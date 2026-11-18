@@ -171,15 +171,6 @@
 			<description>
 			</description>
 		</method>
-		<method name="make_shrub_species" qualifiers="static">
-			<return type="PlantSpecies" />
-			<param index="0" name="preset" type="int" enum="TreeGenerator.Preset" />
-			<param index="1" name="form" type="int" enum="TreeGenerator.ShrubForm" default="1" />
-			<param index="2" name="variants" type="int" default="3" />
-			<param index="3" name="season" type="Dictionary" default="{}" />
-			<description>
-			</description>
-		</method>
 		<method name="make_species">
 			<return type="PlantSpecies" />
 			<param index="0" name="stand_grown" type="bool" />
@@ -196,6 +187,7 @@
 			<param index="3" name="season" type="Dictionary" default="{}" />
 			<description>
 				Grows [param variants] heath or scrub shrubs ([constant PRESET_GORSE], [constant PRESET_BROOM], [constant PRESET_GUM_ROCKROSE], [constant PRESET_KERMES_OAK], [constant PRESET_LENTISK], [constant PRESET_DWARF_FAN_PALM]) of one [param form] and returns them as a [PlantSpecies] with meshes, footprint, canopy radius and far colour, and no climate or terrain rules: the caller places it. [param season] is a [method WeatherMap3D.get_season] dictionary; its [code]day_of_year[/code] opens the flowers and ripens pods and fruit, and the far colour turns gold (gorse, broom) or speckled white (gum rockrose) in flower. The dwarf fan palm flowers among its leaf bases in spring (yellow on male plants) and female plants carry dates, green to red-brown, from summer into winter. Gum rockrose has no cushion form and gives its young plant for [constant SHRUB_CUSHION].
+				The hedge shrubs ([constant PRESET_HAWTHORN], [constant PRESET_BLACKTHORN], [constant PRESET_HAZEL], [constant PRESET_FIELD_MAPLE], [constant PRESET_DOG_ROSE]) are also taken: [constant SHRUB_HEDGE] grows a two-metre segment of a flailed field hedge along local X from 0 to 2 m, 1.8-2.5 m tall, A-shaped on even variants and boxed on odd ones, leafy to the ground. A hedge species has no random yaw, spacing 2 m and meta [code]hedge_segment_length[/code] 2.0, so a caller lays segments end to end along a field edge. Hawthorn flowers white in May and carries red haws into winter, blackthorn flowers white on bare twigs in March and April and carries sloes in autumn, dog rose flowers pale pink in June and carries scarlet hips. For these presets [constant SHRUB_THICKET] gives the open-grown bush and [constant SHRUB_CUSHION] a young plant.
 			</description>
 		</method>
 		<method name="make_stand">
@@ -580,18 +572,6 @@
 		<constant name="PRESET_BROOM" value="32" enum="Preset">
 			Broom (Cytisus scoparius), an erect heath shrub of straight green switches with few small leaves, golden in flower in late spring.
 		</constant>
-		<constant name="SHRUB_YOUNG" value="0" enum="ShrubForm">
-		</constant>
-		<constant name="SHRUB_MATURE" value="1" enum="ShrubForm">
-		</constant>
-		<constant name="SHRUB_OLD" value="2" enum="ShrubForm">
-		</constant>
-		<constant name="SHRUB_THICKET" value="3" enum="ShrubForm">
-		</constant>
-		<constant name="SHRUB_CUSHION" value="4" enum="ShrubForm">
-		</constant>
-		<constant name="SHRUB_MAX" value="5" enum="ShrubForm">
-		</constant>
 		<constant name="PRESET_GUM_ROCKROSE" value="33" enum="Preset">
 			Gum rockrose (Cistus ladanifer): an erect, open Mediterranean shrub 1-2.5 m with long, narrow, glossy leaves, big white flowers with a maroon blotch in spring and standing capsules after; its leaves fold and fall in part in the summer drought.
 		</constant>
@@ -622,7 +602,16 @@
 		<constant name="PRESET_CAROB" value="42" enum="Preset">
 			Carob (Ceratonia siliqua): an evergreen with a short trunk under a broad, dense, rounded crown; leathery, glossy, dark paripinnate leaves of two to five pairs of rounded leaflets; rough grey-brown bark.
 		</constant>
-		<constant name="PRESET_MAX" value="43" enum="Preset">
+		<constant name="PRESET_BLACKTHORN" value="43" enum="Preset">
+			Blackthorn (Prunus spinosa): a dense, suckering, thorny shrub 1.5-4 m of stiff dark twigs; white flowers on the bare wood in March and April before the small oval leaves; blue-black sloes with a bloom from September.
+		</constant>
+		<constant name="PRESET_FIELD_MAPLE" value="44" enum="Preset">
+			Field maple (Acer campestre): a small rounded tree or hedge shrub with small, blunt, five-lobed leaves turning yellow in autumn, winged keys spread level, corky ridged young twigs.
+		</constant>
+		<constant name="PRESET_DOG_ROSE" value="45" enum="Preset">
+			Dog rose (Rosa canina): arching, prickly green canes to 3 m scrambling through hedges; pinnate leaves of five to seven leaflets; pale pink five-petalled flowers in June, scarlet oval hips in autumn.
+		</constant>
+		<constant name="PRESET_MAX" value="46" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="STAND_BEECH" value="0" enum="Stand">
@@ -908,7 +897,10 @@
 		<constant name="SHRUB_CUSHION" value="4" enum="ShrubForm">
 			A wind-pruned cushion under 60 cm.
 		</constant>
-		<constant name="SHRUB_MAX" value="5" enum="ShrubForm">
+		<constant name="SHRUB_HEDGE" value="5" enum="ShrubForm">
+			A two-metre segment of a flailed field hedge (hedge shrubs only).
+		</constant>
+		<constant name="SHRUB_MAX" value="6" enum="ShrubForm">
 			Number of shrub forms.
 		</constant>
 	</constants>

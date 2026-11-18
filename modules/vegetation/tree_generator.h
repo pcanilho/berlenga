@@ -98,6 +98,9 @@ public:
 		PRESET_WILD_OLIVE, // Olea europaea var. sylvestris (trees.md 5ac).
 		PRESET_MARITIME_PINE, // Pinus pinaster (trees.md 5ac).
 		PRESET_CAROB, // Ceratonia siliqua (trees.md 5ac).
+		PRESET_BLACKTHORN, // Prunus spinosa (trees.md 5ad).
+		PRESET_FIELD_MAPLE, // Acer campestre (trees.md 5ad).
+		PRESET_DOG_ROSE, // Rosa canina (trees.md 5ad).
 		PRESET_MAX,
 	};
 
@@ -514,6 +517,9 @@ private:
 	Builder soil_b; // The root plate's soil and stones (section 5k).
 	bool fallen_branch = false; // Only one shed limb of the grown tree, lying on the ground.
 	AABB envelope; // Clipping volume for hedges and topiary (size 0: off).
+	int envelope_sprouts = 0; // Shoots a stub cut at the envelope breaks into (a flailed hedge, trees.md 5ad).
+	float envelope_batter = 0.0f; // 0-1: the envelope narrows to this share less of its depth (z) at its top: an A-shaped hedge.
+	bool _in_envelope(const Vector3 &p_point) const;
 	float collider_radius = 0.08f; // Wood thicker than this gets collision capsules.
 	int broken_tip = -1; // Stem node whose end is a broken top.
 	HashSet<int> broken_ends; // Limbs that rubbed on thicker wood and snapped (_prune_collisions()).
@@ -817,6 +823,7 @@ private:
 		FORM_BANK, // On a stream bank or gorge side: variants over slopes 0 to 0.85 rad, roots eroded (section 5q).
 		FORM_THICKET, // Heath shrubs grown into one: wider than tall, flat-topped (section 5u).
 		FORM_OLD, // A heath shrub near the end of its life: leggy, leaning out, its centre dead and grey (5u).
+		FORM_HEDGE, // A two-metre segment of a cut field hedge, A-shaped or boxed by variant (5ad).
 		FORM_MAX,
 	};
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
@@ -995,6 +1002,7 @@ public:
 		SHRUB_OLD,
 		SHRUB_THICKET,
 		SHRUB_CUSHION,
+		SHRUB_HEDGE,
 		SHRUB_MAX,
 	};
 	static Ref<PlantSpecies> make_shrub_species(Preset p_preset, ShrubForm p_form, int p_variants, const Dictionary &p_season);
