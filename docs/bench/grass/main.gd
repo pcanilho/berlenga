@@ -104,6 +104,7 @@ var stubble_view := false # --fields=stubble: from 1.7 m at the stubble field's 
 var close := false
 var ruts_view := false
 var ruts_ground: GroundSurface3D
+var ruts_aged := 0.0 # --ruts=aged[:scale]: kept, then read back by a new ground with this ruts_time_scale (weeks away)
 var forest := false
 var litter_wind := Vector2()
 var grass_density := 0.0
@@ -196,9 +197,11 @@ func _ready() -> void:
 			farmland = true
 			SIZE = 640.0 # Fields and the meadow round them to the horizon.
 		elif a == "--close": close = true
-		elif a == "--ruts":
+		elif a == "--ruts" or a.begins_with("--ruts=aged"):
 			ruts_view = true
 			close = true
+			if a.begins_with("--ruts=aged"):
+				ruts_aged = 6e5 if a == "--ruts=aged" else float(a.substr(12))
 		elif a == "--forest": forest = true
 		elif a == "--swamp": swamp = true
 		elif a == "--swamp=close":
@@ -661,7 +664,10 @@ void fragment() {
 		ruts_ground.follow_target = NodePath("../" + str(cam.name))
 		ruts_ground.ground_type = GroundSurface3D.GROUND_SOIL
 		ruts_ground.moisture = 0.7
-		ruts_ground.keep_ruts = false
+		ruts_ground.keep_ruts = ruts_aged > 0.0
+		ruts_ground.ruts_path = "user://grass_bench_ruts"
+		if ruts_aged > 0.0:
+			ruts_ground.clear_saved_ruts()
 		ruts_ground.wind_ripples = false
 		ruts_ground.desiccation_cracks = false
 		add_child(ruts_ground)
@@ -2072,6 +2078,23 @@ func _process(dt: float) -> void:
 			var z := 16.0 - k * 0.45
 			var x: float = 3.4 - 0.08 * k
 			ruts_ground.press_box(Vector3(x, 0, z), Vector2(0.32, 0.5), 0.17, height(x, z) - 0.006, 0.0)
+	if ruts_aged > 0.0 and n == 14:
+		# Left: the node goes (it keeps its ruts as it leaves), and a new one over the same ground reads them back
+		# after the time away, scaled to weeks.
+		var cfg := ruts_ground
+		var next := GroundSurface3D.new()
+		for prop in ["follow_target", "ground_type", "moisture", "keep_ruts", "ruts_path", "wind_ripples", "desiccation_cracks"]:
+			next.set(prop, cfg.get(prop))
+		cfg.queue_free()
+		await get_tree().create_timer(3.0).timeout
+		next.ruts_time_scale = ruts_aged
+		next.ruts_away_rain = 0.0 # the hollows kept as they were: only the sward grows back over them
+		next.name = "RutsBack"
+		add_child(next)
+		ruts_ground = next
+	if ruts_view and n == 40:
+		for q in [Vector3(-0.15, 0, 14.0), Vector3(3.05, 0, 14.0)]:
+			print("GRASS_RUT_LATE ", [q, ruts_ground.get_dent_at(q), ruts_ground.get_regrown_at(q)])
 	if ruts_view and n == 12:
 		for q in [Vector3(-0.15, 0, 14.0), Vector3(3.05, 0, 14.0)]:
 			print("GRASS_RUT ", [q, ruts_ground.get_dent_at(q), ruts_ground.get_rim_at(q), ruts_ground.get_fresh_at(q), ruts_ground.get_standing_water_at(q), ruts_ground.get_tracked_mud_at(q)])

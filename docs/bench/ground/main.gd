@@ -1143,6 +1143,15 @@ func _run_ruts_tests() -> void:
 	var want := d0 * exp(-surface.rain_smoothing * surface.ruts_away_rain * real_away * ruts_scale / 3600.0)
 	_check("kept ruts come back aged by the time away: rain has softened them", d5 < 0.9 * d0 and d5 > 0.05 * d0 and absf(d5 - want) < 0.25 * want,
 			"%.1f cm after %.0f days away (%.1f cm expected), %.1f cm when left" % [d5 * 100.0, real_away * ruts_scale / 86400.0, want * 100.0, d0 * 100.0])
+	var rg := surface.get_regrown_at(a)
+	var rg_want := 1.0 - exp(-real_away * ruts_scale / surface.ruts_regrowth_time)
+	_check("and the grass has grown back over them (mud round 6)", absf(rg - rg_want) < 0.1 and surface.get_regrown_at(a + Vector3(3, 0, 3)) == 0.0,
+			"%.2f regrown (%.2f expected), %.2f off the print" % [rg, rg_want, surface.get_regrown_at(a + Vector3(3, 0, 3))])
+	surface.press_box(a, Vector2(0.11, 0.29), 0.0, 0.0, 0.04)
+	for i in 4:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	_check("pressed again, it is bare again", surface.get_regrown_at(a) < 0.05, "%.2f regrown" % surface.get_regrown_at(a))
 	ruts_scale = 1.0
 	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
 	for i in 3:

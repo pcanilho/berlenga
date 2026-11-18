@@ -4827,7 +4827,9 @@ float ground_deform_exposed(vec3 p_world) {
 		return 0.0;
 	}
 	vec4 d = ground_deform_sample(p_world.xz);
-	float relief = smoothstep(0.01, 0.04, abs(d.r));
+	// An old rut the sward has grown back over (mud round 6: A just over 1) shows its ground cover again.
+	float regrown = clamp((d.a - 1.0) / 0.02, 0.0, 1.0);
+	float relief = smoothstep(0.01, 0.04, abs(d.r)) * (1.0 - regrown);
 	float turned = smoothstep(0.03, 0.15, abs(1.0 - d.b));
 	float water = d.a < 0.0 ? 1.0 : smoothstep(5e-4, 3e-3, d.g);
 	return max(max(relief, turned), water);

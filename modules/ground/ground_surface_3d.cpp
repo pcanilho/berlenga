@@ -631,6 +631,16 @@ float GroundSurface3D::get_water_mud_at(Vector3 p_position) const {
 	return 0.0f;
 }
 
+float GroundSurface3D::get_regrown_at(Vector3 p_position) const {
+	if (is_near_active() && _near_inside(p_position.x, p_position.z) && int(near_fld.regrown.size()) == near_fld.resolution * near_fld.resolution) {
+		return near_fld.sample(near_fld.regrown, p_position.x, p_position.z);
+	}
+	if (field.valid && int(field.regrown.size()) == field.resolution * field.resolution) {
+		return field.sample(field.regrown, p_position.x, p_position.z);
+	}
+	return 0.0f;
+}
+
 float GroundSurface3D::get_standing_water_volume(const Vector3 &p_position, float p_radius) const {
 	const bool near = is_near_active() && _near_inside(p_position.x, p_position.z);
 	const GroundDeformField &f = near ? near_fld : field;
@@ -1356,6 +1366,7 @@ void GroundSurface3D::_near_seed(Vector2i p_origin) {
 	const float t = near_fld.texel();
 	const int S = GroundRutStore::STRIDE;
 	const bool clay = int(field.water.size()) == field.resolution * field.resolution && int(field.water_mud.size()) == field.resolution * field.resolution;
+	const bool grown = int(field.regrown.size()) == field.resolution * field.resolution;
 	LocalVector<uint32_t> data;
 	data.resize(T * T * S);
 	for (int tz = 0; tz < nt; tz++) {
@@ -1382,7 +1393,8 @@ void GroundSurface3D::_near_seed(Vector2i p_origin) {
 					const int k = z * T + x;
 					data[k * S + 0] = uint32_t(Math::make_half_float(dn)) | (uint32_t(Math::make_half_float(rm)) << 16);
 					data[k * S + 1] = uint32_t(Math::make_half_float(fr)) | (uint32_t(Math::make_half_float(wd)) << 16);
-					data[k * S + 2] = uint32_t(Math::make_half_float(cl));
+					const float rg = grown ? CLAMP(field.sample(field.regrown, wx, wz), 0.0f, 1.0f) : 0.0f;
+					data[k * S + 2] = uint32_t(Math::make_half_float(cl)) | (uint32_t(Math::make_half_float(rg)) << 16);
 				}
 			}
 			if (any) {
@@ -3905,6 +3917,7 @@ void GroundSurface3D::_ruts_age(LocalVector<uint32_t> &r_data, double p_seconds)
 	const float dry = float(Math::exp(-secs / double(drying_time)));
 	const float keep = float(Math::exp(-double(rain_smoothing * ruts_away_rain) * secs / 3600.0));
 	const float loss = float(double(MAX(_evaporation() - ruts_away_rain / 3.6e6f, 0.0f)) * secs);
+	const float regrow = float(Math::exp(-secs / double(MAX(ruts_regrowth_time, 1.0f))));
 	const int S = GroundRutStore::STRIDE;
 	const int count = int(r_data.size()) / S;
 	for (int k = 0; k < count; k++) {
@@ -3913,6 +3926,7 @@ void GroundSurface3D::_ruts_age(LocalVector<uint32_t> &r_data, double p_seconds)
 		float fr = Math::half_to_float(uint16_t(r_data[k * S + 1] & 0xffff));
 		float wd = Math::half_to_float(uint16_t(r_data[k * S + 1] >> 16));
 		float cl = Math::half_to_float(uint16_t(r_data[k * S + 2] & 0xffff));
+		float rg = Math::half_to_float(uint16_t(r_data[k * S + 2] >> 16));
 		// Settling (Stokes, as the water step): the clay falls out over the water's own depth.
 		cl = wd > 1e-4f ? cl * float(Math::exp(-1.0e-4 * secs / double(wd))) : 0.0f;
 		if (fr >= 4.0f) {
@@ -3927,7 +3941,10 @@ void GroundSurface3D::_ruts_age(LocalVector<uint32_t> &r_data, double p_seconds)
 		rm = rm < 1e-5f ? 0.0f : rm;
 		r_data[k * S] = uint32_t(Math::make_half_float(dn)) | (uint32_t(Math::make_half_float(rm)) << 16);
 		r_data[k * S + 1] = uint32_t(Math::make_half_float(fr)) | (uint32_t(Math::make_half_float(wd)) << 16);
-		r_data[k * S + 2] = uint32_t(Math::make_half_float(cl));
+		// The sward grows back over the rut (mud round 6): what is still bare closes at ruts_regrowth_time's e-fold;
+		// a rut softened flat by the rain needs none.
+		rg = Math::abs(dn - rm) > 0.002f ? 1.0f - (1.0f - CLAMP(rg, 0.0f, 1.0f)) * regrow : 0.0f;
+		r_data[k * S + 2] = uint32_t(Math::make_half_float(cl)) | (uint32_t(Math::make_half_float(rg)) << 16);
 	}
 }
 
@@ -4784,6 +4801,7 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_puddle", "position", "radius", "depth", "mud"), &GroundSurface3D::add_puddle, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("stir_water", "position", "radius", "mass"), &GroundSurface3D::stir_water);
 	ClassDB::bind_method(D_METHOD("get_water_mud_at", "position"), &GroundSurface3D::get_water_mud_at);
+	ClassDB::bind_method(D_METHOD("get_regrown_at", "position"), &GroundSurface3D::get_regrown_at);
 	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet", "print"), &GroundSurface3D::track_mud, DEFVAL(1.0f), DEFVAL(Vector4()));
 	ClassDB::bind_method(D_METHOD("get_tracked_mud_at", "position"), &GroundSurface3D::get_tracked_mud_at);
 	ClassDB::bind_method(D_METHOD("set_tracked_mud", "enabled"), &GroundSurface3D::set_tracked_mud);
@@ -4794,6 +4812,8 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_ruts_path"), &GroundSurface3D::get_ruts_path);
 	ClassDB::bind_method(D_METHOD("set_ruts_time_scale", "scale"), &GroundSurface3D::set_ruts_time_scale);
 	ClassDB::bind_method(D_METHOD("get_ruts_time_scale"), &GroundSurface3D::get_ruts_time_scale);
+	ClassDB::bind_method(D_METHOD("set_ruts_regrowth_time", "seconds"), &GroundSurface3D::set_ruts_regrowth_time);
+	ClassDB::bind_method(D_METHOD("get_ruts_regrowth_time"), &GroundSurface3D::get_ruts_regrowth_time);
 	ClassDB::bind_method(D_METHOD("set_ruts_away_rain", "rate"), &GroundSurface3D::set_ruts_away_rain);
 	ClassDB::bind_method(D_METHOD("get_ruts_away_rain"), &GroundSurface3D::get_ruts_away_rain);
 	ClassDB::bind_method(D_METHOD("save_ruts"), &GroundSurface3D::save_ruts);
@@ -4958,6 +4978,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "ruts_path"), "set_ruts_path", "get_ruts_path");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ruts_time_scale", PROPERTY_HINT_RANGE, "0,1000,0.01,or_greater"), "set_ruts_time_scale", "get_ruts_time_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ruts_away_rain", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:mm/h"), "set_ruts_away_rain", "get_ruts_away_rain");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ruts_regrowth_time", PROPERTY_HINT_RANGE, "3600,31536000,1,or_greater,suffix:s"), "set_ruts_regrowth_time", "get_ruts_regrowth_time");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "desiccation_cracks"), "set_desiccation_cracks", "is_desiccation_cracks");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");
 	ADD_GROUP("Drawing", "");

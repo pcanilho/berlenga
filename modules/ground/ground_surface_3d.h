@@ -326,6 +326,7 @@ private:
 	String ruts_path = "user://ground_ruts";
 	float ruts_time_scale = 1.0f; // world seconds per real second while away (0: kept as left)
 	float ruts_away_rain = 0.1f; // mean rain while away, mm/h (a temperate 900 mm a year)
+	float ruts_regrowth_time = 2.6e6f; // s: the sward grows back over a kept rut at this e-fold (a month; mud round 6)
 	void _ruts_age(LocalVector<uint32_t> &r_data, double p_seconds) const;
 	// Crack state kept with the ruts (mud round 5): the lattice cells it moves off and onto.
 	GroundCellStore crack_store;
@@ -618,6 +619,7 @@ public:
 	void stir_water(const Vector3 &p_position, float p_radius, float p_mass);
 	// The clay the standing water carries at a place, kg/m3, as last read back.
 	float get_water_mud_at(Vector3 p_position) const;
+	float get_regrown_at(Vector3 p_position) const;
 	// Lays a film of clay p_depth m thick over a disc (a tyre or a boot leaving mud on firm ground; mud round 3):
 	// dark and glossy as wet as p_wet, a pale film once it dries, and it stays until a wash takes it.
 	// p_print: the film's print (ground_deform.glsl mud_print_mask()): (0) a plain disc, (1, yaw) a tyre's lugs on its
@@ -635,6 +637,8 @@ public:
 	float get_ruts_time_scale() const { return ruts_time_scale; }
 	void set_ruts_away_rain(float p_rate) { ruts_away_rain = MAX(p_rate, 0.0f); }
 	float get_ruts_away_rain() const { return ruts_away_rain; }
+	void set_ruts_regrowth_time(float p_seconds) { ruts_regrowth_time = MAX(p_seconds, 1.0f); }
+	float get_ruts_regrowth_time() const { return ruts_regrowth_time; }
 	void save_ruts();
 	void clear_saved_ruts();
 	int get_saved_rut_tile_count();
