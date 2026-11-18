@@ -1201,6 +1201,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Muddy water",
+   "settings": [
+    "GroundSurface3D.muddy_water"
+   ],
+   "note": "",
+   "what": "tyres and boots churn clay into standing water, which turns milky brown, drifts with the flow and settles out over minutes; tyre spray flies brown and stains the wheel arches.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Mud on legs",
    "settings": [
     "GroundLegMud3D"
