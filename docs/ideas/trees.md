@@ -1903,6 +1903,11 @@ limbs until near the crown and the long, low wing limbs go. With the stems doing
 structure, side shoots get apical control 0.95 again and needles are kept four years: the
 cushion runs to the edge. Stone pine: 15.9 m, crown 13.1 m across, base 9.8 m; 6.9M triangles.
 Cork oak: 3 m, four stems, ten years, two levels, 45 degrees, lift 0.22.
+
+Round 3 (18 Nov, docs: the split still read as a fan, children need to taper and thin): side
+shoots off a forked stem get a share of their vigor (`side`: stone pine 0.5, cork oak 0.7),
+so the stems stay thick and dominant and their side shoots thin; stone pine 15.7 m, crown 13.3
+m across, base 12.8 m, 6.1M triangles.
  Stand: `STAND_STONE_PINE` (parkland, 13), open-grown umbrellas
 about 11 m apart with saplings, snags and logs; not part of `make_woodland`. Its scrub comes
 from vegetation's `make_scrub` (lentisk, kermes oak, gum rockrose, dwarf fan palm). Not yet:
@@ -1947,7 +1952,77 @@ trees are cleaned), leaves 7 cm, toothed (six shallow teeth a side), grey felted
 widely warped, cracks 0.3 cell wide and 7 cm deep, rounded lumpy tops, warm red-brown fissure
 floors under grey-buff ridges (headroom 1.3). Furrow lines (the oak's pattern) were tried
 first: too smooth, a few pits. Open-grown 17.7 m, crown 20.6 m across, base 9.2 m; 16.5M
-triangles (an open oak is 24M). Not yet: stripping, acorns, the montado stand.
+triangles (an open oak is 24M). Close up the displaced cork tore steep plate walls into jagged
+spikes: blocks are now 3 x 2 a tile (13 x 20 cm) with rounded shoulders, 5 cm deep.
+
+Stripping (18 Nov): `cork_stripped_years` (-1 picks one of eight stages of the cycle by seed;
+30 or more, unworked; trees under 25 and dead wood never). The bole is stripped from 4 cm over
+the soil to twice the girth, at most a metre over the fork, so the limb bases are bared too; the
+cut wavers a hand's breadth. It reuses the peel machinery (5f) with the stepped edge (5o): the
+stripped vertices sink past the deepest fissure of the displaced bark (smooth stem) and lose
+3-5 cm on plain tubes, less as the new cork grows back 4 mm a year. The bark shader draws the
+stripped stem instead of wood: bright orange (fresh), red-brown (weeks), brown-black (a year),
+then cork brown with fine cracks as it thickens (`bark_stripped_age`). Not yet: the painted
+year digit, acorns, the montado stand.
+
+### 5ab. Holm oak (18 Nov; Mediterranean trees, third)
+
+Research (Rameau, Mansion, Dume et al., *Flore forestiere francaise 3: region mediterraneenne*,
+2008; de Rigo and Caudullo in the *European Atlas of Forest Tree Species*, 2016, Quercus ilex):
+- Evergreen oak of the whole Mediterranean, on limestone and acid soils alike, 10-25 m (often
+  a multi-stemmed coppice or a shrub on poor ground). Open-grown, a short bole dividing low into
+  a few limbs under a broad, dense, rounded dome; it casts the deepest shade of the
+  Mediterranean trees and stays leafy deep inside (shade tolerant).
+- Leaves 2-8 cm, very variable: adult leaves entire or nearly, leathery, dark glossy green
+  above, grey-white felted below, kept 2-3 years; juvenile and sprout leaves spiny like holly.
+- Bark dark grey to blackish, thin, finely cracked into small squarish plates.
+- Acorns ripen in their first autumn, 1.5-3 cm, in a grey felted cup.
+
+As built, first pass (18 Nov): `PRESET_HOLM_OAK` (39), the leader split at 2 m into three
+limbs at 45 degrees with full-strength side shoots and no lift; shade-tolerant buds and a low
+shed ratio (0.02) keep it leafy deep inside and down to a crown base of 2.5 m (with a higher
+shed ratio and a lift the first try stood a vase of limbs under a cap, a stone pine's habit).
+Three leaf years, 40 simple leaves of 6 cm an internode, felted below, `BARK_SCALY` for the
+small plates. Open-grown 13.2 m, crown 18 m across; 10.5M triangles. Not yet: spiny juvenile
+leaves on saplings and sprouts, acorns, coppice forms (garrigue).
+
+### 5ac. Wild olive, maritime pine and carob (18 Nov; Mediterranean trees, last three)
+
+Research (Rameau et al. 2008, as above; the *European Atlas of Forest Tree Species*, 2016:
+Olea europaea, Pinus pinaster, Ceratonia siliqua):
+- **Wild olive** (oleaster, *Olea europaea* var. *sylvestris*): a shrub or small tree of
+  maquis and dry slopes, 2-10 m, often several crooked stems from one stool; dense, rounded,
+  grey-green crown. Leaves opposite, narrowly lanceolate, 3-6 cm, dark grey-green above and
+  silvery with scales below. Bark grey, smooth when young, fissured, twisted and hollowing when
+  old.
+- **Maritime pine** (*Pinus pinaster*): the tallest Mediterranean pine, 20-35 m, on sandy acid
+  soils (the Landes, Portugal's coastal pinewoods). A long straight or slightly bowed clear bole
+  and an open, irregular crown held high; it self-prunes like Scots pine. Needles in pairs,
+  10-25 cm, the stoutest of the European pines, grey-green. Bark very thick, deeply furrowed
+  between long purplish red-brown plates. Tapped for resin for centuries.
+- **Carob** (*Ceratonia siliqua*): evergreen, 5-15 m, a short thick trunk dividing low under a
+  broad, dense, rounded crown. Leaves paripinnate, 10-20 cm, of 2-5 pairs of rounded, leathery,
+  glossy dark leaflets, paler below. Bark grey-brown, rough, finely cracked.
+
+As built (18 Nov):
+- `PRESET_WILD_OLIVE` (40): three crooked stems (stem spread 20 degrees, direction noise 22),
+  opposite buds, a low shed ratio and shade-tolerant buds for a dense crown down low; 30
+  narrow 5 cm leaves an internode, silvery below; `BARK_FURROWED`. Open-grown 7.8 m, crown
+  9.4 m across.
+- `PRESET_MARITIME_PINE` (41): built on the Scots pine growth rules (whorls of five, the same
+  apical dominance, self-pruning), grown 45 years with 40 cm shoots, a pipe exponent of 2.0
+  for a stout bole, and 18 cm needles. No leader split; open-grown it still self-prunes onto
+  a clear bole (the fork rule's lift at 0.25). First tries with weaker leader growth and
+  higher apical control grew a bush under a bare leader, then a pole; the Scots pine rules
+  gave the right habit at once. `BARK_PLATED`, resin on wounds, pine cones. Open-grown 30.9 m,
+  crown base 9.4 m, crown 13.6 m across; forest-grown crown base 18.9 m.
+- `PRESET_CAROB` (42): the leader split at 2 m into three limbs at 50 degrees, low shed and
+  shade-tolerant buds for a dense dome; six paripinnate 16 cm leaves an internode with
+  rounded leaflets, dark and glossy, paler below; `BARK_SCALY`. Open-grown 11.5 m, crown 15 m
+  across.
+
+Not yet: olive and carob fruit, cultivated olives (grafted, pruned open vase), resin-tapping
+scars on maritime pines, Mediterranean stands (montado, maritime pine plantation).
 
 ## 6. What the games at Paulo's bar do
 

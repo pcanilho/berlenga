@@ -863,9 +863,11 @@ func _caves(cam: Camera3D) -> void:
 				var st_segs: Array = net.get_segments(0)
 				var best_s := -1
 				var best_d := 1e9
+				# The nearest long, gently sloping stream segment (a short or steep one leaves no channel to look down).
 				for k in st_segs.size():
 					if st_segs[k]["stream"]:
-						var dk: float = (st_segs[k]["a"] as Vector3).distance_to(pos)
+						var ln := (st_segs[k]["b"] as Vector3) - (st_segs[k]["a"] as Vector3)
+						var dk: float = (st_segs[k]["a"] as Vector3).distance_to(pos) - 4.0 * minf(ln.length(), 8.0) + (20.0 if absf(ln.normalized().y) > 0.25 else 0.0)
 						if dk < best_d:
 							best_d = dk
 							best_s = k
@@ -879,6 +881,11 @@ func _caves(cam: Camera3D) -> void:
 				if sb.y > sa.y:
 					dir = -dir # look downstream
 				var eye_s := mid - dir * float(args.get("dist", "2.5")) + Vector3(0, -0.2 * rr_s, 0)
+				# Inside the air, with room round the lens.
+				for k in 10:
+					if net.get_rock_distance(eye_s) < -0.35:
+						break
+					eye_s = eye_s.lerp(mid, 0.25)
 				cam.position = eye_s
 				cam.look_at(mid + dir * 1.5 - Vector3(0, 1.1 * rr_s, 0))
 				cam.fov = 65.0
@@ -887,7 +894,8 @@ func _caves(cam: Camera3D) -> void:
 				lamp_st.light_energy = float(args.get("lamp-energy", "2.0"))
 				lamp_st.shadow_enabled = true
 				add_child(lamp_st)
-				lamp_st.global_position = eye_s + dir.cross(Vector3.UP).normalized() * 0.4 * rr_s + Vector3(0, 0.2, 0)
+				# Overhead and a little behind the camera, as a helmet lamp: no wall close enough to burn out.
+				lamp_st.global_position = eye_s - dir * 0.3 + Vector3(0, 0.25, 0)
 				var n_stream := 0
 				for sgx in st_segs:
 					n_stream += 1 if sgx["stream"] else 0

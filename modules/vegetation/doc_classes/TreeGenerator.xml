@@ -281,6 +281,9 @@
 		</member>
 		<member name="compress_vertices" type="bool" setter="set_compress_vertices" getter="is_compress_vertices" default="true">
 		</member>
+		<member name="cork_stripped_years" type="float" setter="set_cork_stripped_years" getter="get_cork_stripped_years" default="-1.0">
+			[constant PRESET_CORK_OAK] only: years since the cork was last harvested from the bole and the bases of the main limbs. The stripped stem shows bright orange when fresh, deep red-brown within weeks, brown-black within the year, then the new cork thickening back, browner and finely cracked, with a step up to the virgin cork above. [code]-1[/code] picks a stage of the nine-year cycle by [member seed]; [code]30[/code] or more leaves the tree unworked. Trees under 25 years and dead wood are never stripped.
+		</member>
 		<member name="crown_cone" type="float" setter="set_param" getter="get_param" default="0.0">
 			Excurrent crown shape: a branch reaches out at most this many times its depth below the top of the tree, so spruce, fir, larch and pine keep a cone (Kantola and Makela 2004). Shoots that would leave the cone wait until the leader has grown. 0 turns it off.
 		</member>
@@ -607,7 +610,19 @@
 		<constant name="PRESET_CORK_OAK" value="38" enum="Preset">
 			Cork oak (Quercus suber): an evergreen oak with a short bole dividing at about 3 m into a few thick, sinuous, spreading limbs under a broad, low, rounded crown; small toothed leaves, dark glossy above and grey felted below; thick, deeply fissured, spongy grey-buff virgin cork.
 		</constant>
-		<constant name="PRESET_MAX" value="39" enum="Preset">
+		<constant name="PRESET_HOLM_OAK" value="39" enum="Preset">
+			Holm oak (Quercus ilex): an evergreen oak with a short bole dividing into a few limbs under a dense, dark, rounded dome, leafy deep inside; small leaves, dark glossy green above and grey felted below; dark grey bark cracked into small, thin plates.
+		</constant>
+		<constant name="PRESET_WILD_OLIVE" value="40" enum="Preset">
+			Wild olive (Olea europaea var. sylvestris): a gnarled small tree of two or three crooked stems under a dense, rounded crown; opposite, narrow leaves, grey-green above and silvery below; grey bark, fissured on old stems.
+		</constant>
+		<constant name="PRESET_MARITIME_PINE" value="41" enum="Preset">
+			Maritime pine (Pinus pinaster): a tall pine with a long clear bole and an irregular, open crown high up; stout grey-green needles 10-25 cm in pairs; very thick bark in long purplish red-brown plates between deep furrows; cones in whorls.
+		</constant>
+		<constant name="PRESET_CAROB" value="42" enum="Preset">
+			Carob (Ceratonia siliqua): an evergreen with a short trunk under a broad, dense, rounded crown; leathery, glossy, dark paripinnate leaves of two to five pairs of rounded leaflets; rough grey-brown bark.
+		</constant>
+		<constant name="PRESET_MAX" value="43" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="STAND_BEECH" value="0" enum="Stand">

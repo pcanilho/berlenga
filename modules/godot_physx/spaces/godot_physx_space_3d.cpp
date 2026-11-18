@@ -279,6 +279,38 @@ GodotPhysXSpace3D::GodotPhysXSpace3D(PxPhysics *p_physics, PxDefaultCpuDispatche
 	default_material = px_physics->createMaterial(0.5f, 0.5f, 0.0f);
 }
 
+void GodotPhysXSpace3D::queue_static_actor(PxRigidActor *p_actor) {
+	pending_statics.push_back(p_actor);
+}
+
+bool GodotPhysXSpace3D::cancel_static_actor(PxRigidActor *p_actor) {
+	const int64_t i = pending_statics.find(p_actor);
+	if (i < 0) {
+		return false;
+	}
+	pending_statics.remove_at_unordered(i);
+	return true;
+}
+
+void GodotPhysXSpace3D::flush_pending_actors() {
+	if (pending_statics.is_empty() || !px_scene) {
+		return;
+	}
+	// Below this a plain batched add is as cheap as building the structure.
+	constexpr uint32_t PRUNING_STRUCTURE_MIN = 64;
+	bool added = false;
+	if (pending_statics.size() >= PRUNING_STRUCTURE_MIN) {
+		if (PxPruningStructure *ps = px_physics->createPruningStructure(pending_statics.ptr(), pending_statics.size())) {
+			added = px_scene->addActors(*ps);
+			ps->release();
+		}
+	}
+	if (!added) {
+		px_scene->addActors(reinterpret_cast<PxActor *const *>(pending_statics.ptr()), pending_statics.size());
+	}
+	pending_statics.clear();
+}
+
 static LocalVector<PxMaterial *> pending_material_releases;
 static BinaryMutex pending_material_mutex;
 
@@ -388,6 +420,7 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 		return;
 	}
 	last_step = p_step;
+	flush_pending_actors();
 
 	for (GodotPhysXBody3D *body : contact_reporters) {
 		body->clear_contacts();
@@ -897,6 +930,7 @@ RoundContact round_mesh_contact(const PxGeometry &p_geom, const PxTransform &p_p
 
 bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const PhysicsServer3D::MotionParameters &p_params, PhysicsServer3D::MotionResult *r_result) {
 	ERR_FAIL_NULL_V(px_scene, false);
+	flush_pending_actors();
 	ERR_FAIL_NULL_V(p_body, false);
 
 	if (r_result) {

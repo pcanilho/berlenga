@@ -465,6 +465,9 @@ GodotPhysXShape3D *query_shape(RID p_shape_rid) {
 
 bool GodotPhysXDirectSpaceState3D::intersect_ray(const RayParameters &p_parameters, RayResult &r_result) {
 	PxScene *scene = space ? space->get_px_scene() : nullptr;
+	if (scene) {
+		space->flush_pending_actors(); // statics added this frame are found
+	}
 	ERR_FAIL_NULL_V(scene, false);
 
 	const Vector3 delta = p_parameters.to - p_parameters.from;
@@ -513,6 +516,9 @@ bool GodotPhysXDirectSpaceState3D::intersect_ray(const RayParameters &p_paramete
 
 int GodotPhysXDirectSpaceState3D::intersect_point(const PointParameters &p_parameters, ShapeResult *r_results, int p_result_max) {
 	PxScene *scene = space ? space->get_px_scene() : nullptr;
+	if (scene) {
+		space->flush_pending_actors(); // statics added this frame are found
+	}
 	ERR_FAIL_NULL_V(scene, 0);
 	if (p_result_max <= 0) {
 		return 0;
@@ -547,6 +553,9 @@ int GodotPhysXDirectSpaceState3D::intersect_point(const PointParameters &p_param
 
 int GodotPhysXDirectSpaceState3D::intersect_shape(const ShapeParameters &p_parameters, ShapeResult *r_results, int p_result_max) {
 	PxScene *scene = space ? space->get_px_scene() : nullptr;
+	if (scene) {
+		space->flush_pending_actors(); // statics added this frame are found
+	}
 	ERR_FAIL_NULL_V(scene, 0);
 	GodotPhysXShape3D *shape = query_shape(p_parameters.shape_rid);
 	ERR_FAIL_NULL_V(shape, 0);
@@ -586,6 +595,9 @@ bool GodotPhysXDirectSpaceState3D::cast_motion(const ShapeParameters &p_paramete
 	p_closest_unsafe = 1.0;
 
 	PxScene *scene = space ? space->get_px_scene() : nullptr;
+	if (scene) {
+		space->flush_pending_actors(); // statics added this frame are found
+	}
 	ERR_FAIL_NULL_V(scene, false);
 	GodotPhysXShape3D *shape = query_shape(p_parameters.shape_rid);
 	ERR_FAIL_NULL_V(shape, false);
@@ -627,6 +639,9 @@ bool GodotPhysXDirectSpaceState3D::cast_motion(const ShapeParameters &p_paramete
 bool GodotPhysXDirectSpaceState3D::collide_shape(const ShapeParameters &p_parameters, Vector3 *r_results, int p_result_max, int &r_result_count) {
 	r_result_count = 0;
 	PxScene *scene = space ? space->get_px_scene() : nullptr;
+	if (scene) {
+		space->flush_pending_actors(); // statics added this frame are found
+	}
 	ERR_FAIL_NULL_V(scene, false);
 	GodotPhysXShape3D *shape = query_shape(p_parameters.shape_rid);
 	ERR_FAIL_NULL_V(shape, false);
@@ -663,6 +678,9 @@ bool GodotPhysXDirectSpaceState3D::collide_shape(const ShapeParameters &p_parame
 
 bool GodotPhysXDirectSpaceState3D::rest_info(const ShapeParameters &p_parameters, ShapeRestInfo *r_info) {
 	PxScene *scene = space ? space->get_px_scene() : nullptr;
+	if (scene) {
+		space->flush_pending_actors(); // statics added this frame are found
+	}
 	ERR_FAIL_NULL_V(scene, false);
 	GodotPhysXShape3D *shape = query_shape(p_parameters.shape_rid);
 	ERR_FAIL_NULL_V(shape, false);

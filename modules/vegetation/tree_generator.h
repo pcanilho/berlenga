@@ -94,6 +94,10 @@ public:
 		PRESET_DWARF_FAN_PALM, // Chamaerops humilis (trees.md 5w).
 		PRESET_STONE_PINE, // Pinus pinea (trees.md 5y).
 		PRESET_CORK_OAK, // Quercus suber (trees.md 5aa).
+		PRESET_HOLM_OAK, // Quercus ilex (trees.md 5ab).
+		PRESET_WILD_OLIVE, // Olea europaea var. sylvestris (trees.md 5ac).
+		PRESET_MARITIME_PINE, // Pinus pinaster (trees.md 5ac).
+		PRESET_CAROB, // Ceratonia siliqua (trees.md 5ac).
 		PRESET_MAX,
 	};
 
@@ -241,6 +245,7 @@ private:
 		int levels = 2;
 		float angle = 35.0f; // Degrees off the parent stem.
 		float gravitropism = 0.1f; // The forked stems' upward bend (the trunk's is far stronger).
+		float side = 1.0f; // Vigor of the side shoots off a forked stem: under 1 they stay thin and the stems dominate.
 		float lift = 0.0f; // Open-grown too, the stems are clear of limbs up to this share of the height (5y).
 	};
 	ForkRule _fork_rule() const;
@@ -616,6 +621,8 @@ public:
 	float witches_brooms = 1.0f; // Chance and amount of witches' brooms (birches; section 5n).
 	float limb_breakage = 1.0f; // Storm-snapped and hanging limbs on living trees (section 5j); 0 none.
 	float bark_peel = 1.0f; // Dead wood sheds its bark by decay class (section 5f); 0 keeps it.
+	float cork_stripped_years = -1.0f; // Cork oak: years since the last cork harvest (5aa); -1 picks by seed, 30 or more never worked.
+	float _cork_strip_age() const;
 	// Exposure to a prevailing wind blowing toward +X (trees.md 5q): ice and sand kill the windward
 	// buds above the shelter height (flagged crowns); krummholz 0..1 turns it into the low mat of
 	// the tree line. Placement turns the mesh's +X down the prevailing wind (meta tree_wind_flag).
@@ -896,6 +903,8 @@ public:
 	void set_lichen_cover(float p_cover) { lichen_cover = MAX(p_cover, 0.0f); }
 	float get_lichen_cover() const { return lichen_cover; }
 	void set_bark_peel(float p_peel) { bark_peel = MAX(p_peel, 0.0f); }
+	void set_cork_stripped_years(float p_years) { cork_stripped_years = MAX(p_years, -1.0f); }
+	float get_cork_stripped_years() const { return cork_stripped_years; }
 	void set_root_stone(float p_v) { root_stone = CLAMP(p_v, 0.0f, 2.0f); }
 	float get_root_stone() const { return root_stone; }
 	void set_ground_slope(float p_v) { ground_slope = CLAMP(p_v, 0.0f, 1.2f); }

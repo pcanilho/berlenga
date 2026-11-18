@@ -94,8 +94,10 @@ void GodotPhysXBody3D::_destroy_actor() {
 	if (space) {
 		space->body_actor_gone(this); // the areas it overlaps take their pairs back (an exit unless it re-enters)
 	}
-	if (space && space->get_px_scene()) {
-		space->get_px_scene()->removeActor(*px_actor);
+	if (px_actor->getScene()) {
+		px_actor->getScene()->removeActor(*px_actor);
+	} else if (space) {
+		space->cancel_static_actor(px_actor); // never reached the scene
 	}
 	px_actor->release();
 	px_actor = nullptr;
@@ -280,7 +282,11 @@ void GodotPhysXBody3D::_build_actor() {
 	_apply_axis_lock();
 	_apply_solver_iterations();
 
-	scene->addActor(*px_actor);
+	if (mode == PhysicsServer3D::BODY_MODE_STATIC && joints.is_empty()) {
+		space->queue_static_actor(px_actor); // enters with the space's next batch
+	} else {
+		scene->addActor(*px_actor);
+	}
 	_gravity_scale_changed();
 
 	// The actor pointer changed; any joints referencing this body must be

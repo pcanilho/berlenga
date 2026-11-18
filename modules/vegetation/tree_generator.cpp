@@ -49,7 +49,7 @@ static const char *preset_names[TreeGenerator::PRESET_MAX] = {
 	"Horse Chestnut", "Black Alder", "White Willow", "European Larch", "Silver Fir", "Rowan", "Elder", "Holly", "Yew", "Box",
 	"Sugar Maple", "Red Maple", "Northern Red Oak", "White Oak", "Eastern White Pine", "Eastern Hemlock", "American Beech",
 	"Paper Birch", "Yellow Birch", "Witch-hazel", "Mountain Laurel", "Gorse", "Broom", "Gum Rockrose", "Kermes Oak", "Lentisk", "Dwarf Fan Palm",
-	"Stone Pine", "Cork Oak"
+	"Stone Pine", "Cork Oak", "Holm Oak", "Wild Olive", "Maritime Pine", "Carob"
 };
 
 // The woody shrubs vegetation places through make_shrub_species (trees.md 5u, 5v): Atlantic heath
@@ -765,6 +765,110 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			bark_color = Color(0.5f, 0.47f, 0.42f); // Virgin cork: grey to buff.
 			leaf_color = Color(0.07f, 0.17f, 0.06f); // Dark, glossy above; grey felt below.
 			break;
+		case PRESET_HOLM_OAK: // Quercus ilex (trees.md 5ab): evergreen, a short bole and a dense, dark,
+			// rounded dome, leafy deep inside (shade tolerant), small grey-felted leaves.
+			p[PARAM_YEARS] = 60;
+			p[PARAM_INTERNODE_LENGTH] = 0.3f;
+			p[PARAM_LEADER_GROWTH] = 0.5f;
+			p[PARAM_APICAL_DOMINANCE] = 0.6f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_MATURITY] = 25;
+			p[PARAM_BRANCH_ANGLE] = 60;
+			p[PARAM_DIRECTION_NOISE] = 14;
+			p[PARAM_GRAVITROPISM] = 0.02f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.6f;
+			p[PARAM_APICAL_CONTROL] = 0.95f;
+			p[PARAM_SHED_RATIO] = 0.02f; // Shade-tolerant: leafy deep inside and low down.
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.02f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.02f;
+			p[PARAM_ROOT_FLARE] = 0.6f;
+			p[PARAM_LEAF_SIZE] = 0.06f; // 2-8 cm.
+			p[PARAM_LEAF_WIDTH] = 0.4f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 40;
+			p[PARAM_LEAF_YEARS] = 3; // Leaves live two to three years.
+			bark_color = Color(0.3f, 0.29f, 0.27f); // Dark grey, cracked into small squares.
+			leaf_color = Color(0.05f, 0.12f, 0.05f); // Very dark, glossy green above.
+			break;
+		case PRESET_WILD_OLIVE: // Olea europaea var. sylvestris (trees.md 5ac): a gnarled small tree of
+			// two or three crooked stems and a dense, rounded, grey-green crown; opposite leaves,
+			// narrow, silvery below.
+			p[PARAM_YEARS] = 50;
+			p[PARAM_INTERNODE_LENGTH] = 0.18f;
+			p[PARAM_LEADER_GROWTH] = 0.35f;
+			phyllotaxis = PHYLLOTAXIS_OPPOSITE;
+			p[PARAM_APICAL_DOMINANCE] = 0.55f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_MATURITY] = 20;
+			p[PARAM_BRANCH_ANGLE] = 50;
+			p[PARAM_DIRECTION_NOISE] = 22; // Crooked, twisting stems.
+			p[PARAM_GRAVITROPISM] = 0.03f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.3f;
+			p[PARAM_APICAL_CONTROL] = 0.92f;
+			p[PARAM_SHED_RATIO] = 0.03f;
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.1f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.02f;
+			p[PARAM_STEMS] = 3;
+			p[PARAM_STEM_SPREAD] = 20;
+			p[PARAM_ROOT_FLARE] = 0.8f;
+			p[PARAM_LEAF_SIZE] = 0.05f; // 3-6 cm.
+			p[PARAM_LEAF_WIDTH] = 0.18f; // Narrow, lanceolate.
+			p[PARAM_LEAVES_PER_INTERNODE] = 30;
+			p[PARAM_LEAF_YEARS] = 3;
+			bark_color = Color(0.42f, 0.41f, 0.37f); // Grey.
+			leaf_color = Color(0.13f, 0.17f, 0.09f); // Grey-green above.
+			break;
+		case PRESET_MARITIME_PINE: // Pinus pinaster (trees.md 5ac): tall, a long clear bole and an
+			// irregular, open crown high up; stout long needles; very thick, deeply furrowed bark.
+			// Built on the Scots pine growth rules (both are two-needle pines with whorls that
+			// self-prune), grown longer with longer shoots and stouter needles.
+			p[PARAM_YEARS] = 45;
+			p[PARAM_INTERNODE_LENGTH] = 0.4f;
+			phyllotaxis = PHYLLOTAXIS_WHORLED;
+			p[PARAM_WHORL_BUDS] = 5;
+			p[PARAM_APICAL_DOMINANCE] = 0.74f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.52f;
+			p[PARAM_MATURITY] = 30;
+			p[PARAM_BRANCH_ANGLE] = 65;
+			p[PARAM_DIRECTION_NOISE] = 9;
+			p[PARAM_GRAVITROPISM] = 0.0f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.9f;
+			p[PARAM_APICAL_CONTROL] = 0.7f;
+			p[PARAM_PHOTOTROPISM] = 0.08f;
+			p[PARAM_SHED_RATIO] = 0.099f;
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.1f;
+			p[PARAM_NEEDLES] = 1;
+			p[PARAM_LEAF_SIZE] = 0.18f; // Pairs, 10-25 cm, stout.
+			p[PARAM_LEAVES_PER_INTERNODE] = 120;
+			p[PARAM_LEAF_YEARS] = 3;
+			p[PARAM_CROWN_CONE] = 0.45f;
+			p[PARAM_SHADOW_STRENGTH] = 0.04f;
+			p[PARAM_PIPE_EXPONENT] = 2.0f;
+			bark_color = Color(0.4f, 0.26f, 0.2f); // Purplish red-brown plates.
+			leaf_color = Color(0.11f, 0.17f, 0.08f); // Grey-green.
+			break;
+		case PRESET_CAROB: // Ceratonia siliqua (trees.md 5ac): evergreen, a short trunk under a broad,
+			// dense, rounded crown; leathery, glossy, paripinnate leaves of rounded leaflets.
+			p[PARAM_YEARS] = 50;
+			p[PARAM_INTERNODE_LENGTH] = 0.25f;
+			p[PARAM_LEADER_GROWTH] = 0.45f;
+			p[PARAM_APICAL_DOMINANCE] = 0.56f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_MATURITY] = 20;
+			p[PARAM_BRANCH_ANGLE] = 60;
+			p[PARAM_DIRECTION_NOISE] = 15;
+			p[PARAM_GRAVITROPISM] = 0.01f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.45f;
+			p[PARAM_APICAL_CONTROL] = 0.95f;
+			p[PARAM_SHED_RATIO] = 0.025f;
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.05f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.02f;
+			p[PARAM_ROOT_FLARE] = 0.7f;
+			p[PARAM_LEAF_SIZE] = 0.16f; // Leaves 10-20 cm, leaflets 3-7 cm.
+			p[PARAM_LEAVES_PER_INTERNODE] = 6;
+			p[PARAM_LEAF_YEARS] = 2;
+			bark_color = Color(0.36f, 0.32f, 0.28f); // Grey-brown, rough.
+			leaf_color = Color(0.05f, 0.13f, 0.04f); // Dark, glossy.
+			break;
 		case PRESET_MAX:
 			break;
 	}
@@ -1244,6 +1348,7 @@ TreeGenerator::ForkRule TreeGenerator::_fork_rule() const {
 		r.angle = 32.0f;
 		r.gravitropism = 0.12f;
 		r.lift = 0.55f;
+		r.side = 0.5f;
 	} else if (preset == PRESET_CORK_OAK && forest_shade <= 0.0f) {
 		// A bole of 2-4 m, then three or four thick limbs (Natividade 1950).
 		r.fork_height = 3.0f;
@@ -1253,6 +1358,32 @@ TreeGenerator::ForkRule TreeGenerator::_fork_rule() const {
 		r.angle = 45.0f;
 		r.gravitropism = 0.06f;
 		r.lift = 0.22f; // Pruned up to the cork harvest height in the montado.
+		r.side = 0.7f;
+	} else if (preset == PRESET_MARITIME_PINE && forest_shade <= 0.0f) {
+		// No split: a strong leader, but open-grown it still self-prunes onto a long clear bole
+		// (Alia et al. 1996; the Landes pine).
+		r.lift = 0.25f;
+	} else if (preset == PRESET_CAROB && forest_shade <= 0.0f) {
+		// A short trunk into a few spreading limbs under a broad dome (Batlle and Tous 1997).
+		r.fork_height = 2.0f;
+		r.stems = 3;
+		r.fork_every = 10;
+		r.levels = 2;
+		r.angle = 50.0f;
+		r.gravitropism = 0.03f;
+		r.lift = 0.08f;
+		r.side = 1.0f;
+	} else if (preset == PRESET_HOLM_OAK && forest_shade <= 0.0f) {
+		// A short bole into a few limbs under a full dome (Rameau et al., Flore forestiere
+		// francaise 3, 2008); side shoots stay strong: the dome is leafy throughout.
+		r.fork_height = 2.0f;
+		r.stems = 3;
+		r.fork_every = 10;
+		r.levels = 2;
+		r.angle = 45.0f;
+		r.gravitropism = 0.05f;
+		r.lift = 0.0f;
+		r.side = 1.0f;
 	}
 	return r;
 }
@@ -1426,6 +1557,7 @@ void TreeGenerator::_grow_year(int p_year) {
 			}
 		}
 	}
+	const float fork_side = _fork_rule().side;
 	for (int bi = 0; bi < bud_count; bi++) {
 		if (!buds[bi].alive) {
 			continue;
@@ -1439,6 +1571,10 @@ void TreeGenerator::_grow_year(int p_year) {
 				ord = 0; // A layered stem grows as a stem of its own (section 5s).
 			}
 			buds[bi].vigor *= Math::pow(params[PARAM_APICAL_CONTROL], float(ord));
+			if (!buds[bi].terminal && !buds[bi].fork && on.order == 0 && on.stem_level > 0) {
+				// Side shoots off a forked stem stay thin under it (trees.md 5z, docs 18 Nov).
+				buds[bi].vigor *= fork_side;
+			}
 			// A cut stem's root system feeds a few poles: they shoot up 1-3 m a year (coppice
 			// regrowth; Rackham 2006).
 			if ((buds[bi].sprout || (buds[bi].terminal && on.pole)) && p_year - last_cut_year <= 4) {
@@ -2893,6 +3029,10 @@ static const LeafFormSpec LEAF_FORMS[TreeGenerator::PRESET_MAX] = {
 	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Dwarf fan palm: its fans are built by _palm_geometry.
 	{ TreeGenerator::LEAF_NEEDLE, 0, 0.0f }, // Stone pine.
 	{ TreeGenerator::LEAF_LOBED, 6, 0.1f }, // Cork oak: ovate, shallowly toothed.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Holm oak: adult leaves entire or nearly.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Wild olive: narrow lanceolate.
+	{ TreeGenerator::LEAF_NEEDLE, 0, 0.0f }, // Maritime pine.
+	{ TreeGenerator::LEAF_PINNATE, 8, 0.0f }, // Carob: paripinnate, 2-5 pairs of rounded leaflets.
 };
 
 Dictionary TreeGenerator::get_leaf_form(Preset p_preset) {
@@ -2967,6 +3107,10 @@ static const LeafSeasonSpec LEAF_SEASONS[TreeGenerator::PRESET_MAX] = {
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Dwarf fan palm.
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Stone pine.
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Cork oak.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Holm oak.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Wild olive.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Maritime pine.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Carob.
 };
 
 TreeGenerator::LeafSeason TreeGenerator::_leaf_season(Preset p_preset, const Dictionary &p_season) {
@@ -3193,7 +3337,7 @@ void TreeGenerator::_add_species_blade(Builder &r_b, const Vector3 &start, const
 			// Half-width over length: rowan's leaflets are narrow (about 3:1 to 4:1), ash's a
 			// little broader, elder's broadest.
 			// Lentisk's are elliptic, about 2.5:1, on a paripinnate leaf (no end leaflet).
-			const bool paripinnate = preset == PRESET_LENTISK;
+			const bool paripinnate = preset == PRESET_LENTISK || preset == PRESET_CAROB;
 			const float hwr = preset == PRESET_ROWAN ? 0.15f : (preset == PRESET_ELDER ? 0.24f : (paripinnate ? 0.22f : 0.19f));
 			// Three rows, a quarter wider than the leaflet: the leaflet texture cuts the
 			// lanceolate outline and its teeth from it (_leaflet_texture).
@@ -3402,6 +3546,13 @@ TreeGenerator::BarkKind TreeGenerator::_bark_kind(Preset p_preset) {
 			return BARK_PINEA;
 		case PRESET_CORK_OAK:
 			return BARK_CORK;
+		case PRESET_HOLM_OAK: // Dark grey, cracked into small, thin, squarish plates.
+		case PRESET_CAROB: // Rough grey-brown, finely cracked.
+			return BARK_SCALY;
+		case PRESET_MARITIME_PINE: // Very thick, deep furrows between long purplish plates.
+			return BARK_PLATED;
+		case PRESET_WILD_OLIVE: // Grey, smooth when young, fissured and gnarled when old.
+			return BARK_FURROWED;
 		case PRESET_NORWAY_SPRUCE:
 		case PRESET_HEMLOCK:
 		case PRESET_SILVER_FIR:
@@ -3560,7 +3711,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 3, 40, 0.0f, 0.0008f, 0.0004f, 1.0f, 0.04f }, // Papery: smooth, lenticel bands.
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
-		{ 4, 3, 0.3f, 0.07f, 0.004f, 0.4f, 0.18f }, // Cork: deep, wide fissures between spongy, rounded ridges (5aa).
+		{ 3, 2, 0.3f, 0.05f, 0.004f, 0.4f, 0.18f }, // Cork: deep, wide fissures between spongy, rounded ridges (5aa).
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -3604,7 +3755,9 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// Virgin cork (Natividade 1950; Pereira 2007): thick, spongy blocks, rounded and
 					// lumpy, between deep, wide fissures in an irregular network.
 					const float lumps = bark_fbm(u, v, 12, 8, 3, salt + 57u);
-					plate = Math::sqrt(Math::smoothstep(0.0f, 0.8f, open)) * (0.85f + 0.3f * (lumps + 0.5f));
+					// Rounded shoulders, not walls: the displaced near trunk tore steep walls into
+					// jagged spikes.
+					plate = Math::smoothstep(0.05f, 0.95f, open) * (0.85f + 0.3f * (lumps + 0.5f));
 				} else if (p_kind == BARK_FURROWED) {
 					// Furrows are the zero lines of noise stretched along the stem: long, wavy, merging
 					// and splitting like an oak's interlaced ridges. The cells only add the shallower
@@ -3630,7 +3783,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				a = Color(shade, shade, shade);
 				if (p_kind == BARK_CORK) {
 					// Cork's fissures are warm red-brown under the grey-buff, weathered ridges.
-					a = Color(1.25f, 0.88f, 0.68f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.25f, 0.7f, open)) * shade;
+					a = Color(1.15f, 0.82f, 0.62f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.1f, 0.4f, open)) * shade;
 				}
 				if (p_kind == BARK_PINEA) {
 					// Stone pine (Gymnosperm Database: "red-brown to orange with blackish edges to
@@ -4008,6 +4161,10 @@ static const float MOSS_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	0.05f, // Dwarf fan palm: fibre, sun.
 	0.1f, // Stone pine: dry, sunny coasts.
 	0.05f, // Cork oak: a dry climate; a little moss low on the shaded side.
+	0.15f, // Holm oak: deep shade under the dome keeps the base damp.
+	0.05f, // Wild olive: dry and sunny.
+	0.1f, // Maritime pine: Atlantic dunes, damper than the stone pine's.
+	0.05f, // Carob: dry coasts.
 };
 
 float TreeGenerator::_moss_amount() const {
@@ -4149,6 +4306,10 @@ static const LichenAffinity LICHEN_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	{ 0.1f, 0.3f, 0.05f }, // Dwarf fan palm.
 	{ 0.08f, 0.15f, 0.0f }, // Stone pine: thick flaking plates hold little.
 	{ 0.4f, 0.4f, 0.05f }, // Cork oak: crusts and leafy lichens on the cork's ridges.
+	{ 0.5f, 0.3f, 0.05f }, // Holm oak: grey crusts on the dark bark.
+	{ 0.6f, 0.3f, 0.15f }, // Wild olive: crusts and Xanthoria on old trunks.
+	{ 0.1f, 0.2f, 0.0f }, // Maritime pine: thick, flaking plates.
+	{ 0.4f, 0.3f, 0.1f }, // Carob.
 };
 
 float TreeGenerator::_lichen_amount() const {
@@ -5202,6 +5363,10 @@ static const struct {
 	{ 30.0f, 300.0f }, // dwarf fan palm (fibrous, flexible; it bends rather than breaks)
 	{ 40.0f, 210.0f }, // stone pine (deep taproot on sand)
 	{ 55.0f, 200.0f }, // cork oak (dense oak wood, deep roots)
+	{ 60.0f, 200.0f }, // holm oak (very hard, dense wood)
+	{ 60.0f, 220.0f }, // wild olive (very dense wood, deep roots)
+	{ 40.0f, 190.0f }, // maritime pine (deep taproot, but tall and exposed)
+	{ 50.0f, 200.0f }, // carob
 };
 static_assert(sizeof(STORM_WOOD) / sizeof(STORM_WOOD[0]) == TreeGenerator::PRESET_MAX, "one storm row per preset");
 
@@ -6593,6 +6758,10 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 		case PRESET_WHITE_PINE:
 			kind = CONE_WHITE_PINE, share = 0.08f, low = 0.6f;
 			break;
+		case PRESET_MARITIME_PINE:
+			// Cones in whorls, kept for years (Gymnosperm Database).
+			kind = CONE_PINE, share = 0.2f, low = 0.5f;
+			break;
 		case PRESET_STONE_PINE:
 			// On the sunlit top of the umbrella, where the crown spends itself on cones.
 			kind = CONE_STONE_PINE, share = 0.35f, low = 0.45f;
@@ -7785,6 +7954,22 @@ float TreeGenerator::_bare_at(const Vector3 &p_pos, const Vector3 &p_normal, con
 	return CLAMP(0.5f + 3.0f * (t - (1.0f - a)), 0.0f, 1.0f);
 }
 
+// Cork harvest (trees.md 5aa): years since the cork was last stripped from the bole and the
+// limb bases, or -1 where it never was: other species, dead wood, trees under 25 (the first
+// stripping waits for a girth of 70 cm), and cork_stripped_years 30 or more. -1 picks a stage
+// of the nine-year cycle by seed, so a stand shows trees stripped in different summers; just
+// stripped stays rare.
+float TreeGenerator::_cork_strip_age() const {
+	if (preset != PRESET_CORK_OAK || decay_class > 0 || fallen || fallen_branch || params[PARAM_YEARS] < 25.0f || cork_stripped_years >= 30.0f) {
+		return -1.0f;
+	}
+	if (cork_stripped_years >= 0.0f) {
+		return cork_stripped_years;
+	}
+	static const float STAGES[8] = { 0.02f, 0.25f, 1.0f, 2.5f, 3.5f, 5.0f, 6.5f, 8.0f };
+	return STAGES[(uint32_t(seed) * 2654435761u >> 13) % 8];
+}
+
 // The bark surface's vertex alpha, written last: 0.5 + 0.5 x lichen weight on bark, 0.5 - 0.5 x
 // bare on lost bark (the bark shader decodes both; trees.md 2h and 5f). Bare vertices sink by the
 // bark's thickness, so the wood lies below the bark's edge. The sinking is per vertex and
@@ -7797,7 +7982,7 @@ void TreeGenerator::_peel_bark(Builder &r_bark) {
 	const float amount = _bare_amount();
 	const float ground = nodes.is_empty() ? 0.0f : nodes[0].start.y;
 	const float moss_k = _moss_amount();
-	const float floor_k = amount > 0.0f ? _bark_set(_bark_kind(preset)).relief_floor : 0.0f;
+	const float floor_k = (amount > 0.0f || _cork_strip_age() >= 0.0f) ? _bark_set(_bark_kind(preset)).relief_floor : 0.0f;
 	LocalVector<float> radius;
 	radius.resize(nv);
 	for (int v = 0; v < nv; v++) {
@@ -7826,7 +8011,17 @@ void TreeGenerator::_peel_bark(Builder &r_bark) {
 	// A log's peel edge is cut as a step (trees.md 5o): bark the thickness it is, standing over
 	// the wood, never a slope across the 2.5 cm grid that read as a decal's edge. Vertices sink
 	// fully or not at all, and the triangles the edge crosses are split along it below.
-	const bool step_edge = (fallen || fallen_branch) && amount > 0.0f;
+	// A cork harvest is cut as a step too: the cork stands centimetres proud of the stripped
+	// stem (trees.md 5aa).
+	const float strip_age = _cork_strip_age();
+	float strip_h = 0.0f;
+	if (strip_age >= 0.0f) {
+		// Stripped up to about twice the girth (Portuguese rules allow 2-3 times), and onto the
+		// bases of the main limbs, no higher than a metre over the fork.
+		const float girth = float(Math::TAU) * MAX(nodes[0].radius, 0.05f);
+		strip_h = CLAMP(2.0f * girth, 1.2f, _fork_rule().fork_height + 1.0f);
+	}
+	const bool step_edge = ((fallen || fallen_branch) && amount > 0.0f) || strip_age >= 0.0f;
 	LocalVector<Vector3> orig;
 	LocalVector<float> bare_v, depth_v;
 	if (step_edge) {
@@ -7873,6 +8068,17 @@ void TreeGenerator::_peel_bark(Builder &r_bark) {
 				}
 			}
 		}
+		bool stripped = false;
+		if (strip_age >= 0.0f && !skip[v] && radius[v] >= 0.06f) {
+			// The cut runs round the stem with an axe, wavering a hand's breadth; the strippers
+			// leave a few centimetres at the foot.
+			const float h = vw[v].y - ground;
+			const float edge = strip_h + 0.12f * (moss_noise(vw[v] * 2.5f, 0x636f726bu) - 0.5f);
+			if (h < edge && h > 0.04f) {
+				bare = 1.0f;
+				stripped = true;
+			}
+		}
 		if (bare > 0.0f) {
 			const float r = radius[v];
 			// Thin bark on smooth tubes (beech, birch, young stems): a few millimetres. A deeper
@@ -7882,6 +8088,17 @@ void TreeGenerator::_peel_bark(Builder &r_bark) {
 			if (v < int(r_bark.relief_off.size()) && r_bark.relief_off[v].y > 0.0f) {
 				// Displaced bark: the wood lies at the furrow floor (what was bark above it is gone).
 				depth = MAX(0.0f, r_bark.relief_off[v].x - 0.9f * floor_k * r_bark.relief_off[v].y) + 0.002f;
+			}
+			if (stripped) {
+				// Virgin cork 3-5 cm thick over the stripped stem, which is smooth; the new cork
+				// grows back 3-5 mm a year (Pereira 2007).
+				const float regrown = MIN(0.004f * strip_age, 0.03f);
+				if (v < int(r_bark.relief_off.size()) && r_bark.relief_off[v].y > 0.0f) {
+					// Displaced bark: down past the deepest fissure, so the stem is smooth.
+					depth = MAX(0.0f, r_bark.relief_off[v].x - floor_k * r_bark.relief_off[v].y) + MAX(0.004f, 0.012f - regrown);
+				} else {
+					depth = MIN(0.3f * r, MAX(0.006f, 0.04f - regrown));
+				}
 			}
 			if (step_edge && !skip[v]) {
 				bare_v[v] = bare;
@@ -8527,6 +8744,7 @@ bool TreeGenerator::_wounds_resin() const {
 		case PRESET_SILVER_FIR:
 		case PRESET_WHITE_PINE:
 		case PRESET_STONE_PINE:
+		case PRESET_MARITIME_PINE: // Tapped for resin in the Landes for centuries.
 		case PRESET_HEMLOCK:
 			return true;
 		default:
@@ -14718,7 +14936,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		bool bark_custom = false;
 		if (s == 0) {
 			_peel_bark(b);
-			bark_custom = _bare_amount() > 0.0f || !b.wound.is_empty();
+			bark_custom = _bare_amount() > 0.0f || !b.wound.is_empty() || _cork_strip_age() >= 0.0f;
 		}
 		Array arrays;
 		arrays.resize(Mesh::ARRAY_MAX);
@@ -15319,6 +15537,22 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			}
 			wood *= 1.0 - 0.65 * gallery;
 			wood = mix(wood, vec3(0.03, 0.025, 0.02), 0.85 * zone);
+			if (bark_stripped_age >= 0.0) {
+				// A cork oak's stripped stem (trees.md 5aa): the phellogen bright orange when
+				// fresh, deep red-brown in weeks, brown-black within the year; then the new cork,
+				// browner and smoother than virgin cork, finely and regularly cracked as it thickens.
+				float t = bark_stripped_age;
+				vec3 c = mix(vec3(0.69, 0.17, 0.02), vec3(0.17, 0.025, 0.008), smoothstep(0.0, 0.12, t));
+				c = mix(c, vec3(0.033, 0.013, 0.008), smoothstep(0.12, 1.0, t));
+				c = mix(c, vec3(0.15, 0.09, 0.055), smoothstep(1.0, 7.0, t)); // Linear: sRGB orange, red-brown, near black, cork brown.
+				float tone = texture(lichen_map, base_uv * vec2(1.7, 0.6) + vec2(0.21, 0.4)).g;
+				float crk = texture(lichen_map, base_uv * vec2(7.0, 2.2) + vec2(0.57, 0.12)).r;
+				float lines = 1.0 - smoothstep(0.015, 0.05, abs(crk - 0.5));
+				c *= mix(0.85, 1.12, tone);
+				c *= 1.0 - 0.55 * smoothstep(0.5, 5.0, t) * lines;
+				wood = c;
+				bark_wood_n = vec3(0.5, 0.5, 1.0);
+			}
 			float rim = smoothstep(0.25, 0.47, bare_field) * (1.0 - bark_bare);
 			ALBEDO *= 1.0 - 0.45 * rim;
 			ALBEDO = mix(ALBEDO, wood, bark_bare);
@@ -15368,6 +15602,7 @@ uniform vec3 lichen_orange_color : source_color = vec3(0.74, 0.58, 0.28);
 uniform float lichen_leafy_share = 0.5;
 uniform float lichen_orange_share = 0.0;
 uniform vec3 bark_wood_color : source_color = vec3(0.55, 0.53, 0.49);
+uniform float bark_stripped_age = -1.0;
 )";
 	code = code.insert(vx, uniforms + VegetationFire::SHADER_CODE + "\n");
 	Ref<Shader> sh;
@@ -15403,6 +15638,7 @@ uniform vec3 bark_wood_color : source_color = vec3(0.55, 0.53, 0.49);
 	const Color wood = (fallen || fallen_branch || decay_class >= 5) ? Color(0.38f, 0.31f, 0.23f) : decay_class == 4 ? Color(0.42f, 0.38f, 0.32f)
 																													 : Color(0.47f, 0.45f, 0.41f);
 	m->set_shader_parameter("bark_wood_color", wood);
+	m->set_shader_parameter("bark_stripped_age", _cork_strip_age());
 	m->set_shader_parameter("lichen_orange_share", la.orange);
 	// Leafy lichens of acid bark are grey-green (Parmelia, Hypogymnia); of nutrient-rich bark
 	// yellower (Flavoparmelia, Physcia with Xanthoria about).
@@ -15474,6 +15710,14 @@ vec3 plant_wind(vec3 wp, float h) {
 			leaf_underside = 0.5f;
 			break;
 		case PRESET_CORK_OAK: // Grey felted below.
+		case PRESET_HOLM_OAK:
+			leaf_underside = 0.6f;
+			break;
+		case PRESET_WILD_OLIVE: // Silvery scales below.
+			leaf_underside = 0.85f;
+			break;
+		case PRESET_CAROB: // Paler below.
+			leaf_underside = 0.3f;
 			leaf_underside = 0.6f;
 			break;
 		case PRESET_WHITE_WILLOW:
@@ -15793,6 +16037,15 @@ static const Habitat HABITATS[TreeGenerator::PRESET_MAX] = {
 	// Cork oak: western Mediterranean, oceanic-influenced, on acid soils; needs 450 mm or more and
 	// mild winters (Pereira 2007).
 	{ 13, 19, 4, 12, 450, 1200, 0.3f, 35, 0.3f, 0, 0.4f, 0.6f, 10.0f, 1.2f }, // Cork oak
+	// Holm oak: the whole Mediterranean, limestone too, dry summers, hardy to about -15 C; casts
+	// deep shade (Rameau et al. 2008).
+	{ 11, 19, 1, 12, 350, 1500, 0.25f, 45, 0.15f, 0, 0.6f, 0.8f, 7.0f, 1.0f }, // Holm oak
+	// Wild olive: thermo-Mediterranean, frost-tender (about -8 C), the driest lowland sites.
+	{ 14, 21, 5, 14, 250, 900, 0.15f, 45, 0.1f, 0, 0.3f, 0.6f, 6.0f, 0.8f }, // Wild olive
+	// Maritime pine: western Mediterranean and Atlantic coasts, acid sands, needs some summer rain.
+	{ 11, 18, 2, 11, 500, 1500, 0.35f, 40, 0.3f, 0, 0.2f, 0.5f, 6.0f, 1.0f }, // Maritime pine
+	// Carob: the warmest coasts, frost-tender (about -4 C), limestone, dry summers.
+	{ 16, 22, 8, 15, 250, 800, 0.15f, 35, 0.2f, 0, 0.35f, 0.75f, 9.0f, 1.0f }, // Carob
 };
 
 static bool is_shrub(TreeGenerator::Preset p_preset) {
@@ -16001,6 +16254,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	moss_cover = p_from.moss_cover;
 	lichen_cover = p_from.lichen_cover;
 	bark_peel = p_from.bark_peel;
+	cork_stripped_years = p_from.cork_stripped_years;
 	bark_wounds = p_from.bark_wounds;
 	bark_chevrons = p_from.bark_chevrons;
 	wind_exposure = p_from.wind_exposure;
@@ -16290,7 +16544,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	// Needle cover overhead for the forest floor (VegetationField3D.get_conifer_at on the
 	// vegetation branch); a no-op until PlantSpecies has the property.
 	const bool conifer = p_preset == PRESET_SCOTS_PINE || p_preset == PRESET_NORWAY_SPRUCE || p_preset == PRESET_SILVER_FIR || p_preset == PRESET_LARCH || p_preset == PRESET_YEW ||
-			p_preset == PRESET_WHITE_PINE || p_preset == PRESET_HEMLOCK || p_preset == PRESET_STONE_PINE;
+			p_preset == PRESET_WHITE_PINE || p_preset == PRESET_HEMLOCK || p_preset == PRESET_STONE_PINE || p_preset == PRESET_MARITIME_PINE;
 	sp->set("canopy_conifer", conifer);
 	sp->set_canopy_radius(crown);
 	sp->set_canopy_opacity(h.opacity);
@@ -17414,6 +17668,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_lichen_cover", "cover"), &TreeGenerator::set_lichen_cover);
 	ClassDB::bind_method(D_METHOD("get_lichen_cover"), &TreeGenerator::get_lichen_cover);
 	ClassDB::bind_method(D_METHOD("set_bark_peel", "peel"), &TreeGenerator::set_bark_peel);
+	ClassDB::bind_method(D_METHOD("set_cork_stripped_years", "years"), &TreeGenerator::set_cork_stripped_years);
+	ClassDB::bind_method(D_METHOD("get_cork_stripped_years"), &TreeGenerator::get_cork_stripped_years);
 	ClassDB::bind_method(D_METHOD("get_bark_peel"), &TreeGenerator::get_bark_peel);
 	ClassDB::bind_method(D_METHOD("set_root_stone", "radius"), &TreeGenerator::set_root_stone);
 	ClassDB::bind_method(D_METHOD("get_root_stone"), &TreeGenerator::get_root_stone);
@@ -17533,6 +17789,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moss_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_moss_cover", "get_moss_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_peel", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_bark_peel", "get_bark_peel");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cork_stripped_years", PROPERTY_HINT_RANGE, "-1,30,0.01"), "set_cork_stripped_years", "get_cork_stripped_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_wounds", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_bark_wounds", "get_bark_wounds");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_chevrons", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_bark_chevrons", "get_bark_chevrons");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "storm_kit"), "set_storm_kit", "get_storm_kit");
@@ -17611,6 +17868,10 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_DWARF_FAN_PALM);
 	BIND_ENUM_CONSTANT(PRESET_STONE_PINE);
 	BIND_ENUM_CONSTANT(PRESET_CORK_OAK);
+	BIND_ENUM_CONSTANT(PRESET_HOLM_OAK);
+	BIND_ENUM_CONSTANT(PRESET_WILD_OLIVE);
+	BIND_ENUM_CONSTANT(PRESET_MARITIME_PINE);
+	BIND_ENUM_CONSTANT(PRESET_CAROB);
 	BIND_ENUM_CONSTANT(SHRUB_YOUNG);
 	BIND_ENUM_CONSTANT(SHRUB_MATURE);
 	BIND_ENUM_CONSTANT(SHRUB_OLD);

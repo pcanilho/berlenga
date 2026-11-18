@@ -20,6 +20,8 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 - **Smoke on the ground** (PhysXFlow3D `terrain_floor`, `smoke_buoyancy`): Flow gas rests on the terrain and slides downhill, and heavier-than-air smoke pools as dust or fog.
 - **Gas pushes bodies** (`PhysXFlow3D.push_bodies`; `PhysXCloth3D.flow`): Flow smoke, blasts and fire updrafts blow debris, Blast pieces, flags and tarps, and the cloth stirs the gas back.
 - **Spreading fire** (`PhysXFireSpread3D`, `fuel_patchiness`): grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel, behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.
+- **Fuel moisture from the weather** (`PhysXFireSpread3D.use_weather_moisture`): fuel dries or damps toward the air's equilibrium moisture, and rain wets it, slows the fire and puts it out.
+- **Burning objects** (`PhysXBurnable3D`, `embers`): wooden props catch fire from burning ground nearby, char with glowing cracks, smoulder in rain and throw embers that start new fires.
 - **Fire light and embers** (`PhysXFlow3D.fire_light`, `embers`): a burning Flow emitter lights its surroundings with a soft-shadowed light that flickers with the flame's puffing, and throws up glowing embers, in raster and path tracing.
 
   ![A campfire in a stone ring at night, seen from above, lighting the ground and stones](media/physx-campfire.jpg)

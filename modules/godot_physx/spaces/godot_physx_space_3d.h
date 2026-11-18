@@ -81,6 +81,8 @@ class GodotPhysXSpace3D {
 	HashSet<GodotPhysXCloth3D *> cloths;
 	HashSet<GodotPhysXSoftBody3D *> soft_bodies;
 	LocalVector<GodotPhysXBody3D *> sync_bodies; // to notify in the next call_queries()
+	// Static actors waiting to enter the scene together (see queue_static_actor).
+	LocalVector<physx::PxRigidActor *> pending_statics;
 	HashSet<GodotPhysXBody3D *> force_integrators; // bodies driving their own _integrate_forces
 	HashSet<GodotPhysXBody3D *> constant_force_bodies; // bodies with a nonzero constant force/torque
 	HashSet<GodotPhysXBody3D *> separation_ray_bodies; // dynamic bodies with a SeparationRayShape3D
@@ -103,6 +105,12 @@ public:
 	// OLD material's GPU slot, which the sync then drops, so the new body collides with the dead material's friction /
 	// bounce for good (a frictionless body freed-and-made in one frame slid at friction 1). Released right before the
 	// simulate, nothing can be created between the removal and its sync.
+	// Static bodies entering the space are added to the scene in one batch before the next step or query,
+	// through a PxPruningStructure when there are many (a streamed region): one merge into the scene query
+	// tree instead of each actor dirtying it.
+	void queue_static_actor(physx::PxRigidActor *p_actor);
+	bool cancel_static_actor(physx::PxRigidActor *p_actor);
+	void flush_pending_actors();
 	static void defer_material_release(physx::PxMaterial *p_material);
 	static void flush_material_releases();
 	// The same for an actor about to be released whose shapes hold the last references to their materials (a PhysX
