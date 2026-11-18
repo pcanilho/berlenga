@@ -3515,3 +3515,20 @@ into a map once per frame. The river's ripples exist only in its shader (flow-ma
 evaluates the same determinant in place. The white water where the sun enters (live flow foam at x_in) shades
 the bed (Valence's review). The path tracer does not find these lines yet (normals only, no caustic paths; PT
 crop 18 Nov), which is candidate 2 above: move the river's field into the shared map and read it in PT.
+
+### Path-traced caustics on the river (18 Nov, Paulo picked "All four, in order"; item 1)
+
+The path tracer already traces caustic photons (raytracing_caustics_inc.glsl: Gruen 2019, Yang and Ouyang RTG II
+ch. 30) through the river's own shader normals. On the 640x360 cloud frames the river bed still showed only
+grain, for three reasons, now fixed:
+- Photon density: one photon a pixel is about one a texel at 640x360 (512^2 cascade 0), and a bright line is a
+  density estimate. Each cascade now gets at least RT_CAUSTICS_MIN_PHOTONS (4) a texel a frame, up to 6 photons a
+  pixel, stratified in strips. At 1080p it is still one a pixel, so no cost there.
+- Sun disc: photons now start from a point on the sun's disc (the light's angular radius, at least the real
+  sun's 0.27 degrees). It blurs by angle x depth, as a real sun does; the mean is unchanged (river crop means
+  83.3/98.0/83.5 off vs 84.1/98.6/84.0 on).
+- Moving water in an accumulated still: the river bench's --pt-freeze stops the clock when path tracing starts,
+  so the still holds one instant instead of averaging a second of moving lines.
+Result at 640, 32 frames: the bed shows the ripple-scale light pattern; finer lines need more samples (PC).
+Rocks' riffle check (stream_riffle_*960): the raster glint in the cave is the known raster sky-ambient excess
+underground, not a PT loss; PT shows the expected sparse glints.
