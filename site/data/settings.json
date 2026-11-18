@@ -1125,7 +1125,7 @@
     "ploughing"
    ],
    "note": "",
-   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide.",
+   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1250,10 +1250,11 @@
   {
    "name": "Mud on legs",
    "settings": [
-    "GroundLegMud3D"
+    "GroundLegMud3D",
+    "boot_suction"
    ],
    "note": "",
-   "what": "each leg is coated to the depth its foot sank and flecked by the stride; the mud dries over minutes and rinses off in standing water.",
+   "what": "each leg is coated to the depth its foot sank and flecked by the stride; the mud dries over minutes and rinses off in standing water; sticky mud grips a lifting foot, slows the stride and can keep the boot.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1274,10 +1275,11 @@
   {
    "name": "Frozen ground",
    "settings": [
-    "GroundSurface3D.frozen_ground"
+    "GroundSurface3D.frozen_ground",
+    "needle_ice"
    ],
    "note": "",
-   "what": "soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days.",
+   "what": "soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days. Frosty nights lift wet bare soil on ice needles, and the thaw leaves loose crumbs that print deep.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
