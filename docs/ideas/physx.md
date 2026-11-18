@@ -1227,6 +1227,28 @@ Sources: Cohen 2000, "Preventing disaster: home ignitability in the
 wildland-urban interface", J. Forestry 98; Manzello et al. 2008, Fire
 Safety J. 43; McGrattan et al., FDS technical reference (water spray).
 
+### Next-round options (card, 18 Nov night)
+
+1. Water on fire makes steam. Water on burning fuel boils off (2.26
+   MJ/kg) as a white plume that hides the flames for a moment, the
+   look of every hose or bucket on a fire. Here: cells and burnables put
+   out by water emit white, buoyant, fast-cooling vapour into Flow for a
+   few seconds, more for hotter fuel.
+2. Burning buildings and props break apart. Char eats a timber's section
+   (charring rate about 0.65 mm/min, EN 1995-1-2), so beams give way and
+   roofs fall in. Here: a PhysXBurnable3D on a Blast asset loses bond
+   strength with its char depth, so a burning shed or fence breaks and
+   falls in pieces that keep burning.
+3. River current drags and floats clothing. Submerged fabric feels the
+   current (Morison drag on the water's flow_at) and lifts (buoyancy
+   less its weight), so a skirt or coat streams downstream and floats up
+   when wading. Here: the waded band of PhysXSkinnedCloth3D and
+   PhysXCloth3D gets drag and lift from the water contract.
+4. Fire whirls. A fire in a sheared wind spins up vertical vortices
+   (Forthofer and Goodrick 2011) that lift brands high and throw them
+   far. Here: Flow's vorticity seeded where the front meets a wind
+   shear or a lee slope; brands caught in it rise further.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
