@@ -204,6 +204,8 @@ private:
 		float current = 75.0f; // The stage now.
 	};
 	static bool _crop_swath(const CropPlot &p_pl, float &r_pitch, float &r_half);
+	Vector4 crop_view_published;
+	mutable Ref<ImageTexture> crop_stage_texture; // A texel a plot: its stage (shader crop_plot_stage).
 	Array fields;
 	LocalVector<CropPlot> plots;
 	int crop_day = -1; // The season's day the plot stages were set for.
