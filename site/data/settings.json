@@ -3740,12 +3740,14 @@
   {
    "name": "Wet cloth",
    "settings": [
-    "PhysXCloth3D.weather_wetting",
+    "PhysXCloth3D",
+    "PhysXSkinnedCloth3D",
+    "weather_wetting",
     "wetness",
     "water_capacity"
    ],
    "note": "",
-   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire.",
+   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less and clings to the body.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

@@ -38,7 +38,7 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 
 - **Cloth tearing** (`PhysXCloth3D.tear_factor`, `physics/physx_3d/cloth/tearing`): overstretched edges split and the rip runs.
 - **Burning cloth** (`PhysXCloth3D.burnable`): cloth catches fire, chars with a glowing edge and burns through in holes until it falls apart.
-- **Wet cloth** (`PhysXCloth3D.weather_wetting`, `wetness`, `water_capacity`): rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire.
+- **Wet cloth** (`PhysXCloth3D` and `PhysXSkinnedCloth3D`: `weather_wetting`, `wetness`, `water_capacity`): rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less and clings to the body.
 - **Blast materials** (`PhysXBlastAsset.materials`, `bond_healths`): pieces carry several materials and each bond its own strength, so a limb breaks into bark, wood and leaves, and a twig joint gives before a trunk joint.
 - **Blast without stalls** (`PhysXBlastAsset.prepare_render()`; `initial_linear_velocity`, `initial_angular_velocity`): piece meshes are built once per asset, off the main thread, so a large break does not stall the frame; destructibles can start already moving.
 - **Streaming without stalls** (`physics/physx_3d/streaming/statics_per_step`): static bodies of streamed regions enter over a few frames, nearest first, and removals are batched; bodies with the same friction and bounce share one material, so the cost stays flat as the world grows.
