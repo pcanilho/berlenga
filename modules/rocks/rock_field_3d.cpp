@@ -2026,14 +2026,38 @@ void RockField3D::_free_cell(Cell &r_cell) {
 	r_cell.stones = 0;
 }
 
-Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, bool p_cliff) {
-	const int mkey = int(p_type) + (p_cliff ? 1000 : 0);
+// How long a family's faces stand exposed between disturbances, for its lichen (0 just turned over, 1 for centuries).
+static float rock_surface_age(RockGenerator::Family p_family) {
+	switch (p_family) {
+		case RockGenerator::FAMILY_SCREE:
+			return 0.1f; // active talus: rockfall keeps turning the stones
+		case RockGenerator::FAMILY_ROCKFALL:
+		case RockGenerator::FAMILY_PEBBLE:
+			return 0.2f;
+		case RockGenerator::FAMILY_COBBLE:
+		case RockGenerator::FAMILY_POTHOLE:
+			return 0.3f; // scoured by floods
+		case RockGenerator::FAMILY_GOBLIN:
+		case RockGenerator::FAMILY_HOODOO:
+			return 0.4f; // soft rock, its skin keeps flaking
+		case RockGenerator::FAMILY_FIN:
+			return 0.6f;
+		default:
+			return 1.0f;
+	}
+}
+
+Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockGenerator::Family p_family) {
+	const bool p_cliff = p_family == RockGenerator::FAMILY_CAVE_MOUTH;
+	const float age = rock_surface_age(p_family);
+	const int mkey = int(p_type) + (p_cliff ? 1000 : 0) + int(age * 10.0f + 0.5f) * 10000;
 	if (Ref<ShaderMaterial> *m = materials.getptr(mkey)) {
 		return *m;
 	}
 	Ref<ShaderMaterial> m = RockGenerator::get_material(p_type)->duplicate();
 	m->set_shader_parameter("cliff_match", p_cliff);
 	m->set_shader_parameter("lichen_cover", lichen_cover);
+	m->set_shader_parameter("surface_age", age);
 	m->set_shader_parameter("moss_cover", moss_cover);
 	m->set_shader_parameter("small_linear", ground_detail);
 	_apply_ground(m);
@@ -2113,7 +2137,7 @@ Color RockField3D::_stone_custom(const TerrainGenerator3D *p_gen, const Stone &p
 MultiMeshInstance3D *RockField3D::_add_group_instance(const Ref<MultiMesh> &p_multimesh, uint32_t p_library, real_t p_visibility, real_t p_margin) {
 	MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
 	mmi->set_multimesh(p_multimesh);
-	mmi->set_material_override(_material(key_type(p_library), key_family(p_library) == RockGenerator::FAMILY_CAVE_MOUTH));
+	mmi->set_material_override(_material(key_type(p_library), key_family(p_library)));
 	mmi->set_visibility_range_end(p_visibility);
 	mmi->set_visibility_range_end_margin(p_margin);
 	add_child(mmi, false, INTERNAL_MODE_BACK);
@@ -2805,7 +2829,7 @@ void RockField3D::_update_close_up(bool p_wait) {
 			mm->set_use_custom_data(true);
 			mm->set_mesh(lib->close[v]);
 			mmi->set_multimesh(mm);
-			mmi->set_material_override(_material(key_type(lk), key_family(lk) == RockGenerator::FAMILY_CAVE_MOUTH));
+			mmi->set_material_override(_material(key_type(lk), RockGenerator::Family(key_family(lk))));
 			mmi->set_meta("rock_close_up", true);
 			add_child(mmi, false, INTERNAL_MODE_BACK);
 			mmi->set_as_top_level(true);
@@ -2906,7 +2930,7 @@ void RockField3D::_update_moss(const HashMap<uint64_t, LocalVector<Transform3D>>
 			job->params.xform = xf;
 			job->params.custom = cd;
 			job->params.moss_cover = float(moss_cover);
-			const Ref<ShaderMaterial> mat = _material(key_type(lk), key_family(lk) == RockGenerator::FAMILY_CAVE_MOUTH);
+			const Ref<ShaderMaterial> mat = _material(key_type(lk), RockGenerator::Family(key_family(lk)));
 			if (mat.is_valid()) {
 				const Variant pd = mat->get_shader_parameter("pole_direction");
 				if (pd.get_type() == Variant::VECTOR3) {
@@ -3237,7 +3261,7 @@ Node3D *RockField3D::_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, boo
 	const Color cd = p_grp.custom[p_k];
 	// Its own copy of the rock material, with the stone's instance data (ground, film, scale, seed), so the copy
 	// shades exactly like the stone it replaces.
-	Ref<ShaderMaterial> mat = _material(key_type(p_grp.library), key_family(p_grp.library) == RockGenerator::FAMILY_CAVE_MOUTH);
+	Ref<ShaderMaterial> mat = _material(key_type(p_grp.library), RockGenerator::Family(key_family(p_grp.library)));
 	if (mat.is_valid()) {
 		mat = mat->duplicate();
 		mat->set_shader_parameter("rock_instance", Vector4(cd.r, cd.g, cd.b, cd.a));

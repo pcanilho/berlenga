@@ -392,7 +392,7 @@ private:
 	// p_libs and p_seeds: the ground detail's snapshot (DetailJob) when placing off the main thread.
 	void _place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, LocalVector<Stone> &r_stones, const HashMap<uint32_t, Library *> *p_libs = nullptr, const LocalVector<DetailSeed> *p_seeds = nullptr);
 	void _rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const Library &p_lib, const Vector3 &p_xz, real_t p_yaw, real_t p_sink, const Vector3 &p_tilt_axis, real_t p_tilt, real_t p_follow_ground) const;
-	Ref<ShaderMaterial> _material(RockGenerator::RockType p_type, bool p_cliff = false);
+	Ref<ShaderMaterial> _material(RockGenerator::RockType p_type, RockGenerator::Family p_family = RockGenerator::FAMILY_ROCKFALL);
 	void _build_cell(const Vector3i &p_key);
 	void _free_cell(Cell &r_cell);
 	void _update_streaming(bool p_all);
