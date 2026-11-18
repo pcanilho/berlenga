@@ -446,7 +446,9 @@ float PhysXFireSpread3D::_spread_rate(int p_x, int p_z, const Vector2 &p_normal,
 	// Spark does): c cos t + sqrt(a^2 cos^2 t + b^2 sin^2 t), with a the semi-major axis, b = a / lw and c the
 	// offset of its centre from the ignition point.
 	const float u_eff = Math::pow(phi_len / MAX(wind_coef, 1.0e-9f), 1.0f / b) / 88.0f; // ft/min -> mph
-	const float lw = MAX(0.936f * Math::exp(0.2566f * u_eff) + 0.461f * Math::exp(-0.1548f * u_eff) - 0.397f, 1.0f);
+	// Capped at 8, as FARSITE does: the fit grows without bound in a strong wind (about 90 at 8 m/s), which would stall
+	// the flanks, where real fires in strong winds keep ratios under about 8 (Alexander 1985).
+	const float lw = CLAMP(0.936f * Math::exp(0.2566f * u_eff) + 0.461f * Math::exp(-0.1548f * u_eff) - 0.397f, 1.0f, 8.0f);
 	const float ecc = Math::sqrt(MAX(1.0f - 1.0f / (lw * lw), 0.0f));
 	const float back = head * (1.0f - ecc) / (1.0f + ecc);
 	const float semi_a = 0.5f * (head + back);

@@ -1432,8 +1432,11 @@ fifth of the wind (either way, plus a tenth of the wind downslope),
 lights the fuel under its core as it goes, and otherwise draws and lofts
 brands as a flank whirl. All whirls now sit on the ground's height. Test:
 a 30 x 40 m tall-grass patch on a 28 degree slope falling away downwind:
-at 8 m/s two lee whirls in two minutes widened the burn across the slope
-from 4.5 m to 21 m; none with whirls off or with the wind up the slope.
+at 8 m/s five lee whirls in two minutes widened the burn across the slope
+to 22.5 m at one minute against 18.5 m without whirls; none with the
+wind up the slope. (That test found the fire's length-to-width ratio
+uncapped: Anderson's fit gives about 90 at 8 m/s, stalling the flanks;
+it is now capped at 8 as FARSITE does.)
 Left: the lee test reads the fire's own slope, not the terrain wind's
 separation behind a ridge crest upwind; whirls (and so the lateral
 spread) need the fire's Flow, as flank whirls do.
