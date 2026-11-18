@@ -3782,7 +3782,7 @@
     "fuel_patchiness"
    ],
    "note": "",
-   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water (which billows up as white steam, also where fire meets a shore), behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.",
+   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water (which billows up as white steam, also where fire meets a shore), behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height. Strong wind lifts ash off cold burnt ground as low grey dust (`blowing_ash`).",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3806,7 +3806,7 @@
     "collapse_share"
    ],
    "note": "",
-   "what": "wooden props catch fire from burning ground nearby or from embers piling at wall feet and on top faces, char with glowing cracks, smoulder in rain, go out under poured water, break apart as their timber chars through (EN 1995-1-2) with the pieces keeping their char, and throw embers that ride their plume and the wind and start spot fires downwind.",
+   "what": "wooden props catch fire from burning ground nearby or from embers piling at wall feet and on top faces, char with glowing cracks, smoulder in rain, go out under poured water, break apart as their timber chars through (EN 1995-1-2) with the pieces keeping their char, or carrying their flames and embers as they fall and smouldering where they land, and throw embers that ride their plume and the wind and start spot fires downwind.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3841,7 +3841,7 @@
     "foliar_moisture"
    ],
    "note": "",
-   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; fire whirls spin up on strong flanks in a cross wind and loft firebrands higher (`fire_whirls`); a torched tree drops burning twigs and stands as bare black branches over grey ash.",
+   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; fire whirls spin up on strong flanks in a cross wind and on steep lee slopes, loft firebrands higher and run across the slope, spreading the fire sideways (`fire_whirls`); a torched tree drops burning twigs and stands as bare black branches over grey ash.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3914,7 +3914,7 @@
     "water_capacity"
    ],
    "note": "",
-   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less, clings to the body and wets up to a ragged tide line when wading; river current drags it under water, and soaked fabric sinks slowly.",
+   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less, clings to the body and wets up to a ragged tide line when wading; river current drags worn clothing and loose flags and sheets under water, where soaked fabric sinks slowly and streams downstream.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
