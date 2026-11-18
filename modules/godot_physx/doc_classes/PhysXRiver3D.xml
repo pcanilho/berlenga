@@ -249,6 +249,9 @@
 		<member name="standing_waves" type="bool" setter="set_standing_waves" getter="get_standing_waves" default="true">
 			Standing surface patterns from the solved profile (needs [member gradually_varied_flow]): below a weak hydraulic jump (Froude number 1 to 1.7) a train of smooth stationary waves whose wavelength is the one that stands still in the current downstream, decaying over about four wavelengths (a weak tail below stronger jumps); in fast (supercritical) water, cross-waves that leave each bank where the channel narrows or widens at the angle [code]asin(1/Fr)[/code] and reflect off the far bank, making diamond patterns. The water material's [code]froude_overlay[/code] parameter colours the water by its Froude number for tuning (blue slow, green near critical, red fast, white at jump toes).
 		</member>
+		<member name="ground_probe_height" type="float" setter="set_ground_probe_height" getter="get_ground_probe_height" default="50.0">
+			How far above the curve the ground rays of [member snap_to_ground] start. Keep it under any roof over the water (a stream in a cave: a few decimetres), or the rays find the roof instead of the bed. While no ray finds any ground, the build waits up to 30 physics ticks for a floor that joins the physics space late.
+		</member>
 		<member name="snap_to_ground" type="bool" setter="set_snap_to_ground" getter="get_snap_to_ground" default="true">
 			Measure the ground under the river by raycasts. Off: the curve is the water surface, and the bed is a parabola [member depths] deep.
 		</member>

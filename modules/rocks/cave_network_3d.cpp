@@ -3096,7 +3096,11 @@ void CaveNetwork3D::_update_stream_nodes() {
 				depths.push_back(dep[j]);
 			}
 			river->set_name("CaveStream");
-			river->set("snap_to_ground", false);
+			// The water meets the real bed: rays from just above the surface (under the passage's roof) measure the
+			// channel across each section, so the stream thins to its edges against the stones and sand instead of
+			// ending along the ribbon's straight sides as a slab of the given depth.
+			river->set("snap_to_ground", true);
+			river->set("ground_probe_height", 0.3);
 			river->set("carve", false);
 			river->set("raster_reflections", false); // underground: nothing to reflect but the walls (as the pools)
 			river->set("contact_wetness", false);

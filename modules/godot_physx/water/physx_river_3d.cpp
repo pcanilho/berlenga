@@ -524,6 +524,8 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_max_slope"), &PhysXRiver3D::get_max_slope);
 	ClassDB::bind_method(D_METHOD("set_snap_to_ground", "snap"), &PhysXRiver3D::set_snap_to_ground);
 	ClassDB::bind_method(D_METHOD("get_snap_to_ground"), &PhysXRiver3D::get_snap_to_ground);
+	ClassDB::bind_method(D_METHOD("set_ground_probe_height", "height"), &PhysXRiver3D::set_ground_probe_height);
+	ClassDB::bind_method(D_METHOD("get_ground_probe_height"), &PhysXRiver3D::get_ground_probe_height);
 	ClassDB::bind_method(D_METHOD("set_ground_collision_mask", "mask"), &PhysXRiver3D::set_ground_collision_mask);
 	ClassDB::bind_method(D_METHOD("get_ground_collision_mask"), &PhysXRiver3D::get_ground_collision_mask);
 	ClassDB::bind_method(D_METHOD("set_obstacle_collision_mask", "mask"), &PhysXRiver3D::set_obstacle_collision_mask);
@@ -617,6 +619,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "depths"), "set_depths", "get_depths");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "default_width", PROPERTY_HINT_RANGE, "0.1,100,0.05,or_greater,suffix:m"), "set_default_width", "get_default_width");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snap_to_ground"), "set_snap_to_ground", "get_snap_to_ground");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_probe_height", PROPERTY_HINT_RANGE, "0,200,0.05,or_greater,suffix:m"), "set_ground_probe_height", "get_ground_probe_height");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ground_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_ground_collision_mask", "get_ground_collision_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "obstacle_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_obstacle_collision_mask", "get_obstacle_collision_mask");
 	ADD_GROUP("Hydraulics", "");
@@ -684,6 +687,7 @@ RIVER_SETTER(discharge, float, discharge, MAX(p_value, 0.001f))
 RIVER_SETTER(roughness, float, roughness, CLAMP(p_value, 0.005f, 0.5f))
 RIVER_SETTER(max_slope, float, max_slope, MAX(p_value, 0.001f))
 RIVER_SETTER(gradually_varied_flow, bool, gradually_varied_flow, p_value)
+RIVER_SETTER(ground_probe_height, float, ground_probe_height, MAX(p_value, 0.0f))
 RIVER_SETTER(bend_superelevation, bool, bend_superelevation, p_value)
 RIVER_SETTER(standing_waves, bool, standing_waves, p_value)
 RIVER_SETTER(snap_to_ground, bool, snap_to_ground, p_value)
@@ -1470,7 +1474,7 @@ bool PhysXRiver3D::_ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 
 	if (p_space == nullptr) {
 		return false;
 	}
-	constexpr real_t PROBE_ABOVE = 50.0;
+	const real_t PROBE_ABOVE = ground_probe_height;
 	constexpr real_t PROBE_BELOW = 200.0;
 	constexpr int MAX_SKIPS = 8;
 	const Transform3D xf = get_global_transform();
@@ -1640,6 +1644,21 @@ void PhysXRiver3D::_build() {
 		float y = 0.0f;
 		bed_found[i] = _base_ground_at(space, sec.centre, y) ? 1 : 0;
 		bed[i] = bed_found[i] ? y : sec.centre.y - (given_depth[i] > 0.0f ? given_depth[i] : 0.0f);
+	}
+	if (space != nullptr) {
+		// A floor added with the river (a cave chunk and its stream) can reach the physics space a few ticks later:
+		// no ray at all finding it puts the build off, up to 30 ticks, before settling on the given depths.
+		bool any = false;
+		for (int i = 0; i < count && !any; i++) {
+			any = bed_found[i] != 0;
+		}
+		if (!any && ground_probe_tries < 30) {
+			ground_probe_tries++;
+			sections.clear();
+			build_pending = true;
+			return;
+		}
+		ground_probe_tries = 0;
 	}
 
 	// Ground across each section, measured once (independent of the water).
