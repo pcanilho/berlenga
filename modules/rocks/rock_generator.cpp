@@ -1813,7 +1813,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			bool clash = false;
 			for (uint32_t j = 0; j < hollows.size() && !clash; j++) {
 				if (main_hollow[j]) {
-					clash = c.distance_to(hollows[j].c) < 0.92f * (R + hollows[j].r);
+					clash = c.distance_to(hollows[j].c) < 1.02f * (R + hollows[j].r); // a wall at least a few cells thick: thinner tears in the mesh
 				}
 			}
 			if (clash) {
@@ -1869,7 +1869,11 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 							// The grains that fall out lie on its floor: a level, sandy bottom.
 							carve = MIN(carve, qy + 0.42f * hw.r * squash[k]);
 						}
-						v = MAX(v, carve);
+						// A smooth union: the lips and visors come out rounded, a few cells thick, not knife edges that
+						// the mesher tears into flaps.
+						const float kb = MAX(0.25f * hw.r, 2.0f * fine.h);
+						const float hk = MAX(kb - Math::abs(v - carve), 0.0f) / kb;
+						v = MAX(v, carve) + hk * hk * kb * 0.25f;
 					}
 				}
 			}
@@ -2957,7 +2961,11 @@ void fragment() {
 	// Rivulets and overhang lips: the water clings under the overhangs too (the shared wet code leaves undersides dry).
 	// Stone soaks: pores filling with water darken it far more than the shared default porosity gives (wet
 	// sandstone and limestone go about half as bright, granite a third darker; Lekner and Dorf 1988).
+	// Satin, not glazed: the soaked face keeps most of its roughness (the grains stand proud of the film); the gloss
+	// is on the rivulets.
+	float rough_dry = rough;
 	weather_wetness_apply(wet, max(wn.y, rivulet > 0.0 ? 0.2 : -1.0), metallic, clamp(porosity + 0.4, 0.0, 1.0), col, rough);
+	rough = mix(rough_dry, rough, 0.35);
 	col *= 1.0 - 0.4 * rivulet;
 	rough = mix(rough, 0.07, rivulet);
 

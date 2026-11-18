@@ -1416,6 +1416,40 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 	if (!drips.is_empty()) {
 		_rimstone(drips, O, chunk_size, r_chunk);
 	}
+	// The pools' basins in the drawn floor: a mesh cell (0.3 m) is as wide as many pools, so the triangles from the
+	// floor round a pool would span it and bury the water sheet. Inside each outline the floor goes down to a bowl
+	// from the pool's depth at its middle to just under the level at its rim, and for a cell and a half outside it
+	// rises as a bank from the level, so every triangle under the water lies below it.
+	for (const RimPool &pl : r_chunk.pools) {
+		const int nr = pl.outline.size();
+		if (nr < 3) {
+			continue;
+		}
+		const real_t bank = 1.5 * mesh_cell;
+		for (uint32_t i = 0; i < verts.size(); i++) {
+			Vector3 &v = verts[i];
+			if (v.y > pl.center.y + 0.5 || v.y < pl.center.y - 0.6) {
+				continue;
+			}
+			const Vector2 rel(v.x - pl.center.x, v.z - pl.center.z);
+			// The outline's reach in this direction (its rays are evenly spaced round the centre).
+			const real_t ang = Math::fposmod(real_t(Math::atan2(rel.y, rel.x)), real_t(Math::TAU)) / Math::TAU * nr;
+			const int k0 = int(ang) % nr, k1 = (k0 + 1) % nr;
+			const real_t reach = MAX(Math::lerp(pl.outline[k0].length(), pl.outline[k1].length(), ang - Math::floor(ang)), real_t(0.05));
+			const real_t d = rel.length();
+			if (d > reach + bank) {
+				continue;
+			}
+			real_t bed;
+			if (d <= reach) {
+				const real_t sr = d / reach;
+				bed = pl.center.y - MAX(real_t(0.012), pl.depth * (1.0 - sr * sr));
+			} else {
+				bed = pl.center.y - 0.012 + 0.6 * (d - reach);
+			}
+			v.y = MIN(v.y, bed);
+		}
+	}
 	// Inside a pool (under its water, inside its outline): the floor is lined with calcite.
 	auto in_pool = [&](const Vector3 &p) {
 		for (const RimPool &pl : r_chunk.pools) {
@@ -1875,6 +1909,34 @@ void CaveNetwork3D::_rimstone(const LocalVector<Drip> &p_drips, const Vector3 &p
 			}
 			if (leaks > 2) {
 				break;
+			}
+			// A ray that ran on (up to two may) would leave a long spike in the outline, a sliver of water reaching
+			// far past the pool under the floor: it takes the shorter of its neighbours' reaches instead.
+			{
+				LocalVector<uint8_t> ran;
+				ran.resize(RAYS);
+				for (int k = 0; k < RAYS; k++) {
+					ran[k] = outline[k].length() >= reach - 0.031 ? 1 : 0;
+				}
+				for (int k = 0; k < RAYS; k++) {
+					if (!ran[k]) {
+						continue;
+					}
+					real_t best = reach;
+					for (int st = 1; st < RAYS / 2; st++) {
+						const int a = (k + st) % RAYS, b = (k - st + RAYS) % RAYS;
+						if (!ran[a]) {
+							best = MIN(best, outline[a].length());
+						}
+						if (!ran[b]) {
+							best = MIN(best, outline[b].length());
+						}
+						if (best < reach) {
+							break;
+						}
+					}
+					outline.write[k] = outline[k].normalized() * best;
+				}
 			}
 			RimPool pool;
 			pool.center = Vector3(pc.x, level, pc.y);

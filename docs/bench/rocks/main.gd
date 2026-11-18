@@ -1711,6 +1711,13 @@ func _render_later() -> void:
 	var sea_node := get_node_or_null("Sea")
 	while sea_node and sea_node.get("contact_foam") and not sea_node.is_contact_foam_ready():
 		await get_tree().process_frame
+	# A path-traced still waits for every surface's ray-tracing geometry (the pools' water among them), up to 600 frames.
+	if not raster:
+		var waited := 0
+		while waited < 600 and get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES) > 0:
+			await RenderingServer.frame_post_draw
+			waited += 1
+		print("rt pending surfaces cleared after %d frames" % waited)
 	var frames := (8 if raster else 12) + int(args.get("settle", "0")) # --settle=N: N more frames (lazily built near plants)
 	var t0 := 0
 	var tf := Time.get_ticks_msec()
