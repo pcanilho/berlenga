@@ -33,6 +33,8 @@
 
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
+#include "physx_firebrands.h"
+
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
 
@@ -102,7 +104,19 @@ private:
 		float age = 0.0f;
 		float life = 1.0f;
 	};
-	LocalVector<Ember> ember_list;
+	LocalVector<Ember> ember_list; // sparks: short-lived, for the look
+	// Firebrands: bark and char flakes lofted by the fire's own column that can start spot fires where they land on a
+	// PhysXFireSpread3D's ground (the same flight as the ground fire's).
+	PhysXFirebrands brands;
+	// Brands resting on it (ember attack, Manzello et al. 2008, 2020): they pile up where they settle (top faces,
+	// corners, against an edge), glow, and heat the wood under the pile; a pile big enough lights it.
+	struct BrandSpot {
+		Vector3 local; // target-local
+		float glow = 0.0f; // glowing brands in the pile, each weighed by how much of it is left
+	};
+	LocalVector<BrandSpot> brand_spots;
+	float _brand_flux(Vector3 &r_hot) const; // kW/m2 under the hottest pile
+	Vector3 brand_wind;
 	float ember_carry = 0.0f;
 	MultiMeshInstance3D *ember_mmi = nullptr;
 	Ref<MultiMesh> ember_mm;
@@ -130,6 +144,12 @@ protected:
 public:
 	// Radiant heat (kW/m2) at a point from every flaming burnable, as a point source each.
 	static float radiant_flux_at(const Vector3 &p_position);
+	// The burnable whose target is (or holds, or is held by) this collider, or null.
+	static PhysXBurnable3D *find_by_collider(Object *p_collider);
+	// A firebrand came to rest on it at a world point with this surface normal; p_glow is how much of the brand is
+	// left (0..1).
+	void add_brand(const Vector3 &p_position, const Vector3 &p_normal, float p_glow);
+	int get_brand_pile_count() const;
 	static void free_materials();
 	void ignite(const Vector3 &p_position);
 	void extinguish();
@@ -140,6 +160,8 @@ public:
 	float get_fuel_left() const { return fuel_left; }
 	float get_char_amount() const { return char_amount; }
 	int get_ember_count() const { return (int)ember_list.size(); }
+	int get_firebrand_count() const { return brands.get_count(); }
+	int get_spot_fire_count() const { return brands.get_spot_fires(); }
 
 	void set_target(const NodePath &p_path);
 	NodePath get_target() const { return target; }

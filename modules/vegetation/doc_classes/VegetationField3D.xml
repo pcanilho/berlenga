@@ -51,6 +51,13 @@
 				Removes every placed plant.
 			</description>
 		</method>
+		<method name="get_crowns_in" qualifiers="const">
+			<return type="PackedFloat32Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				The placed crowns reaching into a world rectangle (x and z), seven floats each: x, z, crown radius, the crown's top and its base (lowest foliage) above the ground, 1 for a conifer or 0, and the crown's opacity. [PhysXFireSpread3D] reads them to light crowns.
+			</description>
+		</method>
 		<method name="get_deadwood_at" qualifiers="const">
 			<return type="Dictionary" />
 			<param index="0" name="global_position" type="Vector3" />

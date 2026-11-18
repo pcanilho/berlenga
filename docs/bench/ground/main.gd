@@ -51,8 +51,12 @@ extends Node3D
 #                  --dry=frames for part of it (600 is all), --dry=0 until the deepest pool starts to crust
 #   --frost=hours[,break] --view=ruts with --water: then a frost of that many hours at -5 C freezes the water (mud
 #                  round 7); ",break": a walker's boots across the left rut break the ice
+#   --test=frost        (and the ruts' guidance of a tyre: pushed back towards a rut's floor, walls as deep as the rut)
+#                       frozen ground: a night's frost (Stefan) holds feet off, keeps the ruts, stands water; the thaw
+#                         leaves a soaked layer that prints deeper than before
 #   --view=ice          a frozen puddle with a wheel's track broken through it (mud round 7)
-#   --test=ice          puddle ice: freezes at Stefan's rate, bears a foot, breaks under a wheel, refreezes, thaws
+#   --test=ice          puddle ice: freezes at Stefan's rate, bears a foot, breaks under a wheel, refreezes, thaws;
+#                         and mud on plants: thrown clay and muddy splashes spatter the sward, prints do not, rain washes it
 #   --view=ruts         a 4x4 drives a curve through the ground and leaves (needs the PhysX build); on dry sand
 #                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
 #   --view=roost        a 4x4 floored on dry sand throws sand behind it (needs the PhysX build and a GPU)
@@ -106,6 +110,7 @@ var tracked_test := false
 var ruts_test := false
 var pudhelp_test := false
 var ice_test := false
+var frost_test := false
 var frost_arg := 0.0 # --frost=hours: the ruts view's water frozen over that long at -5 C
 var frost_break := false # --frost=hours,break: and boots across the left rut
 var cracks_on := false # _setup turns desiccation_cracks on (the kept-cracks check needs it from the first lattice)
@@ -156,6 +161,7 @@ func _ready() -> void:
 		elif a == "--test=ruts": ruts_test = true
 		elif a == "--test=puddle-helper": pudhelp_test = true
 		elif a == "--test=ice": ice_test = true
+		elif a == "--test=frost": frost_test = true
 		elif a.begins_with("--frost="):
 			var fv := a.substr(8).split(",")
 			frost_arg = float(fv[0])
@@ -182,8 +188,15 @@ func _ready() -> void:
 				cam_arg.append(float(v))
 	if mud_test:
 		await _run_mud_tests()
+	if frost_test:
+		await _run_frost_tests()
+		await _run_rut_guidance_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if ice_test:
 		await _run_ice_tests()
+		await _run_plant_mud_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -354,6 +367,7 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 		surface.runoff_channels = false
 		surface.standing_water = false
 		surface.desiccation_cracks = cracks_on
+		surface.frozen_ground = false
 		surface.world_puddles = false
 	# --prop=name:value sets any of the surface's properties (repeatable), for an A/B.
 	for a in OS.get_cmdline_user_args():
@@ -1285,8 +1299,8 @@ func _run_puddle_helper_tests() -> void:
 		print("  %s: %.1f cm deep at the centre, edge %.2f to %.2f m out, surface %.1f mm from lowest to highest, %.1f kg/m3, %.2f mm 2.4 m out" % [kind, w * 100.0, rmin, rmax, (tmax - tmin) * 1000.0, surface.get_water_mud_at(o), outside * 1000.0])
 		_check("add_puddle on %s ground: a filled puddle" % kind, w > 0.07 and rmin > 0.6 and rmax < 2.0, "%.1f cm deep, edge %.2f to %.2f m" % [w * 100.0, rmin, rmax])
 		_check("its rim is irregular", rmax - rmin > 0.12, "%.2f to %.2f m" % [rmin, rmax])
-		# On the slope the bed's texels step 5 mm each along it: the surface read back there is a step or two out.
-		_check("its water stands level and stays in it", tmax - tmin < (0.004 if kind == "flat" else 0.02) and outside < 0.0005, "%.1f mm, %.2f mm outside" % [(tmax - tmin) * 1000.0, outside * 1000.0])
+		# On the slope the bed's texels step 5 mm each along it: the surface read back there is a few steps out.
+		_check("its water stands level and stays in it", tmax - tmin < (0.004 if kind == "flat" else 0.025) and outside < 0.0005, "%.1f mm, %.2f mm outside" % [(tmax - tmin) * 1000.0, outside * 1000.0])
 		_check("it carries the clay asked for", absf(surface.get_water_mud_at(o) - 40.0) < 8.0, "%.1f kg/m3" % surface.get_water_mud_at(o))
 
 
@@ -1350,6 +1364,138 @@ func _run_ice_tests() -> void:
 	_check("a thaw melts it (degree days)", surface.get_ice_at(o).x == 0.0 and hours < 24.0, "%.1f mm left after %.1f h" % [surface.get_ice_at(o).x * 1000.0, hours])
 	surface.runoff_time_scale = 1.0
 	wm.queue_free()
+	near_on = true
+
+
+# Mud on plants (mud round 7): clay thrown onto the sward and muddy water splashed onto it spatter it; a tyre's print
+# does not; rain washes it off.
+func _run_plant_mud_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.35, 0.0)
+	surface.mud_layer = false
+	surface.standing_water = true
+	surface.tracked_mud = true
+	var a := Vector3(1.0, 0, 0.0)
+	var b := Vector3(-1.5, 0, 0.0)
+	var c := Vector3(0.0, 0, 2.0)
+	surface.track_mud(a, 0.25, 0.0004, 1.0)
+	surface.add_water(b, 0.3, 0.0006, 60.0)
+	surface.track_mud(c, 0.25, 0.0004, 1.0, Vector4(1.0, 0.0, 0.0, 0.0))
+	for i in 4:
+		await get_tree().physics_frame
+	var pa := surface.get_plant_mud_at(a)
+	var pb := surface.get_plant_mud_at(b)
+	var pc := surface.get_plant_mud_at(c)
+	_check("thrown clay spatters the plants it lands among", pa > 0.9 and surface.get_plant_mud_at(a + Vector3(1.0, 0, 0)) == 0.0, "%.2f there, %.2f a metre off" % [pa, surface.get_plant_mud_at(a + Vector3(1.0, 0, 0))])
+	_check("muddy water splashed out does too", pb > 0.9, "%.2f" % pb)
+	_check("a tyre's print does not", pc == 0.0, "%.2f" % pc)
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 1.0
+	wm.rain_rate = 4.0
+	add_child(wm)
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 3600.0
+	# A second sped up 3600 times: an hour at 4 mm/h, e-fold 2 mm: about a seventh is left.
+	for i in 60:
+		await get_tree().physics_frame
+	var left := surface.get_plant_mud_at(a)
+	_check("rain washes it off within millimetres", left < 0.3 * pa, "%.2f left after about 4 mm" % left)
+	surface.runoff_time_scale = 1.0
+	wm.queue_free()
+	near_on = true
+
+
+# Frozen ground (mud round 8): a night at -8 C freezes the top some 10 cm, a boot no longer marks it and an old rut stays
+# as it is; a thaw leaves a soaked layer on the frost that a boot sinks deeper into than before the frost.
+func _run_frost_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.4, 0.0)
+	surface.mud_layer = true
+	surface.frozen_ground = true
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 0.0
+	wm.rain_rate = 0.0
+	wm.humidity = 0.9
+	wm.temperature = 8.0
+	wm.season_day = 200 # summer: the climate gives no frost to start from
+	add_child(wm)
+	wm.snap_to_settings()
+	for i in 6:
+		await get_tree().physics_frame
+	var g := surface.get_surface_height_at(Vector3(-2, 0, 0))
+	surface.press_box(Vector3(-2, 0, 0), Vector2(0.11, 0.29), 0.0, g - 0.1, 0.05)
+	for i in 30:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var before := g - surface.get_surface_height_at(Vector3(-2, 0, 0))
+	var sink0: float = surface.get_wheel_soil(Vector3(0.8, 0, 2), 3000.0, 0.35, 0.25, 200.0, 0.0, 0.0)["sinkage"]
+	var rut := Vector3(1.5, 0, 0)
+	g = surface.get_surface_height_at(rut)
+	surface.press_box(rut, Vector2(0.3, 1.0), 0.0, g - 0.1, 0.05)
+	for i in 30:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var rut0 := surface.get_surface_height_at(rut)
+	wm.temperature = -8.0
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 5000.0
+	for i in 520: # about 12 h
+		await get_tree().physics_frame
+	surface.runoff_time_scale = 1.0
+	var fr := surface.get_frost_at(Vector3(0, 0, -2))
+	print("  frost: %.1f cm deep after about 12 h at -8 C" % (fr.y * 100.0))
+	_check("a night's frost freezes the top (Stefan, Berggren)", fr.y > 0.06 and fr.y < 0.2, "%.1f cm" % (fr.y * 100.0))
+	for i in 150: # the cells take it (every 2 s)
+		await get_tree().physics_frame
+	var q := Vector3(0, 0, -2)
+	g = surface.get_surface_height_at(q)
+	surface.press_box(q, Vector2(0.11, 0.29), 0.0, g - 0.1, 0.05)
+	for i in 30:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var frozen := g - surface.get_surface_height_at(q)
+	_check("a boot barely marks frozen ground", frozen < 0.2 * before, "%.1f mm (%.1f mm unfrozen)" % [frozen * 1000.0, before * 1000.0])
+	_check("the rut already there stays", absf(surface.get_surface_height_at(rut) - rut0) < 0.003, "%.1f mm moved" % ((surface.get_surface_height_at(rut) - rut0) * 1000.0))
+	wm.temperature = 6.0
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 5000.0
+	var frames := 0
+	while frames < 1500 and surface.get_frost_at(q).x < 0.04:
+		await get_tree().physics_frame
+		frames += 1
+	surface.runoff_time_scale = 1.0
+	fr = surface.get_frost_at(q)
+	print("  thaw: %.1f cm thawed over %.1f cm of frost after %.1f h" % [fr.x * 100.0, fr.y * 100.0, frames / 60.0 * 5000.0 / 3600.0])
+	for i in 150:
+		await get_tree().physics_frame
+	# A loaded wheel (3 kN, 70 cm tyre at 200 kPa) on it: Bekker's sinkage, the thawed slurry against the summer soil.
+	var sink1: float = surface.get_wheel_soil(Vector3(0.8, 0, 2), 3000.0, 0.35, 0.25, 200.0, 0.0, 0.0)["sinkage"]
+	_check("a wheel sinks deeper in the thaw's soaked layer than before the frost", fr.x > 0.03 and fr.y > fr.x and sink1 > 1.2 * sink0, "%.1f mm (%.1f mm before the frost), %.1f cm thawed" % [sink1 * 1000.0, sink0 * 1000.0, fr.x * 100.0])
+	wm.queue_free()
+	near_on = true
+
+
+# Ruts steer the wheels (mud round 9): a tyre 25 cm wide over a 30 cm rut 6 cm deep running along z.
+func _run_rut_guidance_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.5, 0.0)
+	surface.mud_layer = false
+	for k in 12:
+		var z := -2.5 + 0.45 * k
+		var g := surface.get_surface_height_at(Vector3(0, 0, z))
+		surface.press_box(Vector3(0, 0, z), Vector2(0.3, 0.5), 0.0, g - 0.06, 0.0)
+	for i in 40:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var lat := Vector3(1, 0, 0)
+	var centred := surface.get_rut_guidance(Vector3(0, 0, 0), lat, 0.125)
+	var right := surface.get_rut_guidance(Vector3(0.12, 0, 0), lat, 0.125)
+	var left := surface.get_rut_guidance(Vector3(-0.12, 0, 0), lat, 0.125)
+	var flat := surface.get_rut_guidance(Vector3(2.0, 0, 0), lat, 0.125)
+	print("  rut guidance: centred %s, 12 cm right %s, 12 cm left %s, off the rut %s" % [centred, right, left, flat])
+	_check("centred in a rut, no push; walls as high as the rut is deep", absf(centred.x) < 0.05 and centred.y > 0.04 and centred.z > 0.04, "slope %.2f, walls %.1f and %.1f cm" % [centred.x, centred.y * 100.0, centred.z * 100.0])
+	_check("half out of it, the tilt pushes it back in", right.x > 0.1 and left.x < -0.1, "slope %.2f right, %.2f left" % [right.x, left.x])
+	_check("on unmarked ground, nothing", absf(flat.x) < 0.01 and flat.y < 0.005 and flat.z < 0.005, "%s" % flat)
 	near_on = true
 
 
@@ -1530,7 +1676,12 @@ func _run_legs_tests() -> void:
 	var legs := _make_legs(Vector3(-2, 0, 0))
 	var lm := legs.get_node("LegMud") as GroundLegMud3D
 	surface.follow_target = surface.get_path_to(legs)
+	var held := [0, 0.0]  # boots broken out of the mud, the most one was held by (N)
+	lm.boot_released.connect(func(_leg: int, f: float) -> void:
+		held[0] += 1
+		held[1] = maxf(held[1], f))
 	await _walk_legs(legs, 3.0, 1.4)
+	_check("on dry soil the boots lift free (no suction)", held[0] == 0, "%d releases" % held[0])
 	var dry_line := maxf(lm.get_mud_line(GroundLegMud3D.LEG_LEFT), lm.get_mud_line(GroundLegMud3D.LEG_RIGHT))
 	_check("walking on dry soil leaves the boots clean", dry_line == 0.0 and lm.get_mud_flecks(GroundLegMud3D.LEG_LEFT) == 0.0, "line %.1f cm" % (dry_line * 100.0))
 	# Into 15 cm of slurry: the line rises to about its depth, flecks up the shins at a walk, more at a run.
@@ -1542,6 +1693,13 @@ func _run_legs_tests() -> void:
 	var f_walk := lm.get_mud_flecks(GroundLegMud3D.LEG_LEFT)
 	print("  in %.1f cm of mud: lines %.1f and %.1f cm, flecks %.2f, wet %.2f" % [surface.get_mud_depth_at(legs.position) * 100.0, l0 * 100.0, l1 * 100.0, f_walk, lm.get_mud_wetness()])
 	_check("walking in slurry coats both boots to about its depth", l0 > 0.12 and l1 > 0.12 and l0 < 0.3 and l1 < 0.3 and lm.get_mud_wetness() == 1.0, "%.1f and %.1f cm" % [l0 * 100.0, l1 * 100.0])
+	# Suction (mud round 9): each boot is held as it lifts out of the slurry and breaks free with a release.
+	print("  suction: %d releases, held by up to %.0f N" % [held[0], held[1]])
+	_check("the slurry holds each boot as it lifts, then lets go", held[0] >= 6 and held[1] > 10.0 and held[1] < lm.boot_hold_limit, "%d releases, %.0f N" % [held[0], held[1]])
+	var quick := GroundLegMud3D.suction_force(4.14, 0.4, 0.03, 0.1, 1.0)
+	var slow := GroundLegMud3D.suction_force(4.14, 0.4, 0.03, 0.1, 0.005)
+	var shallow := GroundLegMud3D.suction_force(4.14, 0.05, 0.03, 0.1, 1.0)
+	_check("a boot 40 cm deep in stiff clay mud lifted quickly needs about A c Nc = 1.1 kN; slowly a quarter; shallow less", absf(quick - 1118.0) < 5.0 and absf(slow / quick - 0.25) < 0.01 and shallow < 0.2 * quick, "%.0f N quick, %.0f slow, %.0f at 5 cm" % [quick, slow, shallow])
 	await _walk_legs(legs, 3.0, 4.0)
 	var f_run := lm.get_mud_flecks(GroundLegMud3D.LEG_LEFT)
 	_check("running throws more flecks up the shins than walking", f_walk > 0.05 and f_run > f_walk + 0.2, "%.2f walking, %.2f running" % [f_walk, f_run])
@@ -1914,8 +2072,8 @@ func _build_ice() -> void:
 	print("ice: %s at the centre, %s in the track, %.1f cm of water" % [surface.get_ice_at(o), surface.get_ice_at(Vector3(-0.8, 0, 0.35)), surface.get_standing_water_at(o) * 100.0])
 	if OS.get_cmdline_user_args().has("--banks"):
 		var hs := []
-		for k in 16:
-			var a := TAU * k / 16.0
+		for k in 32:
+			var a := TAU * k / 32.0
 			var row := ""
 			for j in range(10, 22):
 				var q := Vector3(cos(a), 0, sin(a)) * (0.1 * j)
@@ -3381,6 +3539,10 @@ func _build_shore() -> void:
 	sea.set("shore_wave_direction", Vector2(0.15, 1.0))
 	sea.set("swash_run_up", 0.12)
 	sea.set("contact_wetness", true)
+	# A wider near field (12 m at the same texel): the run-up climbs to about 3 m above the still line, and the
+	# default 8 m field's sharp middle ends 3 m from its centre.
+	surface.near_resolution = 768
+	surface.near_extent = 12.0
 	# --sea=name:value sets one of the sea's properties (repeatable), e.g. --sea=shore_wave_curl:0.
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--sea="):

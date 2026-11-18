@@ -12,6 +12,15 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="add_brand">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="normal" type="Vector3" />
+			<param index="2" name="glow" type="float" />
+			<description>
+				Rests glowing firebrands on it at [param position], on a surface facing [param normal]; [param glow] is how many brands, each weighed by how much of it is left (0 to 1). Brands on a top face stay where they land; those that hit a wall gather at its foot. A pile heats the wood under it (up to about 50 kW/m² for twenty brands in a strong wind) and can set it alight. [PhysXFireSpread3D] and burning [PhysXBurnable3D] brands call this when they land.
+			</description>
+		</method>
 		<method name="extinguish">
 			<return type="void" />
 			<description>
@@ -24,10 +33,22 @@
 				How much of the surface is charred, from 0 to 1.
 			</description>
 		</method>
+		<method name="get_brand_pile_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Glowing firebrands resting on it, weighed by how much of each is left.
+			</description>
+		</method>
 		<method name="get_ember_count" qualifiers="const">
 			<return type="int" />
 			<description>
-				Embers in the air.
+				Sparks in the air (the short-lived glowing points; see [method get_firebrand_count] for the brands that can start fires).
+			</description>
+		</method>
+		<method name="get_firebrand_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Firebrands in the air: bark and char flakes lofted by the fire's own plume and carried by the wind, which can start spot fires where they land on a [PhysXFireSpread3D]'s ground.
 			</description>
 		</method>
 		<method name="get_fuel_left" qualifiers="const">
@@ -46,6 +67,12 @@
 			<return type="float" />
 			<description>
 				The heat the object gives off while flaming, in kW.
+			</description>
+		</method>
+		<method name="get_spot_fire_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Spot fires its firebrands have started.
 			</description>
 		</method>
 		<method name="get_state" qualifiers="const">
@@ -70,10 +97,10 @@
 	</methods>
 	<members>
 		<member name="ember_rate" type="float" setter="set_ember_rate" getter="get_ember_rate" default="30.0">
-			Embers thrown per second for each MW of heat released.
+			Sparks thrown per second for each MW of heat released (for the look; they do not light anything).
 		</member>
 		<member name="embers" type="bool" setter="set_embers" getter="has_embers" default="true">
-			Throws embers while flaming.
+			Throws sparks and firebrands while flaming: about 10 brands per kg of wood burnt, lofted by the fire's own column (Byram's plume speed for its heat release), carried by the wind and able to start spot fires where they land on dry ground fuel of a [PhysXFireSpread3D].
 		</member>
 		<member name="fire" type="NodePath" setter="set_fire" getter="get_fire" default="NodePath(&quot;&quot;)">
 			The [PhysXFireSpread3D] that heats the object, and where its embers land.

@@ -366,6 +366,8 @@ func _world() -> void:
 	land.camera = land.get_path_to(cam)
 	land.rebuild()
 	land.load_all_heights()
+	if gen.has_sea_result() and not args.has("no-ground-surface"):
+		_beach_surface(tm)
 	if args.has("water"):
 		var waters: Array = gen.build_water(self)
 		for w in waters:
@@ -1957,6 +1959,14 @@ func _render_later() -> void:
 		await _walk()
 	while breaking:
 		await get_tree().process_frame
+	if args.has("hide-stream-water"):
+		_hide_class(self, "PhysXRiver3D") # --hide-stream-water: the cave streams' water hidden (what is under it)
+	# The beach's sand (grain, ripples, wetness) is drawn by its GroundSurface3D once the ripples are built.
+	var gs := get_node_or_null("Beach") as GroundSurface3D
+	var rw := 0
+	while gs and not gs.is_ripples_ready() and rw < 1200:
+		await get_tree().process_frame
+		rw += 1
 	while args.has("plants") and rocks and not plants_ready:
 		await get_tree().process_frame
 	# The sea's rock contact foam is measured over the first ticks (and once more for bodies built late): a path-traced
@@ -1997,3 +2007,37 @@ func _render_later() -> void:
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)
+
+
+# The beach as the landscape bench draws it (its _build_prints): a GroundSurface3D over the TerrainMaterial3D with a
+# sand type map over the beach band, so the sand has its grain, ripples, wetness and prints, not the beach layer alone.
+# --no-ground-surface leaves it out (a before frame).
+func _beach_surface(tm: TerrainMaterial3D) -> void:
+	var gs := GroundSurface3D.new()
+	gs.name = "Beach"
+	gs.ground_type = GroundSurface3D.GROUND_SOIL
+	gs.material = tm
+	add_child(gs)
+	gs.height_source = gs.get_path_to(gen)
+	var n := 512
+	var img := Image.create(n, n, false, Image.FORMAT_RGB8)
+	var beach := tm.beach_height
+	var half := WORLD * 0.5
+	for j in n:
+		for i in n:
+			var x := -half + (i + 0.5) * WORLD / n
+			var z := -half + (j + 0.5) * WORLD / n
+			var h := gen.get_height(Vector3(x, 0, z))
+			var sand := 1.0 - smoothstep(beach * 0.6, beach * 1.4, h - gen.sea_level)
+			if h < gen.sea_level - 1.0:
+				sand = 0.0
+			img.set_pixel(i, j, Color(sand, 0, 0))
+	gs.type_map = img
+	gs.type_map_rect = Rect2(-half, -half, WORLD, WORLD)
+
+
+func _hide_class(n: Node, cls: String) -> void:
+	for c in n.get_children(true):
+		if c.is_class(cls) and c is Node3D:
+			(c as Node3D).visible = false
+		_hide_class(c, cls)

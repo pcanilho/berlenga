@@ -33,7 +33,8 @@
 
 // Fire on plants (docs/ideas/physx.md, "Fire burns grass, plants and trees"): PhysXFireSpread3D
 // publishes fire_state_map over fire_char_rect (r: share of the fuel burnt, g: glow of the burning
-// band and embers, b: peak flame length / 8 m, a: peak crown scorch height / 24 m). Plant shaders
+// band and embers, b: sqrt(peak flame length / 32 m), a: sqrt(peak crown scorch height / 48 m), square
+// roots so a grass fire's half metre and a torching tree's twenty both keep their detail in 8 bits). Plant shaders
 // read it with no state of their own; the vegetation module declares the globals (rect width 0:
 // no fire), so they compile with or without PhysX.
 namespace VegetationFire {
@@ -52,7 +53,7 @@ vec4 fire_state_at(vec2 xz) {
 		return vec4(0.0);
 	}
 	vec4 s = textureLod(fire_state_map, uv, 0.0);
-	return vec4(s.r, s.g, s.b * 8.0, s.a * 24.0);
+	return vec4(s.r, s.g, s.b * s.b * 32.0, s.a * s.a * 48.0);
 }
 
 // A blackbody of about 900-1,100 K in linear sRGB (as the ground's glow), g 0..1.

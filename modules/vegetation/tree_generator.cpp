@@ -3125,6 +3125,29 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 		hdata = reinterpret_cast<const float *>(hbuf.ptr());
 		hn = p_height->get_width();
 	}
+	// Macro variation (Paulo, 18 Nov: the cork's 1.2 m tile visibly repeats). The tile's relief
+	// and colour are the same everywhere it repeats, so a world-space noise at about a metre,
+	// unrelated to the tile, deepens and shallows the relief (0.65-1.35) and shifts the bark's
+	// tone (+-12%, a little warmer or greyer): the detail-breakup or macro-variation layer of
+	// terrain texturing (e.g. Unreal's landscape macro variation; Frostbite terrain, Andersson,
+	// GDC 2007). Geometry and colour both, so the path tracer sees the same bark as raster.
+	auto macro_relief = [&](const Vector3 &p_p) -> float {
+		const float m = 0.6f * moss_noise(p_p * 0.9f + Vector3(13.1f, 0.0f, 7.7f), 0x6d61636fu) + 0.4f * moss_noise(p_p * 2.3f, 0x6d616371u);
+		return Math::lerp(0.65f, 1.35f, m);
+	};
+	auto macro_tint = [&](const Vector3 &p_p, const Color &p_c) -> Color {
+		const float b = moss_noise(p_p * 1.3f + Vector3(3.3f, 0.0f, 9.1f), 0x6d616372u);
+		const float w = moss_noise(p_p * 0.7f + Vector3(5.9f, 0.0f, 1.7f), 0x6d616373u) - 0.5f;
+		const float k = Math::lerp(0.88f, 1.12f, b);
+		return Color(p_c.r * k * (1.0f + 0.08f * w), p_c.g * k, p_c.b * k * (1.0f - 0.08f * w), p_c.a);
+	};
+	// And the tile itself slides round the stem by a slow world-space amount (up to a third of a
+	// tile over a couple of metres, like a gentle spiral grain), so the copy a tile above or
+	// beside never lines up with this one. One value a ring keeps the seam closed; the crotch
+	// evaluates it at the same points (the bole's ring centre, the stem's axis).
+	auto twist = [&](const Vector3 &p_p) -> float {
+		return 0.6f * (moss_noise(p_p * 0.45f + Vector3(2.7f, 0.0f, 6.1f), 0x74776973u) - 0.5f);
+	};
 	auto relief_at = [&](float p_u, float p_v) -> float {
 		const float x = (p_u - Math::floor(p_u)) * hn - 0.5f, y = (p_v - Math::floor(p_v)) * hn - 0.5f;
 		const int x0 = int(Math::floor(x)), y0 = int(Math::floor(y));
@@ -3234,7 +3257,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				if (r > 0) {
 					side_v[s] += c_pos.distance_to(r_b.verts[base + (r - 1) * (p_sides + 1) + s]) / circumference;
 				}
-				const Vector2 ub(float(s) / p_sides * repeats, side_v[s]);
+				const Vector2 ub(float(s) / p_sides * repeats + twist(p_points[r]), side_v[s]);
 				Vector3 tb = bin * Math::cos(ang) - nrm * Math::sin(ang);
 				c_uv = ub;
 				c_tan = tb;
@@ -3256,7 +3279,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 					if (a < 0.0f) {
 						a += float(Math::TAU);
 					}
-					const Vector2 us(a / float(Math::TAU) * st.repeats, (st.arc[seg] + tt * ab.length()) / st.circ);
+					const Vector2 us(a / float(Math::TAU) * st.repeats + twist(st.p[seg] + ab * tt), (st.arc[seg] + tt * ab.length()) / st.circ);
 					// The stem's UVs shifted by whole tiles to the bole's: shifting the bole's instead
 					// squeezed whole tiles into the row under the crotch's first ring, a band.
 					const Vector2 uss(us.x - Math::round(us.x - ub.x), us.y - Math::round(us.y - ub.y));
@@ -3279,7 +3302,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				const float gy = p_points[r].y + dir.y * rr;
 				// None on a cap's end face: the furrows ran into its centre as pleats.
 				const float face = 1.0f - CLAMP(Math::abs(slope) - 0.5f, 0.0f, 1.0f);
-				rr += p_relief * relief_at(float(s) / p_sides * repeats, v) * (p_soil_fade ? Math::smoothstep(-0.02f, 0.2f, gy) : 1.0f) * face *
+				rr += p_relief * macro_relief(p_points[r] + dir * p_radii[r]) * relief_at(float(s) / p_sides * repeats + twist(p_points[r]), v) * (p_soil_fade ? Math::smoothstep(-0.02f, 0.2f, gy) : 1.0f) * face *
 						(tube_fade_r > 0.0f ? Math::smoothstep(tube_fade_r0, tube_fade_r, p_points[r].distance_to(tube_fade_c)) : 1.0f);
 			}
 			const Vector3 n_out = capped ? (dir - t * slope).normalized() : dir;
@@ -3310,7 +3333,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				while (r_b.relief_off.size() < uint32_t(r_b.verts.size())) {
 					r_b.relief_off.push_back(Vector2());
 				}
-				r_b.relief_off.push_back(Vector2(cring ? 0.0f : rr - p_radii[r], p_relief));
+				r_b.relief_off.push_back(Vector2(cring ? 0.0f : rr - p_radii[r], p_relief * macro_relief(p_points[r] + dir * p_radii[r])));
 			}
 			r_b.verts.push_back(cring ? c_pos : p_points[r] + dir * rr + tongue);
 			r_b.normals.push_back(cring ? c_nrm : n_out);
@@ -3320,8 +3343,8 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				r_b.uvs.push_back(Vector2(0.5f + rf * Math::cos(ang), 0.5f + rf * Math::sin(ang)));
 				r_b.colors.push_back(p_color.lerp(Color(0.3f, 0.24f, 0.17f), 0.7f));
 			} else {
-				r_b.uvs.push_back(cring ? c_uv : Vector2(float(s) / p_sides * repeats, v));
-				r_b.colors.push_back(p_color);
+				r_b.uvs.push_back(cring ? c_uv : Vector2(float(s) / p_sides * repeats + twist(p_points[r]), v));
+				r_b.colors.push_back(hdata ? macro_tint(p_points[r] + dir * p_radii[r], p_color) : p_color);
 			}
 			if (r_b.use_tangents) {
 				// Along u; the binormal (normal x tangent) then runs along the stem, with v. On the
@@ -3421,6 +3444,128 @@ Dictionary TreeGenerator::get_leaf_form(Preset p_preset) {
 	d["width"] = look.get_param(PARAM_LEAF_WIDTH); // Half width over length.
 	d["size"] = look.get_param(PARAM_LEAF_SIZE); // Metres.
 	d["color"] = look.get_leaf_color();
+	return d;
+}
+
+// Falling and blown leaves (wind thread; trees.md 2c): one leaf off the tree at true size, in the
+// canopy's own material and the date's colour. Variants: 0 as on the tree; odd variants curled
+// and a little smaller, every third one dead brown (litter lifted from the ground). Needles come
+// as a fascicle of two or three, which is how pines shed them.
+Ref<ArrayMesh> TreeGenerator::make_leaf_mesh(Preset p_preset, const Dictionary &p_season, int p_variant) {
+	ERR_FAIL_INDEX_V(int(p_preset), int(PRESET_MAX), Ref<ArrayMesh>());
+	Ref<TreeGenerator> g;
+	g.instantiate();
+	g->set_preset(p_preset);
+	g->season = p_season.duplicate(true);
+	const bool needles = g->params[PARAM_NEEDLES] > 0.5f;
+	const uint32_t h = hash_murmur3_one_32(uint32_t(p_variant) * 2654435761u + uint32_t(p_preset));
+	const float r0 = float(h & 0xffff) / 65535.0f;
+	Color c = g->leaf_color.srgb_to_linear();
+	const LeafSeason ls = _leaf_season(p_preset, p_season);
+	if (!p_season.is_empty() && ls.autumn > 0.0f) {
+		c = c.lerp(ls.color, CLAMP(ls.autumn * 1.5f, 0.0f, 1.0f));
+	}
+	if (p_variant % 3 == 2) {
+		c = c.lerp(Color(0.3f, 0.2f, 0.11f).srgb_to_linear(), 0.85f); // Dead and dried.
+	}
+	const float size = g->params[PARAM_LEAF_SIZE] * Math::lerp(0.85f, 1.1f, r0) * (p_variant % 2 == 1 ? 0.9f : 1.0f);
+	Builder b;
+	if (needles) {
+		const int n = (p_preset == PRESET_SCOTS_PINE || p_preset == PRESET_MARITIME_PINE || p_preset == PRESET_STONE_PINE) ? 2 : (p_preset == PRESET_WHITE_PINE ? 5 : 1);
+		const float w = 0.0012f;
+		for (int k = 0; k < n; k++) {
+			const float a = (float(k) / n) * Math::TAU;
+			const Vector3 tip = Vector3(0.08f * Math::cos(a), 1.0f, 0.08f * Math::sin(a)).normalized() * size;
+			const Vector3 side = Vector3(-Math::sin(a), 0, Math::cos(a)) * w;
+			const int v0 = b.verts.size();
+			const Vector3 nrm = side.cross(tip).normalized();
+			const Vector3 pts[4] = { -side, side, tip + side * 0.3f, tip - side * 0.3f };
+			const Vector2 uv[4] = { Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0) };
+			for (int q = 0; q < 4; q++) {
+				b.verts.push_back(pts[q]);
+				b.normals.push_back(nrm);
+				b.uvs.push_back(uv[q]);
+				b.colors.push_back(c);
+			}
+			const int idx[6] = { 0, 1, 2, 0, 2, 3 };
+			for (int q = 0; q < 6; q++) {
+				b.indices.push_back(v0 + idx[q]);
+			}
+		}
+	} else {
+		Vector4i part;
+		b.begin(part);
+		g->_add_leaf(b, Vector3(), Vector3(0, 0, 1), Vector3(0, 1, 0), size, c);
+		b.end(part, 0.0f);
+		if (p_variant % 2 == 1) {
+			// Curled as it dries: the blade's sides lift about its midrib.
+			for (int v = 0; v < b.verts.size(); v++) {
+				const Vector3 q = b.verts[v];
+				b.verts.write[v].y += 0.35f * q.x * q.x / MAX(size, 0.005f);
+			}
+		}
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = b.verts;
+	arrays[Mesh::ARRAY_NORMAL] = b.normals;
+	arrays[Mesh::ARRAY_TEX_UV] = b.uvs;
+	arrays[Mesh::ARRAY_COLOR] = b.colors;
+	arrays[Mesh::ARRAY_INDEX] = b.indices;
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	ERR_FAIL_COND_V(b.verts.is_empty(), mesh);
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	Ref<StandardMaterial3D> m;
+	m.instantiate();
+	m->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
+	m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+	m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
+	m->set_backlight(c * 0.6f);
+	m->set_roughness(needles ? 0.5f : 0.75f);
+	if (!needles) {
+		m->set_specular(0.3f); // As the canopy's (leaf sheen, 18 Nov).
+		if (LEAF_FORMS[p_preset].kind == LEAF_PINNATE) {
+			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, g->_leaflet_texture());
+			m->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA_SCISSOR);
+			m->set_alpha_scissor_threshold(0.5f);
+			m->set_alpha_antialiasing(BaseMaterial3D::ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE);
+			m->set_albedo(Color(1.28f, 1.28f, 1.28f));
+		} else {
+			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, g->_leaf_texture());
+			m->set_albedo(Color(1.17f, 1.17f, 1.17f));
+		}
+	}
+	mesh->surface_set_material(0, m);
+	mesh->surface_set_name(0, needles ? "needles" : "leaves");
+	return mesh;
+}
+
+// A falling leaf's figures: blade length and one-sided area, fresh and dry mass (leaf mass per
+// area about 60 g/m2 dry, 2.5 times that fresh; Poorter et al., New Phytol. 182, 2009), and the
+// flat-plate terminal speed sqrt(2 m g / (rho Cd A)) with Cd 1.2, about 1-2 m/s for broad leaves
+// as measured (Vogel, Life in Moving Fluids, 1994). flutter: 1 for broad thin blades that tumble
+// and flutter, low for needles that drop nearly straight.
+Dictionary TreeGenerator::get_leaf_physics(Preset p_preset) {
+	ERR_FAIL_INDEX_V(int(p_preset), int(PRESET_MAX), Dictionary());
+	TreeGenerator look;
+	look.set_preset(p_preset);
+	const bool needles = look.params[PARAM_NEEDLES] > 0.5f;
+	const float size = look.params[PARAM_LEAF_SIZE];
+	const float area = needles ? size * 0.0015f * 2.0f : 2.0f * look.params[PARAM_LEAF_WIDTH] * size * size * 0.656f;
+	const float lma_dry = needles ? 0.2f : 0.06f; // kg/m2: needles are thick.
+	const float dry = area * lma_dry, fresh = dry * 2.5f;
+	auto terminal = [&](float p_m) {
+		return Math::sqrt(2.0f * p_m * 9.81f / (1.2f * 1.2f * MAX(area, 1e-6f)));
+	};
+	Dictionary d;
+	d["length"] = size;
+	d["area"] = area;
+	d["mass_fresh"] = fresh;
+	d["mass_dry"] = dry;
+	d["terminal_speed_fresh"] = terminal(fresh);
+	d["terminal_speed_dry"] = terminal(dry);
+	d["flutter"] = needles ? 0.1f : 1.0f;
 	return d;
 }
 
@@ -4096,7 +4241,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
 		{ 9, 12, 0.2f, 0.08f, 0.003f, 0.3f, 0.14f }, // Cork (1.2 m tile): long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
-		{ 4, 3, 0.22f, 0.06f, 0.003f, 0.3f, 0.12f }, // Pinaster (0.9 m tile): thick plates a hand or two across, deep furrows (5ac).
+		{ 4, 3, 0.36f, 0.085f, 0.003f, 0.3f, 0.12f }, // Pinaster (0.9 m tile): thick plates a hand or two across, deep furrows (5ac).
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -4223,7 +4368,9 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// ledge (a sawtooth across the stem, about 1.5 cm a layer, broken into lengths).
 					const float layer = v * 80.0f + 1.5f * bark_fbm(u, v, 12, 6, 2, salt + 99u);
 					const float ledge = (layer - Math::floor(layer)) * Math::smoothstep(-0.1f, 0.2f, bark_fbm(u, v, 30, 16, 2, salt + 101u));
-					const float wall = 1.0f - 0.5f * Math::smoothstep(0.35f, 0.9f, x);
+					// The layer lines keep to the walls; on the ridge faces they lined up like rows of
+					// printed text (docs, 18 Nov), so the faces get the post pass's irregular pits.
+					const float wall = 1.0f - 0.85f * Math::smoothstep(0.35f, 0.9f, x);
 					plate = 1.0f - depth / L.depth + 0.06f * lumps - (0.2f * lam + 0.1f * ledge) * wall;
 					open = cork_open;
 				} else if (p_kind == BARK_FURROWED) {
@@ -4251,7 +4398,22 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					const float r1 = bark_fbm(u, v, 16, 9, 3, salt + 57u);
 					const float r2 = 0.5f - Math::abs(bark_fbm(u, v, 34, 20, 2, salt + 59u));
 					const float grit = bark_fbm(u, v, 70, 50, 2, salt + 111u);
-					plate = Math::smoothstep(0.0f, 0.3f, open) * (0.66f + 0.28f * r1 + 0.16f * r2 + 0.08f * grit);
+					// Round 8 (docs, 18 Nov: narrow slits with a sharp lip; large smooth slabs):
+					// furrows are wide V valleys taking about a third of the surface (twice the crack
+					// width, a V profile, not a cliff), and each plate breaks into layered scales a few
+					// centimetres across that overlap downward, standing at their own heights with
+					// soft-edged steps between (shingles, as the scaly family; a few walls merged so
+					// the scales are irregular).
+					const float valley = Math::pow(CLAMP(open, 0.0f, 1.0f), 0.7f);
+					const float fu = u + 0.025f * bark_fbm(u, v, 8, 8, 2, salt + 103u);
+					const BarkCell f = bark_voronoi(fu - Math::floor(fu), v, 12, 10, salt + 105u, 0.3f, 0.0f, salt + 113u);
+					const float below = v * 10.0f - f.site.y; // + toward the scale's lower edge.
+					const float lift = CLAMP(0.5f + 0.9f * below, 0.0f, 1.0f);
+					const float own = bark_hash(int(f.id), 3, salt + 107u);
+					const float step_soft = Math::smoothstep(0.0f, 0.12f, f.edge);
+					const float scales = (0.55f * lift + 0.45f * own) * (0.6f + 0.4f * step_soft);
+					const float on_plate = Math::smoothstep(0.55f, 0.85f, open);
+					plate = valley * (0.62f + 0.2f * r1 + 0.08f * r2 + 0.06f * grit) + 0.2f * scales * on_plate;
 				} else if (p_kind == BARK_PLATED || p_kind == BARK_PINEA) {
 					// Flat plate tops, steep walls, and each plate built of thin flaking layers.
 					const float layers = Math::floor((bark_fbm(u, v, 12, 6, 3, salt + 57u) + 0.5f) * 4.0f) / 4.0f;
@@ -4279,7 +4441,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				if (p_kind == BARK_PINASTER) {
 					// Dark plates and dark walls; only the furrow's floor, where the outer bark has
 					// split to the fresh layers, a dull red-brown (bright, they read as orange piping).
-					a = Color(1.5f, 0.98f, 0.76f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.08f, 0.3f, open)) * shade;
+					a = Color(1.5f, 0.98f, 0.76f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.04f, 0.22f, open)) * shade;
 				}
 				if (p_kind == BARK_PINEA) {
 					// Stone pine (Gymnosperm Database: "red-brown to orange with blackish edges to
@@ -4547,7 +4709,8 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				// across, open pores, and weathering from pale grey to ochre. Without them the ridges
 				// read as melted wax (docs, 18 Nov).
 				const float crumb = bark_fbm(u, v, 200, 160, 2, salt + 173u);
-				const float pore = Math::smoothstep(0.08f, 0.16f, bark_fbm(u, v, 320, 240, 1, salt + 177u));
+				// Pits of every size, a few millimetres to a centimetre, scattered without rows.
+				const float pore = Math::smoothstep(0.08f, 0.16f, bark_fbm(u, v, 320, 240, 1, salt + 177u)) + 0.7f * Math::smoothstep(0.14f, 0.24f, bark_fbm(u + 0.01f * bark_fbm(u, v, 40, 40, 1, salt + 179u), v, 150, 130, 2, salt + 181u));
 				hw[k] += 0.004f * bark_fbm(u, v, 72, 36, 3, salt + 171u) + 0.003f * crumb - 0.004f * pore;
 				const float ochre = Math::smoothstep(-0.1f, 0.15f, bark_fbm(u, v, 6, 4, 3, salt + 179u));
 				// The ochre weathering is faint: strong, it read as pale and brown blotches across
@@ -16321,6 +16484,22 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (rigged) {
 				static_materials.push_back(_flutter_material(twin(m), s == 3 ? 0.05f : params[PARAM_LEAF_SIZE]));
 			}
+		} else if (s == 1) {
+			// Needles: the same shader for the fire's char and scorch (vegetation_fire.h), with no flutter (a needle is
+			// stiff) and no paler underside.
+			auto needle_material = [&](const Ref<StandardMaterial3D> &p_m) -> Ref<Material> {
+				const Ref<Material> fm = _flutter_material(p_m, params[PARAM_LEAF_SIZE]);
+				const Ref<ShaderMaterial> sm = fm;
+				if (sm.is_valid()) {
+					sm->set_shader_parameter("flutter_amount", 0.0f);
+					sm->set_shader_parameter("leaf_underside", 0.0f);
+				}
+				return fm;
+			};
+			mesh->surface_set_material(mesh->get_surface_count() - 1, needle_material(m));
+			if (rigged) {
+				static_materials.push_back(needle_material(twin(m)));
+			}
 		} else {
 			mesh->surface_set_material(mesh->get_surface_count() - 1, m);
 			if (rigged) {
@@ -17576,6 +17755,11 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			_setup_variant(p_preset, p_form, v, saved_seed, saved_climber_cover);
 			Ref<ArrayMesh> mesh = generate();
 			crown += crown_radius;
+			// The variant's crown for placed-tree queries (falling leaves, wind thread): height,
+			// crown base and drip-line radius in metres, unscaled.
+			if (mesh.is_valid()) {
+				mesh->set_meta("crown", Vector3(height, crown_base, crown_radius));
+			}
 			if (p_variants > 0) {
 				meshes.push_back(mesh);
 			}
@@ -18858,6 +19042,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_limb_breakage"), &TreeGenerator::get_limb_breakage);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_form", "preset"), &TreeGenerator::get_leaf_form);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_season", "preset", "season"), &TreeGenerator::get_leaf_season);
+	ClassDB::bind_static_method("TreeGenerator", D_METHOD("make_leaf_mesh", "preset", "season", "variant"), &TreeGenerator::make_leaf_mesh, DEFVAL(Dictionary()), DEFVAL(0));
+	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_physics", "preset"), &TreeGenerator::get_leaf_physics);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("make_shrub_species", "preset", "form", "variants", "season"), &TreeGenerator::make_shrub_species, DEFVAL(SHRUB_MATURE), DEFVAL(3), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_bloom", "preset", "day_of_year"), &TreeGenerator::get_bloom);
 	ClassDB::bind_method(D_METHOD("set_season", "season"), &TreeGenerator::set_season);

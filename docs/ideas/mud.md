@@ -736,6 +736,12 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   edges, and where broken, Voronoi plates sized with the ice (6 to 25 cm), tilted, with open water and white
   fractured rims between them; no flow ripples under it. `get_ice_at()`. Not kept with the ruts (it re-forms from
   the temperature). Checks `--test=ice`; `--view=ice --pair` shoots a frozen puddle with a wheel track through it.
+  Reworked after the docs review (18 Nov): the look follows how a puddle freezes, from its rim in: where the ice
+  reaches the bed (h over the water's depth, ragged by noise) it is milky with crowded bubbles (1 to 3 mm dots on a
+  1.5 cm Worley grid, averaged past 2 mm footprints), the middle clear and dark with a few; frozen ripples (slope
+  0.04) and roughness 0.12 instead of a mirror; no crack lines on intact ice; broken plates only where the broken
+  share passes 0.4, tilted (0.35), with wider, softer white fractured edges. add_puddle's bank is now a continuous
+  berm (48 overlapping discs, 2 cm over the water only where the rim is lower), not 16 mounds.
 - **Regrowth follows the seasons.** The regrowth e-fold scaled by WeatherMap3D's season: grass grows from about 5 C,
   fastest in spring, stalled by summer drought and in winter (growing degree days), so a rut left in November is
   still bare in February.
@@ -749,6 +755,76 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   clock-time rate. Checks in `--test=ruts`.
 - **Mud on plants beside ruts.** Spray and splashes that land on the sward tint the blades and plants there with the
   ground's clay (a per-texel splatter share the blade shaders read, as the body mud does), washed off by rain.
+  *Built (18 Nov):* `plant_mud` (on). A CPU lattice share per 25 cm cell, raised where thrown clay lands
+  (`track_mud` without a print: MudSpray's clods; full at a 0.3 mm film) and where muddy water splashes out
+  (`add_water` with mud: full at 50 g of clay per m2), not by tyre or sole prints. Rain washes it off at an
+  e-fold of 2 mm (simulated-rain wash-off of leaf deposits goes mostly early, Xu et al. 2017). Published as the wet
+  map's fifth block (share, the clay's linear colour from mud_color/mud_color_map; texel 4's tag 6.5).
+  GrassField3D's `grass_ground_mud()` (in the shared ground code, so PlantGenerator's plants read it too) and
+  `grass_mud_apply()`: specks hashed on a 6 mm world grid that join into a coat as the share rises, thickest low
+  down (reach 12 to 45 cm with the share), clay colour x0.8, matte (0.85); on blades, crops and plants, in both
+  renderers. A thrown film no longer lays the sward flat (it came from the air): the tint term of
+  `grass_ground_opened()` is scaled by 1 - the share. `get_plant_mud_at()`. Checks in `--test=ice`; grass bench
+  `--ruts=mud`.
+
+
+### Round 8: proposed (18 Nov, card posted)
+
+- **Frozen ground holds its ruts.** WeatherSeason's soil frost (freezing degree days, none under snow) stiffens the
+  soil: wheels and boots barely sink, old ruts freeze rigid and jolt a vehicle crossing them; the thaw then leaves
+  the top wetter and weaker than before (thaw weakening, the spring mud season of forest roads), so ruts form
+  deeper for a while. Build: a frost depth per lattice cell from the weather, scaling the cell's rate and bearing.
+  *Built (18 Nov):* `frozen_ground` (on). Per lattice cell (thawed top a, frost depth b, thaw weakening w), stepped
+  with the water from WeatherMap3D's air: Stefan's front with the soil water's latent heat (the modified Berggren
+  equation's leading term, Aldrich 1956): dz/dt = k dT / (334 MJ/m3 theta (z + 2 cm)), frozen k 2, theta 0.1 to 0.4
+  by wetness (12 cm in 12 h at -8 C); the thaw works down from the top (unfrozen k 1.2); a frost after a thaw
+  refreezes the wet top first; snow-covered cells are left alone. New cells seed from WeatherSeason's soil_frost
+  for the day. Crust share = smoothstep(2, 8 cm) of the frozen layer, gone under 0.5 to 3 cm of thaw: the cell's
+  Bekker k's x(1 + 30 f), cohesion +200 kPa f, no slumping, max_dent x(1 - f), not deformable past 0.95 (ruts in
+  it stay as they are, get_soil() reports it firm); ksat x(1 - 0.99 f), so water stands on it. Thaw weakening:
+  while thawed soil lies on the frost (and for an e-fold of 5 days after it has gone) the cell's wetness is raised
+  to past mud_wet_full and, with mud_layer, the thawed layer is mud as deep as it is. `get_frost_at()`.
+  Checks `--test=frost`: 12 cm in a night, a boot leaves 0 mm (98 unfrozen), the old rut does not move, a 3 kN
+  wheel sinks 87 mm in the thaw against 65 before the frost.
+- **Raindrop rings on puddles.** (Moved to the rain thread, 18 Nov: rain, snow and wind are one system. It adds its
+  ring slope to the standing-water block's `gfs`, scaled by 1 - the ice cover.) Rain falling on standing water draws expanding rings (Lagarde's 2013 rain ripple
+  texture approach, rings per drop cell timed by the rain rate), in both renderers, on ruts, puddles and ice-free
+  water.
+- **Hoar frost.** (Moved to the world-links thread, 18 Nov, with dew, across every material.) Clear, still nights below 0 C rime the grass, plants and bare ground white (deposition when the
+  surface cools under the dew point), thickest in hollows; the low sun melts it off from the lit side first.
+
+
+### Round 9: proposed (18 Nov, card posted)
+
+- **Ruts steer the wheels.** A wheel in a rut deeper than about a third of its sidewall is held by the rut's walls:
+  turning out of it needs the lateral force to climb the wall (the wall's slope and the soil's shear), so the
+  vehicle follows old ruts and lurches when it climbs out, MudRunner's rut tracking. Build: the wall slope under
+  each tyre's edges from the field, a lateral force on PhysXVehicle3D's wheels.
+  *Built, ground side (18 Nov):* `get_rut_guidance(contact, lateral, half_width)`: the deformation's cross slope
+  under the tread (least squares over 7 points, dent less rim only, so the terrain's own camber the road plane
+  already carries is not counted twice) and the wall height beside each edge (the highest relief 3 to 15 cm
+  outside it over the tread's floor). A tyre resting across a rut's wall is pushed down the tilt by load x slope
+  (rut wandering; the normal force resolved on a slope, as on a road's camber); one moving sideways shoves the
+  wall as a bulldozed face that high. Checks in `--test=frost`: centred no push, walls 7.6 cm over a 6 cm rut,
+  12 cm off-centre a slope of 0.36 back in. The vehicle's call waits for the world-links grip change in
+  physx_vehicle_3d.cpp (the split: it owns the firm-ground branch, the mud thread the soft force block).
+- **Mud holds boots.** Feet in sticky, saturated mud are held by suction (the pore pressure under a lifting sole,
+  as in breakout force of objects from seabed mud): a GroundLegMud3D or character foot slows to lift, with a sound
+  hook, and loses a boot past a limit.
+  *Built (18 Nov):* research: breakout of objects embedded in soft seabed clay (Vesic 1971, NCEL; Das 1980 for
+  anchor plates). A quick lift is undrained: the pore water cannot follow the sole, so the soil above it fails in
+  shear, F = A c_u N_c, with N_c rising with embedment D/B to about 9 past D/B = 4; lifted slowly, water seeps in
+  under the sole and the long-term breakout is about a quarter. GroundLegMud3D `boot_suction` (on): the stance
+  records how deep the sole went into sticky mud (slurry, or clay with stickiness 0.2-0.5 and up), and as the foot
+  lifts the mud holds it with that force (cohesion capped at 30 kPa so frozen crust adds nothing; it needs depth
+  anyway) until the sole has come up a quarter of its depth, then `boot_released(leg, force)` (the squelch).
+  `get_boot_hold`, `get_boot_drag` = hold / (hold + `leg_pull` 400 N) for a controller or animation to slow the
+  lift, `boot_hold_limit` 900 N emits `boot_lost` and sets `is_boot_lost` until the next footfall. Checks in
+  `--test=legs`: dry soil no releases, 15 cm of slurry 9 releases up to 215 N, the static formula 1.1 kN at 40 cm in
+  stiff clay mud quick, a quarter slow. The node reads animation; it does not move the foot itself.
+- **Needle ice on bare soil.** Frosty nights on wet bare soil grow needle ice (pipkrake) that lifts the top
+  centimetres; the thaw collapses it into loose, fluffy soil that prints easily and washes away. Ground-only,
+  beside the frozen ground just built.
 
 
 ### Look (any stage)

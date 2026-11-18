@@ -155,6 +155,19 @@ private:
 	LocalVector<float> ice_state;
 	void _ice_update(double p_delta);
 	void _ice_break(const Vector3 &p_position, float p_radius, float p_bearing);
+	// Frozen ground (round 8): per lattice cell (the thawed layer on top, m; the frost's depth, m; the thaw's
+	// weakening, 0..1).
+	static constexpr int FROST_FLOATS = 3;
+	bool frozen_ground = true;
+	LocalVector<float> frost_state;
+	void _frost_update(double p_delta);
+	void _frost_seed(int p_from);
+	float _frost_crust(int p_i) const;
+	// Mud on plants (round 7): per lattice cell, the share of the sward's and the plants' faces spattered with clay.
+	bool plant_mud = true;
+	LocalVector<float> plant_mud_state;
+	void _plant_mud_add(const Vector3 &p_position, float p_radius, float p_share);
+	void _plant_mud_update(double p_delta);
 	Ref<Image> mud_map;
 	Rect2 mud_map_rect;
 	float mud_max_depth = 1.2f;
@@ -367,6 +380,7 @@ private:
 		float litter = 0.0f;
 		float mud = 0.0f; // deep mud, m (stage 1 of docs/ideas/mud.md)
 		bool fixed = false; // rock or snow: never deforms
+		float frozen = 0.0f; // frozen soil at the surface (round 8): 0..1, how far it holds as a crust
 	};
 	LocalVector<CellInput> cell_inputs;
 	float _water_conductivity(const CellInput &p_in) const;
@@ -728,6 +742,12 @@ public:
 	void set_puddle_ice(bool p_enabled);
 	bool is_puddle_ice() const { return puddle_ice; }
 	Vector2 get_ice_at(Vector3 p_position) const;
+	void set_frozen_ground(bool p_enabled);
+	bool is_frozen_ground() const { return frozen_ground; }
+	Vector3 get_frost_at(Vector3 p_position) const;
+	void set_plant_mud(bool p_enabled);
+	bool is_plant_mud() const { return plant_mud; }
+	float get_plant_mud_at(Vector3 p_position) const;
 	// The crack state at a point: (opening 0..1, plate size m, regularity 0..1, crust 0..1 or, negative, how damp
 	// the drying layer still is).
 	Vector4 get_crack_at(Vector3 p_position) const;
@@ -827,6 +847,7 @@ public:
 	// terrain floor), so gas rests on the ruts and berms.
 	float get_height(Vector3 p_position) const { return get_surface_height_at(p_position); }
 	float get_dent_at(Vector3 p_position) const;
+	Vector3 get_rut_guidance(Vector3 p_contact, Vector3 p_lateral, float p_half_width) const;
 	float get_rim_at(Vector3 p_position) const;
 	float get_fresh_at(Vector3 p_position) const;
 	// The rules at a place: n, kc, kphi, rim share, repose angle (degrees), slump rate, max dent,

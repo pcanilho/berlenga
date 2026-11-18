@@ -65,9 +65,11 @@ private:
 		float vt = 4.0f; // terminal velocity when fresh, m/s
 		float age = 0.0f;
 		float life = 20.0f; // s of glowing combustion
+		float n = 1.0f; // real brands this one stands for (more than one once MAX_BRANDS are aloft)
 	};
 	LocalVector<Brand> brands;
 	float carry = 0.0f;
+	float stand_for = 1.0f; // real brands each new one stands for
 	uint32_t seed = 0x9e3779b9u;
 	MultiMeshInstance3D *mmi = nullptr;
 	Ref<MultiMesh> mm;
@@ -82,7 +84,7 @@ private:
 	void _draw(Node3D *p_owner, float p_glow_energy);
 
 public:
-	static constexpr int MAX_BRANDS = 400;
+	static constexpr int MAX_BRANDS = 1000; // a torching tree throws hundreds a second
 	// Schroeder's (1969) probability that a firebrand ignites fine dead fuel at this moisture (fraction of dry weight)
 	// and air temperature (C).
 	static float ignition_probability(float p_moisture, float p_air_temperature);
