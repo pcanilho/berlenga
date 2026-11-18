@@ -837,14 +837,14 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_INTERNODE_LENGTH] = 0.4f;
 			phyllotaxis = PHYLLOTAXIS_WHORLED;
 			p[PARAM_WHORL_BUDS] = 5;
-			p[PARAM_APICAL_DOMINANCE] = 0.68f;
-			p[PARAM_APICAL_DOMINANCE_OLD] = 0.52f;
+			p[PARAM_APICAL_DOMINANCE] = 0.72f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.62f; // The leader keeps on: limbs at several heights, not one whorl of spokes at the bole top (docs, 18 Nov).
 			p[PARAM_MATURITY] = 30;
 			p[PARAM_BRANCH_ANGLE] = 65;
-			p[PARAM_DIRECTION_NOISE] = 9;
+			p[PARAM_DIRECTION_NOISE] = 16; // Crooked limbs and a sinuous bole.
 			p[PARAM_GRAVITROPISM] = 0.0f;
-			p[PARAM_TRUNK_GRAVITROPISM] = 0.9f;
-			p[PARAM_APICAL_CONTROL] = 0.9f; // Strong laterals: a full, dense crown.
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.7f;
+			p[PARAM_APICAL_CONTROL] = 0.85f; // Laterals strong enough for a full crown, under the leader.
 			p[PARAM_PHOTOTROPISM] = 0.08f;
 			p[PARAM_GRAVITY_BENDING] = 0.35f; // Heavy old limbs bow out and down, tips turned up: the crown spreads as a mass, not a fan of rising limbs.
 			p[PARAM_SHED_RATIO] = 0.02f; // Keeps shoots inside the crown: a dense mass, not tufts at the limb tips (docs, 18 Nov).
@@ -856,7 +856,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_CROWN_CONE] = 0.0f; // No excurrent cone: it held the top to a sparse spire over a wide lowest whorl (docs, 18 Nov).
 			p[PARAM_SHADOW_STRENGTH] = 0.03f;
 			p[PARAM_PIPE_EXPONENT] = 1.85f; // A stout bole under the heavy crown.
-			bark_color = Color(0.4f, 0.26f, 0.2f); // Purplish red-brown plates.
+			bark_color = Color(0.27f, 0.25f, 0.23f); // Dark grey-brown plates (the fissures red-orange, from the bark map).
 			leaf_color = Color(0.11f, 0.17f, 0.08f); // Grey-green.
 			break;
 		case PRESET_CAROB: // Ceratonia siliqua (trees.md 5ac): evergreen, a short trunk under a broad,
@@ -1431,8 +1431,8 @@ TreeGenerator::ForkRule TreeGenerator::_fork_rule() const {
 		r.side = 0.8f; // Their branches fill a dense dome; the single split keeps the limbs few.
 	} else if (preset == PRESET_MARITIME_PINE && forest_shade <= 0.0f) {
 		// A long clear bole under the crown (Alia et al. 1996; the Landes pine): open-grown, the
-		// crown starts at about 40% of the height.
-		r.lift = 0.42f;
+		// crown starts at about half the height (docs, 18 Nov: at 42% the bole read short).
+		r.lift = 0.55f;
 	} else if (preset == PRESET_CAROB && forest_shade <= 0.0f) {
 		// A short trunk into a few spreading limbs under a broad dome (Batlle and Tous 1997).
 		r.fork_height = 2.0f;
@@ -3916,8 +3916,8 @@ TreeGenerator::BarkKind TreeGenerator::_bark_kind(Preset p_preset) {
 		case PRESET_HOLM_OAK: // Dark grey, cracked into small, thin, squarish plates.
 		case PRESET_CAROB: // Rough grey-brown, finely cracked.
 			return BARK_SCALY;
-		case PRESET_MARITIME_PINE: // Very thick, deep furrows between long purplish plates.
-			return BARK_PLATED;
+		case PRESET_MARITIME_PINE: // Very thick, deep furrows between long dark plates, red-orange inside (as the stone pine's).
+			return BARK_PINEA;
 		case PRESET_WILD_OLIVE: // Grey, smooth when young, fissured and gnarled when old.
 			return BARK_FURROWED;
 		case PRESET_BLACKTHORN: // Dark, almost black, finely scaly.
@@ -4147,43 +4147,40 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// the ridges, and cross fissures that cut them into blocks, full width.
 					const float tile = _bark_tile_of(p_kind);
 					const float e = 1.0f / N;
-					auto zero_dist = [&](float p_u, float p_v, int p_px, int p_py, uint32_t p_salt) {
+					auto zero_dist = [&](float p_u, float p_v, int p_px, int p_py, uint32_t p_salt, int p_oct = 3) {
 						auto at = [&](float p_a, float p_b) {
 							const float qu = p_a + 0.035f * warp * bark_fbm(p_a, p_b, 4 * F, 4 * F, 2, salt + 21u);
 							const float qv = p_b + 0.05f * warp * bark_fbm(p_a, p_b, 4 * F, 4 * F, 2, salt + 27u);
-							return bark_fbm(qu, qv, p_px, p_py, 3, p_salt);
+							return bark_fbm(qu, qv, p_px, p_py, p_oct, p_salt);
 						};
 						const float n0 = at(p_u, p_v);
 						const float gx = (at(p_u + e, p_v) - at(p_u - e, p_v)) / (2.0f * e * tile);
 						const float gy = (at(p_u, p_v + e) - at(p_u, p_v - e)) / (2.0f * e * tile);
 						return Math::abs(n0) / MAX(Math::sqrt(gx * gx + gy * gy), 1e-4f);
 					};
-					auto cut = [](float p_d, float p_w) {
-						// 1 on the floor, 0 past the rounded shoulder.
-						return Math::pow(1.0f - Math::smoothstep(0.0f, 1.15f, p_d / p_w), 1.6f);
-					};
 					const float wn = bark_fbm(u, v, 4, 6, 2, salt + 33u) + 0.25f; // 0..0.5
 					const float w1 = 0.034f + 0.04f * wn; // Nominal: the first-order distance runs about twice the true one at this noise.
 					const float dep = 0.045f + 0.05f * wn;
 					const float d1 = zero_dist(u, v, 8, 1, salt + 51u);
-					const float c1 = cut(d1, w1);
-					// The second family only where it splits a ridge (half the stem).
-					const float m2 = Math::smoothstep(-0.02f, 0.06f, bark_fbm(u, v, 3, 4, 2, salt + 63u));
-					const float d2 = zero_dist(u, v, 6, 1, salt + 55u);
-					const float c2 = m2 * cut(d2, 0.8f * w1);
-					// Cross fissures, about every 15-25 cm, on most of the ridges.
-					const float m3 = Math::smoothstep(-0.08f, 0.02f, bark_fbm(u, v, 5, 3, 2, salt + 67u));
-					const float d3 = zero_dist(u, v, 3, 8, salt + 59u);
-					const float c3 = m3 * cut(d3, 0.6f * w1);
-					const float depth = dep * MAX(MAX(c1, 0.8f * c2), 0.65f * c3);
-					cork_open = 1.0f - MAX(MAX(c1, c2), 0.85f * c3);
-					// Lumpy, crumbly ridge tops, at the scale of a thumb.
+					// The second family splits about half the ridges; the cross cracks are zero lines
+					// of a noise as fine across as along, so they wander at every angle and length
+					// (round 9, docs 18 Nov: zero lines of a noise stretched round the stem gave
+					// rows of short square-ended notches, stamped glyphs). Where a family fades out it
+					// narrows and shallows to a point instead of stopping square.
+					const float m2 = Math::smoothstep(-0.06f, 0.1f, bark_fbm(u, v, 3, 4, 2, salt + 63u));
+					const float d2 = zero_dist(u, v, 6, 1, salt + 55u) / 0.8f + (1.0f - m2) * 3.0f * w1;
+					const float m3 = Math::smoothstep(-0.2f, 0.04f, bark_fbm(u, v, 3, 3, 2, salt + 67u));
+					const float d3 = zero_dist(u, v, 5, 6, salt + 59u, 2) / 0.75f + (1.0f - m3) * 3.0f * w1;
+					const float dm = MIN(d1, MIN(d2, d3));
+					// One profile from the fissure's floor to the block's crown, steep at the floor
+					// and rounding over the top (round 8's separate cut and swelling met in a step, a
+					// terraced, machined edge).
+					const float x = CLAMP(dm / (2.6f * w1), 0.0f, 1.0f);
+					const float depth = (dep + 0.03f) * (1.0f - x) * (1.0f - x);
+					cork_open = CLAMP(dm / (1.3f * w1), 0.0f, 1.0f);
+					// Lumpy, crumbly crowns, at the scale of a thumb.
 					const float lumps = bark_fbm(u, v, 30, 20, 3, salt + 57u);
-					// Each block swells from its fissures to a rounded crown (flat between grooves, it
-					// read as carved plaster).
-					const float dm = MIN(d1, MIN(m2 > 0.5f ? d2 : 1.0f, m3 > 0.5f ? d3 : 1.0f));
-					const float crown = 0.03f * Math::smoothstep(0.3f * w1, 2.2f * w1, dm);
-					plate = 1.0f - (depth + 0.03f - crown) / L.depth + 0.05f * lumps;
+					plate = 1.0f - depth / L.depth + 0.06f * lumps;
 					open = cork_open;
 				} else if (p_kind == BARK_FURROWED) {
 					// Furrows are the zero lines of noise stretched along the stem: long, wavy, merging
@@ -4455,7 +4452,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		// the spongy pitting goes back on top, unblurred.
 		LocalVector<float> tmp;
 		tmp.resize(N * N);
-		const int R = 2;
+		const int R = 3;
 		for (int pass = 0; pass < 1; pass++) {
 			for (int y = 0; y < N; y++) {
 				for (int x = 0; x < N; x++) {
@@ -4485,7 +4482,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				// read as melted wax (docs, 18 Nov).
 				const float crumb = bark_fbm(u, v, 200, 160, 2, salt + 173u);
 				const float pore = Math::smoothstep(0.08f, 0.16f, bark_fbm(u, v, 320, 240, 1, salt + 177u));
-				hw[k] += 0.003f * bark_fbm(u, v, 72, 36, 3, salt + 171u) + 0.0025f * crumb - 0.003f * pore;
+				hw[k] += 0.004f * bark_fbm(u, v, 72, 36, 3, salt + 171u) + 0.003f * crumb - 0.004f * pore;
 				const float ochre = Math::smoothstep(-0.1f, 0.15f, bark_fbm(u, v, 6, 4, 3, salt + 179u));
 				// The ochre weathering is faint: strong, it read as pale and brown blotches across
 				// the ridges, a leopard's coat (docs, 18 Nov).
