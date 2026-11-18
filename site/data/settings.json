@@ -1272,6 +1272,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Frozen ground",
+   "settings": [
+    "GroundSurface3D.frozen_ground"
+   ],
+   "note": "",
+   "what": "soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Desiccation cracks",
    "settings": [
     "GroundSurface3D.desiccation_cracks"
