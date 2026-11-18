@@ -171,6 +171,8 @@ public:
 		base_moisture = fuel_moisture;
 	}
 	float get_moisture_at(const Vector3 &p_position) const;
+	float get_moisture_of_extinction() const { return _model(fuel_type).moisture_extinction; }
+	float get_ground_height_at(const Vector3 &p_position) const;
 	void set_use_weather_moisture(bool p_v) { use_weather_moisture = p_v; }
 	bool is_using_weather_moisture() const { return use_weather_moisture; }
 	void set_moisture_timelag(float p_v) { moisture_timelag = MAX(p_v, 1.0f); }

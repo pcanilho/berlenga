@@ -49,6 +49,13 @@
 				The [PhysXFlow3D] the flames are drawn in.
 			</description>
 		</method>
+		<method name="get_ground_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The ground height the fire grid holds at [param position] (world Y), or the node's own height outside the grid.
+			</description>
+		</method>
 		<method name="get_intensity_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -61,6 +68,12 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Dead fuel moisture at [param position], as a fraction of dry weight: [member fuel_moisture] as the weather has moved it, its patchiness, and the rain the fuel holds.
+			</description>
+		</method>
+		<method name="get_moisture_of_extinction" qualifiers="const">
+			<return type="float" />
+			<description>
+				The fuel moisture (fraction of dry weight) at and above which the [member fuel_type] cannot burn.
 			</description>
 		</method>
 		<method name="get_scorch_height_at" qualifiers="const">

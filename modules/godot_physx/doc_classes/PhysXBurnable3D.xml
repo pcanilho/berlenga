@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXBurnable3D" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Makes a wooden object (a crate, a log, debris) catch fire, burn down to glowing char and throw embers.
+	</brief_description>
+	<description>
+		Add it as a child of the object to burn, or point [member target] at it; it reads the object's meshes for its size and look.
+		The object heats up from a [PhysXFireSpread3D] nearby ([member fire]): flame contact where the ground under it is flaming, and radiation from the burning area around it. It catches fire when the heat it has taken in reaches the dose for a thick solid to reach [member ignition_temperature] (the flux-time product of fire safety engineering, with wood's thermal inertia), so a short touch of flame does not light it but a sustained one does.
+		Once alight, the flaming patch grows from the ignition point at [member flame_spread], giving off [member heat_release_rate] over its area and burning [member fuel_mass] at wood's heat of combustion. The flame is drawn by an emitter in the fire's [PhysXFlow3D] (or [member flow]) sized by Heskestad's flame height. The surface chars from the ignition point with a ragged edge, a glowing band at the burning front, and alligator cracks that glow while it smoulders. Rain held on the wood slows it and puts it out, leaving it smouldering.
+		While flaming it throws embers ([member ember_rate] per MW): small glowing particles lofted by the plume and carried by Flow's gas, which can start new fires where they land on dry ground.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="extinguish">
+			<return type="void" />
+			<description>
+				Puts the flames out. Wood with fuel left keeps smouldering.
+			</description>
+		</method>
+		<method name="get_char_amount" qualifiers="const">
+			<return type="float" />
+			<description>
+				How much of the surface is charred, from 0 to 1.
+			</description>
+		</method>
+		<method name="get_ember_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Embers in the air.
+			</description>
+		</method>
+		<method name="get_fuel_left" qualifiers="const">
+			<return type="float" />
+			<description>
+				Kilograms of wood left to burn.
+			</description>
+		</method>
+		<method name="get_heat_flux" qualifiers="const">
+			<return type="float" />
+			<description>
+				The heat reaching the object from the fire around it, in kW/m².
+			</description>
+		</method>
+		<method name="get_heat_release" qualifiers="const">
+			<return type="float" />
+			<description>
+				The heat the object gives off while flaming, in kW.
+			</description>
+		</method>
+		<method name="get_state" qualifiers="const">
+			<return type="int" enum="PhysXBurnable3D.State" />
+			<description>
+				Whether the object is unburnt, flaming, smouldering or burnt out.
+			</description>
+		</method>
+		<method name="ignite">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Sets the object alight at the point of its bounds nearest [param position] (world space).
+			</description>
+		</method>
+		<method name="is_burning" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether it is flaming.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="ember_rate" type="float" setter="set_ember_rate" getter="get_ember_rate" default="30.0">
+			Embers thrown per second for each MW of heat released.
+		</member>
+		<member name="embers" type="bool" setter="set_embers" getter="has_embers" default="true">
+			Throws embers while flaming.
+		</member>
+		<member name="fire" type="NodePath" setter="set_fire" getter="get_fire" default="NodePath(&quot;&quot;)">
+			The [PhysXFireSpread3D] that heats the object, and where its embers land.
+		</member>
+		<member name="flame_spread" type="float" setter="set_flame_spread" getter="get_flame_spread" default="0.04">
+			How fast the flaming patch grows over the surface, in m/s.
+		</member>
+		<member name="flame_strength" type="float" setter="set_flame_strength" getter="get_flame_strength" default="1.0">
+			Scales the flame and smoke the object puts into Flow.
+		</member>
+		<member name="flow" type="NodePath" setter="set_flow" getter="get_flow" default="NodePath(&quot;&quot;)">
+			The [PhysXFlow3D] that draws the flame. Empty uses the [member fire]'s.
+		</member>
+		<member name="fuel_mass" type="float" setter="set_fuel_mass" getter="get_fuel_mass" default="0.0">
+			Kilograms of wood to burn. 0 works it out from the object's size (a third of its bounding volume, as wood).
+		</member>
+		<member name="glow_energy" type="float" setter="set_glow_energy" getter="get_glow_energy" default="6.0">
+			Brightness of the burning front, the glowing cracks and the embers.
+		</member>
+		<member name="heat_release_rate" type="float" setter="set_heat_release_rate" getter="get_heat_release_rate" default="150.0">
+			Heat given off per square metre of flaming surface, in kW/m².
+		</member>
+		<member name="ignition_temperature" type="float" setter="set_ignition_temperature" getter="get_ignition_temperature" default="350.0">
+			Surface temperature at which the wood catches fire, in degrees Celsius.
+		</member>
+		<member name="target" type="NodePath" setter="set_target" getter="get_target" default="NodePath(&quot;..&quot;)">
+			The object that burns: its meshes give the size and take the char look.
+		</member>
+	</members>
+	<constants>
+		<constant name="STATE_UNBURNT" value="0" enum="State">
+			Not alight.
+		</constant>
+		<constant name="STATE_FLAMING" value="1" enum="State">
+			Flaming.
+		</constant>
+		<constant name="STATE_SMOULDERING" value="2" enum="State">
+			Flames out, glowing char left.
+		</constant>
+		<constant name="STATE_BURNT_OUT" value="3" enum="State">
+			No fuel left.
+		</constant>
+	</constants>
+</class>
