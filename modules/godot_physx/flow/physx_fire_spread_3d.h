@@ -114,6 +114,16 @@ private:
 	// Plants' view of the fire (fire_state_map): burnt, glow, peak flame length, peak crown scorch height.
 	Ref<Image> state_image;
 	Ref<ImageTexture> state_texture;
+	// Large wood (logs and fallen branches from a VegetationField3D): kg/m2, diameter (m), fraction left, ignition time.
+	LocalVector<float> heavy;
+	LocalVector<float> heavy_d;
+	LocalVector<float> heavy_left;
+	LocalVector<float> heavy_t;
+	bool heavy_any = false;
+	static LocalVector<PhysXFireSpread3D *> fires;
+	float _heavy_flaming_time(uint32_t p_i) const { return 18900.0f * heavy_d[p_i]; } // Anderson 1969, 384/sigma min
+	bool _heavy_flaming(uint32_t p_i) const { return heavy_t[p_i] >= 0.0f && heavy_left[p_i] > HEAVY_SMOULDER && !quenched[p_i]; }
+	static constexpr float HEAVY_SMOULDER = 0.4f; // below this share left, a log smoulders without flame
 	LocalVector<float> peak_flame; // m, Byram's flame length of the front that crossed the cell
 	LocalVector<float> peak_scorch; // m, Van Wagner's crown scorch height
 
@@ -138,6 +148,7 @@ private:
 	void _ignite_from_heat_source();
 	void _update_emitters(const Vector3 &p_wind);
 	void _update_maps();
+	void _burn_heavy(float p_delta);
 	Vector3 _wind() const;
 	Vector3 _cell_world(int p_x, int p_z) const;
 	bool _world_cell(const Vector3 &p_world, int &r_x, int &r_z) const;
@@ -171,6 +182,10 @@ public:
 		base_moisture = fuel_moisture;
 	}
 	float get_moisture_at(const Vector3 &p_position) const;
+	// Fires in the scene tree, for things that burn without a fire set (cloth): the first whose area holds p_position.
+	static PhysXFireSpread3D *find_at(const Vector3 &p_position);
+	static bool any() { return !fires.is_empty(); }
+	float get_heavy_fuel_at(const Vector3 &p_position) const;
 	float get_moisture_of_extinction() const { return _model(fuel_type).moisture_extinction; }
 	float get_ground_height_at(const Vector3 &p_position) const;
 	void set_use_weather_moisture(bool p_v) { use_weather_moisture = p_v; }

@@ -99,10 +99,16 @@ void PhysXFireSpread3D::_allocate() {
 	rate.resize(n);
 	peak_flame.resize(n);
 	peak_scorch.resize(n);
+	heavy.resize(n);
+	heavy_d.resize(n);
+	heavy_left.resize(n);
+	heavy_t.resize(n);
+	heavy_any = false;
 	const FuelModel &m = _model(fuel_type);
 	Node3D *veg = vegetation_field.is_empty() || !is_inside_tree() ? nullptr : Object::cast_to<Node3D>(get_node_or_null(vegetation_field));
 	const bool veg_paths = veg && veg->has_method("get_path_passes_at");
 	const bool veg_litter = veg && veg->has_method("get_litter_at");
+	const bool veg_wood = veg && veg->has_method("get_deadwood_at") && int(veg->call("get_deadwood_count")) > 0;
 	for (int z = 0; z < nz; z++) {
 		for (int x = 0; x < nx; x++) {
 			const uint32_t i = z * nx + x;
@@ -145,6 +151,23 @@ void PhysXFireSpread3D::_allocate() {
 				l += float(veg->call("get_litter_at", wp)) * 0.4f * fuel_load_scale;
 			}
 			load[i] = l;
+			// Logs and fallen branches lying here: a log of radius r crossing the cell puts its wood, about
+			// 500 kg/m3 * pi r^2 per metre, over its 2r width, or over the cell's width when it is thinner.
+			heavy[i] = 0.0f;
+			heavy_d[i] = 0.0f;
+			heavy_left[i] = 1.0f;
+			heavy_t[i] = -1.0f;
+			if (veg_wood) {
+				const Dictionary d = veg->call("get_deadwood_at", wp, 0.5f * cell_size, 0.0f);
+				if (!d.is_empty() && float(d.get("side", 1.0f)) + float(d.get("radius", 0.0f)) < 0.5f * cell_size) {
+					const float r = d.get("radius", 0.0f);
+					if (r >= 0.01f) {
+						heavy[i] = 500.0f * Math::PI * r * r / MAX(2.0f * r, cell_size);
+						heavy_d[i] = 2.0f * r;
+						heavy_any = true;
+					}
+				}
+			}
 			rate[i] = rate_mul;
 			rain_water[i] = 0.0f;
 			quenched[i] = 0;
@@ -470,6 +493,52 @@ void PhysXFireSpread3D::_step(float p_delta) {
 			fuel_left[i] = left < 0.002f ? 0.0f : left;
 		}
 	}
+	if (heavy_any) {
+		_burn_heavy(p_delta);
+	}
+}
+
+// Large wood (BURNUP's view, Albini and Reinhardt 1995: big pieces keep burning long after the surface front has
+// passed). A log catches from the surface fire burning under it unless it is too wet, flames for about Anderson's
+// (1969) residence time, 384/sigma minutes (sigma its surface to volume ratio, 4/d per foot: about 5 minutes per cm
+// of diameter), then smoulders for longer with no flame. Its heat feeds the flames and the glow over its cells.
+void PhysXFireSpread3D::_burn_heavy(float p_delta) {
+	const FuelModel &m = _model(fuel_type);
+	for (int z = band_z0; z <= band_z1; z++) {
+		for (int x = band_x0; x <= band_x1; x++) {
+			const uint32_t i = z * nx + x;
+			if (heavy[i] <= 0.0f || heavy_left[i] <= 0.0f) {
+				continue;
+			}
+			if (heavy_t[i] < 0.0f) {
+				// Catches while the fine fuel under it flames, unless the wood is too wet.
+				if (t_ignite[i] >= 0.0f && time - t_ignite[i] < m.burn_time && !quenched[i] && _moisture(i) < m.moisture_extinction) {
+					heavy_t[i] = time;
+				}
+				continue;
+			}
+			const float tf = MAX(_heavy_flaming_time(i), 30.0f);
+			// Flaming burns down at 1/tf; smouldering (or a log put out by rain) at a third of that.
+			const float k = _heavy_flaming(i) ? 1.0f / tf : 1.0f / (3.0f * tf);
+			const float before = heavy_left[i];
+			heavy_left[i] = before * Math::exp(-p_delta * k);
+			if (heavy_left[i] < 0.01f) {
+				heavy_left[i] = 0.0f;
+			}
+			if (_heavy_flaming(i)) {
+				heat[i] += (before - heavy_left[i]) * heavy[i] * HEAT_CONTENT / MAX(p_delta, 1.0e-4f);
+			}
+		}
+	}
+}
+
+float PhysXFireSpread3D::get_heavy_fuel_at(const Vector3 &p_position) const {
+	int x, z;
+	if (!_world_cell(p_position, x, z) || heavy.is_empty()) {
+		return 0.0f;
+	}
+	const uint32_t i = z * nx + x;
+	return heavy[i] * heavy_left[i];
 }
 
 float PhysXFireSpread3D::_air_temperature() const {
@@ -523,7 +592,8 @@ void PhysXFireSpread3D::_update_moisture(float p_delta) {
 						w = MIN(w + rain / 3600.0f * p_delta * 0.33f / load[i], 2.5f);
 					}
 					rain_water[i] = w;
-					if (t_ignite[i] >= 0.0f && fuel_left[i] > 0.0f && !quenched[i] && _moisture(i) >= m.moisture_extinction) {
+					const bool burning = (t_ignite[i] >= 0.0f && fuel_left[i] > 0.0f) || (!heavy.is_empty() && _heavy_flaming(i));
+					if (burning && !quenched[i] && _moisture(i) >= m.moisture_extinction) {
 						quenched[i] = 1;
 					}
 				}
@@ -607,8 +677,8 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 			for (int x = band_x0; x <= band_x1; x++) {
 				const uint32_t i = z * nx + x;
 				const float q = heat[i];
-				if (q <= 0.0f || time - t_ignite[i] > burn_time) {
-					continue; // not burning, or past its flaming phase (embers glow on the ground map)
+				if (q <= 0.0f || (time - t_ignite[i] > burn_time && !(heavy_any && _heavy_flaming(i)))) {
+					continue; // not burning, or past its flaming phase (embers glow on the ground map); logs flame on
 				}
 				Tile &t = tiles[(z / tile) * tx + x / tile];
 				t.heat += q * cell_area;
@@ -625,7 +695,7 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 		for (int z = band_z0; z <= band_z1; z++) {
 			for (int x = band_x0; x <= band_x1; x++) {
 				const uint32_t i = z * nx + x;
-				if (heat[i] <= 0.0f || time - t_ignite[i] > burn_time) {
+				if (heat[i] <= 0.0f || (time - t_ignite[i] > burn_time && !(heavy_any && _heavy_flaming(i)))) {
 					continue;
 				}
 				const Tile &t = tiles[(z / tile) * tx + x / tile];
@@ -755,9 +825,17 @@ void PhysXFireSpread3D::_update_maps() {
 			const float age = t_ignite[i] < 0.0f ? 0.0f : (time - t_ignite[i]) / m.burn_time;
 			// Put out by rain: no flame, a few wet embers.
 			const float g = cover * CLAMP(Math::exp(-age * (1.2f + 1.6f * jitter)), 0.0f, 1.0f) * (quenched[i] ? 0.05f : 1.0f);
+			// The ground's own glow (the decal); plants and wood read the state map's, which adds the logs'.
+			float wood_g = g;
+			if (heavy_any && heavy_t[i] >= 0.0f && heavy_left[i] > 0.0f) {
+				// A burning log glows over its cells: fully while it flames, then its embers dim as it smoulders
+				// away, patchily; a wet one barely.
+				const float hg = _heavy_flaming(i) ? 1.0f : (0.25f + 0.5f * jitter) * Math::sqrt(heavy_left[i] / HEAVY_SMOULDER);
+				wood_g = MAX(g, cover * MIN(hg, 1.0f) * (quenched[i] ? 0.15f : 1.0f));
+			}
 			// A blackbody near 1,000 K (linear sRGB, as Flow's heat ramp), yellower while flaming.
 			glow_image->set_pixel(x, z, Color(1.0f * g, 0.32f * g * g, 0.06f * g * g * g, 1.0f));
-			state_image->set_pixel(x, z, Color(cover * MAX(burnt, 0.3f), g, peak_flame[i] / 8.0f, peak_scorch[i] / 24.0f));
+			state_image->set_pixel(x, z, Color(cover * MAX(burnt, 0.3f), wood_g, peak_flame[i] / 8.0f, peak_scorch[i] / 24.0f));
 		}
 	}
 	char_texture->update(char_image);
@@ -939,8 +1017,28 @@ int PhysXFireSpread3D::get_burning_cells() const {
 	return n;
 }
 
+LocalVector<PhysXFireSpread3D *> PhysXFireSpread3D::fires;
+
+PhysXFireSpread3D *PhysXFireSpread3D::find_at(const Vector3 &p_position) {
+	for (PhysXFireSpread3D *f : fires) {
+		int x, z;
+		if (f->is_inside_tree() && !f->height.is_empty() && f->_world_cell(p_position, x, z)) {
+			return f;
+		}
+	}
+	return nullptr;
+}
+
 void PhysXFireSpread3D::_notification(int p_what) {
 	switch (p_what) {
+		case NOTIFICATION_ENTER_TREE: {
+			if (!fires.has(this)) {
+				fires.push_back(this);
+			}
+		} break;
+		case NOTIFICATION_EXIT_TREE: {
+			fires.erase(this);
+		} break;
 		case NOTIFICATION_READY: {
 			// Once per run, unless the project declares them (global_shader_parameter_get_list is editor only).
 			static bool globals_added = false;
@@ -1005,6 +1103,7 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_fuel_moisture", "moisture"), &PhysXFireSpread3D::set_fuel_moisture);
 	ClassDB::bind_method(D_METHOD("get_fuel_moisture"), &PhysXFireSpread3D::get_fuel_moisture);
 	ClassDB::bind_method(D_METHOD("get_moisture_at", "position"), &PhysXFireSpread3D::get_moisture_at);
+	ClassDB::bind_method(D_METHOD("get_heavy_fuel_at", "position"), &PhysXFireSpread3D::get_heavy_fuel_at);
 	ClassDB::bind_method(D_METHOD("get_moisture_of_extinction"), &PhysXFireSpread3D::get_moisture_of_extinction);
 	ClassDB::bind_method(D_METHOD("get_ground_height_at", "position"), &PhysXFireSpread3D::get_ground_height_at);
 	ClassDB::bind_method(D_METHOD("set_use_weather_moisture", "enable"), &PhysXFireSpread3D::set_use_weather_moisture);

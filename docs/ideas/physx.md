@@ -885,6 +885,17 @@ char in the cloth shader by the particle's burn state, and burnt-through
 triangles removed through the cloth tearing already built, so the cloth
 falls apart under its own weight and the hot gas pushes it.
 
+Status (18 Nov, deadwood): built in the fire node rather than as burnables
+per log, since logs are MultiMesh instances in the field: at grid build, each
+cell under a log (get_deadwood_at, side below 0) takes large wood, 500 kg/m3
+times pi r^2 over the log's 2r width. It ignites while the fine fuel under
+it flames and is dry enough, flames for Anderson's 384/sigma minutes
+(18,900 d seconds, d in m; a 68 cm beech trunk about 3.6 h), adding its heat
+to the cell so the Flow flames stay over it, then smoulders below 40% left
+at a third of the rate with a patchy glow. The bark shader takes that glow
+from fire_state_map in its furrows within half a metre of the ground. Rain
+quenches a flaming log to a smoulder.
+
 Smoother streaming. Unreal registers a streamed level's components over
 several frames within a budget (s.LevelStreamingComponentsRegistration
 Granularity and the streaming time limit). Here: bodies entering a space
