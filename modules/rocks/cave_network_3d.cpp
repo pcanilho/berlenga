@@ -1137,7 +1137,14 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p) const {
 			const real_t w = 1.0 - Math::smoothstep(real_t(0.7), real_t(1.3), Math::abs(x));
 			floor_v = Math::lerp(floor_v, fill - cave_stream_cut(r) + 0.03 * (cave_fbm(p_p / 0.4f, uint32_t(seed) + 107u, 2) - 0.5f), w);
 		}
-		dc = MAX(dc, floor_v - q.dot(v_axis));
+		// Along a stream the fill meets the walls in a bank, not a crease: sediment and spalled chips heap against
+		// the wall's foot (a smooth maximum, about a third of the radius wide), so the washed floor never ends in a
+		// hard line at the rock. Dry floors keep their crease (the rimstone pools measure their floors on it).
+		if (sg->stream) {
+			dc = -cave_smin(-dc, q.dot(v_axis) - floor_v, MAX(real_t(0.3) * r, real_t(0.15)));
+		} else {
+			dc = MAX(dc, floor_v - q.dot(v_axis));
+		}
 		const real_t ds = s > 0.0 ? (dc > 0.0 ? Math::sqrt(s * s + dc * dc) : s) : dc;
 		d = cave_smin(d, ds, 0.8);
 	}
@@ -1161,6 +1168,48 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p) const {
 		}
 	}
 	return d;
+}
+
+// How near the fill p_p is (1 on it, 0 from 0.35 m above): where the wall's foot meets the floor, spalls fallen
+// from the wall lie banked against it. The same sections and fill as _air, without its roughness.
+real_t CaveNetwork3D::_wall_foot(const FieldSource &p_src, const Vector3 &p_p) const {
+	real_t foot = 0.0;
+	for (const Segment *sg : p_src.segments) {
+		Vector3 t = sg->b - sg->a;
+		const real_t len = t.length();
+		if (len < 1e-4f || Math::abs(t.y) > 0.9f * len || sg->type == PASSAGE_SHAFT) {
+			continue;
+		}
+		t /= len;
+		const real_t l = (p_p - sg->a).dot(t);
+		if (l < -0.5 * sg->ra || l > len + 0.5 * sg->rb) {
+			continue;
+		}
+		const real_t lc = CLAMP(l, real_t(0.0), len);
+		const Vector3 q = p_p - (sg->a + t * lc);
+		const Vector3 u_axis = t.cross(Vector3(0, 1, 0)).normalized();
+		const Vector3 v_axis = u_axis.cross(t);
+		const real_t r = Math::lerp(real_t(sg->ra), real_t(sg->rb), lc / len);
+		if (Math::abs(q.dot(u_axis)) > 1.6 * r) {
+			continue;
+		}
+		real_t floor_v;
+		cave_profile(sg->type, 0.0, 0.0, r, floor_v);
+		floor_v += 0.35 * (cave_fbm(p_p / 1.6f, uint32_t(seed) + 101u, 2) - 0.5f) + 0.12 * (cave_fbm(p_p / 0.5f, uint32_t(seed) + 103u, 2) - 0.5f);
+		const real_t h = q.dot(v_axis) - floor_v;
+		if (h < -0.3) {
+			continue;
+		}
+		foot = MAX(foot, real_t(1.0) - Math::smoothstep(real_t(0.05), real_t(0.35), h));
+	}
+	for (const Chamber *c : p_src.chambers) {
+		const Vector3 q = Basis(Vector3(0, 1, 0), -c->yaw).xform(p_p - c->center);
+		const real_t h = q.y + 0.55 * c->radii.y;
+		if (h > -0.3 && (q / c->radii).length() < 1.3) {
+			foot = MAX(foot, real_t(1.0) - Math::smoothstep(real_t(0.05), real_t(0.5), h));
+		}
+	}
+	return foot;
 }
 
 // How wet a stream leaves the floor at p_p (docs/ideas/rocks.md, "Cave streams"): 1 on its bed, under the water, and
@@ -1618,7 +1667,8 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 					fw = 1.0;
 				}
 				// Green: the stream's wet bed and margin.
-				pc.push_back(Color(fw, has_stream ? _stream_wet(src, p) : 0.0, 0));
+				// Blue: the foot of the wall, a few decimetres over the fill (the shader's bank of spalls).
+				pc.push_back(Color(fw, has_stream ? _stream_wet(src, p) : 0.0, _wall_foot(src, p)));
 				pi.push_back(pv.size() - 1);
 			} else {
 				pi.push_back(*m);
@@ -2269,13 +2319,17 @@ float groove(float a, float w) { return smoothstep(1.0 - w, 1.0, a); }
 float joints(vec3 p) {
 	// Real joints wander and die out: the planes are warped by up to a third of their spacing, and each set opens
 	// only along a minority of its length (dissolution follows the few that carried water).
-	float wob = 0.6 * (fbm(p * 0.35 + 2.0) - 0.5) + 0.12 * (fbm(p * 1.9) - 0.5);
-	float wv = 0.012 + 0.03 * smoothstep(0.5, 0.8, fbm(p * 1.7 + 41.0));
+	// A crack is never a ruled line: it kinks at the centimetre (the grains it breaks round) as well as the metre, and
+	// its width runs from a hairline to a few centimetres where solution opened it.
+	float wob = 0.6 * (fbm(p * 0.35 + 2.0) - 0.5) + 0.12 * (fbm(p * 1.9) - 0.5) + 0.03 * (vn(p * 9.0 + 5.0) - 0.5);
+	float wv = 0.005 + 0.045 * smoothstep(0.35, 0.85, fbm(p * 1.3 + 41.0));
 	float a = abs(fract(dot(p.xz, vec2(0.94, 0.34)) / 1.7 + wob) - 0.5) * 2.0;
 	float b = abs(fract(dot(p.xz, vec2(-0.17, 0.98)) / 2.3 + wob * 1.3) - 0.5) * 2.0;
 	float c = abs(fract(p.y / 1.1 + 0.5 * wob + 0.4 * fbm(p * 0.2)) - 0.5) * 2.0;
 	float ma = smoothstep(0.55, 0.62, fbm(p * 0.35 + 3.0)), mb = smoothstep(0.58, 0.65, fbm(p * 0.3 + 9.0)), mc = smoothstep(0.5, 0.58, fbm(p * 0.25 + 15.0));
-	return max(max(ma * groove(a, wv), mb * groove(b, wv * 0.8)), mc * groove(c, wv * 1.5));
+	// Each length dies out and starts again (en echelon), a few decimetres to metres long.
+	float brk = smoothstep(0.3, 0.42, vn(p * 1.6 + 23.0));
+	return brk * max(max(ma * groove(a, wv), mb * groove(b, wv * 0.8)), mc * groove(c, wv * 1.5));
 }
 // Worley distances (nearest, second) and the nearest cell's id, for scallops and the stream's clasts.
 vec3 wor(vec3 p, out vec3 r_id) {
@@ -2317,12 +2371,21 @@ float clasts(vec3 p, float p_size, out vec3 r_id) {
 	float dome = sqrt(clamp(1.0 - w.x * w.x / r2, 0.0, 1.0));
 	return dome * step(0.22, h3(r_id + 11.0)) * smoothstep(0.0, 0.12, w.y - w.x);
 }
+// Spalls on the bank at a wall's foot: angular flakes fallen from the wall, flat-topped polygons (Worley cells with
+// sharp edges, not domes), some missing so the fill shows between.
+float chips(vec3 p, float p_size, out vec3 r_id) {
+	vec3 w = wor(p / p_size, r_id);
+	// Each flake its own size inside its cell; most cells hold only fill.
+	float keep = step(0.55, h3(r_id + 11.0));
+	float r = mix(0.25, 0.45, h3(r_id + 6.0));
+	return keep * smoothstep(0.0, 0.08, w.y - w.x) * (1.0 - smoothstep(r - 0.05, r, w.x)) * (0.6 + 0.4 * h3(r_id + 4.0));
+}
 float relief(vec3 p, float p_joint, float p_near, float p_wall, float p_bed) {
 	float h = 0.6 * fbm(p * 3.3) + 0.25 * fbm(p * 12.0 + 5.0) + 0.08 * vn(p * 48.0);
 	h += p_near * (0.2 * vn(p * 26.0 + 2.0) + 0.04 * vn(p * 90.0 + 9.0));
 	float bed = fract(p.y / 1.1 + 0.4 * fbm(p * 0.6));
 	h += 0.3 * smoothstep(0.0, 0.08, bed) * (1.0 - bed);
-	h -= 0.5 * p_joint * joints(p);
+	h -= 0.3 * p_joint * joints(p);
 	if (p_wall > 0.01) {
 		h += 0.45 * p_wall * scallop(p);
 	}
@@ -2352,12 +2415,25 @@ void fragment() {
 	// Joints stop at the floor: its sediment fills over them.
 	float joint_w = 1.0 - smoothstep(0.3, 0.6, w_nrm.y);
 	float crack = joints(w_pos) * joint_w;
-	col *= 1.0 - 0.18 * crack; // a little dirt in the grooves; their shading is the bump's
+	// The crack's mouth is a shadowed slot with silt and dark manganese in it: dark, recessed, never a bright line.
+	col *= mix(1.0, 0.22, crack);
 	// The floor's fill: brown cave earth, or beach sand where the sea carries it in (a few metres over the sea, the
 	// same sand as the beach outside, so a sea cave's floor runs on from the shore with no seam).
 	float sandy = (1.0 - smoothstep(3.5, 5.0, w_pos.y - sea_level)) * smoothstep(0.82, 0.95, w_nrm.y);
 	vec3 fill = mix(sediment_color, sand_color, sandy) * (0.8 + 0.4 * fine) * (0.85 + 0.3 * grain);
 	col = mix(col, fill, floor_w);
+	// The bank where the fill meets the wall (the field's smooth fillet, normals between steep and level): spalls
+	// fallen from the wall, paler and sharper than the fill, so the floor runs up into the rock through debris.
+	float bank = smoothstep(0.15, 0.4, w_nrm.y) * (1.0 - smoothstep(0.8, 0.93, w_nrm.y)) * clamp(COLOR.b, 0.0, 1.0);
+	if (bank > 0.0) {
+		vec3 bid;
+		float ch = chips(w_pos, 0.03, bid);
+		vec3 chip_col = rock_color * mix(0.95, 1.7, h3(bid)) * (0.85 + 0.3 * grain);
+		col = mix(col, mix(fill * 0.9, chip_col, smoothstep(0.05, 0.3, ch)), bank * 0.85);
+	}
+	// Close up, the micrite's own crisp speckle (a few millimetres), so a near wall never reads as smeared.
+	float near_c = 1.0 - smoothstep(1.5, 4.0, length(VERTEX));
+	col *= mix(1.0, 0.86 + 0.28 * vn(w_pos * 420.0 + 3.0), near_c * (1.0 - floor_w));
 	// Flowstone streaks: water runs down the walls in sheets, leaving smooth, paler calcite in vertical streaks
 	// (noise stretched along the fall line).
 	float wall = 1.0 - abs(w_nrm.y);
@@ -2382,7 +2458,7 @@ void fragment() {
 		float cl = clasts(w_pos, size, cid);
 		float k = h3(cid + 5.0);
 		vec3 stone = rock_color * mix(1.0, 2.1, h3(cid)) * mix(vec3(1.0), vec3(1.08, 1.0, 0.88), h3(cid + 2.0));
-		stone = k > 0.9 ? vec3(0.09, 0.085, 0.08) : (k > 0.8 ? vec3(0.42, 0.28, 0.17) : stone);
+		stone = k > 0.96 ? vec3(0.16, 0.15, 0.14) : (k > 0.92 ? vec3(0.34, 0.25, 0.17) : stone);
 		stone *= 0.85 + 0.3 * grain;
 		vec3 sand = mix(sediment_color * 1.6, rock_color * 1.1, 0.4) * (0.75 + 0.5 * grain);
 		vec3 gravel = mix(sand, stone, smoothstep(0.05, 0.3, cl));
@@ -2391,8 +2467,12 @@ void fragment() {
 	// The wall's foot by the water only damp (splash), so it never reads as water itself.
 	float wet = clamp(max(puddle + 0.7 * streak, bed * mix(0.5, 1.0, floor_w)), 0.0, 1.0);
 	ALBEDO = col * mix(1.0, 0.7, wet);
-	ROUGHNESS = mix(0.82 + 0.12 * grain, 0.3 - 0.12 * bed * floor_w, wet);
-	SPECULAR = 0.4;
+	ROUGHNESS = mix(0.82 + 0.12 * grain, 0.3, wet);
+	// Under the water (the bed's core) the stones meet water, not air: their sheen all but goes (Fresnel at an
+	// index ratio of 1.5 / 1.33), the shine is the water surface's. Only the wet margin glistens.
+	float under = smoothstep(0.85, 1.0, bed) * floor_w;
+	ROUGHNESS = mix(ROUGHNESS, 0.6, under);
+	SPECULAR = mix(0.4, 0.08, under);
 	// The relief as a bump on the world normal (its gradient off the surface), smoothed where flowstone coats it and
 	// under puddles.
 	float e = 0.005;
@@ -2405,11 +2485,15 @@ void fragment() {
 	// Sand and mud are smoother than the rock; flowstone and puddles smoother still.
 	float amount = mix(mix(0.05, 0.1, near), 0.025, floor_w) * (1.0 - 0.7 * streak) * (1.0 - 0.8 * puddle);
 	amount = mix(amount, 0.06, smoothstep(0.1, 0.45, bed_floor)); // the clasts stand proud of the sand
-	vec3 nb = normalize(n - amount * g);
+	// The tilt is bounded (about 25 degrees): where several octaves' slopes add up, an unbounded bump turns the
+	// normal past the light and leaves black blots, or a groove's lit side a white wire.
+	vec3 tilt = amount * g;
+	tilt *= min(1.0, 0.45 / max(length(tilt), 1e-5));
+	vec3 nb = normalize(n - tilt);
 	NORMAL = normalize((VIEW_MATRIX * vec4(nb, 0.0)).xyz);
 	// Cavity occlusion from the same relief: its pits and grooves darker, so the near wall reads as rough stone.
 	float cav = smoothstep(0.25, 0.75, h0);
-	AO = (1.0 - 0.3 * crack) * mix(0.55, 1.0, cav);
+	AO = (1.0 - 0.5 * crack) * mix(mix(0.7, 1.0, cav), 1.0, 0.6 * max(bed_floor, bank));
 }
 )");
 	default_wall.instantiate();
@@ -3032,34 +3116,52 @@ void CaveNetwork3D::_update_stream_nodes() {
 
 // A stream's bed stones (docs/ideas/rocks.md, "Cave streams"): real rounded clasts, the rock generator's cobbles,
 // scattered over the channel under the water. The flow sorts them (Bridge 2003, "Rivers and Floodplains", ch. 4): the
-// coarsest in the thread of the flow, finer toward the margins; they lie on their flat sides, a third or so sunk in
-// the sand, and lean upstream on each other (imbrication, about 15 degrees). Drawn in MultiMeshes of about six metres
-// of channel each, out to 25 m from the eye (beyond that the bed's shader carries the gravel).
+// coarsest in the thread of the flow, finer toward the margins; they lie on their flat sides, a third to a half sunk in
+// the sand, never through each other, and lean upstream on each other (imbrication, about 15 degrees). Their shapes
+// span the run's rounding (subrounded to well rounded, Krumbein's chart), with a few washed in from outside the
+// cave. Against each wall's foot lie angular spalls fallen from it. Drawn in MultiMeshes of about six metres of
+// channel each, out to 25 m from the eye (beyond that the bed's shader carries the gravel).
 void CaveNetwork3D::_scatter_clasts(const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_wid, const LocalVector<float> &p_dep, uint32_t p_seed) {
 	if (p_pts.size() < 2) {
 		return;
 	}
+	// The library: kCobbles limestone cobbles, kAllo allogenic ones (sandstone, granite, basalt), kChips spalls.
+	const int kCobbles = 8, kAllo = 3, kChips = 3;
 	if (clast_library.is_empty()) {
-		// Mostly the cave's own limestone; a few stones washed in from the rocks the stream crossed outside
-		// (allogenic: sandstone and granite), rounded as cobbles by the run.
-		const RockGenerator::RockType types[6] = { RockGenerator::ROCK_LIMESTONE, RockGenerator::ROCK_LIMESTONE, RockGenerator::ROCK_LIMESTONE, RockGenerator::ROCK_LIMESTONE, RockGenerator::ROCK_SANDSTONE, RockGenerator::ROCK_GRANITE };
-		for (int i = 0; i < 6; i++) {
+		for (int i = 0; i < kCobbles + kAllo + kChips; i++) {
 			Ref<RockGenerator> g;
 			g.instantiate();
-			g->set_rock_type(types[i]);
-			g->set_family(RockGenerator::FAMILY_COBBLE);
+			if (i < kCobbles) {
+				g->set_rock_type(RockGenerator::ROCK_LIMESTONE);
+				g->set_family(RockGenerator::FAMILY_COBBLE);
+				// From subrounded to well rounded: 0.6 to 3.5 abrasion lengths of transport.
+				g->set_transport_distance(RockGenerator::get_lithology(RockGenerator::ROCK_LIMESTONE).abrasion_length * (0.6 + 2.9 * real_t(i) / real_t(kCobbles - 1)));
+			} else if (i < kCobbles + kAllo) {
+				const RockGenerator::RockType at[3] = { RockGenerator::ROCK_SANDSTONE, RockGenerator::ROCK_GRANITE, RockGenerator::ROCK_BASALT };
+				g->set_rock_type(at[i - kCobbles]);
+				g->set_family(RockGenerator::FAMILY_COBBLE);
+			} else {
+				g->set_rock_type(RockGenerator::ROCK_LIMESTONE);
+				g->set_family(RockGenerator::FAMILY_SCREE);
+			}
 			g->set_seed(int(seed) * 31 + 1009 + i);
 			Ref<ArrayMesh> m = g->generate();
-			if (m.is_valid()) {
-				clast_library.push_back(m);
+			if (m.is_null()) {
+				clast_library.clear();
+				return;
 			}
-		}
-		if (clast_library.is_empty()) {
-			return;
+			clast_library.push_back(m);
 		}
 	}
-	RandomPCG rng(p_seed);
 	const int nl = clast_library.size();
+	// Each shape's half height (local y) and how far its lowest point sits below its origin, per unit scale.
+	LocalVector<real_t> half_h, low;
+	for (int i = 0; i < nl; i++) {
+		const Vector3 ax = clast_library[i]->get_meta("rock_axes", Vector3(1.4, 0.6, 1.0));
+		half_h.push_back(ax.y);
+		low.push_back(-real_t(float(clast_library[i]->get_meta("rock_bottom", -0.6f))));
+	}
+	RandomPCG rng(p_seed);
 	const real_t group_len = 6.0;
 	LocalVector<LocalVector<Transform3D>> xf;
 	LocalVector<LocalVector<Color>> cu;
@@ -3094,6 +3196,30 @@ void CaveNetwork3D::_scatter_clasts(const LocalVector<Vector3> &p_pts, const Loc
 			cu[s].clear();
 		}
 	};
+	// The stones placed so far, by 15 cm cell (x, z, footprint radius), so none goes through another.
+	HashMap<int64_t, LocalVector<Vector3>> placed;
+	const real_t cell = 0.15;
+	auto key = [&](real_t x, real_t z) -> int64_t {
+		return (int64_t(Math::floor(x / cell)) << 32) ^ (int64_t(Math::floor(z / cell)) & 0xffffffff);
+	};
+	auto clear_of = [&](real_t x, real_t z, real_t rad) -> bool {
+		const int64_t cx = int64_t(Math::floor(x / cell)), cz = int64_t(Math::floor(z / cell));
+		for (int64_t i = -1; i <= 1; i++) {
+			for (int64_t k = -1; k <= 1; k++) {
+				HashMap<int64_t, LocalVector<Vector3>>::Iterator it = placed.find(((cx + i) << 32) ^ ((cz + k) & 0xffffffff));
+				if (!it) {
+					continue;
+				}
+				for (const Vector3 &o : it->value) {
+					const real_t dx = o.x - x, dz = o.y - z;
+					if (dx * dx + dz * dz < Math::pow(0.85 * (o.z + rad), 2.0)) {
+						return false;
+					}
+				}
+			}
+		}
+		return true;
+	};
 	for (uint32_t j = 0; j + 1 < p_pts.size(); j++) {
 		const Vector3 a = p_pts[j], b = p_pts[j + 1];
 		Vector3 t = b - a;
@@ -3104,30 +3230,101 @@ void CaveNetwork3D::_scatter_clasts(const LocalVector<Vector3> &p_pts, const Loc
 		t /= sl;
 		const Vector3 side = t.cross(Vector3(0, 1, 0)).normalized();
 		const Vector3 down = Vector3(t.x, 0, t.z).normalized(); // downstream on the level
-		// Rows across the channel about 4 cm apart; along each row, stones by their own size.
-		for (real_t s = 0.0; s < sl; s += 0.04) {
-			const real_t f = s / sl;
-			const Vector3 c = a.lerp(b, f);
-			const real_t hw = 0.5 * Math::lerp(real_t(p_wid[j]), real_t(p_wid[j + 1]), f) / 1.05;
-			const real_t bed = c.y - Math::lerp(real_t(p_dep[j]), real_t(p_dep[j + 1]), f);
-			for (real_t u = -hw; u < hw;) {
-				const real_t mid = 1.0 - Math::abs(u) / MAX(hw, real_t(0.05)); // 1 in the thread, 0 at the margin
-				const real_t size = (0.02 + 0.07 * mid * mid) * (0.6 + 0.8 * rng.randf());
-				u += size * (0.9 + 0.6 * rng.randf());
-				if (rng.randf() > 0.12 + 0.4 * mid) {
-					continue; // sand between
+		FieldSource src;
+		AABB box(a, Vector3());
+		box.expand_to(b);
+		_gather(box.grow(3.0), src);
+		// The floor under (x, z): the field crosses from air (negative) to fill between y_top and y_bot.
+		auto floor_at = [&](real_t x, real_t z, real_t y_top, real_t y_bot) -> real_t {
+			if (_air(src, Vector3(x, y_top, z)) > 0.0 || _air(src, Vector3(x, y_bot, z)) < 0.0) {
+				return Math::NaN;
+			}
+			for (int it = 0; it < 14; it++) {
+				const real_t m = 0.5 * (y_top + y_bot);
+				if (_air(src, Vector3(x, m, z)) < 0.0) {
+					y_top = m;
+				} else {
+					y_bot = m;
 				}
-				const real_t sc = 0.5 * size; // b axis 2 units
-				const Vector3 p = c + side * u + down * (rng.randf() - 0.5) * 0.04;
-				Basis bs = Basis(Vector3(0, 1, 0), rng.randf() * Math::TAU);
-				// Imbrication: the upstream end tucked down, leaning on the stone above.
-				bs = Basis(side, -Math::deg_to_rad(8.0 + 14.0 * rng.randf()) * (rng.randf() < 0.75 ? 1.0 : -0.4)) * bs;
-				const real_t sink = 0.35 + 0.2 * rng.randf();
-				const Vector3 pos(p.x, bed + sc * 0.6 * (1.0 - 2.0 * sink), p.z);
-				// Allogenic stones (the last two shapes) one in eight.
-				const int shape = (nl > 2 && rng.randf() < 0.125) ? nl - 1 - int(rng.rand() % 2u) : int(rng.rand() % uint32_t(MAX(nl - 2, 1)));
-				xf[shape].push_back(Transform3D(bs.scaled(Vector3(sc, sc, sc)), pos));
-				cu[shape].push_back(Color(bed, 1.0, sc, rng.randf() * 0.98));
+			}
+			return 0.5 * (y_top + y_bot);
+		};
+		auto put = [&](int p_shape, const Vector3 &p_at, const Basis &p_rot, real_t p_sc, real_t p_sink, real_t p_ground, real_t p_wet) {
+			// Rests on its lowest point, then sunk a share of its height into the fill.
+			const Vector3 pos(p_at.x, p_at.y + low[p_shape] * p_sc - p_sink * 2.0 * half_h[p_shape] * p_sc, p_at.z);
+			xf[p_shape].push_back(Transform3D(p_rot.scaled(Vector3(p_sc, p_sc, p_sc)), pos));
+			cu[p_shape].push_back(Color(p_ground, p_wet, p_sc, rng.randf() * 0.98));
+		};
+		const real_t hw0 = 0.5 * real_t(p_wid[j]) / 1.05, hw1 = 0.5 * real_t(p_wid[j + 1]) / 1.05;
+		const real_t water0 = a.y, water1 = b.y;
+		// Darts over the channel: about one try per 3.5 cm square (the spacing test thins them).
+		const int tries = int(sl * (hw0 + hw1) / 0.0012);
+		for (int n = 0; n < tries; n++) {
+			const real_t f = rng.randf();
+			const real_t hw = Math::lerp(hw0, hw1, f);
+			const real_t u = (rng.randf() * 2.0 - 1.0) * hw;
+			const real_t mid = 1.0 - Math::abs(u) / MAX(hw, real_t(0.05)); // 1 in the thread, 0 at the margin
+			if (rng.randf() > 0.15 + 0.45 * mid) {
+				continue; // sand between
+			}
+			const real_t size = (0.02 + 0.07 * mid * mid) * (0.6 + 0.8 * rng.randf());
+			const real_t sc = 0.5 * size; // b axis 2 units
+			const Vector3 c = a.lerp(b, f) + side * u + down * (rng.randf() - 0.5) * 0.04;
+			const real_t rad = 1.2 * sc;
+			if (!clear_of(c.x, c.z, rad)) {
+				continue;
+			}
+			const real_t water = Math::lerp(water0, water1, f);
+			const real_t dep = Math::lerp(real_t(p_dep[j]), real_t(p_dep[j + 1]), f);
+			const real_t fy = floor_at(c.x, c.z, water + 0.3, water - dep - 0.5);
+			if (Math::is_nan(fy)) {
+				continue;
+			}
+			placed[key(c.x, c.z)].push_back(Vector3(c.x, c.z, rad));
+			Basis bs = Basis(Vector3(0, 1, 0), rng.randf() * Math::TAU);
+			// Imbrication: the upstream end tucked down, leaning on the stone above.
+			bs = Basis(side, -Math::deg_to_rad(8.0 + 14.0 * rng.randf()) * (rng.randf() < 0.75 ? 1.0 : -0.4)) * bs;
+			// Allogenic stones one in eight.
+			const int shape = rng.randf() < 0.125 ? kCobbles + int(rng.rand() % uint32_t(kAllo)) : int(rng.rand() % uint32_t(kCobbles));
+			// Washed clean: no soil contact band (its ground height well below), a thin biofilm only.
+			put(shape, Vector3(c.x, fy, c.z), bs, sc, 0.3 + 0.2 * rng.randf(), fy - 1.0, 0.6);
+		}
+		// Spalls at each wall's foot, on the bank: find the wall across the floor a hand above the fill.
+		for (real_t s = 0.15; s < sl; s += 0.35) {
+			const real_t f = s / sl;
+			const Vector3 c0 = a.lerp(b, f);
+			const real_t hw = Math::lerp(hw0, hw1, f);
+			const real_t dep = Math::lerp(real_t(p_dep[j]), real_t(p_dep[j + 1]), f);
+			for (int sd = -1; sd <= 1; sd += 2) {
+				real_t uw = -1.0;
+				for (real_t uu = 0.5 * hw; uu < 4.0 * hw + 1.5; uu += 0.04) {
+					if (_air(src, c0 + side * (real_t(sd) * uu) + Vector3(0, 0.25 - dep, 0)) > 0.0) {
+						uw = uu;
+						break;
+					}
+				}
+				if (uw < 0.0) {
+					continue;
+				}
+				const int count = int(rng.rand() % 3u);
+				for (int q = 0; q < count; q++) {
+					const real_t size = 0.03 + 0.11 * rng.randf() * rng.randf();
+					const real_t sc = 0.5 * size;
+					const real_t uu = uw - 0.02 - (0.05 + 0.3 * rng.randf()) * (0.5 + size * 4.0);
+					const Vector3 c = c0 + side * (real_t(sd) * uu) + down * (rng.randf() - 0.5) * 0.3;
+					if (!clear_of(c.x, c.z, 1.2 * sc)) {
+						continue;
+					}
+					const real_t fy = floor_at(c.x, c.z, c0.y + 0.6, c0.y - dep - 0.5);
+					if (Math::is_nan(fy)) {
+						continue;
+					}
+					placed[key(c.x, c.z)].push_back(Vector3(c.x, c.z, 1.2 * sc));
+					// Fallen any way up, tilted by the bank and by landing on each other.
+					Basis bs = Basis(Vector3(0, 1, 0), rng.randf() * Math::TAU);
+					bs = Basis(Vector3(rng.randf() - 0.5, 0, rng.randf() - 0.5).normalized(), Math::deg_to_rad(10.0 + 25.0 * rng.randf())) * bs;
+					put(kCobbles + kAllo + int(rng.rand() % uint32_t(kChips)), Vector3(c.x, fy, c.z), bs, sc, 0.1 + 0.15 * rng.randf(), fy - 1.0, fy < c0.y + 0.02 ? 0.6 : 0.0);
+				}
 			}
 		}
 		along += sl;

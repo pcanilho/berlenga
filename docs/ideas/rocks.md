@@ -1004,7 +1004,19 @@ frame). The bench's sea cave opens onto a beach, so a mouth with the swell in it
    centimetres deep shows by its bed, not its body (as in any caver's photograph): the mesher marks the stream's bed
    and a margin 12 cm plus 0.1 r wider than the water (vertex green, _stream_wet), and the wall shader lays washed
    gravel and cobbles there, darker than the dry fill, wet and glossy; with the lamp glints on the water (#359) the
-   stream reads in raster and PT alike. Still to do: sinks and resurgences, the sea swell into sea caves (needs a
+   stream reads in raster and PT alike. 18 Nov, second pass (docs review): the bed stones are real cobbles (14
+   shapes: limestone from subrounded to well rounded, 0.6 to 3.5 abrasion lengths of transport; sandstone, granite and
+   basalt washed in, one in eight), dart-thrown so none goes through another, each set on the field's own floor and
+   sunk 30 to 50% of its height, washed clean (no soil contact band); under water they and the bed lose their own
+   sheen (Fresnel at 1.5 / 1.33), the water surface carries it. The fill meets every wall in a bank (a smooth maximum
+   of the floor and the section, 0.3 r wide) instead of a crease, with spalls from the wall on it (scree-family
+   limestone at each wall's foot, and paler flakes in the shader where vertex blue, _wall_foot, marks the foot).
+   Wall joints are dark recessed slots (albedo to 0.22 in the crack, kinked at the centimetre, hairline to a few
+   centimetres wide, broken en echelon), and the wall bump's tilt is bounded at about 25 degrees: unbounded, the
+   summed octaves turned normals past the lamp into black blots and a groove's lit side into a white wire. Close up,
+   the micrite has its own millimetre speckle. Bench stream view: 0.4 m over the bed, 50 degree lens, a wide
+   segment, and a second lamp 5 m downstream 0.2 m over the water so the surface glints toward the lens.
+   Still to do: sinks and resurgences, the sea swell into sea caves (needs a
    coast with a cliff at the swash line; none of the generated coasts has one yet).
    Sea mouths (17 Nov): find_sea_entrances loosened for cliffed coasts with a beach or platform at the foot (top 6 m
    over the sea, sea within 150 m, a steep rise to 6 m within 6 to 25 m behind the mouth); CAVE_SEA_DEBUG=1 prints
