@@ -53,10 +53,13 @@ public:
 		float flame_spread = 0.02f; // m/s across and down the fabric; upward about eight times faster
 		float burn_through_time = 3.0f; // s from ignition to a hole
 		float glow_energy = 4.0f;
+		float water = 0.0f; // kg/m2 of water the fabric holds: heat must boil it off before the fabric can light
+		float wetness = 0.0f; // 0..1 for the look: water in the weave darkens it
 	};
 
 private:
 	LocalVector<float> heat; // J/m2 taken in
+	LocalVector<float> dried; // kJ/m2 spent boiling off the water held
 	LocalVector<float> ignited; // time lit, -1 before
 	LocalVector<float> progress; // 0..1 of the flame's way from a burning neighbour
 	LocalVector<float> jitter; // per particle, steady
@@ -90,6 +93,8 @@ public:
 	void fill_colors(PackedColorArray &r_colors, int p_count) const;
 	// The material with the char and glow read from vertex colours (base: the cloth's material, or null).
 	RID get_material(const Ref<Material> &p_base);
+	// Updates the material's wetness from settings.wetness.
+	void update_wetness();
 	int get_burning_count() const;
 	int get_burnt_count() const;
 };

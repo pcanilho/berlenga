@@ -265,6 +265,31 @@ void XPBDClothSolver::_finalize() {
 	rest_volume = _mesh_volume(rest_positions);
 }
 
+void XPBDClothSolver::refresh_masses() {
+	const int n = positions.size();
+	if ((int)base_inv_mass.size() != n || (int)rest_positions.size() != n) {
+		return;
+	}
+	LocalVector<float> mass;
+	mass.resize(n);
+	for (int i = 0; i < n; i++) {
+		mass[i] = 0.0f;
+	}
+	for (int t = 0; t + 2 < (int)indices.size(); t += 3) {
+		const int a = indices[t];
+		const int b = indices[t + 1];
+		const int c = indices[t + 2];
+		const float m = 0.5f * (rest_positions[b] - rest_positions[a]).cross(rest_positions[c] - rest_positions[a]).length() * settings.density / 3.0f;
+		mass[a] += m;
+		mass[b] += m;
+		mass[c] += m;
+	}
+	for (int i = 0; i < n; i++) {
+		base_inv_mass[i] = 1.0f / MAX(mass[i], 1.0e-6f);
+		inv_mass[i] = pinned[i] ? 0.0f : base_inv_mass[i];
+	}
+}
+
 // One global XPBD volume constraint: C = V(x) - pressure * rest_volume, with the
 // per-vertex gradient dV/dx_i accumulated from the incident triangles. Keeps a
 // closed soft body from pancaking under gravity and lets pressure > 1 inflate it.

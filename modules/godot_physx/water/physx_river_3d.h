@@ -126,6 +126,8 @@ private:
 	bool bend_superelevation = true; // the surface banks up against the outside of bends
 	bool standing_waves = true; // undular jump trains and supercritical cross-waves
 	bool snap_to_ground = true;
+	float ground_probe_height = 50.0f; // how far above the curve the ground rays start
+	int ground_probe_tries = 0; // builds put off while no ray found the ground (a floor joining the space late)
 	uint32_t ground_collision_mask = 1;
 	uint32_t obstacle_collision_mask = 0; // rocks measured on top of the (base) ground
 	float step_length = 1.0f; // m between cross-sections
@@ -276,6 +278,8 @@ public:
 	bool get_standing_waves() const { return standing_waves; }
 	void set_snap_to_ground(bool p_snap);
 	bool get_snap_to_ground() const { return snap_to_ground; }
+	void set_ground_probe_height(float p_height);
+	float get_ground_probe_height() const { return ground_probe_height; }
 	void set_ground_collision_mask(uint32_t p_mask);
 	uint32_t get_ground_collision_mask() const { return ground_collision_mask; }
 	void set_obstacle_collision_mask(uint32_t p_mask);

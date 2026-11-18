@@ -1,0 +1,1 @@
+- Water: `ground_probe_height` on PhysXRiver3D starts the ground rays under a roof, and a build waits for a floor that joins the physics space late; cave streams measure their real bed, so they thin to their edges instead of reading as a slab.

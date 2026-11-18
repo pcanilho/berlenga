@@ -23,6 +23,7 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 - **Fuel moisture from the weather** (`PhysXFireSpread3D.use_weather_moisture`): fuel dries or damps toward the air's equilibrium moisture, and rain wets it, slows the fire and puts it out.
 - **Burning objects** (`PhysXBurnable3D`, `embers`): wooden props catch fire from burning ground nearby, char with glowing cracks, smoulder in rain and throw embers that start new fires.
 - **Burning logs** (`PhysXFireSpread3D.vegetation_field`): fallen logs and branches catch from the fire under them, flame for minutes, then smoulder with glowing bark.
+- **Spot fires** (`PhysXFireSpread3D.spotting`, `spotting_scale`): burning grass, litter and logs throw embers that the plume lifts and the wind carries; one landing on dry fuel starts a new fire ahead of the front.
 - **Fire light and embers** (`PhysXFlow3D.fire_light`, `embers`): a burning Flow emitter lights its surroundings with a soft-shadowed light that flickers with the flame's puffing, and throws up glowing embers, in raster and path tracing.
 
   ![A campfire in a stone ring at night, seen from above, lighting the ground and stones](media/physx-campfire.jpg)
@@ -37,6 +38,7 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 
 - **Cloth tearing** (`PhysXCloth3D.tear_factor`, `physics/physx_3d/cloth/tearing`): overstretched edges split and the rip runs.
 - **Burning cloth** (`PhysXCloth3D.burnable`): cloth catches fire, chars with a glowing edge and burns through in holes until it falls apart.
+- **Wet cloth** (`PhysXCloth3D.weather_wetting`, `wetness`, `water_capacity`): rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire.
 - **Blast materials** (`PhysXBlastAsset.materials`, `bond_healths`): pieces carry several materials and each bond its own strength, so a limb breaks into bark, wood and leaves, and a twig joint gives before a trunk joint.
 - **Blast without stalls** (`PhysXBlastAsset.prepare_render()`; `initial_linear_velocity`, `initial_angular_velocity`): piece meshes are built once per asset, off the main thread, so a large break does not stall the frame; destructibles can start already moving.
 - **Streaming without stalls** (`physics/physx_3d/streaming/statics_per_step`): static bodies of streamed regions enter over a few frames, nearest first, and removals are batched; bodies with the same friction and bounce share one material, so the cost stays flat as the world grows.

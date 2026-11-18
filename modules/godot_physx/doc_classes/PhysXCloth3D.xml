@@ -22,6 +22,12 @@
 				Returns how many vertices have burnt through. Their triangles have left the mesh.
 			</description>
 		</method>
+		<method name="get_water_load" qualifiers="const">
+			<return type="float" />
+			<description>
+				Water the fabric holds now, in kg per square metre.
+			</description>
+		</method>
 		<method name="ignite">
 			<return type="void" />
 			<param index="0" name="position" type="Vector3" />
@@ -160,6 +166,12 @@
 		<member name="tear_factor" type="float" setter="set_tear_factor" getter="get_tear_factor" default="0.0">
 			How far a structural edge can stretch, as a multiple of its rest length and averaged over 50 ms, before it breaks. When one does, the cloth splits a vertex there in two, so the rip opens without losing any triangles and runs on as the load moves to the next edges; a pinned edge that breaks rips free of what holds it. At most a few vertices split per physics tick. [code]0[/code] (or anything up to [code]1[/code]) turns tearing off. Softer cloth ([member stiffness]) stretches further under the same load, so it tears at a lower force for the same factor. Tearing runs on the CPU solver: with [constant SIM_AUTO] a tearing cloth always uses it. The project setting [code]physics/physx_3d/cloth/tearing[/code] switches tearing off for every cloth. See also [signal torn].
 		</member>
+		<member name="water_capacity" type="float" setter="set_water_capacity" getter="get_water_capacity" default="1.0">
+			Kilograms of water a kilogram of the fabric holds when soaked, past which rain drips off: about 1 for cotton, more for wool and towelling, 0.3 for polyester.
+		</member>
+		<member name="weather_wetting" type="bool" setter="set_weather_wetting" getter="is_weather_wetting" default="true">
+			When enabled and a [WeatherMap3D] is active, rain soaks the cloth: it catches the rain by how it faces the rain's slant in the wind (a sheet hanging across the wind gets wet too), not under a roof or a closed canopy. It dries in the air at the rate open water evaporates for the air's temperature, humidity and wind (Penman's wind function), slower for the last water in the fibres.
+		</member>
 		<member name="weather_wind" type="bool" setter="set_weather_wind" getter="get_weather_wind" default="true">
 			If [code]true[/code] and a [WeatherMap3D] is in the scene, its wind at the cloth (mean wind on the log law plus its gusts) is added to [member wind] and the [member wind_area] wind. [member wind_turbulence] still shapes only those two.
 		</member>
@@ -174,6 +186,9 @@
 		</member>
 		<member name="wind_turbulence" type="float" setter="set_wind_turbulence" getter="get_wind_turbulence" default="0.4">
 			Adds a swirling gust on top of the steady wind, as a fraction of its speed.
+		</member>
+		<member name="wetness" type="float" setter="set_wetness" getter="get_wetness" default="0.0">
+			How wet the fabric is, 0 dry to 1 soaked ([member water_capacity]). Wet cloth is heavier (it carries the water's weight), bends more easily, looks darker and slightly glossier (light trapped in the wet weave, Lekner and Dorf 1988), and clings: it sticks to what it touches and slides less. Heat must boil the water off before it can catch fire, and flame spreads over it more slowly. Set it from a script to soak or dry a cloth at once (CPU solver; the look needs Flow).
 		</member>
 	</members>
 	<signals>

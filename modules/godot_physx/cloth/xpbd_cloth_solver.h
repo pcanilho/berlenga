@@ -108,6 +108,10 @@ public:
 	void set_pin_target(int p_vertex, const Vector3 &p_world_pos);
 	void clear_pin_target(int p_vertex);
 
+	// Recomputes every vertex's mass from the rest triangles and settings.density (a cloth taking up water), keeping
+	// pins and motion.
+	void refresh_masses();
+
 	// Advance the simulation. p_wind is a world-space air velocity.
 	// Returns how many vertices tore apart (split) at the end of this step (settings.tear_factor).
 	int step(float p_dt, const Vector3 &p_gravity, const Vector3 &p_wind);
