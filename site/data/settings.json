@@ -2778,7 +2778,7 @@
     "SHRUB_HEDGE"
    ],
    "note": "",
-   "what": "hawthorn, blackthorn, hazel, field maple and dog rose as flailed 2 m hedge segments, with blossom and fruit in season; foliage grows in clumps with gaps and shaded undersides, and each grown-out shrub takes its own habit.",
+   "what": "hawthorn, blackthorn, hazel, field maple and dog rose as flailed 2 m hedge segments, with blossom and fruit in season; foliage grows in clumps with gaps and shaded undersides, and each grown-out shrub takes its own habit. Laid hedges (`SHRUB_LAID_HEDGE`, `FORM_LAID_HEDGE`): stems cut and laid over at 28 to 40 degrees between stakes every 45 cm, held by twisted hazel binders.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
