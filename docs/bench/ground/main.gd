@@ -2029,6 +2029,32 @@ func _run_clog_tests() -> void:
 			"%.0f N up, %.0f N drag" % [belly["on"][1], belly["on"][2]])
 	_check("the slurry the car sits in marks the body: a mud line round the belly", belly["on"][4] > 0.05 and belly["on"][4] < 0.4, "%.0f cm above the chassis bottom" % (belly["on"][4] * 100.0))
 	_check("the belly ploughs a trough", belly["on"][3] > 0.03 and belly["on"][3] > belly["off"][3] + 0.05, "%.1f cm (%.1f cm without)" % [belly["on"][3] * 100.0, belly["off"][3] * 100.0])
+	# Treads (mud round 10): the same 4 s in stiff sticky clay on road tyres, mud tyres and chains.
+	var treads := {}
+	for t in [PhysXVehicleWheel3D.TREAD_ROAD, PhysXVehicleWheel3D.TREAD_MUD, PhysXVehicleWheel3D.TREAD_CHAINS]:
+		await _soil_scene("soil")
+		await _paint_mud(0.8, STIFF_MUD)
+		var tc := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+		tc.belly_drag = false
+		for c in tc.get_children():
+			if c is PhysXVehicleWheel3D:
+				c.tread = t
+		surface.follow_target = surface.get_path_to(tc)
+		var r: Array = await _drive(tc, 4.0, 0.5)
+		var fill := 0.0
+		for w in 4:
+			fill += tc.get_wheel_mud(w) / 4.0
+		treads[t] = [r[0], fill]
+		print("  tread %d: %.2f m in 4 s, tread %.0f%% full" % [t, r[0], fill * 100.0])
+	var rd: Array = treads[PhysXVehicleWheel3D.TREAD_ROAD]
+	var mt: Array = treads[PhysXVehicleWheel3D.TREAD_MUD]
+	var ch: Array = treads[PhysXVehicleWheel3D.TREAD_CHAINS]
+	_check("road tyres pack with clay, mud tyres throw it out", rd[1] > 1.2 * mt[1], "%.0f%% full against %.0f%%" % [rd[1] * 100.0, mt[1] * 100.0])
+	_check("mud tyres and chains get further in sticky clay than road tyres", mt[0] > rd[0] + 0.1 and ch[0] > rd[0] + 0.1,
+			"%.2f m and %.2f m against %.2f m" % [mt[0], ch[0], rd[0]])
+	var g_dry := PhysXVehicleWheel3D.tread_firm_grip(PhysXVehicleWheel3D.TREAD_CHAINS, 0.0, 0.0)
+	var g_ice := PhysXVehicleWheel3D.tread_firm_grip(PhysXVehicleWheel3D.TREAD_CHAINS, 1.0, 0.0)
+	_check("chains slide on dry road and bite on ice", g_dry < 0.8 and g_ice > 2.5, "%.2f dry, %.2f on ice" % [g_dry, g_ice])
 
 
 # Meshes for a bench car (mud stage 3b): a painted body over the chassis box and a cab, tyres on the wheels.
