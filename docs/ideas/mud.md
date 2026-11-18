@@ -636,6 +636,11 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   Bingham repose), rain from the weather map's history filling ruts and settling clay, and the tracked film drying,
   run in a few large stable steps on the CPU before it is seeded. Bounded per tile so a long absence settles to
   the ground's rest state rather than integrating hours.
+  **Built (ageing ruts).** Kept tiles carry the unix time they were written (file version 2). Read back, a tile is
+  stepped over the time away times `ruts_time_scale` with _age()'s own decays, which are exponential and so exact in
+  one step: tint and mud film dry by `drying_time`, relief softens at `rain_smoothing` times `ruts_away_rain` (0.1 mm/h
+  default, a temperate 900 mm a year: a 4 cm rut is about 1 cm after a month), water goes as evaporation beats that
+  rain. A tile cached more than ten world minutes comes back from disk, aged. Bench `--test=ruts` (35 days).
 - **Thrown clods leave lumps.** A landed clod over a size threshold deposits a mud depth (relief, with rim) instead
   of only the tint; mud on mud merges into the layer, on firm ground it dries and cracks as a small cake.
 - **Tread and sole patterns.** The film is laid through the tyre's or sole's pattern mask (the lug bars and boot

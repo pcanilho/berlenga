@@ -217,6 +217,12 @@ public:
 	// slot. Call before shift_to.
 	void seed_tile(Vector2i p_tile, const uint32_t *p_data, int p_stride, int p_max_cached_tiles);
 	bool has_cached(Vector2i p_tile) const { return cache.has(p_tile); }
+	void forget_cached(Vector2i p_tile) {
+		if (Slot *c = cache.getptr(p_tile)) {
+			free_slots.push_back(c->slot);
+			cache.erase(p_tile);
+		}
+	}
 	// Reads the cached tiles p_tiles (world tiles inside the field, seeded with seed_tile) into the field where it
 	// stands, the rest kept as they are: a tile brought back from disk (kept ruts) after the field arrived.
 	// Returns false (nothing done) while a move or a reset is waiting.

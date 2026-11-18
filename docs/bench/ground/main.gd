@@ -100,6 +100,7 @@ var legs_test := false
 var muddy_test := false
 var tracked_test := false
 var ruts_test := false
+var ruts_scale := 1.0 # kept ruts' world seconds per real second while away
 var ruts_on := false # kept ruts (written to user://): off on the bench, or one run's prints turn up in the next
 var near_on := true
 var out := ""
@@ -314,6 +315,7 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 	surface.near_field = near_on
 	surface.sand_glints = not OS.get_cmdline_user_args().has("--glints=0") # A/B
 	surface.keep_ruts = ruts_on
+	surface.ruts_time_scale = ruts_scale
 	if OS.get_cmdline_user_args().has("--meadow"):
 		_meadow(surface)
 	surface.ruts_path = "user://bench_ruts"
@@ -1120,6 +1122,27 @@ func _run_ruts_tests() -> void:
 	var e2 := -surface.get_surface_height_at(b)
 	_check("and in the next session, both prints as they were", absf(d2 - d0) < 0.1 * d0 and absf(e2 - e0) < 0.1 * e0,
 			"%.1f and %.1f cm, %.1f and %.1f cm before" % [d2 * 100.0, e2 * 100.0, d0 * 100.0, e0 * 100.0])
+	# Weeks away (the world's clock run fast while the tiles were on disk): rain has softened them (mud round 4).
+	var away_s := 3.0e6 # 35 days
+	var t_left := Time.get_unix_time_from_system()
+	ruts_scale = away_s / 4.0
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+	for i in 6:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var real_away := Time.get_unix_time_from_system() - t_left
+	var d5 := -surface.get_surface_height_at(a)
+	var want := d0 * exp(-surface.rain_smoothing * surface.ruts_away_rain * real_away * ruts_scale / 3600.0)
+	_check("kept ruts come back aged by the time away: rain has softened them", d5 < 0.9 * d0 and d5 > 0.05 * d0 and absf(d5 - want) < 0.25 * want,
+			"%.1f cm after %.0f days away (%.1f cm expected), %.1f cm when left" % [d5 * 100.0, real_away * ruts_scale / 86400.0, want * 100.0, d0 * 100.0])
+	ruts_scale = 1.0
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+	for i in 3:
+		await get_tree().physics_frame
+	surface.press_box(a, Vector2(0.11, 0.29), 0.0, 0.0, 0.04)
+	for i in 4:
+		await get_tree().physics_frame
+	surface.sync_deformation()
 	# Flattened (cleared) and left: its file goes, so a later visit finds it flat.
 	surface.clear_deformation()
 	for i in 3:

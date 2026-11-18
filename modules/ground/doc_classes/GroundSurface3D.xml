@@ -666,6 +666,12 @@
 		<member name="ruts_path" type="String" setter="set_ruts_path" getter="get_ruts_path" default="&quot;user://ground_ruts&quot;">
 			The folder the kept ruts go to (see [member keep_ruts]).
 		</member>
+		<member name="ruts_away_rain" type="float" setter="set_ruts_away_rain" getter="get_ruts_away_rain" default="0.1">
+			The mean rain while the player is away, mm/h (0.1: a temperate 900 mm a year): kept ruts read back after time away are softened by it at [member rain_smoothing], and their water goes as far as evaporation beats it (see [member keep_ruts]).
+		</member>
+		<member name="ruts_time_scale" type="float" setter="set_ruts_time_scale" getter="get_ruts_time_scale" default="1.0">
+			World seconds per real second while away from kept ruts (see [member keep_ruts]): a tile read back is aged by the time since it was written times this, its turned tint and mud film dried ([member drying_time]), its relief softened and its water evaporated, as if the field had stayed over it. 0 keeps tiles exactly as left. A tile the field left more than ten world minutes ago comes back from disk, aged, rather than from the cache.
+		</member>
 		<member name="tracked_mud" type="bool" setter="set_tracked_mud" getter="is_tracked_mud" default="true">
 			If [code]true[/code], mud carried out onto firm ground is left on it ([method track_mud]): a vehicle's clogged tread presses part of its clay down as it rolls (most at a crawl, little at a spin, where it flies instead), and boots leave heel and forefoot prints that fade over a dozen steps as the soles come clean. The film darkens the ground while wet, dries in place to the clay's pale tone, is kept by later tyre and foot presses, and is washed off by standing water or dug away. Both renderers draw it.
 		</member>

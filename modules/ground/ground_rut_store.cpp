@@ -34,9 +34,10 @@
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/math/math_funcs.h"
+#include "core/os/time.h"
 
 static const uint32_t RUT_MAGIC = 0x54555247; // "GRUT"
-static const uint32_t RUT_VERSION = 1;
+static const uint32_t RUT_VERSION = 2; // 2: the unix time it was written, after the tile size
 
 void GroundRutStore::configure(const String &p_dir, const String &p_kind, float p_texel) {
 	const String want_prefix = p_dir.is_empty() ? String() : vformat("%s%d_", p_kind, int(Math::round(p_texel * 1e5f)));
@@ -170,11 +171,19 @@ void GroundRutStore::store(const GroundDeformField &p_field, Vector2i p_tile, in
 	f->store_32(RUT_MAGIC);
 	f->store_32(RUT_VERSION);
 	f->store_32(GroundDeformField::TILE);
+	const double now = Time::get_singleton()->get_unix_time_from_system();
+	f->store_double(now);
+	written[p_tile] = now;
 	f->store_buffer(reinterpret_cast<const uint8_t *>(data.ptr()), data.size() * 4);
 	on_disk.insert(p_tile);
 }
 
-bool GroundRutStore::load(Vector2i p_tile, LocalVector<uint32_t> &r_data) {
+double GroundRutStore::written_ago(Vector2i p_tile) const {
+	const double *t = written.getptr(p_tile);
+	return t ? Time::get_singleton()->get_unix_time_from_system() - *t : -1.0;
+}
+
+bool GroundRutStore::load(Vector2i p_tile, LocalVector<uint32_t> &r_data, double *r_age) {
 	if (!has(p_tile)) {
 		return false;
 	}
@@ -184,8 +193,16 @@ bool GroundRutStore::load(Vector2i p_tile, LocalVector<uint32_t> &r_data) {
 		return false;
 	}
 	const int T = GroundDeformField::TILE;
-	if (f->get_32() != RUT_MAGIC || f->get_32() != RUT_VERSION || int(f->get_32()) != T) {
+	if (f->get_32() != RUT_MAGIC) {
 		return false;
+	}
+	const uint32_t version = f->get_32();
+	if ((version != 1 && version != RUT_VERSION) || int(f->get_32()) != T) {
+		return false;
+	}
+	const double when = version >= 2 ? f->get_double() : 0.0;
+	if (r_age) {
+		*r_age = when > 0.0 ? MAX(Time::get_singleton()->get_unix_time_from_system() - when, 0.0) : 0.0;
 	}
 	r_data.resize(T * T * 2);
 	return f->get_buffer(reinterpret_cast<uint8_t *>(r_data.ptr()), T * T * 2 * 4) == uint64_t(T * T * 2 * 4);
@@ -205,4 +222,5 @@ void GroundRutStore::clear() {
 		}
 	}
 	on_disk.clear();
+	written.clear();
 }

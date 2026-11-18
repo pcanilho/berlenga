@@ -3657,7 +3657,16 @@ void GroundSurface3D::_ruts_arrive(const GroundDeformField &p_field, GroundRutSt
 			if (p_field.valid && o.x >= 0 && o.y >= 0 && o.x < nt && o.y < nt) {
 				continue;
 			}
-			const bool cached = p_host ? p_host->has_cached(w) : p_field.has_cached(w);
+			bool cached = p_host ? p_host->has_cached(w) : p_field.has_cached(w);
+			if (cached && ruts_time_scale > 0.0f && r_store.written_ago(w) * ruts_time_scale > 600.0) {
+				// Away long enough to have changed: the kept copy comes back aged, not the cache's as left.
+				if (p_host) {
+					const_cast<GroundDeformGPUHost *>(p_host)->forget_cached(w);
+				} else {
+					const_cast<GroundDeformField &>(p_field).forget_cached(w);
+				}
+				cached = false;
+			}
 			if (!cached && r_store.has(w) && !r_pending.has(w)) {
 				r_pending.push_back(w);
 			}
@@ -3670,7 +3679,9 @@ void GroundSurface3D::_ruts_read_cpu(GroundDeformField &r_field, GroundRutStore 
 	const Vector2i t0 = r_field.origin / T;
 	LocalVector<uint32_t> data;
 	for (const Vector2i &w : r_pending) {
-		if (r_store.load(w, data)) {
+		double age = 0.0;
+		if (r_store.load(w, data, &age)) {
+			_ruts_age(data, age);
 			GroundRutStore::unpack(r_field, w.x - t0.x, w.y - t0.y, data);
 		}
 	}
@@ -3684,12 +3695,45 @@ void GroundSurface3D::_ruts_read_gpu(const GroundDeformField &p_field, GroundRut
 	}
 	LocalVector<uint32_t> data;
 	for (const Vector2i &w : r_pending) {
-		if (r_store.load(w, data)) {
+		double age = 0.0;
+		if (r_store.load(w, data, &age)) {
+			_ruts_age(data, age);
 			r_host.seed_tile(w, data.ptr(), 2, max_cached_tiles);
 		}
 	}
 	if (r_host.pull_cached(p_field, r_pending)) {
 		r_pending.clear();
+	}
+}
+
+// A kept tile read back after time away is stepped over it as _age() would have (mud round 4): the turned ground's
+// tint and the tracked film dry, rain over the time softens soil prints (at the mean rate ruts_away_rain), and the
+// water in them goes as evaporation beats that rain. Exact for these exponential decays however long the absence.
+void GroundSurface3D::_ruts_age(LocalVector<uint32_t> &r_data, double p_seconds) const {
+	const double secs = MIN(p_seconds * double(ruts_time_scale), 3.0e7); // a year at most
+	if (secs < 60.0) {
+		return;
+	}
+	const float dry = float(Math::exp(-secs / double(drying_time)));
+	const float keep = float(Math::exp(-double(rain_smoothing * ruts_away_rain) * secs / 3600.0));
+	const float loss = float(double(MAX(_evaporation() - ruts_away_rain / 3.6e6f, 0.0f)) * secs);
+	const int count = int(r_data.size()) / 2;
+	for (int k = 0; k < count; k++) {
+		float dn = Math::half_to_float(uint16_t(r_data[k * 2] & 0xffff)) * keep;
+		float rm = Math::half_to_float(uint16_t(r_data[k * 2] >> 16)) * keep;
+		float fr = Math::half_to_float(uint16_t(r_data[k * 2 + 1] & 0xffff));
+		float wd = Math::half_to_float(uint16_t(r_data[k * 2 + 1] >> 16));
+		if (fr >= 4.0f) {
+			const Vector2 sq = GroundDeformField::mud_band_share_wet(fr);
+			fr = GroundDeformField::mud_band(sq.x, sq.y * dry);
+		} else if (fr < 2.0f) {
+			fr *= dry;
+		}
+		wd = MAX(wd - loss, 0.0f);
+		dn = dn < 1e-5f ? 0.0f : dn;
+		rm = rm < 1e-5f ? 0.0f : rm;
+		r_data[k * 2] = uint32_t(Math::make_half_float(dn)) | (uint32_t(Math::make_half_float(rm)) << 16);
+		r_data[k * 2 + 1] = uint32_t(Math::make_half_float(fr)) | (uint32_t(Math::make_half_float(wd)) << 16);
 	}
 }
 
@@ -4544,6 +4588,10 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_keeping_ruts"), &GroundSurface3D::is_keeping_ruts);
 	ClassDB::bind_method(D_METHOD("set_ruts_path", "path"), &GroundSurface3D::set_ruts_path);
 	ClassDB::bind_method(D_METHOD("get_ruts_path"), &GroundSurface3D::get_ruts_path);
+	ClassDB::bind_method(D_METHOD("set_ruts_time_scale", "scale"), &GroundSurface3D::set_ruts_time_scale);
+	ClassDB::bind_method(D_METHOD("get_ruts_time_scale"), &GroundSurface3D::get_ruts_time_scale);
+	ClassDB::bind_method(D_METHOD("set_ruts_away_rain", "rate"), &GroundSurface3D::set_ruts_away_rain);
+	ClassDB::bind_method(D_METHOD("get_ruts_away_rain"), &GroundSurface3D::get_ruts_away_rain);
 	ClassDB::bind_method(D_METHOD("save_ruts"), &GroundSurface3D::save_ruts);
 	ClassDB::bind_method(D_METHOD("clear_saved_ruts"), &GroundSurface3D::clear_saved_ruts);
 	ClassDB::bind_method(D_METHOD("get_saved_rut_tile_count"), &GroundSurface3D::get_saved_rut_tile_count);
@@ -4704,6 +4752,8 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "tracked_mud"), "set_tracked_mud", "is_tracked_mud");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "keep_ruts"), "set_keep_ruts", "is_keeping_ruts");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "ruts_path"), "set_ruts_path", "get_ruts_path");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ruts_time_scale", PROPERTY_HINT_RANGE, "0,1000,0.01,or_greater"), "set_ruts_time_scale", "get_ruts_time_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ruts_away_rain", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:mm/h"), "set_ruts_away_rain", "get_ruts_away_rain");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "desiccation_cracks"), "set_desiccation_cracks", "is_desiccation_cracks");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");
 	ADD_GROUP("Drawing", "");

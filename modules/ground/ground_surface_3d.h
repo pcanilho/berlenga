@@ -324,6 +324,9 @@ private:
 	// Ruts kept across the world (mud round 3): tiles leaving a field go to disk, and come back when it returns.
 	bool keep_ruts = true;
 	String ruts_path = "user://ground_ruts";
+	float ruts_time_scale = 1.0f; // world seconds per real second while away (0: kept as left)
+	float ruts_away_rain = 0.1f; // mean rain while away, mm/h (a temperate 900 mm a year)
+	void _ruts_age(LocalVector<uint32_t> &r_data, double p_seconds) const;
 	GroundRutStore rut_main;
 	GroundRutStore rut_near;
 	LocalVector<Vector2i> rut_main_pending; // world tiles in the field waiting to be read in from disk
@@ -611,6 +614,10 @@ public:
 	bool is_keeping_ruts() const { return keep_ruts; }
 	void set_ruts_path(const String &p_path);
 	String get_ruts_path() const { return ruts_path; }
+	void set_ruts_time_scale(float p_scale) { ruts_time_scale = MAX(p_scale, 0.0f); }
+	float get_ruts_time_scale() const { return ruts_time_scale; }
+	void set_ruts_away_rain(float p_rate) { ruts_away_rain = MAX(p_rate, 0.0f); }
+	float get_ruts_away_rain() const { return ruts_away_rain; }
 	void save_ruts();
 	void clear_saved_ruts();
 	int get_saved_rut_tile_count();

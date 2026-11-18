@@ -159,6 +159,7 @@ public:
 	void clear();
 	int cached_tile_count() const { return cache.size(); }
 	bool has_cached(Vector2i p_tile) const { return cache.has(p_tile); }
+	void forget_cached(Vector2i p_tile) { cache.erase(p_tile); }
 
 	float sample(const LocalVector<float> &p_field, float p_x, float p_z) const;
 	float dent_at(float p_x, float p_z) const { return valid ? sample(dent, p_x, p_z) : 0.0f; }
