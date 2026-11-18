@@ -114,6 +114,12 @@ private:
 	// capsules is skipped (those are solids through collide_with_bodies).
 	bool terrain_floor = true;
 	NodePath terrain_path;
+	// AMBIENT WIND (docs/ideas/wind.md): the WeatherMap3D's wind over the gas, as air-only boxes in layers up
+	// the gas (the log profile, terrain and gusts sampled at each layer's middle) that reserve no blocks: smoke
+	// from a chimney or a campfire leans and drifts with the weather. weather_wind_coupling: per second.
+	bool weather_wind = true;
+	float weather_wind_coupling = 1.0f;
+	void _gather_weather_wind(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters) const;
 	float terrain_floor_spacing = 0.5f;
 	HashMap<Vector2i, float> terrain_heights; // ground height at grid nodes (NaN: none, or already a collider)
 	float terrain_heights_spacing = 0.0f;
@@ -305,6 +311,10 @@ public:
 	bool is_floor_enabled() const { return floor_enabled; }
 	void set_floor_height(float p_v) { floor_height = p_v; }
 	float get_floor_height() const { return floor_height; }
+	void set_weather_wind(bool p_v) { weather_wind = p_v; }
+	bool is_weather_wind() const { return weather_wind; }
+	void set_weather_wind_coupling(float p_v) { weather_wind_coupling = MAX(p_v, 0.0f); }
+	float get_weather_wind_coupling() const { return weather_wind_coupling; }
 	void set_terrain_floor(bool p_v) { terrain_floor = p_v; }
 	bool is_terrain_floor() const { return terrain_floor; }
 	void set_terrain_path(const NodePath &p_path) {

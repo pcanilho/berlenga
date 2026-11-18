@@ -71,6 +71,8 @@ struct Emitter {
 	float smoke = 1.0f;
 	float divergence = 0.0f;
 	float couple_rate = 2.0f;
+	// false: acts only where gas already is (the ambient wind), reserving no blocks of its own.
+	bool allocate = true;
 	// A solid for the gas: zero smoke/heat inside, the gas takes on
 	// body_velocity there. Allocates no grid of its own.
 	bool collision = false;
