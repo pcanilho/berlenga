@@ -938,7 +938,7 @@ river gravels by mossy saxifrage, stonecrop and, near water, sedges and rushes.
   make_stones pairs green moss (+1 scree, +0.6 river) with a smaller, sparser yellow-olive one (-1).
 - Next: the river sets reading the stones' water film.
 
-## Far hedges as voxel bricks (Paulo picked 18 Nov; to build)
+## Far hedges as voxel bricks (Paulo picked 18 Nov; built)
 
 A hedge segment is 70k to 330k triangles, and a farmland view holds hundreds of them. Past some
 tens of metres a hedge's leaves and twigs are far below a pixel, so their shape and their light are
@@ -964,3 +964,23 @@ The fork has no compute rasteriser and must stay path-traceable, so the bricks b
    near segments real twigs. Shadows and PT trace the same shell.
 
 Then woodland edges and tree crowns the same way, if it holds up.
+
+Built (`VegetationVoxelLod::make_shell`, `GrassField3D.make_voxel_shell`, `hedge_voxel_lods` on):
+
+- Triangles are sampled every voxel/3 with their material's look (BaseMaterial3D or a ShaderMaterial
+  made from its code, so leaf flutter keeps working): colour, vertex colour (linear unless the
+  material says sRGB), texture with its alpha cut-out. Normals are turned outward from the core for
+  two-sided leaves.
+- Coverage 1 - exp(-0.5 L) for leaf area L per voxel face; solid past 0.35. Faces of partly filled
+  voxels sit inset, so the shell is not a lattice of whole cubes.
+- The shell must not look brighter than the hedge it stands for. Three terms, all from the voxel
+  grid: the filled share of the 26 neighbours as ambient occlusion; a deep leaf cloud's single
+  scattering brings its reflectance to about half the leaf albedo (Ross 1981; Goudriaan 1977), so
+  0.45 + 0.55 exp(-tau/2) with tau the leaf optical depth behind the face; and the rays the leaves in
+  front let through end on shade (a fifth of the leaf brightness). Normals blend the voxel's mean
+  leaf normal (by its length) with the crown's rounded outward direction, the spherical-normal
+  foliage trick, so the brick lights as one soft mass.
+- Hawthorn segment: full 279k triangles; 10 cm 4.5k; 20 cm 0.9k; 40 cm 0.2k; about 50 ms per level.
+  Far views: the mean colour of each level is within a few sRGB values of the full hedge. Levels
+  swap by visibility range: full to 30 m, 10 cm to 70 m, 20 cm to 150 m, 40 cm beyond, 3 m fades.
+- Not done: per-pixel normal dither from the distribution (step 3); greedy face merging.

@@ -263,6 +263,8 @@ private:
 	// each field's edge, hedge_offset metres out (past the verge), one gateway gap per field.
 	bool hedges = true;
 	float hedge_offset = 3.5f;
+	bool hedge_voxel_lods = true; // Voxel shells past 30 m (VegetationVoxelLod).
+	static inline HashMap<String, Ref<Mesh>> hedge_shell_cache;
 	LocalVector<Node3D *> hedge_nodes;
 	LocalVector<CropFieldMask::Hedge> hedge_runs; // World xz, for the mask.
 	int hedge_day = -1000;
@@ -517,7 +519,10 @@ public:
 	bool get_hedges() const { return hedges; }
 	void set_hedge_offset(float p_offset);
 	float get_hedge_offset() const { return hedge_offset; }
+	void set_hedge_voxel_lods(bool p_enabled);
+	bool get_hedge_voxel_lods() const { return hedge_voxel_lods; }
 	int get_hedge_segment_count() const;
+	static Ref<ArrayMesh> make_voxel_shell(const Ref<Mesh> &p_mesh, float p_voxel);
 	Array get_fields() const { return fields; }
 	float get_field_stage(int p_index) const;
 	static float crop_calendar_stage(int p_sown_day, int p_harvest_day, int p_day);

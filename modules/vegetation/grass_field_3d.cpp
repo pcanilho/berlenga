@@ -31,6 +31,7 @@
 
 #include "grass_field_3d.h"
 #include "tree_generator.h"
+#include "vegetation_voxel_lod.h"
 #include "vegetation_fire.h"
 #include "vegetation_light.h"
 
@@ -1192,6 +1193,18 @@ void GrassField3D::set_hedges(bool p_enabled) {
 	_queue_hedges();
 }
 
+Ref<ArrayMesh> GrassField3D::make_voxel_shell(const Ref<Mesh> &p_mesh, float p_voxel) {
+	return VegetationVoxelLod::make_shell(p_mesh, p_voxel);
+}
+
+void GrassField3D::set_hedge_voxel_lods(bool p_enabled) {
+	if (hedge_voxel_lods == p_enabled) {
+		return;
+	}
+	hedge_voxel_lods = p_enabled;
+	_queue_hedges();
+}
+
 void GrassField3D::set_hedge_offset(float p_offset) {
 	hedge_offset = MAX(p_offset, 0.0f);
 	_queue_hedges();
@@ -1202,7 +1215,7 @@ int GrassField3D::get_hedge_segment_count() const {
 	for (const Node3D *h : hedge_nodes) {
 		for (int i = 0; i < h->get_child_count(); i++) {
 			const MultiMeshInstance3D *mmi = Object::cast_to<MultiMeshInstance3D>(h->get_child(i));
-			if (mmi && mmi->get_multimesh().is_valid()) {
+			if (mmi && mmi->get_multimesh().is_valid() && String(mmi->get_name()).ends_with("lod0")) {
 				n += mmi->get_multimesh()->get_instance_count();
 			}
 		}
@@ -1353,8 +1366,8 @@ void GrassField3D::_build_hedges() {
 				}
 				const uint32_t hv = hash_murmur3_one_32(uint32_t(k), run);
 				const int variant = int(hv % VARIANTS);
-				const Vector2 p0 = a + dir * s + out * hedge_offset;
-				Vector3 at(p0.x, base_y, p0.y);
+				// Segment meshes are centred on their origin, 2 m along local +X.
+				Vector3 at(mid.x, base_y, mid.y);
 				if (map) {
 					const Vector3 pm(mid.x, 0.0f, mid.y);
 					at.y = map->get_height_at(pm) - 0.05f;
@@ -1394,22 +1407,45 @@ void GrassField3D::_build_hedges() {
 			if (xf[k][v].is_empty() || meshes.is_empty()) {
 				continue;
 			}
-			Ref<MultiMesh> mm;
-			mm.instantiate();
-			mm->set_transform_format(MultiMesh::TRANSFORM_3D);
-			mm->set_mesh(meshes[v % meshes.size()]);
-			mm->set_instance_count(xf[k][v].size());
-			for (uint32_t t = 0; t < xf[k][v].size(); t++) {
-				mm->set_instance_transform(t, xf[k][v][t]);
+			// The real segment near, voxel shells further out (docs/ideas/vegetation.md, "Far hedges
+			// as voxel bricks"): 10 cm voxels from 30 m, 20 cm from 70 m, 40 cm from 150 m.
+			const Ref<Mesh> full = meshes[v % meshes.size()];
+			const float ranges[5] = { 0.0f, 30.0f, 70.0f, 150.0f, 0.0f };
+			const float voxels[4] = { 0.0f, 0.1f, 0.2f, 0.4f };
+			for (int lod = 0; lod < 4; lod++) {
+				Ref<Mesh> lm = full;
+				if (lod > 0) {
+					const String key = vformat("%s_%d_%d_%d", String::num_int64(int64_t(mix[k].preset)), v, lod, hedge_day);
+					if (!hedge_shell_cache.has(key)) {
+						hedge_shell_cache[key] = VegetationVoxelLod::make_shell(full, voxels[lod], 7 + v * 13 + lod);
+					}
+					lm = hedge_shell_cache[key];
+				}
+				if (lm.is_null() || lm->get_surface_count() == 0) {
+					continue;
+				}
+				Ref<MultiMesh> mm;
+				mm.instantiate();
+				mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+				mm->set_mesh(lm);
+				mm->set_instance_count(xf[k][v].size());
+				for (uint32_t t = 0; t < xf[k][v].size(); t++) {
+					mm->set_instance_transform(t, xf[k][v][t]);
+				}
+				MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+				mmi->set_name(vformat("Hedge%d_%d_lod%d", k, v, lod));
+				mmi->set_multimesh(mm);
+				if (hedge_voxel_lods) {
+					mmi->set_visibility_range_begin(ranges[lod]);
+					mmi->set_visibility_range_end(ranges[lod + 1]);
+					mmi->set_visibility_range_begin_margin(lod > 0 ? 3.0f : 0.0f);
+					mmi->set_visibility_range_end_margin(lod < 3 ? 3.0f : 0.0f);
+				} else if (lod > 0) {
+					memdelete(mmi);
+					continue;
+				}
+				holder->add_child(mmi);
 			}
-			MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
-			mmi->set_name(vformat("Hedge%d_%d", k, v));
-			mmi->set_multimesh(mm);
-			const float range = species[k]->get_visibility_range();
-			if (range > 0.0f) {
-				mmi->set_visibility_range_end(range * 4.0f);
-			}
-			holder->add_child(mmi);
 		}
 	}
 }
@@ -4213,6 +4249,7 @@ void GrassField3D::_notification(int p_what) {
 				crop_nodes.erase(this);
 				_crop_fields_changed_notify();
 				if (crop_nodes.is_empty()) {
+					hedge_shell_cache.clear();
 					// The last crop node: no fields' ground left, and the shared textures go with the
 					// tree (not at exit, after the rendering server).
 					RenderingServer *rs = RenderingServer::get_singleton();
@@ -4612,6 +4649,9 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_hedges"), &GrassField3D::get_hedges);
 	ClassDB::bind_method(D_METHOD("set_hedge_offset", "offset"), &GrassField3D::set_hedge_offset);
 	ClassDB::bind_method(D_METHOD("get_hedge_offset"), &GrassField3D::get_hedge_offset);
+	ClassDB::bind_method(D_METHOD("set_hedge_voxel_lods", "enabled"), &GrassField3D::set_hedge_voxel_lods);
+	ClassDB::bind_method(D_METHOD("get_hedge_voxel_lods"), &GrassField3D::get_hedge_voxel_lods);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("make_voxel_shell", "mesh", "voxel"), &GrassField3D::make_voxel_shell);
 	ClassDB::bind_method(D_METHOD("get_hedge_segment_count"), &GrassField3D::get_hedge_segment_count);
 	GRASS_BIND(set_lean, get_lean, "lean")
 	GRASS_BIND(set_base_color, get_base_color, "color")
@@ -4669,6 +4709,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "fields", PROPERTY_HINT_ARRAY_TYPE, "Dictionary"), "set_fields", "get_fields");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hedges"), "set_hedges", "get_hedges");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hedge_offset", PROPERTY_HINT_RANGE, "0,20,0.1,suffix:m"), "set_hedge_offset", "get_hedge_offset");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hedge_voxel_lods"), "set_hedge_voxel_lods", "get_hedge_voxel_lods");
 	BIND_ENUM_CONSTANT(CROP_NONE);
 	BIND_ENUM_CONSTANT(CROP_WHEAT);
 	BIND_ENUM_CONSTANT(CROP_BARLEY);

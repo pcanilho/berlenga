@@ -1762,7 +1762,7 @@ func _field_checks() -> void:
 			var mm: MultiMesh = ch.multimesh
 			for i in mm.instance_count:
 				var t: Transform3D = ch.global_transform * mm.get_instance_transform(i)
-				var mid := t.origin + t.basis.x * 1.0
+				var mid := t.origin # Segments are centred on their origin.
 				for f in grass.fields:
 					if Geometry2D.is_point_in_polygon(Vector2(mid.x, mid.z), f["polygon"]):
 						hedge_in += 1
