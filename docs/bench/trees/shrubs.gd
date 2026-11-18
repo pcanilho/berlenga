@@ -5,7 +5,7 @@ extends Node3D
 #   --test             checks (PASS/FAIL), quit
 #   --out=path.png     render the forms of each species in rows (raster unless --pt), then quit
 #   --presets=a,b      species (default 31,32: gorse, broom; 33-35 gum rockrose, kermes oak, lentisk; 36 dwarf fan palm)
-#   --forms=a,b        TreeGenerator.ShrubForm values (default all: young, mature, old, thicket, cushion)
+#   --forms=a,b        TreeGenerator.ShrubForm values (default all: young, mature, old, thicket, cushion; 5 hedge, 6 laid hedge)
 #   --day=N            day of year (default 100)
 #   --variants=N       N variants of each form side by side (default 1)
 #   --pt --spp=N       path traced
@@ -190,4 +190,9 @@ func _test() -> void:
 		var hs: PlantSpecies = TreeGenerator.make_shrub_species(p, TreeGenerator.SHRUB_HEDGE, 1, aug)
 		var hb := (hs.meshes[0] as Mesh).get_aabb()
 		_check(hb.end.y > 1.6 and hb.end.y < 2.7 and hb.size.x > 1.8 and hb.size.x < 3.2 and float(hs.get_meta("hedge_segment_length", 0.0)) == 2.0 and not hs.random_yaw, "%s: %.2f m tall, %.2f m along the line, segment meta, no yaw" % [hs.get_name(), hb.end.y, hb.size.x])
+	# Laid hedges (trees.md, laid hedges): pleached stems lie along the line, stakes and binders on top.
+	for p in [6, 5]:
+		var ls: PlantSpecies = TreeGenerator.make_shrub_species(p, TreeGenerator.SHRUB_LAID_HEDGE, 1, aug)
+		var lb := (ls.meshes[0] as Mesh).get_aabb()
+		_check(lb.end.y > 1.0 and lb.end.y < 2.6 and lb.size.x > 1.6 and lb.size.x < 3.0 and lb.size.z < 1.8 and float(ls.get_meta("hedge_segment_length", 0.0)) == 2.0 and not ls.random_yaw, "%s: %.2f m tall, %.2f m along, %.2f m deep, segment meta, no yaw" % [ls.get_name(), lb.end.y, lb.size.x, lb.size.z])
 	_check(TreeGenerator.get_bloom(43, 95) > 0.9 and TreeGenerator.get_bloom(6, 135) > 0.9 and TreeGenerator.get_bloom(45, 170) > 0.9 and TreeGenerator.get_bloom(6, 200) == 0.0, "blackthorn in flower in April, hawthorn in May, dog rose in June")
