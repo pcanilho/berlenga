@@ -30,6 +30,7 @@
 /**************************************************************************/
 
 #include "ground_surface_3d.h"
+#include "ground_clods_3d.h"
 
 #include "core/config/engine.h"
 #include "core/io/dir_access.h"
@@ -1678,6 +1679,13 @@ void GroundSurface3D::_ensure_children() {
 	}
 	if (mesh_dirty) {
 		_build_mesh();
+	}
+	if (clods && !clods_node) {
+		clods_node = memnew(GroundClods3D);
+		add_child(clods_node, false, INTERNAL_MODE_FRONT);
+	} else if (!clods && clods_node) {
+		clods_node->queue_free();
+		clods_node = nullptr;
 	}
 }
 
@@ -4895,11 +4903,41 @@ float GroundSurface3D::track_mud(Vector3 p_position, float p_radius, float p_dep
 		// Thrown clay (no tyre or sole print): it spatters the plants it lands among too, in full by a film of
 		// 0.3 mm.
 		_plant_mud_add(p_position, p_radius, CLAMP(p_depth / 0.0003f, 0.0f, 1.0f));
+		// And GroundClods3D stands the bigger landings up as lumps.
+		const uint64_t frame = Engine::get_singleton()->get_physics_frames();
+		if (frame > clod_frame + 2) {
+			clod_drops.clear();
+		}
+		clod_frame = frame;
+		if (clods_node && clod_drops.size() < 1024) {
+			ClodDrop d;
+			d.position = p_position;
+			d.radius = p_radius;
+			d.volume = float(Math::PI) * p_radius * p_radius * p_depth;
+			d.color = get_mud_color_at(p_position);
+			if (d.color.r + d.color.g + d.color.b <= 0.01f) {
+				d.color = mud_color; // no painted mud there
+			}
+			d.wet = p_wet;
+			clod_drops.push_back(d);
+		}
 	}
 	field.amount_fresh = before;
 	field.amount_print = Vector4();
 	near_fld.amount_print = Vector4();
 	return v;
+}
+
+void GroundSurface3D::take_clod_drops(LocalVector<ClodDrop> &r_drops) {
+	r_drops = clod_drops;
+	clod_drops.clear();
+}
+
+void GroundSurface3D::set_clods(bool p_enabled) {
+	clods = p_enabled;
+	if (is_inside_tree()) {
+		_ensure_children();
+	}
 }
 
 void GroundSurface3D::add_spray(const Spray &p_spray) {
@@ -5663,6 +5701,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_water_mud_at", "position"), &GroundSurface3D::get_water_mud_at);
 	ClassDB::bind_method(D_METHOD("get_regrown_at", "position"), &GroundSurface3D::get_regrown_at);
 	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet", "print"), &GroundSurface3D::track_mud, DEFVAL(1.0f), DEFVAL(Vector4()));
+	ClassDB::bind_method(D_METHOD("set_clods", "enabled"), &GroundSurface3D::set_clods);
+	ClassDB::bind_method(D_METHOD("is_clods"), &GroundSurface3D::is_clods);
+	ClassDB::bind_method(D_METHOD("get_clods_node"), &GroundSurface3D::get_clods_node);
 	ClassDB::bind_method(D_METHOD("get_tracked_mud_at", "position"), &GroundSurface3D::get_tracked_mud_at);
 	ClassDB::bind_method(D_METHOD("set_tracked_mud", "enabled"), &GroundSurface3D::set_tracked_mud);
 	ClassDB::bind_method(D_METHOD("is_tracked_mud"), &GroundSurface3D::is_tracked_mud);
@@ -5834,6 +5875,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "standing_water"), "set_standing_water", "is_standing_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "muddy_water"), "set_muddy_water", "is_muddy_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "tracked_mud"), "set_tracked_mud", "is_tracked_mud");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clods"), "set_clods", "is_clods");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "keep_ruts"), "set_keep_ruts", "is_keeping_ruts");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "ruts_path"), "set_ruts_path", "get_ruts_path");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ruts_time_scale", PROPERTY_HINT_RANGE, "0,1000,0.01,or_greater"), "set_ruts_time_scale", "get_ruts_time_scale");

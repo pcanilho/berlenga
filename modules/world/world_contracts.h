@@ -211,6 +211,7 @@ class WorldFireProvider {
 public:
 	virtual float contract_fire_heat_at(const Vector3 &p_position) const = 0; // W/m2 of ground, now
 	virtual float contract_fire_burnt_at(const Vector3 &p_position) const { return 0.0f; } // 0..1
+	virtual Vector3 contract_fire_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s, the fire's indraft near the ground
 	virtual ~WorldFireProvider() {}
 };
 
@@ -225,6 +226,7 @@ protected:
 
 	GDVIRTUAL1RC(float, _heat_at, Vector3)
 	GDVIRTUAL1RC(float, _burnt_at, Vector3)
+	GDVIRTUAL1RC(Vector3, _wind_at, Vector3)
 
 public:
 	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -232,6 +234,9 @@ public:
 	float heat_at(const Vector3 &p_position) const;
 	// How burnt the ground is there, 0..1.
 	float burnt_at(const Vector3 &p_position) const;
+	// The wind the fires draw in near the ground at the point (their indraft, m/s, horizontal), summed over the fires;
+	// it adds to the weather's wind. Zero with none.
+	Vector3 wind_at(const Vector3 &p_position) const;
 };
 
 // Ground: the deformable ground's surface, soil and what lies on it (docs/ideas/world-contracts.md, Ground).

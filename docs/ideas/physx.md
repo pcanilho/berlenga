@@ -1471,6 +1471,30 @@ spread) need the fire's Flow, as flank whirls do.
    whirls form only below a real ridge, and the lateral spread follows the
    ridge line.
 
+### Fire makes its own wind (picked 18 Nov late night, first of four)
+
+Built. Research: a fire's plume entrains air at its base; FireFlux
+(Clements et al. 2007) measured an indraft of a few m/s at a grass head
+fire, opposing the ambient wind ahead of it, and coupled models
+(WRF-SFIRE, Coen's CAWFE, Clark et al. 1996) show it drawing fronts
+together where they meet (junction fires: Viegas et al. 2012, Raposo et
+al. 2018). Here: each 2 m stretch of burning front over 50 kW/m is a sink
+drawing in, per metre and side, q = (pi/2) w* d0 (w* Byram's buoyant
+velocity, d0 half the flame length), so the inflow just outside the
+flames is about w*/2 and falls as 1/d along a front (a line sink) and
+1/d^2 past its ends; the strongest 64 are kept each 0.25 s. It goes out
+three ways: WorldFire.wind_at (a new contract member, summed over fires),
+which PhysXCloth3D adds to its wind; shader globals fire_wind_map and
+fire_wind_rect (2 m texels over the fire), which grass adds to its wind
+(VegetationFire::WIND_CODE); and the spread, which takes only the pull of
+fire more than 5 m away lying ahead of a front (a fire's pull on its own
+front is in Rothermel's empirical fits already). Test: two 20 m fire lines
+8 m apart in calm tall grass closed the gap in 65 s against 136 s without
+it; a lone fire in a 3 m/s wind burnt exactly the same area either way;
+the indraft 2 m outside a calm front was 0.3 to 0.6 m/s. Left: the Flow
+gas itself does not take this wind (it has its own buoyant flow), and the
+grass map covers the fire's own area only.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

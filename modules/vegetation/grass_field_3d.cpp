@@ -442,6 +442,7 @@ void GrassField3D::_build_material() {
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
+	code += VegetationFire::WIND_CODE;
 	code += WeatherMap3D::get_wind_shader_code();
 	code += vformat("#define WEATHER_GUST_COUNT %d\n#define WEATHER_GUSTS_PER_AXIS %d\n", WeatherMap3D::GUST_COUNT, WeatherMap3D::GUSTS_PER_AXIS);
 	// The ground's ruts, digs and puddles (GroundSurface3D; material.cpp ground_deform_exposed()), mud round 5.
@@ -528,8 +529,8 @@ vec3 grass_weather_wind(vec3 wp, float height, float omega0, float zeta, float j
 	return v + vec3(hz.x, g.z * sigma, hz.y);
 }
 
-// The weather map's wind; without one, fallback_wind with gusts rolling downwind.
-vec3 grass_wind(vec3 wp, float h, float time, float omega0, float jitter) {
+// The weather map's wind; without one, fallback_wind with gusts rolling downwind. A fire's indraft adds to either.
+vec3 grass_wind_ambient(vec3 wp, float h, float time, float omega0, float jitter) {
 	if (weather_map_rect.z > 0.0) {
 		return grass_weather_wind(wp, h, omega0, 0.1, jitter, time);
 	}
@@ -541,6 +542,9 @@ vec3 grass_wind(vec3 wp, float h, float time, float omega0, float jitter) {
 	float phase = dot(wp.xz, d) * 0.12 - time * s * 0.12;
 	float g = 1.0 + 0.45 * sin(phase) + 0.2 * sin(phase * 2.7 + dot(wp.xz, vec2(-d.y, d.x)) * 0.2);
 	return vec3(fallback_wind.x, 0.0, fallback_wind.y) * g;
+}
+vec3 grass_wind(vec3 wp, float h, float time, float omega0, float jitter) {
+	return grass_wind_ambient(wp, h, time, omega0, jitter) + fire_wind_at(wp.xz);
 }
 )";
 	if (crop != CROP_NONE) {
@@ -4439,6 +4443,11 @@ void GrassField3D::_trample_step(double p_delta) {
 		}
 	}
 	trample_last = seen;
+	// The current in any water over the sward lays it downstream (WaterCurrentBend, Luhar and Nepf 2011).
+	if ((int)trample.size() == trample_resolution * trample_resolution) {
+		water_current.update(trample_origin, trample_resolution, trample_size / trample_resolution, p_delta, [&](const Vector3 &p) { return map ? map->get_height_at(p) : ground_y; });
+		trample_active = water_current.apply(trample, trample_resolution) || trample_active;
+	}
 	if (trample_active) {
 		_trample_upload();
 	}

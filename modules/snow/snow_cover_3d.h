@@ -249,6 +249,7 @@ class SnowCover3D : public Node3D {
 	double world_dt = 0.0;
 	// The terrain climate's precipitation per cell (mm a year), read on the main thread.
 	Vector<float> cell_climate_precip;
+	Vector<float> cell_fire; // W/m2 from WorldFire, read on the main thread each update (empty with no fire)
 	// Water (docs/ideas/snow.md, follow-up 15): the water surface over the cell from the terrain data map
 	// (-INF: dry land), read on the main thread, and the lake ice on it (m).
 	Vector<float> cell_water;
@@ -261,6 +262,7 @@ class SnowCover3D : public Node3D {
 	Ref<Image> upload_catch;
 	void _publish_cells();
 	void _refresh_cell_inputs(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only);
+	void _refresh_fire();
 	void _update_begin(double p_weather_dt, bool p_blocking);
 	void _update_cells(bool p_parallel);
 	void _update_end();

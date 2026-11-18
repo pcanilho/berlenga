@@ -121,6 +121,12 @@ uniform float foam_grain_tilt : hint_range(0.0, 2.0) = 0.15;
 // finer than the pixel and its slope put into the surface's roughness instead (Bruneton, Neyret and Holzschuch
 // 2010), so the near water is sharp and the far water glitters without shimmering. 0: the three coarse octaves.
 uniform float ripple_detail : hint_range(0.0, 2.0) = 1.0;
+// Sun caustics on the bed seen through clear water (raster; the path tracer finds its own): the ripples bend the
+// refracted sun, and the bed's light scales by how the bundle of rays narrows or spreads there, one over the
+// determinant of the map from where a ray enters the surface to where it lands (I + z (1 - 1/n) H, H the surface's
+// Hessian, from the ripples' slope; Wallace's WebGL water, 2011, as a closed form). Capped where the rays cross,
+// where the sun's half-degree disc keeps the real lines finite. 0: off.
+uniform float caustics_strength : hint_range(0.0, 2.0) = 1.0;
 // The surface fades out over this much water depth (m) at the waterline.
 uniform float edge_softness : hint_range(0.0, 0.5, 0.005) = 0.06;
 // A living waterline: the edge laps in and out by up to this much water depth
@@ -266,6 +272,29 @@ vec2 ripple_detail_slope(vec2 p, float footprint, out float r_hidden) {
 		r_hidden += 0.5 * a * a * (1.0 - shown); // (value-noise gradients: mean square about half the peak)
 	}
 	return s;
+}
+
+// The ripples' slope (both flow phases, as the fragment blends them) at world point x, before their amplitude.
+vec2 river_ripple_field(vec2 x, vec2 o_a, vec2 o_b, float w) {
+	vec2 p = x * ripple_scale;
+	return (ripple_slope(p - o_a * ripple_scale) * w + ripple_slope(p - o_b * ripple_scale + vec2(13.1, 7.7)) * (1.0 - w))
+			/ sqrt(w * w + (1.0 - w) * (1.0 - w));
+}
+
+// The bed's sun scaled by the ripples' focusing: x where the sun's ray entered the surface, z the water it then
+// crossed along the vertical, amp the ripples' amplitude.
+float river_caustic(vec2 x, float z, float amp, vec2 o_a, vec2 o_b, float w) {
+	const float e = 0.015;
+	vec2 s0 = river_ripple_field(x, o_a, o_b, w);
+	vec2 sx = river_ripple_field(x + vec2(e, 0.0), o_a, o_b, w);
+	vec2 sz = river_ripple_field(x + vec2(0.0, e), o_a, o_b, w);
+	// Hessian of the height (columns: d slope / dx, d slope / dz), symmetrised.
+	float hxx = (sx.x - s0.x) / e;
+	float hzz = (sz.y - s0.y) / e;
+	float hxz = 0.5 * ((sx.y - s0.y) + (sz.x - s0.x)) / e;
+	float k = z * (1.0 - 1.0 / 1.333) * amp;
+	float det = (1.0 + k * hxx) * (1.0 + k * hzz) - k * k * hxz * hxz;
+	return 1.0 / max(abs(det), 0.25);
 }
 
 // The white water's structure (the open sea's foam_structure, PhysXWaterSurface3D; kept in step with it): holes
@@ -525,9 +554,10 @@ void fragment() {
 		// draws it out along the current by itself). Not rotated to the local current: world coordinates turned by
 		// an angle that varies over the water shear by that angle times their distance from the origin, combing
 		// the pattern into hairlines wherever the current turns.
-		// The amount the structure tears is the white water as the soft lace drew it (where and how much), so the
-		// crisp foam covers what the soft foam did, not every trace of live foam.
-		float amount = foam;
+		// The amount the structure tears is the white water read as how much foam is left: the live flow foam sits
+		// near 1 wherever it is made, which kept every patch a solid sheet, so only the thickest stays a sheet and
+		// the rest drains into lace with clear water between.
+		float amount = foam * foam;
 		const vec2 sd = vec2(1.0, 0.0);
 		const float stretch = 0.0;
 		float f_a = rf_structure(v_world.xz - o_a, amount, footprint, sd, stretch);
@@ -607,7 +637,20 @@ void fragment() {
 		vec3 sun_irr;
 		vec3 sky;
 		water_light_in_water(sun_dir, sun_irr, sky);
-		base_rgb = water_clear_through(clear_screen, clear_depth, v_world, normalize(v_world - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, max(v_info.r * 4.0 - 1.0, 0.0), pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, sun_dir, sun_irr, sky, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX);
+		vec3 seen;
+		vec3 bed_p;
+		float sun_share;
+		base_rgb = water_clear_through_ex(clear_screen, clear_depth, v_world, normalize(v_world - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, max(v_info.r * 4.0 - 1.0, 0.0), pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, sun_dir, sun_irr, sky, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, true, seen, bed_p, sun_share);
+		if (caustics_strength > 0.0 && sun_share > 0.0 && sun_dir.y < -0.05) {
+			// Back up the refracted sun ray from the bed to the surface it came through.
+			float z = max(v_world.y - bed_p.y, 0.0);
+			vec2 x_in = bed_p.xz - sun_dir.xz * (z / -sun_dir.y);
+			float e = river_caustic(x_in, z / -sun_dir.y, ripple_amp, o_a, o_b, w);
+			// Faded where the bed's ripple cells (about 12 cm at the finest) shrink under a few pixels.
+			e = mix(1.0, e, caustics_strength * (1.0 - smoothstep(0.25, 1.0, footprint * 8.6 * ripple_scale)));
+			float vis = dot(sun_visibility(bed_p), vec3(1.0 / 3.0));
+			base_rgb += seen * sun_share * vis * (e - 1.0);
+		}
 		unlit_rgb = vec3(0.0);
 		base_a = 1.0;
 	}

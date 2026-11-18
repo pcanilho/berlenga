@@ -66,7 +66,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Rain → wet snow, crust | linked | cells | |
 | Canopy → interception | linked | shelter | |
 | Snow → plants (burial, pressing) | linked (18 Nov) | snow cover (snow map) | grass and plant shaders: load ρ g d against stem stiffness lays plants down, deep snow hides them |
-| Fire → snow melt | missing | WorldFire `heat_at` | snow thread (contract ready) |
+| Fire → snow melt | linked (18 Nov) | WorldFire `heat_at` | SnowCover3D melts H dt / L_f under the fire, whatever the air |
 | Vehicles → snow ruts | linked (18 Nov) | world_contact | snow checks the wheel stamp |
 | Bodies → snow prints | linked | `snow_deform`, `grass_trample` groups | |
 
@@ -87,7 +87,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Bodies → branches | linked | `tree_touch` group | |
 | Vehicles → grass, branches | linked (18 Nov) | world_contact | wheels and bodies join |
 | Lying snow → plants | linked (18 Nov) | snow cover (snow map) | as above (GrassField3D, PlantGenerator) |
-| Flowing water → reeds, grass | missing | river flow | planned (contact 6) |
+| Flowing water → reeds, grass | linked (18 Nov) | WorldWater flow and surface | the trample fields take the current's drag (Cauchy number, Luhar and Nepf 2011): grass and plants lean downstream, flat in a fast current |
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
 | Wet ground → mist | linked (18 Nov) | surface wetness, surface cooling | VegetationMist3D: wet ground mists more and sooner |
 
@@ -104,7 +104,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Bodies without buoyancy → ripples, splash | linked (18 Nov) | contact | world_contact bodies disturb sea, river |
 | Wading → wet legs, clothes | linked (18 Nov) | WorldWater | ClothWetness (PhysX, d90fa990) |
 | Cold air over water → steam fog | linked (18 Nov) | air, WorldWater, `get_water_temperature()` | VegetationMist3D cells over water |
-| Rain, melt → river level | missing | runoff | rain work |
+| Rain, melt → river level | linked (18 Nov) | WeatherRunoff3D (SCS curve number, D8 routing) | rain thread: rivers add the discharge reaching them; snowmelt runs off too |
 | Cold → lake ice | linked | air, snow | SnowCover3D lake ice, Stefan's law under the snow (Leppaeranta 1993) |
 | Fire → steam on water | linked (18 Nov) | WorldFire, WorldWater | water landing on fire and fire at the water's edge (PhysX, ebb5f254) |
 
@@ -119,8 +119,9 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Fire → cloth | linked | cloth burn | |
 | Fire → firebrands → spot fires | linked | wind | |
 | Fire → drying | linked (18 Nov) | WorldFire | the weather boils the surface film off under a fire |
-| Fire → snow melt | missing | WorldFire `heat_at` | snow thread (contract ready) |
+| Fire → snow melt | linked (18 Nov) | WorldFire `heat_at` | as above (snow) |
 | Fire → heat shimmer | linked (18 Nov) | Flow temperature, weather air | `PhysXFlow3D.heat_shimmer`: raster screen pass and bent PT camera rays (heat-shimmer.md) |
+| Fire indraft → grass, plants, cloth, hair, leaves, ash, smoke, dust | linked (18 Nov) | WorldFire `wind_at` (fire_wind_map in shaders) | PhysX e141399d (grass, cloth); plants, hair, LeafFall3D, firebrands, other Flows and rock dust add it to their wind, fading over the first few metres for airborne things |
 | Weather wind → free-standing Flow smoke | linked (18 Nov) | wind | `PhysXFlow3D.weather_wind` (wind work) |
 
 ### Cloth, hair, bodies

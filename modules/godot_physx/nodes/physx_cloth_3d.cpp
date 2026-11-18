@@ -386,6 +386,10 @@ Vector3 PhysXCloth3D::_sample_wind(double p_delta) {
 		}
 		w += weather->wind_at(center);
 	}
+	// A fire's indraft near the ground (WorldContracts' fire): a sheet beside a fire leans into it.
+	if (const WorldFire *fire = WorldContracts::fire(); fire->has_provider()) {
+		w += fire->wind_at(get_global_transform().xform(get_aabb().get_center()));
+	}
 	return w;
 }
 

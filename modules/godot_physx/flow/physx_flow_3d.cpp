@@ -1054,7 +1054,9 @@ void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, LocalVector<FlowBac
 		return;
 	}
 	const WorldWeather *wm = WorldContracts::weather();
-	if (wm == nullptr || !wm->has_provider()) {
+	const WorldFire *fire = WorldContracts::fire();
+	const bool fires = fire && fire->has_provider();
+	if ((wm == nullptr || !wm->has_provider()) && !fires) {
 		return;
 	}
 	// Layers of at most 4 m, up to 8: the wind grows with height (log law), so a tall plume bends more aloft.
@@ -1063,7 +1065,12 @@ void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, LocalVector<FlowBac
 	const float lh = r.size.y / layers;
 	for (int i = 0; i < layers; i++) {
 		const Vector3 c(r.position.x + r.size.x * 0.5f, r.position.y + lh * (i + 0.5f), r.position.z + r.size.z * 0.5f);
-		const Vector3 w = wm->wind_at(c);
+		Vector3 w = wm && wm->has_provider() ? wm->wind_at(c) : Vector3();
+		if (fires) {
+			// Another fire's indraft draws smoke and dust beside it in (near the ground, fading over a few metres);
+			// over a fire's own Flow it converges on the box's middle and nets out.
+			w += fire->wind_at(c) * (1.0f - Math::smoothstep(2.0f, 6.0f, c.y - r.position.y));
+		}
 		FlowBackend::Emitter e;
 		e.shape = FlowBackend::Emitter::SHAPE_BOX;
 		e.origin[0] = c.x;

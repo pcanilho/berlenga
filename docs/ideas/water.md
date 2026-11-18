@@ -3474,3 +3474,17 @@ The river shader gets the open sea's techniques (see "Crisp foam on the open sea
   Holzschuch 2010). The path tracer draws every octave.
 Shader uniforms; benches switch them off with `--water=foam_crisp:0.0 --water=ripple_detail:0.0`.
 Shots: /mnt/project-files/fork/water/river-crisp/ (creek bench, raster and PT, 100% crops).
+
+### River vs ocean open water (18 Nov, Paulo: "the rest of the surface ... more shading? how is the ocean comparing?")
+
+Side by side (river rocks bench vs water_surface `--view=river`), the ocean's open water reads busier mostly
+because of its bed caustics (water_caustics_map.glsl, a light-space map of the FFT and ripple heights); the
+river's live solver runs with caustics off and its ripples are procedural in the shader, so its bed was lit flat.
+- `caustics_strength` (1): sun caustics from the river's own ripples, raster only (the path tracer finds its
+  own). For the bed point seen through the water, the refracted sun ray is traced back to where it entered the
+  surface; the bed's sun scales by 1 / |det(I + z (1 - 1/n) H)|, H the ripples' Hessian by finite differences of
+  their slope (both flow phases, so the pattern rides the current), z the path under water. This is the
+  area-ratio form of Wallace's WebGL water caustics (2011) in closed form, without a light-space map. Capped at
+  4x where the rays cross; faded where the 12 cm ripple cells drop under a few pixels; only the sun that reaches
+  the bed (sun_visibility). Cost: six ripple_slope calls per clear-water pixel.
+Bench switch: `--water=caustics_strength:0.0`.

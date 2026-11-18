@@ -684,7 +684,17 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			const float m = (melt_temperature_factor * t + melt_shortwave_factor * (1.0f - alb) * g) * in.dt_h;
 			surface_melt = CLAMP(m, 0.0f, MAX(swe - liq, 0.0f));
 			liq += surface_melt;
-		} else if (t < 0.0f && liq > 0.0f) {
+		}
+		// Fire: the heat it puts into the pack melts snow whatever the air, its energy over the latent heat of
+		// fusion (334 kJ/kg), M = H dt / L_f (mm water); the cold pack's own warming is small beside a fire's tens
+		// of kW/m2 and left out.
+		if (cell_fire.size() == n * n && cell_fire[i] > 0.0f) {
+			const float m = cell_fire[i] * 3600.0f / 334000.0f * in.dt_h;
+			const float fm = CLAMP(m, 0.0f, MAX(swe - liq, 0.0f));
+			surface_melt += fm;
+			liq += fm;
+		}
+		if (!melting && surface_melt <= 0.0f && t < 0.0f && liq > 0.0f) {
 			// Meltwater and rain refreeze in a cold pack, at the temperature factor's rate.
 			refrozen = MIN(liq, melt_temperature_factor * -t * in.dt_h);
 			liq -= refrozen;
@@ -989,6 +999,33 @@ void SnowCover3D::_update_begin(double p_weather_dt, bool p_blocking) {
 	const int band = MAX(resolution / 16, 1);
 	const int from = int(update_count % uint64_t((resolution + band - 1) / band)) * band;
 	_refresh_cell_inputs(from, MIN(from + band, resolution), nullptr);
+	_refresh_fire();
+}
+
+// Fire over the snow (docs/ideas/world-links.md, fire → snow melt): the heat each cell takes from WorldFire, read on
+// the main thread every update since a fire moves fast. None while a climate bake drives the cover.
+void SnowCover3D::_refresh_fire() {
+	const int n = resolution;
+	WorldFire *fire = WorldContracts::fire();
+	if (driven || !fire || !fire->has_provider() || cell_ground.size() != n * n) {
+		cell_fire.clear();
+		return;
+	}
+	cell_fire.resize(n * n);
+	float *f = cell_fire.ptrw();
+	bool any = false;
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			Vector3 pos = _cell_center(x, z);
+			pos.y = cell_ground[z * n + x];
+			const float h = MAX(fire->heat_at(pos), 0.0f);
+			f[z * n + x] = h;
+			any = any || h > 0.0f;
+		}
+	}
+	if (!any) {
+		cell_fire.clear();
+	}
 }
 
 // The cells, slides, drift and cornices: any thread, nothing else touching the cells meanwhile.
