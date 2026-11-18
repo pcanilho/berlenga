@@ -63,8 +63,9 @@ GodotPhysXBody3D::~GodotPhysXBody3D() {
 	}
 	_destroy_actor();
 	if (px_material) {
-		// (not released here: its handle must not be reused before a GPU scene has synced the removal)
-		GodotPhysXSpace3D::defer_material_release(px_material);
+		// (shared; the last user's release is deferred: its handle must not be reused before a GPU scene has synced
+		// the removal)
+		GodotPhysXSpace3D::release_material(px_material);
 		px_material = nullptr;
 	}
 	if (direct_state) {
@@ -74,11 +75,7 @@ GodotPhysXBody3D::~GodotPhysXBody3D() {
 
 PxMaterial *GodotPhysXBody3D::_get_material() {
 	if (!px_material && space && space->get_px_physics()) {
-		px_material = space->get_px_physics()->createMaterial(
-				(PxReal)Math::abs(friction), (PxReal)Math::abs(friction), (PxReal)CLAMP(bounce, (real_t)0.0, (real_t)1.0));
-		if (px_material) {
-			godot_physx_apply_material(px_material, friction, bounce);
-		}
+		px_material = GodotPhysXSpace3D::acquire_material(space->get_px_physics(), friction, bounce);
 	}
 	return px_material ? px_material : (space ? space->get_default_material() : nullptr);
 }
@@ -629,8 +626,20 @@ void GodotPhysXBody3D::set_param(PhysicsServer3D::BodyParameter p_param, const V
 			break;
 	}
 
-	if (px_material && (p_param == PhysicsServer3D::BODY_PARAM_FRICTION || p_param == PhysicsServer3D::BODY_PARAM_BOUNCE)) {
-		godot_physx_apply_material(px_material, friction, bounce);
+	if (px_material && (p_param == PhysicsServer3D::BODY_PARAM_FRICTION || p_param == PhysicsServer3D::BODY_PARAM_BOUNCE) && space && space->get_px_physics()) {
+		// Materials are shared: move this body's shapes to the one for its new values.
+		PxMaterial *m = GodotPhysXSpace3D::acquire_material(space->get_px_physics(), friction, bounce);
+		if (m && m != px_material) {
+			for (PxShape *ps : px_shapes) {
+				if (ps) {
+					ps->setMaterials(&m, 1);
+				}
+			}
+			GodotPhysXSpace3D::release_material(px_material);
+			px_material = m;
+		} else if (m) {
+			GodotPhysXSpace3D::release_material(m); // the same one: drop the extra reference
+		}
 	}
 
 	if (space && px_actor) {
