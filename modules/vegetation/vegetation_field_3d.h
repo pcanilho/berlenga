@@ -244,6 +244,13 @@ private:
 		int sand_ny = 0;
 		Rect2 sand_rect;
 		float sand_at(const Vector2 &p_xz) const;
+		// Desert sand seas (PlantSpecies.RULE_SAND_MOBILITY): 0 stable to 1 moving, -1 off them, on the sand sea's
+		// own grid; read only when a species uses the rule.
+		LocalVector<float> mobility;
+		int mobility_nx = 0;
+		int mobility_ny = 0;
+		Rect2 mobility_rect;
+		float mobility_at(const Vector2 &p_xz) const;
 	};
 	struct FarAdd {
 		Vector2 xz;
@@ -269,6 +276,7 @@ private:
 	bool _make_setup(PlaceSetup &r_setup);
 	float _species_range(const Ref<PlantSpecies> &p_species, real_t p_pixel_angle) const;
 	static void _read_sand(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
+	static void _read_sand_mobility(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
 	void _place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles) const;
 	void _commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes);
 	// The maps from the placed crowns and far colour: computed anywhere, applied on the main thread.

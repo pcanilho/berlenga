@@ -46,8 +46,9 @@
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 
+class GroundClods3D;
 class MeshInstance3D;
-class WeatherMap3D;
+class WorldWeather;
 
 // Footprints, ruts and dents in bare ground (docs/ideas/ground-deform.md): sand, soil and mud, and the
 // leaf litter over them, pressed by bodies in deform_groups with Bekker sinkage (Wong's soil values),
@@ -216,6 +217,14 @@ public:
 		// The clay that water carries, kg/m3 (muddy water, round 3).
 		float water_mud = 0.0f;
 	};
+	// Clay thrown and landed (track_mud with no print): for GroundClods3D, which stands the bigger ones up as lumps.
+	struct ClodDrop {
+		Vector3 position;
+		float radius = 0.0f;
+		float volume = 0.0f; // m3
+		Color color; // the clay's (get_mud_color_at)
+		float wet = 0.0f;
+	};
 	// Fines lifted from dry, bare sand by a tyre (sand drifting, Gillies et al. 2005): for a dust node.
 	struct Dust {
 		Vector3 position;
@@ -233,6 +242,10 @@ private:
 	uint64_t dust_claim_frame = 0;
 	float dust_emission = 0.06f; // kg/s per metre of tyre width per m/s over fully dry, bare sand
 	uint64_t spray_frame = 0;
+	LocalVector<ClodDrop> clod_drops;
+	uint64_t clod_frame = 0;
+	bool clods = true; // GroundClods3D: lumps of clay near the camera (ground detail)
+	GroundClods3D *clods_node = nullptr;
 	void _plough_bodies();
 	float contact_tolerance = 0.03f;
 	float character_mass = 75.0f;
@@ -462,7 +475,7 @@ private:
 	int far_n = 0;
 	int far_phase = 0;
 	double far_age[FAR_PHASES] = {};
-	void _far_update(double p_delta, const LocalVector<Node *> &p_sources, const class WeatherMap3D *p_weather);
+	void _far_update(double p_delta, const LocalVector<Node *> &p_sources, const WorldWeather *p_weather);
 	float _far_pore_at(float p_x, float p_z) const;
 	float _pore_step(float p_s, float p_depth, float p_contact, float p_dt, float &r_table) const;
 	static float _value_noise(float p_x, float p_z);
@@ -578,6 +591,8 @@ private:
 	void _publish();
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
 	float _ground_at(float p_x, float p_z) const;
+	// Where the field reads the air (its centre on the ground): the weather contract's air is per point.
+	Vector3 _weather_point() const { return Vector3(center.x, _ground_at(center.x, center.y), center.y); }
 	const Cell &_cell_at(float p_x, float p_z) const;
 	float _edge_distance(float p_x, float p_z) const;
 
@@ -642,6 +657,11 @@ public:
 	void set_dust_emission(float p_v) { dust_emission = MAX(p_v, 0.0f); }
 	float get_dust_emission() const { return dust_emission; }
 	Array take_sprays();
+	// The clay landed since the last call (GroundClods3D); kept for a couple of physics frames when nobody takes it.
+	void take_clod_drops(LocalVector<ClodDrop> &r_drops);
+	void set_clods(bool p_enabled);
+	bool is_clods() const { return clods; }
+	GroundClods3D *get_clods_node() const { return clods_node; }
 	void add_spray(const Spray &p_spray);
 	// A tyre moving through standing water this physics frame (mud stage 4c): the GPU water passes push the water
 	// ahead of it (a bow wave) and draw it in behind. p_id: the tyre's (a later call with the same replaces it);
@@ -806,6 +826,9 @@ public:
 	Rect2 get_near_rect() const;
 	Vector2 get_near_moved_volume() const { return is_near_active() ? near_fld.moved_volume() : Vector2(); }
 	bool is_near_active() const { return _near_on() && near_fld.valid; }
+	// The print fields' CPU copies (read back from the GPU), for GroundLumpScan.
+	const GroundDeformField &get_deform_field() const { return field; }
+	const GroundDeformField *get_near_deform_field() const { return is_near_active() ? &near_fld : nullptr; }
 	void set_water_sources(const TypedArray<NodePath> &p_sources) { water_sources = p_sources; }
 	TypedArray<NodePath> get_water_sources() const { return water_sources; }
 	void set_water_coupling(bool p_enabled);

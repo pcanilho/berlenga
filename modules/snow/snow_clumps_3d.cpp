@@ -209,30 +209,12 @@ void SnowClumps3D::_ensure_draw() {
 		if (shapes[i].is_null()) {
 			shapes[i] = make_shape(i + 1);
 		}
-		if (multimeshes[i].is_null()) {
-			multimeshes[i].instantiate();
-			multimeshes[i]->set_transform_format(MultiMesh::TRANSFORM_3D);
-			multimeshes[i]->set_mesh(shapes[i]);
-		}
-		if (!instances[i]) {
-			instances[i] = memnew(MultiMeshInstance3D);
-			instances[i]->set_multimesh(multimeshes[i]);
-			instances[i]->set_material_override(material);
-			instances[i]->set_as_top_level(true);
-			add_child(instances[i], false, INTERNAL_MODE_FRONT);
-			instances[i]->set_global_transform(Transform3D());
-		}
 	}
+	lump_draw.ensure(this, shapes, SHAPES, false, material);
 }
 
 void SnowClumps3D::_free_draw() {
-	for (int i = 0; i < SHAPES; i++) {
-		if (instances[i]) {
-			instances[i]->queue_free();
-			instances[i] = nullptr;
-		}
-		multimeshes[i].unref();
-	}
+	lump_draw.release();
 }
 
 static Vector3 _camera_or(const Node *p_node, const Vector3 &p_fallback) {
@@ -245,75 +227,29 @@ void SnowClumps3D::_scan(SnowSurface3D *p_surface, SnowCover3D *p_cover) {
 	const Rect2 field = p_surface->get_deform_rect();
 	const float texel = p_surface->get_deform_extent() / MAX(p_surface->get_deform_resolution(), 1);
 	const Vector3 cam = _camera_or(this, Vector3(field.get_center().x, 0.0f, field.get_center().y));
-	const float cell = texel * 2.0f;
-	const int n = int(Math::ceil(2.0f * radius / cell));
-	const Vector2i origin(int(Math::floor((cam.x - radius) / cell)), int(Math::floor((cam.z - radius) / cell)));
-	const Vector2 moved = p_surface->get_moved_volume();
-	if (origin == last_origin && n == scan_n && cell == scan_texel && moved == last_moved) {
-		return; // nothing pressed, nothing slumped
-	}
-	const bool fresh = n != scan_n || cell != scan_texel;
-	if (fresh || origin != last_origin) {
-		// Move the remembered rim with the window: cells that stay keep it, new ones start at what is there now.
-		LocalVector<float> rim2, owed2;
-		rim2.resize(n * n);
-		owed2.resize(n * n);
-		for (int z = 0; z < n; z++) {
-			for (int x = 0; x < n; x++) {
-				const int ox = x + origin.x - last_origin.x, oz = z + origin.y - last_origin.y;
-				const int i = z * n + x;
-				if (!fresh && ox >= 0 && oz >= 0 && ox < scan_n && oz < scan_n) {
-					rim2[i] = last_rim[oz * scan_n + ox];
-					owed2[i] = owed[oz * scan_n + ox];
-				} else {
-					rim2[i] = p_surface->get_rim_at(Vector3((origin.x + x + 0.5f) * cell, 0.0f, (origin.y + z + 0.5f) * cell));
-					owed2[i] = 0.0f;
-				}
-			}
+	scan.main_field = &p_surface->get_deform_field();
+	scan.fine_field = nullptr;
+	scan.update(cam, radius, texel * 2.0f, RIM_STEP, grown);
+	for (const GroundLumpScan::Grown &g : grown) {
+		const Vector3 &c = g.center;
+		const float coh = p_cover ? cohesion(p_cover->get_density_at(c), p_cover->get_wetness_at(c), p_cover->get_air_temperature_at(c)) : 0.6f;
+		if (coh <= 0.01f) {
+			continue;
 		}
-		last_rim = rim2;
-		owed = owed2;
-		scan_n = n;
-		scan_texel = cell;
-		last_origin = origin;
-	}
-	last_moved = moved;
-	const float r2 = radius * radius;
-	for (int z = 0; z < n; z++) {
-		for (int x = 0; x < n; x++) {
-			const Vector3 c((origin.x + x + 0.5f) * cell, 0.0f, (origin.y + z + 0.5f) * cell);
-			if (!field.has_point(Vector2(c.x, c.z)) || Vector2(c.x - cam.x, c.z - cam.z).length_squared() > r2) {
-				continue;
+		float &owed = scan.owed[g.index];
+		owed += g.grew * scan.cell * scan.cell * break_share * coh;
+		const float wet = p_cover ? p_cover->get_wetness_at(c) : 0.0f;
+		for (int k = 0; k < 6; k++) {
+			// Log-normal sizes (avalanche debris granules, Bartelt and McArdell 2009), larger in wet snow.
+			const float median = 0.022f + 0.03f * wet;
+			const float size = CLAMP(median * Math::exp(0.5f * rng.randfn(0.0f, 1.0f)), MIN_SIZE, MAX_SIZE);
+			const float vol = CLUMP_FILL * size * size * size;
+			if (owed < vol) {
+				break;
 			}
-			const int i = z * n + x;
-			const float rim = p_surface->get_rim_at(c);
-			const float grew = rim - last_rim[i];
-			last_rim[i] = rim;
-			if (grew <= RIM_STEP) {
-				continue;
-			}
-			const float coh = p_cover ? cohesion(p_cover->get_density_at(c), p_cover->get_wetness_at(c), p_cover->get_air_temperature_at(c)) : 0.6f;
-			if (coh <= 0.01f) {
-				continue;
-			}
-			owed[i] += grew * cell * cell * break_share * coh;
-			// Away from the print: down the dent's slope, the way the snow was pushed.
-			const float e = cell;
-			const Vector2 grad(p_surface->get_dent_at(c + Vector3(e, 0, 0)) - p_surface->get_dent_at(c - Vector3(e, 0, 0)), p_surface->get_dent_at(c + Vector3(0, 0, e)) - p_surface->get_dent_at(c - Vector3(0, 0, e)));
-			const Vector2 out = grad.length() > 1e-5f ? -grad.normalized() : Vector2();
-			const float wet = p_cover ? p_cover->get_wetness_at(c) : 0.0f;
-			for (int k = 0; k < 6; k++) {
-				// Log-normal sizes (avalanche debris granules, Bartelt and McArdell 2009), larger in wet snow.
-				const float median = 0.022f + 0.03f * wet;
-				const float size = CLAMP(median * Math::exp(0.5f * rng.randfn(0.0f, 1.0f)), MIN_SIZE, MAX_SIZE);
-				const float vol = CLUMP_FILL * size * size * size;
-				if (owed[i] < vol) {
-					break;
-				}
-				owed[i] -= vol;
-				const Vector3 at = c + Vector3(rng.random(-0.5f, 0.5f) * cell, 0.0f, rng.random(-0.5f, 0.5f) * cell);
-				_spawn(p_surface, p_cover, at, out, size);
-			}
+			owed -= vol;
+			const Vector3 at = c + Vector3(rng.random(-0.5f, 0.5f) * scan.cell, 0.0f, rng.random(-0.5f, 0.5f) * scan.cell);
+			_spawn(p_surface, p_cover, at, g.out, size);
 		}
 	}
 }
@@ -327,7 +263,7 @@ void SnowClumps3D::_spawn(SnowSurface3D *p_surface, SnowCover3D *p_cover, const 
 	c.size = p_size;
 	c.shape = uint8_t(rng.rand() % SHAPES);
 	const Vector3 pos(p_at.x + d.x, 0.0f, p_at.z + d.y);
-	c.relief = p_surface->get_rim_at(pos) - p_surface->get_dent_at(pos);
+	c.relief = scan.relief_at(pos);
 	// Height of the shape is about 0.7 of its size: its centre a third of its size up, less what it sank.
 	c.position = Vector3(pos.x, p_surface->get_surface_height_at(pos) + p_size * (0.34f - SINK), pos.z);
 	const Basis yaw(Vector3(0, 1, 0), rng.randf() * float(Math::TAU));
@@ -376,8 +312,8 @@ void SnowClumps3D::_age(SnowSurface3D *p_surface, SnowCover3D *p_cover) {
 void SnowClumps3D::_crush(SnowSurface3D *p_surface) {
 	for (uint32_t i = 0; i < clumps.size();) {
 		const Clump &c = clumps[i];
-		// The print field alone (new snow buries it in _age()): two samples, not the whole surface.
-		const float h = p_surface->get_rim_at(c.position) - p_surface->get_dent_at(c.position);
+		// Only where the print field moved since the last look (new snow buries it in _age()).
+		const float h = scan.changed_at(c.position) ? scan.relief_at(c.position) : c.relief;
 		if (h < c.relief - 0.5f * c.size || h > c.relief + 0.6f * c.size) {
 			clumps[i] = clumps[clumps.size() - 1];
 			clumps.resize(clumps.size() - 1);
@@ -395,32 +331,15 @@ void SnowClumps3D::_draw() {
 	}
 	_ensure_draw();
 	draw_dirty = false;
-	LocalVector<float> buffers[SHAPES];
 	for (const Clump &c : clumps) {
 		const Basis b = c.basis.scaled(Vector3(c.size, c.size, c.size));
-		LocalVector<float> &out = buffers[c.shape % SHAPES];
+		LocalVector<float> &out = lump_draw.buffers[c.shape % SHAPES];
 		const float row[12] = { b.rows[0].x, b.rows[0].y, b.rows[0].z, c.position.x, b.rows[1].x, b.rows[1].y, b.rows[1].z, c.position.y, b.rows[2].x, b.rows[2].y, b.rows[2].z, c.position.z };
 		for (int k = 0; k < 12; k++) {
 			out.push_back(row[k]);
 		}
 	}
-	RenderingServer *rs = RenderingServer::get_singleton();
-	for (int i = 0; i < SHAPES; i++) {
-		const int count = int(buffers[i].size() / 12);
-		Ref<MultiMesh> &mm = multimeshes[i];
-		if (mm->get_instance_count() != count) {
-			mm->set_instance_count(count);
-			// One TLAS entry per clump over its shape for the path tracer, not a merged copy of every clump.
-			rs->multimesh_set_rt_instanced(mm->get_rid(), true);
-		}
-		instances[i]->set_visible(count > 0);
-		if (count > 0) {
-			PackedFloat32Array buf;
-			buf.resize(buffers[i].size());
-			memcpy(buf.ptrw(), buffers[i].ptr(), buffers[i].size() * sizeof(float));
-			rs->multimesh_set_buffer(mm->get_rid(), buf);
-		}
-	}
+	lump_draw.commit();
 }
 
 void SnowClumps3D::_notification(int p_what) {
@@ -454,9 +373,8 @@ void SnowClumps3D::update_now() {
 	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	SnowCover3D *cover = _cover(surface);
-	const Vector2 moved_before = last_moved;
 	_scan(surface, cover);
-	if (last_moved != moved_before && !clumps.is_empty()) {
+	if (!clumps.is_empty()) {
 		_crush(surface);
 	}
 	if (cover && cover->get_update_count() != seen_cover_update) {
@@ -475,11 +393,7 @@ void SnowClumps3D::update_now() {
 void SnowClumps3D::clear() {
 	clumps.clear();
 	next_slot = 0;
-	last_rim.clear();
-	owed.clear();
-	scan_n = 0;
-	last_origin = Vector2i(INT32_MIN, INT32_MIN);
-	last_moved = Vector2(-1.0f, -1.0f);
+	scan.clear();
 	draw_dirty = true;
 	if (is_inside_tree()) {
 		_draw();
@@ -512,11 +426,7 @@ void SnowClumps3D::set_max_clumps(int p_max) {
 
 void SnowClumps3D::set_material(const Ref<Material> &p_material) {
 	material = p_material;
-	for (int i = 0; i < SHAPES; i++) {
-		if (instances[i]) {
-			instances[i]->set_material_override(material);
-		}
-	}
+	lump_draw.set_material(material);
 }
 
 void SnowClumps3D::_bind_methods() {

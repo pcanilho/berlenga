@@ -921,9 +921,18 @@ void fragment() {
 	vec3 wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	bool cliff = wn.y < tm_cliff_cos;
-	// The pixel's world footprint, taken here in uniform control flow for the layers' texture gradients.
-	vec3 tm_dpx = dFdx(wp);
-	vec3 tm_dpy = dFdy(wp);
+	// The pixel's footprint on the ground for the layers' texture gradients, as a ray cone's ellipse (Akenine-Moller
+	// et al. 2019), as the rock detail takes it: the path tracer has no screen derivatives.
+	vec3 tm_dpx, tm_dpy;
+	{
+		vec3 v = wp - CAMERA_POSITION_WORLD;
+		float cone = length(v) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+		v = normalize(v);
+		vec3 t1 = cross(v, wn);
+		t1 = dot(t1, t1) > 1e-8 ? normalize(t1) : normalize(cross(wn, vec3(1.0, 0.0, 0.0) + vec3(0.0, 0.0, 1.0) * step(0.9, abs(wn.x))));
+		tm_dpx = t1 * cone;
+		tm_dpy = cross(wn, t1) * cone / max(abs(dot(v, wn)), 0.05);
+	}
 	// Layer weights. Geology from the generator: bare rock, scree on it, the rest soil, alluvium where much water
 	// drains; without it, rock past the rock slope and soil elsewhere. Sand on the beach band above the sea.
 	float w[5];

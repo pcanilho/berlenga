@@ -33,6 +33,8 @@
 
 #include "core/math/random_pcg.h"
 #include "core/templates/local_vector.h"
+#include "modules/ground/ground_lump_draw.h"
+#include "modules/ground/ground_lump_scan.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
@@ -76,20 +78,15 @@ private:
 	LocalVector<Clump> clumps;
 	uint32_t next_slot = 0; // ring buffer past max_clumps
 
-	// The rim the last scan saw, on the print field's texels round the camera.
-	LocalVector<float> last_rim;
-	LocalVector<float> owed; // m3 pushed into the rim but not yet broken into a clump
-	Vector2i last_origin = Vector2i(INT32_MIN, INT32_MIN);
-	Vector2 last_moved = Vector2(-1.0f, -1.0f);
-	int scan_n = 0;
-	float scan_texel = 0.0f;
+	// The print field's rim round the camera, as the last look saw it.
+	GroundLumpScan scan;
+	LocalVector<GroundLumpScan::Grown> grown;
 	double since_scan = 0.0;
 	uint64_t seen_cover_update = 0;
 	RandomPCG rng;
 
 	Ref<ArrayMesh> shapes[SHAPES];
-	Ref<MultiMesh> multimeshes[SHAPES];
-	MultiMeshInstance3D *instances[SHAPES] = {};
+	GroundLumpDraw lump_draw;
 	Ref<Material> material;
 	bool draw_dirty = false;
 	int spawned_total = 0;

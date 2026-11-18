@@ -40,7 +40,7 @@ extends Node3D
 #   --water [--sea-res=N] with --world: the generator's water bodies; --sea-res sets the sea's simulated grid (cells)
 #   --settle=N            N more frames before the capture (near plant cells are built lazily)
 #   --out=path.png        render and quit (path traced unless --raster); --spp=N (16); --size=WxH
-#   --cam=x,y,z --look=x,y,z   a fixed camera; --sun=elevation,yaw (degrees)
+#   --cam=x,y,z --look=x,y,z   a fixed camera; --sun=elevation,yaw (degrees); --fov=deg vertical (27: a 50 mm lens)
 #   --plants[=off]        with --world: the crevice plants of the view's stones (PlantGenerator.make_stones: scree,
 #                         river or shore; VegetationField3D.obstacles from the field); =off places them hidden (before
 #                         shots, same camera); --dist=m sets the camera's distance from the spot
@@ -2002,6 +2002,8 @@ func _render_later() -> void:
 			await RenderingServer.frame_post_draw
 			waited += 1
 		print("rt pending surfaces cleared after %d frames" % waited)
+	if args.has("fov"):
+		get_viewport().get_camera_3d().fov = float(args["fov"]) # --fov=deg: vertical field of view (27: a 50 mm lens)
 	var frames := (8 if raster else 12) + int(args.get("settle", "0")) # --settle=N: N more frames (lazily built near plants)
 	var t0 := 0
 	var tf := Time.get_ticks_msec()

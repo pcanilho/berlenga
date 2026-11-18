@@ -246,7 +246,10 @@ void PhysXRockDust3D::_step(float p_delta) {
 	}
 	// The weather's wind over the dust, 2 m up.
 	const Vector3 at = weight > 0.0f ? mid / weight : c;
-	const Vector3 wind = WorldContracts::weather()->wind_at(at, 2.0f);
+	Vector3 wind = WorldContracts::weather()->wind_at(at, 2.0f);
+	if (const WorldFire *fire = WorldContracts::fire(); fire->has_provider()) {
+		wind += fire->wind_at(at); // a fire nearby draws the dust in
+	}
 	air->set_enabled(weight > 0.0f && wind.length_squared() > 1e-4f);
 	air->set_global_position(at + Vector3(0, 2.0f, 0));
 	air->set_velocity(wind);

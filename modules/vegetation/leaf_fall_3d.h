@@ -117,10 +117,10 @@ private:
 	float _ground_at(const Vector3 &p_p) const;
 	void _spawn(const Vector3 &p_p, const Vector3 &p_v, int p_kind, bool p_lying);
 	void _step(float p_delta);
-	void _step_leaf(Leaf &p_leaf, float p_delta, const class WeatherMap3D *p_weather);
+	void _step_leaf(Leaf &p_leaf, float p_delta, const class WorldWeather *p_weather);
 	void _rebuild_draws();
 	void _upload();
-	void _refresh_auto_crowns(const class WeatherMap3D *p_weather, const Vector3 &p_camera);
+	void _refresh_auto_crowns(const class WorldWeather *p_weather, const Vector3 &p_camera);
 
 protected:
 	void _notification(int p_what);

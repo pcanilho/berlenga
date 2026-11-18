@@ -69,6 +69,7 @@ public:
 		RULE_COAST_EXPOSURE, // 0 sheltered to 1 open to the sea's waves (TerrainGenerator3D.get_coast_exposure_at); 0 far from the sea.
 		RULE_BEACH, // Beach mask, 1 on the beach face fading over the backshore, 0 inland (TerrainGenerator3D.get_beach_at).
 		RULE_FIELD_EDGE, // Metres from the nearest crop field's edge (GrassField3D.fields), negative inside the field. A species using it may grow in the fields; without fields it is not placed.
+		RULE_SAND_MOBILITY, // Desert sand seas (TerrainGenerator3D.sand_sea_rect): 0 stable interdune ground to 1 moving crest or slip face; -1 off the sand seas. A species using it grows on their loose sand.
 		RULE_MAX,
 	};
 	// How the species meets fallen wood placed in the field (meshes with tree_deadwood_axis).
@@ -247,6 +248,7 @@ public:
 	static float season_temperature(float p_january, float p_july);
 	bool uses_field_edge() const { return ranges[RULE_FIELD_EDGE].x > -100000.0f || ranges[RULE_FIELD_EDGE].y < 100000.0f; }
 	bool uses_dune() const { return ranges[RULE_DUNE].x > -1.0f || ranges[RULE_DUNE].y < 1.0f; }
+	bool uses_sand_mobility() const { return ranges[RULE_SAND_MOBILITY].x > -1.0f || ranges[RULE_SAND_MOBILITY].y < 1.0f; }
 	// True when a coast rule (tide height, exposure, beach) is narrower than "anywhere".
 	bool uses_coast() const {
 		return ranges[RULE_TIDE_HEIGHT].x > -10000.0f || ranges[RULE_TIDE_HEIGHT].y < 10000.0f ||

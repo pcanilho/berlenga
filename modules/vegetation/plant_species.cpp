@@ -65,6 +65,7 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_COAST_EXPOSURE] = Vector2(0.0f, 1.0f);
 	ranges[RULE_BEACH] = Vector2(0.0f, 1.0f);
 	ranges[RULE_FIELD_EDGE] = Vector2(-100000.0f, 100000.0f);
+	ranges[RULE_SAND_MOBILITY] = Vector2(-1.0f, 1.0f);
 }
 
 float PlantSpecies::season_temperature(float p_january, float p_july) {
@@ -297,7 +298,12 @@ Vector3 PlantSpecies::get_coupe_at(const Vector3 &p_pos, Vector2 *r_out) const {
 	if (r_out) {
 		*r_out = out;
 	}
-	const float age = float(int(patch_hash(best.x, best.y, patch_seed + 43) * float(coupe_rotation)) % coupe_rotation);
+	// The cutting order: the year steps by about 5 along x and 8 along z (mod the rotation), so
+	// a coupe and its neighbours differ by four years or more, fresh stools next to tall poles
+	// (docs, 18 Nov: a random age per coupe often put like beside like and the edges barely
+	// read), with a year's jitter.
+	const int step = best.x * 5 + best.y * 8 + int(patch_hash(best.x, best.y, patch_seed + 43) * 2.0f);
+	const float age = float(((step % coupe_rotation) + coupe_rotation) % coupe_rotation);
 	return Vector3(age, edge, ride && edge < 0.0f ? 1.0f : 0.0f);
 }
 
@@ -587,6 +593,8 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "beach_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_BEACH);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "field_edge_range", PROPERTY_HINT_NONE, "suffix:m"), "set_rule_range", "get_rule_range", RULE_FIELD_EDGE);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "field_edge_fade", PROPERTY_HINT_RANGE, "0,10,0.01,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_FIELD_EDGE);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "sand_mobility_range"), "set_rule_range", "get_rule_range", RULE_SAND_MOBILITY);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "sand_mobility_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_SAND_MOBILITY);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -612,6 +620,7 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_COAST_EXPOSURE);
 	BIND_ENUM_CONSTANT(RULE_BEACH);
 	BIND_ENUM_CONSTANT(RULE_FIELD_EDGE);
+	BIND_ENUM_CONSTANT(RULE_SAND_MOBILITY);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 	BIND_ENUM_CONSTANT(DEADWOOD_AVOID);
 	BIND_ENUM_CONSTANT(DEADWOOD_ON);

@@ -7,7 +7,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
 ## Snowpack
 
-- **Snow cover** (`SnowCover3D`): a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it.
+- **Snow cover** (`SnowCover3D`): a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it, and fire melts the snow under it at any air temperature.
 
   ![Snow on a mountain, raster and path traced](media/snow-mountain.jpg)
 

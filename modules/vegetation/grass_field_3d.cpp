@@ -442,10 +442,13 @@ void GrassField3D::_build_material() {
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
+	code += VegetationFire::WIND_CODE;
 	code += WeatherMap3D::get_wind_shader_code();
 	code += vformat("#define WEATHER_GUST_COUNT %d\n#define WEATHER_GUSTS_PER_AXIS %d\n", WeatherMap3D::GUST_COUNT, WeatherMap3D::GUSTS_PER_AXIS);
 	// The ground's ruts, digs and puddles (GroundSurface3D; material.cpp ground_deform_exposed()), mud round 5.
 	code += get_ground_opened_shader_code();
+	// The snowpack (SnowCover3D globals; material.cpp snow_pack_at(), snow_press()): it presses the sward flat.
+	code += BaseMaterial3D::get_snow_functions_code(true);
 	code += R"(
 // weather_wind() as felt by a blade: a damped oscillator of angular frequency omega0 and damping
 // zeta (Py, de Langre and Moulia 2006). The mean wind and the gust patches are slow and pass as
@@ -526,8 +529,8 @@ vec3 grass_weather_wind(vec3 wp, float height, float omega0, float zeta, float j
 	return v + vec3(hz.x, g.z * sigma, hz.y);
 }
 
-// The weather map's wind; without one, fallback_wind with gusts rolling downwind.
-vec3 grass_wind(vec3 wp, float h, float time, float omega0, float jitter) {
+// The weather map's wind; without one, fallback_wind with gusts rolling downwind. A fire's indraft adds to either.
+vec3 grass_wind_ambient(vec3 wp, float h, float time, float omega0, float jitter) {
 	if (weather_map_rect.z > 0.0) {
 		return grass_weather_wind(wp, h, omega0, 0.1, jitter, time);
 	}
@@ -540,6 +543,9 @@ vec3 grass_wind(vec3 wp, float h, float time, float omega0, float jitter) {
 	float g = 1.0 + 0.45 * sin(phase) + 0.2 * sin(phase * 2.7 + dot(wp.xz, vec2(-d.y, d.x)) * 0.2);
 	return vec3(fallback_wind.x, 0.0, fallback_wind.y) * g;
 }
+vec3 grass_wind(vec3 wp, float h, float time, float omega0, float jitter) {
+	return grass_wind_ambient(wp, h, time, omega0, jitter) + fire_wind_at(wp.xz);
+}
 )";
 	if (crop != CROP_NONE) {
 		code += R"(
@@ -550,6 +556,7 @@ varying float v_ripe;
 varying float v_dead;
 varying float v_wet;
 varying float v_frost;
+varying float v_snow; // under the snow surface: 1
 varying vec3 v_tint;
 varying float v_light;
 varying float v_hf;
@@ -672,6 +679,16 @@ void vertex() {
 				off = mix(off, normalize(bd) * 1.3, smoothstep(0.0, 1.0, min(bl, 1.0)));
 			}
 		}
+	}
+	// Snow (docs/ideas/world-links.md): a settled pack's weight presses the sward flat, each blade its own way (the
+	// snow press, Koerner 2003); it stands again as the pack melts.
+	vec2 snow_pk = snow_pack_at(base_w);
+	float snow_p = snow_press(snow_pk, 1.5);
+	if (snow_p > 0.0) {
+		float sa = fract(rnd * 61.7) * 6.2832;
+		off = mix(off, vec2(cos(sa), sin(sa)) * 1.45, snow_p);
+		// Laid flat under a pack deeper than it lies: buried, the snow surface shows over it.
+		h *= 1.0 - smoothstep(0.06, 0.12, snow_pk.x) * smoothstep(0.7, 1.0, snow_p);
 	}
 	// Ruts and puddles (mud round 5): pressed blades lie flat, each its own way; where the soil is opened they are gone.
 	vec3 go = grass_ground_opened(base_w.xz);
@@ -853,6 +870,7 @@ void vertex() {
 	v_tint = grass_patch_tint(base_w.xz, fract(rnd * 7.31 + 0.13), fract(rnd * 13.7 + 0.51), color_variation);
 	v_wet = 0.0;
 	v_frost = 0.0;
+	v_snow = snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0;
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
@@ -939,6 +957,9 @@ void fragment() {
 	float frost_c = v_frost * mix(0.4, 1.0, v_hf);
 	c = mix(c, vec3(0.78, 0.8, 0.84), 0.6 * frost_c);
 	rough = mix(rough, 0.85, frost_c);
+	// Under the snow surface the blade is the snow's (the pack's albedo stands for it).
+	c = mix(c, vec3(0.85), v_snow);
+	rough = mix(rough, 0.7, v_snow);
 	ALBEDO = c * mix(1.0, wet_factor, v_wet * (1.0 - frost_c));
 	ROUGHNESS = rough * mix(1.0, 0.4, v_wet * (1.0 - frost_c));
 	SPECULAR = spec;
@@ -954,6 +975,7 @@ varying float v_t;
 varying float v_dry;
 varying float v_wet;
 varying float v_frost;
+varying float v_snow; // under the snow surface: 1
 varying vec3 v_tint;
 varying float v_light;
 varying float v_trod; // Trodden flat on a worn path (its rest lean past any sward's own).
@@ -997,6 +1019,16 @@ void vertex() {
 				off = mix(off, normalize(bd) * 1.4, smoothstep(0.0, 1.0, min(bl, 1.0)));
 			}
 		}
+	}
+	// Snow (docs/ideas/world-links.md): a settled pack's weight presses the sward flat, each blade its own way (the
+	// snow press, Koerner 2003); it stands again as the pack melts.
+	vec2 snow_pk = snow_pack_at(base_w);
+	float snow_p = snow_press(snow_pk, 1.0);
+	if (snow_p > 0.0) {
+		float sa = fract(rnd * 61.7) * 6.2832;
+		off = mix(off, vec2(cos(sa), sin(sa)) * 1.45, snow_p);
+		// Laid flat under a pack deeper than it lies: buried, the snow surface shows over it.
+		h *= 1.0 - smoothstep(0.06, 0.12, snow_pk.x) * smoothstep(0.7, 1.0, snow_p);
 	}
 	// Ruts and puddles (mud round 5): pressed blades lie flat, each its own way; where the soil is opened they are gone.
 	vec3 go = grass_ground_opened(base_w.xz);
@@ -1067,6 +1099,7 @@ void vertex() {
 	v_dry = rnd;
 	v_wet = 0.0;
 	v_frost = 0.0;
+	v_snow = snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0;
 	v_tint = grass_patch_tint(base_w.xz, fract(rnd * 7.31 + 0.13), fract(rnd * 13.7 + 0.51), color_variation);
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
@@ -1131,8 +1164,11 @@ void fragment() {
 	float frost_c = v_frost * mix(0.4, 1.0, v_t);
 	c = mix(c, vec3(0.78, 0.8, 0.84), 0.6 * frost_c);
 	float wet_c = v_wet * (1.0 - frost_c);
+	// Under the snow surface the blade is the snow's (the pack's albedo stands for it).
+	c = mix(c, vec3(0.85), v_snow);
 	ALBEDO = c * mix(1.0, wet_factor, wet_c);
 	ROUGHNESS = mix(mix(mix(mix(0.55, 0.75, v_trod) * mix(1.0, wet_factor, 0.5 * wet_c) * mix(1.0, 0.4, wet_c), 0.85, mud_c), 0.95, smoothstep(0.0, 0.5, v_burn)), 0.85, frost_c);
+	ROUGHNESS = mix(ROUGHNESS, 0.7, v_snow);
 	// The burning band: the stubs' tips glow as the ground's embers do (the char decal's glow energy).
 	EMISSION = fire_glow_color(v_glow) * 4.0 * smoothstep(0.4, 1.0, v_t) * step(1e-3, v_burn);
 	SPECULAR = mix(0.35, 0.2, v_trod);
@@ -1384,9 +1420,9 @@ void GrassField3D::_build_hedges() {
 		return;
 	}
 	Dictionary season;
-	WeatherMap3D *wm = Object::cast_to<WeatherMap3D>(get_node_or_null(season_source));
-	if (wm) {
-		season = wm->get_season();
+	// season_source set: the season from the weather contract at the field.
+	if (!season_source.is_empty() && WorldContracts::weather()->has_provider()) {
+		season = WorldContracts::weather()->season_at(is_inside_tree() ? get_global_position() : Vector3());
 	} else if (crop_day >= 0) {
 		season["day_of_year"] = crop_day;
 	} else {
@@ -4407,6 +4443,11 @@ void GrassField3D::_trample_step(double p_delta) {
 		}
 	}
 	trample_last = seen;
+	// The current in any water over the sward lays it downstream (WaterCurrentBend, Luhar and Nepf 2011).
+	if ((int)trample.size() == trample_resolution * trample_resolution) {
+		water_current.update(trample_origin, trample_resolution, trample_size / trample_resolution, p_delta, [&](const Vector3 &p) { return map ? map->get_height_at(p) : ground_y; });
+		trample_active = water_current.apply(trample, trample_resolution) || trample_active;
+	}
 	if (trample_active) {
 		_trample_upload();
 	}
@@ -4829,20 +4870,21 @@ void GrassField3D::_season_step() {
 		return;
 	}
 	season_wait = 60;
-	WeatherMap3D *wm = Object::cast_to<WeatherMap3D>(get_node_or_null(season_source));
-	if (!wm) {
+	const WorldWeather *wm = WorldContracts::weather();
+	if (!wm->has_provider()) {
 		return;
 	}
+	const Dictionary season_now = wm->season_at(get_global_position());
 	if (crop != CROP_NONE && !plots.is_empty()) {
 		// Fields with a sowing day grow through the year.
-		const int day = int(wm->get_season().get("day_of_year", -1));
+		const int day = int(season_now.get("day_of_year", -1));
 		if (day != crop_day) {
 			crop_day = day;
 			_update_plot_stages(day);
 			_queue_far_bake();
 		}
 	}
-	const float g = season_greenness(wm->get_season());
+	const float g = season_greenness(season_now);
 	if (Math::abs(g - season_green) < 0.005f) {
 		return;
 	}

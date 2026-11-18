@@ -1414,6 +1414,87 @@ all of it within 3 minutes at 12 m/s; under a 10 m/s WeatherMap3D wind a
 low grey sheet streamed downwind off the scar. Left: grass ash does not
 show in the char map itself (only crown ash is drawn lighter).
 
+### Fire whirls behind ridges (picked 18 Nov late, fourth of four)
+
+Built. Research: wind over a ridge separates and rolls into a horizontal
+eddy in the lee; a fire on the lee slope tilts that vorticity upright into
+whirls that carry the fire across the slope, along the ridge, at rates
+near the head fire's (vorticity-driven lateral spread: Sharples et al.
+2012, Simpson et al. 2013 in coupled LES; the 2003 Canberra fires). The
+operational test (Sharples et al. 2012): slope over about 20 degrees,
+aspect within 40 degrees of the lee direction, wind over about 20 km/h.
+Here: strong flaming tiles (at least 300 kW/m) where the fire's ground
+(its height samples) falls away at more than tan 20 within 40 degrees of
+downwind, in a wind over 5.5 m/s, are lee sites. Each has a 1 in 600
+chance a second of a whirl, with no U/w* condition (the eddy is the
+ridge's). A lee whirl lives 20 to 60 s, drifts along the contour at a
+fifth of the wind (either way, plus a tenth of the wind downslope),
+lights the fuel under its core as it goes, and otherwise draws and lofts
+brands as a flank whirl. All whirls now sit on the ground's height. Test:
+a 30 x 40 m tall-grass patch on a 28 degree slope falling away downwind:
+at 8 m/s five lee whirls in two minutes widened the burn across the slope
+to 22.5 m at one minute against 18.5 m without whirls; none with the
+wind up the slope. (That test found the fire's length-to-width ratio
+uncapped: Anderson's fit gives about 90 at 8 m/s, stalling the flanks;
+it is now capped at 8 as FARSITE does.)
+Left: the lee test reads the fire's own slope, not the terrain wind's
+separation behind a ridge crest upwind; whirls (and so the lateral
+spread) need the fire's Flow, as flank whirls do.
+
+### Next-round options (card, 18 Nov late night)
+
+1. Fire makes its own wind. A fire's plume draws air in at its base
+   (indraft of a few m/s at a strong front: Clements et al. 2007, FireFlux),
+   which tilts flames toward the fire, slows the backing front and pulls
+   smoke, ash, grass and loose cloth inward. Here: the fire's Flow
+   velocity near the ground, sampled at the front, feeds the spread's
+   effective wind (WRF-SFIRE's two-way coupling, with Flow as the
+   atmosphere), and is offered on the wind contract so grass, cloth and
+   particles near a fire lean into it.
+2. Burnt trees fall later. A ground fire chars a trunk's base (cambium
+   killed, wood charred from the outside: Dickinson and Johnson 2001);
+   days on, or in the next strong wind, fire-weakened trees fall (hazard
+   trees, a main danger to crews). Here: the char depth at the stem foot
+   from flame length and residence time, the section left (as buildings'
+   EN 1995-1-2 model) against the wind's bending load, and a tree whose
+   base gives way falls as a PhysX body (the storm bench's thrown-tree
+   path).
+3. Burnt grass shows its ash. Complete combustion leaves white-grey
+   mineral ash, incomplete black char (Roy et al. 2010: ash albedo 0.3 to
+   0.5, char 0.03 to 0.05); the mix follows fuel moisture and intensity.
+   Here: the char map draws grass ash by combustion completeness, thinned
+   by blowing ash and darkened by rain, so a burn scar reads grey and
+   black in patches instead of uniform black.
+4. Lee eddies from the terrain wind. Lee whirls now read the fire's own
+   slope. Here: WeatherMap3D's terrain wind marks where flow separates
+   behind a crest (reversed or slack near-ground wind in the lee), so lee
+   whirls form only below a real ridge, and the lateral spread follows the
+   ridge line.
+
+### Fire makes its own wind (picked 18 Nov late night, first of four)
+
+Built. Research: a fire's plume entrains air at its base; FireFlux
+(Clements et al. 2007) measured an indraft of a few m/s at a grass head
+fire, opposing the ambient wind ahead of it, and coupled models
+(WRF-SFIRE, Coen's CAWFE, Clark et al. 1996) show it drawing fronts
+together where they meet (junction fires: Viegas et al. 2012, Raposo et
+al. 2018). Here: each 2 m stretch of burning front over 50 kW/m is a sink
+drawing in, per metre and side, q = (pi/2) w* d0 (w* Byram's buoyant
+velocity, d0 half the flame length), so the inflow just outside the
+flames is about w*/2 and falls as 1/d along a front (a line sink) and
+1/d^2 past its ends; the strongest 64 are kept each 0.25 s. It goes out
+three ways: WorldFire.wind_at (a new contract member, summed over fires),
+which PhysXCloth3D adds to its wind; shader globals fire_wind_map and
+fire_wind_rect (2 m texels over the fire), which grass adds to its wind
+(VegetationFire::WIND_CODE); and the spread, which takes only the pull of
+fire more than 5 m away lying ahead of a front (a fire's pull on its own
+front is in Rothermel's empirical fits already). Test: two 20 m fire lines
+8 m apart in calm tall grass closed the gap in 65 s against 136 s without
+it; a lone fire in a 3 m/s wind burnt exactly the same area either way;
+the indraft 2 m outside a calm front was 0.3 to 0.6 m/s. Left: the Flow
+gas itself does not take this wind (it has its own buoyant flow), and the
+grass map covers the fire's own area only.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

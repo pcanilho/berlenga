@@ -308,6 +308,99 @@ void VegetationField3D::_read_sand(const TerrainGenerator3D *p_gen, PlaceSetup &
 	r_setup.sand_rect = p_gen->get_world_rect();
 }
 
+// How much the desert sand moves (docs/ideas/vegetation.md, "Arid ground"): crests and upper flanks every windy
+// day, the plinths less, the interdune corridors under thin sand not at all (Tsoar 2005). From the sand sea's depth
+// on its own grid: its place between the local low and high over about half a crest spacing (crests come some 25
+// cells apart), and 0 under thin sand. Slip faces are raised at placement from the ground's slope.
+void VegetationField3D::_read_sand_mobility(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup) {
+	r_setup.mobility.clear();
+	r_setup.mobility_nx = 0;
+	r_setup.mobility_ny = 0;
+	if (!p_gen || !p_gen->get_sand_sea_rect().has_area()) {
+		return;
+	}
+	const Rect2 rect = p_gen->get_sand_sea_rect();
+	const float cell = MAX(float(p_gen->get_sand_sea_scale()), 1.0f);
+	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 2048);
+	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 2048);
+	LocalVector<float> depth;
+	depth.resize(nx * ny);
+	bool any = false;
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const float d = float(p_gen->get_sand_sea_height(Vector3(rect.position.x + rect.size.x * x / (nx - 1), 0.0f, rect.position.y + rect.size.y * z / (ny - 1))));
+			depth[z * nx + x] = d;
+			any = any || d > 0.05f;
+		}
+	}
+	if (!any) {
+		return;
+	}
+	// Local low and high: separable sliding windows.
+	const int r = 12;
+	LocalVector<float> lo_x, hi_x, lo, hi;
+	lo_x.resize(nx * ny);
+	hi_x.resize(nx * ny);
+	lo.resize(nx * ny);
+	hi.resize(nx * ny);
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			float a = 1e9f, b = -1e9f;
+			for (int k = MAX(x - r, 0); k <= MIN(x + r, nx - 1); k++) {
+				a = MIN(a, depth[z * nx + k]);
+				b = MAX(b, depth[z * nx + k]);
+			}
+			lo_x[z * nx + x] = a;
+			hi_x[z * nx + x] = b;
+		}
+	}
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			float a = 1e9f, b = -1e9f;
+			for (int k = MAX(z - r, 0); k <= MIN(z + r, ny - 1); k++) {
+				a = MIN(a, lo_x[k * nx + x]);
+				b = MAX(b, hi_x[k * nx + x]);
+			}
+			lo[z * nx + x] = a;
+			hi[z * nx + x] = b;
+		}
+	}
+	r_setup.mobility.resize(nx * ny);
+	for (int i = 0; i < nx * ny; i++) {
+		const float d = depth[i];
+		if (d < 0.05f) {
+			r_setup.mobility[i] = -1.0f;
+			continue;
+		}
+		const float place = (d - lo[i]) / (hi[i] - lo[i] + 0.3f);
+		const float m = Math::smoothstep(0.3f, 0.85f, place) * Math::smoothstep(0.2f, 0.6f, d);
+		r_setup.mobility[i] = m;
+	}
+	r_setup.mobility_nx = nx;
+	r_setup.mobility_ny = ny;
+	r_setup.mobility_rect = rect;
+}
+
+float VegetationField3D::PlaceSetup::mobility_at(const Vector2 &p_xz) const {
+	if (mobility.is_empty()) {
+		return -1.0f;
+	}
+	const float gx = (p_xz.x - mobility_rect.position.x) / mobility_rect.size.x * (mobility_nx - 1);
+	const float gz = (p_xz.y - mobility_rect.position.y) / mobility_rect.size.y * (mobility_ny - 1);
+	if (gx < 0.0f || gz < 0.0f || gx > mobility_nx - 1 || gz > mobility_ny - 1) {
+		return -1.0f;
+	}
+	const int ix = MIN(int(gx), mobility_nx - 2), iz = MIN(int(gz), mobility_ny - 2);
+	const float fx = gx - ix, fz = gz - iz;
+	const float *r0 = &mobility[iz * mobility_nx + ix];
+	const float *r1 = r0 + mobility_nx;
+	// The edge of the sand: nearest, so -1 does not blend into the sand's values.
+	if (MIN(MIN(r0[0], r0[1]), MIN(r1[0], r1[1])) < 0.0f) {
+		return (fx < 0.5f ? (fz < 0.5f ? r0[0] : r1[0]) : (fz < 0.5f ? r0[1] : r1[1]));
+	}
+	return Math::lerp(Math::lerp(r0[0], r0[1], fx), Math::lerp(r1[0], r1[1], fx), fz);
+}
+
 float VegetationField3D::PlaceSetup::sand_at(const Vector2 &p_xz) const {
 	if (sand.is_empty() || !sand_rect.has_area()) {
 		return 0.0f;
@@ -377,6 +470,17 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		r_setup.coast = gen && gen->has_sea_result() ? gen : nullptr;
 		r_setup.sea_y = gen ? float(gen->get_sea_level() + gen->get_height_offset()) : 0.0f;
 		_read_sand(gen, r_setup);
+		bool mobility_rule = false;
+		if (biome.is_valid()) {
+			const TypedArray<PlantSpecies> list = biome->get_species();
+			for (int i = 0; i < list.size(); i++) {
+				const Ref<PlantSpecies> sp = list[i];
+				mobility_rule = mobility_rule || (sp.is_valid() && sp->uses_sand_mobility());
+			}
+		}
+		if (mobility_rule) {
+			_read_sand_mobility(gen, r_setup);
+		}
 	}
 	r_setup.stone_tops = stone_top_grid;
 	r_setup.stone_top_normals = stone_top_grid_normals;
@@ -903,7 +1007,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool dune_rule = sp->uses_dune() && p_setup.dunes;
 		const bool coast_rule = sp->uses_coast();
 		const bool field_rule = sp->uses_field_edge();
-		const bool sand_plant = sp->uses_dune() || coast_rule;
+		const bool mobility_rule = sp->uses_sand_mobility();
+		const bool sand_plant = sp->uses_dune() || coast_rule || mobility_rule;
 		if (coast_rule && !p_setup.coast) {
 			continue; // Coast plants need a sea to measure from.
 		}
@@ -995,6 +1100,14 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						const Vector3 dp(xz.x, 0.0f, xz.y);
 						const float dune = p_setup.dunes->get_dune_height(dp) >= DUNE_SAND_MIN ? float(p_setup.dunes->get_dune_stability(dp)) : -1.0f;
 						suit *= sp->rule_weight(PlantSpecies::RULE_DUNE, dune);
+					}
+					if (mobility_rule && suit > 0.0f) {
+						// Desert sand seas: slip faces past 20 to 30 degrees avalanche and stay bare.
+						float m = p_setup.mobility_at(xz);
+						if (m >= 0.0f) {
+							m = MAX(m, Math::smoothstep(20.0f, 30.0f, float(Math::rad_to_deg(map->get_slope_at(p3)))));
+						}
+						suit *= sp->rule_weight(PlantSpecies::RULE_SAND_MOBILITY, m);
 					}
 					if (!sand_plant && suit > 0.0f && !p_setup.sand.is_empty()) {
 						// Loose sand (beach, dune, sand sea): no soil to root in or to hold litter.

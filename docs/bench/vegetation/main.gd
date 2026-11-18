@@ -15,6 +15,10 @@ extends Node3D
 #                    species' pixel reach on (off: their hand-set ranges): walks VEG_FLOOR_WALK m (30) and
 #                    prints the main thread's streaming time a frame, memory, primitives, draw calls and
 #                    the frame time; with --out also saves the view (path traced unless --raster)
+#   --desert[=off]   a transverse sand sea (TerrainGenerator3D.sand_sea_rect) with make_desert's flanks and
+#                    interdune sets streamed round a camera 1.7 m up (off: no plants): checks the plants keep
+#                    off the crests and slip faces by the sand's mobility, prints the same costs as --floor
+#                    and with --out saves the view. VEG_DESERT_HIGH=1 looks from 12 m up across the dunes.
 
 const SIZE := 256.0
 var size := SIZE
@@ -31,6 +35,7 @@ var stone_plants := true # --stones-off: the same stones, no plants.
 var far_volume_view := 0 # --far-volume: 1 with the far plants as volume, 2 without (--far-volume=off).
 var far_match := 0 # --far-match: the far-volume view without volume, 4 m up, on a ground drawing the far colour, waiting for the far shade match; 2 = match off (=off), 3 = shade forced to 0.3 (=dark).
 var floor_view := 0 # --floor: 1 with the small species' pixel reach, 2 without (--floor=off).
+var desert_view := 0 # --desert: 1 with make_desert's plants on a sand sea, 2 the same view without (--desert=off).
 var mushroom_view := 0 # --mushrooms: 1 with the mushrooms, 2 the same view without them (--mushrooms=off).
 var n := 0
 var dm: TerrainDataMap3D
@@ -83,6 +88,8 @@ func _ready() -> void:
 		elif a.begins_with("--floor"):
 			floor_view = 2 if a == "--floor=off" else 1
 			size = 128.0
+		elif a.begins_with("--desert"):
+			desert_view = 2 if a == "--desert=off" else 1
 		elif a.begins_with("--mushrooms"):
 			mushroom_view = 2 if a == "--mushrooms=off" else 1
 			deadwood_view = true
@@ -132,7 +139,7 @@ func _ready() -> void:
 	field.data_map = field.get_path_to(dm)
 	if stream_cost:
 		_setup_stream_cost()
-	if not out.is_empty():
+	if not out.is_empty() and desert_view == 0:
 		_build_view()
 
 func _mesh(m: PrimitiveMesh, lift: float, col: Color) -> Mesh:
@@ -244,6 +251,9 @@ func _physics_process(_d: float) -> void:
 	if floor_view > 0:
 		await _floor_view()
 		return
+	if desert_view > 0:
+		await _desert_view()
+		return
 	if stone_view != "":
 		_stones_view()
 		_render_later()
@@ -302,6 +312,7 @@ func _floor_view() -> void:
 	cam.position = at + Vector3(0, 1.7, 0)
 	cam.look_at(Vector3(at.x, height(at.x, at.z + 20.0), at.z + 20.0))
 	cam.current = true
+	var close := OS.get_environment("VEG_FLOOR_CLOSE") != "" # Looking down 3 m ahead: the near litter.
 	var ground := VegetationField3D.new()
 	ground.far_volume = false
 	ground.name = "Floor"
@@ -311,6 +322,12 @@ func _floor_view() -> void:
 	var gb := Biome.new()
 	var floor_set: Array[PlantSpecies] = []
 	floor_set.assign(PlantGenerator.make_floor(PlantGenerator.FLOOR_OAK_MIXED, 3, false))
+	if OS.get_environment("VEG_FLOOR_NEAR") == "0":
+		# The litter without its leaf-on-leaf near cards (PlantGenerator.litter_deposit).
+		for sp in floor_set:
+			if sp.near_range == 7.0 and sp.near_meshes.size() > 0:
+				sp.near_meshes = []
+				sp.near_range = 0.0
 	gb.species = floor_set
 	ground.biome = gb
 	ground.tile_size = 16.0
@@ -354,6 +371,10 @@ func _floor_view() -> void:
 	for v in ms:
 		total += v
 	get_viewport().disable_3d = false
+	if close:
+		cam.look_at(Vector3(cam.position.x, height(cam.position.x, cam.position.z + 3.0), cam.position.z + 3.0))
+		for i in 30:
+			await get_tree().process_frame
 	var nodes := 0
 	for ch in ground.get_children(true):
 		if ch is MultiMeshInstance3D:
@@ -379,6 +400,275 @@ func _floor_view() -> void:
 		get_tree().quit(0)
 	else:
 		_render_later()
+
+# --desert[=off]: make_desert's two stands on a transverse sand sea, streamed round a walker; checks the plants by
+# the sand's mobility (the field's RULE_SAND_MOBILITY, worked out again here from the generator's sand depth).
+func _desert_view() -> void:
+	field.queue_free()
+	var gen := TerrainGenerator3D.new()
+	gen.name = "DesertGen"
+	# Heavy generator options are on by default; this bench keeps its own fast choices.
+	gen.glacial_enabled = false
+	gen.glacial_converged = false
+	gen.tile_erosion_enabled = false
+	gen.strata_enabled = false
+	gen.guide_preview = false
+	gen.dunes_enabled = false
+	gen.deposition = 0.0
+	gen.moraine_age = 0.0
+	gen.scree_age = 0.0
+	gen.meander_age = 0.0
+	gen.outwash_age = 0.0
+	gen.base_uplift = 0.0
+	gen.size = Vector2(1024, 1024)
+	gen.cell_size = 8.0
+	gen.seed = 3
+	gen.sand_sea_rect = Rect2(-400, -400, 800, 800)
+	gen.sand_sea_scale = 4.0
+	gen.sand_sea_depth = 8.0
+	gen.sand_sea_steps = 200
+	gen.sand_sea_edge = 150.0
+	add_child(gen)
+	var t := Time.get_ticks_msec()
+	gen.generate()
+	print("VEG_DESERT sand sea %.0f ms, dunes up to %.1f m (generate %d ms)" % [gen.get_last_sand_sea_msec(), gen.get_last_sand_sea_max(), Time.get_ticks_msec() - t])
+	var map := TerrainDataMap3D.new()
+	map.name = "DesertMap"
+	map.size = 256.0
+	map.resolution = 256
+	map.bake_on_ready = false
+	add_child(map)
+	map.height_source = map.get_path_to(gen)
+	map.geology_source = map.get_path_to(gen)
+	map.bake()
+	var mob := _desert_mobility(gen)
+	var high := OS.get_environment("VEG_DESERT_HIGH") != ""
+	var at := Vector3(-60, 0, -20)
+	at.y = gen.get_height(at)
+	var cam := Camera3D.new()
+	add_child(cam)
+	cam.far = 600.0
+	cam.position = at + Vector3(0, 12.0 if high else 1.7, 0)
+	var look := Vector3(at.x + 40.0, 0, at.z + 30.0)
+	look.y = gen.get_height(look) + (0.0 if high else 1.0)
+	cam.look_at(look)
+	cam.current = true
+	var ground := VegetationField3D.new()
+	ground.far_volume = false
+	ground.name = "Desert"
+	ground.populate_on_ready = false
+	ground.detail_reference_height = 1080
+	var gb := Biome.new()
+	var desert_set: Array[PlantSpecies] = []
+	desert_set.assign(Array(PlantGenerator.make_desert(PlantGenerator.DESERT_FLANKS, 3, true)) + Array(PlantGenerator.make_desert(PlantGenerator.DESERT_INTERDUNE, 3, true)))
+	gb.species = desert_set if desert_view == 1 else ([] as Array[PlantSpecies])
+	ground.biome = gb
+	ground.tile_size = 16.0
+	ground.stream_radius = 60.0
+	add_child(ground)
+	ground.stream_target = ground.get_path_to(cam)
+	ground.data_map = ground.get_path_to(map)
+	var mem0 := OS.get_static_memory_usage()
+	var vid0 := Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED)
+	ground.streaming = true
+	get_viewport().disable_3d = true
+	var warm := 0
+	while warm < 1200 and (warm < 20 or not ground.is_stream_idle()):
+		await get_tree().process_frame
+		warm += 1
+	if desert_view == 1:
+		_desert_checks(ground, desert_set, gen, map, mob)
+	# Walking 30 m (VEG_FLOOR_WALK) along the wind, across the dunes, at 0.1 m a frame.
+	var walk := float(OS.get_environment("VEG_FLOOR_WALK")) if OS.get_environment("VEG_FLOOR_WALK") != "" else 30.0
+	var ms: Array[float] = []
+	var walked := 0.0
+	var start := cam.position
+	ground.get_stream_stats()
+	while walked < walk:
+		cam.position += Vector3(0.1, 0, 0)
+		cam.position.y = gen.get_height(cam.position) + 1.7
+		walked += 0.1
+		await get_tree().process_frame
+		ms.append(float(ground.get_stream_stats().frame_max_msec))
+	cam.position = start
+	var settle := 0
+	while settle < 1200 and (settle < 20 or not ground.is_stream_idle()):
+		await get_tree().process_frame
+		settle += 1
+	ms.sort()
+	var total := 0.0
+	for v in ms:
+		total += v
+	get_viewport().disable_3d = false
+	_desert_scene(gen, cam)
+	for i in 30:
+		await get_tree().process_frame
+	for i in 6:
+		await RenderingServer.frame_post_draw
+	var waited := 0
+	while not raster and waited < 600 and get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES) > 0:
+		await RenderingServer.frame_post_draw
+		waited += 1
+	var t0 := Time.get_ticks_usec()
+	for i in 12:
+		await RenderingServer.frame_post_draw
+	var frame_ms := (Time.get_ticks_usec() - t0) / 12000.0
+	print("VEG_DESERT walk %.0f m in %d frames: streaming mean %.2f ms, p95 %.2f ms, worst %.2f ms" % [walk, ms.size(), total / maxi(ms.size(), 1), ms[int(ms.size() * 0.95)], ms[-1]])
+	print("VEG_DESERT plants %d, memory +%.1f MB, video +%.1f MB, primitives %d, draw calls %d, objects %d, %s frame %.1f ms" % [
+		ground.get_plant_count(), (OS.get_static_memory_usage() - mem0) / 1048576.0,
+		(Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) - vid0) / 1048576.0,
+		Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME), Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME),
+		Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME), "raster" if raster else "path traced", frame_ms])
+	if desert_view == 1:
+		print("VEG_DESERT_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+	if out.is_empty():
+		get_tree().quit(1 if fails > 0 else 0)
+	else:
+		_render_later()
+
+# The sand's mobility as VegetationField3D works it out (_read_sand_mobility): the depth's place between its low and
+# high within 12 cells, 0 under thin sand, -1 off the sand. Returns [grid, nx, ny, rect].
+func _desert_mobility(gen: TerrainGenerator3D) -> Array:
+	var rect := gen.sand_sea_rect
+	var c := gen.sand_sea_scale
+	var nx := int(ceil(rect.size.x / c)) + 1
+	var ny := int(ceil(rect.size.y / c)) + 1
+	var d := PackedFloat32Array()
+	d.resize(nx * ny)
+	for z in ny:
+		for x in nx:
+			d[z * nx + x] = gen.get_sand_sea_height(Vector3(rect.position.x + rect.size.x * x / (nx - 1), 0, rect.position.y + rect.size.y * z / (ny - 1)))
+	var r := 12
+	var lox := PackedFloat32Array()
+	var hix := PackedFloat32Array()
+	lox.resize(nx * ny)
+	hix.resize(nx * ny)
+	for z in ny:
+		for x in nx:
+			var a := 1e9
+			var b := -1e9
+			for k in range(maxi(x - r, 0), mini(x + r, nx - 1) + 1):
+				a = minf(a, d[z * nx + k])
+				b = maxf(b, d[z * nx + k])
+			lox[z * nx + x] = a
+			hix[z * nx + x] = b
+	var m := PackedFloat32Array()
+	m.resize(nx * ny)
+	for z in ny:
+		for x in nx:
+			var a := 1e9
+			var b := -1e9
+			for k in range(maxi(z - r, 0), mini(z + r, ny - 1) + 1):
+				a = minf(a, lox[k * nx + x])
+				b = maxf(b, hix[k * nx + x])
+			var v := d[z * nx + x]
+			if v < 0.05:
+				m[z * nx + x] = -1.0
+			else:
+				m[z * nx + x] = smoothstep(0.3, 0.85, (v - a) / (b - a + 0.3)) * smoothstep(0.2, 0.6, v)
+	return [m, nx, ny, rect]
+
+func _desert_mob_at(mob: Array, p: Vector3) -> float:
+	var rect: Rect2 = mob[3]
+	var x := clampi(roundi((p.x - rect.position.x) / rect.size.x * (mob[1] - 1)), 0, mob[1] - 1)
+	var z := clampi(roundi((p.z - rect.position.y) / rect.size.y * (mob[2] - 1)), 0, mob[2] - 1)
+	return mob[0][z * mob[1] + x]
+
+func _desert_checks(ground: VegetationField3D, dset: Array[PlantSpecies], gen: TerrainGenerator3D, map: TerrainDataMap3D, mob: Array) -> void:
+	# Per preset: plants, on a crest (mobility over 0.85 here, the near cell), on a slip face (over 30 deg),
+	# share on the flanks (0.1 to 0.8), on stable sand (under 0.2), mean slope.
+	# Keyed by preset, and drinn by stand (the flanks' set comes first, 89; the interdune drinn as -89).
+	var stats := {}
+	var seen_drinn := false
+	for s in dset.size():
+		var key: int = dset[s].get_meta("plant_preset", -1)
+		if key == PlantGenerator.PRESET_DRINN:
+			key = -key if seen_drinn else key
+			seen_drinn = true
+		if not stats.has(key):
+			stats[key] = [0, 0, 0, 0, 0]
+		var st: Array = stats[key]
+		for p in ground.get_placements(s):
+			var m := _desert_mob_at(mob, p)
+			var slope := rad_to_deg(map.get_slope_at(p))
+			st[0] += 1
+			if maxf(m, smoothstep(20.0, 30.0, slope)) > 0.85:
+				st[1] += 1
+			if slope > 30.0:
+				st[2] += 1
+			if m > 0.07 and m < 0.8: # the flanks set: 0.15 to 0.7, its fade 0.08
+				st[3] += 1
+			if m > -0.5 and m < 0.25:
+				st[4] += 1
+	print("VEG_DESERT per preset [plants, crest, slip face, flanks, stable]: ", stats)
+	var drinn: Array = stats.get(PlantGenerator.PRESET_DRINN, [0, 0, 0, 0, 0])
+	var crust: Array = stats.get(PlantGenerator.PRESET_SOIL_CRUST, [0, 0, 0, 0, 0])
+	var annual: Array = stats.get(PlantGenerator.PRESET_DESERT_ANNUALS, [0, 0, 0, 0, 0])
+	var crest := 0
+	var slip := 0
+	for k in stats:
+		crest += stats[k][1]
+		slip += stats[k][2]
+	# Mobility over the sea: crests and corridors both there.
+	var hi := 0
+	var lo := 0
+	for v in mob[0]:
+		if v > 0.85:
+			hi += 1
+		elif v > -0.5 and v < 0.12:
+			lo += 1
+	_check("desert: the sand sea has mobile crests and stable corridors", hi > 200 and lo > 200, [hi, lo, mob[0].size()])
+	_check("desert: no plant on a crest or a slip face", crest == 0 and slip == 0 and drinn[0] > 50, [crest, slip])
+	_check("desert: the flanks' drinn on the flanks", drinn[0] > 50 and drinn[3] > drinn[0] * 0.7, [drinn[0], drinn[3]])
+	# Mobility here is the nearest cell, the field's bilinear: a fade's width (0.08) of slack.
+	_check("desert: crust only on stable sand", crust[0] > 500 and crust[4] == crust[0], [crust[0], crust[4]])
+	_check("desert: annuals between the dunes, not up them", annual[0] > 500 and annual[3] < annual[0] * 0.5, [annual[0], annual[3]])
+
+# The desert's ground, sky and sun for the view.
+func _desert_scene(gen: TerrainGenerator3D, cam: Camera3D) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var res := 240
+	var step := 1.0
+	var o := Vector3(cam.position.x - 60.0, 0, cam.position.z - 60.0)
+	var hs := PackedFloat32Array()
+	hs.resize((res + 1) * (res + 1))
+	for z in res + 1:
+		for x in res + 1:
+			hs[z * (res + 1) + x] = gen.get_height(o + Vector3(x * step, 0, z * step))
+	for z in res:
+		for x in res:
+			var q := [Vector3(x, hs[z * (res + 1) + x], z), Vector3(x + 1, hs[z * (res + 1) + x + 1], z),
+					Vector3(x + 1, hs[(z + 1) * (res + 1) + x + 1], z + 1), Vector3(x, hs[(z + 1) * (res + 1) + x], z + 1)]
+			for i in [0, 1, 2, 0, 2, 3]:
+				st.add_vertex(o + Vector3(q[i].x * step, q[i].y, q[i].z * step))
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	var gm := StandardMaterial3D.new()
+	gm.albedo_color = Color(0.72, 0.55, 0.36) # Quartz sand with an iron-oxide coat.
+	gm.roughness = 0.95
+	mi.material_override = gm
+	add_child(mi)
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.62, 0.72, 0.86)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.55, 0.6, 0.7)
+	env.ambient_light_energy = 0.6
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = not raster
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = 2
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-28, 120, 0)
+	sun.light_energy = 1.3
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 80.0
+	add_child(sun)
 
 # Mean and standard deviation of a cover map's alpha, inside its border.
 func _alpha_stats(img: Image) -> Array:

@@ -38,6 +38,7 @@
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/terrain_deform/terrain_deformer_3d.h"
 #include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
@@ -683,7 +684,17 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			const float m = (melt_temperature_factor * t + melt_shortwave_factor * (1.0f - alb) * g) * in.dt_h;
 			surface_melt = CLAMP(m, 0.0f, MAX(swe - liq, 0.0f));
 			liq += surface_melt;
-		} else if (t < 0.0f && liq > 0.0f) {
+		}
+		// Fire: the heat it puts into the pack melts snow whatever the air, its energy over the latent heat of
+		// fusion (334 kJ/kg), M = H dt / L_f (mm water); the cold pack's own warming is small beside a fire's tens
+		// of kW/m2 and left out.
+		if (cell_fire.size() == n * n && cell_fire[i] > 0.0f) {
+			const float m = cell_fire[i] * 3600.0f / 334000.0f * in.dt_h;
+			const float fm = CLAMP(m, 0.0f, MAX(swe - liq, 0.0f));
+			surface_melt += fm;
+			liq += fm;
+		}
+		if (!melting && surface_melt <= 0.0f && t < 0.0f && liq > 0.0f) {
 			// Meltwater and rain refreeze in a cold pack, at the temperature factor's rate.
 			refrozen = MIN(liq, melt_temperature_factor * -t * in.dt_h);
 			liq -= refrozen;
@@ -927,7 +938,7 @@ void SnowCover3D::_slide() {
 void SnowCover3D::_refresh_cell_inputs(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only) {
 	const int n = resolution;
 	const int nn = n * n;
-	const WeatherMap3D *wm = owner || !canopy_enabled ? nullptr : WeatherMap3D::get_active();
+	const WorldWeather *wm = owner || !canopy_enabled || !WorldContracts::weather()->has_provider() ? nullptr : WorldContracts::weather();
 	const TerrainDataMap3D *cm = get_climate_map_node();
 	const bool canopy = cell_canopy.size() == nn;
 	if (cm) {
@@ -957,7 +968,7 @@ void SnowCover3D::_refresh_cell_inputs(int p_from_row, int p_to_row, const Vecto
 			}
 			const Vector3 pos = _cell_center(x, z);
 			if (c) {
-				c[i] = wm ? CLAMP(wm->get_canopy_closure_at(pos), 0.0f, 1.0f) : 0.0f;
+				c[i] = wm ? CLAMP(wm->canopy_closure_at(pos), 0.0f, 1.0f) : 0.0f;
 			}
 			if (cp) {
 				cp[i] = cm->get_precipitation_at(pos);
@@ -988,6 +999,33 @@ void SnowCover3D::_update_begin(double p_weather_dt, bool p_blocking) {
 	const int band = MAX(resolution / 16, 1);
 	const int from = int(update_count % uint64_t((resolution + band - 1) / band)) * band;
 	_refresh_cell_inputs(from, MIN(from + band, resolution), nullptr);
+	_refresh_fire();
+}
+
+// Fire over the snow (docs/ideas/world-links.md, fire → snow melt): the heat each cell takes from WorldFire, read on
+// the main thread every update since a fire moves fast. None while a climate bake drives the cover.
+void SnowCover3D::_refresh_fire() {
+	const int n = resolution;
+	WorldFire *fire = WorldContracts::fire();
+	if (driven || !fire || !fire->has_provider() || cell_ground.size() != n * n) {
+		cell_fire.clear();
+		return;
+	}
+	cell_fire.resize(n * n);
+	float *f = cell_fire.ptrw();
+	bool any = false;
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			Vector3 pos = _cell_center(x, z);
+			pos.y = cell_ground[z * n + x];
+			const float h = MAX(fire->heat_at(pos), 0.0f);
+			f[z * n + x] = h;
+			any = any || h > 0.0f;
+		}
+	}
+	if (!any) {
+		cell_fire.clear();
+	}
 }
 
 // The cells, slides, drift and cornices: any thread, nothing else touching the cells meanwhile.
@@ -2224,18 +2262,21 @@ float SnowCover3D::get_runoff_at(Vector3 p_position) const {
 	return MAX(_sample(pub.runoff, Vector2(p_position.x, p_position.z)), 0.0f);
 }
 
+// The weather contract's air at the ground under the point, then the snow's own lapse rate up or down to it.
 float SnowCover3D::get_air_temperature_at(Vector3 p_position) const {
-	const WeatherMap3D *w = WeatherMap3D::get_active();
-	const float ref = w ? w->get_ground_height() : (is_inside_tree() ? get_global_position().y : 0.0f);
-	const float t = w ? w->get_air_temperature() : temperature;
+	const WorldWeather *w = WorldContracts::weather();
+	const bool live = w->has_provider();
+	const float ref = live ? w->ground_height_at(p_position) : (is_inside_tree() ? get_global_position().y : 0.0f);
+	const float t = live ? w->air_temperature_at(Vector3(p_position.x, ref, p_position.z)) : temperature;
 	return t - lapse_rate * 0.001f * (p_position.y - ref);
 }
 
 float SnowCover3D::get_snowfall_rate_at(Vector3 p_position) const {
-	const WeatherMap3D *w = WeatherMap3D::get_active();
-	const float rate = w ? w->get_rain_at(p_position) : precipitation_rate;
-	const float rh = w ? w->get_air_humidity() : humidity;
-	const float ref = w ? w->get_ground_height() : (is_inside_tree() ? get_global_position().y : 0.0f);
+	const WorldWeather *w = WorldContracts::weather();
+	const bool live = w->has_provider();
+	const float ref = live ? w->ground_height_at(p_position) : (is_inside_tree() ? get_global_position().y : 0.0f);
+	const float rate = live ? w->precipitation_at(p_position) : precipitation_rate;
+	const float rh = live ? w->air_humidity_at(Vector3(p_position.x, ref, p_position.z)) : humidity;
 	return MAX(rate, 0.0f) * get_orographic_factor_at(p_position, ref) * snowfall_fraction(get_air_temperature_at(p_position), rh);
 }
 

@@ -3408,6 +3408,10 @@ func _build_trail() -> void:
 		await get_tree().physics_frame
 	surface.sync_deformation()
 	print("ground %s: step %.2f ms on the %s, moved %s m3, near rect %s" % [kind, surface.get_step_time_msec(), "GPU" if surface.is_gpu_active() else "CPU", surface.get_moved_volume(), surface.get_near_rect()])
+	var clods: GroundClods3D = surface.get_clods_node()
+	if clods:
+		clods.update_now()
+		print("clods: %d lying (%d torn out, %d landed); update %.2f ms mean, %.2f ms worst (%d updates)" % [clods.get_clod_count(), clods.get_spawned_total() - clods.get_landed_total(), clods.get_landed_total(), clods.get_update_msec_mean(), clods.get_update_msec_worst(), clods.get_update_runs()])
 	env.pathtracing_enabled = not raster
 	await _save_frame()
 	get_tree().quit()

@@ -434,6 +434,9 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 		case PRESET_MARRAM:
 			r_phenology = { 950.0f, 1450.0f, -1.0f, true }; // July and August; bleached panicles all winter.
 			return true;
+		case PRESET_DRINN:
+			r_phenology = { 250.0f, 900.0f, -1.0f, true }; // Late winter and spring in the Sahara; plumes stand on.
+			return true;
 		case PRESET_LYME_GRASS:
 			r_phenology = { 750.0f, 1350.0f, -1.0f, true }; // June to August; straw spikes stand.
 			return true;
@@ -492,6 +495,9 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 			return true;
 		case PRESET_COW_PARSLEY:
 			r_phenology = { 250.0f, 650.0f, 600.0f, true }; // April to early June; dead stalks into summer.
+			return true;
+		case PRESET_GROUND_IVY:
+			r_phenology = { 50.0f, 450.0f, 100.0f, true }; // March to May, among the first of the floor.
 			return true;
 		case PRESET_BELL_HEATHER:
 			r_phenology = { 900.0f, 1750.0f, -1.0f, true }; // July to September, before heather; brown bells stand.
@@ -654,6 +660,7 @@ float PlantGenerator::get_pollen_amount(Preset p_preset) {
 		case PRESET_LYME_GRASS:
 		case PRESET_DRY_GRASS:
 		case PRESET_CORD_GRASS:
+		case PRESET_DRINN:
 			return 0.6f;
 		case PRESET_DOCK:
 		case PRESET_PLANTAIN:
@@ -720,6 +727,7 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 		case PRESET_DANDELION:
 		case PRESET_DAISY:
 			return 600.0f;
+		case PRESET_GROUND_IVY: // Creeping runners rooting at the nodes, as clover.
 		case PRESET_CLOVER:
 			return 500.0f;
 		case PRESET_SEDGE:
@@ -737,12 +745,18 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 		case PRESET_YARROW:
 			return 200.0f; // A creeping, low-rosette forb: the toughest of the meadow herbs.
 		case PRESET_BUTTERCUP:
+		case PRESET_PINCUSHION_MOSS:
 		case PRESET_MOSS:
 		case PRESET_FEATHER_MOSS:
 		case PRESET_THRIFT:
 		case PRESET_MARRAM:
 		case PRESET_LYME_GRASS:
+		case PRESET_DRINN:
 			return 150.0f;
+		case PRESET_SOIL_CRUST:
+			return 2.0f; // A few passes break it, and it takes decades to heal (Belnap and Lange 2003).
+		case PRESET_DESERT_ANNUALS:
+			return 100.0f;
 		case PRESET_DOCK:
 		case PRESET_STONECROP:
 		case PRESET_COTTONGRASS:
@@ -836,6 +850,7 @@ static float _preset_detail_size(PlantGenerator::Preset p_preset) {
 		case P::PRESET_SPHAGNUM:
 			return 0.06f;
 		case P::PRESET_FEATHER_MOSS:
+		case P::PRESET_PINCUSHION_MOSS:
 			return 0.08f;
 		case P::PRESET_LIVERWORT:
 		case P::PRESET_STONECROP:
@@ -850,7 +865,11 @@ static float _preset_detail_size(PlantGenerator::Preset p_preset) {
 			return 0.06f;
 		case P::PRESET_WOOD_SORREL:
 		case P::PRESET_VIOLET:
+		case P::PRESET_GROUND_IVY:
+		case P::PRESET_DESERT_ANNUALS:
 			return 0.07f;
+		case P::PRESET_SOIL_CRUST:
+			return 0.1f;
 		case P::PRESET_SEEDLING:
 			return 0.15f;
 		default:
@@ -1790,11 +1809,9 @@ void PlantGenerator::_build_dry_grass() {
 // Leaf litter: fallen leaves of several shapes lying on the ground, edges curled as they dry,
 // in browns, ochres and the odd late yellow; a couple of twigs and dry blades among them.
 void PlantGenerator::_build_leaf_litter() {
-	if (!litter_leaves.is_empty()) {
-		_build_stand_litter();
-	} else {
-		const int leaves = int(_rand(14.0f, 26.0f));
-		for (int i = 0; i < leaves; i++) {
+	// Generic leaves (no stand given): p_count of them, p_lift above the card's ground.
+	auto generic = [&](int p_count, float p_lift) {
+		for (int i = 0; i < p_count; i++) {
 			Leaf l;
 			const float pick = rng.randf();
 			l.shape = pick < 0.4f ? LEAF_OVATE : (pick < 0.7f ? LEAF_LANCEOLATE : LEAF_ROUND);
@@ -1811,7 +1828,7 @@ void PlantGenerator::_build_leaf_litter() {
 			l.segments = 6;
 			const float r = 0.13f * Math::sqrt(rng.randf());
 			const float a = _rand(0.0f, Math::TAU);
-			const Vector3 at(Math::cos(a) * r, 0.002f + 0.004f * rng.randf(), Math::sin(a) * r);
+			const Vector3 at(Math::cos(a) * r, p_lift + 0.002f + 0.004f * rng.randf(), Math::sin(a) * r);
 			const float k = _rand(0.6f, 1.25f);
 			const float hue = rng.randf();
 			const Color tint = hue < 0.15f ? Color(1.5f, 1.3f, 0.5f) : (hue < 0.35f ? Color(1.3f, 0.8f, 0.5f) : Color(k, k * 0.95f, k * 0.9f));
@@ -1820,6 +1837,11 @@ void PlantGenerator::_build_leaf_litter() {
 			const Vector3 up = rng.randf() < 0.7f ? Vector3(0, 1, 0) : Vector3(0, -1, 0);
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(fwd, up), at), l, 0.15f, 0.85f, tint);
 		}
+	};
+	if (!litter_leaves.is_empty()) {
+		_build_stand_litter();
+	} else {
+		generic(int(_rand(14.0f, 26.0f)), 0.0f);
 	}
 	const int twigs = int(_rand(0.0f, 4.0f));
 	for (int t = 0; t < twigs; t++) {
@@ -1830,6 +1852,34 @@ void PlantGenerator::_build_leaf_litter() {
 			_add_stem(side, _rand(0.03f, 0.06f), 0.0012f, 0.0007f, 0.0f, 2, 0.05f);
 		}
 	}
+	// The near-camera card (litter_deposit > 1; docs/ideas/ground-detail-vegetation.md, item 3): the dead-leaves
+	// model (Matheron 1968), leaves falling in sequence over the ones down, so what shows is the top layer. The
+	// card's own leaves and twigs come first, from the same seed as the far card, so the swap only adds leaves:
+	// more layers on top, each a little higher, and broken twig ends among them.
+	if (litter_deposit > 1.0f) {
+		const float extra = litter_deposit - 1.0f;
+		if (!litter_leaves.is_empty()) {
+			_build_stand_litter(1.3f * extra, 0.005f);
+		} else {
+			generic(int(20.0f * extra), 0.005f);
+		}
+		_add_twig_ends(int(_rand(2.0f, 5.0f) * extra), 0.006f);
+	}
+}
+
+// Broken twig ends a few centimetres long lying in the litter, p_lift above the card's ground.
+void PlantGenerator::_add_twig_ends(int p_count, float p_lift) {
+	for (int t = 0; t < p_count; t++) {
+		const float r = 0.12f * Math::sqrt(rng.randf());
+		const float a = _rand(0.0f, Math::TAU);
+		Transform3D b(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.06f, 0.06f)), Vector3(0, 1, 0)), Vector3(Math::cos(a) * r, p_lift + 0.0015f, Math::sin(a) * r));
+		const Transform3D e = _add_stem(b, _rand(0.02f, 0.06f), _rand(0.0012f, 0.0025f), 0.0009f, _rand(-0.2f, 0.2f), 2, 0.05f);
+		if (rng.randf() < 0.3f) {
+			// A bud or a short fork at the tip.
+			Transform3D side(organ_frame(e.basis.get_column(2) + e.basis.get_column(0) * 0.8f, Vector3(0, 1, 0)), e.origin);
+			_add_stem(side, _rand(0.008f, 0.02f), 0.0009f, 0.0005f, 0.0f, 2, 0.05f);
+		}
+	}
 }
 
 // The stand's own fallen leaves (docs/ideas/forest-floor.md, step 6): each entry of litter_leaves
@@ -1838,7 +1888,7 @@ void PlantGenerator::_build_leaf_litter() {
 // ("color", the autumn colour) and the share of this year's leaves still fresh ("fresh"). Fresh
 // leaves keep that colour; older ones fade to a dull tan brown and curl. A card
 // carries about 1.3 layers of leaves over its disc, so big leaves come few and small ones many.
-void PlantGenerator::_build_stand_litter() {
+void PlantGenerator::_build_stand_litter(float p_layers, float p_lift) {
 	float total = 0.0f;
 	for (int i = 0; i < litter_leaves.size(); i++) {
 		total += float(Dictionary(litter_leaves[i]).get("share", 1.0f));
@@ -1847,9 +1897,10 @@ void PlantGenerator::_build_stand_litter() {
 		return;
 	}
 	const float disc = 0.13f;
-	float area_left = 1.3f * Math::PI * disc * disc;
+	float area_left = p_layers * Math::PI * disc * disc;
+	const int guard_max = int(60.0f * MAX(p_layers, 1.3f) / 1.3f);
 	int guard = 0;
-	while (area_left > 0.0f && guard++ < 60) {
+	while (area_left > 0.0f && guard++ < guard_max) {
 		float pick = rng.randf() * total;
 		Dictionary f = litter_leaves[0];
 		for (int i = 0; i < litter_leaves.size(); i++) {
@@ -1874,7 +1925,7 @@ void PlantGenerator::_build_stand_litter() {
 		Color tint(c.r / MAX(leaf_color.r, 0.01f), c.g / MAX(leaf_color.g, 0.01f), c.b / MAX(leaf_color.b, 0.01f));
 		const float r = disc * Math::sqrt(rng.randf());
 		const float a = _rand(0.0f, Math::TAU);
-		const Vector3 at(Math::cos(a) * r, 0.002f + 0.004f * rng.randf(), Math::sin(a) * r);
+		const Vector3 at(Math::cos(a) * r, p_lift + 0.002f + 0.004f * rng.randf(), Math::sin(a) * r);
 		const Vector3 fwd = polar_dir(_rand(0.0f, Math::TAU), _rand(-0.12f, 0.12f));
 		// About a third lie underside up: paler and duller (the lower epidermis, hairier and without
 		// the upper's wax). Shown by colour, the face still up, so a lying leaf is never drawn from
@@ -1983,11 +2034,19 @@ void PlantGenerator::_build_moss() {
 	// 30 cm high of packed shoots, their surface the star-shaped capitula (Rydin and Jeglum, "The
 	// Biology of Peatlands", 2013). Lawns and hollows are the same mound, lower and wider.
 	const bool hummock = preset == PRESET_SPHAGNUM;
+	// Pincushion moss (Leucobryum glaucum) on acid oak, beech and pine floors: tight round cushions 4 to 20 cm
+	// across and nearly half as high, smooth-domed, pale glaucous (Atherton, Bosanquet and Lawley 2010,
+	// "Mosses and Liverworts of Britain and Ireland"). Often several crowded together.
+	const bool pincushion = preset == PRESET_PINCUSHION_MOSS;
 	float radius = carpet ? _rand(0.18f, 0.32f) : _rand(0.06f, 0.12f);
 	float height = radius * (carpet ? _rand(0.08f, 0.13f) : _rand(0.22f, 0.35f));
 	if (hummock) {
 		radius = _rand(0.2f, 0.45f);
 		height = radius * _rand(0.3f, 0.6f);
+	}
+	if (pincushion) {
+		radius = _rand(0.02f, 0.1f);
+		height = radius * _rand(0.55f, 0.8f);
 	}
 	Builder &b = builders[SURFACE_CENTRE];
 	const int rings = hummock ? 12 : 8;
@@ -2009,9 +2068,13 @@ void PlantGenerator::_build_moss() {
 			const float x = Math::cos(a) * rr;
 			const float z = Math::sin(a) * rr;
 			// Sphagnum hummocks are broad and smooth, a few low swells over the dome.
-			const float lump = hummock ? 1.0f + 0.1f * Math::sin(x * 9.0f + ph[2]) * Math::sin(z * 8.0f + ph[3]) + 0.04f * Math::sin(x * 23.0f + ph[4] + z * 17.0f)
-									   : 1.0f + 0.18f * Math::sin(x * 70.0f + ph[2]) * Math::sin(z * 63.0f + ph[3]) + 0.1f * Math::sin(x * 150.0f + ph[4] + z * 90.0f);
-			const float y = height * Math::pow(MAX(0.0f, 1.0f - u * u), 0.9f) * lump - 0.004f;
+			float lump = hummock ? 1.0f + 0.1f * Math::sin(x * 9.0f + ph[2]) * Math::sin(z * 8.0f + ph[3]) + 0.04f * Math::sin(x * 23.0f + ph[4] + z * 17.0f)
+								 : 1.0f + 0.18f * Math::sin(x * 70.0f + ph[2]) * Math::sin(z * 63.0f + ph[3]) + 0.1f * Math::sin(x * 150.0f + ph[4] + z * 90.0f);
+			if (pincushion) {
+				// Smooth, close-packed domes, bulging over their foot.
+				lump = 1.0f + 0.05f * Math::sin(x * 90.0f + ph[2]) * Math::sin(z * 80.0f + ph[3]);
+			}
+			const float y = height * Math::pow(MAX(0.0f, 1.0f - u * u), pincushion ? 0.55f : 0.9f) * lump - 0.004f;
 			b.verts.push_back(Vector3(x, y, z));
 			b.uvs.push_back(Vector2(x, z) / 0.05f);
 			b.uv2s.push_back(Vector2(0.05f, 0.0f));
@@ -2036,7 +2099,7 @@ void PlantGenerator::_build_moss() {
 	l.fold = 0.3f;
 	l.segments = 2;
 	// Sphagnum: capitula over the whole mound, so its outline is knobbly against the light.
-	const int shoots = hummock ? int(_rand(160.0f, 240.0f)) : int(_rand(40.0f, 60.0f));
+	const int shoots = hummock ? int(_rand(160.0f, 240.0f)) : (pincushion ? int(_rand(15.0f, 30.0f)) : int(_rand(40.0f, 60.0f)));
 	for (int s = 0; s < shoots; s++) {
 		const bool edge = s < shoots * (hummock ? 2 : 3) / (hummock ? 5 : 4);
 		const float a = _rand(0.0f, Math::TAU);
@@ -2436,6 +2499,20 @@ void PlantGenerator::_build_needle_litter() {
 		Transform3D cb(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.1f, 0.1f)), Vector3(0, 1, 0)), Vector3(_rand(-radius, radius) * 0.7f, len * 0.16f, _rand(-radius, radius) * 0.7f));
 		const Transform3D mid = _add_stem(cb, len * 0.6f, len * 0.12f, len * 0.16f, 0.0f, 3, 0.0f, SURFACE_PETAL);
 		_add_stem(mid, len * 0.4f, len * 0.16f, len * 0.03f, 0.0f, 3, 0.0f, SURFACE_PETAL);
+	}
+	// The near-camera card (litter_deposit > 1): more needles fallen over these, and twig ends.
+	if (litter_deposit > 1.0f) {
+		const int more = int(_rand(70.0f, 120.0f) * (litter_deposit - 1.0f));
+		for (int i = 0; i < more; i++) {
+			n.length = _rand(0.012f, 0.045f);
+			n.bend = _rand(-0.3f, 0.3f);
+			const float r = radius * 1.1f * Math::sqrt(rng.randf());
+			const float a = _rand(0.0f, Math::TAU);
+			const Vector3 at(Math::cos(a) * r, 0.003f + 0.004f * rng.randf(), Math::sin(a) * r);
+			const float k = _rand(0.7f, 1.3f);
+			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.15f, 0.15f)), Vector3(0, 1, 0)), at), n, 0.0f, 0.9f, Color(k, k * 0.9f, k * 0.8f));
+		}
+		_add_twig_ends(int(_rand(1.0f, 3.0f) * (litter_deposit - 1.0f)), 0.004f);
 	}
 }
 
@@ -2889,6 +2966,94 @@ void PlantGenerator::_build_violet() {
 			_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, face), top.origin), p, 1.0f);
 		}
 		_add_head(SURFACE_CENTRE, Transform3D(fb, top.origin), 0.0012f, 0.002f);
+	}
+}
+
+// Ground ivy (Glechoma hederacea; Stace 2019): a creeping labiate of woods, hedge bottoms and shady grass on
+// moist, richer soils. Square purplish runners lie on the ground and root at the nodes; each node carries a pair
+// of kidney-shaped, round-toothed leaves 1 to 3 cm across on stalks 2 to 5 cm long, so the mat is a few
+// centimetres deep. From March to May short shoots stand up 5 to 15 cm with blue-violet two-lipped flowers in
+// twos and threes in the upper leaf axils.
+void PlantGenerator::_build_ground_ivy() {
+	Leaf l;
+	l.shape = LEAF_ROUND;
+	l.lobes = 9;
+	l.lobe_depth = 0.08f;
+	l.round_lobes = true;
+	l.petiole = 0.0f;
+	l.fold = 0.15f;
+	l.bend = -0.1f; // The blade's edges turned a little down.
+	l.segments = 8;
+	auto pair = [&](const Transform3D &p_node, float p_size, float p_stalk, float p_wind) {
+		const Vector3 along = p_node.basis.get_column(2);
+		const Vector3 side = along.cross(Vector3(0, 1, 0)).normalized();
+		const float tint_k = _rand(0.85f, 1.1f);
+		// Shade and cold flush the leaves purple underneath and along the margin.
+		const Color tint = rng.randf() < 0.25f ? Color(1.15f * tint_k, 0.85f * tint_k, 1.05f * tint_k) : Color(tint_k, tint_k, tint_k);
+		for (int k = 0; k < 2; k++) {
+			const Vector3 out = side * (k == 0 ? 1.0f : -1.0f);
+			// The stalk leans out from the runner and arches, so the blade lies spread over the mat beside it.
+			const Transform3D stalk(organ_frame((out * 1.1f + Vector3(0, 0.8f, 0) + along * _rand(-0.3f, 0.5f)).normalized(), Vector3(0, 1, 0)), p_node.origin);
+			const Transform3D top = _add_stem(stalk, p_stalk * _rand(0.8f, 1.2f), 0.0006f, 0.0005f, _rand(0.6f, 1.0f), 3, p_wind);
+			l.length = p_size * _rand(0.85f, 1.1f);
+			l.width = l.length * _rand(1.15f, 1.35f); // Kidney-shaped: wider than long.
+			const Vector3 d = (out + Vector3(0, _rand(0.1f, 0.4f), 0) + along * 0.3f).normalized();
+			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, Vector3(0, 1, 0)), top.origin), l, MIN(p_wind + 0.4f, 1.0f), 1.0f, tint);
+		}
+	};
+	const int runners = int(_rand(2.0f, 5.0f));
+	for (int r = 0; r < runners; r++) {
+		const float az = _rand(0.0f, Math::TAU);
+		Transform3D base(organ_frame(polar_dir(az, -0.02f), Vector3(0, 1, 0)), Vector3(_rand(-0.02f, 0.02f), 0.002f, _rand(-0.02f, 0.02f)));
+		const float len = _rand(0.12f, 0.3f);
+		const float bend = 0.0f; // Rooting at the nodes, the runner stays down.
+		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, 6);
+		_add_stem(base, len, 0.0011f, 0.0008f, bend, 6, 0.0f);
+		const int nodes = MAX(int(len / _rand(0.03f, 0.045f)), 3);
+		for (int n = 1; n <= nodes; n++) {
+			const float s = float(n) / nodes;
+			Transform3D node = _frame_at(fr, s);
+			node.origin.y = MIN(node.origin.y, 0.004f); // The runner lies on the ground.
+			// Leaves smaller towards the growing tip.
+			pair(node, Math::lerp(0.034f, 0.016f, s), Math::lerp(0.03f, 0.012f, s), 0.0f);
+		}
+	}
+	// The spring shoots, flowering from the upper axils.
+	const int shoots = int(_rand(0.0f, 3.0f));
+	Leaf p;
+	p.shape = LEAF_SPATULATE;
+	p.fold = 0.3f;
+	p.bend = -0.3f;
+	p.segments = 3;
+	for (int f = 0; f < shoots; f++) {
+		const Bloom bloom = _bloom();
+		if (bloom == BLOOM_NONE) {
+			continue;
+		}
+		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.25f, 1.5f));
+		const float len = _rand(0.05f, 0.14f);
+		const LocalVector<Transform3D> fr = _stem_frames(base, len, _rand(0.0f, 0.3f), 4);
+		_add_stem(base, len, 0.001f, 0.0007f, 0.0f, 4, 0.0f);
+		const int pairs = int(_rand(2.0f, 4.0f));
+		for (int k = 1; k <= pairs; k++) {
+			const float s = float(k) / pairs;
+			const Transform3D node = _frame_at(fr, s);
+			pair(node, Math::lerp(0.02f, 0.012f, s), 0.012f, s);
+			if (bloom != BLOOM_FLOWER || s < 0.5f) {
+				continue;
+			}
+			// Two or three flowers in each upper axil, the tube 1.5 to 2 cm with a spreading lower lip.
+			const int flowers = int(_rand(2.0f, 4.0f));
+			for (int q = 0; q < flowers; q++) {
+				const float a = _rand(0.0f, Math::TAU);
+				const Vector3 face = (Vector3(Math::cos(a), 0.35f, Math::sin(a))).normalized();
+				const Transform3D tube(organ_frame(face, Vector3(0, 1, 0)), node.origin);
+				const Transform3D mouth = _add_stem(tube, _rand(0.009f, 0.014f), 0.0012f, 0.0022f, 0.2f, 2, s, SURFACE_PETAL);
+				p.length = _rand(0.004f, 0.006f);
+				p.width = p.length * 0.9f;
+				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame((face + Vector3(0, -0.6f, 0)).normalized(), face), mouth.origin), p, 1.0f);
+			}
+		}
 	}
 }
 
@@ -4196,6 +4361,7 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.spots = 1.0f;
 			break;
 		case PRESET_MOSS:
+		case PRESET_PINCUSHION_MOSS:
 			l.shape = LEAF_LINEAR;
 			t.aspect = 0.15f;
 			t.venation = VENATION_PARALLEL;
@@ -4351,6 +4517,15 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.venation = VENATION_PALMATE;
 			t.yellowing = 0.1f;
 			break;
+		case PRESET_GROUND_IVY:
+			l.shape = LEAF_ROUND;
+			l.lobes = 9;
+			l.lobe_depth = 0.08f;
+			t.aspect = 1.15f;
+			t.venation = VENATION_PALMATE;
+			t.yellowing = 0.1f;
+			t.spots = 0.0f;
+			break;
 		case PRESET_HERB_ROBERT:
 			l.shape = LEAF_PALMATE;
 			l.lobes = 2;
@@ -4498,8 +4673,10 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			break;
 		case PRESET_MARRAM:
 		case PRESET_LYME_GRASS:
+		case PRESET_DRINN:
+		case PRESET_DESERT_ANNUALS:
 			l.shape = LEAF_LINEAR;
-			t.aspect = preset == PRESET_MARRAM ? 0.03f : 0.05f;
+			t.aspect = preset == PRESET_LYME_GRASS ? 0.05f : 0.03f;
 			t.venation = VENATION_PARALLEL;
 			t.parallel_veins = preset == PRESET_MARRAM ? 5 : 9; // Marram's rolled leaf shows its ribs.
 			t.vein = leaf_color.lerp(Color(0.8f, 0.78f, 0.62f), 0.3f);
@@ -5045,6 +5222,12 @@ PlantGenerator::TextureSet PlantGenerator::_bake_moss_texture(uint32_t p_seed) c
 		const float t = tone[i];
 		Color c = base * (0.25f + 0.95f * h);
 		c = c.lerp(Color(base.r * 1.6f + 0.04f, base.g * 1.3f + 0.03f, base.b * 0.8f), h * t * 0.6f); // Fresh, yellower tips.
+		if (preset == PRESET_PINCUSHION_MOSS) {
+			// Leucobryum: the leaves' empty hyaline cells make the packed tips pale, glaucous, near white where dry,
+			// with little dark between them.
+			c = base * (0.6f + 0.55f * h);
+			c = c.lerp(Color(base.r * 1.3f + 0.04f, base.g * 1.25f + 0.04f, base.b * 1.3f + 0.04f), h * t * 0.6f);
+		}
 		// The bytes are sRGB: scaled so the cushion's mean green albedo is about 0.06 linear,
 		// inside the 0.05 to 0.1 measured for mosses (and the trees' moss shell), not 0.02.
 		c *= 1.55f;
@@ -5222,6 +5405,7 @@ String PlantGenerator::shader_common_code() {
 	code += BaseMaterial3D::get_snow_shader_code();
 	code += BaseMaterial3D::get_rain_functions_code(true);
 	code += VegetationFire::SHADER_CODE;
+	code += VegetationFire::WIND_CODE;
 	code += R"(
 global uniform sampler2D weather_state_map;
 
@@ -5239,7 +5423,7 @@ float weather_wetness_at(vec3 p_world_pos) {
 
 global uniform vec4 grass_wind; // xy: fallback wind (m/s, x and z), z: the grass's response (rad per m/s).
 
-vec3 plant_wind(vec3 wp, float h) {
+vec3 plant_air_wind(vec3 wp, float h) {
 	if (weather_map_rect.z > 0.0) {
 		return weather_wind(wp, h);
 	}
@@ -5252,6 +5436,10 @@ vec3 plant_wind(vec3 wp, float h) {
 	float phase = dot(wp.xz, d) * 0.12 - TIME * s * 0.12;
 	float g = 1.0 + 0.45 * sin(phase) + 0.2 * sin(phase * 2.7 + dot(wp.xz, vec2(-d.y, d.x)) * 0.2);
 	return vec3(w.x, 0.0, w.y) * g;
+}
+
+vec3 plant_wind(vec3 wp, float h) {
+	return plant_air_wind(wp, h) + fire_wind_at(wp.xz); // the fires' indraft on top (WorldFire.wind_at)
 }
 )";
 	return code;
@@ -5370,6 +5558,15 @@ void vertex() {
 			float ga = plant_rnd * 6.2831853;
 			press = go.x;
 			push = normalize((to_local * vec3(cos(ga), 0.0, sin(ga))).xz) * 1.2 / max(sqrt(stiffness), 0.3);
+		}
+		// Snow (docs/ideas/world-links.md): a settled pack's weight bows the plant down and out, each part
+		// over its own side, till it lies under the snow; it rises again as the pack melts.
+		float snow_p = snow_press(snow_pack_at(root), stiffness);
+		if (snow_p > press) {
+			float ga = plant_rnd * 6.2831853;
+			vec2 own = normalize((to_local * vec3(cos(ga), 0.0, sin(ga))).xz);
+			press = snow_p;
+			push = (hl > 1e-4 ? hd : own) * 1.2 / max(sqrt(stiffness), 0.3);
 		}
 		// Sway: on top of the mean lean, each organ rocks at its own natural frequency, driven by
 		// the turbulence (de Langre 2008: herbs and grasses 0.5 to 4 Hz, lower for taller and
@@ -5770,6 +5967,17 @@ void PlantGenerator::apply_preset_colors() {
 			leaf_color = Color(0.17f, 0.3f, 0.05f);
 			centre_color = Color(0.12f, 0.21f, 0.045f); // The packed shoots below the tips.
 			break;
+		case PRESET_PINCUSHION_MOSS:
+			// Leucobryum glaucum: pale glaucous grey-green (the leaves' empty hyaline cells), near white when dry.
+			leaf_color = Color(0.36f, 0.45f, 0.3f);
+			centre_color = Color(0.3f, 0.38f, 0.25f);
+			break;
+		case PRESET_GROUND_IVY:
+			leaf_color = Color(0.1f, 0.25f, 0.06f); // Dark, often purple-flushed in shade and cold.
+			stem_color = Color(0.3f, 0.2f, 0.18f); // Square runners, purplish.
+			petal_color = Color(0.42f, 0.32f, 0.68f); // Blue-violet lipped flowers.
+			centre_color = Color(0.85f, 0.75f, 0.85f);
+			break;
 		case PRESET_BILBERRY:
 			leaf_color = Color(0.17f, 0.36f, 0.08f);
 			stem_color = Color(0.2f, 0.4f, 0.12f); // Green, angled stems.
@@ -6030,6 +6238,25 @@ void PlantGenerator::apply_preset_colors() {
 			stem_color = Color(0.4f, 0.12f, 0.08f);
 			petal_color = Color(0.55f, 0.08f, 0.06f); // The tentacles.
 			centre_color = Color(0.85f, 0.82f, 0.78f); // The dew drops.
+			break;
+		case PRESET_DRINN:
+			leaf_color = Color(0.36f, 0.38f, 0.27f); // Grey-green and dusty; much of the tussock dead straw.
+			stem_color = Color(0.55f, 0.5f, 0.36f);
+			centre_color = Color(0.82f, 0.78f, 0.66f); // Silvery plumed awns.
+			break;
+		case PRESET_DESERT_ANNUALS:
+			leaf_color = Color(0.2f, 0.34f, 0.1f); // Fresh after rain; the season dries them to straw.
+			stem_color = Color(0.3f, 0.36f, 0.16f);
+			centre_color = Color(0.6f, 0.55f, 0.4f);
+			petal_color = Color(0.85f, 0.75f, 0.3f);
+			break;
+		case PRESET_SOIL_CRUST:
+			// Cyanobacterial and lichen crust: dark brown-black (scytonemin), lichen specks grey, green and orange.
+			leaf_color = Color(0.09f, 0.075f, 0.06f);
+			centre_color = Color(0.5f, 0.47f, 0.4f); // The palest of its lichens; each fleck's tint darkens it.
+			// The skin's rim: a little darker than the sand it binds; its vertex colours darken the middle to the
+			// cyanobacteria's brown (light crust some 0.75 of it, mature dark crust 0.5), so its edge fades into the sand.
+			stem_color = Color(0.6f, 0.48f, 0.34f);
 			break;
 		case PRESET_MARRAM:
 			leaf_color = Color(0.33f, 0.37f, 0.26f); // Grey-green, the rolled leaf's waxy outer side.
@@ -6399,6 +6626,21 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_COW_PARSLEY:
 			_build_cow_parsley();
 			break;
+		case PRESET_PINCUSHION_MOSS:
+			_build_moss();
+			break;
+		case PRESET_GROUND_IVY:
+			_build_ground_ivy();
+			break;
+		case PRESET_DRINN:
+			_build_drinn();
+			break;
+		case PRESET_DESERT_ANNUALS:
+			_build_desert_annuals();
+			break;
+		case PRESET_SOIL_CRUST:
+			_build_soil_crust();
+			break;
 		case PRESET_BELL_HEATHER:
 			_build_bell_heather();
 			break;
@@ -6564,7 +6806,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			}
 		}
 		Ref<ShaderMaterial> mat;
-		if (textures && (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_SPHAGNUM) && s == SURFACE_CENTRE) {
+		if (textures && (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_SPHAGNUM || preset == PRESET_PINCUSHION_MOSS) && s == SURFACE_CENTRE) {
 			const uint64_t key = (uint64_t(preset) << 40) ^ (uint64_t(s) << 36) ^ (uint64_t(uint32_t(seed % 3)) << 32) ^ uint64_t(Math::abs(int(leaf_color.to_rgba32()) % 1000003)) ^ (uint64_t(texture_size) << 44);
 			TextureSet *ts = texture_cache.getptr(key);
 			if (!ts) {
@@ -6593,7 +6835,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		// Sun and shade leaves: leaves and stems change colour with their light, petals and litter do not.
 		mat->set_shader_parameter("light_response", s >= SURFACE_PETAL || is_mushroom(preset) || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS ? 0.0f : 1.0f);
 		// Stiffer the bigger and woodier: bramble canes and bracken stipes barely lean in the wind.
-		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL || preset == PRESET_MARRAM || preset == PRESET_SEA_HOLLY || preset == PRESET_CORD_GRASS || preset == PRESET_GLASSWORT ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f)));
+		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL || preset == PRESET_MARRAM || preset == PRESET_SEA_HOLLY || preset == PRESET_CORD_GRASS || preset == PRESET_GLASSWORT ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_PINCUSHION_MOSS || preset == PRESET_SOIL_CRUST || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f)));
 		im->add_surface(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), Dictionary(), mat, names[s]);
 	}
 	// Distance LODs (meshoptimizer simplification, as the scene importer does): a meadow holds
@@ -6801,6 +7043,10 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 	// herb Robert in rides, gaps and edges.
 	const FloorSpec violet = { P::PRESET_VIOLET, 0.3f, 0.06f, 0.6f, 0.9f, 1.2f, 4.0f, 0.3f, 0.2f, 0.9f, 0.15f, 0.0f, 0.6f, 18.0f };
 	const FloorSpec herb_robert = { P::PRESET_HERB_ROBERT, 0.4f, 0.1f, 0.6f, 0.8f, 1.2f, 5.0f, 0.3f, 0.1f, 0.75f, 0.15f, 0.0f, 0.7f, 25.0f };
+	// Small plants under 5 cm where the floor was thin (docs/ideas/ground-detail-vegetation.md, item 4): pincushion
+	// moss in crowded colonies on acid litter under deep shade, ground ivy's creeping mats on richer, moister floors.
+	const FloorSpec pincushion = { P::PRESET_PINCUSHION_MOSS, 0.45f, 0.04f, 0.55f, 0.8f, 1.3f, 2.5f, 0.2f, 0.5f, 1.0f, 0.15f, 0.0f, 1.0f, 15.0f };
+	const FloorSpec ground_ivy = { P::PRESET_GROUND_IVY, 0.3f, 0.05f, 0.6f, 0.9f, 1.3f, 5.0f, 0.3f, 0.25f, 0.95f, 0.15f, 0.0f, 0.6f, 18.0f };
 	const FloorSpec bilberry = { P::PRESET_BILBERRY, 0.35f, 0.12f, 0.9f, 1.0f, 1.4f, 7.0f, 0.6f, 0.3f, 1.0f, 0.15f, 0.4f, 1.0f, 25.0f };
 	LocalVector<FloorSpec> set;
 	switch (p_stand) {
@@ -6809,7 +7055,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			set = LocalVector<FloorSpec>({ gap_bramble, gap_foxglove, fern, seedling,
 				{ P::PRESET_WOODRUFF, 0.3f, 0.1f, 0.9f, 0.9f, 1.2f, 4.0f, 0.3f, 0.5f, 1.0f, 0.15f, 0.0f, 0.5f, 20.0f },
 				{ P::PRESET_WOOD_ANEMONE, 0.25f, 0.08f, 0.9f, 0.9f, 1.2f, 5.0f, 0.3f, 0.4f, 1.0f, 0.15f, 0.0f, 0.6f, 20.0f },
-				violet, herb_robert, sorrel, moss, twigs, leaves, needles });
+				violet, herb_robert, sorrel, pincushion, moss, twigs, leaves, needles });
 			set[2].density = 0.35f; // Few ferns under beech.
 			set[3].density = 0.8f; // Beech seedlings carpet the floor.
 			break;
@@ -6819,13 +7065,13 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 				{ P::PRESET_IVY, 0.6f, 0.0f, 0.9f, 0.9f, 1.3f, 6.0f, 0.45f, 0.3f, 1.0f, 0.15f, 0.0f, 0.6f, 25.0f },
 				{ P::PRESET_WOOD_ANEMONE, 0.25f, 0.08f, 0.9f, 0.9f, 1.2f, 6.0f, 0.4f, 0.3f, 1.0f, 0.15f, 0.0f, 0.6f, 20.0f },
 				{ P::PRESET_WOODRUFF, 0.3f, 0.1f, 0.7f, 0.9f, 1.2f, 4.0f, 0.2f, 0.5f, 1.0f, 0.15f, 0.0f, 0.5f, 20.0f },
-				violet, herb_robert, moss, twigs, leaves, needles });
+				violet, herb_robert, ground_ivy, pincushion, moss, twigs, leaves, needles });
 			set[0].shade_max = 0.9f; // Bramble runs under oak, not only in gaps.
 			set[0].patch_cover = 0.5f;
 			break;
 		case FLOOR_MONTANE_CONIFER:
 			// Spruce, fir and beech: wood sorrel, ferns and bilberry on mixed litter.
-			set = LocalVector<FloorSpec>({ gap_bramble, gap_foxglove, fern, seedling, bilberry, sorrel, moss, twigs, leaves, needles });
+			set = LocalVector<FloorSpec>({ gap_bramble, gap_foxglove, fern, seedling, bilberry, sorrel, pincushion, moss, twigs, leaves, needles });
 			set[2].density = 0.9f;
 			set[2].patch_cover = 0.6f;
 			break;
@@ -6844,7 +7090,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			set = LocalVector<FloorSpec>({ gap_bracken, seedling, bilberry,
 				{ P::PRESET_HEATHER, 0.45f, 0.15f, 0.9f, 0.9f, 1.3f, 8.0f, 0.55f, 0.0f, 0.7f, 0.15f, 0.0f, 1.0f, 30.0f },
 				{ P::PRESET_DRY_GRASS, 0.3f, 0.0f, 0.7f, 0.7f, 1.1f, 6.0f, 0.45f, 0.0f, 0.8f, 0.15f, 0.0f, 1.0f, 15.0f },
-				moss, twigs, needles });
+				pincushion, moss, twigs, needles });
 			set[1].density = 0.25f;
 			set[2].density = 1.0f;
 			set[2].patch_cover = 0.7f;
@@ -6856,7 +7102,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 				fern,
 				{ P::PRESET_SEDGE, 0.35f, 0.1f, 0.9f, 0.9f, 1.4f, 5.0f, 0.5f, 0.0f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f, 15.0f },
 				{ P::PRESET_RUSH, 0.6f, 0.2f, 0.7f, 0.9f, 1.2f, 5.0f, 0.4f, 0.0f, 0.8f, 0.15f, 0.0f, 1.0f, 30.0f, 8.0f },
-				moss, twigs, leaves });
+				ground_ivy, moss, twigs, leaves });
 			break;
 		case FLOOR_HEDGEROW:
 			// Hedge bottoms: bramble, nettle, ivy, foxglove, fern.
@@ -6864,7 +7110,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 				{ P::PRESET_NETTLE, 0.5f, 0.15f, 0.8f, 0.9f, 1.3f, 5.0f, 0.45f, 0.0f, 0.9f, 0.15f, 0.0f, 1.0f, 35.0f },
 				gap_foxglove, fern,
 				{ P::PRESET_IVY, 0.6f, 0.0f, 0.9f, 0.9f, 1.3f, 5.0f, 0.5f, 0.2f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f },
-				violet, herb_robert, twigs, leaves });
+				violet, herb_robert, ground_ivy, twigs, leaves });
 			set[0].shade_max = 0.95f;
 			set[0].density = 1.0f;
 			set[0].patch_cover = 0.7f;
@@ -7066,6 +7312,20 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			meshes.push_back(v[i]);
 		}
 		sp->set_meshes(meshes);
+		// Near the camera the litter lies leaf on leaf (docs/ideas/ground-detail-vegetation.md, item 3): the same
+		// cards from the same seeds with more layers fallen on top and broken twig ends, swapped in within a few
+		// metres, so the swap only adds leaves.
+		if ((f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_NEEDLE_LITTER) && f.deadwood == PlantSpecies::DEADWOOD_AVOID) {
+			gen->set_litter_deposit(2.5f);
+			const TypedArray<ArrayMesh> nv = gen->generate_variants(MAX(p_variants, 1));
+			gen->set_litter_deposit(1.0f);
+			TypedArray<Mesh> near;
+			for (int i = 0; i < nv.size(); i++) {
+				near.push_back(nv[i]);
+			}
+			sp->set_near_meshes(near);
+			sp->set_near_range(7.0f);
+		}
 		sp->set_spacing(f.spacing);
 		sp->set_footprint(f.footprint);
 		// Bracken and bramble shade the sward out under their stands (a GrassField3D reads it
@@ -7147,6 +7407,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 					break;
 				case P::PRESET_MOSS:
 				case P::PRESET_FEATHER_MOSS:
+				case P::PRESET_PINCUSHION_MOSS:
 					sp->set_rock_foot(3.0f);
 					break;
 				case P::PRESET_WOOD_SORREL:
@@ -7324,8 +7585,11 @@ void PlantGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lods"), "set_lods", "get_lods");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "leaf_wear", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_leaf_wear", "get_leaf_wear");
 	ClassDB::bind_method(D_METHOD("set_litter_leaves", "leaves"), &PlantGenerator::set_litter_leaves);
+	ClassDB::bind_method(D_METHOD("set_litter_deposit", "deposit"), &PlantGenerator::set_litter_deposit);
+	ClassDB::bind_method(D_METHOD("get_litter_deposit"), &PlantGenerator::get_litter_deposit);
 	ClassDB::bind_method(D_METHOD("get_litter_leaves"), &PlantGenerator::get_litter_leaves);
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "litter_leaves"), "set_litter_leaves", "get_litter_leaves");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "litter_deposit", PROPERTY_HINT_RANGE, "1,4,0.1"), "set_litter_deposit", "get_litter_deposit");
 	ClassDB::bind_method(D_METHOD("set_season", "season"), &PlantGenerator::set_season);
 	ClassDB::bind_method(D_METHOD("get_season"), &PlantGenerator::get_season);
 	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "season"), "set_season", "get_season");
@@ -7428,10 +7692,16 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_CORNFLOWER);
 	BIND_ENUM_CONSTANT(PRESET_MAYWEED);
 	BIND_ENUM_CONSTANT(PRESET_COW_PARSLEY);
+	BIND_ENUM_CONSTANT(PRESET_PINCUSHION_MOSS);
+	BIND_ENUM_CONSTANT(PRESET_GROUND_IVY);
+	BIND_ENUM_CONSTANT(PRESET_DRINN);
+	BIND_ENUM_CONSTANT(PRESET_DESERT_ANNUALS);
+	BIND_ENUM_CONSTANT(PRESET_SOIL_CRUST);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dunes", "stand", "variants", "textures", "season"), &PlantGenerator::make_dunes, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_desert", "stand", "variants", "textures", "season"), &PlantGenerator::make_desert, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_margin", "stand", "variants", "textures", "season"), &PlantGenerator::make_margin, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
@@ -7475,6 +7745,9 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(DUNES_MOBILE);
 	BIND_ENUM_CONSTANT(DUNES_FIXED);
 	BIND_ENUM_CONSTANT(DUNES_MAX);
+	BIND_ENUM_CONSTANT(DESERT_FLANKS);
+	BIND_ENUM_CONSTANT(DESERT_INTERDUNE);
+	BIND_ENUM_CONSTANT(DESERT_MAX);
 	BIND_ENUM_CONSTANT(ALPINE_FELLFIELD);
 	BIND_ENUM_CONSTANT(ALPINE_GRASSLAND);
 	BIND_ENUM_CONSTANT(ALPINE_SNOWBED);
