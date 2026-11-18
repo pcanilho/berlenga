@@ -1222,9 +1222,7 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 		if (!use_weather_wind) {
 			flow->set_weather_wind(false);
 		}
-#ifdef MODULE_WEATHER_ENABLED
-		ambient = flow->is_weather_wind() && WeatherMap3D::get_active() != nullptr;
-#endif
+		ambient = flow->is_weather_wind() && WorldContracts::weather()->has_provider();
 	}
 	if (air) {
 		air->set_enabled(!ambient && (!order.is_empty() || n_crown > 0) && p_wind.length_squared() > 1.0e-4f);
