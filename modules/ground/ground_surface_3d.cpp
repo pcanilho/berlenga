@@ -206,6 +206,14 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 		// Nearly incompressible: what a wheel pushes down squeezes up beside it.
 		mud.rim_share = 0.97f;
 		mud.max_dent = MAX(c.max_dent, p_mud);
+		// The layer on a slope (round 10): an infinite slope of Bingham fluid H deep shears at its base under
+		// rho g H sin(theta); past the yield stress the whole layer flows (Johnson 1970; Coussot 1997, the
+		// mudflow's stopping depth h = tau_y / (rho g sin theta)). Soaked by rain its solid share falls and
+		// its yield stress with it (a hundredfold from stiff to slurry), so mud that held a bank all summer
+		// slides off it in a storm, down to the firm base, and piles in the ruts and hollows below.
+		// As the layer thins it holds steeper ground: it stops at h = tau_y / (rho g tan theta), so the shader
+		// takes the length tau_y / (rho g) and the depth left.
+		c.slide_length = mw > 0.5f ? tau_y / (rho * 9.81f) : 1e3f;
 		// Pressure-sinkage: stiff mud as lean clay at 32% (Wong table 2.2: n 0.5, kc 13.19, kphi 692.15); slurry
 		// fitted so a boot (21 kPa) sinks about 15 cm (n 0.5, kphi 54) and a loaded tyre goes to the base.
 		mud.n = 0.5f;
@@ -809,6 +817,20 @@ Color GroundSurface3D::get_mud_color_at(Vector3 p_position) const {
 void GroundSurface3D::set_mud_layer(bool p_enabled) {
 	mud_layer = p_enabled;
 	_update_cells();
+}
+
+void GroundSurface3D::set_mud_slides(bool p_enabled) {
+	mud_slides = p_enabled;
+	_update_cells();
+}
+
+float GroundSurface3D::get_mud_slide_angle_at(Vector3 p_position) const {
+	const Cell &c = _cell_at(p_position.x, p_position.z);
+	if (!mud_slides || c.mud <= 0.0f || c.slide_length >= 1e2f) {
+		return 90.0f;
+	}
+	const float left = MAX(c.max_dent - get_dent_at(p_position) + get_rim_at(p_position), 0.005f);
+	return Math::rad_to_deg(Math::atan(c.slide_length / left));
 }
 
 void GroundSurface3D::set_standing_water(bool p_enabled) {
@@ -4061,7 +4083,7 @@ Dictionary GroundSurface3D::get_wheel_soil(Vector3 p_position, float p_load, flo
 	return d;
 }
 
-float GroundSurface3D::press_wheel(Vector3 p_position, Vector2 p_size, float p_yaw, float p_sinkage, Vector2 p_velocity) {
+float GroundSurface3D::press_wheel(Vector3 p_position, Vector2 p_size, float p_yaw, float p_sinkage, Vector2 p_velocity, int p_tread) {
 	if (!field.valid || p_sinkage <= 0.0f || p_size.x <= 0.0f || p_size.y <= 0.0f) {
 		return 0.0f;
 	}
@@ -4073,12 +4095,19 @@ float GroundSurface3D::press_wheel(Vector3 p_position, Vector2 p_size, float p_y
 	const float radius = 0.5f * MAX(p_size.x, p_size.y);
 	const float bottom = _ground_at(p_position.x, p_position.z) - p_sinkage;
 	_ice_break(p_position, radius, 0.06f);
+	// The tread's lugs or chains in the rut floor (round 10).
+	field.press_tread = p_tread >= 0 ? MIN(p_tread, 3) + 1 : 0;
+	near_fld.press_tread = field.press_tread;
+	float moved = 0.0f;
 	if (_gpu_on()) {
 		// The bodies' path: only the GPU field takes it (the CPU copy follows at the read back).
 		gpu_sink.stamp(cols, p_position, radius, half, p_yaw, true, bottom, p_sinkage, false, contact_tolerance, p_velocity);
-		return 0.0f;
+	} else {
+		moved = field.press(cols, p_position, radius, half, p_yaw, true, bottom, p_sinkage, false, contact_tolerance, p_velocity);
 	}
-	return field.press(cols, p_position, radius, half, p_yaw, true, bottom, p_sinkage, false, contact_tolerance, p_velocity);
+	field.press_tread = 0;
+	near_fld.press_tread = 0;
+	return moved;
 }
 
 void GroundSurface3D::_plough_bodies() {
@@ -4232,7 +4261,7 @@ void GroundSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns
 	if (!GroundDeformGPUHost::stamp_bounds(f, p_position, span, x0, x1, z0, z1)) {
 		return;
 	}
-	const uint32_t flags = (p_box ? 1u : 0u) | (p_round ? 2u : 0u);
+	const uint32_t flags = (p_box ? 1u : 0u) | (p_round ? 2u : 0u) | ((uint32_t)CLAMP(surface->field.press_tread, 0, 7) << 5u);
 	const float v[12] = {
 		p_position.x, p_position.y, p_position.z, p_radius,
 		p_half.x, p_half.y, p_yaw, p_bottom,
@@ -5020,15 +5049,16 @@ PackedByteArray GroundSurface3D::_gpu_cells() const {
 	if (!ground_valid || int(cells.size()) != n * n) {
 		return out;
 	}
-	out.resize(n * n * 48);
+	out.resize(n * n * 64);
 	float *w = reinterpret_cast<float *>(out.ptrw());
 	const bool inputs = int(cell_inputs.size()) == n * n;
 	bool seep = false;
+	bool sliding = false;
 	const bool runoff_gpu = _runoff_on_gpu();
 	bool runoff_any = false;
 	for (int i = 0; i < n * n; i++) {
 		const Cell &c = cells[i];
-		float *o = w + i * 12;
+		float *o = w + i * 16;
 		o[0] = c.rim_share;
 		o[1] = c.tan_repose;
 		o[2] = c.rate;
@@ -5044,9 +5074,25 @@ PackedByteArray GroundSurface3D::_gpu_cells() const {
 		// Runoff channels on the GPU: the seepage face's outflow, m/s; -1 under the sea or a lake (the runoff ends).
 		o[11] = runoff_gpu ? ((int)water_depth.size() == n * n && water_depth[i] > 0.002f ? -1.0f : _runoff_seep(i)) : 0.0f;
 		runoff_any = runoff_any || o[11] > 0.0f;
+		// Mud slides (round 10): the steepest slope the layer holds.
+		o[12] = mud_slides ? c.slide_length : 1e3f;
+		if (mud_slides && c.deformable && c.slide_length < 1e2f && c.mud > 0.0f && !sliding) {
+			// The ground's steepest fall to a lattice neighbour against what the full layer holds.
+			const int x = i % n;
+			const int z = i / n;
+			float fall = 0.0f;
+			if (x > 0 && x < n - 1 && z > 0 && z < n - 1) {
+				fall = MAX(MAX(Math::abs(ground[i + 1] - ground[i - 1]), Math::abs(ground[i + n] - ground[i - n])) / (2.0f * ground_spacing), 0.0f);
+			}
+			sliding = fall > c.slide_length / c.mud;
+		}
+		o[13] = 0.0f;
+		o[14] = 0.0f;
+		o[15] = 0.0f;
 		seep = seep || (c.deformable && o[9] < c.max_dent);
 	}
 	const_cast<GroundSurface3D *>(this)->water_seep = seep;
+	const_cast<GroundSurface3D *>(this)->mud_sliding = sliding;
 	const_cast<GroundSurface3D *>(this)->runoff_seep_any = runoff_any;
 	return out;
 }
@@ -5225,6 +5271,11 @@ void GroundSurface3D::_gpu_submit_field(GroundDeformGPUHost &r_host, const Groun
 		if (cell_bytes.size() > 0) {
 			flags |= GroundDeformGPU::STEP_COVER;
 			r_cells_dirty = false;
+			if (mud_sliding) {
+				// A soaked layer on a slope it no longer holds (round 10): the field slumps for a minute after the
+				// cells change (rain renews it as it soaks them), so the slide runs its course and stops.
+				r_host.slump_until = MAX(r_host.slump_until, r_host.time + 60.0);
+			}
 		}
 	}
 	if (r_host.reset) {
@@ -5285,8 +5336,10 @@ void GroundSurface3D::_gpu_submit_field(GroundDeformGPUHost &r_host, const Groun
 	d.slots = MAX(max_cached_tiles, 1);
 	d.coll_w = 0;
 	d.stride = 2;
-	d.slump_passes = p_passes;
-	d.cover_vec4s = 3;
+	// A slide carries mud metres down a slope, further than slumping spreads in a pass: four passes a step while one
+	// runs (round 10).
+	d.slump_passes = p_passes * (mud_sliding && r_host.time <= r_host.slump_until ? 4 : 1);
+	d.cover_vec4s = 4;
 	d.water_passes = water_passes;
 	d.morph_passes = _morph_passes();
 	r_host.gpu->step(d, flags, _gpu_params(p_field, p_edge_margin, p_delta, p_age, slow), ground_bytes, cell_bytes, r_host.stamps, r_host.stores, r_host.shift, p_field.origin, Vector2(), r_host.uploads);
@@ -5651,6 +5704,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wind_override"), &GroundSurface3D::get_wind_override);
 	ClassDB::bind_method(D_METHOD("set_mud_layer", "enabled"), &GroundSurface3D::set_mud_layer);
 	ClassDB::bind_method(D_METHOD("is_mud_layer"), &GroundSurface3D::is_mud_layer);
+	ClassDB::bind_method(D_METHOD("set_mud_slides", "enabled"), &GroundSurface3D::set_mud_slides);
+	ClassDB::bind_method(D_METHOD("is_mud_slides"), &GroundSurface3D::is_mud_slides);
+	ClassDB::bind_method(D_METHOD("get_mud_slide_angle_at", "position"), &GroundSurface3D::get_mud_slide_angle_at);
 	ClassDB::bind_method(D_METHOD("set_mud_map", "map"), &GroundSurface3D::set_mud_map);
 	ClassDB::bind_method(D_METHOD("set_standing_water", "enabled"), &GroundSurface3D::set_standing_water);
 	ClassDB::bind_method(D_METHOD("is_standing_water"), &GroundSurface3D::is_standing_water);
@@ -5786,7 +5842,7 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_rain_smoothing"), &GroundSurface3D::get_rain_smoothing);
 
 	ClassDB::bind_method(D_METHOD("get_wheel_soil", "position", "load", "radius", "width", "inflation", "slip", "slip_angle"), &GroundSurface3D::get_wheel_soil, DEFVAL(200.0f), DEFVAL(0.0f), DEFVAL(0.0f));
-	ClassDB::bind_method(D_METHOD("press_wheel", "position", "size", "yaw", "sinkage", "velocity"), &GroundSurface3D::press_wheel, DEFVAL(Vector2()));
+	ClassDB::bind_method(D_METHOD("press_wheel", "position", "size", "yaw", "sinkage", "velocity", "tread"), &GroundSurface3D::press_wheel, DEFVAL(Vector2()), DEFVAL(-1));
 	ClassDB::bind_method(D_METHOD("get_footing_at", "position", "mass", "area"), &GroundSurface3D::get_footing_at, DEFVAL(75.0f), DEFVAL(0.035f));
 	ClassDB::bind_method(D_METHOD("dig", "position", "radius", "depth"), &GroundSurface3D::dig);
 	ClassDB::bind_method(D_METHOD("deposit", "position", "radius", "depth"), &GroundSurface3D::deposit);
@@ -5838,6 +5894,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "near_resolution", PROPERTY_HINT_RANGE, "128,2048,64"), "set_near_resolution", "get_near_resolution");
 	ADD_GROUP("Mud", "mud_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_layer"), "set_mud_layer", "is_mud_layer");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_slides"), "set_mud_slides", "is_mud_slides");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "mud_map", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_mud_map", "get_mud_map");
 	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "mud_map_rect"), "set_mud_map_rect", "get_mud_map_rect");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mud_max_depth", PROPERTY_HINT_RANGE, "0,3,0.05,suffix:m"), "set_mud_max_depth", "get_mud_max_depth");

@@ -82,7 +82,8 @@ layout(set = 0, binding = 4, std430) restrict readonly buffer Ground {
 };
 layout(set = 0, binding = 5, std430) restrict readonly buffer Cover {
 	// Snow: per cover cell, two: (swe mm, density, crust thickness, crust burial), (new snow m, cover ground m, 0, 0).
-	// Ground: per lattice point, two: (rim share, tan repose, slumping rate, deepest dent), (darken, gloss, blown sand, deformable).
+	// Ground: per lattice point, four: (rim share, tan repose, slumping rate, deepest dent), (darken, gloss, blown sand,
+	// deformable), (water inputs: GroundSurface3D::_gpu_cells), (mud slides: tau_y / (rho g) m, 0, 0, 0).
 	vec4 cover_cells[];
 };
 struct Stamp {
@@ -243,7 +244,7 @@ vec4 ground_cell(vec2 p, int part) {
 	if (x < 0 || z < 0 || x >= n || z >= n) {
 		return vec4(0.0);
 	}
-	return cover_cells[(z * n + x) * 3 + part];
+	return cover_cells[(z * n + x) * 4 + part];
 }
 
 bool ground_deformable(vec2 p) {
@@ -428,6 +429,57 @@ void run_amount_stamp(Stamp s) {
 	barrier();
 }
 
+// A tyre's tread in its rut (docs/ideas/mud.md, round 10; GroundDeformField::tread_relief()): how far the print's
+// floor stands above (voids the soil squeezed into) or below (chain cross links) the plain box, m. p_code: 0 none,
+// 1 road (circumferential grooves stand as low ribs), 2 all terrain (chevron lugs, 9 cm), 3 mud terrain (staggered
+// open lugs, 13 cm, deep voids), 4 chains (cross links every 22 cm over all terrain lugs). The pattern is fixed on
+// the ground along the wheel's heading so the frames of a rolling tyre agree, warped by noise at about 1 m and
+// 25 cm so a long rut does not read as a repeated stamp; a slipping tread smears it out.
+float runoff_hash(ivec2 c) {
+	uint h = (uint(c.x) * 73856093u) ^ (uint(c.y) * 19349663u) ^ 0x5bd1e995u;
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	return float(h & 0xffffu) / 65535.0;
+}
+float runoff_noise(vec2 q, int salt) {
+	ivec2 c = ivec2(floor(q)) + ivec2(salt * 7919, salt * 104729);
+	vec2 f = q - floor(q);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = mix(runoff_hash(c), runoff_hash(c + ivec2(1, 0)), f.x);
+	float b = mix(runoff_hash(c + ivec2(0, 1)), runoff_hash(c + ivec2(1, 1)), f.x);
+	return mix(a, b, f.y) - 0.5;
+}
+float tread_relief(uint p_code, vec2 p_wp, vec2 p_lp, vec2 p_half, float p_cy, float p_sy, float p_slip) {
+	if (p_code == 0u) {
+		return 0.0;
+	}
+	float a = p_sy * p_wp.x + p_cy * p_wp.y + 0.03 * runoff_noise(p_wp / 0.9, 5) + 0.008 * runoff_noise(p_wp / 0.25, 6);
+	float x = p_lp.x / max(p_half.x, 1e-3);
+	float keep = (1.0 - smoothstep(0.6, 3.0, p_slip)) * (1.0 - smoothstep(0.85, 1.0, abs(x)));
+	float r = 0.0;
+	if (p_code == 1u) {
+		float d = abs(fract(2.0 * x + 0.5) - 0.5);
+		r = abs(x) < 0.75 ? 0.004 * (1.0 - smoothstep(0.04, 0.08, d)) : 0.0;
+	} else if (p_code == 3u) {
+		float g = fract((a + 0.35 * abs(p_lp.x)) / 0.13 + (x < 0.0 ? 0.0 : 0.5));
+		float bar = smoothstep(0.0, 0.05, g) * (1.0 - smoothstep(0.4, 0.45, g));
+		r = 0.018 * (1.0 - bar);
+	} else {
+		float g = fract((a + 0.6 * abs(p_lp.x)) / 0.09);
+		float bar = smoothstep(0.0, 0.06, g) * (1.0 - smoothstep(0.44, 0.5, g));
+		r = (p_code == 4u ? 0.005 : 0.01) * (1.0 - bar);
+		if (p_code == 4u) {
+			// The cross chains bear first and press their ladder in, the tread's lugs fainter between.
+			float link = abs(fract(a / 0.22) - 0.5) * 0.22;
+			r = mix(r, -0.015, 1.0 - smoothstep(0.008, 0.016, link));
+		}
+	}
+	return r * keep;
+}
+
 // A boot's sole (GroundDeformField::sole_sd(), sole_relief()): a box stamp flagged round as well. Local p in the box's
 // frame, the toe toward + along its longer side. The outline: a heel and a forefoot ellipse joined by a smooth
 // union through the waist; the relief raises the print's floor where the sole does not bear: the shank between
@@ -511,6 +563,7 @@ void run_stamp(Stamp s) {
 	bool round_ = (flags & STAMP_ROUND) != 0u;
 	// A box flagged round is a boot's sole.
 	bool sole = box && round_;
+	uint tread = (flags >> 5u) & 7u; // a wheel's tread (round 10)
 	if (sole) {
 		round_ = false;
 	}
@@ -566,6 +619,8 @@ void run_stamp(Stamp s) {
 		float prof = round_ ? bottom + radius - sqrt(max(r2 - d2, 0.0)) : bottom;
 		if (sole) {
 			prof += sole_relief(lp, half_);
+		} else if (box) {
+			prof += tread_relief(tread, wp, lp, half_, cy, sy, speed);
 		}
 		if (prof <= c.surface - state[i].x + state[i].y + tol) {
 			atomicOr(touch_flag, 1u);
@@ -610,7 +665,7 @@ void run_stamp(Stamp s) {
 		float sfc = c.surface - st.x + st.y;
 		float dd = min(d2, r2);
 		float target = round_ ? bottom + radius - sqrt(max(r2 - dd, 0.0)) : bottom;
-		float relief = sole ? sole_relief(lp, half_) : 0.0;
+		float relief = sole ? sole_relief(lp, half_) : (box ? tread_relief(tread, wp, lp, half_, cy, sy, speed) : 0.0);
 		target += relief;
 		if (sink > 0.0) {
 			float wgt = round_ ? sqrt(max(1.0 - d2 / r2, 0.0)) : 1.0;
@@ -795,8 +850,10 @@ void run_stamp(Stamp s) {
 // goes down to its deepest dent. Slow material (mud creeping back) only moves on the steps the CPU marks
 // slow, by the seconds saved up since (GroundDeformField's tile wait).
 
-// The repose slope, share per second and deepest dent at p; false where nothing moves.
-bool slump_params(vec2 p, out float tan_r, out float rate, out float max_dent) {
+// The repose slope, share per second and deepest dent at p, and the mud's slide length tau_y / (rho g) (mud round
+// 10: a layer h deep slides off ground steeper than slide / h); false where nothing moves.
+bool slump_params(vec2 p, out float tan_r, out float rate, out float max_dent, out float slide) {
+	slide = 1e3;
 	if (!is_ground()) {
 		tan_r = params.relax.w;
 		rate = 1e3;
@@ -813,7 +870,22 @@ bool slump_params(vec2 p, out float tan_r, out float rate, out float max_dent) {
 	tan_r = m.y;
 	rate = m.z;
 	max_dent = m.w;
+	slide = ground_cell(p, 3).x;
 	return true;
+}
+
+// The steepest ground a mud layer holds with what is left of it at a texel (state st): its depth over the base
+// (deepest dent) plus any rim on it (Coussot 1997: a mudflow stops at h = tau_y / (rho g sin theta)).
+float slide_tan(float p_slide, float p_max_dent, vec4 p_st) {
+	return p_slide >= 1e2 ? 1e3 : p_slide / max(p_max_dent - p_st.x + p_st.y, 0.005);
+}
+
+// The step to a neighbour dist away the surface may keep: the repose, or the undisturbed ground's own step where
+// steeper (slopes steeper than the repose stay as they are). Where the ground falls faster than the whole mud layer
+// holds (a soaked layer, round 10), the layer's own critical slope instead: the layer slides as one mass.
+float slump_limit(float p_tan_r, float p_tan_slide, float p_dist, float p_gi, float p_gj) {
+	float hold = p_tan_slide * p_dist;
+	return p_gi - p_gj > hold ? hold : max(p_tan_r * p_dist, p_gi - p_gj);
 }
 
 const ivec2 DIRS[8] = ivec2[8](ivec2(1, 0), ivec2(-1, 0), ivec2(0, 1), ivec2(0, -1), ivec2(1, 1), ivec2(1, -1), ivec2(-1, 1), ivec2(-1, -1));
@@ -830,16 +902,19 @@ void slump_give(int x, int z) {
 		return;
 	}
 	vec4 st = state[i];
-	if (st.z <= 0.0) {
-		return;
-	}
 	vec2 wp = texel_world(x, z);
 	float tan_r;
 	float rate;
 	float max_dent;
-	if (!slump_params(wp, tan_r, rate, max_dent)) {
+	float slide;
+	if (!slump_params(wp, tan_r, rate, max_dent, slide)) {
 		return;
 	}
+	// Settled texels only move where a soaked mud layer may be sliding (round 10).
+	if (st.z <= 0.0 && slide >= 1e2) {
+		return;
+	}
+	float tan_slide = slide_tan(slide, max_dent, st);
 	if (st.y <= 0.0 && st.x >= max_dent) {
 		return; // nothing here can move
 	}
@@ -865,7 +940,7 @@ void slump_give(int x, int z) {
 		float dist = k < 4 ? tx : tx * 1.41421356;
 		float gj = ground_at(texel_world(q.x, q.y));
 		float sj = gj + sj4.y - sj4.x;
-		float limit = max(tan_r * dist, gi - gj);
+		float limit = slump_limit(tan_r, tan_slide, dist, gi, gj);
 		float e = max((si - sj) - limit, 0.0);
 		sum += e;
 		big = max(big, e);
@@ -916,11 +991,12 @@ void slump_take(int x, int z) {
 		float tan_r;
 		float q_rate;
 		float q_max;
-		slump_params(qp, tan_r, q_rate, q_max);
+		float q_slide;
+		slump_params(qp, tan_r, q_rate, q_max, q_slide);
 		float gi = ground_at(qp);
 		float si = gi + sq.y - sq.x;
 		float dist = k < 4 ? tx : tx * 1.41421356;
-		float e = (si - sj) - max(tan_r * dist, gi - gj);
+		float e = (si - sj) - slump_limit(tan_r, slide_tan(q_slide, q_max, sq), dist, gi, gj);
 		if (e <= 0.0) {
 			continue;
 		}
@@ -965,23 +1041,6 @@ const float WATER_G = 9.81;
 // Runoff channels start from the bed's own roughness (RillGrow, Favis-Mortlock 1998): a few millimetres of fixed
 // relief per place, value noise at 3 cm (grain clusters, the swash's and rain's marks), which the water sees and
 // follows; the cuts it makes are then the channels.
-float runoff_hash(ivec2 c) {
-	uint h = (uint(c.x) * 73856093u) ^ (uint(c.y) * 19349663u) ^ 0x5bd1e995u;
-	h ^= h >> 16u;
-	h *= 0x7feb352du;
-	h ^= h >> 15u;
-	h *= 0x846ca68bu;
-	h ^= h >> 16u;
-	return float(h & 0xffffu) / 65535.0;
-}
-float runoff_noise(vec2 q, int salt) {
-	ivec2 c = ivec2(floor(q)) + ivec2(salt * 7919, salt * 104729);
-	vec2 f = q - floor(q);
-	f = f * f * (3.0 - 2.0 * f);
-	float a = mix(runoff_hash(c), runoff_hash(c + ivec2(1, 0)), f.x);
-	float b = mix(runoff_hash(c + ivec2(0, 1)), runoff_hash(c + ivec2(1, 1)), f.x);
-	return mix(a, b, f.y) - 0.5;
-}
 // The face's own relief, fixed per place: grain-scale roughness (3 cm) on the swash's low ridges and hollows
 // (15 and 50 cm, a few mm), which gather the seepage into fewer, joining rills.
 float runoff_rough(vec2 p) {
