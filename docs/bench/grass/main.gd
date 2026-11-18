@@ -34,6 +34,8 @@ extends Node3D
 #   --clip=dir       save every frame from 20 on as PNGs (for a GIF)
 #   --layers=0       only the tall blades (no undercoat, ground tint, view facing, clover, flowers)
 #   --close          the closer view used by --trample
+#   --ruts           with a GroundSurface3D of wet soil: a pair of tyre ruts in the close view; the blades lie
+#                    flat or are torn out where the ground is pressed (docs/ideas/mud.md)
 #   --notex          plants without their generated leaf textures
 #   --forest         a wood of stand-in trees: forest floor (litter, moss, bilberry, fern) in
 #                    their shade, meadow in the open (PlantSpecies.shade_range)
@@ -100,6 +102,8 @@ var crop_close := false
 var crop_fields := false
 var stubble_view := false # --fields=stubble: from 1.7 m at the stubble field's edge, over its swaths.
 var close := false
+var ruts_view := false
+var ruts_ground: GroundSurface3D
 var forest := false
 var litter_wind := Vector2()
 var grass_density := 0.0
@@ -192,6 +196,9 @@ func _ready() -> void:
 			farmland = true
 			SIZE = 640.0 # Fields and the meadow round them to the horizon.
 		elif a == "--close": close = true
+		elif a == "--ruts":
+			ruts_view = true
+			close = true
 		elif a == "--forest": forest = true
 		elif a == "--swamp": swamp = true
 		elif a == "--swamp=close":
@@ -526,6 +533,8 @@ void fragment() {
 	if terrain_mat:
 		ground.material_override = TerrainMaterial3D.new()
 	add_child(ground)
+	if ruts_view:
+		ground.position.y = -0.2 # Under the GroundSurface3D's own ground, which carries the ruts.
 	var water := MeshInstance3D.new()
 	var wp := PlaneMesh.new()
 	wp.size = Vector2(SIZE, SIZE)
@@ -645,6 +654,17 @@ void fragment() {
 		# Closer, looking down on the trails.
 		cam.position = Vector3(1.5, height(1.5, 17.0) + 1.6, 17.0)
 		cam.look_at(Vector3(0.5, height(0.5, 10.0), 10.0))
+	if ruts_view:
+		ruts_ground = GroundSurface3D.new()
+		ruts_ground.name = "Ruts"
+		cam.name = "Eye"
+		ruts_ground.follow_target = NodePath("../" + str(cam.name))
+		ruts_ground.ground_type = GroundSurface3D.GROUND_SOIL
+		ruts_ground.moisture = 0.7
+		ruts_ground.keep_ruts = false
+		ruts_ground.wind_ripples = false
+		ruts_ground.desiccation_cracks = false
+		add_child(ruts_ground)
 	if far_view and not test:
 		# From a corner, a little up, across the whole map: near plants, thinning, ground beyond.
 		cam.position = Vector3(42, height(42, 42) + (2.0 if dolly else 7.0), 42)
@@ -2040,6 +2060,21 @@ func _process(dt: float) -> void:
 		for i in 800:
 			grass.update_at(cam.global_position)
 			(get_node("Meadow") as GrassField3D).update_at(cam.global_position)
+	if ruts_view and n == 6:
+		# A pair of tyre ruts 1.6 m apart running away from the eye, 8 cm deep.
+		for side in [0.2, 1.8]:
+			for k in 12:
+				var z := 16.0 - k * 0.45
+				var x: float = side - 0.08 * k
+				ruts_ground.press_box(Vector3(x, 0, z), Vector2(0.32, 0.5), 0.17, height(x, z) - 0.08, 0.0)
+		# A light pass 6 mm deep to the right: the sward pressed flat, not torn.
+		for k in 12:
+			var z := 16.0 - k * 0.45
+			var x: float = 3.4 - 0.08 * k
+			ruts_ground.press_box(Vector3(x, 0, z), Vector2(0.32, 0.5), 0.17, height(x, z) - 0.006, 0.0)
+	if ruts_view and n == 12:
+		for q in [Vector3(-0.15, 0, 14.0), Vector3(3.05, 0, 14.0)]:
+			print("GRASS_RUT ", [q, ruts_ground.get_dent_at(q), ruts_ground.get_rim_at(q), ruts_ground.get_fresh_at(q), ruts_ground.get_standing_water_at(q), ruts_ground.get_tracked_mud_at(q)])
 	if n == 2:
 		dm.bake()
 		if rocks > 0 and not forest:
