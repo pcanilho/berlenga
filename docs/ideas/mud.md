@@ -739,6 +739,14 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
 - **Regrowth follows the seasons.** The regrowth e-fold scaled by WeatherMap3D's season: grass grows from about 5 C,
   fastest in spring, stalled by summer drought and in winter (growing degree days), so a rut left in November is
   still bare in February.
+  *Built (18 Nov):* kept ruts age their regrowth by growing time, not clock time (`_growing_seconds()`): day by day
+  over the time away (ending on WeatherMap3D's day of the year; whole years at the year's sum), each day counts
+  (T - 5 C) / 10 K of WeatherSeason's climatological day at the field's height (growing degree days, Cannell and
+  Smith's base; the reference a late spring day), times a drought factor from the day's precipitation over its
+  Thornthwaite evapotranspiration (none under 0.1, full over 0.7). The live weather's anomaly is left out: it is
+  the last month's, the time away can be many. Default climate: 90 days to mid February regrow nothing, 35 days to
+  late June about the reference; a Mediterranean August (bench dry_climate.gd) nothing. No WeatherMap3D: the old
+  clock-time rate. Checks in `--test=ruts`.
 - **Mud on plants beside ruts.** Spray and splashes that land on the sward tint the blades and plants there with the
   ground's clay (a per-texel splatter share the blade shaders read, as the body mud does), washed off by rain.
 

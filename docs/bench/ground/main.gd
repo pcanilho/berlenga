@@ -1174,6 +1174,34 @@ func _run_ruts_tests() -> void:
 		await get_tree().physics_frame
 	surface.sync_deformation()
 	_check("pressed again, it is bare again", surface.get_regrown_at(a) < 0.05, "%.2f regrown" % surface.get_regrown_at(a))
+	# Regrowth follows the seasons (mud round 7): with a WeatherMap3D, the same weeks away grow it back by the
+	# climate's growing degree days: a winter away (back in mid February after 90 days) leaves it bare, a summer away
+	# (back at the end of June after 35 days) greens it about as fast as the reference rate (the reference is a late
+	# spring day; June is warmer but drier), a Mediterranean August not at all.
+	var wm := WeatherMap3D.new()
+	get_tree().root.add_child(wm)
+	var seasonal := []
+	for leg in [[45, 90.0, false], [180, 35.0, false], [240, 35.0, true]]:
+		wm.season_day = leg[0]
+		wm.climate = load("res://dry_climate.gd").new() if leg[2] else null
+		t_left = Time.get_unix_time_from_system()
+		ruts_scale = leg[1] * 86400.0 / 4.0
+		await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
+		for i in 6:
+			await get_tree().physics_frame
+		surface.sync_deformation()
+		seasonal.append(surface.get_regrown_at(a))
+		var ref := 1.0 - exp(-(Time.get_unix_time_from_system() - t_left) * ruts_scale / surface.ruts_regrowth_time)
+		print("  day %d after %.0f days away: %.2f regrown (%.2f at the reference rate)" % [leg[0], (Time.get_unix_time_from_system() - t_left) * ruts_scale / 86400.0, seasonal[-1], ref])
+		seasonal.append(ref)
+		surface.press_box(a, Vector2(0.11, 0.29), 0.0, 0.0, 0.04)
+		for i in 4:
+			await get_tree().physics_frame
+		surface.sync_deformation()
+	_check("a winter away leaves the rut bare (mud round 7)", seasonal[0] < 0.25 and seasonal[0] < 0.5 * seasonal[1], "%.2f regrown in 90 winter days (%.2f at the reference rate)" % [seasonal[0], seasonal[1]])
+	_check("a summer away greens it at about the reference rate", seasonal[2] > 0.7 * seasonal[3] and seasonal[2] < 1.6 * seasonal[3], "%.2f regrown in 35 summer days (%.2f at the reference rate)" % [seasonal[2], seasonal[3]])
+	_check("a Mediterranean summer's drought stalls it", seasonal[4] < 0.3 * seasonal[5], "%.2f regrown in 35 August days (%.2f at the reference rate)" % [seasonal[4], seasonal[5]])
+	wm.queue_free()
 	ruts_scale = 1.0
 	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.6, 0.0)
 	for i in 3:
@@ -1884,6 +1912,16 @@ func _build_ice() -> void:
 	for i in 20:
 		await get_tree().physics_frame
 	print("ice: %s at the centre, %s in the track, %.1f cm of water" % [surface.get_ice_at(o), surface.get_ice_at(Vector3(-0.8, 0, 0.35)), surface.get_standing_water_at(o) * 100.0])
+	if OS.get_cmdline_user_args().has("--banks"):
+		var hs := []
+		for k in 16:
+			var a := TAU * k / 16.0
+			var row := ""
+			for j in range(10, 22):
+				var q := Vector3(cos(a), 0, sin(a)) * (0.1 * j)
+				row += " %+5.1f" % ((surface.get_surface_height_at(q) - surface.get_surface_height_at(Vector3(6, 0, 6))) * 100.0)
+			hs.append(row)
+		print("banks (cm, 1.0 to 2.1 m out):\n" + "\n".join(hs))
 	var cam := Camera3D.new()
 	add_child(cam)
 	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([1.6, 1.0, 2.0, -0.3, 0.0, 0.0])

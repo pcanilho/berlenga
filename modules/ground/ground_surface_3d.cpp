@@ -4145,6 +4145,48 @@ void GroundSurface3D::_ruts_read_gpu(const GroundDeformField &p_field, GroundRut
 // water in them goes as evaporation beats that rain, and the clay in that water settles out of it (round 5: the
 // floc's 0.1 mm/s over the water's depth, all of it where the water went). Exact for these exponential decays however
 // long the absence.
+// Regrowth follows the seasons (docs/ideas/mud.md, round 7): of p_seconds (world time, ending today), the seconds of
+// growth at the reference rate ruts_regrowth_time is given for. The sward grows with the day's mean temperature above
+// 5 C (growing degree days, as WeatherSeason's forcing; the reference 10 K above it, a late spring day), held back
+// by drought: the day's precipitation against its Thornthwaite evapotranspiration (no growth under a tenth of it, full
+// over seven tenths), so a Mediterranean summer stalls it as a winter does. The days of the climatological year
+// (WeatherMap3D's climate at the field's height); without a WeatherMap3D, every day at the reference rate.
+double GroundSurface3D::_growing_seconds(double p_seconds) const {
+	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	if (!wm || p_seconds <= 0.0) {
+		return p_seconds;
+	}
+	const WeatherSeason::Climate c = wm->get_season_climate();
+	const float h = _ground_at(center.x, center.y);
+	double heat = 0.0;
+	double a = 0.0;
+	WeatherSeason::thornthwaite_coefficients(c, h, heat, a);
+	auto rate = [&](int p_day) {
+		// The climate's day, not the live weather's departure from it (WeatherMap3D's season anomaly: the last
+		// month's, while the time away can be months).
+		const float t = WeatherSeason::day_temperature(c, h, float(p_day));
+		const float pet = WeatherSeason::day_pet(c, heat, a, t, p_day);
+		const float wet = pet > 0.01f ? Math::smoothstep(0.1f, 0.7f, WeatherSeason::day_precipitation(c, float(p_day)) / pet) : 1.0f;
+		return double(MAX(t - WeatherSeason::FORCING_BASE, 0.0f) / 10.0f * wet);
+	};
+	const double days = p_seconds / 86400.0;
+	const int whole = int(Math::floor(days));
+	double sum = 0.0;
+	if (whole >= 365) {
+		double year = 0.0;
+		for (int d = 1; d <= 365; d++) {
+			year += rate(d);
+		}
+		sum += year * double(whole / 365);
+	}
+	const int today = wm->get_day_of_year();
+	for (int k = 0; k < whole % 365; k++) {
+		sum += rate((today - 1 - k + 365 * 2) % 365 + 1);
+	}
+	sum += rate((today - 1 - (whole % 365) + 365 * 2) % 365 + 1) * (days - double(whole));
+	return sum * 86400.0;
+}
+
 void GroundSurface3D::_ruts_age(LocalVector<uint32_t> &r_data, double p_seconds) const {
 	const double secs = MIN(p_seconds * double(ruts_time_scale), 3.0e7); // a year at most
 	if (secs < 60.0) {
@@ -4153,7 +4195,7 @@ void GroundSurface3D::_ruts_age(LocalVector<uint32_t> &r_data, double p_seconds)
 	const float dry = float(Math::exp(-secs / double(drying_time)));
 	const float keep = float(Math::exp(-double(rain_smoothing * ruts_away_rain) * secs / 3600.0));
 	const float loss = float(double(MAX(_evaporation() - ruts_away_rain / 3.6e6f, 0.0f)) * secs);
-	const float regrow = float(Math::exp(-secs / double(MAX(ruts_regrowth_time, 1.0f))));
+	const float regrow = float(Math::exp(-_growing_seconds(secs) / double(MAX(ruts_regrowth_time, 1.0f))));
 	const int S = GroundRutStore::STRIDE;
 	const int count = int(r_data.size()) / S;
 	for (int k = 0; k < count; k++) {

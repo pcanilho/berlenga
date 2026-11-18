@@ -334,6 +334,7 @@ private:
 	float ruts_time_scale = 1.0f; // world seconds per real second while away (0: kept as left)
 	float ruts_away_rain = 0.1f; // mean rain while away, mm/h (a temperate 900 mm a year)
 	float ruts_regrowth_time = 2.6e6f; // s: the sward grows back over a kept rut at this e-fold (a month; mud round 6)
+	double _growing_seconds(double p_seconds) const;
 	void _ruts_age(LocalVector<uint32_t> &r_data, double p_seconds) const;
 	// Crack state kept with the ruts (mud round 5): the lattice cells it moves off and onto.
 	GroundCellStore crack_store;
