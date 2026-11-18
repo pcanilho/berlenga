@@ -409,7 +409,10 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	}
 	const float cu = smoothstep(0.2f, 0.8f, ct.y);
 	// Domed tops through the remap, a flat base after it (wc_extinction in the shader).
-	const float dome = 1.0f - smoothstep(1.0f - Math::lerp(0.15f, 0.6f, cu), 1.0f, h);
+	// Broken cloud domes over more of its height whatever its type: a narrow band at the top cut the few
+	// clouds of a fair sky into flat-topped blocks. Only a deck (high cover) keeps the stratus' flat top.
+	const float round_top = Math::lerp(0.6f, Math::lerp(0.15f, 0.6f, cu), smoothstep(0.35f, 0.75f, ct.x));
+	const float dome = 1.0f - smoothstep(1.0f - round_top, 1.0f, h);
 	const float base = smoothstep(0.0f, Math::lerp(0.2f, 0.03f, cu), h);
 	const Vector2 so = shear_offset(p_state, p_pos.y);
 	const float n = shape_at(p_state, Vector3(p_pos.x - so.x, p_pos.y, p_pos.z - so.y));
@@ -601,7 +604,11 @@ float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {
 	// The tops dome through the coverage remap (the noise must be higher to reach further up); the base is
 	// applied after it, so cumulus sit on a flat condensation level instead of rounding off underneath as
 	// they did with the whole profile inside the remap (Schneider 2015's height gradient).
-	float dome = 1.0 - smoothstep(1.0 - mix(0.15, 0.6, cu), 1.0, h);
+	// Broken cloud domes over more of its height whatever its type (dome in extinction_at on the CPU): a
+	// narrow band at the top cut the few clouds of a fair sky into flat-topped blocks. Only a deck keeps
+	// the stratus' flat top.
+	float round_top = mix(0.6, mix(0.15, 0.6, cu), smoothstep(0.35, 0.75, ct.x));
+	float dome = 1.0 - smoothstep(1.0 - round_top, 1.0, h);
 	float base = smoothstep(0.0, mix(0.2, 0.03, cu), h);
 	float texel = cloud_shape_scale / 128.0;
 	// Wind shear: the tissue higher up was carried further downwind (and veered) while it rose, so the
