@@ -2039,6 +2039,17 @@ Docs review (18 Nov): holm oak and carob passed. Fixes for the rest:
   valleys (crack 0.35 of a cell) and rounded shoulders (square root of the profile), pale grey
   ridges over warm fissures.
 
+Cork oak round 4 (18 Nov; r3 bark read as wet clay, the crown as a eucalyptus vase): the crown
+takes the holm oak's dome rules (apical control 0.95, shedding 0.02, internodes 0.3 m, leader
+growth 0.5) on the one four-way split, limbs at 62 degrees and side branches at 0.8 vigor:
+15 m, a broad, low, dense dome. Fissures 4 cm deep again, the relief blurred half as much (two
+passes of 5 texels), spongy noise 3 mm; fewer, thinner lichen crusts.
+
+Maritime pine round 3 (18 Nov): no excurrent crown cone (it kept the top a sparse spire over a
+wide lowest whorl, the floating disc); the bole is lifted clear to 42% of the height; apical
+control 0.9, shedding 0.06 and few kept dead branches give a dense, irregular, rounded crown in
+the top 60%.
+
 Round 3 (18 Nov): the leader splits once into four limbs (a second split at ten years gave
 sixteen, the broom of thin pale limbs the docs saw), their side branches held to 0.35 of their
 vigor, the fork stems at 55 degrees; no dead branches kept (the twig bundle on the bole). Cork
