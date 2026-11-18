@@ -131,6 +131,8 @@ private:
 	bool standing_water = true;
 	// Muddy water (docs/ideas/mud.md, round 3): standing water carries the clay tyres churn up and feet stir in.
 	bool muddy_water = true;
+	// Mud tracked onto firm ground (round 3): tyres and boots leave the clay they carry as a film (track_mud).
+	bool tracked_mud = true;
 	bool water_seep = false; // some lattice cell's water table lies within a print's reach: seepage can fill one
 	float water_seen = 0.0f; // the deepest standing water at the last read back, m
 	float _evaporation() const;
@@ -583,6 +585,13 @@ public:
 	void stir_water(const Vector3 &p_position, float p_radius, float p_mass);
 	// The clay the standing water carries at a place, kg/m3, as last read back.
 	float get_water_mud_at(Vector3 p_position) const;
+	// Lays a film of clay p_depth m thick over a disc (a tyre or a boot leaving mud on firm ground; mud round 3):
+	// dark and glossy as wet as p_wet, a pale film once it dries, and it stays until a wash takes it.
+	float track_mud(Vector3 p_position, float p_radius, float p_depth, float p_wet = 1.0f);
+	// The tracked mud film at a place (the texel under it): (its share 0..1, its wetness 0..1), (0, 0) for none.
+	Vector2 get_tracked_mud_at(Vector3 p_position) const;
+	void set_tracked_mud(bool p_enabled) { tracked_mud = p_enabled; }
+	bool is_tracked_mud() const { return tracked_mud; }
 	void set_muddy_water(bool p_enabled) { muddy_water = p_enabled; }
 	bool is_muddy_water() const { return muddy_water; }
 	// The standing water over a disc, as last read back (m3): what add_water can take there.

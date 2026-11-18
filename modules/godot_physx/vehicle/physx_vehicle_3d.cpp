@@ -1213,7 +1213,23 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 		impl->mud_shed_seen[i] = sw.shed;
 		spray += thrown / MUD_SPRAY_KG;
 #ifdef MODULE_GROUND_ENABLED
-		if (thrown > 0.0f && ground) {
+		float flung = thrown;
+		if (thrown > 0.0f && ground && !(sw.soft && sw.soil.stickiness >= 0.2f)) {
+			// Out of the mud (round 3): the clay the tread drops on firm ground is pressed onto it under the tyre,
+			// the more of it the slower the tread turns (a tyre leaves most of its mud within its first tens of
+			// metres: construction tracking pads are sized at about 15 m). The rest still flies.
+			const PhysXVehicleWheel3D *wn = wheels[impl->wheel_order[i]];
+			const float r = v.wheelParams[i].radius;
+			const float hw = v.wheelParams[i].halfWidth;
+			const float tread = Math::abs(v.wheelRigidBody1dStates[i].rotationSpeed) * r;
+			const float pressed = thrown * CLAMP(1.0f - tread / 8.0f, 0.2f, 1.0f);
+			const Vector3 up = get_global_basis().get_column(1).normalized();
+			const Vector3 contact = wn->get_global_position() - up * r;
+			ground->track_mud(contact, hw, pressed / 1700.0f / ((float)Math::PI * hw * hw), 1.0f);
+			flung = thrown - pressed;
+			spray -= pressed / MUD_SPRAY_KG; // pressed down, not thrown up into the arch
+		}
+		if (flung > 0.0f && ground) {
 			// The shed clay leaves the rear of the tread, up and back at the tread's speed (mud stage 4): the
 			// rooster tail of a wheel spun clean. A grains node throws it as mud clods.
 			const PhysXVehicleWheel3D *wn = wheels[impl->wheel_order[i]];
@@ -1226,7 +1242,7 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 			fling.velocity = get_linear_velocity() + (up * 0.85f - fwd * 0.5f).normalized() * Math::abs(tread);
 			fling.width = 2.0f * v.wheelParams[i].halfWidth;
 			fling.stickiness = 1.0f;
-			fling.volume = thrown / 1700.0f;
+			fling.volume = flung / 1700.0f;
 			ground->add_spray(fling);
 		}
 #endif
