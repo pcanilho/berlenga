@@ -3393,7 +3393,7 @@
     "WeatherLightning3D"
    ],
    "note": "",
-   "what": "strikes from storm cells at a rate set by cloud-top height, lit by their own channel under path tracing, with sharp shadows in raster too (`raster_shadow_distance`) and thunder made from the channel.",
+   "what": "strikes from storm cells at a rate set by cloud-top height, hitting tall things first and starting fires in dry fuel (`PhysXFireSpread3D.lightning_ignition`), lit by their own channel under path tracing, with sharp shadows in raster too (`raster_shadow_distance`) and thunder made from the channel.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -3452,7 +3452,7 @@
     "humidity"
    ],
    "note": "",
-   "what": "fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.",
+   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -3480,13 +3480,25 @@
    "topic": ""
   },
   {
+   "name": "Air temperature",
+   "settings": [
+    "air_follows_climate",
+    "air_daily_cycle"
+   ],
+   "note": "",
+   "what": "follows the season and the time of day.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Followers",
    "settings": [
     "follow_weather",
     "weather_wind"
    ],
    "note": "",
-   "what": "water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).",
+   "what": "water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`); tyres lose grip on wet, flooded and icy ground and aquaplane at speed.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -3834,6 +3846,17 @@
    ],
    "note": "",
    "what": "static bodies of streamed regions enter over a few frames, nearest first, and removals are batched; bodies with the same friction and bounce share one material, so the cost stays flat as the world grows.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "World contact",
+   "settings": [
+    "physics/3d/world_contact/auto_join"
+   ],
+   "note": "",
+   "what": "every moving body bends plants, presses prints into ground and snow, and leaves ripples in water.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

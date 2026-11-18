@@ -43,6 +43,7 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 - **Blast materials** (`PhysXBlastAsset.materials`, `bond_healths`): pieces carry several materials and each bond its own strength, so a limb breaks into bark, wood and leaves, and a twig joint gives before a trunk joint.
 - **Blast without stalls** (`PhysXBlastAsset.prepare_render()`; `initial_linear_velocity`, `initial_angular_velocity`): piece meshes are built once per asset, off the main thread, so a large break does not stall the frame; destructibles can start already moving.
 - **Streaming without stalls** (`physics/physx_3d/streaming/statics_per_step`): static bodies of streamed regions enter over a few frames, nearest first, and removals are batched; bodies with the same friction and bounce share one material, so the cost stays flat as the world grows.
+- **World contact** (`physics/3d/world_contact/auto_join`): every moving body bends plants, presses prints into ground and snow, and leaves ripples in water.
 
 ![Cloth tearing: a ribbon rips off its post and a flag frays in rising wind](media/cloth-tearing.gif)
 
