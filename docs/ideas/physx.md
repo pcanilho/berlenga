@@ -718,6 +718,67 @@ dry air (30 C, 20%) keeps it burning, about 70 m2 in 30 s; humid air (15 C,
 m2; 4 mm/h of rain from 10 s raises the fuel from 7% to 12% in 20 s, and the
 front stalls and goes out.
 
+### Burning wood and debris, embers spot new fires (picked 17 Nov, third of four)
+
+How games do it: Far Cry 2 (2008) spreads fire through objects and grass
+cells that each hold fuel and catch from heat nearby, with the wind; Breath
+of the Wild's chemistry engine (GDC 2017, "Breaking Conventions") gives
+objects a material that burns, an element state passed between neighbours
+and burning embers that drift and light grass. Both are rules, not
+physics; the look is a flame on the object and char spreading over it.
+
+The physics to borrow:
+- Ignition of wood under a heat flux (Babrauskas 2001, "Ignition of wood:
+  a review"): piloted ignition from about 12 kW/m2; a thick solid ignites
+  after t_ig = (pi/4) k rho c (T_ig - T0)^2 / q^2 (Quintiere, Fundamentals
+  of Fire Phenomena), with k rho c about 1.2e5 for wood and T_ig about
+  350 C: some 10 s at 30 kW/m2, a minute at 13. The dose builds with q^2
+  and leaks away when the heat drops.
+- Burning: flame spreads over wood at millimetres to centimetres a second;
+  burning wood gives off about 100-200 kW/m2 (cone calorimeter) and chars
+  inwards at about 0.65 mm/min (Eurocode 5, softwood). Heat of combustion
+  about 15 MJ/kg.
+- Radiation to neighbours: a point source, q = chi_r HRR / (4 pi d^2),
+  chi_r about 0.3 (Modak's point source model, SFPE Handbook).
+- Embers (firebrands): lofted by the plume and carried by the gas, they
+  burn out in seconds to tens of seconds; Albini (1979) gives spotting
+  distances from the plume's height and the wind. Manzello et al. (2006,
+  2008) found glowing firebrands ignite dry grass and litter beds (below
+  about 11% moisture), flaming ones more readily, damp beds not at all.
+
+Technique: a `PhysXBurnable3D` node on a prop, log, crate or Blast piece.
+1. Heat in: the ground fire under it (PhysXFireSpread3D intensity and flame
+   length at its base), Flow hot gas at its bounds (sample_temperature),
+   and radiation from other burning burnables. Ignition by the dose model
+   above, at the hottest point (the char starts there).
+2. Burning: the burning area grows from that point at a set flame spread
+   speed over the object's surface (its bounds), heat release 150 kW/m2
+   of burning area, fuel from its mass (or set), mass loss at the heat of
+   combustion; one or more Flow sphere emitters at the burning area feed
+   the flame (the same combustion and light as the ground fire). It burns
+   out to embers, then cold char.
+3. Look: the meshes under it get their materials' shader with instance
+   uniforms: char spreading from the ignition point with a ragged edge
+   (distance plus a noise), the char front's band glowing, and glowing
+   cracks in the char while it smoulders (raster and path tracer both
+   read instance uniforms).
+4. Embers: while flaming, it releases embers at a rate with its heat
+   release; each is carried by Flow's gas velocity (sample_velocity) with
+   drag and gravity, glows and burns out over seconds, and where it lands
+   on a PhysXFireSpread3D's ground it may light it, more likely as the
+   fuel is drier. Drawn as small emissive particles (a MultiMesh).
+5. Rain (the weather step) puts it out as it does the ground.
+Cost: a few samples per burnable a tick, a few hundred embers.
+
+Status (18 Nov): built as above (1192aad2). Checks: crates in a grass fire
+catch at about 30 s of flame contact and reach about 320 kW by 50 s; a crate
+off the fire's path stays unburnt. The first char cracks (the difference of
+two noises) read as lava worms; they are now the cell edges of a Voronoi
+pattern, as alligator char splits into blocks, thin and dull red to orange,
+faded by the pixel footprint so they do not alias at a distance. Embers stay
+few without Flow's updraft (headless runs). Raster and path tracer both keep
+the char and cracks.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

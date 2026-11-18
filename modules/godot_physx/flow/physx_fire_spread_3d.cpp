@@ -533,6 +533,14 @@ void PhysXFireSpread3D::_update_moisture(float p_delta) {
 #endif
 }
 
+float PhysXFireSpread3D::get_ground_height_at(const Vector3 &p_position) const {
+	int x, z;
+	if (!_world_cell(p_position, x, z) || height.is_empty()) {
+		return get_global_position().y;
+	}
+	return height[z * nx + x];
+}
+
 float PhysXFireSpread3D::get_moisture_at(const Vector3 &p_position) const {
 	int x, z;
 	if (!_world_cell(p_position, x, z) || wet.is_empty()) {
@@ -997,6 +1005,8 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_fuel_moisture", "moisture"), &PhysXFireSpread3D::set_fuel_moisture);
 	ClassDB::bind_method(D_METHOD("get_fuel_moisture"), &PhysXFireSpread3D::get_fuel_moisture);
 	ClassDB::bind_method(D_METHOD("get_moisture_at", "position"), &PhysXFireSpread3D::get_moisture_at);
+	ClassDB::bind_method(D_METHOD("get_moisture_of_extinction"), &PhysXFireSpread3D::get_moisture_of_extinction);
+	ClassDB::bind_method(D_METHOD("get_ground_height_at", "position"), &PhysXFireSpread3D::get_ground_height_at);
 	ClassDB::bind_method(D_METHOD("set_use_weather_moisture", "enable"), &PhysXFireSpread3D::set_use_weather_moisture);
 	ClassDB::bind_method(D_METHOD("is_using_weather_moisture"), &PhysXFireSpread3D::is_using_weather_moisture);
 	ClassDB::bind_method(D_METHOD("set_moisture_timelag", "seconds"), &PhysXFireSpread3D::set_moisture_timelag);

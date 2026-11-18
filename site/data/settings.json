@@ -2039,7 +2039,7 @@
     "crop_stage"
    ],
    "note": "",
-   "what": "wheat, barley, oats and rye as real plants in drill rows, through their growth stages from green rows to gold ears and stubble.",
+   "what": "wheat, barley, oats and rye as real plants in drill rows, with spikelet ears and barley awns, through their growth stages from green rows to gold ears and stubble with straw swaths.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Placement"
@@ -3528,6 +3528,18 @@
    ],
    "note": "",
    "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel, behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Burning objects",
+   "settings": [
+    "PhysXBurnable3D",
+    "embers"
+   ],
+   "note": "",
+   "what": "wooden props catch fire from burning ground nearby, char with glowing cracks, smoulder in rain and throw embers that start new fires.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

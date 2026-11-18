@@ -718,6 +718,7 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 	auto H = [&](real_t p_x, real_t p_z) -> real_t { return gen->get_height(Vector3(p_x, 0, p_z)); };
 	// Why candidates fail, for --find-caves benches (CAVE_SEA_DEBUG=1 prints it).
 	int rej_low = 0, rej_flat = 0, rej_dry = 0, rej_depth = 0, rej_foot = 0, rej_back = 0;
+	const bool dbg = OS::get_singleton()->get_environment("CAVE_SEA_DEBUG") == "1";
 	for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += 6.0) {
 		for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += 6.0) {
 			const real_t h = H(x, z);
@@ -760,19 +761,39 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 				continue;
 			}
 
-			// The mouth: back from the waterline to the cliff's foot, where the ground first stands 2 m over the sea
-			// (a beach or a wave-cut platform may lie between, up to 40 m wide).
+			// The mouth: back from the waterline to the cliff's foot, where the ground first stands 2 m over the sea.
+			// The sea must reach the mouth floor: the foot stands within 8 m of the waterline and the ground between
+			// stays under high-water swash (sea + 0.6 m), so a wave-cut notch rather than a dry beach fronts the cave.
 			Vector2 mouth = m;
-			bool foot = false;
-			for (real_t t = 0.0; t < 40.0; t += 0.5) {
+			bool foot = false, swash = true;
+			for (real_t t = 0.0; t < 8.0; t += 0.5) {
 				const Vector2 q = m - dn * t;
-				if (H(q.x, q.y) > sea + 2.0) {
-					mouth = q + dn * 1.0;
+				const real_t hq = H(q.x, q.y);
+				if (hq > sea + 2.0) {
 					foot = true;
 					break;
 				}
+				if (hq > sea + 0.6) {
+					swash = false;
+					break;
+				}
+				mouth = q;
 			}
-			if (!foot) {
+			if (!foot || !swash) {
+				if (dbg) {
+					real_t gap = -1.0, hi = -1e9;
+					for (real_t t = 0.0; t < 60.0; t += 0.5) {
+						const real_t hq = H((m - dn * t).x, (m - dn * t).y);
+						if (hq > sea + 2.0) {
+							gap = t;
+							break;
+						}
+						hi = MAX(hi, hq - sea);
+					}
+					if (gap >= 0.0 && gap < 20.0) {
+						print_line(vformat("  sea foot near miss at (%.0f, %.0f): foot %.1f m from the waterline, ground up to %.2f m over the sea", x, z, gap, hi));
+					}
+				}
 				rej_foot++;
 				continue;
 			}
@@ -795,7 +816,7 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 		}
 	}
 	if (OS::get_singleton()->get_environment("CAVE_SEA_DEBUG") == "1") {
-		print_line(vformat("find_sea_entrances: %d candidates; rejected: %d under 6 m, %d flat, %d no sea within 150 m, %d depth, %d no cliff foot within 40 m, %d no cliff behind", found.size(), rej_low, rej_flat, rej_dry, rej_depth, rej_foot, rej_back));
+		print_line(vformat("find_sea_entrances: %d candidates; rejected: %d under 6 m, %d flat, %d no sea within 150 m, %d depth, %d no cliff foot at the swash, %d no cliff behind", found.size(), rej_low, rej_flat, rej_dry, rej_depth, rej_foot, rej_back));
 	}
 	struct More {
 		_FORCE_INLINE_ bool operator()(const Found &p_a, const Found &p_b) const { return p_a.score > p_b.score; }
@@ -1416,6 +1437,40 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 	if (!drips.is_empty()) {
 		_rimstone(drips, O, chunk_size, r_chunk);
 	}
+	// The pools' basins in the drawn floor: a mesh cell (0.3 m) is as wide as many pools, so the triangles from the
+	// floor round a pool would span it and bury the water sheet. Inside each outline the floor goes down to a bowl
+	// from the pool's depth at its middle to just under the level at its rim, and for a cell and a half outside it
+	// rises as a bank from the level, so every triangle under the water lies below it.
+	for (const RimPool &pl : r_chunk.pools) {
+		const int nr = pl.outline.size();
+		if (nr < 3) {
+			continue;
+		}
+		const real_t bank = 1.5 * mesh_cell;
+		for (uint32_t i = 0; i < verts.size(); i++) {
+			Vector3 &v = verts[i];
+			if (v.y > pl.center.y + 0.5 || v.y < pl.center.y - 0.6) {
+				continue;
+			}
+			const Vector2 rel(v.x - pl.center.x, v.z - pl.center.z);
+			// The outline's reach in this direction (its rays are evenly spaced round the centre).
+			const real_t ang = Math::fposmod(real_t(Math::atan2(rel.y, rel.x)), real_t(Math::TAU)) / Math::TAU * nr;
+			const int k0 = int(ang) % nr, k1 = (k0 + 1) % nr;
+			const real_t reach = MAX(Math::lerp(pl.outline[k0].length(), pl.outline[k1].length(), ang - Math::floor(ang)), real_t(0.05));
+			const real_t d = rel.length();
+			if (d > reach + bank) {
+				continue;
+			}
+			real_t bed;
+			if (d <= reach) {
+				const real_t sr = d / reach;
+				bed = pl.center.y - MAX(real_t(0.012), pl.depth * (1.0 - sr * sr));
+			} else {
+				bed = pl.center.y - 0.012 + 0.6 * (d - reach);
+			}
+			v.y = MIN(v.y, bed);
+		}
+	}
 	// Inside a pool (under its water, inside its outline): the floor is lined with calcite.
 	auto in_pool = [&](const Vector3 &p) {
 		for (const RimPool &pl : r_chunk.pools) {
@@ -1875,6 +1930,34 @@ void CaveNetwork3D::_rimstone(const LocalVector<Drip> &p_drips, const Vector3 &p
 			}
 			if (leaks > 2) {
 				break;
+			}
+			// A ray that ran on (up to two may) would leave a long spike in the outline, a sliver of water reaching
+			// far past the pool under the floor: it takes the shorter of its neighbours' reaches instead.
+			{
+				LocalVector<uint8_t> ran;
+				ran.resize(RAYS);
+				for (int k = 0; k < RAYS; k++) {
+					ran[k] = outline[k].length() >= reach - 0.031 ? 1 : 0;
+				}
+				for (int k = 0; k < RAYS; k++) {
+					if (!ran[k]) {
+						continue;
+					}
+					real_t best = reach;
+					for (int st = 1; st < RAYS / 2; st++) {
+						const int a = (k + st) % RAYS, b = (k - st + RAYS) % RAYS;
+						if (!ran[a]) {
+							best = MIN(best, outline[a].length());
+						}
+						if (!ran[b]) {
+							best = MIN(best, outline[b].length());
+						}
+						if (best < reach) {
+							break;
+						}
+					}
+					outline.write[k] = outline[k].normalized() * best;
+				}
 			}
 			RimPool pool;
 			pool.center = Vector3(pc.x, level, pc.y);

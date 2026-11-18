@@ -165,7 +165,8 @@ static var farmland := false # --fields: gently rolling farmland, no pond.
 
 static func height(x: float, z: float) -> float:
 	if farmland:
-		return 0.5 * sin(x * 0.035) * cos(z * 0.03) + 0.3 * sin((x - z) * 0.02) + 0.4
+		# Rolling farmland: swells several metres high, slopes up to about 10%.
+		return 3.5 * sin(x * 0.028 + 0.6) * cos(z * 0.024) + 2.0 * sin((x - z) * 0.012) + 0.4 * sin(x * 0.06 + z * 0.05) + 6.0
 	return 0.6 * sin(x * 0.08) * cos(z * 0.06) + 0.4 * sin((x + z) * 0.05) + 0.02 * (x * x + (z + 12.0) * (z + 12.0)) / 40.0 - 0.6
 
 func _ready() -> void:
@@ -317,20 +318,23 @@ func _ready() -> void:
 		grass.density = grass_density if grass_density > 0.0 else 400.0
 		grass.drill_angle = deg_to_rad(20.0)
 		grass.radius = 24.0
-		grass.tile_size = 1.25 # Under the path tracer's merged BLAS cap (65536 triangles) at 400 tillers per m2.
+		grass.tile_size = 1.0 if crop_name == "oats" else 1.25 # Under the path tracer's merged BLAS cap (65536 triangles) at 400 tillers per m2.
 		if crop_close:
 			# One field over the whole map: past the tillers the ground carries the crop's own far canopy.
 			var e := SIZE * 0.5 - 1.0
-			grass.fields = [{"polygon": PackedVector2Array([Vector2(-e, -e), Vector2(e, -e), Vector2(e, e), Vector2(-e, e)]), "drill_angle": deg_to_rad(20.0), "stage": crop_stage, "tramline_spacing": 0.0, "headland": 0.0}]
+			# Oats: the field's edge just ahead, so the first panicles stand against the sky.
+			var ez := 19.3 if crop_name == "oats" else e
+			grass.fields = [{"polygon": PackedVector2Array([Vector2(-e, -e), Vector2(e, -e), Vector2(e, ez), Vector2(-e, ez)]), "drill_angle": deg_to_rad(20.0), "stage": crop_stage, "tramline_spacing": 0.0, "headland": 0.0}]
 		if crop_fields:
 			grass.radius = 50.0
 			grass.density = grass_density if grass_density > 0.0 else 450.0 # Closed stands, as drilled (450 to 600 tillers per m2).
 			# Three fields with grass margins between them: ripe wheat, wheat at stem elongation drilled
 			# across it, harvested stubble behind.
 			grass.fields = [
-				{"polygon": PackedVector2Array([Vector2(-62, -2), Vector2(-4, 0), Vector2(-5, -58), Vector2(-66, -55)]), "drill_angle": deg_to_rad(92.0), "stage": crop_stage, "tramline_spacing": 24.0, "headland": 8.0},
-				{"polygon": PackedVector2Array([Vector2(4, 0), Vector2(60, -4), Vector2(64, -60), Vector2(3, -58)]), "drill_angle": deg_to_rad(5.0), "stage": 37.0, "tramline_spacing": 24.0, "headland": 8.0},
-				{"polygon": PackedVector2Array([Vector2(-70, -64), Vector2(70, -66), Vector2(72, -112), Vector2(-74, -110)]), "drill_angle": deg_to_rad(-30.0), "stage": 99.0, "tramline_spacing": 24.0, "headland": 0.0},
+				# Old field boundaries: no two sides parallel, edges that bend where a hedge or track ran.
+				{"polygon": PackedVector2Array([Vector2(-60, -3), Vector2(-31, 1), Vector2(-5, -1), Vector2(-3, -27), Vector2(-7, -57), Vector2(-38, -61), Vector2(-71, -52), Vector2(-68, -25)]), "drill_angle": deg_to_rad(92.0), "stage": crop_stage, "tramline_spacing": 24.0, "headland": 8.0},
+				{"polygon": PackedVector2Array([Vector2(4, 0), Vector2(33, -4), Vector2(61, -2), Vector2(70, -33), Vector2(63, -64), Vector2(30, -59), Vector2(5, -60), Vector2(2, -30)]), "drill_angle": deg_to_rad(8.0), "stage": 37.0, "tramline_spacing": 24.0, "headland": 8.0},
+				{"polygon": PackedVector2Array([Vector2(-72, -66), Vector2(-20, -68), Vector2(30, -66), Vector2(71, -70), Vector2(80, -98), Vector2(66, -121), Vector2(10, -114), Vector2(-48, -118), Vector2(-79, -96)]), "drill_angle": deg_to_rad(-30.0), "stage": 99.0, "tramline_spacing": 24.0, "headland": 0.0},
 			]
 	add_child(grass)
 	grass.data_map = grass.get_path_to(dm)
@@ -632,6 +636,11 @@ void fragment() {
 		var eye := 1.1 if crop_name in ["wheat", "barley"] else (1.3 if crop_name == "oats" else 1.6)
 		cam.position = Vector3(6, height(6, 20) + eye, 20)
 		cam.look_at(Vector3(5.2, height(5.2, 17.6) + 0.75, 17.6))
+		if crop_name == "oats":
+			# At the field's edge, level with the panicles, the nearest half a metre off: they hang from
+			# whorled branches against the sky.
+			cam.position = Vector3(6, height(6, 19.75) + 0.95, 19.75)
+			cam.look_at(Vector3(5.5, height(5.5, 18.0) + 1.0, 18.0))
 	if (trample or close) and not test:
 		# Closer, looking down on the trails.
 		cam.position = Vector3(1.5, height(1.5, 17.0) + 1.6, 17.0)
