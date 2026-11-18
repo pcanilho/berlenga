@@ -525,9 +525,10 @@ void fragment() {
 		// draws it out along the current by itself). Not rotated to the local current: world coordinates turned by
 		// an angle that varies over the water shear by that angle times their distance from the origin, combing
 		// the pattern into hairlines wherever the current turns.
-		// The amount the structure tears is the white water as the soft lace drew it (where and how much), so the
-		// crisp foam covers what the soft foam did, not every trace of live foam.
-		float amount = foam;
+		// The amount the structure tears is the white water read as how much foam is left: the live flow foam sits
+		// near 1 wherever it is made, which kept every patch a solid sheet, so only the thickest stays a sheet and
+		// the rest drains into lace with clear water between.
+		float amount = foam * foam;
 		const vec2 sd = vec2(1.0, 0.0);
 		const float stretch = 0.0;
 		float f_a = rf_structure(v_world.xz - o_a, amount, footprint, sd, stretch);
