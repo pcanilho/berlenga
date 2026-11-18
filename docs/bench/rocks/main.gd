@@ -498,6 +498,12 @@ func _world() -> void:
 		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, mouth.y + float(args.get("cam-up", "1.6")))
 		look = mouth + Vector3(0, float(args.get("look-height", "3")), 0)
 	cam.look_at(look)
+	if args.has("cam"):
+		# --cam/--look win over the view's camera (a fixed shot of a spot in the world).
+		var c: PackedStringArray = args["cam"].split(",")
+		var l: PackedStringArray = args.get("look", "0,0,0").split(",")
+		cam.position = Vector3(float(c[0]), float(c[1]), float(c[2]))
+		cam.look_at(Vector3(float(l[0]), float(l[1]), float(l[2])))
 	print("spot %s, camera %s" % [spot, cam.position])
 	print("ground at the spot: generator %.2f, landscape %.2f; camera %s" % [gen.get_height(spot), land.get_height(spot), cam.position])
 	if rocks:
