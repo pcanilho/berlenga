@@ -80,6 +80,9 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		{ "crop_ground_plots", "sampler2D" },
 		{ "crop_ground_rect", "vec4" },
 		{ "crop_ground_fade", "vec4" },
+		{ "crop_ground_sun", "vec4" },
+		{ "crop_ground_lobe1", "vec4" },
+		{ "crop_ground_lobe2", "vec4" },
 		{ "grass_trample_map", "sampler2D" },
 		{ "grass_trample_rect", "vec4" },
 		// PhysXFireSpread3D's plant state (vegetation_fire.h); set only while a fire burns.

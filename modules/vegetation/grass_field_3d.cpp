@@ -1189,8 +1189,9 @@ Color GrassField3D::crop_canopy_look(Crop p_crop, float p_stage) {
 	const float ripe = ramp(s, 71.0f, 87.0f);
 	// A young open stand has little self-shade: its leaves keep nearer their own colour.
 	const float closed = ramp(cover, 0.3f, 0.95f);
-	c = Color(grey, grey, grey).lerp(c, Math::lerp(Math::lerp(1.2f, 1.6f, closed), 1.2f, ripe));
-	c = c * Math::lerp(Math::lerp(0.8f, 0.44f, closed), 0.53f, ripe);
+	// (Ripe: matched with the sun ahead and behind, the far ground turning by the tillers' bake.)
+	c = Color(grey, grey, grey).lerp(c, Math::lerp(Math::lerp(1.2f, 1.6f, closed), 0.85f, ripe));
+	c = c * Math::lerp(Math::lerp(0.8f, 0.44f, closed), 0.68f, ripe);
 	c.r = MAX(c.r, 0.0f);
 	c.g = MAX(c.g, 0.0f);
 	c.b = MAX(c.b, 0.0f);
@@ -2471,6 +2472,38 @@ void GrassField3D::_far_bake_step() {
 	emit_signal(SNAME("far_color_changed"));
 }
 
+// The fields' far ground turns with the sun as the tillers do: the first crop node's bake of its
+// tillers gives the azimuth lobes (hot spot down-sun, shaded sides into it) at the sun's elevation,
+// applied to every field's canopy colour (the canopy's shape changes less with the stage than its
+// colour). Without a bake, or with the sun down, none.
+void GrassField3D::_publish_crop_sun() {
+	Vector4 sun_v;
+	Color l1, l2;
+	DirectionalLight3D *sun = _get_sun();
+	if (far_baked && sun && sun->is_visible_in_tree() && sun->get_param(Light3D::PARAM_ENERGY) > 0.0f) {
+		const Vector3 d = -sun->get_global_transform().basis.get_column(Vector3::AXIS_Z).normalized();
+		const float h = Vector2(d.x, d.z).length();
+		const float up = -d.y;
+		if (h > 1e-4f) {
+			const float horizon = CLAMP((up + 0.05f) / 0.1f, 0.0f, 1.0f);
+			const float strength = far_elev_count == FAR_ELEVATIONS ? horizon : MIN(h / Math::cos(Math::deg_to_rad(FAR_BAKE_SUN_DEG)), 1.15f) * horizon;
+			sun_v = Vector4(d.x / h, d.z / h, strength, 0.0f);
+			Color col;
+			_far_at_elevation(Math::rad_to_deg(Math::asin(CLAMP(up, -1.0f, 1.0f))), col, l1, l2);
+		}
+	}
+	if (sun_v.is_equal_approx(crop_sun_published) && l1.is_equal_approx(crop_lobe1_published) && l2.is_equal_approx(crop_lobe2_published)) {
+		return;
+	}
+	crop_sun_published = sun_v;
+	crop_lobe1_published = l1;
+	crop_lobe2_published = l2;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->global_shader_parameter_set("crop_ground_sun", sun_v);
+	rs->global_shader_parameter_set("crop_ground_lobe1", Vector4(l1.r, l1.g, l1.b, 0.0f));
+	rs->global_shader_parameter_set("crop_ground_lobe2", Vector4(l2.r, l2.g, l2.b, 0.0f));
+}
+
 // The far colour and its azimuth lobes, for grass_ground(). The fade owner's only.
 // At the sun's elevation, between the baked ones (the lowest and highest held beyond them).
 void GrassField3D::_far_at_elevation(float p_deg, Color &r_color, Color &r_lobe1, Color &r_lobe2) const {
@@ -2937,6 +2970,9 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 			crop_view_published = cv;
 			RenderingServer::get_singleton()->global_shader_parameter_set("crop_ground_fade", cv);
 		}
+		if (!crop_nodes.is_empty() && crop_nodes[0] == this) {
+			_publish_crop_sun();
+		}
 	}
 	// Drop tiles out of range or at the wrong level.
 	LocalVector<Vector2i> drop;
@@ -3156,6 +3192,9 @@ global uniform vec4 grass_ground_view; // xyz: the camera.
 global uniform sampler2D crop_ground_map : filter_linear; // GrassField3D.fields: r the field's slot, g the wheelings.
 global uniform sampler2D crop_ground_plots : filter_nearest; // A texel a field (crop_ground()).
 global uniform vec4 crop_ground_rect;
+global uniform vec4 crop_ground_sun; // xy: where the sun's light heads, z: the lobes' strength (crop tillers' bake).
+global uniform vec4 crop_ground_lobe1; // rgb: the far canopy's change with cos of the sun's azimuth from the view.
+global uniform vec4 crop_ground_lobe2; // rgb: and with cos of twice that azimuth.
 global uniform vec4 crop_ground_fade; // xy: the centre of the tillers' band (the eye), z: the eye's height, w: 1 (-1: no tillers, the far canopy everywhere).
 )";
 	code += GRASS_COLOR_CODE;
@@ -3383,6 +3422,13 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 	// Clumps of ears and lodged patches at about half a metre, still resolved some way out.
 	float clump = mix(grass_noise(xz * 1.8 + 5.3), 0.5, smoothstep(0.4, 1.0, length(fwidth(xz * 1.8))));
 	vec3 canopy = look.rgb * (0.6 + 0.8 * patchy) * (0.75 + 0.5 * speck) * (0.8 + 0.4 * clump);
+	// Down-sun the lit faces of ears and leaves, into the sun their shaded sides (the tillers' bake).
+	vec2 to_far = xz - crop_ground_fade.xy;
+	float to_far_len = length(to_far);
+	if (crop_ground_sun.z > 0.0 && to_far_len > 1e-3) {
+		float c1 = dot(to_far / to_far_len, crop_ground_sun.xy);
+		canopy *= max(1.0 + crop_ground_sun.z * (crop_ground_lobe1.rgb * c1 + crop_ground_lobe2.rgb * (2.0 * c1 * c1 - 1.0)), vec3(0.1));
+	}
 	// Wheelings: the crop is missing there, soil shows as narrow lines through it.
 	float cover = look.a * (1.0 - wheel * 0.6);
 	// Seen at a slant the soil's gaps close: the gap fraction falls as exp(-k LAI / cos(view

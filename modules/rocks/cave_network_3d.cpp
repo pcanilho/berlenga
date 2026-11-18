@@ -2081,6 +2081,67 @@ void CaveNetwork3D::_rimstone(const LocalVector<Drip> &p_drips, const Vector3 &p
 			}
 		}
 	}
+	// A pool's rays stop only at its own dam, so a lower pool's outline can run on upstream under the water of the
+	// pool above it (whose floor is lower still), and two chains can find the same basin. One body of water has one
+	// level: where a higher pool (or an earlier one at the same level) already holds the floor, the other's sheet
+	// ends; a pool left with almost nothing is dropped.
+	{
+		const int np = int(r_chunk.pools.size());
+		LocalVector<Rect2> boxes;
+		boxes.resize(np);
+		for (int a = 0; a < np; a++) {
+			const RimPool &pa = r_chunk.pools[a];
+			Rect2 b(Vector2(pa.center.x, pa.center.z), Vector2());
+			for (const Vector2 &o : pa.outline) {
+				b.expand_to(Vector2(pa.center.x, pa.center.z) + o);
+			}
+			boxes[a] = b;
+		}
+		LocalVector<bool> keep;
+		keep.resize(np);
+		for (int a = 0; a < np; a++) {
+			RimPool &pa = r_chunk.pools[a];
+			const Vector2 ca(pa.center.x, pa.center.z);
+			LocalVector<int> over;
+			for (int b = 0; b < np; b++) {
+				const RimPool &pb = r_chunk.pools[b];
+				const bool above = pb.center.y > pa.center.y + 0.002 || (b < a && Math::abs(pb.center.y - pa.center.y) <= 0.002);
+				if (b != a && above && boxes[a].intersects(boxes[b])) {
+					over.push_back(b);
+				}
+			}
+			real_t sum = 0.0;
+			for (int k = 0; k < pa.outline.size(); k++) {
+				const Vector2 o = pa.outline[k];
+				const real_t len = o.length();
+				const Vector2 rd = len > 0.0 ? o / len : Vector2();
+				real_t r = len;
+				for (real_t t = 0.0; t < len && !over.is_empty(); t += 0.03) {
+					const Vector2 x = ca + rd * t;
+					bool inside = false;
+					for (int b : over) {
+						const RimPool &pb = r_chunk.pools[b];
+						if (Geometry2D::is_point_in_polygon(x - Vector2(pb.center.x, pb.center.z), Vector<Vector2>(pb.outline))) {
+							inside = true;
+							break;
+						}
+					}
+					if (inside) {
+						r = MAX(t - 0.03, real_t(0.0));
+						break;
+					}
+				}
+				pa.outline.write[k] = rd * r;
+				sum += r;
+			}
+			keep[a] = sum / MAX(pa.outline.size(), 1) > 0.06;
+		}
+		for (int a = np - 1; a >= 0; a--) {
+			if (!keep[a]) {
+				r_chunk.pools.remove_at(a);
+			}
+		}
+	}
 	if (mi.is_empty()) {
 		return;
 	}
