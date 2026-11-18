@@ -2079,6 +2079,18 @@
    "topic": "Placement"
   },
   {
+   "name": "Hedgerows and margins",
+   "settings": [
+    "GrassField3D.hedges",
+    "PlantGenerator.make_margin()"
+   ],
+   "note": "",
+   "what": "field edges carry hedgerows of mixed native shrubs with a gateway per field, and headland and verge strips of field weeds.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
    "name": "Clear of boulders",
    "settings": [
     "VegetationField3D.obstacles",
