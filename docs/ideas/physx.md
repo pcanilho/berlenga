@@ -1041,6 +1041,22 @@ at 0.7 after 10; it dries at 6.5e-5 kg/m2/s, about 50 min; a soaked sheet
 dropped on a ball stays on it where the dry one slides off; in a tall grass
 fire the dry sheet lights at 2.3 s, the soaked one at 18.7 s.
 
+Follow-up (18 Nov, after docs declined the first pair: sheets read as
+boards). Three causes, all in the cloth: the wind's gusts were one vector
+for the whole cloth, so a sheet tilted as a plane; there are now eddies
+across it, two scales of smooth noise carried along by the mean wind
+(Taylor's frozen turbulence) at 0.6 of wind_turbulence times the speed,
+fed to the solver as per-particle air when no Flow gas drives it. Cloth
+fell through thin colliders (a rope, a rail) because only overlaps were
+tested; particles are now also swept along their step's path and stopped
+where it meets a surface. That exposed explicit quadratic drag blowing up
+when a sheet is stopped short; drag is now implicit in the normal speed.
+And laundry hangs from pegs set closer than it is wide: move_pins() holds
+pinned vertices at new places, so it falls in swags and folds. Pegged
+sheets in a 2.2 m/s gusty breeze: dry ones billow out, soaked ones hang
+about 20% longer and flutter less. On a 30 degree slope a soaked sheet
+slides 0.18 m in 5 s against a dry one's 0.42 m.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

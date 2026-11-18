@@ -87,6 +87,8 @@ private:
 	NodePath flow_path;
 	LocalVector<Vector3> flow_prev_positions; // world, last step, for the cloth's own velocity
 	void _couple_flow(double p_delta);
+	void _eddy_air(const Vector3 &p_wind); // wind_turbulence's eddies across the cloth, when no Flow gas drives it
+	bool eddies_on = false;
 	float drag = 1.0;
 	float lift = 0.2;
 
@@ -152,6 +154,7 @@ private:
 	void _resolve_pins();
 	void _step(double p_delta);
 	void _collide();
+	LocalVector<Vector3> pre_step_positions; // world, before the solver step, for swept collision
 	void _update_mesh(); // CPU: from the solver
 	bool _fill_uvs(int p_count);
 	void _update_gpu_mesh(); // GPU: from the server readback
@@ -236,6 +239,7 @@ public:
 	// Local-space positions of the currently pinned vertices (for the editor gizmo).
 	PackedVector3Array get_pinned_positions() const;
 	int release_pins(const PackedInt32Array &p_vertices);
+	void move_pins(const PackedInt32Array &p_vertices, const PackedVector3Array &p_positions);
 	int tear(const Vector3 &p_from, const Vector3 &p_to);
 	void set_wetness(float p_v);
 	float get_wetness() const { return wetness; }

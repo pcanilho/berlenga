@@ -274,6 +274,56 @@ void PhysXCloth3D::_resolve_pins() {
 	last_anchor_xform = anchor ? anchor->get_global_transform() : Transform3D();
 }
 
+// Smooth value noise in -1..1 (quintic fade), for the eddies.
+static float _eddy_noise(const Vector3 &p_p, uint32_t p_seed) {
+	const Vector3 i = p_p.floor();
+	const Vector3 f = p_p - i;
+	const Vector3 u = f * f * f * (f * (f * 6.0f - Vector3(15, 15, 15)) + Vector3(10, 10, 10));
+	auto h = [p_seed](int x, int y, int z) {
+		uint32_t n = (uint32_t)x * 73856093u ^ (uint32_t)y * 19349663u ^ (uint32_t)z * 83492791u ^ p_seed * 2654435761u;
+		n = (n ^ (n >> 13)) * 1274126177u;
+		return float((n ^ (n >> 16)) & 0xffff) / 32767.5f - 1.0f;
+	};
+	const int x = (int)i.x, y = (int)i.y, z = (int)i.z;
+	const float a = Math::lerp(Math::lerp(h(x, y, z), h(x + 1, y, z), u.x), Math::lerp(h(x, y + 1, z), h(x + 1, y + 1, z), u.x), u.y);
+	const float b = Math::lerp(Math::lerp(h(x, y, z + 1), h(x + 1, y, z + 1), u.x), Math::lerp(h(x, y + 1, z + 1), h(x + 1, y + 1, z + 1), u.x), u.y);
+	return Math::lerp(a, b, u.z);
+}
+
+// Turbulence varies over the cloth, not only in time: eddies carried along by the mean wind (Taylor's frozen
+// turbulence), at two scales near the size of a sheet, push its parts differently so it ripples and billows instead
+// of tilting as a plane. Gusts near the ground are about 0.3 to 0.5 of the mean speed (turbulence intensity), most of
+// it along the wind.
+void PhysXCloth3D::_eddy_air(const Vector3 &p_wind) {
+	const bool has_flow = !flow_path.is_empty();
+	const float speed = p_wind.length();
+	if (has_flow || wind_turbulence <= 0.0f || speed < 0.05f) {
+		if (eddies_on) {
+			eddies_on = false;
+			if (!has_flow) {
+				solver.set_air(LocalVector<Vector3>());
+			}
+		}
+		return;
+	}
+	eddies_on = true;
+	const LocalVector<Vector3> &pos = solver.get_positions();
+	LocalVector<Vector3> air;
+	air.resize(pos.size());
+	const Vector3 drift = p_wind * (float)wind_time;
+	const float amp = speed * wind_turbulence * 0.6f;
+	for (uint32_t i = 0; i < pos.size(); i++) {
+		const Vector3 q = pos[i] - drift;
+		const Vector3 q1 = q / 1.2f;
+		const Vector3 q2 = q / 0.45f + Vector3(0.0f, 0.0f, (float)wind_time * 0.7f);
+		air[i] = Vector3(_eddy_noise(q1, 1u) + 0.5f * _eddy_noise(q2, 4u),
+						 0.6f * (_eddy_noise(q1, 2u) + 0.5f * _eddy_noise(q2, 5u)),
+						 _eddy_noise(q1, 3u) + 0.5f * _eddy_noise(q2, 6u)) *
+				amp;
+	}
+	solver.set_air(air);
+}
+
 Vector3 PhysXCloth3D::_sample_wind(double p_delta) {
 	if (!wind_enabled) {
 		return Vector3();
@@ -412,6 +462,10 @@ void PhysXCloth3D::_step(double p_delta) {
 	}
 	const Vector3 gravity = gravity_vec.normalized() * gravity_mag;
 
+	_eddy_air(wind_now);
+	if (collision_enabled) {
+		pre_step_positions = solver.get_positions();
+	}
 	const int torn = solver.step((float)p_delta, gravity, wind_now);
 	if (torn > 0) {
 		const Transform3D inv = get_global_transform().affine_inverse();
@@ -749,9 +803,31 @@ void PhysXCloth3D::_collide() {
 	LocalVector<Vector3> &pos = solver.positions_mut();
 	LocalVector<Vector3> &vel = solver.velocities_mut();
 	const int n = solver.vertex_count();
+	const bool swept = (int)pre_step_positions.size() == n;
 	for (int i = 0; i < n; i++) {
 		if (solver.is_pinned(i)) {
 			continue;
+		}
+		// Swept: a particle the step carried across a thin collider (a rope, a rail, an edge), which the overlap test
+		// below would push out on the far side, is stopped where its path met the surface.
+		if (swept) {
+			const Vector3 move = pos[i] - pre_step_positions[i];
+			const float len = move.length();
+			if (len > 0.25f * radius) {
+				PhysicsDirectSpaceState3D::RayParameters rp;
+				rp.from = pre_step_positions[i];
+				rp.to = pos[i]; // the centre's own path: only a real crossing, not a graze ahead of a sliding particle
+				rp.collision_mask = collision_mask;
+				rp.hit_from_inside = false;
+				PhysicsDirectSpaceState3D::RayResult rr;
+				if (ss->intersect_ray(rp, rr) && rr.position.is_finite() && rr.normal.is_finite() && rr.normal.length_squared() > 0.25f && rr.normal.dot(move) < 0.0f && rr.position.distance_squared_to(rp.from) > 1.0e-10f) {
+					pos[i] = rr.position + rr.normal * (radius + 0.001f);
+					const float vn = vel[i].dot(rr.normal);
+					if (vn < 0.0f) {
+						vel[i] -= rr.normal * vn;
+					}
+				}
+			}
 		}
 		params.transform = Transform3D(Basis(), pos[i]);
 		PhysicsDirectSpaceState3D::ShapeRestInfo info;
@@ -889,6 +965,23 @@ int PhysXCloth3D::tear(const Vector3 &p_from, const Vector3 &p_to) {
 		_update_mesh();
 	}
 	return removed;
+}
+
+// Holds pinned vertices at new places (local space), as pegs set closer than the cloth is wide so it hangs in swags
+// between them. CPU solver; lasts until the pins are next resolved.
+void PhysXCloth3D::move_pins(const PackedInt32Array &p_vertices, const PackedVector3Array &p_positions) {
+	ERR_FAIL_COND(p_vertices.size() != p_positions.size());
+	ERR_FAIL_COND_MSG(gpu_cloth.is_valid(), "PhysXCloth3D.move_pins() needs the CPU solver; set simulation_mode to SIM_CPU.");
+	if (!built) {
+		return;
+	}
+	const Transform3D gt = get_global_transform();
+	for (int i = 0; i < p_vertices.size(); i++) {
+		const int v = p_vertices[i];
+		if (v >= 0 && v < solver.vertex_count()) {
+			solver.set_pin_target(v, gt.xform(p_positions[i]));
+		}
+	}
 }
 
 int PhysXCloth3D::release_pins(const PackedInt32Array &p_vertices) {
@@ -1181,6 +1274,7 @@ void PhysXCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_vertex_count"), &PhysXCloth3D::get_vertex_count);
 	ClassDB::bind_method(D_METHOD("get_pinned_positions"), &PhysXCloth3D::get_pinned_positions);
 	ClassDB::bind_method(D_METHOD("release_pins", "vertices"), &PhysXCloth3D::release_pins);
+	ClassDB::bind_method(D_METHOD("move_pins", "vertices", "positions"), &PhysXCloth3D::move_pins);
 	ClassDB::bind_method(D_METHOD("tear", "from", "to"), &PhysXCloth3D::tear);
 	ClassDB::bind_method(D_METHOD("set_wetness", "wetness"), &PhysXCloth3D::set_wetness);
 	ClassDB::bind_method(D_METHOD("get_wetness"), &PhysXCloth3D::get_wetness);
