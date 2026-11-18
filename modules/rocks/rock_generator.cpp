@@ -3025,7 +3025,10 @@ void fragment() {
 	// barnacles over the stone, weed toward low water, all of it wet; above it the splash zone's black Verrucaria
 	// lichen in a tar-like band; the grey and orange lichens only above that. Ragged edges, a wave's reach not a line.
 	float above_sea = v_world.y - sea_level;
-	if (at_sea > 0.5 && above_sea < tide_range * 4.0) {
+	// Only stones the sea does not move carry them: shingle and cobbles rolled by every tide are scoured bare (a
+	// mobile beach has no barnacles or weed on it; Lewis 1964), so the crusts follow the surface's age.
+	float biota = smoothstep(0.35, 0.8, surface_age);
+	if (at_sea > 0.5 && above_sea < tide_range * 4.0 && biota > 0.0) {
 		float zn = rk_fbm3(mp * 2.3 + 5.0);
 		float edge = above_sea + (zn - 0.5) * 0.7 * tide_range * 0.5;
 		float tidal = 1.0 - smoothstep(tide_range * 0.4, tide_range * 0.6, edge);
@@ -3036,8 +3039,8 @@ void fragment() {
 		vec3 barnacle = mix(vec3(0.13, 0.12, 0.10), vec3(0.42, 0.40, 0.35), shells) * (0.8 + 0.4 * rk_noise3(mp * 23.0));
 		vec3 weed = vec3(0.05, 0.045, 0.02) * (0.8 + 0.4 * rk_noise3(mp * 9.0));
 		vec3 shore = mix(barnacle, weed, 1.0 - smoothstep(-0.25 * tide_range, 0.1 * tide_range, edge + 0.3 * tide_range * (rk_fbm3(mp * 4.0) - 0.5)));
-		col = mix(col, shore, 0.9 * tidal);
-		col = mix(col, vec3(0.025, 0.025, 0.022), 0.92 * splash * (0.65 + 0.35 * smoothstep(0.35, 0.55, rk_fbm3(mp * 6.0 + 9.0) + 0.15)));
+		col = mix(col, shore, 0.9 * tidal * biota);
+		col = mix(col, vec3(0.025, 0.025, 0.022), 0.92 * biota * splash * (0.65 + 0.35 * smoothstep(0.35, 0.55, rk_fbm3(mp * 6.0 + 9.0) + 0.15)));
 		rough = mix(rough, 0.85, tidal);
 		film = max(film, tidal);
 	}
