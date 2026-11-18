@@ -2635,6 +2635,17 @@
    "topic": "Growth"
   },
   {
+   "name": "Field hedges",
+   "settings": [
+    "SHRUB_HEDGE"
+   ],
+   "note": "",
+   "what": "hawthorn, blackthorn, hazel, field maple and dog rose as flailed 2 m hedge segments, with blossom and fruit in season.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
    "name": "Gorse and broom",
    "settings": [
     "TreeGenerator.make_shrub_species()"
