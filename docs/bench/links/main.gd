@@ -14,7 +14,7 @@ extends Node3D
 #             the sun dries puddles faster than the shade of a canopy and than the night
 #   lightning a tall mast takes the strike meant for the ground beside it; striking distance on IEC 62305
 #   fire      a long continuing current lights dry fuel, not wet (PhysX)
-#   contact   a body in world_contact flattens grass without being in grass_trample
+#   contact   a body in world_contact flattens grass without being in grass_trample, and herbs where there is no grass
 
 var fails := 0
 var passes := 0
@@ -40,6 +40,10 @@ func _ready() -> void:
 		push_error("This build has no weather module.")
 		get_tree().quit(1)
 		return
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 3, 6)
+	add_child(cam)
+	cam.make_current()
 	await _air_tests()
 	await _water_tests()
 	await _lightning_tests()
@@ -256,8 +260,20 @@ func _contact_tests() -> void:
 	add_child(body)
 	for i in 30:
 		body.position = Vector3(0.1 * i, 0.2, 0)
-		await get_tree().physics_frame
+		await get_tree().process_frame
 	var t: Vector2 = g.get_trample_at(Vector3(1.5, 0, 0))
 	_check("contact: a world_contact body flattens grass", t.length() > 0.1, "bend %.2f" % t.length())
 	g.queue_free()
+	await get_tree().process_frame
+	# No grass: a VegetationField3D keeps the field the other plants read.
+	if ClassDB.class_exists("VegetationField3D"):
+		var v: Node3D = ClassDB.instantiate("VegetationField3D")
+		v.populate_on_ready = false
+		add_child(v)
+		for i in 30:
+			body.position = Vector3(0.1 * i, 0.2, 0)
+			await get_tree().process_frame
+		var tv: Vector2 = v.get_contact_trample_at(Vector3(1.5, 0, 0))
+		_check("contact: plants bend under bodies where there is no grass", tv.length() > 0.1, "bend %.2f" % tv.length())
+		v.queue_free()
 	body.queue_free()

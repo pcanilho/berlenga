@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "modules/world/world_contracts.h"
 #include "weather_clouds.h"
 #include "weather_contact_wetness.h"
 #include "weather_season.h"
@@ -51,7 +52,7 @@ class Environment;
 class FogMaterial;
 class FogVolume;
 
-class WeatherMap3D : public Node3D {
+class WeatherMap3D : public Node3D, public WorldWeatherProvider {
 	GDCLASS(WeatherMap3D, Node3D);
 
 public:
@@ -623,6 +624,19 @@ public:
 		float sun_visibility_at(Vector3 p_position) const;
 	};
 	Snapshot get_snapshot() const;
+
+	// The weather contract (docs/ideas/world-contracts.md).
+	float contract_air_temperature_at(const Vector3 &p_position) const override { return get_air_temperature(); }
+	float contract_air_humidity_at(const Vector3 &p_position) const override { return get_air_humidity(); }
+	Vector3 contract_wind_at(const Vector3 &p_position, float p_height_above_ground) const override { return get_wind_at(p_position, p_height_above_ground); }
+	float contract_precipitation_at(const Vector3 &p_position) const override { return get_rain_at(p_position); }
+	float contract_rain_share_at(const Vector3 &p_position) const override { return rain_fraction(get_air_temperature(), get_air_humidity()); }
+	float contract_surface_wetness_at(const Vector3 &p_position) const override { return get_wetness_at(p_position); }
+	float contract_puddle_at(const Vector3 &p_position) const override { return get_puddle_at(p_position); }
+	float contract_contact_wetness_at(const Vector3 &p_position) const override { return get_contact_wetness_at(p_position); }
+	void contract_add_contact_wetness(const Vector3 &p_position, float p_radius, float p_amount) override { add_contact_wetness(p_position, p_radius, p_amount); }
+	float contract_sun_visibility_at(const Vector3 &p_position) const override { return get_sun_visibility_at(p_position); }
+	float contract_canopy_closure_at(const Vector3 &p_position) const override { return get_canopy_closure_at(p_position); }
 
 	void set_sky_clock(const NodePath &p_path);
 	NodePath get_sky_clock() const { return sky_clock; }

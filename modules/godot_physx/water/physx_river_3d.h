@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "water_body_contacts.h"
 #include "water_raster_reflections.h"
 #include "water_solver.h"
 
@@ -58,6 +59,8 @@ const String &physx_river_water_shader_src();
 
 class PhysXRiver3D : public Path3D {
 	GDCLASS(PhysXRiver3D, Path3D);
+
+	WaterBodyContacts body_contacts; // world_contact bodies push the ripples (docs/ideas/world-links.md)
 
 public:
 	struct Section {

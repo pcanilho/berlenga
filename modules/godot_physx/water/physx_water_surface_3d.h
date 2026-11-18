@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "water_body_contacts.h"
 #include "water_contact_map.h"
 #include "water_raster_reflections.h"
 #include "water_solver.h"
@@ -80,6 +81,8 @@ class ParticleProcessMaterial;
 // underlying simulation.
 class PhysXWaterSurface3D : public Node3D {
 	GDCLASS(PhysXWaterSurface3D, Node3D);
+
+	WaterBodyContacts body_contacts; // world_contact bodies push the ripples (docs/ideas/world-links.md)
 
 protected:
 	static void _bind_methods();

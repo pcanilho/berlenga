@@ -1455,6 +1455,15 @@ void PhysXRiver3D::_notification(int p_what) {
 				_build();
 			}
 			_live_update(get_physics_process_delta_time());
+			if (!Engine::get_singleton()->is_editor_hint()) {
+				body_contacts.update(
+						get_tree(), get_physics_process_delta_time(),
+						[this](const Vector3 &p) { return sample_height(p); },
+						[this](const Vector3 &p) { return sample_flow(p); },
+						[this](int o, const Vector3 &p, float r, float s) { submit_sphere(o, p, r, s); },
+						[this](int o) { clear_sphere(o); },
+						[this](const Vector3 &p, float r, float s) { submit_sphere(int(uint64_t(get_instance_id()) ^ 0x5a5a), p, r, s); });
+			}
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			water_time += get_process_delta_time();

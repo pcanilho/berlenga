@@ -759,6 +759,7 @@ void PhysicalBone3D::_notification(int p_what) {
 		// We need to wait until the bone has finished being added to the tree
 		// or none of the global transform calls will work correctly.
 		case NOTIFICATION_POST_ENTER_TREE:
+			_join_world_contact();
 			_update_simulator_path();
 			update_bone_id();
 			reset_to_rest_position();

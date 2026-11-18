@@ -915,6 +915,7 @@ void WeatherMap3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
 			active = this;
+			WorldContracts::register_weather(this);
 			if (cell_film.size() != resolution * resolution) {
 				_allocate();
 			}
@@ -937,6 +938,7 @@ void WeatherMap3D::_notification(int p_what) {
 			if (active == this) {
 				active = nullptr;
 			}
+			WorldContracts::unregister_weather(this);
 			set_physics_process_internal(false);
 			_finish_shadow_bake(true);
 			_finish_sky_shadow_bake(true);
@@ -2218,6 +2220,7 @@ WeatherMap3D::~WeatherMap3D() {
 	if (active == this) {
 		active = nullptr;
 	}
+	WorldContracts::unregister_weather(this);
 	if (shadow_task != WorkerThreadPool::INVALID_TASK_ID) {
 		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(shadow_task);
 	}

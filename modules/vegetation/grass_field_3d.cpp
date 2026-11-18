@@ -4503,6 +4503,7 @@ void GrassField3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_ENTER_TREE: {
+			add_to_group(SNAME("grass_trample_field")); // keeps the trample field (VegetationField3D stands in without one)
 			if (crop != CROP_NONE) {
 				if (!crop_nodes.has(this)) {
 					crop_nodes.push_back(this);

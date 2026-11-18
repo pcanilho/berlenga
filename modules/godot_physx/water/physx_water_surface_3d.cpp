@@ -6348,6 +6348,15 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 			_update_crest_spray();
 			_update_crest_sheets((float)get_physics_process_delta_time());
 			_wet_ground();
+			if (!Engine::get_singleton()->is_editor_hint()) {
+				body_contacts.update(
+						get_tree(), get_physics_process_delta_time(),
+						[this](const Vector3 &p) { return sample_height(p); },
+						[](const Vector3 &) { return Vector3(); },
+						[this](int o, const Vector3 &p, float r, float s) { submit_sphere(o, p, r, s); },
+						[this](int o) { clear_sphere(o); },
+						[this](const Vector3 &p, float r, float s) { submit_impulse(p, r, s); });
+			}
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			if (!Engine::get_singleton()->is_editor_hint()) {

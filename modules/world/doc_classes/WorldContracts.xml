@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WorldContracts" inherits="Object" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		The registry of the contracts between world systems.
+	</brief_description>
+	<description>
+		Hands out each contract between world systems (the weather; more to come), backed by the active producer node, or by a stub a test has set. Bodies that the ground, snow, plants, trees and water should feel are in the [code]world_contact[/code] group; [method describe_body] is how all of them read a body's size and weight. See docs/ideas/world-contracts.md.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="clear_overrides">
+			<return type="void" />
+			<description>
+				Removes every stub set by a test: the producers are current again.
+			</description>
+		</method>
+		<method name="describe_body" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="node" type="Node" />
+			<description>
+				How the world systems read a body: [code]center[/code], [code]radius[/code], [code]half_height[/code], [code]round[/code], [code]wheel[/code], [code]box[/code], [code]width[/code] and [code]mass[/code] (kg on the ground), from its first collision shape and its metas ([code]deform_wheel_radius[/code], [code]deform_wheel_width[/code], [code]trample_radius[/code], [code]ground_mass[/code]).
+			</description>
+		</method>
+		<method name="get_weather" qualifiers="const">
+			<return type="WorldWeather" />
+			<description>
+				The weather contract now: the stub a test set, else the one backed by the active [WeatherMap3D].
+			</description>
+		</method>
+		<method name="set_weather">
+			<param index="0" name="stub" type="WorldWeather" />
+			<return type="void" />
+			<description>
+				Replaces the weather for every system with [param stub], a script extending [WorldWeather]; what it does not override still comes from the producer.
+			</description>
+		</method>
+	</methods>
+</class>
