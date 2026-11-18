@@ -2654,6 +2654,17 @@
    "topic": "Growth"
   },
   {
+   "name": "Stone pine",
+   "settings": [
+    "PRESET_STONE_PINE"
+   ],
+   "note": "",
+   "what": "an umbrella crown on a clear bole, cones in three ages and plated red-brown bark.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
    "name": "Wind, bank and rock trees",
    "settings": [
     "wind_exposure",

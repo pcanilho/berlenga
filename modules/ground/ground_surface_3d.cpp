@@ -2037,10 +2037,14 @@ static bool _swash_trace() {
 
 // A ridge of fine sand from p_from to p_to (world xz): small deposits a centimetre apart, a few millimetres high and
 // about two near-field texels wide (real ones are a few mm high and about a centimetre wide, Komar 1998; two texels
-// is the narrowest the field draws). The sea brings the sand: the swash's own load.
-void GroundSurface3D::_swash_lay(const Vector2 &p_from, const Vector2 &p_to) {
+// is the narrowest the field draws). The sea brings the sand: the swash's own load. p_erase takes it off again
+// (a later swash running over the line spreads it and washes its fines away).
+void GroundSurface3D::_swash_lay(const Vector2 &p_from, const Vector2 &p_to, bool p_erase) {
 	const float len = p_from.distance_to(p_to);
 	const int steps = MAX(1, int(Math::ceil(len / 0.01f)));
+	// The lip is the swash's finest load, mica, heavy minerals and bits of debris: darker than the sand round it
+	// (the fresh tint, which fades over drying_time).
+	field.amount_fresh = p_erase ? -1.0f : 1.0f;
 	for (int k = 0; k <= steps; k++) {
 		const Vector2 q = p_from.lerp(p_to, float(k) / steps);
 		if (!_near_inside(q.x, q.y)) {
@@ -2056,15 +2060,20 @@ void GroundSurface3D::_swash_lay(const Vector2 &p_from, const Vector2 &p_to) {
 			}
 			continue;
 		}
-		deposit(Vector3(q.x, _ground_at(q.x, q.y), q.y), 0.012f, 0.003f);
+		if (p_erase) {
+			dig(Vector3(q.x, _ground_at(q.x, q.y), q.y), 0.012f, 0.004f);
+		} else {
+			deposit(Vector3(q.x, _ground_at(q.x, q.y), q.y), 0.012f, 0.004f);
+		}
 	}
+	field.amount_fresh = 0.0f;
 }
 
 // Swash marks: run-up followed on shore-normal transects 10 cm apart across the near field, ten times a second.
 // The beach's downhill direction there sets the transects; along each, the water's landward edge (swash film or
 // sea, over 1 mm) is found to 6 mm. When a swash that had been climbing falls back 5 cm from its highest reach,
 // that reach is its uprush limit: a ridge is laid there, joined halfway to the neighbouring transects' marks from
-// the same wave (or towards where they are climbing), so each wave draws one scalloped line.
+// the same wave (or towards where they are climbing), so each wave draws one scalloped line (its lobes below).
 void GroundSurface3D::_swash_update(double p_delta) {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	swash_time += p_delta;
@@ -2143,7 +2152,15 @@ void GroundSurface3D::_swash_update(double p_delta) {
 				break;
 			}
 		}
-		if (reach > tr.peak + 0.005f) {
+		// A swash running over an older line flattens it: the ridge is only a few mm of loose fines.
+		for (int m = int(tr.laid.size()) - 1; m >= 0; m--) {
+			if (wet(tr.laid[m].at)) {
+				_swash_lay(tr.laid[m].from, tr.laid[m].at, true);
+				_swash_lay(tr.laid[m].at, tr.laid[m].to, true);
+				tr.laid.remove_at(m);
+			}
+		}
+				if (reach > tr.peak + 0.005f) {
 			tr.peak = reach;
 			tr.peak_pos = at;
 			tr.rising = true;
@@ -2151,7 +2168,22 @@ void GroundSurface3D::_swash_update(double p_delta) {
 			// The swash turned back: its highest reach is this wave's mark.
 			tr.rising = false;
 			tr.mark_time = swash_time;
-			tr.mark_pos = tr.peak_pos;
+			// A mark more than two seconds after the last one is the next wave's.
+			if (swash_time - swash_last_mark > 2.0) {
+				swash_wave++;
+			}
+			swash_last_mark = swash_time;
+			// The swash's tongues: its leading edge thins and breaks into lobes, convex landward and meeting in
+			// cusps that point seaward, so each line is a chain of scallops (Reineck and Singh 1980; Komar 1998).
+			// The film is followed only past 1 mm and smoothly along the beach, so the lobes are drawn here: half
+			// a metre to 1.2 m long and up to 4 to 10 cm beyond the followed reach, new for every wave.
+			const uint32_t hw = hash_murmur3_one_32(swash_wave);
+			const float lw = 0.5f + 0.7f * float(hw & 0xffff) / 65535.0f;
+			const float amp = 0.04f + 0.06f * float((hw >> 16) & 0xff) / 255.0f;
+			const float phase = float(hw >> 24) / 255.0f;
+			const float s_along = (-half + 0.1f * t) + swash_mid.dot(along);
+			const float lobe = Math::pow(Math::sin(float(Math::PI) * Math::fposmod(s_along / lw + phase, 1.0f)), 0.6f);
+			tr.mark_pos = tr.peak_pos - down * (amp * lobe);
 			Vector2 ends[2];
 			for (int side = 0; side < 2; side++) {
 				const int u = side == 0 ? t - 1 : t + 1;
@@ -2160,7 +2192,7 @@ void GroundSurface3D::_swash_update(double p_delta) {
 					const SwashTransect &nb = swash_tr[u];
 					// Joined only to a mark of the same wave nearby (within 20 cm up or down the beach): a
 					// neighbour's older or higher mark is another wave's line, not this one's.
-					if (swash_time - nb.mark_time < 3.0 && nb.mark_pos.distance_to(tr.mark_pos) < 0.2f) {
+					if (swash_time - nb.mark_time < 3.0 && nb.mark_pos.distance_to(tr.mark_pos) < 0.25f) {
 						to = 0.5f * (tr.mark_pos + nb.mark_pos);
 					} else if (nb.rising && nb.peak_pos.distance_to(tr.mark_pos) < 0.2f) {
 						to = 0.5f * (tr.mark_pos + nb.peak_pos);
@@ -2173,6 +2205,10 @@ void GroundSurface3D::_swash_update(double p_delta) {
 			}
 			_swash_lay(ends[0], tr.mark_pos);
 			_swash_lay(tr.mark_pos, ends[1]);
+			if (tr.laid.size() >= 12) {
+				tr.laid.remove_at(0);
+			}
+			tr.laid.push_back({ ends[0], tr.mark_pos, ends[1] });
 			swash_mark_count++;
 			tr.peak = reach;
 		} else if (!tr.rising) {
@@ -3207,7 +3243,7 @@ void GroundSurface3D::GPUSink::amount(const GroundDeformField::Columns &p_column
 	const float v[12] = {
 		p_position.x, p_position.y, p_position.z, p_radius,
 		0.0f, 0.0f, 0.0f, 0.0f,
-		p_depth, tent ? 1.0f : 0.0f, 0.0f, 0.0f
+		p_depth, tent ? 1.0f : 0.0f, surface->field.amount_fresh, 0.0f
 	};
 	const float settle = MAX(surface->field.press_settle, 0.0f);
 	const float d[4] = { 0.0f, 16.0f, 0.0f, settle }; // STAMP_AMOUNT

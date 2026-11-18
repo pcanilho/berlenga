@@ -68,7 +68,8 @@ static bool scrub_shrub(TreeGenerator::Preset p_preset) {
 
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
 	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow",
-	"Northern Hardwood Forest", "Eastern Oak Forest", "Pine-Hemlock Forest", "Coppice with Standards", "Wood Pasture", "Pollard Row"
+	"Northern Hardwood Forest", "Eastern Oak Forest", "Pine-Hemlock Forest", "Coppice with Standards", "Wood Pasture", "Pollard Row",
+	"Stone Pine Parkland"
 };
 
 TreeGenerator::TreeGenerator() {
@@ -716,26 +717,29 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_YEARS] = 60;
 			p[PARAM_INTERNODE_LENGTH] = 0.35f;
 			phyllotaxis = PHYLLOTAXIS_WHORLED;
-			p[PARAM_WHORL_BUDS] = 5;
+			p[PARAM_WHORL_BUDS] = 4;
 			p[PARAM_APICAL_DOMINANCE] = 0.78f;
 			p[PARAM_APICAL_DOMINANCE_OLD] = 0.32f;
 			p[PARAM_MATURITY] = 35;
 			p[PARAM_BRANCH_ANGLE] = 65;
-			p[PARAM_DIRECTION_NOISE] = 10;
+			p[PARAM_DIRECTION_NOISE] = 13;
 			p[PARAM_GRAVITROPISM] = 0.03f;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.7f;
 			p[PARAM_APICAL_CONTROL] = 0.95f;
 			p[PARAM_PHOTOTROPISM] = 0.12f;
 			p[PARAM_SHED_RATIO] = 0.13f;
-			p[PARAM_DEAD_BRANCH_KEEP] = 0.05f;
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.0f;
 			p[PARAM_NEEDLES] = 1;
 			p[PARAM_LEAF_SIZE] = 0.14f; // Needles in pairs, 10-18 cm.
-			p[PARAM_LEAVES_PER_INTERNODE] = 160;
+			p[PARAM_LEAVES_PER_INTERNODE] = 220;
 			p[PARAM_LEAF_YEARS] = 3;
 			p[PARAM_CROWN_CONE] = 0.0f; // No cone: a dome, then an umbrella.
 			p[PARAM_SHADOW_STRENGTH] = 0.04f;
-			bark_color = Color(0.36f, 0.25f, 0.19f); // Red-brown plates, blackish edges, orange where flaked.
-			leaf_color = Color(0.15f, 0.27f, 0.09f); // Mid green.
+			p[PARAM_PIPE_EXPONENT] = 2.05f; // A stout bole under a heavy crown.
+			p[PARAM_ROOT_FLARE] = 0.2f;
+			p[PARAM_TIP_RADIUS] = 0.005f;
+			bark_color = Color(0.44f, 0.37f, 0.32f); // Grey-brown plate tops; BARK_PINEA makes the fissures orange-red.
+			leaf_color = Color(0.07f, 0.16f, 0.05f); // A dense, dark, glossy green mass from outside.
 			break;
 		case PRESET_MAX:
 			break;
@@ -3290,9 +3294,10 @@ TreeGenerator::BarkKind TreeGenerator::_bark_kind(Preset p_preset) {
 			return BARK_SMOOTH;
 		case PRESET_SCOTS_PINE:
 		case PRESET_WHITE_PINE:
-		case PRESET_STONE_PINE:
 		case PRESET_LARCH:
 			return BARK_PLATED;
+		case PRESET_STONE_PINE:
+			return BARK_PINEA;
 		case PRESET_NORWAY_SPRUCE:
 		case PRESET_HEMLOCK:
 		case PRESET_SILVER_FIR:
@@ -3415,7 +3420,8 @@ BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt,
 // family's, with depth from the species' bark thickness.
 // The bark albedo texture's scale: stored divided by it, the material's albedo multiplies it back.
 float TreeGenerator::_bark_headroom(BarkKind p_kind) {
-	return p_kind == BARK_SMOOTH ? 1.35f : 1.0f;
+	// Stone pine's orange-red fissures run far warmer than its grey-brown bark colour.
+	return p_kind == BARK_SMOOTH ? 1.35f : (p_kind == BARK_PINEA ? 3.0f : 1.0f);
 }
 
 const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
@@ -3441,6 +3447,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 5, 4, 0.03f, 0.003f, 0.001f, 0.6f, 0.0f }, // Flaking: shallow edges, colour mosaic.
 		{ 3, 40, 0.0f, 0.0008f, 0.0004f, 1.0f, 0.04f }, // Papery: smooth, lenticel bands.
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
+		{ 6, 2, 0.15f, 0.035f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -3464,10 +3471,10 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 			float r = 0.88f + 0.08f * fibre;
 			if (L.crack > 0.0f) {
 				// Warp the lookup so ridges interlace and wander rather than sit on a grid.
-				const float warp = p_kind == BARK_PLATED ? 2.0f : (p_kind == BARK_FLAKING ? 10.0f : 1.0f);
+				const float warp = (p_kind == BARK_PLATED || p_kind == BARK_PINEA) ? 2.0f : (p_kind == BARK_FLAKING ? 10.0f : 1.0f);
 				const float wu = u + 0.035f * warp * bark_fbm(u, v, 4, 4, 2, salt + 21u);
 				const float wv = v + 0.05f * warp * bark_fbm(u, v, 4, 4, 2, salt + 27u);
-				const float merge = p_kind == BARK_PLATED ? 0.35f : (p_kind == BARK_SCALY ? 0.1f : 0.0f);
+				const float merge = p_kind == BARK_PLATED ? 0.35f : (p_kind == BARK_PINEA ? 0.2f : (p_kind == BARK_SCALY ? 0.1f : 0.0f));
 				const float scar_cut = p_kind == BARK_FLAKING ? 0.62f : 0.0f;
 				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u);
 				// Cracks open unevenly: wider where the layer split first. Some cell walls never
@@ -3489,7 +3496,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					const float cross = Math::lerp(1.0f, open, 0.55f);
 					open = MIN(furrow, cross);
 					plate = Math::sqrt(open); // Rounded ridge tops.
-				} else if (p_kind == BARK_PLATED) {
+				} else if (p_kind == BARK_PLATED || p_kind == BARK_PINEA) {
 					// Flat plate tops, steep walls, and each plate built of thin flaking layers.
 					const float layers = Math::floor((bark_fbm(u, v, 12, 6, 3, salt + 57u) + 0.5f) * 4.0f) / 4.0f;
 					plate = Math::smoothstep(0.0f, 0.5f, open) * (0.75f + 0.25f * layers);
@@ -3503,6 +3510,16 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				height += L.depth * (plate - 1.0f) + L.depth * 0.15f * (plate_noise - 0.5f) * plate;
 				const float shade = Math::lerp(L.dark, 1.0f + L.mottle * (plate_noise - 0.5f), plate);
 				a = Color(shade, shade, shade);
+				if (p_kind == BARK_PINEA) {
+					// Stone pine (Gymnosperm Database: "red-brown to orange with blackish edges to
+					// the plates"): weathered grey-brown plate tops, the fresh orange-red inner
+					// layers in the fissures. The bark colour is the plate tops'; the fissures' factor
+					// (linear) turns it orange-red, inside the headroom (_bark_headroom).
+					const Color top(1.0f, 1.0f, 1.0f), fissure(2.8f, 1.35f, 0.62f);
+					a = fissure.lerp(top, Math::smoothstep(0.3f, 0.6f, open)) * shade;
+					// Blackish plate rims, between the orange floor and the grey top.
+					a = a * Math::lerp(0.55f, 1.0f, MAX(1.0f - Math::smoothstep(0.15f, 0.35f, open), Math::smoothstep(0.55f, 0.85f, open)));
+				}
 				r = Math::lerp(1.0f, r, plate);
 				if (scar) {
 					const float t = 0.5f + bark_fbm(u, v, 4, 4, 2, salt + 47u) * 1.6f;
@@ -4004,7 +4021,7 @@ static const LichenAffinity LICHEN_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	{ 0.6f, 0.5f, 0.1f }, // Kermes oak: smooth grey bark, crusts and some Xanthoria near the sea.
 	{ 0.6f, 0.5f, 0.1f }, // Lentisk.
 	{ 0.1f, 0.3f, 0.05f }, // Dwarf fan palm.
-	{ 0.4f, 0.6f, 0.05f }, // Stone pine.
+	{ 0.08f, 0.15f, 0.0f }, // Stone pine: thick flaking plates hold little.
 };
 
 float TreeGenerator::_lichen_amount() const {
@@ -6450,7 +6467,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			break;
 		case PRESET_STONE_PINE:
 			// On the sunlit top of the umbrella, where the crown spends itself on cones.
-			kind = CONE_STONE_PINE, share = 0.2f, low = 0.6f;
+			kind = CONE_STONE_PINE, share = 0.35f, low = 0.45f;
 			break;
 		case PRESET_HAZEL:
 		case PRESET_WITCH_HAZEL:
@@ -6554,7 +6571,8 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 		eligible += t.f >= low ? 1 : 0;
 	}
 	// Corymbs carry a hundred berries or more each: a rowan bears some dozens of heads.
-	const float budget = (kind == BERRY_ROWAN || kind == BERRY_ELDER ? 80.0f : 360.0f) * fruit_cover;
+	// A stone pine's crown is spent on cones, three years' worth at once: about a thousand.
+	const float budget = (kind == BERRY_ROWAN || kind == BERRY_ELDER ? 80.0f : (kind == CONE_STONE_PINE ? 900.0f : 360.0f)) * fruit_cover;
 	const float p = MIN(share * fruit_cover * present, eligible > 0 ? budget / eligible : 0.0f);
 	// Catkins open before the leaves: hazel from late January, alder February, birch April.
 	const bool open_catkin = (kind == CATKIN_HAZEL && in_days(20.0f, 100.0f)) || (kind == CATKIN_ALDER && in_days(40.0f, 100.0f)) || (kind == CATKIN_BIRCH && in_days(100.0f, 135.0f));
@@ -6594,12 +6612,20 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				// from April, and the opened ones fall through the next winter.
 				const float ripe = cohort == 2 ? CLAMP((day - 30.0f) / 60.0f, 0.0f, 1.0f) : 0.0f;
 				const float op = cohort == 2 ? CLAMP((day - 100.0f) / 120.0f, 0.0f, 1.0f) * 0.7f : 0.0f;
-				const float len = cohort == 0 ? Math::lerp(0.012f, 0.02f, cr.randf()) : (cohort == 1 ? Math::lerp(0.035f, 0.05f, cr.randf()) : Math::lerp(0.08f, 0.12f, cr.randf()));
-				const Vector3 ax = (d * 0.7f + sd * 0.5f + Vector3(0, 0.15f, 0)).normalized();
+				// Heavy cones come in twos and threes on the bare shoot behind the needle tuft (the
+				// needles are 10-18 cm), held out and drooping under their weight: seen from below
+				// and from the side, not buried in the needles.
+				const int k = cohort == 2 ? 1 + int(cr.randf() * 2.6f) : 1;
 				const Color green = lin(0.32f, 0.38f, 0.2f), chestnut = lin(0.42f, 0.24f, 0.12f);
 				const Color c0 = green.lerp(chestnut, ripe);
-				cone(at - d * 0.01f, ax, len, len * 0.42f * (1.0f + 0.3f * op), cohort == 0 ? 24 : 72, false, op, c0 * 0.85f, c0.lerp(lin(0.55f, 0.42f, 0.28f), op));
-				size = len;
+				for (int q = 0; q < k; q++) {
+					const float len = cohort == 0 ? Math::lerp(0.012f, 0.02f, cr.randf()) : (cohort == 1 ? Math::lerp(0.035f, 0.05f, cr.randf()) : Math::lerp(0.09f, 0.13f, cr.randf()));
+					const Vector3 out = sd.rotated(d, q * 2.3f);
+					const Vector3 ax = (d * 0.3f + out * 0.7f + Vector3(0, cohort == 2 ? -0.45f : 0.1f, 0)).normalized();
+					const float back = cohort == 0 ? 0.02f : MIN(0.2f, n.length * 0.8f);
+					cone(at - d * (back + 0.05f * q) + out * 0.015f, ax, len, len * 0.42f * (1.0f + 0.3f * op), cohort == 0 ? 24 : 72, false, op, c0 * 0.85f, c0.lerp(lin(0.55f, 0.42f, 0.28f), op));
+					size = MAX(size, len);
+				}
 			} break;
 			case CONE_WHITE_PINE: {
 				const Vector3 ax = (d * 0.1f + Vector3(0, -1, 0)).normalized();
@@ -14820,8 +14846,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		if (s == 0) {
 			const BarkSet &bs = _bark_set(_bark_kind(preset));
 			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, bs.albedo);
+			// The texture stores albedo / headroom (linear); the material's albedo colour is sRGB
+			// (the shader converts it), so the headroom goes in encoded: given as a plain 1.35 it
+			// came back as 2.05 and smooth bark rendered 1.5 times too bright.
 			const float head = _bark_headroom(_bark_kind(preset));
-			m->set_albedo(Color(head, head, head));
+			m->set_albedo(Color(head, head, head).linear_to_srgb());
 			m->set_roughness(1.0f);
 			m->set_texture(BaseMaterial3D::TEXTURE_ROUGHNESS, bs.roughness);
 			m->set_roughness_texture_channel(BaseMaterial3D::TEXTURE_CHANNEL_GREEN);
@@ -16548,6 +16577,18 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			list.push_back(wil);
 			open(PRESET_BLACK_ALDER, 0.2f);
 		} break;
+		case STAND_STONE_PINE: {
+			lead = PRESET_STONE_PINE;
+			// Stone pine on coastal sands (trees.md 5y): open woods and parkland of umbrella crowns
+			// on clear boles, kept open for the cones and grazing, the crowns near touching
+			// (pinhal manso; Mutke et al. 2012: 50-150 trees a hectare in productive stands). Open
+			// grown, at about a crown's width apart; the scrub beneath (lentisk, kermes oak,
+			// gum rockrose, dwarf fan palm) is PlantGenerator.make_scrub's on the same ground.
+			Ref<PlantSpecies> pine = _stand_species(PRESET_STONE_PINE, false, p_variants);
+			pine->set_density(0.8f);
+			pine->set_spacing(MAX(pine->get_spacing(), 11.0f));
+			list.push_back(pine);
+		} break;
 		case STAND_MAX:
 			break;
 	}
@@ -17429,6 +17470,7 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_COPPICE_STANDARDS);
 	BIND_ENUM_CONSTANT(STAND_WOOD_PASTURE);
 	BIND_ENUM_CONSTANT(STAND_POLLARD_ROW);
+	BIND_ENUM_CONSTANT(STAND_STONE_PINE);
 	BIND_ENUM_CONSTANT(STAND_MAX);
 	BIND_ENUM_CONSTANT(REGION_EUROPE);
 	BIND_ENUM_CONSTANT(REGION_NORTH_AMERICA);

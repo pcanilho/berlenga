@@ -34,6 +34,7 @@
 #include "rock_field_3d.h"
 
 #include "core/math/geometry_2d.h"
+#include "core/math/random_pcg.h"
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
@@ -48,6 +49,7 @@
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/static_body_3d.h"
 #include "scene/resources/3d/concave_polygon_shape_3d.h"
+#include "scene/resources/curve.h"
 #include "scene/main/viewport.h"
 #include "scene/resources/material.h"
 #include "scene/resources/multimesh.h"
@@ -517,6 +519,8 @@ int CaveNetwork3D::add_cave(const Vector3 &p_entrance, const Vector3 &p_out) {
 	last_build_usec = OS::get_singleton()->get_ticks_usec() - t0;
 	ERR_FAIL_COND_V_MSG(!ok, -1, "CaveNetwork3D: no network could be grown here (no generator, or too little rock behind the entrance).");
 	_scatter_blocks(c, s);
+	_mark_streams(c, s);
+	streams_dirty = true;
 	_stream_finish(true); // the batch in flight reads the caves
 	streamed = false;
 	caves.push_back(c);
@@ -527,6 +531,7 @@ void CaveNetwork3D::clear_caves() {
 	_stream_finish(false);
 	streamed = false;
 	caves.clear();
+	streams_dirty = true;
 }
 
 Array CaveNetwork3D::get_segments(int p_cave) const {
@@ -540,6 +545,7 @@ Array CaveNetwork3D::get_segments(int p_cave) const {
 		d["radius_a"] = s.ra;
 		d["radius_b"] = s.rb;
 		d["type"] = int(s.type);
+		d["stream"] = s.stream;
 		out.push_back(d);
 	}
 	return out;
@@ -710,11 +716,14 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 	LocalVector<Found> found;
 	RandomPCG rng(uint32_t(seed) * 2654435761u + 77u);
 	auto H = [&](real_t p_x, real_t p_z) -> real_t { return gen->get_height(Vector3(p_x, 0, p_z)); };
-	for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += 8.0) {
-		for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += 8.0) {
+	// Why candidates fail, for --find-caves benches (CAVE_SEA_DEBUG=1 prints it).
+	int rej_low = 0, rej_flat = 0, rej_dry = 0, rej_depth = 0, rej_foot = 0, rej_back = 0;
+	for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += 6.0) {
+		for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += 6.0) {
 			const real_t h = H(x, z);
-			if (!Math::is_finite(h) || h < sea + 8.0) {
-				continue; // a cliff at least 8 m over the sea
+			if (!Math::is_finite(h) || h < sea + 6.0) {
+				rej_low++;
+				continue; // a cliff at least 6 m over the sea
 			}
 
 			const real_t e = 4.0;
@@ -723,47 +732,70 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 				continue;
 			}
 			n.normalize();
-			if (n.y >= 0.8f) {
+			if (n.y >= 0.85f) {
+				rej_flat++;
 				continue;
 			}
 			const Vector2 dn = Vector2(n.x, n.z).normalized();
 			// Seaward from the cliff: the first point under the sea, then the depth there.
 			Vector2 m(x, z);
 			bool wet = false;
-			for (real_t t = 0.0; t < 60.0; t += 1.0) {
+			for (real_t t = 0.0; t < 150.0; t += 1.0) {
 				const Vector2 q = Vector2(x, z) + dn * t;
-				if (H(q.x, q.y) < sea - 0.5) {
+				if (H(q.x, q.y) < sea - 0.3) {
 					m = q;
 					wet = true;
 					break;
 				}
 			}
 			if (!wet) {
+				rej_dry++;
 				continue;
 			}
 
 			const Vector2 off = m + dn * 4.0;
 			const real_t depth = sea - H(off.x, off.y);
-			if (depth < 0.3 || depth > 25.0) {
+			if (depth < 0.3 || depth > 30.0) {
+				rej_depth++;
 				continue;
 			}
 
-			// The mouth: back from the waterline to where the cliff face rises 2 m above the sea.
+			// The mouth: back from the waterline to the cliff's foot, where the ground first stands 2 m over the sea
+			// (a beach or a wave-cut platform may lie between, up to 40 m wide).
 			Vector2 mouth = m;
-			for (real_t t = 0.0; t < 20.0; t += 0.5) {
+			bool foot = false;
+			for (real_t t = 0.0; t < 40.0; t += 0.5) {
 				const Vector2 q = m - dn * t;
 				if (H(q.x, q.y) > sea + 2.0) {
 					mouth = q + dn * 1.0;
+					foot = true;
 					break;
 				}
 			}
-			// The cliff behind must stand: 10 m in, the ground at least 8 m over the sea.
-			const Vector2 back = mouth - dn * 10.0;
-			if (H(back.x, back.y) < sea + 8.0) {
+			if (!foot) {
+				rej_foot++;
 				continue;
 			}
-			found.push_back({ Vector3(mouth.x, sea, mouth.y), Vector3(dn.x, 0, dn.y), real_t(H(back.x, back.y) - sea) + real_t(4.0 * rng.randf()) });
+			// The cliff behind must stand: within 6 to 25 m in, the ground at least 6 m over the sea and rising
+			// steeply from the mouth (a cliff or a steep bluff, not a dune or a gentle slope).
+			real_t best = -1e9, best_t = 0.0;
+			for (real_t t = 6.0; t <= 25.0; t += 1.0) {
+				const Vector2 q = mouth - dn * t;
+				const real_t hq = H(q.x, q.y);
+				if (hq > best) {
+					best = hq;
+					best_t = t;
+				}
+			}
+			if (best < sea + 6.0 || (best - sea) / best_t < 0.35) {
+				rej_back++;
+				continue;
+			}
+			found.push_back({ Vector3(mouth.x, sea, mouth.y), Vector3(dn.x, 0, dn.y), real_t(best - sea) + real_t(4.0 * rng.randf()) });
 		}
+	}
+	if (OS::get_singleton()->get_environment("CAVE_SEA_DEBUG") == "1") {
+		print_line(vformat("find_sea_entrances: %d candidates; rejected: %d under 6 m, %d flat, %d no sea within 150 m, %d depth, %d no cliff foot within 40 m, %d no cliff behind", found.size(), rej_low, rej_flat, rej_dry, rej_depth, rej_foot, rej_back));
 	}
 	struct More {
 		_FORCE_INLINE_ bool operator()(const Found &p_a, const Found &p_b) const { return p_a.score > p_b.score; }
@@ -1022,6 +1054,24 @@ real_t cave_profile(CaveNetwork3D::PassageType p_type, real_t u, real_t v, real_
 	}
 }
 
+// A cave stream's channel (docs/ideas/rocks.md, "Cave streams"): cut into the trench's fill, its half width a
+// little under the trench's, meandering off the passage line; the same numbers carve it and lay the water in it.
+// Cut no deeper than the trench under its fill (the section's floor is 0.15 r to 0.2 r below the fill).
+inline real_t cave_stream_cut(real_t p_r) {
+	return 0.1 * p_r; // the washed bed below the dry fill
+}
+inline real_t cave_stream_depth(real_t p_r) {
+	return MAX(real_t(0.06), 0.08 * p_r); // of water at the middle
+}
+
+inline real_t cave_stream_half_width(CaveNetwork3D::PassageType p_type, real_t p_r) {
+	return (p_type == CaveNetwork3D::PASSAGE_CANYON ? 0.36 : 0.27) * p_r; // nearly the trench (0.4 r, 0.3 r)
+}
+
+inline real_t cave_stream_u(const Vector3 &p_line, uint32_t p_seed, real_t p_half_width) {
+	return 0.25 * p_half_width * 2.0 * (real_t(cave_fbm(p_line / 3.0f, p_seed + 211u, 2)) - 0.5);
+}
+
 } // namespace
 
 // Distance to the open cave (negative inside): every passage as its section swept along it, the ends run on by half
@@ -1055,8 +1105,17 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p) const {
 		const real_t r = Math::lerp(real_t(sg->ra), real_t(sg->rb), lc / len);
 		real_t floor_v;
 		real_t dc = cave_profile(sg->type, q.dot(u_axis), q.dot(v_axis), r, floor_v);
+		const real_t fill = floor_v;
 		// The fill is never quite level: ripples, puddle hollows and mud banks a few decimetres high.
 		floor_v += 0.35 * (cave_fbm(p_p / 1.6f, uint32_t(seed) + 101u, 2) - 0.5f) + 0.12 * (cave_fbm(p_p / 0.5f, uint32_t(seed) + 103u, 2) - 0.5f);
+		if (sg->stream) {
+			// A stream's trench: the water has washed its fill level across the floor (sand and gravel bars only
+			// along its edges), a little below the dry fill.
+			const real_t ch = cave_stream_half_width(sg->type, r);
+			const real_t x = (q.dot(u_axis) - cave_stream_u(sg->a + t * lc, uint32_t(seed), ch)) / MAX(ch, real_t(0.05));
+			const real_t w = 1.0 - Math::smoothstep(real_t(0.7), real_t(1.3), Math::abs(x));
+			floor_v = Math::lerp(floor_v, fill - cave_stream_cut(r) + 0.03 * (cave_fbm(p_p / 0.4f, uint32_t(seed) + 107u, 2) - 0.5f), w);
+		}
 		dc = MAX(dc, floor_v - q.dot(v_axis));
 		const real_t ds = s > 0.0 ? (dc > 0.0 ? Math::sqrt(s * s + dc * dc) : s) : dc;
 		d = cave_smin(d, ds, 0.8);
@@ -2512,6 +2571,150 @@ void CaveNetwork3D::_update_mist_node() {
 	mist_node = node->get_instance_id();
 }
 
+// Vadose streams (docs/ideas/rocks.md, "Cave streams"): above the water table the water a cave takes in runs down
+// the trench floors of its keyhole and canyon passages (Palmer 2007, "Cave Geology"; Ford and Williams 2007), and
+// sinks where the passage reaches the water table. Runs of joined trench segments at least 8 m long; most carry
+// a stream, the rest are abandoned (dry) trenches.
+void CaveNetwork3D::_mark_streams(Cave &r_cave, uint32_t p_seed) const {
+	if (r_cave.sea) {
+		return;
+	}
+	RandomPCG rng(uint64_t(p_seed) * 0x9E3779B97F4A7C15ull + 0x5851F42D4C957F2Dull);
+	const uint32_t n = r_cave.segments.size();
+	uint32_t k = 0;
+	while (k < n) {
+		const PassageType ty = r_cave.segments[k].type;
+		if (ty != PASSAGE_KEYHOLE && ty != PASSAGE_CANYON) {
+			k++;
+			continue;
+		}
+		uint32_t e = k;
+		real_t len = r_cave.segments[k].a.distance_to(r_cave.segments[k].b);
+		while (e + 1 < n && (r_cave.segments[e + 1].type == PASSAGE_KEYHOLE || r_cave.segments[e + 1].type == PASSAGE_CANYON) && r_cave.segments[e + 1].a.distance_squared_to(r_cave.segments[e].b) < 1e-4f) {
+			e++;
+			len += r_cave.segments[e].a.distance_to(r_cave.segments[e].b);
+		}
+		const bool wet = len >= 8.0 && rng.randf() < 0.65f;
+		for (uint32_t j = k; j <= e; j++) {
+			r_cave.segments[j].stream = wet;
+		}
+		k = e + 1;
+	}
+}
+
+void CaveNetwork3D::_update_stream_nodes() {
+	if (!streams_dirty) {
+		return;
+	}
+	streams_dirty = false;
+	for (const ObjectID &id : stream_nodes) {
+		if (Node *nd = ObjectDB::get_instance<Node>(id)) {
+			nd->queue_free();
+		}
+	}
+	stream_nodes.clear();
+	if (!cave_streams || !ClassDB::class_exists("PhysXRiver3D")) {
+		return;
+	}
+	for (const Cave &cv : caves) {
+		const uint32_t n = cv.segments.size();
+		uint32_t k = 0;
+		while (k < n) {
+			if (!cv.segments[k].stream) {
+				k++;
+				continue;
+			}
+			uint32_t e = k;
+			while (e + 1 < n && cv.segments[e + 1].stream && cv.segments[e + 1].a.distance_squared_to(cv.segments[e].b) < 1e-4f) {
+				e++;
+			}
+			// The water surface in the channel along the run, every ~1.5 m.
+			LocalVector<Vector3> pts;
+			LocalVector<float> wid, dep;
+			real_t len = 0.0;
+			for (uint32_t j = k; j <= e; j++) {
+				const Segment &sg = cv.segments[j];
+				Vector3 t = sg.b - sg.a;
+				const real_t sl = t.length();
+				if (sl < 1e-4f) {
+					continue;
+				}
+				len += sl;
+				t /= sl;
+				const Vector3 u_axis = t.cross(Vector3(0, 1, 0)).normalized();
+				const Vector3 v_axis = u_axis.cross(t);
+				const int steps = MAX(1, int(Math::ceil(sl / 1.5)));
+				for (int st = (j == k ? 0 : 1); st <= steps; st++) {
+					const real_t lc = sl * real_t(st) / real_t(steps);
+					const real_t r = Math::lerp(real_t(sg.ra), real_t(sg.rb), lc / sl);
+					const Vector3 line = sg.a + t * lc;
+					real_t floor_v;
+					cave_profile(sg.type, 0.0, 0.0, r, floor_v);
+					const real_t ch = cave_stream_half_width(sg.type, r);
+					pts.push_back(line + u_axis * cave_stream_u(line, uint32_t(seed), ch) + v_axis * (floor_v - cave_stream_cut(r) + cave_stream_depth(r)));
+					wid.push_back(float(2.0 * ch * 1.05));
+					dep.push_back(float(cave_stream_depth(r)));
+				}
+			}
+			k = e + 1;
+			if (pts.size() < 3) {
+				continue;
+			}
+			if (pts[0].y < pts[pts.size() - 1].y) { // run it downhill
+				pts.invert();
+				wid.invert();
+				dep.invert();
+			}
+			Object *obj = ClassDB::instantiate("PhysXRiver3D");
+			Node3D *river = Object::cast_to<Node3D>(obj);
+			if (!river) {
+				if (obj) {
+					memdelete(obj);
+				}
+				return;
+			}
+			Ref<Curve3D> curve;
+			curve.instantiate();
+			PackedFloat32Array widths, depths;
+			for (uint32_t j = 0; j < pts.size(); j++) {
+				curve->add_point(pts[j]);
+				widths.push_back(wid[j]);
+				depths.push_back(dep[j]);
+			}
+			river->set_name("CaveStream");
+			river->set("snap_to_ground", false);
+			river->set("carve", false);
+			river->set("raster_reflections", false); // underground: nothing to reflect but the walls (as the pools)
+			river->set("contact_wetness", false);
+			river->set("fall_mist", false);
+			river->set("fall_min_height", 1.0);
+			river->set("discharge", MIN(0.15, 0.01 + 0.04 * len / 50.0));
+			river->set("widths", widths);
+			river->set("depths", depths);
+			river->set("curve", curve);
+			add_child(river, false, INTERNAL_MODE_BACK);
+			river->set_global_transform(Transform3D());
+			stream_nodes.push_back(river->get_instance_id());
+		}
+	}
+}
+
+void CaveNetwork3D::set_cave_streams(bool p_enable) {
+	cave_streams = p_enable;
+	streams_dirty = true;
+	if (is_inside_tree() && !Engine::get_singleton()->is_editor_hint()) {
+		_update_stream_nodes();
+	}
+}
+
+int CaveNetwork3D::get_stream_count() const {
+	int c = 0;
+	for (const ObjectID &id : stream_nodes) {
+		c += ObjectDB::get_instance(id) ? 1 : 0;
+	}
+	return c;
+}
+
 void CaveNetwork3D::set_sea_mist(bool p_enable) {
 	sea_mist = p_enable;
 	if (is_inside_tree() && !Engine::get_singleton()->is_editor_hint()) {
@@ -2782,6 +2985,7 @@ void CaveNetwork3D::_notification(int p_what) {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				_pool_water_update();
 				_update_mist_node();
+				_update_stream_nodes();
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
@@ -2861,6 +3065,9 @@ void CaveNetwork3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_rimstone_water_max", "count"), &CaveNetwork3D::set_rimstone_water_max);
 	ClassDB::bind_method(D_METHOD("get_rimstone_water_max"), &CaveNetwork3D::get_rimstone_water_max);
 	ClassDB::bind_method(D_METHOD("get_rimstone_water_count"), &CaveNetwork3D::get_rimstone_water_count);
+	ClassDB::bind_method(D_METHOD("set_cave_streams", "enable"), &CaveNetwork3D::set_cave_streams);
+	ClassDB::bind_method(D_METHOD("get_cave_streams"), &CaveNetwork3D::get_cave_streams);
+	ClassDB::bind_method(D_METHOD("get_stream_count"), &CaveNetwork3D::get_stream_count);
 	ClassDB::bind_method(D_METHOD("set_sea_mist", "enable"), &CaveNetwork3D::set_sea_mist);
 	ClassDB::bind_method(D_METHOD("get_sea_mist"), &CaveNetwork3D::get_sea_mist);
 	ClassDB::bind_method(D_METHOD("get_sea_mist_node"), &CaveNetwork3D::get_sea_mist_node);
@@ -2934,6 +3141,7 @@ void CaveNetwork3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rimstone_water"), "set_rimstone_water", "get_rimstone_water");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rimstone_water_radius", PROPERTY_HINT_RANGE, "0,100,0.5,suffix:m"), "set_rimstone_water_radius", "get_rimstone_water_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "rimstone_water_max", PROPERTY_HINT_RANGE, "0,64,1"), "set_rimstone_water_max", "get_rimstone_water_max");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cave_streams"), "set_cave_streams", "get_cave_streams");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_mist"), "set_sea_mist", "get_sea_mist");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collision"), "set_collision", "has_collision");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "wall_material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_wall_material", "get_wall_material");

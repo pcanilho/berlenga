@@ -56,10 +56,12 @@ extends Node3D
 #                       --glints=0 for the A/B)
 #   --view=shore        a real sea's swash edge on a beach: the water sheet, damp sand draining behind it and a
 #                       row of boot prints crossing the line, rounded in the wash, sharp on the dry sand (stage 4)
-#                       --water=uniform:value sets one of the sea's shader uniforms (repeatable)
+#                       --water=uniform:value sets one of the sea's shader uniforms (repeatable); --ebb=from,to
+#                       lowers the run-up over the run, as a falling tide, leaving a ladder of swash marks
 #   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
 #   --cam=x,y,z,tx,ty,tz camera for --view=trail, --view=roost and --view=ripples
 #   --sun=pitch,yaw[,exposure] sun angles in degrees for --view=trail (default -18,140), and the exposure
+#   --prop=name:value   set one of the surface's properties (repeatable)
 #   --defaults          keep every shipped setting on (otherwise each check or view turns on only its own)
 #   --raster            raster only (default path traced)
 #   --pair              --view=bodymud: save the raster frame as <out>_raster.png, then the path traced one, from one run
@@ -265,6 +267,11 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 		surface.runoff_channels = false
 		surface.standing_water = false
 		surface.desiccation_cracks = false
+	# --prop=name:value sets any of the surface's properties (repeatable), for an A/B.
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--prop="):
+			var pkv := a.substr(7).split(":", true, 1)
+			surface.set(pkv[0], str_to_var(pkv[1]))
 	add_child(surface)
 	await get_tree().physics_frame
 
@@ -2317,7 +2324,15 @@ func _build_shore() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--swash-frames="):
 			swash_frames = int(a.substr(15))
+	# --ebb=from,to: the run-up falls from one height to the other over the swash frames, as on a falling tide,
+	# so each wave's mark is left below the last ones' and the beach keeps a ladder of them.
+	var ebb := PackedFloat32Array()
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--ebb="):
+			ebb = PackedFloat32Array(Array(a.substr(6).split(",")).map(func(v): return float(v)))
 	for i in swash_frames:
+		if ebb.size() == 2:
+			sea.set("swash_run_up", lerpf(ebb[0], ebb[1], float(i) / swash_frames))
 		await get_tree().physics_frame
 		if OS.get_environment("SHORE_TRACE") != "" and i % 60 == 0:
 			var q := Vector3(0.0, _undisturbed(Vector3(0, 0, 5)), 5.0)
@@ -2342,11 +2357,11 @@ func _build_shore() -> void:
 	print("shore: saturation by z" + prof)
 	print("shore: %d swash marks laid, %.2f ms a step" % [surface.get_swash_mark_count(), surface.get_swash_step_usec() / 1000.0])
 	if OS.get_environment("SWASH_DUMP") != "":
-		# The ground's change from undisturbed over x -3..3, z -1..3 at 1 cm (raw floats) for a look from above.
+		# The ground's change from undisturbed over x -4..4, z -1..5 at 1 cm (800 x 600 raw floats) for a look from above.
 		var buf := PackedFloat32Array()
-		for zi in 400:
-			for xi in 600:
-				var pq := Vector3(-3.0 + xi * 0.01, 0.0, -1.0 + zi * 0.01)
+		for zi in 600:
+			for xi in 800:
+				var pq := Vector3(-4.0 + xi * 0.01, 0.0, -1.0 + zi * 0.01)
 				buf.append(surface.get_surface_height_at(pq) - _undisturbed(pq))
 		var fa := FileAccess.open(OS.get_environment("SWASH_DUMP"), FileAccess.WRITE)
 		fa.store_buffer(buf.to_byte_array())
