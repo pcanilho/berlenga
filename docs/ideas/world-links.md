@@ -89,7 +89,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Lying snow → plants | missing | snow cover | planned (contact 5) |
 | Flowing water → reeds, grass | missing | river flow | planned (contact 6) |
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
-| Wet ground → mist | one-way | humidity only | planned (link 6) |
+| Wet ground → mist | linked (18 Nov) | surface wetness, surface cooling | VegetationMist3D: wet ground mists more and sooner |
 
 ### Water (ocean, rivers, pools, falls)
 
@@ -103,7 +103,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Bodies with buoyancy → wakes | linked | buoyancy, wake nodes | |
 | Bodies without buoyancy → ripples, splash | linked (18 Nov) | contact | world_contact bodies disturb sea, river |
 | Wading → wet legs, clothes | linked (18 Nov) | WorldWater | ClothWetness (PhysX, d90fa990) |
-| Cold air over water → steam fog | missing | air, water | planned (link 6) |
+| Cold air over water → steam fog | linked (18 Nov) | air, WorldWater, `get_water_temperature()` | VegetationMist3D cells over water |
 | Rain, melt → river level | missing | runoff | rain work |
 | Cold → lake ice | missing | air | snow work (Stefan's law) |
 | Fire → steam on water | missing | fire, water | planned (link 8) |

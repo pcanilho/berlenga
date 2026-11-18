@@ -162,6 +162,11 @@ func _air_tests() -> void:
 	c.month = 7
 	var summer := _air_at(m, c, 12.0).x
 	_check("air: winter colder than summer from the climate", summer - winter > 15.0, "%.1f C in January, %.1f C in July" % [winter, summer])
+	# Open water lags the season: on an autumn dawn it is warmer than the air (steam fog over lakes).
+	c.month = 10
+	var dawn := _air_at(m, c, 5.0).x
+	var water: float = m.get_water_temperature()
+	_check("air: autumn water warmer than the dawn air", water - dawn > 3.0, "water %.1f C, dawn air %.1f C" % [water, dawn])
 	m.climate = null
 	m.queue_free()
 	c.queue_free()
@@ -371,6 +376,38 @@ func _dew_tests() -> void:
 	m.snap_to_settings()
 	m.advance(2.0 * 3600.0)
 	_check("dew: the morning sun melts the frost", m.get_frost_at(open_p) < 0.01, "%.3f mm left after 2 h" % m.get_frost_at(open_p))
+	# Radiation mist: wet ground and a surface cooled below the dew point bring it on sooner.
+	if ClassDB.class_exists("VegetationMist3D"):
+		var m3 := _new_map()
+		m3.sky_clock = m3.get_path_to(c)
+		m3.air_daily_cycle = false
+		m3.wind_speed = 0.5
+		m3.humidity = 0.85
+		m3.temperature = 8.0
+		m3.snap_to_settings()
+		await get_tree().physics_frame
+		c.time_of_day = 2.0
+		var mist: Node3D = ClassDB.instantiate("VegetationMist3D")
+		add_child(mist)
+		mist.weather_map = mist.get_path_to(m3)
+		m3.dew_and_frost = false
+		m3.advance(600.0)
+		var dry_level: float = mist.weather_mist_level()
+		m3.rain_rate = 5.0
+		m3.cloud_cover = 1.0
+		m3.snap_to_settings()
+		m3.advance(3600.0)
+		m3.rain_rate = 0.0
+		m3.cloud_cover = 0.0
+		m3.dew_and_frost = true
+		m3.snap_to_settings()
+		m3.advance(600.0)
+		var wet_level: float = mist.weather_mist_level()
+		_check("mist: a clear night over wet ground mists sooner than over dry", wet_level > dry_level + 0.1, "level %.2f wet, %.2f dry" % [wet_level, dry_level])
+		mist.queue_free()
+		m3.queue_free()
+	else:
+		_skip("mist", "no VegetationMist3D")
 	m.queue_free()
 	m2.queue_free()
 	c.queue_free()

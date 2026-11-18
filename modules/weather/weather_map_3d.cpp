@@ -532,6 +532,14 @@ float WeatherMap3D::_target_temperature() const {
 	return temperature;
 }
 
+float WeatherMap3D::get_water_temperature() const {
+	if (climate.is_valid()) {
+		const float day = Math::fposmod(float(get_day_of_year()) - 30.0f, 365.0f);
+		return MAX(WeatherSeason::day_temperature(_season_climate(), ground_height, day), 0.0f);
+	}
+	return MAX(cur_temperature, 0.0f);
+}
+
 // Parton and Logan (1981), "A model for diurnal variation in soil and air temperature": from the minimum c hours
 // after sunrise a sine to the peak, T = Tmin + (Tmax - Tmin) sin(pi m / (Y + 2a)), then from sunset an
 // exponential fall, here scaled to land on the minimum again (their form leaves a step at dawn). Their fit
@@ -2440,6 +2448,7 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_air_temperature"), &WeatherMap3D::get_air_temperature);
 	ClassDB::bind_method(D_METHOD("get_air_humidity"), &WeatherMap3D::get_air_humidity);
 	ClassDB::bind_method(D_METHOD("get_air_mean_temperature"), &WeatherMap3D::get_air_mean_temperature);
+	ClassDB::bind_method(D_METHOD("get_water_temperature"), &WeatherMap3D::get_water_temperature);
 	ClassDB::bind_method(D_METHOD("get_air_dew_point"), &WeatherMap3D::get_air_dew_point);
 	ClassDB::bind_method(D_METHOD("get_air_temperature_at", "position"), &WeatherMap3D::get_air_temperature_at);
 	ClassDB::bind_method(D_METHOD("get_air_humidity_at", "position"), &WeatherMap3D::get_air_humidity_at);

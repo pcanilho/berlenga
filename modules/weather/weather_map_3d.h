@@ -450,6 +450,9 @@ public:
 	float get_air_temperature() const { return cur_air_temperature; }
 	float get_air_humidity() const { return cur_air_humidity; }
 	float get_air_mean_temperature() const { return cur_temperature; } // the day's mean, without the cycle
+	// Open water's surface temperature (C): lakes and the sea follow the air's seasonal mean about a month
+	// late (Livingstone and Lotter 1998), never below freezing; without a climate, the day's mean air.
+	float get_water_temperature() const;
 	float get_air_dew_point() const;
 	// The live air at a point: the air above (or below) the map's ground height by the standard lapse rate,
 	// 6.5 K/km (ICAO), with the dew point falling 1.8 K/km (the vapour mixing up unchanged).
