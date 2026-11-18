@@ -1,0 +1,1 @@
+- Weather: cumulus sit on flat bases, come in mixed sizes (the coverage threshold drifts by cloud-sized clusters) and tear into wisps at their edges (domain-warped detail erosion).

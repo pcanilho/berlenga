@@ -1457,7 +1457,7 @@ void GrassField3D::_build_hedges() {
 				// A standard every 35 to 80 m along the line.
 				// Not at a field's corner: the gateways and turning space are there, and a corner
 				// tree would shade two fields.
-				if (s >= next_std && s > 15.0f && s < len - 15.0f) {
+				if (s >= next_std && s > 8.0f && s < len - 8.0f) {
 					const float pick = h01(6);
 					const int sk = pick < 0.35f ? 0 : (pick < 0.6f ? 1 : 2);
 					const float sc = sk == 0 ? 0.45f + 0.2f * h01(7) : (sk == 1 ? 0.7f + 0.2f * h01(7) : 0.55f + 0.2f * h01(7)); // Oak: 10 to 14 m of a 19 m open-grown crown.
@@ -4016,6 +4016,9 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 			// Across the view the footprint is the distance times the pixel's angle; along it the
 			// slant stretches it. The grain follows the narrow side, or a far field turns blotchy.
 			float px_lat = vl * length(fwidth(v)) * 0.7;
+			// Across a tramline (it runs along the rows): seen side on, a lane's width lies along
+			// the view's slant, where the footprint is long.
+			float px_lane = fwidth(dot(xz, vec2(-d.y, d.x)));
 			float ear_f = 1.0 - smoothstep(0.03, 0.12, px_m);
 			float closed = clamp((look.a - 0.3) / 0.65, 0.0, 1.0);
 			const int STEPS = 24;
@@ -4035,7 +4038,7 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 			// Down a lane to its soil, part in its walls' shade, while a wheel track (half a metre)
 			// spans a few pixels; past that the pixel holds the lane's walls and tops as well, and
 			// its mean is near the canopy's own (a far tramline is a faint line, not a black one).
-			float lane_res = 1.0 - smoothstep(0.08, 0.3, px_lat);
+			float lane_res = 1.0 - smoothstep(0.08, 0.3, px_lane);
 			vec3 relief = mix(canopy * 0.8, soil * mix(0.85, 0.6, look.a), lane_res);
 			if (hit_s >= 0.0) {
 				vec2 q = xz - v.xz * hit_s;

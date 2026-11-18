@@ -547,6 +547,8 @@ func _world() -> void:
 func _caves(cam: Camera3D) -> void:
 	var net := CaveNetwork3D.new()
 	net.name = "Caves"
+	if args.has("scallops"):
+		net.scallops = float(args["scallops"]) # --scallops=k: the walls' dish hollows (0 off, a before frame)
 	add_child(net)
 	net.generator = net.get_path_to(gen)
 	if rocks:

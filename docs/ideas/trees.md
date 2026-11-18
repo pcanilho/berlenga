@@ -2097,6 +2097,14 @@ cutting them into blocks across their width; the whole fissure darkens (red-brow
 floor); each block swells from its fissures to a rounded crown 3 cm proud (flat between the grooves, it read as carved plaster); ridge-top mottling at a few centimetres and the ochre weathering faint (strong, it read
 as leopard spots). Buttress roots flatten as they reach the soil and slide under it.
 
+Maritime pine round 8 (18 Nov; docs: plates large smooth slabs with a fine grain; furrows narrow
+slits with a sharp lip). Furrows are wide V valleys, about a third of the surface (crack width
+0.36 cells, a V profile open^0.7, depth 8.5 cm), red-brown only in the bottom fifth. Plates break
+into layered scales (a Voronoi of 12 x 10 cells, a share of walls merged), each lifting toward its
+lower edge and at its own height, with soft steps between, over lumpy and ridged noise.
+Cork follow-up: the layer lines keep to the fissure walls (on the ridge faces they lined up like
+printed text); the faces get pits of every size instead.
+
 Cork round 11 (18 Nov; docs: every cross break a knife slash meeting a fissure in a T; ridges
 smooth, long and stringy, driftwood). Matched against photographs of virgin cork (Wikimedia
 Commons, "Domaine du Rayol - Quercus suber (bark 1)", public domain): deep, irregular fissures

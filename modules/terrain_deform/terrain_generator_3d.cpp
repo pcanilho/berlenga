@@ -3415,22 +3415,14 @@ void TerrainGenerator3D::_sand_sea_shear(void *p_sea, uint32_t p_part) {
 	sea->shear_rows(int(p_part) * 16, MIN(int(p_part + 1) * 16, sea->h));
 }
 
-float TerrainGenerator3D::_sea_sample(real_t p_x, real_t p_z) const {
-	if (sea_nx < 2 || sea_nz < 2 || sea_sand.size() != uint32_t(sea_nx * sea_nz)) {
-		return 0.0f;
-	}
-	const real_t gx = (p_x - sea_origin.x) / sea_cell;
-	const real_t gz = (p_z - sea_origin.y) / sea_cell;
-	if (gx < 0.0 || gz < 0.0 || gx > real_t(sea_nx - 1) || gz > real_t(sea_nz - 1)) {
-		return 0.0f;
-	}
+// Catmull-Rom over the 4x4 cells round a point of the grid (grid units): bilinear drew each cell as flat facets (a
+// dune's crest a polyline of 4 m straight ridges); the cubic keeps the cells' values and runs smooth between them.
+real_t TerrainGenerator3D::_sea_cubic(real_t p_gx, real_t p_gz) const {
+	const real_t gx = CLAMP(p_gx, real_t(0.0), real_t(sea_nx - 1)), gz = CLAMP(p_gz, real_t(0.0), real_t(sea_nz - 1));
 	const int x0 = MIN(int(gx), sea_nx - 2);
 	const int z0 = MIN(int(gz), sea_nz - 2);
 	const real_t fx = gx - x0, fz = gz - z0;
 	const float *g = sea_sand.ptr();
-	// Catmull-Rom over the 4x4 cells round the point: bilinear drew each cell as flat facets (a dune's crest a
-	// polyline of 4 m straight ridges); the cubic keeps the cells' values, so the brink stays at its height, and
-	// runs smooth between them. Clamped at 0 against the small overshoot beside a slip face's foot.
 	auto w4 = [](real_t t, real_t *w) {
 		const real_t t2 = t * t, t3 = t2 * t;
 		w[0] = 0.5 * (-t3 + 2.0 * t2 - t);
@@ -3449,6 +3441,38 @@ float TerrainGenerator3D::_sea_sample(real_t p_x, real_t p_z) const {
 			row += wx[i] * real_t(g[zz + CLAMP(x0 - 1 + i, 0, sea_nx - 1)]);
 		}
 		v += wz[j] * row;
+	}
+	return v;
+}
+
+float TerrainGenerator3D::_sea_sample(real_t p_x, real_t p_z) const {
+	if (sea_nx < 2 || sea_nz < 2 || sea_sand.size() != uint32_t(sea_nx * sea_nz)) {
+		return 0.0f;
+	}
+	const real_t gx = (p_x - sea_origin.x) / sea_cell;
+	const real_t gz = (p_z - sea_origin.y) / sea_cell;
+	if (gx < 0.0 || gz < 0.0 || gx > real_t(sea_nx - 1) || gz > real_t(sea_nz - 1)) {
+		return 0.0f;
+	}
+	real_t v = _sea_cubic(gx, gz);
+	// The brink: a transverse dune's crest is a sharp break between the long stoss and the slip face, narrower than a
+	// cell, which any interpolation of the cells rounds into a dome. Along the wind, where the sand rises into a span
+	// and drops steeply out of it (past about 20 degrees), the surface there is the lower of the stoss line carried on
+	// and the slip face carried back: they meet in a sharp crest inside the span (a crest-line reconstruction, as
+	// ENO schemes keep shocks sharp by extrapolating each side instead of interpolating across).
+	if (sea_brink_dir != Vector2()) {
+		const real_t ux = sea_brink_dir.x, uz = sea_brink_dir.y;
+		const real_t t = gx * ux + gz * uz;
+		const real_t f = t - Math::floor(t);
+		real_t hk[4];
+		for (int k = 0; k < 4; k++) {
+			const real_t d = real_t(k - 1) - f;
+			hk[k] = _sea_cubic(gx + ux * d, gz + uz * d);
+		}
+		const real_t rise = hk[1] - hk[0], drop = hk[2] - hk[3];
+		if (rise > 0.0 && drop > 0.35 * sea_cell && drop > rise) {
+			v = MAX(v, MIN(hk[1] + rise * f, hk[2] + drop * (1.0 - f)));
+		}
 	}
 	return float(MAX(v, real_t(0.0)));
 }
@@ -3517,6 +3541,7 @@ void TerrainGenerator3D::_build_sand_sea() {
 		z ^= z >> 31;
 		return double(z >> 11) * (1.0 / 9007199254740992.0);
 	};
+	sea_brink_dir = (sand_sea_kind == SAND_SEA_BARCHAN || sand_sea_kind == SAND_SEA_TRANSVERSE) ? Vector2(Math::cos(turn), Math::sin(turn)) : Vector2();
 	switch (sand_sea_kind) {
 		case SAND_SEA_BARCHAN:
 			sea.winds = { wind(0.0, 3.0, 1.0) };
@@ -3625,6 +3650,36 @@ void TerrainGenerator3D::_build_sand_sea() {
 			const float v = float(acc / 16.0 * sc * keep);
 			sea_sand[z * w + x] = v;
 			mx = MAX(mx, double(v));
+		}
+	}
+	// The stoss and the interdune flats smoothed further (four more passes): the slabs leave lumps a few cells
+	// across there that read as noise mounds from afar, while a real stoss is smooth under its ripples. Not where
+	// the sand stands steeper than about 17 degrees to any neighbour (slip faces, brinks and their foot), so the
+	// crests stay sharp.
+	{
+		LocalVector<float> tmp;
+		tmp.resize(w * h);
+		const float lim = float(0.3 * sc), full = float(0.2 * sc);
+		for (int pass = 0; pass < 4; pass++) {
+			for (int z = 0; z < h; z++) {
+				for (int x = 0; x < w; x++) {
+					const int i = z * w + x;
+					const float c = sea_sand[i];
+					float acc = 0.0f, steep = 0.0f;
+					for (int dz = -1; dz <= 1; dz++) {
+						for (int dx = -1; dx <= 1; dx++) {
+							const float v = sea_sand[CLAMP(z + dz, 0, h - 1) * w + CLAMP(x + dx, 0, w - 1)];
+							acc += float((2 - dz * dz) * (2 - dx * dx)) * v;
+							steep = MAX(steep, Math::abs(v - c));
+						}
+					}
+					const float k = CLAMP((lim - steep) / (lim - full), 0.0f, 1.0f);
+					tmp[i] = Math::lerp(c, acc / 16.0f, k);
+				}
+			}
+			for (int i = 0; i < w * h; i++) {
+				sea_sand[i] = tmp[i];
+			}
 		}
 	}
 	sea_nx = w;

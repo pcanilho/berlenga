@@ -1840,6 +1840,8 @@ func _weather_settings() -> void:
 	weather.haze_visibility = float(args.get("haze-visibility", "40"))
 	if args.has("cloud-cover"):
 		weather.cloud_cover = float(args["cloud-cover"])
+		if weather.cloud_cover <= 0.0:
+			weather.cloud_variation = 0.0 # a clear sky: the regional variation would still raise clouds out of 0 cover
 	weather.snap_to_settings()
 	if storm:
 		weather.cloud_thickness = 2500.0 # a deep storm cell: about 1.6 flashes a minute

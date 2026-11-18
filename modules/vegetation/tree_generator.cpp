@@ -4096,7 +4096,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
 		{ 9, 12, 0.2f, 0.08f, 0.003f, 0.3f, 0.14f }, // Cork (1.2 m tile): long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
-		{ 4, 3, 0.22f, 0.06f, 0.003f, 0.3f, 0.12f }, // Pinaster (0.9 m tile): thick plates a hand or two across, deep furrows (5ac).
+		{ 4, 3, 0.36f, 0.085f, 0.003f, 0.3f, 0.12f }, // Pinaster (0.9 m tile): thick plates a hand or two across, deep furrows (5ac).
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -4223,7 +4223,9 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// ledge (a sawtooth across the stem, about 1.5 cm a layer, broken into lengths).
 					const float layer = v * 80.0f + 1.5f * bark_fbm(u, v, 12, 6, 2, salt + 99u);
 					const float ledge = (layer - Math::floor(layer)) * Math::smoothstep(-0.1f, 0.2f, bark_fbm(u, v, 30, 16, 2, salt + 101u));
-					const float wall = 1.0f - 0.5f * Math::smoothstep(0.35f, 0.9f, x);
+					// The layer lines keep to the walls; on the ridge faces they lined up like rows of
+					// printed text (docs, 18 Nov), so the faces get the post pass's irregular pits.
+					const float wall = 1.0f - 0.85f * Math::smoothstep(0.35f, 0.9f, x);
 					plate = 1.0f - depth / L.depth + 0.06f * lumps - (0.2f * lam + 0.1f * ledge) * wall;
 					open = cork_open;
 				} else if (p_kind == BARK_FURROWED) {
@@ -4251,7 +4253,22 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					const float r1 = bark_fbm(u, v, 16, 9, 3, salt + 57u);
 					const float r2 = 0.5f - Math::abs(bark_fbm(u, v, 34, 20, 2, salt + 59u));
 					const float grit = bark_fbm(u, v, 70, 50, 2, salt + 111u);
-					plate = Math::smoothstep(0.0f, 0.3f, open) * (0.66f + 0.28f * r1 + 0.16f * r2 + 0.08f * grit);
+					// Round 8 (docs, 18 Nov: narrow slits with a sharp lip; large smooth slabs):
+					// furrows are wide V valleys taking about a third of the surface (twice the crack
+					// width, a V profile, not a cliff), and each plate breaks into layered scales a few
+					// centimetres across that overlap downward, standing at their own heights with
+					// soft-edged steps between (shingles, as the scaly family; a few walls merged so
+					// the scales are irregular).
+					const float valley = Math::pow(CLAMP(open, 0.0f, 1.0f), 0.7f);
+					const float fu = u + 0.025f * bark_fbm(u, v, 8, 8, 2, salt + 103u);
+					const BarkCell f = bark_voronoi(fu - Math::floor(fu), v, 12, 10, salt + 105u, 0.3f, 0.0f, salt + 113u);
+					const float below = v * 10.0f - f.site.y; // + toward the scale's lower edge.
+					const float lift = CLAMP(0.5f + 0.9f * below, 0.0f, 1.0f);
+					const float own = bark_hash(int(f.id), 3, salt + 107u);
+					const float step_soft = Math::smoothstep(0.0f, 0.12f, f.edge);
+					const float scales = (0.55f * lift + 0.45f * own) * (0.6f + 0.4f * step_soft);
+					const float on_plate = Math::smoothstep(0.55f, 0.85f, open);
+					plate = valley * (0.62f + 0.2f * r1 + 0.08f * r2 + 0.06f * grit) + 0.2f * scales * on_plate;
 				} else if (p_kind == BARK_PLATED || p_kind == BARK_PINEA) {
 					// Flat plate tops, steep walls, and each plate built of thin flaking layers.
 					const float layers = Math::floor((bark_fbm(u, v, 12, 6, 3, salt + 57u) + 0.5f) * 4.0f) / 4.0f;
@@ -4279,7 +4296,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				if (p_kind == BARK_PINASTER) {
 					// Dark plates and dark walls; only the furrow's floor, where the outer bark has
 					// split to the fresh layers, a dull red-brown (bright, they read as orange piping).
-					a = Color(1.5f, 0.98f, 0.76f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.08f, 0.3f, open)) * shade;
+					a = Color(1.5f, 0.98f, 0.76f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.04f, 0.22f, open)) * shade;
 				}
 				if (p_kind == BARK_PINEA) {
 					// Stone pine (Gymnosperm Database: "red-brown to orange with blackish edges to
@@ -4547,7 +4564,8 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				// across, open pores, and weathering from pale grey to ochre. Without them the ridges
 				// read as melted wax (docs, 18 Nov).
 				const float crumb = bark_fbm(u, v, 200, 160, 2, salt + 173u);
-				const float pore = Math::smoothstep(0.08f, 0.16f, bark_fbm(u, v, 320, 240, 1, salt + 177u));
+				// Pits of every size, a few millimetres to a centimetre, scattered without rows.
+				const float pore = Math::smoothstep(0.08f, 0.16f, bark_fbm(u, v, 320, 240, 1, salt + 177u)) + 0.7f * Math::smoothstep(0.14f, 0.24f, bark_fbm(u + 0.01f * bark_fbm(u, v, 40, 40, 1, salt + 179u), v, 150, 130, 2, salt + 181u));
 				hw[k] += 0.004f * bark_fbm(u, v, 72, 36, 3, salt + 171u) + 0.003f * crumb - 0.004f * pore;
 				const float ochre = Math::smoothstep(-0.1f, 0.15f, bark_fbm(u, v, 6, 4, 3, salt + 179u));
 				// The ochre weathering is faint: strong, it read as pale and brown blotches across

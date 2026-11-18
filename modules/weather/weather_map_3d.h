@@ -593,6 +593,7 @@ public:
 	float get_season_anomaly() const { return season_anomaly; }
 	void set_season_anomaly(float p_kelvin);
 	int get_day_of_year() const;
+	WeatherSeason::Climate get_season_climate() const { return _season_climate(); } // for C++ users (the ground's regrowth)
 	Dictionary get_season();
 	Dictionary get_season_at_height(float p_height) const;
 	// Bakes the cloud shadow now and waits for it (normally it runs in the background).

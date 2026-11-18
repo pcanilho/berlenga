@@ -1079,7 +1079,7 @@ real_t cave_profile(CaveNetwork3D::PassageType p_type, real_t u, real_t v, real_
 // little under the trench's, meandering off the passage line; the same numbers carve it and lay the water in it.
 // Cut no deeper than the trench under its fill (the section's floor is 0.15 r to 0.2 r below the fill).
 inline real_t cave_stream_cut(real_t p_r) {
-	return 0.1 * p_r; // the washed bed below the dry fill
+	return 0.15 * p_r; // the washed bed below the dry fill: the water (cave_stream_depth) stands well under the banks
 }
 inline real_t cave_stream_depth(real_t p_r) {
 	return MAX(real_t(0.06), 0.08 * p_r); // of water at the middle
@@ -1135,6 +1135,9 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p) const {
 			const real_t ch = cave_stream_half_width(sg->type, r);
 			const real_t x = (q.dot(u_axis) - cave_stream_u(sg->a + t * lc, uint32_t(seed), ch)) / MAX(ch, real_t(0.05));
 			const real_t w = 1.0 - Math::smoothstep(real_t(0.7), real_t(1.3), Math::abs(x));
+			// The banks beside the channel never dip under the fill's level (a dip there let the water stand above
+			// its banks as a slab with straight sides); the ripples and mud banks only rise.
+			floor_v = Math::lerp(MAX(floor_v, fill), floor_v, Math::smoothstep(real_t(1.3), real_t(2.5), Math::abs(x)));
 			floor_v = Math::lerp(floor_v, fill - cave_stream_cut(r) + 0.03 * (cave_fbm(p_p / 0.4f, uint32_t(seed) + 107u, 2) - 0.5f), w);
 		}
 		// Along a stream the fill meets the walls in a bank, not a crease: sediment and spalled chips heap against
@@ -2296,6 +2299,7 @@ uniform vec3 rock_color = vec3(0.30, 0.29, 0.26);
 uniform vec3 sediment_color = vec3(0.13, 0.10, 0.07);
 uniform vec3 sand_color = vec3(0.4, 0.3, 0.17);
 uniform float sea_level = -1e9;
+uniform int debug_view = 0; // CAVE_WALL_DEBUG: 1 streak/wet/floor, 2 shells/crack/foot
 uniform float scallops_amount = 1.0;
 varying vec3 w_pos;
 varying vec3 w_nrm;
@@ -2316,7 +2320,7 @@ void vertex() {
 // Returned as groove depth 0..1; the shading comes from the bump (the groove's sides catch and lose the light), not
 // from painting a line.
 float groove(float a, float w) { return smoothstep(1.0 - w, 1.0, a); }
-float joints_w(vec3 p, float p_wide) {
+float joints_w(vec3 p, vec3 p_n, float p_wide) {
 	// Real joints wander and die out: the planes are warped by up to a third of their spacing, and each set opens
 	// only along a minority of its length (dissolution follows the few that carried water).
 	// A crack is never a ruled line: it kinks at the centimetre (the grains it breaks round) as well as the metre, and
@@ -2329,9 +2333,14 @@ float joints_w(vec3 p, float p_wide) {
 	float ma = smoothstep(0.45, 0.55, fbm(p * 0.35 + 3.0)), mb = smoothstep(0.48, 0.58, fbm(p * 0.3 + 9.0)), mc = smoothstep(0.45, 0.55, fbm(p * 0.25 + 15.0));
 	// Each length dies out and starts again (en echelon), a few decimetres to metres long.
 	float brk = smoothstep(0.3, 0.42, vn(p * 1.6 + 23.0));
-	return brk * max(max(ma * groove(a, wv), mb * groove(b, wv * 0.8)), mc * groove(c, wv * 1.5));
+	// A plane's trace on the wall is a line only where the wall cuts across it; where the wall runs nearly along the
+	// plane the trace smears into blots metres wide, so each set fades out there (the joint is then the wall itself).
+	float fa = 1.0 - smoothstep(0.7, 0.9, abs(dot(p_n, vec3(0.94, 0.0, 0.34))));
+	float fb = 1.0 - smoothstep(0.7, 0.9, abs(dot(p_n, vec3(-0.17, 0.0, 0.98))));
+	float fc = 1.0 - smoothstep(0.7, 0.9, abs(p_n.y));
+	return brk * max(max(fa * ma * groove(a, wv), fb * mb * groove(b, wv * 0.8)), fc * mc * groove(c, wv * 1.5));
 }
-float joints(vec3 p) { return joints_w(p, 1.0); }
+float joints(vec3 p, vec3 p_n) { return joints_w(p, p_n, 1.0); }
 // Worley distances (nearest, second) and the nearest cell's id, for scallops and the stream's clasts.
 vec3 wor(vec3 p, out vec3 r_id) {
 	vec3 i = floor(p), f = fract(p);
@@ -2381,19 +2390,19 @@ float chips(vec3 p, float p_size, out vec3 r_id) {
 	float r = mix(0.25, 0.45, h3(r_id + 6.0));
 	return keep * smoothstep(0.0, 0.08, w.y - w.x) * (1.0 - smoothstep(r - 0.05, r, w.x)) * (0.6 + 0.4 * h3(r_id + 4.0));
 }
-float relief(vec3 p, float p_joint, float p_near, float p_wall, float p_bed) {
+float relief(vec3 p, vec3 p_n, float p_joint, float p_near, float p_wall, float p_bed) {
 	float h = 0.6 * fbm(p * 3.3) + 0.25 * fbm(p * 12.0 + 5.0) + 0.08 * vn(p * 48.0);
 	h += p_near * (0.2 * vn(p * 26.0 + 2.0) + 0.04 * vn(p * 90.0 + 9.0));
 	if (p_near > 0.01) {
 		// Close up, solution pits and vugs a few millimetres across, sharp-edged, in the micrite.
 		vec3 pid;
-		vec3 pw = wor(p * 70.0, pid);
-		float pr = mix(0.1, 0.3, h3(pid + 5.0));
-		h -= p_near * 0.12 * step(0.85, h3(pid + 2.0)) * (1.0 - smoothstep(pr - 0.08, pr, pw.x));
+		vec3 pw = wor(p * 30.0, pid);
+		float pr = mix(0.08, 0.22, h3(pid + 5.0));
+		h -= p_near * 0.12 * step(0.8, h3(pid + 2.0)) * (1.0 - smoothstep(pr - 0.06, pr, pw.x));
 	}
 	float bed = fract(p.y / 1.1 + 0.4 * fbm(p * 0.6));
 	h += 0.3 * smoothstep(0.0, 0.08, bed) * (1.0 - bed);
-	h -= 0.3 * p_joint * joints(p);
+	h -= 0.3 * p_joint * joints(p, p_n);
 	if (p_wall > 0.01) {
 		h += 0.45 * p_wall * scallop(p);
 	}
@@ -2408,9 +2417,12 @@ void fragment() {
 	float fine = fbm(w_pos * 3.1);
 	// Limestone grain: a micritic matrix speckled with paler shell fragments and darker grains (2 cm to 1 mm).
 	float grain = vn(w_pos * 55.0) * 0.6 + vn(w_pos * 160.0) * 0.4;
-	float shells = smoothstep(0.78, 0.86, vn(w_pos * 22.0 + 7.0));
+	// Shell fragments a few millimetres long: at 4 cm they read as pale flakes painted on the wall, so they are kept
+	// small and faint, and fade to their mean tone once a pixel covers several.
+	float shell_px = 1.0 - smoothstep(0.004, 0.012, length(VERTEX) * 0.0009);
+	float shells = smoothstep(0.8, 0.88, vn(w_pos * 90.0 + 7.0)) * shell_px;
 	vec3 col = rock_color * (0.7 + 0.6 * m) * (0.85 + 0.3 * fine) * (0.82 + 0.36 * grain);
-	col = mix(col, col * 1.35 + 0.03, shells * 0.6);
+	col = mix(col, col * 1.2 + 0.02, shells * 0.5 + 0.03 * (1.0 - shell_px));
 	// Beds: darker bands every half metre or so.
 	col *= 0.85 + 0.15 * smoothstep(0.3, 0.7, sin(w_pos.y * 11.0 + 3.0 * m) * 0.5 + 0.5);
 	// Limestone is rarely one grey: beds differ in purity (paler, creamier micrite against darker, muddier beds), iron
@@ -2419,19 +2431,28 @@ void fragment() {
 	col *= mix(vec3(0.82, 0.8, 0.78), vec3(1.18, 1.12, 1.0), smoothstep(0.3, 0.7, purity));
 	float iron = smoothstep(0.6, 0.78, fbm(vec3(w_pos.x * 1.1, w_pos.y * 0.6, w_pos.z * 1.1) + 77.0));
 	col = mix(col, col * vec3(1.25, 0.95, 0.65), 0.55 * iron);
+	// Sediment rests on floors under about 30 degrees; steeper ramps (a passage climbing to the next level) are rock
+	// with a thin washed silt drape, not a pale sand slope (which read as a decal stuck on the far wall).
 	float floor_w = smoothstep(0.55, 0.85, w_nrm.y);
+	float fill_w = smoothstep(0.8, 0.93, w_nrm.y);
 	// Joints stop at the floor: its sediment fills over them.
 	float joint_w = 1.0 - smoothstep(0.3, 0.6, w_nrm.y);
-	float crack = joints(w_pos) * joint_w;
+	float crack = joints(w_pos, w_nrm) * joint_w;
 	// The crack's mouth is a shadowed slot with silt and dark manganese in it: dark, recessed, never a bright line.
-	col *= mix(1.0, 0.22, crack);
+	col *= mix(1.0, 0.4, crack);
 	// Water seeping out of the crack stains a hand's width round it darker (the slot reads as a recess, not a line).
-	col *= 1.0 - 0.3 * joints_w(w_pos, 4.0) * joint_w;
+	col *= 1.0 - 0.3 * joints_w(w_pos, w_nrm, 4.0) * joint_w;
 	// The floor's fill: brown cave earth, or beach sand where the sea carries it in (a few metres over the sea, the
 	// same sand as the beach outside, so a sea cave's floor runs on from the shore with no seam).
 	float sandy = (1.0 - smoothstep(3.5, 5.0, w_pos.y - sea_level)) * smoothstep(0.82, 0.95, w_nrm.y);
 	vec3 fill = mix(sediment_color, sand_color, sandy) * (0.8 + 0.4 * fine) * (0.85 + 0.3 * grain);
-	col = mix(col, fill, floor_w);
+	// Up on the walls a ledge holds only a thin drape of flood silt, darker and patchy (the pale fill drawn there read
+	// as a decal); the full fill lies within the wall foot's reach of the floor (COLOR.b).
+	float on_floor = smoothstep(0.0, 0.6, COLOR.b);
+	float drape = floor_w * (1.0 - on_floor) * smoothstep(0.35, 0.65, fbm(w_pos * 2.1 + 51.0));
+	col = mix(col, fill, fill_w * on_floor);
+	drape = max(drape, (floor_w - fill_w) * on_floor * smoothstep(0.35, 0.65, fbm(w_pos * 2.1 + 51.0)));
+	col = mix(col, col * 0.75 + sediment_color * 0.12, 0.6 * drape);
 	// The bank where the fill meets the wall (the field's smooth fillet, normals between steep and level): spalls
 	// fallen from the wall, paler and sharper than the fill, so the floor runs up into the rock through debris.
 	float bank = smoothstep(0.15, 0.4, w_nrm.y) * (1.0 - smoothstep(0.8, 0.93, w_nrm.y)) * clamp(COLOR.b, 0.0, 1.0);
@@ -2443,14 +2464,14 @@ void fragment() {
 		col = mix(col, mix(fill * 0.95, chip_col, smoothstep(0.05, 0.3, ch)), bank * 0.6);
 	}
 	// Close up, the micrite's own crisp speckle (a few millimetres), so a near wall never reads as smeared.
-	float near_c = 1.0 - smoothstep(1.5, 4.0, length(VERTEX));
-	col *= mix(1.0, (0.8 + 0.4 * vn(w_pos * 420.0 + 3.0)) * (0.9 + 0.2 * vn(w_pos * 130.0 + 8.0)), near_c * (1.0 - floor_w));
+	float near_c = 1.0 - smoothstep(2.5, 6.0, length(VERTEX));
+	col *= mix(1.0, (0.8 + 0.4 * vn(w_pos * 420.0 + 3.0)) * (0.75 + 0.5 * vn(w_pos * 130.0 + 8.0)) * (0.8 + 0.4 * vn(w_pos * 38.0 + 2.0)), near_c * (1.0 - floor_w));
 	// Its pits dark (the relief's own, at 70 per metre).
 	if (near_c > 0.01) {
 		vec3 pid;
-		vec3 pw = wor(w_pos * 70.0, pid);
-		float pr = mix(0.1, 0.3, h3(pid + 5.0));
-		col *= 1.0 - near_c * (1.0 - floor_w) * 0.3 * step(0.85, h3(pid + 2.0)) * (1.0 - smoothstep(pr - 0.08, pr, pw.x));
+		vec3 pw = wor(w_pos * 30.0, pid);
+		float pr = mix(0.08, 0.22, h3(pid + 5.0));
+		col *= 1.0 - near_c * (1.0 - floor_w) * 0.45 * step(0.8, h3(pid + 2.0)) * (1.0 - smoothstep(pr - 0.06, pr, pw.x));
 	}
 	// Flowstone streaks: water runs down the walls in sheets, leaving smooth, paler calcite in vertical streaks
 	// (noise stretched along the fall line).
@@ -2462,7 +2483,7 @@ void fragment() {
 	col = mix(col, vec3(0.46, 0.38, 0.28) * (0.8 + 0.35 * fine), flow * 0.8);
 	streak = max(streak, flow);
 	// Wet only where water stands or runs: puddles in floor hollows, the streaks; the rest is damp, matte rock.
-	float puddle = floor_w * smoothstep(0.58, 0.68, fbm(w_pos * 0.7 + 31.0));
+	float puddle = floor_w * on_floor * smoothstep(0.58, 0.68, fbm(w_pos * 0.7 + 31.0)); // not on high ledges
 	// A stream's bed (the mesher's green): washed gravel and cobbles, the fines carried off, so darker and coarser
 	// than the dry fill; wet over the bed and a margin a little wider than the water.
 	float bed = clamp(COLOR.g, 0.0, 1.0);
@@ -2496,8 +2517,8 @@ void fragment() {
 	float e = 0.005;
 	float near = 1.0 - smoothstep(3.0, 8.0, length(VERTEX));
 	float sc_w = wall * scallops_amount;
-	float h0 = relief(w_pos, joint_w, near, sc_w, bed_floor);
-	vec3 g = vec3(relief(w_pos + vec3(e, 0, 0), joint_w, near, sc_w, bed_floor) - h0, relief(w_pos + vec3(0, e, 0), joint_w, near, sc_w, bed_floor) - h0, relief(w_pos + vec3(0, 0, e), joint_w, near, sc_w, bed_floor) - h0) / e;
+	float h0 = relief(w_pos, w_nrm, joint_w, near, sc_w, bed_floor);
+	vec3 g = vec3(relief(w_pos + vec3(e, 0, 0), w_nrm, joint_w, near, sc_w, bed_floor) - h0, relief(w_pos + vec3(0, e, 0), w_nrm, joint_w, near, sc_w, bed_floor) - h0, relief(w_pos + vec3(0, 0, e), w_nrm, joint_w, near, sc_w, bed_floor) - h0) / e;
 	vec3 n = normalize(w_nrm);
 	g -= n * dot(g, n);
 	// Sand and mud are smoother than the rock; flowstone and puddles smoother still.
@@ -2509,14 +2530,31 @@ void fragment() {
 	tilt *= min(1.0, 0.45 / max(length(tilt), 1e-5));
 	vec3 nb = normalize(n - tilt);
 	NORMAL = normalize((VIEW_MATRIX * vec4(nb, 0.0)).xyz);
+	// A bumped normal turned away from the eye (a wall seen at grazing angles) shades black in flecks: bend it back
+	// until it faces the eye a little (the usual view-facing clamp of normal-mapped shading).
+	vec3 v_eye = normalize(-VERTEX);
+	float nv = dot(NORMAL, v_eye);
+	if (nv < 0.08) {
+		NORMAL = normalize(NORMAL + v_eye * (0.08 - nv));
+	}
 	// Cavity occlusion from the same relief: its pits and grooves darker, so the near wall reads as rough stone.
 	float cav = smoothstep(0.25, 0.75, h0);
 	AO = (1.0 - 0.5 * crack) * mix(mix(0.7, 1.0, cav), 1.0, 0.6 * max(bed_floor, bank));
+	if (debug_view == 1) {
+		ALBEDO = vec3(streak, wet, floor_w);
+		ROUGHNESS = 1.0;
+		SPECULAR = 0.0;
+	} else if (debug_view == 2) {
+		ALBEDO = vec3(shells, crack, COLOR.b);
+		ROUGHNESS = 1.0;
+		SPECULAR = 0.0;
+	}
 }
 )");
 	default_wall.instantiate();
 	default_wall->set_shader(sh);
 	default_wall->set_shader_parameter("scallops_amount", float(scallops));
+	default_wall->set_shader_parameter("debug_view", OS::get_singleton()->get_environment("CAVE_WALL_DEBUG").to_int());
 	// The landscape's own rock colour where it has one (TerrainMaterial3D tm_rock_color), so the walls carry on the
 	// cliff's rock into the cave.
 	if (Ref<ShaderMaterial> gm = ground_material; gm.is_valid()) {
@@ -3085,7 +3123,7 @@ void CaveNetwork3D::_update_stream_nodes() {
 					const real_t ch = cave_stream_half_width(sg.type, r);
 					pts.push_back(line + u_axis * cave_stream_u(line, uint32_t(seed), ch) + v_axis * (floor_v - cave_stream_cut(r) + cave_stream_depth(r)));
 					// Wide enough that its edges run under the banks: the washed floor rises to the fill between 0.7 and
-					// 1.3 half-widths and meets the water's level at about 1.15, so a narrower ribbon ended in the air
+					// 1.3 half-widths and meets the water's level at about 1.0 (cut 0.15 r, depth 0.08 r), so a narrower ribbon ended in the air
 					// over the bed as a cut edge.
 					wid.push_back(float(2.0 * ch * 1.3));
 					dep.push_back(float(cave_stream_depth(r)));
