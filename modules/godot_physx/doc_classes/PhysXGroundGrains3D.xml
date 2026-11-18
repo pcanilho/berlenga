@@ -52,6 +52,12 @@
 				Of [method get_deposited_volume], the volume (m³) of mud clods that stuck to vehicles' bodies instead of landing (see [method PhysXVehicle3D.add_mud_splat]).
 			</description>
 		</method>
+		<method name="get_water_grains" qualifiers="const">
+			<return type="PhysXGroundGrains3D" />
+			<description>
+				The internal node of MPM liquid this node throws water sprays with, or [code]null[/code] (see [member water_spray]).
+			</description>
+		</method>
 		<method name="kick">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -84,6 +90,9 @@
 		</member>
 		<member name="tread_depth" type="float" setter="set_tread_depth" getter="get_tread_depth" default="0.008">
 			The sand a slipping tread throws, m per metre of slip (to 10 m/s of slip), dug over the sand the tread reaches, its loose rim first. [code]0[/code] throws none.
+		</member>
+		<member name="water_spray" type="bool" setter="set_water_spray" getter="is_water_spray" default="true">
+			Sprays carrying standing water (tyres through puddles past their wave speed, from [code]PhysXVehicle3D[/code]) go to an internal node of MPM liquid, drawn as water, which takes that water from the ground's standing water where it is thrown and returns it where it lands ([method GroundSurface3D.add_water]). See [method get_water_grains].
 		</member>
 	</members>
 </class>

@@ -3540,7 +3540,7 @@ void TerrainGenerator3D::_build_sand_sea() {
 			WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
 		}
 	}
-	// The result: one 1-2-1 smoothing pass (the 10 cm slabs leave a speckle a cell wide), in metres, thinned out at the
+	// The result: one 1-2-1 smoothing pass (the slabs leave a speckle a cell wide), in metres, thinned out at the
 	// edge, on steep ground and on water.
 	sea_sand.resize(w * h);
 	double mx = 0.0;

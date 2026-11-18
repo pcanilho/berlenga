@@ -181,6 +181,8 @@ public:
 		float stickiness = 0.0f;
 		// Clay flung off a tyre's tread (mud stage 4), m3: thrown as it is, not dug from the field.
 		float volume = 0.0f;
+		// Standing water a tyre throws (mud stage 4c), m3: taken from the field over the reach disc when thrown.
+		float water = 0.0f;
 	};
 	// Fines lifted from dry, bare sand by a tyre (sand drifting, Gillies et al. 2005): for a dust node.
 	struct Dust {
@@ -347,6 +349,20 @@ private:
 		uint64_t frame = 0;
 	};
 	mutable LocalVector<Wader> waders; // add_wader()'s, this physics frame's and the last
+	struct WaterDisc {
+		Vector3 position;
+		float radius = 0.0f;
+		double volume = 0.0; // m3, < 0 taken
+	};
+	LocalVector<WaterDisc> water_discs; // add_water()'s, applied by the next water step
+	double water_added = 0.0; // m3, the discs applied so far (taken < 0)
+	// What takes could not find (the GPU's ledger, read back), and how much of it later water added has paid.
+	uint32_t water_owed_seen[2] = { 0, 0 };
+	double water_owed = 0.0;
+	void _water_owed_update();
+	static constexpr int WATER_DISCS = 16;
+	// Texel centres of p_field within p_radius of p_position (the disc's area in that field's texels).
+	static int _disc_texels(const GroundDeformField &p_field, const Vector3 &p_position, float p_radius);
 	LocalVector<float> water_table; // m from the surface down to the water table a sea or lake left (runoff_channels)
 	double water_accum = 0.0;
 	float water_usec = 0.0f;
@@ -539,6 +555,19 @@ public:
 	// ahead of it (a bow wave) and draw it in behind. p_id: the tyre's (a later call with the same replaces it);
 	// p_axle: the wheel's centre; p_velocity: the wheel's.
 	void add_wader(int64_t p_id, const Vector3 &p_axle, float p_radius, float p_half_width, const Vector3 &p_velocity);
+	// Adds p_volume m3 of standing water spread over a disc (taken where negative, never below dry): spray landing
+	// and water thrown up (mud stage 4c). Applied by the next water step on the GPU.
+	void add_water(const Vector3 &p_position, float p_radius, float p_volume);
+	// The standing water over a disc, as last read back (m3): what add_water can take there.
+	float get_standing_water_volume(const Vector3 &p_position, float p_radius) const;
+	float get_water_added() const { return (float)water_added; }
+	// Water takes asked for but did not find, not yet paid back by water added (m3).
+	// The water add_water's discs put into the main field and took out of it, as the GPU last read back (m3).
+	Vector2 get_water_moved() const { return gpu_host.gpu.is_valid() ? Vector2(gpu_host.gpu->get_water_moved_mm3(0) * 1e-9, gpu_host.gpu->get_water_moved_mm3(1) * 1e-9) : Vector2(); }
+	float get_water_owed() {
+		_water_owed_update();
+		return (float)water_owed;
+	}
 	// Rigid bodies in deform_groups moving through soft ground feel its resistance (on).
 	void set_ploughing(bool p_enabled) { ploughing = p_enabled; }
 	bool is_ploughing() const { return ploughing; }

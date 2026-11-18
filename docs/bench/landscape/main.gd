@@ -2059,6 +2059,9 @@ func _build_prints() -> void:
 			var sand := 1.0 - smoothstep(beach * 0.6, beach * 1.4, h - gen.sea_level)
 			if h < gen.sea_level - 1.0:
 				sand = 0.0
+			# And the desert's sand sea (its ripples and prints), where some 20 cm of sand lies.
+			if gen.sand_sea_rect.has_area():
+				sand = maxf(sand, clampf(gen.get_sand_sea_height(Vector3(x, 0, z)) / 0.2, 0.0, 1.0))
 			img.set_pixel(i, j, Color(sand, 0, 0))
 	prints.type_map = img
 	prints.type_map_rect = Rect2(-2048, -2048, 4096, 4096)

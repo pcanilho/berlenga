@@ -2668,6 +2668,22 @@
    "topic": "Growth"
   },
   {
+   "name": "Mediterranean trees",
+   "settings": [
+    "PRESET_HOLM_OAK",
+    "PRESET_WILD_OLIVE",
+    "PRESET_MARITIME_PINE",
+    "PRESET_CAROB",
+    "PRESET_CORK_OAK",
+    "cork_stripped_years"
+   ],
+   "note": "",
+   "what": "holm oak and carob split low into dense domes, wild olive grows crooked stems from one stool, maritime pine runs onto a long clear bole, and cork oak carries thick cork plates or a stripped trunk that turns from orange to red-brown and darkens as new cork grows back.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
    "name": "Wind, bank and rock trees",
    "settings": [
     "wind_exposure",
