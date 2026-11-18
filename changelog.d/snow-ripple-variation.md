@@ -1,0 +1,1 @@
+- Snow: the surface ripples no longer show a grid or repeat: turned octaves, a patch-strength field at 1.7 m and a sine-free hash that holds far from the origin.
