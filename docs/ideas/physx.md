@@ -994,6 +994,53 @@ glowing streaks along their flight. Test (tall grass upwind, short grass
 downwind past a 5 m gap, wind 8 m/s): brands land 15 to 40 m downwind and
 light 12 spot fires in 10 s at 4% moisture, 3 at 10%, none above 12%.
 
+### Rain soaks cloth (picked 18 Nov, third of three)
+
+What happens to fabric in rain, and the numbers:
+- Uptake: a woven fabric holds about its own weight of water once soaked
+  (cotton about 1 kg/kg after dripping, wool and towelling more, polyester
+  about 0.3); past that it drips. Rain is mm/h = kg/m2/h on the ground; a
+  surface catches it by how it faces the drops' slant in the wind (drops of
+  2 mm fall at about 6.5 m/s, Gunn and Kinzer 1949), so a sheet facing the
+  wind wets almost as fast as a flat one and one edge on only through gusts.
+- Drying: each face evaporates as open water does while the weave is wet
+  (the constant rate period), Penman's (1948) wind function 0.26 (1 + 0.54
+  U) mm a day per hPa of vapour pressure deficit, then slower as the last
+  water is held in the fibres (the falling rate period).
+- Weight and drape: water doubles a cotton sheet's mass and plasticises
+  the fibres, about halving bending stiffness, so wet cloth hangs straight
+  and flutters less.
+- Cling: a water film between fabric and skin or a surface pulls them
+  together (capillary adhesion) and raises the friction (Gerhardt et al.
+  2008: fabric on skin roughly doubles when wet).
+- Look: water in the pores cuts the light that leaves the weave, a (1 -
+  r) / (1 - a r) with r about 0.6 for water (Lekner and Dorf 1988, "Why some
+  things are darker when wet"), which is what Lagarde's (2013) wet surfaces
+  in games use; dark colours darken most. Only a soaked surface gets a film
+  and a little gloss.
+- Fire: wet fabric holds at 100 C until its water has boiled off (2.6 MJ
+  per kg from 20 C), and thermally thin flame spread goes as one over the
+  heat to bring the fabric ahead to ignition (de Ris 1969).
+How games usually do it: a wetness value that darkens the material and
+dries on a timer; the cloth's motion stays the same.
+
+Status (18 Nov): built on the CPU cloth solver. PhysXCloth3D wetness (0 to
+1 of water_capacity times its density) rises with the weather map's rain
+over it (its rain fraction, the canopy, a roof ray above it) times its
+catch, |n . d| / |d.y| over the cloth's triangles for the wind's slant plus
+gust scatter of 0.3 U + 0.5 m/s, and falls by Penman's evaporation for the
+map's air temperature, humidity and the cloth's wind (both faces, slowed
+below a fifth). Wet: the solver's masses take the water's weight, bending
+compliance follows half the stiffness at soaked, collisions cling (a film
+gap of 1.5 vertex radii times wetness pulls the fabric on and damps it
+peeling off; friction toward 1), the material darkens by Lekner and Dorf,
+and the burn needs the water boiled off before the dose builds; flame
+spread slows by the same heat. Tests (5 mm/h, wind 3 m/s, 15 C, 70%): a
+flat sheet soaks in 2.5 min, a sheet facing the wind in 6, one edge on is
+at 0.7 after 10; it dries at 6.5e-5 kg/m2/s, about 50 min; a soaked sheet
+dropped on a ball stays on it where the dry one slides off; in a tall grass
+fire the dry sheet lights at 2.3 s, the soaked one at 18.7 s.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

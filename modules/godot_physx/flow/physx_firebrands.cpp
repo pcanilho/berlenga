@@ -38,6 +38,7 @@
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/material.h"
+#include "scene/resources/shader.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
 #ifdef MODULE_WEATHER_ENABLED
@@ -243,11 +244,31 @@ void PhysXFirebrands::_draw(Node3D *p_owner, float p_glow_energy) {
 		Ref<BoxMesh> box;
 		box.instantiate();
 		box->set_size(Vector3(1.0f, 1.0f, 1.0f));
-		Ref<StandardMaterial3D> mat;
+		// A brand is millimetres across, far under a pixel beyond a few metres: each streak is widened to about a
+		// pixel and dimmed by as much, so it keeps the light it would cover and neither vanishes nor aliases.
+		Ref<Shader> sh;
+		sh.instantiate();
+		sh->set_code(R"(shader_type spatial;
+render_mode unshaded, fog_disabled, shadows_disabled;
+varying float fb_cover;
+void vertex() {
+	vec3 centre = MODEL_MATRIX[3].xyz;
+	float depth = max(-(VIEW_MATRIX * vec4(centre, 1.0)).z, 0.01);
+	float px = 2.0 * depth / max(abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y, 1e-6);
+	float w = max(length(MODEL_MATRIX[0].xyz), 1e-6);
+	float l = max(length(MODEL_MATRIX[2].xyz), 1e-6);
+	float kw = max(1.2 * px / w, 1.0);
+	float kl = max(1.2 * px / l, 1.0);
+	VERTEX *= vec3(kw, kw, kl);
+	fb_cover = 1.0 / (kw * kl);
+}
+void fragment() {
+	ALBEDO = COLOR.rgb * fb_cover;
+}
+)");
+		Ref<ShaderMaterial> mat;
 		mat.instantiate();
-		mat->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
-		mat->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
-		mat->set_flag(BaseMaterial3D::FLAG_DISABLE_FOG, true);
+		mat->set_shader(sh);
 		box->surface_set_material(0, mat);
 		mm->set_mesh(box);
 		mmi = memnew(MultiMeshInstance3D);
