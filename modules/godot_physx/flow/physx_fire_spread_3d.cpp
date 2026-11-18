@@ -883,7 +883,11 @@ bool PhysXFireSpread3D::_update_moisture(float p_delta) {
 	for (int bz = 0; bz < nz; bz += block) {
 		for (int bx = 0; bx < nx; bx += block) {
 			const int cx = MIN(bx + block / 2, nx - 1), cz = MIN(bz + block / 2, nz - 1);
-			const float rain = MAX(wm->precipitation_at(_cell_world(cx, cz)), 0.0f); // mm/h = kg/m2/h
+			const Vector3 block_at = _cell_world(cx, cz);
+			const float rain = MAX(wm->precipitation_at(block_at), 0.0f); // mm/h = kg/m2/h
+			// Fuel lying on wet ground (the weather's surface film: rain that fell before the grid was there, dew)
+			// holds about as much as the film: soaked ground keeps it past extinction, dewy ground slows the front.
+			const float ground_wet = CLAMP(wm->surface_wetness_at(block_at), 0.0f, 1.0f) * 1.2f * m.moisture_extinction;
 			for (int z = bz; z < MIN(bz + block, nz); z++) {
 				for (int x = bx; x < MIN(bx + block, nx); x++) {
 					const uint32_t i = z * nx + x;
@@ -891,6 +895,7 @@ bool PhysXFireSpread3D::_update_moisture(float p_delta) {
 					if (rain > 0.0f && load[i] > 1.0e-4f) {
 						w = MIN(w + rain / 3600.0f * p_delta * 0.33f / load[i], 2.5f);
 					}
+					w = MAX(w, ground_wet - base_moisture * wet[i]);
 					rain_water[i] = w;
 					const bool burning = (t_ignite[i] >= 0.0f && fuel_left[i] > 0.0f) || (!heavy.is_empty() && _heavy_flaming(i));
 					if (burning && !quenched[i] && _moisture(i) >= m.moisture_extinction) {
@@ -1498,12 +1503,14 @@ void PhysXFireSpread3D::_notification(int p_what) {
 			if (!fires.has(this)) {
 				fires.push_back(this);
 			}
+			WorldContracts::register_fire(this);
 #ifdef MODULE_WEATHER_ENABLED
 			lightning_seen = WeatherLightning3D::get_last_ground_strike_serial(); // strikes from before it entered do not count
 #endif
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			fires.erase(this);
+			WorldContracts::unregister_fire(this);
 		} break;
 		case NOTIFICATION_READY: {
 			// Once per run, unless the project declares them (global_shader_parameter_get_list is editor only).

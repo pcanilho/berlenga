@@ -247,6 +247,38 @@ void WorldWater::_bind_methods() {
 	GDVIRTUAL_BIND(_impulse, "position", "radius", "strength");
 }
 
+// Fire.
+
+float WorldFire::heat_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_heat_at, p_position, r)) {
+		return r;
+	}
+	for (WorldFireProvider *f : providers) {
+		r = MAX(r, f->contract_fire_heat_at(p_position));
+	}
+	return r;
+}
+
+float WorldFire::burnt_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_burnt_at, p_position, r)) {
+		return r;
+	}
+	for (WorldFireProvider *f : providers) {
+		r = MAX(r, f->contract_fire_burnt_at(p_position));
+	}
+	return r;
+}
+
+void WorldFire::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("has_provider"), &WorldFire::has_provider);
+	ClassDB::bind_method(D_METHOD("heat_at", "position"), &WorldFire::heat_at);
+	ClassDB::bind_method(D_METHOD("burnt_at", "position"), &WorldFire::burnt_at);
+	GDVIRTUAL_BIND(_heat_at, "position");
+	GDVIRTUAL_BIND(_burnt_at, "position");
+}
+
 // A script stub standing in as one water producer among the real ones.
 class WorldWaterStubProvider : public WorldWaterProvider {
 public:
@@ -352,6 +384,37 @@ Ref<WorldWater> WorldContracts::get_water() const {
 	return water_override.is_valid() ? water_override : builtin_water;
 }
 
+WorldFire *WorldContracts::fire() {
+	static Ref<WorldFire> fallback;
+	if (singleton == nullptr) {
+		if (fallback.is_null()) {
+			fallback.instantiate();
+		}
+		return fallback.ptr();
+	}
+	return singleton->fire_override.is_valid() ? singleton->fire_override.ptr() : singleton->builtin_fire.ptr();
+}
+
+void WorldContracts::register_fire(WorldFireProvider *p_provider) {
+	if (singleton && p_provider && !singleton->builtin_fire->providers.has(p_provider)) {
+		singleton->builtin_fire->providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_fire(WorldFireProvider *p_provider) {
+	if (singleton) {
+		singleton->builtin_fire->providers.erase(p_provider);
+	}
+}
+
+void WorldContracts::set_fire(const Ref<WorldFire> &p_stub) {
+	fire_override = p_stub;
+}
+
+Ref<WorldFire> WorldContracts::get_fire() const {
+	return fire_override.is_valid() ? fire_override : builtin_fire;
+}
+
 void WorldContracts::set_weather(const Ref<WorldWeather> &p_stub) {
 	weather_override = p_stub;
 	if (weather_override.is_valid()) {
@@ -366,6 +429,7 @@ Ref<WorldWeather> WorldContracts::get_weather() const {
 void WorldContracts::clear_overrides() {
 	weather_override.unref();
 	water_override.unref();
+	fire_override.unref();
 	_clear_water_stubs();
 }
 
@@ -486,6 +550,8 @@ void WorldContracts::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_water", "stub"), &WorldContracts::set_water);
 	ClassDB::bind_method(D_METHOD("get_water"), &WorldContracts::get_water);
 	ClassDB::bind_method(D_METHOD("add_water_stub", "stub"), &WorldContracts::add_water_stub);
+	ClassDB::bind_method(D_METHOD("set_fire", "stub"), &WorldContracts::set_fire);
+	ClassDB::bind_method(D_METHOD("get_fire"), &WorldContracts::get_fire);
 	ClassDB::bind_method(D_METHOD("clear_overrides"), &WorldContracts::clear_overrides);
 	ClassDB::bind_method(D_METHOD("describe_body", "node"), &WorldContracts::describe_body_bind);
 }
@@ -494,6 +560,7 @@ WorldContracts::WorldContracts() {
 	singleton = this;
 	builtin_weather.instantiate();
 	builtin_water.instantiate();
+	builtin_fire.instantiate();
 }
 
 WorldContracts::~WorldContracts() {

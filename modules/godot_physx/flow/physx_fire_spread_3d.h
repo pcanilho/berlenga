@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "modules/world/world_contracts.h"
 #include "physx_firebrands.h"
 
 #include "core/templates/hash_map.h"
@@ -49,7 +50,7 @@ class PhysXFlowEmitter3D;
 // feeds a pool of emitters in a PhysXFlow3D, which draws the flames and smoke (raster and path traced) and lights the
 // scene. What has burnt is charred, and the burning band glows, through a Decal and the global shader parameters
 // fire_char_map / fire_char_rect for ground and vegetation shaders.
-class PhysXFireSpread3D : public Node3D {
+class PhysXFireSpread3D : public Node3D, public WorldFireProvider {
 	GDCLASS(PhysXFireSpread3D, Node3D);
 
 public:
@@ -210,6 +211,9 @@ public:
 	void extinguish();
 	float get_char_at(const Vector3 &p_position) const; // 0 unburnt .. 1 burnt out
 	float get_intensity_at(const Vector3 &p_position) const; // fireline heat, kW/m2 of ground
+	// The fire contract (WorldFire).
+	float contract_fire_heat_at(const Vector3 &p_position) const override { return get_intensity_at(p_position) * 1000.0f; }
+	float contract_fire_burnt_at(const Vector3 &p_position) const override { return get_char_at(p_position); }
 	float get_flame_length_at(const Vector3 &p_position) const; // peak, m
 	float get_scorch_height_at(const Vector3 &p_position) const; // peak crown scorch height, m
 	float get_burnt_area() const { return total_burnt; }

@@ -21,7 +21,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | `SkyClock` | weather | date, time, sun and moon |
 | `GroundSurface3D` | ground | soil per point (`get_soil`), deformation field (`ground_deform_map`), standing water, puddle ice, frost |
 | `SnowCover3D` | snow | `snow_cover` maps, depth, air at height (`get_air_temperature_at`) |
-| `fire_state_map` | fire | burnt share and glow per cell |
+| `fire_state_map`, `WorldFire` | fire | burnt share and glow per cell; `heat_at` (W/m2), `burnt_at` |
 | `WeatherLightning3D` | weather | `struck` signal and `get_ground_strikes_after()` |
 | Contact groups | each system | `world_contact` (every physics body and wheel) read by all, plus the old `grass_trample`, `tree_touch`, `ground_deform`, `snow_deform` |
 | Contracts | world | `WorldContracts.get_weather()`, `get_water()`, `describe_body()`: see world-contracts.md |
@@ -52,7 +52,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Season → regrowth of ruts | linked | season | |
 | Snow → ground | linked | snow cover | |
 | Water bodies → wet sand (swash) | linked | contact wetness | |
-| Fire → scorched, ashy ground | missing | fire_state_map | vegetation's burnt-ground pick covers plants; ground side planned (link 8) |
+| Fire → scorched, ashy ground | linked | fire char decal | PhysXFireSpread3D's decal |
 | Ground → dust (Flow) | linked | Flow | |
 | Terrain → runoff, rivers | linked | terrain runoff (monthly) | storm runoff to rivers: rain work |
 
@@ -66,7 +66,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Rain → wet snow, crust | linked | cells | |
 | Canopy → interception | linked | shelter | |
 | Snow → plants (burial, pressing) | missing | snow cover | planned (contact 5) |
-| Fire → snow melt | missing | fire_state_map | planned (link 8) |
+| Fire → snow melt | missing | WorldFire `heat_at` | snow thread (contract ready) |
 | Vehicles → snow ruts | missing | contact | planned (contact 3) |
 | Bodies → snow prints | linked | `snow_deform`, `grass_trample` groups | |
 
@@ -106,7 +106,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Cold air over water → steam fog | linked (18 Nov) | air, WorldWater, `get_water_temperature()` | VegetationMist3D cells over water |
 | Rain, melt → river level | missing | runoff | rain work |
 | Cold → lake ice | missing | air | snow work (Stefan's law) |
-| Fire → steam on water | missing | fire, water | planned (link 8) |
+| Fire → steam on water | missing | WorldFire, WorldWater | water/PhysX thread (both contracts ready) |
 
 ### Fire, gas and lightning
 
@@ -114,11 +114,12 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | --- | --- | --- | --- |
 | Wind → fire spread, smoke | linked | wind | |
 | Air, rain → fuel moisture | linked | air, cells | |
-| Wet ground → fuel moisture | missing | cells | fuel starts dry after rain (link 8) |
+| Wet ground → fuel moisture | linked (18 Nov) | weather contract | fuel on wet or dewy ground holds the film's water |
 | Lightning → fire | linked (18 Nov) | ground strikes | continuing current, fuel moisture |
 | Fire → cloth | linked | cloth burn | |
 | Fire → firebrands → spot fires | linked | wind | |
-| Fire → drying, snow melt | missing | fire_state_map | link 8 |
+| Fire → drying | linked (18 Nov) | WorldFire | the weather boils the surface film off under a fire |
+| Fire → snow melt | missing | WorldFire `heat_at` | snow thread (contract ready) |
 | Fire → heat shimmer | missing | Flow temperature | link 10 |
 | Weather wind → free-standing Flow smoke | linked (18 Nov) | wind | `PhysXFlow3D.weather_wind` (wind work) |
 

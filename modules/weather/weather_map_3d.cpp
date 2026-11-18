@@ -752,6 +752,10 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	// Without a sun light or a clock nothing says how much sun there is: the drying stays the air's alone.
 	c.sun = sun_drying && sun_known;
 	c.dew = dew_and_frost && sun_known;
+	{
+		const WorldFire *f = WorldContracts::fire();
+		c.fire = (f->has_provider() || f->get_script_instance()) ? f : nullptr; // a fire, or a test's stub
+	}
 	c.shortwave_clear = 0.75f * 1361.0f * cur_sun_sine;
 	c.use_shadow = sun_drying && cur_sun_sine > 0.0f && shadow_res >= 2 && shadow_values.size() == shadow_res * shadow_res;
 	if (c.use_shadow) {
@@ -916,6 +920,11 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 			const bool radiation = c.sun || c.dew;
 			const float rn = radiation ? _net_radiation(c, Vector3(p.x, ground_height, p.y), cover) : 0.0f;
 			float evap = (c.sun ? penman_evaporation(rn, u2, c.air_temperature, rh) : evaporation_rate(u2, c.air_temperature, rh)) * c.dt_h;
+			// A fire over the cell boils the surface water off: a share of its heat release (a tenth here)
+			// reaches the ground, 681 W/m2 a millimetre an hour.
+			if (c.fire && c.dt_h > 0.0f) {
+				evap += 0.1f * c.fire->heat_at(Vector3(p.x, ground_height, p.y)) / 681.0f * c.dt_h;
+			}
 			// Dew and hoarfrost (Monteith 1957): where the surface loses more by radiation to a clear night sky
 			// than the air's drying brings, Penman's combination turns negative and the vapour condenses on it.
 			// Clouds and a canopy overhead return the longwave, so sheltered and clouded spots stay dry. Below

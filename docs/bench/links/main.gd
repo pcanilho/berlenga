@@ -36,6 +36,12 @@ class PoolStub extends WorldWater:
 		return Vector3(0.5, 0, 0)
 
 
+# A fire stub: 50 kW/m2 burning over x > 0.
+class FireStub extends WorldFire:
+	func _heat_at(p: Vector3) -> float:
+		return 50000.0 if p.x > 0.0 else 0.0
+
+
 var fails := 0
 var passes := 0
 var skips := 0
@@ -75,7 +81,7 @@ func _ready() -> void:
 	await _lightning_tests()
 	_fire_tests()
 	await _contact_tests()
-	_contract_tests()
+	await _contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -327,6 +333,21 @@ func _contract_tests() -> void:
 	_check("contracts: a pool below the sea's level reads its own water", out == 0.0 and in_pool == -5.0 and between == 0.0 and above == 0.0, "sea side %.1f, in the pool %.1f, over the pool under the sea %.1f, above both %.1f" % [out, in_pool, between, above])
 	_check("contracts: the flow comes from the water that answered", w.flow_at(Vector3(-5, -7, 0)).x == 0.5 and w.flow_at(Vector3(5, -2, 0)) == Vector3.ZERO, "")
 	_check("contracts: depth under the surface", absf(w.depth_at(Vector3(-5, -7, 0)) - 2.0) < 1e-4, "%.2f m" % w.depth_at(Vector3(-5, -7, 0)))
+	# A fire dries the surface water under it, through the fire contract.
+	var m := _new_map()
+	m.rain_rate = 5.0
+	m.cloud_cover = 1.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(3600.0)
+	m.rain_rate = 0.0
+	m.snap_to_settings()
+	WorldContracts.set_fire(FireStub.new())
+	m.advance(3600.0)
+	var burning: float = m.get_wetness_at(Vector3(200, 0, 0))
+	var beside: float = m.get_wetness_at(Vector3(-200, 0, 0))
+	_check("contracts: a fire dries the ground under it", burning < 0.05 and beside > 0.5, "wetness %.2f under the fire, %.2f beside it" % [burning, beside])
+	m.queue_free()
 	WorldContracts.clear_overrides()
 	var wx: WorldWeather = WorldContracts.get_weather()
 	if not wx.has_provider():

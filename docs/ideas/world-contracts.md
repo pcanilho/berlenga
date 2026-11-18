@@ -135,15 +135,18 @@ Consumers: buoyancy, bodies in world_contact, plants (lean with the current), cl
 
 Consumers: fire (crown fire), lightning (attachment), weather (shelter), snow (interception), rain (drip).
 
-### Fire (`WorldFire`; producer `PhysXFireSpread3D`)
+### Fire (`WorldFire`; producer `PhysXFireSpread3D`, every live one)
 
-| Member | Unit | Default |
-| --- | --- | --- |
-| `burnt_at(pos)`, `glow_at(pos)` | 0..1 | 0 |
-| `heat_at(pos)` | W/m2 | 0 |
-| shader globals `fire_state_map`, `fire_char_rect` | | |
+| Member | Unit | Default | Guarantee |
+| --- | --- | --- | --- |
+| `heat_at(pos)` | W/m2 | 0 | The most heat release of any fire over the point, now |
+| `burnt_at(pos)` | 0..1 | 0 | |
+| shader globals `fire_state_map`, `fire_char_rect` | | | burnt, glow, flame length, scorch height |
 
-Consumers: plants (char), ground (scorch), snow (melt), weather (drying), water (steam).
+Tests: `WorldContracts.set_fire(stub)`.
+
+Consumers: weather (the surface film boils off under a fire), plants (char), snow (melt, to come), water (steam,
+to come).
 
 ## Testing
 

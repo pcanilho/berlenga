@@ -205,6 +205,7 @@ private:
 		float *frost = nullptr;
 		float *cooling = nullptr;
 		bool dew = false;
+		const WorldFire *fire = nullptr; // with a fire producer only
 		// The sun on wet surfaces (sun_drying): clear-sky shortwave on level ground (W/m2), the cloud shadow
 		// when one is baked, the air the evaporation sees.
 		bool sun = false;

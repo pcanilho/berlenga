@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WorldFire" inherits="RefCounted" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		The fire contract: where fire burns and has burnt, as the other world systems read it.
+	</brief_description>
+	<description>
+		Answers for every live fire producer at once ([code]PhysXFireSpread3D[/code]): the most heat and the most burnt of any of them at a point. With none, both are 0. The weather dries the surface water under a fire from [method heat_at]. Get it from [WorldContracts]; a test extends it in a script and sets it with [method WorldContracts.set_fire].
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="_burnt_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method burnt_at].
+			</description>
+		</method>
+		<method name="_heat_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method heat_at].
+			</description>
+		</method>
+		<method name="burnt_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How burnt the ground at [param position] is, 0 unburnt to 1 burnt out.
+			</description>
+		</method>
+		<method name="has_provider" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether any fire producer is live.
+			</description>
+		</method>
+		<method name="heat_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The fire's heat release over the ground at [param position] now, in W/m2; 0 where nothing burns.
+			</description>
+		</method>
+	</methods>
+</class>

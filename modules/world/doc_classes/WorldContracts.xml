@@ -4,7 +4,7 @@
 		The registry of the contracts between world systems.
 	</brief_description>
 	<description>
-		Hands out each contract between world systems (the weather and open water; more to come), backed by the active producer node, or by a stub a test has set. Bodies that the ground, snow, plants, trees and water should feel are in the [code]world_contact[/code] group; [method describe_body] is how all of them read a body's size and weight. See docs/ideas/world-contracts.md.
+		Hands out each contract between world systems (the weather, open water and fire; more to come), backed by the active producer node, or by a stub a test has set. Bodies that the ground, snow, plants, trees and water should feel are in the [code]world_contact[/code] group; [method describe_body] is how all of them read a body's size and weight. See docs/ideas/world-contracts.md.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -29,6 +29,12 @@
 				How the world systems read a body: [code]center[/code], [code]radius[/code], [code]half_height[/code], [code]round[/code], [code]wheel[/code], [code]box[/code], [code]width[/code] and [code]mass[/code] (kg on the ground), from its first collision shape and its metas ([code]deform_wheel_radius[/code], [code]deform_wheel_width[/code], [code]trample_radius[/code], [code]ground_mass[/code]).
 			</description>
 		</method>
+		<method name="get_fire" qualifiers="const">
+			<return type="WorldFire" />
+			<description>
+				The fire contract now: the stub a test set, else the one over every live fire producer.
+			</description>
+		</method>
 		<method name="get_water" qualifiers="const">
 			<return type="WorldWater" />
 			<description>
@@ -39,6 +45,13 @@
 			<return type="WorldWeather" />
 			<description>
 				The weather contract now: the stub a test set, else the one backed by the active [WeatherMap3D].
+			</description>
+		</method>
+		<method name="set_fire">
+			<param index="0" name="stub" type="WorldFire" />
+			<return type="void" />
+			<description>
+				Replaces the fire for every system with [param stub], a script extending [WorldFire].
 			</description>
 		</method>
 		<method name="set_water">
