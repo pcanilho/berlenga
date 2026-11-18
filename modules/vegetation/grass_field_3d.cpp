@@ -1532,7 +1532,7 @@ Color GrassField3D::crop_canopy_look(Crop p_crop, float p_stage) {
 		// between them as a ripe stand does (0.55, pushed from its grey), a dull gold, not the
 		// pale straw of one stem (the first fields frame read as snow).
 		const float g = (cs.straw.r + cs.straw.g + cs.straw.b) / 3.0f;
-		const Color st = Color(g, g, g).lerp(cs.straw, 1.3f) * 0.55f;
+		const Color st = Color(g, g, g).lerp(cs.straw, 1.5f) * 0.62f;
 		return Color(MAX(st.r, 0.0f), MAX(st.g, 0.0f), MAX(st.b, 0.0f), 0.6f);
 	}
 	auto ramp = [](float p_x, float p_a, float p_b) { return CLAMP((p_x - p_a) / (p_b - p_a), 0.0f, 1.0f); };
