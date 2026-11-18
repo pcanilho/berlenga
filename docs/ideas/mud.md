@@ -749,6 +749,17 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   clock-time rate. Checks in `--test=ruts`.
 - **Mud on plants beside ruts.** Spray and splashes that land on the sward tint the blades and plants there with the
   ground's clay (a per-texel splatter share the blade shaders read, as the body mud does), washed off by rain.
+  *Built (18 Nov):* `plant_mud` (on). A CPU lattice share per 25 cm cell, raised where thrown clay lands
+  (`track_mud` without a print: MudSpray's clods; full at a 0.3 mm film) and where muddy water splashes out
+  (`add_water` with mud: full at 50 g of clay per m2), not by tyre or sole prints. Rain washes it off at an
+  e-fold of 2 mm (simulated-rain wash-off of leaf deposits goes mostly early, Xu et al. 2017). Published as the wet
+  map's fifth block (share, the clay's linear colour from mud_color/mud_color_map; texel 4's tag 6.5).
+  GrassField3D's `grass_ground_mud()` (in the shared ground code, so PlantGenerator's plants read it too) and
+  `grass_mud_apply()`: specks hashed on a 6 mm world grid that join into a coat as the share rises, thickest low
+  down (reach 12 to 45 cm with the share), clay colour x0.8, matte (0.85); on blades, crops and plants, in both
+  renderers. A thrown film no longer lays the sward flat (it came from the air): the tint term of
+  `grass_ground_opened()` is scaled by 1 - the share. `get_plant_mud_at()`. Checks in `--test=ice`; grass bench
+  `--ruts=mud`.
 
 
 ### Look (any stage)

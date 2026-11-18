@@ -358,6 +358,30 @@ global uniform sampler2D ground_deform_map;
 global uniform vec4 ground_deform_rect;
 global uniform sampler2D ground_deform_near_map;
 global uniform vec4 ground_deform_near_rect;
+global uniform sampler2D ground_wet_map;
+// Mud thrown or splashed onto the sward and the plants at p_xz (mud round 7): the share of their faces spattered and
+// the clay's linear colour, from the ground's wet map (its last block, tag 6.5; GroundSurface3D::_wet_publish()).
+vec4 grass_ground_mud(vec2 p_xz) {
+	ivec2 ts = textureSize(ground_wet_map, 0);
+	if (ts.x < 5 || ts.y < 2) {
+		return vec4(0.0);
+	}
+	vec4 r = texelFetch(ground_wet_map, ivec2(0, ts.y - 1), 0);
+	if (abs(r.w - 2.5) > 0.01 || abs(texelFetch(ground_wet_map, ivec2(4, ts.y - 1), 0).w - 6.5) > 0.01 || r.z <= 0.0) {
+		return vec4(0.0);
+	}
+	vec2 uv = (p_xz - r.xy) / r.z;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return vec4(0.0);
+	}
+	int blocks = 1;
+	for (int k = 1; k < 5; k++) {
+		blocks += abs(texelFetch(ground_wet_map, ivec2(k, ts.y - 1), 0).w - (2.5 + float(k))) < 0.01 ? 1 : 0;
+	}
+	float rows = float((ts.y - 1) / blocks);
+	float v = clamp(uv.y * rows, 0.5, rows - 0.5) + float(blocks - 1) * rows;
+	return textureLod(ground_wet_map, vec2(uv.x, v / float(ts.y)), 0.0);
+}
 // What a rut, dig or puddle does to the sward at p_xz: x lays it flat (a print, a tyre's light pass, a mud film), y takes
 // it away (a rut or dig past a centimetre or so, standing water), 0 to 1 each; z how far
 // the ground went down there (m, negative on a rim), so the blades left stand on it.
@@ -382,10 +406,27 @@ vec3 grass_ground_opened(vec2 p_xz) {
 	// Grown back over since (mud round 6: GroundSurface3D's kept ruts age; A just over 1): torn blades return, flattened
 	// ones stand up four times sooner.
 	float regrown = clamp((d.a - 1.0) / 0.02, 0.0, 1.0);
-	float flat_ = max(smoothstep(0.002, 0.008, abs(d.r)) * (1.0 - min(4.0 * regrown, 1.0)), smoothstep(0.03, 0.15, abs(1.0 - d.b)));
+	// A film of clay thrown onto the sward (mud round 7: it spattered the blades, grass_ground_mud()) came from the air:
+	// it lays nothing over.
+	float thrown = grass_ground_mud(p_xz).x;
+	float flat_ = max(smoothstep(0.002, 0.008, abs(d.r)) * (1.0 - min(4.0 * regrown, 1.0)), smoothstep(0.03, 0.15, abs(1.0 - d.b)) * (1.0 - thrown));
 	float relief = smoothstep(0.01, 0.04, abs(d.r)) * (1.0 - regrown);
 	float water = d.a < 0.0 ? 1.0 : smoothstep(5e-4, 3e-3, d.g);
 	return vec3(flat_, max(relief, water), d.r);
+}
+// Spatter on a face p_up metres above the ground (thrown clay lands thickest low down, splashes reach 30 to 50 cm), at
+// world point p_w: specks that join into a coat as the share grows, the clay's colour a little darkened. Applied to
+// the albedo; returns the share covered (the caller takes its roughness to the clay's matte 0.85).
+float grass_mud_apply(vec4 p_mud, vec3 p_w, float p_up, inout vec3 r_albedo) {
+	if (p_mud.x <= 0.0) {
+		return 0.0;
+	}
+	float reach = mix(0.12, 0.45, p_mud.x);
+	float m = p_mud.x * (1.0 - smoothstep(0.3 * reach, reach, p_up));
+	float speck = fract(sin(dot(floor(p_w * 160.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+	float cover = smoothstep(speck - 0.15, speck + 0.15, 1.3 * m);
+	r_albedo = mix(r_albedo, p_mud.yzw * 0.8, cover);
+	return cover;
 }
 )";
 }
@@ -884,6 +925,10 @@ void fragment() {
 		back *= 1.0 - smoothstep(0.0, 0.5, fire_f.x);
 		EMISSION = fire_glow_color(fire_f.y) * 4.0 * smoothstep(0.4, 1.0, v_hf);
 	}
+	// Mud thrown or splashed onto it (mud round 7).
+	vec3 mud_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	float mud_c = grass_mud_apply(grass_ground_mud(mud_w.xz), mud_w, v_hf * 0.8, c);
+	rough = mix(rough, 0.85, mud_c);
 	ALBEDO = c * mix(1.0, wet_factor, v_wet);
 	ROUGHNESS = rough * mix(1.0, 0.4, v_wet);
 	SPECULAR = spec;
@@ -1065,8 +1110,11 @@ void fragment() {
 		vec3 ch = mix(vec3(0.035, 0.03, 0.027), vec3(0.35, 0.34, 0.33), step(0.85, fract(v_dry * 41.0)) * smoothstep(0.6, 1.0, v_burn));
 		c = mix(c, ch, smoothstep(0.0, 0.5, v_burn));
 	}
+	// Mud thrown or splashed onto it (mud round 7): the blade's height as a 30 cm sward's.
+	vec3 mud_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	float mud_c = grass_mud_apply(grass_ground_mud(mud_w.xz), mud_w, v_t * 0.3, c);
 	ALBEDO = c * mix(1.0, wet_factor, v_wet);
-	ROUGHNESS = mix(mix(0.55, 0.75, v_trod) * mix(1.0, wet_factor, 0.5 * v_wet) * mix(1.0, 0.4, v_wet), 0.95, smoothstep(0.0, 0.5, v_burn));
+	ROUGHNESS = mix(mix(mix(0.55, 0.75, v_trod) * mix(1.0, wet_factor, 0.5 * v_wet) * mix(1.0, 0.4, v_wet), 0.85, mud_c), 0.95, smoothstep(0.0, 0.5, v_burn));
 	// The burning band: the stubs' tips glow as the ground's embers do (the char decal's glow energy).
 	EMISSION = fire_glow_color(v_glow) * 4.0 * smoothstep(0.4, 1.0, v_t) * step(1e-3, v_burn);
 	SPECULAR = mix(0.35, 0.2, v_trod);

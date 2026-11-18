@@ -386,6 +386,11 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 	} else {
 		ice_state.clear();
 	}
+	if (ground_valid && ground_n == p_n && (int)plant_mud_state.size() == p_n * p_n) {
+		_shift_lattice(plant_mud_state, ground_origin, p_origin, p_n, 1);
+	} else {
+		plant_mud_state.clear();
+	}
 	ground_n = p_n;
 	ground_origin = p_origin;
 	ground_valid = true;
@@ -556,6 +561,11 @@ void GroundSurface3D::_water_owed_update() {
 void GroundSurface3D::add_water(const Vector3 &p_position, float p_radius, float p_volume, float p_mud) {
 	if (p_radius <= 0.0f || p_volume == 0.0f || !Math::is_finite(p_volume)) {
 		return;
+	}
+	if (p_volume > 0.0f && p_mud > 0.0f) {
+		// Muddy water splashed out (a wheel through a puddle): its clay spatters the plants it lands on, in full by
+		// 50 g/m2.
+		_plant_mud_add(p_position, p_radius, CLAMP(p_mud * p_volume / (float(Math::PI) * p_radius * p_radius) / 0.05f, 0.0f, 1.0f));
 	}
 	if (p_volume > 0.0f) {
 		// Water a take asked for but did not find (the field had less than its read back showed) was thrown all
@@ -946,6 +956,79 @@ void GroundSurface3D::_ice_break(const Vector3 &p_position, float p_radius, floa
 			c[1] = MAX(c[1], 1.0f - Math::smoothstep(p_radius, r, d));
 		}
 	}
+}
+
+void GroundSurface3D::set_plant_mud(bool p_enabled) {
+	plant_mud = p_enabled;
+	if (!p_enabled) {
+		plant_mud_state.clear();
+	}
+}
+
+// Mud on plants beside ruts (docs/ideas/mud.md, round 7). Clay thrown by a wheel or splashed out of a muddy puddle
+// lands on the sward and the plants as well as on the ground: p_share of their faces over p_radius round
+// p_position is spattered (on top of what is there). Rain washes it off: simulated-rain tests on leaves (Xu et al.
+// 2017; lawn grass, 2025) find most of a particle deposit goes early in the rain, so here, coarse loose clay, at an
+// e-fold of 2 mm of rain.
+void GroundSurface3D::_plant_mud_add(const Vector3 &p_position, float p_radius, float p_share) {
+	const int n = ground_n;
+	if (!plant_mud || !ground_valid || n < 2 || !(p_share > 0.0f)) {
+		return;
+	}
+	if ((int)plant_mud_state.size() != n * n) {
+		plant_mud_state.resize(n * n);
+		for (float &v : plant_mud_state) {
+			v = 0.0f;
+		}
+	}
+	const float r = MAX(p_radius, 0.5f * ground_spacing);
+	const int x0 = MAX(int(Math::floor((p_position.x - r) / ground_spacing)) - ground_origin.x, 0);
+	const int x1 = MIN(int(Math::ceil((p_position.x + r) / ground_spacing)) - ground_origin.x, n - 1);
+	const int z0 = MAX(int(Math::floor((p_position.z - r) / ground_spacing)) - ground_origin.y, 0);
+	const int z1 = MIN(int(Math::ceil((p_position.z + r) / ground_spacing)) - ground_origin.y, n - 1);
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			const float d = Vector2((ground_origin.x + x) * ground_spacing - p_position.x, (ground_origin.y + z) * ground_spacing - p_position.z).length();
+			const float w = 1.0f - Math::smoothstep(0.5f * r, r + 0.5f * ground_spacing, d);
+			float &m = plant_mud_state[z * n + x];
+			m = MIN(m + p_share * w * (1.0f - m), 1.0f);
+		}
+	}
+}
+
+void GroundSurface3D::_plant_mud_update(double p_delta) {
+	const int n = ground_n;
+	if (plant_mud_state.is_empty()) {
+		return;
+	}
+	if (!plant_mud || (int)plant_mud_state.size() != n * n) {
+		plant_mud_state.clear();
+		return;
+	}
+	const WeatherMap3D *wm = WeatherMap3D::get_active();
+	const float rain = wm ? wm->get_rain_at(Vector3(center.x, _ground_at(center.x, center.y), center.y)) : 0.0f; // mm/h
+	if (rain <= 0.0f) {
+		return;
+	}
+	const float keep = Math::exp(-rain * float(p_delta) * runoff_time_scale / 3600.0f / 2.0f);
+	bool any = false;
+	for (float &m : plant_mud_state) {
+		m = m * keep < 0.01f ? 0.0f : m * keep;
+		any = any || m > 0.0f;
+	}
+	if (!any) {
+		plant_mud_state.clear();
+	}
+}
+
+float GroundSurface3D::get_plant_mud_at(Vector3 p_position) const {
+	const int n = ground_n;
+	if (!ground_valid || n < 2 || (int)plant_mud_state.size() != n * n) {
+		return 0.0f;
+	}
+	const int x = CLAMP(int(Math::round(p_position.x / ground_spacing)) - ground_origin.x, 0, n - 1);
+	const int z = CLAMP(int(Math::round(p_position.z / ground_spacing)) - ground_origin.y, 0, n - 1);
+	return plant_mud_state[z * n + x];
 }
 
 Vector2 GroundSurface3D::get_ice_at(Vector3 p_position) const {
@@ -2007,7 +2090,14 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 			ice = ice_state[i * ICE_FLOATS] > 0.0f;
 		}
 	}
-	const int blocks = 1 + (far ? 1 : 0) + (cracks ? 1 : 0) + (ice ? 1 : 0);
+	// Then, with mud on plants, its block (share, the clay's linear colour; texel 4's tag 6.5).
+	bool pmud = false;
+	if (on && plant_mud && (int)plant_mud_state.size() == n * n && n >= 5) {
+		for (int i = 0; i < n * n && !pmud; i++) {
+			pmud = plant_mud_state[i] > 0.0f;
+		}
+	}
+	const int blocks = 1 + (far ? 1 : 0) + (cracks ? 1 : 0) + (ice ? 1 : 0) + (pmud ? 1 : 0);
 	const int w = on ? n : (wet_texture.is_valid() ? wet_texture->get_width() : 1);
 	const int h = on ? blocks * n + 1 : (wet_texture.is_valid() ? wet_texture->get_height() : 2);
 	Vector<uint8_t> data;
@@ -2034,8 +2124,21 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 			d[i * 4 + 3] = Math::smoothstep(terrain_margin, terrain_margin + skirt_fade, edge);
 		}
 		float *r = d + blocks * n * n * 4;
+		if (pmud) {
+			float *pd = d + (blocks - 1) * n * n * 4;
+			for (int i = 0; i < n * n; i++) {
+				const float wx = (ground_origin.x + i % n) * ground_spacing;
+				const float wz = (ground_origin.y + i / n) * ground_spacing;
+				const Color mc = get_mud_color_at(Vector3(wx, 0.0f, wz)).srgb_to_linear();
+				pd[i * 4 + 0] = plant_mud_state[i];
+				pd[i * 4 + 1] = mc.r;
+				pd[i * 4 + 2] = mc.g;
+				pd[i * 4 + 3] = mc.b;
+			}
+			r[19] = 6.5f;
+		}
 		if (ice) {
-			float *id = d + (blocks - 1) * n * n * 4;
+			float *id = d + (1 + (far ? 1 : 0) + (cracks ? 1 : 0)) * n * n * 4;
 			for (int i = 0; i < n * n; i++) {
 				id[i * 4 + 0] = ice_state[i * ICE_FLOATS];
 				id[i * 4 + 1] = ice_state[i * ICE_FLOATS + 1];
@@ -3362,6 +3465,7 @@ void GroundSurface3D::_notification(int p_what) {
 				_water_update(water_accum);
 				_crack_update(water_accum);
 				_ice_update(water_accum);
+				_plant_mud_update(water_accum);
 				water_accum = 0.0;
 			}
 			wet_publish_accum += delta;
@@ -4333,6 +4437,11 @@ float GroundSurface3D::track_mud(Vector3 p_position, float p_radius, float p_dep
 	// A sole's disc is about five times the sole's own area: the relief is spread over the disc by that, the volume
 	// the sole's (the share, from the film's thickness, stays the sole's).
 	const float v = deposit(p_position, p_radius, p_print.x > 1.5f ? 0.2f * p_depth : p_depth);
+	if (p_print.x < 0.5f) {
+		// Thrown clay (no tyre or sole print): it spatters the plants it lands among too, in full by a film of
+		// 0.3 mm.
+		_plant_mud_add(p_position, p_radius, CLAMP(p_depth / 0.0003f, 0.0f, 1.0f));
+	}
 	field.amount_fresh = before;
 	field.amount_print = Vector4();
 	near_fld.amount_print = Vector4();
@@ -5058,6 +5167,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_puddle_ice", "enabled"), &GroundSurface3D::set_puddle_ice);
 	ClassDB::bind_method(D_METHOD("is_puddle_ice"), &GroundSurface3D::is_puddle_ice);
 	ClassDB::bind_method(D_METHOD("get_ice_at", "position"), &GroundSurface3D::get_ice_at);
+	ClassDB::bind_method(D_METHOD("set_plant_mud", "enabled"), &GroundSurface3D::set_plant_mud);
+	ClassDB::bind_method(D_METHOD("is_plant_mud"), &GroundSurface3D::is_plant_mud);
+	ClassDB::bind_method(D_METHOD("get_plant_mud_at", "position"), &GroundSurface3D::get_plant_mud_at);
 	ClassDB::bind_method(D_METHOD("is_desiccation_cracks"), &GroundSurface3D::is_desiccation_cracks);
 	ClassDB::bind_method(D_METHOD("get_crack_at", "position"), &GroundSurface3D::get_crack_at);
 	ClassDB::bind_method(D_METHOD("get_mud_map"), &GroundSurface3D::get_mud_map);
@@ -5268,6 +5380,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ruts_regrowth_time", PROPERTY_HINT_RANGE, "3600,31536000,1,or_greater,suffix:s"), "set_ruts_regrowth_time", "get_ruts_regrowth_time");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "desiccation_cracks"), "set_desiccation_cracks", "is_desiccation_cracks");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "puddle_ice"), "set_puddle_ice", "is_puddle_ice");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plant_mud"), "set_plant_mud", "is_plant_mud");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "world_puddles"), "set_world_puddles", "is_world_puddles");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "world_puddle_density", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_world_puddle_density", "get_world_puddle_density");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");

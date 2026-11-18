@@ -106,6 +106,13 @@
 				The field's world XZ rectangle.
 			</description>
 		</method>
+		<method name="get_plant_mud_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The share of the grass and plants at [param position] spattered with mud (0 to 1, see [member plant_mud]).
+			</description>
+		</method>
 		<method name="get_ice_at" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />
@@ -639,6 +646,9 @@
 		</member>
 		<member name="outer_spacing" type="float" setter="set_outer_spacing" getter="get_outer_spacing" default="0.125">
 			The patch's vertex spacing over the outer half of the field, in metres.
+		</member>
+		<member name="plant_mud" type="bool" setter="set_plant_mud" getter="is_plant_mud" default="true">
+			If [code]true[/code], clay thrown by wheels (a [PhysXGroundGrains3D]'s spray, [method track_mud] without a print) and muddy water splashed out of puddles ([method add_water] with mud) spatter the grass and plants where they land: specks low down that join into a coat, in the clay's colour ([member mud_color]). Rain washes it off, most of it in the first few millimetres. Read by [GrassField3D] and [PlantGenerator] plants in both renderers.
 		</member>
 		<member name="ploughing" type="bool" setter="set_ploughing" getter="is_ploughing" default="true">
 			Rigid bodies in [member deform_groups] moving through soft ground feel its resistance: compaction and bulldozing of the soil they move into, at their width.

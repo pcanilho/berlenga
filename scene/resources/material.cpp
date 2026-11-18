@@ -4383,11 +4383,11 @@ vec4 ground_wet_block(vec2 p_xz, vec4 p_rect, int p_block, ivec2 p_ts, float p_r
 	float v = clamp(uv.y * p_rows, 0.5, p_rows - 0.5) + float(p_block) * p_rows;
 	return textureLod(ground_wet_map, vec2(uv.x, v / float(p_ts.y)), 0.0);
 }
-// The wet map's blocks: the fine lattice, then the far one (texel 1's tag 3.5), the cracks (texel 2's 4.5) and the
-// puddle ice (texel 3's 5.5), each there only when tagged.
+// The wet map's blocks: the fine lattice, then the far one (texel 1's tag 3.5), the cracks (texel 2's 4.5), the
+// puddle ice (texel 3's 5.5) and the mud on plants (texel 4's 6.5; GrassField3D reads it), each there only when tagged.
 int ground_wet_blocks(ivec2 p_ts) {
 	int b = 1;
-	for (int k = 1; k < 4; k++) {
+	for (int k = 1; k < 5; k++) {
 		if (p_ts.x > k && abs(texelFetch(ground_wet_map, ivec2(k, p_ts.y - 1), 0).w - (2.5 + float(k))) < 0.01) {
 			b++;
 		}
@@ -4623,7 +4623,8 @@ vec4 ground_crack_state(vec2 p_xz) {
 	int far = abs(texelFetch(ground_wet_map, ivec2(1, ts.y - 1), 0).w - 3.5) < 0.01 ? 1 : 0;
 	return ground_wet_block(p_xz, r, 1 + far, ts, float((ts.y - 1) / ground_wet_blocks(ts)));
 }
-// The puddle ice at p_xz (round 7): the wet map's ice block, its last (thickness m, broken share); 0 where none.
+// The puddle ice at p_xz (round 7): the wet map's ice block, after the fine, far and crack ones (thickness m, broken
+// share); 0 where none.
 vec2 ground_ice_state(vec2 p_xz) {
 	ivec2 ts = textureSize(ground_wet_map, 0);
 	if (ts.x < 4 || ts.y < 2) {
@@ -4633,8 +4634,11 @@ vec2 ground_ice_state(vec2 p_xz) {
 	if (abs(r.w - 2.5) > 0.01 || abs(texelFetch(ground_wet_map, ivec2(3, ts.y - 1), 0).w - 5.5) > 0.01) {
 		return vec2(0.0);
 	}
-	int blocks = ground_wet_blocks(ts);
-	return ground_wet_block(p_xz, r, blocks - 1, ts, float((ts.y - 1) / blocks)).xy;
+	int at = 1;
+	for (int k = 1; k < 3; k++) {
+		at += abs(texelFetch(ground_wet_map, ivec2(k, ts.y - 1), 0).w - (2.5 + float(k))) < 0.01 ? 1 : 0;
+	}
+	return ground_wet_block(p_xz, r, at, ts, float((ts.y - 1) / ground_wet_blocks(ts))).xy;
 }
 // The patch's surface with its standing water and its cracks (the cracks the mesh's spacing can carry).
 float ground_deform_top(vec2 p_xz) {

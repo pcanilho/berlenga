@@ -2854,9 +2854,11 @@ void main() {
 			bool gfar = abs(frect.w - 3.5) < 0.01;
 			// The crack block (mud stage 2b) follows the far one: texel 2's tag 4.5.
 			bool gcrk = gts.x > 2 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(2, gts.y - 1), 0).w - 4.5) < 0.01;
-			// The puddle ice (mud round 7), the last block: texel 3's tag 5.5 (material.cpp ground_wet_blocks()).
+			// The puddle ice (mud round 7) after them: texel 3's tag 5.5; then the mud on plants, texel 4's 6.5
+			// (material.cpp ground_wet_blocks()).
 			bool gice = gts.x > 3 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(3, gts.y - 1), 0).w - 5.5) < 0.01;
-			int gblocks = 1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0) + (gice ? 1 : 0);
+			bool gpmud = gts.x > 4 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(4, gts.y - 1), 0).w - 6.5) < 0.01;
+			int gblocks = 1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0) + (gice ? 1 : 0) + (gpmud ? 1 : 0);
 			float grows = float((gts.y - 1) / gblocks);
 			vec2 gxz = (h.hit_pos + rt_origin.xyz).xz;
 			if (abs(grect.w - 2.5) < 0.01) {
@@ -2886,7 +2888,7 @@ void main() {
 				if (gice && rt_material_ground_deform(mat)) {
 					vec2 guv = (gxz - grect.xy) / max(grect.z, 1e-3);
 					if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
-						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(gblocks - 1) * grows;
+						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0)) * grows;
 						g_ice = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, gv / float(gts.y)), 0.0).xy;
 					}
 				}

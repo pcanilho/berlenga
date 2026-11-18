@@ -36,6 +36,8 @@ extends Node3D
 #   --close          the closer view used by --trample
 #   --ruts           with a GroundSurface3D of wet soil: a pair of tyre ruts in the close view; the blades lie
 #                    flat or are torn out where the ground is pressed (docs/ideas/mud.md)
+#   --ruts=mud       the same, with clay thrown onto the sward beside the left rut and muddy water splashed beside
+#                    the right one (mud round 7: mud on the blades and plants)
 #   --notex          plants without their generated leaf textures
 #   --forest         a wood of stand-in trees: forest floor (litter, moss, bilberry, fern) in
 #                    their shade, meadow in the open (PlantSpecies.shade_range)
@@ -104,6 +106,7 @@ var stubble_view := false # --fields=stubble: from 1.7 m at the stubble field's 
 var close := false
 var ruts_view := false
 var ruts_ground: GroundSurface3D
+var ruts_mud := false # --ruts=mud: clay thrown beside the left rut, muddy water splashed beside the right (mud round 7)
 var ruts_aged := 0.0 # --ruts=aged[:scale]: kept, then read back by a new ground with this ruts_time_scale (weeks away)
 var forest := false
 var litter_wind := Vector2()
@@ -197,9 +200,10 @@ func _ready() -> void:
 			farmland = true
 			SIZE = 640.0 # Fields and the meadow round them to the horizon.
 		elif a == "--close": close = true
-		elif a == "--ruts" or a.begins_with("--ruts=aged"):
+		elif a == "--ruts" or a.begins_with("--ruts=aged") or a == "--ruts=mud":
 			ruts_view = true
 			close = true
+			ruts_mud = a == "--ruts=mud"
 			if a.begins_with("--ruts=aged"):
 				ruts_aged = 6e5 if a == "--ruts=aged" else float(a.substr(12))
 		elif a == "--forest": forest = true
@@ -2074,6 +2078,17 @@ func _process(dt: float) -> void:
 				var z := 16.0 - k * 0.45
 				var x: float = side - 0.08 * k
 				ruts_ground.press_box(Vector3(x, 0, z), Vector2(0.32, 0.5), 0.17, height(x, z) - 0.08, 0.0)
+		if ruts_mud:
+			# Thrown clay along both sides of the left rut (a spray's clods, no print), thinning outwards; muddy water
+			# splashed out along the right one.
+			for k in 14:
+				var z := 16.0 - k * 0.42
+				for o in [-0.45, -0.75, 0.45, 0.75]:
+					var x: float = 0.2 - 0.08 * k + o
+					ruts_ground.track_mud(Vector3(x, height(x, z), z), 0.25, 0.0004 if absf(o) < 0.6 else 0.00015, 1.0)
+				for o in [-0.5, 0.5]:
+					var x: float = 1.8 - 0.08 * k + o
+					ruts_ground.add_water(Vector3(x, height(x, z), z), 0.3, 0.0006, 60.0)
 		# A light pass 6 mm deep to the right: the sward pressed flat, not torn.
 		for k in 12:
 			var z := 16.0 - k * 0.45
@@ -2094,8 +2109,8 @@ func _process(dt: float) -> void:
 		add_child(next)
 		ruts_ground = next
 	if ruts_view and n == 40:
-		for q in [Vector3(-0.15, 0, 14.0), Vector3(3.05, 0, 14.0)]:
-			print("GRASS_RUT_LATE ", [q, ruts_ground.get_dent_at(q), ruts_ground.get_regrown_at(q)])
+		for q in [Vector3(-0.15, 0, 14.0), Vector3(3.05, 0, 14.0), Vector3(0.3, 0, 14.0), Vector3(1.95, 0, 14.0)]:
+			print("GRASS_RUT_LATE ", [q, ruts_ground.get_dent_at(q), ruts_ground.get_regrown_at(q), ruts_ground.get_plant_mud_at(q)])
 	if ruts_view and n == 12:
 		for q in [Vector3(-0.15, 0, 14.0), Vector3(3.05, 0, 14.0)]:
 			print("GRASS_RUT ", [q, ruts_ground.get_dent_at(q), ruts_ground.get_rim_at(q), ruts_ground.get_fresh_at(q), ruts_ground.get_standing_water_at(q), ruts_ground.get_tracked_mud_at(q)])

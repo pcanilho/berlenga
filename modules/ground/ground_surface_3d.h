@@ -155,6 +155,11 @@ private:
 	LocalVector<float> ice_state;
 	void _ice_update(double p_delta);
 	void _ice_break(const Vector3 &p_position, float p_radius, float p_bearing);
+	// Mud on plants (round 7): per lattice cell, the share of the sward's and the plants' faces spattered with clay.
+	bool plant_mud = true;
+	LocalVector<float> plant_mud_state;
+	void _plant_mud_add(const Vector3 &p_position, float p_radius, float p_share);
+	void _plant_mud_update(double p_delta);
 	Ref<Image> mud_map;
 	Rect2 mud_map_rect;
 	float mud_max_depth = 1.2f;
@@ -728,6 +733,9 @@ public:
 	void set_puddle_ice(bool p_enabled);
 	bool is_puddle_ice() const { return puddle_ice; }
 	Vector2 get_ice_at(Vector3 p_position) const;
+	void set_plant_mud(bool p_enabled);
+	bool is_plant_mud() const { return plant_mud; }
+	float get_plant_mud_at(Vector3 p_position) const;
 	// The crack state at a point: (opening 0..1, plate size m, regularity 0..1, crust 0..1 or, negative, how damp
 	// the drying layer still is).
 	Vector4 get_crack_at(Vector3 p_position) const;

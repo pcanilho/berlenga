@@ -52,7 +52,8 @@ extends Node3D
 #   --frost=hours[,break] --view=ruts with --water: then a frost of that many hours at -5 C freezes the water (mud
 #                  round 7); ",break": a walker's boots across the left rut break the ice
 #   --view=ice          a frozen puddle with a wheel's track broken through it (mud round 7)
-#   --test=ice          puddle ice: freezes at Stefan's rate, bears a foot, breaks under a wheel, refreezes, thaws
+#   --test=ice          puddle ice: freezes at Stefan's rate, bears a foot, breaks under a wheel, refreezes, thaws;
+#                         and mud on plants: thrown clay and muddy splashes spatter the sward, prints do not, rain washes it
 #   --view=ruts         a 4x4 drives a curve through the ground and leaves (needs the PhysX build); on dry sand
 #                       its tyres are aired down to 60 kPa; --ground=KIND as above (default damp_sand)
 #   --view=roost        a 4x4 floored on dry sand throws sand behind it (needs the PhysX build and a GPU)
@@ -184,6 +185,7 @@ func _ready() -> void:
 		await _run_mud_tests()
 	if ice_test:
 		await _run_ice_tests()
+		await _run_plant_mud_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -1348,6 +1350,44 @@ func _run_ice_tests() -> void:
 	hours = frames / 60.0 * 5000.0 / 3600.0
 	print("  thaw: melted in %.1f h at 8 C, %.1f cm of water left" % [hours, surface.get_standing_water_at(o) * 100.0])
 	_check("a thaw melts it (degree days)", surface.get_ice_at(o).x == 0.0 and hours < 24.0, "%.1f mm left after %.1f h" % [surface.get_ice_at(o).x * 1000.0, hours])
+	surface.runoff_time_scale = 1.0
+	wm.queue_free()
+	near_on = true
+
+
+# Mud on plants (mud round 7): clay thrown onto the sward and muddy water splashed onto it spatter it; a tyre's print
+# does not; rain washes it off.
+func _run_plant_mud_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.35, 0.0)
+	surface.mud_layer = false
+	surface.standing_water = true
+	surface.tracked_mud = true
+	var a := Vector3(1.0, 0, 0.0)
+	var b := Vector3(-1.5, 0, 0.0)
+	var c := Vector3(0.0, 0, 2.0)
+	surface.track_mud(a, 0.25, 0.0004, 1.0)
+	surface.add_water(b, 0.3, 0.0006, 60.0)
+	surface.track_mud(c, 0.25, 0.0004, 1.0, Vector4(1.0, 0.0, 0.0, 0.0))
+	for i in 4:
+		await get_tree().physics_frame
+	var pa := surface.get_plant_mud_at(a)
+	var pb := surface.get_plant_mud_at(b)
+	var pc := surface.get_plant_mud_at(c)
+	_check("thrown clay spatters the plants it lands among", pa > 0.9 and surface.get_plant_mud_at(a + Vector3(1.0, 0, 0)) == 0.0, "%.2f there, %.2f a metre off" % [pa, surface.get_plant_mud_at(a + Vector3(1.0, 0, 0))])
+	_check("muddy water splashed out does too", pb > 0.9, "%.2f" % pb)
+	_check("a tyre's print does not", pc == 0.0, "%.2f" % pc)
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 1.0
+	wm.rain_rate = 4.0
+	add_child(wm)
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 3600.0
+	# A second sped up 3600 times: an hour at 4 mm/h, e-fold 2 mm: about a seventh is left.
+	for i in 60:
+		await get_tree().physics_frame
+	var left := surface.get_plant_mud_at(a)
+	_check("rain washes it off within millimetres", left < 0.3 * pa, "%.2f left after about 4 mm" % left)
 	surface.runoff_time_scale = 1.0
 	wm.queue_free()
 	near_on = true
