@@ -310,7 +310,7 @@ void PhysXBurnable3D::_update_emitter() {
 		}
 		const float grow = CLAMP(left / MAX(face_r, 0.02f), 0.0f, 1.0f);
 		Vector3 q = p.lerp(fc, grow * 0.7f);
-		const float r = CLAMP(MIN(left, face_r) * 0.5f, 0.04f, 0.8f);
+		const float r = CLAMP(MIN(left, face_r) * 0.5f, 0.12f, 0.8f); // at least a Flow cell or so, or the flame breaks up
 		if (axis != 1) {
 			q.y = CLAMP(q.y, lo.y + r * 0.5f, hi.y - r * 0.5f);
 		}
@@ -514,7 +514,7 @@ Ref<Material> PhysXBurnable3D::_burn_material(const Ref<Material> &p_base) {
 			float n = burn_noise(burn_local * 9.0) * 0.6 + burn_noise(burn_local * 23.0) * 0.4;
 			float n2 = burn_noise(burn_local * 41.0);
 			// Distance behind the front (m): positive is burnt.
-			float s = burn_origin.w - d + (n - 0.5) * b * 2.0 + (n2 - 0.5) * b * 0.5;
+			float s = burn_origin.w - d + (n - 0.5) * b * 2.0 + (n2 - 0.5) * b * 0.2;
 			float scorch = smoothstep(-b * 2.5, 0.0, s);
 			float charred = smoothstep(-b * 0.15, b * 0.25, s);
 			float depth = clamp(s / (b * 6.0), 0.0, 1.0);
@@ -538,9 +538,12 @@ Ref<Material> PhysXBurnable3D::_burn_material(const Ref<Material> &p_base) {
 			float patches = smoothstep(0.45, 0.75, burn_noise(burn_local * 3.0 + 7.0));
 			float crack_glow = crack * charred * ((near * burn_state.x * 0.25 + burn_state.y) * patches);
 			// The front: a thin line, broken where the noise is low.
-			float w = b * (0.12 + 0.2 * n2);
-			float line = (1.0 - smoothstep(0.0, w, abs(s - b * 0.05))) * smoothstep(0.25, 0.6, burn_noise(burn_local * 17.0));
-			burn_emit = (vec3(0.9, 0.22, 0.03) * line * burn_state.x * 0.2 + ember * crack_glow);
+			// The front: an ember band a few centimetres wide, brightest at the front and fading into the char
+			// behind it, broken where the noise is low.
+			float w = b * (0.3 + 0.25 * n);
+			float x = (s + b * 0.1) / w;
+			float line = exp(-x * x * (x < 0.0 ? 6.0 : 1.5)) * smoothstep(0.2, 0.55, burn_noise(burn_local * 11.0));
+			burn_emit = (vec3(0.9, 0.2, 0.03) * line * burn_state.x * 0.15 + ember * crack_glow);
 		}
 	}
 )";
