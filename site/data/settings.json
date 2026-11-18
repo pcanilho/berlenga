@@ -1490,11 +1490,12 @@
     "follow_target",
     "speleothems",
     "scallops",
+    "cave_streams",
     "add_sea_cave()",
     "terrain3d"
    ],
    "note": "",
-   "what": "cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening, also on Terrain3D; stalactites, stalagmites and columns grow where water drips through the roof, and flow scallops the walls. Sea caves follow cracks into sea cliffs, flooded at the mouth, some ending in a chamber with a blowhole to the cliff top.",
+   "what": "cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening, also on Terrain3D; stalactites, stalagmites and columns grow where water drips through the roof, and flow scallops the walls; streams run over washed, wet gravel beds. Sea caves follow cracks into sea cliffs, flooded at the mouth, some ending in a chamber with a blowhole to the cliff top.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
