@@ -49,6 +49,7 @@
 class CollisionShape3D;
 class MeshInstance3D;
 class SnowCover3D;
+class SnowClumps3D;
 class StaticBody3D;
 
 // Deep snow as geometry (docs/ideas/snow.md, stage 2). A camera-following grid, dense near the
@@ -161,6 +162,8 @@ class SnowSurface3D : public Node3D {
 	Ref<ShaderMaterial> material;
 	Ref<Shader> shader;
 	StaticBody3D *body = nullptr;
+	bool clumps = true; // SnowClumps3D: the lumps a print breaks out of cohesive snow (ground detail)
+	SnowClumps3D *clumps_node = nullptr;
 	CollisionShape3D *collision_node = nullptr;
 	Ref<HeightMapShape3D> collision_shape;
 	Vector2 mesh_center;
@@ -214,6 +217,9 @@ public:
 
 	void set_deform_enabled(bool p_enabled);
 	bool is_deform_enabled() const { return deform_enabled; }
+	void set_clumps(bool p_enabled);
+	bool is_clumps() const { return clumps; }
+	SnowClumps3D *get_clumps_node() const { return clumps_node; }
 	void set_deform_extent(float p_extent);
 	float get_deform_extent() const { return deform_extent; }
 	void set_deform_resolution(int p_resolution);

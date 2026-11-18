@@ -774,11 +774,46 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   soil: wheels and boots barely sink, old ruts freeze rigid and jolt a vehicle crossing them; the thaw then leaves
   the top wetter and weaker than before (thaw weakening, the spring mud season of forest roads), so ruts form
   deeper for a while. Build: a frost depth per lattice cell from the weather, scaling the cell's rate and bearing.
-- **Raindrop rings on puddles.** Rain falling on standing water draws expanding rings (Lagarde's 2013 rain ripple
+  *Built (18 Nov):* `frozen_ground` (on). Per lattice cell (thawed top a, frost depth b, thaw weakening w), stepped
+  with the water from WeatherMap3D's air: Stefan's front with the soil water's latent heat (the modified Berggren
+  equation's leading term, Aldrich 1956): dz/dt = k dT / (334 MJ/m3 theta (z + 2 cm)), frozen k 2, theta 0.1 to 0.4
+  by wetness (12 cm in 12 h at -8 C); the thaw works down from the top (unfrozen k 1.2); a frost after a thaw
+  refreezes the wet top first; snow-covered cells are left alone. New cells seed from WeatherSeason's soil_frost
+  for the day. Crust share = smoothstep(2, 8 cm) of the frozen layer, gone under 0.5 to 3 cm of thaw: the cell's
+  Bekker k's x(1 + 30 f), cohesion +200 kPa f, no slumping, max_dent x(1 - f), not deformable past 0.95 (ruts in
+  it stay as they are, get_soil() reports it firm); ksat x(1 - 0.99 f), so water stands on it. Thaw weakening:
+  while thawed soil lies on the frost (and for an e-fold of 5 days after it has gone) the cell's wetness is raised
+  to past mud_wet_full and, with mud_layer, the thawed layer is mud as deep as it is. `get_frost_at()`.
+  Checks `--test=frost`: 12 cm in a night, a boot leaves 0 mm (98 unfrozen), the old rut does not move, a 3 kN
+  wheel sinks 87 mm in the thaw against 65 before the frost.
+- **Raindrop rings on puddles.** (Moved to the rain thread, 18 Nov: rain, snow and wind are one system. It adds its
+  ring slope to the standing-water block's `gfs`, scaled by 1 - the ice cover.) Rain falling on standing water draws expanding rings (Lagarde's 2013 rain ripple
   texture approach, rings per drop cell timed by the rain rate), in both renderers, on ruts, puddles and ice-free
   water.
-- **Hoar frost.** Clear, still nights below 0 C rime the grass, plants and bare ground white (deposition when the
+- **Hoar frost.** (Moved to the world-links thread, 18 Nov, with dew, across every material.) Clear, still nights below 0 C rime the grass, plants and bare ground white (deposition when the
   surface cools under the dew point), thickest in hollows; the low sun melts it off from the lit side first.
+
+
+### Round 9: proposed (18 Nov, card posted)
+
+- **Ruts steer the wheels.** A wheel in a rut deeper than about a third of its sidewall is held by the rut's walls:
+  turning out of it needs the lateral force to climb the wall (the wall's slope and the soil's shear), so the
+  vehicle follows old ruts and lurches when it climbs out, MudRunner's rut tracking. Build: the wall slope under
+  each tyre's edges from the field, a lateral force on PhysXVehicle3D's wheels.
+  *Built, ground side (18 Nov):* `get_rut_guidance(contact, lateral, half_width)`: the deformation's cross slope
+  under the tread (least squares over 7 points, dent less rim only, so the terrain's own camber the road plane
+  already carries is not counted twice) and the wall height beside each edge (the highest relief 3 to 15 cm
+  outside it over the tread's floor). A tyre resting across a rut's wall is pushed down the tilt by load x slope
+  (rut wandering; the normal force resolved on a slope, as on a road's camber); one moving sideways shoves the
+  wall as a bulldozed face that high. Checks in `--test=frost`: centred no push, walls 7.6 cm over a 6 cm rut,
+  12 cm off-centre a slope of 0.36 back in. The vehicle's call waits for the world-links grip change in
+  physx_vehicle_3d.cpp (the split: it owns the firm-ground branch, the mud thread the soft force block).
+- **Mud holds boots.** Feet in sticky, saturated mud are held by suction (the pore pressure under a lifting sole,
+  as in breakout force of objects from seabed mud): a GroundLegMud3D or character foot slows to lift, with a sound
+  hook, and loses a boot past a limit.
+- **Needle ice on bare soil.** Frosty nights on wet bare soil grow needle ice (pipkrake) that lifts the top
+  centimetres; the thaw collapses it into loose, fluffy soil that prints easily and washes away. Ground-only,
+  beside the frozen ground just built.
 
 
 ### Look (any stage)

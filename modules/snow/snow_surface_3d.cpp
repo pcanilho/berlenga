@@ -32,6 +32,7 @@
 
 
 #include "snow_surface_3d.h"
+#include "snow_clumps_3d.h"
 
 #include "snow_cover_3d.h"
 
@@ -431,6 +432,20 @@ void SnowSurface3D::_ensure_children() {
 		body = nullptr;
 		collision_node = nullptr;
 		collision_shape.unref();
+	}
+	if (clumps && !clumps_node) {
+		clumps_node = memnew(SnowClumps3D);
+		add_child(clumps_node, false, INTERNAL_MODE_FRONT);
+	} else if (!clumps && clumps_node) {
+		clumps_node->queue_free();
+		clumps_node = nullptr;
+	}
+}
+
+void SnowSurface3D::set_clumps(bool p_enabled) {
+	clumps = p_enabled;
+	if (is_inside_tree()) {
+		_ensure_children();
 	}
 }
 
@@ -1366,6 +1381,9 @@ void SnowSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_dent_at", "position"), &SnowSurface3D::get_dent_at);
 	ClassDB::bind_method(D_METHOD("get_rim_at", "position"), &SnowSurface3D::get_rim_at);
 	ClassDB::bind_method(D_METHOD("get_moved_volume"), &SnowSurface3D::get_moved_volume);
+	ClassDB::bind_method(D_METHOD("set_clumps", "enabled"), &SnowSurface3D::set_clumps);
+	ClassDB::bind_method(D_METHOD("is_clumps"), &SnowSurface3D::is_clumps);
+	ClassDB::bind_method(D_METHOD("get_clumps_node"), &SnowSurface3D::get_clumps_node);
 	ClassDB::bind_method(D_METHOD("get_cached_tile_count"), &SnowSurface3D::get_cached_tile_count);
 	ClassDB::bind_method(D_METHOD("get_deform_rect"), &SnowSurface3D::get_deform_rect);
 	ClassDB::bind_method(D_METHOD("get_step_time_msec"), &SnowSurface3D::get_step_time_msec);
@@ -1383,6 +1401,7 @@ void SnowSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "tint", PROPERTY_HINT_COLOR_NO_ALPHA), "set_tint", "get_tint");
 	ADD_GROUP("Deformation", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "deform_enabled"), "set_deform_enabled", "is_deform_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clumps"), "set_clumps", "is_clumps");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "deform_extent", PROPERTY_HINT_RANGE, "4,512,1,suffix:m"), "set_deform_extent", "get_deform_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "deform_resolution", PROPERTY_HINT_RANGE, "128,4096,64"), "set_deform_resolution", "get_deform_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_STRING_ARRAY, "deform_groups"), "set_deform_groups", "get_deform_groups");

@@ -132,6 +132,35 @@ private:
 	LocalVector<PhysXFirebrands::Release> brand_points;
 	float brand_count = 0.0f; // brands to throw this step
 	static LocalVector<PhysXFireSpread3D *> fires;
+	// Trees and shrubs over the ground (docs/ideas/physx.md, "Trees catch fire from a ground fire"): a crown lights when
+	// the surface fire under it reaches Van Wagner's (1977) critical intensity for its crown base and foliar moisture,
+	// or when a burning crown's flame reaches it; it flares, burns out in tens of seconds and throws embers.
+	struct Tree {
+		Vector3 pos; // stem foot (y from the ground grid once read)
+		float radius = 1.0f; // crown radius, m
+		float top = 5.0f; // crown top above the ground, m
+		float base = 1.0f; // crown base above the ground, m
+		float fuel = 0.0f; // crown fine fuel (foliage and twigs under 6 mm), kg
+		float fmc = 1.0f; // foliar moisture, fraction of dry weight
+		float t_ignite = -1.0f;
+		float burnt = 0.0f; // share of the crown fuel consumed
+		float hrr = 0.0f; // W, this step
+		bool conifer = true;
+		bool grounded = false;
+		bool scripted = false;
+	};
+	LocalVector<Tree> trees;
+	LocalVector<float> crown_char; // per cell: the burnt share of a crown over it (fire_state_map's burnt)
+	LocalVector<float> crown_glow; // per cell: a burning crown's glow over it
+	bool crown_fire = true;
+	float foliar_moisture = 1.0f;
+	int crowns_lit = 0;
+	static constexpr float CROWN_TIME = 8.0f; // s, the crown burn's time constant (heat release peaks then)
+	void _gather_trees();
+	// Lights crowns and burns them; adds their plumes, brands and state. p_intensity: the surface fire's fireline
+	// intensity (kW/m) near a world point.
+	template <typename F>
+	void _update_trees(float p_delta, const Vector3 &p_wind, const F &p_intensity, LocalVector<PhysXFirebrands::Plume> &r_plumes);
 	float _heavy_flaming_time(uint32_t p_i) const { return 18900.0f * heavy_d[p_i]; } // Anderson 1969, 384/sigma min
 	bool _heavy_flaming(uint32_t p_i) const { return heavy_t[p_i] >= 0.0f && heavy_left[p_i] > HEAVY_SMOULDER && !quenched[p_i]; }
 	static constexpr float HEAVY_SMOULDER = 0.4f; // below this share left, a log smoulders without flame
@@ -250,6 +279,19 @@ public:
 	float get_spotting_scale() const { return spotting_scale; }
 	int get_firebrand_count() const { return firebrands.get_count(); }
 	int get_spot_fire_count() const { return firebrands.get_spot_fires(); }
+	void set_crown_fire(bool p_v) { crown_fire = p_v; }
+	bool is_crown_fire() const { return crown_fire; }
+	void set_foliar_moisture(float p_v) { foliar_moisture = MAX(p_v, 0.3f); }
+	float get_foliar_moisture() const { return foliar_moisture; }
+	// A tree or shrub the fire can light, besides a vegetation_field's crowns: its stem foot, height, crown base
+	// height and crown radius (m).
+	void add_tree(const Vector3 &p_position, float p_height, float p_crown_base, float p_crown_radius, bool p_conifer = true);
+	void clear_trees();
+	int get_tree_count() const { return trees.size(); }
+	int get_crowns_lit() const { return crowns_lit; }
+	int get_crowns_burning() const;
+	// A tree's state: share of its crown burnt (0 unlit), or -1 past the list.
+	float get_tree_burnt(int p_index) const;
 
 	PhysXFlow3D *get_flow() const { return flow; }
 };

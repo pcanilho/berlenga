@@ -16339,6 +16339,22 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (rigged) {
 				static_materials.push_back(_flutter_material(twin(m), s == 3 ? 0.05f : params[PARAM_LEAF_SIZE]));
 			}
+		} else if (s == 1) {
+			// Needles: the same shader for the fire's char and scorch (vegetation_fire.h), with no flutter (a needle is
+			// stiff) and no paler underside.
+			auto needle_material = [&](const Ref<StandardMaterial3D> &p_m) -> Ref<Material> {
+				const Ref<Material> fm = _flutter_material(p_m, params[PARAM_LEAF_SIZE]);
+				const Ref<ShaderMaterial> sm = fm;
+				if (sm.is_valid()) {
+					sm->set_shader_parameter("flutter_amount", 0.0f);
+					sm->set_shader_parameter("leaf_underside", 0.0f);
+				}
+				return fm;
+			};
+			mesh->surface_set_material(mesh->get_surface_count() - 1, needle_material(m));
+			if (rigged) {
+				static_materials.push_back(needle_material(twin(m)));
+			}
 		} else {
 			mesh->surface_set_material(mesh->get_surface_count() - 1, m);
 			if (rigged) {
