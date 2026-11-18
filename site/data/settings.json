@@ -1217,7 +1217,7 @@
     "GroundSurface3D.tracked_mud"
    ],
    "note": "",
-   "what": "tyres and boots leaving clay lay a film of mud on firm ground that fades as they clean and dries pale in place.",
+   "what": "tyres and boots leaving clay lay a film of mud on firm ground, printed with the tyre's chevron lugs or the boot's heel and forefoot, that fades as they clean and dries pale in place; thrown clods land as cakes of wet clay that dry where they lie.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1225,10 +1225,12 @@
   {
    "name": "Ruts that stay",
    "settings": [
-    "GroundSurface3D.keep_ruts"
+    "GroundSurface3D.keep_ruts",
+    "ruts_time_scale",
+    "ruts_away_rain"
    ],
    "note": "",
-   "what": "prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next.",
+   "what": "prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
