@@ -1249,6 +1249,27 @@ Safety J. 43; McGrattan et al., FDS technical reference (water spray).
    far. Here: Flow's vorticity seeded where the front meets a wind
    shear or a lee slope; brands caught in it rise further.
 
+### Water on fire makes steam (picked 18 Nov night, first of four)
+
+Built. Water landing on burning or still-glowing fuel takes the hot bed's
+heat once, as FDS's spray sink does: 2.6 MJ per kg to heat it to 100 C and
+boil it. A grass cell gives its fuel and char at about 600 C (1.5 kJ/kg K)
+and a second of its flames' output, never more than the water on it can
+boil; a burning prop gives its char layer (about 1 cm at 500 C, 1.2 MJ/m2)
+and a second of its heat release. That becomes puffs (a place, kg/s,
+falling over 3 to 4 s) in PhysXSteam, which makes a PhysXFlow3D of its own
+only while something steams and frees it 12 s after: steam is white where
+the fire's smoke is grey, so it cannot share the fire's gas. Combustion off,
+no glow (vapour near 100 C), a buoyant gas (smoke_buoyancy, as water vapour
+is lighter than air), a thin box source on the wet ground pushing up and
+outwards (boiling water swells some 1,700 times), and the cloud fading by
+the air's humidity (smoke_fade 1.2/s in dry air to 0.25/s near
+saturation). Fire at a shore (WorldContracts' water): a cell the front
+reaches under the surface goes out in a puff, and flames beside the water
+send a tenth of their heat into it as a thin steady steam. Test: a 2.6 m
+square of water on a burning patch put out 100 cells and made 2.7 kg of
+steam that rose as a white billow over a metre in two seconds.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

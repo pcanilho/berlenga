@@ -154,6 +154,12 @@
 				The highest the fire's plume killed foliage at [param position], in metres: the crown scorch height of Van Wagner (1973) from the front's fireline intensity, the wind and the air temperature.
 			</description>
 		</method>
+		<method name="get_steam_mass" qualifiers="const">
+			<return type="float" />
+			<description>
+				Kilograms of steam made so far where water met the fire: water from a [PhysXParticleFluid3D] on burning or glowing ground, and the front reaching standing or running water. Steam rises as a white cloud in a gas of its own, made only while something steams.
+			</description>
+		</method>
 		<method name="get_tree_burnt" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="index" type="int" />

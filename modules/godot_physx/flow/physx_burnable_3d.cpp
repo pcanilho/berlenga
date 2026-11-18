@@ -195,6 +195,14 @@ void PhysXBurnable3D::_wet_from_fluids(const Transform3D &p_xf) {
 	if (rain_water >= 0.5f) {
 		brand_spots.clear();
 	}
+	// Steam (PhysXSteam): the water takes the burning patch's heat once: its char layer, about a centimetre at some
+	// 500 C (200 kg/m3, 1.2 kJ/kg K: 1.2 MJ/m2), and a second of its flames' output, while the water lasts.
+	if (!steamed && (state == STATE_FLAMING || (state == STATE_SMOULDERING && smoulder > 0.1f))) {
+		steamed = true;
+		const float area = MIN(Math::PI * burn_radius * burn_radius, _surface_area());
+		const float j = MIN(area * 1.2e6f * (state == STATE_FLAMING ? 1.0f : smoulder) + hrr, kg * PhysXSteam::BOIL_HEAT);
+		steam.add_heat(p_xf.xform(origin_local.lerp(bounds.get_center(), 0.3f)), j, CLAMP(burn_radius, 0.3f, 1.5f), 4.0f);
+	}
 }
 
 void PhysXBurnable3D::_sample_heat(float p_delta) {
@@ -359,6 +367,7 @@ void PhysXBurnable3D::ignite(const Vector3 &p_position) {
 	burn_radius = MAX(burn_radius, 0.05f);
 	state = STATE_FLAMING;
 	rain_water = 0.0f;
+	steamed = false;
 }
 
 void PhysXBurnable3D::extinguish() {
@@ -803,6 +812,7 @@ void PhysXBurnable3D::_notification(int p_what) {
 		case NOTIFICATION_EXIT_TREE: {
 			burnables.erase(this);
 			brands.clear();
+			steam.clear();
 			for (ObjectID &id : emitters) {
 				if (Node *e = Object::cast_to<Node>(ObjectDB::get_instance(id))) {
 					e->queue_free();
@@ -823,6 +833,9 @@ void PhysXBurnable3D::_notification(int p_what) {
 				_sample_heat(0.1f);
 			}
 			_burn(dt);
+			if (steam.is_steaming() || steam.get_total_kg() > 0.0f) {
+				steam.step(this, brand_wind, dt);
+			}
 			_update_emitter();
 			_update_embers(dt);
 			_update_look();

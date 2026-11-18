@@ -31,13 +31,15 @@
 
 #pragma once
 
-#include "modules/world/world_contracts.h"
 #include "physx_firebrands.h"
+#include "physx_steam.h"
 
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
+
+#include "modules/world/world_contracts.h"
 
 class Decal;
 class PhysXFlow3D;
@@ -75,6 +77,8 @@ private:
 	LocalVector<uint8_t> quenched; // put out while burning (rain)
 	HashMap<uint32_t, float> water_cells; // fluid water on the ground this sample, kg per cell
 	int quenched_by_water = 0;
+	LocalVector<uint8_t> steamed; // water has already taken this cell's heat
+	PhysXSteam steam;
 	float base_moisture = 0.06f; // fuel_moisture as the weather moves it
 	bool use_weather_moisture = true;
 	float moisture_timelag = 3600.0f; // s, the fine dead fuel's (1 h) time lag
@@ -249,6 +253,7 @@ public:
 	Ref<Image> get_fuel_map() const { return fuel_map; }
 	bool _update_moisture(float p_delta);
 	void _apply_fluid_water(float p_delta, bool p_weather_dried);
+	void _water_edge(float p_delta);
 	float _moisture(uint32_t p_i) const { return base_moisture * wet[p_i] + rain_water[p_i]; }
 	float _air_temperature() const;
 	void set_fuel_patchiness(float p_v);
@@ -289,6 +294,7 @@ public:
 	int get_firebrand_count() const { return firebrands.get_count(); }
 	int get_spot_fire_count() const { return firebrands.get_spot_fires(); }
 	int get_doused_cells() const { return quenched_by_water; }
+	float get_steam_mass() const { return steam.get_total_kg(); }
 	void set_crown_fire(bool p_v) { crown_fire = p_v; }
 	bool is_crown_fire() const { return crown_fire; }
 	void set_foliar_moisture(float p_v) { foliar_moisture = MAX(p_v, 0.3f); }

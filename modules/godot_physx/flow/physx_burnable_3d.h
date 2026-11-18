@@ -32,6 +32,7 @@
 #pragma once
 
 #include "physx_firebrands.h"
+#include "physx_steam.h"
 
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
@@ -130,6 +131,8 @@ private:
 	float _rand();
 	Transform3D _target_xform() const;
 	void _wet_from_fluids(const Transform3D &p_xf);
+	PhysXSteam steam;
+	bool steamed = false; // water has taken the hot surface's heat
 	void _sample_heat(float p_delta);
 	void _burn(float p_delta);
 	void _update_emitter();
