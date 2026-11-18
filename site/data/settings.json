@@ -1860,7 +1860,7 @@
     "terrain_source"
    ],
    "note": "",
-   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); lakes get shore waves from their own wind only, and a generated world's sea breaks on every coast, in sections that spill and open into lace foam.",
+   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); lakes get shore waves from their own wind only, and a generated world's sea breaks on every coast, in sections that spill, show lit faces under the lip and tear open into lace foam.",
    "page": "water",
    "title": "Water",
    "topic": "Shore"
