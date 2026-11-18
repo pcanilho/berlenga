@@ -794,6 +794,20 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   surface cools under the dew point), thickest in hollows; the low sun melts it off from the lit side first.
 
 
+### Round 9: proposed (18 Nov, card posted)
+
+- **Ruts steer the wheels.** A wheel in a rut deeper than about a third of its sidewall is held by the rut's walls:
+  turning out of it needs the lateral force to climb the wall (the wall's slope and the soil's shear), so the
+  vehicle follows old ruts and lurches when it climbs out, MudRunner's rut tracking. Build: the wall slope under
+  each tyre's edges from the field, a lateral force on PhysXVehicle3D's wheels.
+- **Mud holds boots.** Feet in sticky, saturated mud are held by suction (the pore pressure under a lifting sole,
+  as in breakout force of objects from seabed mud): a GroundLegMud3D or character foot slows to lift, with a sound
+  hook, and loses a boot past a limit.
+- **Needle ice on bare soil.** Frosty nights on wet bare soil grow needle ice (pipkrake) that lifts the top
+  centimetres; the thaw collapses it into loose, fluffy soil that prints easily and washes away. Ground-only,
+  beside the frozen ground just built.
+
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
