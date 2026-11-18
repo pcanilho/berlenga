@@ -893,7 +893,8 @@ func _caves(cam: Camera3D) -> void:
 				for k in st_segs.size():
 					if st_segs[k]["stream"]:
 						var ln := (st_segs[k]["b"] as Vector3) - (st_segs[k]["a"] as Vector3)
-						var dk: float = (st_segs[k]["a"] as Vector3).distance_to(pos) - 4.0 * minf(ln.length(), 8.0) + (20.0 if absf(ln.normalized().y) > 0.25 else 0.0)
+						# Also a wide one: a narrow trench puts the walls in the lens.
+						var dk: float = (st_segs[k]["a"] as Vector3).distance_to(pos) - 4.0 * minf(ln.length(), 8.0) + (20.0 if absf(ln.normalized().y) > 0.25 else 0.0) - 12.0 * float(st_segs[k]["radius_a"])
 						if dk < best_d:
 							best_d = dk
 							best_s = k
@@ -907,10 +908,10 @@ func _caves(cam: Camera3D) -> void:
 				if sb.y > sa.y:
 					dir = -dir # look downstream
 				var eye_s := mid - dir * float(args.get("dist", "2.5")) + Vector3(0, -0.2 * rr_s, 0)
-				# Low over the water, as a caver crouched in the stream: 0.5 m over the bed under the eye.
+				# Low over the water, as a caver crouched in the stream: 0.4 m over the bed under the eye.
 				var fl_hit := get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(eye_s + Vector3(0, 1.0, 0), eye_s - Vector3(0, 3.0 * rr_s, 0)))
 				if fl_hit:
-					eye_s.y = fl_hit["position"].y + float(args.get("eye-height", "0.5"))
+					eye_s.y = fl_hit["position"].y + float(args.get("eye-height", "0.4"))
 				print("  stream view: bed under the eye %s" % ("found" if fl_hit else "not found (collision not in the space yet)"))
 				# Inside the air, with room round the lens.
 				for k in 10:
@@ -918,21 +919,52 @@ func _caves(cam: Camera3D) -> void:
 						break
 					eye_s = eye_s.lerp(mid, 0.25)
 				cam.position = eye_s
-				cam.look_at(Vector3(mid.x, eye_s.y, mid.z) + dir * 3.0 - Vector3(0, 0.6, 0))
-				cam.fov = 65.0
+				# Down the channel, a little below level; a narrower lens so the walls enter the frame only past a metre.
+				cam.look_at(Vector3(mid.x, eye_s.y, mid.z) + dir * 3.0 - Vector3(0, 0.35, 0))
+				cam.fov = 50.0
 				var lamp_st := OmniLight3D.new()
 				lamp_st.omni_range = 14.0
-				lamp_st.light_energy = float(args.get("lamp-energy", "2.0"))
+				lamp_st.light_energy = float(args.get("lamp-energy", "1.2"))
 				lamp_st.shadow_enabled = true
 				add_child(lamp_st)
 				# Overhead and a little behind the camera, as a helmet lamp: no wall close enough to burn out.
 				lamp_st.global_position = eye_s - dir * 0.2 + Vector3(0, 0.15, 0)
+				# A second lamp downstream, low over the water (another caver's, out of shot): its light grazes the
+				# surface toward the lens, so the water shows as a glinting sheet, as it does to a caver.
+				var lamp_g := OmniLight3D.new()
+				lamp_g.omni_range = 10.0
+				lamp_g.light_energy = float(args.get("graze-energy", "1.5"))
+				lamp_g.shadow_enabled = true
+				add_child(lamp_g)
+				# Kept on this segment's own water, short of its end: past it the stream may drop down a cascade, and a
+				# lamp down in the plunge would light the whole passage through the fall's water.
+				var ahead := minf(float(args.get("graze-dist", "5.0")), float(args.get("dist", "2.5")) + 0.5 * (sb - sa).length() - 0.4)
+				var g_at := eye_s + dir * maxf(ahead, 1.5)
+				var bed_eye := eye_s.y - float(args.get("eye-height", "0.4"))
+				var g_hit := get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(Vector3(g_at.x, bed_eye + 0.8, g_at.z), Vector3(g_at.x, bed_eye - 0.6, g_at.z)))
+				g_at.y = (g_hit["position"].y if g_hit else bed_eye) + 0.2
+				for k in 8:
+					if net.get_rock_distance(g_at) < -0.15:
+						break
+					g_at = g_at.lerp(Vector3(mid.x, g_at.y, mid.z), 0.3)
+				lamp_g.global_position = g_at
+				print("  stream view: grazing lamp %.1f m ahead, %.2f m over the eye's bed" % [ahead, g_at.y - bed_eye])
 				var n_stream := 0
 				for sgx in st_segs:
 					n_stream += 1 if sgx["stream"] else 0
 				print("  stream view: segment %d (%d of %d segments carry streams), radius %.2f, camera %s" % [best_s, n_stream, st_segs.size(), rr_s, eye_s])
 				get_tree().create_timer(0.5).timeout.connect(func():
 					print("  cave streams: %d" % net.get_stream_count())
+					if OS.get_environment("POOL_DEBUG") == "1":
+						for wn2 in get_tree().root.find_children("*", "Node3D", true, false):
+							if wn2.get_class().contains("Water") or wn2.get_class().contains("River") or wn2.get_class().contains("Ocean") or wn2.get_class().contains("Lake"):
+								for wm2 in wn2.find_children("*", "MeshInstance3D", true, false):
+									var gb2: AABB = (wm2 as MeshInstance3D).global_transform * (wm2 as MeshInstance3D).get_aabb()
+									if gb2.grow(10.0).has_point(cam.global_position):
+										print("    water node %s %s mesh aabb %s" % [wn2.get_class(), wn2.name, gb2])
+						for wm in net.find_children("*", "MeshInstance3D", true, false):
+							var gb: AABB = (wm as MeshInstance3D).global_transform * (wm as MeshInstance3D).get_aabb()
+							print("    water mesh %s aabb %s contains eye %s" % [wm.get_parent().name, gb, gb.has_point(cam.global_position)])
 					_screen_reflections(net))
 			elif args.get("cave-view", "outside") == "top":
 				cam.position = pos + o * 10.0 + Vector3(0, float(args.get("dist", "70")), 0)

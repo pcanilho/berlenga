@@ -918,6 +918,42 @@ already wait in a batch; creating their PhysX shapes and actors could also
 be split over frames within a time budget, with queries flushing the rest
 first so nothing is missed, and removals batched with removeActors.
 
+Status (18 Nov, streaming): built. Statics waiting to enter keep their world
+bounds; a step adds statics_per_step of them (1024, oldest first) plus any
+whose bounds touch an awake dynamic or kinematic actor grown by half a second
+of travel (areas skipped; past 512 movers, all at once). Queries add the
+waiting statics their bounds reach (ray segment, point, shape bounds swept
+along the motion, the body swept for test_body_motion); past 32 such queries
+in a step they add everything. A static moved or reshaped while waiting
+refreshes the bounds. Static bodies leaving are removed in one removeActors
+before the next step or query (userData cleared so nothing reports them).
+Cloud bench (5,000 statics a region, 20,000 total), worst of the first ten
+frames: 4 to 6 ms against 6 to 9 ms for the first three regions, about the
+same at 20,000. Most of what was left was not the adds: with nothing added in
+the region's first step the step still cost 1 to 8 ms, growing with the
+statics already in the scene.
+
+Status (18 Nov, profile): a PhysX profile build (zones are compiled out of
+release; a PxProfilerCallback summing zones per step, plus zones added
+round the unzoned start of NpScene::simulateOrCollide) put it in
+syncMaterialEvents: 3.5, 5 and 7.8 ms for regions 1 to 3. Every body made
+its own PxMaterial, and each new material is an event every scene applies
+at its next simulate (growing with the materials already there); PhysX
+material handles also stop at 65,535, which an open world passes. Bodies
+now share one material per (friction, bounce), reference counted, the last
+release deferred as before; changing a body's friction moves its shapes to
+the matching material. Bench after (worst of a region's first ten frames,
+5,000 statics a region): all at once 5 to 8 ms, flat with world size;
+spread (default) 3.4 to 4.5 ms, flat (before: 6 to 14 ms, growing).
+Spreading has one cost: statics added in pieces go into the incremental
+part of the static query tree, so raycasts run about 1.5 to 2 times slower
+until PhysX's progressive rebuild finishes a few seconds later (measured
+back to normal 600 frames on). Building one pruning structure per piece was
+no better; forcing a rebuild after the last piece fixes it at once but
+costs 0.6 to 1.9 ms at 5,000 to 20,000 statics and grows with the world, so
+it is left out. The game side (creating the nodes, 15 to 20 ms a region) is
+now the larger part: stream nodes in over frames.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

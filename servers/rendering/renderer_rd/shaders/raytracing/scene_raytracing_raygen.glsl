@@ -717,9 +717,21 @@ uint rt_camera_medium(vec3 p_origin) {
 		if ((ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) != 0u) {
 			return ps.bsdf_pdf < 0.0 ? (floatBitsToUint(ps.bsdf_pdf) & 0x7FFFFFFFu) : 0u;
 		}
+		// Into a solid thicker than a hull's plating (the rock over a cave): water beyond it is not the camera's.
+		// The next surface up, faces either way, is that solid's far side when it is a back face; before, a stream
+		// on the ground 60 m over a cave read as the water the cave's camera stood in, and the whole passage
+		// filled with its scattering.
+		vec3 hit_p = o + up * ps.hit_t;
+		bool back;
+		vec3 bn;
+		uint bg;
+		float t_out = rt_sss_probe(hit_p + up * 0.002, up, back, bn, bg);
+		if (t_out > 1.0 && back) {
+			return 0u;
+		}
 		// On past it: off the surface on its upper side.
 		vec3 n = dot(ps.offset_normal, up) >= 0.0 ? ps.offset_normal : -ps.offset_normal;
-		o = offset_ray_origin(o + up * ps.hit_t, n, ps.hit_t);
+		o = offset_ray_origin(hit_p, n, ps.hit_t);
 	}
 	return 0u;
 }

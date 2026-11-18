@@ -73,7 +73,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Torn spray sheets: veils of spray stream downwind off the folding crests.*
 
-- **Crisp sea foam** (`foam_crisp`, `foam_relief`): sharp patch edges, torn lobed holes and bubble relief, up close and at range.
+- **Crisp sea foam** (`foam_crisp`, `foam_relief`): sharp patch edges, torn lobed holes and bubble relief, up close and at range; distant foam keeps its lace in raster instead of turning to flat white sheets.
 
   ![Sea foam on a rough sea a few metres away, without and with crisp foam, raster](media/water-foam-crisp.jpg)
 

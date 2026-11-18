@@ -1408,9 +1408,10 @@ void GrassField3D::_build_hedges() {
 				continue;
 			}
 			// The real segment near, voxel shells further out (docs/ideas/vegetation.md, "Far hedges
-			// as voxel bricks"): 10 cm voxels from 30 m, 20 cm from 70 m, 40 cm from 150 m.
+			// as voxel bricks"): 10 cm voxels from 45 m, 20 cm from 90 m, 40 cm from 180 m, where a
+			// voxel is about two pixels across at 1080p and a 75 degree view (plus the cell's reach).
 			const Ref<Mesh> full = meshes[v % meshes.size()];
-			const float ranges[5] = { 0.0f, 30.0f, 70.0f, 150.0f, 0.0f };
+			const float ranges[5] = { 0.0f, 45.0f, 90.0f, 180.0f, 0.0f };
 			const float voxels[4] = { 0.0f, 0.1f, 0.2f, 0.4f };
 			for (int lod = 0; lod < 4; lod++) {
 				Ref<Mesh> lm = full;
@@ -1424,27 +1425,37 @@ void GrassField3D::_build_hedges() {
 				if (lm.is_null() || lm->get_surface_count() == 0) {
 					continue;
 				}
-				Ref<MultiMesh> mm;
-				mm.instantiate();
-				mm->set_transform_format(MultiMesh::TRANSFORM_3D);
-				mm->set_mesh(lm);
-				mm->set_instance_count(xf[k][v].size());
-				for (uint32_t t = 0; t < xf[k][v].size(); t++) {
-					mm->set_instance_transform(t, xf[k][v][t]);
+				// A visibility range is measured to the instance's AABB centre, so the segments go
+				// in 8 m cells: one MultiMesh per cell and level, each switching on its own
+				// distance (a whole field's hedges in one MultiMesh switch together).
+				HashMap<Vector2i, LocalVector<Transform3D>> cells;
+				for (const Transform3D &t : xf[k][v]) {
+					const Vector2i c(int(Math::floor(t.origin.x / 8.0f)), int(Math::floor(t.origin.z / 8.0f)));
+					cells[hedge_voxel_lods ? c : Vector2i()].push_back(t);
 				}
-				MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
-				mmi->set_name(vformat("Hedge%d_%d_lod%d", k, v, lod));
-				mmi->set_multimesh(mm);
-				if (hedge_voxel_lods) {
-					mmi->set_visibility_range_begin(ranges[lod]);
-					mmi->set_visibility_range_end(ranges[lod + 1]);
-					mmi->set_visibility_range_begin_margin(lod > 0 ? 3.0f : 0.0f);
-					mmi->set_visibility_range_end_margin(lod < 3 ? 3.0f : 0.0f);
-				} else if (lod > 0) {
-					memdelete(mmi);
-					continue;
+				for (const KeyValue<Vector2i, LocalVector<Transform3D>> &cell : cells) {
+					Ref<MultiMesh> mm;
+					mm.instantiate();
+					mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+					mm->set_mesh(lm);
+					mm->set_instance_count(cell.value.size());
+					for (uint32_t t = 0; t < cell.value.size(); t++) {
+						mm->set_instance_transform(t, cell.value[t]);
+					}
+					MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+					mmi->set_name(vformat("Hedge%d_%d_%d_%d_lod%d", k, v, cell.key.x, cell.key.y, lod));
+					mmi->set_multimesh(mm);
+					if (hedge_voxel_lods) {
+						mmi->set_visibility_range_begin(ranges[lod]);
+						mmi->set_visibility_range_end(ranges[lod + 1]);
+						mmi->set_visibility_range_begin_margin(lod > 0 ? 3.0f : 0.0f);
+						mmi->set_visibility_range_end_margin(lod < 3 ? 3.0f : 0.0f);
+					} else if (lod > 0) {
+						memdelete(mmi);
+						continue;
+					}
+					holder->add_child(mmi);
 				}
-				holder->add_child(mmi);
 			}
 		}
 	}

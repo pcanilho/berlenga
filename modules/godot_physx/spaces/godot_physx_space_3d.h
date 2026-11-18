@@ -37,6 +37,8 @@
 #include "core/templates/rid.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
+#include <foundation/PxBounds3.h>
+
 namespace physx {
 class PxScene;
 class PxDefaultCpuDispatcher;
@@ -81,8 +83,20 @@ class GodotPhysXSpace3D {
 	HashSet<GodotPhysXCloth3D *> cloths;
 	HashSet<GodotPhysXSoftBody3D *> soft_bodies;
 	LocalVector<GodotPhysXBody3D *> sync_bodies; // to notify in the next call_queries()
-	// Static actors waiting to enter the scene together (see queue_static_actor).
-	LocalVector<physx::PxRigidActor *> pending_statics;
+	// Static actors waiting to enter the scene together (see queue_static_actor), with their world bounds.
+	struct PendingStatic {
+		physx::PxRigidActor *actor = nullptr;
+		physx::PxBounds3 bounds;
+	};
+	LocalVector<PendingStatic> pending_statics;
+	// Static actors leaving the scene together (see queue_static_removal); released once removed.
+	LocalVector<physx::PxRigidActor *> pending_removals;
+	int partial_flushes = 0; // query-driven partial flushes since the last step
+	bool pending_bounds_dirty = false; // a waiting static moved or changed shape
+	void _refresh_pending_bounds();
+	void _add_statics(physx::PxRigidActor *const *p_actors, uint32_t p_count, bool p_whole_batch);
+	void _flush_removals();
+	void _flush_pending_step();
 	HashSet<GodotPhysXBody3D *> force_integrators; // bodies driving their own _integrate_forces
 	HashSet<GodotPhysXBody3D *> constant_force_bodies; // bodies with a nonzero constant force/torque
 	HashSet<GodotPhysXBody3D *> separation_ray_bodies; // dynamic bodies with a SeparationRayShape3D
@@ -108,10 +122,25 @@ public:
 	// Static bodies entering the space are added to the scene in one batch before the next step or query,
 	// through a PxPruningStructure when there are many (a streamed region): one merge into the scene query
 	// tree instead of each actor dirtying it.
+	// When many arrive at once, they go in over several steps (statics_per_step), nearest the moving bodies first,
+	// and a query first adds those its bounds reach, so neither the solver nor a query ever misses one.
+	// Static bodies leaving go out together the same way (one removeActors before the next step or query).
 	void queue_static_actor(physx::PxRigidActor *p_actor);
 	bool cancel_static_actor(physx::PxRigidActor *p_actor);
+	void queue_static_removal(physx::PxRigidActor *p_actor);
+	void pending_static_changed() { pending_bounds_dirty = !pending_statics.is_empty(); }
+	// Everything waiting, now.
 	void flush_pending_actors();
+	// Before a query: removals, then the waiting statics whose bounds overlap p_bounds (all of them once a step has
+	// seen many such queries).
+	void flush_pending_actors(const physx::PxBounds3 &p_bounds);
+	int get_pending_static_count() const { return pending_statics.size(); }
 	static void defer_material_release(physx::PxMaterial *p_material);
+	// Bodies share one PxMaterial per (friction, bounce): every new material is an event each scene processes at its
+	// next simulate (a streamed region of 5,000 bodies made 5,000 of them, several ms growing with the world, and
+	// PhysX handles stop at 65,535). Released (deferred, as above) when the last body lets go.
+	static physx::PxMaterial *acquire_material(physx::PxPhysics *p_physics, real_t p_friction, real_t p_bounce);
+	static void release_material(physx::PxMaterial *p_material);
 	static void flush_material_releases();
 	// The same for an actor about to be released whose shapes hold the last references to their materials (a PhysX
 	// vehicle's chassis / wheel materials): each is kept alive (one reference each) until the next step.

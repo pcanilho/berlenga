@@ -1,0 +1,1 @@
+- Path tracing: a camera in a cave under water on the surface above no longer reads as standing in that water (the camera's medium probe stops at rock thicker than 1 m), so the passage no longer fills with its scattering.

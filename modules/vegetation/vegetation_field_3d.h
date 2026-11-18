@@ -218,6 +218,14 @@ class VegetationField3D : public Node3D {
 		const TerrainGenerator3D *dunes = nullptr; // The map's geology source when it has coastal dunes (PlantSpecies.RULE_DUNE); read only.
 		const TerrainGenerator3D *coast = nullptr; // The map's geology source when it has a sea (PlantSpecies.RULE_TIDE_HEIGHT and the other coast rules); read only.
 		float sea_y = 0.0f; // Its sea's surface, world y.
+		// Loose sand at the surface (beach, coastal dune, sand sea: the geology's negative soil
+		// depth), 0..1 on the generator's result grid. Only sand plants (the dune and coast rules)
+		// grow on it; no stand, so no litter, on a dune.
+		LocalVector<float> sand;
+		int sand_nx = 0;
+		int sand_ny = 0;
+		Rect2 sand_rect;
+		float sand_at(const Vector2 &p_xz) const;
 	};
 	struct FarAdd {
 		Vector2 xz;
@@ -241,6 +249,7 @@ class VegetationField3D : public Node3D {
 	};
 	void _publish_deadwood(const LocalVector<const LocalVector<Deadwood> *> &p_lists);
 	bool _make_setup(PlaceSetup &r_setup);
+	static void _read_sand(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
 	void _place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles) const;
 	void _commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes);
 	// The maps from the placed crowns and far colour: computed anywhere, applied on the main thread.

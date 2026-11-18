@@ -1288,6 +1288,7 @@ func _sand_shelter_check(spots: Array) -> void:
 	var sand := GroundSurface3D.new()
 	sand.ground_type = GroundSurface3D.GROUND_SAND
 	sand.moisture = 0.0
+	sand.keep_ruts = false # Each run starts from fresh sand.
 	add_child(sand)
 	sand.height_source = sand.get_path_to(height)
 	sand.follow_target = sand.get_path_to(probe)
