@@ -1,0 +1,284 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WorldWeather" inherits="RefCounted" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		The weather contract: what the air, the sky and the surface water are doing at a point.
+	</brief_description>
+	<description>
+		Every world system that reads the weather reads it through this contract ([method WorldContracts.get_weather]), never through the producer. The producer is the active [WeatherMap3D]; with none, each query returns its documented default. A test replaces it with a script extending this class and overriding the virtuals it needs (the rest fall back to the producer or the default), set with [method WorldContracts.set_weather]. See docs/ideas/world-contracts.md.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="_add_contact_wetness" qualifiers="virtual">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="amount" type="float" />
+			<description>
+				Override in a stub to replace [method add_contact_wetness].
+			</description>
+		</method>
+		<method name="_air_humidity_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method air_humidity_at].
+			</description>
+		</method>
+		<method name="_air_temperature_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method air_temperature_at].
+			</description>
+		</method>
+		<method name="_canopy_closure_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method canopy_closure_at].
+			</description>
+		</method>
+		<method name="_canopy_drip_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method canopy_drip_at].
+			</description>
+		</method>
+		<method name="_canopy_water_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method canopy_water_at].
+			</description>
+		</method>
+		<method name="_canopy_wetness_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method canopy_wetness_at].
+			</description>
+		</method>
+		<method name="_contact_wetness_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method contact_wetness_at].
+			</description>
+		</method>
+		<method name="_frost_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method frost_at].
+			</description>
+		</method>
+		<method name="_ground_water_input_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method ground_water_input_at].
+			</description>
+		</method>
+		<method name="_precipitation_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method precipitation_at].
+			</description>
+		</method>
+		<method name="_puddle_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method puddle_at].
+			</description>
+		</method>
+		<method name="_rain_share_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method rain_share_at].
+			</description>
+		</method>
+		<method name="_rainfall_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method rainfall_at].
+			</description>
+		</method>
+		<method name="_snowfall_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method snowfall_at].
+			</description>
+		</method>
+		<method name="_sun_visibility_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method sun_visibility_at].
+			</description>
+		</method>
+		<method name="_surface_wetness_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method surface_wetness_at].
+			</description>
+		</method>
+		<method name="_wind_at" qualifiers="virtual const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="height_above_ground" type="float" />
+			<description>
+				Override in a stub to replace [method wind_at].
+			</description>
+		</method>
+		<method name="add_contact_wetness">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="amount" type="float" default="1.0" />
+			<description>
+				Wets surfaces round [param position] (a splash, a spill, the sea's swash).
+			</description>
+		</method>
+		<method name="air_humidity_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The relative humidity (0..1) of the air at [param position]. Default 0.7.
+			</description>
+		</method>
+		<method name="air_temperature_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The air temperature (C) at [param position]: the live air through the season and the day's cycle. Default 15.
+			</description>
+		</method>
+		<method name="canopy_closure_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The share of the sky closed by the canopy overhead (0..1). Default 0.
+			</description>
+		</method>
+		<method name="canopy_drip_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Water dripping from the leaves (mm/h). Default 0.
+			</description>
+		</method>
+		<method name="canopy_water_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Water held on leaves (mm). Default 0.
+			</description>
+		</method>
+		<method name="canopy_wetness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How wet the leaves are (0..1). Default 0.
+			</description>
+		</method>
+		<method name="contact_wetness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Water other systems splashed onto surfaces at [param position] (0..1). Default 0.
+			</description>
+		</method>
+		<method name="dew_point_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The dew point (C) of the air at [param position], from the two above.
+			</description>
+		</method>
+		<method name="frost_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Hoarfrost on exposed surfaces (mm of water). Default 0.
+			</description>
+		</method>
+		<method name="ground_water_input_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Water reaching the ground under the canopy (mm/h). Default 0.
+			</description>
+		</method>
+		<method name="has_provider" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether a producer (a [WeatherMap3D] in the tree) stands behind this contract.
+			</description>
+		</method>
+		<method name="precipitation_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Water falling at [param position] (mm/h, rain and snow as water). Default 0.
+			</description>
+		</method>
+		<method name="puddle_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Standing water at [param position] (mm). Default 0.
+			</description>
+		</method>
+		<method name="rain_share_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The liquid share (0..1) of what falls at [param position]. Default 1.
+			</description>
+		</method>
+		<method name="rainfall_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Rain at [param position] (mm/h of liquid). Default 0.
+			</description>
+		</method>
+		<method name="snowfall_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Snow at [param position] (mm/h of water). Default 0.
+			</description>
+		</method>
+		<method name="sun_visibility_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The share of the sun's disc clear of cloud at [param position] (0..1). Default 1.
+			</description>
+		</method>
+		<method name="surface_wetness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How wet open surfaces are at [param position] (0..1: the water film over its storage; 1 where puddles stand). Default 0.
+			</description>
+		</method>
+		<method name="wind_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="height_above_ground" type="float" default="-1.0" />
+			<description>
+				The wind (m/s) at [param position], [param height_above_ground] metres up (below zero: 10 m), sheltered by canopy and obstacles. Default still.
+			</description>
+		</method>
+	</methods>
+</class>

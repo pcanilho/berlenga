@@ -855,6 +855,7 @@ void CharacterBody3D::set_up_direction(const Vector3 &p_up_direction) {
 void CharacterBody3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
+			_join_world_contact();
 			// Reset move_and_slide() data.
 			collision_state.state = 0;
 			platform_rid = RID();

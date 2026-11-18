@@ -115,13 +115,49 @@
 		<method name="get_air_humidity" qualifiers="const">
 			<return type="float" />
 			<description>
-				The relative humidity the cells use now (0..1): [member humidity] eased over [member transition_time].
+				The relative humidity of the air now (0..1): [member humidity] eased over [member transition_time] is the humidity at the day's mean temperature; with [member air_daily_cycle] the vapour holds through the day, so it rises as the air cools at night and falls in the afternoon.
 			</description>
 		</method>
 		<method name="get_air_temperature" qualifiers="const">
 			<return type="float" />
 			<description>
-				The air temperature the cells use now (C): [member temperature] eased over [member transition_time].
+				The air temperature now (C), as everything that melts, freezes, dries, burns or fogs reads it: the day's mean ([method get_air_mean_temperature]) through the day's cycle when [member air_daily_cycle] is on and a [member sky_clock] is set.
+			</description>
+		</method>
+		<method name="get_air_dew_point" qualifiers="const">
+			<return type="float" />
+			<description>
+				The dew point of the air now (C), from [method get_air_temperature] and [method get_air_humidity] (Magnus).
+			</description>
+		</method>
+		<method name="get_air_mean_temperature" qualifiers="const">
+			<return type="float" />
+			<description>
+				The day's mean air temperature now (C): with a [member climate] and [member air_follows_climate], the climate's mean for the date at [member ground_height] plus [member season_anomaly]; else [member temperature]; eased over [member transition_time].
+			</description>
+		</method>
+		<method name="get_sun_sine" qualifiers="const">
+			<return type="float" />
+			<description>
+				The sine of the sun's elevation (0 below the horizon): from [member sun_light], else the [member sky_clock].
+			</description>
+		</method>
+		<method name="diurnal_shape" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="solar_hour" type="float" />
+			<param index="1" name="day_length" type="float" />
+			<description>
+				The day's temperature cycle of Parton and Logan (1981), 0 at the minimum just after sunrise and 1 at the afternoon peak, for the local solar hour and the day length in hours.
+			</description>
+		</method>
+		<method name="penman_evaporation" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="net_radiation" type="float" />
+			<param index="1" name="wind_2m" type="float" />
+			<param index="2" name="celsius" type="float" />
+			<param index="3" name="humidity" type="float" />
+			<description>
+				Evaporation from a wet surface (mm/h): Penman's (1948) combination of the net radiation (W/m2; below zero adds nothing) and the air's drying power (his wind function, at the wind at 2 m).
 			</description>
 		</method>
 		<method name="get_canopy_closure_at" qualifiers="const">
@@ -414,6 +450,18 @@
 		</method>
 	</methods>
 	<members>
+		<member name="air_daily_cycle" type="bool" setter="set_air_daily_cycle" getter="get_air_daily_cycle" default="true">
+			With a [member sky_clock], the air follows the day: coolest just after sunrise, warmest in the afternoon, falling through the night (Parton and Logan 1981), over [member daily_temperature_range] narrowed by clouds and rain, around the day's mean. The humidity follows at a held dew point, so clear nights near saturation bring mist.
+		</member>
+		<member name="air_follows_climate" type="bool" setter="set_air_follows_climate" getter="get_air_follows_climate" default="true">
+			With a [member climate], the day's mean air temperature is the climate's for the date at [member ground_height] plus [member season_anomaly], which then sets how warm or cold the weather runs; [member temperature] is used only without a climate or with this off.
+		</member>
+		<member name="daily_temperature_range" type="float" setter="set_daily_temperature_range" getter="get_daily_temperature_range" default="10.0">
+			The range between the day's coldest and warmest air on a clear calm day (K). An overcast sky halves it and rain narrows it further (Dai, Trenberth and Karl 1999).
+		</member>
+		<member name="sun_drying" type="bool" setter="set_sun_drying" getter="get_sun_drying" default="true">
+			The sun dries wet surfaces: evaporation is Penman's combination of the net radiation (the sun's shortwave under the cloud shadow and the canopy, less the longwave loss; FAO-56) and the air's drying power, so puddles in sun go well before those in shade.
+		</member>
 		<member name="aerosol_haze" type="bool" setter="set_aerosol_haze" getter="get_aerosol_haze" default="true">
 			Fills the air with background aerosol haze, from [member haze_visibility] and the air's humidity, thinning with height over [member haze_height]. The volumetric fog lights it with the sun, the sun's shadows and the cloud shadow, so shafts of light show between clouds and past ridges. Past the volumetric fog's reach the [WeatherSkyMaterial] carries the same haze in its air (see [method WeatherSkyMaterial.set_aerosol]), where the clouds' shadow draws the shafts on across the sky. Off, the air is clear unless the [Environment] adds fog.
 		</member>
@@ -461,6 +509,9 @@
 		</member>
 		<member name="cloud_shape_scale" type="float" setter="set_cloud_shape_scale" getter="get_cloud_shape_scale" default="3000.0">
 			Size of one tile of the 3D shape noise, in metres. Single clouds are about a quarter of it across.
+		</member>
+		<member name="cloud_shear" type="float" setter="set_cloud_shear" getter="get_cloud_shear" default="1.0">
+			Scale on how far the wind shear leans the clouds' tops downwind of their bases. The wind aloft grows and veers with height, so tissue that rose higher was carried further: towers lean and their tops stream out, the lean growing as height squared so the base stays upright. [code]0[/code] keeps the clouds upright.
 		</member>
 		<member name="cloud_thickness" type="float" setter="set_cloud_thickness" getter="get_cloud_thickness" default="1500.0">
 			Depth of the cloud layer for cumulus ([member cloud_type] 0.7), in metres. Stratus is a quarter of it; cumulonimbus (type above 0.8, as storms make) towers up to five times it.
@@ -538,7 +589,7 @@
 			Aerodynamic roughness length z0 of the ground, in metres: about 0.0002 over the sea, 0.03 over open land, 0.5 to 1 over a town. It sets how the wind slows near the ground and how gusty it is.
 		</member>
 		<member name="season_anomaly" type="float" setter="set_season_anomaly" getter="get_season_anomaly" default="0.0">
-			How much warmer (K) this year runs than the [member climate]: the live air temperature's departure from the climate's mean for the day, averaged over about a month of weather time while the map runs. Set it for a warm or cold year.
+			How much warmer (K) this year runs than the [member climate]: with [member air_follows_climate] on, the air's offset from the climate's mean for the day; with it off, the live air temperature's departure from that mean, averaged over about a month of weather time while the map runs. Set it for a warm or cold spell or year.
 		</member>
 		<member name="season_day" type="int" setter="set_season_day" getter="get_season_day" default="135">
 			Day of the year for [method get_season] when there is no [member sky_clock] (135 is 15 May).

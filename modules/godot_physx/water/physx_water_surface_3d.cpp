@@ -800,10 +800,16 @@ vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 		// wave (a metre or so across, several long), so even fresh white water opens in places rather than
 		// reading as an even white band from a few tens of metres.
 		// Wandering streaks, only in patches along the crest (an even comb otherwise).
-		vec2 rq = vec2(dot(world_xz, dir) * 0.25, dot(world_xz, vec2(-dir.y, dir.x)) * 0.7);
-		rq.y += 1.6 * flow_value_noise(world_xz * 0.12 + vec2(2.3, float(i) * 4.7));
+		// Warped at two scales so they tear raggedly rather than run as straight parallel bars.
+		vec2 rq = vec2(dot(world_xz, dir) * 0.4, dot(world_xz, vec2(-dir.y, dir.x)) * 0.75);
+		rq += vec2(0.8, 1.6) * (vec2(flow_value_noise(world_xz * 0.12 + vec2(2.3, float(i) * 4.7)), flow_value_noise(world_xz * 0.12 - vec2(float(i) * 3.3, 7.9))) - 0.5) * 2.0;
+		rq.y += 0.5 * (flow_value_noise(world_xz * 0.6 + vec2(4.1, float(i))) - 0.5);
 		float torn = smoothstep(0.35, 0.65, flow_value_noise(world_xz * 0.08 + vec2(float(i) * 9.1, 6.2)));
-		float rip = 1.0 - 0.6 * torn * smoothstep(0.62, 0.3, flow_value_noise(rq + vec2(float(i) * 5.1, 1.3)));
+		// Only past about 15 m from the camera (as foam_at_with's view_dist): nearer, the foam's own holes and
+		// lace are resolved, and streaks cut in its amount meet the crisp edge as hard straight bars.
+		vec2 rel_c = world_xz - grid_center;
+		float rip_far = smoothstep(12.0, 25.0, length(mesh_open ? rel_c - mesh_offset : rel_c));
+		float rip = 1.0 - 0.6 * rip_far * torn * smoothstep(0.62, 0.3, flow_value_noise(rq + vec2(float(i) * 5.1, 1.3)));
 		r_white = max(r_white, brk * vary * spill * max(rip * smoothstep(0.35, 0.95, cos(ps)), trail));
 		// The lip turns white as it falls, and the plunge throws up a splash.
 		r_white = max(r_white, drop_w * lip);
@@ -2831,6 +2837,24 @@ void PhysXWaterSurface3D::_configure_cascades(const WaterSolver::Settings &p_bas
 		c->solver.configure(s);
 		c->solver.set_foam_settings(false, choppiness, _live_foam_threshold(), foam_persistence, 0.0f, shore_undertow);
 		detail_cascade = c;
+	}
+}
+
+float PhysXWaterSurface3D::contract_water_height_at(const Vector3 &p_position) const {
+	return sample_depth(p_position) > 0.0f ? sample_height(p_position) : -Math::INF;
+}
+
+void PhysXWaterSurface3D::contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) {
+	submit_sphere(int(p_owner & 0x7fffffff), p_position, p_radius, p_strength);
+}
+
+void PhysXWaterSurface3D::contract_water_clear(uint64_t p_owner) {
+	clear_sphere(int(p_owner & 0x7fffffff));
+}
+
+void PhysXWaterSurface3D::contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) {
+	if (sample_depth(p_position) > 0.0f) {
+		submit_impulse(p_position, p_radius, p_strength);
 	}
 }
 
@@ -6327,12 +6351,14 @@ Ref<Texture2D> PhysXWaterSurface3D::get_caustics_texture() const {
 void PhysXWaterSurface3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
+			WorldContracts::register_water(this);
 			_connect_terrain();
 			_rebuild();
 			set_physics_process_internal(true);
 			set_process_internal(true);
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
+			WorldContracts::unregister_water(this);
 			_disconnect_terrain();
 			set_physics_process_internal(false);
 			set_process_internal(false);
@@ -6348,6 +6374,15 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 			_update_crest_spray();
 			_update_crest_sheets((float)get_physics_process_delta_time());
 			_wet_ground();
+			if (!Engine::get_singleton()->is_editor_hint()) {
+				body_contacts.update(
+						get_tree(), get_physics_process_delta_time(),
+						[this](const Vector3 &p) { return sample_height(p); },
+						[](const Vector3 &) { return Vector3(); },
+						[this](int o, const Vector3 &p, float r, float s) { submit_sphere(o, p, r, s); },
+						[this](int o) { clear_sphere(o); },
+						[this](const Vector3 &p, float r, float s) { submit_impulse(p, r, s); });
+			}
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			if (!Engine::get_singleton()->is_editor_hint()) {

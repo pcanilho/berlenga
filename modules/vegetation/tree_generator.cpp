@@ -2961,6 +2961,8 @@ static thread_local Vector3 tube_carry_nrm;
 static thread_local Vector3 tube_last_nrm;
 // Metres of bark one texture tile covers on the tree being built (_build_mesh sets it per bark family).
 static thread_local float tube_tile = 0.4f;
+// Off for tubes that are not bark or moss (resin runs), which keep their own flat colour.
+static thread_local bool tube_macro_tint = true;
 // A leader's split (trees.md 5z): the displaced relief fades out within tube_fade_r of
 // tube_fade_c, on the bole and on its stems, so their surfaces meet smooth (the normal map keeps
 // the bark); displaced, the bole's ridges stood through the stems' furrows as teeth (docs, 18 Nov).
@@ -3344,7 +3346,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				r_b.colors.push_back(p_color.lerp(Color(0.3f, 0.24f, 0.17f), 0.7f));
 			} else {
 				r_b.uvs.push_back(cring ? c_uv : Vector2(float(s) / p_sides * repeats + twist(p_points[r]), v));
-				r_b.colors.push_back(hdata ? macro_tint(p_points[r] + dir * p_radii[r], p_color) : p_color);
+				r_b.colors.push_back(tube_macro_tint ? macro_tint(p_points[r] + dir * p_radii[r], p_color) : p_color);
 			}
 			if (r_b.use_tangents) {
 				// Along u; the binormal (normal x tangent) then runs along the stem, with v. On the
@@ -10356,7 +10358,9 @@ void TreeGenerator::_grow_resin(Builder &r_resin) {
 					rp.push_back(stem_point(wound_pts, wound_arc, es - run * f, sa[k], sr + 0.1f * rk, out, axis));
 					rr.push_back(rk);
 				}
+				tube_macro_tint = false;
 				_tube(r_resin, rp, rr, 6, 0.0f, col, nullptr, 0.0f, -1.0f, false);
+				tube_macro_tint = true;
 				// The drop at its end, on the run's last point (out and axis are that point's).
 				bead(rp[rp.size() - 1] + out * (0.3f * rm), out, axis, rm * 1.5f, col);
 			} else if (rng.randf() < 0.6f) {

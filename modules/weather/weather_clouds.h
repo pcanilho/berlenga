@@ -58,6 +58,10 @@ struct State {
 	float cover_scale = 6000.0f; // m, the cover noise (WeatherMap3D::cloud_scale)
 	float shape_scale = 3000.0f; // m, one tile of the shape noise
 	Vector2 drift; // m, how far the clouds have moved with the wind aloft
+	// m, how far a cloud's tissue one thickness above the base has been carried downwind (and veered) of
+	// the base by the wind shear while it rose: tops lean over (Nubis's cloud top offset), growing as height
+	// squared (shear_offset()).
+	Vector2 shear;
 	// Clouds that form and clear (step 3e): the cover noise's time in lifetimes (below 0: frozen), how far the
 	// shape noise's second read has slid against the first, and how far the sky's detail noise has risen
 	// (texture units, wrapped).
@@ -74,6 +78,8 @@ struct State {
 // Cloud top over the base for a cloud type: stratus a quarter of the thickness, cumulus (0.7) all of
 // it, cumulonimbus towers (type above 0.8) up to five times.
 float top_height(const State &p_state, float p_type);
+// The shape noise's offset at height p_y (m): the shear times the squared height over the thickness.
+Vector2 shear_offset(const State &p_state, float p_y);
 // The weather map's cover noise: four octaves of hashed value noise over (p - drift) / scale, 0..1. With
 // p_evolve >= 0 (time in lifetimes) each octave moves on through time (clouds form and clear).
 float cover_noise(Vector2 p_xz, Vector2 p_drift, float p_scale, float p_evolve = -1.0f);

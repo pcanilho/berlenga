@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "contact_trample.h"
 #include "grass_field_3d.h"
 #include "plant_species.h"
 #include "vegetation_holes.h"
@@ -59,6 +60,16 @@ class TerrainDataMap3D;
 // One MultiMeshInstance3D per species mesh per tile. Deterministic for a seed.
 class VegetationField3D : public Node3D {
 	GDCLASS(VegetationField3D, Node3D);
+
+	// Plants bend under bodies where no GrassField3D keeps the trample field (docs/ideas/world-links.md).
+	ContactTrample contact_trample;
+	static VegetationField3D *contact_trample_owner;
+	void _contact_trample_step(double p_delta);
+
+public:
+	Vector2 get_contact_trample_at(const Vector3 &p_position) const { return contact_trample.get_at(p_position); }
+
+private:
 
 	struct Pattern {
 		LocalVector<Vector2> points; // In [0, tile_size).

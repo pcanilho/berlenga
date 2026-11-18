@@ -31,6 +31,7 @@
 
 #include "physx_burnable_3d.h"
 
+#include "../nodes/physx_particle_fluid_3d.h"
 #include "physx_fire_spread_3d.h"
 #include "physx_flow_3d.h"
 #include "physx_flow_emitter_3d.h"
@@ -165,8 +166,42 @@ float PhysXBurnable3D::_surface_area() const {
 // Heat reaching the surface (kW/m2): the ground fire's flames at its base, Flow's hot gas around it, and the
 // radiation of other burning burnables (a point source, chi_r HRR / 4 pi d^2). Ignition when the dose reaches a thick
 // solid's (pi/4) k rho c (T_ig - T0)^2 (Quintiere; Babrauskas 2001 for wood), at the hottest place.
+// Water from the liquid fluids (docs/ideas/physx.md, "Water puts fires out"): the particles on and around the
+// prop, spread over its surface, are a film of water on it (kg/m2 = mm). It wets the wood as rain does: wet wood
+// does not take the heat that lights it, a burning surface damps down and goes out at about 1.5 mm, and the
+// embers in a pile or in the char drown.
+void PhysXBurnable3D::_wet_from_fluids(const Transform3D &p_xf) {
+	const LocalVector<PhysXParticleFluid3D *> &fluids = PhysXParticleFluid3D::get_water_fluids();
+	if (fluids.is_empty()) {
+		return;
+	}
+	const AABB box = p_xf.xform(bounds).grow(0.1f);
+	LocalVector<Vector3> pts;
+	float kg = 0.0f;
+	for (const PhysXParticleFluid3D *f : fluids) {
+		if (!f->is_inside_tree()) {
+			continue;
+		}
+		f->gather_world_positions(pts);
+		const float mass = f->get_particle_water_mass();
+		int n = 0;
+		for (const Vector3 &p : pts) {
+			n += box.has_point(p) ? 1 : 0;
+		}
+		kg += n * mass;
+	}
+	if (kg <= 0.0f) {
+		return;
+	}
+	rain_water = MAX(rain_water, kg / _surface_area());
+	if (rain_water >= 0.5f) {
+		brand_spots.clear();
+	}
+}
+
 void PhysXBurnable3D::_sample_heat(float p_delta) {
 	const Transform3D xf = _target_xform();
+	_wet_from_fluids(xf);
 	const Vector3 c = xf.xform(bounds.get_center());
 	const Vector3 base = xf.xform(bounds.get_center() - Vector3(0, bounds.size.y * 0.5f, 0));
 	float q = 0.0f;
@@ -364,7 +399,7 @@ void PhysXBurnable3D::_burn(float p_delta) {
 		}
 	} else if (state == STATE_SMOULDERING) {
 		// Embers in the char die over about a minute, faster in rain.
-		smoulder *= Math::exp(-p_delta / (rain > 0.0f ? 10.0f : 60.0f));
+		smoulder *= Math::exp(-p_delta / (rain > 0.0f || rain_water >= 0.5f ? 10.0f : 60.0f));
 		if (smoulder < 0.01f) {
 			smoulder = 0.0f;
 			state = STATE_BURNT_OUT;

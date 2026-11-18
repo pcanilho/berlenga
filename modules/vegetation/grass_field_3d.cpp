@@ -4390,10 +4390,12 @@ void GrassField3D::_trample_step(double p_delta) {
 	const float ground_y = get_global_position().y;
 	HashMap<ObjectID, Vector3> seen;
 	if (is_inside_tree()) {
-		const Vector<Node *> movers = get_tree()->get_nodes_in_group(trample_group);
+		// The trample group and world_contact, every body any system should feel (docs/ideas/world-links.md).
+		Vector<Node *> movers = get_tree()->get_nodes_in_group(trample_group);
+		movers.append_array(get_tree()->get_nodes_in_group(SNAME("world_contact")));
 		for (Node *n : movers) {
 			Node3D *n3 = Object::cast_to<Node3D>(n);
-			if (!n3 || !n3->is_visible_in_tree()) {
+			if (!n3 || !n3->is_visible_in_tree() || seen.has(n3->get_instance_id())) {
 				continue;
 			}
 			const Vector3 pos = n3->get_global_position();
@@ -4509,6 +4511,7 @@ void GrassField3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_ENTER_TREE: {
+			add_to_group(SNAME("grass_trample_field")); // keeps the trample field (VegetationField3D stands in without one)
 			if (crop != CROP_NONE) {
 				if (!crop_nodes.has(this)) {
 					crop_nodes.push_back(this);

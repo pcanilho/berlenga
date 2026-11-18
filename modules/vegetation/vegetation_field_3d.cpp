@@ -3619,14 +3619,20 @@ void VegetationField3D::_notification(int p_what) {
 					queue_populate();
 				}
 			}
-			if (streaming) {
-				set_process_internal(true);
+			// Always: the contact trample field steps here (and streaming, when on).
+			set_process_internal(true);
+		} break;
+		case NOTIFICATION_EXIT_TREE: {
+			if (contact_trample_owner == this) {
+				contact_trample.release();
+				contact_trample_owner = nullptr;
 			}
 		} break;
 		case NOTIFICATION_PREDELETE: {
 			_clear_generated();
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
+			_contact_trample_step(get_process_delta_time());
 			// A few times a second: has path tracing been switched on or off?
 			impostor_check -= get_process_delta_time();
 			if (impostor_check <= 0.0) {
@@ -3647,6 +3653,42 @@ void VegetationField3D::_notification(int p_what) {
 			}
 		} break;
 	}
+}
+
+VegetationField3D *VegetationField3D::contact_trample_owner = nullptr;
+
+// One VegetationField3D keeps the ground cover's trample field when no GrassField3D does (grass keeps its own, with
+// its wear and recovery tuned to the sward): bodies then lay herbs, ferns and heath down on bare ground too.
+void VegetationField3D::_contact_trample_step(double p_delta) {
+	bool grass = false;
+	for (Node *n : get_tree()->get_nodes_in_group(SNAME("grass_trample_field"))) {
+		if (GrassField3D *g = Object::cast_to<GrassField3D>(n)) {
+			grass = grass || g->is_trample_enabled();
+		}
+	}
+	if (grass) {
+		if (contact_trample_owner == this) {
+			contact_trample.release();
+			contact_trample_owner = nullptr;
+		}
+		return;
+	}
+	if (contact_trample_owner == nullptr) {
+		contact_trample_owner = this;
+	}
+	if (contact_trample_owner != this) {
+		return;
+	}
+	Viewport *vp = get_viewport();
+	Camera3D *cam = vp ? vp->get_camera_3d() : nullptr;
+	const Vector3 center = cam ? cam->get_global_position() : get_global_position();
+	TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
+	if (map && !map->is_baked()) {
+		map = nullptr;
+	}
+	const float base = get_global_position().y;
+	// Plants up to about 1.5 m (the vegetation's band; taller shrubs are rigged and bend through TreeWind3D).
+	contact_trample.step(get_tree(), center, p_delta, 1.5f, [&](const Vector3 &p) { return map ? map->get_height_at(p) : base; });
 }
 
 void VegetationField3D::set_biome(const Ref<Biome> &p_biome) {
@@ -3673,6 +3715,7 @@ void VegetationField3D::set_populate_on_ready(bool p_enable) {
 
 void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_crop_fields_changed"), &VegetationField3D::_on_crop_fields_changed);
+	ClassDB::bind_method(D_METHOD("get_contact_trample_at", "position"), &VegetationField3D::get_contact_trample_at);
 	ClassDB::bind_method(D_METHOD("set_biome", "biome"), &VegetationField3D::set_biome);
 	ClassDB::bind_method(D_METHOD("get_biome"), &VegetationField3D::get_biome);
 	ClassDB::bind_method(D_METHOD("set_data_map", "path"), &VegetationField3D::set_data_map);

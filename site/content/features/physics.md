@@ -19,9 +19,9 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 
 - **Smoke on the ground** (PhysXFlow3D `terrain_floor`, `smoke_buoyancy`): Flow gas rests on the terrain and slides downhill, and heavier-than-air smoke pools as dust or fog.
 - **Gas pushes bodies** (`PhysXFlow3D.push_bodies`; `PhysXCloth3D.flow`): Flow smoke, blasts and fire updrafts blow debris, Blast pieces, flags and tarps, and the cloth stirs the gas back.
-- **Spreading fire** (`PhysXFireSpread3D`, `fuel_patchiness`): grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel, behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.
+- **Spreading fire** (`PhysXFireSpread3D`, `fuel_patchiness`): grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water, behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height.
 - **Fuel moisture from the weather** (`PhysXFireSpread3D.use_weather_moisture`): fuel dries or damps toward the air's equilibrium moisture, and rain wets it, slows the fire and puts it out.
-- **Burning objects** (`PhysXBurnable3D`, `embers`): wooden props catch fire from burning ground nearby, char with glowing cracks, smoulder in rain and throw embers that ride their plume and the wind and start spot fires downwind.
+- **Burning objects** (`PhysXBurnable3D`, `embers`): wooden props catch fire from burning ground nearby or from embers piling at wall feet and on top faces, char with glowing cracks, smoulder in rain, go out under poured water and throw embers that ride their plume and the wind and start spot fires downwind.
 - **Burning logs** (`PhysXFireSpread3D.vegetation_field`): fallen logs and branches catch from the fire under them, flame for minutes, then smoulder with glowing bark.
 - **Spot fires** (`PhysXFireSpread3D.spotting`, `spotting_scale`): burning grass, litter and logs throw embers that the plume lifts and the wind carries; one landing on dry fuel starts a new fire ahead of the front.
 - **Crown fire** (`PhysXFireSpread3D.crown_fire`, `foliar_moisture`): trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers.
@@ -43,6 +43,7 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 - **Blast materials** (`PhysXBlastAsset.materials`, `bond_healths`): pieces carry several materials and each bond its own strength, so a limb breaks into bark, wood and leaves, and a twig joint gives before a trunk joint.
 - **Blast without stalls** (`PhysXBlastAsset.prepare_render()`; `initial_linear_velocity`, `initial_angular_velocity`): piece meshes are built once per asset, off the main thread, so a large break does not stall the frame; destructibles can start already moving.
 - **Streaming without stalls** (`physics/physx_3d/streaming/statics_per_step`): static bodies of streamed regions enter over a few frames, nearest first, and removals are batched; bodies with the same friction and bounce share one material, so the cost stays flat as the world grows.
+- **World contact** (`physics/3d/world_contact/auto_join`): every moving body bends plants, presses prints into ground and snow, and leaves ripples in water.
 
 ![Cloth tearing: a ribbon rips off its post and a flag frays in rising wind](media/cloth-tearing.gif)
 

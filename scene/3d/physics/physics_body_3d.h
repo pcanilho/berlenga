@@ -45,6 +45,10 @@ protected:
 
 	uint16_t locked_axis = 0;
 
+	// Moving bodies join the world_contact group, which the ground, snow, grass, plants, trees and water read to
+	// feel bodies (docs/ideas/world-links.md): physics/3d/world_contact/auto_join, on by default.
+	void _join_world_contact();
+
 	Ref<KinematicCollision3D> _move(const Vector3 &p_motion, bool p_test_only = false, real_t p_margin = 0.001, bool p_recovery_as_collision = false, int p_max_collisions = 1);
 
 public:

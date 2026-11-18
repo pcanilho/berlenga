@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "modules/world/world_contracts.h"
 #include "weather_clouds.h"
 #include "weather_contact_wetness.h"
 #include "weather_season.h"
@@ -51,7 +52,7 @@ class Environment;
 class FogMaterial;
 class FogVolume;
 
-class WeatherMap3D : public Node3D {
+class WeatherMap3D : public Node3D, public WorldWeatherProvider {
 	GDCLASS(WeatherMap3D, Node3D);
 
 public:
@@ -98,6 +99,11 @@ private:
 	float cloud_scale = 6000.0f; // m, size of the cloud cover noise
 	float rain_rate = 0.0f; // mm/h
 	float temperature = 15.0f; // C
+	// The air through the day and the year (docs/ideas/world-links.md, link 1).
+	bool air_follows_climate = true; // with a climate: the day's mean from it plus season_anomaly
+	bool air_daily_cycle = true; // with a SkyClock: cooler nights, warmer afternoons (Parton and Logan 1981)
+	float daily_temperature_range = 10.0f; // K, clear calm day; clouds and rain narrow it
+	bool sun_drying = true; // the sun's net radiation in the evaporation (Penman 1948's combination)
 	// Season (weather_season.h): the date from a SkyClock, or season_day; the climate from a ClimateRecipe.
 	NodePath sky_clock;
 	int season_day = 135; // day of the year without a SkyClock (15 May)
@@ -124,6 +130,7 @@ private:
 	bool cloud_evolution = true;
 	float cloud_lifetime = 900.0f; // s, turnover of the cover noise's largest octave
 	float cloud_churn = 1.5f; // m/s, how fast the cloud shapes change (the shape noise's reads slide apart)
+	float cloud_shear = 1.0f; // scale on the wind shear's lean of the cloud tops (0: upright)
 	double cloud_time = 0.0; // s of weather time the clouds have evolved
 	NodePath sun_light;
 	float cloud_shadow_extent = 6144.0f; // m
@@ -138,6 +145,13 @@ private:
 	float cur_rain_rate = 0.0f;
 	float cur_temperature = 15.0f;
 	float cur_humidity = 0.7f;
+	// The air now: the eased mean above plus the day's cycle; its humidity at the mean's dew point.
+	float cur_air_temperature = 15.0f;
+	float cur_air_humidity = 0.7f;
+	float cur_sun_sine = 0.0f; // sine of the sun's elevation (0 below the horizon or without a sun)
+	bool sun_known = false; // a sun light or a sky clock says where the sun is
+	float diurnal_cache_day_length = -1.0f;
+	float diurnal_cache_mean = 0.5f;
 	bool eased_once = false;
 	// Followers (the sea's lag) watch these: cells refreshed, the base snapped, and weather time skipped
 	// by advance().
@@ -184,6 +198,14 @@ private:
 		const float *inflow = nullptr;
 		float rain_fraction = 1.0f;
 		float *puddle = nullptr;
+		// The sun on wet surfaces (sun_drying): clear-sky shortwave on level ground (W/m2), the cloud shadow
+		// when one is baked, the air the evaporation sees.
+		bool sun = false;
+		float shortwave_clear = 0.0f;
+		bool use_shadow = false;
+		Vector2 shadow_corner;
+		float air_temperature = 15.0f;
+		float air_humidity = 0.7f;
 	};
 	CellPass cell_pass;
 
@@ -323,6 +345,9 @@ private:
 	void _update_row(uint32_t p_row, CellPass *p_pass);
 	void _gather_water_sources();
 	void _set_base_to_settings();
+	float _target_temperature() const;
+	float _net_radiation(const CellPass &p_pass, Vector3 p_position, float p_cover) const;
+	void _update_air();
 	void _snap();
 	void _fill_gust_image();
 	void _upload();
@@ -394,9 +419,26 @@ public:
 	float get_rain_rate() const { return rain_rate; }
 	void set_temperature(float p_celsius);
 	float get_temperature() const { return temperature; }
-	// The eased state the cells use (the settings are its targets).
-	float get_air_temperature() const { return cur_temperature; }
-	float get_air_humidity() const { return cur_humidity; }
+	// The air now, as everything that melts, freezes, dries, burns or fogs reads it: the eased state (the
+	// settings, or the climate's day, are its targets) through the day's cycle.
+	float get_air_temperature() const { return cur_air_temperature; }
+	float get_air_humidity() const { return cur_air_humidity; }
+	float get_air_mean_temperature() const { return cur_temperature; } // the day's mean, without the cycle
+	float get_air_dew_point() const;
+	float get_sun_sine() const { return cur_sun_sine; }
+	void set_air_follows_climate(bool p_enabled);
+	bool get_air_follows_climate() const { return air_follows_climate; }
+	void set_air_daily_cycle(bool p_enabled);
+	bool get_air_daily_cycle() const { return air_daily_cycle; }
+	void set_daily_temperature_range(float p_kelvin);
+	float get_daily_temperature_range() const { return daily_temperature_range; }
+	void set_sun_drying(bool p_enabled);
+	bool get_sun_drying() const { return sun_drying; }
+	// Parton and Logan's (1981) day: 0 at the minimum just after sunrise, 1 at the afternoon peak.
+	static float diurnal_shape(float p_solar_hour, float p_day_length);
+	// Evaporation from a wet surface (mm/h), Penman's (1948) combination of the sun's net radiation (W/m2)
+	// and the air's drying power.
+	static float penman_evaporation(float p_net_radiation, float p_wind_2m, float p_celsius, float p_humidity);
 	// Share of precipitation that falls as rain at an air temperature and relative humidity (0..1), the
 	// complement of the snowfall fraction of Jennings et al. (2018).
 	static float rain_fraction(float p_celsius, float p_humidity);
@@ -458,6 +500,8 @@ public:
 	float get_cloud_lifetime() const { return cloud_lifetime; }
 	void set_cloud_churn(float p_speed);
 	float get_cloud_churn() const { return cloud_churn; }
+	void set_cloud_shear(float p_scale);
+	float get_cloud_shear() const { return cloud_shear; }
 	void set_cloud_time(double p_seconds);
 	double get_cloud_time() const { return cloud_time; }
 	void set_sun_light(const NodePath &p_path);
@@ -583,6 +627,19 @@ public:
 		float sun_visibility_at(Vector3 p_position) const;
 	};
 	Snapshot get_snapshot() const;
+
+	// The weather contract (docs/ideas/world-contracts.md).
+	float contract_air_temperature_at(const Vector3 &p_position) const override { return get_air_temperature(); }
+	float contract_air_humidity_at(const Vector3 &p_position) const override { return get_air_humidity(); }
+	Vector3 contract_wind_at(const Vector3 &p_position, float p_height_above_ground) const override { return get_wind_at(p_position, p_height_above_ground); }
+	float contract_precipitation_at(const Vector3 &p_position) const override { return get_rain_at(p_position); }
+	float contract_rain_share_at(const Vector3 &p_position) const override { return rain_fraction(get_air_temperature(), get_air_humidity()); }
+	float contract_surface_wetness_at(const Vector3 &p_position) const override { return get_wetness_at(p_position); }
+	float contract_puddle_at(const Vector3 &p_position) const override { return get_puddle_at(p_position); }
+	float contract_contact_wetness_at(const Vector3 &p_position) const override { return get_contact_wetness_at(p_position); }
+	void contract_add_contact_wetness(const Vector3 &p_position, float p_radius, float p_amount) override { add_contact_wetness(p_position, p_radius, p_amount); }
+	float contract_sun_visibility_at(const Vector3 &p_position) const override { return get_sun_visibility_at(p_position); }
+	float contract_canopy_closure_at(const Vector3 &p_position) const override { return get_canopy_closure_at(p_position); }
 
 	void set_sky_clock(const NodePath &p_path);
 	NodePath get_sky_clock() const { return sky_clock; }

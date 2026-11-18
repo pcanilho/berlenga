@@ -31,6 +31,8 @@
 
 #pragma once
 
+#include "modules/world/world_contracts.h"
+#include "water_body_contacts.h"
 #include "water_raster_reflections.h"
 #include "water_solver.h"
 
@@ -56,8 +58,10 @@ class Texture2DRD;
 // fade); PhysXLiveWater3D draws with it too.
 const String &physx_river_water_shader_src();
 
-class PhysXRiver3D : public Path3D {
+class PhysXRiver3D : public Path3D, public WorldWaterProvider {
 	GDCLASS(PhysXRiver3D, Path3D);
+
+	WaterBodyContacts body_contacts; // world_contact bodies push the ripples (docs/ideas/world-links.md)
 
 public:
 	struct Section {
@@ -378,6 +382,11 @@ public:
 	void rebuild();
 	// Water surface height at a world position, -INF off the river or where it's dry.
 	float sample_height(const Vector3 &p_world_pos) const;
+	// The water contract (WorldWater): this water's surface, -INF where it has none.
+	float contract_water_height_at(const Vector3 &p_position) const override;
+	Vector3 contract_water_flow_at(const Vector3 &p_position) const override { return sample_flow(p_position); }
+	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override;
+	void contract_water_clear(uint64_t p_owner) override;
 	// Depth-averaged water velocity (m/s, world) at a world position; zero off the river.
 	Vector3 sample_flow(const Vector3 &p_world_pos) const;
 	// Water depth (m) under a world position, <= 0 off the river.

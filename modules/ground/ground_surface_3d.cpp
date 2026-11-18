@@ -781,6 +781,11 @@ void GroundSurface3D::set_standing_water(bool p_enabled) {
 	}
 }
 
+float GroundSurface3D::contract_water_height_at(const Vector3 &p_position) const {
+	const float water = get_standing_water_at(p_position);
+	return water > 0.002f ? get_surface_height_at(p_position) + water : -Math::INF;
+}
+
 float GroundSurface3D::get_standing_water_at(Vector3 p_position) const {
 	if (is_near_active() && _near_inside(p_position.x, p_position.z) && int(near_fld.water.size()) == near_fld.resolution * near_fld.resolution) {
 		return near_fld.sample(near_fld.water, p_position.x, p_position.z);
@@ -3655,6 +3660,7 @@ void GroundSurface3D::_notification(int p_what) {
 			if (!active) {
 				active = this;
 			}
+			WorldContracts::register_water(this);
 			_ensure_children();
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_physics_process_internal(true);
@@ -3666,6 +3672,7 @@ void GroundSurface3D::_notification(int p_what) {
 			_publish();
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			WorldContracts::unregister_water(this);
 			set_physics_process_internal(false);
 			if (_ruts_on()) {
 				save_ruts();
@@ -5711,6 +5718,7 @@ GroundSurface3D::GroundSurface3D() {
 	deform_groups.push_back("ground_deform");
 	deform_groups.push_back("snow_deform");
 	deform_groups.push_back("grass_trample");
+	deform_groups.push_back("world_contact"); // every body any system should feel (docs/ideas/world-links.md)
 }
 
 GroundSurface3D::~GroundSurface3D() {

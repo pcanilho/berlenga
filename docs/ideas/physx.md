@@ -1167,6 +1167,28 @@ downwind in 90 s, which burnt 420 m2.
    burning stand of 24 conifers gathered about 40 brands and caught at
    about 35 s; downwind of a grass fire alone it held a dozen and did not
    catch; with spotting off, none.
+   Status of 2 (18 Nov): built. PhysXParticleFluid3D keeps a list of the
+   liquid fluids in the world (granular subclasses left out) and hands out
+   its particles' positions without a GPU wait (MPM: the render buffer it
+   already reads back). Every quarter second PhysXFireSpread3D bins the
+   particles lying on its ground (up to 0.4 m above a cell) and soaks each
+   cell's fine fuel by the water on it, up to 2.5 times the fuel's dry
+   weight as rain does; a burning cell over the moisture of extinction goes
+   out (Rothermel 1972), and wet cells ahead of the front do not take it.
+   With no weather map to dry it, the water dries at the fuel's time lag.
+   PhysXBurnable3D counts the particles in its box, 10 cm grown, as a film
+   over its surface (kg/m2 = mm): wet wood takes no ignition dose, a
+   flaming surface damps and goes out at 1.5 mm (the rain rule), and the
+   ember piles on it and the embers in its char drown. Water stands for
+   cooling and wetting together; the FDS-style droplet heat sink (2.6
+   MJ/kg) is left to the moisture rule, which is what the fire models use.
+   Test (3 m/s wind, tall grass, 5%): a band of water 3 x 6 m laid across
+   the path stopped the front, 75 m2 burnt against 120 m2 with none past
+   the band; a 1 m crate burning at 39 kW went out a second after about
+   a 0.6 x 0.6 x 0.3 m block of water fell on it.
+   The same band dropped onto the burning
+   patch behind the head put out 181 burning cells; the head, already past
+   it, ran on.
 3. Burnt crowns shed their needles. After a crown fire the fine fuel is
    gone: bare black branches, needles fallen as a grey ash layer, and
    burning twigs falling while it torches. Here: the tree shaders cut
