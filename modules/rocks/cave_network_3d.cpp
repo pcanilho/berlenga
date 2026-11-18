@@ -2207,9 +2207,10 @@ void fragment() {
 		vec3 gravel = mix(sediment_color * 0.9, rock_color * 0.75, smoothstep(0.45, 0.7, cob)) * (0.75 + 0.5 * grain);
 		col = mix(col, gravel, smoothstep(0.6, 0.95, bed) * floor_w);
 	}
-	float wet = clamp(max(puddle + 0.7 * streak, bed), 0.0, 1.0);
+	// The wall's foot by the water only damp (splash), so it never reads as water itself.
+	float wet = clamp(max(puddle + 0.7 * streak, bed * mix(0.5, 1.0, floor_w)), 0.0, 1.0);
 	ALBEDO = col * mix(1.0, 0.7, wet);
-	ROUGHNESS = mix(0.82 + 0.12 * grain, 0.3 - 0.12 * bed, wet);
+	ROUGHNESS = mix(0.82 + 0.12 * grain, 0.3 - 0.12 * bed * floor_w, wet);
 	SPECULAR = 0.4;
 	// The relief as a bump on the world normal (its gradient off the surface), smoothed where flowstone coats it and
 	// under puddles.
