@@ -4881,52 +4881,55 @@ vec4 ground_ice_look(vec2 p_xz, float p_h, float p_depth, float p_broken, float 
 	float white = cover * clamp(milk + 0.5 * rim, 0.0, 0.9);
 	return vec4(white, cover, mix(0.12, 0.45, white / max(cover, 1e-3)), 0.0);
 }
-// Needle ice (docs/ideas/mud.md, round 9), the same lines in material.cpp and scene_raytracing_raygen.glsl. Ice
-// needles p_h tall (m) lift the top soil as a cap that tears into clods 3 to 5 cm across as it rises (Outcalt 1971;
-// Lawler 1988), with thin dark cracks between them; a few clods tip and show the white needles on their raised side.
-// After the thaw the cap lies as loose crumbs (p_loose) a few millimetres across, each tilted, rough and a little
-// uneven in colour. Returns (the share that is needle ice showing, the soil's albedo factor, the crumbs' weight for a
-// rough matte surface, 0); r_slope the clods' and crumbs' tilt.
-// The clods' lattice at p_xz (in cells 4 cm across), warped by a smooth noise about a metre across so their size and
-// shape wander and the network shows no repeat.
+// The crust's tear field at p_xz (in units of 5 cm), warped by noise at two scales so the tears wander and nothing
+// repeats.
 vec2 ground_needle_q(vec2 p_xz) {
 	vec2 w = vec2(ground_flow_noise(p_xz / 0.9 + vec2(13.0, 71.0)).x, ground_flow_noise(p_xz / 0.9 + vec2(97.0, 29.0)).x);
-	return p_xz / 0.04 + 1.5 * w;
+	vec2 w2 = vec2(ground_flow_noise(p_xz / 0.17 + vec2(3.0, 41.0)).x, ground_flow_noise(p_xz / 0.17 + vec2(59.0, 7.0)).x);
+	// A finer jitter a centimetre or so across: torn soil breaks jagged, not in smooth curves.
+	vec2 w3 = vec2(ground_flow_noise(p_xz / 0.012 + vec2(11.0, 83.0)).x, ground_flow_noise(p_xz / 0.012 + vec2(37.0, 19.0)).x);
+	return p_xz / 0.05 + 1.6 * w + 0.5 * w2 + 0.12 * w3;
 }
+// Needle ice (docs/ideas/mud.md, round 9), the same lines in material.cpp and scene_raytracing_raygen.glsl. Ice
+// needles p_h tall (m) stand upright under a crust of soil they lifted (Outcalt 1971; Lawler 1988). The crust stays
+// whole over most of the ground, a lumpy skin; in patches it tears open along meandering lines (where it lifted most
+// unevenly), and in the tears, lens-shaped and up to about a third of the needles' height wide, the needles show
+// side-on: bright upright columns about a millimetre apart, with the crust's dark underside over them. After the
+// thaw the crust lies as loose crumbs (p_loose) a few millimetres across. Returns (the share that is needle ice
+// showing, the soil's albedo factor, the crumbs' weight for a rough matte surface, 0); r_slope the crust's lumps and
+// the crumbs' tilt.
 vec4 ground_needle_look(vec2 p_xz, float p_h, float p_loose, float p_fp, out vec2 r_slope) {
 	r_slope = vec2(0.0);
 	float lift = smoothstep(0.002, 0.015, p_h);
-	float s = 0.04;
-	vec4 c = ground_ice_cells(ground_needle_q(p_xz));
-	float e = c.x * s;
-	// Patches a metre or two across where the cap tore wider and more clods tipped, and quieter ones.
-	float macro = clamp(0.5 + 0.8 * ground_flow_noise(p_xz / 1.6 + vec2(5.0, 3.0)).x, 0.0, 1.0);
-	// The cap tears along its joints: thin dark cracks (the shadowed gap under the cap).
-	float gw = (0.0003 + 0.03 * p_h) * mix(0.6, 1.5, macro);
-	float crack = lift * (1.0 - smoothstep(gw, gw + p_fp, e));
-	// A few clods tip over as they rise and show the needles on their raised side: a white band along that edge (the
-	// side away from the clod's middle along its tilt).
-	float share = (0.04 + 0.06 * lift) * mix(0.3, 1.7, macro);
-	float tip = lift * step(c.y, share);
-	vec2 tilt = vec2(c.y - 0.5, c.z - 0.5);
-	float band = 0.002 + 0.15 * p_h;
+	// The tears: where a warped noise crosses zero (meandering, branching lines, no cells to repeat), its distance
+	// from the line its value over its slope; open only in patches about half a metre across.
+	vec2 q = ground_needle_q(p_xz);
+	vec3 n = ground_flow_noise(q * 0.7);
+	float e = abs(n.x) / max(length(n.yz) * 0.7 / 0.05, 1.0);
+	float tear = lift * smoothstep(0.05, 0.45, ground_flow_noise(p_xz / 0.45 + vec2(31.0, 11.0)).x);
+	// The opening swells and pinches along its line.
+	float along = clamp(0.5 + 0.9 * ground_flow_noise(p_xz / 0.03 + vec2(7.0, 3.0)).x, 0.0, 1.0);
+	float gw = tear * p_h * (0.05 + 0.35 * along);
 	float far_ = smoothstep(0.003, 0.02, p_fp);
-	float white = 0.0;
-	if (tip > 0.0 && e < band + p_fp && far_ < 1.0) {
-		// The way out from the clod's middle: the gradient of the distance to its site.
-		float d = 0.002;
-		vec2 out_ = vec2(ground_ice_cells(ground_needle_q(p_xz + vec2(d, 0.0))).w - c.w, ground_ice_cells(ground_needle_q(p_xz + vec2(0.0, d))).w - c.w);
-		float side = smoothstep(0.0, 0.5, dot(normalize(out_ + 1e-6), normalize(tilt + 1e-6)));
-		white = tip * side * (1.0 - smoothstep(band, band + p_fp, e)) * (1.0 - crack);
-	}
-	// Past a few millimetres a pixel both average out to their share of the area.
-	crack = mix(crack, lift * clamp(3.7 * gw / s, 0.0, 0.3), far_);
-	white = mix(white, lift * share * clamp(0.5 * band / s, 0.0, 0.3), far_);
-	r_slope = lift * (1.0 - crack) * (0.15 + 0.5 * tip) * tilt;
+	float gap = gw > 1e-5 ? 1.0 - smoothstep(gw, gw + p_fp, e) : 0.0;
+	// In the tear the needles stand side-on: columns about a millimetre apart (each its own brightness), averaging
+	// out past a millimetre or two a pixel; the outer fifth of the opening is the crust's dark underside.
+	vec4 col = ground_ice_cells(p_xz / 0.0012 + vec2(17.0, 5.0));
+	float cols = mix(0.35 + 0.65 * smoothstep(0.25, 0.05, col.x) * (0.6 + 0.4 * col.y), 0.6, smoothstep(0.0008, 0.003, p_fp));
+	float under = 1.0 - smoothstep(0.6, 0.85, e / max(gw, 1e-5));
+	float white = gap * cols * under;
+	// Past a few millimetres a pixel it averages out to its share of the area.
+	white = mix(white, tear * clamp(0.3 * p_h / 0.05, 0.0, 0.25) * 0.6, far_);
+	float shadow = gap * (1.0 - under);
+	// The crust's lumps a few centimetres across; beside a tear its edges curl up away from the opening.
+	vec3 lump = ground_flow_noise(p_xz / 0.035 + vec2(23.0, 2.0));
+	vec2 away = sign(n.x) * normalize(n.yz + 1e-6);
+	float edge = tear * (1.0 - gap) * (1.0 - smoothstep(gw, gw + 0.01, e));
+	r_slope = lift * (1.0 - gap) * 0.1 * lump.yz - 0.3 * edge * away;
 	vec4 k = ground_ice_cells(p_xz / 0.006);
 	float fine = 1.0 - smoothstep(0.002, 0.008, p_fp);
 	r_slope += p_loose * fine * 0.5 * vec2(k.y - 0.5, k.z - 0.5);
-	float shade = mix(1.0, mix(1.0, 0.8 + 0.4 * k.y, fine), p_loose) * (1.0 - 0.6 * crack);
+	float shade = mix(1.0, mix(1.0, 0.8 + 0.4 * k.y, fine), p_loose) * (1.0 - 0.7 * clamp(shadow, 0.0, 1.0));
 	return vec4(white, shade, p_loose, 0.0);
 }
 // Sand grains (docs/ideas/sand.md, sand glints; the same functions are in scene_raytracing_raygen.glsl). Grains
