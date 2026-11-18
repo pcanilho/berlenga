@@ -40,7 +40,8 @@
 // Ruts kept across the world (mud round 3, docs/ideas/mud.md): the field's tiles written to disk as they leave it
 // and read back when it comes over them again, so a print made anywhere is there when the player returns, in this
 // session or the next. One zstd file per world tile, in the cache's own layout (TILE x TILE texels of STRIDE uints:
-// half dent | half rim, half fresh tint | half water depth, half the water's clay kg/m2 | 0), named by the field's
+// half dent | half rim, half fresh tint | half water depth, half the water's clay kg/m2 | half the sward regrown over
+// it 0..1), named by the field's
 // texel so fields of other sizes never read each other's.
 class GroundRutStore {
 public:

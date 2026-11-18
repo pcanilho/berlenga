@@ -66,7 +66,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Layered meadow: finer, denser grass with turf between the blades instead of bare ground.*
 
-- **Trampling** (`grass_trample` group, `GrassField3D.trample_recovery`): bodies lay grass down and it springs back; grass lies flat on light ground prints and is gone from deep ruts and puddles.
+- **Trampling** (`grass_trample` group, `GrassField3D.trample_recovery`): bodies lay grass down and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles.
 
   ![A body walking through grass that lies down and springs back, raster](media/grass-trample.gif)
 

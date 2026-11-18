@@ -103,6 +103,7 @@ bool GroundRutStore::pack(const GroundDeformField &p_field, int p_tx, int p_tz, 
 	const bool fresh = int(p_field.fresh.size()) == n * n;
 	const bool water = int(p_field.water.size()) == n * n;
 	const bool clay = water && int(p_field.water_mud.size()) == n * n;
+	const bool grown = int(p_field.regrown.size()) == n * n;
 	r_data.resize(T * T * STRIDE);
 	bool any = false;
 	for (int z = 0; z < T; z++) {
@@ -117,7 +118,8 @@ bool GroundRutStore::pack(const GroundDeformField &p_field, int p_tx, int p_tz, 
 			const int k = z * T + x;
 			r_data[k * STRIDE + 0] = uint32_t(Math::make_half_float(dn)) | (uint32_t(Math::make_half_float(rm)) << 16);
 			r_data[k * STRIDE + 1] = uint32_t(Math::make_half_float(fr)) | (uint32_t(Math::make_half_float(wd)) << 16);
-			r_data[k * STRIDE + 2] = uint32_t(Math::make_half_float(cl));
+			const float rg = grown ? CLAMP(p_field.regrown[i], 0.0f, 1.0f) : 0.0f;
+			r_data[k * STRIDE + 2] = uint32_t(Math::make_half_float(cl)) | (uint32_t(Math::make_half_float(rg)) << 16);
 		}
 	}
 	return any;

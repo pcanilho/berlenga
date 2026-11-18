@@ -326,6 +326,7 @@ private:
 	String ruts_path = "user://ground_ruts";
 	float ruts_time_scale = 1.0f; // world seconds per real second while away (0: kept as left)
 	float ruts_away_rain = 0.1f; // mean rain while away, mm/h (a temperate 900 mm a year)
+	float ruts_regrowth_time = 2.6e6f; // s: the sward grows back over a kept rut at this e-fold (a month; mud round 6)
 	void _ruts_age(LocalVector<uint32_t> &r_data, double p_seconds) const;
 	// Crack state kept with the ruts (mud round 5): the lattice cells it moves off and onto.
 	GroundCellStore crack_store;
@@ -400,6 +401,14 @@ private:
 	};
 	LocalVector<PendingPuddle> pending_puddles; // add_puddle()'s, filled once dug
 	void _puddles_update(double p_delta);
+	void _add_puddle(const Vector3 &p_position, float p_radius, float p_depth, float p_mud, bool p_fill);
+	// Puddles the world places (mud round 6): candidate sites on a 4 m grid, each seen inside the field a while.
+	bool world_puddles = true;
+	float world_puddle_density = 1.0f; // puddles per 100 m2 where the ground fully suits one
+	HashMap<Vector2i, double> world_puddle_seen; // site -> time first seen inside the field (< 0: done)
+	double world_puddle_clock = 0.0;
+	void _world_puddles_update(double p_delta);
+	float _world_puddle_suit(const Vector3 &p_position) const;
 	double water_added = 0.0; // m3, the discs applied so far (taken < 0)
 	// What takes could not find (the GPU's ledger, read back), and how much of it later water added has paid.
 	uint32_t water_owed_seen[2] = { 0, 0 };
@@ -410,6 +419,7 @@ private:
 	static int _disc_texels(const GroundDeformField &p_field, const Vector3 &p_position, float p_radius);
 	LocalVector<float> water_table; // m from the surface down to the water table a sea or lake left (runoff_channels)
 	double water_accum = 0.0;
+	double puddle_accum = 0.0;
 	float water_usec = 0.0f;
 	void _water_update(double p_delta);
 	// The far pore water (docs/ideas/mud.md, stage 0): the same balance on a lattice FAR_STEP times coarser with as
@@ -613,11 +623,16 @@ public:
 	// and water thrown up (mud stage 4c). Applied by the next water step on the GPU.
 	void add_water(const Vector3 &p_position, float p_radius, float p_volume, float p_mud = 0.0f);
 	void add_puddle(const Vector3 &p_position, float p_radius, float p_depth, float p_mud = 0.0f);
+	void set_world_puddles(bool p_enabled) { world_puddles = p_enabled; }
+	bool is_world_puddles() const { return world_puddles; }
+	void set_world_puddle_density(float p_density) { world_puddle_density = MAX(p_density, 0.0f); }
+	float get_world_puddle_density() const { return world_puddle_density; }
 	// Stirs p_mass kg of the bed's clay into the standing water over a disc (feet, clods landing), where the bed is
 	// cohesive; muddy water (round 3). Applied by the next water step on the GPU.
 	void stir_water(const Vector3 &p_position, float p_radius, float p_mass);
 	// The clay the standing water carries at a place, kg/m3, as last read back.
 	float get_water_mud_at(Vector3 p_position) const;
+	float get_regrown_at(Vector3 p_position) const;
 	// Lays a film of clay p_depth m thick over a disc (a tyre or a boot leaving mud on firm ground; mud round 3):
 	// dark and glossy as wet as p_wet, a pale film once it dries, and it stays until a wash takes it.
 	// p_print: the film's print (ground_deform.glsl mud_print_mask()): (0) a plain disc, (1, yaw) a tyre's lugs on its
@@ -635,6 +650,8 @@ public:
 	float get_ruts_time_scale() const { return ruts_time_scale; }
 	void set_ruts_away_rain(float p_rate) { ruts_away_rain = MAX(p_rate, 0.0f); }
 	float get_ruts_away_rain() const { return ruts_away_rain; }
+	void set_ruts_regrowth_time(float p_seconds) { ruts_regrowth_time = MAX(p_seconds, 1.0f); }
+	float get_ruts_regrowth_time() const { return ruts_regrowth_time; }
 	void save_ruts();
 	void clear_saved_ruts();
 	int get_saved_rut_tile_count();

@@ -209,6 +209,13 @@
 				How much material is piled on the ground at [param position], in metres.
 			</description>
 		</method>
+		<method name="get_regrown_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How far the grass and plants have grown back over a rut at [param position], 0 (bare, as pressed) to 1 (green again; see [member ruts_regrowth_time]). The GPU field's, as last read back.
+			</description>
+		</method>
 		<method name="get_ripple_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -680,6 +687,9 @@
 		<member name="ruts_away_rain" type="float" setter="set_ruts_away_rain" getter="get_ruts_away_rain" default="0.1">
 			The mean rain while the player is away, mm/h (0.1: a temperate 900 mm a year): kept ruts read back after time away are softened by it at [member rain_smoothing], and their water goes as far as evaporation beats it (see [member keep_ruts]).
 		</member>
+		<member name="ruts_regrowth_time" type="float" setter="set_ruts_regrowth_time" getter="get_ruts_regrowth_time" default="2.6e+06">
+			Seconds for the grass and plants to grow back over a kept rut while the field is away from it (see [member keep_ruts]): the bare share closes at this e-fold (a month by default; meadows recover from wheel ruts over one to three months of growing season). The rut stays a hollow, green again; plants lying flat on a light print stand up four times sooner. Pressing it again bares it.
+		</member>
 		<member name="ruts_time_scale" type="float" setter="set_ruts_time_scale" getter="get_ruts_time_scale" default="1.0">
 			World seconds per real second while away from kept ruts (see [member keep_ruts]): a tile read back is aged by the time since it was written times this, its turned tint and mud film dried ([member drying_time]), its relief softened and its water evaporated, as if the field had stayed over it. 0 keeps tiles exactly as left. A tile the field left more than ten world minutes ago comes back from disk, aged, rather than from the cache.
 		</member>
@@ -698,6 +708,12 @@
 		</member>
 		<member name="water_sources" type="NodePath[]" setter="set_water_sources" getter="get_water_sources" default="[]">
 			The water nodes the ground reads, sampled on a 1 m grid twice a second: any node with [code]sample_depth(position)[/code] (or [code]sample_height(position)[/code]), [code]sample_flow(position)[/code] and, for a sea's swash, [code]sample_swash(position)[/code], such as the water surface, river and live water nodes.
+		</member>
+		<member name="world_puddle_density" type="float" setter="set_world_puddle_density" getter="get_world_puddle_density" default="1.0">
+			Puddles per 100 m² that [member world_puddles] places where the ground fully suits one (fewer where it suits less).
+		</member>
+		<member name="world_puddles" type="bool" setter="set_world_puddles" getter="is_world_puddles" default="true">
+			If [code]true[/code], the ground places puddles itself where water would gather: hollows in the ground, and with a [member data_map] the wet flats its wetness index marks and the first metres beside water, on flat bare soil (not sand, rock or litter). Each is [method add_puddle]'s hollow, the same at each place every time; filled with slightly muddy water when the ground round it is wet, a dry hollow (which can crack) when it is not; rain fills it later like any hollow. Needs [member standing_water]. With [member keep_ruts] a puddle already kept is not dug again.
 		</member>
 		<member name="wind_override" type="Vector2" setter="set_wind_override" getter="get_wind_override" default="Vector2(0, 0)">
 			The 10 m wind over the ground in m/s, as world XZ. [code]Vector2(0, 0)[/code] reads it from the [code]WeatherMap3D[/code].

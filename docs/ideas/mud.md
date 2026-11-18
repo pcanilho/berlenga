@@ -685,6 +685,39 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   Checks in --test=ruts: clay back in its pool on return and next session, dried cracks back with the same plates.
 
 
+### Round 6 (picked 18 Nov: all three, in order)
+
+- **Plants flattened in ruts.** VegetationField3D's flowers, clover and herbs keep standing in a rut the grass has
+  left. Their materials are StandardMaterial3D on MultiMeshes, so the blade shader's trick does not reach them. Build:
+  on the CPU, when a kept or live tile's dent passes a centimetre under a placement (the field's read back), drop
+  it from its MultiMesh (torn) or lay it over (a per-instance lean, as `paths` trampling already shortens plants).
+  *Built (18 Nov):* simpler than that: the plants' own shader (PlantGenerator's, which already reads the trample
+  map) calls the grass's `grass_ground_opened()` (GrassField3D::get_ground_opened_shader_code(), shared): a light
+  print lays the plant over its own way through the trample lean, a rut or standing water collapses it (dithered
+  per plant), and the rest stand on the dented ground. No CPU work, and PT matches raster.
+- **Ruts grow back over.** Grass torn out of a rut regrows from the edges over weeks (meadow recovery after wheel
+  traffic: weeks to a season, faster in wet warm months), and a lightly pressed sward stands up again in days. Build:
+  the ground's fresh tint already dries; a second slow channel (regrowth 0..1 per texel, aged with the kept ruts)
+  that the blade shader reads to bring blades back, densest at the rut's shoulders first.
+  *Built (18 Nov):* the regrowth share is per texel on the GPU field (the water cell's spare `s.z`), moved with the
+  field, kept in the tile cache and the kept files (the clay uint's high half), read back (`get_regrown_at`). It
+  grows only while a kept tile is away (`_ruts_age`: the bare share closes at `ruts_regrowth_time`, a month by
+  default) and is zeroed wherever a stamp presses or digs again. The map carries it as A just over 1 (1 + 0.02 x
+  share: a roughness factor too small to see, and A > 1 never happens otherwise), and the grass, the plants and the
+  ground's exposure (material.cpp) read it: torn blades return, flattened ones stand up four times sooner, the
+  ground shows its cover again; the hollow stays. Bench: docs/bench/grass `--ruts=aged[:scale]`.
+- **Puddles placed by the world.** add_puddle() exists for scenes; the ground can call it itself where the terrain
+  data map's wetness index is high in a hollow, after rain, so a generated world has puddles where water would
+  gather without scene code.
+  *Built (18 Nov):* `world_puddles` (on) and `world_puddle_density` (1 per 100 m2 where fully suited). Sites on a
+  4 m world grid with their own hash; a site seen inside the field for a second is weighed by
+  `_world_puddle_suit()` (the data map's wetness index or the first metres by water, as the deep mud's, or without a
+  data map a hollow in the ground lattice; flat, bare soil only) and dug with add_puddle's hollow (radius 0.6 to
+  1.6 m, 5 to 12 cm), filled with slightly muddy water (15 kg/m3) when the ground round it is wet, left a dry hollow
+  (it can crack) when not; rain fills it later. Sites the field leaves are forgotten; a hollow already there on
+  return (kept ruts) is not dug again. Check: --test=puddle-helper (three dips of a "hollows" ground).
+
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
