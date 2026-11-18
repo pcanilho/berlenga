@@ -843,15 +843,15 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_DIRECTION_NOISE] = 9;
 			p[PARAM_GRAVITROPISM] = 0.0f;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.9f;
-			p[PARAM_APICAL_CONTROL] = 0.8f; // Stronger laterals than Scots pine: a fuller, broader crown.
+			p[PARAM_APICAL_CONTROL] = 0.9f; // Strong laterals: a full, dense crown.
 			p[PARAM_PHOTOTROPISM] = 0.08f;
-			p[PARAM_SHED_RATIO] = 0.099f;
-			p[PARAM_DEAD_BRANCH_KEEP] = 0.1f;
+			p[PARAM_SHED_RATIO] = 0.06f; // Keeps shoots inside the crown: a dense mass, not tufts.
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.03f; // A few dead stubs on the bole, not long dead limbs.
 			p[PARAM_NEEDLES] = 1;
 			p[PARAM_LEAF_SIZE] = 0.18f; // Pairs, 10-25 cm, stout.
 			p[PARAM_LEAVES_PER_INTERNODE] = 240;
 			p[PARAM_LEAF_YEARS] = 4;
-			p[PARAM_CROWN_CONE] = 0.45f;
+			p[PARAM_CROWN_CONE] = 0.0f; // No excurrent cone: it held the top to a sparse spire over a wide lowest whorl (docs, 18 Nov).
 			p[PARAM_SHADOW_STRENGTH] = 0.04f;
 			p[PARAM_PIPE_EXPONENT] = 2.0f;
 			bark_color = Color(0.4f, 0.26f, 0.2f); // Purplish red-brown plates.
@@ -1428,10 +1428,9 @@ TreeGenerator::ForkRule TreeGenerator::_fork_rule() const {
 		r.lift = 0.22f; // Pruned up to the cork harvest height in the montado.
 		r.side = 0.35f;
 	} else if (preset == PRESET_MARITIME_PINE && forest_shade <= 0.0f) {
-		// A strong leader to about 16 m, then it loses its dominance and the top breaks into a
-		// few stems: the mature crown, irregular and rounded, sits in the top third over a long
-		// clear bole (Alia et al. 1996; the Landes pine).
-		r.lift = 0.25f;
+		// A long clear bole under the crown (Alia et al. 1996; the Landes pine): open-grown, the
+		// crown starts at about 40% of the height.
+		r.lift = 0.42f;
 	} else if (preset == PRESET_CAROB && forest_shade <= 0.0f) {
 		// A short trunk into a few spreading limbs under a broad dome (Batlle and Tous 1997).
 		r.fork_height = 2.0f;
