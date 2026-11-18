@@ -428,6 +428,7 @@ struct PhysXVehicle3D::Impl {
 	// the mud's wetness; the meshes painted (their materials copied with Mud on).
 	float mud_spray[4] = {};
 	float mud_shed_seen[4] = {};
+	float sheet_rate[4] = {}; // m3/s of water each wheel throws as sheets (mud stage 4c): washes its arch
 	float mud_line = 0.0f;
 	float mud_wet = 0.0f;
 	// The clay's colour on the body, linear (mud stage 4d): the ground's mud colour at the wheels, averaged over the last
@@ -1015,6 +1016,12 @@ void PhysXVehicle3D::add_mud_splat(const Vector3 &p_world, const Vector3 &p_velo
 	impl->mud_wet = 1.0f;
 }
 
+Vector4 PhysXVehicle3D::get_mud_splat(int p_index) const {
+	ERR_FAIL_INDEX_V(p_index, impl->splat_count, Vector4());
+	const Vector4 &a = impl->splat_a[p_index];
+	return Vector4(a.x, a.y, a.z, impl->splat_b[p_index].w);
+}
+
 int PhysXVehicle3D::get_mud_splat_count() const {
 	return impl->splat_count;
 }
@@ -1165,6 +1172,7 @@ void PhysXVehicle3D::_wade_step() {
 		if (water <= 0.0) {
 			continue;
 		}
+		impl->sheet_rate[i] = float(water / MAX(dt, 1e-4));
 		for (int s = -1; s <= 1; s += 2) {
 			// Out at about the speed, rising at ~30 degrees, carried a little forward by the tread's push.
 			GroundSurface3D::Spray sheet;
@@ -1189,6 +1197,7 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 	}
 	bool fresh = false;
 	float water_body = 0.0f;
+	float water_line = -1e9f; // world height of the water the wheels stand in
 #ifdef MODULE_GROUND_ENABLED
 	GroundSurface3D *ground = GroundSurface3D::get_active();
 #endif
@@ -1232,10 +1241,26 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 		}
 		if (ground) {
 			const Vector3 c = wheels[impl->wheel_order[i]]->get_global_position();
-			const float water = ground->get_standing_water_at(c);
-			if (water > 0.02f) {
+			// The water the wheel stands in: the tyre pushes it out from under itself, so around it too.
+			const Vector3 ax = get_global_basis().get_column(0).normalized() * (2.0f * v.wheelParams[i].halfWidth);
+			const Vector3 az = get_global_basis().get_column(2).normalized() * (0.7f * v.wheelParams[i].radius);
+			const Vector3 around[5] = { c, c + az, c - az, c + ax, c - ax };
+			float water = 0.0f;
+			for (const Vector3 &q : around) {
+				const float w = ground->get_standing_water_at(q);
+				if (w > 0.01f) {
+					water = MAX(water, w);
+					water_line = MAX(water_line, ground->get_surface_height_at(q) + w);
+				}
+			}
+			if (water > 0.01f) {
 				spray -= spray * MIN(MIN(water / 0.1f, 1.0f) * 0.3f * p_delta, 1.0f);
 				water_body = MAX(water_body, water);
+			}
+			// Its own sheets wash the arch they hit: a litre a second rinses most of it in a few seconds.
+			if (impl->sheet_rate[i] > 0.0f) {
+				spray -= spray * MIN(MIN(impl->sheet_rate[i] / 0.001f, 1.0f) * 0.4f * p_delta, 1.0f);
+				impl->sheet_rate[i] = 0.0f;
 			}
 		}
 #endif
@@ -1261,12 +1286,24 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 		fresh = true;
 	}
 	impl->mud_wet = fresh || water_body > 0.02f ? 1.0f : MAX(impl->mud_wet - p_delta / MUD_DRY_TIME, 0.0f);
-	if (water_body > 0.02f && impl->splat_count > 0) {
-		// Standing water washes the stuck clods off too.
+	if (water_body > 0.01f) {
+		// Water washes the body below its line (and a little above it, the bow wave riding up the panels), faster as
+		// the water runs past: the shear on the clay grows with the flow (soil erosion's excess shear, as the
+		// tyre tread's wash above). Stuck clods under it go, and the belly's mud line drops to it.
+		const float speed = get_linear_velocity().length();
+		const float rate = MIN(water_body / 0.03f, 1.0f) * 0.3f * (1.0f + 0.5f * speed);
+		const float wl = inv.xform(Vector3(frame.origin.x, water_line, frame.origin.z)).y + 0.03f + 0.02f * speed;
 		for (int k = 0; k < impl->splat_count; k++) {
-			impl->splat_b[k].w -= impl->splat_b[k].w * MIN(MIN(water_body / 0.1f, 1.0f) * 0.3f * p_delta, 1.0f);
+			// Above the line only what splashes up: less the higher it sits.
+			const float under = impl->splat_a[k].y < wl ? 1.0f : 0.3f * Math::exp(-(impl->splat_a[k].y - wl) / 0.1f);
+			impl->splat_b[k].w -= impl->splat_b[k].w * MIN(under * rate * p_delta, 1.0f);
 		}
-		impl->splats_dirty = true;
+		if (impl->splat_count > 0) {
+			impl->splats_dirty = true;
+		}
+		if (impl->mud_line > 0.0f && wl - bottom >= impl->mud_line) {
+			impl->mud_line = MAX(impl->mud_line - impl->mud_line * MIN(rate * p_delta, 1.0f), 0.0f);
+		}
 	}
 
 	float total = impl->mud_line;
@@ -1721,6 +1758,7 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_body_mud_color"), &PhysXVehicle3D::get_body_mud_color);
 	ClassDB::bind_method(D_METHOD("add_mud_splat", "position", "velocity", "volume"), &PhysXVehicle3D::add_mud_splat);
 	ClassDB::bind_method(D_METHOD("get_mud_splat_count"), &PhysXVehicle3D::get_mud_splat_count);
+	ClassDB::bind_method(D_METHOD("get_mud_splat", "index"), &PhysXVehicle3D::get_mud_splat);
 	ClassDB::bind_method(D_METHOD("get_wheel_slip", "wheel"), &PhysXVehicle3D::get_wheel_slip);
 	ClassDB::bind_method(D_METHOD("is_wheel_on_soft_soil", "wheel"), &PhysXVehicle3D::is_wheel_on_soft_soil);
 	ClassDB::bind_method(D_METHOD("get_wheel_separation", "wheel"), &PhysXVehicle3D::get_wheel_separation);

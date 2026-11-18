@@ -516,6 +516,10 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   drops look (PhysX thread's card) to read, and muddy water a tint.
 - **Body.** Muddy water lifts the arches' spray level and washes stuck clods (2a already washes them in standing
   water).
+- **Built (body).** Water washes the body below its line (the highest water around the wheels, plus a few cm for the
+  bow wave riding up), faster as it runs past (rate x (1 + speed/2)); above the line only splash, falling off over
+  10 cm. Clods under it go and the belly's mud line drops to it. A wheel's own sheets rinse its arch.
+  PhysXVehicle3D.get_mud_splat(); --test=splash checks a clod under the line washes and one on a door stays.
 - Checks: a wheel driven through a puddle raises water ahead and lowers it behind, total volume kept to 1%; past
   Froude 1 water is thrown and lands back, volume kept; raster vs PT frame of a 4x4 through a rut puddle.
 

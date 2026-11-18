@@ -150,6 +150,13 @@
 				The chassis's world-space linear velocity. It reads the chassis itself, so a velocity just set with [method set_linear_velocity] or changed by an impulse reads back at once.
 			</description>
 		</method>
+		<method name="get_mud_splat" qualifiers="const">
+			<return type="Vector4" />
+			<param index="0" name="index" type="int" />
+			<description>
+				Stuck clod [param index]: its position in the vehicle's frame ([code]x[/code], [code]y[/code], [code]z[/code]) and how much of it is left ([code]w[/code], 1 fresh, washing to 0). Water washes clods under its line, faster as it runs past.
+			</description>
+		</method>
 		<method name="get_mud_splat_count" qualifiers="const">
 			<return type="int" />
 			<description>
