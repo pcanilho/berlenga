@@ -228,6 +228,9 @@ public:
 	virtual float contract_ground_mud_depth_at(const Vector3 &p_position) const { return 0.0f; } // m of slurry
 	virtual Vector2 contract_ground_needle_ice_at(const Vector3 &p_position) const { return Vector2(); } // (m, crumbs 0..1)
 	virtual Vector3 contract_ground_rut_guidance_at(const Vector3 &p_contact, const Vector3 &p_lateral, float p_half_width) const { return Vector3(); } // (cross slope, wall -lat m, wall +lat m)
+	virtual float contract_ground_sand_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, loose sand's share of the top
+	virtual float contract_ground_ripple_at(const Vector3 &p_position) const { return 0.0f; } // m, wind ripples about their mean
+	virtual float contract_ground_blown_sand_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, dry sand the wind moves there now
 	virtual ~WorldGroundProvider() {}
 };
 
@@ -253,6 +256,9 @@ protected:
 	GDVIRTUAL1RC(float, _mud_depth_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _needle_ice_at, Vector3)
 	GDVIRTUAL3RC(Vector3, _rut_guidance_at, Vector3, Vector3, float)
+	GDVIRTUAL1RC(float, _sand_at, Vector3)
+	GDVIRTUAL1RC(float, _ripple_at, Vector3)
+	GDVIRTUAL1RC(float, _blown_sand_at, Vector3)
 
 public:
 	bool has_provider() const { return provider != nullptr; }
@@ -268,6 +274,9 @@ public:
 	float mud_depth_at(const Vector3 &p_position) const;
 	Vector2 needle_ice_at(const Vector3 &p_position) const;
 	Vector3 rut_guidance_at(const Vector3 &p_contact, const Vector3 &p_lateral, float p_half_width) const;
+	float sand_at(const Vector3 &p_position) const;
+	float ripple_at(const Vector3 &p_position) const;
+	float blown_sand_at(const Vector3 &p_position) const;
 };
 
 // A body as every system that feels bodies reads it: one reader instead of a copy in each.

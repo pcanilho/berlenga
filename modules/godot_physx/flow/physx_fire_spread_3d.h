@@ -79,6 +79,22 @@ private:
 	int quenched_by_water = 0;
 	LocalVector<uint8_t> steamed; // water has already taken this cell's heat
 	PhysXSteam steam;
+	// Fire whirls (docs/ideas/physx.md, "Fire whirls").
+	struct Whirl {
+		Vector3 pos;
+		float radius = 1.0f; // m, the core
+		float spin = 5.0f; // m/s, tangential, signed
+		float rise = 5.0f; // m/s, the core's updraft
+		float age = 0.0f;
+		float life = 15.0f;
+	};
+	LocalVector<Whirl> whirls;
+	LocalVector<PhysXFlowEmitter3D *> whirl_emitters;
+	int whirls_spawned = 0;
+	bool fire_whirls = true;
+	uint32_t whirl_seed = 0x2545f491u;
+	float _whirl_rand();
+	void _update_whirls(float p_delta, const Vector3 &p_wind, const LocalVector<Vector3> &p_flank, const LocalVector<float> &p_flank_q, LocalVector<PhysXFirebrands::Plume> &r_plumes);
 	float base_moisture = 0.06f; // fuel_moisture as the weather moves it
 	bool use_weather_moisture = true;
 	float moisture_timelag = 3600.0f; // s, the fine dead fuel's (1 h) time lag
@@ -295,6 +311,10 @@ public:
 	int get_spot_fire_count() const { return firebrands.get_spot_fires(); }
 	int get_doused_cells() const { return quenched_by_water; }
 	float get_steam_mass() const { return steam.get_total_kg(); }
+	int get_whirl_count() const { return whirls.size(); }
+	int get_whirls_spawned() const { return whirls_spawned; }
+	void set_fire_whirls(bool p_v) { fire_whirls = p_v; }
+	bool is_fire_whirls() const { return fire_whirls; }
 	void set_crown_fire(bool p_v) { crown_fire = p_v; }
 	bool is_crown_fire() const { return crown_fire; }
 	void set_foliar_moisture(float p_v) { foliar_moisture = MAX(p_v, 0.3f); }

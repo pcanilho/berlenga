@@ -577,6 +577,17 @@ float GroundSurface3D::_mud_depth_at(const Vector3 &p_position, float p_moisture
 	return depth * Math::smoothstep(mud_wet_start, mud_wet_full, p_moisture);
 }
 
+// The sand reads of the ground contract (WorldGround): loose sand's share of the top, and how much of it the wind
+// moves there now (dry sand, out of shelter).
+float GroundSurface3D::contract_ground_sand_at(const Vector3 &p_position) const {
+	const Cell &c = _cell_at(p_position.x, p_position.z);
+	return c.deformable ? c.sand : 0.0f;
+}
+
+float GroundSurface3D::contract_ground_blown_sand_at(const Vector3 &p_position) const {
+	return get_blown_at(p_position.x, p_position.z);
+}
+
 float GroundSurface3D::get_mud_depth_at(Vector3 p_position) const {
 	return _cell_at(p_position.x, p_position.z).mud;
 }

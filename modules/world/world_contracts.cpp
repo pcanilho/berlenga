@@ -380,6 +380,9 @@ float WorldGround::dent_at(const Vector3 &p_position) const WG_CALL(_dent_at, co
 float WorldGround::rim_at(const Vector3 &p_position) const WG_CALL(_rim_at, contract_ground_rim_at(p_position), 0.0f, p_position)
 Vector2 WorldGround::runoff_at(const Vector3 &p_position) const WG_CALL(_runoff_at, contract_ground_runoff_at(p_position), Vector2(), p_position)
 float WorldGround::mud_depth_at(const Vector3 &p_position) const WG_CALL(_mud_depth_at, contract_ground_mud_depth_at(p_position), 0.0f, p_position)
+float WorldGround::sand_at(const Vector3 &p_position) const WG_CALL(_sand_at, contract_ground_sand_at(p_position), 0.0f, p_position)
+float WorldGround::ripple_at(const Vector3 &p_position) const WG_CALL(_ripple_at, contract_ground_ripple_at(p_position), 0.0f, p_position)
+float WorldGround::blown_sand_at(const Vector3 &p_position) const WG_CALL(_blown_sand_at, contract_ground_blown_sand_at(p_position), 0.0f, p_position)
 Vector2 WorldGround::needle_ice_at(const Vector3 &p_position) const WG_CALL(_needle_ice_at, contract_ground_needle_ice_at(p_position), Vector2(), p_position)
 Vector3 WorldGround::rut_guidance_at(const Vector3 &p_contact, const Vector3 &p_lateral, float p_half_width) const WG_CALL(_rut_guidance_at, contract_ground_rut_guidance_at(p_contact, p_lateral, p_half_width), Vector3(), p_contact, p_lateral, p_half_width)
 
@@ -394,6 +397,9 @@ void WorldGround::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("rim_at", "position"), &WorldGround::rim_at);
 	ClassDB::bind_method(D_METHOD("runoff_at", "position"), &WorldGround::runoff_at);
 	ClassDB::bind_method(D_METHOD("mud_depth_at", "position"), &WorldGround::mud_depth_at);
+	ClassDB::bind_method(D_METHOD("sand_at", "position"), &WorldGround::sand_at);
+	ClassDB::bind_method(D_METHOD("ripple_at", "position"), &WorldGround::ripple_at);
+	ClassDB::bind_method(D_METHOD("blown_sand_at", "position"), &WorldGround::blown_sand_at);
 	ClassDB::bind_method(D_METHOD("needle_ice_at", "position"), &WorldGround::needle_ice_at);
 	ClassDB::bind_method(D_METHOD("rut_guidance_at", "contact", "lateral", "half_width"), &WorldGround::rut_guidance_at);
 	GDVIRTUAL_BIND(_height_at, "position");
@@ -405,6 +411,9 @@ void WorldGround::_bind_methods() {
 	GDVIRTUAL_BIND(_rim_at, "position");
 	GDVIRTUAL_BIND(_runoff_at, "position");
 	GDVIRTUAL_BIND(_mud_depth_at, "position");
+	GDVIRTUAL_BIND(_sand_at, "position");
+	GDVIRTUAL_BIND(_ripple_at, "position");
+	GDVIRTUAL_BIND(_blown_sand_at, "position");
 	GDVIRTUAL_BIND(_needle_ice_at, "position");
 	GDVIRTUAL_BIND(_rut_guidance_at, "contact", "lateral", "half_width");
 }

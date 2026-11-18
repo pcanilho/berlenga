@@ -757,6 +757,9 @@ public:
 	float contract_ground_mud_depth_at(const Vector3 &p_position) const override { return get_mud_depth_at(p_position); }
 	Vector2 contract_ground_needle_ice_at(const Vector3 &p_position) const override { return get_needle_ice_at(p_position); }
 	Vector3 contract_ground_rut_guidance_at(const Vector3 &p_contact, const Vector3 &p_lateral, float p_half_width) const override { return get_rut_guidance(p_contact, p_lateral, p_half_width); }
+	float contract_ground_sand_at(const Vector3 &p_position) const override;
+	float contract_ground_ripple_at(const Vector3 &p_position) const override { return get_ripple_at(p_position); }
+	float contract_ground_blown_sand_at(const Vector3 &p_position) const override;
 	void set_desiccation_cracks(bool p_enabled);
 	bool is_desiccation_cracks() const { return desiccation_cracks; }
 	void set_puddle_ice(bool p_enabled);

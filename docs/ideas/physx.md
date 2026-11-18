@@ -1305,6 +1305,55 @@ against the legs while the downstream side held out, and it all hung back
 once out of the water. Left: free PhysXCloth3D (flags and sheets dipping in
 a river) does not take the current yet.
 
+### Fire whirls (picked 18 Nov night, fourth of four)
+
+Built. Research: fire whirls form where a fire's updraft meets ambient
+vorticity, most often on the flanks of a front in a cross wind or at a
+lee slope (Forthofer and Goodrick 2011, "Review of vortices in wildland
+fire"). Kuwana et al. (2008) found whirls behind line fires when the wind
+U is near the buoyant velocity scale w* = (g I / (rho cp T))^(1/3), and
+L-shaped fronts favour them (Kuwana et al. 2013). Whirl cores are a
+fraction of the flame length across, spin at a few times w* and stand
+several flame lengths tall. Here: tiles of strong flame (I at least 300
+kW/m) whose front normal runs across the wind (|n . w| under 0.35) are
+flank sites. Each has a birth chance of 1 in 180 a second times a
+log-normal favour exp(-(ln(U/w*)/0.5)^2), at most two whirls, 6 m apart.
+A whirl has a core of 0.3 flame lengths (0.3 to 3 m), spins at 2 w* either
+way round, rises at 2 w*, lives 10 to 30 s, drifts at a third of the wind
+and ages three times as fast off flaming fuel. It draws as four
+overlapping Flow sources in a helix up its core (tangential plus upward
+velocity), so the flame is pulled into one spinning column, and adds a
+firebrand plume (1.5 times its rise) so brands caught in it go higher.
+Test: a 24 m grass fire, 90 s at each wind: none at 1 m/s, 7 at 2.5, 4 at
+4, none at 6 and 9 m/s; the frame shows a flame column about twice the
+height of the front's flames with smoke shed off its top. Left: the
+column's vorticity is set by its sources, not grown by Flow from a sheared
+wind field, and terrain lee slopes are not yet a birth site.
+
+### Next-round options (card, 18 Nov late)
+
+1. Burning pieces keep their flames. After a burning wall breaks, the
+   Flow sources stay where the intact shape stood. Here: the burnable
+   follows the destructible's live pieces (their AABBs and char state) and
+   moves its emitters with them, so a falling plank burns as it falls
+   and smoulders where it lands (as Teardown and BeamNG keep fire on
+   debris).
+2. River current drags flags, sheets and nets. Free PhysXCloth3D does not
+   yet read the water contract. Here: the same Morison drag and reduced
+   weight as worn clothing, per particle under WorldContracts' water, so a
+   sheet dipped in a river streams downstream.
+3. Wind lifts ash after a fire. Burnt grass leaves a light ash layer (a
+   few hundred g/m2) that blows off in winds above about 4 m/s (Wagenbrenner
+   et al. 2013, post-fire ash emission). Here: the char map seeds a heavy
+   dust (negative smoke_buoyancy) in Flow where wind is strong over fresh
+   ash, thinning the ash each gust, so a burnt hillside smokes grey in
+   the wind for hours.
+4. Fire whirls on lee slopes. Whirls also form in the lee of ridges where
+   the wind separates (Forthofer and Goodrick 2011; Sharples et al. 2012
+   on vorticity-driven lateral spread). Here: births also where the
+   terrain wind (WeatherMap3D, terrain wind) turns back behind a ridge,
+   and those whirls run along the slope, spreading the fire sideways.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

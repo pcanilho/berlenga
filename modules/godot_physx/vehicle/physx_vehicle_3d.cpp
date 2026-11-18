@@ -73,6 +73,7 @@
 //   is its traction less the resistance, and a car whose resistance passes its traction digs in.
 struct PhysXVehicleSoilWheel {
 	float inflation = 200.0f; // kPa, from the wheel node
+	int tread = 1; // PhysXVehicleWheel3D::Tread, from the wheel node
 	float sinkage = 0.0f; // m, smoothed
 	float already = 0.0f; // m, the rut already pressed ahead of the wheel
 	float resistance = 0.0f; // N, the last substep's
@@ -117,7 +118,6 @@ static float _soil_slip(const Vehicle4W &p_v, PxU32 p_i, float p_spin) {
 // Mud in the tread (docs/ideas/mud.md, stage 3): sticky clay packs into the tread as it slips through it; a tread
 // turning fast enough flings it off (w^2 r past ca / (rho t): GroundTerramechanics::shedding_speed()); standing water
 // washes it out; on firm ground it falls off slowly. A full tread grips as a slick and adds its mass to the wheel.
-static constexpr float TREAD_DEPTH = 0.02f; // m, a lug
 static constexpr float CLAY_DENSITY = 1700.0f; // kg/m3
 
 static void _clog_update(PhysXVehicleSoilWheel &p_sw, Vehicle4W &p_v, PxU32 p_i, float p_spin, float p_dt, bool p_soft, float p_water) {
@@ -127,10 +127,11 @@ static void _clog_update(PhysXVehicleSoilWheel &p_sw, Vehicle4W &p_v, PxU32 p_i,
 	const float revs = tread / ((float)Math::TAU * r); // per second
 	float &f = p_sw.mud;
 	const float before = f;
+	const PhysXVehicleWheel3D::TreadSoil ts = PhysXVehicleWheel3D::tread_soil((PhysXVehicleWheel3D::Tread)p_sw.tread);
 	if (p_soft && p_sw.soil.stickiness > 0.0f) {
-		// A quarter of the tread fills per turn at full slip in the stickiest clay, a tenth rolling.
-		f += 0.25f * p_sw.soil.stickiness * (0.4f + 0.6f * Math::abs(p_sw.slip)) * revs * (1.0f - f) * p_dt;
-		const float shed_speed = GroundTerramechanics::shedding_speed(p_sw.soil, r);
+		// A quarter of an all terrain tread fills per turn at full slip in the stickiest clay, a tenth rolling.
+		f += 0.25f * ts.fill * p_sw.soil.stickiness * (0.4f + 0.6f * Math::abs(p_sw.slip)) * revs * (1.0f - f) * p_dt;
+		const float shed_speed = GroundTerramechanics::shedding_speed(p_sw.soil, r) * ts.shed;
 		if (tread > shed_speed) {
 			f -= f * MIN(2.0f * (tread / shed_speed - 1.0f) * p_dt, 1.0f);
 		}
@@ -147,7 +148,7 @@ static void _clog_update(PhysXVehicleSoilWheel &p_sw, Vehicle4W &p_v, PxU32 p_i,
 		f -= f * MIN(MIN(p_water / 0.1f, 1.0f) * (0.2f + 0.5f * revs) * p_dt, 1.0f);
 	}
 	f = CLAMP(f, 0.0f, 1.0f);
-	const float full_kg = (float)Math::TAU * r * 2.0f * wp.halfWidth * TREAD_DEPTH * 0.5f * CLAY_DENSITY;
+	const float full_kg = (float)Math::TAU * r * 2.0f * wp.halfWidth * ts.depth * 0.5f * CLAY_DENSITY;
 	if (f < before) {
 		p_sw.shed += (before - f) * full_kg;
 	}
@@ -294,7 +295,9 @@ public:
 				const PxVehicleTireForceParams &tp = v.tireForceParams[i];
 				const float peak = MAX(MAX(tp.frictionVsSlip[0][1], tp.frictionVsSlip[1][1]), MAX(tp.frictionVsSlip[2][1], 0.05f));
 				// A clogged tread grips as a slick (stage 3).
-				sw.grip = Math::lerp(1.0f, GroundTerramechanics::clogged_grip(sw.soil, load, probe.contact_length * width), sw.mud);
+				// The tread's lugs or chains shear deeper; chains still bite through a clogged tread's slick (round 10).
+				const PhysXVehicleWheel3D::TreadSoil ts = PhysXVehicleWheel3D::tread_soil((PhysXVehicleWheel3D::Tread)sw.tread);
+				sw.grip = Math::lerp(1.0f, GroundTerramechanics::clogged_grip(sw.soil, load, probe.contact_length * width), sw.mud * (1.0f - ts.clog_bite)) * ts.grip;
 				road.friction = probe.shear_limit * sw.grip / load / peak;
 				const float slope = probe.shear_limit * probe.contact_length / (2.0f * MAX(sw.soil.shear_k, 1e-3f));
 				const float substep = p_dt / 3.0f;
@@ -737,6 +740,7 @@ void PhysXVehicle3D::_notification(int p_what) {
 			_engine_controls();
 			for (uint32_t i = 0; i < 4; i++) {
 				impl->soil_wheels[i].inflation = (float)wheels[impl->wheel_order[i]]->get_tire_pressure();
+				impl->soil_wheels[i].tread = (int)wheels[impl->wheel_order[i]]->get_tread();
 			}
 			if (!get_global_transform().is_equal_approx(impl->synced)) {
 				// Moved by a script since the last step: the actor goes there at rest.

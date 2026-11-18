@@ -9,6 +9,13 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="_blown_sand_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method blown_sand_at].
+			</description>
+		</method>
 		<method name="_dent_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -58,6 +65,13 @@
 				A stub's [method rim_at].
 			</description>
 		</method>
+		<method name="_ripple_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method ripple_at].
+			</description>
+		</method>
 		<method name="_runoff_at" qualifiers="virtual const">
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />
@@ -74,6 +88,13 @@
 				A stub's [method rut_guidance_at].
 			</description>
 		</method>
+		<method name="_sand_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method sand_at].
+			</description>
+		</method>
 		<method name="_soil_at" qualifiers="virtual const">
 			<return type="Dictionary" />
 			<param index="0" name="position" type="Vector3" />
@@ -86,6 +107,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				A stub's [method standing_water_at].
+			</description>
+		</method>
+		<method name="blown_sand_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How much of the sand there the wind moves now, 0 to 1: dry sand out of shelter. Default 0.
 			</description>
 		</method>
 		<method name="dent_at" qualifiers="const">
@@ -143,6 +171,13 @@
 				How far the ground is raised at [param position] (berms, laid soil), in metres. Default 0.
 			</description>
 		</method>
+		<method name="ripple_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The wind ripples' height about their mean, in metres. Default 0.
+			</description>
+		</method>
 		<method name="runoff_at" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />
@@ -157,6 +192,13 @@
 			<param index="2" name="half_width" type="float" />
 			<description>
 				Ruts under a tyre at [param contact]: the cross slope of the ground's deformation along [param lateral] (rising towards it), and the rut wall's height beside the tread on its -[param lateral] and +[param lateral] sides (m), for a tread [param half_width] m either side. Default zero.
+			</description>
+		</method>
+		<method name="sand_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Loose sand's share of the ground's top, 0 to 1. Default 0.
 			</description>
 		</method>
 		<method name="soil_at" qualifiers="const">
