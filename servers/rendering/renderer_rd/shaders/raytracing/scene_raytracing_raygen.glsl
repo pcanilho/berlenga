@@ -514,6 +514,38 @@ bool rt_caustics_trace(vec3 p_origin, vec3 p_dir, float p_width, uint p_rng, out
 	return r_ps.hit_t >= 0.0;
 }
 
+// A path into or through a medium leaves each surface from offset_ray_origin()'s start, up to 256 ulps of the
+// position off it: about 1.5 cm a kilometre from the origin. Water thinner than that (a pool's or a beach's
+// shallow edge) fits inside the offset: a ray refracted in at the top started under the floor, and one off the
+// floor started over the top, and both stayed "in the water" for good, every later segment absorbed (blue strips
+// along the shores of rimstone pools far from the origin). Probe the gap from the start back to the point; a
+// surface there (the floor under the water, the water over the floor) moves the start to halfway between the two.
+// Only where the offset is wider than the trace's own 1 mm minimum distance, so scenes near the origin pay nothing.
+vec3 rt_medium_gap_start(vec3 p_hit, vec3 p_start) {
+	vec3 g = p_hit - p_start;
+	float d = length(g);
+	if (d < 0.002) {
+		return p_start;
+	}
+	PathState ps;
+	ps.bsdf_pdf = 0.0;
+	ps.radiance = vec3(0.0);
+	ps.throughput = vec3(1.0);
+	ps.packed_bounces_flags = inc_total_bounce(0u) | CAUSTIC_PHOTON_FLAG;
+	ps.rng_state = 0u;
+	ps.hit_t = -1.0;
+	ps.offset_normal = vec3(0.0, 0.0, 1.0);
+	ps.next_ray_dir = g / d;
+	path_pack(payload, ps);
+	payload_set_cone_width(payload, 0.0);
+	// From 2 mm past the start (a surface just beyond it is still skipped by the next trace's 1 mm minimum
+	// distance), back faces too: from a start under the floor the floor is met from behind.
+	const float past = 0.002;
+	traceRayEXT(tlas, gl_RayFlagsNoneEXT, RT_BOUNCE_MASK, 0, 0, 0, p_start - g * (past / d), 0.0, g / d, d * 0.98 + past, 0);
+	ps = path_unpack(payload);
+	return ps.hit_t >= 0.0 ? p_hit - g * (0.5 * max(d + past - ps.hit_t, 0.0) / d) : p_start;
+}
+
 // ============================================================================
 // SUBSURFACE SCATTERING (docs/ideas/subsurface-scattering.md)
 // ============================================================================
@@ -1342,6 +1374,9 @@ void main() {
 			}
 			ray_origin = offset_ray_origin(hit_pos, ps.offset_normal, ps.hit_t);
 			ray_dir = ps.next_ray_dir;
+			if (in_medium) {
+				ray_origin = rt_medium_gap_start(hit_pos, ray_origin);
+			}
 		}
 #ifdef DLSS_RR_ENABLED
 		if (replace_pending) {
