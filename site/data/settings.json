@@ -1315,7 +1315,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it; prints wipe them and they form again.",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile; prints wipe them and they form again.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
