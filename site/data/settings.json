@@ -2448,6 +2448,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Falling leaves",
+   "settings": [
+    "LeafFall3D"
+   ],
+   "note": "",
+   "what": "leaves fall from the crowns through the wind as autumn sheds them, and gusts lift them off the ground.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Wetland plants",
    "settings": [
     "PlantSpecies.floating",
@@ -3353,6 +3364,17 @@
    "topic": ""
   },
   {
+   "name": "Wind over terrain",
+   "settings": [
+    "terrain_wind_enabled"
+   ],
+   "note": "",
+   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Wind near the ground",
    "settings": [
     "add_canopy",
@@ -3506,10 +3528,12 @@
    "name": "Followers",
    "settings": [
     "follow_weather",
-    "weather_wind"
+    "cats_paws",
+    "weather_wind",
+    "wind_drag"
    ],
    "note": "",
-   "what": "water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`); tyres lose grip on wet, flooded and icy ground and aquaplane at speed.",
+   "what": "water waves grow with the weather's wind (`follow_weather`) and gusts darken the ripples in moving cat's paws (`cats_paws` shader uniform); cloth, hair and smoke move in it (`weather_wind`); particles drift with it and its gusts (`wind_drag`); tyres lose grip on wet, flooded and icy ground and aquaplane at speed.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -3582,7 +3606,7 @@
     "cloud_density"
    ],
    "note": "",
-   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes and fray into wisps, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
+   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes and fray into wisps, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""
