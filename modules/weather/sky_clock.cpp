@@ -35,6 +35,7 @@
 #include "weather_sky_material.h"
 
 #include "core/config/engine.h"
+#include "core/config/project_settings.h"
 #include "core/math/math_funcs.h"
 #include "core/object/class_db.h"
 #include "scene/3d/camera_3d.h"
@@ -425,10 +426,16 @@ void SkyClock::_apply_lights() {
 	Ref<WeatherSkyMaterial> sky_mat = WeatherSkyMaterial::find_for(this);
 	sky_material_id = sky_mat.is_valid() ? sky_mat->get_instance_id() : ObjectID();
 	if (sky_mat.is_valid() && drive_light_energy) {
-		const double e_sun = get_sun_illuminance_top() * energy_per_lux;
-		const double e_moon = get_moon_illuminance_top() * energy_per_lux;
+		// The sky's radiance in the surfaces' units. Without physical light units the renderer lights a surface
+		// with pi times a light's energy (its Lambert 1/pi cancelled), so a white surface under E lux shows
+		// E energy_per_lux: one cd/m2 is then pi energy_per_lux. The sky computed its radiance from the bare
+		// energy, a factor pi (1.65 stops) under the ground it lit: a navy daytime sky, grey clouds, and too
+		// little skylight in the shadows.
+		const double units = GLOBAL_GET_CACHED(bool, "rendering/lights_and_shadows/use_physical_light_units") ? 1.0 : Math::PI;
+		const double e_sun = get_sun_illuminance_top() * energy_per_lux * units;
+		const double e_moon = get_moon_illuminance_top() * energy_per_lux * units;
 		sky_mat->set_atmosphere_lights(get_sun_direction(), Vector3(e_sun, e_sun, e_sun), get_moon_direction(), Vector3(e_moon, e_moon, e_moon));
-		sky_mat->set_star_sky(get_celestial_basis(), float(energy_per_lux));
+		sky_mat->set_star_sky(get_celestial_basis(), float(energy_per_lux * units));
 		sky_mat->set_moon_angular_size(float(2.0 * Math::asin(1737.4 / sky.moon.dist_km)));
 	}
 	if (drive_exposure && !Engine::get_singleton()->is_editor_hint()) {

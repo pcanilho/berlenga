@@ -34,6 +34,7 @@
 #include "atmosphere.h"
 #include "bright_stars_data.h"
 
+#include "core/config/project_settings.h"
 #include "core/object/class_db.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/main/viewport.h"
@@ -339,6 +340,7 @@ vec3 lightning_glow(vec3 cam, vec3 rd, float opacity) {
 }
 
 #ifdef ATMO_SCATTERING
+uniform float atmo_light_units = 3.14159265; // pi without physical light units, else 1
 // The two bodies lighting the air: SkyClock's sun and moon when it drives the sky, else the first
 // directional light taken as the sun above the air.
 void atmo_lights(out vec3 l0, out vec3 e0, out vec3 l1, out vec3 e1, out float size0) {
@@ -350,7 +352,8 @@ void atmo_lights(out vec3 l0, out vec3 e0, out vec3 l1, out vec3 e1, out float s
 		size0 = atmo_sun_angular_size;
 	} else {
 		l0 = LIGHT0_ENABLED ? normalize(LIGHT0_DIRECTION) : UP;
-		e0 = LIGHT0_ENABLED ? LIGHT0_COLOR * LIGHT0_ENERGY : vec3(0.0);
+		// In the surfaces' units (SkyClock's note on pi): the renderer lights them with pi times the energy.
+		e0 = LIGHT0_ENABLED ? LIGHT0_COLOR * LIGHT0_ENERGY * atmo_light_units : vec3(0.0);
 		l1 = -UP;
 		e1 = vec3(0.0);
 		size0 = LIGHT0_ENABLED ? LIGHT0_SIZE : atmo_sun_angular_size;
@@ -903,5 +906,6 @@ void WeatherSkyMaterial::cleanup() {
 WeatherSkyMaterial::WeatherSkyMaterial() {
 	_update_shader();
 	RS::get_singleton()->material_set_param(get_rid(), "cloud_shape", WeatherClouds::shape_texture()->get_rid());
+	RS::get_singleton()->material_set_param(get_rid(), "atmo_light_units", GLOBAL_GET_CACHED(bool, "rendering/lights_and_shadows/use_physical_light_units") ? 1.0f : float(Math::PI));
 	RS::get_singleton()->material_set_param(get_rid(), "cloud_detail", WeatherClouds::detail_texture()->get_rid());
 }
