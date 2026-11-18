@@ -1,0 +1,1 @@
+- Water: clear-water refraction near the frame's edge no longer smears the last row or column of the screen into streaks.
