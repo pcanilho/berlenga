@@ -1712,6 +1712,17 @@
    "topic": "Sea and lakes"
   },
   {
+   "name": "Underground reflections",
+   "settings": [
+    "screen_reflections"
+   ],
+   "note": "",
+   "what": "with `raster_reflections` off, still water and streams mirror the cave around them in raster; rivers keep clear water.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
    "name": "Raster reflections",
    "settings": [
     "raster_reflections"
