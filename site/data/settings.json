@@ -1168,10 +1168,12 @@
   {
    "name": "Mud on vehicles",
    "settings": [
-    "PhysXVehicle3D.body_mud"
+    "PhysXVehicle3D.body_mud",
+    "mud_color",
+    "mud_color_map"
    ],
    "note": "",
-   "what": "tyres, arches and bellies cake with the clay they drive through, wet at first and drying pale.",
+   "what": "tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first and drying pale.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2031,6 +2033,29 @@
    "topic": "Placement"
   },
   {
+   "name": "Cereal crops",
+   "settings": [
+    "GrassField3D.crop",
+    "crop_stage"
+   ],
+   "note": "",
+   "what": "wheat, barley, oats and rye as real plants in drill rows, through their growth stages from green rows to gold ears and stubble.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
+   "name": "Crop fields",
+   "settings": [
+    "GrassField3D.fields"
+   ],
+   "note": "",
+   "what": "field outlines with their own drill direction, sowing date, tramlines and headland; the ground carries the crop's colour into the distance.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
    "name": "Clear of boulders",
    "settings": [
     "VegetationField3D.obstacles",
@@ -2626,6 +2651,17 @@
    ],
    "note": "",
    "what": "clumps of short fibrous trunks or stemless crowns, with pleated fan leaves on spiny stalks, a skirt of dead leaves, spring flower clusters and dates that ripen from green to red-brown.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Stone pine",
+   "settings": [
+    "PRESET_STONE_PINE"
+   ],
+   "note": "",
+   "what": "an umbrella crown on a clear bole, cones in three ages and plated red-brown bark.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"

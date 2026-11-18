@@ -36,7 +36,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("d35400"), Color("c0392b"), Color("a04000"), Color("b7950b"), Color("4d6b5a"), Color("17332a"), Color("a6acaf"),
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
-		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row",
+		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
 		"woodland", "NA woodland"]
 
 var gen: TreeGenerator
@@ -186,6 +186,8 @@ func _stand_checks() -> void:
 			_check(f.get_plant_count() > 0 and open_count == f.get_plant_count(), "hedgerow: shrubs and open-grown standards only (%d)" % open_count)
 		elif i == TreeGenerator.STAND_WOOD_PASTURE:
 			_check(cut.pollard > 0 and regen.sapling == 0 and regen.log > 0, "wood pasture: %d lapsed pollards, no saplings (grazed), %d logs" % [cut.pollard, regen.log])
+		elif i == TreeGenerator.STAND_STONE_PINE:
+			_check(open_count > 0 and stand_count == 0 and regen.sapling > 0 and regen.log > 0, "stone pine parkland: %d open-grown umbrellas, %d saplings, %d logs" % [open_count, regen.sapling, regen.log])
 		elif i == TreeGenerator.STAND_POLLARD_ROW:
 			_check(cut.pollard > 0 and cut.pollard >= open_count, "pollard row: %d willow pollards, %d alders" % [cut.pollard, open_count])
 		elif i == TreeGenerator.STAND_COPPICE_STANDARDS:
@@ -297,30 +299,54 @@ func _wind_check() -> void:
 # generator makes without the split (lobed leaves, LODs, rig and climbers); it is freed once
 # nothing holds it.
 func _near_leaves_check() -> void:
-	var meshes := []
-	var far := []
-	var srcs := []
-	for range in [0.0, 60.0]:
-		var g := TreeGenerator.new()
-		g.seed = 1
-		g.rigged = true
-		g.near_leaf_range = range
-		g.set_preset(TreeGenerator.PRESET_OAK)
-		var sp := g.make_species(false, 2) # Variant 1 carries ivy.
-		far.append(sp.meshes)
-		srcs.append(sp)
-	var sp: PlantSpecies = srcs[1]
-	var src: Object = sp.near_mesh_source
-	_check(srcs[0].near_mesh_source == null and src != null and sp.near_range == 60.0, "near leaves: the split species has a near mesh source, the plain one none")
-	if src == null:
-		return
+	# The unsplit oak is two variants of 17M and 30M vertices: keep only a fingerprint of each
+	# (a hash of its arrays and LODs) and free it before the split species and its near meshes
+	# are built, or the two copies overrun a 15 GB machine.
 	var leaves := func(m: Mesh) -> int:
 		var n := 0
 		for i in m.get_surface_count():
 			if m.surface_get_name(i) == "leaves":
-				n += m.surface_get_arrays(i)[Mesh.ARRAY_VERTEX].size()
+				n += m.surface_get_array_len(i)
 		return n
+	var print_of := func(m: Mesh) -> Array:
+		var out := [m.get_surface_count(), m.get_meta("tree_rig", null)]
+		for i in m.get_surface_count():
+			var a := m.surface_get_arrays(i)
+			out.append(hash(a[Mesh.ARRAY_VERTEX]))
+			out.append(hash(a[Mesh.ARRAY_INDEX]))
+			out.append(hash(a[Mesh.ARRAY_TEX_UV]))
+			a.clear()
+			for l in RenderingServer.mesh_get_surface(m.get_rid(), i).get("lods", []):
+				out.append(l.edge_length)
+				out.append(hash(l.index_data))
+		return out
+	var full_prints := []
+	var full_leaves := []
+	var plain := TreeGenerator.new()
+	plain.seed = 1
+	plain.rigged = true
+	plain.near_leaf_range = 0.0
+	plain.set_preset(TreeGenerator.PRESET_OAK)
+	var plain_sp := plain.make_species(false, 2) # Variant 1 carries ivy.
+	var plain_src: Object = plain_sp.near_mesh_source
+	for m in plain_sp.meshes:
+		full_prints.append(print_of.call(m))
+		full_leaves.append(leaves.call(m))
+	plain_sp = null
+	plain = null
+	var g := TreeGenerator.new()
+	g.seed = 1
+	g.rigged = true
+	g.near_leaf_range = 60.0
+	g.set_preset(TreeGenerator.PRESET_OAK)
+	var sp := g.make_species(false, 2)
+	var src: Object = sp.near_mesh_source
+	_check(plain_src == null and src != null and sp.near_range == 60.0, "near leaves: the split species has a near mesh source, the plain one none")
+	if src == null:
+		return
 	for v in 2:
+		var lf: int = leaves.call(sp.meshes[v])
+		_check(lf < full_leaves[v], "near leaves: variant %d far leaves %.2fM vertices vs %.2fM" % [v, lf / 1e6, full_leaves[v] / 1e6])
 		var t0 := Time.get_ticks_msec()
 		var near: Mesh = null
 		var calls := 0
@@ -328,26 +354,11 @@ func _near_leaves_check() -> void:
 			near = src.request_near_mesh(sp.near_mesh_key, v)
 			calls += 1
 			await get_tree().process_frame
-		var full: Mesh = far[0][v]
-		var same: bool = near != null and near.get_surface_count() == full.get_surface_count()
-		if same:
-			for i in full.get_surface_count():
-				var a := full.surface_get_arrays(i)
-				var b := near.surface_get_arrays(i)
-				same = same and a[Mesh.ARRAY_VERTEX] == b[Mesh.ARRAY_VERTEX] and a[Mesh.ARRAY_INDEX] == b[Mesh.ARRAY_INDEX] and a[Mesh.ARRAY_TEX_UV] == b[Mesh.ARRAY_TEX_UV]
-				var la: Array = RenderingServer.mesh_get_surface(full.get_rid(), i).get("lods", [])
-				var lb: Array = RenderingServer.mesh_get_surface(near.get_rid(), i).get("lods", [])
-				same = same and la.size() == lb.size()
-				for k in min(la.size(), lb.size()):
-					same = same and la[k].edge_length == lb[k].edge_length and la[k].index_data == lb[k].index_data
-			same = same and full.get_meta("tree_rig", null) == near.get_meta("tree_rig", null)
+		var same: bool = near != null and print_of.call(near) == full_prints[v]
 		_check(same and calls > 1, "near leaves: variant %d's near mesh is the unsplit mesh, built in the background in %d ms" % [v, Time.get_ticks_msec() - t0])
-		var lf: int = leaves.call(far[1][v])
-		var lo: int = leaves.call(full)
-		_check(lf < lo, "near leaves: variant %d far leaves %.2fM vertices vs %.2fM" % [v, lf / 1e6, lo / 1e6])
 		_check(src.request_near_mesh(sp.near_mesh_key, v) == near, "near leaves: a second cell gets the same mesh")
 		near = null
-	await get_tree().process_frame
+		await get_tree().process_frame
 	_check(src.get_near_mesh_count() == 0, "near leaves: meshes are freed once nothing draws them (%d left)" % src.get_near_mesh_count())
 
 # Wind level of detail (trees.md 3c): a camera at eye height on the stand's edge, looking across
@@ -479,7 +490,7 @@ func _draw_maps(path: String) -> void:
 const PRESET_NAMES := ["Oak", "Beech", "Birch", "Scots Pine", "Norway Spruce", "Hazel", "Hawthorn", "Lime", "Sycamore Maple", "Ash",
 		"Horse Chestnut", "Black Alder", "White Willow", "European Larch", "Silver Fir", "Rowan", "Elder", "Holly", "Yew", "Box",
 		"Sugar Maple", "Red Maple", "Northern Red Oak", "White Oak", "Eastern White Pine", "Eastern Hemlock", "American Beech",
-		"Paper Birch", "Yellow Birch", "Witch-hazel", "Mountain Laurel", "Gorse", "Broom", "Gum Rockrose", "Kermes Oak", "Lentisk", "Dwarf Fan Palm"]
+		"Paper Birch", "Yellow Birch", "Witch-hazel", "Mountain Laurel", "Gorse", "Broom", "Gum Rockrose", "Kermes Oak", "Lentisk", "Dwarf Fan Palm", "Stone Pine"]
 
 func _preset_of(nm: String) -> int:
 	var base := nm.substr(0, nm.find(" ("))

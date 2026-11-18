@@ -92,6 +92,7 @@ public:
 		PRESET_KERMES_OAK, // Quercus coccifera.
 		PRESET_LENTISK, // Pistacia lentiscus.
 		PRESET_DWARF_FAN_PALM, // Chamaerops humilis (trees.md 5w).
+		PRESET_STONE_PINE, // Pinus pinea (trees.md 5y).
 		PRESET_MAX,
 	};
 
@@ -118,6 +119,7 @@ public:
 		STAND_COPPICE_STANDARDS, // Hazel coppice in coupes of different ages under oak and ash standards.
 		STAND_WOOD_PASTURE, // Grazed: lapsed beech and oak pollards, open-grown oaks, thorn and holly.
 		STAND_POLLARD_ROW, // Willow pollards along water, placed by the scene along its lines.
+		STAND_STONE_PINE, // Stone pine parkland on coastal sands: open-grown umbrellas a crown apart.
 		STAND_MAX,
 	};
 
@@ -731,6 +733,7 @@ private:
 		BARK_FLAKING,
 		BARK_PAPERY,
 		BARK_LENTICELLED, // Hazel: glossy, pale lenticels, thin peeling skin.
+		BARK_PINEA, // Stone pine: long flat grey-brown plates, orange-red fissures.
 		BARK_MAX,
 	};
 	struct BarkSet {

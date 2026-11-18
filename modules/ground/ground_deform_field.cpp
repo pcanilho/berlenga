@@ -403,7 +403,15 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 			}
 			const int i = z * n + x;
 			const float a = p_depth * cover;
-			if (a > 0.0f) {
+			if (a > 0.0f && amount_fresh < 0.0f) {
+				// A line being washed away: only what was laid on the surface goes, and its tint with it.
+				const float take = MIN(rim[i], a);
+				rim[i] -= take;
+				volume += take * t * t;
+				if (track_fresh) {
+					fresh[i] *= 1.0f - cover;
+				}
+			} else if (a > 0.0f) {
 				const float take = MIN(rim[i], a);
 				rim[i] -= take;
 				const float before = dent[i];
@@ -417,6 +425,9 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 				dent[i] -= fill;
 				rim[i] += -a - fill;
 				volume += a * t * t;
+				if (track_fresh && amount_fresh > 0.0f) {
+					fresh[i] = MAX(fresh[i], amount_fresh * cover);
+				}
 			}
 			_mark(x, z, press_settle);
 		}

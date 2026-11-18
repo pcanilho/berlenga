@@ -1808,6 +1808,68 @@ a coupe map (age by cell from a Voronoi of coupes with a cutting order) and plac
 at a set density with ages mixed, brash heaps and cut faces in fresh coupes (deadwood plumbing,
 5o), and hands vegetation the coupe light map.
 
+### 5y. Stone pine (17 Nov; Paulo's pick, Mediterranean trees first)
+
+Research (Gymnosperm Database, Pinus pinea, 2026; Surovy, Ribeiro and Santos Pereira 2011,
+Observations on 3-dimensional crown growth of stone pine, Agroforest Syst 82; Mutke et al. 2012
+on cone yield and crown form):
+- 12-25 m (to 35). Conic only its first two years, globose and shrubby young, then domed, and
+  with age a very broad, low-rounded umbrella. Main limbs rise at 30-60 degrees with tips swept
+  up to vertical; the leader gives up dominance, so the crown is many equal limbs ending at one
+  height. The form carries the heavy cones on many branches, in full light, on top.
+- Shoots uninodal (one whorl a year). Needles in pairs, 10-18 cm (to 28), mid-green, 1.5 mm
+  thick, kept 2-4 years: dense tufts at the shoot tips, bare wood behind. Juvenile needles
+  single, glaucous, 1.5-4 cm, for 3-10 years (saplings).
+- Cones 8-12 cm (to 15), 5-11 cm broad, broad ovoid to globose, on short stout stalks; green,
+  then shiny chestnut-brown, ripe in April three years after pollination (the longest of any
+  pine), so a tree carries three cohorts: small first-year conelets, green second-year cones
+  and full-size ripe or opening cones; open on ripening or within a year.
+- Bark thick, plated, deeply fissured, red-brown to orange with blackish plate edges.
+- Hardy to about -12 C; coastal sands and dunes, Iberia's south and west, Italy, Turkey.
+
+How the generator gets there: the existing pine plumbing (whorled phyllotaxis, needles, plated
+bark, cones as crown parts, resin) with an apical dominance that falls hard with age
+(`PARAM_APICAL_DOMINANCE_OLD` well under Scots pine's), upturned limb tips (negative
+gravitropism), heavy self-pruning of the lower crown (shed ratio), long needles in tip tufts,
+the three cone cohorts by day of year, an orange-red tint on the plated bark, and a warm,
+dry habitat. Then the five forms, raster and PT frames, docs.
+
+As built (17 Nov): `PRESET_STONE_PINE`. Parameters alone gave a vase of limbs from the ground
+(open-grown, every low lateral stays lit) or a sparse candelabra. What made the umbrella:
+- a strong leader young (lambda 0.78) falling to 0.32 over 35 years, laterals near the leader's
+  vigor (apical control 0.95), wide branch angle (65 degrees), little upward bend (0.03), no
+  crown cone, 0.35 m internodes, five buds a whorl, 160 needles of 14 cm an internode;
+- a crown lift in `_shed`: open-grown too, limbs off the stem below 0.42 of the tree's height
+  (ramping in from year 8 to 35) die, as they do under the dome in the real tree.
+Mature open-grown (60 years): 15.5 m tall, crown 15.1 m across, crown base 11.9 m; 4.0M
+triangles. Stand-grown: 21.6 m, narrow, crown base 15.8 m. Cones: three cohorts by a hash per
+tip (conelets 1-2 cm, green second-year cones 3.5-5 cm, third-year 8-12 cm turning chestnut
+from February, opening from April), on the sunlit top. Plated bark in red-brown. Raster vs PT
+at 100% crop: the same limbs and needle tufts, PT's crown a little darker and fuller. Deadwood
+classes and logs come from the shared plumbing.
+
+Docs review fixes (18 Nov): the crown was pale and lacy, the limbs a fan of thin straight
+branches, the trunk slender, the bark plates cartoonish, the cones dots.
+- Crown: four buds a whorl, 220 needles of 14 cm an internode kept three years, darker green
+  (0.07, 0.16, 0.05) and a little self-shadowing, so the top is one dark flat mass.
+- Limbs: more branch noise (13) and less upward bend, so the limbs wander; pipe exponent 2.05
+  and a root flare give a stout bole (about 0.9 m across at 60 years).
+- Bark: its own kind, `BARK_PINEA`: long vertical plates (6 x 2 cells, warped like the plated
+  kind), grey-brown faces and orange-red fissure floors carried in the material's headroom
+  (3.0), so the plate faces stay grey; lichen cut to 0.08. Fixing it found that the bark
+  headroom was passed linear to an sRGB albedo: smooth bark (beech, hornbeam) drew about 1.5
+  times too bright; now encoded.
+- Cones: three cohorts at the shoot tips, set back behind the needle tufts and drooping; the
+  third-year cones 9-13 cm, green to chestnut by day of year, open from April.
+- Limb count: still more limbs than the real tree's handful. Thinning the weaker scaffolds in
+  `_shed` destabilised the form (the leader took over or the crown collapsed); left for a
+  growth rule that splits the leader into a few limbs.
+Mature open-grown: 15.5 m tall, crown 13.7 m across, crown base 12.5 m; 6.9M triangles (5.3M
+needles, thinned by the LODs). Stand: `STAND_STONE_PINE` (parkland, 13), open-grown umbrellas
+about 11 m apart with saplings, snags and logs; not part of `make_woodland`. Its scrub comes
+from vegetation's `make_scrub` (lentisk, kermes oak, gum rockrose, dwarf fan palm). Not yet:
+juvenile needles on saplings.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

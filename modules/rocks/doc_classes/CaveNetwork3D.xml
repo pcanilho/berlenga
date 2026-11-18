@@ -166,6 +166,12 @@
 				The network's own sea-mist node (see [member sea_mist]), or [code]null[/code].
 			</description>
 		</method>
+		<method name="get_stream_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many cave streams ([member cave_streams]) are in the tree.
+			</description>
+		</method>
 		<method name="get_speleothem_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -237,6 +243,9 @@
 		</member>
 		<member name="scallops" type="float" setter="set_scallops" getter="get_scallops" default="1.0">
 			Dissolution scallops on the walls: dish-shaped hollows about 1.2 m across with sharp ridges between them, from Worley (cellular) noise. Real scallops are cells of this kind (Curl 1974), and these are the large ones that slow phreatic flow leaves. 0 turns them off.
+		</member>
+		<member name="cave_streams" type="bool" setter="set_cave_streams" getter="get_cave_streams" default="true">
+			Streams down the trench floors of the vadose passages (keyhole and canyon runs at least 8 m long, about two in three of them; the rest are dry): a channel cut into the fill and a [PhysXRiver3D] in it, run downhill to where the passage meets the water table. Needs the PhysX module.
 		</member>
 		<member name="sea_mist" type="bool" setter="set_sea_mist" getter="get_sea_mist" default="true">
 			When the network has sea caves, it makes its own [code]PhysXCaveMist3D[/code] (with the PhysX module built with Flow), which breathes cold mist out of their mouths with the swell.

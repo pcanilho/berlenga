@@ -56,13 +56,17 @@ extends Node3D
 #                       --glints=0 for the A/B)
 #   --view=shore        a real sea's swash edge on a beach: the water sheet, damp sand draining behind it and a
 #                       row of boot prints crossing the line, rounded in the wash, sharp on the dry sand (stage 4)
-#                       --water=uniform:value sets one of the sea's shader uniforms (repeatable)
+#                       --water=uniform:value sets one of the sea's shader uniforms (repeatable); --ebb=from,to
+#                       lowers the run-up over the run, as a falling tide, leaving a ladder of swash marks
 #   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
 #   --cam=x,y,z,tx,ty,tz camera for --view=trail, --view=roost and --view=ripples
 #   --sun=pitch,yaw[,exposure] sun angles in degrees for --view=trail (default -18,140), and the exposure
+#   --prop=name:value   set one of the surface's properties (repeatable)
 #   --defaults          keep every shipped setting on (otherwise each check or view turns on only its own)
 #   --raster            raster only (default path traced)
-#   --pair              --view=bodymud: save the raster frame as <out>_raster.png, then the path traced one, from one run
+#   --pair              --view=bodymud, ruts and wade: save the raster frame as <out>_raster.png, then the path traced one, from one run
+#   --view=wade         a 4x4 drives along two ruts brimming with ground water (mud stage 4c): the bow wave and wake;
+#                         --cam=x,y,z,tx,ty,tz in the world
 #   --out=path.png      save the frame and quit
 #   --spp=N --bounces=N path tracing samples and bounces (default 16, 3)
 #   --gpu=0             the field on the CPU (default: compute shaders where there is a GPU; --headless
@@ -215,6 +219,9 @@ func _ready() -> void:
 	if view == "bodymud":
 		await _build_bodymud()
 		return
+	if view == "wade":
+		await _build_wade()
+		return
 	if view == "ripples":
 		await _build_ripples()
 		return
@@ -265,6 +272,11 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 		surface.runoff_channels = false
 		surface.standing_water = false
 		surface.desiccation_cracks = false
+	# --prop=name:value sets any of the surface's properties (repeatable), for an A/B.
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--prop="):
+			var pkv := a.substr(7).split(":", true, 1)
+			surface.set(pkv[0], str_to_var(pkv[1]))
 	add_child(surface)
 	await get_tree().physics_frame
 
@@ -702,6 +714,27 @@ func _run_puddle_tests() -> void:
 	_check("ground water seeps into a rut up to the water table", absf(floor_h + w + 0.06) < 0.01, "surface %.1f cm (table -6 cm)" % ((floor_h + w) * 100.0))
 	_check("it stands level", vs.y < 0.003, "%.1f mm from lowest to highest" % (vs.y * 1000.0))
 	_check("none outside the rut", surface.get_standing_water_at(o + Vector3(0.6, 0, 0)) == 0.0, "%.2f mm beside it" % (surface.get_standing_water_at(o + Vector3(0.6, 0, 0)) * 1000.0))
+	# A tyre wading up the rut at 2 m/s (mud stage 4c): the water rises ahead of it and falls behind, volume kept
+	# (sources and sinks stopped).
+	surface.runoff_time_scale = 0.0
+	surface.settle(1.0, 0.05)
+	var ahead0 := surface.get_standing_water_at(o + Vector3(0, 0, 0.52))
+	var behind0 := surface.get_standing_water_at(o + Vector3(0, 0, 0.1))
+	var vw0 := _water_volume(o, 1.0)
+	# It rolls 60 cm up the rut, a physics frame at a time.
+	for k in 15:
+		surface.add_wader(1, o + Vector3(0, floor_h + 0.33, -0.3 + 0.04 * k), 0.35, 0.12, Vector3(0, 0, 2.0))
+		surface.settle(0.02, 0.02)
+		await get_tree().physics_frame
+	var ahead1 := surface.get_standing_water_at(o + Vector3(0, 0, 0.52))
+	var behind1 := surface.get_standing_water_at(o + Vector3(0, 0, 0.1))
+	var vw1 := _water_volume(o, 1.0)
+	var prof := []
+	for k in 13:
+		prof.append(snappedf(surface.get_standing_water_at(o + Vector3(0, 0, -0.3 + 0.1 * k)) * 100.0, 0.1))
+	print("  water along the rut after the tyre (cm, z -0.3 to 0.9): ", prof)
+	_check("a wading tyre pushes the water up ahead of it and out from under it, volume kept", ahead1 > ahead0 + 0.003 and behind1 < behind0 - 0.003 and absf(vw1.x - vw0.x) < 0.02 * vw0.x,
+			"ahead %.1f to %.1f cm, under its rear %.1f to %.1f cm; %.2f l to %.2f l" % [ahead0 * 100.0, ahead1 * 100.0, behind0 * 100.0, behind1 * 100.0, vw0.x * 1000.0, vw1.x * 1000.0])
 	# Flow alone keeps the water: with the sources and sinks stopped (time scale 0), a print pressed beside the
 	# pool and cut into it draws water in; the volume holds.
 	surface.runoff_time_scale = 0.0
@@ -847,6 +880,8 @@ func _run_clog_tests() -> void:
 		car.body_mud = k == "clogging"
 		_dress_car(car)
 		surface.follow_target = surface.get_path_to(car)
+		# Red laterite (stage 4d): the clay the car picks up should be red.
+		surface.mud_color = Color(0.62, 0.3, 0.2)
 		var r: Array = await _drive(car, 4.0, 0.5)
 		var fill := 0.0
 		var traction := 0.0
@@ -909,6 +944,8 @@ func _run_clog_tests() -> void:
 	var body_mi: MeshInstance3D = car.get_node("Body")
 	var body_mat := body_mi.get_active_material(0) as BaseMaterial3D
 	var fed: Vector4 = body_mi.get_instance_shader_parameter("mud_spray")
+	var clay := car.get_body_mud_color()
+	_check("the body's mud takes the ground's clay colour", clay.r > 1.6 * clay.g and clay.r > 0.5, "clay %s on the body" % str(clay))
 	_check("the thrown clay muds the arches, the body's material shows it", spray > 0.3 and body_mat.mud_enabled and fed.x + fed.y + fed.z + fed.w > 1.0 and not res["clean"][5] and car.get_body_mud_wetness() > 0.9,
 			"spray %.2f a wheel, uniform %s, wetness %.2f" % [spray, str(fed), car.get_body_mud_wetness()])
 	# A low car (15 cm under its belly) in 80 cm of slurry at half throttle: with belly drag it high-centres.
@@ -1031,6 +1068,9 @@ func _build_bodymud() -> void:
 		# --splat: one big clod placed on the side, a check of the splat drawing alone
 		if "--splat" in OS.get_cmdline_user_args():
 			car.add_mud_splat(car.global_transform * Vector3(0.9, 0.5, -0.6), -side * 5.0 + Vector3(0, 1.0, 0), 3e-4)
+			# and two smaller ones overlapping further back, a check that they merge
+			car.add_mud_splat(car.global_transform * Vector3(0.9, 0.55, -1.3), -side * 5.0 + Vector3(0, 0.5, 0), 1.2e-4)
+			car.add_mud_splat(car.global_transform * Vector3(0.9, 0.5, -1.42), -side * 5.0 + Vector3(0, 1.5, 0), 0.8e-4)
 			for i in 5:
 				await get_tree().physics_frame
 	if mg:
@@ -1049,8 +1089,83 @@ func _build_bodymud() -> void:
 	cam.look_at(xf * Vector3(c[3], c[4], c[5]))
 	cam.fov = 45.0
 	get_window().size = full
+	await _save_view(env)
+	get_tree().quit()
+
+
+func _build_wade() -> void:
+	near_on = false
+	kind = "soil"
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.9, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	surface.mud_layer = false
+	surface.standing_water = true
+	surface.moisture = 0.9
+	var env := Environment.new()
+	var sky := Sky.new()
+	sky.sky_material = ProceduralSkyMaterial.new()
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.set("pathtracing_sky_shader_enabled", true)
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = false
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-30.0, 150.0, 0.0)
+	sun.directional_shadow_max_distance = 30.0
+	add_child(sun)
+	# Two ruts at the 4x4's track, 12 cm deep, filled by the ground water to its table 6 cm down (sped up).
+	for x in [-0.8, 0.8]:
+		surface.press_box(Vector3(x, 0, 0), Vector2(0.18, 7.0), 0.0, 0.0, 0.12)
+	surface.sync_deformation()
+	surface.runoff_time_scale = 1000.0
+	surface.settle(240.0, 0.05)
+	# Then firm ground to drive on, the water held (its sources and sinks stopped).
+	surface.runoff_time_scale = 0.0
+	surface.moisture = 0.3
+	print("wade: %.1f cm of water in the ruts" % (surface.get_standing_water_at(Vector3(0.8, 0, 0)) * 100.0))
+	var car := _make_car(1500.0, 700.0, Vector3(0.0, _undisturbed(Vector3(0, 0, -6.0)) + 0.9, -6.0))
+	_dress_car(car)
+	surface.follow_target = surface.get_path_to(car)
+	var full := get_window().size
+	get_window().size = Vector2i(160, 90)
+	for i in 30:
+		await get_tree().physics_frame
+	car.throttle = 0.6
+	var t := 0.0
+	while t < 10.0 and car.global_position.z < -0.4:
+		await get_tree().physics_frame
+		t += 1.0 / 60.0
+	var c := car.global_position
+	var v := car.get_linear_velocity().length()
+	print("wade: car at %s, %.1f m/s, Froude %.1f in the rut" % [c, v, v / sqrt(9.81 * maxf(surface.get_standing_water_at(Vector3(0.8, 0, c.z + 3.0)), 1e-3))])
+	var cam := Camera3D.new()
+	add_child(cam)
+	var cc := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([2.2, 1.5, c.z + 3.4, 0.8, 0.0, c.z + 1.5])
+	cam.position = Vector3(cc[0], cc[1], cc[2])
+	cam.look_at(Vector3(cc[3], cc[4], cc[5]))
+	cam.fov = 45.0
+	cam.current = true
+	# Held still for the frame: drawn full size, a frame takes long enough for many physics steps to run.
+	get_tree().paused = true
+	get_window().size = full
+	await _save_view(env)
+	get_tree().quit()
+
+
+# The frame, path traced unless --raster; with --pair, the raster frame first as <out>_raster.png and then the path
+# traced one from the same run, everything held still between them (the same clods, the same water).
+func _save_view(env: Environment) -> void:
 	if "--pair" in OS.get_cmdline_user_args() and not out.is_empty():
-		# The same clods for both renderers: the raster frame first, then the path traced one, the bodies held still.
 		var pt_out := out
 		out = pt_out.get_basename() + "_raster.png"
 		env.pathtracing_enabled = false
@@ -1059,11 +1174,9 @@ func _build_bodymud() -> void:
 		out = pt_out
 		env.pathtracing_enabled = true
 		await _save_frame()
-		get_tree().quit()
 		return
 	env.pathtracing_enabled = not raster
 	await _save_frame()
-	get_tree().quit()
 
 
 # Bekker's rigid wheel, written out here apart from the engine's: z0 = (3 W / ((3 - n) b k sqrt(D)))^(2 / (2n + 1)).
@@ -2089,8 +2202,7 @@ func _build_ruts() -> void:
 	surface.sync_deformation()
 	get_window().size = full
 	print("ruts in %s: car at %s, moved %s m3, field on the %s" % [kind, car_end, surface.get_moved_volume(), "GPU" if surface.is_gpu_active() else "CPU"])
-	env.pathtracing_enabled = not raster
-	await _save_frame()
+	await _save_view(env)
 	get_tree().quit()
 
 
@@ -2317,7 +2429,15 @@ func _build_shore() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--swash-frames="):
 			swash_frames = int(a.substr(15))
+	# --ebb=from,to: the run-up falls from one height to the other over the swash frames, as on a falling tide,
+	# so each wave's mark is left below the last ones' and the beach keeps a ladder of them.
+	var ebb := PackedFloat32Array()
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--ebb="):
+			ebb = PackedFloat32Array(Array(a.substr(6).split(",")).map(func(v): return float(v)))
 	for i in swash_frames:
+		if ebb.size() == 2:
+			sea.set("swash_run_up", lerpf(ebb[0], ebb[1], float(i) / swash_frames))
 		await get_tree().physics_frame
 		if OS.get_environment("SHORE_TRACE") != "" and i % 60 == 0:
 			var q := Vector3(0.0, _undisturbed(Vector3(0, 0, 5)), 5.0)
@@ -2342,11 +2462,11 @@ func _build_shore() -> void:
 	print("shore: saturation by z" + prof)
 	print("shore: %d swash marks laid, %.2f ms a step" % [surface.get_swash_mark_count(), surface.get_swash_step_usec() / 1000.0])
 	if OS.get_environment("SWASH_DUMP") != "":
-		# The ground's change from undisturbed over x -3..3, z -1..3 at 1 cm (raw floats) for a look from above.
+		# The ground's change from undisturbed over x -4..4, z -1..5 at 1 cm (800 x 600 raw floats) for a look from above.
 		var buf := PackedFloat32Array()
-		for zi in 400:
-			for xi in 600:
-				var pq := Vector3(-3.0 + xi * 0.01, 0.0, -1.0 + zi * 0.01)
+		for zi in 600:
+			for xi in 800:
+				var pq := Vector3(-4.0 + xi * 0.01, 0.0, -1.0 + zi * 0.01)
 				buf.append(surface.get_surface_height_at(pq) - _undisturbed(pq))
 		var fa := FileAccess.open(OS.get_environment("SWASH_DUMP"), FileAccess.WRITE)
 		fa.store_buffer(buf.to_byte_array())

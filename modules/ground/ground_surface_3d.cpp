@@ -515,6 +515,46 @@ float GroundSurface3D::get_mud_depth_at(Vector3 p_position) const {
 	return _cell_at(p_position.x, p_position.z).mud;
 }
 
+void GroundSurface3D::add_wader(int64_t p_id, const Vector3 &p_axle, float p_radius, float p_half_width, const Vector3 &p_velocity) {
+	const uint64_t frame = Engine::get_singleton()->get_physics_frames();
+	for (int64_t k = int64_t(waders.size()) - 1; k >= 0; k--) {
+		if (waders[k].frame + 1 < frame || waders[k].id == p_id) {
+			waders.remove_at_unordered(k);
+		}
+	}
+	Wader w;
+	w.id = p_id;
+	w.axle = p_axle;
+	w.radius = p_radius;
+	w.half_width = p_half_width;
+	w.velocity = p_velocity;
+	w.frame = frame;
+	waders.push_back(w);
+}
+
+void GroundSurface3D::set_mud_color(const Color &p_color) {
+	mud_color = p_color;
+}
+
+void GroundSurface3D::set_mud_color_map(const Ref<Image> &p_map) {
+	mud_color_map = p_map;
+}
+
+Color GroundSurface3D::get_mud_color_at(Vector3 p_position) const {
+	if (mud_color_map.is_null() || mud_color_map->is_empty() || mud_map_rect.size.x <= 0.0f || mud_map_rect.size.y <= 0.0f) {
+		return mud_color;
+	}
+	const Vector2 uv = (Vector2(p_position.x, p_position.z) - mud_map_rect.position) / mud_map_rect.size;
+	if (uv.x < 0.0f || uv.y < 0.0f || uv.x > 1.0f || uv.y > 1.0f) {
+		return mud_color;
+	}
+	const int x = CLAMP((int)(uv.x * mud_color_map->get_width()), 0, mud_color_map->get_width() - 1);
+	const int y = CLAMP((int)(uv.y * mud_color_map->get_height()), 0, mud_color_map->get_height() - 1);
+	Color col = mud_color_map->get_pixel(x, y);
+	col.a = 1.0f;
+	return col;
+}
+
 void GroundSurface3D::set_mud_layer(bool p_enabled) {
 	mud_layer = p_enabled;
 	_update_cells();
@@ -2037,10 +2077,14 @@ static bool _swash_trace() {
 
 // A ridge of fine sand from p_from to p_to (world xz): small deposits a centimetre apart, a few millimetres high and
 // about two near-field texels wide (real ones are a few mm high and about a centimetre wide, Komar 1998; two texels
-// is the narrowest the field draws). The sea brings the sand: the swash's own load.
-void GroundSurface3D::_swash_lay(const Vector2 &p_from, const Vector2 &p_to) {
+// is the narrowest the field draws). The sea brings the sand: the swash's own load. p_erase takes it off again
+// (a later swash running over the line spreads it and washes its fines away).
+void GroundSurface3D::_swash_lay(const Vector2 &p_from, const Vector2 &p_to, bool p_erase) {
 	const float len = p_from.distance_to(p_to);
 	const int steps = MAX(1, int(Math::ceil(len / 0.01f)));
+	// The lip is the swash's finest load, mica, heavy minerals and bits of debris: darker than the sand round it
+	// (the fresh tint, which fades over drying_time).
+	field.amount_fresh = p_erase ? -1.0f : 1.0f;
 	for (int k = 0; k <= steps; k++) {
 		const Vector2 q = p_from.lerp(p_to, float(k) / steps);
 		if (!_near_inside(q.x, q.y)) {
@@ -2056,15 +2100,20 @@ void GroundSurface3D::_swash_lay(const Vector2 &p_from, const Vector2 &p_to) {
 			}
 			continue;
 		}
-		deposit(Vector3(q.x, _ground_at(q.x, q.y), q.y), 0.012f, 0.003f);
+		if (p_erase) {
+			dig(Vector3(q.x, _ground_at(q.x, q.y), q.y), 0.012f, 0.004f);
+		} else {
+			deposit(Vector3(q.x, _ground_at(q.x, q.y), q.y), 0.012f, 0.004f);
+		}
 	}
+	field.amount_fresh = 0.0f;
 }
 
 // Swash marks: run-up followed on shore-normal transects 10 cm apart across the near field, ten times a second.
 // The beach's downhill direction there sets the transects; along each, the water's landward edge (swash film or
 // sea, over 1 mm) is found to 6 mm. When a swash that had been climbing falls back 5 cm from its highest reach,
 // that reach is its uprush limit: a ridge is laid there, joined halfway to the neighbouring transects' marks from
-// the same wave (or towards where they are climbing), so each wave draws one scalloped line.
+// the same wave (or towards where they are climbing), so each wave draws one scalloped line (its lobes below).
 void GroundSurface3D::_swash_update(double p_delta) {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	swash_time += p_delta;
@@ -2143,7 +2192,15 @@ void GroundSurface3D::_swash_update(double p_delta) {
 				break;
 			}
 		}
-		if (reach > tr.peak + 0.005f) {
+		// A swash running over an older line flattens it: the ridge is only a few mm of loose fines.
+		for (int m = int(tr.laid.size()) - 1; m >= 0; m--) {
+			if (wet(tr.laid[m].at)) {
+				_swash_lay(tr.laid[m].from, tr.laid[m].at, true);
+				_swash_lay(tr.laid[m].at, tr.laid[m].to, true);
+				tr.laid.remove_at(m);
+			}
+		}
+				if (reach > tr.peak + 0.005f) {
 			tr.peak = reach;
 			tr.peak_pos = at;
 			tr.rising = true;
@@ -2151,7 +2208,22 @@ void GroundSurface3D::_swash_update(double p_delta) {
 			// The swash turned back: its highest reach is this wave's mark.
 			tr.rising = false;
 			tr.mark_time = swash_time;
-			tr.mark_pos = tr.peak_pos;
+			// A mark more than two seconds after the last one is the next wave's.
+			if (swash_time - swash_last_mark > 2.0) {
+				swash_wave++;
+			}
+			swash_last_mark = swash_time;
+			// The swash's tongues: its leading edge thins and breaks into lobes, convex landward and meeting in
+			// cusps that point seaward, so each line is a chain of scallops (Reineck and Singh 1980; Komar 1998).
+			// The film is followed only past 1 mm and smoothly along the beach, so the lobes are drawn here: half
+			// a metre to 1.2 m long and up to 4 to 10 cm beyond the followed reach, new for every wave.
+			const uint32_t hw = hash_murmur3_one_32(swash_wave);
+			const float lw = 0.5f + 0.7f * float(hw & 0xffff) / 65535.0f;
+			const float amp = 0.04f + 0.06f * float((hw >> 16) & 0xff) / 255.0f;
+			const float phase = float(hw >> 24) / 255.0f;
+			const float s_along = (-half + 0.1f * t) + swash_mid.dot(along);
+			const float lobe = Math::pow(Math::sin(float(Math::PI) * Math::fposmod(s_along / lw + phase, 1.0f)), 0.6f);
+			tr.mark_pos = tr.peak_pos - down * (amp * lobe);
 			Vector2 ends[2];
 			for (int side = 0; side < 2; side++) {
 				const int u = side == 0 ? t - 1 : t + 1;
@@ -2160,7 +2232,7 @@ void GroundSurface3D::_swash_update(double p_delta) {
 					const SwashTransect &nb = swash_tr[u];
 					// Joined only to a mark of the same wave nearby (within 20 cm up or down the beach): a
 					// neighbour's older or higher mark is another wave's line, not this one's.
-					if (swash_time - nb.mark_time < 3.0 && nb.mark_pos.distance_to(tr.mark_pos) < 0.2f) {
+					if (swash_time - nb.mark_time < 3.0 && nb.mark_pos.distance_to(tr.mark_pos) < 0.25f) {
 						to = 0.5f * (tr.mark_pos + nb.mark_pos);
 					} else if (nb.rising && nb.peak_pos.distance_to(tr.mark_pos) < 0.2f) {
 						to = 0.5f * (tr.mark_pos + nb.peak_pos);
@@ -2173,6 +2245,10 @@ void GroundSurface3D::_swash_update(double p_delta) {
 			}
 			_swash_lay(ends[0], tr.mark_pos);
 			_swash_lay(tr.mark_pos, ends[1]);
+			if (tr.laid.size() >= 12) {
+				tr.laid.remove_at(0);
+			}
+			tr.laid.push_back({ ends[0], tr.mark_pos, ends[1] });
 			swash_mark_count++;
 			tr.peak = reach;
 		} else if (!tr.rising) {
@@ -3207,7 +3283,7 @@ void GroundSurface3D::GPUSink::amount(const GroundDeformField::Columns &p_column
 	const float v[12] = {
 		p_position.x, p_position.y, p_position.z, p_radius,
 		0.0f, 0.0f, 0.0f, 0.0f,
-		p_depth, tent ? 1.0f : 0.0f, 0.0f, 0.0f
+		p_depth, tent ? 1.0f : 0.0f, surface->field.amount_fresh, 0.0f
 	};
 	const float settle = MAX(surface->field.press_settle, 0.0f);
 	const float d[4] = { 0.0f, 16.0f, 0.0f, settle }; // STAMP_AMOUNT
@@ -3403,6 +3479,29 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 			// water at its own pace); 2 mm of bed roughness; the seepage landed in the substeps at its own rate.
 			put(15, 1.0f, runoff_time_scale / _morph_passes(), 0.002f, gain / MAX(runoff_time_scale, 1e-6f));
 		}
+		// Tyres wading (mud stage 4c): this physics frame's over the field, up to four.
+		const uint64_t frame = Engine::get_singleton()->get_physics_frames();
+		LocalVector<const Wader *> live;
+		for (const Wader &wd : waders) {
+			if (wd.frame + 1 >= frame && r.has_point(Vector2(wd.axle.x, wd.axle.z))) {
+				live.push_back(&wd);
+			}
+		}
+		int count = 0;
+		for (const Wader *wd : live) {
+			if (count >= 4) {
+				break;
+			}
+			const Vector2 v(wd->velocity.x, wd->velocity.z);
+			const float speed = v.length();
+			if (speed < 1e-3f) {
+				continue;
+			}
+			put(17 + 2 * count, wd->axle.x, wd->axle.y, wd->axle.z, wd->radius);
+			put(18 + 2 * count, Math::atan2(v.y, v.x), 0.0f, wd->half_width, speed);
+			count++;
+		}
+		put(16, float(count), 0.0f, 0.0f, 0.0f);
 	} else if (_runoff_on_gpu()) {
 		// No water step (a still frame): the bed's relief is still drawn (the blit reads it), nothing moves.
 		put(15, 1.0f, 0.0f, 0.002f, 0.0f);
@@ -3889,6 +3988,12 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_data_map", "path"), &GroundSurface3D::set_data_map);
 	ClassDB::bind_method(D_METHOD("get_data_map"), &GroundSurface3D::get_data_map);
 	ClassDB::bind_method(D_METHOD("get_mud_depth_at", "position"), &GroundSurface3D::get_mud_depth_at);
+	ClassDB::bind_method(D_METHOD("set_mud_color", "color"), &GroundSurface3D::set_mud_color);
+	ClassDB::bind_method(D_METHOD("get_mud_color"), &GroundSurface3D::get_mud_color);
+	ClassDB::bind_method(D_METHOD("set_mud_color_map", "map"), &GroundSurface3D::set_mud_color_map);
+	ClassDB::bind_method(D_METHOD("get_mud_color_map"), &GroundSurface3D::get_mud_color_map);
+	ClassDB::bind_method(D_METHOD("get_mud_color_at", "position"), &GroundSurface3D::get_mud_color_at);
+	ClassDB::bind_method(D_METHOD("add_wader", "id", "axle", "radius", "half_width", "velocity"), &GroundSurface3D::add_wader);
 	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("mud_yield_stress", "concentration"), &GroundSurface3D::mud_yield_stress);
 	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("mud_viscosity", "concentration"), &GroundSurface3D::mud_viscosity);
 	ClassDB::bind_method(D_METHOD("set_near_field", "enabled"), &GroundSurface3D::set_near_field);
@@ -4007,6 +4112,8 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mud_auto_depth", PROPERTY_HINT_RANGE, "0,2,0.05,suffix:m"), "set_mud_auto_depth", "get_mud_auto_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mud_wet_start", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_mud_wet_start", "get_mud_wet_start");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mud_wet_full", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_mud_wet_full", "get_mud_wet_full");
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "mud_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_mud_color", "get_mud_color");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "mud_color_map", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_mud_color_map", "get_mud_color_map");
 	ADD_GROUP("", "");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_spacing", PROPERTY_HINT_RANGE, "0.05,4,0.05,suffix:m"), "set_ground_spacing", "get_ground_spacing");

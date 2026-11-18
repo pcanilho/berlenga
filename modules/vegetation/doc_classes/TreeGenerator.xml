@@ -601,7 +601,10 @@
 		<constant name="PRESET_DWARF_FAN_PALM" value="36" enum="Preset">
 			Dwarf fan palm (Chamaerops humilis): a clumping palm of several stems, stemless and bushy in grazed or windswept ground, or short trunks 1-2.5 m clad in old leaf bases and fibre; stiff fan leaves split into narrow folded segments on spiny petioles, a skirt of dead leaves below.
 		</constant>
-		<constant name="PRESET_MAX" value="37" enum="Preset">
+		<constant name="PRESET_STONE_PINE" value="37" enum="Preset">
+			Stone pine (Pinus pinea): globose when young, then domed, and with age the broad, flat-topped umbrella of many equal limbs rising at 30-60 degrees on a clear bole; long paired needles tufted at the shoot tips; plated, orange-red bark; cones of three ages at once on the top of the crown, conelets, green second-year cones and broad 8-12 cm cones turning chestnut-brown and opening from spring.
+		</constant>
+		<constant name="PRESET_MAX" value="38" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="STAND_BEECH" value="0" enum="Stand">
@@ -665,7 +668,10 @@
 		<constant name="STAND_POLLARD_ROW" value="12" enum="Stand">
 			Willow pollards, still worked on a five to eight year cycle, with black alder. Placed by the scene along its own lines, like [constant STAND_HEDGEROW].
 		</constant>
-		<constant name="STAND_MAX" value="13" enum="Stand">
+		<constant name="STAND_STONE_PINE" value="13" enum="Stand">
+			Stone pine parkland on coastal sands: open-grown [constant PRESET_STONE_PINE] umbrellas about a crown's width apart, with their saplings, snags and logs. The scrub beneath comes from [method PlantGenerator.make_scrub] on the same ground. Not part of [method make_woodland].
+		</constant>
+		<constant name="STAND_MAX" value="14" enum="Stand">
 			Number of stand types.
 		</constant>
 		<constant name="REGION_EUROPE" value="0" enum="Region">
