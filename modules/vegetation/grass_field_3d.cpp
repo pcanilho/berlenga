@@ -30,6 +30,7 @@
 /**************************************************************************/
 
 #include "grass_field_3d.h"
+#include "vegetation_fire.h"
 #include "vegetation_light.h"
 
 #include "vegetation_field_3d.h"
@@ -447,7 +448,9 @@ varying float v_rnd;
 
 uniform float color_variation;
 // The growth stage (BBCH) of each plot: 0 the node's crop_stage, 1 on its fields in order.
-uniform float crop_plot_stage[64];
+// A texel a plot (not a uniform array: 64 floats pad to 1 KB in std140, over the path tracer's
+// material slot).
+uniform sampler2D crop_plot_stage : filter_nearest, repeat_disable;
 uniform float crop_nod; // How far the ripe ear bends over (0 upright, 1 hanging).
 uniform vec4 crop_ear; // Ear length, half width, awn length, panicle branches.
 uniform vec4 crop_leaf; // Leaf length, half width, stem radius.
@@ -458,6 +461,7 @@ uniform float crop_lai = 3.0;
 )";
 		code += GRASS_COLOR_CODE;
 		code += VegetationLight::SHADER_CODE;
+		code += VegetationFire::SHADER_CODE;
 		code += R"(
 float crop_ramp(float x, float a, float b) {
 	return clamp((x - a) / (b - a), 0.0, 1.0);
@@ -521,7 +525,7 @@ void vertex() {
 	// Plots from 64 up: loose straw the combine left lying in its swath, not a standing tiller.
 	bool straw = plot > 63.5;
 	plot -= straw ? 64.0 : 0.0;
-	float stage = crop_plot_stage[clamp(int(plot), 0, 63)];
+	float stage = texelFetch(crop_plot_stage, ivec2(clamp(int(plot), 0, 63), 0), 0).r;
 	vec4 crop_growth;
 	vec4 crop_age;
 	crop_look(stage, crop_growth, crop_age);
@@ -538,6 +542,9 @@ void vertex() {
 	float lag = (fract(rnd * 5.17) - 0.5) * 0.3;
 	float h = cut > 0.0 ? min(H, cut * (0.8 + 0.4 * fract(rnd * 3.7))) : H * crop_growth.x;
 	h = straw ? H : h;
+	// Fire (vegetation_fire.h): a crop burns to stubble a hand high, its leaves and ears gone.
+	float fire_gone = smoothstep(0.0, 0.85, fire_state_at(base_w.xz).x);
+	h = mix(h, min(h, 0.06 + 0.06 * fract(rnd * 29.3)), fire_gone);
 
 	// Wind: the tiller sways as a cantilever with the ear's mass on top, 1 to 2 Hz (Berry et al.
 	// 2003, wheat stems); the same oscillator and honami as the grass. Stubble barely moves.
@@ -709,7 +716,7 @@ void vertex() {
 		float order = floor(INSTANCE_CUSTOM.w) / 256.0;
 		p *= smoothstep(order, order + 0.15, keep_b * 1.15);
 	}
-	hide = hide || (straw && part != 0);
+	hide = hide || (straw && part != 0) || (fire_gone > 0.6 && part != 0);
 	// Lying straw shows its upper side, lit from the sky, not a strip turned edge-on to a low view.
 	n = straw ? normalize(n + vec3(0.0, 2.0, 0.0)) : n;
 	// Not yet emerged (a plot sown, below 10): nothing shows.
@@ -788,6 +795,16 @@ void fragment() {
 	spec *= mix(1.0, 0.6, far_t);
 	// Wet (Lagarde 2013, low porosity): a little darker and glossier.
 	float wet_factor = mix(1.0, 0.2, 0.25);
+	// Fire: charred stubble with ash flecks, its top glowing in the burning band. Read at this point (the path
+	// tracer reruns vertex() for a merged MultiMesh with the field's transform).
+	vec4 fire_f = fire_state_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
+	if (fire_f.x > 0.0) {
+		vec3 ch = mix(vec3(0.035, 0.03, 0.027), vec3(0.35, 0.34, 0.33), step(0.85, fract(v_rnd * 41.0)) * smoothstep(0.6, 1.0, fire_f.x));
+		c = mix(c, ch, smoothstep(0.0, 0.5, fire_f.x));
+		rough = mix(rough, 0.95, smoothstep(0.0, 0.5, fire_f.x));
+		back *= 1.0 - smoothstep(0.0, 0.5, fire_f.x);
+		EMISSION = fire_glow_color(fire_f.y) * 4.0 * smoothstep(0.4, 1.0, v_hf);
+	}
 	ALBEDO = c * mix(1.0, wet_factor, v_wet);
 	ROUGHNESS = rough * mix(1.0, 0.4, v_wet);
 	SPECULAR = spec;
@@ -810,6 +827,7 @@ uniform float color_variation;
 )";
 		code += GRASS_COLOR_CODE;
 		code += VegetationLight::SHADER_CODE;
+		code += VegetationFire::SHADER_CODE;
 		code += R"(
 
 void vertex() {
@@ -852,6 +870,16 @@ void vertex() {
 		float la = fract(rnd * 53.7) * 6.2832;
 		off = off * 0.4 + vec2(cos(la), sin(la)) * (0.9 + 0.4 * fract(rnd * 17.3));
 		h *= 0.8;
+	}
+	// Fire (vegetation_fire.h): the front burns a blade from the top down as its fuel goes, to
+	// stubble 3-6 cm tall, thinner and upright (a grass fire's burnt ground).
+	vec4 fire_s = fire_state_at(base_w.xz);
+	if (fire_s.x > 0.0) {
+		float gone = smoothstep(0.0, 0.85, fire_s.x);
+		float stub = clamp((0.03 + 0.03 * fract(rnd * 29.3)) / max(h, 0.01), 0.0, 1.0);
+		h *= mix(1.0, stub, gone);
+		w *= mix(1.0, 0.6, gone);
+		off *= 1.0 - 0.8 * gone;
 	}
 	// Length-preserving bend (Jahrmann and Wimmer 2017): the tip turns by the bend angle.
 	float ang = min(length(off), 1.45);
@@ -938,8 +966,20 @@ void fragment() {
 	// Trodden flat: bruised and soiled, and its waxy face no longer catches the sky at a grazing
 	// angle (lying blades read frosted white on a worn path's edge, docs 17 Nov).
 	c *= mix(1.0, 0.72, v_trod);
+	// Read here at the blade's own point, not passed from vertex(): the path tracer reruns vertex() for a merged
+	// MultiMesh with the field's transform, not the blade's.
+	vec4 fire_f = fire_state_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
+	float v_burn = fire_f.x;
+	float v_glow = fire_f.y;
+	if (v_burn > 0.0) {
+		// Charred stubble, with flecks of white ash where blades burnt out.
+		vec3 ch = mix(vec3(0.035, 0.03, 0.027), vec3(0.35, 0.34, 0.33), step(0.85, fract(v_dry * 41.0)) * smoothstep(0.6, 1.0, v_burn));
+		c = mix(c, ch, smoothstep(0.0, 0.5, v_burn));
+	}
 	ALBEDO = c * mix(1.0, wet_factor, v_wet);
-	ROUGHNESS = mix(0.55, 0.75, v_trod) * mix(1.0, wet_factor, 0.5 * v_wet) * mix(1.0, 0.4, v_wet);
+	ROUGHNESS = mix(mix(0.55, 0.75, v_trod) * mix(1.0, wet_factor, 0.5 * v_wet) * mix(1.0, 0.4, v_wet), 0.95, smoothstep(0.0, 0.5, v_burn));
+	// The burning band: the stubs' tips glow as the ground's embers do (the char decal's glow energy).
+	EMISSION = fire_glow_color(v_glow) * 4.0 * smoothstep(0.4, 1.0, v_t) * step(1e-3, v_burn);
 	SPECULAR = mix(0.35, 0.2, v_trod);
 	BACKLIGHT = ALBEDO * 0.7;
 	// Sky light inside the sward (Monsi and Saeki 1953): diffuse light falls off as
@@ -1143,8 +1183,10 @@ Color GrassField3D::crop_canopy_look(Crop p_crop, float p_stage) {
 	// Shade between the leaves deepens the colour too: pushed out from its grey.
 	const float grey = (c.r + c.g + c.b) / 3.0f;
 	const float ripe = ramp(s, 71.0f, 87.0f);
-	c = Color(grey, grey, grey).lerp(c, Math::lerp(1.6f, 1.2f, ripe));
-	c = c * Math::lerp(0.44f, 0.53f, ripe);
+	// A young open stand has little self-shade: its leaves keep nearer their own colour.
+	const float closed = ramp(cover, 0.3f, 0.95f);
+	c = Color(grey, grey, grey).lerp(c, Math::lerp(Math::lerp(1.2f, 1.6f, closed), 1.2f, ripe));
+	c = c * Math::lerp(Math::lerp(0.8f, 0.44f, closed), 0.53f, ripe);
 	c.r = MAX(c.r, 0.0f);
 	c.g = MAX(c.g, 0.0f);
 	c.b = MAX(c.b, 0.0f);
@@ -1551,13 +1593,16 @@ Ref<ArrayMesh> GrassField3D::_make_crop_mesh(bool p_far) const {
 // stage into the look.
 void GrassField3D::_crop_uniforms(const Ref<ShaderMaterial> &p_material) const {
 	const CropShape cs = _crop_shape(crop);
-	PackedFloat32Array stages;
-	stages.resize(MAX_PLOTS + 1);
-	stages.fill(crop_stage);
-	for (uint32_t i = 0; i < plots.size() && i < MAX_PLOTS; i++) {
-		stages.set(i + 1, plots[i].current);
+	Ref<Image> img = Image::create_empty(64, 1, false, Image::FORMAT_RF);
+	for (int i = 0; i < 64; i++) {
+		img->set_pixel(i, 0, Color(i >= 1 && uint32_t(i - 1) < plots.size() && i <= MAX_PLOTS ? plots[i - 1].current : crop_stage, 0, 0));
 	}
-	p_material->set_shader_parameter("crop_plot_stage", stages);
+	if (crop_stage_texture.is_valid()) {
+		crop_stage_texture->update(img);
+	} else {
+		crop_stage_texture = ImageTexture::create_from_image(img);
+	}
+	p_material->set_shader_parameter("crop_plot_stage", crop_stage_texture);
 	p_material->set_shader_parameter("crop_nod", cs.nod);
 	p_material->set_shader_parameter("crop_ear", Vector4(cs.ear_length, cs.ear_width, cs.awn_length, float(cs.branches)));
 	p_material->set_shader_parameter("crop_leaf", Vector4(cs.leaf_length, cs.leaf_width, 0.0022f, 4.0f));
@@ -2061,7 +2106,7 @@ void GrassField3D::_update_fade(const Vector2 &p_center) {
 	if (crop != CROP_NONE) {
 		// A crop's ground is its own (crop_ground()): the meadow keeps the grass ground's band.
 		if (is_inside_tree()) {
-			RenderingServer::get_singleton()->global_shader_parameter_set("crop_ground_fade", Vector4(p_center.x, p_center.y, 0.0f, 0.0f));
+			crop_view_published = Vector4(); // Published with the eye's height in update_at().
 			crop_plots_dirty = true;
 		}
 		return;
@@ -2881,6 +2926,14 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 	const Vector2 c(p_center.x, p_center.z);
 	const float reach = radius + tile_size * 0.75f;
 	_update_fade(c);
+	if (crop != CROP_NONE && is_inside_tree()) {
+		// The fields' ground also needs the eye's height: seen low, the canopy hides the soil.
+		const Vector4 cv(c.x, c.y, p_center.y, 1.0f);
+		if (!cv.is_equal_approx(crop_view_published)) {
+			crop_view_published = cv;
+			RenderingServer::get_singleton()->global_shader_parameter_set("crop_ground_fade", cv);
+		}
+	}
 	// Drop tiles out of range or at the wrong level.
 	LocalVector<Vector2i> drop;
 	for (KeyValue<Vector2i, Tile> &kv : tiles) {
@@ -3099,7 +3152,7 @@ global uniform vec4 grass_ground_view; // xyz: the camera.
 global uniform sampler2D crop_ground_map : filter_linear; // GrassField3D.fields: r the field's slot, g the wheelings.
 global uniform sampler2D crop_ground_plots : filter_nearest; // A texel a field (crop_ground()).
 global uniform vec4 crop_ground_rect;
-global uniform vec4 crop_ground_fade; // xy: the centre of the tillers' band.
+global uniform vec4 crop_ground_fade; // xy: the centre of the tillers' band (the eye), z: the eye's height, w: 1 (-1: no tillers, the far canopy everywhere).
 )";
 	code += GRASS_COLOR_CODE;
 	code += VegetationField3D::get_floor_shader_code();
@@ -3312,7 +3365,7 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 	float gone = 0.0;
 	float dropped = 0.0;
 	if (drill.w > 0.0) {
-		gone = 1.0 - clamp((drill.z - dist) / drill.w, 0.0, 1.0);
+		gone = crop_ground_fade.w < 0.0 ? 1.0 : 1.0 - clamp((drill.z - dist) / drill.w, 0.0, 1.0);
 		float radius = drill.z / 0.97;
 		dropped = smoothstep(0.15, 0.85, dist / radius);
 	}
@@ -3326,9 +3379,18 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 	vec3 canopy = look.rgb * (0.6 + 0.8 * patchy) * (0.75 + 0.5 * speck);
 	// Wheelings: the crop is missing there, soil shows as narrow lines through it.
 	float cover = look.a * (1.0 - wheel * 0.6);
+	// Seen at a slant the soil's gaps close: the gap fraction falls as exp(-k LAI / cos(view
+	// zenith)) (Nilson 1971), so (1 - cover) goes to the power 1 / cos.
+	float mu = 1.0;
+	if (crop_ground_fade.w != 0.0) {
+		vec3 to_eye = vec3(crop_ground_fade.x, crop_ground_fade.z, crop_ground_fade.y) - world_pos;
+		mu = clamp(to_eye.y / max(length(to_eye), 1e-3), 0.05, 1.0);
+		cover = 1.0 - pow(1.0 - clamp(cover, 0.0, 0.999), 1.0 / mu);
+	}
 	vec3 shaded = soil * mix(1.0, 0.55, look.a);
 	vec3 near = mix(shaded, canopy, cover * dropped);
-	vec3 far = mix(shaded, canopy, cover * mix(rows, 1.0, look.a * look.a));
+	// The rows' soil stripes close up too as the view slants along the ground.
+	vec3 far = mix(shaded, canopy, cover * mix(rows, 1.0, max(look.a * look.a, 1.0 - mu * mu)));
 	// Stubble: the combine's swaths of straw down each pass, paler and fuller than the stubble.
 	vec4 sw = texelFetch(crop_ground_plots, ivec2(textureSize(crop_ground_plots, 0).y > 2 ? int(crop_ground_field_slot(world_pos)) : 0, 2), 0);
 	if (sw.z > 0.0) {
@@ -3338,7 +3400,7 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 		float across = abs(mod(um - sway, sw.x) - 0.5 * sw.x) / sw.y;
 		float heap = clamp(1.0 - across * across, 0.0, 1.0) * (0.75 + 0.5 * speck);
 		vec3 straw = look.rgb / 0.85 * 0.8 * (0.8 + 0.4 * patchy);
-		far = mix(far, straw, smoothstep(0.0, 0.7, heap) * 0.8);
+		far = mix(far, straw, smoothstep(0.0, 1.0, heap) * 0.5);
 		near = mix(near, straw * 0.55, smoothstep(0.0, 0.5, heap) * (1.0 - dropped));
 	}
 	return mix(near, far, gone);

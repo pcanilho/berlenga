@@ -318,6 +318,10 @@ func _ready() -> void:
 		grass.drill_angle = deg_to_rad(20.0)
 		grass.radius = 24.0
 		grass.tile_size = 1.25 # Under the path tracer's merged BLAS cap (65536 triangles) at 400 tillers per m2.
+		if crop_close:
+			# One field over the whole map: past the tillers the ground carries the crop's own far canopy.
+			var e := SIZE * 0.5 - 1.0
+			grass.fields = [{"polygon": PackedVector2Array([Vector2(-e, -e), Vector2(e, -e), Vector2(e, e), Vector2(-e, e)]), "drill_angle": deg_to_rad(20.0), "stage": crop_stage, "tramline_spacing": 0.0, "headland": 0.0}]
 		if crop_fields:
 			grass.radius = 50.0
 			grass.density = grass_density if grass_density > 0.0 else 450.0 # Closed stands, as drilled (450 to 600 tillers per m2).
@@ -2001,7 +2005,8 @@ func _process(dt: float) -> void:
 	if crop_name != "" and OS.get_environment("CROP_FAR_ONLY") == "1":
 		# Calibration: the fields' far canopy everywhere, no tillers, to match against them.
 		grass.visible = false
-		RenderingServer.global_shader_parameter_set("crop_ground_fade", Vector4(1e6, 1e6, 0, 0))
+		var e := cam.global_position
+		RenderingServer.global_shader_parameter_set("crop_ground_fade", Vector4(e.x, e.z, e.y, -1))
 	if crop_fields and n == 4 and not test:
 		# Every crop and meadow tile in range at once, as a player arriving would see them after a
 		# few seconds (the fields' radius holds thousands of small tiles).

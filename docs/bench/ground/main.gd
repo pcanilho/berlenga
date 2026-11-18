@@ -57,7 +57,8 @@ extends Node3D
 #   --view=shore        a real sea's swash edge on a beach: the water sheet, damp sand draining behind it and a
 #                       row of boot prints crossing the line, rounded in the wash, sharp on the dry sand (stage 4)
 #                       --water=uniform:value sets one of the sea's shader uniforms (repeatable); --ebb=from,to
-#                       lowers the run-up over the run, as a falling tide, leaving a ladder of swash marks
+#                       lowers the run-up over the run, as a falling tide, leaving a ladder of swash marks;
+#                       --prints=0 leaves out the row of boot prints; --sea=name:value sets a sea property
 #   --view=ripples      wind ripples on dry sand at a low sun, sand blowing over them; --wind=m/s (default 9)
 #   --cam=x,y,z,tx,ty,tz camera for --view=trail, --view=roost and --view=ripples
 #   --sun=pitch,yaw[,exposure] sun angles in degrees for --view=trail (default -18,140), and the exposure
@@ -2409,6 +2410,11 @@ func _build_shore() -> void:
 	sea.set("shore_wave_direction", Vector2(0.15, 1.0))
 	sea.set("swash_run_up", 0.12)
 	sea.set("contact_wetness", true)
+	# --sea=name:value sets one of the sea's properties (repeatable), e.g. --sea=shore_wave_curl:0.
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--sea="):
+			var skv := a.substr(6).split(":", true, 1)
+			sea.set(skv[0], str_to_var(skv[1]))
 	add_child(sea)
 	var wm: ShaderMaterial = sea.call("get_water_material")
 	for a in OS.get_cmdline_user_args():
@@ -2420,7 +2426,7 @@ func _build_shore() -> void:
 	# The prints first, then the sea comes up over the lower ones.
 	for i in 30:
 		await get_tree().physics_frame
-	for k in 16:
+	for k in (0 if OS.get_cmdline_user_args().has("--prints=0") else 16):
 		var p := Vector3(0.12 if k % 2 == 0 else -0.12, 0.0, -0.6 + 0.3 * k)
 		p.y = _undisturbed(p)
 		surface.press_box(p, Vector2(0.11, 0.29), 0.0, p.y, 0.045)
