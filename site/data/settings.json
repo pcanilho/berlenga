@@ -1230,7 +1230,7 @@
     "ruts_away_rain"
    ],
    "note": "",
-   "what": "prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate.",
+   "what": "prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate; kept puddles keep the clay in their water and the cracks a dried pool left.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1249,10 +1249,11 @@
   {
    "name": "Standing water",
    "settings": [
-    "GroundSurface3D.standing_water"
+    "GroundSurface3D.standing_water",
+    "add_puddle()"
    ],
    "note": "",
-   "what": "rain the ground cannot take and ground water gather level in ruts and prints, then soak in and dry, as real geometry in raster and path tracing.",
+   "what": "rain the ground cannot take and ground water gather level in ruts and prints, then soak in and dry, as real geometry in raster and path tracing; `add_puddle()` digs and fills an irregular clay puddle that stays level on slopes.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2283,7 +2284,7 @@
     "GrassField3D.trample_recovery"
    ],
    "note": "",
-   "what": "bodies lay grass down and it springs back.",
+   "what": "bodies lay grass down and it springs back; grass lies flat on light ground prints and is gone from deep ruts and puddles.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
