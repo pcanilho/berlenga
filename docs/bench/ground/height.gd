@@ -19,6 +19,12 @@ func get_height(p: Vector3) -> float:
 		"beach":
 			# A foreshore rising 1 in 12 toward +z out of still water at z = 0, with a little relief.
 			return p.z / 12.0 + 0.03 * noise.get_noise_2d(p.x * 2.0, p.z * 2.0)
+		"hollows":
+			# Flat ground with three shallow dips 4 to 5 m across, 20 to 30 cm deep (where puddles gather).
+			var h := 0.0
+			for d in [Vector3(-4.0, 0.25, -3.0), Vector3(5.0, 0.3, 2.0), Vector3(-2.0, 0.2, 6.0)]:
+				h -= d.y * exp(-(pow(p.x - d.x, 2.0) + pow(p.z - d.z, 2.0)) / 3.0)
+			return h
 		"meadow":
 			return 0.12 * noise.get_noise_2d(p.x * 3.0, p.z * 3.0) + 0.02 * p.x
 		_:

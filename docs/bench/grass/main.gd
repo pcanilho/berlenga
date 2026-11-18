@@ -670,6 +670,7 @@ void fragment() {
 			ruts_ground.clear_saved_ruts()
 		ruts_ground.wind_ripples = false
 		ruts_ground.desiccation_cracks = false
+		ruts_ground.world_puddles = false
 		add_child(ruts_ground)
 	if far_view and not test:
 		# From a corner, a little up, across the whole map: near plants, thinning, ground beyond.
@@ -2083,7 +2084,7 @@ func _process(dt: float) -> void:
 		# after the time away, scaled to weeks.
 		var cfg := ruts_ground
 		var next := GroundSurface3D.new()
-		for prop in ["follow_target", "ground_type", "moisture", "keep_ruts", "ruts_path", "wind_ripples", "desiccation_cracks"]:
+		for prop in ["follow_target", "ground_type", "moisture", "keep_ruts", "ruts_path", "wind_ripples", "desiccation_cracks", "world_puddles"]:
 			next.set(prop, cfg.get(prop))
 		cfg.queue_free()
 		await get_tree().create_timer(3.0).timeout

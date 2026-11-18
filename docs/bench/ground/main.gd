@@ -172,6 +172,7 @@ func _ready() -> void:
 		await _run_mud_tests()
 	if pudhelp_test:
 		await _run_puddle_helper_tests()
+		await _run_world_puddle_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -333,6 +334,7 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 		surface.runoff_channels = false
 		surface.standing_water = false
 		surface.desiccation_cracks = cracks_on
+		surface.world_puddles = false
 	# --prop=name:value sets any of the surface's properties (repeatable), for an A/B.
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--prop="):
@@ -1238,6 +1240,44 @@ func _run_puddle_helper_tests() -> void:
 		# On the slope the bed's texels step 5 mm each along it: the surface read back there is a step or two out.
 		_check("its water stands level and stays in it", tmax - tmin < (0.004 if kind == "flat" else 0.02) and outside < 0.0005, "%.1f mm, %.2f mm outside" % [(tmax - tmin) * 1000.0, outside * 1000.0])
 		_check("it carries the clay asked for", absf(surface.get_water_mud_at(o) - 40.0) < 8.0, "%.1f kg/m3" % surface.get_water_mud_at(o))
+
+
+# Puddles the world places (mud round 6): in hollows, filled where the ground is wet, dry hollows where it is not.
+func _run_world_puddle_tests() -> void:
+	near_on = false
+	var dips := [Vector3(-4.0, 0, -3.0), Vector3(5.0, 0, 2.0), Vector3(-2.0, 0, 6.0)]
+	for wet in [true, false]:
+		await _setup("hollows", GroundSurface3D.GROUND_SOIL, 0.6 if wet else 0.2, 0.0)
+		surface.mud_layer = false
+		surface.standing_water = true
+		surface.world_puddles = true
+		surface.world_puddle_density = 8.0
+		for i in 240:
+			await get_tree().physics_frame
+		surface.sync_deformation()
+		var filled := 0
+		var dug := 0
+		for d in dips:
+			var best := 0.0
+			var dent := 0.0
+			for dx in range(-4, 5):
+				for dz in range(-4, 5):
+					var q: Vector3 = d + Vector3(dx * 0.5, 0, dz * 0.5)
+					best = maxf(best, surface.get_standing_water_at(q))
+					dent = maxf(dent, surface.get_dent_at(q))
+			filled += 1 if best > 0.02 else 0
+			dug += 1 if dent > 0.03 else 0
+		var flat_water := 0.0
+		var flat_dent := 0.0
+		for q in [Vector3(10, 0, -10), Vector3(-11, 0, 10), Vector3(11, 0, 11), Vector3(0, 0, -12)]:
+			flat_water = maxf(flat_water, surface.get_standing_water_at(q))
+			flat_dent = maxf(flat_dent, surface.get_dent_at(q))
+		print("  %s: %d of 3 dips dug, %d filled; on the flats %.1f cm dug, %.1f mm of water" % ["wet" if wet else "dry", dug, filled, flat_dent * 100.0, flat_water * 1000.0])
+		if wet:
+			_check("world puddles: the ground's hollows get puddles, filled where it is wet", dug >= 2 and filled >= 2, "%d dug, %d filled" % [dug, filled])
+			_check("none on the flats", flat_dent < 0.01, "%.1f cm" % (flat_dent * 100.0))
+		else:
+			_check("dry ground: the hollows are dug but stay dry", dug >= 2 and filled == 0, "%d dug, %d filled" % [dug, filled])
 
 
 # Mud round 5: what stood in a rut is kept with it. Clay churned into a pool's water, and cracks a dried pool left.
