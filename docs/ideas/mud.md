@@ -718,6 +718,19 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   return (kept ruts) is not dug again. Check: --test=puddle-helper (three dips of a "hollows" ground).
 
 
+### Round 7: proposed (18 Nov, card posted)
+
+- **Puddles freeze in frost.** Below 0 C (WeatherMap3D air temperature, night radiative cooling) standing water
+  grows an ice skin, thickness by Stefan's law (h ~ sqrt(degree-days)); thin ice is white-veined and cracks radially
+  under a wheel or boot (a star of cracks, then broken plates floating), thicker ice bears. Build: an ice thickness
+  per texel beside the water depth, drawn as a frosted, cracked sheet over the water in both renderers.
+- **Regrowth follows the seasons.** The regrowth e-fold scaled by WeatherMap3D's season: grass grows from about 5 C,
+  fastest in spring, stalled by summer drought and in winter (growing degree days), so a rut left in November is
+  still bare in February.
+- **Mud on plants beside ruts.** Spray and splashes that land on the sward tint the blades and plants there with the
+  ground's clay (a per-texel splatter share the blade shaders read, as the body mud does), washed off by rain.
+
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
