@@ -155,6 +155,7 @@ private:
 	int live_grid_resolution = 192;
 	float wall_friction = 1.5f; // 1/s, along rocks and banks
 	float flow_foam = 0.25f; // a river runs fast everywhere: less than the sea's 1
+	bool flow_foam_gather = true; // foam where the live flow converges and on rocks' upstream faces
 	float flow_foam_persistence = 4.0f; // s
 	float live_damping = 0.05f;
 	NodePath live_follow; // empty: the viewport's camera
@@ -332,6 +333,8 @@ public:
 	float get_flow_foam() const { return flow_foam; }
 	void set_flow_foam_persistence(float p_seconds);
 	float get_flow_foam_persistence() const { return flow_foam_persistence; }
+	void set_flow_foam_gather(bool p_enabled);
+	bool is_flow_foam_gather() const { return flow_foam_gather; }
 	void set_live_damping(float p_damping);
 	float get_live_damping() const { return live_damping; }
 	void set_live_follow(const NodePath &p_path);

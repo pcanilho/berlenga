@@ -492,6 +492,8 @@ public:
 	float get_flow_foam() const { return flow_foam; }
 	void set_flow_foam_persistence(float p_seconds);
 	float get_flow_foam_persistence() const { return flow_foam_persistence; }
+	void set_flow_foam_gather(bool p_enabled);
+	bool is_flow_foam_gather() const { return flow_foam_gather; }
 	// The live flow's velocity at cell centres (RG m/s, B flow foam), or null when off.
 	Ref<Texture2D> get_live_flow_texture() const;
 	// Solves the flow again (after the seabed or the current changed; done
@@ -762,6 +764,7 @@ private:
 	bool live_flow = true;
 	float wall_friction = 1.5f;
 	float flow_foam = 1.0f;
+	bool flow_foam_gather = true; // foam where the live flow converges and on rocks' upstream faces
 	float flow_foam_persistence = 8.0f;
 	PackedFloat32Array flow_faces; // baked face fluxes sent to the solver (4 a cell), empty = none
 	Vector<float> cached_live_velocity; // live face velocities read back (2 a cell)

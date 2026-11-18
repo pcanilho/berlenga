@@ -389,6 +389,9 @@
 		</member>
 		<member name="flow_foam" type="float" setter="set_flow_foam" getter="get_flow_foam" default="1.0">
 		</member>
+		<member name="flow_foam_gather" type="bool" setter="set_flow_foam_gather" getter="is_flow_foam_gather" default="true">
+			The live flow also makes foam where the surface current runs into itself (the lee of a rock where the split flow rejoins, seams between currents, eddy lines), and piled on the upstream face of rocks and banks the water is driven at. Off leaves only the shear and fast-water foam.
+		</member>
 		<member name="flow_foam_persistence" type="float" setter="set_flow_foam_persistence" getter="get_flow_foam_persistence" default="8.0">
 		</member>
 		<member name="flow_period" type="float" setter="set_flow_period" getter="get_flow_period" default="2.0">

@@ -2354,6 +2354,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_flow_foam"), &PhysXWaterSurface3D::get_flow_foam);
 	ClassDB::bind_method(D_METHOD("set_flow_foam_persistence", "seconds"), &PhysXWaterSurface3D::set_flow_foam_persistence);
 	ClassDB::bind_method(D_METHOD("get_flow_foam_persistence"), &PhysXWaterSurface3D::get_flow_foam_persistence);
+	ClassDB::bind_method(D_METHOD("set_flow_foam_gather", "enabled"), &PhysXWaterSurface3D::set_flow_foam_gather);
+	ClassDB::bind_method(D_METHOD("is_flow_foam_gather"), &PhysXWaterSurface3D::is_flow_foam_gather);
 	ClassDB::bind_method(D_METHOD("set_choppiness", "choppiness"), &PhysXWaterSurface3D::set_choppiness);
 	ClassDB::bind_method(D_METHOD("get_choppiness"), &PhysXWaterSurface3D::get_choppiness);
 	ClassDB::bind_method(D_METHOD("set_normal_mode", "mode"), &PhysXWaterSurface3D::set_normal_mode);
@@ -2557,6 +2559,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wall_friction", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater,suffix:1/s"), "set_wall_friction", "get_wall_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam", PROPERTY_HINT_RANGE, "0,4,0.05,or_greater"), "set_flow_foam", "get_flow_foam");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam_persistence", PROPERTY_HINT_RANGE, "0.1,30,0.1,or_greater,suffix:s"), "set_flow_foam_persistence", "get_flow_foam_persistence");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flow_foam_gather"), "set_flow_foam_gather", "is_flow_foam_gather");
 
 	ADD_GROUP("Rendering", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "render_extent", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_render_extent", "get_render_extent");
@@ -4831,13 +4834,18 @@ void PhysXWaterSurface3D::set_live_flow(bool p_enabled) {
 
 void PhysXWaterSurface3D::set_flow_foam(float p_strength) {
 	flow_foam = MAX(p_strength, 0.0f);
-	solver.set_flow_foam(flow_foam, flow_foam_persistence);
+	solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_gather);
 	_update_flow_material();
 }
 
 void PhysXWaterSurface3D::set_flow_foam_persistence(float p_seconds) {
 	flow_foam_persistence = MAX(p_seconds, 0.1f);
-	solver.set_flow_foam(flow_foam, flow_foam_persistence);
+	solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_gather);
+}
+
+void PhysXWaterSurface3D::set_flow_foam_gather(bool p_enabled) {
+	flow_foam_gather = p_enabled;
+	solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_gather);
 }
 
 void PhysXWaterSurface3D::set_wall_friction(float p_friction) {
@@ -6624,7 +6632,7 @@ void PhysXWaterSurface3D::_configure_solver() {
 	whitecap_fill_start = water_time;
 	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
-	solver.set_flow_foam(flow_foam, flow_foam_persistence);
+	solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_gather);
 	if (!solver.has_device() && !warned_no_device) {
 		warned_no_device = true;
 		WARN_PRINT("PhysXWaterSurface3D: the water compute solver could not start (no RenderingDevice / compute support).");

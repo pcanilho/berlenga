@@ -52,7 +52,7 @@
 #include "servers/rendering/rendering_server.h"
 
 namespace {
-constexpr int PARAMS_BYTES = 64; // 4 * vec4, std140 -- see water_inc.glsl's Params
+constexpr int PARAMS_BYTES = 80; // 5 * vec4, std140 -- see water_inc.glsl's Params
 constexpr int OCEAN_INIT_PARAMS_BYTES = 64; // 4 * vec4 -- see water_spectrum_init.glsl's Params
 constexpr int OCEAN_EVOLVE_PARAMS_BYTES = 32; // 2 * vec4 -- see water_spectrum_evolve.glsl's Params
 constexpr int FFT_PARAMS_BYTES = 16; // 1 * ivec4 -- see water_fft.glsl's Params
@@ -844,8 +844,9 @@ void WaterSolverGPU::rt_set_base_flux(Ref<WaterSolverGPU> p_self, PackedFloat32A
 	rt_clear_ripples(p_self);
 }
 
-void WaterSolverGPU::rt_set_flow_foam(Ref<WaterSolverGPU> p_self, float p_strength, float p_persistence) {
+void WaterSolverGPU::rt_set_flow_foam(Ref<WaterSolverGPU> p_self, float p_strength, float p_persistence, bool p_gather) {
 	flow_foam = MAX(p_strength, 0.0f);
+	flow_foam_gather = p_gather;
 	flow_foam_persistence = MAX(p_persistence, 0.05f);
 }
 
@@ -949,6 +950,10 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 				put_f(52, wall_friction);
 				put_f(56, flow_foam);
 				put_f(60, flow_foam_persistence);
+				put_f(64, flow_foam_gather ? 1.0f : 0.0f); // convergence
+				put_f(68, flow_foam_gather ? 1.0f : 0.0f); // stagnation
+				put_f(72, 0.0f);
+				put_f(76, 0.0f);
 				rd->buffer_update(buf_params, 0, PARAMS_BYTES, b.ptr());
 				params_bytes = b;
 			}
@@ -1634,11 +1639,11 @@ void WaterSolver::set_base_flux(const PackedFloat32Array &p_flux, float p_wall_f
 	queued_disturbed = true;
 }
 
-void WaterSolver::set_flow_foam(float p_strength, float p_persistence) {
+void WaterSolver::set_flow_foam(float p_strength, float p_persistence, bool p_gather) {
 	if (gpu.is_null()) {
 		return;
 	}
-	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_flow_foam).bind(gpu, p_strength, p_persistence));
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_flow_foam).bind(gpu, p_strength, p_persistence, p_gather));
 }
 
 void WaterSolver::get_velocity_grid(Vector<float> &r_velocity) const {

@@ -599,6 +599,8 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_flow_foam"), &PhysXRiver3D::get_flow_foam);
 	ClassDB::bind_method(D_METHOD("set_flow_foam_persistence", "seconds"), &PhysXRiver3D::set_flow_foam_persistence);
 	ClassDB::bind_method(D_METHOD("get_flow_foam_persistence"), &PhysXRiver3D::get_flow_foam_persistence);
+	ClassDB::bind_method(D_METHOD("set_flow_foam_gather", "enabled"), &PhysXRiver3D::set_flow_foam_gather);
+	ClassDB::bind_method(D_METHOD("is_flow_foam_gather"), &PhysXRiver3D::is_flow_foam_gather);
 	ClassDB::bind_method(D_METHOD("set_live_damping", "damping"), &PhysXRiver3D::set_live_damping);
 	ClassDB::bind_method(D_METHOD("get_live_damping"), &PhysXRiver3D::get_live_damping);
 	ClassDB::bind_method(D_METHOD("set_live_follow", "path"), &PhysXRiver3D::set_live_follow);
@@ -673,6 +675,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wall_friction", PROPERTY_HINT_RANGE, "0,10,0.05,suffix:1/s"), "set_wall_friction", "get_wall_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam", PROPERTY_HINT_RANGE, "0,4,0.05"), "set_flow_foam", "get_flow_foam");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam_persistence", PROPERTY_HINT_RANGE, "0.1,60,0.1,suffix:s"), "set_flow_foam_persistence", "get_flow_foam_persistence");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flow_foam_gather"), "set_flow_foam_gather", "is_flow_foam_gather");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_damping", PROPERTY_HINT_RANGE, "0,1,0.005"), "set_live_damping", "get_live_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "live_follow", PROPERTY_HINT_NODE_TYPE, "Node3D"), "set_live_follow", "get_live_follow");
 	ADD_GROUP("Carve", "carve_");
@@ -977,14 +980,21 @@ void PhysXRiver3D::set_wall_friction(float p_friction) {
 void PhysXRiver3D::set_flow_foam(float p_strength) {
 	flow_foam = MAX(p_strength, 0.0f);
 	if (live_configured) {
-		live_solver.set_flow_foam(flow_foam, flow_foam_persistence);
+		live_solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_gather);
 	}
 }
 
 void PhysXRiver3D::set_flow_foam_persistence(float p_seconds) {
 	flow_foam_persistence = MAX(p_seconds, 0.05f);
 	if (live_configured) {
-		live_solver.set_flow_foam(flow_foam, flow_foam_persistence);
+		live_solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_gather);
+	}
+}
+
+void PhysXRiver3D::set_flow_foam_gather(bool p_enabled) {
+	flow_foam_gather = p_enabled;
+	if (live_configured) {
+		live_solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_gather);
 	}
 }
 
@@ -1215,7 +1225,7 @@ void PhysXRiver3D::_live_update(double p_delta) {
 		live_depth = depth;
 		live_tilt = Vector3();
 		live_solver.configure(st);
-		live_solver.set_flow_foam(flow_foam, flow_foam_persistence);
+		live_solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_gather);
 		live_solver.set_base_flux(flux, wall_friction);
 		live_configured = true;
 		live_fields_dirty = false;

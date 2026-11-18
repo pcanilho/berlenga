@@ -46,6 +46,8 @@ layout(set = 0, binding = 8, rgba16f) uniform restrict writeonly image2D velocit
 #define WALL_FRICTION (ripple_control.y)
 #define FLOW_FOAM (ripple_control.z)
 #define FLOW_FOAM_PERSISTENCE (ripple_control.w)
+#define CONVERGE_FOAM (foam_gather.x)
+#define STAGNATION_FOAM (foam_gather.y)
 #define MIN_FLOW_DEPTH 0.25 // m: the depth face fluxes divide by, at least (as the bake)
 #define RUNUP_BAND 1.0 // m: ground this far above the still water is simulated (wet/dry fronts)
 #define DRY_DEPTH 0.002 // m: a cell holding less water than this is dry
@@ -191,7 +193,38 @@ float flow_foam_source(ivec2 c, vec2 v) {
 	float trapped_air = smoothstep(0.15, 0.6, shear);
 	float supercritical = smoothstep(0.8, 1.6, froude);
 	float energy = smoothstep(0.5, 1.5, speed);
-	return energy * max(trapped_air, supercritical);
+	float source = energy * max(trapped_air, supercritical);
+	// Convergence: where the surface flow runs into itself (negative divergence: the lee of a rock where the
+	// split current rejoins, the seam between two currents, an eddy line) the water sinks and leaves its
+	// bubbles and scum behind on the surface, so foam gathers in lines there even in water too slow to
+	// entrain air (Langmuir's windrows are the same thing at sea).
+	if (CONVERGE_FOAM > 0.0) {
+		vec2 vr = centre_velocity(c + ivec2(1, 0));
+		vec2 vl = centre_velocity(c - ivec2(1, 0));
+		vec2 vt = centre_velocity(c + ivec2(0, 1));
+		vec2 vb = centre_velocity(c - ivec2(0, 1));
+		float div = (vr.x - vl.x + vt.y - vb.y) / (2.0 * CELL); // 1/s
+		source = max(source, CONVERGE_FOAM * smoothstep(0.4, 1.6, -div) * smoothstep(0.15, 0.5, speed));
+	}
+	// Stagnation: water driven at a rock face piles up into a cushion (the pillow on its upstream face) and
+	// tumbles there, the white water every boulder in a stream wears on its upstream side. Looking up to
+	// three cells along the flow for ground or a dry cell, stronger the nearer and faster.
+	if (STAGNATION_FOAM > 0.0 && speed > 0.2) {
+		vec2 dir = v / speed;
+		float pillow = 0.0;
+		for (int k = 1; k <= 3; k++) {
+			ivec2 a = c + ivec2(round(dir * float(k)));
+			if (a.x < 0 || a.y < 0 || a.x >= GRID_N || a.y >= GRID_N) {
+				break;
+			}
+			if (!has_water(a)) {
+				pillow = 1.0 - float(k - 1) / 3.0;
+				break;
+			}
+		}
+		source = max(source, STAGNATION_FOAM * pillow * smoothstep(0.25, 1.0, speed));
+	}
+	return source;
 }
 
 float eta_at(ivec2 c) {
