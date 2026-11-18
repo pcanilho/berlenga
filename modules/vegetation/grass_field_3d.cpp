@@ -1236,7 +1236,12 @@ void GrassField3D::_free_hedges() {
 void GrassField3D::_build_hedges() {
 	hedges_queued = false;
 	_free_hedges();
+	const bool had_runs = !hedge_runs.is_empty();
+	hedge_runs.clear();
 	if (!hedges || crop == CROP_NONE || plots.is_empty() || !is_inside_tree()) {
+		if (had_runs) {
+			_crop_fields_changed_notify();
+		}
 		return;
 	}
 	Dictionary season;
@@ -1245,6 +1250,8 @@ void GrassField3D::_build_hedges() {
 		season = wm->get_season();
 	} else if (crop_day >= 0) {
 		season["day_of_year"] = crop_day;
+	} else {
+		season["day_of_year"] = 200; // No calendar: midsummer leaf, as the crops' default stages.
 	}
 	hedge_day = int(season.get("day_of_year", -1));
 	struct Mix {
@@ -1299,8 +1306,22 @@ void GrassField3D::_build_hedges() {
 			const int count = int(Math::floor((s1 - s0) / seg));
 			const float start = s0 + 0.5f * ((s1 - s0) - count * seg);
 			const float gate = len * 0.25f;
+			float run_from = -1e9f, run_to = -1e9f;
+			auto close_run = [&]() {
+				if (run_to > run_from) {
+					CropFieldMask::Hedge h;
+					h.a = a + dir * run_from + out * hedge_offset;
+					h.b = a + dir * run_to + out * hedge_offset;
+					h.bounds = Rect2(h.a, Vector2()).expand(h.b).grow(h.half);
+					hedge_runs.push_back(h);
+				}
+				run_from = run_to = -1e9f;
+			};
 			for (int k = 0; k < count; k++) {
 				const float s = start + k * seg;
+				if (run_to > -1e8f && Math::abs(s - run_to) > 0.01f) {
+					close_run();
+				}
 				if (i == gate_edge && s + seg > gate - 3.0f && s < gate + 3.0f) {
 					continue; // The gateway.
 				}
@@ -1341,9 +1362,16 @@ void GrassField3D::_build_hedges() {
 				// The segment runs along its local +X: turn that onto the edge.
 				const float yaw = Math::atan2(-dir.y, dir.x);
 				xf[kind][variant].push_back(to_local * Transform3D(Basis(Vector3(0, 1, 0), yaw), at));
+				if (run_from < -1e8f) {
+					run_from = s;
+				}
+				run_to = s + seg;
 			}
+			close_run();
 		}
 	}
+	// The meadow and the plants keep out of the hedges' cores.
+	_crop_fields_changed_notify();
 	// One holder node, so code walking the tiles (MultiMeshInstance3D children) never meets them.
 	Node3D *holder = memnew(Node3D);
 	holder->set_name("Hedges");
@@ -1456,6 +1484,9 @@ GrassField3D::CropFieldMask GrassField3D::get_crop_field_mask() {
 	for (const GrassField3D *g : crop_nodes) {
 		for (const CropPlot &pl : g->plots) {
 			m.items.push_back({ pl.bounds, pl.polygon });
+		}
+		for (const CropFieldMask::Hedge &h : g->hedge_runs) {
+			m.hedges.push_back(h);
 		}
 	}
 	return m;
@@ -3706,7 +3737,10 @@ vec3 crop_ground(vec3 world_pos, vec3 albedo) {
 	float rows = mix(1.0, smoothstep(0.1, 0.6, 0.5 + 0.5 * cos(u * 6.2832)), row_show);
 	// Clumps of ears and lodged patches at about half a metre, still resolved some way out.
 	float clump = mix(grass_noise(xz * 1.8 + 5.3), 0.5, smoothstep(0.4, 1.0, length(fwidth(xz * 1.8))));
-	vec3 canopy = look.rgb * (0.78 + 0.44 * patchy) * (0.8 + 0.4 * speck) * (0.8 + 0.4 * clump);
+	// A closed, ripe stand is even from afar (the ears' layer hides the stems): its patches and
+	// clumps are faint; an open young crop shows its uneven growth more.
+	float even = clamp((look.a - 0.6) / 0.35, 0.0, 1.0);
+	vec3 canopy = look.rgb * (1.0 + (0.44 * patchy - 0.22) * mix(1.0, 0.4, even)) * (0.8 + 0.4 * speck) * (1.0 + (0.4 * clump - 0.2) * mix(1.0, 0.5, even));
 	// Down-sun the lit faces of ears and leaves, into the sun their shaded sides (the tillers' bake).
 	vec2 to_far = xz - crop_ground_fade.xy;
 	float to_far_len = length(to_far);

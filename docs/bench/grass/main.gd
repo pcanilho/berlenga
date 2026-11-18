@@ -2120,6 +2120,12 @@ func _process(dt: float) -> void:
 	if OS.get_environment("GRASS_DIAG").contains("viewtime") and n > 5:
 		var pv: Dictionary = grass.get_far_published()
 		print("GRASS_VIEWTIME n=%d dt_ms=%.1f state=%d round=%d scale=%s" % [n, dt * 1000.0, pv["view_state"], pv["view_round"], str(pv["view_scale"])])
+	# The hedges (hundreds of dense segments) only for the last 40 frames: the software rasteriser
+	# takes tens of seconds a frame with them, and the far bake and live match do not need them.
+	if crop_fields and not test and n > 2:
+		for h in grass.get_children(true):
+			if h.name == "Hedges":
+				h.visible = n >= frames - 40 # Long enough for the temporal AA to settle on them.
 	if n == frames - 30 and not test:
 		t_frames = Time.get_ticks_usec()
 	if test and crop_name != "":
