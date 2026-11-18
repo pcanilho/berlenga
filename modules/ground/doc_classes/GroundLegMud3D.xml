@@ -16,6 +16,27 @@
 				Cleans both legs.
 			</description>
 		</method>
+		<method name="get_boot_drag" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
+			<description>
+				The share of [param leg]'s lift the mud takes, [code]hold / (hold + leg_pull)[/code]: 0 free, towards 1 stuck. A character controller or animation can slow the foot's lift by it.
+			</description>
+		</method>
+		<method name="get_boot_embedment" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
+			<description>
+				How deep [param leg]'s sole went into sticky mud this stance, in metres.
+			</description>
+		</method>
+		<method name="get_boot_hold" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
+			<description>
+				The force the mud holds [param leg]'s boot with as it lifts, in newtons (0 while it stands, or once it has broken out). See [member boot_suction].
+			</description>
+		</method>
 		<method name="get_foot_bone" qualifiers="const">
 			<return type="String" />
 			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
@@ -64,6 +85,13 @@
 				The node at the sole of [param leg], used instead of bones.
 			</description>
 		</method>
+		<method name="is_boot_lost" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
+			<description>
+				[code]true[/code] when the mud held [param leg]'s boot past [member boot_hold_limit] this stance; cleared when the foot is planted again.
+			</description>
+		</method>
 		<method name="set_foot_bone">
 			<return type="void" />
 			<param index="0" name="leg" type="int" enum="GroundLegMud3D.Leg" />
@@ -96,13 +124,33 @@
 				Sets the node at the sole of [param leg].
 			</description>
 		</method>
+		<method name="suction_force" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="cohesion" type="float" />
+			<param index="1" name="depth" type="float" />
+			<param index="2" name="area" type="float" />
+			<param index="3" name="width" type="float" />
+			<param index="4" name="speed" type="float" />
+			<description>
+				The suction breakout force of a sole of [param area] m² and [param width] m sunk [param depth] m in soil of undrained shear strength [param cohesion] kPa, lifted at [param speed] m/s, in newtons: [code]area * cohesion * Nc[/code], [code]Nc[/code] rising with depth / width to 9 (Vesic 1971), a quarter of it for a slow lift that lets water in under the sole.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="ankle_height" type="float" setter="set_ankle_height" getter="get_ankle_height" default="0.08">
 			How far the sole sits below the foot bone, in metres.
 		</member>
+		<member name="boot_hold_limit" type="float" setter="set_boot_hold_limit" getter="get_boot_hold_limit" default="900.0">
+			Past this hold, in newtons, the boot stays in the mud: [signal boot_lost] is emitted and [method is_boot_lost] is set. 0: never.
+		</member>
+		<member name="boot_suction" type="bool" setter="set_boot_suction" getter="is_boot_suction" default="true">
+			If [code]true[/code], sticky, saturated mud holds each boot as it lifts: the breakout force of a plate buried in soft clay (Vesic 1971), from the soil's cohesion, how deep the sole went and how fast it lifts, until the sole has come up about a quarter of its depth. Read it with [method get_boot_hold] and [method get_boot_drag]; [signal boot_released] marks the moment it comes free, for a squelch.
+		</member>
 		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
 			If [code]false[/code], the legs stay clean.
+		</member>
+		<member name="leg_pull" type="float" setter="set_leg_pull" getter="get_leg_pull" default="400.0">
+			The force a leg lifts its foot with, in newtons, for [method get_boot_drag].
 		</member>
 		<member name="left_foot_bone" type="String" setter="set_foot_bone" getter="get_foot_bone" default="&quot;&quot;">
 			The left foot bone. Empty: found by name ("LeftFoot", "foot.L", "foot_l").
@@ -134,7 +182,28 @@
 		<member name="skeleton" type="NodePath" setter="set_skeleton" getter="get_skeleton" default="NodePath(&quot;&quot;)">
 			The [Skeleton3D] to read the legs from. Empty: the first one under the parent.
 		</member>
+		<member name="sole_area" type="float" setter="set_sole_area" getter="get_sole_area" default="0.03">
+			The boot sole's area, in square metres, for its sinkage and suction.
+		</member>
+		<member name="sole_width" type="float" setter="set_sole_width" getter="get_sole_width" default="0.1">
+			The boot sole's width, in metres.
+		</member>
 	</members>
+	<signals>
+		<signal name="boot_lost">
+			<param index="0" name="leg" type="int" />
+			<description>
+				Emitted when the mud holds [param leg]'s boot past [member boot_hold_limit].
+			</description>
+		</signal>
+		<signal name="boot_released">
+			<param index="0" name="leg" type="int" />
+			<param index="1" name="force" type="float" />
+			<description>
+				Emitted when [param leg]'s boot breaks out of the mud, with the most it was held by in newtons: the moment for a suction sound, louder for a larger [param force].
+			</description>
+		</signal>
+	</signals>
 	<constants>
 		<constant name="LEG_LEFT" value="0" enum="Leg">
 			The left leg.

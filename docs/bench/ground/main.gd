@@ -1676,7 +1676,12 @@ func _run_legs_tests() -> void:
 	var legs := _make_legs(Vector3(-2, 0, 0))
 	var lm := legs.get_node("LegMud") as GroundLegMud3D
 	surface.follow_target = surface.get_path_to(legs)
+	var held := [0, 0.0]  # boots broken out of the mud, the most one was held by (N)
+	lm.boot_released.connect(func(_leg: int, f: float) -> void:
+		held[0] += 1
+		held[1] = maxf(held[1], f))
 	await _walk_legs(legs, 3.0, 1.4)
+	_check("on dry soil the boots lift free (no suction)", held[0] == 0, "%d releases" % held[0])
 	var dry_line := maxf(lm.get_mud_line(GroundLegMud3D.LEG_LEFT), lm.get_mud_line(GroundLegMud3D.LEG_RIGHT))
 	_check("walking on dry soil leaves the boots clean", dry_line == 0.0 and lm.get_mud_flecks(GroundLegMud3D.LEG_LEFT) == 0.0, "line %.1f cm" % (dry_line * 100.0))
 	# Into 15 cm of slurry: the line rises to about its depth, flecks up the shins at a walk, more at a run.
@@ -1688,6 +1693,13 @@ func _run_legs_tests() -> void:
 	var f_walk := lm.get_mud_flecks(GroundLegMud3D.LEG_LEFT)
 	print("  in %.1f cm of mud: lines %.1f and %.1f cm, flecks %.2f, wet %.2f" % [surface.get_mud_depth_at(legs.position) * 100.0, l0 * 100.0, l1 * 100.0, f_walk, lm.get_mud_wetness()])
 	_check("walking in slurry coats both boots to about its depth", l0 > 0.12 and l1 > 0.12 and l0 < 0.3 and l1 < 0.3 and lm.get_mud_wetness() == 1.0, "%.1f and %.1f cm" % [l0 * 100.0, l1 * 100.0])
+	# Suction (mud round 9): each boot is held as it lifts out of the slurry and breaks free with a release.
+	print("  suction: %d releases, held by up to %.0f N" % [held[0], held[1]])
+	_check("the slurry holds each boot as it lifts, then lets go", held[0] >= 6 and held[1] > 10.0 and held[1] < lm.boot_hold_limit, "%d releases, %.0f N" % [held[0], held[1]])
+	var quick := GroundLegMud3D.suction_force(4.14, 0.4, 0.03, 0.1, 1.0)
+	var slow := GroundLegMud3D.suction_force(4.14, 0.4, 0.03, 0.1, 0.005)
+	var shallow := GroundLegMud3D.suction_force(4.14, 0.05, 0.03, 0.1, 1.0)
+	_check("a boot 40 cm deep in stiff clay mud lifted quickly needs about A c Nc = 1.1 kN; slowly a quarter; shallow less", absf(quick - 1118.0) < 5.0 and absf(slow / quick - 0.25) < 0.01 and shallow < 0.2 * quick, "%.0f N quick, %.0f slow, %.0f at 5 cm" % [quick, slow, shallow])
 	await _walk_legs(legs, 3.0, 4.0)
 	var f_run := lm.get_mud_flecks(GroundLegMud3D.LEG_LEFT)
 	_check("running throws more flecks up the shins than walking", f_walk > 0.05 and f_run > f_walk + 0.2, "%.2f walking, %.2f running" % [f_walk, f_run])

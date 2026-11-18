@@ -811,6 +811,17 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
 - **Mud holds boots.** Feet in sticky, saturated mud are held by suction (the pore pressure under a lifting sole,
   as in breakout force of objects from seabed mud): a GroundLegMud3D or character foot slows to lift, with a sound
   hook, and loses a boot past a limit.
+  *Built (18 Nov):* research: breakout of objects embedded in soft seabed clay (Vesic 1971, NCEL; Das 1980 for
+  anchor plates). A quick lift is undrained: the pore water cannot follow the sole, so the soil above it fails in
+  shear, F = A c_u N_c, with N_c rising with embedment D/B to about 9 past D/B = 4; lifted slowly, water seeps in
+  under the sole and the long-term breakout is about a quarter. GroundLegMud3D `boot_suction` (on): the stance
+  records how deep the sole went into sticky mud (slurry, or clay with stickiness 0.2-0.5 and up), and as the foot
+  lifts the mud holds it with that force (cohesion capped at 30 kPa so frozen crust adds nothing; it needs depth
+  anyway) until the sole has come up a quarter of its depth, then `boot_released(leg, force)` (the squelch).
+  `get_boot_hold`, `get_boot_drag` = hold / (hold + `leg_pull` 400 N) for a controller or animation to slow the
+  lift, `boot_hold_limit` 900 N emits `boot_lost` and sets `is_boot_lost` until the next footfall. Checks in
+  `--test=legs`: dry soil no releases, 15 cm of slurry 9 releases up to 215 N, the static formula 1.1 kN at 40 cm in
+  stiff clay mud quick, a quarter slow. The node reads animation; it does not move the foot itself.
 - **Needle ice on bare soil.** Frosty nights on wet bare soil grow needle ice (pipkrake) that lifts the top
   centimetres; the thaw collapses it into loose, fluffy soil that prints easily and washes away. Ground-only,
   beside the frozen ground just built.

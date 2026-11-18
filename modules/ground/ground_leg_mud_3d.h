@@ -63,6 +63,18 @@ private:
 	float wet = 0.0f;
 	float in_water[2] = { 1e3f, 1e3f };
 	bool planted[2] = { false, false }; // last step's, so a footfall prints once // s since each foot last stood in water (the read back can miss a frame as the field moves)
+	// Suction (mud round 9): a boot sunk in sticky, saturated mud is held as it lifts (breakout of a buried plate).
+	bool boot_suction = true;
+	float sole_area = 0.03f; // m2
+	float sole_width = 0.1f; // m
+	float leg_pull = 400.0f; // N, what a leg lifts a foot with
+	float boot_hold_limit = 900.0f; // N, past this the boot stays in the mud (0: never)
+	float embed[2] = {}; // m the sole is down in sticky mud this stance
+	float hold[2] = {}; // N now
+	float hold_peak[2] = {}; // N, this lift's
+	float sole_y[2] = {};
+	float sole_low[2] = {}; // the sole's lowest point this stance
+	bool lost[2] = { false, false };
 	Vector3 mud_rgb = Vector3(0.17f, 0.11f, 0.065f);
 	Vector3 last_position;
 	bool have_last = false;
@@ -105,6 +117,27 @@ public:
 	float get_mud_flecks(Leg p_leg) const { return flecks[p_leg]; }
 	float get_mud_wetness() const { return wet; }
 	void clear_mud();
+
+	void set_boot_suction(bool p_on);
+	bool is_boot_suction() const { return boot_suction; }
+	void set_sole_area(float p_m2) { sole_area = MAX(p_m2, 0.001f); }
+	float get_sole_area() const { return sole_area; }
+	void set_sole_width(float p_m) { sole_width = MAX(p_m, 0.01f); }
+	float get_sole_width() const { return sole_width; }
+	void set_leg_pull(float p_n) { leg_pull = MAX(p_n, 1.0f); }
+	float get_leg_pull() const { return leg_pull; }
+	void set_boot_hold_limit(float p_n) { boot_hold_limit = MAX(p_n, 0.0f); }
+	float get_boot_hold_limit() const { return boot_hold_limit; }
+	// The force the mud holds leg p_leg's boot with as it lifts (N), and the share of the stride it slows by:
+	// hold / (hold + leg_pull), for a character controller or animation to slow the foot.
+	float get_boot_hold(Leg p_leg) const { return hold[p_leg]; }
+	float get_boot_drag(Leg p_leg) const { return hold[p_leg] / (hold[p_leg] + leg_pull); }
+	float get_boot_embedment(Leg p_leg) const { return embed[p_leg]; }
+	// The mud held each foot's boot past boot_hold_limit; stays set until it is planted again.
+	bool is_boot_lost(Leg p_leg) const { return lost[p_leg]; }
+	// The suction breakout force of a sole of p_area m2 and p_width m sunk p_depth m in soil of undrained shear
+	// strength p_cohesion kPa, lifted at p_speed m/s (N).
+	static float suction_force(float p_cohesion, float p_depth, float p_area, float p_width, float p_speed);
 };
 
 VARIANT_ENUM_CAST(GroundLegMud3D::Leg);

@@ -51,6 +51,29 @@ void GroundLegMud3D::set_enabled(bool p_enabled) {
 	}
 }
 
+void GroundLegMud3D::set_boot_suction(bool p_on) {
+	boot_suction = p_on;
+	if (!p_on) {
+		for (int leg = 0; leg < 2; leg++) {
+			hold[leg] = hold_peak[leg] = embed[leg] = 0.0f;
+			lost[leg] = false;
+		}
+	}
+}
+
+// Breakout of a plate buried in soft clay (Vesic 1971, "Breakout resistance of objects embedded in ocean bottom";
+// Das 1980 for anchor plates): a quick lift is undrained, the pore water under the sole cannot follow and the soil
+// above fails in shear, F = A c_u N_c, with N_c rising with the embedment D/B to about 9 past D/B = 4. Lifted slowly
+// water seeps in under the sole and most of the suction goes (Vesic's long-term breakout, about a quarter).
+float GroundLegMud3D::suction_force(float p_cohesion, float p_depth, float p_area, float p_width, float p_speed) {
+	if (p_depth <= 0.0f || p_cohesion <= 0.0f) {
+		return 0.0f;
+	}
+	const float nc = 9.0f * MIN(p_depth / (4.0f * MAX(p_width, 0.01f)), 1.0f);
+	const float undrained = 0.25f + 0.75f * Math::smoothstep(0.02f, 0.2f, p_speed);
+	return p_area * MIN(p_cohesion, 30.0f) * 1000.0f * nc * undrained;
+}
+
 void GroundLegMud3D::set_skeleton(const NodePath &p_path) {
 	skeleton = p_path;
 	skeleton_id = ObjectID();
@@ -234,6 +257,7 @@ void GroundLegMud3D::_step(double p_delta) {
 	const float dt = float(p_delta);
 	Node3D *body = Object::cast_to<Node3D>(get_parent());
 	const Vector3 here = body ? body->get_global_position() : get_global_position();
+	const bool had_last = have_last;
 	float speed = 0.0f;
 	if (have_last && dt > 0.0f) {
 		const Vector3 d = here - last_position;
@@ -254,6 +278,44 @@ void GroundLegMud3D::_step(double p_delta) {
 			const bool planted = p.y - surface < LEG_PLANTED;
 			const bool footfall = planted && !this->planted[leg];
 			this->planted[leg] = planted;
+			const float lift = had_last && dt > 0.0f ? (p.y - sole_y[leg]) / dt : 0.0f;
+			sole_y[leg] = p.y;
+			if (boot_suction) {
+				if (footfall || !had_last) {
+					embed[leg] = 0.0f;
+					hold_peak[leg] = 0.0f;
+					lost[leg] = false;
+					sole_low[leg] = p.y;
+				}
+				const GroundSoil soil = ground->get_soil(p);
+				const float mud = ground->get_mud_depth_at(p);
+				// Sticky and saturated: in slurry, or clay soil wet enough to cling.
+				const float sticky = !soil.soft ? 0.0f : (mud > 0.0f ? 1.0f : Math::smoothstep(0.2f, 0.5f, soil.stickiness));
+				if (planted && lift <= 0.005f) {
+					sole_low[leg] = MIN(sole_low[leg], p.y);
+					if (sticky > 0.0f) {
+						const float sink = MAX(MAX(mud, ground->get_sinkage_at(p, 40.0f, sole_area, sole_width)), surface - p.y);
+						embed[leg] = MAX(embed[leg], MIN(sink, 0.6f));
+					}
+					hold[leg] = 0.0f;
+				} else if (embed[leg] > 0.01f && hold_peak[leg] >= 0.0f) {
+					// Lifting: held until the sole has come up about a quarter of its embedment, then it breaks out.
+					if (p.y - sole_low[leg] < MAX(0.25f * embed[leg], 0.02f)) {
+						hold[leg] = sticky * suction_force(soil.cohesion, embed[leg], sole_area, sole_width, MAX(lift, 0.0f));
+						hold_peak[leg] = MAX(hold_peak[leg], hold[leg]);
+						if (boot_hold_limit > 0.0f && hold[leg] > boot_hold_limit && !lost[leg]) {
+							lost[leg] = true;
+							emit_signal(SNAME("boot_lost"), leg);
+						}
+					} else {
+						hold[leg] = 0.0f;
+						if (hold_peak[leg] > 0.0f) {
+							emit_signal(SNAME("boot_released"), leg, hold_peak[leg]);
+						}
+						hold_peak[leg] = -1.0f; // released this stance
+					}
+				}
+			}
 			// Under more than a few cm of standing water the boot comes out rinsed, not coated.
 			in_water[leg] = water > 0.03f ? 0.0f : in_water[leg] + dt;
 			if (planted && in_water[leg] > 0.5f) {
@@ -367,6 +429,21 @@ void GroundLegMud3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mud_flecks", "leg"), &GroundLegMud3D::get_mud_flecks);
 	ClassDB::bind_method(D_METHOD("get_mud_wetness"), &GroundLegMud3D::get_mud_wetness);
 	ClassDB::bind_method(D_METHOD("clear_mud"), &GroundLegMud3D::clear_mud);
+	ClassDB::bind_method(D_METHOD("set_boot_suction", "enabled"), &GroundLegMud3D::set_boot_suction);
+	ClassDB::bind_method(D_METHOD("is_boot_suction"), &GroundLegMud3D::is_boot_suction);
+	ClassDB::bind_method(D_METHOD("set_sole_area", "area"), &GroundLegMud3D::set_sole_area);
+	ClassDB::bind_method(D_METHOD("get_sole_area"), &GroundLegMud3D::get_sole_area);
+	ClassDB::bind_method(D_METHOD("set_sole_width", "width"), &GroundLegMud3D::set_sole_width);
+	ClassDB::bind_method(D_METHOD("get_sole_width"), &GroundLegMud3D::get_sole_width);
+	ClassDB::bind_method(D_METHOD("set_leg_pull", "force"), &GroundLegMud3D::set_leg_pull);
+	ClassDB::bind_method(D_METHOD("get_leg_pull"), &GroundLegMud3D::get_leg_pull);
+	ClassDB::bind_method(D_METHOD("set_boot_hold_limit", "force"), &GroundLegMud3D::set_boot_hold_limit);
+	ClassDB::bind_method(D_METHOD("get_boot_hold_limit"), &GroundLegMud3D::get_boot_hold_limit);
+	ClassDB::bind_method(D_METHOD("get_boot_hold", "leg"), &GroundLegMud3D::get_boot_hold);
+	ClassDB::bind_method(D_METHOD("get_boot_drag", "leg"), &GroundLegMud3D::get_boot_drag);
+	ClassDB::bind_method(D_METHOD("get_boot_embedment", "leg"), &GroundLegMud3D::get_boot_embedment);
+	ClassDB::bind_method(D_METHOD("is_boot_lost", "leg"), &GroundLegMud3D::is_boot_lost);
+	ClassDB::bind_static_method("GroundLegMud3D", D_METHOD("suction_force", "cohesion", "depth", "area", "width", "speed"), &GroundLegMud3D::suction_force);
 
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "enabled"), "set_enabled", "is_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "skeleton", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Skeleton3D"), "set_skeleton", "get_skeleton");
@@ -383,6 +460,16 @@ void GroundLegMud3D::_bind_methods() {
 	ADD_GROUP("", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ankle_height", PROPERTY_HINT_RANGE, "0,0.3,0.005,suffix:m"), "set_ankle_height", "get_ankle_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shin_radius", PROPERTY_HINT_RANGE, "0.01,0.2,0.005,suffix:m"), "set_shin_radius", "get_shin_radius");
+	ADD_GROUP("Suction", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "boot_suction"), "set_boot_suction", "is_boot_suction");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sole_area", PROPERTY_HINT_RANGE, "0.005,0.1,0.001,suffix:m²"), "set_sole_area", "get_sole_area");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sole_width", PROPERTY_HINT_RANGE, "0.03,0.3,0.005,suffix:m"), "set_sole_width", "get_sole_width");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "leg_pull", PROPERTY_HINT_RANGE, "50,2000,10,suffix:N"), "set_leg_pull", "get_leg_pull");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "boot_hold_limit", PROPERTY_HINT_RANGE, "0,5000,10,suffix:N"), "set_boot_hold_limit", "get_boot_hold_limit");
+	ADD_GROUP("", "");
+
+	ADD_SIGNAL(MethodInfo("boot_released", PropertyInfo(Variant::INT, "leg", PROPERTY_HINT_ENUM, "Left,Right"), PropertyInfo(Variant::FLOAT, "force")));
+	ADD_SIGNAL(MethodInfo("boot_lost", PropertyInfo(Variant::INT, "leg", PROPERTY_HINT_ENUM, "Left,Right")));
 
 	BIND_ENUM_CONSTANT(LEG_LEFT);
 	BIND_ENUM_CONSTANT(LEG_RIGHT);
