@@ -3225,6 +3225,17 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Lake ice",
+   "settings": [
+    "SnowCover3D.lake_ice_enabled"
+   ],
+   "note": "",
+   "what": "lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Snow on materials",
    "settings": [
     "snow_enabled"
@@ -3278,6 +3289,17 @@
    ],
    "note": "",
    "what": "falling and blowing snow from the weather; flake counts, sizes and fall speeds from snowfall measurements, drawn as motion streaks; roofs shelter, snow blows above the wind threshold, `get_extinction()` feeds fog.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Falling snow"
+  },
+  {
+   "name": "Sleet",
+   "settings": [
+    "SnowFall3D.sleet_enabled"
+   ],
+   "note": "",
+   "what": "near 0 C falling snow clumps into large wet flakes; above it the flakes melt as they fall, smaller, faster and greyer.",
    "page": "snow",
    "title": "Snow",
    "topic": "Falling snow"
