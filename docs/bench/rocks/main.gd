@@ -825,7 +825,38 @@ func _caves(cam: Camera3D) -> void:
 					lp_r = lp_r.lerp(eye_r, 0.3)
 				lamp_r.global_position = lp_r
 				print("  rimstone view: pool %d of %d (%d within 3 m) at %s, camera %s" % [best_k, pools_v.size(), best_c, pc, eye_r])
-				get_tree().create_timer(1.0).timeout.connect(func(): print("  rimstone water: %d pools with live water" % net.get_rimstone_water_count()))
+				get_tree().create_timer(1.0).timeout.connect(func():
+					print("  rimstone water: %d pools with live water" % net.get_rimstone_water_count())
+					# The drawn floor under each pool's middle against its level (the floor must lie under the water).
+					var space := get_world_3d().direct_space_state
+					for pl in pools_v:
+						var c: Vector3 = pl["center"]
+						var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(c + Vector3(0, 0.5, 0), c - Vector3(0, 1.0, 0)))
+						print("    pool floor at middle: %s m against the level (depth %.3f)" % [("%.3f" % (hit["position"].y - c.y)) if hit else "none", pl["depth"]])
+					# The focal pool: the share of its outline's inside where the drawn floor stands over the water.
+					var fc: Vector3 = pools_v[best_k]["center"]
+					var ol: PackedVector2Array = pools_v[best_k]["outline"]
+					var above := 0
+					var total := 0
+					var worst := -1.0
+					for ri in ol.size():
+						for fr in [0.2, 0.4, 0.6, 0.8, 0.95]:
+							var q: Vector3 = fc + Vector3(ol[ri].x, 0, ol[ri].y) * fr
+							var h2 := space.intersect_ray(PhysicsRayQueryParameters3D.create(q + Vector3(0, 0.5, 0), q - Vector3(0, 1.0, 0)))
+							if h2:
+								total += 1
+								var dy: float = h2["position"].y - fc.y
+								worst = maxf(worst, dy)
+								if dy > 0.0:
+									above += 1
+					print("    focal pool: floor over the water at %d of %d samples, highest %.3f m" % [above, total, worst])
+					for nd in net.find_children("Pool *", "", true, false):
+						var wmi: MeshInstance3D = null
+						for ch in nd.find_children("*", "MeshInstance3D", true, false):
+							wmi = ch
+							break
+						if wmi and wmi.mesh and (nd as Node3D).global_position.distance_to(fc) < 0.01:
+							print("    focal water node %s at %s, mesh aabb %s, mesh node at %s" % [nd.get_class(), (nd as Node3D).global_position, wmi.mesh.get_aabb(), wmi.global_position]))
 			elif args.get("cave-view", "outside") == "stream":
 				# A cave stream: the stream segment nearest the entrance, from 2.5 m upstream at the passage line,
 				# looking down the channel; a lamp beside the camera.

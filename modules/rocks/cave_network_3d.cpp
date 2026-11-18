@@ -718,6 +718,7 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 	auto H = [&](real_t p_x, real_t p_z) -> real_t { return gen->get_height(Vector3(p_x, 0, p_z)); };
 	// Why candidates fail, for --find-caves benches (CAVE_SEA_DEBUG=1 prints it).
 	int rej_low = 0, rej_flat = 0, rej_dry = 0, rej_depth = 0, rej_foot = 0, rej_back = 0;
+	const bool dbg = OS::get_singleton()->get_environment("CAVE_SEA_DEBUG") == "1";
 	for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += 6.0) {
 		for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += 6.0) {
 			const real_t h = H(x, z);
@@ -760,19 +761,39 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 				continue;
 			}
 
-			// The mouth: back from the waterline to the cliff's foot, where the ground first stands 2 m over the sea
-			// (a beach or a wave-cut platform may lie between, up to 40 m wide).
+			// The mouth: back from the waterline to the cliff's foot, where the ground first stands 2 m over the sea.
+			// The sea must reach the mouth floor: the foot stands within 8 m of the waterline and the ground between
+			// stays under high-water swash (sea + 0.6 m), so a wave-cut notch rather than a dry beach fronts the cave.
 			Vector2 mouth = m;
-			bool foot = false;
-			for (real_t t = 0.0; t < 40.0; t += 0.5) {
+			bool foot = false, swash = true;
+			for (real_t t = 0.0; t < 8.0; t += 0.5) {
 				const Vector2 q = m - dn * t;
-				if (H(q.x, q.y) > sea + 2.0) {
-					mouth = q + dn * 1.0;
+				const real_t hq = H(q.x, q.y);
+				if (hq > sea + 2.0) {
 					foot = true;
 					break;
 				}
+				if (hq > sea + 0.6) {
+					swash = false;
+					break;
+				}
+				mouth = q;
 			}
-			if (!foot) {
+			if (!foot || !swash) {
+				if (dbg) {
+					real_t gap = -1.0, hi = -1e9;
+					for (real_t t = 0.0; t < 60.0; t += 0.5) {
+						const real_t hq = H((m - dn * t).x, (m - dn * t).y);
+						if (hq > sea + 2.0) {
+							gap = t;
+							break;
+						}
+						hi = MAX(hi, hq - sea);
+					}
+					if (gap >= 0.0 && gap < 20.0) {
+						print_line(vformat("  sea foot near miss at (%.0f, %.0f): foot %.1f m from the waterline, ground up to %.2f m over the sea", x, z, gap, hi));
+					}
+				}
 				rej_foot++;
 				continue;
 			}
@@ -795,7 +816,7 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 		}
 	}
 	if (OS::get_singleton()->get_environment("CAVE_SEA_DEBUG") == "1") {
-		print_line(vformat("find_sea_entrances: %d candidates; rejected: %d under 6 m, %d flat, %d no sea within 150 m, %d depth, %d no cliff foot within 40 m, %d no cliff behind", found.size(), rej_low, rej_flat, rej_dry, rej_depth, rej_foot, rej_back));
+		print_line(vformat("find_sea_entrances: %d candidates; rejected: %d under 6 m, %d flat, %d no sea within 150 m, %d depth, %d no cliff foot at the swash, %d no cliff behind", found.size(), rej_low, rej_flat, rej_dry, rej_depth, rej_foot, rej_back));
 	}
 	struct More {
 		_FORCE_INLINE_ bool operator()(const Found &p_a, const Found &p_b) const { return p_a.score > p_b.score; }

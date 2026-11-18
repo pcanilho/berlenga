@@ -1003,5 +1003,7 @@ frame). The bench's sea cave opens onto a beach, so a mouth with the swell in it
    meets the water table. Bench `--caves=1 --cave-mesh --cave-view=stream`, `--no-streams`. Still to do: the water
    reads faintly under a lamp (clear and shallow), sinks and resurgences, the sea swell into sea caves.
    Sea mouths (17 Nov): find_sea_entrances loosened for cliffed coasts with a beach or platform at the foot (top 6 m
-   over the sea, sea within 150 m, cliff foot within 40 m of the waterline, a steep rise to 6 m within 6 to 25 m
-   behind the mouth); CAVE_SEA_DEBUG=1 prints why candidates fail.
+   over the sea, sea within 150 m, a steep rise to 6 m within 6 to 25 m behind the mouth); CAVE_SEA_DEBUG=1 prints
+   why candidates fail. 18 Nov: a 40 m beach let mouths open onto dry sand, which is not a sea cave; the foot must now
+   stand within 8 m of the waterline with the ground between under high-water swash (sea + 0.6 m), and the mouth
+   sits at the last swashed point.

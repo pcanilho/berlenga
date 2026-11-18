@@ -62,7 +62,7 @@
 			<param index="0" name="rect" type="Rect2" />
 			<param index="1" name="max" type="int" default="4" />
 			<description>
-				Finds sea cave mouths in [param rect] (global x, z): cliffs at least 8 m over the sea, with water 0.3 to 25 m deep in front of them (a beach at low tide still floods at high water) and at least 8 m of cliff 10 m behind the mouth. The mouths are at least 80 m apart and the tallest cliffs come first. Each entry is a [Dictionary] with [code]position[/code] (at sea level) and [code]out[/code] (toward the sea). Returns nothing without a sea.
+				Finds sea cave mouths in [param rect] (global x, z): cliffs at least 6 m over the sea, with water 0.3 to 30 m deep in front of them, a cliff foot within 8 m of the waterline and the ground between under high-water swash (0.6 m over the sea), so the sea reaches the mouth floor, and a steep rise to at least 6 m within 6 to 25 m behind the mouth. The mouths are at least 80 m apart and the tallest cliffs come first. Each entry is a [Dictionary] with [code]position[/code] (at sea level) and [code]out[/code] (toward the sea). Returns nothing without a sea.
 			</description>
 		</method>
 		<method name="get_blowholes" qualifiers="const">
