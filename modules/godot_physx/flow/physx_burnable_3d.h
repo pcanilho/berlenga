@@ -129,6 +129,7 @@ private:
 	void _resolve();
 	float _rand();
 	Transform3D _target_xform() const;
+	void _wet_from_fluids(const Transform3D &p_xf);
 	void _sample_heat(float p_delta);
 	void _burn(float p_delta);
 	void _update_emitter();
