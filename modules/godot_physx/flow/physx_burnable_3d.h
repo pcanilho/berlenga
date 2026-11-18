@@ -33,6 +33,8 @@
 
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
+#include "physx_firebrands.h"
+
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
 
@@ -102,7 +104,11 @@ private:
 		float age = 0.0f;
 		float life = 1.0f;
 	};
-	LocalVector<Ember> ember_list;
+	LocalVector<Ember> ember_list; // sparks: short-lived, for the look
+	// Firebrands: bark and char flakes lofted by the fire's own column that can start spot fires where they land on a
+	// PhysXFireSpread3D's ground (the same flight as the ground fire's).
+	PhysXFirebrands brands;
+	Vector3 brand_wind;
 	float ember_carry = 0.0f;
 	MultiMeshInstance3D *ember_mmi = nullptr;
 	Ref<MultiMesh> ember_mm;
@@ -140,6 +146,8 @@ public:
 	float get_fuel_left() const { return fuel_left; }
 	float get_char_amount() const { return char_amount; }
 	int get_ember_count() const { return (int)ember_list.size(); }
+	int get_firebrand_count() const { return brands.get_count(); }
+	int get_spot_fire_count() const { return brands.get_spot_fires(); }
 
 	void set_target(const NodePath &p_path);
 	NodePath get_target() const { return target; }
