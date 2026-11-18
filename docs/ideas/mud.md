@@ -896,6 +896,18 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
   loses half its mud and its surface eases to 9.6 degrees (it holds 9.4 there), the 20 cm rut at the foot is filled
   and heaped 24 cm, volume kept.
 
+#### Round 11 candidates (card 18 Nov)
+
+- **Gullies in ruts.** Wheel ruts on slopes concentrate runoff and are the classic start of gully erosion on
+  forest and farm tracks (Croke and Mockler 2001; Foltz 1996, rutted logging roads lose several times the
+  sediment of unrutted ones). The runoff channels (RillGrow on the field, Exner bed) already cut where water runs;
+  the gap is routing rain caught by a rut along it instead of standing, and a deposition fan where it slows.
+- **Winch.** MudRunner's core recovery tool: a cable to an anchor (tree, rock, another vehicle) pulling at the
+  frame; PhysX distance joint with a motor-driven rest length, sag from the cable's weight as a catenary drawn
+  between, and the pull fighting the soil's resistance we already compute.
+- **Body mud dries and flakes.** Caked mud dries lighter and cracks (the desiccation crack model we use on the
+  ground, at body scale), then sheds in flakes on bumps; the clods of the ground-detail thread can carry them.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
