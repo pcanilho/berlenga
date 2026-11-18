@@ -118,6 +118,7 @@ class VegetationField3D : public Node3D {
 		float top = 0.0f; // Crown top above the ground, metres.
 		float conifer = 0.0f; // 1 for a needle-leaved crown.
 		float stem = 0.0f; // The stem's foot at the soil line (flare and root ridges), metres from its centre.
+		float base = 0.0f; // Crown base above the ground (its lowest foliage), metres.
 	};
 	NodePath weather_map; // A WeatherMap3D that gets the placed canopy as its canopy_map.
 	Vector2 litter_wind; // Downwind lean of the leaf drift; zero: from the weather map's wind.
@@ -157,6 +158,7 @@ class VegetationField3D : public Node3D {
 	static float near_radius_published;
 	void _publish_near_radius(float p_radius);
 	static float _foot_radius(const Ref<Mesh> &p_mesh, float p_cap);
+	static float _crown_base(const Ref<Mesh> &p_mesh);
 	float _shade_at(const Vector2 &p_xz, float *r_conifer = nullptr) const; // No lock: main thread, or under crown_lock.
 
 	Ref<Biome> biome;
@@ -176,6 +178,7 @@ class VegetationField3D : public Node3D {
 		float footprint = 0.0f;
 		float canopy_top = 0.0f;
 		float stem_foot = 0.0f; // Crowned species: the foot radius of its first mesh (other plants keep out of it).
+		float canopy_base = 0.0f; // Crowned species: the height of its first mesh's lowest foliage (unit scale).
 		float spread = 0.0f; // Ground plants: the widest reach of its meshes' leaves from the stem (unit scale).
 		float crown_max = 0.0f; // The largest crown radius it can place.
 		float halo = 0.0f; // How far around a tile it must be placed for later species.
@@ -538,6 +541,9 @@ public:
 	double get_populate_time_msec() const { return populate_msec; }
 	PackedVector3Array get_placements(int p_species) const;
 	int get_deadwood_count() const;
+	// The placed crowns over a world rect, 7 floats each: x, z, crown radius, top and crown base above the ground,
+	// conifer (0 or 1), opacity. For fires (crown fire initiation).
+	PackedFloat32Array get_crowns_in(const Rect2 &p_rect) const;
 	Dictionary get_deadwood_at(const Vector3 &p_global_position, float p_reach = 0.0f, float p_min_radius = 0.0f) const;
 	// Canopy shade at a point (0 open sky, 1 dense crown), from the canopy species placed so far.
 	float get_shade_at(const Vector3 &p_global_position) const;

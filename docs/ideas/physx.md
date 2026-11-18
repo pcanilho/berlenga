@@ -1072,6 +1072,70 @@ mm/h: about 11 min), dries about 2% a minute; under a 3 m/s2 sideways push
 a soaked hem leans 1.1 cm against a dry one's 3.6, and with the hips
 swaying 12 cm at 1.5 Hz it swings 3.2 cm against 4.4.
 
+### Trees catch fire from a ground fire (picked 18 Nov, second of three)
+
+How fire models do it: FARSITE, FlamMap and BehavePlus use Van Wagner's
+(1977) crown fire initiation: a surface fire lights the crown when its
+fireline intensity reaches I0 = (0.010 CBH (460 + 25.9 FMC))^1.5 kW/m (CBH
+crown base height m, FMC foliar moisture %): about 480 kW/m for a crown 2 m
+up at 100%, 2,500 at 6 m. Crowns lit one by one is passive crown fire
+(torching); a stand dense enough carries it crown to crown (active, Van
+Wagner's R0 = 3 / CBD m/min, CBD the canopy bulk density, typically 0.05 to
+0.3 kg/m3, Cruz et al. 2003). A torching tree's flame stands about 1.5 to 2
+times its height for tens of seconds (Albini 1979, "Spot fire distance from
+burning trees"); the NIST burns of whole conifers (Mell et al. 2009,
+Manzello et al. 2007) show heat release peaking about 10 s after ignition,
+most fine fuel gone by 30 to 40 s, and a shower of brands, more than any
+surface fire. Games: Far Cry 2 and 5 set trees alight as props with fixed
+flame effects; none we found models the initiation threshold.
+
+Technique: PhysXFireSpread3D keeps a list of crowns, from its
+vegetation_field (VegetationField3D.get_crowns_in: position, radius, top,
+the crown base as the 5th percentile height of the mesh's leaves or needles,
+conifer, opacity) or add_tree(). Crown fine fuel is the crown's volume (cone
+for conifers, paraboloid for broadleaves) at 0.5 or 0.25 kg/m3 inside the
+crown, less for a sparse one. Each step:
+1. An unlit crown lights when the strongest half-metre tile of the surface
+   front within reach of its stem passes I0, with FMC from foliar_moisture
+   (broadleaves 1.6 times as wet), or when a burning neighbour's flame
+   (1.5 times its height, leaning by U / sqrt(g Hf)) reaches across the gap
+   between crowns, growing over its first 4 s. It lights the ground under it.
+2. A lit crown burns as a gamma curve, 1 - (1 + t/T) e^(-t/T), T = 8 s.
+3. Its heat feeds a Flow emitter filling the crown (burning crowns take up
+   to half the emitters), a plume (Byram's speed over its width) that lofts
+   its brands, and 20 brands per kg (MAX_BRANDS raised to 1,000).
+4. Plants see it through fire_state_map: the crown footprint's flame length
+   rises from the crown base to 1.3 times its top as it flares (foliage
+   charred black), scorch out to 1.6 radii, a glow while it flames. The map
+   now stores the square roots of flame length / 32 m and scorch / 48 m, so
+   tall trees fit and grass flames keep their detail in 8 bits.
+
+Status (18 Nov): built. Test (tall grass at 5%, 4 m/s wind, 8 to 10 m
+conifers): crowns with bases at 0.5 and 2.5 m and a broadleaf at 2 m
+torch; a crown base at 6 m does not; a row of crowns 0.6 m apart with bases
+at 7 m (too high for the ground fire) burns tree to tree downwind from a
+low-crowned one, the same crowns 8 m apart do not. With trees the fire has
+400 brands aloft against 60 without. Render: a 9.5 m pine torches with
+flames about twice its height and a smoke column; afterwards its needles
+are black and a neighbour's scorched brown. Found on the way: conifer needles
+used a plain material with no fire code, so pines and spruces never charred
+or scorched in any fire; needles now go through the leaves' shader with
+flutter and the paler underside off (raster and path traced frames of an
+unburnt pine match the old ones, mean difference under 0.1 of 255).
+
+### Burning props throw firebrands (picked 18 Nov, third of three)
+
+PhysXBurnable3D's embers were sparks that rose in Flow's gas and could
+light the ground where they fell, with no plume above Flow's grid and no
+wind. It now also throws PhysXFirebrands, the ground fire's brands: about
+10 per kg of wood burnt (as the fire node's logs), released over its top,
+lofted by its own column (Byram's speed for its heat release over its
+width), carried by the weather map's wind (or its fire's), and landing with
+Schroeder's ignition probability. The sparks stay for the look and no
+longer light anything. Test: a 2 x 1.5 x 1.2 m woodpile reaching 2 MW in a
+6 m/s wind (28 C, 25%) started 14 spot fires in dry grass 4 to 44 m
+downwind in 90 s, which burnt 420 m2.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

@@ -367,11 +367,47 @@ void PhysXBurnable3D::_update_emitter() {
 // Embers: released with the heat (ember_rate per MW), lofted by the plume and carried by Flow's gas with drag (a
 // light firebrand's terminal speed about 3 m/s), glowing out over seconds. One landing on the ground fire's area
 // lights it with a chance that falls to nothing at the fuel's moisture of extinction (Manzello et al. 2006).
+// Sparks (ember_rate a second per MW, for the look: they rise in Flow's gas and fade) and firebrands: wood throws
+// about 10 brands big enough to light fine fuel per kg it burns (as PhysXFireSpread3D's logs; Caton-Kerr et al.
+// 2021), released over its top, lofted by its own column (Byram's speed for its heat release over its width) and
+// carried by the wind; where one lands on a PhysXFireSpread3D's ground it may start a spot fire (PhysXFirebrands).
 void PhysXBurnable3D::_update_embers(float p_delta) {
+	const Transform3D xf = _target_xform();
 	if (embers && state == STATE_FLAMING) {
 		ember_carry += ember_rate * hrr / 1.0e6f * p_delta;
+		if (hrr > 0.0f) {
+			const AABB wb = xf.xform(bounds);
+			const float width = MAX(MAX(wb.size.x, wb.size.z), 0.2f);
+			float t_air = 20.0f;
+			Vector3 wind;
+#ifdef MODULE_WEATHER_ENABLED
+			if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
+				t_air = wm->get_air_temperature();
+				wind = wm->get_wind_at(wb.get_center());
+			}
+#endif
+			if (wind == Vector3() && fire) {
+				wind = fire->get_wind();
+			}
+			brand_wind = wind;
+			LocalVector<PhysXFirebrands::Plume> plume;
+			PhysXFirebrands::Plume pl;
+			pl.base = Vector3(wb.get_center().x, wb.get_end().y, wb.get_center().z);
+			pl.w0 = PhysXFirebrands::plume_speed(hrr / 1000.0f / width, t_air);
+			pl.width = width;
+			plume.push_back(pl);
+			brands.set_plumes(plume, width);
+			LocalVector<PhysXFirebrands::Release> pts;
+			for (int q = 0; q < 3; q++) {
+				const Vector3 r(0.2f + 0.3f * q, 0.9f, 0.8f - 0.3f * q);
+				pts.push_back({ xf.xform(bounds.position + bounds.size * r), 1.0f });
+			}
+			brands.release(10.0f * hrr / WOOD_HEAT * p_delta, pts, flow);
+		}
 	}
-	const Transform3D xf = _target_xform();
+	if (brands.get_count() > 0) {
+		brands.step(this, flow, brand_wind, p_delta, glow_energy);
+	}
 	while (ember_carry >= 1.0f && ember_list.size() < 512) {
 		ember_carry -= 1.0f;
 		Ember e;
@@ -403,20 +439,8 @@ void PhysXBurnable3D::_update_embers(float p_delta) {
 		if (fire) {
 			ground = fire->get_ground_height_at(e.p);
 		}
-		bool gone = e.age >= e.life;
-		if (!gone && e.p.y <= ground + 0.02f) {
-			gone = true;
-			const float glow = Math::exp(-2.0f * e.age / e.life);
-			if (fire && glow > 0.2f) {
-				const float m = fire->get_moisture_at(e.p);
-				const float ext = fire->get_moisture_of_extinction();
-				const float chance = 0.35f * glow * CLAMP(1.0f - m / MAX(ext * 0.9f, 1e-3f), 0.0f, 1.0f);
-				if (_rand() < chance) {
-					fire->ignite(Vector3(e.p.x, ground, e.p.z), 0.15f);
-				}
-			}
-		}
-		if (gone) {
+		// Sparks die where they land; the firebrands are what light the ground.
+		if (e.age >= e.life || e.p.y <= ground + 0.02f) {
 			ember_list[i] = ember_list[ember_list.size() - 1];
 			ember_list.resize(ember_list.size() - 1);
 		} else {
@@ -658,6 +682,7 @@ void PhysXBurnable3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			burnables.erase(this);
+			brands.clear();
 			for (ObjectID &id : emitters) {
 				if (Node *e = Object::cast_to<Node>(ObjectDB::get_instance(id))) {
 					e->queue_free();
@@ -711,6 +736,8 @@ void PhysXBurnable3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_fuel_left"), &PhysXBurnable3D::get_fuel_left);
 	ClassDB::bind_method(D_METHOD("get_char_amount"), &PhysXBurnable3D::get_char_amount);
 	ClassDB::bind_method(D_METHOD("get_ember_count"), &PhysXBurnable3D::get_ember_count);
+	ClassDB::bind_method(D_METHOD("get_firebrand_count"), &PhysXBurnable3D::get_firebrand_count);
+	ClassDB::bind_method(D_METHOD("get_spot_fire_count"), &PhysXBurnable3D::get_spot_fire_count);
 
 	ClassDB::bind_method(D_METHOD("set_target", "path"), &PhysXBurnable3D::set_target);
 	ClassDB::bind_method(D_METHOD("get_target"), &PhysXBurnable3D::get_target);

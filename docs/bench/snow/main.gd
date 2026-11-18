@@ -46,6 +46,9 @@ extends Node3D
 #                     first cornice falls, a moment later (the blocks tumbling)
 #   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
 #   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
+#   --settled         (trail view) 0.4 m of settled snow (300 kg/m3) instead of fresh: prints break clumps
+#   --no-clumps       (trail view) no snow clumps beside the prints
+#   --clumps-close    (trail view) the camera low beside the small ball's furrow
 #   --sled            (trail view) a sled pulled at 4 m/s for 2 s and lifted away: its bow wave and berm
 #   --deform=R,E[,S]  (trail view) deformation texels R over E m, triangles every S m
 #   --crust=N         (trail view) a 2 cm crust of N melt-freeze cycles on the snow: 1 breaks into plates
@@ -1507,6 +1510,11 @@ func _build_trail(cam: Camera3D) -> void:
 			# Down on the end of the sled's track and the berm its bow wave left.
 			cam.position = Vector3(0.2, 1.0, 5.6)
 			cam.look_at(Vector3(-2.2, 0.2, 3.4))
+	if OS.get_cmdline_user_args().has("--clumps-close"):
+		# Low beside the small ball's furrow, looking back along it: the clumps it broke out of the rim.
+		cam.position = Vector3(-1.2, 0.8, 0.2)
+		cam.look_at(Vector3(-4.2, 0.4, -0.9))
+		cam.fov = 45.0
 	var target := Marker3D.new()
 	target.name = "Probe"
 	add_child(target)
@@ -1515,6 +1523,8 @@ func _build_trail(cam: Camera3D) -> void:
 	var hours := snow_hours if snow_hours >= 0.0 else 0.0
 	if hours > 0.0:
 		_precipitate(hours, 2.0)
+	elif OS.get_cmdline_user_args().has("--settled"):
+		snow.add_snow(120.0, 300.0) # 0.4 m of settled snow: cohesive, prints break lumps out of it
 	else:
 		snow.add_snow(45.0, 110.0) # 0.41 m of fresh snow
 	if crust_cycles > 0.0:
@@ -1536,6 +1546,8 @@ func _build_trail(cam: Camera3D) -> void:
 				surface.detail_spacing = float(v[2])
 		if a == "--gpu=0":
 			surface.gpu_simulation = false # the print field on the CPU (default: compute shaders where there is a GPU)
+		if a == "--no-clumps":
+			surface.clumps = false # no snow clumps beside the prints (ground detail)
 	add_child(surface)
 	# Movers, driven on set paths so the shot is the same each run: a walker whose two boots print the
 	# snow (boot boxes in the snow_deform group, 80 kg on 0.035 m2: Bekker), a cart wheel and two balls
@@ -1651,6 +1663,10 @@ func _build_trail(cam: Camera3D) -> void:
 	surface.sync_deformation()
 	var mv := surface.get_moved_volume()
 	print("print field on the %s: dent %.4f m3, rim %.4f m3" % ["GPU" if surface.is_gpu_active() else "CPU", mv.x, mv.y])
+	var clumps: SnowClumps3D = surface.get_clumps_node()
+	if clumps:
+		clumps.update_now()
+		print("snow clumps: %d lying, %d broken off; update %.2f ms mean, %.2f ms worst (%d updates)" % [clumps.get_clump_count(), clumps.get_spawned_total(), clumps.get_update_msec_mean(), clumps.get_update_msec_worst(), clumps.get_update_runs()])
 	if we and not raster:
 		we.environment.pathtracing_enabled = true
 	await _save_frame("")

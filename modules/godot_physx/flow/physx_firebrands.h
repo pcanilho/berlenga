@@ -82,7 +82,7 @@ private:
 	void _draw(Node3D *p_owner, float p_glow_energy);
 
 public:
-	static constexpr int MAX_BRANDS = 400;
+	static constexpr int MAX_BRANDS = 1000; // a torching tree throws hundreds a second
 	// Schroeder's (1969) probability that a firebrand ignites fine dead fuel at this moisture (fraction of dry weight)
 	// and air temperature (C).
 	static float ignition_probability(float p_moisture, float p_air_temperature);

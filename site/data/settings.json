@@ -1201,6 +1201,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Mud on plants",
+   "settings": [
+    "GroundSurface3D.plant_mud"
+   ],
+   "note": "",
+   "what": "thrown clay and muddy splashes spatter grass and plants, and rain washes it off.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Muddy water",
    "settings": [
     "GroundSurface3D.muddy_water"
@@ -1231,7 +1242,7 @@
     "ruts_regrowth_time"
    ],
    "note": "",
-   "what": "prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate; grass grows back over them; kept puddles keep the clay in their water and the cracks a dried pool left.",
+   "what": "prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate; grass grows back over them with the growing season, stalling in winter and drought; kept puddles keep the clay in their water and the cracks a dried pool left.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1255,7 +1266,18 @@
     "add_puddle()"
    ],
    "note": "",
-   "what": "rain the ground cannot take and ground water gather level in ruts and prints, then soak in and dry, as real geometry in raster and path tracing; puddles form in hollows and wet flats and stay as dry hollows in dry weather; `add_puddle()` digs and fills an irregular clay puddle that stays level on slopes.",
+   "what": "rain the ground cannot take and ground water gather level in ruts and prints, then soak in and dry, as real geometry in raster and path tracing; puddles form in hollows and wet flats and stay as dry hollows in dry weather; `add_puddle()` digs and fills an irregular clay puddle that stays level on slopes; below 0 C puddles freeze (`puddle_ice`), bearing a foot and breaking into plates under a wheel.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Frozen ground",
+   "settings": [
+    "GroundSurface3D.frozen_ground"
+   ],
+   "note": "",
+   "what": "soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1838,7 +1860,7 @@
     "terrain_source"
    ],
    "note": "",
-   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); lakes get shore waves from their own wind only, and a generated world's sea breaks on every coast, in sections that spill and open into lace foam.",
+   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); lakes get shore waves from their own wind only, and a generated world's sea breaks on every coast, in sections that spill, show lit faces under the lip and tear open into lace foam.",
    "page": "water",
    "title": "Water",
    "topic": "Shore"

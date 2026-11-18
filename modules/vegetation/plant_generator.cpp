@@ -5410,6 +5410,10 @@ void fragment() {
 	float burnt = fire_foliage_apply(fire_s, clamp(fire_w.y - MODEL_MATRIX[3].y, 0.0, height), fire_n, albedo, rough);
 	back *= 1.0 - burnt;
 	EMISSION = fire_glow_color(fire_s.y) * 4.0 * burnt;
+	// Mud thrown or splashed onto it (mud round 7), thickest low down.
+	float mud_c = grass_mud_apply(grass_ground_mud(fire_w.xz), fire_w, clamp(fire_w.y - MODEL_MATRIX[3].y, 0.0, height), albedo);
+	rough = mix(rough, 0.85, mud_c);
+	back *= 1.0 - mud_c;
 	// Rain: leaves barely soak (low porosity), they darken a little and turn glossy.
 	weather_wetness_apply(weather_wetness_at(v_world), n_world.y, metallic, 0.15, albedo, rough);
 	// Snow lies on the faces that look up.

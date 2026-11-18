@@ -388,6 +388,11 @@ RockField3D::LibraryBuild *RockField3D::_start_libraries(const LocalVector<uint3
 			j.detail = float(detail);
 			if (j.family == RockGenerator::FAMILY_COBBLE) {
 				j.transport = RockGenerator::get_lithology(j.type).abrasion_length * cobble_bins[CLAMP(key_bin(k), 0, 2)];
+			} else if (j.family == RockGenerator::FAMILY_PEBBLE && key_bin(k) < RF_DETAIL_BIN) {
+				// Shingle bins: from little-worn to long-worn (1.5 to 6 abrasion lengths), each with its own shapes.
+				static const float pebble_bins[4] = { 1.5f, 2.5f, 4.0f, 6.0f };
+				j.transport = RockGenerator::get_lithology(j.type).abrasion_length * pebble_bins[CLAMP(key_bin(k), 0, 3)];
+				j.seed += 131 * key_bin(k);
 			}
 			jobs.push_back(j);
 		}
@@ -966,6 +971,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			// Grain size and band are taken at the corners of 2 m sub-cells and blended to each stone, so the
 			// cover fades with the beach slope instead of stepping from sub-cell to sub-cell.
 			const real_t sub = 2.0;
+			LocalVector<Pending> shore_tries;
+			HashMap<int64_t, LocalVector<Vector3>> shore_laid; // laid stones by grid cell: (x, radius, z)
+			const float sgrid = 0.25f;
+			float shore_max_r = 0.0f;
+			struct ShorePendingGreater {
+				bool operator()(const Pending &p_a, const Pending &p_b) const { return p_a.size > p_b.size; }
+			};
 			static const Vector2 probes[9] = { Vector2(0, 0), Vector2(4, 0), Vector2(-4, 0), Vector2(0, 4), Vector2(0, -4), Vector2(10, 0), Vector2(-10, 0), Vector2(0, 10), Vector2(0, -10) };
 			const int nx = int(Math::ceil(p_rect.size.x / sub)), nz = int(Math::ceil(p_rect.size.y / sub));
 			struct ShoreCorner {
@@ -999,6 +1011,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					const float rock = float(gen->get_rock_exposure(c));
 					float d50 = 0.002f * Math::exp(tanb / 0.045f);
 					d50 = MAX(d50, 0.5f * Math::smoothstep(0.2f, 0.7f, rock));
+					// Sorted across the beach: the swash throws the coarsest up to the storm berm, the finer stay low
+					// (Bluck 1967; Carter and Orford 1993).
+					d50 *= 0.75f + 0.55f * Math::smoothstep(0.2f, 2.2f, sc.e);
 					sc.d50 = MIN(d50, 1.2f);
 					sc.band = Math::smoothstep(-0.6f, 0.0f, sc.e) * (1.0f - Math::smoothstep(1.6f, 2.5f, sc.e));
 					// Stones per square metre big enough to be geometry: the packed count of grains this size,
@@ -1017,9 +1032,11 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					if (rate_max <= 0.0f) {
 						continue; // sand, or off the shore
 					}
-					// Candidates at the densest corner's rate; each kept by its own blended rate.
-					const float want = 0.5f * rate_max * float(sub * sub) * float(density) / (float(Math::PI) * 0.25f * 1.2f);
-					const int count = MIN(int(want + rng.randf()), 400);
+					// Shingle is clast-supported: stones touching, sand showing only between them (some 80 to 90% cover;
+					// Carter and Orford 1993). Candidates three times over at the densest corner's rate, each kept by its
+					// own blended rate, then laid largest first where they do not pass through those already down.
+					const float want = 3.0f * 0.85f * rate_max * float(sub * sub) * float(density) / (0.785f * 1.4f);
+					const int count = MIN(int(want + rng.randf()), 1200);
 					const real_t x = p_rect.position.x + i * sub, z = p_rect.position.y + j * sub;
 					const RockGenerator::RockType type = _type_at(gen, Vector3(x + sub * 0.5f, 0, z + sub * 0.5f));
 					for (int k = 0; k < count; k++) {
@@ -1042,16 +1059,47 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 							pd.size = d50 * Math::exp(rng.randfn(0.0f, 0.35f));
 						}
 						pd.size = CLAMP(pd.size, float(min_size), 1.5f);
-						pd.key = pd.size < 0.25f ? _library_key(type, RockGenerator::FAMILY_PEBBLE, 0) : _library_key(type, RockGenerator::FAMILY_COBBLE, 2);
+						// Four shape bins of pebbles (the swash's sorting by shape: discs and blades up the beach, spheres and
+						// rods rolled down; Bluck 1967), each its own variants, so neighbours are rarely twins.
+						pd.key = pd.size < 0.25f ? _library_key(type, RockGenerator::FAMILY_PEBBLE, int(rng.rand() % 4)) : _library_key(type, RockGenerator::FAMILY_COBBLE, 2);
 						pd.yaw = rng.randf() * Math::TAU;
 						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
-						pd.tilt = Math::deg_to_rad(8.0f) * rng.randf();
-						pd.sink = 0.2f + 0.1f * rng.randf();
+						pd.tilt = Math::deg_to_rad(10.0f) * rng.randf();
+						// Set into the shingle, a quarter to two fifths deep (the swash packs the gaps round them).
+						pd.sink = 0.25f + 0.15f * rng.randf();
 						pd.follow = 0.85f;
 						pd.film = e < 0.8f ? 1.0f : CLAMP((2.5f - e) / 1.7f, 0.0f, 1.0f) * 0.5f;
-						pending.push_back(pd);
+						shore_tries.push_back(pd);
 					}
 				}
+			}
+			shore_tries.sort_custom<ShorePendingGreater>();
+			for (const Pending &pd : shore_tries) {
+				const float r = 0.5f * pd.size;
+				const int64_t gx = int64_t(Math::floor(pd.xz.x / sgrid)), gz = int64_t(Math::floor(pd.xz.z / sgrid));
+				const int64_t span = 1 + int64_t(Math::ceil(0.82f * (r + shore_max_r) / sgrid));
+				bool clear = true;
+				for (int64_t i = -span; i <= span && clear; i++) {
+					for (int64_t k = -span; k <= span && clear; k++) {
+						const LocalVector<Vector3> *cellv = shore_laid.getptr(((gx + i) << 32) ^ ((gz + k) & 0xffffffff));
+						if (!cellv) {
+							continue;
+						}
+						for (const Vector3 &o : *cellv) {
+							const float dx = o.x - pd.xz.x, dz = o.z - pd.xz.z, m = 0.82f * (o.y + r);
+							if (dx * dx + dz * dz < m * m) {
+								clear = false;
+								break;
+							}
+						}
+					}
+				}
+				if (!clear) {
+					continue;
+				}
+				shore_laid[(gx << 32) ^ (gz & 0xffffffff)].push_back(Vector3(pd.xz.x, r, pd.xz.z));
+				shore_max_r = MAX(shore_max_r, r);
+				pending.push_back(pd);
 			}
 		} break;
 		case LAYER_CLIFF: {

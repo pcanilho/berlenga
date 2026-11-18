@@ -1671,7 +1671,17 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk) const {
 				}
 				// Green: the stream's wet bed and margin.
 				// Blue: the foot of the wall, a few decimetres over the fill (the shader's bank of spalls).
-				pc.push_back(Color(fw, has_stream ? _stream_wet(src, p) : 0.0, _wall_foot(src, p)));
+				// Alpha: how much of the sky's light reaches here (the raster has no occlusion for it this deep: up-facing
+				// floors far inside lit up as if under the open sky). Falls off with the distance to the nearest opening,
+				// the daylight zone a few passage widths in (the twilight zone beyond it).
+				real_t sky = 0.0;
+				for (const Cave &cv : caves) {
+					sky = MAX(sky, real_t(1.0) - Math::smoothstep(real_t(3.0), real_t(22.0), p.distance_to(cv.entrance)));
+					for (const Vector3 &bh : cv.blowholes) {
+						sky = MAX(sky, real_t(1.0) - Math::smoothstep(real_t(2.0), real_t(10.0), p.distance_to(bh)));
+					}
+				}
+				pc.push_back(Color(fw, has_stream ? _stream_wet(src, p) : 0.0, _wall_foot(src, p), sky));
 				pi.push_back(pv.size() - 1);
 			} else {
 				pi.push_back(*m);
@@ -2540,6 +2550,11 @@ void fragment() {
 	// Cavity occlusion from the same relief: its pits and grooves darker, so the near wall reads as rough stone.
 	float cav = smoothstep(0.25, 0.75, h0);
 	AO = (1.0 - 0.5 * crack) * mix(mix(0.7, 1.0, cav), 1.0, 0.6 * max(bed_floor, bank));
+#if !defined(RT)
+	// The sky's share (COLOR.a, by the distance to the openings): the raster's ambient comes from the sky, which deep
+	// inside is hidden (the path tracer finds that itself).
+	AO *= mix(0.08, 1.0, clamp(COLOR.a, 0.0, 1.0));
+#endif
 	if (debug_view == 1) {
 		ALBEDO = vec3(streak, wet, floor_w);
 		ROUGHNESS = 1.0;
@@ -3163,6 +3178,10 @@ void CaveNetwork3D::_update_stream_nodes() {
 			// Past the banks a ray starting inside the rock goes on down through it to a passage below; a stream
 			// a metre or so deep finds its bed within 3 m, and none past the banks reads as dry.
 			river->set("ground_probe_depth", 3.0);
+			// The waterline is cut between the ribbon's samples: at a river's 1 m by 12 across it ran in straight
+			// segments up a cave stream's steep banks (hard edges, a sheet left over a bank) under the path tracer.
+			river->set("step_length", 0.35);
+			river->set("cross_segments", 32);
 			river->set("carve", false);
 			river->set("raster_reflections", false); // underground: nothing to reflect but the walls (as the pools)
 			river->set("contact_wetness", false);

@@ -12,6 +12,23 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="add_tree">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="height" type="float" />
+			<param index="2" name="crown_base" type="float" />
+			<param index="3" name="crown_radius" type="float" />
+			<param index="4" name="conifer" type="bool" default="true" />
+			<description>
+				Adds a tree or shrub the fire can light, standing at [param position], [param height] metres tall with its lowest foliage [param crown_base] metres up and a crown [param crown_radius] metres across its middle. Crowns from [member vegetation_field] are added by themselves.
+			</description>
+		</method>
+		<method name="clear_trees">
+			<return type="void" />
+			<description>
+				Removes every tree, those from [member vegetation_field] and those added by [method add_tree].
+			</description>
+		</method>
 		<method name="extinguish">
 			<return type="void" />
 			<description>
@@ -35,6 +52,18 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				How burnt the ground at [param position] is: 0 unburnt, 1 burnt out.
+			</description>
+		</method>
+		<method name="get_crowns_burning" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many tree crowns are burning now.
+			</description>
+		</method>
+		<method name="get_crowns_lit" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many tree crowns have caught fire since the fire grid was built.
 			</description>
 		</method>
 		<method name="get_flame_length_at" qualifiers="const">
@@ -103,6 +132,19 @@
 				The highest the fire's plume killed foliage at [param position], in metres: the crown scorch height of Van Wagner (1973) from the front's fireline intensity, the wind and the air temperature.
 			</description>
 		</method>
+		<method name="get_tree_burnt" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="index" type="int" />
+			<description>
+				The share of a tree's crown fuel burnt so far, 0 for a crown not lit; -1 past the last tree.
+			</description>
+		</method>
+		<method name="get_tree_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many trees the fire knows: crowns from [member vegetation_field] over its area and those added by [method add_tree].
+			</description>
+		</method>
 		<method name="ignite">
 			<return type="void" />
 			<param index="0" name="position" type="Vector3" />
@@ -119,6 +161,9 @@
 		<member name="char_darkness" type="float" setter="set_char_darkness" getter="get_char_darkness" default="0.95">
 			How fully burnt-out ground turns to black char.
 		</member>
+		<member name="crown_fire" type="bool" setter="set_crown_fire" getter="is_crown_fire" default="true">
+			If [code]true[/code], trees and shrubs catch fire from the ground fire under them (Van Wagner's crown fire initiation: the surface fire's intensity against the crown base height and the foliage's moisture), flare up and burn out in under a minute, light crowns their flame reaches, and throw many embers lofted by their own plume. Low crowns and shrubs catch easily, crowns high above the ground only scorch, and a dense stand carries fire from crown to crown where a sparse one does not.
+		</member>
 		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
 			When disabled, the fire stops where it is.
 		</member>
@@ -127,6 +172,9 @@
 		</member>
 		<member name="flow_path" type="NodePath" setter="set_flow_path" getter="get_flow_path" default="NodePath(&quot;&quot;)">
 			The [PhysXFlow3D] to draw the flames in. Empty: one of its own, with 10 cm cells.
+		</member>
+		<member name="foliar_moisture" type="float" setter="set_foliar_moisture" getter="get_foliar_moisture" default="1.0">
+			Moisture of conifer foliage as a fraction of its dry weight (1.0 is the 100% fire models assume); broadleaf foliage holds 1.6 times as much. Drier foliage (late summer drought, about 0.8) catches from weaker ground fires.
 		</member>
 		<member name="fuel_load_scale" type="float" setter="set_fuel_load_scale" getter="get_fuel_load_scale" default="1.0">
 			Scales the fuel's load (kilograms a square metre) from the [member fuel_type]: more fuel burns hotter, with taller flames.

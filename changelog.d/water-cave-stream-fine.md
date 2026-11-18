@@ -1,0 +1,1 @@
+- Water: cave streams sample their ribbon every 0.35 m and 32 times across, so the waterline follows steep banks instead of straight segments.

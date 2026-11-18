@@ -408,6 +408,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		if (canopy_r > 0.0f && ps.meshes.size() > 0 && ps.meshes[0].is_valid()) {
 			ps.canopy_top = ps.meshes[0]->get_aabb().get_end().y;
 			ps.stem_foot = _foot_radius(ps.meshes[0], ps.footprint > 0.0f ? ps.footprint : 1.0f);
+			ps.canopy_base = _crown_base(ps.meshes[0]);
 		}
 		ps.crown_max = canopy_r * MAX(ps.sp->get_scale_range().x, ps.sp->get_scale_range().y);
 		r_setup.crown_max = MAX(r_setup.crown_max, ps.crown_max);
@@ -1268,7 +1269,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						scale *= Math::lerp(1.0f, sp->get_margin_scale(), margin);
 					}
 					if (canopy_r > 0.0f) {
-						const Crown crown = { xz, canopy_r * scale, sp->get_canopy_opacity(), ps.canopy_top * scale, sp->is_canopy_conifer() ? 1.0f : 0.0f, ps.stem_foot * scale };
+						const Crown crown = { xz, canopy_r * scale, sp->get_canopy_opacity(), ps.canopy_top * scale, sp->is_canopy_conifer() ? 1.0f : 0.0f, ps.stem_foot * scale, ps.canopy_base * scale };
 						local_crowns.push_back(crown);
 						local_crown_grid[Vector2i(int(Math::floor(xz.x / CROWN_CELL)), int(Math::floor(xz.y / CROWN_CELL)))].push_back(local_crowns.size() - 1);
 						if (out) {
@@ -2582,6 +2583,60 @@ Error VegetationField3D::populate() {
 // surface crosses 2 cm above the ground (the flare and root ridges reach out there; TreeGenerator, trees.md
 // 5d), capped at p_cap (the species' footprint) so a shrub's low branches do not count. Measured
 // once per mesh and kept on it.
+// The crown base height (fire behaviour's CBH, the lowest foliage that carries a fire up into the crown): the 5th
+// percentile height of the "leaves" or "needles" surfaces' vertices, so a stray low twig does not set it. A mesh
+// without such surfaces: a third of its height.
+float VegetationField3D::_crown_base(const Ref<Mesh> &p_mesh) {
+	if (p_mesh.is_null()) {
+		return 0.0f;
+	}
+	static const StringName key = SNAME("_vegetation_crown_base");
+	if (p_mesh->has_meta(key)) {
+		return p_mesh->get_meta(key);
+	}
+	LocalVector<float> ys;
+	const ArrayMesh *am = Object::cast_to<ArrayMesh>(p_mesh.ptr());
+	for (int si = 0; am && si < am->get_surface_count(); si++) {
+		const String name = am->surface_get_name(si);
+		if (name != "leaves" && name != "needles") {
+			continue;
+		}
+		const Array arrays = am->surface_get_arrays(si);
+		if (arrays.size() <= Mesh::ARRAY_VERTEX) {
+			continue;
+		}
+		const PackedVector3Array v = arrays[Mesh::ARRAY_VERTEX];
+		const int step = MAX(1, v.size() / 4096);
+		for (int i = 0; i < v.size(); i += step) {
+			ys.push_back(v[i].y);
+		}
+	}
+	float base;
+	if (ys.is_empty()) {
+		base = p_mesh->get_aabb().get_end().y / 3.0f;
+	} else {
+		ys.sort();
+		base = MAX(ys[ys.size() / 20], 0.0f);
+	}
+	p_mesh->set_meta(key, base);
+	return base;
+}
+
+PackedFloat32Array VegetationField3D::get_crowns_in(const Rect2 &p_rect) const {
+	PackedFloat32Array res;
+	RWLockRead guard(crown_lock);
+	for (const Crown &c : crowns) {
+		if (c.xz.x + c.radius < p_rect.position.x || c.xz.y + c.radius < p_rect.position.y || c.xz.x - c.radius > p_rect.get_end().x || c.xz.y - c.radius > p_rect.get_end().y) {
+			continue;
+		}
+		const float rec[7] = { c.xz.x, c.xz.y, c.radius, c.top, c.base, c.conifer, c.opacity };
+		for (float f : rec) {
+			res.push_back(f);
+		}
+	}
+	return res;
+}
+
 float VegetationField3D::_foot_radius(const Ref<Mesh> &p_mesh, float p_cap) {
 	if (p_mesh.is_null()) {
 		return 0.0f;
@@ -3602,6 +3657,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_populate_time_msec"), &VegetationField3D::get_populate_time_msec);
 	ClassDB::bind_method(D_METHOD("get_placements", "species"), &VegetationField3D::get_placements);
 	ClassDB::bind_method(D_METHOD("get_deadwood_count"), &VegetationField3D::get_deadwood_count);
+	ClassDB::bind_method(D_METHOD("get_crowns_in", "rect"), &VegetationField3D::get_crowns_in);
 	ClassDB::bind_method(D_METHOD("get_deadwood_at", "global_position", "reach", "min_radius"), &VegetationField3D::get_deadwood_at, DEFVAL(0.0f), DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("get_sward_shade_at", "global_position"), &VegetationField3D::get_sward_shade_at);
 	ClassDB::bind_method(D_METHOD("get_sward_litter_at", "global_position"), &VegetationField3D::get_sward_litter_at);

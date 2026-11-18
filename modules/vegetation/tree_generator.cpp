@@ -3424,6 +3424,128 @@ Dictionary TreeGenerator::get_leaf_form(Preset p_preset) {
 	return d;
 }
 
+// Falling and blown leaves (wind thread; trees.md 2c): one leaf off the tree at true size, in the
+// canopy's own material and the date's colour. Variants: 0 as on the tree; odd variants curled
+// and a little smaller, every third one dead brown (litter lifted from the ground). Needles come
+// as a fascicle of two or three, which is how pines shed them.
+Ref<ArrayMesh> TreeGenerator::make_leaf_mesh(Preset p_preset, const Dictionary &p_season, int p_variant) {
+	ERR_FAIL_INDEX_V(int(p_preset), int(PRESET_MAX), Ref<ArrayMesh>());
+	Ref<TreeGenerator> g;
+	g.instantiate();
+	g->set_preset(p_preset);
+	g->season = p_season.duplicate(true);
+	const bool needles = g->params[PARAM_NEEDLES] > 0.5f;
+	const uint32_t h = hash_murmur3_one_32(uint32_t(p_variant) * 2654435761u + uint32_t(p_preset));
+	const float r0 = float(h & 0xffff) / 65535.0f;
+	Color c = g->leaf_color.srgb_to_linear();
+	const LeafSeason ls = _leaf_season(p_preset, p_season);
+	if (!p_season.is_empty() && ls.autumn > 0.0f) {
+		c = c.lerp(ls.color, CLAMP(ls.autumn * 1.5f, 0.0f, 1.0f));
+	}
+	if (p_variant % 3 == 2) {
+		c = c.lerp(Color(0.3f, 0.2f, 0.11f).srgb_to_linear(), 0.85f); // Dead and dried.
+	}
+	const float size = g->params[PARAM_LEAF_SIZE] * Math::lerp(0.85f, 1.1f, r0) * (p_variant % 2 == 1 ? 0.9f : 1.0f);
+	Builder b;
+	if (needles) {
+		const int n = (p_preset == PRESET_SCOTS_PINE || p_preset == PRESET_MARITIME_PINE || p_preset == PRESET_STONE_PINE) ? 2 : (p_preset == PRESET_WHITE_PINE ? 5 : 1);
+		const float w = 0.0012f;
+		for (int k = 0; k < n; k++) {
+			const float a = (float(k) / n) * Math::TAU;
+			const Vector3 tip = Vector3(0.08f * Math::cos(a), 1.0f, 0.08f * Math::sin(a)).normalized() * size;
+			const Vector3 side = Vector3(-Math::sin(a), 0, Math::cos(a)) * w;
+			const int v0 = b.verts.size();
+			const Vector3 nrm = side.cross(tip).normalized();
+			const Vector3 pts[4] = { -side, side, tip + side * 0.3f, tip - side * 0.3f };
+			const Vector2 uv[4] = { Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0) };
+			for (int q = 0; q < 4; q++) {
+				b.verts.push_back(pts[q]);
+				b.normals.push_back(nrm);
+				b.uvs.push_back(uv[q]);
+				b.colors.push_back(c);
+			}
+			const int idx[6] = { 0, 1, 2, 0, 2, 3 };
+			for (int q = 0; q < 6; q++) {
+				b.indices.push_back(v0 + idx[q]);
+			}
+		}
+	} else {
+		Vector4i part;
+		b.begin(part);
+		g->_add_leaf(b, Vector3(), Vector3(0, 0, 1), Vector3(0, 1, 0), size, c);
+		b.end(part, 0.0f);
+		if (p_variant % 2 == 1) {
+			// Curled as it dries: the blade's sides lift about its midrib.
+			for (int v = 0; v < b.verts.size(); v++) {
+				const Vector3 q = b.verts[v];
+				b.verts.write[v].y += 0.35f * q.x * q.x / MAX(size, 0.005f);
+			}
+		}
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = b.verts;
+	arrays[Mesh::ARRAY_NORMAL] = b.normals;
+	arrays[Mesh::ARRAY_TEX_UV] = b.uvs;
+	arrays[Mesh::ARRAY_COLOR] = b.colors;
+	arrays[Mesh::ARRAY_INDEX] = b.indices;
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	ERR_FAIL_COND_V(b.verts.is_empty(), mesh);
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	Ref<StandardMaterial3D> m;
+	m.instantiate();
+	m->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
+	m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+	m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
+	m->set_backlight(c * 0.6f);
+	m->set_roughness(needles ? 0.5f : 0.75f);
+	if (!needles) {
+		m->set_specular(0.3f); // As the canopy's (leaf sheen, 18 Nov).
+		if (LEAF_FORMS[p_preset].kind == LEAF_PINNATE) {
+			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, g->_leaflet_texture());
+			m->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA_SCISSOR);
+			m->set_alpha_scissor_threshold(0.5f);
+			m->set_alpha_antialiasing(BaseMaterial3D::ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE);
+			m->set_albedo(Color(1.28f, 1.28f, 1.28f));
+		} else {
+			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, g->_leaf_texture());
+			m->set_albedo(Color(1.17f, 1.17f, 1.17f));
+		}
+	}
+	mesh->surface_set_material(0, m);
+	mesh->surface_set_name(0, needles ? "needles" : "leaves");
+	return mesh;
+}
+
+// A falling leaf's figures: blade length and one-sided area, fresh and dry mass (leaf mass per
+// area about 60 g/m2 dry, 2.5 times that fresh; Poorter et al., New Phytol. 182, 2009), and the
+// flat-plate terminal speed sqrt(2 m g / (rho Cd A)) with Cd 1.2, about 1-2 m/s for broad leaves
+// as measured (Vogel, Life in Moving Fluids, 1994). flutter: 1 for broad thin blades that tumble
+// and flutter, low for needles that drop nearly straight.
+Dictionary TreeGenerator::get_leaf_physics(Preset p_preset) {
+	ERR_FAIL_INDEX_V(int(p_preset), int(PRESET_MAX), Dictionary());
+	TreeGenerator look;
+	look.set_preset(p_preset);
+	const bool needles = look.params[PARAM_NEEDLES] > 0.5f;
+	const float size = look.params[PARAM_LEAF_SIZE];
+	const float area = needles ? size * 0.0015f * 2.0f : 2.0f * look.params[PARAM_LEAF_WIDTH] * size * size * 0.656f;
+	const float lma_dry = needles ? 0.2f : 0.06f; // kg/m2: needles are thick.
+	const float dry = area * lma_dry, fresh = dry * 2.5f;
+	auto terminal = [&](float p_m) {
+		return Math::sqrt(2.0f * p_m * 9.81f / (1.2f * 1.2f * MAX(area, 1e-6f)));
+	};
+	Dictionary d;
+	d["length"] = size;
+	d["area"] = area;
+	d["mass_fresh"] = fresh;
+	d["mass_dry"] = dry;
+	d["terminal_speed_fresh"] = terminal(fresh);
+	d["terminal_speed_dry"] = terminal(dry);
+	d["flutter"] = needles ? 0.1f : 1.0f;
+	return d;
+}
+
 // Phenology per species (docs/ideas/trees.md 2c). Budburst: thermal time above 5 C from 1 Jan
 // (Cannell and Smith 1983), the requirement falling with winter chilling (Murray, Cannell and
 // Smith 1989: F* = a + b exp(r C)); leaves then expand over about 180 degree days. Autumn:
@@ -16339,6 +16461,22 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (rigged) {
 				static_materials.push_back(_flutter_material(twin(m), s == 3 ? 0.05f : params[PARAM_LEAF_SIZE]));
 			}
+		} else if (s == 1) {
+			// Needles: the same shader for the fire's char and scorch (vegetation_fire.h), with no flutter (a needle is
+			// stiff) and no paler underside.
+			auto needle_material = [&](const Ref<StandardMaterial3D> &p_m) -> Ref<Material> {
+				const Ref<Material> fm = _flutter_material(p_m, params[PARAM_LEAF_SIZE]);
+				const Ref<ShaderMaterial> sm = fm;
+				if (sm.is_valid()) {
+					sm->set_shader_parameter("flutter_amount", 0.0f);
+					sm->set_shader_parameter("leaf_underside", 0.0f);
+				}
+				return fm;
+			};
+			mesh->surface_set_material(mesh->get_surface_count() - 1, needle_material(m));
+			if (rigged) {
+				static_materials.push_back(needle_material(twin(m)));
+			}
 		} else {
 			mesh->surface_set_material(mesh->get_surface_count() - 1, m);
 			if (rigged) {
@@ -17594,6 +17732,11 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			_setup_variant(p_preset, p_form, v, saved_seed, saved_climber_cover);
 			Ref<ArrayMesh> mesh = generate();
 			crown += crown_radius;
+			// The variant's crown for placed-tree queries (falling leaves, wind thread): height,
+			// crown base and drip-line radius in metres, unscaled.
+			if (mesh.is_valid()) {
+				mesh->set_meta("crown", Vector3(height, crown_base, crown_radius));
+			}
 			if (p_variants > 0) {
 				meshes.push_back(mesh);
 			}
@@ -18876,6 +19019,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_limb_breakage"), &TreeGenerator::get_limb_breakage);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_form", "preset"), &TreeGenerator::get_leaf_form);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_season", "preset", "season"), &TreeGenerator::get_leaf_season);
+	ClassDB::bind_static_method("TreeGenerator", D_METHOD("make_leaf_mesh", "preset", "season", "variant"), &TreeGenerator::make_leaf_mesh, DEFVAL(Dictionary()), DEFVAL(0));
+	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_physics", "preset"), &TreeGenerator::get_leaf_physics);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("make_shrub_species", "preset", "form", "variants", "season"), &TreeGenerator::make_shrub_species, DEFVAL(SHRUB_MATURE), DEFVAL(3), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_bloom", "preset", "day_of_year"), &TreeGenerator::get_bloom);
 	ClassDB::bind_method(D_METHOD("set_season", "season"), &TreeGenerator::set_season);

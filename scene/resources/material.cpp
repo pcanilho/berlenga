@@ -2916,7 +2916,7 @@ void fragment() {)";
 			// ripples under it.
 			vec2 gis = ground_ice_state((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
 			vec2 gisl = vec2(0.0);
-			vec4 gil = gis.x > 0.0 ? ground_ice_look((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, min(gis.x, gwd), gis.y, ground_fp, gisl) : vec4(0.0);
+			vec4 gil = gis.x > 0.0 ? ground_ice_look((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, min(gis.x, gwd), gwd, gis.y, ground_fp, gisl) : vec4(0.0);
 			gil *= gwl.y;
 			gisl *= gwl.y;
 			ALBEDO = mix(ALBEDO, vec3(0.8, 0.83, 0.86), gil.x);
@@ -4383,11 +4383,11 @@ vec4 ground_wet_block(vec2 p_xz, vec4 p_rect, int p_block, ivec2 p_ts, float p_r
 	float v = clamp(uv.y * p_rows, 0.5, p_rows - 0.5) + float(p_block) * p_rows;
 	return textureLod(ground_wet_map, vec2(uv.x, v / float(p_ts.y)), 0.0);
 }
-// The wet map's blocks: the fine lattice, then the far one (texel 1's tag 3.5), the cracks (texel 2's 4.5) and the
-// puddle ice (texel 3's 5.5), each there only when tagged.
+// The wet map's blocks: the fine lattice, then the far one (texel 1's tag 3.5), the cracks (texel 2's 4.5), the
+// puddle ice (texel 3's 5.5) and the mud on plants (texel 4's 6.5; GrassField3D reads it), each there only when tagged.
 int ground_wet_blocks(ivec2 p_ts) {
 	int b = 1;
-	for (int k = 1; k < 4; k++) {
+	for (int k = 1; k < 5; k++) {
 		if (p_ts.x > k && abs(texelFetch(ground_wet_map, ivec2(k, p_ts.y - 1), 0).w - (2.5 + float(k))) < 0.01) {
 			b++;
 		}
@@ -4623,7 +4623,8 @@ vec4 ground_crack_state(vec2 p_xz) {
 	int far = abs(texelFetch(ground_wet_map, ivec2(1, ts.y - 1), 0).w - 3.5) < 0.01 ? 1 : 0;
 	return ground_wet_block(p_xz, r, 1 + far, ts, float((ts.y - 1) / ground_wet_blocks(ts)));
 }
-// The puddle ice at p_xz (round 7): the wet map's ice block, its last (thickness m, broken share); 0 where none.
+// The puddle ice at p_xz (round 7): the wet map's ice block, after the fine, far and crack ones (thickness m, broken
+// share); 0 where none.
 vec2 ground_ice_state(vec2 p_xz) {
 	ivec2 ts = textureSize(ground_wet_map, 0);
 	if (ts.x < 4 || ts.y < 2) {
@@ -4633,8 +4634,11 @@ vec2 ground_ice_state(vec2 p_xz) {
 	if (abs(r.w - 2.5) > 0.01 || abs(texelFetch(ground_wet_map, ivec2(3, ts.y - 1), 0).w - 5.5) > 0.01) {
 		return vec2(0.0);
 	}
-	int blocks = ground_wet_blocks(ts);
-	return ground_wet_block(p_xz, r, blocks - 1, ts, float((ts.y - 1) / blocks)).xy;
+	int at = 1;
+	for (int k = 1; k < 3; k++) {
+		at += abs(texelFetch(ground_wet_map, ivec2(k, ts.y - 1), 0).w - (2.5 + float(k))) < 0.01 ? 1 : 0;
+	}
+	return ground_wet_block(p_xz, r, at, ts, float((ts.y - 1) / ground_wet_blocks(ts))).xy;
 }
 // The patch's surface with its standing water and its cracks (the cracks the mesh's spacing can carry).
 float ground_deform_top(vec2 p_xz) {
@@ -4747,8 +4751,8 @@ vec2 ground_water_flow(vec2 p_xz, vec3 p_n, float p_depth, float p_t, float p_fp
 }
 // Puddle ice (docs/ideas/mud.md, round 7), the same lines in material.cpp and scene_raytracing_raygen.glsl.
 // The Voronoi cells of p (in cells, Worley 1996): x about the distance to the nearest edge (half of F2 - F1), yz
-// the nearest site's two hashes (0..1).
-vec3 ground_ice_cells(vec2 p) {
+// the nearest site's two hashes (0..1), w the distance to that site.
+vec4 ground_ice_cells(vec2 p) {
 	vec2 i = floor(p);
 	vec2 f = p - i;
 	float d1 = 8.0;
@@ -4770,36 +4774,48 @@ vec3 ground_ice_cells(vec2 p) {
 			}
 		}
 	}
-	return vec3(0.5 * (sqrt(d2) - sqrt(d1)), h1);
+	return vec4(0.5 * (sqrt(d2) - sqrt(d1)), h1, sqrt(d1));
 }
-// Ice p_h thick (m) over a puddle, p_broken of it broken into plates, seen with a footprint of p_fp (m): (the share
-// that is white, the share that is ice, its roughness, 0); r_slope the tilt of a broken plate. Clear ice shows the
-// dark water under it (black ice); thicker, it holds air in milky patches, and the boundaries between its crystals
-// and its stress cracks show as fine white lines. Broken, it lies in plates (larger the thicker it is), tilted, with
-// open water between them and white fractured edges.
-vec4 ground_ice_look(vec2 p_xz, float p_h, float p_broken, float p_fp, out vec2 r_slope) {
+// Ice p_h thick (m) over a puddle p_depth deep, p_broken of it broken into plates, seen with a footprint of p_fp (m):
+// (the share that is white, the share that is ice, its roughness, 0); r_slope the tilt of a broken plate. A puddle
+// freezes from its rim in: there the ice reaches the bed (and the water under it drains or freezes out its air), so
+// the rim is milky white with trapped bubbles, the middle clear and dark over the water (black ice). The surface is
+// not a mirror: frozen ripples and rime frost it a little. Broken, the ice lies in tilted plates (larger the thicker
+// it is) with white fractured edges and open water between them.
+vec4 ground_ice_look(vec2 p_xz, float p_h, float p_depth, float p_broken, float p_fp, out vec2 r_slope) {
 	r_slope = vec2(0.0);
 	float ice = smoothstep(0.0003, 0.001, p_h);
 	if (ice <= 0.0) {
 		return vec4(0.0);
 	}
-	// Air in patches some 30 cm across.
-	float milk = smoothstep(0.003, 0.04, p_h) * 0.35 * smoothstep(-0.05, 0.3, ground_flow_noise(p_xz / 0.3 + vec2(41.0, 7.0)).x);
-	// Stress cracks: some of the edges of cells 30 cm across, faint.
-	float vw = 0.0006;
-	vec3 vc = ground_ice_cells(p_xz / 0.3);
-	float vein = (1.0 - smoothstep(vw, vw + p_fp, vc.x * 0.3)) * step(0.6, vc.y) * smoothstep(0.004, 0.015, p_h) * 0.3 * (1.0 - smoothstep(0.004, 0.02, p_fp));
+	// Frozen to the bed (the rim), and a ragged edge to that zone.
+	float n = ground_flow_noise(p_xz / 0.12 + vec2(41.0, 7.0)).x;
+	float through = smoothstep(0.55, 0.95, p_h / max(p_depth, 1e-4) + 0.3 * n);
+	// Bubbles: dots of 1 to 3 mm on a 1.5 cm grid, crowded where it froze through, sparse in the clear ice; past a
+	// couple of millimetres a pixel they average out.
+	vec4 bc = ground_ice_cells(p_xz / 0.015);
+	float br = 0.0007 + 0.0015 * bc.z;
+	float dense = mix(0.08, 0.9, through);
+	float dot_ = step(bc.y, dense) * (1.0 - smoothstep(br, br + p_fp, bc.w * 0.015));
+	float avg = dense * 3.14159 * br * br / (0.015 * 0.015);
+	float bubbles = mix(dot_, avg, smoothstep(0.002, 0.006, p_fp));
+	float milk = clamp(0.75 * through + 0.6 * bubbles * (1.0 - 0.5 * through) + 0.06, 0.0, 0.9);
+	// Frozen ripples: a gentle relief that breaks the mirror.
+	vec3 rip = ground_flow_noise(p_xz / 0.05 + vec2(3.0, 19.0));
+	r_slope = 0.04 * rip.yz;
 	float s = clamp(0.06 + 2.0 * p_h, 0.06, 0.25);
-	vec3 pc = ground_ice_cells(p_xz / s);
-	float brk = step(pc.y, p_broken) * step(1e-3, p_broken);
+	vec4 pc = ground_ice_cells(p_xz / s);
+	// Broken where the load went through (the share past 0.4): the lattice's smooth falloff leaves no stray plates.
+	float brk = step(pc.y, (p_broken - 0.4) / 0.6);
 	float pe = pc.x * s;
 	float gap = 0.003 + 0.004 * pc.z;
 	float open = brk * (1.0 - smoothstep(gap, gap + p_fp, pe));
-	float rim = brk * (1.0 - smoothstep(gap + 0.002, gap + 0.004 + p_fp, pe)) * (1.0 - open);
-	r_slope = brk * (1.0 - open) * 0.15 * vec2(pc.z - 0.5, fract(pc.y * 7.31) - 0.5);
+	float rim = brk * (1.0 - smoothstep(gap, gap + 0.012 + p_fp, pe)) * (1.0 - open);
+	// Broken plates tip: one edge sinks, the other rises from the water.
+	r_slope += brk * (1.0 - open) * 0.35 * vec2(pc.z - 0.5, fract(pc.y * 7.31) - 0.5);
 	float cover = ice * (1.0 - open);
-	float white = cover * clamp(milk + vein * (1.0 - brk) + 0.7 * rim, 0.0, 0.85);
-	return vec4(white, cover, mix(0.04, 0.35, white / max(cover, 1e-3)), 0.0);
+	float white = cover * clamp(milk + 0.5 * rim, 0.0, 0.9);
+	return vec4(white, cover, mix(0.12, 0.45, white / max(cover, 1e-3)), 0.0);
 }
 // Sand grains (docs/ideas/sand.md, sand glints; the same functions are in scene_raytracing_raygen.glsl). Grains
 // of 0.25 mm counted per cell of the pixel's footprint, as the snow's sparkle is (Zirr and Kaplanyan 2016;
