@@ -4449,7 +4449,7 @@ BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt
 	// A fissure that has not opened over a stretch: the plates either side are one there, and
 	// the breaks across them end on it in T junctions, as real crack networks do. It narrows to
 	// its end rather than stopping (a hard stop drew a straight step across the plate).
-	auto shut = [&](int i) { return Math::smoothstep(-0.04f, -0.3f, bark_fbm(float(wrap(i)) / p_cols, p_v, p_cols, 8, 2, p_salt + 41u)); };
+	auto shut = [&](int i) { return Math::smoothstep(-0.12f, -0.24f, bark_fbm(float(wrap(i)) / p_cols, p_v, p_cols, 8, 2, p_salt + 41u)); };
 	int c = int(Math::floor(x));
 	if (x < bound(c)) {
 		c--;
@@ -4658,7 +4658,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					const float n = ragged - c.edge;
 					// A fissure shallows as it shuts, so its tapered end is a fading groove, not a
 					// thin deep slash (docs, 19 Nov).
-					open = MIN(MAX(Math::smoothstep(0.0f, crack_w, c.f1 + n), 0.85f * c.shallow), 0.55f + 0.45f * Math::smoothstep(0.0f, crack_w * 1.3f, c.cross + n));
+					open = MIN(MAX(Math::smoothstep(0.0f, crack_w, c.f1 + n), 0.85f * c.shallow), 0.12f + 0.88f * Math::smoothstep(0.0f, crack_w * 1.8f, c.cross + n));
 				}
 				// Flaking bark is mostly smooth: only a fallen flake leaves an edge, around a shallow
 				// scar of fresh, warmer inner bark (sycamore, plane, horse chestnut).
@@ -4835,7 +4835,12 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// the warm floor runs up the lower walls, and where a plate's outer scales have
 					// flaked off its face shows the fresher red-brown layer (Alia et al. 1996; maritime
 					// pine's inner bark is purplish red-brown).
-					a = Color(1.62f, 0.95f, 0.7f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.04f, 0.4f, open)) * shade;
+					// Round 17 (docs, 19 Nov: an even orange band down both walls read as painted on): the
+					// warm layer shows only as a narrow line deep in the crack, broken along it where the
+					// fissure's floor is filled with grey flakes and dirt.
+					const float broken = Math::smoothstep(-0.05f, 0.12f, bark_fbm(u, v, 10 * F, 14 * F, 2, salt + 63u));
+					const float deep = 1.0f - Math::smoothstep(0.02f, 0.12f, open);
+					a = Color(1.0f, 1.0f, 1.0f).lerp(Color(1.62f, 0.95f, 0.7f), 0.75f * deep * broken) * shade;
 					const float fresh = Math::smoothstep(0.1f, 0.22f, bark_fbm(u, v, 6 * F, 3 * F, 3, salt + 61u)) * Math::smoothstep(0.6f, 0.9f, open);
 					a = a * Color(1.0f, 1.0f, 1.0f).lerp(Color(1.35f, 0.92f, 0.74f), 0.55f * fresh);
 				}
@@ -5131,19 +5136,27 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 	rbytes.resize(N * N * 3);
 	Vector<uint8_t> hbytes;
 	hbytes.resize(N * N * 4);
-	// The heights the normal map is taken from. Maritime pine's furrows are cut into the mesh
-	// (the relief tube); taken from the full heights as well, the normal map tilted the furrow
-	// walls a second time on top of the displaced walls, past facing each other, and the deepest
-	// furrows shaded flat black under raster and the path tracer alike (docs, 19 Nov). Its map
-	// keeps only the detail finer than the mesh's grid: the heights less a box-blurred copy
-	// about the grid's size (a high-pass, as detail normal maps over displaced meshes are baked).
-	LocalVector<float> hn_detail;
-	const float *hn = hw;
+	// Maritime pine's furrows are cut into the mesh (the relief tube); with the normal map taken
+	// from the full heights as well, it tilted the furrow walls a second time on top of the
+	// displaced walls, past facing each other, and the deepest furrows shaded flat black under
+	// raster and the path tracer alike (docs, 19 Nov). Down in the furrows the map keeps only
+	// the detail finer than the mesh's grid: the slope less most of a box-blurred copy's about
+	// the grid's size (a high-pass, as detail normal maps over displaced meshes are baked).
+	LocalVector<float> hn_detail; // The blurred heights.
+	const float *hn = nullptr;
+	float h_lo = 0.0f, h_span = 1.0f;
 	if (p_kind == BARK_PINASTER) {
 		const int R = 6;
 		LocalVector<float> tmp;
 		tmp.resize(N * N);
 		hn_detail.resize(N * N);
+		float h_hi = -1e9f;
+		h_lo = 1e9f;
+		for (int k = 0; k < N * N; k++) {
+			h_lo = MIN(h_lo, hw[k]);
+			h_hi = MAX(h_hi, hw[k]);
+		}
+		h_span = MAX(h_hi - h_lo, 1e-6f);
 		for (int y = 0; y < N; y++) {
 			float sum = 0.0f;
 			for (int k = -R; k <= R; k++) {
@@ -5160,7 +5173,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				sum += tmp[((k + N) % N) * N + x];
 			}
 			for (int y = 0; y < N; y++) {
-				hn_detail[y * N + x] = hw[y * N + x] - 0.6f * sum / (2 * R + 1);
+				hn_detail[y * N + x] = sum / (2 * R + 1); // The blurred heights.
 				sum += tmp[((y + R + 1) % N) * N + x] - tmp[((y - R + N) % N) * N + x];
 			}
 		}
@@ -5178,8 +5191,18 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				const float f = CLAMP(aw[k * 3 + c] * 0.92f / _bark_headroom(p_kind), 0.0f, 1.0f);
 				abytes.write[k * 3 + c] = uint8_t(Math::round(Color(f, f, f).linear_to_srgb().r * 255.0f));
 			}
-			const float hx = hn[y * N + (x + 1) % N] - hn[y * N + (x + N - 1) % N];
-			const float hy = hn[((y + 1) % N) * N + x] - hn[((y + N - 1) % N) * N + x];
+			float hx = hw[y * N + (x + 1) % N] - hw[y * N + (x + N - 1) % N];
+			float hy = hw[((y + 1) % N) * N + x] - hw[((y + N - 1) % N) * N + x];
+			if (hn) {
+				// The blurred slope taken off only down in the wide furrows (the blurred height
+				// low), where the mesh carries the walls; the narrow cross breaks keep their full
+				// shading, or the plates' ends and stagger washed out into unbroken ridges (docs,
+				// 19 Nov, round 17). Slopes blended, not heights: a weight varying over the heights
+				// drew its own ridges.
+				const float w = 0.9f * (1.0f - Math::smoothstep(h_lo + 0.4f * h_span, h_lo + 0.7f * h_span, hn[k]));
+				hx -= w * (hn[y * N + (x + 1) % N] - hn[y * N + (x + N - 1) % N]);
+				hy -= w * (hn[((y + 1) % N) * N + x] - hn[((y + N - 1) % N) * N + x]);
+			}
 			// OpenGL convention (Godot): +y up the image is +v, so the y slope flips.
 			Vector3 n = Vector3(-hx / (2.0f * texel), hy / (2.0f * texel), 1.0f).normalized();
 			nbytes.write[k * 3 + 0] = uint8_t(Math::round((n.x * 0.5f + 0.5f) * 255.0f));
