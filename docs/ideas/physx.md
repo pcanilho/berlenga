@@ -1950,6 +1950,33 @@ embers); a 15 m gap did not save the street (brands carried it, as the
 surveys find); 4 m/s, 6 lost. A bare wall with no fuel against it does
 not catch from a grass front 10 m off or from embers alone.
 
+### Ash darkens snow (world-links hook, 19 Nov)
+
+Research: light-absorbing particles on snow are counted as black carbon
+equivalent (Warren and Wiscombe 1980; Flanner et al. 2007); burnt-area
+ash and char blown onto snow cut its albedo for seasons after a fire
+(Gleason et al. 2013, Oregon Cascades). Fine ash lifted to about 1.5 m
+and falling at about 0.3 m/s settles over L = u h / v_s downwind. Built:
+PhysXAsh hands the ash it lifts to WorldSnow.add_impurity once a second,
+in three bands along the wind (e^-0 - e^-1, e^-1 - e^-2, e^-2 - e^-3 of
+it), gathered into cells half L across, as 0.05 of its mass in black
+carbon equivalent (char-bearing ash, darker than mineral dust's 0.013).
+Test: 5.2 kg blown in 2 min at 10 m/s gives 247 g BCe on the snow out
+to 150 m downwind, about 10 calls a second.
+
+### Flow raster light matches path tracing (snow's request, 19 Nov)
+
+The raster scattering pass weighed the multiple-scattering octaves
+(Wrenninge et al. 2013; Hillaire 2016) as 1 + 0.5 + 0.25 of the light
+at zero optical depth, so thin gas and the sunlit skin of thick gas got
+1.75 times the light the path tracer gives them, and the lit and shaded
+sides sat together in the tone curve's shoulder: evenly bright puffs.
+The octaves are now normalised to 1 at zero depth (the extra octaves
+still keep dense interiors from going black). Test puff, mean grey down
+its middle (raster before, after, path traced): 185, 166, 152.
+scattering_strength is a raster-only multiplier the path tracer does
+not see; it stays at 1 for parity.
+
 ### Next-round options (card, 19 Nov late morning)
 
 Water on burning buildings. Hose streams and MPM water reaching a room
