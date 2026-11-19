@@ -59,6 +59,7 @@ extends Node3D
 #   --burn=A         a burn scar A years old (WorldBurnScar3D, 20 x 12 m) in the view: the sward grows back over
 #                    GrassField3D.burn_recovery (0.7 years), short and sparse first; GRASS_NO_FLUSH=1 without the
 #                    regrowth flush (the before frame)
+#   GRASS_FIBRE=ab   with --out: also saves out_nofibre.png, the same frame with GrassField3D.fibre_shading 0
 #   --undergrowth-edge  with --undergrowth: its edge from 1 m up, 3.5 m along it (--no-margin: no margin)
 #   --no-rock-foot   with --rocks: the floor species without PlantSpecies.rock_foot
 #   --undergrowth=bracken|bramble   a stand of it in the open meadow, framed from 5 m and 3 m up in side light; the sward
@@ -329,6 +330,8 @@ func _ready() -> void:
 	dm.water_sources = [NodePath("../Pond")]
 	add_child(dm)
 	grass = GrassField3D.new()
+	if OS.get_environment("GRASS_STILL") == "1":
+		grass.still_shot = true
 	grass.name = "Grass"
 	grass.fallback_wind = wind
 	grass.far_match_view = OS.get_environment("GRASS_VIEW_MATCH") != "0" # 0: without the live-view far match.
@@ -438,6 +441,8 @@ func _ready() -> void:
 		cover.populate_on_ready = false
 		cover.tile_size = 4.0
 		cover.biome = _cover_biome()
+		if OS.get_environment("GRASS_STILL") == "1":
+			cover.still_shot = true # Still shots: stop streaming once settled.
 		cover.forest_floor_enabled = not no_floor
 		cover.litter_wind = litter_wind
 		if clearing >= 0:
@@ -2493,6 +2498,9 @@ func _process(dt: float) -> void:
 			["", "on", "off", "rings"][far_grass], grass.get_ring_blade_count(), grass.get_ring_tile_count(), grass.get_ring_build_msec(), grass.get_shell_column_count(), grass.get_shell_tile_count(), grass.get_blade_count(),
 			(OS.get_static_memory_usage() - far_mem0) / 1048576.0, Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME), Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)])
 	await RenderingServer.frame_post_draw
+	if OS.get_environment("GRASS_STILL") == "1":
+		# GrassField3D/VegetationField3D.still_shot: settled and frozen by now; memory against the run's start.
+		print("GRASS_STILL frozen grass=%s cover=%s memory %.0f MB" % [grass.is_still_frozen(), cover.is_still_frozen() if cover else "-", OS.get_static_memory_usage() / 1048576.0])
 	if prims:
 		await _print_prims()
 	if not out.is_empty():
@@ -2502,6 +2510,9 @@ func _process(dt: float) -> void:
 				(grass.get_material() as ShaderMaterial).set_shader_parameter("burn_flush_rect", Vector4())
 			for i in 3:
 				await RenderingServer.frame_post_draw
+		if OS.get_environment("GRASS_FIBRE") == "ab":
+			for i in 30: # Everything streamed in before the pair is taken.
+				await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out)
 		print("saved ", out)
 		if burn_age >= 0.0 and OS.get_environment("GRASS_NO_FLUSH") == "ab":
@@ -2510,6 +2521,12 @@ func _process(dt: float) -> void:
 			for i in 3:
 				await RenderingServer.frame_post_draw
 			get_viewport().get_texture().get_image().save_png(out.get_basename() + "_noflush.png")
+		if OS.get_environment("GRASS_FIBRE") == "ab":
+			# The same frame again without the fibre shading (GrassField3D.fibre_shading 0): out_nofibre.png.
+			grass.fibre_shading = 0.0
+			for i in 30:
+				await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(out.get_basename() + "_nofibre.png")
 
 	get_tree().quit()
 

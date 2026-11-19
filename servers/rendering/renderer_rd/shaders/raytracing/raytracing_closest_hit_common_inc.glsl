@@ -406,6 +406,8 @@ MaterialProperties material_properties_coated(vec3 p_albedo, float p_metallic, f
 	material.hairPlaneNormal = p_coat_normal;
 	material.hairParams = vec4(0.3, 0.3, 2.0, 0.0);
 	material.hairCards = false;
+	material.anisotropy = 0.0;
+	material.anisoTangent = vec3(1.0, 0.0, 0.0);
 	return material;
 }
 
@@ -430,6 +432,8 @@ MaterialProperties material_properties_from_result(HitData h, MaterialResult m, 
 	material.hairPlaneNormal = h.geometry_normal;
 	material.hairParams = m.hair_params;
 	material.hairCards = m.hair_cards;
+	material.anisotropy = m.aniso.w;
+	material.anisoTangent = m.aniso.xyz;
 	return material;
 }
 
@@ -866,7 +870,8 @@ float reflection_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties mat
 		}
 		vec3 H = normalize(V + L);
 		vec3 Ns = dot(material.specularNormal, material.specularNormal) > 0.5 ? material.specularNormal : N;
-		pdf += p_spec * sampleGGXVNDFReflectionPdf(alpha, alpha * alpha, max(dot(Ns, H), 0.0), max(dot(Ns, V), 0.0), max(dot(L, H), 0.0));
+		pdf += p_spec * (material.anisotropy > 0.0 ? anisoGGXReflectionPdf(Ns, material.anisoTangent, V, L, alpha, material.anisotropy)
+													  : sampleGGXVNDFReflectionPdf(alpha, alpha * alpha, max(dot(Ns, H), 0.0), max(dot(Ns, V), 0.0), max(dot(L, H), 0.0)));
 	}
 	return pdf;
 }

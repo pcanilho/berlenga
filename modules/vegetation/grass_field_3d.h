@@ -198,6 +198,15 @@ private:
 	int max_tiles_per_frame = 12;
 	int blade_segments = 4;
 	float view_facing = 0.6f;
+	float fibre_shading = 0.8f;
+	// Still shots (scene benches on the cloud's memory): once the field round the camera is complete it stops
+	// updating (no tile, ring or shell rebuilds, no trample) until the camera moves still_shot_move metres.
+	bool still_shot = false;
+	int still_quiet = 0; // Frames in a row with nothing left to build.
+	Vector3 still_at;
+	bool still_frozen = false;
+	uint32_t still_generation = 0;
+	int last_built = 0; // Near tiles built by the last _update_tiles(). // ANISOTROPY of the blades' specular, spread across the strands (docs/ideas/grass.md, "Fibre shading").
 	// Ground under the grass takes its colour (alpha: strength), through the grass_ground_* globals.
 	Color ground_tint = Color(0.05f, 0.09f, 0.025f, 0.85f);
 	bool ground_tint_enabled = true;
@@ -565,6 +574,11 @@ public:
 	int get_blade_segments() const { return blade_segments; }
 	void set_view_facing(float p_facing);
 	float get_view_facing() const { return view_facing; }
+	void set_still_shot(bool p_enabled);
+	bool is_still_shot() const { return still_shot; }
+	bool is_still_frozen() const { return still_frozen; }
+	void set_fibre_shading(float p_amount);
+	float get_fibre_shading() const { return fibre_shading; }
 	void set_ground_tint(const Color &p_color);
 	Color get_ground_tint() const { return ground_tint; }
 	void set_ground_tint_enabled(bool p_enabled);

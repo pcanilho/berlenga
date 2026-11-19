@@ -1013,6 +1013,7 @@ varying float v_light;
 varying float v_trod; // Trodden flat on a worn path (its rest lean past any sward's own).
 
 uniform float color_variation;
+uniform float fibre_shading = 0.8;
 )";
 		code += GRASS_COLOR_CODE;
 		code += VegetationLight::SHADER_CODE;
@@ -1165,6 +1166,13 @@ void vertex() {
 		NORMAL = normalize(mix(NORMAL, normalize(to_local * vec3(0.0, 1.0, 0.0)), 0.55 * soft));
 		v_tint = mix(v_tint, grass_patch_tint(base_w.xz, 0.5, 0.5, color_variation), 0.5 * soft);
 	}
+	// Fibre shading (docs/ideas/grass.md): the blade's normals spread across its width, not along it, so its
+	// specular lobe widens across the strand (ANISOTROPY along TANGENT) and the sward's highlight runs as a sheen
+	// across the blades, as on hair. Tangent across the blade, square to the normal, so raster and the path
+	// tracer (which squares it) agree.
+	vec3 fib_t = across - dot(across, NORMAL) * NORMAL;
+	TANGENT = dot(fib_t, fib_t) > 1e-8 ? normalize(fib_t) : normalize(cross(NORMAL, tangent));
+	BINORMAL = normalize(cross(NORMAL, TANGENT));
 	// Regrowth on burnt ground: the new blades come up a lighter, fresher yellow-green than the sward around (the
 	// post-fire green flush), fading over a year and a half; the plants' shader does the same.
 	v_flush = 0.0;
@@ -1260,10 +1268,15 @@ void fragment() {
 	ALBEDO = c * mix(1.0, wet_factor, wet_c);
 	ROUGHNESS = mix(mix(mix(mix(0.55, 0.75, v_trod) * mix(1.0, wet_factor, 0.5 * wet_c) * mix(1.0, 0.4, wet_c), 0.85, mud_c), 0.95, smoothstep(0.0, 0.5, v_burn)), 0.85, frost_c);
 	ROUGHNESS = mix(ROUGHNESS, 0.7, v_snow);
+	// Fibre shading: the strand sheen; wet, frosted, muddy or snow-covered blades lose it (a film or a crust over the fibres).
+	float fib = fibre_shading * (1.0 - max(wet_c, max(frost_c, max(mud_c, v_snow))));
 	ROUGHNESS = mix(ROUGHNESS, max(ROUGHNESS, 0.8), v_soft);
 	// The burning band: the stubs' tips glow as the ground's embers do (the char decal's glow energy).
 	EMISSION = fire_glow_color(v_glow) * 4.0 * smoothstep(0.4, 1.0, v_t) * step(1e-3, v_burn);
 	SPECULAR = mix(0.35, 0.2, v_trod);
+	// Only the lobe's shape changes (stretched across the strands), not its energy: raster and the path tracer agree
+	// on that, where a smoother, shinier blade brightened the path-traced sward far more than the raster one.
+	ANISOTROPY = fib;
 	BACKLIGHT = ALBEDO * 0.7;
 	// Sky light inside the sward (Monsi and Saeki 1953): diffuse light falls off as
 	// exp(-k L) with the leaf area L above, k about 0.8 for upright blades, and light the blades
@@ -1296,6 +1309,7 @@ void fragment() {
 	material->set_shader_parameter("trample_rect", Vector4());
 	_publish_burn_flush();
 	material->set_shader_parameter("view_facing", view_facing);
+	material->set_shader_parameter("fibre_shading", fibre_shading);
 	material->set_shader_parameter("fade_band", fade_band);
 	material->set_shader_parameter("ring_band", ring_band);
 	// One-sided leaf area per ground area: blades per m2 x mean height x width x 0.7 (the taper).
@@ -1494,21 +1508,6 @@ void GrassField3D::_free_hedges() {
 		}
 	}
 	hedge_nodes.clear();
-}
-
-// A species' living meshes: TreeGenerator appends its burnt band variants (mesh meta "tree_fire_years",
-// world-links.md "Fire -> trees regrow"), which only VegetationField3D picks by burn age; the hedgerow
-// cycles its variants by index, so it takes the living ones only.
-static TypedArray<Mesh> _living_meshes(const Ref<PlantSpecies> &p_species) {
-	TypedArray<Mesh> out;
-	const TypedArray<Mesh> all = p_species->get_meshes();
-	for (int i = 0; i < all.size(); i++) {
-		const Ref<Mesh> m = all[i];
-		if (m.is_valid() && !m->has_meta(SNAME("tree_fire_years"))) {
-			out.push_back(m);
-		}
-	}
-	return out;
 }
 
 // Hedgerows (docs/ideas/vegetation.md, "Farmland", stage 3): a hawthorn hedge with blackthorn,
@@ -1771,7 +1770,7 @@ void GrassField3D::_build_hedges() {
 		if (species[k].is_null()) {
 			continue;
 		}
-		const TypedArray<Mesh> meshes = _living_meshes(species[k]);
+		const TypedArray<Mesh> meshes = TreeGenerator::get_living_meshes(species[k]);
 		for (int v = 0; v < VARIANTS; v++) {
 			if (xf[k][v].is_empty() || meshes.is_empty()) {
 				continue;
@@ -1806,7 +1805,7 @@ void GrassField3D::_build_hedges() {
 		if (sp.is_null()) {
 			continue;
 		}
-		const TypedArray<Mesh> meshes = _living_meshes(sp);
+		const TypedArray<Mesh> meshes = TreeGenerator::get_living_meshes(sp);
 		for (int v = 0; v < VARIANTS; v++) {
 			if (std_xf[k][v].is_empty() || meshes.is_empty()) {
 				continue;
@@ -2932,6 +2931,7 @@ void GrassField3D::_update_rings(const Vector2 &p_center, TerrainDataMap3D *p_ma
 		}
 	}
 	want.sort();
+	last_built += int(want.size());
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	// The first fill all at once (a scene's first frame), then within a budget a frame.
 	const bool first = ring_tiles.is_empty();
@@ -3264,6 +3264,7 @@ void fragment() {
 		}
 	}
 	want.sort();
+	last_built += int(want.size());
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	const bool first = shell_tiles.is_empty();
 	for (const Want &w : want) {
@@ -4674,6 +4675,7 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 	if (built > 0) {
 		build_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	}
+	last_built = int(want.size()); // Anything wanted (built now or left for later frames), with the far rings' and shell's.
 	_update_rings(c, map);
 	_update_shell(c, map);
 }
@@ -5287,6 +5289,19 @@ void GrassField3D::set_view_facing(float p_facing) {
 	}
 }
 
+void GrassField3D::set_still_shot(bool p_enabled) {
+	still_shot = p_enabled;
+	still_frozen = false;
+	still_quiet = 0;
+}
+
+void GrassField3D::set_fibre_shading(float p_amount) {
+	fibre_shading = CLAMP(p_amount, 0.0f, 1.0f);
+	if (material.is_valid()) {
+		material->set_shader_parameter("fibre_shading", fibre_shading);
+	}
+}
+
 void GrassField3D::set_ground_tint(const Color &p_color) {
 	ground_tint = p_color;
 	ground_baked = false;
@@ -5521,7 +5536,24 @@ void GrassField3D::set_trample_resolution(int p_resolution) {
 }
 
 void GrassField3D::update_at(const Vector3 &p_center) {
+	if (still_shot && still_frozen) {
+		if (p_center.distance_to(still_at) < 0.5f && generation == still_generation) {
+			return;
+		}
+		still_frozen = false;
+		still_quiet = 0;
+	}
+	const uint32_t gen_before = generation;
 	_update_tiles(p_center);
+	if (still_shot) {
+		// Complete once a few frames in a row built nothing.
+		still_quiet = (last_built == 0 && generation == gen_before) ? still_quiet + 1 : 0;
+		if (still_quiet >= 10) {
+			still_frozen = true;
+			still_at = p_center;
+			still_generation = generation;
+		}
+	}
 	if (trample_enabled) {
 		const Vector2i before = trample_origin;
 		const bool fresh = (int)trample.size() != trample_resolution * trample_resolution || material->get_shader_parameter("trample_map").get_type() == Variant::NIL;
@@ -5606,7 +5638,7 @@ void GrassField3D::_notification(int p_what) {
 					_far_view_step(cam);
 				}
 			}
-			if (trample_enabled && !trample.is_empty()) {
+			if (trample_enabled && !trample.is_empty() && !still_frozen) {
 				_trample_step(get_process_delta_time());
 			}
 			_season_step();
@@ -5999,6 +6031,10 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_trample_enabled"), &GrassField3D::is_trample_enabled);
 	GRASS_BIND(set_blade_segments, get_blade_segments, "segments")
 	GRASS_BIND(set_view_facing, get_view_facing, "facing")
+	GRASS_BIND(set_fibre_shading, get_fibre_shading, "amount")
+	ClassDB::bind_method(D_METHOD("set_still_shot", "enabled"), &GrassField3D::set_still_shot);
+	ClassDB::bind_method(D_METHOD("is_still_shot"), &GrassField3D::is_still_shot);
+	ClassDB::bind_method(D_METHOD("is_still_frozen"), &GrassField3D::is_still_frozen);
 	GRASS_BIND(set_ground_tint, get_ground_tint, "color")
 	ClassDB::bind_method(D_METHOD("set_ground_tint_enabled", "enabled"), &GrassField3D::set_ground_tint_enabled);
 	ClassDB::bind_method(D_METHOD("is_ground_tint_enabled"), &GrassField3D::is_ground_tint_enabled);
@@ -6064,6 +6100,8 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "clump_size", PROPERTY_HINT_RANGE, "0.05,10,0.05,suffix:m"), "set_clump_size", "get_clump_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "blade_segments", PROPERTY_HINT_RANGE, "1,8,1"), "set_blade_segments", "get_blade_segments");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "view_facing", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_view_facing", "get_view_facing");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "still_shot"), "set_still_shot", "is_still_shot");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fibre_shading", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_fibre_shading", "get_fibre_shading");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lean", PROPERTY_HINT_RANGE, "0,1.4,0.01,radians_as_degrees"), "set_lean", "get_lean");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "base_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_base_color", "get_base_color");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "tip_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_tip_color", "get_tip_color");
