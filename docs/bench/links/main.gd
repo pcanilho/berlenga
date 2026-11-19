@@ -499,7 +499,7 @@ func _contract_tests() -> void:
 	var lost: Dictionary = fa.get_burn_changes_since(gen)
 	_check("contracts: burn change log covers a moved scar's old and new area; too old means read all", moved_ok and none["complete"] and not (none["area"] as Rect2).has_area() and not lost["complete"], "%s, %s" % [ch, lost])
 	new_scar.position = Vector3.ZERO
-	_check("contracts: no fire gives no plumes", fa.plumes().is_empty(), "%d" % fa.plumes().size())
+	_check("contracts: no fire gives no plumes or smoke", fa.plumes().is_empty() and fa.smoke_sources().is_empty(), "%d, %d" % [fa.plumes().size(), fa.smoke_sources().size()])
 	var a_old := fa.burn_age_at(Vector3(-20, 0, -20))
 	var a_new := fa.burn_age_at(Vector3(5, 0, 5))
 	var a_none := fa.burn_age_at(Vector3(200, 0, 0))

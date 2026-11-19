@@ -127,6 +127,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Terrain wind (lee of a ridge) → fire whirls | linked (18 Nov) | WorldWeather `terrain_lee_at` (Winstral Sx) | PhysX c3c529f4: lee-slope whirls form where the wind has separated behind a crest, driven by the ridge's free wind |
 | Fire → ash on burnt grass, litter | linked (18 Nov) | fire_char_map (`VegetationFire::ASH_CODE`) | PhysX c3c529f4: white ash where it burnt out, black char where not, thinned by wind and darkened by rain |
 | Fire → fire clouds (pyrocumulus over a big fire) | linked (19 Nov) | WorldFire `plumes()` (base, convective W) | PhysX ebdad64b: WeatherMap3D builds the cloud from the plumes |
+| Fire → smoke haze downwind | linked (19 Nov) | WorldFire `smoke_sources()` (base, kg/s PM2.5) | PhysX eabdcd98: WeatherMap3D carries the smoke into its haze |
 | Fire age → trees cast dead needles | linked (19 Nov) | shader global `fire_age_map` | PhysX ebdad64b |
 | Fire → regrowth (burnt ground greens again) | linked (19 Nov) | WorldFire `burn_age_at` (fires in play, WorldBurnScar3D) | VegetationField3D: RULE_BURN_AGE, PlantSpecies.burn_recovery (38c29f47); GrassField3D green-up (30b7085a, a7c6a8fb); both refresh through the burn change log (VegetationField3D 0197e5b2, vegetation bench `--burn=live`) |
 | Burnt ground → runoff (water-repellent soil, ash washed off) | linked (19 Nov) | WorldFire `water_repellency_at`, WorldGround `runoff_at` | PhysX 837fea90 |
