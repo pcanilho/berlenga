@@ -2308,6 +2308,12 @@ taken by `scrub_shrub()` so young, mature, old, thicket and cushion forms all wo
   Frames: /mnt/project-files/fork/trees/arid/.
 - Not done: Calligonum's small flowers (March), saltbush's autumn fruiting spikes, the twiglets'
   summer shedding.
+- Cost (vegetation's desert bench, 19 Nov: about 70k triangles a plant in view): calligonum's far mesh draws
+  each twiglet as one face twice as wide (a third of the prisms; the near mesh keeps them), its fruit thins
+  with distance as heath flowers do instead of leaving at LOD 1, 24 bristles a fruit; white broom's pods are
+  a 30-triangle lens; saltbush grows longer internodes and carries its leaves on fewer twigs (its twig
+  tubes were most of its triangles). Far meshes: calligonum 542k to 229k, white broom 289k to 218k (pods
+  in), saltbush 401k to 245k; coarsest levels 20-26k.
 
 ### 5af. Needle cast after fire (19 Nov; PhysX's standing snags)
 

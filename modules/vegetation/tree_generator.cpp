@@ -1018,9 +1018,9 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			// grey with salt-bladder hairs on both faces, held through most of the year; pale
 			// woody stems. Small flowers and winged fruit in terminal spikes in autumn (Le Houerou
 			// 1992; Walker et al. 2014).
-			p[PARAM_YEARS] = 12;
+			p[PARAM_YEARS] = 10;
 			p[PARAM_MATURITY] = 5;
-			p[PARAM_INTERNODE_LENGTH] = 0.1f;
+			p[PARAM_INTERNODE_LENGTH] = 0.14f; // Fewer, longer internodes: a dense bush at a third of the wood's cost.
 			p[PARAM_INTERNODE_LENGTH_AGE] = 0.95f;
 			p[PARAM_MAX_SHOOT] = 4;
 			p[PARAM_APICAL_DOMINANCE] = 0.47f;
@@ -1042,7 +1042,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_ROOT_FLARE] = 0.15f;
 			p[PARAM_LEAF_SIZE] = 0.022f;
 			p[PARAM_LEAF_WIDTH] = 0.65f;
-			p[PARAM_LEAVES_PER_INTERNODE] = 24;
+			p[PARAM_LEAVES_PER_INTERNODE] = 26;
 			p[PARAM_LEAF_YEARS] = 3;
 			bark_color = Color(0.58f, 0.56f, 0.5f); // Pale grey-buff.
 			leaf_color = Color(0.42f, 0.43f, 0.33f); // Silvery, whitish grey-green (the salt bladders' bloom).
@@ -4125,12 +4125,16 @@ void TreeGenerator::_add_needle(Builder &r_b, const Vector3 &p_base, const Vecto
 // its own flat faces, so the joints read as kinks and dark rings up close.
 void TreeGenerator::_add_jointed_twig(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color, uint32_t p_hash) {
 	const int segs = 3 + int(p_hash % 3u);
+	// The far mesh (beyond the near range, trees.md 8d): one face a segment, turned to the twiglet's side, a third
+	// of the prisms' cost; a millimetre twig is under a pixel there.
+	const int faces = far_leaves ? 1 : 3;
 	const float seg_len = p_size / segs;
 	Vector3 ref = Math::abs(p_out.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
 	Vector3 s0 = p_out.cross(ref).normalized();
 	Vector3 at = p_base;
 	Vector3 d = p_out;
-	const float r0 = 0.0007f;
+	// A single face shows on average about half a prism's width: twice as wide keeps the twiglets' green.
+	const float r0 = far_leaves ? 0.0014f : 0.0007f;
 	const Color joint = Color(p_color.r * 0.45f + 0.12f, p_color.g * 0.4f + 0.07f, p_color.b * 0.4f + 0.03f);
 	for (int sgi = 0; sgi < segs; sgi++) {
 		// Each joint turns the twiglet a little, and it bows down toward its tip.
@@ -4147,7 +4151,7 @@ void TreeGenerator::_add_jointed_twig(Builder &r_b, const Vector3 &p_base, const
 			cb[k] = at + off * r;
 			ce[k] = end + off * (r * 1.25f); // The swollen joint.
 		}
-		for (int k = 0; k < 3; k++) {
+		for (int k = 0; k < faces; k++) {
 			const int k1 = (k + 1) % 3;
 			Vector3 n = (cb[k1] - cb[k]).cross(ce[k] - cb[k]); // Outward.
 			n = n.length_squared() > 1e-24f ? n.normalized() : s0;
@@ -7914,7 +7918,8 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 							const Vector3 w = perp(a);
 							const Vector3 th = a.cross(w);
 							const int v0 = r_b.verts.size();
-							const int rings = 6, sides = 6;
+							// White broom's small pods by the thousand: a coarser lens (30 triangles, not 60).
+							const int rings = retama ? 4 : 6, sides = retama ? 5 : 6;
 							for (int i = 0; i < rings; i++) {
 								const float tt = float(i) / (rings - 1);
 								const float pr = Math::pow(Math::sin(float(Math::PI) * (0.08f + 0.84f * tt)), 0.6f);
@@ -9075,7 +9080,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			case NUT_CALLIGONUM: {
 				// One to three along the twig behind its tip: an ellipsoid nut 8-12 mm with four
 				// ribs, each ribbed edge carrying two rows of branched bristles, so the fruit is a
-				// ball of bristles 15-25 mm across (Calligonum comosum: "hairy"). Scarlet to crimson
+				// ball of bristles 15-25 mm across (Calligonum comosum: "hairy"; 24 bristles stand for the many). Scarlet to crimson
 				// when fresh in April, fading through pink to buff as it dries (Danin 1996; Flora
 				// Palaestina). Each bristle a thin triangle forked once near its tip.
 				const float fade = CLAMP((day - 140.0f) / 70.0f, 0.0f, 1.0f);
@@ -9097,8 +9102,8 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 					for (int rib = 0; rib < 4; rib++) {
 						for (int row = 0; row < 2; row++) {
 							const float az = float(Math::TAU) * rib / 4.0f + (row == 0 ? -0.22f : 0.22f);
-							for (int j = 0; j < 4; j++) {
-								const float lat = Math::lerp(-1.0f, 1.0f, (j + 0.5f) / 4.0f) * 0.9f;
+							for (int j = 0; j < 3; j++) {
+								const float lat = Math::lerp(-1.0f, 1.0f, (j + 0.5f) / 3.0f) * 0.85f;
 								const Vector3 radial = (u1 * Math::cos(az) + u2 * Math::sin(az)) * Math::sqrt(MAX(1.0f - lat * lat, 0.05f)) + ax * lat;
 								const Vector3 jit = Vector3(cr.randf() - 0.5f, cr.randf() - 0.5f, cr.randf() - 0.5f) * 0.35f;
 								const Vector3 bd = (radial + jit).normalized();
@@ -9155,7 +9160,12 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			default:
 				break;
 		}
-		close_part(part, size);
+		// Calligonum's red fruit colours the bush from afar (trees.md 5ae): it thins stochastically with distance as a
+		// heath shrub's flowers do (sized negative) instead of leaving with LOD 0.
+		close_part(part, kind == NUT_CALLIGONUM ? -size : size);
+	}
+	if (kind == NUT_CALLIGONUM) {
+		big_end = r_b.indices.size();
 	}
 	(void)ls;
 	return big_end;
@@ -16905,7 +16915,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// a spherical-like leaf angle distribution (Campbell 1986: most broadleaf canopies have a
 		// mean leaf inclination near 45-60 degrees, not horizontal).
 		// Spurs on older wood carry a few short shoots, not a whole year's spray.
-		const int twigs = spurs[i] ? MAX(1, per / 12) : MAX(1, per / 4);
+		// Saltbush's leaves sit close along the shoots on short petioles, not on side twigs (trees.md 5ae): a few
+		// longer twigs carry them (its twig tubes were most of the bush's triangles).
+		const int twigs = spurs[i] ? MAX(1, per / 12) : MAX(1, per / (preset == PRESET_SALTBUSH ? 10 : 4));
 		const int per_twig = MAX(1, per / twigs);
 		const float twig_r = params[PARAM_TIP_RADIUS] * 0.6f;
 		const float droop = params[PARAM_TWIG_DROOP] * (1.0f - 0.85f * krummholz);
