@@ -1314,6 +1314,7 @@ Paulo picked all three of round 3 (19 Nov), triggers first. `SnowAvalanche3D.tri
 - 60 cm of fresh snow: index 1.10 alone, 0.45 under a person. A person standing on it releases 9600 m3.
 - A metre of snow five cold days old (now 0.49 m at 202 kg/m3): index 1.13 under a person, who stands on it, and 0.75 under a 400 kg sled, which releases it.
 - A week-old slab, 0.57 m over a buried crust: on the flat, index 1.72 under a person (holds) and 0.45 under 3 kN/m. That load collapses the crust and the face 20 m away releases 1650 m3.
+- Snow from the weather map builds the slab update by update: 0.164 m fell in 6 h and all of it counts as new slab (re-checked after the world-links fix 499de57a, which makes the weather map answer snowfall_at for SnowBodies3D too; the body checks still pass and the crates get the ground's 0.147 m in the bodies view).
 - With `triggers_enabled` off, nothing triggers.
 
 **Limits.**

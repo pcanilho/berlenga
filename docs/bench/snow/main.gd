@@ -1430,6 +1430,13 @@ func _run_trigger_tests() -> void:
 	_check("a buried crust: a person on the flat holds, a heavy load collapses it and the face releases from afar", light == 0 and heavy == 1 and av.get_collapse_count() == 1 and av.is_running() and av.get_released_volume() > 500.0, "results %d, %d; %d collapse; %.2f m over the crust; index on the flat %.2f under a person, %.2f under 3 kN/m; %.0f m3 released" % [light, heavy, av.get_collapse_count(), snow.get_depth_at(flat_at), i_light, i_heavy, av.get_released_volume()])
 	while av.is_running():
 		av.step(0.5)
+	# Snow from the weather map (not add_snow) builds the slab too, update by update.
+	av = await _trigger_setup()
+	_precipitate(6.0, 2.0)
+	for i in 3:
+		await get_tree().physics_frame
+	var fell := snow.get_depth_at(face)
+	_check("snowfall from the weather map builds the slab", fell > 0.02 and absf(av.get_recent_snow_at(face) - fell) < 0.1 * fell, "%.3f m fell, %.3f m of it new slab" % [fell, av.get_recent_snow_at(face)])
 	# Nothing triggers with triggers off.
 	av = await _trigger_setup()
 	av.triggers_enabled = false
