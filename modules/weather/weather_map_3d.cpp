@@ -461,6 +461,9 @@ float WeatherMap3D::_cloud_evolve() const {
 }
 
 float WeatherMap3D::_storm_weight(const Storm &p_storm) const {
+	if (p_storm.fire) {
+		return p_storm.fade; // eased by _update_fire_clouds
+	}
 	if (p_storm.lifetime <= 0.0f) {
 		return Math::smoothstep(0.0f, 600.0f, p_storm.age);
 	}
@@ -1036,6 +1039,7 @@ void WeatherMap3D::_advance(double p_weather_dt, double p_real_dt) {
 			storms.remove_at(i);
 		}
 	}
+	_update_fire_clouds(p_weather_dt);
 
 	// Gust patches ride the wind near the ground (1 m), wrapped to their noise's period.
 	{
@@ -1558,6 +1562,121 @@ int WeatherMap3D::add_storm(Vector2 p_position, float p_radius, float p_rain_rat
 	s.lifetime = p_lifetime;
 	storms.push_back(s);
 	return s.id;
+}
+
+// Fire clouds (docs/ideas/physx.md, "Fire clouds"). A fire's plume rises through the mixed layer, then by Briggs's
+// (1975) laws in the stable atmosphere over it (the standard 6.5 K/km lapse rate, buoyancy frequency N about 0.0106/s): 5.0 F^1/4 N^-3/4 in calm air,
+// 2.6 (F / (u N^2))^1/3 bent over in a wind u, F = g Q / (pi cp rho T) its buoyancy flux from Q, the convective heat.
+// Where it rises past the lifting condensation level, 125 m per kelvin of dew point depression (Espy), its rising
+// air condenses into a cumulus cap over it, a pyrocumulus; past it by a few kilometres, latent heat drives it on into
+// a pyrocumulonimbus that towers, throws lightning (WeatherLightning3D reads it as a storm) and blows out a downdraft
+// (Fromm et al. 2010; Lareau and Clements 2016, who measure the plume's condensation level a few hundred metres above
+// the ambient LCL, which the plume's heat lifts and the fire's water vapour lowers about evenly; Tory et al. 2018).
+Vector3 WeatherMap3D::get_fire_cloud_for(float p_heat) const {
+	const float t = cur_air_temperature;
+	const float lcl = MAX(125.0f * (t - get_air_dew_point()), 50.0f);
+	if (p_heat <= 0.0f) {
+		return Vector3(0.0f, lcl, 0.0f);
+	}
+	const float f = 9.81f * p_heat / (Math::PI * 1005.0f * 1.2f * (t + 273.15f));
+	const float n = 0.0106f;
+	const float z0 = MAX(roughness_length, 1e-5f);
+	const float u = cur_wind_speed * Math::log(500.0f / z0) / Math::log(10.0f / z0); // at about 500 m
+	float rise = 5.0f * Math::pow(f, 0.25f) * Math::pow(n, -0.75f);
+	if (u > 1.0f) {
+		rise = MIN(rise, 2.6f * Math::pow(f / (u * n * n), 1.0f / 3.0f));
+	}
+	// By day the sun mixes the air near the ground into a neutral layer that reaches up to about the cumulus base
+	// (Stull 1988): the plume rises through it freely and the stable rise above starts from its top. At night the
+	// mixed layer is a couple of hundred metres deep.
+	const float day = sun_known ? Math::smoothstep(0.0f, 0.5f, cur_sun_sine) : 0.5f;
+	rise += Math::lerp(200.0f, 0.9f * lcl, day);
+	// A cap of cumulus as the plume's top passes the LCL by a few hundred metres; beyond about two kilometres of
+	// rise above it the cloud keeps rising on its own latent heat (pyrocumulonimbus).
+	const float over = rise - lcl;
+	const float strength = over <= 0.0f ? 0.0f : MIN(over / 500.0f, 1.0f) + MAX(over - 2000.0f, 0.0f) / 2000.0f;
+	return Vector3(rise, lcl, strength);
+}
+
+int WeatherMap3D::get_fire_cloud_count() const {
+	int n = 0;
+	for (const Storm &s : storms) {
+		n += s.fire && s.fade > 0.01f ? 1 : 0;
+	}
+	return n;
+}
+
+void WeatherMap3D::_update_fire_clouds(double p_weather_dt) {
+	const WorldFire *wf = WorldContracts::fire();
+	const bool any = fire_clouds && (wf->has_provider() || wf->get_script_instance());
+	PackedVector4Array plumes;
+	if (any) {
+		plumes = wf->plumes();
+	}
+	for (int i = 0; i < storms.size(); i++) {
+		if (storms[i].fire) {
+			storms.write[i].fade_target = 0.0f;
+		}
+	}
+	const float z0 = MAX(roughness_length, 1e-5f);
+	const Vector2 steer = cur_wind_direction * cur_wind_speed * Math::log(1000.0f / z0) / Math::log(10.0f / z0);
+	for (const Vector4 &p : plumes) {
+		const Vector3 cloud = get_fire_cloud_for(p.w);
+		if (cloud.z <= 0.0f) {
+			continue;
+		}
+		// The cap spreads to about half the plume's rise across, and sits where the bent-over plume reaches the
+		// condensation level: downwind by the wind aloft over the plume's rise time, its rise over its updraft
+		// (about (F / z)^1/3).
+		const float radius = MAX(0.5f * cloud.x, 150.0f);
+		const float f = 9.81f * p.w / (Math::PI * 1005.0f * 1.2f * (cur_air_temperature + 273.15f));
+		const float w = MAX(Math::pow(f / MAX(cloud.y, 10.0f), 1.0f / 3.0f), 1.0f);
+		Vector2 at = Vector2(p.x, p.z) + steer * MIN(cloud.y / w, 2.0f * cloud.y / MAX(steer.length(), 1e-3f));
+		int found = -1;
+		float best = 1e30f;
+		for (int i = 0; i < storms.size(); i++) {
+			const Storm &s = storms[i];
+			const float d = s.position.distance_to(at);
+			if (s.fire && d < 2.0f * radius + 500.0f && d < best) {
+				best = d;
+				found = i;
+			}
+		}
+		if (found < 0) {
+			Storm s;
+			s.id = next_storm_id++;
+			s.fire = true;
+			s.fade = 0.0f;
+			s.lifetime = 0.0f;
+			s.rain_rate = 0.0f;
+			s.position = at;
+			storms.push_back(s);
+			found = storms.size() - 1;
+		}
+		Storm &s = storms.write[found];
+		s.position = at;
+		s.radius = radius;
+		// Cumulus (the cloud type follows its cover: about 0.55-0.7) until it goes deep; a pyrocumulonimbus
+		// towers (type 0.9), with a downdraft's outflow and a little rain.
+		const float deep = CLAMP(cloud.z - 1.0f, 0.0f, 1.0f);
+		s.cloud_cover = Math::lerp(0.6f + 0.17f * MIN(cloud.z, 1.0f), 1.0f, deep);
+		s.outflow = 10.0f * deep;
+		s.rain_rate = 2.0f * deep;
+		s.fade_target = MAX(s.fade_target, MIN(cloud.z, 1.0f));
+	}
+	// Grows over about five minutes of weather time while the plume feeds it; once it stops, the cap drifts off
+	// with the wind and evaporates over a quarter of an hour.
+	for (int i = storms.size() - 1; i >= 0; i--) {
+		Storm &s = storms.write[i];
+		if (!s.fire) {
+			continue;
+		}
+		const float tau = s.fade_target > s.fade ? 300.0f : 900.0f;
+		s.fade += (s.fade_target - s.fade) * (1.0f - Math::exp(-float(p_weather_dt) / tau));
+		if (s.fade_target <= 0.0f && s.fade < 0.02f) {
+			storms.remove_at(i);
+		}
+	}
 }
 
 void WeatherMap3D::remove_storm(int p_id) {
@@ -2542,6 +2661,10 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_storm", "position", "radius", "rain_rate", "outflow", "lifetime"), &WeatherMap3D::add_storm, DEFVAL(1500.0f), DEFVAL(30.0f), DEFVAL(10.0f), DEFVAL(3600.0f));
 	ClassDB::bind_method(D_METHOD("remove_storm", "id"), &WeatherMap3D::remove_storm);
 	ClassDB::bind_method(D_METHOD("clear_storms"), &WeatherMap3D::clear_storms);
+	ClassDB::bind_method(D_METHOD("set_fire_clouds", "enabled"), &WeatherMap3D::set_fire_clouds);
+	ClassDB::bind_method(D_METHOD("is_fire_clouds"), &WeatherMap3D::is_fire_clouds);
+	ClassDB::bind_method(D_METHOD("get_fire_cloud_count"), &WeatherMap3D::get_fire_cloud_count);
+	ClassDB::bind_method(D_METHOD("get_fire_cloud_for", "heat"), &WeatherMap3D::get_fire_cloud_for);
 	ClassDB::bind_method(D_METHOD("get_storm_count"), &WeatherMap3D::get_storm_count);
 	ClassDB::bind_method(D_METHOD("get_cloud_top_at", "position"), &WeatherMap3D::get_cloud_top_at);
 	ClassDB::bind_method(D_METHOD("set_precipitation_extinction", "source", "sigma", "height_scale", "albedo", "centre", "radius"), &WeatherMap3D::set_precipitation_extinction, DEFVAL(0.95f), DEFVAL(Vector3()), DEFVAL(0.0f));
@@ -2742,6 +2865,7 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "air_daily_cycle"), "set_air_daily_cycle", "get_air_daily_cycle");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "daily_temperature_range", PROPERTY_HINT_RANGE, "0,40,0.1,suffix:K"), "set_daily_temperature_range", "get_daily_temperature_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sun_drying"), "set_sun_drying", "get_sun_drying");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_clouds"), "set_fire_clouds", "is_fire_clouds");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dew_and_frost"), "set_dew_and_frost", "get_dew_and_frost");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "aerosol_haze"), "set_aerosol_haze", "get_aerosol_haze");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "traced_haze"), "set_traced_haze", "get_traced_haze");

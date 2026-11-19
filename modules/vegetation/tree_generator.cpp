@@ -18018,6 +18018,20 @@ vec3 plant_wind(vec3 wp, float h) {
 			if (fire_burn * smoothstep(0.35, 0.8, fire_s.x) > fract(fire_n * 7.31 + 0.137)) {
 				ALPHA = 0.0;
 			}
+			// Needle cast: foliage the fire killed (browned up to the scorch height) is shed through the first
+			// year, leaf by leaf, most of it in the first months (Pannkuk and Robichaud 2003; Cram et al. 2015 on
+			// ponderosa pine needle cast after fire), so a scorched crown thins from brown to bare branches. The same
+			// scorch share as fire_foliage_apply, with its leaf hash; time since the ground there burnt from
+			// fire_age_map (PhysXFireSpread3D, game years).
+			float fire_age = fire_age_years(fire_w.xz);
+			if (fire_age >= 0.0) {
+				float fire_h = fire_w.y - MODEL_MATRIX[3].y;
+				float fire_killed = fire_s.x * (1.0 - smoothstep(0.85, 1.15, fire_h / max(fire_s.w * (0.85 + 0.3 * fire_n), 0.02)));
+				float fire_cast = 1.0 - exp(-fire_age / 0.3);
+				if (fire_killed > fract(fire_n * 3.71 + 0.41) && fire_cast > fract(fire_n * 11.37 + 0.73)) {
+					ALPHA = 0.0;
+				}
+			}
 			// Light through a dead leaf takes its colour too (seen from below, a crown is mostly backlit).
 			fire_leaf_back = clamp(ALBEDO / max(fire_before, vec3(1e-3)), 0.0, 1.5);
 		}
@@ -18035,7 +18049,23 @@ vec3 plant_wind(vec3 wp, float h) {
 		ALBEDO = mix(ALBEDO, vec3(leaf_lum) * vec3(0.93, 1.04, 0.9) * 1.2, leaf_underside);
 	})");
 	}
-	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\n" + wind + VegetationFire::SHADER_CODE + "\n");
+	// Years since the ground under a leaf burnt (fire_age_map, R = years / 2, 0 never; over fire_char_rect), -1 never.
+	static const char *FIRE_AGE_CODE = R"(
+global uniform sampler2D fire_age_map : filter_nearest;
+
+float fire_age_years(vec2 xz) {
+	if (fire_char_rect.z <= 0.0) {
+		return -1.0;
+	}
+	vec2 uv = (xz - fire_char_rect.xy) / fire_char_rect.zw;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return -1.0;
+	}
+	float a = textureLod(fire_age_map, uv, 0.0).r;
+	return a > 0.0 ? a * 2.0 : -1.0;
+}
+)";
+	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\n" + wind + VegetationFire::SHADER_CODE + FIRE_AGE_CODE + "\n");
 	// The path tracer: flutter is a raster motion of millimetres; the traced leaves keep their
 	// shape and follow the bones. A static tree is traced from its rest mesh (no capture), a
 	// rigged one is captured only when its bones move (as the plain material was), never because

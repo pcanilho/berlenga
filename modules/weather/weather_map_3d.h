@@ -72,6 +72,11 @@ public:
 		float outflow = 10.0f; // peak downburst outflow speed (m/s)
 		float lifetime = 3600.0f; // weather seconds; <= 0 lasts until removed
 		float age = 0.0f;
+		// A fire cloud (pyrocumulus) over a fire's plume (WorldFire.plumes): eased in and out by fade, held over the
+		// plume while it burns.
+		bool fire = false;
+		float fade = 1.0f;
+		float fade_target = 0.0f;
 	};
 
 private:
@@ -105,6 +110,7 @@ private:
 	bool air_daily_cycle = true; // with a SkyClock: cooler nights, warmer afternoons (Parton and Logan 1981)
 	float daily_temperature_range = 10.0f; // K, clear calm day; clouds and rain narrow it
 	bool sun_drying = true; // the sun's net radiation in the evaporation (Penman 1948's combination)
+	bool fire_clouds = true; // fire plumes that reach the condensation level make clouds (pyrocumulus)
 	bool dew_and_frost = true; // clear calm nights: dew, and hoarfrost below freezing (Monteith 1957)
 	// Season (weather_season.h): the date from a SkyClock, or season_day; the climate from a ClimateRecipe.
 	NodePath sky_clock;
@@ -387,6 +393,7 @@ private:
 	float _cloud_noise(Vector2 p_xz) const;
 	float _cloud_evolve() const;
 	float _storm_weight(const Storm &p_storm) const;
+	void _update_fire_clouds(double p_weather_dt);
 	WeatherClouds::State _cloud_state() const;
 	void _start_shadow_bake();
 	void _finish_shadow_bake(bool p_wait);
@@ -654,6 +661,13 @@ public:
 	void remove_storm(int p_id);
 	void clear_storms();
 	int get_storm_count() const { return storms.size(); }
+	void set_fire_clouds(bool p_enabled) { fire_clouds = p_enabled; }
+	bool is_fire_clouds() const { return fire_clouds; }
+	int get_fire_cloud_count() const;
+	// The fire cloud a plume of p_heat watts of convective heat makes in this weather: x the plume's rise (m),
+	// y the lifting condensation level (m above the ground), z the cloud's strength (0: none, 1: a full
+	// cumulus over it; beyond 1, a pyrocumulonimbus).
+	Vector3 get_fire_cloud_for(float p_heat) const;
 	// The storm cells, and how far each has grown (0..1, its rise and decay over its lifetime).
 	const Vector<Storm> &get_storms() const { return storms; }
 	float get_storm_strength(const Storm &p_storm) const { return _storm_weight(p_storm); }

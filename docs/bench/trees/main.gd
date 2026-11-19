@@ -25,6 +25,7 @@ extends Node3D
 #   --pollards        a working willow pollard, a lapsed beech pollard and a hazel coppice stool
 #                     side by side in winter grass (trees.md 5l), seen from 1.7 m, 10 m back
 #   --sun-energy=E    sun energy (default 1.4; 0 for sky light only)
+#   env FIRE_AGE=Y [SCORCH=H]  a past fire Y years ago, crowns killed up to H m (default 30): needle cast
 #   --decays          deadwood: each preset living, then decay classes 1-5, then a log (class 3)
 #   --stands ...      stands and placement instead: see stands.gd
 #   --wind ...        wind on rigged trees: see wind.gd
@@ -404,6 +405,8 @@ func _build_scene() -> void:
 	get_viewport().msaa_3d = Viewport.MSAA_8X
 	if OS.has_environment("LOD0"):
 		get_viewport().mesh_lod_threshold = 0.0
+	if OS.has_environment("FIRE_AGE"):
+		_past_fire(float(OS.get_environment("FIRE_AGE")), float(OS.get_environment("SCORCH")) if OS.has_environment("SCORCH") else 30.0)
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -645,6 +648,18 @@ func _build_scene() -> void:
 			cam.position = Vector3(cx + cv[0], cv[1], cv[2])
 			cam.look_at(Vector3(cx + cv[3], cv[4], cv[5]))
 			cam.fov = cv[6]
+
+# A past fire under the whole bench (env FIRE_AGE years ago, SCORCH metres of crown scorch): the fire globals a
+# PhysXFireSpread3D publishes (vegetation_fire.h), set by hand, no flame now. Foliage below the scorch height is
+# killed brown and, with time, cast (trees.md 5af).
+func _past_fire(p_years: float, p_scorch: float) -> void:
+	var state := Image.create_empty(1, 1, false, Image.FORMAT_RGBA8)
+	state.set_pixel(0, 0, Color(1.0, 0.0, 0.0, sqrt(minf(p_scorch / 48.0, 1.0))))
+	var age := Image.create_empty(1, 1, false, Image.FORMAT_R8)
+	age.set_pixel(0, 0, Color(maxf(clampf(p_years / 2.0, 0.0, 1.0), 1.0 / 255.0), 0, 0))
+	RenderingServer.global_shader_parameter_set("fire_state_map", ImageTexture.create_from_image(state))
+	RenderingServer.global_shader_parameter_set("fire_age_map", ImageTexture.create_from_image(age))
+	RenderingServer.global_shader_parameter_set("fire_char_rect", Color(-200, -200, 400, 400))
 
 func _render_later() -> void:
 	if OS.has_environment("WIRE"):
