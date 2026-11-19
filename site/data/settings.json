@@ -1852,6 +1852,17 @@
    "topic": "Sea and lakes"
   },
   {
+   "name": "Oasis springs",
+   "settings": [
+    "OasisSprings3D"
+   ],
+   "note": "",
+   "what": "still spring pools in the desert, each sized by its spring's water balance and with its own outline, with sand boils heaving at the vents.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
    "name": "Cave pools",
    "settings": [
     "seabed_probe_height"
