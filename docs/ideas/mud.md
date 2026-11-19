@@ -958,6 +958,17 @@ a dry caked car over three bars sheds 5 of 12 plates, a wet one none. --view=bod
 Bug found on the way: a wheel standing still in mud counted as freshly churned (its cake kept topping up), so a
 parked car never dried. The tread must be turning (0.1 m/s at the rim) to pick up fresh mud.
 
+
+#### Round 12 candidates (card 19 Nov)
+
+- **Tyre pressure.** Airing down lengthens and widens the footprint: Bekker's b and the contact length grow, sinkage
+  and rolling resistance fall (Wong, Theory of Ground Vehicles, ch. 2; the CTIS literature puts 15 to 25 % more
+  drawbar pull at a third of road pressure). PhysXVehicleWheel3D.pressure scales the flexible-tyre terms we already
+  feed to the soil model.
+- **Firm subsoil.** A soft layer over a hard pan: the pressure-sinkage curve of the top layer until its depth, then the
+  stiffer one (layered-soil Bekker, Wong 2010; the "hardpan" of MudRunner's deep ruts). A depth per cell in the field.
+- **Branches under wheels.** Sticks and logs laid in a rut (deadwood from the trees thread) are pressed in and add
+  shear strength under the tyre, the corduroy road: a cell factor on the Janosi-Hanamoto shear, and their meshes sink.
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
