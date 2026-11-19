@@ -382,6 +382,26 @@ global uniform vec4 ground_deform_rect;
 global uniform sampler2D ground_deform_near_map;
 global uniform vec4 ground_deform_near_rect;
 global uniform sampler2D ground_wet_map;
+#ifndef GROUND_WEAR_CODE
+#define GROUND_WEAR_CODE
+global uniform sampler2D ground_wear_map : filter_linear, repeat_disable;
+global uniform vec4 ground_wear_rect;
+// Worn-in tracks (mud round 14.2): the sward's cover left by the wheel passes GroundSurface3D counted at p_xz
+// (ground_wear_map). A wheel bears and scuffs as some twenty boots do, so the passes count twenty times against the
+// sward's p_resistance (GrassField3D.trample_resistance, foot passes; Cole 1995's cover, as _trample_cover()).
+float grass_ground_worn(vec2 p_xz, float p_resistance) {
+	if (ground_wear_rect.w <= 0.0 || ground_wear_rect.z <= 0.0) {
+		return 1.0;
+	}
+	vec2 uv = (p_xz - ground_wear_rect.xy) / ground_wear_rect.z;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return 1.0;
+	}
+	float passes = textureLod(ground_wear_map, uv, 0.0).r;
+	float x = 20.0 * passes / max(p_resistance, 1.0);
+	return x > 0.0 ? (1.0 - smoothstep(2.5, 5.0, x)) / (1.0 + x * x) : 1.0;
+}
+#endif
 // Mud thrown or splashed onto the sward and the plants at p_xz (mud round 7): the share of their faces spattered and
 // the clay's linear colour, from the ground's wet map (its block tagged 6.5; GroundSurface3D::_wet_publish()).
 vec4 grass_ground_mud(vec2 p_xz) {
@@ -414,11 +434,13 @@ vec4 grass_ground_mud(vec2 p_xz) {
 // the ground went down there (m, negative on a rim), so the blades left stand on it.
 vec3 grass_ground_opened(vec2 p_xz) {
 	if (ground_deform_rect.z <= 0.0) {
-		return vec3(0.0);
+		float worn = grass_ground_worn(p_xz, 300.0);
+		return vec3(smoothstep(1.0, 0.6, worn), 1.0 - worn, 0.0);
 	}
 	vec2 uv = (p_xz - ground_deform_rect.xy) / ground_deform_rect.z;
 	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
-		return vec3(0.0);
+		float worn = grass_ground_worn(p_xz, 300.0);
+		return vec3(smoothstep(1.0, 0.6, worn), 1.0 - worn, 0.0);
 	}
 	vec4 d = textureLod(ground_deform_map, uv, 0.0);
 	if (ground_deform_near_rect.z > 0.0) {
@@ -439,6 +461,12 @@ vec3 grass_ground_opened(vec2 p_xz) {
 	float flat_ = max(smoothstep(0.002, 0.008, abs(d.r)) * (1.0 - min(4.0 * regrown, 1.0)), smoothstep(0.03, 0.15, abs(1.0 - d.b)) * (1.0 - thrown));
 	float relief = smoothstep(0.01, 0.04, abs(d.r)) * (1.0 - regrown);
 	float water = d.a < 0.0 ? 1.0 : smoothstep(5e-4, 3e-3, d.g);
+	// A worn-in track (mud round 14.2): what the passes left lies flat, the rest is gone.
+	float worn = grass_ground_worn(p_xz, 300.0);
+	if (worn < 1.0) {
+		flat_ = max(flat_, smoothstep(1.0, 0.6, worn));
+		water = max(water, 1.0 - worn);
+	}
 	return vec3(flat_, max(relief, water), d.r);
 }
 // Spatter on a face p_up metres above the ground (thrown clay lands thickest low down, splashes reach 30 to 50 cm), at
@@ -1306,7 +1334,21 @@ void fragment() {
 	ROUGHNESS = mix(ROUGHNESS, 0.7, v_snow);
 	// Fibre shading: the strand sheen; wet, frosted, muddy or snow-covered blades lose it (a film or a crust over the fibres).
 	float fib = fibre_shading * (1.0 - max(wet_c, max(frost_c, max(mud_c, v_snow))));
+	// Prefiltered, as the path tracer's many samples a pixel do: once a blade is under a few pixels wide its strand
+	// highlight averages back to the round lobe (full from about 3 pixels wide, gone by 1.25: fwidth(UV.x)), and the lobe
+	// takes the normal's spread across the pixel as extra roughness (Tokuyoshi and Kaplanyan 2019, "Improved Geometric
+	// Specular Antialiasing": alpha^2 += min(2 variance, 0.18)). Without them a single lit pixel of a thin blade
+	// flashes white.
+	fib *= 1.0 - smoothstep(0.3, 0.8, fw);
 	ROUGHNESS = mix(ROUGHNESS, max(ROUGHNESS, 0.8), v_soft);
+	{
+		// fwidth(), not dFdx()/dFdy(): the path tracer's translation has only fwidth() (about zero there, where the
+		// samples do this). (|dx| + |dy|)^2 / 4 stands for the variance's 2 (dx^2 + dy^2) / 4.
+		vec3 nw = fwidth(NORMAL);
+		float kernel = min(0.25 * dot(nw, nw), 0.18);
+		float a = ROUGHNESS * ROUGHNESS;
+		ROUGHNESS = sqrt(sqrt(a * a + kernel));
+	}
 	// The burning band: the stubs' tips glow as the ground's embers do (the char decal's glow energy).
 	EMISSION = fire_glow_color(v_glow) * 4.0 * smoothstep(0.4, 1.0, v_t) * step(1e-3, v_burn);
 	SPECULAR = mix(0.35, 0.2, v_trod);
@@ -1365,8 +1407,10 @@ void fragment() {
 }
 
 int GrassField3D::_lod_for(float p_distance) const {
+	// Full density over the inner half, then a half and a quarter (Ghost of Tsushima holds its blades' density far
+	// out and thins late; Wohllaib GDC 2021). The far rings carry on from the quarter.
 	const float f = p_distance / MAX(radius, 0.001f);
-	return f < 0.25f ? 0 : (f < 0.5f ? 1 : (f < 0.75f ? 2 : 3));
+	return f < 0.5f ? 0 : (f < 0.75f ? 1 : 2);
 }
 
 // The cereals (vegetation.md, farmland plan): modern straw lengths to the ear's base, ear and awn
@@ -2831,6 +2875,7 @@ namespace {
 constexpr float RING_TILE = 16.0f; // m, a level-0 tile; level L is 2^L times wider and holds as many blades.
 constexpr int RING_MAX_LEVEL = 8;
 constexpr float RING_WIDEN_MAX = 16.0f;
+constexpr float RING_BASE_SHARE = 4.0f; // The rings' density at their start: the near tiles' coarsest level.
 constexpr float RING_BUDGET_MSEC = 4.0f; // Ring tiles built a frame, past the first.
 
 uint32_t ring_child(int p_x, int p_z, int p_level) {
@@ -2879,7 +2924,7 @@ Ref<ArrayMesh> GrassField3D::_make_ring_mesh(int p_segments) const {
 	m->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
 	// Bent and widened in the shader: bounds for the tallest blade at the widest.
 	const float h = MAX(blade_height.x, blade_height.y) * 1.1f;
-	const float wd = blade_width * Math::sqrt(8.0f) * RING_WIDEN_MAX * 1.5f + h;
+	const float wd = blade_width * Math::sqrt(RING_BASE_SHARE) * RING_WIDEN_MAX * 1.5f + h;
 	m->set_custom_aabb(AABB(Vector3(-wd, -0.05f, -wd), Vector3(2.0f * wd, h + 0.1f, 2.0f * wd)));
 	m->surface_set_material(0, material);
 	return m;
@@ -3022,8 +3067,8 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 	const float ring_start = MAX(ring_band.x, 1.0f);
 	const float min_neg_log_rank = p_near > ring_start ? 2.0f * Math::log2(p_near / ring_start) : 0.0f;
 	const int level = p_key.z;
-	// The base density: the near tiles' coarsest level (an eighth), its cell fitted to the tile.
-	const float base_density = MAX(density, 0.01f) / 8.0f;
+	// The base density: the near tiles' coarsest level (a quarter, RING_BASE_SHARE), its cell fitted to the tile.
+	const float base_density = MAX(density, 0.01f) / RING_BASE_SHARE;
 	const int n = MAX(int(Math::ceil(RING_TILE * Math::sqrt(base_density))), 1);
 	const float cell0 = RING_TILE / float(n);
 	const float width0 = blade_width * Math::sqrt(MAX(density, 0.01f) / base_density);
@@ -4854,7 +4899,7 @@ void GrassField3D::_ground_bake_publish(const Vector4 &p_rect, const Ref<Image> 
 	rs->global_shader_parameter_set("grass_ground_color", Vector4(ground_tint.r, ground_tint.g, ground_tint.b, ground_tint.a));
 	rs->global_shader_parameter_set("grass_ground_dry", Vector4(dry_color.r, dry_color.g, dry_color.b, _dryness()));
 	ground_published = true;
-	rs->global_shader_parameter_set("grass_ground_params", Vector4(color_variation, 0.0f, 0.0f, 0.0f));
+	rs->global_shader_parameter_set("grass_ground_params", Vector4(color_variation, trample_resistance, 0.0f, 0.0f));
 }
 
 String GrassField3D::get_ground_shader_code() {
@@ -4870,7 +4915,7 @@ global uniform sampler2D grass_ground_litter : hint_default_black, filter_linear
 global uniform vec4 grass_ground_rect;
 global uniform vec4 grass_ground_color; // rgb: the sward's root colour; a: how much it covers the soil.
 global uniform vec4 grass_ground_dry; // rgb: thatch colour; a: the grass's dryness.
-global uniform vec4 grass_ground_params; // x: colour variation.
+global uniform vec4 grass_ground_params; // x: colour variation, y: the sward's trample_resistance.
 global uniform vec4 grass_ground_fade; // xy: centre of the blades, z: where the last is gone, w: the band they thin over.
 global uniform vec4 grass_ground_far; // rgb: the blades' colour seen from a distance.
 global uniform vec4 grass_ground_far_lobe1; // rgb: its change with cos of the sun's azimuth from the view.
@@ -4892,6 +4937,27 @@ global uniform vec4 crop_ground_fade; // xy: the centre of the tillers' band (th
 	code += GRASS_COLOR_CODE;
 	code += VegetationField3D::get_floor_shader_code();
 	code += R"(
+#ifndef GROUND_WEAR_CODE
+#define GROUND_WEAR_CODE
+global uniform sampler2D ground_wear_map : filter_linear, repeat_disable;
+global uniform vec4 ground_wear_rect;
+// Worn-in tracks (mud round 14.2): the sward's cover left by the wheel passes GroundSurface3D counted at p_xz
+// (ground_wear_map). A wheel bears and scuffs as some twenty boots do, so the passes count twenty times against the
+// sward's p_resistance (GrassField3D.trample_resistance, foot passes; Cole 1995's cover, as _trample_cover()).
+float grass_ground_worn(vec2 p_xz, float p_resistance) {
+	if (ground_wear_rect.w <= 0.0 || ground_wear_rect.z <= 0.0) {
+		return 1.0;
+	}
+	vec2 uv = (p_xz - ground_wear_rect.xy) / ground_wear_rect.z;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return 1.0;
+	}
+	float passes = textureLod(ground_wear_map, uv, 0.0).r;
+	float x = 20.0 * passes / max(p_resistance, 1.0);
+	return x > 0.0 ? (1.0 - smoothstep(2.5, 5.0, x)) / (1.0 + x * x) : 1.0;
+}
+#endif
+
 float grass_ground_cover(vec3 world_pos) {
 	if (grass_ground_rect.z <= 0.0) {
 		return 0.0;
@@ -4901,7 +4967,7 @@ float grass_ground_cover(vec3 world_pos) {
 	// Nothing outside the map: fade out over its outer texel instead of smearing the edge.
 	vec2 outside = max(half_texel - uv, uv - (1.0 - half_texel));
 	float inside = 1.0 - clamp(max(outside.x, outside.y) / half_texel.x, 0.0, 1.0);
-	return textureLod(grass_ground_map, clamp(uv, half_texel, 1.0 - half_texel), 0.0).r * inside;
+	return textureLod(grass_ground_map, clamp(uv, half_texel, 1.0 - half_texel), 0.0).r * inside * grass_ground_worn(world_pos.xz, grass_ground_params.y > 0.0 ? grass_ground_params.y : 300.0);
 }
 
 // The tread of worn paths (GrassField3D.paths): 1 where walkers have worn the sward away.

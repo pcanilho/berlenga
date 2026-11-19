@@ -39,6 +39,8 @@
 #include "core/templates/local_vector.h"
 #include "core/variant/variant.h"
 
+#include "modules/world/world_walker_steps.h"
+
 class Image;
 class ImageTexture;
 class Node3D;
@@ -228,6 +230,7 @@ private:
 		uint64_t frame = 0;
 	};
 	HashMap<ObjectID, Mover> movers;
+	WorldWalkerSteps walker_steps; // a walker's footfalls (its soles, not its body shape)
 	uint64_t frame = 0;
 
 	int channels() const { return track_fresh ? 3 : 2; }

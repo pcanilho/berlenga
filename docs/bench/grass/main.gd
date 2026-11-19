@@ -36,6 +36,8 @@ extends Node3D
 #   --close          the closer view used by --trample
 #   --ruts           with a GroundSurface3D of wet soil: a pair of tyre ruts in the close view; the blades lie
 #                    flat or are torn out where the ground is pressed (docs/ideas/mud.md)
+#   --ruts=worn      a worn-in track instead (mud round 14.2): two wheel lines worn by 60 passes near the eye down
+#                    to 2 further off, no ruts; the sward lies flat, thins and goes bare with the passes
 #   --ruts=mud       the same, with clay thrown onto the sward beside the left rut and muddy water splashed beside
 #                    the right one (mud round 7: mud on the blades and plants)
 #   --notex          plants without their generated leaf textures
@@ -113,6 +115,7 @@ var crop_fields := false
 var stubble_view := false # --fields=stubble: from 1.7 m at the stubble field's edge, over its swaths.
 var close := false
 var ruts_view := false
+var ruts_worn := false
 var ruts_ground: GroundSurface3D
 var ruts_mud := false # --ruts=mud: clay thrown beside the left rut, muddy water splashed beside the right (mud round 7)
 var ruts_aged := 0.0 # --ruts=aged[:scale]: kept, then read back by a new ground with this ruts_time_scale (weeks away)
@@ -215,10 +218,11 @@ func _ready() -> void:
 			far_grass = 2 if a == "--far-grass=off" else (3 if a == "--far-grass=rings" else 1)
 			farmland = true
 			SIZE = 640.0
-		elif a == "--ruts" or a.begins_with("--ruts=aged") or a == "--ruts=mud":
+		elif a == "--ruts" or a.begins_with("--ruts=aged") or a == "--ruts=mud" or a == "--ruts=worn":
 			ruts_view = true
 			close = true
 			ruts_mud = a == "--ruts=mud"
+			ruts_worn = a == "--ruts=worn"
 			if a.begins_with("--ruts=aged"):
 				ruts_aged = 6e5 if a == "--ruts=aged" else float(a.substr(12))
 		elif a == "--forest": forest = true
@@ -1912,7 +1916,8 @@ func _checks() -> void:
 	var near_density: float = near / max(near_area, 0.01)
 	var far_density: float = far / max(ring_area, 0.01)
 	_check("near density about %d /m2" % int(grass.density), near_density > grass.density * 0.75 and near_density < grass.density * 1.17, near_density)
-	_check("far ring thinned (LOD)", far_density < near_density * 0.3, far_density)
+	# 32 to 36 m of a 50 m field: the half-density level (full over the inner half of the radius, then a half).
+	_check("far ring thinned (LOD)", far_density < near_density * 0.6 and far_density > near_density * 0.3, far_density)
 	_check("no grass under water", wet == 0, wet)
 	# Rocks (GrassField3D.obstacles): no blade roots inside a boulder, blades right up to its foot.
 	var rock := Vector4(c.x + 2.0, 0.0, c.y + 1.0, 0.7)
@@ -2229,7 +2234,15 @@ func _process(dt: float) -> void:
 		for i in 800:
 			grass.update_at(cam.global_position)
 			(get_node("Meadow") as GrassField3D).update_at(cam.global_position)
-	if ruts_view and n == 6:
+	if ruts_worn and n == 6:
+		# A worn-in track instead (mud round 14.2): two wheel lines 1.6 m apart, no ruts pressed, worn by 60 wheel
+		# passes nearest the eye down to 2 passes 6 m away.
+		for side in [0.2, 1.8]:
+			for k in 14:
+				var z := 16.0 - k * 0.45
+				var x: float = side - 0.08 * k
+				ruts_ground.add_wear(Vector3(x, 0, z), Vector2(0.3, 0.5), 0.17, 60.0 * pow(2.0 / 60.0, k / 13.0))
+	elif ruts_view and n == 6:
 		# A pair of tyre ruts 1.6 m apart running away from the eye, 8 cm deep.
 		for side in [0.2, 1.8]:
 			for k in 12:
@@ -2280,6 +2293,10 @@ func _process(dt: float) -> void:
 			# The whole 640 m map at once is too many cells: streamed round the eye instead.
 			cover.stream_radius = 80.0
 			cover.stream_target = cover.get_path_to(cam)
+			if OS.get_environment("GRASS_FAR_REACH") != "":
+				cover.far_reach = float(OS.get_environment("GRASS_FAR_REACH")) # GRASS_FAR_REACH=1: the plants fade at their range
+			if OS.get_environment("GRASS_FAR_SHELL") == "0":
+				cover.far_shell = false # GRASS_FAR_SHELL=0: no far columns for the taller plants
 			cover.streaming = true
 		elif cover:
 			cover.populate()
@@ -2497,6 +2514,16 @@ func _process(dt: float) -> void:
 		print("GRASS_FAR_RINGS %s: ring blades %d in %d tiles, last build %.1f ms, shell columns %d in %d tiles, near blades %d, memory +%.1f MB, primitives %d, draw calls %d" % [
 			["", "on", "off", "rings"][far_grass], grass.get_ring_blade_count(), grass.get_ring_tile_count(), grass.get_ring_build_msec(), grass.get_shell_column_count(), grass.get_shell_tile_count(), grass.get_blade_count(),
 			(OS.get_static_memory_usage() - far_mem0) / 1048576.0, Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME), Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)])
+		if cover:
+			# The plants drawn (the far tail's share: VegetationField3D.far_reach).
+			var inst := 0
+			var shells := 0
+			for c in cover.get_children(true):
+				if c.name.begins_with("FarShell"):
+					shells += 1
+				if c is MultiMeshInstance3D and c.multimesh and not c.name.begins_with("FarVolume"):
+					inst += c.multimesh.instance_count
+			print("GRASS_FAR_COVER far_reach %.1f: plant instances %d, far shell columns %d in %d tiles" % [cover.far_reach, inst, cover.get_far_shell_column_count(), shells])
 	await RenderingServer.frame_post_draw
 	if OS.get_environment("GRASS_STILL") == "1":
 		# GrassField3D/VegetationField3D.still_shot: settled and frozen by now; memory against the run's start.
