@@ -83,6 +83,8 @@ private:
 		float break_at = 450.0f; // C of the hot layer that drops its glass
 		ObjectID emitter;
 		ObjectID smoke_emitter;
+		ObjectID tip_emitter; // the flame's upper part, against the wall above the opening
+		float wind_flow = 0.0f; // kg/s the wind drives out of the room through it (negative: in)
 		ObjectID pane; // its glass, drawn while whole
 		bool shattered = false;
 	};
@@ -92,6 +94,8 @@ private:
 		LocalVector<Opening> openings;
 		RoomState state = ROOM_COLD;
 		float t = 0.0f; // s since it lit
+		float pressure = 0.0f; // Pa over the still air outside, from the wind on its openings
+		float wind_in = 0.0f; // kg/s of air the wind drives in
 		float q = 0.0f; // kW inside
 		float q_ext = 0.0f; // kW burning outside its openings
 		float temperature = 20.0f; // C, the hot layer
@@ -171,6 +175,8 @@ private:
 	String ignition_cause;
 	String cause = "heat"; // what the next room ignition is put down to
 	void _note_ignition(const String &p_cause);
+	void _wind_flows();
+	float _opening_cp(const Opening &p_opening, const Vector3 &p_wind_dir) const;
 	uint32_t rng = 1u;
 
 	PhysXFireSpread3D *fire = nullptr;

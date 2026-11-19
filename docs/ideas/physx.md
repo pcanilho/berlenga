@@ -1983,6 +1983,34 @@ surge rides the mud body's front, the later surges run behind it as
 pulses. Test (1500 m3 on the 25% gully): the lead surge tracks the mud
 front to its stop at 148 m, the second surge follows at 3.3 m/s.
 
+### Window flames as tongues (picked 19 Nov afternoon, first of three)
+
+Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
+as the opening, leaving through its upper two thirds, standing off the
+wall by about a third of the opening's height, and rising along the
+facade to the flame length. Built: the flame emitter is a slot across
+the opening's top (box, wide as the opening, 0.35 of its height), and a
+thinner slab of fuel stands against the wall over the lower half of the
+flame length, so Flow burns the gas along the facade rather than in a
+ball at the window. Wind bends both. Left: a door's flames, being wider
+and taller, still read broad.
+
+### Wind-driven building fires (picked 19 Nov afternoon, second of three)
+
+Research: in NIST and FDNY's wind-driven fire tests (Kerber and
+Madrzykowski 2009), wind of 9-10 m/s into a broken window drove
+corridor temperatures over 1000 C and pushed the flames out through the
+leeward openings. Built: wind pressure per opening, Cp +0.7 facing the
+wind, -0.5 in the lee, -0.6 on the sides and roof (EN 1991-1-4); each
+room's pressure balances the orifice flows (Cd 0.6) to the outside and
+the rooms next door (four Gauss-Seidel sweeps, bisection per room). Air
+driven in raises the ventilation limit to 3 MJ per kg of air (Huggett);
+flames leave only by openings the gas flows out of, taking the inflow
+openings' share; gas pushed through a door adds its heat over the door's
+area to the next room's dose. Test (rooms A, B beside it, C above,
+wind 10 m/s into A's door): C, lit by the flames out of A's window,
+catches at 12 min instead of 24.
+
 ### Next-round options (card, 19 Nov afternoon)
 
 Window flames as tongues. External flames now read as round fireballs
