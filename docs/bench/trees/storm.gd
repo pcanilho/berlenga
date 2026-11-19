@@ -261,6 +261,14 @@ func _avalanche_test() -> void:
 	wm.canopy_map = ImageTexture.create_from_image(img)
 	var trees := _setup({"speed": "5", "presets": "4,1,2"})
 	wind.weather_map = wind.get_path_to(wm)
+	# The trees as a VegetationField3D's: it keeps the felled crowns (add_canopy_loss) for its repaints.
+	var vf := VegetationField3D.new()
+	add_child(vf)
+	for c in get_children():
+		if c is MultiMeshInstance3D:
+			c.reparent(vf)
+	wind.target = wind.get_path_to(vf)
+	wind.rescan()
 	var sizes := []
 	for t in trees:
 		sizes.append("%.0f m" % t.height)
@@ -300,4 +308,5 @@ func _avalanche_test() -> void:
 		worst = maxf(worst, canopy.get_pixel(px, 20).g)
 	var kept := canopy.get_pixel(int(trees[0].x + 20.0), 2).g # 18 m upslope of the first stem.
 	_check(worst < 0.05 and kept > 0.95, "felled crowns leave the canopy map (leaf area left %.2f at the stems, %.2f away)" % [worst * 4.0, kept * 4.0])
+	_check(vf.get_canopy_losses().size() == trees.size() * 2, "the field keeps every felled crown and snapped top (%d losses)" % vf.get_canopy_losses().size())
 	_check(wm.get_canopy_closure_at(Vector3(trees[0].x, 0, 0)) < 0.1, "the weather map sees the gap (closure %.2f at the first stem)" % wm.get_canopy_closure_at(Vector3(trees[0].x, 0, 0)))
