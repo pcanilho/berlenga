@@ -633,6 +633,17 @@
    "topic": ""
   },
   {
+   "name": "Ray footprint in shaders",
+   "settings": [
+    "RAY_FOOTPRINT"
+   ],
+   "note": "",
+   "what": "under path tracing a shader reads the ray cone's width at the hit, to filter detail smaller than a pixel.",
+   "page": "materials",
+   "title": "Materials",
+   "topic": ""
+  },
+  {
    "name": "Histogram metering",
    "settings": [
     "rendering/camera/auto_exposure/metering"
