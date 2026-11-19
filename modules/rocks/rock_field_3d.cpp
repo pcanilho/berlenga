@@ -970,8 +970,12 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						pd.sink = 0.12f + 0.12f * rng.randf();
 						pd.follow = 0.5f;
 						pd.film = 0.0f;
-						pending.push_back(pd);
-						lay(pd.xz.x, pd.xz.z, 0.45f * pd.size);
+						// Only where it can have stopped: the apron under 30 degrees across the block's own footprint (on
+						// the wall above a thin cone it stood out of the cliff as a slab in the air).
+						if (ground_normal(gen, pd.xz.x, pd.xz.z, MAX(real_t(1.0), real_t(0.5f * pd.size))).y >= 0.87f) {
+							pending.push_back(pd);
+							lay(pd.xz.x, pd.xz.z, 0.45f * pd.size);
+						}
 					}
 					// The cobble tail in the gaps: some 6% more cover in stones of 10 to 15 cm, tried twice over.
 					if (tail_min < dmin) {

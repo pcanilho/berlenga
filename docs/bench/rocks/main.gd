@@ -565,6 +565,11 @@ func _world() -> void:
 		if args.has("only-layer"):
 			for i in LAYERS.size():
 				rocks.set_layer_enabled(i, LAYERS[i] == view)
+		if args.has("skip-layers"):
+			# --skip-layers=a,b: those layers off (to find which layer a stone in a frame comes from)
+			for nm in str(args["skip-layers"]).split(","):
+				if LAYERS.has(nm):
+					rocks.set_layer_enabled(LAYERS.find(nm), false)
 		if args.has("stone-density"):
 			rocks.set_layer_density(LAYERS.find(view), float(args["stone-density"]))
 		# Ground detail: the stones under min_size near the camera as real geometry (docs/ideas/ground-detail.md);
