@@ -860,6 +860,7 @@ int CaveNetwork3D::add_sea_cave(const Vector3 &p_entrance, const Vector3 &p_out)
 	const Vector3 side = dir.cross(Vector3(0, 1, 0)).normalized();
 	const real_t length = 35.0 + 60.0 * rng.randf();
 	const real_t r_mouth = 2.6 + 1.6 * rng.randf();
+	c.mouth = r_mouth;
 	const uint32_t ws = rng.rand();
 	// The floor at the mouth: 1.5 m under the sea off a cliff in the water; level with the beach where one runs in
 	// front (no step up out of the cave).
@@ -1320,7 +1321,7 @@ real_t CaveNetwork3D::_rock(const FieldSource &p_src, const TerrainGenerator3D *
 	if (r_ground && Math::abs(cave - g) < 0.5) {
 		for (uint32_t pi = 0; pi < p_src.patches.size(); pi++) {
 			const Vector3 d = p_p - p_src.patches[pi];
-			if (d.x * d.x + d.z * d.z > patch_radius * patch_radius * 2.0) {
+			if (d.x * d.x + d.z * d.z > p_src.patch_r[pi] * p_src.patch_r[pi] * 2.0) {
 				continue;
 			}
 			const Vector3 o = Vector3(p_src.patch_out[pi].x, 0, p_src.patch_out[pi].z).normalized();
@@ -1386,10 +1387,12 @@ void CaveNetwork3D::_gather(const AABB &p_box, FieldSource &r_src) const {
 				r_src.chambers.push_back(&ch);
 			}
 		}
-		const real_t pr = patch_radius * 1.4143 + 4.0;
+		const real_t half = _patch_half(c);
+		const real_t pr = half * 1.4143 + 4.0;
 		if (patch_radius > 0.0 && AABB(c.entrance - Vector3(pr, 60.0, pr), Vector3(2.0 * pr, 1000.0, 2.0 * pr)).intersects(p_box)) {
 			r_src.patches.push_back(c.entrance);
 			r_src.patch_out.push_back(c.out);
+			r_src.patch_r.push_back(half);
 		}
 	}
 }
@@ -1632,7 +1635,7 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 						for (uint32_t pi = 0; pi < src.patches.size() && !inside; pi++) {
 							const Vector3 d = verts[vi[0]] - src.patches[pi];
 							const Vector3 o = Vector3(src.patch_out[pi].x, 0, src.patch_out[pi].z).normalized();
-							inside = Math::abs(d.x * o.x + d.z * o.z) < patch_radius && Math::abs(-d.x * o.z + d.z * o.x) < patch_radius;
+							inside = Math::abs(d.x * o.x + d.z * o.z) < src.patch_r[pi] && Math::abs(-d.x * o.z + d.z * o.x) < src.patch_r[pi];
 						}
 						if (!inside) {
 							continue;
@@ -2788,7 +2791,7 @@ void CaveNetwork3D::_wanted(const AABB &p_area, HashSet<Vector3i> &r_want, HashS
 	}
 	for (const Cave &cv : caves) {
 		// The patch: from the foot to the top of the wall within the radius.
-		const real_t pr = patch_radius * 1.4143;
+		const real_t pr = _patch_half(cv) * 1.4143;
 		if (!p_all_patches && !p_area.intersects(AABB(cv.entrance - Vector3(pr, 4.0, pr), Vector3(2.0 * pr, 8.0, 2.0 * pr)))) {
 			continue;
 		}
@@ -3740,7 +3743,7 @@ void CaveNetwork3D::_open_holes() {
 		if (cv.holed) {
 			continue;
 		}
-		const real_t hr = patch_radius - 1.5;
+		const real_t hr = _patch_half(cv) - 1.5;
 		const Vector3 o = Vector3(cv.out.x, 0, cv.out.z).normalized();
 		const Basis b(Vector3(-o.z, 0, o.x) * hr, Vector3(0, 500.0, 0), o * hr);
 		gen->add_hole(Transform3D(b, cv.entrance + Vector3(0, 490.0, 0)));

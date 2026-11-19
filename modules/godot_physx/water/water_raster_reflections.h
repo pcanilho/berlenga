@@ -472,12 +472,15 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 	vec3 bb = max(p_sc, vec3(0.0)) * (1.0 - p_g);
 	vec3 aa = max(p_ab, vec3(0.0));
 	vec3 wp = bb / max(aa + bb, vec3(1e-6));
-	float turbid = smoothstep(0.3, 0.6, max(wp.r, max(wp.g, wp.b)));
+	// Turbid: a transport mean free path (1 / b') of a metre or less, where the light has diffused (clear water's
+	// b' is a few hundredths per metre).
+	float turbid = smoothstep(0.1, 1.0, max(bb.r, max(bb.g, bb.b)));
 	if (turbid > 0.0) {
 		vec3 gam = sqrt(max(1.0 - wp, vec3(0.0)));
-		// Calibrated against the path tracer's turbid river (the medium's forward in-scatter, which the isotropic
-		// two-stream misses, brightens the higher-albedo channels): same khaki in both.
-		vec3 rd = (1.0 - gam) / (1.0 + gam) * 1.1 * (1.0 + 1.5 * max(wp - 0.4, vec3(0.0)));
+		// Calibrated against the path tracer's turbid river at flood loads (its paths through the forward-scattering
+		// medium redden the light more than the isotropic two-stream does): the same brown in both.
+		float wpm = max(max(wp.r, max(wp.g, wp.b)), 1e-4);
+		vec3 rd = (1.0 - gam) / (1.0 + gam) * pow(wp / wpm, vec3(1.2)) * (1.12 + 1.25 * max(wpm - 0.42, 0.0));
 		vec3 sig = sqrt(3.0 * aa * (aa + bb));
 		vec3 held = 1.0 - exp(-2.0 * sig * max(-t.y, 0.05) * min(len, 1e3));
 		vec3 multi = rd * (p_sun_irr * mu + p_sky * PI) / PI * held * vis;
