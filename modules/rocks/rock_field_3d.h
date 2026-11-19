@@ -188,6 +188,35 @@ private:
 	void _detail_sizes(Layer p_layer, real_t p_upper, float &r_d1, float &r_d2) const;
 	void _update_detail_radii();
 	Vector3 _detail_center() const;
+	// The far hand-over (docs/ideas/ground-detail.md, "Seamless far edge"): each detail class's cover of the ground in
+	// two maps round the camera (1 m and 8 m texels), handed to the ground material (TerrainMaterial3D
+	// set_ground_cover), which draws the grains' aggregate look past where each class's real stones stop.
+	static constexpr int COVER_N = 256;
+	struct CoverJob {
+		const RockField3D *field = nullptr;
+		const TerrainGenerator3D *gen = nullptr;
+		int level = 0;
+		Vector2 origin; // world xz of texel (0, 0)'s corner
+		float texel = 1.0f;
+		float sizes[3][2] = {}; // each class's shore sizes (m)
+		float scree_sizes[3][2] = {}; // and talus sizes (m)
+		float scree_dmin = 0.15f;
+		bool shore = true;
+		bool scree = true;
+		PackedByteArray data; // RGBA8: pebble, gravel and fine cover (0..0.5 as 0..255), rock type (x 32)
+		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
+	};
+	bool ground_cover = true;
+	Ref<ImageTexture> cover_tex[2];
+	Vector2 cover_origin[2];
+	bool cover_valid[2] = {};
+	CoverJob *cover_job = nullptr;
+	static void _cover_task(void *p_job);
+	static void _cover_fill(CoverJob *p_job);
+	void _update_cover(bool p_wait);
+	void _cover_finish(bool p_wait);
+	void _push_cover();
+	void _clear_cover();
 	struct DetailSeed {
 		Vector2 xz;
 		float centre;
@@ -523,6 +552,9 @@ public:
 	real_t get_build_budget_msec() const { return build_budget_msec; }
 	void set_cell_threads(bool p_enabled);
 	bool is_cell_threads() const { return cell_threads; }
+	void set_ground_detail_cover(bool p_enabled);
+	bool is_ground_detail_cover() const { return ground_cover; }
+	Ref<Texture2D> get_ground_detail_cover_texture(int p_level) const;
 	void set_ground_detail_threads(bool p_enabled);
 	bool is_ground_detail_threads() const { return detail_threads; }
 	int get_ground_detail_pending() const { return int(detail_jobs.size()); }

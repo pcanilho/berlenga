@@ -69,6 +69,13 @@
 				Coarse cells being placed on worker threads (see [member cell_threads]), and shape libraries being built for them.
 			</description>
 		</method>
+		<method name="get_ground_detail_cover_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<param index="0" name="level" type="int" />
+			<description>
+				The ground detail cover map at [param level] (0: 1 m texels, 1: 8 m texels; see [member ground_detail_cover]): red, green and blue hold the pebbles', gravel's and fine gravel's share of the ground (0 to 0.5 as 0 to 255), alpha the rock type times 32. [code]null[/code] until built.
+			</description>
+		</method>
 		<method name="get_ground_detail_pending" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -382,6 +389,9 @@
 		</member>
 		<member name="ground_detail" type="bool" setter="set_ground_detail" getter="is_ground_detail" default="true">
 			The stones under [member min_size] near the camera as real instanced geometry instead of the ground material's normal map, so they have silhouettes, contact shadows and parallax under raster and the path tracer alike. Three size classes (1 to 2 cm, 2 to 4 cm, 4 cm to [member min_size]) continue the shore's and the talus's own size laws, so they keep the big stones' sorting and rock; each class is drawn round the camera out to where its stones are still [member ground_detail_pixels] tall, and every stone shares one of the field's shapes, so the path tracer only adds an instance for each (see [method RenderingServer.multimesh_set_rt_instanced]). Cells are placed on worker threads while streaming (see [member ground_detail_threads]). Turn it off in tests that do not need it.
+		</member>
+		<member name="ground_detail_cover" type="bool" setter="set_ground_detail_cover" getter="is_ground_detail_cover" default="true">
+			Past where each ground detail class stops drawing its stones, the ground material shows their aggregate instead: how much of the ground they cover, their colour, the bed they hide when seen edge on and the shade they cast under a low sun, so the edge of the drawn stones never shows. The cover comes from the same size and density laws as the stones, in two maps round the camera (1 m texels over 256 m and 8 m texels over 2 km, see [method get_ground_detail_cover_texture]) built on worker threads as it moves. Needs a [TerrainMaterial3D] ground and [member ground_detail] on.
 		</member>
 		<member name="ground_detail_threads" type="bool" setter="set_ground_detail_threads" getter="is_ground_detail_threads" default="true">
 			While streaming, place the ground detail cells on worker threads: the main thread only snapshots what a cell rests on and adds the finished cell, one buffer upload a shape. A finer size class waits until the coarser ones round it are down. When disabled, each cell is placed on the main thread as it is wanted.
