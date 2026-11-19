@@ -371,7 +371,12 @@ void fragment() {
 			vec2 dw = live_wave_texel / live_size;
 			float wx = texture(live_wave_tex, cuv + vec2(dw.x, 0.0)).r - texture(live_wave_tex, cuv - vec2(dw.x, 0.0)).r;
 			float wz = texture(live_wave_tex, cuv + vec2(0.0, dw.y)).r - texture(live_wave_tex, cuv - vec2(0.0, dw.y)).r;
-			live_slope += vec2(wx, wz) / (2.0 * live_wave_texel) * live;
+			// Held under the steepness short waves break at (slope about 0.3 for capillary-gravity waves; Stokes'
+			// limit is 0.44), softly: the turbulence source can pile more than real water stands up into a trough,
+			// and facets past it turned away from the eye sent path-traced rays through the surface into the bed.
+			vec2 ws = vec2(wx, wz) / (2.0 * live_wave_texel);
+			ws /= sqrt(1.0 + dot(ws, ws) / (0.3 * 0.3));
+			live_slope += ws * live;
 		}
 	}
 	vec2 p = v_world.xz * ripple_scale;
@@ -548,7 +553,13 @@ void fragment() {
 	vec3 base_rgb = unlit_rgb * water_raster_body_light();
 	float base_a = mix(shallow_color.a, water_color.a, deep);
 	// Also with raster_reflections off (underground, no sky): the bed shows through all the same, lit by the scene.
-	if (clear_water) {
+	// Under solid white water (all the colour is the foam's: the water's part is scaled by 1 - foam) the bed's
+	// march and its caustics are skipped.
+	if (clear_water && foam > 0.995) {
+		base_rgb = vec3(0.0);
+		unlit_rgb = vec3(0.0);
+		base_a = 1.0;
+	} else if (clear_water) {
 		// The bed through the water, refracted, in place of the tint and its blend; its sun is inside it.
 		vec3 sun_dir;
 		vec3 sun_irr;
@@ -562,16 +573,18 @@ void fragment() {
 			// Back up the refracted sun ray from the bed to the surface it came through.
 			float z = max(v_world.y - bed_p.y, 0.0);
 			vec2 x_in = bed_p.xz - sun_dir.xz * (z / -sun_dir.y);
-			float e = river_caustic(x_in, z / -sun_dir.y, ripple_amp, o_a, o_b, w);
 			// White water where the sun came in scatters it before it can focus: no pattern under it.
 			vec2 cuv_in;
 			float live_in = live_weight(x_in, cuv_in);
 			float foam_in = live_in > 0.0 ? texture(live_flow_tex, cuv_in).b * live_in : 0.0;
-			e = mix(e, 1.0, clamp(foam_in, 0.0, 1.0));
 			// Faded where the bed's ripple cells (about 12 cm at the finest) shrink under a few pixels.
-			e = mix(1.0, e, caustics_strength * (1.0 - smoothstep(0.25, 1.0, footprint * 8.6 * ripple_scale)));
-			float vis = dot(sun_visibility(bed_p), vec3(1.0 / 3.0));
-			base_rgb += seen * sun_share * vis * (e - 1.0);
+			float shown = (1.0 - clamp(foam_in, 0.0, 1.0)) * caustics_strength * (1.0 - smoothstep(0.25, 1.0, footprint * 8.6 * ripple_scale));
+			// The pattern's three ripple evaluations and the sun's shadow only where any of it shows.
+			if (shown > 0.001) {
+				float e = river_caustic(x_in, z / -sun_dir.y, ripple_amp, o_a, o_b, w);
+				float vis = dot(sun_visibility(bed_p), vec3(1.0 / 3.0));
+				base_rgb += seen * sun_share * vis * (e - 1.0) * shown;
+			}
 		}
 		unlit_rgb = vec3(0.0);
 		base_a = 1.0;
