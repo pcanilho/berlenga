@@ -146,6 +146,7 @@ private:
 		ObjectID light;
 		ObjectID inner_emitter;
 		ObjectID roof_emitter;
+		ObjectID rubble_emitter; // smoke off its smouldering debris
 		ObjectID clad_emitter[FACE_COUNT];
 	};
 	LocalVector<Room> rooms;
@@ -172,6 +173,9 @@ private:
 	float flicker = 0.0f;
 	float clock = 0.0f; // fire seconds since it started stepping
 	float ignited_at = -1.0f;
+	float rain_now = 0.0f; // mm/h at the building
+	int rekindles = 0;
+	bool _exposed(const Room &p_room) const;
 	String ignition_cause;
 	String cause = "heat"; // what the next room ignition is put down to
 	void _note_ignition(const String &p_cause);
@@ -269,6 +273,8 @@ public:
 	int get_spot_fire_count() const { return brands.get_spot_fires(); }
 	bool is_burning() const;
 	float get_ignition_time() const { return ignited_at; }
+	float get_room_ember(int p_room) const;
+	int get_rekindle_count() const { return rekindles; }
 	String get_ignition_cause() const { return ignition_cause; }
 
 	void set_target(const NodePath &p_path);

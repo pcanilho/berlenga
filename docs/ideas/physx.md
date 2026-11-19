@@ -2011,6 +2011,25 @@ area to the next room's dose. Test (rooms A, B beside it, C above,
 wind 10 m/s into A's door): C, lit by the flames out of A's window,
 catches at 12 min instead of 24.
 
+### Smouldering rubble and rekindles (picked 19 Nov afternoon, third of three)
+
+Research: char and timber under the ash of a burnt or hosed-out room go
+on smouldering for hours; smoulder fronts speed up with air flows of
+only centimetres a second through the pile (Ohlemiller 1985), so wind
+fans them, and a smoulder can turn back to flame (Rein 2009). Rekindles
+are a recognised cause of second fires hours after crews leave (NFPA),
+mostly from deep pockets a hose stream did not reach. Built: a burnt-out
+room's ember (0..1) falls by e in about 30 min in still air, faster
+under rain or water. Where the debris lies open (fallen in, roofless or
+with an opening to the outside), ground wind over 0.5 m/s fans it up
+logistically at (u - 0.5)/1200 per second. Water leaves deep pockets
+worth 0.15 of the share of fuel left. At 0.6, with over 5% of its fuel
+left and dry, the room relights (signal rekindled). Glowing debris in a
+wind over 4 m/s sheds embers that hop downwind, and thin, cool smoke
+drifts off it. Test (A hosed out at 25 min): in still air its ember dies
+within the hour; in an 8 m/s wind it relights 80 min after the hose
+stopped.
+
 ### Next-round options (card, 19 Nov afternoon)
 
 Window flames as tongues. External flames now read as round fireballs
