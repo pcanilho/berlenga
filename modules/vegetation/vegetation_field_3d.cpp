@@ -2725,7 +2725,9 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 			const uint32_t h = far_shell_hash(cx, cz, salt ^ uint32_t(level));
 			// Expected height where it grows, by the cover; clumped by the hash (more variation where it is thin).
 			const float lump = 1.0f + (far_shell_unit(h, 0) - 0.5f) * (0.5f + 0.6f * (1.0f - cover));
-			hgt[j * n + i] = hs / sum * cover * lump;
+			// Its mass, not its tips: the stand's tops are mostly air, and a sward's own blades (GrassField3D's far
+			// rings and columns) stand through it.
+			hgt[j * n + i] = 0.4f * hs / sum * cover * lump;
 			col[j * n + i] = Color(cs.r / sum, cs.g / sum, cs.b / sum, cover);
 		}
 	}

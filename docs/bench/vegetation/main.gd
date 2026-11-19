@@ -354,6 +354,22 @@ func _floor_view() -> void:
 	ground.stream_target = ground.get_path_to(cam)
 	ground.data_map = ground.get_path_to(dm)
 	ground.canopy_field = ground.get_path_to(wood)
+	if OS.get_environment("VEG_FLOOR_STAND") == "mediterranean" and OS.get_environment("VEG_FLOOR_SWARD") != "0":
+		# The montado's summer sward as real blades (GrassField3D): near tiles, far rings to 250 m, blade columns to
+		# 500 m (VEG_FLOOR_SWARD=0: the floor set alone).
+		var sward := GrassField3D.new()
+		sward.name = "Sward"
+		sward.radius = 40.0
+		sward.density = 90.0
+		sward.blade_height = Vector2(0.2, 0.45)
+		sward.clump_size = 0.6
+		sward.dryness = 0.85
+		sward.base_color = Color(0.32, 0.27, 0.13)
+		sward.tip_color = Color(0.78, 0.66, 0.38)
+		sward.ground_tint_enabled = false
+		add_child(sward)
+		sward.data_map = sward.get_path_to(dm)
+		sward.canopy_field = sward.get_path_to(wood)
 	var ranges := []
 	for i in gb.species.size():
 		var sp: PlantSpecies = gb.species[i]
