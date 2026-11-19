@@ -45,7 +45,11 @@
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/multimesh_instance_3d.h"
+#include "scene/3d/physics/character_body_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
+#include "scene/3d/physics/rigid_body_3d.h"
+#include "scene/resources/3d/world_3d.h"
+#include "servers/physics_3d/physics_server_3d.h"
 
 #include <cmath>
 #include "scene/3d/physics/static_body_3d.h"
@@ -4123,7 +4127,255 @@ void RockField3D::set_live_rockfall(bool p_enabled) {
 
 void RockField3D::_update_process() {
 	set_process_internal(!Engine::get_singleton()->is_editor_hint() && (streaming || live_rockfall || ground_contact));
-	set_physics_process_internal(!Engine::get_singleton()->is_editor_hint() && rockfall_dust);
+	set_physics_process_internal(!Engine::get_singleton()->is_editor_hint() && (rockfall_dust || stones_react));
+}
+
+/* Stones that react */
+
+// The stones a contact body touches, each physics frame (docs/ideas/ground-detail.md, "Stones that react").
+// Technique: an active zone round each contact, as in Servin et al.'s multiscale terrain (2021: the soil under a tool
+// turns into discrete particles while it is disturbed and merges back once at rest). Here the zone is the body's
+// footprint: the stones in it that have no collision of their own become rigid bodies (a convex hull from their
+// shape's own hull) with the push of the body, up to react_max_bodies at a time, the rest (and the finest) are shoved
+// out of the footprint. A loose stone stays an instance of its MultiMesh, moved each frame to its body, so the
+// raster and the path tracer draw it as before; at rest it is a record again where it lies.
+void RockField3D::_update_react(double p_delta) {
+	if (!stones_react || !is_inside_tree()) {
+		return;
+	}
+	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	const TerrainGenerator3D *gen = _get_generator();
+	const float dt = float(p_delta);
+	// The loose stones: follow their bodies, settle the ones at rest.
+	for (int i = int(loose.size()) - 1; i >= 0; i--) {
+		Loose &l = loose[i];
+		Cell *c = cells.getptr(l.cell);
+		if (!c || l.group >= c->groups.size() || l.k >= c->groups[l.group].xforms.size()) {
+			_free_loose(i);
+			continue;
+		}
+		Transform3D bt = ps->body_get_state(l.body, PhysicsServer3D::BODY_STATE_TRANSFORM);
+		const Vector3 v = ps->body_get_state(l.body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY);
+		const bool sleeping = ps->body_get_state(l.body, PhysicsServer3D::BODY_STATE_SLEEPING);
+		l.age += dt;
+		l.idle = v.length() < 0.05f ? l.idle + dt : 0.0f;
+		bool done = sleeping || l.idle > 0.4f || l.age > 8.0f;
+		if (gen) {
+			// Through the ground (no collision there, or tunnelled): back on it, at rest.
+			const float ground = float(gen->get_height(bt.origin));
+			if (bt.origin.y < ground - 0.5f * l.reach) {
+				bt.origin.y = ground + 0.3f * l.reach;
+				done = true;
+			}
+		}
+		Group &g = c->groups[l.group];
+		g.xforms[l.k] = Transform3D(bt.basis * Basis::from_scale(Vector3(l.scale, l.scale, l.scale)), bt.origin);
+		g.multimesh->set_instance_transform(int(l.k), g.xforms[l.k]);
+		if (done) {
+			react_settled++;
+			_free_loose(i);
+		}
+	}
+	// The contact bodies near the ground.
+	Vector<Node *> movers = get_tree()->get_nodes_in_group(SNAME("world_contact"));
+	HashMap<ObjectID, Vector3> seen;
+	const Ref<World3D> world = get_world_3d();
+	if (world.is_null()) {
+		return;
+	}
+	for (Node *n : movers) {
+		Node3D *n3 = Object::cast_to<Node3D>(n);
+		if (!n3 || !n3->is_visible_in_tree() || seen.has(n3->get_instance_id())) {
+			continue;
+		}
+		const WorldContactBody wb = WorldContracts::describe_body(n3);
+		const Vector3 *last = react_last.getptr(n3->get_instance_id());
+		Vector3 vel;
+		if (const RigidBody3D *rb = Object::cast_to<RigidBody3D>(n3)) {
+			vel = rb->get_linear_velocity();
+		} else if (const CharacterBody3D *cb = Object::cast_to<CharacterBody3D>(n3)) {
+			vel = cb->get_velocity();
+		} else if (last && dt > 0.0f) {
+			vel = (wb.center - *last) / dt;
+		}
+		if (vel.length_squared() > 900.0f) {
+			vel = Vector3(); // teleported
+		}
+		seen.insert(n3->get_instance_id(), wb.center);
+		const float bottom = wb.center.y - wb.half_height;
+		const float foot = wb.wheel ? MAX(wb.width * 0.5f, wb.half_height * 0.35f) : wb.radius;
+		if (gen && bottom > float(gen->get_height(wb.center)) + 0.25f) {
+			continue; // off the ground
+		}
+		const Vector2 c2(wb.center.x, wb.center.z);
+		Vector2 hv(vel.x, vel.z);
+		const float speed = hv.length();
+		if (vel.length() < 0.15f) {
+			continue; // at rest on them: what it pressed aside on arrival stays aside (a stone rolling back stays put)
+		}
+		// Every layer with loose stones: the ground detail classes and the small stones of the coarse layers that
+		// have no collision of their own.
+		static const Layer react_layers[6] = { LAYER_DETAIL_PEBBLE, LAYER_DETAIL_GRAVEL, LAYER_DETAIL_FINE, LAYER_SHORE, LAYER_RIVER, LAYER_SCREE };
+		for (Layer layer : react_layers) {
+			const real_t cs = _cell_size(layer);
+			const int x0 = int(Math::floor((c2.x - foot - 0.5f) / cs)), x1 = int(Math::floor((c2.x + foot + 0.5f) / cs));
+			const int z0 = int(Math::floor((c2.y - foot - 0.5f) / cs)), z1 = int(Math::floor((c2.y + foot + 0.5f) / cs));
+			for (int cz = z0; cz <= z1; cz++) {
+				for (int cx = x0; cx <= x1; cx++) {
+					const Vector3i key(layer, cx, cz);
+					Cell *cell = cells.getptr(key);
+					if (!cell) {
+						continue;
+					}
+					for (uint32_t gi = 0; gi < cell->groups.size(); gi++) {
+						Group &g = cell->groups[gi];
+						const uint32_t fam = key_family(g.library);
+						if (fam >= RockGenerator::FAMILY_SEA_STACK) {
+							continue;
+						}
+						const Library *lib = libraries.getptr(g.library);
+						for (uint32_t k = 0; k < g.xforms.size(); k++) {
+							if (g.broken[k] || g.near[k] || g.shapes[k]) {
+								continue;
+							}
+							const Vector3 o = g.xforms[k].origin;
+							const float r = float(g.reach[k]);
+							if (r > 0.3f) {
+								continue; // a boulder: not shoved by a foot or a wheel
+							}
+							Vector2 d(o.x - c2.x, o.z - c2.y);
+							const float dl = d.length();
+							if (dl > foot + r || o.y + r < bottom - 0.02f) {
+								continue;
+							}
+							bool is_loose = false;
+							for (const Loose &l : loose) {
+								if (l.cell == key && l.group == gi && l.k == k) {
+									is_loose = true;
+									break;
+								}
+							}
+							if (is_loose) {
+								continue;
+							}
+							const Vector2 out = dl > 1e-4f ? d / dl : (speed > 1e-3f ? hv / speed : Vector2(1, 0));
+							const float s = float(g.xforms[k].basis.get_scale().x);
+							// What a rolling or stepping contact does to a grain bed: most grains are pressed into it, a share
+							// squeezed out sideways into a low berm, and a few flicked (a stone caught by the edge of the tread
+							// or the sole). Picked per stone (a hash, so a stone gets the same answer on every frame it is under).
+							const uint32_t hs = hash_murmur3_one_32(uint32_t(k) * 2654435761u ^ hash_murmur3_one_32(uint32_t(key.y) * 73856093u ^ uint32_t(key.z) * 19349663u ^ gi));
+							const float pick = float(hs & 0xffffu) / 65536.0f;
+							const float ground_here = gen ? float(gen->get_height(o)) : o.y - r;
+							if (pick < 0.6f) {
+								// Pressed: its centre down to a little over the ground (idempotent: a stone already down stays).
+								const float y = MIN(o.y, ground_here + 0.15f * r);
+								if (y < o.y - 1e-4f) {
+									g.xforms[k].origin.y = y;
+									g.multimesh->set_instance_transform(int(k), g.xforms[k]);
+									react_shoved++;
+								}
+								continue;
+							}
+							if (pick < 0.85f && r >= 0.012f && int(loose.size()) < react_max_bodies && lib && g.variant < int(lib->hulls.size()) && !lib->hulls[g.variant].is_empty()) {
+								// Promoted: a rigid body of its own hull, pushed on by the body (a share of its speed, out of the
+								// footprint and a little up, as a tread or a sole flicks it).
+								const PackedVector3Array &hull = lib->hulls[g.variant];
+								Vector<Vector3> pts;
+								pts.resize(hull.size());
+								for (int q = 0; q < hull.size(); q++) {
+									pts.write[q] = hull[q] * s;
+								}
+								Loose l;
+								l.shape = ps->convex_polygon_shape_create();
+								ps->shape_set_data(l.shape, pts);
+								l.body = ps->body_create();
+								ps->body_set_mode(l.body, PhysicsServer3D::BODY_MODE_RIGID);
+								ps->body_add_shape(l.body, l.shape);
+								ps->body_set_collision_layer(l.body, 0); // nothing collides into a pebble (a vehicle would shake)
+								ps->body_set_collision_mask(l.body, collision_layer);
+								const float vol = 4.18879f * r * r * r * 0.35f; // a pebble fills about a third of its sphere
+								ps->body_set_param(l.body, PhysicsServer3D::BODY_PARAM_MASS, MAX(vol * 2650.0f, 0.002f));
+								ps->body_set_param(l.body, PhysicsServer3D::BODY_PARAM_FRICTION, 0.8f);
+								ps->body_set_param(l.body, PhysicsServer3D::BODY_PARAM_BOUNCE, 0.15f);
+								ps->body_set_space(l.body, world->get_space());
+								ps->body_set_state(l.body, PhysicsServer3D::BODY_STATE_TRANSFORM, Transform3D(g.xforms[k].basis.orthonormalized(), o + Vector3(0, 0.25f * r, 0)));
+								const float push = MAX(speed, 0.4f);
+								const Vector2 h = hv * 0.6f + out * (0.5f * push);
+								ps->body_set_state(l.body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY, Vector3(h.x, 0.3f * push, h.y));
+								ps->body_set_state(l.body, PhysicsServer3D::BODY_STATE_ANGULAR_VELOCITY, Vector3(-out.y, 0, out.x) * (push / MAX(r, 0.01f)) * 0.5f);
+								l.cell = key;
+								l.group = gi;
+								l.k = k;
+								l.scale = s;
+								l.reach = r;
+								loose.push_back(l);
+								react_promoted++;
+							} else {
+								// Squeezed out sideways to the footprint's edge (its place along the body's way kept), its height
+								// above the ground kept, turned a little.
+								Vector2 to = c2 + out * (foot + r * 1.1f);
+								if (speed > 1e-3f) {
+									const Vector2 fw = hv / speed;
+									const Vector2 lat(-fw.y, fw.x);
+									const float along = d.dot(fw);
+									const float across = d.dot(lat) >= 0.0f ? 1.0f : -1.0f;
+									to = c2 + fw * along + lat * across * (Math::sqrt(MAX(foot * foot - along * along, 0.0f)) + r * 1.1f);
+								}
+								float y = o.y;
+								if (gen) {
+									y += float(gen->get_height(Vector3(to.x, 0, to.y)) - gen->get_height(o));
+								}
+								const float turn = (float(hash_murmur3_one_32(k * 2654435761u + uint32_t(react_shoved)) & 1023u) / 1023.0f - 0.5f) * 1.2f;
+								g.xforms[k] = Transform3D(Basis(Vector3(0, 1, 0), turn) * g.xforms[k].basis, Vector3(to.x, y, to.y));
+								g.multimesh->set_instance_transform(int(k), g.xforms[k]);
+								react_shoved++;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	react_last = seen;
+}
+
+// Frees loose stone p_index's body (its instance stays where the body left it).
+void RockField3D::_free_loose(uint32_t p_index) {
+	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	Loose &l = loose[p_index];
+	if (l.body.is_valid()) {
+		ps->free_rid(l.body);
+	}
+	if (l.shape.is_valid()) {
+		ps->free_rid(l.shape);
+	}
+	loose.remove_at_unordered(p_index);
+}
+
+void RockField3D::_clear_react() {
+	while (!loose.is_empty()) {
+		_free_loose(loose.size() - 1);
+	}
+	react_last.clear();
+}
+
+void RockField3D::set_stones_react(bool p_enabled) {
+	stones_react = p_enabled;
+	if (!stones_react) {
+		_clear_react();
+	}
+	if (is_inside_tree()) {
+		_update_process();
+	}
+}
+
+Dictionary RockField3D::get_react_stats() const {
+	Dictionary d;
+	d["loose"] = int(loose.size());
+	d["promoted"] = int64_t(react_promoted);
+	d["shoved"] = int64_t(react_shoved);
+	d["settled"] = int64_t(react_settled);
+	return d;
 }
 
 /* Rockfall dust */
@@ -4437,6 +4689,19 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 						if (st.footprint > 0.0f) {
 							cell.obstacles.push_back(Vector4(st.position.x, st.ground, st.position.z, st.footprint));
 							cell.sizes.push_back(2.0f * st.scale);
+							// Its top: the hull's support straight up when the shape is built (as get_stones), else
+							// about 0.7 b (the c axis) over the origin, where the mesh's base sits.
+							real_t top = st.position.y + 1.4f * st.scale;
+							const Library *lib = libraries.getptr(st.library);
+							if (lib && st.variant < lib->hulls.size() && !lib->hulls[st.variant].is_empty()) {
+								const PackedVector3Array &hull = lib->hulls[st.variant];
+								real_t best = -1e20;
+								for (int h = 0; h < hull.size(); h++) {
+									best = MAX(best, st.basis.rows[1].dot(hull[h]));
+								}
+								top = st.position.y + best;
+							}
+							cell.heights.push_back(MAX(float(top - st.ground), 0.0f));
 						}
 					}
 					oc = &obstacle_cache.insert(key, std::move(cell))->value;
@@ -4451,6 +4716,52 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 		}
 	}
 	return out;
+}
+
+Array RockField3D::get_wind_obstacles(const Rect2 &p_rect) {
+	Array out;
+	if (!wind_obstacles || !_get_generator()) {
+		return out; // no ground yet: nothing placed (and nothing cached empty)
+	}
+	const PackedVector4Array obs = get_obstacles(p_rect, 0.7);
+	// get_obstacles fills the cache for the rect; read the heights back from it.
+	for (int l = 0; l < LAYER_MAX; l++) {
+		if (!layer_enabled[l] || l == LAYER_CLIFF || _is_detail(l)) {
+			continue;
+		}
+		const real_t cs = _cell_size(Layer(l));
+		const int x0 = int(Math::floor(p_rect.position.x / cs)), x1 = int(Math::floor(p_rect.get_end().x / cs));
+		const int z0 = int(Math::floor(p_rect.position.y / cs)), z1 = int(Math::floor(p_rect.get_end().y / cs));
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const ObstacleCell *oc = obstacle_cache.getptr(Vector3i(l, x, z));
+				if (!oc) {
+					continue;
+				}
+				for (uint32_t k = 0; k < oc->obstacles.size(); k++) {
+					const Vector4 &o = oc->obstacles[k];
+					const float h = k < oc->heights.size() ? oc->heights[k] : 0.0f;
+					if (h < 0.5f || !p_rect.has_point(Vector2(o.x, o.z))) {
+						continue;
+					}
+					// The footprint's square, a little narrower than its disc (the same area).
+					const real_t r = o.w * 0.886;
+					out.push_back(AABB(Vector3(o.x - r, o.y, o.z - r), Vector3(2.0 * r, h, 2.0 * r)));
+				}
+			}
+		}
+	}
+	(void)obs;
+	return out;
+}
+
+void RockField3D::set_wind_obstacles(bool p_enabled) {
+	wind_obstacles = p_enabled;
+	if (p_enabled) {
+		add_to_group(SNAME("weather_shelter"));
+	} else if (is_in_group(SNAME("weather_shelter"))) {
+		remove_from_group(SNAME("weather_shelter"));
+	}
 }
 
 Array RockField3D::get_stones(int p_layer, const Rect2 &p_rect) {
@@ -5470,6 +5781,12 @@ void RockField3D::set_ground_contact(bool p_enabled) {
 
 void RockField3D::_notification(int p_what) {
 	switch (p_what) {
+		case NOTIFICATION_ENTER_TREE: {
+			// Before any node is ready, so the weather's first shelter bake finds the boulders.
+			if (wind_obstacles) {
+				add_to_group(SNAME("weather_shelter"));
+			}
+		} break;
 		case NOTIFICATION_READY: {
 			auto_ground_found = false;
 			_update_process();
@@ -5488,9 +5805,13 @@ void RockField3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
-			_update_dust(get_physics_process_delta_time());
+			if (rockfall_dust) {
+				_update_dust(get_physics_process_delta_time());
+			}
+			_update_react(get_physics_process_delta_time());
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			_clear_react();
 			_clear_cover();
 			clear();
 			_clear_contact();
@@ -5601,6 +5922,9 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("build_area", "rect"), &RockField3D::build_area);
 	ClassDB::bind_method(D_METHOD("clear"), &RockField3D::clear);
 	ClassDB::bind_method(D_METHOD("get_obstacles", "rect", "min_size"), &RockField3D::get_obstacles, DEFVAL(0.25));
+	ClassDB::bind_method(D_METHOD("get_wind_obstacles", "rect"), &RockField3D::get_wind_obstacles);
+	ClassDB::bind_method(D_METHOD("set_wind_obstacles", "enabled"), &RockField3D::set_wind_obstacles);
+	ClassDB::bind_method(D_METHOD("is_wind_obstacles_enabled"), &RockField3D::is_wind_obstacles_enabled);
 	ClassDB::bind_method(D_METHOD("set_ground_contact", "enabled"), &RockField3D::set_ground_contact);
 	ClassDB::bind_method(D_METHOD("set_ground_detail", "enabled"), &RockField3D::set_ground_detail);
 	ClassDB::bind_method(D_METHOD("is_ground_detail"), &RockField3D::is_ground_detail);
@@ -5616,6 +5940,12 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_cell_threads", "enabled"), &RockField3D::set_cell_threads);
 	ClassDB::bind_method(D_METHOD("is_cell_threads"), &RockField3D::is_cell_threads);
 	ClassDB::bind_method(D_METHOD("set_ground_detail_rivers", "enabled"), &RockField3D::set_ground_detail_rivers);
+	ClassDB::bind_method(D_METHOD("set_stones_react", "enabled"), &RockField3D::set_stones_react);
+	ClassDB::bind_method(D_METHOD("is_stones_react"), &RockField3D::is_stones_react);
+	ClassDB::bind_method(D_METHOD("set_react_max_bodies", "count"), &RockField3D::set_react_max_bodies);
+	ClassDB::bind_method(D_METHOD("get_react_max_bodies"), &RockField3D::get_react_max_bodies);
+	ClassDB::bind_method(D_METHOD("get_loose_count"), &RockField3D::get_loose_count);
+	ClassDB::bind_method(D_METHOD("get_react_stats"), &RockField3D::get_react_stats);
 	ClassDB::bind_method(D_METHOD("is_ground_detail_rivers"), &RockField3D::is_ground_detail_rivers);
 	ClassDB::bind_method(D_METHOD("set_ground_detail_cover", "enabled"), &RockField3D::set_ground_detail_cover);
 	ClassDB::bind_method(D_METHOD("is_ground_detail_cover"), &RockField3D::is_ground_detail_cover);
@@ -5660,6 +5990,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_blend_height", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_ground_blend_height", "get_ground_blend_height");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "ground_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_ground_material", "get_ground_material");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_contact"), "set_ground_contact", "is_ground_contact_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wind_obstacles"), "set_wind_obstacles", "is_wind_obstacles_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "moss_cushions"), "set_moss_cushions", "is_moss_cushions_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_size", PROPERTY_HINT_RANGE, "0.01,1,0.01,suffix:m"), "set_min_size", "get_min_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_min_area", PROPERTY_HINT_RANGE, "1000,10000000,1000,or_greater,suffix:m²"), "set_river_min_area", "get_river_min_area");
@@ -5681,6 +6012,8 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_threads"), "set_ground_detail_threads", "is_ground_detail_threads");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_cover"), "set_ground_detail_cover", "is_ground_detail_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_rivers"), "set_ground_detail_rivers", "is_ground_detail_rivers");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stones_react"), "set_stones_react", "is_stones_react");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "react_max_bodies", PROPERTY_HINT_RANGE, "0,256,1"), "set_react_max_bodies", "get_react_max_bodies");
 	ADD_GROUP("Breaking", "break_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "break_pieces", PROPERTY_HINT_RANGE, "2,48,1"), "set_break_pieces", "get_break_pieces");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "break_prepare_radius", PROPERTY_HINT_RANGE, "0,50,0.5,suffix:m"), "set_break_prepare_radius", "get_break_prepare_radius");

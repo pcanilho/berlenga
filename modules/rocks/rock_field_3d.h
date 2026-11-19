@@ -136,6 +136,7 @@ private:
 	struct ObstacleCell {
 		LocalVector<Vector4> obstacles;
 		LocalVector<float> sizes;
+		LocalVector<float> heights; // m over the ground, about the stone's top
 	};
 	HashMap<Vector3i, ObstacleCell> obstacle_cache;
 
@@ -363,6 +364,7 @@ private:
 	// The ground side of the contact (docs/ideas/rocks.md, "Stone and ground contact"): a global mask around the
 	// target the terrain material reads, R the damp ring round each stone's foot, G fines banked on its uphill side.
 	bool ground_contact = true;
+	bool wind_obstacles = true;
 	Ref<ImageTexture> contact_texture;
 	Vector2 contact_origin = Vector2(1e30, 1e30);
 	bool contact_dirty = true;
@@ -450,6 +452,24 @@ public:
 
 private:
 	bool rockfall_dust = true;
+	// Stones that react (docs/ideas/ground-detail.md, "Stones that react"): under a world_contact body (feet, wheels,
+	// anything in the group) the small stones it touches become rigid bodies for a moment (an active zone of
+	// particles round the contact, as Servin et al.'s multiscale terrain), drawn by their own instance as they move,
+	// and go back to records once at rest; the finest are shoved out of the footprint without bodies.
+	bool stones_react = true;
+	int react_max_bodies = 32;
+	struct Loose {
+		RID body, shape;
+		Vector3i cell;
+		uint32_t group = 0, k = 0;
+		float scale = 1.0f, reach = 0.0f, idle = 0.0f, age = 0.0f;
+	};
+	LocalVector<Loose> loose;
+	HashMap<ObjectID, Vector3> react_last; // contact bodies' last centres (their speed when they are not physics bodies)
+	uint64_t react_promoted = 0, react_shoved = 0, react_settled = 0;
+	void _update_react(double p_delta);
+	void _free_loose(uint32_t p_index);
+	void _clear_react();
 	real_t dust_per_joule = 2e-5; // kg of airborne fines per joule an impact takes out of a piece
 	struct PieceTrack {
 		Vector3 velocity;
@@ -579,6 +599,12 @@ public:
 	void set_cell_threads(bool p_enabled);
 	bool is_cell_threads() const { return cell_threads; }
 	void set_ground_detail_rivers(bool p_enabled);
+	void set_stones_react(bool p_enabled);
+	bool is_stones_react() const { return stones_react; }
+	void set_react_max_bodies(int p_count) { react_max_bodies = MAX(p_count, 0); }
+	int get_react_max_bodies() const { return react_max_bodies; }
+	int get_loose_count() const { return int(loose.size()); }
+	Dictionary get_react_stats() const;
 	bool is_ground_detail_rivers() const { return detail_rivers; }
 	void set_ground_detail_cover(bool p_enabled);
 	bool is_ground_detail_cover() const { return ground_cover; }
@@ -642,6 +668,11 @@ public:
 	// Where stones of at least p_min_size (b axis, m) meet the ground in p_rect, as VegetationField3D obstacles:
 	// (x, ground y, z, footprint radius). Computed from the placement rules, built or not.
 	PackedVector4Array get_obstacles(const Rect2 &p_rect, real_t p_min_size = 0.25);
+	// Boulders standing at least 0.5 m out of the ground, as world boxes for the weather's shelter (the
+	// weather_shelter group): snow and sand drift in their lee.
+	Array get_wind_obstacles(const Rect2 &p_rect);
+	void set_wind_obstacles(bool p_enabled);
+	bool is_wind_obstacles_enabled() const { return wind_obstacles; }
 	// The stones of one layer in p_rect, each a Dictionary (position, basis, scale, footprint, film, rock_type,
 	// family, variant): what the layer would place, for tests.
 	Array get_stones(int p_layer, const Rect2 &p_rect);

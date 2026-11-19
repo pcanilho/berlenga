@@ -49,6 +49,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Rain, puddles → ground wetness, mud | linked | cells | |
 | Air → puddle ice, soil frost, thaw | linked | air, season | |
 | Wind → sand transport, dust | linked | wind | |
+| Obstacles → blown sand drops in their lee | linked (19 Nov) | WorldWeather `obstacle_lee_at` (0.15 in the cavity to 2 H, recovering over 6 H) | GroundSurface3D `obstacle_lee` scales u* by it with the plants' Raupach ratio: the flux falls and sand lands behind boulders, walls and parked cars (shadow dunes, Hesp 1981) |
 | Season → regrowth of ruts | linked | season | |
 | Snow → ground | linked | snow cover | |
 | Water bodies → wet sand (swash) | linked | contact wetness | |
@@ -63,6 +64,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Air → snowfall, melt | linked (18 Nov) | air | live air with snow's own lapse rate |
 | Sun, cloud shadow → melt | linked | sun, cloud shadow | |
 | Wind → drifts, cornices | linked | wind | |
+| Obstacles (rocks, walls, buildings, vehicles) → snow drifts in their lee | linked (19 Nov) | WorldWeather `obstacle_height_at` (WeatherMap3D shelter: the `weather_shelter` group, `get_wind_obstacles(rect)` on RockField3D boulders over 0.5 m and PhysXVehicle3D chassis) | SnowCover3D `drift_obstacles` counts them as terrain in Winstral's Sx (Winstral and Marks 2002): tops stripped, lee filled to about 15 H (Tabler 1991); a moved vehicle rebakes within 2 s |
 | Rain → wet snow, crust | linked | cells | |
 | Canopy → interception | linked | shelter | |
 | Snow → plants (burial, pressing) | linked (18 Nov) | snow cover (snow map) | grass and plant shaders: load ρ g d against stem stiffness lays plants down, deep snow hides them |
@@ -112,6 +114,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Cold air over water → steam fog | linked (18 Nov) | air, WorldWater, `get_water_temperature()` | VegetationMist3D cells over water |
 | Rain, melt → river level | linked (18 Nov) | WeatherRunoff3D (SCS curve number, D8 routing) | rain thread: rivers add the discharge reaching them; snowmelt runs off too |
 | Floodwater → ground soaked, silted | linked (19 Nov) | WorldWater `height_except` (every producer but the ground's own standing water), `flow_at`, `sediment_at` | GroundSurface3D soaks the ground any water covers (Green-Ampt) and still or slow water (under 0.2-0.5 m/s) lays its load as fresh mud, D = C w_s dt with w_s 3e-4 m/s (Pizzuto 1987; Asselman and Middelkoop 1995) |
+| Sea → sea caves (surge, currents, blowholes) | linked (19 Nov) | CaveNetwork3D is a WorldWater producer inside each sea cave: the sea at the mouth (`height_except`, any producer; the still sea when none) run in as a long wave, lag sqrt(g h), Green's law growth (b^-1/2 h^-1/4), e-folding `surge_damping` 40 m; u = eta sqrt(g/h) | Blowholes: a crest that seals the passage traps the chamber's air, pushed up the shaft at rise x chamber/shaft area (oscillating water column; Falcao and Henriques 2016); `get_blowhole_spout`, signal `blowhole_spout`. Drawing (surface in the cave, spray) is Valence's: `get_sea_cave_water(cave)` |
 | Cold → lake ice | linked | air, snow | SnowCover3D lake ice, Stefan's law under the snow (Leppaeranta 1993) |
 | Bodies → lake ice (break through) | linked (19 Nov) | world_contact bodies (mass), SnowCover3D lake ice | a load past Gold's P = A h^2 (A 10, white ice half, thawing ice half) breaks a hole the body's size; it stops bearing at once and refreezes by Stefan's law |
 | Fire → steam on water | linked (18 Nov) | WorldFire, WorldWater | water landing on fire and fire at the water's edge (PhysX, ebb5f254) |
@@ -239,13 +242,15 @@ Gaps found by reading the readers, each on a contract that exists.
    the channel falling off over tens to hundreds of metres (Pizzuto 1987; Asselman and Middelkoop 1995). When the
    water goes it leaves a wet silt or ash veneer that dries and cracks (mud's cracks), and the plants it laid stay
    laid.
-2. Sand and snow drift in the lee of rocks, walls, buildings and vehicles. The snow cover's drift reads Winstral's Sx
+2. Sand and snow drift in the lee of rocks, walls, buildings and vehicles (built 19 Nov: the contract carries the
+   obstacles' height and their lee rather than `wind_at` at a height, since Sx wants heights and the sand wants the
+   near-ground ratio). The snow cover's drift reads Winstral's Sx
    from the terrain alone; the sand's flux is sheltered by plants alone (Raupach). The weather map already bakes
    obstacles into its near-ground wind (WeatherShelter). Reading that through `WorldWeather.wind_at` at 0.1-2 m lets
    both settle where the wind slows: a snow fence's drift reaches about 12-15 H downwind and 1.2 H high at
    equilibrium (Tabler 1980, 1991); sand fills a lee shadow a few H long behind a boulder or a parked car (Hesp 1981,
    shadow dunes). Rocks (RockField3D) and vehicles join the shelter as obstacles.
-3. The sea surges into sea caves. CaveNetwork3D sea caves have floors at or below low tide but no water. A WorldWater
+3. The sea surges into sea caves (built 19 Nov, the water and the blowhole air; drawing with Valence). CaveNetwork3D sea caves have floors at or below low tide but no water. A WorldWater
    producer for the cave passages (the sea level at the mouth, wave set-up carried in and damped with distance) lets
    bodies wade and swim there, and Valence's surface draws it; where a roof opening meets the surface the trapped air
    drives a spout on the wave crests (blowholes; the spout's pressure scales with the wave's rho g H at the mouth).

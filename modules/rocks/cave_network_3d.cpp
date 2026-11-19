@@ -533,6 +533,8 @@ void CaveNetwork3D::clear_caves() {
 	streamed = false;
 	caves.clear();
 	streams_dirty = true;
+	surges.clear();
+	surges_dirty = true;
 }
 
 Array CaveNetwork3D::get_segments(int p_cave) const {
@@ -940,12 +942,283 @@ int CaveNetwork3D::add_sea_cave(const Vector3 &p_entrance, const Vector3 &p_out)
 	_stream_finish(true);
 	streamed = false;
 	caves.push_back(c);
+	surges_dirty = true;
 	return int(caves.size()) - 1;
 }
 
 bool CaveNetwork3D::is_sea_cave(int p_cave) const {
 	ERR_FAIL_INDEX_V(p_cave, int(caves.size()), false);
 	return caves[p_cave].sea;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// The sea in sea caves
+
+void CaveNetwork3D::set_sea_surge(bool p_enable) {
+	sea_surge = p_enable;
+	surges.clear();
+	surges_dirty = true;
+}
+
+void CaveNetwork3D::_surge_build() {
+	surges.clear();
+	surges_dirty = false;
+	TerrainGenerator3D *gen = _get_generator();
+	for (int ci = 0; ci < int(caves.size()); ci++) {
+		const Cave &c = caves[ci];
+		if (!c.sea) {
+			continue;
+		}
+		SeaSurge sg;
+		sg.cave = ci;
+		sg.sea = gen && gen->has_sea_result() ? float(gen->get_sea_level()) : float(c.entrance.y);
+		sg.dir = -Vector3(c.out.x, 0, c.out.z).normalized();
+		// The probe: out from the mouth to the first point a metre under the still sea (the open water an ocean answers).
+		sg.probe = c.entrance + c.out * 12.0;
+		if (gen) {
+			for (real_t d = 4.0; d <= 80.0; d += 2.0) {
+				const Vector3 q = c.entrance + c.out * d;
+				if (gen->get_height(q) < sg.sea - 1.0) {
+					sg.probe = q;
+					break;
+				}
+			}
+		}
+		sg.probe.y = sg.sea;
+		float along = 0.0f;
+		Vector3 last;
+		auto add = [&](const Vector3 &p_axis, float p_floor, float p_roof, float p_half) {
+			if (!sg.axis.is_empty()) {
+				along += Vector2(p_axis.x - last.x, p_axis.z - last.z).length();
+			}
+			last = p_axis;
+			sg.axis.push_back(p_axis);
+			sg.along.push_back(along);
+			sg.floor.push_back(p_floor);
+			sg.roof.push_back(p_roof);
+			sg.half_width.push_back(p_half);
+		};
+		bool first = true;
+		for (const Segment &seg : c.segments) {
+			if (seg.type != PASSAGE_SEA) {
+				continue;
+			}
+			// The arch: its floor 1.25 r under the line, its crown 0.6 r over it, about 0.8 r to each wall.
+			if (first) {
+				add(seg.a, seg.a.y - 1.25f * seg.ra, seg.a.y + 0.6f * seg.ra, 0.8f * seg.ra);
+				first = false;
+			}
+			add(seg.b, seg.b.y - 1.25f * seg.rb, seg.b.y + 0.6f * seg.rb, 0.8f * seg.rb);
+		}
+		if (sg.axis.size() < 2) {
+			continue;
+		}
+		if (!c.chambers.is_empty()) {
+			const Chamber &ch = c.chambers[c.chambers.size() - 1];
+			Vector3 a = ch.center;
+			const float fl = ch.center.y - 0.55f * ch.radii.y;
+			a.y = fl;
+			add(a, fl, ch.center.y + 0.8f * ch.radii.y, MAX(ch.radii.x, ch.radii.z));
+			sg.chamber = int(sg.axis.size()) - 1;
+			sg.chamber_area = float(Math::PI) * ch.radii.x * ch.radii.z;
+			for (const Segment &seg : c.segments) {
+				if (seg.type == PASSAGE_SHAFT) {
+					sg.shaft_area = float(Math::PI) * seg.ra * seg.ra;
+				}
+			}
+			if (!c.blowholes.is_empty()) {
+				sg.blowhole = c.blowholes[0];
+			}
+		}
+		// Lag and growth along the passage, from the still sea: the long wave's speed sqrt(g h) over the depth there,
+		// Green's law (amplitude as width^-1/2 depth^-1/4) from the mouth's width and depth, and a friction decay.
+		const int n = int(sg.axis.size());
+		sg.amp.resize(n);
+		sg.lag.resize(n);
+		sg.level.resize(n);
+		sg.flow.resize(n);
+		const float h0 = MAX(sg.sea - sg.floor[0], 0.5f);
+		const float b0 = sg.half_width[0];
+		float lag = 0.0f;
+		for (int i = 0; i < n; i++) {
+			const float h = MAX(sg.sea - sg.floor[i], 0.5f);
+			if (i > 0) {
+				const float hm = MAX(sg.sea - 0.5f * (sg.floor[i] + sg.floor[i - 1]), 0.5f);
+				lag += (sg.along[i] - sg.along[i - 1]) / Math::sqrt(9.81f * hm);
+			}
+			sg.lag[i] = lag;
+			const float green = Math::sqrt(b0 / MAX(sg.half_width[i], 0.3f)) * Math::pow(h0 / h, 0.25f);
+			sg.amp[i] = CLAMP(green * Math::exp(-sg.along[i] / float(surge_damping)), 0.0f, 2.5f);
+			sg.level[i] = sg.sea;
+			sg.flow[i] = 0.0f;
+		}
+		sg.history.resize(int(Math::ceil(lag / SURGE_HISTORY_STEP)) + 4);
+		for (float &v : sg.history) {
+			v = 0.0f;
+		}
+		sg.bounds = c.bounds.grow(2.0);
+		surges.push_back(sg);
+	}
+}
+
+void CaveNetwork3D::_surge_update(double p_delta) {
+	if (!sea_surge) {
+		return;
+	}
+	if (surges_dirty) {
+		_surge_build();
+	}
+	if (surges.is_empty() || p_delta <= 0.0) {
+		return;
+	}
+	const WorldWater *water = WorldContracts::water();
+	for (SeaSurge &sg : surges) {
+		// The sea at the mouth from any other producer; the still sea when none answers there.
+		float h = water ? water->height_except(sg.probe, this) : -Math::INF;
+		if (!Math::is_finite(h)) {
+			h = sg.sea;
+		}
+		if (!Math::is_finite(sg.mean)) {
+			sg.mean = h;
+		}
+		sg.mean += (h - sg.mean) * float(1.0 - Math::exp(-p_delta / 120.0));
+		const float eta = h - sg.mean;
+		const int hn = int(sg.history.size());
+		sg.since += p_delta;
+		while (sg.since >= SURGE_HISTORY_STEP) {
+			sg.since -= SURGE_HISTORY_STEP;
+			sg.head = (sg.head + 1) % hn;
+			sg.history[sg.head] = eta;
+		}
+		const float prev_chamber = sg.chamber >= 0 ? sg.level[sg.chamber] : 0.0f;
+		bool sealed = false;
+		for (int i = 0; i < int(sg.axis.size()); i++) {
+			// The wave as it was at the mouth lag seconds ago (the newest sample is now).
+			const float back = sg.lag[i] / SURGE_HISTORY_STEP;
+			const int k = MIN(int(back), hn - 2);
+			const float t = back - k;
+			const float e0 = sg.history[(sg.head - k + 2 * hn) % hn];
+			const float e1 = sg.history[(sg.head - k - 1 + 2 * hn) % hn];
+			const float e = Math::lerp(e0, e1, t) * sg.amp[i];
+			const float lv = sg.mean + e;
+			sg.level[i] = lv;
+			const float depth = lv - sg.floor[i];
+			// Linear long wave: u = eta sqrt(g / h) over the mean depth, into the cave under a crest; no faster than a
+			// bore runs over the water there (sqrt(g d)).
+			const float mean_depth = MAX(sg.mean - sg.floor[i], 0.5f);
+			const float cap = Math::sqrt(9.81f * MAX(depth, 0.0f));
+			sg.flow[i] = depth > 0.05f ? CLAMP(e * Math::sqrt(9.81f / mean_depth), -cap, cap) : 0.0f;
+			if (i != sg.chamber && lv >= sg.roof[i]) {
+				sealed = true;
+			}
+		}
+		sg.sealed = sealed;
+		float spout = 0.0f;
+		if (sg.chamber >= 0 && sg.shaft_area > 0.0f) {
+			const float rise = (sg.level[sg.chamber] - prev_chamber) / float(p_delta);
+			if (sealed && rise > 0.0f && sg.level[sg.chamber] > sg.floor[sg.chamber]) {
+				spout = MIN(rise * sg.chamber_area / sg.shaft_area, 60.0f);
+			}
+		}
+		if (spout > 5.0f && sg.spout <= 5.0f) {
+			emit_signal(SNAME("blowhole_spout"), sg.cave, sg.blowhole, spout);
+		}
+		sg.spout = spout;
+	}
+}
+
+float CaveNetwork3D::contract_water_height_at(const Vector3 &p_position) const {
+	float best = -Math::INF;
+	for (const SeaSurge &sg : surges) {
+		if (!sg.bounds.has_point(p_position) || sg.axis.size() < 2) {
+			continue;
+		}
+		// The nearest stretch of the passage in plan.
+		const Vector2 p(p_position.x, p_position.z);
+		for (int i = 0; i + 1 < int(sg.axis.size()); i++) {
+			const Vector2 a(sg.axis[i].x, sg.axis[i].z);
+			const Vector2 b(sg.axis[i + 1].x, sg.axis[i + 1].z);
+			const Vector2 ab = b - a;
+			const float len2 = ab.length_squared();
+			const float t = len2 > 1e-6f ? CLAMP((p - a).dot(ab) / len2, 0.0f, 1.0f) : 0.0f;
+			const float hw = Math::lerp(sg.half_width[i], sg.half_width[i + 1], t);
+			if (p.distance_to(a + ab * t) > hw) {
+				continue;
+			}
+			const float roof = Math::lerp(sg.roof[i], sg.roof[i + 1], t);
+			if (p_position.y > roof + 0.5f) {
+				continue; // over the cave, in the rock or on the cliff top
+			}
+			const float lv = Math::lerp(sg.level[i], sg.level[i + 1], t);
+			if (lv > Math::lerp(sg.floor[i], sg.floor[i + 1], t) + 0.01f) {
+				best = MAX(best, MIN(lv, roof));
+			}
+		}
+	}
+	return best;
+}
+
+Vector3 CaveNetwork3D::contract_water_flow_at(const Vector3 &p_position) const {
+	for (const SeaSurge &sg : surges) {
+		if (!sg.bounds.has_point(p_position)) {
+			continue;
+		}
+		int best = -1;
+		float best_d = 1e30f;
+		for (int i = 0; i < int(sg.axis.size()); i++) {
+			const float d = Vector2(p_position.x - sg.axis[i].x, p_position.z - sg.axis[i].z).length() - sg.half_width[i];
+			if (d < best_d) {
+				best_d = d;
+				best = i;
+			}
+		}
+		if (best >= 0 && best_d < 0.0f) {
+			Vector3 d = sg.dir;
+			if (best + 1 < int(sg.axis.size())) {
+				d = sg.axis[best + 1] - sg.axis[best];
+				d.y = 0.0f;
+				d = d.length_squared() > 1e-6f ? d.normalized() : sg.dir;
+			}
+			return d * sg.flow[best];
+		}
+	}
+	return Vector3();
+}
+
+Dictionary CaveNetwork3D::get_sea_cave_water(int p_cave) const {
+	Dictionary d;
+	for (const SeaSurge &sg : surges) {
+		if (sg.cave != p_cave) {
+			continue;
+		}
+		PackedVector3Array pts;
+		PackedFloat32Array hw, fl, depth;
+		for (int i = 0; i < int(sg.axis.size()); i++) {
+			pts.push_back(Vector3(sg.axis[i].x, sg.level[i], sg.axis[i].z));
+			hw.push_back(sg.half_width[i]);
+			fl.push_back(sg.flow[i]);
+			depth.push_back(MAX(sg.level[i] - sg.floor[i], 0.0f));
+		}
+		d["points"] = pts;
+		d["half_widths"] = hw;
+		d["flows"] = fl;
+		d["depths"] = depth;
+		d["mean_level"] = sg.mean;
+		d["sealed"] = sg.sealed;
+	}
+	return d;
+}
+
+Dictionary CaveNetwork3D::get_blowhole_spout(int p_cave) const {
+	Dictionary d;
+	for (const SeaSurge &sg : surges) {
+		if (sg.cave == p_cave && sg.chamber >= 0 && sg.shaft_area > 0.0f) {
+			d["position"] = sg.blowhole;
+			d["speed"] = sg.spout;
+			d["sealed"] = sg.sealed;
+		}
+	}
+	return d;
 }
 
 PackedVector3Array CaveNetwork3D::get_blowholes(int p_cave) const {
@@ -3966,6 +4239,9 @@ void CaveNetwork3D::_stream_finish(bool p_keep) {
 
 void CaveNetwork3D::_notification(int p_what) {
 	switch (p_what) {
+		case NOTIFICATION_ENTER_TREE: {
+			WorldContracts::register_water(this);
+		} break;
 		case NOTIFICATION_READY: {
 			set_process_internal(true); // streaming round the follow target; live water on the nearest pools
 		} break;
@@ -3977,9 +4253,11 @@ void CaveNetwork3D::_notification(int p_what) {
 				_pool_water_update();
 				_update_mist_node();
 				_update_stream_nodes();
+				_surge_update(get_process_delta_time());
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			WorldContracts::unregister_water(this);
 			_stream_finish(false);
 		} break;
 		case NOTIFICATION_PREDELETE: {
@@ -4032,6 +4310,13 @@ void CaveNetwork3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("find_sea_entrances", "rect", "max"), &CaveNetwork3D::find_sea_entrances, DEFVAL(4));
 	ClassDB::bind_method(D_METHOD("is_sea_cave", "cave"), &CaveNetwork3D::is_sea_cave);
 	ClassDB::bind_method(D_METHOD("get_blowholes", "cave"), &CaveNetwork3D::get_blowholes);
+	ClassDB::bind_method(D_METHOD("set_sea_surge", "enable"), &CaveNetwork3D::set_sea_surge);
+	ClassDB::bind_method(D_METHOD("get_sea_surge"), &CaveNetwork3D::get_sea_surge);
+	ClassDB::bind_method(D_METHOD("set_surge_damping", "metres"), &CaveNetwork3D::set_surge_damping);
+	ClassDB::bind_method(D_METHOD("get_surge_damping"), &CaveNetwork3D::get_surge_damping);
+	ClassDB::bind_method(D_METHOD("get_sea_cave_water", "cave"), &CaveNetwork3D::get_sea_cave_water);
+	ClassDB::bind_method(D_METHOD("get_blowhole_spout", "cave"), &CaveNetwork3D::get_blowhole_spout);
+	ClassDB::bind_method(D_METHOD("step_sea_surge", "delta"), &CaveNetwork3D::step_sea_surge);
 	ClassDB::bind_method(D_METHOD("get_cave_count"), &CaveNetwork3D::get_cave_count);
 	ClassDB::bind_method(D_METHOD("get_segments", "cave"), &CaveNetwork3D::get_segments);
 	ClassDB::bind_method(D_METHOD("get_chambers", "cave"), &CaveNetwork3D::get_chambers);
@@ -4144,6 +4429,9 @@ void CaveNetwork3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "rimstone_water_max", PROPERTY_HINT_RANGE, "0,64,1"), "set_rimstone_water_max", "get_rimstone_water_max");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cave_streams"), "set_cave_streams", "get_cave_streams");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_mist"), "set_sea_mist", "get_sea_mist");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_surge"), "set_sea_surge", "get_sea_surge");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "surge_damping", PROPERTY_HINT_RANGE, "1,500,1,suffix:m"), "set_surge_damping", "get_surge_damping");
+	ADD_SIGNAL(MethodInfo("blowhole_spout", PropertyInfo(Variant::INT, "cave"), PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "speed")));
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collision"), "set_collision", "has_collision");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "wall_material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_wall_material", "get_wall_material");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "ground_material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_ground_material", "get_ground_material");

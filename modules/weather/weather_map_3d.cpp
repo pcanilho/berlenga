@@ -268,6 +268,10 @@ void WeatherMap3D::_update_terrain_wind() {
 		terrain_wind.pending_row = end;
 		if (end >= n) {
 			terrain_wind.finish_heights();
+			// The obstacles stand on this terrain: seat them again.
+			if (shelter_box_count > 0) {
+				shelter.dirty = true;
+			}
 		}
 	}
 	if (terrain_wind.needs_derive(cur_wind_direction)) {
@@ -388,18 +392,53 @@ float WeatherMap3D::get_terrain_lee_at(Vector3 p_position) const {
 void WeatherMap3D::_bake_shelter() {
 	shelter.ground_height = ground_height;
 	LocalVector<AABB> extra;
+	const Vector3 c = _follow_position();
+	shelter_movers.clear();
+	shelter_mover_timer = 0.0f;
 	if (shelter_enabled && is_inside_tree()) {
+		// Each box stands on the terrain under its middle: lowered so its height counts from ground_height, as
+		// the bake measures it.
+		auto lowered = [&](AABB p_box) {
+			const float g = get_terrain_ground_at(p_box.get_center());
+			if (Math::is_finite(g)) {
+				p_box.position.y += ground_height - g;
+			}
+			return p_box;
+		};
+		const Rect2 square(Vector2(c.x, c.z) - Vector2(shelter.extent, shelter.extent) * 0.5f, Vector2(shelter.extent, shelter.extent));
+		static const StringName s_obstacles = "get_wind_obstacles";
 		const Vector<Node *> nodes = get_tree()->get_nodes_in_group(SNAME("weather_shelter"));
 		for (Node *node : nodes) {
+			// A node with many obstacles (a rock field, a vehicle) lists them as boxes; any other visual node
+			// is one box.
+			if (node->has_method(s_obstacles)) {
+				const Array boxes = node->call(s_obstacles, square);
+				AABB all;
+				for (int k = 0; k < boxes.size(); k++) {
+					if (boxes[k].get_type() == Variant::AABB) {
+						const AABB b = boxes[k];
+						extra.push_back(lowered(b));
+						all = k == 0 ? b : all.merge(b);
+					}
+				}
+				// A few boxes: a vehicle or a prop that can move, checked every few seconds.
+				if (boxes.size() <= 8) {
+					shelter_movers.push_back(Pair<ObjectID, AABB>(node->get_instance_id(), all));
+				}
+				continue;
+			}
 			VisualInstance3D *vi = Object::cast_to<VisualInstance3D>(node);
 			if (vi != nullptr && vi->is_visible_in_tree()) {
-				extra.push_back(vi->get_global_transform().xform(vi->get_aabb()));
+				extra.push_back(lowered(vi->get_global_transform().xform(vi->get_aabb())));
 			}
 		}
+		for (const WeatherShelter::Obstacle &o : shelter.obstacles) {
+			extra.push_back(lowered(o.box));
+		}
 	}
-	const Vector3 c = _follow_position();
+	shelter_box_count = int(extra.size());
 	if (shelter_enabled) {
-		shelter.bake(Vector2(c.x, c.z), cur_wind_direction, extra);
+		shelter.bake(Vector2(c.x, c.z), cur_wind_direction, extra, false);
 	} else {
 		// No shelter: an empty square, so shaders still find the texture.
 		Vector<WeatherShelter::Canopy> keep_c = shelter.canopies;
@@ -1318,8 +1357,8 @@ void WeatherMap3D::_notification(int p_what) {
 				_follow(_follow_position());
 				_ease_base(0.0);
 				_update_cells(0.0);
+				rebake_terrain_wind(); // first: the shelter seats its boxes on the terrain
 				_bake_shelter();
-				rebake_terrain_wind();
 				_upload();
 				_push_sky();
 				update_cloud_shadow();
@@ -1351,6 +1390,11 @@ void WeatherMap3D::_notification(int p_what) {
 			_follow(_follow_position());
 			{
 				const Vector3 c = _follow_position();
+				shelter_mover_timer += float(dt);
+				if (shelter_mover_timer >= 2.0f && !shelter_movers.is_empty()) {
+					shelter_mover_timer = 0.0f;
+					_check_shelter_movers();
+				}
 				if (shelter.needs_bake(Vector2(c.x, c.z), cur_wind_direction)) {
 					_bake_shelter();
 				}
@@ -1494,6 +1538,54 @@ void WeatherMap3D::get_gust_waves(LocalVector<Vector4> &r_waves) const {
 	for (int i = 0; i < GUST_COUNT; i++) {
 		r_waves[i] = Vector4(gusts[i].k.x, gusts[i].k.y, gusts[i].amplitude, float(gusts[i].phase));
 	}
+}
+
+void WeatherMap3D::_check_shelter_movers() {
+	// A vehicle that drove off (or parked) moves its lee: rebake when one of the few-box obstacles moved by
+	// more than half a metre, or left.
+	static const StringName s_obstacles = "get_wind_obstacles";
+	const Rect2 square = shelter.rect();
+	for (const Pair<ObjectID, AABB> &m : shelter_movers) {
+		Node *node = ObjectDB::get_instance<Node>(m.first);
+		if (!node || !node->is_inside_tree() || !node->has_method(s_obstacles)) {
+			shelter.dirty = true;
+			return;
+		}
+		const Array boxes = node->call(s_obstacles, square);
+		AABB all;
+		for (int k = 0; k < boxes.size(); k++) {
+			if (boxes[k].get_type() == Variant::AABB) {
+				const AABB b = boxes[k];
+				all = k == 0 ? b : all.merge(b);
+			}
+		}
+		if (all.position.distance_to(m.second.position) > 0.5f || (all.size - m.second.size).length() > 0.5f) {
+			shelter.dirty = true;
+			return;
+		}
+	}
+}
+
+float WeatherMap3D::get_obstacle_height_at(Vector3 p_position) const {
+	return shelter_enabled ? shelter.height_at(Vector2(p_position.x, p_position.z)) : 0.0f;
+}
+
+float WeatherMap3D::get_obstacle_lee_at(Vector3 p_position) const {
+	if (!shelter_enabled) {
+		return 1.0f;
+	}
+	float cell[4];
+	shelter.sample(Vector2(p_position.x, p_position.z), cell);
+	const float s = CLAMP(cell[2], 0.0f, 1.0f);
+	const float heff = cell[3];
+	if (s >= 1.0f || heff <= 0.05f) {
+		return s;
+	}
+	// A surface raised over the ground (a snow drift) fills the lee: gone at 1.2 times the obstacle's height, a
+	// drift at equilibrium (Tabler 1991).
+	const float g = get_terrain_ground_at(p_position);
+	const float z = p_position.y - (Math::is_finite(g) ? g : ground_height);
+	return Math::lerp(s, 1.0f, Math::smoothstep(0.3f * heff, 1.2f * heff, z));
 }
 
 float WeatherMap3D::get_shelter_at(Vector3 p_position, float p_height_above_ground) const {
@@ -2721,6 +2813,8 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("rebake_shelter"), &WeatherMap3D::rebake_shelter);
 	ClassDB::bind_method(D_METHOD("get_shelter_bake_time"), &WeatherMap3D::get_shelter_bake_time);
 	ClassDB::bind_method(D_METHOD("get_shelter_at", "position", "height_above_ground"), &WeatherMap3D::get_shelter_at, DEFVAL(-1.0f));
+	ClassDB::bind_method(D_METHOD("get_obstacle_height_at", "position"), &WeatherMap3D::get_obstacle_height_at);
+	ClassDB::bind_method(D_METHOD("get_obstacle_lee_at", "position"), &WeatherMap3D::get_obstacle_lee_at);
 	ClassDB::bind_method(D_METHOD("get_shelter_texture"), &WeatherMap3D::get_shelter_texture);
 	ClassDB::bind_method(D_METHOD("get_shelter_rect"), &WeatherMap3D::get_shelter_rect);
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("get_wind_shader_code"), &WeatherMap3D::get_wind_shader_code);

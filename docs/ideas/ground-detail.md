@@ -506,3 +506,28 @@ stones at all. Ground detail now carries the river layer's bed on below it, as i
 - **Through clear water.** The grains are ordinary detail instances, so the water's own transmission shows them; the
   check needs river water (PhysXRiver3D), which the cloud build here lacks (no PhysX SDK in this container): on the
   PC queue, or with a PhysX cloud build.
+
+## Stones that react (19 Nov)
+
+- **Technique.** An active zone round each contact, as in Servin, Berglund, Nordfeldt and Lacoursière's multiscale
+  terrain for earthmoving (2021, https://www.algoryx.se/papers/terrain/): the bed is records, and only where a tool
+  disturbs it does it turn into discrete particles, merged back once at rest. Here the tool is any `world_contact`
+  body (`WorldContracts.describe_body`: feet, wheels, balls, the same list grass, snow and the ground read).
+- **What a contact does.** Each physics frame, for each moving body (over 0.15 m/s; a body at rest leaves things as
+  they are), the stones under its footprint with no collision of their own (ground detail, and the small shore,
+  river and scree stones; never boulders over 0.3 m), each picked by a hash so it gets the same answer every frame:
+  - 60% pressed into the bed (centre down to 0.15 of its size over the ground; idempotent);
+  - 25% flicked: a rigid body on the physics server, a convex shape from the stone's own hull, mass from its size
+    (2650 kg/m3, a third of its sphere), pushed with 0.6 of the body's speed, out of the footprint and a little up,
+    spinning; ground collision only (layer 0: a vehicle is not shaken by gravel); up to `react_max_bodies` (32), and
+    only from 1.2 cm across;
+  - the rest (and flicks past the cap or too small) squeezed sideways to the footprint's edge, their place along the
+    way kept, into a low berm.
+  A first try that cleared every stone from the footprint read as a swept channel; a rolling contact mostly presses.
+- **Drawing.** A loose stone stays an instance of its own MultiMesh; each frame its instance transform is the body's,
+  so raster and the path tracer draw it exactly as before (no node swap, no separate mesh). At rest (asleep, or
+  under 5 cm/s for 0.4 s, or 8 s old, or through the ground) its body is freed and the record keeps where it lies.
+- **Switch.** `RockField3D.stones_react` (on), `react_max_bodies`, `get_react_stats()`. Bench `--roll[=m/s]`: a 0.3 m,
+  40 kg ball rolled 8 m across the spot (terrain collision on), taken away before the still; `--no-react`.
+- **Not yet.** Grains do not sink into soft ground (the ground's dent and soil from `WorldGround` would give it), and
+  stones that leave their cell's bounds stay in that cell (drawn, but streamed out with it).

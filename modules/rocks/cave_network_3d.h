@@ -35,6 +35,7 @@
 #include "core/templates/hash_map.h"
 #include "core/templates/hash_set.h"
 #include "core/templates/local_vector.h"
+#include "modules/world/world_contracts.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
@@ -50,7 +51,7 @@ struct CaveMeshJob;
 // cheap), a gamma-skeleton between the key points (the entrance, sinks under closed hollows above), side passages,
 // tortuosity, and a passage type from the height over the water table.
 
-class CaveNetwork3D : public Node3D {
+class CaveNetwork3D : public Node3D, public WorldWaterProvider {
 	GDCLASS(CaveNetwork3D, Node3D);
 
 public:
@@ -172,6 +173,37 @@ private:
 	uint64_t pool_water_usec = 0;
 	bool sea_mist = true;
 	ObjectID mist_node;
+	// The sea in sea caves (docs/ideas/world-links.md, "Sea caves"): a WorldWater producer along each sea cave. The
+	// sea's level just outside the mouth (any other producer, read through the contract) runs in as a long wave:
+	// lagged by the shallow-water speed sqrt(g h), grown by Green's law as the passage narrows and shoals, damped by
+	// the rough floor. A wave that seals the passage traps the air over the back chamber, and the rising water drives
+	// it up the blowhole like an oscillating water column's piston (air speed = rise speed x chamber / shaft area).
+	struct SeaSurge {
+		int cave = -1;
+		Vector3 probe; // out in front of the mouth, where the sea answers
+		Vector3 dir; // into the cave
+		AABB bounds;
+		LocalVector<Vector3> axis; // samples along the passage, then the chamber
+		LocalVector<float> along, floor, roof, half_width, amp, lag;
+		LocalVector<float> level, flow; // live: the surface (m) and the current into the cave (m/s)
+		float sea = 0.0f; // the still sea at build time
+		float mean = NAN; // the sea's level at the mouth, low-passed (tides pass, waves do not)
+		LocalVector<float> history; // the wave at the mouth (m over the mean), one every HISTORY_STEP
+		int head = 0;
+		double since = 0.0;
+		int chamber = -1; // the chamber's sample, or -1
+		Vector3 blowhole;
+		float chamber_area = 0.0f, shaft_area = 0.0f;
+		float spout = 0.0f; // air speed up the blowhole, m/s
+		bool sealed = false;
+	};
+	static constexpr float SURGE_HISTORY_STEP = 0.05f;
+	LocalVector<SeaSurge> surges;
+	bool sea_surge = true;
+	real_t surge_damping = 40.0; // m, the e-folding of the wave along the passage
+	bool surges_dirty = true;
+	void _surge_build();
+	void _surge_update(double p_delta);
 	void _update_mist_node();
 	// Cave streams (docs/ideas/rocks.md, "Cave streams"): a PhysXRiver3D along each run of stream segments.
 	bool cave_streams = true;
@@ -294,6 +326,15 @@ public:
 	void set_cave_streams(bool p_enable);
 	bool get_cave_streams() const { return cave_streams; }
 	int get_stream_count() const;
+	void set_sea_surge(bool p_enable);
+	bool get_sea_surge() const { return sea_surge; }
+	void set_surge_damping(real_t p_metres) { surge_damping = MAX(p_metres, real_t(1.0)); surges_dirty = true; }
+	real_t get_surge_damping() const { return surge_damping; }
+	Dictionary get_sea_cave_water(int p_cave) const;
+	Dictionary get_blowhole_spout(int p_cave) const;
+	void step_sea_surge(double p_delta) { _surge_update(p_delta); }
+	float contract_water_height_at(const Vector3 &p_position) const override;
+	Vector3 contract_water_flow_at(const Vector3 &p_position) const override;
 	void set_sea_mist(bool p_enable);
 	bool get_sea_mist() const { return sea_mist; }
 	Node *get_sea_mist_node() const { return ObjectDB::get_instance<Node>(mist_node); }
