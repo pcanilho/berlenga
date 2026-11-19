@@ -62,6 +62,7 @@ void ShaderTypes::add_raster_ray_renames(HashMap<StringName, String> &r_renames)
 	r_renames["RAY_IS_SINGULAR"] = "true";
 	r_renames["RAY_BOUNCES"] = "0";
 	r_renames["RAY_DIFFUSE_BOUNCES"] = "0";
+	r_renames["RAY_FOOTPRINT"] = "0.0";
 }
 
 ShaderTypes *ShaderTypes::singleton = nullptr;
@@ -242,6 +243,9 @@ ShaderTypes::ShaderTypes() {
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_IS_SINGULAR"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_BOUNCES"] = constt(ShaderLanguage::TYPE_INT);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_DIFFUSE_BOUNCES"] = constt(ShaderLanguage::TYPE_INT);
+	// The path tracer ray's cone where it meets the surface (ray cones), in world units: detail finer than this is
+	// below the pixel. 0 where unknown and in raster, which has screen derivatives.
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_FOOTPRINT"] = constt(ShaderLanguage::TYPE_FLOAT);
 
 	shader_modes[RSE::SHADER_SPATIAL].functions["light"].built_ins["MODEL_MATRIX"] = constt(ShaderLanguage::TYPE_MAT4);
 	shader_modes[RSE::SHADER_SPATIAL].functions["light"].built_ins["VIEW_MATRIX"] = constt(ShaderLanguage::TYPE_MAT4);
