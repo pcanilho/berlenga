@@ -2079,7 +2079,12 @@ than PT (sun only, deep rows 55 vs 84). Refit on the puffs: SUN_MS_GAIN
 1.3; the tail of orders past the octaves back, now at every albedo
 (sum over n >= 3 of (0.45 albedo)^n); SKY_MS_SHARE 0.25. Puff under sun
 and sky, rows down two columns against 32-spp PT: default albedo rms
-5.6%, mean +2%; albedo 0.99 rms 9.6%, mean -6%.
+5.6%, mean +2%; albedo 0.99 rms 9.6%, mean -6%. Against a fresh 16-spp
+PT still of snow's powder (mountainside bench, 6 s) that fit left the
+powder 14-22% bright, and no octave or tail setting fits both scenes, so
+the constants split the difference: SUN_MS_GAIN 1.1, SKY_MS_SHARE 0.18.
+Puff default mean -2% (rms 7%), puff at 0.99 mean -15%, powder band +3%
+and its left column +9%.
 
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 

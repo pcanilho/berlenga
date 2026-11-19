@@ -356,8 +356,8 @@ float hg_phase(float c, float g) {
 // The densest smoke the gas is taken as: the path tracer's density majorant (RTSparseVolume::density_majorant),
 // which clamps the smoke it tracks to it, and Flow's own opacity march (patched, misc/physx_patches 0010).
 const float SMOKE_MAX = 2.0;
-const float SUN_MS_GAIN = 1.3;
-const float SKY_MS_SHARE = 0.25;
+const float SUN_MS_GAIN = 1.1;
+const float SKY_MS_SHARE = 0.18;
 const float SKY_OCCLUSION = 0.15;
 
 float ms_transmittance(float tau) {
