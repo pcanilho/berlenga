@@ -970,6 +970,28 @@ frame). The bench's sea cave opens onto a beach, so a mouth with the swell in it
 - Sea-cave mouths: cold mist in PhysX Flow. Spray and saturated air pushed out of the cave by the swell, where the
   sea is in the mouth. A slow, heavy, pale Flow emitter at the mouth, pulsing with the swell, near the target only.
 
+## Salt bloom (19 Nov, from the weather's sea spray)
+
+Sea spray leaves salt on the shore stone (WeatherMap3D `sea_spray`, the `weather_spray_map` global, G = 1 - exp(-g/m2 /
+10)). Where the film dries the salt crystallises at the surface as a white halite crust (efflorescence; Mustoe 1982,
+Goudie and Viles 1997, Huinink et al. 2004 on salt and tafoni): heaviest in the sheltered stone (hollows, ledge
+undersides, overhangs), thin on open faces, washed off the lines rain runs down. It dissolves in any water film, so it
+shows only on dry stone and returns as the stone dries. The rock shader reads `weather_salt_at` (shared with the salt
+burn on plants): crust = smoothstep(0.2, 0.8, salt x (0.5 + 0.5 shelter) x (1 - 0.6 runnel) + noise), off where wet,
+in the tidal film, under moss and mostly under lichen; matte, near white. Setting: rock material `salt_bloom` (on).
+Bench: `--rock=... --salt=k` (a stand-in salt index), `--no-salt-bloom` for a before frame.
+
+## Sea stack faces (19 Nov, round 5)
+
+The C++ `rk_fbm` returns -1..1, but the coast and landform shaping used it as 0..1 (`rk_fbm(...) - 0.5`), so every such
+term pushed the whole surface out by half its amplitude. On stacks, whose amplitudes are large, the faces were pushed
+out to the voxel pass's cutoff (0.5c past the cut) and came out as flat planes there: the "slab" at 30 m. Fixed
+everywhere (the terms are centred now; the other forms change by a few percent of their thickness), and the stack's
+own terms retuned on the centred noise: beds set back 0.07 to 0.2c (hard ones standing 0.05c proud), clefts opened
+along a share of the joints (a slot 0.24 to 0.44c wide and 0.55c deep, dying out up the column), a plan that changes
+with height, the voxel pass reaching 1.2c outside the cut. Hoodoos and goblins take the slope's rock colour
+(`cliff_match`), like cliff blocks and cave mouths: they are the bedrock left standing.
+
 ## Next options (17 Nov research, nothing built before Paulo picks)
 
 1. Tafoni and honeycomb weathering as real geometry. Coastal sandstone and granite boulders hollow out into
