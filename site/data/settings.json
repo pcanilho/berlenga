@@ -3235,10 +3235,11 @@
   {
    "name": "Dirty snow",
    "settings": [
-    "SnowCover3D.impurities_enabled"
+    "SnowCover3D.impurities_enabled",
+    "rockfall_dust"
    ],
    "note": "",
-   "what": "smoke, burnt forest and settling dust darken the snow and make it melt sooner, until fresh snow buries the dirt.",
+   "what": "smoke, burnt forest, rockfall dust and other settling dust darken the snow and make it melt sooner, until fresh snow buries the dirt.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
