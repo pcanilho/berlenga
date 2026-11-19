@@ -1542,7 +1542,7 @@ void fragment() {
 	}
 	if (ground_deform_enabled) {
 		// The salt crust round still water in a dry climate (GroundSurface3D salt_crusts).
-		c += "\tground_salt_apply(wp, wn.y, albedo, rough);\n";
+		c += "\tground_salt_apply(wp, wn.y, length(fwidth(wp.xz)), albedo, rough);\n";
 	}
 	if (snow_enabled) {
 		// The snowpack over everything: slides off past its slope, settles first on the flattest facets of the

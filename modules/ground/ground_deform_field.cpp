@@ -427,7 +427,10 @@ float GroundDeformField::add_amount(const Columns &p_columns, Vector3 p_position
 				dent[i] = MIN(dent[i] + a - take, c.max_dent);
 				volume += (take + dent[i] - before) * t * t;
 				if (track_fresh) {
-					fresh[i] = 1.0f;
+					// Turned over by its depth: a skim of a millimetre or two (an avalanche's margin, a tent's tail)
+					// barely shows; 3 mm or more is fresh ground (ground_deform.glsl run_amount_stamp()).
+					const float f = MIN(a / 0.003f, 1.0f);
+					fresh[i] = fresh[i] >= 2.0f ? (f >= 1.0f ? 1.0f : fresh[i]) : MAX(fresh[i], f);
 				}
 			} else {
 				const float fill = MIN(dent[i], -a);

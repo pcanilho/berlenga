@@ -2848,7 +2848,19 @@ void GroundSurface3D::_water_update(double p_delta) {
 								still = 0.0f;
 							}
 						}
-						crust = arid * still * Math::smoothstep(0.05f, 0.16f, above) * (1.0f - Math::smoothstep(0.2f, 0.4f, above));
+						// It follows the ground: wider in hollows, where the water stands longer and the evaporating
+						// front gathers, narrower on rises, none on steeper banks (over about 8 degrees the fringe's top
+						// is a thin line and slumps keep it fresh), and its top wanders along the shore.
+						const int kk = MAX(1, (int)Math::round(0.5f / ground_spacing));
+						auto gat = [&](int p_x, int p_z) { return ground[CLAMP(p_z, 0, n - 1) * n + CLAMP(p_x, 0, n - 1)]; };
+						const float sx = (gat(x + kk, z) - gat(x - kk, z)) / (2.0f * kk * ground_spacing);
+						const float sz = (gat(x, z + kk) - gat(x, z - kk)) / (2.0f * kk * ground_spacing);
+						const float hollow = 0.25f * (gat(x + kk, z) + gat(x - kk, z) + gat(x, z + kk) + gat(x, z - kk)) - ground[i];
+						const float wx = (ground_origin.x + x) * ground_spacing;
+						const float wz = (ground_origin.y + z) * ground_spacing;
+						const float top = 0.3f + CLAMP(hollow * 40.0f, -0.12f, 0.2f) + 0.16f * (_value_noise(wx / 2.3f + 11.0f, wz / 2.3f + 5.0f) - 0.5f);
+						const float steep = Math::smoothstep(0.1f, 0.2f, Math::sqrt(sx * sx + sz * sz));
+						crust = arid * still * (1.0f - steep) * Math::smoothstep(0.05f, 0.14f, above) * (1.0f - Math::smoothstep(top - 0.08f, top + 0.06f, above));
 					}
 				}
 				salt_crust[i] = crust;

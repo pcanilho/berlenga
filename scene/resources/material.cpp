@@ -3152,7 +3152,7 @@ void fragment() {)";
 	ROUGHNESS = mix(ROUGHNESS, 0.2, 0.6 * ground_wet.y);
 )";
 		// The salt crust round still water in a dry climate (GroundSurface3D salt_crusts), over the wet margin.
-		code += "\tground_salt_apply((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, ALBEDO, ROUGHNESS);\n";
+		code += "\tground_salt_apply((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, length(fwidth((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz)), ALBEDO, ROUGHNESS);\n";
 	}
 	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
 		// Standing water in ruts and prints (mud stage 2): the patch lies on the water's level there (its
@@ -5057,23 +5057,65 @@ float ground_salt_state(vec2 p_xz) {
 	int b = ground_wet_blocks(ts);
 	return ground_wet_block(p_xz, r, b - 1, ts, float((ts.y - 1) / b)).x;
 }
+// Salt polygons (the crust buckles into plates some 10 cm across with raised rims, Lasser et al. 2023): a Voronoi
+// lattice in cell units, x the distance to the cell's edge (cell units), y the cell's random 0..1.
+vec2 ground_salt_cells(vec2 p_p) {
+	vec2 ip = floor(p_p);
+	vec2 fp = p_p - ip;
+	float d1 = 8.0;
+	float d2 = 8.0;
+	vec2 id = ip;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec2 g = vec2(float(i), float(j));
+			uvec2 q = uvec2(ivec2(ip + g) + ivec2(32768));
+			uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u);
+			h = (h ^ (h >> 16u)) * 2246822519u;
+			h ^= h >> 13u;
+			vec2 o = vec2(float(h & 0xffffu), float(h >> 16u)) / 65535.0;
+			vec2 r = g + 0.15 + 0.7 * o - fp;
+			float d = dot(r, r);
+			if (d < d1) {
+				d2 = d1;
+				d1 = d;
+				id = ip + g;
+			} else if (d < d2) {
+				d2 = d;
+			}
+		}
+	}
+	uvec2 q = uvec2(ivec2(id) + ivec2(32768));
+	uint h = (q.x * 2654435761u) ^ (q.y * 2246822519u);
+	h = (h ^ (h >> 15u)) * 2654435761u;
+	return vec2(0.5 * (sqrt(d2) - sqrt(d1)), float(h >> 8u) / 16777215.0);
+}
 // A salt crust (efflorescence) round still water in a dry climate: the salts the fringe's water leaves as it
 // evaporates, white and matte in patches that join as the crust thickens (playa crusts' albedo about 0.5 to 0.7,
 // Nield et al. 2015). The same lines in scene_raytracing_raygen.glsl.
-void ground_salt_apply(vec3 p_world, float p_normal_y, inout vec3 r_albedo, inout float r_roughness) {
+// p_fp: the pixel's footprint in metres (0 for full detail): past about a plate the plates give way to their share.
+void ground_salt_apply(vec3 p_world, float p_normal_y, float p_fp, inout vec3 r_albedo, inout float r_roughness) {
 	float c = ground_salt_state(p_world.xz);
 	if (c <= 0.0) {
 		return;
 	}
-	// Thicker and thinner along the shore (1.5 m), in crusts and bare sand between them (35, 9 and 2.5 cm), and a
-	// thin bloom under the crusts: off-white, never the snow's white.
+	// Thicker and thinner along the shore (1.5 m), in patches (35 and 9 cm) of polygonal plates 10 cm across, whole
+	// plates crusted or bare, with whiter raised rims; a thin bloom under the crusts: off-white, never the snow's white.
 	vec2 p = p_world.xz;
 	float ce = c * mix(0.35, 1.0, ground_ripple_vn(p / 1.5, 23u));
-	float nz = 0.5 * ground_ripple_vn(p / 0.35, 21u) + 0.3 * ground_ripple_vn(p / 0.09, 22u) + 0.2 * ground_ripple_vn(p / 0.025, 24u);
+	float nz = 0.6 * ground_ripple_vn(p / 0.35, 21u) + 0.4 * ground_ripple_vn(p / 0.09, 22u);
 	float up = smoothstep(0.3, 0.8, p_normal_y);
-	float cover = smoothstep(1.0 - ce, 1.35 - ce, nz) * up;
-	r_albedo = mix(r_albedo, vec3(0.56, 0.53, 0.48), max(0.7 * cover, 0.15 * ce * up));
-	r_roughness = mix(r_roughness, 0.92, cover);
+	float share = smoothstep(1.0 - ce, 1.35 - ce, nz);
+	vec2 cell = ground_salt_cells(p / 0.1);
+	float plate = step(cell.y, share) * (0.85 + 0.15 * (1.0 - smoothstep(0.0, 0.08, cell.x)));
+	float cover = mix(plate, 0.9 * share, smoothstep(0.03, 0.1, p_fp)) * up;
+	r_albedo = mix(r_albedo, vec3(0.56, 0.53, 0.48), max(0.75 * cover, 0.15 * ce * up));
+	r_roughness = mix(r_roughness, 0.92, min(cover, 1.0));
+	// The cracks between the plates, a few millimetres wide, showing the damp sand under them (gone past a few mm
+	// a pixel, where their share is in the plates' mix).
+	// Plate by plate a little whiter or greyer; the cracks open and close along their length.
+	float gap = 0.05 * ground_ripple_vn(p / 0.04, 25u);
+	float near = (1.0 - smoothstep(0.004, 0.012, p_fp)) * step(cell.y, share) * up;
+	r_albedo *= 1.0 + near * (0.12 * fract(cell.y * 17.0) - 0.06 - 0.25 * (1.0 - smoothstep(gap, gap + 0.02, cell.x)));
 }
 // The patch's surface with its standing water and its cracks (the cracks the mesh's spacing can carry).
 float ground_deform_top(vec2 p_xz) {

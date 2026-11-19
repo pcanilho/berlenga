@@ -2424,6 +2424,38 @@ float ground_ripple_vn(vec2 p_p, uint p_s) {
 	ivec2 c = ivec2(i);
 	return mix(mix(ground_ripple_hash(c, p_s), ground_ripple_hash(c + ivec2(1, 0), p_s), u.x), mix(ground_ripple_hash(c + ivec2(0, 1), p_s), ground_ripple_hash(c + ivec2(1, 1), p_s), u.x), u.y);
 }
+
+// material.cpp ground_salt_cells(), the same lines.
+vec2 ground_salt_cells(vec2 p_p) {
+	vec2 ip = floor(p_p);
+	vec2 fp = p_p - ip;
+	float d1 = 8.0;
+	float d2 = 8.0;
+	vec2 id = ip;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec2 g = vec2(float(i), float(j));
+			uvec2 q = uvec2(ivec2(ip + g) + ivec2(32768));
+			uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u);
+			h = (h ^ (h >> 16u)) * 2246822519u;
+			h ^= h >> 13u;
+			vec2 o = vec2(float(h & 0xffffu), float(h >> 16u)) / 65535.0;
+			vec2 r = g + 0.15 + 0.7 * o - fp;
+			float d = dot(r, r);
+			if (d < d1) {
+				d2 = d1;
+				d1 = d;
+				id = ip + g;
+			} else if (d < d2) {
+				d2 = d;
+			}
+		}
+	}
+	uvec2 q = uvec2(ivec2(id) + ivec2(32768));
+	uint h = (q.x * 2654435761u) ^ (q.y * 2246822519u);
+	h = (h ^ (h >> 15u)) * 2654435761u;
+	return vec2(0.5 * (sqrt(d2) - sqrt(d1)), float(h >> 8u) / 16777215.0);
+}
 vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 	vec2 p = p_xz;
 	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
@@ -3307,11 +3339,14 @@ void main() {
 	if (g_salt > 0.0) {
 		vec2 gsp = (h.hit_pos + rt_origin.xyz).xz;
 		float gse = g_salt * mix(0.35, 1.0, ground_ripple_vn(gsp / 1.5, 23u));
-		float gsn = 0.5 * ground_ripple_vn(gsp / 0.35, 21u) + 0.3 * ground_ripple_vn(gsp / 0.09, 22u) + 0.2 * ground_ripple_vn(gsp / 0.025, 24u);
+		float gsn = 0.6 * ground_ripple_vn(gsp / 0.35, 21u) + 0.4 * ground_ripple_vn(gsp / 0.09, 22u);
 		float gsu = smoothstep(0.3, 0.8, h.geometry_normal.y);
-		float gsc = smoothstep(1.0 - gse, 1.35 - gse, gsn) * gsu;
-		m.albedo = mix(m.albedo, vec3(0.56, 0.53, 0.48), max(0.7 * gsc, 0.15 * gse * gsu));
-		m.roughness = mix(m.roughness, 0.92, gsc);
+		vec2 gsv = ground_salt_cells(gsp / 0.1);
+		float gsc = step(gsv.y, smoothstep(1.0 - gse, 1.35 - gse, gsn)) * (0.85 + 0.15 * (1.0 - smoothstep(0.0, 0.08, gsv.x))) * gsu;
+		m.albedo = mix(m.albedo, vec3(0.56, 0.53, 0.48), max(0.75 * gsc, 0.15 * gse * gsu));
+		m.roughness = mix(m.roughness, 0.92, min(gsc, 1.0));
+		float gsg = 0.05 * ground_ripple_vn(gsp / 0.04, 25u);
+		m.albedo *= 1.0 + step(gsv.y, smoothstep(1.0 - gse, 1.35 - gse, gsn)) * gsu * (0.12 * fract(gsv.y * 17.0) - 0.06 - 0.25 * (1.0 - smoothstep(gsg, gsg + 0.02, gsv.x)));
 	}
 	// Standing water in ruts and prints (material.cpp ground_water_look()): the patch already lies on the water's
 	// level there; the surface is water's (F0 0.02, smooth, no relief), the bed under it soaked and, deeper, hidden

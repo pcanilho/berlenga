@@ -768,8 +768,17 @@ about 0.3, full under 0.1. The crust lies from about 8 cm over the water's level
 top, and only by still water (a stream's banks are washed). It is a wet-map block (texel 6's tag 8.5, after the mud's fresh deposits at 7.5), drawn in
 patches that join as it thickens, white and matte, by BaseMaterial3D, TerrainMaterial3D and the path tracer alike.
 `salt_crusts` (on); `--test=fringe` checks it in a desert climate (`desert_climate.gd`) and not without one.
+Docs round 2: a band of even width read as a foam line. The crust now follows the ground: its top wanders along the
+shore (2.3 m value noise), reaches higher in hollows (the lattice's Laplacian over 50 cm) and lower on rises, and
+fades out on banks over about 8 degrees. Up close it is polygonal plates some 10 cm across (salt polygons, Lasser et
+al. 2023): whole plates crusted or bare, each a little whiter or greyer, with cracks that open and close along their
+length; past a few millimetres a pixel the plates give way to their share. `--view=fringe` (and `--cam=` for close).
 
 ### Avalanche tongues and planed ripples (19 Nov 2026)
+
+Any dig, however shallow, set the fresh-ground tint in full, so the tents' tails turned the whole face below a row
+of prints into one dark, blocky rectangle. The tint now scales with the dig's depth, full from 3 mm (CPU field and
+GPU shader alike).
 
 The tongue's scour and lobe are now tents 1.6 times the flow's half width: flat discs 4 cm apart left each disc's
 edge as a terrace, a row of arcs down the tongue like contour lines. A change of the surface now planes the
