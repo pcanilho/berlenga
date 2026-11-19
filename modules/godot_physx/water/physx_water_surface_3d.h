@@ -432,6 +432,10 @@ public:
 	void contract_water_clear(uint64_t p_owner) override;
 	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override;
 	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return sample_depth(p_position) > 0.0f ? sediment : Vector2(); }
+	// Breaking waves for sea spray (WorldWater.breaking_at): the surf zone, where the shore swell is taller than
+	// about 0.78 of the still depth (saturated surf, Thornton and Guza 1982), breaks at 0.78 d; open water gives its
+	// whitecap cover times the wind sea's significant height (4 sigma).
+	float contract_water_breaking_at(const Vector3 &p_position) const override;
 	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override;
 	void contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) override;
 	// The body's suspended load (kg/m3: x mineral, y ash), well mixed; it settles out over hours to days.
@@ -746,6 +750,8 @@ private:
 	// footprint's center when surface_mesh is set), and the ripple domain
 	// actually in use -- both fixed at _rebuild().
 	Vector2 grid_center;
+	mutable Vector3 breaking_sigma_key = Vector3(-1, -1, -1); // wind, amplitude, fetch of the cached sigma
+	mutable float breaking_sigma = 0.0f;
 	Vector2 active_domain_size;
 	// Wet/dry cells from the surface_mesh footprint (empty = none set), and
 	// the still-water depth per ripple cell actually in use (<= 0 = dry;

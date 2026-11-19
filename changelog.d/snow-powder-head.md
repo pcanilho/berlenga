@@ -1,0 +1,1 @@
+- Snow: the avalanche powder cloud rises along the whole head of the flow and is near white (`SnowPowderCloud3D`, scattering albedo 0.99).

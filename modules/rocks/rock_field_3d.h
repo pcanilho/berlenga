@@ -466,7 +466,7 @@ private:
 	};
 	LocalVector<Loose> loose;
 	HashMap<ObjectID, Vector3> react_last; // contact bodies' last centres (their speed when they are not physics bodies)
-	uint64_t react_promoted = 0, react_shoved = 0, react_settled = 0;
+	uint64_t react_promoted = 0, react_shoved = 0, react_pressed = 0, react_settled = 0;
 	void _update_react(double p_delta);
 	void _free_loose(uint32_t p_index);
 	void _clear_react();

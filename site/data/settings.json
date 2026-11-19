@@ -1852,6 +1852,17 @@
    "topic": "Sea and lakes"
   },
   {
+   "name": "Oasis springs",
+   "settings": [
+    "OasisSprings3D"
+   ],
+   "note": "",
+   "what": "still spring pools in the desert, each sized by its spring's water balance and with its own outline, with sand boils heaving at the vents.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
    "name": "Cave pools",
    "settings": [
     "seabed_probe_height"
@@ -3432,10 +3443,11 @@
     "forests_enabled",
     "wet_enabled",
     "glide_enabled",
-    "water_enabled"
+    "water_enabled",
+    "crowns_enabled"
    ],
    "note": "",
-   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice and breaks through thin ice.",
+   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts, leaving a crown wall, flanks that fade downslope and a grey scoured bed; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice and breaks through thin ice.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
@@ -3708,6 +3720,39 @@
    ],
    "note": "",
    "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Fog drip",
+   "settings": [
+    "WeatherMap3D.fog_drip"
+   ],
+   "note": "",
+   "what": "cloud lying on wooded ground drips from the trees and wets the ground beneath them.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Sea spray",
+   "settings": [
+    "WeatherMap3D.sea_spray"
+   ],
+   "note": "",
+   "what": "breaking waves wet the shore and cliff faces downwind and leave salt that rain washes off; salted grass browns at the tips.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Wet tracks",
+   "settings": [
+    "WeatherMap3D.wet_tracks"
+   ],
+   "note": "",
+   "what": "bodies and vehicles coming out of water, wet mud or puddles leave wet footprints and tyre tracks that fade along the way, drip where they stand, and dry with the weather.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

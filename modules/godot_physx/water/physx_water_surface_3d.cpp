@@ -3014,6 +3014,32 @@ float PhysXWaterSurface3D::contract_water_height_at(const Vector3 &p_position) c
 	return sample_depth(p_position) > 0.0f ? sample_height(p_position) : -Math::INF;
 }
 
+float PhysXWaterSurface3D::contract_water_breaking_at(const Vector3 &p_position) const {
+	if (surface_mesh.is_valid() && !is_wet(p_position)) {
+		return 0.0f;
+	}
+	const float d = _rest_depth_at(p_position.x - grid_center.x, p_position.z - grid_center.y);
+	if (d <= 0.0f) {
+		return 0.0f;
+	}
+	float br = 0.0f;
+	if (foam_enabled) {
+		const Vector3 key(wind_speed, wave_amplitude, get_effective_fetch());
+		if (key != breaking_sigma_key) {
+			breaking_sigma_key = key;
+			breaking_sigma = _wind_sea_sigma(0.001f, 100.0f);
+		}
+		br = get_whitecap_target_cover() * 4.0f * breaking_sigma;
+	}
+	if (shore_waves) {
+		const float h0 = _shore_height();
+		if (h0 > 0.0f && d < h0 / 0.78f) {
+			br = MAX(br, 0.78f * d);
+		}
+	}
+	return br;
+}
+
 void PhysXWaterSurface3D::contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) {
 	submit_sphere(int(p_owner & 0x7fffffff), p_position, p_radius, p_strength);
 }

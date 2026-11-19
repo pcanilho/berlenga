@@ -220,3 +220,21 @@ not describe its dunes.
 - terrain_gen --test: power at 267-800 m over 80-200 m 4.5 against 2.4 plain (300 steps, 60 m edge), same seed same
   sea.
 
+## Oases (19 Nov, hand-off from Valence's OasisSprings3D, #401)
+
+Desert springs rise where a confined aquifer reaches the floor of a depression (Siwa and Farafra in the Western
+Desert; the Great Artesian Basin's mound springs). TerrainGenerator3D is the provider of both the springs and the
+ground under them; OasisSprings3D (Valence) sizes each pool by its water balance and draws the water and boils.
+
+- **Springs** (`oasis_count`, default 3 a sand sea): 48 m lattice over the sea, thin sand (under 0.6 m), loose
+  sand cover, off water; score = mean ground 120 m round minus the site (over 1 m); the deepest kept 400 m apart.
+  Level 0.6 m under the lowest ground within 6 m. `get_springs()` returns (x, level, z, 0).
+- **Wiring**: OasisSprings3D.spring_source = the generator; generator.oasis_springs = the OasisSprings3D.
+  generate() places the springs, rebuilds the pools and reads each outline (matched to the nearest spring).
+- **Hollow**: inside 0.92 of the outline a bed (1 - d^2)^1.2 down to min(2.4, 0.6 + 0.35 R) m, with lumps
+  (value noise 1.6 m and 0.7 m, 0.4 and 0.15 m) and runnels (radial grooves, 0.22 m) fading to nothing at the
+  shore; the bed meets the still water at 0.92 of the outline, as Valence asked, so the clipped water edge never
+  shows. Past it a 7 degree beach for 3 m, then 24 degrees up to the dunes; the hollow only lowers the ground.
+- A pit 0.35 m deep and 0.7 m in radius under each get_vents(i) point (x and z only; the vents' heights land on the
+  measured bed a frame later).
+

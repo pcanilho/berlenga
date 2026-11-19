@@ -27,6 +27,13 @@
 				Override in a stub to replace [method add_sediment_mass].
 			</description>
 		</method>
+		<method name="_breaking_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method breaking_at].
+			</description>
+		</method>
 		<method name="_clear" qualifiers="virtual">
 			<return type="void" />
 			<param index="0" name="owner" type="int" />
@@ -97,6 +104,13 @@
 			<param index="2" name="ash_kg" type="float" />
 			<description>
 				A load dropped into the water that answers at [param position] at once, in kg of mineral and of ash: the fines of a debris flow or a landslide that stops in it, a bank's collapse. A river mixes it through the water around the point and carries it on; a lake through its whole volume. The load is capped at [code]1000[/code] kg/m³ (hyperconcentrated flow); a denser mixture is a debris flow. Where no water answers, it is dropped. For a load that keeps coming (runoff), use [method add_sediment].
+			</description>
+		</method>
+		<method name="breaking_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Height of the waves breaking at [param position], in m, the largest any producer reports: the broken waves in a surf zone (about 0.78 of the depth), whitecap cover times wave height over open water, 0 where none break. Sea spray reads it ([method WorldWeather.sea_spray_at]).
 			</description>
 		</method>
 		<method name="clear">
