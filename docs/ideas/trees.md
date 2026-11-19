@@ -2323,6 +2323,20 @@ outright (TreeWind3D's snags) but above the scorch height are not cast yet (that
 per-tree state in the shader). Bench: env FIRE_AGE=Y SCORCH=H on main.gd renders; frames
 /mnt/project-files/fork/trees/fire/.
 
+### 5ag. Trees the fire killed outright (19 Nov)
+
+A snag must not keep a green top. One mortality rule, VegetationFire::tree_killed (vegetation_fire.h, C++ and
+the same GLSL in MORTALITY_CODE), used by TreeWind3D's snags and by the leaf shader, so wood that weakens and
+foliage that dies always agree: Ryan and Reinhardt (1988), CVS from the crown's foliage profile (TreeGenerator's
+"tree_fire_crown" mesh meta and the leaf material's fire_crown_q / fire_crown_top / fire_dbh: heights over the
+foot below which 0-100% of the leaves sit by quartile, and the stem's diameter at 1.3 m), bark 4% of that
+diameter, a hash of the tree's world foot (16 cm cells) against P. The scorch height is read as the state map
+stores it (8 bits, truncated as Image::set_pixel does; the shader texelFetches the foot's cell), so CPU and GPU see
+the same number. A killed tree's spared foliage fades to red-brown over the first three months and is cast over
+the following year or two (1 - exp(-(age - 0.25) / 0.5)): the red stage of fire-killed conifers. TreeWind3D keeps
+its bone-area rule only for meshes without the meta (leafless ones). Frames: fire/snag-strip.png (scorch 13 m,
+0.05 / 0.3 / 1 year); storm bench --snag=0 and 8 as before (0 and 38 breaks at 18 m/s).
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

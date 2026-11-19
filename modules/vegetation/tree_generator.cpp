@@ -17100,6 +17100,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	_grow_chevrons(bark);
 	Builder resin;
 	_grow_resin(resin);
+	_fire_crown(leaves);
 	Builder *builders[10] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b, &climber_adult_b, &soil_b, &crown_parts, &resin };
 	if (stone.on) {
 		_build_root_stone(soil_b);
@@ -17567,6 +17568,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// 5 Trametes, 6 honey fungus, 7 sulphur tuft); mesh space.
 		mesh->set_meta(SNAME("tree_fungi"), fungi_points);
 	}
+	if (fire_crown[5] > 0.0f) {
+		// The crown's foliage profile for fire mortality (VegetationFire::tree_killed; trees.md 5ag).
+		PackedFloat32Array fc;
+		for (int i = 0; i < 6; i++) {
+			fc.push_back(fire_crown[i]);
+		}
+		mesh->set_meta(SNAME("tree_fire_crown"), fc);
+	}
 	if (rigged) {
 		mesh->set_meta(SNAME("tree_rig"), _rig_data());
 		if (storm_kit && !fallen && decay_class == 0 && !fallen_branch) {
@@ -18031,6 +18040,20 @@ vec3 plant_wind(vec3 wp, float h) {
 				if (fire_killed > fract(fire_n * 3.71 + 0.41) && fire_cast > fract(fire_n * 11.37 + 0.73)) {
 					ALPHA = 0.0;
 				}
+				// A tree the fire killed outright (VegetationFire::tree_killed, the same rule TreeWind3D's snags
+				// follow): the foliage the scorch spared dies with it, fading to red-brown over the first months and
+				// cast over the next year or two (the red stage of fire-killed conifers; snag classes, Everett et al.
+				// 1999), so a snag never keeps a green top.
+				float fire_scale = pow(abs(determinant(mat3(MODEL_MATRIX))), 1.0 / 3.0);
+				if (fire_killed < 0.5 && fire_tree_killed(MODEL_MATRIX[3].xyz, fire_scale)) {
+					float fire_lum = dot(ALBEDO, vec3(0.2126, 0.7152, 0.0722));
+					vec3 fire_red = vec3(0.34, 0.15, 0.05) * clamp(fire_lum * 5.0, 0.5, 1.4);
+					ALBEDO = mix(ALBEDO, fire_red, smoothstep(0.0, 0.25, fire_age + 0.06 * (fire_n - 0.5)));
+					float fire_drop = 1.0 - exp(-max(fire_age - 0.25, 0.0) / 0.5);
+					if (fire_drop > fract(fire_n * 5.13 + 0.29)) {
+						ALPHA = 0.0;
+					}
+				}
 			}
 			// Light through a dead leaf takes its colour too (seen from below, a crown is mostly backlit).
 			fire_leaf_back = clamp(ALBEDO / max(fire_before, vec3(1e-3)), 0.0, 1.5);
@@ -18065,7 +18088,7 @@ float fire_age_years(vec2 xz) {
 	return a > 0.0 ? a * 2.0 : -1.0;
 }
 )";
-	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\n" + wind + VegetationFire::SHADER_CODE + FIRE_AGE_CODE + "\n");
+	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\n" + wind + VegetationFire::SHADER_CODE + VegetationFire::MORTALITY_CODE + FIRE_AGE_CODE + "\n");
 	// The path tracer: flutter is a raster motion of millimetres; the traced leaves keep their
 	// shape and follow the bones. A static tree is traced from its rest mesh (no capture), a
 	// rigged one is captured only when its bones move (as the plain material was), never because
@@ -18103,7 +18126,46 @@ float fire_age_years(vec2 xz) {
 	m->set_shader_parameter("flutter_amount", leaf_flutter);
 	m->set_shader_parameter("flutter_size", p_leaf_size);
 	m->set_shader_parameter("leaf_underside", leaf_underside);
+	m->set_shader_parameter("fire_crown_q", Vector4(fire_crown[0], fire_crown[1], fire_crown[2], fire_crown[3]));
+	m->set_shader_parameter("fire_crown_top", fire_crown[4]);
+	m->set_shader_parameter("fire_dbh", fire_crown[5]);
 	return m;
+}
+
+// Fire mortality's crown profile (trees.md 5ag): heights over the foot below which 0, 25, 50, 75 and 100% of the
+// leaves (or needles) sit, by leaf vertex, and the stem's diameter at breast height (1.3 m). No leaves: none (zero).
+void TreeGenerator::_fire_crown(const Builder &p_leaves) {
+	for (float &f : fire_crown) {
+		f = 0.0f;
+	}
+	if (nodes.is_empty() || p_leaves.verts.size() < 3) {
+		return;
+	}
+	const float base_y = nodes[0].start.y;
+	LocalVector<float> ys;
+	ys.resize(p_leaves.verts.size());
+	for (int i = 0; i < p_leaves.verts.size(); i++) {
+		ys[i] = p_leaves.verts[i].y - base_y;
+	}
+	ys.sort();
+	for (int k = 0; k < 5; k++) {
+		fire_crown[k] = MAX(ys[MIN(uint32_t(k * (ys.size() - 1) / 4), ys.size() - 1)], 0.0f);
+	}
+	float r = 0.0f;
+	for (uint32_t i = 1; i < nodes.size(); i++) {
+		const Node &n = nodes[i];
+		if (n.removed || n.order != 0) {
+			continue;
+		}
+		const float y0 = n.start.y - base_y, y1 = n.end().y - base_y;
+		if (MIN(y0, y1) <= 1.3f && MAX(y0, y1) >= 1.3f) {
+			r = MAX(r, n.radius);
+		}
+	}
+	if (r <= 0.0f && nodes.size() > 1) {
+		r = nodes[1].radius;
+	}
+	fire_crown[5] = 2.0f * r;
 }
 
 // Far meshes from LOD 1 (trees.md 8d): the leaves' LOD 1 (half the leaves, each grown to keep
