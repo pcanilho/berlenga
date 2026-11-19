@@ -335,6 +335,16 @@ void WorldWater::add_sediment(const Vector3 &p_position, float p_mineral_kg_s, f
 	}
 }
 
+void WorldWater::add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) {
+	if (GDVIRTUAL_CALL(_add_sediment_mass, p_position, p_mineral_kg, p_ash_kg)) {
+		return;
+	}
+	float h;
+	if (WorldWaterProvider *top = _top_at(p_position, h)) {
+		top->contract_water_add_sediment_mass(p_position, MAX(p_mineral_kg, 0.0f), MAX(p_ash_kg, 0.0f));
+	}
+}
+
 void WorldWater::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldWater::has_provider);
 	ClassDB::bind_method(D_METHOD("height_at", "position"), &WorldWater::height_at);
@@ -346,6 +356,7 @@ void WorldWater::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("impulse", "position", "radius", "strength"), &WorldWater::impulse);
 	ClassDB::bind_method(D_METHOD("sediment_at", "position"), &WorldWater::sediment_at);
 	ClassDB::bind_method(D_METHOD("add_sediment", "position", "mineral_kg_s", "ash_kg_s"), &WorldWater::add_sediment);
+	ClassDB::bind_method(D_METHOD("add_sediment_mass", "position", "mineral_kg", "ash_kg"), &WorldWater::add_sediment_mass);
 
 	GDVIRTUAL_BIND(_height_at, "position");
 	GDVIRTUAL_BIND(_flow_at, "position");
@@ -355,6 +366,7 @@ void WorldWater::_bind_methods() {
 	GDVIRTUAL_BIND(_impulse, "position", "radius", "strength");
 	GDVIRTUAL_BIND(_sediment_at, "position");
 	GDVIRTUAL_BIND(_add_sediment, "position", "mineral_kg_s", "ash_kg_s");
+	GDVIRTUAL_BIND(_add_sediment_mass, "position", "mineral_kg", "ash_kg");
 }
 
 // Snow.
@@ -626,6 +638,7 @@ public:
 	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override { stub->impulse(p_position, p_radius, p_strength); }
 	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return stub->sediment_at(p_position); }
 	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override { stub->add_sediment(p_position, p_mineral_kg_s, p_ash_kg_s); }
+	void contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) override { stub->add_sediment_mass(p_position, p_mineral_kg, p_ash_kg); }
 };
 
 void WorldContracts::add_water_stub(const Ref<WorldWater> &p_stub) {

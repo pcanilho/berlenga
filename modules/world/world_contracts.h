@@ -187,6 +187,8 @@ public:
 	virtual Vector2 contract_water_sediment_at(const Vector3 &p_position) const { return Vector2(); }
 	// A load entering this water at the point (kg/s of each), from runoff, banks or a landslide; it carries it on.
 	virtual void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) {}
+	// A load dropped into this water at once (kg of each): a debris flow's or a landslide's fines, a bank's collapse.
+	virtual void contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) {}
 	virtual ~WorldWaterProvider() {}
 };
 
@@ -209,6 +211,7 @@ protected:
 	GDVIRTUAL3(_impulse, Vector3, float, float)
 	GDVIRTUAL1RC(Vector2, _sediment_at, Vector3)
 	GDVIRTUAL3(_add_sediment, Vector3, float, float)
+	GDVIRTUAL3(_add_sediment_mass, Vector3, float, float)
 
 public:
 	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -226,6 +229,8 @@ public:
 	Vector2 sediment_at(const Vector3 &p_position) const;
 	// A load entering the water that answers at the point (kg/s of mineral and of ash); none there: it is lost.
 	void add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s);
+	// A load dropped into that water at once (kg of mineral and of ash): mixed into the water around the point.
+	void add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg);
 };
 
 // Fire: what burns where, for what it heats (snow, the surface water, the air) and chars.

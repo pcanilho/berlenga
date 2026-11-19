@@ -54,6 +54,9 @@ class SiltPondStub extends WorldWater:
 	func _add_sediment(_p: Vector3, mineral: float, ash: float) -> void:
 		load += Vector2(mineral, ash) / 1000.0
 
+	func _add_sediment_mass(_p: Vector3, mineral: float, ash: float) -> void:
+		load += Vector2(mineral, ash) / 1000.0
+
 	func _sediment_at(_p: Vector3) -> Vector2:
 		return load
 
@@ -795,6 +798,11 @@ func _contract_tests() -> void:
 	ws.add_sediment(Vector3(5, 0, 0), 9.0, 9.0) # no water there: dropped
 	var sed := ws.sediment_at(Vector3(-5, 0, 0))
 	_check("contracts: ash washed into a pond clouds it, none lands where there is no water", is_equal_approx(sed.y, 0.002) and sed.x == 0.0 and ws.sediment_at(Vector3(5, 0, 0)) == Vector2.ZERO, "%.4f kg/m3 ash, %.4f mineral" % [sed.y, sed.x])
+	# A debris flow's fines dropped in at once (kg, not kg/s), and none where there is no water.
+	ws.add_sediment_mass(Vector3(-5, 0, 0), 3000.0, 0.0)
+	ws.add_sediment_mass(Vector3(5, 0, 0), 9000.0, 0.0)
+	sed = ws.sediment_at(Vector3(-5, 0, 0))
+	_check("contracts: a debris flow's fines dumped into a pond mix through it", is_equal_approx(sed.x, 3.0) and ws.sediment_at(Vector3(5, 0, 0)) == Vector2.ZERO, "%.3f kg/m3 mineral" % sed.x)
 	WorldContracts.clear_overrides()
 	var wx: WorldWeather = WorldContracts.get_weather()
 	if not wx.has_provider():

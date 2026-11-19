@@ -18,6 +18,15 @@
 				Override in a stub to replace [method add_sediment].
 			</description>
 		</method>
+		<method name="_add_sediment_mass" qualifiers="virtual">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="mineral_kg" type="float" />
+			<param index="2" name="ash_kg" type="float" />
+			<description>
+				Override in a stub to replace [method add_sediment_mass].
+			</description>
+		</method>
 		<method name="_clear" qualifiers="virtual">
 			<return type="void" />
 			<param index="0" name="owner" type="int" />
@@ -79,6 +88,15 @@
 			<param index="2" name="ash_kg_s" type="float" />
 			<description>
 				A suspended load entering the water that answers at [param position], in kg/s of mineral (silt and clay) and of ash and char: runoff off burnt or bare ground, a collapsing bank, a landslide. That water carries it on downstream and settles it. Where no water answers, it is dropped.
+			</description>
+		</method>
+		<method name="add_sediment_mass">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="mineral_kg" type="float" />
+			<param index="2" name="ash_kg" type="float" />
+			<description>
+				A load dropped into the water that answers at [param position] at once, in kg of mineral and of ash: the fines of a debris flow or a landslide that stops in it, a bank's collapse. A river mixes it through the water around the point and carries it on; a lake through its whole volume. The load is capped at [code]1000[/code] kg/m³ (hyperconcentrated flow); a denser mixture is a debris flow. Where no water answers, it is dropped. For a load that keeps coming (runoff), use [method add_sediment].
 			</description>
 		</method>
 		<method name="clear">
