@@ -1846,6 +1846,52 @@ several boxes); no smoke filling rooms ahead of the fire (two-zone
 smoke layer), no firefighting water on rooms yet (Flow/MPM water reaches
 burnables, not buildings), glass is not drawn breaking.
 
+### Water puts building fires out (picked 19 Nov, first of four)
+
+Research: water boils off at 2.6 MJ/kg (heating and evaporation);
+flames go down once the water takes about a third of the heat release
+(Grimwood's gas cooling); Sardqvist's critical application rate for
+compartment fires is about 0.1 to 0.3 kg/s per MW; steam swells about
+1700 times and pushes the hot gas out of the openings. Built: water
+in a room (PhysXParticleFluid3D water particles inside its box, or
+apply_water() from a hose, a bucket brigade or a script) boils off over
+about 8 s and takes 2.6 MJ/kg. The share it takes of 0.3 times what the
+fire could release damps the burning at once (0.7 of it), and a room
+held under it for 20 s goes out. A flashed room falls back to growing
+below half, its hot layer cooling over 15 s. The fire regrows from what
+is left when the water stops. Water on a face (particles within 0.5 m,
+or apply_water near it) puts out burning cladding at 0.5 mm and keeps it
+from catching, drying over ten minutes. The heat taken leaves as
+PhysXSteam at the room's first open opening. Test (the scratch house,
+room A flashed at 4 MW, water from 900 to 1500 s): 0.3 kg/s (0.075
+kg/s/MW) holds it at 2.2 MW and 560 C, and it re-flashes when the water
+stops; 0.6 kg/s puts it out in under two minutes; 1.5 kg/s also does.
+
+### Smoke ahead of the fire (picked 19 Nov, second of four)
+
+Two-zone layer per room (Quintiere; the zone model of CFAST). Plume
+entrainment m = 0.071 Q_c^(1/3) z^(5/3) + 0.0018 Q_c kg/s (Heskestad),
+Q_c = 0.7 Q, z the clear height; buoyant flow out of each opening below
+the layer, m = (2/3) Cd W rho_s sqrt(2 g (1 - rho_s/rho_a)) dh^(3/2) with
+Cd 0.7; through doors into the next room's layer (mass, soot and heat
+mixed), out of windows, open roofs and 0.01 m2 of ceiling leaks; soot at
+smoke_yield, visibility 3 / K with K = 8.7 m2/g times its concentration
+(Mulholland); a layer with no fire under it cools over five minutes.
+The opening emitters smoke from smoke_out and the layer's extinction
+(also from rooms the fire has not reached). Test (scratch house, fire in
+A): A's layer at 1.5 m after a minute (50 kW) and 0.5 m at 1 MW (5 min),
+visibility 3 m at one minute and under 1 m by three; the next room B
+fills through the door just behind A and shows the same visibility 4
+minutes before it catches. Left: no smoke inside rooms drawn through
+windows yet (Flow gas leaks through thin walls); stairs are not yet a
+connection between floors.
+
+Mudflow pooling (Valence: a 4 km2 burnt valley fires 68 events at once):
+events under min_volume (100 m3) are left to the mud body; at most
+max_events (6) events have surges, a bigger one replacing the smallest;
+the boulder cap is shared. Storm test: 68 events, 39,000 m3: 6 events,
+24 surges, 60 boulders.
+
 ### Next-round options (card, 19 Nov late morning)
 
 Water on burning buildings. Hose streams and MPM water reaching a room

@@ -1287,6 +1287,39 @@ off as `SnowClumps3D` pieces when a load sheds.
 
 **Avalanches.** Slab release where the load on a 30-45° slope exceeds the weak layer. We already have the crust and burial state from follow-up 4, which can serve as the weak layer. The run-out uses a depth-averaged Savage-Hutter or Voellmy flow on the cover grid (RAMMS uses Voellmy with mu around 0.155 and xi 2000 m/s²). The flow deposits snow, buries plants and bodies through the snow contract, and throws powder into the fog.
 
+## Follow-up 21: triggers from people, sleds, vehicles and cornices (built 19 Nov 2026)
+
+Paulo picked all three of round 3 (19 Nov), triggers first. `SnowAvalanche3D.triggers_enabled`, on.
+
+**Load.** Every body in `trigger_groups` (the groups SnowSurface3D prints: `snow_deform`, `grass_trample`, `world_contact`) that stands on at least `min_slab` of snow loads the slab under it, every physics frame.
+- The load is a line load P: the body's weight over its footprint, a metre at least. An 80 kg skier gives Foehn's 0.78 kN/m.
+- Mass comes from rigid bodies, `character_mass` for characters, and the `snow_mass` / `ground_mass` meta. Vehicle wheels carry their share of the vehicle.
+- What the body has sunk in, read from `WorldSnow.surface_at` (its print), brings the load nearer the weak layer. A boot in powder triggers more easily than a ski.
+
+**Index.** The added shear is Flamant's line load on an elastic half-space, as Foehn (1987) applies it to a slope: 2 P sin(t + a) sin^2(t) cos(t) / (pi D), peaked over t. On the flat it is 0.207 P / D. The trigger index is strength / (rho g h sin cos + delta_tau), for the weakest layer (new snow or a buried crust's facets). Under 1, the slab releases.
+
+**Spread.**
+- From the load, the fracture runs through new slab on avalanche terrain while that slab's natural index stays under `propagation_index` (1.5), or under 1.2 times the index where it opened. A uniform storm slab goes as a whole.
+- Along a buried crust the collapse (a whumpf) runs anywhere the crust does, flat ground included, up to `collapse_range` (60 m). It releases the steep cells it reaches whose index is under 1.5: a remote trigger (Johnson et al. 2004; the propagation saw test, Gauthier and Jamieson 2008).
+- A collapsed crust does not collapse again.
+
+**Cornices.** A failed cornice (`SnowCover3D.cornice_failed`) lands on the slope below it at twice its weight along its length.
+
+**Recent snow.** The cover now hands every update's new snow and hours to the avalanche as the update ends, and `add_snow` does too. Before, snow added between two checks, or the hours of a multi-step `advance`, could be missed.
+
+**Background updates.** While an avalanche runs and a background cover update has the cells, the flow waits and catches up afterwards (at most 0.25 s), so the frame never waits for the update. The background-update bench switches avalanches off, since a fresh load there can avalanche and the two runs it compares would then diverge.
+
+**Checks.** `--test=triggers`, 5 checks, on the 38 degree face:
+- Flamant's 0.207 P / D.
+- 60 cm of fresh snow: index 1.10 alone, 0.45 under a person. A person standing on it releases 9600 m3.
+- A metre of snow five cold days old (now 0.49 m at 202 kg/m3): index 1.13 under a person, who stands on it, and 0.75 under a 400 kg sled, which releases it.
+- A week-old slab, 0.57 m over a buried crust: on the flat, index 1.72 under a person (holds) and 0.45 under 3 kN/m. That load collapses the crust and the face 20 m away releases 1650 m3.
+- With `triggers_enabled` off, nothing triggers.
+
+**Limits.**
+- Loads are static. A jump landing or a fall (about twice as much, Schweizer and Camponovo 2001) would need the body's vertical speed.
+- Wheels load one at a time, not summed across the vehicle.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

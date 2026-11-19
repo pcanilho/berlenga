@@ -36,9 +36,13 @@
 #include "snow_cover_3d.h"
 
 #include "core/config/engine.h"
+#include "core/object/callable_mp.h"
+#include "modules/ground/ground_deform_field.h"
+#include "modules/world/world_contracts.h"
 #include "core/object/class_db.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/physics/rigid_body_3d.h"
+#include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
 
 namespace {
@@ -93,9 +97,10 @@ float SnowAvalanche3D::_slope_at(const SnowCover3D *p_cover, int p_x, int p_z) c
 
 void SnowAvalanche3D::_track_recent(SnowCover3D *p_cover) {
 	// The new snow since it last bonded, per cell: new snow adds to it (its age the mass-weighted mean), it ages
-	// with the cover's hours, a week bonds it, and it is never more than the pack.
+	// with the cover's hours, a week bonds it, and it is never more than the pack. The cover calls this at the end
+	// of every update (main thread, its cells finished), so no update's snow or hours are missed.
 	const int n = p_cover->resolution;
-	if (p_cover->pub.swe.size() != n * n || p_cover->cell_ground.size() != n * n) {
+	if (p_cover->cell_swe.size() != n * n || p_cover->cell_density.size() != n * n || p_cover->cell_ground.size() != n * n) {
 		return;
 	}
 	if (recent_res != n) {
@@ -126,17 +131,17 @@ void SnowAvalanche3D::_track_recent(SnowCover3D *p_cover) {
 		recent_origin = p_cover->origin_cell;
 	}
 	const float hours = p_cover->last_step_hours;
-	const bool has_new = p_cover->pub.new_depth.size() == n * n;
+	const bool has_new = p_cover->cell_new_depth.size() == n * n;
 	for (int i = 0; i < n * n; i++) {
-		const float add = has_new ? MAX(p_cover->pub.new_depth[i], 0.0f) : 0.0f;
+		const float add = has_new ? MAX(p_cover->cell_new_depth[i], 0.0f) : 0.0f;
 		float r = recent[i];
 		float a = recent_age[i] + hours;
 		if (add > 0.0f) {
 			a = (a * r) / (r + add);
 			r += add;
 		}
-		const float rho = MAX(p_cover->pub.density[i], 30.0f);
-		const float depth = p_cover->pub.swe[i] > 0.01f ? p_cover->pub.swe[i] / rho : 0.0f;
+		const float rho = MAX(p_cover->cell_density[i], 30.0f);
+		const float depth = p_cover->cell_swe[i] > 0.01f ? p_cover->cell_swe[i] / rho : 0.0f;
 		r = MIN(r, depth);
 		if (a > RECENT_BONDED_HOURS) {
 			r = 0.0f;
@@ -601,7 +606,6 @@ bool SnowAvalanche3D::trigger(const Vector3 &p_at, float p_radius) {
 		return false;
 	}
 	cover->_finish_background(true);
-	_track_recent(cover);
 	const int n = cover->resolution;
 	if (recent_res != n || cover->cell_swe.size() != n * n) {
 		return false;
@@ -633,6 +637,233 @@ bool SnowAvalanche3D::trigger(const Vector3 &p_at, float p_radius) {
 	}
 	_release(cover, cells, amounts);
 	return running;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Triggers (docs/ideas/snow.md, follow-up 21)
+
+float SnowAvalanche3D::added_shear(float p_line_load, float p_depth, float p_slope) {
+	// Foehn (1987), from Flamant's line load on an elastic half-space (the slope): the stress is radial,
+	// 2 P sin(t + a) / (pi r) at r from the load and t below the surface, the vertical load a slope of a off the
+	// surface's normal. Its shear on a plane parallel to the slope is that times sin(t) cos(t). At the weak layer,
+	// D deep normal to the slope, r = D / sin(t): the peak over t. On the flat it is 0.207 P / D, Flamant's.
+	const float depth = MAX(p_depth, 0.02f);
+	float best = 0.0f;
+	for (int k = 1; k < 128; k++) {
+		const float t = Math::PI * k / 128.0f;
+		const float st = Math::sin(t);
+		best = MAX(best, Math::sin(t + p_slope) * st * st * Math::cos(t));
+	}
+	return 2.0f * MAX(p_line_load, 0.0f) * best / (Math::PI * depth);
+}
+
+float SnowAvalanche3D::_trigger_index(const SnowCover3D *p_cover, int p_x, int p_z, float p_line_load, float p_sink, float &r_slab, bool &r_crust) const {
+	// Foehn's skier stability index: the weak layer's strength over the slab's own shear plus the load's. A load
+	// sunk into the snow (a boot in powder) is that much nearer the weak layer.
+	const int n = p_cover->resolution;
+	const int i = p_z * n + p_x;
+	r_slab = 0.0f;
+	r_crust = false;
+	if (recent_res != n || p_cover->pub.swe.size() != n * n) {
+		return 1.0e6f;
+	}
+	const float slope = _slope_at(p_cover, p_x, p_z);
+	const float rho = MAX(p_cover->pub.density[i], 30.0f);
+	const float sc = Math::sin(slope) * Math::cos(slope);
+	float best = 1.0e6f;
+	auto test = [&](float p_slab, float p_strength, bool p_is_crust) {
+		const float d = MAX(p_slab - p_sink, 0.02f) * Math::cos(slope);
+		const float tau = rho * GRAVITY * p_slab * sc + added_shear(p_line_load, d, slope);
+		const float sk = tau > 1.0e-3f ? p_strength / tau : 1.0e6f;
+		if (sk < best) {
+			best = sk;
+			r_slab = p_slab;
+			r_crust = p_is_crust;
+		}
+	};
+	if (recent[i] >= min_slab) {
+		test(recent[i], weak_layer_strength(WEAK_DENSITY, recent_age[i]), false);
+	}
+	const bool crusts = p_cover->pub.crust.size() == n * n && p_cover->pub.crust_burial.size() == n * n;
+	if (crusts && p_cover->pub.crust[i] > 0.0f && p_cover->pub.crust_burial[i] >= min_slab && !(collapsed.size() == n * n && collapsed[i])) {
+		test(p_cover->pub.crust_burial[i], weak_layer_strength(BURIED_WEAK_DENSITY, 0.0f), true);
+	}
+	return best;
+}
+
+float SnowAvalanche3D::get_trigger_index_at(const Vector3 &p_at, float p_line_load, float p_sink) const {
+	const SnowCover3D *cover = _cover();
+	ERR_FAIL_NULL_V(cover, 1.0e6f);
+	const float cs = cover->_cell_size();
+	const int x = int(Math::floor(p_at.x / cs)) - cover->origin_cell.x;
+	const int z = int(Math::floor(p_at.z / cs)) - cover->origin_cell.y;
+	if (x < 0 || z < 0 || x >= cover->resolution || z >= cover->resolution) {
+		return 1.0e6f;
+	}
+	float slab;
+	bool crust;
+	return _trigger_index(cover, x, z, p_line_load, p_sink, slab, crust);
+}
+
+int SnowAvalanche3D::_load(SnowCover3D *p_cover, const Vector3 &p_at, float p_line_load, float p_sink, Node *p_body) {
+	const int n = p_cover->resolution;
+	const float cs = p_cover->_cell_size();
+	const int x0 = int(Math::floor(p_at.x / cs)) - p_cover->origin_cell.x;
+	const int z0 = int(Math::floor(p_at.z / cs)) - p_cover->origin_cell.y;
+	if (running || x0 < 0 || z0 < 0 || x0 >= n || z0 >= n || recent_res != n) {
+		return 0;
+	}
+	float slab = 0.0f;
+	bool crust = false;
+	if (_trigger_index(p_cover, x0, z0, p_line_load, p_sink, slab, crust) >= 1.0f) {
+		return 0;
+	}
+	const float lo = Math::deg_to_rad(min_slope), hi = Math::deg_to_rad(max_slope);
+	const int seed = z0 * n + x0;
+	const float seed_slope = _slope_at(p_cover, x0, z0);
+	// A fracture opened in a slab runs on through slab like it (a uniform storm slab goes as a whole), and through
+	// any near failure on its own.
+	const float spread = MAX(propagation_index, crust ? 0.0f : 1.2f * stability_index(slab, MAX(p_cover->pub.density[seed], 30.0f), WEAK_DENSITY, recent_age[seed], seed_slope));
+	if (!crust && (seed_slope < lo || seed_slope > hi)) {
+		return 0; // the new snow fails under the load, but on ground too flat to slide
+	}
+	// The fracture spreads from under the load. In new snow it runs through the slab on avalanche terrain while the
+	// slab is near failure; along a buried crust's facets it runs anywhere the crust does, flat ground too, for up to
+	// collapse_range (a whumpf, which releases the steep slopes it reaches: remote triggering; Johnson et al. 2004,
+	// the propagation saw test of Gauthier and Jamieson 2008).
+	if (crust && collapsed.size() != n * n) {
+		collapsed.resize(n * n);
+		collapsed.fill(0);
+	}
+	const bool crusts = p_cover->pub.crust.size() == n * n && p_cover->pub.crust_burial.size() == n * n;
+	Vector<int> cells;
+	Vector<float> amounts;
+	Vector<uint8_t> seen;
+	seen.resize(n * n);
+	seen.fill(0);
+	Vector<int> stack;
+	stack.push_back(seed);
+	seen.write[seed] = 1;
+	int visited = 0;
+	while (!stack.is_empty() && visited < MAX_RELEASE_CELLS) {
+		const int i = stack[stack.size() - 1];
+		stack.resize(stack.size() - 1);
+		visited++;
+		const int x = i % n, z = i / n;
+		const float slope = _slope_at(p_cover, x, z);
+		const float rho = MAX(p_cover->pub.density[i], 30.0f);
+		const bool steep = slope >= lo && slope <= hi;
+		if (crust) {
+			collapsed.write[i] = 1;
+			const float b = p_cover->pub.crust_burial[i];
+			if (steep && (i == seed || stability_index(b, rho, BURIED_WEAK_DENSITY, 0.0f, slope) < propagation_index)) {
+				cells.push_back(i);
+				amounts.push_back(b);
+			}
+		} else {
+			cells.push_back(i);
+			amounts.push_back(i == seed ? slab : recent[i]);
+		}
+		const int nb[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+		for (const auto &o : nb) {
+			const int xx = x + o[0], zz = z + o[1];
+			if (xx < 0 || zz < 0 || xx >= n || zz >= n) {
+				continue;
+			}
+			const int j = zz * n + xx;
+			if (seen[j]) {
+				continue;
+			}
+			bool go;
+			if (crust) {
+				go = crusts && p_cover->pub.crust[j] > 0.0f && p_cover->pub.crust_burial[j] >= 0.5f * min_slab && !collapsed[j] && Vector2(xx - x0, zz - z0).length() * cs <= collapse_range;
+			} else {
+				const float sj = _slope_at(p_cover, xx, zz);
+				go = sj >= lo && sj <= hi && recent[j] >= 0.5f * min_slab && stability_index(recent[j], MAX(p_cover->pub.density[j], 30.0f), WEAK_DENSITY, recent_age[j], sj) < spread;
+			}
+			if (go) {
+				seen.write[j] = 1;
+				stack.push_back(j);
+			}
+		}
+	}
+	if (crust) {
+		collapse_count++;
+		emit_signal(SNAME("snow_collapsed"), p_at, float(visited) * cs * cs);
+	}
+	if (cells.is_empty()) {
+		return crust ? 2 : 0;
+	}
+	_release(p_cover, cells, amounts);
+	if (!running) {
+		return crust ? 2 : 0;
+	}
+	trigger_count++;
+	emit_signal(SNAME("avalanche_triggered"), p_at, p_body);
+	return 1;
+}
+
+int SnowAvalanche3D::apply_load(const Vector3 &p_at, float p_line_load, float p_sink) {
+	SnowCover3D *cover = _cover();
+	ERR_FAIL_NULL_V(cover, 0);
+	cover->_finish_background(true);
+	return _load(cover, p_at, p_line_load, p_sink, nullptr);
+}
+
+void SnowAvalanche3D::_check_triggers(SnowCover3D *p_cover) {
+	// Everything that presses the snow (the groups SnowSurface3D prints) loads the slab under it. Its weight is
+	// spread along its footprint, a metre at least (Foehn's skier, 80 kg: 0.78 kN/m); what it has sunk in (the
+	// print, read from WorldSnow) brings it nearer the weak layer.
+	if (!is_inside_tree() || p_cover->is_updating()) {
+		return;
+	}
+	SceneTree *tree = get_tree();
+	WorldSnow *ws = WorldContracts::snow();
+	HashSet<ObjectID> done;
+	for (const String &group : trigger_groups) {
+		const Vector<Node *> nodes = tree->get_nodes_in_group(StringName(group));
+		for (Node *node : nodes) {
+			Node3D *n3 = Object::cast_to<Node3D>(node);
+			if (!n3 || !n3->is_visible_in_tree() || done.has(n3->get_instance_id())) {
+				continue;
+			}
+			done.insert(n3->get_instance_id());
+			GroundDeformField::Body b;
+			GroundDeformField::read_body(n3, character_mass, 0.035f, b);
+			if (b.mass <= 0.0f) {
+				continue;
+			}
+			const float depth = p_cover->get_depth_at(b.center);
+			if (depth < min_slab) {
+				continue;
+			}
+			const float top = p_cover->get_ground_height_at(b.center) + depth;
+			if (b.center.y - b.half_height > top + 0.25f) {
+				continue; // in the air
+			}
+			float sink = 0.0f;
+			const float surface = ws ? ws->surface_at(b.center) : -Math::INF;
+			if (Math::is_finite(surface)) {
+				sink = CLAMP(top - surface, 0.0f, depth);
+			}
+			const float extent = b.box ? 2.0f * MAX(b.box_half.x, b.box_half.y) : 2.0f * b.radius;
+			const float load = b.mass * GRAVITY / MAX(extent, 1.0f);
+			if (_load(p_cover, b.center, load, sink, n3) != 0 || running) {
+				return;
+			}
+		}
+	}
+}
+
+void SnowAvalanche3D::_on_cornice_failed(const Vector3 &p_position, const Vector3 &p_direction, float p_length, float p_mass) {
+	// A failed cornice drops onto the lee slope below it: its weight along its length, doubled for the impact
+	// (Vogel et al. 2012 measured cornice blocks triggering slabs on impact).
+	SnowCover3D *cover = _cover();
+	if (!cover || !triggers_enabled) {
+		return;
+	}
+	const Vector3 at = p_position + p_direction.normalized() * MAX(2.0f * cover->_cell_size(), 3.0f);
+	apply_load(at, 2.0f * p_mass * GRAVITY / MAX(p_length, 1.0f), 0.0f);
 }
 
 float SnowAvalanche3D::get_flowing_volume() const {
@@ -687,6 +918,10 @@ void SnowAvalanche3D::_notification(int p_what) {
 		case NOTIFICATION_READY: {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_physics_process_internal(true);
+				SnowCover3D *cover = _cover();
+				if (cover && !cover->is_connected(SNAME("cornice_failed"), callable_mp(this, &SnowAvalanche3D::_on_cornice_failed))) {
+					cover->connect(SNAME("cornice_failed"), callable_mp(this, &SnowAvalanche3D::_on_cornice_failed));
+				}
 			}
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
@@ -695,18 +930,28 @@ void SnowAvalanche3D::_notification(int p_what) {
 				break;
 			}
 			if (running) {
-				step(get_physics_process_delta_time());
+				// The flow reads and writes the cover's cells: while a background update has them it waits, and
+				// catches up after (the frame never waits for the update).
+				pending_time += get_physics_process_delta_time();
+				if (cover->is_updating()) {
+					break;
+				}
+				step(MIN(pending_time, 0.25));
+				pending_time = 0.0;
 				if (running) {
 					_hit_bodies(cover);
 				}
 				break;
 			}
+			pending_time = 0.0;
 			if (cover->update_count != seen_update && !cover->is_updating()) {
 				seen_update = cover->update_count;
-				_track_recent(cover);
 				if (natural_release) {
 					_check_release(cover);
 				}
+			}
+			if (triggers_enabled && !running && recent_res == cover->resolution) {
+				_check_triggers(cover);
 			}
 		} break;
 	}
@@ -715,6 +960,21 @@ void SnowAvalanche3D::_notification(int p_what) {
 void SnowAvalanche3D::_bind_methods() {
 	ClassDB::bind_static_method("SnowAvalanche3D", D_METHOD("weak_layer_strength", "density", "age_hours"), &SnowAvalanche3D::weak_layer_strength);
 	ClassDB::bind_static_method("SnowAvalanche3D", D_METHOD("stability_index", "slab", "slab_density", "weak_density", "age_hours", "slope"), &SnowAvalanche3D::stability_index);
+	ClassDB::bind_static_method("SnowAvalanche3D", D_METHOD("added_shear", "line_load", "depth", "slope"), &SnowAvalanche3D::added_shear);
+	ClassDB::bind_method(D_METHOD("apply_load", "at", "line_load", "sink"), &SnowAvalanche3D::apply_load, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("get_trigger_index_at", "at", "line_load", "sink"), &SnowAvalanche3D::get_trigger_index_at, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("get_trigger_count"), &SnowAvalanche3D::get_trigger_count);
+	ClassDB::bind_method(D_METHOD("get_collapse_count"), &SnowAvalanche3D::get_collapse_count);
+	ClassDB::bind_method(D_METHOD("set_triggers_enabled", "enable"), &SnowAvalanche3D::set_triggers_enabled);
+	ClassDB::bind_method(D_METHOD("is_triggers_enabled"), &SnowAvalanche3D::is_triggers_enabled);
+	ClassDB::bind_method(D_METHOD("set_trigger_groups", "groups"), &SnowAvalanche3D::set_trigger_groups);
+	ClassDB::bind_method(D_METHOD("get_trigger_groups"), &SnowAvalanche3D::get_trigger_groups);
+	ClassDB::bind_method(D_METHOD("set_character_mass", "mass"), &SnowAvalanche3D::set_character_mass);
+	ClassDB::bind_method(D_METHOD("get_character_mass"), &SnowAvalanche3D::get_character_mass);
+	ClassDB::bind_method(D_METHOD("set_propagation_index", "index"), &SnowAvalanche3D::set_propagation_index);
+	ClassDB::bind_method(D_METHOD("get_propagation_index"), &SnowAvalanche3D::get_propagation_index);
+	ClassDB::bind_method(D_METHOD("set_collapse_range", "range"), &SnowAvalanche3D::set_collapse_range);
+	ClassDB::bind_method(D_METHOD("get_collapse_range"), &SnowAvalanche3D::get_collapse_range);
 	ClassDB::bind_method(D_METHOD("trigger", "at", "radius"), &SnowAvalanche3D::trigger);
 	ClassDB::bind_method(D_METHOD("step", "delta"), &SnowAvalanche3D::step);
 	ClassDB::bind_method(D_METHOD("is_running"), &SnowAvalanche3D::is_running);
@@ -750,7 +1010,21 @@ void SnowAvalanche3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_slab", PROPERTY_HINT_RANGE, "0,3,0.01,suffix:m"), "set_min_slab", "get_min_slab");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "entrainment", PROPERTY_HINT_RANGE, "0,0.1,0.0001"), "set_entrainment", "get_entrainment");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "natural_release"), "set_natural_release", "is_natural_release");
+	ADD_GROUP("Triggers", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "triggers_enabled"), "set_triggers_enabled", "is_triggers_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::PACKED_STRING_ARRAY, "trigger_groups"), "set_trigger_groups", "get_trigger_groups");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "character_mass", PROPERTY_HINT_RANGE, "0,500,0.5,suffix:kg"), "set_character_mass", "get_character_mass");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "propagation_index", PROPERTY_HINT_RANGE, "0,5,0.01"), "set_propagation_index", "get_propagation_index");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collapse_range", PROPERTY_HINT_RANGE, "0,500,0.1,suffix:m"), "set_collapse_range", "get_collapse_range");
 
+	ADD_SIGNAL(MethodInfo("avalanche_triggered", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::OBJECT, "body", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT, "Node")));
+	ADD_SIGNAL(MethodInfo("snow_collapsed", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "area")));
 	ADD_SIGNAL(MethodInfo("avalanche_released", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "volume")));
 	ADD_SIGNAL(MethodInfo("avalanche_stopped", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "volume"), PropertyInfo(Variant::FLOAT, "run_out")));
+}
+
+SnowAvalanche3D::SnowAvalanche3D() {
+	trigger_groups.push_back("snow_deform");
+	trigger_groups.push_back("grass_trample");
+	trigger_groups.push_back("world_contact");
 }
