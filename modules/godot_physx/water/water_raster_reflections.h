@@ -129,7 +129,11 @@ vec3 water_raster_sun_light(vec3 p_light, vec3 p_view, vec3 p_irradiance, bool p
 
 // p_sun_albedo: the colour the sun lights, scaled as p_albedo is (p_albedo itself carries only the sky's
 // light). r_sun_body and r_sun_glint go to the wr_sun_* varyings for light().
-vec4 water_raster_reflect(vec3 p_albedo, float p_alpha, vec3 p_normal, vec3 p_world, vec3 p_camera, float p_surface, float p_roughness, vec3 p_sun_albedo, out vec3 r_sun_body, out vec4 r_sun_glint, out float r_sun_a2) {
+// r_sky: the mirrored sky's share of the result (premultiplied, as written before the division by the new alpha),
+// r_f: the mean Fresnel it was weighted by (water_screen_over_sky() puts the screen in its place where it can).
+vec4 water_raster_reflect_ex(vec3 p_albedo, float p_alpha, vec3 p_normal, vec3 p_world, vec3 p_camera, float p_surface, float p_roughness, vec3 p_sun_albedo, out vec3 r_sun_body, out vec4 r_sun_glint, out float r_sun_a2, out vec3 r_sky, out float r_f) {
+	r_sky = vec3(0.0);
+	r_f = 0.0;
 	r_sun_body = vec3(0.0);
 	r_sun_glint = vec4(0.0, 1.0, 0.0, 0.0);
 	r_sun_a2 = 1.0;
@@ -215,7 +219,15 @@ vec4 water_raster_reflect(vec3 p_albedo, float p_alpha, vec3 p_normal, vec3 p_wo
 	}
 	r_sun_glint = vec4(n_w, p_surface * inv);
 	r_sun_a2 = a2;
+	r_sky = add;
+	r_f = f_eff;
 	return vec4((p_albedo * p_alpha * (1.0 - f_eff) + add) * inv, a_new);
+}
+
+vec4 water_raster_reflect(vec3 p_albedo, float p_alpha, vec3 p_normal, vec3 p_world, vec3 p_camera, float p_surface, float p_roughness, vec3 p_sun_albedo, out vec3 r_sun_body, out vec4 r_sun_glint, out float r_sun_a2) {
+	vec3 sky;
+	float f;
+	return water_raster_reflect_ex(p_albedo, p_alpha, p_normal, p_world, p_camera, p_surface, p_roughness, p_sun_albedo, r_sun_body, r_sun_glint, r_sun_a2, sky, f);
 }
 
 // The light inside the water from this sky and sun: the sun's direction once refracted (Snell, 1.33), its
@@ -422,7 +434,8 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 	float w_sun = dot(p_sun_irr, vec3(1.0 / 3.0)) * mu / PI;
 	float w_sky = dot(p_sky, vec3(1.0 / 3.0));
 	vec3 down = w_sun + w_sky > 0.0 ? (w_sun * exp(-st * z_b / mu) + w_sky * exp(-st * 1.2 * z_b)) / (w_sun + w_sky) : exp(-st * z_b);
-	vec3 seen = texture(p_screen, uv_r).rgb * down * exp(-st * len);
+	vec3 scr = texture(p_screen, uv_r).rgb;
+	vec3 seen = scr * down * exp(-st * len);
 	r_seen = seen;
 	r_bed = p_s + t * min(len, 1e3);
 	{
@@ -472,14 +485,26 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 	vec3 bb = max(p_sc, vec3(0.0)) * (1.0 - p_g);
 	vec3 aa = max(p_ab, vec3(0.0));
 	vec3 wp = bb / max(aa + bb, vec3(1e-6));
-	float turbid = smoothstep(0.3, 0.6, max(wp.r, max(wp.g, wp.b)));
+	// Turbid: a transport mean free path (1 / b') of a metre or less, where the light has diffused (clear water's
+	// b' is a few hundredths per metre).
+	float turbid = smoothstep(0.1, 1.0, max(bb.r, max(bb.g, bb.b)));
 	if (turbid > 0.0) {
 		vec3 gam = sqrt(max(1.0 - wp, vec3(0.0)));
-		vec3 rd = (1.0 - gam) / (1.0 + gam);
+		// Calibrated against the path tracer's turbid river at flood loads (its paths through the forward-scattering
+		// medium redden the light more than the isotropic two-stream does): the same brown in both.
+		float wpm = max(max(wp.r, max(wp.g, wp.b)), 1e-4);
+		vec3 rd = (1.0 - gam) / (1.0 + gam) * pow(wp / wpm, vec3(1.2)) * (1.12 + 1.25 * max(wpm - 0.42, 0.0));
 		vec3 sig = sqrt(3.0 * aa * (aa + bb));
 		vec3 held = 1.0 - exp(-2.0 * sig * max(-t.y, 0.05) * min(len, 1e3));
 		vec3 multi = rd * (p_sun_irr * mu + p_sky * PI) / PI * held * vis;
-		single = mix(single, max(single, multi), turbid);
+		// The diffuse reflectance counts every order of scattering, the first included: it replaces the single term.
+		single = mix(single, multi, turbid);
+		// The bed under shallow turbid water: the light scattered on its way is diffused, not lost, so the bed shows
+		// through the diffuse attenuation over both paths, not the beam extinction (Maritorena, Morel & Gentili 1994:
+		// R = R_inf (1 - exp(-2 K H)) + R_bed exp(-2 K H)). The beam's own extinction left the shallows only the deep
+		// medium's colour held over a few centimetres, its red short of the blue (mauve over gravel).
+		seen = mix(seen, scr * (1.0 - held), turbid);
+		r_seen = seen;
 	}
 	return seen + single;
 }
@@ -489,19 +514,11 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 // pixel, a hit where the ray passes behind the depth by less than a thickness growing with distance, then five
 // halvings between the last two steps. Its Fresnel share (exact, air into water) blended over p_refl as
 // water_raster_reflect() does (written for blend_mix); a miss or the screen's edge fades to the dark around.
-vec4 water_screen_reflect(sampler2D p_screen, sampler2D p_depth, vec4 p_refl, vec3 p_n, vec3 p_vtx, vec2 p_uv, float p_surface, float p_jitter, mat4 proj, mat4 inv_proj) {
-	vec3 v = normalize(p_vtx);
-	vec3 n = dot(p_n, v) > 0.0 ? normalize(p_n - 2.0 * dot(p_n, v) * v) : p_n;
-	vec3 r = reflect(v, n);
-	float nv = clamp(-dot(n, v), 1e-3, 1.0);
-	float st = sqrt(max(1.0 - nv * nv, 0.0)) / 1.33;
-	float ct = sqrt(max(1.0 - st * st, 0.0));
-	float rs = (nv - 1.33 * ct) / (nv + 1.33 * ct);
-	float rp = (1.33 * nv - ct) / (1.33 * nv + ct);
-	float f = 0.5 * (rs * rs + rp * rp) * p_surface;
-	if (f <= 0.0) {
-		return p_refl;
-	}
+// The march alone: whether mirror ray r from p_vtx (view space) meets the screen's depth, the colour there and how
+// much of it to trust (faded at the screen's edge and at the march's range).
+bool water_screen_march(sampler2D p_screen, sampler2D p_depth, vec3 p_vtx, vec3 r, float p_jitter, mat4 proj, mat4 inv_proj, out vec3 r_seen, out float r_fade) {
+	r_seen = vec3(0.0);
+	r_fade = 0.0;
 	const int N = 24;
 	const float MAX_D = 24.0;
 	float t_prev = 0.0;
@@ -527,9 +544,7 @@ vec4 water_screen_reflect(sampler2D p_screen, sampler2D p_depth, vec4 p_refl, ve
 		t_prev = t;
 	}
 	if (t_hit < 0.0) {
-		vec3 dark = p_refl.rgb * p_refl.a * (1.0 - f);
-		float a_d = 1.0 - (1.0 - p_refl.a) * (1.0 - f);
-		return vec4(dark / max(a_d, 1e-4), a_d);
+		return false;
 	}
 	float lo = t_prev;
 	float hi = t_hit;
@@ -547,10 +562,55 @@ vec4 water_screen_reflect(sampler2D p_screen, sampler2D p_depth, vec4 p_refl, ve
 	vec4 c = proj * vec4(p_vtx + r * hi, 1.0);
 	vec2 huv = c.xy / c.w * 0.5 + 0.5;
 	vec2 e = min(huv, 1.0 - huv);
-	float fade = smoothstep(0.0, 0.06, min(e.x, e.y)) * (1.0 - smoothstep(0.7 * MAX_D, MAX_D, hi));
-	vec3 seen = textureLod(p_screen, huv, 0.0).rgb * fade;
+	r_fade = smoothstep(0.0, 0.06, min(e.x, e.y)) * (1.0 - smoothstep(0.7 * MAX_D, MAX_D, hi));
+	r_seen = textureLod(p_screen, huv, 0.0).rgb;
+	return true;
+}
+
+vec4 water_screen_reflect(sampler2D p_screen, sampler2D p_depth, vec4 p_refl, vec3 p_n, vec3 p_vtx, vec2 p_uv, float p_surface, float p_jitter, mat4 proj, mat4 inv_proj) {
+	vec3 v = normalize(p_vtx);
+	vec3 n = dot(p_n, v) > 0.0 ? normalize(p_n - 2.0 * dot(p_n, v) * v) : p_n;
+	vec3 r = reflect(v, n);
+	float nv = clamp(-dot(n, v), 1e-3, 1.0);
+	float st = sqrt(max(1.0 - nv * nv, 0.0)) / 1.33;
+	float ct = sqrt(max(1.0 - st * st, 0.0));
+	float rs = (nv - 1.33 * ct) / (nv + 1.33 * ct);
+	float rp = (1.33 * nv - ct) / (1.33 * nv + ct);
+	float f = 0.5 * (rs * rs + rp * rp) * p_surface;
+	if (f <= 0.0) {
+		return p_refl;
+	}
+	vec3 seen;
+	float fade;
+	if (!water_screen_march(p_screen, p_depth, p_vtx, r, p_jitter, proj, inv_proj, seen, fade)) {
+		vec3 dark = p_refl.rgb * p_refl.a * (1.0 - f);
+		float a_d = 1.0 - (1.0 - p_refl.a) * (1.0 - f);
+		return vec4(dark / max(a_d, 1e-4), a_d);
+	}
+	seen *= fade;
 	float a_new = 1.0 - (1.0 - p_refl.a) * (1.0 - f);
 	return vec4((p_refl.rgb * p_refl.a * (1.0 - f) + seen * f) / max(a_new, 1e-4), a_new);
+}
+
+// The mirrored sky (water_raster_reflect_ex(): p_sky, p_f) replaced by what the screen holds along the mirror ray
+// where the march meets it: the sky panorama has no terrain, so water in a valley mirrored open sky where its
+// banks stand (a blue-grey sheen over brown flood water at grazing views, where the path tracer mirrors the
+// banks). Screen-space reflections over the environment as their fallback, as engines layer them (Frostbite,
+// Unreal: SSR, then probes and sky).
+vec4 water_screen_over_sky(sampler2D p_screen, sampler2D p_depth, vec4 p_refl, vec3 p_sky, float p_f, vec3 p_n, vec3 p_vtx, float p_jitter, mat4 proj, mat4 inv_proj) {
+	if (p_f <= 0.0) {
+		return p_refl;
+	}
+	vec3 v = normalize(p_vtx);
+	vec3 n = dot(p_n, v) > 0.0 ? normalize(p_n - 2.0 * dot(p_n, v) * v) : p_n;
+	vec3 r = reflect(v, n);
+	vec3 seen;
+	float fade;
+	if (!water_screen_march(p_screen, p_depth, p_vtx, r, p_jitter, proj, inv_proj, seen, fade)) {
+		return p_refl;
+	}
+	vec3 pre = p_refl.rgb * p_refl.a + (seen * p_f - p_sky) * fade;
+	return vec4(max(pre, vec3(0.0)) / max(p_refl.a, 1e-4), p_refl.a);
 }
 
 

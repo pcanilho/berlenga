@@ -1371,7 +1371,7 @@ float surface_height_world(vec2 world_xz, float base_y) {
 }
 
 vec3 uw_sigma_t() {
-	return max((pathtraced_absorption + sediment_absorption), vec3(0.0)) + max((pathtraced_scattering + sediment_scattering), vec3(0.0));
+	return max((pathtraced_absorption + sediment_absorption), vec3(0.0)) + max(water_medium_scattering(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy), vec3(0.0));
 }
 
 float uw_hg(float cos_theta, float g) {
@@ -1395,10 +1395,10 @@ vec3 uw_segment(vec3 b, float len) {
 // (half the sphere lit). The path tracer does the same by sampling.
 vec3 uw_inscatter(float z0, vec3 d, float len) {
 	vec3 st = uw_sigma_t();
-	vec3 ss = max((pathtraced_scattering + sediment_scattering), vec3(0.0));
+	vec3 ss = max(water_medium_scattering(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy), vec3(0.0));
 	float mu = max(-underwater_sun_direction.y, 0.05);
 	vec3 a = st / mu;
-	vec3 sun = underwater_sun_irradiance * uw_hg(dot(underwater_sun_direction, -d), pathtraced_scattering_anisotropy) *
+	vec3 sun = underwater_sun_irradiance * uw_hg(dot(underwater_sun_direction, -d), water_medium_g(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy)) *
 			exp(-a * z0) * uw_segment(st - a * d.y, len);
 	vec3 k = st * 1.2;
 	vec3 sky = underwater_sky_radiance * 0.5 * exp(-k * z0) * uw_segment(st - k * d.y, len);
@@ -1413,7 +1413,7 @@ vec3 uw_inscatter(float z0, vec3 d, float len) {
 // last step's light carries on. jitter (0..1) moves the samples within their steps from pixel to pixel.
 vec3 uw_inscatter_shadowed(vec3 p0, float z0, vec3 d, float len, float jitter) {
 	vec3 st = uw_sigma_t();
-	vec3 ss = max((pathtraced_scattering + sediment_scattering), vec3(0.0));
+	vec3 ss = max(water_medium_scattering(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy), vec3(0.0));
 	vec3 sd = underwater_sun_direction;
 	float mu = max(-sd.y, 0.05);
 	vec3 a = st / mu;
@@ -1434,7 +1434,7 @@ vec3 uw_inscatter_shadowed(vec3 p0, float z0, vec3 d, float len, float jitter) {
 	if (len > reach) {
 		sun += vis * exp(-k * reach) * uw_segment(k, len - reach);
 	}
-	sun *= underwater_sun_irradiance * uw_hg(dot(sd, -d), pathtraced_scattering_anisotropy) * exp(-a * z0);
+	sun *= underwater_sun_irradiance * uw_hg(dot(sd, -d), water_medium_g(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy)) * exp(-a * z0);
 	vec3 kk = st * 1.2;
 	vec3 sky = underwater_sky_radiance * 0.5 * exp(-kk * z0) * uw_segment(st - kk * d.y, len);
 	return ss * (sun + sky);
@@ -1446,7 +1446,7 @@ vec3 uw_inscatter_shadowed(vec3 p0, float z0, vec3 d, float len, float jitter) {
 vec3 uw_lamps(vec3 p0, vec3 d, float len, float jitter) {
 	vec3 total = vec3(0.0);
 	vec3 st = uw_sigma_t();
-	vec3 ss = max((pathtraced_scattering + sediment_scattering), vec3(0.0));
+	vec3 ss = max(water_medium_scattering(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy), vec3(0.0));
 	for (int i = 0; i < min(uw_lamp_count, 4); i++) {
 		vec3 c = uw_lamp_pos[i].xyz;
 		float range = uw_lamp_pos[i].w;
@@ -1484,7 +1484,7 @@ vec3 uw_lamps(vec3 p0, vec3 d, float len, float jitter) {
 				float rim = max(1e-4, (1.0 - scos) / max(1.0 - cutoff, 1e-4));
 				att *= 1.0 - pow(rim, uw_lamp_rim[i]);
 			}
-			sum += att * uw_hg(dot(l, -d), pathtraced_scattering_anisotropy) * exp(-st * (r + t)) * dt;
+			sum += att * uw_hg(dot(l, -d), water_medium_g(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy)) * exp(-st * (r + t)) * dt;
 		}
 		total += uw_lamp_color[i].rgb * sum;
 	}
@@ -2028,7 +2028,7 @@ void fragment() {
 		vec3 seen;
 		vec3 bed_p;
 		float sun_share;
-		base_rgb = water_clear_through_ex(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, (pathtraced_absorption + sediment_absorption), (pathtraced_scattering + sediment_scattering), pathtraced_scattering_anisotropy, underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, false, seen, bed_p, sun_share);
+		base_rgb = water_clear_through_ex(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, (pathtraced_absorption + sediment_absorption), water_medium_scattering(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy), water_medium_g(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy), underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, false, seen, bed_p, sun_share);
 		if (caustics_on && sun_share > 0.0) {
 			// The bed point back up its refracted sun ray to the surface, then down it to the map's reference
 			// depth: where the map holds that ray's light (a bed at the reference depth reads its own point).
@@ -2104,8 +2104,8 @@ void fragment() {
 	TRANSMISSION = 1.0 - foam;
 	IOR = 1.33;
 	ABSORPTION = (pathtraced_absorption + sediment_absorption);
-	SCATTERING = (pathtraced_scattering + sediment_scattering) + vec3(bubble_scattering * bubbles * bubble_strength);
-	SCATTERING_ANISOTROPY = pathtraced_scattering_anisotropy;
+	SCATTERING = water_medium_scattering(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy) + vec3(bubble_scattering * bubbles * bubble_strength);
+	SCATTERING_ANISOTROPY = water_medium_g(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy);
 #if !defined(BREAKER_LIP)
 	// A lip is water wherever it is (the shore cut-out belongs to the swash film). It writes no alpha at
 	// all: an alpha-tested material is also cut by the any-hit pass, which does not see the lip's varyings.
@@ -2171,7 +2171,7 @@ void fragment() {
 		// The light a crest passes on: the water's single-scattering albedo (what scatters of what it meets), over
 		// the open water only (foam and sand take their own light), in the thin top third of the high crests
 		// (Atlas's height term, made relative to the chop's own rms height so it holds from a calm to a gale).
-		vec3 albedo = max((pathtraced_scattering + sediment_scattering), vec3(0.0)) / max(uw_sigma_t(), vec3(1e-4));
+		vec3 albedo = max(water_medium_scattering(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy), vec3(0.0)) / max(uw_sigma_t(), vec3(1e-4));
 		float above = smoothstep(1.5, 2.5, v_crest / max(crest_sigma, 0.02));
 		above = max(above, smoothstep(0.35, 1.0, v_shore_crest));
 		wr_crest = crest_glow * 2.0 * albedo * above * (1.0 - foam) * water_a * inv_a0 * smoothstep(0.0, soft, shore) * (1.0 - v_lip);
@@ -2248,7 +2248,7 @@ float water_cats_paw(vec2 xz) {
 
 // The whole shader: head, the shared wind, the raster reflections (water_raster_reflections.h), tail.
 static const String &water_shader_src() {
-	static const String src = String(WATER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + _water_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + WATER_FOAM_SHARED_GLSL + WATER_SHADER_SRC_TAIL;
+	static const String src = String(WATER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + _water_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + WATER_FOAM_SHARED_GLSL + WATER_SEDIMENT_GLSL + WATER_SHADER_SRC_TAIL;
 	return src;
 }
 
@@ -2958,6 +2958,19 @@ void PhysXWaterSurface3D::contract_water_add_sediment(const Vector3 &p_position,
 	}
 	sediment_src += Vector2(MAX(p_mineral_kg_s, 0.0f), MAX(p_ash_kg_s, 0.0f));
 	sediment_src_age = 0.0f;
+}
+
+// A load dropped in at once, mixed through the body (as the sources are).
+void PhysXWaterSurface3D::contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) {
+	const float volume = get_water_volume();
+	if (volume <= 0.0f) {
+		return;
+	}
+	sediment += Vector2(MAX(p_mineral_kg, 0.0f), MAX(p_ash_kg, 0.0f)) / volume;
+	const float total = sediment.x + sediment.y;
+	if (total > WaterSediment::MAX_LOAD) {
+		sediment *= WaterSediment::MAX_LOAD / total;
+	}
 }
 
 void PhysXWaterSurface3D::set_sediment(const Vector2 &p_kg_m3) {

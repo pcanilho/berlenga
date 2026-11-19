@@ -41,6 +41,8 @@ extends Node3D
 #   --water [--sea-res=N] with --world: the generator's water bodies; --sea-res sets the sea's simulated grid (cells)
 #   --settle=N            N more frames before the capture (near plant cells are built lazily)
 #   --out=path.png        render and quit (path traced unless --raster); --spp=N (16); --size=WxH
+#   --eye=h [--beyond=m --turn=deg]  with --world: standing --dist m off the spot, h m up, looking along the
+#                         ground's contour past it (turned by --turn)
 #   --cam=x,y,z --look=x,y,z   a fixed camera; --sun=elevation,yaw (degrees); --fov=deg vertical (27: a 50 mm lens)
 #   --plants[=off]        with --world: the crevice plants of the view's stones (PlantGenerator.make_stones: scree,
 #                         river or shore; VegetationField3D.obstacles from the field); =off places them hidden (before
@@ -52,6 +54,9 @@ extends Node3D
 #                         --detail-pixels=n (3);
 #                         --detail-sync places the detail cells on the main thread (ground_detail_threads off),
 #                         --cell-sync the coarse layers' cells (cell_threads off)
+#   --no-ground-cover     with --world: RockField3D.ground_detail_cover off (no grain aggregate on the ground past
+#                         each class's reach; a before frame); --save-cover writes the near cover map, --cover-check
+#                         compares it with the stones placed
 #   --walk=m              with --world: stream while the camera walks m metres forward (--walk-step=m a frame, 0.1),
 #                         then print the main thread's streaming time per frame (mean, 95th percentile, worst)
 
@@ -466,6 +471,23 @@ func _world() -> void:
 	if args.has("top"):
 		cam.position = spot + Vector3(0, float(args["top"]) if args["top"] != "1" else 30.0, 0.5)
 	var look := spot + Vector3(0, 0.3, 0)
+	if args.has("eye"):
+		# --eye=h: standing --dist m off, h m above the ground, looking across it past the spot (where each ground
+		# detail class stops drawing shows as a line across the frame).
+		# Along the ground's contour (across the highest ground's direction), so a shore or scree band runs away.
+		var land_dir := Vector3.ZERO
+		var top := -INF
+		for i in 16:
+			var d := Vector3(cos(TAU * i / 16.0), 0, sin(TAU * i / 16.0))
+			var hgt := gen.get_height(spot + d * 30.0)
+			if hgt > top:
+				top = hgt
+				land_dir = d
+		var flat := land_dir.cross(Vector3.UP).rotated(Vector3.UP, deg_to_rad(float(args.get("turn", "0"))))
+		cam.position = spot + flat * dist
+		cam.position.y = gen.get_height(cam.position) + float(args["eye"])
+		look = spot - flat * float(args.get("beyond", "20"))
+		look.y = gen.get_height(look) + 0.2
 	if view == "coast" and args.has("seaward"):
 		# --seaward: from the land side looking out, the form against sea and sky with the cliff behind the camera.
 		var land_dir := Vector3.ZERO
@@ -526,6 +548,7 @@ func _world() -> void:
 		# Ground detail: the stones under min_size near the camera as real geometry (docs/ideas/ground-detail.md);
 		# --detail-ref=px the image height the reach is set for (0: the window's), --detail-pixels=n the smallest drawn.
 		rocks.ground_detail = not (args.has("no-ground-detail") or args.has("test"))
+		rocks.ground_detail_cover = not args.has("no-ground-cover")
 		if rocks.ground_detail:
 			rocks.ground_detail_reference_height = int(args.get("detail-ref", "1080"))
 			if args.has("detail-pixels"):
@@ -2056,6 +2079,36 @@ func _render_later() -> void:
 	var sea := get_node_or_null("Sea")
 	if sea and sea.has_method("get_contact_foam_cells"):
 		print("contact foam: ready %s, %d ring cells, %d rays" % [sea.is_contact_foam_ready(), sea.get_contact_foam_cells(), sea.get_contact_foam_rays()])
+	if rocks and rocks.has_method("get_ground_detail_cover_texture"):
+		var ct: Texture2D = rocks.get_ground_detail_cover_texture(0)
+		print("ground cover: %s" % ("maps ready" if ct else "no maps"))
+		if ct and args.has("save-cover"):
+			ct.get_image().save_png(out.get_basename() + "_cover.png")
+		if ct and args.has("cover-check"):
+			# Each class's cover as placed (sum of footprints over 2 m squares) against the near map's.
+			var img := ct.get_image()
+			var cp := get_viewport().get_camera_3d().global_position
+			var org := Vector2(floor(cp.x) - 128.0, floor(cp.z) - 128.0)
+			for k in 3:
+				var layer: int = RockField3D.LAYER_DETAIL_PEBBLE + k
+				var rad: float = rocks.get_layer_radius(layer) * float(args.get("cover-reach", "0.7"))
+				var placed := 0.0
+				var mapped := 0.0
+				var n := 0
+				for gz in range(-int(rad), int(rad), 2):
+					for gx in range(-int(rad), int(rad), 2):
+						var rc := Rect2(cp.x + gx, cp.z + gz, 2, 2)
+						var a := 0.0
+						for st in rocks.get_stones(layer, rc):
+							a += PI * pow(float(st["footprint"]), 2.0)
+						var px := img.get_pixel(int(rc.get_center().x - org.x), int(rc.get_center().y - org.y))
+						var m: float = [px.r, px.g, px.b][k] * 0.5
+						placed += a / 4.0
+						mapped += m
+						n += 1
+						if args.has("cover-verbose") and (a > 0.0 or m > 0.0):
+							print("  class %d at %s: placed %.3f map %.3f" % [k, rc.get_center(), a / 4.0, m])
+				print("cover class %d: placed %.4f, map %.4f (mean over %d squares within %.0f m)" % [k, placed / max(n, 1), mapped / max(n, 1), n, rad])
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)

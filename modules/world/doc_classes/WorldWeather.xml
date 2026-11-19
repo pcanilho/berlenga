@@ -144,6 +144,13 @@
 				Override in a stub: [method season_at].
 			</description>
 		</method>
+		<method name="_smoke_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method smoke_at].
+			</description>
+		</method>
 		<method name="_snowfall_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -355,6 +362,13 @@
 				The season's state at the point's height on a day of the year (below 1: today), with the live departure from the climate: phenology, snowpack, soil frost (the keys of WeatherMap3D.get_season). Default: the default climate.
 			</description>
 		</method>
+		<method name="smoke_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Fires' smoke in the air over [param position], g/m2 of particulate in the column (the weather's smoke haze layer, about 2 km deep). Default 0.
+			</description>
+		</method>
 		<method name="snowfall_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -394,6 +408,23 @@
 			<return type="float" />
 			<description>
 				The weather's time per real second. Default 1.
+			</description>
+		</method>
+		<method name="washout_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="coarse" type="bool" />
+			<description>
+				How fast the rain and snow falling here wash particles out of the air, 1/s: [method washout_rate] of [method rainfall_at] and [method snowfall_at].
+			</description>
+		</method>
+		<method name="washout_rate" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="rain_mm_h" type="float" />
+			<param index="1" name="snow_mm_h" type="float" />
+			<param index="2" name="coarse" type="bool" />
+			<description>
+				Below-cloud scavenging coefficient, 1/s, as [code]a R^b[/code] with [code]R[/code] in mm/h of water. Fine smoke (PM2.5): about 1e-5 at 1 mm/h of rain (Laakso et al. 2003). [param coarse] dust over 10 um: about 3e-4 (Wang et al. 2010). Snow washes about five times as much as rain for the same water (Kyro et al. 2009).
 			</description>
 		</method>
 		<method name="water_temperature" qualifiers="const">

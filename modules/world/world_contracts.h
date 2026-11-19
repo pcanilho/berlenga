@@ -68,6 +68,7 @@ public:
 	virtual float contract_terrain_lee_at(const Vector3 &p_position) const { return NAN; } // rad, Winstral's Sx; NaN: no terrain wind there
 	virtual float contract_rainfall_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of liquid
 	virtual float contract_snowfall_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of water falling as snow
+	virtual float contract_smoke_at(const Vector3 &p_position) const { return 0.0f; } // g/m2 of smoke particulate in the column
 	virtual float contract_canopy_water_at(const Vector3 &p_position) const { return 0.0f; } // mm held on leaves
 	virtual float contract_canopy_wetness_at(const Vector3 &p_position) const { return 0.0f; } // 0..1
 	virtual float contract_canopy_drip_at(const Vector3 &p_position) const { return 0.0f; } // mm/h
@@ -111,6 +112,7 @@ protected:
 	GDVIRTUAL1RC(float, _terrain_lee_at, Vector3)
 	GDVIRTUAL1RC(float, _rainfall_at, Vector3)
 	GDVIRTUAL1RC(float, _snowfall_at, Vector3)
+	GDVIRTUAL1RC(float, _smoke_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_water_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_wetness_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_drip_at, Vector3)
@@ -147,6 +149,7 @@ public:
 	float terrain_lee_at(const Vector3 &p_position) const;
 	float rainfall_at(const Vector3 &p_position) const;
 	float snowfall_at(const Vector3 &p_position) const;
+	float smoke_at(const Vector3 &p_position) const; // g/m2 of smoke particulate over the point (the haze layer)
 	float canopy_water_at(const Vector3 &p_position) const;
 	float canopy_wetness_at(const Vector3 &p_position) const;
 	float canopy_drip_at(const Vector3 &p_position) const;
@@ -160,6 +163,12 @@ public:
 	float surface_temperature_at(const Vector3 &p_position) const;
 	float ground_height_at(const Vector3 &p_position) const;
 	double time_scale() const;
+	// Below-cloud scavenging (washout) of particles in the air by falling rain and snow, 1/s: Lambda = a R^b
+	// (R mm/h of water). Fine smoke (PM2.5, accumulation mode) about 1e-5 at 1 mm/h (Laakso et al. 2003; Wang et
+	// al. 2010); coarse dust (> 10 um) about 3e-4 (Wang et al. 2010); snow about five times rain for the same water
+	// (Kyroe et al. 2009; Zhang et al. 2013). washout_at reads rainfall_at and snowfall_at.
+	static float washout_rate(float p_rain_mm_h, float p_snow_mm_h, bool p_coarse);
+	float washout_at(const Vector3 &p_position, bool p_coarse) const;
 };
 
 // Water: open water of every kind (sea, rivers, pools, live water, standing water on the ground). Several
@@ -178,6 +187,8 @@ public:
 	virtual Vector2 contract_water_sediment_at(const Vector3 &p_position) const { return Vector2(); }
 	// A load entering this water at the point (kg/s of each), from runoff, banks or a landslide; it carries it on.
 	virtual void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) {}
+	// A load dropped into this water at once (kg of each): a debris flow's or a landslide's fines, a bank's collapse.
+	virtual void contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) {}
 	virtual ~WorldWaterProvider() {}
 };
 
@@ -200,6 +211,7 @@ protected:
 	GDVIRTUAL3(_impulse, Vector3, float, float)
 	GDVIRTUAL1RC(Vector2, _sediment_at, Vector3)
 	GDVIRTUAL3(_add_sediment, Vector3, float, float)
+	GDVIRTUAL3(_add_sediment_mass, Vector3, float, float)
 
 public:
 	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -217,6 +229,8 @@ public:
 	Vector2 sediment_at(const Vector3 &p_position) const;
 	// A load entering the water that answers at the point (kg/s of mineral and of ash); none there: it is lost.
 	void add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s);
+	// A load dropped into that water at once (kg of mineral and of ash): mixed into the water around the point.
+	void add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg);
 };
 
 // Fire: what burns where, for what it heats (snow, the surface water, the air) and chars.
@@ -395,6 +409,9 @@ public:
 	virtual float contract_snow_surface_at(const Vector3 &p_position) const { return -Math::INF; } // m, the snow top with prints; -INF bare
 	virtual float contract_snow_crust_at(const Vector3 &p_position) const { return 0.0f; } // kPa a crust bears, 0 none
 	virtual Vector2 contract_snow_lake_ice_at(const Vector3 &p_position) const { return Vector2(); } // (m of lake ice, white share)
+	// Light-absorbing particles on the snow, as mg/m2 of black carbon equivalent (dust about 0.013 of its mass).
+	virtual void contract_snow_add_impurity(const Vector3 &p_position, float p_radius, float p_mg_per_m2) {}
+	virtual float contract_snow_impurity_at(const Vector3 &p_position) const { return 0.0f; }
 	virtual ~WorldSnowProvider() {}
 };
 
@@ -413,6 +430,8 @@ protected:
 	GDVIRTUAL1RC(float, _surface_at, Vector3)
 	GDVIRTUAL1RC(float, _crust_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _lake_ice_at, Vector3)
+	GDVIRTUAL3(_add_impurity, Vector3, float, float)
+	GDVIRTUAL1RC(float, _impurity_at, Vector3)
 
 public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_snow) counts
@@ -428,6 +447,11 @@ public:
 	float crust_at(const Vector3 &p_position) const;
 	// Lake ice: (thickness m, share of it that is white snow ice). Ice of 5 cm and more bears a walker.
 	Vector2 lake_ice_at(const Vector3 &p_position) const;
+	// Soot, ash and dust on the snow (light-absorbing particles), mg/m2 of black carbon equivalent: dust counts about
+	// 0.013 of its mass (mass absorption about 0.1 against 7.5 m2/g). Producers of dust settling on snow add it; the
+	// snow darkens and melts sooner. impurity_at: what shows at the surface.
+	void add_impurity(const Vector3 &p_position, float p_radius, float p_mg_per_m2);
+	float impurity_at(const Vector3 &p_position) const;
 };
 
 // A body as every system that feels bodies reads it: one reader instead of a copy in each.

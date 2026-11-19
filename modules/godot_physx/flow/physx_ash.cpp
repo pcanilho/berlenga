@@ -33,8 +33,11 @@
 #include "physx_flow_3d.h"
 #include "physx_flow_emitter_3d.h"
 
+#include "core/templates/hash_map.h"
 #include "core/templates/sort_array.h"
 #include "scene/3d/node_3d.h"
+
+#include "modules/world/world_contracts.h"
 
 void PhysXAsh::_build(Node3D *p_owner) {
 	if (flow || !p_owner || !p_owner->is_inside_tree()) {
@@ -95,6 +98,30 @@ void PhysXAsh::step(Node3D *p_owner, const LocalVector<Source> &p_sources, const
 		return;
 	}
 	idle = 0.0f;
+	// What blows settles downwind; on snow it darkens it (once a second).
+	for (const Source &src : p_sources) {
+		if (src.rate <= 0.0f) {
+			continue;
+		}
+		bool merged = false;
+		for (Source &q : settling) {
+			if (q.position.distance_squared_to(src.position) < 0.01f) {
+				q.rate += src.rate * p_delta;
+				merged = true;
+				break;
+			}
+		}
+		if (!merged) {
+			Source q = src;
+			q.rate = src.rate * p_delta;
+			settling.push_back(q);
+		}
+	}
+	settle_timer += p_delta;
+	if (settle_timer >= 1.0f) {
+		settle_timer = 0.0f;
+		_settle_on_snow(p_wind);
+	}
 	_build(p_owner);
 	if (!flow) {
 		return;
@@ -130,6 +157,56 @@ void PhysXAsh::step(Node3D *p_owner, const LocalVector<Source> &p_sources, const
 		em->set_velocity(Vector3(p_wind.x, 0.0f, p_wind.z) * 0.8f + Vector3(0.0f, 0.2f, 0.0f));
 		em->set_couple_rate(4.0f);
 	}
+}
+
+// Ash on snow (docs/ideas/physx.md, "Ash darkens snow"): the dust settles out over a length L = u h / v_s downwind
+// (lifted to h about 1.5 m, falling at v_s about 0.3 m/s for fine ash), so a patch's ash lands in three bands along
+// the wind holding e^-0 - e^-1, e^-1 - e^-2 and e^-2 - e^-3 of it (the rest goes further, thinly). Handed to the
+// snow as black carbon equivalent: fire ash is mineral ash with char in it, darker than mineral dust (0.013), taken
+// as 0.05 of its mass.
+void PhysXAsh::_settle_on_snow(const Vector3 &p_wind) {
+	WorldSnow *snow = WorldContracts::snow();
+	if (!snow || !snow->has_provider()) {
+		settling.clear();
+		return;
+	}
+	const Vector3 w(p_wind.x, 0.0f, p_wind.z);
+	const float u = w.length();
+	const Vector3 dir = u > 0.01f ? w / u : Vector3();
+	const float len = CLAMP(u * 1.5f / 0.3f, 2.0f, 200.0f);
+	// Patches gathered into cells half a settling length across: the snow gets a few calls a second, not hundreds.
+	const float cell = MAX(len * 0.5f, 4.0f);
+	HashMap<Vector2i, Source> cells;
+	for (const Source &q : settling) {
+		const Vector2i key(Math::floor(q.position.x / cell), Math::floor(q.position.z / cell));
+		Source *c = cells.getptr(key);
+		if (!c) {
+			Source n;
+			n.position = Vector3();
+			n.size = 0.0f;
+			n.rate = 0.0f;
+			c = &cells.insert(key, n)->value;
+		}
+		c->position += q.position * q.rate;
+		c->size = MAX(c->size, q.size);
+		c->rate += q.rate;
+	}
+	for (const KeyValue<Vector2i, Source> &kv : cells) {
+		Source q = kv.value;
+		if (q.rate <= 0.0f) {
+			continue;
+		}
+		q.position /= q.rate;
+		q.size = MAX(q.size, cell);
+		for (int band = 0; band < 3; band++) {
+			const float share = Math::exp(-float(band)) - Math::exp(-float(band + 1));
+			const float r = MAX(q.size * 0.5f, len * 0.5f);
+			const Vector3 at = q.position + dir * (len * (float(band) + 0.5f));
+			const float mg_per_m2 = q.rate * share * 1.0e6f * 0.05f / (Math::PI * r * r);
+			snow->add_impurity(at, r, mg_per_m2);
+		}
+	}
+	settling.clear();
 }
 
 void PhysXAsh::clear() {

@@ -1222,6 +1222,12 @@ void PhysXFlow3D::_step(double p_delta) {
 	settings.smoke_buoyancy = smoke_buoyancy;
 	settings.cooling_rate = cooling_rate;
 	settings.smoke_fade = smoke_fade;
+	{
+		const WorldWeather *wm = WorldContracts::weather();
+		washout_rate = (rain_washout && wm != nullptr && wm->has_provider()) ? wm->washout_at(draw_center, smoke_buoyancy < 0.0f) : 0.0f;
+		// Flow's damping is the share lost per second: keep (1 - 0.3) e^-Lambda.
+		settings.smoke_damping = 1.0f - (1.0f - 0.3f) * Math::exp(-washout_rate);
+	}
 	settings.vorticity = vorticity;
 	settings.ignition_temperature = ignition_temperature;
 	settings.combustion = combustion;
@@ -1652,6 +1658,9 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_cooling_rate"), &PhysXFlow3D::get_cooling_rate);
 	ClassDB::bind_method(D_METHOD("set_smoke_fade", "fade"), &PhysXFlow3D::set_smoke_fade);
 	ClassDB::bind_method(D_METHOD("get_smoke_fade"), &PhysXFlow3D::get_smoke_fade);
+	ClassDB::bind_method(D_METHOD("set_rain_washout", "enabled"), &PhysXFlow3D::set_rain_washout);
+	ClassDB::bind_method(D_METHOD("is_rain_washout"), &PhysXFlow3D::is_rain_washout);
+	ClassDB::bind_method(D_METHOD("get_washout_rate"), &PhysXFlow3D::get_washout_rate);
 	ClassDB::bind_method(D_METHOD("set_vorticity", "vorticity"), &PhysXFlow3D::set_vorticity);
 	ClassDB::bind_method(D_METHOD("get_vorticity"), &PhysXFlow3D::get_vorticity);
 	ClassDB::bind_method(D_METHOD("set_ignition_temperature", "temperature"), &PhysXFlow3D::set_ignition_temperature);
@@ -1753,6 +1762,7 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "smoke_buoyancy", PROPERTY_HINT_RANGE, "-20,20,0.01,or_less,or_greater"), "set_smoke_buoyancy", "get_smoke_buoyancy");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cooling_rate", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_cooling_rate", "get_cooling_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "smoke_fade", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_smoke_fade", "get_smoke_fade");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_washout"), "set_rain_washout", "is_rain_washout");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "vorticity", PROPERTY_HINT_RANGE, "0,5,0.01"), "set_vorticity", "get_vorticity");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "combustion"), "set_combustion", "is_combustion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ignition_temperature", PROPERTY_HINT_RANGE, "0,2,0.001"), "set_ignition_temperature", "get_ignition_temperature");

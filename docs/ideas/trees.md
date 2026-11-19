@@ -2378,6 +2378,64 @@ green, seedlings lighter still and larger; BARK_SCALY (holm oak, spruce, fir, ..
 with per-scale height, tilt and tone (the holm collar read as paving). In PT a clump in the stem's shadow is
 near black: sky light only, the same as any shaded leaves.
 
+Fire band variants (19 Nov, vegetation's contract, world-links.md): `fire_variants` (on) makes every placed living
+species (open, stand, understory, old, grove forms) carry five more meshes after its living ones, grown at
+fire_years 0.5, 2, 4.5, 8 and 15 from the first variants' seeds, with mesh meta `tree_fire_years` and
+`tree_fire_band` (0-1, 1-3, 3-6, 6-10, 10-20). generate() sets both metas whenever fire_years >= 0. Near meshes of
+a band variant are grown burnt too (near_living). Stands bench: off unless --fire (beech stand 17 s, 38 s with).
+
+### 5ai. Date palm and oasis (19 Nov; Paulo's pick)
+
+PRESET_DATE_PALM (Phoenix dactylifera; Chao and Krueger 2007, Zaid and de Wet 2002, Tomlinson 1990), laid out
+by _grow_date_palm as the dwarf fan palm is (no shoot growth). No trunk for five years, then about 30 cm a year
+(40 years: 15 m); fronds 1.4-4.6 m by age, 22-70 green on golden-angle insertions, spear upright, old ones
+arching below level (five nodes a frond: wind bones, colliders). _date_palm_frond: rachis tube, acanthophyll
+spines on the lower fifth (LOD 0), induplicate V-folded pinnae 45-95 a side in groups of three planes
+(elevations 0.8 / 0.3 / -0.12 rad), forward-pointing, longest at mid-frond; each pinna a sized part (whole in
+every LOD). _date_palm_trunk: one leaf base ("boot") per frond on the golden-angle spiral, so they fall in the
+8/13 diamond lattice; flattened wedges with lighter cut faces greying down the trunk, sheath fibre under the
+crown; on a wild palm the lowest bases worn short or fallen. Wild palms keep a skirt of dead fronds and
+offshoots at the foot (PARAM_BASAL_SPROUTS, PARAM_STEMS for clumps); `grove_vase` = tended (FORM_GROVE): skirt
+and offshoots cut, bases trimmed square. Flowers February-April (cream strand brooms from split spathes);
+female palms (all in a grove) hang 8-10 bunches on orange stalks bowed by the fruit: dates green to yellow or
+red (khalal, a third of seeds red) to amber-brown, cut by day 300 in a grove. STAND_DATE_OASIS: tended palms
+8 m apart (77 a hectare on the bench valley), wild clumps at 0.12, olives beneath at 0.15. Fire: palms get
+char only (FIRE_NONE, no prune). Frames: fork/trees/palm/ (date-palm, -trunk, -crown-dates, -raster-pt,
+date-oasis). Cost: 312k triangles a grown palm, 0.9 s.
+
+Docs round 1 (19 Nov): the oasis read as clones and the crowns as fuzz. Now each variant draws its own age
+(grove 9-70 years, wild 8-90, so 2-20 m), wild palms lean up to 0.28 rad (tended 0.09) and grow 1-4 stem
+clumps; wild palms only within 18 m of water (RULE_WATER_DISTANCE, 10 m fade) and the grove in patches
+(patch_scale 35 m, cover 0.75). Fronds read at range: pinnae narrower (half width 1.25 cm), rachis paler
+and thicker at the base, groups opened to 0.55 / 0.22 / -0.05 rad so sky shows between them. Dead-frond skirt
+darker (0.13, 0.105, 0.08). PT note: with dates on, some pinnae show date red in PT only; the leaf
+surface's vertex colours hold no red (scanned), so the path tracer reads crown_parts colours for some leaf
+triangles (engine, reported).
+
+### 5aj. Bark beetle kill and beetle spruce stands (19 Nov; Paulo's pick)
+
+Technique: the bark beetle outbreak phases of remote sensing and forest health surveys (Hicke et al. 2012, Forest
+Ecology and Management 271; Wulder et al. 2006; Wermelinger 2004, Ips typographus) mapped onto the deadwood classes
+(5). `beetle_years` on a conifer: under 0.6 green attack (crown green, a duller green late; resin beads on the stem
+from 0.6 m to three quarters of the height, about 25 a metre, milky white within days; pitch tubes on pines; boring
+dust as a red-brown tint in the bark furrows of the low stem and grain drifts against the root collar); 0.6-2.5
+red (decay class 1: needles fade yellow-green to fox red to brown and drop from year 1, 90% by 2.4; woodpecker
+flaking, bark_peel x1-4); 2.5-6 grey (class 2, bark shed in sheets at 2.2x the usual rate: the galleries cut it
+from the wood); 6-12 class 3 (top broken); 12 on a stub. Signs are placed on the bark's real surface (max radius
+per 10 cm x 48 bins from outward-facing bark vertices), so they sit on the plates and the flare. Mesh meta
+`tree_beetle_years`.
+
+STAND_BEETLE_SPRUCE (Kautz et al. 2011, infestation spots in the Bavarian Forest): one patch mask (scale 70 m,
+cover 0.12 + 0.06 a year of `beetle_outbreak`, default 6): a red front in a 5 m band along the spot edges
+(patch_ring; front variants 0.15-2.4 years), a grey core inside (2.6 years to the outbreak's age; canopy opacity
+0.15 so pioneers come up), living spruce on the inverted mask, beetle logs in old spots from 5 years, rowan, birch
+and elder in the light. Beetle species carry no fire bands. Frames: fork/trees/beetle/.
+
+Far mesh trim (19 Nov, vegetation's oasis bench): far meshes (past near_leaf_range) leave out the displaced bark
+relief and the LOD 0-only crown parts, and fold date palm pinnae as one V of two triangles: wild palm clump 668k
+to 318k, tended 227k to 127k. Dropping the oleaster's twigs between 1 mm and 1 cm (3M of its 4.9M) lit its crown
+grey-blue in PT (they shade the crown's inside en masse), so they stay; its bulk is about half a million shoots.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

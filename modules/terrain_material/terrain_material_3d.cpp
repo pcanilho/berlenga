@@ -179,6 +179,76 @@ uniform int tm_detail_octaves = 4;
 uniform float tm_wetness = 1.0;
 uniform float tm_snow = 1.0;
 uniform float tm_snow_max_slope = 60.0;
+
+// The grains past where RockField3D's ground detail stops drawing them (set_ground_cover): each class's cover of the
+// shore in two maps round the camera, drawn as the grains' aggregate look (Meng et al. 2015): single grains while a
+// pixel resolves them, their mean colour once it does not, so the real stones hand over without a line.
+uniform bool tm_gc_on = false;
+uniform sampler2D tm_gc_near : filter_linear, repeat_disable;
+uniform sampler2D tm_gc_far : filter_linear, repeat_disable;
+uniform vec4 tm_gc_near_rect = vec4(0.0, 0.0, 1.0, 1.0); // origin x, z and size, m
+uniform vec4 tm_gc_far_rect = vec4(0.0, 0.0, 1.0, 1.0);
+uniform vec3 tm_gc_reach = vec3(0.0); // where each class's real stones stop (pebbles, gravel, fine), m
+uniform vec3 tm_gc_band = vec3(1.0); // the band they hand over in (the class's cell size), m
+uniform vec3 tm_gc_size = vec3(0.05, 0.03, 0.015); // each class's mean size, m
+uniform vec3 tm_gc_colors[8]; // the rock types' mean albedo (linear)
+
+vec3 tm_gc_hash3(vec2 c) {
+	// Hash without sine (Hoskins).
+	vec3 p3 = fract(vec3(c.xyx) * vec3(0.1031, 0.1030, 0.0973));
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.xxy + p3.yzz) * p3.zyx);
+}
+
+float tm_gc_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(tm_gc_hash3(i).x, tm_gc_hash3(i + vec2(1.0, 0.0)).x, f.x), mix(tm_gc_hash3(i + vec2(0.0, 1.0)).x, tm_gc_hash3(i + vec2(1.0, 1.0)).x, f.x), f.y);
+}
+
+// The cover (rgb: pebbles, gravel, fine, as area fractions) and the rock type at xz: the near map, faded into the far
+// one over its outer eighth.
+vec3 tm_gc_cover(vec2 xz, out int type) {
+	vec2 un = (xz - tm_gc_near_rect.xy) / tm_gc_near_rect.zw;
+	vec2 uf = (xz - tm_gc_far_rect.xy) / tm_gc_far_rect.zw;
+	vec2 en = min(un, 1.0 - un);
+	float wn = smoothstep(0.0, 0.125, min(en.x, en.y));
+	vec2 ef = min(uf, 1.0 - uf);
+	float wf = smoothstep(0.0, 0.03, min(ef.x, ef.y));
+	vec3 c = texture(tm_gc_far, uf).rgb * wf;
+	if (wn > 0.0) {
+		c = mix(c, texture(tm_gc_near, un).rgb, wn);
+		type = int(texelFetch(tm_gc_near, ivec2(clamp(un, 0.0, 0.999) * vec2(textureSize(tm_gc_near, 0))), 0).a * 255.0 + 0.5) / 32;
+	} else {
+		type = int(texelFetch(tm_gc_far, ivec2(clamp(uf, 0.0, 0.999) * vec2(textureSize(tm_gc_far, 0))), 0).a * 255.0 + 0.5) / 32;
+	}
+	return c * 0.5;
+}
+
+// One class's grains at p (a cell 1.25 grains wide holds at most one, a share of cells filled for the cover):
+// whether p is on one, its tone and its dome's normal (world). fp: the pixel's footprint.
+float tm_gc_grain(vec2 p, float s, float cover, out float tone, out vec3 gn) {
+	float g = 1.25 * s;
+	vec2 cell = floor(p / g);
+	vec3 h = tm_gc_hash3(cell + 0.5 * s);
+	tone = 0.7 + 0.5 * h.z;
+	gn = vec3(0.0, 1.0, 0.0);
+	if (h.x >= cover * 1.99) {
+		return 0.0;
+	}
+	float r = 0.5 * s * (0.75 + 0.5 * fract(h.y * 7.13));
+	vec2 o = (cell + 0.5 + (h.xy - 0.5) * 0.35) * g;
+	vec2 d = (p - o) / r;
+	float q = dot(d, d);
+	if (q >= 1.0) {
+		return 0.0;
+	}
+	float z = sqrt(1.0 - q);
+	gn = normalize(vec3(d.x, z * 1.2, d.y));
+	tone *= 0.55 + 0.45 * z; // darker toward its foot (the grains round it and the bed)
+	return 1.0;
+}
 )";
 	for (int i = 0; i < LAYER_MAX; i++) {
 		const Ref<TerrainMaterialLayer> &l = layers[i];
@@ -1198,6 +1268,77 @@ void fragment() {
 	}
 )";
 	}
+	c += R"(	float tm_gc_spec = 1.0;
+	float tm_gc_any = 0.0;
+	if (tm_gc_on) {
+		// Past each ground detail class's reach: its grains' aggregate (see tm_gc_cover).
+		vec3 gc_v = wp - CAMERA_POSITION_WORLD;
+		float gc_d = length(gc_v);
+		vec3 gc_hid = smoothstep(tm_gc_reach - 0.25 * tm_gc_band, tm_gc_reach + 0.75 * tm_gc_band, vec3(gc_d));
+		if (max(gc_hid.x, max(gc_hid.y, gc_hid.z)) > 0.0) {
+			int gc_type;
+			// Patchy below the map's metre (two octaves): a deposit is never an even smear.
+			float gc_patch = 0.7 + 0.45 * tm_gc_noise(wp.xz * 0.9) + 0.2 * (tm_gc_noise(wp.xz * 3.1 + 7.0) - 0.5);
+			vec3 gc_cov = tm_gc_cover(wp.xz, gc_type) * gc_hid * gc_patch;
+			if (max(gc_cov.x, max(gc_cov.y, gc_cov.z)) > 0.002) {
+				vec3 gc_view = gc_v / max(gc_d, 1e-4);
+				float gc_cv = max(abs(dot(gc_view, wn)), 0.05);
+				float gc_fp = gc_d * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y) / max(gc_cv, 0.1);
+				// Seen from the side the grains stand up off the bed and hide it (a grain about 0.6 of its width tall), and
+				// a low sun puts the bed between them in their shade: the aggregate's view and light dependence (Meng et
+				// al. 2015), as Poisson cover of grains whose shadow and silhouette lengthen with the tangent of the angle.
+				float gc_tv = sqrt(1.0 - gc_cv * gc_cv) / gc_cv;
+				vec3 gc_l = relief_sun_direction();
+				float gc_ts = 0.0;
+				float gc_back = 0.0;
+				if (dot(gc_l, gc_l) > 0.5) {
+					float cs = max(dot(gc_l, wn), 0.05);
+					gc_ts = sqrt(max(1.0 - cs * cs, 0.0)) / cs;
+					// Against a low sun the grains show the camera their shaded sides.
+					vec3 lf = gc_l - wn * dot(gc_l, wn);
+					vec3 vf = gc_view - wn * dot(gc_view, wn);
+					gc_back = max(dot(normalize(lf + 1e-5), normalize(vf + 1e-5)), 0.0) * min(gc_ts / 2.0, 1.0);
+				}
+				// The grains carry the ground's dust (as the field's own grains do: half their colour from far off).
+				vec3 gc_stone = mix(tm_gc_colors[clamp(gc_type, 0, 7)], albedo, 0.5);
+				vec3 gc_n = vec3(0.0);
+				float gc_any = 0.0;
+				float gc_shade = 1.0;
+				// Fine first, so the larger grains lie over them.
+				for (int k = 2; k >= 0; k--) {
+					float cov = gc_cov[k];
+					if (cov <= 0.002) {
+						continue;
+					}
+					float s = tm_gc_size[k];
+					// Single grains while a pixel spans under a quarter of one, their mean by the time it spans most of one.
+					float res = smoothstep(0.25, 0.8, gc_fp / s);
+					float tone;
+					vec3 gn;
+					float hit = res < 1.0 ? tm_gc_grain(wp.xz, s, cov, tone, gn) : 0.0;
+					// The mean: the share of the view the grains fill, at their mean tone (lit tops, shaded sides).
+					// (0.8 and 1.5 matched to frames with every grain drawn, from above and at eye height.)
+					float seen = 1.0 - exp(-0.8 * cov * (1.0 + 1.5 * gc_tv));
+					float shaded = 1.0 - exp(-cov * 0.4 * gc_ts);
+					float f = mix(hit, seen, res);
+					// Seen edge on, what shows is mostly their sides and the shade between them.
+					float t = mix(tone, (0.85 - 0.2 * min(gc_ts / 3.0, 1.0)) * (1.0 - 0.45 * gc_back) * (1.0 - 0.3 * smoothstep(3.0, 12.0, gc_tv)), res);
+					albedo = mix(albedo, gc_stone * t, f);
+					// The bed still seen lies partly in their shadow.
+					gc_shade *= 1.0 - res * (1.0 - seen) * shaded;
+					gc_n = mix(gc_n, gn - vec3(0.0, 1.0, 0.0), hit * (1.0 - res));
+					gc_any = max(gc_any, f);
+				}
+				sn = normalize(sn + gc_n);
+				SUN_SHADOW *= gc_shade;
+				// The grains hide the bed's sheen, and being rough and in each other's shade send back little of their own
+				// (their roughness goes on after the wet sand's gloss, below).
+				tm_gc_spec = 1.0 - gc_any;
+				tm_gc_any = gc_any;
+			}
+		}
+	}
+)";
 	if (far_blend_enabled) {
 		c += "\tvec3 tm_bare = albedo;\n\tfloat tm_far_t = 0.0;\n\tfloat tm_far_cover = 0.0;\n";
 	}
@@ -1278,6 +1419,8 @@ void fragment() {
 		float soaked = w[4] * (1.0 - smoothstep(runup * 0.6, runup, wp.y - tm_sea_level));
 		albedo *= mix(1.0, 0.55, soaked);
 		rough = mix(rough, rough * 0.45, soaked);
+		// The grains past the ground detail's reach stay rough on a wet bed.
+		rough = mix(rough, 0.72, tm_gc_any);
 	}
 )";
 	if (ground_deform_enabled) {
@@ -1295,7 +1438,7 @@ void fragment() {
 		// over the sand of the patch, as BaseMaterial3D draws it.
 		c += "\tvec2 gr_far = ground_ripple_far_slope(wp.xz, length(tm_dpx));\n\tsn = normalize(sn - vec3(gr_far.x, 0.0, gr_far.y));\n";
 	}
-	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5;\n";
+	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5 * tm_gc_spec;\n";
 	if (grass_tint_enabled) {
 		// The sward hides the soil's sheen (GrassField3D): without it the meadow past the blades reads pale grey.
 		c += "\tspecular = grass_ground_specular(wp, specular);\n";
@@ -1398,6 +1541,23 @@ void TerrainMaterial3D::_update_params() {
 	set_shader_parameter("tm_cliff_cos", Math::cos(Math::deg_to_rad(cliff_slope)));
 	set_shader_parameter("tm_rock_detail_scale", rock_detail_scale);
 	set_shader_parameter("tm_scree_blocks_distance", scree_blocks_distance);
+	set_shader_parameter("tm_gc_on", cover_near.is_valid() && cover_far.is_valid());
+	if (cover_near.is_valid() && cover_far.is_valid()) {
+		set_shader_parameter("tm_gc_near", cover_near);
+		set_shader_parameter("tm_gc_far", cover_far);
+		set_shader_parameter("tm_gc_near_rect", Vector4(cover_near_rect.position.x, cover_near_rect.position.y, cover_near_rect.size.x, cover_near_rect.size.y));
+		set_shader_parameter("tm_gc_far_rect", Vector4(cover_far_rect.position.x, cover_far_rect.position.y, cover_far_rect.size.x, cover_far_rect.size.y));
+		set_shader_parameter("tm_gc_reach", cover_reach);
+		set_shader_parameter("tm_gc_band", cover_band);
+		set_shader_parameter("tm_gc_size", cover_size);
+		PackedVector3Array cols;
+		cols.resize(8);
+		for (int i = 0; i < 8; i++) {
+			const Color c = i < cover_colors.size() ? cover_colors[i] : Color(0.35, 0.33, 0.3);
+			cols.set(i, Vector3(c.r, c.g, c.b));
+		}
+		set_shader_parameter("tm_gc_colors", cols);
+	}
 	set_shader_parameter("tm_alluvium_area", alluvium_area);
 	set_shader_parameter("tm_blend_depth", blend_depth);
 	set_shader_parameter("tm_detail_octaves", detail_octaves);
@@ -1494,6 +1654,19 @@ MAT_SETTER(int, detail_octaves, CLAMP(p_value, 0, 8))
 MAT_SETTER(float, snow_max_slope, CLAMP(p_value, 0.0f, 90.0f))
 MAT_SETTER_CODE(const String &, detail_code)
 MAT_SETTER_CODE(bool, grass_tint_enabled)
+// RockField3D's ground detail cover (see the shader's tm_gc_cover): null maps turn it off.
+void TerrainMaterial3D::set_ground_cover(const Ref<Texture2D> &p_near, const Ref<Texture2D> &p_far, const Rect2 &p_near_rect, const Rect2 &p_far_rect, const Vector3 &p_reach, const Vector3 &p_band, const Vector3 &p_size, const PackedColorArray &p_colors) {
+	cover_near = p_near;
+	cover_far = p_far;
+	cover_near_rect = p_near_rect;
+	cover_far_rect = p_far_rect;
+	cover_reach = p_reach;
+	cover_band = p_band;
+	cover_size = p_size;
+	cover_colors = p_colors;
+	_update_params();
+}
+
 MAT_SETTER_CODE(bool, rock_detail_enabled)
 MAT_SETTER(float, rock_detail_scale, CLAMP(p_value, 0.1f, 10.0f))
 MAT_SETTER(float, scree_blocks_distance, MAX(p_value, 0.0f))
@@ -1527,6 +1700,7 @@ void TerrainMaterial3D::use_generator(Object *p_generator) {
 }
 
 void TerrainMaterial3D::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_ground_cover", "near", "far", "near_rect", "far_rect", "reach", "band", "size", "colors"), &TerrainMaterial3D::set_ground_cover);
 	ClassDB::bind_method(D_METHOD("update_shader"), &TerrainMaterial3D::update_shader);
 	ClassDB::bind_method(D_METHOD("get_shader_code"), &TerrainMaterial3D::get_shader_code);
 	ClassDB::bind_method(D_METHOD("set_layer", "layer", "value"), &TerrainMaterial3D::set_layer);

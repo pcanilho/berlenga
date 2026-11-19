@@ -452,3 +452,34 @@ the far hand-over (proposal 6). Four candidates, put to Paulo as a decision card
 Sources: Meng, Papas, Habel, Dachsbacher, Marschner, Gross, Jarosz 2015
 (https://cs.dartmouth.edu/~wjarosz/publications/meng15granular.html); Unity
 `AddInstancesIndirect` (https://docs.unity3d.com/ScriptReference/Rendering.RayTracingAccelerationStructure.AddInstancesIndirect.html).
+
+## Seamless far edge as built (19 Nov)
+
+Picked first of the four (Paulo, 19 Nov: all of them, in order). The drawn classes stop at their reach (pebbles 32 m,
+gravel 12 m, fine gravel 6 m at 720p), and past it the ground showed plain sand: a line across every beach and talus.
+
+- **Cover maps (RockField3D).** Two camera-centred RGBA8 maps, 256 texels each, at 1 m (256 m) and 8 m (2 km) texels:
+  R, G, B each class's cover of the ground (0 to 0.5), A the rock type. Filled from the same laws the detail cells
+  place by (the shore's log-normal from the beach slope above the water line, the talus power law), on a worker when
+  the camera has moved an eighth of a map; `build_area` fills them at once. `ground_detail_cover` (on by default),
+  `get_ground_detail_cover_texture(level)`. A bench check (`--cover-check`) compares the map with the stones actually
+  placed per 4 m square: no square with placed stones the map misses.
+- **Aggregate (TerrainMaterial3D, `set_ground_cover`).** Meng et al. 2015's split, cut down to a few ALU: past each
+  class's reach (blended over its cell size) the ground draws single hashed grains (domed normal, darker at the
+  foot) while a pixel spans under a quarter of a grain, and their mean by the time it spans most of one. The mean is
+  Poisson cover of grains standing about 0.6 of their width tall: the share of the view they fill grows with the
+  tangent of the view angle (edge on they hide the bed), the bed they leave is in their shade by the tangent of the
+  sun's, and edge on or against a low sun the camera sees their shaded sides. Colour: the rock type's linear albedo as
+  the stones' shader mixes it (mineral, specks, rind), half dusted to the ground's. Grains hide the bed's sheen
+  (specular off, roughness 0.72 after the wet sand's gloss). Patch noise at two octaves below the map's metre keeps it
+  from an even smear (no visible repetition).
+- **Calibration.** Against frames with every stone drawn (`--detail-pixels=0.75`), mean brightness of the hand-over
+  area: at eye height 2074 before, 1639 every stone, 1711 aggregate; from 11 m up 141, 132, 126. Constants: view
+  cover 0.8 cov (1 + 1.5 tan), bed shade 0.4 cov tan(sun), edge-on tone down to 0.7.
+- **Path tracing.** All of it is in the ground material, which the path tracer runs as is; the sun direction comes
+  from `relief_sun_direction()` and the grain switch from the ray-cone footprint, so raster and PT pick the same
+  grains.
+- **Cost.** One 256 x 256 fill on a worker per eighth-of-a-map move, two texture reads and up
+  to three hashed grain tests per ground pixel past the reach. No new instances.
+- **Left.** Very sparse scattered stones (cover under 0.01) vanish in the aggregate where the drawn frame shows a few
+  dark specks; any other ground layer (Terrain3D) needs the same uniforms wired.

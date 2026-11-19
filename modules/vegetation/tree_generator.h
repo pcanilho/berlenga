@@ -104,6 +104,7 @@ public:
 		PRESET_CALLIGONUM, // Calligonum comosum (trees.md 5ae).
 		PRESET_WHITE_BROOM, // Retama raetam (trees.md 5ae).
 		PRESET_SALTBUSH, // Atriplex halimus (trees.md 5ae).
+		PRESET_DATE_PALM, // Phoenix dactylifera (trees.md 5ai).
 		PRESET_MAX,
 	};
 
@@ -132,6 +133,8 @@ public:
 		STAND_POLLARD_ROW, // Willow pollards along water, placed by the scene along its lines.
 		STAND_STONE_PINE, // Stone pine parkland on coastal sands: open-grown umbrellas a crown apart.
 		STAND_OLIVE_GROVE, // Old olive grove: open-centre olives on split, twisted trunks, about 10 m apart.
+		STAND_DATE_OASIS, // Date palm oasis: tended palms in irrigated rows, wild clumps by the water, fruit trees beneath (trees.md 5ai).
+		STAND_BEETLE_SPRUCE, // Spruce after a bark beetle outbreak: grey snag spots with a red front, living spruce between (trees.md 5aj).
 		STAND_MAX,
 	};
 
@@ -353,11 +356,16 @@ private:
 		float blade = 0.3f; // Blade radius, metres.
 		int segments = 18;
 		bool dead = false;
+		bool pinnate = false; // A feather leaf (date palm): the petiole runs on as the rachis, pinnae along it.
+		int first = -1; // Pinnate: the frond's first node (the sheath at the crown).
 	};
 	LocalVector<PalmFrond> palm_fronds;
 	LocalVector<int> palm_trunks; // Trunk nodes, for the leaf-base stubs.
 	LocalVector<int> palm_crowns; // Each stem's top node.
 	void _grow_palm();
+	void _grow_date_palm();
+	void _date_palm_frond(Builder &r_leaves, const PalmFrond &p_f);
+	void _date_palm_trunk(Builder &r_bark, int p_trunk_first, int p_trunk_last);
 	void _palm_geometry(Builder &r_bark, Builder &r_leaves);
 	LocalVector<float> node_drag; // m2 of effective frontal area per node (wood and foliage).
 	LocalVector<float> node_mass; // kg per node.
@@ -654,6 +662,19 @@ public:
 	float limb_breakage = 1.0f; // Storm-snapped and hanging limbs on living trees (section 5j); 0 none.
 	float bark_peel = 1.0f; // Dead wood sheds its bark by decay class (section 5f); 0 keeps it.
 	float fire_years = -1.0f; // Years since a fire killed the crown (trees.md 5ah), -1 unburnt: the tree as it stands and regrows.
+	// Placed species carry one variant per fire band (0-1, 1-3, 3-6, 6-10, 10-20 years, grown at 0.5, 2, 4.5, 8
+	// and 15) after their living ones, mesh meta tree_fire_years and tree_fire_band; VegetationField3D picks by
+	// WorldFire.burn_age_at (world-links.md). Off for scouts and tests that do not burn.
+	bool fire_variants = true;
+	// Years since bark beetles killed the tree (trees.md 5aj), -1 none; conifers only. Under 0.6 green attack (resin
+	// beads, boring dust), then the needles fade yellow to red and drop (to 2.5), grey snag with the bark falling in
+	// sheets (to 6), top broken (to 12), then a stub.
+	float beetle_years = -1.0f;
+	// STAND_BEETLE_SPRUCE: years since the outbreak began; the spots grow and age with it.
+	float beetle_outbreak = 6.0f;
+	bool beetle_active = false; // This generate() grows a beetle kill.
+	int beetle_band = 0; // While a beetle stand grows its species: 1 the red front, 2 the grey core.
+	void _grow_beetle_signs(Builder &p_bark, Builder &r_parts);
 	float cork_stripped_years = -1.0f; // Cork oak: years since the last cork harvest (5aa); -1 picks by seed, 30 or more never worked.
 	float _cork_strip_age() const;
 	// Exposure to a prevailing wind blowing toward +X (trees.md 5q): ice and sand kill the windward
@@ -891,6 +912,9 @@ private:
 	int near_task_variant = -1;
 	Ref<ArrayMesh> near_result;
 	TypedArray<Mesh> near_far_meshes; // The species' far meshes, whose materials a near mesh shares.
+	TypedArray<Mesh> near_fire_meshes; // Its fire band variants, after near_living living ones in the species.
+	int near_living = 0;
+	HashMap<int, TypedArray<Mesh>> fire_cache;
 	Ref<ArrayMesh> material_source;
 	static void _near_task(void *p_self);
 
@@ -958,6 +982,12 @@ public:
 	float get_lichen_cover() const { return lichen_cover; }
 	void set_bark_peel(float p_peel) { bark_peel = MAX(p_peel, 0.0f); }
 	void set_fire_years(float p_years) { fire_years = p_years < 0.0f ? -1.0f : p_years; }
+	void set_fire_variants(bool p_on) { fire_variants = p_on; }
+	void set_beetle_years(float p_years) { beetle_years = p_years < 0.0f ? -1.0f : p_years; }
+	float get_beetle_years() const { return beetle_years; }
+	void set_beetle_outbreak(float p_years) { beetle_outbreak = MAX(p_years, 0.0f); }
+	float get_beetle_outbreak() const { return beetle_outbreak; }
+	bool get_fire_variants() const { return fire_variants; }
 	void set_cork_stripped_years(float p_years) { cork_stripped_years = MAX(p_years, -1.0f); }
 	float get_cork_stripped_years() const { return cork_stripped_years; }
 	void set_root_stone(float p_v) { root_stone = CLAMP(p_v, 0.0f, 2.0f); }
@@ -1074,6 +1104,9 @@ public:
 		SHRUB_MAX,
 	};
 	static Ref<PlantSpecies> make_shrub_species(Preset p_preset, ShrubForm p_form, int p_variants, const Dictionary &p_season);
+	// A species' living variants only: placed species carry their fire band variants after them (meta
+	// tree_fire_band), so code that cycles meshes by index must use this.
+	static TypedArray<Mesh> get_living_meshes(const Ref<PlantSpecies> &p_species);
 	// Open share of a heath shrub's flowers on a day of the year (0 for other presets).
 	static float get_bloom(Preset p_preset, float p_day_of_year);
 	Ref<Biome> make_stand(Stand p_stand, int p_variants);

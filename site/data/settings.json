@@ -1125,7 +1125,7 @@
     "ploughing"
    ],
    "note": "",
-   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out.",
+   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1138,7 +1138,7 @@
     "data_map"
    ],
    "note": "",
-   "what": "wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry.",
+   "what": "wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry. It lies on a firm base of varying depth that wheels can dig down to for grip (`subsoil`), and logs and branches settled in it become corduroy that spreads wheel load and snaps when too thin (`mats`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1419,7 +1419,7 @@
     "GroundSurface3D.runoff_channels"
    ],
    "note": "",
-   "what": "water seeping out of a beach after the tide, and rain the ground cannot take, cuts a braided net of rills and lays the sand down at their foot; on soil it cuts gullies along ruts and spreads a fan below, faster on softer ground.",
+   "what": "water seeping out of a beach after the tide, and rain the ground cannot take, cuts a braided net of rills from the top of the seepage face and lays the sand down at their foot on a low-tide terrace; on soil it cuts gullies along ruts and spreads a fan below, faster on softer ground.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2497,7 +2497,7 @@
     "LeafFall3D"
    ],
    "note": "",
-   "what": "leaves fall from the crowns through the wind as autumn sheds them, and gusts lift them off the ground.",
+   "what": "leaves fall from the crowns through the wind as autumn sheds them, and gusts and passing bodies lift them off the ground; on ponds and rivers they float and drift, and on snow they lie until it melts and brings them back out.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2770,7 +2770,7 @@
     "make_woodland"
    ],
    "note": "",
-   "what": "thirteen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
+   "what": "sixteen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), and date palm oases (`STAND_DATE_OASIS`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -2840,6 +2840,17 @@
    ],
    "note": "",
    "what": "clumps of short fibrous trunks or stemless crowns, with pleated fan leaves on spiny stalks, a skirt of dead leaves, spring flower clusters and dates that ripen from green to red-brown.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Date palm",
+   "settings": [
+    "PRESET_DATE_PALM"
+   ],
+   "note": "",
+   "what": "a tall trunk latticed with old leaf bases, arching feather fronds over a skirt of dead ones, offshoots at the foot of wild palms (cut on tended ones) and date bunches through the year; path tracing keeps every leaflet and date.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3210,6 +3221,17 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Dirty snow",
+   "settings": [
+    "SnowCover3D.impurities_enabled"
+   ],
+   "note": "",
+   "what": "smoke, burnt forest and settling dust darken the snow and make it melt sooner, until fresh snow buries the dirt.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Snowpack on a worker thread",
    "settings": [
     "SnowCover3D.background_updates"
@@ -3282,7 +3304,7 @@
     "SnowCover3D.lake_ice_enabled"
    ],
    "note": "",
-   "what": "lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm.",
+   "what": "lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm; heavier bodies and vehicles break through ice too thin for their weight, and the hole freezes over again.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3386,10 +3408,12 @@
    "name": "Avalanches",
    "settings": [
     "SnowCover3D.avalanches_enabled",
-    "SnowAvalanche3D.trigger()"
+    "SnowAvalanche3D.trigger()",
+    "triggers_enabled",
+    "powder_enabled"
    ],
    "note": "",
-   "what": "slabs release where the snowpack's stability index fails and run out as a Voellmy flow that picks up snow on the way and piles debris where it stops.",
+   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
@@ -3606,10 +3630,12 @@
   {
    "name": "Smoke haze",
    "settings": [
-    "WeatherMap3D.smoke_haze"
+    "WeatherMap3D.smoke_haze",
+    "smoke_washout",
+    "PhysXFlow3D.rain_washout"
    ],
    "note": "",
-   "what": "smoke from fires drifts on the wind as a haze layer that dims and reddens the sun and cools the day.",
+   "what": "smoke from fires drifts on the wind as a haze layer that dims and reddens the sun and cools the day; rain and snow wash smoke and dust out of the air.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -3872,7 +3898,7 @@
     "smoke_buoyancy"
    ],
    "note": "",
-   "what": "Flow gas rests on the terrain and slides downhill, and heavier-than-air smoke pools as dust or fog.",
+   "what": "Flow gas rests on the terrain and slides downhill, and heavier-than-air smoke pools as dust or fog. In raster, smoke, dust and snow clouds shade themselves as under path tracing, darker in the body under bright tops.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3896,7 +3922,7 @@
     "fuel_patchiness"
    ],
    "note": "",
-   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water (which billows up as white steam, also where fire meets a shore), behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height. Burnt grass shows its ash, white-grey where dry fuel burnt out and black char where it was damp, thinned by wind and darkened by rain (`grass_ash`); strong wind lifts ash off cold burnt ground as low grey dust (`blowing_ash`). Duff smoulders for hours behind the front under pale low smoke until heavy rain puts it out, and wind can relight it (`smouldering`); burnt soil sheds rain, and the runoff washes its ash away. The fire draws air in at its base, and nearby plants, hair, falling leaves, ash, embers, smoke and dust lean or drift into it.",
+   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water (which billows up as white steam, also where fire meets a shore), behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height. Burnt grass shows its ash, white-grey where dry fuel burnt out and black char where it was damp, thinned by wind and darkened by rain (`grass_ash`); strong wind lifts ash off cold burnt ground as low grey dust that darkens snow downwind (`blowing_ash`). Duff smoulders for hours behind the front under pale low smoke until heavy rain puts it out, and wind can relight it (`smouldering`); burnt soil sheds rain, and the runoff washes its ash away. The fire draws air in at its base, and nearby plants, hair, falling leaves, ash, embers, smoke and dust lean or drift into it.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3934,7 +3960,7 @@
     "collapse_share"
    ],
    "note": "",
-   "what": "wooden buildings catch from embers and ground fire; rooms flash over, the windows break and flames lean out of them, fire spreads room to room and the frame collapses.",
+   "what": "wooden buildings catch from embers and ground fire; rooms flash over, the window glass breaks into falling shards and flames lean out (`glass_panes`), fire spreads room to room, ceilings and roofs sag and fall in, and the frame collapses. A hose or fluid water knocks a room back below flashover and puts it out, with steam pouring from its windows; a weak stream only holds it (`apply_water()`).",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3954,13 +3980,14 @@
    "name": "Debris flows",
    "settings": [
     "WeatherRunoff3D.debris_flows",
+    "GroundDebrisFlow3D",
     "PhysXDebrisSurge3D",
     "surge_count_max",
     "max_boulder",
     "stop_slope"
    ],
    "note": "",
-   "what": "after a fire, intense rain on steep burnt basins sends debris flows down their channels in surges with boulders at the front, throwing mud, until each stops on its fan.",
+   "what": "after a fire, intense rain on steep burnt basins sends debris flows down their channels in surges with boulders at the front, throwing mud; the flow gathers loose bed on the way and spreads into a fan of fresh mud where it stops.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

@@ -15,6 +15,11 @@ extends Node3D
 #                       wind near the ground: a forest's profile against Cionco's, the lee of a wall against
 #                       distance, gust patches (spread and size), the shader code against get_wind_at(), and
 #                       the shelter bake's cost
+#   --test=basics     the checks above down to the cost of one map update (no clouds, no shelter)
+#   --test=clouds     only the cloud checks; --test=basics, --test=clouds and --test=shelter together are --test.
+#                     The shelter and terrain checks draw the wind shader in a SubViewport, which never draws under
+#                     --headless: run them under xvfb with a Vulkan driver (lavapipe on a machine with no GPU), about
+#                     2 min for all of --test
 #   --test=terrain    wind over terrain (docs/ideas/wind.md): a 60 m hill and a 40 m ridge, speed-up on the crest,
 #                     slowing in the lee (Sx), turning on the flanks, the updraught on the windward slope, the
 #                     fade with height, the shader code against get_wind_at(), the bake's cost, and particles
@@ -75,6 +80,8 @@ var only_terrain := false
 var only_leaves := false
 var only_lightning := false
 var only_haze := false
+var only_basics := false
+var only_clouds := false
 var haze := ""
 var no_sky_shadow := false
 var froxel_haze := false
@@ -127,6 +134,8 @@ func _ready() -> void:
 		elif a == "--test=leaves": test = true; only_leaves = true
 		elif a == "--test=lightning": test = true; only_lightning = true
 		elif a == "--test=haze": test = true; only_haze = true
+		elif a == "--test=basics": test = true; only_basics = true
+		elif a == "--test=clouds": test = true; only_clouds = true
 		elif a.begins_with("--haze="): haze = a.substr(7)
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
@@ -155,6 +164,9 @@ func _ready() -> void:
 			await _lightning_tests()
 		elif only_haze:
 			await _haze_tests()
+		elif only_clouds:
+			await _cloud_tests()
+			await _cloud_evolution_tests()
 		else:
 			await _run_tests()
 		get_tree().quit()
@@ -326,6 +338,8 @@ func _run_tests() -> void:
 		s.queue_free()
 		await get_tree().physics_frame
 
+	if only_basics:
+		return
 	await _cloud_tests()
 	await _cloud_evolution_tests()
 	await _shelter_tests()

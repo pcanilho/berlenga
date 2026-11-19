@@ -2820,9 +2820,6 @@ void fragment() {
 	float bed_q = COLOR.b > 0.75 ? lp.x : (COLOR.b > 0.25 ? lp.z : lp.y);
 	float bands = 0.5 + 0.5 * sin(6.2831853 * (bed_q * v_scale / band_spacing + 0.6 * rk_fbm3(mp * 0.8)));
 	col = mix(col, band_color, band_contrast * smoothstep(0.3, 0.9, bands));
-	if (cliff_match) {
-		col *= ground_rock / max(base_color, vec3(1e-3));
-	}
 	// Mineral maps at the stone's real size, in octave steps from its family's typical size (UV2.y), the steps
 	// the close-up shapes are carved at (RockGenerator.get_marks_metres_per_unit), so relief and colour share one map.
 	float mpu_marks = UV2.y > 0.0 ? UV2.y * exp2(round(log2(max(v_scale, 1e-4) / UV2.y))) : v_scale;
@@ -2899,6 +2896,13 @@ void fragment() {
 	// The rind: weathered faces stained and duller than a fresh break.
 	vec3 weathered = mix(col, rind_color, 0.45 + 0.25 * rk_fbm3(mp * 3.1));
 	col = mix(weathered, col * 1.08, fresh);
+	// A block of the wall itself (a cave mouth's, a cliff's courses) in the landscape's rock colour, after the minerals
+	// and the rind: matched before them, a granite's pale quartz and feldspar and its fresh breaks still read as white
+	// slivers on a grey cliff. Only the stone's own light and dark is kept.
+	if (cliff_match) {
+		const vec3 lw = vec3(0.2126, 0.7152, 0.0722);
+		col = ground_rock * clamp(dot(col, lw) / max(dot(base_color, lw), 1e-3), 0.6, 1.3);
+	}
 	// Cleavage faces (a third of the feldspars) and glassy quartz are near mirrors, each at its own facet tilt: under a
 	// low sun a few of them flash (cleavage glints, the crystal-scale case of a discrete microfacet glint model).
 	float rough = mix(rock_roughness, 0.12, crystal_gloss * (0.6 + 0.4 * fresh));

@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="GroundDebrisFlow3D" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A post-fire debris flow: the moving body, its bulking and its deposit.
+	</brief_description>
+	<description>
+		Runs the debris flows that [WorldGround] announces (its [code]debris_flow[/code] signal: an outlet, a volume, the channel path downhill with its widths and burn severity). Each event becomes a depth-averaged flow on a corridor of cells along its path, held back by a Voellmy basal resistance (Coulomb [member voellmy_mu] plus turbulent [member voellmy_xi]) and the slurry's [member yield_stress], so it stops by itself where the ground flattens, as a fan. It is fed at the outlet by a triangular hydrograph (Rickenmann 1999), gathers loose bed along the burnt channel ([member entrainment], McDougall and Hungr 2005) and lays what stops as fresh slurry on the ground ([method GroundSurface3D.add_mud_deposit]), raised ground through [member terrain_deformer], or sediment where it runs into water ([method WorldWater.add_sediment_mass]).
+		Small events whose outlets lie on a running flow's path within [member pool_distance] feed that flow instead of starting their own. [PhysXDebrisSurge3D] follows the front through [method get_debris_front] and [signal debris_front_changed].
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="advance">
+			<return type="void" />
+			<param index="0" name="seconds" type="float" />
+			<param index="1" name="step" type="float" default="0.05" />
+			<description>
+				Runs every body [param seconds] at once in steps of [param step] seconds (tests and replays). While [member listen] is on, the node advances itself every physics frame.
+			</description>
+		</method>
+		<method name="clear">
+			<return type="void" />
+			<description>
+				Removes every body, moving or finished, and its mesh. Deposits already laid stay on the ground.
+			</description>
+		</method>
+		<method name="get_active_bodies" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of bodies still moving.
+			</description>
+		</method>
+		<method name="get_body_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of bodies, moving or finished. Pooled events share one body.
+			</description>
+		</method>
+		<method name="get_budget" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="event_id" type="int" />
+			<description>
+				The volume budget of the body that carries event [param event_id], in m³: [code]in[/code] (fed at the outlets), [code]entrained[/code] (gathered from the bed), [code]out[/code] (run off the corridor's end), [code]now[/code] (in the body) and [code]time[/code] (seconds run). [code]now + out[/code] equals [code]in + entrained[/code].
+			</description>
+		</method>
+		<method name="get_debris_front" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="event_id" type="int" />
+			<description>
+				The front of the body that carries event [param event_id]: [code]position[/code] (on the flow's surface, only while the front is wet), [code]path_index[/code] (float index along the event's path), [code]depth[/code] (m), [code]speed[/code] (m/s), [code]width[/code] (m), [code]volume[/code] (m³ in the body) and [code]done[/code]. An unknown id returns only [code]done[/code] true.
+			</description>
+		</method>
+		<method name="get_deposit_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The depth of debris laid at [param position] by finished bodies, in metres.
+			</description>
+		</method>
+		<method name="get_flow_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The depth of debris flowing at [param position] now, in metres.
+			</description>
+		</method>
+		<method name="get_volume" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="event_id" type="int" />
+			<description>
+				The volume in the body that carries event [param event_id] now, in m³.
+			</description>
+		</method>
+		<method name="start">
+			<return type="void" />
+			<param index="0" name="event" type="Dictionary" />
+			<description>
+				Starts a body from an event [Dictionary] with the keys of the [code]debris_flow[/code] signal ([code]id[/code], [code]position[/code], [code]volume[/code] in m³, [code]path[/code], [code]widths[/code], [code]severity[/code]), or feeds it into a running body whose path passes within [member pool_distance] of its outlet.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="1.5">
+			The size of the flow's cells, in metres.
+		</member>
+		<member name="corridor_width" type="float" setter="set_corridor_width" getter="get_corridor_width" default="60.0">
+			The width of the corridor of cells along the path, in metres. Wider lets the fan spread further.
+		</member>
+		<member name="density" type="float" setter="set_density" getter="get_density" default="1900.0">
+			The slurry's density, in kg/m³.
+		</member>
+		<member name="entrainment" type="float" setter="set_entrainment" getter="get_entrainment" default="0.002">
+			McDougall and Hungr's growth rate E, per metre of travel, scaled by the path's burn severity. 0 keeps the volume as fired.
+		</member>
+		<member name="listen" type="bool" setter="set_listen" getter="is_listening" default="true">
+			Starts a body for each [code]debris_flow[/code] event of the active [WorldGround] and advances bodies every physics frame.
+		</member>
+		<member name="max_scour" type="float" setter="set_max_scour" getter="get_max_scour" default="0.6">
+			The deepest the flow can scour the bed, in metres.
+		</member>
+		<member name="pool_distance" type="float" setter="set_pool_distance" getter="get_pool_distance" default="30.0">
+			How close a new event's outlet must lie to a running body's path to feed that body, in metres. 0 gives every event its own body.
+		</member>
+		<member name="show_flow" type="bool" setter="set_show_flow" getter="is_show_flow" default="true">
+			Draws each body's surface as a mesh.
+		</member>
+		<member name="terrain_deformer" type="NodePath" setter="set_terrain_deformer" getter="get_terrain_deformer" default="NodePath(&quot;&quot;)">
+			An optional [TerrainDeformer3D] that the deposit raises.
+		</member>
+		<member name="time_scale" type="float" setter="set_time_scale" getter="get_time_scale" default="1.0">
+			Runs the flow faster (above 1) or slower than real time.
+		</member>
+		<member name="voellmy_mu" type="float" setter="set_voellmy_mu" getter="get_voellmy_mu" default="0.1">
+			The Coulomb friction coefficient of the Voellmy resistance, about the tangent of the slope it stops on.
+		</member>
+		<member name="voellmy_xi" type="float" setter="set_voellmy_xi" getter="get_voellmy_xi" default="400.0">
+			The turbulent coefficient of the Voellmy resistance, in m/s². Lower values slow fast flows more.
+		</member>
+		<member name="yield_stress" type="float" setter="set_yield_stress" getter="get_yield_stress" default="1500.0">
+			The slurry's yield stress, in pascals. Thin layers below it stop.
+		</member>
+	</members>
+	<signals>
+		<signal name="debris_flow_finished">
+			<param index="0" name="event_id" type="int" />
+			<description>
+				Emitted once the body carrying [param event_id] has stopped and laid its deposit. Pooled events get it too.
+			</description>
+		</signal>
+		<signal name="debris_flow_started">
+			<param index="0" name="event_id" type="int" />
+			<description>
+				Emitted when event [param event_id] starts a new body.
+			</description>
+		</signal>
+		<signal name="debris_front_changed">
+			<param index="0" name="event_id" type="int" />
+			<description>
+				Emitted once per physics frame (or [method advance] call) while the body carrying [param event_id] moves; read [method get_debris_front]. Pooled events get it too.
+			</description>
+		</signal>
+	</signals>
+</class>

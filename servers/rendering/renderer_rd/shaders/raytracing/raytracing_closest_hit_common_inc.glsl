@@ -879,21 +879,25 @@ float opaque_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties materia
 	return reflection_continuation_pdf(N, V, L, material);
 }
 
-// Probability of a bounce ray passing through a thin transmissive surface: the transmitted
-// share of its light.
-float transmission_lobe_probability(MaterialProperties material) {
+// Probability of a bounce ray passing through a transmissive surface: the transmitted share of its
+// light at this view, by the Fresnel at the shading normal (pbrt's dielectric picks reflection with
+// probability F). Head-on shares (F0) sent water's reflection 2% of the rays at every angle, each
+// weighted F / 0.02, up to fifteen times, at grazing views: sky glints speckled over open water.
+float transmission_lobe_probability(MaterialProperties material, vec3 N, vec3 V) {
 	if (material.transmissivness <= 0.0) {
 		return 0.0;
 	}
-	float trans_lum = luminance(thinTransmittance(material));
-	float lum = trans_lum + luminance(materialSpecularF0(material)) + luminance(materialDiffuseReflectance(material)) + luminance(backlightTransmittance(material));
+	vec3 f0 = materialSpecularF0(material);
+	float fr = luminance(evalFresnel(f0, godotF90(f0, material.metalness), clamp(abs(dot(N, V)), 0.0, 1.0)));
+	float trans_lum = luminance(material.baseColor) * material.transmissivness * (1.0 - fr);
+	float lum = trans_lum + fr + luminance(materialDiffuseReflectance(material)) + luminance(backlightTransmittance(material));
 	return lum > 0.0 ? clamp(trans_lum / lum, 0.01, 0.99) : 0.0;
 }
 
 // The reflection and back light lobes' density. The thin transmission lobe adds none: no light
 // sample draws its directions (a ray through it weighs what it finds in full).
 float base_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
-	float p_trans = transmission_lobe_probability(material);
+	float p_trans = transmission_lobe_probability(material, N, V);
 	return (1.0 - p_trans) * opaque_continuation_pdf(N, V, L, material);
 }
 
@@ -1251,7 +1255,7 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 	}
 
 	// Thin transmission: straight through the surface, with its share of the light.
-	float p_trans = transmission_lobe_probability(material);
+	float p_trans = transmission_lobe_probability(material, N, V);
 	if (p_trans > 0.0) {
 		if (rand(ps.rng_state) < p_trans) {
 			vec3 trans_dir;

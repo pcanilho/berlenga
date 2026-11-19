@@ -416,9 +416,13 @@ void fragment() {
 	// close to independent).
 	vec2 slope = (ripple_slope(p - o_a * ripple_scale) * w + ripple_slope(p - o_b * ripple_scale + vec2(13.1, 7.7)) * (1.0 - w))
 			/ sqrt(w * w + (1.0 - w) * (1.0 - w));
-	// The pixel's footprint on the water (m); the path tracer has no derivatives and draws every octave.
+	// The pixel's footprint on the water (m). The path tracer's is its ray cone's: drawing every octave there left the
+	// ripples finer than a pixel to the samples, a speckle of sky and bank glints over distant water that raster
+	// filters into the roughness (Toksvig; the hidden slope variance below).
 #if defined(RT)
-	float footprint = 0.0;
+	float footprint = RAY_FOOTPRINT;
+	// The foam keeps its full structure: raster steps its filtered edge crisp again, which the path tracer can't.
+	const float foam_fp = 0.0;
 #else
 	// From the distance and the smooth (undisplaced) surface's tilt to the eye, not fwidth: over the near mesh's
 	// wave facets the screen derivatives jump from triangle to triangle, and every footprint-scaled detail (the
@@ -430,6 +434,7 @@ void fragment() {
 	vec3 eye_dir = ortho ? INV_VIEW_MATRIX[2].xyz : to_eye / max(eye_d, 1e-4);
 	float pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 	float footprint = (ortho ? 1.0 : eye_d) * pix / max(abs(dot(eye_dir, normalize(v_normal))), 0.15);
+	float foam_fp = footprint;
 #endif
 	float ripple_hidden = 0.0;
 	if (ripple_detail > 0.0) {
@@ -477,11 +482,7 @@ void fragment() {
 	if (rain_rings) {
 		float rr_rate = weather_rainfall_at(vec3(v_world.x, weather_precip_phase.w, v_world.z));
 		if (rr_rate > 0.0) {
-#if defined(RT)
-			float rr_fp = 0.0;
-#else
 			float rr_fp = max(footprint, 1e-5);
-#endif
 			vec3 rr = rain_ripples(v_world.xz - o_a, TIME, rr_rate, rr_fp) * w + rain_ripples(v_world.xz - o_b + vec2(13.1, 7.7), TIME, rr_rate, rr_fp) * (1.0 - w);
 			slope += rr.xy * smoothstep(0.0, 0.05, depth);
 			river_roughness = rain_ripple_roughness(river_roughness, rr.z);
@@ -512,8 +513,8 @@ void fragment() {
 		float amount = foam * foam;
 		const vec2 sd = vec2(1.0, 0.0);
 		const float stretch = 0.0;
-		float f_a = wf_structure(v_world.xz - o_a, amount, footprint, sd, stretch, foam_detail_scale, foam_crisp);
-		float f_b = wf_structure(v_world.xz - o_b + vec2(5.3, 2.1), amount, footprint, sd, stretch, foam_detail_scale, foam_crisp);
+		float f_a = wf_structure(v_world.xz - o_a, amount, foam_fp, sd, stretch, foam_detail_scale, foam_crisp);
+		float f_b = wf_structure(v_world.xz - o_b + vec2(5.3, 2.1), amount, foam_fp, sd, stretch, foam_detail_scale, foam_crisp);
 		float crisp = f_a * w + f_b * (1.0 - w);
 		float foam_soft = crisp;
 #if !defined(RT)
@@ -545,7 +546,7 @@ void fragment() {
 			// Foam damps the ripples under it (the film's elasticity, as slicks do), its bubbles' domes catch the
 			// light, and its rims stand up as a thin skin.
 			world_normal = normalize(mix(world_normal, n_mesh, clamp(foam, 0.0, 1.0)));
-			vec2 bs = wf_bubble_slope(v_world.xz - o_a, footprint) * w + wf_bubble_slope(v_world.xz - o_b + vec2(5.3, 2.1), footprint) * (1.0 - w);
+			vec2 bs = wf_bubble_slope(v_world.xz - o_a, foam_fp) * w + wf_bubble_slope(v_world.xz - o_b + vec2(5.3, 2.1), foam_fp) * (1.0 - w);
 			world_normal = normalize(world_normal - vec3(bs.x, 0.0, bs.y) * foam * foam_grain_tilt);
 #if !defined(RT)
 			if (foam_relief > 0.0) {
@@ -574,11 +575,16 @@ void fragment() {
 		sed_abs = sediment_absorption_of(sc);
 		sed_sca = sediment_scattering_of(sc);
 	}
+	// The medium with its load (similarity, water_sediment.h), and white water taking the loaded water's colour.
+	vec3 med_sca = water_medium_scattering(pathtraced_scattering, sed_sca, pathtraced_scattering_anisotropy);
+	float med_g = water_medium_g(pathtraced_scattering, sed_sca, pathtraced_scattering_anisotropy);
+	vec3 white_rgb = foam_color.rgb * sediment_foam_tint(sed_abs);
 
 #if defined(RT)
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
-	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
-	ROUGHNESS = mix(river_roughness, 0.8, foam);
+	ALBEDO = mix(vec3(1.0), white_rgb, foam);
+	// The ripples finer than the ray's cone as roughness, as raster (GGX alpha squared plus their slope variance).
+	ROUGHNESS = mix(pow(pow(river_roughness, 4.0) + ripple_hidden, 0.25), 0.8, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
 	TRANSMISSION = 1.0 - foam;
@@ -587,8 +593,8 @@ void fragment() {
 	// angle can run on under the bank's ground through metres of the medium, tinting a dotted line along the shore.
 	float film = smoothstep(0.0, 0.12, depth);
 	ABSORPTION = (pathtraced_absorption + sed_abs) * film;
-	SCATTERING = (pathtraced_scattering + sed_sca) * film;
-	SCATTERING_ANISOTROPY = pathtraced_scattering_anisotropy;
+	SCATTERING = med_sca * film;
+	SCATTERING_ANISOTROPY = med_g;
 	// Gone past the waterline and the banks' fade, as in raster.
 	ALPHA = smoothstep(0.0, max(edge_softness, 1e-3), depth) * bank_fade;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
@@ -621,7 +627,7 @@ void fragment() {
 		vec3 seen;
 		vec3 bed_p;
 		float sun_share;
-		base_rgb = water_clear_through_ex(clear_screen, clear_depth, v_world, normalize(v_world - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, max(v_info.r * 4.0 - 1.0, 0.0), pathtraced_absorption + sed_abs, pathtraced_scattering + sed_sca, pathtraced_scattering_anisotropy, sun_dir, sun_irr, sky, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, true, seen, bed_p, sun_share);
+		base_rgb = water_clear_through_ex(clear_screen, clear_depth, v_world, normalize(v_world - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, max(v_info.r * 4.0 - 1.0, 0.0), pathtraced_absorption + sed_abs, med_sca, med_g, sun_dir, sun_irr, sky, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, true, seen, bed_p, sun_share);
 		if (caustics_strength > 0.0 && sun_share > 0.0 && sun_dir.y < -0.05) {
 			// Back up the refracted sun ray from the bed to the surface it came through.
 			float z = max(v_world.y - bed_p.y, 0.0);
@@ -661,9 +667,16 @@ void fragment() {
 	float sun_a2;
 	// The capillary ripples finer than the pixel, as roughness (GGX alpha squared plus their slope variance).
 	float rough_eff = pow(pow(river_roughness, 4.0) + ripple_hidden, 0.25);
-	vec4 refl = water_raster_reflect(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), rough_eff, unlit_rgb * (1.0 - foam), sun_body, sun_glint, sun_a2);
-	if (!raster_reflections && screen_reflections) {
-		refl = water_screen_reflect(clear_screen, clear_depth, refl, n, VERTEX, SCREEN_UV, edge * (1.0 - foam), water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
+	vec3 sky_part;
+	float sky_f;
+	vec4 refl = water_raster_reflect_ex(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), rough_eff, unlit_rgb * (1.0 - foam), sun_body, sun_glint, sun_a2, sky_part, sky_f);
+	if (screen_reflections) {
+		if (raster_reflections) {
+			// The banks in the mirror where the screen holds them, the sky elsewhere.
+			refl = water_screen_over_sky(clear_screen, clear_depth, refl, sky_part, sky_f, n, VERTEX, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
+		} else {
+			refl = water_screen_reflect(clear_screen, clear_depth, refl, n, VERTEX, SCREEN_UV, edge * (1.0 - foam), water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
+		}
 	}
 	wr_sun_body = sun_body;
 	wr_sun_glint = sun_glint;
@@ -674,7 +687,7 @@ void fragment() {
 	float keep = a0 * through / a_new;
 	NORMAL = n;
 	EMISSION = refl.rgb;
-	ALBEDO = foam_color.rgb * foam * keep;
+	ALBEDO = white_rgb * foam * keep;
 	ROUGHNESS = 0.85;
 	SPECULAR = 0.25 * foam;
 	METALLIC = 0.0;
@@ -733,6 +746,8 @@ uniform float water_time = 0.0;
 uniform vec4 water_color : source_color = vec4(0.30, 0.42, 0.42, 0.45);
 uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 uniform vec3 pathtraced_absorption = vec3(0.6, 0.14, 0.1);
+// The load the river carries (silt, ash: water_sediment.h), its absorption: the sheet and its white water take its colour.
+uniform vec3 sediment_absorption = vec3(0.0);
 // The water a ray crosses through the sheet, for its tint under path tracing (m).
 uniform float sheet_thickness = 0.1;
 uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.05;
@@ -769,7 +784,8 @@ void fragment() {
 #if defined(RT)
 	// A falling sheet is one surface with holes: traced as a thin wall (straight through, tinted by its thickness),
 	// not as the boundary of a medium, which a path leaving through a hole never left (see the contact sheet).
-	ALBEDO = mix(exp(-pathtraced_absorption * sheet_thickness), foam_color.rgb, foam);
+	vec3 white = foam_color.rgb * exp(-sediment_absorption * 0.05);
+	ALBEDO = mix(exp(-(pathtraced_absorption + sediment_absorption) * sheet_thickness), white, foam);
 	ROUGHNESS = mix(pathtraced_roughness, 0.8, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
@@ -780,7 +796,8 @@ void fragment() {
 	// Lit by the scene's lights, shadows and sky like any surface (it was unshaded with a fixed light,
 	// so a fall in a shaded valley glowed flat white): white water scatters diffusely, the clear sheet
 	// is a smooth dielectric showing the sky in its specular.
-	ALBEDO = mix(water_color.rgb, foam_color.rgb, foam);
+	vec3 white = foam_color.rgb * exp(-sediment_absorption * 0.05);
+	ALBEDO = mix(water_color.rgb * exp(-sediment_absorption * 0.05), white, foam);
 	ROUGHNESS = mix(pathtraced_roughness + 0.1, 0.85, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
@@ -1960,6 +1977,33 @@ void PhysXRiver3D::contract_water_add_sediment(const Vector3 &p_position, float 
 	sed_any = true;
 }
 
+// A load dropped in at once: mixed through the water of the nearest section (its cross-section, discharge over
+// speed, times the sections' spacing), then carried on as any other. A debris flow's dump would otherwise be
+// held as a rate for the sources' two seconds (twice its mass), and a second dump into the same section on a
+// later frame replaced the first.
+void PhysXRiver3D::contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) {
+	int i;
+	float t;
+	float n;
+	if (!_locate(p_position, i, t, n)) {
+		return;
+	}
+	_sediment_resample();
+	const int k = t < 0.5f ? i : i + 1;
+	if (k < 0 || k >= (int)sed_c.size() || k >= (int)sections.size() || sed_ds <= 0.0f) {
+		return;
+	}
+	const Section &sec = sections[k];
+	const float volume = MAX(sec.discharge, 1e-3f) / MAX(sec.speed, 0.01f) * sed_ds;
+	Vector2 &c = sed_c[k];
+	c += Vector2(MAX(p_mineral_kg, 0.0f), MAX(p_ash_kg, 0.0f)) / volume;
+	const float total = c.x + c.y;
+	if (total > WaterSediment::MAX_LOAD) {
+		c *= WaterSediment::MAX_LOAD / total;
+	}
+	sed_any = sed_any || total > 0.0f;
+}
+
 Vector2 PhysXRiver3D::get_sediment_at(const Vector3 &p_world_pos) const {
 	int i;
 	float t;
@@ -2022,7 +2066,18 @@ void PhysXRiver3D::_sediment_texture() {
 	const int count = (int)sed_c.size();
 	if (!sed_any || count < 2) {
 		water_material->set_shader_parameter(SNAME("sediment_on"), false);
+		if (fall_material.is_valid()) {
+			fall_material->set_shader_parameter(SNAME("sediment_absorption"), Vector3());
+		}
 		return;
+	}
+	if (fall_material.is_valid()) {
+		// The falls take the river's mean load (a fall is a few metres of a river carrying it all the way).
+		Vector2 mean;
+		for (int i = 0; i < count; i++) {
+			mean += sed_c[i];
+		}
+		fall_material->set_shader_parameter(SNAME("sediment_absorption"), WaterSediment::absorption(mean / (float)count));
 	}
 	Vector<uint8_t> bytes;
 	bytes.resize(count * 8);

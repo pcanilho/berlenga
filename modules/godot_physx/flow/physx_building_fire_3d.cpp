@@ -34,6 +34,7 @@
 #ifdef GODOT_PHYSX_BLAST
 #include "../blast/physx_destructible_3d.h"
 #endif
+#include "../nodes/physx_particle_fluid_3d.h"
 #include "physx_burnable_3d.h"
 #include "physx_fire_spread_3d.h"
 #include "physx_flow_3d.h"
@@ -43,6 +44,10 @@
 #include "core/object/class_db.h"
 #include "scene/3d/light_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/3d/physics/collision_shape_3d.h"
+#include "scene/3d/physics/rigid_body_3d.h"
+#include "scene/resources/3d/box_shape_3d.h"
+#include "scene/resources/3d/primitive_meshes.h"
 
 LocalVector<PhysXBuildingFire3D *> PhysXBuildingFire3D::buildings;
 
@@ -158,6 +163,7 @@ void PhysXBuildingFire3D::_build_rooms() {
 		}
 		for (Opening &o : r.openings) {
 			_disable(o.emitter);
+			_disable(o.smoke_emitter);
 		}
 		if (Node *l = Object::cast_to<Node>(ObjectDB::get_instance(r.light))) {
 			l->queue_free();
@@ -294,9 +300,21 @@ void PhysXBuildingFire3D::_ignite_room(int p_room, const Vector3 &p_local) {
 	}
 	r.state = ROOM_GROWING;
 	r.t = 0.0f;
+	_note_ignition(cause);
 	const Vector3 lo = r.box.position + Vector3(0.3f, 0.0f, 0.3f);
 	const Vector3 hi = r.box.position + r.box.size - Vector3(0.3f, 0.0f, 0.3f);
 	r.origin = Vector3(CLAMP(p_local.x, lo.x, MAX(hi.x, lo.x)), r.box.position.y, CLAMP(p_local.z, lo.z, MAX(hi.z, lo.z)));
+}
+
+// The building's first catch, for whoever counts losses (a village bench, a game's damage report): when and by
+// what, the way post-fire surveys of wildland-urban interface fires class it (Maranghides and Mell 2011).
+void PhysXBuildingFire3D::_note_ignition(const String &p_cause) {
+	if (ignited_at >= 0.0f) {
+		return;
+	}
+	ignited_at = clock;
+	ignition_cause = p_cause;
+	emit_signal(SNAME("ignited"), p_cause);
 }
 
 void PhysXBuildingFire3D::ignite(const Vector3 &p_position) {
@@ -315,7 +333,9 @@ void PhysXBuildingFire3D::ignite(const Vector3 &p_position) {
 		}
 	}
 	if (best >= 0) {
+		cause = "direct";
 		_ignite_room(best, l);
+		cause = "heat";
 	}
 }
 
@@ -373,6 +393,117 @@ float PhysXBuildingFire3D::_exposure(int p_room, int p_face, Vector3 &r_hot) con
 	return q;
 }
 
+// Water from the liquid fluids (a hose, buckets, MPM water): the particles inside a room's box are water in the room,
+// those within half a metre outside a face are water on its cladding.
+void PhysXBuildingFire3D::_sample_fluids(const Transform3D &p_inv) {
+	for (Room &r : rooms) {
+		r.fluid_kg = 0.0f;
+		for (int f = 0; f < FACE_COUNT; f++) {
+			r.face_fluid_kg[f] = 0.0f;
+		}
+	}
+	const LocalVector<PhysXParticleFluid3D *> &fluids = PhysXParticleFluid3D::get_water_fluids();
+	if (fluids.is_empty() || rooms.is_empty()) {
+		return;
+	}
+	AABB all = rooms[0].box;
+	for (const Room &r : rooms) {
+		all.merge_with(r.box);
+	}
+	all = all.grow(0.6f);
+	LocalVector<Vector3> pts;
+	for (const PhysXParticleFluid3D *fl : fluids) {
+		if (!fl->is_inside_tree()) {
+			continue;
+		}
+		pts.clear();
+		fl->gather_world_positions(pts);
+		const float mass = fl->get_particle_water_mass();
+		for (const Vector3 &pw : pts) {
+			const Vector3 p = p_inv.xform(pw);
+			if (!all.has_point(p)) {
+				continue;
+			}
+			for (Room &r : rooms) {
+				if (r.box.has_point(p)) {
+					r.fluid_kg += mass;
+					break;
+				}
+				if (!r.box.grow(0.5f).has_point(p)) {
+					continue;
+				}
+				// The face it is outside of.
+				const Vector3 lo = r.box.position - p;
+				const Vector3 hi = p - (r.box.position + r.box.size);
+				const float d[FACE_COUNT] = { lo.x, hi.x, lo.z, hi.z, hi.y };
+				int best = -1;
+				for (int f = 0; f < FACE_COUNT; f++) {
+					if (d[f] > 0.0f && r.exterior[f] && (best < 0 || d[f] > d[best])) {
+						best = f;
+					}
+				}
+				if (best >= 0) {
+					r.face_fluid_kg[best] += mass;
+				}
+				break;
+			}
+		}
+	}
+}
+
+void PhysXBuildingFire3D::apply_water(const Vector3 &p_position, float p_kg) {
+	if (p_kg <= 0.0f) {
+		return;
+	}
+	if (rooms_dirty) {
+		_build_rooms();
+	}
+	const Vector3 l = get_global_transform().affine_inverse().xform(p_position);
+	for (Room &r : rooms) {
+		if (r.box.grow(0.05f).has_point(l)) {
+			r.water_kg += p_kg;
+			return;
+		}
+	}
+	int best = -1;
+	int best_face = 0;
+	float bd = 1.0f;
+	for (uint32_t i = 0; i < rooms.size(); i++) {
+		const Room &r = rooms[i];
+		for (int f = 0; f < FACE_COUNT; f++) {
+			if (!r.exterior[f]) {
+				continue;
+			}
+			const Vector2 fs = _face_size(r, f);
+			const Vector2 uv = _face_uv(r, f, l);
+			const float d = _face_point(r, f, Vector2(CLAMP(uv.x, 0.0f, fs.x), CLAMP(uv.y, 0.0f, fs.y))).distance_to(l);
+			if (d < bd) {
+				bd = d;
+				best = i;
+				best_face = f;
+			}
+		}
+	}
+	if (best < 0) {
+		return;
+	}
+	// Through an open opening the water goes in.
+	Room &r = rooms[best];
+	const Vector2 uv = _face_uv(r, best_face, l);
+	for (const Opening &o : r.openings) {
+		if (o.face == best_face && o.to_room < 0 && (!o.glazed || o.broken) && o.rect.grow(0.1f).has_point(uv)) {
+			r.water_kg += p_kg;
+			return;
+		}
+	}
+	r.face_water[best_face] += p_kg;
+}
+
+float PhysXBuildingFire3D::get_room_water_cooling(int p_room) const {
+	ERR_FAIL_INDEX_V(p_room, (int)rooms.size(), 0.0f);
+	return rooms[p_room].cooling;
+}
+
 // Every 0.25 s: the cladding's heat dose; at a thick solid's ignition dose (pi/4) k rho c (T_ig - T0)^2 (as
 // PhysXBurnable3D) the face catches where it is hottest. Wet wood (rain over 0.5 mm/h) takes no dose.
 void PhysXBuildingFire3D::_sample(float p_delta) {
@@ -390,6 +521,7 @@ void PhysXBuildingFire3D::_sample(float p_delta) {
 	}
 	const float ig = 0.25f * Math::PI * WOOD_KRHOC * 330.0f * 330.0f;
 	const Transform3D inv = get_global_transform().affine_inverse();
+	_sample_fluids(inv);
 	for (uint32_t i = 0; i < rooms.size(); i++) {
 		Room &r = rooms[i];
 		for (int f = 0; f < FACE_COUNT; f++) {
@@ -400,7 +532,7 @@ void PhysXBuildingFire3D::_sample(float p_delta) {
 			Vector3 hot;
 			const float q = _exposure(i, f, hot);
 			const float qw = q * 1000.0f;
-			if (q > 5.0f && rain < 0.5f) {
+			if (q > 5.0f && rain < 0.5f && r.face_water[f] + r.face_fluid_kg[f] < 0.1f) {
 				r.clad_dose[f] += qw * qw * p_delta;
 			} else {
 				r.clad_dose[f] *= Math::exp(-p_delta / 30.0f);
@@ -410,6 +542,10 @@ void PhysXBuildingFire3D::_sample(float p_delta) {
 				const Vector2 uv = _face_uv(r, f, inv.xform(hot));
 				r.clad_origin[f] = Vector2(CLAMP(uv.x, 0.0f, fs.x), CLAMP(uv.y, 0.0f, fs.y));
 				r.clad_r[f] = 0.05f;
+				// A glowing pile of brands against the face giving most of its heat: lit by embers; otherwise by the
+				// heat of flames nearby (radiation or contact).
+				const float qb = 50.0f * MIN(r.brand_glow[f] / 20.0f, 1.0f);
+				_note_ignition(qb >= 0.5f * q ? "firebrand" : "heat");
 			}
 		}
 	}
@@ -425,7 +561,16 @@ void PhysXBuildingFire3D::_step_room(int p_room, float p_delta) {
 	Room &r = rooms[p_room];
 	// Cladding: the patch spreads, chars, lets the fire in where it reaches an opening or burns through.
 	for (int f = 0; f < FACE_COUNT; f++) {
+		r.face_water[f] = MAX(r.face_water[f] - r.face_water[f] * p_delta / 600.0f, 0.0f); // dries over ten minutes
 		if (r.clad_r[f] <= 0.0f) {
+			continue;
+		}
+		// Half a millimetre of water over the face puts its flames out (as PhysXBurnable3D).
+		const Vector2 fsz = _face_size(r, f);
+		if (r.face_water[f] + r.face_fluid_kg[f] > 0.5f * fsz.x * fsz.y) {
+			r.steam_j += MIN(CLAD_HRR * Math::PI * r.clad_r[f] * r.clad_r[f] * 0.5f, 2000.0f) * 1000.0f * 5.0f;
+			r.clad_r[f] = 0.0f;
+			r.clad_dose[f] = 0.0f;
 			continue;
 		}
 		if (r.state == ROOM_OUT && r.fuel_left <= 0.0f) {
@@ -451,6 +596,14 @@ void PhysXBuildingFire3D::_step_room(int p_room, float p_delta) {
 			_ignite_room(p_room, _face_point(r, f, r.clad_origin[f]));
 		}
 	}
+	// Water in the room (docs/ideas/physx.md, "Water puts building fires out"): what lies in it boils off taking
+	// 2.6 MJ/kg, over about eight seconds where it meets the fire.
+	const float water_kw = (r.water_kg + r.fluid_kg) * PhysXSteam::BOIL_HEAT / 8.0f / 1000.0f;
+	r.water_kg = MAX(r.water_kg - r.water_kg * p_delta / 8.0f, 0.0f);
+	r.cooling = (r.state == ROOM_COLD || r.state == ROOM_OUT) ? 0.0f : water_kw;
+	if (r.state == ROOM_OUT && water_kw > 0.0f) {
+		r.ember = MAX(r.ember - p_delta / 30.0f, 0.0f); // the char drowned
+	}
 	if (r.state == ROOM_COLD || r.state == ROOM_OUT) {
 		r.q = 0.0f;
 		r.q_ext = 0.0f;
@@ -461,6 +614,29 @@ void PhysXBuildingFire3D::_step_room(int p_room, float p_delta) {
 		return;
 	}
 	r.t += p_delta;
+	// Absorbing about a third of what the fire could release puts the flames down (Grimwood; Sardqvist's critical
+	// flow of about 0.1 to 0.3 kg/s per MW): the share it absorbs damps the fuel's burning at once, and a room held
+	// under that for twenty seconds goes out. Flashed rooms fall back to a growing fire; once the water stops it can
+	// grow again from what is left.
+	float damp = 0.0f;
+	if (water_kw > 0.0f && (r.state == ROOM_GROWING || r.state == ROOM_FLASHED || r.state == ROOM_DECAY)) {
+		const float need = 0.3f * MAX(r.potential, 10.0f);
+		const float share = CLAMP(water_kw / need, 0.0f, 1.0f);
+		r.knock = share >= 1.0f ? r.knock + p_delta / 20.0f : r.knock - p_delta / 120.0f;
+		damp = MAX(0.7f * share, r.knock);
+		r.steam_j += MIN(water_kw, r.q + r.q_ext + 50.0f) * 1000.0f * p_delta;
+	} else {
+		r.knock -= p_delta / 120.0f;
+	}
+	r.knock = CLAMP(r.knock, 0.0f, 1.0f);
+	if (r.knock >= 1.0f) {
+		r.state = ROOM_OUT;
+		r.ember = 0.2f; // wet char
+		r.q = 0.0f;
+		r.q_ext = 0.0f;
+		r.knock = 0.0f;
+		return;
+	}
 	const float floor_area = r.box.size.x * r.box.size.z;
 	const float vent = _vent(r);
 	const float q_vent = 1500.0f * vent;
@@ -469,16 +645,21 @@ void PhysXBuildingFire3D::_step_room(int p_room, float p_delta) {
 	float pyro = 0.0f; // kW of fuel given off
 	if (r.state == ROOM_GROWING) {
 		const float tg = r.t / growth_time;
-		pyro = MIN(1000.0f * tg * tg + 10.0f, q_fuel);
+		r.potential = MIN(1000.0f * tg * tg + 10.0f, q_fuel);
+		pyro = r.potential * (1.0f - damp);
+		if (r.knock > 0.0f) { // the water is winning: the fire shrinks, and regrows from there
+			r.t = MIN(r.t, growth_time * Math::sqrt(MAX(pyro - 10.0f, 0.0f) / 1000.0f)); // it regrows from here
+		}
 		r.q = MIN(pyro, q_vent);
 		r.q_ext = 0.0f;
 		const float hk = Math::sqrt(LINING_KRHOC / MAX(r.t, 10.0f)) / 1000.0f;
-		const float dt = 6.85f * Math::pow(r.q * r.q / (vent * hk * a_t), 1.0f / 3.0f);
-		r.temperature = MIN(t_air + dt, 1100.0f);
+		const float qc = MAX(r.q - water_kw, 0.0f); // the gas the water has not cooled
+		const float dt = 6.85f * Math::pow(qc * qc / (vent * hk * a_t), 1.0f / 3.0f);
+		r.temperature = damp > 0.0f ? Math::lerp(r.temperature, MIN(t_air + dt, 1100.0f), 1.0f - Math::exp(-p_delta / 15.0f)) : MIN(t_air + dt, 1100.0f);
 		const float q_fo = 7.8f * a_t + 378.0f * vent;
 		// Flashover; a room open enough never meets Thomas's condition but is fully involved once its fuel burns at
 		// its own rate.
-		if (r.q >= q_fo || r.q >= 0.95f * q_fuel) {
+		if (damp <= 0.0f && (r.q >= q_fo || r.q >= 0.95f * q_fuel)) {
 			r.state = ROOM_FLASHED;
 			r.flash_time = r.t;
 		} else if (r.fuel_left <= 0.0f) {
@@ -499,14 +680,24 @@ void PhysXBuildingFire3D::_step_room(int p_room, float p_delta) {
 			r.decay_time = 2.0f * r.fuel_left * 1000.0f / r.q_decay;
 		}
 		pyro = r.state == ROOM_DECAY ? r.q_decay * MAX(1.0f - (r.t - r.decay_t0) / MAX(r.decay_time, 1.0f), 0.0f) : q_fuel;
+		r.potential = MAX(pyro, r.state == ROOM_FLASHED ? q_fuel : 0.0f);
+		pyro *= 1.0f - damp;
 		r.q = MIN(pyro, q_vent);
 		r.q_ext = MAX(pyro - q_vent, 0.0f);
-		// Hot layer: MQH with the lining heated through, held between 800 C and 1100 C while fully developed.
+		// Hot layer: MQH with the lining heated through, held between 800 C and 1100 C while fully developed (and
+		// not being cooled).
 		const float hk = Math::sqrt(LINING_KRHOC / MAX(r.t, 10.0f)) / 1000.0f;
-		const float dt = 6.85f * Math::pow(r.q * r.q / (vent * hk * a_t), 1.0f / 3.0f);
-		const float target = r.state == ROOM_FLASHED ? CLAMP(t_air + dt, 800.0f, 1100.0f) : MIN(t_air + dt, 1100.0f);
-		r.temperature = Math::lerp(r.temperature, target, 1.0f - Math::exp(-p_delta / 60.0f));
-		if (r.fuel_left <= 0.0f || pyro < 20.0f) {
+		const float qc = MAX(r.q - water_kw, 0.0f);
+		const float dt = 6.85f * Math::pow(qc * qc / (vent * hk * a_t), 1.0f / 3.0f);
+		const float target = (r.state == ROOM_FLASHED && damp <= 0.0f) ? CLAMP(t_air + dt, 800.0f, 1100.0f) : MIN(t_air + dt, 1100.0f);
+		r.temperature = Math::lerp(r.temperature, target, 1.0f - Math::exp(-p_delta / (damp > 0.0f ? 15.0f : 60.0f)));
+		// Knocked down below flashover: back to a growing fire of what still burns.
+		if (r.state == ROOM_FLASHED && damp > 0.5f) {
+			r.state = ROOM_GROWING;
+			r.t = growth_time * Math::sqrt(MAX(pyro, 10.0f) / 1000.0f);
+			r.potential = MAX(pyro, 10.0f);
+			r.q_ext = 0.0f;
+		} else if (r.fuel_left <= 0.0f || (pyro < 20.0f && damp <= 0.0f)) {
 			r.state = ROOM_OUT;
 			r.ember = 1.0f;
 			r.q = 0.0f;
@@ -530,6 +721,123 @@ void PhysXBuildingFire3D::_step_room(int p_room, float p_delta) {
 		r.collapsed = true;
 		r.roof_open = r.roof_open || r.exterior[FACE_TOP];
 	}
+}
+
+// Smoke ahead of the fire: a two-zone layer per room (Quintiere; as CFAST). A burning room's plume entrains air
+// into the layer under its ceiling (Heskestad: m = 0.071 Q_c^(1/3) z^(5/3) + 0.0018 Q_c kg/s, with Q_c = 0.7 Q and z
+// the clear height), carrying soot at smoke_yield of the fuel burnt. The layer leaves through every opening whose top
+// is below it as a buoyant flow, m = (2/3) Cd W rho_s sqrt(2 g (1 - rho_s / rho_a)) dh^(3/2) with dh the depth of
+// layer in the opening, and through the leaks at the ceiling; through a door it fills the next room, which smokes in
+// turn. Visibility in the layer is 3 / K for soot's mass extinction of 8.7 m2/g (Mulholland).
+void PhysXBuildingFire3D::_smoke(float p_delta) {
+	const float rho_a = 353.0f / (t_air + 273.15f);
+	for (Room &r : rooms) {
+		const float area = r.box.size.x * r.box.size.z;
+		const float h = r.box.size.y;
+		const bool burning = r.state == ROOM_GROWING || r.state == ROOM_FLASHED || r.state == ROOM_DECAY;
+		const float t_layer = burning ? MAX(r.temperature, r.layer_temp) : r.layer_temp;
+		const float rho_s = 353.0f / (t_layer + 273.15f);
+		float depth = r.layer_mass / MAX(rho_s * area, 1e-3f);
+		if (burning && r.q > 0.0f) {
+			const float qc = 0.7f * r.q;
+			const float z = MAX(h - depth, 0.1f);
+			const float m = 0.071f * Math::pow(qc, 1.0f / 3.0f) * Math::pow(z, 5.0f / 3.0f) + 0.0018f * qc;
+			r.layer_mass += m * p_delta;
+			r.layer_temp = t_layer;
+			r.soot += smoke_yield * (r.q + r.q_ext) / (FUEL_HEAT * 1000.0f) * p_delta;
+		} else {
+			// A layer with no fire under it cools toward the air (and the walls) over a few minutes.
+			r.layer_temp = Math::lerp(r.layer_temp, t_air, 1.0f - Math::exp(-p_delta / 300.0f));
+		}
+		depth = r.layer_mass / MAX(rho_s * area, 1e-3f);
+		const float buoy = Math::sqrt(2.0f * 9.81f * MAX(1.0f - rho_s / rho_a, 0.02f));
+		const float soot_share = r.soot / MAX(r.layer_mass, 1e-3f);
+		float out = 0.0f;
+		r.smoke_out = 0.0f;
+		auto vent = [&](float p_width, float p_dh, int p_to) {
+			if (p_dh <= 0.0f) {
+				return;
+			}
+			const float m = MIN((2.0f / 3.0f) * 0.7f * p_width * rho_s * buoy * Math::pow(p_dh, 1.5f) * p_delta, MAX(r.layer_mass - out, 0.0f));
+			out += m;
+			if (p_to >= 0) {
+				Room &n = rooms[p_to];
+				const float mix = m / MAX(n.layer_mass + m, 1e-6f);
+				n.layer_temp = Math::lerp(n.layer_temp, t_layer, mix);
+				n.layer_mass += m;
+				n.soot += m * soot_share;
+			} else {
+				r.smoke_out += m / MAX(p_delta, 1e-3f);
+			}
+		};
+		const float z_i = h - depth; // the layer's underside above the floor
+		for (const Opening &o : r.openings) {
+			if (o.face == FACE_TOP) {
+				if (!o.glazed || o.broken) {
+					vent(Math::sqrt(o.rect.get_area()), MIN(depth, 1.0f), o.to_room);
+				}
+				continue;
+			}
+			const float top = o.rect.get_end().y;
+			const float bottom = o.rect.position.y;
+			if (z_i >= top) {
+				continue;
+			}
+			if (o.glazed && !o.broken) {
+				continue;
+			}
+			vent(o.rect.size.x, top - MAX(z_i, bottom), o.to_room);
+		}
+		if (r.roof_open) {
+			vent(Math::sqrt(area), MIN(depth, 1.0f), -1);
+		}
+		// Leaks at the ceiling (eaves, gaps round doors): about 0.01 m2.
+		vent(0.1f, MIN(depth, 0.1f) * 0.1f, -1);
+		if (out > 0.0f) {
+			r.soot = MAX(r.soot - out * soot_share, 0.0f);
+			r.layer_mass = MAX(r.layer_mass - out, 0.0f);
+		}
+		// A full room pushes the rest out (down to the floor).
+		const float full = rho_s * area * h;
+		if (r.layer_mass > full) {
+			const float spill = r.layer_mass - full;
+			r.soot = MAX(r.soot - spill * soot_share, 0.0f);
+			r.layer_mass = full;
+			r.smoke_out += spill / MAX(p_delta, 1e-3f);
+		}
+		// Soot settles out of a still layer over hours.
+		r.soot *= Math::exp(-p_delta / 7200.0f);
+	}
+}
+
+float PhysXBuildingFire3D::get_room_layer_height(int p_room) const {
+	ERR_FAIL_INDEX_V(p_room, (int)rooms.size(), 0.0f);
+	const Room &r = rooms[p_room];
+	const float rho_s = 353.0f / (r.layer_temp + 273.15f);
+	return MAX(r.box.size.y - r.layer_mass / MAX(rho_s * r.box.size.x * r.box.size.z, 1e-3f), 0.0f);
+}
+
+float PhysXBuildingFire3D::_extinction(const Room &p_room) const {
+	const float rho_s = 353.0f / (p_room.layer_temp + 273.15f);
+	const float vol = p_room.layer_mass / MAX(rho_s, 1e-3f);
+	return vol > 1e-3f ? 8700.0f * p_room.soot / vol : 0.0f;
+}
+
+float PhysXBuildingFire3D::get_room_visibility(int p_room) const {
+	ERR_FAIL_INDEX_V(p_room, (int)rooms.size(), 1000.0f);
+	const float k = _extinction(rooms[p_room]);
+	return k > 0.003f ? 3.0f / k : 1000.0f;
+}
+
+float PhysXBuildingFire3D::get_visibility_at(const Vector3 &p_position) const {
+	const Vector3 l = get_global_transform().affine_inverse().xform(p_position);
+	for (uint32_t i = 0; i < rooms.size(); i++) {
+		const Room &r = rooms[i];
+		if (r.box.has_point(l)) {
+			return l.y - r.box.position.y >= get_room_layer_height(i) ? get_room_visibility(i) : 1000.0f;
+		}
+	}
+	return 1000.0f;
 }
 
 // Fire between rooms: through an open door or hatch the hot layer of a room over 500 C radiates into the next
@@ -629,6 +937,272 @@ void PhysXBuildingFire3D::_spread(float p_delta) {
 	}
 }
 
+Ref<Material> PhysXBuildingFire3D::_glass() {
+	if (glass_material.is_null()) {
+		Ref<StandardMaterial3D> m;
+		m.instantiate();
+		m->set_albedo(Color(1, 1, 1));
+		m->set_roughness(0.04f);
+		m->set_transmission(1.0f);
+		m->set_transmission_ior(1.52f);
+		m->set_transmission_thin_walled(true);
+		m->set_transmission_attenuation_color(Color(0.86f, 0.95f, 0.92f)); // soda-lime's green edge
+		m->set_transmission_attenuation_distance(0.05f);
+		glass_material = m;
+	}
+	return glass_material;
+}
+
+// Window glass: a pane in each glazed opening while it is whole (glass_panes); when the hot layer drops it, it
+// cracks from the shaded edge in and falls out in pieces (Pagni and Joshi 1991; Babrauskas 2004: shards of a few
+// to some tens of centimetres), mostly down, some pushed out by the fire's pressure.
+void PhysXBuildingFire3D::_update_glass() {
+	const Transform3D xf = get_global_transform();
+	for (uint32_t i = 0; i < rooms.size(); i++) {
+		Room &r = rooms[i];
+		for (Opening &o : r.openings) {
+			if (!o.glazed || o.to_room >= 0) {
+				continue;
+			}
+			MeshInstance3D *pane = Object::cast_to<MeshInstance3D>(ObjectDB::get_instance(o.pane));
+			if (o.broken) {
+				if (!o.shattered) {
+					o.shattered = true;
+					if (pane) {
+						pane->queue_free();
+						o.pane = ObjectID();
+					}
+					if (glass_panes) {
+						_shatter(i, o);
+					}
+				}
+				continue;
+			}
+			if (!glass_panes || pane) {
+				continue;
+			}
+			pane = memnew(MeshInstance3D);
+			Ref<BoxMesh> bm;
+			bm.instantiate();
+			bm->set_size(o.face == FACE_TOP ? Vector3(o.rect.size.x, 0.005f, o.rect.size.y) : Vector3(o.rect.size.x, o.rect.size.y, 0.005f));
+			bm->set_material(_glass());
+			pane->set_mesh(bm);
+			add_child(pane, false, INTERNAL_MODE_FRONT);
+			const Vector3 n = _face_normal(o.face);
+			const Vector3 c = _face_point(r, o.face, o.rect.get_center()) + n * 0.05f;
+			Basis b;
+			if (o.face == FACE_NEG_X || o.face == FACE_POS_X) {
+				b = Basis(Vector3(0, 1, 0), Math::PI * 0.5f);
+			}
+			pane->set_transform(Transform3D(b, c));
+			o.pane = pane->get_instance_id();
+		}
+	}
+	(void)xf;
+}
+
+void PhysXBuildingFire3D::_shatter(int p_room, Opening &r_opening) {
+	const Room &r = rooms[p_room];
+	// The pane split into pieces by random cuts, the larger piece cut again (about one per 0.03 m2).
+	LocalVector<Rect2> pieces;
+	pieces.push_back(Rect2(Vector2(), r_opening.rect.size));
+	const int want = CLAMP(int(r_opening.rect.get_area() / 0.06f), 3, 20);
+	while ((int)pieces.size() < want) {
+		uint32_t big = 0;
+		for (uint32_t k = 1; k < pieces.size(); k++) {
+			if (pieces[k].get_area() > pieces[big].get_area()) {
+				big = k;
+			}
+		}
+		const Rect2 p = pieces[big];
+		const float t = 0.3f + 0.4f * _rand();
+		Rect2 a = p, b = p;
+		if (p.size.x > p.size.y) {
+			a.size.x = p.size.x * t;
+			b.position.x += a.size.x;
+			b.size.x -= a.size.x;
+		} else {
+			a.size.y = p.size.y * t;
+			b.position.y += a.size.y;
+			b.size.y -= a.size.y;
+		}
+		pieces[big] = a;
+		pieces.push_back(b);
+	}
+	const Transform3D xf = get_global_transform();
+	const Vector3 n = xf.basis.xform(_face_normal(r_opening.face)).normalized();
+	const bool hot = r.state == ROOM_FLASHED || r.temperature > 500.0f;
+	Basis b;
+	if (r_opening.face == FACE_NEG_X || r_opening.face == FACE_POS_X) {
+		b = Basis(Vector3(0, 1, 0), Math::PI * 0.5f);
+	} else if (r_opening.face == FACE_TOP) {
+		b = Basis(Vector3(1, 0, 0), -Math::PI * 0.5f);
+	}
+	for (const Rect2 &p : pieces) {
+		// Each piece cut once more along a diagonal, its corner moved a little: angular shards, not tiles.
+		const bool diag = _rand() < 0.5f;
+		const Vector2 c[4] = { p.position, p.position + Vector2(p.size.x, 0), p.get_end(), p.position + Vector2(0, p.size.y) };
+		const Vector2 tris[2][3] = {
+			{ c[0], c[1], c[diag ? 2 : 3] },
+			{ c[diag ? 0 : 1], c[2], c[3] },
+		};
+		for (int tri = 0; tri < 2; tri++) {
+			if (shard_count >= 300 || _rand() < 0.15f) { // some stay in the frame a while
+				continue;
+			}
+			Vector2 v[3] = { tris[tri][0], tris[tri][1], tris[tri][2] };
+			const Vector2 mid = (v[0] + v[1] + v[2]) / 3.0f;
+			// Pane coordinates centred on the shard, x right and y up on the pane.
+			PackedVector3Array verts;
+			PackedVector3Array norms;
+			for (int side = 0; side < 2; side++) {
+				for (int k = 0; k < 3; k++) {
+					const Vector2 q = v[side == 0 ? k : 2 - k] - mid;
+					verts.push_back(Vector3(q.x, q.y, side == 0 ? 0.003f : -0.003f));
+					norms.push_back(Vector3(0, 0, side == 0 ? 1.0f : -1.0f));
+				}
+			}
+			Array arrays;
+			arrays.resize(Mesh::ARRAY_MAX);
+			arrays[Mesh::ARRAY_VERTEX] = verts;
+			arrays[Mesh::ARRAY_NORMAL] = norms;
+			Ref<ArrayMesh> am;
+			am.instantiate();
+			am->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+			am->surface_set_material(0, _glass());
+			Vector2 lo = v[0] - mid, hi = v[0] - mid;
+			for (int k = 1; k < 3; k++) {
+				lo = lo.min(v[k] - mid);
+				hi = hi.max(v[k] - mid);
+			}
+			RigidBody3D *rb = memnew(RigidBody3D);
+			CollisionShape3D *cs = memnew(CollisionShape3D);
+			Ref<BoxShape3D> sh;
+			sh.instantiate();
+			sh->set_size(Vector3((hi.x - lo.x) * 0.7f, (hi.y - lo.y) * 0.7f, 0.006f));
+			cs->set_shape(sh);
+			rb->add_child(cs);
+			MeshInstance3D *mi = memnew(MeshInstance3D);
+			mi->set_mesh(am);
+			rb->add_child(mi);
+			const float area = 0.5f * Math::abs((v[1] - v[0]).cross(v[2] - v[0]));
+			rb->set_mass(MAX(2500.0f * area * 0.006f, 0.01f));
+			add_child(rb, false, INTERNAL_MODE_FRONT);
+			rb->set_as_top_level(true);
+			const Vector3 local = _face_point(r, r_opening.face, r_opening.rect.position + mid) + _face_normal(r_opening.face) * 0.05f;
+			rb->set_global_transform(Transform3D(xf.basis * b, xf.xform(local)));
+			// Out with the fire's pressure (a metre or two a second near flashover), turning as it goes.
+			rb->set_linear_velocity(n * (hot ? 0.5f + 1.5f * _rand() : 0.2f * _rand()) + Vector3(0, -0.3f * _rand(), 0));
+			rb->set_angular_velocity(Vector3(_rand() - 0.5f, _rand() - 0.5f, _rand() - 0.5f) * 6.0f);
+			shard_count++;
+		}
+	}
+}
+
+// The target's pieces that make a room's ceiling or roof: meshes over its floor whose centre lies within the top
+// 0.3 m of the room or up to 1.5 m above it, with the colliders over the same span.
+void PhysXBuildingFire3D::_find_roof(int p_room) {
+	Room &r = rooms[p_room];
+	r.roof_found = true;
+	Node3D *t = _target();
+	if (!t || !destructible_id.is_null()) {
+		return;
+	}
+	const Transform3D inv = get_global_transform().affine_inverse();
+	const AABB span(Vector3(r.box.position.x, r.box.position.y + r.box.size.y - 0.3f, r.box.position.z), Vector3(r.box.size.x, 1.8f, r.box.size.z));
+	auto inside = [&](const Vector3 &p_global) {
+		const Vector3 l = inv.xform(p_global);
+		return span.grow(0.05f).has_point(l);
+	};
+	LocalVector<Node *> stack;
+	stack.push_back(t);
+	LocalVector<CollisionShape3D *> shapes;
+	while (!stack.is_empty()) {
+		Node *nd = stack[stack.size() - 1];
+		stack.resize(stack.size() - 1);
+		for (int c = 0; c < nd->get_child_count(); c++) {
+			stack.push_back(nd->get_child(c));
+		}
+		if (MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(nd)) {
+			if (mi->get_mesh().is_valid() && inside(mi->get_global_transform().xform(mi->get_aabb().get_center()))) {
+				Room::RoofPiece rp;
+				rp.mesh = mi->get_instance_id();
+				rp.rest = mi->get_global_transform();
+				r.roof.push_back(rp);
+			}
+		} else if (CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(nd)) {
+			if (inside(cs->get_global_position())) {
+				shapes.push_back(cs);
+			}
+		}
+	}
+	for (Room::RoofPiece &rp : r.roof) {
+		for (CollisionShape3D *cs : shapes) {
+			rp.shapes.push_back(cs->get_instance_id());
+		}
+		break; // the first piece holds them all; they go together
+	}
+}
+
+// Sagging as the framing chars: a deflection growing as the cube of the share of the section lost, to a twentieth
+// of the span just before failure; then it falls in, each piece a rigid body, its colliders gone.
+void PhysXBuildingFire3D::_update_roof(int p_room) {
+	Room &r = rooms[p_room];
+	if (r.roof_fallen || r.state == ROOM_COLD || !destructible_id.is_null()) {
+		return;
+	}
+	if (!r.roof_found) {
+		_find_roof(p_room);
+	}
+	if (r.roof.is_empty()) {
+		return;
+	}
+	const float lost = CLAMP(2.0f * r.char_depth / (collapse_share * member_size), 0.0f, 1.0f);
+	const float span = MIN(r.box.size.x, r.box.size.z);
+	if (!r.collapsed) {
+		const float sag = span / 20.0f * lost * lost * lost;
+		for (const Room::RoofPiece &rp : r.roof) {
+			if (MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(ObjectDB::get_instance(rp.mesh))) {
+				Transform3D g = rp.rest;
+				g.origin.y -= sag;
+				mi->set_global_transform(g);
+			}
+		}
+		return;
+	}
+	r.roof_fallen = true;
+	for (Room::RoofPiece &rp : r.roof) {
+		for (ObjectID id : rp.shapes) {
+			if (CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(ObjectDB::get_instance(id))) {
+				cs->set_disabled(true);
+			}
+		}
+		MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(ObjectDB::get_instance(rp.mesh));
+		if (!mi) {
+			continue;
+		}
+		const Transform3D g = mi->get_global_transform();
+		const AABB box = mi->get_aabb();
+		RigidBody3D *rb = memnew(RigidBody3D);
+		CollisionShape3D *cs = memnew(CollisionShape3D);
+		Ref<BoxShape3D> sh;
+		sh.instantiate();
+		sh->set_size((box.size * g.basis.get_scale()).maxf(0.02f));
+		cs->set_shape(sh);
+		rb->add_child(cs);
+		add_child(rb, false, INTERNAL_MODE_FRONT);
+		rb->set_as_top_level(true);
+		const Vector3 centre = g.xform(box.get_center());
+		rb->set_global_transform(Transform3D(g.basis.orthonormalized(), centre));
+		rb->set_mass(MAX(400.0f * box.size.x * box.size.y * box.size.z * g.basis.get_scale().x * g.basis.get_scale().y * g.basis.get_scale().z, 1.0f));
+		mi->get_parent()->remove_child(mi);
+		rb->add_child(mi);
+		mi->set_transform(Transform3D(g.basis.orthonormalized().inverse() * g.basis, -box.get_center() * g.basis.get_scale()));
+		// It gives way at one end first.
+		rb->set_angular_velocity(Vector3(_rand() - 0.5f, 0.0f, _rand() - 0.5f) * 0.8f);
+	}
+}
+
 // A PhysXDestructible3D target (Blast) gives way where a room's framing fails: its bonds there are damaged as the
 // char eats the members (as PhysXBurnable3D), all at once when it collapses.
 void PhysXBuildingFire3D::_weaken(int p_room) {
@@ -653,13 +1227,44 @@ void PhysXBuildingFire3D::_weaken(int p_room) {
 #endif
 }
 
-PhysXFlowEmitter3D *PhysXBuildingFire3D::_emitter(ObjectID &r_id, const String &p_name) {
+// The building's smoke: its own gas, dark with soot and slow to fade, so the smoke from its windows hangs and drifts
+// rather than vanishing as the flames' smoke does.
+PhysXFlow3D *PhysXBuildingFire3D::_smoke_flow() {
+	PhysXFlow3D *f = Object::cast_to<PhysXFlow3D>(ObjectDB::get_instance(smoke_flow_id));
+	if (f) {
+		return f;
+	}
+	f = memnew(PhysXFlow3D);
+	f->set_name("BuildingSmoke");
+	f->set_cell_size(0.2f);
+	f->set_max_blocks(1024);
+	f->set_combustion(false);
+	f->set_emission_strength(0.0f);
+	f->set_temperature_range(1.0f);
+	f->set_buoyancy(1.0f);
+	f->set_cooling_rate(0.6f);
+	f->set_vorticity(1.0f);
+	f->set_smoke_color(Color(0.16f, 0.15f, 0.14f));
+	f->set_smoke_density(2.0f);
+	f->set_smoke_buoyancy(0.6f);
+	f->set_smoke_fade(0.06f);
+	f->set_fire_light(false);
+	f->set_embers(false);
+	add_child(f, false, INTERNAL_MODE_FRONT);
+	f->set_as_top_level(true);
+	f->set_global_transform(Transform3D());
+	smoke_flow_id = f->get_instance_id();
+	return f;
+}
+
+PhysXFlowEmitter3D *PhysXBuildingFire3D::_emitter(ObjectID &r_id, const String &p_name, PhysXFlow3D *p_flow) {
 	PhysXFlowEmitter3D *e = Object::cast_to<PhysXFlowEmitter3D>(ObjectDB::get_instance(r_id));
-	if (!e && flow) {
+	PhysXFlow3D *into = p_flow ? p_flow : flow;
+	if (!e && into) {
 		e = memnew(PhysXFlowEmitter3D);
 		e->set_name(String(get_name()) + p_name);
-		flow->add_child(e);
-		e->set_flow_path(e->get_path_to(flow));
+		into->add_child(e);
+		e->set_flow_path(e->get_path_to(into));
 		e->set_shape(PhysXFlowEmitter3D::SHAPE_SPHERE);
 		r_id = e->get_instance_id();
 	}
@@ -707,12 +1312,22 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 		for (uint32_t k = 0; k < r.openings.size(); k++) {
 			Opening &o = r.openings[k];
 			const bool open = !o.glazed || o.broken;
-			if (!burning || !open || o.to_room >= 0) {
+			const float layer = get_room_layer_height(i);
+			const bool smoking = open && o.to_room < 0 && r.smoke_out > 0.002f && (o.face == FACE_TOP || layer < o.rect.get_end().y);
+			if ((!burning && !smoking) || !open || o.to_room >= 0) {
 				_disable(o.emitter);
+				_disable(o.smoke_emitter);
 				continue;
 			}
 			const Vector3 n = _face_normal(o.face);
-			PhysXFlowEmitter3D *e = _emitter(o.emitter, base + "Opening" + itos(k));
+			const float l = _external_flame(r, o);
+			const bool flames = l > 0.0f || (o.face == FACE_TOP && burning && r.state != ROOM_GROWING);
+			// Flames go into the fire's gas; smoke into the building's own, which keeps it longer.
+			_disable(flames ? o.smoke_emitter : o.emitter);
+			PhysXFlowEmitter3D *e = flames ? _emitter(o.emitter, base + "Opening" + itos(k)) : _emitter(o.smoke_emitter, base + "Smoke" + itos(k), _smoke_flow());
+			if (!e) {
+				continue;
+			}
 			e->set_enabled(true);
 			e->set_burn(0.0f);
 			e->set_couple_rate(2.0f);
@@ -725,20 +1340,38 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 				const Vector2 uv(o.rect.get_center().x, o.rect.position.y + o.rect.size.y * 0.8f);
 				e->set_global_position(xf.xform(_face_point(r, o.face, uv) + n * 0.25f));
 			}
-			const float l = _external_flame(r, o);
-			if (l > 0.0f || (o.face == FACE_TOP && r.state != ROOM_GROWING)) {
+			if (flames) {
 				// Tongues about the window's width, reaching Eurocode's length above it (not fireballs).
 				e->set_temperature(1.0f);
 				e->set_fuel(CLAMP(0.2f + 0.15f * l, 0.2f, 0.55f));
 				e->set_smoke(0.4f);
 				e->set_velocity(xf.basis.xform(n * 1.2f + Vector3(0, CLAMP(l * 0.8f, 0.6f, 3.0f), 0)));
 			} else {
-				// Smoke before flashover, thicker and hotter as the layer heats.
-				const float h = CLAMP((r.temperature - 60.0f) / 500.0f, 0.0f, 1.0f);
-				e->set_temperature(0.25f * h);
+				// Smoke from the layer before flashover (and from smoke-filled rooms the fire has not reached): as thick
+				// as its soot, as much as flows out, as warm as the layer.
+				const float k = _extinction(r);
+				const float h = CLAMP((r.layer_temp - 20.0f) / 500.0f, 0.0f, 1.0f);
+				const float amount = CLAMP(k / 2.0f, 0.05f, 1.0f) * CLAMP(r.smoke_out / 0.5f, 0.1f, 1.0f);
+				// A slab across the opening's smoky part (above the layer's base), just outside the wall: a sphere that
+				// small gives the grid only a cell or two of smoke, which thins to nothing within a metre.
+				e->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
+				if (o.face != FACE_TOP) {
+					const float top = o.rect.get_end().y;
+					const float base = CLAMP(layer, o.rect.position.y, top - 0.2f);
+					const Vector2 uv(o.rect.get_center().x, 0.5f * (base + top));
+					const float w = MAX(o.rect.size.x, 0.4f);
+					const float hh = MAX(top - base, 0.3f);
+					const Vector3 size = o.face < FACE_NEG_Z ? Vector3(0.4f, hh, w) : Vector3(w, hh, 0.4f);
+					e->set_size(size);
+					e->set_global_transform(Transform3D(xf.basis.orthonormalized(), xf.xform(_face_point(r, o.face, uv) + n * 0.3f)));
+				} else {
+					e->set_size(Vector3(o.rect.size.x, 0.4f, o.rect.size.y));
+				}
+				e->set_couple_rate(4.0f);
+				e->set_temperature(0.15f + 0.45f * h);
 				e->set_fuel(0.0f);
-				e->set_smoke(CLAMP(r.q / 300.0f, 0.1f, 1.0f) * h);
-				e->set_velocity(xf.basis.xform(n * 0.8f + Vector3(0, 0.5f, 0)));
+				e->set_smoke(3.0f * amount);
+				e->set_velocity(xf.basis.xform(n * (0.4f + 0.6f * h) + Vector3(0, 0.3f + 0.4f * h, 0)));
 			}
 		}
 		if (burning && r.roof_open) {
@@ -784,6 +1417,10 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 				light->set_name(base + "Light");
 				light->set_color(Color(1.0f, 0.55f, 0.25f));
 				light->set_shadow(true);
+				// Tight shadows: walls and floors are thin next to the light's range, and must not let it through.
+				light->set_param(Light3D::PARAM_SHADOW_BIAS, 0.02f);
+				light->set_param(Light3D::PARAM_SHADOW_NORMAL_BIAS, 0.3f);
+				light->set_shadow_mode(OmniLight3D::SHADOW_CUBE);
 				add_child(light, false, INTERNAL_MODE_FRONT);
 				r.light = light->get_instance_id();
 			}
@@ -797,6 +1434,28 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 		} else if (light) {
 			light->set_visible(false);
 		}
+	}
+}
+
+// Steam: the heat the water took leaves as steam (PhysXSteam), out of the room's openings and off its cladding.
+void PhysXBuildingFire3D::_update_steam(float p_delta) {
+	const Transform3D xf = get_global_transform();
+	for (Room &r : rooms) {
+		if (r.steam_j < 2.0e5f) {
+			continue;
+		}
+		Vector3 at = r.box.get_center() + Vector3(0, r.box.size.y * 0.3f, 0);
+		for (const Opening &o : r.openings) {
+			if (o.to_room < 0 && (!o.glazed || o.broken)) {
+				at = _face_point(r, o.face, Vector2(o.rect.get_center().x, o.rect.get_end().y - 0.1f)) + _face_normal(o.face) * 0.3f;
+				break;
+			}
+		}
+		steam.add_heat(xf.xform(at), r.steam_j, CLAMP(0.25f * r.box.size.length(), 0.4f, 1.5f), 3.0f);
+		r.steam_j = 0.0f;
+	}
+	if (steam.is_steaming() || steam.get_total_kg() > 0.0f) {
+		steam.step(this, wind, p_delta);
 	}
 }
 
@@ -1020,7 +1679,9 @@ void PhysXBuildingFire3D::add_brand(const Vector3 &p_position, const Vector3 &p_
 	for (const Opening &o : r.openings) {
 		if (o.face == best_face && o.to_room < 0 && (!o.glazed || o.broken) && o.rect.grow(0.05f).has_point(uv)) {
 			if (_rand() < 0.2f * p_glow) {
+				cause = "firebrand";
 				_ignite_room(best, l - _face_normal(best_face) * 0.5f);
+				cause = "heat";
 			}
 			return;
 		}
@@ -1195,6 +1856,7 @@ void PhysXBuildingFire3D::_notification(int p_what) {
 			buildings.erase(this);
 			WorldContracts::unregister_fire(this);
 			brands.clear();
+			steam.clear();
 			for (Room &r : rooms) {
 				for (ObjectID *id : { &r.inner_emitter, &r.roof_emitter }) {
 					if (Node *e = Object::cast_to<Node>(ObjectDB::get_instance(*id))) {
@@ -1213,6 +1875,7 @@ void PhysXBuildingFire3D::_notification(int p_what) {
 						e->queue_free();
 					}
 					o.emitter = ObjectID();
+					o.smoke_emitter = ObjectID(); // freed with the smoke gas, a child
 				}
 			}
 		} break;
@@ -1240,12 +1903,17 @@ void PhysXBuildingFire3D::_notification(int p_what) {
 				for (uint32_t i = 0; i < rooms.size(); i++) {
 					_step_room(i, dt);
 				}
+				clock += dt;
+				_smoke(dt);
 				_spread(dt);
 			}
 			for (uint32_t i = 0; i < rooms.size(); i++) {
 				_weaken(i);
+				_update_roof(i);
 			}
+			_update_glass();
 			_update_visuals(real_dt);
+			_update_steam(real_dt);
 			_update_brands(real_dt);
 			_update_look();
 		} break;
@@ -1285,10 +1953,18 @@ void PhysXBuildingFire3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_firebrands"), &PhysXBuildingFire3D::has_firebrands);
 	ClassDB::bind_method(D_METHOD("set_firebrand_rate", "per_second_per_mw"), &PhysXBuildingFire3D::set_firebrand_rate);
 	ClassDB::bind_method(D_METHOD("get_firebrand_rate"), &PhysXBuildingFire3D::get_firebrand_rate);
+	ClassDB::bind_method(D_METHOD("set_glass_panes", "enabled"), &PhysXBuildingFire3D::set_glass_panes);
+	ClassDB::bind_method(D_METHOD("has_glass_panes"), &PhysXBuildingFire3D::has_glass_panes);
+	ClassDB::bind_method(D_METHOD("get_shard_count"), &PhysXBuildingFire3D::get_shard_count);
 	ClassDB::bind_method(D_METHOD("set_time_scale", "scale"), &PhysXBuildingFire3D::set_time_scale);
 	ClassDB::bind_method(D_METHOD("get_time_scale"), &PhysXBuildingFire3D::get_time_scale);
 
 	ClassDB::bind_method(D_METHOD("ignite", "position"), &PhysXBuildingFire3D::ignite);
+	ClassDB::bind_method(D_METHOD("apply_water", "position", "kg"), &PhysXBuildingFire3D::apply_water);
+	ClassDB::bind_method(D_METHOD("get_room_water_cooling", "room"), &PhysXBuildingFire3D::get_room_water_cooling);
+	ClassDB::bind_method(D_METHOD("get_room_layer_height", "room"), &PhysXBuildingFire3D::get_room_layer_height);
+	ClassDB::bind_method(D_METHOD("get_room_visibility", "room"), &PhysXBuildingFire3D::get_room_visibility);
+	ClassDB::bind_method(D_METHOD("get_visibility_at", "position"), &PhysXBuildingFire3D::get_visibility_at);
 	ClassDB::bind_method(D_METHOD("extinguish"), &PhysXBuildingFire3D::extinguish);
 	ClassDB::bind_method(D_METHOD("add_brand", "position", "normal", "glow"), &PhysXBuildingFire3D::add_brand);
 	ClassDB::bind_method(D_METHOD("get_room_count"), &PhysXBuildingFire3D::get_room_count);
@@ -1305,7 +1981,11 @@ void PhysXBuildingFire3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_firebrand_count"), &PhysXBuildingFire3D::get_firebrand_count);
 	ClassDB::bind_method(D_METHOD("get_spot_fire_count"), &PhysXBuildingFire3D::get_spot_fire_count);
 	ClassDB::bind_method(D_METHOD("is_burning"), &PhysXBuildingFire3D::is_burning);
+	ClassDB::bind_method(D_METHOD("get_ignition_time"), &PhysXBuildingFire3D::get_ignition_time);
+	ClassDB::bind_method(D_METHOD("get_ignition_cause"), &PhysXBuildingFire3D::get_ignition_cause);
 	ClassDB::bind_static_method("PhysXBuildingFire3D", D_METHOD("radiant_flux_at", "position"), &PhysXBuildingFire3D::_radiant_flux_bind);
+
+	ADD_SIGNAL(MethodInfo("ignited", PropertyInfo(Variant::STRING, "cause")));
 
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "rooms"), "set_rooms", "get_rooms");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "target"), "set_target", "get_target");
@@ -1323,6 +2003,7 @@ void PhysXBuildingFire3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "light_energy", PROPERTY_HINT_RANGE, "0,32,0.1"), "set_light_energy", "get_light_energy");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "firebrands"), "set_firebrands", "has_firebrands");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "firebrand_rate", PROPERTY_HINT_RANGE, "0,500,0.1"), "set_firebrand_rate", "get_firebrand_rate");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "glass_panes"), "set_glass_panes", "has_glass_panes");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "time_scale", PROPERTY_HINT_RANGE, "0,3600,0.1"), "set_time_scale", "get_time_scale");
 
 	BIND_ENUM_CONSTANT(ROOM_COLD);

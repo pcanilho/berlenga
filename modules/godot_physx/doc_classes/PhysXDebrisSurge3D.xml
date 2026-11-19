@@ -57,6 +57,12 @@
 				Rickenmann's peak discharge (m³/s) for a debris flow of [param volume] m³.
 			</description>
 		</method>
+		<method name="get_skipped_events" qualifiers="const">
+			<return type="int" />
+			<description>
+				Events left to the mud body alone: smaller than [member min_volume], or crowded out by bigger ones past [member max_events].
+			</description>
+		</method>
 		<method name="get_spray_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -85,7 +91,7 @@
 			Boulders per m³ of surge.
 		</member>
 		<member name="front_source" type="NodePath" setter="set_front_source" getter="get_front_source" default="NodePath(&quot;&quot;)">
-			A node with [code]get_debris_front(event_id)[/code] returning the mud body's front ([code]position[/code], [code]path_index[/code], [code]depth[/code], [code]speed[/code], [code]width[/code], [code]done[/code]), such as the ground's [code]GroundDebrisFlow3D[/code]. Empty, or with no front for an event, the surge runs its own front.
+			A node with [code]get_debris_front(event_id)[/code] returning the mud body's front ([code]position[/code], [code]path_index[/code], [code]depth[/code], [code]speed[/code], [code]width[/code], [code]done[/code]), such as the ground's [code]GroundDebrisFlow3D[/code]. Empty, the scene's first [code]GroundDebrisFlow3D[/code] is used when there is one. With none, or with no front for an event (small events the mud body pooled into a running one get its front), the surge runs its own front.
 		</member>
 		<member name="listen" type="bool" setter="set_listen" getter="is_listening" default="true">
 			If [code]true[/code], starts surges for the weather's debris-flow events.
@@ -95,6 +101,12 @@
 		</member>
 		<member name="max_boulders" type="int" setter="set_max_boulders" getter="get_max_boulders" default="60">
 			The most boulders it keeps.
+		</member>
+		<member name="max_events" type="int" setter="set_max_events" getter="get_max_events" default="6">
+			The most events with surges at once. A storm on a burnt slope fires one event per gully, so a bigger event replaces the smallest running one.
+		</member>
+		<member name="min_volume" type="float" setter="set_min_volume" getter="get_min_volume" default="100.0">
+			Events smaller than this (m³) get no surges or boulders of their own; the mud body draws them.
 		</member>
 		<member name="mud_color" type="Color" setter="set_mud_color" getter="get_mud_color" default="Color(0.13, 0.1, 0.08, 1)">
 			Colour of the spray (dark with ash after a fire).

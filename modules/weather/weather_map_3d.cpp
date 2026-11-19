@@ -2678,6 +2678,8 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_smoke_haze"), &WeatherMap3D::is_smoke_haze);
 	ClassDB::bind_method(D_METHOD("set_smoke_lifetime", "seconds"), &WeatherMap3D::set_smoke_lifetime);
 	ClassDB::bind_method(D_METHOD("get_smoke_lifetime"), &WeatherMap3D::get_smoke_lifetime);
+	ClassDB::bind_method(D_METHOD("set_smoke_washout", "enabled"), &WeatherMap3D::set_smoke_washout);
+	ClassDB::bind_method(D_METHOD("is_smoke_washout"), &WeatherMap3D::is_smoke_washout);
 	ClassDB::bind_method(D_METHOD("get_smoke_at", "position"), &WeatherMap3D::get_smoke_at);
 	ClassDB::bind_method(D_METHOD("get_smoke_optical_depth_at", "position"), &WeatherMap3D::get_smoke_optical_depth_at);
 	ClassDB::bind_method(D_METHOD("get_smoke_transmittance", "position", "to_sun"), &WeatherMap3D::get_smoke_transmittance);
@@ -2890,6 +2892,7 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_clouds"), "set_fire_clouds", "is_fire_clouds");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "smoke_haze"), "set_smoke_haze", "is_smoke_haze");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "smoke_lifetime", PROPERTY_HINT_RANGE, "60,1000000,60,or_greater,suffix:s"), "set_smoke_lifetime", "get_smoke_lifetime");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "smoke_washout"), "set_smoke_washout", "is_smoke_washout");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dew_and_frost"), "set_dew_and_frost", "get_dew_and_frost");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "aerosol_haze"), "set_aerosol_haze", "get_aerosol_haze");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "traced_haze"), "set_traced_haze", "get_traced_haze");

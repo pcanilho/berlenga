@@ -34,10 +34,13 @@
 #include "core/config/engine.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "core/os/os.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/multimesh_instance_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/rigid_body_3d.h"
+#include "scene/main/scene_tree.h"
+#include "scene/main/window.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/sphere_shape_3d.h"
 #include "scene/resources/material.h"
@@ -95,6 +98,41 @@ void PhysXDebrisSurge3D::start(const Dictionary &p_event) {
 	}
 	last_event = MAX(last_event, int(p_event.get("id", -1)));
 	const float volume = MAX(float(p_event.get("volume", 500.0f)), 1.0f);
+	// A storm on a burnt slope fires many small events at once (one per gully): the small ones are left to the mud
+	// body, and only the biggest few get surges, so fronts and boulders do not multiply.
+	if (volume < min_volume) {
+		skipped++;
+		return;
+	}
+	for (int64_t k = int64_t(surges.size()) - 1; k >= 0; k--) {
+		if (surges[k].done) {
+			_drop_surge(k);
+		}
+	}
+	int events = 0;
+	int smallest = -1;
+	for (uint32_t k = 0; k < surges.size(); k++) {
+		const bool first = k == 0 || surges[k].event_id != surges[k - 1].event_id;
+		if (first) {
+			events++;
+			if (smallest < 0 || surges[k].event_volume < surges[smallest].event_volume) {
+				smallest = k;
+			}
+		}
+	}
+	if (events >= max_events) {
+		if (smallest < 0 || surges[smallest].event_volume >= volume) {
+			skipped++;
+			return;
+		}
+		const int drop_id = surges[smallest].event_id;
+		for (int64_t k = int64_t(surges.size()) - 1; k >= 0; k--) {
+			if (surges[k].event_id == drop_id) {
+				_drop_surge(k);
+			}
+		}
+		skipped++;
+	}
 	const int n = CLAMP(int(Math::ceil(volume / 400.0f)), 1, surge_count);
 	float total = 0.0f;
 	for (int k = 0; k < n; k++) {
@@ -112,10 +150,33 @@ void PhysXDebrisSurge3D::start(const Dictionary &p_event) {
 		s.widths = p_event.get("widths", PackedFloat32Array());
 		s.along = along;
 		s.volume = volume * Math::pow(0.6f, float(k)) / total;
+		s.event_volume = volume;
 		s.delay = k * surge_interval * (0.7f + 0.6f * _rand());
+		s.lead = k == 0;
 		surges.push_back(s);
 		_spawn_boulders(surges.size() - 1);
 	}
+}
+
+// Removes a surge and its boulders (they stay where they lie only once its front has stopped).
+void PhysXDebrisSurge3D::_drop_surge(int p_surge) {
+	const bool settled = surges[p_surge].done;
+	for (int64_t b = int64_t(boulders.size()) - 1; b >= 0; b--) {
+		if (boulders[b].surge == p_surge) {
+			if (!settled) {
+				if (Node *n = Object::cast_to<Node>(ObjectDB::get_instance(boulders[b].body))) {
+					n->queue_free();
+				}
+			}
+			boulders.remove_at(b);
+		}
+	}
+	for (Boulder &bo : boulders) {
+		if (bo.surge > p_surge) {
+			bo.surge--;
+		}
+	}
+	surges.remove_at(p_surge);
 }
 
 void PhysXDebrisSurge3D::_point_at(const Surge &p_surge, float p_s, Vector3 &r_pos, Vector3 &r_dir, float &r_width, float &r_slope) const {
@@ -209,7 +270,8 @@ void PhysXDebrisSurge3D::_step_surge(Surge &p_surge, float p_delta) {
 		p_surge.delay -= p_delta;
 		return;
 	}
-	if (Object *src = front_source.is_empty() ? nullptr : get_node_or_null(front_source)) {
+	// Only the lead surge rides the mud body's front; the later ones are pulses behind it, run as before.
+	if (Object *src = p_surge.lead ? _front() : nullptr) {
 		if (src->has_method("get_debris_front")) {
 			// GroundDebrisFlow3D (the mud system): an unknown or finished id comes back done with no position, so
 			// only a front with a position is followed.
@@ -448,6 +510,29 @@ void PhysXDebrisSurge3D::_notification(int p_what) {
 	}
 }
 
+// The mud system's front: front_source if set, else the scene's GroundDebrisFlow3D (looked up every two seconds
+// until there is one), so a surge in a world with a debris-flow body follows its front with no wiring.
+Object *PhysXDebrisSurge3D::_front() {
+	if (!front_source.is_empty()) {
+		return get_node_or_null(front_source);
+	}
+	if (Object *o = ObjectDB::get_instance(found_front)) {
+		return o;
+	}
+	const uint64_t now = OS::get_singleton()->get_ticks_msec();
+	if (now < next_front_search || !is_inside_tree()) {
+		return nullptr;
+	}
+	next_front_search = now + 2000;
+	TypedArray<Node> found = get_tree()->get_root()->find_children("*", "GroundDebrisFlow3D", true, false);
+	if (found.is_empty()) {
+		return nullptr;
+	}
+	Node *n = Object::cast_to<Node>(found[0]);
+	found_front = n ? n->get_instance_id() : ObjectID();
+	return n;
+}
+
 void PhysXDebrisSurge3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("start", "event"), &PhysXDebrisSurge3D::start);
 	ClassDB::bind_method(D_METHOD("clear"), &PhysXDebrisSurge3D::clear);
@@ -479,6 +564,11 @@ void PhysXDebrisSurge3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_boulder_rate"), &PhysXDebrisSurge3D::get_boulder_rate);
 	ClassDB::bind_method(D_METHOD("set_stop_slope", "slope"), &PhysXDebrisSurge3D::set_stop_slope);
 	ClassDB::bind_method(D_METHOD("get_stop_slope"), &PhysXDebrisSurge3D::get_stop_slope);
+	ClassDB::bind_method(D_METHOD("set_min_volume", "m3"), &PhysXDebrisSurge3D::set_min_volume);
+	ClassDB::bind_method(D_METHOD("get_min_volume"), &PhysXDebrisSurge3D::get_min_volume);
+	ClassDB::bind_method(D_METHOD("set_max_events", "count"), &PhysXDebrisSurge3D::set_max_events);
+	ClassDB::bind_method(D_METHOD("get_max_events"), &PhysXDebrisSurge3D::get_max_events);
+	ClassDB::bind_method(D_METHOD("get_skipped_events"), &PhysXDebrisSurge3D::get_skipped_events);
 	ClassDB::bind_method(D_METHOD("set_spray", "amount"), &PhysXDebrisSurge3D::set_spray);
 	ClassDB::bind_method(D_METHOD("get_spray"), &PhysXDebrisSurge3D::get_spray);
 	ClassDB::bind_method(D_METHOD("set_mud_color", "color"), &PhysXDebrisSurge3D::set_mud_color);
@@ -494,6 +584,8 @@ void PhysXDebrisSurge3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_boulders", PROPERTY_HINT_RANGE, "0,500,1"), "set_max_boulders", "get_max_boulders");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "boulder_rate", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_boulder_rate", "get_boulder_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stop_slope", PROPERTY_HINT_RANGE, "0,0.5,0.005"), "set_stop_slope", "get_stop_slope");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_volume", PROPERTY_HINT_RANGE, "0,10000,1,suffix:m³"), "set_min_volume", "get_min_volume");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_events", PROPERTY_HINT_RANGE, "1,64,1"), "set_max_events", "get_max_events");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_spray", "get_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "mud_color"), "set_mud_color", "get_mud_color");
 }

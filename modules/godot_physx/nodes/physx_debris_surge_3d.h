@@ -67,10 +67,12 @@ class PhysXDebrisSurge3D : public Node3D {
 		PackedFloat32Array widths;
 		LocalVector<float> along; // m from the outlet at each point
 		float volume = 0.0f; // m3 in this surge
+		float event_volume = 0.0f; // m3 of its whole event
 		float s = 0.0f; // m, the front's distance down the path
 		float speed = 0.0f; // m/s
 		float depth = 0.0f; // m
 		float delay = 0.0f; // s before it starts
+		bool lead = false; // the event's first surge: the one at the mud body's front
 		float stopped_time = -1.0f; // s since it stopped
 		bool done = false;
 	};
@@ -87,6 +89,9 @@ class PhysXDebrisSurge3D : public Node3D {
 	Ref<Material> rock_material;
 
 	NodePath front_source; // an object with get_debris_front(event_id) -> Dictionary (the mud system)
+	ObjectID found_front; // the scene's GroundDebrisFlow3D when front_source is empty
+	uint64_t next_front_search = 0;
+	Object *_front();
 	bool listen = true;
 	int surge_count = 4; // the most surges per event
 	float surge_interval = 60.0f; // s
@@ -97,6 +102,9 @@ class PhysXDebrisSurge3D : public Node3D {
 	float boulder_rate = 0.08f; // boulders per m3 of surge (the coarse fraction gathered at the snout)
 	float stop_slope = 0.07f; // the front stops on slopes below this (Ikeya 1981; fans at 3 to 6 degrees)
 	float spray = 1.0f;
+	float min_volume = 100.0f; // m3: smaller events are the mud body's alone
+	int max_events = 6; // events with surges at once; a bigger one replaces the smallest
+	int skipped = 0;
 	Color mud_color = Color(0.13f, 0.1f, 0.08f);
 
 	float _rand();
@@ -107,6 +115,7 @@ class PhysXDebrisSurge3D : public Node3D {
 	void _step_surge(Surge &p_surge, float p_delta);
 	void _push_boulders(float p_delta);
 	void _step_spray(float p_delta);
+	void _drop_surge(int p_surge);
 
 protected:
 	void _notification(int p_what);
@@ -145,6 +154,11 @@ public:
 	float get_boulder_rate() const { return boulder_rate; }
 	void set_stop_slope(float p_v) { stop_slope = MAX(p_v, 0.0f); }
 	float get_stop_slope() const { return stop_slope; }
+	void set_min_volume(float p_v) { min_volume = MAX(p_v, 0.0f); }
+	float get_min_volume() const { return min_volume; }
+	void set_max_events(int p_v) { max_events = CLAMP(p_v, 1, 64); }
+	int get_max_events() const { return max_events; }
+	int get_skipped_events() const { return skipped; }
 	void set_spray(float p_v) { spray = MAX(p_v, 0.0f); }
 	float get_spray() const { return spray; }
 	void set_mud_color(const Color &p_c) { mud_color = p_c; }

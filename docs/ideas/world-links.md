@@ -67,6 +67,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Canopy → interception | linked | shelter | |
 | Snow → plants (burial, pressing) | linked (18 Nov) | snow cover (snow map) | grass and plant shaders: load ρ g d against stem stiffness lays plants down, deep snow hides them |
 | Fire → snow melt | linked (18 Nov) | WorldFire `heat_at` | SnowCover3D melts H dt / L_f under the fire, whatever the air |
+| Smoke, burnt forest, dust → dirty snow | linked (19 Nov) | WorldWeather `smoke_at` (haze), WorldFire `burn_age_at`, WorldSnow `add_impurity` (GroundDust3D settling, PhysX blown ash 3862f22e, rockfall dust) | SnowCover3D keeps light-absorbing particles as mg/m2 black carbon equivalent: albedo drop 0.35 (1 - e^(-L/15)), fresh snow buries them, the melt brings them back up; shows grey and melts sooner (Warren and Wiscombe 1980; Painter et al. 2007; Gleason et al. 2013). Blowing ash and rockfall fines add theirs through `add_impurity` |
 | Vehicles → snow ruts | linked (18 Nov) | world_contact | snow checks the wheel stamp |
 | Bodies → snow prints | linked | `snow_deform`, `grass_trample` groups | |
 
@@ -86,9 +87,12 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Bodies → shrubs, crops, hedges, ferns | linked (18 Nov) | contact trample field | VegetationField3D keeps a field where no grass does |
 | Bodies → branches | linked | `tree_touch` group | |
 | Bodies → fallen leaves kicked up | linked (19 Nov) | world_contact bodies (position, speed) | LeafFall3D throws the lying leaves a moving body touches at 0.4-0.9 of its speed with a small lift; leaf litter spawns leaves across the swath; a still body moves none |
+| Water, snow → fallen leaves | linked (19 Nov) | WorldWater (height, flow), WorldSnow (depth, surface, lake ice), weather wind | LeafFall3D leaves land on the top surface: on water they float with the current plus 3% leeway in the wind (Breivik et al. 2011), on snow they lie on top, are buried by more snow and set down when it melts; lake ice holds them |
 | Vehicles → grass, branches | linked (18 Nov) | world_contact | wheels and bodies join |
 | Lying snow → plants | linked (18 Nov) | snow cover (snow map) | as above (GrassField3D, PlantGenerator) |
 | Flowing water → reeds, grass | linked (18 Nov) | WorldWater flow and surface | the trample fields take the current's drag (Cauchy number, Luhar and Nepf 2011): grass and plants lean downstream, flat in a fast current |
+| Springs → oasis plants and grass | linked (19 Nov) | DesertSprings (vegetation, from TerrainGenerator3D sand seas): `VegetationField3D.get_springs()`, `get_spring_wetness_at(pos)` (positions m, wetness 0-1, -1 off the sand seas) | readers VegetationField3D RULE_SPRING and GrassField3D; Valence adds the pools next; the spring finder should move to the terrain generator later. Anything cycling species meshes by index skips meshes with `tree_fire_years` meta |
+| Nebkhas → shrubs | linked (19 Nov) | TerrainGenerator3D `get_nebkhas(rect)` (x, top y, z, height m), `get_nebkha_height(pos)` (mound sand alone); `sand_sea_mask` (Image, red 0..1) shapes the ergs | VegetationField3D places a shrub on each mound top; the mounds are sand for the sand thread, no deformation hook needed (terrain-gen cf579682) |
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
 | Wet ground → mist | linked (18 Nov) | surface wetness, surface cooling | VegetationMist3D: wet ground mists more and sooner |
 
@@ -131,6 +135,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Fire → ash on burnt grass, litter | linked (18 Nov) | fire_char_map (`VegetationFire::ASH_CODE`) | PhysX c3c529f4: white ash where it burnt out, black char where not, thinned by wind and darkened by rain |
 | Fire → fire clouds (pyrocumulus over a big fire) | linked (19 Nov) | WorldFire `plumes()` (base, convective W) | PhysX ebdad64b: WeatherMap3D builds the cloud from the plumes |
 | Fire → smoke haze downwind | linked (19 Nov) | WorldFire `smoke_sources()` (base, kg/s PM2.5) | PhysX eabdcd98: WeatherMap3D carries the smoke into its haze |
+| Rain, snow → smoke and dust washed out of the air | linked (19 Nov) | WorldWeather `washout_at` (`rainfall_at`, `snowfall_at`) | below-cloud scavenging Lambda = a R^b: the map's smoke haze thins over hours of rain; Flow gas adds it to its smoke damping (coarse when the gas is heavy dust) |
 | Fire age → trees cast dead needles | linked (19 Nov) | shader global `fire_age_map` | PhysX ebdad64b |
 | Fire → regrowth (burnt ground greens again) | linked (19 Nov) | WorldFire `burn_age_at` (fires in play, WorldBurnScar3D) | VegetationField3D: RULE_BURN_AGE, PlantSpecies.burn_recovery (38c29f47); GrassField3D green-up (30b7085a, a7c6a8fb); both refresh through the burn change log (VegetationField3D 0197e5b2, vegetation bench `--burn=live`) |
 | Fire → trees regrow (resprouts, seedlings on the ash) | linked (19 Nov) | WorldFire `burn_age_at` at each tree's foot (VegetationField3D's burn grid) | Trees supply variants built at TreeGenerator.fire_years with mesh meta `tree_fire_years` (years) and `tree_fire_band` (Vector2 years from, to: bands 0-1, 1-3, 3-6, 6-10, 10-20); VegetationField3D places the variant whose band holds the age, unburnt variants off burns and from 20 years; vegetation --test checks it. Also the regrowth flush (cadd0e98) |
@@ -195,8 +200,55 @@ Every pair above is linked or in work. Three visible gaps remain; each reads a c
    lift, and its wake lifts the ones a little beyond: the air behind a walker moves at about 0.3-0.5 of walking
    speed close to the ground (Edge et al. 2005, human wake measurements), well under the gust lift threshold, so only
    leaves the body touches, plus a wheel's wake at speed, should fly.
-3. Rain washes smoke and dust out of the air (below-cloud scavenging). Source: `WorldWeather.precipitation_at` into
+3. Rain washes smoke and dust out of the air (below-cloud scavenging; built 19 Nov). Source: `WorldWeather.precipitation_at` into
    PhysXFlow3D smoke and dust. Scavenging coefficient Lambda = a R^b: for PM2.5-sized smoke about 1e-5 to 1e-4 1/s at
    1-10 mm/h (Laakso et al. 2003; Wang et al. 2010), so a smoke plume barely thins in a shower; for coarse dust
    (> 10 um) about 1e-3 1/s, so a dust cloud clears within minutes in rain. Applied as a density decay per Flow
    step, split by the gas's kind.
+
+## Round 4 candidates (19 Nov, card to Paulo)
+
+Two gaps found while building round 3; both read contracts that exist.
+
+1. Fallen leaves land on water and snow (built 19 Nov). LeafFall3D settles every leaf on the ground under it, through a pond or
+   a snow pack. A leaf reaching `WorldWater.height_at` floats: it drifts at the surface current
+   (`WorldWater.flow_at`) plus a small leeway in the wind (about 2-3% of the 10 m wind for flat floating debris,
+   Breivik et al. 2011), turns in eddies, and waterlogs and sinks over days (leaf breakdown, Webster and Benfield
+   1986), sooner in a fast current. A leaf landing on `WorldSnow` depth lies on top and is buried as new snow
+   falls; a dark leaf in sun sinks into the pack a little (it absorbs about 3x the sun the snow does).
+2. Soot, ash and dust darken snow and speed its melt (built 19 Nov). SnowCover3D ages albedo (Verseghy 1991) but knows no
+   impurities. Light-absorbing particles lower snow albedo: black carbon about 0.01-0.02 in the visible for 100 ppb
+   (Warren and Wiscombe 1980; Hadley and Kirchstetter 2012); mineral dust 0.1-0.3, bringing melt a month earlier
+   (Painter et al. 2007); burnt forests shed charred bark on the snow, cutting albedo by about 0.4 and melting the
+   pack about 5 days earlier (Gleason et al. 2013). Sources: the weather map's smoke haze (dry deposition at about
+   0.1-0.5 cm/s for PM2.5), WorldFire burn scars (charred debris under burnt trees, `burn_age_at`), ground and rock
+   dust events. Impurities gather at the surface as the snow melts (melt amplification, Doherty et al. 2013) and are
+   buried by new snow; the snow material shows them grey.
+
+
+## Round 5 candidates (19 Nov, card to Paulo)
+
+Gaps found by reading the readers, each on a contract that exists.
+
+1. Floodwater soaks and silts the ground it covers. GroundSurface3D reads its own `water_sources` list for water over
+   the ground (sand and water, stage 4), not WorldWater, so a river rising over its banks (WeatherRunoff3D), live
+   water or a waterfall's pool never wets the ground they cover. Moving that read to `WorldWater.height_at`,
+   `flow_at` and `sediment_at` (19 Nov) makes every water producer soak the ground (Green-Ampt as now), and the
+   water's suspended load settles on the ground it floods: overbank deposition D = C w_s t per event, a few mm next to
+   the channel falling off over tens to hundreds of metres (Pizzuto 1987; Asselman and Middelkoop 1995). When the
+   water goes it leaves a wet silt or ash veneer that dries and cracks (mud's cracks), and the plants it laid stay
+   laid.
+2. Sand and snow drift in the lee of rocks, walls, buildings and vehicles. The snow cover's drift reads Winstral's Sx
+   from the terrain alone; the sand's flux is sheltered by plants alone (Raupach). The weather map already bakes
+   obstacles into its near-ground wind (WeatherShelter). Reading that through `WorldWeather.wind_at` at 0.1-2 m lets
+   both settle where the wind slows: a snow fence's drift reaches about 12-15 H downwind and 1.2 H high at
+   equilibrium (Tabler 1980, 1991); sand fills a lee shadow a few H long behind a boulder or a parked car (Hesp 1981,
+   shadow dunes). Rocks (RockField3D) and vehicles join the shelter as obstacles.
+3. The sea surges into sea caves. CaveNetwork3D sea caves have floors at or below low tide but no water. A WorldWater
+   producer for the cave passages (the sea level at the mouth, wave set-up carried in and damped with distance) lets
+   bodies wade and swim there, and Valence's surface draws it; where a roof opening meets the surface the trapped air
+   drives a spout on the wave crests (blowholes; the spout's pressure scales with the wave's rho g H at the mouth).
+   Needs Valence for the drawing.
+
+Later: fog drip (cloud water caught by leaves and needles wets the ground under trees on foggy ridges, about 0.1-1
+mm a day; Bruijnzeel et al. 2005).

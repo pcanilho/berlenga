@@ -30,7 +30,11 @@
 
 #pragma once
 
+#include "core/templates/hash_map.h"
+#include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
+
+#include "snow_powder_cloud_3d.h"
 
 class SnowCover3D;
 
@@ -39,12 +43,13 @@ class SnowCover3D;
 // density) drops below 1 on 28-55 degree slopes; the slab is the new snow since it last settled, or the snow over a
 // buried crust. The released snow runs as a depth-averaged Voellmy flow (Voellmy 1955; Salm 1993; Christen et al.
 // 2010, RAMMS) on the cover's own grid: gravity down the snow surface, dry friction mu g cos(theta) and turbulent
-// friction g u^2 / (xi h), donor-cell transport of mass and momentum, entrainment of the new snow it runs over at a
+// friction g u^2 / (xi h), second-order finite-volume transport of mass and momentum (MUSCL, HLL fluxes; follow-up 22), entrainment of the new snow it runs over at a
 // rate with its speed, deposition where it can no longer overcome its own friction. The moving snow lives in the
 // cover's cells while it runs, so the snow map, prints, plants and every reader of WorldSnow see it move; bodies in
 // its path take its dynamic pressure, 1/2 rho u^2. SnowCover3D adds one by itself while avalanches_enabled.
 class SnowAvalanche3D : public Node3D {
 	GDCLASS(SnowAvalanche3D, Node3D);
+	friend class SnowCover3D;
 
 	// Settings.
 	float mu = 0.2f; // Voellmy dry friction (RAMMS: 0.155-0.4)
@@ -57,6 +62,50 @@ class SnowAvalanche3D : public Node3D {
 	float flow_density = 300.0f; // kg/m3
 	float max_time = 180.0f; // s
 	bool natural_release = true;
+	// Triggers (follow-up 21): what stands on the slab adds Foehn's shear under it.
+	bool triggers_enabled = true;
+	PackedStringArray trigger_groups;
+	float character_mass = 75.0f; // kg, a CharacterBody3D without snow_mass / ground_mass
+	float propagation_index = 1.5f; // a fracture a load opens runs through slab with S under this
+	float collapse_range = 60.0f; // m a collapse (whumpf) runs along a buried crust
+	// Powder cloud (follow-up 23).
+	bool powder_enabled = true;
+	float powder_speed = 10.0f; // m/s the front must run at to throw snow up
+	float powder_share = 0.3f; // of the front's snow taken into the air per 10 m it runs over the speed
+	float powder_settle = 6.0f; // s, e-folding of the cloud's snow settling out
+	float powder_deposit_density = 70.0f; // kg/m3 of the layer it leaves
+	struct Parcel {
+		Vector3 position;
+		Vector3 velocity;
+		float mass = 0.0f; // kg still in the air
+		float owed = 0.0f; // kg settled, not yet laid on the cover
+		float radius = 4.0f;
+		float age = 0.0f;
+	};
+	LocalVector<Parcel> parcels;
+	struct Bin {
+		float mass = 0.0f;
+		Vector3 momentum;
+		Vector3 position; // mass-weighted sum
+	};
+	HashMap<Vector2i, Bin> bins; // the front's intake since the last parcels, by 8 m bins
+	LocalVector<SnowPowderCloud3D::Source> sources;
+	Vector<float> powder_pending; // kg/m2 settled onto each cover cell, not yet written
+	double powder_window = 0.0;
+	double powder_flush = 0.0;
+	double parcel_deposit = 0.0;
+	float release_liquid = 0.0f; // the released slab's liquid water, share of its mass
+	float powder_taken = 0.0f; // kg into the air this avalanche
+	float powder_laid = 0.0f; // kg settled back
+	float powder_reach = 0.0f; // m from the release's centre to the farthest settling
+	SnowPowderCloud3D *cloud = nullptr;
+	void _powder_step(SnowCover3D *p_cover, float p_dt);
+	void _powder_lay(SnowCover3D *p_cover, const Parcel &p_parcel, float p_mass);
+	void _powder_flush(SnowCover3D *p_cover);
+
+	int trigger_count = 0;
+	int collapse_count = 0;
+	Vector<uint8_t> collapsed; // cover cells whose buried crust already collapsed
 	float debris_share = 0.02f; // of the deposit, broken into clumps on its surface
 	float debris_radius = 60.0f; // m round the camera
 
@@ -80,10 +129,12 @@ class SnowAvalanche3D : public Node3D {
 	Vector<float> peak; // m/s, the fastest the flow ran through each cell
 	double flow_time = 0.0;
 	double flush_accum = 0.0;
+	double pending_time = 0.0; // s of flow owed while a background update had the cover
 	float released_volume = 0.0f; // m3
 	float entrained_volume = 0.0f;
 	float deposited_volume = 0.0f;
 	float max_speed = 0.0f;
+	float max_speed_terminal = 0.0f; // m/s, Voellmy's steady speed where and when it ran fastest
 	float run_out = 0.0f; // m, the farthest the front got from the release's centre
 	Vector3 release_center;
 	int release_count = 0;
@@ -94,11 +145,19 @@ class SnowAvalanche3D : public Node3D {
 	bool _check_release(SnowCover3D *p_cover);
 	void _release(SnowCover3D *p_cover, const Vector<int> &p_cells, const Vector<float> &p_slab);
 	void _flow_step(SnowCover3D *p_cover, float p_dt);
+	void _fluxes(const Vector<float> &p_h, const Vector<float> &p_hu, const Vector<float> &p_hv, float p_dt, Vector<float> &r_dh, Vector<float> &r_dhu, Vector<float> &r_dhv) const;
+	void _transport(float p_dt);
 	void _flush(SnowCover3D *p_cover);
 	void _debris(const Vector3 &p_at, float p_volume);
 	void _hit_bodies(SnowCover3D *p_cover);
 	void _finish(SnowCover3D *p_cover);
 	int _cover_index(const SnowCover3D *p_cover, int p_i) const;
+	// The weakest layer at a cover cell under a line load: its trigger index (strength over shear with the load)
+	// and the slab over it; p_crust says the weak layer is the facets on a buried crust.
+	float _trigger_index(const SnowCover3D *p_cover, int p_x, int p_z, float p_line_load, float p_sink, float &r_slab, bool &r_crust) const;
+	int _load(SnowCover3D *p_cover, const Vector3 &p_at, float p_line_load, float p_sink, Node *p_body);
+	void _check_triggers(SnowCover3D *p_cover);
+	void _on_cornice_failed(const Vector3 &p_position, const Vector3 &p_direction, float p_length, float p_mass);
 
 protected:
 	void _notification(int p_what);
@@ -109,6 +168,22 @@ public:
 	static float weak_layer_strength(float p_density, float p_age_hours); // Pa
 	static float stability_index(float p_slab, float p_slab_density, float p_weak_density, float p_age_hours, float p_slope);
 
+	// The shear a line load (N/m along it) on the surface adds at depth p_depth below it, normal to a slope of
+	// p_slope radians: its peak over the angle below the load (Foehn 1987).
+	static float added_shear(float p_line_load, float p_depth, float p_slope); // Pa
+	// Puts a line load on the snow at a point: 0 nothing gave, 1 a slab released, 2 a buried crust collapsed
+	// (whumpf) without a release. p_sink: how far the load has sunk into the snow (m).
+	int apply_load(const Vector3 &p_at, float p_line_load, float p_sink = 0.0f);
+	float get_trigger_index_at(const Vector3 &p_at, float p_line_load, float p_sink = 0.0f) const;
+	int get_trigger_count() const { return trigger_count; }
+	float get_powder_taken() const { return powder_taken; }
+	float get_powder_settled() const { return powder_laid; }
+	float get_suspended_mass() const;
+	float get_powder_reach() const { return powder_reach; }
+	float get_powder_density_at(const Vector3 &p_position) const; // kg/m3 of snow in the air
+	SnowPowderCloud3D *get_powder_cloud() const { return cloud; }
+	int get_collapse_count() const { return collapse_count; }
+
 	bool trigger(const Vector3 &p_at, float p_radius); // release the slab round a point now (a skier, a cornice, a test)
 	void step(double p_delta); // run the flow now, for tests
 	bool is_running() const { return running; }
@@ -118,6 +193,7 @@ public:
 	float get_deposited_volume() const { return deposited_volume; }
 	float get_flowing_volume() const;
 	float get_max_speed() const { return max_speed; }
+	float get_max_speed_terminal() const { return max_speed_terminal; }
 	float get_run_out() const { return run_out; }
 	float get_flow_height_at(const Vector3 &p_position) const;
 	Vector3 get_flow_velocity_at(const Vector3 &p_position) const;
@@ -137,4 +213,24 @@ public:
 	float get_entrainment() const { return entrainment; }
 	void set_natural_release(bool p_enable) { natural_release = p_enable; }
 	bool is_natural_release() const { return natural_release; }
+	void set_powder_enabled(bool p_enable) { powder_enabled = p_enable; }
+	bool is_powder_enabled() const { return powder_enabled; }
+	void set_powder_speed(float p_speed) { powder_speed = MAX(p_speed, 0.0f); }
+	float get_powder_speed() const { return powder_speed; }
+	void set_powder_share(float p_share) { powder_share = CLAMP(p_share, 0.0f, 1.0f); }
+	float get_powder_share() const { return powder_share; }
+	void set_powder_settle(float p_seconds) { powder_settle = MAX(p_seconds, 0.1f); }
+	float get_powder_settle() const { return powder_settle; }
+	void set_triggers_enabled(bool p_enable) { triggers_enabled = p_enable; }
+	bool is_triggers_enabled() const { return triggers_enabled; }
+	void set_trigger_groups(const PackedStringArray &p_groups) { trigger_groups = p_groups; }
+	PackedStringArray get_trigger_groups() const { return trigger_groups; }
+	void set_character_mass(float p_kg) { character_mass = MAX(p_kg, 0.0f); }
+	float get_character_mass() const { return character_mass; }
+	void set_propagation_index(float p_index) { propagation_index = MAX(p_index, 0.0f); }
+	float get_propagation_index() const { return propagation_index; }
+	void set_collapse_range(float p_m) { collapse_range = MAX(p_m, 0.0f); }
+	float get_collapse_range() const { return collapse_range; }
+
+	SnowAvalanche3D();
 };

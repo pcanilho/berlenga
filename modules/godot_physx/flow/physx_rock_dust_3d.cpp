@@ -165,7 +165,16 @@ void PhysXRockDust3D::_step(float p_delta) {
 	field->take_rockfall_dust(events);
 	// Each event joins a burst still running within a couple of metres of it (a piece's run of hits), else a free
 	// source, else the weakest; mass-weighted position, jet and size.
+	// Rockfall fines settling on snow darken it (dirty snow, WorldSnow.add_impurity): most of a rockfall's dust is
+	// coarse and lands within metres, carried a little downwind; mineral dust counts 0.013 of its mass as black carbon.
+	WorldSnow *snow = WorldContracts::snow();
+	const WorldWeather *weather = WorldContracts::weather();
 	for (const RockField3D::Dust &d : events) {
+		if (snow && snow->has_provider() && d.mass > 0.0f) {
+			const Vector3 w = weather && weather->has_provider() ? weather->wind_at(d.position, 1.0f) : Vector3();
+			const float r = MAX(d.radius * 4.0f, 3.0f);
+			snow->add_impurity(d.position + Vector3(w.x, 0.0f, w.z) * 2.0f, r, d.mass * 0.7f * 1.0e6f * 0.013f / (float(Math::PI) * r * r));
+		}
 		if (d.position.distance_to(c) > near_range) {
 			continue;
 		}
