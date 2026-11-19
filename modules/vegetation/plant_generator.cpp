@@ -5807,6 +5807,8 @@ void fragment() {
 		}
 	}
 	weather_frost_apply(weather_frost_at(v_world), n_world.y, albedo, rough);
+	// Salt spray burns the leaves near the sea (WeatherMap3D sea_spray), leaf by leaf.
+	weather_salt_burn_apply(weather_salt_at(v_world), fract(sin(dot(floor(v_world * 6.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453), albedo);
 	// Snow lies on the faces that look up.
 	vec4 snow_s = snow_cover_at(v_world);
 	float snow = snow_cover_weight(snow_s.x, 60.0, n_world, n_world);

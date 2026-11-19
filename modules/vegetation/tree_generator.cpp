@@ -19549,6 +19549,24 @@ vec3 plant_wind(vec3 wp, float h) {
 			code = code.insert(bl + back_line.length(), "	BACKLIGHT *= fire_leaf_back;\n");
 		}
 	}
+	if (al >= 0 && code.contains("float weather_salt_burn_apply(")) {
+		// Salt spray (WeatherMap3D sea_spray): the leaves near the sea brown one by one (the fire's leaf hash), the
+		// light through them too.
+		code = code.insert(al + albedo_line.length(), R"(
+	vec3 salt_leaf_back = vec3(1.0);
+	{
+		vec3 salt_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec3 salt_before = ALBEDO;
+		if (weather_salt_burn_apply(weather_salt_at(salt_w), fract(dot(COLOR.rgb, vec3(53.17, 21.71, 7.13)) * 3.17 + 0.29), ALBEDO) > 0.0) {
+			salt_leaf_back = clamp(ALBEDO / max(salt_before, vec3(1e-3)), 0.0, 1.5);
+		}
+	})");
+		const String salt_back = "	BACKLIGHT = (backlight.rgb + backlight_tex);\n";
+		const int sb = code.find(salt_back);
+		if (sb >= 0) {
+			code = code.insert(sb + salt_back.length(), "	BACKLIGHT *= salt_leaf_back;\n");
+		}
+	}
 	if (al >= 0 && leaf_underside > 0.0f) {
 		code = code.insert(al + albedo_line.length(), R"(
 	if (!FRONT_FACING) {

@@ -841,12 +841,22 @@ void WorldGround::add_runoff_load(const Vector3 &p_position, float p_mineral_kg,
 	}
 }
 
+float WorldGround::track_mud(const Vector3 &p_position, float p_radius, float p_depth, float p_wet, const Vector4 &p_print) {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_track_mud, p_position, p_radius, p_depth, p_wet, p_print, r)) {
+		return r;
+	}
+	return provider && p_depth > 0.0f ? provider->contract_ground_track_mud(p_position, p_radius, p_depth, p_wet, p_print) : 0.0f;
+}
+
 void WorldGround::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_runoff_load", "position", "mineral_kg", "ash_kg"), &WorldGround::add_runoff_load);
+	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet", "print"), &WorldGround::track_mud);
 	ClassDB::bind_method(D_METHOD("has_runoff"), &WorldGround::has_runoff);
 	// The runoff's post-fire debris flows (WeatherRunoff3D): one event per basin per storm, for the moving flow.
 	ADD_SIGNAL(MethodInfo("debris_flow", PropertyInfo(Variant::DICTIONARY, "event")));
 	GDVIRTUAL_BIND(_add_runoff_load, "position", "mineral_kg", "ash_kg");
+	GDVIRTUAL_BIND(_track_mud, "position", "radius", "depth", "wet", "print");
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldGround::has_provider);
 	ClassDB::bind_method(D_METHOD("height_at", "position"), &WorldGround::height_at);
 	ClassDB::bind_method(D_METHOD("soil_at", "position"), &WorldGround::_soil_at_bind);

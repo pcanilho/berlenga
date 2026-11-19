@@ -2451,9 +2451,10 @@ dense flow then powder).
   through the storm path (`_storm_fail`), falling downslope (`WorldGround.height_at` at 3 m) with a
   1.5 m/s shove from the flow.
 - Felled trees and snapped stems (wind too) cut their leaf area out of the weather map's
-  `canopy_map` (fading to 1.4 crown radii like VegetationField3D's crown term), so snow's anchoring
-  and braking, rain and wind see the lane. A VegetationField3D repaint restores it (it owns the map).
-- Bench: `--storm --avalanche-test` (WorldSnow/WorldGround stubs, 7 checks) and
+  `canopy_map` (fading to 1.4 crown radii like VegetationField3D's crown term) and record it with the field's
+  `add_canopy_loss` (repaints keep the gap), so snow's anchoring
+  and braking, rain and wind see the lane.
+- Bench: `--storm --avalanche-test` (WorldSnow/WorldGround stubs, 8 checks) and
   `--storm --avalanche=P` frames. Old 34 m open-grown spruce (D 1.37 m) holds to ~80 kPa.
 ## 6. What the games at Paulo's bar do
 

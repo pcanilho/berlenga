@@ -36,6 +36,10 @@
 // drips go into the contact wetness square ("wet where water has been"), which dries them by the weather's drying
 // time (the air's vapour deficit, the wind, the sun: Penman), so they last minutes in a humid shade and fade fast in
 // sun and wind. Bodies are the world_contact group, read through WorldContracts::describe_body.
+// Out of mud the feet or tread also carry clay, a film of about a millimetre (a tread a little more), pressed onto
+// firm ground print by print through WorldGround.track_mud (the ground's tracked mud), shedding about a seventh a
+// footfall as GroundLegMud3D's boots do. Vehicles and characters that print their own mud (PhysXVehicle3D,
+// GroundLegMud3D) carry only water here.
 
 #include "weather_map_3d.h"
 
@@ -48,6 +52,9 @@ static constexpr float TRACK_TREAD_SHARE = 0.03f; // by each tread stamp (every 
 static constexpr float TRACK_DRIP_TIME = 40.0f; // s, e-folding of the water running off a wet body
 static constexpr float TRACK_LOAD_TIME = 180.0f; // s, the feet's film drying on them as they go
 static constexpr float TRACK_DRIP_EVERY = 0.12f; // s between drops
+static constexpr float TRACK_MUD_SOLE = 0.001f; // m of clay on a sole out of mud
+static constexpr float TRACK_MUD_TREAD = 0.002f; // m in a tread
+static constexpr float TRACK_MUD_MIN = 2e-5f; // m: thinner prints nothing
 
 void WeatherMap3D::_tracks_step(float p_real_dt) {
 	if (!wet_tracks || !contact_wetness_enabled || p_real_dt <= 0.0f || !is_inside_tree()) {
@@ -55,7 +62,7 @@ void WeatherMap3D::_tracks_step(float p_real_dt) {
 	}
 	const Rect2 square = contact.rect();
 	const WorldWater *ww = WorldContracts::water();
-	const WorldGround *wg = WorldContracts::ground();
+	WorldGround *wg = WorldContracts::ground();
 	const bool water = ww->has_provider();
 	for (KeyValue<ObjectID, TrackBody> &kv : track_bodies) {
 		kv.value.seen = false;
@@ -84,12 +91,17 @@ void WeatherMap3D::_tracks_step(float p_real_dt) {
 		}
 		t->seen = true;
 		const float bottom = b.center.y - b.half_height;
-		// In water: soaked through, nothing printed (the water covers it).
+		// In water: soaked through, the clay washed off, nothing printed (the water covers it).
 		if (water && ww->depth_at(Vector3(b.center.x, bottom + 0.05f, b.center.z)) > 0.0f) {
 			t->load = 1.0f;
 			t->drip = 1.0f;
+			t->mud = 0.0f;
 			t->last_print = b.center;
 			continue;
+		}
+		bool own_mud = n3->is_class("PhysXVehicle3D") || n3->is_class("PhysXVehicleWheel3D");
+		for (int c = 0; c < n3->get_child_count() && !own_mud; c++) {
+			own_mud = n3->get_child(c)->is_class("GroundLegMud3D");
 		}
 		// On the ground (or near it, without one).
 		float ground = (wg->has_provider() || wg->get_script_instance()) ? wg->height_at(Vector3(b.center.x, b.center.y + 1.0f, b.center.z)) : -Math::INF;
@@ -100,6 +112,9 @@ void WeatherMap3D::_tracks_step(float p_real_dt) {
 			float wet = 0.0f;
 			if (wg->mud_depth_at(at) > 0.01f) {
 				wet = 0.8f;
+				if (!own_mud) {
+					t->mud = MAX(t->mud, b.wheel ? TRACK_MUD_TREAD : TRACK_MUD_SOLE);
+				}
 			} else if (wg->standing_water_at(at) > 0.003f || get_puddle_at(at) > 0.5f) {
 				wet = 0.6f;
 			}
@@ -116,24 +131,42 @@ void WeatherMap3D::_tracks_step(float p_real_dt) {
 		const float stride = b.wheel ? 0.15f : CLAMP(2.2f * b.radius, 0.3f, 0.9f);
 		if (step.length() > 10.0f) {
 			t->last_print = b.center; // moved by a teleport
-		} else if (grounded && t->load > 0.03f && step.length() >= stride) {
+		} else if (grounded && (t->load > 0.03f || t->mud > TRACK_MUD_MIN) && step.length() >= stride) {
 			const Vector2 dir = step.normalized();
+			const float yaw = Math::atan2(-dir.y, dir.x);
+			const float gy = Math::is_finite(ground) ? ground : bottom;
+			// Firm ground under the print: mud only leaves the clay it carries where it is not mud itself.
+			const bool firm = !Math::is_finite(ground) || wg->mud_depth_at(Vector3(b.center.x, ground, b.center.z)) <= 0.0f;
 			if (b.wheel) {
 				const float w = b.width > 0.0f ? b.width : 2.0f * b.radius;
 				// A line of stamps along the way, as wide as the tread.
 				const int k = MAX(int(Math::ceil(step.length() / 0.1f)), 1);
 				for (int i = 1; i <= k; i++) {
 					const Vector2 p = Vector2(t->last_print.x, t->last_print.z) + step * (float(i) / k);
-					contact.add_disc(Vector3(p.x, 0.0f, p.y), 0.5f * w, t->load);
+					if (t->load > 0.03f) {
+						contact.add_disc(Vector3(p.x, 0.0f, p.y), 0.5f * w, t->load);
+					}
+					if (firm && t->mud > TRACK_MUD_MIN) {
+						wg->track_mud(Vector3(p.x, gy, p.y), 0.5f * w, t->mud, 1.0f, Vector4(1.0f, yaw, 0.0f, 0.0f));
+						t->mud *= 1.0f - TRACK_TREAD_SHARE * (step.length() / k) / 0.15f;
+					}
 				}
 				t->load *= Math::pow(1.0f - TRACK_TREAD_SHARE, step.length() / 0.15f);
 			} else {
 				const Vector2 side(-dir.y, dir.x);
 				const Vector2 p = xz + side * (t->left ? 0.4f : -0.4f) * b.radius;
 				const float foot = CLAMP(0.4f * b.radius, 0.06f, 0.25f);
-				contact.add_disc(Vector3(p.x, 0.0f, p.y), foot, t->load);
-				// A foot is longer than wide: a second disc ahead of the heel.
-				contact.add_disc(Vector3(p.x + dir.x * foot, 0.0f, p.y + dir.y * foot), foot * 0.9f, t->load * 0.9f);
+				if (t->load > 0.03f) {
+					contact.add_disc(Vector3(p.x, 0.0f, p.y), foot, t->load);
+					// A foot is longer than wide: a second disc ahead of the heel.
+					contact.add_disc(Vector3(p.x + dir.x * foot, 0.0f, p.y + dir.y * foot), foot * 0.9f, t->load * 0.9f);
+				}
+				if (firm && t->mud > TRACK_MUD_MIN) {
+					// The sole's heel and forefoot (GroundLegMud3D's print), scaled with the body.
+					const float sc = CLAMP(b.radius / 0.3f, 0.5f, 2.0f);
+					wg->track_mud(Vector3(p.x + dir.x * 0.5f * foot, gy, p.y + dir.y * 0.5f * foot), 0.16f * sc, t->mud, 1.0f, Vector4(2.0f, yaw, 0.15f * sc, 0.055f * sc));
+					t->mud *= 1.0f - TRACK_PRINT_SHARE;
+				}
 				t->left = !t->left;
 				t->load *= 1.0f - TRACK_PRINT_SHARE;
 			}
@@ -176,9 +209,18 @@ Vector2 WeatherMap3D::get_body_water(Node *p_body) const {
 	return t ? Vector2(t->load, t->drip) : Vector2();
 }
 
+float WeatherMap3D::get_body_mud(Node *p_body) const {
+	if (!p_body) {
+		return 0.0f;
+	}
+	const TrackBody *t = track_bodies.getptr(p_body->get_instance_id());
+	return t ? t->mud : 0.0f;
+}
+
 void WeatherMap3D::_bind_tracks_methods() {
 	ClassDB::bind_method(D_METHOD("set_wet_tracks", "enabled"), &WeatherMap3D::set_wet_tracks);
 	ClassDB::bind_method(D_METHOD("is_wet_tracks_enabled"), &WeatherMap3D::is_wet_tracks_enabled);
 	ClassDB::bind_method(D_METHOD("get_body_water", "body"), &WeatherMap3D::get_body_water);
+	ClassDB::bind_method(D_METHOD("get_body_mud", "body"), &WeatherMap3D::get_body_mud);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wet_tracks"), "set_wet_tracks", "is_wet_tracks_enabled");
 }

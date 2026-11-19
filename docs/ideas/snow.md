@@ -1447,6 +1447,7 @@ Research: a slab avalanche leaves a crown (a tensile fracture standing the slab'
 
 - **Head**: the eruption current comes from the head, the fastest part of a dry avalanche (Sovilla et al. 2015). In the flow the head's very edge ploughs the snow ahead and slows below the powder speed, so only the slab's sides (where the flow spreads sideways) fed the cloud: a few separate puffs. A cell now also counts as the head when the cell ahead of it is slower than the powder speed (the last fast snow before the ploughing edge), so the cloud rises along the whole front.
 - **Albedo**: PhysXFlow3D.scattering_albedo (PhysX 6568b3d2, raster to match 7b6f7ea0) is 0.99 for the powder: ice grains barely absorb (Warren 1982).
+- **Spikes under the running flow**: on the slow lateral margins single cells stopped and dropped their whole load (1-3 m) as columns while their neighbours crept on; the snow surface drew them as cones. A stopping cell now comes to rest over its neighbours too (half on itself, an eighth on each side, as the end of the run smooths the deposit), and every flush lets stopped debris slump to its angle of repose (talus relaxation, 4 passes), even under moving snow.
 - **Bench**: `--view=avalanche --powder` releases a wide dry slab in front of the camera (`trigger` at -40, radius 60). Left to itself the face let go off to both sides of the frame, and its cloud with it.
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow

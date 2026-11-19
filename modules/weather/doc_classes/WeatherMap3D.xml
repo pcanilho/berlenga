@@ -178,6 +178,13 @@
 				Clears the smoke layer.
 			</description>
 		</method>
+		<method name="get_body_mud" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="body" type="Node" />
+			<description>
+				For a body in the [code]world_contact[/code] group: the mud it carries on its soles or tread, in metres of film. Prints on firm ground hand it to [method WorldGround.track_mud] a little at a time; water washes it off. See [member wet_tracks].
+			</description>
+		</method>
 		<method name="get_body_water" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="body" type="Node" />

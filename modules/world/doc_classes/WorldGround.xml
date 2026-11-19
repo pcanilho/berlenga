@@ -118,6 +118,17 @@
 				A stub's [method standing_water_at].
 			</description>
 		</method>
+		<method name="_track_mud" qualifiers="virtual">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="depth" type="float" />
+			<param index="3" name="wet" type="float" />
+			<param index="4" name="print" type="Vector4" />
+			<description>
+				Override in a stub to replace [method track_mud].
+			</description>
+		</method>
 		<method name="add_runoff_load">
 			<return type="void" />
 			<param index="0" name="position" type="Vector3" />
@@ -237,6 +248,17 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Water standing on the ground (ruts, prints, puddles), in metres. Default 0.
+			</description>
+		</method>
+		<method name="track_mud">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="depth" type="float" />
+			<param index="3" name="wet" type="float" />
+			<param index="4" name="print" type="Vector4" />
+			<description>
+				Leaves [param depth] metres of mud film carried by a body on the ground at [param position] over [param radius] metres; [param wet] is its water share (0..1). [param print]: x 1 for a tyre, 2 for a sole (0: a thrown lump), y the yaw, z and w the print's length and width. Returns the volume laid, m3 (0 with no provider). GroundSurface3D provides it.
 			</description>
 		</method>
 	</methods>
