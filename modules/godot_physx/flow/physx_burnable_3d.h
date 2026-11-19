@@ -50,6 +50,7 @@ class PhysXFlowEmitter3D;
 // and debris, embers spot new fires").
 class PhysXBurnable3D : public Node3D {
 	GDCLASS(PhysXBurnable3D, Node3D);
+	friend class PhysXBuildingFire3D; // shares the burn material
 
 public:
 	enum State {

@@ -100,6 +100,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Cloud shadow → water | linked | cloud shadow | |
 | Water → wet shore | linked | contact wetness | |
 | Falls → mist → wet rock | linked | mist | |
+| Falls → bodies in them (wet, pushed down) | linked (19 Nov) | WorldWater (PhysXWaterfalls3D) | the sheets and free columns answer the contract inside their water, above where they land: depth q/v, the water's velocity |
 | Bodies with buoyancy → wakes | linked | buoyancy, wake nodes | |
 | Bodies without buoyancy → ripples, splash | linked (18 Nov) | contact | world_contact bodies disturb sea, river |
 | Wading → wet legs, clothes | linked (18 Nov) | WorldWater | ClothWetness (PhysX, d90fa990) |
@@ -174,3 +175,25 @@ copy of shared state is listed under "Private copies" until it moves onto the so
   temperature plus sub-grid plume turbulence).
 - One contact group: every system reads `world_contact` as well as its own group; vehicles, characters and PhysX
   bodies join it.
+
+## Next round candidates (19 Nov, card to Paulo)
+
+Every pair above is linked or in work. Three visible gaps remain; each reads a contract that already exists.
+
+1. Bodies break through lake ice. Source: `WorldSnow.lake_ice_at` (thickness, white share) and `world_contact` bodies
+   (mass from the physics body). Bearing capacity of floating ice: Gold (1971), P = A h^2 (P in kg, h in cm), A about
+   3.5 for routine safe loads and about 17.5 at failure; white (snow) ice carries about half of clear ice, and
+   thawing ice less again (USACE EM 1110-2-1612; Masterson 2009 review). A body over A_fail h^2 breaks a hole
+   about its own size plus the radial cracks' reach (characteristic length l = (E h^3 / 12 (1 - nu^2) rho_w g)^(1/4),
+   Wyman 1950), which the lake ice keeps open till it refreezes (Stefan's law already in SnowCover3D); the body then
+   meets the water through WorldWater (buoyancy, wet clothes).
+2. Bodies kick up fallen leaves. Source: `world_contact` bodies (position, velocity) into LeafFall3D's lying leaves.
+   A foot or wheel moving through litter throws the leaves it touches at about the contact's speed plus a small
+   lift, and its wake lifts the ones a little beyond: the air behind a walker moves at about 0.3-0.5 of walking
+   speed close to the ground (Edge et al. 2005, human wake measurements), well under the gust lift threshold, so only
+   leaves the body touches, plus a wheel's wake at speed, should fly.
+3. Rain washes smoke and dust out of the air (below-cloud scavenging). Source: `WorldWeather.precipitation_at` into
+   PhysXFlow3D smoke and dust. Scavenging coefficient Lambda = a R^b: for PM2.5-sized smoke about 1e-5 to 1e-4 1/s at
+   1-10 mm/h (Laakso et al. 2003; Wang et al. 2010), so a smoke plume barely thins in a shower; for coarse dust
+   (> 10 um) about 1e-3 1/s, so a dust cloud clears within minutes in rain. Applied as a density decay per Flow
+   step, split by the gas's kind.

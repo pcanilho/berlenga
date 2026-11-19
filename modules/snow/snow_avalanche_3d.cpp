@@ -242,6 +242,8 @@ void SnowAvalanche3D::_release(SnowCover3D *p_cover, const Vector<int> &p_cells,
 	written.fill(0.0f);
 	deposit.resize(n * n);
 	deposit.fill(0.0f);
+	peak.resize(n * n);
+	peak.fill(0.0f);
 	released_volume = 0.0f;
 	entrained_volume = 0.0f;
 	deposited_volume = 0.0f;
@@ -343,7 +345,10 @@ void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
 				// Deposited: the flow's snow stays in the cover as static snow, its surface broken into blocks near
 				// the camera (avalanche debris: granules, Bartelt and McArdell 2009).
 				deposited_volume += depth * cell * cell;
-				_debris(Vector3((flow_origin.x + x + 0.5f) * cell, 0.0f, (flow_origin.y + z + 0.5f) * cell), depth * cell * cell);
+				// Blocks only where the flow arrived fast (the run-out), not the thin remnants in the release zone.
+				if (peak[i] > ENTRAIN_SPEED) {
+					_debris(Vector3((flow_origin.x + x + 0.5f) * cell, 0.0f, (flow_origin.y + z + 0.5f) * cell), depth * cell * cell);
+				}
 				// The cover holds what was last written here; it may be less than the flow brought since.
 				written.write[i] = written[i] - h[i];
 				deposit.write[i] = deposit[i] + h[i];
@@ -366,6 +371,7 @@ void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
 			hu.write[i] = u * h[i];
 			hv.write[i] = v * h[i];
 			vmax = MAX(vmax, speed);
+			peak.write[i] = MAX(peak[i], speed);
 		}
 	}
 	max_speed = MAX(max_speed, vmax);

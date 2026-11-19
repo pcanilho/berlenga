@@ -31,6 +31,7 @@
 #include "physx_cloth_burn.h"
 
 #include "../cloth/xpbd_cloth_solver.h"
+#include "physx_building_fire_3d.h"
 #include "physx_burnable_3d.h"
 #include "physx_fire_spread_3d.h"
 #include "physx_flow_3d.h"
@@ -138,7 +139,7 @@ void PhysXClothBurn::_sample(const XPBDClothSolver &p_solver, PhysXFireSpread3D 
 			const float t = CLAMP(p_flow->sample_temperature(p), 0.0f, 1.5f);
 			q = MAX(q, 80.0f * t * t);
 		}
-		q += PhysXBurnable3D::radiant_flux_at(p);
+		q += PhysXBurnable3D::radiant_flux_at(p) + PhysXBuildingFire3D::radiant_flux_at(p);
 		if (q > CRITICAL_FLUX) {
 			float in = (q - CRITICAL_FLUX) * p_delta;
 			// The water held boils off first (wet cloth holds at 100 C), then the dry fabric heats.

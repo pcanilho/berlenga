@@ -204,7 +204,7 @@
 			<param index="0" name="position" type="Vector3" />
 			<param index="1" name="to_sun" type="Vector3" />
 			<description>
-				The direct sun's transmittance (red, green, blue) through the smoke layer at [param position], for a sun along [param to_sun]: the column where the ray crosses the layer (about 2 km up), along the slant path, losing blue first (Angstrom exponent 1.8). [SkyClock] dims and colours the sun light by it.
+				The direct sun's transmittance (red, green, blue) through the smoke layer at [param position], for a sun along [param to_sun]: the column where the ray crosses the middle of the layer (about 1 km up; no further out than the map reaches, so a low sun still reads the smoke), along the slant path (about ten air masses at the horizon, smoothly), losing blue first (Angstrom exponent 1.8). [SkyClock] dims and colours the sun light by it.
 			</description>
 		</method>
 		<method name="get_frost_at" qualifiers="const">

@@ -4685,7 +4685,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 			float r = 0.88f + 0.08f * fibre;
 			if (L.crack > 0.0f) {
 				// Warp the lookup so ridges interlace and wander rather than sit on a grid.
-				const float warp = (p_kind == BARK_PLATED || p_kind == BARK_PINEA) ? 2.0f : (p_kind == BARK_FLAKING ? 10.0f : (p_kind == BARK_CORK ? 0.9f : (p_kind == BARK_PINASTER ? 1.0f : 1.0f))); // Cork and pinaster: amplitude in their larger tiles.
+				const float warp = (p_kind == BARK_PLATED || p_kind == BARK_PINEA) ? 2.0f : (p_kind == BARK_FLAKING ? 10.0f : (p_kind == BARK_CORK ? 0.9f : (p_kind == BARK_SCALY ? 1.7f : 1.0f))); // Cork and pinaster: amplitude in their larger tiles.
 				float wu = u + 0.035f * warp * bark_fbm(u, v, 4 * F, 4 * F, 2, salt + 21u);
 				float wv = v + 0.05f * warp * bark_fbm(u, v, 4 * F, 4 * F, 2, salt + 27u);
 				if (p_kind == BARK_PINASTER) {
@@ -4696,7 +4696,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					wu += 0.015f * bark_fbm(u, v, 11 * F, 7 * F, 2, salt + 121u);
 					wv += 0.0175f * bark_fbm(u, v, 9 * F, 12 * F, 2, salt + 123u);
 				}
-				const float merge = (p_kind == BARK_PLATED || p_kind == BARK_PINASTER) ? 0.35f : (p_kind == BARK_PINEA ? 0.05f : (p_kind == BARK_SCALY ? 0.1f : (p_kind == BARK_CORK ? 0.5f : 0.0f)));
+				const float merge = (p_kind == BARK_PLATED || p_kind == BARK_PINASTER) ? 0.35f : (p_kind == BARK_PINEA ? 0.05f : (p_kind == BARK_SCALY ? 0.28f : (p_kind == BARK_CORK ? 0.5f : 0.0f)));
 				const float scar_cut = p_kind == BARK_FLAKING ? 0.62f : 0.0f;
 				// Round 11 (docs, 18 Nov: pointed, feather-like tongues stacked in rows): maritime pine
 				// plates come from fracture columns, not a stretched Voronoi.
@@ -4882,12 +4882,31 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// Shingles: each scale lifts toward its lower edge, over the next one down.
 					const float below = (wv - Math::floor(wv)) * L.cv - c.site.y; // -1..1 cell units
 					plate = open * (0.55f + 0.45f * CLAMP(0.5f + below, 0.0f, 1.0f));
+					// Docs, 19 Nov (holm oak's root collar read as paving): even cells at one height tile. Each scale
+					// sits at its own height and tilt (some lifted, some worn flat), and more walls stay uncracked
+					// (merge 0.28) with a stronger warp, so the scales vary in size and outline.
+					const float lift = 0.6f + 0.8f * bark_hash(int(c.id), 5, salt + 141u);
+					const float tilt = 0.5f * (bark_hash(int(c.id), 6, salt + 141u) - 0.5f) * ((wu - Math::floor(wu)) * L.cu - c.site.x);
+					plate = plate * lift + tilt * open;
+					// Cracking at two scales (the outer bark breaks into plates, then in patches the plates split
+					// again): finer cells' cracks, shallower, where a low-frequency mask lets them through, so plate
+					// sizes vary across the stem rather than repeat one size.
+					const float wu2 = wu + 0.02f * bark_fbm(u, v, 9, 9, 2, salt + 213u), wv2 = wv + 0.02f * bark_fbm(u, v, 9, 9, 2, salt + 217u);
+					const BarkCell c2 = bark_voronoi(wu2 - Math::floor(wu2), wv2 - Math::floor(wv2), L.cu * 2, L.cv * 2, salt + 201u, 0.3f, 0.0f, salt + 243u);
+					const float sub = Math::smoothstep(0.0f, crack_w * 0.55f, c2.edge + 0.06f * bark_fbm(u, v, 30, 30, 2, salt + 219u));
+					const float split = Math::smoothstep(-0.2f, 0.1f, bark_fbm(u, v, 3, 3, 2, salt + 211u));
+					plate *= Math::lerp(1.0f, 0.35f + 0.65f * sub, split);
 				}
 				// Plate tone drifts smoothly (a per-cell tone outlines joined plates).
 				const float plate_noise = 0.5f + bark_fbm(u, v, 5 * F, 3 * F, 2, salt + 41u) * 1.6f;
 				height += L.depth * (plate - 1.0f) + L.depth * 0.15f * (plate_noise - 0.5f) * plate;
 				const float shade = Math::lerp(L.dark, 1.0f + L.mottle * (plate_noise - 0.5f), p_kind == BARK_CORK ? Math::smoothstep(0.0f, 0.3f, open) : plate);
 				a = Color(shade, shade, shade);
+				if (p_kind == BARK_SCALY) {
+					// Each scale weathered to its own grey (a shared tone read as cast paving).
+					const float tone = 0.72f + 0.56f * bark_hash(int(c.id), 7, salt + 141u);
+					a = Color(shade * tone, shade * tone, shade * tone);
+				}
 				if (p_kind == BARK_CORK) {
 					// Cork's fissures are warm red-brown under the grey-buff, weathered ridges.
 					// The whole fissure darkens, its walls the fresher red-brown cork, its floor in
@@ -18739,10 +18758,12 @@ void TreeGenerator::_fire_char(Builder &r_bark) {
 		return;
 	}
 	const float base_y = nodes[0].start.y;
-	const float keep = Math::exp(-fire_years / (preset == PRESET_CORK_OAK ? 3.0f : 7.0f));
+	// Char on thick bark lasts: the black outer layer weathers off over a decade or more, cork's sooner as it
+	// flakes (docs, 19 Nov: char at 0.5 years read as dark bark, not fire).
+	const float keep = Math::exp(-fire_years / (preset == PRESET_CORK_OAK ? 6.0f : 12.0f));
 	const float reach = MAX(1.2f, MIN(0.45f * height, 6.0f));
 	const uint32_t cs = uint32_t(seed) * 2246822519u + 0x63686172u;
-	const Color char_c(0.035f, 0.031f, 0.028f);
+	const Color char_c(0.022f, 0.02f, 0.019f);
 	for (int v = 0; v < int(r_bark.verts.size()); v++) {
 		const Vector3 p = r_bark.verts[v];
 		const float h = p.y - base_y;
@@ -18750,14 +18771,16 @@ void TreeGenerator::_fire_char(Builder &r_bark) {
 		const float low = 1.0f - Math::smoothstep(edge - 0.3f, edge + 0.2f, h);
 		// The crown fire's char above: in patches, most on the thin wood.
 		const float crown = Math::smoothstep(0.45f, 0.6f, moss_noise(p * 4.0f, cs + 7u)) * 0.8f;
-		const float k = keep * MAX(low, h > edge ? crown : 0.0f) * (0.75f + 0.25f * moss_noise(p * 21.0f, cs + 3u));
+		const float k = keep * MAX(low, h > edge ? crown : 0.0f) * (1.0f + 0.15f * moss_noise(p * 21.0f, cs + 3u));
 		if (k <= 0.0f) {
 			continue;
 		}
 		Color c = r_bark.colors[v];
 		const float a = c.a;
 		c = c.lerp(char_c, CLAMP(k, 0.0f, 1.0f));
-		c.a = a;
+		// The fire burnt the lichen off with the outer bark (docs, 19 Nov: the holm oak's pale crusts hid the
+		// char): alpha here is 1 - lichen weight until _peel_bark encodes it.
+		c.a = Math::lerp(a, 1.0f, CLAMP(1.5f * k, 0.0f, 1.0f));
 		r_bark.colors.write[v] = c;
 	}
 }
@@ -18769,19 +18792,60 @@ void TreeGenerator::_grow_fire_regrowth(Builder &r_bark, Builder &r_leaves) {
 	if (fire_years < 0.0f || nodes.size() < 2) {
 		return;
 	}
+	RandomPCG fr;
+	fr.seed(uint64_t(seed) * 2654435761u + 0x66697265u);
+	{
+		// The burnt fine fuel's charcoal: charred twigs and small limbs the fire dropped round the snag, lying in
+		// the ash (docs, 19 Nov: nothing in the frames said fire). Black, cracked across; buried, broken and
+		// carried off over a few years.
+		const float base_y0 = nodes[0].start.y;
+		const float spread = MAX(1.2f, 0.45f * height);
+		const int sticks = int((30.0f + 16.0f * MIN(height, 12.0f)) * Math::exp(-fire_years / 2.5f));
+		const Color char_c = Color(0.03f, 0.027f, 0.024f);
+		const Color ember_c = Color(0.07f, 0.06f, 0.055f);
+		const Color ash_c = Color(0.42f, 0.41f, 0.39f);
+		for (int k = 0; k < sticks; k++) {
+			const float az = fr.randf() * float(Math::TAU);
+			const float d = 0.2f + spread * Math::sqrt(fr.randf());
+			const float r = Math::lerp(0.004f, 0.022f, fr.randf() * fr.randf()) * MAX(0.4f, MIN(height / 8.0f, 1.0f));
+			const float len = Math::lerp(0.15f, 0.9f, fr.randf()) * (0.5f + 30.0f * r);
+			const float ra = fr.randf() * float(Math::TAU);
+			const Vector3 run(Math::cos(ra), 0.0f, Math::sin(ra));
+			const Vector3 side(-run.z, 0.0f, run.x);
+			const Vector3 c0(nodes[0].start.x + Math::cos(az) * d, base_y0 + r * 0.7f, nodes[0].start.z + Math::sin(az) * d);
+			LocalVector<Vector3> sp;
+			LocalVector<float> sr;
+			const float bend = (fr.randf() - 0.5f) * 0.25f * len;
+			for (int q = 0; q <= 3; q++) {
+				const float t = q / 3.0f - 0.5f;
+				sp.push_back(c0 + run * (t * len) + side * (bend * (0.25f - t * t) * 4.0f));
+				sr.push_back(r * (1.0f - 0.35f * (t + 0.5f)));
+			}
+			r_bark.bone = 0;
+			Vector4i part;
+			r_bark.begin(part);
+			// Some burnt through where they lay: a pale grey ash outline of the twig, gone with the first winds and rain.
+			const float pick = fr.randf();
+			const Color stick_c = pick < 0.4f * Math::exp(-fire_years / 0.6f) ? ash_c : (pick > 0.75f ? ember_c : char_c);
+			_tube(r_bark, sp, sr, r > 0.01f ? 5 : 4, 0.0f, stick_c);
+			r_bark.end(part, r);
+		}
+	}
 	const FireResponse resp = get_fire_response(preset);
 	if (resp == FIRE_NONE) {
 		return;
 	}
-	RandomPCG fr;
-	fr.seed(uint64_t(seed) * 2654435761u + 0x66697265u);
 	const LeafSeason vls = _leaf_season(preset, season);
 	const bool needles = params[PARAM_NEEDLES] > 0.5f;
 	const float y = fire_years;
 	const float base_y = nodes[0].start.y;
 	const Color shoot_bark = bark_color.lerp(Color(0.36f, 0.28f, 0.16f), 0.6f).srgb_to_linear();
 	// Young shoots' leaves: larger and a fresher green than the old crown's (resprout foliage; Pausas 1999).
-	const Color young(MIN(leaf_color.r * 1.15f, 1.0f), MIN(leaf_color.g * 1.2f, 1.0f), leaf_color.b);
+	// Docs, 19 Nov: the old crown's dark green made the resprouts black clumps; new shoots are a light, yellowish
+	// green (holm oak's young leaves pale and downy).
+	const Color young = leaf_color.lerp(Color(0.16f, 0.3f, 0.06f), 0.55f);
+	// Seedlings' first leaves lighter still (cotyledons and juvenile leaves).
+	const Color seedling = leaf_color.lerp(Color(0.2f, 0.36f, 0.07f), 0.75f);
 	const float leaf_size = params[PARAM_LEAF_SIZE];
 	// One shoot: out from its bud, curving up to the light, side twigs once it is a year or two old, leaves along its
 	// upper two thirds.
@@ -18927,7 +18991,7 @@ void TreeGenerator::_grow_fire_regrowth(Builder &r_bark, Builder &r_leaves) {
 			const float rr = tr * (1.0f + fl * (0.18f * Math::exp(-h0 / MAX(0.05f, tr)) + 0.5f * ridge * Math::exp(-h0 / MAX(0.05f, 0.6f * tr)))) + 0.01f;
 			const Vector3 at = nodes[0].start + out * rr + Vector3(0, h0, 0);
 			const float l = len * Math::lerp(0.55f, 1.15f, fr.randf());
-			shoot(at, (out * 0.5f + Vector3(0, 0.3f, 0)).normalized(), l, Math::lerp(0.0025f, 0.005f, fr.randf()) * (1.0f + 0.6f * MIN(y, 5.0f)), 0, 2.2f);
+			shoot(at, (out * 0.5f + Vector3(0, 0.3f, 0)).normalized(), l, Math::lerp(0.0025f, 0.005f, fr.randf()) * (1.0f + 0.6f * MIN(y, 5.0f)), 0, 1.3f);
 		}
 	} else if (resp == FIRE_SEEDER) {
 		// Seedlings on the ash bed under and round the snag, where its seed fell: none until the first wet season, a
@@ -18971,14 +19035,14 @@ void TreeGenerator::_grow_fire_regrowth(Builder &r_bark, Builder &r_leaves) {
 			r_leaves.begin(lp);
 			if (needles) {
 				// A seedling pine: the first-year juvenile needles in a tuft, then needles all up its leader.
-				const int nn = 10 + int(40.0f * MIN(h / 0.4f, 1.5f));
+				const int nn = 16 + int(60.0f * MIN(h / 0.4f, 1.5f));
 				for (int q = 0; q < nn; q++) {
 					const float u = Math::lerp(0.25f, 1.0f, float(q) / nn);
 					const Vector3 p = u < 0.5f ? sp[0].lerp(sp[1], u * 2.0f) : sp[1].lerp(sp[2], u * 2.0f - 1.0f);
 					const float az2 = q * 2.39996f;
 					const Vector3 no = (Vector3(Math::cos(az2), 0.9f, Math::sin(az2))).normalized();
 					const float nl = MIN(leaf_size, 0.04f + 0.25f * h) * Math::lerp(0.8f, 1.1f, fr.randf());
-					_add_needle(r_leaves, p, no, nl, young);
+					_add_needle(r_leaves, p, no, nl, seedling);
 				}
 			} else {
 				// A seedling shrub branches from low down into a small rounded bush, opposite leaves crowded at
@@ -19004,7 +19068,7 @@ void TreeGenerator::_grow_fire_regrowth(Builder &r_bark, Builder &r_leaves) {
 						const Vector3 p = b0.lerp(e, u);
 						const float az2 = az0 + (q / 2) * 1.5708f + (q & 1) * float(Math::PI);
 						const Vector3 lo = Vector3(Math::cos(az2), 0.35f, Math::sin(az2)).normalized();
-						_add_leaf(r_leaves, p, lo, Vector3(0, 1, 0), leaf_size * Math::lerp(0.55f, 0.85f, fr.randf()) * MAX(vls.out, 0.3f), young);
+						_add_leaf(r_leaves, p, lo, Vector3(0, 1, 0), leaf_size * Math::lerp(0.8f, 1.15f, fr.randf()) * MAX(vls.out, 0.3f), seedling);
 					}
 				}
 			}

@@ -35,6 +35,7 @@
 #ifdef GODOT_PHYSX_BLAST
 #include "../blast/physx_destructible_3d.h"
 #endif
+#include "physx_building_fire_3d.h"
 #include "physx_fire_spread_3d.h"
 #include "physx_flow_3d.h"
 #include "physx_flow_emitter_3d.h"
@@ -260,6 +261,14 @@ void PhysXBurnable3D::_sample_heat(float p_delta) {
 			hot = c + (bc - c).normalized() * bounds.size.length() * 0.4f;
 		}
 		q += qr;
+	}
+	{
+		// Burning buildings: their windows, flames and open roofs.
+		const float qh = PhysXBuildingFire3D::radiant_flux_at(c);
+		if (qh > q) {
+			hot = c;
+		}
+		q += qh;
 	}
 	{
 		Vector3 bh;

@@ -509,6 +509,29 @@ func _contract_tests() -> void:
 	m.queue_free()
 	WorldContracts.clear_overrides()
 	await get_tree().physics_frame
+	# A waterfall answers inside its falling water, falling fast, and nowhere beside it.
+	if ClassDB.class_exists("PhysXWaterfalls3D"):
+		WorldContracts.clear_overrides()
+		var cliff := Node3D.new()
+		cliff.set_script(load("res://cliff_source.gd"))
+		cliff.name = "Cliff"
+		add_child(cliff)
+		var falls: Node3D = ClassDB.instantiate("PhysXWaterfalls3D")
+		add_child(falls)
+		falls.source = falls.get_path_to(cliff)
+		falls.rebuild()
+		var wf: WorldWater = WorldContracts.get_water()
+		var fastest := 0.0
+		for xi in 40:
+			for yi in 6:
+				var q := Vector3(0.25 * xi, 5.0 + 4.0 * yi, 0.0)
+				if is_finite(wf.height_at(q)):
+					fastest = minf(fastest, wf.flow_at(q).y)
+		var off_fall := wf.height_at(Vector3(5, 15, 30))
+		_check("contracts: a waterfall's falling water answers the water contract, nothing beside it", fastest < -5.0 and is_inf(off_fall), "fastest %.1f m/s down; beside %f" % [fastest, off_fall])
+		falls.queue_free()
+		cliff.queue_free()
+		await get_tree().process_frame
 	# Runoff load: dropped quietly with no runoff producer, taken by a stub.
 	var gr: WorldGround = WorldContracts.get_ground()
 	var had_runoff := gr.has_runoff()
