@@ -587,6 +587,53 @@ TypedArray<Resource> PlantGenerator::make_desert(DesertStand p_stand, int p_vari
 				out.push_back(sp);
 			}
 		}
+		// Round the spring pools (OasisSprings3D through VegetationField3D.spring_pools): common reed standing in the
+		// shallows and on the wet shore, rushes on the damp sand behind (Phragmites australis and Juncus rigidus /
+		// maritimus, the oasis pools' and sabkha springs' fringe: Zahran and Willis 2009, "The Vegetation of Egypt";
+		// Ozenda 1977 for the Sahara). Without pools they are not placed.
+		struct PoolSpec {
+			Preset preset;
+			float spacing, footprint, density, scale_min, scale_max;
+			Vector2 shore; // Metres from the pool's shore, negative in the water.
+			float fade, patch_scale, patch_cover, visibility;
+		};
+		const PoolSpec pool_set[2] = { { P::PRESET_REED, 0.45f, 0.12f, 0.95f, 0.9f, 1.3f, Vector2(-2.0f, 1.2f), 0.6f, 6.0f, 0.75f, 70.0f },
+			{ P::PRESET_RUSH, 0.6f, 0.2f, 0.65f, 0.8f, 1.2f, Vector2(0.6f, 4.5f), 1.2f, 5.0f, 0.5f, 30.0f } };
+		for (const PoolSpec &f : pool_set) {
+			Ref<PlantGenerator> gen;
+			gen.instantiate();
+			gen->set_textures(p_textures);
+			gen->set_preset(f.preset);
+			gen->apply_preset_colors();
+			gen->set_seed(seed_base + 50 + int(f.preset));
+			gen->set_season(p_season);
+			Ref<PlantSpecies> sp;
+			sp.instantiate();
+			TypedArray<Mesh> meshes;
+			const TypedArray<ArrayMesh> v = gen->generate_variants(MAX(p_variants, 1));
+			for (int i = 0; i < v.size(); i++) {
+				meshes.push_back(v[i]);
+			}
+			sp->set_meshes(meshes);
+			sp->set_spacing(f.spacing);
+			sp->set_footprint(f.footprint);
+			sp->set_density(f.density * get_presence(f.preset, p_season));
+			sp->set_scale_range(Vector2(f.scale_min, f.scale_max));
+			sp->set_align_to_ground(0.2f);
+			sp->set_rule_range(PlantSpecies::RULE_POOL_DISTANCE, f.shore);
+			sp->set_rule_fade(PlantSpecies::RULE_POOL_DISTANCE, f.fade);
+			sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 25.0f));
+			sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 4.0f);
+			sp->set_patch_scale(f.patch_scale);
+			sp->set_patch_cover(f.patch_cover);
+			sp->set_patch_seed(seed_base + 50 + int(f.preset));
+			sp->set_visibility_range(f.visibility);
+			sp->set_meta("desert", true);
+			sp->set_meta("oasis", true);
+			sp->set_meta("oasis_pool", true);
+			tag_species(sp, f.preset);
+			out.push_back(sp);
+		}
 		return out;
 	}
 	if (p_shrubs) {

@@ -262,6 +262,12 @@
 		<member name="precipitation_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member precipitation_range].
 		</member>
+		<member name="pool_distance_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			The soft edge of [member pool_distance_range], metres.
+		</member>
+		<member name="pool_distance_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100000, 100000)">
+			Metres from an oasis spring pool's shore ([constant RULE_POOL_DISTANCE]); the default leaves the rule off.
+		</member>
 		<member name="precipitation_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 100000)">
 			Annual precipitation in mm where the species grows. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
@@ -477,7 +483,10 @@
 		<constant name="RULE_SPRING" value="26" enum="Rule">
 			Wetness round a desert spring, 0 dry to 1 at its water; -1 off the sand seas. Springs are the deepest hollows of a sand sea below its smoothed surface (at least 2 m, 900 m apart); the ground is wet where it lies within 5 m of the spring's water level, up to 250 m out. A species using it grows on the sand seas' sand ([method PlantGenerator.make_desert] with [constant PlantGenerator.DESERT_OASIS]).
 		</constant>
-		<constant name="RULE_MAX" value="27" enum="Rule">
+		<constant name="RULE_POOL_DISTANCE" value="27" enum="Rule">
+			Metres from the nearest oasis spring pool's shore ([member VegetationField3D.spring_pools]), negative in the pool. A species using it grows only round those pools, on their sand too.
+		</constant>
+		<constant name="RULE_MAX" value="28" enum="Rule">
 			Number of rules.
 		</constant>
 		<constant name="DEADWOOD_AVOID" value="0" enum="DeadwoodRule">

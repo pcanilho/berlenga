@@ -68,6 +68,7 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_SAND_MOBILITY] = Vector2(-1.0f, 1.0f);
 	ranges[RULE_BURN_AGE] = Vector2(-1.0f, 1000.0f);
 	ranges[RULE_SPRING] = Vector2(-1.0f, 1.0f);
+	ranges[RULE_POOL_DISTANCE] = Vector2(-100000.0f, 100000.0f);
 }
 
 float PlantSpecies::season_temperature(float p_january, float p_july) {
@@ -606,6 +607,8 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "burn_age_fade", PROPERTY_HINT_RANGE, "0,10,0.01,suffix:yr"), "set_rule_fade", "get_rule_fade", RULE_BURN_AGE);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "spring_range"), "set_rule_range", "get_rule_range", RULE_SPRING);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "spring_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_SPRING);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "pool_distance_range", PROPERTY_HINT_NONE, "suffix:m"), "set_rule_range", "get_rule_range", RULE_POOL_DISTANCE);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "pool_distance_fade", PROPERTY_HINT_RANGE, "0,20,0.01,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_POOL_DISTANCE);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -634,6 +637,7 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_SAND_MOBILITY);
 	BIND_ENUM_CONSTANT(RULE_BURN_AGE);
 	BIND_ENUM_CONSTANT(RULE_SPRING);
+	BIND_ENUM_CONSTANT(RULE_POOL_DISTANCE);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 	BIND_ENUM_CONSTANT(DEADWOOD_AVOID);
 	BIND_ENUM_CONSTANT(DEADWOOD_ON);

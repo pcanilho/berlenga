@@ -136,6 +136,7 @@ private:
 		float y = 0.0f; // The ground under it, world y.
 	};
 	NodePath weather_map; // A WeatherMap3D that gets the placed canopy as its canopy_map.
+	NodePath spring_pools; // An OasisSprings3D: its pools' outlines for PlantSpecies.RULE_POOL_DISTANCE.
 	Vector2 litter_wind; // Downwind lean of the leaf drift; zero: from the weather map's wind.
 	Vector2 litter_skew; // The lean of the last placement.
 	NodePath canopy_field; // Another VegetationField3D whose crowns also shade this one's plants.
@@ -269,6 +270,10 @@ private:
 		float sea_depth_at(const Vector2 &p_xz) const;
 		// Oases (PlantSpecies.RULE_SPRING): read when a species uses the rule and the generator has a sand sea.
 		DesertSprings springs;
+		// Spring pools (spring_pools, PlantSpecies.RULE_POOL_DISTANCE): each pool's shore, world xz, and its bounds.
+		LocalVector<PackedVector2Array> pools;
+		LocalVector<Rect2> pool_bounds;
+		float pool_distance(const Vector2 &p_xz, float p_reach) const;
 		// Nebkhas (TerrainGenerator3D.get_nebkhas): (x, top y, z, mound height), on a grid of NEBKHA_CELL; each mound
 		// carries one nebkha shrub at its top and keeps the other desert shrubs NEBKHA_CLEAR from its foot.
 		PackedVector4Array nebkhas;
@@ -576,6 +581,8 @@ public:
 	NodePath get_canopy_field() const { return canopy_field; }
 	void set_litter_wind(const Vector2 &p_wind) { litter_wind = p_wind; }
 	Vector2 get_litter_wind() const { return litter_wind; }
+	void set_spring_pools(const NodePath &p_path);
+	NodePath get_spring_pools() const { return spring_pools; }
 	void set_weather_map(const NodePath &p_path) { weather_map = p_path; }
 	NodePath get_weather_map() const { return weather_map; }
 	void set_tile_size(float p_size);

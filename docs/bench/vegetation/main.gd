@@ -847,9 +847,54 @@ func _oasis_checks(ground: VegetationField3D, dset: Array[PlantSpecies], cam: Ca
 	_check("oasis: date palms on the wet ground (wetness over 0.47)", kinds["palm"][0] > 10 and kinds["palm"][1] > 0.46, kinds["palm"])
 	_check("oasis: the shrub ring on the drier ground (under 0.73)", kinds["shrub"][0] > 5 and kinds["shrub"][2] < 0.74, kinds["shrub"])
 	_check("oasis: no crust on the wettest ground (under 0.5)", kinds["crust"][2] < 0.51, kinds["crust"])
+	if ClassDB.class_exists("OasisSprings3D"):
+		# The water system's spring pools (OasisSprings3D, from the same springs): reeds in the shallows and on the
+		# shore, rushes behind, following each pool's outline.
+		var pools: Node3D = ClassDB.instantiate("OasisSprings3D")
+		pools.name = "OasisPools"
+		pools.springs = springs
+		add_child(pools)
+		pools.rebuild()
+		ground.spring_pools = ground.get_path_to(pools)
+		w = 0
+		while w < 6000 and (w < 20 or not ground.is_stream_idle()):
+			await get_tree().process_frame
+			w += 1
+		var outline: PackedVector2Array = pools.get_outline(0) if pools.get_pool_count() > 0 else PackedVector2Array()
+		var by := {}
+		for s in dset.size():
+			if not dset[s].get_meta("oasis_pool", false):
+				continue
+			var name: String = "reed" if dset[s].get_meta("plant_preset", -1) == PlantGenerator.PRESET_REED else "rush"
+			var r := [0, 1e9, -1e9]
+			for p in ground.get_placements(s):
+				var d := _outline_distance(outline, Vector2(p.x, p.z))
+				r[0] += 1
+				r[1] = minf(r[1], d)
+				r[2] = maxf(r[2], d)
+			by[name] = r
+		print("VEG_OASIS pools %d, area %.0f m2; round the first [plants, shore distance min, max]: %s" % [pools.get_pool_count(), pools.get_pool_area(0) if pools.get_pool_count() > 0 else 0.0, str(by)])
+		_check("oasis: reeds round the spring pool, in the shallows and on the shore (-2.6 to 1.8 m)", by.has("reed") and by["reed"][0] > 10 and by["reed"][1] > -2.7 and by["reed"][2] < 1.9, by.get("reed"))
+		_check("oasis: rushes on the damp sand behind (0 to 5.7 m)", by.has("rush") and by["rush"][0] > 5 and by["rush"][1] > -0.05 and by["rush"][2] < 5.8, by.get("rush"))
 	ground.stream_radius = radius
 	if not keep:
 		cam.global_transform = start
+
+# Signed distance from a closed outline (negative inside); far for an empty one.
+func _outline_distance(o: PackedVector2Array, q: Vector2) -> float:
+	if o.size() < 3:
+		return 1e9
+	var d := 1e9
+	var inside := false
+	var j := o.size() - 1
+	for i in o.size():
+		var a := o[j]
+		var b := o[i]
+		d = minf(d, q.distance_to(Geometry2D.get_closest_point_to_segment(q, a, b)))
+		if (a.y > q.y) != (b.y > q.y) and q.x < a.x + (q.y - a.y) * (b.x - a.x) / (b.y - a.y):
+			inside = not inside
+		j = i
+	return -d if inside else d
 
 # Trees grown for a fire (mesh meta "tree_fire_years"): on a burn the variant nearest its age, unburnt ones off it.
 func _fire_variant_check() -> void:

@@ -340,6 +340,9 @@
 		<member name="stream_maps_radius" type="float" setter="set_stream_maps_radius" getter="get_stream_maps_radius" default="96.0">
 			While [member streaming], the canopy map, the stand shade and the forest floor map cover this far around the centre (half-metre cells); the far colour map covers [member stream_radius].
 		</member>
+		<member name="spring_pools" type="NodePath" setter="set_spring_pools" getter="get_spring_pools" default="NodePath(&quot;&quot;)">
+			An [OasisSprings3D] whose pools' outlines ([method OasisSprings3D.get_outline]) the species with [constant PlantSpecies.RULE_POOL_DISTANCE] grow round: [method PlantGenerator.make_desert]'s oasis set puts common reed in the shallows and on the shore and rushes behind. Read when the placement is set up, so the pools must be built first.
+		</member>
 		<member name="stream_radius" type="float" setter="set_stream_radius" getter="get_stream_radius" default="200.0">
 			While [member streaming], tiles within this distance of the centre are placed. Each species is drawn only out to its [member PlantSpecies.visibility_range] (all of the radius when it has none); tiles a tile and a half past the radius are freed. The field publishes the radius as the global shader parameter [code]vegetation_near_radius[/code] (0 when it stops streaming; the last streaming field to publish owns it), so a terrain's far blend can start before the placed plants end.
 		</member>

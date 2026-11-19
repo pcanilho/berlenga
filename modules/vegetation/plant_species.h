@@ -72,6 +72,7 @@ public:
 		RULE_SAND_MOBILITY, // Desert sand seas (TerrainGenerator3D.sand_sea_rect): 0 stable interdune ground to 1 moving crest or slip face; -1 off the sand seas. A species using it grows on their loose sand.
 		RULE_BURN_AGE, // Years since the ground last burnt (WorldFire.burn_age_at); -1 never. A species using it grows only on ground that burnt (the burn presets).
 		RULE_SPRING, // Desert springs (DesertSprings): 0 dry to 1 at an oasis spring's water; -1 off the sand seas. A species using it grows on their sand.
+		RULE_POOL_DISTANCE, // Metres from the nearest oasis spring pool's shore (VegetationField3D.spring_pools), negative in the pool. A species using it grows only round those pools, on their sand too.
 		RULE_MAX,
 	};
 	// How the species meets fallen wood placed in the field (meshes with tree_deadwood_axis).
@@ -252,6 +253,7 @@ public:
 	bool uses_field_edge() const { return ranges[RULE_FIELD_EDGE].x > -100000.0f || ranges[RULE_FIELD_EDGE].y < 100000.0f; }
 	bool uses_dune() const { return ranges[RULE_DUNE].x > -1.0f || ranges[RULE_DUNE].y < 1.0f; }
 	bool uses_burn_age() const { return ranges[RULE_BURN_AGE].x > -1.0f || ranges[RULE_BURN_AGE].y < 1000.0f; }
+	bool uses_pool() const { return ranges[RULE_POOL_DISTANCE].x > -100000.0f || ranges[RULE_POOL_DISTANCE].y < 100000.0f; }
 	bool uses_spring() const { return ranges[RULE_SPRING].x > -1.0f || ranges[RULE_SPRING].y < 1.0f; }
 	bool uses_sand_mobility() const { return ranges[RULE_SAND_MOBILITY].x > -1.0f || ranges[RULE_SAND_MOBILITY].y < 1.0f; }
 	// True when a coast rule (tide height, exposure, beach) is narrower than "anywhere".

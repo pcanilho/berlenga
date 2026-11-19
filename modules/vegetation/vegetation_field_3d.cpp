@@ -418,6 +418,46 @@ PackedVector4Array VegetationField3D::get_canopy_losses() const {
 	return out;
 }
 
+void VegetationField3D::set_spring_pools(const NodePath &p_path) {
+	if (spring_pools == p_path) {
+		return;
+	}
+	spring_pools = p_path;
+	if (streaming) {
+		_stream_clear(); // Placed again round the new pools.
+	}
+}
+
+// Signed distance (m) to the nearest pool shore, negative inside a pool; p_reach past every pool's bounds.
+float VegetationField3D::PlaceSetup::pool_distance(const Vector2 &p_xz, float p_reach) const {
+	float best = p_reach;
+	for (uint32_t k = 0; k < pools.size(); k++) {
+		if (!pool_bounds[k].grow(p_reach).has_point(p_xz)) {
+			continue;
+		}
+		const PackedVector2Array &o = pools[k];
+		const int n = o.size();
+		float d2 = 1e30f;
+		bool inside = false;
+		for (int i = 0, j = n - 1; i < n; j = i++) {
+			const Vector2 a = o[j];
+			const Vector2 b = o[i];
+			const Vector2 ab = b - a;
+			const float t = CLAMP((p_xz - a).dot(ab) / MAX(ab.length_squared(), 1e-12f), 0.0f, 1.0f);
+			d2 = MIN(d2, p_xz.distance_squared_to(a + ab * t));
+			if ((a.y > p_xz.y) != (b.y > p_xz.y) && p_xz.x < a.x + (p_xz.y - a.y) * ab.x / ab.y) {
+				inside = !inside;
+			}
+		}
+		const float d = inside ? -Math::sqrt(d2) : Math::sqrt(d2);
+		if (inside) {
+			return d; // Pools do not overlap.
+		}
+		best = MIN(best, d);
+	}
+	return best;
+}
+
 PackedVector4Array VegetationField3D::get_springs() const {
 	PackedVector4Array out;
 	for (uint32_t i = 0; i < springs_seen.springs.size(); i++) {
@@ -616,6 +656,27 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			for (int i = 0; i < r_setup.nebkhas.size(); i++) {
 				const Vector4 n = r_setup.nebkhas[i];
 				r_setup.nebkha_grid[Vector2i(int(Math::floor(n.x / NEBKHA_CELL)), int(Math::floor(n.z / NEBKHA_CELL)))].push_back(i);
+			}
+		}
+	}
+	// Oasis spring pools (OasisSprings3D, the water thread's): their shores, for the species that grow round them.
+	r_setup.pools.clear();
+	r_setup.pool_bounds.clear();
+	if (!spring_pools.is_empty() && is_inside_tree()) {
+		Node *op = get_node_or_null(spring_pools);
+		if (op && op->has_method("get_pool_count") && op->has_method("get_outline")) {
+			const int count = op->call("get_pool_count");
+			for (int i = 0; i < count; i++) {
+				const PackedVector2Array outline = op->call("get_outline", i);
+				if (outline.size() < 3) {
+					continue;
+				}
+				Rect2 b(outline[0], Vector2());
+				for (const Vector2 &q : outline) {
+					b.expand_to(q);
+				}
+				r_setup.pools.push_back(outline);
+				r_setup.pool_bounds.push_back(b);
 			}
 		}
 	}
@@ -1201,11 +1262,16 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool burn_rule = sp->uses_burn_age();
 		const bool burn_recovery = !burn_rule && sp->get_burn_recovery() > 0.0f && !p_setup.burn.is_empty();
 		const bool spring_rule = sp->uses_spring();
-		// Nebkha shrubs grow on the sand they gathered.
-		const bool sand_plant = sp->uses_dune() || coast_rule || mobility_rule || spring_rule || ps.nebkha_slot >= 0;
+		const bool pool_rule = sp->uses_pool();
+		// Nebkha shrubs grow on the sand they gathered; a pool's reeds on its wet sand.
+		const bool sand_plant = sp->uses_dune() || coast_rule || mobility_rule || spring_rule || pool_rule || ps.nebkha_slot >= 0;
 		if (coast_rule && !p_setup.coast) {
 			continue; // Coast plants need a sea to measure from.
 		}
+		if (pool_rule && p_setup.pools.is_empty()) {
+			continue; // Pool plants need pools to measure from.
+		}
+		const float pool_reach = pool_rule ? MAX(Math::abs(sp->get_rule_range(PlantSpecies::RULE_POOL_DISTANCE).x), Math::abs(sp->get_rule_range(PlantSpecies::RULE_POOL_DISTANCE).y)) + sp->get_rule_fade(PlantSpecies::RULE_POOL_DISTANCE) + 1.0f : 0.0f;
 		const float canopy_r = sp->get_canopy_radius();
 		const float range = ps.range;
 		const bool is_log = ps.deadwood_reach > 0.0f;
@@ -1347,6 +1413,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (spring_rule && suit > 0.0f) {
 						// Oases: wetness round a desert spring (DesertSprings); -1 off the sand seas.
 						suit *= sp->rule_weight(PlantSpecies::RULE_SPRING, p_setup.springs.at(xz));
+					}
+					if (pool_rule && suit > 0.0f) {
+						// Round an oasis spring's pool: by the distance from its shore, negative in the water.
+						suit *= sp->rule_weight(PlantSpecies::RULE_POOL_DISTANCE, p_setup.pool_distance(xz, MIN(pool_reach, 1000.0f)));
 					}
 					if (burn_rule && suit > 0.0f) {
 						// Burnt ground: the burn presets by the years since (charred stems, fire moss, fireweed); -1 never burnt.
@@ -4439,6 +4509,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_canopy_field"), &VegetationField3D::get_canopy_field);
 	ClassDB::bind_method(D_METHOD("set_litter_wind", "wind"), &VegetationField3D::set_litter_wind);
 	ClassDB::bind_method(D_METHOD("get_litter_wind"), &VegetationField3D::get_litter_wind);
+	ClassDB::bind_method(D_METHOD("set_spring_pools", "path"), &VegetationField3D::set_spring_pools);
+	ClassDB::bind_method(D_METHOD("get_spring_pools"), &VegetationField3D::get_spring_pools);
 	ClassDB::bind_method(D_METHOD("set_weather_map", "path"), &VegetationField3D::set_weather_map);
 	ClassDB::bind_method(D_METHOD("get_weather_map"), &VegetationField3D::get_weather_map);
 	ClassDB::bind_method(D_METHOD("set_tile_size", "size"), &VegetationField3D::set_tile_size);
@@ -4526,6 +4598,7 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "biome", PROPERTY_HINT_RESOURCE_TYPE, "Biome"), "set_biome", "get_biome");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "litter_wind"), "set_litter_wind", "get_litter_wind");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "spring_pools", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "OasisSprings3D"), "set_spring_pools", "get_spring_pools");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "weather_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WeatherMap3D"), "set_weather_map", "get_weather_map");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "canopy_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_canopy_field", "get_canopy_field");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "forest_floor_enabled"), "set_forest_floor_enabled", "is_forest_floor_enabled");
