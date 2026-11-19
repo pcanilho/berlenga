@@ -1680,7 +1680,7 @@
     "wave_shadows"
    ],
    "note": "",
-   "what": "rivers, lakes and the sea take shadows from terrain, objects and clouds in raster, as they already do under path tracing, on the surface and inside the water, seen from above or below. The open sea's raster colour matches the path tracer's. At a low sun, waves shade their own lee sides (`wave_shadows`).",
+   "what": "rivers, lakes and the sea take shadows from terrain, objects and clouds in raster, as they already do under path tracing, on the surface and inside the water, seen from above or below; path traced shadows pass through the water, so a shallow bed takes the depth's tint on the way down as well as up. The open sea's raster colour matches the path tracer's. At a low sun, waves shade their own lee sides (`wave_shadows`).",
    "page": "water",
    "title": "Water",
    "topic": "Light in water"
