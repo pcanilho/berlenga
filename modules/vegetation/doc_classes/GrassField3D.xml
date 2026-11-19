@@ -277,7 +277,7 @@
 			The distance between the crop's drill rows, in metres (12 to 15 cm for cereals).
 		</member>
 		<member name="rules" type="PlantSpecies" setter="set_rules" getter="get_rules">
-			Where grass grows: the rules of a [PlantSpecies] over the maps of [member data_map]. Its spacing, footprint and meshes are ignored. Without rules, grass grows on dry land only.
+			Where grass grows: the rules of a [PlantSpecies] over the maps of [member data_map]. Its spacing, footprint and meshes are ignored. Without rules, grass grows on dry land only. With a narrowed [member PlantSpecies.spring_range] it is an oasis sward: it grows only round the desert springs ([constant PlantSpecies.RULE_SPRING]), on the sand seas' damp corridors. Any sward on a sand sea also comes back onto the sand where an oasis's ground is wet.
 		</member>
 		<member name="season_response" type="float" setter="set_season_response" getter="get_season_response" default="1.0">
 			How much the season browns the sward, 0 (not at all) to 1.

@@ -688,7 +688,10 @@
 		<constant name="DESERT_INTERDUNE" value="1" enum="DesertStand">
 			Desert interdune corridors: sparse drinn, biological soil crust on the stable sand, the rain-flush annuals.
 		</constant>
-		<constant name="DESERT_MAX" value="2" enum="DesertStand">
+		<constant name="DESERT_OASIS" value="2" enum="DesertStand">
+			Oases at desert springs ([constant PlantSpecies.RULE_SPRING]): trees' date palm oasis ([constant TreeGenerator.STAND_DATE_OASIS]) on the wet ground, and with [code]shrubs[/code] a ring of calligonum, white broom and saltbush where the water lies deeper. The interdune crust and annuals keep off its wettest ground.
+		</constant>
+		<constant name="DESERT_MAX" value="3" enum="DesertStand">
 			Number of desert stands.
 		</constant>
 		<constant name="BURN_HEATH" value="0" enum="BurnStand">

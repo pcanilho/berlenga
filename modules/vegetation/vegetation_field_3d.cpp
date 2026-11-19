@@ -385,6 +385,14 @@ void VegetationField3D::_read_sand_mobility(const TerrainGenerator3D *p_gen, Pla
 	r_setup.sea_depth = depth;
 }
 
+PackedVector3Array VegetationField3D::get_springs() const {
+	PackedVector3Array out;
+	for (const Vector3 &p : springs_seen.springs) {
+		out.push_back(p);
+	}
+	return out;
+}
+
 float VegetationField3D::PlaceSetup::sea_depth_at(const Vector2 &p_xz) const {
 	if (sea_depth.is_empty()) {
 		return 0.0f;
@@ -557,6 +565,17 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		_read_sand(gen, r_setup);
 		// Every field on a sand sea reads it: sand plants by their mobility rule, and the rest to keep off the sand.
 		_read_sand_mobility(gen, r_setup);
+		// Oases at desert springs, for the species that use them.
+		bool spring_rule = false;
+		const TypedArray<PlantSpecies> sl = biome->get_species();
+		for (int i = 0; i < sl.size() && !spring_rule; i++) {
+			const Ref<PlantSpecies> sp = sl[i];
+			spring_rule = sp.is_valid() && sp->uses_spring();
+		}
+		if (spring_rule) {
+			r_setup.springs.build(gen);
+		}
+		springs_seen = r_setup.springs;
 	}
 	_read_burn_age(r_setup);
 	r_setup.stone_tops = stone_top_grid;
@@ -1107,7 +1126,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool mobility_rule = sp->uses_sand_mobility();
 		const bool burn_rule = sp->uses_burn_age();
 		const bool burn_recovery = !burn_rule && sp->get_burn_recovery() > 0.0f && !p_setup.burn.is_empty();
-		const bool sand_plant = sp->uses_dune() || coast_rule || mobility_rule;
+		const bool spring_rule = sp->uses_spring();
+		const bool sand_plant = sp->uses_dune() || coast_rule || mobility_rule || spring_rule;
 		if (coast_rule && !p_setup.coast) {
 			continue; // Coast plants need a sea to measure from.
 		}
@@ -1207,6 +1227,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							m = MAX(m, Math::smoothstep(20.0f, 30.0f, float(Math::rad_to_deg(map->get_slope_at(p3)))));
 						}
 						suit *= sp->rule_weight(PlantSpecies::RULE_SAND_MOBILITY, m);
+					}
+					if (spring_rule && suit > 0.0f) {
+						// Oases: wetness round a desert spring (DesertSprings); -1 off the sand seas.
+						suit *= sp->rule_weight(PlantSpecies::RULE_SPRING, p_setup.springs.at(xz));
 					}
 					if (burn_rule && suit > 0.0f) {
 						// Burnt ground: the burn presets by the years since (charred stems, fire moss, fireweed); -1 never burnt.
@@ -4312,6 +4336,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_forest_floor_enabled"), &VegetationField3D::is_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("get_conifer_at", "global_position"), &VegetationField3D::get_conifer_at);
 	ClassDB::bind_method(D_METHOD("get_litter_at", "global_position"), &VegetationField3D::get_litter_at);
+	ClassDB::bind_method(D_METHOD("get_spring_wetness_at", "global_position"), &VegetationField3D::get_spring_wetness_at);
+	ClassDB::bind_method(D_METHOD("get_springs"), &VegetationField3D::get_springs);
 	ClassDB::bind_method(D_METHOD("set_cover_map_enabled", "enable"), &VegetationField3D::set_cover_map_enabled);
 	ClassDB::bind_method(D_METHOD("is_cover_map_enabled"), &VegetationField3D::is_cover_map_enabled);
 	ClassDB::bind_method(D_METHOD("set_cover_grass", "path"), &VegetationField3D::set_cover_grass);

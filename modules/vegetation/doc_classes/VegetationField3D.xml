@@ -40,6 +40,19 @@
 				The global shader parameter [code]vegetation_near_radius[/code]: the smallest [member stream_radius] of the fields streaming now, so a terrain far blend has taken over before the first plants run out; 0 when none streams.
 			</description>
 		</method>
+		<method name="get_spring_wetness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The wetness round a desert spring at [param global_position] (x and z), as [constant PlantSpecies.RULE_SPRING] reads it: 0 dry to 1 at the water, -1 off the sand seas. Read with the last placement, and only when a species uses the rule.
+			</description>
+		</method>
+		<method name="get_springs" qualifiers="const">
+			<return type="PackedVector3Array" />
+			<description>
+				The desert springs found with the last placement: x, the water's level and z each. For the water and terrain systems to put a pool there. Empty unless a species uses [constant PlantSpecies.RULE_SPRING].
+			</description>
+		</method>
 		<method name="get_stream_stats">
 			<return type="Dictionary" />
 			<description>

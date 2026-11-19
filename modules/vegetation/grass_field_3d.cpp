@@ -3521,6 +3521,7 @@ void GrassField3D::_read_sand_sea(TerrainDataMap3D *p_map) {
 	sea_depth.clear();
 	sea_nx = 0;
 	sea_ny = 0;
+	springs.clear();
 	const TerrainGenerator3D *gen = p_map ? VegetationHoles::source_of(p_map) : nullptr;
 	if (!gen || crop != CROP_NONE || !gen->get_sand_sea_rect().has_area()) {
 		return;
@@ -3544,6 +3545,7 @@ void GrassField3D::_read_sand_sea(TerrainDataMap3D *p_map) {
 		sea_rect = rect;
 		sea_nx = nx;
 		sea_ny = ny;
+		springs.build(gen);
 	}
 }
 
@@ -3602,7 +3604,18 @@ float GrassField3D::_burn_cover(const PlantSpecies *p_rules, float p_x, float p_
 			const float *r1 = r0 + sea_nx;
 			const float d = Math::lerp(Math::lerp(r0[0], r0[1], fx), Math::lerp(r1[0], r1[1], fx), fz);
 			sand = 1.0f - Math::smoothstep(0.05f, 0.3f, d);
+			if (p_rules && p_rules->uses_spring()) {
+				// An oasis sward (rules with PlantSpecies.spring_range): only round the springs, by its own range.
+				sand = p_rules->rule_weight(PlantSpecies::RULE_SPRING, springs.at(Vector2(p_x, p_z))) * (1.0f - Math::smoothstep(1.0f, 3.0f, d));
+			} else if (sand < 1.0f && !springs.is_empty()) {
+				// An oasis's damp ground holds a sward on the sand.
+				// (Damp ground in the corridor, not up the dunes standing in it: thinning out from 1 to 3 m of sand.)
+				sand = MAX(sand, Math::smoothstep(0.5f, 0.85f, springs.at(Vector2(p_x, p_z))) * (1.0f - Math::smoothstep(1.0f, 3.0f, d)));
+			}
 		}
+	}
+	if (p_rules && p_rules->uses_spring() && sea_depth.is_empty()) {
+		sand = 0.0f; // An oasis sward with no sand sea to hold springs.
 	}
 	if (burn_ages.is_empty() || sand <= 0.0f) {
 		return sand;

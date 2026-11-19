@@ -32,6 +32,7 @@
 #pragma once
 
 #include "contact_trample.h"
+#include "desert_springs.h"
 #include "grass_field_3d.h"
 #include "plant_species.h"
 #include "vegetation_holes.h"
@@ -260,6 +261,8 @@ private:
 		// sand plants keep off where it lies over 5 to 30 cm.
 		LocalVector<float> sea_depth;
 		float sea_depth_at(const Vector2 &p_xz) const;
+		// Oases (PlantSpecies.RULE_SPRING): read when a species uses the rule and the generator has a sand sea.
+		DesertSprings springs;
 		// Years since the ground burnt (WorldFire.burn_age_at), -1 never, on a grid over the map, nearest cell; read
 		// only when the fire contract has a provider and a species uses the burn rule or recovers from fire.
 		LocalVector<float> burn;
@@ -289,6 +292,7 @@ private:
 		int count = 0;
 	};
 	void _publish_deadwood(const LocalVector<const LocalVector<Deadwood> *> &p_lists);
+	DesertSprings springs_seen; // The last setup's springs, for get_spring_wetness_at() and get_springs().
 	bool _make_setup(PlaceSetup &r_setup);
 	float _species_range(const Ref<PlantSpecies> &p_species, real_t p_pixel_angle) const;
 	static void _read_sand(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
@@ -640,4 +644,6 @@ public:
 	// Leaf fall from the placed crowns, 0 to 1, with a drift past their edges (PlantSpecies.RULE_LITTER).
 	static constexpr float LITTER_SPREAD = 6.0f; // Metres: the drift's e-folding distance past a crown's edge.
 	float get_litter_at(const Vector3 &p_global_position) const;
+	float get_spring_wetness_at(const Vector3 &p_global_position) const { return springs_seen.at(Vector2(p_global_position.x, p_global_position.z)); }
+	PackedVector3Array get_springs() const;
 };

@@ -589,6 +589,7 @@ public:
 	enum DesertStand {
 		DESERT_FLANKS, // Dune flanks and plinths: drinn tussocks.
 		DESERT_INTERDUNE, // Interdune corridors: sparse drinn, the rain-flush annuals, soil crust.
+		DESERT_OASIS, // Oases at desert springs (PlantSpecies.RULE_SPRING): the date palm stand and a ring of shrubs.
 		DESERT_MAX,
 	};
 	// p_shrubs: TreeGenerator's desert shrubs too (calligonum, white broom, saltbush).

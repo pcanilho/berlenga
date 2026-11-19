@@ -669,6 +669,39 @@ flats), sparse and grouped. Bench VEG_DESERT_SHRUBS=0 for the cost: with against
 (about 70k triangles each in view): asked trees about LODs/impostors for them. The desert bench now reads mobility
 bilinearly, as the field does (nearest-cell reads failed after the sinuous brinks, 81cae021).
 
+## Oases at desert springs (Paulo's pick 19 Nov)
+
+Trees' date palm oasis stand (TreeGenerator.STAND_DATE_OASIS, trees.md 5ai) placed where the sand seas hold water,
+with the desert shrubs round it and a green sward on its damp ground.
+
+Where oases are (research):
+- Ergs hold water where the ground dips to the water table. The Badain Jaran desert has over a hundred permanent
+  lakes in the hollows between its megadunes, fed by groundwater and springs in the lake floors (Yang and Williams
+  2003; Dong et al. 2016); the Ubari sand sea in Libya has its palm-ringed lakes in interdune corridors (Mandara,
+  Gaberoun). The Western Desert's oases (Siwa, Kharga) sit in hollows the wind scoured down to the water table
+  (Said 1990).
+- The water table is a subdued copy of the land's shape (Haitjema and Mitchell-Bruker 2005): flat under the dunes,
+  so the deepest hollows reach it first and a spring's water stands at one level round it.
+- Belts out from the water (Badain Jaran and Saharan oasis surveys): reeds at the edge, then the damp salt meadow
+  and tended palms with fruit trees beneath (Battesti 2005; Zaid and de Wet 2002: the palm wants "its feet in
+  water"; most absorbing roots in the top 2 m, reaching groundwater a few metres down), then a ring of shrubs
+  (tamarisk, calligonum, white broom, saltbush) where the water is deeper, then bare sand.
+- Biological soil crust does not form on wet, worked ground.
+
+Model (VegetationField3D and GrassField3D read the same, from the generator; no private copy of a water state the
+water systems own):
+- Springs: the deepest hollows of the sand sea's surface below its own smoothed level (a 150 m window), at least
+  2 m deep, no closer than 900 m to each other and 60 m inside the sea's edge.
+- Each spring's water stands 1 m above its hollow's floor; `PlantSpecies.RULE_SPRING` is the wetness, 1 where the
+  ground lies at or under that level, falling to 0 where it stands 5 m above it (out of a palm's root reach), and
+  to 0 by 250 m out; -1 off the sand seas. It follows the corridor's shape, since the dunes' flanks rise out of it.
+- `make_desert(DESERT_OASIS)`: the oasis stand (tended palms 0.55 to 1, wild palm clumps by the water 0.8 to 1,
+  olives beneath 0.5 to 0.95) and a shrub ring (calligonum, white broom, saltbush, 0.08 to 0.6). Crust and the
+  annuals keep to wetness under 0.4. A species using the rule grows on the sand like a sand plant.
+- GrassField3D lets its sward onto the sand sea where the wetness passes 0.5 to 0.85.
+- Not here: the water itself. The spring list (`get_springs()`, x, water level, z) is for the water and terrain
+  systems; reeds wait for a pool there.
+
 ## Burnt ground and regrowth (Paulo's pick 17 Nov; built 19 Nov)
 
 PhysX burns plants now (fire_state_map: char, scorch, stubble; fire_char_map: ash). Nothing grows back: a burn stays a

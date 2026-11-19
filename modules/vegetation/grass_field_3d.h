@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "desert_springs.h"
 #include "plant_species.h"
 #include "vegetation_holes.h"
 #include "vegetation_obstacles.h"
@@ -360,6 +361,9 @@ private:
 	Rect2 sea_rect;
 	int sea_nx = 0;
 	int sea_ny = 0;
+	// Oases at desert springs (DesertSprings, as VegetationField3D's RULE_SPRING): the sward comes back onto the sand
+	// where the wetness passes 0.5 to 0.85.
+	DesertSprings springs;
 	void _read_sand_sea(TerrainDataMap3D *p_map);
 	void _read_burn_age(TerrainDataMap3D *p_map);
 	void _follow_burns(TerrainDataMap3D *p_map);
