@@ -64,7 +64,7 @@ layout(set = 0, binding = 5, std140) uniform Params {
 	vec4 sun_map_xform[3]; // rows: world meters -> the sun's volumetric shadow map (u, v, depth in 0..1)
 	vec4 sun_map; // xyz: world direction toward the light it is built from; w: 1 = present
 	vec4 sky_map_xform[3]; // rows: world meters -> the sky's volumetric shadow map (built looking down)
-	vec4 sky_map; // x: single-scattering albedo; w: 1 = present
+	vec4 sky_map; // x: single-scattering albedo; z: weight of the scattering orders past the octaves; w: 1 = present
 } p;
 
 // The world distance (meters) to what a frame pixel shows (reverse Z: 0 is the far plane), at most
@@ -343,10 +343,11 @@ float hg_phase(float c, float g) {
 // The multiple-scattering octaves (Wrenninge et al. 2013), normalised to 1 at zero depth. Octave i stands for
 // higher scattering orders, so it is weighed by the single-scattering albedo to the i-th power, relative to
 // the 0.9 the gas has by default (the default looks are unchanged; a whiter medium such as snow powder keeps
-// more of its deep, many-times-scattered light, as it does under path tracing).
+// more of its deep, many-times-scattered light, as it does under path tracing). The orders past the third come as
+// one more, wider octave weighted by sky_map.z.
 float ms_transmittance(float tau) {
 	float a = p.sky_map.x * (1.0 / 0.9);
-	return (exp(-tau) + 0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau)) * (a / 1.75);
+	return (exp(-tau) + 0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + p.sky_map.z * exp(-0.125 * tau)) * (a / 1.75);
 }
 
 float ign(vec2 px) {
@@ -1010,7 +1011,14 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	}
 	f[w++] = CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
 	f[w++] = 1.0f;
-	f[w++] = 0.0f;
+	{
+		// The scattering orders past the three octaves, as a geometric series: sum over n >= 3 of (c albedo)^n,
+		// c = 0.6 the share of light a scatter keeps inside the gas (fitted to the path tracer on two test puffs),
+		// counted only above the 0.9 default (whose look the three octaves already match).
+		const float om = CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
+		auto tail = [](float x) { const float q = 0.6f * x; return q * q * q / (1.0f - q); };
+		f[w++] = MAX(tail(om) - tail(0.9f), 0.0f);
+	}
 	f[w++] = sky_map ? 1.0f : 0.0f;
 	ERR_FAIL_COND(w != PARAMS_WORDS);
 	p_rd->buffer_update(params_buffer, 0, sizeof(words), words);

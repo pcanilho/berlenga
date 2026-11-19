@@ -2013,6 +2013,15 @@ approximate the many orders PT follows, so raster brightens less than PT
 for very white gas. Test puff, mean grey down its middle at 0.9 and 0.99:
 raster 155.5 and 157.6, path traced 145.0 and 149.5.
 
+Closing that gap (coordinator, 19 Nov evening): the orders past the third
+are added as one wider octave (exp(-tau/8)) weighted by the geometric
+tail sum over n >= 3 of (c albedo)^n, counted only above the 0.9 default,
+so the default look is untouched. c = 0.6 fitted on the test puff; gain
+from 0.9 to 0.99, middle grey (raster vs path traced): test puff +3.0% vs
++3.1% (raster 155.5 -> 160.1), denser full-res puff (check, not fitted)
++1.6% vs +1.2%. The absolute raster/PT gap at the default (about 7% on
+the puff) is unchanged by design.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
