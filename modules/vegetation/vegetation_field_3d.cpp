@@ -3322,6 +3322,108 @@ PackedVector3Array VegetationField3D::get_placements(int p_species) const {
 	return res;
 }
 
+// The trunks of the placed trees within p_radius of p_center, for close-up bark (tree_bark_detail): read back from
+// the drawn cells, whose meshes carry TreeGenerator's tree_colliders (capsules a, b, radius, bone, mesh-local). Each
+// tree once, however many cells or passes draw it. The trunk is the chain of capsules from the first, up to
+// p_height metres above its base.
+Array VegetationField3D::get_trunks_near(const Vector3 &p_center, float p_radius, float p_height) const {
+	Array res;
+	HashMap<const Mesh *, Vector2i> species_of; // mesh: species, variant.
+	if (biome.is_valid()) {
+		for (int s = 0; s < biome->get_species().size(); s++) {
+			const Ref<PlantSpecies> sp = biome->get_species()[s];
+			if (sp.is_null()) {
+				continue;
+			}
+			const TypedArray<Mesh> ms = sp->get_meshes();
+			for (int v = 0; v < ms.size(); v++) {
+				const Ref<Mesh> m = ms[v];
+				if (m.is_valid()) {
+					species_of.insert(m.ptr(), Vector2i(s, v));
+				}
+			}
+		}
+	}
+	HashSet<Vector3i> seen;
+	const float r2 = p_radius * p_radius;
+	for (int c = 0; c < get_child_count(true); c++) {
+		const MultiMeshInstance3D *mmi = Object::cast_to<MultiMeshInstance3D>(get_child(c, true));
+		if (!mmi || mmi->get_multimesh().is_null()) {
+			continue;
+		}
+		const Ref<MultiMesh> mm = mmi->get_multimesh();
+		const Ref<Mesh> mesh = mm->get_mesh();
+		if (mesh.is_null() || !mesh->has_meta(SNAME("tree_colliders"))) {
+			continue;
+		}
+		const PackedFloat32Array col = mesh->get_meta(SNAME("tree_colliders"));
+		if (col.size() < 8) {
+			continue;
+		}
+		const Vector2i *sv = species_of.getptr(mesh.ptr());
+		int preset = -1;
+		if (sv && biome.is_valid()) {
+			const Ref<PlantSpecies> sp = biome->get_species()[sv->x];
+			preset = sp.is_valid() ? int(sp->get_meta(SNAME("preset"), -1)) : -1;
+		}
+		const Transform3D gx = mmi->get_global_transform();
+		const bool custom = mm->is_using_custom_data();
+		const int count = mm->get_visible_instance_count() < 0 ? mm->get_instance_count() : mm->get_visible_instance_count();
+		for (int i = 0; i < count; i++) {
+			const Transform3D t = gx * mm->get_instance_transform(i);
+			if (t.origin.distance_squared_to(p_center) > r2) {
+				continue;
+			}
+			const Vector3i key(int(Math::round(t.origin.x * 100.0f)), int(Math::round(t.origin.y * 100.0f)), int(Math::round(t.origin.z * 100.0f)));
+			if (seen.has(key)) {
+				continue;
+			}
+			seen.insert(key);
+			const float scale = t.basis.get_scale().y;
+			Array segments;
+			const Vector3 a0(col[0], col[1], col[2]);
+			Vector3 prev = a0;
+			float r_top = col[6];
+			float height = 0.0f;
+			for (int k = 0; k + 7 < col.size(); k += 8) {
+				const Vector3 a(col[k], col[k + 1], col[k + 2]);
+				const Vector3 b(col[k + 3], col[k + 4], col[k + 5]);
+				if (k > 0 && a.distance_to(prev) > 1e-3f) {
+					break; // The trunk's chain ends where the next capsule starts elsewhere (a branch).
+				}
+				Array seg;
+				seg.push_back(t.xform(a));
+				seg.push_back(t.xform(b));
+				seg.push_back(col[k + 6] * scale);
+				segments.push_back(seg);
+				height += a.distance_to(b) * scale;
+				r_top = col[k + 6];
+				prev = b;
+				if ((b.y - a0.y) * scale >= p_height) {
+					break;
+				}
+			}
+			const Vector3 b0(col[3], col[4], col[5]);
+			Dictionary d;
+			d["base"] = t.xform(a0);
+			d["up"] = t.basis.xform(b0 - a0).normalized();
+			d["height"] = height;
+			d["radius_base"] = col[6] * scale;
+			d["radius_top"] = r_top * scale;
+			d["segments"] = segments;
+			d["preset"] = preset;
+			d["species"] = sv ? sv->x : -1;
+			d["variant"] = sv ? sv->y : -1;
+			d["basis"] = t.basis;
+			d["custom"] = custom ? mm->get_instance_custom_data(i) : Color();
+			// A seed from where it stands: the same tree gives the same number whichever cell draws it.
+			d["seed"] = int(hash_murmur3_one_32(uint32_t(key.x), hash_murmur3_one_32(uint32_t(key.z))) & 0x7fffffff);
+			res.push_back(d);
+		}
+	}
+	return res;
+}
+
 // Streaming (docs/ideas/vegetation-lod-streaming.md, "Built (2)"): tiles around a centre are placed
 // on WorkerThreadPool, nearest first, each over its halo so it comes out exactly as in populate().
 // The main thread adds a placed tile's species to the scene within stream_budget_msec a frame,
@@ -3905,6 +4007,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_plant_count"), &VegetationField3D::get_plant_count);
 	ClassDB::bind_method(D_METHOD("get_populate_time_msec"), &VegetationField3D::get_populate_time_msec);
 	ClassDB::bind_method(D_METHOD("get_placements", "species"), &VegetationField3D::get_placements);
+	ClassDB::bind_method(D_METHOD("get_trunks_near", "center", "radius", "height"), &VegetationField3D::get_trunks_near, DEFVAL(4.0f));
 	ClassDB::bind_method(D_METHOD("get_deadwood_count"), &VegetationField3D::get_deadwood_count);
 	ClassDB::bind_method(D_METHOD("get_crowns_in", "rect"), &VegetationField3D::get_crowns_in);
 	ClassDB::bind_method(D_METHOD("get_deadwood_at", "global_position", "reach", "min_radius"), &VegetationField3D::get_deadwood_at, DEFVAL(0.0f), DEFVAL(0.0f));
