@@ -503,7 +503,10 @@ void GroundSurface3D::_ground_changed() {
 
 // The mud deposits, a cubic B-spline over their 1 m cells' centres: smooth in slope as well as height, so a fan's
 // surface carries no creases along the cells for the field's slumping to work into terraces.
-float GroundSurface3D::_deposit_smooth_at(float p_x, float p_z) const {
+float GroundSurface3D::_deposit_smooth_at(float p_x, float p_z, float *r_coloured) const {
+	if (r_coloured) {
+		*r_coloured = 0.0f;
+	}
 	if (mud_deposits.is_empty()) {
 		return 0.0f;
 	}
@@ -527,9 +530,13 @@ float GroundSurface3D::_deposit_smooth_at(float p_x, float p_z) const {
 	float sum = 0.0f;
 	for (int j = 0; j < 4; j++) {
 		for (int k = 0; k < 4; k++) {
-			const float *v = mud_deposits.getptr(Vector2i(x0 - 1 + k, z0 - 1 + j));
+			const Vector2i key(x0 - 1 + k, z0 - 1 + j);
+			const float *v = mud_deposits.getptr(key);
 			if (v) {
 				sum += wx[k] * wz[j] * *v;
+				if (r_coloured && mud_deposit_colors.has(key)) {
+					*r_coloured += wx[k] * wz[j] * *v;
+				}
 			}
 		}
 	}
@@ -543,10 +550,24 @@ bool GroundSurface3D::_apply_deposits() {
 		return false;
 	}
 	bool moved = false;
+	// A deposit with a colour is one its depositor draws itself beyond the print field (a debris flow's sheet,
+	// GroundDebrisFlow3D): the ground takes it over inside the field only, fading in over the field's 1 to 4 m from
+	// its edge, where the sheet still draws over it, so the two never stand side by side as a step. Uncoloured
+	// deposits (flood silt) are the ground's alone and raise it everywhere.
+	const Rect2 field_rect = get_deform_rect();
 	for (int z = 0; z < n; z++) {
 		for (int x = 0; x < n; x++) {
 			const int i = z * n + x;
-			const float want = _deposit_smooth_at((ground_origin.x + x) * ground_spacing, (ground_origin.y + z) * ground_spacing);
+			const float wx = (ground_origin.x + x) * ground_spacing;
+			const float wz = (ground_origin.y + z) * ground_spacing;
+			float drawn = 0.0f;
+			const float all = _deposit_smooth_at(wx, wz, &drawn);
+			float inside = 0.0f;
+			if (field_rect.size.x > 0.0f) {
+				const float d = MIN(MIN(wx - field_rect.position.x, field_rect.get_end().x - wx), MIN(wz - field_rect.position.y, field_rect.get_end().y - wz));
+				inside = Math::smoothstep(1.0f, 4.0f, d);
+			}
+			const float want = all - drawn * (1.0f - inside);
 			if (Math::abs(want - ground_dep[i]) > 1e-4f) {
 				ground[i] += want - ground_dep[i];
 				ground_dep[i] = want;
@@ -2949,9 +2970,10 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 				if (c.a <= 1e-4f) {
 					continue;
 				}
-				// Covered past a few centimetres; the edge wanders with a value noise (about 1.7 m), as a lobe's margin.
-				const float edge = 0.012f * _value_noise(wx / 1.7f + 31.0f, wz / 1.7f + 7.0f);
-				dd[i * 4 + 0] = c.a * Math::smoothstep(0.0f, 0.03f, ground_dep[i] - edge);
+				// A film of a few millimetres already hides the soil; the edge wanders with a value noise (about 1.7 m),
+				// as a lobe's margin.
+				const float edge = 0.004f * _value_noise(wx / 1.7f + 31.0f, wz / 1.7f + 7.0f);
+				dd[i * 4 + 0] = c.a * Math::smoothstep(0.0f, 0.006f, ground_dep[i] - edge);
 				dd[i * 4 + 1] = c.r;
 				dd[i * 4 + 2] = c.g;
 				dd[i * 4 + 3] = c.b;

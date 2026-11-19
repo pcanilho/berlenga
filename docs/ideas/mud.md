@@ -1068,6 +1068,10 @@ Also (19 Nov): `add_mud_deposit(..., color)` gives a deposit its own colour; Gro
 deposits as a wet map block (texel 5's tag 7.5: cover, linear colour, B-spline weighted like the depths, edge
 wobbled by noise), and the ground's raster and PT shading take it, so the fan in the print field shows the flow's ash
 grey and meets the sheet beyond it with no seam. Slurry water ponding along a levee's foot reads as muddy water.
+Edge fixes (19 Nov): a coloured deposit (one its depositor draws) raises the ground only inside the print field,
+fading in over the field's 1 to 4 m from its edge; the sheet runs on 3 cm under the ground there (hidden), so seen
+from any side there is no step where the two meet. Margin cells of the sheet split 4 x 4 with bilinear depth, so its
+1 cm contour curves instead of a 1.5 m saw-tooth. The deposit's colour covers past a few millimetres.
 
 **13.2 Stream fords.** Research: off-road vehicle crossings show as turbidity spikes that pass downstream with each
 crossing (Alaska DEC, Kenai ATV crossings 2002; Forest Service low-water crossing guides); remoulded soil erodes past
