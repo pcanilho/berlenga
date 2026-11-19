@@ -332,6 +332,17 @@
 				A one-shot local disturbance (a splash) at [param world_pos]'s XZ -- consumed by the next simulation step, then cleared automatically. Call it once per event (e.g. on impact), not every tick.
 			</description>
 		</method>
+		<method name="submit_wave">
+			<return type="bool" />
+			<param index="0" name="world_pos" type="Vector3" />
+			<param index="1" name="direction" type="Vector3" />
+			<param index="2" name="height" type="float" />
+			<param index="3" name="period" type="float" />
+			<param index="4" name="width" type="float" />
+			<description>
+				An impulse wave in metres and seconds ([method WorldWater.wave]): one crest and trough [param height] m high (crest to trough, at most 0.78 of the depth there, the breaking limit), as long as [param period] s at the long-wave speed sqrt(g h) of the depth at [param world_pos] (at least eight cells), its crest [param width] m wide with tapered ends, centred on [param world_pos] and setting off along [param direction] (XZ). Seeded in one step as height plus the matching velocity, so it travels one way, runs up the shore and reflects. Returns [code]false[/code] where there is no water or [param world_pos] is off the simulated grid.
+			</description>
+		</method>
 		<method name="submit_sphere">
 			<return type="void" />
 			<param index="0" name="owner" type="int" />
