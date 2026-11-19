@@ -760,8 +760,21 @@ void rt_caustics_photon_cascade(vec3 p_center, uint p_cascade, uint p_write, uve
 	vec3 start = q.x * f.r + q.y * f.u + f.ref_depth * f.L - dir * RT_CAUSTICS_SUN_HEIGHT;
 	float width = f.size / float(f.res);
 	PathState ps;
+	if (!rt_caustics_trace(start, dir, width, rng, ps)) {
+		return;
+	}
+	// A photon that meets dry ground first lands where it is, bent and straight alike, so the ratio is 1 there. Without
+	// it a dry point beside the water read its texel's ratio from the water's photons alone: bent photons land short of
+	// their straight twins (refraction steepens them), so along one bank the bent ones had no twins to match (a bright
+	// line on the shore) and along the other the twins had no bent ones (a dark line).
+	if ((ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u) {
+		vec3 dry = start + dir * ps.hit_t;
+		rt_caustics_deposit(f, p_write, dry, 0u);
+		rt_caustics_deposit(f, p_write, dry, 1u);
+		return;
+	}
 	// Only photons entering a medium through its front face count.
-	if (!rt_caustics_trace(start, dir, width, rng, ps) || (ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u || ps.bsdf_pdf < 0.5) {
+	if (ps.bsdf_pdf < 0.5) {
 		return;
 	}
 	vec3 entry = start + dir * ps.hit_t;
