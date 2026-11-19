@@ -50,6 +50,8 @@ extends Node3D
 #   --out=path.png    save the last frame and quit
 #   --map-out=path.png  save the map (wind speed red, cloud cover green, wetness blue) and quit
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
+#   --fire=W          clouds views: a fire plume of W watts convective heat 5 km ahead (a WorldFire stub) in dry air
+#                     (humidity 0.3), the weather advanced 30 minutes: its fire cloud at its own condensation level
 #   --no-reprojection  clouds view: every half resolution pixel every frame (WeatherSkyMaterial.cloud_reprojection off)
 #   --pan=D           clouds view: the camera turns D degrees a second (reprojection under motion)
 #   --cloud-time=S    clouds views: the clouds have evolved S seconds (the drift stays), for time-lapse strips
@@ -87,6 +89,15 @@ var reprojection := true
 var pan := 0.0
 var cloud_time := -1.0
 var frozen := false
+var fire_w := 0.0
+
+
+# A fire's convection column 5 km ahead of the clouds views' camera (--fire=W).
+class PlumeStub extends WorldFire:
+	var heat := 0.0
+	func _plumes() -> PackedVector4Array:
+		return PackedVector4Array([Vector4(0, 0, -5000, heat)])
+
 var pan_cam: Camera3D
 var n := 0
 var env: Environment
@@ -103,6 +114,7 @@ func _ready() -> void:
 		elif a.begins_with("--pan="): pan = float(a.substr(6))
 		elif a.begins_with("--cloud-time="): cloud_time = float(a.substr(13))
 		elif a == "--frozen": frozen = true
+		elif a.begins_with("--fire="): fire_w = float(a.substr(7))
 		elif a == "--no-sky-shadow": no_sky_shadow = true
 		elif a == "--froxel-haze": froxel_haze = true
 		elif a.begins_with("--sun-up="): sun_up = float(a.substr(9))
@@ -1117,6 +1129,16 @@ func _build_clouds() -> void:
 
 	await get_tree().physics_frame
 	weather.snap_to_settings()
+	if fire_w > 0.0:
+		var stub := PlumeStub.new()
+		stub.heat = fire_w
+		WorldContracts.set_fire(stub)
+		weather.humidity = 0.3
+		weather.snap_to_settings()
+		for i in 30:
+			weather.advance(60.0)
+		var fc: Vector3 = weather.get_fire_cloud_for(fire_w)
+		print("fire: rise %.0f m, condensation level %.0f m, strength %.2f, fire clouds %d, map cloud base %.0f m" % [fc.x, fc.y, fc.z, weather.get_fire_cloud_count(), weather.cloud_base_height])
 	weather.update_cloud_shadow()
 	if haze == "uniform" or haze == "both":
 		weather.set_precipitation_extinction(sun, 3.912 / 2000.0, 0.0)

@@ -71,7 +71,11 @@ struct State {
 	float rise_detail = 0.0f;
 	int storm_count = 0;
 	float storms[MAX_STORMS][4] = {}; // x, z, radius of the cloud shield, cover times growth
+	// Each storm's own cloud base (m above y = 0; <= 0: base_height), as a fire cloud's at its plume's
+	// condensation level. Columns round a storm blend to it as they join its cloud shield (base_at()).
+	float storm_base[MAX_STORMS] = {};
 	float top_max = 0.0f; // highest top any column reaches now (m), set by update_top_max()
+	float base_min = 1500.0f; // lowest base any column has now (m), set by update_top_max()
 
 	void update_top_max();
 };
@@ -81,11 +85,15 @@ struct State {
 float top_height(const State &p_state, float p_type);
 // The shape noise's offset at height p_y (m): the shear times the squared height over the thickness.
 Vector2 shear_offset(const State &p_state, float p_y);
+// The same over a column whose base is p_base (m).
+Vector2 shear_offset(const State &p_state, float p_y, float p_base);
 // The weather map's cover noise: four octaves of hashed value noise over (p - drift) / scale, 0..1. With
 // p_evolve >= 0 (time in lifetimes) each octave moves on through time (clouds form and clear).
 float cover_noise(Vector2 p_xz, Vector2 p_drift, float p_scale, float p_evolve = -1.0f);
 // Cover and type at world x, z: the weather map's drifting noise plus storms.
 Vector2 cover_type_at(const State &p_state, Vector2 p_xz);
+// The cloud base (m) over world x, z: base_height, blended to each storm's own base over its cloud shield.
+float base_at(const State &p_state, Vector2 p_xz);
 // Extinction (1/m) at a world point, base shape only (the sky adds detail erosion at the edges).
 // Where a world point reads the shape noise first (turned, stretched twice vertically), and the
 // shape there: two reads of the tile at an irrational ratio of scales, evened out (0..1).

@@ -764,7 +764,8 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 
 			// The mouth: back from the waterline to the cliff's foot, where the ground first stands 2 m over the sea.
 			// The sea must reach the mouth floor: the foot stands within 8 m of the waterline and the ground between
-			// stays under high-water swash (sea + 0.6 m), so a wave-cut notch rather than a dry beach fronts the cave.
+			// stays under storm swash (sea + 1.9 m: a wave-cut notch, or the pocket beach of sand and shingle that
+			// storm waves throw up into many sea cave mouths), not a dry beach well above the sea.
 			Vector2 mouth = m;
 			bool foot = false, swash = true;
 			for (real_t t = 0.0; t < 8.0; t += 0.5) {
@@ -774,7 +775,7 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 					foot = true;
 					break;
 				}
-				if (hq > sea + 0.6) {
+				if (hq > sea + 1.9) {
 					swash = false;
 					break;
 				}

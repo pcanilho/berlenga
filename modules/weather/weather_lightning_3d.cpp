@@ -386,7 +386,7 @@ Vector3 WeatherLightning3D::_attach_point(const Vector3 &p_below, float p_cloud_
 Vector3 WeatherLightning3D::find_strike_point(const Vector3 &p_position, float p_peak_current) {
 	WeatherMap3D *map = WeatherMap3D::get_active();
 	const float ground = map ? map->get_ground_height() : 0.0f;
-	const float base = map ? map->get_cloud_state().base_height : ground + 1500.0f;
+	const float base = map ? WeatherClouds::base_at(map->get_cloud_state(), Vector2(p_position.x, p_position.z)) : ground + 1500.0f;
 	bool canopy = false;
 	return _attach_point(Vector3(p_position.x, MAX(base, ground + 500.0f), p_position.z), MAX(base, ground + 500.0f), ground, p_peak_current, map, canopy);
 }
@@ -669,7 +669,7 @@ int WeatherLightning3D::_start_flash(const Vector3 &p_position, bool p_cloud_to_
 	}
 	const Vector2 ct = WeatherClouds::cover_type_at(state, Vector2(p_position.x, p_position.z));
 	const float top_height = WeatherClouds::top_height(state, MAX(ct.y, 0.9f));
-	const float base = state.base_height;
+	const float base = WeatherClouds::base_at(state, Vector2(p_position.x, p_position.z));
 
 	Flash f;
 	f.id = next_id++;

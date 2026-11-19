@@ -166,6 +166,8 @@ private:
 	bool live_advected_ripples = true; // ripples carried along the live flow's real paths (water_flow_offset.glsl)
 	bool live_surface_waves = true; // dispersive surface waves over the live window (water_surface_waves.glsl)
 	float live_surface_wave_strength = 1.0f;
+	float live_near_mesh_spacing = 0.1f; // m between vertices of the ribbon inside the live window (0: off)
+	float live_near_mesh_used = 0.0f; // the spacing the last build used (raised to stay inside the budget)
 	float live_damping = 0.05f;
 	NodePath live_follow; // empty: the viewport's camera
 
@@ -356,6 +358,8 @@ public:
 	bool get_live_surface_waves() const { return live_surface_waves; }
 	void set_live_surface_wave_strength(float p_strength);
 	float get_live_surface_wave_strength() const { return live_surface_wave_strength; }
+	void set_live_near_mesh_spacing(float p_spacing);
+	float get_live_near_mesh_spacing() const { return live_near_mesh_spacing; }
 	void set_live_damping(float p_damping);
 	float get_live_damping() const { return live_damping; }
 	void set_live_follow(const NodePath &p_path);

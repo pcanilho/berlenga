@@ -1726,10 +1726,12 @@ get_fire_cloud_for(Q) gives the rise, LCL and strength. Numbers (30 C,
 pyrocumulonimbus; at night (mixed layer 200 m) nothing under about 60 GW;
 humid air (60%, LCL 1.1 km) caps a 1 GW fire fully. Scratch test with a
 plume stub (50 GW, sun unknown): a cumulus cap over the plume after 20
-game minutes (cloud type 0.79), gone within two hours of the heat stopping. Left (weather owners): the
-cloud base stays the map's global cloud_base_height; a per-storm base at
-the plume's own condensation level would need a field in the sky
-shader's storm uniform.
+game minutes (cloud type 0.79), gone within two hours of the heat stopping. Each fire cloud's
+base sits at its plume's own condensation level (fire base plus the LCL),
+not the map's cloud_base_height: storms carry an optional base, read by the
+sky shader, the CPU density (shadow bake, path traced sky) and lightning;
+round a storm the base levels out to about four shield radii (weather
+bench `--view=clouds --fire=5e10`: base 2500 m against the map's 1500 m).
 
 The same round adds `fire_age_map` for the trees thread (needle cast on
 fire-killed crowns): R8, game years since each cell caught over 2 (about
