@@ -31,6 +31,16 @@ func get_height(p: Vector3) -> float:
 			for d in [Vector3(-4.0, 0.25, -3.0), Vector3(5.0, 0.3, 2.0), Vector3(-2.0, 0.2, 6.0)]:
 				h -= d.y * exp(-(pow(p.x - d.x, 2.0) + pow(p.z - d.z, 2.0)) / 3.0)
 			return h
+		"valley":
+			# A burnt channel falling 25% toward +z to the fan apex at z = 0, then a 4% fan (post-fire debris flow).
+			var along := -0.25 * minf(p.z, 0.0) - 0.04 * maxf(p.z, 0.0)
+			# Above the apex the channel is a gully cut 2.4 m into 15% valley sides, with 31 degree banks.
+			var ax := absf(p.x)
+			var bank := 0.6 * minf(ax, 4.0) + 0.15 * maxf(ax - 4.0, 0.0) if p.z < 0.0 else 0.02 * ax
+			# The gully dies out over the 10 m above the apex.
+			if p.z > -10.0 and p.z < 0.0:
+				bank = lerpf(bank, 0.02 * ax, (p.z + 10.0) / 10.0)
+			return along + bank + 0.15 * noise.get_noise_2d(p.x * 2.0, p.z * 2.0)
 		"meadow":
 			return 0.12 * noise.get_noise_2d(p.x * 3.0, p.z * 3.0) + 0.02 * p.x
 		_:

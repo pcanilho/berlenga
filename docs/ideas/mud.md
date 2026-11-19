@@ -1005,6 +1005,44 @@ it. A branch whose bending moment under the load, P / (4 lambda), passes green w
 wheels. Bench --test=mats: on 29 logs across 25 cm of slurry the car drives 4.6 m in 8 s, where bare it bogs at
 0.5 m. The logs sink 6 cm at most against a bare tyre's 28 cm. A 16 cm log carries a 3.7 kN wheel; a 3 cm branch
 snaps under it. --view=mats shows a car on a corduroy.
+#### Post-fire debris flow body (queued 19 Nov, picked through the PhysX thread)
+
+Valence's runoff fires a debris-flow event (WorldRunoffProvider::contract_runoff_debris_flow: event id, outlet, volume
+from USGS M1 and Gartner 2014, the channel path downstream, peak I15, burnt share, channel width and burn severity
+along the path). Mud owns the moving body:
+
+- **Model.** A depth-averaged flow on a 1 to 2 m lattice in a corridor along the path (the GPU field covers only
+  32 m): shallow-water mass and momentum with a Voellmy basal resistance, tau = mu rho g h cos(theta) + rho g u^2 / xi
+  (RAMMS: Christen, Kowalski and Bartelt 2010; mu about 0.1, xi 200 to 1000 m/s^2 for post-fire flows), plus the
+  Bingham yield stress (O'Brien, Julien and Fullerton 1993, FLO-2D's quadratic rheology) so it stops on its own.
+- **Bulking.** Entrainment along the channel at McDougall and Hungr's (2005) natural-exponential growth rate,
+  E = ln(V_out / V_in) / L, scaled by the path's burn severity and capped by the bed's loose depth (the cells' own
+  layer, round 12's subsoil).
+- **Stopping.** The yield stress holds once rho g h sin(theta) falls under tau_y, about 10% slope for typical flows
+  (the fan apex). What stops is written as a mud deposit (depth, clay) into GroundSurface3D and the WorldGround
+  height and mud fields, so the field's ruts, slides, cracks and drying carry on from there.
+- **Near the camera.** Within the 32 m field the GPU slide pass (round 10) takes the front's depth, so it flows over
+  ruts and logs at 6 cm.
+- **For PhysX.** get_debris_front(event_id) gives the front's position, depth and speed for its surge particles
+  and boulders.
+- **Wiring (19 Nov).** Valence eab1d857: basin_area in km2; get_debris_flows_since(-1) returns the whole log. Steep burnt
+  valleys fire many small events at once (68 in 4 km2 at 40 mm/h): pool events whose paths join into one body. A
+  deposit reaching water goes to WorldWater.add_sediment. PhysX 427652c3bb: PhysXDebrisSurge3D.front_source takes the
+  GroundDebrisFlow3D and follows get_debris_front(id) while it returns a position.
+
+**Built (19 Nov): GroundDebrisFlow3D** (modules/ground). Listens to WorldGround's debris_flow (listen, on) and
+pools events whose outlets lie within pool_distance (30 m) of a running body's path. Corridor lattice cell_size 1.5 m,
+corridor_width 60 m, carried 40 m past the path's end for the fan; local inertial momentum with a semi-implicit
+Voellmy turbulent term (voellmy_xi 400) and a Coulomb plus yield stop (voellmy_mu 0.1, yield_stress 1500 Pa);
+Rickenmann hydrograph feeds; entrainment 0.002/m times severity, max_scour 0.6 m. On stopping: add_mud_deposit on the
+active GroundSurface3D, TerrainBrush3D add rectangles on terrain_deformer if set, WorldWater.add_sediment where the
+water is deeper than 10 cm. PhysX reads get_debris_front(id) and debris_front_changed(id) (once per physics frame per
+body, pooled ids too); debris_flow_started / debris_flow_finished. The sheet mesh clips at the 1 cm contour (marching
+triangles), smooths drawn depth over neighbours and carries ash streak noise at 4 m and 1.3 m.
+Bench --test=debris: 2,000 m3 down a 25% channel: front peaks 7.1 m/s, stops 39 m onto the 4% fan, entrains 310 m3,
+budget closes to 0.1%, fan laid up to 3 m deep. --view=debris [--t=40] shows a flow spreading at the fan apex.
+Limits: margins are 1.5 m resolution from afar (near the camera the slide pass and PhysX surge carry the detail).
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

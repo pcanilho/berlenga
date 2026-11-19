@@ -118,6 +118,7 @@ var flakes_test := false
 var pressure_test := false
 var subsoil_test := false
 var mats_test := false
+var debris_test := false
 var tread_arg := -1 # --view=ruts: the car's PhysXVehicleWheel3D.Tread (mud round 10)
 var puddle_test := false
 var crack_test := false
@@ -179,6 +180,7 @@ func _ready() -> void:
 		elif a == "--test=pressure": pressure_test = true
 		elif a == "--test=subsoil": subsoil_test = true
 		elif a == "--test=mats": mats_test = true
+		elif a == "--test=debris": debris_test = true
 		elif a == "--test=puddles": puddle_test = true
 		elif a == "--test=cracks": crack_test = true
 		elif a == "--test=legs": legs_test = true
@@ -254,7 +256,7 @@ func _ready() -> void:
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test:
+	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test:
 		if clog_test:
 			await _run_clog_tests()
 		if treads_test:
@@ -273,6 +275,8 @@ func _ready() -> void:
 			await _run_subsoil_tests()
 		if mats_test:
 			await _run_mat_tests()
+		if debris_test:
+			await _run_debris_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -349,6 +353,9 @@ func _ready() -> void:
 		return
 	if view == "mats":
 		await _build_mats()
+		return
+	if view == "debris":
+		await _build_debris()
 		return
 	if view == "roost":
 		await _build_roost()
@@ -5095,3 +5102,146 @@ func _run_burnscar_tests() -> void:
 	var off: Vector2 = await _burn_runoff(0.0)
 	print("  runoff sheet: repellent scar %.3f mm (unburnt below %.3f mm); scar gone %.3f mm" % [on.x * 1000.0, on.y * 1000.0, off.x * 1000.0])
 	_check("water-repellent burnt soil sheds the rain (Robichaud 2000)", on.x > 0.0 and on.x > 2.0 * off.x, "%.3f mm against %.3f mm" % [on.x * 1000.0, off.x * 1000.0])
+
+
+# Post-fire debris flow (after mud round 12): a burnt channel down a 25% valley side onto a 4% fan.
+class DebrisValley extends WorldGround:
+	func _height_at(p: Vector3) -> float:
+		# A V-shaped channel along +z: 25% down to z = 120, then a 4% fan; banks rise 15% to each side.
+		var z := p.z
+		var along := -0.25 * minf(z, 120.0) - 0.04 * maxf(z - 120.0, 0.0)
+		var bank := 0.15 * absf(p.x) if z < 120.0 else 0.02 * absf(p.x)
+		return along + bank
+
+
+func _debris_event(p_id: int, p_from: float, p_volume: float) -> Dictionary:
+	var path := PackedVector3Array()
+	var widths := PackedFloat32Array()
+	var sev := PackedFloat32Array()
+	var z := p_from
+	while z <= 120.0:
+		path.append(Vector3(0, 0, z))
+		widths.append(4.0)
+		sev.append(1.0)
+		z += 5.0
+	return {"id": p_id, "position": path[0], "volume": p_volume, "path": path, "widths": widths, "severity": sev}
+
+
+func _run_debris_tests() -> void:
+	await _soil_scene("soil")
+	var stub := DebrisValley.new()
+	WorldContracts.set_ground(stub)
+	var flow = ClassDB.instantiate("GroundDebrisFlow3D")
+	flow.listen = false
+	flow.show_flow = false
+	add_child(flow)
+	var signalled := {"changed": 0, "finished": []}
+	flow.debris_front_changed.connect(func(id: int) -> void:
+		if id == 1:
+			signalled["changed"] += 1)
+	flow.debris_flow_finished.connect(func(id: int) -> void: signalled["finished"].append(id))
+	flow.start(_debris_event(1, 0.0, 2000.0))
+	# A second gully's small event joins it 20 m down.
+	flow.start(_debris_event(2, 20.0, 150.0))
+	_check("a small event whose outlet lies on a running flow's path feeds that flow", flow.get_body_count() == 1, "%d bodies" % flow.get_body_count())
+	var peak_speed := 0.0
+	var fronts := []
+	var t := 0.0
+	var moving_pos := false
+	while t < 900.0 and flow.get_active_bodies() > 0:
+		flow.advance(5.0, 0.05)
+		t += 5.0
+		var f: Dictionary = flow.get_debris_front(1)
+		if f.has("position") and not f["done"]:
+			moving_pos = true
+		peak_speed = maxf(peak_speed, f.get("speed", 0.0))
+		fronts.append(f.get("position", Vector3()))
+	var f: Dictionary = flow.get_debris_front(1)
+	var b: Dictionary = flow.get_budget(1)
+	var stop_z: float = f.get("position", Vector3()).z
+	print("  ran %.0f s: front stopped at z %.1f m (fan from 120 m), peak front speed %.1f m/s, %.1f m deep there, %.1f m wide" % [t, stop_z, peak_speed, f.get("depth", 0.0), f.get("width", 0.0)])
+	print("  budget: %.0f m3 fed, %.0f m3 entrained, %.0f m3 off the end, %.0f m3 lying" % [b["in"], b["entrained"], b["out"], b["now"]])
+	_check("the front runs down the channel at debris-flow speeds (Rickenmann 1999: a few to 10 m/s)", peak_speed > 2.0 and peak_speed < 15.0, "%.1f m/s" % peak_speed)
+	_check("and stops on the fan, where the slope falls under the basal friction (about 10%)", stop_z > 120.0 and stop_z < 200.0 and f["done"], "z %.1f m, done %s" % [stop_z, f["done"]])
+	_check("it bulks up along the burnt channel (McDougall and Hungr 2005)", b["entrained"] > 0.1 * b["in"], "%.0f of %.0f m3" % [b["entrained"], b["in"]])
+	_check("no slurry is made or lost", absf(b["now"] + b["out"] - b["in"] - b["entrained"]) < 0.02 * b["in"], "%.0f + %.0f against %.0f + %.0f" % [b["now"], b["out"], b["in"], b["entrained"]])
+	_check("PhysX can follow the front while it moves", moving_pos, "")
+	_check("debris_front_changed fires as it moves, and both pooled events hear debris_flow_finished", signalled["changed"] > 10 and 1 in signalled["finished"] and 2 in signalled["finished"], "%d changes, finished %s" % [signalled["changed"], signalled["finished"]])
+	var lying := 0.0
+	for z in range(122, int(stop_z), 2):
+		lying = maxf(lying, surface.get_mud_deposit_at(Vector3(0, 0, z)))
+	_check("the fan is laid on the ground as fresh slurry", lying > 0.1, "%.2f m at most" % lying)
+	WorldContracts.set_ground(null)
+	flow.queue_free()
+
+
+# The bench's own height source as the world's ground, for the debris view.
+class HeightGround extends WorldGround:
+	var src: Node3D
+
+	func _height_at(p: Vector3) -> float:
+		return src.get_height(p)
+
+
+# --view=debris [--t=45]: a post-fire debris flow down a burnt channel spreading on its fan, --t seconds after it fires.
+func _build_debris() -> void:
+	await _setup("valley", GroundSurface3D.GROUND_SOIL, 0.5, 0.0)
+	_apply("soil")
+	var mat := _ground_material("soil")
+	surface.material = mat
+	_add_terrain(160.0, 320, mat)
+	var env := Environment.new()
+	var sky := Sky.new()
+	sky.sky_material = ProceduralSkyMaterial.new()
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.set("pathtracing_sky_shader_enabled", true)
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = false
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-35.0, 140.0, 0.0) if sun_arg.size() < 2 else Vector3(sun_arg[0], sun_arg[1], 0.0)
+	sun.directional_shadow_max_distance = 120.0
+	add_child(sun)
+	var stub := HeightGround.new()
+	stub.src = height
+	WorldContracts.set_ground(stub)
+	var flow = ClassDB.instantiate("GroundDebrisFlow3D")
+	flow.listen = false
+	add_child(flow)
+	var path := PackedVector3Array()
+	var widths := PackedFloat32Array()
+	var sev := PackedFloat32Array()
+	var z := -110.0
+	while z <= 0.0:
+		path.append(Vector3(0, 0, z))
+		widths.append(4.0)
+		sev.append(1.0)
+		z += 5.0
+	flow.start({"id": 1, "position": path[0], "volume": 2000.0, "path": path, "widths": widths, "severity": sev})
+	var secs := 40.0
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--t="):
+			secs = float(a.substr(4))
+	flow.advance(secs, 0.05)
+	var f: Dictionary = flow.get_debris_front(1)
+	print("debris: front at %s, %.2f m deep, %.1f m/s, %.0f m3" % [f.get("position", Vector3()), f["depth"], f["speed"], f["volume"]])
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([30.0, 45.0, -60.0, 0.0, 0.0, 5.0])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 55.0
+	surface.follow_target = surface.get_path_to(cam)
+	for i in 20:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	await _save_view(env)
+	WorldContracts.set_ground(null)
+	get_tree().quit()
