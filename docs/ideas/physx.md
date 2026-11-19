@@ -1735,6 +1735,44 @@ The same round adds `fire_age_map` for the trees thread (needle cast on
 fire-killed crowns): R8, game years since each cell caught over 2 (about
 3-day steps), 0 where nothing burnt, over fire_char_rect.
 
+### Next-round options (card, 19 Nov)
+
+Research notes for the card that follows the four picks above.
+
+Smoke haze dims the sun. Thick wildfire smoke reaches aerosol optical
+depths of 1 to 5 at 550 nm, with a mass extinction of about 4.5 m2/g
+and a single scattering albedo near 0.9 (Reid et al. 2005). The
+Angstrom exponent of 1.5 to 2 removes blue light first, so the sun goes
+orange and then red. Under dense plumes the day cools by a few kelvin
+(Robock 1988). Plan: the fire's smoke mass rate (WorldFire.plumes gains
+a smoke term) feeds a column-load field on the weather grid, advected
+by the wind aloft and settling out over days. The weather's haze
+(rt_params 80-84) and its sun read the field, so sun drying and air
+temperature follow.
+
+Post-fire mudflows. In the first one or two years, rain bursts on burnt
+slopes steeper than about 23% start runoff-generated debris flows. USGS
+thresholds sit near 15-minute intensities of 10-25 mm/h (Cannon et al.
+2008; Staley et al. 2017). They grow by scouring rills and channel beds
+as they run (progressive bulking; Kean et al. 2013). Plan: the burn
+scar's runoff (water_repellency_at, runoff_at) already concentrates the
+flow. A channel that passes the threshold picks up ash and soil into a
+Bingham mud body (the mud thread's model) that runs down the gully, then
+fans out and stops where the slope eases. The ground and mud threads own
+that code, so it needs their sign-off.
+
+Burning wooden buildings. Embers light buildings through vents, gutters
+and decks (Manzello 2017). Inside, a room fire grows until flashover,
+when the hot layer reaches about 600 C and the floor takes about 20
+kW/m2 (Drysdale). After that it burns ventilation-limited at about
+1.5 A sqrt(H) MW (Kawagoe), and flames lean out of the windows. Timber
+members char at about 0.65 mm/min (EN 1995-1-2), which is the char
+rate the stem foot already uses, and they fail as the section thins.
+Plan: a PhysXBurnable3D building mode made of rooms with openings,
+using flashover and Kawagoe's heat release, external flames as Flow
+emitters, members charring, and the frame collapsing through Blast when
+the remaining section falls under its load.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
