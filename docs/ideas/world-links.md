@@ -86,6 +86,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Bodies → shrubs, crops, hedges, ferns | linked (18 Nov) | contact trample field | VegetationField3D keeps a field where no grass does |
 | Bodies → branches | linked | `tree_touch` group | |
 | Bodies → fallen leaves kicked up | linked (19 Nov) | world_contact bodies (position, speed) | LeafFall3D throws the lying leaves a moving body touches at 0.4-0.9 of its speed with a small lift; leaf litter spawns leaves across the swath; a still body moves none |
+| Water, snow → fallen leaves | linked (19 Nov) | WorldWater (height, flow), WorldSnow (depth, surface, lake ice), weather wind | LeafFall3D leaves land on the top surface: on water they float with the current plus 3% leeway in the wind (Breivik et al. 2011), on snow they lie on top, are buried by more snow and set down when it melts; lake ice holds them |
 | Vehicles → grass, branches | linked (18 Nov) | world_contact | wheels and bodies join |
 | Lying snow → plants | linked (18 Nov) | snow cover (snow map) | as above (GrassField3D, PlantGenerator) |
 | Flowing water → reeds, grass | linked (18 Nov) | WorldWater flow and surface | the trample fields take the current's drag (Cauchy number, Luhar and Nepf 2011): grass and plants lean downstream, flat in a fast current |
@@ -207,7 +208,7 @@ Every pair above is linked or in work. Three visible gaps remain; each reads a c
 
 Two gaps found while building round 3; both read contracts that exist.
 
-1. Fallen leaves land on water and snow. LeafFall3D settles every leaf on the ground under it, through a pond or
+1. Fallen leaves land on water and snow (built 19 Nov). LeafFall3D settles every leaf on the ground under it, through a pond or
    a snow pack. A leaf reaching `WorldWater.height_at` floats: it drifts at the surface current
    (`WorldWater.flow_at`) plus a small leeway in the wind (about 2-3% of the 10 m wind for flat floating debris,
    Breivik et al. 2011), turns in eddies, and waterlogs and sinks over days (leaf breakdown, Webster and Benfield

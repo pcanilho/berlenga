@@ -83,6 +83,23 @@ class SnowStub extends WorldSnow:
 		return 350.0
 
 
+# A pond 0.5 m deep over 10 < x < 30, its surface water running +x at 0.5 m/s; snow of a set depth over
+# -30 < x < -10.
+class LeafPondStub extends WorldWater:
+	func _height_at(p: Vector3) -> float:
+		return 0.5 if p.x > 10.0 and p.x < 30.0 else -INF
+
+	func _flow_at(p: Vector3) -> Vector3:
+		return Vector3(0.5, 0, 0) if p.x > 10.0 and p.x < 30.0 else Vector3.ZERO
+
+
+class LeafSnowStub extends WorldSnow:
+	var depth := 0.2
+
+	func _depth_at(p: Vector3) -> float:
+		return depth if p.x > -30.0 and p.x < -10.0 else 0.0
+
+
 # A fire stub: 50 kW/m2 burning over x > 0.
 class FireStub extends WorldFire:
 	func _heat_at(p: Vector3) -> float:
@@ -142,6 +159,7 @@ func _ready() -> void:
 	await _contact_tests()
 	await _snow_fire_tests()
 	await _leaf_kick_tests()
+	await _leaf_surface_tests()
 	await _washout_tests()
 	_tyre_snow_tests()
 	await _contract_tests()
@@ -428,6 +446,67 @@ func _leaf_kick_tests() -> void:
 	_check("leaves: a walking body kicks up the leaves it passes, a still one none", lying >= 10 and still == 0 and kicked >= 8, "%d lying; %d kicked standing, %d walking through" % [lying, still, kicked])
 	walker.queue_free()
 	lf.queue_free()
+	await get_tree().physics_frame
+
+
+# Leaves land on water and snow (WorldWater, WorldSnow): on a pond they float and drift with its current; on
+# snow they lie on its surface, are buried when more falls and set down on the ground when it melts.
+func _leaf_surface_tests() -> void:
+	if not ClassDB.class_exists("LeafFall3D"):
+		_skip("leaves: water and snow", "no LeafFall3D")
+		return
+	WorldContracts.clear_overrides()
+	WorldContracts.add_water_stub(LeafPondStub.new())
+	var snow := LeafSnowStub.new()
+	WorldContracts.set_snow(snow)
+	var lf: Node3D = ClassDB.instantiate("LeafFall3D")
+	lf.auto_crowns = false
+	lf.lie_time = 3600.0
+	add_child(lf)
+	var q := QuadMesh.new()
+	q.size = Vector2(0.06, 0.05)
+	lf.add_kind(q, 0.06, 0.003, 0.0003, 0.5)
+	for i in 6:
+		lf.drop_leaf(Vector3(15.0 + 0.5 * i, 1.5, 0.0), 0)
+		lf.drop_leaf(Vector3(-20.0 + 0.5 * i, 1.0, 0.0), 0)
+	for i in 240:
+		await get_tree().physics_frame
+	var floating: int = lf.get_floating_count()
+	var on_water_x := 0.0
+	var on_snow_y := 0.0
+	var nw := 0
+	var ns := 0
+	for st in lf.get_leaf_states():
+		if st.x > 10.0:
+			on_water_x += st.x
+			nw += 1
+		elif st.x < -10.0 and st.w > 0.5:
+			on_snow_y += st.y
+			ns += 1
+	on_water_x /= maxf(nw, 1)
+	on_snow_y /= maxf(ns, 1)
+	for i in 120:
+		await get_tree().physics_frame
+	var later_x := 0.0
+	for st in lf.get_leaf_states():
+		if st.x > 10.0:
+			later_x += st.x / maxf(nw, 1)
+	var drift := later_x - on_water_x
+	_check("leaves: on a pond they float and drift with the current", floating == 6 and drift > 0.6 and drift < 1.4, "%d floating, drifted %.2f m in 2 s on a 0.5 m/s current" % [floating, drift])
+	snow.depth = 0.35
+	for i in 10:
+		await get_tree().physics_frame
+	var buried: int = lf.get_buried_count()
+	snow.depth = 0.0
+	for i in 10:
+		await get_tree().physics_frame
+	var melted_y := 0.0
+	for st in lf.get_leaf_states():
+		if st.x < -10.0:
+			melted_y = maxf(melted_y, st.y)
+	_check("leaves: on snow they lie on top, more snow buries them, the thaw sets them on the ground", ns == 6 and absf(on_snow_y - 0.2) < 0.02 and buried == 6 and lf.get_buried_count() == 0 and melted_y < 0.02, "%d on snow at %.3f m, %d buried by 15 cm more, highest after the thaw %.3f m" % [ns, on_snow_y, buried, melted_y])
+	lf.queue_free()
+	WorldContracts.clear_overrides()
 	await get_tree().physics_frame
 
 
