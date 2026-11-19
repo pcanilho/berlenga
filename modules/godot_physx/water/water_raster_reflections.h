@@ -475,11 +475,14 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 	float turbid = smoothstep(0.3, 0.6, max(wp.r, max(wp.g, wp.b)));
 	if (turbid > 0.0) {
 		vec3 gam = sqrt(max(1.0 - wp, vec3(0.0)));
-		vec3 rd = (1.0 - gam) / (1.0 + gam);
+		// Calibrated against the path tracer's turbid river (the medium's forward in-scatter, which the isotropic
+		// two-stream misses, brightens the higher-albedo channels): same khaki in both.
+		vec3 rd = (1.0 - gam) / (1.0 + gam) * 1.1 * (1.0 + 1.5 * max(wp - 0.4, vec3(0.0)));
 		vec3 sig = sqrt(3.0 * aa * (aa + bb));
 		vec3 held = 1.0 - exp(-2.0 * sig * max(-t.y, 0.05) * min(len, 1e3));
 		vec3 multi = rd * (p_sun_irr * mu + p_sky * PI) / PI * held * vis;
-		single = mix(single, max(single, multi), turbid);
+		// The diffuse reflectance counts every order of scattering, the first included: it replaces the single term.
+		single = mix(single, multi, turbid);
 	}
 	return seen + single;
 }

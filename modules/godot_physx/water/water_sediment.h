@@ -36,16 +36,15 @@
 // Suspended load in water (the water contract's sediment: x mineral silt and clay, y ash and char, kg/m3) and what it
 // does to the light, shared by rivers and lakes so the same water looks alike in both (docs/ideas/world-links.md,
 // sediment). Mass-specific coefficients, per metre per kg/m3:
-// - Mineral: absorption rising steeply toward the blue (iron oxides in the particles, a* about 0.01-0.04 m2/g red to
-//   blue; Babin et al. 2003, Bowers and Binding 2006; plus the humic matter washed off with them, which runoff
-//   carries in step with its silt) and strong, nearly grey scattering (b* about 0.2 m2/g for silt; Babin et al.
+// - Mineral: absorption rising toward the blue (iron oxides in the particles, a* about 0.01-0.04 m2/g red to
+//   blue; Babin et al. 2003, Bowers and Binding 2006): khaki-tan water, as flood water looks, not orange and strong, nearly grey scattering (b* about 0.2 m2/g for silt; Babin et al.
 //   2003): tan to brown water, opaque within a few decimetres at a few hundred mg/L.
 // - Ash and char: black carbon absorbs about flat across the visible (Bond and Bergstrom 2006 give 7.5 m2/g for fresh
 //   soot; settled ash particles are far larger, a* of a few tenths of m2/g) and scatters less: grey to black water.
 // Lakes settle it out (well mixed, an e-folding time): mineral silt within about half a day, light ash and char in
 // about two (they float and sink slowly).
 struct WaterSediment {
-	static Vector3 mineral_absorption() { return Vector3(12.0f, 30.0f, 85.0f); }
+	static Vector3 mineral_absorption() { return Vector3(12.0f, 19.0f, 40.0f); }
 	static Vector3 mineral_scattering() { return Vector3(200.0f, 200.0f, 200.0f); }
 	static Vector3 ash_absorption() { return Vector3(300.0f, 300.0f, 300.0f); }
 	static Vector3 ash_scattering() { return Vector3(150.0f, 150.0f, 150.0f); }
@@ -68,10 +67,11 @@ struct WaterSediment {
 //   it is (no load: its own scattering and anisotropy).
 // - White water in loaded water: the light a foam patch sends back has crossed millimetres to centimetres of the water
 //   between its bubbles, so foam takes the water's colour (Dierssen 2019: whitecap spectra shaped by the water's
-//   absorption over an effective path of a few millimetres). Tan in a silty flood, grey in ash.
+//   absorption; the light bounces through many films and lenses of water between bubbles, an effective path of a
+//   few centimetres in loaded water). Beige in a silty flood, grey in ash.
 inline constexpr const char *WATER_SEDIMENT_GLSL = R"(
 vec3 sediment_absorption_of(vec2 c) {
-	return vec3(12.0, 30.0, 85.0) * c.x + vec3(300.0) * c.y;
+	return vec3(12.0, 19.0, 40.0) * c.x + vec3(300.0) * c.y;
 }
 vec3 sediment_scattering_of(vec2 c) {
 	return vec3(200.0) * c.x + vec3(150.0) * c.y;
@@ -88,6 +88,6 @@ vec3 water_medium_scattering(vec3 b_w, vec3 b_s, float g_w) {
 	return (max(b_w, vec3(0.0)) * (1.0 - g_w) + max(b_s, vec3(0.0)) * (1.0 - 0.85)) / max(1.0 - g, 0.05);
 }
 vec3 sediment_foam_tint(vec3 a_s) {
-	return exp(-max(a_s, vec3(0.0)) * 0.006);
+	return exp(-max(a_s, vec3(0.0)) * 0.05);
 }
 )";

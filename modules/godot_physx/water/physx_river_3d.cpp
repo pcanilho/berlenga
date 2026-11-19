@@ -737,6 +737,8 @@ uniform float water_time = 0.0;
 uniform vec4 water_color : source_color = vec4(0.30, 0.42, 0.42, 0.45);
 uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 uniform vec3 pathtraced_absorption = vec3(0.6, 0.14, 0.1);
+// The load the river carries (silt, ash: water_sediment.h), its absorption: the sheet and its white water take its colour.
+uniform vec3 sediment_absorption = vec3(0.0);
 // The water a ray crosses through the sheet, for its tint under path tracing (m).
 uniform float sheet_thickness = 0.1;
 uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.05;
@@ -773,7 +775,8 @@ void fragment() {
 #if defined(RT)
 	// A falling sheet is one surface with holes: traced as a thin wall (straight through, tinted by its thickness),
 	// not as the boundary of a medium, which a path leaving through a hole never left (see the contact sheet).
-	ALBEDO = mix(exp(-pathtraced_absorption * sheet_thickness), foam_color.rgb, foam);
+	vec3 white = foam_color.rgb * exp(-sediment_absorption * 0.05);
+	ALBEDO = mix(exp(-(pathtraced_absorption + sediment_absorption) * sheet_thickness), white, foam);
 	ROUGHNESS = mix(pathtraced_roughness, 0.8, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
@@ -784,7 +787,8 @@ void fragment() {
 	// Lit by the scene's lights, shadows and sky like any surface (it was unshaded with a fixed light,
 	// so a fall in a shaded valley glowed flat white): white water scatters diffusely, the clear sheet
 	// is a smooth dielectric showing the sky in its specular.
-	ALBEDO = mix(water_color.rgb, foam_color.rgb, foam);
+	vec3 white = foam_color.rgb * exp(-sediment_absorption * 0.05);
+	ALBEDO = mix(water_color.rgb * exp(-sediment_absorption * 0.05), white, foam);
 	ROUGHNESS = mix(pathtraced_roughness + 0.1, 0.85, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
@@ -2026,7 +2030,18 @@ void PhysXRiver3D::_sediment_texture() {
 	const int count = (int)sed_c.size();
 	if (!sed_any || count < 2) {
 		water_material->set_shader_parameter(SNAME("sediment_on"), false);
+		if (fall_material.is_valid()) {
+			fall_material->set_shader_parameter(SNAME("sediment_absorption"), Vector3());
+		}
 		return;
+	}
+	if (fall_material.is_valid()) {
+		// The falls take the river's mean load (a fall is a few metres of a river carrying it all the way).
+		Vector2 mean;
+		for (int i = 0; i < count; i++) {
+			mean += sed_c[i];
+		}
+		fall_material->set_shader_parameter(SNAME("sediment_absorption"), WaterSediment::absorption(mean / (float)count));
 	}
 	Vector<uint8_t> bytes;
 	bytes.resize(count * 8);
