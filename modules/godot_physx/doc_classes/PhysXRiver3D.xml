@@ -240,6 +240,9 @@
 		<member name="live_grid_resolution" type="int" setter="set_live_grid_resolution" getter="get_live_grid_resolution" default="192">
 			Cells along each side of the live window.
 		</member>
+		<member name="live_near_mesh_spacing" type="float" setter="set_live_near_mesh_spacing" getter="get_live_near_mesh_spacing" default="0.1">
+			Vertex spacing (m) of the ribbon inside the live window, so the surface waves ([member live_surface_waves]) stand up as real geometry near the camera. The dense part follows the window and stays under about 200,000 quads (the spacing grows past that). [code]0[/code] keeps the coarse ribbon.
+		</member>
 		<member name="live_surface_wave_strength" type="float" setter="set_live_surface_wave_strength" getter="get_live_surface_wave_strength" default="1.0">
 			How strongly the current raises surface waves where it runs into dry ground (stones, the points of the banks), as a share of the stagnation head [code]0.5 v² / g[/code]. Used with [member live_surface_waves].
 		</member>
