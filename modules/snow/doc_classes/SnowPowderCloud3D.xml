@@ -38,8 +38,8 @@
 		<member name="heaviness" type="float" setter="set_heaviness" getter="get_heaviness" default="0.8">
 			How much heavier than air the cloud is, as Flow's negative smoke buoyancy. Suspended snow is 3 to 10 kg/m³, against air's 1.2.
 		</member>
-		<member name="max_sources" type="int" setter="set_max_sources" getter="get_max_sources" default="12">
-			The number of emitters along the front. The strongest parts of the front get them.
+		<member name="max_sources" type="int" setter="set_max_sources" getter="get_max_sources" default="24">
+			The number of emitters along the front. Each overlaps its neighbours, and the weaker parts of the front feed at least a third of the strongest, so the cloud rises as one wall.
 		</member>
 		<member name="smoke_per_kg" type="float" setter="set_smoke_per_kg" getter="get_smoke_per_kg" default="0.05">
 			Emitter smoke per kg/s of snow blown into the air.

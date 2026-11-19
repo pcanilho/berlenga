@@ -1130,11 +1130,11 @@ void SnowAvalanche3D::_powder_step(SnowCover3D *p_cover, float p_dt) {
 			src.position = pc.position + Vector3(0.0f, 1.0f, 0.0f);
 			src.velocity = pc.velocity;
 			src.rate = b.mass / float(MAX(powder_window, 1.0e-3));
-			src.radius = 3.0f;
+			src.radius = 5.0f; // overlapping the next 8 m bin
 			all.push_back(src);
 		}
 		all.sort_custom<SourceByRate>();
-		const int keep = cloud ? cloud->get_max_sources() : 12;
+		const int keep = cloud ? cloud->get_max_sources() : 24;
 		for (uint32_t i = 0; i < all.size() && int(i) < keep; i++) {
 			sources.push_back(all[i]);
 		}

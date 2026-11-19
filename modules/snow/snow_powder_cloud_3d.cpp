@@ -115,6 +115,12 @@ void SnowPowderCloud3D::feed(const LocalVector<Source> &p_sources) {
 		_build();
 	}
 	active = 0;
+	// The front is one wall, not a row of puffs: every emitter overlaps its neighbours (8 m bins, 5 m spheres) and
+	// the weaker parts of the front still feed it at least a third of the strongest (the cloud mixes along the front).
+	float strongest = 0.0f;
+	for (const Source &s : p_sources) {
+		strongest = MAX(strongest, s.rate);
+	}
 	for (uint32_t i = 0; i < emitters.size(); i++) {
 		Node3D *e = emitters[i];
 		if (i >= p_sources.size()) {
@@ -127,11 +133,11 @@ void SnowPowderCloud3D::feed(const LocalVector<Source> &p_sources) {
 		v.y = MAX(v.y, 0.0f) + updraft * Vector2(s.velocity.x, s.velocity.z).length();
 		e->set("enabled", true);
 		e->set("shape", 0); // sphere
-		e->set("radius", CLAMP(s.radius, 0.5f, 4.0f));
+		e->set("radius", CLAMP(s.radius, 0.5f, 6.0f));
 		e->set_global_position(s.position);
 		e->set("velocity", v);
-		e->set("divergence", 6.0f);
-		e->set("smoke", MIN(s.rate * smoke_per_kg, 20.0f));
+		e->set("divergence", 3.0f);
+		e->set("smoke", MIN(MAX(s.rate, strongest / 3.0f) * smoke_per_kg, 20.0f));
 		e->set("temperature", 0.0f);
 		e->set("couple_rate", 4.0f);
 		active++;

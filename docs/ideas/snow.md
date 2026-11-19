@@ -1346,7 +1346,7 @@ A fast dry avalanche lifts a suspension cloud off its front. Measured clouds hol
 - Every kg that goes up comes down, and water is conserved.
 - Free bodies inside a parcel take 1/2 rho_c u^2, where rho_c is the parcel's mass over its volume, capped at 10 kg/m3 (`get_powder_density_at`).
 
-**Look.** `SnowPowderCloud3D`, a child of the avalanche, puts sphere emitters (12) on the strongest bins in a PhysXFlow3D of its own. It is a heavy gas (`smoke_buoyancy` -0.8) with an updraft of 0.3 times the front's speed (the eruption current), resting on the cover's height source as Flow's terrain floor and drifting with the weather's wind. It reaches the PhysX module by class and property names only, so the snow module builds and runs without it, with the same physics and no cloud drawn.
+**Look.** `SnowPowderCloud3D`, a child of the avalanche, puts sphere emitters (24, 5 m, overlapping the 8 m bins) on the strongest bins, each fed at least a third of the strongest so the front rises as one wall in a PhysXFlow3D of its own. It is a heavy gas (`smoke_buoyancy` -0.8) with an updraft of 0.3 times the front's speed (the eruption current), resting on the cover's height source as Flow's terrain floor and drifting with the weather's wind. It reaches the PhysX module by class and property names only, so the snow module builds and runs without it, with the same physics and no cloud drawn.
 
 **Checks.** `--test=powder`, 5 checks:
 - The test avalanche lofts 14.5 t, at most 11.4 t in the air at once, and all of it settles within 40 s.
@@ -1355,7 +1355,7 @@ A fast dry avalanche lifts a suspension cloud off its front. Measured clouds hol
 - Water is conserved (7864 t to 7854 t; the dense flow's edge losses).
 - After a thaw (wetness 0.1), the same avalanche makes no cloud.
 
-**View.** `--view=avalanche --powder [--at=S]`. The avalanche runs in real time so Flow steps the cloud with it. The raster shot 9 s after release shows three billowing lobes over the run-out, one per tongue of the flow, casting shadows on the snow. For path tracing, the bench steps under raster and freezes the scene for the traced still.
+**View.** `--view=avalanche --powder [--at=S]`. The avalanche runs in real time so Flow steps the cloud with it. The raster shot 9 s after release shows one continuous billowing wall over the run-out, casting its shadow on the snow. A first tune, with 12 emitters fed by rate, drew three separate puffs and failed the docs' parity check against PT. For path tracing, the bench steps under raster and freezes the scene for the traced still.
 
 **Limits.**
 - This avalanche peaks at 15.6 m/s, so the cloud is modest: the intake grows with speed above 10 m/s.

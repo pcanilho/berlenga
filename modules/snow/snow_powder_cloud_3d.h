@@ -52,7 +52,7 @@ public:
 
 private:
 	bool enabled = true;
-	int max_sources = 12;
+	int max_sources = 24;
 	float smoke_per_kg = 0.05f; // emitter smoke per kg/s
 	float heaviness = 0.8f; // Flow smoke_buoyancy = -this (3-10 kg/m3 of suspended snow against air's 1.2)
 	float updraft = 0.3f; // share of the front's speed blown up out of it (the eruption current)
