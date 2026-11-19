@@ -58,6 +58,7 @@
 #include "nodes/physx_cloth_3d.h"
 #include "nodes/physx_fluid_render_effect.h"
 #include "nodes/physx_gi_effect.h"
+#include "nodes/physx_debris_surge_3d.h"
 #include "nodes/physx_granular_3d.h"
 #ifdef MODULE_GROUND_ENABLED
 #include "nodes/physx_ground_grains_3d.h"
@@ -136,6 +137,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXParticleFluid3D);
 		GDREGISTER_INTERNAL_CLASS(PhysXFluidRenderEffect);
 		GDREGISTER_CLASS(PhysXGranular3D);
+		GDREGISTER_CLASS(PhysXDebrisSurge3D);
 #ifdef MODULE_GROUND_ENABLED
 		GDREGISTER_CLASS(PhysXGroundGrains3D);
 #endif

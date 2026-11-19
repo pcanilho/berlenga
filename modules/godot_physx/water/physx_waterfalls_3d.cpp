@@ -1678,6 +1678,94 @@ void PhysXWaterfalls3D::rebuild() {
 	_build_mesh();
 	_build_effects();
 	_exclude_from_rivers();
+	_build_tubes();
+}
+
+// The water contract's view of the falls: a body in a fall is in fast, thin water (wet, pushed down), and only above
+// where the fall lands, so a pool or lake below keeps answering for itself.
+void PhysXWaterfalls3D::_build_tubes() {
+	tubes.clear();
+	for (const Face &face : faces) {
+		const int nc = face.columns.size();
+		if (nc == 0) {
+			continue;
+		}
+		const float half = MAX(face.width / nc * 0.5f, 0.15f);
+		for (const Column &col : face.columns) {
+			if (col.edge < 0.0f) {
+				continue; // wet rock beyond the water
+			}
+			for (int i = 0; i + 1 < col.points.size(); i++) {
+				WaterTube t;
+				t.a = col.points[i];
+				t.b = col.points[i + 1];
+				const Vector3 dir = (t.b - t.a).normalized();
+				const float sa = i < col.speed.size() ? col.speed[i] : 1.0f;
+				const float sb = i + 1 < col.speed.size() ? col.speed[i + 1] : sa;
+				t.va = dir * sa;
+				t.vb = dir * sb;
+				t.ra = half;
+				t.rb = half;
+				t.depth = CLAMP(col.q / MAX(0.5f * (sa + sb), 0.1f), 0.01f, 0.5f); // q / v: the sheet's thickness
+				tubes.push_back(t);
+			}
+		}
+	}
+	for (const Plunge &pl : plunges) {
+		// The broken column from its break-up zone to the floor it lands on, widening as it falls.
+		WaterTube t;
+		t.a = pl.zone_start.lerp(pl.zone_end, 0.5f);
+		t.b = Vector3(pl.foot.x, pl.floor, pl.foot.z);
+		t.va = pl.zone_start_velocity.lerp(pl.zone_end_velocity, 0.5f);
+		t.vb = Vector3(0.0f, -pl.landing_speed, 0.0f);
+		t.ra = MAX(pl.width * 0.5f, 0.3f);
+		t.rb = MAX(pl.column_width * 0.5f, t.ra);
+		t.depth = 0.3f;
+		if (t.a.y > t.b.y) {
+			tubes.push_back(t);
+		}
+	}
+	tubes_box = AABB();
+	for (uint32_t i = 0; i < tubes.size(); i++) {
+		const WaterTube &t = tubes[i];
+		AABB b(t.a, Vector3());
+		b.expand_to(t.b);
+		b = b.grow(MAX(t.ra, t.rb));
+		tubes_box = i == 0 ? b : tubes_box.merge(b);
+	}
+}
+
+const PhysXWaterfalls3D::WaterTube *PhysXWaterfalls3D::_tube_at(const Vector3 &p_position, float &r_t) const {
+	if (tubes.is_empty() || !tubes_box.has_point(p_position)) {
+		return nullptr;
+	}
+	const WaterTube *best = nullptr;
+	float best_d = Math::INF;
+	for (const WaterTube &t : tubes) {
+		const Vector3 ab = t.b - t.a;
+		const float len2 = ab.length_squared();
+		const float s = len2 > 1e-8f ? CLAMP((p_position - t.a).dot(ab) / len2, 0.0f, 1.0f) : 0.0f;
+		const float d = p_position.distance_to(t.a + ab * s);
+		const float r = Math::lerp(t.ra, t.rb, s);
+		if (d <= r && d < best_d) {
+			best_d = d;
+			best = &t;
+			r_t = s;
+		}
+	}
+	return best;
+}
+
+float PhysXWaterfalls3D::contract_water_height_at(const Vector3 &p_position) const {
+	float s = 0.0f;
+	const WaterTube *t = _tube_at(p_position, s);
+	return t ? p_position.y + t->depth : -Math::INF;
+}
+
+Vector3 PhysXWaterfalls3D::contract_water_flow_at(const Vector3 &p_position) const {
+	float s = 0.0f;
+	const WaterTube *t = _tube_at(p_position, s);
+	return t ? t->va.lerp(t->vb, s) : Vector3();
 }
 
 // The rivers draw their own falls from their beds: hand them the lips drawn here, so a contact fall is not also a
@@ -1755,6 +1843,10 @@ void PhysXWaterfalls3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
 			set_process_internal(true);
+			WorldContracts::register_water(this);
+		} break;
+		case NOTIFICATION_EXIT_TREE: {
+			WorldContracts::unregister_water(this);
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			water_time += get_process_delta_time();

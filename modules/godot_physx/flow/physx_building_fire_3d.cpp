@@ -696,7 +696,7 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 			e->set_radius(rad);
 			e->set_global_position(xf.xform(at));
 			e->set_temperature(1.0f);
-			e->set_fuel(CLAMP(r.q / 1000.0f, 0.2f, 1.0f));
+			e->set_fuel(CLAMP(r.q / 2000.0f, 0.15f, 0.5f));
 			e->set_smoke(0.3f);
 			e->set_burn(0.0f);
 			e->set_couple_rate(2.0f);
@@ -720,15 +720,16 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 				e->set_radius(0.5f * MIN(o.rect.size.x, o.rect.size.y));
 				e->set_global_position(xf.xform(_face_point(r, o.face, o.rect.get_center()) + n * 0.2f));
 			} else {
-				e->set_radius(CLAMP(0.5f * MIN(o.rect.size.x, o.rect.size.y), 0.2f, 1.0f));
+				e->set_radius(CLAMP(0.35f * MIN(o.rect.size.x, o.rect.size.y), 0.15f, 0.7f));
 				// The hot layer leaves through the opening's upper part.
 				const Vector2 uv(o.rect.get_center().x, o.rect.position.y + o.rect.size.y * 0.8f);
 				e->set_global_position(xf.xform(_face_point(r, o.face, uv) + n * 0.25f));
 			}
 			const float l = _external_flame(r, o);
 			if (l > 0.0f || (o.face == FACE_TOP && r.state != ROOM_GROWING)) {
+				// Tongues about the window's width, reaching Eurocode's length above it (not fireballs).
 				e->set_temperature(1.0f);
-				e->set_fuel(CLAMP(q_all / 2000.0f, 0.3f, 1.0f));
+				e->set_fuel(CLAMP(0.2f + 0.15f * l, 0.2f, 0.55f));
 				e->set_smoke(0.4f);
 				e->set_velocity(xf.basis.xform(n * 1.2f + Vector3(0, CLAMP(l * 0.8f, 0.6f, 3.0f), 0)));
 			} else {

@@ -2378,6 +2378,31 @@ green, seedlings lighter still and larger; BARK_SCALY (holm oak, spruce, fir, ..
 with per-scale height, tilt and tone (the holm collar read as paving). In PT a clump in the stem's shadow is
 near black: sky light only, the same as any shaded leaves.
 
+Fire band variants (19 Nov, vegetation's contract, world-links.md): `fire_variants` (on) makes every placed living
+species (open, stand, understory, old, grove forms) carry five more meshes after its living ones, grown at
+fire_years 0.5, 2, 4.5, 8 and 15 from the first variants' seeds, with mesh meta `tree_fire_years` and
+`tree_fire_band` (0-1, 1-3, 3-6, 6-10, 10-20). generate() sets both metas whenever fire_years >= 0. Near meshes of
+a band variant are grown burnt too (near_living). Stands bench: off unless --fire (beech stand 17 s, 38 s with).
+
+### 5ai. Date palm and oasis (19 Nov; Paulo's pick)
+
+PRESET_DATE_PALM (Phoenix dactylifera; Chao and Krueger 2007, Zaid and de Wet 2002, Tomlinson 1990), laid out
+by _grow_date_palm as the dwarf fan palm is (no shoot growth). No trunk for five years, then about 30 cm a year
+(40 years: 15 m); fronds 1.4-4.6 m by age, 22-70 green on golden-angle insertions, spear upright, old ones
+arching below level (five nodes a frond: wind bones, colliders). _date_palm_frond: rachis tube, acanthophyll
+spines on the lower fifth (LOD 0), induplicate V-folded pinnae 45-95 a side in groups of three planes
+(elevations 0.8 / 0.3 / -0.12 rad), forward-pointing, longest at mid-frond; each pinna a sized part (whole in
+every LOD). _date_palm_trunk: one leaf base ("boot") per frond on the golden-angle spiral, so they fall in the
+8/13 diamond lattice; flattened wedges with lighter cut faces greying down the trunk, sheath fibre under the
+crown; on a wild palm the lowest bases worn short or fallen. Wild palms keep a skirt of dead fronds and
+offshoots at the foot (PARAM_BASAL_SPROUTS, PARAM_STEMS for clumps); `grove_vase` = tended (FORM_GROVE): skirt
+and offshoots cut, bases trimmed square. Flowers February-April (cream strand brooms from split spathes);
+female palms (all in a grove) hang 8-10 bunches on orange stalks bowed by the fruit: dates green to yellow or
+red (khalal, a third of seeds red) to amber-brown, cut by day 300 in a grove. STAND_DATE_OASIS: tended palms
+8 m apart (77 a hectare on the bench valley), wild clumps at 0.12, olives beneath at 0.15. Fire: palms get
+char only (FIRE_NONE, no prune). Frames: fork/trees/palm/ (date-palm, -trunk, -crown-dates, -raster-pt,
+date-oasis). Cost: 312k triangles a grown palm, 0.9 s.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

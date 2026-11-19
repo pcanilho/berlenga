@@ -52,6 +52,7 @@ def get_doc_classes():
         "PhysXGroundDust3D",
         "PhysXRockDust3D",
         "PhysXBuildingFire3D",
+        "PhysXDebrisSurge3D",
         "PhysXBurnable3D",
         "PhysXFireSpread3D",
         "PhysXCaveMist3D",

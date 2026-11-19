@@ -53,7 +53,7 @@ static const char *preset_names[TreeGenerator::PRESET_MAX] = {
 	"Paper Birch", "Yellow Birch", "Witch-hazel", "Mountain Laurel", "Gorse", "Broom", "Gum Rockrose", "Kermes Oak", "Lentisk", "Dwarf Fan Palm",
 	"Stone Pine", "Cork Oak", "Holm Oak", "Wild Olive", "Maritime Pine", "Carob",
 	"Blackthorn", "Field Maple", "Dog Rose",
-	"Calligonum", "White Broom", "Mediterranean Saltbush"
+	"Calligonum", "White Broom", "Mediterranean Saltbush", "Date Palm"
 };
 
 // The woody shrubs vegetation places through make_shrub_species (trees.md 5u, 5v): Atlantic heath
@@ -72,6 +72,15 @@ static bool scrub_shrub(TreeGenerator::Preset p_preset) {
 			p_preset == TreeGenerator::PRESET_CALLIGONUM || p_preset == TreeGenerator::PRESET_WHITE_BROOM || p_preset == TreeGenerator::PRESET_SALTBUSH;
 }
 
+// Fire bands (world-links.md): the years each band variant covers, and the years it is grown at.
+static const float FIRE_BAND_EDGES[6] = { 0.0f, 1.0f, 3.0f, 6.0f, 10.0f, 20.0f };
+static const float FIRE_BAND_YEARS[5] = { 0.5f, 2.0f, 4.5f, 8.0f, 15.0f };
+
+// Palms are laid out directly (_grow_palm), not grown by shoots; their leaves are _palm_geometry's.
+static bool palm_preset(TreeGenerator::Preset p_preset) {
+	return p_preset == TreeGenerator::PRESET_DWARF_FAN_PALM || p_preset == TreeGenerator::PRESET_DATE_PALM;
+}
+
 // Shrubs of the desert sand seas and their interdune flats (trees.md 5ae; vegetation.md "Arid
 // ground"): make_shrub_species takes them as scrub shrubs, and vegetation places them by
 // RULE_SAND_MOBILITY.
@@ -88,7 +97,7 @@ static bool hedge_shrub(TreeGenerator::Preset p_preset) {
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
 	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow",
 	"Northern Hardwood Forest", "Eastern Oak Forest", "Pine-Hemlock Forest", "Coppice with Standards", "Wood Pasture", "Pollard Row",
-	"Stone Pine Parkland", "Olive Grove"
+	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis"
 };
 
 TreeGenerator::TreeGenerator() {
@@ -1047,6 +1056,20 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAF_YEARS] = 3;
 			bark_color = Color(0.58f, 0.56f, 0.5f); // Pale grey-buff.
 			leaf_color = Color(0.42f, 0.43f, 0.33f); // Silvery, whitish grey-green (the salt bladders' bloom).
+			break;
+		case PRESET_DATE_PALM: // Phoenix dactylifera (trees.md 5ai): a tall single trunk clad in cut leaf bases,
+			// a crown of feather fronds 3-6 m long, offshoots round the foot. Not grown by shoots (_grow_palm):
+			// years set its age (40 = a grown palm about 12 m tall), stems the trunks of a clump.
+			p[PARAM_YEARS] = 40;
+			p[PARAM_STEMS] = 1;
+			p[PARAM_STEM_SPREAD] = 15;
+			p[PARAM_BASAL_SPROUTS] = 0.5f; // Offshoots at the foot (cut away in a tended grove).
+			p[PARAM_TIP_RADIUS] = 0.01f;
+			p[PARAM_LEAF_SIZE] = 0.4f; // Pinna length at mid-frond: 20-40 cm (Chao and Krueger 2007).
+			p[PARAM_LEAF_WIDTH] = 0.06f;
+			p[PARAM_LEAF_YEARS] = 4;
+			bark_color = Color(0.36f, 0.29f, 0.21f); // Fibre and old leaf bases, grey-brown.
+			leaf_color = Color(0.085f, 0.125f, 0.08f); // Glaucous grey-green.
 			break;
 		case PRESET_MAX:
 			break;
@@ -2144,6 +2167,10 @@ void TreeGenerator::_grow_palm() {
 	palm_fronds.clear();
 	palm_trunks.clear();
 	palm_crowns.clear();
+	if (preset == PRESET_DATE_PALM) {
+		_grow_date_palm();
+		return;
+	}
 	const float age = CLAMP(params[PARAM_YEARS] / 30.0f, 0.1f, 2.5f);
 	const float grown = MIN(age, 1.0f);
 	const bool cushion = krummholz > 0.0f;
@@ -2230,6 +2257,485 @@ void TreeGenerator::_grow_palm() {
 	}
 }
 
+// The date palm (trees.md 5ai; Chao and Krueger 2007, HortScience 42; Zaid and de Wet 2002, FAO Date Palm
+// Cultivation; Tomlinson 1990): laid out directly, as the dwarf fan palm. A single unbranched trunk (in a
+// tended grove; a wild clump leans several), no trunk for the first five years, then 30-60 cm a year to
+// 15-20 m, 30-50 cm across, clad in the cut leaf bases. Its crown about a hundred feather fronds 3-6 m long,
+// on golden-angle insertions (Fibonacci parastichies): the young ones upright in the centre, the old spread and
+// arching, the dead hanging as a skirt down the trunk where nobody cuts them. Offshoots at the foot, which a
+// grower cuts away and planted out (grove_vase: a tended grove palm, skirt and offshoots cut, bases trimmed).
+// Each frond is a chain of five nodes from the crown, so wind bones and colliders take it as a limb.
+void TreeGenerator::_grow_date_palm() {
+	const float years = params[PARAM_YEARS];
+	const float grown = CLAMP(years / 40.0f, 0.08f, 1.0f);
+	const bool tended = grove_vase;
+	const Vector3 up(0, 1, 0);
+	const Vector3 root = nodes[0].start;
+	// One crown: a trunk (maybe none) of nodes, then its fronds.
+	auto palm = [&](const Vector3 &p_base, const Vector3 &p_lean, float p_trunk_h, float p_trunk_r, int p_alive, int p_dead, float p_frond_len) {
+		const int segs = p_trunk_h < 0.08f ? 1 : MAX(1, int(Math::ceil(p_trunk_h / 0.5f)));
+		const float seg_len = p_trunk_h < 0.08f ? 0.08f : p_trunk_h / segs;
+		int parent = 0;
+		Vector3 q = p_base;
+		// A curve, not a straight pole: the lean at the foot straightening toward the crown, with a gentle
+		// wander (the trunk follows the light as it grows).
+		const float wph = _rand(0.0f, float(Math::TAU));
+		for (int k = 0; k < segs; k++) {
+			const float t = float(k) / MAX(segs, 1);
+			Vector3 d = p_lean.lerp(up, 0.5f * t);
+			d += Vector3(Math::cos(wph + t * 3.0f), 0.0f, Math::sin(wph + t * 2.3f)) * 0.03f;
+			d.normalize();
+			const int idx = _add_node(parent, q, d, seg_len, 0, 1, parent != 0);
+			nodes[idx].leafy = false;
+			// Near cylindrical (a palm has no secondary growth): a little thicker at the foot, a waist under the
+			// crown where the newest leaf bases are still short.
+			nodes[idx].radius = p_trunk_r * (1.0f + 0.12f * Math::exp(-t * 6.0f) - 0.06f * Math::smoothstep(0.85f, 1.0f, t));
+			palm_trunks.push_back(idx);
+			q = nodes[idx].end();
+			parent = idx;
+		}
+		const int top = parent;
+		palm_crowns.push_back(top);
+		const Vector3 ax = nodes[top].dir;
+		const Vector3 ref = Math::abs(ax.y) < 0.95f ? up : Vector3(1, 0, 0);
+		const Vector3 cx = ax.cross(ref).normalized();
+		const Vector3 cz = cx.cross(ax).normalized();
+		float roll = _rand(0.0f, float(Math::TAU));
+		const int total = p_alive + p_dead;
+		for (int f = 0; f < total; f++) {
+			const bool dead = f >= p_alive;
+			// Youngest first: 0 the spear in the centre, 1 the oldest green frond at the crown's foot.
+			const float t = dead ? 1.0f : float(f) / MAX(p_alive - 1, 1);
+			roll += 2.39996f;
+			const Vector3 hz = cx * Math::cos(roll) + cz * Math::sin(roll);
+			// Insertion: the old fronds lower on the crown (their bases stacked down the top half metre).
+			const float drop = dead ? Math::lerp(0.4f, 1.8f, _rand(0.0f, 1.0f)) * MIN(1.0f, p_trunk_h / 3.0f) : 0.6f * Math::pow(t, 1.3f) * MIN(1.0f, 0.3f + p_trunk_h / 2.0f);
+			const Vector3 at = nodes[top].end() - ax * (0.05f + drop) + hz * (p_trunk_r * (dead ? 1.0f : 0.5f + 0.4f * t));
+			// Elevation: about 80 degrees for the spear, near level for the oldest green; the dead hang.
+			const float elev = dead ? _rand(-1.45f, -1.15f) : Math::lerp(1.4f, -0.45f, Math::pow(t, 0.8f)) + _rand(-0.1f, 0.1f);
+			Vector3 d = (hz * Math::cos(elev) + ax * Math::sin(elev)).normalized();
+			const float len = p_frond_len * (dead ? _rand(0.75f, 0.95f) : Math::lerp(0.7f, 1.0f, MIN(1.0f, t * 4.0f)) * _rand(0.9f, 1.08f));
+			const int NODES = 5;
+			const float nl = len / NODES;
+			// The rachis arches: stiff near the base, bending down over its outer half, more on the older fronds.
+			const float arch = dead ? 0.0f : Math::lerp(0.04f, 0.22f, t);
+			int pp = top;
+			int first = -1;
+			Vector3 q2 = at;
+			for (int k = 0; k < NODES; k++) {
+				const int idx = _add_node(pp, q2, d, nl, 1, 1, k > 0);
+				nodes[idx].leafy = false;
+				nodes[idx].dead = dead;
+				// The petiole wide and flat at its sheath (6-8 cm), the rachis tapering to its tip.
+				nodes[idx].radius = Math::lerp(0.03f, 0.007f, float(k) / (NODES - 1)) * Math::lerp(0.5f, 1.0f, grown);
+				if (first < 0) {
+					first = idx;
+				}
+				q2 = nodes[idx].end();
+				pp = idx;
+				d = (d - up * (arch * float(k + 1))).normalized();
+			}
+			PalmFrond fr;
+			fr.node = pp;
+			fr.first = first;
+			fr.blade = len;
+			fr.pinnate = true;
+			// Pinnae a side: 100-120 on a grown frond (Chao and Krueger 2007), fewer drawn on a young one.
+			fr.segments = int(Math::lerp(45.0f, 95.0f, grown) * _rand(0.9f, 1.1f));
+			fr.dead = dead;
+			palm_fronds.push_back(fr);
+		}
+	};
+	// The main trunk: none for the first five years (the stem thickens underground first), then about 30 cm a
+	// year; a tended palm grows a little faster on its water.
+	const float trunk_h = MIN(MAX(0.0f, years - 5.0f) * (tended ? 0.34f : 0.3f) * _rand(0.88f, 1.12f), 20.0f);
+	const float trunk_r = Math::lerp(0.1f, 0.17f, grown) * _rand(0.92f, 1.08f);
+	const float frond_len = Math::lerp(1.4f, 4.6f, grown) * _rand(0.92f, 1.08f);
+	const int alive = int(Math::lerp(22.0f, 70.0f, grown) * _rand(0.9f, 1.1f));
+	// A wild or neglected palm keeps its dead fronds as a skirt; a tended one has them cut each year.
+	const int dead = tended ? 0 : (trunk_h > 1.5f ? int(_rand(18.0f, 40.0f) * grown) : 0);
+	const Vector3 lean0 = (up + Vector3(_rand(-1.0f, 1.0f), 0.0f, _rand(-1.0f, 1.0f)) * (tended ? 0.04f : 0.12f)).normalized();
+	palm(root, lean0, trunk_h, trunk_r, alive, dead, frond_len);
+	// A wild clump: more trunks from old offshoots, leaning out; and young offshoots round the foot, each its own
+	// small crown (the grower's cut leaves only the stumps, not modelled).
+	if (!tended) {
+		const int extra = MAX(0, int(params[PARAM_STEMS]) - 1);
+		for (int s2 = 0; s2 < extra; s2++) {
+			const float a = _rand(0.0f, float(Math::TAU));
+			const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
+			const float th = trunk_h * _rand(0.4f, 0.9f);
+			palm(root + out * (trunk_r * 2.2f), (up + out * _rand(0.25f, 0.5f)).normalized(), th, trunk_r * 0.85f, int(alive * 0.8f), dead / 2, frond_len * 0.95f);
+		}
+		const int offs = years > 8.0f ? int(params[PARAM_BASAL_SPROUTS] * _rand(2.0f, 9.0f)) : 0;
+		for (int o = 0; o < offs; o++) {
+			const float a = _rand(0.0f, float(Math::TAU));
+			const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
+			const float og = _rand(0.15f, 0.5f);
+			const float oth = og > 0.35f ? _rand(0.0f, 1.2f) : 0.0f;
+			palm(root + out * (trunk_r * _rand(1.3f, 2.2f)), (up + out * _rand(0.3f, 0.7f)).normalized(), oth, trunk_r * Math::lerp(0.45f, 0.75f, og), int(Math::lerp(10.0f, 24.0f, og)), 0, frond_len * Math::lerp(0.35f, 0.6f, og));
+		}
+	}
+}
+
+// A date palm frond (trees.md 5ai; Dransfield et al., Genera Palmarum 2008; Chao and Krueger 2007): the petiole
+// wide and flat at its fibrous sheath, its lower quarter armed with acanthophylls (pinnae reduced to stiff yellow
+// spines 5-15 cm, the hazard of every date climber), then the rachis with its pinnae. Phoenix pinnae are
+// induplicate (V-folded, the fold down, the margins up), linear and sharp, 20-40 cm, set in groups of two or
+// three at different angles, so the frond is not flat but V-shaped in section with pinnae in several planes;
+// they point forward along the rachis, longest about the frond's middle. Glaucous grey-green; the dead hang
+// straw-brown with the pinnae folded in.
+void TreeGenerator::_date_palm_frond(Builder &r_leaves, const PalmFrond &p_f) {
+	const Vector3 up(0, 1, 0);
+	// The rachis polyline, base to tip.
+	LocalVector<int> chain;
+	for (int x = p_f.node; x >= 0; x = nodes[x].parent) {
+		chain.push_back(x);
+		if (x == p_f.first) {
+			break;
+		}
+	}
+	chain.reverse();
+	LocalVector<Vector3> pts;
+	LocalVector<float> rad;
+	pts.push_back(nodes[chain[0]].start);
+	rad.push_back(nodes[chain[0]].radius * 1.5f); // The sheath.
+	for (const int x : chain) {
+		pts.push_back(nodes[x].end());
+		rad.push_back(nodes[x].radius);
+	}
+	LocalVector<float> arc;
+	arc.push_back(0.0f);
+	for (uint32_t i = 1; i < pts.size(); i++) {
+		arc.push_back(arc[i - 1] + pts[i].distance_to(pts[i - 1]));
+	}
+	const float total = MAX(arc[arc.size() - 1], 0.01f);
+	// Point, tangent and node at a fraction of the length.
+	auto at = [&](float p_u, Vector3 &r_t, int &r_node) {
+		const float d = CLAMP(p_u, 0.0f, 1.0f) * total;
+		uint32_t i = 1;
+		while (i < arc.size() - 1 && arc[i] < d) {
+			i++;
+		}
+		const float seg = MAX(arc[i] - arc[i - 1], 1e-5f);
+		const float t = CLAMP((d - arc[i - 1]) / seg, 0.0f, 1.0f);
+		Vector3 t0 = (pts[i] - pts[i - 1]) / seg;
+		Vector3 t1 = i + 1 < pts.size() ? (pts[i + 1] - pts[i]).normalized() : t0;
+		r_t = t0.lerp(t1, t * 0.5f).normalized();
+		r_node = chain[MIN(i - 1, chain.size() - 1)];
+		return pts[i - 1].lerp(pts[i], t);
+	};
+	RandomPCG pr;
+	pr.seed(uint64_t(seed) * 0x9E3779B97F4A7C15ull + uint64_t(p_f.node) * 7919u + 0x64617465u);
+	const bool dead = p_f.dead;
+	const Color live = leaf_color;
+	const Color dead_c(0.24f, 0.19f, 0.13f);
+	const float len_k = CLAMP(p_f.blade / 4.0f, 0.4f, 1.15f);
+	auto bone_at = [&](int p_node) {
+		return node_bone.size() > uint32_t(p_node) ? node_bone[p_node] : 0;
+	};
+	auto vert = [&](const Vector3 &p_p, const Vector3 &p_n, const Vector2 &p_uv, const Color &p_c) {
+		r_leaves.verts.push_back(p_p);
+		r_leaves.normals.push_back(p_n);
+		r_leaves.uvs.push_back(p_uv);
+		r_leaves.colors.push_back(p_c);
+		return int(r_leaves.verts.size()) - 1;
+	};
+	auto tri = [&](int a, int b, int c, const Vector3 &p_n) {
+		const Vector3 fn = (r_leaves.verts[c] - r_leaves.verts[a]).cross(r_leaves.verts[b] - r_leaves.verts[a]);
+		if (fn.dot(p_n) < 0.0f) {
+			SWAP(b, c);
+		}
+		r_leaves.indices.push_back(a);
+		r_leaves.indices.push_back(b);
+		r_leaves.indices.push_back(c);
+	};
+	{
+		// The petiole and rachis: smooth, yellowish green, from a brown fibrous sheath (leaves surface, not
+		// barked; rewound and on one texel as the fan palm's petiole).
+		const Color rc = dead ? dead_c * 0.95f : Color(live.r * 1.25f + 0.03f, live.g * 1.15f + 0.03f, live.b * 0.85f);
+		r_leaves.bone = bone_at(chain[0]);
+		Vector4i pp;
+		r_leaves.begin(pp);
+		_tube(r_leaves, pts, rad, 6, 0.0f, rc);
+		for (int i = pp.x; i + 2 < r_leaves.indices.size(); i += 3) {
+			SWAP(r_leaves.indices.write[i + 1], r_leaves.indices.write[i + 2]);
+		}
+		for (int v = pp.z; v < r_leaves.uvs.size(); v++) {
+			r_leaves.uvs.write[v] = Vector2(0.5f, 0.5f);
+		}
+		r_leaves.end(pp, 1.0f);
+		for (const int x : chain) {
+			node_drag[x] += 2.0f * nodes[x].radius * nodes[x].length;
+			node_mass[x] += float(Math::PI) * nodes[x].radius * nodes[x].radius * nodes[x].length * 700.0f;
+		}
+	}
+	const float spine_end = 0.2f;
+	if (!dead) {
+		// Acanthophylls: in pairs and threes along both edges of the lower part, pointing out and forward,
+		// longest where they give way to the first pinnae.
+		const Color spine_c(0.62f, 0.56f, 0.32f);
+		const int ns = 7 + int(pr.randf() * 6.0f);
+		for (int q = 0; q < ns; q++) {
+			const float u = Math::lerp(0.06f, spine_end, (q + 0.5f) / ns);
+			Vector3 t;
+			int nd;
+			const Vector3 c = at(u, t, nd);
+			Vector3 side = t.cross(up);
+			side = side.length_squared() > 1e-5f ? side.normalized() : Vector3(1, 0, 0);
+			r_leaves.bone = bone_at(nd);
+			for (int sd = -1; sd <= 1; sd += 2) {
+				const Vector3 o = (side * (0.7f * sd) + t * 0.6f + up * (pr.randf() * 0.4f - 0.1f)).normalized();
+				Vector4i sp;
+				r_leaves.begin(sp);
+				_add_spine(r_leaves, c + side * (sd * 0.012f), o, Math::lerp(0.05f, 0.14f, (u - 0.06f) / (spine_end - 0.06f)) * len_k * Math::lerp(0.7f, 1.0f, pr.randf()), spine_c, hash_murmur3_one_32(uint32_t(q * 2 + sd + 1), uint32_t(seed) + uint32_t(p_f.node)), false);
+				r_leaves.end(sp, -1.0f);
+			}
+		}
+	}
+	// The pinnae.
+	const int n = MAX(6, p_f.segments);
+	const float lp = params[PARAM_LEAF_SIZE] * len_k;
+	const float hw = 0.0105f * MIN(len_k, 1.0f) + 0.002f; // Half the width: pinnae 1.5-2.5 cm.
+	static const float GROUP_EL[3] = { 0.8f, 0.3f, -0.12f }; // The V: pinnae in three planes.
+	int count = 0;
+	for (int sd = -1; sd <= 1; sd += 2) {
+		for (int i = 0; i < n; i++) {
+			const float u = Math::lerp(spine_end + 0.01f, 0.985f, (i + 0.3f + 0.4f * pr.randf()) / n);
+			Vector3 t;
+			int nd;
+			const Vector3 c = at(u, t, nd);
+			Vector3 side = t.cross(up);
+			if (side.length_squared() < 1e-4f) {
+				side = t.cross(Vector3(1, 0, 0));
+			}
+			side = side.normalized();
+			Vector3 nf = side.cross(t).normalized(); // The frond's upper face.
+			if (nf.dot(up) < 0.0f && !dead) {
+				nf = -nf;
+			}
+			// Longest about the middle, short at the base and the tip.
+			const float prof = u < 0.45f ? Math::lerp(0.45f, 1.0f, (u - spine_end) / (0.45f - spine_end)) : Math::lerp(1.0f, 0.3f, (u - 0.45f) / 0.55f);
+			const float L = lp * prof * Math::lerp(0.88f, 1.1f, pr.randf());
+			const float fa = dead ? 0.25f : Math::lerp(0.95f, 0.6f, u) + 0.12f * (pr.randf() - 0.5f); // Forward from square-on.
+			const float el = dead ? -0.2f : GROUP_EL[i % 3] * Math::lerp(1.0f, 0.5f, u) + 0.12f * (pr.randf() - 0.5f);
+			Vector3 dir0 = (side * (float(sd) * Math::cos(fa)) + t * Math::sin(fa)).normalized();
+			Vector3 dir = (dir0 * Math::cos(el) + nf * Math::sin(el)).normalized();
+			Vector3 N = nf - dir * nf.dot(dir);
+			N = N.length_squared() > 1e-6f ? N.normalized() : up;
+			const Vector3 sv = N.cross(dir).normalized();
+			const float j = 0.88f + 0.24f * pr.randf();
+			// The spear and young fronds a paler, yellower green; each pinna its own shade.
+			Color pc = dead ? Color(dead_c.r * j, dead_c.g * j, dead_c.b * j) : Color(live.r * j, live.g * j, live.b * (0.95f + 0.15f * pr.randf()));
+			const float pleat = 0.65f;
+			const int STEPS = 3;
+			r_leaves.bone = bone_at(nd);
+			Vector4i part;
+			r_leaves.begin(part);
+			int il = -1, iml = -1, imr = -1, ir = -1;
+			const Vector3 base = c + side * (float(sd) * rad[MIN(uint32_t(1), rad.size() - 1)] * 0.3f);
+			for (int k = 0; k <= STEPS; k++) {
+				const float tt = float(k) / STEPS;
+				const float w = tt < 0.15f ? hw * Math::lerp(0.35f, 1.0f, tt / 0.15f) : hw * Math::pow((1.0f - tt) / 0.85f, 0.55f);
+				const float droop = (dead ? -0.25f : -0.12f) * L * tt * tt;
+				const Vector3 mid = base + dir * (tt * L) + up * droop - N * (pleat * w);
+				const Vector3 lm = mid + sv * w + N * (pleat * w);
+				const Vector3 rm = mid - sv * w + N * (pleat * w);
+				Vector3 nl = (lm - mid).cross(dir).normalized();
+				nl = nl.dot(N) < 0.0f ? -nl : nl;
+				Vector3 nr = (rm - mid).cross(dir).normalized();
+				nr = nr.dot(N) < 0.0f ? -nr : nr;
+				const float vy = 0.3f + 0.7f * tt;
+				const Color crease = dead ? pc : pc * 1.08f;
+				if (k == STEPS) {
+					const int tl = vert(mid, nl, Vector2(0.5f, vy), crease);
+					const int tr = vert(mid, nr, Vector2(0.5f, vy), crease);
+					tri(iml, il, tl, nl);
+					tri(imr, tr, ir, nr);
+					break;
+				}
+				const int l = vert(lm, nl, Vector2(1.0f, vy), pc);
+				const int ml = vert(mid, nl, Vector2(0.5f, vy), crease);
+				const int mr = vert(mid, nr, Vector2(0.5f, vy), crease);
+				const int rr = vert(rm, nr, Vector2(0.0f, vy), pc);
+				if (k > 0) {
+					tri(iml, il, l, nl);
+					tri(iml, l, ml, nl);
+					tri(imr, mr, rr, nr);
+					tri(imr, rr, ir, nr);
+				}
+				il = l;
+				iml = ml;
+				imr = mr;
+				ir = rr;
+			}
+			// Sized: a pinna stays whole in every LOD (grown about its base it would stab out of the frond).
+			r_leaves.end(part, L);
+			node_drag[nd] += (dead ? 0.3f : 1.0f) * 2.0f * hw * L;
+			node_mass[nd] += 2.0f * hw * L * 0.35f;
+			count++;
+		}
+	}
+	leaf_count += count;
+}
+
+// The date palm's trunk (trees.md 5ai): clad in the cut leaf bases ("boots"), one for every frond the palm ever
+// bore, in the same golden-angle spiral, so they lie in crossing parastichies (8 and 13, a diamond lattice;
+// Tomlinson 1990). Each a flattened wedge 10-15 cm wide and a few thick, its cut face square to the trunk
+// pointing up and out, the brown sheath fibre matted between them near the crown. Low on an old trunk the
+// bases have weathered and fallen, leaving the stem's ring scars (shorter stubs, some gone).
+void TreeGenerator::_date_palm_trunk(Builder &r_bark, int p_trunk_first, int p_trunk_last) {
+	const Vector3 up(0, 1, 0);
+	LocalVector<int> chain;
+	for (int x = p_trunk_last; x >= 0; x = nodes[x].parent) {
+		chain.push_back(x);
+		if (x == p_trunk_first) {
+			break;
+		}
+	}
+	chain.reverse();
+	float th = 0.0f;
+	for (const int x : chain) {
+		th += nodes[x].length;
+	}
+	if (th < 0.25f) {
+		return;
+	}
+	RandomPCG pr;
+	pr.seed(uint64_t(seed) * 0x9E3779B97F4A7C15ull + uint64_t(p_trunk_first) * 104729u + 0x626f6f74u);
+	const bool tended = grove_vase;
+	const float r0 = nodes[chain[0]].radius;
+	const float bw = Math::lerp(0.08f, 0.14f, CLAMP((r0 - 0.08f) / 0.1f, 0.0f, 1.0f)); // Base width.
+	const float btk = bw * 0.38f;
+	// One base per frond: the rise between them so the bases tile the surface.
+	const float dh = (bw * btk * 1.4f) / (float(Math::TAU) * r0);
+	const int count = MIN(int(th / dh), 6000);
+	const Color side_c = Color(0.3f, 0.23f, 0.16f).srgb_to_linear();
+	const Color cut_fresh = Color(0.55f, 0.46f, 0.33f).srgb_to_linear();
+	const Color cut_old = Color(0.38f, 0.36f, 0.33f).srgb_to_linear();
+	const Color fibre_c = Color(0.24f, 0.18f, 0.12f).srgb_to_linear();
+	const float wph = pr.randf() * 7.0f;
+	float acc = 0.0f;
+	uint32_t ci = 0;
+	for (int i = 0; i < count; i++) {
+		const float hgt = (i + 0.5f) * dh;
+		while (ci + 1 < chain.size() && acc + nodes[chain[ci]].length < hgt) {
+			acc += nodes[chain[ci]].length;
+			ci++;
+		}
+		const Node &n = nodes[chain[ci]];
+		const float tn = CLAMP((hgt - acc) / MAX(n.length, 1e-4f), 0.0f, 1.0f);
+		const float hrel = hgt / th; // 0 at the foot, 1 at the crown.
+		// Weathering: the oldest bases low on a wild trunk worn short or fallen; a grower trims them even.
+		const float age = 1.0f - hrel;
+		const float noise = 0.5f + 0.5f * Math::sin(hgt * 3.1f + wph) * Math::sin(hgt * 1.3f + wph * 0.7f);
+		if (!tended && age > 0.7f && pr.randf() < (age - 0.7f) * 1.5f * (0.6f + 0.8f * noise)) {
+			continue; // Fallen: the scar shows on the bark.
+		}
+		Vector3 sx = n.dir.cross(up);
+		sx = sx.length_squared() > 1e-6f ? sx.normalized() : Vector3(1, 0, 0);
+		const Vector3 sz = sx.cross(n.dir).normalized();
+		const float a = i * 2.39996f + 0.04f * (pr.randf() - 0.5f);
+		const Vector3 rd = sx * Math::cos(a) + sz * Math::sin(a);
+		const Vector3 tg = n.dir.cross(rd).normalized();
+		const float r = n.radius;
+		const Vector3 foot = n.start + n.dir * (n.length * tn) + rd * (r * 0.82f);
+		// Out and up at about 40 degrees; length worn down with age (tended: cut 10-15 cm from the trunk).
+		const float wear = tended ? Math::lerp(0.8f, 1.0f, pr.randf()) : Math::lerp(1.0f, 0.5f, Math::smoothstep(0.4f, 1.0f, age)) * Math::lerp(0.75f, 1.1f, pr.randf());
+		const float bl = (r * 0.18f + Math::lerp(0.07f, 0.12f, pr.randf())) * wear;
+		const Vector3 bd = (rd * 0.62f + n.dir * 0.78f + tg * (0.12f * (pr.randf() - 0.5f))).normalized();
+		const Vector3 bn = bd.cross(tg).normalized(); // The base's thin axis.
+		const float w = bw * Math::lerp(0.85f, 1.1f, pr.randf()) * 0.62f; // Wider than the lattice step: neighbours overlap.
+		const float tk = btk * Math::lerp(0.8f, 1.15f, pr.randf()) * 0.5f;
+		// The cut: square to the trunk on a tended palm, ragged and slanting on a wild one.
+		const Vector3 cut_n = (bd + n.dir * (tended ? 0.25f : 0.5f * pr.randf())).normalized();
+		const int S = 8;
+		r_bark.bone = node_bone.size() > uint32_t(chain[ci]) ? node_bone[chain[ci]] : 0;
+		Vector4i part;
+		r_bark.begin(part);
+		const int v0 = r_bark.verts.size();
+		const Color sc = side_c * (0.8f + 0.4f * pr.randf());
+		// Two rings: at the trunk (inside it a little) and at the cut, a flattened ellipse, wider at its foot.
+		for (int ring = 0; ring < 2; ring++) {
+			const Vector3 cc = foot + bd * (ring == 0 ? -0.02f : bl);
+			const float ws = ring == 0 ? 1.08f : 0.92f;
+			for (int k = 0; k < S; k++) {
+				const float ang = float(Math::TAU) * k / S;
+				const Vector3 o = tg * (Math::cos(ang) * w * ws) + bn * (Math::sin(ang) * tk * ws);
+				Vector3 p = cc + o;
+				if (ring == 1) {
+					// Onto the cut plane through the stub's end.
+					p -= cut_n * (p - (foot + bd * bl)).dot(cut_n);
+				}
+				r_bark.verts.push_back(p);
+				r_bark.normals.push_back((tg * (Math::cos(ang) / w) + bn * (Math::sin(ang) / tk)).normalized());
+				r_bark.uvs.push_back(Vector2(float(k) / S, float(ring) * 0.2f));
+				r_bark.colors.push_back(Color(sc.r, sc.g, sc.b, 1.0f));
+			}
+		}
+		for (int k = 0; k < S; k++) {
+			const int a0 = v0 + k, a1 = v0 + (k + 1) % S, b0 = a0 + S, b1 = a1 + S;
+			// Counter-clockwise from outside, as the bark builder's own (flipped when the mesh is built).
+			r_bark.indices.push_back(a0);
+			r_bark.indices.push_back(a1);
+			r_bark.indices.push_back(b0);
+			r_bark.indices.push_back(a1);
+			r_bark.indices.push_back(b1);
+			r_bark.indices.push_back(b0);
+		}
+		{
+			// The cut face: lighter, fibrous tan when fresh, greying with the years down the trunk.
+			const Color cf = cut_fresh.lerp(cut_old, tended ? Math::smoothstep(0.0f, 0.6f, age) : MIN(1.0f, 0.3f + age));
+			const int cv = r_bark.verts.size();
+			r_bark.verts.push_back(foot + bd * bl + cut_n * 0.002f);
+			r_bark.normals.push_back(cut_n);
+			r_bark.uvs.push_back(Vector2(0.5f, 0.5f));
+			r_bark.colors.push_back(Color(cf.r, cf.g, cf.b, 1.0f));
+			for (int k = 0; k < S; k++) {
+				r_bark.verts.push_back(r_bark.verts[v0 + S + k]);
+				r_bark.normals.push_back(cut_n);
+				r_bark.uvs.push_back(Vector2(0.5f + 0.5f * Math::cos(float(Math::TAU) * k / S), 0.5f + 0.5f * Math::sin(float(Math::TAU) * k / S)));
+				r_bark.colors.push_back(Color(cf.r, cf.g, cf.b, 1.0f));
+			}
+			for (int k = 0; k < S; k++) {
+				const int a0 = cv + 1 + k, a1 = cv + 1 + (k + 1) % S;
+				// Wound so the face looks along cut_n after the flip.
+				const Vector3 fn = (r_bark.verts[a1] - r_bark.verts[cv]).cross(r_bark.verts[a0] - r_bark.verts[cv]);
+				r_bark.indices.push_back(cv);
+				if (fn.dot(cut_n) > 0.0f) {
+					r_bark.indices.push_back(a1);
+					r_bark.indices.push_back(a0);
+				} else {
+					r_bark.indices.push_back(a0);
+					r_bark.indices.push_back(a1);
+				}
+			}
+		}
+		r_bark.end(part, w);
+		// The sheath fibre: a brown net matted between the youngest bases under the crown (a wild palm's to
+		// half the trunk), in a few strands hanging from each base's foot.
+		const float fib = tended ? Math::smoothstep(0.85f, 1.0f, hrel) : Math::smoothstep(0.5f, 1.0f, hrel);
+		if (fib > 0.0f && pr.randf() < fib * 0.8f) {
+			const int strands = 1 + int(pr.randf() * 2.5f);
+			for (int fs = 0; fs < strands; fs++) {
+				const Vector3 f0 = foot + tg * (w * (pr.randf() - 0.5f) * 1.6f) + rd * 0.01f;
+				const float fl = Math::lerp(0.05f, 0.14f, pr.randf());
+				const float ph = pr.randf() * float(Math::TAU);
+				LocalVector<Vector3> fp;
+				LocalVector<float> fr;
+				for (int fk = 0; fk <= 3; fk++) {
+					const float uu = fk / 3.0f;
+					fp.push_back(f0 + (tg * (0.7f * (fs & 1 ? 1.0f : -1.0f)) - n.dir * 0.7f).normalized() * (fl * uu) + rd * (0.006f * Math::sin(ph + uu * 8.0f)));
+					fr.push_back(Math::lerp(0.003f, 0.0013f, uu));
+				}
+				Vector4i fpart;
+				r_bark.begin(fpart);
+				_tube(r_bark, fp, fr, 3, 0.0f, fibre_c * (0.8f + 0.4f * pr.randf()));
+				r_bark.end(fpart, 0.003f);
+			}
+		}
+	}
+}
+
 // The palm's own geometry on the generic stems and petioles (trees.md 5w): each blade a fan of
 // three quarters of a circle split into induplicate segments (each a V-folded blade, the fold
 // up, fused at the base and free for the outer two thirds); straight spines up to 2 cm along both
@@ -2243,6 +2749,10 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 	const Color dead_c = Color(0.23f, 0.16f, 0.09f); // Straw-brown (on the leaf scale: live is 0.12, 0.2, 0.1).
 	const Color spine_c = Color(0.55f, 0.47f, 0.3f);
 	for (const PalmFrond &f : palm_fronds) {
+		if (f.pinnate) {
+			_date_palm_frond(r_leaves, f);
+			continue;
+		}
 		const Node &n = nodes[f.node];
 		const Vector3 hast = n.end();
 		const Vector3 fwd = n.dir;
@@ -2453,6 +2963,20 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 	// fibre dark brown.
 	const Color stub_c = Color(0.3f, 0.22f, 0.15f).srgb_to_linear();
 	const Color fibre_c = Color(0.25f, 0.18f, 0.12f).srgb_to_linear();
+	if (preset == PRESET_DATE_PALM) {
+		// Each trunk is a run of palm_trunks from a node off the root to the crown's.
+		for (uint32_t i = 0; i < palm_trunks.size(); i++) {
+			if (nodes[palm_trunks[i]].parent != 0) {
+				continue;
+			}
+			uint32_t j = i;
+			while (j + 1 < palm_trunks.size() && nodes[palm_trunks[j + 1]].parent == palm_trunks[j]) {
+				j++;
+			}
+			_date_palm_trunk(r_bark, palm_trunks[i], palm_trunks[j]);
+		}
+		return;
+	}
 	for (const int ti : palm_trunks) {
 		const Node &n = nodes[ti];
 		if (n.length < 0.08f) {
@@ -3585,6 +4109,7 @@ static const LeafFormSpec LEAF_FORMS[TreeGenerator::PRESET_MAX] = {
 	{ TreeGenerator::LEAF_NEEDLE, 0, 0.0f }, // Calligonum: leafless, jointed green twiglets.
 	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // White broom: a few tiny linear leaves.
 	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Saltbush: ovate to rhombic, entire.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Date palm: its fronds are built by _palm_geometry.
 };
 
 Dictionary TreeGenerator::get_leaf_form(Preset p_preset) {
@@ -3795,6 +4320,7 @@ static const LeafSeasonSpec LEAF_SEASONS[TreeGenerator::PRESET_MAX] = {
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Calligonum: green twigs most of the year.
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // White broom: green stems.
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Saltbush: semi-evergreen.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Date palm.
 };
 
 TreeGenerator::LeafSeason TreeGenerator::_leaf_season(Preset p_preset, const Dictionary &p_season) {
@@ -5473,6 +5999,7 @@ static const float MOSS_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	0.0f, // Calligonum: desert sand.
 	0.0f, // White broom.
 	0.0f, // Saltbush.
+	0.0f, // Date palm: desert.
 };
 
 float TreeGenerator::_moss_amount() const {
@@ -5624,6 +6151,7 @@ static const LichenAffinity LICHEN_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	{ 0.15f, 0.0f, 0.1f }, // Calligonum: sparse crusts in the dry air.
 	{ 0.2f, 0.05f, 0.1f }, // White broom.
 	{ 0.2f, 0.05f, 0.15f }, // Saltbush.
+	{ 0.1f, 0.0f, 0.1f }, // Date palm.
 };
 
 float TreeGenerator::_lichen_amount() const {
@@ -7287,6 +7815,7 @@ static const struct {
 	{ 50.0f, 220.0f }, // calligonum (tough, deep-rooted)
 	{ 40.0f, 220.0f }, // white broom (whippy switches)
 	{ 50.0f, 200.0f }, // saltbush
+	{ 35.0f, 260.0f }, // date palm (fibrous monocot stem; it bends, and its dense root ball holds)
 };
 static_assert(sizeof(STORM_WOOD) / sizeof(STORM_WOOD[0]) == TreeGenerator::PRESET_MAX, "one storm row per preset");
 
@@ -7559,6 +8088,10 @@ float TreeGenerator::get_bloom(Preset p_preset, float p_day) {
 		case PRESET_DWARF_FAN_PALM:
 			// March to June, peaking in April (Flora iberica; Herrera 1989).
 			return ramp(65.0f, 90.0f, 130.0f, 170.0f);
+		case PRESET_DATE_PALM:
+			// February to April in the northern oases (Chao and Krueger 2007); the spathes split and the
+			// cream strands show a few weeks.
+			return ramp(40.0f, 60.0f, 90.0f, 115.0f);
 		// Hedge shrubs (trees.md 5ad; lowland Britain and France): blackthorn on the bare wood in
 		// March and April, hawthorn's May blossom, dog rose in June.
 		case PRESET_BLACKTHORN:
@@ -8561,9 +9094,122 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				close_part(part, 0.15f);
 			}
 		}
+		// Date palm flowers and dates (trees.md 5ai; Zaid and de Wet 2002; Chao and Krueger 2007). Dioecious; a
+		// grove is nearly all female, pollinated by hand. February to April the woody spathes split among the
+		// frond bases and the inflorescences open: a flattened stalk with a broom of cream strands. On the female
+		// the strands set dates; by summer the stalks lengthen to a metre and bow out between the fronds under
+		// 5-15 kg of fruit, the bunch hanging below the crown. The dates oblong, 3-6 cm: green (kimri) to
+		// summer, yellow or red (khalal) in July-August, then soft amber-brown (rutab, tamar) through October,
+		// when they are cut; a wild palm's spent bunches dry and hang on.
+		if (fruit_cover > 0.0f && preset == PRESET_DATE_PALM && !palm_crowns.is_empty()) {
+			const float bloom = get_bloom(preset, day);
+			const bool female = grove_vase || (uint32_t(seed) * 2654435761u >> 18) % 2 == 1;
+			const float d = day;
+			// 0 none, else the fruit's stage: 0-1 green to ripe.
+			const bool fruiting = female && d >= 100.0f && d <= (grove_vase ? 300.0f : 345.0f);
+			const float ripe = CLAMP((d - 175.0f) / 110.0f, 0.0f, 1.0f);
+			const float swell = CLAMP((d - 100.0f) / 90.0f, 0.25f, 1.0f);
+			const bool red_kind = (uint32_t(seed) * 2246822519u >> 20) % 3 == 0; // Some cultivars red at khalal.
+			const Color d_green = lin(0.45f, 0.55f, 0.18f), d_khalal = red_kind ? lin(0.72f, 0.2f, 0.12f) : lin(0.88f, 0.7f, 0.15f);
+			const Color d_ripe = lin(0.42f, 0.22f, 0.08f);
+			const Color date_c = ripe < 0.5f ? d_green.lerp(d_khalal, ripe * 2.0f) : d_khalal.lerp(d_ripe, ripe * 2.0f - 1.0f);
+			const Color stalk_c = lin(0.85f, 0.62f, 0.2f); // The fruit stalks are a bright yellow-orange.
+			const Color strand_fl = lin(0.92f, 0.88f, 0.7f), spathe_c = lin(0.5f, 0.38f, 0.22f);
+			const bool flowers = bloom > 0.0f && !fruiting;
+			if (flowers || fruiting) {
+				uint32_t slot = 0;
+				for (const int top : palm_crowns) {
+					const Node &cn = nodes[top];
+					if (cn.end().y - base_y < 1.5f) {
+						continue; // Offshoots and young palms do not bear.
+					}
+					const Vector3 ax = cn.dir;
+					const Vector3 s0 = perp(ax);
+					const int count = int(Math::round((flowers ? Math::lerp(3.0f, 9.0f, bloom) : 8.0f) * fruit_cover)) + int(cr.randf() * 3.0f);
+					r_b.bone = bone_of(top);
+					for (int q = 0; q < count; q++) {
+						const uint32_t h = hash_murmur3_one_32(slot++, uint32_t(seed) * 2654435761u + 0x64617465u);
+						const float roll = float(h & 0xffff) / 65535.0f * float(Math::TAU);
+						const Vector3 out = s0.rotated(ax, roll);
+						const Vector3 base = cn.end() - ax * Math::lerp(0.25f, 0.6f, float((h >> 16) & 255u) / 255.0f) + out * 0.2f;
+						Vector4i part;
+						r_b.begin(part);
+						if (flowers) {
+							// The split spathe and the broom of strands out of it, up and out between the fronds.
+							const Vector3 dd = (out * 0.7f + ax * 0.7f).normalized();
+							stalk(base, base + dd * 0.35f, 0.02f, spathe_c);
+							const Vector3 tip = base + dd * 0.35f;
+							for (int k = 0; k < 24; k++) {
+								const uint32_t hk = hash_murmur3_one_32(uint32_t(k), h);
+								const Vector3 sd = (dd + perp(dd).rotated(dd, float(hk & 255u) / 255.0f * float(Math::TAU)) * 0.45f).normalized();
+								stalk(tip, tip + sd * Math::lerp(0.15f, 0.3f, float((hk >> 8) & 255u) / 255.0f), 0.0025f, strand_fl);
+							}
+							close_part(part, 0.2f);
+							continue;
+						}
+						// The fruit stalk: out between the fronds and then bowed down under the bunch.
+						const float L = Math::lerp(0.7f, 1.1f, float((h >> 8) & 255u) / 255.0f);
+						const float bow = Math::lerp(0.4f, 1.0f, swell);
+						LocalVector<Vector3> pts;
+						LocalVector<float> rad;
+						LocalVector<Color> col;
+						pts.push_back(base);
+						pts.push_back(base + (out * 0.8f + ax * (0.5f - 0.3f * bow)).normalized() * (L * 0.4f));
+						pts.push_back(pts[1] + (out * 0.6f - Vector3(0, 0.4f + 0.5f * bow, 0)).normalized() * (L * 0.35f));
+						pts.push_back(pts[2] + Vector3(0, -1, 0) * (L * 0.25f));
+						for (int k = 0; k < 4; k++) {
+							rad.push_back(Math::lerp(0.022f, 0.012f, k / 3.0f));
+							col.push_back(stalk_c);
+						}
+						tube(pts, rad, 5, col);
+						// The strands: a hanging broom from the stalk's end, the dates along their outer two thirds.
+						const Vector3 hang = pts[3];
+						const int ns = 22;
+						for (int k = 0; k < ns; k++) {
+							const uint32_t hk = hash_murmur3_one_32(uint32_t(k), h + 77u);
+							const float az = float(hk & 255u) / 255.0f * float(Math::TAU);
+							const Vector3 spread(Math::cos(az), 0.0f, Math::sin(az));
+							const float sl = Math::lerp(0.25f, 0.42f, float((hk >> 8) & 255u) / 255.0f);
+							const Vector3 se = hang + spread * (sl * 0.35f * swell) + Vector3(0, -sl, 0);
+							stalk(hang, se, 0.003f, stalk_c * 0.9f);
+							const int nd = 5;
+							for (int m = 0; m < nd; m++) {
+								const uint32_t hm = hash_murmur3_one_32(uint32_t(m), hk);
+								if (float(hm & 255u) / 255.0f > 0.85f) {
+									continue; // Dropped.
+								}
+								const float u = Math::lerp(0.35f, 1.0f, (m + 0.5f) / nd);
+								const Vector3 side = perp(se - hang).rotated((se - hang).normalized(), float((hm >> 8) & 255u) / 255.0f * float(Math::TAU));
+								const float r = Math::lerp(0.009f, 0.013f, float((hm >> 16) & 255u) / 255.0f) * swell;
+								const Vector3 c = hang.lerp(se, u) + side * (r * 1.2f) - Vector3(0, r * 1.2f, 0);
+								const Color dc = date_c * (0.88f + 0.24f * float((hm >> 4) & 15u) / 15.0f);
+								// Oblong: a small UV ball stretched along the hang (shared vertices, averaged normals).
+								const int RS = 4, SS = 6;
+								const int s0v = r_b.verts.size();
+								for (int ri = 0; ri <= RS; ri++) {
+									const float th = float(Math::PI) * ri / RS;
+									for (int si = 0; si < SS; si++) {
+										const float ph = float(Math::TAU) * si / SS;
+										vert(c + Vector3(Math::sin(th) * Math::cos(ph) * r, -Math::cos(th) * r * 1.6f, Math::sin(th) * Math::sin(ph) * r), Vector2(float(si) / SS, float(ri) / RS), dc);
+									}
+								}
+								for (int ri = 0; ri < RS; ri++) {
+									for (int si = 0; si < SS; si++) {
+										const int a0 = s0v + ri * SS + si, a1 = s0v + ri * SS + (si + 1) % SS;
+										tri(a0, a1, a0 + SS);
+										tri(a1, a1 + SS, a0 + SS);
+									}
+								}
+							}
+						}
+						close_part(part, 0.3f);
+					}
+				}
+			}
+		}
 		big_end = r_b.indices.size();
 	}
-	if (fruit_cover > 0.0f && params[PARAM_NEEDLES] <= 0.5f && !tips.is_empty() && preset != PRESET_DWARF_FAN_PALM) {
+	if (fruit_cover > 0.0f && params[PARAM_NEEDLES] <= 0.5f && !tips.is_empty() && !palm_preset(preset)) {
 		// Winter buds at the shoot tips, modelled: each species' own (Poland and Clement, The
 		// Vegetative Key to the British Flora, 2009): rowan's big dark purple woolly cones, ash's
 		// black, beech's long brown spindles, oak's orange-brown clusters, horse chestnut's large
@@ -12500,7 +13146,7 @@ Ref<Texture2D> TreeGenerator::_spray_texture() {
 void TreeGenerator::_mark_spurs(int p_year) {
 	spurs.resize(nodes.size());
 	memset(spurs.ptr(), 0, spurs.size());
-	if (phyllotaxis == PHYLLOTAXIS_WHORLED || params[PARAM_NEEDLES] > 0.5f || preset == PRESET_DWARF_FAN_PALM) {
+	if (phyllotaxis == PHYLLOTAXIS_WHORLED || params[PARAM_NEEDLES] > 0.5f || palm_preset(preset)) {
 		return; // No spurs on a palm's petioles: its fans are _palm_geometry.
 	}
 	_build_shadow_grid(p_year);
@@ -15906,7 +16552,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		if (first.removed || (first.parent > 0 && nodes[first.parent].main == s)) {
 			continue;
 		}
-		if (preset == PRESET_DWARF_FAN_PALM && first.order > 0) {
+		if (palm_preset(preset) && first.order > 0) {
 			continue; // Petioles are green, not bark: _palm_geometry draws them with the fans.
 		}
 		if (dw_v0 >= 0 && dw_v1 < 0) {
@@ -17562,7 +18208,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			leaves.normals.write[v] = n.lerp(out, 0.55f).normalized();
 		}
 	}
-	if (preset == PRESET_DWARF_FAN_PALM) {
+	if (palm_preset(preset)) {
 		_palm_geometry(bark, leaves);
 	}
 	if (rigged) {
@@ -18120,6 +18766,19 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// its kind (0 Fomes, 1 Fomitopsis pinicola, 2 F. betulina, 3 Ganoderma, 4 Laetiporus,
 		// 5 Trametes, 6 honey fungus, 7 sulphur tuft); mesh space.
 		mesh->set_meta(SNAME("tree_fungi"), fungi_points);
+	}
+	if (fire_years >= 0.0f) {
+		// A tree grown for a fire (trees.md 5ah): its years and the band it stands for (VegetationField3D picks
+		// the variant whose band holds WorldFire.burn_age_at; world-links.md).
+		mesh->set_meta(SNAME("tree_fire_years"), fire_years);
+		Vector2 band(FIRE_BAND_EDGES[4], FIRE_BAND_EDGES[5]);
+		for (int b = 0; b < 5; b++) {
+			if (fire_years < FIRE_BAND_EDGES[b + 1]) {
+				band = Vector2(FIRE_BAND_EDGES[b], FIRE_BAND_EDGES[b + 1]);
+				break;
+			}
+		}
+		mesh->set_meta(SNAME("tree_fire_band"), band);
 	}
 	if (fire_crown[5] > 0.0f) {
 		// The crown's foliage profile for fire mortality (VegetationFire::tree_killed; trees.md 5ag).
@@ -18713,6 +19372,10 @@ TreeGenerator::FireResponse TreeGenerator::get_fire_response(Preset p_preset) {
 		case PRESET_STONE_PINE:
 		case PRESET_BEECH:
 		case PRESET_CALLIGONUM:
+		// Palms keep their bud inside the crown's sheaths and re-leaf from it; the fan and feather leaves are not
+		// a shoot system the regrowth passes model, so they get the char only.
+		case PRESET_DWARF_FAN_PALM:
+		case PRESET_DATE_PALM:
 		case PRESET_MAX:
 			return FIRE_NONE;
 		default:
@@ -19364,6 +20027,9 @@ static const Habitat HABITATS[TreeGenerator::PRESET_MAX] = {
 	{ 18, 28, 8, 18, 30, 250, 0.02f, 30, 0.5f, 0, 0.1f, 0.30f, 6.0f, 1.0f }, // Calligonum
 	{ 15, 26, 6, 16, 40, 500, 0.03f, 35, 0.3f, 0, 0.15f, 0.40f, 5.0f, 0.9f }, // White broom
 	{ 14, 25, 4, 15, 80, 600, 0.05f, 30, 0.2f, 0, 0.25f, 0.65f, 3.0f, 0.8f }, // Saltbush
+	// Date palm: hot deserts on groundwater (oases, wadis); the rainfall is the region's, the water the palm's
+	// own roots find (Zohary and Hopf 2000; Chao and Krueger 2007).
+	{ 18, 30, 8, 22, 20, 400, 0.0f, 15, 0.3f, 0, 0.3f, 0.45f, 8.0f, 1.5f }, // Date palm
 };
 
 static bool is_shrub(TreeGenerator::Preset p_preset) {
@@ -19468,6 +20134,14 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		ground_slope = slopes[p_variant % 4];
 		bank_erosion = ground_slope > 0.0f ? Math::lerp(0.3f, 0.9f, t) * Math::lerp(0.6f, 1.0f, ground_slope / 0.85f) : 0.0f;
 		root_stone = p_variant % 8 == 2 ? Math::lerp(0.35f, 0.6f, float((h >> 16) & 255u) / 255.0f) : 0.0f;
+	} else if (p_preset == PRESET_DATE_PALM && (p_form == FORM_GROVE || p_form == FORM_OPEN || p_form == FORM_STAND)) {
+		// Date palms (trees.md 5ai): a grove palm tended (skirt and offshoots cut), 15-60 years old; a wild one
+		// any age from a young clump to an old palm, a third of them clumps of two or three trunks.
+		const uint32_t h = uint32_t(seed) * 2654435761u;
+		const float t = float((h >> 8) & 255u) / 255.0f;
+		grove_vase = p_form == FORM_GROVE;
+		params[PARAM_YEARS] = grove_vase ? Math::round(Math::lerp(15.0f, 60.0f, t)) : Math::round(Math::lerp(10.0f, 80.0f, t));
+		params[PARAM_STEMS] = grove_vase ? 1.0f : float(1 + ((h >> 16) % 3u == 0u ? 1 + int((h >> 20) % 2u) : 0));
 	} else if (p_form == FORM_GROVE) {
 		// A cultivated olive in an old grove (trees.md, "Ancient olive"; Connor and Fereres,
 		// Hort. Rev. 31, 2005; Barranco et al., El cultivo del olivo, 2008): planted as one stem,
@@ -19743,6 +20417,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	bark_peel = p_from.bark_peel;
 	cork_stripped_years = p_from.cork_stripped_years;
 	fire_years = p_from.fire_years;
+	fire_variants = p_from.fire_variants;
 	bark_wounds = p_from.bark_wounds;
 	bark_chevrons = p_from.bark_chevrons;
 	wind_exposure = p_from.wind_exposure;
@@ -19782,8 +20457,17 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 
 void TreeGenerator::_near_task(void *p_self) {
 	TreeGenerator *self = static_cast<TreeGenerator *>(p_self);
-	self->_setup_variant(self->preset, self->near_form, self->near_task_variant, self->near_base_seed, self->near_base_cover);
-	self->material_source = self->near_far_meshes.size() > self->near_task_variant ? Ref<ArrayMesh>(self->near_far_meshes[self->near_task_variant]) : Ref<ArrayMesh>();
+	const int fb = self->near_living > 0 && self->near_task_variant >= self->near_living ? self->near_task_variant - self->near_living : -1;
+	if (fb >= 0) {
+		// A fire band variant: the same seed as the living one it was grown from, burnt.
+		self->_setup_variant(self->preset, self->near_form, fb, self->near_base_seed, self->near_base_cover);
+		self->fire_years = FIRE_BAND_YEARS[MIN(fb, 4)];
+		self->material_source = self->near_fire_meshes.size() > fb ? Ref<ArrayMesh>(self->near_fire_meshes[fb]) : Ref<ArrayMesh>();
+	} else {
+		self->_setup_variant(self->preset, self->near_form, self->near_task_variant, self->near_base_seed, self->near_base_cover);
+		self->fire_years = -1.0f;
+		self->material_source = self->near_far_meshes.size() > self->near_task_variant ? Ref<ArrayMesh>(self->near_far_meshes[self->near_task_variant]) : Ref<ArrayMesh>();
+	}
 	self->near_result = self->generate();
 	self->material_source.unref();
 	// Keep the copy small between requests: the growth state is only needed while growing.
@@ -19965,9 +20649,27 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 				meshes.push_back(mesh);
 			}
 		}
+		// The fire band variants (trees.md 5ah): the same seeds as the first living ones, grown burnt.
+		TypedArray<Mesh> fire_meshes;
+		const bool fire_form = p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_OLD || p_form == FORM_GROVE;
+		if (fire_variants && p_variants > 0 && fire_form) {
+			const float saved_fire = fire_years;
+			for (int b = 0; b < 5; b++) {
+				_setup_variant(p_preset, p_form, b, saved_seed, saved_climber_cover);
+				fire_years = FIRE_BAND_YEARS[b];
+				Ref<ArrayMesh> mesh = generate();
+				if (mesh.is_valid()) {
+					mesh->set_meta("crown", Vector3(height, crown_base, crown_radius));
+					fire_meshes.push_back(mesh);
+				}
+			}
+			fire_years = saved_fire;
+		}
+		fire_cache[key] = fire_meshes;
 		far_leaves = false;
 		if (near_split) {
 			near_sources[key]->near_far_meshes = meshes;
+			near_sources[key]->near_fire_meshes = fire_meshes;
 		}
 		decay_class = saved_decay;
 		fallen = saved_fallen;
@@ -20035,6 +20737,13 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	TypedArray<Mesh> meshes = mesh_cache[key];
 	if (p_variants < meshes.size()) {
 		meshes.resize(p_variants);
+	}
+	const int living = meshes.size();
+	if (fire_variants && fire_cache.has(key)) {
+		meshes.append_array(fire_cache[key]);
+	}
+	if (near_sources.has(key)) {
+		near_sources[key]->near_living = living;
 	}
 	sp->set_meshes(meshes);
 	if (near_leaf_range > 0.0f && near_sources.has(key)) {
@@ -20232,6 +20941,7 @@ Ref<PlantSpecies> TreeGenerator::make_shrub_species(Preset p_preset, ShrubForm p
 
 void TreeGenerator::clear_cache() {
 	mesh_cache.clear();
+	fire_cache.clear();
 	crown_cache.clear();
 	near_cache.clear();
 	near_sources.clear();
@@ -20642,6 +21352,26 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			olive->set_scale_range(Vector2(0.9f, 1.1f));
 			list.push_back(olive);
 		} break;
+		case STAND_DATE_OASIS: {
+			// A date palm oasis (trees.md 5ai; Zaid and de Wet 2002; Battesti 2005, Jardins au desert): the
+			// palms planted in irrigated rows 7-9 m apart (120-200 a hectare), tended (dead fronds and offshoots
+			// cut, the bases trimmed), the gardens beneath them in the classic three storeys: fruit trees
+			// (olive, fig, pomegranate) under the palms, then crops. Where the water rises, wild and abandoned
+			// palms grow in clumps with their skirts on. The rows are the field's to lay out; here the tended
+			// palms stand a palm's spacing apart. No deadwood: a worked oasis is tidied (the fronds are fuel).
+			Ref<PlantSpecies> palm = _stand_species(PRESET_DATE_PALM, false, p_variants, FORM_GROVE);
+			palm->set_name("Date Palm (grove)");
+			palm->set_spacing(8.0f);
+			palm->set_density(0.9f);
+			palm->set_scale_range(Vector2(0.9f, 1.1f));
+			list.push_back(palm);
+			Ref<PlantSpecies> wild = _stand_species(PRESET_DATE_PALM, false, p_variants, FORM_OPEN);
+			wild->set_density(0.12f);
+			wild->set_spacing(10.0f);
+			list.push_back(wild);
+			// The middle storey: olives under the palms' shade.
+			open(PRESET_WILD_OLIVE, 0.15f);
+		} break;
 		case STAND_MAX:
 			break;
 	}
@@ -20836,7 +21566,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		b.dir = Vector3(0, 1, 0).rotated(Vector3(Math::cos(p_angle), 0, Math::sin(p_angle)), p_tilt).normalized();
 		buds.push_back(b);
 	};
-	const bool palm = preset == PRESET_DWARF_FAN_PALM;
+	const bool palm = palm_preset(preset);
 	for (int s = 0; s < stems && !palm; s++) {
 		const float tilt = stems == 1 ? _rand(0.0f, 0.04f) : spread * _rand(0.4f, 1.0f);
 		add_stem_bud(Math::TAU * s / stems + _rand(-0.4f, 0.4f), tilt);
@@ -21156,7 +21886,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	} else if (veteran > 0.0f && !fallen && !fallen_branch) {
 		_apply_veteran();
 	}
-	if (fire_years >= 0.0f && decay_class == 0 && !fallen && !fallen_branch) {
+	if (fire_years >= 0.0f && decay_class == 0 && !fallen && !fallen_branch && !palm_preset(preset)) {
 		_fire_prune();
 	}
 	if (decay_class == 0 && !fallen && !fallen_branch && cut_height > 0.5f && cuts > 0) {
@@ -21377,6 +22107,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_lichen_cover"), &TreeGenerator::get_lichen_cover);
 	ClassDB::bind_method(D_METHOD("set_bark_peel", "peel"), &TreeGenerator::set_bark_peel);
 	ClassDB::bind_method(D_METHOD("set_fire_years", "years"), &TreeGenerator::set_fire_years);
+	ClassDB::bind_method(D_METHOD("set_fire_variants", "enabled"), &TreeGenerator::set_fire_variants);
+	ClassDB::bind_method(D_METHOD("get_fire_variants"), &TreeGenerator::get_fire_variants);
 	ClassDB::bind_method(D_METHOD("get_fire_years"), &TreeGenerator::get_fire_years);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_fire_response", "preset"), &TreeGenerator::get_fire_response);
 	ClassDB::bind_method(D_METHOD("set_cork_stripped_years", "years"), &TreeGenerator::set_cork_stripped_years);
@@ -21503,6 +22235,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_peel", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_bark_peel", "get_bark_peel");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fire_years", PROPERTY_HINT_RANGE, "-1,30,0.05,suffix:yr"), "set_fire_years", "get_fire_years");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_variants"), "set_fire_variants", "get_fire_variants");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cork_stripped_years", PROPERTY_HINT_RANGE, "-1,30,0.01"), "set_cork_stripped_years", "get_cork_stripped_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_wounds", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_bark_wounds", "get_bark_wounds");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_chevrons", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_bark_chevrons", "get_bark_chevrons");
@@ -21592,6 +22325,7 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_CALLIGONUM);
 	BIND_ENUM_CONSTANT(PRESET_WHITE_BROOM);
 	BIND_ENUM_CONSTANT(PRESET_SALTBUSH);
+	BIND_ENUM_CONSTANT(PRESET_DATE_PALM);
 	BIND_ENUM_CONSTANT(SHRUB_YOUNG);
 	BIND_ENUM_CONSTANT(SHRUB_MATURE);
 	BIND_ENUM_CONSTANT(SHRUB_OLD);
@@ -21631,6 +22365,7 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_POLLARD_ROW);
 	BIND_ENUM_CONSTANT(STAND_STONE_PINE);
 	BIND_ENUM_CONSTANT(STAND_OLIVE_GROVE);
+	BIND_ENUM_CONSTANT(STAND_DATE_OASIS);
 	BIND_ENUM_CONSTANT(STAND_MAX);
 	BIND_ENUM_CONSTANT(REGION_EUROPE);
 	BIND_ENUM_CONSTANT(REGION_NORTH_AMERICA);

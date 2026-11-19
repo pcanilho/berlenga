@@ -207,6 +207,11 @@ private:
 		float frontal = 0.0f; // m2 a plant shows the wind at scale 1 (PlantSpecies.wind_frontal_area).
 		bool wind_flag = false; // Meta "wind_flag": +X turned down the prevailing wind (flagged trees, krummholz).
 		LocalVector<float> bank_slopes; // Per variant, mesh meta "tree_ground_slope".x (radians); empty: no bank forms.
+		// Per variant, mesh meta "tree_fire_years" (years since the fire the tree was grown for, -1 unburnt); empty: none.
+		// A tree takes the variant whose years are nearest the ground's burn age, unburnt ones off burns.
+		LocalVector<float> fire_years;
+		LocalVector<Vector2> fire_bands; // Per variant, mesh meta "tree_fire_band" (years from, to); empty: nearest years.
+		float fire_years_max = 0.0f;
 	};
 	struct PlaceSetup {
 		LocalVector<PlaceSpecies> species;

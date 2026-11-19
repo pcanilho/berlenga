@@ -273,6 +273,16 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	Ref<Image> upload_snow;
 	Ref<Image> upload_catch;
 	void _publish_cells();
+	// Lake ice broken under bodies too heavy for it (docs/ideas/world-links.md, bodies → lake ice): world x, z and
+	// radius, cut from the published ice at once and from the cells at the next update's start.
+	struct IceBreak {
+		Vector2 center;
+		float radius = 0.0f;
+	};
+	LocalVector<IceBreak> ice_breaks;
+	int ice_break_count = 0;
+	void _cut_ice(Vector<float> &r_ice, Vector<float> &r_white) const;
+	void _ice_load_step();
 	void _refresh_cell_inputs(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only);
 	void _refresh_fire();
 	void _update_begin(double p_weather_dt, bool p_blocking);
@@ -435,6 +445,9 @@ public:
 	// growing below freezing; it does not melt here (the update melts it in a thaw once the snow is gone).
 	static float lake_ice_growth(float p_ice, float p_air_celsius, float p_snow_depth, float p_snow_density, float p_hours);
 	static float snow_conductivity(float p_density); // W/(m K), Sturm et al. 1997
+	// The load floating ice carries before it breaks: P = A h^2 (kg, h in cm; Gold 1971), A about 10 at failure.
+	static float ice_breaking_load(float p_ice, float p_white_share, float p_air_celsius);
+	int get_ice_break_count() const { return ice_break_count; }
 	static constexpr float ICE_WALK = 0.05f; // m of ice that bears a person (the deep snow and its collision lie on it)
 	static constexpr float ICE_HOLD = 0.02f; // m of ice that keeps snow on it (thinner, snow sinks into slush and melts)
 	// The top crust (docs/ideas/snow.md, follow-up 3d): its thickness, the snow over it, its melt-freeze

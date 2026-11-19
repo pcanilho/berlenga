@@ -636,6 +636,16 @@ meshoptimizer cannot thin; they now take the leaf cards' rank-ordered chain (Coo
 simplification with area kept): fire moss capsules 3.8k to 154 triangles at the far LOD. In the burn bench view
 only 2% fewer primitives (3.10 M to 3.04 M): the heath around, not the burn set, holds most of them.
 
+## Prefiltered far blades (19 Nov)
+
+Past a few metres a blade is a pixel or two wide, and its own base-to-tip ramp and its dry or dead odd one out
+alias into grit (non-linear pre-filtering, Bruneton and Neyret 2012: shade with the footprint's mean, not a
+point sample). The meadow fragment now eases each blade's colour towards the sward's mean (base to tip at 0.6,
+dry tips and thatch by their shares) by half over 6 to 35 m (the same distance softening as the normals and
+tint), and raises its roughness to at least 0.8 there, so the far meadow reads soft. Measured on the far view
+crop: pixel-to-pixel contrast down about 5%. Much of the rest of the softness in the reference (a far meadow
+as a soft mass) comes from temporal AA and upscaling in game, which the cloud bench does not run.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.

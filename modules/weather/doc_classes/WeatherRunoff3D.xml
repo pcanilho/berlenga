@@ -31,6 +31,13 @@
 				Samples the heights and builds the drainage network.
 			</description>
 		</method>
+		<method name="bankfull_width" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="area_km2" type="float" />
+			<description>
+				Bankfull channel width (m) for a drainage area of [param area_km2] km² (Castro and Jackson 2001: 2.37 A^0.38), the width a debris flow runs at.
+			</description>
+		</method>
 		<method name="channel_velocity" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="discharge" type="float" />
@@ -38,10 +45,36 @@
 				Leopold and Maddock (1953) mean channel speed (m/s) for [param discharge] m³/s.
 			</description>
 		</method>
+		<method name="debris_flow_likelihood" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="rain15_mm" type="float" />
+			<param index="1" name="burnt_steep_share" type="float" />
+			<param index="2" name="burnt" type="float" />
+			<param index="3" name="kf" type="float" />
+			<description>
+				The chance (0..1) a burnt basin makes a debris flow in a storm (Staley et al. 2017, USGS model M1): [param rain15_mm] mm of rain in 15 minutes, [param burnt_steep_share] the basin's share burnt moderate or high on slopes of 23% and more, [param burnt] its mean burn severity (dNBR / 1000) and [param kf] its soil erodibility (K factor).
+			</description>
+		</method>
+		<method name="debris_flow_volume" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="i15_mm_h" type="float" />
+			<param index="1" name="burnt_km2" type="float" />
+			<param index="2" name="relief_m" type="float" />
+			<description>
+				A debris flow's volume (m³; Gartner et al. 2014) from the peak 15-minute rain intensity [param i15_mm_h] (mm/h), the area burnt moderate or high [param burnt_km2] (km²) and the basin's relief [param relief_m] (m).
+			</description>
+		</method>
 		<method name="get_bake_time_msec" qualifiers="const">
 			<return type="float" />
 			<description>
 				How long the last bake took.
+			</description>
+		</method>
+		<method name="get_debris_flows_since" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="id" type="int" />
+			<description>
+				The logged debris flows (the last 32, as given to [signal debris_flow]) with an id above [param id], oldest first; -1 for all.
 			</description>
 		</method>
 		<method name="get_delivered_load" qualifiers="const">
@@ -141,6 +174,12 @@
 		<member name="curve_number" type="float" setter="set_curve_number" getter="get_curve_number" default="75.0">
 			The SCS curve number of the land (about 75 for mixed soils and cover).
 		</member>
+		<member name="debris_flow_threshold" type="float" setter="set_debris_flow_threshold" getter="get_debris_flow_threshold" default="0.5">
+			The likelihood ([method debris_flow_likelihood]) from which a burnt basin's storm makes a debris flow.
+		</member>
+		<member name="debris_flows" type="bool" setter="set_debris_flows" getter="is_debris_flows" default="true">
+			Watches burnt basins ([WorldFire]) in heavy rain and starts post-fire debris flows ([signal debris_flow]). Burns fade from 1.5 to 3 years old.
+		</member>
 		<member name="extent" type="float" setter="set_extent" getter="get_extent" default="4096.0">
 			The grid's width (m).
 		</member>
@@ -154,4 +193,12 @@
 			Steps per second of weather time.
 		</member>
 	</members>
+	<signals>
+		<signal name="debris_flow">
+			<param index="0" name="event" type="Dictionary" />
+			<description>
+				One post-fire debris flow, once per basin per storm (re-armed after a day of weather time). [param event] holds: [code]id[/code] (int, rising), [code]time[/code] (weather seconds), [code]position[/code] (the basin's outlet), [code]probability[/code] ([method WeatherRunoff3D.debris_flow_likelihood]), [code]volume[/code] (m³), [code]rain15[/code] (mm in 15 minutes), [code]i15[/code] (mm/h), [code]basin_area[/code] (km²), [code]burnt_share[/code] (mean severity), [code]burnt_steep_share[/code], [code]relief[/code] (m), [code]path[/code] (PackedVector3Array, the channel from the outlet down to water, flat ground or the map's edge), [code]widths[/code] (bankfull width per path point, m) and [code]severity[/code] (burn severity per path point, 0..1).
+			</description>
+		</signal>
+	</signals>
 </class>

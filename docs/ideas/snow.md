@@ -1256,7 +1256,7 @@ off as `SnowClumps3D` pieces when a load sheds.
 - Above 5 m/s the flow entrains new snow at 0.005 m per m/s per s.
 - It deposits where it is slower than 0.5 m/s and the slope cannot beat mu.
 - The moving mass lives in the cover's cells and is written back at 5 Hz, so every reader sees it move.
-- At the end, two mass-conserving passes smooth away the grid's checkerboard. Debris near the camera breaks into clumps.
+- At the end, two mass-conserving passes smooth away the grid's checkerboard. Debris breaks into clumps near the camera, only in cells the flow crossed faster than 5 m/s, so the scoured release zone is left clean.
 - Free rigid bodies in the flow take 1/2 rho u^2 over their width times the flow depth.
 
 **Checks.** `--test=avalanche`, 6 checks, on a 38 degree, 80 m face over a flat run-out:
@@ -1267,7 +1267,7 @@ off as `SnowClumps3D` pieces when a load sheds.
 - About 2 m of debris piles 40 m out from the toe.
 - A trigger releases a slab.
 
-**View.** `--view=avalanche [--before]`.
+**View.** `--view=avalanche [--before]`. The dark specks on the face in the raster shot are the ground showing through the 1 cm left on the scoured bed. In this bench all the snow is new, so the slab runs to the ground. That is not a rendering fault (the specks are the same with `--glints=grid`).
 
 **Limits and next.**
 - The flow is thin at the front, so it runs slower than measured avalanches of this size (20-30 m/s). A higher-order scheme (HLL, as RAMMS uses) would keep the front sharper.
@@ -1286,3 +1286,37 @@ off as `SnowClumps3D` pieces when a load sheds.
 **Rain on ruts.** RainFall3D reads WorldContracts::snow()->surface_at, so drops stop in prints and ruts. This touches a weather file and needs Paulo's line.
 
 **Avalanches.** Slab release where the load on a 30-45° slope exceeds the weak layer. We already have the crust and burial state from follow-up 4, which can serve as the weak layer. The run-out uses a depth-averaged Savage-Hutter or Voellmy flow on the cover grid (RAMMS uses Voellmy with mu around 0.155 and xi 2000 m/s²). The flow deposits snow, buries plants and bodies through the snow contract, and throws powder into the fog.
+
+## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
+
+**Triggers from people and vehicles.**
+- Foehn (1987) gives the extra shear a surface load adds at the weak layer's depth: delta_tau = 2 P cos(psi) sin^2(theta) sin(theta + psi) / (pi r). Here P is the line load, theta is the angle below the surface and r is the distance. Its peak sits roughly straight under the load, so it is about 2P / (pi h) for a slab of depth h.
+- The skier stability index SK = tau_strength / (tau_gravity + delta_tau). Our natural S already has every term except delta_tau.
+- The loads are a skier's 0.78 kN/m (Foehn), a boot on foot about twice that on a smaller footprint, and a snowmobile about 2-3 times a skier. Thumlert and Jamieson (2014) measured the snowmobile.
+- Monti et al. (2016) correct for a layered slab, where a stiff layer spreads the load. Our crust flag can scale that.
+- The load comes from SnowSurface3D's prints, which already know mass and footprint, through WorldContracts world_contact. Every body that presses snow can then trigger.
+- A cornice failure (follow-up 7, which already reports position and mass) adds its impact as a large P where it lands.
+- Remote triggers: a whumpf spreads along a buried crust (follow-up 4) for tens of metres, so a person on the flat can release the slope above. Gauthier and Jamieson (2008) give the propagation saw test. Spread the release flood fill from the trigger cell only along the crust.
+- Checks: a skier crossing 60 cm at 38 degrees releases it, the same with no one on it holds, and a sled releases it where a boot does not.
+
+**Sharper, faster flow.**
+- Donor-cell transport smears the front, so the run-out is right but the speed is about half of measured values (15 m/s against 20-30).
+- RAMMS (Christen et al. 2010) solves the same Voellmy equations with a second-order finite-volume scheme. The fix is to swap the transport step for one too:
+  - MUSCL reconstruction with a minmod limiter, then an HLL Riemann flux (Toro 2001, for shallow water) and a Heun time step.
+  - The wave speed |u| + sqrt(g h cos theta) sets the CFL step.
+- Hydrostatic reconstruction (Audusse et al. 2004) keeps a wet/dry front stable on a slope and still snow still.
+- Friction stays a separate implicit step, as now, so mass conservation does not change.
+- Check: front speed within 20% of the 1D Voellmy terminal speed sqrt(xi h (sin theta - mu cos theta)), with the run-out unchanged within one cell.
+
+**Powder cloud.**
+- Big dry-snow avalanches lift a suspension cloud at the front at 3-10 kg/m3, against air's 1.2. It runs faster than the dense core and can go up to 60 m/s.
+- Data comes from Vallee de la Sionne (Sovilla et al. 2015, front eruption currents). The dynamics follow Turnbull and McElwaine (2008); RAMMS::EXTENDED models the cloud as a second layer fed from the dense core's front (Bartelt et al. 2016).
+- In PhysX Flow:
+  - A heavy-gas emitter (negative `smoke_buoyancy`) sits on front cells where the speed is over 10 m/s and the snow is dry and fresh. Its rate is the entrained mass times a share of about 0.1-0.2.
+  - Its initial velocity is the flow's velocity plus an updraft.
+  - Flow's wind and terrain floor carry the cloud, so it runs up the opposite slope and settles. What settles adds a thin powder layer back to the cover.
+- The cloud's dynamic pressure, about 0.5 rho u^2 (several kPa at 40 m/s), pushes bodies and trees past the dense deposit's edge. That is the blast zone.
+- On the raster path it uses Flow's own draw. Under PT it is a participating medium if Flow's volume reaches PT. Otherwise it goes on the PC queue for a check.
+- Check: the cloud outruns the core's front and leaves a thin powder layer beyond the debris. No cloud forms from a wet slide.
+
+**Also worth offering.** An avalanche into a lake displaces water (an impulse wave from the WorldWater contract). The impact on trees: the trees thread's thrown-tree path breaks those above a dynamic pressure of about 5-10 kPa.

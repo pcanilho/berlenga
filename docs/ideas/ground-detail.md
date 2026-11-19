@@ -423,3 +423,32 @@ Plan, in `modules/vegetation/tree_bark_detail.*` (BarkDetail3D), the ground deta
   4 to 10 cm.
 - Cost (bench, 4 trunks, 1,045 pieces): main thread 0.15 ms mean, 3.4 ms worst an update with the meta (33 ms
   mean, 826 ms worst with the readback); 64 bytes a piece in instance buffers (67 KB), 32 shared shapes.
+
+## Next round options (19 Nov)
+
+Litter (vegetation), mud clods, snow clumps and close-up bark are done; the open items of the plan above are 2, 4 and
+the far hand-over (proposal 6). Four candidates, put to Paulo as a decision card:
+
+1. **Seamless far edge (recommended).** Past each class's reach the ground material takes the aggregate look of the
+   grains it stops drawing, so the edge never shows. Technique: Meng et al. 2015, "Multi-scale modeling and
+   rendering of granular materials" (SIGGRAPH): explicit grains near, a volumetric/BSDF aggregate far, the switch by
+   projected grain size. A real-time cut of it: per class, tabulate once from the shape library (offline, from the
+   rocks' own LODs) coverage, mean tilt, a self-shadowing term over sun elevation and the mean albedo and
+   roughness of a lit grain bed; the terrain shader blends rock detail toward those values by distance with a
+   dithered band one cell wide, and the far normal is the existing Worley rock detail. Cost: one small table and a
+   few ALU in the terrain shader. Check by a raster/PT pair straddling the reach at 100% crop.
+2. **Stones that react.** Wheels and feet already write the deform fields; a changed cell sinks or shoves its grains
+   (displacement along the deform gradient), and grains under a contact patch become PhysX rigid bodies (the
+   `break_stone` path), back to records once asleep. Only grains near a contact need bodies: tens at a time.
+3. **River and stream beds.** Imbrication: river pebbles lie overlapping like roof tiles, the long axis across the
+   flow and the upstream edge down, dip 10 to 30 degrees (standard sedimentology; the flow direction comes from the
+   water's own flow map). Size from the stream's shear (coarse in riffles, fine and silted in pools); seen through
+   clear water, so it needs Valence's water to trace them.
+4. **More stones for the same cost.** Peytavie et al.'s tiles of piles (settled once by PhysX, Wang borders) and a
+   compute pass writing TLAS instance records straight into a slot range (Unity 6
+   `RayTracingAccelerationStructure.AddInstancesIndirect`, Unreal's GPU instance buffer path), with per-instance
+   culling by projected size. Needs a cost run on the PC to prove the gain.
+
+Sources: Meng, Papas, Habel, Dachsbacher, Marschner, Gross, Jarosz 2015
+(https://cs.dartmouth.edu/~wjarosz/publications/meng15granular.html); Unity
+`AddInstancesIndirect` (https://docs.unity3d.com/ScriptReference/Rendering.RayTracingAccelerationStructure.AddInstancesIndirect.html).

@@ -1766,6 +1766,35 @@ smoke's grey part so plumes shade the ground in patches (weather
 owners); the haze is one value over the map's centre, not a field; the
 lofted plume is treated as mixed through 2 km.
 
+### Post-fire mudflows (picked 19 Nov morning, second of three)
+
+Split agreed by the three owners. Valence (WeatherRunoff3D) fires the
+event: USGS M1 likelihood (Staley et al. 2017) and Gartner (2014) volume
+at basin outlets, at P >= 0.5, one per basin per storm, signal
+debris_flow on WeatherRunoff3D and WorldGround, with id, volume, path,
+widths and severity. Mud (GroundDebrisFlow3D) moves the body:
+Bingham/Voellmy on the path, Iverson entrainment, deposit written into
+the ground, front getter get_debris_front(id) and the
+debris_front_changed signal. PhysX (PhysXDebrisSurge3D, nodes/) draws what
+rides the front. Research: post-fire debris flows arrive as surges, tens
+of seconds to minutes apart (Kean et al. 2011, 2013); a bouldery snout
+forms because the surface outruns the front and carries clasts forward
+(Iverson 1997); peak discharge Q = 0.1 V^(5/6) and front speed v = 2.1
+Q^(1/3) S^(1/3) (Rickenmann 1999); fans and deposition below about 4
+degrees (Ikeya 1981). Built: a train of up to four surges (one per 400
+m3, each 0.6 of the last); a front of its own on the path at
+Rickenmann's speed, easing over a few seconds and stopping below
+stop_slope, replaced by mud's front where its getter reports one;
+boulders as rigid bodies drawn from a D^-2.5 power law up to the flow
+depth, with quadratic drag toward 1.3 times the front speed behind the
+snout and the front speed at it, the slurry's buoyancy, the force
+clamped for stability; mud spray as ballistic drops. Test (scratch:
+1500 m3, 25% channel then a 3% fan): peak Q 44 m3/s, front 3.8 m/s, 1.0
+to 1.8 m deep; boulders stay within a few metres of the snout; the front
+stops 30 m onto the fan with its boulders in the lobe; the second surge
+stops 4 m short of the first. Left: drawing the body and levees is
+mud's; dust ahead of dry fronts; rumble and ground shake.
+
 ### Burning wooden buildings (picked 19 Nov morning, third of three)
 
 Built as PhysXBuildingFire3D (flow/physx_building_fire_3d.cpp), a
@@ -1816,6 +1845,34 @@ Left: rooms are boxes (pitched roofs, attics and L-shaped rooms are
 several boxes); no smoke filling rooms ahead of the fire (two-zone
 smoke layer), no firefighting water on rooms yet (Flow/MPM water reaches
 burnables, not buildings), glass is not drawn breaking.
+
+### Next-round options (card, 19 Nov late morning)
+
+Water on burning buildings. Hose streams and MPM water reaching a room
+take heat at 2.6 MJ/kg (heating and boiling); a room needs about 0.1 to
+0.3 kg/s per MW to knock the flames down (Sardqvist's critical flow
+rate). Steam expands about 1700 times and pushes the hot layer out of
+the openings. Plan: water particles entering an opening or hitting the
+cladding feed PhysXSteam and a cooling term in the room's heat balance.
+
+Smoke ahead of the fire. A two-zone layer (Quintiere; CFAST) fills each
+room from the ceiling. The smoke leaves through the top of the openings
+above a neutral plane and passes through doors to the next rooms well
+before any flames do. That gives smoke from the eaves and grey windows
+in the early minutes. Plan: a layer height and smoke density per room,
+drawn as Flow smoke at the openings.
+
+Windows and roofs that break. Glass that falls out at 450 C drops as
+Blast shards (Pagni and Joshi's crack pattern from the frame edge).
+Roofs sag and fall in where the room collapses, rather than the whole
+target breaking at once. Plan: optional glass and roof Destructibles per
+opening and per room.
+
+A settlement in a wind-driven fire. In wildland-urban interface fires,
+most homes are lost to embers rather than flame contact, and home to
+home spread then dominates (Maranghides and Mell 2011, Waldo Canyon;
+Camp Fire NIST 2021). Plan: a village bench where firebrands and the
+radiation between buildings carry a grass fire's front through a street.
 
 ### Next-round options (card, 19 Nov)
 
