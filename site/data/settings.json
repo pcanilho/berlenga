@@ -2149,10 +2149,11 @@
    "name": "Streamed placement",
    "settings": [
     "VegetationField3D.streaming",
-    "stream_radius"
+    "stream_radius",
+    "still_shot"
    ],
    "note": "",
-   "what": "tiles are placed on worker threads around the camera, identical to a full placement; 2 to 3 ms of main-thread time a frame through 1 km of oak wood.",
+   "what": "tiles are placed on worker threads around the camera, identical to a full placement, and `still_shot` stops streaming once the view settles; 2 to 3 ms of main-thread time a frame through 1 km of oak wood.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Placement"
@@ -2302,7 +2303,7 @@
     "GrassField3D"
    ],
    "note": "",
-   "what": "blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind (each blade answers gusts at its own frequency, about 2 Hz, and the sway rolls downwind as waves) and darken in rain; near tall grass at 120 blades per m²; the sward darkens inside from its leaf area (raster AO) and casts its blades' true shadow; path traced.",
+   "what": "blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind (each blade answers gusts at its own frequency, about 2 Hz, and the sway rolls downwind as waves) and darken in rain; near tall grass at 120 blades per m²; the sward darkens inside from its leaf area (raster AO) and casts its blades' true shadow; path traced. Highlights run along each blade over a folded mid vein, raster and path traced alike (`fibre_shading`).",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
@@ -2437,6 +2438,7 @@
    "name": "Forest floor",
    "settings": [
     "PlantGenerator.make_floor(stand, variants)",
+    "FLOOR_MEDITERRANEAN",
     "VegetationField3D.forest_floor_enabled"
    ],
    "note": "",
@@ -2617,6 +2619,21 @@
    ],
    "note": "",
    "what": "fellfield, alpine grassland, snowbed and scree sets above the treeline, placed by climate, curvature, sunlight, soil depth and talus.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Desert plants",
+   "settings": [
+    "PlantGenerator.make_desert()",
+    "DESERT_OASIS",
+    "PlantSpecies.RULE_SPRING",
+    "RULE_POOL_DISTANCE",
+    "VegetationField3D.spring_pools"
+   ],
+   "note": "",
+   "what": "oases grow at the terrain's springs with date palms, olives and a ring of shrubs, reeds and rushes edge the spring pools, and each nebkha mound holds a shrub.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

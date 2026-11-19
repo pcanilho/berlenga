@@ -13,7 +13,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Plant placement: trees on dry ground, bushes between them, reeds along the banks (placeholder meshes).*
 
-- **Streamed placement** (`VegetationField3D.streaming`, `stream_radius`, 200 m default): tiles are placed on worker threads around the camera, identical to a full placement; 2 to 3 ms of main-thread time a frame through 1 km of oak wood.
+- **Streamed placement** (`VegetationField3D.streaming`, `stream_radius`, 200 m default; `still_shot`): tiles are placed on worker threads around the camera, identical to a full placement, and `still_shot` stops streaming once the view settles; 2 to 3 ms of main-thread time a frame through 1 km of oak wood.
 - **Placement by geology** (`TerrainDataMap3D.geology_source`; `PlantSpecies` `soil_depth_range`, `rock_range`, `talus_range`): plants follow the generated soil, rock and scree; trees stay off bare rock and thin soil, grass thins on rock.
 - **Placement by climate** (`temperature_range`, `january_temperature_range`, `precipitation_range`, `aridity_range`, `sunlight_range`): species by temperature, winter frost, rain, aridity and sunlight.
 - **Density masks** (`density_mask`, `density_mask_rect`; per species `mask_channel`, `mask_invert`): a painted texture thins or clears any species per channel, for clearings and paths.
@@ -28,7 +28,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
 ## Grass
 
-- **Grass** (`GrassField3D`): blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind (each blade answers gusts at its own frequency, about 2 Hz, and the sway rolls downwind as waves) and darken in rain; near tall grass at 120 blades per m²; the sward darkens inside from its leaf area (raster AO) and casts its blades' true shadow; path traced.
+- **Grass** (`GrassField3D`): blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind (each blade answers gusts at its own frequency, about 2 Hz, and the sway rolls downwind as waves) and darken in rain; near tall grass at 120 blades per m²; the sward darkens inside from its leaf area (raster AO) and casts its blades' true shadow; path traced. Highlights run along each blade over a folded mid vein, raster and path traced alike (`fibre_shading`).
 
   ![A dense meadow close up, raster and path traced](media/grass-field.jpg)
 
@@ -96,7 +96,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Plants by season: by December the bracken stands dead and russet.*
 
-- **Forest floor** (`PlantGenerator.make_floor(stand, variants)` for 10 stand types; `VegetationField3D.forest_floor_enabled`): herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.
+- **Forest floor** (`PlantGenerator.make_floor(stand, variants)` for 10 stand types, plus `FLOOR_MEDITERRANEAN` for montado and dehesa; `VegetationField3D.forest_floor_enabled`): herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.
 - **Stand margins** (`PlantSpecies.margin_width`, `margin_scale`, `margin_lean`): bracken and bramble stands grow shorter and lean outward toward their edges.
 - **Rock foot** (`PlantSpecies.rock_foot`): ferns, mosses, wood sorrel and seedlings gather within about half a metre of a rock's foot.
 - **Plants on and between stones** (`PlantSpecies.stone_top`, `PlantSpecies.stone_gap`, `PlantGenerator.make_stones()`): moss grows on the tops of generated stones, green cushions on low, shaded tops and hoary yellow-olive ones on high, sunlit tops (`PlantSpecies.stone_top_damp`), and crevice ferns, stonecrop, saxifrage and thrift only in the gaps of scree, gravel and shingle.
@@ -126,6 +126,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Dune plants** (`PlantGenerator.make_dunes()`; `GroundSurface3D.wind_shelters`): marram, lyme grass and sea holly on sand; they shelter it from the wind, so blowing sand piles into mounds round them.
 - **Salt marsh and shingle plants** (`PlantGenerator.make_saltmarsh()`): glasswort, cord-grass, sea purslane, sea aster and sea lavender zoned by height above the tide on sheltered marsh; sea kale, sea campion and horned-poppy on shingle backshores.
 - **Alpine and scree plants** (`PlantGenerator.make_alpine()`): fellfield, alpine grassland, snowbed and scree sets above the treeline, placed by climate, curvature, sunlight, soil depth and talus.
+- **Desert plants** (`PlantGenerator.make_desert()`, `DESERT_OASIS`; `PlantSpecies.RULE_SPRING`, `RULE_POOL_DISTANCE`; `VegetationField3D.spring_pools`): oases grow at the terrain's springs with date palms, olives and a ring of shrubs, reeds and rushes edge the spring pools, and each nebkha mound holds a shrub.
 
 - **Leaf wear** (`PlantGenerator.leaf_wear`): insect bites, uneven halves, dead tips and older leaves yellowing and browning, per leaf.
 
