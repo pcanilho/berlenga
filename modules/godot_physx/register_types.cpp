@@ -88,6 +88,7 @@
 #include "water/physx_water_pusher_3d.h"
 #include "water/physx_water_spray_3d.h"
 #include "water/physx_water_surface_3d.h"
+#include "water/oasis_springs_3d.h"
 #include "water/physx_water_wake_3d.h"
 #include "water/physx_waterfalls_3d.h"
 #include "water/water_ripple_probe.h"
@@ -157,6 +158,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		// Runtime-bridge MVP probe, not public API yet -- see water/water_ripple_probe.h.
 		GDREGISTER_CLASS(WaterRippleProbe);
 		GDREGISTER_CLASS(PhysXWaterSurface3D);
+		GDREGISTER_CLASS(OasisSprings3D);
 		GDREGISTER_CLASS(PhysXBuoyancy3D);
 		GDREGISTER_CLASS(PhysXRiver3D);
 		GDREGISTER_CLASS(PhysXBoat3D);
