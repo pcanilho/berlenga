@@ -45,6 +45,7 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
 - **Runoff** (`WeatherRunoff3D`, `PhysXRiver3D.rain_response`): rain runs off the land and wets the ground it crosses, and rivers and lakes rise with it.
 
 - **Dew and frost** (`dew_and_frost`): clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks.
+- **Fog drip** (`WeatherMap3D.fog_drip`): cloud lying on wooded ground drips from the trees and wets the ground beneath them.
 - **Contact wetness** (`contact_wetness_enabled`): ground that running water crossed stays dark after it drains, then dries with the weather.
 - **Rain on rock** (rock material `rain_rivulets`): rivulets run down rock faces while it rains, and the rock dries in patches after.
 - **Air temperature** (`air_follows_climate`, `air_daily_cycle`): follows the season and the time of day.

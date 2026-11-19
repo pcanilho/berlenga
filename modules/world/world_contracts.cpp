@@ -74,6 +74,8 @@ float WorldWeather::snowfall_at(const Vector3 &p_position) const WW_CALL(_snowfa
 float WorldWeather::smoke_at(const Vector3 &p_position) const WW_CALL(_smoke_at, contract_smoke_at(p_position), 0.0f, p_position)
 float WorldWeather::obstacle_height_at(const Vector3 &p_position) const WW_CALL(_obstacle_height_at, contract_obstacle_height_at(p_position), 0.0f, p_position)
 float WorldWeather::obstacle_lee_at(const Vector3 &p_position) const WW_CALL(_obstacle_lee_at, contract_obstacle_lee_at(p_position), 1.0f, p_position)
+float WorldWeather::fog_water_at(const Vector3 &p_position) const WW_CALL(_fog_water_at, contract_fog_water_at(p_position), 0.0f, p_position)
+float WorldWeather::fog_drip_at(const Vector3 &p_position) const WW_CALL(_fog_drip_at, contract_fog_drip_at(p_position), 0.0f, p_position)
 float WorldWeather::canopy_water_at(const Vector3 &p_position) const WW_CALL(_canopy_water_at, contract_canopy_water_at(p_position), 0.0f, p_position)
 float WorldWeather::canopy_wetness_at(const Vector3 &p_position) const WW_CALL(_canopy_wetness_at, contract_canopy_wetness_at(p_position), 0.0f, p_position)
 float WorldWeather::canopy_drip_at(const Vector3 &p_position) const WW_CALL(_canopy_drip_at, contract_canopy_drip_at(p_position), 0.0f, p_position)
@@ -186,6 +188,8 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("smoke_at", "position"), &WorldWeather::smoke_at);
 	ClassDB::bind_method(D_METHOD("obstacle_height_at", "position"), &WorldWeather::obstacle_height_at);
 	ClassDB::bind_method(D_METHOD("obstacle_lee_at", "position"), &WorldWeather::obstacle_lee_at);
+	ClassDB::bind_method(D_METHOD("fog_water_at", "position"), &WorldWeather::fog_water_at);
+	ClassDB::bind_method(D_METHOD("fog_drip_at", "position"), &WorldWeather::fog_drip_at);
 	ClassDB::bind_method(D_METHOD("canopy_water_at", "position"), &WorldWeather::canopy_water_at);
 	ClassDB::bind_method(D_METHOD("canopy_wetness_at", "position"), &WorldWeather::canopy_wetness_at);
 	ClassDB::bind_method(D_METHOD("canopy_drip_at", "position"), &WorldWeather::canopy_drip_at);
@@ -218,6 +222,8 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_smoke_at, "position");
 	GDVIRTUAL_BIND(_obstacle_height_at, "position");
 	GDVIRTUAL_BIND(_obstacle_lee_at, "position");
+	GDVIRTUAL_BIND(_fog_water_at, "position");
+	GDVIRTUAL_BIND(_fog_drip_at, "position");
 	GDVIRTUAL_BIND(_canopy_water_at, "position");
 	GDVIRTUAL_BIND(_canopy_wetness_at, "position");
 	GDVIRTUAL_BIND(_canopy_drip_at, "position");

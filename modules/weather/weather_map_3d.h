@@ -218,6 +218,7 @@ private:
 		float *rain = nullptr;
 		float *film = nullptr;
 		const float *inflow = nullptr;
+		const float *fog_drip = nullptr; // mm/h off the canopy, from the last canopy step
 		float rain_fraction = 1.0f;
 		float *puddle = nullptr;
 		float *frost = nullptr;
@@ -433,6 +434,11 @@ private:
 	float canopy_free_throughfall = 0.25f; // p: the share of rain passing through the gaps
 	Vector<float> cell_canopy; // mm, C
 	Vector<float> cell_drip; // mm/h, the canopy's drainage D
+	// Fog drip (docs/ideas/world-links.md, "Fog drip"): cloud water on the ground's level, as the sky's clouds hold it
+	// where the terrain rises into them, combed out by the canopy (Lovett 1984: deposition = LWC x u x efficiency).
+	bool fog_drip = true;
+	Vector<float> cell_fog; // g/m3 of cloud water at the canopy
+	Vector<float> cell_fog_drip; // mm/h, the fog's share of the drainage
 	Ref<Image> rain_image;
 	Ref<ImageTexture> rain_texture;
 	bool rain_global_added = false;
@@ -797,6 +803,8 @@ public:
 	float contract_smoke_at(const Vector3 &p_position) const override { return get_smoke_at(p_position); }
 	float contract_obstacle_height_at(const Vector3 &p_position) const override { return get_obstacle_height_at(p_position); }
 	float contract_obstacle_lee_at(const Vector3 &p_position) const override { return get_obstacle_lee_at(p_position); }
+	float contract_fog_water_at(const Vector3 &p_position) const override { return get_fog_water_at(p_position); }
+	float contract_fog_drip_at(const Vector3 &p_position) const override { return get_fog_drip_at(p_position); }
 	float contract_canopy_water_at(const Vector3 &p_position) const override { return get_canopy_water_at(p_position); }
 	float contract_canopy_wetness_at(const Vector3 &p_position) const override { return get_canopy_wetness_at(p_position); }
 	float contract_canopy_drip_at(const Vector3 &p_position) const override { return get_canopy_drip_at(p_position); }
@@ -875,6 +883,12 @@ public:
 	float get_canopy_water_at(Vector3 p_position) const;
 	float get_canopy_wetness_at(Vector3 p_position) const;
 	float get_canopy_drip_at(Vector3 p_position) const;
+	// Cloud water at the ground (g/m3: 6.7 times the clouds' extinction per metre, droplets of 10 um effective radius)
+	// where the terrain stands in the cloud, and the fog water the canopy drips onto the ground (mm/h).
+	float get_fog_water_at(Vector3 p_position) const;
+	float get_fog_drip_at(Vector3 p_position) const;
+	void set_fog_drip(bool p_enabled) { fog_drip = p_enabled; }
+	bool is_fog_drip_enabled() const { return fog_drip; }
 	// The water reaching the ground (mm/h): a snowpack's runoff where one lies (set_surface_water_source), else the
 	// rain at its liquid share. What WeatherRunoff3D routes.
 	float get_ground_water_input_at(Vector3 p_position) const;

@@ -71,6 +71,8 @@ public:
 	virtual float contract_smoke_at(const Vector3 &p_position) const { return 0.0f; } // g/m2 of smoke particulate in the column
 	virtual float contract_obstacle_height_at(const Vector3 &p_position) const { return 0.0f; } // m, wind-blocking obstacles over the ground
 	virtual float contract_obstacle_lee_at(const Vector3 &p_position) const { return 1.0f; } // 0..1, near-ground wind behind obstacles over the open
+	virtual float contract_fog_water_at(const Vector3 &p_position) const { return 0.0f; } // g/m3 of cloud water at the ground
+	virtual float contract_fog_drip_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of fog water dripping off the canopy
 	virtual float contract_canopy_water_at(const Vector3 &p_position) const { return 0.0f; } // mm held on leaves
 	virtual float contract_canopy_wetness_at(const Vector3 &p_position) const { return 0.0f; } // 0..1
 	virtual float contract_canopy_drip_at(const Vector3 &p_position) const { return 0.0f; } // mm/h
@@ -117,6 +119,8 @@ protected:
 	GDVIRTUAL1RC(float, _smoke_at, Vector3)
 	GDVIRTUAL1RC(float, _obstacle_height_at, Vector3)
 	GDVIRTUAL1RC(float, _obstacle_lee_at, Vector3)
+	GDVIRTUAL1RC(float, _fog_water_at, Vector3)
+	GDVIRTUAL1RC(float, _fog_drip_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_water_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_wetness_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_drip_at, Vector3)
@@ -160,6 +164,10 @@ public:
 	// surface, has less, none at 1.2 heights). Snow and sand drift into the lee.
 	float obstacle_height_at(const Vector3 &p_position) const;
 	float obstacle_lee_at(const Vector3 &p_position) const;
+	// Fog at the ground (g/m3 of cloud water: the terrain standing in the cloud), and the part of it the canopy combs
+	// out and drips onto the ground (mm/h; already in ground_water_input_at).
+	float fog_water_at(const Vector3 &p_position) const;
+	float fog_drip_at(const Vector3 &p_position) const;
 	float canopy_water_at(const Vector3 &p_position) const;
 	float canopy_wetness_at(const Vector3 &p_position) const;
 	float canopy_drip_at(const Vector3 &p_position) const;

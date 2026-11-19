@@ -32,7 +32,10 @@
 
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
+#include "core/templates/local_vector.h"
+#include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/node_3d.h"
+#include "scene/resources/material.h"
 
 #include "snow_powder_cloud_3d.h"
 
@@ -112,6 +115,20 @@ class SnowAvalanche3D : public Node3D {
 	void _emit_wave(SnowCover3D *p_cover);
 	float _hold(const SnowCover3D *p_cover, int p_ci) const { return _anchoring(p_cover, p_ci) * _wet_factor(p_cover, p_ci); }
 	void _glide_advance(SnowCover3D *p_cover, float p_hours);
+	// The crown (follow-up 29): a wall of snow along the fracture line, as geometry (the 2 m cells cannot hold a
+	// vertical step); buried by new snow.
+	struct Crown {
+		MeshInstance3D *mesh = nullptr;
+		Vector3 center;
+		float height = 0.0f;
+		float buried = 0.0f;
+	};
+	LocalVector<Crown> crowns;
+	Vector<uint8_t> released_cells; // the last release's cells (no debris granules there)
+	bool crowns_enabled = true;
+	Ref<StandardMaterial3D> crown_material;
+	void _build_crown(SnowCover3D *p_cover, const Vector<float> &p_released);
+	void _bury_crowns(SnowCover3D *p_cover);
 	bool _check_glide(SnowCover3D *p_cover);
 
 	// Powder cloud (follow-up 23).
@@ -158,6 +175,7 @@ class SnowAvalanche3D : public Node3D {
 	// Recent snow per cover cell (m), and its age in hours, in the cover's cell coordinates.
 	Vector<float> recent;
 	Vector<float> recent_age;
+	Vector<float> recent_pack; // the pack's depth when recent was last updated: the new snow settles and melts with it
 	Vector2i recent_origin;
 	int recent_res = 0;
 	uint64_t seen_update = UINT64_MAX;
@@ -237,6 +255,9 @@ public:
 	void set_water_enabled(bool p_enable) { water_enabled = p_enable; }
 	bool is_water_enabled() const { return water_enabled; }
 	int get_glide_count() const { return glide_count; }
+	int get_crown_count() const { return int(crowns.size()); }
+	void set_crowns_enabled(bool p_enable) { crowns_enabled = p_enable; }
+	bool is_crowns_enabled() const { return crowns_enabled; }
 	int get_glide_crack_count() const { return glide_cracks; }
 	float get_flow_wetness() const { return run_wet; }
 	float get_powder_taken() const { return powder_taken; }

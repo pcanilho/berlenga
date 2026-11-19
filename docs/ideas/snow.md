@@ -1410,6 +1410,24 @@ Docs flagged four things on the wet slide bench: spiky grey cones at the toe, a 
 - **Crown dots and specks** were bare ground. The bench storm lay on bare ground, so the scar and thin patches showed earth. The `--wet` and `--triggered` views now lay an old, bonded 60 cm pack first, so the slab leaves a white bed and a step.
 - **Pressure contract**: `SnowCover3D` answers world-links' `WorldSnow.avalanche_pressure_at` and `avalanche_peak_pressure_at` from its avalanche node. The forest test reads 20 kPa through it. The peak is per run (it resets when the next avalanche releases).
 
+## Follow-up 28: the wet deposit's shape; path-traced surface refresh (19 Nov 2026)
+
+Docs: the wet debris covered the toe evenly at one density with no tongue, lobed edge or pile-up, so it read as gravel.
+
+- **Lobes:** wet snow's friction varies with its water and grain. A front with patchy friction breaks into lobes and fingers (fingering in granular fronts, Pouliquen et al. 1997; the lobate snouts of wet avalanches, Bartelt et al. 2012). mu varies +-25% x wetness through smooth value noise over about 3 cells (integer hash). Dry flows are unchanged.
+- **Granules** gather where the debris is thick (snout, levees, pile-ups): none under 30 cm, full share from 1.5 m.
+- **Recent snow settles with the pack.** It was tracked as the depth that fell and only capped by the pack, so a storm that settled read as the whole pack, and a release scoured to the ground (the dark crown dots). Now it scales with the pack's shrinkage between updates, not counting new snow, released slab or entrained snow.
+- **Bench:** the `--wet` view thaws 12 h at +5 C (35% wet), `--toe` frames the tongue from above, and the deep-snow mesh covers the run-out (extent 160 m).
+- **Path tracing:** the tracer recaptures a mesh's vertex() output when a material parameter changes, not when a texture it samples is rewritten in place. The deep-snow surface's displacement reads the cover's snow texture, so under PT the deposit stayed flat. `SnowSurface3D` now bumps a `snow_serial` uniform whenever the cover updates. Any PT shot of the surface after a change before this (e.g. the round-2 avalanche pair) may show the old surface.
+
+## Follow-up 29: crown walls; rubble over the whole deposit (19 Nov 2026)
+
+Docs: the granules sat in one dense oval, the lobe was smooth pillows, and the crown read as thin bright straight lines.
+
+- **The oval** was two limits. Granules are kept only inside the deep-snow print field (`deform_extent`, 32 m around the follow target), and they were dropped only where the flow arrived faster than 5 m/s, which the slow wet snout never does. Now granules go on every debris cell over 10 cm outside the release zone (`released_cells`). Their share is 0.35 + 0.65 x max(margin, (distance/run-out)^3): margins are cells whose neighbours hold much less debris, and the snout is the far end. Debris sizes spread wider (log-normal sigma 0.75), and wet debris carries up to 2.5 times the share. The bench widens the print field to 96 m.
+- **Crown walls**: 2 m cells cannot hold a vertical step, so the crown is geometry. Every edge between a released cell and one that kept its snow (crown and flanks, not the foot) is chained over cell corners into lines. The lines are rounded with Chaikin corner cutting (three passes) and wander by up to a third of a cell through value noise, then stand up as a wall from the bed to the snow surface beside it (a ragged top, +-2 cm). It is a `MeshInstance3D` child with a snow material and both faces drawn, and it casts shadows. New snow buries it: it goes at 80% of its height. Up to 8 are kept (`crowns_enabled`, `get_crown_count`).
+- **Irregular fracture**: a load's release reaches +-15% of its radius over about 12 m, not a circle. The bench triggers inside the face, so the crown breaks across the slope below the ridge.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

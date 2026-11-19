@@ -28,6 +28,8 @@ extends Node3D
 #   contact   a body in world_contact flattens grass without being in grass_trample, and herbs where there is no grass
 #   lee       a wall and a moving prop (get_wind_obstacles) shelter the wind behind them; snow drifts into a wall's
 #             lee and blows off its top, the ground past the drift swept; a moved prop takes its lee along
+#   fog       a forest on ground standing in the cloud combs the fog out: it drips, wets the ground under it,
+#             feeds the runoff; open ground gets little; none under the cloud base
 #   contracts the water contract picks the right water where several overlap (a pool in a hollow below the sea's
 #             level, a body above the water); with no producer it answers -INF; the weather's defaults
 
@@ -185,6 +187,7 @@ func _ready() -> void:
 	await _dirty_snow_tests()
 	await _flood_ground_tests()
 	await _lee_drift_tests()
+	await _fog_drip_tests()
 	await _leaf_kick_tests()
 	await _leaf_surface_tests()
 	await _washout_tests()
@@ -794,6 +797,39 @@ func _lee_drift_tests() -> void:
 	wall.queue_free()
 	crate.queue_free()
 	ground_node.queue_free()
+	m.queue_free()
+	await get_tree().physics_frame
+
+
+# Fog drip (docs/ideas/world-links.md): ground standing in the sky's cloud deck, a forest on half of it.
+func _fog_drip_tests() -> void:
+	WorldContracts.clear_overrides()
+	var m := _new_map()
+	m.ground_height = 400.0
+	m.cloud_base_height = 300.0
+	m.cloud_cover = 1.0
+	m.wind_speed = 6.0
+	m.temperature = 8.0
+	m.humidity = 0.95
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	m.add_canopy(Vector2(-150, 0), 120.0, 20.0, 2.5)
+	await get_tree().physics_frame
+	m.rebake_shelter()
+	# A day in the cloud: the canopy fills its storage (about 1 mm) over the first hours, then drips (Rutter).
+	m.advance(24.0 * 3600.0)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var forest := Vector3(-150, 400, 0)
+	var open := Vector3(200, 400, 0)
+	var lwc: float = w.fog_water_at(open)
+	var drip_f: float = w.fog_drip_at(forest)
+	var drip_o: float = w.fog_drip_at(open)
+	print("  fog: %.2f g/m3 at the ground; drip %.3f mm/h under the forest, %.3f in the open; wetness %.2f / %.2f; ground input %.3f mm/h" % [lwc, drip_f, drip_o, m.get_wetness_at(forest), m.get_wetness_at(open), w.ground_water_input_at(forest)])
+	_check("fog: a forest standing in the cloud combs it out and, its leaves full, drips onto the ground (0.015 to 0.5 mm/h)", lwc > 0.05 and drip_f > 0.015 and drip_f < 0.5 and drip_f > 3.0 * drip_o and m.get_wetness_at(forest) > m.get_wetness_at(open) and w.ground_water_input_at(forest) >= drip_f * 0.99, "%.2f g/m3 of cloud water; %.3f mm/h under the forest, %.3f in the open; wetness %.2f under the trees, %.2f in the open" % [lwc, drip_f, drip_o, m.get_wetness_at(forest), m.get_wetness_at(open)])
+	m.cloud_base_height = 1500.0
+	m.snap_to_settings()
+	m.advance(6.0 * 3600.0)
+	_check("fog: none once the cloud base lifts over the ground", w.fog_water_at(forest) == 0.0 and w.fog_drip_at(forest) < 0.2 * drip_f, "%.2f g/m3, %.3f mm/h still draining" % [w.fog_water_at(forest), w.fog_drip_at(forest)])
 	m.queue_free()
 	await get_tree().physics_frame
 
