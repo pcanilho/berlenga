@@ -8876,7 +8876,8 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				for (int q = 0; q < k; q++) {
 					const Vector3 ax = (d * 0.2f + Vector3(0, -1, 0) + sd.rotated(d, q * 2.1f) * 0.6f).normalized();
 					const float len = Math::lerp(0.04f, 0.065f, cr.randf());
-					const float op = cr.randf() < 0.6f ? Math::lerp(0.5f, 1.0f, cr.randf()) : 0.0f;
+					// After a fire the serotinous cones open on the snag and shed their seed (Tapias et al. 2001).
+					const float op = fire_years >= 0.0f ? Math::lerp(0.85f, 1.0f, cr.randf()) : (cr.randf() < 0.6f ? Math::lerp(0.5f, 1.0f, cr.randf()) : 0.0f);
 					cone(at - d * 0.02f * q, ax, len, len * 0.32f * (1.0f + 0.4f * op), 56, false, op, lin(0.36f, 0.25f, 0.15f), op > 0.0f ? lin(0.52f, 0.47f, 0.38f) : lin(0.42f, 0.36f, 0.22f));
 				}
 				size = 0.07f;
@@ -10180,8 +10181,10 @@ float TreeGenerator::_bare_at(const Vector3 &p_pos, const Vector3 &p_normal, con
 // stripping waits for a girth of 70 cm), and cork_stripped_years 30 or more. -1 picks a stage
 // of the nine-year cycle by seed, so a stand shows trees stripped in different summers; just
 // stripped stays rare.
+// A burnt cork oak keeps its cork: recently stripped stems mostly die in fire (Catry 2012), so a
+// fire variant is drawn unstripped and charred.
 float TreeGenerator::_cork_strip_age() const {
-	if (preset != PRESET_CORK_OAK || decay_class > 0 || fallen || fallen_branch || params[PARAM_YEARS] < 25.0f || cork_stripped_years >= 30.0f) {
+	if (preset != PRESET_CORK_OAK || decay_class > 0 || fallen || fallen_branch || params[PARAM_YEARS] < 25.0f || cork_stripped_years >= 30.0f || fire_years >= 0.0f) {
 		return -1.0f;
 	}
 	if (cork_stripped_years >= 0.0f) {
@@ -17132,6 +17135,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 		}
 	}
+	if (fire_years >= 0.0f && decay_class == 0 && !fallen && !fallen_branch) {
+		_fire_char(bark);
+		_grow_fire_regrowth(bark, leaves);
+	}
 	soil_b = Builder();
 	if (laid_done && decay_class == 0 && !fallen && !fallen_branch) {
 		_laid_hedge_props(bark);
@@ -17290,7 +17297,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	const float hang_floor = preset == PRESET_MARITIME_PINE && bole_height > 1.0f ? bole_height - 0.15f : -1e9f;
 	for (int i = 1; i < int(nodes.size()); i++) {
 		const Node &n = nodes[i];
-		if ((!n.leafy && !spurs[i]) || n.removed || n.dead || n.end().y < hang_floor) {
+		if ((!n.leafy && !spurs[i]) || n.removed || n.dead || n.end().y < hang_floor || fire_years >= 0.0f) {
 			continue;
 		}
 		// Thin by twigs and by leaves on the kept twigs in equal parts: dropping whole twigs alone
@@ -17612,6 +17619,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	Builder resin;
 	_grow_resin(resin);
 	_fire_crown(leaves);
+	if (fire_years >= 0.0f) {
+		// Its foliage is the regrowth: the live map's mortality rule (5ag) must not cast it again.
+		fire_crown[5] = 0.0f;
+	}
 	Builder *builders[10] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b, &climber_adult_b, &soil_b, &crown_parts, &resin };
 	if (stone.on) {
 		_build_root_stone(soil_b);
@@ -18657,6 +18668,352 @@ float fire_age_years(vec2 xz) {
 
 // Fire mortality's crown profile (trees.md 5ag): heights over the foot below which 0, 25, 50, 75 and 100% of the
 // leaves (or needles) sit, by leaf vertex, and the stem's diameter at breast height (1.3 m). No leaves: none (zero).
+// How each species comes back after a crown fire (trees.md 5ah). Pausas et al. 2004 and Paula et al. 2009 (the BROT
+// trait database): cork oak alone among them resprouts from epicormic buds all along its stem and limbs, under
+// bark thick enough to insulate them (Catry et al. 2012: 90% of burnt cork oaks resprout so, the crown back in two
+// to three years); most broadleaves and the Mediterranean scrub resprout from the root crown or a lignotuber (holm
+// and kermes oak, lentisk, olive, carob, strawberry tree, heathers, gorse; oak, hazel, alder, willow, lime, maples,
+// birches when young: Moreira et al. 2009); maritime pine and gum rockrose are obligate seeders, killed outright,
+// the pine's serotinous cones opening on the snag and both coming back as a flush of seedlings on the ash bed in the
+// first wet season (Tapias et al. 2001; Trabaud 1987). Scots and stone pine, the spruces and firs, larch, yew and
+// the North American pines neither resprout nor keep a canopy seed bank: a killed one stays dead.
+TreeGenerator::FireResponse TreeGenerator::get_fire_response(Preset p_preset) {
+	switch (p_preset) {
+		case PRESET_CORK_OAK:
+			return FIRE_EPICORMIC;
+		case PRESET_MARITIME_PINE:
+		case PRESET_GUM_ROCKROSE:
+			return FIRE_SEEDER;
+		case PRESET_SCOTS_PINE:
+		case PRESET_NORWAY_SPRUCE:
+		case PRESET_LARCH:
+		case PRESET_SILVER_FIR:
+		case PRESET_YEW:
+		case PRESET_WHITE_PINE:
+		case PRESET_HEMLOCK:
+		case PRESET_STONE_PINE:
+		case PRESET_BEECH:
+		case PRESET_CALLIGONUM:
+		case PRESET_MAX:
+			return FIRE_NONE;
+		default:
+			return FIRE_BASAL;
+	}
+}
+
+// The crown fire takes the fine fuel (Rothermel's one-hour class, under about 6 mm) at once; the dead twigs and
+// small branches left fall over the next years, the larger the later (snag fall, Ryan and Amman 1996). A seeder's
+// cone-bearing shoots stand the first two years: its serotinous cones open on them and shed their seed.
+void TreeGenerator::_fire_prune() {
+	if (fire_years < 0.0f || nodes.size() < 2) {
+		return;
+	}
+	const FireResponse resp = get_fire_response(preset);
+	const float y = MIN(fire_years, 12.0f);
+	// On a shrub the stems are a few millimetres to a couple of centimetres: the same fall takes them in proportion.
+	float thr = (0.0035f + 0.004f * y + 0.0015f * MAX(y - 3.0f, 0.0f)) * CLAMP(height / 8.0f, 0.3f, 1.0f);
+	if (resp == FIRE_SEEDER && fire_years < 2.0f) {
+		thr = 0.0f;
+	}
+	for (int i = 1; i < int(nodes.size()); i++) {
+		Node &n = nodes[i];
+		n.leafy = false;
+		if (n.radius < thr && n.parent > 0) {
+			n.removed = true;
+		}
+	}
+	for (int i = 1; i < int(nodes.size()); i++) {
+		if (!nodes[i].removed && nodes[i].parent > 0 && nodes[nodes[i].parent].removed) {
+			nodes[i].removed = true;
+		}
+	}
+}
+
+// The char on the stem and limbs (trees.md 5ah): black up to the flames' reach on the stem, ragged at its top and
+// higher on the lee side the flames leaned to, patchy on the limbs in the crown fire. It weathers: the loose char
+// flakes and washes off and the bark greys over five to ten years (cork oak's new cork pushes it off sooner).
+// Baked into the bark's vertex colour, so a variant placed away from the fire's state map (the world's burnt areas
+// generated, not simulated) carries it; the bark shader's char from the live map lies over it the same way.
+void TreeGenerator::_fire_char(Builder &r_bark) {
+	if (fire_years < 0.0f || r_bark.verts.is_empty()) {
+		return;
+	}
+	const float base_y = nodes[0].start.y;
+	const float keep = Math::exp(-fire_years / (preset == PRESET_CORK_OAK ? 3.0f : 7.0f));
+	const float reach = MAX(1.2f, MIN(0.45f * height, 6.0f));
+	const uint32_t cs = uint32_t(seed) * 2246822519u + 0x63686172u;
+	const Color char_c(0.035f, 0.031f, 0.028f);
+	for (int v = 0; v < int(r_bark.verts.size()); v++) {
+		const Vector3 p = r_bark.verts[v];
+		const float h = p.y - base_y;
+		const float edge = reach * (0.8f + 0.4f * moss_noise(Vector3(p.x * 3.0f, h * 0.6f, p.z * 3.0f), cs));
+		const float low = 1.0f - Math::smoothstep(edge - 0.3f, edge + 0.2f, h);
+		// The crown fire's char above: in patches, most on the thin wood.
+		const float crown = Math::smoothstep(0.45f, 0.6f, moss_noise(p * 4.0f, cs + 7u)) * 0.8f;
+		const float k = keep * MAX(low, h > edge ? crown : 0.0f) * (0.75f + 0.25f * moss_noise(p * 21.0f, cs + 3u));
+		if (k <= 0.0f) {
+			continue;
+		}
+		Color c = r_bark.colors[v];
+		const float a = c.a;
+		c = c.lerp(char_c, CLAMP(k, 0.0f, 1.0f));
+		c.a = a;
+		r_bark.colors.write[v] = c;
+	}
+}
+
+// What grows back (trees.md 5ah), by the species' response and the years since the fire: water shoots from the
+// epicormic buds along the stem and limbs (cork oak), a clump of shoots from the root crown round the dead stems
+// (the resprouters), or a ring of seedlings on the ash bed round the snag (the seeders).
+void TreeGenerator::_grow_fire_regrowth(Builder &r_bark, Builder &r_leaves) {
+	if (fire_years < 0.0f || nodes.size() < 2) {
+		return;
+	}
+	const FireResponse resp = get_fire_response(preset);
+	if (resp == FIRE_NONE) {
+		return;
+	}
+	RandomPCG fr;
+	fr.seed(uint64_t(seed) * 2654435761u + 0x66697265u);
+	const LeafSeason vls = _leaf_season(preset, season);
+	const bool needles = params[PARAM_NEEDLES] > 0.5f;
+	const float y = fire_years;
+	const float base_y = nodes[0].start.y;
+	const Color shoot_bark = bark_color.lerp(Color(0.36f, 0.28f, 0.16f), 0.6f).srgb_to_linear();
+	// Young shoots' leaves: larger and a fresher green than the old crown's (resprout foliage; Pausas 1999).
+	const Color young(MIN(leaf_color.r * 1.15f, 1.0f), MIN(leaf_color.g * 1.2f, 1.0f), leaf_color.b);
+	const float leaf_size = params[PARAM_LEAF_SIZE];
+	// One shoot: out from its bud, curving up to the light, side twigs once it is a year or two old, leaves along its
+	// upper two thirds.
+	auto shoot = [&](const Vector3 &p_at, const Vector3 &p_out, float p_len, float p_r, int p_bone, float p_leaf_k) {
+		const Vector3 dir = (p_out * 0.6f + Vector3(0, 0.8f, 0) + Vector3(fr.randf() - 0.5f, 0.0f, fr.randf() - 0.5f) * 0.35f).normalized();
+		const Vector3 up_dir = (dir + Vector3(0, 0.7f, 0)).normalized();
+		LocalVector<Vector3> sp;
+		LocalVector<float> sr;
+		sp.push_back(p_at - p_out * 0.01f);
+		sr.push_back(p_r);
+		sp.push_back(p_at + dir * (p_len * 0.35f));
+		sr.push_back(p_r * 0.75f);
+		sp.push_back(sp[1] + up_dir * (p_len * 0.35f));
+		sr.push_back(p_r * 0.5f);
+		sp.push_back(sp[2] + (up_dir + Vector3(fr.randf() - 0.5f, 0.2f, fr.randf() - 0.5f) * 0.3f).normalized() * (p_len * 0.3f));
+		sr.push_back(p_r * 0.25f);
+		r_bark.bone = p_bone;
+		Vector4i part;
+		r_bark.begin(part);
+		_tube(r_bark, sp, sr, p_r > 0.006f ? 5 : 3, 0.0f, shoot_bark);
+		r_bark.end(part, p_r);
+		LocalVector<Vector3> tips;
+		tips.push_back(sp[3]);
+		const int twigs = y > 1.0f ? MIN(1 + int(y * 1.5f * fr.randf()), 5) : 0;
+		for (int q = 0; q < twigs; q++) {
+			const float u = Math::lerp(0.35f, 0.85f, (q + fr.randf()) / twigs);
+			const int seg = MIN(int(u * 3.0f), 2);
+			const Vector3 at = sp[seg].lerp(sp[seg + 1], u * 3.0f - seg);
+			const float ar = Math::lerp(sr[seg], sr[seg + 1], u * 3.0f - seg) * 0.6f;
+			const Vector3 side = up_dir.cross(Vector3(fr.randf() - 0.5f, 0.0f, fr.randf() - 0.5f)).normalized();
+			const Vector3 td = (side * 0.8f + up_dir * 0.6f).normalized();
+			const float tl = p_len * Math::lerp(0.2f, 0.4f, fr.randf());
+			LocalVector<Vector3> tp;
+			LocalVector<float> trr;
+			tp.push_back(at);
+			trr.push_back(ar);
+			tp.push_back(at + td * (tl * 0.5f));
+			trr.push_back(ar * 0.6f);
+			tp.push_back(at + (td + Vector3(0, 0.4f, 0)).normalized() * tl);
+			trr.push_back(ar * 0.25f);
+			Vector4i tpart;
+			r_bark.begin(tpart);
+			_tube(r_bark, tp, trr, 3, 0.0f, shoot_bark);
+			r_bark.end(tpart, ar);
+			tips.push_back(tp[2]);
+		}
+		if (vls.out <= 0.0f || vls.fallen >= 1.0f || p_leaf_k <= 0.0f) {
+			return;
+		}
+		// Leaves a few centimetres apart along the shoot's upper part and round each twig's end.
+		const int nl = MAX(3, int(p_len / MAX(leaf_size * 0.9f, 0.02f) * p_leaf_k));
+		r_leaves.bone = p_bone;
+		Vector4i lp;
+		r_leaves.begin(lp);
+		for (int q = 0; q < nl; q++) {
+			const float u = Math::lerp(0.3f, 1.0f, (q + 0.5f) / nl);
+			const int seg = MIN(int(u * 3.0f), 2);
+			Vector3 at = sp[seg].lerp(sp[seg + 1], u * 3.0f - seg);
+			if (tips.size() > 1 && (q % 3) == 2) {
+				at = tips[1 + (q / 3) % (tips.size() - 1)];
+			}
+			const Vector3 sd = dir.cross(Vector3(0, 1, 0)).normalized().rotated(dir, q * 2.4f);
+			const Vector3 lo = (sd * 0.8f + up_dir * 0.4f).normalized();
+			const float j = 0.85f + 0.3f * fr.randf();
+			Color c(young.r * j, young.g * j, young.b);
+			if (vls.autumn > fr.randf()) {
+				c = c.lerp(vls.color, 0.8f);
+			}
+			if (needles) {
+				for (int k = 0; k < 6; k++) {
+					const Vector3 no = (lo.rotated(dir, k * 1.05f) + up_dir * 0.5f).normalized();
+					_add_needle(r_leaves, at, no, leaf_size * Math::lerp(0.7f, 1.0f, fr.randf()), c);
+				}
+			} else {
+				_add_leaf(r_leaves, at, lo, (Vector3(0, 1, 0) + p_out * 0.3f).normalized(), leaf_size * Math::lerp(0.85f, 1.2f, fr.randf()) * MAX(vls.out, 0.3f), c);
+			}
+			leaf_count++;
+		}
+		r_leaves.end(lp, 0.0f);
+	};
+	if (resp == FIRE_EPICORMIC) {
+		// Shoots break within months all along the stem and the limbs thicker than a few centimetres, in clusters;
+		// they lengthen and branch, and by the fourth year they are the new crown (Catry et al. 2012).
+		if (y < 0.1f) {
+			return;
+		}
+		const float len_k = MIN(0.25f + 0.45f * y, 2.0f);
+		int budget = 900;
+		for (int i = 1; i < int(nodes.size()) && budget > 0; i++) {
+			const Node &n = nodes[i];
+			if (n.removed || n.radius < 0.035f) {
+				continue;
+			}
+			const Vector3 side0 = n.dir.cross(Math::abs(n.dir.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0)).normalized();
+			const int clusters = MAX(1, int(n.length / 0.45f));
+			for (int k = 0; k < clusters && budget > 0; k++) {
+				const float t = (k + fr.randf()) / clusters;
+				const Vector3 out = side0.rotated(n.dir, fr.randf() * float(Math::TAU));
+				// Up the stem's sunny upper side more than its underside.
+				if (out.y < -0.3f && fr.randf() < 0.6f) {
+					continue;
+				}
+				const Vector3 at = n.start + n.dir * (n.length * t) + out * n.radius;
+				const int shoots = 2 + int(fr.randf() * 4.0f);
+				for (int q = 0; q < shoots && budget > 0; q++, budget--) {
+					const Vector3 o2 = (out + Vector3(fr.randf() - 0.5f, fr.randf() - 0.5f, fr.randf() - 0.5f) * 0.4f).normalized();
+					const float len = len_k * Math::lerp(0.5f, 1.1f, fr.randf());
+					shoot(at + Vector3(0, (fr.randf() - 0.5f) * 0.08f, 0), o2, len, Math::lerp(0.003f, 0.006f, fr.randf()) * (1.0f + 0.5f * MIN(y, 4.0f)), node_bone.is_empty() ? 0 : node_bone[i], 2.2f);
+				}
+			}
+		}
+	} else if (resp == FIRE_BASAL) {
+		// A dense clump from the root crown round the dead stems, the first shoots within weeks; they grow fast on
+		// the old root system, half a metre the first year and one to two metres by the third (holm and kermes oak,
+		// lentisk: Moreira et al. 2009; Konstantinidis et al. 2006), thinning out as they grow.
+		if (y < 0.08f) {
+			return;
+		}
+		float r0 = 0.02f;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			if (nodes[i].parent == 0) {
+				r0 = MAX(r0, nodes[i].radius);
+			}
+		}
+		const float top = MAX(height, 0.6f);
+		const float len = MIN(0.25f + 0.55f * Math::pow(y, 0.8f), 0.9f * top);
+		const int count = int((14.0f + 160.0f * r0) * (1.0f / (1.0f + 0.15f * y)) * Math::lerp(0.8f, 1.2f, fr.randf()));
+		// Buds on the root collar's surface, mostly between the root ridges (on a ridge they would start inside the
+		// swollen foot): the collar's radius from the same ridge count and flare the bark took.
+		const float tr = foot_roots.trunk_r > 0.0f ? foot_roots.trunk_r : r0;
+		const float fl = params[PARAM_ROOT_FLARE];
+		const int nr = MAX(int(foot_roots.az.size()), 1);
+		const float az0 = foot_roots.az.is_empty() ? 0.0f : foot_roots.az[0];
+		for (int k = 0; k < count; k++) {
+			float az = fr.randf() * float(Math::TAU);
+			float ridge = Math::pow(0.5f + 0.5f * Math::cos(float(nr) * (az - az0)), 3.0f);
+			if (ridge > 0.4f && fr.randf() < 0.7f) {
+				az += float(Math::PI) / nr;
+				ridge = Math::pow(0.5f + 0.5f * Math::cos(float(nr) * (az - az0)), 3.0f);
+			}
+			const Vector3 out(Math::cos(az), 0.0f, Math::sin(az));
+			const float h0 = Math::lerp(0.01f, 0.1f, fr.randf());
+			const float rr = tr * (1.0f + fl * (0.18f * Math::exp(-h0 / MAX(0.05f, tr)) + 0.5f * ridge * Math::exp(-h0 / MAX(0.05f, 0.6f * tr)))) + 0.01f;
+			const Vector3 at = nodes[0].start + out * rr + Vector3(0, h0, 0);
+			const float l = len * Math::lerp(0.55f, 1.15f, fr.randf());
+			shoot(at, (out * 0.5f + Vector3(0, 0.3f, 0)).normalized(), l, Math::lerp(0.0025f, 0.005f, fr.randf()) * (1.0f + 0.6f * MIN(y, 5.0f)), 0, 2.2f);
+		}
+	} else if (resp == FIRE_SEEDER) {
+		// Seedlings on the ash bed under and round the snag, where its seed fell: none until the first wet season, a
+		// dense flush by the second year, then self-thinning (maritime pine: Tapias et al. 2001, Fernandes and Rigolot
+		// 2007). Pine seedlings grow 10-30 cm a year at first, the rockrose's flower in their second or third year.
+		if (y < 0.4f) {
+			return;
+		}
+		const float spread = MAX(1.5f, needles ? 0.35f * height : 1.2f * MAX(height, 0.6f));
+		const float flush = Math::smoothstep(0.4f, 1.5f, y) * Math::exp(-MAX(y - 3.0f, 0.0f) / 4.0f);
+		const int count = int((needles ? 140.0f : 70.0f) * flush * Math::lerp(0.7f, 1.3f, fr.randf()));
+		const float h_mean = needles ? MIN(0.04f + 0.18f * (y - 0.4f), 2.0f) : MIN(0.04f + 0.1f * (y - 0.4f), 0.7f);
+		for (int k = 0; k < count; k++) {
+			const float az = fr.randf() * float(Math::TAU);
+			// Densest a little out from the stem, thinning to the seed shadow's edge.
+			const float d = spread * Math::sqrt(fr.randf()) * Math::lerp(0.3f, 1.0f, fr.randf()) + 0.25f;
+			const Vector3 at = Vector3(nodes[0].start.x + Math::cos(az) * d, base_y - 0.01f, nodes[0].start.z + Math::sin(az) * d);
+			const float h = h_mean * Math::lerp(0.4f, 1.4f, fr.randf());
+			const Vector3 lean = Vector3(fr.randf() - 0.5f, 0.0f, fr.randf() - 0.5f) * 0.25f;
+			LocalVector<Vector3> sp;
+			LocalVector<float> sr;
+			const float r = 0.0015f + 0.006f * h;
+			// A pine's leader runs the full height; a shrub seedling's stem only to where it branches.
+			const float hs = needles ? h : 0.3f * h;
+			sp.push_back(at);
+			sr.push_back(r);
+			sp.push_back(at + (Vector3(0, 1, 0) + lean * 0.5f).normalized() * (hs * 0.5f));
+			sr.push_back(r * 0.7f);
+			sp.push_back(at + (Vector3(0, 1, 0) + lean).normalized() * hs);
+			sr.push_back(r * 0.3f);
+			r_bark.bone = 0;
+			Vector4i part;
+			r_bark.begin(part);
+			_tube(r_bark, sp, sr, 3, 0.0f, shoot_bark);
+			r_bark.end(part, r);
+			if (vls.out <= 0.0f && !needles) {
+				continue;
+			}
+			r_leaves.bone = 0;
+			Vector4i lp;
+			r_leaves.begin(lp);
+			if (needles) {
+				// A seedling pine: the first-year juvenile needles in a tuft, then needles all up its leader.
+				const int nn = 10 + int(40.0f * MIN(h / 0.4f, 1.5f));
+				for (int q = 0; q < nn; q++) {
+					const float u = Math::lerp(0.25f, 1.0f, float(q) / nn);
+					const Vector3 p = u < 0.5f ? sp[0].lerp(sp[1], u * 2.0f) : sp[1].lerp(sp[2], u * 2.0f - 1.0f);
+					const float az2 = q * 2.39996f;
+					const Vector3 no = (Vector3(Math::cos(az2), 0.9f, Math::sin(az2))).normalized();
+					const float nl = MIN(leaf_size, 0.04f + 0.25f * h) * Math::lerp(0.8f, 1.1f, fr.randf());
+					_add_needle(r_leaves, p, no, nl, young);
+				}
+			} else {
+				// A seedling shrub branches from low down into a small rounded bush, opposite leaves crowded at
+				// the shoot ends (a young Cistus).
+				const int stems = 2 + int(fr.randf() * 3.0f);
+				for (int st = 0; st < stems; st++) {
+					const float az0 = fr.randf() * float(Math::TAU);
+					const Vector3 b0 = sp[1].lerp(sp[2], fr.randf());
+					const Vector3 e = b0 + Vector3(Math::cos(az0) * 0.4f, 0.85f, Math::sin(az0) * 0.4f).normalized() * (h * Math::lerp(0.5f, 0.75f, fr.randf()));
+					LocalVector<Vector3> bp;
+					LocalVector<float> br;
+					bp.push_back(b0);
+					br.push_back(r * 0.6f);
+					bp.push_back(e);
+					br.push_back(r * 0.25f);
+					Vector4i bpart;
+					r_bark.begin(bpart);
+					_tube(r_bark, bp, br, 3, 0.0f, shoot_bark);
+					r_bark.end(bpart, r * 0.6f);
+					const int nl = 4 + int(8.0f * MIN(h / 0.3f, 1.5f));
+					for (int q = 0; q < nl; q++) {
+						const float u = Math::lerp(0.5f, 1.0f, float(q) / nl);
+						const Vector3 p = b0.lerp(e, u);
+						const float az2 = az0 + (q / 2) * 1.5708f + (q & 1) * float(Math::PI);
+						const Vector3 lo = Vector3(Math::cos(az2), 0.35f, Math::sin(az2)).normalized();
+						_add_leaf(r_leaves, p, lo, Vector3(0, 1, 0), leaf_size * Math::lerp(0.55f, 0.85f, fr.randf()) * MAX(vls.out, 0.3f), young);
+					}
+				}
+			}
+			leaf_count += 1;
+			r_leaves.end(lp, 0.0f);
+		}
+	}
+}
+
 void TreeGenerator::_fire_crown(const Builder &p_leaves) {
 	for (float &f : fire_crown) {
 		f = 0.0f;
@@ -19321,6 +19678,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	lichen_cover = p_from.lichen_cover;
 	bark_peel = p_from.bark_peel;
 	cork_stripped_years = p_from.cork_stripped_years;
+	fire_years = p_from.fire_years;
 	bark_wounds = p_from.bark_wounds;
 	bark_chevrons = p_from.bark_chevrons;
 	wind_exposure = p_from.wind_exposure;
@@ -20734,6 +21092,9 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	} else if (veteran > 0.0f && !fallen && !fallen_branch) {
 		_apply_veteran();
 	}
+	if (fire_years >= 0.0f && decay_class == 0 && !fallen && !fallen_branch) {
+		_fire_prune();
+	}
 	if (decay_class == 0 && !fallen && !fallen_branch && cut_height > 0.5f && cuts > 0) {
 		// A pollard's head is knobbly, not a smooth bulb: each cut's callus rolls over the stubs
 		// and dormant buds as burrs and knuckles (Read 2000), more of them with every cycle. They
@@ -20951,6 +21312,9 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_lichen_cover", "cover"), &TreeGenerator::set_lichen_cover);
 	ClassDB::bind_method(D_METHOD("get_lichen_cover"), &TreeGenerator::get_lichen_cover);
 	ClassDB::bind_method(D_METHOD("set_bark_peel", "peel"), &TreeGenerator::set_bark_peel);
+	ClassDB::bind_method(D_METHOD("set_fire_years", "years"), &TreeGenerator::set_fire_years);
+	ClassDB::bind_method(D_METHOD("get_fire_years"), &TreeGenerator::get_fire_years);
+	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_fire_response", "preset"), &TreeGenerator::get_fire_response);
 	ClassDB::bind_method(D_METHOD("set_cork_stripped_years", "years"), &TreeGenerator::set_cork_stripped_years);
 	ClassDB::bind_method(D_METHOD("get_cork_stripped_years"), &TreeGenerator::get_cork_stripped_years);
 	ClassDB::bind_method(D_METHOD("get_bark_peel"), &TreeGenerator::get_bark_peel);
@@ -21074,6 +21438,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moss_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_moss_cover", "get_moss_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_peel", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_bark_peel", "get_bark_peel");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fire_years", PROPERTY_HINT_RANGE, "-1,30,0.05,suffix:yr"), "set_fire_years", "get_fire_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cork_stripped_years", PROPERTY_HINT_RANGE, "-1,30,0.01"), "set_cork_stripped_years", "get_cork_stripped_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_wounds", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_bark_wounds", "get_bark_wounds");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_chevrons", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_bark_chevrons", "get_bark_chevrons");
@@ -21171,6 +21536,10 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(SHRUB_HEDGE);
 	BIND_ENUM_CONSTANT(SHRUB_LAID_HEDGE);
 	BIND_ENUM_CONSTANT(SHRUB_MAX);
+	BIND_ENUM_CONSTANT(FIRE_NONE);
+	BIND_ENUM_CONSTANT(FIRE_EPICORMIC);
+	BIND_ENUM_CONSTANT(FIRE_BASAL);
+	BIND_ENUM_CONSTANT(FIRE_SEEDER);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 	BIND_ENUM_CONSTANT(STAND_BEECH);
 	BIND_ENUM_CONSTANT(STAND_OAK_MIXED);

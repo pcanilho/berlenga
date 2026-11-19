@@ -2354,6 +2354,25 @@ the following year or two (1 - exp(-(age - 0.25) / 0.5)): the red stage of fire-
 its bone-area rule only for meshes without the meta (leafless ones). Frames: fire/snag-strip.png (scorch 13 m,
 0.05 / 0.3 / 1 year); storm bench --snag=0 and 8 as before (0 and 38 breaks at 18 m/s).
 
+### 5ah. Regrowth after fire (19 Nov; Paulo's pick)
+
+A generate-time variant, `TreeGenerator.fire_years` (-1 off; 0-30 years since the fire), for trees a fire left
+standing dead above ground. Placement (scene, vegetation) reads WorldFire.burn_age_at at the foot. Each preset has
+a fire response (`get_fire_response`, after Pausas 2004 and Paula et al. 2009, BROT):
+- EPICORMIC (cork oak; Catry et al. 2012): shoot clusters from stem and limb buds within months, every ~45 cm on
+  wood thicker than 3.5 cm, sunny side favoured, 0.25 m growing to 2 m by year 4; the cork chars thinly (char
+  fades over ~3 years) and a burnt cork oak is never drawn stripped (recently stripped stems die).
+- BASAL (holm oak, most broadleaves and resprouting shrubs; Moreira et al. 2009, Konstantinidis 2006): a clump
+  from the root collar between the root ridges, half a metre the first year, 1-2 m by year three, thinning.
+- SEEDER (maritime pine, gum rockrose; Tapias et al. 2001, Trabaud 1987): no regrowth on the snag; seedlings on
+  the ash bed from the first wet season, a flush by year two (serotinous cones open), self-thinning after year 3.
+  Pine seedlings are leaders with spiral needles, 10-30 cm a year; rockrose seedlings small bushes.
+- NONE (Scots pine, spruce, larch, fir, yew, beech, ...): the snag only.
+Shared: twigs under a radius that grows with years are pruned away (fine fuel burnt, then dropping), all old
+foliage removed, and the bark takes ragged char to ~45% of height (max 6 m), fading over ~7 years. The runtime
+mortality rule (5ag) skips these meshes' regrowth foliage (fire_crown cleared). Frames: fire/regrowth-strip.png
+(cork oak, holm oak, maritime pine, rockrose at 0.5 / 2 / 6 years), regrowth-holm-raster-pt.png.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

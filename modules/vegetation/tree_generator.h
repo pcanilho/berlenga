@@ -653,6 +653,7 @@ public:
 	float witches_brooms = 1.0f; // Chance and amount of witches' brooms (birches; section 5n).
 	float limb_breakage = 1.0f; // Storm-snapped and hanging limbs on living trees (section 5j); 0 none.
 	float bark_peel = 1.0f; // Dead wood sheds its bark by decay class (section 5f); 0 keeps it.
+	float fire_years = -1.0f; // Years since a fire killed the crown (trees.md 5ah), -1 unburnt: the tree as it stands and regrows.
 	float cork_stripped_years = -1.0f; // Cork oak: years since the last cork harvest (5aa); -1 picks by seed, 30 or more never worked.
 	float _cork_strip_age() const;
 	// Exposure to a prevailing wind blowing toward +X (trees.md 5q): ice and sand kill the windward
@@ -956,6 +957,7 @@ public:
 	void set_lichen_cover(float p_cover) { lichen_cover = MAX(p_cover, 0.0f); }
 	float get_lichen_cover() const { return lichen_cover; }
 	void set_bark_peel(float p_peel) { bark_peel = MAX(p_peel, 0.0f); }
+	void set_fire_years(float p_years) { fire_years = p_years < 0.0f ? -1.0f : p_years; }
 	void set_cork_stripped_years(float p_years) { cork_stripped_years = MAX(p_years, -1.0f); }
 	float get_cork_stripped_years() const { return cork_stripped_years; }
 	void set_root_stone(float p_v) { root_stone = CLAMP(p_v, 0.0f, 2.0f); }
@@ -986,6 +988,7 @@ public:
 	void set_limb_breakage(float p_breakage) { limb_breakage = MAX(p_breakage, 0.0f); }
 	float get_limb_breakage() const { return limb_breakage; }
 	float get_bark_peel() const { return bark_peel; }
+	float get_fire_years() const { return fire_years; }
 	void set_fallen_branch(bool p_fallen_branch) { fallen_branch = p_fallen_branch; }
 	bool is_fallen_branch() const { return fallen_branch; }
 	void set_envelope(const AABB &p_envelope) { envelope = p_envelope; }
@@ -1046,6 +1049,20 @@ public:
 	Ref<PlantSpecies> make_species(bool p_stand_grown, int p_variants);
 	// Heath shrubs for vegetation's placement (trees.md 5u): meshes, footprint, canopy radius and
 	// far colour, no climate or terrain rules.
+	// How a species comes back after a fire kills its crown (trees.md 5ah; Pausas et al. 2004, Paula et al. 2009,
+	// BROT): new shoots from buds under thick bark all along stem and limbs; a clump from the root crown; seedlings from
+	// the seed bank or serotinous cones, the parent dead; or nothing.
+	enum FireResponse {
+		FIRE_NONE,
+		FIRE_EPICORMIC,
+		FIRE_BASAL,
+		FIRE_SEEDER,
+	};
+	static FireResponse get_fire_response(Preset p_preset);
+	void _fire_prune();
+	void _fire_char(Builder &r_bark);
+	void _grow_fire_regrowth(Builder &r_bark, Builder &r_leaves);
+
 	enum ShrubForm {
 		SHRUB_YOUNG,
 		SHRUB_MATURE,
@@ -1090,3 +1107,4 @@ VARIANT_ENUM_CAST(TreeGenerator::Climber);
 VARIANT_ENUM_CAST(TreeGenerator::LeafKind);
 VARIANT_ENUM_CAST(TreeGenerator::RigField);
 VARIANT_ENUM_CAST(TreeGenerator::ShrubForm);
+VARIANT_ENUM_CAST(TreeGenerator::FireResponse);
