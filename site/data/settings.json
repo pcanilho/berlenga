@@ -1149,7 +1149,7 @@
     "data_map"
    ],
    "note": "",
-   "what": "wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry. It lies on a firm base of varying depth that wheels can dig down to for grip (`subsoil`), and logs and branches settled in it become corduroy that spreads wheel load and snaps when too thin (`mats`).",
+   "what": "wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry. It lies on a firm base of varying depth that wheels can dig down to for grip (`subsoil`), and logs and branches settled in it become corduroy that spreads wheel load and snaps when too thin (`mats`). Liquid mud a wheel shoves aside runs on as a wave and the rut closes behind it (`mud_waves`), and hidden stones and roots lift a sinking wheel and show as ruts deepen (`buried_obstacles`, `buried_density`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1197,6 +1197,18 @@
    ],
    "note": "",
    "what": "a cable winch that slows under load, stalls at its rated pull and slips its brake; the cable sags and lies on the ground.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Worn tracks",
+   "settings": [
+    "GroundSurface3D.worn_tracks",
+    "wear_regrowth_days"
+   ],
+   "note": "",
+   "what": "repeated wheel passes pack the soil firmer so it sheds rain, flatten the grass and then wear it bare, and it all regrows over weeks.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
