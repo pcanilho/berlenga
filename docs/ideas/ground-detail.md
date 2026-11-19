@@ -532,13 +532,26 @@ stones at all. Ground detail now carries the river layer's bed on below it, as i
   (`WorldGround.height_at`, GroundSurface3D's sand or mud), a pressed stone sits in the dent that ground took: the
   print is a real depression. Bench `--tracks`: a walker (boots coming down every 0.45 s, alternating) and a
   two-wheeled cart on 6 and 8 m bends; `--tracks-verbose`.
+- **Prints and ruts, second docs check (19 Nov).** Prints read as pale rings and ruts as pale sand strips, with fine
+  stripes over the frame. The causes:
+  - The terrain material opened a print to the bare soil colour *after* the stones' damp-soil tone
+    (`rock_contact_map`) and gave it back its full sheen, so a print in gravel showed pale dry soil between the
+    stones. The soil now opens before the damp tone, and its sheen keeps the ground cover's share
+    (`0.5 * tm_gc_spec`).
+  - The bench's sand kept its ruts between runs (`GroundSurface3D.keep_ruts` to `user://ground_ruts`), so before
+    frames had old prints. The bench turns it off.
+  - The stripes are the sand's wind ripples (`GroundSurface3D.wind_ripples`) beating against the pixel grid on a
+    gravel-covered beach; gone with `--gs-prop=wind_ripples:false`. The sand's owner is told.
+  - The bench's boots were weightless and never dented the sand. They now sink 2.5 cm, and the stones under a
+    standing body keep following its print down (press only: no shove or flick at rest). A pressed stone sits
+    0.1 of its size under the dent's surface (bedded, its top flat). The disturbed film is 0.4 (0.85 made a pebble
+    on a boulder read as a hole).
 - **Drawing.** A loose stone stays an instance of its own MultiMesh; each frame its instance transform is the body's,
   so raster and the path tracer draw it exactly as before (no node swap, no separate mesh). At rest (asleep, or
   under 5 cm/s for 0.4 s, or 8 s old, or through the ground) its body is freed and the record keeps where it lies.
 - **Switch.** `RockField3D.stones_react` (on), `react_max_bodies`, `get_react_stats()`. Bench `--roll[=m/s]`: a 0.3 m,
   40 kg ball rolled 8 m across the spot (terrain collision on), taken away before the still; `--no-react`.
-- **Not yet.** Grains do not sink into soft ground (the ground's dent and soil from `WorldGround` would give it), and
-  stones that leave their cell's bounds stay in that cell (drawn, but streamed out with it).
+- **Not yet.** Stones that leave their cell's bounds stay in that cell (drawn, but streamed out with it).
 
 ## More stones for the same cost: what is left to gain (19 Nov)
 

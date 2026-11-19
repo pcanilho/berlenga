@@ -786,7 +786,9 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// Coast forms (Trenhaile 1987; Sunamura 1992): one mass of bedrock each, cut by the joints and the beds.
 	const bool coast_form = family == FAMILY_SEA_STACK || family == FAMILY_SEA_ARCH || family == FAMILY_SEA_PLATFORM;
 	if (family == FAMILY_SEA_STACK) {
-		a = 2.6f + 0.8f * rng.randf(); // x: the column's height when stood on end, several times its width
+		// x: the column's height when stood on end, several times its width (two to four: the Twelve Apostles, Old
+		// Harry); the top's breaks and the drowned foot take a share of it, so it is cut long.
+		a = 3.4f + 1.2f * rng.randf();
 		c = 0.75f + 0.2f * rng.randf();
 	} else if (family == FAMILY_SEA_ARCH) {
 		a = 1.5f + 0.4f * rng.randf(); // x: the span along the coast; y: its height, as much as its thickness
@@ -882,8 +884,8 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			float off = 0.82f + 0.16f * rng.randf();
 			if (!hoodoo) {
 				az = top_az + (k == 0 ? 0.0f : (trng.randf() - 0.5f) * 1.6f);
-				slope = k == 0 ? 0.25f + 0.3f * trng.randf() : 0.6f + 0.5f * trng.randf();
-				off = k == 0 ? 0.92f + 0.06f * trng.randf() : 0.78f + 0.12f * trng.randf();
+				slope = k == 0 ? 0.25f + 0.3f * trng.randf() : 0.45f + 0.35f * trng.randf();
+				off = k == 0 ? 0.92f + 0.06f * trng.randf() : 0.87f + 0.08f * trng.randf(); // a break off the top's edge, not a cut through it
 			}
 			const Vector3 n = Vector3(1.0f, slope * Math::cos(az), slope * Math::sin(az)).normalized();
 			planes.push_back({ n, n.x * a * off, k > 0 && rng.randf() < 0.5f });
@@ -1271,7 +1273,9 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		const float exp_az = lrng.randf() * float(Math::TAU);
 		const Vector3 exp_dir(0.0f, Math::cos(exp_az), Math::sin(exp_az));
 		const float exp_r = Math::sqrt(c * c * exp_dir.y * exp_dir.y + exp_dir.z * exp_dir.z);
-		const bool stepped = family == FAMILY_SEA_STACK && lrng.randf() < 0.7f;
+		// (Off for now: at the field's scale the cut left a thin figure standing on a block; the tilted top, its edge
+		// breaks and the broken crest carry the asymmetry. The draw stays so the stacks keep their shapes.)
+		const bool stepped = family == FAMILY_SEA_STACK && lrng.randf() < 0.0f;
 		const float stack_taper = 0.12f + 0.2f * lrng.randf();
 		struct NotchCave {
 			Vector3 c, r, out, side;
@@ -1294,8 +1298,8 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		const float step_az = exp_az + float(Math::PI) * (0.5f + lrng.randf()); // toward the lee or a flank
 		const Vector3 step_dir(0.0f, Math::cos(step_az), Math::sin(step_az));
 		const float step_r = Math::sqrt(c * c * step_dir.y * step_dir.y + step_dir.z * step_dir.z);
-		const float step_d = step_r * (0.3f * lrng.randf() - 0.02f); // a quarter to half the top falls, never leaving a needle
-		float step_x = x_lo + (0.58f + 0.17f * lrng.randf()) * (x_hi - x_lo);
+		const float step_d = step_r * (0.3f + 0.25f * lrng.randf()); // a corner of the top falls, never leaving a needle
+		float step_x = x_lo + (0.66f + 0.16f * lrng.randf()) * (x_hi - x_lo);
 		if (stepped && bed_axis == 0 && bed_at.size() > 2) {
 			// The step's tread is a bed's top.
 			uint32_t best = 0;

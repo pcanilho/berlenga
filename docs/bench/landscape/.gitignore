@@ -1,0 +1,6 @@
+# Optional art copied by fetch_art.sh from the private art repository: never commit it.
+art/
+.godot/
+*.uid
+ext/
+override.cfg

@@ -544,7 +544,14 @@ void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
 				const int dx = Math::abs(u) >= Math::abs(v) ? (u > 0.0f ? 1 : -1) : 0;
 				const int dz = dx == 0 ? (v > 0.0f ? 1 : -1) : 0;
 				const int fx = x + dx, fz = z + dz;
-				const bool front = fx < 0 || fz < 0 || fx >= n || fz >= n || h[fz * n + fx] < h[i]; // the leading slope of the flow
+				// The head: the leading slope of the flow, or the last fast cell before it. The head's very edge
+				// ploughs the snow in front of it and slows, so its eruption current comes from the fast snow just
+				// behind (the head is the fastest part of a dry avalanche; Sovilla et al. 2015).
+				bool front = fx < 0 || fz < 0 || fx >= n || fz >= n || h[fz * n + fx] < h[i];
+				if (!front) {
+					const int f = fz * n + fx;
+					front = h[f] < FLOW_MIN || (hu[f] * hu[f] + hv[f] * hv[f]) < powder_speed * powder_speed * h[f] * h[f];
+				}
 				if (front && release_liquid < 0.001f) { // dry snow holds no liquid water
 					const float take = MIN(0.5f * h[i], powder_share * h[i] * (speed - powder_speed) * 0.1f * p_dt);
 					const float m = take * cell * cell;

@@ -2427,7 +2427,7 @@ per 10 cm x 48 bins from outward-facing bark vertices), so they sit on the plate
 
 STAND_BEETLE_SPRUCE (Kautz et al. 2011, infestation spots in the Bavarian Forest): one patch mask (scale 70 m,
 cover 0.12 + 0.06 a year of `beetle_outbreak`, default 6): a red front in a 5 m band along the spot edges
-(patch_ring; front variants 0.15-2.4 years), a grey core inside (2.6 years to the outbreak's age; canopy opacity
+(patch_ring; front variants 0.85-2.2 years, a few in green attack 0.2-0.5; the yellowing weeks skipped, as one variant there drew the front khaki from above), a grey core inside (2.6 years to the outbreak's age; canopy opacity
 0.15 so pioneers come up), living spruce on the inverted mask, beetle logs in old spots from 5 years, rowan, birch
 and elder in the light. Beetle species carry no fire bands. Frames: fork/trees/beetle/.
 

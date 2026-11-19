@@ -228,7 +228,12 @@ vec3 tm_gc_cover(vec2 xz, out int type) {
 
 // One class's grains at p (a cell 1.25 grains wide holds at most one, a share of cells filled for the cover):
 // whether p is on one, its tone and its dome's normal (world). fp: the pixel's footprint.
-float tm_gc_grain(vec2 p, float s, float cover, out float tone, out vec3 gn) {
+float tm_gc_grain(vec2 p_world, float s, float cover, out float tone, out vec3 gn) {
+	// Each class on its own lattice, turned off the world's axes (an axis-aligned lattice of near-regular grains beat
+	// against the pixel grid in stripes from above).
+	float ang = fract(s * 137.508) * 6.2831853;
+	mat2 rot = mat2(vec2(cos(ang), sin(ang)), vec2(-sin(ang), cos(ang)));
+	vec2 p = rot * p_world;
 	float g = 1.25 * s;
 	vec2 cell = floor(p / g);
 	vec3 h = tm_gc_hash3(cell + 0.5 * s);
@@ -245,7 +250,8 @@ float tm_gc_grain(vec2 p, float s, float cover, out float tone, out vec3 gn) {
 		return 0.0;
 	}
 	float z = sqrt(1.0 - q);
-	gn = normalize(vec3(d.x, z * 1.2, d.y));
+	vec2 dw = transpose(rot) * d;
+	gn = normalize(vec3(dw.x, z * 1.2, dw.y));
 	tone *= 0.55 + 0.45 * z; // darker toward its foot (the grains round it and the bed)
 	return 1.0;
 }
@@ -1398,6 +1404,18 @@ void fragment() {
 	}
 )";
 	}
+	if (ground_deform_enabled) {
+		// Ruts, digs, puddles and tracked mud open the meadow's cover: the soil layer's own colour shows there, its
+		// edge broken by noise, before the turned ground's tint (darker, wet) goes over it. Before the stones' damp
+		// soil below: the stones still sit in a print, and their damp ring stays on it (else a print in gravel shows
+		// pale dry soil between them).
+		c += R"(	tm_exposed = ground_deform_exposed(wp);
+	if (tm_exposed > 0.0) {
+		tm_exposed = clamp(tm_exposed * (0.75 + 0.5 * tm_vn(wp * 6.0 + 11.0)), 0.0, 1.0);
+		albedo = mix(albedo, tm_soil, tm_exposed);
+	}
+)";
+	}
 	// Where stones sit (RockField3D.ground_contact): the soil beside them kept damp (darker, smoother: porous darkening
 	// as for wet sand, Lagarde 2013) and the fines banked on their uphill side, a finer, browner skin with a little
 	// grit, so a stone reads as sitting in the ground. Edges broken by noise; none on bare rock faces.
@@ -1431,14 +1449,6 @@ void fragment() {
 )";
 	if (ground_deform_enabled) {
 		// Freshly turned ground is darker until it dries.
-		// Ruts, digs, puddles and tracked mud open the meadow's cover: the soil layer's own colour shows there,
-		// its edge broken by noise, before the turned ground's tint (darker, wet) goes over it.
-		c += R"(	tm_exposed = ground_deform_exposed(wp);
-	if (tm_exposed > 0.0) {
-		tm_exposed = clamp(tm_exposed * (0.75 + 0.5 * tm_vn(wp * 6.0 + 11.0)), 0.0, 1.0);
-		albedo = mix(albedo, tm_soil, tm_exposed);
-	}
-)";
 		c += "\tvec2 gd = ground_deform_tint(wp);\n\talbedo *= gd.x;\n\trough = clamp(rough * gd.y, 0.0, 1.0);\n";
 		// Wind ripples past their real geometry (GroundSurface3D's 4 m window): the grown field's slope as a normal
 		// over the sand of the patch, as BaseMaterial3D draws it.
@@ -1454,9 +1464,9 @@ void fragment() {
 		c += "\tspecular = mix(specular, mix(0.5, 0.1, tm_far_cover), tm_far_t);\n";
 	}
 	if (ground_deform_enabled) {
-		// The opened soil keeps its sheen (the sward hid it); standing water in ruts (mud stage 2) and the clay it
+		// The opened soil keeps its sheen (the sward hid it; the ground detail's stones still cover it); standing water in ruts (mud stage 2) and the clay it
 		// carries (round 3), as BaseMaterial3D draws them (material.cpp ground_water_look()).
-		c += R"(	specular = mix(specular, 0.5, tm_exposed);
+		c += R"(	specular = mix(specular, 0.5 * tm_gc_spec, tm_exposed);
 	{
 		float gwd = ground_deform_water(wp);
 		if (gwd > 0.0) {
