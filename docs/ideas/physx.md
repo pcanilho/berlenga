@@ -1846,6 +1846,33 @@ several boxes); no smoke filling rooms ahead of the fire (two-zone
 smoke layer), no firefighting water on rooms yet (Flow/MPM water reaches
 burnables, not buildings), glass is not drawn breaking.
 
+### Water puts building fires out (picked 19 Nov, first of four)
+
+Research: water boils off at 2.6 MJ/kg (heating and evaporation);
+flames go down once the water takes about a third of the heat release
+(Grimwood's gas cooling); Sardqvist's critical application rate for
+compartment fires is about 0.1 to 0.3 kg/s per MW; steam swells about
+1700 times and pushes the hot gas out of the openings. Built: water
+in a room (PhysXParticleFluid3D water particles inside its box, or
+apply_water() from a hose, a bucket brigade or a script) boils off over
+about 8 s and takes 2.6 MJ/kg. The share it takes of 0.3 times what the
+fire could release damps the burning at once (0.7 of it), and a room
+held under it for 20 s goes out. A flashed room falls back to growing
+below half, its hot layer cooling over 15 s. The fire regrows from what
+is left when the water stops. Water on a face (particles within 0.5 m,
+or apply_water near it) puts out burning cladding at 0.5 mm and keeps it
+from catching, drying over ten minutes. The heat taken leaves as
+PhysXSteam at the room's first open opening. Test (the scratch house,
+room A flashed at 4 MW, water from 900 to 1500 s): 0.3 kg/s (0.075
+kg/s/MW) holds it at 2.2 MW and 560 C, and it re-flashes when the water
+stops; 0.6 kg/s puts it out in under two minutes; 1.5 kg/s also does.
+
+Mudflow pooling (Valence: a 4 km2 burnt valley fires 68 events at once):
+events under min_volume (100 m3) are left to the mud body; at most
+max_events (6) events have surges, a bigger one replacing the smallest;
+the boulder cap is shared. Storm test: 68 events, 39,000 m3: 6 events,
+24 surges, 60 boulders.
+
 ### Next-round options (card, 19 Nov late morning)
 
 Water on burning buildings. Hose streams and MPM water reaching a room

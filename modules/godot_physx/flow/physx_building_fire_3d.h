@@ -32,6 +32,7 @@
 #pragma once
 
 #include "physx_firebrands.h"
+#include "physx_steam.h"
 
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
@@ -113,6 +114,14 @@ private:
 		float brand_glow[FACE_COUNT] = {};
 		Vector2 brand_at[FACE_COUNT];
 		float neighbour_dose = 0.0f;
+		float water_kg = 0.0f; // put in by apply_water()
+		float fluid_kg = 0.0f; // fluid particles in it now
+		float cooling = 0.0f; // kW the water takes
+		float knock = 0.0f; // 0..1, how far the water has put it down
+		float potential = 0.0f; // kW it would burn at without water
+		float steam_j = 0.0f; // heat to leave as steam
+		float face_water[FACE_COUNT] = {}; // kg on each face's cladding
+		float face_fluid_kg[FACE_COUNT] = {};
 		ObjectID light;
 		ObjectID inner_emitter;
 		ObjectID roof_emitter;
@@ -147,6 +156,7 @@ private:
 	ObjectID destructible_id;
 	bool look_done = false;
 	PhysXFirebrands brands;
+	PhysXSteam steam;
 	Vector3 wind;
 	float t_air = 20.0f;
 
@@ -170,6 +180,8 @@ private:
 	void _weaken(int p_room);
 	void _update_visuals(float p_delta);
 	void _update_brands(float p_delta);
+	void _update_steam(float p_delta);
+	void _sample_fluids(const Transform3D &p_inv);
 	void _update_look();
 	PhysXFlowEmitter3D *_emitter(ObjectID &r_id, const String &p_name);
 	static void _disable(ObjectID p_id);
@@ -191,6 +203,10 @@ public:
 	void add_brand(const Vector3 &p_position, const Vector3 &p_normal, float p_glow);
 
 	void ignite(const Vector3 &p_position);
+	// Puts p_kg of water on it at a global point: into the room there (or through an open window), or onto the
+	// cladding of the nearest face (a hose, a bucket brigade, a script). Fluid particles count by themselves.
+	void apply_water(const Vector3 &p_position, float p_kg);
+	float get_room_water_cooling(int p_room) const; // kW the water in it takes
 	void extinguish();
 
 	void set_rooms(const Array &p_rooms);

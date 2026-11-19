@@ -34,6 +34,7 @@
 #ifdef GODOT_PHYSX_BLAST
 #include "../blast/physx_destructible_3d.h"
 #endif
+#include "../nodes/physx_particle_fluid_3d.h"
 #include "physx_burnable_3d.h"
 #include "physx_fire_spread_3d.h"
 #include "physx_flow_3d.h"
@@ -373,6 +374,117 @@ float PhysXBuildingFire3D::_exposure(int p_room, int p_face, Vector3 &r_hot) con
 	return q;
 }
 
+// Water from the liquid fluids (a hose, buckets, MPM water): the particles inside a room's box are water in the room,
+// those within half a metre outside a face are water on its cladding.
+void PhysXBuildingFire3D::_sample_fluids(const Transform3D &p_inv) {
+	for (Room &r : rooms) {
+		r.fluid_kg = 0.0f;
+		for (int f = 0; f < FACE_COUNT; f++) {
+			r.face_fluid_kg[f] = 0.0f;
+		}
+	}
+	const LocalVector<PhysXParticleFluid3D *> &fluids = PhysXParticleFluid3D::get_water_fluids();
+	if (fluids.is_empty() || rooms.is_empty()) {
+		return;
+	}
+	AABB all = rooms[0].box;
+	for (const Room &r : rooms) {
+		all.merge_with(r.box);
+	}
+	all = all.grow(0.6f);
+	LocalVector<Vector3> pts;
+	for (const PhysXParticleFluid3D *fl : fluids) {
+		if (!fl->is_inside_tree()) {
+			continue;
+		}
+		pts.clear();
+		fl->gather_world_positions(pts);
+		const float mass = fl->get_particle_water_mass();
+		for (const Vector3 &pw : pts) {
+			const Vector3 p = p_inv.xform(pw);
+			if (!all.has_point(p)) {
+				continue;
+			}
+			for (Room &r : rooms) {
+				if (r.box.has_point(p)) {
+					r.fluid_kg += mass;
+					break;
+				}
+				if (!r.box.grow(0.5f).has_point(p)) {
+					continue;
+				}
+				// The face it is outside of.
+				const Vector3 lo = r.box.position - p;
+				const Vector3 hi = p - (r.box.position + r.box.size);
+				const float d[FACE_COUNT] = { lo.x, hi.x, lo.z, hi.z, hi.y };
+				int best = -1;
+				for (int f = 0; f < FACE_COUNT; f++) {
+					if (d[f] > 0.0f && r.exterior[f] && (best < 0 || d[f] > d[best])) {
+						best = f;
+					}
+				}
+				if (best >= 0) {
+					r.face_fluid_kg[best] += mass;
+				}
+				break;
+			}
+		}
+	}
+}
+
+void PhysXBuildingFire3D::apply_water(const Vector3 &p_position, float p_kg) {
+	if (p_kg <= 0.0f) {
+		return;
+	}
+	if (rooms_dirty) {
+		_build_rooms();
+	}
+	const Vector3 l = get_global_transform().affine_inverse().xform(p_position);
+	for (Room &r : rooms) {
+		if (r.box.grow(0.05f).has_point(l)) {
+			r.water_kg += p_kg;
+			return;
+		}
+	}
+	int best = -1;
+	int best_face = 0;
+	float bd = 1.0f;
+	for (uint32_t i = 0; i < rooms.size(); i++) {
+		const Room &r = rooms[i];
+		for (int f = 0; f < FACE_COUNT; f++) {
+			if (!r.exterior[f]) {
+				continue;
+			}
+			const Vector2 fs = _face_size(r, f);
+			const Vector2 uv = _face_uv(r, f, l);
+			const float d = _face_point(r, f, Vector2(CLAMP(uv.x, 0.0f, fs.x), CLAMP(uv.y, 0.0f, fs.y))).distance_to(l);
+			if (d < bd) {
+				bd = d;
+				best = i;
+				best_face = f;
+			}
+		}
+	}
+	if (best < 0) {
+		return;
+	}
+	// Through an open opening the water goes in.
+	Room &r = rooms[best];
+	const Vector2 uv = _face_uv(r, best_face, l);
+	for (const Opening &o : r.openings) {
+		if (o.face == best_face && o.to_room < 0 && (!o.glazed || o.broken) && o.rect.grow(0.1f).has_point(uv)) {
+			r.water_kg += p_kg;
+			return;
+		}
+	}
+	r.face_water[best_face] += p_kg;
+}
+
+float PhysXBuildingFire3D::get_room_water_cooling(int p_room) const {
+	ERR_FAIL_INDEX_V(p_room, (int)rooms.size(), 0.0f);
+	return rooms[p_room].cooling;
+}
+
 // Every 0.25 s: the cladding's heat dose; at a thick solid's ignition dose (pi/4) k rho c (T_ig - T0)^2 (as
 // PhysXBurnable3D) the face catches where it is hottest. Wet wood (rain over 0.5 mm/h) takes no dose.
 void PhysXBuildingFire3D::_sample(float p_delta) {
@@ -390,6 +502,7 @@ void PhysXBuildingFire3D::_sample(float p_delta) {
 	}
 	const float ig = 0.25f * Math::PI * WOOD_KRHOC * 330.0f * 330.0f;
 	const Transform3D inv = get_global_transform().affine_inverse();
+	_sample_fluids(inv);
 	for (uint32_t i = 0; i < rooms.size(); i++) {
 		Room &r = rooms[i];
 		for (int f = 0; f < FACE_COUNT; f++) {
@@ -400,7 +513,7 @@ void PhysXBuildingFire3D::_sample(float p_delta) {
 			Vector3 hot;
 			const float q = _exposure(i, f, hot);
 			const float qw = q * 1000.0f;
-			if (q > 5.0f && rain < 0.5f) {
+			if (q > 5.0f && rain < 0.5f && r.face_water[f] + r.face_fluid_kg[f] < 0.1f) {
 				r.clad_dose[f] += qw * qw * p_delta;
 			} else {
 				r.clad_dose[f] *= Math::exp(-p_delta / 30.0f);
@@ -425,7 +538,16 @@ void PhysXBuildingFire3D::_step_room(int p_room, float p_delta) {
 	Room &r = rooms[p_room];
 	// Cladding: the patch spreads, chars, lets the fire in where it reaches an opening or burns through.
 	for (int f = 0; f < FACE_COUNT; f++) {
+		r.face_water[f] = MAX(r.face_water[f] - r.face_water[f] * p_delta / 600.0f, 0.0f); // dries over ten minutes
 		if (r.clad_r[f] <= 0.0f) {
+			continue;
+		}
+		// Half a millimetre of water over the face puts its flames out (as PhysXBurnable3D).
+		const Vector2 fsz = _face_size(r, f);
+		if (r.face_water[f] + r.face_fluid_kg[f] > 0.5f * fsz.x * fsz.y) {
+			r.steam_j += MIN(CLAD_HRR * Math::PI * r.clad_r[f] * r.clad_r[f] * 0.5f, 2000.0f) * 1000.0f * 5.0f;
+			r.clad_r[f] = 0.0f;
+			r.clad_dose[f] = 0.0f;
 			continue;
 		}
 		if (r.state == ROOM_OUT && r.fuel_left <= 0.0f) {
@@ -451,6 +573,14 @@ void PhysXBuildingFire3D::_step_room(int p_room, float p_delta) {
 			_ignite_room(p_room, _face_point(r, f, r.clad_origin[f]));
 		}
 	}
+	// Water in the room (docs/ideas/physx.md, "Water puts building fires out"): what lies in it boils off taking
+	// 2.6 MJ/kg, over about eight seconds where it meets the fire.
+	const float water_kw = (r.water_kg + r.fluid_kg) * PhysXSteam::BOIL_HEAT / 8.0f / 1000.0f;
+	r.water_kg = MAX(r.water_kg - r.water_kg * p_delta / 8.0f, 0.0f);
+	r.cooling = (r.state == ROOM_COLD || r.state == ROOM_OUT) ? 0.0f : water_kw;
+	if (r.state == ROOM_OUT && water_kw > 0.0f) {
+		r.ember = MAX(r.ember - p_delta / 30.0f, 0.0f); // the char drowned
+	}
 	if (r.state == ROOM_COLD || r.state == ROOM_OUT) {
 		r.q = 0.0f;
 		r.q_ext = 0.0f;
@@ -461,6 +591,29 @@ void PhysXBuildingFire3D::_step_room(int p_room, float p_delta) {
 		return;
 	}
 	r.t += p_delta;
+	// Absorbing about a third of what the fire could release puts the flames down (Grimwood; Sardqvist's critical
+	// flow of about 0.1 to 0.3 kg/s per MW): the share it absorbs damps the fuel's burning at once, and a room held
+	// under that for twenty seconds goes out. Flashed rooms fall back to a growing fire; once the water stops it can
+	// grow again from what is left.
+	float damp = 0.0f;
+	if (water_kw > 0.0f && (r.state == ROOM_GROWING || r.state == ROOM_FLASHED || r.state == ROOM_DECAY)) {
+		const float need = 0.3f * MAX(r.potential, 10.0f);
+		const float share = CLAMP(water_kw / need, 0.0f, 1.0f);
+		r.knock = share >= 1.0f ? r.knock + p_delta / 20.0f : r.knock - p_delta / 120.0f;
+		damp = MAX(0.7f * share, r.knock);
+		r.steam_j += MIN(water_kw, r.q + r.q_ext + 50.0f) * 1000.0f * p_delta;
+	} else {
+		r.knock -= p_delta / 120.0f;
+	}
+	r.knock = CLAMP(r.knock, 0.0f, 1.0f);
+	if (r.knock >= 1.0f) {
+		r.state = ROOM_OUT;
+		r.ember = 0.2f; // wet char
+		r.q = 0.0f;
+		r.q_ext = 0.0f;
+		r.knock = 0.0f;
+		return;
+	}
 	const float floor_area = r.box.size.x * r.box.size.z;
 	const float vent = _vent(r);
 	const float q_vent = 1500.0f * vent;
@@ -469,16 +622,21 @@ void PhysXBuildingFire3D::_step_room(int p_room, float p_delta) {
 	float pyro = 0.0f; // kW of fuel given off
 	if (r.state == ROOM_GROWING) {
 		const float tg = r.t / growth_time;
-		pyro = MIN(1000.0f * tg * tg + 10.0f, q_fuel);
+		r.potential = MIN(1000.0f * tg * tg + 10.0f, q_fuel);
+		pyro = r.potential * (1.0f - damp);
+		if (r.knock > 0.0f) { // the water is winning: the fire shrinks, and regrows from there
+			r.t = MIN(r.t, growth_time * Math::sqrt(MAX(pyro - 10.0f, 0.0f) / 1000.0f)); // it regrows from here
+		}
 		r.q = MIN(pyro, q_vent);
 		r.q_ext = 0.0f;
 		const float hk = Math::sqrt(LINING_KRHOC / MAX(r.t, 10.0f)) / 1000.0f;
-		const float dt = 6.85f * Math::pow(r.q * r.q / (vent * hk * a_t), 1.0f / 3.0f);
-		r.temperature = MIN(t_air + dt, 1100.0f);
+		const float qc = MAX(r.q - water_kw, 0.0f); // the gas the water has not cooled
+		const float dt = 6.85f * Math::pow(qc * qc / (vent * hk * a_t), 1.0f / 3.0f);
+		r.temperature = damp > 0.0f ? Math::lerp(r.temperature, MIN(t_air + dt, 1100.0f), 1.0f - Math::exp(-p_delta / 15.0f)) : MIN(t_air + dt, 1100.0f);
 		const float q_fo = 7.8f * a_t + 378.0f * vent;
 		// Flashover; a room open enough never meets Thomas's condition but is fully involved once its fuel burns at
 		// its own rate.
-		if (r.q >= q_fo || r.q >= 0.95f * q_fuel) {
+		if (damp <= 0.0f && (r.q >= q_fo || r.q >= 0.95f * q_fuel)) {
 			r.state = ROOM_FLASHED;
 			r.flash_time = r.t;
 		} else if (r.fuel_left <= 0.0f) {
@@ -499,14 +657,24 @@ void PhysXBuildingFire3D::_step_room(int p_room, float p_delta) {
 			r.decay_time = 2.0f * r.fuel_left * 1000.0f / r.q_decay;
 		}
 		pyro = r.state == ROOM_DECAY ? r.q_decay * MAX(1.0f - (r.t - r.decay_t0) / MAX(r.decay_time, 1.0f), 0.0f) : q_fuel;
+		r.potential = MAX(pyro, r.state == ROOM_FLASHED ? q_fuel : 0.0f);
+		pyro *= 1.0f - damp;
 		r.q = MIN(pyro, q_vent);
 		r.q_ext = MAX(pyro - q_vent, 0.0f);
-		// Hot layer: MQH with the lining heated through, held between 800 C and 1100 C while fully developed.
+		// Hot layer: MQH with the lining heated through, held between 800 C and 1100 C while fully developed (and
+		// not being cooled).
 		const float hk = Math::sqrt(LINING_KRHOC / MAX(r.t, 10.0f)) / 1000.0f;
-		const float dt = 6.85f * Math::pow(r.q * r.q / (vent * hk * a_t), 1.0f / 3.0f);
-		const float target = r.state == ROOM_FLASHED ? CLAMP(t_air + dt, 800.0f, 1100.0f) : MIN(t_air + dt, 1100.0f);
-		r.temperature = Math::lerp(r.temperature, target, 1.0f - Math::exp(-p_delta / 60.0f));
-		if (r.fuel_left <= 0.0f || pyro < 20.0f) {
+		const float qc = MAX(r.q - water_kw, 0.0f);
+		const float dt = 6.85f * Math::pow(qc * qc / (vent * hk * a_t), 1.0f / 3.0f);
+		const float target = (r.state == ROOM_FLASHED && damp <= 0.0f) ? CLAMP(t_air + dt, 800.0f, 1100.0f) : MIN(t_air + dt, 1100.0f);
+		r.temperature = Math::lerp(r.temperature, target, 1.0f - Math::exp(-p_delta / (damp > 0.0f ? 15.0f : 60.0f)));
+		// Knocked down below flashover: back to a growing fire of what still burns.
+		if (r.state == ROOM_FLASHED && damp > 0.5f) {
+			r.state = ROOM_GROWING;
+			r.t = growth_time * Math::sqrt(MAX(pyro, 10.0f) / 1000.0f);
+			r.potential = MAX(pyro, 10.0f);
+			r.q_ext = 0.0f;
+		} else if (r.fuel_left <= 0.0f || (pyro < 20.0f && damp <= 0.0f)) {
 			r.state = ROOM_OUT;
 			r.ember = 1.0f;
 			r.q = 0.0f;
@@ -797,6 +965,28 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 		} else if (light) {
 			light->set_visible(false);
 		}
+	}
+}
+
+// Steam: the heat the water took leaves as steam (PhysXSteam), out of the room's openings and off its cladding.
+void PhysXBuildingFire3D::_update_steam(float p_delta) {
+	const Transform3D xf = get_global_transform();
+	for (Room &r : rooms) {
+		if (r.steam_j < 2.0e5f) {
+			continue;
+		}
+		Vector3 at = r.box.get_center() + Vector3(0, r.box.size.y * 0.3f, 0);
+		for (const Opening &o : r.openings) {
+			if (o.to_room < 0 && (!o.glazed || o.broken)) {
+				at = _face_point(r, o.face, Vector2(o.rect.get_center().x, o.rect.get_end().y - 0.1f)) + _face_normal(o.face) * 0.3f;
+				break;
+			}
+		}
+		steam.add_heat(xf.xform(at), r.steam_j, CLAMP(0.25f * r.box.size.length(), 0.4f, 1.5f), 3.0f);
+		r.steam_j = 0.0f;
+	}
+	if (steam.is_steaming() || steam.get_total_kg() > 0.0f) {
+		steam.step(this, wind, p_delta);
 	}
 }
 
@@ -1195,6 +1385,7 @@ void PhysXBuildingFire3D::_notification(int p_what) {
 			buildings.erase(this);
 			WorldContracts::unregister_fire(this);
 			brands.clear();
+			steam.clear();
 			for (Room &r : rooms) {
 				for (ObjectID *id : { &r.inner_emitter, &r.roof_emitter }) {
 					if (Node *e = Object::cast_to<Node>(ObjectDB::get_instance(*id))) {
@@ -1246,6 +1437,7 @@ void PhysXBuildingFire3D::_notification(int p_what) {
 				_weaken(i);
 			}
 			_update_visuals(real_dt);
+			_update_steam(real_dt);
 			_update_brands(real_dt);
 			_update_look();
 		} break;
@@ -1289,6 +1481,8 @@ void PhysXBuildingFire3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_time_scale"), &PhysXBuildingFire3D::get_time_scale);
 
 	ClassDB::bind_method(D_METHOD("ignite", "position"), &PhysXBuildingFire3D::ignite);
+	ClassDB::bind_method(D_METHOD("apply_water", "position", "kg"), &PhysXBuildingFire3D::apply_water);
+	ClassDB::bind_method(D_METHOD("get_room_water_cooling", "room"), &PhysXBuildingFire3D::get_room_water_cooling);
 	ClassDB::bind_method(D_METHOD("extinguish"), &PhysXBuildingFire3D::extinguish);
 	ClassDB::bind_method(D_METHOD("add_brand", "position", "normal", "glow"), &PhysXBuildingFire3D::add_brand);
 	ClassDB::bind_method(D_METHOD("get_room_count"), &PhysXBuildingFire3D::get_room_count);
