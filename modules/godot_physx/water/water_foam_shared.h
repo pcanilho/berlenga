@@ -24,8 +24,15 @@ float wf_noise(vec2 p) {
 			mix(wf_hash(i + vec2(0.0, 1.0)), wf_hash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
 
+// Turned 36.87 degrees (a 3-4-5 triangle): each octave on its own lattice, so their sum has no axis to line up on.
+// Value noise on one lattice per octave lined every crisp threshold of it up with the world's axes, short bars
+// across and along the surf like a barcode.
+vec2 wf_rot(vec2 p) {
+	return vec2(0.8 * p.x - 0.6 * p.y, 0.6 * p.x + 0.8 * p.y);
+}
+
 float wf_fbm(vec2 p) {
-	return 0.5 * wf_noise(p) + 0.3 * wf_noise(p * 2.3 + 7.1) + 0.2 * wf_noise(p * 5.1 - 3.3);
+	return 0.5 * wf_noise(p) + 0.3 * wf_noise(wf_rot(p) * 2.3 + 7.1) + 0.2 * wf_noise(wf_rot(wf_rot(p)) * 5.1 - 3.3);
 }
 
 // Holes torn in a foam sheet, one per feature of a jittered grid (Worley 1996), each its own size: the cover left
@@ -49,7 +56,9 @@ vec4 wf_holes(vec2 p, float open, float scale, float bias, float soft, float jit
 		for (int x = -1; x <= 1; x++) {
 			vec2 g = vec2(float(x), float(y));
 			vec2 o = vec2(wf_hash(i + g), wf_hash(i + g + vec2(17.3, 5.1)));
-			vec2 r = g + 0.15 + 0.7 * o - f;
+			// Each feature anywhere in its cell: kept near the middle (0.15 to 0.85) the cells stayed nearly a square
+			// grid, and the strands along their borders ran as rows of short bars across and along the foam.
+			vec2 r = g + o - f;
 			float d = length(r);
 			if (d < d1) {
 				d2 = d1;
@@ -57,10 +66,10 @@ vec4 wf_holes(vec2 p, float open, float scale, float bias, float soft, float jit
 			} else if (d < d2) {
 				d2 = d;
 			}
-			// No feature outside the 3x3 neighbourhood is nearer than 1.15 cells, and a hole reaches its radius
-			// plus the tear and lobes (up to 0.16 + 0.43 of the radius) past it: at most 0.65 cells keeps every
+			// No feature outside the 3x3 neighbourhood is nearer than one cell, and a hole reaches its radius
+			// plus the tear and lobes (up to 0.16 + 0.43 of the radius) past it: at most 0.56 cells keeps every
 			// hole whole (a larger one was cut along a straight line where the search ended).
-			float rad = min(open * max(wf_hash(i + g + vec2(41.7, 23.9)) * scale - bias, 0.0), 0.65);
+			float rad = min(open * max(wf_hash(i + g + vec2(41.7, 23.9)) * scale - bias, 0.0), 0.56);
 			if (rad > 0.0) {
 				float de = d + jit + rad * (0.6 * lobe + 0.25 * tear);
 				keep = min(keep, smoothstep(rad - soft, rad + soft, de));
@@ -95,8 +104,12 @@ float wf_structure(vec2 p, float amount, float footprint, vec2 p_streak, float p
 	// Hole radius per cell: about a fifth of the cells hold, the rest open to sizes spread wide; each layer's holes
 	// torn at its own scale (wf_holes).
 	vec4 h1 = wf_holes(q * 0.5 + warp * 0.8 * age_warp, open, 1.5, 0.3, soft1, 0.22 * rag);
-	vec4 h2 = wf_holes(q * 1.4 + warp * 1.4 * age_warp + 11.0, open, 1.4, 0.25, soft2, 0.28 * rag);
-	vec4 h3 = wf_holes(q * 4.6 + warp * 2.0 * age_warp - 5.0, open, 1.2, 0.15, soft3, 0.32 * rag);
+	// Each layer's cells turned against the last, so no two share an axis.
+	vec4 h2 = wf_holes(wf_rot(q) * 1.4 + warp * 1.4 * age_warp + 11.0, open, 1.4, 0.25, soft2, 0.28 * rag);
+	// The smallest holes open in clusters (a metre or two across) with stretches of unbroken sheet between: films
+	// drain unevenly, and one even sprinkle of them read as a pocked stipple over all the near foam.
+	float cluster3 = smoothstep(0.38, 0.68, wf_fbm(q * 0.6 + vec2(-9.3, 4.4)));
+	vec4 h3 = wf_holes(wf_rot(wf_rot(q)) * 4.6 + warp * 2.0 * age_warp - 5.0, open * mix(0.25, 1.35, cluster3), 1.2, 0.15, soft3, 0.32 * rag);
 	float keep1 = h1.x;
 	float keep2 = h2.x;
 	float keep3 = h3.x;
@@ -126,14 +139,24 @@ float wf_structure(vec2 p, float amount, float footprint, vec2 p_streak, float p
 	// Smooth, warped noise rather than cells, so the grain has no tile edges: soft clumps, the dark gaps
 	// between them, and the small bright domes of single large bubbles.
 	vec2 pw = p + 0.08 * warp;
-	float clumps = wf_fbm(pw * 16.0 + 4.7);
-	float gaps = smoothstep(0.3, 0.12, wf_fbm(pw * 31.0 - 2.9));
-	float domes = smoothstep(0.8, 0.95, wf_fbm(pw * 38.0 + 9.3));
+	// The grain varies over the sheet (patches of fine, even froth beside coarse, pocked foam and smooth slick
+	// films, about a metre across), not one even stipple of dots over all of it: real swash foam is patchy.
+	float grain_patch = wf_fbm(p * 0.9 + vec2(13.1, -7.7));
+	float coarse_grain = smoothstep(0.35, 0.7, grain_patch);
+	// Two fixed scales blended, not one scale that varies (its rate times the distance from the origin sheared it).
+	float clumps = mix(wf_fbm(pw * 20.0 + 4.7), wf_fbm(pw * 11.0 - 6.2), coarse_grain);
+	// The dark gaps between clumps only in the coarse patches: sprinkled over the whole sheet they read as an even pocked
+	// stipple from a few metres.
+	float gaps = smoothstep(0.3, 0.12, mix(wf_fbm(pw * 36.0 - 2.9), wf_fbm(pw * 22.0 + 8.4), coarse_grain)) * smoothstep(0.5, 0.8, grain_patch);
+	float domes = smoothstep(0.8, 0.95, wf_fbm(pw * 38.0 + 9.3)) * smoothstep(0.45, 0.8, grain_patch);
 	// Past a pixel each fades to its own mean (wf_fbm averages 0.5: clumps 0.62 + 0.45 * 0.5, gaps and domes rare),
 	// not to 1: fading to 1 drew far foam about a fifth brighter than the same foam near, or under the path tracer
 	// (no derivatives, full detail, the same mean), so distant patches read as flat white sheets.
 	float bubbles = mix(0.84, (0.62 + 0.45 * clumps) * (1.0 - 0.3 * gaps) + 0.12 * domes, grain);
 	bubbles *= mix(0.925, 0.7 + 0.45 * wf_fbm(pw * 3.5 + 2.3), cluster);
+	// Thicker and thinner stretches of the sheet (half a metre to a couple of metres): a fresh sheet is mottled, its
+	// thin places greyer, not one even white.
+	bubbles *= mix(0.93, 0.78 + 0.3 * wf_fbm(pw * 1.1 - 7.7), cluster);
 	// Thin foam is translucent, thick foam opaque.
 	float density = smoothstep(0.02, 0.35, a);
 	if (p_crisp > 0.0) {

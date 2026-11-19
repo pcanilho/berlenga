@@ -37,6 +37,7 @@ extends Node3D
 #   --cave-mouths         the retired cave-mouth portal blocks (and their terrain holes) in --world frames
 #   --wind=m/s            with --water: the sea's wind speed (and some swell)
 #   --shadow-filter=N     the directional soft-shadow filter quality (0 hard .. 5 ultra)
+#   --sea-set=prop:value[,...]  with --water: set properties of the sea (e.g. wave_tile_breakup:false)
 #   --water [--sea-res=N] with --world: the generator's water bodies; --sea-res sets the sea's simulated grid (cells)
 #   --settle=N            N more frames before the capture (near plant cells are built lazily)
 #   --out=path.png        render and quit (path traced unless --raster); --spp=N (16); --size=WxH
@@ -371,6 +372,13 @@ func _world() -> void:
 		_beach_surface(tm)
 	if args.has("water"):
 		var waters: Array = gen.build_water(self)
+		if args.has("sea-set"):
+			# --sea-set=property:value[,property:value]: properties of the sea (PhysXWaterSurface3D), for off/on pairs.
+			for kv in String(args["sea-set"]).split(","):
+				var pv := kv.split(":", true, 1)
+				for w in waters:
+					if w is Node and (w as Node).name == "Sea":
+						w.set(pv[0], str_to_var(pv[1]))
 		for w in waters:
 			# Seabed rays through terrain holes (cave mouths) land on the cave floors.
 			if w is Node and (w as Node).name == "Sea" and "terrain_source" in w:

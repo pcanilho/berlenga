@@ -611,6 +611,24 @@ vec4 ocean_deriv_all(vec2 world_xz) {
 // The cascades' summed derivatives (as ocean_deriv_all), and the same with each band weighted by the share of it
 // a pixel of this footprint (m) shows (in log k, where the slope variance lies evenly; waves longer than two
 // footprints), with the hidden bands' slope variance in r_hidden.
+// The pixel's longer side on the water (m), along the view at grazing angles. The path tracer has no
+// derivatives (its fwidth is a token epsilon), so there it is the camera pixel's cone at the point's distance
+// stretched by the grazing angle, as the raster's fwidth measures it: without it the far sea under path tracing
+// carried every wave in the normal on rings metres apart, and at a grazing view those facets sent the rays
+// down into the water or into the next wave, a black band toward the horizon where raster shows the sky's sheen
+// (filtered far sea: Bruneton, Neyret and Holzschuch 2010, as raster does).
+float water_pixel_footprint(vec2 p_xz, vec3 p_world, vec3 p_camera, mat4 p_projection, vec2 p_viewport) {
+#if defined(RT)
+	vec3 to = p_world - p_camera;
+	float d = length(to);
+	float pixel = 2.0 / max(abs(p_projection[1][1]) * p_viewport.y, 1.0);
+	return max(d * pixel / max(abs(to.y) / max(d, 1e-4), 0.02), 1e-5);
+#else
+	vec2 fw = fwidth(p_xz);
+	return max(max(fw.x, fw.y), 1e-5);
+#endif
+}
+
 float far_shown(int i, float footprint) {
 	float lo = cascade_k_lo[i];
 	float hi = cascade_k_hi[i];
@@ -800,9 +818,12 @@ vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 	if (inside <= 0.0) {
 		return vec3(0.0);
 	}
-	vec4 a = texture(shore_wave_tex_a, cuv_r);
-	vec4 b = texture(shore_wave_tex_b, cuv_r);
-	vec4 c = texture(shore_wave_tex_c, cuv_r);
+	// Smooth (cubic B-spline) across the grid's cells: bilinear, every threshold on them (where a wave breaks, its
+	// stage, its white water) turned at the cell borders, so the surf's foam showed the grid as rows of short
+	// straight bars along both axes.
+	vec4 a = grid_bspline(shore_wave_tex_a, cuv_r);
+	vec4 b = grid_bspline(shore_wave_tex_b, cuv_r);
+	vec4 c = grid_bspline(shore_wave_tex_c, cuv_r);
 	float depth = max(depth_r(world_xz, cuv_r), 0.0);
 	float vary = 0.55 + 0.45 * flow_value_noise(world_xz * 0.04 + vec2(water_time * 0.03, 0.0));
 	// Plunging or spilling, from the surf similarity number (Battjes 1974):
@@ -866,21 +887,24 @@ vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 		// opens into lace rather than trailing as a smooth band.
 		float sect = flow_value_noise(world_xz * 0.09 + vec2(float(i) * 7.3, 0.0)) * 0.65 + flow_value_noise(world_xz * 0.31 - vec2(0.0, float(i) * 3.1)) * 0.35;
 		float spill = mix(0.3, 1.0, smoothstep(0.3, 0.62, sect));
-		float trail = 0.7 * exp(-behind * 5.0) * mix(0.45, 1.0, smoothstep(0.25, 0.7, flow_value_noise(world_xz * 0.45 + 2.7)));
+		float trail = 0.7 * exp(-behind * 5.0) * mix(0.45, 1.0, smoothstep(0.3, 0.65, wf_fbm(world_xz * 0.45 + 2.7)));
 		// The roller on the crest is torn too: its turbulence leaves dark streaks of clear water running with the
 		// wave (a metre or so across, several long), so even fresh white water opens in places rather than
 		// reading as an even white band from a few tens of metres.
-		// Wandering streaks, only in patches along the crest (an even comb otherwise).
-		// Warped at two scales so they tear raggedly rather than run as straight parallel bars.
-		vec2 rq = vec2(dot(world_xz, dir) * 0.4, dot(world_xz, vec2(-dir.y, dir.x)) * 0.75);
-		rq += vec2(0.8, 1.6) * (vec2(flow_value_noise(world_xz * 0.12 + vec2(2.3, float(i) * 4.7)), flow_value_noise(world_xz * 0.12 - vec2(float(i) * 3.3, 7.9))) - 0.5) * 2.0;
-		rq.y += 0.5 * (flow_value_noise(world_xz * 0.6 + vec2(4.1, float(i))) - 0.5);
-		float torn = smoothstep(0.35, 0.65, flow_value_noise(world_xz * 0.08 + vec2(float(i) * 9.1, 6.2)));
+		// Only in patches along the crest. Each streak is a blob of noise drawn out along the wave, summed from value
+		// noise on three lattices turned against each other and warped at the scale of the streaks, so its outline
+		// wanders and no edge runs along a lattice: one lattice's threshold tore the band into blocks with edges along
+		// and across the wave (a comb of short parallel bars), and contour lines of it into an even hatching.
+		vec2 rq = vec2(dot(world_xz, dir) * 0.25, dot(world_xz, vec2(-dir.y, dir.x)) * 0.7);
+		rq += 2.4 * (vec2(wf_fbm(world_xz * 0.09 + vec2(2.3, float(i) * 4.7)), wf_fbm(world_xz * 0.09 - vec2(float(i) * 3.3, 7.9))) - 0.5);
+		rq += vec2(float(i) * 5.1, 1.3);
+		float rn = 0.36 * wf_noise(rq) + 0.36 * wf_noise(wf_rot(rq) * 1.17 + 5.3) + 0.28 * wf_noise(wf_rot(wf_rot(rq)) * 2.6 - 2.1);
+		float torn = smoothstep(0.35, 0.65, wf_fbm(world_xz * 0.07 + vec2(float(i) * 9.1, 6.2)));
 		// Only past about 15 m from the camera (as foam_at_with's view_dist): nearer, the foam's own holes and
 		// lace are resolved, and streaks cut in its amount meet the crisp edge as hard straight bars.
 		vec2 rel_c = world_xz - grid_center;
 		float rip_far = smoothstep(12.0, 25.0, length(mesh_open ? rel_c - mesh_offset : rel_c));
-		float rip = 1.0 - 0.6 * rip_far * torn * smoothstep(0.62, 0.3, flow_value_noise(rq + vec2(float(i) * 5.1, 1.3)));
+		float rip = 1.0 - 0.6 * rip_far * torn * smoothstep(0.58, 0.68, rn);
 		r_white = max(r_white, brk * vary * spill * max(rip * smoothstep(0.35, 0.95, cos(ps)), trail));
 		// The lip turns white as it falls, and the plunge throws up a splash.
 		r_white = max(r_white, drop_w * lip);
@@ -1728,8 +1752,7 @@ void fragment() {
 	float water_roughness = pathtraced_roughness;
 	if (per_pixel_normals && v_lip < 0.5) {
 		// The pixel's longer side (along the view at grazing angles), so no band aliases there.
-		vec2 fw_px = fwidth(v_rest_xz);
-		float footprint_px = max(max(fw_px.x, fw_px.y), 1e-5);
+		float footprint_px = water_pixel_footprint(v_rest_xz, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, PROJECTION_MATRIX, VIEWPORT_SIZE);
 		vec4 der;
 		float hidden_var;
 		// The normal takes the bands the pixel shows; the foam reads the whole surface (its crests break as they are).
@@ -1747,8 +1770,7 @@ void fragment() {
 			// A pixel shows the waves longer than two of its footprints: the share of the band (in log k, where
 			// the slope variance lies evenly) from the band's start up to that.
 			// The pixel's longer side (along the view at grazing angles), so the band never aliases there.
-			vec2 fw = fwidth(v_rest_xz);
-			float footprint = max(max(fw.x, fw.y), 1e-5);
+			float footprint = water_pixel_footprint(v_rest_xz, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, PROJECTION_MATRIX, VIEWPORT_SIZE);
 			float k_hi = PI / detail_texel;
 			float shown = clamp(log(PI / (2.0 * footprint) / detail_k_min) / log(k_hi / detail_k_min), 0.0, 1.0);
 			// Cat's paws: the gusts passing over the water roughen the short waves under them.
@@ -2060,6 +2082,17 @@ void fragment() {
 	// (the path tracer tracks the medium between them). Foam is an opaque,
 	// rough white layer on top; where the swash has left the sand, no surface.
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
+	if (FRONT_FACING) {
+		// A facet turned away from the ray cannot be what it meets: at a grazing view the waves in front hide
+		// it (masking). The per-pixel normal carries waves the coarse far rings do not, so there it can face
+		// away, and the reflected ray went down into the water, a black band toward the horizon that raster's
+		// filtered far sea does not have. It is turned until it faces the ray a little (as Unreal and Frostbite
+		// bend shading normals that face away from the view).
+		float nv = dot(NORMAL, VIEW);
+		if (nv < 0.08) {
+			NORMAL = normalize(NORMAL + VIEW * (0.08 - nv));
+		}
+	}
 	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
 	ROUGHNESS = mix(edge_rough, 0.8, foam);
 	SPECULAR = 0.5;
