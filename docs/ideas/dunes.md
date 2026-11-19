@@ -167,3 +167,37 @@ path drops there. About 2.2 times the old cost. Bench check: stoss 58% of the sl
    plants, and sand seas following a mask (a wind-shadow or sediment map) instead of a rect.
 4. Logged earlier: mudflat/fine-sediment mask under salt marsh; compacted soil along vegetation paths; plunging
    cliffs to the swash line (rocks' sea caves).
+
+## Built: nebkhas and erg masks (19 Nov, item 3 of the round)
+
+Nebkhas (coppice dunes) are sand trapped by a single shrub: a dome round the plant and a tail in its lee (a shadow
+dune). They form where the sand supply is limited and the plant keeps pace with it: interdune flats, erg margins,
+playas. Most are 0.4 to 2 m high and a few metres across (Tengberg 1995, Burkina Faso; Khalaf, Misak and Al-Dousari
+1995, Kuwait: most under 1.5 m). The tail runs a few plant heights downwind (Hesp 1981, shadow dunes).
+
+Latest (asked by Paulo, 19 Nov). Cheng, Wu, Pang and Jia 2024 (Plants 13:624, Tengger): mean heights 1.1-1.2 m,
+largest 2.7-3.6 m, areas up to hundreds of m2, half-ellipsoid mounds, clustered within some 30 m, where the water
+table is 1.5-4 m down; degrading mounds lose height and spread. Charbonneau et al. 2026 (Front. Ecol. Evol.
+13:1691144): field mounds near round (L/W 0.99) without tails, flanks 28 degrees on average, wind-tunnel ones
+L/W 1.4; height tracks stem count. ViSTA (Mayaud et al. 2017, JGR Earth Surface) is the one model shown to give
+nebkha size and spacing (Skeleton Coast), a slow cellular model; not worth porting. No paper gives a tail/height
+ratio, so tails vary 0-5 heights.
+
+- **Provider: TerrainGenerator3D.** The mounds belong to the ground, so the generator owns them and adds them to
+  get_height. Sites on a jittered 10 m lattice over the sand sea; a site keeps a mound with chance
+  0.9 x suitability x patch x `nebkha_density` (default 1), patch a 60 m value noise for the clustering. Suitable means loose sand at the surface, the sea's sand under
+  3 m (full under 1 m), surface slope under 12 degrees (full under 5), off water and out of gullies (centre more than 0.5 m below the ground 8 m round).
+- **Shape.** Height 0.3 + 3.2 u^2.5 m (mean 1.2, most small). Dome radius max(1 + 1.4 h, 2.4 h) x 1-1.3 (up to
+  8 m), profile (1 - q)^1.5, so the steepest flank (1.5 h / r) stays under 32 degrees. A quarter wear down
+  (x0.6 high, x1.3 wide). Tail 0 to 5 heights past the dome, narrowing to a third and thinning to nothing, along
+  `sand_sea_wind_angle`. Overlaps merge by the highest. The mound sits on the ground as it is (too small to fill a gully,
+  and none placed in gullies or channels) and buries boulders lower than twice its depth.
+- **Contract.** `get_nebkhas(rect)` returns (x, ground y at the top, z, mound height in m) for each mound whose plant
+  stands in the rect; `get_nebkha_height(pos)` is the mound's sand alone. `get_sand_sea_height` stays the sea's
+  sand only, so vegetation's dune and mobility reads do not change. Reader: vegetation places one desert shrub on
+  each mound top (size growing with the mound's height). Units m; default none outside a sand sea.
+- **Masks.** `sand_sea_mask` (Image, red 0 to 1, stretched over `sand_sea_rect`) scales the sea's supply and its
+  result, so an erg can follow basins or a drawn outline. A soft mask edge gives a thinning margin, where most
+  nebkhas land.
+- Cost: one 32 m bucket lookup per get_height call, a handful of mounds each.
+

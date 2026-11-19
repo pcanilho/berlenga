@@ -191,6 +191,8 @@ private:
 	real_t sand_sea_scale = 4.0; // m a cell; dunes come out some 25 cells apart and scale with it
 	int sand_sea_steps = 300;
 	real_t sand_sea_edge = 300.0; // m over which the sand thins out at the sea's edge
+	Ref<Image> sand_sea_mask; // optional: 0..1 (red) stretched over sand_sea_rect, where the sea's sand may lie
+	real_t nebkha_density = 1.0; // vegetated sand mounds on the sea's thin sand and margins (0: none)
 
 	// Lakes: natural dams across valleys, the water behind them.
 	int lake_count = 0;
@@ -460,6 +462,23 @@ private:
 	static void _sand_sea_shear(void *p_sea, uint32_t p_part);
 	void _build_sand_sea();
 	float _sea_sample(real_t p_x, real_t p_z) const;
+	LocalVector<float> sea_mask; // sand_sea_mask resampled on the sea's grid (empty: no mask)
+	// Nebkhas (docs/ideas/dunes.md, "Nebkhas"): mounds of sand held by a shrub, each a dome round the plant and a
+	// tail downwind, bucketed for get_height.
+	struct Nebkha {
+		Vector2 pos;
+		float height = 0.0f; // m at the plant
+		float radius = 0.0f; // m, the dome's
+		float tail = 0.0f; // m from the plant to the tail's end, downwind
+	};
+	LocalVector<Nebkha> nebkhas;
+	LocalVector<LocalVector<uint32_t>> neb_buckets;
+	int neb_bx = 0;
+	int neb_bz = 0;
+	Vector2 neb_origin;
+	Vector2 neb_dir; // downwind
+	void _build_nebkhas();
+	float _nebkha_sample(real_t p_x, real_t p_z) const;
 	real_t _sea_cubic(real_t p_gx, real_t p_gz) const;
 	float _ground_detail(real_t p_x, real_t p_z) const;
 	bool result_deposition = false; // the last generate() deposited (alluvium smooths the detail)
@@ -745,6 +764,12 @@ public:
 	void set_sand_sea_edge(real_t p_value) { sand_sea_edge = MAX(p_value, real_t(0.0)); }
 	real_t get_sand_sea_edge() const { return sand_sea_edge; }
 	real_t get_sand_sea_height(const Vector3 &p_global_position) const { return _sea_sample(p_global_position.x, p_global_position.z); }
+	void set_sand_sea_mask(const Ref<Image> &p_mask) { sand_sea_mask = p_mask; }
+	Ref<Image> get_sand_sea_mask() const { return sand_sea_mask; }
+	void set_nebkha_density(real_t p_value) { nebkha_density = MAX(p_value, real_t(0.0)); }
+	real_t get_nebkha_density() const { return nebkha_density; }
+	real_t get_nebkha_height(const Vector3 &p_global_position) const { return _nebkha_sample(p_global_position.x, p_global_position.z); }
+	PackedVector4Array get_nebkhas(const Rect2 &p_rect) const;
 	real_t get_last_sand_sea_msec() const { return last_sand_sea_msec; }
 	real_t get_last_sand_sea_max() const { return last_sand_sea_max; }
 	void set_lake_count(int p_count) { lake_count = CLAMP(p_count, 0, 256); }
