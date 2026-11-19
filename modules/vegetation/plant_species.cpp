@@ -376,7 +376,8 @@ float PlantSpecies::get_patch_weight(const Vector3 &p_pos) const {
 	const float n = 0.7f * patch_value_noise(x, z, patch_seed) + 0.3f * patch_value_noise(x * 2.7f + 17.3f, z * 2.7f - 5.1f, patch_seed + 1);
 	// Two octaves of value noise are close to a bell around 0.5: map the cover through it.
 	const float threshold = 0.5f + 0.42f * (0.5f - patch_cover) * 2.0f;
-	const float w = Math::smoothstep(threshold - 0.06f, threshold + 0.06f, n);
+	// A wide band (about a fifth of the noise's spread): density and, in the grass, height taper over metres.
+	const float w = Math::smoothstep(threshold - 0.12f, threshold + 0.12f, n);
 	return patch_invert ? 1.0f - w : w;
 }
 

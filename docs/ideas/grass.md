@@ -553,6 +553,42 @@ tiles, +69 MB memory, +976k primitives, frame 2710 to 3067 ms (+13%); the shell 
 primitives, +1%. First fill 120-150 ms on the main thread, then a 4 ms budget a frame. Path traced: the far meadow
 keeps its texture to the horizon with no seam (bench pair). GPU cost on the PC queue.
 
+## Colour without blotches (built 19 Nov)
+
+Paulo (19 Nov): the meadow's colour variation read as patches, like camouflage; he wants variation without blotches
+and the soft, slightly blurred look of the Nyx I grass in Star Citizen, with smooth edges between grass types and
+densities. Causes found in our code:
+
+- `grass_patch_tint` drove the hue from two octaves of square-lattice value noise at about 9 m and 2 m, at gain 1.6
+  and clamped, so the hue sat at full warm or full cool over blobs a few metres across with lattice-aligned shapes.
+- Rule edges (a patch's edge, a fade to other ground) thinned the blades by their rank but left them full height, so
+  a sparse sward ended in a wall of tall blades; the patch noise's edge band was also narrow (0.06 of the noise).
+- Every blade kept its own facing and value at any distance: past a few metres that is speckle, not softness.
+
+What the references do:
+
+- Ghost of Tsushima (Wohllaib, GDC 2021): Voronoi clumps share height and facing; colour along each blade from a
+  texture; artist-authored far tiles; and with distance the blades' normals blend towards a clump-based common
+  normal, which takes the glints and flicker out of distant grass.
+- Star Citizen Planet Tech v5 (CitizenCon 2954, starcitizen.tools/Planet_Tech_v5): "continuous variation to biomes",
+  "unrepetitively tiled blending"; meadows lit "more like a mass of fine fibers than a flat surface"; ground layers
+  with transitions that blend; density from competition, woodland thinning gradually into grassland.
+- Horizon Zero Dawn (van Muijden, GDC 2017): density maps placed by dithering against a per-instance threshold, so
+  density ramps are soft and species interpenetrate at ecotones (we already do this with the blue-noise rank).
+
+Built:
+
+- Colour: hue from two rotated, domain-warped octaves at about 70 m and 25 m with a soft (x / (1 + |x|)) response and
+  0.55 strength, plus per-blade hue and value. No mid-scale hue blobs, no lattice shapes; the ground under the blades
+  takes the same field (grass_ground()).
+- Soft edges: blades left where the rules thin the sward grow shorter, half height at the edge (`_edge_height`, the
+  GPU fill the same, in sixteenths so both fills agree); the patch noise's edge band is twice as wide (0.12). A patch
+  now tapers over metres in both density and height.
+- Softness with distance: from 6 to 35 m from the fade band's centre the blade normal eases 55% towards the ground's
+  up and the tint 50% towards the large-scale drift (Ghost of Tsushima's common normal). Done in vertex() from the
+  fade band, so the shadow pass and the path tracer see the same.
+- Cost: a few ALU per vertex; no new data.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.

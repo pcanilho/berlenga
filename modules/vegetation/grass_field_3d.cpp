@@ -269,6 +269,14 @@ bool GrassField3D::is_gpu_fill_available() {
 
 // Shared by the blades and the ground under them (get_ground_shader_code()), so both drift to the
 // same colours at the same places: a gap between blades then shows the base of the same sward.
+// Soft edges (docs/ideas/grass.md, "Colour without blotches"): where the rules thin the sward the blades left grow
+// shorter too, half height at the edge, so a patch or a fade to other ground tapers instead of ending in a wall of
+// full-height blades. grass_fill.glsl does the same.
+static inline float _edge_height(float p_suit) {
+	// In sixteenths, so the GPU fill (its suitability from a 0.5 m grid) gives the same heights as this.
+	return Math::round(Math::lerp(0.5f, 1.0f, Math::smoothstep(0.0f, 0.7f, p_suit)) * 16.0f) / 16.0f;
+}
+
 static const char *GRASS_COLOR_CODE = R"(
 float grass_hash(vec2 p) {
 	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -281,15 +289,28 @@ float grass_noise(vec2 p) {
 	return mix(mix(grass_hash(i), grass_hash(i + vec2(1.0, 0.0)), f.x), mix(grass_hash(i + vec2(0.0, 1.0)), grass_hash(i + vec2(1.0, 1.0)), f.x), f.y);
 }
 
-// Colour variation at three scales (patches of soil and water, clumps, single blades), as in
-// Ghost of Tsushima and Horizon: a field of one flat green reads as carpet, not grass.
+// Colour variation (docs/ideas/grass.md, "Colour without blotches"): a meadow's colour drifts slowly over tens of
+// metres (moisture, soil, the species mix) and varies strongly only from one blade or tuft to the next. Strong hue
+// patches a few metres across read as camouflage blotches, so the hue is gentle and large-scale: two rotated, domain-
+// warped octaves at about 70 m and 25 m (no square-lattice blobs), soft at their extremes (no flat-tinted plateaus).
+// The blade's own value carries the fine variation, and the ground under the blades takes the same field.
+vec2 grass_rot(vec2 p, float a) {
+	float s = sin(a), c = cos(a);
+	return vec2(c * p.x - s * p.y, s * p.x + c * p.y);
+}
+
 vec3 grass_patch_tint(vec2 xz, float blade, float value, float variation) {
-	float patches = grass_noise(xz * 0.11) * 0.65 + grass_noise(xz * 0.47 + 3.7) * 0.35;
-	float hue = (patches - 0.5) * 1.6 + (blade - 0.5) * 0.7;
-	vec3 warm = vec3(1.18, 1.08, 0.62); // yellower, drier
-	vec3 cool = vec3(0.82, 0.96, 1.02); // bluer, lusher
+	vec2 warp = vec2(grass_noise(grass_rot(xz, 0.6) * 0.021 + 5.2), grass_noise(grass_rot(xz, 2.1) * 0.021 - 7.9)) - 0.5;
+	vec2 q = xz + warp * 30.0;
+	float drift = grass_noise(grass_rot(q, 0.37) * 0.0143) * 0.65 + grass_noise(grass_rot(q, 1.91) * 0.04 + 3.7) * 0.35;
+	// Soft response: tanh-like, so the extremes ease off instead of saturating to one flat tint.
+	float d = (drift - 0.5) * 2.2;
+	d = d / (1.0 + abs(d));
+	float hue = d * 0.55 + (blade - 0.5) * 0.6;
+	vec3 warm = vec3(1.14, 1.06, 0.7); // yellower, drier
+	vec3 cool = vec3(0.86, 0.97, 1.02); // bluer, lusher
 	vec3 tint = hue > 0.0 ? mix(vec3(1.0), warm, min(hue, 1.0)) : mix(vec3(1.0), cool, min(-hue, 1.0));
-	tint *= 0.82 + 0.36 * value;
+	tint *= 0.8 + 0.4 * value;
 	return mix(vec3(1.0), tint, variation);
 }
 )";
@@ -1128,6 +1149,16 @@ void vertex() {
 	v_frost = 0.0;
 	v_snow = snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0;
 	v_tint = grass_patch_tint(base_w.xz, fract(rnd * 7.31 + 0.13), fract(rnd * 13.7 + 0.51), color_variation);
+	// Softness with distance (docs/ideas/grass.md, "Colour without blotches"; Ghost of Tsushima, GDC 2021: normals
+	// blended towards a common normal with distance): past a few metres each blade's own facing and value flicker
+	// into speckle, so they ease towards the sward's: the normal towards the ground's up, the tint towards the large-
+	// scale drift. The meadow then reads as a mass of fine fibres (Planet Tech v5), not grit. Measured from the
+	// fade band's centre, so the shadow pass and the path tracer agree.
+	if (fade_band.w > 0.0) {
+		float soft = smoothstep(6.0, 35.0, length(base_w.xz - fade_band.xy));
+		NORMAL = normalize(mix(NORMAL, normalize(to_local * vec3(0.0, 1.0, 0.0)), 0.55 * soft));
+		v_tint = mix(v_tint, grass_patch_tint(base_w.xz, 0.5, 0.5, color_variation), 0.5 * soft);
+	}
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
@@ -2296,6 +2327,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 		float shade_t = 0.0f;
 		float sun_t = 0.0f;
 		float passes = 0.0f;
+		float edge = 1.0f; // Height at the rules' edges (soft edges: the thinning blades also shorten).
 	};
 	const bool fielded = crop == CROP_NONE && crop_mask.any_in(Rect2(x0, z0, tile_size, tile_size));
 	auto accept = [&](float x, float z, float rank, Spot &r_spot) -> bool {
@@ -2328,6 +2360,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			if (rank >= keep * suit) {
 				return false;
 			}
+			r_spot.edge = _edge_height(suit / MAX(passes > 0.0f ? _trample_cover(passes) : 1.0f, 1e-4f));
 			y = p_map->get_height_at(p);
 		}
 		const float lx = CLAMP(x - x0, 0.0f, float(lg - 1));
@@ -2366,7 +2399,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 				const float clump_h = unit(hc, 0);
 				const float clump_yaw = unit(hc, 8) * Math::TAU;
 				const float rnd = unit(hb, 16);
-				const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * clump_h + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * sp.shade_t - 0.15f * sp.sun_t) * _trample_scale(sp.passes);
+				const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * clump_h + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * sp.shade_t - 0.15f * sp.sun_t) * _trample_scale(sp.passes) * sp.edge;
 				const float yaw = clump_yaw + (unit(hj, 24) - 0.5f) * 1.6f;
 				const Transform3D world(Basis(Vector3(0, 1, 0), yaw), Vector3(x, sp.y, z));
 				xforms.push_back(to_local * world);
@@ -2977,6 +3010,7 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 			float y = ground_y;
 			const float pick = unit(hb, 16) + unit(hb, 24) / 256.0f;
 			float suit = 1.0f;
+			float edge = 1.0f;
 			if (p_map) {
 				suit = r->get_suitability(p_map, p);
 				if (canopy && suit > 0.0f) {
@@ -2991,13 +3025,14 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 				if (pick >= suit) {
 					continue;
 				}
+				edge = _edge_height(suit / MAX(passes > 0.0f ? _trample_cover(passes) : 1.0f, 1e-4f));
 				y = p_map->get_height_at(p);
 			}
 			const float light = (1.0f - (crowns ? crowns->get_shade_at(p) : 0.0f)) * (p_map ? VegetationLight::exposure(p_map, sun_mean, x, z) : 1.0f);
 			const float shade_t = 1.0f - CLAMP(light, 0.0f, 1.0f);
 			const float sun_t = Math::smoothstep(1.0f, 1.3f, light);
 			const uint32_t hc = clump_hash(x, z, clump_size);
-			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * unit(hc, 0) + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * shade_t - 0.15f * sun_t) * _trample_scale(passes);
+			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * unit(hc, 0) + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * shade_t - 0.15f * sun_t) * _trample_scale(passes) * edge;
 			const float yaw = unit(hc, 8) * Math::TAU + (unit(hj, 24) - 0.5f) * 1.6f;
 			xforms.push_back(to_local * Transform3D(Basis(Vector3(0, 1, 0), yaw), Vector3(x, y, z)));
 			const float rnd = unit(hash_fmix32(hb ^ 0x5BD1E995u), 0);
