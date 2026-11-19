@@ -2497,7 +2497,7 @@
     "LeafFall3D"
    ],
    "note": "",
-   "what": "leaves fall from the crowns through the wind as autumn sheds them, and gusts and passing bodies lift them off the ground.",
+   "what": "leaves fall from the crowns through the wind as autumn sheds them, and gusts and passing bodies lift them off the ground; on ponds and rivers they float and drift, and on snow they lie until it melts and brings them back out.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -3216,6 +3216,17 @@
    ],
    "note": "",
    "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it, and fire melts the snow under it at any air temperature.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
+   "name": "Dirty snow",
+   "settings": [
+    "SnowCover3D.impurities_enabled"
+   ],
+   "note": "",
+   "what": "smoke, burnt forest and settling dust darken the snow and make it melt sooner, until fresh snow buries the dirt.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
