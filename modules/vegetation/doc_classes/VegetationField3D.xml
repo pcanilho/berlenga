@@ -47,6 +47,27 @@
 				The wetness round a desert spring at [param global_position] (x and z), as [constant PlantSpecies.RULE_SPRING] reads it: 0 dry to 1 at the water, -1 off the sand seas. Read with the last placement, and only when a species uses the rule.
 			</description>
 		</method>
+		<method name="add_canopy_loss">
+			<return type="void" />
+			<param index="0" name="xz" type="Vector2" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="keep" type="float" default="0.0" />
+			<description>
+				A felled tree or snapped crown: every placed crown centred within [param radius] of [param xz] keeps only [param keep] of its leaf area. [method get_shade_at] sees it at once, and every later repaint of the canopy ([member WeatherMap3D.canopy_map] through [member weather_map]) takes it out again, so streaming does not restore a felled crown. The caller cuts the live canopy map itself ([TreeWind3D] does).
+			</description>
+		</method>
+		<method name="clear_canopy_losses">
+			<return type="void" />
+			<description>
+				Forgets every [method add_canopy_loss]: the next repaint restores those crowns.
+			</description>
+		</method>
+		<method name="get_canopy_losses" qualifiers="const">
+			<return type="PackedVector4Array" />
+			<description>
+				The felled crowns from [method add_canopy_loss]: x, z, radius and the leaf area kept, each.
+			</description>
+		</method>
 		<method name="get_springs" qualifiers="const">
 			<return type="PackedVector4Array" />
 			<description>

@@ -385,6 +385,39 @@ void VegetationField3D::_read_sand_mobility(const TerrainGenerator3D *p_gen, Pla
 	r_setup.sea_depth = depth;
 }
 
+// A felled crown or snapped stem (TreeWind3D: storms, avalanches) keeps only p_keep of its leaf area: every crown
+// centred within p_radius of p_xz. Leaf area scales, so opacity = 1 - (1 - opacity)^keep (Beer's law, as the
+// canopy map's LAI = -2 ln(1 - opacity)).
+void VegetationField3D::_apply_canopy_losses(LocalVector<Crown> &r_crowns, const LocalVector<Vector4> &p_losses, int p_from) {
+	for (uint32_t i = p_from; i < p_losses.size(); i++) {
+		const Vector4 &l = p_losses[i];
+		const Vector2 c(l.x, l.y);
+		const float keep = CLAMP(l.w, 0.0f, 1.0f);
+		for (Crown &cr : r_crowns) {
+			if (cr.xz.distance_squared_to(c) < l.z * l.z) {
+				cr.opacity = keep <= 0.0f ? 0.0f : 1.0f - Math::pow(MAX(1.0f - cr.opacity, 1e-4f), keep);
+			}
+		}
+	}
+}
+
+void VegetationField3D::add_canopy_loss(const Vector2 &p_xz, float p_radius, float p_keep) {
+	ERR_FAIL_COND(p_radius <= 0.0f);
+	canopy_losses.push_back(Vector4(p_xz.x, p_xz.y, p_radius, CLAMP(p_keep, 0.0f, 1.0f)));
+	// The crowns already placed: get_shade_at() and the plants under them see the gap now; the canopy map at
+	// its next repaint (the caller cuts the live map itself).
+	RWLockWrite guard(crown_lock);
+	_apply_canopy_losses(crowns, canopy_losses, canopy_losses.size() - 1);
+}
+
+PackedVector4Array VegetationField3D::get_canopy_losses() const {
+	PackedVector4Array out;
+	for (const Vector4 &l : canopy_losses) {
+		out.push_back(l);
+	}
+	return out;
+}
+
 PackedVector4Array VegetationField3D::get_springs() const {
 	PackedVector4Array out;
 	for (uint32_t i = 0; i < springs_seen.springs.size(); i++) {
@@ -2289,6 +2322,7 @@ void VegetationField3D::_compute_maps(Maps &r_maps, const LocalVector<const Loca
 			r_maps.max_radius = MAX(r_maps.max_radius, c.radius);
 		}
 	}
+	_apply_canopy_losses(r_maps.crowns, r_maps.canopy_losses);
 	const float reach = r_maps.max_radius * 1.4f;
 	const Rect2 &rect = r_maps.maps_rect;
 	if (!r_maps.crowns.is_empty() && rect.has_area()) {
@@ -2509,6 +2543,7 @@ void VegetationField3D::_compute_maps(Maps &r_maps, const LocalVector<const Loca
 }
 
 void VegetationField3D::_maps_wants(Maps &r_maps) const {
+	r_maps.canopy_losses = canopy_losses;
 	r_maps.want_canopy = !weather_map.is_empty() && is_inside_tree();
 	r_maps.want_floor = forest_floor_enabled && is_inside_tree();
 	r_maps.want_far = true;
@@ -4436,6 +4471,9 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_litter_at", "global_position"), &VegetationField3D::get_litter_at);
 	ClassDB::bind_method(D_METHOD("get_spring_wetness_at", "global_position"), &VegetationField3D::get_spring_wetness_at);
 	ClassDB::bind_method(D_METHOD("get_springs"), &VegetationField3D::get_springs);
+	ClassDB::bind_method(D_METHOD("add_canopy_loss", "xz", "radius", "keep"), &VegetationField3D::add_canopy_loss, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("get_canopy_losses"), &VegetationField3D::get_canopy_losses);
+	ClassDB::bind_method(D_METHOD("clear_canopy_losses"), &VegetationField3D::clear_canopy_losses);
 	ClassDB::bind_method(D_METHOD("set_cover_map_enabled", "enable"), &VegetationField3D::set_cover_map_enabled);
 	ClassDB::bind_method(D_METHOD("is_cover_map_enabled"), &VegetationField3D::is_cover_map_enabled);
 	ClassDB::bind_method(D_METHOD("set_cover_grass", "path"), &VegetationField3D::set_cover_grass);

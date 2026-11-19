@@ -329,8 +329,13 @@ private:
 		Ref<Image> floor;
 		Ref<Image> far;
 		float far_range = 0.0f;
+		LocalVector<Vector4> canopy_losses; // Snapshot of the field's (x, z, radius, leaf area kept).
 	};
 	void _maps_wants(Maps &r_maps) const;
+	// Felled crowns (add_canopy_loss()): x, z, radius, the share of leaf area kept. Every repaint of the canopy
+	// (WeatherMap3D.canopy_map) and the crowns' shade takes them out again.
+	LocalVector<Vector4> canopy_losses;
+	static void _apply_canopy_losses(LocalVector<Crown> &r_crowns, const LocalVector<Vector4> &p_losses, int p_from = 0);
 	static void _compute_maps(Maps &r_maps, const LocalVector<const LocalVector<Crown> *> &p_crowns, const LocalVector<const LocalVector<FarAdd> *> &p_far);
 	void _apply_maps(Maps &p_maps);
 	// The plant cover seen from far above for distant terrain (terrain_cover_* globals,
@@ -668,4 +673,7 @@ public:
 	float get_litter_at(const Vector3 &p_global_position) const;
 	float get_spring_wetness_at(const Vector3 &p_global_position) const { return springs_seen.at(Vector2(p_global_position.x, p_global_position.z)); }
 	PackedVector4Array get_springs() const;
+	void add_canopy_loss(const Vector2 &p_xz, float p_radius, float p_keep = 0.0f);
+	PackedVector4Array get_canopy_losses() const;
+	void clear_canopy_losses() { canopy_losses.clear(); }
 };
