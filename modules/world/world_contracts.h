@@ -557,6 +557,11 @@ struct WorldContactBody {
 	bool box = false;
 	float width = 0.0f; // m, contact width (0: from the shape)
 	float mass = 0.0f; // kg on the ground (0: only pushes to its underside)
+	// A walker (every CharacterBody3D; meta world_contact_walker true or false overrides): the ground, snow, sand and
+	// mud press its soles step by step (WorldWalkerSteps), never its body shape. Grass, plants, branches, water and
+	// wet tracks still feel the shape.
+	bool walker = false;
+	bool feet = false; // meta world_contact_feet: its feet are contact bodies of their own; deformers skip the walker
 };
 
 class WorldContracts : public Object {

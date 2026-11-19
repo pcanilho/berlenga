@@ -75,6 +75,8 @@ public:
 		float leaf_area = 0.0f; // Carried area of the stems at the root: shares the crown's snow by bone.
 		float crown_radius = 0.5f; // Horizontal reach of the crown (m, tree space).
 		float snow_catch = 1.0f; // Share of the canopy's snow this crown holds: bare broadleaves catch on twigs only.
+		Ref<Mesh> snow_caps[3]; // Light, full and heavy cap pads (mesh meta tree_snow_caps), skinned to this rig.
+		PackedFloat32Array cap_sites; // bone, x, y, z per cap (mesh meta tree_snow_cap_sites).
 		PackedFloat32Array colliders; // TreeGenerator.get_collision_capsules().
 		Ref<Mesh> mesh;
 		// Storms (docs/ideas/trees.md section 5t), from TreeGenerator's storm kit.
@@ -142,6 +144,11 @@ private:
 		LocalVector<uint8_t> avalanche_hit; // Per instance: 1 an avalanche took its crown, 2 the whole tree.
 		LocalVector<float> snow_kg; // Per instance: snow held in the crown (kg, WorldSnow.canopy_load_at), as the wood feels it.
 		LocalVector<float> snow_creep; // Per instance: the crept part of that (kg; the wood's slow bend under a held load).
+		LocalVector<uint8_t> cap_level; // Per instance: snow caps drawn, 0 none, 1-3 light to heavy.
+		LocalVector<float> snow_seen; // Per instance: the load (kg, no creep) clumps were last dropped against.
+		bool caps_dirty = false; // cap_level changed since the caps' last upload.
+		ObjectID cap_nodes[3]; // MultiMeshInstance3D children drawing the caps of each level.
+		Vector<float> cap_buffer;
 		HashMap<int, Touch> touch;
 		struct Body {
 			RID body;
@@ -190,6 +197,29 @@ private:
 	int snow_breaks = 0;
 	float snow_shaken_kg = 0.0f;
 	void _snow_check(float p_dt);
+	float snow_cap_range = 150.0f; // m: past it the crown whitening alone shows the snow.
+	Vector3 last_eye;
+	int caps_drawn = 0;
+	void _update_caps(Target &r_target, bool p_moved);
+	// Falling clumps: snow leaving a crown (unloading, a gust, a break) drops from its caps.
+	struct Clump {
+		Vector3 position;
+		Vector3 velocity;
+		Basis rotation;
+		Vector3 spin;
+		Vector3 size;
+		float ground = 0.0f;
+	};
+	LocalVector<Clump> clumps;
+	bool snow_clumps_enabled = true;
+	float clump_range = 80.0f;
+	int clumps_dropped = 0;
+	int clump_capacity = 0;
+	ObjectID clump_node;
+	Ref<Mesh> clump_mesh;
+	void _drop_clumps(Target &r_target, int p_instance, const Transform3D &p_world, float p_kg);
+	void _step_clumps(double p_delta);
+	void _free_caps(Target &r_target);
 	int avalanche_breaks = 0; // Crowns snapped.
 	int avalanche_throws = 0; // Whole trees broken at the foot or thrown.
 	struct AvalancheFail {
@@ -416,6 +446,14 @@ public:
 	int get_snow_break_count() const { return snow_breaks; }
 	float get_snow_shaken_kg() const { return snow_shaken_kg; }
 	float get_instance_snow_kg(Node *p_target, int p_instance) const;
+	int get_instance_cap_level(Node *p_target, int p_instance) const;
+	void set_snow_cap_range(float p_range) { snow_cap_range = MAX(p_range, 0.0f); }
+	float get_snow_cap_range() const { return snow_cap_range; }
+	int get_snow_caps_drawn() const { return caps_drawn; }
+	void set_snow_clumps_enabled(bool p_enabled) { snow_clumps_enabled = p_enabled; }
+	bool is_snow_clumps_enabled() const { return snow_clumps_enabled; }
+	int get_snow_clumps_dropped() const { return clumps_dropped; }
+	int get_snow_clumps_falling() const { return clumps.size(); }
 	int get_avalanche_throw_count() const { return avalanche_throws; }
 	int get_canopy_holes_cut() const { return canopy_holes_cut; }
 	static float avalanche_strength(float p_stem_diameter, bool p_crown);

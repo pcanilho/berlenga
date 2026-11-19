@@ -53,6 +53,7 @@
 #include "scene/main/viewport.h"
 #include "scene/resources/3d/capsule_shape_3d.h"
 #include "scene/resources/3d/cylinder_shape_3d.h"
+#include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/image_texture.h"
 #include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"
@@ -225,6 +226,15 @@ const TreeWind3D::Rig *TreeWind3D::_rig_for(const Ref<Mesh> &p_mesh) {
 	if (!rigs.has(id)) {
 		const float vogel = p_mesh->has_meta(SNAME("tree_vogel")) ? float(p_mesh->get_meta(SNAME("tree_vogel"))) : -0.7f;
 		Rig rig = parse_rig(p_mesh->get_meta(SNAME("tree_rig")), vogel);
+		if (p_mesh->has_meta(SNAME("tree_snow_caps"))) {
+			const Array caps = p_mesh->get_meta(SNAME("tree_snow_caps"));
+			for (int k = 0; k < MIN(caps.size(), 3); k++) {
+				rig.snow_caps[k] = caps[k];
+			}
+			if (p_mesh->has_meta(SNAME("tree_snow_cap_sites"))) {
+				rig.cap_sites = p_mesh->get_meta(SNAME("tree_snow_cap_sites"));
+			}
+		}
 		if (p_mesh->has_meta(SNAME("tree_foliage"))) {
 			// Leafless broadleaves hold some 10-20% of what conifers do, on twigs and forks (Hedstrom and Pomeroy
 			// 1998 on leafless aspen; Pomeroy and Gray 1995); in leaf, a wet early or late snow loads them fully
@@ -686,7 +696,11 @@ void TreeWind3D::_scan_node(Node *p_node) {
 				t.avalanche_hit.resize(n);
 				t.snow_kg.resize(n);
 				t.snow_creep.resize(n);
+				t.cap_level.resize(n);
+				t.snow_seen.resize(n);
 				for (int c = 0; c < n; c++) {
+					t.cap_level[c] = 0;
+					t.snow_seen[c] = 0.0f;
 					t.snow_kg[c] = 0.0f;
 					t.snow_creep[c] = 0.0f;
 					t.base_char[c] = 0.0f;
@@ -721,6 +735,7 @@ void TreeWind3D::_scan() {
 		MultiMeshInstance3D *mmi = ObjectDB::get_instance<MultiMeshInstance3D>(targets[i].node);
 		if (!mmi || mmi->get_multimesh() != targets[i].multimesh || targets[i].multimesh->get_instance_count() != int(targets[i].placements.size()) * targets[i].bones) {
 			_free_colliders(targets[i]);
+			_free_caps(targets[i]);
 			targets.remove_at(i);
 		}
 	}
@@ -756,6 +771,7 @@ void TreeWind3D::_on_target_child(Node *p_child) {
 void TreeWind3D::rescan() {
 	for (Target &t : targets) {
 		_free_colliders(t);
+		_free_caps(t);
 	}
 	targets.clear();
 	rigs.clear();
@@ -781,6 +797,7 @@ void TreeWind3D::update(double p_delta) {
 		cam = get_viewport()->get_camera_3d();
 		eye = cam->get_global_position();
 	}
+	last_eye = eye;
 	bool lod = lod_enabled && cam && cam->get_projection() == Camera3D::PROJECTION_PERSPECTIVE;
 	Vector<Plane> frustum;
 	float px_per_rad = 0.0f; // Pixels per metre at 1 m.
@@ -939,6 +956,15 @@ void TreeWind3D::update(double p_delta) {
 	for (Target *t : changed) {
 		RenderingServer::get_singleton()->multimesh_set_buffer(t->multimesh->get_rid(), t->buffer);
 	}
+	caps_drawn = 0;
+	for (Target &t : targets) {
+		bool moved = false;
+		for (Target *c : changed) {
+			moved = moved || c == &t;
+		}
+		_update_caps(t, moved);
+	}
+	_step_clumps(p_delta);
 	solved_instances = jobs.size();
 	skipped_instances = skipped;
 	solve_usec = OS::get_singleton()->get_ticks_usec() - t0;
@@ -1875,6 +1901,10 @@ void TreeWind3D::_storm_fail(Target &r_target, int p_instance, const Transform3D
 		if (snow && snow->has_provider()) {
 			const float part = thrown ? 1.0f : (rig.leaf_area > 1e-6f ? CLAMP(rig.bones[b].area / rig.leaf_area, 0.1f, 1.0f) : 0.5f);
 			snow_shaken_kg += snow->shake_canopy(tree.origin, rig.crown_radius * scale, part);
+			if (p_instance < int(r_target.snow_seen.size())) {
+				_drop_clumps(r_target, p_instance, p_world, r_target.snow_seen[p_instance] * part);
+				r_target.snow_seen[p_instance] *= 1.0f - part;
+			}
 			r_target.snow_kg[p_instance] *= 1.0f - part;
 			r_target.snow_creep[p_instance] *= 1.0f - part;
 		}
@@ -1927,6 +1957,10 @@ void TreeWind3D::_snow_check(float p_dt) {
 			for (uint32_t i = 0; i < t.snow_kg.size(); i++) {
 				t.snow_kg[i] = 0.0f;
 				t.snow_creep[i] = 0.0f;
+				if (i < t.cap_level.size() && t.cap_level[i]) {
+					t.cap_level[i] = 0;
+					t.caps_dirty = true;
+				}
 			}
 		}
 		return;
@@ -1945,6 +1979,24 @@ void TreeWind3D::_snow_check(float p_dt) {
 		for (uint32_t i = 0; i < t.placements.size(); i++) {
 			const Transform3D tree = cw * t.placements[i];
 			const float load = snow->canopy_load_at(tree.origin);
+			// Caps by the canopy's load over its capacity, the ratio the crown whitening reads (snow's catch map):
+			// a light dusting from 8%, full from 35%, heavy from 70%. Near the camera only.
+			if (i < t.cap_level.size()) {
+				const float cap = snow->canopy_capacity_at(tree.origin);
+				const float ratio = cap > 0.0f ? load / cap : load / 20.0f;
+				uint8_t lv = 0;
+				if (t.rig->snow_caps[0].is_valid() && load > 0.0f && tree.origin.distance_to(last_eye) <= snow_cap_range) {
+					lv = ratio < 0.08f ? 0 : (ratio < 0.35f ? 1 : (ratio < 0.7f ? 2 : 3));
+				}
+				const Touch *tc = t.touch.getptr(int(i));
+				if (tc && tc->uprooted) {
+					lv = 0;
+				}
+				if (t.cap_level[i] != lv) {
+					t.cap_level[i] = lv;
+					t.caps_dirty = true;
+				}
+			}
 			float kg = 0.0f;
 			if (load > 0.0f) {
 				const float scale = MAX(Math::pow(float(Math::abs(tree.basis.determinant())), 1.0f / 3.0f), 1e-3f);
@@ -1953,11 +2005,242 @@ void TreeWind3D::_snow_check(float p_dt) {
 				kg = load / MAX(closure, 0.3f) * float(Math::PI) * r * r * t.rig->snow_catch;
 			}
 			const float inst = kg;
+			// Snow leaving the crown (the cover's unloading in wind and warmth) drops as clumps near the camera.
+			if (i < t.snow_seen.size()) {
+				const float lost = t.snow_seen[i] - inst;
+				if (lost > MAX(5.0f, 0.1f * t.snow_seen[i])) {
+					_drop_clumps(t, int(i), cw, lost);
+					t.snow_seen[i] = inst;
+				} else if (inst > t.snow_seen[i]) {
+					t.snow_seen[i] = inst;
+				}
+			}
 			t.snow_creep[i] += (creep_share * inst - t.snow_creep[i]) * creep_step;
 			t.snow_kg[i] = inst + t.snow_creep[i];
 			snow_frame = snow_frame || t.snow_kg[i] > 1.0f;
 		}
 	}
+}
+
+// The snow caps (section 5al): one MultiMesh per load level under the target, drawing that level's cap pads on the
+// instances at it, with the same bone records as the trees (so they ride the wind and the path tracer sees them as the
+// trees' own geometry); every other instance's record collapses to a point.
+void TreeWind3D::_update_caps(Target &r_target, bool p_moved) {
+	if (!r_target.rig || r_target.rig->snow_caps[0].is_null() || r_target.cap_level.size() != r_target.placements.size()) {
+		return;
+	}
+	MultiMeshInstance3D *mmi = ObjectDB::get_instance<MultiMeshInstance3D>(r_target.node);
+	if (!mmi) {
+		return;
+	}
+	int count[3] = { 0, 0, 0 };
+	for (uint32_t i = 0; i < r_target.cap_level.size(); i++) {
+		if (r_target.cap_level[i]) {
+			count[r_target.cap_level[i] - 1]++;
+		}
+	}
+	const bool any = count[0] + count[1] + count[2] > 0;
+	if (!any && !r_target.caps_dirty) {
+		return;
+	}
+	if (!p_moved && !r_target.caps_dirty) {
+		caps_drawn += count[0] + count[1] + count[2];
+		return;
+	}
+	r_target.caps_dirty = false;
+	const int n = r_target.placements.size();
+	const int k = r_target.bones;
+	for (int lv = 0; lv < 3; lv++) {
+		MultiMeshInstance3D *cap = ObjectDB::get_instance<MultiMeshInstance3D>(r_target.cap_nodes[lv]);
+		if (count[lv] == 0 || r_target.rig->snow_caps[lv].is_null()) {
+			if (cap) {
+				cap->set_visible(false);
+			}
+			continue;
+		}
+		if (!cap) {
+			cap = memnew(MultiMeshInstance3D);
+			cap->set_name(vformat("SnowCaps%d", lv + 1));
+			Ref<MultiMesh> mm;
+			mm.instantiate();
+			mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+			mm->set_use_colors(true);
+			mm->set_use_custom_data(true);
+			mm->set_mesh(r_target.rig->snow_caps[lv]);
+			mm->set_bones_per_instance(k);
+			mm->set_instance_count(n * k);
+			cap->set_multimesh(mm);
+			mmi->add_child(cap, false, Node::INTERNAL_MODE_BACK);
+			r_target.cap_nodes[lv] = cap->get_instance_id();
+		}
+		cap->set_visible(true);
+		r_target.cap_buffer = r_target.buffer;
+		float *w = r_target.cap_buffer.ptrw();
+		for (int i = 0; i < n; i++) {
+			if (r_target.cap_level[i] == lv + 1) {
+				continue;
+			}
+			const Vector3 o = r_target.placements[i].origin;
+			for (int b = 0; b < k; b++) {
+				float *f = w + (size_t(i) * k + b) * RECORD_FLOATS;
+				for (int q = 0; q < 12; q++) {
+					f[q] = 0.0f;
+				}
+				f[3] = o.x;
+				f[7] = o.y;
+				f[11] = o.z;
+			}
+		}
+		RenderingServer::get_singleton()->multimesh_set_buffer(cap->get_multimesh()->get_rid(), r_target.cap_buffer);
+		caps_drawn += count[lv];
+	}
+}
+
+// Clumps of snow leaving a crown (section 5al): a load drop of p_kg falls from its cap sites as lumps of about 1.5 kg
+// (sintered crown snow breaks into lumps of 10-30 cm; Hedstrom and Pomeroy 1998 saw unloading as mass release), at
+// most 40 a tree, near the camera only. They fall with air drag to some 5 m/s (snow lumps' terminal speed), tumble,
+// crumble as they go and are gone on the ground: where they land is the snow cover's (it deepens there).
+void TreeWind3D::_drop_clumps(Target &r_target, int p_instance, const Transform3D &p_world, float p_kg) {
+	if (!snow_clumps_enabled || p_kg <= 0.0f || !r_target.rig || r_target.rig->cap_sites.size() < 4 || clumps.size() >= 3000) {
+		return;
+	}
+	const Transform3D tree = p_world * r_target.placements[p_instance];
+	if (tree.origin.distance_to(last_eye) > clump_range) {
+		return;
+	}
+	const PackedFloat32Array &sites = r_target.rig->cap_sites;
+	const int count = sites.size() / 4;
+	const int n = CLAMP(int(p_kg / 1.5f), 1, 40);
+	RandomPCG r;
+	r.seed(uint64_t(frame_index) * 2654435761ull + uint64_t(p_instance) * 40503ull + uint64_t(clumps.size()));
+	float ground = tree.origin.y;
+	const WorldGround *wg = WorldContracts::ground();
+	if (wg && wg->has_provider()) {
+		ground = wg->height_at(tree.origin);
+	}
+	const float scale = MAX(Math::pow(float(Math::abs(tree.basis.determinant())), 1.0f / 3.0f), 1e-3f);
+	for (int k = 0; k < n; k++) {
+		const int s = int(r.rand() % uint32_t(count));
+		const int bone = CLAMP(int(sites[s * 4]), 0, r_target.bones - 1);
+		const Vector3 local(sites[s * 4 + 1], sites[s * 4 + 2], sites[s * 4 + 3]);
+		const Transform3D posed = p_world * read_record(r_target.buffer.ptr() + (size_t(p_instance) * r_target.bones + bone) * RECORD_FLOATS);
+		Clump c;
+		c.position = posed.xform(local);
+		c.velocity = Vector3(Math::lerp(-0.3f, 0.3f, r.randf()), Math::lerp(-0.5f, 0.2f, r.randf()), Math::lerp(-0.3f, 0.3f, r.randf()));
+		c.rotation = Basis(Vector3(r.randf() - 0.5f, r.randf() - 0.5f, r.randf() - 0.5f).normalized(), r.randf() * float(Math::TAU));
+		c.spin = Vector3(r.randf() - 0.5f, r.randf() - 0.5f, r.randf() - 0.5f) * 4.0f;
+		const float d = Math::lerp(0.08f, 0.28f, r.randf()) * MIN(scale, 1.5f);
+		c.size = Vector3(d * Math::lerp(0.8f, 1.3f, r.randf()), d * Math::lerp(0.6f, 1.0f, r.randf()), d * Math::lerp(0.8f, 1.3f, r.randf()));
+		c.ground = ground;
+		clumps.push_back(c);
+	}
+	clumps_dropped += n;
+}
+
+void TreeWind3D::_step_clumps(double p_delta) {
+	MultiMeshInstance3D *node = ObjectDB::get_instance<MultiMeshInstance3D>(clump_node);
+	if (clumps.is_empty()) {
+		if (node && node->is_visible()) {
+			node->set_visible(false);
+		}
+		return;
+	}
+	const float dt = float(MIN(p_delta, 0.1));
+	const float drag = 9.81f / 25.0f; // terminal 5 m/s: g = k v^2
+	for (int i = int(clumps.size()) - 1; i >= 0; i--) {
+		Clump &c = clumps[i];
+		const float v = c.velocity.length();
+		c.velocity += (Vector3(0.0f, -9.81f, 0.0f) - c.velocity * (drag * v)) * dt;
+		c.position += c.velocity * dt;
+		const float spin = c.spin.length();
+		if (spin > 1e-4f) {
+			c.rotation = Basis(c.spin / spin, spin * dt) * c.rotation;
+		}
+		c.size *= 1.0f - 0.08f * dt; // crumbling as it falls
+		if (c.position.y <= c.ground + c.size.y * 0.3f) {
+			clumps.remove_at_unordered(i);
+		}
+	}
+	if (!node) {
+		if (clump_mesh.is_null()) {
+			// A lumpy ball: a coarse sphere, each clump scaled unevenly and turned (no two alike).
+			Ref<SphereMesh> sphere;
+			sphere.instantiate();
+			sphere->set_radius(0.5f);
+			sphere->set_height(0.85f);
+			sphere->set_radial_segments(8);
+			sphere->set_rings(4);
+			Ref<StandardMaterial3D> mat;
+			mat.instantiate();
+			mat->set_albedo(Color(0.9f, 0.91f, 0.93f));
+			mat->set_roughness(0.8f);
+			mat->set_specular(0.3f);
+			sphere->set_material(mat);
+			clump_mesh = sphere;
+		}
+		node = memnew(MultiMeshInstance3D);
+		node->set_name("SnowClumps");
+		Ref<MultiMesh> mm;
+		mm.instantiate();
+		mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+		mm->set_mesh(clump_mesh);
+		node->set_multimesh(mm);
+		add_child(node, false, Node::INTERNAL_MODE_BACK);
+		node->set_as_top_level(true);
+		node->set_global_transform(Transform3D());
+		clump_node = node->get_instance_id();
+		clump_capacity = 0;
+	}
+	Ref<MultiMesh> mm = node->get_multimesh();
+	const int n = clumps.size();
+	if (n > clump_capacity) {
+		clump_capacity = MAX(n, clump_capacity * 2);
+		clump_capacity = MAX(clump_capacity, 64);
+		mm->set_instance_count(clump_capacity);
+	}
+	Vector<float> buf;
+	buf.resize(clump_capacity * 12);
+	float *w = buf.ptrw();
+	memset(w, 0, buf.size() * sizeof(float));
+	for (int i = 0; i < n; i++) {
+		const Clump &c = clumps[i];
+		const Basis b = c.rotation * Basis::from_scale(c.size);
+		float *f = w + i * 12;
+		f[0] = b.rows[0][0];
+		f[1] = b.rows[0][1];
+		f[2] = b.rows[0][2];
+		f[3] = c.position.x;
+		f[4] = b.rows[1][0];
+		f[5] = b.rows[1][1];
+		f[6] = b.rows[1][2];
+		f[7] = c.position.y;
+		f[8] = b.rows[2][0];
+		f[9] = b.rows[2][1];
+		f[10] = b.rows[2][2];
+		f[11] = c.position.z;
+	}
+	RenderingServer::get_singleton()->multimesh_set_buffer(mm->get_rid(), buf);
+	mm->set_visible_instance_count(n);
+	node->set_visible(true);
+}
+
+void TreeWind3D::_free_caps(Target &r_target) {
+	for (int lv = 0; lv < 3; lv++) {
+		MultiMeshInstance3D *cap = ObjectDB::get_instance<MultiMeshInstance3D>(r_target.cap_nodes[lv]);
+		if (cap) {
+			cap->queue_free();
+		}
+		r_target.cap_nodes[lv] = ObjectID();
+	}
+}
+
+int TreeWind3D::get_instance_cap_level(Node *p_target, int p_instance) const {
+	for (const Target &t : targets) {
+		if (p_target && t.node == p_target->get_instance_id() && p_instance >= 0 && p_instance < int(t.cap_level.size())) {
+			return t.cap_level[p_instance];
+		}
+	}
+	return 0;
 }
 
 float TreeWind3D::get_instance_snow_kg(Node *p_target, int p_instance) const {
@@ -3289,6 +3572,14 @@ void TreeWind3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_snow_break_count"), &TreeWind3D::get_snow_break_count);
 	ClassDB::bind_method(D_METHOD("get_snow_shaken_kg"), &TreeWind3D::get_snow_shaken_kg);
 	ClassDB::bind_method(D_METHOD("get_instance_snow_kg", "target", "instance"), &TreeWind3D::get_instance_snow_kg);
+	ClassDB::bind_method(D_METHOD("get_instance_cap_level", "target", "instance"), &TreeWind3D::get_instance_cap_level);
+	ClassDB::bind_method(D_METHOD("set_snow_cap_range", "range"), &TreeWind3D::set_snow_cap_range);
+	ClassDB::bind_method(D_METHOD("get_snow_cap_range"), &TreeWind3D::get_snow_cap_range);
+	ClassDB::bind_method(D_METHOD("get_snow_caps_drawn"), &TreeWind3D::get_snow_caps_drawn);
+	ClassDB::bind_method(D_METHOD("set_snow_clumps_enabled", "enabled"), &TreeWind3D::set_snow_clumps_enabled);
+	ClassDB::bind_method(D_METHOD("is_snow_clumps_enabled"), &TreeWind3D::is_snow_clumps_enabled);
+	ClassDB::bind_method(D_METHOD("get_snow_clumps_dropped"), &TreeWind3D::get_snow_clumps_dropped);
+	ClassDB::bind_method(D_METHOD("get_snow_clumps_falling"), &TreeWind3D::get_snow_clumps_falling);
 	ClassDB::bind_method(D_METHOD("set_avalanche_enabled", "enabled"), &TreeWind3D::set_avalanche_enabled);
 	ClassDB::bind_method(D_METHOD("is_avalanche_enabled"), &TreeWind3D::is_avalanche_enabled);
 	ClassDB::bind_method(D_METHOD("get_avalanche_break_count"), &TreeWind3D::get_avalanche_break_count);
@@ -3344,6 +3635,8 @@ void TreeWind3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "storm_min_wind", PROPERTY_HINT_RANGE, "0,60,0.5,suffix:m/s"), "set_storm_min_wind", "get_storm_min_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "avalanche_enabled"), "set_avalanche_enabled", "is_avalanche_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_load_enabled"), "set_snow_load_enabled", "is_snow_load_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_clumps_enabled"), "set_snow_clumps_enabled", "is_snow_clumps_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_cap_range", PROPERTY_HINT_RANGE, "0,1000,1,suffix:m"), "set_snow_cap_range", "get_snow_cap_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_creep_hours", PROPERTY_HINT_RANGE, "0,48,0.1,suffix:h"), "set_snow_creep_hours", "get_snow_creep_hours");
 	ADD_SIGNAL(MethodInfo("storm_damage", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "radius"), PropertyInfo(Variant::BOOL, "uprooted"), PropertyInfo(Variant::DICTIONARY, "pit")));
 }

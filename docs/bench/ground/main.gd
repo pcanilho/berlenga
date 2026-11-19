@@ -5116,18 +5116,19 @@ func _dust_centroid(d: GroundDust3D, around: Vector3) -> Vector4:
 # Slip-face avalanches (docs/ideas/sand.md): a boot print on a dune's 32 degree slip face, between dry sand's
 # stopping and starting angles, sets off a tongue of sand that runs down the face; the same print on the 10 degree
 # stoss slope only relaxes its own walls; the face away from the print does not move.
-func _avalanche_print(p: Vector3) -> void:
+# A boot's print (press_box's sole: heel, forefoot, tread), heading p_yaw (the toe along (sin, cos) in x, z).
+func _avalanche_print(p: Vector3, p_yaw := 0.0) -> void:
 	var h: float = height.get_height(p)
-	surface.press_box(Vector3(p.x, h, p.z), Vector2(0.11, 0.29), 0.0, h - 0.03, 0.03)
+	surface.press_box(Vector3(p.x, h, p.z), Vector2(0.11, 0.29), p_yaw, h - 0.03, 0.03, true)
 
 
 # The surface along the fall line through p and along a line 1.5 m to the side, every 2 cm from 0.5 m above p to
-# 3 m below it: taken before a print and after, so the field's own sampling of the dune cancels.
+# 4 m below it: taken before a print and after, so the field's own sampling of the dune cancels.
 func _avalanche_profile(p: Vector3) -> PackedFloat32Array:
 	var out := PackedFloat32Array()
 	for side in [0.0, 1.5]:
 		var x := p.x - 0.5
-		while x < p.x + 3.0:
+		while x < p.x + 4.0:
 			out.append(surface.get_surface_height_at(Vector3(x, 0, p.z + side)))
 			x += 0.02
 	return out
@@ -5177,6 +5178,13 @@ func _run_avalanche_tests() -> void:
 	_check("the face beside it stays", r.y < 1e-4, "%.2f mm off 1.5 m to the side" % (r.y * 1000.0))
 	_check("the avalanche keeps the sand", absf((v1.x - v1.y) - (v0.x - v0.y)) < 0.02 * maxf(v1.x, 1e-6), "net hollow %.3f l before, %.3f l after; %.2f l moved" % [(v0.x - v0.y) * 1000.0, (v1.x - v1.y) * 1000.0, v1.x * 1000.0])
 	_check("it takes only a surface layer from the face", r.z < 0.035, "deepest scar below the print %.1f cm" % (r.z * 100.0))
+	var lobe := 0.0
+	var lobe_at := 0.0
+	for k in bb.size() / 2:
+		if -0.5 + 0.02 * k > 1.0 and bb[k] - a[k] > lobe:
+			lobe = bb[k] - a[k]
+			lobe_at = -0.5 + 0.02 * k
+	_check("it piles a lobe at the toe (2 to 5 cm, Breton et al. 2008)", lobe > 0.015 and lobe < 0.06, "%.1f cm high %.2f m below the print" % [lobe * 100.0, lobe_at])
 	surface.clear_deformation()
 	var stoss := Vector3(-1.5, 0, 0)
 	get_node("Probe").position = Vector3(-1.5, height.get_height(stoss), 0.0)
@@ -5351,13 +5359,15 @@ func _build_avalanche() -> void:
 	get_node("Probe").position = Vector3(2.0, height.get_height(Vector3(2.0, 0, 0)), 0.0)
 	for i in 10:
 		await get_tree().physics_frame
-	# Footsteps traversing the face, a little downhill, left and right feet 18 cm apart, a stride of 70 cm.
+	# Footsteps traversing the face, a little downhill, left and right feet 18 cm apart across the walk, a stride of 70 cm.
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 5
 	for k in 7:
 		var z := -2.1 + 0.7 * k
 		var side := 0.09 if k % 2 == 0 else -0.09
-		_avalanche_print(Vector3(1.2 + 0.08 * k + side * 0.3 + rng.randf_range(-0.03, 0.03), 0, z + side))
+		# Heading along the walk (0.08 m down the face a 0.7 m stride), each foot toed out about 6 degrees.
+		var heading := atan2(0.08, 0.7) + (0.1 if k % 2 == 0 else -0.1) + rng.randf_range(-0.05, 0.05)
+		_avalanche_print(Vector3(1.2 + 0.08 * k + side + rng.randf_range(-0.02, 0.02), 0, z + rng.randf_range(-0.04, 0.04)), heading)
 		for i in 40:
 			await get_tree().physics_frame
 	for i in 360:

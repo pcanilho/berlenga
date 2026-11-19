@@ -101,6 +101,7 @@ class BodySnowStub extends WorldSnow:
 #   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
 #   --settled         (trail view) 0.4 m of settled snow (300 kg/m3) instead of fresh: prints break clumps
 #   --no-clumps       (trail view) no snow clumps beside the prints
+#   --prints-close    (trail view) 1.5 m over two boot prints (with --crust=1: the broken crust's pieces)
 #   --clumps-close    (trail view) the camera low beside the small ball's furrow
 #   --away            (trail view) the field leaves for 300 m and comes back: are the clumps kept?
 #   --sled            (trail view) a sled pulled at 4 m/s for 2 s and lifted away: its bow wave and berm
@@ -2350,6 +2351,12 @@ func _build_trail(cam: Camera3D) -> void:
 			# Down on the end of the sled's track and the berm its bow wave left.
 			cam.position = Vector3(0.2, 1.0, 5.6)
 			cam.look_at(Vector3(-2.2, 0.2, 3.4))
+	if OS.get_cmdline_user_args().has("--prints-close"):
+		# From 1.5 m over two boot prints, the sun high enough to light their floors: the pieces of a broken crust.
+		cam.position = Vector3(-1.4, 1.05, 2.35)
+		cam.look_at(Vector3(-2.6, 0.3, 1.35))
+		cam.fov = 45.0
+		sun.rotation_degrees = Vector3(-38.0, 100.0, 0.0) # higher and from the side, into the prints
 	if OS.get_cmdline_user_args().has("--clumps-close"):
 		# Low beside the small ball's furrow, looking back along it: the clumps it broke out of the rim.
 		cam.position = Vector3(-1.2, 0.8, 0.2)
@@ -2373,7 +2380,7 @@ func _build_trail(cam: Camera3D) -> void:
 	surface = SnowSurface3D.new()
 	surface.snow_cover = NodePath("../SnowCover3D")
 	surface.follow_target = NodePath("../Probe")
-	if OS.get_cmdline_user_args().has("--close"):
+	if OS.get_cmdline_user_args().has("--close") or OS.get_cmdline_user_args().has("--prints-close"):
 		# Triangles as fine as the deformation texels (6 cm), for the pieces of a broken crust.
 		surface.detail_spacing = 0.0625
 	for a in OS.get_cmdline_user_args():
@@ -2855,7 +2862,7 @@ func _build_avalanche(cam: Camera3D) -> void:
 		if pflow:
 			pflow.set("scattering_resolution", 0) # full: quarter averages away the billows at still sizes
 		av.trigger(Vector3(-40.0, 0, 0), 60.0)
-		surface.extent = 256.0 # the deep-snow geometry over the whole face the camera sees, flank to flank
+		surface.extent = 320.0 # the deep-snow geometry over the whole face the camera sees, out to the camera
 		# Mid-run in real time, so PhysX Flow steps the cloud with it: --at=S seconds after release (default 9).
 		var at_s := 9.0
 		for a in OS.get_cmdline_user_args():
@@ -2886,6 +2893,7 @@ func _build_avalanche(cam: Camera3D) -> void:
 			cam.look_at(Vector3(-25.0, 16.0, -10.0))
 		cam.fov = 66.0
 		cam.far = 1000.0
+		sun.directional_shadow_max_distance = 400.0 # the ridge's shadow on the run-out, as the path tracer has it
 		if traced:
 			process_mode = Node.PROCESS_MODE_ALWAYS
 			get_tree().paused = true

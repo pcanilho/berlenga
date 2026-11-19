@@ -1262,6 +1262,8 @@ WorldContactBody WorldContracts::describe_body(const Node3D *p_node) {
 	if (p_node->has_meta(SNAME("ground_mass"))) {
 		b.mass = p_node->get_meta(SNAME("ground_mass"));
 	}
+	b.walker = p_node->has_meta(SNAME("world_contact_walker")) ? bool(p_node->get_meta(SNAME("world_contact_walker"))) : Object::cast_to<CharacterBody3D>(p_node) != nullptr;
+	b.feet = b.walker && bool(p_node->get_meta(SNAME("world_contact_feet"), false));
 	return b;
 }
 
@@ -1305,6 +1307,8 @@ Dictionary WorldContracts::describe_body_bind(Node *p_node) const {
 	d["box"] = b.box;
 	d["width"] = b.width;
 	d["mass"] = b.mass;
+	d["walker"] = b.walker;
+	d["feet"] = b.feet;
 	return d;
 }
 

@@ -74,8 +74,10 @@ constexpr float RIPPLE_FULL_LENGTH = 0.5f;
 constexpr float RIPPLE_TIP_FADE = 0.04f;
 constexpr int RIPPLE_COLUMNS = 64; // wide, so mipmaps (halving both ways) only blend near strengths
 // The hazy core: pockets of impure water caught in layers as the icicle thickens (Ladan and Morris 2022) cloud
-// the ice inside the newest clear layer; the tip, the newest ice, stays clear.
-constexpr float CORE_RADIUS = 0.4f;
+// the ice inside the newest clear layer; the tip, the newest ice, stays clear. The cloudy part is a thin central
+// column of bubbles (a quarter of the radius): the clear ice around it is a cylindrical lens that widens it about
+// 1.3 times to the eye, and at 0.4 the path tracer showed broad white blobs where photographs show a thin streak.
+constexpr float CORE_RADIUS = 0.25f;
 constexpr float CORE_REACH = 0.8f;
 
 float buoyancy_rayleigh(float p_delta, float p_size) {

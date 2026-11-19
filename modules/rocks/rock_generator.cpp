@@ -1400,6 +1400,11 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						// A bed weathers back more on some sides than others (spray, sun, the swell's side), so it is
 						// not a ring round the column, and the blocks differ less than the beds.
 						float shift = bi < int(bed_shift.size()) ? bed_shift[bi] * (0.3f + 1.4f * rk_noise(p * 0.45f + Vector3(float(bi) * 5.3f, 0, 0), nseed + 110u)) : 0.0f;
+						{
+							// The top beds stand freest and are frost-split most: their ledges are the boldest.
+							const float tt0 = CLAMP((p.x - x_lo) / MAX(x_hi - x_lo, 0.01f), 0.0f, 1.0f);
+							shift *= 1.0f + 1.6f * Math::smoothstep(0.55f, 0.9f, tt0);
+						}
 						shift += 0.03f * c * (bo - 0.5f) + (bo > 0.9f ? 0.1f * c : 0.0f);
 						v += shift + 0.035f * c * (0.5f * rk_fbm(p * 1.6f, nseed + 102u, 3));
 						// Its outline changes up the column (Twelve Apostles, Am Buachaille): buttresses and
@@ -1584,16 +1589,18 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// the neck under one side wore first; one column in five has lost its cap and weathers to a spire.
 		RandomPCG crng(uint64_t(nseed) * 0x9E3779B97F4A7C15ull + 0x7704ull);
 		const bool capless = crng.randf() < 0.35f;
-		cap_t = 0.8f + 0.14f * crng.randf();
-		const float cap_over = capless ? -0.06f * c : (0.01f + 0.09f * crng.randf()) * c; // how far the cap stands out
-		const float cap_dome = capless ? 0.45f * c : (0.04f + 0.24f * crng.randf()) * c;
+		cap_t = 0.86f + 0.08f * crng.randf(); // a thin hard slab
+		const float cap_over = capless ? -0.06f * c : (0.12f + 0.2f * crng.randf()) * c; // how far the cap stands out
+		const float cap_side_az = crng.randf() * float(Math::TAU); // the side it overhangs most
+		const float face_az = crng.randf() * float(Math::TAU); // the wet side, notched deepest
+		const float cap_dome = capless ? 0.45f * c : (0.02f + 0.06f * crng.randf()) * c;
 		const float cap_tip_az = crng.randf() * float(Math::TAU), cap_tip = 0.25f * crng.randf();
 		if (family == FAMILY_HOODOO) {
 			float b = x_lo - 0.3f;
 			bool soft = rng.randf() < 0.5f;
 			while (b < x_hi + 0.6f) {
 				knot_at.push_back(b);
-				knot_rec.push_back((soft ? 0.16f + 0.24f * rng.randf() : 0.03f * rng.randf()) * c);
+				knot_rec.push_back((soft ? 0.14f + 0.2f * rng.randf() : 0.0f) * c); // a soft bed's groove depth
 				knot_az.push_back(rng.randf() * float(Math::TAU));
 				soft = rng.randf() < 0.75f ? !soft : soft;
 				b += 0.45f + 0.5f * rng.randf();
@@ -1715,12 +1722,19 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						while (i + 2 < int(knot_at.size()) && knot_at[i + 1] <= q) {
 							i++;
 						}
+						// A soft bed is a thin groove with sharp edges cut into the shaft (Bryce: the columns are notched,
+						// not turned), deepest on the wet side; between grooves the shaft is straight.
 						const float f = Math::smoothstep(knot_at[i], knot_at[i + 1], q);
-						const float r = knot_rec[i] + (knot_rec[i + 1] - knot_rec[i]) * f;
+						const float dq = MIN(q - knot_at[i], knot_at[i + 1] - q);
+						const int gi = (q - knot_at[i] < knot_at[i + 1] - q) ? i : i + 1;
+						const float paz = Math::atan2(p.z, p.y / c);
+						const float facing = 0.5f + 0.5f * Math::cos(paz - face_az);
+						const float gw = 0.05f + 0.04f * rk_noise(Vector3(p.x * 0.5f, 0.0f, float(gi)), nseed + 127u);
+						const float r = knot_rec[gi] * (0.35f + 1.1f * facing) * (0.7f + 0.6f * rk_noise(p * 0.9f, nseed + 128u)) * MAX(1.0f - dq / gw, 0.0f);
 						const float tip = cap_tip * 0.25f * (Math::cos(cap_tip_az) * p.y / c + Math::sin(cap_tip_az) * p.z);
 						const float cap = Math::smoothstep(cap_t - 0.02f, cap_t + 0.02f, t + tip);
 						// Swells below, none in the cap; the neck just under the cap thinnest; the cap a little wider.
-						v += r * (0.8f + 0.4f * rk_noise(p * 1.2f, nseed + 112u)) * (1.0f - cap);
+						v += r * (1.0f - cap);
 						// The column's axis wanders from bed to bed (each bed's own setback is uneven round it), so the
 						// outline steps sideways up the column, never a turned post.
 						{
@@ -1729,9 +1743,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 							v += 0.09f * c * (sx * p.y / c + sz * p.z) * (1.0f - cap);
 						}
 						v += 0.1f * c * Math::smoothstep(cap_t - 0.3f, cap_t - 0.03f, t) * (1.0f - cap);
-						v += 0.14f * c * t * (1.0f - cap); // wider at the foot, where the debris apron feeds it
+						// Broad at the foot, tapering up (the debris apron feeds the foot), and not round: the wet side
+						// is cut back further than the dry.
+						v += 0.38f * c * t * (1.0f - cap) + 0.12f * c * facing * t * (1.0f - cap);
 						// The cap barely wider than the neck's foot, its rim and top rounded off and uneven.
-						v -= cap_over * cap * (0.3f + 1.4f * rk_noise(p * 1.1f, nseed + 126u)); // its rim lobed, standing out on some sides only
+						// A wider flat slab, overhanging one side most, its rim lobed.
+						v -= cap_over * cap * (0.25f + 0.75f * (0.5f + 0.5f * Math::cos(paz - cap_side_az))) * (0.6f + 0.8f * rk_noise(p * 1.1f, nseed + 126u));
 						const float dome = Math::smoothstep(cap_t + 0.01f, 1.02f, t + tip);
 						v += cap_dome * dome * dome;
 						v += 0.16f * c * cap * (0.5f * rk_fbm(p * 1.6f, nseed + 125u, 3));
@@ -1742,7 +1759,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						// The cap is the harder bed: it keeps sharp edges and takes no rills; the soft column under it
 						// is fluted top to bottom (Bryce: the cap's rim stands clean over a grooved neck).
 						const float rill = rk_noise(Vector3(p.x * 0.3f, p.y * 5.0f, p.z * 5.0f), nseed + 120u);
-						v += 0.11f * c * (1.0f - Math::abs(2.0f * rill - 1.0f) - 0.5f) * (1.0f - cap);
+						v += 0.15f * c * (1.0f - Math::abs(2.0f * rill - 1.0f) - 0.5f) * (1.0f - cap);
 						v += 0.05f * c * (0.5f * rk_fbm(p * 2.2f, nseed + 113u, 3)) * (1.0f - 0.6f * cap);
 					} else if (family == FAMILY_CAVE_MOUTH) {
 						const float fh = MAX(z_hi - z_lo, 0.01f);
@@ -3306,7 +3323,9 @@ void fragment() {
 		float edge = above_sea + (zn - 0.5) * 0.7 * tide_range * 0.5;
 		float tidal = 1.0 - smoothstep(tide_range * 0.4, tide_range * 0.6, edge);
 		// On an exposed stack the swash throws the splash zone several metres up.
-		float splash = (1.0 - tidal) * (1.0 - smoothstep(tide_range * 1.2, tide_range * 3.6, edge + 1.6 * tide_range * (rk_fbm3(mp * 0.35 + 2.0) - 0.5) + 0.5 * tide_range * (rk_fbm3(mp * 2.1 + 7.0) - 0.5)));
+		// Its top grades over a metre or so in drip streaks: run-down stretched up and down the face.
+		float drips = rk_fbm3(vec3(v_world.x * 2.2, v_world.y * 0.12, v_world.z * 2.2) + 7.0);
+		float splash = (1.0 - tidal) * (1.0 - smoothstep(tide_range * 0.9, tide_range * 1.9, edge + 0.8 * tide_range * (rk_fbm3(mp * 0.35 + 2.0) - 0.5) + 0.9 * tide_range * (drips - 0.5)));
 		// Barnacles: a dull grey-brown crust, specked by the shells' pale plates, not a clean pale band.
 		float shells = smoothstep(0.62, 0.8, rk_noise3(mp * 140.0));
 		vec3 barnacle = mix(vec3(0.13, 0.12, 0.10), vec3(0.42, 0.40, 0.35), shells) * (0.8 + 0.4 * rk_noise3(mp * 23.0));

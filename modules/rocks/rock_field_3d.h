@@ -168,6 +168,8 @@ private:
 		LocalVector<Group> groups;
 		LocalVector<Ref<MultiMesh>> tile_meshes;
 		LocalVector<TilePlacement> tiles;
+		Vector3i tile_block; // its block's shared tile set (tile_sets), when it holds one
+		bool tile_set = false;
 		StaticBody3D *body = nullptr;
 		int stones = 0;
 	};
@@ -280,8 +282,48 @@ private:
 	struct DetailTile {
 		LocalVector<DetailTileShape> shapes;
 	};
+	// A square's grains as a tile: what it is matched by, and its grains in tile space (centre on the plane, y up).
+	struct TileSquare {
+		LocalVector<uint32_t> idx; // its grains on the ground (those resting on a coarser grain are left single)
+		Transform3D frame; // tile space (centre on its plane, y the plane's normal) to world
+		Plane plane;
+		float lsize = 0.0f, lsd = 0.0f, film = 0.0f, mix = 1.0f; // mean and spread of its grains' log size, its wetness, the share of its first rock
+		uint32_t sig = 0, order = 0;
+		bool ok = false;
+	};
+	// Tiles shared across cells (docs/ideas/ground-detail.md, "Tiles shared across cells"): one set per block of
+	// TILE_BLOCK x TILE_BLOCK detail cells, squares sampled over the block placed alone without the coarse stones round
+	// them (a function of the block alone), thinned to a few per kind of ground; each candidate's MultiMesh built when a
+	// placement first takes it; freed when the block's last cell goes.
+	struct TileCut {
+		DetailTile tile;
+		LocalVector<Stone> stones; // tile space
+		uint32_t sig = 0;
+		float lsize = 0.0f, lsd = 0.0f, film = 0.0f, mix = 1.0f;
+		int count = 0;
+		LocalVector<Ref<MultiMesh>> mms; // per shape, once used
+		LocalVector<RID> mats;
+	};
+	struct TileSet {
+		LocalVector<TileCut> cuts;
+		int users = 0; // cells holding it, and jobs reading it
+	};
+	static constexpr int TILE_BLOCK = 16; // cells across
+	static constexpr int TILE_SAMPLES = 256; // squares sampled over a block for its set (16 x 16 parts)
+	static constexpr int TILE_TRIES = 8; // hashed tries per part for a square with grains
+	static constexpr int TILE_CHOICES = 2; // matching shared tiles a square picks from
+	HashMap<Vector3i, TileSet *> tile_sets;
+	HashSet<Vector3i> tile_set_pending; // a job is cutting it
+	Vector3i _tile_block(const Vector3i &p_key) const {
+		return Vector3i(p_key.x, Math::floor(real_t(p_key.y) / TILE_BLOCK), Math::floor(real_t(p_key.z) / TILE_BLOCK));
+	}
+	void _tile_set_release(const Vector3i &p_block);
+
+	void _tile_squares(const TerrainGenerator3D *p_gen, int p_layer, const Rect2 &p_rect, int p_n, const LocalVector<Stone> &p_stones, const LocalVector<DetailSeed> &p_seeds, TileSquare *r_sq) const;
+	void _tile_cut(const TerrainGenerator3D *p_gen, const LocalVector<Stone> &p_stones, const TileSquare &p_sq, const HashMap<uint32_t, Library *> &p_libs, uint32_t p_seed, DetailTile &r_tile) const;
 	struct DetailPlacement {
 		int tile = 0;
+		bool shared = false; // tile: a cut of the block's shared set
 		Rect2 square;
 		Transform3D xform; // tile space to world
 		Plane plane; // the ground under it
@@ -295,12 +337,18 @@ private:
 		LocalVector<DetailGroup> groups;
 		LocalVector<DetailTile> tiles;
 		LocalVector<DetailPlacement> placements;
+		Vector3i block;
+		TileSet *set = nullptr; // the block's shared tiles (held: users), or
+		TileSet *new_set = nullptr; // cut by this job
+		bool pending_owner = false; // it put the block in tile_set_pending
 		int stones = 0;
 		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
 	};
 	HashMap<Vector3i, DetailJob *> detail_jobs;
 	bool detail_threads = true;
 	void _detail_prepare(DetailJob &r_job);
+	void _tile_set_adopt(DetailJob &r_job);
+	void _tile_set_drop(DetailJob &r_job);
 	void _detail_compute(DetailJob &r_job);
 	void _detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, LocalVector<int> &r_place) const;
 	void _split_tile(Cell &r_cell, uint32_t p_index);
