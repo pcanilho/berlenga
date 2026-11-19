@@ -474,6 +474,16 @@ func _desert_view() -> void:
 	var desert_set: Array[PlantSpecies] = []
 	var shrubs := OS.get_environment("VEG_DESERT_SHRUBS") != "0" # 0: without the woody shrubs (their cost).
 	desert_set.assign(Array(PlantGenerator.make_desert(PlantGenerator.DESERT_FLANKS, 3, true, {}, shrubs)) + Array(PlantGenerator.make_desert(PlantGenerator.DESERT_INTERDUNE, 3, true, {}, shrubs)))
+	if desert_view == 1:
+		# A plain species with no sand rule: the field keeps it off the sand sea's sand by itself.
+		var plain := PlantSpecies.new()
+		var pm := BoxMesh.new()
+		pm.size = Vector3(0.2, 0.3, 0.2)
+		plain.meshes = [pm]
+		plain.spacing = 2.0
+		plain.density = 0.6
+		plain.set_meta("plain", true)
+		desert_set.append(plain)
 	gb.species = desert_set if desert_view == 1 else ([] as Array[PlantSpecies])
 	ground.biome = gb
 	ground.tile_size = 16.0
@@ -655,6 +665,15 @@ func _desert_checks(ground: VegetationField3D, dset: Array[PlantSpecies], gen: T
 	for s in dset.size():
 		if dset[s].get_meta("woody_shrub", false):
 			shrubs += ground.get_placements(s).size()
+	var plain_deep := 0
+	var plain_n := 0
+	for s in dset.size():
+		if dset[s].get_meta("plain", false):
+			for p in ground.get_placements(s):
+				plain_n += 1
+				if gen.get_sand_sea_height(p) > 0.5: # The field fades it out by 0.3 m on a 4 m grid: slack for the grid.
+					plain_deep += 1
+	_check("desert: a species without a sand rule keeps off the sand sea's sand", plain_deep == 0, [plain_n, plain_deep])
 	_check("desert: woody shrubs (calligonum, white broom, saltbush) placed", shrubs > 20 or OS.get_environment("VEG_DESERT_SHRUBS") == "0", [shrubs])
 	_check("desert: annuals between the dunes, not up them", annual[0] > 500 and annual[3] < annual[0] * 0.5, [annual[0], annual[3]])
 
