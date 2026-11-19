@@ -1912,7 +1912,8 @@ func _checks() -> void:
 	var near_density: float = near / max(near_area, 0.01)
 	var far_density: float = far / max(ring_area, 0.01)
 	_check("near density about %d /m2" % int(grass.density), near_density > grass.density * 0.75 and near_density < grass.density * 1.17, near_density)
-	_check("far ring thinned (LOD)", far_density < near_density * 0.3, far_density)
+	# 32 to 36 m of a 50 m field: the half-density level (full over the inner half of the radius, then a half).
+	_check("far ring thinned (LOD)", far_density < near_density * 0.6 and far_density > near_density * 0.3, far_density)
 	_check("no grass under water", wet == 0, wet)
 	# Rocks (GrassField3D.obstacles): no blade roots inside a boulder, blades right up to its foot.
 	var rock := Vector4(c.x + 2.0, 0.0, c.y + 1.0, 0.7)
