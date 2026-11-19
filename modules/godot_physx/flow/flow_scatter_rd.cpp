@@ -64,7 +64,7 @@ layout(set = 0, binding = 5, std140) uniform Params {
 	vec4 sun_map_xform[3]; // rows: world meters -> the sun's volumetric shadow map (u, v, depth in 0..1)
 	vec4 sun_map; // xyz: world direction toward the light it is built from; w: 1 = present
 	vec4 sky_map_xform[3]; // rows: world meters -> the sky's volumetric shadow map (built looking down)
-	vec4 sky_map; // x: single-scattering albedo; w: 1 = present
+	vec4 sky_map; // x: single-scattering albedo; z: weight of the scattering orders past the octaves; w: 1 = present
 } p;
 
 // The world distance (meters) to what a frame pixel shows (reverse Z: 0 is the far plane), at most
@@ -343,11 +343,12 @@ float hg_phase(float c, float g) {
 // The multiple-scattering octaves (Wrenninge et al. 2013), times the single-scattering albedo (sky_map.x, as
 // the path tracer weighs each scatter). Octave i stands for higher scattering orders, so it is weighed by the
 // albedo to the i-th power relative to 0.9 (a whiter medium such as snow powder keeps more of its deep,
-// many-times-scattered light, as it does under path tracing).
+// many-times-scattered light, as it does under path tracing). The orders past the third come as one more, wider
+// octave weighted by sky_map.z.
 // Fitted to the path tracer (docs/ideas/physx.md, "Flow raster light matches path tracing, refit"), each
 // light on its own on test puffs under a real sky:
-// - SUN_MS_GAIN: the octaves' light at zero depth, over single scattering (1.84: in sunlit gas the light
-//   scattered on from the rest of the cloud adds most of a second scattering's worth again).
+// - SUN_MS_GAIN: the octaves' light, over their sum (in sunlit gas the light scattered on from the rest of the
+//   cloud adds most of a second scattering's worth again).
 // - SKY_MS_SHARE: the sky's light already arrives from all around, so the octaves overcount it; this share of
 //   it is left, with the 0.9 albedo the gas loses it at every scatter, as the path tracer has it.
 // - SKY_OCCLUSION: the sky reaches a point from the whole hemisphere, mostly along shorter paths out of the
@@ -355,13 +356,13 @@ float hg_phase(float c, float g) {
 // The densest smoke the gas is taken as: the path tracer's density majorant (RTSparseVolume::density_majorant),
 // which clamps the smoke it tracks to it, and Flow's own opacity march (patched, misc/physx_patches 0010).
 const float SMOKE_MAX = 2.0;
-const float SUN_MS_GAIN = 1.0 / 0.95;
-const float SKY_MS_SHARE = 0.27;
+const float SUN_MS_GAIN = 1.3;
+const float SKY_MS_SHARE = 0.25;
 const float SKY_OCCLUSION = 0.15;
 
 float ms_transmittance(float tau) {
 	float a = p.sky_map.x * (1.0 / 0.9);
-	return (exp(-tau) + 0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau)) * (p.sky_map.x * SUN_MS_GAIN);
+	return (exp(-tau) + 0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + p.sky_map.z * exp(-0.125 * tau)) * (p.sky_map.x * SUN_MS_GAIN);
 }
 
 float ign(vec2 px) {
@@ -1025,7 +1026,12 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	}
 	f[w++] = CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
 	f[w++] = 1.0f;
-	f[w++] = 0.0f;
+	{
+		// The scattering orders past the three octaves, as a geometric series: the sum over n >= 3 of (c albedo)^n, c = 0.45
+		// the share of light a scatter keeps inside the gas (fitted with SUN_MS_GAIN to the path tracer on test puffs).
+		const float q = 0.45f * CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
+		f[w++] = q * q * q / (1.0f - q);
+	}
 	f[w++] = sky_map ? 1.0f : 0.0f;
 	ERR_FAIL_COND(w != PARAMS_WORDS);
 	p_rd->buffer_update(params_buffer, 0, sizeof(words), words);
