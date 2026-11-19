@@ -651,6 +651,9 @@ func _caves(cam: Camera3D) -> void:
 		if id == 0 and args.has("cave-mesh"):
 			var land_m: Landscape3D = get_node("Landscape")
 			net.ground_material = land_m.material
+			# The bench already has no ambient underground (the environment's is zeroed for cave views), so the
+			# network's interior ambient probes would only add light the path tracer does not have.
+			net.cave_ambient_probes = false
 			if args.has("cave-cell"):
 				net.mesh_cell = float(args["cave-cell"]) # --cave-cell=m: the cave mesh's grid (0.3 by default)
 			var mr := float(args.get("mesh-radius", "50"))
