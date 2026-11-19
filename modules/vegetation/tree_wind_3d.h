@@ -91,6 +91,9 @@ public:
 		// way before the roots (root_ratio is then the foot's), so it snaps there and falls without its root plate.
 		float base_char = 0.0f;
 		bool base_snap = false;
+		// A tree the fire killed (a snag), in: its age dead (years, -1 alive). Its roots and wood rot over the years,
+		// and it fails at the rotten butt (no root plate).
+		float snag_age = -1.0f;
 	};
 	// Touch on one instance: each bone's extra turn (tree space, axis * angle) and its rate, and
 	// the bones that snapped off.
@@ -129,6 +132,7 @@ private:
 		LocalVector<uint8_t> moving; // Per instance: solved last frame (else at rest).
 		LocalVector<uint8_t> slot; // Per instance: its frame within an update period (staggers the load).
 		LocalVector<float> base_char; // Per instance: char at the stem's foot from a fire (m), refreshed now and then.
+		LocalVector<float> snag_age; // Per instance: years since the fire killed it, -1 alive.
 		HashMap<int, Touch> touch;
 		struct Body {
 			RID body;
@@ -165,6 +169,7 @@ private:
 	int storm_breaks = 0;
 	int storm_throws = 0;
 	int storm_snaps = 0; // Of the throws: fire-charred stems that snapped at the foot.
+	int storm_snags = 0; // Trees a fire killed, standing dead.
 	float char_timer = 0.0f;
 	bool making_snap = false; // _make_part: a charred stem snapped at its foot (no root plate)
 	float snap_cut = 0.0f; // _make_part: its cut over the stump (tree space)
@@ -279,6 +284,7 @@ private:
 	void _gather_waves();
 	void _solve_job(uint32_t p_index, int p_unused);
 	void _process(double p_delta);
+	void _update_snag(Target &r_target, uint32_t p_instance, const Transform3D &p_tree, const Vector3 &p_at, const class WorldFire *p_fire);
 	void _gather_contacts(double p_delta);
 	void _update_colliders(Target &r_target, const Transform3D &p_world, const Vector3 &p_eye);
 	void _free_colliders(Target &r_target);
@@ -371,6 +377,7 @@ public:
 	int get_storm_throw_count() const { return storm_throws; }
 	int get_storm_fall_count() const { return storm_falls; }
 	int get_storm_snap_count() const { return storm_snaps; }
+	int get_snag_count() const { return storm_snags; }
 	// For tests: the storm load on a rigged mesh at a placement and the current time.
 	Dictionary get_storm_load(const Ref<Mesh> &p_mesh, const Transform3D &p_placement, int p_seed);
 	int get_collider_count() const;

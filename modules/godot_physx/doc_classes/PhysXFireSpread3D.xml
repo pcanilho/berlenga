@@ -71,6 +71,13 @@
 				Puts the fire out. What has burnt stays charred.
 			</description>
 		</method>
+		<method name="get_burn_age_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How long ago the ground at [param position] caught, in years of the weather's clock (real time times [method WorldWeather.time_scale]; real time with no weather), or -1 where it has not burnt. Its [method WorldFire.burn_age_at], for plants growing back.
+			</description>
+		</method>
 		<method name="get_burning_cells" qualifiers="const">
 			<return type="int" />
 			<description>

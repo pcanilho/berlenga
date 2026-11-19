@@ -1611,6 +1611,31 @@ wood breaks short and brash); the trunk's butt takes the matching face
 and hinges on the stump's lee edge. The capsules, the Blast hulls and the
 Blast soups of the stem below the cut are dropped from the part.
 
+### Standing snags (picked 19 Nov, first of four, part two)
+
+Built. Research: whether a fire kills a tree follows the share of its
+crown scorched and its bark thickness (Ryan and Reinhardt 1988, FOFEM:
+P = 1 / (1 + exp(-1.941 + 6.316 (1 - e^-BT) - 0.000535 CVS^2)), BT in
+inches, CVS in %). Dead trees stand as snags: fine limbs drop in the first
+years, roots and butt hold about a year and then rot, and snags fall at
+the base with half-lives of about 5 to 10 years (Everett et al. 1999;
+Russell et al. 2006; Dunn and Bailey 2016). Here: WorldFire gains
+crown_scorch_at (Van Wagner's lethal scorch height of the front that
+passed, PhysXFireSpread3D's peak_scorch, which a torching crown raises
+over its top) and PhysXFireSpread3D now provides burn_age_at (years of
+the weather's clock since each cell caught: the fire keeps a game-day
+clock from WorldWeather.time_scale). TreeWind3D, once a second while a
+fire provider exists, takes each tree's crown share below the scorch
+height (foliage area of its bones) and bark of 4% of its diameter, and a
+hash steady per tree against P; a killed tree's age dead follows
+burn_age_at. In the storm test its limbs keep 0.2 + 0.8 e^(-t/3) of their
+strength and its roots and butt 0.15 + 0.85 e^(-(t-1)/6), and a snag dead
+over half a year fails at the butt (the snap path: stump, no plate). Test
+(storm bench, `--snag=Y` stub, 18 m/s): alive, nothing breaks; dead 0
+years, nothing; 3 years, 11 limbs; 8 years, 38 limbs and the spruce falls
+at its butt. Left: the dead crowns' needles stay on in the shader (trees
+thread: needle cast in the first year).
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

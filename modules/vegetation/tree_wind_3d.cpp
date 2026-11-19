@@ -346,6 +346,13 @@ void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32
 	const uint32_t wave_count = waves.size();
 	const uint32_t per_axis = MAX(wave_count / 3, 1u);
 	const bool storm = r_storm && p_rig.storm;
+	// A fire-killed tree's rot (docs/ideas/physx.md, "Standing snags"): its fine limbs dry, check and drop within a few
+	// years, its roots and butt hold about a year, then rot (snags fall at half-lives of about 5 to 10 years: Everett et al.
+	// 1999, Russell et al. 2006, Dunn and Bailey 2016). Strength left: limbs 0.2 + 0.8 e^(-t/3), roots and butt
+	// 0.15 + 0.85 e^(-(t-1)/6), t in years dead.
+	const float snag_t = r_storm ? r_storm->snag_age : -1.0f;
+	const float snag_wood = snag_t < 0.0f ? 1.0f : 0.2f + 0.8f * Math::exp(-snag_t / 3.0f);
+	const float snag_roots = snag_t < 0.0f ? 1.0f : 0.15f + 0.85f * Math::exp(-MAX(snag_t - 1.0f, 0.0f) / 6.0f);
 	const float scale3 = scale * scale * scale;
 	Vector3 base_moment;
 	Vector3 base_wind;
@@ -433,7 +440,7 @@ void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32
 			// A stem's first segment fails at the foot: the roots' test below covers it.
 			if (bone.parent != 0 && bone.strength > 0.0f && bone.radius * scale >= storm_min_radius) {
 				// Knots, old wounds and rot: each part of each tree is 65-115% as strong as clear wood.
-				const float defect = 0.65f + 0.5f * hash01(p_seed, b);
+				const float defect = (0.65f + 0.5f * hash01(p_seed, b)) * snag_wood;
 				const float ratio = moment.length() / MAX(bone.strength * scale3 * storm_strength * defect, 1e-3f);
 				if (ratio > r_storm->ratio) {
 					r_storm->ratio = ratio;
@@ -471,7 +478,7 @@ void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32
 	if (storm && p_rig.anchorage > 0.0f && !(has_broken && p_touch->broken[1])) {
 		// The overturning moment at the foot, 15% more for the crown's weight carried out over the
 		// lean (HWIND, Peltola et al. 1999); each tree's roots and soil 70-130% of the mean.
-		const float defect = 0.7f + 0.6f * hash01(p_seed, 0x51u);
+		const float defect = (0.7f + 0.6f * hash01(p_seed, 0x51u)) * snag_roots;
 		r_storm->root_ratio = base_moment.length() * 1.15f / MAX(p_rig.anchorage * scale3 * storm_anchorage * defect, 1e-3f);
 		// A fire-charred foot (docs/ideas/physx.md, "Burnt trees fall later"): the char eats the stem's section from
 		// outside; under bark of about a tenth of its radius (5 mm to 3 cm), the wood lost leaves a section modulus of (r' / r)^3,
@@ -483,13 +490,18 @@ void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32
 			const float wood = MAX(r_storm->base_char - CLAMP(0.1f * r, 0.005f, 0.03f), 0.0f) * 0.5f;
 			if (wood > 0.001f && r > 0.0f) {
 				const float left = MAX(1.0f - wood / r, 0.05f);
-				const float wood_defect = 0.65f + 0.5f * hash01(p_seed, 1u);
+				const float wood_defect = (0.65f + 0.5f * hash01(p_seed, 1u)) * snag_roots;
 				const float foot_ratio = base_moment.length() / MAX(foot.strength * scale3 * storm_strength * wood_defect * left * left * left, 1e-3f);
 				if (foot_ratio > r_storm->root_ratio) {
 					r_storm->root_ratio = foot_ratio;
 					r_storm->base_snap = true;
 				}
 			}
+		}
+		// A snag dead over half a year fails at its rotten butt rather than lifting a root plate (snags break at the
+		// base: Everett et al. 1999; Russell et al. 2006).
+		if (r_storm->snag_age > 0.5f) {
+			r_storm->base_snap = true;
 		}
 		if (r_storm->root_ratio > r_storm->ratio) {
 			r_storm->wind = base_wind;
@@ -629,8 +641,10 @@ void TreeWind3D::_scan_node(Node *p_node) {
 				t.moving.resize(n);
 				t.slot.resize(n);
 				t.base_char.resize(n);
+				t.snag_age.resize(n);
 				for (int c = 0; c < n; c++) {
 					t.base_char[c] = 0.0f;
+					t.snag_age[c] = -1.0f;
 				}
 				const float *r = t.buffer.ptr();
 				for (int i = 0; i < n; i++) {
@@ -751,7 +765,9 @@ void TreeWind3D::update(double p_delta) {
 				}
 				const Transform3D cw = cm->get_global_transform();
 				for (uint32_t i = 0; i < t.placements.size(); i++) {
-					t.base_char[i] = MAX(t.base_char[i], fire->stem_char_at(cw.xform(t.placements[i].origin)));
+					const Vector3 at = cw.xform(t.placements[i].origin);
+					t.base_char[i] = MAX(t.base_char[i], fire->stem_char_at(at));
+					_update_snag(t, i, cw * t.placements[i], at, fire);
 				}
 			}
 		}
@@ -816,6 +832,9 @@ void TreeWind3D::update(double p_delta) {
 				job.storm = storm_frame && t.rig->storm;
 				if (i < t.base_char.size()) {
 					job.load.base_char = t.base_char[i];
+				}
+				if (i < t.snag_age.size()) {
+					job.load.snag_age = t.snag_age[i];
 				}
 				jobs.push_back(job);
 				t.moving[i] = 1;
@@ -1464,6 +1483,43 @@ RigidBody3D *TreeWind3D::_make_part(Target &r_target, int p_instance, const Tran
 	}
 	tc.parts.push_back(body->get_instance_id());
 	return body;
+}
+
+// Whether the fire killed the tree (docs/ideas/physx.md, "Standing snags"): Ryan and Reinhardt's (1988) mortality from
+// the crown volume scorched (CVS, %, the share of its foliage below the lethal scorch height) and its bark thickness
+// (BT, inches; about 4% of the stem's diameter, FOFEM's middle), P = 1 / (1 + exp(-1.941 + 6.316 (1 - e^-BT) -
+// 0.000535 CVS^2)), against a hash steady per tree. A killed tree's age dead follows the fire's burn age.
+void TreeWind3D::_update_snag(Target &r_target, uint32_t p_instance, const Transform3D &p_tree, const Vector3 &p_at, const WorldFire *p_fire) {
+	if (p_instance >= r_target.snag_age.size() || !r_target.rig) {
+		return;
+	}
+	float &age = r_target.snag_age[p_instance];
+	if (age >= 0.0f) {
+		age = MAX(age, p_fire->burn_age_at(p_at));
+		return;
+	}
+	const float scorch = p_fire->crown_scorch_at(p_at);
+	if (scorch <= 0.0f) {
+		return;
+	}
+	const Rig &rig = *r_target.rig;
+	const float scale = MAX(Math::pow(float(Math::abs(p_tree.basis.determinant())), 1.0f / 3.0f), 1e-3f);
+	float below = 0.0f, total = 0.0f;
+	for (uint32_t b = 1; b < rig.bones.size(); b++) {
+		const Bone &bone = rig.bones[b];
+		total += bone.area;
+		below += (bone.pivot + bone.centroid).y * scale < scorch ? bone.area : 0.0f;
+	}
+	const float cvs = total > 0.0f ? 100.0f * below / total : 0.0f;
+	const float dbh_in = (rig.bones.size() > 1 ? 2.0f * rig.bones[1].radius * scale : 0.2f) * 39.37f;
+	const float bt = 0.04f * dbh_in;
+	const float p = 1.0f / (1.0f + Math::exp(-1.941f + 6.316f * (1.0f - Math::exp(-bt)) - 0.000535f * cvs * cvs));
+	const Vector3 o = r_target.placements[p_instance].origin;
+	const uint32_t seed = hash_u32(uint32_t(int(o.x * 16.0f)) * 73856093u ^ uint32_t(int(o.z * 16.0f)) * 19349663u);
+	if (hash01(seed, 0x5a9u) < p) {
+		age = MAX(p_fire->burn_age_at(p_at), 0.0f);
+		storm_snags++;
+	}
 }
 
 // A storm broke a part of a tree or threw it (docs/ideas/trees.md section 5t): the part becomes a
@@ -2843,6 +2899,7 @@ void TreeWind3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_storm_throw_count"), &TreeWind3D::get_storm_throw_count);
 	ClassDB::bind_method(D_METHOD("get_storm_fall_count"), &TreeWind3D::get_storm_fall_count);
 	ClassDB::bind_method(D_METHOD("get_storm_snap_count"), &TreeWind3D::get_storm_snap_count);
+	ClassDB::bind_method(D_METHOD("get_snag_count"), &TreeWind3D::get_snag_count);
 	ClassDB::bind_method(D_METHOD("get_storm_load", "mesh", "placement", "seed"), &TreeWind3D::get_storm_load);
 	ClassDB::bind_method(D_METHOD("get_piece_count"), &TreeWind3D::get_piece_count);
 	ClassDB::bind_method(D_METHOD("get_touch_bends", "target", "instance"), &TreeWind3D::get_touch_bends);

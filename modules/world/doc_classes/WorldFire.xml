@@ -23,6 +23,13 @@
 				Override in a stub to replace [method burnt_at].
 			</description>
 		</method>
+		<method name="_crown_scorch_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method crown_scorch_at].
+			</description>
+		</method>
 		<method name="_heat_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -56,6 +63,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				How burnt the ground at [param position] is, 0 unburnt to 1 burnt out.
+			</description>
+		</method>
+		<method name="crown_scorch_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How high the fire killed tree crowns over [param position], in metres: the lethal scorch height of the front that passed (Van Wagner 1973), or 1000 where a crown burnt. [TreeWind3D] takes the share of a crown below it, with its bark, for whether the tree died (Ryan and Reinhardt 1988); a dead tree stands as a snag that weakens over the years ([method burn_age_at]). The most of any fire; 0 where none burnt.
 			</description>
 		</method>
 		<method name="has_provider" qualifiers="const">
