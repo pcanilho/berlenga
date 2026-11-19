@@ -19,7 +19,7 @@ summary: "Sun and moon set by date, time and place; a scattering atmosphere with
 
   *Sunset: the old sky goes black; the atmosphere lights the clouds orange from below the horizon.*
 
-- **Cloud layer** (`cloud_base_height`, `cloud_thickness`, `cloud_density`): shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`) and fray into wisps, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).
+- **Cloud layer** (`cloud_base_height`, `cloud_thickness`, `cloud_density`): shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).
 
   ![Fair weather cumulus over a meadow at 14:00, looking up toward the sea, raster](media/sky-clouds.jpg)
 
