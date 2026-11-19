@@ -19,7 +19,13 @@
 			<param index="1" name="mineral_kg_s" type="float" />
 			<param index="2" name="ash_kg_s" type="float" />
 			<description>
-				Load entering the river at [param position] (kg/s of silt and clay, and of ash), as [method WorldWater.add_sediment] gives it: held until the caller's next call, carried down at the river's speed and mixed across it ([param mineral_kg_s] over the discharge downstream). It browns (silt) or greys (ash) the water in raster and path tracing alike.
+				Load entering the river at [param position] (kg/s of silt and clay, and of ash), as [method WorldWater.add_sediment] gives it: a rate held for 2 seconds after each call (call it every frame, or at least every second, for as long as the load enters; one call alone sends a 2 s slug downstream), carried down at the river's speed and mixed across it ([param mineral_kg_s] over the discharge downstream). It browns (silt) or greys (ash) the water in raster and path tracing alike.
+			</description>
+		</method>
+		<method name="clear_sediment_deposit">
+			<return type="void" />
+			<description>
+				Forgets what has settled on the bed (a scene reset, or the ground taking it up into its own layer).
 			</description>
 		</method>
 		<method name="clear_sphere">
@@ -90,7 +96,14 @@
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
-				The suspended load (kg/m³: x mineral, y ash) at [param position] on the river; zero off it.
+				The suspended load (kg/m³: x mineral, y ash) at [param position] on the river; zero off it. The load is held per cross-section and per lane across the channel: a load entering by one bank runs down that bank as a plume and spreads across by turbulent mixing (0.6 d u*, Fischer et al. 1979) over some tens of channel widths.
+			</description>
+		</method>
+		<method name="get_sediment_deposit_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				What has settled out of the load onto the bed at [param position] (kg/m², x mineral, y ash): where the bed shear is under the stress for deposition (slack water by the banks, pools), silt settles at about 0.15 mm/s and ash five times slower. Also answered through [method WorldWater.sediment_deposit_at].
 			</description>
 		</method>
 		<method name="get_waterfalls" qualifiers="const">

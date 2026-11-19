@@ -81,6 +81,13 @@
 				Override in a stub to replace [method sediment_at].
 			</description>
 		</method>
+		<method name="_sediment_deposit_at" qualifiers="virtual const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method sediment_deposit_at].
+			</description>
+		</method>
 		<method name="_wake_depth_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -105,7 +112,7 @@
 			<param index="1" name="mineral_kg_s" type="float" />
 			<param index="2" name="ash_kg_s" type="float" />
 			<description>
-				A suspended load entering the water that answers at [param position], in kg/s of mineral (silt and clay) and of ash and char: runoff off burnt or bare ground, a collapsing bank, a landslide. That water carries it on downstream and settles it. Where no water answers, it is dropped.
+				A suspended load entering the water that answers at [param position], in kg/s of mineral (silt and clay) and of ash and char: runoff off burnt or bare ground, a collapsing bank, a landslide. It is a rate: call it every frame (or at least every second) while the load enters, since a river holds each call's rate for 2 seconds. A one-off mass goes to [method add_sediment_mass]. That water carries it on downstream. Where no water answers, it is dropped.
 			</description>
 		</method>
 		<method name="add_sediment_mass">
@@ -182,6 +189,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The suspended load of the water at [param position] (kg/m3): [code]x[/code] mineral, which clouds it brown, [code]y[/code] ash and char, which turn it grey to black. Both 0 for clear water or none.
+			</description>
+		</method>
+		<method name="sediment_deposit_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Silt and ash the water has laid on its bed at [param position] (kg/m², [code]x[/code] mineral, [code]y[/code] ash), summed over every producer, whether or not water still covers the point: a river drops its load in slack water by its banks and in pools, where the bed shear falls under the stress for deposition (about 0.1 Pa). 1 kg/m² is a layer of about 0.8 mm. The ground can read it to lay a silt skin.
 			</description>
 		</method>
 		<method name="wake_depth_at" qualifiers="const">

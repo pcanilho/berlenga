@@ -6703,7 +6703,11 @@ void PhysXWaterSurface3D::_rebuild() {
 	}
 	if (mesh_instance == nullptr) {
 		mesh_instance = memnew(MeshInstance3D);
-		mesh_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+		// No raster shadow (the water's own pass lights what lies under it), but the path tracer's shadow rays from
+		// under the water cross its surface, so the sun reaching the bed is absorbed on its way down (Beer-Lambert,
+		// the leg the camera's ray alone left out) and filtered by the surface's Fresnel.
+		mesh_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_ON);
+		mesh_instance->set_shadow_renderers(RSE::SHADOW_RENDERER_PATH_TRACER);
 		add_child(mesh_instance, false, INTERNAL_MODE_BACK);
 	}
 	if (water_material.is_null()) {
