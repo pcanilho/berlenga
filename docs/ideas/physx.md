@@ -1983,6 +1983,77 @@ surge rides the mud body's front, the later surges run behind it as
 pulses. Test (1500 m3 on the 25% gully): the lead surge tracks the mud
 front to its stop at 148 m, the second surge follows at 3.3 m/s.
 
+### Window flames as tongues (picked 19 Nov afternoon, first of three)
+
+Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
+as the opening, leaving through its upper two thirds, standing off the
+wall by about a third of the opening's height, and rising along the
+facade to the flame length. Built: the flame emitter is a slot across
+the opening's top (box, wide as the opening, 0.35 of its height), and a
+thinner slab of fuel stands against the wall over the lower half of the
+flame length, so Flow burns the gas along the facade rather than in a
+ball at the window. Wind bends both. Left: a door's flames, being wider
+and taller, still read broad.
+
+### Wind-driven building fires (picked 19 Nov afternoon, second of three)
+
+Research: in NIST and FDNY's wind-driven fire tests (Kerber and
+Madrzykowski 2009), wind of 9-10 m/s into a broken window drove
+corridor temperatures over 1000 C and pushed the flames out through the
+leeward openings. Built: wind pressure per opening, Cp +0.7 facing the
+wind, -0.5 in the lee, -0.6 on the sides and roof (EN 1991-1-4); each
+room's pressure balances the orifice flows (Cd 0.6) to the outside and
+the rooms next door (four Gauss-Seidel sweeps, bisection per room). Air
+driven in raises the ventilation limit to 3 MJ per kg of air (Huggett);
+flames leave only by openings the gas flows out of, taking the inflow
+openings' share; gas pushed through a door adds its heat over the door's
+area to the next room's dose. Test (rooms A, B beside it, C above,
+wind 10 m/s into A's door): C, lit by the flames out of A's window,
+catches at 12 min instead of 24.
+
+### Smouldering rubble and rekindles (picked 19 Nov afternoon, third of three)
+
+Research: char and timber under the ash of a burnt or hosed-out room go
+on smouldering for hours; smoulder fronts speed up with air flows of
+only centimetres a second through the pile (Ohlemiller 1985), so wind
+fans them, and a smoulder can turn back to flame (Rein 2009). Rekindles
+are a recognised cause of second fires hours after crews leave (NFPA),
+mostly from deep pockets a hose stream did not reach. Built: a burnt-out
+room's ember (0..1) falls by e in about 30 min in still air, faster
+under rain or water. Where the debris lies open (fallen in, roofless or
+with an opening to the outside), ground wind over 0.5 m/s fans it up
+logistically at (u - 0.5)/1200 per second. Water leaves deep pockets
+worth 0.15 of the share of fuel left. At 0.6, with over 5% of its fuel
+left and dry, the room relights (signal rekindled). Glowing debris in a
+wind over 4 m/s sheds embers that hop downwind, and thin, cool smoke
+drifts off it. Test (A hosed out at 25 min): in still air its ember dies
+within the hour; in an 8 m/s wind it relights 80 min after the hose
+stopped.
+
+### Next-round options (card, 19 Nov evening)
+
+Firefighters' hose streams. apply_water already knocks fires down.
+Plan: a hose node whose jet is a PhysX particle stream (a solid stream
+reaches about 20 to 30 m; Freeman's nozzle formula), aimed at
+openings, feeding apply_water where it lands, with steam and the
+knock-down seen through the windows.
+
+Embers through vents and gutters. Post-fire surveys and IBHS tests show
+embers getting in through attic and foundation vents and catching the
+dry debris in gutters and on decks; mesh of 3 mm or finer stops most
+(Manzello et al. 2011, NIST ember generator). Plan: vents and gutters
+as openings with a mesh size and a debris load, which brands can light.
+
+Fire in roof spaces and voids. Fire that gets into an attic or a wall
+cavity runs unseen along it and comes out far from where it started;
+it is a common way a whole roof goes (NFPA; BRE). Plan: concealed
+voids as rooms with a low fuel load and no openings to the outside,
+linked by gaps to the rooms below and next to them.
+
+Raster smoke speckle (fix, no pick needed): opacity-matched upsampling
+of the quarter-resolution light (the light per unit of the low-res
+opacity, times the full-res opacity).
+
 ### Next-round options (card, 19 Nov afternoon)
 
 Window flames as tongues. External flames now read as round fireballs

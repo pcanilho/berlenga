@@ -54,6 +54,8 @@ extends Node3D
 #                         --detail-pixels=n (3);
 #                         --detail-sync places the detail cells on the main thread (ground_detail_threads off),
 #                         --cell-sync the coarse layers' cells (cell_threads off)
+#   --no-river-detail     with --world: RockField3D.ground_detail_rivers off (river beds keep only the river layer's stones)
+#   --gravel-reach[=d]    with --view=river: a gravel-bed reach whose median is nearest d m (0.03)
 #   --no-ground-cover     with --world: RockField3D.ground_detail_cover off (no grain aggregate on the ground past
 #                         each class's reach; a before frame); --save-cover writes the near cover map, --cover-check
 #                         compares it with the stones placed
@@ -549,6 +551,7 @@ func _world() -> void:
 		# --detail-ref=px the image height the reach is set for (0: the window's), --detail-pixels=n the smallest drawn.
 		rocks.ground_detail = not (args.has("no-ground-detail") or args.has("test"))
 		rocks.ground_detail_cover = not args.has("no-ground-cover")
+		rocks.ground_detail_rivers = not args.has("no-river-detail")
 		if rocks.ground_detail:
 			rocks.ground_detail_reference_height = int(args.get("detail-ref", "1080"))
 			if args.has("detail-pixels"):
@@ -1436,6 +1439,42 @@ func _densest(layer: int) -> Vector3:
 					bp = p
 		print("scree: fullest talus %.2f at %s (%d ms)" % [bt, bp, Time.get_ticks_msec() - t0])
 		return bp
+	if layer == RockField3D.LAYER_RIVER and args.has("gravel-reach"):
+		# --gravel-reach[=d]: a gravel-bed reach (the bed's median under the river layer's smallest stones, so only
+		# ground detail shows it), the widest whose median is nearest d (m, default 0.03); as the river layer's sizes.
+		var want := float(args["gravel-reach"]) if args["gravel-reach"] != "1" else 0.03
+		var best_score := INF
+		var best_p := Vector3.ZERO
+		var rvs: Array = gen.get_rivers(rocks.river_min_area)
+		var wmax := 0.0
+		for rv in rvs:
+			for wv in (rv["widths"] as PackedFloat32Array):
+				wmax = maxf(wmax, wv)
+		print("river: %d rivers, widest %.1f m" % [rvs.size(), wmax])
+		for rv in rvs:
+			var pts: PackedVector3Array = rv["points"]
+			var wid: PackedFloat32Array = rv["widths"]
+			var areas: PackedFloat32Array = rv["areas"]
+			var dist := 0.0
+			for i in range(1, pts.size() - 1):
+				dist += Vector2(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z).length()
+				if absf(pts[i].x) > 700 or absf(pts[i].z) > 700 or wid[i] < minf(3.0, 0.5 * wmax) or pts[i].y < gen.sea_level + 8.0:
+					continue
+				var q: float = gen.get_discharge(areas[i])
+				var depth := 0.27 * pow(maxf(q, 1e-3), 0.4)
+				var run := Vector2(pts[i + 1].x - pts[i].x, pts[i + 1].z - pts[i].z).length()
+				var slope := clampf((pts[i].y - pts[i + 1].y) / maxf(run, 1e-3), 1e-4, 0.3)
+				var d50 := clampf(minf(depth * slope / (1.65 * 0.045), 0.5 * exp(-dist / 20000.0)), 0.005, 1.2)
+				# In the open (no gorge walls within 15 m either side), so the sun reaches the bed.
+				var fd := Vector2(pts[i + 1].x - pts[i].x, pts[i + 1].z - pts[i].z).normalized()
+				var sd := Vector3(-fd.y, 0, fd.x)
+				var walls := maxf(gen.get_height(pts[i] + sd * 15.0), gen.get_height(pts[i] - sd * 15.0)) - pts[i].y
+				var score := absf(log(d50 / want)) - 0.02 * wid[i] + maxf(walls - 3.0, 0.0) * 0.3
+				if score < best_score:
+					best_score = score
+					best_p = pts[i]
+		print("river: gravel reach at %s (score %.2f)" % [best_p, best_score])
+		return best_p
 	var stones: Array = rocks.get_stones(layer, Rect2(-800, -800, 1600, 1600))
 	if layer == RockField3D.LAYER_COAST:
 		# The coast: frame the stack or arch itself (the biggest form), its foot at the water.

@@ -42,6 +42,7 @@ extends Node3D
 #   --ice-converged       with --glacial: solve the steady ice to convergence (glacial_converged)
 #   --dunes=steps|0       coastal dunes behind the beaches (dunes_enabled, on); --dune-supply=m3/m, --dune-belt=m,
 #                         --dune-cell=m, --dune-wind=degrees from onshore, --dune-veg=0..1 (0: bare sand)
+#   --find-nebkhas        print the sand sea's nebkha count and the tallest (then quit)
 #   --sand-sea=x0,z0,w,d  a desert sand sea over that rect (sand_sea_rect); --sand-sea-kind=transverse|barchan|
 #                         linear|star, --sand-sea-depth=m, --sand-sea-wind=degrees, --sand-sea-scale=m, --sand-sea-steps=n
 #   --touch=x,z,w,d,mode,y[,depth,falloff,bowl];...  TerrainBrush3D touch-ups under the generator (lower, raise,
@@ -205,6 +206,16 @@ func _ready() -> void:
 			print("[landscape] sea cave entrance %s facing %s" % [e["position"], e["out"]])
 		get_tree().quit(0)
 		return
+	if args.has("find-nebkhas"):
+		# --find-nebkhas: how many nebkhas the sand sea grew and the tallest few (x, top y, z, height).
+		var neb := gen.get_nebkhas(gen.sand_sea_rect)
+		var tall := Array(neb)
+		tall.sort_custom(func(a, b): return a.w > b.w)
+		print("[landscape] %d nebkhas" % neb.size())
+		for i in mini(12, tall.size()):
+			print("[landscape] nebkha %s" % tall[i])
+		get_tree().quit(0)
+		return
 	if args.has("dune-map"):
 		_save_dune_map(args["dune-map"])
 		get_tree().quit(0)
@@ -322,6 +333,7 @@ func _ready() -> void:
 		var pitch := deg_to_rad(float(args.get("face-sun", args.get("face-away", "0"))))
 		cam5.look_at(cam5.global_position + flat * cos(pitch) - Vector3.UP * sin(pitch))
 		_log("facing the sun: azimuth dir %s, sun elevation %.1f deg" % [str(flat), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
+	await _docs_links_setup()
 	# Raster: 160 frames, so the sky's reprojected clouds (one pixel of each 4x4 block a frame) have had ten
 	# samples a pixel; fewer leave the first frame's upsampled blocks and the march jitter in the picture
 	# (a game reaches that within a second or two of a cut).
@@ -1832,6 +1844,74 @@ func _build_weather() -> void:
 		leaf_fall.weather_map = leaf_fall.get_path_to(weather)
 		leaf_fall.litter_density = float(args.get("leaf-litter", "0.5"))
 	snow.global_position = Vector3(0, 0, 0)
+
+
+# World-links docs shots (docs/ideas/world-links.md), on the scene's own systems:
+#   --drop-leaves=N[,r[,d]]   N of the vegetation's own leaves dropped from 2-6 m over a disc of radius r (default
+#                         15 m) round --look, else d m (25) in front of the camera; they land on what is there (ground, snow, water) and float on water
+#   --burn=x,z,r,years    a WorldBurnScar3D (burnt forest years ago) of radius r; with --snow-days=N the snow under it
+#                         gathers the burnt trees' char over N days of weather (dirty snow)
+func _docs_links_setup() -> void:
+	if args.has("burn"):
+		var b := String(args["burn"]).split(",")
+		var scar = ClassDB.instantiate("WorldBurnScar3D")
+		scar.name = "DocsBurn"
+		add_child(scar)
+		scar.global_position = Vector3(float(b[0]), height_at(float(b[0]), float(b[1])), float(b[1]))
+		scar.size = Vector2(float(b[2]), float(b[2])) * 2.0
+		scar.age_years = float(b[3]) if b.size() > 3 else 1.0
+		await get_tree().process_frame
+		_log("burn scar at %s, %s m, %.1f years" % [str(scar.global_position), str(scar.size), scar.age_years])
+	if args.has("snow-days") and snow != null:
+		var days := float(args["snow-days"])
+		var t := Time.get_ticks_msec()
+		snow.advance(days * 86400.0)
+		var waited := 0
+		while snow.is_updating() and waited < 600:
+			await get_tree().process_frame
+			waited += 1
+		if args.has("look"):
+			var lp := _vec3_arg(args["look"])
+			_log("snow after %.0f days: %.2f m deep, %.1f mg/m2 dirt, albedo %.2f at the look point (%d ms)" % [days, snow.get_depth_at(lp), snow.get_impurity_at(lp), snow.get_albedo_at(lp), Time.get_ticks_msec() - t])
+	if args.has("drop-leaves"):
+		var leaf_fall := get_node_or_null("LeafFall")
+		if leaf_fall == null:
+			return
+		var d := String(args["drop-leaves"]).split(",")
+		var n := int(d[0])
+		var r := float(d[1]) if d.size() > 1 else 15.0
+		# Round --look, else 25 m (third arg) in front of the camera.
+		var cam6: Camera3D = get_viewport().get_camera_3d()
+		var ahead := float(d[2]) if d.size() > 2 else 25.0
+		var lp := _vec3_arg(args["look"]) if args.has("look") else cam6.global_position - cam6.global_basis.z * ahead
+		if not args.has("look"):
+			lp.y = maxf(height_at(lp.x, lp.z), cam6.global_position.y - 3.0)
+		leaf_fall.lie_time = 100000.0
+		leaf_fall.refresh_crowns_near(lp)
+		var kinds: int = leaf_fall.get_kind_count()
+		if kinds == 0:
+			_log("drop-leaves: no leaf kinds from the vegetation near %s" % str(lp))
+			return
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 7
+		for i in n:
+			var a := rng.randf() * TAU
+			var rr := r * sqrt(rng.randf())
+			var p := Vector3(lp.x + rr * cos(a), 0.0, lp.z + rr * sin(a))
+			p.y = maxf(height_at(p.x, p.z), lp.y) + rng.randf_range(2.0, 6.0)
+			leaf_fall.drop_leaf(p, rng.randi() % kinds)
+		var waited := 0
+		while waited < 900:
+			await get_tree().physics_frame
+			waited += 1
+			if waited % 60 == 0 and leaf_fall.get_floating_count() + leaf_fall.get_buried_count() >= 0:
+				var aloft := 0
+				for st in leaf_fall.get_leaf_states():
+					if st.w < 0.5:
+						aloft += 1
+				if aloft < n / 20:
+					break
+		_log("drop-leaves: %d dropped (%d kinds), %d floating, %d buried after %d physics frames" % [n, kinds, leaf_fall.get_floating_count(), leaf_fall.get_buried_count(), waited])
 
 
 func _bake_snow_winter() -> void:

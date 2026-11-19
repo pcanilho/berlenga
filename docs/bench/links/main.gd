@@ -103,6 +103,19 @@ class LeafSnowStub extends WorldSnow:
 		return depth if p.x > -30.0 and p.x < -10.0 else 0.0
 
 
+# A flood 0.3 m deep over x < 0 carrying 5 kg/m3 of silt and 1 of ash: still over -6 < x < 0, a 1 m/s current
+# beyond.
+class FloodStub extends WorldWater:
+	func _height_at(p: Vector3) -> float:
+		return 0.3 if p.x < 0.0 else -INF
+
+	func _flow_at(p: Vector3) -> Vector3:
+		return Vector3(0, 0, 1.0) if p.x < -6.0 else Vector3.ZERO
+
+	func _sediment_at(p: Vector3) -> Vector2:
+		return Vector2(5.0, 1.0) if p.x < 0.0 else Vector2.ZERO
+
+
 # Ground burnt a year ago over x < -10 (no fire burning now).
 class BurntStub extends WorldFire:
 	func _burn_age_at(p: Vector3) -> float:
@@ -168,6 +181,7 @@ func _ready() -> void:
 	await _contact_tests()
 	await _snow_fire_tests()
 	await _dirty_snow_tests()
+	await _flood_ground_tests()
 	await _leaf_kick_tests()
 	await _leaf_surface_tests()
 	await _washout_tests()
@@ -692,6 +706,46 @@ func _dirty_snow_tests() -> void:
 	sun.queue_free()
 	ground_node.queue_free()
 	m.queue_free()
+	await get_tree().physics_frame
+
+
+# Floods on the ground (WorldWater into GroundSurface3D): any producer's water soaks the ground it covers, and still
+# water lays its load as fresh mud; a fast current keeps it up; dry ground beside gets neither.
+func _flood_ground_tests() -> void:
+	if not ClassDB.class_exists("GroundSurface3D"):
+		_skip("ground: floods", "no GroundSurface3D")
+		return
+	WorldContracts.clear_overrides()
+	var ground_node := Node3D.new()
+	ground_node.set_script(load("res://flat_ground.gd"))
+	ground_node.name = "FloodGround"
+	add_child(ground_node)
+	var g: Node3D = ClassDB.instantiate("GroundSurface3D")
+	g.name = "FloodSurface"
+	g.gpu_simulation = false
+	g.near_field = false
+	g.runoff_channels = false
+	g.standing_water = false
+	g.wind_ripples = false
+	g.world_puddles = false
+	add_child(g)
+	g.height_source = g.get_path_to(ground_node)
+	g.follow_target = g.get_path_to(ground_node)
+	await get_tree().physics_frame
+	WorldContracts.add_water_stub(FloodStub.new())
+	for i in 480:
+		await get_tree().physics_frame
+	var wet_still: float = g.get_saturation_at(Vector3(-3, 0, 0))
+	var wet_fast: float = g.get_saturation_at(Vector3(-9, 0, 0))
+	var dry: float = g.get_saturation_at(Vector3(3, 0, 0))
+	var silt_still: float = g.get_mud_deposit_at(Vector3(-3, 0, 0))
+	var silt_fast: float = g.get_mud_deposit_at(Vector3(-9, 0, 0))
+	var silt_dry: float = g.get_mud_deposit_at(Vector3(3, 0, 0)) # Green-Ampt fills the top 2 cm in about 10 s: over half in 8
+	_check("ground: floodwater from any producer soaks the ground it covers, not beside it", wet_still > 0.5 and wet_fast > 0.5 and dry < 0.1, "saturation %.2f under still water, %.2f under the current, %.2f on dry ground" % [wet_still, wet_fast, dry])
+	_check("ground: still floodwater lays its silt as fresh mud, a current keeps it up", silt_still > 1e-6 and silt_fast == 0.0 and silt_dry == 0.0, "%.1f um of silt under still water, %.1f um under the current, %.1f um beside" % [silt_still * 1e6, silt_fast * 1e6, silt_dry * 1e6])
+	WorldContracts.clear_overrides()
+	g.queue_free()
+	ground_node.queue_free()
 	await get_tree().physics_frame
 
 

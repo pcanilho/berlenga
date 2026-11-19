@@ -59,7 +59,10 @@ class BodySnowStub extends WorldSnow:
 #   --view=avalanche  a metre of new snow on a 38 degree face releases and piles at the toe (--before: the
 #                     loaded face before it goes); --test=avalanche for the checks
 #                     --powder [--at=S]: the run in real time, shot S s after release (default 9) with its
-#                     powder cloud (PhysX Flow); --test=triggers, --test=powder for triggers and the cloud
+#                     powder cloud (PhysX Flow); --wet: a thaw first, then a wet slide (--triggered: the
+#                     same release, dry); --test=triggers, --test=powder, --test=forest, --test=wet for
+#                     triggers, the cloud, forests (holding, braking, pressure on trees) and wet snow;
+#                     --test=waves: avalanches into a lake (impulse waves, lake ice)
 #   --view=bodies     three crates after a snowfall: one left out, one just driven in, one from a shed (SnowBodies3D)
 #   --test=bodies     snow on moving things (follow-up 18): seeded, built by snowfall, sheltered, blown and shaken
 #                     off, melted, burnt
@@ -190,6 +193,12 @@ func _ready() -> void:
 			await _run_trigger_tests()
 		elif only == "powder":
 			await _run_powder_tests()
+		elif only == "forest":
+			await _run_forest_tests()
+		elif only == "wet":
+			await _run_wet_tests()
+		elif only == "waves":
+			await _run_impulse_wave_tests()
 		elif only == "bodies":
 			await _run_body_tests()
 			await _run_body_slab_tests()
@@ -389,6 +398,9 @@ func _run_tests() -> void:
 	await _run_avalanche_tests()
 	await _run_trigger_tests()
 	await _run_powder_tests()
+	await _run_forest_tests()
+	await _run_wet_tests()
+	await _run_impulse_wave_tests()
 
 	# Cost: a 512 m map at 2 m (256 x 256), snowing with drift.
 	await _setup("mountain", 512.0, 256, -2.0)
@@ -1493,6 +1505,190 @@ func _run_powder_tests() -> void:
 	_check("a wet slide makes no powder cloud", av.get_release_count() >= 1 and av.get_powder_taken() == 0.0, "wetness %.2f, %d released at %.1f m/s, %.0f kg up" % [wet, av.get_release_count(), av.get_max_speed(), av.get_powder_taken()])
 
 
+func _avalanche_run(av: SnowAvalanche3D) -> float:
+	var t := 0.0
+	while (av.is_running() or av.get_suspended_mass() > 0.0) and t < 300.0:
+		av.step(0.25)
+		t += 0.25
+	return t
+
+
+func _debris_reach() -> float:
+	# The farthest point along the run-out (x, three lines across) with 10 cm of debris over the 1.3 m storm cover.
+	var far := 0.0
+	for z in [-20.0, 0.0, 20.0]:
+		for x in range(0, 128, 2):
+			if snow.get_depth_at(Vector3(x, 0, z)) > 1.4:
+				far = maxf(far, float(x))
+	return far
+
+
+func _run_forest_tests() -> void:
+	print("Forests and avalanches (follow-up 24)")
+	# Anchoring: the storm that releases the bare face holds under a closed forest (Teich et al. 2012).
+	var av := await _trigger_setup()
+	av.natural_release = true
+	for z in range(-128, 129, 8):
+		for x in range(-128, 4, 8):
+			weather.add_canopy(Vector2(x, z), 7.0, 18.0, 4.0)
+	weather.rebake_shelter()
+	for i in 16:
+		snow.advance(1.0) # the cover reads the canopy a sixteenth of its rows an update
+	var face := Vector3(-40.0, 0.0, 6.0)
+	var closure := weather.get_canopy_closure_at(face)
+	snow.add_snow(30.0, 100.0)
+	await get_tree().physics_frame
+	snow.add_snow(90.0, 90.0)
+	for i in 3:
+		await get_tree().physics_frame
+	var s_forest := av.get_trigger_index_at(face, 0.0)
+	var s_person := av.get_trigger_index_at(face, 80.0 * 9.81)
+	_check("a closed forest holds the storm slab that releases on the bare face", av.get_release_count() == 0 and s_person > 1.0, "closure %.2f, %.2f m under the trees; index %.1f alone, %.1f under a person; %d released" % [closure, snow.get_depth_at(face), s_forest, s_person, av.get_release_count()])
+	# Braking: the same avalanche runs out over the flat, then through a forest strip on the run-out.
+	av = await _trigger_setup()
+	av.natural_release = true
+	snow.add_snow(30.0, 100.0)
+	await get_tree().physics_frame
+	snow.add_snow(90.0, 90.0)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await _avalanche_run(av)
+	var open_run := _debris_reach()
+	var toe_p := av.get_peak_pressure_at(Vector3(10.0, 0, 0))
+	var contract_p := (WorldContracts.get_snow() as WorldSnow).avalanche_peak_pressure_at(Vector3(10.0, 0, 0))
+	av = await _trigger_setup()
+	av.natural_release = true
+	for z in range(-128, 129, 8):
+		for x in range(12, 128, 8):
+			weather.add_canopy(Vector2(x, z), 7.0, 18.0, 4.0)
+	weather.rebake_shelter()
+	for i in 16:
+		snow.advance(1.0) # the cover reads the canopy a sixteenth of its rows an update
+	snow.add_snow(30.0, 100.0)
+	await get_tree().physics_frame
+	snow.add_snow(90.0, 90.0)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await _avalanche_run(av)
+	var forest_run := _debris_reach()
+	_check("a forest on the run-out brakes it: its debris stops sooner, some of it among the trees", forest_run < open_run - 10.0 and av.get_detrained_volume() > 100.0, "debris (10 cm and more) reaches x = %.0f m into the forest against %.0f m in the open; %.0f m3 stopped by the stems" % [forest_run, open_run, av.get_detrained_volume()])
+	_check("trees in its path take its dynamic pressure, 1/2 rho u^2 (and read it through the snow contract)", toe_p > 5000.0 and toe_p < 200000.0 and absf(contract_p - toe_p) < 1.0, "%.0f kPa at the toe, %.0f kPa through WorldSnow (Bartelt and Stoeckli 2001: trunks break from about 10-20 kPa)" % [toe_p / 1000.0, contract_p / 1000.0])
+
+
+func _thaw(t: float, hours: float, rain: float = 0.0) -> void:
+	# Warm air (and rain) on the pack, an hour an update so the avalanche node sees each one.
+	weather.temperature = t
+	weather.rain_rate = rain
+	weather.cloud_cover = 1.0 if rain > 0.0 else 0.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	for i in int(hours):
+		snow.advance(3600.0)
+		await get_tree().physics_frame
+
+
+func _deposit_peak() -> float:
+	# The deepest snow on the run-out (x 0 to 128 m), over the gully and beside it.
+	var top := 0.0
+	for z in range(-30, 31, 2):
+		for x in range(0, 128, 2):
+			top = maxf(top, snow.get_depth_at(Vector3(x, 0, z)))
+	return top
+
+
+func _run_wet_tests() -> void:
+	print("Wet spring avalanches (follow-up 25)")
+	var face := Vector3(-40.0, 0.0, 6.0)
+	# Meltwater: 60 cm of new snow that holds in frost releases by itself once a thaw wets it.
+	var av := await _trigger_setup()
+	av.natural_release = true
+	snow.add_snow(60.0, 100.0)
+	for i in 3:
+		await get_tree().physics_frame
+	var s_dry := av.get_trigger_index_at(face, 0.0)
+	var quiet := av.get_release_count()
+	await _thaw(4.0, 6.0)
+	var released := av.get_release_count()
+	var wet_flow := av.get_flow_wetness()
+	_check("meltwater weakens the slab: what holds in frost releases in a thaw", quiet == 0 and s_dry > 1.0 and released >= 1 and wet_flow > 0.05, "index %.2f in frost, 0 released; after 6 h at +4 C %d released, the flow %.0f%% wet" % [s_dry, released, wet_flow * 100.0])
+	# Rheology: the same slab triggered dry and wet. The wet one runs slower and shorter and piles up deeper.
+	av = await _trigger_setup()
+	snow.add_snow(60.0, 100.0)
+	await get_tree().physics_frame
+	av.trigger(Vector3(-50.0, 0, 0), 30.0)
+	await _avalanche_run(av)
+	var dry_speed := av.get_max_speed()
+	var dry_out := av.get_run_out()
+	var dry_pile := _deposit_peak()
+	av = await _trigger_setup()
+	snow.add_snow(60.0, 100.0)
+	await get_tree().physics_frame
+	await _thaw(4.0, 6.0)
+	av.trigger(Vector3(-50.0, 0, 0), 30.0)
+	var wetness := av.get_flow_wetness()
+	await _avalanche_run(av)
+	_check("a wet flow runs slower and stops shorter, in a deeper pile", wetness > 0.3 and av.get_max_speed() < 0.85 * dry_speed and av.get_run_out() < dry_out - 5.0 and _deposit_peak() > dry_pile, "dry %.1f m/s, %.0f m, piles %.2f m; wet (%.0f%%) %.1f m/s, %.0f m, piles %.2f m" % [dry_speed, dry_out, dry_pile, wetness * 100.0, av.get_max_speed(), av.get_run_out(), _deposit_peak()])
+	# Glide: an old, bonded pack on the face; rain on it drains through to the ground. Cracks open, then it goes
+	# full depth. None on the flat.
+	av = await _trigger_setup()
+	snow.add_snow(300.0, 150.0)
+	snow.advance(10.0 * 24.0 * 3600.0) # ten cold days: the storm has bonded
+	await get_tree().physics_frame
+	av.natural_release = true
+	var depth0 := snow.get_depth_at(face)
+	var cracked_at := -1
+	var hours := 0
+	while hours < 96 and av.get_glide_count() == 0:
+		await _thaw(3.0, 1.0, 2.0)
+		hours += 1
+		if cracked_at < 0 and av.get_glide_crack_count() > 0:
+			cracked_at = hours
+	var flat_glide := av.get_glide_at(Vector3(60.0, 0, 0))
+	_check("rain on an old pack opens glide cracks, then it releases full depth", cracked_at > 0 and av.get_glide_count() >= 1 and av.get_released_volume() > 500.0 and flat_glide == 0.0, "%.2f m of old snow; cracks after %d h of rain, a glide avalanche after %d h, %.0f m3 (%.0f%% wet); no glide on the flat" % [depth0, cracked_at, hours, av.get_released_volume(), av.get_flow_wetness() * 100.0])
+
+
+func _run_impulse_wave_tests() -> void:
+	print("Avalanches into water (follow-up 26)")
+	# Heller and Hager (2010): F 2, S 0.5, M 1 at 45 degrees gives P 1.25 and H_M 0.66 h.
+	var p := SnowAvalanche3D.impulse_product(2.0 * sqrt(9.81 * 10.0), 5.0, 1000.0 * 10.0 * 100.0, 10.0, 10.0, deg_to_rad(45.0))
+	var hm := SnowAvalanche3D.impulse_wave_height(p, 10.0, 0.0, 0.0)
+	var far := SnowAvalanche3D.impulse_wave_height(p, 10.0, 300.0, 0.0)
+	var side := SnowAvalanche3D.impulse_wave_height(p, 10.0, 300.0, deg_to_rad(90.0))
+	_check("the impulse product and the wave it makes (Heller and Hager 2010; Heller et al. 2009)", absf(p - 1.251) < 0.01 and absf(hm - 6.64) < 0.05 and far < hm and side < far, "P %.3f, H_M %.2f m in 10 m of water; %.2f m 300 m out ahead, %.2f m to the side; leading period %.1f s there" % [p, hm, far, side, SnowAvalanche3D.impulse_wave_period(1.0, 10.0, 300.0)])
+	# The storm avalanche runs into an open lake at the foot of the face.
+	var av := await _lake_avalanche(0.0)
+	var entered := av.get_water_entry_mass()
+	var wave := av.get_wave_height_at(Vector3(60.0, 0, 0))
+	_check("an avalanche into open water plunges in and pushes a wave", entered > 1.0e5 and av.get_wave_count() >= 1 and wave > 0.05 and wave < 12.0, "%.0f t into the lake, %d waves; %.2f m high 60 m out (%.0f m deep there)" % [entered / 1000.0, av.get_wave_count(), wave, 15.0])
+	# Thick ice carries it (no wave); thin ice breaks under it.
+	av = await _lake_avalanche(30.0)
+	var thick := snow.get_ice_thickness_at(Vector3(40.0, 0, 0))
+	_check("thick lake ice carries the avalanche: no wave", av.get_wave_count() == 0 and av.get_ice_broken() == 0 and thick > 0.3, "%.2f m of ice; %d waves, %d ice cells broken, run-out %.0f m" % [thick, av.get_wave_count(), av.get_ice_broken(), av.get_run_out()])
+	av = await _lake_avalanche(0.5)
+	var thin := snow.get_ice_thickness_at(Vector3(80.0, 0, 0))
+	_check("thin lake ice breaks under it, and the snow goes in", av.get_ice_broken() > 0 and av.get_water_entry_mass() > 0.0, "%.2f m of ice far out; %d cells broken, %.0f t into the lake" % [thin, av.get_ice_broken(), av.get_water_entry_mass() / 1000.0])
+
+
+func _lake_avalanche(freeze_days: float) -> SnowAvalanche3D:
+	# The storm (as in the avalanche tests) on the face over a lake, after freeze_days of hard frost on the lake.
+	await _setup("avalanche_lake", 256.0, 128, -15.0)
+	snow.drift_enabled = false
+	snow.slide_enabled = false
+	_lake(0.0)
+	var av: SnowAvalanche3D = snow.get_avalanches()
+	av.natural_release = false
+	if freeze_days > 0.0:
+		snow.advance(freeze_days * 24.0 * 3600.0)
+	await get_tree().physics_frame
+	snow.add_snow(30.0, 100.0)
+	await get_tree().physics_frame
+	snow.add_snow(90.0, 90.0)
+	await get_tree().physics_frame
+	av.trigger(Vector3(-45.0, 0, 0), 40.0)
+	await _avalanche_run(av)
+	return av
+
+
 func _run_fire_tests() -> void:
 	print("Fire melts snow (WorldFire)")
 	await _setup("flat", 32.0, 32, -8.0)
@@ -2580,13 +2776,28 @@ func _build_avalanche(cam: Camera3D) -> void:
 	add_child(surface)
 	await get_tree().physics_frame
 	var av: SnowAvalanche3D = snow.get_avalanches()
-	if OS.get_cmdline_user_args().has("--before"):
+	var wet := OS.get_cmdline_user_args().has("--wet")
+	var triggered := wet or OS.get_cmdline_user_args().has("--triggered")
+	if OS.get_cmdline_user_args().has("--before") or triggered:
 		av.natural_release = false
+	if triggered:
+		# An old, bonded pack under the storm (60 cm a week and more old): the slab breaks away from it, leaving a
+		# crown step and a white bed, as slabs do.
+		snow.add_snow(90.0, 150.0)
+		snow.advance(8.0 * 24.0 * 3600.0)
+		await get_tree().physics_frame
 	snow.add_snow(30.0, 100.0)
 	await get_tree().physics_frame
 	snow.add_snow(90.0, 90.0)
 	await get_tree().physics_frame
 	await get_tree().physics_frame
+	if wet:
+		# --wet: a spring thaw (6 h at +4 C) wets the storm snow, then the slab goes as a wet slide.
+		await _thaw(4.0, 6.0)
+	if triggered:
+		# --triggered (dry) and --wet release the same face, so the two compare.
+		av.trigger(Vector3(-45.0, 0, 0), 40.0)
+		print("triggered slide: %.0f%% wet" % (av.get_flow_wetness() * 100.0))
 	if OS.get_cmdline_user_args().has("--powder"):
 		# Mid-run in real time, so PhysX Flow steps the cloud with it: --at=S seconds after release (default 9).
 		var at_s := 9.0
@@ -2626,6 +2837,10 @@ func _build_avalanche(cam: Camera3D) -> void:
 	cam.position = Vector3(42.0, snow.get_ground_height_at(Vector3(42, 0, 9)) + snow.get_depth_at(Vector3(42, 0, 9)) + 2.2, 9.0)
 	cam.look_at(Vector3(-25.0, 18.0, 0.0))
 	cam.fov = 55.0
+	if OS.get_cmdline_user_args().has("--close"):
+		# --close: the debris at the toe from 20 m.
+		cam.position = Vector3(22.0, snow.get_ground_height_at(Vector3(22, 0, 14)) + snow.get_depth_at(Vector3(22, 0, 14)) + 3.0, 14.0)
+		cam.look_at(Vector3(2.0, 1.0, 0.0))
 	cam.far = 1000.0
 	await _save_frame("")
 

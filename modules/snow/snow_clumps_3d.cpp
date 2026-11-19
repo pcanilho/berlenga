@@ -393,18 +393,21 @@ void SnowClumps3D::_notification(int p_what) {
 	}
 }
 
-int SnowClumps3D::drop(const Vector3 &p_at, float p_radius, float p_volume, float p_wetness) {
+int SnowClumps3D::drop(const Vector3 &p_at, float p_radius, float p_volume, float p_wetness, float p_size_scale) {
 	SnowSurface3D *surface = _surface();
 	if (!enabled || !surface || p_volume <= 0.0f) {
 		return 0;
 	}
 	// Fallen slab debris is coarser than a print's rim: log-normal sizes about 4 cm dry, 8 cm wet (Bartelt and
 	// McArdell 2009), at most 64 clumps a drop; what is left of the volume is powder that settles unseen.
-	const float median = 0.04f + 0.04f * CLAMP(p_wetness, 0.0f, 1.0f);
+	// p_size_scale: avalanche debris rolls into larger granules and, wet, into snowballs of tens of cm (Bartelt and
+	// McArdell 2009; Jomelli and Bertran 2001).
+	const float scale = CLAMP(p_size_scale, 0.1f, 8.0f);
+	const float median = (0.04f + 0.04f * CLAMP(p_wetness, 0.0f, 1.0f)) * scale;
 	float owed = p_volume;
 	int made = 0;
 	for (int k = 0; k < 64; k++) {
-		const float size = CLAMP(median * Math::exp(0.5f * rng.randfn(0.0f, 1.0f)), MIN_SIZE, MAX_SIZE);
+		const float size = CLAMP(median * Math::exp(0.5f * rng.randfn(0.0f, 1.0f)), MIN_SIZE, MAX_SIZE * scale);
 		const float vol = CLUMP_FILL * size * size * size;
 		if (owed < vol) {
 			break;
@@ -503,7 +506,7 @@ void SnowClumps3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_material", "material"), &SnowClumps3D::set_material);
 	ClassDB::bind_method(D_METHOD("get_material"), &SnowClumps3D::get_material);
 	ClassDB::bind_method(D_METHOD("update_now"), &SnowClumps3D::update_now);
-	ClassDB::bind_method(D_METHOD("drop", "at", "radius", "volume", "wetness"), &SnowClumps3D::drop);
+	ClassDB::bind_method(D_METHOD("drop", "at", "radius", "volume", "wetness", "size_scale"), &SnowClumps3D::drop, DEFVAL(1.0));
 	ClassDB::bind_method(D_METHOD("clear"), &SnowClumps3D::clear);
 	ClassDB::bind_method(D_METHOD("get_clump_count"), &SnowClumps3D::get_clump_count);
 	ClassDB::bind_method(D_METHOD("get_spawned_total"), &SnowClumps3D::get_spawned_total);
