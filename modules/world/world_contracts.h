@@ -290,6 +290,8 @@ public:
 	// The union of the areas reported after generation p_since into r_area; false when the log no longer reaches
 	// back that far (read everything again). True with an empty r_area when nothing changed.
 	bool burn_changes_since(uint64_t p_since, Rect2 &r_area) const;
+	// The same for scripts and tests: {"complete": bool, "area": Rect2}.
+	Dictionary get_burn_changes_since(uint64_t p_since) const;
 };
 
 // Ground: the deformable ground's surface, soil and what lies on it (docs/ideas/world-contracts.md, Ground).

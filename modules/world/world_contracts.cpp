@@ -531,7 +531,16 @@ bool WorldFire::burn_changes_since(uint64_t p_since, Rect2 &r_area) const {
 	return true;
 }
 
+Dictionary WorldFire::get_burn_changes_since(uint64_t p_since) const {
+	Rect2 area;
+	Dictionary d;
+	d["complete"] = burn_changes_since(p_since, area);
+	d["area"] = area;
+	return d;
+}
+
 void WorldFire::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("get_burn_changes_since", "generation"), &WorldFire::get_burn_changes_since);
 	ClassDB::bind_method(D_METHOD("burn_changed", "area"), &WorldFire::burn_changed);
 	ClassDB::bind_method(D_METHOD("get_burn_generation"), &WorldFire::get_burn_generation);
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldFire::has_provider);
