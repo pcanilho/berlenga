@@ -181,6 +181,9 @@ float WeatherMap3D::get_smoke_optical_depth_at(Vector3 p_position) const {
 }
 
 Vector3 WeatherMap3D::get_smoke_transmittance(Vector3 p_position, Vector3 p_to_sun) const {
+	if (!smoke_haze) {
+		return Vector3(1, 1, 1);
+	}
 	const Vector3 d = p_to_sun.normalized();
 	// The sun's ray crosses the layer's middle (half its depth) here, no further out than the map reaches (a low sun
 	// reads the edge of the map's smoke, not empty air beyond it); the slant path through the layer is the column over

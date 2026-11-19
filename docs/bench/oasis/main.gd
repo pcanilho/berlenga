@@ -11,6 +11,7 @@ extends Node3D
 #   --seed=N        OasisSprings3D.seed
 #   --wind=W        wind over the pool, m/s (2)
 #   --no-water      hide the water: the bed and the boils alone
+#   --linear        linear tone mapping (measuring colours)
 #   --no-boils      no sand boils (and no surface dome over them)
 #   --synthetic     the bench's own hollow instead of a TerrainGenerator3D sand sea carved by carve_oases()
 #   --terrain-seed=N  TerrainGenerator3D.seed (1)
@@ -40,6 +41,8 @@ var synthetic := false
 var terrain_seed := 1
 var gen: Node3D
 var dry_oasis: OasisSprings3D
+var surface: GroundSurface3D
+var world_env: Environment
 
 
 func _ready() -> void:
@@ -69,8 +72,9 @@ func _ready() -> void:
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR if "--linear" in OS.get_cmdline_user_args() else Environment.TONE_MAPPER_AGX
 	env.pathtracing_enabled = not raster and not test
+	world_env = env
 	env.pathtracing_samples_per_pixel = spp
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--debug="):
@@ -226,6 +230,7 @@ func _terrain() -> bool:
 		push_error("no oasis on this sand sea (try another --terrain-seed)")
 		return false
 	origin = Vector3(springs[0].x, springs[0].y, springs[0].z)
+	print("depth at the spring %.3f m, at the pool centre %.3f m" % [origin.y - gen.get_height(origin), origin.y - gen.get_height(oasis.get_pool(0).global_position)])
 	var pts := 321
 	var step := 0.3
 	var o := Vector2(origin.x, origin.z) - Vector2.ONE * step * (pts - 1) * 0.5
@@ -248,7 +253,52 @@ func _terrain() -> bool:
 			for k in [i, i + 1, i + pts, i + 1, i + pts + 1, i + pts]:
 				st.add_index(k)
 	st.generate_normals()
-	_ground_mesh(st.commit())
+	var mesh := st.commit()
+	# The ground's own surface (GroundSurface3D, as the terrain has it): dry sand, the wet margin up to 15 cm over the
+	# pool's level and, in this desert's climate, the salt crust at its top (water_fringe, salt_crusts).
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.78, 0.68, 0.5)
+	mat.roughness = 0.95
+	var nt := NoiseTexture2D.new()
+	nt.seamless = true
+	nt.as_normal_map = true
+	nt.bump_strength = 4.0
+	nt.width = 512
+	nt.height = 512
+	var nz := FastNoiseLite.new()
+	nz.frequency = 0.03
+	nz.fractal_octaves = 5
+	nt.noise = nz
+	mat.normal_enabled = true
+	mat.normal_texture = nt
+	mat.uv1_triplanar = true
+	mat.uv1_world_triplanar = true
+	mat.uv1_scale = Vector3(0.5, 0.5, 0.5)
+	mat.ground_deform_enabled = true
+	mesh.surface_set_material(0, mat)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	add_child(mi)
+	var body := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	cs.shape = mesh.create_trimesh_shape()
+	body.add_child(cs)
+	add_child(body)
+	var wm := WeatherMap3D.new()
+	wm.climate = load("res://desert_climate.gd").new()
+	add_child(wm)
+	var probe := Marker3D.new()
+	probe.name = "Probe"
+	add_child(probe)
+	probe.global_position = origin
+	surface = GroundSurface3D.new()
+	surface.ground_type = GroundSurface3D.GROUND_SAND
+	surface.moisture = 0.0
+	surface.material = mat
+	add_child(surface)
+	surface.height_source = surface.get_path_to(gen)
+	surface.follow_target = surface.get_path_to(probe)
+	surface.water_sources = [surface.get_path_to(oasis.get_pool(0))]
 	return true
 
 
@@ -269,6 +319,12 @@ func _check(what: String, ok: bool, detail: String) -> void:
 
 func _physics_process(_delta: float) -> void:
 	n += 1
+	# The wet margin and the salt crust grow over the first frames (ten times faster), as the ground bench lets them.
+	if surface != null:
+		Engine.time_scale = 10.0 if n < 240 else 1.0
+		# Raster while they grow (a path traced frame takes seconds in the cloud), path traced from then on.
+		if not raster and not test:
+			world_env.pathtracing_enabled = n >= 240
 	if "--probe" in OS.get_cmdline_user_args() and n % 30 == 0:
 		var pool: PhysXWaterSurface3D = oasis.get_pool(0)
 		var lo := 1e9
@@ -282,6 +338,8 @@ func _physics_process(_delta: float) -> void:
 				hi = maxf(hi, hh)
 			row += "%.3f " % hh if hh > -1e8 else "  .   "
 		print("PROBE %d min %.4f max %.4f | %s" % [n, lo, hi, row])
+		var wm := pool.get_water_material()
+		print("  medium a %s s %s sediment a %s s %s" % [wm.get_shader_parameter("pathtraced_absorption"), wm.get_shader_parameter("pathtraced_scattering"), wm.get_shader_parameter("sediment_absorption"), wm.get_shader_parameter("sediment_scattering")])
 		if n >= 300:
 			get_tree().quit()
 	if test and n == 30:
@@ -336,7 +394,7 @@ func _physics_process(_delta: float) -> void:
 		print("oasis: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if out != "" and n >= frames:
+	if out != "" and n >= (frames + 240 if surface != null else frames):
 		if not raster and get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES) > 0 and n < frames + 600:
 			return
 		set_physics_process(false)

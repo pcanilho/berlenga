@@ -3800,6 +3800,12 @@ void main() {
 	if (!transparent && !alpha_scissor && !transmissive_shadow) {
 		return; // Ordinary opaque shadow candidate: accept immediately.
 	}
+	// A custom shader that bounds a medium (TRANSMISSION and IOR) and cuts its outline with ALPHA_SCISSOR (water's
+	// shoreline): decided once its fragment has run (below), where it passes the light through its medium as an
+	// unscissored one does. Taken as an opaque scissored caster, the sun reached a bed under water only past the
+	// water's own TLAS mask (water casts no raster shadows), with none of the water's absorption on the way down.
+	bool scissored_medium_candidate = alpha_scissor && !transparent && is_shadow_ray(payload.packed_bounces_flags) &&
+			(mat.flags & RT_MAT_FLAG_CUSTOM_TRANSMITTANCE) != 0u && shadow_transmission;
 
 	uint i0, i1, i2;
 	get_triangle_indices(geom, i0, i1, i2);
@@ -3838,6 +3844,12 @@ void main() {
 	hit_alpha = alpha;
 	hit_tint = clamp(albedo, vec3(0.0), vec3(1.0));
 	scissor_threshold = alpha_scissor_threshold;
+	if (scissored_medium_candidate && ior >= 1.0 && transmission > 0.0) {
+		if (hit_alpha < (scissor_threshold >= 0.0 ? scissor_threshold : 0.5)) {
+			ignoreIntersectionEXT; // cut out: no surface here
+		}
+		transmissive_shadow = true;
+	}
 	if (transmissive_shadow) {
 		// TRANSMISSION and BACKLIGHT, as BaseMaterial3D's Transmission and Back Lighting.
 		PathState shadow_ps = path_unpack(payload);
