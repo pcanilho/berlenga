@@ -371,6 +371,7 @@ private:
 	// Streaming fields only. Tiles of two sizes (finer near), keyed x, z, level.
 	bool far_shell = true;
 	float far_shell_range = 4000.0f;
+	bool far_shell_clumps = true; // The shell opens into clumps and gaps where its cells are fine enough.
 	struct FarShellTile {
 		MeshInstance3D *mi = nullptr;
 		Vector2 built_at; // The centre its inner and outer edges were cut for.
@@ -652,6 +653,8 @@ public:
 	bool is_far_shell() const { return far_shell; }
 	void set_far_shell_range(float p_range) { far_shell_range = MAX(p_range, 0.0f); }
 	float get_far_shell_range() const { return far_shell_range; }
+	void set_far_shell_clumps(bool p_enabled);
+	bool is_far_shell_clumps() const { return far_shell_clumps; }
 	int get_far_shell_column_count() const { return far_shell_columns; }
 	void set_far_reach(float p_reach) { far_reach = CLAMP(p_reach, 1.0f, 8.0f); }
 	float get_far_reach() const { return far_reach; }

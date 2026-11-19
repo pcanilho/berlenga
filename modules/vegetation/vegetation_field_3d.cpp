@@ -2461,6 +2461,13 @@ void VegetationField3D::set_far_shell(bool p_on) {
 	}
 }
 
+void VegetationField3D::set_far_shell_clumps(bool p_enabled) {
+	if (far_shell_clumps != p_enabled) {
+		far_shell_clumps = p_enabled;
+		_free_far_shell(); // Rebuilt on the next update.
+	}
+}
+
 void VegetationField3D::_free_far_shell() {
 	for (KeyValue<Vector3i, FarShellTile> &kv : far_shell_tiles) {
 		if (kv.value.mi) {
@@ -2696,6 +2703,11 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 		if (sp->get_rule_range(PlantSpecies::RULE_SHADE).x > 0.0f || sp->uses_dune() || sp->uses_coast() || sp->uses_spring() || sp->uses_pool() || ps.deadwood_reach > 0.0f) {
 			continue;
 		}
+		// A species whose own far form takes over past its plants (meta "far_shell" false: the trees module's crown
+		// hulls and skyline trees) stays out of the shell.
+		if (!bool(sp->get_meta(SNAME("far_shell"), true))) {
+			continue;
+		}
 		const Vector2 sr = sp->get_scale_range();
 		const float h = ps.meshes[0]->get_aabb().get_end().y * 0.5f * (sr.x + sr.y);
 		// The share of ground its leaves hide where it grows at full suitability: its plants a square metre (a Poisson
@@ -2778,13 +2790,39 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 			const uint32_t h = far_shell_hash(cx, cz, salt ^ uint32_t(level));
 			// Expected height where it grows, by the cover; clumped by the hash (more variation where it is thin).
 			const float lump = 1.0f + (far_shell_unit(h, 0) - 0.5f) * (0.5f + 0.6f * (1.0f - cover));
+			// Clumps and gaps (docs/ideas/vegetation.md, "Next round", 3): heath, gorse and scrub stand in clumps with
+			// open ground between, which is what keeps a far hillside's grain (the canopy height models of remote
+			// sensing show the same). Where the cells are fine enough to hold them, the stand stands at its full mass
+			// where a clump field (three octaves, 7, 19 and 53 m) is over its cover's threshold and opens to the ground
+			// elsewhere, so about its cover's share of the ground is under clumps; each octave fades out as the cells
+			// grow past a quarter of its size (prefiltered, as a mip), leaving the even mass by cover.
+			float dev = 0.0f, act = 0.0f;
+			const float scales[3] = { 7.0f, 19.0f, 53.0f };
+			const float amps[3] = { 0.5f, 0.3f, 0.2f };
+			for (int o = 0; o < (far_shell_clumps ? 3 : 0); o++) {
+				const float a = 1.0f - Math::smoothstep(0.25f, 0.5f, cell / scales[o]);
+				if (a > 0.0f) {
+					dev += a * amps[o] * (far_shell_noise(q.x, q.y, scales[o], 0x68E31DA4u + uint32_t(o) * 0x9E3779B9u) - 0.5f) * 2.0f;
+					act += a * amps[o];
+				}
+			}
+			float mass = cover;
+			if (act > 0.0f) {
+				// The value noise's spread is about a third of its range: its threshold for this cover.
+				const float open = Math::smoothstep(-0.12f, 0.12f, dev / act * 0.35f + (cover - 0.5f) * 0.6f);
+				mass = Math::lerp(cover, open, act);
+			}
 			// Its mass, not its tips: the stand's tops are mostly air, and a sward's own blades (GrassField3D's far
 			// rings and columns) stand through it.
-			hgt[j * n + i] = 0.4f * hs / sum * cover * lump;
+			hgt[j * n + i] = 0.4f * hs / sum * mass * lump;
 			col[j * n + i] = Color(cs.r / sum, cs.g / sum, cs.b / sum, cover);
 		}
 	}
 	// Corners: the mean of the cells round them, on the ground (jittered by a hash shared with the neighbours).
+	float hc_top = 0.0f; // The tallest stand's full mass, for the clumps' shade.
+	for (const Kind &k : kinds) {
+		hc_top = MAX(hc_top, 0.4f * k.height);
+	}
 	const int m = FAR_SHELL_CELLS + 1;
 	LocalVector<Vector3> corner;
 	LocalVector<float> ch;
@@ -2867,7 +2905,9 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 				// A sward or scrub seen from afar is its lit tops over the shade between them (darker than the leaves'
 				// own colour, the more so where it is thin), mottled at the clumps' scale and in larger patches.
 				const float mottle = (0.8f + 0.4f * far_shell_noise(corner[k[c]].x, corner[k[c]].z, 3.0f, 0x2545F491u)) * (0.75f + 0.5f * far_shell_noise(corner[k[c]].x, corner[k[c]].z, 23.0f, 0x9E3779B9u));
-				const float shade = (0.55f + 0.2f * CLAMP(cc[k[c]].a, 0.0f, 1.0f)) * mottle;
+				// The low corners round a clump sit in its shade (ambient occlusion at the clumps' foot), its tops in light.
+				const float rel = hc_top > 0.0f ? CLAMP(hc / hc_top, 0.0f, 1.0f) : 1.0f;
+				const float shade = (0.55f + 0.2f * CLAMP(cc[k[c]].a, 0.0f, 1.0f)) * mottle * (0.8f + 0.2f * rel);
 				vid[k[c]] = verts.size();
 				verts.push_back(to_local.xform(p));
 				normals.push_back(to_local.basis.xform(nn).normalized());
@@ -5125,6 +5165,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_far_shell"), &VegetationField3D::is_far_shell);
 	ClassDB::bind_method(D_METHOD("set_far_shell_range", "range"), &VegetationField3D::set_far_shell_range);
 	ClassDB::bind_method(D_METHOD("get_far_shell_range"), &VegetationField3D::get_far_shell_range);
+	ClassDB::bind_method(D_METHOD("set_far_shell_clumps", "enabled"), &VegetationField3D::set_far_shell_clumps);
+	ClassDB::bind_method(D_METHOD("is_far_shell_clumps"), &VegetationField3D::is_far_shell_clumps);
 	ClassDB::bind_method(D_METHOD("get_far_shell_column_count"), &VegetationField3D::get_far_shell_column_count);
 	ClassDB::bind_method(D_METHOD("set_far_reach", "reach"), &VegetationField3D::set_far_reach);
 	ClassDB::bind_method(D_METHOD("get_far_reach"), &VegetationField3D::get_far_reach);
@@ -5188,6 +5230,7 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_volume_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_far_volume_range", "get_far_volume_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_shell"), "set_far_shell", "is_far_shell");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_shell_range", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_far_shell_range", "get_far_shell_range");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_shell_clumps"), "set_far_shell_clumps", "is_far_shell_clumps");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_reach", PROPERTY_HINT_RANGE, "1,8,0.1"), "set_far_reach", "get_far_reach");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "detail_reach"), "set_detail_reach", "get_detail_reach");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_pixels", PROPERTY_HINT_RANGE, "0.25,16,0.25,suffix:px"), "set_detail_pixels", "get_detail_pixels");

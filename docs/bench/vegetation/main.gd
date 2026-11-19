@@ -354,6 +354,7 @@ func _floor_view() -> void:
 	ground.stream_target = ground.get_path_to(cam)
 	ground.data_map = ground.get_path_to(dm)
 	ground.canopy_field = ground.get_path_to(wood)
+	ground.far_shell_clumps = OS.get_environment("VEG_FAR_CLUMPS") != "0" # VEG_FAR_CLUMPS=0: the far shell as an even mass
 	if OS.get_environment("VEG_FLOOR_STAND") == "mediterranean" and OS.get_environment("VEG_FLOOR_SWARD") != "0":
 		# The montado's summer sward as real blades (GrassField3D): near tiles, far rings to 250 m, blade columns to
 		# 500 m (VEG_FLOOR_SWARD=0: the floor set alone).
