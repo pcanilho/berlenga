@@ -69,6 +69,12 @@ func get_height(p: Vector3) -> float:
 			if p.z > -10.0 and p.z < 0.0:
 				bank = lerpf(bank, 0.02 * ax, (p.z + 10.0) / 10.0)
 			return along + bank + 0.15 * noise.get_noise_2d(p.x * 2.0, p.z * 2.0)
+		"camber":
+			# A 20 degree side slope rising toward +x, with a little roughness (mud round 13.3).
+			return 0.364 * p.x + 0.02 * noise.get_noise_2d(p.x * 2.0, p.z * 2.0)
+		"ford":
+			# A stream bed 60 cm down over x < -1, a 30 degree bank up to a flat at 55 cm from x = 1 (mud round 13.2).
+			return clampf((p.x + 1.0) * 0.577, 0.0, 1.155) - 0.6 + 0.01 * noise.get_noise_2d(p.x * 3.0, p.z * 3.0)
 		"meadow":
 			return 0.12 * noise.get_noise_2d(p.x * 3.0, p.z * 3.0) + 0.02 * p.x
 		_:

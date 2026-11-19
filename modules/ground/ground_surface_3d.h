@@ -135,11 +135,21 @@ private:
 	// most mud_auto_depth). It counts only when wet: none below mud_wet_start moisture, all at mud_wet_full.
 	bool mud_layer = true;
 	bool mud_slides = true; // round 10: a soaked layer flows off slopes it no longer holds
-	bool simulation_paused = false; // still shots: no simulation, the ground stays as it is
+	bool simulation_paused = false;
 	bool light_budget = false; // still shots: smaller GPU fields and tile cache
 	bool subsoil = true; // round 12: a firm base under the loose layer, its depth varied across the ground
 	HashMap<Vector2i, float> mud_deposits; // m of fresh slurry per 1 m cell (debris flows' fans, flood silt)
+	HashMap<Vector2i, Color> mud_deposit_colors; // its linear colour where the depositor gave one (alpha: cover)
+	Color _deposit_color_at(float p_x, float p_z) const; // premultiplied by cover, bilinear between cell centres
 	bool flood_silt = true; // other water over the ground leaves its suspended load as fresh mud
+	// Stream fords (docs/ideas/mud.md, round 13.2): wheels in running water scour the bed and send its fines
+	// downstream; wheels on a saturated bank break it down into the water.
+	bool stream_fords = true;
+	HashMap<Vector2i, uint64_t> bank_failed; // 1 m cell: when its bank last gave way (ms), so one failure is one event
+	float ford_plume_kg = 0.0f; // sent into the water by wheels and banks
+	float ford_scour_m3 = 0.0f;
+	int bank_failures = 0;
+	void _ford(const Vector3 &p_position, const Vector2 &p_half, float p_yaw, float p_sinkage, const Vector2 &p_velocity);
 	float silt_total = 0.0f; // kg/m2 laid since start, summed over the 1 m points
 	float silt_pending = 0.0f;
 	float silt_timer = 0.0f;
@@ -227,6 +237,7 @@ private:
 		float carried = 0.0f; // N, the load smoothed over a fifth of a second
 		float friction = 0.5f; // its body's
 		bool broken = false; // snapped under a load past its strength: no longer a mat
+		bool buried = false; // under a debris-flow deposit deeper than it is thick: gone from sight and from under wheels
 		Vector3 a, b; // its axis ends, world
 	};
 	LocalVector<Mat> mat_list;
@@ -569,6 +580,10 @@ private:
 	LocalVector<float> sand_flux; // kg/m/s, along the wind
 	LocalVector<float> sand_dep_rate; // m/s, + piling up, - scoured
 	LocalVector<float> sand_dep; // m written to the ground since the cell came in
+	LocalVector<float> ground_dep; // m of mud deposit (debris fans, flood silt) the ground lattice carries, per cell
+	float _deposit_smooth_at(float p_x, float p_z) const;
+	bool _apply_deposits();
+	void _ground_changed();
 	LocalVector<float> sand_dep_pending; // m owed, written in 2 mm steps
 	LocalVector<int> wind_order; // the cells in downwind order
 	Vector2 wind_order_dir;
@@ -877,10 +892,16 @@ public:
 	void set_subsoil(bool p_enabled);
 	bool is_subsoil() const { return subsoil; }
 	// Fresh slurry laid over a disc (a debris flow's deposit, GroundDebrisFlow3D): wet mud whatever the weather.
-	void add_mud_deposit(Vector3 p_position, float p_radius, float p_depth, bool p_update = true);
+	void add_mud_deposit(Vector3 p_position, float p_radius, float p_depth, bool p_update = true, Color p_color = Color(0, 0, 0, 0));
 	void refresh_cells() { _update_cells(); }
+	// The ground lattice takes the mud deposits laid since (a fan's surface becomes the ground, smooth across its
+	// 1 m cells, that wheels and feet then print), then the cells refresh.
+	void refresh_deposits();
 	float get_mud_deposit_at(Vector3 p_position) const;
 	void set_flood_silt(bool p_enabled) { flood_silt = p_enabled; }
+	void set_stream_fords(bool p_enabled) { stream_fords = p_enabled; }
+	bool is_stream_fords() const { return stream_fords; }
+	Dictionary get_ford_stats() const;
 	bool is_flood_silt() const { return flood_silt; }
 	float get_flood_silt_total() const { return silt_total; }
 	void set_mats(bool p_enabled) { mats = p_enabled; }
@@ -889,6 +910,7 @@ public:
 	int get_mat_at(Vector3 p_contact, float p_tolerance = 0.06f) const;
 	// A wheel's load on mat p_mat this step, N.
 	void add_mat_load(int p_mat, float p_load);
+	bool is_mat_buried(int p_mat) const { return p_mat >= 0 && p_mat < (int)mat_list.size() && mat_list[p_mat].buried; }
 	int get_mat_count() const { return (int)mat_list.size(); }
 	// How far mat p_mat has sunk below the undisturbed ground, m.
 	float get_mat_sinkage(int p_mat) const;

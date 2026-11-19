@@ -3077,6 +3077,7 @@ void main() {
 	float g_water = 0.0; // standing water over the deformed ground, m (mud stage 2)
 	float g_mud = 0.0; // the clay it carries, kg/m3 (mud round 3)
 	vec4 g_crack = vec4(0.0); // desiccation cracks: opening, plate size m, regularity, crust (mud stage 2b)
+	vec4 g_dep = vec4(0.0); // a fresh deposit: cover, linear colour (mud round 13)
 	vec4 g_ice = vec4(0.0); // puddle ice: thickness m, broken share (mud round 7); needle ice: height m, crumbs (round 9)
 	// The terrain round the patch reads the pore water too (the far lattice), with no grains.
 	if (rt_material_ground_deform(mat) || rt_material_ground_terrain(mat)) {
@@ -3094,7 +3095,9 @@ void main() {
 			// (material.cpp ground_wet_blocks()).
 			bool gice = gts.x > 3 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(3, gts.y - 1), 0).w - 5.5) < 0.01;
 			bool gpmud = gts.x > 4 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(4, gts.y - 1), 0).w - 6.5) < 0.01;
-			int gblocks = 1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0) + (gice ? 1 : 0) + (gpmud ? 1 : 0);
+			// Then a fresh deposit's block, texel 5's 7.5 (material.cpp ground_deposit_state()).
+			bool gdepb = gts.x > 5 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(5, gts.y - 1), 0).w - 7.5) < 0.01;
+			int gblocks = 1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0) + (gice ? 1 : 0) + (gpmud ? 1 : 0) + (gdepb ? 1 : 0);
 			float grows = float((gts.y - 1) / gblocks);
 			vec2 gxz = (h.hit_pos + rt_origin.xyz).xz;
 			if (abs(grect.w - 2.5) < 0.01) {
@@ -3126,6 +3129,13 @@ void main() {
 					if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
 						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0)) * grows;
 						g_ice = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, gv / float(gts.y)), 0.0);
+					}
+				}
+				if (gdepb) {
+					vec2 guv = (gxz - grect.xy) / max(grect.z, 1e-3);
+					if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
+						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(gblocks - 1) * grows;
+						g_dep = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, gv / float(gts.y)), 0.0);
 					}
 				}
 				g_grain = clamp(gw.z, 0.0, 1.0);
@@ -3272,6 +3282,11 @@ void main() {
 	}
 	// Saturated ground under a film of water: the film's smooth surface hides the sand's relief (Lagarde 2013's
 	// accumulated water), as material.cpp does.
+	if (g_dep.x > 0.0) {
+		// A fresh deposit in the flow's own colour (material.cpp ground_deposit_state()).
+		m.albedo = mix(m.albedo, g_dep.yzw, clamp(g_dep.x, 0.0, 1.0));
+		m.roughness = mix(m.roughness, 0.55, clamp(g_dep.x, 0.0, 1.0));
+	}
 	if (g_sheen > 0.0) {
 		m.normal = normalize(mix(m.normal, h.geometry_normal, 0.85 * g_sheen));
 		m.roughness = mix(m.roughness, 0.2, 0.6 * g_sheen);

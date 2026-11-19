@@ -3136,7 +3136,14 @@ void fragment() {)";
 	if (features[FEATURE_GROUND_DEFORM]) {
 		// A film of water standing on saturated sand (Lagarde 2013's accumulated water): its surface hides the
 		// sand's relief and is smooth.
-		code += R"(	NORMAL_MAP_DEPTH *= 1.0 - 0.85 * ground_wet.y;
+		// A fresh deposit (a debris fan, mud round 13) lies over the soil in the flow's own colour, as the flow's sheet
+		// draws it beyond the print field (GroundDebrisFlow3D), so the two meet with no seam.
+		code += R"(	{
+		vec4 gdep = ground_deposit_state((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
+		ALBEDO = mix(ALBEDO, gdep.yzw, clamp(gdep.x, 0.0, 1.0));
+		ROUGHNESS = mix(ROUGHNESS, 0.55, clamp(gdep.x, 0.0, 1.0));
+	}
+	NORMAL_MAP_DEPTH *= 1.0 - 0.85 * ground_wet.y;
 	ROUGHNESS = mix(ROUGHNESS, 0.2, 0.6 * ground_wet.y);
 )";
 	}
@@ -4754,10 +4761,11 @@ vec4 ground_wet_block(vec2 p_xz, vec4 p_rect, int p_block, ivec2 p_ts, float p_r
 	return textureLod(ground_wet_map, vec2(uv.x, v / float(p_ts.y)), 0.0);
 }
 // The wet map's blocks: the fine lattice, then the far one (texel 1's tag 3.5), the cracks (texel 2's 4.5), the
-// puddle ice (texel 3's 5.5) and the mud on plants (texel 4's 6.5; GrassField3D reads it), each there only when tagged.
+// puddle ice (texel 3's 5.5), the mud on plants (texel 4's 6.5; GrassField3D reads it) and fresh deposits (texel 5's
+// 7.5), each there only when tagged.
 int ground_wet_blocks(ivec2 p_ts) {
 	int b = 1;
-	for (int k = 1; k < 5; k++) {
+	for (int k = 1; k < 6; k++) {
 		if (p_ts.x > k && abs(texelFetch(ground_wet_map, ivec2(k, p_ts.y - 1), 0).w - (2.5 + float(k))) < 0.01) {
 			b++;
 		}
@@ -5009,6 +5017,20 @@ vec4 ground_ice_state(vec2 p_xz) {
 		at += abs(texelFetch(ground_wet_map, ivec2(k, ts.y - 1), 0).w - (2.5 + float(k))) < 0.01 ? 1 : 0;
 	}
 	return ground_wet_block(p_xz, r, at, ts, float((ts.y - 1) / ground_wet_blocks(ts)));
+}
+// A fresh deposit at p_xz (a debris fan, mud round 13): the wet map's last block, x its cover (0..1), yzw its linear
+// colour (the flow's ash and char); 0 where none.
+vec4 ground_deposit_state(vec2 p_xz) {
+	ivec2 ts = textureSize(ground_wet_map, 0);
+	if (ts.x < 6 || ts.y < 2) {
+		return vec4(0.0);
+	}
+	vec4 r = texelFetch(ground_wet_map, ivec2(0, ts.y - 1), 0);
+	if (abs(r.w - 2.5) > 0.01 || abs(texelFetch(ground_wet_map, ivec2(5, ts.y - 1), 0).w - 7.5) > 0.01) {
+		return vec4(0.0);
+	}
+	int b = ground_wet_blocks(ts);
+	return ground_wet_block(p_xz, r, b - 1, ts, float((ts.y - 1) / b));
 }
 // The patch's surface with its standing water and its cracks (the cracks the mesh's spacing can carry).
 float ground_deform_top(vec2 p_xz) {

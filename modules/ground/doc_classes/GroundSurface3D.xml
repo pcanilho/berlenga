@@ -25,8 +25,9 @@
 			<param index="1" name="radius" type="float" />
 			<param index="2" name="depth" type="float" />
 			<param index="3" name="update" type="bool" default="true" />
+			<param index="4" name="color" type="Color" default="Color(0, 0, 0, 0)" />
 			<description>
-				Lays fresh saturated slurry [param depth] metres deep over 1 m cells within [param radius] of [param position], such as the fan a debris flow leaves. It reads as soft mud whatever the weather (the deeper of this and the [member mud_layer] depth wins). With [param update] false the cells refresh later, which suits many small deposits in one step.
+				Lays fresh saturated slurry [param depth] metres deep over 1 m cells within [param radius] of [param position], such as the fan a debris flow leaves. It reads as soft mud whatever the weather (the deeper of this and the [member mud_layer] depth wins), raises the ground and buries the relief under it. With [param update] false the cells refresh later ([method refresh_deposits]), which suits many small deposits in one step. A [param color] (linear, alpha its cover) shows the deposit in that colour on the ground in raster and path tracing, as a debris flow's ash; alpha 0 leaves the soil's own.
 			</description>
 		</method>
 		<method name="add_wader">
@@ -229,6 +230,12 @@
 			<param index="2" name="area" type="float" default="0.035" />
 			<description>
 				The footing at [param position] for a walker of [param mass] kg on [param area] m² of boot: [code]soft[/code], [code]sinkage[/code] (m), [code]effort[/code] (the work of walking against firm ground, 2.1 on dry sand), [code]speed_scale[/code] (its inverse) and [code]slide[/code] (an acceleration down a face steeper than the material holds, m/s²). The game decides how a controller uses them.
+			</description>
+		</method>
+		<method name="get_ford_stats" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				What [member stream_fords] has done so far: [code]plume_kg[/code] (soil sent into the water by wheels and banks), [code]scour_m3[/code] (scoured from the bed under wheels) and [code]bank_failures[/code].
 			</description>
 		</method>
 		<method name="get_fresh_at" qualifiers="const">
@@ -551,6 +558,13 @@
 				Whether mat [param mat] has snapped: the bending under the heaviest load it carried passed green wood's strength (about 40 MPa). A broken mat no longer carries wheels.
 			</description>
 		</method>
+		<method name="is_mat_buried" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="mat" type="int" />
+			<description>
+				Whether mat [param mat] lies under a deposit ([method add_mud_deposit]) at least as deep as it is thick. A buried mat no longer carries wheels and is hidden.
+			</description>
+		</method>
 		<method name="is_near_active" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -615,6 +629,12 @@
 			<return type="void" />
 			<description>
 				Samples the height source again (after the terrain changed).
+			</description>
+		</method>
+		<method name="refresh_deposits">
+			<return type="void" />
+			<description>
+				Raises the ground by the deposits added since the last refresh ([method add_mud_deposit] with [code]update[/code] false) and refreshes the cells. The deposit buries the relief under it: ruts fill and rims are levelled.
 			</description>
 		</method>
 		<method name="settle">
@@ -860,6 +880,9 @@
 		</member>
 		<member name="snow_cover" type="NodePath" setter="set_snow_cover" getter="get_snow_cover" default="NodePath(&quot;&quot;)">
 			A [code]SnowCover3D[/code]: where it has more than 3 cm of snow, the snow surface takes the print instead.
+		</member>
+		<member name="stream_fords" type="bool" setter="set_stream_fords" getter="is_stream_fords" default="true">
+			Wheels in running water from the water contract scour the bed: a share of the rut (rising with the current's shear past the remoulded soil's 0.5 Pa) and most of its rims leave as fines dropped into the water ([method WorldWater.add_sediment_mass]), a plume the stream carries on. A wheel on a bank over water tests the bank as an infinite-slope slab 0.5 m deep (Skempton and DeLory 1957) under its load, carried undrained by the pore water where the slab lies below the water table (the stream's level plus a 0.3 m fringe); under a factor of safety of 1 the slab slumps to the toe as fresh mud and half its fines go into the water.
 		</member>
 		<member name="subsoil" type="bool" setter="set_subsoil" getter="is_subsoil" default="true">
 			A firm base under the loose layer of soil or mud. The layer's depth over it varies across the ground (0.7 to 1.3 times the material's depth, over a few metres; [method get_subsoil_depth_at]). As a wheel or foot presses the layer thinner than its own width, the soil stiffens against the base (finite-depth pressure-sinkage), and a tyre that reaches the base grips on it (friction 0.5) instead of on the mud above. Off: the base is only a hard stop.
