@@ -2560,6 +2560,8 @@ func _far_ring_checks() -> void:
 			var mm: MultiMesh = ch.multimesh
 			for i in mm.instance_count:
 				var cd := mm.get_instance_custom_data(i)
+				if cd.r <= 0.0:
+					continue # Dropped by the rules in the GPU fill (a zero record).
 				var p: Vector3 = ch.global_transform * mm.get_instance_transform(i).origin
 				var d := Vector2(p.x, p.z).distance_to(c)
 				var rank := pow(2.0, -floorf(cd.a) / 1024.0)
