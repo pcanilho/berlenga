@@ -1004,6 +1004,7 @@ void fragment() {
 varying float v_t;
 varying float v_dry;
 varying float v_flush; // Regrowth on burnt ground (burn_flush_map).
+varying float v_soft; // Distance softening, 0 near, 1 from 35 m.
 varying float v_wet;
 varying float v_frost;
 varying float v_snow; // under the snow surface: 1
@@ -1152,6 +1153,7 @@ void vertex() {
 	v_frost = 0.0;
 	v_snow = snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0;
 	v_tint = grass_patch_tint(base_w.xz, fract(rnd * 7.31 + 0.13), fract(rnd * 13.7 + 0.51), color_variation);
+	v_soft = 0.0;
 	// Softness with distance (docs/ideas/grass.md, "Colour without blotches"; Ghost of Tsushima, GDC 2021: normals
 	// blended towards a common normal with distance): past a few metres each blade's own facing and value flicker
 	// into speckle, so they ease towards the sward's: the normal towards the ground's up, the tint towards the large-
@@ -1159,6 +1161,7 @@ void vertex() {
 	// fade band's centre, so the shadow pass and the path tracer agree.
 	if (fade_band.w > 0.0) {
 		float soft = smoothstep(6.0, 35.0, length(base_w.xz - fade_band.xy));
+		v_soft = soft;
 		NORMAL = normalize(mix(NORMAL, normalize(to_local * vec3(0.0, 1.0, 0.0)), 0.55 * soft));
 		v_tint = mix(v_tint, grass_patch_tint(base_w.xz, 0.5, 0.5, color_variation), 0.5 * soft);
 	}
@@ -1208,6 +1211,17 @@ void fragment() {
 	// as orange specks on a dark winter sward).
 	vec3 straw = mix(dry_color, vec3(dot(dry_color, vec3(0.3, 0.59, 0.11))) * vec3(1.0, 0.96, 0.88), 0.5) * 0.85;
 	c = mix(c, straw * mix(0.7, 1.0, t) * (0.75 + 0.5 * fract(v_dry * 31.0)), dead);
+	// Prefiltered with distance (Bruneton and Neyret 2012, non-linear pre-filtering): once blades are a pixel or
+	// two wide, each blade's own base-to-tip ramp and its dry or dead odd one out alias into grit; their mean over
+	// the sward is what a pixel should see. Past 6 m the blade's colour eases towards that mean (the soft, slightly
+	// diffused read of a far meadow), and below its roughness rises (the sheen of many blades averages out).
+	{
+		vec3 tip_mean = mix(tip_color, dry_color, dry_share * 0.6);
+		vec3 mean_c = mix(base_color, tip_mean, 0.6) * v_tint;
+		float dead_share = max(dry_share * 0.3, dormant * 0.85 * (1.0 - v_flush));
+		mean_c = mix(mean_c, straw * 0.85, dead_share);
+		c = mix(c, mean_c, 0.5 * v_soft);
+	}
 	// Midrib and parallel veins (monocot leaves), faded out once a blade is under a few pixels wide.
 	float x = abs(UV.x - 0.5) * 2.0;
 	float fw = max(fwidth(UV.x), 1e-4);
@@ -1246,6 +1260,7 @@ void fragment() {
 	ALBEDO = c * mix(1.0, wet_factor, wet_c);
 	ROUGHNESS = mix(mix(mix(mix(0.55, 0.75, v_trod) * mix(1.0, wet_factor, 0.5 * wet_c) * mix(1.0, 0.4, wet_c), 0.85, mud_c), 0.95, smoothstep(0.0, 0.5, v_burn)), 0.85, frost_c);
 	ROUGHNESS = mix(ROUGHNESS, 0.7, v_snow);
+	ROUGHNESS = mix(ROUGHNESS, max(ROUGHNESS, 0.8), v_soft);
 	// The burning band: the stubs' tips glow as the ground's embers do (the char decal's glow energy).
 	EMISSION = fire_glow_color(v_glow) * 4.0 * smoothstep(0.4, 1.0, v_t) * step(1e-3, v_burn);
 	SPECULAR = mix(0.35, 0.2, v_trod);
