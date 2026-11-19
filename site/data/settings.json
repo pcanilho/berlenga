@@ -3094,6 +3094,17 @@
    "topic": "Old trees and deadwood"
   },
   {
+   "name": "After fire",
+   "settings": [
+    "fire_years"
+   ],
+   "note": "",
+   "what": "burnt stands recover by species: cork oak resprouts along its stem and limbs, holm oak from the root collar, and maritime pine and rockrose reseed on the ash bed, while the bark char fades over the years.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
    "name": "Broken limbs",
    "settings": [
     "limb_breakage"
