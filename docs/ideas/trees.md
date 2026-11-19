@@ -2889,6 +2889,9 @@ Beech forests at 40/80 m passed 15 GB on the first draw. Measured (4 cores, lava
   raster frame the same by eye. Not on by default: PT olive crowns went grey-blue without the fine
   shoots that shade their inside (FAR_TWIG_RADIUS stays 1 mm).
 - `fire_variants` adds 45% vertices to a stand (burnt variants ride along).
+- Olive-only far twig floor of 2.7 mm (A/B 19 Nov): halves a grove olive's far mesh (4.25M to 2.14M
+  triangles), but the path-traced grove's crowns went blue-grey (frame mean 47 to 57); dropped. The
+  1-2.7 mm shoots are what shades an olive crown's inside.
 Still recipe: `rigged` false, `fire_variants` false, `near_needle_range` 0, `light_far_meshes` true
 set before `make_stand`/`make_woodland`, `near_leaf_range` ~25, `set_near_build_limit(1)`, one tree
 variant, a frame between stands, wait for `get_near_builds() == 0`.
