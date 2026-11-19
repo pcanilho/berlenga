@@ -24,6 +24,18 @@ vec4 fetch_instance_custom(GeometryData geom, uint primitive_id) {
 	return fetch_instance_field(geom, primitive_id, 16u, vec4(0.0));
 }
 
+// The hit instance's own transform in a merged MultiMesh (FLAG_INSTANCE_XFORM): the record's leading 3x4 rows.
+mat4 fetch_instance_transform(GeometryData geom, uint primitive_id) {
+	uint divisor = geom.instance_data_primitive_divisor;
+	if (geom.instance_data_address == 0ul || divisor == 0u) {
+		return mat4(1.0);
+	}
+	uint stride = geom.instance_data_layout & 0xffu;
+	FloatBuffer d = FloatBuffer(geom.instance_data_address + uint64_t((primitive_id / divisor) * stride) * 4ul);
+	return mat4(vec4(d.v[0], d.v[4], d.v[8], 0.0), vec4(d.v[1], d.v[5], d.v[9], 0.0), vec4(d.v[2], d.v[6], d.v[10], 0.0),
+			vec4(d.v[3], d.v[7], d.v[11], 1.0));
+}
+
 // ============================================================================
 // VERTEX ATTRIBUTES
 // ============================================================================

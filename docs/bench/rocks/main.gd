@@ -572,6 +572,8 @@ func _world() -> void:
 		rocks.ground_detail = not (args.has("no-ground-detail") or args.has("test"))
 		rocks.ground_detail_cover = not args.has("no-ground-cover")
 		rocks.ground_detail_rivers = not args.has("no-river-detail")
+		# --tiles / --no-tiles: tiles of piles on or off (else the default), the A/B of the tiles.
+		rocks.ground_detail_tiles = args.has("tiles") or (rocks.ground_detail_tiles and not args.has("no-tiles"))
 		rocks.stones_react = not args.has("no-react")
 		if rocks.ground_detail:
 			rocks.ground_detail_reference_height = int(args.get("detail-ref", "1080"))
@@ -2333,6 +2335,10 @@ func _render_later() -> void:
 		# without --no-ground-detail, path traced, and compare these and the frame time).
 		var vp := get_viewport()
 		print("rt: %d TLAS instances, %d triangles built, %d ground detail grains" % [vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_TLAS_INSTANCES), vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_TRIANGLES_BUILT), rocks.get_ground_detail_count() if rocks else 0])
+		var ri := func(what: int) -> int: return vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, what)
+		print("rt: captured %d, rebakes %d, held %d, budget limited %d, pending %d" % [ri.call(Viewport.RENDER_INFO_RT_CAPTURED_MESHES), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_REBAKES), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_HELD), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_BUDGET_LIMITED), ri.call(Viewport.RENDER_INFO_RT_PENDING_SURFACES)])
+	if rocks and rocks.ground_detail:
+		print("tiles: %s" % rocks.get_ground_detail_tile_stats())
 	if rocks and rocks.moss_cushions:
 		print("moss: %d shells, %d triangles, %d building" % [rocks.get_moss_shell_count(), rocks.get_moss_triangle_count(), rocks.get_moss_pending()])
 	if rocks and rocks.ground_contact and rocks.get_contact_texture():
