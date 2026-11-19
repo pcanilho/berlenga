@@ -2198,10 +2198,15 @@ func _build_view() -> void:
 	# A sky, so path traced shadows are lit by it as raster's are by the ambient.
 	var sky := Sky.new()
 	var sky_material := ProceduralSkyMaterial.new()
-	if view == "icicles" or view == "avalanche":
+	if view == "icicles":
 		# A snowy land below the horizon, not the default brown: clear ice shows what lies behind and below it.
 		sky_material.ground_horizon_color = Color(0.72, 0.75, 0.8)
 		sky_material.ground_bottom_color = Color(0.55, 0.58, 0.62)
+	elif view == "avalanche":
+		# Snow below the horizon, as bright as the snow there is under this sky (albedo 0.84 under the sky's own
+		# colours), so raster's ambient lights walls as the path tracer's bounce off the real snow does.
+		sky_material.ground_horizon_color = Color(0.53, 0.54, 0.56)
+		sky_material.ground_bottom_color = Color(0.33, 0.38, 0.46)
 	sky.sky_material = sky_material
 	env.sky = sky
 	env.background_mode = Environment.BG_SKY
@@ -2850,6 +2855,10 @@ func _build_avalanche(cam: Camera3D) -> void:
 		av.step(0.25)
 		t += 0.25
 	print("avalanche: %d released, %.0f m3, run-out %.0f m, %.1f m/s, toe %.2f m" % [av.get_release_count(), av.get_released_volume(), av.get_run_out(), av.get_max_speed(), snow.get_depth_at(Vector3(40, 0, 0))])
+	# Shot with the sun 55 degrees up from behind the ridge (the slide ran under 30 degrees, which melts the same
+	# but left the whole 38 degree face in shade): it rakes the face, the crown wall stands in its own shade and
+	# throws a band of shadow down the bed.
+	sun.rotation_degrees = Vector3(-55.0, -60.0, 0.0)
 	cam.position = Vector3(42.0, snow.get_ground_height_at(Vector3(42, 0, 9)) + snow.get_depth_at(Vector3(42, 0, 9)) + 2.2, 9.0)
 	cam.look_at(Vector3(-25.0, 18.0, 0.0))
 	cam.fov = 55.0

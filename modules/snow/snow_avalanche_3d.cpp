@@ -380,7 +380,7 @@ void SnowAvalanche3D::_release(SnowCover3D *p_cover, const Vector<int> &p_cells,
 			const Vector2 wc(float(flow_origin.x + i % n), float(flow_origin.y + i / n));
 			const float u = wc.dot(down), v = wc.dot(Vector2(-down.y, down.x));
 			const float streak = _patch_noise(int(Math::floor(v * 3.0f)), int(Math::floor(u / 3.0f)));
-			p_cover->cell_albedo.write[i] = MIN(p_cover->cell_albedo[i], BED_ALBEDO + 0.07f * (streak - 0.5f));
+			p_cover->cell_albedo.write[i] = MIN(p_cover->cell_albedo[i], BED_ALBEDO + 0.12f * (streak - 0.5f));
 		}
 	}
 	release_liquid = total > 0.0f ? release_liquid / total : 0.0f; // the slab's liquid water share of its mass
