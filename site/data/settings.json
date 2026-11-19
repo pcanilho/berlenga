@@ -3567,6 +3567,17 @@
    "topic": ""
   },
   {
+   "name": "Smoke haze",
+   "settings": [
+    "WeatherMap3D.smoke_haze"
+   ],
+   "note": "",
+   "what": "smoke from fires drifts on the wind as a haze layer that dims and reddens the sun and cools the day.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Wet surfaces and puddles",
    "settings": [
     "surface_storage",

@@ -33,6 +33,7 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
 - **Haze and cloud shadow in fog** (`aerosol_haze`, `haze_visibility`): volumetric fog takes the cloud shadow, and the weather adds haze from visibility and humidity.
 - **Shafts across the sky** (`atmo_cloud_shadow_steps`): the air under the clouds reads a baked cloud shadow map, so light shafts reach across the whole sky, and the weather's haze carries on past the volumetric fog.
 - **Path traced haze** (`WeatherMap3D.traced_haze`): under path tracing the haze is a traced medium lit through shadows and the clouds' direct beam, so shafts stay sharp at any distance and show in reflections.
+- **Smoke haze** (`WeatherMap3D.smoke_haze`): smoke from fires drifts on the wind as a haze layer that dims and reddens the sun and cools the day.
 
 - **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).
 
