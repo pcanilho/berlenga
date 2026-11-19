@@ -669,6 +669,12 @@ flats), sparse and grouped. Bench VEG_DESERT_SHRUBS=0 for the cost: with against
 (about 70k triangles each in view): asked trees about LODs/impostors for them. The desert bench now reads mobility
 bilinearly, as the field does (nearest-cell reads failed after the sinuous brinks, 81cae021).
 
+Nebkhas (19 Nov, terrain-gen's cf579682): the sand mounds a desert shrub gathers round itself (Tengberg 1995; Khalaf
+et al. 1995; Wang et al. 2006). TerrainGenerator3D.get_nebkhas(rect) gives each mound's top and height; with shrubs,
+`make_desert(DESERT_INTERDUNE)` adds three mound shrubs (calligonum, saltbush, white broom, PlantSpecies meta
+"nebkha"), and VegetationField3D crowns every mound with one of them (picked by the mound's hash), its crown 0.4 of the
+mound's radius (radius about 2.7 times its height). The desert shrubs placed by density keep 2 m off a mound's foot.
+
 ## Oases at desert springs (Paulo's pick 19 Nov)
 
 Trees' date palm oasis stand (TreeGenerator.STAND_DATE_OASIS, trees.md 5ai) placed where the sand seas hold water,

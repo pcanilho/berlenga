@@ -160,6 +160,10 @@ private:
 	};
 	Ref<Texture2D> far_texture;
 	static constexpr float CROWN_CELL = 8.0f;
+	static constexpr float NEBKHA_CELL = 16.0f;
+	static constexpr float NEBKHA_CLEAR = 2.0f; // Desert shrubs placed by density keep this far from a mound's foot.
+	static constexpr float NEBKHA_RADIUS = 2.7f; // A mound's radius over its height (terrain-gen: 2.4 to 3).
+	static constexpr float NEBKHA_CROWN = 0.4f; // Its shrub's crown radius over the mound's radius.
 	static constexpr float STEM_MARGIN = 0.03f; // Ground plants root this far clear of a stem's foot.
 	LocalVector<Crown> crowns;
 	// Shade weighed by stand closure and the conifer share, on half-metre cells (_build_stand()).
@@ -198,6 +202,8 @@ private:
 		float spread = 0.0f; // Ground plants: the widest reach of its meshes' leaves from the stem (unit scale).
 		float crown_max = 0.0f; // The largest crown radius it can place.
 		float halo = 0.0f; // How far around a tile it must be placed for later species.
+		int nebkha_slot = -1; // A nebkha shrub (meta "nebkha"): which of the mounds (hash modulo nebkha_count) it crowns.
+		bool desert_shrub = false; // A desert woody shrub placed by density: keeps off the nebkhas.
 		Color far_color; // Linear; alpha: how much ground it hides far away.
 		LocalVector<PackedFloat32Array> deadwood_axes; // Per variant: start, end, widest reach, then optionally the reach profile (mesh space); empty if not deadwood.
 		LocalVector<PackedFloat32Array> deadwood_features; // Per variant: tree_deadwood_features (8 floats a record: kind, point, normal, half width; mesh space).
@@ -263,6 +269,12 @@ private:
 		float sea_depth_at(const Vector2 &p_xz) const;
 		// Oases (PlantSpecies.RULE_SPRING): read when a species uses the rule and the generator has a sand sea.
 		DesertSprings springs;
+		// Nebkhas (TerrainGenerator3D.get_nebkhas): (x, top y, z, mound height), on a grid of NEBKHA_CELL; each mound
+		// carries one nebkha shrub at its top and keeps the other desert shrubs NEBKHA_CLEAR from its foot.
+		PackedVector4Array nebkhas;
+		HashMap<Vector2i, LocalVector<int>> nebkha_grid;
+		int nebkha_count = 0;
+		bool near_nebkha(const Vector2 &p_xz) const;
 		// Years since the ground burnt (WorldFire.burn_age_at), -1 never, on a grid over the map, nearest cell; read
 		// only when the fire contract has a provider and a species uses the burn rule or recovers from fire.
 		LocalVector<float> burn;

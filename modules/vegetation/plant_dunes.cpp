@@ -619,6 +619,23 @@ TypedArray<Resource> PlantGenerator::make_desert(DesertStand p_stand, int p_vari
 			sp->set_meta("desert", true);
 			out.push_back(sp);
 		}
+		if (p_stand == DESERT_INTERDUNE) {
+			// Nebkhas (TerrainGenerator3D.get_nebkhas): the mounds a shrub gathers round itself from blown sand
+			// (Tengberg 1995; Khalaf et al. 1995, Kuwait; Wang et al. 2006 on Nitraria and tamarisk nebkhas). Each
+			// mound carries one at its top, its crown about 0.4 of the mound's radius (VegetationField3D sizes it).
+			const int mound_shrubs[3] = { T::PRESET_CALLIGONUM, T::PRESET_SALTBUSH, T::PRESET_WHITE_BROOM };
+			for (int m : mound_shrubs) {
+				Ref<PlantSpecies> sp = make_woody_shrub(m, T::SHRUB_MATURE, p_variants, p_season, 1.0f, 0.0f, 0.0f, seed_base + 31 + m);
+				if (sp.is_null()) {
+					continue;
+				}
+				sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 40.0f));
+				sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 4.0f);
+				sp->set_meta("desert", true);
+				sp->set_meta("nebkha", true);
+				out.push_back(sp);
+			}
+		}
 	}
 	for (const DesertSpec &f : set) {
 		Ref<PlantGenerator> gen;

@@ -576,6 +576,14 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			r_setup.springs.build(gen);
 		}
 		springs_seen = r_setup.springs;
+		// Nebkhas: the sand mounds desert shrubs build (terrain-gen; docs/ideas/vegetation.md, "Nebkhas").
+		if (gen && gen->get_nebkha_density() > 0.0f) {
+			r_setup.nebkhas = gen->get_nebkhas(r_setup.rect);
+			for (int i = 0; i < r_setup.nebkhas.size(); i++) {
+				const Vector4 n = r_setup.nebkhas[i];
+				r_setup.nebkha_grid[Vector2i(int(Math::floor(n.x / NEBKHA_CELL)), int(Math::floor(n.z / NEBKHA_CELL)))].push_back(i);
+			}
+		}
 	}
 	_read_burn_age(r_setup);
 	r_setup.stone_tops = stone_top_grid;
@@ -762,7 +770,39 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	}
 	r_setup.grid_cell = MAX(1.0f, r_setup.max_footprint * 2.0f);
 	r_setup.sun_mean = VegetationLight::sun_mean(map);
+	// Nebkha shrubs: each mound is crowned by one of them, picked by the mound's hash.
+	for (int s = 0; s < count; s++) {
+		PlaceSpecies &ps = r_setup.species[s];
+		if (ps.sp.is_valid() && bool(ps.sp->get_meta("nebkha", false))) {
+			ps.nebkha_slot = r_setup.nebkha_count++;
+		} else if (ps.sp.is_valid() && bool(ps.sp->get_meta("desert", false)) && bool(ps.sp->get_meta("woody_shrub", false)) && !bool(ps.sp->get_meta("oasis", false))) {
+			ps.desert_shrub = true;
+		}
+	}
 	return true;
+}
+
+bool VegetationField3D::PlaceSetup::near_nebkha(const Vector2 &p_xz) const {
+	if (nebkhas.is_empty()) {
+		return false;
+	}
+	const int cx = int(Math::floor(p_xz.x / NEBKHA_CELL)), cz = int(Math::floor(p_xz.y / NEBKHA_CELL));
+	for (int dz = -1; dz <= 1; dz++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			const LocalVector<int> *cell = nebkha_grid.getptr(Vector2i(cx + dx, cz + dz));
+			if (!cell) {
+				continue;
+			}
+			for (int i : *cell) {
+				const Vector4 n = nebkhas[i];
+				const float reach = NEBKHA_RADIUS * n.w + NEBKHA_CLEAR;
+				if (Vector2(n.x - p_xz.x, n.z - p_xz.y).length_squared() < reach * reach) {
+					return true;
+				}
+			}
+		}
+	}
+	return false;
 }
 
 namespace {
@@ -1127,7 +1167,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool burn_rule = sp->uses_burn_age();
 		const bool burn_recovery = !burn_rule && sp->get_burn_recovery() > 0.0f && !p_setup.burn.is_empty();
 		const bool spring_rule = sp->uses_spring();
-		const bool sand_plant = sp->uses_dune() || coast_rule || mobility_rule || spring_rule;
+		// Nebkha shrubs grow on the sand they gathered.
+		const bool sand_plant = sp->uses_dune() || coast_rule || mobility_rule || spring_rule || ps.nebkha_slot >= 0;
 		if (coast_rule && !p_setup.coast) {
 			continue; // Coast plants need a sea to measure from.
 		}
@@ -1146,6 +1187,18 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const int tx1 = MIN(p_tiles.position.x + p_tiles.size.x + ht, map_tx1);
 		const int tz1 = MIN(p_tiles.position.y + p_tiles.size.y + ht, map_tz1);
 		const Rect2 reach_rect = core.grow(halo);
+		const bool nebkha_sp = ps.nebkha_slot >= 0;
+		if (nebkha_sp && p_setup.nebkhas.is_empty()) {
+			continue;
+		}
+		// A nebkha shrub's crown: its leaves' reach at unit scale (the mesh's footprint if it has none).
+		float nebkha_unit = ps.spread;
+		if (nebkha_sp && nebkha_unit <= 0.0f && !ps.meshes.is_empty() && ps.meshes[0].is_valid()) {
+			const AABB ab = ps.meshes[0]->get_aabb();
+			nebkha_unit = 0.5f * MAX(ab.size.x, ab.size.z);
+		}
+		LocalVector<Vector2> mound_xz;
+		LocalVector<float> mound_h;
 
 		for (int tz = tz0; tz < tz1; tz++) {
 			for (int tx = tx0; tx < tx1; tx++) {
@@ -1157,16 +1210,45 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					out->species[s].customs.resize(variants);
 				}
 				const float shift = float(tile_hash(tx, tz, p_setup.seed, s) & 0xFFFFFF) / float(0x1000000);
-				for (uint32_t i = 0; i < pat.points.size(); i++) {
-					Vector2 xz = Vector2(tx * ts, tz * ts) + pat.points[i];
+				if (nebkha_sp) {
+					// This species' mounds in the tile: their tops are its points.
+					mound_xz.clear();
+					mound_h.clear();
+					const Rect2 tr(tx * ts, tz * ts, ts, ts);
+					const int c0x = int(Math::floor(tr.position.x / NEBKHA_CELL)), c0z = int(Math::floor(tr.position.y / NEBKHA_CELL));
+					const int c1x = int(Math::floor((tr.position.x + ts) / NEBKHA_CELL)), c1z = int(Math::floor((tr.position.y + ts) / NEBKHA_CELL));
+					for (int cz = c0z; cz <= c1z; cz++) {
+						for (int cx = c0x; cx <= c1x; cx++) {
+							const LocalVector<int> *cell = p_setup.nebkha_grid.getptr(Vector2i(cx, cz));
+							if (!cell) {
+								continue;
+							}
+							for (int mi : *cell) {
+								const Vector4 n = p_setup.nebkhas[mi];
+								const Vector2 m(n.x, n.z);
+								const uint32_t mh = hash_murmur3_one_float(n.x, hash_murmur3_one_float(n.z, uint32_t(p_setup.seed)));
+								if (tr.has_point(m) && int(mh % uint32_t(p_setup.nebkha_count)) == ps.nebkha_slot) {
+									mound_xz.push_back(m);
+									mound_h.push_back(n.w);
+								}
+							}
+						}
+					}
+				}
+				const uint32_t point_count = nebkha_sp ? mound_xz.size() : pat.points.size();
+				for (uint32_t i = 0; i < point_count; i++) {
+					Vector2 xz = nebkha_sp ? mound_xz[i] : Vector2(tx * ts, tz * ts) + pat.points[i];
 					if (!rect.has_point(xz) || (!in_core && !reach_rect.has_point(xz))) {
 						continue;
 					}
 					// Ordered dither: a point survives where its (per-tile shifted) rank is below
 					// the density there, so density changes smoothly and the pattern stays blue noise.
-					const float rank = Math::fmod(pat.ranks[i] + shift, 1.0f);
+					const float rank = nebkha_sp ? 0.0f : Math::fmod(pat.ranks[i] + shift, 1.0f);
 					if (rank >= max_keep) {
 						continue;
+					}
+					if (ps.desert_shrub && p_setup.near_nebkha(xz)) {
+						continue; // A mound's own shrub crowns it; the others keep off its flanks.
 					}
 					Vector3 p3(xz.x, 0.0f, xz.y);
 					float suit = sp->get_suitability(map, p3, false);
@@ -1496,8 +1578,12 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						continue;
 					}
 					// The plant's transform: on the ground, tilted towards its normal, random yaw and size.
-					const float r = pat.randoms[i];
+					const float r = nebkha_sp ? float(hash_murmur3_one_float(xz.x, hash_murmur3_one_float(xz.y)) & 0xFFFFFF) / float(0x1000000) : pat.randoms[i];
 					float scale = Math::lerp(scale_range.x, scale_range.y, Math::fmod(r * 104729.0f, 1.0f)) * trodden;
+					if (nebkha_sp && nebkha_unit > 0.0f) {
+						// The shrub that built the mound: its crown about NEBKHA_CROWN of the mound's radius.
+						scale = NEBKHA_CROWN * NEBKHA_RADIUS * mound_h[i] / nebkha_unit * Math::lerp(0.9f, 1.1f, r);
+					}
 					// At a rock's foot: leaves must not pass into the rock. A plant reaching in over it
 					// grows smaller and leans away, as plants pressed against a boulder do.
 					float rock_fit = 1.0f;

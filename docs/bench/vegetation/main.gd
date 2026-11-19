@@ -729,6 +729,33 @@ func _desert_checks(ground: VegetationField3D, dset: Array[PlantSpecies], gen: T
 					plain_deep += 1
 	_check("desert: a species without a sand rule keeps off the sand sea's sand", plain_deep == 0, [plain_n, plain_deep])
 	_check("desert: woody shrubs (calligonum, white broom, saltbush) placed", shrubs > 20 or OS.get_environment("VEG_DESERT_SHRUBS") == "0", [shrubs])
+	# Nebkhas (TerrainGenerator3D.get_nebkhas): one mound shrub at each mound top in the streamed ground, the other
+	# desert shrubs off the mounds.
+	var mounds := gen.get_nebkhas(Rect2(-400, -400, 800, 800))
+	var neb_n := 0
+	var neb_off := 0
+	var shrub_on := 0
+	for s in dset.size():
+		var is_neb: bool = dset[s].get_meta("nebkha", false)
+		var is_shrub: bool = dset[s].get_meta("woody_shrub", false) and not dset[s].get_meta("oasis", false)
+		if not is_neb and not is_shrub:
+			continue
+		for p in ground.get_placements(s):
+			var best := 1e9
+			var best_r := 0.0
+			for m in mounds:
+				var d := Vector2(m.x - p.x, m.z - p.z).length()
+				if d < best:
+					best = d
+					best_r = 2.7 * m.w
+			if is_neb:
+				neb_n += 1
+				if best > 0.6:
+					neb_off += 1
+			elif best < best_r + 1.0:
+				shrub_on += 1
+	print("VEG_NEBKHA mounds %d in the sea, mound shrubs %d (%d off a top), other shrubs on a mound %d" % [mounds.size(), neb_n, neb_off, shrub_on])
+	_check("desert: a shrub crowns each nebkha, the others keep off them", mounds.is_empty() or (neb_n > 0 and neb_off == 0 and shrub_on == 0), [mounds.size(), neb_n, neb_off, shrub_on])
 	_check("desert: annuals between the dunes, not up them", annual[0] > 500 and annual[3] < annual[0] * 0.5, [annual[0], annual[3]])
 
 # Oases (docs/ideas/vegetation.md, "Oases at desert springs"): springs found in the sand sea's hollows; near one, the
