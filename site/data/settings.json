@@ -2814,7 +2814,7 @@
     "make_woodland"
    ],
    "note": "",
-   "what": "sixteen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), and date palm oases (`STAND_DATE_OASIS`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
+   "what": "seventeen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), date palm oases (`STAND_DATE_OASIS`) and beetle-killed spruce (`STAND_BEETLE_SPRUCE`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3144,6 +3144,17 @@
    ],
    "note": "",
    "what": "standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood; peeled edges show the bark's thickness. Logs settle along the ground at every decay class, and fallen sticks lie as snapped, kinked pieces. Windthrown trees lie with their root plate on edge, its torn underside holding soil clods, stones and root stubs, the butt held off the ground.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
+   "name": "Bark beetle kill",
+   "settings": [
+    "beetle_years"
+   ],
+   "note": "",
+   "what": "spruce go from green attack, with boring dust on the lower stem and at the foot, to rust-red crowns and then grey snags, in fronts through the stand.",
    "page": "trees",
    "title": "Trees",
    "topic": "Old trees and deadwood"
