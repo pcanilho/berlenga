@@ -1033,6 +1033,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Far sun shadows",
+   "settings": [
+    "TerrainMaterial3D.far_shadow_start"
+   ],
+   "note": "",
+   "what": "past the shadow maps' reach, ridges cast the low sun's shadow across distant terrain in raster.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Sky occlusion",
    "settings": [
     "TerrainGenerator3D.sky_occlusion",
@@ -1397,7 +1408,7 @@
     "GroundSurface3D.sand_glints"
    ],
    "note": "",
-   "what": "up close, dry sand shows the colours of its grains and the odd grain flashing in the sun.",
+   "what": "up close, dry sand shows the colours of its grains and the odd grain flashing in the sun; in low sun, sun-aligned grain facets glitter across dry sand.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"

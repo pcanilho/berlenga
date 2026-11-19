@@ -138,6 +138,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 ## Ground
 
 - **Ground material** (`TerrainMaterial3D`, `use_generator()`): rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows.
+- **Far sun shadows** (`TerrainMaterial3D.far_shadow_start`): past the shadow maps' reach, ridges cast the low sun's shadow across distant terrain in raster.
 
   ![A generated range with its ground material under the cloud layer: rock, scree, soil, forest and a sand beach, raster vs path traced](media/terrain-ground.jpg)
 
@@ -196,7 +197,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 - **Wind ripples** (`GroundSurface3D.wind_ripples`; `ripple_extent`): the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile; prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).
 - **Blowing sand** (`GroundStreamers3D`; `GroundSurface3D.obstacle_lee`): grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind, and drop in the lee of boulders, walls and parked vehicles.
 - **Dust** (`GroundDust3D`, `GroundSurface3D.dust_emission`): the wind lifts dust off dry sand, and sliding tyres lift billowing clouds of it, carried on the wind until it settles; needs volumetric fog.
-- **Sand glints** (`GroundSurface3D.sand_glints`): up close, dry sand shows the colours of its grains and the odd grain flashing in the sun.
+- **Sand glints** (`GroundSurface3D.sand_glints`): up close, dry sand shows the colours of its grains and the odd grain flashing in the sun; in low sun, sun-aligned grain facets glitter across dry sand.
 
   ![Dry sand 40 cm from the camera at full resolution, without and with sand glints, raster](media/sand-glints.jpg)
 
