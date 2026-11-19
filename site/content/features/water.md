@@ -106,6 +106,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Lake ripples: short wind waves and sun glitter on a lake, where the surface used to lie flat.*
 
+- **Oasis springs** (`OasisSprings3D`): still spring pools in the desert, each sized by its spring's water balance and with its own outline, with sand boils heaving at the vents.
 - **Cave pools** (`seabed_probe_height`): pool water under a cave roof measures the real floor beneath it, so a shallow pool thins out to its rim.
 - **Underground reflections** (`screen_reflections`): with `raster_reflections` off, still water and streams mirror the cave around them in raster; rivers keep clear water.
 - **Raster reflections** (`raster_reflections` on PhysXWaterSurface3D and PhysXRiver3D): raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer, and omni and spot lights glint on all raster water; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows; the water's own colour is lit by sun and sky, so the sea darkens at dusk.
