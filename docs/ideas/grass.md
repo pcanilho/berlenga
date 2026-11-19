@@ -691,6 +691,10 @@ Findings (19 Nov):
   path clamps NdotV and weighs masking with that clamp; the anisotropic one weighed masking at V's real depth over the
   clamped 1 / NdotV, which blew single samples up into bright speckles. Now V and L enter the masking clamped as the
   isotropic path takes them, and visible-normal sampling sees a V just above the surface.
+- Which way: stretched across the blade (TANGENT) the lobe only dulled the sward at 1280 close up (near-sward mean
+  36.6 to 36.5, the sunlit patches' sheen gone); stretched along it (ANISOTROPY_FLOW onto BINORMAL) lit blades carry
+  the highlight as streaks down their length (mean 40.4), the fibre look. Shipped along the blade, with the fold at the
+  mid vein (NORMAL_MAP, flat tilted halves; fades with fwidth(UV.x) and v_soft, so only close blades show it).
 
 ## References
 

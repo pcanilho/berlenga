@@ -1237,6 +1237,17 @@ void fragment() {
 	float rib = 1.0 - smoothstep(0.0, 0.12 + fw, x);
 	float veins = 0.5 + 0.5 * cos(x * 6.2832 * 3.5);
 	c *= 1.0 + detail * (0.18 * rib - 0.07 * veins * (1.0 - rib) - 0.12 * x * x);
+	// Folded at the mid vein (Pesce 2024, "Making a greener grass"; keeled and V-folded grass leaves): each half of the
+	// blade is flat and tilted to its side, not rounded, so the strand sheen breaks into a thin bright line along one
+	// half. The vertex normal leans 0.45 across at the edges and interpolates linearly; this bends each half to a
+	// constant 0.375, with fibre_shading, and goes as the blade narrows to a few pixels or softens with distance.
+	{
+		float s = (UV.x - 0.5) * 2.0;
+		float half_sign = s / (abs(s) + 2.0 * fw);
+		float fold = fibre_shading * detail * (1.0 - v_soft) * (half_sign * 0.375 - s * 0.45);
+		fold *= FRONT_FACING ? 1.0 : -1.0; // A back face's normal is flipped across its tangent too.
+		NORMAL_MAP = vec3(0.5 + 0.5 * clamp(fold, -1.0, 1.0), 0.5, 1.0);
+	}
 	c = vegetation_light_tint(c, v_light);
 	// Wet blades (Lagarde 2013, low porosity): a little darker and glossier.
 	float wet_factor = mix(1.0, 0.2, 0.25);
@@ -1274,9 +1285,12 @@ void fragment() {
 	// The burning band: the stubs' tips glow as the ground's embers do (the char decal's glow energy).
 	EMISSION = fire_glow_color(v_glow) * 4.0 * smoothstep(0.4, 1.0, v_t) * step(1e-3, v_burn);
 	SPECULAR = mix(0.35, 0.2, v_trod);
-	// Only the lobe's shape changes (stretched across the strands), not its energy: raster and the path tracer agree
-	// on that, where a smoother, shinier blade brightened the path-traced sward far more than the raster one.
+	// The highlight drawn out along the blade (ANISOTROPY_FLOW onto BINORMAL), so lit blades carry it as streaks down
+	// their length, the fibre look; across the blade it only dulled the sward's sheen (docs/ideas/grass.md). Only the
+	// lobe's shape changes, not its energy: raster and the path tracer agree on that, where a smoother, shinier blade
+	// brightened the path-traced sward far more than the raster one.
 	ANISOTROPY = fib;
+	ANISOTROPY_FLOW = vec2(0.0, 1.0);
 	BACKLIGHT = ALBEDO * 0.7;
 	// Sky light inside the sward (Monsi and Saeki 1953): diffuse light falls off as
 	// exp(-k L) with the leaf area L above, k about 0.8 for upright blades, and light the blades
