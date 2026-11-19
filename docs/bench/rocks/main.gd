@@ -35,6 +35,7 @@ extends Node3D
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
 #   --rain=mm/h           with --rock: rain on the stone for --rain-hours=h (0.5), then --dry-hours=h of drying;
 #                         --no-rivulets for a before frame; --film=f the water film of a stream bed's stones
+#   --salt=k              with --rock: a stand-in sea salt index (0..1) for the salt bloom; --no-salt-bloom: off
 #   --moss=k              the field's moss_cover (0..1)
 #   --cave-mouths         the retired cave-mouth portal blocks (and their terrain holes) in --world frames
 #   --wind=m/s            with --water: the sea's wind speed (and some swell)
@@ -296,14 +297,28 @@ func _families() -> void:
 	cam.look_at(Vector3(0.05, 0.3, 2.0))
 
 
+# --salt=0..1: a stand-in for WeatherMap3D sea_spray's salt index over the bench (the weather_spray_map global, G),
+# so the rock material's salt bloom shows without a sea; --no-salt-bloom turns it off (a before frame).
+func _salt_stand_in() -> void:
+	if not args.has("salt"):
+		return
+	var img := Image.create(4, 4, false, Image.FORMAT_RGBAF)
+	img.fill(Color(0.0, float(args["salt"]), 0.0, 1.0))
+	RenderingServer.global_shader_parameter_set("weather_spray_map", ImageTexture.create_from_image(img))
+	RenderingServer.global_shader_parameter_set("weather_spray_rect", Vector4(-100.0, -100.0, 200.0, 200.0))
+
+
 func _one_rock() -> void:
 	_plain_ground(20.0)
 	_rain_weather()
+	_salt_stand_in()
 	var tf: PackedStringArray = args["rock"].split(",")
 	var m := _rock(TYPES.find(tf[0]), FAMILIES.find(tf[1]) if tf.size() > 1 else 0, int(args.get("seed", "3")))
 	print("rock: %d triangles, axes %s" % [m.surface_get_array_index_len(0) / 3, m.get_meta("rock_axes")])
 	if args.has("no-rivulets") and m.surface_get_material(0) is ShaderMaterial:
 		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("rain_rivulets", false)
+	if args.has("no-salt-bloom") and m.surface_get_material(0) is ShaderMaterial:
+		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("salt_bloom", false)
 	if args.has("film") and m.surface_get_material(0) is ShaderMaterial:
 		# --film=f: the water film a stream bed gives its stones (INSTANCE_CUSTOM.y), contact band off.
 		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("rock_instance", Vector4(-1.0e4, float(args["film"]), 0.0, 0.5))

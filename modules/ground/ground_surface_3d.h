@@ -581,7 +581,7 @@ private:
 	LocalVector<float> sand_dep_rate; // m/s, + piling up, - scoured
 	LocalVector<float> sand_dep; // m written to the ground since the cell came in
 	LocalVector<float> ground_dep; // m of mud deposit (debris fans, flood silt) the ground lattice carries, per cell
-	float _deposit_smooth_at(float p_x, float p_z) const;
+	float _deposit_smooth_at(float p_x, float p_z, float *r_coloured = nullptr) const; // r_coloured: the share with a colour
 	bool _apply_deposits();
 	void _ground_changed();
 	LocalVector<float> sand_dep_pending; // m owed, written in 2 mm steps

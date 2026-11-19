@@ -1573,10 +1573,11 @@
     "ground_detail_pixels",
     "ground_detail_cover",
     "ground_detail_rivers",
+    "ground_detail_tiles",
     "stones_react"
    ],
    "note": "",
-   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
+   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one, grouped into shared tiles of piles so it handles far fewer instances. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1622,10 +1623,11 @@
    "settings": [
     "layer_enabled",
     "LAYER_TOR",
-    "LAYER_COAST"
+    "LAYER_COAST",
+    "salt_bloom"
    ],
    "note": "",
-   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks cut into sharp-edged joint blocks with spray pitting only on upward faces, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above.",
+   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks cut into sharp-edged joint blocks with spray pitting only on upward faces, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above; on sheltered rock, sea spray salt dries to a white crust that is gone while the rock is wet.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
