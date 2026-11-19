@@ -63,6 +63,12 @@
 				Ground detail stones built in [param layer] (one of the LAYER_DETAIL constants), or in all three with -1.
 			</description>
 		</method>
+		<method name="get_cells_pending" qualifiers="const">
+			<return type="int" />
+			<description>
+				Coarse cells being placed on worker threads (see [member cell_threads]), and shape libraries being built for them.
+			</description>
+		</method>
 		<method name="get_ground_detail_pending" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -268,6 +274,9 @@
 		</member>
 		<member name="build_budget_msec" type="float" setter="set_build_budget_msec" getter="get_build_budget_msec" default="4.0">
 			Milliseconds per frame spent building cells while streaming.
+		</member>
+		<member name="cell_threads" type="bool" setter="set_cell_threads" getter="is_cell_threads" default="true">
+			While streaming, the cells of the coarse layers (field stones, scree, river and shore stones, landforms) are placed on worker threads, and the main thread only adds their MultiMeshes and collision. A cell whose shapes are not built yet starts them on workers and is placed again once they are in. Landform cells stay on the main thread while [member cave_mouths] is on, as those open terrain holes. Off: placed on the main thread within [member build_budget_msec], as before.
 		</member>
 		<member name="cliff_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
 			Scales how many blocks are set into cliff faces.

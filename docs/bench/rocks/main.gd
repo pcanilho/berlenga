@@ -49,7 +49,8 @@ extends Node3D
 #   --no-ground-detail    with --world: RockField3D.ground_detail off (on by default: stones of 1 to 8 cm round the
 #                         camera as geometry; off for --test); --detail-ref=px image height the reach is set for (1080),
 #                         --detail-pixels=n (3);
-#                         --detail-sync places the detail cells on the main thread (ground_detail_threads off)
+#                         --detail-sync places the detail cells on the main thread (ground_detail_threads off),
+#                         --cell-sync the coarse layers' cells (cell_threads off)
 #   --walk=m              with --world: stream while the camera walks m metres forward (--walk-step=m a frame, 0.1),
 #                         then print the main thread's streaming time per frame (mean, 95th percentile, worst)
 
@@ -520,6 +521,7 @@ func _world() -> void:
 			if args.has("detail-pixels"):
 				rocks.ground_detail_pixels = float(args["detail-pixels"])
 			rocks.ground_detail_threads = not args.has("detail-sync")
+		rocks.cell_threads = not args.has("cell-sync")
 		var tb := Time.get_ticks_msec()
 		var built := rocks.build_area(Rect2(spot.x - 160, spot.z - 160, 320, 320))
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
@@ -1905,11 +1907,14 @@ func _test() -> void:
 	var frames := 0
 	var still := 0
 	var last := -1
-	while frames < 400 and still < 10:
+	var t0 := Time.get_ticks_msec()
+	# By time, not frames: the coarse cells the grains wait for are placed on workers too (cell_threads), and frames
+	# without drawing pass faster than they land.
+	while Time.get_ticks_msec() - t0 < 180000 and still < 10:
 		await get_tree().process_frame
 		frames += 1
 		var n := rocks.get_ground_detail_count()
-		still = still + 1 if n == last and n > 0 and rocks.get_ground_detail_pending() == 0 else 0
+		still = still + 1 if n == last and n > 0 and rocks.get_ground_detail_pending() == 0 and rocks.get_cells_pending() == 0 else 0
 		last = n
 	rocks.streaming = false
 	get_viewport().disable_3d = false
@@ -1945,6 +1950,7 @@ func _walk() -> void:
 	dir.y = 0.0
 	dir = dir.normalized()
 	rocks.streaming = true
+	get_viewport().disable_3d = true # streaming cost only: software Vulkan takes seconds to draw a frame
 	# The first updates fill the coarse layers' full streaming radius (build_area covered less): not walking cost.
 	var warm := 0
 	while warm < 300 and (warm < 10 or rocks.get_last_build_msec() > 2.0 * rocks.build_budget_msec):
@@ -1961,12 +1967,15 @@ func _walk() -> void:
 		dms.append(rocks.get_last_detail_msec())
 	# Let the last cells land.
 	var settle := 0
-	while rocks.get_ground_detail_pending() > 0 and settle < 600:
+	var settle_t := Time.get_ticks_msec()
+	while (rocks.get_ground_detail_pending() > 0 or rocks.get_cells_pending() > 0 or settle < 30) and settle < 3000:
 		await get_tree().process_frame
 		ms.append(rocks.get_last_build_msec())
 		dms.append(rocks.get_last_detail_msec())
 		settle += 1
 	rocks.streaming = false
+	get_viewport().disable_3d = false
+	print("walk: settled in %d frames (%d ms); %d cells, %d detail grains" % [settle, Time.get_ticks_msec() - settle_t, rocks.get_cell_count(), rocks.get_ground_detail_count()])
 	var stats := func(a: Array[float]) -> String:
 		var s := a.duplicate()
 		s.sort()
@@ -1975,7 +1984,7 @@ func _walk() -> void:
 			total += v
 		return "mean %.2f ms, p95 %.2f ms, worst %.2f ms" % [total / a.size(), s[int(s.size() * 0.95)], s[-1]]
 	print("walk: %.1f m in %d frames after %d warm-up (%s): streaming %s; ground detail %s; %d stones" % [
-		dist, ms.size(), warm, "detail on the main thread" if not rocks.ground_detail_threads else "detail on workers",
+		dist, ms.size(), warm, ("detail on the main thread" if not rocks.ground_detail_threads else "detail on workers") + (", cells on the main thread" if not rocks.cell_threads else ", cells on workers"),
 		stats.call(ms), stats.call(dms), rocks.get_stone_count()])
 
 

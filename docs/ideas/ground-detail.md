@@ -325,3 +325,40 @@ outlive the area streaming out like the ruts do. The scan skips cells outside th
 inside it a few looks to settle, so a returning field is not read as fresh rims. Snow bench `--away` (field taken
 300 m away and back): 4,172 lying, 4,172 kept while away, 4,129 lying again where they were (the rest crushed by
 the relief check), no new ones broken off. Cost unchanged: clumps 0.78 ms mean, clods 0.88 ms mean per update.
+
+## Coarse rock cells on workers (19 Nov)
+
+`RockField3D.cell_threads` (on): while streaming, the coarse layers' cells (field stones, scree, river and shore stones,
+landforms) are placed on worker threads as the detail cells are. A worker places the cell and packs each shape's
+MultiMesh records, looking shapes up under a lock; a shape not built yet sends the cell back to be placed once it is
+in. The main thread takes out stones on holes and broken ones, uploads one buffer per shape and adds the collision.
+Landform cells stay on the main thread with `cave_mouths` on (they open terrain holes). Rocks bench `--world --walk=120
+--walk-step=0.2` (lavapipe, drawing off), main thread per frame, `--cell-sync` then on: mean 5.2 / 0.6 ms, p95 13.6 /
+0.3 ms, worst 1,020 / 359 ms; the same 120,430 stones once settled (cells land about 8 s after a 12 m/s walk stops on
+this machine, nearest first).
+
+## Close-up bark (plan, 19 Nov)
+
+LOD 0 trunks already carry bark relief as displaced geometry (TreeGenerator `bark_relief`, ten `BarkKind` families), so
+the furrows are only as sharp as the tube's rings and segments, and nothing stands proud of the surface: no loose
+plate edges, lifting flakes or curls of paper bark. Close up those are what reads as bark.
+
+Established technique:
+- Bark as elements on a surface (Pixar, "Elemental Bark", Hery et al.): plates, scales and strips modelled as
+  separate pieces laid over the trunk, not one displacement, so they can overlap, lift and cast their own shadows.
+- Bark synthesis from fracture of a growing skin (Lefebvre and Neyret 2002, "Synthesizing Bark"; Wang et al. 2003,
+  Tsinghua): the plate layout comes from the trunk's own pattern, which here is the BarkSet height image.
+- Game practice: SpeedTree and UE5 trunks pair a displaced mesh (Nanite tessellation) with decal or mesh pieces for
+  peeling bark; the pieces are where close shots spend geometry.
+
+Plan, in `modules/vegetation/tree_bark_detail.*` (BarkDetail3D), the ground detail pattern on trunks:
+- Trunks near the camera from `VegetationField3D.get_trunks_near(center, radius, height)` (c027d1ed): each trunk's
+  capsules up to a few metres, its preset and seed.
+- Per bark kind (`TreeGenerator.bark_kind_for_preset`, 16f1f982), elements placed where `bark_height` says the
+  surface stands: plated and pinaster/pinea plates on plate tops (0 height), their edges lifted over the furrow;
+  flaking: thin flakes peeling at one edge; papery: curls of birch skin rolled outward; scaly: small overlapping
+  scales; furrowed and cork keep their geometry (already deep), with a few broken ridge fragments; smooth and
+  lenticelled get none.
+- Each element one of 8 shapes per kind with its own random bend, size and tint (no visible repetition), drawn as
+  rt_instanced MultiMeshes so the path tracer sees each piece over a shared shape; reach by the pixel rule (3 px).
+- Placed on workers like the detail cells; cost reported on and off (memory, walking main thread, raster and PT frame).
