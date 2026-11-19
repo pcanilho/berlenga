@@ -138,11 +138,12 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 ## Ground
 
 - **Ground material** (`TerrainMaterial3D`, `use_generator()`): rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows.
-- **Far sun shadows** (`TerrainMaterial3D.far_shadow_start`): past the shadow maps' reach, ridges cast the low sun's shadow across distant terrain in raster.
 
   ![A generated range with its ground material under the cloud layer: rock, scree, soil, forest and a sand beach, raster vs path traced](media/terrain-ground.jpg)
 
   *Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
+
+- **Far sun shadows** (`TerrainMaterial3D.far_shadow_start`): past the shadow maps' reach, ridges cast the low sun's shadow across distant terrain in raster.
 
 - **Sky occlusion** (`TerrainGenerator3D.sky_occlusion`, `TerrainMaterial3D.sky_occlusion`): raster ground is lit only by the sky its hills leave open, from a horizon bake and the live sky, matching path tracing at dusk.
 
