@@ -867,7 +867,7 @@ int CaveNetwork3D::add_sea_cave(const Vector3 &p_entrance, const Vector3 &p_out)
 	// down into the cave nor up out of it.
 	const Vector3 front = p_entrance + c.out * 5.0;
 	const real_t toe = MIN(gen->get_height(p_entrance + c.out * 2.5), gen->get_height(front) + real_t(1.5));
-	const real_t mouth_floor = MAX(sea - real_t(1.5), toe - real_t(0.3));
+	const real_t mouth_floor = MAX(sea - real_t(1.5), toe - real_t(0.08)); // just under the beach: a deeper cut showed as a step-sided trench
 	// The back at high water, or a little under a high beach (sand drifts in and slopes down the passage).
 	const real_t back_floor = MAX(sea + real_t(0.6), mouth_floor - real_t(1.0));
 	// The passage starts out in front of the face, so the toe of the cliff is cut level with the floor outside.
@@ -1144,7 +1144,9 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p, real_t 
 		real_t dc = cave_profile(sg->type, q.dot(u_axis), q.dot(v_axis), r, floor_v);
 		const real_t fill = floor_v;
 		// The fill is never quite level: ripples, puddle hollows and mud banks a few decimetres high.
-		floor_v += 0.35 * (cave_fbm(p_p / 1.6f, uint32_t(seed) + 101u, 2) - 0.5f) + 0.12 * (cave_fbm(p_p / 0.5f, uint32_t(seed) + 103u, 2) - 0.5f);
+		// (A sea cave's floor is washed level by the swash and runs out level with the beach: ripples there cut the
+		// sand at the mouth into islands with steep trenches between them.)
+		floor_v += (sg->type == PASSAGE_SEA ? 0.1 : 1.0) * (0.35 * (cave_fbm(p_p / 1.6f, uint32_t(seed) + 101u, 2) - 0.5f) + 0.12 * (cave_fbm(p_p / 0.5f, uint32_t(seed) + 103u, 2) - 0.5f));
 		if (sg->stream) {
 			// A stream's trench: the water has washed its fill level across the floor (sand and gravel bars only
 			// along its edges), a little below the dry fill.
@@ -1232,7 +1234,7 @@ real_t CaveNetwork3D::_wall_foot(const FieldSource &p_src, const Vector3 &p_p) c
 		}
 		real_t floor_v;
 		cave_profile(sg->type, 0.0, 0.0, r, floor_v);
-		floor_v += 0.35 * (cave_fbm(p_p / 1.6f, uint32_t(seed) + 101u, 2) - 0.5f) + 0.12 * (cave_fbm(p_p / 0.5f, uint32_t(seed) + 103u, 2) - 0.5f);
+		floor_v += (sg->type == PASSAGE_SEA ? 0.1 : 1.0) * (0.35 * (cave_fbm(p_p / 1.6f, uint32_t(seed) + 101u, 2) - 0.5f) + 0.12 * (cave_fbm(p_p / 0.5f, uint32_t(seed) + 103u, 2) - 0.5f)); // as the field's floor
 		const real_t h = q.dot(v_axis) - floor_v;
 		if (h < -0.3) {
 			continue;

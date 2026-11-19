@@ -245,6 +245,15 @@ void WeatherRunoff3D::_build_network() {
 	lv_fill(load, Vector2());
 	load_in.resize(nn);
 	lv_fill(load_in, Vector2());
+	rain_now.resize(nn);
+	lv_fill(rain_now, 0.0f);
+	fire_burnt.resize(nn);
+	lv_fill(fire_burnt, 0.0f);
+	fire_kf.resize(nn);
+	lv_fill(fire_kf, 0.0f);
+	df_fired_at.resize(nn);
+	lv_fill(df_fired_at, -1e30f);
+	fire_generation = UINT64_MAX;
 	baked_n = n;
 }
 
@@ -276,6 +285,7 @@ void WeatherRunoff3D::_step(double p_dt) {
 		const int i = order[k];
 		const Vector3 p(origin.x + (i % n + 0.5f) * cell, Math::is_finite(height[i]) ? height[i] : 0.0f, origin.y + (i / n + 0.5f) * cell);
 		const float input = w ? w->get_ground_water_input_at(p) : 0.0f; // mm/h
+		rain_now[i] = input;
 		// The storm's running totals (curve number on the event, relaxing when dry).
 		float excess = 0.0f;
 		if (input > 0.05f) {
@@ -319,6 +329,15 @@ void WeatherRunoff3D::_step(double p_dt) {
 			}
 		}
 		load[i] = l;
+	}
+	_step_debris(p_dt);
+}
+
+void WeatherRunoff3D::_step_debris(double p_dt) {
+	sim_time += p_dt;
+	if (debris_flows) {
+		_fire_refresh();
+		_debris_flows();
 	}
 }
 
@@ -473,6 +492,15 @@ void WeatherRunoff3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_load_at", "position"), &WeatherRunoff3D::get_load_at);
 	ClassDB::bind_method(D_METHOD("get_total_load"), &WeatherRunoff3D::get_total_load);
 	ClassDB::bind_method(D_METHOD("get_delivered_load"), &WeatherRunoff3D::get_delivered_load);
+	ClassDB::bind_method(D_METHOD("set_debris_flows", "enabled"), &WeatherRunoff3D::set_debris_flows);
+	ClassDB::bind_method(D_METHOD("is_debris_flows"), &WeatherRunoff3D::is_debris_flows);
+	ClassDB::bind_method(D_METHOD("set_debris_flow_threshold", "probability"), &WeatherRunoff3D::set_debris_flow_threshold);
+	ClassDB::bind_method(D_METHOD("get_debris_flow_threshold"), &WeatherRunoff3D::get_debris_flow_threshold);
+	ClassDB::bind_method(D_METHOD("get_debris_flows_since", "id"), &WeatherRunoff3D::get_debris_flows_since);
+	ClassDB::bind_static_method("WeatherRunoff3D", D_METHOD("debris_flow_likelihood", "rain15_mm", "burnt_steep_share", "burnt", "kf"), &WeatherRunoff3D::debris_flow_likelihood);
+	ClassDB::bind_static_method("WeatherRunoff3D", D_METHOD("debris_flow_volume", "i15_mm_h", "burnt_km2", "relief_m"), &WeatherRunoff3D::debris_flow_volume);
+	ClassDB::bind_static_method("WeatherRunoff3D", D_METHOD("bankfull_width", "area_km2"), &WeatherRunoff3D::bankfull_width);
+	ADD_SIGNAL(MethodInfo("debris_flow", PropertyInfo(Variant::DICTIONARY, "event")));
 	ClassDB::bind_static_method("WeatherRunoff3D", D_METHOD("scs_runoff", "rain_mm", "curve_number"), &WeatherRunoff3D::scs_runoff);
 	ClassDB::bind_static_method("WeatherRunoff3D", D_METHOD("shallow_flow_velocity", "slope"), &WeatherRunoff3D::shallow_flow_velocity);
 	ClassDB::bind_static_method("WeatherRunoff3D", D_METHOD("channel_velocity", "discharge"), &WeatherRunoff3D::channel_velocity);
@@ -486,6 +514,8 @@ void WeatherRunoff3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "channel_area", PROPERTY_HINT_RANGE, "0,100,0.01,suffix:km²"), "set_channel_area", "get_channel_area");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "update_rate", PROPERTY_HINT_RANGE, "0.01,60,0.01,suffix:Hz"), "set_update_rate", "get_update_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "bake_on_ready"), "set_bake_on_ready", "is_bake_on_ready");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "debris_flows"), "set_debris_flows", "is_debris_flows");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "debris_flow_threshold", PROPERTY_HINT_RANGE, "0.01,0.99,0.01"), "set_debris_flow_threshold", "get_debris_flow_threshold");
 }
 
 WeatherRunoff3D::WeatherRunoff3D() {

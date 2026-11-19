@@ -418,6 +418,11 @@ void VegetationField3D::_read_burn_age(PlaceSetup &r_setup) const {
 		for (int i = 0; i < list.size() && !wanted; i++) {
 			const Ref<PlantSpecies> sp = list[i];
 			wanted = sp.is_valid() && (sp->uses_burn_age() || sp->get_burn_recovery() > 0.0f);
+			const TypedArray<Mesh> ms = sp.is_valid() ? sp->get_meshes() : TypedArray<Mesh>();
+			for (int m = 0; m < ms.size() && !wanted; m++) {
+				const Ref<Mesh> mesh = ms[m];
+				wanted = mesh.is_valid() && mesh->has_meta(SNAME("tree_fire_years"));
+			}
 		}
 	}
 	burn_follow = wanted;
@@ -624,6 +629,26 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 				for (const Ref<Mesh> &m : ps.meshes) {
 					const Vector2 gs = m.is_valid() ? Vector2(m->get_meta(SNAME("tree_ground_slope"), Vector2())) : Vector2();
 					ps.bank_slopes.push_back(gs.x);
+				}
+			}
+		}
+		{
+			bool any_fire = false;
+			for (const Ref<Mesh> &m : ps.meshes) {
+				any_fire = any_fire || (m.is_valid() && m->has_meta(SNAME("tree_fire_years")));
+			}
+			if (any_fire) {
+				bool any_band = false;
+				for (const Ref<Mesh> &m : ps.meshes) {
+					const float fy = (m.is_valid() && m->has_meta(SNAME("tree_fire_years"))) ? float(m->get_meta(SNAME("tree_fire_years"))) : -1.0f;
+					ps.fire_years.push_back(fy);
+					ps.fire_years_max = MAX(ps.fire_years_max, fy);
+					any_band = any_band || (m.is_valid() && m->has_meta(SNAME("tree_fire_band")));
+				}
+				if (any_band) {
+					for (const Ref<Mesh> &m : ps.meshes) {
+						ps.fire_bands.push_back((m.is_valid() && m->has_meta(SNAME("tree_fire_band"))) ? Vector2(m->get_meta(SNAME("tree_fire_band"))) : Vector2(-1.0f, -1.0f));
+					}
 				}
 			}
 		}
@@ -1596,7 +1621,41 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						b = Basis(Vector3(Math::cos(ta), 0.0f, Math::sin(ta)), Math::deg_to_rad(55.0f) * trod) * b;
 					}
 					b.scale(Vector3(scale, scale * (1.0f - 0.5f * trod), scale));
-					const int variant = bank_variant >= 0 ? bank_variant : MIN(int(r * variants), variants - 1);
+					int fire_variant = -1;
+					if (!ps.fire_years.is_empty()) {
+						// Trees grown for a fire (TreeGenerator.fire_years): on burnt ground the variant whose years
+						// are nearest the ground's burn age (WorldFire.burn_age_at, the field's grid), off burns or
+						// long after (past 1.5 times the oldest band) an unburnt one; ties by the tree's own number.
+						// With bands (mesh meta "tree_fire_band", years from and to): the variant whose band holds the age,
+						// an unburnt one past the last band.
+						const float age = p_setup.burn.is_empty() ? -1.0f : p_setup.burn_at(xz);
+						bool burnt = age >= 0.0f && age <= ps.fire_years_max * 1.5f;
+						if (!ps.fire_bands.is_empty()) {
+							burnt = false;
+							for (const Vector2 &band : ps.fire_bands) {
+								burnt = burnt || (band.y > band.x && age >= band.x && age < band.y);
+							}
+						}
+						const int nv = ps.fire_years.size();
+						const int start = MIN(int(r * nv), nv - 1);
+						float best = 1e9f;
+						for (int k = 0; k < nv; k++) {
+							const int vi = (start + k) % nv;
+							const float fy = ps.fire_years[vi];
+							if ((fy >= 0.0f) != burnt) {
+								continue;
+							}
+							if (burnt && !ps.fire_bands.is_empty() && !(age >= ps.fire_bands[vi].x && age < ps.fire_bands[vi].y)) {
+								continue;
+							}
+							const float d = burnt ? Math::abs(fy - age) : 0.0f;
+							if (d < best - 1e-4f) {
+								best = d;
+								fire_variant = vi;
+							}
+						}
+					}
+					const int variant = fire_variant >= 0 ? fire_variant : (bank_variant >= 0 ? bank_variant : MIN(int(r * variants), variants - 1));
 					const Transform3D world(b, Vector3(xz.x, y, xz.y));
 					if (is_log && variant < int(ps.deadwood_axes.size()) && ps.deadwood_axes[variant].size() >= 7) {
 						const PackedFloat32Array &ax = ps.deadwood_axes[variant];

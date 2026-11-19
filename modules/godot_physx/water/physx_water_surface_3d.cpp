@@ -35,6 +35,7 @@
 #include "flow_poisson.h"
 #include "physx_water_wake_3d.h"
 #include "water_foam_shared.h"
+#include "water_sediment.h"
 #include "water_raster_reflections.h"
 
 #include "core/config/engine.h"
@@ -242,12 +243,15 @@ uniform vec4 water_color : source_color = vec4(0.09, 0.32, 0.42, 0.65);
 // (default: clear coastal water, a little more than pure water's 0.35, 0.06,
 // 0.01 from Pope and Fry 1997), and the surface's roughness.
 uniform vec3 pathtraced_absorption = vec3(0.45, 0.09, 0.05);
+// The body's suspended load (WorldWater sediment) in the medium, added to the water's own (water_sediment.h).
+uniform vec3 sediment_absorption = vec3(0.0);
 // Path tracing only: light scattered per metre -- what gives deep water its
 // blue body colour instead of black (pure water's molecular scattering is
 // about 0.001, 0.002, 0.005 from Smith and Baker 1981; fine particles in
 // coastal water add more, bluer the finer) -- and how much it keeps going
 // forward (Petzold's ocean measurements: ~0.9). Higher = milkier.
 uniform vec3 pathtraced_scattering = vec3(0.05, 0.08, 0.12);
+uniform vec3 sediment_scattering = vec3(0.0);
 uniform float pathtraced_scattering_anisotropy : hint_range(-0.9, 0.95) = 0.85;
 uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.02;
 // Persistent whitecap foam (0..1) on the ocean grid, injected where the
@@ -1367,7 +1371,7 @@ float surface_height_world(vec2 world_xz, float base_y) {
 }
 
 vec3 uw_sigma_t() {
-	return max(pathtraced_absorption, vec3(0.0)) + max(pathtraced_scattering, vec3(0.0));
+	return max((pathtraced_absorption + sediment_absorption), vec3(0.0)) + max((pathtraced_scattering + sediment_scattering), vec3(0.0));
 }
 
 float uw_hg(float cos_theta, float g) {
@@ -1391,7 +1395,7 @@ vec3 uw_segment(vec3 b, float len) {
 // (half the sphere lit). The path tracer does the same by sampling.
 vec3 uw_inscatter(float z0, vec3 d, float len) {
 	vec3 st = uw_sigma_t();
-	vec3 ss = max(pathtraced_scattering, vec3(0.0));
+	vec3 ss = max((pathtraced_scattering + sediment_scattering), vec3(0.0));
 	float mu = max(-underwater_sun_direction.y, 0.05);
 	vec3 a = st / mu;
 	vec3 sun = underwater_sun_irradiance * uw_hg(dot(underwater_sun_direction, -d), pathtraced_scattering_anisotropy) *
@@ -1409,7 +1413,7 @@ vec3 uw_inscatter(float z0, vec3 d, float len) {
 // last step's light carries on. jitter (0..1) moves the samples within their steps from pixel to pixel.
 vec3 uw_inscatter_shadowed(vec3 p0, float z0, vec3 d, float len, float jitter) {
 	vec3 st = uw_sigma_t();
-	vec3 ss = max(pathtraced_scattering, vec3(0.0));
+	vec3 ss = max((pathtraced_scattering + sediment_scattering), vec3(0.0));
 	vec3 sd = underwater_sun_direction;
 	float mu = max(-sd.y, 0.05);
 	vec3 a = st / mu;
@@ -1442,7 +1446,7 @@ vec3 uw_inscatter_shadowed(vec3 p0, float z0, vec3 d, float len, float jitter) {
 vec3 uw_lamps(vec3 p0, vec3 d, float len, float jitter) {
 	vec3 total = vec3(0.0);
 	vec3 st = uw_sigma_t();
-	vec3 ss = max(pathtraced_scattering, vec3(0.0));
+	vec3 ss = max((pathtraced_scattering + sediment_scattering), vec3(0.0));
 	for (int i = 0; i < min(uw_lamp_count, 4); i++) {
 		vec3 c = uw_lamp_pos[i].xyz;
 		float range = uw_lamp_pos[i].w;
@@ -2008,7 +2012,7 @@ void fragment() {
 	{
 		vec3 p_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 		float mu = max(abs(normalize(p_w - CAMERA_POSITION_WORLD).y), 0.05);
-		float sigma = dot(pathtraced_absorption, vec3(1.0 / 3.0));
+		float sigma = dot((pathtraced_absorption + sediment_absorption), vec3(1.0 / 3.0));
 		float bed = max(depth_r(v_rest_xz, cuv_fade), 0.0);
 		base_a = mix(1.0, base_a, exp(-sigma * bed * (1.0 + 1.0 / mu)));
 	}
@@ -2024,7 +2028,7 @@ void fragment() {
 		vec3 seen;
 		vec3 bed_p;
 		float sun_share;
-		base_rgb = water_clear_through_ex(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, false, seen, bed_p, sun_share);
+		base_rgb = water_clear_through_ex(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, (pathtraced_absorption + sediment_absorption), (pathtraced_scattering + sediment_scattering), pathtraced_scattering_anisotropy, underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, false, seen, bed_p, sun_share);
 		if (caustics_on && sun_share > 0.0) {
 			// The bed point back up its refracted sun ray to the surface, then down it to the map's reference
 			// depth: where the map holds that ray's light (a bed at the reference depth reads its own point).
@@ -2099,8 +2103,8 @@ void fragment() {
 	METALLIC = 0.0;
 	TRANSMISSION = 1.0 - foam;
 	IOR = 1.33;
-	ABSORPTION = pathtraced_absorption;
-	SCATTERING = pathtraced_scattering + vec3(bubble_scattering * bubbles * bubble_strength);
+	ABSORPTION = (pathtraced_absorption + sediment_absorption);
+	SCATTERING = (pathtraced_scattering + sediment_scattering) + vec3(bubble_scattering * bubbles * bubble_strength);
 	SCATTERING_ANISOTROPY = pathtraced_scattering_anisotropy;
 #if !defined(BREAKER_LIP)
 	// A lip is water wherever it is (the shore cut-out belongs to the swash film). It writes no alpha at
@@ -2167,7 +2171,7 @@ void fragment() {
 		// The light a crest passes on: the water's single-scattering albedo (what scatters of what it meets), over
 		// the open water only (foam and sand take their own light), in the thin top third of the high crests
 		// (Atlas's height term, made relative to the chop's own rms height so it holds from a calm to a gale).
-		vec3 albedo = max(pathtraced_scattering, vec3(0.0)) / max(uw_sigma_t(), vec3(1e-4));
+		vec3 albedo = max((pathtraced_scattering + sediment_scattering), vec3(0.0)) / max(uw_sigma_t(), vec3(1e-4));
 		float above = smoothstep(1.5, 2.5, v_crest / max(crest_sigma, 0.02));
 		above = max(above, smoothstep(0.35, 1.0, v_shore_crest));
 		wr_crest = crest_glow * 2.0 * albedo * above * (1.0 - foam) * water_a * inv_a0 * smoothstep(0.0, soft, shore) * (1.0 - v_lip);
@@ -2423,6 +2427,10 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_normal_mode"), &PhysXWaterSurface3D::get_normal_mode);
 	ClassDB::bind_method(D_METHOD("set_foam_enabled", "enabled"), &PhysXWaterSurface3D::set_foam_enabled);
 	ClassDB::bind_method(D_METHOD("get_foam_enabled"), &PhysXWaterSurface3D::get_foam_enabled);
+	ClassDB::bind_method(D_METHOD("get_sediment"), &PhysXWaterSurface3D::get_sediment);
+	ClassDB::bind_method(D_METHOD("set_sediment", "kg_m3"), &PhysXWaterSurface3D::set_sediment);
+	ClassDB::bind_method(D_METHOD("get_water_volume"), &PhysXWaterSurface3D::get_water_volume);
+	ClassDB::bind_method(D_METHOD("add_sediment", "position", "mineral_kg_s", "ash_kg_s"), &PhysXWaterSurface3D::contract_water_add_sediment);
 	ClassDB::bind_method(D_METHOD("set_foam_threshold", "threshold"), &PhysXWaterSurface3D::set_foam_threshold);
 	ClassDB::bind_method(D_METHOD("get_foam_threshold"), &PhysXWaterSurface3D::get_foam_threshold);
 	ClassDB::bind_method(D_METHOD("set_whitecap_auto", "enabled"), &PhysXWaterSurface3D::set_whitecap_auto);
@@ -2925,6 +2933,67 @@ void PhysXWaterSurface3D::_configure_cascades(const WaterSolver::Settings &p_bas
 		c->solver.configure(s);
 		c->solver.set_foam_settings(false, choppiness, _live_foam_threshold(), foam_persistence, 0.0f, shore_undertow);
 		detail_cascade = c;
+	}
+}
+
+float PhysXWaterSurface3D::get_water_volume() const {
+	const int n = grid_resolution;
+	const float area = active_domain_size.x * active_domain_size.y;
+	if (cell_depth.size() != n * n || n <= 0) {
+		return MAX(depth, 0.01f) * MAX(area, 1.0f);
+	}
+	double v = 0.0;
+	for (int i = 0; i < n * n; i++) {
+		v += MAX(cell_depth[i], 0.0f);
+	}
+	return MAX(float(v) * area / float(n * n), 0.01f);
+}
+
+void PhysXWaterSurface3D::contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) {
+	// A source holds its rate until its caller's next call: calls in one frame add, a later frame's replace.
+	const uint64_t frame = Engine::get_singleton()->get_physics_frames();
+	if (sediment_src_frame != frame) {
+		sediment_src = Vector2();
+		sediment_src_frame = frame;
+	}
+	sediment_src += Vector2(MAX(p_mineral_kg_s, 0.0f), MAX(p_ash_kg_s, 0.0f));
+	sediment_src_age = 0.0f;
+}
+
+void PhysXWaterSurface3D::set_sediment(const Vector2 &p_kg_m3) {
+	sediment = Vector2(MAX(p_kg_m3.x, 0.0f), MAX(p_kg_m3.y, 0.0f));
+}
+
+// The body well mixed: the load coming in spreads through its volume, and settles out on weather time (mineral
+// silt within about half a day, ash in about two: water_sediment.h). Its colour goes to the shader as the medium's
+// added absorption and scattering, for raster and path tracer alike.
+void PhysXWaterSurface3D::_sediment_update(double p_delta) {
+	double scale = 1.0;
+	if (WorldContracts *wc = WorldContracts::get_singleton()) {
+		const Ref<WorldWeather> ww = wc->get_weather();
+		if (ww.is_valid()) {
+			scale = MAX(ww->time_scale(), 0.0);
+		}
+	}
+	const float dtw = float(p_delta * scale);
+	if (sediment_src_age < 2.0f && (sediment_src.x > 0.0f || sediment_src.y > 0.0f)) {
+		sediment += sediment_src * (dtw / get_water_volume());
+	}
+	sediment_src_age += float(p_delta);
+	if (sediment.x > 0.0f || sediment.y > 0.0f) {
+		sediment.x *= Math::exp(-dtw / WaterSediment::MINERAL_SETTLE_TIME);
+		sediment.y *= Math::exp(-dtw / WaterSediment::ASH_SETTLE_TIME);
+		if (sediment.x < 1e-7f) {
+			sediment.x = 0.0f;
+		}
+		if (sediment.y < 1e-7f) {
+			sediment.y = 0.0f;
+		}
+	}
+	if (water_material.is_valid() && !sediment.is_equal_approx(sediment_shown)) {
+		sediment_shown = sediment;
+		water_material->set_shader_parameter(SNAME("sediment_absorption"), WaterSediment::absorption(sediment));
+		water_material->set_shader_parameter(SNAME("sediment_scattering"), WaterSediment::scattering(sediment));
 	}
 }
 
@@ -6555,6 +6624,7 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			_follow_weather(get_physics_process_delta_time());
 			_rain_inflow_update(get_physics_process_delta_time());
+			_sediment_update(get_physics_process_delta_time());
 			_update(get_physics_process_delta_time());
 			_update_breakers();
 			_update_crest_spray();
