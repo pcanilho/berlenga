@@ -362,3 +362,21 @@ Plan, in `modules/vegetation/tree_bark_detail.*` (BarkDetail3D), the ground deta
 - Each element one of 8 shapes per kind with its own random bend, size and tint (no visible repetition), drawn as
   rt_instanced MultiMeshes so the path tracer sees each piece over a shared shape; reach by the pixel rule (3 px).
 - Placed on workers like the detail cells; cost reported on and off (memory, walking main thread, raster and PT frame).
+
+## Close-up bark as built (19 Nov)
+
+`BarkDetail3D` (modules/vegetation/tree_bark_detail.*), bench `docs/bench/bark` (`--test`, `--raster`, `--look`).
+- Pieces per bark family: plates (Scots, stone and maritime pine), scales (holm oak), flakes (flaking), torn
+  curls (paper birch, and short ones on lenticelled bark); smooth, furrowed and cork shed none. 8 shapes per family,
+  each piece its own size, spin, tone and texture offset.
+- Where they lie: placing pieces on the capsule radius plus `bark_height` put them inside the trunk (the LOD 0 tube
+  stands proud of its colliders), so each trunk mesh gets a profile: its bark surface binned 96 round by 2.5 cm
+  along its capsule chain, the outermost bark vertex and mean vertex colour per cell. Pieces sit at that radius
+  and take that colour (the stem's vertex colour is its species tint; without it pieces rendered white). Plates and
+  scales only go where the cell is in the top third of the bark round it (plate tops).
+- The profile from the mesh's own arrays needs a GPU readback (`mesh_get_surface`), 200 ms or more a mesh on the
+  cloud renderer. `BarkDetail3D.make_bark_profile` packs it for a `tree_bark_profile` mesh meta (about 110 KB a
+  mesh, the first 4.2 m) that TreeGenerator stores while it still has the arrays; without the meta the readback
+  is the fallback and the binning runs on the worker.
+- Cost (bench, 4 trunks, 1,045 pieces): main thread 0.15 ms mean, 3.4 ms worst an update with the meta (33 ms
+  mean, 826 ms worst with the readback); 64 bytes a piece in instance buffers (67 KB), 32 shared shapes.
