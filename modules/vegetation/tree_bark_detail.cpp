@@ -225,7 +225,7 @@ Ref<ArrayMesh> BarkDetail3D::_make_shape(TreeGenerator::BarkKind p_bark, int p_s
 		const bool both = p_shape < 2;
 		const float L = bs.length * 0.4f * (0.8f + 0.6f * bd_noise(seed, 0)) * (both ? 1.4f : 1.0f);
 		const float W = bs.width * (1.0f + 0.8f * bd_noise(seed, 1)) * (p_shape == 2 || p_shape == 3 ? 1.6f : 1.0f);
-		const float T = bs.thick * 1.8f; // paper bark peels several plies thick
+		const float T = bs.thick * 1.1f; // a peeled ply is paper thin
 		const float stem_r = 0.12f;
 		const float lift_angle = 0.75f + 0.3f * bd_noise(seed, 8); // lifts enough for the small roll to clear the stem, no more
 		const float side = 1.0f; // single sheets roll at +x
@@ -256,7 +256,7 @@ Ref<ArrayMesh> BarkDetail3D::_make_shape(TreeGenerator::BarkKind p_bark, int p_s
 			}
 			return arm;
 		};
-		const float roll = 0.004f + 0.003f * bd_noise(seed, 3); // a tight scroll hugging the stem
+		const float roll = 0.0022f + 0.0015f * bd_noise(seed, 3); // a tight scroll at the torn edge, paper thin
 		Arm right, left;
 		if (both) {
 			right = make_arm(0.5f * L, 0.06f * L, roll, side);
@@ -1224,7 +1224,11 @@ void BarkDetail3D::_place(Trunk &r_trunk, const Dictionary &p_trunk, const Profi
 			// Paper bark tears along the lenticel bands: bands up the stem, each with a run of strips side by side
 			// round part of it (wide sheets, long strips, short curls), sizes log-normal.
 			float row = l0 + 2.0f + rng.randf() * 4.0f;
+			// Each band's patches start a golden angle (with some jitter) round from the last band's, so bands up
+			// the stem never stack in one column.
+			float phase = rng.randf() * na;
 			while (row < l1 - 2) {
+				phase += na * (0.381966f + (rng.randf() - 0.5f) * 0.12f);
 				const int lc = int(row);
 				const float cw = cell_w(lc);
 				int in_band = 2 + int(rng.randf() * 4.0f);
@@ -1234,7 +1238,7 @@ void BarkDetail3D::_place(Trunk &r_trunk, const Dictionary &p_trunk, const Profi
 				// attached part on the intact bark and the roll at the torn edge.
 				auto sheet = [&](int p_row, float p_col, float p_dir) {
 					const int shape = int(rng.rand() % 6);
-					const float size = MIN(CLAMP(Math::exp(rng.randfn(0.0f, 0.3f)), 0.6f, 1.8f), MIN(0.25f, arc) / fam.shape_size[shape].y);
+					const float size = MIN(CLAMP(Math::exp(rng.randfn(0.0f, 0.25f)), 0.6f, 1.3f), MIN(0.25f, arc) / fam.shape_size[shape].y);
 					const Vector2 ext = fam.shape_size[shape] * size; // x up the stem once turned, y round it
 					// p_row is where the roll lies (the tear); the sheet runs p_dir from it, its origin a quarter of its
 					// length in, and it claims the cells it covers.
@@ -1245,8 +1249,8 @@ void BarkDetail3D::_place(Trunk &r_trunk, const Dictionary &p_trunk, const Profi
 					const float srad = lie_rad(p_row + int(p_dir * hr), ac, hr, hc);
 					if (srad > 0.0f && claim(p_row + int(p_dir * hr), ac, hr, hc)) {
 						// p_dir 1: the sheet lies above the tear, its roll at the bottom (x turned down).
-						// Bent round to this stem like the patches (the shape is bent to 12 cm), the roll a little oval.
-						emit(lr + 0.5f, th_of(float(ac)), srad - 0.0005f, size, size, -p_dir * float(Math::PI) * 0.5f + (rng.randf() - 0.5f) * 0.1f, shape, pr.col[at(lr, ac)], CLAMP(size * size * 0.12f / MAX(srad, 0.03f), 0.6f, 1.6f));
+						// Bent round to this stem like the patches (the shape is bent to 12 cm), never thickened, so the roll stays thin.
+						emit(lr + 0.5f, th_of(float(ac)), srad - 0.0005f, size, size, -p_dir * float(Math::PI) * 0.5f + (rng.randf() - 0.5f) * 0.1f, shape, pr.col[at(lr, ac)], CLAMP(size * size * 0.12f / MAX(srad, 0.03f), 0.6f, 1.0f));
 					}
 					return float(ac + hc) + rng.randf() * 2.0f;
 				};
@@ -1254,7 +1258,7 @@ void BarkDetail3D::_place(Trunk &r_trunk, const Dictionary &p_trunk, const Profi
 				// rolled up; some bands only have sheets lifting.
 				const int patches = rng.randf() < 0.85f ? 1 + int(rng.rand() % 3) : 0;
 				for (int pk = 0; pk < patches; pk++) {
-					col = rng.randf() * na;
+					col = phase + na * (float(pk) + (rng.randf() - 0.5f) * 0.3f) / float(patches);
 					const int ps = 6 + int(rng.rand() % 2);
 					const float size = MIN(CLAMP(Math::exp(rng.randfn(0.2f, 0.3f)), 0.7f, 2.2f), MIN(0.25f, arc) / fam.shape_size[ps].x);
 					const float sy = CLAMP(size * 0.8f, 0.6f, 1.6f);
@@ -1274,13 +1278,14 @@ void BarkDetail3D::_place(Trunk &r_trunk, const Dictionary &p_trunk, const Profi
 					}
 				}
 				if (patches == 0) {
+					col = phase;
 					for (int k = 0; k < in_band; k++) {
 						col = sheet(lc, col, rng.randf() < 0.5f ? 1.0f : -1.0f);
 					}
 				}
-				// Bands every 5 to 14 cm (a band with its sheets is 10 to 20 cm tall, and they interleave round the stem),
+				// Bands every 4 to 10 cm (a band with its sheets is 10 to 20 cm tall, and they interleave round the stem),
 				// closer with density.
-				row += (0.05f + 0.09f * rng.randf()) / pr.step / MAX(float(density), 0.1f);
+				row += (0.04f + 0.06f * rng.randf()) / pr.step / MAX(float(density), 0.1f);
 			}
 			return;
 		}
