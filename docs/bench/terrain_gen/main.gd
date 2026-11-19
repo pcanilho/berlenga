@@ -509,6 +509,34 @@ func _run_checks() -> void:
 	check(soil_flat > 4.0 * soil_steep, "soil deeper on gentle ground (%.2f m) than steep (%.2f m)" % [soil_flat, soil_steep])
 	talus_slope /= maxi(talus_n, 1)
 	check(talus_n > 50 and talus_slope < repose, "scree lies below repose (%d cells, mean slope %.2f, repose %.2f)" % [talus_n, talus_slope, repose])
+	# Fall sorting (Kirkby and Statham 1975): on scree, fines stop near the apex and big blocks run to the toe,
+	# so get_scree_sorting rises downslope. Compare each talus cell with its lowest talus neighbour.
+	var wr := gen.get_world_rect()
+	var sort_pairs := 0
+	var sort_down := 0
+	var sort_bad := 0
+	for z in range(1, gs.y - 1):
+		for x in range(1, gs.x - 1):
+			if geo.get_pixel(x, z).b <= 0.5:
+				continue
+			var h0 := hgrid.get_pixel(x, z).r
+			var lo := Vector2i(-1, -1)
+			var lo_h := h0
+			for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var q: Vector2i = Vector2i(x, z) + d
+				var hq := hgrid.get_pixel(q.x, q.y).r
+				if hq < lo_h - 0.05 and geo.get_pixel(q.x, q.y).b > 0.5:
+					lo = q
+					lo_h = hq
+			var s0 := gen.get_scree_sorting(Vector3(wr.position.x + x * cs, 0, wr.position.y + z * cs))
+			if s0 < 0.0 or s0 > 1.0:
+				sort_bad += 1
+			if lo.x < 0:
+				continue
+			sort_pairs += 1
+			if gen.get_scree_sorting(Vector3(wr.position.x + lo.x * cs, 0, wr.position.y + lo.y * cs)) >= s0 - 0.02:
+				sort_down += 1
+	check(sort_bad == 0 and sort_pairs > 30 and sort_down > 0.8 * sort_pairs, "scree sorting rises downslope (%d of %d talus steps)" % [sort_down, sort_pairs])
 	var gc := gen.get_geology_at(Vector3(100, 0, 100))
 	check(absf(gc.r - gen.get_soil_depth(Vector3(100, 0, 100))) < 1e-5 and absf(gc.g - gen.get_rock_exposure(Vector3(100, 0, 100))) < 1e-5, "get_geology_at agrees with the single queries")
 

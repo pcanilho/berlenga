@@ -66,8 +66,28 @@ float Landscape3D::_h(int p_x, int p_z) const {
 
 // Central differences at 1 m. Where a chunk is not read yet its points between the 4 m grid are interpolated, and
 // there this gives exactly the 4 m central difference at the 4 m points (the only ones its meshes use).
+// At a crease (a dune's brink, a terrace edge, a cliff top: the slope changes by more than about 10 degrees between
+// one side of the point and the other) the central difference averages the two faces, and the light rounds the
+// edge over two metres. There each axis takes the one-sided difference from the smoother side instead (the
+// essentially non-oscillatory choice, Harten et al. 1987: the stencil with the smaller second difference), so the
+// faces next to an edge keep their own slope and the edge stays sharp in the shading as in the geometry.
+static _FORCE_INLINE_ real_t _eno_slope(float a2, float a1, float c, float b1, float b2, real_t p_spacing) {
+	const real_t back = c - a1, fwd = b1 - c;
+	const real_t central = 0.5f * (back + fwd);
+	const real_t kink = Math::abs(fwd - back) / p_spacing;
+	if (kink < 0.18f) {
+		return central;
+	}
+	const real_t eno = Math::abs(c - 2.0f * a1 + a2) <= Math::abs(b2 - 2.0f * b1 + c) ? back : fwd;
+	const real_t t = CLAMP((kink - 0.18f) / (0.35f - 0.18f), real_t(0.0), real_t(1.0));
+	return Math::lerp(central, eno, t * t * (3.0f - 2.0f * t));
+}
+
 Vector3 Landscape3D::_normal(int p_x, int p_z) const {
-	return Vector3(_h(p_x - 1, p_z) - _h(p_x + 1, p_z), 2.0f * spacing, _h(p_x, p_z - 1) - _h(p_x, p_z + 1)).normalized();
+	const float c = _h(p_x, p_z);
+	const real_t sx = _eno_slope(_h(p_x - 2, p_z), _h(p_x - 1, p_z), c, _h(p_x + 1, p_z), _h(p_x + 2, p_z), spacing);
+	const real_t sz = _eno_slope(_h(p_x, p_z - 2), _h(p_x, p_z - 1), c, _h(p_x, p_z + 1), _h(p_x, p_z + 2), spacing);
+	return Vector3(-sx, spacing, -sz).normalized();
 }
 
 // Indices of a chunk at p_level, in vertex rows of (n + 1), n = chunk_quads >> p_level. The grid is cut into 2 x 2

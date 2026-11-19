@@ -221,6 +221,7 @@ private:
 	LocalVector<float> soil;
 	LocalVector<float> rock;
 	LocalVector<float> talus;
+	LocalVector<float> scree_sorting; // 0 at a talus apron's apex, 1 at its toe (fall sorting)
 	LocalVector<float> beach; // 1 on the beach face, fading over the backshore; 0 inland and where no beach
 	LocalVector<float> coast_exposure; // 0 sheltered to 1 open to the sea's waves, within coast_exposure_reach of the sea
 	LocalVector<float> hardness; // 0 soft .. 1 hard rock at the surface (strata)
@@ -840,6 +841,7 @@ public:
 	real_t get_soil_depth(const Vector3 &p_global_position) const;
 	real_t get_rock_exposure(const Vector3 &p_global_position) const;
 	real_t get_talus(const Vector3 &p_global_position) const;
+	real_t get_scree_sorting(const Vector3 &p_global_position) const;
 	real_t get_rock_hardness(const Vector3 &p_global_position) const;
 	Array get_river_sites(real_t p_min_area = 1.0e5, real_t p_min_discharge = 0.0, real_t p_run = 200.0) const;
 	Array get_waterfalls(real_t p_min_area = 1.0e5, real_t p_min_height = 5.0) const;
