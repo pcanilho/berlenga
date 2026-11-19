@@ -32,6 +32,7 @@
 #pragma once
 
 #include "core/object/object_id.h"
+#include "modules/world/world_contracts.h"
 #include "scene/3d/node_3d.h"
 
 // Rain running off the land at world scale (docs/ideas/rain.md, step 6), beyond the ground's and the live water's
@@ -50,7 +51,11 @@
 //
 // Rivers (PhysXRiver3D) add the discharge reaching their upstream end to their base flow, so they rise and quicken;
 // lakes take what flows into them; the weather map shows the water as wet ground along the drainage lines.
-class WeatherRunoff3D : public Node3D {
+// - Load: the runoff contract's provider (WorldGround.add_runoff_load: ash off burnt ground, mud washed off a slope).
+//   Each cell's load moves on with the share of its water that leaves it each step (washload travels with the water),
+//   and where the flow reaches open water (WorldWater has a surface over the cell's ground) it is handed to that water
+//   (WorldWater.add_sediment) as a rate over the step. Load put off the map, or carried off it, is lost.
+class WeatherRunoff3D : public Node3D, public WorldRunoffProvider {
 	GDCLASS(WeatherRunoff3D, Node3D);
 
 	float extent = 4096.0f;
@@ -76,6 +81,9 @@ class WeatherRunoff3D : public Node3D {
 	LocalVector<float> event_q; // mm, its runoff so far
 	LocalVector<float> outflow; // m3/s
 	LocalVector<float> inflow; // m3/s, scratch
+	LocalVector<Vector2> load; // kg on the cell's water: x mineral, y ash
+	LocalVector<Vector2> load_in; // kg arriving this step, scratch
+	Vector2 delivered; // kg handed to open water so far
 	double accum = 0.0;
 	double last_weather_time = -1.0;
 	double bake_ms = 0.0;
@@ -125,6 +133,12 @@ public:
 	float get_depth_at(const Vector3 &p_position) const; // mm of water held over the cell
 	float get_upstream_area_at(const Vector3 &p_position) const; // m2
 	float get_total_storage() const; // m3 on the map
+	Vector2 get_load_at(const Vector3 &p_position) const; // kg carried on the cell's water (mineral, ash)
+	Vector2 get_total_load() const; // kg on the map's water
+	Vector2 get_delivered_load() const { return delivered; } // kg handed to open water so far
+
+	// WorldRunoffProvider: loose material put on the runoff at a ground point.
+	void contract_runoff_add_load(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) override;
 
 	// The published relations.
 	static float scs_runoff(float p_rain_mm, float p_curve_number); // mm

@@ -613,6 +613,14 @@ recovered, so the scar's edge grows in over a cell rather than on a hard line.
 - Not yet: VegetationField3D still reads ages once a setup; the fresh-flush colour of regrowth (brighter
   green) would need a channel to the blades.
 
+## Sand seas and radius 0 (19 Nov)
+
+- The sward keeps off desert sand seas like VegetationField3D's non-sand species: the generator's sand-sea depth
+  sampled once a bake (cell at least 2 m, up to 1024 a side), bilinear, cover 1 - smoothstep(0.05, 0.3, depth),
+  unless the rules are a sand plant's (dune, coast or sand mobility rule). Vegetation bench `--desert` checks it.
+- radius 0 now draws nothing. Before, radius was clamped to 1 m and the far rings and shell still covered
+  the view out to 250 and 500 m.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.

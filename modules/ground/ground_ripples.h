@@ -57,7 +57,7 @@ public:
 	int n = 320; // cells across
 	float hop = 0.08f; // L0, m
 	float hop_gain = 3.0f; // b
-	float hop_saturation = 0.003f; // m
+	float hop_saturation = 0.005f; // m
 	float q_ref = 6e-4f; // m a step at which creep is d_ref (the creep share scales with q)
 	float d_ref = 0.45f;
 	float tan_repose = 0.65f;

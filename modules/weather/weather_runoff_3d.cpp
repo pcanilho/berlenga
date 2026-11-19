@@ -241,6 +241,10 @@ void WeatherRunoff3D::_build_network() {
 	lv_fill(outflow, 0.0f);
 	inflow.resize(nn);
 	lv_fill(inflow, 0.0f);
+	load.resize(nn);
+	lv_fill(load, Vector2());
+	load_in.resize(nn);
+	lv_fill(load_in, Vector2());
 	baked_n = n;
 }
 
@@ -265,6 +269,8 @@ void WeatherRunoff3D::_step(double p_dt) {
 	const float cell_area = cell * cell;
 	const float relax = float(Math::exp(-p_dt / (3600.0 * antecedent_time)));
 	const float channel_m2 = channel_area * 1e6f;
+	WorldContracts *wc = WorldContracts::get_singleton();
+	const Ref<WorldWater> water = wc ? wc->get_water() : Ref<WorldWater>();
 	lv_fill(inflow, 0.0f);
 	for (int k = 0; k < n * n; k++) {
 		const int i = order[k];
@@ -291,7 +297,50 @@ void WeatherRunoff3D::_step(double p_dt) {
 		if (receiver[i] >= 0) {
 			inflow[receiver[i]] += outflow[i];
 		}
+		// The load (washload: it moves with the water). The cell held s + outflow dt over the step and passed
+		// outflow dt of it on, so that share of its load goes with it.
+		Vector2 l = load[i] + load_in[i];
+		load_in[i] = Vector2();
+		if (l.x <= 0.0f && l.y <= 0.0f) {
+			continue;
+		}
+		if (water.is_valid() && water->depth_at(Vector3(p.x, p.y - 0.05f, p.z)) > 0.0f) {
+			// Open water over the cell: it takes the load (kg/s over the step).
+			water->add_sediment(p, l.x / dt, l.y / dt);
+			delivered += l;
+			l = Vector2();
+		} else {
+			const float out = outflow[i] * dt;
+			const float f = out > 0.0f ? out / (s + out) : 0.0f;
+			const Vector2 moved = l * f;
+			l -= moved;
+			if (receiver[i] >= 0) {
+				load_in[receiver[i]] += moved;
+			}
+		}
+		load[i] = l;
 	}
+}
+
+void WeatherRunoff3D::contract_runoff_add_load(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) {
+	const int i = _cell_at(p_position);
+	if (i < 0) {
+		return;
+	}
+	load[i] += Vector2(MAX(p_mineral_kg, 0.0f), MAX(p_ash_kg, 0.0f));
+}
+
+Vector2 WeatherRunoff3D::get_load_at(const Vector3 &p_position) const {
+	const int i = _cell_at(p_position);
+	return i >= 0 ? load[i] : Vector2();
+}
+
+Vector2 WeatherRunoff3D::get_total_load() const {
+	Vector2 t;
+	for (uint32_t i = 0; i < load.size(); i++) {
+		t += load[i] + load_in[i];
+	}
+	return t;
 }
 
 void WeatherRunoff3D::advance(float p_seconds) {
@@ -359,6 +408,7 @@ void WeatherRunoff3D::_notification(int p_what) {
 			active = this;
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_physics_process_internal(true);
+				WorldContracts::register_runoff(this);
 			}
 		} break;
 		case NOTIFICATION_READY: {
@@ -371,6 +421,7 @@ void WeatherRunoff3D::_notification(int p_what) {
 			if (active == this) {
 				active = nullptr;
 			}
+			WorldContracts::unregister_runoff(this);
 			set_physics_process_internal(false);
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
@@ -418,6 +469,10 @@ void WeatherRunoff3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_depth_at", "position"), &WeatherRunoff3D::get_depth_at);
 	ClassDB::bind_method(D_METHOD("get_upstream_area_at", "position"), &WeatherRunoff3D::get_upstream_area_at);
 	ClassDB::bind_method(D_METHOD("get_total_storage"), &WeatherRunoff3D::get_total_storage);
+	ClassDB::bind_method(D_METHOD("add_load", "position", "mineral_kg", "ash_kg"), &WeatherRunoff3D::contract_runoff_add_load);
+	ClassDB::bind_method(D_METHOD("get_load_at", "position"), &WeatherRunoff3D::get_load_at);
+	ClassDB::bind_method(D_METHOD("get_total_load"), &WeatherRunoff3D::get_total_load);
+	ClassDB::bind_method(D_METHOD("get_delivered_load"), &WeatherRunoff3D::get_delivered_load);
 	ClassDB::bind_static_method("WeatherRunoff3D", D_METHOD("scs_runoff", "rain_mm", "curve_number"), &WeatherRunoff3D::scs_runoff);
 	ClassDB::bind_static_method("WeatherRunoff3D", D_METHOD("shallow_flow_velocity", "slope"), &WeatherRunoff3D::shallow_flow_velocity);
 	ClassDB::bind_static_method("WeatherRunoff3D", D_METHOD("channel_velocity", "discharge"), &WeatherRunoff3D::channel_velocity);

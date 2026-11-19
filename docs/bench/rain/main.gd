@@ -5,6 +5,7 @@ extends Node3D
 #                       rain and snow split with height (lapse rate, Jennings et al. 2018)
 #                       Rutter canopy store: fills in rain, drips, stays wet after the rain, dries
 #                       world runoff on a valley: water reaches the outlet, the channel gathers the area
+#                       runoff load (WorldGround.add_runoff_load): carried down the valley into a lake stub, mass kept
 #                       falling rain: drops in the box, splashes, haze from the drop sizes
 #   --view=pond       a pool in 10 mm/h rain under a wet tree and a shed: rings, streaks, splashes, drips,
 #                     beaded leaves (--close: down on the water and leaves for a 100% crop)
@@ -15,6 +16,7 @@ extends Node3D
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 
 const Valley := preload("res://valley.gd")
+const LakeStub := preload("res://lake_stub.gd")
 
 var view := "pond"
 var raster := false
@@ -136,6 +138,23 @@ func _run_tests() -> void:
 		ro.advance(3600.0)
 	q_out = ro.get_max_discharge_in(Rect2(-80, -2048, 160, 300))
 	_check("the flood recedes after the rain", q_out < q_peak, "%.1f m3/s 12 h later" % q_out)
+	# Load on the runoff (the contract call PhysX and the ground make): 100 kg of ash and 400 kg of silt on a burnt
+	# slope high in the valley, carried down the drainage in a storm into a lake at the outlet.
+	var lake: WorldWater = LakeStub.new()
+	WorldContracts.set_water(lake)
+	_check("runoff answers the ground's load call", WorldContracts.get_ground().has_runoff(), "")
+	WorldContracts.get_ground().add_runoff_load(Vector3(300.0, 0.0, 1500.0), 400.0, 100.0)
+	var on_map: Vector2 = ro.get_total_load()
+	_check("the load lands on the runoff", on_map.is_equal_approx(Vector2(400.0, 100.0)), "%s kg" % on_map)
+	_set_rain(w, 20.0)
+	for h in 12:
+		w.advance(3600.0)
+		ro.advance(3600.0)
+	var got: Vector2 = ro.get_delivered_load()
+	var left: Vector2 = ro.get_total_load()
+	_check("the load reaches the lake", got.x > 200.0 and got.y > 50.0 and lake.calls > 0, "%s kg delivered, %s kg still on the land" % [got, left])
+	_check("no load is made or lost on the way", (got + left).is_equal_approx(Vector2(400.0, 100.0)) or (got + left - Vector2(400.0, 100.0)).length() < 0.5, "%s kg" % (got + left))
+	WorldContracts.clear_overrides()
 	ro.queue_free()
 	ground.queue_free()
 	w.queue_free()

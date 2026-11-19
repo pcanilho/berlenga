@@ -4501,7 +4501,10 @@ BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt
 		const uint32_t id = uint32_t(ci * S + jw);
 		Brk b;
 		b.on = jw == 0 || bark_hash(id, 8, p_salt + 5u) > 0.27f;
-		const float tilt = 1.4f * (bark_hash(id, 4, p_salt + 7u) - 0.5f) / to_m; // tan 35 = 0.7
+		// The sign from its own, well-mixed hash (docs, 19 Nov: with the linear bark_hash, breaks
+		// one above another in a column often slanted the same way, a faint herringbone).
+		const float sgn = (hash_murmur3_one_32(id * 2654435761u + 0x9e37u, p_salt + 11u) & 1u) ? 1.0f : -1.0f;
+		const float tilt = sgn * 0.7f * bark_hash(id, 4, p_salt + 7u) / to_m; // tan 35 = 0.7
 		const float bend = 0.8f * (bark_hash(id, 9, p_salt + 7u) - 0.5f) / to_m;
 		b.at = float(j) + 0.5f * (bark_hash(id, 7, p_salt + 5u) - 0.5f) + tilt * dx + bend * dx * dx;
 		b.slope = (tilt + 2.0f * bend * dx) * to_m;

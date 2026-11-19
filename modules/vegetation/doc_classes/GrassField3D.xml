@@ -271,7 +271,7 @@
 			Rocks on the ground that no blade grows through: each a disc (x, ground y, z, radius), the radius where the rock meets the soil, as [member VegetationField3D.obstacles]. Blades root 2 cm or more off a rock, on both fill paths. Setting it rebuilds the field.
 		</member>
 		<member name="radius" type="float" setter="set_radius" getter="get_radius" default="40.0">
-			Distance from the camera, in metres, to which tiles are grown.
+			Distance from the camera, in metres, to which tiles are grown. 0 draws no blades at all (no near tiles, far rings or shell), for a field kept only for its rules or ground tint.
 		</member>
 		<member name="row_spacing" type="float" setter="set_row_spacing" getter="get_row_spacing" default="0.125">
 			The distance between the crop's drill rows, in metres (12 to 15 cm for cereals).

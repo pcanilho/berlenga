@@ -354,6 +354,13 @@ private:
 	uint64_t burn_seen = 0; // WorldFire.get_burn_generation() the grid holds
 	bool burn_read = false; // The grid was read since the last rebuild().
 	uint64_t burn_follow_usec = 0;
+	// Desert sand seas (TerrainGenerator3D sand sea): the sward keeps off loose sand as it deepens from 5 to 30 cm,
+	// like VegetationField3D's non-sand species, unless the rules are a sand plant's (dune, coast, sand mobility).
+	LocalVector<float> sea_depth;
+	Rect2 sea_rect;
+	int sea_nx = 0;
+	int sea_ny = 0;
+	void _read_sand_sea(TerrainDataMap3D *p_map);
 	void _read_burn_age(TerrainDataMap3D *p_map);
 	void _follow_burns(TerrainDataMap3D *p_map);
 	void _burn_dirty(const Rect2 &p_area);

@@ -559,6 +559,36 @@ func _desert_view() -> void:
 
 # The sand's mobility as VegetationField3D works it out (_read_sand_mobility): the depth's place between its low and
 # high within 12 cells, 0 under thin sand, -1 off the sand. Returns [grid, nx, ny, rect].
+# The meadow sward (GrassField3D) keeps off the sand sea like the plants: no blades on deep sand, some off it.
+func _desert_grass_check(gen: TerrainGenerator3D, map: TerrainDataMap3D) -> void:
+	var g := GrassField3D.new()
+	g.radius = 12.0
+	g.far_rings = false
+	g.far_shell = false
+	g.rules = PlantSpecies.new()
+	add_child(g)
+	g.data_map = g.get_path_to(map)
+	var deep := Vector3()
+	for k in 400:
+		var q := Vector3(randf_range(-350, 350), 0, randf_range(-350, 350))
+		if gen.get_sand_sea_height(q) > 1.5:
+			deep = q
+			break
+	var counts := []
+	for q in [deep, Vector3(460, 0, 460)]:
+		for i in 4:
+			g.update_at(q)
+		var n := 0
+		for ch in g.get_children(true):
+			if ch is MultiMeshInstance3D:
+				var buf := RenderingServer.multimesh_get_buffer(ch.multimesh.get_rid())
+				for b in range(0, buf.size(), 16):
+					if not (buf[b] == 0.0 and buf[b + 2] == 0.0) and Vector2(buf[b + 3] - q.x, buf[b + 11] - q.z).length() < 10.0:
+						n += 1
+		counts.append(n)
+	g.queue_free()
+	_check("desert: the meadow grass keeps off the sand sea (blades on deep sand, off the sea)", counts[0] == 0 and counts[1] > 100, [deep, counts])
+
 func _desert_mobility(gen: TerrainGenerator3D) -> Array:
 	var rect := gen.sand_sea_rect
 	var c := gen.sand_sea_scale
@@ -622,6 +652,7 @@ func _desert_mob_at(mob: Array, p: Vector3) -> float:
 	return lerpf(lerpf(a, b, fx), lerpf(c, d, fx), fz)
 
 func _desert_checks(ground: VegetationField3D, dset: Array[PlantSpecies], gen: TerrainGenerator3D, map: TerrainDataMap3D, mob: Array) -> void:
+	_desert_grass_check(gen, map)
 	# Per preset: plants, on a crest (mobility over 0.85 here, the near cell), on a slip face (over 30 deg),
 	# share on the flanks (0.1 to 0.8), on stable sand (under 0.2), mean slope.
 	# Keyed by preset, and drinn by stand (the flanks' set comes first, 89; the interdune drinn as -89).
