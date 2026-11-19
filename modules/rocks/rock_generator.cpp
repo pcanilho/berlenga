@@ -821,11 +821,17 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	if (family == FAMILY_ROCKFALL || family == FAMILY_SCREE) {
 		const float f = rng.randf();
 		fragment_form = f < 0.32f ? 1 : (f < 0.55f ? 2 : (f < 0.75f ? 3 : 0));
+		// Each form over a wide spread of its own ratios (frost-shattered talus runs from near cubes to thin plates
+		// and long blades), so no two neighbours share proportions.
+		const float g = rng.randf();
 		if (fragment_form == 1) {
-			c *= 0.6f;
+			c *= 0.32f + 0.38f * g; // plates to thick slabs
+			a *= 0.9f + 0.5f * rng.randf();
 		} else if (fragment_form == 2) {
-			a *= 1.4f;
-			c *= 0.85f;
+			a *= 1.3f + 0.9f * g; // stubby rods to long blades
+			c *= 0.65f + 0.3f * rng.randf();
+		} else {
+			a *= 0.85f + 0.45f * g * g;
 		}
 	}
 	a = MAX(a, 1.0f);

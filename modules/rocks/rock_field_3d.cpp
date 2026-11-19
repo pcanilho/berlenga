@@ -367,7 +367,7 @@ real_t RockField3D::_cell_size(Layer p_layer) const {
 // same shape side by side read as a copy, where two pebbles do not.
 int RockField3D::_variant_count(uint32_t p_key) const {
 	const RockGenerator::Family f = key_family(p_key);
-	const bool big = key_bin(p_key) < RF_DETAIL_BIN && (f == RockGenerator::FAMILY_COBBLE || f == RockGenerator::FAMILY_GLACIAL || f == RockGenerator::FAMILY_ROCKFALL);
+	const bool big = key_bin(p_key) < RF_DETAIL_BIN && (f == RockGenerator::FAMILY_COBBLE || f == RockGenerator::FAMILY_GLACIAL || f == RockGenerator::FAMILY_ROCKFALL || f == RockGenerator::FAMILY_SCREE);
 	return big ? MIN(variants * 2, 32) : variants;
 }
 
@@ -852,13 +852,18 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					// Blocks to cover 65% of full talus (the mean b axis squared of the power law cut at 0.9 m is about
 					// 3.4 dmin^2; the footprint about 1.4 b by b), tried four times over: the spacing test turns many
 					// away as the cover jams.
-					const float want = 4.0f * 0.65f * t * float(sub * sub) * float(density) / (0.785f * 1.4f * 3.4f * dmin * dmin);
+					// Fall sorting down the cone (the generator's get_scree_sorting: 0 at the apex, 1 at the toe): small stones
+					// and fines high up, the big blocks run furthest.
+					const float sort = CLAMP(float(gen->get_scree_sorting(c)), 0.0f, 1.0f);
+					const float sort_k = 0.5f + 1.0f * sort;
+					// (the count scaled so the cover stays the same at either end: more, smaller stones up the cone)
+					const float want = 4.0f * 0.65f * t * float(sub * sub) * float(density) / (0.785f * 1.4f * 3.4f * dmin * dmin * sort_k * sort_k);
 					int count = int(want);
 					if (rng.randf() < want - count) {
 						count++;
 					}
 					for (int k = 0; k < count; k++) {
-						tries.push_back({ Vector3(x + rng.randf() * sub, 0, z + rng.randf() * sub), MIN(dmin * Math::pow(1.0f - rng.randf() * 0.999f, -1.0f / 2.5f), 0.9f) * (1.0f + 1.2f * (1.0f - t)), t });
+						tries.push_back({ Vector3(x + rng.randf() * sub, 0, z + rng.randf() * sub), MAX(MIN(dmin * Math::pow(1.0f - rng.randf() * 0.999f, -1.0f / 2.5f), 0.9f) * (1.0f + 1.2f * (1.0f - t)) * sort_k, tail_min), t });
 					}
 					// The toe: the largest blocks roll furthest and stop on the thin apron below the cone, car- to
 					// house-sized (2 to 6 m), a few per hundred metres of toe (fall sorting; Kirkby and Statham 1975).
@@ -897,6 +902,16 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				const float r = 0.45f * tr.size;
 				if (!fits(tr.xz.x, tr.xz.z, r)) {
 					continue;
+				}
+				// None on the rock wall above the cone: a stone stays only below the angle of repose (talus stands at 32
+				// to 38 degrees; past 42 a block would slide or the ground is the cliff itself, Statham 1976).
+				{
+					const real_t e = MAX(real_t(0.6), real_t(r));
+					const real_t gx = (gen->get_height(tr.xz + Vector3(e, 0, 0)) - gen->get_height(tr.xz - Vector3(e, 0, 0))) / (2.0 * e);
+					const real_t gz = (gen->get_height(tr.xz + Vector3(0, 0, e)) - gen->get_height(tr.xz - Vector3(0, 0, e))) / (2.0 * e);
+					if (gx * gx + gz * gz > 0.9 * 0.9) {
+						continue;
+					}
 				}
 				lay(tr.xz.x, tr.xz.z, r);
 				Pending pd;
@@ -3048,6 +3063,13 @@ void RockField3D::_update_moss(const HashMap<uint64_t, LocalVector<Transform3D>>
 		if (!cds) {
 			continue;
 		}
+		// Moss needs a stone that has lain still for years, as the shader's moss does (surface_age): none on active
+		// scree or fresh rockfall, whose stones are turned over by each fall.
+		const float age = float(rock_surface_age(RockGenerator::Family(key_family(lk))));
+		const float age_cover = Math::smoothstep(0.15f, 0.6f, age);
+		if (age_cover <= 0.0f) {
+			continue;
+		}
 		for (uint32_t k = 0; k < kv.value.size(); k++) {
 			const Transform3D &xf = kv.value[k];
 			const Color &cd = (*cds)[k];
@@ -3078,7 +3100,7 @@ void RockField3D::_update_moss(const HashMap<uint64_t, LocalVector<Transform3D>>
 			job->source = *src;
 			job->params.xform = xf;
 			job->params.custom = cd;
-			job->params.moss_cover = float(moss_cover);
+			job->params.moss_cover = float(moss_cover) * age_cover;
 			const Ref<ShaderMaterial> mat = _material(key_type(lk), RockGenerator::Family(key_family(lk)));
 			if (mat.is_valid()) {
 				const Variant pd = mat->get_shader_parameter("pole_direction");

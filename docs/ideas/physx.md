@@ -1660,6 +1660,119 @@ washes 1.3 kg of ash off a 10 m burn in 20 s. Left (water owners): the
 washed ash should darken the stream it reaches (a turbidity or load term
 on WorldWater).
 
+### Smouldering ground fire (picked 19 Nov, third of four)
+
+Built. Research: under the fine fuel lies duff and organic soil that a
+passing front can light and that then smoulders for hours with no flame
+(Rein 2009). It lights with a 50% chance near 110-120% moisture (dry
+basis) in organic soil with little mineral matter, drier as the mineral
+share rises (Frandsen 1987, 1997; Prat-Guitart et al. 2016 find 115-150%
+by bulk density); it creeps sideways at 1-5 cm/h, slower when wetter
+(Prat-Guitart et al. 2016: medians 1-5, spots 0.6-9 cm/h), and burns down
+more slowly still; its smoke is pale (condensed tars and water, little
+soot) and cool, so it hangs low; heavy rain puts it out, light rain does
+not; and under unburnt fuel a breeze can turn it back into flame, the
+holdover fire (Santoso et al. 2019). Ignition indices from duff codes
+(Otway et al. 2006: 50% at DMC 27-29 in aspen duff) back the same
+picture. Here: PhysXSmoulder (flow/physx_smoulder.*) keeps a duff grid
+under PhysXFireSpread3D, on the weather's clock (time_scale): duff_depth
+(by fuel type: 1, 1.5 and 5 cm) at 100 kg/m3, deeper under heavier fuel;
+duff_moisture follows the weather over 12 game days (the DMC's time lag)
+and soaks up half the rain; duff_mineral moves the 50% point
+(1.2 - 1.5 (mineral - 0.1)). Half a burn time after the front, each cell
+gets one steady-hash chance to light (logistic in moisture, width 0.12,
+thinner beds less); a smouldering cell creeps into its four neighbours at
+5 e^(-0.8 M) cm/h (a little faster in wind), burns down at a quarter of
+that (about 1.6 kW/m2 at 8 MJ/kg, part of heat_at), goes out past 1.6
+times the 50% moisture (rain, or poured fluid water, which boils off as
+steam), and under unburnt dry fuel in wind over 1 m/s relights the fine
+fuel (hazard up to once a game hour at 4 m/s). It glows dull red in
+spots on the ground map, leaves pale ash where the duff burnt through,
+and smokes from a gas of its own (2 m tiles, eight emitters, light grey,
+buoyancy 0.8, freed 20 s after the last cell). Test (scratch scene, 10 m
+litter fire, time_scale 3600): the duff lights behind the front (peak
+1,437 of 1,600 cells), burns 465 kg in about a day and goes out; 20 mm/h
+rain puts it out within ten game hours (446 kg burnt), 1 mm/h does not;
+a fire stopped at 3.6 m2 with a 3 m/s wind relit the fuel around it 14
+times in 100 game hours.
+
+### Fire clouds (picked 19 Nov, fourth of four)
+
+Built. Research: a fire's plume rises until its buoyancy is spent; where
+it passes the lifting condensation level its moist air condenses into a
+cumulus cap (pyrocumulus), and a plume that keeps rising on the latent
+heat becomes a pyrocumulonimbus, with lightning and downdraft outflow
+(Fromm et al. 2010; Lareau and Clements 2016, who find the plume's
+condensation level a few hundred metres above the ambient one: the
+plume's heat lifts it, the fire's water vapour lowers it, near evenly;
+Tory et al. 2018 on the heat it takes). Plume rise: Briggs (1975), with
+F = g Q / (pi cp rho T) from the convective heat Q (about three quarters
+of the heat release: radiant fractions 0.15-0.3), 5.0 F^1/4 N^-3/4 calm
+and 2.6 (F / (u N^2))^1/3 bent over, N about 0.0106/s for the standard
+lapse rate; by day the plume first crosses the sun-mixed layer, which
+reaches to about the cumulus base (Stull 1988). LCL: Espy's 125 m per
+kelvin of dew point depression. Here: WorldFire gains plumes(), a list of
+(base, convective heat) from every fire; PhysXFireSpread3D gives one per
+node, from its flaming tiles and burning crowns. WeatherMap3D (weather
+owners' code, flagged to them) turns each plume that reaches the LCL into
+a storm entry marked fire: no rain, cumulus (cover 0.6-0.77, which sets
+the type) over the bent-over plume, radius half the rise, growing over
+five game minutes and evaporating over fifteen once the heat stops; at
+2 km past the LCL it grows into a pyrocumulonimbus (cover 1: a tower,
+10 m/s outflow, 2 mm/h), which WeatherLightning3D already strikes from by
+its cloud top (Price and Rind). `fire_clouds` on by default;
+get_fire_cloud_for(Q) gives the rise, LCL and strength. Numbers (30 C,
+25% humidity, LCL 2.8 km): by day 1 GW caps itself, about 40 GW makes a
+pyrocumulonimbus; at night (mixed layer 200 m) nothing under about 60 GW;
+humid air (60%, LCL 1.1 km) caps a 1 GW fire fully. Scratch test with a
+plume stub (50 GW, sun unknown): a cumulus cap over the plume after 20
+game minutes (cloud type 0.79), gone within two hours of the heat stopping. Left (weather owners): the
+cloud base stays the map's global cloud_base_height; a per-storm base at
+the plume's own condensation level would need a field in the sky
+shader's storm uniform.
+
+The same round adds `fire_age_map` for the trees thread (needle cast on
+fire-killed crowns): R8, game years since each cell caught over 2 (about
+3-day steps), 0 where nothing burnt, over fire_char_rect.
+
+### Next-round options (card, 19 Nov)
+
+Research notes for the card that follows the four picks above.
+
+Smoke haze dims the sun. Thick wildfire smoke reaches aerosol optical
+depths of 1 to 5 at 550 nm, with a mass extinction of about 4.5 m2/g
+and a single scattering albedo near 0.9 (Reid et al. 2005). The
+Angstrom exponent of 1.5 to 2 removes blue light first, so the sun goes
+orange and then red. Under dense plumes the day cools by a few kelvin
+(Robock 1988). Plan: the fire's smoke mass rate (WorldFire.plumes gains
+a smoke term) feeds a column-load field on the weather grid, advected
+by the wind aloft and settling out over days. The weather's haze
+(rt_params 80-84) and its sun read the field, so sun drying and air
+temperature follow.
+
+Post-fire mudflows. In the first one or two years, rain bursts on burnt
+slopes steeper than about 23% start runoff-generated debris flows. USGS
+thresholds sit near 15-minute intensities of 10-25 mm/h (Cannon et al.
+2008; Staley et al. 2017). They grow by scouring rills and channel beds
+as they run (progressive bulking; Kean et al. 2013). Plan: the burn
+scar's runoff (water_repellency_at, runoff_at) already concentrates the
+flow. A channel that passes the threshold picks up ash and soil into a
+Bingham mud body (the mud thread's model) that runs down the gully, then
+fans out and stops where the slope eases. The ground and mud threads own
+that code, so it needs their sign-off.
+
+Burning wooden buildings. Embers light buildings through vents, gutters
+and decks (Manzello 2017). Inside, a room fire grows until flashover,
+when the hot layer reaches about 600 C and the floor takes about 20
+kW/m2 (Drysdale). After that it burns ventilation-limited at about
+1.5 A sqrt(H) MW (Kawagoe), and flames lean out of the windows. Timber
+members char at about 0.65 mm/min (EN 1995-1-2), which is the char
+rate the stem foot already uses, and they fail as the section thins.
+Plan: a PhysXBurnable3D building mode made of rooms with openings,
+using flashover and Kawagoe's heat release, external flames as Flow
+emitters, members charring, and the frame collapsing through Blast when
+the remaining section falls under its load.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with
