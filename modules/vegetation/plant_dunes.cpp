@@ -37,6 +37,7 @@
 
 #include "plant_generator.h"
 #include "plant_species.h"
+#include "tree_generator.h"
 
 namespace {
 const float DUNE_GOLDEN = 2.39996323f;
@@ -507,7 +508,7 @@ void PlantGenerator::_build_soil_crust() {
 
 // The desert sets (docs/ideas/vegetation.md, "Arid ground"): by how much the sand moves (PlantSpecies.RULE_SAND_MOBILITY,
 // from the generator's sand sea), never on the crests and slip faces.
-TypedArray<Resource> PlantGenerator::make_desert(DesertStand p_stand, int p_variants, bool p_textures, const Dictionary &p_season) {
+TypedArray<Resource> PlantGenerator::make_desert(DesertStand p_stand, int p_variants, bool p_textures, const Dictionary &p_season, bool p_shrubs) {
 	using P = PlantGenerator;
 	struct DesertSpec {
 		Preset preset;
@@ -533,6 +534,37 @@ TypedArray<Resource> PlantGenerator::make_desert(DesertStand p_stand, int p_vari
 	}
 	TypedArray<Resource> out;
 	int seed_base = 9500 + int(p_stand) * 100;
+	if (p_shrubs) {
+		// Woody shrubs (TreeGenerator, trees.md 5ae; Danin 1996, "Plants of Desert Dunes"): calligonum rides the
+		// flanks' moving sand and grows up through burial; white broom and saltbush keep to the stable corridors,
+		// saltbush to the lowest, saltiest flats. Far apart, in loose groups.
+		using T = TreeGenerator;
+		struct ShrubSpec {
+			int preset, form;
+			float density, patch_scale, patch_cover;
+			Vector2 mobility;
+		};
+		LocalVector<ShrubSpec> shrubs;
+		if (p_stand == DESERT_FLANKS) {
+			shrubs = LocalVector<ShrubSpec>({ { T::PRESET_CALLIGONUM, T::SHRUB_MATURE, 0.12f, 20.0f, 0.5f, Vector2(0.1f, 0.6f) } });
+		} else if (p_stand == DESERT_INTERDUNE) {
+			shrubs = LocalVector<ShrubSpec>({ { T::PRESET_WHITE_BROOM, T::SHRUB_MATURE, 0.08f, 25.0f, 0.45f, Vector2(-0.05f, 0.25f) },
+					{ T::PRESET_SALTBUSH, T::SHRUB_MATURE, 0.06f, 25.0f, 0.4f, Vector2(-0.05f, 0.12f) },
+					{ T::PRESET_CALLIGONUM, T::SHRUB_YOUNG, 0.05f, 15.0f, 0.4f, Vector2(0.0f, 0.35f) } });
+		}
+		for (const ShrubSpec &w : shrubs) {
+			Ref<PlantSpecies> sp = make_woody_shrub(w.preset, w.form, p_variants, p_season, w.density, w.patch_scale, w.patch_cover, seed_base + 7 * w.form + w.preset);
+			if (sp.is_null()) {
+				continue;
+			}
+			sp->set_rule_range(PlantSpecies::RULE_SAND_MOBILITY, w.mobility);
+			sp->set_rule_fade(PlantSpecies::RULE_SAND_MOBILITY, 0.08f);
+			sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 25.0f));
+			sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 4.0f);
+			sp->set_meta("desert", true);
+			out.push_back(sp);
+		}
+	}
 	for (const DesertSpec &f : set) {
 		Ref<PlantGenerator> gen;
 		gen.instantiate();

@@ -289,6 +289,12 @@ func _ready() -> void:
 		sun.light_angular_distance = 0.8
 		sky_mat.sun_angle_max = 6.0
 		sky_mat.sun_curve = 0.05
+	elif view == "storm_glitter":
+		# The sun is clear (no clouds in this bench), so the sky is too: the default sky's pale grey read as
+		# overcast over a full-strength glitter path.
+		sky_mat.sky_top_color = Color(0.16, 0.36, 0.72)
+		sky_mat.sky_horizon_color = Color(0.62, 0.72, 0.84)
+		sky_mat.ground_horizon_color = Color(0.62, 0.72, 0.84)
 	elif view == "storm_sheets":
 		# 10 degrees up, behind the sheets and a little to the side: they backlight against the darker sea.
 		var wds2 := Vector2(-0.3, 1.0).normalized()

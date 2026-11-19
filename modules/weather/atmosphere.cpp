@@ -206,7 +206,10 @@ uniform float atmo_far_water : hint_range(0, 1) = 0.0; // how much of the ground
 // The weather's aerosol haze (WeatherMap3D aerosol_haze), past the froxel fog that draws its nearer part: its
 // scattering and extinction at the ground (1/m), its scale height (m), and the distance along the eye's rays
 // where it starts (the froxels' reach). Not in the tables: its own multiple scattering is left out.
-uniform vec4 atmo_aerosol = vec4(0.0, 0.0, 1200.0, 0.0);
+// Until a WeatherMap3D sets it: the map's own default haze (40 km dry visibility, Koschmieder 3.912 / V, albedo
+// 0.9), so a sky alone hazes its far clouds into the horizon as the world's does. Without it the deck ran to the
+// horizon as a crisp strip of small puffs in rows; real cumulus there merge into the boundary layer's haze.
+uniform vec4 atmo_aerosol = vec4(8.802e-5, 9.78e-5, 1200.0, 0.0);
 // The clouds' shadow map (WeatherMap3D bakes it in the sun's plane; size 0: none, the shader marches the
 // clouds itself): red the beam's transmittance, green the diffuse. Axes in xyz, the square's corner in w.
 uniform sampler2D atmo_cloud_shadow_map : filter_linear, repeat_disable, hint_default_white;

@@ -32,6 +32,7 @@
 #include "tree_wind_3d.h"
 
 #include "tree_generator.h"
+#include "vegetation_fire.h"
 
 #include "core/config/engine.h"
 #include "core/math/random_pcg.h"
@@ -1504,6 +1505,16 @@ void TreeWind3D::_update_snag(Target &r_target, uint32_t p_instance, const Trans
 	}
 	const Rig &rig = *r_target.rig;
 	const float scale = MAX(Math::pow(float(Math::abs(p_tree.basis.determinant())), 1.0f / 3.0f), 1e-3f);
+	// A tree with a foliage profile follows the rule its leaf shader follows (VegetationFire::tree_killed, trees.md
+	// 5ag), so a snag's crown browns and is cast exactly where its wood weakens; the bone areas are the fallback.
+	const PackedFloat32Array fc = rig.mesh.is_valid() ? PackedFloat32Array(rig.mesh->get_meta(SNAME("tree_fire_crown"), PackedFloat32Array())) : PackedFloat32Array();
+	if (fc.size() == 6 && fc[5] > 0.0f) {
+		if (VegetationFire::tree_killed(p_at.x, p_at.z, scale, scorch, fc.ptr())) {
+			age = MAX(p_fire->burn_age_at(p_at), 0.0f);
+			storm_snags++;
+		}
+		return;
+	}
 	float below = 0.0f, total = 0.0f;
 	for (uint32_t b = 1; b < rig.bones.size(); b++) {
 		const Bone &bone = rig.bones[b];

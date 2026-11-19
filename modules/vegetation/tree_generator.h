@@ -778,6 +778,8 @@ private:
 	Ref<Texture2D> _leaflet_texture();
 	void _add_needle(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color);
 	void _add_spine(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color, uint32_t p_hash, bool p_branched);
+	float fire_crown[6] = {}; // The last mesh's foliage height quantiles and stem diameter (VegetationFire::tree_killed).
+	void _fire_crown(const Builder &p_leaves);
 	void _add_jointed_twig(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color, uint32_t p_hash);
 	void _add_spray(Builder &r_b, const Vector3 &p_base, const Vector3 &p_dir, float p_length, float p_half_width, const Vector3 &p_side, const Color &p_color);
 	Ref<Texture2D> spray_texture; // Built on first use; per generator so it never outlives the renderer.
