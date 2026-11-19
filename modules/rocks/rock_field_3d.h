@@ -35,6 +35,7 @@
 
 #include "core/math/random_pcg.h"
 #include "core/object/worker_thread_pool.h"
+#include "core/os/mutex.h"
 #include "core/templates/hash_set.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
@@ -222,6 +223,31 @@ private:
 	void _detail_commit(DetailJob &r_job);
 	void _detail_finish(bool p_wait, real_t p_budget_msec);
 	void _detail_cancel();
+	// The coarse layers' cells are placed on worker threads too while streaming (cell_threads): a worker places the
+	// cell's stones and packs each shape's MultiMesh records, reading the shape libraries under library_lock; a shape
+	// not built yet is noted (missing) and the job is dropped, to be placed again once the main thread has built it.
+	// The main thread takes out stones on holes and broken ones, adds the MultiMeshes and the collision.
+	struct CoarseGroup : DetailGroup {
+		LocalVector<uint32_t> members; // stone indices
+	};
+	struct CoarseJob {
+		RockField3D *field = nullptr;
+		Vector3i key;
+		TerrainGenerator3D *gen = nullptr;
+		LocalVector<Stone> stones;
+		LocalVector<CoarseGroup> groups;
+		LocalVector<uint32_t> missing; // shape libraries the placement asked for that are not built
+		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
+	};
+	HashMap<Vector3i, CoarseJob *> coarse_jobs;
+	bool cell_threads = true;
+	Mutex library_lock; // libraries: workers look shapes up, the main thread adds them
+	bool _coarse_place(CoarseJob &r_job);
+	void _coarse_pack(const Vector3i &p_key, const LocalVector<Stone> &p_stones, LocalVector<CoarseGroup> &r_groups);
+	static void _coarse_job(void *p_job);
+	void _coarse_commit(const Vector3i &p_key, LocalVector<Stone> &p_stones, LocalVector<CoarseGroup> &p_groups);
+	void _coarse_finish(bool p_wait, real_t p_budget_msec);
+	void _coarse_cancel();
 	struct LibraryBuild;
 	HashMap<uint32_t, LibraryBuild *> library_builds; // started by streaming cells, keyed by every key they build
 	bool library_async = false; // while streaming: a missing library is started on workers, the cell waits
@@ -495,9 +521,12 @@ public:
 	uint32_t get_collision_layer() const { return collision_layer; }
 	void set_build_budget_msec(real_t p_msec) { build_budget_msec = MAX(p_msec, real_t(0.1)); }
 	real_t get_build_budget_msec() const { return build_budget_msec; }
+	void set_cell_threads(bool p_enabled);
+	bool is_cell_threads() const { return cell_threads; }
 	void set_ground_detail_threads(bool p_enabled);
 	bool is_ground_detail_threads() const { return detail_threads; }
 	int get_ground_detail_pending() const { return int(detail_jobs.size()); }
+	int get_cells_pending() const { return int(coarse_jobs.size() + library_builds.size()); }
 	double get_last_detail_msec() const { return last_detail_msec; }
 	void set_close_up_enabled(bool p_enabled);
 	bool is_close_up_enabled() const { return close_up_enabled; }
