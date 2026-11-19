@@ -319,10 +319,34 @@ float top_height(const State &p_state, float p_type) {
 
 void State::update_top_max() {
 	float t = type;
+	base_min = base_height;
+	top_max = base_height + top_height(*this, t);
 	for (int i = 0; i < storm_count; i++) {
 		t = MAX(t, 0.9f * storms[i][3]);
+		if (storm_base[i] > 0.0f) {
+			base_min = MIN(base_min, storm_base[i]);
+			top_max = MAX(top_max, storm_base[i] + top_height(*this, MAX(type, 0.9f * storms[i][3])));
+		}
 	}
-	top_max = base_height + top_height(*this, t);
+	top_max = MAX(top_max, base_height + top_height(*this, t));
+}
+
+float base_at(const State &p_state, Vector2 p_xz) {
+	float b = p_state.base_height;
+	for (int i = 0; i < p_state.storm_count; i++) {
+		if (p_state.storm_base[i] <= 0.0f) {
+			continue;
+		}
+		const float *s = p_state.storms[i];
+		const float dx = p_xz.x - s[0];
+		const float dz = p_xz.y - s[1];
+		// Level out to about four times the shield's radius, where its fall-off (cover_type_at, without its growth: a
+		// cloud fading out keeps its base) has left under a percent of cover: a base following the fall-off itself
+		// sloped the cap's edges down to the map's base. Beyond, the step is under clouds too thin to show it.
+		const float g = Math::exp(-(dx * dx + dz * dz) / (s[2] * s[2]) / (1.6f * 1.6f));
+		b = Math::lerp(b, p_state.storm_base[i], smoothstep(0.005f, 0.1f, g));
+	}
+	return b;
 }
 
 Vector2 cover_type_at(const State &p_state, Vector2 p_xz) {
@@ -417,20 +441,28 @@ float shape_at(const State &p_state, const Vector3 &p_pos) {
 	return even_mix(n, nc, w);
 }
 
-Vector2 shear_offset(const State &p_state, float p_y) {
-	const float z = MAX(p_y - p_state.base_height, 0.0f) / MAX(p_state.thickness, 1.0f);
+Vector2 shear_offset(const State &p_state, float p_y, float p_base) {
+	const float z = MAX(p_y - p_base, 0.0f) / MAX(p_state.thickness, 1.0f);
 	return p_state.shear * MIN(z * z, 9.0f);
 }
 
+Vector2 shear_offset(const State &p_state, float p_y) {
+	return shear_offset(p_state, p_y, p_state.base_height);
+}
+
 float extinction_at(const State &p_state, const Vector3 &p_pos) {
-	if (p_pos.y < p_state.base_height || p_pos.y > p_state.top_max) {
+	if (p_pos.y < p_state.base_min || p_pos.y > p_state.top_max) {
+		return 0.0f;
+	}
+	const float b = base_at(p_state, Vector2(p_pos.x, p_pos.z));
+	if (p_pos.y < b) {
 		return 0.0f;
 	}
 	const Vector2 ct = cover_type_at(p_state, Vector2(p_pos.x, p_pos.z));
 	if (ct.x <= 0.001f) {
 		return 0.0f;
 	}
-	const float h = (p_pos.y - p_state.base_height) / top_height(p_state, ct.y);
+	const float h = (p_pos.y - b) / top_height(p_state, ct.y);
 	if (h >= 1.0f) {
 		return 0.0f;
 	}
@@ -441,7 +473,7 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	const float round_top = Math::lerp(0.6f, Math::lerp(0.15f, 0.6f, cu), smoothstep(0.35f, 0.75f, ct.x));
 	const float dome = 1.0f - smoothstep(1.0f - round_top, 1.0f, h);
 	const float base = smoothstep(0.0f, Math::lerp(0.2f, 0.03f, cu), h);
-	const Vector2 so = shear_offset(p_state, p_pos.y);
+	const Vector2 so = shear_offset(p_state, p_pos.y, b);
 	const float n = shape_at(p_state, Vector3(p_pos.x - so.x, p_pos.y, p_pos.z - so.y));
 	// Nubis's coverage remap, remap(n p, 1 - c, 1, 0, 1): where the noise is high the cloud reaches
 	// further up the profile, which domes the tops. Then times the cover (Schneider 2015): the few
@@ -514,6 +546,9 @@ uniform float cloud_evolve = -1.0;
 uniform vec3 cloud_churn = vec3(0.0);
 uniform int cloud_storm_count = 0;
 uniform vec4 cloud_storms[8];
+// Each storm's own cloud base (m; <= 0: cloud_base_height), and the lowest base of all (the march's bounds).
+uniform float cloud_storm_base[8];
+uniform float cloud_base_min = 1500.0;
 
 float wc_hash2(int x, int y) {
 	uint h = uint(x) * 2376512323u ^ uint(y) * 3625334849u;
@@ -647,13 +682,31 @@ vec2 wc_cover_type(vec2 xz) {
 	return vec2(cover, t);
 }
 
+// The cloud base over xz (base_at() on the CPU): cloud_base_height, blended to each storm's own base.
+float wc_base_at(vec2 xz) {
+	float b = cloud_base_height;
+	for (int i = 0; i < 8; i++) {
+		if (i >= cloud_storm_count) {
+			break;
+		}
+		if (cloud_storm_base[i] <= 0.0) {
+			continue;
+		}
+		vec4 s = cloud_storms[i];
+		vec2 d = xz - s.xy;
+		b = mix(b, cloud_storm_base[i], smoothstep(0.005, 0.1, exp(-dot(d, d) / (s.z * s.z) / (1.6 * 1.6))));
+	}
+	return b;
+}
+
 // Extinction (1/m) at p. p_detail erodes the edges with the detail noise (Nubis); the shadow bake
 // and the CPU leave it out. p_step is the march's step (m): the noise is read at that scale.
 float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {
 	if (ct.x <= 0.001) {
 		return 0.0;
 	}
-	float h = (p.y - cloud_base_height) / wc_top_height(ct.y);
+	float b0 = wc_base_at(p.xz);
+	float h = (p.y - b0) / wc_top_height(ct.y);
 	if (h <= 0.0 || h >= 1.0) {
 		return 0.0;
 	}
@@ -671,7 +724,7 @@ float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {
 	// Wind shear: the tissue higher up was carried further downwind (and veered) while it rose, so the
 	// tower leans and its top streams out (Schneider 2015's cloud top offset), squared in height so the
 	// base stays upright. The cover stays read at the column's base.
-	float zs = max(p.y - cloud_base_height, 0.0) / max(cloud_thickness, 1.0);
+	float zs = max(p.y - b0, 0.0) / max(cloud_thickness, 1.0);
 	p.xz -= cloud_shear * min(zs * zs, 9.0);
 	float n = wc_shape(p, p_step);
 	float shape = max(n * dome - (1.0 - ct.x), 0.0) / max(ct.x, 0.001) * base;

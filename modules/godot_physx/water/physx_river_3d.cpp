@@ -168,6 +168,7 @@ uniform sampler2D live_offset_tex : hint_default_black, filter_linear, repeat_di
 uniform bool live_waves = false;
 uniform sampler2D live_wave_tex : hint_default_black, filter_linear, repeat_disable;
 uniform vec2 live_wave_texel = vec2(0.1);
+uniform float live_near_spacing = 0.0; // m between the dense ribbon's vertices in the live window (0: none)
 // Clear water (raster, seen from above; docs/ideas/water.md "Clear water you can see into"): the bed read
 // through the surface along the refracted ray and passed through the path tracer's medium, as on the sea
 // (PhysXWaterSurface3D). Off: the older tint (water_color, shallow_color).
@@ -347,8 +348,19 @@ void vertex() {
 		// water runs up them (1 m, the solver's run-up band; a dry bank reads below its ground).
 		vec2 off = v_world.xz - live_center;
 		float h = (textureLod(live_height_tex, cuv, 0.0).r - (live_tilt.x + dot(live_tilt.yz, off))) * live * step(-0.99, v_info.r * 4.0 - 1.0);
-		VERTEX.y += h;
-		v_world.y += h;
+		if (live_waves && live_near_spacing > 0.0) {
+			// The surface waves as geometry where the ribbon is dense enough to carry them (Planet Coaster 2's
+			// near-camera water: real silhouettes and parallax, the slope still drawn per pixel).
+			float carry = 1.0 - smoothstep(1.5 * live_wave_texel.x, 4.0 * live_wave_texel.x, live_near_spacing);
+			h = textureLod(live_wave_tex, cuv, 0.0).r * live * carry;
+			// Depth-limited: no wave stands higher than the water under it allows (breaking at H = 0.78 d,
+			// McCowan 1894: amplitude 0.39 d), softly; at a stone's foot or the waterline that is a few millimetres,
+			// where the grid's last wet cell would otherwise stand up as a spike.
+			float a_max = max(0.39 * (v_info.r * 4.0 - 1.0), 0.0);
+			h = a_max > 1e-4 ? h / sqrt(1.0 + (h * h) / (a_max * a_max)) : 0.0;
+			VERTEX.y += h;
+			v_world.y += h;
+		}
 	}
 }
 
@@ -855,6 +867,8 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_live_surface_waves"), &PhysXRiver3D::get_live_surface_waves);
 	ClassDB::bind_method(D_METHOD("set_live_surface_wave_strength", "strength"), &PhysXRiver3D::set_live_surface_wave_strength);
 	ClassDB::bind_method(D_METHOD("get_live_surface_wave_strength"), &PhysXRiver3D::get_live_surface_wave_strength);
+	ClassDB::bind_method(D_METHOD("set_live_near_mesh_spacing", "spacing"), &PhysXRiver3D::set_live_near_mesh_spacing);
+	ClassDB::bind_method(D_METHOD("get_live_near_mesh_spacing"), &PhysXRiver3D::get_live_near_mesh_spacing);
 	ClassDB::bind_method(D_METHOD("set_live_damping", "damping"), &PhysXRiver3D::set_live_damping);
 	ClassDB::bind_method(D_METHOD("get_live_damping"), &PhysXRiver3D::get_live_damping);
 	ClassDB::bind_method(D_METHOD("set_live_follow", "path"), &PhysXRiver3D::set_live_follow);
@@ -934,6 +948,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_advected_ripples"), "set_live_advected_ripples", "get_live_advected_ripples");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_surface_waves"), "set_live_surface_waves", "get_live_surface_waves");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_surface_wave_strength", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_live_surface_wave_strength", "get_live_surface_wave_strength");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_near_mesh_spacing", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_live_near_mesh_spacing", "get_live_near_mesh_spacing");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_damping", PROPERTY_HINT_RANGE, "0,1,0.005"), "set_live_damping", "get_live_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "live_follow", PROPERTY_HINT_NODE_TYPE, "Node3D"), "set_live_follow", "get_live_follow");
 	ADD_GROUP("Carve", "carve_");
@@ -1271,6 +1286,13 @@ void PhysXRiver3D::set_live_surface_wave_strength(float p_strength) {
 	}
 }
 
+void PhysXRiver3D::set_live_near_mesh_spacing(float p_spacing) {
+	live_near_mesh_spacing = MAX(p_spacing, 0.0f);
+	if (sections.size() >= 2 && mesh_instance != nullptr) {
+		_build_mesh();
+	}
+}
+
 void PhysXRiver3D::set_live_advected_ripples(bool p_enabled) {
 	live_advected_ripples = p_enabled;
 	if (live_configured) {
@@ -1463,6 +1485,7 @@ void PhysXRiver3D::_live_material() {
 		water_material->set_shader_parameter(SNAME("live_wave_texel"), Vector2(live_domain_size, live_domain_size) / 512.0f);
 	}
 	water_material->set_shader_parameter(SNAME("live_waves"), waves);
+	water_material->set_shader_parameter(SNAME("live_near_spacing"), live_near_mesh_used);
 }
 
 // The live window: the shallow-water solver of PhysXWaterSurface3D's live flow
@@ -1528,6 +1551,9 @@ void PhysXRiver3D::_live_update(double p_delta) {
 		live_configured = true;
 		live_fields_dirty = false;
 		live_bound = false;
+		if (live_near_mesh_spacing > 0.0f) {
+			_build_mesh(); // the dense ribbon round the new window
+		}
 	} else if (MAX(Math::abs(want.x - live_center.x), Math::abs(want.y - live_center.y)) > 0.25f * live_domain_size || live_fields_dirty) {
 		live_center = want;
 		live_solver.recenter(live_center);
@@ -1542,6 +1568,9 @@ void PhysXRiver3D::_live_update(double p_delta) {
 		live_fields_dirty = false;
 		live_height_cache.clear();
 		live_velocity_cache.clear();
+		if (live_near_mesh_spacing > 0.0f) {
+			_build_mesh(); // the dense ribbon follows the window
+		}
 		_live_material();
 	}
 	live_solver.step(p_delta);
@@ -3332,6 +3361,100 @@ void PhysXRiver3D::_build_mesh() {
 			normals.set(i * row + j, nrm.length_squared() > 1e-12f ? nrm.normalized() : Vector3(0, 1, 0));
 		}
 	}
+	// The live window's ribbon, dense (docs/ideas/water.md "Real ripple geometry near the camera"): the strips
+	// whose corners come within the window (plus a strip's size, so the seam with the coarse ribbon lies where the
+	// live heights have faded to nothing) are cut into quads about live_near_mesh_spacing across, attributes
+	// bilinear between the section samples, for the surface waves' heights to stand up as geometry.
+	LocalVector<int> fine_along; // per strip: 0 coarse, else its cuts along the current
+	int fine_across = 1; // cuts per cross segment (the same for every dense strip, so their shared rows match)
+	live_near_mesh_used = 0.0f;
+	if (live_near_mesh_spacing > 0.0f && live_flow && live_configured) {
+		const Transform3D gt = get_global_transform();
+		float reach = 0.0f;
+		for (int i = 0; i < count; i++) {
+			reach = MAX(reach, MAX(step_length, (sections[i].width + 2.0f * bank_margin) / m));
+		}
+		const float half_w = 0.5f * live_domain_size + 1.5f * reach;
+		auto near = [&](const Vector3 &p_local) {
+			const Vector3 g = gt.xform(p_local);
+			return MAX(Math::abs(g.x - live_center.x), Math::abs(g.z - live_center.y)) <= half_w;
+		};
+		fine_along.resize(count - 1);
+		float along_len_sum = 0.0f;
+		float across_max = 0.0f;
+		int strips = 0;
+		for (int i = 0; i + 1 < count; i++) {
+			const bool in = near(verts[i * row]) || near(verts[i * row + m]) || near(verts[(i + 1) * row]) || near(verts[(i + 1) * row + m]) || near(sections[i].centre);
+			fine_along[i] = in ? 1 : 0;
+			if (in) {
+				strips++;
+				along_len_sum += sections[i].centre.distance_to(sections[i + 1].centre);
+				across_max = MAX(across_max, MAX(sections[i].width, sections[i + 1].width) + 2.0f * bank_margin);
+			}
+		}
+		if (strips > 0) {
+			// At most about 200,000 quads: past that the spacing grows (and the waves' heights fade, in the shader).
+			const float budget = 200000.0f;
+			float spacing = live_near_mesh_spacing;
+			const float quads = (along_len_sum / spacing) * (across_max / spacing);
+			if (quads > budget) {
+				spacing *= Math::sqrt(quads / budget);
+			}
+			live_near_mesh_used = spacing;
+			fine_across = CLAMP((int)Math::ceil(across_max / m / spacing), 1, 64);
+			for (int i = 0; i + 1 < count; i++) {
+				if (fine_along[i]) {
+					fine_along[i] = CLAMP((int)Math::ceil(sections[i].centre.distance_to(sections[i + 1].centre) / spacing), 1, 64);
+				}
+			}
+		}
+	}
+	const int fine_row = m * fine_across + 1;
+	LocalVector<int> fine_section_row; // per section: first vertex of its dense row, -1 none yet
+	if (!fine_along.is_empty()) {
+		fine_section_row.resize(count);
+		for (int i = 0; i < count; i++) {
+			fine_section_row[i] = -1;
+		}
+	}
+	// A vertex at strip i, a fraction u of the way along it, at cross position v (in segments), its attributes
+	// bilinear between the four coarse samples round it.
+	auto add_fine_vertex = [&](int p_i, float p_u, float p_v) -> int {
+		const int j0 = MIN((int)Math::floor(p_v), m - 1);
+		const float t = p_v - j0;
+		const int i1 = MIN(p_i + 1, count - 1);
+		const int a = p_i * row + j0;
+		const int b = i1 * row + j0;
+		const float w00 = (1.0f - p_u) * (1.0f - t);
+		const float w01 = (1.0f - p_u) * t;
+		const float w10 = p_u * (1.0f - t);
+		const float w11 = p_u * t;
+		const int k = verts.size();
+		verts.push_back(verts[a] * w00 + verts[a + 1] * w01 + verts[b] * w10 + verts[b + 1] * w11);
+		const Vector3 nr = normals[a] * w00 + normals[a + 1] * w01 + normals[b] * w10 + normals[b + 1] * w11;
+		normals.push_back(nr.length_squared() > 1e-12f ? nr.normalized() : Vector3(0, 1, 0));
+		uvs.push_back(uvs[a] * w00 + uvs[a + 1] * w01 + uvs[b] * w10 + uvs[b + 1] * w11);
+		uv2s.push_back(uv2s[a] * w00 + uv2s[a + 1] * w01 + uv2s[b] * w10 + uv2s[b + 1] * w11);
+		colors.push_back(colors[a] * w00 + colors[a + 1] * w01 + colors[b] * w10 + colors[b + 1] * w11);
+		for (int c = 0; c < 4; c++) {
+			custom0.push_back(custom0[a * 4 + c] * w00 + custom0[(a + 1) * 4 + c] * w01 + custom0[b * 4 + c] * w10 + custom0[(b + 1) * 4 + c] * w11);
+		}
+		return k;
+	};
+	// The dense row along section i (shared by the two strips either side of it).
+	auto section_row = [&](int p_i) -> int {
+		if (fine_section_row[p_i] < 0) {
+			const int strip = MIN(p_i, count - 2);
+			const float u = p_i == strip ? 0.0f : 1.0f;
+			fine_section_row[p_i] = verts.size();
+			for (int b = 0; b < fine_row; b++) {
+				add_fine_vertex(strip, u, (float)b / fine_across);
+			}
+		}
+		return fine_section_row[p_i];
+	};
+	LocalVector<int> strip_rows;
+	int strip_rows_of = -1; // the strip strip_rows holds
 	for (int i = 0; i + 1 < count; i++) {
 		for (int j = 0; j < m; j++) {
 			const int k00 = i * row + j;
@@ -3341,6 +3464,37 @@ void PhysXRiver3D::_build_mesh() {
 			// Skip quads that are dry all round (ground well above the water).
 			const float dmax = MAX(MAX(sections[i].depth[j], sections[i].depth[j + 1]), MAX(sections[i + 1].depth[j], sections[i + 1].depth[j + 1]));
 			if (dmax < -0.05f || MAX(sections[i].mouth_fade, sections[i + 1].mouth_fade) <= 0.0f || sections[i].fall_drop) {
+				continue;
+			}
+			if (!fine_along.is_empty() && fine_along[i] > 0) {
+				// This quad cut into fine_along x fine_across, the same winding.
+				const int fa = fine_along[i];
+				if (strip_rows_of != i) {
+					strip_rows_of = i;
+					strip_rows.resize(fa + 1);
+					strip_rows[0] = section_row(i);
+					for (int a = 1; a < fa; a++) {
+						strip_rows[a] = verts.size();
+						for (int b = 0; b < fine_row; b++) {
+							add_fine_vertex(i, (float)a / fa, (float)b / fine_across);
+						}
+					}
+					strip_rows[fa] = section_row(i + 1);
+				}
+				for (int a = 0; a < fa; a++) {
+					for (int b = j * fine_across; b < (j + 1) * fine_across; b++) {
+						const int f00 = strip_rows[a] + b;
+						const int f01 = f00 + 1;
+						const int f10 = strip_rows[a + 1] + b;
+						const int f11 = f10 + 1;
+						indices.push_back(f00);
+						indices.push_back(f01);
+						indices.push_back(f10);
+						indices.push_back(f01);
+						indices.push_back(f11);
+						indices.push_back(f10);
+					}
+				}
 				continue;
 			}
 			// Clockwise seen from above: the top is the front face, which the path
@@ -3374,6 +3528,7 @@ void PhysXRiver3D::_build_mesh() {
 	mesh_instance->set_mesh(mesh);
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter(SNAME("section_step"), count > 1 ? (sections[count - 1].s - sections[0].s) / (count - 1) : step_length);
+		water_material->set_shader_parameter(SNAME("live_near_spacing"), live_near_mesh_used);
 	}
 }
 

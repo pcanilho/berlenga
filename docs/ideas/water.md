@@ -3599,3 +3599,20 @@ bulk's own high frequencies off; the live grid's 25 cm cells hold none worth spl
 Cost per step: 3 small passes, a one-field and a four-field 512^2 shared-memory FFT (water_fft_rows.glsl).
 Bench switch: `--river=live_surface_waves:false`. Raster and PT read the same slope (river shader live_waves).
 Not yet on PhysXWaterSurface3D (lakes, sea shallows).
+Trough fix (19 Nov, docs review): the slope is softly held under 0.3 (capillary-gravity breaking steepness;
+Stokes' limit 0.44). Steeper facets turned away from the eye sent path-traced rays through the surface into the
+bed, which drew dark speckled troughs in PT and not in raster.
+
+### Real ripple geometry near the camera (19 Nov; item 3 of Paulo's four)
+
+PhysXRiver3D `live_near_mesh_spacing` (0.1 m, on; 0 keeps the coarse ribbon). Same approach as Planet Coaster 2's
+water and the usual "dense near the camera, coarse far" water meshes (Frostbite, UE Water's quadtree): the
+ribbon strips inside the live window are cut into ~10 cm quads, attributes bilinear between the section
+samples, and rebuilt when the window recentres. The surface waves' height is then added in vertex() (raster
+and PT both run it), so their crests stand up as real geometry with silhouettes against stones and banks; the
+slope is still drawn per pixel. Cracks: dense strips share their section rows exactly, and the seam with the
+coarse ribbon lies 1.5 strips outside the window, where the live heights have faded to zero. Budget: about
+200,000 quads; past that the spacing grows and the waves' heights fade (they need ~1.5 wave cells a vertex).
+Heights are depth-limited, softly, to amplitude 0.39 d (McCowan's H = 0.78 d breaking limit): without it the
+last wet cell at a stone's foot stood up as a spike.
+Bench switch: `--no-near-mesh`.

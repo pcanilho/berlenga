@@ -15,6 +15,7 @@ extends Node3D
 #   --frames=N       frames rendered before --out is saved (default 12)
 #   --pt-from=N      rasterize until frame N, path trace from then on
 #   --pt-freeze      with --pt-from: stop the clock there, so the still is one instant (caustics, foam)
+#   --no-near-mesh   with --live: the coarse ribbon in the live window (live_near_mesh_spacing 0)
 #   --out=path.png   save the last frame and quit
 #   --seq=N          also save the N frames after --frames (for a GIF)
 #   --river=prop:value  a PhysXRiver3D property, e.g. --river=discharge:12.0
@@ -57,6 +58,7 @@ var spp := 16
 var bounces := 3
 var frames := 12
 var pt_from := 0
+var no_near_mesh := false # --no-near-mesh: the coarse ribbon in the live window (live_near_mesh_spacing 0)
 var pt_freeze := false # --pt-freeze: stop the clock when path tracing starts, so the accumulated still holds one instant
 var out := ""
 var seq := 0
@@ -153,6 +155,7 @@ func _ready() -> void:
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a == "--pt-freeze": pt_freeze = true
+		elif a == "--no-near-mesh": no_near_mesh = true
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--seq="): seq = int(a.substr(6))
 		elif a.begins_with("--sun="):
@@ -245,6 +248,8 @@ func _ready() -> void:
 		river.set("live_flow", true)
 		river.set("live_domain_size", 32.0)
 		river.set("live_grid_resolution", 160)
+		if no_near_mesh:
+			river.set("live_near_mesh_spacing", 0.0)
 		if contact and ClassDB.class_exists("WeatherMap3D"):
 			weather = ClassDB.instantiate("WeatherMap3D")
 			weather.set("rain_rate", 0.0)
