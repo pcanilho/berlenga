@@ -1234,3 +1234,16 @@ driven in, from a shed), raster and path traced alike.
 
 **Next.** Weight on the body (its mass), snow sliding off a tilted roof as a slab, and clumps falling
 off as `SnowClumps3D` pieces when a load sheds.
+
+## Next round (proposed 19 Nov 2026): heavier snow on bodies, rain on ruts, avalanches
+
+**Heavier snow on bodies.**
+
+- *Weight:* SnowBodies3D adds the load's mass to the body. That mass is depth × density × the top area facing the sky, where the area is the body's AABB top, or a downward ray grid for a better estimate. The load is applied as a constant force at the top centre, so a loaded trailer handles differently and a laden branch-like prop dips.
+- *Cloth sag:* the same load goes on PhysXCloth3D as extra mass on the particles facing up. PhysX cloth takes per-particle inverse mass.
+- *Slab sliding:* on a tilted face the load slides as a slab once the shear (rho g d sin θ) passes the bond strength. Wet snow on warm metal bonds weakly. Start from the cornice failure criterion we already have (follow-up 7), which uses the same Mohr-Coulomb form.
+- *Clumps:* shed snow (wind, jolts, slides) leaves as SnowClumps3D pieces, the ground thread's parked clumps (4dd45be3), instead of just disappearing. A shake's mass balance goes to clumps, and wind's goes to the blowing-snow flux.
+
+**Rain on ruts.** RainFall3D reads WorldContracts::snow()->surface_at, so drops stop in prints and ruts. This touches a weather file and needs Paulo's line.
+
+**Avalanches.** Slab release where the load on a 30-45° slope exceeds the weak layer. We already have the crust and burial state from follow-up 4, which can serve as the weak layer. The run-out uses a depth-averaged Savage-Hutter or Voellmy flow on the cover grid (RAMMS uses Voellmy with mu around 0.155 and xi 2000 m/s²). The flow deposits snow, buries plants and bodies through the snow contract, and throws powder into the fog.
