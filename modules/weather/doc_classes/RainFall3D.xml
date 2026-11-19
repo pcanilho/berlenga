@@ -172,7 +172,7 @@
 			Render layers that shelter from the rain.
 		</member>
 		<member name="snow_cover" type="NodePath" setter="set_snow_cover" getter="get_snow_cover" default="NodePath(&quot;&quot;)">
-			A [SnowCover3D] whose surface stops the drops; found by itself when empty.
+			A [SnowCover3D] whose surface stops the drops. When empty, the snow contract ([code]WorldContracts.get_snow()[/code]) gives the snow top, ruts and footprints included.
 		</member>
 		<member name="splashes_enabled" type="bool" setter="set_splashes_enabled" getter="is_splashes_enabled" default="true">
 			Splashes where drops land.

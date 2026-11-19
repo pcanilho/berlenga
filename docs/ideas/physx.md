@@ -1636,6 +1636,30 @@ years, nothing; 3 years, 11 limbs; 8 years, 38 limbs and the spruce falls
 at its butt. Left: the dead crowns' needles stay on in the shader (trees
 thread: needle cast in the first year).
 
+### Rain washes the burn scar (picked 19 Nov, second of four)
+
+Built. Research: a hot fire leaves a water-repellent layer a few
+centimetres down (DeBano 2000; Doerr et al. 2000), strongest where it
+burnt long and hot (Huffman et al. 2001), weakening over months and
+mostly gone in one to two years. With the litter gone and the soil
+repellent, infiltration falls to about a tenth (Robichaud 2000), so light
+rain that unburnt ground would soak up runs off, and the runoff carries
+the ash (Cerda and Doerr 2008; Smith et al. 2011: ash and fines at tens of
+kg per m3 of runoff). Here: WorldFire gains water_repellency_at (0 to 1,
+max over providers). PhysXFireSpread3D provides it on burnt-out, unquenched
+cells: 0.35 + 0.65 of the char time over a minute (0.5 under a heavy log),
+fading as e^(-age / 0.75 yr) on the burn-age clock. GroundSurface3D reads
+it with burnt_at every cell refresh: burnt litter is gone and its
+infiltration (pore water and the runoff channels) is cut by 1 - 0.9 R.
+Once a second the fire reads WorldGround.runoff_at on cold burnt 1 m tiles
+and takes 30 kg/m3 of the unit discharge off each cell's ash (the ash map
+dims, get_ash_washed counts it). Test (ground bench `--test=burnscar`,
+3 mm/h on a 15 degree clay bank): repellent scar 0.036 mm sheet, the same
+bank with the scar gone 0 mm; fire scratch run: a 2 mm sheet at 0.3 m/s
+washes 1.3 kg of ash off a 10 m burn in 20 s. Left (water owners): the
+washed ash should darken the stream it reaches (a turbidity or load term
+on WorldWater).
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

@@ -164,6 +164,11 @@ public:
 		PRESET_DRINN,
 		PRESET_DESERT_ANNUALS,
 		PRESET_SOIL_CRUST,
+		// Burnt ground and regrowth (plant_burn.cpp).
+		PRESET_FIREWEED,
+		PRESET_FIRE_MOSS,
+		PRESET_CHARRED_STEMS,
+		PRESET_BURNT_TUSSOCK,
 		PRESET_MAX,
 	};
 
@@ -296,6 +301,13 @@ private:
 	void _build_drinn();
 	void _build_desert_annuals();
 	void _build_soil_crust();
+	// Burnt ground (plant_burn.cpp): the season's "burn_age" sets each one's stage.
+	float _burn_age() const;
+	void _tint_since(Surface p_surface, int p_from, const Color &p_tint);
+	void _build_fireweed();
+	void _build_fire_moss();
+	void _build_charred_stems();
+	void _build_burnt_tussock();
 	void _build_moss();
 	void _build_bilberry();
 	void _build_bracken();
@@ -580,6 +592,14 @@ public:
 		DESERT_MAX,
 	};
 	static TypedArray<Resource> make_desert(DesertStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Burnt ground (docs/ideas/vegetation.md, "Burnt ground and regrowth"), placed by PlantSpecies.RULE_BURN_AGE.
+	enum BurnStand {
+		BURN_HEATH, // Heather moor: charred stems, fire moss, fireweed, resprouting moor-grass.
+		BURN_GRASS, // Grassland: resprouting tussocks, a little fire moss and fireweed.
+		BURN_SCRUB, // Scrub: tall charred skeletons standing longer, fireweed between.
+		BURN_MAX,
+	};
+	static TypedArray<Resource> make_burn(BurnStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 
 	// Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants").
 	enum AlpineStand {
@@ -630,6 +650,8 @@ public:
 	static void apply_scrub_rules(const Ref<PlantSpecies> &p_species, ScrubStand p_stand);
 	// Passes a year on a worn path that halve the preset's cover, by its growth form (0: not trampled).
 	static float get_trample_resistance(Preset p_preset);
+	// Years to full cover after a fire (PlantSpecies.burn_recovery); 0 for water plants and the burn presets.
+	static float get_burn_recovery(Preset p_preset);
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
@@ -640,6 +662,7 @@ VARIANT_ENUM_CAST(PlantGenerator::BankStand);
 VARIANT_ENUM_CAST(PlantGenerator::BogStand);
 VARIANT_ENUM_CAST(PlantGenerator::DuneStand);
 VARIANT_ENUM_CAST(PlantGenerator::DesertStand);
+VARIANT_ENUM_CAST(PlantGenerator::BurnStand);
 VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
 VARIANT_ENUM_CAST(PlantGenerator::SaltmarshStand);
 VARIANT_ENUM_CAST(PlantGenerator::MarginStand);

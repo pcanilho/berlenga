@@ -251,6 +251,13 @@ private:
 		int mobility_ny = 0;
 		Rect2 mobility_rect;
 		float mobility_at(const Vector2 &p_xz) const;
+		// Years since the ground burnt (WorldFire.burn_age_at), -1 never, on a grid over the map, nearest cell; read
+		// only when the fire contract has a provider and a species uses the burn rule or recovers from fire.
+		LocalVector<float> burn;
+		int burn_nx = 0;
+		int burn_ny = 0;
+		Rect2 burn_rect;
+		float burn_at(const Vector2 &p_xz) const;
 	};
 	struct FarAdd {
 		Vector2 xz;
@@ -277,6 +284,7 @@ private:
 	float _species_range(const Ref<PlantSpecies> &p_species, real_t p_pixel_angle) const;
 	static void _read_sand(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
 	static void _read_sand_mobility(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
+	void _read_burn_age(PlaceSetup &r_setup) const;
 	void _place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles) const;
 	void _commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes);
 	// The maps from the placed crowns and far colour: computed anywhere, applied on the main thread.

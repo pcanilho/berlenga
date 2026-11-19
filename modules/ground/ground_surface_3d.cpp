@@ -478,6 +478,7 @@ void GroundSurface3D::_update_cells() {
 	gpu_cells_dirty = true;
 	near_cells_dirty = true;
 	const WorldWeather *wm = _weather();
+	const WorldFire *fire = WorldContracts::fire();
 	Node *hs = height_source.is_empty() || !is_inside_tree() ? nullptr : get_node_or_null(height_source);
 	const TerrainGenerator3D *gen = rock_from_geology ? Object::cast_to<TerrainGenerator3D>(hs) : nullptr;
 	Node *snow = snow_cover.is_empty() || !is_inside_tree() ? nullptr : get_node_or_null(snow_cover);
@@ -513,6 +514,12 @@ void GroundSurface3D::_update_cells() {
 			in.sand = sand;
 			in.moisture = m;
 			in.litter = litter_depth * CLAMP(closure, 0.0f, 1.0f);
+			// A fire burnt the litter off and left the soil water-repellent (WorldFire).
+			in.repel = 0.0f;
+			if (fire && fire->has_provider()) {
+				in.litter *= 1.0f - CLAMP(fire->burnt_at(p), 0.0f, 1.0f);
+				in.repel = CLAMP(fire->water_repellency_at(p), 0.0f, 1.0f);
+			}
 			// Under more than a few centimetres of snow the snow surface takes the print.
 			in.fixed = rock || (snow && float(snow->call("get_depth_at", p)) > 0.03f);
 			// Frozen ground (round 8): a crust holds; a thaw's wet layer over the frost, or a fresh thaw not yet
@@ -883,6 +890,9 @@ float GroundSurface3D::_water_conductivity(const CellInput &p_in) const {
 	}
 	// Frozen: its pores are ice (meltwater and rain stand on frozen ground).
 	k *= 1.0f - 0.99f * CLAMP(p_in.frozen, 0.0f, 1.0f);
+	// Burnt water-repellent soil sheds rain: infiltration down to about a tenth on a fresh severe burn (Robichaud 2000;
+	// Doerr et al. 2000).
+	k *= 1.0f - 0.9f * p_in.repel;
 	return k;
 }
 
@@ -2672,7 +2682,10 @@ void GroundSurface3D::_runoff_update(double p_delta) {
 					r += 1e-4f * Math::sqrt(g2 / (1.0f + g2)) * MIN(1.0f - tab / 0.02f, 1.0f) * cell.sand;
 				}
 				if (rain > 0.0f) {
-					const float k = Math::exp(Math::lerp(Math::log(1e-6f), Math::log(1e-4f), CLAMP(cell.sand, 0.0f, 1.0f)));
+					float k = Math::exp(Math::lerp(Math::log(1e-6f), Math::log(1e-4f), CLAMP(cell.sand, 0.0f, 1.0f)));
+					if ((int)cell_inputs.size() == n * n) {
+						k *= 1.0f - 0.9f * cell_inputs[li].repel; // burnt water-repellent soil (WorldFire)
+					}
 					r += s >= 0.95f ? rain : MAX(rain - k, 0.0f);
 				}
 			}

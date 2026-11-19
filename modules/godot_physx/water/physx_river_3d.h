@@ -164,6 +164,8 @@ private:
 	float flow_foam_persistence = 4.0f; // s
 	bool flow_foam_impact = true; // also where the water runs into things (water_ripple.glsl)
 	bool live_advected_ripples = true; // ripples carried along the live flow's real paths (water_flow_offset.glsl)
+	bool live_surface_waves = true; // dispersive surface waves over the live window (water_surface_waves.glsl)
+	float live_surface_wave_strength = 1.0f;
 	float live_damping = 0.05f;
 	NodePath live_follow; // empty: the viewport's camera
 
@@ -175,6 +177,8 @@ private:
 	Ref<Texture2DRD> live_height_tex;
 	Ref<Texture2DRD> live_flow_tex;
 	Ref<Texture2DRD> live_offset_tex;
+	Ref<Texture2DRD> live_wave_tex;
+	RID live_wave_rid;
 	Vector<float> live_height_cache;
 	Vector<float> live_velocity_cache;
 	PackedFloat32Array live_depth; // still-water depth per window cell, for the tilt fit
@@ -348,6 +352,10 @@ public:
 	bool get_flow_foam_impact() const { return flow_foam_impact; }
 	void set_live_advected_ripples(bool p_enabled);
 	bool get_live_advected_ripples() const { return live_advected_ripples; }
+	void set_live_surface_waves(bool p_enabled);
+	bool get_live_surface_waves() const { return live_surface_waves; }
+	void set_live_surface_wave_strength(float p_strength);
+	float get_live_surface_wave_strength() const { return live_surface_wave_strength; }
 	void set_live_damping(float p_damping);
 	float get_live_damping() const { return live_damping; }
 	void set_live_follow(const NodePath &p_path);

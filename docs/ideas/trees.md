@@ -2266,6 +2266,49 @@ at the foot. Regrowth internodes are 0.6 of the bush's, leaves 0.65 (hazel, fiel
 0.85 of it. Hawthorn corymbs are tighter (2.4 cm across), 16-32 cream flowers. A segment is now
 160-540k triangles at LOD 0.
 
+### 5ae. Desert shrubs (19 Nov; sand seas, for vegetation)
+
+Asked by vegetation for the sand seas (vegetation.md, "Arid ground"): three woody shrubs as
+`make_shrub_species` presets that it places by RULE_SAND_MOBILITY. Sand banks round them into
+nebkhas; that mound is vegetation's and sand's, not the tree's.
+
+Research:
+- **Calligonum comosum** (Danin 1996, *Plants of Desert Dunes*; Flora Palaestina; Tsoar 2005):
+  1-2 m, many zigzag woody stems from the base with whitish-grey bark that splits in shreds;
+  leafless, the photosynthesis in green jointed twiglets 2-10 cm, two to five from each node,
+  shed in the summer drought (the habit of Ephedra and Casuarina). Fruit an ellipsoid nut
+  8-12 mm with four ribs, each carrying two rows of branched bristles: a ball of bristles
+  15-25 mm, scarlet in April and May, drying to buff. Mobile to semi-stable dunes
+  (mobility 0-0.5); down to about 50 mm of rain.
+- **Retama raetam, white broom** (Zohary 1972; Danin 1996): a broad, rounded broom 1-3 m of
+  slender grooved switches, silky-silvery, erect then hanging at their ends; a few linear
+  leaves 3-8 mm on young shoots, soon gone. White flowers 10-12 mm, calyx purplish, crowding
+  the stems from January to March; small ovoid beaked pods, straw-coloured, not splitting.
+  Stable sand and wadi beds (0-0.35).
+- **Atriplex halimus, Mediterranean saltbush** (Le Houerou 1992; Walker et al. 2014): a dense,
+  much-branched, rounded shrub 1-2.5 m of silty, saline flats and coasts; leaves ovate to
+  rhombic, 2-4 cm, silvery grey from the salt bladders on both faces, matte, kept most of the
+  year; pale woody stems. Interdune flats (0-0.2).
+
+Built (PRESET_CALLIGONUM 46, PRESET_WHITE_BROOM 47, PRESET_SALTBUSH 48; `desert_shrub()`,
+taken by `scrub_shrub()` so young, mature, old, thicket and cushion forms all work):
+- Calligonum: PARAM_NEEDLES with `_add_jointed_twig` instead of a needle: three to five
+  three-sided segments, kinked at each joint, the joint swollen and brown, bowing down to the
+  tip, two or three to a node. Crown part NUT_CALLIGONUM: two stretched balls for the nut and 32
+  forked bristle triangles in eight rows; red to buff by day of year (days 85-215).
+- White broom: broom's flower and pod code with white petals, a purplish calyx and short
+  beaked pods (no split); green-silvery young switches; gravity bending 0.9 and twig droop for
+  the hanging ends. Far colour white in flower; get_leaf_season gives its flowering.
+- Saltbush: small grey leaves on many leaning stems, no light floor, a low leaf specular
+  (0.12, mealy) and a paler underside.
+- Habitats: hot deserts, aridity index from 0.02 (calligonum) to 0.05 (saltbush); no moss,
+  little lichen. make_shrub_species clears the climate rules anyway: vegetation sets them.
+- Bench: `--shrubs --presets=46,47,48 --sand` (sand-coloured ground), `--row=M` for row spacing;
+  `--shrubs --test` checks heights, white broom's season and calligonum's red fruit.
+  Frames: /mnt/project-files/fork/trees/arid/.
+- Not done: Calligonum's small flowers (March), saltbush's autumn fruiting spikes, the twiglets'
+  summer shedding.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

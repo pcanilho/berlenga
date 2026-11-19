@@ -554,6 +554,23 @@ Checks (`docs/bench/weather --test`, cover 0.4, variation 0.35):
   (+10%, reprojection on, 120 frames). So it ships off until the PC's GPU number is in. GPU time on the PC queue. The shadow bake: 48 ms (52 before, noise).
 - `--cloud-time=S` and `--frozen` on the weather bench.
 
+## Step 3f: clouds of many sizes (19 Nov 2026)
+
+At low cover the shape noise (one Worley-Perlin field at one scale) cut cumulus of one size at an even spacing,
+which read as rows of equal puffs toward the horizon. Real fair-weather cumulus are not like that: their sizes
+follow a steep falling distribution, many small clouds and a few large ones (Plank 1969, J. Appl. Meteor. 8,
+46-67; later power-law fits by Benner and Curry 1998), and they cluster. Nubis gets the same effect from its
+hand-painted weather map; we have no painter, so the shape field does it.
+
+As built: a second read of the same 3D shape texture, 2.6 times larger (1/0.382), on a rotated lattice so its
+cells never line up with the first, is blended in by a slow value-noise mask. The blend of two near-uniform
+noises uses the trapezoid CDF of their sum, so the mixed field keeps the first's distribution and the cover
+threshold keeps meaning the same share of sky. The CPU density (shadow bake, path tracer sky) runs the same code.
+`WeatherMap3D.cloud_size_mix` (1, on; 0 gives the old single size).
+
+Checks (`docs/bench/sky --sky --time=13 --pitch=8 --fov=70`, cover 0.15, type 0.3): big and small clouds with
+uneven gaps; sky share of cloud 0.256 at mix 0 and 0.241 at mix 1. Cost: one more texture read per march step.
+
 ## Season state (11 Nov)
 
 One state of the year for every system that follows it: trees (budburst, colour, leaf fall), ground plants

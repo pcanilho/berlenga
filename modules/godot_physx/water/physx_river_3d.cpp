@@ -164,6 +164,10 @@ uniform sampler2D live_flow_tex : hint_default_black, filter_linear, repeat_disa
 // velocity). Phase A in rg, B in ba (m).
 uniform bool live_advected = false;
 uniform sampler2D live_offset_tex : hint_default_black, filter_linear, repeat_disable;
+// Dispersive surface waves over the live window (water_surface_waves.glsl): h (m) in r, on a finer grid.
+uniform bool live_waves = false;
+uniform sampler2D live_wave_tex : hint_default_black, filter_linear, repeat_disable;
+uniform vec2 live_wave_texel = vec2(0.1);
 // Clear water (raster, seen from above; docs/ideas/water.md "Clear water you can see into"): the bed read
 // through the surface along the refracted ray and passed through the path tracer's medium, as on the sea
 // (PhysXWaterSurface3D). Off: the older tint (water_color, shallow_color).
@@ -362,6 +366,13 @@ void fragment() {
 		float hx = texture(live_height_tex, cuv + vec2(du.x, 0.0)).r - texture(live_height_tex, cuv - vec2(du.x, 0.0)).r;
 		float hz = texture(live_height_tex, cuv + vec2(0.0, du.y)).r - texture(live_height_tex, cuv - vec2(0.0, du.y)).r;
 		live_slope = (vec2(hx, hz) / (2.0 * live_texel) - live_tilt.yz) * live;
+		if (live_waves) {
+			// The surface waves' slope (central differences on their own grid).
+			vec2 dw = live_wave_texel / live_size;
+			float wx = texture(live_wave_tex, cuv + vec2(dw.x, 0.0)).r - texture(live_wave_tex, cuv - vec2(dw.x, 0.0)).r;
+			float wz = texture(live_wave_tex, cuv + vec2(0.0, dw.y)).r - texture(live_wave_tex, cuv - vec2(0.0, dw.y)).r;
+			live_slope += vec2(wx, wz) / (2.0 * live_wave_texel) * live;
+		}
 	}
 	vec2 p = v_world.xz * ripple_scale;
 	vec2 o_a;
@@ -827,6 +838,10 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_flow_foam_impact"), &PhysXRiver3D::get_flow_foam_impact);
 	ClassDB::bind_method(D_METHOD("set_live_advected_ripples", "enabled"), &PhysXRiver3D::set_live_advected_ripples);
 	ClassDB::bind_method(D_METHOD("get_live_advected_ripples"), &PhysXRiver3D::get_live_advected_ripples);
+	ClassDB::bind_method(D_METHOD("set_live_surface_waves", "enabled"), &PhysXRiver3D::set_live_surface_waves);
+	ClassDB::bind_method(D_METHOD("get_live_surface_waves"), &PhysXRiver3D::get_live_surface_waves);
+	ClassDB::bind_method(D_METHOD("set_live_surface_wave_strength", "strength"), &PhysXRiver3D::set_live_surface_wave_strength);
+	ClassDB::bind_method(D_METHOD("get_live_surface_wave_strength"), &PhysXRiver3D::get_live_surface_wave_strength);
 	ClassDB::bind_method(D_METHOD("set_live_damping", "damping"), &PhysXRiver3D::set_live_damping);
 	ClassDB::bind_method(D_METHOD("get_live_damping"), &PhysXRiver3D::get_live_damping);
 	ClassDB::bind_method(D_METHOD("set_live_follow", "path"), &PhysXRiver3D::set_live_follow);
@@ -904,6 +919,8 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam_persistence", PROPERTY_HINT_RANGE, "0.1,60,0.1,suffix:s"), "set_flow_foam_persistence", "get_flow_foam_persistence");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flow_foam_impact"), "set_flow_foam_impact", "get_flow_foam_impact");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_advected_ripples"), "set_live_advected_ripples", "get_live_advected_ripples");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_surface_waves"), "set_live_surface_waves", "get_live_surface_waves");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_surface_wave_strength", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_live_surface_wave_strength", "get_live_surface_wave_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_damping", PROPERTY_HINT_RANGE, "0,1,0.005"), "set_live_damping", "get_live_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "live_follow", PROPERTY_HINT_NODE_TYPE, "Node3D"), "set_live_follow", "get_live_follow");
 	ADD_GROUP("Carve", "carve_");
@@ -1226,6 +1243,21 @@ void PhysXRiver3D::set_flow_foam_impact(bool p_enabled) {
 	}
 }
 
+void PhysXRiver3D::set_live_surface_waves(bool p_enabled) {
+	live_surface_waves = p_enabled;
+	if (live_configured) {
+		live_solver.set_surface_waves(live_surface_waves, live_surface_wave_strength);
+	}
+	_live_material();
+}
+
+void PhysXRiver3D::set_live_surface_wave_strength(float p_strength) {
+	live_surface_wave_strength = MAX(p_strength, 0.0f);
+	if (live_configured) {
+		live_solver.set_surface_waves(live_surface_waves, live_surface_wave_strength);
+	}
+}
+
 void PhysXRiver3D::set_live_advected_ripples(bool p_enabled) {
 	live_advected_ripples = p_enabled;
 	if (live_configured) {
@@ -1384,6 +1416,10 @@ void PhysXRiver3D::_live_stop() {
 	if (live_offset_tex.is_valid()) {
 		live_offset_tex->set_texture_rd_rid(RID());
 	}
+	if (live_wave_tex.is_valid()) {
+		live_wave_tex->set_texture_rd_rid(RID());
+	}
+	live_wave_rid = RID();
 	live_bound = false;
 	live_configured = false;
 	live_height_cache.clear();
@@ -1408,6 +1444,12 @@ void PhysXRiver3D::_live_material() {
 		water_material->set_shader_parameter(SNAME("live_offset_tex"), live_offset_tex);
 	}
 	water_material->set_shader_parameter(SNAME("live_advected"), on && live_advected_ripples && live_offset_tex.is_valid());
+	const bool waves = on && live_surface_waves && live_wave_tex.is_valid() && live_wave_rid.is_valid();
+	if (waves) {
+		water_material->set_shader_parameter(SNAME("live_wave_tex"), live_wave_tex);
+		water_material->set_shader_parameter(SNAME("live_wave_texel"), Vector2(live_domain_size, live_domain_size) / 512.0f);
+	}
+	water_material->set_shader_parameter(SNAME("live_waves"), waves);
 }
 
 // The live window: the shallow-water solver of PhysXWaterSurface3D's live flow
@@ -1468,6 +1510,7 @@ void PhysXRiver3D::_live_update(double p_delta) {
 		live_solver.configure(st);
 		live_solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
 		live_solver.set_advected_ripples(live_advected_ripples, RIVER_FLOW_PERIOD);
+		live_solver.set_surface_waves(live_surface_waves, live_surface_wave_strength);
 		live_solver.set_base_flux(flux, wall_friction);
 		live_configured = true;
 		live_fields_dirty = false;
@@ -1730,6 +1773,16 @@ void PhysXRiver3D::_notification(int p_what) {
 				water_material->set_shader_parameter(SNAME("water_time"), (float)Math::fmod(water_time, 3600.0));
 				if (live_configured) {
 					live_solver.set_flow_clock((float)Math::fmod(water_time, 3600.0)); // (the clock the ripples' phases run on)
+					// The surface waves' texture is made on their first step (and again after a clear): follow it.
+					const RID wave_rid = live_bound && live_surface_waves ? live_solver.get_surface_wave_texture_rd_rid() : RID();
+					if (wave_rid != live_wave_rid) {
+						if (live_wave_tex.is_null()) {
+							live_wave_tex.instantiate();
+						}
+						live_wave_tex->set_texture_rd_rid(wave_rid);
+						live_wave_rid = wave_rid;
+						_live_material();
+					}
 				}
 				raster_reflection_state.update(this, water_material, raster_reflections);
 			}

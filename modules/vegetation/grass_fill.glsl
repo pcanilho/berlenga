@@ -210,6 +210,7 @@ void main() {
 	const float x = (float(ix) + unit(hj, 0)) * cell;
 	const float z = (float(iz) + unit(hj, 8)) * cell;
 	float y = inp[H_GROUND_Y];
+	float edge = 1.0;
 	const float passes = passes_at(x, z);
 	if (rank >= keep * trample_cover(passes)) {
 		write_zero(b);
@@ -221,6 +222,9 @@ void main() {
 			write_zero(b);
 			return;
 		}
+		// Soft edges (docs/ideas/grass.md, "Colour without blotches"): where the rules thin the sward (a patch's edge,
+		// a fade to another ground) the blades left also grow shorter, so the sward tapers instead of ending in a wall.
+		edge = round(mix(0.5, 1.0, smoothstep(0.0, 0.7, suitability(x, z))) * 16.0) / 16.0; // As _edge_height().
 		y = height_at(x, z);
 	}
 	// Clumps (Ghost of Tsushima): blades of a clump share height, facing and dryness.
@@ -231,7 +235,7 @@ void main() {
 	const float light = light_at(x, z);
 	const float shade_t = 1.0 - clamp(light, 0.0, 1.0);
 	const float sun_t = smoothstep(1.0, 1.3, light);
-	const float height = mix(inp[H_HMIN], inp[H_HMAX], 0.65 * clump_h + 0.35 * unit(hj, 16)) * (1.0 + 0.35 * shade_t - 0.15 * sun_t) * trample_scale(passes);
+	const float height = mix(inp[H_HMIN], inp[H_HMAX], 0.65 * clump_h + 0.35 * unit(hj, 16)) * (1.0 + 0.35 * shade_t - 0.15 * sun_t) * trample_scale(passes) * edge;
 	const float yaw = clump_yaw + (unit(hj, 24) - 0.5) * 1.6;
 
 	// to_local * Transform3D(Basis(Y, yaw), (x, y, z)).

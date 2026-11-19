@@ -2981,7 +2981,15 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 		g += _dune_sample(dune_sand, p_x, p_z);
 	}
 	if (!sea_sand.is_empty()) {
-		g += _sea_sample(p_x, p_z);
+		// The sand buries the ground's detail and gullies: it settles on the simulated ground the sea was grown on,
+		// not on the noise added after, which would print through as lumps a few metres high all over the stoss.
+		const float sand = _sea_sample(p_x, p_z);
+		if (sand > 0.0f) {
+			const float bury = float(Math::smoothstep(0.2, 2.0, double(sand)));
+			const float base = _sample(heights, p_x, p_z);
+			g = g + (base - g) * bury;
+			g += sand;
+		}
 	}
 	return g;
 }
@@ -3493,10 +3501,38 @@ float TerrainGenerator3D::_sea_sample(real_t p_x, real_t p_z) const {
 	if (sea_nx < 2 || sea_nz < 2 || sea_sand.size() != uint32_t(sea_nx * sea_nz)) {
 		return 0.0f;
 	}
-	const real_t gx = (p_x - sea_origin.x) / sea_cell;
-	const real_t gz = (p_z - sea_origin.y) / sea_cell;
+	real_t gx = (p_x - sea_origin.x) / sea_cell;
+	real_t gz = (p_z - sea_origin.y) / sea_cell;
 	if (gx < 0.0 || gz < 0.0 || gx > real_t(sea_nx - 1) || gz > real_t(sea_nz - 1)) {
 		return 0.0f;
+	}
+	// Crest-line sinuosity: a transverse brink is never ruler-straight. It meanders over tens of metres and scallops
+	// over ten or so where the slip face's grainflows cut back into it (Hunter 1977; Ewing, Kocurek and Lake 2006 for
+	// crest-line defects). The cells resolve neither, so the whole sea is shifted along the wind by a smooth noise of
+	// the along-crest coordinate: up to 0.6 cell (some 2.4 m) over 10 cells and 0.18 cell over 3.5. A shift along
+	// the wind only moves each crest and slip face downwind or back; the stoss and the flats barely change.
+	if (sea_brink_dir != Vector2()) {
+		const real_t s = -gx * sea_brink_dir.y + gz * sea_brink_dir.x;
+		auto n1 = [](real_t p_s, uint32_t p_k) {
+			const real_t fl = Math::floor(p_s);
+			const int64_t i = int64_t(fl);
+			auto hsh = [p_k](int64_t p_i) {
+				uint32_t h = uint32_t(p_i) * 0x9E3779B1u ^ (p_k * 0x85EBCA77u);
+				h ^= h >> 15;
+				h *= 0x2C1B3C6Du;
+				h ^= h >> 12;
+				h *= 0x297A2D39u;
+				h ^= h >> 15;
+				return real_t(h) * real_t(1.0 / 4294967295.0) * 2.0 - 1.0;
+			};
+			real_t f = p_s - fl;
+			f = f * f * (3.0 - 2.0 * f);
+			return Math::lerp(hsh(i), hsh(i + 1), f);
+		};
+		const uint32_t k = uint32_t(seed) * 2654435761u;
+		const real_t shift = 0.6 * n1(s / 10.0, k + 1u) + 0.18 * n1(s / 3.5 + 0.37, k + 2u);
+		gx = CLAMP(gx + sea_brink_dir.x * shift, real_t(0.0), real_t(sea_nx - 1));
+		gz = CLAMP(gz + sea_brink_dir.y * shift, real_t(0.0), real_t(sea_nz - 1));
 	}
 	real_t v = _sea_cubic(gx, gz);
 	// The brink: a transverse dune's crest is a sharp break between the long stoss and the slip face, narrower than a
@@ -3696,7 +3732,7 @@ void TerrainGenerator3D::_build_sand_sea() {
 			mx = MAX(mx, double(v));
 		}
 	}
-	// The stoss and the interdune flats smoothed further (four more passes): the slabs leave lumps a few cells
+	// The stoss and the interdune flats smoothed further (ten more passes): the slabs leave lumps a few cells
 	// across there that read as noise mounds from afar, while a real stoss is smooth under its ripples. Not where
 	// the sand stands steeper than about 17 degrees to any neighbour (slip faces, brinks and their foot), so the
 	// crests stay sharp.
@@ -3704,7 +3740,7 @@ void TerrainGenerator3D::_build_sand_sea() {
 		LocalVector<float> tmp;
 		tmp.resize(w * h);
 		const float lim = float(0.3 * sc), full = float(0.2 * sc);
-		for (int pass = 0; pass < 4; pass++) {
+		for (int pass = 0; pass < 10; pass++) {
 			for (int z = 0; z < h; z++) {
 				for (int x = 0; x < w; x++) {
 					const int i = z * w + x;
@@ -3723,6 +3759,84 @@ void TerrainGenerator3D::_build_sand_sea() {
 			}
 			for (int i = 0; i < w * h; i++) {
 				sea_sand[i] = tmp[i];
+			}
+		}
+	}
+	// What is left on the stoss are lumps 5 to 10 cells across (20-40 m), a few metres high: from a low camera they
+	// read as soft mounds hiding the crests. A wide normalized convolution (Knutsson and Westin 1993) over the stoss
+	// and flats only: cells within two of a slip face (sand dropping downwind past about 29 degrees) weigh
+	// nothing, so neither the crest nor the face is pulled into the average, and the result blends in over two
+	// more cells. Three box passes of radius 3, near a Gaussian of 3.5 cells.
+	{
+		LocalVector<float> face, wgt, num, den, tmp;
+		face.resize(w * h);
+		// A slip face drops downwind at the angle of repose (32-34 degrees); a lump's flanks are rarely past 29.
+		// Without one wind (linear, star seas) any steep drop counts.
+		const float drop = float(0.55 * sc);
+		const Vector2 u = sea_brink_dir;
+		auto at = [&](real_t p_x, real_t p_z) {
+			const int x0 = CLAMP(int(Math::floor(p_x)), 0, w - 2), z0 = CLAMP(int(Math::floor(p_z)), 0, h - 2);
+			const float fx = float(CLAMP(p_x - x0, real_t(0.0), real_t(1.0))), fz = float(CLAMP(p_z - z0, real_t(0.0), real_t(1.0)));
+			const float a = Math::lerp(sea_sand[z0 * w + x0], sea_sand[z0 * w + x0 + 1], fx);
+			const float b = Math::lerp(sea_sand[(z0 + 1) * w + x0], sea_sand[(z0 + 1) * w + x0 + 1], fx);
+			return Math::lerp(a, b, fz);
+		};
+		for (int z = 0; z < h; z++) {
+			for (int x = 0; x < w; x++) {
+				const float c = sea_sand[z * w + x];
+				float steep = 0.0f;
+				if (u != Vector2()) {
+					steep = MAX(c - at(x + u.x, z + u.y), at(x - u.x, z - u.y) - c);
+				} else {
+					for (int dz = -1; dz <= 1; dz++) {
+						for (int dx = -1; dx <= 1; dx++) {
+							steep = MAX(steep, Math::abs(sea_sand[CLAMP(z + dz, 0, h - 1) * w + CLAMP(x + dx, 0, w - 1)] - c));
+						}
+					}
+				}
+				face[z * w + x] = steep > drop ? 1.0f : 0.0f;
+			}
+		}
+		tmp.resize(w * h);
+		auto box = [&](LocalVector<float> &p_v, int p_r, bool p_max) {
+			for (int axis = 0; axis < 2; axis++) {
+				for (int z = 0; z < h; z++) {
+					for (int x = 0; x < w; x++) {
+						float acc = 0.0f;
+						for (int d = -p_r; d <= p_r; d++) {
+							const int xx = axis == 0 ? CLAMP(x + d, 0, w - 1) : x;
+							const int zz = axis == 1 ? CLAMP(z + d, 0, h - 1) : z;
+							const float v = p_v[zz * w + xx];
+							acc = p_max ? MAX(acc, v) : acc + v;
+						}
+						tmp[z * w + x] = p_max ? acc : acc / float(2 * p_r + 1);
+					}
+				}
+				for (int i = 0; i < w * h; i++) {
+					p_v[i] = tmp[i];
+				}
+			}
+		};
+		box(face, 2, true); // within two cells of a face
+		wgt.resize(w * h);
+		num.resize(w * h);
+		// Nor where the ground stands bare (hills out of the sand, the river gaps): their edges stay where they are.
+		const float thin = float(0.5);
+		for (int i = 0; i < w * h; i++) {
+			wgt[i] = (1.0f - face[i]) * CLAMP(sea_sand[i] / thin - 1.0f, 0.0f, 1.0f);
+			num[i] = sea_sand[i] * wgt[i];
+		}
+		den = wgt;
+		for (int pass = 0; pass < 3; pass++) {
+			box(num, 3, false);
+			box(den, 3, false);
+		}
+		box(face, 1, false); // the blend out from the faces
+		box(face, 1, false);
+		for (int i = 0; i < w * h; i++) {
+			if (den[i] > 0.05f) {
+				const float k = wgt[i] * (1.0f - CLAMP(face[i] * 1.5f, 0.0f, 1.0f));
+				sea_sand[i] = MAX(Math::lerp(sea_sand[i], num[i] / den[i], k), 0.0f);
 			}
 		}
 	}

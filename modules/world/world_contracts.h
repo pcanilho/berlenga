@@ -174,6 +174,10 @@ public:
 	virtual void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) {}
 	virtual void contract_water_clear(uint64_t p_owner) {}
 	virtual void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) {}
+	// Suspended load (kg/m3): x mineral (silt, clay: brown), y ash and char (grey to black). Zero for clear water.
+	virtual Vector2 contract_water_sediment_at(const Vector3 &p_position) const { return Vector2(); }
+	// A load entering this water at the point (kg/s of each), from runoff, banks or a landslide; it carries it on.
+	virtual void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) {}
 	virtual ~WorldWaterProvider() {}
 };
 
@@ -194,6 +198,8 @@ protected:
 	GDVIRTUAL4(_disturb, uint64_t, Vector3, float, float)
 	GDVIRTUAL1(_clear, uint64_t)
 	GDVIRTUAL3(_impulse, Vector3, float, float)
+	GDVIRTUAL1RC(Vector2, _sediment_at, Vector3)
+	GDVIRTUAL3(_add_sediment, Vector3, float, float)
 
 public:
 	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -207,6 +213,10 @@ public:
 	void disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength);
 	void clear(uint64_t p_owner);
 	void impulse(const Vector3 &p_position, float p_radius, float p_strength);
+	// The water's suspended load at the point (kg/m3): x mineral, y ash and char; the shading clouds and darkens by it.
+	Vector2 sediment_at(const Vector3 &p_position) const;
+	// A load entering the water that answers at the point (kg/s of mineral and of ash); none there: it is lost.
+	void add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s);
 };
 
 // Fire: what burns where, for what it heats (snow, the surface water, the air) and chars.
@@ -218,6 +228,7 @@ public:
 	virtual float contract_fire_stem_char_at(const Vector3 &p_position) const { return 0.0f; } // m, char a stem foot there took
 	virtual float contract_fire_burn_age_at(const Vector3 &p_position) const { return -1.0f; } // years since it last burnt there, -1 never
 	virtual float contract_fire_crown_scorch_at(const Vector3 &p_position) const { return 0.0f; } // m, crowns killed up to this height
+	virtual float contract_fire_water_repellency_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, burnt soil shedding rain
 	virtual ~WorldFireProvider() {}
 };
 
@@ -236,6 +247,7 @@ protected:
 	GDVIRTUAL1RC(float, _stem_char_at, Vector3)
 	GDVIRTUAL1RC(float, _burn_age_at, Vector3)
 	GDVIRTUAL1RC(float, _crown_scorch_at, Vector3)
+	GDVIRTUAL1RC(float, _water_repellency_at, Vector3)
 
 public:
 	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -255,6 +267,9 @@ public:
 	// How high the fire killed tree crowns over the point (m): Van Wagner's lethal scorch height of the front that
 	// passed, or a crown that burnt (1000). The most of any fire; 0 where none burnt.
 	float crown_scorch_at(const Vector3 &p_position) const;
+	// How water-repellent the fire left the soil at the point, 0..1 (1: it takes almost no rain in; the ground's
+	// infiltration falls by up to nine tenths). Fades over a year or two. The most of any fire; 0 where none burnt.
+	float water_repellency_at(const Vector3 &p_position) const;
 };
 
 // Ground: the deformable ground's surface, soil and what lies on it (docs/ideas/world-contracts.md, Ground).
