@@ -1202,6 +1202,24 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			const float fallen = Math::smoothstep(0.62f, 0.65f, rk_noise(p_p * 0.55f + Vector3(float(i) * 3.1f, 0, 0), nseed + 94u));
 			return r * (0.3f + 1.4f * along) + 0.14f * c * layered * fallen;
 		};
+		// The bed a point is in (its index in bed_at), for the stack's blocks.
+		auto bed_index = [&](const Vector3 &p_p) -> int {
+			if (bed_at.size() < 2) {
+				return 0;
+			}
+			const float q = p_p[bed_axis] + dip.dot(p_p);
+			int i = 0;
+			while (i + 2 < int(bed_at.size()) && bed_at[i + 1] <= q) {
+				i++;
+			}
+			return i;
+		};
+		// The stack's two vertical joint sets (across the beds), 60 to 90 degrees apart, a metre or two between joints.
+		// (Their own generator: the shared one's sequence shapes the arches and platforms after this.)
+		RandomPCG jrng(uint64_t(nseed) * 0x9E3779B97F4A7C15ull + 0x51ull);
+		const float jth = jrng.randf() * float(Math::TAU), jth2 = jth + float(Math::PI) * (0.33f + 0.17f * jrng.randf());
+		const Vector3 jt_dir1(0.0f, Math::cos(jth), Math::sin(jth)), jt_dir2(0.0f, Math::cos(jth2), Math::sin(jth2));
+		const float jt_s1 = (0.32f + 0.2f * jrng.randf()) * c, jt_s2 = (0.32f + 0.2f * jrng.randf()) * c;
 		// Stack: the notch a fifth of the way up the solid as it stands after the cuts (not the grid's box).
 		float x_lo = 1e9f, x_hi = -1e9f;
 		for (int z = 0; z < fine.nz; z++) {
@@ -1285,7 +1303,17 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						}
 						v += rec;
 					}
-					if (family != FAMILY_SEA_PLATFORM) {
+					if (family == FAMILY_SEA_STACK) {
+						// A stack's faces are the faces of the blocks the joints and beds cut it into (Old Harry, the
+						// Twelve Apostles): each block between two vertical joints and two bed planes stands proud or
+						// sits back by its own amount, flat, so the face reads as masonry with sharp arrises where the
+						// blocks meet (a step one cell wide), not as noise lumps. A faint lump stays on each block.
+						const float js1 = jt_dir1.dot(p) / jt_s1 + 0.15f * (rk_noise(p * 0.7f, nseed + 105u) - 0.5f);
+						const float js2 = jt_dir2.dot(p) / jt_s2 + 0.15f * (rk_noise(p * 0.7f, nseed + 106u) - 0.5f);
+						const uint32_t bid = rk_hash(uint32_t(int(Math::floor(js1)) + 1024) * 73856093u ^ uint32_t(int(Math::floor(js2)) + 1024) * 19349663u ^ uint32_t(bed_index(p) + 64) * 83492791u ^ nseed);
+						const float bo = float(bid & 0xFFFFu) / 65535.0f;
+						v += 0.12f * c * (bo - 0.5f) + 0.025f * c * (rk_fbm(p * 2.4f, nseed + 102u, 3) - 0.5f);
+					} else if (family != FAMILY_SEA_PLATFORM) {
 						// No joint face is a plane at this size: blocks a metre or so across stand proud or sit back
 						// by a hand's breadth (quantised noise, so the facets meet in edges), with a lumpy face on them.
 						const float blk = rk_noise(p * 1.6f, nseed + 101u) * 4.0f;
@@ -1762,6 +1790,11 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		const bool old_inland = family == FAMILY_CORESTONE || family == FAMILY_HOODOO || family == FAMILY_GOBLIN || family == FAMILY_FIN;
 		const float inland = old_inland ? 0.6f : 0.5f * Math::smoothstep(0.4f, 0.9f, weather);
 		tafoni = lith_t * MAX(float(get_effective_salt()), inland) * float(detail);
+		// Limestone's coast forms dissolve rather than crumble grain by grain: spray pitting and notches, few tafoni
+		// (the Twelve Apostles, the Algarve stacks); crowded hollows read as a sponge on a limestone column.
+		if (coast_form && rock_type == ROCK_LIMESTONE) {
+			tafoni *= 0.3f;
+		}
 		if (family == FAMILY_PEBBLE || family == FAMILY_COBBLE || family == FAMILY_ROCKFALL || family == FAMILY_SCREE || family == FAMILY_CLIFF_BLOCK) {
 			tafoni = 0.0f;
 		}
@@ -1929,7 +1962,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			const float cell = karst ? 0.16f : 0.07f;
 			const float wd = rk_worley(p / cell, nseed + 21u);
 			const float pit = MAX(0.0f, 0.55f - wd) / 0.55f;
-			const float mask = karst ? Math::smoothstep(0.2f, 0.7f, n.y) * weather : 0.6f;
+			const float mask = karst ? Math::smoothstep(0.2f, 0.7f, n.dot(t_up)) * weather : 0.6f; // on the faces up as the field stands it (a column is up on its x)
 			phi += lith.pits * float(detail) * mask * pit * pit * MAX(1.6f * hb, cell * 0.22f) * (karst ? worn : 1.0f);
 		}
 		// Bedding laminae etched out by weathering (differential erosion of the softer laminae), slightly cross-bedded.
@@ -1954,7 +1987,11 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// et al. 2004). Worley cells, carved inside and left standing along the cell boundaries (F2 - F1 small).
 		if (tafoni > 0.05f) {
 			const float mpu = float(get_family_metres_per_unit(family));
-			const float cell = MAX(0.06f / MAX(mpu, 1e-3f), 1.3f * min_period);
+			const float real_cell = 0.06f / MAX(mpu, 1e-3f);
+			const float cell = MAX(real_cell, 1.3f * min_period);
+			// Where the grid cannot hold centimetre cells (a stack's or arch's grid is decimetres) they would come out
+			// as fist-sized black pits all over the face: fade them out once a cell is past twice its real size.
+			const float holds = 1.0f - Math::smoothstep(1.6f, 2.4f, cell / real_cell);
 			float f1, f2;
 			uint32_t cid;
 			rk_worley2(p / cell, nseed + 161u, f1, f2, cid);
@@ -1962,7 +1999,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			const float patch = Math::smoothstep(0.3f, 0.5f, rk_fbm(p * (0.6f / cell), nseed + 162u, 2) + 0.3f * MIN(tafoni, 1.0f));
 			const float side = 1.0f - Math::smoothstep(0.55f, 0.85f, n.dot(t_up)); // not on tops that rain washes
 			const float cdepth = 0.45f * cell * (0.7f + 0.6f * float(cid & 255u) / 255.0f);
-			phi += MIN(tafoni, 1.0f) * inner * patch * side * cdepth * worn;
+			phi += MIN(tafoni, 1.0f) * inner * patch * side * cdepth * worn * holds;
 		}
 		// Close-up: the rock's own millimetre fabric as geometry (crystals, grains, vesicles, karren, cleavage steps,
 		// conchoidal ripples on fresh breaks), so the path tracer and raster see the same relief.

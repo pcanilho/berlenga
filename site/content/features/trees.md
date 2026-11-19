@@ -42,6 +42,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
   *Surface roots: buttress roots spread from the trunk into the litter, with moss in the crotches between them.*
 
 - **Bark** (`bark_relief`): a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing. Smooth beech bark shows cross-stem creases, lenticel streaks and fine grain, and carries stemflow tracks, low algae and crust lichen.
+- **Close-up bark** (`BarkDetail3D`: `density`, `detail_pixels`): loose bark as real pieces on trunks near the camera, by bark family: lifting plates on pines, small scales, flakes curling out at one end and torn strips of paper bark, with the inner bark showing on their undersides and broken edges.
 - **Bark stories** (`bark_wounds`): frost ribs, lightning scars, deer stripping and resin runs on trunks; drying checks open as real splits and knots on lying logs.
 - **Branch-scar chevrons** (`bark_chevrons`): living beech and birch carry dark chevrons below shed limbs, longer and flatter with age, black on birch.
 - **Bark moss** (`moss_cover`): moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions with ragged margins near the camera.
