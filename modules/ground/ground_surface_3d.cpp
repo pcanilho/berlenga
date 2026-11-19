@@ -5464,19 +5464,32 @@ void GroundSurface3D::_avalanche_trigger(const Vector3 &p_position, float p_radi
 	if (n < 8) {
 		return;
 	}
-	// The toe: the lobe is the run's last fifth and 30 cm on past it onto the easing ground.
-	a.lobe_from = MAX(int(0.8f * n), 1);
+	// The toe: the flow piles up where the face eases (Breton et al. 2008; field lobes 2 to 5 cm thick): the lobe is
+	// the run's last 25 cm, bulging a little wider, and a rounded snout 28 cm on past it onto the easing ground,
+	// narrowing to its tip. Its thickness rises over the lobe's first quarter and holds to the snout.
+	a.lobe_from = MAX(n - MAX(int(0.25f / step), n / 12), 1);
+	for (int k = a.lobe_from; k < n; k++) {
+		a.path[k].y *= 1.0f + 0.15f * Math::smoothstep(0.0f, 1.0f, float(k - a.lobe_from) / MAX(float(n - a.lobe_from), 1.0f));
+	}
 	const Vector3 last = a.path[n - 1];
 	const Vector3 prev = a.path[n - 2];
 	const Vector2 dir = Vector2(last.x - prev.x, last.z - prev.z).normalized();
-	for (int k = 1; k <= 7; k++) {
+	const int snout = 7;
+	for (int k = 1; k <= snout; k++) {
 		const Vector2 q = Vector2(last.x, last.z) + dir * (step * k);
-		a.path.push_back(Vector3(q.x, last.y * (1.0f + 0.04f * k), q.y));
+		const float u = float(k) / float(snout + 1);
+		a.path.push_back(Vector3(q.x, MAX(last.y * Math::sqrt(1.0f - u * u), 0.04f), q.y));
 	}
 	for (int k = a.lobe_from; k < (int)a.path.size(); k++) {
-		a.lobe_area += AVAL_TENT * AVAL_TENT * a.path[k].y * a.path[k].y; // tents (_avalanche_update())
+		a.lobe_area += _aval_lobe_weight(a, k) * AVAL_TENT * AVAL_TENT * a.path[k].y * a.path[k].y; // tents (_avalanche_update())
 	}
 	avalanches.push_back(a);
+}
+
+// A lobe step's share of the deposit: rising over the lobe's first quarter, so its upslope end feathers into the scar.
+float GroundSurface3D::_aval_lobe_weight(const Avalanche &p_a, int p_k) {
+	const float u = float(p_k - p_a.lobe_from) / MAX(float((int)p_a.path.size() - p_a.lobe_from), 1.0f);
+	return 0.15f + 0.85f * Math::smoothstep(0.0f, 0.25f, u);
 }
 
 void GroundSurface3D::_avalanche_update(double p_delta) {
@@ -5487,6 +5500,10 @@ void GroundSurface3D::_avalanche_update(double p_delta) {
 	// Tents 1.6 times the flow's half width, not flat discs: discs 4 cm apart left each one's edge as a terrace,
 	// a row of arcs down the tongue like contour lines.
 	field.amount_tent = true;
+	// The face's sand under the flow is the same dry sand: the scar shows by its relief, barely by tint (0..1 for a
+	// dig: GroundDeformField::amount_fresh).
+	const float fresh_before = field.amount_fresh;
+	field.amount_fresh = 0.25f;
 	for (int i = int(avalanches.size()) - 1; i >= 0; i--) {
 		Avalanche &a = avalanches[i];
 		// A grain flow runs at about a metre a second (a few cm thick on a slip face; Breton et al. 2008).
@@ -5499,17 +5516,17 @@ void GroundSurface3D::_avalanche_update(double p_delta) {
 			const float r = MAX(q.y, 0.05f);
 			const Vector3 at(q.x, _ground_at(q.x, q.z), q.z);
 			if (k < a.lobe_from) {
-				// The scour: 1.5 cm thinning to 4 mm down the face, as an area-averaged layer over discs 4 cm apart
+				// The scour: 2.5 cm thinning to 8 mm down the face, as an area-averaged layer over discs 4 cm apart
 				// (each point under about 2r / 4 cm of them).
 				const float t = float(k) / MAX(float(a.lobe_from), 1.0f);
-				const float layer = Math::lerp(0.015f, 0.004f, t) * (0.8f + 0.4f * _aval_hash(a.seed, 100u + uint32_t(k / 5)));
+				const float layer = Math::lerp(0.025f, 0.008f, t) * (0.8f + 0.4f * _aval_hash(a.seed, 100u + uint32_t(k / 5)));
 				const float rt = AVAL_TENT * r;
 				const float depth = layer * step * 2.0f * r / (rt * rt); // a tent moves rt^2 depth
 				a.scoured += rt * rt * depth;
 				_amount(at, rt, depth, 0.0f);
 			} else if (a.lobe_area > 0.0f) {
 				// The lobe: what the scour took, spread over its tents, a share each by its area.
-				const float depth = a.scoured / a.lobe_area;
+				const float depth = a.scoured * _aval_lobe_weight(a, k) / a.lobe_area;
 				_amount(at, AVAL_TENT * r, -depth, 0.0f);
 			}
 		}
@@ -5518,6 +5535,7 @@ void GroundSurface3D::_avalanche_update(double p_delta) {
 		}
 	}
 	field.amount_tent = false;
+	field.amount_fresh = fresh_before;
 }
 
 void GroundSurface3D::_plough_bodies() {
@@ -6852,22 +6870,22 @@ float GroundSurface3D::press(Vector3 p_position, float p_radius, float p_bottom,
 	return moved;
 }
 
-float GroundSurface3D::press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink) {
+float GroundSurface3D::press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink, bool p_sole) {
 	_ice_break(p_position, 0.5f * MAX(p_size.x, p_size.y), 0.03f);
 	Columns cols;
 	cols.surface = this;
 	const Cell &c = _cell_at(p_position.x, p_position.z);
 	field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
-	const float moved = field.press(cols, p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, false, contact_tolerance);
+	const float moved = field.press(cols, p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, p_sole, contact_tolerance);
 	if (!_gpu_on()) {
 		_avalanche_trigger(p_position, 0.5f * p_size.length(), p_bottom);
 	}
 	if (is_near_active()) {
 		near_fld.press_settle = field.press_settle;
-		near_fld.press(cols, p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, false, contact_tolerance);
+		near_fld.press(cols, p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, p_sole, contact_tolerance);
 	}
 	if (_gpu_on() && field.valid) {
-		gpu_sink.stamp(cols, p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, false, contact_tolerance, Vector2());
+		gpu_sink.stamp(cols, p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, p_sole, contact_tolerance, Vector2());
 	}
 	return moved;
 }
@@ -7375,7 +7393,7 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_gpu_active"), &GroundSurface3D::is_gpu_active);
 	ClassDB::bind_method(D_METHOD("sync_deformation"), &GroundSurface3D::sync_deformation);
 	ClassDB::bind_method(D_METHOD("press", "position", "radius", "bottom", "sink", "round"), &GroundSurface3D::press, DEFVAL(0.0f), DEFVAL(true));
-	ClassDB::bind_method(D_METHOD("press_box", "position", "size", "yaw", "bottom", "sink"), &GroundSurface3D::press_box, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("press_box", "position", "size", "yaw", "bottom", "sink", "sole"), &GroundSurface3D::press_box, DEFVAL(0.0f), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("get_sinkage_at", "position", "mass", "area", "width"), &GroundSurface3D::get_sinkage_at, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("settle", "seconds", "step"), &GroundSurface3D::settle, DEFVAL(1.0f / 60.0f));
 	ClassDB::bind_method(D_METHOD("clear_deformation"), &GroundSurface3D::clear_deformation);

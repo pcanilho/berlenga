@@ -317,6 +317,7 @@ private:
 	LocalVector<AvalancheMark> avalanche_marks;
 	void _avalanche_trigger(const Vector3 &p_position, float p_radius, float p_bottom);
 	void _avalanche_update(double p_delta);
+	static float _aval_lobe_weight(const Avalanche &p_a, int p_k);
 	float contact_tolerance = 0.03f;
 	float character_mass = 75.0f;
 	float character_contact_area = 0.035f;
@@ -1058,7 +1059,7 @@ public:
 	// Presses the ground like SnowSurface3D.press(): down to p_bottom under a sphere (p_round) or a flat
 	// disc of p_radius, plus p_sink below the undisturbed surface. Returns the volume moved, m3.
 	float press(Vector3 p_position, float p_radius, float p_bottom, float p_sink = 0.0f, bool p_round = true);
-	float press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink = 0.0f);
+	float press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink = 0.0f, bool p_sole = false);
 	// Bekker sinkage of a body of p_mass kg on p_area m2 (width p_width) at a place, m.
 	float get_sinkage_at(Vector3 p_position, float p_mass, float p_area, float p_width = 0.0f) const;
 	// Runs slumping and ageing for p_seconds at once (tests, and settling a scene after loading).

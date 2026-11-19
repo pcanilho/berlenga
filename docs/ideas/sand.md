@@ -780,6 +780,13 @@ Any dig, however shallow, set the fresh-ground tint in full, so the tents' tails
 of prints into one dark, blocky rectangle. The tint now scales with the dig's depth, full from 3 mm (CPU field and
 GPU shader alike).
 
+Docs round 2 on the tongues (faint stains, no lobe; prints identical capsule dishes): the flow now scours 2.5 cm
+thinning to 8 mm and piles everything it took into its last 25 cm and a rounded snout 28 cm on, a lobe about 3 cm
+high (field lobes 2 to 5 cm, Breton et al. 2008), its thickness rising over the lobe's first quarter; the scar is
+tinted at a quarter of a dig's (the same dry sand, shown by its relief). The bench's prints are boot soles
+(`press_box(..., sole = true)`: heel, forefoot, tread), toed out and alternating across the walk. `--test=avalanche`
+checks the lobe's height.
+
 The tongue's scour and lobe are now tents 1.6 times the flow's half width: flat discs 4 cm apart left each disc's
 edge as a terrace, a row of arcs down the tongue like contour lines. A change of the surface now planes the
 ripples by its depth over a ripple's height (4 mm), read between the field's texels at each ripple cell: the old
