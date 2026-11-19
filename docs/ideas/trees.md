@@ -2309,6 +2309,20 @@ taken by `scrub_shrub()` so young, mature, old, thicket and cushion forms all wo
 - Not done: Calligonum's small flowers (March), saltbush's autumn fruiting spikes, the twiglets'
   summer shedding.
 
+### 5af. Needle cast after fire (19 Nov; PhysX's standing snags)
+
+Foliage a surface fire kills (browned up to the lethal scorch height, Van Wagner 1973) is not
+kept: scorched needles fall over the following months, most within the first year, and the
+needle cast mulches the burnt ground (Pannkuk and Robichaud 2003; Cram et al. 2015 on ponderosa
+pine). Built in the leaf and needle shader (_flutter_material's fire block): PhysXFireSpread3D's
+fire_age_map (R8, game years since the cell caught / 2, over fire_char_rect) gives the age; each
+killed leaf (fire_foliage_apply's scorch share, its leaf hash) is discarded once
+1 - exp(-age / 0.3 yr) passes a second hash: about 55% gone at three months, 96% at a year. Bare
+branches are left; crowns above the scorch height stay green. Leaves on trees the fire killed
+outright (TreeWind3D's snags) but above the scorch height are not cast yet (that needs the
+per-tree state in the shader). Bench: env FIRE_AGE=Y SCORCH=H on main.gd renders; frames
+/mnt/project-files/fork/trees/fire/.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
