@@ -437,6 +437,7 @@ public:
 
 	Rect2 get_map_rect() const;
 	float get_depth_at(Vector3 p_position) const; // m
+	float get_surface_depth_at(Vector3 p_position) const; // m, Catmull-Rom between cells as the drawn surface
 	float get_swe_at(Vector3 p_position) const; // mm
 	float get_density_at(Vector3 p_position) const; // kg/m3
 	float get_albedo_at(Vector3 p_position) const;
@@ -467,6 +468,8 @@ public:
 	Vector2 contract_snow_lake_ice_at(const Vector3 &p_position) const override;
 	void contract_snow_add_impurity(const Vector3 &p_position, float p_radius, float p_mg_per_m2) override { add_impurity(p_position, p_radius, p_mg_per_m2); }
 	float contract_snow_impurity_at(const Vector3 &p_position) const override { return get_impurity_at(p_position); }
+	float contract_snow_avalanche_pressure_at(const Vector3 &p_position) const override;
+	float contract_snow_avalanche_peak_pressure_at(const Vector3 &p_position) const override;
 	void add_impurity(Vector3 p_position, float p_radius, float p_mg_per_m2);
 	float get_impurity_at(Vector3 p_position) const;
 	// The albedo the particles take off clean snow: 0.35 (1 - e^(-L / 15 mg/m2)), about 0.02 for the first mg/m2 (Warren

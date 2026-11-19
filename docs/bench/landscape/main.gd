@@ -42,6 +42,7 @@ extends Node3D
 #   --ice-converged       with --glacial: solve the steady ice to convergence (glacial_converged)
 #   --dunes=steps|0       coastal dunes behind the beaches (dunes_enabled, on); --dune-supply=m3/m, --dune-belt=m,
 #                         --dune-cell=m, --dune-wind=degrees from onshore, --dune-veg=0..1 (0: bare sand)
+#   --find-nebkhas        print the sand sea's nebkha count and the tallest (then quit)
 #   --sand-sea=x0,z0,w,d  a desert sand sea over that rect (sand_sea_rect); --sand-sea-kind=transverse|barchan|
 #                         linear|star, --sand-sea-depth=m, --sand-sea-wind=degrees, --sand-sea-scale=m, --sand-sea-steps=n
 #   --touch=x,z,w,d,mode,y[,depth,falloff,bowl];...  TerrainBrush3D touch-ups under the generator (lower, raise,
@@ -203,6 +204,16 @@ func _ready() -> void:
 			print("[landscape] cave entrance %s facing %s" % [e["position"], e["out"]])
 		for e in net.find_sea_entrances(gen.get_world_rect(), n):
 			print("[landscape] sea cave entrance %s facing %s" % [e["position"], e["out"]])
+		get_tree().quit(0)
+		return
+	if args.has("find-nebkhas"):
+		# --find-nebkhas: how many nebkhas the sand sea grew and the tallest few (x, top y, z, height).
+		var neb := gen.get_nebkhas(gen.sand_sea_rect)
+		var tall := Array(neb)
+		tall.sort_custom(func(a, b): return a.w > b.w)
+		print("[landscape] %d nebkhas" % neb.size())
+		for i in mini(12, tall.size()):
+			print("[landscape] nebkha %s" % tall[i])
 		get_tree().quit(0)
 		return
 	if args.has("dune-map"):

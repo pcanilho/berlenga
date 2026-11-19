@@ -601,6 +601,77 @@ void RockField3D::_prepare_rivers() {
 	}
 }
 
+// The river layer's segments that reach into p_rect, with the bed's median size as the river layer sets it (what the
+// flow can move and what still arrives from upstream). Needs _prepare_rivers.
+void RockField3D::_river_segments(const Rect2 &p_rect, LocalVector<RiverSeg> &r_segs) const {
+	for (uint32_t r = 0; r < rivers.size(); r++) {
+		const River &rv = rivers[r];
+		if (!rv.bounds.grow(20.0).intersects(p_rect)) {
+			continue;
+		}
+		// Each river's pools and riffles start at their own place along it.
+		const float phase = float(hash_murmur3_one_32(r * 7919u + 17u) & 0xffffu) / 65536.0f * float(Math::TAU);
+		for (uint32_t i = 0; i + 1 < rv.points.size(); i++) {
+			const Vector3 a = rv.points[i], b = rv.points[i + 1];
+			const float w = 0.5f * (rv.widths[i] + rv.widths[i + 1]);
+			const Rect2 seg_rect = Rect2(Vector2(a.x, a.z), Vector2()).expand(Vector2(b.x, b.z)).grow(w);
+			if (!seg_rect.intersects(p_rect)) {
+				continue;
+			}
+			const Vector2 dir2 = Vector2(b.x - a.x, b.z - a.z);
+			const float len = dir2.length();
+			if (len < 1e-3f) {
+				continue;
+			}
+			// As the river layer (_place, LAYER_RIVER): Shields threshold and Sternberg fining.
+			const float q = 0.5f * (rv.discharge[i] + rv.discharge[i + 1]);
+			const float depth = 0.27f * Math::pow(MAX(q, 1e-3f), 0.4f);
+			const float slope = CLAMP((a.y - b.y) / len, 1e-4f, 0.3f);
+			const float dist = rv.distance[i];
+			const float competent = depth * slope / (1.65f * 0.045f);
+			const float supplied = 0.5f * Math::exp(-(dist + 0.5f * len) / 20000.0f);
+			RiverSeg sg;
+			sg.a = Vector2(a.x, a.z);
+			sg.f = dir2 / len;
+			sg.side = Vector2(-sg.f.y, sg.f.x);
+			sg.len = len;
+			sg.w = w;
+			sg.d50 = CLAMP(MIN(competent, supplied), 0.005f, 1.2f);
+			sg.s0 = dist;
+			sg.phase = phase;
+			sg.type = rv.head_type;
+			r_segs.push_back(sg);
+		}
+	}
+}
+
+// The bed one segment gives at p: inside the river layer's band (0.6 of the width either side of the line), with the
+// median coarse in the riffles and fine in the pools between them, about six widths apart (Leopold, Wolman and Miller
+// 1964; Keller and Melhorn 1978), coarser down the thalweg than on the bars at the sides, and the pools' slack water
+// draping fines over their bed (silt). False outside. p_texel: a map's texel; a bed narrower than it is spread over it,
+// thinner by as much.
+bool RockField3D::_river_bed(const RiverSeg &p_seg, const Vector2 &p_xz, RiverBed &r_bed, float p_texel) {
+	const Vector2 d = p_xz - p_seg.a;
+	const float t = d.dot(p_seg.f);
+	if (t < -0.5f * p_seg.w || t > p_seg.len + 0.5f * p_seg.w) {
+		return false;
+	}
+	const float we = MAX(p_seg.w, p_texel);
+	const float u = Math::abs(d.dot(p_seg.side)) / MAX(we, 0.5f);
+	if (u >= 0.6f) {
+		return false;
+	}
+	const float s = p_seg.s0 + CLAMP(t, 0.0f, p_seg.len);
+	const float riffle = 0.5f + 0.5f * Math::cos(float(Math::TAU) * s / (6.0f * MAX(p_seg.w, 1.0f)) + p_seg.phase);
+	r_bed.band = (1.0f - Math::smoothstep(0.42f, 0.6f, u)) * MIN(p_seg.w / we, 1.0f);
+	r_bed.d50 = p_seg.d50 * (0.5f + 0.9f * riffle) * (1.0f - 0.35f * Math::smoothstep(0.1f, 0.6f, u));
+	r_bed.silt = (1.0f - riffle) * (1.0f - riffle) * (1.0f - 0.5f * Math::smoothstep(0.2f, 0.6f, u));
+	r_bed.f = p_seg.f;
+	r_bed.side = p_seg.side;
+	r_bed.type = p_seg.type;
+	return true;
+}
+
 /* Placement */
 
 // A stone at rest: yawed, its up partly following the ground (p_follow_ground 0 level, 1 on the slope), tilted, sunk
@@ -2005,7 +2076,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			_detail_sizes(p_layer, scree_dmin, pd1, pd2); // talus: up to the scree layer's own smallest
 			const bool shore_on = layer_enabled[LAYER_SHORE] && sd2 > sd1 * 1.01f;
 			const bool scree_on = layer_enabled[LAYER_SCREE] && pd2 > pd1 * 1.01f;
-			if (!shore_on && !scree_on) {
+			// River beds: the river layer's own bed carried on below min_size, as the shore's (the rivers are read only
+			// once prepared on the main thread: _detail_prepare, build_area).
+			LocalVector<RiverSeg> rsegs;
+			if (detail_rivers && layer_enabled[LAYER_RIVER] && sd2 > sd1 * 1.01f && rivers_ready) {
+				_river_segments(p_rect.grow(1.0), rsegs);
+			}
+			if (!shore_on && !scree_on && rsegs.is_empty()) {
 				break;
 			}
 			// Each class's cover (count x mean footprint) is held under about half the ground: past that the
@@ -2019,6 +2096,8 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				float scree = 0.0f; // and from the talus's power law (exponent 2.5)
 				float d50 = 0.0f; // the shore's median size, m
 				float e = 0.0f; // height above the water line
+				float river = 0.0f; // and from a river bed's log-normal
+				RiverBed bed;
 			};
 			LocalVector<DetailCorner> corners;
 			corners.resize((nx + 1) * (nz + 1));
@@ -2070,13 +2149,33 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					}
 				}
 			}
+			// Each river segment over the corners it reaches; where two overlap (a bend, a junction) the one deeper inside.
+			for (const RiverSeg &sg : rsegs) {
+				const Rect2 r = Rect2(sg.a, Vector2()).expand(sg.a + sg.f * sg.len).grow(0.6f * sg.w + 0.5f);
+				const int i0 = MAX(int(Math::floor((r.position.x - p_rect.position.x) / sub)), 0), i1 = MIN(int(Math::ceil((r.get_end().x - p_rect.position.x) / sub)), nx);
+				const int j0 = MAX(int(Math::floor((r.position.y - p_rect.position.y) / sub)), 0), j1 = MIN(int(Math::ceil((r.get_end().y - p_rect.position.y) / sub)), nz);
+				for (int j = j0; j <= j1; j++) {
+					for (int i = i0; i <= i1; i++) {
+						DetailCorner &dc = corners[j * (nx + 1) + i];
+						RiverBed bed;
+						if (!_river_bed(sg, Vector2(p_rect.position.x + i * sub, p_rect.position.y + j * sub), bed) || bed.band <= dc.bed.band) {
+							continue;
+						}
+						dc.bed = bed;
+						// A gravel bed is clast-supported like shingle; the pools' drape of fines hides most of it.
+						const float sig = 0.6f * float(Math::SQRT2);
+						const float share = 0.5f * (std::erfc(Math::log(sd1 / bed.d50) / sig) - std::erfc(Math::log(sd2 / bed.d50) / sig));
+						dc.river = MIN(0.85f * bed.band * share * (1.0f - 0.75f * bed.silt) / (0.785f * sd1 * sd2), cap_shore);
+					}
+				}
+			}
 			const float pa = Math::pow(pd1, -2.5f), pb = Math::pow(pd2, -2.5f);
 			for (int j = 0; j < nz; j++) {
 				for (int i = 0; i < nx; i++) {
 					const DetailCorner *cc[4] = { &corners[j * (nx + 1) + i], &corners[j * (nx + 1) + i + 1], &corners[(j + 1) * (nx + 1) + i], &corners[(j + 1) * (nx + 1) + i + 1] };
 					float rate_max = 0.0f;
 					for (const DetailCorner *k : cc) {
-						rate_max = MAX(rate_max, k->shore + k->scree);
+						rate_max = MAX(rate_max, k->shore + k->scree + k->river);
 					}
 					if (rate_max <= 0.0f) {
 						continue;
@@ -2087,25 +2186,63 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					for (int k = 0; k < count; k++) {
 						const float fx = rng.randf(), fz = rng.randf();
 						const float w[4] = { (1 - fx) * (1 - fz), fx * (1 - fz), (1 - fx) * fz, fx * fz };
-						float shore = 0.0f, scree = 0.0f, d50 = 0.0f, e = 0.0f, ws = 0.0f;
+						float shore = 0.0f, scree = 0.0f, river = 0.0f, d50 = 0.0f, e = 0.0f, ws = 0.0f;
+						float rd50 = 0.0f, silt = 0.0f, wr = 0.0f;
+						const RiverBed *bed = nullptr;
 						for (int q = 0; q < 4; q++) {
 							shore += w[q] * cc[q]->shore;
 							scree += w[q] * cc[q]->scree;
+							river += w[q] * cc[q]->river;
+							if (cc[q]->bed.band > 0.0f) {
+								rd50 += w[q] * cc[q]->bed.d50;
+								silt += w[q] * cc[q]->bed.silt;
+								wr += w[q];
+								if (!bed || w[q] > 0.25f) {
+									bed = &cc[q]->bed;
+								}
+							}
 							if (cc[q]->d50 > 0.0f) {
 								d50 += w[q] * cc[q]->d50;
 								e += w[q] * cc[q]->e;
 								ws += w[q];
 							}
 						}
-						const float total = shore + scree;
+						const float total = shore + scree + river;
 						if (total <= 0.0f || rng.randf() * rate_max > total) {
 							continue;
 						}
+						const float pick = rng.randf() * total;
 						Pending pd;
 						pd.xz = Vector3(x + fx * sub, 0, z + fz * sub);
 						pd.yaw = rng.randf() * Math::TAU;
 						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
-						if (ws > 0.0f && rng.randf() * total < shore) {
+						if (bed && wr > 0.0f && pick >= shore && pick < shore + river) {
+							rd50 /= wr;
+							silt /= wr;
+							// The bed's log-normal kept to this class, as the shore's.
+							float d = 0.0f;
+							for (int tries = 0; tries < 12; tries++) {
+								const float t = rd50 * Math::exp(rng.randfn(0.0f, 0.6f));
+								if (t >= sd1 && t < sd2) {
+									d = t;
+									break;
+								}
+							}
+							pd.size = d > 0.0f ? d : sd1 * Math::pow(sd2 / sd1, rng.randf());
+							// Most of a river's stones come from its headwaters (as the river layer's).
+							const RockGenerator::RockType rt = rng.randf() < 0.7f ? bed->type : type;
+							pd.key = _library_key(rt, RockGenerator::FAMILY_PEBBLE, RF_DETAIL_BIN + (p_layer - LAYER_DETAIL_PEBBLE));
+							// Imbrication (as the river layer's cobbles): the long axis across the flow, each grain dipping
+							// upstream on the one before it like roof tiles, 10 to 30 degrees (Rust 1972; the a-b plane's
+							// upstream dip of a flowing gravel bed).
+							pd.yaw = Math::atan2(-bed->f.x, -bed->f.y) + (rng.randf() - 0.5f) * 0.7f;
+							pd.tilt_axis = Vector3(bed->side.x, 0, bed->side.y);
+							pd.tilt = Math::deg_to_rad(10.0f + 20.0f * rng.randf());
+							// Set deeper in the pools, where the fines drape them.
+							pd.sink = 0.25f + 0.1f * rng.randf() + 0.2f * silt;
+							pd.follow = 0.6f;
+							pd.film = 1.0f;
+						} else if (ws > 0.0f && pick < shore) {
 							d50 /= ws;
 							e /= ws;
 							// The shore's log-normal, kept to this class (a log-uniform pick when the class is far in its tail).
@@ -2369,6 +2506,7 @@ MultiMeshInstance3D *RockField3D::_add_group_instance(const Ref<MultiMesh> &p_mu
 void RockField3D::_detail_prepare(DetailJob &r_job) {
 	r_job.field = this;
 	r_job.gen = _get_generator();
+	_prepare_rivers(); // the river beds' grains read them on the worker
 	const Layer layer = Layer(r_job.key.x);
 	const real_t cs = _cell_size(layer);
 	const Rect2 rect(r_job.key.y * cs, r_job.key.z * cs, cs, cs);
@@ -4225,6 +4363,7 @@ int RockField3D::build_area(const Rect2 &p_rect) {
 	_watch_holes();
 	int built = 0;
 	_update_detail_radii();
+	_prepare_rivers();
 	_update_cover(true);
 	const Vector3 tp = _detail_center();
 	for (int l = 0; l < LAYER_MAX; l++) {
@@ -5040,6 +5179,24 @@ void RockField3D::_cover_fill(CoverJob *p_job) {
 	memset(w, 0, n * n * 4);
 	static const Vector2 probes[9] = { Vector2(0, 0), Vector2(4, 0), Vector2(-4, 0), Vector2(0, 4), Vector2(0, -4), Vector2(10, 0), Vector2(-10, 0), Vector2(0, 10), Vector2(0, -10) };
 	const float sig = 0.6f * float(Math::SQRT2);
+	// The river beds first, each segment over the texels it reaches (the one deeper inside wins).
+	LocalVector<RiverBed> beds;
+	if (!p_job->river_segs.is_empty()) {
+		beds.resize(n * n);
+		for (const RiverSeg &sg : p_job->river_segs) {
+			const Rect2 r = Rect2(sg.a, Vector2()).expand(sg.a + sg.f * sg.len).grow(0.6f * MAX(sg.w, p_job->texel) + p_job->texel);
+			const int i0 = MAX(int((r.position.x - p_job->origin.x) / p_job->texel), 0), i1 = MIN(int((r.get_end().x - p_job->origin.x) / p_job->texel), n - 1);
+			const int j0 = MAX(int((r.position.y - p_job->origin.y) / p_job->texel), 0), j1 = MIN(int((r.get_end().y - p_job->origin.y) / p_job->texel), n - 1);
+			for (int j = j0; j <= j1; j++) {
+				for (int i = i0; i <= i1; i++) {
+					RiverBed bed;
+					if (_river_bed(sg, p_job->origin + Vector2(i + 0.5f, j + 0.5f) * p_job->texel, bed, p_job->texel) && bed.band > beds[j * n + i].band) {
+						beds[j * n + i] = bed;
+					}
+				}
+			}
+		}
+	}
 	for (int j = 0; j < n; j++) {
 		for (int i = 0; i < n; i++) {
 			const Vector3 c(p_job->origin.x + (i + 0.5f) * p_job->texel, 0, p_job->origin.y + (j + 0.5f) * p_job->texel);
@@ -5070,6 +5227,18 @@ void RockField3D::_cover_fill(CoverJob *p_job) {
 							cover[k] += 0.85f * band * share;
 							any = true;
 						}
+					}
+				}
+			}
+			if (!beds.is_empty() && beds[j * n + i].band > 0.0f) {
+				// The river bed's log-normal, as the detail cells (and the pools' drape of fines over it).
+				const RiverBed &bed = beds[j * n + i];
+				for (int k = 0; k < 3; k++) {
+					const float d1 = p_job->sizes[k][0], d2 = p_job->sizes[k][1];
+					if (d2 > d1 * 1.01f) {
+						const float share = 0.5f * (std::erfc(Math::log(d1 / bed.d50) / sig) - std::erfc(Math::log(d2 / bed.d50) / sig));
+						cover[k] += 0.85f * bed.band * share * (1.0f - 0.75f * bed.silt);
+						any = true;
 					}
 				}
 			}
@@ -5157,6 +5326,11 @@ void RockField3D::_update_cover(bool p_wait) {
 		job->shore = layer_enabled[LAYER_SHORE];
 		job->scree = layer_enabled[LAYER_SCREE];
 		job->scree_dmin = MAX(float(min_size), 0.15f);
+		job->river = detail_rivers && layer_enabled[LAYER_RIVER];
+		if (job->river) {
+			_prepare_rivers();
+			_river_segments(Rect2(job->origin, Vector2(span, span)), job->river_segs);
+		}
 		for (int k = 0; k < 3; k++) {
 			_detail_sizes(Layer(LAYER_DETAIL_PEBBLE + k), min_size, job->sizes[k][0], job->sizes[k][1]);
 			_detail_sizes(Layer(LAYER_DETAIL_PEBBLE + k), job->scree_dmin, job->scree_sizes[k][0], job->scree_sizes[k][1]);
@@ -5221,6 +5395,28 @@ void RockField3D::_clear_cover() {
 	}
 	cover_valid[0] = cover_valid[1] = false;
 	_push_cover();
+}
+
+// Off: the river beds keep only the river layer's stones (their grains and their far cover go; cells already built
+// are built again).
+void RockField3D::set_ground_detail_rivers(bool p_enabled) {
+	if (detail_rivers == p_enabled) {
+		return;
+	}
+	detail_rivers = p_enabled;
+	_detail_cancel();
+	_clear_cover();
+	LocalVector<Vector3i> drop;
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		if (_is_detail(kv.key.x)) {
+			stone_count -= kv.value.stones;
+			_free_cell(kv.value);
+			drop.push_back(kv.key);
+		}
+	}
+	for (const Vector3i &k : drop) {
+		cells.erase(k);
+	}
 }
 
 void RockField3D::set_ground_detail_cover(bool p_enabled) {
@@ -5487,6 +5683,8 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_ground_detail_count", "layer"), &RockField3D::get_ground_detail_count, DEFVAL(-1));
 	ClassDB::bind_method(D_METHOD("set_cell_threads", "enabled"), &RockField3D::set_cell_threads);
 	ClassDB::bind_method(D_METHOD("is_cell_threads"), &RockField3D::is_cell_threads);
+	ClassDB::bind_method(D_METHOD("set_ground_detail_rivers", "enabled"), &RockField3D::set_ground_detail_rivers);
+	ClassDB::bind_method(D_METHOD("is_ground_detail_rivers"), &RockField3D::is_ground_detail_rivers);
 	ClassDB::bind_method(D_METHOD("set_ground_detail_cover", "enabled"), &RockField3D::set_ground_detail_cover);
 	ClassDB::bind_method(D_METHOD("is_ground_detail_cover"), &RockField3D::is_ground_detail_cover);
 	ClassDB::bind_method(D_METHOD("get_ground_detail_cover_texture", "level"), &RockField3D::get_ground_detail_cover_texture);
@@ -5551,6 +5749,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cell_threads"), "set_cell_threads", "is_cell_threads");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_threads"), "set_ground_detail_threads", "is_ground_detail_threads");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_cover"), "set_ground_detail_cover", "is_ground_detail_cover");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_rivers"), "set_ground_detail_rivers", "is_ground_detail_rivers");
 	ADD_GROUP("Breaking", "break_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "break_pieces", PROPERTY_HINT_RANGE, "2,48,1"), "set_break_pieces", "get_break_pieces");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "break_prepare_radius", PROPERTY_HINT_RANGE, "0,50,0.5,suffix:m"), "set_break_prepare_radius", "get_break_prepare_radius");

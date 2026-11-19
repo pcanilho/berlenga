@@ -1273,6 +1273,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Flood silt",
+   "settings": [
+    "GroundSurface3D.flood_silt"
+   ],
+   "note": "",
+   "what": "rivers over their banks and other floodwater soak the ground and leave their silt behind as fresh mud.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Mud slides",
    "settings": [
     "GroundSurface3D.mud_slides"
@@ -1537,10 +1548,11 @@
     "RockField3D",
     "ground_detail",
     "ground_detail_pixels",
-    "ground_detail_cover"
+    "ground_detail_cover",
+    "ground_detail_rivers"
    ],
    "note": "",
-   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach or scree around them, each drawn only while it stays a few pixels tall; the path tracer traces every one. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop.",
+   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -3224,10 +3236,11 @@
   {
    "name": "Dirty snow",
    "settings": [
-    "SnowCover3D.impurities_enabled"
+    "SnowCover3D.impurities_enabled",
+    "rockfall_dust"
    ],
    "note": "",
-   "what": "smoke, burnt forest and settling dust darken the snow and make it melt sooner, until fresh snow buries the dirt.",
+   "what": "smoke, burnt forest, rockfall dust and other settling dust darken the snow and make it melt sooner, until fresh snow buries the dirt.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3414,10 +3427,11 @@
     "powder_enabled",
     "forests_enabled",
     "wet_enabled",
-    "glide_enabled"
+    "glide_enabled",
+    "water_enabled"
    ],
    "note": "",
-   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees. In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep, and on a wet base the whole pack glides and releases to the ground.",
+   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees. In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice and breaks through thin ice.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
@@ -3964,7 +3978,7 @@
     "collapse_share"
    ],
    "note": "",
-   "what": "wooden buildings catch from embers and ground fire; rooms flash over, the window glass breaks into falling shards and flames lean out (`glass_panes`), fire spreads room to room, ceilings and roofs sag and fall in, and the frame collapses. A hose or fluid water knocks a room back below flashover and puts it out, with steam pouring from its windows; a weak stream only holds it (`apply_water()`).",
+   "what": "wooden buildings catch from embers and ground fire; rooms flash over, the window glass breaks into falling shards (`glass_panes`) and flames run up the wall above as sheets bent by the wind; wind blows in through windward openings, pushes hot gas through the doors and drives the flames out to leeward; fire spreads room to room, ceilings and roofs sag and fall in, and the frame collapses. Burnt-out rooms smoulder for hours, smoking and shedding embers in the wind, and can rekindle. A hose or fluid water knocks a room back below flashover and puts it out, with steam pouring from its windows; a weak stream only holds it (`apply_water()`).",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

@@ -1400,6 +1400,16 @@ Round 4, third part. `SnowAvalanche3D.water_enabled`, on by default. Lakes are t
   - The storm avalanche into an open lake at the face's foot puts 585 t in, 0.09 m thick over 148 m at 10.4 m/s, into 4.2 m of water: one wave, 0.53 m near the entry and 0.25 m 60 m out.
   - 65 cm of ice carries it with no wave and no breaks. 4 cm of ice breaks in 20 cells and 580 t goes in.
 
+## Follow-up 27: the debris and surface look; avalanche pressure in the snow contract (19 Nov 2026)
+
+Docs flagged four things on the wet slide bench: spiky grey cones at the toe, a crown drawn as a row of dark dots, dark specks mid-slope, and faceted low-poly foreground snow.
+
+- **Cones** were clumps stacking. Each stop event dropped blocks on its cell, and a cell that stopped again and again piled them into cones metres high. Now the granules are dropped once per cell when the run ends, on the settled debris, over the whole cell. They are sized as avalanche granules (`SnowClumps3D.drop` size_scale 2 dry to 5 wet, so about 10 cm dry and wet snowballs of about 40 cm; Bartelt and McArdell 2009) and use the flow's own wetness.
+- **Debris relaxation**: after the two smoothing passes, the debris slumps to its angle of repose, 32 degrees dry to 40 wet. This is talus relaxation, the thermal-erosion pass of Musgrave et al. (1989), a quarter of each excess per pass, up to 16 passes. A lone stopped cell no longer stands as a spike.
+- **Facets** came from bilinear depth between 2 m cells, which creases along every cell edge. The drawn surface (`SnowSurface3D`, GPU) and its collision and deformation columns (CPU, `SnowCover3D.get_surface_depth_at`) now use Catmull-Rom over 4 x 4 cells (Keys 1981), clamped to the four nearest cells' range so it never rings. It still passes through every cell value, so no detail is lost.
+- **Crown dots and specks** were bare ground. The bench storm lay on bare ground, so the scar and thin patches showed earth. The `--wet` and `--triggered` views now lay an old, bonded 60 cm pack first, so the slab leaves a white bed and a step.
+- **Pressure contract**: `SnowCover3D` answers world-links' `WorldSnow.avalanche_pressure_at` and `avalanche_peak_pressure_at` from its avalanche node. The forest test reads 20 kPa through it. The peak is per run (it resets when the next avalanche releases).
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

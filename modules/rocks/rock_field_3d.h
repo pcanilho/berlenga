@@ -102,6 +102,18 @@ private:
 		RockGenerator::RockType head_type = RockGenerator::ROCK_GRANITE;
 		Rect2 bounds;
 	};
+	struct RiverSeg {
+		Vector2 a, f, side; // start (world xz), downstream and left unit vectors
+		float len = 0.0f, w = 0.0f, d50 = 0.0f, s0 = 0.0f, phase = 0.0f;
+		RockGenerator::RockType type = RockGenerator::ROCK_GRANITE;
+	};
+	struct RiverBed {
+		float band = 0.0f; // 0..1 inside the bed
+		float d50 = 0.0f; // the local median, m
+		float silt = 0.0f; // 0..1 the fines draped over the bed in a pool
+		Vector2 f, side;
+		RockGenerator::RockType type = RockGenerator::ROCK_GRANITE;
+	};
 
 	struct Library {
 		LocalVector<Ref<ArrayMesh>> meshes;
@@ -204,10 +216,13 @@ private:
 		float scree_dmin = 0.15f;
 		bool shore = true;
 		bool scree = true;
+		bool river = true;
+		LocalVector<RiverSeg> river_segs; // the river beds under the map
 		PackedByteArray data; // RGBA8: pebble, gravel and fine cover (0..0.5 as 0..255), rock type (x 32)
 		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
 	};
 	bool ground_cover = true;
+	bool detail_rivers = true; // ground detail on the river beds
 	Ref<ImageTexture> cover_tex[2];
 	Vector2 cover_origin[2];
 	bool cover_valid[2] = {};
@@ -416,6 +431,10 @@ private:
 	Library *_ensure_library(uint32_t p_key);
 	void _ensure_libraries(const LocalVector<uint32_t> &p_keys);
 	void _prepare_rivers();
+	// Ground detail on river beds (docs/ideas/ground-detail.md, "River and stream beds"): the river layer's segments
+	// near a rectangle, each with its bed's median size, and the bed one gives at a point (its pools and riffles).
+	void _river_segments(const Rect2 &p_rect, LocalVector<RiverSeg> &r_segs) const;
+	static bool _river_bed(const RiverSeg &p_seg, const Vector2 &p_xz, RiverBed &r_bed, float p_texel = 0.0f);
 	RockGenerator::RockType _type_at(const TerrainGenerator3D *p_gen, const Vector3 &p_pos) const;
 
 public:
@@ -561,6 +580,8 @@ public:
 	real_t get_build_budget_msec() const { return build_budget_msec; }
 	void set_cell_threads(bool p_enabled);
 	bool is_cell_threads() const { return cell_threads; }
+	void set_ground_detail_rivers(bool p_enabled);
+	bool is_ground_detail_rivers() const { return detail_rivers; }
 	void set_ground_detail_cover(bool p_enabled);
 	bool is_ground_detail_cover() const { return ground_cover; }
 	Ref<Texture2D> get_ground_detail_cover_texture(int p_level) const;

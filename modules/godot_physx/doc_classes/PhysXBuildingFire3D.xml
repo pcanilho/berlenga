@@ -69,6 +69,12 @@
 				Fire seconds from when it started stepping to its first catch (scaled by [member time_scale]), or [code]-1[/code] if it has not caught.
 			</description>
 		</method>
+		<method name="get_rekindle_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Times a room that had gone out burst back into flame from its smouldering debris.
+			</description>
+		</method>
 		<method name="get_room_char_depth" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="room" type="int" />
@@ -101,6 +107,13 @@
 			<param index="0" name="room" type="int" />
 			<description>
 				Seconds from a room's ignition to its flashover, or -1 if it has not flashed over.
+			</description>
+		</method>
+		<method name="get_room_ember" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="room" type="int" />
+			<description>
+				How hard a burnt-out room's debris still glows, [code]0[/code] (cold) to [code]1[/code]. It dies away over hours in still air, is kept down by rain and water, and is fanned up by wind where the debris lies open. At [code]0.6[/code], if fuel is left, the room relights ([signal rekindled]).
 			</description>
 		</method>
 		<method name="get_room_fuel_left" qualifiers="const">
@@ -252,6 +265,12 @@
 			<param index="0" name="cause" type="String" />
 			<description>
 				Emitted once, when the building first catches; [param cause] as [method get_ignition_cause].
+			</description>
+		</signal>
+		<signal name="rekindled">
+			<param index="0" name="room" type="int" />
+			<description>
+				Emitted when a room that had gone out bursts back into flame from its smouldering debris.
 			</description>
 		</signal>
 	</signals>

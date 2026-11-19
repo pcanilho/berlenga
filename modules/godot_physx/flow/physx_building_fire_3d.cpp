@@ -317,6 +317,24 @@ void PhysXBuildingFire3D::_ignite_room(int p_room, const Vector3 &p_local) {
 	r.origin = Vector3(CLAMP(p_local.x, lo.x, MAX(hi.x, lo.x)), r.box.position.y, CLAMP(p_local.z, lo.z, MAX(hi.z, lo.z)));
 }
 
+// Its debris lies open to the wind: fallen in, roofless, or with an opening to the outside.
+bool PhysXBuildingFire3D::_exposed(const Room &p_room) const {
+	if (p_room.collapsed || p_room.roof_open) {
+		return true;
+	}
+	for (const Opening &o : p_room.openings) {
+		if (o.to_room < 0 && (!o.glazed || o.broken)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+float PhysXBuildingFire3D::get_room_ember(int p_room) const {
+	ERR_FAIL_INDEX_V(p_room, (int)rooms.size(), 0.0f);
+	return rooms[p_room].ember;
+}
+
 // The building's first catch, for whoever counts losses (a village bench, a game's damage report): when and by
 // what, the way post-fire surveys of wildland-urban interface fires class it (Maranghides and Mell 2011).
 void PhysXBuildingFire3D::_note_ignition(const String &p_cause) {
@@ -532,6 +550,7 @@ void PhysXBuildingFire3D::_sample(float p_delta) {
 	}
 	const float ig = 0.25f * Math::PI * WOOD_KRHOC * 330.0f * 330.0f;
 	const Transform3D inv = get_global_transform().affine_inverse();
+	rain_now = rain;
 	_sample_fluids(inv);
 	for (uint32_t i = 0; i < rooms.size(); i++) {
 		Room &r = rooms[i];
@@ -612,15 +631,39 @@ void PhysXBuildingFire3D::_step_room(int p_room, float p_delta) {
 	const float water_kw = (r.water_kg + r.fluid_kg) * PhysXSteam::BOIL_HEAT / 8.0f / 1000.0f;
 	r.water_kg = MAX(r.water_kg - r.water_kg * p_delta / 8.0f, 0.0f);
 	r.cooling = (r.state == ROOM_COLD || r.state == ROOM_OUT) ? 0.0f : water_kw;
-	if (r.state == ROOM_OUT && water_kw > 0.0f) {
-		r.ember = MAX(r.ember - p_delta / 30.0f, 0.0f); // the char drowned
+	if (r.state == ROOM_OUT && r.water_kg + r.fluid_kg > 0.1f) {
+		// The char drowned, all but pockets deep in the fuel left, which a stream seldom reaches (most rekindles start
+		// there).
+		r.ember = MAX(r.ember - p_delta / 30.0f, MIN(r.ember, 0.15f * r.fuel_left / MAX(r.fuel_total, 1e-3f)));
 	}
 	if (r.state == ROOM_COLD || r.state == ROOM_OUT) {
 		r.q = 0.0f;
 		r.q_ext = 0.0f;
 		r.temperature = Math::lerp(r.temperature, t_air, 1.0f - Math::exp(-p_delta / 600.0f));
-		if (r.state == ROOM_OUT) {
-			r.ember *= Math::exp(-p_delta / 1800.0f); // the char glows out over the next hours
+		if (r.state == ROOM_OUT && r.ember > 0.0f) {
+			// Smouldering debris (docs/ideas/physx.md, "Smouldering rubble and rekindles"): char and timber under
+			// the ash glow on for hours, dying away in still air (about half an hour to fall by e) and, where the pile
+			// lies open, fanned by any breeze over about 0.5 m/s at the ground, which brings oxygen faster than it cools (Ohlemiller
+			// 1985: smoulder fronts speed up with air flows of centimetres a second through the pile).
+			// Rain or water on it keeps it down. Glowing hard enough with fuel left, it bursts back into flame: a
+			// rekindle, the fire coming back hours after it was put out.
+			const float u = _exposed(r) ? Vector2(wind.x, wind.z).length() : 0.0f;
+			const bool wet = rain_now > 0.5f || r.water_kg + r.fluid_kg > 0.1f;
+			const float grow = wet ? -1.0f / 300.0f : (u > 0.5f ? (u - 0.5f) / 1200.0f * (1.0f - r.ember) : -1.0f / 1800.0f);
+			r.ember = CLAMP(r.ember + r.ember * grow * p_delta, 0.0f, 1.0f);
+			if (r.ember < 0.01f) {
+				r.ember = 0.0f;
+			}
+			if (r.ember >= 0.6f && !wet && r.fuel_left > 0.05f * r.fuel_total && !r.collapsed) {
+				r.state = ROOM_COLD;
+				cause = "rekindle";
+				_ignite_room(p_room, r.origin);
+				cause = "heat";
+				r.t = 0.3f * growth_time;
+				r.knock = 0.0f;
+				rekindles++;
+				emit_signal(SNAME("rekindled"), p_room);
+			}
 		}
 		return;
 	}
@@ -1382,6 +1425,23 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 		const bool burning = r.state == ROOM_GROWING || r.state == ROOM_FLASHED || r.state == ROOM_DECAY;
 		const float q_all = r.q + r.q_ext;
 		const String base = "Room" + itos(i);
+		// Smoke off smouldering debris: thin, cool, drifting low with the wind.
+		if (r.state == ROOM_OUT && r.ember > 0.05f && _exposed(r)) {
+			if (PhysXFlowEmitter3D *e = _emitter(r.rubble_emitter, base + "Rubble", _smoke_flow())) {
+				e->set_enabled(true);
+				e->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
+				e->set_size(Vector3(r.box.size.x * 0.7f, 0.3f, r.box.size.z * 0.7f));
+				e->set_global_transform(Transform3D(xf.basis.orthonormalized(), xf.xform(Vector3(r.box.get_center().x, r.box.position.y + 0.3f, r.box.get_center().z))));
+				e->set_couple_rate(2.0f);
+				e->set_fuel(0.0f);
+				e->set_burn(0.0f);
+				e->set_temperature(0.1f + 0.2f * r.ember);
+				e->set_smoke(0.3f + 1.2f * r.ember);
+				e->set_velocity(Vector3(0, 0.3f, 0) + wind * 0.3f);
+			}
+		} else {
+			_disable(r.rubble_emitter);
+		}
 		if (!flow) {
 			continue;
 		}
@@ -1635,6 +1695,29 @@ void PhysXBuildingFire3D::_update_brands(float p_delta) {
 			plume.push_back(pl);
 			brands.set_plumes(plume, width);
 			brands.release(firebrand_rate * q / 1000.0f * p_delta, pts, flow);
+		}
+		// Glowing debris in a wind sheds embers that hop downwind (no plume to loft them): about one a second per
+		// 20 m2 of hot floor at 8 m/s.
+		const float u = Vector2(wind.x, wind.z).length();
+		if (q <= 0.0f && u > 4.0f && flow) {
+			LocalVector<PhysXFirebrands::Release> rubble;
+			float rate = 0.0f;
+			for (const Room &r : rooms) {
+				if (r.state == ROOM_OUT && r.ember > 0.3f && _exposed(r)) {
+					rubble.push_back({ xf.xform(r.box.get_center() - Vector3(0, r.box.size.y * 0.4f, 0)), r.ember });
+					rate += r.ember * (u - 4.0f) / 4.0f * r.box.size.x * r.box.size.z / 20.0f;
+				}
+			}
+			if (!rubble.is_empty()) {
+				LocalVector<PhysXFirebrands::Plume> plume;
+				PhysXFirebrands::Plume pl;
+				pl.base = xf.xform(all.get_center() - Vector3(0, all.size.y * 0.4f, 0));
+				pl.w0 = 1.0f;
+				pl.width = MAX(MAX(all.size.x, all.size.z), 1.0f);
+				plume.push_back(pl);
+				brands.set_plumes(plume, pl.width);
+				brands.release(rate * p_delta, rubble, flow);
+			}
 		}
 	}
 	if (brands.get_count() > 0) {
@@ -2124,9 +2207,12 @@ void PhysXBuildingFire3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_burning"), &PhysXBuildingFire3D::is_burning);
 	ClassDB::bind_method(D_METHOD("get_ignition_time"), &PhysXBuildingFire3D::get_ignition_time);
 	ClassDB::bind_method(D_METHOD("get_ignition_cause"), &PhysXBuildingFire3D::get_ignition_cause);
+	ClassDB::bind_method(D_METHOD("get_room_ember", "room"), &PhysXBuildingFire3D::get_room_ember);
+	ClassDB::bind_method(D_METHOD("get_rekindle_count"), &PhysXBuildingFire3D::get_rekindle_count);
 	ClassDB::bind_static_method("PhysXBuildingFire3D", D_METHOD("radiant_flux_at", "position"), &PhysXBuildingFire3D::_radiant_flux_bind);
 
 	ADD_SIGNAL(MethodInfo("ignited", PropertyInfo(Variant::STRING, "cause")));
+	ADD_SIGNAL(MethodInfo("rekindled", PropertyInfo(Variant::INT, "room")));
 
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "rooms"), "set_rooms", "get_rooms");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "target"), "set_target", "get_target");

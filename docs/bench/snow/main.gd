@@ -1555,6 +1555,7 @@ func _run_forest_tests() -> void:
 	await _avalanche_run(av)
 	var open_run := _debris_reach()
 	var toe_p := av.get_peak_pressure_at(Vector3(10.0, 0, 0))
+	var contract_p := (WorldContracts.get_snow() as WorldSnow).avalanche_peak_pressure_at(Vector3(10.0, 0, 0))
 	av = await _trigger_setup()
 	av.natural_release = true
 	for z in range(-128, 129, 8):
@@ -1571,7 +1572,7 @@ func _run_forest_tests() -> void:
 	await _avalanche_run(av)
 	var forest_run := _debris_reach()
 	_check("a forest on the run-out brakes it: its debris stops sooner, some of it among the trees", forest_run < open_run - 10.0 and av.get_detrained_volume() > 100.0, "debris (10 cm and more) reaches x = %.0f m into the forest against %.0f m in the open; %.0f m3 stopped by the stems" % [forest_run, open_run, av.get_detrained_volume()])
-	_check("trees in its path take its dynamic pressure, 1/2 rho u^2", toe_p > 5000.0 and toe_p < 200000.0, "%.0f kPa at the toe (Bartelt and Stoeckli 2001: trunks break from about 10-20 kPa)" % (toe_p / 1000.0))
+	_check("trees in its path take its dynamic pressure, 1/2 rho u^2 (and read it through the snow contract)", toe_p > 5000.0 and toe_p < 200000.0 and absf(contract_p - toe_p) < 1.0, "%.0f kPa at the toe, %.0f kPa through WorldSnow (Bartelt and Stoeckli 2001: trunks break from about 10-20 kPa)" % [toe_p / 1000.0, contract_p / 1000.0])
 
 
 func _thaw(t: float, hours: float, rain: float = 0.0) -> void:
@@ -2779,6 +2780,12 @@ func _build_avalanche(cam: Camera3D) -> void:
 	var triggered := wet or OS.get_cmdline_user_args().has("--triggered")
 	if OS.get_cmdline_user_args().has("--before") or triggered:
 		av.natural_release = false
+	if triggered:
+		# An old, bonded pack under the storm (60 cm a week and more old): the slab breaks away from it, leaving a
+		# crown step and a white bed, as slabs do.
+		snow.add_snow(90.0, 150.0)
+		snow.advance(8.0 * 24.0 * 3600.0)
+		await get_tree().physics_frame
 	snow.add_snow(30.0, 100.0)
 	await get_tree().physics_frame
 	snow.add_snow(90.0, 90.0)
@@ -2830,6 +2837,10 @@ func _build_avalanche(cam: Camera3D) -> void:
 	cam.position = Vector3(42.0, snow.get_ground_height_at(Vector3(42, 0, 9)) + snow.get_depth_at(Vector3(42, 0, 9)) + 2.2, 9.0)
 	cam.look_at(Vector3(-25.0, 18.0, 0.0))
 	cam.fov = 55.0
+	if OS.get_cmdline_user_args().has("--close"):
+		# --close: the debris at the toe from 20 m.
+		cam.position = Vector3(22.0, snow.get_ground_height_at(Vector3(22, 0, 14)) + snow.get_depth_at(Vector3(22, 0, 14)) + 3.0, 14.0)
+		cam.look_at(Vector3(2.0, 1.0, 0.0))
 	cam.far = 1000.0
 	await _save_frame("")
 

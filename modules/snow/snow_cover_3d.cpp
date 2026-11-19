@@ -2520,6 +2520,47 @@ float SnowCover3D::get_depth_at(Vector3 p_position) const {
 	return swe > SWE_MIN ? swe / MAX(get_density_at(p_position), 30.0f) : 0.0f;
 }
 
+float SnowCover3D::get_surface_depth_at(Vector3 p_position) const {
+	// The drawn surface's depth (SnowSurface3D's snow_depth_smooth): Catmull-Rom over the 4 x 4 cells around,
+	// held within the four nearest cells' range. The snow texture holds the cell's swe / density.
+	const int n = resolution;
+	if (_in_world_only(p_position) || !origin_valid || pub.swe.size() != n * n || pub.density.size() != n * n) {
+		return get_depth_at(p_position);
+	}
+	if (!get_map_rect().has_point(Vector2(p_position.x, p_position.z))) {
+		return 0.0f;
+	}
+	const float cs = _cell_size();
+	const float fx = p_position.x / cs - origin_cell.x - 0.5f;
+	const float fz = p_position.z / cs - origin_cell.y - 0.5f;
+	const int bx = int(Math::floor(fx)), bz = int(Math::floor(fz));
+	const float tx = fx - bx, tz = fz - bz;
+	auto weights = [](float t, float *w) {
+		w[0] = t * (-0.5f + t * (1.0f - 0.5f * t));
+		w[1] = 1.0f + t * t * (-2.5f + 1.5f * t);
+		w[2] = t * (0.5f + t * (2.0f - 1.5f * t));
+		w[3] = t * t * (-0.5f + 0.5f * t);
+	};
+	float wx[4], wz[4];
+	weights(tx, wx);
+	weights(tz, wz);
+	float sum = 0.0f, lo = 1e9f, hi = -1e9f;
+	for (int j = 0; j < 4; j++) {
+		for (int i = 0; i < 4; i++) {
+			const int x = CLAMP(bx + i - 1, 0, n - 1), z = CLAMP(bz + j - 1, 0, n - 1);
+			const int c = z * n + x;
+			const float swe = pub.swe[c];
+			const float v = swe > SWE_MIN ? swe / MAX(pub.density[c], 30.0f) : 0.0f;
+			sum += v * wx[i] * wz[j];
+			if (i >= 1 && i <= 2 && j >= 1 && j <= 2) {
+				lo = MIN(lo, v);
+				hi = MAX(hi, v);
+			}
+		}
+	}
+	return CLAMP(sum, lo, hi);
+}
+
 float SnowCover3D::get_swe_at(Vector3 p_position) const {
 	if (_in_world_only(p_position)) {
 		return world->get_swe_at(p_position);
@@ -2690,6 +2731,14 @@ float SnowCover3D::contract_snow_surface_at(const Vector3 &p_position) const {
 	}
 	const float d = get_depth_at(p_position);
 	return d > 0.0f ? get_ground_height_at(p_position) + d : -Math::INF;
+}
+
+float SnowCover3D::contract_snow_avalanche_pressure_at(const Vector3 &p_position) const {
+	return avalanche_node ? avalanche_node->get_pressure_at(p_position) : 0.0f;
+}
+
+float SnowCover3D::contract_snow_avalanche_peak_pressure_at(const Vector3 &p_position) const {
+	return avalanche_node ? avalanche_node->get_peak_pressure_at(p_position) : 0.0f;
 }
 
 Vector2 SnowCover3D::contract_snow_lake_ice_at(const Vector3 &p_position) const {

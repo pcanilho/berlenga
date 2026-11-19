@@ -483,3 +483,26 @@ gravel 12 m, fine gravel 6 m at 720p), and past it the ground showed plain sand:
   to three hashed grain tests per ground pixel past the reach. No new instances.
 - **Left.** Very sparse scattered stones (cover under 0.01) vanish in the aggregate where the drawn frame shows a few
   dark specks; any other ground layer (Terrain3D) needs the same uniforms wired.
+
+## River and stream beds (19 Nov)
+
+The river layer already lays cobbles by Shields' threshold and Sternberg's fining, imbricated; below `min_size` the
+beds were bare ground, so a gravel-bed stream (most of them in a 2 km world: channels about a metre wide) showed no
+stones at all. Ground detail now carries the river layer's bed on below it, as it does the shore's.
+
+- **Technique.** The bed's median from the river layer (same formulas, shared per segment: `_river_segments`), then
+  the pool-riffle sequence: riffles coarse and pools fine, about six channel widths apart (Leopold, Wolman and Miller
+  1964; Keller and Melhorn 1978: 5 to 7 widths), median x (0.5 + 0.9 riffle), and finer on the bars at the sides than
+  down the thalweg (x 0.65 at the banks). The pools' slack water drapes fines over the bed: their grains' cover drops
+  by up to three quarters and they sit deeper. Sizes from a log-normal of sigma 0.6 (poorly sorted at the fine end,
+  as the shore's), cover as the shore's (weight share, clast-supported 0.85).
+- **Imbrication.** Every grain's long axis across the flow, its a-b plane dipping upstream 10 to 30 degrees (Rust
+  1972; the stacked "roof tile" fabric of a flowing gravel bed), as the river layer's cobbles. Wet film on.
+- **Rock.** 70% of grains carry the headwaters' rock, as the cobbles do.
+- **Far cover.** The same beds go into the far hand-over's cover maps (rasterised per segment; a bed narrower than a
+  texel is spread over it, thinner by as much), so a stream's gravel continues past the drawn reach.
+- **Switch.** `RockField3D.ground_detail_rivers` (on). Bench: `--view=river --gravel-reach[=d]` picks an open
+  gravel-bed reach whose median is nearest d (0.03 m); `--no-river-detail` for the before frame.
+- **Through clear water.** The grains are ordinary detail instances, so the water's own transmission shows them; the
+  check needs river water (PhysXRiver3D), which the cloud build here lacks (no PhysX SDK in this container): on the
+  PC queue, or with a PhysX cloud build.
