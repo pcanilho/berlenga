@@ -466,8 +466,21 @@ void GrassField3D::_build_material() {
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	// Regrowth flush on burnt ground (burn_recovery): 1 on a fresh burn, 0 by a year and a half; rect z 0: none.
 	code += "uniform sampler2D burn_flush_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 burn_flush_rect;\n";
-	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\n";
+	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\nglobal uniform sampler2D weather_spray_map;\nglobal uniform vec4 weather_spray_rect;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
+	// Sea salt on the blades (WeatherMap3D sea_spray, G: 1 - exp(-salt / 10 g/m2)): salt spray burns leaf tips brown
+	// on the windward shore (Boyce 1954; foliar chloride necrosis), from a couple of grams per square metre.
+	code += R"(
+float grass_salt_burn(vec2 p_xz) {
+	if (weather_spray_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 uv = (p_xz - weather_spray_rect.xy) / weather_spray_rect.zw;
+	vec2 e = min(uv, 1.0 - uv);
+	float edge = smoothstep(0.0, 0.05, min(e.x, e.y));
+	return edge > 0.0 ? smoothstep(0.15, 0.85, textureLod(weather_spray_map, uv, 0.0).g) * edge : 0.0;
+}
+)";
 	code += VegetationFire::WIND_CODE;
 	code += WeatherMap3D::get_wind_shader_code();
 	code += vformat("#define WEATHER_GUST_COUNT %d\n#define WEATHER_GUSTS_PER_AXIS %d\n", WeatherMap3D::GUST_COUNT, WeatherMap3D::GUSTS_PER_AXIS);
@@ -582,6 +595,7 @@ varying float v_ripe;
 varying float v_dead;
 varying float v_wet;
 varying float v_frost;
+varying float v_salt;
 varying float v_snow; // under the snow surface: 1
 varying vec3 v_tint;
 varying float v_light;
@@ -897,6 +911,7 @@ void vertex() {
 	v_tint = grass_patch_tint(base_w.xz, fract(rnd * 7.31 + 0.13), fract(rnd * 13.7 + 0.51), color_variation);
 	v_wet = 0.0;
 	v_frost = 0.0;
+	v_salt = grass_salt_burn(base_w.xz);
 	v_snow = snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0;
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
@@ -983,6 +998,8 @@ void fragment() {
 	vec3 mud_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	float mud_c = grass_mud_apply(grass_ground_mud(mud_w.xz), mud_w, v_hf * 0.8, c);
 	rough = mix(rough, 0.85, mud_c);
+	// Salt burn: the tips first, then down the blade.
+	c = mix(c, vec3(0.3, 0.22, 0.1) * v_tint, v_salt * smoothstep(1.0 - v_salt, 1.2 - 0.5 * v_salt, v_hf));
 	// Hoarfrost rimes the blades, the tips most (they see the most sky); frozen, they do not look wet.
 	float frost_c = v_frost * mix(0.4, 1.0, v_hf);
 	c = mix(c, vec3(0.78, 0.8, 0.84), 0.6 * frost_c);
@@ -1007,6 +1024,7 @@ varying float v_flush; // Regrowth on burnt ground (burn_flush_map).
 varying float v_soft; // Distance softening, 0 near, 1 from 35 m.
 varying float v_wet;
 varying float v_frost;
+varying float v_salt;
 varying float v_snow; // under the snow surface: 1
 varying vec3 v_tint;
 varying float v_light;
@@ -1152,6 +1170,7 @@ void vertex() {
 	v_dry = rnd;
 	v_wet = 0.0;
 	v_frost = 0.0;
+	v_salt = grass_salt_burn(base_w.xz);
 	v_snow = snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0;
 	v_tint = grass_patch_tint(base_w.xz, fract(rnd * 7.31 + 0.13), fract(rnd * 13.7 + 0.51), color_variation);
 	v_soft = 0.0;
@@ -1270,6 +1289,8 @@ void fragment() {
 	// Mud thrown or splashed onto it (mud round 7): the blade's height as a 30 cm sward's.
 	vec3 mud_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	float mud_c = grass_mud_apply(grass_ground_mud(mud_w.xz), mud_w, v_t * 0.3, c);
+	// Salt burn: the tips first, then down the blade.
+	c = mix(c, vec3(0.3, 0.22, 0.1) * v_tint, v_salt * smoothstep(1.0 - v_salt, 1.2 - 0.5 * v_salt, v_t));
 	// Hoarfrost rimes the stubs (frozen, they do not look wet).
 	float frost_c = v_frost * mix(0.4, 1.0, v_t);
 	c = mix(c, vec3(0.78, 0.8, 0.84), 0.6 * frost_c);

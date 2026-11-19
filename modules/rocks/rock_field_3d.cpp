@@ -1332,6 +1332,22 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						if (gen->get_height(centre) < centre.y + 0.1f * course) {
 							continue;
 						}
+						// And the face is where the cell's plane put it: at the crossing and at both ends of the block
+						// (along the strike) the ground stands within a fifth of a course of the block's face, measured
+						// square to the face. Where the real face bends away or steps back (a gully, a convex corner),
+						// the block would stand out of it in the air, read from afar as a slab hung on the cliff.
+						{
+							bool out = false;
+							const real_t ext = axes.x * st.scale * 0.9;
+							for (int e = -1; e <= 1 && !out; e++) {
+								const Vector3 q = surface + x_axis * (ext * e);
+								const real_t gap = (q.y - gen->get_height(q)) * n.y; // + where the face lies under the block's face
+								out = gap > 0.2f * course;
+							}
+							if (out) {
+								continue;
+							}
+						}
 						st.basis = b * Basis().scaled(Vector3(st.scale, st.scale, st.scale));
 						st.position = centre;
 						st.ground = yk - 50.0f; // no contact band on a wall

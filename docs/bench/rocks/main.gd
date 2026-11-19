@@ -1794,6 +1794,8 @@ func _test() -> void:
 				break
 		var near_chunks := net.get_mesh_chunk_count()
 		var stream_ms := Time.get_ticks_msec() - t_stream
+		# (Why, when it finds nothing: where the target stands against the rock, and whether the network has caves.)
+		print("  cave streaming target %s: %.2f m from the rock (negative in air), %d caves, follow %s, streaming %s" % [walker.global_position, net.get_rock_distance(walker.global_position), net.get_cave_count(), net.get_node_or_null(net.follow_target) != null, net.is_streaming()])
 		walker.global_position += Vector3(400, 0, 0)
 		for i in 3000:
 			await get_tree().process_frame

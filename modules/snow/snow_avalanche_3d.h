@@ -128,6 +128,7 @@ class SnowAvalanche3D : public Node3D {
 	bool crowns_enabled = true;
 	Ref<StandardMaterial3D> crown_material;
 	void _build_crown(SnowCover3D *p_cover, const Vector<float> &p_released);
+	static Vector2 _fall_line(const SnowCover3D *p_cover, const Vector<float> &p_weight);
 	void _bury_crowns(SnowCover3D *p_cover);
 	bool _check_glide(SnowCover3D *p_cover);
 

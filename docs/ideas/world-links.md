@@ -90,6 +90,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Bodies → shrubs, crops, hedges, ferns | linked (18 Nov) | contact trample field | VegetationField3D keeps a field where no grass does |
 | Bodies → branches | linked | `tree_touch` group | |
 | Bodies → fallen leaves kicked up | linked (19 Nov) | world_contact bodies (position, speed) | LeafFall3D throws the lying leaves a moving body touches at 0.4-0.9 of its speed with a small lift; leaf litter spawns leaves across the swath; a still body moves none |
+| Bodies out of water, mud, puddles → wet prints, drips | linked (19 Nov) | world_contact bodies, WorldWater.depth_at, WorldGround mud/standing water, puddles | WeatherMap3D `wet_tracks`: a load on the feet or tread (1 out of water, 0.8 wet mud, 0.6 puddles); each print a stride apart takes 15% (tyres 3% per 15 cm), so trails fade over a dozen strides; drips round the body e-fold over 40 s; all into the contact wetness square, dried by the weather's drying time (Penman: air, wind, sun) |
 | Water, snow → fallen leaves | linked (19 Nov) | WorldWater (height, flow), WorldSnow (depth, surface, lake ice), weather wind | LeafFall3D leaves land on the top surface: on water they float with the current plus 3% leeway in the wind (Breivik et al. 2011), on snow they lie on top, are buried by more snow and set down when it melts; lake ice holds them |
 | Vehicles → grass, branches | linked (18 Nov) | world_contact | wheels and bodies join |
 | Lying snow → plants | linked (18 Nov) | snow cover (snow map) | as above (GrassField3D, PlantGenerator) |
@@ -116,6 +117,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Rain, melt → river level | linked (18 Nov) | WeatherRunoff3D (SCS curve number, D8 routing) | rain thread: rivers add the discharge reaching them; snowmelt runs off too |
 | Floodwater → ground soaked, silted | linked (19 Nov) | WorldWater `height_except` (every producer but the ground's own standing water), `flow_at`, `sediment_at` | GroundSurface3D soaks the ground any water covers (Green-Ampt) and still or slow water (under 0.2-0.5 m/s) lays its load as fresh mud, D = C w_s dt with w_s 3e-4 m/s (Pizzuto 1987; Asselman and Middelkoop 1995) |
 | Sea → sea caves (surge, currents, blowholes) | linked (19 Nov) | CaveNetwork3D is a WorldWater producer inside each sea cave: the sea at the mouth (`height_except`, any producer; the still sea when none) run in as a long wave, lag sqrt(g h), Green's law growth (b^-1/2 h^-1/4), e-folding `surge_damping` 40 m; u = eta sqrt(g/h) | Blowholes: a crest that seals the passage traps the chamber's air, pushed up the shaft at rise x chamber/shaft area (oscillating water column; Falcao and Henriques 2016); `get_blowhole_spout`, signal `blowhole_spout`. Drawing (surface in the cave, spray) is Valence's: `get_sea_cave_water(cave)` |
+| Sea → spray on the shore (wets, salts) | linked (19 Nov) | `WorldWater.breaking_at` (surf 0.78 d, whitecap cover x Hs) into WeatherMap3D `sea_spray` | Coarse spray L = u (1 + H) / 1 m/s, fine salt L = 50 s x u, swept along the wind on a 512 m square; production 1 mm/h (coarse) and 0.25 g/m2/h (fine) per m of breaking, x ((u - 2) / 8)^2. Rising ground catches the coarse spray (cliff faces). Wets the film, contact map and soil; salt 35 g/kg, washed off by rain (e-folding 5 mm), 2 weeks otherwise; `weather_spray_map` global (grass salt burn). `sea_spray_at`, `salt_at`. Andreas 1998; de Leeuw et al. 2000; Gustafsson and Franzen 1996; Boyce 1954 |
 | Cold → lake ice | linked | air, snow | SnowCover3D lake ice, Stefan's law under the snow (Leppaeranta 1993) |
 | Bodies → lake ice (break through) | linked (19 Nov) | world_contact bodies (mass), SnowCover3D lake ice | a load past Gold's P = A h^2 (A 10, white ice half, thawing ice half) breaks a hole the body's size; it stops bearing at once and refreezes by Stefan's law |
 | Fire → steam on water | linked (18 Nov) | WorldFire, WorldWater | water landing on fire and fire at the water's edge (PhysX, ebb5f254) |
@@ -267,5 +269,16 @@ mm a day; Bruijnzeel et al. 2005).
    The weather map takes the liquid water content from the cloud's extinction at canopy height
    (LWC = 2/3 rho_w r_e beta, r_e 10 um), adds the catch to Rutter's canopy store and keeps the store from drying
    while in cloud; the drip's fog share goes to the surface film and the soil water.
-2. Sea spray wets and salts the shore: surf wets and salts rocks, ground and plants downwind.
-3. Wet tracks out of water and mud: bodies leaving water or mud leave wet prints and drips that dry in sun and wind.
+2. Sea spray wets and salts the shore (built 19 Nov). Breaking waves make spray in proportion to the breaker height and
+   the wind's square (Andreas 1998; surf zones much more than open water, de Leeuw et al. 2000). Coarse drops (0.1-1
+   mm) settle about 1 m/s from about one breaker height, so they wet the first tens of metres; fine film and jet drops
+   carry salt hundreds of metres, chloride deposition falling about tenfold over the first kilometre (Gustafsson and
+   Franzen 1996). Salt spray browns the windward leaves of shore plants (Boyce 1954). Producers report breaking
+   (`WorldWater.breaking_at`; PhysXWaterSurface3D: its surf zone and whitecaps); the weather map carries both sizes
+   downwind on a fine square, steady along the wind, wets surfaces and soil and keeps the salt until rain takes it.
+   Later readers: snow (salt lowers the melting point), rocks (salt bloom, a drawing job).
+3. Wet tracks out of water and mud (built 19 Nov). A body out of water, wet mud or a puddle carries a film on its
+   feet or tread and presses a share of it off with each print, the depleting-load trail games use for wet and
+   bloody footprint decals (e.g. Red Dead Redemption 2), and drips round itself as its clothes drain. The prints go
+   into the weather's contact wetness square (already read by grass, ground, rocks and the path tracer), which dries
+   them at the weather's rate. Later: muddy prints that leave mud, not only water (mud's splat decals).

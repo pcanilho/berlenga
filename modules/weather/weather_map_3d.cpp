@@ -815,10 +815,12 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	_gather_water_sources();
 	c.inflow = cell_inflow.ptr();
 	c.fog_drip = fog_drip && cell_fog_drip.size() == resolution * resolution ? cell_fog_drip.ptr() : nullptr;
+	c.spray = sea_spray && cell_spray.size() == resolution * resolution ? cell_spray.ptr() : nullptr;
 	// Rows in parallel: each cell depends only on the weather and its own history.
 	WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &WeatherMap3D::_update_row, &cell_pass, resolution, -1, true, String("WeatherMap3D cells"));
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
 	_rain_update(p_weather_dt);
+	_spray_step(p_weather_dt);
 }
 
 float WeatherMap3D::rain_fraction(float p_celsius, float p_humidity) {
@@ -1027,7 +1029,7 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 			}
 			c.frost[i] = fr;
 			// Where a snowpack lies, what reaches the surface is its runoff (rain through it and melt).
-			const float in = (c.inflow[i] >= 0.0f ? c.inflow[i] : r * c.rain_fraction) + (c.fog_drip ? c.fog_drip[i] : 0.0f);
+			const float in = (c.inflow[i] >= 0.0f ? c.inflow[i] : r * c.rain_fraction) + (c.fog_drip ? c.fog_drip[i] : 0.0f) + (c.spray ? c.spray[i] : 0.0f);
 			f += in * c.dt_h;
 			float pd = c.puddle[i];
 			if (f > surface_storage) {
@@ -1418,6 +1420,7 @@ void WeatherMap3D::_notification(int p_what) {
 			_apply_sky_shadow();
 			_apply_haze();
 			_update_contact(wdt);
+			_tracks_step(float(dt));
 			if (update_accum >= period) {
 				_update_cells(update_accum);
 				update_accum = 0.0;
@@ -1634,7 +1637,7 @@ float WeatherMap3D::get_wetness_at(Vector3 p_position) const {
 	if (_sample(cell_puddle, p) > 0.0f) {
 		return 1.0f;
 	}
-	return CLAMP(_sample(cell_film, p) / MAX(surface_storage, 1e-3f), 0.0f, 1.0f);
+	return MAX(CLAMP(_sample(cell_film, p) / MAX(surface_storage, 1e-3f), 0.0f, 1.0f), get_spray_wetness_at(p_position));
 }
 
 float WeatherMap3D::get_frost_at(Vector3 p_position) const {
@@ -3007,6 +3010,8 @@ void WeatherMap3D::_bind_methods() {
 	BIND_CONSTANT(GUST_COUNT);
 
 	_bind_rain_methods();
+	_bind_spray_methods();
+	_bind_tracks_methods();
 }
 
 WeatherMap3D::WeatherMap3D() {

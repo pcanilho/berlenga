@@ -219,6 +219,7 @@ private:
 		float *film = nullptr;
 		const float *inflow = nullptr;
 		const float *fog_drip = nullptr; // mm/h off the canopy, from the last canopy step
+		const float *spray = nullptr; // mm/h of sea spray settling, from the last spray step
 		float rain_fraction = 1.0f;
 		float *puddle = nullptr;
 		float *frost = nullptr;
@@ -330,6 +331,21 @@ private:
 	double contact_accum = 0.0;
 	bool contact_global_added = false;
 	void _update_contact(double p_weather_dt);
+	// Wet tracks (weather_tracks.cpp): bodies coming out of water, mud or puddles carry water on their feet or tyres,
+	// leaving prints that each take a share of it, and drip for a while; the contact square dries them.
+	bool wet_tracks = true;
+	struct TrackBody {
+		Vector3 last_print;
+		float load = 0.0f; // 0..1, the water on the feet or tread
+		float drip = 0.0f; // 0..1, the water running off the body
+		float drip_timer = 0.0f;
+		bool left = false; // the next print's side
+		bool seen = false;
+	};
+	HashMap<ObjectID, TrackBody> track_bodies;
+	uint32_t track_seed = 0x9e3779b9u;
+	void _tracks_step(float p_real_dt);
+	static void _bind_tracks_methods();
 
 	static WeatherMap3D *active;
 
@@ -439,6 +455,38 @@ private:
 	bool fog_drip = true;
 	Vector<float> cell_fog; // g/m3 of cloud water at the canopy
 	Vector<float> cell_fog_drip; // mm/h, the fog's share of the drainage
+	// Sea spray (weather_spray.cpp, docs/ideas/world-links.md "Sea spray"): drops torn from breaking waves
+	// (WorldWater.breaking_at) carried downwind over a fine square round the follow point, settling on the shore:
+	// coarse drops within tens of metres (they wet), fine salt aerosol over hundreds. Salt stays on surfaces until
+	// rain washes it off.
+	bool sea_spray = true;
+	float sea_spray_extent = 512.0f; // m, the square's side
+	int sea_spray_resolution = 128;
+	struct Spray {
+		int n = 0;
+		float cell = 4.0f;
+		Vector2i origin; // world cell index of cell (0, 0)
+		bool valid = false;
+		bool sources_valid = false;
+		bool any_breaking = false;
+		int source_row = 0;
+		Vector<float> breaking; // m, WorldWater.breaking_at over water; -1 on land
+		Vector<float> ground; // m
+		Vector<float> rate; // mm/h of spray settling
+		Vector<float> salt_rate; // g/m2/h
+		Vector<float> film; // mm of spray water on surfaces
+		Vector<float> salt; // g/m2 on surfaces
+		Ref<Image> image;
+		Ref<ImageTexture> texture;
+		bool global_added = false;
+	} spray;
+	Vector<float> cell_spray; // mm/h of sea spray settling, the spray square averaged onto the map's cells
+	void _spray_step(double p_weather_dt);
+	void _spray_follow(Vector3 p_center);
+	void _spray_sources(int p_rows);
+	void _spray_upload();
+	float _spray_sample(const Vector<float> &p_field, Vector3 p_position) const;
+	static void _bind_spray_methods();
 	Ref<Image> rain_image;
 	Ref<ImageTexture> rain_texture;
 	bool rain_global_added = false;
@@ -805,6 +853,8 @@ public:
 	float contract_obstacle_lee_at(const Vector3 &p_position) const override { return get_obstacle_lee_at(p_position); }
 	float contract_fog_water_at(const Vector3 &p_position) const override { return get_fog_water_at(p_position); }
 	float contract_fog_drip_at(const Vector3 &p_position) const override { return get_fog_drip_at(p_position); }
+	float contract_sea_spray_at(const Vector3 &p_position) const override { return get_sea_spray_at(p_position); }
+	float contract_salt_at(const Vector3 &p_position) const override { return get_salt_at(p_position); }
 	float contract_canopy_water_at(const Vector3 &p_position) const override { return get_canopy_water_at(p_position); }
 	float contract_canopy_wetness_at(const Vector3 &p_position) const override { return get_canopy_wetness_at(p_position); }
 	float contract_canopy_drip_at(const Vector3 &p_position) const override { return get_canopy_drip_at(p_position); }
@@ -889,6 +939,24 @@ public:
 	float get_fog_drip_at(Vector3 p_position) const;
 	void set_fog_drip(bool p_enabled) { fog_drip = p_enabled; }
 	bool is_fog_drip_enabled() const { return fog_drip; }
+	// Sea spray settling (mm/h of sea water), the spray's own wet film over the surface storage (0..1), and the
+	// salt left on surfaces (g/m2). 0 outside the spray square.
+	float get_sea_spray_at(Vector3 p_position) const;
+	float get_spray_wetness_at(Vector3 p_position) const;
+	float get_salt_at(Vector3 p_position) const;
+	float get_salt_deposition_at(Vector3 p_position) const; // g/m2/h
+	void set_sea_spray(bool p_enabled);
+	bool is_sea_spray_enabled() const { return sea_spray; }
+	void set_sea_spray_extent(float p_extent);
+	float get_sea_spray_extent() const { return sea_spray_extent; }
+	void set_sea_spray_resolution(int p_resolution);
+	int get_sea_spray_resolution() const { return sea_spray_resolution; }
+	Rect2 get_sea_spray_rect() const;
+	void clear_salt();
+	void set_wet_tracks(bool p_enabled);
+	bool is_wet_tracks_enabled() const { return wet_tracks; }
+	// The water a world_contact body carries on its feet or tread (0..1) and running off it (0..1).
+	Vector2 get_body_water(Node *p_body) const;
 	// The water reaching the ground (mm/h): a snowpack's runoff where one lies (set_surface_water_source), else the
 	// rain at its liquid share. What WeatherRunoff3D routes.
 	float get_ground_water_input_at(Vector3 p_position) const;
