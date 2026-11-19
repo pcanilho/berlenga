@@ -40,7 +40,92 @@ float bekker_k(const GroundSoil &p_soil, float p_width) {
 	return p_soil.kc / MAX(p_width, 0.02f) + p_soil.kphi;
 }
 
-float wheel_static_sinkage(const GroundSoil &p_soil, float p_load, float p_radius, float p_width, float p_inflation) {
+GroundTyreFlat tyre_flat(float p_load, float p_radius, float p_width, float p_inflation) {
+	GroundTyreFlat f;
+	if (p_load <= 0.0f || p_radius <= 0.0f || p_width <= 0.0f || p_inflation <= 0.0f) {
+		return f;
+	}
+	const float d = 2.0f * p_radius;
+	// The load stands on the air and the carcass over the flat (Wong 2008, sec. 2.4: p_g = p_i + p_c, W = p_g b L).
+	const float pg = p_inflation + TYRE_CARCASS_KPA;
+	// The deflection from the tyre's vertical stiffness, which grows with the pressure and as sqrt(width x
+	// diameter) (Rhyne 2005, "Development of a vertical stiffness relationship for belted radial tires", Tire Sci.
+	// Technol. 33(3)): k = C p_g sqrt(b D), C set so a 225/65 R17 on 220 kPa is about 220 N/mm, as measured for
+	// passenger tyres. Past about a third of its section height a tyre bottoms on its rim (the limit airing-down
+	// guides and tyre makers give): it stops there and the pressure on the flat rises instead. Section height from
+	// the width (a 75 series off-road tyre), kept within a sensible share of the radius.
+	const float h = CLAMP(0.75f * p_width, 0.12f * p_radius, 0.5f * p_radius);
+	const float d_max = 0.35f * h;
+	const float k = 2329.0f * pg * Math::sqrt(p_width * d); // N/m
+	f.deflection = MIN(p_load / k, d_max);
+	// The flat: as long as the pressure needs, but no longer than the chord at the deflection allows.
+	const float chord = 2.0f * Math::sqrt(MAX(d * f.deflection - f.deflection * f.deflection, 0.0f));
+	f.length = MAX(MIN(p_load / 1000.0f / (p_width * pg), MAX(chord, 0.01f)), 0.01f);
+	f.pressure = p_load / 1000.0f / (p_width * f.length);
+	return f;
+}
+
+float layered_sinkage(const GroundSoil &p_soil, float p_sinkage, float p_width) {
+	// A layer H deep over a rigid base (Salman 2022, after Yegorov; Bekker 1969 on shallow soil): while the layer
+	// left under a load of width b is thicker than b the base is not felt and p = k z^n; past z0 = H - b the
+	// stress bulb presses on the base through a compacted cone and the apparent modulus grows exponentially,
+	// k_app = k (1 + B (exp(c (z - z0) / b) - 1)), B 1 and c 2 here (the published fits are for one sandy loam).
+	// The same pressure then sinks less, and the load stops short of the base unless it is heavy enough.
+	const float h = p_soil.max_sinkage;
+	if (!p_soil.layered || h <= 0.01f || p_sinkage <= 0.0f) {
+		return p_sinkage;
+	}
+	const float b = MAX(p_width, 0.02f);
+	const float z0 = MAX(h - b, 0.0f);
+	if (p_sinkage <= z0) {
+		return p_sinkage;
+	}
+	const float n = CLAMP(p_soil.n, 0.1f, 2.9f);
+	const float target = Math::pow(p_sinkage, n); // the pressure over k
+	auto pressure = [&](float p_z) {
+		return (1.0f + (Math::exp(2.0f * (p_z - z0) / b) - 1.0f)) * Math::pow(p_z, n);
+	};
+	if (pressure(h) <= target) {
+		return h;
+	}
+	float lo = z0;
+	float hi = MIN(p_sinkage, h);
+	for (int i = 0; i < 16; i++) {
+		const float mid = 0.5f * (lo + hi);
+		if (pressure(mid) < target) {
+			lo = mid;
+		} else {
+			hi = mid;
+		}
+	}
+	return 0.5f * (lo + hi);
+}
+
+float pan_share(const GroundSoil &p_soil, float p_sinkage) {
+	const float h = p_soil.max_sinkage;
+	if (!p_soil.layered || h <= 0.01f) {
+		return 0.0f;
+	}
+	// The tread bites the base once the film of soil left under it is thinner than its lugs (about 3 cm); through a
+	// thicker film the soil shears first.
+	return 1.0f - Math::smoothstep(0.0f, 0.03f, h - p_sinkage);
+}
+
+float pan_shear_limit(const GroundSoil &p_soil, float p_load, float p_sinkage, float p_shear_limit) {
+	// On the base the tyre's load bears on firm ground (Coulomb friction, mu W); the soil above never lowers that.
+	return Math::lerp(p_shear_limit, MAX(p_shear_limit, PAN_FRICTION * MAX(p_load, 0.0f)), pan_share(p_soil, p_sinkage));
+}
+
+float tyre_rolling_coefficient(float p_inflation, float p_speed) {
+	// Gillespie, "Fundamentals of Vehicle Dynamics" (1992), eq. 4-2: f_r = 0.005 + (1 / p)(0.01 + 0.0095 (v / 100)^2),
+	// p in bar, v in km/h: the carcass's hysteresis grows as the tyre flexes more.
+	const float bar = MAX(p_inflation, 10.0f) / 100.0f;
+	const float kmh = Math::abs(p_speed) * 3.6f / 100.0f;
+	return 0.005f + (0.01f + 0.0095f * kmh * kmh) / bar;
+}
+
+// The sinkage with no base under the layer (the layer then caps it).
+static float _free_sinkage(const GroundSoil &p_soil, float p_load, float p_radius, float p_width, float p_inflation) {
 	if (!p_soil.soft || p_load <= 0.0f || p_radius <= 0.0f || p_width <= 0.0f) {
 		return 0.0f;
 	}
@@ -49,15 +134,21 @@ float wheel_static_sinkage(const GroundSoil &p_soil, float p_load, float p_radiu
 	const float w = p_load / 1000.0f; // kN
 	const float d = 2.0f * p_radius;
 	float z = Math::pow(3.0f * w / ((3.0f - n) * p_width * k * Math::sqrt(d)), 2.0f / (2.0f * n + 1.0f));
-	// A tyre whose inflation is below the pressure the rigid wheel would put on the ground flattens: it
-	// sinks only as deep as its own pressure presses (Wong 2008, sec. 2.4, the elastic mode).
+	// A tyre whose ground pressure (inflation plus carcass, more once it bottoms) is below the pressure the rigid
+	// wheel would put on the ground flattens: it sinks only as deep as that pressure presses (Wong 2008, sec. 2.4,
+	// the elastic mode).
 	if (p_inflation > 0.0f) {
 		const float rigid_pressure = k * Math::pow(z, n);
-		if (p_inflation < rigid_pressure) {
-			z = Math::pow(p_inflation / k, 1.0f / n);
+		const float pg = tyre_flat(p_load, p_radius, p_width, p_inflation).pressure;
+		if (pg < rigid_pressure) {
+			z = Math::pow(pg / k, 1.0f / n);
 		}
 	}
-	return MIN(z, p_soil.max_sinkage);
+	return z;
+}
+
+float wheel_static_sinkage(const GroundSoil &p_soil, float p_load, float p_radius, float p_width, float p_inflation) {
+	return MIN(layered_sinkage(p_soil, _free_sinkage(p_soil, p_load, p_radius, p_width, p_inflation), p_width), p_soil.max_sinkage);
 }
 
 float slip_sinkage(float p_static, float p_slip) {
@@ -120,20 +211,23 @@ GroundWheelSoil wheel(const GroundSoil &p_soil, float p_load, float p_radius, fl
 		return r;
 	}
 	r.soft = true;
-	r.static_sinkage = wheel_static_sinkage(p_soil, p_load, p_radius, p_width, p_inflation);
-	r.sinkage = MIN(slip_sinkage(r.static_sinkage, p_slip), p_soil.max_sinkage);
+	// The base stiffens what the load presses; what a spinning wheel digs out on top of that it throws out (Lyasko's slip sinkage).
+	const float free_z = _free_sinkage(p_soil, p_load, p_radius, p_width, p_inflation);
+	r.static_sinkage = MIN(layered_sinkage(p_soil, free_z, p_width), p_soil.max_sinkage);
+	// The extra a spinning wheel digs is soil thrown out, not pressed, so the base does not stiffen it.
+	r.sinkage = MIN(r.static_sinkage + MAX(slip_sinkage(free_z, p_slip) - free_z, 0.0f), p_soil.max_sinkage);
 	// The contact: the arc a rigid wheel of radius r has under the surface at sinkage z, or the flat of a
 	// flattened tyre (its load over its inflation pressure), whichever is longer.
 	const float z = r.sinkage;
 	float length = p_radius * Math::acos(CLAMP(1.0f - z / p_radius, -1.0f, 1.0f));
 	if (p_inflation > 0.0f) {
-		length = MAX(length, p_load / 1000.0f / (p_width * p_inflation));
+		length = MAX(length, tyre_flat(p_load, p_radius, p_width, p_inflation).length);
 	}
 	r.contact_length = MAX(length, 0.01f);
 	r.compaction = compaction_resistance(p_soil, p_width, z, p_already_pressed);
 	r.bulldozing = wheel_bulldozing_resistance(p_soil, p_width, p_radius, z, p_already_pressed);
 	const float area = p_width * r.contact_length;
-	r.shear_limit = 1000.0f * area * p_soil.cohesion + p_load * p_soil.tan_phi;
+	r.shear_limit = pan_shear_limit(p_soil, p_load, z, 1000.0f * area * p_soil.cohesion + p_load * p_soil.tan_phi);
 	r.traction = r.shear_limit * janosi_hanamoto(CLAMP(Math::abs(p_slip), 0.0f, 1.0f) * r.contact_length, p_soil.shear_k);
 	r.lateral = r.shear_limit * janosi_hanamoto(Math::abs(Math::tan(CLAMP(p_slip_angle, -1.4f, 1.4f))) * r.contact_length, p_soil.shear_k);
 	return r;

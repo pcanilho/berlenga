@@ -969,6 +969,42 @@ parked car never dried. The tread must be turning (0.1 m/s at the rim) to pick u
   stiffer one (layered-soil Bekker, Wong 2010; the "hardpan" of MudRunner's deep ruts). A depth per cell in the field.
 - **Branches under wheels.** Sticks and logs laid in a rut (deadwood from the trees thread) are pressed in and add
   shear strength under the tyre, the corduroy road: a cell factor on the Janosi-Hanamoto shear, and their meshes sink.
+
+#### Round 12 (picked 19 Nov: all three, in order)
+
+**12.1 Tyre pressure: built.** PhysXVehicleWheel3D.tire_pressure (read live, so a script or a tyre inflation system can
+air down while driving) now acts on firm ground as well as soft. The tyre stands on its air plus its carcass's own
+stiffness, p_g = p_i + p_c (Wong 2008, sec. 2.4; p_c 15 kPa, within the 10 to 30 kPa measured for radial tyres), over a
+flat W / (b p_g) long. It deflects by its vertical stiffness, k = C p_g sqrt(b D) (Rhyne 2005's scaling; C set so a
+225/65 R17 on 220 kPa is about 220 N/mm), and bottoms at a third of its section height. Below the 200 kPa default an
+aired-down tyre stands lower by the extra deflection (get_wheel_deflection()), corners more softly (MF 6.1's pressure
+term, 1 + 0.6 dp, kept between half and 1.15 times; Besselink, Schmeitz and Pacejka 2010) and on firm ground rolls with
+more resistance (Gillespie 1992, f_r = 0.005 + (1 / p)(0.01 + 0.0095 (v / 100)^2), the difference from road pressure). Horne's
+aquaplaning speed now uses the tyre's own pressure. A tyre left at 200 kPa drives exactly as before. Bench
+--test=pressure: at 80 kPa the car stands 23 mm lower, loses 0.25 m/s more coasting for 3 s (Gillespie: 0.23), sinks
+2.0 cm instead of 4.5 cm standing in stiff mud and gets 5.9 m instead of 1.5 m in 8 s.
+
+**12.2 Firm subsoil: built.** GroundSurface3D.subsoil (on): the loose layer (max_dent) now lies on a firm base whose
+depth varies 0.7 to 1.3 times over a few metres (two octaves of value noise, 2.5 m and 0.9 m;
+get_subsoil_depth_at()). A load stiffens the layer once what is left under it is thinner than the load is wide:
+finite-depth pressure-sinkage, k_app = k (1 + B (exp(c (z - z0) / b) - 1)) past z0 = H - b (Salman 2022, after
+Yegorov; B 1, c 2). What a spinning wheel digs on top of that (Lyasko's slip sinkage) is thrown out, so it still digs
+down to the base. Once the soil left under the tread is thinner than its lugs (3 cm) the tyre bites the base at
+friction 0.5, whatever clay clogs it. Bench --test=subsoil: a light wheel in 21 cm of slurry sinks 5 cm instead of
+12 cm, a heavy one still reaches the base and grips on it, and a car whose wheels spin in place (slip 0.98) with no
+base crawls on at slip 0.38, 3.4 times as far.
+
+**12.3 Logs and branches in ruts: built.** GroundSurface3D.mats (on): a RigidBody3D in the "ground_mats" group with a
+cylinder or capsule shape is taken by the ground once it settles on soft soil. It is frozen and laid on its highest
+supports along the deformed surface, so it lies in the ruts and on the berms. A wheel that touches one rests on the
+wood, the height where circle meets circle, so it bridges the gaps of a corduroy the road ray falls through, with
+the body's own friction. The log spreads the wheels' load (smoothed over a fifth of a second) along the length a beam
+on an elastic foundation bends over, pi / lambda with lambda = (k_s d / 4 E I)^(1/4) (Hetényi 1946; E 9 GPa for green
+wood, USDA Wood Handbook). It presses its print to the plate sinkage of that load, layered as in 12.2, and sinks with
+it. A branch whose bending moment under the load, P / (4 lambda), passes green wood's 40 MPa snaps and stops carrying
+wheels. Bench --test=mats: on 29 logs across 25 cm of slurry the car drives 4.6 m in 8 s, where bare it bogs at
+0.5 m. The logs sink 6 cm at most against a bare tyre's 28 cm. A 16 cm log carries a 3.7 kN wheel; a 3 cm branch
+snaps under it. --view=mats shows a car on a corduroy.
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
