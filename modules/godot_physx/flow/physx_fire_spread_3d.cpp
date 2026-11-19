@@ -84,6 +84,29 @@ static float _fuel_noise(float p_x, float p_z, uint32_t p_seed) {
 	return Math::lerp(a, b, tz);
 }
 
+// The ground that caught since the last report, as a world rect, for readers of burn_age_at (grass, plants): a few
+// times a second, the cells in between unioned.
+void PhysXFireSpread3D::_report_burn() {
+	if (burn_x1 < burn_x0) {
+		return;
+	}
+	const Transform3D xf = get_global_transform();
+	Rect2 r;
+	for (int k = 0; k < 4; k++) {
+		const float lx = ((k & 1) ? burn_x1 + 1 : burn_x0) * cell_size - size.x * 0.5f;
+		const float lz = ((k & 2) ? burn_z1 + 1 : burn_z0) * cell_size - size.y * 0.5f;
+		const Vector3 w = xf.xform(Vector3(lx, 0.0f, lz));
+		if (k == 0) {
+			r = Rect2(w.x, w.z, 0.0f, 0.0f);
+		} else {
+			r.expand_to(Vector2(w.x, w.z));
+		}
+	}
+	burn_x1 = -1;
+	burn_x0 = 0;
+	WorldContracts::fire_burn_changed(r);
+}
+
 void PhysXFireSpread3D::_allocate() {
 	nx = MAX(2, (int)Math::ceil(size.x / cell_size));
 	nz = MAX(2, (int)Math::ceil(size.y / cell_size));
@@ -204,6 +227,8 @@ void PhysXFireSpread3D::_allocate() {
 	band_z1 = -1;
 	total_burnt = 0.0f;
 	heights_ready = false;
+	burn_x0 = 0;
+	burn_x1 = -1;
 	grid_dirty = false;
 	char_image = Image::create_empty(nx, nz, false, Image::FORMAT_RGBA8);
 	char_image->fill(Color(0, 0, 0, 0));
@@ -549,6 +574,15 @@ void PhysXFireSpread3D::_step(float p_delta) {
 					t_ignite[i] = time + p_delta - remaining;
 					burn_moisture[i] = _moisture(i);
 					burn_day[i] = float(game_days);
+					if (burn_x1 < burn_x0) {
+						burn_x0 = burn_x1 = x;
+						burn_z0 = burn_z1 = z;
+					} else {
+						burn_x0 = MIN(burn_x0, x);
+						burn_x1 = MAX(burn_x1, x);
+						burn_z0 = MIN(burn_z0, z);
+						burn_z1 = MAX(burn_z1, z);
+					}
 				}
 			}
 		}
@@ -2215,6 +2249,7 @@ void PhysXFireSpread3D::_notification(int p_what) {
 				_ignite_from_lightning();
 				_blow_ash(0.25f);
 				_update_indraft();
+				_report_burn();
 			}
 			wash_timer -= dt;
 			if (wash_timer <= 0.0f) {
