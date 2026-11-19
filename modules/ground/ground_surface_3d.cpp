@@ -1594,6 +1594,7 @@ void GroundSurface3D::_build_mesh() {
 	const TerrainGenerator3D *hgen = _hole_generator();
 	mesh_hole_count = hgen ? hgen->get_hole_count() : 0;
 	mesh_hole_cut = hgen != nullptr;
+	const float hole_quad_reach = 0.75f;
 	auto cut = [&](int p_a, int p_b, int p_c) -> bool {
 		if (!hgen) {
 			return false;
@@ -1604,12 +1605,23 @@ void GroundSurface3D::_build_mesh() {
 		if (!hgen->has_holes_in(Rect2(m, Vector2()).grow(span))) {
 			return false;
 		}
+		// The ground's span over the triangle and over a terrain quad's reach round it (Landscape3D tests whole quads,
+		// so where the ground climbs a cliff at a cave mouth its quads cross the passage while a small triangle of
+		// beach in front of them may not; the sand must stop where the terrain does).
 		real_t lo = 1e30, hi = -1e30;
-		for (int k = 0; k < 3; k++) {
-			const real_t h = hgen->get_height(Vector3(center.x + v[k].x, 0.0f, center.y + v[k].z));
+		auto take = [&](real_t p_x, real_t p_z) {
+			const real_t h = hgen->get_height(Vector3(p_x, 0.0f, p_z));
 			lo = MIN(lo, h);
 			hi = MAX(hi, h);
+		};
+		for (int k = 0; k < 3; k++) {
+			take(center.x + v[k].x, center.y + v[k].z);
 		}
+		const float reach = MAX(span, hole_quad_reach);
+		take(m.x - reach, m.y);
+		take(m.x + reach, m.y);
+		take(m.x, m.y - reach);
+		take(m.x, m.y + reach);
 		return hgen->is_hole_span(m.x, m.y, lo, hi);
 	};
 	LocalVector<int> tri;
