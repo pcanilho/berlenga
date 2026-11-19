@@ -47,7 +47,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   ![Deep open sea under overcast sky with three wave layers, raster](media/ocean-swell.jpg)
 
-  *Ocean swell: three wave layers run long swell under the chop.*
+  *Ocean swell: three wave layers run long swell under the chop, and no wave tile repeats.*
 
 - **Measured wave spreading** (`wave_spreading`, `swell`): Donelan-Banner spreading as Horvath (2015) fits it, with swell; slopes at 14 m/s match Cox and Munk's measurements.
 
