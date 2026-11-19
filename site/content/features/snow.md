@@ -101,7 +101,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
 ## Cornices and ice
 
-- **Avalanches** (`SnowCover3D.avalanches_enabled`, `SnowAvalanche3D.trigger()`, `triggers_enabled`, `powder_enabled`): slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow.
+- **Avalanches** (`SnowCover3D.avalanches_enabled`, `SnowAvalanche3D.trigger()`, `triggers_enabled`, `powder_enabled`, `forests_enabled`, `wet_enabled`, `glide_enabled`): slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees. In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep, and on a wet base the whole pack glides and releases to the ground.
 
 - **Cornices** (`SnowCornice3D`): overhangs on lee crests, with collision; milder ranges grow them too (crest wind speed-up).
 

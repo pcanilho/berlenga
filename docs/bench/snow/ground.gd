@@ -24,6 +24,12 @@ func get_height(p: Vector3) -> float:
 			# below; a shallow gully along it (z = 0) so the flow gathers.
 			var t := clampf(-p.x, 0.0, 80.0) * tan(deg_to_rad(38.0))
 			return t - 4.0 * exp(-p.z * p.z / 400.0) * clampf(-p.x / 20.0, 0.0, 1.0)
+		"avalanche_lake":
+			# The avalanche face with a lake at its foot: the bed falls at 25 degrees from x = 2 m to 15 m deep
+			# (the water stands at 0).
+			var t := clampf(-p.x, 0.0, 80.0) * tan(deg_to_rad(38.0))
+			t -= 4.0 * exp(-p.z * p.z / 400.0) * clampf(-p.x / 20.0, 0.0, 1.0)
+			return t - clampf((p.x - 2.0) * tan(deg_to_rad(25.0)), 0.0, 15.0)
 		"meadow":
 			# Gentle ground with knee-high hummocks, for the trail view.
 			return 0.25 * noise.get_noise_2d(p.x * 30.0, p.z * 30.0) + 0.03 * p.x

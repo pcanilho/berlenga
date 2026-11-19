@@ -287,8 +287,19 @@ float PhysXBuildingFire3D::_external_flame(const Room &p_room, const Opening &p_
 			area += o.rect.get_area();
 		}
 	}
+	// Wind blowing in through an opening takes the flames away from it: they leave by the openings it drives the gas
+	// out of, with what would have left the inflow ones (NIST wind-driven fire tests).
+	if (p_opening.wind_flow < -0.05f) {
+		return 0.0f;
+	}
+	float out_area = 0.0f;
+	for (const Opening &o : p_room.openings) {
+		if (o.face != FACE_TOP && o.to_room < 0 && (!o.glazed || o.broken) && o.wind_flow >= -0.05f) {
+			out_area += o.rect.get_area();
+		}
+	}
 	const float h = MAX(p_opening.rect.size.y, 0.3f);
-	const float q = (p_room.q + p_room.q_ext) / 1000.0f;
+	const float q = (p_room.q + p_room.q_ext) / 1000.0f * area / MAX(out_area, 0.1f);
 	const float x = q / (MAX(area, 0.1f) * 0.47f * Math::sqrt(9.81f * h));
 	return MAX(h * (2.37f * Math::pow(x, 2.0f / 3.0f) - 1.0f), 0.0f);
 }
@@ -639,7 +650,9 @@ void PhysXBuildingFire3D::_step_room(int p_room, float p_delta) {
 	}
 	const float floor_area = r.box.size.x * r.box.size.z;
 	const float vent = _vent(r);
-	const float q_vent = 1500.0f * vent;
+	// The air the openings let in by themselves (Kawagoe's 0.5 A sqrt(H) kg/s, burning 3 MJ per kg of air:
+	// Huggett) or, with wind blowing through, what the wind drives in.
+	const float q_vent = MAX(1500.0f * vent, 3000.0f * r.wind_in);
 	const float q_fuel = heat_release_rate * floor_area;
 	const float a_t = _lining_area(r);
 	float pyro = 0.0f; // kW of fuel given off
@@ -840,6 +853,85 @@ float PhysXBuildingFire3D::get_visibility_at(const Vector3 &p_position) const {
 	return 1000.0f;
 }
 
+// Wind pressure on an opening (Cp, of the dynamic pressure rho u^2 / 2): about +0.7 facing the wind, -0.5 in the
+// lee, -0.6 on the sides and roof (low-rise walls: EN 1991-1-4 Table 7.1; ASCE 7).
+float PhysXBuildingFire3D::_opening_cp(const Opening &p_opening, const Vector3 &p_wind_dir) const {
+	if (p_opening.face == FACE_TOP) {
+		return -0.6f;
+	}
+	const float d = get_global_transform().basis.xform(_face_normal(p_opening.face)).normalized().dot(p_wind_dir);
+	return d < 0.0f ? Math::lerp(-0.6f, 0.7f, -d) : Math::lerp(-0.6f, -0.5f, d);
+}
+
+// Wind through the building (docs/ideas/physx.md, "Wind-driven building fires"): each room's pressure balances the
+// orifice flows through its open openings, m = Cd A rho sqrt(2 |dp| / rho) (Cd 0.6), to the outside at its Cp and
+// to the rooms next door (a few Gauss-Seidel sweeps, each room's pressure by bisection). What comes in feeds the
+// fire; what goes out through a door carries the hot layer into the next room; the openings it leaves by carry the
+// flames.
+void PhysXBuildingFire3D::_wind_flows() {
+	const Vector3 w(wind.x, 0.0f, wind.z);
+	const float u = w.length();
+	const float rho = 1.2f;
+	for (Room &r : rooms) {
+		r.wind_in = 0.0f;
+		for (Opening &o : r.openings) {
+			o.wind_flow = 0.0f;
+		}
+	}
+	if (u < 0.5f) {
+		for (Room &r : rooms) {
+			r.pressure = 0.0f;
+		}
+		return;
+	}
+	const Vector3 dir = w / u;
+	const float q_dyn = 0.5f * rho * u * u;
+	auto flow = [&](float p_area, float p_dp) { // kg/s from the high side, signed with p_dp
+		return SIGN(p_dp) * 0.6f * p_area * rho * Math::sqrt(2.0f * Math::abs(p_dp) / rho);
+	};
+	auto is_open = [](const Room &p_r, const Opening &p_o) { return !p_o.glazed || p_o.broken || p_o.to_room >= 0; };
+	for (int sweep = 0; sweep < 4; sweep++) {
+		for (Room &r : rooms) {
+			float lo = -q_dyn, hi = q_dyn;
+			bool any = false;
+			for (int it = 0; it < 24; it++) {
+				const float p = 0.5f * (lo + hi);
+				float net = 0.0f; // into the room
+				for (const Opening &o : r.openings) {
+					if (!is_open(r, o)) {
+						continue;
+					}
+					any = true;
+					const float po = o.to_room >= 0 ? rooms[o.to_room].pressure : _opening_cp(o, dir) * q_dyn;
+					net += flow(o.rect.get_area(), po - p);
+				}
+				if (r.roof_open) {
+					any = true;
+					net += flow(r.box.size.x * r.box.size.z * 0.5f, -0.6f * q_dyn - p);
+				}
+				if (net > 0.0f) {
+					lo = p;
+				} else {
+					hi = p;
+				}
+			}
+			r.pressure = any ? 0.5f * (lo + hi) : 0.0f;
+		}
+	}
+	for (Room &r : rooms) {
+		for (Opening &o : r.openings) {
+			if (!is_open(r, o)) {
+				continue;
+			}
+			const float po = o.to_room >= 0 ? rooms[o.to_room].pressure : _opening_cp(o, dir) * q_dyn;
+			o.wind_flow = flow(o.rect.get_area(), r.pressure - po);
+			if (o.wind_flow < 0.0f) {
+				r.wind_in -= o.wind_flow;
+			}
+		}
+	}
+}
+
 // Fire between rooms: through an open door or hatch the hot layer of a room over 500 C radiates into the next
 // (half the view of a blackbody at its temperature) and its flames reach through once it flashes; a wall, floor or
 // ceiling that burns through lets it in; a room collapsing drops burning timber into the one below; flames out of a
@@ -858,7 +950,9 @@ void PhysXBuildingFire3D::_spread(float p_delta) {
 			}
 			Room &n = rooms[o.to_room];
 			const float tk = r.temperature + 273.15f;
-			const float q = 0.5f * SIGMA * tk * tk * tk * tk;
+			// Hot gas the wind drives through the door heats what it meets (its heat over the door's area).
+			const float push = MAX(o.wind_flow, 0.0f) * 1000.0f * (r.temperature - t_air) / MAX(o.rect.get_area(), 0.5f);
+			const float q = 0.5f * SIGMA * tk * tk * tk * tk + push;
 			n.neighbour_dose += q * q * p_delta;
 			if (n.neighbour_dose >= ig || r.state == ROOM_FLASHED) {
 				const Vector3 at = _face_point(r, o.face, o.rect.get_center()) + _face_normal(o.face) * 0.3f;
@@ -1317,6 +1411,7 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 			if ((!burning && !smoking) || !open || o.to_room >= 0) {
 				_disable(o.emitter);
 				_disable(o.smoke_emitter);
+				_disable(o.tip_emitter);
 				continue;
 			}
 			const Vector3 n = _face_normal(o.face);
@@ -1324,6 +1419,9 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 			const bool flames = l > 0.0f || (o.face == FACE_TOP && burning && r.state != ROOM_GROWING);
 			// Flames go into the fire's gas; smoke into the building's own, which keeps it longer.
 			_disable(flames ? o.smoke_emitter : o.emitter);
+			if (!flames || o.face == FACE_TOP) {
+				_disable(o.tip_emitter);
+			}
 			PhysXFlowEmitter3D *e = flames ? _emitter(o.emitter, base + "Opening" + itos(k)) : _emitter(o.smoke_emitter, base + "Smoke" + itos(k), _smoke_flow());
 			if (!e) {
 				continue;
@@ -1340,8 +1438,46 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 				const Vector2 uv(o.rect.get_center().x, o.rect.position.y + o.rect.size.y * 0.8f);
 				e->set_global_position(xf.xform(_face_point(r, o.face, uv) + n * 0.25f));
 			}
-			if (flames) {
-				// Tongues about the window's width, reaching Eurocode's length above it (not fireballs).
+			if (flames && o.face != FACE_TOP) {
+				// A window plume (EN 1991-1-2 Annex B; Law 1978): a sheet as wide as the opening leaving through its
+				// upper two thirds (above the neutral plane), standing off the wall by about a third of the opening's
+				// height and bending up along the facade to the flame length l above the opening's top. Drawn as a
+				// slot of burning gas across the opening's top and a second, thinner slab of fuel against the wall over
+				// the lower half of the flame, so the gas burns along the facade as a tongue instead of all at the
+				// window in a ball.
+				const float top = o.rect.get_end().y;
+				const float hw = o.rect.size.y;
+				const float w = MAX(o.rect.size.x, 0.4f);
+				const float stand = CLAMP(hw / 3.0f, 0.25f, 0.8f);
+				const Basis basis = xf.basis.orthonormalized();
+				const auto slab = [&](float p_w, float p_h, float p_d) { return o.face < FACE_NEG_Z ? Vector3(p_d, p_h, p_w) : Vector3(p_w, p_h, p_d); };
+				e->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
+				e->set_size(slab(w, MAX(hw * 0.35f, 0.3f), 0.35f));
+				e->set_global_transform(Transform3D(basis, xf.xform(_face_point(r, o.face, Vector2(o.rect.get_center().x, top - hw * 0.2f)) + n * 0.25f)));
+				e->set_couple_rate(3.0f);
+				e->set_temperature(1.0f);
+				e->set_fuel(CLAMP(0.25f + 0.1f * l, 0.25f, 0.5f));
+				e->set_smoke(0.4f);
+				e->set_velocity(xf.basis.xform(n * (0.8f + MAX(o.wind_flow, 0.0f) / MAX(1.2f * o.rect.get_area(), 0.1f) * 0.5f) + Vector3(0, 1.5f + CLAMP(0.5f * l, 0.0f, 2.0f), 0)) + wind * 0.4f);
+				if (l > 0.3f) {
+					PhysXFlowEmitter3D *tip = _emitter(o.tip_emitter, base + "Tip" + itos(k));
+					if (tip) {
+						const float span = 0.5f * l;
+						tip->set_enabled(true);
+						tip->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
+						tip->set_size(slab(w * 0.85f, span, 0.3f));
+						tip->set_global_transform(Transform3D(basis, xf.xform(_face_point(r, o.face, Vector2(o.rect.get_center().x, top + 0.5f * span)) + n * stand)));
+						tip->set_couple_rate(1.5f);
+						tip->set_temperature(0.8f);
+						tip->set_burn(0.0f);
+						tip->set_fuel(CLAMP(0.08f + 0.05f * l, 0.08f, 0.25f));
+						tip->set_smoke(0.3f);
+						tip->set_velocity(xf.basis.xform(Vector3(0, 2.0f + CLAMP(0.5f * l, 0.0f, 2.0f), 0)) + wind * 0.4f);
+					}
+				} else {
+					_disable(o.tip_emitter);
+				}
+			} else if (flames) {
 				e->set_temperature(1.0f);
 				e->set_fuel(CLAMP(0.2f + 0.15f * l, 0.2f, 0.55f));
 				e->set_smoke(0.4f);
@@ -1875,6 +2011,10 @@ void PhysXBuildingFire3D::_notification(int p_what) {
 						e->queue_free();
 					}
 					o.emitter = ObjectID();
+					if (Node *e = Object::cast_to<Node>(ObjectDB::get_instance(o.tip_emitter))) {
+						e->queue_free();
+					}
+					o.tip_emitter = ObjectID();
 					o.smoke_emitter = ObjectID(); // freed with the smoke gas, a child
 				}
 			}
@@ -1900,6 +2040,7 @@ void PhysXBuildingFire3D::_notification(int p_what) {
 			while (left > 0.0f) {
 				const float dt = MIN(left, 1.0f);
 				left -= dt;
+				_wind_flows();
 				for (uint32_t i = 0; i < rooms.size(); i++) {
 					_step_room(i, dt);
 				}

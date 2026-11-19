@@ -1280,10 +1280,16 @@ void fragment() {
 			// Patchy below the map's metre (two octaves): a deposit is never an even smear.
 			float gc_patch = 0.7 + 0.45 * tm_gc_noise(wp.xz * 0.9) + 0.2 * (tm_gc_noise(wp.xz * 3.1 + 7.0) - 0.5);
 			vec3 gc_cov = tm_gc_cover(wp.xz, gc_type) * gc_hid * gc_patch;
+			// Where a deposit thins out its edge is ragged, not a smooth fade: the thin cover is cut by the same patch
+			// noise (with a finer octave), so the aggregate's edge breaks up as the stones' own does.
+			float gc_rag = tm_gc_noise(wp.xz * 0.6 + 3.0) - 0.5 + 0.6 * (tm_gc_noise(wp.xz * 1.7 + 11.0) - 0.5);
+			gc_cov *= smoothstep(vec3(0.0), vec3(1.0), gc_cov * 8.0 + 1.5 * gc_rag);
+			// And the mean is never flat: clusters a few grains wide, lighter and darker (a third octave).
+			float gc_clump = 0.85 + 0.3 * tm_gc_noise(wp.xz * 5.3 + 1.0);
 			if (max(gc_cov.x, max(gc_cov.y, gc_cov.z)) > 0.002) {
 				vec3 gc_view = gc_v / max(gc_d, 1e-4);
 				float gc_cv = max(abs(dot(gc_view, wn)), 0.05);
-				float gc_fp = gc_d * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y) / max(gc_cv, 0.1);
+				float gc_fp = gc_d * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y) / sqrt(max(gc_cv, 0.1)); // across and along the view, their mean
 				// Seen from the side the grains stand up off the bed and hide it (a grain about 0.6 of its width tall), and
 				// a low sun puts the bed between them in their shade: the aggregate's view and light dependence (Meng et
 				// al. 2015), as Poisson cover of grains whose shadow and silhouette lengthen with the tangent of the angle.
@@ -1311,19 +1317,19 @@ void fragment() {
 						continue;
 					}
 					float s = tm_gc_size[k];
-					// Single grains while a pixel spans under a quarter of one, their mean by the time it spans most of one.
-					float res = smoothstep(0.25, 0.8, gc_fp / s);
+					// Single grains while a pixel spans under about a third of one, their mean once it spans more than one (as the
+					// drawn stones, which still speckle at a pixel each).
+					float res = smoothstep(0.35, 1.2, gc_fp / s);
 					float tone;
 					vec3 gn;
 					float hit = res < 1.0 ? tm_gc_grain(wp.xz, s, cov, tone, gn) : 0.0;
 					// The mean: the share of the view the grains fill, at their mean tone (lit tops, shaded sides).
-					// (0.8 and 1.5 matched to frames with every grain drawn, from above and at eye height.)
-					float seen = 1.0 - exp(-0.8 * cov * (1.0 + 1.5 * gc_tv));
-					float shaded = 1.0 - exp(-cov * 0.4 * gc_ts);
+					// (0.8 and 0.75 matched to frames with every grain drawn, from above and at eye height.)
+					float seen = 1.0 - exp(-0.8 * cov * (1.0 + 0.75 * gc_tv));
+					float shaded = 1.0 - exp(-cov * 0.2 * gc_ts);
 					float f = mix(hit, seen, res);
-					// Seen edge on, what shows is mostly their sides and the shade between them.
-					float t = mix(tone, (0.85 - 0.2 * min(gc_ts / 3.0, 1.0)) * (1.0 - 0.45 * gc_back) * (1.0 - 0.3 * smoothstep(3.0, 12.0, gc_tv)), res);
-					albedo = mix(albedo, gc_stone * t, f);
+					float t = mix(tone, (0.95 - 0.15 * min(gc_ts / 3.0, 1.0)) * (1.0 - 0.3 * gc_back), res);
+					albedo = mix(albedo, gc_stone * t * mix(1.0, gc_clump, res), f * mix(1.0, gc_clump, res));
 					// The bed still seen lies partly in their shadow.
 					gc_shade *= 1.0 - res * (1.0 - seen) * shaded;
 					gc_n = mix(gc_n, gn - vec3(0.0, 1.0, 0.0), hit * (1.0 - res));
