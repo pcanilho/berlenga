@@ -111,6 +111,10 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 - **Coastal dunes** (TerrainGenerator3D `dunes_enabled`): beaches feed wind-blown sand inland; marram builds foredunes along the plant line, and blowouts and parabolic dunes open where the cover fails.
 - **Sand seas** (TerrainGenerator3D `sand_sea_rect`, `sand_sea_kind`): a desert area fills with wind-built transverse, linear, star or barchan dunes that bank against the hills, thin out at their edges and stop at rivers; each has a long gentle windward slope and a steep slip face at the angle of repose.
 
+  ![A desert sand sea at low sun, raster](media/terrain-sand-sea.jpg)
+
+  *Sand seas: dunes with scalloped brinks and sharp slip faces, rippled sand on the windward slopes.*
+
 ## Maps
 
 - **Geology maps** (`terrain_geology()` in shaders): soil, bare rock and scree from the erosion run.
