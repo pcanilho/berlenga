@@ -2120,6 +2120,19 @@ void GroundSurface3D::set_near_extent(float p_extent) {
 	}
 }
 
+// Still shots on a software GPU: the main field at 256 (12.5 cm over 32 m), the near field at 256 (3 cm) and 64
+// cached tiles, about a fifth of the GPU work and 300 MB less memory than the shipped 512, 512 and 1024. Off restores
+// those.
+void GroundSurface3D::set_light_budget(bool p_light) {
+	if (p_light == light_budget) {
+		return;
+	}
+	light_budget = p_light;
+	set_deform_resolution(p_light ? 256 : 512);
+	set_near_resolution(p_light ? 256 : 512);
+	set_max_cached_tiles(p_light ? 64 : 1024);
+}
+
 void GroundSurface3D::set_near_resolution(int p_resolution) {
 	near_resolution = MAX(p_resolution / GroundDeformField::TILE, 1) * GroundDeformField::TILE;
 	mesh_dirty = true;
@@ -4103,6 +4116,12 @@ void GroundSurface3D::_notification(int p_what) {
 			if (patch_params_stale) {
 				_sync_patch_params();
 			}
+			// Paused (still shots): the field, its texture and every read stay as they are; nothing steps, follows or
+			// reads back, which on a software GPU is most of a frame.
+			if (simulation_paused) {
+				step_msec = 0.0;
+				break;
+			}
 			_follow(_follow_position());
 			if (!pending_puddles.is_empty()) {
 				_puddles_update(delta);
@@ -5732,7 +5751,14 @@ void GroundSurface3D::_gpu_submit_field(GroundDeformGPUHost &r_host, const Groun
 	PackedByteArray cell_bytes;
 	if (r_cells_dirty && ground_valid) {
 		cell_bytes = _gpu_cells();
-		if (cell_bytes.size() > 0) {
+		// The cells refresh every 2 s; most refreshes change nothing (dry still weather), and one that changes
+		// nothing would only re-upload them and keep a slide's minute of slumping going for ever.
+		const uint32_t hash = cell_bytes.size() > 0 ? hash_murmur3_buffer(cell_bytes.ptr(), cell_bytes.size()) : 0;
+		if (cell_bytes.size() > 0 && hash == r_host.cells_hash && !r_host.reset) {
+			r_cells_dirty = false;
+			cell_bytes.clear();
+		} else if (cell_bytes.size() > 0) {
+			r_host.cells_hash = hash;
 			flags |= GroundDeformGPU::STEP_COVER;
 			r_cells_dirty = false;
 			if (mud_sliding) {
@@ -6207,6 +6233,10 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_mud_layer"), &GroundSurface3D::is_mud_layer);
 	ClassDB::bind_method(D_METHOD("set_mud_slides", "enabled"), &GroundSurface3D::set_mud_slides);
 	ClassDB::bind_method(D_METHOD("is_mud_slides"), &GroundSurface3D::is_mud_slides);
+	ClassDB::bind_method(D_METHOD("set_simulation_paused", "paused"), &GroundSurface3D::set_simulation_paused);
+	ClassDB::bind_method(D_METHOD("is_simulation_paused"), &GroundSurface3D::is_simulation_paused);
+	ClassDB::bind_method(D_METHOD("set_light_budget", "light"), &GroundSurface3D::set_light_budget);
+	ClassDB::bind_method(D_METHOD("is_light_budget"), &GroundSurface3D::is_light_budget);
 	ClassDB::bind_method(D_METHOD("set_subsoil", "enabled"), &GroundSurface3D::set_subsoil);
 	ClassDB::bind_method(D_METHOD("is_subsoil"), &GroundSurface3D::is_subsoil);
 	ClassDB::bind_method(D_METHOD("get_subsoil_depth_at", "position"), &GroundSurface3D::get_subsoil_depth_at);
@@ -6415,6 +6445,8 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flood_silt"), "set_flood_silt", "is_flood_silt");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_slides"), "set_mud_slides", "is_mud_slides");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "subsoil"), "set_subsoil", "is_subsoil");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "simulation_paused"), "set_simulation_paused", "is_simulation_paused");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "light_budget"), "set_light_budget", "is_light_budget");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mats"), "set_mats", "is_mats");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "mud_map", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_mud_map", "get_mud_map");
 	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "mud_map_rect"), "set_mud_map_rect", "get_mud_map_rect");
