@@ -2282,6 +2282,8 @@ func _process(dt: float) -> void:
 			cover.stream_target = cover.get_path_to(cam)
 			if OS.get_environment("GRASS_FAR_REACH") != "":
 				cover.far_reach = float(OS.get_environment("GRASS_FAR_REACH")) # GRASS_FAR_REACH=1: the plants fade at their range
+			if OS.get_environment("GRASS_FAR_SHELL") == "0":
+				cover.far_shell = false # GRASS_FAR_SHELL=0: no far columns for the taller plants
 			cover.streaming = true
 		elif cover:
 			cover.populate()
@@ -2502,10 +2504,13 @@ func _process(dt: float) -> void:
 		if cover:
 			# The plants drawn (the far tail's share: VegetationField3D.far_reach).
 			var inst := 0
+			var shells := 0
 			for c in cover.get_children(true):
+				if c.name.begins_with("FarShell"):
+					shells += 1
 				if c is MultiMeshInstance3D and c.multimesh and not c.name.begins_with("FarVolume"):
 					inst += c.multimesh.instance_count
-			print("GRASS_FAR_COVER far_reach %.1f: plant instances %d" % [cover.far_reach, inst])
+			print("GRASS_FAR_COVER far_reach %.1f: plant instances %d, far shell columns %d in %d tiles" % [cover.far_reach, inst, cover.get_far_shell_column_count(), shells])
 	await RenderingServer.frame_post_draw
 	if OS.get_environment("GRASS_STILL") == "1":
 		# GrassField3D/VegetationField3D.still_shot: settled and frozen by now; memory against the run's start.
