@@ -65,6 +65,13 @@
 				Finds sea cave mouths in [param rect] (global x, z): cliffs at least 6 m over the sea, with water 0.3 to 30 m deep in front of them, a cliff foot within 8 m of the waterline and the ground between under high-water swash (0.6 m over the sea), so the sea reaches the mouth floor, and a steep rise to at least 6 m within 6 to 25 m behind the mouth. The mouths are at least 80 m apart and the tallest cliffs come first. Each entry is a [Dictionary] with [code]position[/code] (at sea level) and [code]out[/code] (toward the sea). Returns nothing without a sea.
 			</description>
 		</method>
+		<method name="get_blowhole_spout" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="cave" type="int" />
+			<description>
+				A sea cave's blowhole: [code]position[/code] (where the shaft opens at the ground), [code]speed[/code] (the air driven up it, m/s; 0 at rest) and [code]sealed[/code]. While a crest seals the passage the air over the back chamber is trapped, and the water rising there pushes it up the shaft at the rise speed times the chamber's area over the shaft's (an oscillating water column), up to 60 m/s. Empty for a cave without a blowhole.
+			</description>
+		</method>
 		<method name="get_blowholes" qualifiers="const">
 			<return type="PackedVector3Array" />
 			<param index="0" name="cave" type="int" />
@@ -114,6 +121,13 @@
 			<return type="int" />
 			<description>
 				How many chunks are meshed.
+			</description>
+		</method>
+		<method name="get_sea_cave_water" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="cave" type="int" />
+			<description>
+				The sea inside a sea cave now, for drawing it: [code]points[/code] (the passage's line at the water's level, mouth first, the back chamber last), [code]half_widths[/code], [code]depths[/code] (m over the floor, 0 where dry), [code]flows[/code] (m/s into the cave, negative out), [code]mean_level[/code] (the sea at the mouth with the waves filtered out) and [code]sealed[/code] (a crest fills the passage to its roof somewhere). Empty for a cave that is not a sea cave or while [member sea_surge] is off.
 			</description>
 		</method>
 		<method name="is_streaming" qualifiers="const">
@@ -185,6 +199,13 @@
 				Whether the cave was added with [method add_sea_cave].
 			</description>
 		</method>
+		<method name="step_sea_surge">
+			<return type="void" />
+			<param index="0" name="delta" type="float" />
+			<description>
+				Advances the sea in the sea caves by [param delta] seconds (the network does it every frame; for tests and stills).
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="bedding_spacing" type="float" setter="set_bedding_spacing" getter="get_bedding_spacing" default="12.0">
@@ -250,6 +271,9 @@
 		<member name="sea_mist" type="bool" setter="set_sea_mist" getter="get_sea_mist" default="true">
 			When the network has sea caves, it makes its own [code]PhysXCaveMist3D[/code] (with the PhysX module built with Flow), which breathes cold mist out of their mouths with the swell.
 		</member>
+		<member name="sea_surge" type="bool" setter="set_sea_surge" getter="get_sea_surge" default="true">
+			The sea runs into sea caves: the network answers the water contract (WorldWater) inside each sea cave passage, so bodies wade and swim there, the ground and plants get wet, and water surfaces can draw it. The level is the sea's just outside the mouth (any other water producer, such as the ocean; the still sea when none answers), carried in as a long wave: delayed by the shallow-water speed [code]sqrt(g h)[/code], grown by Green's law as the passage narrows and shoals (amplitude as width^-1/2 depth^-1/4), and damped over [member surge_damping]. Currents follow linear long-wave theory, [code]u = eta sqrt(g / h)[/code]. See [method get_sea_cave_water], [method get_blowhole_spout] and [signal blowhole_spout].
+		</member>
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			The seed. Each cave also takes its entrance's position into its own seed.
 		</member>
@@ -262,6 +286,9 @@
 		<member name="stream_radius" type="float" setter="set_stream_radius" getter="get_stream_radius" default="64.0">
 			How far round [member follow_target] chunks are meshed, in metres.
 		</member>
+		<member name="surge_damping" type="float" setter="set_surge_damping" getter="get_surge_damping" default="40.0">
+			How far a wave runs into a sea cave before the rough floor and walls take it down to 1/e, m.
+		</member>
 		<member name="tortuosity" type="float" setter="set_tortuosity" getter="get_tortuosity" default="0.4">
 			How far passages wander off their paths: from a few centimetres at 0 to 4 m at 1.
 		</member>
@@ -269,6 +296,16 @@
 			The material of the passage walls. Without one, a built-in limestone in world space: mottled, with faint beds, darker and wet toward the floor, and the sediment floor brown.
 		</member>
 	</members>
+	<signals>
+		<signal name="blowhole_spout">
+			<param index="0" name="cave" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<param index="2" name="speed" type="float" />
+			<description>
+				A sea cave's blowhole starts to blow: the air up the shaft has passed 5 m/s ([method get_blowhole_spout]). For spray, sound and mist at [param position].
+			</description>
+		</signal>
+	</signals>
 	<constants>
 		<constant name="PASSAGE_ENTRANCE" value="0" enum="PassageType">
 			The first metres from the mouth in.

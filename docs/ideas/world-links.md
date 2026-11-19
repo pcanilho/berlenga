@@ -114,6 +114,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Cold air over water → steam fog | linked (18 Nov) | air, WorldWater, `get_water_temperature()` | VegetationMist3D cells over water |
 | Rain, melt → river level | linked (18 Nov) | WeatherRunoff3D (SCS curve number, D8 routing) | rain thread: rivers add the discharge reaching them; snowmelt runs off too |
 | Floodwater → ground soaked, silted | linked (19 Nov) | WorldWater `height_except` (every producer but the ground's own standing water), `flow_at`, `sediment_at` | GroundSurface3D soaks the ground any water covers (Green-Ampt) and still or slow water (under 0.2-0.5 m/s) lays its load as fresh mud, D = C w_s dt with w_s 3e-4 m/s (Pizzuto 1987; Asselman and Middelkoop 1995) |
+| Sea → sea caves (surge, currents, blowholes) | linked (19 Nov) | CaveNetwork3D is a WorldWater producer inside each sea cave: the sea at the mouth (`height_except`, any producer; the still sea when none) run in as a long wave, lag sqrt(g h), Green's law growth (b^-1/2 h^-1/4), e-folding `surge_damping` 40 m; u = eta sqrt(g/h) | Blowholes: a crest that seals the passage traps the chamber's air, pushed up the shaft at rise x chamber/shaft area (oscillating water column; Falcao and Henriques 2016); `get_blowhole_spout`, signal `blowhole_spout`. Drawing (surface in the cave, spray) is Valence's: `get_sea_cave_water(cave)` |
 | Cold → lake ice | linked | air, snow | SnowCover3D lake ice, Stefan's law under the snow (Leppaeranta 1993) |
 | Bodies → lake ice (break through) | linked (19 Nov) | world_contact bodies (mass), SnowCover3D lake ice | a load past Gold's P = A h^2 (A 10, white ice half, thawing ice half) breaks a hole the body's size; it stops bearing at once and refreezes by Stefan's law |
 | Fire → steam on water | linked (18 Nov) | WorldFire, WorldWater | water landing on fire and fire at the water's edge (PhysX, ebb5f254) |
@@ -249,7 +250,7 @@ Gaps found by reading the readers, each on a contract that exists.
    both settle where the wind slows: a snow fence's drift reaches about 12-15 H downwind and 1.2 H high at
    equilibrium (Tabler 1980, 1991); sand fills a lee shadow a few H long behind a boulder or a parked car (Hesp 1981,
    shadow dunes). Rocks (RockField3D) and vehicles join the shelter as obstacles.
-3. The sea surges into sea caves. CaveNetwork3D sea caves have floors at or below low tide but no water. A WorldWater
+3. The sea surges into sea caves (built 19 Nov, the water and the blowhole air; drawing with Valence). CaveNetwork3D sea caves have floors at or below low tide but no water. A WorldWater
    producer for the cave passages (the sea level at the mouth, wave set-up carried in and damped with distance) lets
    bodies wade and swim there, and Valence's surface draws it; where a roof opening meets the surface the trapped air
    drives a spout on the wave crests (blowholes; the spout's pressure scales with the wave's rho g H at the mouth).

@@ -4,6 +4,8 @@ extends Node3D
 # godot --path docs/bench/rocks --rendering-driver vulkan -- [options]
 #   --test                checks: every rock type and family builds (size, axes, timing), transport rounds and beach
 #                         wear flattens, then the field's six layers on a generated world; prints PASS/FAIL, quits
+#                         (sea caves: the sea surges in under the cliff, blowholes blow in a storm swell; boulders as
+#                         wind obstacles)
 #   --gallery             every family (columns) of every rock type (rows), each scaled to a 1 m b axis
 #   --rock=type,family    one rock close up (--seed=N, --distance=m transport, --weathering=0..1; --stand: a fin,
 #                         hoodoo or stack stood on end, side on)
@@ -61,6 +63,20 @@ extends Node3D
 #                         compares it with the stones placed
 #   --walk=m              with --world: stream while the camera walks m metres forward (--walk-step=m a frame, 0.1),
 #                         then print the main thread's streaming time per frame (mean, 95th percentile, worst)
+
+
+# A swell at the sea cave's mouth for the sea surge check: still sea plus 1 m amplitude, 12 s period, open water only
+# (it answers outside the cliff, as the ocean does).
+class SwellStub extends WorldWater:
+	var sea := 0.0
+	var t := 0.0
+	var gen: Node
+	var amplitude := 1.0
+	func _height_at(p: Vector3) -> float:
+		if gen.get_height(p) > sea:
+			return -INF
+		return sea + amplitude * sin(TAU * t / 12.0)
+
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
 const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth"]
@@ -1811,6 +1827,54 @@ func _test() -> void:
 			var mist: Node = net.get_sea_mist_node()
 			check(mist != null and mist.get("cave_network") != NodePath(), "sea mist: %s" % ("a mist node on the network" if mist else "no mist node"))
 			net.sea_mist = false # it checks nothing more here
+		# The sea runs into the cave (CaveNetwork3D as a WorldWater producer): a 2 m swell of 12 s outside the mouth.
+		if sid >= 0:
+			var swell := SwellStub.new()
+			swell.sea = sea_y
+			swell.gen = gen
+			WorldContracts.add_water_stub(swell)
+			var water: WorldWater = WorldContracts.get_water()
+			net.step_sea_surge(0.05)
+			var pts0: PackedVector3Array = net.get_sea_cave_water(sid)["points"]
+			var inside: Vector3 = pts0[mini(3, pts0.size() - 1)]
+			var lo := INF
+			var hi := -INF
+			var flow_in := 0.0
+			var spout := 0.0
+			for i in 960: # 48 s in 0.05 s steps
+				swell.t = i * 0.05
+				net.step_sea_surge(0.05)
+				if i >= 480:
+					var hgt := water.height_at(Vector3(inside.x, sea_y - 0.5, inside.z))
+					if is_finite(hgt):
+						lo = minf(lo, hgt)
+						hi = maxf(hi, hgt)
+					flow_in = maxf(flow_in, water.flow_at(Vector3(inside.x, sea_y - 0.5, inside.z)).length())
+					spout = maxf(spout, float(net.get_blowhole_spout(sid).get("speed", 0.0)))
+			check(is_finite(lo) and hi - lo > 1.0 and absf((hi + lo) * 0.5 - sea_y) < 0.6 and flow_in > 0.3 and gen.get_height(inside) > hi, "sea caves: the sea surges into the passage under the cliff: %.1f to %.1f m (still sea %.1f m), currents to %.1f m/s; the blowhole's air up to %.0f m/s" % [lo, hi, sea_y, flow_in, spout])
+			# A storm swell (4 m) seals the passage and drives the air in the back chamber up its blowhole.
+			var bh := -1
+			for se in sea_ents:
+				var id2 := net.add_sea_cave(se["position"], se["out"])
+				if id2 >= 0 and net.get_blowholes(id2).size() > 0:
+					bh = id2
+					break
+			if bh < 0:
+				check(true, "blowholes: none among these sea caves (counted, not required)")
+			else:
+				swell.amplitude = 4.0
+				var top := 0.0
+				var sealed := false
+				for i in 600:
+					swell.t = 60.0 + i * 0.05
+					net.step_sea_surge(0.05)
+					var sp: Dictionary = net.get_blowhole_spout(bh)
+					top = maxf(top, float(sp.get("speed", 0.0)))
+					sealed = sealed or bool(sp.get("sealed", false))
+				check(not sealed or top > 5.0, "blowholes: a storm swell %s; air up the shaft to %.0f m/s" % ["seals the passage" if sealed else "does not seal this passage", top])
+			net.sea_surge = false
+			check(not is_finite(water.height_at(Vector3(inside.x, sea_y - 0.5, inside.z))), "sea surge off: no water under the cliff")
+			WorldContracts.clear_overrides()
 	net.queue_free()
 	# Scree packs without overlaps: stones in one cell, as spheres of their mean radius.
 	var scree: Array = rocks.get_stones(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))
@@ -1845,6 +1909,13 @@ func _test() -> void:
 	var t2 := Time.get_ticks_msec()
 	var obs2: PackedVector4Array = rocks.get_obstacles(Rect2(scree_at.x - 128, scree_at.z - 128, 256, 256), 0.25)
 	check(obs2 == obs and Time.get_ticks_msec() - t2 < 100, "obstacles again from the cache: same %d stones in %d ms" % [obs2.size(), Time.get_ticks_msec() - t2])
+	var t3 := Time.get_ticks_msec()
+	var wind: Array = rocks.get_wind_obstacles(Rect2(scree_at.x - 128, scree_at.z - 128, 256, 256))
+	var tall := 0
+	for b in wind:
+		if (b as AABB).size.y >= 0.5:
+			tall += 1
+	check(wind.size() > 0 and tall == wind.size() and rocks.is_in_group("weather_shelter"), "wind obstacles: %d boulders standing 0.5 m or more as boxes for the weather's shelter, the field in its group (%d ms)" % [wind.size(), Time.get_ticks_msec() - t3])
 	var rivers: Array = rocks.get_stones(RockField3D.LAYER_RIVER, wr)
 	var rounder := 0
 	for s in rivers:
