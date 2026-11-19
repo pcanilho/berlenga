@@ -16,6 +16,15 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="add_sediment">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="mineral_kg_s" type="float" />
+			<param index="2" name="ash_kg_s" type="float" />
+			<description>
+				Load entering the water (kg/s of silt and clay, and of ash), as [method WorldWater.add_sediment] gives it: held until the caller's next call and mixed through the body's volume ([method get_water_volume]) on weather time. It settles out (silt in about half a day, ash in about two) and browns or greys the water in raster and path tracing alike.
+			</description>
+		</method>
 		<method name="clear_inflow">
 			<return type="void" />
 			<param index="0" name="owner" type="int" />
@@ -147,6 +156,18 @@
 			<return type="float" />
 			<description>
 				The storm runoff (m³/s) from [WeatherRunoff3D] reaching this lake besides its rivers, added to its inflow when [member level_from_flows] is on.
+			</description>
+		</method>
+		<method name="get_sediment" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				The body's suspended load (kg/m³: x mineral, y ash), well mixed.
+			</description>
+		</method>
+		<method name="get_water_volume" qualifiers="const">
+			<return type="float" />
+			<description>
+				The water's volume (m³) over its still-water depths, which incoming sediment mixes through.
 			</description>
 		</method>
 		<method name="get_wave_cascade_size" qualifiers="const">
@@ -293,6 +314,13 @@
 			<param index="3" name="fetch" type="float" />
 			<description>
 				Sets [member wind_speed], [member wind_direction], [member wave_amplitude] and [member fetch] at once. Once the surface is running, a change to any of them regenerates the wave spectrum in place: every wave keeps its phase and just grows, calms or turns, and the ripples, wakes and foam carry on -- so a storm can be ramped smoothly, every frame if needed. (Setting the four properties one by one does the same, with one update each.) Changing [member ocean_domain_size] still rebuilds the surface; don't animate it.
+			</description>
+		</method>
+		<method name="set_sediment">
+			<return type="void" />
+			<param index="0" name="kg_m3" type="Vector2" />
+			<description>
+				Sets the body's suspended load (kg/m³: x mineral, y ash), for a lake that starts turbid.
 			</description>
 		</method>
 		<method name="submit_impulse">
@@ -536,14 +564,14 @@
 		<member name="wave_cascade_ratio" type="float" setter="set_wave_cascade_ratio" getter="get_wave_cascade_ratio" default="6.0">
 			How much larger each wave cascade's tile is than the last (plus 0.382 with [member wave_tile_breakup]).
 		</member>
-		<member name="wave_tile_breakup" type="bool" setter="set_wave_tile_breakup" getter="get_wave_tile_breakup" default="true">
-			Keeps the wave tiles from repeating together. Tiles whose sides are whole multiples of each other (40 m, 240 m, and the 5 m [member detail_waves] tile) line up again every few tens of meters, so the same chop, glints and whitecaps come back on a grid. Detuned, each cascade's tile is [code][member wave_cascade_ratio] + 0.382[/code] times the last (6.382 by default) and the detail tile a little larger, ratios as far from any simple fraction as possible, so no two tiles line up again within kilometers. Tiles only grow, so no band changes. [code]false[/code] restores the exact ratios (for comparison).
-		</member>
 		<member name="wave_cascades" type="int" setter="set_wave_cascades" getter="get_wave_cascades" default="1">
 			Number of FFT tiles summed into the ocean. 1 is the single tile of [member ocean_domain_size], which holds no wave longer than the tile, so a strong wind on open water stays short and low. Each extra cascade is a tile [member wave_cascade_ratio] times larger, carrying the band of longer waves (swell), and every tile keeps only waves shorter than a quarter of its size, so none of them shows its repeat. Each extra cascade costs one more FFT ocean on the GPU.
 		</member>
 		<member name="wave_spreading" type="int" setter="set_wave_spreading" getter="get_wave_spreading" enum="PhysXWaterSurface3D.WaveSpreading" default="1">
 			How the ocean's wave energy spreads around the wind direction, from Horvath (2015, "Empirical directional wave spectra for computer graphics"). [constant WAVE_SPREADING_DONELAN_BANNER] (default, Horvath's recommendation) is the measured [code]sech^2[/code] spreading: narrowest at the spectrum's peak, so the dominant waves run with the wind, and wider for shorter and longer waves, so short waves cross. [constant WAVE_SPREADING_HASSELMANN] is Hasselmann et al. (1980)'s [code]cos^2s(theta / 2)[/code] form, wider again for short waves. [constant WAVE_SPREADING_COS2] is the earlier [code]cos^2[/code] spreading with a weak back lobe. [member swell] narrows the first two. Changing it regenerates the spectrum in place.
+		</member>
+		<member name="wave_tile_breakup" type="bool" setter="set_wave_tile_breakup" getter="get_wave_tile_breakup" default="true">
+			Keeps the wave tiles from repeating together. Tiles whose sides are whole multiples of each other (40 m, 240 m, and the 5 m [member detail_waves] tile) line up again every few tens of meters, so the same chop, glints and whitecaps come back on a grid. Detuned, each cascade's tile is [code][member wave_cascade_ratio] + 0.382[/code] times the last (6.382 by default) and the detail tile a little larger, ratios as far from any simple fraction as possible, so no two tiles line up again within kilometers. Tiles only grow, so no band changes. [code]false[/code] restores the exact ratios (for comparison).
 		</member>
 		<member name="wet_sand_dry_time" type="float" setter="set_wet_sand_dry_time" getter="get_wet_sand_dry_time" default="12.0">
 			Time constant (s) for sand uncovered by the swash to dry: the wet darkening fades to about a third over this long. See [member swash_run_up].

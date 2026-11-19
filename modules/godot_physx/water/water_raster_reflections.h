@@ -462,7 +462,26 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 	float hg = (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * p_g * cth, 1e-4), 1.5));
 	vec3 sun = p_sun_irr * hg * seg_sun;
 	vec3 sky = p_sky * 0.5 * seg_sky;
-	return seen + max(p_sc, vec3(0.0)) * (sun + sky);
+	vec3 single = max(p_sc, vec3(0.0)) * (sun + sky);
+	// Turbid water (silt, ash: WorldWater sediment) scatters so much that most of its light has bounced many times,
+	// each bounce filtered by the particles' colour, which single scattering misses (muddy water read as grey sky
+	// light instead of brown, as the path tracer draws it). Its diffuse reflectance as a deep medium by the similarity
+	// relation (reduced albedo w' = b(1 - g) / (a + b(1 - g)); Hapke 1981: R = (1 - sqrt(1 - w')) / (1 + sqrt(1 - w'))),
+	// lit by the light coming down, over the depth it holds (diffusion's attenuation sqrt(3 a (a + b'))). Only where
+	// the water is that turbid: clear water's colour stays its single scattering, as before.
+	vec3 bb = max(p_sc, vec3(0.0)) * (1.0 - p_g);
+	vec3 aa = max(p_ab, vec3(0.0));
+	vec3 wp = bb / max(aa + bb, vec3(1e-6));
+	float turbid = smoothstep(0.3, 0.6, max(wp.r, max(wp.g, wp.b)));
+	if (turbid > 0.0) {
+		vec3 gam = sqrt(max(1.0 - wp, vec3(0.0)));
+		vec3 rd = (1.0 - gam) / (1.0 + gam);
+		vec3 sig = sqrt(3.0 * aa * (aa + bb));
+		vec3 held = 1.0 - exp(-2.0 * sig * max(-t.y, 0.05) * min(len, 1e3));
+		vec3 multi = rd * (p_sun_irr * mu + p_sky * PI) / PI * held * vis;
+		single = mix(single, max(single, multi), turbid);
+	}
+	return seen + single;
 }
 
 // The mirror ray from view-space point p_vtx (normal p_n) marched over the screen's depth (screen_reflections):
