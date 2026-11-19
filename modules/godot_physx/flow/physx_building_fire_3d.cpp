@@ -700,6 +700,123 @@ void PhysXBuildingFire3D::_step_room(int p_room, float p_delta) {
 	}
 }
 
+// Smoke ahead of the fire: a two-zone layer per room (Quintiere; as CFAST). A burning room's plume entrains air
+// into the layer under its ceiling (Heskestad: m = 0.071 Q_c^(1/3) z^(5/3) + 0.0018 Q_c kg/s, with Q_c = 0.7 Q and z
+// the clear height), carrying soot at smoke_yield of the fuel burnt. The layer leaves through every opening whose top
+// is below it as a buoyant flow, m = (2/3) Cd W rho_s sqrt(2 g (1 - rho_s / rho_a)) dh^(3/2) with dh the depth of
+// layer in the opening, and through the leaks at the ceiling; through a door it fills the next room, which smokes in
+// turn. Visibility in the layer is 3 / K for soot's mass extinction of 8.7 m2/g (Mulholland).
+void PhysXBuildingFire3D::_smoke(float p_delta) {
+	const float rho_a = 353.0f / (t_air + 273.15f);
+	for (Room &r : rooms) {
+		const float area = r.box.size.x * r.box.size.z;
+		const float h = r.box.size.y;
+		const bool burning = r.state == ROOM_GROWING || r.state == ROOM_FLASHED || r.state == ROOM_DECAY;
+		const float t_layer = burning ? MAX(r.temperature, r.layer_temp) : r.layer_temp;
+		const float rho_s = 353.0f / (t_layer + 273.15f);
+		float depth = r.layer_mass / MAX(rho_s * area, 1e-3f);
+		if (burning && r.q > 0.0f) {
+			const float qc = 0.7f * r.q;
+			const float z = MAX(h - depth, 0.1f);
+			const float m = 0.071f * Math::pow(qc, 1.0f / 3.0f) * Math::pow(z, 5.0f / 3.0f) + 0.0018f * qc;
+			r.layer_mass += m * p_delta;
+			r.layer_temp = t_layer;
+			r.soot += smoke_yield * (r.q + r.q_ext) / (FUEL_HEAT * 1000.0f) * p_delta;
+		} else {
+			// A layer with no fire under it cools toward the air (and the walls) over a few minutes.
+			r.layer_temp = Math::lerp(r.layer_temp, t_air, 1.0f - Math::exp(-p_delta / 300.0f));
+		}
+		depth = r.layer_mass / MAX(rho_s * area, 1e-3f);
+		const float buoy = Math::sqrt(2.0f * 9.81f * MAX(1.0f - rho_s / rho_a, 0.02f));
+		const float soot_share = r.soot / MAX(r.layer_mass, 1e-3f);
+		float out = 0.0f;
+		r.smoke_out = 0.0f;
+		auto vent = [&](float p_width, float p_dh, int p_to) {
+			if (p_dh <= 0.0f) {
+				return;
+			}
+			const float m = MIN((2.0f / 3.0f) * 0.7f * p_width * rho_s * buoy * Math::pow(p_dh, 1.5f) * p_delta, MAX(r.layer_mass - out, 0.0f));
+			out += m;
+			if (p_to >= 0) {
+				Room &n = rooms[p_to];
+				const float mix = m / MAX(n.layer_mass + m, 1e-6f);
+				n.layer_temp = Math::lerp(n.layer_temp, t_layer, mix);
+				n.layer_mass += m;
+				n.soot += m * soot_share;
+			} else {
+				r.smoke_out += m / MAX(p_delta, 1e-3f);
+			}
+		};
+		const float z_i = h - depth; // the layer's underside above the floor
+		for (const Opening &o : r.openings) {
+			if (o.face == FACE_TOP) {
+				if (!o.glazed || o.broken) {
+					vent(Math::sqrt(o.rect.get_area()), MIN(depth, 1.0f), o.to_room);
+				}
+				continue;
+			}
+			const float top = o.rect.get_end().y;
+			const float bottom = o.rect.position.y;
+			if (z_i >= top) {
+				continue;
+			}
+			if (o.glazed && !o.broken) {
+				continue;
+			}
+			vent(o.rect.size.x, top - MAX(z_i, bottom), o.to_room);
+		}
+		if (r.roof_open) {
+			vent(Math::sqrt(area), MIN(depth, 1.0f), -1);
+		}
+		// Leaks at the ceiling (eaves, gaps round doors): about 0.01 m2.
+		vent(0.1f, MIN(depth, 0.1f) * 0.1f, -1);
+		if (out > 0.0f) {
+			r.soot = MAX(r.soot - out * soot_share, 0.0f);
+			r.layer_mass = MAX(r.layer_mass - out, 0.0f);
+		}
+		// A full room pushes the rest out (down to the floor).
+		const float full = rho_s * area * h;
+		if (r.layer_mass > full) {
+			const float spill = r.layer_mass - full;
+			r.soot = MAX(r.soot - spill * soot_share, 0.0f);
+			r.layer_mass = full;
+			r.smoke_out += spill / MAX(p_delta, 1e-3f);
+		}
+		// Soot settles out of a still layer over hours.
+		r.soot *= Math::exp(-p_delta / 7200.0f);
+	}
+}
+
+float PhysXBuildingFire3D::get_room_layer_height(int p_room) const {
+	ERR_FAIL_INDEX_V(p_room, (int)rooms.size(), 0.0f);
+	const Room &r = rooms[p_room];
+	const float rho_s = 353.0f / (r.layer_temp + 273.15f);
+	return MAX(r.box.size.y - r.layer_mass / MAX(rho_s * r.box.size.x * r.box.size.z, 1e-3f), 0.0f);
+}
+
+float PhysXBuildingFire3D::_extinction(const Room &p_room) const {
+	const float rho_s = 353.0f / (p_room.layer_temp + 273.15f);
+	const float vol = p_room.layer_mass / MAX(rho_s, 1e-3f);
+	return vol > 1e-3f ? 8700.0f * p_room.soot / vol : 0.0f;
+}
+
+float PhysXBuildingFire3D::get_room_visibility(int p_room) const {
+	ERR_FAIL_INDEX_V(p_room, (int)rooms.size(), 1000.0f);
+	const float k = _extinction(rooms[p_room]);
+	return k > 0.003f ? 3.0f / k : 1000.0f;
+}
+
+float PhysXBuildingFire3D::get_visibility_at(const Vector3 &p_position) const {
+	const Vector3 l = get_global_transform().affine_inverse().xform(p_position);
+	for (uint32_t i = 0; i < rooms.size(); i++) {
+		const Room &r = rooms[i];
+		if (r.box.has_point(l)) {
+			return l.y - r.box.position.y >= get_room_layer_height(i) ? get_room_visibility(i) : 1000.0f;
+		}
+	}
+	return 1000.0f;
+}
+
 // Fire between rooms: through an open door or hatch the hot layer of a room over 500 C radiates into the next
 // (half the view of a blackbody at its temperature) and its flames reach through once it flashes; a wall, floor or
 // ceiling that burns through lets it in; a room collapsing drops burning timber into the one below; flames out of a
@@ -875,7 +992,9 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 		for (uint32_t k = 0; k < r.openings.size(); k++) {
 			Opening &o = r.openings[k];
 			const bool open = !o.glazed || o.broken;
-			if (!burning || !open || o.to_room >= 0) {
+			const float layer = get_room_layer_height(i);
+			const bool smoking = open && o.to_room < 0 && r.smoke_out > 0.002f && (o.face == FACE_TOP || layer < o.rect.get_end().y);
+			if ((!burning && !smoking) || !open || o.to_room >= 0) {
 				_disable(o.emitter);
 				continue;
 			}
@@ -901,12 +1020,15 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 				e->set_smoke(0.4f);
 				e->set_velocity(xf.basis.xform(n * 1.2f + Vector3(0, CLAMP(l * 0.8f, 0.6f, 3.0f), 0)));
 			} else {
-				// Smoke before flashover, thicker and hotter as the layer heats.
-				const float h = CLAMP((r.temperature - 60.0f) / 500.0f, 0.0f, 1.0f);
-				e->set_temperature(0.25f * h);
+				// Smoke from the layer before flashover (and from smoke-filled rooms the fire has not reached): as thick
+				// as its soot, as much as flows out, as warm as the layer.
+				const float k = _extinction(r);
+				const float h = CLAMP((r.layer_temp - 20.0f) / 500.0f, 0.0f, 1.0f);
+				const float amount = CLAMP(k / 2.0f, 0.05f, 1.0f) * CLAMP(r.smoke_out / 0.5f, 0.1f, 1.0f);
+				e->set_temperature(0.05f + 0.2f * h);
 				e->set_fuel(0.0f);
-				e->set_smoke(CLAMP(r.q / 300.0f, 0.1f, 1.0f) * h);
-				e->set_velocity(xf.basis.xform(n * 0.8f + Vector3(0, 0.5f, 0)));
+				e->set_smoke(amount);
+				e->set_velocity(xf.basis.xform(n * (0.4f + 0.6f * h) + Vector3(0, 0.3f + 0.4f * h, 0)));
 			}
 		}
 		if (burning && r.roof_open) {
@@ -1431,6 +1553,7 @@ void PhysXBuildingFire3D::_notification(int p_what) {
 				for (uint32_t i = 0; i < rooms.size(); i++) {
 					_step_room(i, dt);
 				}
+				_smoke(dt);
 				_spread(dt);
 			}
 			for (uint32_t i = 0; i < rooms.size(); i++) {
@@ -1483,6 +1606,9 @@ void PhysXBuildingFire3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("ignite", "position"), &PhysXBuildingFire3D::ignite);
 	ClassDB::bind_method(D_METHOD("apply_water", "position", "kg"), &PhysXBuildingFire3D::apply_water);
 	ClassDB::bind_method(D_METHOD("get_room_water_cooling", "room"), &PhysXBuildingFire3D::get_room_water_cooling);
+	ClassDB::bind_method(D_METHOD("get_room_layer_height", "room"), &PhysXBuildingFire3D::get_room_layer_height);
+	ClassDB::bind_method(D_METHOD("get_room_visibility", "room"), &PhysXBuildingFire3D::get_room_visibility);
+	ClassDB::bind_method(D_METHOD("get_visibility_at", "position"), &PhysXBuildingFire3D::get_visibility_at);
 	ClassDB::bind_method(D_METHOD("extinguish"), &PhysXBuildingFire3D::extinguish);
 	ClassDB::bind_method(D_METHOD("add_brand", "position", "normal", "glow"), &PhysXBuildingFire3D::add_brand);
 	ClassDB::bind_method(D_METHOD("get_room_count"), &PhysXBuildingFire3D::get_room_count);

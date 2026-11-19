@@ -119,6 +119,10 @@ private:
 		float cooling = 0.0f; // kW the water takes
 		float knock = 0.0f; // 0..1, how far the water has put it down
 		float potential = 0.0f; // kW it would burn at without water
+		float layer_mass = 0.0f; // kg of smoky gas under the ceiling
+		float layer_temp = 20.0f; // C
+		float soot = 0.0f; // kg in the layer
+		float smoke_out = 0.0f; // kg/s leaving to the outside
 		float steam_j = 0.0f; // heat to leave as steam
 		float face_water[FACE_COUNT] = {}; // kg on each face's cladding
 		float face_fluid_kg[FACE_COUNT] = {};
@@ -181,6 +185,8 @@ private:
 	void _update_visuals(float p_delta);
 	void _update_brands(float p_delta);
 	void _update_steam(float p_delta);
+	void _smoke(float p_delta);
+	float _extinction(const Room &p_room) const; // 1/m in its layer
 	void _sample_fluids(const Transform3D &p_inv);
 	void _update_look();
 	PhysXFlowEmitter3D *_emitter(ObjectID &r_id, const String &p_name);
@@ -207,6 +213,9 @@ public:
 	// cladding of the nearest face (a hose, a bucket brigade, a script). Fluid particles count by themselves.
 	void apply_water(const Vector3 &p_position, float p_kg);
 	float get_room_water_cooling(int p_room) const; // kW the water in it takes
+	float get_room_layer_height(int p_room) const; // m above its floor to the smoke layer's underside
+	float get_room_visibility(int p_room) const; // m in its smoke layer (1000: clear)
+	float get_visibility_at(const Vector3 &p_position) const; // m at a global point (1000: clear or outside)
 	void extinguish();
 
 	void set_rooms(const Array &p_rooms);
