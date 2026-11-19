@@ -1346,7 +1346,7 @@ A fast dry avalanche lifts a suspension cloud off its front. Measured clouds hol
 - Every kg that goes up comes down, and water is conserved.
 - Free bodies inside a parcel take 1/2 rho_c u^2, where rho_c is the parcel's mass over its volume, capped at 10 kg/m3 (`get_powder_density_at`).
 
-**Look.** `SnowPowderCloud3D`, a child of the avalanche, puts sphere emitters (24, 5 m, overlapping the 8 m bins) on the strongest bins, each fed at least a third of the strongest so the front rises as one wall in a PhysXFlow3D of its own. It is a heavy gas (`smoke_buoyancy` -0.8) with an updraft of 0.3 times the front's speed (the eruption current), resting on the cover's height source as Flow's terrain floor and drifting with the weather's wind. It reaches the PhysX module by class and property names only, so the snow module builds and runs without it, with the same physics and no cloud drawn.
+**Look.** `SnowPowderCloud3D`, a child of the avalanche, puts sphere emitters (24, 5 m, overlapping the 8 m bins) on the strongest bins, each fed at least a third of the strongest so the front rises as one wall in a PhysXFlow3D of its own. It is a heavy gas (`smoke_buoyancy` -0.8, `scattering_strength` 1 so raster matches path tracing after the Flow parity fix 8579bb21) with an updraft of 0.3 times the front's speed (the eruption current), resting on the cover's height source as Flow's terrain floor and drifting with the weather's wind. It reaches the PhysX module by class and property names only, so the snow module builds and runs without it, with the same physics and no cloud drawn.
 
 **Checks.** `--test=powder`, 5 checks:
 - The test avalanche lofts 14.5 t, at most 11.4 t in the air at once, and all of it settles within 40 s.

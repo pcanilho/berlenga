@@ -57,7 +57,7 @@ void SnowPowderCloud3D::_build() {
 	flow->set("vorticity", 8.0f);
 	flow->set("emission_strength", 0.0f);
 	flow->set("smoke_density", 1.2f);
-	flow->set("scattering_strength", 4.0f);
+	flow->set("scattering_strength", 1.0f); // raster only; PT never sees it (parity)
 	flow->set("smoke_color", color);
 	flow->set("collide_with_bodies", true);
 	flow->set("collision_range", 30.0f);
