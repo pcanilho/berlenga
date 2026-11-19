@@ -18,7 +18,8 @@ extends Node3D
 #   --desert[=off]   a transverse sand sea (TerrainGenerator3D.sand_sea_rect) with make_desert's flanks and
 #                    interdune sets streamed round a camera 1.7 m up (off: no plants): checks the plants keep
 #                    off the crests and slip faces by the sand's mobility, prints the same costs as --floor
-#                    and with --out saves the view. VEG_DESERT_HIGH=1 looks from 12 m up across the dunes.
+#                    and with --out saves the view. VEG_DESERT_HIGH=1 looks from 12 m up across the dunes;
+#                    VEG_DESERT_DAY=N sets the day of the year; VEG_DESERT_SHRUBS=0 leaves the woody shrubs out.
 #   --burn[=off]     dry heath (make_heath) with four burn scars (WorldBurnScar3D, 0.05, 0.6, 2.5 and 5 years old)
 #                    and make_burn's heath set, streamed round a camera 2.5 m up looking along the scars (off: no scars, no burn set):
 #                    checks each burn plant grows only at its ages and the heather thins on the burns, prints the
@@ -478,7 +479,9 @@ func _desert_view() -> void:
 	var gb := Biome.new()
 	var desert_set: Array[PlantSpecies] = []
 	var shrubs := OS.get_environment("VEG_DESERT_SHRUBS") != "0" # 0: without the woody shrubs (their cost).
-	desert_set.assign(Array(PlantGenerator.make_desert(PlantGenerator.DESERT_FLANKS, 3, true, {}, shrubs)) + Array(PlantGenerator.make_desert(PlantGenerator.DESERT_INTERDUNE, 3, true, {}, shrubs)))
+	# VEG_DESERT_DAY=N: the plants on day N of the year (saltbush panicles 190 to 20, calligonum fruit 85 to 215).
+	var dseason := {} if OS.get_environment("VEG_DESERT_DAY") == "" else {"day_of_year": int(OS.get_environment("VEG_DESERT_DAY"))}
+	desert_set.assign(Array(PlantGenerator.make_desert(PlantGenerator.DESERT_FLANKS, 3, true, dseason, shrubs)) + Array(PlantGenerator.make_desert(PlantGenerator.DESERT_INTERDUNE, 3, true, dseason, shrubs)))
 	if desert_view == 1:
 		# A plain species with no sand rule: the field keeps it off the sand sea's sand by itself.
 		var plain := PlantSpecies.new()
