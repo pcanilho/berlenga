@@ -2442,7 +2442,7 @@ masts, the spots bare. Now: red is a dull rust-brown (fox 0.36, 0.15, 0.06) with
 needles), thinning from the first winter (35% by 1.3 years) so the skeleton shows; grey snags keep their dead
 whorls (twigs under 4 mm go, not 12 mm), 40% lose their top in the grey years, their bark bleaches silver-grey,
 and killed trees are 0.7-1.1 times the stand's age so heights vary. The spots get their shed limbs and the
-waiting spruce regeneration (Jonasova and Prach 2004) from 2.5 years, logs from 3, more rowan, birch, elder.
+waiting spruce regeneration (Jonasova and Prach 2004) from 2.5 years, logs from 3, more elder.
 In the plot's view the bare poles on the right are living spruce with crowns above the frame.
 
 ### 5ak. Avalanches break trees (19 Nov; snow's WorldSnow getters)
