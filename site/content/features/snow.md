@@ -44,7 +44,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   ![Footprints in snow without a crust, then through a broken crust, raster and path traced](media/snow-crust.jpg)
 
-  *Melt-freeze crust: boots break it into tipped plates instead of soft prints.*
+  *Melt-freeze crust: boots break through it, leaving ragged prints instead of soft rounded ones.*
 
 - **Lake ice** (`SnowCover3D.lake_ice_enabled`): lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm; heavier bodies and vehicles break through ice too thin for their weight, and the hole freezes over again.
 

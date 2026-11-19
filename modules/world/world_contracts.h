@@ -484,6 +484,11 @@ public:
 	// highest any avalanche has put there.
 	virtual float contract_snow_avalanche_pressure_at(const Vector3 &p_position) const { return 0.0f; }
 	virtual float contract_snow_avalanche_peak_pressure_at(const Vector3 &p_position) const { return 0.0f; }
+	// Snow held in tree crowns (kg per m2 of ground) and what the canopy there can hold; shake_canopy moves a share of
+	// the held snow in a radius onto the pack below and returns the kg it moves.
+	virtual float contract_snow_canopy_load_at(const Vector3 &p_position) const { return 0.0f; }
+	virtual float contract_snow_canopy_capacity_at(const Vector3 &p_position) const { return 0.0f; }
+	virtual float contract_snow_shake_canopy(const Vector3 &p_position, float p_radius, float p_share) { return 0.0f; }
 	virtual ~WorldSnowProvider() {}
 };
 
@@ -506,6 +511,9 @@ protected:
 	GDVIRTUAL1RC(float, _impurity_at, Vector3)
 	GDVIRTUAL1RC(float, _avalanche_pressure_at, Vector3)
 	GDVIRTUAL1RC(float, _avalanche_peak_pressure_at, Vector3)
+	GDVIRTUAL1RC(float, _canopy_load_at, Vector3)
+	GDVIRTUAL1RC(float, _canopy_capacity_at, Vector3)
+	GDVIRTUAL3R(float, _shake_canopy, Vector3, float, float)
 
 public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_snow) counts
@@ -530,6 +538,13 @@ public:
 	// none), and the highest any avalanche has put there (trees break, buildings fail by it).
 	float avalanche_pressure_at(const Vector3 &p_position) const;
 	float avalanche_peak_pressure_at(const Vector3 &p_position) const;
+	// Snow held in tree crowns over the point (kg per m2 of ground; Hedstrom and Pomeroy interception), and the most
+	// the canopy there holds of new snow. 0 with no snow system or no canopy.
+	float canopy_load_at(const Vector3 &p_position) const;
+	float canopy_capacity_at(const Vector3 &p_position) const;
+	// A crown shaken from outside the weather (a stem snapping, a tree thrown or felled, a body brushing it): the share
+	// (0..1) of the held snow within the radius drops onto the pack below. Returns the kg moved (0 with none).
+	float shake_canopy(const Vector3 &p_position, float p_radius, float p_share);
 };
 
 // A body as every system that feels bodies reads it: one reader instead of a copy in each.

@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/node_3d.h"
@@ -52,6 +53,8 @@
 //   lake it runs into (WorldWater.add_sediment);
 // - small events whose outlets join a running body's path feed that body (steep burnt valleys fire dozens at once).
 // The front (the furthest cell the flow covers) is what PhysXDebrisSurge3D follows: get_debris_front(id).
+class RigidBody3D;
+
 class GroundDebrisFlow3D : public Node3D {
 	GDCLASS(GroundDebrisFlow3D, Node3D);
 
@@ -70,7 +73,9 @@ public:
 		LocalVector<float> bed; // m, per cell (the ground, lowered by scour)
 		LocalVector<float> scoured; // m, per cell
 		LocalVector<float> loose; // m, the bed's loose depth, per cell
-		LocalVector<float> h; // m, flow depth per cell
+		LocalVector<float> h; // m, flow depth per cell (once done: the deposit, levees included)
+		LocalVector<float> hmax; // m, the deepest the flow has run in each cell
+		LocalVector<uint8_t> grounded; // 1 where the print field took the deposit as ground (the sheet skips it)
 		LocalVector<float> qs; // m2/s, along-path flux on the faces (ns + 1) x nw
 		LocalVector<float> qn; // m2/s, across flux on the faces ns x (nw + 1)
 		struct Feed {
@@ -100,6 +105,9 @@ private:
 	bool listen = true;
 	float cell_size = 1.5f;
 	float corridor_width = 60.0f; // m across
+	float levee_height = 0.5f; // levee ridges, a share of the passing flow's peak depth
+	bool push_bodies = true;
+	HashMap<ObjectID, AABB> body_boxes;
 	float voellmy_mu = 0.1f;
 	float voellmy_xi = 400.0f; // m/s2
 	float yield_stress = 1500.0f; // Pa
@@ -122,6 +130,10 @@ private:
 	void _step(Body &p_body, float p_dt);
 	void _update_front(Body &p_body);
 	void _deposit(Body &p_body);
+	void _levees(Body &p_body);
+	float _grid_sample(const Body &p_body, float p_r, float p_c, Vector3 &r_position) const;
+	void _push_bodies(Body &p_body, float p_dt);
+	AABB _body_box(RigidBody3D *p_body);
 	void _update_mesh(Body &p_body);
 	float _ground_height(const Vector3 &p_position) const;
 	Vector3 _cell_position(const Body &p_body, int p_row, int p_col) const;
@@ -145,6 +157,7 @@ public:
 	Dictionary get_budget(int64_t p_event_id) const;
 	float get_deposit_depth_at(const Vector3 &p_position) const; // m, from finished bodies
 	float get_flow_depth_at(const Vector3 &p_position) const; // m, moving now
+	Vector3 get_flow_velocity_at(const Vector3 &p_position) const; // m/s, depth-averaged, moving now
 
 	void set_listen(bool p_v);
 	bool is_listening() const { return listen; }
@@ -170,6 +183,10 @@ public:
 	float get_time_scale() const { return time_scale; }
 	void set_terrain_deformer(const NodePath &p_path) { terrain_deformer = p_path; }
 	NodePath get_terrain_deformer() const { return terrain_deformer; }
+	void set_levee_height(float p_v) { levee_height = CLAMP(p_v, 0.0f, 1.5f); }
+	float get_levee_height() const { return levee_height; }
+	void set_push_bodies(bool p_v) { push_bodies = p_v; }
+	bool is_push_bodies() const { return push_bodies; }
 	void set_show_flow(bool p_v) { show_flow = p_v; }
 	bool is_show_flow() const { return show_flow; }
 

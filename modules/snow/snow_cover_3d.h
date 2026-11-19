@@ -285,6 +285,14 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 		float mg = 0.0f;
 	};
 	LocalVector<ImpurityDrop> impurity_drops;
+	// Crowns shaken from outside the weather (WorldSnow.shake_canopy): applied at the next update's start.
+	struct CanopyShake {
+		Vector2 center;
+		float radius = 0.0f;
+		float share = 0.0f;
+	};
+	LocalVector<CanopyShake> canopy_shakes;
+	void _apply_canopy_shakes();
 	void _refresh_lap();
 	// Water (docs/ideas/snow.md, follow-up 15): the water surface over the cell from the terrain data map
 	// (-INF: dry land), read on the main thread, and the lake ice on it (m).
@@ -347,6 +355,7 @@ public:
 	void set_canopy_enabled(bool p_enabled) { canopy_enabled = p_enabled; }
 	bool is_canopy_enabled() const { return canopy_enabled; }
 	float get_canopy_load_at(Vector3 p_position) const;
+	float shake_canopy(Vector3 p_position, float p_radius, float p_share);
 	float get_canopy_capacity_at(Vector3 p_position) const;
 	static float canopy_capacity(float p_closure, float p_snow_density);
 	Ref<Texture2D> get_catch_texture() const { return catch_texture; }
@@ -476,6 +485,9 @@ public:
 	float contract_snow_impurity_at(const Vector3 &p_position) const override { return get_impurity_at(p_position); }
 	float contract_snow_avalanche_pressure_at(const Vector3 &p_position) const override;
 	float contract_snow_avalanche_peak_pressure_at(const Vector3 &p_position) const override;
+	float contract_snow_canopy_load_at(const Vector3 &p_position) const override { return get_canopy_load_at(p_position); }
+	float contract_snow_canopy_capacity_at(const Vector3 &p_position) const override { return get_canopy_capacity_at(p_position); }
+	float contract_snow_shake_canopy(const Vector3 &p_position, float p_radius, float p_share) override { return shake_canopy(p_position, p_radius, p_share); }
 	void add_impurity(Vector3 p_position, float p_radius, float p_mg_per_m2);
 	float get_impurity_at(Vector3 p_position) const;
 	// The albedo the particles take off clean snow: 0.35 (1 - e^(-L / 15 mg/m2)), about 0.02 for the first mg/m2 (Warren

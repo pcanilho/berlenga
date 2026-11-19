@@ -1520,6 +1520,27 @@ void SnowAvalanche3D::_powder_step(SnowCover3D *p_cover, float p_dt) {
 	if (powder_window >= 0.5 || (!running && !bins.is_empty())) {
 		sources.clear();
 		LocalVector<SnowPowderCloud3D::Source> all;
+		powder_windows++;
+		// A powder avalanche is a gravity current: its head stands about twice the body's height (Simpson 1997) and
+		// sheds Kelvin-Helmholtz billows of mixed sizes off its top, while the body thins back up the track toward
+		// the release (Turnbull and McElwaine 2007, the Vallee de la Sionne radar profiles). So each lane lifts by how
+		// strong it is next to the strongest, with a fresh random lift each half second for billows of varied height,
+		// and sheds its air at half the front's speed while riding on with the front, so the cloud trails back up the
+		// track as the head's wake. No lane draws more than twice the median, so no lane stands as a column of its own.
+		LocalVector<float> rates;
+		for (const KeyValue<Vector2i, Bin> &kv : bins) {
+			if (kv.value.mass > 0.0f) {
+				rates.push_back(kv.value.mass);
+			}
+		}
+		float cap = 1e30f;
+		float strongest = 0.0f;
+		if (!rates.is_empty()) {
+			rates.sort();
+			cap = 2.0f * rates[rates.size() / 2];
+			strongest = MIN(rates[rates.size() - 1], cap);
+		}
+		const float lift = cloud ? cloud->get_updraft() : 0.3f;
 		for (const KeyValue<Vector2i, Bin> &kv : bins) {
 			const Bin &b = kv.value;
 			if (b.mass <= 0.0f) {
@@ -1530,12 +1551,18 @@ void SnowAvalanche3D::_powder_step(SnowCover3D *p_cover, float p_dt) {
 			pc.velocity = b.momentum / b.mass;
 			pc.mass = b.mass;
 			parcels.push_back(pc);
-			SnowPowderCloud3D::Source src;
-			src.position = b.lead + Vector3(0.0f, 1.0f, 0.0f);
-			src.velocity = pc.velocity;
-			src.rate = b.mass / float(MAX(powder_window, 1.0e-3));
-			src.radius = 5.0f; // overlapping the next 8 m bin
-			all.push_back(src);
+			const float mass = MIN(b.mass, cap);
+			const float rate = mass / float(MAX(powder_window, 1.0e-3));
+			const float share = strongest > 0.0f ? mass / strongest : 0.0f;
+			const float billow = _patch_noise(kv.key.x * 7 + 13, int(powder_windows)); // 0..1, new every window
+			const float speed = Vector2(pc.velocity.x, pc.velocity.z).length();
+			SnowPowderCloud3D::Source head;
+			head.position = b.lead + Vector3(0.0f, 1.0f + 3.0f * billow * share, 0.0f);
+			head.velocity = Vector3(pc.velocity.x, 0.0f, pc.velocity.z) * 0.5f; // the air it sheds falls behind: the wake
+			head.velocity.y = speed * lift * (0.6f + 2.4f * billow) * share; // on top of the cloud's own updraft
+			head.rate = rate;
+			head.radius = 3.0f + 3.0f * share;
+			all.push_back(head);
 		}
 		all.sort_custom<SourceByRate>();
 		const int keep = cloud ? cloud->get_max_sources() : 24;
@@ -1544,6 +1571,19 @@ void SnowAvalanche3D::_powder_step(SnowCover3D *p_cover, float p_dt) {
 		}
 		bins.clear();
 		powder_window = 0.0;
+		source_lift.resize(sources.size());
+		for (uint32_t i = 0; i < sources.size(); i++) {
+			const Vector3 &q = sources[i].position;
+			source_lift[i] = q.y - p_cover->get_ground_height_at(q) - p_cover->get_surface_depth_at(q);
+		}
+	} else {
+		// Between windows the emitters ride on with the air they feed, hugging the ground, so the cloud they draw
+		// is one streak rather than a puff left every half second.
+		for (uint32_t i = 0; i < sources.size(); i++) {
+			SnowPowderCloud3D::Source &q = sources[i];
+			q.position += Vector3(q.velocity.x, 0.0f, q.velocity.z) * (2.0f * p_dt); // the front's speed
+			q.position.y = p_cover->get_ground_height_at(q.position) + p_cover->get_surface_depth_at(q.position) + source_lift[i];
+		}
 	}
 	if (cloud) {
 		cloud->feed(running ? sources : LocalVector<SnowPowderCloud3D::Source>());

@@ -78,6 +78,29 @@ inline uint32_t rf_hash3(int p_a, int p_b, int p_c, uint32_t p_seed) {
 	return rf_hash(uint32_t(p_a) * 73856093u ^ rf_hash(uint32_t(p_b) * 19349663u ^ rf_hash(uint32_t(p_c) * 83492791u ^ p_seed)));
 }
 
+// Two squares' grains alike enough to swap (tiles of piles): the same rocks and wetness within 0.15, and grain count,
+// the rocks' shares
+// and mean log size within what a square's own grains already vary by chance: 1.5 standard errors (count: Poisson,
+// sqrt(n); mean log size: its spread over sqrt(n)), and never tighter than 15% and 0.12.
+static bool rf_tile_like(uint32_t p_sig_a, int p_n_a, float p_ls_a, float p_sd_a, float p_film_a, float p_mix_a, uint32_t p_sig_b, int p_n_b, float p_ls_b, float p_sd_b, float p_film_b, float p_mix_b) {
+	if (p_sig_a != p_sig_b || Math::abs(p_film_a - p_film_b) >= 0.15f) {
+		return false;
+	}
+	const float n = float(MAX(MIN(p_n_a, p_n_b), 1));
+	const float tn = MAX(0.15f, 1.5f / Math::sqrt(n));
+	const float nr = float(p_n_a) / float(MAX(p_n_b, 1));
+	if (nr <= 1.0f - tn || nr >= 1.0f / (1.0f - tn)) {
+		return false;
+	}
+	// The rocks' shares (binomial: sqrt(p (1 - p) / n)), so a square keeps its mix of colours.
+	const float pm = 0.5f * (p_mix_a + p_mix_b);
+	if (Math::abs(p_mix_a - p_mix_b) >= MAX(0.08f, 1.5f * Math::sqrt(pm * (1.0f - pm) / n))) {
+		return false;
+	}
+	const float tl = MAX(0.12f, 1.5f * MAX(p_sd_a, p_sd_b) / Math::sqrt(n));
+	return Math::abs(p_ls_a - p_ls_b) < tl;
+}
+
 // Library keys: rock type, family, roundness bin.
 inline RockGenerator::RockType key_type(uint32_t p_key) {
 	return RockGenerator::RockType(p_key & 0xF);
@@ -2396,6 +2419,10 @@ void RockField3D::_free_cell(Cell &r_cell) {
 	}
 	r_cell.tiles.clear();
 	r_cell.tile_meshes.clear();
+	if (r_cell.tile_set) {
+		r_cell.tile_set = false;
+		_tile_set_release(r_cell.tile_block);
+	}
 	r_cell.groups.clear();
 	close_dirty = true;
 	if (r_cell.body) {
@@ -2498,9 +2525,11 @@ static float rock_surface_age(RockGenerator::Family p_family) {
 Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockGenerator::Family p_family, bool p_detail) {
 	// Blocks of the wall itself take the landscape's rock colour (a cave mouth's, and the cliff's courses: in their own
 	// stone colour the courses read as pale plates stuck on the face).
-	const bool p_cliff = p_family == RockGenerator::FAMILY_CAVE_MOUTH || p_family == RockGenerator::FAMILY_CLIFF_BLOCK;
-	const float age = rock_surface_age(p_family);
+	// Hoodoos, goblins, stacks and arches are the bedrock left standing (cut from the slope or the cliff round them), so
+	// they take it too: in their own stone colour they read as pale pieces set on the hill or in the sea.
 	const bool p_group = p_family == RockGenerator::FAMILY_HOODOO || p_family == RockGenerator::FAMILY_GOBLIN;
+	const bool p_cliff = p_family == RockGenerator::FAMILY_CAVE_MOUTH || p_family == RockGenerator::FAMILY_CLIFF_BLOCK || p_family == RockGenerator::FAMILY_SEA_STACK || p_family == RockGenerator::FAMILY_SEA_ARCH || p_group;
+	const float age = rock_surface_age(p_family);
 	const int mkey = int(p_type) + (p_cliff ? 1000 : 0) + int(age * 10.0f + 0.5f) * 10000 + (p_detail ? 2000 : 0) + (p_group ? 4000 : 0);
 	if (Ref<ShaderMaterial> *m = materials.getptr(mkey)) {
 		return *m;
@@ -2634,6 +2663,70 @@ void RockField3D::_detail_prepare(DetailJob &r_job) {
 		}
 	}
 	_detail_seeds(layer, rect.grow(0.5), r_job.seeds);
+	// The block's shared tiles: held while the job reads them, or cut by it (_detail_compute) when there are none yet.
+	r_job.block = _tile_block(r_job.key);
+	if (ground_detail_tiles) {
+		TileSet **found = tile_sets.getptr(r_job.block);
+		if (found) {
+			(*found)->users++;
+			r_job.set = *found;
+		} else {
+			r_job.new_set = memnew(TileSet);
+			if (!tile_set_pending.has(r_job.block)) {
+				tile_set_pending.insert(r_job.block);
+				r_job.pending_owner = true;
+			}
+		}
+	}
+}
+
+// Main thread: a job's newly cut set joins tile_sets (or, cut twice, gives way to the one there: the same tiles).
+void RockField3D::_tile_set_adopt(DetailJob &r_job) {
+	if (r_job.pending_owner) {
+		tile_set_pending.erase(r_job.block);
+		r_job.pending_owner = false;
+	}
+	if (!r_job.new_set) {
+		return;
+	}
+	TileSet **found = tile_sets.getptr(r_job.block);
+	if (found) {
+		memdelete(r_job.new_set);
+		(*found)->users++;
+		r_job.set = *found;
+	} else {
+		r_job.new_set->users = 1;
+		tile_sets.insert(r_job.block, r_job.new_set);
+		r_job.set = r_job.new_set;
+	}
+	r_job.new_set = nullptr;
+}
+
+// Main thread: a job let go without a cell (its hold on the set released).
+void RockField3D::_tile_set_drop(DetailJob &r_job) {
+	if (r_job.pending_owner) {
+		tile_set_pending.erase(r_job.block);
+		r_job.pending_owner = false;
+	}
+	if (r_job.new_set) {
+		memdelete(r_job.new_set);
+		r_job.new_set = nullptr;
+	}
+	if (r_job.set) {
+		r_job.set = nullptr;
+		_tile_set_release(r_job.block);
+	}
+}
+
+void RockField3D::_tile_set_release(const Vector3i &p_block) {
+	TileSet **found = tile_sets.getptr(p_block);
+	if (!found) {
+		return;
+	}
+	if (--(*found)->users <= 0) {
+		memdelete(*found);
+		tile_sets.erase(p_block);
+	}
 }
 
 // Any thread: places the cell's grains and packs each shape's records.
@@ -2661,6 +2754,67 @@ void RockField3D::_detail_compute(DetailJob &r_job) {
 	// replaced by the tile's, so what is drawn is what the finer layers and the contacts see).
 	LocalVector<int> place;
 	if (ground_detail_tiles) {
+		if (r_job.new_set) {
+			// The block's shared tiles: squares spread over the block (by their hash), each placed on its own without
+			// the coarse stones round it (they shape only the grains next to them, which no tile square takes), so the
+			// set samples all the block's ground and is the same whichever cell streams in first.
+			const Vector3i b = r_job.block;
+			const real_t ts = cs / 4;
+			const LocalVector<DetailSeed> none;
+			// Stratified: one square from each of TILE_SAMPLES equal parts of the block, the first of a few hashed tries
+			// there that has grains to tile (the detail lies in bands: shores, talus, river beds).
+			const int side = int(Math::round(Math::sqrt(real_t(TILE_SAMPLES))));
+			const int span = TILE_BLOCK * 4 / side; // squares per part, across
+			for (int c = 0; c < side * side; c++) {
+				for (int a = 0; a < TILE_TRIES; a++) {
+					const uint32_t h = rf_hash3(b.y * side + c % side, b.z * side + c / side, key.x, (uint32_t(seed) ^ 0x51edu) + uint32_t(a) * 0x9e3779b9u);
+					const int sx = b.y * TILE_BLOCK * 4 + (c % side) * span + int(h % uint32_t(span));
+					const int sz = b.z * TILE_BLOCK * 4 + (c / side) * span + int((h / uint32_t(span)) % uint32_t(span));
+					const Rect2 srect(sx * ts, sz * ts, ts, ts);
+					if (gen->has_holes_in(srect)) {
+						continue;
+					}
+					LocalVector<Stone> grains;
+					rf_job_generator = r_job.gen;
+					_place(layer, srect, rf_hash3(sx, sz, key.x, uint32_t(seed) * 2654435761u ^ 0x5a5au), grains, &r_job.libs, &none);
+					rf_job_generator = nullptr;
+					if (grains.size() < 8) {
+						continue;
+					}
+					TileSquare s;
+					_tile_squares(gen, key.x, srect, 1, grains, none, &s);
+					if (!s.ok) {
+						continue;
+					}
+					TileCut cut;
+					cut.sig = s.sig;
+					cut.lsize = s.lsize;
+					cut.lsd = s.lsd;
+					cut.film = s.film;
+					cut.mix = s.mix;
+					cut.count = int(s.idx.size());
+					const Transform3D inv = s.frame.affine_inverse();
+					for (uint32_t i : s.idx) {
+						Stone st = grains[i];
+						const Transform3D xf = inv * Transform3D(st.basis, st.position);
+						st.position = xf.origin;
+						st.basis = xf.basis;
+						cut.stones.push_back(st);
+					}
+					_tile_cut(gen, grains, s, r_job.libs, rf_hash3(sx, sz, key.x, 4441u), cut.tile);
+					// Thinned to a cover: kept only while fewer than TILE_CHOICES kept ones match it, so a block has a
+					// few tiles for each kind of ground (fewer BLAS) and every square still picks from several.
+					int like = 0;
+					for (const TileCut &k : r_job.new_set->cuts) {
+						like += rf_tile_like(k.sig, k.count, k.lsize, k.lsd, k.film, k.mix, cut.sig, cut.count, cut.lsize, cut.lsd, cut.film, cut.mix) ? 1 : 0;
+					}
+					if (like < TILE_CHOICES + 1) {
+						r_job.new_set->cuts.push_back(std::move(cut));
+					}
+					break;
+				}
+			}
+		}
 		_detail_tiles(r_job, stones, place);
 	}
 	r_job.stones = int(stones.size());
@@ -2724,40 +2878,24 @@ void RockField3D::_detail_compute(DetailJob &r_job) {
 	}
 }
 
-// Any thread: tiles of piles (Peytavie et al. 2009; docs/ideas/ground-detail.md). The cell is cut into 4 x 4 squares;
-// a square that lies on a plane (the ground bends less than a fraction of its grains' size over it), clear of the
-// coarser stones the grains may rest on and of holes, with enough grains, is drawn as a placement of a tile: up to
-// four tiles are cut from the cell's own squares (their grains as they settled, so the tiles carry the place's sizes,
-// sorting, rock and wetness) and each other square takes one of them that matches its grain count, size, wetness and
-// rocks, turned by a random quarter turn, at most six times. Its own grains are replaced by the tile's. Squares that
-// match nothing keep their grains. p_place: the placement of each stone, or -1.
-void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, LocalVector<int> &r_place) const {
-	const TerrainGenerator3D *gen = r_job.gen;
-	const Vector3i key = r_job.key;
-	const real_t cs = _cell_size(Layer(key.x));
-	const int N = 4;
-	const real_t ts = cs / N;
-	const Rect2 rect(key.y * cs, key.z * cs, cs, cs);
-	struct Square {
-		LocalVector<uint32_t> idx; // its grains on the ground (those resting on a coarser grain are left single)
-		Transform3D frame; // tile space (centre on its plane, y the plane's normal) to world
-		Plane plane;
-		float lsize = 0.0f, film = 0.0f;
-		uint32_t sig = 0, order = 0;
-		bool ok = false;
-	};
-	Square sq[N * N];
-	for (uint32_t i = 0; i < r_stones.size(); i++) {
-		const int ix = CLAMP(int(Math::floor((r_stones[i].position.x - rect.position.x) / ts)), 0, N - 1);
-		const int iz = CLAMP(int(Math::floor((r_stones[i].position.z - rect.position.y) / ts)), 0, N - 1);
-		sq[iz * N + ix].idx.push_back(i);
+// Any thread: the 4 x 4 squares of a detail cell as tile squares: grains on the ground, its plane, size, wetness and
+// rocks, and whether it can be drawn as a tile (enough grains, no hole, clear of the coarse stones, lies on a plane).
+void RockField3D::_tile_squares(const TerrainGenerator3D *p_gen, int p_layer, const Rect2 &p_rect, int p_n, const LocalVector<Stone> &p_stones, const LocalVector<DetailSeed> &p_seeds, TileSquare *r_sq) const {
+	const int N = p_n;
+	const real_t ts = _cell_size(Layer(p_layer)) / 4;
+	const Rect2 rect = p_rect;
+	const int sx0 = int(Math::round(rect.position.x / ts)), sz0 = int(Math::round(rect.position.y / ts));
+	for (uint32_t i = 0; i < p_stones.size(); i++) {
+		const int ix = CLAMP(int(Math::floor((p_stones[i].position.x - rect.position.x) / ts)), 0, N - 1);
+		const int iz = CLAMP(int(Math::floor((p_stones[i].position.z - rect.position.y) / ts)), 0, N - 1);
+		r_sq[iz * N + ix].idx.push_back(i);
 	}
 	for (int q = 0; q < N * N; q++) {
-		Square &s = sq[q];
+		TileSquare &s = r_sq[q];
 		const Rect2 r(rect.position + Vector2(q % N, q / N) * ts, Vector2(ts, ts));
-		s.order = rf_hash3(key.y * N + q % N, key.z * N + q / N, key.x, uint32_t(seed) ^ 0x7111u);
+		s.order = rf_hash3(sx0 + q % N, sz0 + q / N, p_layer, uint32_t(seed) ^ 0x7111u);
 		tile_skips[4].increment();
-		if (s.idx.size() < 8 || gen->has_holes_in(r)) {
+		if (s.idx.size() < 8 || p_gen->has_holes_in(r)) {
 			tile_skips[0].increment();
 			continue;
 		}
@@ -2768,7 +2906,7 @@ void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, 
 		for (int j = 0; j < 5; j++) {
 			for (int i = 0; i < 5; i++) {
 				const real_t u = (i - 2) * ts * 0.25, v = (j - 2) * ts * 0.25;
-				h[j * 5 + i] = gen->get_height(Vector3(c.x + u, 0, c.y + v));
+				h[j * 5 + i] = p_gen->get_height(Vector3(c.x + u, 0, c.y + v));
 				mean += h[j * 5 + i];
 				sx += h[j * 5 + i] * u;
 				sz += h[j * 5 + i] * v;
@@ -2780,17 +2918,23 @@ void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, 
 		float ls = 0.0f, film = 0.0f;
 		HashMap<uint32_t, int> libs;
 		for (uint32_t i : s.idx) {
-			ls += Math::log(MAX(r_stones[i].scale, 1e-4f));
-			film += r_stones[i].film;
-			libs[r_stones[i].library]++;
+			ls += Math::log(MAX(p_stones[i].scale, 1e-4f));
+			film += p_stones[i].film;
+			libs[p_stones[i].library]++;
 		}
 		s.lsize = ls / float(s.idx.size());
 		s.film = film / float(s.idx.size());
+		float var = 0.0f;
+		for (uint32_t i : s.idx) {
+			const float d = Math::log(MAX(p_stones[i].scale, 1e-4f)) - s.lsize;
+			var += d * d;
+		}
+		s.lsd = Math::sqrt(var / float(s.idx.size()));
 		// Clear of the coarse stones (the shore's, the talus's: over four times its grains) the grains pile against;
 		// the coarser grains of the finer classes' own beds stay (a grain resting on one stays a single grain below).
 		const float big = 4.0f * 2.0f * Math::exp(s.lsize);
 		bool clear = true;
-		for (const DetailSeed &sd : r_job.seeds) {
+		for (const DetailSeed &sd : p_seeds) {
 			if (sd.r < big) {
 				continue;
 			}
@@ -2843,13 +2987,77 @@ void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, 
 		// Grains lifted onto a coarser grain (their origin over 1.2 of their scale above the plane) stay single.
 		LocalVector<uint32_t> on_ground;
 		for (uint32_t i : s.idx) {
-			if (s.plane.distance_to(r_stones[i].position) < 1.2f * r_stones[i].scale) {
+			if (s.plane.distance_to(p_stones[i].position) < 1.2f * p_stones[i].scale) {
 				on_ground.push_back(i);
 			}
 		}
 		s.idx = on_ground;
 		s.ok = s.idx.size() >= 8;
+		if (s.ok && !keys.is_empty()) {
+			int first = 0;
+			for (uint32_t i : s.idx) {
+				first += p_stones[i].library == keys[0] ? 1 : 0;
+			}
+			s.mix = float(first) / float(s.idx.size());
+		}
 	}
+}
+
+// Any thread: a square's grains as a tile (one record buffer per shape, in tile space).
+void RockField3D::_tile_cut(const TerrainGenerator3D *p_gen, const LocalVector<Stone> &p_stones, const TileSquare &p_sq, const HashMap<uint32_t, Library *> &p_libs, uint32_t p_seed, DetailTile &r_tile) const {
+	const Transform3D inv = p_sq.frame.affine_inverse();
+	HashMap<uint64_t, LocalVector<uint32_t>> shapes;
+	for (uint32_t i : p_sq.idx) {
+		shapes[(uint64_t(p_stones[i].library) << 16) | p_stones[i].variant].push_back(i);
+	}
+	RandomPCG rng(p_seed);
+	for (const KeyValue<uint64_t, LocalVector<uint32_t>> &sh : shapes) {
+		Library *const *found = p_libs.getptr(uint32_t(sh.key >> 16));
+		const int v = int(sh.key & 0xFFFF);
+		if (!found || v >= int((*found)->axes.size())) {
+			continue;
+		}
+		DetailTileShape ts_shape;
+		ts_shape.library = uint32_t(sh.key >> 16);
+		ts_shape.variant = v;
+		ts_shape.count = int(sh.value.size());
+		ts_shape.buffer.resize(ts_shape.count * 16);
+		float *w = ts_shape.buffer.ptrw();
+		for (int k = 0; k < ts_shape.count; k++) {
+			const Stone &st = p_stones[sh.value[k]];
+			const Transform3D xf = inv * Transform3D(st.basis, st.position);
+			// Its own record: the ground and slope are the tile placement's plane (the shader's rock_tile_plane).
+			const Color cd = _stone_custom(p_gen, st, (*found)->axes[v], rng);
+			float *rec = w + k * 16;
+			for (int row = 0; row < 3; row++) {
+				rec[row * 4 + 0] = xf.basis.rows[row][0];
+				rec[row * 4 + 1] = xf.basis.rows[row][1];
+				rec[row * 4 + 2] = xf.basis.rows[row][2];
+				rec[row * 4 + 3] = xf.origin[row];
+			}
+			rec[12] = cd.r;
+			rec[13] = cd.g;
+			rec[14] = cd.b;
+			rec[15] = cd.a;
+		}
+		r_tile.shapes.push_back(ts_shape);
+	}
+}
+
+// Any thread: tiles of piles (Peytavie et al. 2009; docs/ideas/ground-detail.md). The cell is cut into 4 x 4 squares
+// (_tile_squares); a square that can be a tile takes a matching tile of its block's shared set (rf_tile_like; chosen by
+// its own hash from its first TILE_CHOICES matches, never a neighbour's, at most six times in the cell), or else one of up to four tiles cut from the cell's own squares (at most six uses; a tile used once is dropped). Each is
+// turned by a random quarter turn and its own grains are replaced by the tile's. Squares that match nothing keep their
+// grains. p_place: the placement of each stone, or -1.
+void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, LocalVector<int> &r_place) const {
+	const TerrainGenerator3D *gen = r_job.gen;
+	const Vector3i key = r_job.key;
+	const real_t cs = _cell_size(Layer(key.x));
+	const int N = 4;
+	const real_t ts = cs / N;
+	const Rect2 rect(key.y * cs, key.z * cs, cs, cs);
+	TileSquare sq[N * N];
+	_tile_squares(gen, key.x, rect, N, r_stones, r_job.seeds, sq);
 	LocalVector<int> by_order;
 	for (int q = 0; q < N * N; q++) {
 		if (sq[q].ok) {
@@ -2864,23 +3072,65 @@ void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, 
 			SWAP(by_order[b], by_order[b - 1]);
 		}
 	}
+	auto matches = [](const TileSquare &a, uint32_t p_sig, int p_count, float p_lsize, float p_lsd, float p_film, float p_mix) {
+		return rf_tile_like(a.sig, int(a.idx.size()), a.lsize, a.lsd, a.film, a.mix, p_sig, p_count, p_lsize, p_lsd, p_film, p_mix);
+	};
+	const TileSet *set = r_job.set ? r_job.set : r_job.new_set;
+	int shared[N * N];
+	for (int q = 0; q < N * N; q++) {
+		shared[q] = -1;
+	}
+	LocalVector<int> shared_uses;
+	if (set) {
+		shared_uses.resize(set->cuts.size());
+		for (uint32_t t = 0; t < set->cuts.size(); t++) {
+			shared_uses[t] = 0;
+		}
+	}
 	struct Cut {
 		int source;
 		int uses = 0;
 	};
 	LocalVector<Cut> cuts;
-	LocalVector<int> use; // the cut each square takes
-	use.resize(N * N);
+	int use[N * N]; // the own cut each square takes
 	for (int q = 0; q < N * N; q++) {
 		use[q] = -1;
 	}
 	for (int q : by_order) {
-		const Square &s = sq[q];
+		const TileSquare &s = sq[q];
+		if (set) {
+			const int left = q % N > 0 ? shared[q - 1] : -1;
+			const int up = q >= N ? shared[q - N] : -1;
+			const int right = q % N < N - 1 ? shared[q + 1] : -1;
+			const int down = q < N * (N - 1) ? shared[q + N] : -1;
+			// The first few matching candidates of the set (TILE_CHOICES: its variety; fewer tiles, less BLAS), past
+			// them only when the neighbours have taken those.
+			LocalVector<int> cand;
+			int matching = 0;
+			for (uint32_t t = 0; t < set->cuts.size(); t++) {
+				const TileCut &c = set->cuts[t];
+				if (shared_uses[t] >= 6 || !matches(s, c.sig, c.count, c.lsize, c.lsd, c.film, c.mix)) {
+					continue;
+				}
+				matching++;
+				if (int(t) != left && int(t) != up && int(t) != right && int(t) != down) {
+					cand.push_back(int(t));
+				}
+				if (matching >= TILE_CHOICES && !cand.is_empty()) {
+					break;
+				}
+			}
+			if (!cand.is_empty()) {
+				const int t = cand[hash_murmur3_one_32(s.order ^ 0x5157u) % cand.size()];
+				shared[q] = t;
+				shared_uses[t]++;
+				continue;
+			}
+		}
 		int best = -1;
 		for (uint32_t t = 0; t < cuts.size(); t++) {
-			const Square &src = sq[cuts[t].source];
-			const float nr = float(s.idx.size()) / float(src.idx.size());
-			if (src.sig == s.sig && cuts[t].uses < 6 && nr > 0.85f && nr < 1.18f && Math::abs(s.lsize - src.lsize) < 0.12f && Math::abs(s.film - src.film) < 0.15f) {
+			const TileSquare &src = sq[cuts[t].source];
+			if (cuts[t].uses < 6 && matches(s, src.sig, int(src.idx.size()), src.lsize, src.lsd, src.film, src.mix)) {
 				best = int(t);
 				break;
 			}
@@ -2904,51 +3154,12 @@ void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, 
 		if (cuts[t].uses < 2) {
 			continue;
 		}
-		const Square &src = sq[cuts[t].source];
-		const Transform3D inv = src.frame.affine_inverse();
-		HashMap<uint64_t, LocalVector<uint32_t>> shapes;
-		for (uint32_t i : src.idx) {
-			shapes[(uint64_t(r_stones[i].library) << 16) | r_stones[i].variant].push_back(i);
-		}
 		DetailTile tile;
-		RandomPCG rng(rf_hash3(key.y, key.z, key.x, 4441u + t));
-		for (const KeyValue<uint64_t, LocalVector<uint32_t>> &sh : shapes) {
-			Library *const *found = r_job.libs.getptr(uint32_t(sh.key >> 16));
-			const int v = int(sh.key & 0xFFFF);
-			if (!found || v >= int((*found)->axes.size())) {
-				continue;
-			}
-			DetailTileShape ts_shape;
-			ts_shape.library = uint32_t(sh.key >> 16);
-			ts_shape.variant = v;
-			ts_shape.count = int(sh.value.size());
-			ts_shape.buffer.resize(ts_shape.count * 16);
-			float *w = ts_shape.buffer.ptrw();
-			for (int k = 0; k < ts_shape.count; k++) {
-				const Stone &st = r_stones[sh.value[k]];
-				const Transform3D xf = inv * Transform3D(st.basis, st.position);
-				// Its own record: the ground and slope are the tile placement's plane (the shader's rock_tile_plane).
-				const Color cd = _stone_custom(gen, st, (*found)->axes[v], rng);
-				float *rec = w + k * 16;
-				for (int row = 0; row < 3; row++) {
-					rec[row * 4 + 0] = xf.basis.rows[row][0];
-					rec[row * 4 + 1] = xf.basis.rows[row][1];
-					rec[row * 4 + 2] = xf.basis.rows[row][2];
-					rec[row * 4 + 3] = xf.origin[row];
-				}
-				rec[12] = cd.r;
-				rec[13] = cd.g;
-				rec[14] = cd.b;
-				rec[15] = cd.a;
-			}
-			tile.shapes.push_back(ts_shape);
-		}
+		_tile_cut(gen, r_stones, sq[cuts[t].source], r_job.libs, rf_hash3(key.y, key.z, key.x, 4441u + t), tile);
 		tile_of_cut[t] = int(r_job.tiles.size());
 		r_job.tiles.push_back(tile);
 	}
 	// The placements, and the stones: each placed square's own grains replaced by its tile's, turned.
-	LocalVector<Stone> out;
-	r_place.clear();
 	LocalVector<bool> gone;
 	gone.resize(r_stones.size());
 	for (uint32_t i = 0; i < r_stones.size(); i++) {
@@ -2957,37 +3168,50 @@ void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, 
 	LocalVector<Stone> added;
 	LocalVector<int> added_place;
 	for (int q = 0; q < N * N; q++) {
-		if (use[q] < 0 || tile_of_cut[use[q]] < 0) {
+		const bool is_shared = shared[q] >= 0;
+		if (!is_shared && (use[q] < 0 || tile_of_cut[use[q]] < 0)) {
 			continue;
 		}
-		const Square &s = sq[q];
-		const Square &src = sq[cuts[use[q]].source];
+		const TileSquare &s = sq[q];
 		const uint32_t hq = hash_murmur3_one_32(s.order);
-		const real_t turn = q == cuts[use[q]].source ? 0.0 : real_t(hq & 3u) * Math::PI * 0.5;
+		const bool own_source = !is_shared && q == cuts[use[q]].source;
+		const real_t turn = own_source ? 0.0 : real_t(hq & 3u) * Math::PI * 0.5;
 		DetailPlacement pl;
-		pl.tile = tile_of_cut[use[q]];
+		pl.shared = is_shared;
+		pl.tile = is_shared ? shared[q] : tile_of_cut[use[q]];
 		pl.square = Rect2(rect.position + Vector2(q % N, q / N) * ts, Vector2(ts, ts));
 		pl.xform = s.frame * Transform3D(Basis(Vector3(0, 1, 0), turn), Vector3());
 		pl.plane = s.plane;
 		const int pi = int(r_job.placements.size());
 		r_job.placements.push_back(pl);
-		const Transform3D to = pl.xform * src.frame.affine_inverse();
 		for (uint32_t i : s.idx) {
 			gone[i] = true;
 		}
-		for (uint32_t i : src.idx) {
-			Stone st = r_stones[i];
-			const Transform3D xf = to * Transform3D(st.basis, st.position);
+		auto add = [&](Stone st, const Transform3D &p_to) {
+			const Transform3D xf = p_to * Transform3D(st.basis, st.position);
 			st.position = xf.origin;
 			st.basis = xf.basis;
 			st.ground = float((-s.plane.normal.x * st.position.x - s.plane.normal.z * st.position.z + s.plane.d) / s.plane.normal.y);
 			added.push_back(st);
 			added_place.push_back(pi);
+		};
+		if (is_shared) {
+			for (const Stone &st : set->cuts[shared[q]].stones) {
+				add(st, pl.xform);
+			}
+		} else {
+			const TileSquare &src = sq[cuts[use[q]].source];
+			const Transform3D to = pl.xform * src.frame.affine_inverse();
+			for (uint32_t i : src.idx) {
+				add(r_stones[i], to);
+			}
 		}
 	}
 	if (r_job.placements.is_empty()) {
 		return;
 	}
+	LocalVector<Stone> out;
+	r_place.clear();
 	for (uint32_t i = 0; i < r_stones.size(); i++) {
 		if (!gone[i]) {
 			out.push_back(r_stones[i]);
@@ -3018,16 +3242,12 @@ void RockField3D::_detail_commit(DetailJob &r_job) {
 	// grains, which every placement shares), and per placement one RenderingServer instance per shape.
 	const Ref<World3D> world = get_world_3d();
 	const RID scenario = world.is_valid() ? world->get_scenario() : RID();
-	LocalVector<LocalVector<Ref<MultiMesh>>> tile_mm;
-	LocalVector<LocalVector<RID>> tile_mat;
-	for (const DetailTile &tile : r_job.tiles) {
-		LocalVector<Ref<MultiMesh>> mms;
-		LocalVector<RID> mats;
-		for (const DetailTileShape &sh : tile.shapes) {
+	auto build = [&](const DetailTile &p_tile, LocalVector<Ref<MultiMesh>> &r_mms, LocalVector<RID> &r_mats) {
+		for (const DetailTileShape &sh : p_tile.shapes) {
 			const Library *lib = libraries.getptr(sh.library);
 			if (!lib || sh.variant >= int(lib->meshes.size())) {
-				mms.push_back(Ref<MultiMesh>());
-				mats.push_back(RID());
+				r_mms.push_back(Ref<MultiMesh>());
+				r_mats.push_back(RID());
 				continue;
 			}
 			Ref<MultiMesh> mm;
@@ -3037,27 +3257,53 @@ void RockField3D::_detail_commit(DetailJob &r_job) {
 			mm->set_mesh(lib->meshes[sh.variant]);
 			mm->set_instance_count(sh.count);
 			RS::get_singleton()->multimesh_set_buffer(mm->get_rid(), sh.buffer);
-			cell.tile_meshes.push_back(mm);
-			mms.push_back(mm);
+			r_mms.push_back(mm);
 			const Ref<Material> mat = _material(key_type(sh.library), RockGenerator::Family(key_family(sh.library)), true);
-			mats.push_back(mat.is_valid() ? mat->get_rid() : RID());
+			r_mats.push_back(mat.is_valid() ? mat->get_rid() : RID());
+		}
+	};
+	LocalVector<LocalVector<Ref<MultiMesh>>> tile_mm;
+	LocalVector<LocalVector<RID>> tile_mat;
+	for (const DetailTile &tile : r_job.tiles) {
+		LocalVector<Ref<MultiMesh>> mms;
+		LocalVector<RID> mats;
+		build(tile, mms, mats);
+		for (const Ref<MultiMesh> &mm : mms) {
+			if (mm.is_valid()) {
+				cell.tile_meshes.push_back(mm);
+			}
 		}
 		tile_mm.push_back(std::move(mms));
 		tile_mat.push_back(std::move(mats));
+	}
+	// The block's shared tiles: held by the cell, each built the first time a placement takes it.
+	TileSet *set = r_job.set;
+	if (set) {
+		set->users++;
+		cell.tile_set = true;
+		cell.tile_block = r_job.block;
 	}
 	for (const DetailPlacement &pl : r_job.placements) {
 		TilePlacement tp;
 		tp.square = pl.square;
 		const Vector3 n = pl.plane.normal;
 		const Vector4 plane(n.x, n.y, n.z, -pl.plane.d);
-		const LocalVector<Ref<MultiMesh>> &mms = tile_mm[pl.tile];
+		if (pl.shared && (!set || pl.tile >= int(set->cuts.size()))) {
+			cell.tiles.push_back(tp);
+			continue;
+		}
+		if (pl.shared && set->cuts[pl.tile].mms.is_empty()) {
+			build(set->cuts[pl.tile].tile, set->cuts[pl.tile].mms, set->cuts[pl.tile].mats);
+		}
+		const LocalVector<Ref<MultiMesh>> &mms = pl.shared ? set->cuts[pl.tile].mms : tile_mm[pl.tile];
+		const LocalVector<RID> &mats = pl.shared ? set->cuts[pl.tile].mats : tile_mat[pl.tile];
 		for (uint32_t k = 0; k < mms.size(); k++) {
 			if (mms[k].is_null() || !scenario.is_valid()) {
 				continue;
 			}
 			RID inst = RS::get_singleton()->instance_create2(mms[k]->get_rid(), scenario);
 			RS::get_singleton()->instance_set_transform(inst, pl.xform);
-			RS::get_singleton()->instance_geometry_set_material_override(inst, tile_mat[pl.tile][k]);
+			RS::get_singleton()->instance_geometry_set_material_override(inst, mats[k]);
 			RS::get_singleton()->instance_geometry_set_visibility_range(inst, 0.0f, vis, 0.0f, cs * 0.5f, RSE::VISIBILITY_RANGE_FADE_DISABLED);
 			RS::get_singleton()->instance_geometry_set_shader_parameter(inst, SNAME("rock_tile_plane"), plane);
 			RS::get_singleton()->instance_set_visible(inst, is_visible_in_tree());
@@ -3144,9 +3390,11 @@ void RockField3D::_detail_finish(bool p_wait, real_t p_budget_msec) {
 		const Layer layer = Layer(kv.key.x);
 		const real_t cs = _cell_size(layer);
 		const Vector2 c((kv.key.y + 0.5f) * cs, (kv.key.z + 0.5f) * cs);
+		_tile_set_adopt(*job);
 		if (_layer_on(layer) && !cells.has(kv.key) && c.distance_to(Vector2(dc.x, dc.z)) <= layer_radius[layer] + cs * 1.5f) {
 			_detail_commit(*job);
 		}
+		_tile_set_drop(*job); // the cell holds its own
 		memdelete(job);
 		done.push_back(kv.key);
 	}
@@ -3158,6 +3406,7 @@ void RockField3D::_detail_finish(bool p_wait, real_t p_budget_msec) {
 void RockField3D::_detail_cancel() {
 	for (KeyValue<Vector3i, DetailJob *> &kv : detail_jobs) {
 		WorkerThreadPool::get_singleton()->wait_for_task_completion(kv.value->task);
+		_tile_set_drop(*kv.value);
 		memdelete(kv.value);
 	}
 	detail_jobs.clear();
@@ -3245,7 +3494,9 @@ void RockField3D::_build_cell(const Vector3i &p_key) {
 		job.key = p_key;
 		_detail_prepare(job);
 		_detail_compute(job);
+		_tile_set_adopt(job);
 		_detail_commit(job);
+		_tile_set_drop(job); // the cell holds its own
 		return;
 	}
 	const real_t cs = _cell_size(layer);
@@ -3635,6 +3886,14 @@ void RockField3D::_update_streaming(bool p_all) {
 		if (blocked || detail_jobs.has(w.key)) {
 			layer_waiting = true;
 			continue;
+		}
+		if (threads && ground_detail_tiles) {
+			// Its block's shared tiles are being cut by another cell's job: wait for them rather than cut them twice.
+			const Vector3i b = _tile_block(w.key);
+			if (!tile_sets.has(b) && tile_set_pending.has(b)) {
+				layer_waiting = true;
+				continue;
+			}
 		}
 		if (threads) {
 			layer_waiting = true;
@@ -6310,6 +6569,55 @@ Dictionary RockField3D::get_ground_detail_tile_stats() const {
 			}
 		}
 	}
+	int64_t shared_built = 0, shared_cands = 0, shared_triangles = 0;
+	for (const KeyValue<Vector3i, TileSet *> &kv : tile_sets) {
+		for (const TileCut &cut : kv.value->cuts) {
+			shared_cands++;
+			if (cut.mms.is_empty()) {
+				continue;
+			}
+			shared_built++;
+			for (const Ref<MultiMesh> &mm : cut.mms) {
+				const Ref<Mesh> m = mm.is_valid() ? mm->get_mesh() : Ref<Mesh>();
+				if (m.is_valid() && m->get_surface_count() > 0) {
+					const int64_t t = int64_t(mm->get_instance_count()) * (m->surface_get_array_index_len(0) / 3);
+					shared_triangles += t;
+					most = MAX(most, t);
+				}
+			}
+		}
+	}
+	triangles += shared_triangles;
+	Array by_layer; // per detail class (pebble, gravel, fine): sets, candidates, built, triangles
+	for (int l = LAYER_DETAIL_PEBBLE; l <= LAYER_DETAIL_FINE; l++) {
+		int64_t n[4] = {};
+		for (const KeyValue<Vector3i, TileSet *> &kv : tile_sets) {
+			if (kv.key.x != l) {
+				continue;
+			}
+			n[0]++;
+			for (const TileCut &cut : kv.value->cuts) {
+				n[1]++;
+				n[2] += cut.mms.is_empty() ? 0 : 1;
+				for (const Ref<MultiMesh> &mm : cut.mms) {
+					const Ref<Mesh> m = mm.is_valid() ? mm->get_mesh() : Ref<Mesh>();
+					if (m.is_valid() && m->get_surface_count() > 0) {
+						n[3] += int64_t(mm->get_instance_count()) * (m->surface_get_array_index_len(0) / 3);
+					}
+				}
+			}
+		}
+		Array a;
+		for (int64_t v : n) {
+			a.push_back(v);
+		}
+		by_layer.push_back(a);
+	}
+	d["shared_by_class"] = by_layer;
+	d["shared_sets"] = int64_t(tile_sets.size());
+	d["shared_candidates"] = shared_cands;
+	d["shared_tiles"] = shared_built; // candidates some placement took (their MultiMeshes and BLAS built)
+	d["shared_triangles"] = shared_triangles;
 	d["live_placements"] = live;
 	d["live_grains"] = grains;
 	d["instances"] = instances; // RenderingServer instances (one per shape of a placement)

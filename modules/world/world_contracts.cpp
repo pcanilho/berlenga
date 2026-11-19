@@ -542,6 +542,30 @@ float WorldSnow::avalanche_peak_pressure_at(const Vector3 &p_position) const {
 	return provider ? provider->contract_snow_avalanche_peak_pressure_at(p_position) : 0.0f;
 }
 
+float WorldSnow::canopy_load_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_canopy_load_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_snow_canopy_load_at(p_position) : 0.0f;
+}
+
+float WorldSnow::canopy_capacity_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_canopy_capacity_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_snow_canopy_capacity_at(p_position) : 0.0f;
+}
+
+float WorldSnow::shake_canopy(const Vector3 &p_position, float p_radius, float p_share) {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_shake_canopy, p_position, p_radius, p_share, r)) {
+		return r;
+	}
+	return provider ? provider->contract_snow_shake_canopy(p_position, p_radius, p_share) : 0.0f;
+}
+
 void WorldSnow::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldSnow::has_provider);
 	ClassDB::bind_method(D_METHOD("depth_at", "position"), &WorldSnow::depth_at);
@@ -554,6 +578,9 @@ void WorldSnow::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("impurity_at", "position"), &WorldSnow::impurity_at);
 	ClassDB::bind_method(D_METHOD("avalanche_pressure_at", "position"), &WorldSnow::avalanche_pressure_at);
 	ClassDB::bind_method(D_METHOD("avalanche_peak_pressure_at", "position"), &WorldSnow::avalanche_peak_pressure_at);
+	ClassDB::bind_method(D_METHOD("canopy_load_at", "position"), &WorldSnow::canopy_load_at);
+	ClassDB::bind_method(D_METHOD("canopy_capacity_at", "position"), &WorldSnow::canopy_capacity_at);
+	ClassDB::bind_method(D_METHOD("shake_canopy", "position", "radius", "share"), &WorldSnow::shake_canopy);
 	GDVIRTUAL_BIND(_depth_at, "position");
 	GDVIRTUAL_BIND(_density_at, "position");
 	GDVIRTUAL_BIND(_wetness_at, "position");
@@ -564,6 +591,9 @@ void WorldSnow::_bind_methods() {
 	GDVIRTUAL_BIND(_impurity_at, "position");
 	GDVIRTUAL_BIND(_avalanche_pressure_at, "position");
 	GDVIRTUAL_BIND(_avalanche_peak_pressure_at, "position");
+	GDVIRTUAL_BIND(_canopy_load_at, "position");
+	GDVIRTUAL_BIND(_canopy_capacity_at, "position");
+	GDVIRTUAL_BIND(_shake_canopy, "position", "radius", "share");
 }
 
 // Fire.

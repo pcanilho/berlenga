@@ -1136,7 +1136,7 @@
     "ploughing"
    ],
    "note": "",
-   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out.",
+   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out; wheels sliding sideways across a slope dig in.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1197,6 +1197,17 @@
    ],
    "note": "",
    "what": "a cable winch that slows under load, stalls at its rated pull and slips its brake; the cable sags and lies on the ground.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Stream fords",
+   "settings": [
+    "GroundSurface3D.stream_fords"
+   ],
+   "note": "",
+   "what": "wheels crossing a stream scour its bed and its soft banks give way under them.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1373,7 +1384,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile; prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1420,7 +1431,7 @@
     "water_sources"
    ],
    "note": "",
-   "what": "water fills the pores of sand below it, wets a margin up to 15 cm above still water (`water_fringe`), and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.",
+   "what": "water fills the pores of sand below it, wets a margin up to 15 cm above still water (`water_fringe`), topped in a dry climate by a pale, patchy salt crust (`salt_crusts`), and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1562,10 +1573,11 @@
     "ground_detail_pixels",
     "ground_detail_cover",
     "ground_detail_rivers",
+    "ground_detail_tiles",
     "stones_react"
    ],
    "note": "",
-   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
+   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one, grouped into shared tiles of piles so it handles far fewer instances. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1611,10 +1623,11 @@
    "settings": [
     "layer_enabled",
     "LAYER_TOR",
-    "LAYER_COAST"
+    "LAYER_COAST",
+    "salt_bloom"
    ],
    "note": "",
-   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks cut into sharp-edged joint blocks with spray pitting only on upward faces, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above.",
+   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks cut into sharp-edged joint blocks with spray pitting only on upward faces, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above; on sheltered rock, sea spray salt dries to a white crust that is gone while the rock is wet.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -4100,13 +4113,15 @@
    "settings": [
     "WeatherRunoff3D.debris_flows",
     "GroundDebrisFlow3D",
+    "levee_height",
+    "push_bodies",
     "PhysXDebrisSurge3D",
     "surge_count_max",
     "max_boulder",
     "stop_slope"
    ],
    "note": "",
-   "what": "after a fire, intense rain on steep burnt basins sends debris flows down their channels in surges with boulders at the front, throwing mud; the flow gathers loose bed on the way and spreads into a fan of fresh mud where it stops.",
+   "what": "after a fire, intense rain on steep burnt basins sends debris flows down their channels in surges with boulders at the front, throwing mud; the flow gathers loose bed on the way and spreads into a fan of fresh mud where it stops, with levees along its edges, burying ruts and shoving logs and props aside.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

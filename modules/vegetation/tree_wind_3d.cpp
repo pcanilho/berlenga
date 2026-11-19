@@ -117,6 +117,7 @@ TreeWind3D::Rig TreeWind3D::parse_rig(const PackedFloat32Array &p_data, float p_
 		bone.dir = Vector3(o[TreeGenerator::RIG_DIR_X], o[TreeGenerator::RIG_DIR_Y], o[TreeGenerator::RIG_DIR_Z]);
 		bone.area = o[TreeGenerator::RIG_AREA];
 		bone.stiffness = o[TreeGenerator::RIG_STIFFNESS];
+		bone.snow_stiffness = bone.stiffness;
 		bone.zeta = CLAMP(o[TreeGenerator::RIG_ZETA], 0.02f, 1.0f);
 		const float inertia = MAX(o[TreeGenerator::RIG_INERTIA], 1e-6f);
 		bone.omega = b == 0 ? 0.0f : Math::sqrt(MAX(bone.stiffness, 0.0f) / inertia);
@@ -128,7 +129,11 @@ TreeWind3D::Rig TreeWind3D::parse_rig(const PackedFloat32Array &p_data, float p_
 		const Vector3 side = bone.centroid - bone.dir * bone.centroid.dot(bone.dir);
 		bone.reach = CLAMP(side.length() * 1.2f + bone.radius, 0.2f, 3.0f);
 		rig.extent = MAX(rig.extent, (bone.pivot + bone.dir * bone.length).length() + bone.reach);
+		if (b > 0 && bone.parent == 0) {
+			rig.leaf_area += bone.area;
+		}
 	}
+	rig.crown_radius = _crown_radius(rig);
 	// Trees build their wood to the loads they meet (Mattheck's axiom of uniform stress, "Trees:
 	// the mechanical design", 1991; thigmomorphogenesis, Telewski 2006): a branch holds its own
 	// weight, and a stem or limb thickens until a strong breeze bends each part only a little.
@@ -150,6 +155,10 @@ TreeWind3D::Rig TreeWind3D::parse_rig(const PackedFloat32Array &p_data, float p_
 			const float lever = bone.centroid.length();
 			const float wind_moment = 0.5f * AIR_DENSITY * design_cd * bone.area * design_wind * design_wind * lever;
 			bone.stiffness = MAX(bone.stiffness, MAX(mass[b] * gravity * lever / max_sag, wind_moment / design_turn));
+			// Under a slow, held load (snow) the wood bends by its own stiffness: the wind's floor stands in for
+			// the gust-stiffened, reconfiguring crown, not for the wood. Kept from sagging over 0.5 rad under its
+			// own weight turned sideways (the pipe model's thin spent leaders).
+			bone.snow_stiffness = MIN(MAX(bone.snow_stiffness, mass[b] * gravity * lever / 0.5f), bone.stiffness);
 		}
 	}
 	// Each axis (a stem or a limb, split in segments) sways as one mode. Its frequency by
@@ -216,6 +225,15 @@ const TreeWind3D::Rig *TreeWind3D::_rig_for(const Ref<Mesh> &p_mesh) {
 	if (!rigs.has(id)) {
 		const float vogel = p_mesh->has_meta(SNAME("tree_vogel")) ? float(p_mesh->get_meta(SNAME("tree_vogel"))) : -0.7f;
 		Rig rig = parse_rig(p_mesh->get_meta(SNAME("tree_rig")), vogel);
+		if (p_mesh->has_meta(SNAME("tree_foliage"))) {
+			// Leafless broadleaves hold some 10-20% of what conifers do, on twigs and forks (Hedstrom and Pomeroy
+			// 1998 on leafless aspen; Pomeroy and Gray 1995); in leaf, a wet early or late snow loads them fully
+			// (the October snows that break broadleaf crowns).
+			rig.snow_catch = Math::lerp(0.15f, 1.0f, CLAMP(float(p_mesh->get_meta(SNAME("tree_foliage"))), 0.0f, 1.0f));
+		}
+		if (p_mesh->has_meta(SNAME("tree_crown_radius"))) {
+			rig.crown_radius = MAX(float(p_mesh->get_meta(SNAME("tree_crown_radius"))), 0.3f);
+		}
 		if (p_mesh->has_meta(SNAME("tree_colliders"))) {
 			rig.colliders = p_mesh->get_meta(SNAME("tree_colliders"));
 		}
@@ -257,10 +275,17 @@ const TreeWind3D::Rig *TreeWind3D::_rig_for(const Ref<Mesh> &p_mesh) {
 				};
 				float stem_mass = 0.0f;
 				float base_ref = 0.0f;
+				// Trees in snowy climates carry what their crowns catch: conifer limbs and tops break from about 20-50 kg
+				// per m2 of crown of wet snow (Peltola et al. 1999, Scots pine; Nykanen et al. 1997), so each part holds
+				// at least its share of 35 kg/m2 (section 5al), the defects below taking the weakest from about 23.
+				// Broadleaves meet snow bare and are built for little of it (12): one in leaf breaks under an early or
+				// late wet snow, as in the October snows of central Europe.
+				const float snow_design = (rig.vogel > -0.6f ? 35.0f : 12.0f) * 9.81f * float(Math::PI) * rig.crown_radius * rig.crown_radius / MAX(rig.leaf_area, 1e-6f);
 				for (uint32_t b = 1; b < rig.bones.size(); b++) {
 					Bone &bone = rig.bones[b];
 					const float wood = 0.85f * mor * float(Math::PI) * bone.radius * bone.radius * bone.radius * 0.25f;
-					const float lo = safety * q_ref(bone) * bone.area * bone.centroid.length() * (mor / 50.0e6f);
+					const float snow_lo = snow_design * bone.area * Vector2(bone.centroid.x, bone.centroid.z).length() * (mor / 50.0e6f);
+					const float lo = MAX(safety * q_ref(bone) * bone.area * bone.centroid.length() * (mor / 50.0e6f), snow_lo);
 					bone.strength = CLAMP(wood, lo, 1.6f * lo);
 					if (bone.parent == 0) {
 						stem_mass += bone.mass;
@@ -333,7 +358,7 @@ void TreeWind3D::_gather_waves() {
 	}
 }
 
-void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32_t p_seed, Transform3D *r_bones, const Touch *p_touch, float p_min_length, StormLoad *r_storm) const {
+void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32_t p_seed, Transform3D *r_bones, const Touch *p_touch, float p_min_length, StormLoad *r_storm, float p_snow_kg) const {
 	const uint32_t count = p_rig.bones.size();
 	if (count == 0) {
 		return;
@@ -361,6 +386,9 @@ void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32
 	Vector3 base_wind;
 	const bool has_broken = p_touch && p_touch->broken.size() == count;
 	const bool has_flat = p_touch && p_touch->flat.size() == count;
+	// Snow on the crown (section 5al): its weight per unit of carried leaf area, in tree space (N per m2 at scale 1).
+	// Each bone carries its area's share, the same cantilever as the wind's drag: theta = r x F / k.
+	const Vector3 snow_per_area = p_snow_kg > 0.0f && p_rig.leaf_area > 1e-6f ? to_local.xform(Vector3(0.0f, -9.81f * p_snow_kg / (p_rig.leaf_area * scale * scale), 0.0f)) : Vector3();
 	for (uint32_t b = 1; b < count; b++) {
 		const Bone &bone = p_rig.bones[b];
 		const Vector3 load_local = bone.pivot + bone.centroid;
@@ -375,10 +403,11 @@ void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32
 			const Vector3 v = to_local.xform(ws.mean);
 			const float vs = v.length();
 			Transform3D local;
-			if (vs > 1e-4f) {
+			if (vs > 1e-4f || p_snow_kg > 0.0f) {
 				const float cd = DRAG_COEFFICIENT * (vs > RECONFIGURATION_SPEED ? Math::pow(vs / RECONFIGURATION_SPEED, p_rig.vogel) : 1.0f);
 				const Vector3 force = v * (0.5f * AIR_DENSITY * cd * bone.area * scale * scale * vs * drag_scale);
 				Vector3 theta = bone.centroid.cross(force) / MAX(bone.stiffness * scale * scale * stiffness_scale, 1e-3f);
+				theta += bone.centroid.cross(snow_per_area * (bone.area * scale * scale)) / MAX(bone.snow_stiffness * scale * scale * stiffness_scale, 1e-3f);
 				theta -= bone.dir * theta.dot(bone.dir);
 				const float angle = theta.length();
 				if (angle > 1e-6f) {
@@ -432,7 +461,8 @@ void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32
 		const float vs = v.length();
 		const float cd = DRAG_COEFFICIENT * (vs > RECONFIGURATION_SPEED ? Math::pow(vs / RECONFIGURATION_SPEED, p_rig.vogel) : 1.0f);
 		// Force in tree space at world scale: area scales with scale^2.
-		const Vector3 force = v * (0.5f * AIR_DENSITY * cd * bone.area * scale * scale * vs * drag_scale);
+		const Vector3 snow_force = snow_per_area * (bone.area * scale * scale);
+		const Vector3 force = v * (0.5f * AIR_DENSITY * cd * bone.area * scale * scale * vs * drag_scale) + snow_force;
 		if (storm && !(has_broken && p_touch->broken[b])) {
 			// The bending moment at the bone's base (N m): its lever in tree space times scale.
 			const Vector3 moment = bone.centroid.cross(force) * scale;
@@ -449,11 +479,19 @@ void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32
 					r_storm->ratio = ratio;
 					r_storm->bone = int(b);
 					r_storm->wind = v_world;
+					// Bowed by its snow more than pushed by the wind: it falls the way it leans.
+					const float drag = 0.5f * AIR_DENSITY * cd * bone.area * scale * scale * vs * vs * drag_scale;
+					if (snow_force.length() > drag) {
+						const Vector3 out = rot.xform(bone.dir);
+						r_storm->wind = Vector3(out.x, 0.0f, out.z) + v_world * 0.1f;
+						r_storm->snow = true;
+					}
 				}
 			}
 		}
 		// theta = moment / stiffness; the lever scales with scale and the stiffness with scale^3.
-		Vector3 theta = bone.centroid.cross(force) / MAX(bone.stiffness * scale * scale * stiffness_scale, 1e-3f);
+		Vector3 theta = bone.centroid.cross(force - snow_force) / MAX(bone.stiffness * scale * scale * stiffness_scale, 1e-3f);
+		theta += bone.centroid.cross(snow_force) / MAX(bone.snow_stiffness * scale * scale * stiffness_scale, 1e-3f);
 		theta -= bone.dir * theta.dot(bone.dir); // Bending only, no twist.
 		if (p_touch && p_touch->active && b < p_touch->angle.size()) {
 			theta += p_touch->angle[b];
@@ -534,7 +572,7 @@ void TreeWind3D::_solve_job(uint32_t p_index, int p_unused) {
 		}
 		return;
 	}
-	solve_pose(*t.rig, job.world * placement, seed, bones, tc, job.min_length, job.storm ? &job.load : nullptr);
+	solve_pose(*t.rig, job.world * placement, seed, bones, tc, job.min_length, job.storm ? &job.load : nullptr, job.snow_kg);
 	for (int b = 0; b < t.bones; b++) {
 		const Transform3D r = placement * bones[b];
 		float *f = w + b * RECORD_FLOATS;
@@ -646,7 +684,11 @@ void TreeWind3D::_scan_node(Node *p_node) {
 				t.base_char.resize(n);
 				t.snag_age.resize(n);
 				t.avalanche_hit.resize(n);
+				t.snow_kg.resize(n);
+				t.snow_creep.resize(n);
 				for (int c = 0; c < n; c++) {
+					t.snow_kg[c] = 0.0f;
+					t.snow_creep[c] = 0.0f;
 					t.base_char[c] = 0.0f;
 					t.snag_age[c] = -1.0f;
 					t.avalanche_hit[c] = 0;
@@ -777,7 +819,10 @@ void TreeWind3D::update(double p_delta) {
 			}
 		}
 		_avalanche_check();
+		_snow_check(1.0f);
 		_cut_canopy();
+	} else {
+		snow_frame = false;
 	}
 	_gather_contacts(p_delta);
 	LocalVector<Target *> changed;
@@ -836,7 +881,8 @@ void TreeWind3D::update(double p_delta) {
 				job.instance = int(i);
 				job.world = world;
 				job.min_length = min_length;
-				job.storm = storm_frame && t.rig->storm;
+				job.snow_kg = i < t.snow_kg.size() ? t.snow_kg[i] : 0.0f;
+				job.storm = (storm_frame || (snow_frame && job.snow_kg > 1.0f)) && t.rig->storm;
 				if (i < t.base_char.size()) {
 					job.load.base_char = t.base_char[i];
 				}
@@ -876,7 +922,7 @@ void TreeWind3D::update(double p_delta) {
 		WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_template_group_task(this, &TreeWind3D::_solve_job, 0, jobs.size(), -1, true, String("TreeWind3D"));
 		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
 	}
-	if (storm_frame) {
+	if (storm_frame || snow_frame) {
 		for (uint32_t j = 0; j < jobs.size(); j++) {
 			const Job &job = jobs[j];
 			if (job.storm && (job.load.ratio > 1.0f || job.load.root_ratio > 1.0f)) {
@@ -1821,6 +1867,18 @@ void TreeWind3D::_storm_fail(Target &r_target, int p_instance, const Transform3D
 	} else {
 		storm_breaks++;
 	}
+	snow_breaks += p_load.snow ? 1 : 0;
+	// The jolt throws the crown's snow onto the pack (WorldSnow.shake_canopy): all of it from a felled tree,
+	// what the broken part held from a snapped limb or top (section 5al).
+	if (snow_load_enabled && p_instance < int(r_target.snow_kg.size()) && r_target.snow_kg[p_instance] > 0.0f) {
+		WorldSnow *snow = WorldContracts::snow();
+		if (snow && snow->has_provider()) {
+			const float part = thrown ? 1.0f : (rig.leaf_area > 1e-6f ? CLAMP(rig.bones[b].area / rig.leaf_area, 0.1f, 1.0f) : 0.5f);
+			snow_shaken_kg += snow->shake_canopy(tree.origin, rig.crown_radius * scale, part);
+			r_target.snow_kg[p_instance] *= 1.0f - part;
+			r_target.snow_creep[p_instance] *= 1.0f - part;
+		}
+	}
 	// A felled tree or snapped stem takes its leaves out of the weather map's canopy, so snow, rain and wind
 	// under it see the gap (a cleared avalanche lane stops anchoring and braking the next one).
 	if (thrown || stem_joint) {
@@ -1851,6 +1909,64 @@ float TreeWind3D::avalanche_strength(float p_stem_diameter, bool p_crown) {
 		return 3000.0f;
 	}
 	return MAX(15000.0f * Math::pow(MAX(p_stem_diameter, 0.01f) / 0.4f, 1.36f), 500.0f);
+}
+
+// Once a second: the snow each crown holds (section 5al). Snow keeps the mass, as kg per m2 of ground over the
+// canopy (WorldSnow.canopy_load_at, Hedstrom and Pomeroy 1998); a tree's crown, where the canopy closes to C
+// (WorldWeather.canopy_closure_at), holds L / C per m2 of its own spread, pi R^2. Under a held load the wood creeps on:
+// softwood branches add about 34% of their instant bend over a few hours (Kelvin retardation, spectra peaking at
+// 1-10 h; Ray and Bret-Harte 2019), taken as one first-order step of snow_creep_hours.
+void TreeWind3D::_snow_check(float p_dt) {
+	snow_frame = false;
+	if (!snow_load_enabled || !is_inside_tree()) {
+		return;
+	}
+	const WorldSnow *snow = WorldContracts::snow();
+	if (!snow || !snow->has_provider()) {
+		for (Target &t : targets) {
+			for (uint32_t i = 0; i < t.snow_kg.size(); i++) {
+				t.snow_kg[i] = 0.0f;
+				t.snow_creep[i] = 0.0f;
+			}
+		}
+		return;
+	}
+	const WorldWeather *weather = WorldContracts::weather();
+	const bool has_weather = weather && weather->has_provider();
+	// snow_creep_hours 0: no creep (tests that want the instant bend).
+	const float creep_share = snow_creep_hours > 0.0f ? 0.34f : 0.0f;
+	const float creep_step = snow_creep_hours > 0.0f ? 1.0f - Math::exp(-p_dt / (snow_creep_hours * 3600.0f)) : 1.0f;
+	for (Target &t : targets) {
+		MultiMeshInstance3D *mmi = ObjectDB::get_instance<MultiMeshInstance3D>(t.node);
+		if (!mmi || !mmi->is_inside_tree() || !t.rig || t.snow_kg.size() != t.placements.size()) {
+			continue;
+		}
+		const Transform3D cw = mmi->get_global_transform();
+		for (uint32_t i = 0; i < t.placements.size(); i++) {
+			const Transform3D tree = cw * t.placements[i];
+			const float load = snow->canopy_load_at(tree.origin);
+			float kg = 0.0f;
+			if (load > 0.0f) {
+				const float scale = MAX(Math::pow(float(Math::abs(tree.basis.determinant())), 1.0f / 3.0f), 1e-3f);
+				const float closure = has_weather ? weather->canopy_closure_at(tree.origin) : 0.7f;
+				const float r = t.rig->crown_radius * scale;
+				kg = load / MAX(closure, 0.3f) * float(Math::PI) * r * r * t.rig->snow_catch;
+			}
+			const float inst = kg;
+			t.snow_creep[i] += (creep_share * inst - t.snow_creep[i]) * creep_step;
+			t.snow_kg[i] = inst + t.snow_creep[i];
+			snow_frame = snow_frame || t.snow_kg[i] > 1.0f;
+		}
+	}
+}
+
+float TreeWind3D::get_instance_snow_kg(Node *p_target, int p_instance) const {
+	for (const Target &t : targets) {
+		if (p_target && t.node == p_target->get_instance_id() && p_instance >= 0 && p_instance < int(t.snow_kg.size())) {
+			return t.snow_kg[p_instance];
+		}
+	}
+	return 0.0f;
 }
 
 float TreeWind3D::_crown_radius(const Rig &p_rig) {
@@ -3166,6 +3282,13 @@ void TreeWind3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_storm_min_wind"), &TreeWind3D::get_storm_min_wind);
 	ClassDB::bind_method(D_METHOD("get_storm_break_count"), &TreeWind3D::get_storm_break_count);
 	ClassDB::bind_method(D_METHOD("get_storm_throw_count"), &TreeWind3D::get_storm_throw_count);
+	ClassDB::bind_method(D_METHOD("set_snow_load_enabled", "enabled"), &TreeWind3D::set_snow_load_enabled);
+	ClassDB::bind_method(D_METHOD("is_snow_load_enabled"), &TreeWind3D::is_snow_load_enabled);
+	ClassDB::bind_method(D_METHOD("set_snow_creep_hours", "hours"), &TreeWind3D::set_snow_creep_hours);
+	ClassDB::bind_method(D_METHOD("get_snow_creep_hours"), &TreeWind3D::get_snow_creep_hours);
+	ClassDB::bind_method(D_METHOD("get_snow_break_count"), &TreeWind3D::get_snow_break_count);
+	ClassDB::bind_method(D_METHOD("get_snow_shaken_kg"), &TreeWind3D::get_snow_shaken_kg);
+	ClassDB::bind_method(D_METHOD("get_instance_snow_kg", "target", "instance"), &TreeWind3D::get_instance_snow_kg);
 	ClassDB::bind_method(D_METHOD("set_avalanche_enabled", "enabled"), &TreeWind3D::set_avalanche_enabled);
 	ClassDB::bind_method(D_METHOD("is_avalanche_enabled"), &TreeWind3D::is_avalanche_enabled);
 	ClassDB::bind_method(D_METHOD("get_avalanche_break_count"), &TreeWind3D::get_avalanche_break_count);
@@ -3220,6 +3343,8 @@ void TreeWind3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "storm_min_radius", PROPERTY_HINT_RANGE, "0,0.3,0.005,suffix:m"), "set_storm_min_radius", "get_storm_min_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "storm_min_wind", PROPERTY_HINT_RANGE, "0,60,0.5,suffix:m/s"), "set_storm_min_wind", "get_storm_min_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "avalanche_enabled"), "set_avalanche_enabled", "is_avalanche_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_load_enabled"), "set_snow_load_enabled", "is_snow_load_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_creep_hours", PROPERTY_HINT_RANGE, "0,48,0.1,suffix:h"), "set_snow_creep_hours", "get_snow_creep_hours");
 	ADD_SIGNAL(MethodInfo("storm_damage", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "radius"), PropertyInfo(Variant::BOOL, "uprooted"), PropertyInfo(Variant::DICTIONARY, "pit")));
 }
 

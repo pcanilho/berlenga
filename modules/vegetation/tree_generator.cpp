@@ -19069,6 +19069,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	}
 	if (rigged) {
 		mesh->set_meta(SNAME("tree_rig"), _rig_data());
+		// The crown's spread (95th percentile of the leaves' reach), for the snow it holds (TreeWind3D; trees.md 5al).
+		mesh->set_meta(SNAME("tree_crown_radius"), crown_radius);
+		{
+			// The share of its foliage the tree carries in this mesh's season (1 evergreen or in full leaf).
+			const LeafSeason fls = _leaf_season(preset, season);
+			mesh->set_meta(SNAME("tree_foliage"), CLAMP(fls.out * (1.0f - fls.fallen), 0.0f, 1.0f));
+		}
 		if (storm_kit && !fallen && decay_class == 0 && !fallen_branch) {
 			_storm_kit(mesh, static_materials);
 		}
@@ -20919,7 +20926,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// its flowers do (trees.md 5u).
 		// Calligonum's jointed twiglets are geometry too: a spray card has no joints.
 		needle_sprays = p_preset != PRESET_GORSE && p_preset != PRESET_CALLIGONUM;
-		forest_shade = p_stand_grown ? 0.6f : 0.0f;
+		forest_shade = p_stand_grown ? stand_forest_shade : 0.0f;
 		if (timber_stems) {
 			// Standards (coppice with standards): stems kept straight for timber.
 			params[PARAM_TRUNK_GRAVITROPISM] = MAX(params[PARAM_TRUNK_GRAVITROPISM], 1.4f);
@@ -21748,6 +21755,9 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			// after a decade.
 			const float ob = MAX(beetle_outbreak, 0.0f);
 			const float cover = CLAMP(0.12f + 0.06f * ob, 0.12f, 0.8f);
+			// Mountain spruce stands are not dense plantations: crowns to about half the height (crown ratio 0.4-0.6;
+			// docs, 19 Nov: at the default shade the living spruce read as masts with a top tuft).
+			stand_forest_shade = 0.45f;
 			const float spot_scale = 70.0f;
 			// The front first (it claims the spots' edges), then the core inside them, then the living stand.
 			beetle_band = 1;
@@ -21808,9 +21818,12 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 				list.push_back(fallen_spot);
 			}
 			// Pioneers in the spots' light (open-grown: only where the canopy is gone).
-			open(PRESET_ROWAN, 0.5f);
-			open(PRESET_BIRCH, 0.4f);
+			// (Not denser: open-grown rowan and birch are 9M and 6M vertices of far mesh, and more of them took the
+			// stand plot's path-traced still past 15 GB.)
+			open(PRESET_ROWAN, 0.35f);
+			open(PRESET_BIRCH, 0.3f);
 			shrub(PRESET_ELDER, 0.25f);
+			stand_forest_shade = 0.6f;
 		} break;
 		case STAND_MAX:
 			break;
@@ -22361,7 +22374,8 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			// patches yellow in the stand plot, 19 Nov).
 			// Rust-brown, not an autumn larch's orange (docs, 19 Nov: the front glowed): dead needles are dull and
 			// thin out from the first winter, so the branch skeleton shows through them.
-			const Color fade = Color(0.25f, 0.25f, 0.09f), fox = Color(0.36f, 0.15f, 0.06f), brown = Color(0.27f, 0.13f, 0.07f);
+			// Docs, 19 Nov again: still salmon in the plot; drier, greyer brown-red.
+			const Color fade = Color(0.25f, 0.25f, 0.09f), fox = Color(0.28f, 0.17f, 0.1f), brown = Color(0.24f, 0.16f, 0.12f);
 			leaf_color = y < 0.95f ? fade.lerp(fox, Math::smoothstep(0.55f, 0.95f, y)) : fox.lerp(brown, Math::smoothstep(0.95f, 2.3f, y));
 			const float drop = 0.35f * Math::smoothstep(0.8f, 1.3f, y) + 0.55f * Math::smoothstep(1.3f, 2.4f, y);
 			for (uint32_t i = 0; i < nodes.size(); i++) {
