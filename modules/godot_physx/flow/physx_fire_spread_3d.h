@@ -178,6 +178,8 @@ private:
 	float map_timer = 0.0f;
 	int band_x0 = 0, band_x1 = -1, band_z0 = 0, band_z1 = -1; // cells that may change
 	float total_burnt = 0.0f; // m2
+	int burn_x0 = 0, burn_x1 = -1, burn_z0 = 0, burn_z1 = -1; // cells caught since the last WorldFire.burn_changed report
+	void _report_burn();
 
 	PhysXFlow3D *flow = nullptr;
 	bool own_flow = false;
