@@ -1384,7 +1384,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile; prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1431,7 +1431,7 @@
     "water_sources"
    ],
    "note": "",
-   "what": "water fills the pores of sand below it, wets a margin up to 15 cm above still water (`water_fringe`), and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.",
+   "what": "water fills the pores of sand below it, wets a margin up to 15 cm above still water (`water_fringe`), topped in a dry climate by a pale, patchy salt crust (`salt_crusts`), and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1573,10 +1573,11 @@
     "ground_detail_pixels",
     "ground_detail_cover",
     "ground_detail_rivers",
+    "ground_detail_tiles",
     "stones_react"
    ],
    "note": "",
-   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
+   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one, grouped into shared tiles of piles so it handles far fewer instances. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1622,10 +1623,11 @@
    "settings": [
     "layer_enabled",
     "LAYER_TOR",
-    "LAYER_COAST"
+    "LAYER_COAST",
+    "salt_bloom"
    ],
    "note": "",
-   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks cut into sharp-edged joint blocks with spray pitting only on upward faces, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above.",
+   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks cut into sharp-edged joint blocks with spray pitting only on upward faces, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above; on sheltered rock, sea spray salt dries to a white crust that is gone while the rock is wet.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"

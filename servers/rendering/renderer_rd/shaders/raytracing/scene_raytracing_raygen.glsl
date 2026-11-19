@@ -2429,7 +2429,9 @@ vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
 	o += 1.2 * (vec2(ground_ripple_vn(p / 6.0, 3u), ground_ripple_vn(p / 6.0, 4u)) - 0.5);
 	o += 0.06 * (vec2(ground_ripple_vn(p / 1.7, 5u), ground_ripple_vn(p / 1.7, 6u)) - 0.5);
-	float amp = mix(0.35, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
+	// Patchy over tens of metres: smooth sheets between ripple fields (material.cpp ground_ripple_vary()).
+	float amp = mix(0.2, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
+	amp *= smoothstep(0.36, 0.6, 0.7 * ground_ripple_vn(p / 16.0, 15u) + 0.3 * ground_ripple_vn(p / 5.0, 16u));
 	float kk = dot(p_k, p_k);
 	if (kk > 0.0) {
 		vec2 kn = p_k / sqrt(kk);
@@ -3079,6 +3081,7 @@ void main() {
 	vec4 g_crack = vec4(0.0); // desiccation cracks: opening, plate size m, regularity, crust (mud stage 2b)
 	vec4 g_dep = vec4(0.0); // a fresh deposit: cover, linear colour (mud round 13)
 	vec4 g_ice = vec4(0.0); // puddle ice: thickness m, broken share (mud round 7); needle ice: height m, crumbs (round 9)
+	float g_salt = 0.0; // the salt crust round still water in a dry climate, 0 to 1 (salt_crusts)
 	// The terrain round the patch reads the pore water too (the far lattice), with no grains.
 	if (rt_material_ground_deform(mat) || rt_material_ground_terrain(mat)) {
 		uint wmap_g = uint(get_rt_param(RT_PARAM_GROUND_WET_MAP));
@@ -3097,7 +3100,9 @@ void main() {
 			bool gpmud = gts.x > 4 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(4, gts.y - 1), 0).w - 6.5) < 0.01;
 			// Then a fresh deposit's block, texel 5's 7.5 (material.cpp ground_deposit_state()).
 			bool gdepb = gts.x > 5 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(5, gts.y - 1), 0).w - 7.5) < 0.01;
-			int gblocks = 1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0) + (gice ? 1 : 0) + (gpmud ? 1 : 0) + (gdepb ? 1 : 0);
+			// The salt crust last: texel 6's 8.5.
+			bool gsalt = gts.x > 6 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(6, gts.y - 1), 0).w - 8.5) < 0.01;
+			int gblocks = 1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0) + (gice ? 1 : 0) + (gpmud ? 1 : 0) + (gdepb ? 1 : 0) + (gsalt ? 1 : 0);
 			float grows = float((gts.y - 1) / gblocks);
 			vec2 gxz = (h.hit_pos + rt_origin.xyz).xz;
 			if (abs(grect.w - 2.5) < 0.01) {
@@ -3134,8 +3139,15 @@ void main() {
 				if (gdepb) {
 					vec2 guv = (gxz - grect.xy) / max(grect.z, 1e-3);
 					if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
-						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(gblocks - 1) * grows;
+						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(gblocks - 1 - (gsalt ? 1 : 0)) * grows;
 						g_dep = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, gv / float(gts.y)), 0.0);
+					}
+				}
+				if (gsalt) {
+					vec2 guv = (gxz - grect.xy) / max(grect.z, 1e-3);
+					if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
+						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(gblocks - 1) * grows;
+						g_salt = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, gv / float(gts.y)), 0.0).x;
 					}
 				}
 				g_grain = clamp(gw.z, 0.0, 1.0);
@@ -3290,6 +3302,16 @@ void main() {
 	if (g_sheen > 0.0) {
 		m.normal = normalize(mix(m.normal, h.geometry_normal, 0.85 * g_sheen));
 		m.roughness = mix(m.roughness, 0.2, 0.6 * g_sheen);
+	}
+	// The salt crust over the wet margin (material.cpp ground_salt_apply()).
+	if (g_salt > 0.0) {
+		vec2 gsp = (h.hit_pos + rt_origin.xyz).xz;
+		float gse = g_salt * mix(0.35, 1.0, ground_ripple_vn(gsp / 1.5, 23u));
+		float gsn = 0.5 * ground_ripple_vn(gsp / 0.35, 21u) + 0.3 * ground_ripple_vn(gsp / 0.09, 22u) + 0.2 * ground_ripple_vn(gsp / 0.025, 24u);
+		float gsu = smoothstep(0.3, 0.8, h.geometry_normal.y);
+		float gsc = smoothstep(1.0 - gse, 1.35 - gse, gsn) * gsu;
+		m.albedo = mix(m.albedo, vec3(0.56, 0.53, 0.48), max(0.7 * gsc, 0.15 * gse * gsu));
+		m.roughness = mix(m.roughness, 0.92, gsc);
 	}
 	// Standing water in ruts and prints (material.cpp ground_water_look()): the patch already lies on the water's
 	// level there; the surface is water's (F0 0.02, smooth, no relief), the bed under it soaked and, deeper, hidden

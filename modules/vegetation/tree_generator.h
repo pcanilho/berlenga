@@ -677,7 +677,8 @@ public:
 	// STAND_BEETLE_SPRUCE: years since the outbreak began; the spots grow and age with it.
 	float beetle_outbreak = 6.0f;
 	bool beetle_active = false; // This generate() grows a beetle kill.
-	int beetle_band = 0; // While a beetle stand grows its species: 1 the red front, 2 the grey core.
+	int beetle_band = 0;
+	float stand_forest_shade = 0.6f; // _stand_species: the shade a stand-grown tree grows in (make_stand may lower it). // While a beetle stand grows its species: 1 the red front, 2 the grey core.
 	void _grow_beetle_signs(Builder &p_bark, Builder &r_parts);
 	float cork_stripped_years = -1.0f; // Cork oak: years since the last cork harvest (5aa); -1 picks by seed, 30 or more never worked.
 	float _cork_strip_age() const;

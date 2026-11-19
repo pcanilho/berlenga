@@ -1523,13 +1523,26 @@ void fragment() {
 	}
 )";
 	}
+	if (ground_deform_enabled) {
+		// The ground's pore water (GroundSurface3D's wet map: a wet margin round still water, runoff, the swash) on the
+		// terrain past the patch, as the path tracer already draws it (g_wet): never wetted twice with the rain's.
+		c += "\tfloat tm_gwet = ground_wet_at(wp, wn).x;\n";
+	} else {
+		c += "\tfloat tm_gwet = 0.0;\n";
+	}
 	if (wetness_enabled) {
 		// Rain soaks the ground by each layer's porosity (Lagarde 2013), before snow lies on it.
-		c += "\tweather_wetness_apply(tm_wetness * weather_wetness_at(wp), wn.y, metallic, porosity, albedo, rough);\n";
+		c += "\tweather_wetness_apply(max(tm_wetness * weather_wetness_at(wp), tm_gwet), wn.y, metallic, porosity, albedo, rough);\n";
 		// A film of rain water drowns the grains' facets.
 		c += "\ttm_sand_dry *= 1.0 - smoothstep(0.05, 0.3, tm_wetness * weather_wetness_at(wp));\n";
 		// Hoarfrost on clear cold nights (WeatherMap3D dew_and_frost).
 		c += "\tweather_frost_apply(weather_frost_at(wp), wn.y, albedo, rough);\n";
+	} else if (ground_deform_enabled) {
+		c += "\t{\n\t\tfloat gw_f = mix(1.0, 0.2, porosity);\n\t\talbedo *= mix(1.0, gw_f, tm_gwet);\n\t\trough *= mix(1.0, gw_f, 0.5 * tm_gwet);\n\t}\n";
+	}
+	if (ground_deform_enabled) {
+		// The salt crust round still water in a dry climate (GroundSurface3D salt_crusts).
+		c += "\tground_salt_apply(wp, wn.y, albedo, rough);\n";
 	}
 	if (snow_enabled) {
 		// The snowpack over everything: slides off past its slope, settles first on the flattest facets of the

@@ -423,6 +423,13 @@
 				The saltation flux over [param position], in kg of sand per metre across the wind per second, along the wind (x, z). Open dry sand carries the Lettau and Lettau flux for the wind; it falls to nothing over about a metre among plants.
 			</description>
 		</method>
+		<method name="get_salt_crust_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The salt crust at [param position], 0 to 1 (see [member salt_crusts]); [code]0.0[/code] outside the ground's lattice.
+			</description>
+		</method>
 		<method name="get_saturation_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -853,6 +860,9 @@
 		</member>
 		<member name="runoff_time_scale" type="float" setter="set_runoff_time_scale" getter="get_runoff_time_scale" default="1.0">
 			Speeds up the runoff's cutting and the water table's fall, for previews and benches.
+		</member>
+		<member name="salt_crusts" type="bool" setter="set_salt_crusts" getter="is_salt_crusts" default="true">
+			In a dry climate (the [code]WorldWeather[/code] season climate's aridity index, precipitation over Thornthwaite's potential evapotranspiration, under about 0.3), the water [member water_fringe] draws up round still water evaporates at the fringe's top and leaves its salts there: a pale, matte, patchy crust from about 8 cm over the water's level to some 35 cm, densest round 15 cm (efflorescence; Rodriguez-Navarro and Doehne 1999, Nield et al. 2015). Running water's banks stay clean. Drawn in raster and under the path tracer through the [code]ground_wet_map[/code] shader global.
 		</member>
 		<member name="sand_drift_rate" type="float" setter="set_sand_drift_rate" getter="get_sand_drift_rate" default="2.0">
 			How fast wind fills dry sand prints: the share lost per hour at 10 m/s, from nothing at 5 m/s (Bagnold's threshold).

@@ -790,9 +790,8 @@ void GroundDebrisFlow3D::_update_mesh(Body &p_body) {
 	for (int r = 0; r < b.ns; r++) {
 		for (int c = 0; c < nw; c++) {
 			const int i = r * nw + c;
-			// The corridor's outer columns draw dry, so a flow that reaches the corridor's side tapers to the ground;
-			// so do cells the ground now draws itself.
-			if (c == 0 || c == nw - 1 || b.grounded[i]) {
+			// The corridor's outer columns draw dry, so a flow that reaches the corridor's side tapers to the ground.
+			if (c == 0 || c == nw - 1) {
 				hd[i] = 0.0f;
 				continue;
 			}
@@ -809,11 +808,17 @@ void GroundDebrisFlow3D::_update_mesh(Body &p_body) {
 				}
 			}
 			hd[i] = 0.5f * b.h[i] + 0.5f * sum / MAX(cnt, 1);
+			// Cells the print field took over as ground: the ground draws them, raised by the deposit; the sheet
+			// carries on 3 cm under that surface, hidden, so where the field's ground fades out (its outer metres,
+			// GroundSurface3D::_apply_deposits()) the sheet is already there at full height, with no step.
+			if (b.grounded[i]) {
+				hd[i] = MAX(hd[i] - 0.03f, 0.0f);
+			}
 		}
 	}
 	auto corner = [&](int r, int c) {
 		const int i = r * nw + c;
-		return V{ _cell_position(b, r, c), hd[i], b.grounded[i] ? b.h[i] : hd[i] };
+		return V{ _cell_position(b, r, c), hd[i], hd[i] + (b.grounded[i] ? 0.03f : 0.0f) };
 	};
 	bool any = false;
 	auto triangle = [&](const V &a, const V &bb, const V &c) {
@@ -850,8 +855,34 @@ void GroundDebrisFlow3D::_update_mesh(Body &p_body) {
 			const V v10 = corner(r + 1, c);
 			const V v01 = corner(r, c + 1);
 			const V v11 = corner(r + 1, c + 1);
-			triangle(v00, v10, v01);
-			triangle(v01, v10, v11);
+			const bool edge = MIN(MIN(hd[i], hd[i + 1]), MIN(hd[i + nw], hd[i + nw + 1])) < wet;
+			if (!edge) {
+				triangle(v00, v10, v01);
+				triangle(v01, v10, v11);
+				continue;
+			}
+			// A margin cell: split 4 x 4 with the depth bilinear across it, so the 1 cm contour curves between the
+			// lattice's points instead of running in straight 1.5 m facets (a saw-tooth seen from afar).
+			const int S = 4;
+			auto sub = [&](int a, int bb) {
+				const float u = float(a) / S;
+				const float w = float(bb) / S;
+				V o;
+				o.ground = v00.ground.lerp(v10.ground, u).lerp(v01.ground.lerp(v11.ground, u), w);
+				o.h = Math::lerp(Math::lerp(v00.h, v10.h, u), Math::lerp(v01.h, v11.h, u), w);
+				o.t = Math::lerp(Math::lerp(v00.t, v10.t, u), Math::lerp(v01.t, v11.t, u), w);
+				return o;
+			};
+			for (int a = 0; a < S; a++) {
+				for (int bb = 0; bb < S; bb++) {
+					const V s00 = sub(a, bb);
+					const V s10 = sub(a + 1, bb);
+					const V s01 = sub(a, bb + 1);
+					const V s11 = sub(a + 1, bb + 1);
+					triangle(s00, s10, s01);
+					triangle(s01, s10, s11);
+				}
+			}
 		}
 	}
 	if (!any) {

@@ -299,6 +299,7 @@ private:
 	// Slip-face avalanches (docs/ideas/sand.md, dunes): a press on a dry dune's slip face sets off a grain flow down
 	// it, a tongue that scours the face's surface layer and lays it in a lobe at the toe.
 	bool slip_avalanches = true;
+	static constexpr float AVAL_TENT = 1.6f; // the scour's and lobe's tents, times the flow's half width
 	struct Avalanche {
 		LocalVector<Vector3> path; // x, z, the half width at each 4 cm step down the fall line (y)
 		int lobe_from = 0; // the first step of the lobe at the toe
@@ -341,6 +342,9 @@ private:
 	// Pebbles and gravel (WorldGround.coarse_cover_at) shelter the sand between them: no blowing, no ripples.
 	bool coarse_armour = true;
 	static constexpr float WATER_FRINGE = 0.15f; // m, fine sand
+	// A pale salt crust at the fringe's top round still water in a dry climate (_water_update()).
+	bool salt_crusts = true;
+	LocalVector<float> salt_crust; // per lattice point, 0..1
 	// Ripples fade out where the wind's lee stops the sand (_ripple_calm_at()).
 	bool lee_calm_ripples = true;
 	static constexpr float PRINT_DRIFT_LENGTH = 0.5f; // m: c = this times the fade rate (about 1 m an hour at 10 m/s)
@@ -366,6 +370,7 @@ private:
 	void _ripples_far_tile();
 	LocalVector<float> ripple_seen; // the field's surface change at each of its texels over the window
 	Vector2i ripple_seen_origin;
+	LocalVector<float> ripple_change; // its change this update (scratch)
 	Ref<Image> ripple_image;
 	Ref<ImageTexture> ripple_texture;
 	WorkerThreadPool::TaskID ripple_task = WorkerThreadPool::INVALID_TASK_ID;
@@ -581,7 +586,7 @@ private:
 	LocalVector<float> sand_dep_rate; // m/s, + piling up, - scoured
 	LocalVector<float> sand_dep; // m written to the ground since the cell came in
 	LocalVector<float> ground_dep; // m of mud deposit (debris fans, flood silt) the ground lattice carries, per cell
-	float _deposit_smooth_at(float p_x, float p_z) const;
+	float _deposit_smooth_at(float p_x, float p_z, float *r_coloured = nullptr) const; // r_coloured: the share with a colour
 	bool _apply_deposits();
 	void _ground_changed();
 	LocalVector<float> sand_dep_pending; // m owed, written in 2 mm steps
@@ -869,6 +874,9 @@ public:
 	bool is_wind_fills_prints() const { return wind_fills_prints; }
 	void set_water_fringe(bool p_enabled) { water_fringe = p_enabled; }
 	bool is_water_fringe() const { return water_fringe; }
+	void set_salt_crusts(bool p_enabled) { salt_crusts = p_enabled; }
+	bool is_salt_crusts() const { return salt_crusts; }
+	float get_salt_crust_at(const Vector3 &p_position) const;
 	void set_coarse_armour(bool p_enabled) {
 		coarse_armour = p_enabled;
 		ripple_mask_accum = 1e9;

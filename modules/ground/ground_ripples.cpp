@@ -148,7 +148,9 @@ Vector3 GroundRipples::vary(Vector2 p_xz, Vector2 p_k) {
 	Vector2 o = 4.0f * (Vector2(_rv_noise(p / 24.0f, 1u), _rv_noise(p / 24.0f, 2u)) - Vector2(0.5f, 0.5f));
 	o += 1.2f * (Vector2(_rv_noise(p / 6.0f, 3u), _rv_noise(p / 6.0f, 4u)) - Vector2(0.5f, 0.5f));
 	o += 0.06f * (Vector2(_rv_noise(p / 1.7f, 5u), _rv_noise(p / 1.7f, 6u)) - Vector2(0.5f, 0.5f));
-	const float amp = Math::lerp(0.35f, 1.0f, _rv_smoothstep(0.1f, 0.9f, 0.5f * _rv_noise(p / 6.0f, 7u) + 0.5f * _rv_noise(p / 1.8f, 8u)));
+	// Patchy over tens of metres: smooth sheets between ripple fields (material.cpp ground_ripple_vary()).
+	const float amp = Math::lerp(0.2f, 1.0f, _rv_smoothstep(0.1f, 0.9f, 0.5f * _rv_noise(p / 6.0f, 7u) + 0.5f * _rv_noise(p / 1.8f, 8u))) *
+			_rv_smoothstep(0.36f, 0.6f, 0.7f * _rv_noise(p / 16.0f, 15u) + 0.3f * _rv_noise(p / 5.0f, 16u));
 	const float kk = p_k.dot(p_k);
 	if (kk > 0.0f) {
 		const Vector2 kn = p_k / Math::sqrt(kk);

@@ -755,13 +755,48 @@ Sand by a pool or lake stays wet above the water's level by capillary rise, abou
 2004), so a still pool's shore shows a band of dark wet sand (about 35% darker, Lekner and Dorf 1988) fading out
 above it. The water's level (any water source or the water contract) is carried 2 m out from the cells it covers,
 the nearest wet cell's; dry ground under 15 cm over it is kept near saturated at the top, falling to 0.4 at the
-fringe's top. `water_fringe` (on); `--test=fringe`. Next: a salt crust where the fringe's top evaporates.
+fringe's top. `water_fringe` (on); `--test=fringe`. The terrain material round the patch now shows the same pore
+water in raster as the path tracer already did (it read the wet map under PT only).
+
+### Salt crusts round still water in a dry climate (oasis pools, 19 Nov 2026)
+
+Where the fringe's water evaporates at its top it leaves its salts there: efflorescence (Rodriguez-Navarro and
+Doehne 1999), the pale crust round playas, sabkhas and desert pools (Nield et al. 2015; crust albedo about 0.5 to
+0.7). Only in a dry climate: the `WorldWeather` season climate's aridity index (UNEP 1992: annual precipitation
+over Thornthwaite's potential evapotranspiration, from the same `WeatherSeason` lines the weather uses) under
+about 0.3, full under 0.1. The crust lies from about 8 cm over the water's level to some 35 cm, round the fringe's
+top, and only by still water (a stream's banks are washed). It is a wet-map block (texel 6's tag 8.5, after the mud's fresh deposits at 7.5), drawn in
+patches that join as it thickens, white and matte, by BaseMaterial3D, TerrainMaterial3D and the path tracer alike.
+`salt_crusts` (on); `--test=fringe` checks it in a desert climate (`desert_climate.gd`) and not without one.
+
+### Avalanche tongues and planed ripples (19 Nov 2026)
+
+The tongue's scour and lobe are now tents 1.6 times the flow's half width: flat discs 4 cm apart left each disc's
+edge as a terrace, a row of arcs down the tongue like contour lines. A change of the surface now planes the
+ripples by its depth over a ripple's height (4 mm), read between the field's texels at each ripple cell: the old
+all-or-nothing erase over whole texels left stepped, blocky edges round a tongue.
+
+### No uniform ripple texture to the horizon (docs, 19 Nov 2026)
+
+Dry sand showed the same busy small ripples everywhere to the horizon. The ripple amplitude now also fades in and
+out over fields some 16 m across (two value-noise octaves, 16 m and 5 m), leaving smooth sheets between rippled
+fields, as on real beaches and sand sheets, besides the 20 to 100% height variation within a field. The same lines
+in material.cpp, the path tracer and GroundRipples' CPU copy.
 
 ### Path traced dents follow the field
 
 The path tracer recaptures a mesh's vertex() output when a material parameter changes, not when a texture it
 samples is rewritten in place, so a fresh rut could show at an older, shallower depth there. The patch material
 carries `ground_deform_serial`, bumped at most once a frame whenever the field's texture was rewritten.
+Its vertex() must also read the serial: the path tracer counts material parameters among a capture's dependencies
+only when vertex() reads one, so the declared but unread serial recaptured nothing (ruts under PT stayed shallow,
+covering pressed stones).
+
+### No glints on damp sand
+
+Glints (`sand_glints`) were killed by pore water only, not by the cell's own moisture, so on a damp beach every print
+that bared sand between stones sparkled with white specks. Water held between the grains rounds their facets into
+menisci: the grain share the wet map publishes now fades out from moisture 0.05 to 0.2.
 
 ### Drifting on sand (Paulo, 16 Nov 2026)
 

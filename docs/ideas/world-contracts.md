@@ -136,6 +136,8 @@ terramechanics and pressing calls, which stay on the producer for now).
 | `surface_height_at(pos)` | m | ground height |
 | `runoff_at(pos)` | mm/h | 0 |
 | `canopy_load_at(pos)` | kg/m2 | 0 |
+| `canopy_capacity_at(pos)` | kg/m2 | 0 |
+| `shake_canopy(pos, radius, share)` | kg moved (the share of the held snow in the radius drops onto the pack below as fresh snow, mass kept; trees call it when a crown is jolted) | no-op, 0 |
 | `lake_ice_at(pos)` | (m, white share) | (0, 0) |
 | `avalanche_pressure_at(pos)`, `avalanche_peak_pressure_at(pos)` | Pa (dense flow, else powder cloud; peak so far) | 0 |
 | `add_impurity(pos, radius, mg_per_m2)`, `impurity_at(pos)` | mg/m2 black carbon equivalent (dust 0.013 of its mass) | no-op, 0 |
