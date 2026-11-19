@@ -339,7 +339,7 @@ func _floor_view() -> void:
 	ground.detail_reference_height = 1080 # The reach of a 1080p screen, not of the bench's small window.
 	var gb := Biome.new()
 	var floor_set: Array[PlantSpecies] = []
-	floor_set.assign(PlantGenerator.make_floor(PlantGenerator.FLOOR_OAK_MIXED, 3, false))
+	floor_set.assign(PlantGenerator.make_floor(PlantGenerator.FLOOR_MEDITERRANEAN if OS.get_environment("VEG_FLOOR_STAND") == "mediterranean" else PlantGenerator.FLOOR_OAK_MIXED, 3, false)) # VEG_FLOOR_STAND=mediterranean: the montado set
 	if OS.get_environment("VEG_FLOOR_NEAR") == "0":
 		# The litter without its leaf-on-leaf near cards (PlantGenerator.litter_deposit).
 		for sp in floor_set:
@@ -452,8 +452,9 @@ func _desert_view() -> void:
 	print("VEG_DESERT sand sea %.0f ms, dunes up to %.1f m (generate %d ms)" % [gen.get_last_sand_sea_msec(), gen.get_last_sand_sea_max(), Time.get_ticks_msec() - t])
 	var map := TerrainDataMap3D.new()
 	map.name = "DesertMap"
-	map.size = 256.0
-	map.resolution = 256
+	# 400 m: the oasis's spring (about 150 m from the middle with this seed) falls inside.
+	map.size = 400.0
+	map.resolution = 400
 	map.bake_on_ready = false
 	add_child(map)
 	map.height_source = map.get_path_to(gen)
@@ -482,6 +483,10 @@ func _desert_view() -> void:
 	# VEG_DESERT_DAY=N: the plants on day N of the year (saltbush panicles 190 to 20, calligonum fruit 85 to 215).
 	var dseason := {} if OS.get_environment("VEG_DESERT_DAY") == "" else {"day_of_year": int(OS.get_environment("VEG_DESERT_DAY"))}
 	desert_set.assign(Array(PlantGenerator.make_desert(PlantGenerator.DESERT_FLANKS, 3, true, dseason, shrubs)) + Array(PlantGenerator.make_desert(PlantGenerator.DESERT_INTERDUNE, 3, true, dseason, shrubs)))
+	# Oases at desert springs (make_desert DESERT_OASIS, RULE_SPRING); VEG_DESERT_OASIS=0 leaves them out, =view frames one.
+	var oasis_env := OS.get_environment("VEG_DESERT_OASIS")
+	if oasis_env != "0" and oasis_env != "before":
+		desert_set.append_array(Array(PlantGenerator.make_desert(PlantGenerator.DESERT_OASIS, 3, true, dseason, shrubs)))
 	if desert_view == 1:
 		# A plain species with no sand rule: the field keeps it off the sand sea's sand by itself.
 		var plain := PlantSpecies.new()
@@ -504,11 +509,15 @@ func _desert_view() -> void:
 	ground.streaming = true
 	get_viewport().disable_3d = true
 	var warm := 0
-	while warm < 1200 and (warm < 20 or not ground.is_stream_idle()):
+	var warm_t := Time.get_ticks_msec()
+	while warm < 6000 and (warm < 20 or not ground.is_stream_idle()):
 		await get_tree().process_frame
 		warm += 1
+	print("VEG_DESERT streamed in %d frames, %d ms" % [warm, Time.get_ticks_msec() - warm_t])
 	if desert_view == 1:
 		_desert_checks(ground, desert_set, gen, map, mob)
+		if oasis_env != "0":
+			await _oasis_checks(ground, desert_set, cam, gen, oasis_env == "view" or oasis_env == "before", map)
 	# Walking 30 m (VEG_FLOOR_WALK) along the wind, across the dunes, at 0.1 m a frame.
 	var walk := float(OS.get_environment("VEG_FLOOR_WALK")) if OS.get_environment("VEG_FLOOR_WALK") != "" else 30.0
 	var ms: Array[float] = []
@@ -569,9 +578,15 @@ func _desert_grass_check(gen: TerrainGenerator3D, map: TerrainDataMap3D) -> void
 	add_child(g)
 	g.data_map = g.get_path_to(map)
 	var deep := Vector3()
-	for k in 400:
-		var q := Vector3(randf_range(-350, 350), 0, randf_range(-350, 350))
-		if gen.get_sand_sea_height(q) > 1.5:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	for k in 2000:
+		var q := Vector3(rng.randf_range(-350, 350), 0, rng.randf_range(-350, 350))
+		# Deep sand all round the 10 m the count looks at (the sward fades in by 0.3 m of sand).
+		var ok := gen.get_sand_sea_height(q) > 1.5
+		for a in 12:
+			ok = ok and gen.get_sand_sea_height(q + Vector3(11.0, 0, 0).rotated(Vector3.UP, a * TAU / 12.0)) > 0.35
+		if ok:
 			deep = q
 			break
 	var counts := []
@@ -714,7 +729,180 @@ func _desert_checks(ground: VegetationField3D, dset: Array[PlantSpecies], gen: T
 					plain_deep += 1
 	_check("desert: a species without a sand rule keeps off the sand sea's sand", plain_deep == 0, [plain_n, plain_deep])
 	_check("desert: woody shrubs (calligonum, white broom, saltbush) placed", shrubs > 20 or OS.get_environment("VEG_DESERT_SHRUBS") == "0", [shrubs])
+	# Nebkhas (TerrainGenerator3D.get_nebkhas): one mound shrub at each mound top in the streamed ground, the other
+	# desert shrubs off the mounds.
+	var mounds := gen.get_nebkhas(Rect2(-400, -400, 800, 800))
+	var neb_n := 0
+	var neb_off := 0
+	var shrub_on := 0
+	for s in dset.size():
+		var is_neb: bool = dset[s].get_meta("nebkha", false)
+		var is_shrub: bool = dset[s].get_meta("woody_shrub", false) and not dset[s].get_meta("oasis", false)
+		if not is_neb and not is_shrub:
+			continue
+		for p in ground.get_placements(s):
+			var best := 1e9
+			var best_r := 0.0
+			for m in mounds:
+				var d := Vector2(m.x - p.x, m.z - p.z).length()
+				if d < best:
+					best = d
+					best_r = 2.7 * m.w
+			if is_neb:
+				neb_n += 1
+				if best > 0.6:
+					neb_off += 1
+			elif best < best_r + 1.0:
+				shrub_on += 1
+	print("VEG_NEBKHA mounds %d in the sea, mound shrubs %d (%d off a top), other shrubs on a mound %d" % [mounds.size(), neb_n, neb_off, shrub_on])
+	_check("desert: a shrub crowns each nebkha, the others keep off them", mounds.is_empty() or (neb_n > 0 and neb_off == 0 and shrub_on == 0), [mounds.size(), neb_n, neb_off, shrub_on])
 	_check("desert: annuals between the dunes, not up them", annual[0] > 500 and annual[3] < annual[0] * 0.5, [annual[0], annual[3]])
+
+# Oases (docs/ideas/vegetation.md, "Oases at desert springs"): springs found in the sand sea's hollows; near one, the
+# palms on its wet ground, the shrub ring where it is drier, no crust on the wettest. keep: leave the camera there,
+# looking at the spring, for the frame.
+func _oasis_checks(ground: VegetationField3D, dset: Array[PlantSpecies], cam: Camera3D, gen: TerrainGenerator3D, keep: bool, map: TerrainDataMap3D) -> void:
+	var with_oasis := false
+	for sp0 in dset:
+		with_oasis = with_oasis or sp0.get_meta("oasis", false)
+	var springs := ground.get_springs()
+	print("VEG_OASIS springs ", springs)
+	_check("oasis: a spring found in the sand sea's hollows", springs.size() >= 1, [springs.size()])
+	if springs.is_empty():
+		return
+	var sp4: Vector4 = springs[0]
+	var sp := Vector3(sp4.x, sp4.y, sp4.z)
+	_check("oasis: the vegetation's springs are the terrain's (one list)", springs == gen.get_springs(), [springs, gen.get_springs()])
+	# The wet ground round it, on a 4 m grid: area wet enough for palms, the shrub ring's, and the sand under the palms.
+	var a_palm := 0
+	var a_ring := 0
+	var deep := 0.0
+	for gx in range(-250, 251, 4):
+		for gz in range(-250, 251, 4):
+			var q := Vector3(sp.x + gx, 0, sp.z + gz)
+			var wv := ground.get_spring_wetness_at(q)
+			if wv >= 0.55:
+				a_palm += 16
+				deep = maxf(deep, gen.get_sand_sea_height(q))
+			elif wv > 0.08 and wv < 0.5:
+				a_ring += 16
+	print("VEG_OASIS wet ground: palms %d m2, shrub ring %d m2, deepest sand under the palms %.1f m" % [a_palm, a_ring, deep])
+	var start := cam.global_transform
+	var at := Vector3(sp.x - 45.0, 0, sp.z - 25.0)
+	at.y = gen.get_height(at) + 1.7
+	if OS.get_environment("VEG_DESERT_HIGH") != "":
+		# Above the corridor, looking down into it over the dune in front.
+		at = Vector3(sp.x - 24.0, 0, sp.z - 14.0)
+		at.y = maxf(gen.get_height(at), sp.y) + 7.0
+	cam.global_position = at
+	cam.look_at(Vector3(sp.x, sp.y + 2.0, sp.z))
+	var radius := ground.stream_radius
+	ground.stream_radius = 220.0 # The whole oasis for the counts.
+	var w := 0
+	var wt := Time.get_ticks_msec()
+	while w < 20000 and (w < 20 or not ground.is_stream_idle()):
+		await get_tree().process_frame
+		w += 1
+	print("VEG_OASIS streamed in %d frames, %d ms" % [w, Time.get_ticks_msec() - wt])
+	# Per kind: plants within the spring's reach, the lowest and highest wetness under them.
+	var kinds := {"palm": [0, 9.0, -9.0], "olive": [0, 9.0, -9.0], "shrub": [0, 9.0, -9.0], "crust": [0, 9.0, -9.0]}
+	for s in dset.size():
+		var kind := ""
+		var preset: int = dset[s].get_meta("preset", -1)
+		if dset[s].get_meta("oasis", false):
+			kind = "palm" if preset == TreeGenerator.PRESET_DATE_PALM else ("olive" if preset == TreeGenerator.PRESET_WILD_OLIVE else ("shrub" if dset[s].get_meta("woody_shrub", false) else ""))
+		elif dset[s].get_meta("plant_preset", -1) == PlantGenerator.PRESET_SOIL_CRUST:
+			kind = "crust"
+		if kind == "":
+			continue
+		var k: Array = kinds[kind]
+		for p in ground.get_placements(s):
+			if Vector2(p.x - sp.x, p.z - sp.z).length() > 250.0:
+				continue
+			var wet := ground.get_spring_wetness_at(p)
+			k[0] += 1
+			k[1] = minf(k[1], wet)
+			k[2] = maxf(k[2], wet)
+	print("VEG_OASIS near the spring [plants, wetness min, max]: ", kinds)
+	for s in dset.size():
+		if dset[s].get_meta("oasis", false):
+			var mn := 9.0
+			for p in ground.get_placements(s):
+				mn = minf(mn, ground.get_spring_wetness_at(p))
+			print("VEG_OASIS species %s: %d placed, wetness min %.2f, spring_range %s" % [dset[s].resource_name if dset[s].resource_name != "" else dset[s].get_name(), ground.get_placements(s).size(), mn, dset[s].spring_range])
+	if not with_oasis:
+		# VEG_DESERT_OASIS=before: the same view without the oasis (the springs come from the crust's rule).
+		ground.stream_radius = radius
+		return
+	if keep:
+		# The oasis sward for the frame: short green grass round the spring (GrassField3D rules with a spring range).
+		var sward := GrassField3D.new()
+		sward.name = "OasisSward"
+		sward.rules = PlantSpecies.new()
+		sward.rules.spring_range = Vector2(0.5, 1.0)
+		sward.rules.spring_fade = 0.1
+		sward.blade_height = Vector2(0.15, 0.35)
+		add_child(sward)
+		sward.data_map = sward.get_path_to(map)
+	_check("oasis: date palms on the wet ground (wetness over 0.47)", kinds["palm"][0] > 10 and kinds["palm"][1] > 0.46, kinds["palm"])
+	_check("oasis: the shrub ring on the drier ground (under 0.73)", kinds["shrub"][0] > 2 and kinds["shrub"][2] < 0.74, kinds["shrub"])
+	_check("oasis: no crust on the wettest ground (under 0.5)", kinds["crust"][2] < 0.51, kinds["crust"])
+	if ClassDB.class_exists("OasisSprings3D"):
+		# The water system's spring pools (OasisSprings3D, from the same springs): reeds in the shallows and on the
+		# shore, rushes behind, following each pool's outline.
+		var pools: Node3D = ClassDB.instantiate("OasisSprings3D")
+		pools.name = "OasisPools"
+		add_child(pools)
+		# Terrain's springs and carving (TerrainGenerator3D.oasis_springs): the pools from the generator's springs,
+		# their levels refitted, the hollows carved to the outlines; then the data map again.
+		pools.spring_source = pools.get_path_to(gen)
+		gen.oasis_springs = gen.get_path_to(pools)
+		var carved: bool = gen.carve_oases()
+		if not carved:
+			pools.springs = springs
+			pools.rebuild()
+		map.bake()
+		print("VEG_OASIS carved %s, pools %d, first vents %s, generator springs %s" % [str(carved), pools.get_pool_count(), str(pools.get_vents(0)) if pools.get_pool_count() > 0 else "-", str(gen.get_springs())])
+		ground.spring_pools = ground.get_path_to(pools)
+		w = 0
+		while w < 20000 and (w < 20 or not ground.is_stream_idle()):
+			await get_tree().process_frame
+			w += 1
+		var outline: PackedVector2Array = pools.get_outline(0) if pools.get_pool_count() > 0 else PackedVector2Array()
+		var by := {}
+		for s in dset.size():
+			if not dset[s].get_meta("oasis_pool", false):
+				continue
+			var name: String = "reed" if dset[s].get_meta("plant_preset", -1) == PlantGenerator.PRESET_REED else "rush"
+			var r := [0, 1e9, -1e9]
+			for p in ground.get_placements(s):
+				var d := _outline_distance(outline, Vector2(p.x, p.z))
+				r[0] += 1
+				r[1] = minf(r[1], d)
+				r[2] = maxf(r[2], d)
+			by[name] = r
+		print("VEG_OASIS pools %d, area %.0f m2; round the first [plants, shore distance min, max]: %s" % [pools.get_pool_count(), pools.get_pool_area(0) if pools.get_pool_count() > 0 else 0.0, str(by)])
+		_check("oasis: reeds round the spring pool, in the shallows and on the shore (-2.6 to 1.8 m)", by.has("reed") and by["reed"][0] > 10 and by["reed"][1] > -2.7 and by["reed"][2] < 1.9, by.get("reed"))
+		_check("oasis: rushes on the damp sand behind (0 to 5.7 m)", by.has("rush") and by["rush"][0] > 5 and by["rush"][1] > -0.05 and by["rush"][2] < 5.8, by.get("rush"))
+	ground.stream_radius = radius
+	if not keep:
+		cam.global_transform = start
+
+# Signed distance from a closed outline (negative inside); far for an empty one.
+func _outline_distance(o: PackedVector2Array, q: Vector2) -> float:
+	if o.size() < 3:
+		return 1e9
+	var d := 1e9
+	var inside := false
+	var j := o.size() - 1
+	for i in o.size():
+		var a := o[j]
+		var b := o[i]
+		d = minf(d, q.distance_to(Geometry2D.get_closest_point_to_segment(q, a, b)))
+		if (a.y > q.y) != (b.y > q.y) and q.x < a.x + (q.y - a.y) * (b.x - a.x) / (b.y - a.y):
+			inside = not inside
+		j = i
+	return -d if inside else d
 
 # Trees grown for a fire (mesh meta "tree_fire_years"): on a burn the variant nearest its age, unburnt ones off it.
 func _fire_variant_check() -> void:
@@ -1095,9 +1283,22 @@ func _desert_scene(gen: TerrainGenerator3D, cam: Camera3D) -> void:
 	st.generate_normals()
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
-	var gm := StandardMaterial3D.new()
-	gm.albedo_color = Color(0.72, 0.55, 0.36) # Quartz sand with an iron-oxide coat.
-	gm.roughness = 0.95
+	# Quartz sand with an iron-oxide coat (sRGB 0.72, 0.55, 0.36), tinted towards a sward where one grows (an oasis's,
+	# GrassField3D.get_ground_shader_code()), as the terrain material does.
+	var gm := ShaderMaterial.new()
+	var gs := Shader.new()
+	# Only with a sward in the scene: the meadow check's freed field leaves its ground globals behind.
+	var tint := has_node("OasisSward")
+	gs.code = "shader_type spatial;\n" + (GrassField3D.get_ground_shader_code() if tint else "") + """
+varying vec3 wp;
+void vertex() { wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
+void fragment() {
+	ALBEDO = __SAND__;
+	ROUGHNESS = 0.95;
+	SPECULAR = __SPEC__;
+}
+""".replace("__SAND__", "grass_ground(wp, vec3(0.477, 0.263, 0.106))" if tint else "vec3(0.477, 0.263, 0.106)").replace("__SPEC__", "grass_ground_specular(wp, 0.5)" if tint else "0.5")
+	gm.shader = gs
 	mi.material_override = gm
 	add_child(mi)
 	var env := Environment.new()
@@ -1315,12 +1516,19 @@ func _checks() -> void:
 	_fire_variant_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []
-	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH]:
+	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH, PlantGenerator.FLOOR_MEDITERRANEAN]:
 		for sp in PlantGenerator.make_floor(fs, 1, false):
 			var lr: Vector2 = sp.get_rule_range(PlantSpecies.RULE_LITTER)
 			if lr.x > 0.0 and not (lr.x - sp.get_rule_fade(PlantSpecies.RULE_LITTER) > 0.0):
 				open_litter.append(sp.resource_name)
 	_check("litter: no fallen leaves or twigs on open ground away from crowns", open_litter.is_empty(), open_litter)
+	# Montado and dehesa (FLOOR_MEDITERRANEAN): the dry grass layer runs through the open and under the crowns.
+	var med := PlantGenerator.make_floor(PlantGenerator.FLOOR_MEDITERRANEAN, 1, false)
+	var med_grass: PlantSpecies = null
+	for sp in med:
+		if sp.get_meta("plant_preset", -1) == PlantGenerator.PRESET_DRY_GRASS:
+			med_grass = sp
+	_check("montado: dry grass in the open and under the crowns", med_grass != null and med_grass.get_density() > 0.5 and med_grass.rule_weight(PlantSpecies.RULE_SHADE, 0.0) > 0.9 and med_grass.rule_weight(PlantSpecies.RULE_SHADE, 0.7) > 0.9, [med.size(), med_grass.get_density() if med_grass else 0.0])
 	# Dunes on a generator's dunes (RULE_DUNE): embryo and mobile sets on moving sand, fixed on held
 	# sand, none off the dune sand (-1).
 	var dune_bad := []

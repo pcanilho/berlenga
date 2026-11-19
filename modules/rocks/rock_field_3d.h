@@ -33,9 +33,12 @@
 #include "rock_generator.h"
 #include "rock_moss.h"
 
+#include "modules/world/world_contracts.h"
+
 #include "core/math/random_pcg.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/mutex.h"
+#include "core/templates/safe_refcount.h"
 #include "core/templates/hash_set.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
@@ -61,7 +64,7 @@ class StaticBody3D;
 // river stones carry the rock of their headwaters. Each layer streams in square cells round the follow target (or
 // the camera) out to its radius; instances share one mesh per shape (MultiMesh), so one acceleration structure per
 // shape serves every stone of it.
-class RockField3D : public Node3D {
+class RockField3D : public Node3D, public WorldCoverProvider {
 	GDCLASS(RockField3D, Node3D);
 
 public:
@@ -143,7 +146,7 @@ private:
 	struct Group {
 		uint32_t library = 0;
 		int variant = 0;
-		Ref<MultiMesh> multimesh;
+		Ref<MultiMesh> multimesh; // null for a cell's tiled grains (drawn by its tile placements)
 		LocalVector<Transform3D> xforms;
 		LocalVector<Color> custom;
 		LocalVector<real_t> reach; // m: how far out the stone's surface reaches from its origin
@@ -152,9 +155,19 @@ private:
 		LocalVector<Node *> shapes; // its CollisionShape3D, or null
 	};
 
+	// Ground detail tiles (docs/ideas/ground-detail.md, "Tiles of piles"): a square of a detail cell drawn as a placement
+	// of a few tiles cut from the cell's own settled grains, every shape of a tile one MultiMesh whose path-traced BLAS
+	// all its placements share. Its grains stay in the cell's groups (tiled), for the finer layers and the contacts.
+	struct TilePlacement {
+		Rect2 square;
+		LocalVector<RID> instances; // one RenderingServer instance per shape of its tile
+		LocalVector<Vector2i> members; // (group, index) of its grains in the cell's tiled groups
+	};
 	struct Cell {
 		LocalVector<MultiMeshInstance3D *> instances;
 		LocalVector<Group> groups;
+		LocalVector<Ref<MultiMesh>> tile_meshes;
+		LocalVector<TilePlacement> tiles;
 		StaticBody3D *body = nullptr;
 		int stones = 0;
 	};
@@ -196,6 +209,9 @@ private:
 	int ground_detail_reference_height = 0; // px; 0: the viewport's own height
 	real_t ground_detail_max_radius = 40.0; // m
 	int ground_detail_max_per_cell = 40000;
+	bool ground_detail_tiles = false; // (on once the rock shader takes rock_tile_plane) tiles of piles: squares of settled grains drawn as reused tiles
+	uint64_t tile_stats[3] = {}; // tiles cut, placements, grains drawn by placements
+	mutable SafeNumeric<uint64_t> tile_skips[5]; // squares left single: few grains or a hole, coarse stones, bent ground, no match, total
 	static bool _is_detail(int p_layer) { return p_layer >= LAYER_DETAIL_PEBBLE && p_layer <= LAYER_DETAIL_FINE; }
 	bool _layer_on(int p_layer) const { return layer_enabled[p_layer] && (ground_detail || !_is_detail(p_layer)); }
 	void _detail_sizes(Layer p_layer, real_t p_upper, float &r_d1, float &r_d2) const;
@@ -227,6 +243,9 @@ private:
 	Vector2 cover_origin[2];
 	bool cover_valid[2] = {};
 	CoverJob *cover_job = nullptr;
+	// A CPU copy of each cover map for WorldGround.coarse_cover_at (any thread; swapped under the lock).
+	PackedByteArray cover_data[2];
+	mutable Mutex cover_data_mutex;
 	static void _cover_task(void *p_job);
 	static void _cover_fill(CoverJob *p_job);
 	void _update_cover(bool p_wait);
@@ -245,10 +264,27 @@ private:
 	struct DetailGroup {
 		uint32_t library = 0;
 		int variant = 0;
+		bool tiled = false; // grains drawn by tile placements (no MultiMesh of its own)
 		Vector<float> buffer; // MultiMesh records: 3x4 transform, custom data
 		LocalVector<Transform3D> xforms;
 		LocalVector<Color> custom;
 		LocalVector<real_t> reach;
+		LocalVector<int> place; // tiled: the placement of each grain
+	};
+	struct DetailTileShape {
+		uint32_t library = 0;
+		int variant = 0;
+		Vector<float> buffer; // tile-space records
+		int count = 0;
+	};
+	struct DetailTile {
+		LocalVector<DetailTileShape> shapes;
+	};
+	struct DetailPlacement {
+		int tile = 0;
+		Rect2 square;
+		Transform3D xform; // tile space to world
+		Plane plane; // the ground under it
 	};
 	struct DetailJob {
 		RockField3D *field = nullptr;
@@ -257,6 +293,8 @@ private:
 		HashMap<uint32_t, Library *> libs;
 		LocalVector<DetailSeed> seeds;
 		LocalVector<DetailGroup> groups;
+		LocalVector<DetailTile> tiles;
+		LocalVector<DetailPlacement> placements;
 		int stones = 0;
 		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
 	};
@@ -264,6 +302,8 @@ private:
 	bool detail_threads = true;
 	void _detail_prepare(DetailJob &r_job);
 	void _detail_compute(DetailJob &r_job);
+	void _detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, LocalVector<int> &r_place) const;
+	void _split_tile(Cell &r_cell, uint32_t p_index);
 	static void _detail_job(void *p_job);
 	void _detail_commit(DetailJob &r_job);
 	void _detail_finish(bool p_wait, real_t p_budget_msec);
@@ -606,9 +646,13 @@ public:
 	int get_loose_count() const { return int(loose.size()); }
 	Dictionary get_react_stats() const;
 	bool is_ground_detail_rivers() const { return detail_rivers; }
+	void set_ground_detail_tiles(bool p_enabled);
+	bool is_ground_detail_tiles() const { return ground_detail_tiles; }
+	Dictionary get_ground_detail_tile_stats() const;
 	void set_ground_detail_cover(bool p_enabled);
 	bool is_ground_detail_cover() const { return ground_cover; }
 	Ref<Texture2D> get_ground_detail_cover_texture(int p_level) const;
+	Rect2 get_ground_detail_cover_rect(int p_level) const; // the map's world xz rect (empty before it is built)
 	void set_ground_detail_threads(bool p_enabled);
 	bool is_ground_detail_threads() const { return detail_threads; }
 	int get_ground_detail_pending() const { return int(detail_jobs.size()); }
@@ -671,6 +715,10 @@ public:
 	// Boulders standing at least 0.5 m out of the ground, as world boxes for the weather's shelter (the
 	// weather_shelter group): snow and sand drift in their lee.
 	Array get_wind_obstacles(const Rect2 &p_rect);
+	// WorldGround.coarse_cover_at: pebble, gravel and fine shares (0..1) from the cover maps, bilinear; the near map
+	// where it reaches, else the far one; 0 outside both.
+	Vector3 contract_cover_at(const Vector3 &p_position) const override;
+	Vector3 get_coarse_cover_at(const Vector3 &p_position) const { return contract_cover_at(p_position); }
 	void set_wind_obstacles(bool p_enabled);
 	bool is_wind_obstacles_enabled() const { return wind_obstacles; }
 	// The stones of one layer in p_rect, each a Dictionary (position, basis, scale, footprint, film, rock_type,

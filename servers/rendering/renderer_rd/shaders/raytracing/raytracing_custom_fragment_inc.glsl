@@ -69,6 +69,24 @@ mat4 rt_default_modelview_matrix = rt_view_matrix * mat4(gl_ObjectToWorldEXT);
 rt_modelview_matrix = rt_default_modelview_matrix;
 rt_modelview_normal_matrix = mat3(rt_modelview_matrix);
 
+// A merged MultiMesh: the BLAS holds every instance baked into the node's space, while raster runs vertex() on the
+// mesh with MODEL_MATRIX = node x instance. Give vertex() the same: the hit in the instance's own space, and the
+// instance's transform folded into the model matrices.
+if ((rt_geom.flags & FLAG_INSTANCE_XFORM) != 0u) {
+	mat4 rt_ixf = fetch_instance_transform(rt_geom, uint(RT_HIT_PRIMITIVE_ID));
+	mat3 rt_ixf_inv3 = inverse(mat3(rt_ixf));
+	vertex = rt_ixf_inv3 * (vertex - rt_ixf[3].xyz);
+	// Normals by the inverse transpose of the instance's 3x3 (its own normal matrix), inverted.
+	normal = normalize(transpose(mat3(rt_ixf)) * normal);
+	tangent = normalize(rt_ixf_inv3 * tangent);
+	binormal = normalize(rt_ixf_inv3 * binormal);
+	read_model_matrix = read_model_matrix * rt_ixf;
+	model_normal_matrix = mat3(read_model_matrix);
+	rt_default_modelview_matrix = rt_default_modelview_matrix * rt_ixf;
+	rt_modelview_matrix = rt_default_modelview_matrix;
+	rt_modelview_normal_matrix = mat3(rt_modelview_matrix);
+}
+
 // Captured geometry already went through vertex(); re-running it must only produce the varyings.
 bool rt_captured = (rt_geom.flags & FLAG_CAPTURED) != 0u;
 vec3 rt_captured_vertex = vertex;

@@ -676,6 +676,8 @@ vec3 rt_sss_exit_direct(vec3 p_pos, vec3 p_normal, uint p_layers, uint p_shadow_
 	lambert.clearcoatAlpha = 0.0;
 	lambert.coatNormal = p_normal;
 	lambert.subsurface = 0.0;
+	lambert.anisotropy = 0.0;
+	lambert.anisoTangent = vec3(1.0, 0.0, 0.0);
 	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
 	return lights_evaluate_direct_lighting(p_pos, p_normal, p_normal, lambert, rng, p_is_indirect, light_count, p_layers, p_shadow_mask);
 }
@@ -738,14 +740,19 @@ uint rt_camera_medium(vec3 p_origin) {
 
 // One photon from the sun into cascade p_cascade's square, and its straight twin.
 // p_sub of p_count: this photon's strip of the pixel (the strips stratify a pixel's photons along x).
-void rt_caustics_photon_cascade(vec3 p_center, uint p_cascade, uint p_write, uvec2 p_pixel, uint p_sub, uint p_count, inout uint rng) {
+// p_block: the photon's cell is the p_block x p_block block of pixels the pixel lies in (2 for the outer
+// cascades, which only one pixel of each 2 x 2 block feeds a frame). With the pixel's own cell there, a
+// frame's photons covered every other column and row: the straight twins sampled that comb at one phase and
+// the bent ones, shifted by refraction in proportion to the depth, at another, so the ratio swung with the
+// depth into bands along the shore's contours under flat water.
+void rt_caustics_photon_cascade(vec3 p_center, uint p_cascade, uint p_write, uvec2 p_pixel, uint p_block, uint p_sub, uint p_count, inout uint rng) {
 	CausticsFrame f;
 	if (!rt_caustics_frame(p_center, p_cascade, f)) {
 		return;
 	}
 	vec2 j = rand2(rng);
 	j.x = (float(p_sub) + j.x) / float(p_count);
-	vec2 uv = (vec2(p_pixel) + j) / vec2(gl_LaunchSizeEXT.xy);
+	vec2 uv = (vec2((p_pixel / p_block) * p_block) + j * float(p_block)) / vec2(gl_LaunchSizeEXT.xy);
 	vec2 q = f.origin + uv * f.size;
 	// Each photon from a point on the sun's disc (at least the real sun's, 0.27 degrees across the
 	// radius, when the light is set sharper): the disc blurs the lines by its angle times the depth,
@@ -834,13 +841,13 @@ void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_
 	// rippled water) sends up to RT_CAUSTICS_MAX_PER_PIXEL each.
 	uint n0 = clamp((RT_CAUSTICS_MIN_PHOTONS * RT_CAUSTICS_RES * RT_CAUSTICS_RES + threads - 1u) / threads, 1u, RT_CAUSTICS_MAX_PER_PIXEL);
 	for (uint k = 0u; k < n0; k++) {
-		rt_caustics_photon_cascade(center, 0u, write, p_pixel, k, n0, rng);
+		rt_caustics_photon_cascade(center, 0u, write, p_pixel, 1u, k, n0, rng);
 	}
 	uint quarter = ((p_pixel.x & 1u) | ((p_pixel.y & 1u) << 1u)) ^ (p_frame & 3u);
 	if (quarter >= 1u && quarter < cascades) {
 		uint n1 = clamp((RT_CAUSTICS_MIN_PHOTONS * RT_CAUSTICS_RES_OUTER * RT_CAUSTICS_RES_OUTER * 4u + threads - 1u) / threads, 1u, RT_CAUSTICS_MAX_PER_PIXEL);
 		for (uint k = 0u; k < n1; k++) {
-			rt_caustics_photon_cascade(center, quarter, write, p_pixel, k, n1, rng);
+			rt_caustics_photon_cascade(center, quarter, write, p_pixel, 2u, k, n1, rng);
 		}
 	}
 }
@@ -2868,6 +2875,14 @@ void main() {
 	// does), so the shading frame comes from the shader, not the mesh TBN.
 	vec3 world_tangent = normalize(view_to_world * tangent);
 	vec3 world_bitangent = normalize(view_to_world * binormal);
+	// ANISOTROPY: anisotropic GGX on the tangent ANISOTROPY_FLOW turns, as raster's light_compute() (brdf_inc.glsl).
+	if (anisotropy > 0.01) {
+		vec3 at = normalize(anisotropy_flow.x * world_tangent + anisotropy_flow.y * world_bitangent);
+		at -= dot(at, m.normal) * m.normal;
+		if (dot(at, at) > 1e-12) {
+			m.aniso = vec4(normalize(at), clamp(anisotropy, 0.0, 1.0));
+		}
+	}
 
 	// Apply normal map if it was written.
 	vec3 ts_normal = vec3(0.0, 0.0, 1.0);

@@ -32,6 +32,7 @@
 #pragma once
 
 #include "contact_trample.h"
+#include "desert_springs.h"
 #include "grass_field_3d.h"
 #include "plant_species.h"
 #include "vegetation_holes.h"
@@ -135,6 +136,7 @@ private:
 		float y = 0.0f; // The ground under it, world y.
 	};
 	NodePath weather_map; // A WeatherMap3D that gets the placed canopy as its canopy_map.
+	NodePath spring_pools; // An OasisSprings3D: its pools' outlines for PlantSpecies.RULE_POOL_DISTANCE.
 	Vector2 litter_wind; // Downwind lean of the leaf drift; zero: from the weather map's wind.
 	Vector2 litter_skew; // The lean of the last placement.
 	NodePath canopy_field; // Another VegetationField3D whose crowns also shade this one's plants.
@@ -159,6 +161,10 @@ private:
 	};
 	Ref<Texture2D> far_texture;
 	static constexpr float CROWN_CELL = 8.0f;
+	static constexpr float NEBKHA_CELL = 16.0f;
+	static constexpr float NEBKHA_CLEAR = 2.0f; // Desert shrubs placed by density keep this far from a mound's foot.
+	static constexpr float NEBKHA_RADIUS = 2.7f; // A mound's radius over its height (terrain-gen: 2.4 to 3).
+	static constexpr float NEBKHA_CROWN = 0.4f; // Its shrub's crown radius over the mound's radius.
 	static constexpr float STEM_MARGIN = 0.03f; // Ground plants root this far clear of a stem's foot.
 	LocalVector<Crown> crowns;
 	// Shade weighed by stand closure and the conifer share, on half-metre cells (_build_stand()).
@@ -197,6 +203,8 @@ private:
 		float spread = 0.0f; // Ground plants: the widest reach of its meshes' leaves from the stem (unit scale).
 		float crown_max = 0.0f; // The largest crown radius it can place.
 		float halo = 0.0f; // How far around a tile it must be placed for later species.
+		int nebkha_slot = -1; // A nebkha shrub (meta "nebkha"): which of the mounds (hash modulo nebkha_count) it crowns.
+		bool desert_shrub = false; // A desert woody shrub placed by density: keeps off the nebkhas.
 		Color far_color; // Linear; alpha: how much ground it hides far away.
 		LocalVector<PackedFloat32Array> deadwood_axes; // Per variant: start, end, widest reach, then optionally the reach profile (mesh space); empty if not deadwood.
 		LocalVector<PackedFloat32Array> deadwood_features; // Per variant: tree_deadwood_features (8 floats a record: kind, point, normal, half width; mesh space).
@@ -260,6 +268,18 @@ private:
 		// sand plants keep off where it lies over 5 to 30 cm.
 		LocalVector<float> sea_depth;
 		float sea_depth_at(const Vector2 &p_xz) const;
+		// Oases (PlantSpecies.RULE_SPRING): read when a species uses the rule and the generator has a sand sea.
+		DesertSprings springs;
+		// Spring pools (spring_pools, PlantSpecies.RULE_POOL_DISTANCE): each pool's shore, world xz, and its bounds.
+		LocalVector<PackedVector2Array> pools;
+		LocalVector<Rect2> pool_bounds;
+		float pool_distance(const Vector2 &p_xz, float p_reach) const;
+		// Nebkhas (TerrainGenerator3D.get_nebkhas): (x, top y, z, mound height), on a grid of NEBKHA_CELL; each mound
+		// carries one nebkha shrub at its top and keeps the other desert shrubs NEBKHA_CLEAR from its foot.
+		PackedVector4Array nebkhas;
+		HashMap<Vector2i, LocalVector<int>> nebkha_grid;
+		int nebkha_count = 0;
+		bool near_nebkha(const Vector2 &p_xz) const;
 		// Years since the ground burnt (WorldFire.burn_age_at), -1 never, on a grid over the map, nearest cell; read
 		// only when the fire contract has a provider and a species uses the burn rule or recovers from fire.
 		LocalVector<float> burn;
@@ -289,6 +309,7 @@ private:
 		int count = 0;
 	};
 	void _publish_deadwood(const LocalVector<const LocalVector<Deadwood> *> &p_lists);
+	DesertSprings springs_seen; // The last setup's springs, for get_spring_wetness_at() and get_springs().
 	bool _make_setup(PlaceSetup &r_setup);
 	float _species_range(const Ref<PlantSpecies> &p_species, real_t p_pixel_angle) const;
 	static void _read_sand(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
@@ -313,8 +334,13 @@ private:
 		Ref<Image> floor;
 		Ref<Image> far;
 		float far_range = 0.0f;
+		LocalVector<Vector4> canopy_losses; // Snapshot of the field's (x, z, radius, leaf area kept).
 	};
 	void _maps_wants(Maps &r_maps) const;
+	// Felled crowns (add_canopy_loss()): x, z, radius, the share of leaf area kept. Every repaint of the canopy
+	// (WeatherMap3D.canopy_map) and the crowns' shade takes them out again.
+	LocalVector<Vector4> canopy_losses;
+	static void _apply_canopy_losses(LocalVector<Crown> &r_crowns, const LocalVector<Vector4> &p_losses, int p_from = 0);
 	static void _compute_maps(Maps &r_maps, const LocalVector<const LocalVector<Crown> *> &p_crowns, const LocalVector<const LocalVector<FarAdd> *> &p_far);
 	void _apply_maps(Maps &p_maps);
 	// The plant cover seen from far above for distant terrain (terrain_cover_* globals,
@@ -390,6 +416,10 @@ private:
 	LocalVector<StreamJob *> stream_jobs;
 	PlaceSetup stream_setup;
 	bool stream_setup_valid = false;
+	// Still shots: once streaming round the camera has settled, no more streaming until it moves 0.5 m.
+	bool still_shot = false;
+	bool still_frozen = false;
+	Vector3 still_at;
 	ObjectID hole_source; // The generator whose holes_changed this field follows.
 	Rect2 holes_dirty; // Ground opened or closed since the streamed tiles were placed (no area: none).
 	void _follow_holes(TerrainDataMap3D *p_map);
@@ -551,6 +581,8 @@ public:
 	NodePath get_canopy_field() const { return canopy_field; }
 	void set_litter_wind(const Vector2 &p_wind) { litter_wind = p_wind; }
 	Vector2 get_litter_wind() const { return litter_wind; }
+	void set_spring_pools(const NodePath &p_path);
+	NodePath get_spring_pools() const { return spring_pools; }
 	void set_weather_map(const NodePath &p_path) { weather_map = p_path; }
 	NodePath get_weather_map() const { return weather_map; }
 	void set_tile_size(float p_size);
@@ -606,6 +638,12 @@ public:
 	float get_stream_maps_radius() const { return stream_maps_radius; }
 	int get_stream_tile_count() const { return stream_tiles.size(); }
 	bool is_stream_idle() const { return stream_idle; }
+	void set_still_shot(bool p_enabled) {
+		still_shot = p_enabled;
+		still_frozen = false;
+	}
+	bool is_still_shot() const { return still_shot; }
+	bool is_still_frozen() const { return still_frozen; }
 	Dictionary get_stream_stats();
 
 	Error populate();
@@ -640,4 +678,9 @@ public:
 	// Leaf fall from the placed crowns, 0 to 1, with a drift past their edges (PlantSpecies.RULE_LITTER).
 	static constexpr float LITTER_SPREAD = 6.0f; // Metres: the drift's e-folding distance past a crown's edge.
 	float get_litter_at(const Vector3 &p_global_position) const;
+	float get_spring_wetness_at(const Vector3 &p_global_position) const { return springs_seen.at(Vector2(p_global_position.x, p_global_position.z)); }
+	PackedVector4Array get_springs() const;
+	void add_canopy_loss(const Vector2 &p_xz, float p_radius, float p_keep = 0.0f);
+	PackedVector4Array get_canopy_losses() const;
+	void clear_canopy_losses() { canopy_losses.clear(); }
 };

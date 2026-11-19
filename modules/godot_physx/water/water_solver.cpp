@@ -2013,8 +2013,8 @@ PackedFloat32Array WaterSolver::_pack_spheres() const {
 PackedFloat32Array WaterSolver::_pack_impulses() const {
 	PackedFloat32Array out;
 	for (const ImpulseSlot &imp : pending_impulses) {
-		out.push_back(imp.world_pos.x - settings.grid_center.x);
-		out.push_back(imp.world_pos.z - settings.grid_center.y);
+		out.push_back(imp.raw ? imp.world_pos.x : imp.world_pos.x - settings.grid_center.x);
+		out.push_back(imp.raw ? imp.world_pos.z : imp.world_pos.z - settings.grid_center.y);
 		out.push_back(imp.radius);
 		out.push_back(imp.strength);
 	}
@@ -2118,6 +2118,27 @@ void WaterSolver::submit_impulse(const Vector3 &p_world_pos, float p_radius, flo
 	imp.radius = p_radius;
 	imp.strength = p_strength;
 	pending_impulses.push_back(imp);
+}
+
+bool WaterSolver::submit_wave(const Vector3 &p_world_pos, const Vector2 &p_direction, float p_height, float p_wavelength, float p_celerity, float p_width) {
+	if (pending_impulses.size() + 2 > MAX_IMPULSES || p_direction.length_squared() < 1e-8f || p_wavelength <= 0.0f || p_height == 0.0f) {
+		return false;
+	}
+	// Slot one: where, marked as a wave by a negative radius (-1 - wavelength), and the height. Slot two: the
+	// direction, the crest's width and the speed, as given.
+	const Vector2 d = p_direction.normalized();
+	ImpulseSlot a;
+	a.world_pos = p_world_pos;
+	a.radius = -1.0f - p_wavelength;
+	a.strength = p_height;
+	ImpulseSlot b;
+	b.world_pos = Vector3(d.x, 0.0f, d.y);
+	b.radius = MAX(p_width, 0.0f);
+	b.strength = MAX(p_celerity, 0.0f);
+	b.raw = true;
+	pending_impulses.push_back(a);
+	pending_impulses.push_back(b);
+	return true;
 }
 
 void WaterSolver::render_caustics(const Vector3 &p_origin, const Vector3 &p_sun_direction, float p_reference_depth, float p_ior, bool p_open_beyond) {

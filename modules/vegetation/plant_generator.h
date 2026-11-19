@@ -546,6 +546,7 @@ public:
 		FLOOR_NORTHERN_HARDWOOD,
 		FLOOR_EASTERN_OAK,
 		FLOOR_PINE_HEMLOCK,
+		FLOOR_MEDITERRANEAN, // Cork and holm oak, stone pine (montado, dehesa): dry grass and herbs, rockrose and lavender patches.
 		FLOOR_MAX,
 	};
 	static Array stand_litter_leaves(FloorStand p_stand, const Dictionary &p_season = Dictionary());
@@ -589,6 +590,7 @@ public:
 	enum DesertStand {
 		DESERT_FLANKS, // Dune flanks and plinths: drinn tussocks.
 		DESERT_INTERDUNE, // Interdune corridors: sparse drinn, the rain-flush annuals, soil crust.
+		DESERT_OASIS, // Oases at desert springs (PlantSpecies.RULE_SPRING): the date palm stand and a ring of shrubs.
 		DESERT_MAX,
 	};
 	// p_shrubs: TreeGenerator's desert shrubs too (calligonum, white broom, saltbush).

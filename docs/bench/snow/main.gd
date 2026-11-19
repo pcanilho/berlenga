@@ -4,6 +4,11 @@ extends Node3D
 class FireStub extends WorldFire:
 	func _heat_at(p: Vector3) -> float:
 		return 928.0 if p.x > 2.0 else 0.0
+# Records the impulse waves handed to the water (WorldWater.wave), for the avalanche-into-water checks.
+class WaveStub extends WorldWater:
+	var waves: Array = []
+	func _wave(position: Vector3, direction: Vector3, height: float, period: float, width: float) -> void:
+		waves.append([position, direction, height, period, width])
 # Weather for the body checks: one value everywhere, an hour of weather per second.
 class BodyWeatherStub extends WorldWeather:
 	var t := -5.0
@@ -1000,13 +1005,15 @@ func _run_background_tests() -> void:
 			top = maxf(top, v)
 		return "mean %.2f ms, worst %.2f ms" % [s / maxf(m.size(), 1), top]
 	print("  main thread per update, 256 x 256 cells and a 64 x 64 world tier every 3rd update: in the frame %s; in the background %s (cells, drift, slides and cornices %.2f ms on a worker)" % [fmt.call(ma), fmt.call(mb), b.work_ms])
-	var top_b := 0.0
-	var top_a := 0.0
-	for v in mb:
-		top_b = maxf(top_b, v)
-	for v in ma:
-		top_a = maxf(top_a, v)
-	_check("the frame no longer waits for the update", top_b < 0.5 * top_a, "worst %.2f ms against %.2f ms" % [top_b, top_a])
+	# Medians, not the worst update: on a loaded machine (a render alongside) the scheduler can stall any one
+	# update in either mode, but the typical frame cost only drops when the work leaves the main thread.
+	var med := func(m: Array[float]) -> float:
+		var c := m.duplicate()
+		c.sort()
+		return c[c.size() / 2] if c.size() > 0 else 0.0
+	var med_a: float = med.call(ma)
+	var med_b: float = med.call(mb)
+	_check("the frame no longer waits for the update", med_b < 0.5 * med_a, "median %.2f ms against %.2f ms" % [med_b, med_a])
 
 
 # A lake around the mountain's foot: a water surface the terrain data map takes as a water source (any node
@@ -1670,9 +1677,17 @@ func _run_impulse_wave_tests() -> void:
 	var side := SnowAvalanche3D.impulse_wave_height(p, 10.0, 300.0, deg_to_rad(90.0))
 	_check("the impulse product and the wave it makes (Heller and Hager 2010; Heller et al. 2009)", absf(p - 1.251) < 0.01 and absf(hm - 6.64) < 0.05 and far < hm and side < far, "P %.3f, H_M %.2f m in 10 m of water; %.2f m 300 m out ahead, %.2f m to the side; leading period %.1f s there" % [p, hm, far, side, SnowAvalanche3D.impulse_wave_period(1.0, 10.0, 300.0)])
 	# The storm avalanche runs into an open lake at the foot of the face.
+	var stub := WaveStub.new()
+	WorldContracts.set_water(stub)
 	var av := await _lake_avalanche(0.0)
+	WorldContracts.clear_overrides()
 	var entered := av.get_water_entry_mass()
 	var wave := av.get_wave_height_at(Vector3(60.0, 0, 0))
+	var biggest: Array = []
+	for w in stub.waves:
+		if biggest.is_empty() or w[2] > biggest[2]:
+			biggest = w
+	_check("the water is handed the wave in metres and seconds (WorldWater.wave)", stub.waves.size() == av.get_wave_count() and not biggest.is_empty() and absf(biggest[2] - av.get_wave_height_at(biggest[0])) < 0.01 * biggest[2] + 1e-3 and biggest[1].x > 0.5 and absf(biggest[1].y) < 1e-4 and biggest[3] > 1.0 and biggest[3] < 60.0 and biggest[4] >= 2.0, "%d sent; biggest %.2f m, %.1f s, %.0f m wide, heading (%.2f, %.2f)" % [stub.waves.size(), biggest[2] if not biggest.is_empty() else 0.0, biggest[3] if not biggest.is_empty() else 0.0, biggest[4] if not biggest.is_empty() else 0.0, biggest[1].x if not biggest.is_empty() else 0.0, biggest[1].z if not biggest.is_empty() else 0.0])
 	_check("an avalanche into open water plunges in and pushes a wave", entered > 1.0e5 and av.get_wave_count() >= 1 and wave > 0.05 and wave < 12.0, "%.0f t into the lake, %d waves; %.2f m high 60 m out (%.0f m deep there)" % [entered / 1000.0, av.get_wave_count(), wave, 15.0])
 	# Thick ice carries it (no wave); thin ice breaks under it.
 	av = await _lake_avalanche(30.0)
@@ -2802,7 +2817,7 @@ func _build_avalanche(cam: Camera3D) -> void:
 	var powder := OS.get_cmdline_user_args().has("--powder")
 	if OS.get_cmdline_user_args().has("--before") or triggered or powder:
 		av.natural_release = false
-	if triggered:
+	if triggered or powder:
 		# An old, bonded pack under the storm (60 cm a week and more old): the slab breaks away from it, leaving a
 		# crown step and a white bed, as slabs do.
 		snow.add_snow(90.0, 150.0)
@@ -2824,6 +2839,7 @@ func _build_avalanche(cam: Camera3D) -> void:
 		# A wide dry slab across the face in front of the camera (left to itself the face lets go wherever it is
 		# weakest, here off to both sides of the frame, and its cloud with it).
 		av.trigger(Vector3(-40.0, 0, 0), 60.0)
+		surface.extent = 256.0 # the deep-snow geometry over the whole face the camera sees, flank to flank
 		# Mid-run in real time, so PhysX Flow steps the cloud with it: --at=S seconds after release (default 9).
 		var at_s := 9.0
 		for a in OS.get_cmdline_user_args():
@@ -2844,8 +2860,9 @@ func _build_avalanche(cam: Camera3D) -> void:
 			frames += 1
 		var cloud := av.get_powder_cloud()
 		print("powder: %.1f t up, %.1f t in the air, Flow %s, %d sources, front %.1f m/s" % [av.get_powder_taken() / 1000.0, av.get_suspended_mass() / 1000.0, cloud.has_flow(), cloud.get_active_sources(), av.get_max_speed()])
-		cam.position = Vector3(70.0, snow.get_ground_height_at(Vector3(70, 0, 30)) + 14.0, 30.0)
-		cam.look_at(Vector3(-20.0, 10.0, 0.0))
+		# Back and up far enough to hold the whole front, flank to flank.
+		cam.position = Vector3(92.0, snow.get_ground_height_at(Vector3(92, 0, 12)) + 15.0, 12.0)
+		cam.look_at(Vector3(-15.0, 12.0, 0.0))
 		cam.fov = 60.0
 		cam.far = 1000.0
 		if traced:

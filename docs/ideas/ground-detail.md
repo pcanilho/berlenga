@@ -574,3 +574,61 @@ Before building tiles of piles or GPU-written TLAS records, what the fork alread
 - **So:** measure first. The PC cost bench (rocks bench, shore eye view, path traced, RENDER_INFO_RT_TLAS_INSTANCES and
   GPU frame time with ground detail on and off) tells whether the TLAS is worth shrinking at all. If the detail's
   share of the frame is small, item 4 is not worth its memory and repetition risk.
+
+## Tiles of piles: the build (Paulo, 19 Nov: "build the tiles then")
+
+Latest practice, checked before building:
+
+- **Moana on the GPU (Maven Kim, Nov 2025).** About 23 M singly instanced pebbles, flowers and sand grains: a TLAS over
+  them would not fit 8 GB. Small instances go into partitions of under 1024 and whole partitions are switched off by
+  screen size (partitioned TLAS).
+- **Clustered geometry and partitioned TLAS in DXR (Microsoft, Oct 2026 preview; NVIDIA RTX Mega Geometry).** Cluster
+  BLAS share cluster pieces; instances still reference whole BLAS. Their sample: AS memory 7.5 GB to 0.8 GB and
+  trace 72.6 to 9.3 ms, "do not assume games will see this". Trace speed is a little worse on clusters (Remedy: about
+  0.5 ms in Alan Wake 2), so static geometry stays on triangle BLAS. Not in the fork (no Vulkan cluster path yet).
+- **Unreal 5.7+ Nanite assemblies.** A mesh of instanced parts, one level deep, up to 65 k parts, "a large array of
+  matrices". Off Nanite they are merged into one mesh. Variation comes from authoring, not from the runtime.
+
+So in the fork: a tile is one BLAS of baked grains, shared by every placement (the merged MultiMesh BLAS is already
+cached per MultiMesh, `_shared_merged_mm_handle`, and each RS instance over it is one TLAS entry). What it takes:
+
+- **Tiles.** Per detail class and rock library, a set of tiles of settled grains (one MultiMesh per shape in the tile,
+  the same randoms as the cells), several cover levels. Corner-coloured Wang tiles so neighbours never repeat an
+  edge; each placement turned by a quarter turn and mirrored at random (eight looks per tile); per-stone tone and size
+  stay per grain.
+- **Placement.** Each tile placement sits on the ground's plane at its centre (tilted to it). Where the ground bends
+  more than a grain's height over the tile (scree, gullies, the shore's step) and on cover between levels, the cell
+  keeps single grains, so the tiles never float or sink and the cover stays continuous; a noise mask decides which
+  tiles show.
+- **Shading.** The rock shader eases each grain into the ground with its own ground height (INSTANCE_CUSTOM.x, world)
+  and slope; a tile's grains share one record set, so a tile placement gives the ground as a plane per placement
+  (an instance uniform). Path tracing reads instance uniforms per TLAS entry, so both renderers agree.
+- **Path tracer, merged MultiMeshes.** In a merged BLAS the hit shader's MODEL_MATRIX is the node's, not the grain's
+  (raster's is node times grain), so per-stone origin uses (uphill fines band, rivulets) differ from raster for every
+  merged MultiMesh today. The hit shader reads the grain's transform from the instance record and runs vertex() in
+  the grain's own space, as raster does.
+- **Contacts.** A tile under a contact is split back into single grains for that cell before stones react.
+
+### As built (19 Nov)
+
+- `RockField3D.ground_detail_tiles` (off until the rock shader takes `rock_tile_plane`; then on). Each detail cell is
+  cut into 4 x 4 squares. A square takes a tile when it has 8 or more grains on the ground, no hole, no coarse stone
+  (over four times its grains) reaching in, and ground within 0.35 of its grains' scale of a plane. Up to four tiles
+  are cut per cell from its own squares (in a hashed order), and a square takes the first tile matching its rocks,
+  grain count (0.85 to 1.18), mean log size (0.12) and wetness (0.15), at most six uses, a random quarter turn. A
+  tile used once is dropped (its square keeps its grains). Grains lifted onto a coarser grain stay single. No Wang
+  edges are needed: grain centres are independent of the square's edges and grains cross them freely, so the seams
+  have no gap; the variety is the cell's own grains, cut afresh per cell.
+- The placed square's grains are replaced by the tile's (moved onto its plane), so the cell's tiled groups (no
+  MultiMesh) hold what is drawn, for the finer layers' seeds and for contacts. A contact within the foot plus 0.3 m
+  of a placement splits it into single grains (one rt-instanced MultiMesh per shape), then reacts as before.
+- Path tracer: merged MultiMeshes now shade with the instance's own transform (`RT_GEOM_FLAG_INSTANCE_XFORM`,
+  `fetch_instance_transform`), so vertex() sees what raster does (MODEL_MATRIX = node x instance, VERTEX in the
+  mesh's space). This was off for every merged MultiMesh before (per-stone origin read as the node's).
+- Shore view, cloud, raster: 2,320 squares; 1,469 too sparse, 154 by coarse stones, 164 bent, 58 unmatched; 412
+  placements of 118 tiles draw 68,819 of 116,200 grains with 2,467 rendering instances; 2.6 M triangles baked in tile
+  BLAS. Top-down path traced (before the tolerance went 0.2 to 0.35): TLAS 73,866 to 59,319 (most tiled grains are
+  past the near ranges the TLAS holds). Top and eye-level frames match the single-grain ones (mean colour within
+  0.4 of 255), no seams or repeats seen. The walker and the cart split 90 placements.
+- Left: tiles shared across cells (one set per class and rock), which would cut the baked triangles; the PC cost run
+  (GPU trace time with and without, `--tiles` / `--no-tiles`).

@@ -2437,6 +2437,14 @@ to 318k, tended 227k to 127k. Dropping the oleaster's twigs between 1 mm and 1 c
 grey-blue in PT (they shade the crown's inside en masse), so they stay; its bulk is about half a million shoots.
 
 
+Docs, 19 Nov (stand plot): the red front glowed orange like autumn larch, the grey snags read as branchless
+masts, the spots bare. Now: red is a dull rust-brown (fox 0.36, 0.15, 0.06) with little backlight (dead
+needles), thinning from the first winter (35% by 1.3 years) so the skeleton shows; grey snags keep their dead
+whorls (twigs under 4 mm go, not 12 mm), 40% lose their top in the grey years, their bark bleaches silver-grey,
+and killed trees are 0.7-1.1 times the stand's age so heights vary. The spots get their shed limbs and the
+waiting spruce regeneration (Jonasova and Prach 2004) from 2.5 years, logs from 3, more rowan, birch, elder.
+In the plot's view the bare poles on the right are living spruce with crowns above the frame.
+
 ### 5ak. Avalanches break trees (19 Nov; snow's WorldSnow getters)
 
 `TreeWind3D.avalanche_enabled` (on). Once a second each rigged tree reads
@@ -2451,9 +2459,10 @@ dense flow then powder).
   through the storm path (`_storm_fail`), falling downslope (`WorldGround.height_at` at 3 m) with a
   1.5 m/s shove from the flow.
 - Felled trees and snapped stems (wind too) cut their leaf area out of the weather map's
-  `canopy_map` (fading to 1.4 crown radii like VegetationField3D's crown term), so snow's anchoring
-  and braking, rain and wind see the lane. A VegetationField3D repaint restores it (it owns the map).
-- Bench: `--storm --avalanche-test` (WorldSnow/WorldGround stubs, 7 checks) and
+  `canopy_map` (fading to 1.4 crown radii like VegetationField3D's crown term) and record it with the field's
+  `add_canopy_loss` (repaints keep the gap), so snow's anchoring
+  and braking, rain and wind see the lane.
+- Bench: `--storm --avalanche-test` (WorldSnow/WorldGround stubs, 8 checks) and
   `--storm --avalanche=P` frames. Old 34 m open-grown spruce (D 1.37 m) holds to ~80 kPa.
 ## 6. What the games at Paulo's bar do
 

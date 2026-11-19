@@ -306,6 +306,9 @@ struct MaterialProperties {
 	float3 hairPlaneNormal; // The geometry normal: shells fold the light that would enter them back across it.
 	float4 hairParams; // Longitudinal roughness, azimuthal roughness, cuticle tilt (degrees), fibre offset h.
 	bool hairCards; // Light passes through instead of folding back.
+
+	float anisotropy; // ANISOTROPY, 0 = isotropic: the GGX lobe widens along anisoTangent (raster's mapping, see anisotropicAlphas()).
+	float3 anisoTangent; // World space (or the sampling frame's), perpendicular to the shading normal.
 };
 
 // Data needed to evaluate BRDF (surface and material properties at given point + configuration of light and normal vectors)
@@ -339,6 +342,11 @@ struct BrdfData {
 	// True when V/L is backfacing wrt. shading normal N
 	bool Vbackfacing;
 	bool Lbackfacing;
+
+	// Anisotropic GGX (ANISOTROPY): 0 = isotropic; T and B span the tangent plane, T the wide axis.
+	float anisotropy;
+	float3 T;
+	float3 B;
 };
 
 // -------------------------------------------------------------------------
@@ -961,6 +969,86 @@ float3 evalMicrofacet(const BrdfData data) {
 }
 
 // -------------------------------------------------------------------------
+//    Anisotropic GGX (ANISOTROPY)
+// -------------------------------------------------------------------------
+// Burley 2012 (Disney BRDF) anisotropic GGX with Heitz 2014's anisotropic Smith masking, on raster's
+// mapping (scene_forward_lights_inc.glsl): aspect = sqrt(1 - 0.9 anisotropy), alpha / aspect along T,
+// alpha * aspect along B. Sampled with sampleGGXVNDF's two alphas (Heitz 2018).
+
+float2 anisotropicAlphas(float alpha, float anisotropy) {
+	float aspect = sqrt(1.0f - 0.9f * anisotropy);
+	return float2(max(alpha / aspect, 0.0001f), max(alpha * aspect, 0.0001f));
+}
+
+// D for a half vector given in the (T, B, N) frame.
+float anisoGGX_D(float3 Hl, float2 a) {
+	float3 s = float3(Hl.x / a.x, Hl.y / a.y, Hl.z);
+	float d = dot(s, s);
+	return 1.0f / (PI * a.x * a.y * d * d);
+}
+
+// Smith Lambda for a direction given in the (T, B, N) frame.
+float anisoSmithLambda(float3 Sl, float2 a) {
+	float z2 = max(Sl.z * Sl.z, 1e-10f);
+	return 0.5f * (-1.0f + sqrt(1.0f + (a.x * a.x * Sl.x * Sl.x + a.y * a.y * Sl.y * Sl.y) / z2));
+}
+
+float3 anisoToFrame(float3 v, float3 T, float3 B, float3 N) {
+	return float3(dot(v, T), dot(v, B), dot(v, N));
+}
+
+// Specular BRDF times NdotL (Fresnel in data.F), height-correlated masking: raster's D_GGX_anisotropic and
+// V_GGX_anisotropic.
+float3 evalAnisoMicrofacet(const BrdfData data) {
+	float2 a = anisotropicAlphas(data.alpha, data.anisotropy);
+	// V and L as the isotropic path takes them (NdotV, NdotL clamped above the surface): a V below a bent
+	// normal (two-sided blades) must not weigh its masking at its real depth against the clamped 1 / NdotV.
+	float3 Vl = anisoToFrame(data.V, data.T, data.B, data.N);
+	Vl.z = data.NdotV;
+	float3 Ll = anisoToFrame(data.L, data.T, data.B, data.N);
+	Ll.z = max(Ll.z, 0.00001f);
+	float3 Hl = anisoToFrame(data.H, data.T, data.B, data.N);
+	float D = anisoGGX_D(Hl, a);
+	float G2 = 1.0f / (1.0f + anisoSmithLambda(Vl, a) + anisoSmithLambda(Ll, a));
+	return data.F * (D * G2 / (4.0f * data.NdotV));
+}
+
+// Density of reflecting V into L by visible-normal sampling: G1(V) D(H) / (4 NdotV).
+float anisoGGXReflectionPdf(float3 N, float3 T, float3 V, float3 L, float alpha, float anisotropy) {
+	float3 t = T - dot(T, N) * N;
+	if (dot(t, t) < 1e-12f) {
+		return 0.0f;
+	}
+	t = normalize(t);
+	float3 b = cross(N, t);
+	float2 a = anisotropicAlphas(alpha, anisotropy);
+	float3 Vl = anisoToFrame(V, t, b, N);
+	float3 Hl = normalize(anisoToFrame(normalize(V + L), t, b, N));
+	float NdotV = max(Vl.z, 0.00001f);
+	Vl.z = NdotV;
+	return anisoGGX_D(Hl, a) / (1.0f + anisoSmithLambda(Vl, a)) / (4.0f * NdotV);
+}
+
+// Samples the reflected direction (in the frame where Vlocal is given, normal +Z, wide axis Tlocal); weight is
+// F G2 / G1(V) times the energy compensation.
+float3 sampleAnisoSpecular(float3 Vlocal, float3 Tlocal, float alpha, float anisotropy, float3 specularF0, float f90, float3 energyCompensation, float2 u, OUT_PARAMETER(float3) weight) {
+	const float3 Nl = float3(0.0f, 0.0f, 1.0f);
+	float3 t = normalize(Tlocal - Tlocal.z * Nl);
+	float3 b = cross(Nl, t);
+	float2 a = anisotropicAlphas(alpha, anisotropy);
+	float3 Ve = anisoToFrame(Vlocal, t, b, Nl);
+	Ve.z = max(Ve.z, 0.00001f); // Visible normals exist only for a V above the surface (as the isotropic path).
+	Ve = normalize(Ve);
+	float3 He = sampleGGXVNDF(Ve, a, u);
+	float3 Le = reflect(-Ve, He);
+	float HdotL = max(0.00001f, min(1.0f, dot(He, Le)));
+	float3 F = evalFresnel(specularF0, f90, HdotL);
+	float lv = anisoSmithLambda(Ve, a);
+	weight = Le.z > 0.0f ? energyCompensation * F * ((1.0f + lv) / (1.0f + lv + anisoSmithLambda(Le, a))) : float3(0.0f, 0.0f, 0.0f);
+	return Le.x * t + Le.y * b + Le.z * Nl;
+}
+
+// -------------------------------------------------------------------------
 //    Godot shading model
 // -------------------------------------------------------------------------
 // Direct-light terms mirror light_compute() in scene_forward_lights_inc.glsl so
@@ -1006,6 +1094,9 @@ float3 godotSpecularNdotL(const BrdfData data, uint specularMode, float3 energyC
 	}
 	if (data.Lbackfacing) {
 		return float3(0.0f, 0.0f, 0.0f);
+	}
+	if (data.anisotropy > 0.0f) {
+		return energyCompensation * evalAnisoMicrofacet(data);
 	}
 	return energyCompensation * evalMicrofacet(data);
 }
@@ -1380,6 +1471,18 @@ BrdfData prepareBRDFData(float3 N, float3 L, float3 V, MaterialProperties materi
 	data.f90 = godotF90(data.specularF0, material.metalness);
 	data.F = evalFresnel(data.specularF0, data.f90, data.LdotH);
 
+	data.anisotropy = 0.0f;
+	data.T = float3(1.0f, 0.0f, 0.0f);
+	data.B = float3(0.0f, 1.0f, 0.0f);
+	if (material.anisotropy > 0.0f) {
+		float3 t = material.anisoTangent - dot(material.anisoTangent, N) * N;
+		if (dot(t, t) > 1e-12f) {
+			data.anisotropy = material.anisotropy;
+			data.T = normalize(t);
+			data.B = cross(N, data.T);
+		}
+	}
+
 	return data;
 }
 
@@ -1438,7 +1541,12 @@ bool evalIndirectCombinedBRDF(float2 u, float3 shadingNormal, float3 geometryNor
 	} else if (brdfType == SPECULAR_TYPE) {
 		// Indirect specular stays GGX for every specular mode, like the rasterizer's reflections.
 		const BrdfData data = prepareBRDFData(Nlocal, float3(0.0f, 0.0f, 1.0f) /* unused L vector */, Vlocal, material);
-		rayDirectionLocal = sampleSpecular(Vlocal, data.alpha, data.alphaSquared, data.specularF0, data.f90, material.energyCompensation, u, sampleWeight);
+		float3 Tlocal = rotatePoint(qRotationToZ, material.anisoTangent);
+		if (material.anisotropy > 0.0f && data.alpha > 0.0f && Tlocal.x * Tlocal.x + Tlocal.y * Tlocal.y > 1e-8f) {
+			rayDirectionLocal = sampleAnisoSpecular(Vlocal, Tlocal, data.alpha, material.anisotropy, data.specularF0, data.f90, material.energyCompensation, u, sampleWeight);
+		} else {
+			rayDirectionLocal = sampleSpecular(Vlocal, data.alpha, data.alphaSquared, data.specularF0, data.f90, material.energyCompensation, u, sampleWeight);
+		}
 	}
 
 	// Transform sampled direction Llocal back to V vector space.

@@ -861,6 +861,7 @@ public:
 	float contract_ground_rim_at(const Vector3 &p_position) const override { return get_rim_at(p_position); }
 	Vector2 contract_ground_runoff_at(const Vector3 &p_position) const override { return get_runoff_at(p_position); }
 	float contract_ground_mud_depth_at(const Vector3 &p_position) const override { return get_mud_depth_at(p_position); }
+	float contract_ground_track_mud(const Vector3 &p_position, float p_radius, float p_depth, float p_wet, const Vector4 &p_print) override { return track_mud(p_position, p_radius, p_depth, p_wet, p_print); }
 	Vector2 contract_ground_needle_ice_at(const Vector3 &p_position) const override { return get_needle_ice_at(p_position); }
 	Vector3 contract_ground_rut_guidance_at(const Vector3 &p_contact, const Vector3 &p_lateral, float p_half_width) const override { return get_rut_guidance(p_contact, p_lateral, p_half_width); }
 	float contract_ground_sand_at(const Vector3 &p_position) const override;

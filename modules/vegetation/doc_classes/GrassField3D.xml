@@ -160,6 +160,12 @@
 				Whether [member gpu_fill] can run: there is a [RenderingDevice] and the fill's compute shader built.
 			</description>
 		</method>
+		<method name="is_still_frozen" qualifiers="const">
+			<return type="bool" />
+			<description>
+				With [member still_shot]: [code]true[/code] once it has settled and stopped updating.
+			</description>
+		</method>
 		<method name="rebuild">
 			<return type="void" />
 			<description>
@@ -252,6 +258,9 @@
 		<member name="far_shell_range" type="float" setter="set_far_shell_range" getter="get_far_shell_range" default="500.0">
 			Distance from the camera, in metres, where the far shell has sunk back into the ground.
 		</member>
+		<member name="fibre_shading" type="float" setter="set_fibre_shading" getter="get_fibre_shading" default="0.8">
+			The blades' specular as fibres: ANISOTROPY spreading the highlight across each blade (its normals vary across its width, not along it), so a sward reads as a mass of fine fibres with a sheen running over it, as hair does. Raster and the path tracer shade it alike. Wet, frosted, muddy or snowy blades lose it. 0 turns it off.
+		</member>
 		<member name="fields" type="Dictionary[]" setter="set_fields" getter="get_fields" default="[]">
 			With a [member crop]: the fields it grows in, each a [Dictionary]. [code]polygon[/code] ([PackedVector2Array], world XZ) is required; optional [code]drill_angle[/code] and [code]row_spacing[/code] (default the node's), [code]stage[/code] (a fixed BBCH stage; default the node's [member crop_stage]), [code]sown_day[/code] and [code]harvest_day[/code] (days of the year: with a [member season_source] the stage follows a sowing calendar, autumn sowing from day 200 over-wintering, spring sowing through in five months, stubble from harvest to the next sowing), [code]tramline_spacing[/code] (default 24 m; 0 none: paired unsown wheel tracks [code]tramline_gauge[/code] apart, default 1.8 m) and [code]headland[/code] (default 12 m; 0 none: rows run round the edge where the drill turned). Outside the fields nothing grows. Up to 63 fields a node. The ground shader ([method get_ground_shader_code]) draws the drilled soil and darker wheelings under every crop node's fields and, past the tillers, the crop's own colour and cover at its stage ([method crop_canopy_look]). Harvested fields (99) carry the combine's straw swaths, one down each pass (a third of [code]tramline_spacing[/code], or 7.5 m), as lying straw near and paler stripes far off. Grass fields without a crop and [VegetationField3D] plants keep out of every crop node's fields.
 		</member>
@@ -277,13 +286,16 @@
 			The distance between the crop's drill rows, in metres (12 to 15 cm for cereals).
 		</member>
 		<member name="rules" type="PlantSpecies" setter="set_rules" getter="get_rules">
-			Where grass grows: the rules of a [PlantSpecies] over the maps of [member data_map]. Its spacing, footprint and meshes are ignored. Without rules, grass grows on dry land only.
+			Where grass grows: the rules of a [PlantSpecies] over the maps of [member data_map]. Its spacing, footprint and meshes are ignored. Without rules, grass grows on dry land only. With a narrowed [member PlantSpecies.spring_range] it is an oasis sward: it grows only round the desert springs ([constant PlantSpecies.RULE_SPRING]), on the sand seas' damp corridors. Any sward on a sand sea also comes back onto the sand where an oasis's ground is wet.
 		</member>
 		<member name="season_response" type="float" setter="set_season_response" getter="get_season_response" default="1.0">
 			How much the season browns the sward, 0 (not at all) to 1.
 		</member>
 		<member name="season_source" type="NodePath" setter="set_season_source" getter="get_season_source" default="NodePath(&quot;&quot;)">
 			Path to a [WeatherMap3D] whose season ([method WeatherMap3D.get_season]) turns the sward through the year: once a second its greenness ([method season_greenness]) raises the blades' and the ground's dryness towards all thatch (effective dryness [code]dryness + (1 - dryness) (1 - green) season_response[/code]), and the far colour is measured again when that moves by more than 0.05. Empty: [member dryness] as set.
+		</member>
+		<member name="still_shot" type="bool" setter="set_still_shot" getter="is_still_shot" default="false">
+			For still shots on a tight memory budget (benches on the cloud): once the near tiles, far rings and shell round the camera are complete, the field stops updating (no rebuilds, no trample) until the camera moves 0.5 m or the field is rebuilt. [method is_still_frozen] says when it has settled.
 		</member>
 		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
 			Path to the [DirectionalLight3D] whose heading turns the far grass colour (see [method get_far_color_lobes]). Empty: the first visible [DirectionalLight3D] in the field's world. The widest field publishes it with the camera position as [code]grass_ground_sun[/code] and [code]grass_ground_view[/code]; the effect lessens as the sun climbs and is off with the sun down.

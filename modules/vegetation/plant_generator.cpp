@@ -5807,6 +5807,8 @@ void fragment() {
 		}
 	}
 	weather_frost_apply(weather_frost_at(v_world), n_world.y, albedo, rough);
+	// Salt spray burns the leaves near the sea (WeatherMap3D sea_spray), leaf by leaf.
+	weather_salt_burn_apply(weather_salt_at(v_world), fract(sin(dot(floor(v_world * 6.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453), albedo);
 	// Snow lies on the faces that look up.
 	vec4 snow_s = snow_cover_at(v_world);
 	float snow = snow_cover_weight(snow_s.x, 60.0, n_world, n_world);
@@ -7123,6 +7125,9 @@ Array PlantGenerator::stand_litter_leaves(FloorStand p_stand, const Dictionary &
 		case FLOOR_PINE_HEMLOCK:
 			mix = LocalVector<Share>({ { LITTER_BIRCH, 1.0f } });
 			break;
+		case FLOOR_MEDITERRANEAN:
+			mix = LocalVector<Share>({ { LITTER_OAK, 1.0f } }); // Cork and holm oak: lobed oak leaves stand in for their leathery ones.
+			break;
 		default:
 			break;
 	}
@@ -7295,6 +7300,21 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			set[1].density = 0.25f;
 			set[2].density = 0.4f;
 			set[3].density = 0.4f;
+			break;
+		case FLOOR_MEDITERRANEAN:
+			// Montado and dehesa (docs/ideas/vegetation.md, "Mediterranean woodland ground layer"; Joffre et al. 1999):
+			// a continuous layer of annual grasses under and between the open crowns, browned by summer, thinner in
+			// the crowns' shade; thistles and French lavender in the open, sage-leaved rockrose in loose patches where
+			// grazing has eased (Pinto-Correia et al. 2011), thyme on the thin soil; oak litter and twigs under the
+			// crowns, needles under stone pine.
+			set = LocalVector<FloorSpec>({ { P::PRESET_DRY_GRASS, 0.16f, 0.0f, 1.0f, 1.2f, 1.8f, 6.0f, 0.85f, 0.0f, 0.85f, 0.15f, 0.0f, 1.0f, 30.0f },
+					{ P::PRESET_THISTLE, 1.0f, 0.2f, 0.35f, 0.8f, 1.2f, 8.0f, 0.35f, 0.0f, 0.5f, 0.15f, 0.0f, 1.0f, 35.0f },
+					{ P::PRESET_FRENCH_LAVENDER, 0.6f, 0.2f, 0.5f, 0.8f, 1.3f, 7.0f, 0.4f, 0.0f, 0.6f, 0.15f, 0.0f, 1.0f, 40.0f },
+					{ P::PRESET_SAGE_ROCKROSE, 0.8f, 0.35f, 0.55f, 0.8f, 1.4f, 10.0f, 0.4f, 0.0f, 0.7f, 0.15f, 0.0f, 1.0f, 45.0f },
+					{ P::PRESET_THYME, 0.35f, 0.08f, 0.4f, 0.8f, 1.2f, 5.0f, 0.35f, 0.0f, 0.5f, 0.15f, 0.0f, 1.0f, 20.0f },
+					twigs, leaves, needles });
+			set[5].density = 0.4f; // Few twigs: open crowns, little dead wood left in a worked wood.
+			set[6].density = 0.1f; // Evergreen oaks shed a little all year: thin litter, the grass shows through.
 			break;
 		case FLOOR_MAX:
 			break;
@@ -7887,6 +7907,7 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(FLOOR_NORTHERN_HARDWOOD);
 	BIND_ENUM_CONSTANT(FLOOR_EASTERN_OAK);
 	BIND_ENUM_CONSTANT(FLOOR_PINE_HEMLOCK);
+	BIND_ENUM_CONSTANT(FLOOR_MEDITERRANEAN);
 	BIND_ENUM_CONSTANT(FLOOR_MAX);
 	BIND_ENUM_CONSTANT(STONES_SCREE);
 	BIND_ENUM_CONSTANT(STONES_RIVER);
@@ -7905,6 +7926,7 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(DUNES_MAX);
 	BIND_ENUM_CONSTANT(DESERT_FLANKS);
 	BIND_ENUM_CONSTANT(DESERT_INTERDUNE);
+	BIND_ENUM_CONSTANT(DESERT_OASIS);
 	BIND_ENUM_CONSTANT(DESERT_MAX);
 	BIND_ENUM_CONSTANT(BURN_HEATH);
 	BIND_ENUM_CONSTANT(BURN_GRASS);

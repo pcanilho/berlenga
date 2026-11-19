@@ -381,6 +381,15 @@ void WorldWater::impulse(const Vector3 &p_position, float p_radius, float p_stre
 	}
 }
 
+void WorldWater::wave(const Vector3 &p_position, const Vector3 &p_direction, float p_height, float p_period, float p_width) {
+	if (GDVIRTUAL_CALL(_wave, p_position, p_direction, p_height, p_period, p_width)) {
+		return;
+	}
+	for (WorldWaterProvider *w : providers) {
+		w->contract_water_wave(p_position, p_direction, p_height, p_period, p_width);
+	}
+}
+
 Vector2 WorldWater::sediment_at(const Vector3 &p_position) const {
 	Vector2 r;
 	if (GDVIRTUAL_CALL(_sediment_at, p_position, r)) {
@@ -431,6 +440,7 @@ void WorldWater::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("disturb", "owner", "position", "radius", "strength"), &WorldWater::disturb);
 	ClassDB::bind_method(D_METHOD("clear", "owner"), &WorldWater::clear);
 	ClassDB::bind_method(D_METHOD("impulse", "position", "radius", "strength"), &WorldWater::impulse);
+	ClassDB::bind_method(D_METHOD("wave", "position", "direction", "height", "period", "width"), &WorldWater::wave);
 	ClassDB::bind_method(D_METHOD("sediment_at", "position"), &WorldWater::sediment_at);
 	ClassDB::bind_method(D_METHOD("breaking_at", "position"), &WorldWater::breaking_at);
 	ClassDB::bind_method(D_METHOD("add_sediment", "position", "mineral_kg_s", "ash_kg_s"), &WorldWater::add_sediment);
@@ -442,6 +452,7 @@ void WorldWater::_bind_methods() {
 	GDVIRTUAL_BIND(_disturb, "owner", "position", "radius", "strength");
 	GDVIRTUAL_BIND(_clear, "owner");
 	GDVIRTUAL_BIND(_impulse, "position", "radius", "strength");
+	GDVIRTUAL_BIND(_wave, "position", "direction", "height", "period", "width");
 	GDVIRTUAL_BIND(_sediment_at, "position");
 	GDVIRTUAL_BIND(_breaking_at, "position");
 	GDVIRTUAL_BIND(_add_sediment, "position", "mineral_kg_s", "ash_kg_s");
@@ -735,6 +746,7 @@ public:
 	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override { stub->disturb(p_owner, p_position, p_radius, p_strength); }
 	void contract_water_clear(uint64_t p_owner) override { stub->clear(p_owner); }
 	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override { stub->impulse(p_position, p_radius, p_strength); }
+	void contract_water_wave(const Vector3 &p_position, const Vector3 &p_direction, float p_height, float p_period, float p_width) override { stub->wave(p_position, p_direction, p_height, p_period, p_width); }
 	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return stub->sediment_at(p_position); }
 	float contract_water_breaking_at(const Vector3 &p_position) const override { return stub->breaking_at(p_position); }
 	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override { stub->add_sediment(p_position, p_mineral_kg_s, p_ash_kg_s); }
@@ -841,12 +853,41 @@ void WorldGround::add_runoff_load(const Vector3 &p_position, float p_mineral_kg,
 	}
 }
 
+float WorldGround::track_mud(const Vector3 &p_position, float p_radius, float p_depth, float p_wet, const Vector4 &p_print) {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_track_mud, p_position, p_radius, p_depth, p_wet, p_print, r)) {
+		return r;
+	}
+	return provider && p_depth > 0.0f ? provider->contract_ground_track_mud(p_position, p_radius, p_depth, p_wet, p_print) : 0.0f;
+}
+
+Vector3 WorldGround::coarse_cover_at(const Vector3 &p_position) const {
+	Vector3 r;
+	if (GDVIRTUAL_CALL(_coarse_cover_at, p_position, r)) {
+		return r;
+	}
+	const LocalVector<WorldCoverProvider *> *list = WorldContracts::cover_providers_list();
+	if (list) {
+		for (const WorldCoverProvider *c : *list) {
+			const Vector3 v = c->contract_cover_at(p_position);
+			if (v.x + v.y > r.x + r.y || (v.x + v.y == r.x + r.y && v.z > r.z)) {
+				r = v;
+			}
+		}
+	}
+	return r;
+}
+
 void WorldGround::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("coarse_cover_at", "position"), &WorldGround::coarse_cover_at);
+	GDVIRTUAL_BIND(_coarse_cover_at, "position");
 	ClassDB::bind_method(D_METHOD("add_runoff_load", "position", "mineral_kg", "ash_kg"), &WorldGround::add_runoff_load);
+	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet", "print"), &WorldGround::track_mud);
 	ClassDB::bind_method(D_METHOD("has_runoff"), &WorldGround::has_runoff);
 	// The runoff's post-fire debris flows (WeatherRunoff3D): one event per basin per storm, for the moving flow.
 	ADD_SIGNAL(MethodInfo("debris_flow", PropertyInfo(Variant::DICTIONARY, "event")));
 	GDVIRTUAL_BIND(_add_runoff_load, "position", "mineral_kg", "ash_kg");
+	GDVIRTUAL_BIND(_track_mud, "position", "radius", "depth", "wet", "print");
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldGround::has_provider);
 	ClassDB::bind_method(D_METHOD("height_at", "position"), &WorldGround::height_at);
 	ClassDB::bind_method(D_METHOD("soil_at", "position"), &WorldGround::_soil_at_bind);
@@ -937,6 +978,18 @@ void WorldContracts::register_runoff(WorldRunoffProvider *p_provider) {
 void WorldContracts::unregister_runoff(WorldRunoffProvider *p_provider) {
 	if (singleton && singleton->runoff_provider == p_provider) {
 		register_runoff(nullptr);
+	}
+}
+
+void WorldContracts::register_cover(WorldCoverProvider *p_provider) {
+	if (singleton && p_provider && singleton->cover_providers.find(p_provider) < 0) {
+		singleton->cover_providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_cover(WorldCoverProvider *p_provider) {
+	if (singleton) {
+		singleton->cover_providers.erase(p_provider);
 	}
 }
 

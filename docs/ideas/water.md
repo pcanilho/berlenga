@@ -3671,3 +3671,38 @@ climate gives 1.7 m a year. get_outline() hands the shore to the ground: the hol
 ends in a wall where the bed is still below the level. The boil cannot cut into the bed (a disc lying on it), so
 the throat reads as a pit by its dark sand in suspension inside a 7 cm cone; terrain carving a real pit under each
 vent (get_vents) would add the depth.
+
+Parity pass (19 Nov, docs check failed it on PT bands and milky water, and on a smooth bowl, a white wall and
+identical boils in raster):
+- The bands were the path tracer's, not the pool's. Under flat water (no wind, no medium, a plain bed) they stayed,
+  and went with `rendering/pathtracing/caustics` off or a 64 m caustics area: the outer caustics cascades take their
+  photons from one pixel of each 2 x 2 block, but each photon was jittered inside that pixel only, so a frame's
+  photons covered every other column and row. The straight twins sampled that comb at one phase and the bent ones,
+  shifted by refraction in proportion to the depth (0.22 h at a 55 degree sun), at another, so the bent-over-straight
+  ratio swung with the depth into bands along the contours. Each photon now spreads over its whole 2 x 2 block.
+  The PT pool also showed coloured grain at 4 to 8 samples: each sample takes the reflection or the refraction by
+  Fresnel, which the denoiser and accumulation resolve.
+- Spring water: groundwater out of sandstone has no CDOM and few particles, so the pools take pure water's
+  absorption (Pope and Fry 1997, 0.36, 0.065, 0.02 per metre) and a fifth of the default scattering; raster and
+  the path tracer read the same values.
+- Raster faults: the smooth bowl and the white wall were the bench's own hollow (now TerrainGenerator3D's carving,
+  `--synthetic` keeps the old one); the boils now differ in size by vent (0.65 to 1.45) with darker throats.
+- Uncarved ground: a spring whose floor stands above its level (at the eye and at the pool's centre) gets no pool,
+  with a warning, instead of a film of water with a dark rim lying on the dune.
+
+## Impulse waves (19 Nov, snow's request: WorldWater.wave for avalanches into lakes)
+
+What they are. A landslide, avalanche, rockfall or calving front entering water pushes up a leading crest and
+trough that run out across the basin (Heller and Hager 2010, the impulse product method snow already uses for the
+height; Fritz et al. 2004). In a lake or bay most of them are long waves: their length (period times speed) is many
+times the depth, so they travel at sqrt(g h), shoal, run up the far shore and reflect.
+
+Technique. The ripple layer is a shallow-water solver (Chentanez and Mueller 2010), which carries long waves
+exactly, so the wave is seeded as an initial condition rather than painted on: one sine period of height H/2
+(crest leading, zero net volume), flat across the width with cosine-tapered ends, plus the progressive long-wave
+velocity u = eta c / h on the faces so it runs one way (a height-only hump would split into two half waves). Its
+length is the period times sqrt(g h) at the entry depth, at least eight cells; its height at most 0.78 h (solitary
+wave breaking, McCowan). Two impulse slots carry it to the GPU (a negative radius marks it), so no new buffers.
+Water with no solver (a river's ribbon) gets a splash of the crest's height through impulse(). Test:
+docs/bench/water_surface/wave_test.gd (-s): 0.5 m, 4 s in 4 m of water arrives where sqrt(g h) puts it (within
+0.6 m after 2 s), holds 0.24 of its 0.25 m crest and leaves 0.006 m behind.

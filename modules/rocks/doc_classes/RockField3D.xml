@@ -56,6 +56,13 @@
 				Triangles in the loaded close-up shapes.
 			</description>
 		</method>
+		<method name="get_coarse_cover_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				This field's answer to [method WorldGround.coarse_cover_at]: pebble, gravel and fine shares of the ground (0..1) from the cover maps, bilinear; the near map where it reaches, else the far one; 0 outside both or with [member ground_detail_cover] off.
+			</description>
+		</method>
 		<method name="get_ground_detail_count" qualifiers="const">
 			<return type="int" />
 			<param index="0" name="layer" type="int" default="-1" />
@@ -69,6 +76,13 @@
 				Coarse cells being placed on worker threads (see [member cell_threads]), and shape libraries being built for them.
 			</description>
 		</method>
+		<method name="get_ground_detail_cover_rect" qualifiers="const">
+			<return type="Rect2" />
+			<param index="0" name="level" type="int" />
+			<description>
+				The world XZ rectangle the cover map of [param level] (0 near, 1 far) covers as built, empty before it is built. See [method get_ground_detail_cover_texture].
+			</description>
+		</method>
 		<method name="get_ground_detail_cover_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<param index="0" name="level" type="int" />
@@ -80,6 +94,12 @@
 			<return type="int" />
 			<description>
 				Ground detail cells being placed on worker threads (see [member ground_detail_threads]).
+			</description>
+		</method>
+		<method name="get_ground_detail_tile_stats" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				[member ground_detail_tiles] so far: [code]tiles[/code] cut, [code]placements[/code] and the [code]grains[/code] they draw (since the field was made); [code]live_placements[/code], [code]live_grains[/code], [code]instances[/code] (rendering instances, one per shape of a placement) and [code]tile_triangles[/code] now; and the squares looked at and why some were left as single grains ([code]skip_sparse[/code], [code]skip_coarse[/code], [code]skip_bent[/code], [code]skip_unmatched[/code]).
 			</description>
 		</method>
 		<method name="get_last_build_msec" qualifiers="const">
@@ -414,6 +434,9 @@
 		</member>
 		<member name="ground_detail_rivers" type="bool" setter="set_ground_detail_rivers" getter="is_ground_detail_rivers" default="true">
 			Ground detail on the river beds: the river layer's bed carried on below [member min_size] (what the flow can move and what still arrives from upstream), coarse in the riffles and fine in the pools between them about six channel widths apart, finer on the bars at the sides, the pools' beds partly hidden under a drape of fines, and every grain imbricated (its long axis across the flow, dipping upstream 10 to 30 degrees). Most grains carry the rock of the river's headwaters. Off, the beds keep only the river layer's stones.
+		</member>
+		<member name="ground_detail_tiles" type="bool" setter="set_ground_detail_tiles" getter="is_ground_detail_tiles" default="false">
+			Tiles of piles: each ground detail cell is cut into 4 x 4 squares, and squares on near-flat ground, clear of coarse stones, are drawn as placements of up to four tiles cut from the cell's own settled grains. A tile is reused only where it matches the grain count, size, wetness and rocks, turned a random quarter turn, at most six times. Each shape of a tile is one [MultiMesh] whose merged ray tracing BLAS every placement shares, so one placement costs a few ray tracing instances instead of one per grain. Grains resting on coarser grains stay single. A contact splits the placement under it back into single grains so they react. The ground blend of a tile's grains uses the placement's plane (the rock shader's [code]rock_tile_plane[/code]).
 		</member>
 		<member name="ground_detail_threads" type="bool" setter="set_ground_detail_threads" getter="is_ground_detail_threads" default="true">
 			While streaming, place the ground detail cells on worker threads: the main thread only snapshots what a cell rests on and adds the finished cell, one buffer upload a shape. A finer size class waits until the coarser ones round it are down. When disabled, each cell is placed on the main thread as it is wanted.

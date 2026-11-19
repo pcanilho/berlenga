@@ -646,6 +646,56 @@ tint), and raises its roughness to at least 0.8 there, so the far meadow reads s
 crop: pixel-to-pixel contrast down about 5%. Much of the rest of the softness in the reference (a far meadow
 as a soft mass) comes from temporal AA and upscaling in game, which the cloud bench does not run.
 
+## Fibre shading (Paulo's pick 19 Nov)
+
+Paulo: the Star Citizen Nyx meadows read "more like a mass of fine fibers than a flat surface" (Planet Tech v5); he
+wants that look, shown before/after before it is pushed.
+
+What it is: light on a sward of thin blades behaves like light on fibres. Every blade is long and narrow, its surface
+curves across its width (keeled, folded or rolled leaves), so its normals spread across the blade and barely along it.
+The specular highlight is then stretched across the strands into a band that runs over the whole meadow and moves
+with the wind combing it, as on hair (Kajiya and Kay 1989) or brushed metal; a flat GGX lobe gives point glints
+instead. Sources:
+- Kajiya and Kay 1989, fibre specular from the strand tangent; Scheuermann 2004 (hair in real time, shifted lobes).
+- Burley 2012 (Disney BRDF) anisotropic GGX with alpha_x, alpha_y; Heitz 2014 anisotropic Smith masking; Heitz 2018
+  visible-normal sampling, which already takes two alphas.
+- Pesce, "Making a greener grass" part 2 (Call of Duty BO4, 2024): close up "grass seems to be made by strands that
+  create a strong anisotropic effect"; a V-shaped normal across the blade from its mid vein thins the highlights;
+  specular driven by gloss, Fresnel kept down; normals return to the terrain's far away.
+- Patry 2020 (Ghost of Tsushima, SIGGRAPH shading course): anisotropic asperity scattering for fine fibres (the
+  grazing fuzz); a later step if the sheen is missing.
+
+State in the fork: raster has Godot's ANISOTROPY (anisotropic GGX, aspect sqrt(1 - 0.9 a), alpha_x = alpha / aspect
+along the tangent); the path tracer reads ANISOTROPY and drops it, so any material using it already loses its
+highlight shape under path tracing. The path tracer has a fibre BSDF (HAIR, Chiang et al. 2016) for round strands, but
+blades are flat leaves, not cylinders, and raster has no match for it.
+
+Plan:
+1. Path tracer: anisotropic GGX in its specular lobe (eval, VNDF sampling and pdf) from the material's ANISOTROPY and
+   ANISOTROPY_FLOW with raster's mapping and tangent frame, so raster and path tracing agree for every material
+   (brushed metal, hair cards, grass). Costs nothing for materials without it.
+2. Grass shader: tangent across the blade, binormal along it; ANISOTROPY about 0.8 so the lobe spreads across the
+   strands; the across-blade normal folded at the mid vein (Pesce) instead of rounded, so each blade carries a thin
+   bright line; softened with distance (v_soft) into the far sward's look.
+3. Checks: same-run before/after raster frames and a path-traced crop; mean colour and highlight size measured.
+   Cost: a few ALU a pixel in raster; the path tracer only on anisotropic hits.
+
+Findings (19 Nov):
+- A smoother, shinier blade (roughness x0.5, F0 0.04) with the anisotropy brightened the path-traced sward by about a
+  quarter and the raster one by about 1%; dropped. The blade keeps its roughness and F0 and only the lobe's shape
+  changes (ANISOTROPY = fibre_shading, 0.8), which keeps raster and path tracing together.
+- Spheres under a procedural sky, raster against path tracing, roughness 0.35 and 0.8: the anisotropic lobe keeps its
+  energy within 1% under path tracing (it loses a little at roughness 0.8, where the wide axis passes alpha 1 and
+  single scattering loses light, as the isotropic lobe does).
+- Path tracer bug found on the grass: two-sided blades are often seen from behind their bent normal. The isotropic
+  path clamps NdotV and weighs masking with that clamp; the anisotropic one weighed masking at V's real depth over the
+  clamped 1 / NdotV, which blew single samples up into bright speckles. Now V and L enter the masking clamped as the
+  isotropic path takes them, and visible-normal sampling sees a V just above the surface.
+- Which way: stretched across the blade (TANGENT) the lobe only dulled the sward at 1280 close up (near-sward mean
+  36.6 to 36.5, the sunlit patches' sheen gone); stretched along it (ANISOTROPY_FLOW onto BINORMAL) lit blades carry
+  the highlight as streaks down their length (mean 40.4), the fibre look. Shipped along the blade, with the fold at the
+  mid vein (NORMAL_MAP, flat tilted halves; fades with fwidth(UV.x) and v_soft, so only close blades show it).
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.
