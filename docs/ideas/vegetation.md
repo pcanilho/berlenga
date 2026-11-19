@@ -713,6 +713,33 @@ water systems own):
   rushes 0.6 to 4.5 m behind (Phragmites australis and Juncus rigidus / maritimus fringe Egypt's oasis pools and
   springs: Zahran and Willis 2009, "The Vegetation of Egypt"; Ozenda 1977 for the Sahara).
 
+## Far vegetation without bald ground (Paulo 19 Nov: "at a distance it's bald")
+
+What the showcase stills show: past 30 to 45 m (each plant layer's visibility range) the meadow, heath and scrub read
+as a smooth flat green; the far grass rings and shell (to 500 m) and the plants' far volume (to 150 m) carry the
+colour but almost none of the structure (clumps, tussocks, flower and dry patches, the shadows between them). Real
+ground cover keeps a grain to the horizon: clumps cast shadow, mixed species show as colour patches, the sward's sheen
+changes with slope and wind.
+
+Published ways to carry it:
+- Real geometry, thinned: Ghost of Tsushima (Wohllaib, GDC 2021) keeps procedural blades out to hundreds of metres by
+  widening fewer blades with distance; Jahrmann and Wimmer 2017 the same on the GPU. Costly but the best match.
+- Voxelised far foliage: UE 5.7's Nanite foliage (State of Unreal 2025, the Witcher 4 demo) turns far plant
+  instances into voxel aggregates that keep their silhouette and porosity to the horizon; our hedges already do this
+  (far voxel bricks) and the plants' far_volume shell is the same idea at 150 m.
+- Vegetation-aware terrain shading: the placement's density feeds the terrain a macro normal, AO and colour variance
+  so the ground past the geometry keeps the clumps' light and shade (Serious Sam 4, "4 Million Acres", GDC 2019;
+  Pesce 2024, "Making a greener grass", far grass normals returning to the terrain's with a sheen term).
+
+Plan (card to Paulo):
+1. Far shell and far volume with structure: per-cell height from the placed plants' own clumping (patch noise the
+   placement uses), colour from the species actually there (flower and dry patches), AO in the gaps, the fibre
+   sheen as a far term. Match ground detail's and trees' far handoff distances.
+2. Shrubs, heath and scrub as voxel clusters out to 1 to 2 km (as the hedges), so slopes keep their dark patches.
+3. A density map for the terrain material (owner: terrain material) to darken and roughen the ground under far
+   cover: only the provider side here.
+4. Measure each layer's end on current main first (the p2 and v10 stills may predate the far shell).
+
 ## Mediterranean woodland ground layer (audit 19 Nov; card to Paulo)
 
 The showcase's cork oak stand stands on bare sand with litter: every other forest has a floor set, the cork oak and
