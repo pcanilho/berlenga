@@ -38,11 +38,21 @@ func get_height(p: Vector3) -> float:
 			# leaving the face slow on the terrace and lay their sand down as fans (Otvos 1999).
 			var t := (p.z - 2.0) / 0.4
 			var soft := 0.4 * (log(1.0 + exp(t)) if t < 30.0 else t) # softplus: max(z - 2, 0), eased
-			# A real face is not a plane: the swash leaves horns and bays a few metres across and several centimetres
-			# deep (beach cusps, Komar 1998; Coco et al. 1999), and the bays gather the seepage into a few trunk rills,
-			# which the small heads join (a plane gave an even comb of parallel rills; 1 cm of relief barely bent it).
-			var relief := 0.05 * swash_relief.get_noise_2d(p.x, p.z * 1.6)
+			# A real face is not a plane: the swash leaves horns and bays a few metres apart and several centimetres
+			# deep, the bays running down the face (beach cusps, Komar 1998; Coco et al. 1999), and the bays gather the
+			# seepage into a few trunk rills all the way down, which the small heads join (a plane gave an even comb
+			# of parallel rills; relief as round as it is long gathered them only near the top).
+			var relief := 0.07 * swash_relief.get_noise_2d(p.x, p.z * 0.35)
 			return 2.0 / 12.0 + (p.z - 2.0 - soft) / 50.0 + soft / 12.0 + 0.03 * noise.get_noise_2d(p.x * 2.0, p.z * 2.0) + relief
+		"dune":
+			# A transverse dune's crest along z at x = 0, 3 m high: a 10 degree stoss slope rising from -x and a slip
+			# face at 32 degrees (dry sand rests between its stopping and starting angles, 31 to 33) falling to flat
+			# ground at x = 4.8, the toe eased over 30 cm.
+			var lee := 3.0 - maxf(p.x, 0.0) * tan(deg_to_rad(32.0))
+			var stoss := 3.0 + minf(p.x, 0.0) * tan(deg_to_rad(10.0))
+			var top := minf(lee, stoss)
+			var k := 0.3 * tan(deg_to_rad(32.0))
+			return k * log(exp(top / k) + 1.0) if top < 30.0 * k else top # softplus: max(top, 0), eased
 		"hollows":
 			# Flat ground with three shallow dips 4 to 5 m across, 20 to 30 cm deep (where puddles gather).
 			var h := 0.0

@@ -4586,6 +4586,11 @@ global uniform sampler2D ground_wet_map : filter_linear, repeat_disable; // pore
 	} else {
 		code += vformat("const bool ground_deform_patch = %s;\n", p_patch ? "true" : "false");
 	}
+	if (p_patch_uniform || p_patch) {
+		// Bumped by GroundSurface3D each frame its field's texture is rewritten: the path tracer recaptures vertex()
+		// output when a material parameter changes, not when a texture it samples is rewritten in place.
+		code += "uniform float ground_deform_serial = 0.0;\n";
+	}
 	code += R"(
 // The near field's weight at p_xz: 1 inside its square, faded to 0 over its outer metre
 // (GroundSurface3D::NEAR_BLEND). A metre, not less: a rut or print row coming in from outside starts fresh
@@ -5025,7 +5030,10 @@ vec4 ground_water_look(float p_depth, float p_wet, float p_mud) {
 	float cover = smoothstep(0.0003, 0.002, p_depth);
 	// Thinner, it already glistens: a seepage sheet a few hundredths of a millimetre deep fills the pores between
 	// the top grains and its surface is smooth (Lagarde 2013's accumulated water), though the grains still show.
-	float gloss = smoothstep(0.00002, 0.0003, p_depth);
+	// Fully a mirror only from most of a millimetre: a sheet of a tenth of one between rills is wet sand with a
+	// sheen, so the water in the channels, deepening across them, reads as the brightest and their banks round off
+	// (from 0.3 mm the whole sheet was one mirror, the dry ridges cut out of it as flat-sided steps).
+	float gloss = smoothstep(0.00004, 0.0008, p_depth);
 	// The bed under it is soaked (Lagarde 2013, porosity 0.6: albedo 0.52), less what its pore water already took.
 	float soak = mix(1.0, 0.52, cover * (1.0 - clamp(p_wet, 0.0, 1.0)));
 	// Rut water carries clay: it hides the bed within a centimetre or so (Beer-Lambert down and back up, an

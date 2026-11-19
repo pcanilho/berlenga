@@ -395,6 +395,7 @@ void SnowAvalanche3D::_release(SnowCover3D *p_cover, const Vector<int> &p_cells,
 		return;
 	}
 	release_center = c / total;
+	run_down = _fall_line(p_cover, released);
 	if (crowns_enabled) {
 		_build_crown(p_cover, released);
 	}
@@ -580,10 +581,19 @@ void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
 					const float take = MIN(0.5f * h[i], powder_share * h[i] * (speed - powder_speed) * 0.1f * p_dt);
 					const float m = take * cell * cell;
 					const Vector3 at((flow_origin.x + x + 0.5f) * cell, p_cover->cell_ground[ci] + MAX(p_cover->cell_swe[ci] - written[i], 0.0f) / MAX(p_cover->cell_density[ci], 30.0f) + depth, (flow_origin.y + z + 0.5f) * cell);
-					Bin &b = bins[Vector2i(int(Math::floor(at.x / 8.0f)), int(Math::floor(at.z / 8.0f)))];
+					// By 8 m lanes across the run: each lane's intake rises from its leading edge, so the cloud
+					// builds along the whole front as one mass (the slab's sides spill sideways and feed their
+					// lanes, they do not stand as columns of their own).
+					const Vector2 across(-run_down.y, run_down.x);
+					Bin &b = bins[Vector2i(int(Math::floor(Vector2(at.x, at.z).dot(across) / 8.0f)), 0)];
 					b.mass += m;
 					b.momentum += Vector3(u, 0.0f, v) * m;
 					b.position += at * m;
+					const float along = Vector2(at.x, at.z).dot(run_down);
+					if (along > b.lead_along) {
+						b.lead_along = along;
+						b.lead = at;
+					}
 					powder_taken += m;
 					h.write[i] = h[i] - take;
 				}
@@ -1521,7 +1531,7 @@ void SnowAvalanche3D::_powder_step(SnowCover3D *p_cover, float p_dt) {
 			pc.mass = b.mass;
 			parcels.push_back(pc);
 			SnowPowderCloud3D::Source src;
-			src.position = pc.position + Vector3(0.0f, 1.0f, 0.0f);
+			src.position = b.lead + Vector3(0.0f, 1.0f, 0.0f);
 			src.velocity = pc.velocity;
 			src.rate = b.mass / float(MAX(powder_window, 1.0e-3));
 			src.radius = 5.0f; // overlapping the next 8 m bin

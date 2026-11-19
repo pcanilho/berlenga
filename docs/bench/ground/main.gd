@@ -48,6 +48,10 @@ extends Node3D
 #   --test=burnscar    rain on a burn scar: water-repellent burnt soil (WorldFire) sheds most of the rain as runoff
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
+#   --test=avalanche    footsteps on a dune's slip face set off grain avalanches down it; not on the stoss slope
+#   --test=infill       wind fills a print from its upwind side; nothing under the threshold
+#   --test=fringe       a wet margin of sand up to 15 cm over still water's level (capillary rise)
+#   --view=avalanche    a walker's prints across a dune's slip face and the tongues of sand running down from them
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
 #                         on the outside; dust: none from damp sand, a plume from dry, Stokes settling, wind drift
 #   --view=trail        a walker, a rolling ball and a wheel cross the ground; --ground=KIND picks it:
@@ -101,6 +105,12 @@ class WallLeeStub extends WorldWeather:
 		return 0.15 + 0.85 * (1.0 - exp(-maxf(x - 2.0, 0.0) / 6.0))
 
 
+# Pebbles over 60% of the ground for x < -6, none elsewhere (WorldGround.coarse_cover_at, as RockField3D's cover).
+class PebbleLagStub extends WorldGround:
+	func _coarse_cover_at(p: Vector3) -> Vector3:
+		return Vector3(0.6, 0.0, 0.0) if p.x < -6.0 else Vector3.ZERO
+
+
 const HeightScript := preload("res://height.gd")
 
 var view := "trail"
@@ -116,6 +126,9 @@ var shelter_test := false
 var runoff_test := false
 var burnscar_test := false
 var drift_test := false
+var avalanche_test := false
+var infill_test := false
+var fringe_test := false
 var near_test := false
 var mud_test := false
 var clog_test := false
@@ -178,6 +191,9 @@ func _ready() -> void:
 		elif a == "--test=burnscar": burnscar_test = true
 		elif a == "--test=splash": splash_test = true
 		elif a == "--test=drift": drift_test = true
+		elif a == "--test=avalanche": avalanche_test = true
+		elif a == "--test=infill": infill_test = true
+		elif a == "--test=fringe": fringe_test = true
 		elif a == "--test=near": near_test = true
 		elif a == "--test=mud": mud_test = true
 		elif a == "--test=clog": clog_test = true
@@ -308,6 +324,24 @@ func _ready() -> void:
 		await _run_shelter_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if avalanche_test:
+		await _run_avalanche_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if infill_test:
+		await _run_infill_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if fringe_test:
+		await _run_fringe_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if view == "avalanche":
+		await _build_avalanche()
 		return
 	if drift_test:
 		await _run_drift_tests()
@@ -3614,12 +3648,27 @@ func _run_shelter_tests() -> void:
 	var q_lee := surface.get_sand_flux_at(lee).length()
 	var d_lee := surface.get_deposition_rate_at(Vector3(5.5, 0, 0))
 	_check("blown sand slows and drops in a wall's lee (the weather's obstacle lee)", q_lee < 0.3 * q_open and d_lee * 3.6e6 > 1.0, "%.4f kg/m/s 2 m behind the wall against %.4f open; %.2f mm/h at its foot" % [q_lee, q_open, d_lee * 3.6e6])
+	# Calm lee (lee_calm_ripples): the ripples gone in the cavity, low and stopped where the wind recovers, all upwind.
+	var s_lee := surface.get_ripple_show_at(Vector3(6.0, 0, 0))
+	var s_mid := surface.get_ripple_show_at(Vector3(13.0, 0, 0))
+	var s_up := surface.get_ripple_show_at(up)
+	_check("ripples gone in the calm lee, back as the wind recovers (Hesp 1981)", s_lee < 0.05 and s_up > 0.9 and s_mid > s_lee + 0.2, "share %.2f 1 m behind the wall, %.2f at 8 m, %.2f upwind" % [s_lee, s_mid, s_up])
 	surface.obstacle_lee = false
 	for i in 2:
 		await get_tree().physics_frame
 	await get_tree().create_timer(0.6).timeout
 	_check("the lee switches off with obstacle_lee", surface.get_sand_flux_at(lee).length() > 0.8 * q_open, "%.4f kg/m/s" % surface.get_sand_flux_at(lee).length())
 	surface.obstacle_lee = true
+	WorldContracts.clear_overrides()
+	# A pebble lag over x < -6 (a stand-in for the stone fields' WorldGround.coarse_cover_at): the sand among the
+	# stones neither blows nor shows ripples.
+	WorldContracts.set_ground(PebbleLagStub.new())
+	for i in 70:
+		await get_tree().physics_frame
+	var lag := Vector3(-9.0, 0, 0)
+	var q_lag := surface.get_sand_flux_at(lag).length()
+	var s_lag := surface.get_ripple_show_at(lag)
+	_check("a pebble lag armours the sand: no blowing, no ripples (Bagnold 1941)", q_lag < 0.05 * q_open and s_lag < 0.05 and surface.get_ripple_show_at(up) > 0.9, "%.4f kg/m/s among the pebbles against %.4f open; ripple share %.2f" % [q_lag, q_open, s_lag])
 	WorldContracts.clear_overrides()
 	surface.wind_override = Vector2.ZERO
 
@@ -4785,6 +4834,16 @@ func _build_rills() -> void:
 		await get_tree().physics_frame
 	env.pathtracing_enabled = not raster
 	await _save_frame()
+	# --cam2=x,dy,z,tx,dy,tz: a second frame of the same run (out with _2 before the extension), e.g. low and
+	# side-on along the beach, where the cusps' bays show.
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--cam2=") and not out.is_empty():
+			var c2 := a.substr(7).split_floats(",")
+			if c2.size() == 6:
+				cam.position = Vector3(c2[0], _undisturbed(Vector3(c2[0], 0, c2[2])) + c2[1], c2[2])
+				cam.look_at(Vector3(c2[3], _undisturbed(Vector3(c2[3], 0, c2[5])) + c2[4], c2[5]))
+				out = out.get_basename() + "_2." + out.get_extension()
+				await _save_frame()
 	get_tree().quit()
 
 
@@ -5035,6 +5094,220 @@ func _dust_centroid(d: GroundDust3D, around: Vector3) -> Vector4:
 
 # Drifting on sand (docs/ideas/sand.md): a 1500 kg 4x4 on 60 kPa tyres up to speed on dry sand, then slid through
 # a full-lock turn; and the dust on its own.
+# Slip-face avalanches (docs/ideas/sand.md): a boot print on a dune's 32 degree slip face, between dry sand's
+# stopping and starting angles, sets off a tongue of sand that runs down the face; the same print on the 10 degree
+# stoss slope only relaxes its own walls; the face away from the print does not move.
+func _avalanche_print(p: Vector3) -> void:
+	var h: float = height.get_height(p)
+	surface.press_box(Vector3(p.x, h, p.z), Vector2(0.11, 0.29), 0.0, h - 0.03, 0.03)
+
+
+# The surface along the fall line through p and along a line 1.5 m to the side, every 2 cm from 0.5 m above p to
+# 3 m below it: taken before a print and after, so the field's own sampling of the dune cancels.
+func _avalanche_profile(p: Vector3) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	for side in [0.0, 1.5]:
+		var x := p.x - 0.5
+		while x < p.x + 3.0:
+			out.append(surface.get_surface_height_at(Vector3(x, 0, p.z + side)))
+			x += 0.02
+	return out
+
+
+# From two profiles: how far below p the surface changed by over a millimetre, the most it changed beside it, and
+# the deepest it was lowered from 0.3 m below p down.
+func _avalanche_reach(p: Vector3, a: PackedFloat32Array, b: PackedFloat32Array) -> Vector3:
+	var m := a.size() / 2
+	var reach := 0.0
+	var deepest := 0.0
+	for k in m:
+		var dx := -0.5 + 0.02 * k
+		var d := b[k] - a[k]
+		if dx > 0.25 and absf(d) > 0.001:
+			reach = dx
+		if dx > 0.3:
+			deepest = maxf(deepest, -d)
+	var side := 0.0
+	for k in m:
+		side = maxf(side, absf(b[m + k] - a[m + k]))
+	return Vector3(reach, side, deepest)
+
+
+func _run_avalanche_tests() -> void:
+	await _setup("dune", GroundSurface3D.GROUND_SAND, 0.0, 0.0)
+	_apply("dry_sand")
+	var face := Vector3(1.6, 0, 0)
+	get_node("Probe").position = Vector3(2.0, height.get_height(Vector3(2.0, 0, 0)), 0.0)
+	for i in 10:
+		await get_tree().physics_frame
+	surface.clear_deformation()
+	surface.sync_deformation()
+	var a := _avalanche_profile(face)
+	_avalanche_print(face)
+	var v0 := surface.get_moved_volume()
+	# The flow runs at its own pace (about 1 m/s), then the field settles.
+	for i in 360:
+		await get_tree().physics_frame
+	surface.settle(3.0)
+	for i in 10:
+		await get_tree().physics_frame
+	var v1 := surface.get_moved_volume()
+	var bb := _avalanche_profile(face)
+	var r := _avalanche_reach(face, a, bb)
+	_check("a print on a dry slip face sets off an avalanche down it (Daerr and Douady 1999)", r.x > 0.6, "the sand runs %.2f m below the print" % r.x)
+	_check("the face beside it stays", r.y < 1e-4, "%.2f mm off 1.5 m to the side" % (r.y * 1000.0))
+	_check("the avalanche keeps the sand", absf((v1.x - v1.y) - (v0.x - v0.y)) < 0.02 * maxf(v1.x, 1e-6), "net hollow %.3f l before, %.3f l after; %.2f l moved" % [(v0.x - v0.y) * 1000.0, (v1.x - v1.y) * 1000.0, v1.x * 1000.0])
+	_check("it takes only a surface layer from the face", r.z < 0.035, "deepest scar below the print %.1f cm" % (r.z * 100.0))
+	surface.clear_deformation()
+	var stoss := Vector3(-1.5, 0, 0)
+	get_node("Probe").position = Vector3(-1.5, height.get_height(stoss), 0.0)
+	for i in 10:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var sa := _avalanche_profile(stoss)
+	_avalanche_print(stoss)
+	for i in 120:
+		await get_tree().physics_frame
+	surface.settle(3.0)
+	for i in 10:
+		await get_tree().physics_frame
+	var rs := _avalanche_reach(stoss, sa, _avalanche_profile(stoss))
+	_check("the same print on the 10 degree stoss slope only relaxes its walls", rs.x < 0.3, "changed to %.2f m below it" % rs.x)
+
+
+# The print's depth along the wind (x) through its middle, every 1 cm from -0.4 to +0.4 m.
+func _infill_profile() -> PackedFloat32Array:
+	surface.sync_deformation()
+	var out := PackedFloat32Array()
+	for k in 81:
+		var p := Vector3(-0.4 + 0.01 * k, 0, 0)
+		out.append(_undisturbed(p) - surface.get_surface_height_at(p))
+	return out
+
+
+# Mean depth over profile samples a..b (inclusive), and where the deepest one lies (m).
+func _infill_stats(pr: PackedFloat32Array) -> Vector3:
+	var up := 0.0
+	var dn := 0.0
+	var deep := -1.0
+	var at := 0.0
+	for k in pr.size():
+		var x := -0.4 + 0.01 * k
+		if x > -0.29 and x < -0.005:
+			up += pr[k]
+		elif x > 0.005 and x < 0.29:
+			dn += pr[k]
+		if pr[k] > deep:
+			deep = pr[k]
+			at = x
+	return Vector3(up / 28.0, dn / 28.0, at)
+
+
+# The point up the beach (x = 0.5) where the ground stands p_above over the level.
+func _fringe_point(level: float, above: float) -> Vector3:
+	var z := 0.0
+	while z < 8.0 and height.get_height(Vector3(0.5, 0, z)) < level + above:
+		z += 0.01
+	return Vector3(0.5, 0, z)
+
+
+# A wet margin round still water (GroundSurface3D.water_fringe): capillary rise keeps the sand near saturated a few
+# cm over the level, fading out by 15 cm (fine sand, Lu and Likos 2004), and dry above.
+func _run_fringe_tests() -> void:
+	await _setup("beach", GroundSurface3D.GROUND_SAND, 0.0, 0.0)
+	_apply("dry_sand")
+	var pool := Node3D.new()
+	pool.set_script(load("res://water_level_fake.gd"))
+	add_child(pool)
+	pool.level = 0.1
+	surface.water_sources = [surface.get_path_to(pool)]
+	Engine.time_scale = 10.0
+	for i in 120:
+		await get_tree().physics_frame
+	Engine.time_scale = 1.0
+	var s2 := surface.get_saturation_at(_fringe_point(0.1, 0.03))
+	var s10 := surface.get_saturation_at(_fringe_point(0.1, 0.10))
+	var s30 := surface.get_saturation_at(_fringe_point(0.1, 0.30))
+	_check("a wet margin over still water's level (capillary rise)", s2 > 0.8 and s10 > 0.4 and s10 < s2 and s30 < 0.05, "saturation %.2f 3 cm over the level, %.2f at 10 cm, %.2f at 30 cm" % [s2, s10, s30])
+
+
+# Wind fills a print from its upwind side (GroundSurface3D::_drift_prints()).
+func _run_infill_tests() -> void:
+	await _soil_scene("dry_sand")
+	surface.wind_ripples = false
+	surface.wind_override = Vector2(12.0, 0.0)
+	for i in 10:
+		await get_tree().physics_frame
+	surface.clear_deformation()
+	var h := _undisturbed(Vector3.ZERO)
+	surface.press_box(Vector3(0, h, 0), Vector2(0.29, 0.11), 0.0, h - 0.03, 0.03)
+	for i in 10:
+		await get_tree().physics_frame
+	surface.settle(2.0)
+	var a := _infill_stats(_infill_profile())
+	# 12 m/s: about 1.4 m of drift an hour; 15 minutes.
+	surface.settle(900.0, 5.0)
+	var b := _infill_stats(_infill_profile())
+	var fu := 1.0 - b.x / maxf(a.x, 1e-6)
+	var fd := 1.0 - b.y / maxf(a.y, 1e-6)
+	print("  12 m/s, 15 min: upwind half %.1f -> %.1f mm, downwind half %.1f -> %.1f mm, deepest at %.0f -> %.0f cm" % [a.x * 1000.0, b.x * 1000.0, a.y * 1000.0, b.y * 1000.0, a.z * 100.0, b.z * 100.0])
+	_check("the wind fills a print from its upwind side (aeolian infilling)", fu > fd + 0.15 and fu > 0.25, "upwind half %.0f%% filled, downwind half %.0f%%" % [fu * 100.0, fd * 100.0])
+	_check("the hollow creeps downwind as it fills", b.z > a.z + 0.02, "deepest point %.0f -> %.0f cm" % [a.z * 100.0, b.z * 100.0])
+	surface.clear_deformation()
+	surface.wind_override = Vector2(4.0, 0.0)
+	surface.press_box(Vector3(0, h, 0), Vector2(0.29, 0.11), 0.0, h - 0.03, 0.03)
+	for i in 10:
+		await get_tree().physics_frame
+	surface.settle(2.0)
+	var c := _infill_stats(_infill_profile())
+	surface.settle(900.0, 5.0)
+	var d := _infill_stats(_infill_profile())
+	_check("under the threshold the print stays", absf(d.x - c.x) < 1e-4 and absf(d.y - c.y) < 1e-4, "halves moved %.2f and %.2f mm" % [(d.x - c.x) * 1000.0, (d.y - c.y) * 1000.0])
+
+
+# --view=avalanche: a walker's line of prints across the slip face, each with the tongue of sand it set off running
+# down to the toe, seen from below and to the side under a low sun. --cam=x,dy,z,tx,dy,tz as in the other views.
+func _build_avalanche() -> void:
+	await _setup("dune", GroundSurface3D.GROUND_SAND, 0.0, 0.0)
+	_apply("dry_sand")
+	var mat := _ground_material("dry_sand")
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := _make_env()
+	for c in get_children():
+		if c is DirectionalLight3D:
+			c.rotation_degrees = Vector3(sun_arg[0], sun_arg[1], 0.0) if sun_arg.size() >= 2 else Vector3(-25.0, 140.0, 0.0)
+	get_node("Probe").position = Vector3(2.0, height.get_height(Vector3(2.0, 0, 0)), 0.0)
+	for i in 10:
+		await get_tree().physics_frame
+	# Footsteps traversing the face, a little downhill, left and right feet 18 cm apart, a stride of 70 cm.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 5
+	for k in 7:
+		var z := -2.1 + 0.7 * k
+		var side := 0.09 if k % 2 == 0 else -0.09
+		_avalanche_print(Vector3(1.2 + 0.08 * k + side * 0.3 + rng.randf_range(-0.03, 0.03), 0, z + side))
+		for i in 40:
+			await get_tree().physics_frame
+	for i in 360:
+		await get_tree().physics_frame
+	surface.settle(3.0)
+	surface.sync_deformation()
+	for i in 10:
+		await get_tree().physics_frame
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([6.5, 1.6, 2.5, 1.8, 0.0, -0.3])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 50.0
+	for i in 10:
+		await get_tree().physics_frame
+	env.pathtracing_enabled = not raster
+	await _save_frame()
+	get_tree().quit()
+
+
 func _run_drift_tests() -> void:
 	# Dust physics: Stokes settling and a puff carried by the wind, then settling to the ground.
 	await _soil_scene("dry_sand")

@@ -24,6 +24,16 @@ func get_height(p: Vector3) -> float:
 			# below; a shallow gully along it (z = 0) so the flow gathers.
 			var t := clampf(-p.x, 0.0, 80.0) * tan(deg_to_rad(38.0))
 			return t - 4.0 * exp(-p.z * p.z / 400.0) * clampf(-p.x / 20.0, 0.0, 1.0)
+		"avalanche_bowl":
+			# The avalanche face as a mountainside, for the powder shot: steepening to about 45 degrees mid-face and
+			# easing out into the run-out (no break of slope), the ridge rising on above it (no plateau), the sides
+			# rising into spurs (a cirque, not a ramp with straight sides), the gully, and rolling ground over it.
+			var s := -p.x
+			var t := 80.0 * tan(deg_to_rad(38.0)) * smoothstep(-12.0, 92.0, s) + maxf(s - 92.0, 0.0) * 0.45
+			var side := maxf(absf(p.z) - 75.0, 0.0)
+			t += 0.012 * side * side * (0.4 + 0.6 * smoothstep(-20.0, 60.0, s))
+			t -= 4.0 * exp(-p.z * p.z / 400.0) * clampf(s / 20.0, 0.0, 1.0)
+			return t + (0.8 + 2.2 * smoothstep(0.0, 40.0, s)) * noise.get_noise_2d(p.x * 3.0, p.z * 3.0)
 		"avalanche_lake":
 			# The avalanche face with a lake at its foot: the bed falls at 25 degrees from x = 2 m to 15 m deep
 			# (the water stands at 0).
