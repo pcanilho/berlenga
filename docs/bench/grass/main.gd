@@ -1816,18 +1816,25 @@ func _field_checks() -> void:
 	# Hedgerows round the fields (GrassField3D.hedges): segments laid, none standing in a field.
 	var hedge_n := grass.get_hedge_segment_count()
 	var hedge_in := 0
+	var hedge_burnt := 0
 	for h in grass.get_children(true):
 		if h.name != "Hedges":
 			continue
 		for ch in h.get_children():
 			var mm: MultiMesh = ch.multimesh
+			# TreeGenerator's burnt band variants (mesh meta "tree_fire_years") are for VegetationField3D only.
+			if mm.mesh and mm.mesh.has_meta("tree_fire_years"):
+				hedge_burnt += 1
 			for i in mm.instance_count:
 				var t: Transform3D = ch.global_transform * mm.get_instance_transform(i)
 				var mid := t.origin # Segments are centred on their origin.
 				for f in grass.fields:
 					if Geometry2D.is_point_in_polygon(Vector2(mid.x, mid.z), f["polygon"]):
 						hedge_in += 1
-	print("GRASS_HEDGES segments=%d in_fields=%d" % [hedge_n, hedge_in])
+	print("GRASS_HEDGES segments=%d in_fields=%d burnt=%d" % [hedge_n, hedge_in, hedge_burnt])
+	if hedge_burnt > 0:
+		fails += 1
+		print("GRASS_FAIL hedges: a burnt tree variant in an unburnt hedgerow")
 	if hedge_n < 40 or hedge_in > 0:
 		fails += 1
 		print("GRASS_FAIL hedges: too few segments round the fields, or some standing in a field")

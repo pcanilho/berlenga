@@ -1496,12 +1496,28 @@ void GrassField3D::_free_hedges() {
 	hedge_nodes.clear();
 }
 
+// A species' living meshes: TreeGenerator appends its burnt band variants (mesh meta "tree_fire_years",
+// world-links.md "Fire -> trees regrow"), which only VegetationField3D picks by burn age; the hedgerow
+// cycles its variants by index, so it takes the living ones only.
+static TypedArray<Mesh> _living_meshes(const Ref<PlantSpecies> &p_species) {
+	TypedArray<Mesh> out;
+	const TypedArray<Mesh> all = p_species->get_meshes();
+	for (int i = 0; i < all.size(); i++) {
+		const Ref<Mesh> m = all[i];
+		if (m.is_valid() && !m->has_meta(SNAME("tree_fire_years"))) {
+			out.push_back(m);
+		}
+	}
+	return out;
+}
+
 // Hedgerows (docs/ideas/vegetation.md, "Farmland", stage 3): a hawthorn hedge with blackthorn,
 // hazel, field maple and dog rose through it (the commonest mixed hedge of lowland England and
 // northern France; Rackham 1986, Pollard, Hooper and Moore 1974), managed as a flailed A or box
 // (TreeGenerator SHRUB_HEDGE, 2 m segments). Each field's edge gets a line past the verge
 // (hedge_offset), the species in runs of a few segments; a shared boundary gets one hedge (the
 // lower-numbered field's); one gateway gap per field on its longest side.
+
 void GrassField3D::_build_hedges() {
 	hedges_queued = false;
 	_free_hedges();
@@ -1755,7 +1771,7 @@ void GrassField3D::_build_hedges() {
 		if (species[k].is_null()) {
 			continue;
 		}
-		const TypedArray<Mesh> meshes = species[k]->get_meshes();
+		const TypedArray<Mesh> meshes = _living_meshes(species[k]);
 		for (int v = 0; v < VARIANTS; v++) {
 			if (xf[k][v].is_empty() || meshes.is_empty()) {
 				continue;
@@ -1781,6 +1797,8 @@ void GrassField3D::_build_hedges() {
 			tg.instantiate();
 			tg->set_preset(std_presets[k]);
 			tg->set_season(season);
+			// The hedgerow's own trees do not follow fires (yet): no burnt band meshes to build.
+			tg->set_fire_variants(false);
 			sp = tg->make_species(false, 2); // Two: a tree is heavy, and few stand in view.
 		} else {
 			sp = TreeGenerator::make_shrub_species(std_presets[k], TreeGenerator::SHRUB_MATURE, VARIANTS, season);
@@ -1788,7 +1806,7 @@ void GrassField3D::_build_hedges() {
 		if (sp.is_null()) {
 			continue;
 		}
-		const TypedArray<Mesh> meshes = sp->get_meshes();
+		const TypedArray<Mesh> meshes = _living_meshes(sp);
 		for (int v = 0; v < VARIANTS; v++) {
 			if (std_xf[k][v].is_empty() || meshes.is_empty()) {
 				continue;
