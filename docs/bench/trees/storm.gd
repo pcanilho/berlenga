@@ -210,6 +210,11 @@ func run(args: Dictionary) -> void:
 		if save:
 			if args.has("pt"):
 				pt_env.pathtracing_enabled = true
+				# The path tracer's surfaces built first (skinned trees take dozens of frames).
+				for k in 200:
+					RenderingServer.force_draw(false)
+					if get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES) == 0:
+						break
 			for k in (int(args.get("spp", "16")) / 4 + 2 if args.has("pt") else 2):
 				RenderingServer.force_draw(false)
 			get_viewport().get_texture().get_image().save_png(dir.path_join("storm_%04d.png" % f))

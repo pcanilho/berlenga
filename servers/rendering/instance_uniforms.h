@@ -63,6 +63,7 @@ private:
 		inline bool is_valid() const { return index != -1; }
 	};
 	int32_t _location = -1;
+	int32_t _count = 0; // slots allocated
 	HashMap<StringName, Item> _parameters;
 
 	void _init_param(Item &r_item, const RendererMaterialStorage::InstanceShaderParam &p_param) const;
