@@ -1983,6 +1983,20 @@ surge rides the mud body's front, the later surges run behind it as
 pulses. Test (1500 m3 on the 25% gully): the lead surge tracks the mud
 front to its stop at 148 m, the second surge follows at 3.3 m/s.
 
+### Powder speckle checked against path tracing (19 Nov)
+
+Tried: scatter texels holding light per unit of their opacity, multiplied
+back by a full-resolution opacity march in the upsample (so the light
+follows Flow's own full-res detail). On snow's avalanche powder it barely
+changed the dark clumps, so it is not in. A path-traced still of the same
+frame (640x360, 4 spp, blurred to strip noise) is as dark and as mottled
+as the raster one (frame means 101 PT, 109 raster): the dark clumps are
+the gas's real density seen against brighter snow and sky, not a raster
+artifact. The brighter, smoother powder from before the parity change was
+over-lit by the un-normalised octaves. Image:
+/mnt/project-files/fork/physx/powder-pt-vs-raster.png (top raw, bottom
+blurred; left PT, right raster).
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

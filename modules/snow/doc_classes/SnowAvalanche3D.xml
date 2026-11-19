@@ -34,6 +34,12 @@
 				How many times a buried crust has collapsed under a load.
 			</description>
 		</method>
+		<method name="get_crown_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many crown walls stand (at most 8; new snow buries them).
+			</description>
+		</method>
 		<method name="get_deposited_volume" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -310,6 +316,9 @@
 		</member>
 		<member name="collapse_range" type="float" setter="set_collapse_range" getter="get_collapse_range" default="60.0">
 			How far, m, a collapse of a buried crust's weak layer (a whumpf) runs from the load. Steep slopes it reaches release, even when the load stands on the flat (a remote trigger).
+		</member>
+		<member name="crowns_enabled" type="bool" setter="set_crowns_enabled" getter="is_crowns_enabled" default="true">
+			Each release leaves its crown and flanks as a wall of snow along the fracture line (geometry: the cover's cells cannot hold a vertical step), an irregular, rounded line from the bed to the snow surface. New snow buries it.
 		</member>
 		<member name="entrainment" type="float" setter="set_entrainment" getter="get_entrainment" default="0.005">
 			The snow the flow takes from the new snow it runs over, m per m/s of speed per second, above 5 m/s.

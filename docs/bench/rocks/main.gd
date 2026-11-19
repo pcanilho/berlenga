@@ -56,6 +56,7 @@ extends Node3D
 #                         --detail-pixels=n (3);
 #                         --detail-sync places the detail cells on the main thread (ground_detail_threads off),
 #                         --cell-sync the coarse layers' cells (cell_threads off)
+#   --tracks              with --world: a walker and a two-wheeled cart cross the spot on bends before the still
 #   --roll[=m/s]          with --world: a ball rolled across the spot before the still (stones_react; --no-react off)
 #   --no-river-detail     with --world: RockField3D.ground_detail_rivers off (river beds keep only the river layer's stones)
 #   --gravel-reach[=d]    with --view=river: a gravel-bed reach whose median is nearest d m (0.03)
@@ -391,7 +392,7 @@ func _world() -> void:
 	add_child(land)
 	land.material = tm
 	land.source = land.get_path_to(gen)
-	land.collision_enabled = args.has("water") or args.has("roll") # the sea's seabed_from_floor measures the bed through it; --roll's stones land on it
+	land.collision_enabled = args.has("water") or args.has("roll") or args.has("tracks") # the sea's seabed_from_floor measures the bed through it; --roll's stones land on it
 	land.camera = land.get_path_to(cam)
 	land.rebuild()
 	land.load_all_heights()
@@ -2177,12 +2178,105 @@ func _roll() -> void:
 	get_viewport().disable_3d = false
 
 
+# A contact for --tracks: a Node3D in world_contact with one collision shape (a boot's box or a tyre's cylinder on
+# its side), moved by the bench; RockField3D reads its speed from its last position.
+func _contact_node(shape: Shape3D, rot := Basis()) -> Node3D:
+	var n := Node3D.new()
+	var cs := CollisionShape3D.new()
+	cs.shape = shape
+	cs.basis = rot
+	n.add_child(cs)
+	n.add_to_group("world_contact")
+	add_child(n)
+	return n
+
+
+# --tracks: a walker and a two-wheeled cart cross the spot on curving paths (6 and 8 m radius bends) before the still
+# (stones_react), then are taken away: the walker's separate prints and the cart's two ruts with what they pushed
+# aside. The walker steps 0.7 m, each boot coming down at 1.5 m/s and standing 0.3 s; the cart rolls at 2 m/s.
+func _tracks() -> void:
+	var side := cam.global_transform.basis.x
+	side.y = 0.0
+	side = side.normalized()
+	var fwd := Vector3.UP.cross(side).normalized() # away from the camera
+	var g := func(p: Vector3) -> float: return gen.get_height(p)
+	# Bends: a point at arc length t (m) on a circle of radius rad through start, heading along side, turning away.
+	var arc := func(start: Vector3, rad: float, t: float) -> Array: # (a bend away from the camera)
+		var a := t / rad
+		var p := start + side * (rad * sin(a)) + fwd * (rad * (1.0 - cos(a)))
+		var h := (side * cos(a) + fwd * sin(a)).normalized()
+		return [p, h]
+	var boot_l := _contact_node(_box(Vector3(0.1, 0.06, 0.27)))
+	var boot_r := _contact_node(_box(Vector3(0.1, 0.06, 0.27)))
+	var tyre := CylinderShape3D.new()
+	tyre.radius = 0.32
+	tyre.height = 0.2
+	var wheel_l := _contact_node(tyre, Basis(Vector3.FORWARD, PI / 2))
+	var wheel_r := _contact_node(tyre, Basis(Vector3.FORWARD, PI / 2))
+	var walk_start := spot_pos - side * 3.0 - fwd * 0.8
+	var cart_start := spot_pos - side * 3.5 + fwd * 0.6
+	get_viewport().disable_3d = true
+	var dt := 1.0 / 60.0
+	var t := 0.0
+	var most := 0
+	while t < 3.5:
+		# The walker: step k plants at arc length 0.7 k, left and right 0.12 m off the line; a boot is in the air
+		# (0.3 m up) between plants, comes down over 0.1 s and stands 0.3 s.
+		for which in 2:
+			var boot: Node3D = boot_l if which == 0 else boot_r
+			var phase := t / 0.45 - which # a step every 0.45 s, the feet alternating
+			var k := floori(phase / 2.0) * 2 + which
+			var in_step := fposmod(phase, 2.0)
+			var at: Array = arc.call(walk_start, 6.0, 0.7 * k)
+			var lat := Vector3.UP.cross(at[1]).normalized() * (0.12 if which == 0 else -0.12)
+			var p: Vector3 = at[0] + lat
+			var lift := 0.3
+			if in_step < 0.22:
+				lift = 0.3 * (1.0 - in_step / 0.22)
+			elif in_step < 0.9:
+				lift = 0.0
+			p.y = g.call(p) + 0.03 + lift
+			boot.global_position = p
+			boot.basis = Basis.looking_at(at[1], Vector3.UP)
+		# The cart: two wheels 1.4 m apart on an 8 m bend, at 2 m/s, pressing 2 cm in.
+		var ca: Array = arc.call(cart_start, 8.0, 2.0 * t)
+		var axle := Vector3.UP.cross(ca[1]).normalized()
+		for which in 2:
+			var wn: Node3D = wheel_l if which == 0 else wheel_r
+			var wp: Vector3 = ca[0] + axle * (0.7 if which == 0 else -0.7)
+			wp.y = g.call(wp) + 0.32 - 0.02
+			wn.global_position = wp
+			wn.basis = Basis.looking_at(ca[1], Vector3.UP)
+		await get_tree().physics_frame
+		most = maxi(most, rocks.get_loose_count())
+		if args.has("tracks-verbose") and int(t / dt) % 30 == 0:
+			print("tracks: t %.2f, left boot %s (%.2f over the ground), %s" % [t, boot_l.global_position, boot_l.global_position.y - g.call(boot_l.global_position), rocks.get_react_stats()])
+		t += dt
+	for n in [boot_l, boot_r, wheel_l, wheel_r]:
+		n.queue_free()
+	var settle := 0
+	while rocks.get_loose_count() > 0 and settle < 600:
+		await get_tree().physics_frame
+		settle += 1
+	print("tracks: stones %s, at most %d loose at once, all at rest %d frames later" % [rocks.get_react_stats(), most, settle])
+	await get_tree().process_frame
+	get_viewport().disable_3d = false
+
+
+func _box(size: Vector3) -> BoxShape3D:
+	var b := BoxShape3D.new()
+	b.size = size
+	return b
+
+
 func _render_later() -> void:
 	await get_tree().process_frame
 	if args.has("walk") and rocks:
 		await _walk()
 	if args.has("roll") and rocks:
 		await _roll()
+	if args.has("tracks") and rocks:
+		await _tracks()
 	while breaking:
 		await get_tree().process_frame
 	if args.has("hide-stream-water"):

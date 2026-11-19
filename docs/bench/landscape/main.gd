@@ -37,6 +37,8 @@ extends Node3D
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
 #   --hanging             with --layout=valley: the lake and big fall in a side valley hung above a glacial trough
 #                         (--bowl-inflow=km² feeds the bowl from beyond the map; --bowl-inflow-at=x,z)
+#   --surge-test          sea caves on this terrain in a storm swell: the sea surging in, air up any blowhole; tries
+#                         cave seeds 0-15 for one with a blowhole; prints, quits
 #   --source-lakes        rivers that start at a lake take their discharge from its outlet (PhysXRiver3D.source_lake)
 #   --guides              the bowl, ridges and bar as TerrainGuide3D nodes; --coast-guide, --beach-guide: see the code
 #   --ice-converged       with --glacial: solve the steady ice to convergence (glacial_converged)
@@ -56,6 +58,18 @@ extends Node3D
 #   --atmosphere=scattering|physical   sky air: Hillaire 2020 multiple scattering (default) or the older PhysicalSky model
 #   --clip=N              with --out, N frames in a row (out_0000.png...), for clips; run with --fixed-fps 24
 #   --checks              with --out, run the link checks before the picture (they change the scene)
+
+
+# A storm swell on the open sea for --surge-test (answers only over water, as the ocean does).
+class SurgeSwell extends WorldWater:
+	var sea := 0.0
+	var t := 0.0
+	var gen: Node
+	func _height_at(p: Vector3) -> float:
+		if gen.get_height(p) > sea:
+			return -INF
+		return sea + 2.0 * sin(TAU * t / 12.0)
+
 
 var no_till_tex: ImageTexture
 const STEP := 4.0 # metres between ground vertices
@@ -204,6 +218,58 @@ func _ready() -> void:
 			print("[landscape] cave entrance %s facing %s" % [e["position"], e["out"]])
 		for e in net.find_sea_entrances(gen.get_world_rect(), n):
 			print("[landscape] sea cave entrance %s facing %s" % [e["position"], e["out"]])
+		get_tree().quit(0)
+		return
+	if args.has("surge-test"):
+		# --surge-test: sea caves on this terrain in a storm swell (4 m, 12 s): the sea surging in, and the air up
+		# any blowhole (CaveNetwork3D.sea_surge), printed, then quit.
+		var net := CaveNetwork3D.new()
+		gen.add_child(net)
+		net.generator = net.get_path_to(gen)
+		var swell := SurgeSwell.new()
+		swell.sea = gen.get_sea_level()
+		swell.gen = gen
+		WorldContracts.add_water_stub(swell)
+		# Half of the sea caves end in a chamber, and a chamber under less than 25 m of rock gets a blowhole: try cave
+		# seeds until one has it.
+		var ents: Array = net.find_sea_entrances(gen.get_world_rect(), 8)
+		var tries: Array = []
+		for sd in 16:
+			net.clear_caves()
+			net.seed = sd
+			for e in ents:
+				var id0: int = net.add_sea_cave(e["position"], e["out"])
+				if id0 >= 0 and net.get_blowholes(id0).size() > 0:
+					tries.append([sd, e])
+			if tries.size() >= 2:
+				break
+		if tries.is_empty():
+			print("[landscape] no sea cave with a blowhole in seeds 0-15")
+			for e in ents:
+				tries.append([0, e])
+		for tr in tries:
+			net.clear_caves()
+			net.seed = int(tr[0])
+			var e: Dictionary = tr[1]
+			var id: int = net.add_sea_cave(e["position"], e["out"])
+			if id < 0:
+				continue
+			var top := 0.0
+			var sealed := false
+			var span := Vector2(INF, -INF)
+			for i in 1200:
+				swell.t = i * 0.05
+				net.step_sea_surge(0.05)
+				var sp: Dictionary = net.get_blowhole_spout(id)
+				top = maxf(top, float(sp.get("speed", 0.0)))
+				sealed = sealed or bool(sp.get("sealed", false))
+				var w: Dictionary = net.get_sea_cave_water(id)
+				var pts: PackedVector3Array = w.get("points", PackedVector3Array())
+				if i >= 600 and pts.size() > 0:
+					var back: Vector3 = pts[pts.size() - 1]
+					span = Vector2(minf(span.x, back.y), maxf(span.y, back.y))
+			print("[landscape] sea cave (seed %d) at %s: %d blowholes; back of the cave %.1f to %.1f m (sea %.1f); %s; air up the blowhole to %.1f m/s" % [net.seed, e["position"], net.get_blowholes(id).size(), span.x, span.y, swell.sea, "a crest seals the passage" if sealed else "never sealed", top])
+		WorldContracts.clear_overrides()
 		get_tree().quit(0)
 		return
 	if args.has("find-nebkhas"):

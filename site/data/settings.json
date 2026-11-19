@@ -1550,10 +1550,11 @@
     "ground_detail",
     "ground_detail_pixels",
     "ground_detail_cover",
-    "ground_detail_rivers"
+    "ground_detail_rivers",
+    "stones_react"
    ],
    "note": "",
-   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop.",
+   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1628,10 +1629,11 @@
     "scallops",
     "cave_streams",
     "add_sea_cave()",
+    "sea_surge",
     "terrain3d"
    ],
    "note": "",
-   "what": "cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening, also on Terrain3D; stalactites, stalagmites and columns grow where water drips through the roof, and flow scallops the walls; streams run over washed, wet gravel beds. Sea caves follow cracks into sea cliffs, their walls stepped by beds of uneven thickness, flooded at the mouth, some ending in a chamber with a blowhole to the cliff top.",
+   "what": "cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening, also on Terrain3D; stalactites, stalagmites and columns grow where water drips through the roof, and flow scallops the walls; streams run over washed, wet gravel beds. Sea caves follow cracks into sea cliffs, their walls stepped by beds of uneven thickness, flooded at the mouth by the sea, which surges in with each swell so bodies wade and swim and the walls get wet, some ending in a chamber with a blowhole to the cliff top.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
