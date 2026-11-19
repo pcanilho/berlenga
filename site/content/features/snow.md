@@ -47,6 +47,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
 - **Lake ice** (`SnowCover3D.lake_ice_enabled`): lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm.
 
+- **Snow on bodies** (`SnowBodies3D`: `weight_enabled`, `slide_enabled`, `clumps_enabled`): snow lying on a body weighs on it, slides off tilted tops as slabs and drops off in clumps.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced; `get_snow_shader_code()` for ShaderMaterials.
 
   ![Thin snow over the ground and props, raster and path traced](media/snow-props.jpg)
@@ -98,6 +99,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 - **Snowstorms** (`SnowFall3D.haze_enabled`, `turbulence`): falling and blowing snow haze the air through the weather map (Pomeroy-Male suspension, 118 m visibility at 20 m/s); flakes ride turbulent eddies.
 
 ## Cornices and ice
+
+- **Avalanches** (`SnowCover3D.avalanches_enabled`, `SnowAvalanche3D.trigger()`): slabs release where the snowpack's stability index fails and run out as a Voellmy flow that picks up snow on the way and piles debris where it stops.
 
 - **Cornices** (`SnowCornice3D`): overhangs on lee crests, with collision; milder ranges grow them too (crest wind speed-up).
 

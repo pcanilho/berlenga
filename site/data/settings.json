@@ -3288,6 +3288,20 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Snow on bodies",
+   "settings": [
+    "SnowBodies3D",
+    "weight_enabled",
+    "slide_enabled",
+    "clumps_enabled"
+   ],
+   "note": "",
+   "what": "snow lying on a body weighs on it, slides off tilted tops as slabs and drops off in clumps.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Snow on materials",
    "settings": [
     "snow_enabled"
@@ -3367,6 +3381,18 @@
    "page": "snow",
    "title": "Snow",
    "topic": "Falling snow"
+  },
+  {
+   "name": "Avalanches",
+   "settings": [
+    "SnowCover3D.avalanches_enabled",
+    "SnowAvalanche3D.trigger()"
+   ],
+   "note": "",
+   "what": "slabs release where the snowpack's stability index fails and run out as a Voellmy flow that picks up snow on the way and piles debris where it stops.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Cornices and ice"
   },
   {
    "name": "Cornices",
