@@ -100,6 +100,12 @@ class LeafSnowStub extends WorldSnow:
 		return depth if p.x > -30.0 and p.x < -10.0 else 0.0
 
 
+# Ground burnt a year ago over x < -10 (no fire burning now).
+class BurntStub extends WorldFire:
+	func _burn_age_at(p: Vector3) -> float:
+		return 1.0 if p.x < -10.0 else -1.0
+
+
 # A fire stub: 50 kW/m2 burning over x > 0.
 class FireStub extends WorldFire:
 	func _heat_at(p: Vector3) -> float:
@@ -158,6 +164,7 @@ func _ready() -> void:
 	_fire_tests()
 	await _contact_tests()
 	await _snow_fire_tests()
+	await _dirty_snow_tests()
 	await _leaf_kick_tests()
 	await _leaf_surface_tests()
 	await _washout_tests()
@@ -606,6 +613,80 @@ func _snow_fire_tests() -> void:
 	_check("snow: a fire melts the pack under it, not beside it, at -4 C", before > 0.05 and burning < 0.6 * beside and beside > 0.9 * before, "%.3f m before, %.3f m under the fire, %.3f m beside it" % [before, burning, beside])
 	WorldContracts.clear_overrides()
 	snow.queue_free()
+	ground_node.queue_free()
+	m.queue_free()
+	await get_tree().physics_frame
+
+
+# Dirty snow: particles on the snow lower its albedo and speed the melt in sun; fresh snow buries them and the melt
+# brings them back; burnt forest sheds its char onto the snow under it.
+func _dirty_snow_tests() -> void:
+	if not ClassDB.class_exists("SnowCover3D"):
+		_skip("snow: dirty snow", "no SnowCover3D")
+		return
+	WorldContracts.clear_overrides()
+	var ground_node := Node3D.new()
+	ground_node.set_script(load("res://flat_ground.gd"))
+	ground_node.name = "DirtyGround"
+	add_child(ground_node)
+	var m := _new_map()
+	m.temperature = -4.0
+	m.humidity = 0.9
+	m.rain_rate = 3.0
+	m.cloud_cover = 1.0
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(1.0)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-50, 0, 0)
+	add_child(sun)
+	var snow: Node3D = ClassDB.instantiate("SnowCover3D")
+	snow.extent = 64.0
+	snow.resolution = 64
+	snow.update_rate = 0.0001
+	add_child(snow)
+	snow.height_source = snow.get_path_to(ground_node)
+	snow.follow_target = snow.get_path_to(ground_node)
+	snow.sun_light = snow.get_path_to(sun)
+	snow.refresh_heights()
+	snow.advance(10.0 * 3600.0)
+	var dirty := Vector3(10, 0, 0)
+	var clean := Vector3(-5, 0, 0)
+	snow.add_impurity(dirty, 5.0, 30.0)
+	snow.advance(60.0)
+	var a_dirty: float = snow.get_albedo_at(dirty)
+	var a_clean: float = snow.get_albedo_at(clean)
+	var shown: float = snow.get_impurity_at(dirty)
+	# Fresh snow over it.
+	snow.advance(3.0 * 3600.0)
+	var buried: float = snow.get_impurity_at(dirty)
+	_check("snow: dust darkens the snow it lands on; fresh snow buries it", absf(shown - 30.0) < 3.0 and a_clean - a_dirty > 0.2 and buried < 0.2 * shown and snow.get_impurity_at(clean) == 0.0, "albedo %.2f clean, %.2f dusty (%.0f mg/m2); %.1f mg/m2 showing after 3 h of snowfall" % [a_clean, a_dirty, shown, buried])
+	# A sunny thaw: the dust melts out and the dusty snow goes faster.
+	m.rain_rate = 0.0
+	m.cloud_cover = 0.0
+	m.temperature = 2.0
+	m.snap_to_settings()
+	m.advance(1.0)
+	var d0: float = snow.get_depth_at(dirty)
+	var c0: float = snow.get_depth_at(clean)
+	snow.advance(8.0 * 3600.0)
+	var dirty_melt: float = d0 - snow.get_depth_at(dirty)
+	var clean_melt: float = c0 - snow.get_depth_at(clean)
+	var out: float = snow.get_impurity_at(dirty)
+	_check("snow: the thaw brings the dust back up and the dusty snow melts faster", out > 15.0 and dirty_melt > 1.15 * clean_melt and clean_melt > 0.0, "%.1f mg/m2 showing again; melt %.3f m dusty, %.3f m clean over 8 h" % [out, dirty_melt, clean_melt])
+	# Burnt forest a year ago: its char falls on the snow over ten cold, dry days.
+	m.temperature = -10.0
+	m.snap_to_settings()
+	m.advance(1.0)
+	WorldContracts.set_fire(BurntStub.new())
+	snow.advance(10.0 * 86400.0)
+	var burnt: float = snow.get_impurity_at(Vector3(-20, 0, 0))
+	var unburnt: float = snow.get_impurity_at(clean)
+	_check("snow: burnt forest sheds char onto the snow under it", burnt > 1.0 and unburnt < 0.05, "%.2f mg/m2 under the burn after 10 days, %.2f beside it" % [burnt, unburnt])
+	WorldContracts.clear_overrides()
+	snow.queue_free()
+	sun.queue_free()
 	ground_node.queue_free()
 	m.queue_free()
 	await get_tree().physics_frame

@@ -785,6 +785,7 @@ public:
 	float contract_frost_at(const Vector3 &p_position) const override { return get_frost_at(p_position); }
 	float contract_rainfall_at(const Vector3 &p_position) const override { return get_rainfall_at(p_position); }
 	float contract_snowfall_at(const Vector3 &p_position) const override { return get_snowfall_at(p_position); }
+	float contract_smoke_at(const Vector3 &p_position) const override { return get_smoke_at(p_position); }
 	float contract_canopy_water_at(const Vector3 &p_position) const override { return get_canopy_water_at(p_position); }
 	float contract_canopy_wetness_at(const Vector3 &p_position) const override { return get_canopy_wetness_at(p_position); }
 	float contract_canopy_drip_at(const Vector3 &p_position) const override { return get_canopy_drip_at(p_position); }

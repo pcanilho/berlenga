@@ -67,6 +67,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Canopy → interception | linked | shelter | |
 | Snow → plants (burial, pressing) | linked (18 Nov) | snow cover (snow map) | grass and plant shaders: load ρ g d against stem stiffness lays plants down, deep snow hides them |
 | Fire → snow melt | linked (18 Nov) | WorldFire `heat_at` | SnowCover3D melts H dt / L_f under the fire, whatever the air |
+| Smoke, burnt forest, dust → dirty snow | linked (19 Nov) | WorldWeather `smoke_at` (haze), WorldFire `burn_age_at`, WorldSnow `add_impurity` (GroundDust3D settling) | SnowCover3D keeps light-absorbing particles as mg/m2 black carbon equivalent: albedo drop 0.35 (1 - e^(-L/15)), fresh snow buries them, the melt brings them back up; shows grey and melts sooner (Warren and Wiscombe 1980; Painter et al. 2007; Gleason et al. 2013). Rock dust and blowing ash can add theirs through `add_impurity` |
 | Vehicles → snow ruts | linked (18 Nov) | world_contact | snow checks the wheel stamp |
 | Bodies → snow prints | linked | `snow_deform`, `grass_trample` groups | |
 
@@ -91,6 +92,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Lying snow → plants | linked (18 Nov) | snow cover (snow map) | as above (GrassField3D, PlantGenerator) |
 | Flowing water → reeds, grass | linked (18 Nov) | WorldWater flow and surface | the trample fields take the current's drag (Cauchy number, Luhar and Nepf 2011): grass and plants lean downstream, flat in a fast current |
 | Springs → oasis plants and grass | linked (19 Nov) | DesertSprings (vegetation, from TerrainGenerator3D sand seas): `VegetationField3D.get_springs()`, `get_spring_wetness_at(pos)` (positions m, wetness 0-1, -1 off the sand seas) | readers VegetationField3D RULE_SPRING and GrassField3D; Valence adds the pools next; the spring finder should move to the terrain generator later. Anything cycling species meshes by index skips meshes with `tree_fire_years` meta |
+| Nebkhas → shrubs | linked (19 Nov) | TerrainGenerator3D `get_nebkhas(rect)` (x, top y, z, height m), `get_nebkha_height(pos)` (mound sand alone); `sand_sea_mask` (Image, red 0..1) shapes the ergs | VegetationField3D places a shrub on each mound top; the mounds are sand for the sand thread, no deformation hook needed (terrain-gen cf579682) |
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
 | Wet ground → mist | linked (18 Nov) | surface wetness, surface cooling | VegetationMist3D: wet ground mists more and sooner |
 
@@ -214,7 +216,7 @@ Two gaps found while building round 3; both read contracts that exist.
    Breivik et al. 2011), turns in eddies, and waterlogs and sinks over days (leaf breakdown, Webster and Benfield
    1986), sooner in a fast current. A leaf landing on `WorldSnow` depth lies on top and is buried as new snow
    falls; a dark leaf in sun sinks into the pack a little (it absorbs about 3x the sun the snow does).
-2. Soot, ash and dust darken snow and speed its melt. SnowCover3D ages albedo (Verseghy 1991) but knows no
+2. Soot, ash and dust darken snow and speed its melt (built 19 Nov). SnowCover3D ages albedo (Verseghy 1991) but knows no
    impurities. Light-absorbing particles lower snow albedo: black carbon about 0.01-0.02 in the visible for 100 ppb
    (Warren and Wiscombe 1980; Hadley and Kirchstetter 2012); mineral dust 0.1-0.3, bringing melt a month earlier
    (Painter et al. 2007); burnt forests shed charred bark on the snow, cutting albedo by about 0.4 and melting the

@@ -248,6 +248,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 		Vector<float> crust, crust_cycles, crust_burial, crust_wet;
 		Vector<float> cornice_x, cornice_z, cornice_crack;
 		Vector<float> ice, white_ice;
+		Vector<float> lap; // mg/m2 BC equivalent showing at the surface
 	} pub;
 	bool background_updates = true;
 	WorkerThreadPool::TaskID cover_task = WorkerThreadPool::INVALID_TASK_ID;
@@ -256,6 +257,19 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	// The terrain climate's precipitation per cell (mm a year), read on the main thread.
 	Vector<float> cell_climate_precip;
 	Vector<float> cell_fire; // W/m2 from WorldFire, read on the main thread each update (empty with no fire)
+	// Light-absorbing particles (docs/ideas/world-links.md, dirty snow), mg/m2 of black carbon equivalent: on the
+	// surface, under the snow fallen since (deep) with that snow's depth (m) over it, and the deposition from the
+	// smoke haze and burnt forest (mg/m2 per hour, read on the main thread every few seconds).
+	bool impurities = true;
+	Vector<float> cell_lap, cell_lap_deep, cell_lap_cover, cell_lap_in;
+	uint64_t lap_refresh_usec = 0;
+	struct ImpurityDrop {
+		Vector2 center;
+		float radius = 0.0f;
+		float mg = 0.0f;
+	};
+	LocalVector<ImpurityDrop> impurity_drops;
+	void _refresh_lap();
 	// Water (docs/ideas/snow.md, follow-up 15): the water surface over the cell from the terrain data map
 	// (-INF: dry land), read on the main thread, and the lake ice on it (m).
 	Vector<float> cell_water;
@@ -438,6 +452,16 @@ public:
 	float contract_snow_surface_at(const Vector3 &p_position) const override;
 	float contract_snow_crust_at(const Vector3 &p_position) const override { return get_crust_strength_at(p_position); }
 	Vector2 contract_snow_lake_ice_at(const Vector3 &p_position) const override;
+	void contract_snow_add_impurity(const Vector3 &p_position, float p_radius, float p_mg_per_m2) override { add_impurity(p_position, p_radius, p_mg_per_m2); }
+	float contract_snow_impurity_at(const Vector3 &p_position) const override { return get_impurity_at(p_position); }
+	void add_impurity(Vector3 p_position, float p_radius, float p_mg_per_m2);
+	float get_impurity_at(Vector3 p_position) const;
+	// The albedo the particles take off clean snow: 0.35 (1 - e^(-L / 15 mg/m2)), about 0.02 for the first mg/m2 (Warren
+	// and Wiscombe 1980) and near 0.35 for a burnt forest's debris or a dust storm's layer (Painter et al. 2007;
+	// Gleason et al. 2013).
+	static float impurity_albedo_drop(float p_mg_per_m2);
+	void set_impurities_enabled(bool p_enabled) { impurities = p_enabled; }
+	bool is_impurities_enabled() const { return impurities; }
 	void set_lake_ice_enabled(bool p_enabled);
 	bool is_lake_ice_enabled() const { return lake_ice_enabled; }
 	// Lake ice after p_hours at p_air_celsius from p_ice m with p_snow_depth m of snow of p_snow_density
