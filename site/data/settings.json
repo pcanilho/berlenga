@@ -1550,10 +1550,11 @@
     "ground_detail",
     "ground_detail_pixels",
     "ground_detail_cover",
-    "ground_detail_rivers"
+    "ground_detail_rivers",
+    "stones_react"
    ],
    "note": "",
-   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop.",
+   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1628,10 +1629,11 @@
     "scallops",
     "cave_streams",
     "add_sea_cave()",
+    "sea_surge",
     "terrain3d"
    ],
    "note": "",
-   "what": "cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening, also on Terrain3D; stalactites, stalagmites and columns grow where water drips through the roof, and flow scallops the walls; streams run over washed, wet gravel beds. Sea caves follow cracks into sea cliffs, their walls stepped by beds of uneven thickness, flooded at the mouth, some ending in a chamber with a blowhole to the cliff top.",
+   "what": "cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening, also on Terrain3D; stalactites, stalagmites and columns grow where water drips through the roof, and flow scallops the walls; streams run over washed, wet gravel beds. Sea caves follow cracks into sea cliffs, their walls stepped by beds of uneven thickness, flooded at the mouth by the sea, which surges in with each swell so bodies wade and swim and the walls get wet, some ending in a chamber with a blowhole to the cliff top.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1845,6 +1847,17 @@
    ],
    "note": "",
    "what": "on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Oasis springs",
+   "settings": [
+    "OasisSprings3D"
+   ],
+   "note": "",
+   "what": "still spring pools in the desert, each sized by its spring's water balance and with its own outline, with sand boils heaving at the vents.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -3430,10 +3443,11 @@
     "forests_enabled",
     "wet_enabled",
     "glide_enabled",
-    "water_enabled"
+    "water_enabled",
+    "crowns_enabled"
    ],
    "note": "",
-   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees. In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice and breaks through thin ice.",
+   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts, leaving a crown wall, flanks that fade downslope and a grey scoured bed; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice and breaks through thin ice.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
@@ -3706,6 +3720,39 @@
    ],
    "note": "",
    "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Fog drip",
+   "settings": [
+    "WeatherMap3D.fog_drip"
+   ],
+   "note": "",
+   "what": "cloud lying on wooded ground drips from the trees and wets the ground beneath them.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Sea spray",
+   "settings": [
+    "WeatherMap3D.sea_spray"
+   ],
+   "note": "",
+   "what": "breaking waves wet the shore and cliff faces downwind and leave salt that rain washes off; salted grass browns at the tips.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Wet tracks",
+   "settings": [
+    "WeatherMap3D.wet_tracks"
+   ],
+   "note": "",
+   "what": "bodies and vehicles coming out of water, wet mud or puddles leave wet footprints and tyre tracks that fade along the way, drip where they stand, and dry with the weather.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

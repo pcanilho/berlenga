@@ -42,6 +42,10 @@ contract returns with no provider.
 | `obstacle_height_at(pos)` | m | 0 | Wind-blocking obstacles (rocks, walls, buildings, vehicles) over the ground, on the provider's shelter grid |
 | `obstacle_lee_at(pos)` | 0..1 | 1 | Near-ground wind behind upwind obstacles over the open wind: 0.15 in the cavity, back to 1 by 25 H |
 | `washout_at(pos, coarse)`, static `washout_rate(rain, snow, coarse)` | 1/s | 0 | Below-cloud scavenging of particles, a R^b: fine smoke about 1e-5 at 1 mm/h, coarse dust about 3e-4, snow five times rain |
+| `fog_water_at(pos)` | g/m3 | 0 | Cloud liquid water at pos (cloud on the ground: hill fog) |
+| `fog_drip_at(pos)` | mm/h | 0 | Fog water combed out by the canopy and dripping to the ground (part of the ground water input) |
+| `sea_spray_at(pos)` | mm/h of sea water | 0 | Spray from breaking waves settling, within tens of metres of the surf downwind (part of the surface wetness and the ground water input) |
+| `salt_at(pos)` | g/m2 | 0 | Sea salt on surfaces: spray and fine aerosol, washed off by rain |
 | `surface_wetness_at(pos)` | 0..1 | 0 | Film over storage; 1 where puddles stand |
 | `puddle_at(pos)` | mm | 0 | |
 | `contact_wetness_at(pos)` / `add_contact_wetness(pos, radius, amount)` | 0..1 | 0 / no-op | Water any system splashes |
@@ -131,7 +135,7 @@ terramechanics and pressing calls, which stay on the producer for now).
 Consumers: ground, plants (burial), trees (load), vehicles (grip, ruts), cloth and hair, weather (runoff into the
 surface water).
 
-### Water (`WorldWater`; producers `PhysXWaterSurface3D` (sea, lakes, pools), `PhysXRiver3D`, `PhysXLiveWater3D`, `TerrainDataMap3D` (baked lakes and streams), `GroundSurface3D` (standing water), `PhysXWaterfalls3D` (inside the falling sheets and columns, above where they land: thin, fast water))
+### Water (`WorldWater`; producers `PhysXWaterSurface3D` (sea, lakes, pools), `PhysXRiver3D`, `PhysXLiveWater3D`, `TerrainDataMap3D` (baked lakes and streams), `GroundSurface3D` (standing water), `PhysXWaterfalls3D` (inside the falling sheets and columns, above where they land: thin, fast water), `CaveNetwork3D` (the sea surging into sea caves))
 
 Every producer is live at once and answers only where it really has water: the sea where its depth over the seabed
 is above 0, a river inside its ribbon, live water and pools in cells with depth, the terrain map where its baked
@@ -147,6 +151,7 @@ below the sea's level reads its own water, and a body above the water reads the 
 | `wake_depth_at(pos)` | m | 0 | |
 | `disturb(owner, pos, radius, strength)`, `clear(owner)`, `impulse(pos, radius, strength)` | | no-op | Sent to every producer; each acts only where it has water |
 | `sediment_at(pos)` | kg/m3 (x mineral, y ash and char) | (0, 0) | Suspended load of the water that answers; river and lake shading cloud and darken by it |
+| `breaking_at(pos)` | m | 0 | Height of the waves breaking: the broken waves in a surf zone (about 0.78 of the depth), whitecap cover times wave height on open water; the largest any producer reports |
 | `add_sediment(pos, mineral_kg_s, ash_kg_s)` | kg/s | dropped with no water | A load entering the water that answers there (runoff off burnt or bare ground, banks, slides); it carries it downstream |
 
 Tests: `WorldContracts.set_water(stub)` replaces the whole contract; `WorldContracts.add_water_stub(stub)` adds a

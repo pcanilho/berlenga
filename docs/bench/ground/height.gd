@@ -5,10 +5,17 @@ var kind := "flat"
 var noise := FastNoiseLite.new()
 
 
+var swash_relief := FastNoiseLite.new()
+
+
 func _init() -> void:
 	noise.seed = 11
 	noise.frequency = 0.02
 	noise.fractal_octaves = 3
+	swash_relief.seed = 23
+	swash_relief.noise_type = FastNoiseLite.TYPE_PERLIN
+	swash_relief.frequency = 0.4
+	swash_relief.fractal_octaves = 3
 
 
 func get_height(p: Vector3) -> float:
@@ -31,7 +38,11 @@ func get_height(p: Vector3) -> float:
 			# leaving the face slow on the terrace and lay their sand down as fans (Otvos 1999).
 			var t := (p.z - 2.0) / 0.4
 			var soft := 0.4 * (log(1.0 + exp(t)) if t < 30.0 else t) # softplus: max(z - 2, 0), eased
-			return 2.0 / 12.0 + (p.z - 2.0 - soft) / 50.0 + soft / 12.0 + 0.03 * noise.get_noise_2d(p.x * 2.0, p.z * 2.0)
+			# A real face is not a plane: the swash leaves horns and bays a few metres across and several centimetres
+			# deep (beach cusps, Komar 1998; Coco et al. 1999), and the bays gather the seepage into a few trunk rills,
+			# which the small heads join (a plane gave an even comb of parallel rills; 1 cm of relief barely bent it).
+			var relief := 0.05 * swash_relief.get_noise_2d(p.x, p.z * 1.6)
+			return 2.0 / 12.0 + (p.z - 2.0 - soft) / 50.0 + soft / 12.0 + 0.03 * noise.get_noise_2d(p.x * 2.0, p.z * 2.0) + relief
 		"hollows":
 			# Flat ground with three shallow dips 4 to 5 m across, 20 to 30 cm deep (where puddles gather).
 			var h := 0.0

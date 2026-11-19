@@ -29,7 +29,7 @@
 		</method>
 	</methods>
 	<members>
-		<member name="color" type="Color" setter="set_color" getter="get_color" default="Color(0.93, 0.95, 0.98, 1)">
+		<member name="color" type="Color" setter="set_color" getter="get_color" default="Color(0.98, 0.99, 1, 1)">
 			The cloud's colour.
 		</member>
 		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">

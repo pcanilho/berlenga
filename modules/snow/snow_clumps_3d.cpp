@@ -406,8 +406,10 @@ int SnowClumps3D::drop(const Vector3 &p_at, float p_radius, float p_volume, floa
 	const float median = (0.04f + 0.04f * CLAMP(p_wetness, 0.0f, 1.0f)) * scale;
 	float owed = p_volume;
 	int made = 0;
+	// Debris (scaled up) spreads its sizes wider: rubble from fist-sized lumps to blocks.
+	const float spread = scale > 1.0f ? 0.75f : 0.5f;
 	for (int k = 0; k < 64; k++) {
-		const float size = CLAMP(median * Math::exp(0.5f * rng.randfn(0.0f, 1.0f)), MIN_SIZE, MAX_SIZE * scale);
+		const float size = CLAMP(median * Math::exp(spread * rng.randfn(0.0f, 1.0f)), MIN_SIZE, MAX_SIZE * scale);
 		const float vol = CLUMP_FILL * size * size * size;
 		if (owed < vol) {
 			break;

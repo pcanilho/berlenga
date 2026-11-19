@@ -74,6 +74,10 @@ float WorldWeather::snowfall_at(const Vector3 &p_position) const WW_CALL(_snowfa
 float WorldWeather::smoke_at(const Vector3 &p_position) const WW_CALL(_smoke_at, contract_smoke_at(p_position), 0.0f, p_position)
 float WorldWeather::obstacle_height_at(const Vector3 &p_position) const WW_CALL(_obstacle_height_at, contract_obstacle_height_at(p_position), 0.0f, p_position)
 float WorldWeather::obstacle_lee_at(const Vector3 &p_position) const WW_CALL(_obstacle_lee_at, contract_obstacle_lee_at(p_position), 1.0f, p_position)
+float WorldWeather::fog_water_at(const Vector3 &p_position) const WW_CALL(_fog_water_at, contract_fog_water_at(p_position), 0.0f, p_position)
+float WorldWeather::fog_drip_at(const Vector3 &p_position) const WW_CALL(_fog_drip_at, contract_fog_drip_at(p_position), 0.0f, p_position)
+float WorldWeather::sea_spray_at(const Vector3 &p_position) const WW_CALL(_sea_spray_at, contract_sea_spray_at(p_position), 0.0f, p_position)
+float WorldWeather::salt_at(const Vector3 &p_position) const WW_CALL(_salt_at, contract_salt_at(p_position), 0.0f, p_position)
 float WorldWeather::canopy_water_at(const Vector3 &p_position) const WW_CALL(_canopy_water_at, contract_canopy_water_at(p_position), 0.0f, p_position)
 float WorldWeather::canopy_wetness_at(const Vector3 &p_position) const WW_CALL(_canopy_wetness_at, contract_canopy_wetness_at(p_position), 0.0f, p_position)
 float WorldWeather::canopy_drip_at(const Vector3 &p_position) const WW_CALL(_canopy_drip_at, contract_canopy_drip_at(p_position), 0.0f, p_position)
@@ -186,6 +190,10 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("smoke_at", "position"), &WorldWeather::smoke_at);
 	ClassDB::bind_method(D_METHOD("obstacle_height_at", "position"), &WorldWeather::obstacle_height_at);
 	ClassDB::bind_method(D_METHOD("obstacle_lee_at", "position"), &WorldWeather::obstacle_lee_at);
+	ClassDB::bind_method(D_METHOD("fog_water_at", "position"), &WorldWeather::fog_water_at);
+	ClassDB::bind_method(D_METHOD("fog_drip_at", "position"), &WorldWeather::fog_drip_at);
+	ClassDB::bind_method(D_METHOD("sea_spray_at", "position"), &WorldWeather::sea_spray_at);
+	ClassDB::bind_method(D_METHOD("salt_at", "position"), &WorldWeather::salt_at);
 	ClassDB::bind_method(D_METHOD("canopy_water_at", "position"), &WorldWeather::canopy_water_at);
 	ClassDB::bind_method(D_METHOD("canopy_wetness_at", "position"), &WorldWeather::canopy_wetness_at);
 	ClassDB::bind_method(D_METHOD("canopy_drip_at", "position"), &WorldWeather::canopy_drip_at);
@@ -218,6 +226,10 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_smoke_at, "position");
 	GDVIRTUAL_BIND(_obstacle_height_at, "position");
 	GDVIRTUAL_BIND(_obstacle_lee_at, "position");
+	GDVIRTUAL_BIND(_fog_water_at, "position");
+	GDVIRTUAL_BIND(_fog_drip_at, "position");
+	GDVIRTUAL_BIND(_sea_spray_at, "position");
+	GDVIRTUAL_BIND(_salt_at, "position");
 	GDVIRTUAL_BIND(_canopy_water_at, "position");
 	GDVIRTUAL_BIND(_canopy_wetness_at, "position");
 	GDVIRTUAL_BIND(_canopy_drip_at, "position");
@@ -379,6 +391,17 @@ Vector2 WorldWater::sediment_at(const Vector3 &p_position) const {
 	return top ? top->contract_water_sediment_at(p_position) : Vector2();
 }
 
+float WorldWater::breaking_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_breaking_at, p_position, r)) {
+		return MAX(r, 0.0f);
+	}
+	for (const WorldWaterProvider *w : providers) {
+		r = MAX(r, w->contract_water_breaking_at(p_position));
+	}
+	return r;
+}
+
 void WorldWater::add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) {
 	if (GDVIRTUAL_CALL(_add_sediment, p_position, p_mineral_kg_s, p_ash_kg_s)) {
 		return;
@@ -409,6 +432,7 @@ void WorldWater::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear", "owner"), &WorldWater::clear);
 	ClassDB::bind_method(D_METHOD("impulse", "position", "radius", "strength"), &WorldWater::impulse);
 	ClassDB::bind_method(D_METHOD("sediment_at", "position"), &WorldWater::sediment_at);
+	ClassDB::bind_method(D_METHOD("breaking_at", "position"), &WorldWater::breaking_at);
 	ClassDB::bind_method(D_METHOD("add_sediment", "position", "mineral_kg_s", "ash_kg_s"), &WorldWater::add_sediment);
 	ClassDB::bind_method(D_METHOD("add_sediment_mass", "position", "mineral_kg", "ash_kg"), &WorldWater::add_sediment_mass);
 
@@ -419,6 +443,7 @@ void WorldWater::_bind_methods() {
 	GDVIRTUAL_BIND(_clear, "owner");
 	GDVIRTUAL_BIND(_impulse, "position", "radius", "strength");
 	GDVIRTUAL_BIND(_sediment_at, "position");
+	GDVIRTUAL_BIND(_breaking_at, "position");
 	GDVIRTUAL_BIND(_add_sediment, "position", "mineral_kg_s", "ash_kg_s");
 	GDVIRTUAL_BIND(_add_sediment_mass, "position", "mineral_kg", "ash_kg");
 }
@@ -711,6 +736,7 @@ public:
 	void contract_water_clear(uint64_t p_owner) override { stub->clear(p_owner); }
 	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override { stub->impulse(p_position, p_radius, p_strength); }
 	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return stub->sediment_at(p_position); }
+	float contract_water_breaking_at(const Vector3 &p_position) const override { return stub->breaking_at(p_position); }
 	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override { stub->add_sediment(p_position, p_mineral_kg_s, p_ash_kg_s); }
 	void contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) override { stub->add_sediment_mass(p_position, p_mineral_kg, p_ash_kg); }
 };

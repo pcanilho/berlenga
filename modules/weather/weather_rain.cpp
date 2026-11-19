@@ -66,6 +66,10 @@ void WeatherMap3D::_rain_allocate() {
 	cell_canopy.fill(0.0f);
 	cell_drip.resize(n * n);
 	cell_drip.fill(0.0f);
+	cell_fog.resize(n * n);
+	cell_fog.fill(0.0f);
+	cell_fog_drip.resize(n * n);
+	cell_fog_drip.fill(0.0f);
 	rain_image = Image::create_empty(n, n, false, Image::FORMAT_RGBAH);
 	rain_texture.unref();
 	rain_global_added = false;
@@ -95,17 +99,40 @@ void WeatherMap3D::_rain_shift(Vector2i p_delta) {
 
 void WeatherMap3D::_rain_update(double p_weather_dt) {
 	const int n = resolution;
-	if (cell_canopy.size() != n * n || cell_rain.size() != n * n) {
+	if (cell_canopy.size() != n * n || cell_rain.size() != n * n || cell_fog.size() != n * n) {
 		_rain_allocate();
 	}
 	float *c = cell_canopy.ptrw();
 	float *d = cell_drip.ptrw();
+	float *fg = cell_fog.ptrw();
+	float *fd = cell_fog_drip.ptrw();
 	if (!canopy_water_enabled) {
 		for (int i = 0; i < n * n; i++) {
 			c[i] = 0.0f;
 			d[i] = 0.0f;
+			fg[i] = 0.0f;
+			fd[i] = 0.0f;
 		}
 		return;
+	}
+	// The cloud water at each cell's canopy: the sky's own clouds where the ground stands in them (a ridge in a deck,
+	// hill fog). LWC = 2 rho_w r_e beta / 3 with r_e 10 um (Stephens 1978): 6.7 g/m3 per 1/m of extinction.
+	if (fog_drip && origin_valid) {
+		const WeatherClouds::State st = _cloud_state();
+		const float cs = _cell_size();
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				Vector3 p((origin_cell.x + x + 0.5f) * cs, 0.0f, (origin_cell.y + z + 0.5f) * cs);
+				const float g = get_terrain_ground_at(p);
+				const float hc = get_canopy_height_at(p);
+				p.y = (Math::is_finite(g) ? g : ground_height) + MAX(0.7f * hc, 1.0f);
+				fg[z * n + x] = MIN(6.7f * WeatherClouds::extinction_at(st, p), 1.0f);
+			}
+		}
+	} else {
+		for (int i = 0; i < n * n; i++) {
+			fg[i] = 0.0f;
+		}
 	}
 	// Rutter's running water balance of the canopy, per cell:
 	//   dC/dt = (1 - p) R - D(C) - E C / S (C below S; E at C >= S),
@@ -121,17 +148,26 @@ void WeatherMap3D::_rain_update(double p_weather_dt) {
 	const float dt_h = float(MAX(p_weather_dt, 0.0)) / 3600.0f;
 	const int steps = dt_h > 0.0f ? CLAMP(int(Math::ceil(dt_h * 60.0f)), 1, 240) : 0;
 	const float h = steps > 0 ? dt_h / steps : 0.0f;
+	const float cs = _cell_size();
 	for (int i = 0; i < n * n; i++) {
 		const float rain = MAX(cell_rain[i], 0.0f) * share;
 		const Vector2 w(cell_wind.size() == n * n * 2 ? cell_wind[i * 2] : 0.0f, cell_wind.size() == n * n * 2 ? cell_wind[i * 2 + 1] : 0.0f);
+		// Fog deposition, Lovett (1984): LWC x u x a capture efficiency, here 0.003 for short plants up to 0.018 under
+		// a closed forest canopy (deposition velocities of about 1.5 to 9 cm/s in a 5 m/s wind; Gallagher et al. 1988,
+		// Katata et al. 2008). 3.6 mm/h per g/m3 m/s. In the cloud the air is saturated: the canopy does not dry.
+		float fog = 0.0f;
+		if (fg[i] > 0.0f) {
+			const Vector3 at((origin_cell.x + float(i % n) + 0.5f) * cs, 0.0f, (origin_cell.y + float(i / n) + 0.5f) * cs);
+			fog = 3.6f * fg[i] * w.length() * (0.003f + 0.015f * get_canopy_closure_at(at));
+		}
 		// Penman's wind function, mm/h (WeatherMap3D's film uses the same, open water).
-		const float e = CANOPY_EVAPORATION_FACTOR * 0.26f * (1.0f + 0.54f * w.length() * to_2m) * deficit / 24.0f;
+		const float e = fg[i] > 0.01f ? 0.0f : CANOPY_EVAPORATION_FACTOR * 0.26f * (1.0f + 0.54f * w.length() * to_2m) * deficit / 24.0f;
 		float held = c[i];
 		float drain = canopy_drainage(held, s);
 		for (int k = 0; k < steps; k++) {
 			drain = canopy_drainage(held, s);
 			const float evap = e * MIN(held / s, 1.0f);
-			held = MAX(held + ((1.0f - p) * rain - drain - evap) * h, 0.0f);
+			held = MAX(held + ((1.0f - p) * rain + fog - drain - evap) * h, 0.0f);
 			// The drainage cannot hold the canopy far above storage: drained to where it balances the input.
 			if (held > s + 3.0f) {
 				held = s + 3.0f;
@@ -139,6 +175,9 @@ void WeatherMap3D::_rain_update(double p_weather_dt) {
 		}
 		c[i] = held;
 		d[i] = steps > 0 ? canopy_drainage(held, s) : drain;
+		// The fog's share of what drips (the inputs mix on the leaves).
+		const float in = (1.0f - p) * rain + fog;
+		fd[i] = in > 1e-6f ? d[i] * fog / in : (fog > 0.0f ? d[i] : 0.0f);
 	}
 }
 
@@ -213,17 +252,26 @@ float WeatherMap3D::get_canopy_drip_at(Vector3 p_position) const {
 	return MAX(_sample(cell_drip, Vector2(p_position.x, p_position.z)), 0.0f);
 }
 
+float WeatherMap3D::get_fog_water_at(Vector3 p_position) const {
+	return cell_fog.size() == resolution * resolution ? MAX(_sample(cell_fog, Vector2(p_position.x, p_position.z)), 0.0f) : 0.0f;
+}
+
+float WeatherMap3D::get_fog_drip_at(Vector3 p_position) const {
+	return cell_fog_drip.size() == resolution * resolution ? MAX(_sample(cell_fog_drip, Vector2(p_position.x, p_position.z)), 0.0f) : 0.0f;
+}
+
 float WeatherMap3D::get_ground_water_input_at(Vector3 p_position) const {
+	const float fog = get_fog_drip_at(p_position) + get_sea_spray_at(p_position); // fog drip and sea spray
 	const int n = resolution;
 	if (origin_valid && cell_inflow.size() == n * n) {
 		const float cs = _cell_size();
 		const int x = int(Math::floor(p_position.x / cs)) - origin_cell.x;
 		const int z = int(Math::floor(p_position.z / cs)) - origin_cell.y;
 		if (x >= 0 && z >= 0 && x < n && z < n && cell_inflow[z * n + x] >= 0.0f) {
-			return cell_inflow[z * n + x];
+			return cell_inflow[z * n + x] + fog;
 		}
 	}
-	return get_rainfall_at(p_position);
+	return get_rainfall_at(p_position) + fog;
 }
 
 void WeatherMap3D::_bind_rain_methods() {
@@ -242,9 +290,14 @@ void WeatherMap3D::_bind_rain_methods() {
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("canopy_drainage", "held_mm", "storage_mm"), &WeatherMap3D::canopy_drainage);
 	ClassDB::bind_method(D_METHOD("get_rain_texture"), &WeatherMap3D::get_rain_texture);
 	ClassDB::bind_method(D_METHOD("get_ground_water_input_at", "position"), &WeatherMap3D::get_ground_water_input_at);
+	ClassDB::bind_method(D_METHOD("get_fog_water_at", "position"), &WeatherMap3D::get_fog_water_at);
+	ClassDB::bind_method(D_METHOD("get_fog_drip_at", "position"), &WeatherMap3D::get_fog_drip_at);
+	ClassDB::bind_method(D_METHOD("set_fog_drip", "enabled"), &WeatherMap3D::set_fog_drip);
+	ClassDB::bind_method(D_METHOD("is_fog_drip_enabled"), &WeatherMap3D::is_fog_drip_enabled);
 
 	ADD_GROUP("Rain", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "canopy_water_enabled"), "set_canopy_water_enabled", "is_canopy_water_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_storage", PROPERTY_HINT_RANGE, "0.05,10,0.01,suffix:mm"), "set_canopy_storage", "get_canopy_storage");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fog_drip"), "set_fog_drip", "is_fog_drip_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_free_throughfall", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_canopy_free_throughfall", "get_canopy_free_throughfall");
 }

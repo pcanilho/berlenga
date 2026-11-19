@@ -71,6 +71,10 @@ public:
 	virtual float contract_smoke_at(const Vector3 &p_position) const { return 0.0f; } // g/m2 of smoke particulate in the column
 	virtual float contract_obstacle_height_at(const Vector3 &p_position) const { return 0.0f; } // m, wind-blocking obstacles over the ground
 	virtual float contract_obstacle_lee_at(const Vector3 &p_position) const { return 1.0f; } // 0..1, near-ground wind behind obstacles over the open
+	virtual float contract_fog_water_at(const Vector3 &p_position) const { return 0.0f; } // g/m3 of cloud water at the ground
+	virtual float contract_fog_drip_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of fog water dripping off the canopy
+	virtual float contract_sea_spray_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of sea spray settling
+	virtual float contract_salt_at(const Vector3 &p_position) const { return 0.0f; } // g/m2 of sea salt on surfaces
 	virtual float contract_canopy_water_at(const Vector3 &p_position) const { return 0.0f; } // mm held on leaves
 	virtual float contract_canopy_wetness_at(const Vector3 &p_position) const { return 0.0f; } // 0..1
 	virtual float contract_canopy_drip_at(const Vector3 &p_position) const { return 0.0f; } // mm/h
@@ -117,6 +121,10 @@ protected:
 	GDVIRTUAL1RC(float, _smoke_at, Vector3)
 	GDVIRTUAL1RC(float, _obstacle_height_at, Vector3)
 	GDVIRTUAL1RC(float, _obstacle_lee_at, Vector3)
+	GDVIRTUAL1RC(float, _fog_water_at, Vector3)
+	GDVIRTUAL1RC(float, _fog_drip_at, Vector3)
+	GDVIRTUAL1RC(float, _sea_spray_at, Vector3)
+	GDVIRTUAL1RC(float, _salt_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_water_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_wetness_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_drip_at, Vector3)
@@ -160,6 +168,14 @@ public:
 	// surface, has less, none at 1.2 heights). Snow and sand drift into the lee.
 	float obstacle_height_at(const Vector3 &p_position) const;
 	float obstacle_lee_at(const Vector3 &p_position) const;
+	// Fog at the ground (g/m3 of cloud water: the terrain standing in the cloud), and the part of it the canopy combs
+	// out and drips onto the ground (mm/h; already in ground_water_input_at).
+	float fog_water_at(const Vector3 &p_position) const;
+	float fog_drip_at(const Vector3 &p_position) const;
+	// Sea spray settling at the point (mm/h of sea water), blown inland from breaking waves.
+	float sea_spray_at(const Vector3 &p_position) const;
+	// Sea salt left on surfaces at the point (g/m2): spray and fine aerosol deposited, washed off by rain.
+	float salt_at(const Vector3 &p_position) const;
 	float canopy_water_at(const Vector3 &p_position) const;
 	float canopy_wetness_at(const Vector3 &p_position) const;
 	float canopy_drip_at(const Vector3 &p_position) const;
@@ -195,6 +211,9 @@ public:
 	virtual void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) {}
 	// Suspended load (kg/m3): x mineral (silt, clay: brown), y ash and char (grey to black). Zero for clear water.
 	virtual Vector2 contract_water_sediment_at(const Vector3 &p_position) const { return Vector2(); }
+	// Height of the waves breaking at the point (m): the broken waves in the surf zone, whitecaps (cover times wave
+	// height) over open water; 0 where none break.
+	virtual float contract_water_breaking_at(const Vector3 &p_position) const { return 0.0f; }
 	// A load entering this water at the point (kg/s of each), from runoff, banks or a landslide; it carries it on.
 	virtual void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) {}
 	// A load dropped into this water at once (kg of each): a debris flow's or a landslide's fines, a bank's collapse.
@@ -220,6 +239,7 @@ protected:
 	GDVIRTUAL1(_clear, uint64_t)
 	GDVIRTUAL3(_impulse, Vector3, float, float)
 	GDVIRTUAL1RC(Vector2, _sediment_at, Vector3)
+	GDVIRTUAL1RC(float, _breaking_at, Vector3)
 	GDVIRTUAL3(_add_sediment, Vector3, float, float)
 	GDVIRTUAL3(_add_sediment_mass, Vector3, float, float)
 
@@ -237,6 +257,8 @@ public:
 	void impulse(const Vector3 &p_position, float p_radius, float p_strength);
 	// The water's suspended load at the point (kg/m3): x mineral, y ash and char; the shading clouds and darkens by it.
 	Vector2 sediment_at(const Vector3 &p_position) const;
+	// Height of the waves breaking at the point (m), the largest any producer reports; 0 where none break.
+	float breaking_at(const Vector3 &p_position) const;
 	// A load entering the water that answers at the point (kg/s of mineral and of ash); none there: it is lost.
 	void add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s);
 	// A load dropped into that water at once (kg of mineral and of ash): mixed into the water around the point.

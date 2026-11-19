@@ -14,3 +14,7 @@ window/vsync/vsync_mode=0
 [rendering]
 
 pathtracing/async_shader_compilation=false
+
+[physics]
+
+3d/physics_engine="PhysX"

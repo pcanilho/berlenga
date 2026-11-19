@@ -101,6 +101,12 @@
 				Removes [param source]'s haze. When the last source clears, the environment's fog is put back as it was.
 			</description>
 		</method>
+		<method name="clear_salt">
+			<return type="void" />
+			<description>
+				Clears the sea spray square's salt and spray film.
+			</description>
+		</method>
 		<method name="clear_shelter">
 			<return type="void" />
 			<description>
@@ -172,6 +178,13 @@
 				Clears the smoke layer.
 			</description>
 		</method>
+		<method name="get_body_water" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="body" type="Node" />
+			<description>
+				For a body in the [code]world_contact[/code] group: x, the water on its feet or tread (0..1, 1 just out of water), y, the water running off it (0..1). See [member wet_tracks].
+			</description>
+		</method>
 		<method name="get_fire_cloud_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -183,6 +196,20 @@
 			<param index="0" name="heat" type="float" />
 			<description>
 				The fire cloud a plume carrying [param heat] watts of convective heat would make in this weather: x its rise (m; through the sun-mixed layer near the ground, then by Briggs's 1975 laws in the stable air above, bent over by the wind), y the lifting condensation level (125 m per kelvin of dew point depression), z its strength (0: none; 1: a full cumulus cap; up to 2 as it grows into a pyrocumulonimbus, from about 2 km of rise past the condensation level).
+			</description>
+		</method>
+		<method name="get_fog_drip_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The fog water dripping off the canopy at [param position] (mm/h): the fog's share of Rutter's canopy drainage. It wets the surface and adds to [method get_ground_water_input_at].
+			</description>
+		</method>
+		<method name="get_fog_water_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Cloud water at the canopy over [param position] (g/m3): the sky's clouds where the ground rises into them, 6.7 g/m3 per 1/m of their extinction (droplets of 10 um effective radius, Stephens 1978).
 			</description>
 		</method>
 		<method name="get_obstacle_height_at" qualifiers="const">
@@ -197,6 +224,33 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The lee factor of upwind shelter obstacles near the ground at [param position], 0.15 to 1 (1 in the open); a [param position] raised over the ground (a drift's surface) has less, none at 1.2 times the obstacle's height. The contract's [code]obstacle_lee_at[/code].
+			</description>
+		</method>
+		<method name="get_salt_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Sea salt on surfaces at [param position], g/m2 (see [member sea_spray]); 0 outside the spray square.
+			</description>
+		</method>
+		<method name="get_salt_deposition_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Sea salt settling at [param position] now, g/m2/h: the coarse spray's salt (35 g per kg of sea water) and the fine aerosol.
+			</description>
+		</method>
+		<method name="get_sea_spray_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Sea spray settling at [param position], mm/h of sea water (see [member sea_spray]); 0 outside the spray square.
+			</description>
+		</method>
+		<method name="get_sea_spray_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				The sea spray square in world XZ (empty before the first update). Shaders read it as [code]weather_spray_rect[/code].
 			</description>
 		</method>
 		<method name="get_smoke_at" qualifiers="const">
@@ -233,6 +287,13 @@
 			<param index="0" name="day" type="int" />
 			<description>
 				The season state (as [method get_season]) on another day of the year [param day] (1-365) at the ground, for rates such as the day-to-day leaf fall.
+			</description>
+		</method>
+		<method name="get_spray_wetness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The sea spray's own film at [param position] over [member surface_storage], 0..1. [method get_wetness_at] includes it.
 			</description>
 		</method>
 		<method name="get_sun_sine" qualifiers="const">
@@ -693,6 +754,18 @@
 		<member name="dew_and_frost" type="bool" setter="set_dew_and_frost" getter="get_dew_and_frost" default="true">
 			On clear calm nights exposed surfaces lose more by radiation to the sky than the air's drying brings back, and the vapour condenses on them (Monteith 1957): dew joins the surface water film, and below 0 C at the surface it deposits as hoarfrost ([method get_frost_at]). Clouds and canopies return the longwave, so clouded and sheltered spots stay dry. Needs a sun light or a sky clock.
 		</member>
+		<member name="fog_drip" type="bool" setter="set_fog_drip" getter="is_fog_drip_enabled" default="true">
+			Fog drip: where the ground stands in the cloud, plants comb the cloud water out, deposition = LWC x wind x a capture efficiency (Lovett 1984), 0.003 over short plants up to 0.018 under a closed canopy ([method get_canopy_closure_at]; deposition velocities of about 2 to 9 cm/s in a 5 m/s wind, Gallagher et al. 1988, Katata et al. 2008). It enters the canopy's water balance with the rain, so it drips once the leaves hold their storage, wets the ground under the trees and feeds the runoff. In the cloud the air is saturated and the canopy does not dry.
+		</member>
+		<member name="sea_spray" type="bool" setter="set_sea_spray" getter="is_sea_spray_enabled" default="true">
+			Sea spray on the shore: breaking waves ([method WorldWater.breaking_at]) make spray in proportion to the breaker height and the square of the wind past 2 m/s; the wind carries it inland over a square round the follow point. Coarse drops settle within tens of metres ([code]u (1 + H) / 1 m/s[/code]) and wet surfaces and the soil; rising ground catches them, so a cliff face takes the spray and its top stays drier. Fine salt aerosol reaches hundreds of metres ([code]50 s x u[/code]). The salt stays on surfaces until rain washes it off (all but a third by 5 mm) and is published with the spray's wetness as the [code]weather_spray_map[/code] global (R wetness, G [code]1 - exp(-salt / 10 g/m2)[/code]); grass browns at the tips from salt burn.
+		</member>
+		<member name="sea_spray_extent" type="float" setter="set_sea_spray_extent" getter="get_sea_spray_extent" default="512.0">
+			Side of the sea spray square, m.
+		</member>
+		<member name="sea_spray_resolution" type="int" setter="set_sea_spray_resolution" getter="get_sea_spray_resolution" default="128">
+			Cells along each side of the sea spray square.
+		</member>
 		<member name="sun_drying" type="bool" setter="set_sun_drying" getter="get_sun_drying" default="true">
 			The sun dries wet surfaces: evaporation is Penman's combination of the net radiation (the sun's shortwave under the cloud shadow and the canopy, less the longwave loss; FAO-56) and the air's drying power, so puddles in sun go well before those in shade.
 		</member>
@@ -917,6 +990,9 @@
 		</member>
 		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="4.0">
 			How often the cells are refreshed, per second. Gusts are evaluated every frame regardless.
+		</member>
+		<member name="wet_tracks" type="bool" setter="set_wet_tracks" getter="is_wet_tracks_enabled" default="true">
+			Wet tracks: bodies in the [code]world_contact[/code] group coming out of water ([method WorldWater.depth_at]), wet mud, standing water or puddles carry water on their feet or tread. Each footprint (a stride apart, alternating sides) presses 15% of it onto the ground, tyres a continuous line losing 3% every 15 cm, so a trail fades over a dozen or so strides; the body also drips round itself, e-folding over 40 s. Prints and drips go into the contact wetness square, which dries them by [method get_contact_drying_time] (air, wind and sun).
 		</member>
 		<member name="wind_direction" type="Vector2" setter="set_wind_direction" getter="get_wind_direction" default="Vector2(1, 0)">
 			The way the wind blows toward, as x and z.

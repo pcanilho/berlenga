@@ -158,6 +158,18 @@
 				Stones in [param rect] of b-axis diameter at least [param min_size], as [code](x, ground y, z, footprint radius)[/code], for vegetation obstacles and water flow. Placement is deterministic, so this works for cells not built yet. Each placement cell is placed once and kept (16 bytes a stone) until [method rebuild], so repeated and overlapping queries are fast. Cliff blocks are left out.
 			</description>
 		</method>
+		<method name="get_loose_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many stones are rigid bodies now (see [member stones_react]).
+			</description>
+		</method>
+		<method name="get_react_stats" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				[member stones_react] so far: [code]loose[/code] (rigid bodies now), [code]promoted[/code], [code]shoved[/code] and [code]settled[/code] (counts since the field was made).
+			</description>
+		</method>
 		<method name="get_rockfall_dust_impacts" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -478,6 +490,9 @@
 		<member name="rockfall_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
 			Scales how many rockfall blocks are placed.
 		</member>
+		<member name="react_max_bodies" type="int" setter="set_react_max_bodies" getter="get_react_max_bodies" default="32">
+			With [member stones_react]: how many stones may be rigid bodies at once; past it the stones a body touches are shoved aside instead.
+		</member>
 		<member name="rockfall_dust" type="bool" setter="set_rockfall_dust" getter="is_rockfall_dust" default="true">
 			Dust where falling and broken stones hit, break and slide: the kinetic energy an impact takes out of a piece times [member rockfall_dust_per_joule], a little from each new fracture face, and a trickle from pieces sliding or rolling on the ground, less in rain. The field makes its own [PhysXRockDust3D] to carry it in NVIDIA Flow when the engine has Flow.
 		</member>
@@ -513,6 +528,9 @@
 		</member>
 		<member name="soft_rock_type" type="int" setter="set_soft_rock_type" getter="get_soft_rock_type" enum="RockGenerator.RockType" default="1">
 			Rock type of the soft beds when [member use_strata] is on.
+		</member>
+		<member name="stones_react" type="bool" setter="set_stones_react" getter="is_stones_react" default="true">
+			Small stones react to whatever stands, walks or drives on them: every node in the [code]world_contact[/code] group (read with [method WorldContracts.describe_body]). The stones under its footprint that have no collision of their own become rigid bodies for a moment, pushed on with a share of its speed (up to [member react_max_bodies] at a time, from 1.2 cm across), and go back to plain instances where they come to rest; the finest are shoved out of the footprint. A loose stone stays in its own [MultiMesh] the whole time, so raster and the path tracer draw it unchanged. Boulders (over 0.3 m) never move. See [method get_react_stats].
 		</member>
 		<member name="streaming" type="bool" setter="set_streaming" getter="is_streaming" default="true">
 			Builds and frees cells round the follow target as it moves, within [member build_budget_msec] a frame.

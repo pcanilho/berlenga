@@ -1410,6 +1410,45 @@ Docs flagged four things on the wet slide bench: spiky grey cones at the toe, a 
 - **Crown dots and specks** were bare ground. The bench storm lay on bare ground, so the scar and thin patches showed earth. The `--wet` and `--triggered` views now lay an old, bonded 60 cm pack first, so the slab leaves a white bed and a step.
 - **Pressure contract**: `SnowCover3D` answers world-links' `WorldSnow.avalanche_pressure_at` and `avalanche_peak_pressure_at` from its avalanche node. The forest test reads 20 kPa through it. The peak is per run (it resets when the next avalanche releases).
 
+## Follow-up 28: the wet deposit's shape; path-traced surface refresh (19 Nov 2026)
+
+Docs: the wet debris covered the toe evenly at one density with no tongue, lobed edge or pile-up, so it read as gravel.
+
+- **Lobes:** wet snow's friction varies with its water and grain. A front with patchy friction breaks into lobes and fingers (fingering in granular fronts, Pouliquen et al. 1997; the lobate snouts of wet avalanches, Bartelt et al. 2012). mu varies +-25% x wetness through smooth value noise over about 3 cells (integer hash). Dry flows are unchanged.
+- **Granules** gather where the debris is thick (snout, levees, pile-ups): none under 30 cm, full share from 1.5 m.
+- **Recent snow settles with the pack.** It was tracked as the depth that fell and only capped by the pack, so a storm that settled read as the whole pack, and a release scoured to the ground (the dark crown dots). Now it scales with the pack's shrinkage between updates, not counting new snow, released slab or entrained snow.
+- **Bench:** the `--wet` view thaws 12 h at +5 C (35% wet), `--toe` frames the tongue from above, and the deep-snow mesh covers the run-out (extent 160 m).
+- **Path tracing:** the tracer recaptures a mesh's vertex() output when a material parameter changes, not when a texture it samples is rewritten in place. The deep-snow surface's displacement reads the cover's snow texture, so under PT the deposit stayed flat. `SnowSurface3D` now bumps a `snow_serial` uniform whenever the cover updates. Any PT shot of the surface after a change before this (e.g. the round-2 avalanche pair) may show the old surface.
+
+## Follow-up 29: crown walls; rubble over the whole deposit (19 Nov 2026)
+
+Docs: the granules sat in one dense oval, the lobe was smooth pillows, and the crown read as thin bright straight lines.
+
+- **The oval** was two limits. Granules are kept only inside the deep-snow print field (`deform_extent`, 32 m around the follow target), and they were dropped only where the flow arrived faster than 5 m/s, which the slow wet snout never does. Now granules go on every debris cell over 10 cm outside the release zone (`released_cells`). Their share is 0.35 + 0.65 x max(margin, (distance/run-out)^3): margins are cells whose neighbours hold much less debris, and the snout is the far end. Debris sizes spread wider (log-normal sigma 0.75), and wet debris carries up to 2.5 times the share. The bench widens the print field to 96 m.
+- **Crown walls**: 2 m cells cannot hold a vertical step, so the crown is geometry. Every edge between a released cell and one that kept its snow (crown and flanks, not the foot) is chained over cell corners into lines. The lines are rounded with Chaikin corner cutting (three passes) and wander by up to a third of a cell through value noise, then stand up as a wall from the bed to the snow surface beside it (a ragged top, +-2 cm). It is a `MeshInstance3D` child with a snow material and both faces drawn, and it casts shadows. New snow buries it: it goes at 80% of its height. Up to 8 are kept (`crowns_enabled`, `get_crown_count`).
+- **Irregular fracture**: a load's release reaches +-15% of its radius over about 12 m, not a circle. The bench triggers inside the face, so the crown breaks across the slope below the ridge.
+
+## Follow-up 30: a slab's outline, a scoured bed, a softer powder cloud (19 Nov 2026)
+
+Docs: the release outline was a closed ring (a cookie-cutter hole), only its top edge read as a wall (the rest a dotted line of dark slivers), and the bed inside was as smooth and white as the snow around. The powder cloud was dark and mottled in both raster and PT (PhysX checked it: the gas's own density, not a renderer bug).
+
+Research: a slab avalanche leaves a crown (a tensile fracture standing the slab's full depth, across the slope), flanks (shear fractures down the fall line on either side, losing height toward the foot) and a stauchwall at the foot, which the slab rides out over and so leaves no wall to see (McClung and Schaerer 2006, The Avalanche Handbook, ch. 3). The bed is the old surface the slab slid on, the weak layer's faceted grains on an aged crust, greyer than the new snow (aged snow albedo 0.65-0.7, Gardner and Sharp 2010). Ice grains barely absorb visible light (single-scattering albedo above 0.999, Warren 1982), so a powder cloud is lit through by many scatterings and reads bright and soft.
+
+- **Outline**: a trigger releases a slab shape, not a disc: a crown across the slope 0.65 radii above the load (bowed a little downslope at its ends), flanks a radius out on either side drawing in a little toward the foot, the foot 0.8 radii below. The crown zigzags in shallow steps (a run every third of a radius, each set up or down the slope by up to 0.12 radii and slanting one way or the other), the flanks each wander by up to 0.2 radii over about a third of a radius, and all edges carry a finer +-8% wobble over about 12 m.
+- **Walls**: every edge between a released cell and one that kept less than half as much is chained (none dropped, so the lines run unbroken). Each point's height is the step there times a fade: full in the upper half of the release, nothing at its foot, and nothing on edges facing up the slope. The wall stands a sixth to a half of a cell inside the released cell, where the cover's rounded step has dropped, so its face shows. A cap runs from its top back to the snow outside, so the edge stays sharp. The face takes the snow's albedo (vertex colour, linear), and its base shades to the weak layer's grey.
+- **Bed**: released cells take the old surface's albedo (0.66), streaked +-0.06 down the fall line (value noise one cell across, nine along). The bed was already lower by the slab's depth.
+- **Natural releases**: the fracture's spread was depth first, so when it hit its 4000-cell cap it left every other row behind (a striped bed with a wall on every row). It is breadth first now, in all three spreads, so a capped release is a compact patch around its seed.
+- **Powder**: white (0.98, 0.99, 1.0) and smoother (vorticity 8 to 4). A thinner gas (density 0.4-0.7, emitters capped lower) was tried: it left see-through ghosts, not a soft white cloud, so the density stays. The grey is the renderer's albedo (below), and raster lights it by single scattering only.
+- **Asked of PhysX**: the path-traced volume's single-scattering albedo is fixed at 0.9 (`physx_flow_3d.cpp`), which loses a tenth of the light at every scatter; an optically thick snow cloud then goes grey. A property for it (snow would set 0.99) is requested through the coordinator.
+- **Bench**: the avalanche view's lower sky is snow under this sky's own light (horizon 0.53, bottom 0.33-0.46), not the default brown (brown walls) nor a brighter white (it lit raster's vertical walls like lamps, a glowing band PT did not show). The slide runs under the old 30 degree sun (the thaw, so the wet run is unchanged); the shot is taken with the sun 55 degrees up from behind the ridge, which rakes the 38 degree face (from 30 degrees the whole face was in shade, so the walls had no light to show by): the crown stands in its own shade and throws shadow down the bed, in both renderers.
+- **Path tracing**: the wall's triangles were wound against their normals. The path tracer treats the winding's side as the front and flips a double-sided normal hit from behind, so the walls came out unlit; each quad is now wound to its normal.
+
+## Follow-up 31: the powder cloud along the whole head (19 Nov 2026)
+
+- **Head**: the eruption current comes from the head, the fastest part of a dry avalanche (Sovilla et al. 2015). In the flow the head's very edge ploughs the snow ahead and slows below the powder speed, so only the slab's sides (where the flow spreads sideways) fed the cloud: a few separate puffs. A cell now also counts as the head when the cell ahead of it is slower than the powder speed (the last fast snow before the ploughing edge), so the cloud rises along the whole front.
+- **Albedo**: PhysXFlow3D.scattering_albedo (PhysX 6568b3d2, raster to match 7b6f7ea0) is 0.99 for the powder: ice grains barely absorb (Warren 1982).
+- **Bench**: `--view=avalanche --powder` releases a wide dry slab in front of the camera (`trigger` at -40, radius 60). Left to itself the face let go off to both sides of the frame, and its cloud with it.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

@@ -4,6 +4,8 @@ extends Node3D
 # godot --path docs/bench/rocks --rendering-driver vulkan -- [options]
 #   --test                checks: every rock type and family builds (size, axes, timing), transport rounds and beach
 #                         wear flattens, then the field's six layers on a generated world; prints PASS/FAIL, quits
+#                         (sea caves: the sea surges in under the cliff, blowholes blow in a storm swell; boulders as
+#                         wind obstacles)
 #   --gallery             every family (columns) of every rock type (rows), each scaled to a 1 m b axis
 #   --rock=type,family    one rock close up (--seed=N, --distance=m transport, --weathering=0..1; --stand: a fin,
 #                         hoodoo or stack stood on end, side on)
@@ -54,6 +56,8 @@ extends Node3D
 #                         --detail-pixels=n (3);
 #                         --detail-sync places the detail cells on the main thread (ground_detail_threads off),
 #                         --cell-sync the coarse layers' cells (cell_threads off)
+#   --tracks              with --world: a walker and a two-wheeled cart cross the spot on bends before the still
+#   --roll[=m/s]          with --world: a ball rolled across the spot before the still (stones_react; --no-react off)
 #   --no-river-detail     with --world: RockField3D.ground_detail_rivers off (river beds keep only the river layer's stones)
 #   --gravel-reach[=d]    with --view=river: a gravel-bed reach whose median is nearest d m (0.03)
 #   --no-ground-cover     with --world: RockField3D.ground_detail_cover off (no grain aggregate on the ground past
@@ -61,6 +65,20 @@ extends Node3D
 #                         compares it with the stones placed
 #   --walk=m              with --world: stream while the camera walks m metres forward (--walk-step=m a frame, 0.1),
 #                         then print the main thread's streaming time per frame (mean, 95th percentile, worst)
+
+
+# A swell at the sea cave's mouth for the sea surge check: still sea plus 1 m amplitude, 12 s period, open water only
+# (it answers outside the cliff, as the ocean does).
+class SwellStub extends WorldWater:
+	var sea := 0.0
+	var t := 0.0
+	var gen: Node
+	var amplitude := 1.0
+	func _height_at(p: Vector3) -> float:
+		if gen.get_height(p) > sea:
+			return -INF
+		return sea + amplitude * sin(TAU * t / 12.0)
+
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
 const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth"]
@@ -80,6 +98,7 @@ var cam: Camera3D
 
 var breaking := false
 var form_stone := {} # the stone --form framed
+var spot_pos := Vector3.ZERO # the view's spot (--roll)
 
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -373,7 +392,7 @@ func _world() -> void:
 	add_child(land)
 	land.material = tm
 	land.source = land.get_path_to(gen)
-	land.collision_enabled = args.has("water") # the sea's seabed_from_floor measures the bed through it
+	land.collision_enabled = args.has("water") or args.has("roll") or args.has("tracks") # the sea's seabed_from_floor measures the bed through it; --roll's stones land on it
 	land.camera = land.get_path_to(cam)
 	land.rebuild()
 	land.load_all_heights()
@@ -463,6 +482,7 @@ func _world() -> void:
 	var spot := _densest(LAYERS.find(view)) if rocks else Vector3(0, 0, 0)
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
+	spot_pos = spot
 	var dist := {"rockfall": 14.0, "scree": 7.0, "glacial": 12.0, "river": 14.0, "shore": 12.0, "cliff": 30.0, "tor": 22.0, "coast": 60.0, "landform": 30.0}.get(view, 10.0) as float
 	if args.has("dist"):
 		dist = float(args["dist"])
@@ -552,6 +572,7 @@ func _world() -> void:
 		rocks.ground_detail = not (args.has("no-ground-detail") or args.has("test"))
 		rocks.ground_detail_cover = not args.has("no-ground-cover")
 		rocks.ground_detail_rivers = not args.has("no-river-detail")
+		rocks.stones_react = not args.has("no-react")
 		if rocks.ground_detail:
 			rocks.ground_detail_reference_height = int(args.get("detail-ref", "1080"))
 			if args.has("detail-pixels"):
@@ -1773,6 +1794,8 @@ func _test() -> void:
 				break
 		var near_chunks := net.get_mesh_chunk_count()
 		var stream_ms := Time.get_ticks_msec() - t_stream
+		# (Why, when it finds nothing: where the target stands against the rock, and whether the network has caves.)
+		print("  cave streaming target %s: %.2f m from the rock (negative in air), %d caves, follow %s, streaming %s" % [walker.global_position, net.get_rock_distance(walker.global_position), net.get_cave_count(), net.get_node_or_null(net.follow_target) != null, net.is_streaming()])
 		walker.global_position += Vector3(400, 0, 0)
 		for i in 3000:
 			await get_tree().process_frame
@@ -1811,6 +1834,54 @@ func _test() -> void:
 			var mist: Node = net.get_sea_mist_node()
 			check(mist != null and mist.get("cave_network") != NodePath(), "sea mist: %s" % ("a mist node on the network" if mist else "no mist node"))
 			net.sea_mist = false # it checks nothing more here
+		# The sea runs into the cave (CaveNetwork3D as a WorldWater producer): a 2 m swell of 12 s outside the mouth.
+		if sid >= 0:
+			var swell := SwellStub.new()
+			swell.sea = sea_y
+			swell.gen = gen
+			WorldContracts.add_water_stub(swell)
+			var water: WorldWater = WorldContracts.get_water()
+			net.step_sea_surge(0.05)
+			var pts0: PackedVector3Array = net.get_sea_cave_water(sid)["points"]
+			var inside: Vector3 = pts0[mini(3, pts0.size() - 1)]
+			var lo := INF
+			var hi := -INF
+			var flow_in := 0.0
+			var spout := 0.0
+			for i in 960: # 48 s in 0.05 s steps
+				swell.t = i * 0.05
+				net.step_sea_surge(0.05)
+				if i >= 480:
+					var hgt := water.height_at(Vector3(inside.x, sea_y - 0.5, inside.z))
+					if is_finite(hgt):
+						lo = minf(lo, hgt)
+						hi = maxf(hi, hgt)
+					flow_in = maxf(flow_in, water.flow_at(Vector3(inside.x, sea_y - 0.5, inside.z)).length())
+					spout = maxf(spout, float(net.get_blowhole_spout(sid).get("speed", 0.0)))
+			check(is_finite(lo) and hi - lo > 1.0 and absf((hi + lo) * 0.5 - sea_y) < 0.6 and flow_in > 0.3 and gen.get_height(inside) > hi, "sea caves: the sea surges into the passage under the cliff: %.1f to %.1f m (still sea %.1f m), currents to %.1f m/s; the blowhole's air up to %.0f m/s" % [lo, hi, sea_y, flow_in, spout])
+			# A storm swell (4 m) seals the passage and drives the air in the back chamber up its blowhole.
+			var bh := -1
+			for se in sea_ents:
+				var id2 := net.add_sea_cave(se["position"], se["out"])
+				if id2 >= 0 and net.get_blowholes(id2).size() > 0:
+					bh = id2
+					break
+			if bh < 0:
+				check(true, "blowholes: none among these sea caves (counted, not required)")
+			else:
+				swell.amplitude = 4.0
+				var top := 0.0
+				var sealed := false
+				for i in 600:
+					swell.t = 60.0 + i * 0.05
+					net.step_sea_surge(0.05)
+					var sp: Dictionary = net.get_blowhole_spout(bh)
+					top = maxf(top, float(sp.get("speed", 0.0)))
+					sealed = sealed or bool(sp.get("sealed", false))
+				check(not sealed or top > 5.0, "blowholes: a storm swell %s; air up the shaft to %.0f m/s" % ["seals the passage" if sealed else "does not seal this passage", top])
+			net.sea_surge = false
+			check(not is_finite(water.height_at(Vector3(inside.x, sea_y - 0.5, inside.z))), "sea surge off: no water under the cliff")
+			WorldContracts.clear_overrides()
 	net.queue_free()
 	# Scree packs without overlaps: stones in one cell, as spheres of their mean radius.
 	var scree: Array = rocks.get_stones(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))
@@ -1845,6 +1916,13 @@ func _test() -> void:
 	var t2 := Time.get_ticks_msec()
 	var obs2: PackedVector4Array = rocks.get_obstacles(Rect2(scree_at.x - 128, scree_at.z - 128, 256, 256), 0.25)
 	check(obs2 == obs and Time.get_ticks_msec() - t2 < 100, "obstacles again from the cache: same %d stones in %d ms" % [obs2.size(), Time.get_ticks_msec() - t2])
+	var t3 := Time.get_ticks_msec()
+	var wind: Array = rocks.get_wind_obstacles(Rect2(scree_at.x - 128, scree_at.z - 128, 256, 256))
+	var tall := 0
+	for b in wind:
+		if (b as AABB).size.y >= 0.5:
+			tall += 1
+	check(wind.size() > 0 and tall == wind.size() and rocks.is_in_group("weather_shelter"), "wind obstacles: %d boulders standing 0.5 m or more as boxes for the weather's shelter, the field in its group (%d ms)" % [wind.size(), Time.get_ticks_msec() - t3])
 	var rivers: Array = rocks.get_stones(RockField3D.LAYER_RIVER, wr)
 	var rounder := 0
 	for s in rivers:
@@ -2065,10 +2143,142 @@ func _walk() -> void:
 		stats.call(ms), stats.call(dms), rocks.get_stone_count()])
 
 
+# --roll[=m/s]: a 0.3 m ball (40 kg, in world_contact) rolled 8 m across the spot from left to right of the view, then
+# taken away before the still: the stones it touched (RockField3D.stones_react) lie where it left them.
+func _roll() -> void:
+	var speed := float(args["roll"]) if args["roll"] != "1" else 3.0
+	var side := cam.global_transform.basis.x
+	side.y = 0.0
+	side = side.normalized()
+	var ball := RigidBody3D.new()
+	ball.mass = 40.0
+	var cs := CollisionShape3D.new()
+	var sph := SphereShape3D.new()
+	sph.radius = 0.3
+	cs.shape = sph
+	ball.add_child(cs)
+	ball.set_meta("trample_radius", 0.3)
+	ball.add_to_group("world_contact")
+	add_child(ball)
+	var start := spot_pos - side * 4.0
+	start.y = gen.get_height(start) + 0.32
+	ball.global_position = start
+	ball.linear_velocity = side * speed
+	ball.angular_velocity = side.cross(Vector3.DOWN) * (speed / 0.3)
+	get_viewport().disable_3d = true
+	var most := 0
+	for i in 300:
+		await get_tree().physics_frame
+		most = maxi(most, rocks.get_loose_count())
+	var settle := 0
+	while rocks.get_loose_count() > 0 and settle < 600:
+		await get_tree().physics_frame
+		settle += 1
+	print("roll: ball went %.1f m; stones %s, at most %d loose at once, all at rest %d frames later" % [ball.global_position.distance_to(start), rocks.get_react_stats(), most, settle])
+	ball.queue_free()
+	await get_tree().process_frame
+	get_viewport().disable_3d = false
+
+
+# A contact for --tracks: a Node3D in world_contact with one collision shape (a boot's box or a tyre's cylinder on
+# its side), moved by the bench; RockField3D reads its speed from its last position.
+func _contact_node(shape: Shape3D, rot := Basis()) -> Node3D:
+	var n := Node3D.new()
+	var cs := CollisionShape3D.new()
+	cs.shape = shape
+	cs.basis = rot
+	n.add_child(cs)
+	n.add_to_group("world_contact")
+	add_child(n)
+	return n
+
+
+# --tracks: a walker and a two-wheeled cart cross the spot on curving paths (6 and 8 m radius bends) before the still
+# (stones_react), then are taken away: the walker's separate prints and the cart's two ruts with what they pushed
+# aside. The walker steps 0.7 m, each boot coming down at 1.5 m/s and standing 0.3 s; the cart rolls at 2 m/s.
+func _tracks() -> void:
+	var side := cam.global_transform.basis.x
+	side.y = 0.0
+	side = side.normalized()
+	var fwd := Vector3.UP.cross(side).normalized() # away from the camera
+	var g := func(p: Vector3) -> float: return gen.get_height(p)
+	# Bends: a point at arc length t (m) on a circle of radius rad through start, heading along side, turning away.
+	var arc := func(start: Vector3, rad: float, t: float) -> Array: # (a bend away from the camera)
+		var a := t / rad
+		var p := start + side * (rad * sin(a)) + fwd * (rad * (1.0 - cos(a)))
+		var h := (side * cos(a) + fwd * sin(a)).normalized()
+		return [p, h]
+	var boot_l := _contact_node(_box(Vector3(0.1, 0.06, 0.27)))
+	var boot_r := _contact_node(_box(Vector3(0.1, 0.06, 0.27)))
+	var tyre := CylinderShape3D.new()
+	tyre.radius = 0.32
+	tyre.height = 0.2
+	var wheel_l := _contact_node(tyre, Basis(Vector3.FORWARD, PI / 2))
+	var wheel_r := _contact_node(tyre, Basis(Vector3.FORWARD, PI / 2))
+	var walk_start := spot_pos - side * 3.0 - fwd * 0.8
+	var cart_start := spot_pos - side * 3.5 + fwd * 0.6
+	get_viewport().disable_3d = true
+	var dt := 1.0 / 60.0
+	var t := 0.0
+	var most := 0
+	while t < 3.5:
+		# The walker: step k plants at arc length 0.7 k, left and right 0.12 m off the line; a boot is in the air
+		# (0.3 m up) between plants, comes down over 0.1 s and stands 0.3 s.
+		for which in 2:
+			var boot: Node3D = boot_l if which == 0 else boot_r
+			var phase := t / 0.45 - which # a step every 0.45 s, the feet alternating
+			var k := floori(phase / 2.0) * 2 + which
+			var in_step := fposmod(phase, 2.0)
+			var at: Array = arc.call(walk_start, 6.0, 0.7 * k)
+			var lat := Vector3.UP.cross(at[1]).normalized() * (0.12 if which == 0 else -0.12)
+			var p: Vector3 = at[0] + lat
+			var lift := 0.3
+			if in_step < 0.22:
+				lift = 0.3 * (1.0 - in_step / 0.22)
+			elif in_step < 0.9:
+				lift = 0.0
+			p.y = g.call(p) + 0.03 + lift
+			boot.global_position = p
+			boot.basis = Basis.looking_at(at[1], Vector3.UP)
+		# The cart: two wheels 1.4 m apart on an 8 m bend, at 2 m/s, pressing 2 cm in.
+		var ca: Array = arc.call(cart_start, 8.0, 2.0 * t)
+		var axle := Vector3.UP.cross(ca[1]).normalized()
+		for which in 2:
+			var wn: Node3D = wheel_l if which == 0 else wheel_r
+			var wp: Vector3 = ca[0] + axle * (0.7 if which == 0 else -0.7)
+			wp.y = g.call(wp) + 0.32 - 0.02
+			wn.global_position = wp
+			wn.basis = Basis.looking_at(ca[1], Vector3.UP)
+		await get_tree().physics_frame
+		most = maxi(most, rocks.get_loose_count())
+		if args.has("tracks-verbose") and int(t / dt) % 30 == 0:
+			print("tracks: t %.2f, left boot %s (%.2f over the ground), %s" % [t, boot_l.global_position, boot_l.global_position.y - g.call(boot_l.global_position), rocks.get_react_stats()])
+		t += dt
+	for n in [boot_l, boot_r, wheel_l, wheel_r]:
+		n.queue_free()
+	var settle := 0
+	while rocks.get_loose_count() > 0 and settle < 600:
+		await get_tree().physics_frame
+		settle += 1
+	print("tracks: stones %s, at most %d loose at once, all at rest %d frames later" % [rocks.get_react_stats(), most, settle])
+	await get_tree().process_frame
+	get_viewport().disable_3d = false
+
+
+func _box(size: Vector3) -> BoxShape3D:
+	var b := BoxShape3D.new()
+	b.size = size
+	return b
+
+
 func _render_later() -> void:
 	await get_tree().process_frame
 	if args.has("walk") and rocks:
 		await _walk()
+	if args.has("roll") and rocks:
+		await _roll()
+	if args.has("tracks") and rocks:
+		await _tracks()
 	while breaking:
 		await get_tree().process_frame
 	if args.has("hide-stream-water"):
