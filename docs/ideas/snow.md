@@ -1395,3 +1395,21 @@ A fast dry avalanche lifts a suspension cloud off its front. Measured clouds hol
 - Check: the cloud outruns the core's front and leaves a thin powder layer beyond the debris. No cloud forms from a wet slide.
 
 **Also worth offering.** An avalanche into a lake displaces water (an impulse wave from the WorldWater contract). The impact on trees: the trees thread's thrown-tree path breaks those above a dynamic pressure of about 5-10 kPa.
+
+## Next round (proposed 19 Nov 2026, round 4): forests, wet spring avalanches, avalanches into water
+
+Soot from smoke haze was already built in world-links (21b20d1a, `SnowCover3D._refresh_lap`): dry deposition at 0.2 cm/s from the smoke contract, a tenth black carbon. Nothing to add here.
+
+**Forests and avalanches.**
+- *Anchoring:* dense forest stops release. Crown cover over about 50%, or a stem density that breaks the slab, keeps the snow from failing (Teich et al. 2012, Bebi et al. 2009). Read canopy from the trees' cover (`cell_canopy` already exists) and raise the stability index under closed canopy.
+- *Braking:* forest takes mass and momentum out of a running avalanche (detrainment). Feistl et al. (2014) fit it as an extra friction term that grows with stem density. Small and medium avalanches stop inside the forest; big ones run through.
+- *Damage:* trees break when the flow's pressure beats the stem's bending strength. A dense core at 1/2 rho u^2 gives tens of kPa; Bartelt and Stoeckli (2001) found that 30-50 cm trunks break under about 10-20 kPa over their height. The powder cloud's 1-5 kPa snaps crowns and smaller trees. Send the broken trees to the trees thread's thrown-tree path, and leave a cleared lane that later avalanches run faster down (the classic avalanche path through a forest).
+
+**Wet spring avalanches.**
+- Wet snow avalanches run slower and denser, with much higher friction (mu 0.3-0.5) and cohesion. They make levees and deep runnels rather than a fan (Bartelt et al. 2012, wet-snow cohesion; Naaim et al. 2013).
+- The trigger is water, not load. The liquid water in the pack (already tracked) weakens the base, and glide cracks open on smooth ground before full-depth glide avalanches (Ancey and Bain 2015; Jones 2004).
+- Build: flow parameters that follow the slab's liquid share, a glide-crack rate on warm days, and a check that a wet slide stops short of a dry one, in levees.
+
+**Avalanches into water.**
+- An avalanche entering a lake or the sea pushes an impulse wave. Heller and Hager (2010) give its height from the slide's mass, speed and thickness and the water depth, from lab and field data (granular slides into reservoirs).
+- This needs Valence's water (WorldWater) to take an impulse. The snow side reports where, how much and how fast through a contract call; the water side makes the wave. It also lays debris on lake ice or breaks it.
