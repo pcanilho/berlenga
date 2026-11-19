@@ -77,8 +77,18 @@ private:
 		float lying = -1.0f; // seconds on the ground; < 0 aloft
 		float scale = 1.0f;
 		uint16_t kind = 0;
+		uint8_t on = 0; // what it lies on: SURFACE_*
+		bool buried = false; // snow fell over it
 		bool alive = false;
 	};
+	enum {
+		SURFACE_GROUND,
+		SURFACE_SNOW,
+		SURFACE_WATER,
+		SURFACE_ICE,
+	};
+	// The top the leaf meets: ground, the snow on it, open water over it, or lake ice (WorldSnow, WorldWater).
+	float _surface_at(const Vector3 &p_p, uint8_t &r_on) const;
 
 	bool enabled = true;
 	int max_leaves = 3000;
@@ -111,6 +121,11 @@ private:
 	LocalVector<Ref<MultiMesh>> multimeshes;
 	int alive_count = 0;
 	int lifted_count = 0;
+	int kicked_count = 0;
+	float leeway = 0.03f; // share of the 10 m wind a floating leaf drifts at, over the water's current
+	HashMap<ObjectID, Vector3> body_last; // world_contact bodies' positions last step
+	HashMap<ObjectID, float> body_kick_accum;
+	void _kick_step(float p_delta, const Vector3 &p_cam);
 	float step_ms = 0.0f;
 
 	Vector3 _camera_position() const;
@@ -172,6 +187,11 @@ public:
 
 	int get_leaf_count() const { return alive_count; }
 	int get_lifted_count() const { return lifted_count; }
+	int get_kicked_count() const { return kicked_count; }
+	int get_floating_count() const;
+	int get_buried_count() const;
+	void set_leeway(float p_v) { leeway = MAX(p_v, 0.0f); }
+	float get_leeway() const { return leeway; }
 	float get_step_time() const { return step_ms; }
 	// Per leaf, for checks: position, velocity, normal; lying flag in w of the position.
 	PackedVector4Array get_leaf_states() const;

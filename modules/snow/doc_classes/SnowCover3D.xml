@@ -22,6 +22,15 @@
 				Lays a frozen crust [param thickness] m thick (at most 0.05) on top of the snow everywhere on the map, as if it had been through [param cycles] melt-freeze cycles. For scenes that start on crusted snow. See [method crust_strength].
 			</description>
 		</method>
+		<method name="add_impurity">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="mg_per_m2" type="float" />
+			<description>
+				Light-absorbing particles settling on the snow within [param radius] of [param position], mg/m2 of black carbon equivalent (the snow contract's [method WorldSnow.add_impurity]); applied at the next update.
+			</description>
+		</method>
 		<method name="add_snow">
 			<return type="void" />
 			<param index="0" name="swe_mm" type="float" />
@@ -119,6 +128,12 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the albedo of the snow at [param position]: 0.84 when fresh, ageing toward 0.70 when dry and 0.50 when melting.
+			</description>
+		</method>
+		<method name="get_avalanches" qualifiers="const">
+			<return type="SnowAvalanche3D" />
+			<description>
+				The [SnowAvalanche3D] it added, or [code]null[/code].
 			</description>
 		</method>
 		<method name="get_blown_flux_max" qualifiers="const">
@@ -234,11 +249,24 @@
 				Returns the ground height the snowpack uses at [param position].
 			</description>
 		</method>
+		<method name="get_ice_break_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Holes broken in the lake ice by bodies too heavy for it so far.
+			</description>
+		</method>
 		<method name="get_ice_thickness_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the lake ice at [param position] in metres (0 on land and open water).
+			</description>
+		</method>
+		<method name="get_impurity_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Light-absorbing particles showing at the surface of the snow, mg/m2 of black carbon equivalent: what lies on top plus what fresh snow covers, fading with the cover's depth (e-folding 2 cm).
 			</description>
 		</method>
 		<method name="get_lake_ice" qualifiers="const">
@@ -387,6 +415,22 @@
 				Returns [code]true[/code] while an update runs in the background. The getters keep answering from the last finished update meanwhile.
 			</description>
 		</method>
+		<method name="ice_breaking_load" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="ice" type="float" />
+			<param index="1" name="white_share" type="float" />
+			<param index="2" name="air_celsius" type="float" />
+			<description>
+				The load (kg) at which lake ice [param ice] m thick breaks: Gold's P = A h^2 with A 10 and h in cm, white (snow) ice counting half and ice near thawing half again.
+			</description>
+		</method>
+		<method name="impurity_albedo_drop" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="mg_per_m2" type="float" />
+			<description>
+				The albedo that [param mg_per_m2] of black carbon equivalent takes off clean snow: 0.35 (1 - e^(-L / 15)).
+			</description>
+		</method>
 		<method name="lake_ice_growth" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="ice" type="float" />
@@ -458,6 +502,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="avalanches_enabled" type="bool" setter="set_avalanches_enabled" getter="is_avalanches_enabled" default="true">
+			If [code]true[/code], slabs release and run as avalanches: the cover adds a [SnowAvalanche3D].
+		</member>
 		<member name="background_updates" type="bool" setter="set_background_updates" getter="is_background_updates" default="true">
 			If [code]true[/code], each update (and the world tier's turn) runs on a worker thread and its results are swapped in when it is done, so no frame waits for it. The main thread only gathers the weather the cells read first. The results are the same as with [code]false[/code], which runs each update in the frame that starts it; the getters answer from the last finished update until the next one lands.
 		</member>
@@ -503,6 +550,9 @@
 			Relative humidity (0 to 1) used when no [code]WeatherMap3D[/code] is in the scene.
 		</member>
 		<member name="humidity" type="float" setter="set_humidity" getter="get_humidity" default="0.85">
+		</member>
+		<member name="impurities_enabled" type="bool" setter="set_impurities_enabled" getter="is_impurities_enabled" default="true">
+			Soot from the smoke haze ([method WorldWeather.smoke_at]), charred debris under burnt forest ([method WorldFire.burn_age_at]) and dust that producers add ([method add_impurity]) darken the snow and speed its melt (light-absorbing particles; Warren and Wiscombe 1980, Painter et al. 2007, Gleason et al. 2013). Fresh snow buries them; the melt brings them back up.
 		</member>
 		<member name="lake_ice_enabled" type="bool" setter="set_lake_ice_enabled" getter="is_lake_ice_enabled" default="true">
 			Lakes and rivers freeze: ice grows in frost under the insulating snow, holds snow from 2 cm, floods into white snow ice under a heavy load and thaws once the snow is gone; from 5 cm it bears a walker. Drawn by a [SnowLakeIce3D] the cover adds. Off, snow and rain landing on water melt into it.

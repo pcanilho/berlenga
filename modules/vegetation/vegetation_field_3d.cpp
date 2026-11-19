@@ -36,6 +36,7 @@
 #include "vegetation_light.h"
 
 // Rigged trees (TreeWind3D, from the trees work) when that class is in the module.
+#include "tree_bark_detail.h"
 #if __has_include("tree_wind_3d.h")
 #include "tree_wind_3d.h"
 #define VEGETATION_HAS_TREE_WIND
@@ -60,6 +61,7 @@
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/weather/weather_map_3d.h"
 #include "modules/weather/weather_sky_material.h"
+#include "modules/world/world_contracts.h"
 
 namespace {
 
@@ -314,6 +316,7 @@ void VegetationField3D::_read_sand(const TerrainGenerator3D *p_gen, PlaceSetup &
 // cells apart), and 0 under thin sand. Slip faces are raised at placement from the ground's slope.
 void VegetationField3D::_read_sand_mobility(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup) {
 	r_setup.mobility.clear();
+	r_setup.sea_depth.clear();
 	r_setup.mobility_nx = 0;
 	r_setup.mobility_ny = 0;
 	if (!p_gen || !p_gen->get_sand_sea_rect().has_area()) {
@@ -379,6 +382,87 @@ void VegetationField3D::_read_sand_mobility(const TerrainGenerator3D *p_gen, Pla
 	r_setup.mobility_nx = nx;
 	r_setup.mobility_ny = ny;
 	r_setup.mobility_rect = rect;
+	r_setup.sea_depth = depth;
+}
+
+float VegetationField3D::PlaceSetup::sea_depth_at(const Vector2 &p_xz) const {
+	if (sea_depth.is_empty()) {
+		return 0.0f;
+	}
+	const float gx = (p_xz.x - mobility_rect.position.x) / mobility_rect.size.x * (mobility_nx - 1);
+	const float gz = (p_xz.y - mobility_rect.position.y) / mobility_rect.size.y * (mobility_ny - 1);
+	if (gx < 0.0f || gz < 0.0f || gx > mobility_nx - 1 || gz > mobility_ny - 1) {
+		return 0.0f;
+	}
+	const int ix = MIN(int(gx), mobility_nx - 2), iz = MIN(int(gz), mobility_ny - 2);
+	const float fx = gx - ix, fz = gz - iz;
+	const float *r0 = &sea_depth[iz * mobility_nx + ix];
+	const float *r1 = r0 + mobility_nx;
+	return Math::lerp(Math::lerp(r0[0], r0[1], fx), Math::lerp(r1[0], r1[1], fx), fz);
+}
+
+// Burnt ground (docs/ideas/vegetation.md, "Burnt ground and regrowth"): the fire contract's years since the ground last
+// burnt, sampled once per setup on a grid of 2 m or more over the map (at most 512 a side). Regrowth takes seasons, so
+// a fire burning now shows once the field places again.
+void VegetationField3D::_read_burn_age(PlaceSetup &r_setup) const {
+	r_setup.burn.clear();
+	r_setup.burn_nx = 0;
+	r_setup.burn_ny = 0;
+	const WorldFire *fire = WorldContracts::fire();
+	if (fire) {
+		burn_seen = fire->get_burn_generation();
+	}
+	bool wanted = false;
+	if (biome.is_valid()) {
+		const TypedArray<PlantSpecies> list = biome->get_species();
+		for (int i = 0; i < list.size() && !wanted; i++) {
+			const Ref<PlantSpecies> sp = list[i];
+			wanted = sp.is_valid() && (sp->uses_burn_age() || sp->get_burn_recovery() > 0.0f);
+			const TypedArray<Mesh> ms = sp.is_valid() ? sp->get_meshes() : TypedArray<Mesh>();
+			for (int m = 0; m < ms.size() && !wanted; m++) {
+				const Ref<Mesh> mesh = ms[m];
+				wanted = mesh.is_valid() && mesh->has_meta(SNAME("tree_fire_years"));
+			}
+		}
+	}
+	burn_follow = wanted;
+	if (!wanted || !fire || !fire->has_provider() || !r_setup.rect.has_area()) {
+		return;
+	}
+	const Rect2 rect = r_setup.rect;
+	const float cell = MAX(2.0f, MAX(rect.size.x, rect.size.y) / 511.0f);
+	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 512);
+	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 512);
+	LocalVector<float> ages;
+	ages.resize(nx * ny);
+	bool any = false;
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const Vector2 xz = rect.position + rect.size * Vector2(float(x) / (nx - 1), float(z) / (ny - 1));
+			const float a = fire->burn_age_at(Vector3(xz.x, 0.0f, xz.y));
+			ages[z * nx + x] = a;
+			any = any || a >= 0.0f;
+		}
+	}
+	if (!any) {
+		return;
+	}
+	r_setup.burn = ages;
+	r_setup.burn_nx = nx;
+	r_setup.burn_ny = ny;
+	r_setup.burn_rect = rect;
+}
+
+float VegetationField3D::PlaceSetup::burn_at(const Vector2 &p_xz) const {
+	if (burn.is_empty()) {
+		return -1.0f;
+	}
+	const int x = int(Math::round((p_xz.x - burn_rect.position.x) / burn_rect.size.x * (burn_nx - 1)));
+	const int z = int(Math::round((p_xz.y - burn_rect.position.y) / burn_rect.size.y * (burn_ny - 1)));
+	if (x < 0 || z < 0 || x >= burn_nx || z >= burn_ny) {
+		return -1.0f;
+	}
+	return burn[z * burn_nx + x];
 }
 
 float VegetationField3D::PlaceSetup::mobility_at(const Vector2 &p_xz) const {
@@ -439,6 +523,7 @@ float VegetationField3D::get_species_range(int p_species) const {
 }
 
 bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
+	_update_bark_detail(); // The species are final by now.
 	r_setup = PlaceSetup();
 	ERR_FAIL_COND_V_MSG(biome.is_null(), false, "VegetationField3D: no biome.");
 	TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
@@ -470,18 +555,10 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		r_setup.coast = gen && gen->has_sea_result() ? gen : nullptr;
 		r_setup.sea_y = gen ? float(gen->get_sea_level() + gen->get_height_offset()) : 0.0f;
 		_read_sand(gen, r_setup);
-		bool mobility_rule = false;
-		if (biome.is_valid()) {
-			const TypedArray<PlantSpecies> list = biome->get_species();
-			for (int i = 0; i < list.size(); i++) {
-				const Ref<PlantSpecies> sp = list[i];
-				mobility_rule = mobility_rule || (sp.is_valid() && sp->uses_sand_mobility());
-			}
-		}
-		if (mobility_rule) {
-			_read_sand_mobility(gen, r_setup);
-		}
+		// Every field on a sand sea reads it: sand plants by their mobility rule, and the rest to keep off the sand.
+		_read_sand_mobility(gen, r_setup);
 	}
+	_read_burn_age(r_setup);
 	r_setup.stone_tops = stone_top_grid;
 	r_setup.stone_top_normals = stone_top_grid_normals;
 	// Another field's crowns (canopy_field): a camera-local herb layer under a world forest.
@@ -552,6 +629,26 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 				for (const Ref<Mesh> &m : ps.meshes) {
 					const Vector2 gs = m.is_valid() ? Vector2(m->get_meta(SNAME("tree_ground_slope"), Vector2())) : Vector2();
 					ps.bank_slopes.push_back(gs.x);
+				}
+			}
+		}
+		{
+			bool any_fire = false;
+			for (const Ref<Mesh> &m : ps.meshes) {
+				any_fire = any_fire || (m.is_valid() && m->has_meta(SNAME("tree_fire_years")));
+			}
+			if (any_fire) {
+				bool any_band = false;
+				for (const Ref<Mesh> &m : ps.meshes) {
+					const float fy = (m.is_valid() && m->has_meta(SNAME("tree_fire_years"))) ? float(m->get_meta(SNAME("tree_fire_years"))) : -1.0f;
+					ps.fire_years.push_back(fy);
+					ps.fire_years_max = MAX(ps.fire_years_max, fy);
+					any_band = any_band || (m.is_valid() && m->has_meta(SNAME("tree_fire_band")));
+				}
+				if (any_band) {
+					for (const Ref<Mesh> &m : ps.meshes) {
+						ps.fire_bands.push_back((m.is_valid() && m->has_meta(SNAME("tree_fire_band"))) ? Vector2(m->get_meta(SNAME("tree_fire_band"))) : Vector2(-1.0f, -1.0f));
+					}
 				}
 			}
 		}
@@ -1008,6 +1105,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool coast_rule = sp->uses_coast();
 		const bool field_rule = sp->uses_field_edge();
 		const bool mobility_rule = sp->uses_sand_mobility();
+		const bool burn_rule = sp->uses_burn_age();
+		const bool burn_recovery = !burn_rule && sp->get_burn_recovery() > 0.0f && !p_setup.burn.is_empty();
 		const bool sand_plant = sp->uses_dune() || coast_rule || mobility_rule;
 		if (coast_rule && !p_setup.coast) {
 			continue; // Coast plants need a sea to measure from.
@@ -1108,6 +1207,18 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							m = MAX(m, Math::smoothstep(20.0f, 30.0f, float(Math::rad_to_deg(map->get_slope_at(p3)))));
 						}
 						suit *= sp->rule_weight(PlantSpecies::RULE_SAND_MOBILITY, m);
+					}
+					if (burn_rule && suit > 0.0f) {
+						// Burnt ground: the burn presets by the years since (charred stems, fire moss, fireweed); -1 never burnt.
+						suit *= sp->rule_weight(PlantSpecies::RULE_BURN_AGE, p_setup.burn_at(xz));
+					} else if (burn_recovery && suit > 0.0f) {
+						// Everything else thins on a fresh burn and closes in again over its own years.
+						suit *= sp->burn_cover(p_setup.burn_at(xz));
+					}
+					if (!sand_plant && suit > 0.0f && !p_setup.sea_depth.is_empty()) {
+						// Desert sand seas: only sand plants (RULE_SAND_MOBILITY) root in their loose sand; the rest
+						// thin out as it deepens from 5 to 30 cm.
+						suit *= 1.0f - Math::smoothstep(0.05f, 0.3f, p_setup.sea_depth_at(xz));
 					}
 					if (!sand_plant && suit > 0.0f && !p_setup.sand.is_empty()) {
 						// Loose sand (beach, dune, sand sea): no soil to root in or to hold litter.
@@ -1510,7 +1621,41 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						b = Basis(Vector3(Math::cos(ta), 0.0f, Math::sin(ta)), Math::deg_to_rad(55.0f) * trod) * b;
 					}
 					b.scale(Vector3(scale, scale * (1.0f - 0.5f * trod), scale));
-					const int variant = bank_variant >= 0 ? bank_variant : MIN(int(r * variants), variants - 1);
+					int fire_variant = -1;
+					if (!ps.fire_years.is_empty()) {
+						// Trees grown for a fire (TreeGenerator.fire_years): on burnt ground the variant whose years
+						// are nearest the ground's burn age (WorldFire.burn_age_at, the field's grid), off burns or
+						// long after (past 1.5 times the oldest band) an unburnt one; ties by the tree's own number.
+						// With bands (mesh meta "tree_fire_band", years from and to): the variant whose band holds the age,
+						// an unburnt one past the last band.
+						const float age = p_setup.burn.is_empty() ? -1.0f : p_setup.burn_at(xz);
+						bool burnt = age >= 0.0f && age <= ps.fire_years_max * 1.5f;
+						if (!ps.fire_bands.is_empty()) {
+							burnt = false;
+							for (const Vector2 &band : ps.fire_bands) {
+								burnt = burnt || (band.y > band.x && age >= band.x && age < band.y);
+							}
+						}
+						const int nv = ps.fire_years.size();
+						const int start = MIN(int(r * nv), nv - 1);
+						float best = 1e9f;
+						for (int k = 0; k < nv; k++) {
+							const int vi = (start + k) % nv;
+							const float fy = ps.fire_years[vi];
+							if ((fy >= 0.0f) != burnt) {
+								continue;
+							}
+							if (burnt && !ps.fire_bands.is_empty() && !(age >= ps.fire_bands[vi].x && age < ps.fire_bands[vi].y)) {
+								continue;
+							}
+							const float d = burnt ? Math::abs(fy - age) : 0.0f;
+							if (d < best - 1e-4f) {
+								best = d;
+								fire_variant = vi;
+							}
+						}
+					}
+					const int variant = fire_variant >= 0 ? fire_variant : (bank_variant >= 0 ? bank_variant : MIN(int(r * variants), variants - 1));
 					const Transform3D world(b, Vector3(xz.x, y, xz.y));
 					if (is_log && variant < int(ps.deadwood_axes.size()) && ps.deadwood_axes[variant].size() >= 7) {
 						const PackedFloat32Array &ax = ps.deadwood_axes[variant];
@@ -1600,7 +1745,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// (VegetationLight), which tints its leaves; species without a range get neither.
 					const float light = (1.0f - shade) * VegetationLight::exposure(map, p_setup.sun_mean, xz.x, xz.y);
 					const float range_light = range > 0.0f ? MAX(Math::floor(range), 1.0f) + VegetationLight::pack(light) / 101.0f : 0.0f;
-					out->species[s].customs[variant].push_back(Color(CLAMP(rank / MAX(keep, 1e-4f), 0.0f, 1.0f), range_light, scale, float(s)));
+					// w: the species, and in its fraction the regrowth flush on burnt ground (the plant shader's fresh
+					// green): full on a fresh burn, gone by a year and a half.
+					const float burn_age = p_setup.burn.is_empty() ? -1.0f : p_setup.burn_at(xz);
+					const float flush = burn_age < 0.0f ? 0.0f : 1.0f - Math::smoothstep(0.0f, 1.5f, burn_age);
+					out->species[s].customs[variant].push_back(Color(CLAMP(rank / MAX(keep, 1e-4f), 0.0f, 1.0f), range_light, scale, float(s) + flush * 0.99f));
 					if (ps.far_color.a > 0.0f && range > 0.0f) {
 						// The ground a plant hides: a disc of half its spacing, scaled.
 						const float rr = 0.5f * sp->get_spacing() * scale;
@@ -3374,6 +3523,9 @@ Array VegetationField3D::get_trunks_near(const Vector3 &p_center, float p_radius
 			if (t.origin.distance_squared_to(p_center) > r2) {
 				continue;
 			}
+			if (t.basis.get_scale().y < 1e-3f) {
+				continue; // A tree taken out of the stand (felled, thrown, burnt down): its instance is collapsed.
+			}
 			const Vector3i key(int(Math::round(t.origin.x * 100.0f)), int(Math::round(t.origin.y * 100.0f)), int(Math::round(t.origin.z * 100.0f)));
 			if (seen.has(key)) {
 				continue;
@@ -3527,7 +3679,9 @@ void VegetationField3D::_stream_update(double p_delta) {
 			continue;
 		}
 		WorkerThreadPool::get_singleton()->wait_for_task_completion(job->task);
-		if (_tile_distance(job->tile, ts, centre) <= stream_radius + ts * 1.5f && !stream_tiles.has(job->tile)) {
+		StreamTile **existing = stream_tiles.getptr(job->tile);
+		StreamTile *old_tile = (existing && (*existing)->stale) ? *existing : nullptr;
+		if (_tile_distance(job->tile, ts, centre) <= stream_radius + ts * 1.5f && (!existing || old_tile)) {
 			StreamTile *t = memnew(StreamTile);
 			t->out = job->out[0];
 			t->nodes.resize(species_count);
@@ -3535,7 +3689,26 @@ void VegetationField3D::_stream_update(double p_delta) {
 			for (int s = 0; s < species_count; s++) {
 				t->committed[s] = false;
 			}
-			stream_tiles.insert(job->tile, t);
+			if (old_tile) {
+				// A replacement (holes or burn ages changed): what the old tile shows is committed at once and
+				// the old instances go in the same frame, so no plant pops out and back in.
+				for (int s = 0; s < species_count; s++) {
+					if (old_tile->committed[s]) {
+						_commit_species(stream_setup, t->out, s, t->nodes[s]);
+						t->committed[s] = true;
+					}
+					_stream_free_species(old_tile, s);
+				}
+				plant_count -= old_tile->out.count;
+				if (stream_maps_job) {
+					stream_graveyard.push_back(old_tile);
+				} else {
+					memdelete(old_tile);
+				}
+				*existing = t;
+			} else {
+				stream_tiles.insert(job->tile, t);
+			}
 			plant_count += t->out.count;
 			stream_maps_dirty = true;
 			shelter_dirty = true;
@@ -3555,10 +3728,40 @@ void VegetationField3D::_stream_update(double p_delta) {
 		const Rect2 near = holes_dirty.grow(stream_setup.deadwood_reach + stream_setup.max_footprint + OBSTACLE_MARGIN);
 		for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
 			if (Rect2(Vector2(kv.key) * ts, Vector2(ts, ts)).intersects(near)) {
-				gone.push_back(kv.key);
+				kv.value->stale = true; // Placed again; the old one shows until the new one is in.
 			}
 		}
 		holes_dirty = Rect2();
+	}
+	// Burn ages changed: the grid samples the area again (all of it when it held no burn) and the tiles there are
+	// placed again with the new ages, each swapped in when its replacement is ready.
+	if (burn_dirty.has_area() && stream_jobs.is_empty()) {
+		PlaceSetup &su = stream_setup;
+		if (su.burn.is_empty() || burn_dirty.encloses(su.rect)) {
+			_read_burn_age(su);
+		} else {
+			const WorldFire *fire = WorldContracts::fire();
+			const float cx = su.burn_rect.size.x / (su.burn_nx - 1);
+			const float cz = su.burn_rect.size.y / (su.burn_ny - 1);
+			const int x0 = CLAMP(int(Math::floor((burn_dirty.position.x - su.burn_rect.position.x) / cx)) - 1, 0, su.burn_nx - 1);
+			const int x1 = CLAMP(int(Math::ceil((burn_dirty.get_end().x - su.burn_rect.position.x) / cx)) + 1, 0, su.burn_nx - 1);
+			const int z0 = CLAMP(int(Math::floor((burn_dirty.position.y - su.burn_rect.position.y) / cz)) - 1, 0, su.burn_ny - 1);
+			const int z1 = CLAMP(int(Math::ceil((burn_dirty.get_end().y - su.burn_rect.position.y) / cz)) + 1, 0, su.burn_ny - 1);
+			for (int z = z0; z <= z1; z++) {
+				for (int x = x0; x <= x1; x++) {
+					const Vector2 xz = su.burn_rect.position + Vector2(x * cx, z * cz);
+					su.burn[z * su.burn_nx + x] = fire ? fire->burn_age_at(Vector3(xz.x, 0.0f, xz.y)) : -1.0f;
+				}
+			}
+		}
+		const float cell = su.burn.is_empty() ? 2.0f : su.burn_rect.size.x / (su.burn_nx - 1);
+		const Rect2 near = burn_dirty.grow(cell + su.max_footprint);
+		for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+			if (Rect2(Vector2(kv.key) * ts, Vector2(ts, ts)).intersects(near)) {
+				kv.value->stale = true; // Placed again; the old one shows until the new one is in.
+			}
+		}
+		burn_dirty = Rect2();
 	}
 	struct Pending {
 		float d;
@@ -3626,8 +3829,8 @@ void VegetationField3D::_stream_update(double p_delta) {
 
 	// Missing tiles within the radius, nearest first, as many at once as there are workers.
 	const int max_jobs = MAX(1, WorkerThreadPool::get_singleton()->get_thread_count());
-	if (int(stream_jobs.size()) < max_jobs && !holes_dirty.has_area()) {
-		const int r = int(Math::ceil(stream_radius / ts)) + 1;
+	if (int(stream_jobs.size()) < max_jobs && !holes_dirty.has_area() && !burn_dirty.has_area()) {
+		const int r = int(Math::ceil(stream_radius / ts)) + 2;
 		const Vector2i ct(int(Math::floor(centre.x / ts)), int(Math::floor(centre.y / ts)));
 		const Rect2i map_tiles(Vector2i(int(Math::floor(rect.position.x / ts)), int(Math::floor(rect.position.y / ts))),
 				Vector2i(int(Math::ceil((rect.position.x + rect.size.x) / ts)) - int(Math::floor(rect.position.x / ts)),
@@ -3636,12 +3839,13 @@ void VegetationField3D::_stream_update(double p_delta) {
 		for (int dz = -r; dz <= r; dz++) {
 			for (int dx = -r; dx <= r; dx++) {
 				const Vector2i tile = ct + Vector2i(dx, dz);
-				if (!map_tiles.has_point(tile) || stream_tiles.has(tile)) {
+				const StreamTile *const *have = stream_tiles.getptr(tile);
+				if (!map_tiles.has_point(tile) || (have && !(*have)->stale)) {
 					continue;
 				}
 				const float d = _tile_distance(tile, ts, centre);
-				if (d > stream_radius) {
-					continue;
+				if (d > stream_radius + (have ? ts * 1.5f : 0.0f)) {
+					continue; // A stale tile is replaced as far out as tiles are kept.
 				}
 				bool queued = false;
 				for (const StreamJob *job : stream_jobs) {
@@ -3843,6 +4047,35 @@ void VegetationField3D::_follow_holes(TerrainDataMap3D *p_map) {
 	gen->connect(SNAME("holes_changed"), on_holes);
 }
 
+// Burn ages changed (WorldFire.burn_changed, a live fire or a scar placed, moved or aged): the streamed tiles over
+// the area are placed again (_stream_update, once no tile is being placed); a populated field populates again.
+void VegetationField3D::_follow_burns(double p_delta) {
+	burn_check -= p_delta;
+	if (!burn_follow || burn_check > 0.0) {
+		return;
+	}
+	burn_check = 0.5;
+	const WorldFire *fire = WorldContracts::fire();
+	if (!fire || fire->get_burn_generation() == burn_seen) {
+		return;
+	}
+	Rect2 area;
+	if (!fire->burn_changes_since(burn_seen, area)) {
+		area = Rect2(-1e6f, -1e6f, 2e6f, 2e6f);
+	}
+	burn_seen = fire->get_burn_generation();
+	if (!area.has_area()) {
+		return;
+	}
+	if (streaming) {
+		if (stream_setup_valid && area.intersects(stream_setup.rect)) {
+			burn_dirty = burn_dirty.has_area() ? burn_dirty.merge(area) : area;
+		}
+	} else if (plant_count > 0) {
+		queue_populate();
+	}
+}
+
 // Crop fields came, went or moved (GrassField3D.fields): rebuild clear of them.
 void VegetationField3D::_on_crop_fields_changed() {
 	_on_holes_changed(Rect2(-1e6f, -1e6f, 2e6f, 2e6f));
@@ -3865,6 +4098,7 @@ void VegetationField3D::_notification(int p_what) {
 				break;
 			}
 			add_to_group(SNAME("vegetation_crop_aware"));
+			_update_bark_detail();
 			TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
 			if (map) {
 				// Repopulate whenever the map is baked again (terrain edits).
@@ -3897,6 +4131,7 @@ void VegetationField3D::_notification(int p_what) {
 					_update_impostors(traced);
 				}
 			}
+			_follow_burns(get_process_delta_time());
 			if (streaming) {
 				_stream_update(get_process_delta_time());
 			}
@@ -3948,6 +4183,60 @@ void VegetationField3D::_contact_trample_step(double p_delta) {
 
 void VegetationField3D::set_biome(const Ref<Biome> &p_biome) {
 	biome = p_biome;
+	_update_bark_detail();
+}
+
+void VegetationField3D::set_bark_detail(bool p_enabled) {
+	bark_detail = p_enabled;
+	_update_bark_detail();
+}
+
+Node *VegetationField3D::get_bark_detail_node() const {
+	return Object::cast_to<Node>(ObjectDB::get_instance(bark_detail_node));
+}
+
+// The close-up bark on this field's trunks: a BarkDetail3D made once a species has trunks (tree_colliders), as an
+// internal child (not saved with the scene) following this field and the camera; gone when switched off. A scene
+// that adds its own BarkDetail3D under the field keeps it, and none is made.
+void VegetationField3D::_update_bark_detail() {
+	if (!is_inside_tree() || Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+	Node *existing = get_bark_detail_node();
+	bool want = bark_detail && biome.is_valid();
+	if (want) {
+		for (int i = 0; i < get_child_count(false); i++) {
+			if (Object::cast_to<BarkDetail3D>(get_child(i, false))) {
+				want = false; // The scene's own.
+			}
+		}
+	}
+	if (want) {
+		bool trunks = false;
+		const TypedArray<PlantSpecies> list = biome->get_species();
+		for (int i = 0; i < list.size() && !trunks; i++) {
+			const Ref<PlantSpecies> sp = list[i];
+			if (sp.is_null()) {
+				continue;
+			}
+			const TypedArray<Mesh> meshes = sp->get_meshes();
+			for (int m = 0; m < meshes.size() && !trunks; m++) {
+				const Ref<Mesh> mesh = meshes[m];
+				trunks = mesh.is_valid() && mesh->has_meta(SNAME("tree_colliders"));
+			}
+		}
+		want = trunks;
+	}
+	if (want && !existing) {
+		BarkDetail3D *bd = memnew(BarkDetail3D);
+		bd->set_name("BarkDetail");
+		add_child(bd, false, INTERNAL_MODE_BACK);
+		bd->set_vegetation(bd->get_path_to(this));
+		bark_detail_node = bd->get_instance_id();
+	} else if (!want && existing && !bark_detail) {
+		existing->queue_free();
+		bark_detail_node = ObjectID();
+	}
 }
 
 void VegetationField3D::set_data_map(const NodePath &p_path) {
@@ -4031,6 +4320,9 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_cover_grass_layers"), &VegetationField3D::get_cover_grass_layers);
 	ClassDB::bind_method(D_METHOD("set_cover_cell", "cell"), &VegetationField3D::set_cover_cell);
 	ClassDB::bind_method(D_METHOD("set_far_volume", "enabled"), &VegetationField3D::set_far_volume);
+	ClassDB::bind_method(D_METHOD("set_bark_detail", "enabled"), &VegetationField3D::set_bark_detail);
+	ClassDB::bind_method(D_METHOD("is_bark_detail"), &VegetationField3D::is_bark_detail);
+	ClassDB::bind_method(D_METHOD("get_bark_detail_node"), &VegetationField3D::get_bark_detail_node);
 	ClassDB::bind_method(D_METHOD("set_far_match_view", "enabled"), &VegetationField3D::set_far_match_view);
 	ClassDB::bind_method(D_METHOD("is_far_match_view"), &VegetationField3D::is_far_match_view);
 	ClassDB::bind_method(D_METHOD("get_far_shade"), &VegetationField3D::get_far_shade);
@@ -4087,6 +4379,7 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "cover_grass_layers", PROPERTY_HINT_ARRAY_TYPE, vformat("%s/%s:%s", Variant::NODE_PATH, PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GrassField3D")), "set_cover_grass_layers", "get_cover_grass_layers");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cover_cell", PROPERTY_HINT_RANGE, "0.5,64,0.5,suffix:m"), "set_cover_cell", "get_cover_cell");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_match_view"), "set_far_match_view", "is_far_match_view");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "bark_detail"), "set_bark_detail", "is_bark_detail");
 	ADD_GROUP("Far volume", "far_volume");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_volume"), "set_far_volume", "is_far_volume");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_volume_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_far_volume_range", "get_far_volume_range");

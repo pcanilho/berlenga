@@ -437,6 +437,12 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 		case PRESET_DRINN:
 			r_phenology = { 250.0f, 900.0f, -1.0f, true }; // Late winter and spring in the Sahara; plumes stand on.
 			return true;
+		case PRESET_FIREWEED:
+			r_phenology = { 1000.0f, 1700.0f, 500.0f, true }; // July to September; the pods split and the fluff blows into autumn.
+			return true;
+		case PRESET_FIRE_MOSS:
+			r_phenology = { 200.0f, 1200.0f, -1.0f, true }; // Capsules ripen spring to summer and stand.
+			return true;
 		case PRESET_LYME_GRASS:
 			r_phenology = { 750.0f, 1350.0f, -1.0f, true }; // June to August; straw spikes stand.
 			return true;
@@ -661,6 +667,7 @@ float PlantGenerator::get_pollen_amount(Preset p_preset) {
 		case PRESET_DRY_GRASS:
 		case PRESET_CORD_GRASS:
 		case PRESET_DRINN:
+		case PRESET_BURNT_TUSSOCK:
 			return 0.6f;
 		case PRESET_DOCK:
 		case PRESET_PLANTAIN:
@@ -753,6 +760,14 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 		case PRESET_LYME_GRASS:
 		case PRESET_DRINN:
 			return 150.0f;
+		case PRESET_CHARRED_STEMS:
+			return 5.0f; // Brittle charcoal snaps underfoot.
+		case PRESET_FIREWEED:
+			return 30.0f; // Tall erect forb.
+		case PRESET_FIRE_MOSS:
+			return 60.0f;
+		case PRESET_BURNT_TUSSOCK:
+			return 150.0f;
 		case PRESET_SOIL_CRUST:
 			return 2.0f; // A few passes break it, and it takes decades to heal (Belnap and Lange 2003).
 		case PRESET_DESERT_ANNUALS:
@@ -833,6 +848,86 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 	}
 }
 
+// Years a preset takes to full cover after a fire (docs/ideas/vegetation.md, "Burnt ground and regrowth"): its share of
+// a stand on burnt ground rises from none to full over them (PlantSpecies.burn_recovery). Grasses and sedges resprout
+// from their crowns within weeks and close in a season (Grime et al. 2007); bracken from its rhizomes in one; herbs in
+// one to two; heaths through the pioneer phase into building, 6 to 10 (Gimingham 1972); woodland mosses and lichens
+// need shade and a decade or more; litter takes some years to build up again; soil crust decades (Belnap and Lange
+// 2003). 0: not touched by fire (water plants, and the burn presets, placed by RULE_BURN_AGE).
+float PlantGenerator::get_burn_recovery(Preset p_preset) {
+	if (is_mushroom(p_preset)) {
+		return 5.0f;
+	}
+	switch (p_preset) {
+		case PRESET_WATER_LILY:
+		case PRESET_RIVER_MOSS:
+		case PRESET_FIREWEED:
+		case PRESET_FIRE_MOSS:
+		case PRESET_CHARRED_STEMS:
+		case PRESET_BURNT_TUSSOCK:
+		case PRESET_MAX:
+			return 0.0f;
+		case PRESET_SEDGE:
+		case PRESET_COCKSFOOT:
+		case PRESET_TIMOTHY:
+		case PRESET_DRY_GRASS:
+		case PRESET_REED:
+		case PRESET_CATTAIL:
+		case PRESET_RUSH:
+		case PRESET_COTTONGRASS:
+		case PRESET_MARRAM:
+		case PRESET_LYME_GRASS:
+		case PRESET_ALPINE_SEDGE:
+		case PRESET_CORD_GRASS:
+		case PRESET_DRINN:
+		case PRESET_DESERT_ANNUALS:
+			return 0.7f;
+		case PRESET_BRACKEN:
+		case PRESET_NETTLE:
+		case PRESET_BRAMBLE:
+			return 1.2f;
+		case PRESET_HEATHER:
+		case PRESET_BELL_HEATHER:
+		case PRESET_CROSS_LEAVED_HEATH:
+		case PRESET_CROWBERRY:
+			return 8.0f;
+		case PRESET_BILBERRY:
+			return 4.0f; // Resprouts from its rhizomes.
+		case PRESET_ROSEMARY:
+		case PRESET_FRENCH_LAVENDER:
+		case PRESET_THYME:
+		case PRESET_SAGE_ROCKROSE:
+			return 5.0f; // Seeders after the first autumn rains (Calvo et al.).
+		case PRESET_DWARF_WILLOW:
+		case PRESET_MOUNTAIN_AVENS:
+		case PRESET_MOSS_CAMPION:
+		case PRESET_PURPLE_SAXIFRAGE:
+			return 15.0f; // Slow alpine cushions and mats.
+		case PRESET_MOSS:
+		case PRESET_FEATHER_MOSS:
+		case PRESET_PINCUSHION_MOSS:
+		case PRESET_SPHAGNUM:
+		case PRESET_LIVERWORT:
+			return 10.0f;
+		case PRESET_LEAF_LITTER:
+		case PRESET_NEEDLE_LITTER:
+		case PRESET_TWIGS:
+			return 3.0f;
+		case PRESET_SOIL_CRUST:
+			return 30.0f;
+		case PRESET_IVY:
+		case PRESET_FERN:
+		case PRESET_PARSLEY_FERN:
+		case PRESET_SPLEENWORT:
+		case PRESET_WOOD_SORREL:
+		case PRESET_WOODRUFF:
+		case PRESET_WOOD_ANEMONE:
+			return 4.0f; // Woodland herbs wait for the shade to return.
+		default:
+			return 1.5f; // Herbs: from rootstocks and the seed bank.
+	}
+}
+
 // What shows of one plant of the small ground presets (m), for the pixel reach (vegetation_detail.h;
 // docs/ideas/ground-detail-vegetation.md): a fallen leaf's or a twig's length, a moss cushion's or a
 // rosette's width, a seedling's height; 0 for the rest, which keep their hand-set range.
@@ -869,6 +964,7 @@ static float _preset_detail_size(PlantGenerator::Preset p_preset) {
 		case P::PRESET_DESERT_ANNUALS:
 			return 0.07f;
 		case P::PRESET_SOIL_CRUST:
+		case P::PRESET_FIRE_MOSS:
 			return 0.1f;
 		case P::PRESET_SEEDLING:
 			return 0.15f;
@@ -888,6 +984,9 @@ void PlantGenerator::tag_species(const Ref<Resource> &p_species, Preset p_preset
 	}
 	if (sp && sp->get_detail_size() <= 0.0f) {
 		sp->set_detail_size(_preset_detail_size(p_preset));
+	}
+	if (sp && sp->get_burn_recovery() <= 0.0f) {
+		sp->set_burn_recovery(get_burn_recovery(p_preset));
 	}
 	const float pollen = get_pollen_amount(p_preset);
 	if (pollen > 0.0f) {
@@ -4671,6 +4770,16 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.yellowing = 0.0f;
 			t.spots = 0.6f; // The tentacles' bases, red dots over the blade.
 			break;
+		case PRESET_FIREWEED:
+			l.shape = LEAF_LANCEOLATE;
+			t.aspect = 0.14f;
+			t.venation = VENATION_PINNATE;
+			t.vein = leaf_color.lerp(Color(0.85f, 0.85f, 0.75f), 0.55f); // The pale midrib and the veins looping short of the margin.
+			t.yellowing = 0.15f;
+			t.spots = 0.15f;
+			break;
+		case PRESET_BURNT_TUSSOCK:
+		case PRESET_CHARRED_STEMS:
 		case PRESET_MARRAM:
 		case PRESET_LYME_GRASS:
 		case PRESET_DRINN:
@@ -5519,6 +5628,11 @@ void vertex() {
 		float lv = 1.0 + 0.16 * (h1 - 0.5);
 		float yl = 0.1 * (h2 - 0.5);
 		v_tone = lv * vec3(1.0 + yl, 1.0 + 0.3 * yl, 1.0 - yl);
+		// Regrowth on burnt ground (VegetationField3D, w's fraction): the first season's shoots come up a lighter,
+		// fresher yellow-green than the stand around (young leaves, richer in nitrogen on the ash: the post-fire
+		// green flush), fading over a year and a half. Living tissue only.
+		float flush = fract(INSTANCE_CUSTOM.w) / 0.99;
+		v_tone *= mix(vec3(1.0), vec3(1.10, 1.22, 0.84), clamp(flush, 0.0, 1.0) * light_response);
 	}
 	if (w > 0.0) {
 		float resp = (grass_wind.z > 0.0 ? grass_wind.z : 0.12) / max(stiffness, 0.05);
@@ -6250,6 +6364,28 @@ void PlantGenerator::apply_preset_colors() {
 			centre_color = Color(0.6f, 0.55f, 0.4f);
 			petal_color = Color(0.85f, 0.75f, 0.3f);
 			break;
+		case PRESET_FIREWEED:
+			leaf_color = Color(0.11f, 0.25f, 0.07f); // Dark green above.
+			stem_color = Color(0.4f, 0.15f, 0.11f); // Reddish.
+			petal_color = Color(0.72f, 0.1f, 0.42f); // Magenta-pink.
+			centre_color = Color(0.85f, 0.83f, 0.8f); // White style and seed fluff.
+			break;
+		case PRESET_FIRE_MOSS:
+			leaf_color = Color(0.25f, 0.33f, 0.08f); // Yellow-green shoots.
+			centre_color = Color(0.17f, 0.24f, 0.05f);
+			stem_color = Color(0.6f, 0.3f, 0.08f); // Orange setae.
+			petal_color = Color(0.45f, 0.25f, 0.08f); // Ripe capsules, orange-brown (unripe ones tinted green).
+			break;
+		case PRESET_CHARRED_STEMS:
+			stem_color = Color(0.035f, 0.031f, 0.028f); // Charcoal; the vertex tint weathers it silver-grey.
+			centre_color = Color(0.55f, 0.54f, 0.52f); // Ash.
+			leaf_color = Color(0.13f, 0.24f, 0.06f); // Resprouting heather shoots.
+			break;
+		case PRESET_BURNT_TUSSOCK:
+			stem_color = Color(0.04f, 0.035f, 0.03f); // Charred stubble and crown.
+			centre_color = Color(0.5f, 0.49f, 0.47f); // Ash.
+			leaf_color = Color(0.16f, 0.36f, 0.07f); // The bright green flush.
+			break;
 		case PRESET_SOIL_CRUST:
 			// Cyanobacterial and lichen crust: dark brown-black (scytonemin), lichen specks grey, green and orange.
 			leaf_color = Color(0.09f, 0.075f, 0.06f);
@@ -6641,6 +6777,18 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_SOIL_CRUST:
 			_build_soil_crust();
 			break;
+		case PRESET_FIREWEED:
+			_build_fireweed();
+			break;
+		case PRESET_FIRE_MOSS:
+			_build_fire_moss();
+			break;
+		case PRESET_CHARRED_STEMS:
+			_build_charred_stems();
+			break;
+		case PRESET_BURNT_TUSSOCK:
+			_build_burnt_tussock();
+			break;
 		case PRESET_BELL_HEATHER:
 			_build_bell_heather();
 			break;
@@ -6796,7 +6944,11 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		// since edge-collapse simplification stalls on many small islands.
 		// Not petals: a flower's few petals are its colour accent far off, and dropping some of
 		// them dims the drift even with the area kept (seen in the heath shots).
-		if (lods && s == SURFACE_LEAF) {
+		// Also the many-island accents of the burn presets, which meshoptimizer cannot thin either (stochastic
+		// simplification of aggregate detail, Cook et al. 2007): fire moss's capsules, the ash on charred stems and
+		// burnt tussock stubs; their colour holds as the survivors grow to keep the area.
+		const bool island_accents = (preset == PRESET_FIRE_MOSS && s == SURFACE_PETAL) || ((preset == PRESET_CHARRED_STEMS || preset == PRESET_BURNT_TUSSOCK) && s == SURFACE_CENTRE);
+		if (lods && (s == SURFACE_LEAF || island_accents)) {
 			CardSurface cs;
 			if (_card_lods(b, cs)) {
 				arrays[Mesh::ARRAY_CUSTOM0] = cs.custom;
@@ -6806,7 +6958,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			}
 		}
 		Ref<ShaderMaterial> mat;
-		if (textures && (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_SPHAGNUM || preset == PRESET_PINCUSHION_MOSS) && s == SURFACE_CENTRE) {
+		if (textures && (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_SPHAGNUM || preset == PRESET_PINCUSHION_MOSS || preset == PRESET_FIRE_MOSS) && s == SURFACE_CENTRE) {
 			const uint64_t key = (uint64_t(preset) << 40) ^ (uint64_t(s) << 36) ^ (uint64_t(uint32_t(seed % 3)) << 32) ^ uint64_t(Math::abs(int(leaf_color.to_rgba32()) % 1000003)) ^ (uint64_t(texture_size) << 44);
 			TextureSet *ts = texture_cache.getptr(key);
 			if (!ts) {
@@ -6835,7 +6987,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		// Sun and shade leaves: leaves and stems change colour with their light, petals and litter do not.
 		mat->set_shader_parameter("light_response", s >= SURFACE_PETAL || is_mushroom(preset) || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS ? 0.0f : 1.0f);
 		// Stiffer the bigger and woodier: bramble canes and bracken stipes barely lean in the wind.
-		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL || preset == PRESET_MARRAM || preset == PRESET_SEA_HOLLY || preset == PRESET_CORD_GRASS || preset == PRESET_GLASSWORT ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_PINCUSHION_MOSS || preset == PRESET_SOIL_CRUST || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f)));
+		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL || preset == PRESET_MARRAM || preset == PRESET_SEA_HOLLY || preset == PRESET_CORD_GRASS || preset == PRESET_GLASSWORT ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_PINCUSHION_MOSS || preset == PRESET_SOIL_CRUST || preset == PRESET_FIRE_MOSS || preset == PRESET_CHARRED_STEMS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f)));
 		im->add_surface(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), Dictionary(), mat, names[s]);
 	}
 	// Distance LODs (meshoptimizer simplification, as the scene importer does): a meadow holds
@@ -7697,17 +7849,23 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_DRINN);
 	BIND_ENUM_CONSTANT(PRESET_DESERT_ANNUALS);
 	BIND_ENUM_CONSTANT(PRESET_SOIL_CRUST);
+	BIND_ENUM_CONSTANT(PRESET_FIREWEED);
+	BIND_ENUM_CONSTANT(PRESET_FIRE_MOSS);
+	BIND_ENUM_CONSTANT(PRESET_CHARRED_STEMS);
+	BIND_ENUM_CONSTANT(PRESET_BURNT_TUSSOCK);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dunes", "stand", "variants", "textures", "season"), &PlantGenerator::make_dunes, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_desert", "stand", "variants", "textures", "season"), &PlantGenerator::make_desert, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_desert", "stand", "variants", "textures", "season", "shrubs"), &PlantGenerator::make_desert, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()), DEFVAL(true));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_burn", "stand", "variants", "textures", "season"), &PlantGenerator::make_burn, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_margin", "stand", "variants", "textures", "season"), &PlantGenerator::make_margin, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_heath", "stand", "variants", "textures", "season", "shrubs"), &PlantGenerator::make_heath, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()), DEFVAL(true));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_scrub", "stand", "variants", "textures", "season", "shrubs"), &PlantGenerator::make_scrub, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()), DEFVAL(true));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_trample_resistance", "preset"), &PlantGenerator::get_trample_resistance);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_burn_recovery", "preset"), &PlantGenerator::get_burn_recovery);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("apply_scrub_rules", "species", "stand"), &PlantGenerator::apply_scrub_rules);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_woody_shrub", "tree_preset", "form", "variants", "season", "density", "patch_scale", "patch_cover", "seed"), &PlantGenerator::make_woody_shrub);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_banks", "stand", "variants", "textures", "season"), &PlantGenerator::make_banks, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
@@ -7748,6 +7906,10 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(DESERT_FLANKS);
 	BIND_ENUM_CONSTANT(DESERT_INTERDUNE);
 	BIND_ENUM_CONSTANT(DESERT_MAX);
+	BIND_ENUM_CONSTANT(BURN_HEATH);
+	BIND_ENUM_CONSTANT(BURN_GRASS);
+	BIND_ENUM_CONSTANT(BURN_SCRUB);
+	BIND_ENUM_CONSTANT(BURN_MAX);
 	BIND_ENUM_CONSTANT(ALPINE_FELLFIELD);
 	BIND_ENUM_CONSTANT(ALPINE_GRASSLAND);
 	BIND_ENUM_CONSTANT(ALPINE_SNOWBED);

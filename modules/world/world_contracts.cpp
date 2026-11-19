@@ -71,12 +71,24 @@ float WorldWeather::canopy_closure_at(const Vector3 &p_position) const WW_CALL(_
 float WorldWeather::frost_at(const Vector3 &p_position) const WW_CALL(_frost_at, contract_frost_at(p_position), 0.0f, p_position)
 float WorldWeather::rainfall_at(const Vector3 &p_position) const WW_CALL(_rainfall_at, contract_rainfall_at(p_position), 0.0f, p_position)
 float WorldWeather::snowfall_at(const Vector3 &p_position) const WW_CALL(_snowfall_at, contract_snowfall_at(p_position), 0.0f, p_position)
+float WorldWeather::smoke_at(const Vector3 &p_position) const WW_CALL(_smoke_at, contract_smoke_at(p_position), 0.0f, p_position)
 float WorldWeather::canopy_water_at(const Vector3 &p_position) const WW_CALL(_canopy_water_at, contract_canopy_water_at(p_position), 0.0f, p_position)
 float WorldWeather::canopy_wetness_at(const Vector3 &p_position) const WW_CALL(_canopy_wetness_at, contract_canopy_wetness_at(p_position), 0.0f, p_position)
 float WorldWeather::canopy_drip_at(const Vector3 &p_position) const WW_CALL(_canopy_drip_at, contract_canopy_drip_at(p_position), 0.0f, p_position)
 float WorldWeather::ground_water_input_at(const Vector3 &p_position) const WW_CALL(_ground_water_input_at, contract_ground_water_input_at(p_position), 0.0f, p_position)
 float WorldWeather::cloud_cover_at(const Vector3 &p_position) const WW_CALL(_cloud_cover_at, contract_cloud_cover_at(p_position), 0.0f, p_position)
 float WorldWeather::ground_height_at(const Vector3 &p_position) const WW_CALL(_ground_height_at, contract_ground_height_at(p_position), 0.0f, p_position)
+float WorldWeather::washout_rate(float p_rain_mm_h, float p_snow_mm_h, bool p_coarse) {
+	const float a = p_coarse ? 3.0e-4f : 1.0e-5f;
+	const float b = p_coarse ? 0.75f : 0.8f;
+	const float r = MAX(p_rain_mm_h, 0.0f), sn = MAX(p_snow_mm_h, 0.0f);
+	return a * (Math::pow(r, b) + 5.0f * Math::pow(sn, b));
+}
+
+float WorldWeather::washout_at(const Vector3 &p_position, bool p_coarse) const {
+	return washout_rate(rainfall_at(p_position), snowfall_at(p_position), p_coarse);
+}
+
 float WorldWeather::surface_temperature_at(const Vector3 &p_position) const {
 	float r = 0.0f;
 	if (GDVIRTUAL_CALL(_surface_temperature_at, p_position, r)) {
@@ -167,6 +179,9 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("terrain_lee_at", "position"), &WorldWeather::terrain_lee_at);
 	ClassDB::bind_method(D_METHOD("rainfall_at", "position"), &WorldWeather::rainfall_at);
 	ClassDB::bind_method(D_METHOD("snowfall_at", "position"), &WorldWeather::snowfall_at);
+	ClassDB::bind_static_method("WorldWeather", D_METHOD("washout_rate", "rain_mm_h", "snow_mm_h", "coarse"), &WorldWeather::washout_rate);
+	ClassDB::bind_method(D_METHOD("washout_at", "position", "coarse"), &WorldWeather::washout_at);
+	ClassDB::bind_method(D_METHOD("smoke_at", "position"), &WorldWeather::smoke_at);
 	ClassDB::bind_method(D_METHOD("canopy_water_at", "position"), &WorldWeather::canopy_water_at);
 	ClassDB::bind_method(D_METHOD("canopy_wetness_at", "position"), &WorldWeather::canopy_wetness_at);
 	ClassDB::bind_method(D_METHOD("canopy_drip_at", "position"), &WorldWeather::canopy_drip_at);
@@ -196,6 +211,7 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_terrain_lee_at, "position");
 	GDVIRTUAL_BIND(_rainfall_at, "position");
 	GDVIRTUAL_BIND(_snowfall_at, "position");
+	GDVIRTUAL_BIND(_smoke_at, "position");
 	GDVIRTUAL_BIND(_canopy_water_at, "position");
 	GDVIRTUAL_BIND(_canopy_wetness_at, "position");
 	GDVIRTUAL_BIND(_canopy_drip_at, "position");
@@ -299,6 +315,26 @@ void WorldWater::impulse(const Vector3 &p_position, float p_radius, float p_stre
 	}
 }
 
+Vector2 WorldWater::sediment_at(const Vector3 &p_position) const {
+	Vector2 r;
+	if (GDVIRTUAL_CALL(_sediment_at, p_position, r)) {
+		return r;
+	}
+	float h;
+	WorldWaterProvider *top = _top_at(p_position, h);
+	return top ? top->contract_water_sediment_at(p_position) : Vector2();
+}
+
+void WorldWater::add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) {
+	if (GDVIRTUAL_CALL(_add_sediment, p_position, p_mineral_kg_s, p_ash_kg_s)) {
+		return;
+	}
+	float h;
+	if (WorldWaterProvider *top = _top_at(p_position, h)) {
+		top->contract_water_add_sediment(p_position, MAX(p_mineral_kg_s, 0.0f), MAX(p_ash_kg_s, 0.0f));
+	}
+}
+
 void WorldWater::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldWater::has_provider);
 	ClassDB::bind_method(D_METHOD("height_at", "position"), &WorldWater::height_at);
@@ -308,6 +344,8 @@ void WorldWater::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("disturb", "owner", "position", "radius", "strength"), &WorldWater::disturb);
 	ClassDB::bind_method(D_METHOD("clear", "owner"), &WorldWater::clear);
 	ClassDB::bind_method(D_METHOD("impulse", "position", "radius", "strength"), &WorldWater::impulse);
+	ClassDB::bind_method(D_METHOD("sediment_at", "position"), &WorldWater::sediment_at);
+	ClassDB::bind_method(D_METHOD("add_sediment", "position", "mineral_kg_s", "ash_kg_s"), &WorldWater::add_sediment);
 
 	GDVIRTUAL_BIND(_height_at, "position");
 	GDVIRTUAL_BIND(_flow_at, "position");
@@ -315,6 +353,8 @@ void WorldWater::_bind_methods() {
 	GDVIRTUAL_BIND(_disturb, "owner", "position", "radius", "strength");
 	GDVIRTUAL_BIND(_clear, "owner");
 	GDVIRTUAL_BIND(_impulse, "position", "radius", "strength");
+	GDVIRTUAL_BIND(_sediment_at, "position");
+	GDVIRTUAL_BIND(_add_sediment, "position", "mineral_kg_s", "ash_kg_s");
 }
 
 // Snow.
@@ -367,6 +407,23 @@ Vector2 WorldSnow::lake_ice_at(const Vector3 &p_position) const {
 	return provider ? provider->contract_snow_lake_ice_at(p_position) : Vector2();
 }
 
+void WorldSnow::add_impurity(const Vector3 &p_position, float p_radius, float p_mg_per_m2) {
+	if (GDVIRTUAL_CALL(_add_impurity, p_position, p_radius, p_mg_per_m2)) {
+		return;
+	}
+	if (provider) {
+		provider->contract_snow_add_impurity(p_position, p_radius, p_mg_per_m2);
+	}
+}
+
+float WorldSnow::impurity_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_impurity_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_snow_impurity_at(p_position) : 0.0f;
+}
+
 void WorldSnow::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldSnow::has_provider);
 	ClassDB::bind_method(D_METHOD("depth_at", "position"), &WorldSnow::depth_at);
@@ -375,12 +432,16 @@ void WorldSnow::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("surface_at", "position"), &WorldSnow::surface_at);
 	ClassDB::bind_method(D_METHOD("crust_at", "position"), &WorldSnow::crust_at);
 	ClassDB::bind_method(D_METHOD("lake_ice_at", "position"), &WorldSnow::lake_ice_at);
+	ClassDB::bind_method(D_METHOD("add_impurity", "position", "radius", "mg_per_m2"), &WorldSnow::add_impurity);
+	ClassDB::bind_method(D_METHOD("impurity_at", "position"), &WorldSnow::impurity_at);
 	GDVIRTUAL_BIND(_depth_at, "position");
 	GDVIRTUAL_BIND(_density_at, "position");
 	GDVIRTUAL_BIND(_wetness_at, "position");
 	GDVIRTUAL_BIND(_surface_at, "position");
 	GDVIRTUAL_BIND(_crust_at, "position");
 	GDVIRTUAL_BIND(_lake_ice_at, "position");
+	GDVIRTUAL_BIND(_add_impurity, "position", "radius", "mg_per_m2");
+	GDVIRTUAL_BIND(_impurity_at, "position");
 }
 
 // Fire.
@@ -443,7 +504,95 @@ float WorldFire::burn_age_at(const Vector3 &p_position) const {
 	return r;
 }
 
+float WorldFire::crown_scorch_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_crown_scorch_at, p_position, r)) {
+		return r;
+	}
+	for (WorldFireProvider *f : providers) {
+		r = MAX(r, f->contract_fire_crown_scorch_at(p_position));
+	}
+	return r;
+}
+
+float WorldFire::water_repellency_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_water_repellency_at, p_position, r)) {
+		return r;
+	}
+	for (WorldFireProvider *f : providers) {
+		r = MAX(r, f->contract_fire_water_repellency_at(p_position));
+	}
+	return r;
+}
+
+// Each fire's convection columns, all of them: where its plume rises from and the heat it carries up (the weather
+// makes fire clouds from them).
+PackedVector4Array WorldFire::plumes() const {
+	PackedVector4Array r;
+	if (GDVIRTUAL_CALL(_plumes, r)) {
+		return r;
+	}
+	for (WorldFireProvider *f : providers) {
+		f->contract_fire_plumes(r);
+	}
+	return r;
+}
+
+void WorldFire::burn_changed(const Rect2 &p_area) {
+	burn_generation++;
+	BurnChange c;
+	c.generation = burn_generation;
+	c.area = p_area;
+	if (burn_log.size() >= uint32_t(BURN_LOG)) {
+		burn_log.remove_at(0);
+	}
+	burn_log.push_back(c);
+}
+
+bool WorldFire::burn_changes_since(uint64_t p_since, Rect2 &r_area) const {
+	r_area = Rect2();
+	if (p_since >= burn_generation) {
+		return true;
+	}
+	if (burn_log.is_empty() || burn_log[0].generation > p_since + 1) {
+		return false; // Older reports have left the log.
+	}
+	bool any = false;
+	for (const BurnChange &c : burn_log) {
+		if (c.generation > p_since) {
+			r_area = any ? r_area.merge(c.area) : c.area;
+			any = true;
+		}
+	}
+	return true;
+}
+
+Dictionary WorldFire::get_burn_changes_since(uint64_t p_since) const {
+	Rect2 area;
+	Dictionary d;
+	d["complete"] = burn_changes_since(p_since, area);
+	d["area"] = area;
+	return d;
+}
+
+// Each fire's smoke, all of it: particulate (PM2.5) in kg per second of real time, where it rises from (the weather
+// carries it as a smoke layer that dims the sun).
+PackedVector4Array WorldFire::smoke_sources() const {
+	PackedVector4Array r;
+	if (GDVIRTUAL_CALL(_smoke_sources, r)) {
+		return r;
+	}
+	for (WorldFireProvider *f : providers) {
+		f->contract_fire_smoke(r);
+	}
+	return r;
+}
+
 void WorldFire::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("get_burn_changes_since", "generation"), &WorldFire::get_burn_changes_since);
+	ClassDB::bind_method(D_METHOD("burn_changed", "area"), &WorldFire::burn_changed);
+	ClassDB::bind_method(D_METHOD("get_burn_generation"), &WorldFire::get_burn_generation);
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldFire::has_provider);
 	ClassDB::bind_method(D_METHOD("heat_at", "position"), &WorldFire::heat_at);
 	ClassDB::bind_method(D_METHOD("burnt_at", "position"), &WorldFire::burnt_at);
@@ -455,6 +604,14 @@ void WorldFire::_bind_methods() {
 	GDVIRTUAL_BIND(_stem_char_at, "position");
 	ClassDB::bind_method(D_METHOD("burn_age_at", "position"), &WorldFire::burn_age_at);
 	GDVIRTUAL_BIND(_burn_age_at, "position");
+	ClassDB::bind_method(D_METHOD("crown_scorch_at", "position"), &WorldFire::crown_scorch_at);
+	GDVIRTUAL_BIND(_crown_scorch_at, "position");
+	ClassDB::bind_method(D_METHOD("water_repellency_at", "position"), &WorldFire::water_repellency_at);
+	ClassDB::bind_method(D_METHOD("plumes"), &WorldFire::plumes);
+	ClassDB::bind_method(D_METHOD("smoke_sources"), &WorldFire::smoke_sources);
+	GDVIRTUAL_BIND(_water_repellency_at, "position");
+	GDVIRTUAL_BIND(_plumes);
+	GDVIRTUAL_BIND(_smoke_sources);
 }
 
 // A script stub standing in as one water producer among the real ones.
@@ -467,6 +624,8 @@ public:
 	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override { stub->disturb(p_owner, p_position, p_radius, p_strength); }
 	void contract_water_clear(uint64_t p_owner) override { stub->clear(p_owner); }
 	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override { stub->impulse(p_position, p_radius, p_strength); }
+	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return stub->sediment_at(p_position); }
+	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override { stub->add_sediment(p_position, p_mineral_kg_s, p_ash_kg_s); }
 };
 
 void WorldContracts::add_water_stub(const Ref<WorldWater> &p_stub) {
@@ -560,7 +719,21 @@ float WorldGround::blown_sand_at(const Vector3 &p_position) const WG_CALL(_blown
 Vector2 WorldGround::needle_ice_at(const Vector3 &p_position) const WG_CALL(_needle_ice_at, contract_ground_needle_ice_at(p_position), Vector2(), p_position)
 Vector3 WorldGround::rut_guidance_at(const Vector3 &p_contact, const Vector3 &p_lateral, float p_half_width) const WG_CALL(_rut_guidance_at, contract_ground_rut_guidance_at(p_contact, p_lateral, p_half_width), Vector3(), p_contact, p_lateral, p_half_width)
 
+void WorldGround::add_runoff_load(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) {
+	if (GDVIRTUAL_CALL(_add_runoff_load, p_position, p_mineral_kg, p_ash_kg)) {
+		return;
+	}
+	if (runoff_provider && (p_mineral_kg > 0.0f || p_ash_kg > 0.0f)) {
+		runoff_provider->contract_runoff_add_load(p_position, MAX(p_mineral_kg, 0.0f), MAX(p_ash_kg, 0.0f));
+	}
+}
+
 void WorldGround::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("add_runoff_load", "position", "mineral_kg", "ash_kg"), &WorldGround::add_runoff_load);
+	ClassDB::bind_method(D_METHOD("has_runoff"), &WorldGround::has_runoff);
+	// The runoff's post-fire debris flows (WeatherRunoff3D): one event per basin per storm, for the moving flow.
+	ADD_SIGNAL(MethodInfo("debris_flow", PropertyInfo(Variant::DICTIONARY, "event")));
+	GDVIRTUAL_BIND(_add_runoff_load, "position", "mineral_kg", "ash_kg");
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldGround::has_provider);
 	ClassDB::bind_method(D_METHOD("height_at", "position"), &WorldGround::height_at);
 	ClassDB::bind_method(D_METHOD("soil_at", "position"), &WorldGround::_soil_at_bind);
@@ -638,10 +811,27 @@ void WorldContracts::unregister_ground(WorldGroundProvider *p_provider) {
 	}
 }
 
+void WorldContracts::register_runoff(WorldRunoffProvider *p_provider) {
+	if (singleton) {
+		singleton->runoff_provider = p_provider;
+		singleton->builtin_ground->runoff_provider = p_provider;
+		if (singleton->ground_override.is_valid()) {
+			singleton->ground_override->runoff_provider = p_provider;
+		}
+	}
+}
+
+void WorldContracts::unregister_runoff(WorldRunoffProvider *p_provider) {
+	if (singleton && singleton->runoff_provider == p_provider) {
+		register_runoff(nullptr);
+	}
+}
+
 void WorldContracts::set_ground(const Ref<WorldGround> &p_stub) {
 	ground_override = p_stub;
 	if (ground_override.is_valid()) {
 		ground_override->provider = ground_provider;
+		ground_override->runoff_provider = runoff_provider;
 	}
 }
 
@@ -728,6 +918,16 @@ void WorldContracts::register_fire(WorldFireProvider *p_provider) {
 void WorldContracts::unregister_fire(WorldFireProvider *p_provider) {
 	if (singleton) {
 		singleton->builtin_fire->providers.erase(p_provider);
+	}
+}
+
+void WorldContracts::fire_burn_changed(const Rect2 &p_area) {
+	if (!singleton) {
+		return;
+	}
+	singleton->builtin_fire->burn_changed(p_area);
+	if (singleton->fire_override.is_valid()) {
+		singleton->fire_override->burn_changed(p_area);
 	}
 }
 

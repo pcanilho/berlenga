@@ -764,7 +764,8 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 
 			// The mouth: back from the waterline to the cliff's foot, where the ground first stands 2 m over the sea.
 			// The sea must reach the mouth floor: the foot stands within 8 m of the waterline and the ground between
-			// stays under high-water swash (sea + 0.6 m), so a wave-cut notch rather than a dry beach fronts the cave.
+			// stays under storm swash (sea + 1.9 m: a wave-cut notch, or the pocket beach of sand and shingle that
+			// storm waves throw up into many sea cave mouths), not a dry beach well above the sea.
 			Vector2 mouth = m;
 			bool foot = false, swash = true;
 			for (real_t t = 0.0; t < 8.0; t += 0.5) {
@@ -774,7 +775,7 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 					foot = true;
 					break;
 				}
-				if (hq > sea + 0.6) {
+				if (hq > sea + 1.9) {
 					swash = false;
 					break;
 				}
@@ -859,6 +860,7 @@ int CaveNetwork3D::add_sea_cave(const Vector3 &p_entrance, const Vector3 &p_out)
 	const Vector3 side = dir.cross(Vector3(0, 1, 0)).normalized();
 	const real_t length = 35.0 + 60.0 * rng.randf();
 	const real_t r_mouth = 2.6 + 1.6 * rng.randf();
+	c.mouth = r_mouth;
 	const uint32_t ws = rng.rand();
 	// The floor at the mouth: 1.5 m under the sea off a cliff in the water; level with the beach where one runs in
 	// front (no step up out of the cave).
@@ -866,7 +868,7 @@ int CaveNetwork3D::add_sea_cave(const Vector3 &p_entrance, const Vector3 &p_out)
 	// down into the cave nor up out of it.
 	const Vector3 front = p_entrance + c.out * 5.0;
 	const real_t toe = MIN(gen->get_height(p_entrance + c.out * 2.5), gen->get_height(front) + real_t(1.5));
-	const real_t mouth_floor = MAX(sea - real_t(1.5), toe - real_t(0.3));
+	const real_t mouth_floor = MAX(sea - real_t(1.5), toe - real_t(0.08)); // just under the beach: a deeper cut showed as a step-sided trench
 	// The back at high water, or a little under a high beach (sand drifts in and slopes down the passage).
 	const real_t back_floor = MAX(sea + real_t(0.6), mouth_floor - real_t(1.0));
 	// The passage starts out in front of the face, so the toe of the cliff is cut level with the floor outside.
@@ -1060,8 +1062,20 @@ real_t cave_profile(CaveNetwork3D::PassageType p_type, real_t u, real_t v, real_
 			// stepped in and out at each bed (1.1 m), a gabled roof where blocks fell out along two joint sets, the
 			// floor bare rock and boulders, no fill. The sides lean a little with the joint's dip.
 			r_floor = -1.25 * r;
-			const real_t bed = Math::fposmod(real_t(v + 0.37f * r), real_t(1.1)) / 1.1;
-			const real_t step = 0.18 * r * (Math::smoothstep(real_t(0.0), real_t(0.12), bed) - Math::smoothstep(real_t(0.55), real_t(0.67), bed));
+			// Beds of uneven thickness (0.7 to 1.5 m), each stepped out by its own amount: equal beds stood in rows
+			// of identical ridges down both walls.
+			const real_t t = (v + 0.37f * r) / 1.1;
+			int j = int(Math::floor(t));
+			auto bed_lo = [](int p_j) { return real_t(p_j) + 0.35 * (real_t(cave_hash(p_j, 0, 0, 0x5eabedu)) - 0.5); };
+			if (t < bed_lo(j)) {
+				j--;
+			} else if (t >= bed_lo(j + 1)) {
+				j++;
+			}
+			const real_t bed = (t - bed_lo(j)) / (bed_lo(j + 1) - bed_lo(j));
+			const real_t amp = 0.18 * r * (0.3 + 1.4 * real_t(cave_hash(j, 1, 0, 0x5eabedu)));
+			const real_t lip = 0.45 + 0.25 * real_t(cave_hash(j, 2, 0, 0x5eabedu)); // where the bed's soft lower part starts
+			const real_t step = amp * (Math::smoothstep(real_t(0.0), real_t(0.12), bed) - Math::smoothstep(lip, lip + 0.12, bed));
 			const real_t uu = u - 0.12 * v; // the joint's dip
 			const real_t hw = 0.62 * r + step;
 			const real_t sides = Math::abs(uu) - hw;
@@ -1131,7 +1145,9 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p, real_t 
 		real_t dc = cave_profile(sg->type, q.dot(u_axis), q.dot(v_axis), r, floor_v);
 		const real_t fill = floor_v;
 		// The fill is never quite level: ripples, puddle hollows and mud banks a few decimetres high.
-		floor_v += 0.35 * (cave_fbm(p_p / 1.6f, uint32_t(seed) + 101u, 2) - 0.5f) + 0.12 * (cave_fbm(p_p / 0.5f, uint32_t(seed) + 103u, 2) - 0.5f);
+		// (A sea cave's floor is washed level by the swash and runs out level with the beach: ripples there cut the
+		// sand at the mouth into islands with steep trenches between them.)
+		floor_v += (sg->type == PASSAGE_SEA ? 0.1 : 1.0) * (0.35 * (cave_fbm(p_p / 1.6f, uint32_t(seed) + 101u, 2) - 0.5f) + 0.12 * (cave_fbm(p_p / 0.5f, uint32_t(seed) + 103u, 2) - 0.5f));
 		if (sg->stream) {
 			// A stream's trench: the water has washed its fill level across the floor (sand and gravel bars only
 			// along its edges), a little below the dry fill.
@@ -1219,7 +1235,7 @@ real_t CaveNetwork3D::_wall_foot(const FieldSource &p_src, const Vector3 &p_p) c
 		}
 		real_t floor_v;
 		cave_profile(sg->type, 0.0, 0.0, r, floor_v);
-		floor_v += 0.35 * (cave_fbm(p_p / 1.6f, uint32_t(seed) + 101u, 2) - 0.5f) + 0.12 * (cave_fbm(p_p / 0.5f, uint32_t(seed) + 103u, 2) - 0.5f);
+		floor_v += (sg->type == PASSAGE_SEA ? 0.1 : 1.0) * (0.35 * (cave_fbm(p_p / 1.6f, uint32_t(seed) + 101u, 2) - 0.5f) + 0.12 * (cave_fbm(p_p / 0.5f, uint32_t(seed) + 103u, 2) - 0.5f)); // as the field's floor
 		const real_t h = q.dot(v_axis) - floor_v;
 		if (h < -0.3) {
 			continue;
@@ -1298,6 +1314,23 @@ real_t CaveNetwork3D::_rock(const FieldSource &p_src, const TerrainGenerator3D *
 		}
 		f = g;
 	}
+	// Where a passage runs out over the ground in front of its mouth (a sea cave's floor level with the beach) the two
+	// surfaces lie within centimetres of each other and the lower one wins by noise: the floor came out a speckle of
+	// cave and ground quads, the two materials in jagged islands. There the side of the face decides instead: ground
+	// in front of the mouth, cave floor under the overhang, the line between them wandering a metre with noise.
+	if (r_ground && Math::abs(cave - g) < 0.5) {
+		for (uint32_t pi = 0; pi < p_src.patches.size(); pi++) {
+			const Vector3 d = p_p - p_src.patches[pi];
+			if (d.x * d.x + d.z * d.z > p_src.patch_r[pi] * p_src.patch_r[pi] * 2.0) {
+				continue;
+			}
+			const Vector3 o = Vector3(p_src.patch_out[pi].x, 0, p_src.patch_out[pi].z).normalized();
+			const real_t along = d.x * o.x + d.z * o.z;
+			const real_t wander = real_t(TerrainErosionFilter::fbm(0x5ea1u, p_p.x, p_p.z, 2.5, 2));
+			*r_ground = along > wander;
+			break;
+		}
+	}
 	// Where the cave breaks out of the ground (a mouth's rim, a sea cave's cliff face) the two surfaces meet in a
 	// knife edge of rock; a smooth union (polynomial smooth min, Quilez) rounds it into a worn lip over half a metre.
 	const real_t kr = 0.5;
@@ -1354,10 +1387,12 @@ void CaveNetwork3D::_gather(const AABB &p_box, FieldSource &r_src) const {
 				r_src.chambers.push_back(&ch);
 			}
 		}
-		const real_t pr = patch_radius * 1.4143 + 4.0;
+		const real_t half = _patch_half(c);
+		const real_t pr = half * 1.4143 + 4.0;
 		if (patch_radius > 0.0 && AABB(c.entrance - Vector3(pr, 60.0, pr), Vector3(2.0 * pr, 1000.0, 2.0 * pr)).intersects(p_box)) {
 			r_src.patches.push_back(c.entrance);
 			r_src.patch_out.push_back(c.out);
+			r_src.patch_r.push_back(half);
 		}
 	}
 }
@@ -1600,7 +1635,7 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 						for (uint32_t pi = 0; pi < src.patches.size() && !inside; pi++) {
 							const Vector3 d = verts[vi[0]] - src.patches[pi];
 							const Vector3 o = Vector3(src.patch_out[pi].x, 0, src.patch_out[pi].z).normalized();
-							inside = Math::abs(d.x * o.x + d.z * o.z) < patch_radius && Math::abs(-d.x * o.z + d.z * o.x) < patch_radius;
+							inside = Math::abs(d.x * o.x + d.z * o.z) < src.patch_r[pi] && Math::abs(-d.x * o.z + d.z * o.x) < src.patch_r[pi];
 						}
 						if (!inside) {
 							continue;
@@ -2756,7 +2791,7 @@ void CaveNetwork3D::_wanted(const AABB &p_area, HashSet<Vector3i> &r_want, HashS
 	}
 	for (const Cave &cv : caves) {
 		// The patch: from the foot to the top of the wall within the radius.
-		const real_t pr = patch_radius * 1.4143;
+		const real_t pr = _patch_half(cv) * 1.4143;
 		if (!p_all_patches && !p_area.intersects(AABB(cv.entrance - Vector3(pr, 4.0, pr), Vector3(2.0 * pr, 8.0, 2.0 * pr)))) {
 			continue;
 		}
@@ -3708,7 +3743,7 @@ void CaveNetwork3D::_open_holes() {
 		if (cv.holed) {
 			continue;
 		}
-		const real_t hr = patch_radius - 1.5;
+		const real_t hr = _patch_half(cv) - 1.5;
 		const Vector3 o = Vector3(cv.out.x, 0, cv.out.z).normalized();
 		const Basis b(Vector3(-o.z, 0, o.x) * hr, Vector3(0, 500.0, 0), o * hr);
 		gen->add_hole(Transform3D(b, cv.entrance + Vector3(0, 490.0, 0)));

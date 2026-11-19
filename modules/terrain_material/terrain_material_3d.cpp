@@ -361,8 +361,11 @@ vec3 tm_grain_n(vec2 x) {
 		if (grain) {
 			c += R"(vec3 tm_sand_grain(vec3 p, float fp, inout vec3 albedo) {
 	vec3 dn = vec3(0.0);
+	// Dry sand has no relief of its own at these scales (its grains are under half a millimetre; the
+	// centimetre relief is the wind ripples', GroundSurface3D): the octaves are mostly tone, with only a faint
+	// tilt left. At full strength the 3.5 cm octave lit as an even stamp of dots under a low sun.
 	const float L[3] = float[3](0.035, 0.014, 0.006);
-	const float S[3] = float[3](0.10, 0.09, 0.07);
+	const float S[3] = float[3](0.0, 0.03, 0.03);
 	for (int k = 0; k < 3; k++) {
 		float f = 1.0 - smoothstep(0.25 * L[k], 0.6 * L[k], fp);
 		if (f <= 0.0) {
@@ -974,7 +977,14 @@ void fragment() {
 		float regolith = smoothstep(0.05, 0.3, sg) * (1.0 - till);
 		scree += rest * regolith;
 		rest *= 1.0 - regolith;
-		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w);
+		// Past the rock slope (40 degrees) beside a wall no soil holds, whatever the 8 m geology cell says: a steep gully
+		// between a wall and its apron is thin grey debris (a smooth olive wedge with a hard edge at a cliff foot before), and
+		// alluvium lies only on gentle ground (a channel's fill does not stand on a 45 degree gully floor).
+		// Only beside walls and aprons (the geology's rock or scree near): open steep hillsides keep their soil and sward.
+		float bare_near = steep * max(smoothstep(0.02, 0.2, clamp(g.y, 0.0, 1.0)), smoothstep(0.02, 0.2, clamp(g.z, 0.0, 1.0)));
+		scree += rest * bare_near;
+		rest *= 1.0 - bare_near;
+		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w) * smoothstep(0.88, 0.95, wn.y);
 		w[0] = rock;
 		w[1] = scree;
 		w[2] = rest * (1.0 - alluvium);
@@ -1422,6 +1432,8 @@ void TerrainMaterial3D::_update_params() {
 			}
 		}
 	}
+	// Copies of this material (GroundSurface3D's near patch) follow its parameters through this signal.
+	emit_changed();
 }
 
 void TerrainMaterial3D::update_shader() {

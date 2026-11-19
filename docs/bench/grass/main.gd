@@ -56,6 +56,9 @@ extends Node3D
 #   --grazed         the tall grass grazed short (5 to 14 cm), as on upland pasture
 #   --path[=P]       a worn path winding away from the camera, P passes a year (default 3000, a busy footpath; GrassField3D.paths,
 #                    VegetationField3D.paths): the sward and plants thin and shorten towards its line
+#   --burn=A         a burn scar A years old (WorldBurnScar3D, 20 x 12 m) in the view: the sward grows back over
+#                    GrassField3D.burn_recovery (0.7 years), short and sparse first; GRASS_NO_FLUSH=1 without the
+#                    regrowth flush (the before frame)
 #   --undergrowth-edge  with --undergrowth: its edge from 1 m up, 3.5 m along it (--no-margin: no margin)
 #   --no-rock-foot   with --rocks: the floor species without PlantSpecies.rock_foot
 #   --undergrowth=bracken|bramble   a stand of it in the open meadow, framed from 5 m and 3 m up in side light; the sward
@@ -127,6 +130,7 @@ var no_sward := false
 var undergrowth := ""
 var grazed := false # --grazed: the tall grass grazed short (upland pasture).
 var path_passes := 0.0 # --path: a worn path across the meadow, passes a year.
+var burn_age := -1.0 # --burn=A: a burn scar A years old in the view.
 var ug_dir := Vector3(0, 0, 1)
 var mushroom_view := "" # --mushrooms[=name]: in the wood, close on a group of mushrooms (make_floor's).
 var ug_edge := false # --undergrowth-edge: the stand's edge seen along it from 1 m up.
@@ -232,6 +236,7 @@ func _ready() -> void:
 		elif a == "--grazed": grazed = true
 		elif a == "--path": path_passes = 3000.0
 		elif a.begins_with("--path="): path_passes = float(a.get_slice("=", 1))
+		elif a.begins_with("--burn="): burn_age = float(a.get_slice("=", 1))
 		elif a == "--no-rock-foot": no_rock_foot = true
 		elif a == "--far=0": no_far = true
 		elif a == "--far": far_view = true
@@ -454,6 +459,12 @@ func _ready() -> void:
 				g.rules = r
 				g.canopy_field = g.get_path_to(cover)
 				g.undergrowth_field = g.get_path_to(cover) # Thinned under the bracken and bramble stands.
+		if burn_age >= 0.0:
+			var scar := WorldBurnScar3D.new()
+			scar.age_years = burn_age
+			scar.size = Vector2(20, 12)
+			scar.position = Vector3(24.0, 0.0, 22.0) if far_view else Vector3(3.0, 0.0, 9.0)
+			add_child(scar)
 		if path_passes > 0.0:
 			# A footpath from beside the camera, bending away over the meadow: a line of points
 			# along a gentle S, 1.2 m trodden width.
@@ -1805,18 +1816,25 @@ func _field_checks() -> void:
 	# Hedgerows round the fields (GrassField3D.hedges): segments laid, none standing in a field.
 	var hedge_n := grass.get_hedge_segment_count()
 	var hedge_in := 0
+	var hedge_burnt := 0
 	for h in grass.get_children(true):
 		if h.name != "Hedges":
 			continue
 		for ch in h.get_children():
 			var mm: MultiMesh = ch.multimesh
+			# TreeGenerator's burnt band variants (mesh meta "tree_fire_years") are for VegetationField3D only.
+			if mm.mesh and mm.mesh.has_meta("tree_fire_years"):
+				hedge_burnt += 1
 			for i in mm.instance_count:
 				var t: Transform3D = ch.global_transform * mm.get_instance_transform(i)
 				var mid := t.origin # Segments are centred on their origin.
 				for f in grass.fields:
 					if Geometry2D.is_point_in_polygon(Vector2(mid.x, mid.z), f["polygon"]):
 						hedge_in += 1
-	print("GRASS_HEDGES segments=%d in_fields=%d" % [hedge_n, hedge_in])
+	print("GRASS_HEDGES segments=%d in_fields=%d burnt=%d" % [hedge_n, hedge_in, hedge_burnt])
+	if hedge_burnt > 0:
+		fails += 1
+		print("GRASS_FAIL hedges: a burnt tree variant in an unburnt hedgerow")
 	if hedge_n < 40 or hedge_in > 0:
 		fails += 1
 		print("GRASS_FAIL hedges: too few segments round the fields, or some standing in a field")
@@ -1978,6 +1996,118 @@ func _checks() -> void:
 							bad += 1
 		_check("plants carry rank and range for thinning", ranged > 1000 and bad == 0, "%d ranged, %d bad" % [ranged, bad])
 	_path_checks()
+	_burn_checks()
+	_radius_zero_check()
+
+# Burnt ground (GrassField3D.burn_recovery, WorldFire.burn_age_at): two 8 m scars 6 m in front of the
+# camera, a fortnight and four months old, against the same ground unburnt. The sward is gone on the fresh
+# one and about half back, shorter, on the older one (smoothstep over 0.7 years), on the GPU and CPU fill.
+func _burn_checks() -> void:
+	var c := cam.global_position
+	var fwd := -cam.global_transform.basis.z
+	fwd.y = 0.0
+	fwd = fwd.normalized()
+	var side := Vector3(-fwd.z, 0.0, fwd.x)
+	var mid := c + fwd * 6.0
+	var ages := [0.04, 0.35]
+	var centres := [mid - side * 5.0, mid + side * 5.0]
+	for gpu in [true, false]:
+		grass.gpu_fill = gpu
+		var before := _burn_count(c, centres)
+		var scars := []
+		for k in 2:
+			var scar := WorldBurnScar3D.new()
+			scar.age_years = ages[k]
+			scar.size = Vector2(8, 8)
+			scar.position = Vector3(centres[k].x, 0.0, centres[k].z)
+			add_child(scar)
+			scars.append(scar)
+		var after := _burn_count(c, centres)
+		for scar in scars:
+			scar.free()
+		var share := float(after[0][1]) / maxf(before[0][1], 1)
+		var hr: float = (after[1][1] / maxf(after[0][1], 1)) / maxf(before[1][1] / maxf(before[0][1], 1), 1e-6)
+		var res := [before[0], after[0], snappedf(share, 0.01), snappedf(hr, 0.01)]
+		_check("burnt ground (%s fill): sward gone on a fresh burn, about half back and shorter at four months" % ("GPU" if gpu else "CPU"), before[0][0] > 20 and after[0][0] * 20 <= before[0][0] and share > 0.3 and share < 0.75 and hr < 0.95, res)
+	grass.gpu_fill = true
+	_burn_count(c, centres)
+	# A fire burning ground after the grass was built (no rebuild): the scar's report (WorldFire.burn_changed)
+	# alone thins the tiles over it, and only those; then it ages to four months.
+	var far_tiles := grass.get_tile_count()
+	var scar := WorldBurnScar3D.new()
+	scar.age_years = 0.04
+	scar.size = Vector2(8, 8)
+	scar.position = Vector3(centres[0].x, 0.0, centres[0].z)
+	add_child(scar)
+	var live := []
+	for step in 2:
+		var t0 := Time.get_ticks_msec()
+		while Time.get_ticks_msec() - t0 < 600:
+			OS.delay_msec(50)
+		for i in 3:
+			grass.update_at(c)
+		live.append(_burn_tally(centres[0]))
+		scar.age_years = 0.35
+	scar.free()
+	var t1 := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - t1 < 600:
+		OS.delay_msec(50)
+	for i in 3:
+		grass.update_at(c)
+	var back := _burn_tally(centres[0])
+	_check("burnt ground follows a live fire without a rebuild (burn_changed): gone, then half back, then whole", live[0] * 20 <= back and back > 20 and float(live[1]) / back > 0.3 and float(live[1]) / back < 0.75 and grass.get_tile_count() >= far_tiles, [live, back, far_tiles, grass.get_tile_count()])
+
+func _burn_tally(centre: Vector3) -> int:
+	var n := 0
+	for ch in grass.get_children(true):
+		if ch is MultiMeshInstance3D:
+			var mm: MultiMesh = ch.multimesh
+			var buf := RenderingServer.multimesh_get_buffer(mm.get_rid())
+			for i in mm.instance_count:
+				var b := i * 16
+				if buf[b] == 0.0 and buf[b + 2] == 0.0:
+					continue
+				if absf(buf[b + 3] - centre.x) < 1.5 and absf(buf[b + 11] - centre.z) < 1.5:
+					n += 1
+	return n
+
+# radius 0 draws no blades: no near tiles, far rings or shell (a field kept for its rules or ground tint only).
+func _radius_zero_check() -> void:
+	var c := cam.global_position
+	var r0: float = grass.radius
+	grass.radius = 0.0
+	for i in 3:
+		grass.update_at(c)
+	var res := [grass.get_tile_count(), grass.get_ring_tile_count(), grass.get_shell_tile_count()]
+	grass.radius = r0
+	for i in 3:
+		grass.update_at(c)
+	res.append(grass.get_tile_count())
+	_check("radius 0: no blades drawn (tiles, rings, shell), back with its radius", res[0] == 0 and res[1] == 0 and res[2] == 0 and res[3] > 0, res)
+
+# Blades and their summed heights in the middle 3 m of each burn scar's square, after a rebuild.
+func _burn_count(c: Vector3, centres: Array) -> Array:
+	grass.rebuild()
+	for i in 3:
+		grass.update_at(c)
+	var n := []
+	var h := []
+	for k in centres.size():
+		n.append(0)
+		h.append(0.0)
+	for ch in grass.get_children(true):
+		if ch is MultiMeshInstance3D:
+			var mm: MultiMesh = ch.multimesh
+			var buf := RenderingServer.multimesh_get_buffer(mm.get_rid())
+			for i in mm.instance_count:
+				var b := i * 16
+				if buf[b] == 0.0 and buf[b + 2] == 0.0:
+					continue
+				for k in centres.size():
+					if absf(buf[b + 3] - centres[k].x) < 1.5 and absf(buf[b + 11] - centres[k].z) < 1.5:
+						n[k] += 1
+						h[k] += buf[b + 12]
+	return [n, h]
 
 # Worn paths (GrassField3D.paths): a busy path across the sward 5 m in front of the camera thins
 # the blades on its trodden line and shortens the ones left, the same on the GPU and the CPU fill.
@@ -2366,8 +2496,21 @@ func _process(dt: float) -> void:
 	if prims:
 		await _print_prims()
 	if not out.is_empty():
+		if burn_age >= 0.0 and OS.get_environment("GRASS_NO_FLUSH") != "":
+			# The before frame: the regrowth flush off (its colour alone).
+			if OS.get_environment("GRASS_NO_FLUSH") == "1":
+				(grass.get_material() as ShaderMaterial).set_shader_parameter("burn_flush_rect", Vector4())
+			for i in 3:
+				await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out)
 		print("saved ", out)
+		if burn_age >= 0.0 and OS.get_environment("GRASS_NO_FLUSH") == "ab":
+			# The same frame again with the regrowth flush off: out_noflush.png.
+			(grass.get_material() as ShaderMaterial).set_shader_parameter("burn_flush_rect", Vector4())
+			for i in 3:
+				await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(out.get_basename() + "_noflush.png")
+
 	get_tree().quit()
 
 

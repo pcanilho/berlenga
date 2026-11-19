@@ -105,7 +105,6 @@ class RainFall3D : public Node3D {
 	Vector3 ground_center;
 	bool ground_valid = false;
 	double ground_accum = 0.0;
-	ObjectID found_snow;
 	LocalVector<ObjectID> found_water;
 	double scan_accum = 0.0;
 	bool scanned = false;

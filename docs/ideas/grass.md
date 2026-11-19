@@ -553,6 +553,99 @@ tiles, +69 MB memory, +976k primitives, frame 2710 to 3067 ms (+13%); the shell 
 primitives, +1%. First fill 120-150 ms on the main thread, then a 4 ms budget a frame. Path traced: the far meadow
 keeps its texture to the horizon with no seam (bench pair). GPU cost on the PC queue.
 
+## Colour without blotches (built 19 Nov)
+
+Paulo (19 Nov): the meadow's colour variation read as patches, like camouflage; he wants variation without blotches
+and the soft, slightly blurred look of the Nyx I grass in Star Citizen, with smooth edges between grass types and
+densities. Causes found in our code:
+
+- `grass_patch_tint` drove the hue from two octaves of square-lattice value noise at about 9 m and 2 m, at gain 1.6
+  and clamped, so the hue sat at full warm or full cool over blobs a few metres across with lattice-aligned shapes.
+- Rule edges (a patch's edge, a fade to other ground) thinned the blades by their rank but left them full height, so
+  a sparse sward ended in a wall of tall blades; the patch noise's edge band was also narrow (0.06 of the noise).
+- Every blade kept its own facing and value at any distance: past a few metres that is speckle, not softness.
+
+What the references do:
+
+- Ghost of Tsushima (Wohllaib, GDC 2021): Voronoi clumps share height and facing; colour along each blade from a
+  texture; artist-authored far tiles; and with distance the blades' normals blend towards a clump-based common
+  normal, which takes the glints and flicker out of distant grass.
+- Star Citizen Planet Tech v5 (CitizenCon 2954, starcitizen.tools/Planet_Tech_v5): "continuous variation to biomes",
+  "unrepetitively tiled blending"; meadows lit "more like a mass of fine fibers than a flat surface"; ground layers
+  with transitions that blend; density from competition, woodland thinning gradually into grassland.
+- Horizon Zero Dawn (van Muijden, GDC 2017): density maps placed by dithering against a per-instance threshold, so
+  density ramps are soft and species interpenetrate at ecotones (we already do this with the blue-noise rank).
+
+Built:
+
+- Colour: hue from two rotated, domain-warped octaves at about 70 m and 25 m with a soft (x / (1 + |x|)) response and
+  0.55 strength, plus per-blade hue and value. No mid-scale hue blobs, no lattice shapes; the ground under the blades
+  takes the same field (grass_ground()).
+- Soft edges: blades left where the rules thin the sward grow shorter, half height at the edge (`_edge_height`, the
+  GPU fill the same, in sixteenths so both fills agree); the patch noise's edge band is twice as wide (0.12). A patch
+  now tapers over metres in both density and height.
+- Softness with distance: from 6 to 35 m from the fade band's centre the blade normal eases 55% towards the ground's
+  up and the tint 50% towards the large-scale drift (Ghost of Tsushima's common normal). Done in vertex() from the
+  fade band, so the shadow pass and the path tracer see the same.
+- Cost: a few ALU per vertex; no new data.
+
+## Grass on burnt ground (built 19 Nov)
+
+Grassland is the quickest cover back after a fire: perennial grasses resprout from the crowns within weeks
+and close the sward within the first growing season, short and sparse at first (fire ecology reviews of
+temperate and Mediterranean grassland; the same 0.7 year recovery PlantGenerator.get_burn_recovery gives the
+grass presets). The engine side follows VegetationField3D: the fire contract's WorldFire.burn_age_at, sampled
+once a bake on a grid over the map (cell at least 2 m), bilinear between cells with unburnt cells counted as
+recovered, so the scar's edge grows in over a cell rather than on a hard line.
+
+- GrassField3D.burn_recovery (default 0.7 yr; the rules' PlantSpecies.burn_recovery wins when set; 0 off).
+- The cover multiplies the rules' suitability on every path: CPU blades, the GPU fill's 0.5 m grid, the far
+  shell, the ground tint. The blade height follows the same suitability (_edge_height), so regrowth is short
+  first. get_burn_cover_at(position) for scripts.
+- Bench: grass --test checks a fortnight-old scar (no blades) and a four-month one (0.51 of the blades,
+  0.87 of the height) on the GPU and CPU fill; `--burn=A` frames a scar A years old.
+- Live fires: the fire contract carries a change log (WorldFire.burn_changed(area), get_burn_generation(),
+  burn_changes_since()). WorldBurnScar3D reports on enter/exit, move and edits; a fire in play reports the
+  cells it burns. GrassField3D checks the generation at most twice a second, samples its grid again over
+  the changed area only, and marks the near tiles, rings, shell tiles and ground tint over it stale; each is
+  replaced once its successor is built, so nothing flashes. Bench: grass --test burns ground after the
+  grass is built, with no rebuild: 0 blades, then 17 of 35 at four months, then all back once it goes.
+- Not yet: VegetationField3D still reads ages once a setup; the fresh-flush colour of regrowth (brighter
+  green) would need a channel to the blades.
+
+## Sand seas and radius 0 (19 Nov)
+
+- The sward keeps off desert sand seas like VegetationField3D's non-sand species: the generator's sand-sea depth
+  sampled once a bake (cell at least 2 m, up to 1024 a side), bilinear, cover 1 - smoothstep(0.05, 0.3, depth),
+  unless the rules are a sand plant's (dune, coast or sand mobility rule). Vegetation bench `--desert` checks it.
+- radius 0 now draws nothing. Before, radius was clamped to 1 m and the far rings and shell still covered
+  the view out to 250 and 500 m.
+
+## Regrowth flush on burns (19 Nov)
+
+Burnt grassland reads greener than the sward around it through its first season: the fire took the standing dead
+(thatch and dry tips) and the regrowth is young leaf, richer in nitrogen on the ash (the post-fire "green flush"
+seen in NDVI after grassland fires). GrassField3D bakes a flush map from its burn grid (1 on a fresh burn,
+smoothstep to 0 by 1.5 years): blades there lose their dry tips and thatch and tint (1.10, 1.22, 0.84).
+VegetationField3D passes the same flush to the plant shader in INSTANCE_CUSTOM.w's fraction (the species index
+keeps the whole part), tinting living tissue the same way. Bench grass `--burn=A --wind=0,0`,
+GRASS_NO_FLUSH=ab saves the frame without it too.
+
+Burn plant LODs: fire moss capsules and the ash on charred stems and burnt tussock are many tiny islands that
+meshoptimizer cannot thin; they now take the leaf cards' rank-ordered chain (Cook et al. 2007, stochastic
+simplification with area kept): fire moss capsules 3.8k to 154 triangles at the far LOD. In the burn bench view
+only 2% fewer primitives (3.10 M to 3.04 M): the heath around, not the burn set, holds most of them.
+
+## Prefiltered far blades (19 Nov)
+
+Past a few metres a blade is a pixel or two wide, and its own base-to-tip ramp and its dry or dead odd one out
+alias into grit (non-linear pre-filtering, Bruneton and Neyret 2012: shade with the footprint's mean, not a
+point sample). The meadow fragment now eases each blade's colour towards the sward's mean (base to tip at 0.6,
+dry tips and thatch by their shares) by half over 6 to 35 m (the same distance softening as the normals and
+tint), and raises its roughness to at least 0.8 there, so the far meadow reads soft. Measured on the far view
+crop: pixel-to-pixel contrast down about 5%. Much of the rest of the softness in the reference (a far meadow
+as a soft mass) comes from temporal AA and upscaling in game, which the cloud bench does not run.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.

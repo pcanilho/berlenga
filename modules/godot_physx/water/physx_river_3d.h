@@ -37,6 +37,7 @@
 #include "water_solver.h"
 
 #include "scene/3d/path_3d.h"
+#include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
 
 class MeshInstance3D;
@@ -130,6 +131,21 @@ private:
 	float rain_discharge = 0.0f; // m^3/s from the runoff at the last build
 	double rain_check = 0.0; // s until the runoff is read again
 	void _rain_response_update(double p_delta);
+	// Suspended load (WorldWater sediment, kg/m3: x mineral, y ash), one value per cross-section, carried down the river
+	// at its speed; the sources the contract hands in (kg/s), held until the caller's next call; the shading reads it
+	// along the river by arc length from a one-row texture.
+	LocalVector<Vector2> sed_c;
+	LocalVector<Vector2> sed_src;
+	LocalVector<uint64_t> sed_src_frame;
+	LocalVector<float> sed_src_age; // s since the source was last given
+	float sed_s0 = 0.0f;
+	float sed_ds = 0.0f;
+	bool sed_any = false;
+	double sed_tex_wait = 0.0;
+	Ref<ImageTexture> sediment_tex;
+	void _sediment_resample();
+	void _sediment_update(double p_delta);
+	void _sediment_texture();
 	float roughness = 0.035f; // Manning n
 	float max_slope = 0.08f; // steeper drops are cascades
 	bool gradually_varied_flow = true; // standard step profile (backwater, drawdown, jumps) instead of normal depth
@@ -164,6 +180,10 @@ private:
 	float flow_foam_persistence = 4.0f; // s
 	bool flow_foam_impact = true; // also where the water runs into things (water_ripple.glsl)
 	bool live_advected_ripples = true; // ripples carried along the live flow's real paths (water_flow_offset.glsl)
+	bool live_surface_waves = true; // dispersive surface waves over the live window (water_surface_waves.glsl)
+	float live_surface_wave_strength = 1.0f;
+	float live_near_mesh_spacing = 0.1f; // m between vertices of the ribbon inside the live window (0: off)
+	float live_near_mesh_used = 0.0f; // the spacing the last build used (raised to stay inside the budget)
 	float live_damping = 0.05f;
 	NodePath live_follow; // empty: the viewport's camera
 
@@ -175,6 +195,8 @@ private:
 	Ref<Texture2DRD> live_height_tex;
 	Ref<Texture2DRD> live_flow_tex;
 	Ref<Texture2DRD> live_offset_tex;
+	Ref<Texture2DRD> live_wave_tex;
+	RID live_wave_rid;
 	Vector<float> live_height_cache;
 	Vector<float> live_velocity_cache;
 	PackedFloat32Array live_depth; // still-water depth per window cell, for the tilt fit
@@ -348,6 +370,12 @@ public:
 	bool get_flow_foam_impact() const { return flow_foam_impact; }
 	void set_live_advected_ripples(bool p_enabled);
 	bool get_live_advected_ripples() const { return live_advected_ripples; }
+	void set_live_surface_waves(bool p_enabled);
+	bool get_live_surface_waves() const { return live_surface_waves; }
+	void set_live_surface_wave_strength(float p_strength);
+	float get_live_surface_wave_strength() const { return live_surface_wave_strength; }
+	void set_live_near_mesh_spacing(float p_spacing);
+	float get_live_near_mesh_spacing() const { return live_near_mesh_spacing; }
 	void set_live_damping(float p_damping);
 	float get_live_damping() const { return live_damping; }
 	void set_live_follow(const NodePath &p_path);
@@ -403,6 +431,10 @@ public:
 	Vector3 contract_water_flow_at(const Vector3 &p_position) const override { return sample_flow(p_position); }
 	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override;
 	void contract_water_clear(uint64_t p_owner) override;
+	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return get_sediment_at(p_position); }
+	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override;
+	// The suspended load (kg/m3: x mineral, y ash) at a world position on the river; zero off it.
+	Vector2 get_sediment_at(const Vector3 &p_world_pos) const;
 	// Depth-averaged water velocity (m/s, world) at a world position; zero off the river.
 	Vector3 sample_flow(const Vector3 &p_world_pos) const;
 	// Water depth (m) under a world position, <= 0 off the river.

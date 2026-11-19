@@ -3580,3 +3580,45 @@ repeated every 240 m and the detail lined up with cascade 0 every 40 m.
   the detail tile.
 - Not blended: the shore swash and shore foam passes (they already read the ocean grid-relative) and the
   light-space caustics map.
+
+
+### Ripples that bounce off boulders (19 Nov; item 2 of Paulo's four)
+
+PhysXRiver3D `live_surface_waves` (on) and `live_surface_wave_strength` (1): a dispersive surface-wave layer over
+the live window (water_surface_waves.glsl), after Jeschke and Wojtan, "Generalizing Shallow Water Simulations with
+Dispersive Surface Waves" (ACM ToG 2023). The shallow-water grid keeps the bulk flow; the surface waves run on a
+512^2 grid over the same 48 m window (9.4 cm cells), stepped exactly in Fourier space with Airy's dispersion
+omega^2 = g k tanh(k d) at four depths (0.15, 0.4, 1, 2.5 m) blended per cell in log depth, carried
+semi-Lagrangian by the live velocity, held at zero in dry cells (so they reflect off banks and wrap round
+stones) and damped in a 24-cell sponge at the window's edge (the transform wraps). One-way: the paper splits the
+bulk's own high frequencies off; the live grid's 25 cm cells hold none worth splitting, so the layer is fed by:
+- stagnation head 0.5 v^2 / g of the arriving water on a stone's upstream face (ship-wake pressure patch);
+- turbulence: p' ~ u'^2 / g with u' = l |grad v| (Prandtl mixing length, l one live cell), as value noise over
+  3 fine cells redrawn every 0.15 s. This is what makes the visible ripples: the stagnation head of a 0.5-1 m/s
+  stream is millimetres.
+Cost per step: 3 small passes, a one-field and a four-field 512^2 shared-memory FFT (water_fft_rows.glsl).
+Bench switch: `--river=live_surface_waves:false`. Raster and PT read the same slope (river shader live_waves).
+Not yet on PhysXWaterSurface3D (lakes, sea shallows).
+Trough fix (19 Nov, docs review): the slope is softly held under 0.3 (capillary-gravity breaking steepness;
+Stokes' limit 0.44). Steeper facets turned away from the eye sent path-traced rays through the surface into the
+bed, which drew dark speckled troughs in PT and not in raster.
+
+### Real ripple geometry near the camera (19 Nov; item 3 of Paulo's four)
+
+PhysXRiver3D `live_near_mesh_spacing` (0.1 m, on; 0 keeps the coarse ribbon). Same approach as Planet Coaster 2's
+water and the usual "dense near the camera, coarse far" water meshes (Frostbite, UE Water's quadtree): the
+ribbon strips inside the live window are cut into ~10 cm quads, attributes bilinear between the section
+samples, and rebuilt when the window recentres. The surface waves' height is then added in vertex() (raster
+and PT both run it), so their crests stand up as real geometry with silhouettes against stones and banks; the
+slope is still drawn per pixel. Cracks: dense strips share their section rows exactly, and the seam with the
+coarse ribbon lies 1.5 strips outside the window, where the live heights have faded to zero. Budget: about
+200,000 quads; past that the spacing grows and the waves' heights fade (they need ~1.5 wave cells a vertex).
+Heights are depth-limited, softly, to amplitude 0.39 d (McCowan's H = 0.78 d breaking limit): without it the
+last wet cell at a stone's foot stood up as a spike.
+Bench switch: `--no-near-mesh`.
+Foam on the wave facets (19 Nov, docs review of eaaa4bff): foam stood on steep facets as jagged shards, and
+its crisp edge drew the triangles' edges. Now white water damps the waves' height under it in vertex() (as
+it already damped their slope per pixel: the film's elasticity), so foam lies on a calm sheet. Footprint-scaled
+detail uses an analytic footprint (distance and the smooth surface's tilt; orthographic aware) instead of fwidth,
+and the crisp step's width is the pattern's world gradient (chain rule) times that footprint, so neither jumps
+from facet to facet. Raster and PT checked on the creek bench.

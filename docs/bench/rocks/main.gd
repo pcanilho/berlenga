@@ -37,6 +37,7 @@ extends Node3D
 #   --cave-mouths         the retired cave-mouth portal blocks (and their terrain holes) in --world frames
 #   --wind=m/s            with --water: the sea's wind speed (and some swell)
 #   --shadow-filter=N     the directional soft-shadow filter quality (0 hard .. 5 ultra)
+#   --sea-set=prop:value[,...]  with --water: set properties of the sea (e.g. wave_tile_breakup:false)
 #   --water [--sea-res=N] with --world: the generator's water bodies; --sea-res sets the sea's simulated grid (cells)
 #   --settle=N            N more frames before the capture (near plant cells are built lazily)
 #   --out=path.png        render and quit (path traced unless --raster); --spp=N (16); --size=WxH
@@ -49,7 +50,8 @@ extends Node3D
 #   --no-ground-detail    with --world: RockField3D.ground_detail off (on by default: stones of 1 to 8 cm round the
 #                         camera as geometry; off for --test); --detail-ref=px image height the reach is set for (1080),
 #                         --detail-pixels=n (3);
-#                         --detail-sync places the detail cells on the main thread (ground_detail_threads off)
+#                         --detail-sync places the detail cells on the main thread (ground_detail_threads off),
+#                         --cell-sync the coarse layers' cells (cell_threads off)
 #   --walk=m              with --world: stream while the camera walks m metres forward (--walk-step=m a frame, 0.1),
 #                         then print the main thread's streaming time per frame (mean, 95th percentile, worst)
 
@@ -154,7 +156,9 @@ func _environment() -> void:
 		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 		env.ambient_light_color = Color(0, 0, 0)
 		env.ambient_light_energy = 0.0
-		env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
+		if not args.has("look-out"):
+			# (Looking out through a mouth the sky is in the frame: the path tracer draws its misses from it.)
+			env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
 	env.pathtracing_sky_shader_enabled = args.has("clouds")
 	env.pathtracing_enabled = not raster
@@ -370,6 +374,13 @@ func _world() -> void:
 		_beach_surface(tm)
 	if args.has("water"):
 		var waters: Array = gen.build_water(self)
+		if args.has("sea-set"):
+			# --sea-set=property:value[,property:value]: properties of the sea (PhysXWaterSurface3D), for off/on pairs.
+			for kv in String(args["sea-set"]).split(","):
+				var pv := kv.split(":", true, 1)
+				for w in waters:
+					if w is Node and (w as Node).name == "Sea":
+						w.set(pv[0], str_to_var(pv[1]))
 		for w in waters:
 			# Seabed rays through terrain holes (cave mouths) land on the cave floors.
 			if w is Node and (w as Node).name == "Sea" and "terrain_source" in w:
@@ -520,6 +531,7 @@ func _world() -> void:
 			if args.has("detail-pixels"):
 				rocks.ground_detail_pixels = float(args["detail-pixels"])
 			rocks.ground_detail_threads = not args.has("detail-sync")
+		rocks.cell_threads = not args.has("cell-sync")
 		var tb := Time.get_ticks_msec()
 		var built := rocks.build_area(Rect2(spot.x - 160, spot.z - 160, 320, 320))
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
@@ -776,6 +788,11 @@ func _caves(cam: Camera3D) -> void:
 							break
 				cam.position = eye
 				cam.look_at(tgt + Vector3(0, 0.5, 0))
+				if not args.has("no-refine"):
+					# The chunks between the lens and the mouth on the near grid, as round a player (the thin rock at a
+					# mouth tears on the coarse grid); --no-refine: all on the coarse one.
+					var n_in := net.refine_meshes(eye.lerp(pos, 0.8))
+					print("  refined %d chunks between the camera and the mouth (cell %.2f m)" % [n_in, net.near_mesh_cell])
 				if args.has("look-out"):
 					# From inside back out through the mouth (a sea cave onto the lit sea).
 					cam.look_at(pos + Vector3(0, float(args.get("look-height", "1.0")), 0) + o * 6.0)
@@ -1805,7 +1822,9 @@ func _test() -> void:
 	for n in rocks.get_children(true):
 		if n is MeshInstance3D and n.has_meta("rock_moss"):
 			moss_bytes += _mesh_bytes({0: (n as MeshInstance3D).mesh})
-	check(rocks.get_moss_shell_count() > 0 and rocks.get_moss_pending() == 0, "moss shells: %d on the close-up stones, %d triangles, %.1f MB" % [rocks.get_moss_shell_count(), rocks.get_moss_triangle_count(), moss_bytes / 1048576.0])
+	# (The stones round this target are young talus and rockfall, which carry no moss since their surface age gates
+	# it, so the shells may be none here; the check is that none are left pending.)
+	check(rocks.get_moss_pending() == 0, "moss shells: %d on the close-up stones, %d triangles, %.1f MB, none pending" % [rocks.get_moss_shell_count(), rocks.get_moss_triangle_count(), moss_bytes / 1048576.0])
 	# Close-up shapes by family and size octave (what drives their count and memory).
 	var hist := {}
 	for l in [RockField3D.LAYER_ROCKFALL, RockField3D.LAYER_SCREE, RockField3D.LAYER_GLACIAL]:
@@ -1903,11 +1922,14 @@ func _test() -> void:
 	var frames := 0
 	var still := 0
 	var last := -1
-	while frames < 400 and still < 10:
+	var t0 := Time.get_ticks_msec()
+	# By time, not frames: the coarse cells the grains wait for are placed on workers too (cell_threads), and frames
+	# without drawing pass faster than they land.
+	while Time.get_ticks_msec() - t0 < 180000 and still < 10:
 		await get_tree().process_frame
 		frames += 1
 		var n := rocks.get_ground_detail_count()
-		still = still + 1 if n == last and n > 0 and rocks.get_ground_detail_pending() == 0 else 0
+		still = still + 1 if n == last and n > 0 and rocks.get_ground_detail_pending() == 0 and rocks.get_cells_pending() == 0 else 0
 		last = n
 	rocks.streaming = false
 	get_viewport().disable_3d = false
@@ -1943,6 +1965,7 @@ func _walk() -> void:
 	dir.y = 0.0
 	dir = dir.normalized()
 	rocks.streaming = true
+	get_viewport().disable_3d = true # streaming cost only: software Vulkan takes seconds to draw a frame
 	# The first updates fill the coarse layers' full streaming radius (build_area covered less): not walking cost.
 	var warm := 0
 	while warm < 300 and (warm < 10 or rocks.get_last_build_msec() > 2.0 * rocks.build_budget_msec):
@@ -1959,12 +1982,15 @@ func _walk() -> void:
 		dms.append(rocks.get_last_detail_msec())
 	# Let the last cells land.
 	var settle := 0
-	while rocks.get_ground_detail_pending() > 0 and settle < 600:
+	var settle_t := Time.get_ticks_msec()
+	while (rocks.get_ground_detail_pending() > 0 or rocks.get_cells_pending() > 0 or settle < 30) and settle < 3000:
 		await get_tree().process_frame
 		ms.append(rocks.get_last_build_msec())
 		dms.append(rocks.get_last_detail_msec())
 		settle += 1
 	rocks.streaming = false
+	get_viewport().disable_3d = false
+	print("walk: settled in %d frames (%d ms); %d cells, %d detail grains" % [settle, Time.get_ticks_msec() - settle_t, rocks.get_cell_count(), rocks.get_ground_detail_count()])
 	var stats := func(a: Array[float]) -> String:
 		var s := a.duplicate()
 		s.sort()
@@ -1973,7 +1999,7 @@ func _walk() -> void:
 			total += v
 		return "mean %.2f ms, p95 %.2f ms, worst %.2f ms" % [total / a.size(), s[int(s.size() * 0.95)], s[-1]]
 	print("walk: %.1f m in %d frames after %d warm-up (%s): streaming %s; ground detail %s; %d stones" % [
-		dist, ms.size(), warm, "detail on the main thread" if not rocks.ground_detail_threads else "detail on workers",
+		dist, ms.size(), warm, ("detail on the main thread" if not rocks.ground_detail_threads else "detail on workers") + (", cells on the main thread" if not rocks.cell_threads else ", cells on workers"),
 		stats.call(ms), stats.call(dms), rocks.get_stone_count()])
 
 

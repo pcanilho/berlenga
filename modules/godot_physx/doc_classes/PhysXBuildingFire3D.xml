@@ -1,0 +1,289 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXBuildingFire3D" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Burns a wooden building room by room: flashover, flames out of the windows, burn-through and collapse.
+	</brief_description>
+	<description>
+		Add it to a building and describe its rooms in [member rooms]: each is a fire compartment with a box, a fuel load and its openings (doors, windows, hatches). An opening that lies on another room's face is a door between the two.
+		A room on fire grows as t² ([member growth_time] to 1 MW) and takes air through its open openings, which limits it to Kawagoe's 1.5 A√H MW. Its hot layer heats as McCaffrey, Quintiere and Harkleroad's correlation gives, and glass falls out at about [member glass_break_temperature]. It flashes over at Thomas's heat release; after that its fuel burns at [member heat_release_rate] per square metre of floor, and what the air inside cannot burn comes out of the windows as flames of Eurocode's length (EN 1991-1-2 Annex B). Once 70% of its fuel has burnt it dies down linearly. Its timber chars at 0.8 mm a minute in a fully developed fire; the fire burns through walls ([member wall_thickness]), floors ([member floor_thickness]) and the roof ([member roof_thickness]) into the rooms beyond, and the room collapses when its framing has lost [member collapse_share] of [member member_size]. A [code]PhysXDestructible3D[/code] [member target] breaks up as it does. Otherwise the target's meshes over each room (its ceiling, the floor above, its roof) sag as the framing chars, then fall in as rigid bodies when that room collapses, room by room, and their colliders go with them.
+		Smoke runs ahead of the fire. A burning room's plume fills a smoke layer under its ceiling (Heskestad's entrainment), carrying soot at [member smoke_yield]. The layer comes down until it reaches the tops of the openings and flows out of them, through doors into the next rooms (which fill and smoke in turn) and out of windows and eaves. So grey smoke pours from a house minutes before any flames show.
+		Fire spreads between rooms through doors (radiation from a hot layer, flames through once it flashes), through burnt walls and floors, from a room that collapses onto the one below, and from flames out of a window to the window above.
+		Water puts it out. Water in a room boils off and takes 2.6 MJ per kilogram. Taking about a third of what the fire could release puts the flames down (about 0.15 kg/s per MW, as fire services find), and the steam pours out of the windows. A flashed-over room falls back to a growing fire, and it goes out if the water keeps winning for twenty seconds. A weaker stream only holds it back, and the fire grows again when the water stops. Half a millimetre of water on burning cladding puts it out, and wet cladding does not catch.
+		It catches from outside. A [PhysXFireSpread3D] ([member fire]) burning at its walls, hot gas in [PhysXFlow3D], radiation from burning [PhysXBurnable3D] and other buildings, and piles of firebrands on its roof or at the foot of its walls all heat its cladding, which lights at a thick solid's ignition dose. The burning patch spreads over the face and lets the fire in where it reaches a window or burns through. A firebrand landing in an open window lights the room's contents about one time in five.
+		It draws flames and smoke in the fire's [PhysXFlow3D] (or [member flow]): inside each burning room, smoke from the top of its openings before flashover, flames out of them after, through an open roof and on burning cladding. A light flickers at each room's fire, and the meshes under [member target] char with the [PhysXBurnable3D] look. It throws firebrands that can start spot fires and light other buildings, radiates to its neighbours, and reports its heat, plumes and smoke to [WorldFire].
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="add_brand">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="normal" type="Vector3" />
+			<param index="2" name="glow" type="float" />
+			<description>
+				Rests a firebrand on the building at [param position] (a surface facing [param normal]); [param glow] is how much of it is left (0 to 1). In an open opening it lands on the room's contents. Elsewhere it piles on the roof or at the foot of the wall it hit, and heats the cladding there. Firebrands call this when they land on a collider under [member target].
+			</description>
+		</method>
+		<method name="apply_water">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="kg" type="float" />
+			<description>
+				Puts [param kg] of water on the building at a global [param position], from a hose, a bucket brigade or a script. It goes into the room there, or through an open window near it, or onto the cladding of the nearest face. Liquid [PhysXParticleFluid3D] water inside a room or against its walls counts by itself.
+			</description>
+		</method>
+		<method name="extinguish">
+			<return type="void" />
+			<description>
+				Puts out every room and the cladding.
+			</description>
+		</method>
+		<method name="get_broken_windows" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many glazed openings have lost their glass.
+			</description>
+		</method>
+		<method name="get_firebrand_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Firebrands it has in flight.
+			</description>
+		</method>
+		<method name="get_heat_release" qualifiers="const">
+			<return type="float" />
+			<description>
+				The whole building's heat release in kW: its rooms, the flames outside them and the burning cladding.
+			</description>
+		</method>
+		<method name="get_ignition_cause" qualifiers="const">
+			<return type="String" />
+			<description>
+				What first set the building alight: [code]"direct"[/code] ([method ignite]), [code]"firebrand"[/code] (embers through an opening, or a glowing pile of them against the cladding) or [code]"heat"[/code] (radiation or flame contact from fires nearby). Empty until it catches.
+			</description>
+		</method>
+		<method name="get_ignition_time" qualifiers="const">
+			<return type="float" />
+			<description>
+				Fire seconds from when it started stepping to its first catch (scaled by [member time_scale]), or [code]-1[/code] if it has not caught.
+			</description>
+		</method>
+		<method name="get_room_char_depth" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="room" type="int" />
+			<description>
+				How deep a room's timber has charred, in metres.
+			</description>
+		</method>
+		<method name="get_room_visibility" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="room" type="int" />
+			<description>
+				How far one can see in a room's smoke layer, in metres (3 / K for soot's extinction, Mulholland); 1000 when clear.
+			</description>
+		</method>
+		<method name="get_room_water_cooling" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="room" type="int" />
+			<description>
+				The heat in kW the water in a burning room takes as it boils off.
+			</description>
+		</method>
+		<method name="get_room_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of rooms.
+			</description>
+		</method>
+		<method name="get_room_flashover_time" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="room" type="int" />
+			<description>
+				Seconds from a room's ignition to its flashover, or -1 if it has not flashed over.
+			</description>
+		</method>
+		<method name="get_room_fuel_left" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="room" type="int" />
+			<description>
+				The share of a room's fuel left, 0 to 1.
+			</description>
+		</method>
+		<method name="get_room_heat_release" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="room" type="int" />
+			<description>
+				A room's heat release in kW, inside and out of its openings.
+			</description>
+		</method>
+		<method name="get_room_layer_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="room" type="int" />
+			<description>
+				Metres from a room's floor up to the underside of its smoke layer; the room's height when there is none, 0 when the room is full of smoke.
+			</description>
+		</method>
+		<method name="get_room_state" qualifiers="const">
+			<return type="int" enum="PhysXBuildingFire3D.RoomState" />
+			<param index="0" name="room" type="int" />
+			<description>
+				Where a room's fire is.
+			</description>
+		</method>
+		<method name="get_room_temperature" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="room" type="int" />
+			<description>
+				The temperature of a room's hot layer in °C.
+			</description>
+		</method>
+		<method name="get_shard_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Pieces of window glass it has dropped (at most 300).
+			</description>
+		</method>
+		<method name="get_smoke_rate" qualifiers="const">
+			<return type="float" />
+			<description>
+				Smoke particulate it gives off, in kg per real second ([member smoke_yield] of the fuel it burns).
+			</description>
+		</method>
+		<method name="get_spot_fire_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Spot fires its firebrands have started.
+			</description>
+		</method>
+		<method name="get_visibility_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How far one can see at a global [param position]: the room's smoke visibility if the point is in its layer, else 1000.
+			</description>
+		</method>
+		<method name="ignite">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Starts a fire in the room holding [param position] (a global position), or the nearest room.
+			</description>
+		</method>
+		<method name="is_burning" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether any room or any of its cladding is burning.
+			</description>
+		</method>
+		<method name="is_room_collapsed" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="room" type="int" />
+			<description>
+				Whether a room's framing has failed.
+			</description>
+		</method>
+		<method name="radiant_flux_at" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The radiant heat at [param position] in kW/m² from every burning building: its open windows as panels glowing at the hot layer's temperature, and its flames outside and through open roofs. [PhysXBurnable3D] and cloth read it.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="collapse_share" type="float" setter="set_collapse_share" getter="get_collapse_share" default="0.6">
+			The share of a framing member's section charred away (from both sides) at which a room collapses.
+		</member>
+		<member name="fire" type="NodePath" setter="set_fire" getter="get_fire" default="NodePath(&quot;&quot;)">
+			A [PhysXFireSpread3D] whose flames heat the walls and whose ground the window flames and firebrands can light. Its [PhysXFlow3D] draws the flames unless [member flow] is set.
+		</member>
+		<member name="firebrand_rate" type="float" setter="set_firebrand_rate" getter="get_firebrand_rate" default="40.0">
+			Firebrands a second per MW of fire once a room has flashed over (structure fires throw many: Suzuki and Manzello).
+		</member>
+		<member name="firebrands" type="bool" setter="set_firebrands" getter="has_firebrands" default="true">
+			If [code]true[/code], it throws firebrands from its window flames and open roofs.
+		</member>
+		<member name="floor_thickness" type="float" setter="set_floor_thickness" getter="get_floor_thickness" default="0.04">
+			Metres of timber a fire chars through before it reaches the room above.
+		</member>
+		<member name="flow" type="NodePath" setter="set_flow" getter="get_flow" default="NodePath(&quot;&quot;)">
+			The [PhysXFlow3D] the flames and smoke are drawn in; empty uses [member fire]'s.
+		</member>
+		<member name="glass_panes" type="bool" setter="set_glass_panes" getter="has_glass_panes" default="true">
+			If [code]true[/code], it draws a pane of glass in each glazed opening, and when the heat breaks it the pane falls out as angular shards, pushed outward when the room is near flashover. Turn it off for a building whose meshes already have glass.
+		</member>
+		<member name="glass_break_temperature" type="float" setter="set_glass_break_temperature" getter="get_glass_break_temperature" default="450.0">
+			The hot-layer temperature in °C at which window glass falls out (each pane up to 80 °C later).
+		</member>
+		<member name="growth_time" type="float" setter="set_growth_time" getter="get_growth_time" default="300.0">
+			Seconds for a room fire to grow to 1 MW (300 is Eurocode's medium growth, for dwellings).
+		</member>
+		<member name="heat_release_rate" type="float" setter="set_heat_release_rate" getter="get_heat_release_rate" default="250.0">
+			kW per square metre of floor a fully developed room fire releases when it has air enough (250 for dwellings).
+		</member>
+		<member name="light_energy" type="float" setter="set_light_energy" getter="get_light_energy" default="4.0">
+			Energy of each burning room's light at 1 MW; 0 for no lights.
+		</member>
+		<member name="member_size" type="float" setter="set_member_size" getter="get_member_size" default="0.05">
+			The smallest side of its framing members, in metres.
+		</member>
+		<member name="roof_thickness" type="float" setter="set_roof_thickness" getter="get_roof_thickness" default="0.03">
+			Metres of roof a fire chars through before flames break out of it.
+		</member>
+		<member name="rooms" type="Array" setter="set_rooms" getter="get_rooms" default="[]">
+			The rooms, as dictionaries: [code]box[/code] ([AABB] in this node's space), [code]fuel_load[/code] (MJ per square metre of floor, 780 by default, Eurocode's mean for dwellings) and [code]openings[/code], an array of dictionaries with [code]face[/code] (a [enum Face]), [code]rect[/code] ([Rect2] on the face in metres: along the wall from the room's lower corner and up from its floor; on the top, x and z) and [code]glazed[/code] ([code]true[/code] for a window with glass).
+		</member>
+		<member name="smoke_yield" type="float" setter="set_smoke_yield" getter="get_smoke_yield" default="0.03">
+			Kilograms of smoke particulate per kilogram of fuel burnt.
+		</member>
+		<member name="target" type="NodePath" setter="set_target" getter="get_target" default="NodePath(&quot;..&quot;)">
+			The building: its meshes char, its colliders take firebrands, and a [code]PhysXDestructible3D[/code] breaks where rooms fail.
+		</member>
+		<member name="time_scale" type="float" setter="set_time_scale" getter="get_time_scale" default="1.0">
+			Fire seconds per real second.
+		</member>
+		<member name="wall_thickness" type="float" setter="set_wall_thickness" getter="get_wall_thickness" default="0.1">
+			Metres of timber a fire chars through before it reaches the next room, or the cladding before it reaches inside.
+		</member>
+	</members>
+	<signals>
+		<signal name="ignited">
+			<param index="0" name="cause" type="String" />
+			<description>
+				Emitted once, when the building first catches; [param cause] as [method get_ignition_cause].
+			</description>
+		</signal>
+	</signals>
+	<constants>
+		<constant name="ROOM_COLD" value="0" enum="RoomState">
+			Not alight.
+		</constant>
+		<constant name="ROOM_GROWING" value="1" enum="RoomState">
+			Growing toward flashover.
+		</constant>
+		<constant name="ROOM_FLASHED" value="2" enum="RoomState">
+			Fully developed.
+		</constant>
+		<constant name="ROOM_DECAY" value="3" enum="RoomState">
+			Dying down, most of its fuel burnt.
+		</constant>
+		<constant name="ROOM_OUT" value="4" enum="RoomState">
+			Out (its char may still glow).
+		</constant>
+		<constant name="FACE_NEG_X" value="0" enum="Face">
+			The wall facing -X.
+		</constant>
+		<constant name="FACE_POS_X" value="1" enum="Face">
+			The wall facing +X.
+		</constant>
+		<constant name="FACE_NEG_Z" value="2" enum="Face">
+			The wall facing -Z.
+		</constant>
+		<constant name="FACE_POS_Z" value="3" enum="Face">
+			The wall facing +Z.
+		</constant>
+		<constant name="FACE_TOP" value="4" enum="Face">
+			The ceiling or roof.
+		</constant>
+	</constants>
+</class>

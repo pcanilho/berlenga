@@ -84,6 +84,29 @@ static float _fuel_noise(float p_x, float p_z, uint32_t p_seed) {
 	return Math::lerp(a, b, tz);
 }
 
+// The ground that caught since the last report, as a world rect, for readers of burn_age_at (grass, plants): a few
+// times a second, the cells in between unioned.
+void PhysXFireSpread3D::_report_burn() {
+	if (burn_x1 < burn_x0) {
+		return;
+	}
+	const Transform3D xf = get_global_transform();
+	Rect2 r;
+	for (int k = 0; k < 4; k++) {
+		const float lx = ((k & 1) ? burn_x1 + 1 : burn_x0) * cell_size - size.x * 0.5f;
+		const float lz = ((k & 2) ? burn_z1 + 1 : burn_z0) * cell_size - size.y * 0.5f;
+		const Vector3 w = xf.xform(Vector3(lx, 0.0f, lz));
+		if (k == 0) {
+			r = Rect2(w.x, w.z, 0.0f, 0.0f);
+		} else {
+			r.expand_to(Vector2(w.x, w.z));
+		}
+	}
+	burn_x1 = -1;
+	burn_x0 = 0;
+	WorldContracts::fire_burn_changed(r);
+}
+
 void PhysXFireSpread3D::_allocate() {
 	nx = MAX(2, (int)Math::ceil(size.x / cell_size));
 	nz = MAX(2, (int)Math::ceil(size.y / cell_size));
@@ -102,6 +125,8 @@ void PhysXFireSpread3D::_allocate() {
 	ash_blown.resize(n);
 	char_time.resize(n);
 	burn_moisture.resize(n);
+	burn_day.resize(n);
+	smoulder.reset(n);
 	quenched_by_water = 0;
 	base_moisture = fuel_moisture;
 	rate.resize(n);
@@ -185,6 +210,7 @@ void PhysXFireSpread3D::_allocate() {
 			ash_blown[i] = 0.0f;
 			char_time[i] = 0.0f;
 			burn_moisture[i] = 0.0f;
+			burn_day[i] = float(game_days);
 			wet[i] = MAX(wet_mul, 0.0f) + (fuel_moisture > 1.0e-4f ? extra_wet / fuel_moisture : extra_wet * 100.0f);
 			height[i] = get_global_position().y;
 			fuel_left[i] = 1.0f;
@@ -201,6 +227,8 @@ void PhysXFireSpread3D::_allocate() {
 	band_z1 = -1;
 	total_burnt = 0.0f;
 	heights_ready = false;
+	burn_x0 = 0;
+	burn_x1 = -1;
 	grid_dirty = false;
 	char_image = Image::create_empty(nx, nz, false, Image::FORMAT_RGBA8);
 	char_image->fill(Color(0, 0, 0, 0));
@@ -211,6 +239,9 @@ void PhysXFireSpread3D::_allocate() {
 	state_image = Image::create_empty(nx, nz, false, Image::FORMAT_RGBA8);
 	state_image->fill(Color(0, 0, 0, 0));
 	state_texture = ImageTexture::create_from_image(state_image);
+	age_image = Image::create_empty(nx, nz, false, Image::FORMAT_R8);
+	age_image->fill(Color(0, 0, 0, 1));
+	age_texture = ImageTexture::create_from_image(age_image);
 	if (decal) {
 		decal->set_texture(Decal::TEXTURE_ALBEDO, char_texture);
 		decal->set_texture(Decal::TEXTURE_EMISSION, glow_texture);
@@ -397,6 +428,7 @@ void PhysXFireSpread3D::extinguish() {
 			phi[i] = FAR;
 		}
 	}
+	smoulder.extinguish();
 }
 
 Vector3 PhysXFireSpread3D::_wind() const {
@@ -541,6 +573,16 @@ void PhysXFireSpread3D::_step(float p_delta) {
 				if (phi[i] <= 0.0f && t_ignite[i] < 0.0f && load[i] > 1.0e-4f) {
 					t_ignite[i] = time + p_delta - remaining;
 					burn_moisture[i] = _moisture(i);
+					burn_day[i] = float(game_days);
+					if (burn_x1 < burn_x0) {
+						burn_x0 = burn_x1 = x;
+						burn_z0 = burn_z1 = z;
+					} else {
+						burn_x0 = MIN(burn_x0, x);
+						burn_x1 = MAX(burn_x1, x);
+						burn_z0 = MIN(burn_z0, z);
+						burn_z1 = MAX(burn_z1, z);
+					}
 				}
 			}
 		}
@@ -1202,6 +1244,85 @@ Vector3 PhysXFireSpread3D::_indraft_at(const Vector3 &p_position, float p_skip) 
 
 // Char at a stem's foot: the time flames and smouldering logs stood there at softwood's notional charring rate (EN
 // 1995-1-2, 0.8 mm a minute), bark and wood together; TreeWind3D takes off the bark.
+float PhysXFireSpread3D::get_burn_age_at(const Vector3 &p_position) const {
+	int x, z;
+	if (t_ignite.is_empty() || !_world_cell(p_position, x, z) || t_ignite[z * nx + x] < 0.0f) {
+		return -1.0f;
+	}
+	return float(MAX(game_days - double(burn_day[z * nx + x]), 0.0) / 365.0);
+}
+
+// Water repellency of the burnt soil (docs/ideas/physx.md, "Rain washes the burn scar"): heating drives waxy compounds
+// from the burning litter into the top soil and fixes them on its grains, most between about 175 and 280 C; above
+// some 300 C they burn off at the surface (DeBano 2000; Doerr et al. 2000). A front passing in seconds heats the soil
+// surface into that band only while it flames there, so the coat grows with the flaming time (full after a minute);
+// a log burning out over a cell overheats it (half as repellent at the surface). It fades as the coat breaks down
+// and wets, back to the background in a year or two (Huffman et al. 2001: about 22 months), here e^(-t / 0.75 yr).
+float PhysXFireSpread3D::get_water_repellency_at(const Vector3 &p_position) const {
+	int x, z;
+	if (t_ignite.is_empty() || !_world_cell(p_position, x, z)) {
+		return 0.0f;
+	}
+	const uint32_t i = z * nx + x;
+	if (t_ignite[i] < 0.0f || fuel_left[i] > 0.5f || quenched[i]) {
+		return 0.0f;
+	}
+	float r = 0.35f + 0.65f * MIN(char_time[i] / 60.0f, 1.0f);
+	if (heavy_any && heavy_t[i] >= 0.0f && char_time[i] > 900.0f) {
+		r = 0.5f;
+	}
+	const float age = get_burn_age_at(p_position);
+	return r * Math::exp(-MAX(age, 0.0f) / 0.75f);
+}
+
+// Rain washing the ash off the burn scar: where the ground's runoff runs (WorldGround.runoff_at: depth and speed),
+// it carries the loose ash away at about 30 kg per m3 of water (post-fire runoff carries ash at tens of grams a litre:
+// Smith et al. 2011; ash is the first thing it moves, Cerda and Doerr 2008), each cell giving up its ash to the flow
+// leaving it (q / cell). Once a second, the runoff read once per metre tile.
+void PhysXFireSpread3D::_wash_ash(float p_delta) {
+	WorldGround *gr = WorldContracts::ground();
+	if (!gr || !gr->has_provider() || t_ignite.is_empty() || total_burnt <= 0.0f) {
+		return;
+	}
+	const FuelModel &m = _model(fuel_type);
+	const int tile = MAX(1, (int)Math::round(1.0f / cell_size));
+	const float cell_area = cell_size * cell_size;
+	for (int tz = 0; tz < nz; tz += tile) {
+		for (int tx = 0; tx < nx; tx += tile) {
+			const int cx = MIN(tx + tile / 2, nx - 1), cz = MIN(tz + tile / 2, nz - 1);
+			const uint32_t ci = cz * nx + cx;
+			if (t_ignite[ci] < 0.0f || time - t_ignite[ci] < 3.0f * m.burn_time) {
+				continue;
+			}
+			Vector3 wp = _cell_world(cx, cz);
+			wp.y = height.is_empty() ? wp.y : height[ci];
+			const Vector2 run = gr->runoff_at(wp);
+			const float q = run.x * run.y; // m2/s
+			if (q <= 1.0e-7f) {
+				continue;
+			}
+			const float take = 30.0f * q / cell_size * p_delta; // kg/m2
+			const float before = ash_washed;
+			for (int z = tz; z < MIN(tz + tile, nz); z++) {
+				for (int x = tx; x < MIN(tx + tile, nx); x++) {
+					const uint32_t i = z * nx + x;
+					if (t_ignite[i] < 0.0f) {
+						continue;
+					}
+					const float left = _ash_made(i) - ash_blown[i];
+					const float lift = MIN(take, MAX(left, 0.0f));
+					ash_blown[i] += lift;
+					ash_washed += lift * cell_area;
+				}
+			}
+			// Into the runoff that carries it to the streams (WorldGround.add_runoff_load, kg since the last call).
+			if (ash_washed > before) {
+				gr->add_runoff_load(wp, 0.0f, ash_washed - before);
+			}
+		}
+	}
+}
+
 float PhysXFireSpread3D::get_stem_char_at(const Vector3 &p_position) const {
 	int x, z;
 	if (char_time.is_empty() || !_world_cell(p_position, x, z)) {
@@ -1578,6 +1699,27 @@ void PhysXFireSpread3D::_update_emitters(const Vector3 &p_wind) {
 	}
 	// Burning crowns take up to half the emitters, the hottest first.
 	const uint32_t n_crown = MIN(crown_em.size(), emitters.size() / 2 + (emitters.size() == 1 ? 1 : 0));
+	// The plume over all of it (WorldFire.plumes): the flames' heat release, about three quarters of it convected
+	// (the rest radiated: a radiant fraction of 0.15-0.3 for vegetation fires; Johnston et al. 2017), from its
+	// heat-weighted centre.
+	{
+		Vector3 c;
+		float w = 0.0f;
+		float wq = 0.0f;
+		for (uint32_t k = 0; k < order.size(); k++) {
+			const Tile &t = tiles[order[k]];
+			c += t.centre;
+			w += t.weight;
+			wq += t.heat;
+		}
+		Vector3 cc = w > 0.0f ? c / w : Vector3();
+		for (uint32_t k : crown_em) {
+			cc = (cc * wq + trees[k].pos * trees[k].hrr) / MAX(wq + trees[k].hrr, 1.0e-6f);
+			wq += trees[k].hrr;
+		}
+		plume_at = cc;
+		plume_heat = 0.75f * wq;
+	}
 	// Fire whirl sites: strong flaming tiles on a flank, where the front runs along the wind (its normal across it)
 	// and the wind's shear against the plume's indraft spins up vertical vorticity.
 	LocalVector<Vector3> flank;
@@ -1727,6 +1869,12 @@ void PhysXFireSpread3D::_update_maps() {
 	for (int z = band_z0; z <= band_z1; z++) {
 		for (int x = band_x0; x <= band_x1; x++) {
 			const uint32_t i = z * nx + x;
+			// Years since it caught over 2, in 8 bits (about 3-day steps); at least one step once burnt, so 0 stays
+			// "never".
+			if (t_ignite[i] >= 0.0f) {
+				const float yrs = MAX(float(game_days) - burn_day[i], 0.0f) / 365.0f;
+				age_image->set_pixel(x, z, Color(CLAMP(yrs * 0.5f, 1.0f / 255.0f, 1.0f), 0.0f, 0.0f, 1.0f));
+			}
 			// Coverage of the cell by the burnt side, from the level set's distance to the front, so the edge is
 			// smooth under the texture's filtering instead of stepping cell by cell.
 			// The edge of a real burn is ragged at the scale of tussocks and gaps, finer than the front the grid can
@@ -1769,6 +1917,12 @@ void PhysXFireSpread3D::_update_maps() {
 				const float mats = 0.65f * _fuel_noise(wp.x / 0.7f, wp.z / 0.7f, 7u) + 0.35f * _fuel_noise(wp.x / 2.2f, wp.z / 2.2f, 8u);
 				ash = MAX(ash, CLAMP(crown_char[i] * 1.6f - 0.6f + 0.9f * (mats - 0.5f), 0.0f, 1.0f) * (0.3f + 0.55f * jitter) * MIN(burnt * 1.5f, 1.0f));
 			}
+			// Where the duff smouldered away, the deep burn leaves pale mineral ash (high severity: white ash; Parsons
+			// et al. 2010).
+			const float deep = smoulder.consumed(i);
+			if (deep > 0.0f) {
+				ash = MAX(ash, CLAMP(deep * 1.3f, 0.0f, 1.0f) * (0.55f + 0.35f * jitter));
+			}
 			if (ash > 0.0f) {
 				// Thinner where the wind has blown it off, the char showing through.
 				const float made = _ash_made(i);
@@ -1784,7 +1938,11 @@ void PhysXFireSpread3D::_update_maps() {
 			// unevenly.
 			const float age = t_ignite[i] < 0.0f ? 0.0f : (time - t_ignite[i]) / m.burn_time;
 			// Put out by rain: no flame, a few wet embers.
-			const float g = cover * CLAMP(Math::exp(-age * (1.2f + 1.6f * jitter)), 0.0f, 1.0f) * (quenched[i] ? 0.05f : 1.0f);
+			float g = cover * CLAMP(Math::exp(-age * (1.2f + 1.6f * jitter)), 0.0f, 1.0f) * (quenched[i] ? 0.05f : 1.0f);
+			if (smoulder.is_smouldering(i)) {
+				// Smouldering duff glows dull red through cracks in its ash, in spots (seen at night).
+				g = MAX(g, cover * (jitter > 0.6f ? 0.12f + 0.25f * (jitter - 0.6f) : 0.02f));
+			}
 			// The ground's own glow (the decal); plants and wood read the state map's, which adds the logs'.
 			float wood_g = g;
 			if (heavy_any && heavy_t[i] >= 0.0f && heavy_left[i] > 0.0f) {
@@ -1804,10 +1962,12 @@ void PhysXFireSpread3D::_update_maps() {
 	char_texture->update(char_image);
 	glow_texture->update(glow_image);
 	state_texture->update(state_image);
+	age_texture->update(age_image);
 	RenderingServer *rs = RenderingServer::get_singleton();
 	const Vector3 o = get_global_transform().xform(Vector3(-size.x * 0.5f, 0, -size.y * 0.5f));
 	rs->global_shader_parameter_set("fire_char_map", char_texture);
 	rs->global_shader_parameter_set("fire_state_map", state_texture);
+	rs->global_shader_parameter_set("fire_age_map", age_texture);
 	rs->global_shader_parameter_set("fire_char_rect", Color(o.x, o.z, size.x, size.y));
 }
 
@@ -1959,7 +2119,51 @@ float PhysXFireSpread3D::get_intensity_at(const Vector3 &p_position) const {
 	if (!_world_cell(p_position, x, z) || heat.is_empty()) {
 		return 0.0f;
 	}
-	return heat[z * nx + x] / 1000.0f;
+	return (heat[z * nx + x] + smoulder.heat_at(z * nx + x)) / 1000.0f;
+}
+
+float PhysXFireSpread3D::get_smoulder_heat_at(const Vector3 &p_position) const {
+	int x, z;
+	if (!_world_cell(p_position, x, z)) {
+		return 0.0f;
+	}
+	return smoulder.heat_at(z * nx + x);
+}
+
+// Duff and organic soil by fuel type: a grass sward's thatch and root mat about a centimetre, a hardwood forest floor's
+// duff (F and H layers) about five (Brown et al. 1985 measure 2-10 cm under western forests).
+float PhysXFireSpread3D::_duff_depth() const {
+	if (duff_depth >= 0.0f) {
+		return duff_depth;
+	}
+	static const float depth[FUEL_MAX] = { 0.01f, 0.015f, 0.05f };
+	return depth[CLAMP((int)fuel_type, 0, FUEL_MAX - 1)];
+}
+
+float PhysXFireSpread3D::get_smoke_rate() const {
+	// PM2.5 per kg burnt: about 7 g for grass (savanna and grassland), 17 g for forest litter and crowns (temperate
+	// forest; Andreae 2019), 30 g smouldering (Urbanski 2014).
+	static const float ef[FUEL_MAX] = { 0.007f, 0.007f, 0.017f };
+	const float flaming = plume_heat / 0.75f / HEAT_CONTENT; // kg/s of fuel
+	return flaming * ef[CLAMP((int)fuel_type, 0, FUEL_MAX - 1)] + smoulder.get_rate() * 0.03f;
+}
+
+void PhysXFireSpread3D::contract_fire_smoke(PackedVector4Array &r_sources) const {
+	static const float ef[FUEL_MAX] = { 0.007f, 0.007f, 0.017f };
+	if (plume_heat > 0.0f) {
+		r_sources.push_back(Vector4(plume_at.x, plume_at.y, plume_at.z, plume_heat / 0.75f / HEAT_CONTENT * ef[CLAMP((int)fuel_type, 0, FUEL_MAX - 1)]));
+	}
+	if (smoulder.get_rate() > 0.0f) {
+		const Vector3 c = smoulder.get_centre();
+		r_sources.push_back(Vector4(c.x, c.y, c.z, smoulder.get_rate() * 0.03f));
+	}
+}
+
+void PhysXFireSpread3D::set_smouldering(bool p_v) {
+	smouldering = p_v;
+	if (!smouldering) {
+		smoulder.extinguish();
+	}
 }
 
 float PhysXFireSpread3D::get_flame_length_at(const Vector3 &p_position) const {
@@ -2014,6 +2218,7 @@ void PhysXFireSpread3D::_notification(int p_what) {
 			fires.erase(this);
 			WorldContracts::unregister_fire(this);
 			steam.clear();
+			smoulder.clear();
 			ash.clear();
 			ash_sources.clear();
 		} break;
@@ -2025,6 +2230,9 @@ void PhysXFireSpread3D::_notification(int p_what) {
 				RenderingServer *rs = RenderingServer::get_singleton();
 				if (!ProjectSettings::get_singleton()->has_setting("shader_globals/fire_char_map")) {
 					rs->global_shader_parameter_add("fire_char_map", RSE::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
+				}
+				if (!ProjectSettings::get_singleton()->has_setting("shader_globals/fire_age_map")) {
+					rs->global_shader_parameter_add("fire_age_map", RSE::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
 				}
 				if (!ProjectSettings::get_singleton()->has_setting("shader_globals/fire_state_map")) {
 					rs->global_shader_parameter_add("fire_state_map", RSE::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
@@ -2048,15 +2256,29 @@ void PhysXFireSpread3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			const float dt = float(get_physics_process_delta_time());
+			// The weather's clock (its time per real second), for how long ago each cell burnt.
+			{
+				const WorldWeather *wwc = WorldContracts::weather();
+				game_days += double(dt) * (wwc->has_provider() ? wwc->time_scale() : 1.0) / 86400.0;
+			}
 			sample_timer -= dt;
 			if (sample_timer <= 0.0f) {
 				sample_timer = 0.25f;
 				_ignite_from_heat_source();
 				_apply_fluid_water(0.25f, _update_moisture(0.25f));
 				_water_edge(0.25f);
+				if (smouldering) {
+					smoulder.step(this, 0.25f);
+				}
 				_ignite_from_lightning();
 				_blow_ash(0.25f);
 				_update_indraft();
+				_report_burn();
+			}
+			wash_timer -= dt;
+			if (wash_timer <= 0.0f) {
+				wash_timer = 1.0f;
+				_wash_ash(1.0f);
 			}
 			_step(dt);
 			_update_emitters(_wind());
@@ -2065,6 +2287,9 @@ void PhysXFireSpread3D::_notification(int p_what) {
 			}
 			if (steam.is_steaming() || steam.get_total_kg() > 0.0f) {
 				steam.step(this, _wind(), dt);
+			}
+			if (smoulder.is_active() || smoulder.has_gas()) {
+				smoulder.step_smoke(this, _wind(), dt);
 			}
 			if (!ash_sources.is_empty() || ash.is_active()) {
 				ash.step(this, ash_sources, _wind(), dt);
@@ -2102,11 +2327,29 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_fire_wind"), &PhysXFireSpread3D::is_fire_wind);
 	ClassDB::bind_method(D_METHOD("get_fire_wind_at", "position"), &PhysXFireSpread3D::get_fire_wind_at);
 	ClassDB::bind_method(D_METHOD("get_stem_char_at", "position"), &PhysXFireSpread3D::get_stem_char_at);
+	ClassDB::bind_method(D_METHOD("get_burn_age_at", "position"), &PhysXFireSpread3D::get_burn_age_at);
+	ClassDB::bind_method(D_METHOD("get_water_repellency_at", "position"), &PhysXFireSpread3D::get_water_repellency_at);
+	ClassDB::bind_method(D_METHOD("get_ash_washed"), &PhysXFireSpread3D::get_ash_washed);
 	ClassDB::bind_method(D_METHOD("set_blowing_ash", "enabled"), &PhysXFireSpread3D::set_blowing_ash);
 	ClassDB::bind_method(D_METHOD("is_blowing_ash"), &PhysXFireSpread3D::is_blowing_ash);
 	ClassDB::bind_method(D_METHOD("set_grass_ash", "enabled"), &PhysXFireSpread3D::set_grass_ash);
 	ClassDB::bind_method(D_METHOD("is_grass_ash"), &PhysXFireSpread3D::is_grass_ash);
 	ClassDB::bind_method(D_METHOD("get_ash_blown"), &PhysXFireSpread3D::get_ash_blown);
+	ClassDB::bind_method(D_METHOD("set_smouldering", "enabled"), &PhysXFireSpread3D::set_smouldering);
+	ClassDB::bind_method(D_METHOD("is_smouldering"), &PhysXFireSpread3D::is_smouldering);
+	ClassDB::bind_method(D_METHOD("set_duff_depth", "depth"), &PhysXFireSpread3D::set_duff_depth);
+	ClassDB::bind_method(D_METHOD("get_duff_depth"), &PhysXFireSpread3D::get_duff_depth);
+	ClassDB::bind_method(D_METHOD("set_duff_moisture", "moisture"), &PhysXFireSpread3D::set_duff_moisture);
+	ClassDB::bind_method(D_METHOD("get_duff_moisture"), &PhysXFireSpread3D::get_duff_moisture);
+	ClassDB::bind_method(D_METHOD("set_duff_mineral", "share"), &PhysXFireSpread3D::set_duff_mineral);
+	ClassDB::bind_method(D_METHOD("get_duff_mineral"), &PhysXFireSpread3D::get_duff_mineral);
+	ClassDB::bind_method(D_METHOD("get_smouldering_cells"), &PhysXFireSpread3D::get_smouldering_cells);
+	ClassDB::bind_method(D_METHOD("get_duff_burnt"), &PhysXFireSpread3D::get_duff_burnt);
+	ClassDB::bind_method(D_METHOD("get_rekindled_count"), &PhysXFireSpread3D::get_rekindled_count);
+	ClassDB::bind_method(D_METHOD("get_smoulder_heat_at", "position"), &PhysXFireSpread3D::get_smoulder_heat_at);
+	ClassDB::bind_method(D_METHOD("get_smoulder_flow"), &PhysXFireSpread3D::get_smoulder_flow);
+	ClassDB::bind_method(D_METHOD("get_smoke_rate"), &PhysXFireSpread3D::get_smoke_rate);
+	ClassDB::bind_method(D_METHOD("get_plume_heat"), &PhysXFireSpread3D::get_plume_heat);
 	ClassDB::bind_method(D_METHOD("set_fire_whirls", "enabled"), &PhysXFireSpread3D::set_fire_whirls);
 	ClassDB::bind_method(D_METHOD("is_fire_whirls"), &PhysXFireSpread3D::is_fire_whirls);
 	ClassDB::bind_method(D_METHOD("set_spotting", "enabled"), &PhysXFireSpread3D::set_spotting);
@@ -2201,6 +2444,11 @@ void PhysXFireSpread3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_whirls"), "set_fire_whirls", "is_fire_whirls");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "blowing_ash"), "set_blowing_ash", "is_blowing_ash");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "grass_ash"), "set_grass_ash", "is_grass_ash");
+	ADD_GROUP("Smouldering", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "smouldering"), "set_smouldering", "is_smouldering");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "duff_depth", PROPERTY_HINT_RANGE, "-1,0.5,0.005,or_greater,suffix:m"), "set_duff_depth", "get_duff_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "duff_moisture", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_duff_moisture", "get_duff_moisture");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "duff_mineral", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_duff_mineral", "get_duff_mineral");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_wind"), "set_fire_wind", "is_fire_wind");
 	ADD_GROUP("Flames", "");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "flow_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFlow3D"), "set_flow_path", "get_flow_path");

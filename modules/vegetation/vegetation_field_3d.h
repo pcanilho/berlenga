@@ -207,6 +207,11 @@ private:
 		float frontal = 0.0f; // m2 a plant shows the wind at scale 1 (PlantSpecies.wind_frontal_area).
 		bool wind_flag = false; // Meta "wind_flag": +X turned down the prevailing wind (flagged trees, krummholz).
 		LocalVector<float> bank_slopes; // Per variant, mesh meta "tree_ground_slope".x (radians); empty: no bank forms.
+		// Per variant, mesh meta "tree_fire_years" (years since the fire the tree was grown for, -1 unburnt); empty: none.
+		// A tree takes the variant whose years are nearest the ground's burn age, unburnt ones off burns.
+		LocalVector<float> fire_years;
+		LocalVector<Vector2> fire_bands; // Per variant, mesh meta "tree_fire_band" (years from, to); empty: nearest years.
+		float fire_years_max = 0.0f;
 	};
 	struct PlaceSetup {
 		LocalVector<PlaceSpecies> species;
@@ -245,12 +250,23 @@ private:
 		Rect2 sand_rect;
 		float sand_at(const Vector2 &p_xz) const;
 		// Desert sand seas (PlantSpecies.RULE_SAND_MOBILITY): 0 stable to 1 moving, -1 off them, on the sand sea's
-		// own grid; read only when a species uses the rule.
+		// own grid; read whenever the generator has a sand sea.
 		LocalVector<float> mobility;
 		int mobility_nx = 0;
 		int mobility_ny = 0;
 		Rect2 mobility_rect;
 		float mobility_at(const Vector2 &p_xz) const;
+		// The sand sea's depth (m) on the same grid, read whenever the generator has a sand sea: species that are not
+		// sand plants keep off where it lies over 5 to 30 cm.
+		LocalVector<float> sea_depth;
+		float sea_depth_at(const Vector2 &p_xz) const;
+		// Years since the ground burnt (WorldFire.burn_age_at), -1 never, on a grid over the map, nearest cell; read
+		// only when the fire contract has a provider and a species uses the burn rule or recovers from fire.
+		LocalVector<float> burn;
+		int burn_nx = 0;
+		int burn_ny = 0;
+		Rect2 burn_rect;
+		float burn_at(const Vector2 &p_xz) const;
 	};
 	struct FarAdd {
 		Vector2 xz;
@@ -277,6 +293,7 @@ private:
 	float _species_range(const Ref<PlantSpecies> &p_species, real_t p_pixel_angle) const;
 	static void _read_sand(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
 	static void _read_sand_mobility(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
+	void _read_burn_age(PlaceSetup &r_setup) const;
 	void _place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles) const;
 	void _commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes);
 	// The maps from the placed crowns and far colour: computed anywhere, applied on the main thread.
@@ -309,6 +326,11 @@ private:
 	// Plants past their range as real volume (docs/ideas/vegetation.md, "Far plants as volume"):
 	// a voxel shell per tile and species, from the range out to far_volume_range.
 	bool far_volume = true;
+	// Close-up bark (BarkDetail3D, ground detail): made and linked as an internal child when a species has trunks
+	// (tree_colliders), so every forest gets it; tests switch it off.
+	bool bark_detail = true;
+	ObjectID bark_detail_node;
+	void _update_bark_detail();
 	float far_volume_range = 150.0f;
 	// Small species (PlantSpecies.detail_size > 0) drawn out to where they are still detail_pixels tall
 	// (vegetation_detail.h; docs/ideas/ground-detail-vegetation.md).
@@ -355,6 +377,7 @@ private:
 		TileOut out;
 		LocalVector<LocalVector<MultiMeshInstance3D *>> nodes; // Per species.
 		LocalVector<bool> committed;
+		bool stale = false; // Placed before the ground (holes) or burn ages changed: its replacement is on the way.
 	};
 	struct StreamJob {
 		VegetationField3D *field = nullptr;
@@ -423,6 +446,13 @@ private:
 	static void _fill_cell(const Ref<MultiMesh> &p_mm, const Ref<Mesh> &p_mesh, const LocalVector<Transform3D> &p_xforms, const LocalVector<Color> &p_customs);
 	bool impostors_traced = false;
 	double impostor_check = 0.0;
+	// Live fires (WorldFire.burn_changed): checked twice a second; streamed tiles over the changed area are placed
+	// again once no tile is being placed, a populated field populates again.
+	mutable uint64_t burn_seen = 0; // WorldFire.get_burn_generation() the setup's burn grid holds
+	mutable bool burn_follow = false; // A species reads burn ages.
+	double burn_check = 0.0;
+	Rect2 burn_dirty;
+	void _follow_burns(double p_delta);
 	bool _path_traced() const;
 	void _update_impostors(bool p_traced);
 	LocalVector<LocalVector<Vector3>> placements; // Per species, world positions.
@@ -538,6 +568,9 @@ public:
 	TypedArray<NodePath> get_cover_grass_layers() const { return cover_grass_layers; }
 	void set_cover_cell(float p_cell) { cover_cell = CLAMP(p_cell, 0.5f, 64.0f); }
 	void set_far_volume(bool p_on) { far_volume = p_on; }
+	void set_bark_detail(bool p_enabled);
+	bool is_bark_detail() const { return bark_detail; }
+	Node *get_bark_detail_node() const;
 	void set_far_match_view(bool p_enabled);
 	bool is_far_match_view() const { return far_match_view; }
 	float get_far_shade() const { return far_shade; }

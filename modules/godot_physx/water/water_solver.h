@@ -82,6 +82,7 @@ public:
 	// Swash run-up and wet sand (water_swash.glsl), on the ripple grid.
 	RID shader_swash, pipeline_swash;
 	RID shader_flow_offset, pipeline_flow_offset;
+	RID shader_surface_waves, pipeline_surface_waves;
 
 	RID buf_params;
 	RID buf_state_a, buf_state_b; // ping-pong ripple state (h, h_prev, foam, _)
@@ -167,6 +168,20 @@ public:
 	Vector2 flow_grid_center; // world xz of the ripple grid's centre (the phases' noise is world-anchored)
 	RID tex_flow_offset, tex_flow_offset_tmp;
 	RID buf_flow_offset_params, buf_flow_offset_copy_params, uset_flow_offset, uset_flow_offset_copy;
+	// Dispersive surface waves (water_surface_waves.glsl) on a finer power-of-two grid over the ripple grid's
+	// domain: RG32F h (m) and phi; built on first use, freed with the rest.
+	bool surface_waves = false;
+	float surface_wave_strength = 1.0f;
+	float surface_wave_time = 0.0f;
+	bool surface_wave_clear = true;
+	int surface_wave_n = 0;
+	RID tex_surface_waves;
+	RID buf_sw_params[3], uset_sw[3];
+	RID buf_sw_packed, buf_sw_d[4], buf_sw_m[4];
+	RID buf_sw_rows_params, buf_sw_cols_params;
+	RID uset_sw_fwd_rows, uset_sw_fwd_cols, uset_sw_inv_rows, uset_sw_inv_cols;
+	void _rt_build_surface_waves();
+	void _rt_free_surface_waves();
 	RID buf_blit_ripple_params, buf_blit_ocean_params; // just {n}, uploaded once at build (grid resolution is fixed per configure())
 	RID uset_blit_ripple, uset_blit_ocean;
 
@@ -293,6 +308,7 @@ public:
 	void rt_set_base_flux(Ref<WaterSolverGPU> p_self, PackedFloat32Array p_flux, float p_wall_friction);
 	void rt_set_flow_foam(Ref<WaterSolverGPU> p_self, float p_strength, float p_persistence, bool p_impact);
 	void rt_set_advected_ripples(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_period);
+	void rt_set_surface_waves(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_strength);
 	void rt_set_flow_grid_center(Ref<WaterSolverGPU> p_self, Vector2 p_center);
 
 	// Async readback callbacks: RenderingDevice invokes them with the data as
@@ -450,6 +466,12 @@ public:
 	void set_flow_clock(float p_time);
 	// RGBA32F on the ripple grid: phase A's offset correction in rg, phase B's in ba (m); invalid until built.
 	RID get_flow_offset_texture_rd_rid() const;
+	// Dispersive surface waves over the ripple grid (water_surface_waves.glsl; Jeschke and Wojtan 2023): short waves
+	// at their own speed, wrapping round stones and reflecting off banks, raised where the current meets dry ground
+	// with the stagnation head times p_strength. Needs a current (set_base_flux).
+	void set_surface_waves(bool p_enabled, float p_strength = 1.0f);
+	// RG32F, SURFACE_WAVE_N square over the ripple grid's domain: h (m) in r; invalid until the first step with it on.
+	RID get_surface_wave_texture_rd_rid() const;
 	// Live face velocities read back from the GPU (u' on each cell's +x face, w' on its +z face, m/s, on top of the
 	// baked flow); empty until a readback lands with a current running.
 	void get_velocity_grid(Vector<float> &r_velocity) const;

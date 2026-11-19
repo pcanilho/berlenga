@@ -168,6 +168,50 @@ float LeafFall3D::_ground_at(const Vector3 &p_p) const {
 	return get_global_position().y;
 }
 
+float LeafFall3D::_surface_at(const Vector3 &p_p, uint8_t &r_on) const {
+	float top = _ground_at(p_p);
+	r_on = SURFACE_GROUND;
+	if (const WorldSnow *snow = WorldContracts::snow(); snow->has_provider()) {
+		const float d = snow->depth_at(p_p);
+		if (d > 0.005f) {
+			const float sf = snow->surface_at(p_p);
+			top = Math::is_finite(sf) ? MAX(sf, top) : top + d;
+			r_on = SURFACE_SNOW;
+		}
+	}
+	if (const WorldWater *water = WorldContracts::water(); water->has_provider()) {
+		const float h = water->height_at(Vector3(p_p.x, top, p_p.z));
+		if (Math::is_finite(h) && h > top + 0.005f) {
+			top = h;
+			r_on = SURFACE_WATER;
+			if (const WorldSnow *snow = WorldContracts::snow(); snow->has_provider()) {
+				const Vector2 ice = snow->lake_ice_at(p_p);
+				if (ice.x > 0.005f) {
+					top = h + ice.x * 0.08f; // freeboard of floating ice, about 8% of it
+					r_on = SURFACE_ICE;
+				}
+			}
+		}
+	}
+	return top;
+}
+
+int LeafFall3D::get_floating_count() const {
+	int n = 0;
+	for (const Leaf &l : leaves) {
+		n += (l.alive && l.lying >= 0.0f && l.on == SURFACE_WATER) ? 1 : 0;
+	}
+	return n;
+}
+
+int LeafFall3D::get_buried_count() const {
+	int n = 0;
+	for (const Leaf &l : leaves) {
+		n += (l.alive && l.lying >= 0.0f && l.buried) ? 1 : 0;
+	}
+	return n;
+}
+
 void LeafFall3D::_spawn(const Vector3 &p_p, const Vector3 &p_v, int p_kind, bool p_lying) {
 	if (kinds.is_empty()) {
 		return;
@@ -226,9 +270,44 @@ void LeafFall3D::drop_leaf(const Vector3 &p_position, int p_kind) {
 void LeafFall3D::_step_leaf(Leaf &p_leaf, float p_delta, const WorldWeather *p_weather) {
 	const Kind &k = kinds[p_leaf.kind];
 	const float sc = p_leaf.scale;
-	const float ground = _ground_at(p_leaf.p);
+	uint8_t on = SURFACE_GROUND;
+	const float ground = _surface_at(p_leaf.p, on);
 	if (p_leaf.lying >= 0.0f) {
 		p_leaf.lying += p_delta;
+		// Leaves on water (docs/ideas/world-links.md): they float, carried by the surface current plus a little
+		// leeway in the wind (about 3% of it for flat floating debris, Breivik et al. 2011), turning slowly; where the
+		// water goes (a pool drains, the leaf reaches the bank) they settle on what is under them.
+		if (on == SURFACE_WATER) {
+			const Vector3 flow = WorldContracts::water()->flow_at(p_leaf.p);
+			const Vector3 a = p_weather ? p_weather->wind_at(p_leaf.p, 10.0f) : Vector3();
+			const Vector3 drift(flow.x + leeway * a.x, 0.0f, flow.z + leeway * a.z);
+			p_leaf.p += drift * p_delta;
+			p_leaf.p.y = ground + 0.002f;
+			if (p_leaf.on != SURFACE_WATER) {
+				p_leaf.w = Vector3(0, (rng.randf() - 0.5f) * 0.6f, 0);
+			}
+			p_leaf.b = Basis(Vector3(0, 1, 0), p_leaf.w.y * p_delta) * p_leaf.b;
+			p_leaf.on = on;
+			p_leaf.buried = false;
+			return;
+		}
+		// Snow falling on a lying leaf buries it (the pack's surface rises over it); melting snow or a lowered
+		// surface sets it down on what is under.
+		if (ground > p_leaf.p.y + 0.01f && on == SURFACE_SNOW) {
+			p_leaf.buried = true;
+		} else if (ground < p_leaf.p.y - 0.01f) {
+			p_leaf.p.y = ground + 0.005f;
+			p_leaf.buried = false;
+			p_leaf.on = on;
+		} else if (p_leaf.buried && ground <= p_leaf.p.y + 0.002f) {
+			p_leaf.buried = false; // melted out
+		}
+		if (on == SURFACE_ICE) {
+			p_leaf.on = on;
+		}
+		if (p_leaf.buried) {
+			return; // held by the snow
+		}
 		// Loose dry leaves lift when the wind 10 cm over the ground passes the threshold (gusts do it).
 		const WorldFire *fire = WorldContracts::fire();
 		if (p_weather || fire->has_provider()) {
@@ -273,6 +352,8 @@ void LeafFall3D::_step_leaf(Leaf &p_leaf, float p_delta, const WorldWeather *p_w
 		p_leaf.v = Vector3();
 		p_leaf.w = Vector3();
 		p_leaf.lying = 0.0f;
+		p_leaf.on = on;
+		p_leaf.buried = false;
 	}
 }
 
@@ -335,6 +416,8 @@ void LeafFall3D::_step(float p_delta) {
 		}
 	}
 
+	_kick_step(p_delta, cam);
+
 	for (uint32_t i = 0; i < leaves.size(); i++) {
 		Leaf &l = leaves[i];
 		if (!l.alive) {
@@ -350,6 +433,73 @@ void LeafFall3D::_step(float p_delta) {
 		}
 	}
 	step_ms = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0f;
+}
+
+// Bodies kick up fallen leaves (docs/ideas/world-links.md): a foot or wheel moving through the litter throws the
+// leaves it touches at about its own speed with a little lift; the air in a walker's wake near the ground moves at
+// only 0.3-0.5 of its speed, under the gust threshold, so only what the body touches flies. Lying leaves under the
+// body are thrown, and the loose litter (litter_density) the body sweeps through gives up a share of its leaves.
+void LeafFall3D::_kick_step(float p_delta, const Vector3 &p_cam) {
+	if (p_delta <= 0.0f || !is_inside_tree()) {
+		return;
+	}
+	HashMap<ObjectID, Vector3> seen;
+	for (Node *n : get_tree()->get_nodes_in_group(SNAME("world_contact"))) {
+		const Node3D *n3 = Object::cast_to<Node3D>(n);
+		if (!n3 || !n3->is_visible_in_tree() || seen.has(n3->get_instance_id())) {
+			continue;
+		}
+		const WorldContactBody b = WorldContracts::describe_body(n3);
+		const ObjectID id = n3->get_instance_id();
+		seen.insert(id, b.center);
+		const Vector3 *last = body_last.getptr(id);
+		if (!last || b.center.distance_to(p_cam) > range) {
+			continue;
+		}
+		Vector3 vel = (b.center - *last) / p_delta;
+		const float speed = Vector2(vel.x, vel.z).length();
+		if (speed < 0.5f || speed > 40.0f) {
+			continue; // standing, or moved by a teleport
+		}
+		uint8_t body_on = SURFACE_GROUND;
+		const float ground = _surface_at(b.center, body_on);
+		if (b.center.y - b.half_height - ground > 0.3f) {
+			continue; // above the litter
+		}
+		vel.y = 0.0f;
+		const float reach = b.radius + 0.15f;
+		const Vector2 c(b.center.x, b.center.z);
+		for (Leaf &l : leaves) {
+			if (!l.alive || l.lying < 0.0f || l.buried || l.on == SURFACE_WATER || Vector2(l.p.x, l.p.z).distance_squared_to(c) > reach * reach) {
+				continue; // buried in snow, or floating (the body pushes through it)
+			}
+			l.lying = -1.0f;
+			l.v = vel * Math::lerp(0.4f, 0.9f, rng.randf()) + Vector3(0, (0.3f + 0.15f * MIN(speed, 10.0f)) * Math::lerp(0.5f, 1.0f, rng.randf()), 0);
+			l.w = Vector3(rng.randf() - 0.5f, rng.randf() - 0.5f, rng.randf() - 0.5f) * 12.0f;
+			l.p.y = MAX(l.p.y, ground + 0.02f);
+			kicked_count++;
+		}
+		// The loose litter swept: a share of the leaves in the swath 2r wide.
+		if (litter_density > 0.0f && !kinds.is_empty()) {
+			float &acc = body_kick_accum[id];
+			acc += litter_density * 2.0f * b.radius * speed * p_delta * 0.15f;
+			const Vector2 dir = Vector2(vel.x, vel.z) / speed;
+			while (acc >= 1.0f) {
+				acc -= 1.0f;
+				const float side = (rng.randf() * 2.0f - 1.0f) * b.radius;
+				Vector3 p(b.center.x - dir.y * side, 0.0f, b.center.z + dir.x * side);
+				p.y = ground + 0.02f;
+				_spawn(p, vel * Math::lerp(0.4f, 0.9f, rng.randf()) + Vector3(0, (0.3f + 0.15f * MIN(speed, 10.0f)) * Math::lerp(0.5f, 1.0f, rng.randf()), 0), int(rng.rand() % kinds.size()), false);
+				kicked_count++;
+			}
+		}
+	}
+	body_last = seen;
+	for (KeyValue<ObjectID, float> &kv : body_kick_accum) {
+		if (!seen.has(kv.key)) {
+			kv.value = 0.0f;
+		}
+	}
 }
 
 void LeafFall3D::_rebuild_draws() {
@@ -691,6 +841,11 @@ void LeafFall3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("drop_leaf", "position", "kind"), &LeafFall3D::drop_leaf);
 	ClassDB::bind_method(D_METHOD("get_leaf_count"), &LeafFall3D::get_leaf_count);
 	ClassDB::bind_method(D_METHOD("get_lifted_count"), &LeafFall3D::get_lifted_count);
+	ClassDB::bind_method(D_METHOD("get_kicked_count"), &LeafFall3D::get_kicked_count);
+	ClassDB::bind_method(D_METHOD("get_floating_count"), &LeafFall3D::get_floating_count);
+	ClassDB::bind_method(D_METHOD("get_buried_count"), &LeafFall3D::get_buried_count);
+	ClassDB::bind_method(D_METHOD("set_leeway", "share"), &LeafFall3D::set_leeway);
+	ClassDB::bind_method(D_METHOD("get_leeway"), &LeafFall3D::get_leeway);
 	ClassDB::bind_method(D_METHOD("get_step_time"), &LeafFall3D::get_step_time);
 	ClassDB::bind_method(D_METHOD("get_leaf_states"), &LeafFall3D::get_leaf_states);
 	ClassDB::bind_method(D_METHOD("get_leaf_velocities"), &LeafFall3D::get_leaf_velocities);
@@ -708,5 +863,6 @@ void LeafFall3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lift_speed", PROPERTY_HINT_RANGE, "0.1,20,0.1,suffix:m/s"), "set_lift_speed", "get_lift_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "litter_density", PROPERTY_HINT_RANGE, "0,500,0.1"), "set_litter_density", "get_litter_density");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lie_time", PROPERTY_HINT_RANGE, "0,3600,1,suffix:s"), "set_lie_time", "get_lie_time");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "leeway", PROPERTY_HINT_RANGE, "0,0.2,0.001"), "set_leeway", "get_leeway");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "weather_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WeatherMap3D"), "set_weather_map", "get_weather_map");
 }

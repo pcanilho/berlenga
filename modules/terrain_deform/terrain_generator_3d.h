@@ -171,6 +171,7 @@ private:
 	real_t seabed_profile = 0.1; // A in the Dean profile depth = A x^(2/3) (m^(1/3)); fine sand ~0.1
 	real_t shelf_slope = 0.03; // added past the surf zone (300 m)
 	real_t max_sea_depth = 60.0; // m
+	bool plunging_cliffs = true; // steep coasts without a beach run on below the sea (no strip at the swash line)
 	real_t beach_width = 80.0; // m, mean; it varies along the coast
 	real_t beach_slope = 0.03;
 	// Coastal dunes (terrain_dunes.h): wind-blown sand off the beaches, on its own fine grid over the belt behind them.
@@ -190,6 +191,8 @@ private:
 	real_t sand_sea_scale = 4.0; // m a cell; dunes come out some 25 cells apart and scale with it
 	int sand_sea_steps = 300;
 	real_t sand_sea_edge = 300.0; // m over which the sand thins out at the sea's edge
+	Ref<Image> sand_sea_mask; // optional: 0..1 (red) stretched over sand_sea_rect, where the sea's sand may lie
+	real_t nebkha_density = 1.0; // vegetated sand mounds on the sea's thin sand and margins (0: none)
 
 	// Lakes: natural dams across valleys, the water behind them.
 	int lake_count = 0;
@@ -221,6 +224,7 @@ private:
 	LocalVector<float> soil;
 	LocalVector<float> rock;
 	LocalVector<float> talus;
+	LocalVector<float> scree_sorting; // 0 at a talus apron's apex, 1 at its toe (fall sorting)
 	LocalVector<float> beach; // 1 on the beach face, fading over the backshore; 0 inland and where no beach
 	LocalVector<float> coast_exposure; // 0 sheltered to 1 open to the sea's waves, within coast_exposure_reach of the sea
 	LocalVector<float> hardness; // 0 soft .. 1 hard rock at the surface (strata)
@@ -458,6 +462,23 @@ private:
 	static void _sand_sea_shear(void *p_sea, uint32_t p_part);
 	void _build_sand_sea();
 	float _sea_sample(real_t p_x, real_t p_z) const;
+	LocalVector<float> sea_mask; // sand_sea_mask resampled on the sea's grid (empty: no mask)
+	// Nebkhas (docs/ideas/dunes.md, "Nebkhas"): mounds of sand held by a shrub, each a dome round the plant and a
+	// tail downwind, bucketed for get_height.
+	struct Nebkha {
+		Vector2 pos;
+		float height = 0.0f; // m at the plant
+		float radius = 0.0f; // m, the dome's
+		float tail = 0.0f; // m from the plant to the tail's end, downwind
+	};
+	LocalVector<Nebkha> nebkhas;
+	LocalVector<LocalVector<uint32_t>> neb_buckets;
+	int neb_bx = 0;
+	int neb_bz = 0;
+	Vector2 neb_origin;
+	Vector2 neb_dir; // downwind
+	void _build_nebkhas();
+	float _nebkha_sample(real_t p_x, real_t p_z) const;
 	real_t _sea_cubic(real_t p_gx, real_t p_gz) const;
 	float _ground_detail(real_t p_x, real_t p_z) const;
 	bool result_deposition = false; // the last generate() deposited (alluvium smooths the detail)
@@ -698,6 +719,8 @@ public:
 	real_t get_shelf_slope() const { return shelf_slope; }
 	void set_max_sea_depth(real_t p_value) { max_sea_depth = MAX(p_value, real_t(0.1)); }
 	real_t get_max_sea_depth() const { return max_sea_depth; }
+	void set_plunging_cliffs(bool p_value) { plunging_cliffs = p_value; }
+	bool is_plunging_cliffs() const { return plunging_cliffs; }
 	void set_beach_width(real_t p_value) { beach_width = MAX(p_value, real_t(0.0)); }
 	real_t get_beach_width() const { return beach_width; }
 	void set_beach_slope(real_t p_value) { beach_slope = CLAMP(p_value, real_t(0.001), real_t(1.0)); }
@@ -741,6 +764,12 @@ public:
 	void set_sand_sea_edge(real_t p_value) { sand_sea_edge = MAX(p_value, real_t(0.0)); }
 	real_t get_sand_sea_edge() const { return sand_sea_edge; }
 	real_t get_sand_sea_height(const Vector3 &p_global_position) const { return _sea_sample(p_global_position.x, p_global_position.z); }
+	void set_sand_sea_mask(const Ref<Image> &p_mask) { sand_sea_mask = p_mask; }
+	Ref<Image> get_sand_sea_mask() const { return sand_sea_mask; }
+	void set_nebkha_density(real_t p_value) { nebkha_density = MAX(p_value, real_t(0.0)); }
+	real_t get_nebkha_density() const { return nebkha_density; }
+	real_t get_nebkha_height(const Vector3 &p_global_position) const { return _nebkha_sample(p_global_position.x, p_global_position.z); }
+	PackedVector4Array get_nebkhas(const Rect2 &p_rect) const;
 	real_t get_last_sand_sea_msec() const { return last_sand_sea_msec; }
 	real_t get_last_sand_sea_max() const { return last_sand_sea_max; }
 	void set_lake_count(int p_count) { lake_count = CLAMP(p_count, 0, 256); }
@@ -840,6 +869,7 @@ public:
 	real_t get_soil_depth(const Vector3 &p_global_position) const;
 	real_t get_rock_exposure(const Vector3 &p_global_position) const;
 	real_t get_talus(const Vector3 &p_global_position) const;
+	real_t get_scree_sorting(const Vector3 &p_global_position) const;
 	real_t get_rock_hardness(const Vector3 &p_global_position) const;
 	Array get_river_sites(real_t p_min_area = 1.0e5, real_t p_min_discharge = 0.0, real_t p_run = 200.0) const;
 	Array get_waterfalls(real_t p_min_area = 1.0e5, real_t p_min_height = 5.0) const;

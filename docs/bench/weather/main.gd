@@ -15,6 +15,11 @@ extends Node3D
 #                       wind near the ground: a forest's profile against Cionco's, the lee of a wall against
 #                       distance, gust patches (spread and size), the shader code against get_wind_at(), and
 #                       the shelter bake's cost
+#   --test=basics     the checks above down to the cost of one map update (no clouds, no shelter)
+#   --test=clouds     only the cloud checks; --test=basics, --test=clouds and --test=shelter together are --test.
+#                     The shelter and terrain checks draw the wind shader in a SubViewport, which never draws under
+#                     --headless: run them under xvfb with a Vulkan driver (lavapipe on a machine with no GPU), about
+#                     2 min for all of --test
 #   --test=terrain    wind over terrain (docs/ideas/wind.md): a 60 m hill and a 40 m ridge, speed-up on the crest,
 #                     slowing in the lee (Sx), turning on the flanks, the updraught on the windward slope, the
 #                     fade with height, the shader code against get_wind_at(), the bake's cost, and particles
@@ -50,6 +55,8 @@ extends Node3D
 #   --out=path.png    save the last frame and quit
 #   --map-out=path.png  save the map (wind speed red, cloud cover green, wetness blue) and quit
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
+#   --fire=W          clouds views: a fire plume of W watts convective heat 5 km ahead (a WorldFire stub) in dry air
+#                     (humidity 0.3), the weather advanced 30 minutes: its fire cloud at its own condensation level
 #   --no-reprojection  clouds view: every half resolution pixel every frame (WeatherSkyMaterial.cloud_reprojection off)
 #   --pan=D           clouds view: the camera turns D degrees a second (reprojection under motion)
 #   --cloud-time=S    clouds views: the clouds have evolved S seconds (the drift stays), for time-lapse strips
@@ -73,6 +80,8 @@ var only_terrain := false
 var only_leaves := false
 var only_lightning := false
 var only_haze := false
+var only_basics := false
+var only_clouds := false
 var haze := ""
 var no_sky_shadow := false
 var froxel_haze := false
@@ -87,6 +96,15 @@ var reprojection := true
 var pan := 0.0
 var cloud_time := -1.0
 var frozen := false
+var fire_w := 0.0
+
+
+# A fire's convection column 5 km ahead of the clouds views' camera (--fire=W).
+class PlumeStub extends WorldFire:
+	var heat := 0.0
+	func _plumes() -> PackedVector4Array:
+		return PackedVector4Array([Vector4(0, 0, -5000, heat)])
+
 var pan_cam: Camera3D
 var n := 0
 var env: Environment
@@ -103,6 +121,7 @@ func _ready() -> void:
 		elif a.begins_with("--pan="): pan = float(a.substr(6))
 		elif a.begins_with("--cloud-time="): cloud_time = float(a.substr(13))
 		elif a == "--frozen": frozen = true
+		elif a.begins_with("--fire="): fire_w = float(a.substr(7))
 		elif a == "--no-sky-shadow": no_sky_shadow = true
 		elif a == "--froxel-haze": froxel_haze = true
 		elif a.begins_with("--sun-up="): sun_up = float(a.substr(9))
@@ -115,6 +134,8 @@ func _ready() -> void:
 		elif a == "--test=leaves": test = true; only_leaves = true
 		elif a == "--test=lightning": test = true; only_lightning = true
 		elif a == "--test=haze": test = true; only_haze = true
+		elif a == "--test=basics": test = true; only_basics = true
+		elif a == "--test=clouds": test = true; only_clouds = true
 		elif a.begins_with("--haze="): haze = a.substr(7)
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
@@ -143,6 +164,9 @@ func _ready() -> void:
 			await _lightning_tests()
 		elif only_haze:
 			await _haze_tests()
+		elif only_clouds:
+			await _cloud_tests()
+			await _cloud_evolution_tests()
 		else:
 			await _run_tests()
 		get_tree().quit()
@@ -314,6 +338,8 @@ func _run_tests() -> void:
 		s.queue_free()
 		await get_tree().physics_frame
 
+	if only_basics:
+		return
 	await _cloud_tests()
 	await _cloud_evolution_tests()
 	await _shelter_tests()
@@ -1117,6 +1143,16 @@ func _build_clouds() -> void:
 
 	await get_tree().physics_frame
 	weather.snap_to_settings()
+	if fire_w > 0.0:
+		var stub := PlumeStub.new()
+		stub.heat = fire_w
+		WorldContracts.set_fire(stub)
+		weather.humidity = 0.3
+		weather.snap_to_settings()
+		for i in 30:
+			weather.advance(60.0)
+		var fc: Vector3 = weather.get_fire_cloud_for(fire_w)
+		print("fire: rise %.0f m, condensation level %.0f m, strength %.2f, fire clouds %d, map cloud base %.0f m" % [fc.x, fc.y, fc.z, weather.get_fire_cloud_count(), weather.cloud_base_height])
 	weather.update_cloud_shadow()
 	if haze == "uniform" or haze == "both":
 		weather.set_precipitation_extinction(sun, 3.912 / 2000.0, 0.0)

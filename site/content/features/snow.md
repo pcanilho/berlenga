@@ -8,6 +8,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 ## Snowpack
 
 - **Snow cover** (`SnowCover3D`): a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it, and fire melts the snow under it at any air temperature.
+- **Dirty snow** (`SnowCover3D.impurities_enabled`): smoke, burnt forest and settling dust darken the snow and make it melt sooner, until fresh snow buries the dirt.
 
   ![Snow on a mountain, raster and path traced](media/snow-mountain.jpg)
 
@@ -45,8 +46,9 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Melt-freeze crust: boots break it into tipped plates instead of soft prints.*
 
-- **Lake ice** (`SnowCover3D.lake_ice_enabled`): lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm.
+- **Lake ice** (`SnowCover3D.lake_ice_enabled`): lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm; heavier bodies and vehicles break through ice too thin for their weight, and the hole freezes over again.
 
+- **Snow on bodies** (`SnowBodies3D`: `weight_enabled`, `slide_enabled`, `clumps_enabled`): snow lying on a body weighs on it, slides off tilted tops as slabs and drops off in clumps.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced; `get_snow_shader_code()` for ShaderMaterials.
 
   ![Thin snow over the ground and props, raster and path traced](media/snow-props.jpg)
@@ -98,6 +100,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 - **Snowstorms** (`SnowFall3D.haze_enabled`, `turbulence`): falling and blowing snow haze the air through the weather map (Pomeroy-Male suspension, 118 m visibility at 20 m/s); flakes ride turbulent eddies.
 
 ## Cornices and ice
+
+- **Avalanches** (`SnowCover3D.avalanches_enabled`, `SnowAvalanche3D.trigger()`, `triggers_enabled`, `powder_enabled`): slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow.
 
 - **Cornices** (`SnowCornice3D`): overhangs on lee crests, with collision; milder ranges grow them too (crest wind speed-up).
 

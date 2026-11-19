@@ -319,10 +319,34 @@ float top_height(const State &p_state, float p_type) {
 
 void State::update_top_max() {
 	float t = type;
+	base_min = base_height;
+	top_max = base_height + top_height(*this, t);
 	for (int i = 0; i < storm_count; i++) {
 		t = MAX(t, 0.9f * storms[i][3]);
+		if (storm_base[i] > 0.0f) {
+			base_min = MIN(base_min, storm_base[i]);
+			top_max = MAX(top_max, storm_base[i] + top_height(*this, MAX(type, 0.9f * storms[i][3])));
+		}
 	}
-	top_max = base_height + top_height(*this, t);
+	top_max = MAX(top_max, base_height + top_height(*this, t));
+}
+
+float base_at(const State &p_state, Vector2 p_xz) {
+	float b = p_state.base_height;
+	for (int i = 0; i < p_state.storm_count; i++) {
+		if (p_state.storm_base[i] <= 0.0f) {
+			continue;
+		}
+		const float *s = p_state.storms[i];
+		const float dx = p_xz.x - s[0];
+		const float dz = p_xz.y - s[1];
+		// Level out to about four times the shield's radius, where its fall-off (cover_type_at, without its growth: a
+		// cloud fading out keeps its base) has left under a percent of cover: a base following the fall-off itself
+		// sloped the cap's edges down to the map's base. Beyond, the step is under clouds too thin to show it.
+		const float g = Math::exp(-(dx * dx + dz * dz) / (s[2] * s[2]) / (1.6f * 1.6f));
+		b = Math::lerp(b, p_state.storm_base[i], smoothstep(0.005f, 0.1f, g));
+	}
+	return b;
 }
 
 Vector2 cover_type_at(const State &p_state, Vector2 p_xz) {
@@ -368,6 +392,25 @@ Vector2 rotate_shape_b(Vector2 p_p) {
 	return rotate_lattice(rotate_lattice(p_p)) * SHAPE_SECOND + Vector2(0.37f, 0.71f);
 }
 
+constexpr float SHAPE_LARGE = 0.381966f; // the large clouds' read's frequency against the first
+
+// (1 - w) a + w b of two even values, evened out again by its CDF (a trapezoid): cover still means share of sky.
+float even_mix(float p_a, float p_b, float p_w) {
+	const float x = (1.0f - p_w) * p_a + p_w * p_b;
+	const float lo = MIN(p_w, 1.0f - p_w);
+	const float hi = MAX(p_w, 1.0f - p_w);
+	if (lo < 1e-4f) {
+		return x;
+	}
+	if (x < lo) {
+		return x * x / (2.0f * lo * hi);
+	}
+	if (x > hi) {
+		return 1.0f - (1.0f - x) * (1.0f - x) / (2.0f * lo * hi);
+	}
+	return (x - 0.5f * lo) / hi;
+}
+
 float even_sum(float p_a, float p_b) {
 	const float s = p_a + p_b;
 	return s < 1.0f ? 0.5f * s * s : 1.0f - 0.5f * (2.0f - s) * (2.0f - s);
@@ -387,23 +430,39 @@ float shape_at(const State &p_state, const Vector3 &p_pos) {
 	// The second read slides against the first (step 3e), so their sum, the clouds, change shape. A slide across
 	// keeps the share of sky: each read still averages over the whole tile's area (rising through the tile did
 	// not, since one height slice of a 128^3 tile differs from the next and the whole sky pulsed with it).
-	return even_sum(sample_tiled(noise, SHAPE_SIZE, Vector3(a.x, y, a.y)), sample_tiled(noise, SHAPE_SIZE, Vector3(b.x + p_state.shift.x, y * SHAPE_SECOND + 0.53f, b.y + p_state.shift.y)));
+	const float n = even_sum(sample_tiled(noise, SHAPE_SIZE, Vector3(a.x, y, a.y)), sample_tiled(noise, SHAPE_SIZE, Vector3(b.x + p_state.shift.x, y * SHAPE_SECOND + 0.53f, b.y + p_state.shift.y)));
+	if (p_state.size_mix <= 0.0f) {
+		return n;
+	}
+	// Large clouds among the small (wc_shape in the shader): a third read 2.618 times larger, weighted by a slow noise.
+	const Vector2 c = rotate_lattice(Vector2(-p.y, p.x)) * SHAPE_LARGE + Vector2(0.19f, 0.83f);
+	const float nc = sample_tiled(noise, SHAPE_SIZE, Vector3(c.x - p_state.shift.y, y * SHAPE_LARGE + 0.29f, c.y + p_state.shift.x));
+	const float w = p_state.size_mix * 0.75f * smoothstep(0.25f, 0.75f, value_noise(p * 0.31f + Vector2(41.3f, 17.9f)));
+	return even_mix(n, nc, w);
 }
 
-Vector2 shear_offset(const State &p_state, float p_y) {
-	const float z = MAX(p_y - p_state.base_height, 0.0f) / MAX(p_state.thickness, 1.0f);
+Vector2 shear_offset(const State &p_state, float p_y, float p_base) {
+	const float z = MAX(p_y - p_base, 0.0f) / MAX(p_state.thickness, 1.0f);
 	return p_state.shear * MIN(z * z, 9.0f);
 }
 
+Vector2 shear_offset(const State &p_state, float p_y) {
+	return shear_offset(p_state, p_y, p_state.base_height);
+}
+
 float extinction_at(const State &p_state, const Vector3 &p_pos) {
-	if (p_pos.y < p_state.base_height || p_pos.y > p_state.top_max) {
+	if (p_pos.y < p_state.base_min || p_pos.y > p_state.top_max) {
+		return 0.0f;
+	}
+	const float b = base_at(p_state, Vector2(p_pos.x, p_pos.z));
+	if (p_pos.y < b) {
 		return 0.0f;
 	}
 	const Vector2 ct = cover_type_at(p_state, Vector2(p_pos.x, p_pos.z));
 	if (ct.x <= 0.001f) {
 		return 0.0f;
 	}
-	const float h = (p_pos.y - p_state.base_height) / top_height(p_state, ct.y);
+	const float h = (p_pos.y - b) / top_height(p_state, ct.y);
 	if (h >= 1.0f) {
 		return 0.0f;
 	}
@@ -414,7 +473,7 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	const float round_top = Math::lerp(0.6f, Math::lerp(0.15f, 0.6f, cu), smoothstep(0.35f, 0.75f, ct.x));
 	const float dome = 1.0f - smoothstep(1.0f - round_top, 1.0f, h);
 	const float base = smoothstep(0.0f, Math::lerp(0.2f, 0.03f, cu), h);
-	const Vector2 so = shear_offset(p_state, p_pos.y);
+	const Vector2 so = shear_offset(p_state, p_pos.y, b);
 	const float n = shape_at(p_state, Vector3(p_pos.x - so.x, p_pos.y, p_pos.z - so.y));
 	// Nubis's coverage remap, remap(n p, 1 - c, 1, 0, 1): where the noise is high the cloud reaches
 	// further up the profile, which domes the tops. Then times the cover (Schneider 2015): the few
@@ -480,12 +539,16 @@ uniform float cloud_cover_scale = 6000.0;
 uniform float cloud_shape_scale = 3000.0;
 uniform vec2 cloud_drift = vec2(0.0);
 uniform vec2 cloud_shear = vec2(0.0); // m, the tops' lean one thickness up (shear_offset() on the CPU)
+uniform float cloud_size_mix = 0.0; // 0..1, how much of the large clouds' read (shape_at() on the CPU)
 // Step 3e: the cover noise's time in lifetimes (below 0: frozen), how far the shape's second read has slid
 // (xy) and the detail noise risen (z), in texture units, wrapped.
 uniform float cloud_evolve = -1.0;
 uniform vec3 cloud_churn = vec3(0.0);
 uniform int cloud_storm_count = 0;
 uniform vec4 cloud_storms[8];
+// Each storm's own cloud base (m; <= 0: cloud_base_height), and the lowest base of all (the march's bounds).
+uniform float cloud_storm_base[8];
+uniform float cloud_base_min = 1500.0;
 
 float wc_hash2(int x, int y) {
 	uint h = uint(x) * 2376512323u ^ uint(y) * 3625334849u;
@@ -546,6 +609,24 @@ float wc_cover_noise(vec2 xz) {
 	return wc_cover_noise_at(xz, cloud_cover_scale);
 }
 
+// (1 - w) a + w b of two even values, evened out again by its CDF (a trapezoid), so cover still means share of sky
+// (even_mix() on the CPU).
+float wc_even_mix(float a, float b, float w) {
+	float x = (1.0 - w) * a + w * b;
+	float lo = min(w, 1.0 - w);
+	float hi = max(w, 1.0 - w);
+	if (lo < 1e-4) {
+		return x;
+	}
+	if (x < lo) {
+		return x * x / (2.0 * lo * hi);
+	}
+	if (x > hi) {
+		return 1.0 - (1.0 - x) * (1.0 - x) / (2.0 * lo * hi);
+	}
+	return (x - 0.5 * lo) / hi;
+}
+
 // The shape noise read twice, turned and at two scales with an irrational ratio, evened out again
 // (shape_at() on the CPU): no tile repeats.
 float wc_shape(vec3 p, float p_step) {
@@ -559,7 +640,18 @@ float wc_shape(vec3 p, float p_step) {
 	float na = textureLod(cloud_shape, vec3(a.x, y, a.y), max(lod, 0.0)).r;
 	float nb = textureLod(cloud_shape, vec3(b.x + cloud_churn.x, y * 0.618034 + 0.53, b.y + cloud_churn.y), max(lod + log2(0.618034), 0.0)).r;
 	float s = na + nb;
-	return s < 1.0 ? 0.5 * s * s : 1.0 - 0.5 * (2.0 - s) * (2.0 - s);
+	float n = s < 1.0 ? 0.5 * s * s : 1.0 - 0.5 * (2.0 - s) * (2.0 - s);
+	if (cloud_size_mix <= 0.0) {
+		return n;
+	}
+	// Large clouds among the small (shape_at() on the CPU): a third read 2.618 times larger, weighted by a
+	// slow noise, so some stretches hold a few big cumulus and others many small ones. One feature size cut
+	// by one threshold gave a sky of puffs all one size, packed in rows to the horizon; fair-weather cumulus
+	// sizes run over a decade (Plank 1969: an exponential size distribution).
+	vec2 c = wc_rotate(vec2(-xz.y, xz.x)) * 0.381966 + vec2(0.19, 0.83);
+	float nc = textureLod(cloud_shape, vec3(c.x - cloud_churn.y, y * 0.381966 + 0.29, c.y + cloud_churn.x), max(lod + log2(0.381966), 0.0)).r;
+	float w = cloud_size_mix * 0.75 * smoothstep(0.25, 0.75, wc_value_noise(xz * 0.31 + vec2(41.3, 17.9)));
+	return wc_even_mix(n, nc, w);
 }
 
 float wc_top_height(float t) {
@@ -590,13 +682,31 @@ vec2 wc_cover_type(vec2 xz) {
 	return vec2(cover, t);
 }
 
+// The cloud base over xz (base_at() on the CPU): cloud_base_height, blended to each storm's own base.
+float wc_base_at(vec2 xz) {
+	float b = cloud_base_height;
+	for (int i = 0; i < 8; i++) {
+		if (i >= cloud_storm_count) {
+			break;
+		}
+		if (cloud_storm_base[i] <= 0.0) {
+			continue;
+		}
+		vec4 s = cloud_storms[i];
+		vec2 d = xz - s.xy;
+		b = mix(b, cloud_storm_base[i], smoothstep(0.005, 0.1, exp(-dot(d, d) / (s.z * s.z) / (1.6 * 1.6))));
+	}
+	return b;
+}
+
 // Extinction (1/m) at p. p_detail erodes the edges with the detail noise (Nubis); the shadow bake
 // and the CPU leave it out. p_step is the march's step (m): the noise is read at that scale.
 float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {
 	if (ct.x <= 0.001) {
 		return 0.0;
 	}
-	float h = (p.y - cloud_base_height) / wc_top_height(ct.y);
+	float b0 = wc_base_at(p.xz);
+	float h = (p.y - b0) / wc_top_height(ct.y);
 	if (h <= 0.0 || h >= 1.0) {
 		return 0.0;
 	}
@@ -614,7 +724,7 @@ float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {
 	// Wind shear: the tissue higher up was carried further downwind (and veered) while it rose, so the
 	// tower leans and its top streams out (Schneider 2015's cloud top offset), squared in height so the
 	// base stays upright. The cover stays read at the column's base.
-	float zs = max(p.y - cloud_base_height, 0.0) / max(cloud_thickness, 1.0);
+	float zs = max(p.y - b0, 0.0) / max(cloud_thickness, 1.0);
 	p.xz -= cloud_shear * min(zs * zs, 9.0);
 	float n = wc_shape(p, p_step);
 	float shape = max(n * dome - (1.0 - ct.x), 0.0) / max(ct.x, 0.001) * base;

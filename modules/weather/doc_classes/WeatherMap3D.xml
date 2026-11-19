@@ -158,6 +158,55 @@
 				The live air at [param position] (C): [method get_air_temperature] less 6.5 K per km above the map's [member ground_height] (the standard lapse rate).
 			</description>
 		</method>
+		<method name="add_smoke">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="kg" type="float" />
+			<description>
+				Adds [param kg] of smoke particulate to the smoke layer over [param position] (fires add theirs through [method WorldFire.smoke_sources] on their own).
+			</description>
+		</method>
+		<method name="clear_smoke">
+			<return type="void" />
+			<description>
+				Clears the smoke layer.
+			</description>
+		</method>
+		<method name="get_fire_cloud_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Fire clouds over the fires' plumes now (they are also among [method get_storm_count]'s storms, with no rain unless they grow into a pyrocumulonimbus).
+			</description>
+		</method>
+		<method name="get_fire_cloud_for" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="heat" type="float" />
+			<description>
+				The fire cloud a plume carrying [param heat] watts of convective heat would make in this weather: x its rise (m; through the sun-mixed layer near the ground, then by Briggs's 1975 laws in the stable air above, bent over by the wind), y the lifting condensation level (125 m per kelvin of dew point depression), z its strength (0: none; 1: a full cumulus cap; up to 2 as it grows into a pyrocumulonimbus, from about 2 km of rise past the condensation level).
+			</description>
+		</method>
+		<method name="get_smoke_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Smoke particulate in the column over [param position], g/m² (0 off the map).
+			</description>
+		</method>
+		<method name="get_smoke_optical_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The smoke's optical depth over [param position] at 550 nm: 4.5 m²/g of particulate (Reid et al. 2005). Around 1 the sun turns orange; past 3 it is a dim red disc.
+			</description>
+		</method>
+		<method name="get_smoke_transmittance" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="to_sun" type="Vector3" />
+			<description>
+				The direct sun's transmittance (red, green, blue) through the smoke layer at [param position], for a sun along [param to_sun]: the column where the ray crosses the middle of the layer (about 1 km up; no further out than the map reaches, so a low sun still reads the smoke), along the slant path (about ten air masses at the horizon, smoothly), losing blue first (Angstrom exponent 1.8). [SkyClock] dims and colours the sun light by it.
+			</description>
+		</method>
 		<method name="get_frost_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -690,6 +739,9 @@
 		<member name="cloud_shape_scale" type="float" setter="set_cloud_shape_scale" getter="get_cloud_shape_scale" default="3000.0">
 			Size of one tile of the 3D shape noise, in metres. Single clouds are about a quarter of it across.
 		</member>
+		<member name="cloud_size_mix" type="float" setter="set_cloud_size_mix" getter="get_cloud_size_mix" default="1.0">
+			Large clouds among the small. A third read of the shape noise, 2.618 times larger, is blended in by a slow noise, so some stretches of sky hold a few big cumulus and others many small ones, as fair-weather cumulus sizes spread over a decade. [code]0[/code] gives every cloud the same size (the old look); costs one more noise read per cloud sample.
+		</member>
 		<member name="cloud_shear" type="float" setter="set_cloud_shear" getter="get_cloud_shear" default="1.0">
 			Scale on how far the wind shear leans the clouds' tops downwind of their bases. The wind aloft grows and veers with height, so tissue that rose higher was carried further: towers lean and their tops stream out, the lean growing as height squared so the base stays upright. [code]0[/code] keeps the clouds upright.
 		</member>
@@ -716,6 +768,18 @@
 		</member>
 		<member name="drive_environment_fog" type="bool" setter="set_drive_environment_fog" getter="get_drive_environment_fog" default="true">
 			The haze from [method set_precipitation_extinction] drives the environment's fog and volumetric fog, while the game runs. Off, the sources only answer [method get_precipitation_extinction_at].
+		</member>
+		<member name="fire_clouds" type="bool" setter="set_fire_clouds" getter="is_fire_clouds" default="true">
+			Fire plumes ([method WorldFire.plumes]) that rise past the lifting condensation level make clouds over them: a pyrocumulus cap that grows over about five minutes of weather time while the fire feeds it, held over the bent-over plume, then drifts off and evaporates over a quarter of an hour once it stops. A plume that rises some 2 km past it towers into a pyrocumulonimbus: storm cloud, lightning ([WeatherLightning3D]), a downdraft's outflow and a little rain. Small fires on a stable night make none; on a sunny afternoon a fire of about a gigawatt caps itself.
+		</member>
+		<member name="smoke_haze" type="bool" setter="set_smoke_haze" getter="is_smoke_haze" default="true">
+			Fires' smoke ([method WorldFire.smoke_sources]) builds a smoke layer over the map, carried and spread by the wind aloft and cleared over [member smoke_lifetime]. Over the map's centre it thickens the aerosol haze, narrows the daily temperature range (a cooler day under thick smoke; Robock 1988), and [SkyClock] dims and reddens the sun through it.
+		</member>
+		<member name="smoke_lifetime" type="float" setter="set_smoke_lifetime" getter="get_smoke_lifetime" default="259200.0">
+			Weather seconds over which the smoke layer clears in dry weather (dilution out of the layer), as an e-folding time: three days by default.
+		</member>
+		<member name="smoke_washout" type="bool" setter="set_smoke_washout" getter="is_smoke_washout" default="true">
+			Rain and snow wash the smoke layer out under them ([method WorldWeather.washout_rate], fine particles): a shower barely thins it, hours of heavy rain clear most of it.
 		</member>
 		<member name="extent" type="float" setter="set_extent" getter="get_extent" default="4096.0">
 			Width of the map, in metres.

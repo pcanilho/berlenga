@@ -309,6 +309,20 @@
 				Mean runoff over the land of the last [method generate] with a [member climate_recipe], in mm a year. Lakes balance their inflow and evaporation with it.
 			</description>
 		</method>
+		<method name="get_nebkha_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Sand (m) the nebkha mounds add at [param global_position] (x and z), on top of [method get_sand_sea_height]; 0 off the mounds. [method get_height] includes it.
+			</description>
+		</method>
+		<method name="get_nebkhas" qualifiers="const">
+			<return type="PackedVector4Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				The nebkhas of the last [method generate] whose plant stands inside [param rect]: (x, ground y at the mound's top, z, mound height in m). Each mound is sand trapped by one shrub, so a vegetation system places a shrub (taller and wider for higher mounds) at each. Their tails point downwind along [member sand_sea_wind_angle]. Deterministic for the seed.
+			</description>
+		</method>
 		<method name="get_last_sand_sea_max" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -376,6 +390,13 @@
 			<param index="0" name="global_position" type="Vector3" />
 			<description>
 				Sand (m) the sand sea added to the ground at [param global_position] (x and z); 0 outside [member sand_sea_rect].
+			</description>
+		</method>
+		<method name="get_scree_sorting" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				How far down its talus apron a world position lies, 0..1: 0 at the apex under the wall, 1 at the toe (the distance down the receivers from the apron's top over the whole run through that point). Big blocks run furthest, so a stone placer grades its sizes by it (fall sorting, Kirkby and Statham 1975). 0 off the scree ([method get_talus] under 0.3).
 			</description>
 		</method>
 		<method name="get_sediment_depth" qualifiers="const">
@@ -728,6 +749,9 @@
 		<member name="max_sea_depth" type="float" setter="set_max_sea_depth" getter="get_max_sea_depth" default="60.0">
 			Deepest the seabed goes (m below sea level).
 		</member>
+		<member name="plunging_cliffs" type="bool" setter="set_plunging_cliffs" getter="is_plunging_cliffs" default="true">
+			Steep coasts with no beach run on below the sea: the land's slope 15 to 80 m inland, where steeper than about 31 degrees, is carried down through the swash line and under the water to 25 m, the floor joining the seabed profile within 160 m (plunging cliffs, Sunamura 1992). Off, every coast keeps a low strip over the swash and a shallow seabed.
+		</member>
 		<member name="max_soil_depth" type="float" setter="set_max_soil_depth" getter="get_max_soil_depth" default="2.0">
 			Deepest soil and alluvium (basin fill comes on top).
 		</member>
@@ -736,6 +760,9 @@
 		</member>
 		<member name="moraine_age" type="float" setter="set_moraine_age" getter="get_moraine_age" default="2000.0">
 			Years the last glaciation's margins stood still, building moraines: terminal loops and lateral ridges of wall rockfall and basal debris, which can dam lakes. 0 builds none.
+		</member>
+		<member name="nebkha_density" type="float" setter="set_nebkha_density" getter="get_nebkha_density" default="1.0">
+			Nebkhas (coppice dunes) on the sand sea's thin sand: mounds of sand held by a shrub, a dome round the plant 0.2 to 3.5 m high (mostly about 1 m) with its flanks under the angle of repose and a tail in its lee of up to five heights; a quarter are wearing down, lower and wider (Hesp 1981; Tengberg 1995; Cheng et al. 2024; Charbonneau et al. 2026). They lie in patches where the sea's sand is under 3 m deep (interdune flats and the thinning margins), on gentle ground, out of gullies and off water, on sites some 10 m apart; 1 keeps up to 90% of the suitable sites in a patch, 0 builds none. [method get_nebkhas] lists them for planting.
 		</member>
 		<member name="ocean_edges" type="int" setter="set_ocean_edges" getter="get_ocean_edges" default="0">
 			Edges of the rectangle that are open sea (bits as in [member outlet_edges]). The sea cells are the run's outlets, held at sea level, so the land drains to the coast; set [member outlet_edges] to 0 to make the sea the only outlet.
@@ -775,6 +802,9 @@
 		</member>
 		<member name="sand_sea_kind" type="int" setter="set_sand_sea_kind" getter="get_sand_sea_kind" enum="TerrainGenerator3D.SandSeaKind" default="0">
 			The wind regime, which picks the dunes: one wind for transverse ridges or barchans, two winds 120 degrees apart for linear dunes along their mean, three for star dunes.
+		</member>
+		<member name="sand_sea_mask" type="Image" setter="set_sand_sea_mask" getter="get_sand_sea_mask">
+			Optional: where inside [member sand_sea_rect] the sand may lie, the red channel from 0 (none) to 1, stretched over the whole rect. The sea's supply and its result are both scaled by it, so an erg can follow basins or a drawn outline instead of the rect; soften its edges over a few hundred metres for a natural margin (nebkhas gather in the thinning sand there).
 		</member>
 		<member name="sand_sea_rect" type="Rect2" setter="set_sand_sea_rect" getter="get_sand_sea_rect" default="Rect2(0, 0, 0, 0)">
 			Where the desert sand sea lies, in global x and z (m). Empty, there is none.

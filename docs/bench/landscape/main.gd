@@ -194,13 +194,15 @@ func _ready() -> void:
 				break
 		print("[landscape] guide preview at %.0f m cells: %.0f ms with the write (full run %.0f ms without)" % [gen.cell_size * gen.guide_preview_scale, gen.get_last_preview_msec(), full_ms])
 	if args.has("find-caves"):
-		# --find-caves[=N]: cave entrances (CaveNetwork3D.find_entrances) on this terrain, printed, then quit.
+		# --find-caves[=N]: cave entrances (CaveNetwork3D.find_entrances, then find_sea_entrances) on this terrain, printed, then quit.
 		var net := CaveNetwork3D.new()
 		gen.add_child(net)
 		net.generator = net.get_path_to(gen)
 		var n := int(args["find-caves"]) if args["find-caves"] != "1" else 8
 		for e in net.find_entrances(gen.get_world_rect(), n):
 			print("[landscape] cave entrance %s facing %s" % [e["position"], e["out"]])
+		for e in net.find_sea_entrances(gen.get_world_rect(), n):
+			print("[landscape] sea cave entrance %s facing %s" % [e["position"], e["out"]])
 		get_tree().quit(0)
 		return
 	if args.has("dune-map"):
@@ -343,6 +345,14 @@ func _ready() -> void:
 		while Time.get_ticks_msec() - t_ready < 2000:
 			await get_tree().process_frame
 		_log("ripples ready after %d more frames" % rw)
+		var rh: PackedFloat32Array = prints.get_ripple_heights()
+		var rs := 0.0
+		for v in rh:
+			rs += v * v
+		var cam3 := get_viewport().get_camera_3d()
+		if cam3 != null and prints.has_method("get_material_at"):
+			_log("ground under the camera: %s" % str(prints.get_material_at(cam3.global_position)))
+		_log("ripple window: %d cells, rms %.2f mm; ground holes %d" % [rh.size(), 1000.0 * sqrt(rs / maxf(rh.size(), 1.0)), gen.get_hole_count() if gen != null and gen.has_method("get_hole_count") else -1])
 	if env.pathtracing_enabled:
 		var w := 0
 		var can_ask := RenderingServer.has_method("is_pathtracing_ready")
@@ -1255,6 +1265,12 @@ func _save_dune_map(spec: String) -> void:
 		for z in range(sz.y):
 			for x in range(sz.x):
 				hf.store_float(hm.get_pixel(x, z).r)
+	# And the sand alone (its depth over the ground), to tell the dunes' shapes from the ground under them.
+	var sf := FileAccess.open(spec.split(",")[0] + ".sand.f32", FileAccess.WRITE)
+	if sf != null:
+		for z in range(sz.y):
+			for x in range(sz.x):
+				sf.store_float(gen.get_sand_sea_height(Vector3(r.position.x + x * step, 0, r.position.y + z * step)))
 	_log("dune map saved %s (%s, %.1f m a pixel, %d x %d)" % [spec.split(",")[0], r, step, sz.x, sz.y])
 
 
@@ -1717,6 +1733,15 @@ func _build_weather() -> void:
 	sun.light_energy = 1.6
 	sun.shadow_enabled = args.get("sun-shadow", "1") != "0"
 	sun.directional_shadow_max_distance = float(args.get("shadow-max", "6000"))
+	# --shadow-splits=a,b,c: the cascades' ends as shares of shadow-max (Godot's defaults 0.1,0.2,0.5); a long low-sun
+	# view puts more of them into the middle distance. --shadow-atlas=N: the directional shadow atlas side (4096).
+	if args.has("shadow-splits"):
+		var sp: PackedStringArray = args["shadow-splits"].split(",")
+		sun.directional_shadow_split_1 = float(sp[0])
+		sun.directional_shadow_split_2 = float(sp[1])
+		sun.directional_shadow_split_3 = float(sp[2])
+	if args.has("shadow-atlas"):
+		RenderingServer.directional_shadow_atlas_set_size(int(args["shadow-atlas"]), true)
 	add_child(sun)
 	# The sun from a date, a time and a place (SkyClock, Meeus): the month is the rivers' month, so the light,
 	# the flows and the snowmelt are one day. World -Z is north; mid-latitude mountains on a western coast.

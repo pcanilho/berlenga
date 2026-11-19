@@ -37,6 +37,9 @@ contract returns with no provider.
 | `terrain_lee_at(pos)` | rad | NaN | Winstral's Sx from the terrain wind (positive in a lee; NaN outside it); fire's lee-slope whirls |
 | `precipitation_at(pos)` | mm/h | 0 | Water equivalent falling |
 | `rain_share_at(pos)` | 0..1 | 1 | Liquid share (Jennings 2018) at the air there |
+| `rainfall_at(pos)`, `snowfall_at(pos)` | mm/h of water | 0 | The precipitation split by `rain_share_at` |
+| `smoke_at(pos)` | g/m2 | 0 | Fires' smoke particulate in the column (the haze layer) |
+| `washout_at(pos, coarse)`, static `washout_rate(rain, snow, coarse)` | 1/s | 0 | Below-cloud scavenging of particles, a R^b: fine smoke about 1e-5 at 1 mm/h, coarse dust about 3e-4, snow five times rain |
 | `surface_wetness_at(pos)` | 0..1 | 0 | Film over storage; 1 where puddles stand |
 | `puddle_at(pos)` | mm | 0 | |
 | `contact_wetness_at(pos)` / `add_contact_wetness(pos, radius, amount)` | 0..1 | 0 / no-op | Water any system splashes |
@@ -95,6 +98,7 @@ the live ground.
 | `frost_at(pos)` | (thawed top m, frost depth m, weakening 0..1) | 0 |
 | `dent_at(pos)`, `rim_at(pos)` | m | 0 |
 | `runoff_at(pos)` | (depth m, speed m/s) | 0 |
+| `add_runoff_load(pos, mineral_kg, ash_kg)` | kg since the caller's last call | dropped with no runoff producer | Loose material put on the runoff there; the catchment carries it down its D8 path into `WorldWater.add_sediment` where the flow reaches a river or lake. A separate producer slot (`WorldRunoffProvider`, `WorldContracts::register_runoff`; WeatherRunoff3D), so the near ground need not implement it. `has_runoff()`. Callers: burnt ground's ash (PhysX), soil erosion |
 | `mud_depth_at(pos)` | m of slurry | 0 |
 | `needle_ice_at(pos)` | (height m, crumbs 0..1) | 0 |
 | `rut_guidance_at(contact, lateral, half_width)` | (cross slope along lateral, wall m on -lateral, wall m on +lateral) | 0 |
@@ -117,12 +121,14 @@ terramechanics and pressing calls, which stay on the producer for now).
 | `surface_height_at(pos)` | m | ground height |
 | `runoff_at(pos)` | mm/h | 0 |
 | `canopy_load_at(pos)` | kg/m2 | 0 |
+| `lake_ice_at(pos)` | (m, white share) | (0, 0) |
+| `add_impurity(pos, radius, mg_per_m2)`, `impurity_at(pos)` | mg/m2 black carbon equivalent (dust 0.013 of its mass) | no-op, 0 |
 | shader globals `snow_cover`, `snow_rect`, `snow_depth` | | |
 
 Consumers: ground, plants (burial), trees (load), vehicles (grip, ruts), cloth and hair, weather (runoff into the
 surface water).
 
-### Water (`WorldWater`; producers `PhysXWaterSurface3D` (sea, lakes, pools), `PhysXRiver3D`, `PhysXLiveWater3D`, `TerrainDataMap3D` (baked lakes and streams), `GroundSurface3D` (standing water))
+### Water (`WorldWater`; producers `PhysXWaterSurface3D` (sea, lakes, pools), `PhysXRiver3D`, `PhysXLiveWater3D`, `TerrainDataMap3D` (baked lakes and streams), `GroundSurface3D` (standing water), `PhysXWaterfalls3D` (inside the falling sheets and columns, above where they land: thin, fast water))
 
 Every producer is live at once and answers only where it really has water: the sea where its depth over the seabed
 is above 0, a river inside its ribbon, live water and pools in cells with depth, the terrain map where its baked
@@ -137,6 +143,8 @@ below the sea's level reads its own water, and a body above the water reads the 
 | `flow_at(pos)` | m/s, Vector3 | 0 | From the producer that answered `height_at` |
 | `wake_depth_at(pos)` | m | 0 | |
 | `disturb(owner, pos, radius, strength)`, `clear(owner)`, `impulse(pos, radius, strength)` | | no-op | Sent to every producer; each acts only where it has water |
+| `sediment_at(pos)` | kg/m3 (x mineral, y ash and char) | (0, 0) | Suspended load of the water that answers; river and lake shading cloud and darken by it |
+| `add_sediment(pos, mineral_kg_s, ash_kg_s)` | kg/s | dropped with no water | A load entering the water that answers there (runoff off burnt or bare ground, banks, slides); it carries it downstream |
 
 Tests: `WorldContracts.set_water(stub)` replaces the whole contract; `WorldContracts.add_water_stub(stub)` adds a
 script producer beside the real ones (a pool or a sea for a buoyancy bench without one).
@@ -164,16 +172,23 @@ Consumers: fire (crown fire), lightning (attachment), weather (shelter), snow (i
 | `wind_at(pos)` | m/s, horizontal | 0 | The fires' indraft near the ground, summed over fires; adds to the weather's wind |
 | `stem_char_at(pos)` | m | 0 | Char a stem foot there took (bark and wood), the most of any fire; trees weaken by it |
 | `burn_age_at(pos)` | years (game time) | -1 (never burnt) | Since the ground last burnt, the most recent of any producer; vegetation's regrowth stage |
+| `water_repellency_at(pos)` | 0..1 | 0 | Burnt soil shedding rain (fades over 1-2 game years); the ground cuts its infiltration by up to 0.9 |
+| `burn_changed(area)`, `get_burn_generation()`, `burn_changes_since(gen, &area)` (scripts: `get_burn_changes_since(gen)`) | Rect2 in x, z (m) | generation 0 | Change log for `burn_age_at`: producers report where ages changed (`WorldContracts::fire_burn_changed(area)` reaches the built-in contract and any stub); readers keep the generation they read at and refresh only the merged area. The log keeps 64 reports; false: read everything again |
+| `smoke_sources()` | (x, y, z, kg/s) | empty | Every fire's smoke particulate (PM2.5) per second of its own time; the weather carries it as a smoke layer (haze, sun, cooler day) |
+| `plumes()` | (x, y, z, W) | empty | Every fire's convection column: its base and convective heat; the weather makes fire clouds from them |
+| `crown_scorch_at(pos)` | m | 0 | Height crowns were killed to (lethal scorch, 1000 for a burnt crown), the most of any fire; trees die and stand as snags |
 | shader globals `fire_wind_map`, `fire_wind_rect` | m/s | rect width 0 | The same indraft over the fire's area (RG: x, z), for grass |
 | shader globals `fire_state_map`, `fire_char_rect` | | | burnt, glow, flame length, scorch height |
+| shader global `fire_age_map` (over `fire_char_rect`) | years / 2 (R8) | 0 (never burnt) | Game years since the cell caught over 2, about 3-day steps; trees cast dead needles by it |
 
-Producers: PhysXFireSpread3D (fires in play; `burn_age_at` to come from PhysX, in game time), WorldBurnScar3D (an
-authored old burn: a rect or polygon and `age_years`, modules/world).
+Producers: PhysXFireSpread3D (fires in play; `burn_age_at` in the weather's game time; `crown_scorch_at`), WorldBurnScar3D (an
+authored old burn: a rect or polygon and `age_years`, modules/world; reports its old and new area on entering, moving and
+leaving). Every producer of `burn_age_at` reports its changes with `fire_burn_changed`.
 
 Tests: `WorldContracts.set_fire(stub)` (`_burn_age_at` in a stub), or WorldBurnScar3D nodes.
 
 Consumers: weather (the surface film boils off under a fire), plants (char; grass leans into `fire_wind_map`), cloth
-(`wind_at` adds to its wind), trees (TreeWind3D weakens stem feet by `stem_char_at`), snow (melt), water (steam), vegetation (regrowth by `burn_age_at`, to come).
+(`wind_at` adds to its wind), trees (TreeWind3D weakens stem feet by `stem_char_at`; trees killed by `crown_scorch_at` stand as snags that weaken by `burn_age_at`), snow (melt), water (steam), vegetation (VegetationField3D and GrassField3D regrowth by `burn_age_at`, refreshed through the change log).
 
 ## Testing
 

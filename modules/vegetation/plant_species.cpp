@@ -66,6 +66,7 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_BEACH] = Vector2(0.0f, 1.0f);
 	ranges[RULE_FIELD_EDGE] = Vector2(-100000.0f, 100000.0f);
 	ranges[RULE_SAND_MOBILITY] = Vector2(-1.0f, 1.0f);
+	ranges[RULE_BURN_AGE] = Vector2(-1.0f, 1000.0f);
 }
 
 float PlantSpecies::season_temperature(float p_january, float p_july) {
@@ -375,7 +376,8 @@ float PlantSpecies::get_patch_weight(const Vector3 &p_pos) const {
 	const float n = 0.7f * patch_value_noise(x, z, patch_seed) + 0.3f * patch_value_noise(x * 2.7f + 17.3f, z * 2.7f - 5.1f, patch_seed + 1);
 	// Two octaves of value noise are close to a bell around 0.5: map the cover through it.
 	const float threshold = 0.5f + 0.42f * (0.5f - patch_cover) * 2.0f;
-	const float w = Math::smoothstep(threshold - 0.06f, threshold + 0.06f, n);
+	// A wide band (about a fifth of the noise's spread): density and, in the grass, height taper over metres.
+	const float w = Math::smoothstep(threshold - 0.12f, threshold + 0.12f, n);
 	return patch_invert ? 1.0f - w : w;
 }
 
@@ -395,6 +397,9 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sward_shade"), &PlantSpecies::get_sward_shade);
 	ClassDB::bind_method(D_METHOD("set_trample_resistance", "passes"), &PlantSpecies::set_trample_resistance);
 	ClassDB::bind_method(D_METHOD("get_trample_resistance"), &PlantSpecies::get_trample_resistance);
+	ClassDB::bind_method(D_METHOD("set_burn_recovery", "years"), &PlantSpecies::set_burn_recovery);
+	ClassDB::bind_method(D_METHOD("get_burn_recovery"), &PlantSpecies::get_burn_recovery);
+	ClassDB::bind_method(D_METHOD("burn_cover", "age"), &PlantSpecies::burn_cover);
 	ClassDB::bind_method(D_METHOD("set_detail_size", "size"), &PlantSpecies::set_detail_size);
 	ClassDB::bind_method(D_METHOD("get_detail_size"), &PlantSpecies::get_detail_size);
 	ClassDB::bind_method(D_METHOD("trample_cover", "passes"), &PlantSpecies::trample_cover);
@@ -486,6 +491,7 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "footprint", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater,suffix:m"), "set_footprint", "get_footprint");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sward_shade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_sward_shade", "get_sward_shade");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "trample_resistance", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:passes/yr"), "set_trample_resistance", "get_trample_resistance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "burn_recovery", PROPERTY_HINT_RANGE, "0,50,0.1,or_greater,suffix:yr"), "set_burn_recovery", "get_burn_recovery");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_size", PROPERTY_HINT_RANGE, "0,1,0.005,or_greater,suffix:m"), "set_detail_size", "get_detail_size");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "litter_color"), "set_litter_color", "get_litter_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_foot", PROPERTY_HINT_RANGE, "0,8,0.1"), "set_rock_foot", "get_rock_foot");
@@ -595,6 +601,8 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "field_edge_fade", PROPERTY_HINT_RANGE, "0,10,0.01,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_FIELD_EDGE);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "sand_mobility_range"), "set_rule_range", "get_rule_range", RULE_SAND_MOBILITY);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "sand_mobility_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_SAND_MOBILITY);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "burn_age_range", PROPERTY_HINT_NONE, "suffix:yr"), "set_rule_range", "get_rule_range", RULE_BURN_AGE);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "burn_age_fade", PROPERTY_HINT_RANGE, "0,10,0.01,suffix:yr"), "set_rule_fade", "get_rule_fade", RULE_BURN_AGE);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -621,6 +629,7 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_BEACH);
 	BIND_ENUM_CONSTANT(RULE_FIELD_EDGE);
 	BIND_ENUM_CONSTANT(RULE_SAND_MOBILITY);
+	BIND_ENUM_CONSTANT(RULE_BURN_AGE);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 	BIND_ENUM_CONSTANT(DEADWOOD_AVOID);
 	BIND_ENUM_CONSTANT(DEADWOOD_ON);

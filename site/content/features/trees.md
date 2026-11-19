@@ -2,7 +2,7 @@
 title: "Trees"
 weight: 70
 group: "World"
-summary: "Trees and woody shrubs grown by light competition, 31 species in ten stand types; bark, moss, lichen, climbers, seasons, pollards, old trees, deadwood and fungi; weather wind out to 1 km, colliders and touch."
+summary: "Trees and woody shrubs grown by light competition, 50 species in sixteen stand types; bark, moss, lichen, climbers, seasons, pollards, old trees, deadwood and fungi; weather wind out to 1 km, colliders and touch."
 ---
 
 ## Growth
@@ -15,13 +15,14 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
 - **Stand and open forms** (`forest_shade`, `forest_spacing`): trees grown in a closed stand shed their lower limbs to a long clear bole under a narrow crown; open-grown trees keep leaves down to their lower limbs.
 - **Conifer crowns** (`crown_cone`): spruce, fir, larch, pine and hemlock keep their cone, with branches to the top.
-- **Stands** (`make_stand`, `make_woodland`): thirteen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.
+- **Stands** (`make_stand`, `make_woodland`): sixteen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), and date palm oases (`STAND_DATE_OASIS`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.
 - **Pollards and coppice** (`cut_height`, `cut_cycle`, `cut_since`): trees cut back on a cycle regrow straight poles from a swollen, knobbly head or a ground stool; lapsed pollards carry big limbs. Coppice with standards is cut in straight-edged coupes in turn (`coupe_rotation`, `coupe_ages`), so neighbouring coupes stand at different ages, with rides along some edges (`ride_width`). Poles swell into collars and carry branch scars; coppice stools end in old rotted cuts under a callus lip, and their rods swell at the nodes.
 - **Shrubs and hedges** (`stems`, `envelope`): many-stemmed shrubs, drawn up and thin under a canopy; hedges and topiary clipped to a box.
 - **Field hedges** (`SHRUB_HEDGE`): hawthorn, blackthorn, hazel, field maple and dog rose as flailed 2 m hedge segments, with blossom and fruit in season; foliage grows in clumps with gaps and shaded undersides, and each grown-out shrub takes its own habit. Laid hedges (`SHRUB_LAID_HEDGE`, `FORM_LAID_HEDGE`): stems cut and laid over at 28 to 40 degrees between stakes every 45 cm, held by twisted hazel binders.
 - **Gorse and broom** (`TreeGenerator.make_shrub_species()`): real spines, flowers and pods, flowering by season, in young, mature, old, thicket and cushion forms.
 - **Mediterranean shrubs** (`TreeGenerator.make_shrub_species()`): gum rockrose, kermes oak and lentisk, with flowers, acorns and drupes as geometry.
 - **Dwarf fan palm** (`PRESET_DWARF_FAN_PALM`): clumps of short fibrous trunks or stemless crowns, with pleated fan leaves on spiny stalks, a skirt of dead leaves, spring flower clusters and dates that ripen from green to red-brown.
+- **Date palm** (`PRESET_DATE_PALM`): a tall trunk latticed with old leaf bases, arching feather fronds over a skirt of dead ones, offshoots at the foot of wild palms (cut on tended ones) and date bunches through the year; path tracing keeps every leaflet and date.
 - **Stone pine** (`PRESET_STONE_PINE`): an umbrella crown on a clear bole, cones in three ages and plated red-brown bark.
 - **Mediterranean trees** (`PRESET_HOLM_OAK`, `PRESET_WILD_OLIVE`, `PRESET_MARITIME_PINE`, `PRESET_CAROB`, `PRESET_CORK_OAK`; `cork_stripped_years`): holm oak and carob split low into dense domes, wild olive grows crooked stems from one stool, maritime pine runs onto a long clear bole with thick dark bark plates over deep furrows, dull red-brown only at the furrow floor, and cork oak carries thick cork plates or a stripped trunk that turns from orange to red-brown and darkens as new cork grows back.
 - **Wind, bank and rock trees** (`wind_exposure`, `krummholz`, `ground_slope`, `bank_erosion`, `root_stone`): at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as low domed cushions stretched downwind on layered stems under a skin of needled shoots, cut at the snow surface; the tree line follows the growing season's mean temperature, as the alpine plants do; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem.
@@ -42,6 +43,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
   *Surface roots: buttress roots spread from the trunk into the litter, with moss in the crotches between them.*
 
 - **Bark** (`bark_relief`): a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing. Smooth beech bark shows cross-stem creases, lenticel streaks and fine grain, and carries stemflow tracks, low algae and crust lichen.
+- **Close-up bark** (`BarkDetail3D`: `density`, `detail_pixels`): loose bark as real pieces on trunks near the camera, by bark family: lifting plates on pines, small scales, flakes curling out at one end and torn strips of paper bark, with the inner bark showing on their undersides and broken edges.
 - **Bark stories** (`bark_wounds`): frost ribs, lightning scars, deer stripping and resin runs on trunks; drying checks open as real splits and knots on lying logs.
 - **Branch-scar chevrons** (`bark_chevrons`): living beech and birch carry dark chevrons below shed limbs, longer and flatter with age, black on birch.
 - **Bark moss** (`moss_cover`): moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions with ragged margins near the camera.
@@ -83,6 +85,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
   *Bark peel: on a class 2 snag the bark has come away in plates from the upper stem, baring grey wood.*
 
+- **After fire** (`fire_years`): burnt stands recover by species: cork oak resprouts along its stem and limbs, holm oak from the root collar, and maritime pine and rockrose reseed on the ash bed, while the bark char fades over the years.
 - **Broken limbs** (`limb_breakage`): snapped ends get a splintered fracture face and torn bark; storms break limbs on living trees, leaving some hanging.
 
   ![A winter oak limb, whole and snapped, raster](media/trees-broken-limb.jpg)

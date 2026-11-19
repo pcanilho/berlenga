@@ -5,7 +5,7 @@
 	</brief_description>
 	<description>
 		Burns the ground under it over a [member size] area, as wildfire models do (the WRF-SFIRE surface model): a fire front moves at Rothermel's rate of spread for the [member fuel_type], faster downwind and uphill, slowed by [member fuel_moisture] and stopped when the fuel is too wet. A fire in the wind grows into an ellipse whose length-to-width ratio follows the wind speed (Anderson 1983), as fire spread tools such as FARSITE draw it.
-		Each patch of fuel burns down over a few seconds once the front reaches it. The heat it gives off drives a pool of emitters in a [PhysXFlow3D] of its own (or [member flow_path]), whose combustion draws the flames and smoke in raster and path tracing and lights the ground. Burnt ground turns black and the burning band glows through a [Decal], and the global shader parameters [code]fire_char_map[/code] (a [Texture2D], alpha: how burnt) and [code]fire_char_rect[/code] (world X and Z of the map's corner, and its size) let ground and vegetation shaders read the same map. Plants read [code]fire_state_map[/code] over the same rect (red: share of the fuel burnt, green: glow, blue: the peak flame length over 8 m, alpha: the peak crown scorch height over 24 m, from Van Wagner 1973): [GrassField3D] blades burn down to charred stubble, [PlantGenerator] plants char under the flame and scorch brown above it, and [TreeGenerator] bark chars to the flame length and leaves brown up to the scorch height.
+		Each patch of fuel burns down over a few seconds once the front reaches it. The heat it gives off drives a pool of emitters in a [PhysXFlow3D] of its own (or [member flow_path]), whose combustion draws the flames and smoke in raster and path tracing and lights the ground. Burnt ground turns black and the burning band glows through a [Decal], and the global shader parameters [code]fire_char_map[/code] (a [Texture2D], alpha: how burnt) and [code]fire_char_rect[/code] (world X and Z of the map's corner, and its size) let ground and vegetation shaders read the same map. Plants read [code]fire_state_map[/code] over the same rect (red: share of the fuel burnt, green: glow, blue: the peak flame length over 8 m, alpha: the peak crown scorch height over 24 m, from Van Wagner 1973): [GrassField3D] blades burn down to charred stubble, [PlantGenerator] plants char under the flame and scorch brown above it, and [TreeGenerator] bark chars to the flame length and leaves brown up to the scorch height. [code]fire_age_map[/code] over the same rect holds in red the game years since each cell caught over 2 (8 bits, about 3-day steps; 0 where nothing burnt), for plants that change in the years after a fire (needle cast, regrowth).
 		With [member spotting], burning fuel throws up glowing firebrands that the plume lofts and the wind carries; where one lands on unburnt fuel of any [PhysXFireSpread3D] it may start a spot fire ahead of the front.
 		Water from a [PhysXParticleFluid3D] lying on the ground (a bucket, a hose, a burst tank) soaks the fuel under it: burning cells go out and the front stops at the wet ground ([method get_doused_cells]).
 		With [member fire_whirls], strong flanks in a cross wind spin up whirls of flame that lift firebrands higher. With [member blowing_ash], a strong wind lifts the ash off the burnt ground as a drifting grey dust.
@@ -18,6 +18,12 @@
 			<return type="float" />
 			<description>
 				Kilograms of ash the wind has lifted off the burnt ground so far ([member blowing_ash]).
+			</description>
+		</method>
+		<method name="get_ash_washed" qualifiers="const">
+			<return type="float" />
+			<description>
+				Kilograms of ash the ground's runoff ([method WorldGround.runoff_at]) has washed off the burnt ground so far. The char shows through where it went.
 			</description>
 		</method>
 		<method name="get_fire_wind_at" qualifiers="const">
@@ -69,6 +75,13 @@
 			<return type="void" />
 			<description>
 				Puts the fire out. What has burnt stays charred.
+			</description>
+		</method>
+		<method name="get_burn_age_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How long ago the ground at [param position] caught, in years of the weather's clock (real time times [method WorldWeather.time_scale]; real time with no weather), or -1 where it has not burnt. Its [method WorldFire.burn_age_at], for plants growing back.
 			</description>
 		</method>
 		<method name="get_burning_cells" qualifiers="const">
@@ -200,6 +213,56 @@
 				How many trees the fire knows: crowns from [member vegetation_field] over its area and those added by [method add_tree].
 			</description>
 		</method>
+		<method name="get_water_repellency_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How water-repellent the burn left the soil at [param position], 0 to 1: more where the fire flamed longer (up to a minute), half as much where a log burnt out and overheated it, fading over a year or two of the weather's clock. Its [method WorldFire.water_repellency_at], by which [GroundSurface3D] sheds more rain as runoff.
+			</description>
+		</method>
+		<method name="get_duff_burnt" qualifiers="const">
+			<return type="float" />
+			<description>
+				Kilograms of duff and organic soil the smouldering ground fire has burnt so far.
+			</description>
+		</method>
+		<method name="get_plume_heat" qualifiers="const">
+			<return type="float" />
+			<description>
+				Convective heat its flames send up now, W: about three quarters of their heat release (the rest radiated). Its [method WorldFire.plumes] entry, from which [WeatherMap3D] makes fire clouds.
+			</description>
+		</method>
+		<method name="get_rekindled_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many times smouldering under unburnt fine fuel has flamed again (a holdover fire).
+			</description>
+		</method>
+		<method name="get_smoke_rate" qualifiers="const">
+			<return type="float" />
+			<description>
+				Smoke particulate (PM2.5) it gives off now, kg per second: about 7 g per kg of grass burnt and 17 g per kg of litter and crowns (Andreae 2019), 30 g per kg of smouldering duff (Urbanski 2014). Its [method WorldFire.smoke_sources] entries.
+			</description>
+		</method>
+		<method name="get_smoulder_flow" qualifiers="const">
+			<return type="PhysXFlow3D" />
+			<description>
+				The gas that carries the smouldering ground's pale smoke, made while anything smoulders and freed some seconds after; [code]null[/code] otherwise.
+			</description>
+		</method>
+		<method name="get_smoulder_heat_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Heat the smouldering duff at [param position] gives off, W/m², about 1-2 kW/m² while it burns (part of [method get_intensity_at] and [method WorldFire.heat_at]).
+			</description>
+		</method>
+		<method name="get_smouldering_cells" qualifiers="const">
+			<return type="int" />
+			<description>
+				Cells whose duff smoulders now.
+			</description>
+		</method>
 		<method name="get_whirl_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -273,6 +336,15 @@
 		<member name="grass_ash" type="bool" setter="set_grass_ash" getter="is_grass_ash" default="true">
 			Burnt grass and litter leave white-grey ash where they burnt completely and black char where they did not: dry fuel (low moisture as it caught) burns out to ash, damp fuel chars, in patches at the scale of tussocks, deeper where the fuel bed was heavier. Wind thins the ash ([member blowing_ash]) and rain darkens it. Grass stubble takes the same ash flecks. Off, the burnt ground is black char (with ash only under burnt crowns).
 		</member>
+		<member name="duff_depth" type="float" setter="set_duff_depth" getter="get_duff_depth" default="-1.0">
+			Depth of duff and organic soil under the fine fuel, m, deeper where the fuel bed is heavier. Below 0, by [member fuel_type]: 1 cm of thatch and root mat under short grass, 1.5 cm under tall grass, 5 cm of forest duff under litter. 0 turns the ground fire off here.
+		</member>
+		<member name="duff_mineral" type="float" setter="set_duff_mineral" getter="get_duff_mineral" default="0.2">
+			Mineral share of the duff's dry weight. The more mineral, the drier the duff must be to smoulder: a 50% chance of lighting near 120% moisture in organic soil with little mineral matter (Frandsen 1997), lower as this rises.
+		</member>
+		<member name="duff_moisture" type="float" setter="set_duff_moisture" getter="get_duff_moisture" default="0.7">
+			Moisture of the duff (fraction of its dry weight) on a day when the fine fuel is at [member fuel_moisture]. With [member use_weather_moisture] it follows the weather slowly, over about 12 game days, and rain soaks it.
+		</member>
 		<member name="heat_source" type="NodePath" setter="set_heat_source" getter="get_heat_source" default="NodePath(&quot;&quot;)">
 			A [PhysXFlow3D] whose hot gas sets the ground under it alight where it is hotter than [member ignition_temperature]. Its [member PhysXFlow3D.cpu_readback] is turned on.
 		</member>
@@ -287,6 +359,9 @@
 		</member>
 		<member name="size" type="Vector2" setter="set_size" getter="get_size" default="Vector2(20, 20)">
 			The area that can burn, in metres along the node's X and Z, centred on it.
+		</member>
+		<member name="smouldering" type="bool" setter="set_smouldering" getter="is_smouldering" default="true">
+			Smouldering ground fire: the front lights the duff under it where it is dry enough, and it burns on for hours of game time ([method WorldWeather.time_scale]) with no flame, creeping 1-5 cm an hour, glowing dull red in spots and giving off a pale, cool smoke that hangs low. Heavy rain or poured water puts it out; light rain does not. Creeping under fine fuel the front never burnt, it can flame again once the wind picks up (a holdover fire). Burnt-through duff leaves pale ash.
 		</member>
 		<member name="spotting" type="bool" setter="set_spotting" getter="is_spotting" default="true">
 			When enabled, what burns throws up firebrands (bark, twig and grass flakes of 2 to 10 mm): the fire's plume in its [PhysXFlow3D] lofts them, the wind at their height carries them, and they fall at their terminal velocity, which drops as they burn away (Tarifa et al. 1965, Tohidi et al. 2015). Grass throws few, litter more, burning logs the most. One that lands on unburnt fuel of any [PhysXFireSpread3D] starts a spot fire with Schroeder's (1969) probability of ignition for the fuel's moisture and the air temperature, so dry fuel in a strong wind catches ahead of the front and damp fuel does not. They show as short glowing streaks.

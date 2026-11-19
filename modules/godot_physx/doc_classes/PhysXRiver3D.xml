@@ -13,6 +13,15 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="add_sediment">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="mineral_kg_s" type="float" />
+			<param index="2" name="ash_kg_s" type="float" />
+			<description>
+				Load entering the river at [param position] (kg/s of silt and clay, and of ash), as [method WorldWater.add_sediment] gives it: held until the caller's next call, carried down at the river's speed and mixed across it ([param mineral_kg_s] over the discharge downstream). It browns (silt) or greys (ash) the water in raster and path tracing alike.
+			</description>
+		</method>
 		<method name="clear_sphere">
 			<return type="void" />
 			<param index="0" name="owner" type="int" />
@@ -75,6 +84,13 @@
 			<return type="int" />
 			<description>
 				The number of cross-sections (one every [member step_length]).
+			</description>
+		</method>
+		<method name="get_sediment_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The suspended load (kg/m³: x mineral, y ash) at [param position] on the river; zero off it.
 			</description>
 		</method>
 		<method name="get_waterfalls" qualifiers="const">
@@ -239,6 +255,15 @@
 		</member>
 		<member name="live_grid_resolution" type="int" setter="set_live_grid_resolution" getter="get_live_grid_resolution" default="192">
 			Cells along each side of the live window.
+		</member>
+		<member name="live_near_mesh_spacing" type="float" setter="set_live_near_mesh_spacing" getter="get_live_near_mesh_spacing" default="0.1">
+			Vertex spacing (m) of the ribbon inside the live window, so the surface waves ([member live_surface_waves]) stand up as real geometry near the camera. The dense part follows the window and stays under about 200,000 quads (the spacing grows past that). [code]0[/code] keeps the coarse ribbon.
+		</member>
+		<member name="live_surface_wave_strength" type="float" setter="set_live_surface_wave_strength" getter="get_live_surface_wave_strength" default="1.0">
+			How strongly the current raises surface waves where it runs into dry ground (stones, the points of the banks), as a share of the stagnation head [code]0.5 v² / g[/code]. Used with [member live_surface_waves].
+		</member>
+		<member name="live_surface_waves" type="bool" setter="set_live_surface_waves" getter="get_live_surface_waves" default="true">
+			Dispersive surface waves over the live window (Jeschke and Wojtan 2023): short waves travel at their own speed ([code]ω² = g k tanh(k d)[/code]), wrap round stones, reflect off the banks and trail behind them as a wake in the current. They run on a 512 × 512 grid over the live window, stepped exactly in Fourier space at four depths, and add their slope to the surface. Turn off in tests that do not need them.
 		</member>
 		<member name="max_slope" type="float" setter="set_max_slope" getter="get_max_slope" default="0.08">
 			Drops steeper than this (m per m) are cascades: the water falls down them instead of flowing.

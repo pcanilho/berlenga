@@ -27,6 +27,13 @@
 				The crop seen from a distance at [param stage]: its colour (sRGB) and, in alpha, how much of the soil it covers.
 			</description>
 		</method>
+		<method name="get_burn_cover_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The sward's cover on burnt ground at [param global_position]: 0 on a fresh burn, 1 where the ground never burnt or has recovered (see [member burn_recovery]).
+			</description>
+		</method>
 		<method name="get_far_color" qualifiers="const">
 			<return type="Color" />
 			<description>
@@ -185,6 +192,9 @@
 		<member name="base_color" type="Color" setter="set_base_color" getter="get_base_color" default="Color(0.1, 0.2, 0.05, 1)">
 			Blade colour at the root.
 		</member>
+		<member name="burn_recovery" type="float" setter="set_burn_recovery" getter="get_burn_recovery" default="0.7">
+			Years the sward takes to grow back over burnt ground ([code]WorldFire.burn_age_at[/code]): gone on a fresh burn, short sparse blades first, full cover after this many years. The rules' [member PlantSpecies.burn_recovery] wins when it is set. 0 leaves the grass blind to fire. The ages are read once a bake, so a live fire shows after the next [method rebuild].
+		</member>
 		<member name="blade_height" type="Vector2" setter="set_blade_height" getter="get_blade_height" default="Vector2(0.2, 0.5)">
 			Minimum and maximum blade height, in metres. Each clump picks a height in this range.
 		</member>
@@ -261,7 +271,7 @@
 			Rocks on the ground that no blade grows through: each a disc (x, ground y, z, radius), the radius where the rock meets the soil, as [member VegetationField3D.obstacles]. Blades root 2 cm or more off a rock, on both fill paths. Setting it rebuilds the field.
 		</member>
 		<member name="radius" type="float" setter="set_radius" getter="get_radius" default="40.0">
-			Distance from the camera, in metres, to which tiles are grown.
+			Distance from the camera, in metres, to which tiles are grown. 0 draws no blades at all (no near tiles, far rings or shell), for a field kept only for its rules or ground tint.
 		</member>
 		<member name="row_spacing" type="float" setter="set_row_spacing" getter="get_row_spacing" default="0.125">
 			The distance between the crop's drill rows, in metres (12 to 15 cm for cereals).

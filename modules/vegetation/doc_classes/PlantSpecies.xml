@@ -77,6 +77,13 @@
 				Sets the range (min, max) of a rule in its units, see [enum Rule].
 			</description>
 		</method>
+		<method name="burn_cover" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="age" type="float" />
+			<description>
+				Returns the share of this species' cover back on ground that burnt [param age] years ago: [code]smoothstep(0, burn_recovery, age)[/code], none on a fresh burn. 1 where it never burnt (negative [param age]) or when [member burn_recovery] is 0.
+			</description>
+		</method>
 		<method name="trample_cover" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="passes" type="float" />
@@ -107,6 +114,15 @@
 		</member>
 		<member name="beach_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
 			Range of [constant RULE_BEACH].
+		</member>
+		<member name="burn_age_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member burn_age_range], in years.
+		</member>
+		<member name="burn_age_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1, 1000)">
+			Years since the ground burnt where the species grows (see [constant RULE_BURN_AGE]); -1 is ground that never burnt. Narrowing it from the default makes the species a burn plant, placed only on burns of those ages.
+		</member>
+		<member name="burn_recovery" type="float" setter="set_burn_recovery" getter="get_burn_recovery" default="0.0">
+			Years this species takes to full cover after a fire: on burnt ground ([method WorldFire.burn_age_at]) its suitability is multiplied by [method burn_cover]. 0: fire does not thin it. [method PlantGenerator.tag_species] sets it from [method PlantGenerator.get_burn_recovery]. Ignored by a species using [member burn_age_range].
 		</member>
 		<member name="canopy_conifer" type="bool" setter="set_canopy_conifer" getter="is_canopy_conifer" default="false">
 			If [code]true[/code], this species' crown is needle-leaved (pine, spruce, fir, larch). [VegetationField3D] counts each crown's share of the cover overhead, so the floor under it can follow the stand type through [member conifer_range].
@@ -310,7 +326,7 @@
 			Soft edge of [member sand_mobility_range].
 		</member>
 		<member name="sand_mobility_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1, 1)">
-			Where on the desert sand seas the species grows (see [constant RULE_SAND_MOBILITY]): 0 the stable interdune ground under thin sand, 1 the moving crests and slip faces, -1 off the sand seas. Narrowing it from the default [code](-1, 1)[/code] makes the species a sand-sea plant, which grows on their loose sand where other plants do not.
+			Where on the desert sand seas the species grows (see [constant RULE_SAND_MOBILITY]): 0 the stable interdune ground under thin sand, 1 the moving crests and slip faces, -1 off the sand seas. Narrowing it from the default [code](-1, 1)[/code] makes the species a sand-sea plant, which grows on their loose sand. Other species keep off the sand seas wherever their sand lies deeper than 5 to 30 cm (read from the generator, no rule needed).
 		</member>
 		<member name="stone_top_damp" type="float" setter="set_stone_top_damp" getter="get_stone_top_damp" default="0.0">
 			For a [member stone_top] species: whether it keeps to damp or to dry stone tops. Each top is damp (1) or dry (0), the whole stone alike: damp where [code]1.0 * a + 0.5 * low + 0.7 * shelter + 0.6 * shade[/code] reaches 0.45 (give or take 0.05 per stone), measured at its cap: a how far the cap tilts to the north (-Z), low 1 for a top 5 cm or less over the ground falling to 0 at 0.8 m, shelter how steeply taller stone tops within 2 m rise over it (as a tangent, full at 45 degrees; stones to the south count fully, those to the north half), shade the canopy's shade. Its suitability is multiplied by [code]lerp(1, damp, stone_top_damp)[/code] when positive and [code]lerp(1, 1 - damp, -stone_top_damp)[/code] when negative, so green cushions keep to the low, shaded, north-tilted tops and dry ones to the high, sunlit ones. [method PlantGenerator.make_stones] pairs a green moss (positive) with a smaller, sparser, yellow-olive one (-1).
@@ -449,7 +465,10 @@
 		<constant name="RULE_SAND_MOBILITY" value="24" enum="Rule">
 			Desert sand seas: 0 stable interdune ground under thin sand to 1 a moving crest or slip face, -1 off the sand seas ([member TerrainGenerator3D.sand_sea_rect]). From the sand sea's depth against its local low and high over about a crest spacing, raised on slopes over 20 degrees.
 		</constant>
-		<constant name="RULE_MAX" value="25" enum="Rule">
+		<constant name="RULE_BURN_AGE" value="25" enum="Rule">
+			Years since the ground last burnt, from [method WorldFire.burn_age_at]; -1 where it never burnt. A species using it grows only on burnt ground (the burn presets, [method PlantGenerator.make_burn]).
+		</constant>
+		<constant name="RULE_MAX" value="26" enum="Rule">
 			Number of rules.
 		</constant>
 		<constant name="DEADWOOD_AVOID" value="0" enum="DeadwoodRule">

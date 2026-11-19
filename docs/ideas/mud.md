@@ -908,6 +908,141 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
 - **Body mud dries and flakes.** Caked mud dries lighter and cracks (the desiccation crack model we use on the
   ground, at body scale), then sheds in flakes on bumps; the clods of the ground-detail thread can carry them.
 
+#### Round 11 (picked 18 Nov: all three, in order)
+
+**11.1 Gullies in ruts: built.** Runoff over cohesive ground now detaches soil instead of rolling it as bed load:
+WEPP's rill detachment (Nearing, Foster, Lane and Finkner 1989), Kr (tau - tau_c), Partheniades' (1965) excess
+shear law, Kr 0.006 s/m (cropland baseline, Flanagan and Nearing 1995) and three times that where tyres freshly
+turned it. The soil rides the water as a suspended load (water[].s.w, metres of bed), moved with it upwind like the
+clay, and settles at 1 mm/s where the shear falls under the ground's own (Krone 1962). The cut deepens downstream as
+the flow gathers and the soil lands as a fan where the slope eases or the water ponds; the old bed-load pull sent the
+walls' soil onto the floor, so ruts filled instead of cutting. Each cell carries a critical shear (cover part 3 .y):
+sand 0.19 Pa (Shields, stays bed load), soil 3.5 to 1.5 Pa by moisture, mud 0.3 to 2 Pa by stiffness, litter up to
+five times (roots); halved on fresh ground, ten times under regrown sward (Knapen et al. 2007). Muddy runoff shows
+in the water's tint. Bench --test=gullies: 20 minutes at 10 mm/h (runoff_time_scale 30) down a 6 degree rut cuts
+14 mm along its floor, none beside it, and lays 21 mm on the flat below.
+
+Bug found on the way: with runoff on, any texel whose own standing water passed 2 mm counted as a lake and its water
+was dropped (the lattice's water depth included the GPU's puddles). Puddles in ruts under runoff never held; now
+only the water bodies' depth ends the runoff. The bench checks 2 L poured in a rut is kept.
+
+**11.2 Winch: built.** PhysXWinch3D, a child of a PhysXVehicle3D at its fairlead, cables to an anchor: any physics
+body (a tree's or rock's static body), another vehicle, or a fixed point. The cable is a PhysX distance joint
+(PxDistanceJoint), tension only: its max distance is the cable paid out, a spring at the rope's axial stiffness EA / L
+past it (6 MN for 9.5 mm steel wire rope), damped near critically against the vehicle's mass. The drum (hold, in,
+free spool) winds at the speed its load allows: an electric winch's line speed falls about linearly from no load to a
+tenth at its rated pull and stalls just past it (WARN's published 10,000 lb curves: 44.5 kN, about 0.14 m/s no load);
+the brake slips past 1.5 times rated. The cable is drawn as a catenary from its length and weight per metre (sag from
+the length when slack, w L^2 / 8 T when taut) and lies on the ground where it would pass under it. Bench
+--test=winch: a free-rolling car comes in at the line speed, a braked one is dragged on its tyres' friction, a slack
+cable sags onto the ground and carries nothing, a taut one sags as theory says, a car is pulled through mud it cannot
+leave alone, and a braked car winches a dead one in.
+
+Bug found on the way: a car on soft soil with its brakes on slid on a seventh of its tyres' friction at walking pace.
+Under 0.2 m/s PhysX's sticky-tyre constraint (a soft damper with no friction limit) replaces the tyre force, and above
+it a braked wheel's slip was over the 3 m/s floor kept for driven wheels on soft soil. Braked with no throttle, the
+sticky regime now starts only at rest (0.02 m/s) and the floors are 0.5 m/s; a locked wheel does not turn, so the
+floor's ringing cannot start.
+
+**11.3 Body mud dries, cracks and flakes off: built.** Mud on a body now dries with the weather: Penman's wind
+function, 0.26 (1 + 0.54 u) times the air's vapour deficit, plus the sun, against a reference day (20 C, half
+humidity, 2 m/s, half sun) that dries a coat in five minutes; rain wets it back (a coat soaks in about two minutes of
+heavy rain) and, past a few mm/h, rinses it thin. Once a thick coat is dry it cracks into plates: Worley cells
+of 2.2 cm, warped, open only where the cake is over the critical cracking thickness (Routh 2013: 2.8 to 4.5 mm by
+place) and drier than 0.45; the cracks are half a millimetre wide, the plate edges curl up 0.7 mm and the paint shows
+in them, in raster and path traced (same code in material.cpp and the raygen). Dry plates fall off on jolts: each
+splat sheds at a rate that grows with the body's acceleration past 0.8 g times its dryness, and a shed plate drops to
+the ground under it as a track_mud mark (vehicle get_mud_flakes_shed()). Wet mud never flakes. Bench --test=flakes:
+a dry caked car over three bars sheds 5 of 12 plates, a wet one none. --view=bodymud --crack shows the cracked coat.
+
+Bug found on the way: a wheel standing still in mud counted as freshly churned (its cake kept topping up), so a
+parked car never dried. The tread must be turning (0.1 m/s at the rim) to pick up fresh mud.
+
+
+#### Round 12 candidates (card 19 Nov)
+
+- **Tyre pressure.** Airing down lengthens and widens the footprint: Bekker's b and the contact length grow, sinkage
+  and rolling resistance fall (Wong, Theory of Ground Vehicles, ch. 2; the CTIS literature puts 15 to 25 % more
+  drawbar pull at a third of road pressure). PhysXVehicleWheel3D.pressure scales the flexible-tyre terms we already
+  feed to the soil model.
+- **Firm subsoil.** A soft layer over a hard pan: the pressure-sinkage curve of the top layer until its depth, then the
+  stiffer one (layered-soil Bekker, Wong 2010; the "hardpan" of MudRunner's deep ruts). A depth per cell in the field.
+- **Branches under wheels.** Sticks and logs laid in a rut (deadwood from the trees thread) are pressed in and add
+  shear strength under the tyre, the corduroy road: a cell factor on the Janosi-Hanamoto shear, and their meshes sink.
+
+#### Round 12 (picked 19 Nov: all three, in order)
+
+**12.1 Tyre pressure: built.** PhysXVehicleWheel3D.tire_pressure (read live, so a script or a tyre inflation system can
+air down while driving) now acts on firm ground as well as soft. The tyre stands on its air plus its carcass's own
+stiffness, p_g = p_i + p_c (Wong 2008, sec. 2.4; p_c 15 kPa, within the 10 to 30 kPa measured for radial tyres), over a
+flat W / (b p_g) long. It deflects by its vertical stiffness, k = C p_g sqrt(b D) (Rhyne 2005's scaling; C set so a
+225/65 R17 on 220 kPa is about 220 N/mm), and bottoms at a third of its section height. Below the 200 kPa default an
+aired-down tyre stands lower by the extra deflection (get_wheel_deflection()), corners more softly (MF 6.1's pressure
+term, 1 + 0.6 dp, kept between half and 1.15 times; Besselink, Schmeitz and Pacejka 2010) and on firm ground rolls with
+more resistance (Gillespie 1992, f_r = 0.005 + (1 / p)(0.01 + 0.0095 (v / 100)^2), the difference from road pressure). Horne's
+aquaplaning speed now uses the tyre's own pressure. A tyre left at 200 kPa drives exactly as before. Bench
+--test=pressure: at 80 kPa the car stands 23 mm lower, loses 0.25 m/s more coasting for 3 s (Gillespie: 0.23), sinks
+2.0 cm instead of 4.5 cm standing in stiff mud and gets 5.9 m instead of 1.5 m in 8 s.
+
+**12.2 Firm subsoil: built.** GroundSurface3D.subsoil (on): the loose layer (max_dent) now lies on a firm base whose
+depth varies 0.7 to 1.3 times over a few metres (two octaves of value noise, 2.5 m and 0.9 m;
+get_subsoil_depth_at()). A load stiffens the layer once what is left under it is thinner than the load is wide:
+finite-depth pressure-sinkage, k_app = k (1 + B (exp(c (z - z0) / b) - 1)) past z0 = H - b (Salman 2022, after
+Yegorov; B 1, c 2). What a spinning wheel digs on top of that (Lyasko's slip sinkage) is thrown out, so it still digs
+down to the base. Once the soil left under the tread is thinner than its lugs (3 cm) the tyre bites the base at
+friction 0.5, whatever clay clogs it. Bench --test=subsoil: a light wheel in 21 cm of slurry sinks 5 cm instead of
+12 cm, a heavy one still reaches the base and grips on it, and a car whose wheels spin in place (slip 0.98) with no
+base crawls on at slip 0.38, 3.4 times as far.
+
+**12.3 Logs and branches in ruts: built.** GroundSurface3D.mats (on): a RigidBody3D in the "ground_mats" group with a
+cylinder or capsule shape is taken by the ground once it settles on soft soil. It is frozen and laid on its highest
+supports along the deformed surface, so it lies in the ruts and on the berms. A wheel that touches one rests on the
+wood, the height where circle meets circle, so it bridges the gaps of a corduroy the road ray falls through, with
+the body's own friction. The log spreads the wheels' load (smoothed over a fifth of a second) along the length a beam
+on an elastic foundation bends over, pi / lambda with lambda = (k_s d / 4 E I)^(1/4) (Hetényi 1946; E 9 GPa for green
+wood, USDA Wood Handbook). It presses its print to the plate sinkage of that load, layered as in 12.2, and sinks with
+it. A branch whose bending moment under the load, P / (4 lambda), passes green wood's 40 MPa snaps and stops carrying
+wheels. Bench --test=mats: on 29 logs across 25 cm of slurry the car drives 4.6 m in 8 s, where bare it bogs at
+0.5 m. The logs sink 6 cm at most against a bare tyre's 28 cm. A 16 cm log carries a 3.7 kN wheel; a 3 cm branch
+snaps under it. --view=mats shows a car on a corduroy.
+#### Post-fire debris flow body (queued 19 Nov, picked through the PhysX thread)
+
+Valence's runoff fires a debris-flow event (WorldRunoffProvider::contract_runoff_debris_flow: event id, outlet, volume
+from USGS M1 and Gartner 2014, the channel path downstream, peak I15, burnt share, channel width and burn severity
+along the path). Mud owns the moving body:
+
+- **Model.** A depth-averaged flow on a 1 to 2 m lattice in a corridor along the path (the GPU field covers only
+  32 m): shallow-water mass and momentum with a Voellmy basal resistance, tau = mu rho g h cos(theta) + rho g u^2 / xi
+  (RAMMS: Christen, Kowalski and Bartelt 2010; mu about 0.1, xi 200 to 1000 m/s^2 for post-fire flows), plus the
+  Bingham yield stress (O'Brien, Julien and Fullerton 1993, FLO-2D's quadratic rheology) so it stops on its own.
+- **Bulking.** Entrainment along the channel at McDougall and Hungr's (2005) natural-exponential growth rate,
+  E = ln(V_out / V_in) / L, scaled by the path's burn severity and capped by the bed's loose depth (the cells' own
+  layer, round 12's subsoil).
+- **Stopping.** The yield stress holds once rho g h sin(theta) falls under tau_y, about 10% slope for typical flows
+  (the fan apex). What stops is written as a mud deposit (depth, clay) into GroundSurface3D and the WorldGround
+  height and mud fields, so the field's ruts, slides, cracks and drying carry on from there.
+- **Near the camera.** Within the 32 m field the GPU slide pass (round 10) takes the front's depth, so it flows over
+  ruts and logs at 6 cm.
+- **For PhysX.** get_debris_front(event_id) gives the front's position, depth and speed for its surge particles
+  and boulders.
+- **Wiring (19 Nov).** Valence eab1d857: basin_area in km2; get_debris_flows_since(-1) returns the whole log. Steep burnt
+  valleys fire many small events at once (68 in 4 km2 at 40 mm/h): pool events whose paths join into one body. A
+  deposit reaching water goes to WorldWater.add_sediment. PhysX 427652c3bb: PhysXDebrisSurge3D.front_source takes the
+  GroundDebrisFlow3D and follows get_debris_front(id) while it returns a position.
+
+**Built (19 Nov): GroundDebrisFlow3D** (modules/ground). Listens to WorldGround's debris_flow (listen, on) and
+pools events whose outlets lie within pool_distance (30 m) of a running body's path. Corridor lattice cell_size 1.5 m,
+corridor_width 60 m, carried 40 m past the path's end for the fan; local inertial momentum with a semi-implicit
+Voellmy turbulent term (voellmy_xi 400) and a Coulomb plus yield stop (voellmy_mu 0.1, yield_stress 1500 Pa);
+Rickenmann hydrograph feeds; entrainment 0.002/m times severity, max_scour 0.6 m. On stopping: add_mud_deposit on the
+active GroundSurface3D, TerrainBrush3D add rectangles on terrain_deformer if set, WorldWater.add_sediment where the
+water is deeper than 10 cm. PhysX reads get_debris_front(id) and debris_front_changed(id) (once per physics frame per
+body, pooled ids too); debris_flow_started / debris_flow_finished. The sheet mesh clips at the 1 cm contour (marching
+triangles), smooths drawn depth over neighbours and carries ash streak noise at 4 m and 1.3 m.
+Bench --test=debris: 2,000 m3 down a 25% channel: front peaks 7.1 m/s, stops 39 m onto the 4% fan, entrains 310 m3,
+budget closes to 0.1%, fan laid up to 3 m deep. --view=debris [--t=40] shows a flow spreading at the fan apex.
+Limits: margins are 1.5 m resolution from afar (near the camera the slide pass and PhysX surge carry the detail).
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

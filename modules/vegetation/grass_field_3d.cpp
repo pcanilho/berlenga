@@ -269,6 +269,14 @@ bool GrassField3D::is_gpu_fill_available() {
 
 // Shared by the blades and the ground under them (get_ground_shader_code()), so both drift to the
 // same colours at the same places: a gap between blades then shows the base of the same sward.
+// Soft edges (docs/ideas/grass.md, "Colour without blotches"): where the rules thin the sward the blades left grow
+// shorter too, half height at the edge, so a patch or a fade to other ground tapers instead of ending in a wall of
+// full-height blades. grass_fill.glsl does the same.
+static inline float _edge_height(float p_suit) {
+	// In sixteenths, so the GPU fill (its suitability from a 0.5 m grid) gives the same heights as this.
+	return Math::round(Math::lerp(0.5f, 1.0f, Math::smoothstep(0.0f, 0.7f, p_suit)) * 16.0f) / 16.0f;
+}
+
 static const char *GRASS_COLOR_CODE = R"(
 float grass_hash(vec2 p) {
 	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -281,15 +289,28 @@ float grass_noise(vec2 p) {
 	return mix(mix(grass_hash(i), grass_hash(i + vec2(1.0, 0.0)), f.x), mix(grass_hash(i + vec2(0.0, 1.0)), grass_hash(i + vec2(1.0, 1.0)), f.x), f.y);
 }
 
-// Colour variation at three scales (patches of soil and water, clumps, single blades), as in
-// Ghost of Tsushima and Horizon: a field of one flat green reads as carpet, not grass.
+// Colour variation (docs/ideas/grass.md, "Colour without blotches"): a meadow's colour drifts slowly over tens of
+// metres (moisture, soil, the species mix) and varies strongly only from one blade or tuft to the next. Strong hue
+// patches a few metres across read as camouflage blotches, so the hue is gentle and large-scale: two rotated, domain-
+// warped octaves at about 70 m and 25 m (no square-lattice blobs), soft at their extremes (no flat-tinted plateaus).
+// The blade's own value carries the fine variation, and the ground under the blades takes the same field.
+vec2 grass_rot(vec2 p, float a) {
+	float s = sin(a), c = cos(a);
+	return vec2(c * p.x - s * p.y, s * p.x + c * p.y);
+}
+
 vec3 grass_patch_tint(vec2 xz, float blade, float value, float variation) {
-	float patches = grass_noise(xz * 0.11) * 0.65 + grass_noise(xz * 0.47 + 3.7) * 0.35;
-	float hue = (patches - 0.5) * 1.6 + (blade - 0.5) * 0.7;
-	vec3 warm = vec3(1.18, 1.08, 0.62); // yellower, drier
-	vec3 cool = vec3(0.82, 0.96, 1.02); // bluer, lusher
+	vec2 warp = vec2(grass_noise(grass_rot(xz, 0.6) * 0.021 + 5.2), grass_noise(grass_rot(xz, 2.1) * 0.021 - 7.9)) - 0.5;
+	vec2 q = xz + warp * 30.0;
+	float drift = grass_noise(grass_rot(q, 0.37) * 0.0143) * 0.65 + grass_noise(grass_rot(q, 1.91) * 0.04 + 3.7) * 0.35;
+	// Soft response: tanh-like, so the extremes ease off instead of saturating to one flat tint.
+	float d = (drift - 0.5) * 2.2;
+	d = d / (1.0 + abs(d));
+	float hue = d * 0.55 + (blade - 0.5) * 0.6;
+	vec3 warm = vec3(1.14, 1.06, 0.7); // yellower, drier
+	vec3 cool = vec3(0.86, 0.97, 1.02); // bluer, lusher
 	vec3 tint = hue > 0.0 ? mix(vec3(1.0), warm, min(hue, 1.0)) : mix(vec3(1.0), cool, min(-hue, 1.0));
-	tint *= 0.82 + 0.36 * value;
+	tint *= 0.8 + 0.4 * value;
 	return mix(vec3(1.0), tint, variation);
 }
 )";
@@ -443,6 +464,8 @@ void GrassField3D::_build_material() {
 	code += "uniform vec4 ring_band;\n";
 	code += "uniform float dormant; // Share of blades dead to the crown in a drought or hard winter (season).\n";
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
+	// Regrowth flush on burnt ground (burn_recovery): 1 on a fresh burn, 0 by a year and a half; rect z 0: none.
+	code += "uniform sampler2D burn_flush_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 burn_flush_rect;\n";
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	code += VegetationFire::WIND_CODE;
@@ -980,6 +1003,8 @@ void fragment() {
 		code += R"(
 varying float v_t;
 varying float v_dry;
+varying float v_flush; // Regrowth on burnt ground (burn_flush_map).
+varying float v_soft; // Distance softening, 0 near, 1 from 35 m.
 varying float v_wet;
 varying float v_frost;
 varying float v_snow; // under the snow surface: 1
@@ -1128,6 +1153,28 @@ void vertex() {
 	v_frost = 0.0;
 	v_snow = snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0;
 	v_tint = grass_patch_tint(base_w.xz, fract(rnd * 7.31 + 0.13), fract(rnd * 13.7 + 0.51), color_variation);
+	v_soft = 0.0;
+	// Softness with distance (docs/ideas/grass.md, "Colour without blotches"; Ghost of Tsushima, GDC 2021: normals
+	// blended towards a common normal with distance): past a few metres each blade's own facing and value flicker
+	// into speckle, so they ease towards the sward's: the normal towards the ground's up, the tint towards the large-
+	// scale drift. The meadow then reads as a mass of fine fibres (Planet Tech v5), not grit. Measured from the
+	// fade band's centre, so the shadow pass and the path tracer agree.
+	if (fade_band.w > 0.0) {
+		float soft = smoothstep(6.0, 35.0, length(base_w.xz - fade_band.xy));
+		v_soft = soft;
+		NORMAL = normalize(mix(NORMAL, normalize(to_local * vec3(0.0, 1.0, 0.0)), 0.55 * soft));
+		v_tint = mix(v_tint, grass_patch_tint(base_w.xz, 0.5, 0.5, color_variation), 0.5 * soft);
+	}
+	// Regrowth on burnt ground: the new blades come up a lighter, fresher yellow-green than the sward around (the
+	// post-fire green flush), fading over a year and a half; the plants' shader does the same.
+	v_flush = 0.0;
+	if (burn_flush_rect.z > 0.0) {
+		vec2 fuv = (base_w.xz - burn_flush_rect.xy) / burn_flush_rect.zw;
+		if (all(greaterThanEqual(fuv, vec2(0.0))) && all(lessThanEqual(fuv, vec2(1.0)))) {
+			v_flush = textureLod(burn_flush_map, fuv, 0.0).r;
+			v_tint *= mix(vec3(1.0), vec3(1.10, 1.22, 0.84), v_flush);
+		}
+	}
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
@@ -1153,14 +1200,28 @@ void fragment() {
 	float t = smoothstep(0.0, 1.0, v_t);
 	// Shade keeps grass green; a sunny slope dries it first.
 	float dry_share = clamp(dryness * (1.0 - 0.7 * (1.0 - clamp(v_light, 0.0, 1.0))) + 0.25 * smoothstep(1.0, 1.3, v_light), 0.0, 1.0);
+	// The fire took the old growth: regrowth carries no dry tips or thatch yet (a burn reads greener than the sward
+	// around it through its first season).
+	dry_share *= 1.0 - 0.85 * v_flush;
 	vec3 tipc = mix(tip_color, dry_color, step(1.0 - dry_share, v_dry) * smoothstep(0.3, 1.0, v_t));
 	vec3 c = mix(base_color, tipc, t) * v_tint;
 	// Some blades of the dry fraction are dead from the root (thatch), straw that greys with age.
-	float dead = step(1.0 - max(dry_share * 0.3, dormant * 0.85), v_dry);
+	float dead = step(1.0 - max(dry_share * 0.3, dormant * 0.85 * (1.0 - v_flush)), v_dry);
 	// Dead leaves bleach to a pale grey buff, not the warm straw of a dry tip (a saturated straw read
 	// as orange specks on a dark winter sward).
 	vec3 straw = mix(dry_color, vec3(dot(dry_color, vec3(0.3, 0.59, 0.11))) * vec3(1.0, 0.96, 0.88), 0.5) * 0.85;
 	c = mix(c, straw * mix(0.7, 1.0, t) * (0.75 + 0.5 * fract(v_dry * 31.0)), dead);
+	// Prefiltered with distance (Bruneton and Neyret 2012, non-linear pre-filtering): once blades are a pixel or
+	// two wide, each blade's own base-to-tip ramp and its dry or dead odd one out alias into grit; their mean over
+	// the sward is what a pixel should see. Past 6 m the blade's colour eases towards that mean (the soft, slightly
+	// diffused read of a far meadow), and below its roughness rises (the sheen of many blades averages out).
+	{
+		vec3 tip_mean = mix(tip_color, dry_color, dry_share * 0.6);
+		vec3 mean_c = mix(base_color, tip_mean, 0.6) * v_tint;
+		float dead_share = max(dry_share * 0.3, dormant * 0.85 * (1.0 - v_flush));
+		mean_c = mix(mean_c, straw * 0.85, dead_share);
+		c = mix(c, mean_c, 0.5 * v_soft);
+	}
 	// Midrib and parallel veins (monocot leaves), faded out once a blade is under a few pixels wide.
 	float x = abs(UV.x - 0.5) * 2.0;
 	float fw = max(fwidth(UV.x), 1e-4);
@@ -1199,6 +1260,7 @@ void fragment() {
 	ALBEDO = c * mix(1.0, wet_factor, wet_c);
 	ROUGHNESS = mix(mix(mix(mix(0.55, 0.75, v_trod) * mix(1.0, wet_factor, 0.5 * wet_c) * mix(1.0, 0.4, wet_c), 0.85, mud_c), 0.95, smoothstep(0.0, 0.5, v_burn)), 0.85, frost_c);
 	ROUGHNESS = mix(ROUGHNESS, 0.7, v_snow);
+	ROUGHNESS = mix(ROUGHNESS, max(ROUGHNESS, 0.8), v_soft);
 	// The burning band: the stubs' tips glow as the ground's embers do (the char decal's glow energy).
 	EMISSION = fire_glow_color(v_glow) * 4.0 * smoothstep(0.4, 1.0, v_t) * step(1e-3, v_burn);
 	SPECULAR = mix(0.35, 0.2, v_trod);
@@ -1232,6 +1294,7 @@ void fragment() {
 	material->set_shader_parameter("fallback_wind", fallback_wind);
 	material->set_shader_parameter("wind_response", wind_response);
 	material->set_shader_parameter("trample_rect", Vector4());
+	_publish_burn_flush();
 	material->set_shader_parameter("view_facing", view_facing);
 	material->set_shader_parameter("fade_band", fade_band);
 	material->set_shader_parameter("ring_band", ring_band);
@@ -1433,12 +1496,28 @@ void GrassField3D::_free_hedges() {
 	hedge_nodes.clear();
 }
 
+// A species' living meshes: TreeGenerator appends its burnt band variants (mesh meta "tree_fire_years",
+// world-links.md "Fire -> trees regrow"), which only VegetationField3D picks by burn age; the hedgerow
+// cycles its variants by index, so it takes the living ones only.
+static TypedArray<Mesh> _living_meshes(const Ref<PlantSpecies> &p_species) {
+	TypedArray<Mesh> out;
+	const TypedArray<Mesh> all = p_species->get_meshes();
+	for (int i = 0; i < all.size(); i++) {
+		const Ref<Mesh> m = all[i];
+		if (m.is_valid() && !m->has_meta(SNAME("tree_fire_years"))) {
+			out.push_back(m);
+		}
+	}
+	return out;
+}
+
 // Hedgerows (docs/ideas/vegetation.md, "Farmland", stage 3): a hawthorn hedge with blackthorn,
 // hazel, field maple and dog rose through it (the commonest mixed hedge of lowland England and
 // northern France; Rackham 1986, Pollard, Hooper and Moore 1974), managed as a flailed A or box
 // (TreeGenerator SHRUB_HEDGE, 2 m segments). Each field's edge gets a line past the verge
 // (hedge_offset), the species in runs of a few segments; a shared boundary gets one hedge (the
 // lower-numbered field's); one gateway gap per field on its longest side.
+
 void GrassField3D::_build_hedges() {
 	hedges_queued = false;
 	_free_hedges();
@@ -1692,7 +1771,7 @@ void GrassField3D::_build_hedges() {
 		if (species[k].is_null()) {
 			continue;
 		}
-		const TypedArray<Mesh> meshes = species[k]->get_meshes();
+		const TypedArray<Mesh> meshes = _living_meshes(species[k]);
 		for (int v = 0; v < VARIANTS; v++) {
 			if (xf[k][v].is_empty() || meshes.is_empty()) {
 				continue;
@@ -1718,6 +1797,8 @@ void GrassField3D::_build_hedges() {
 			tg.instantiate();
 			tg->set_preset(std_presets[k]);
 			tg->set_season(season);
+			// The hedgerow's own trees do not follow fires (yet): no burnt band meshes to build.
+			tg->set_fire_variants(false);
 			sp = tg->make_species(false, 2); // Two: a tree is heavy, and few stand in view.
 		} else {
 			sp = TreeGenerator::make_shrub_species(std_presets[k], TreeGenerator::SHRUB_MATURE, VARIANTS, season);
@@ -1725,7 +1806,7 @@ void GrassField3D::_build_hedges() {
 		if (sp.is_null()) {
 			continue;
 		}
-		const TypedArray<Mesh> meshes = sp->get_meshes();
+		const TypedArray<Mesh> meshes = _living_meshes(sp);
 		for (int v = 0; v < VARIANTS; v++) {
 			if (std_xf[k][v].is_empty() || meshes.is_empty()) {
 				continue;
@@ -2296,6 +2377,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 		float shade_t = 0.0f;
 		float sun_t = 0.0f;
 		float passes = 0.0f;
+		float edge = 1.0f; // Height at the rules' edges (soft edges: the thinning blades also shorten).
 	};
 	const bool fielded = crop == CROP_NONE && crop_mask.any_in(Rect2(x0, z0, tile_size, tile_size));
 	auto accept = [&](float x, float z, float rank, Spot &r_spot) -> bool {
@@ -2319,6 +2401,9 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			if (canopy && suit > 0.0f) {
 				suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_stand_shade_at(p));
 			}
+			if (suit > 0.0f) {
+				suit *= _burn_cover(r.ptr(), x, z);
+			}
 			if (!sward_grid.is_empty() && suit > 0.0f) {
 				suit *= 1.0f - grid_bilinear(sward_grid, lg, x - x0, z - z0);
 			}
@@ -2328,6 +2413,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			if (rank >= keep * suit) {
 				return false;
 			}
+			r_spot.edge = _edge_height(suit / MAX(passes > 0.0f ? _trample_cover(passes) : 1.0f, 1e-4f));
 			y = p_map->get_height_at(p);
 		}
 		const float lx = CLAMP(x - x0, 0.0f, float(lg - 1));
@@ -2366,7 +2452,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 				const float clump_h = unit(hc, 0);
 				const float clump_yaw = unit(hc, 8) * Math::TAU;
 				const float rnd = unit(hb, 16);
-				const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * clump_h + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * sp.shade_t - 0.15f * sp.sun_t) * _trample_scale(sp.passes);
+				const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * clump_h + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * sp.shade_t - 0.15f * sp.sun_t) * _trample_scale(sp.passes) * sp.edge;
 				const float yaw = clump_yaw + (unit(hj, 24) - 0.5f) * 1.6f;
 				const Transform3D world(Basis(Vector3(0, 1, 0), yaw), Vector3(x, sp.y, z));
 				xforms.push_back(to_local * world);
@@ -2564,6 +2650,9 @@ void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDat
 				if (p_canopy && v > 0.0f) {
 					v *= p_rules->rule_weight(PlantSpecies::RULE_SHADE, p_canopy->get_stand_shade_at(q));
 				}
+				if (v > 0.0f) {
+					v *= _burn_cover(p_rules, q.x, q.z);
+				}
 				if (!p_sward.is_empty() && v > 0.0f) {
 					v *= 1.0f - grid_bilinear(p_sward, p_lg, q.x - x0, q.z - z0);
 				}
@@ -2716,7 +2805,7 @@ int floor_half(int p_v) {
 } // namespace
 
 bool GrassField3D::_rings_active() const {
-	return far_rings && crop == CROP_NONE && is_inside_tree() && fade_owner == this && far_ring_range > radius;
+	return far_rings && crop == CROP_NONE && is_inside_tree() && fade_owner == this && radius > 0.0f && far_ring_range > radius;
 }
 
 Ref<ArrayMesh> GrassField3D::_make_ring_mesh(int p_segments) const {
@@ -2977,10 +3066,14 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 			float y = ground_y;
 			const float pick = unit(hb, 16) + unit(hb, 24) / 256.0f;
 			float suit = 1.0f;
+			float edge = 1.0f;
 			if (p_map) {
 				suit = r->get_suitability(p_map, p);
 				if (canopy && suit > 0.0f) {
 					suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_stand_shade_at(p));
+				}
+				if (suit > 0.0f) {
+					suit *= _burn_cover(r.ptr(), x, z);
 				}
 				if (under && suit > 0.0f) {
 					suit *= 1.0f - under->get_sward_shade_at(p);
@@ -2991,13 +3084,14 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 				if (pick >= suit) {
 					continue;
 				}
+				edge = _edge_height(suit / MAX(passes > 0.0f ? _trample_cover(passes) : 1.0f, 1e-4f));
 				y = p_map->get_height_at(p);
 			}
 			const float light = (1.0f - (crowns ? crowns->get_shade_at(p) : 0.0f)) * (p_map ? VegetationLight::exposure(p_map, sun_mean, x, z) : 1.0f);
 			const float shade_t = 1.0f - CLAMP(light, 0.0f, 1.0f);
 			const float sun_t = Math::smoothstep(1.0f, 1.3f, light);
 			const uint32_t hc = clump_hash(x, z, clump_size);
-			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * unit(hc, 0) + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * shade_t - 0.15f * sun_t) * _trample_scale(passes);
+			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * unit(hc, 0) + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * shade_t - 0.15f * sun_t) * _trample_scale(passes) * edge;
 			const float yaw = unit(hc, 8) * Math::TAU + (unit(hj, 24) - 0.5f) * 1.6f;
 			xforms.push_back(to_local * Transform3D(Basis(Vector3(0, 1, 0), yaw), Vector3(x, y, z)));
 			const float rnd = unit(hash_fmix32(hb ^ 0x5BD1E995u), 0);
@@ -3050,6 +3144,7 @@ void GrassField3D::set_far_ring_range(float p_range) {
 // the field's centre).
 namespace {
 constexpr float SHELL_TILE = 64.0f;
+constexpr int BURN_FOLLOW_MSEC = 500; // GrassField3D._follow_burns(): at most twice a second.
 } // namespace
 
 float GrassField3D::_shell_column(int p_x, int p_z, float p_cell, const PlantSpecies *p_rules, TerrainDataMap3D *p_map) const {
@@ -3061,7 +3156,7 @@ float GrassField3D::_shell_column(int p_x, int p_z, float p_cell, const PlantSpe
 		if (!p_map->get_map_rect().has_point(q)) {
 			return 0.0f;
 		}
-		suit = p_rules->get_suitability(p_map, Vector3(x, get_global_position().y, z));
+		suit = p_rules->get_suitability(p_map, Vector3(x, get_global_position().y, z)) * _burn_cover(p_rules, x, z);
 	}
 	if ((!crop_mask.is_empty() || !crop_mask.hedges.is_empty()) && crop_mask.contains(q)) {
 		suit = 0.0f;
@@ -3093,7 +3188,7 @@ void GrassField3D::_free_shell() {
 }
 
 void GrassField3D::_update_shell(const Vector2 &p_center, TerrainDataMap3D *p_map) {
-	if (!far_shell || crop != CROP_NONE || !is_inside_tree() || fade_owner != this) {
+	if (!far_shell || crop != CROP_NONE || !is_inside_tree() || fade_owner != this || radius <= 0.0f) {
 		if (!shell_tiles.is_empty()) {
 			_free_shell();
 		}
@@ -3316,6 +3411,224 @@ void GrassField3D::set_far_shell(bool p_enabled) {
 	if (!far_shell) {
 		_free_shell();
 	}
+}
+
+// Burn ages changed somewhere (WorldFire.burn_changed): sample the grid again there and rebuild what stands on it.
+void GrassField3D::_follow_burns(TerrainDataMap3D *p_map) {
+	const WorldFire *fire = WorldContracts::fire();
+	if (!fire || !p_map || crop != CROP_NONE || !burn_read || fire->get_burn_generation() == burn_seen) {
+		return;
+	}
+	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	if (now - burn_follow_usec < uint64_t(BURN_FOLLOW_MSEC) * 1000) {
+		return;
+	}
+	burn_follow_usec = now;
+	if (burn_recovery <= 0.0f && (rules.is_null() || rules->get_burn_recovery() <= 0.0f)) {
+		burn_seen = fire->get_burn_generation();
+		return;
+	}
+	Rect2 area;
+	const bool partial = fire->burn_changes_since(burn_seen, area);
+	const Rect2 map_rect = p_map->get_map_rect();
+	if (!partial || burn_ages.is_empty()) {
+		const bool had = !burn_ages.is_empty();
+		_read_burn_age(p_map);
+		if (!partial) {
+			area = map_rect;
+		} else if (!had && burn_ages.is_empty()) {
+			return; // Still nothing burnt on this map.
+		}
+	} else {
+		burn_seen = fire->get_burn_generation();
+		const float cx = burn_rect.size.x / (burn_nx - 1);
+		const float cz = burn_rect.size.y / (burn_ny - 1);
+		const int x0 = CLAMP(int(Math::floor((area.position.x - burn_rect.position.x) / cx)) - 1, 0, burn_nx - 1);
+		const int x1 = CLAMP(int(Math::ceil((area.get_end().x - burn_rect.position.x) / cx)) + 1, 0, burn_nx - 1);
+		const int z0 = CLAMP(int(Math::floor((area.position.y - burn_rect.position.y) / cz)) - 1, 0, burn_ny - 1);
+		const int z1 = CLAMP(int(Math::ceil((area.get_end().y - burn_rect.position.y) / cz)) + 1, 0, burn_ny - 1);
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const Vector2 xz = burn_rect.position + Vector2(x * cx, z * cz);
+				burn_ages[z * burn_nx + x] = fire->burn_age_at(Vector3(xz.x, 0.0f, xz.y));
+			}
+		}
+	}
+	if (area.intersects(map_rect, true)) {
+		_burn_dirty(area);
+		_publish_burn_flush();
+	}
+}
+
+// The regrowth flush (shader's burn_flush_map) from the burn grid: 1 - smoothstep(0, 1.5 yr, age), 0 unburnt.
+void GrassField3D::_publish_burn_flush() {
+	if (material.is_null()) {
+		return;
+	}
+	if (burn_ages.is_empty()) {
+		material->set_shader_parameter("burn_flush_rect", Vector4());
+		burn_flush_texture.unref();
+		return;
+	}
+	Vector<uint8_t> data;
+	data.resize(burn_nx * burn_ny);
+	uint8_t *w = data.ptrw();
+	for (int i = 0; i < burn_nx * burn_ny; i++) {
+		const float a = burn_ages[i];
+		w[i] = uint8_t(CLAMP(a < 0.0f ? 0.0f : 1.0f - Math::smoothstep(0.0f, 1.5f, a), 0.0f, 1.0f) * 255.0f + 0.5f);
+	}
+	const Ref<Image> img = Image::create_from_data(burn_nx, burn_ny, false, Image::FORMAT_R8, data);
+	if (burn_flush_texture.is_valid() && burn_flush_texture->get_width() == burn_nx && burn_flush_texture->get_height() == burn_ny) {
+		burn_flush_texture->update(img);
+	} else {
+		burn_flush_texture = ImageTexture::create_from_image(img);
+	}
+	// Texel centres on the grid's nodes.
+	const Vector2 cell(burn_rect.size.x / (burn_nx - 1), burn_rect.size.y / (burn_ny - 1));
+	material->set_shader_parameter("burn_flush_map", burn_flush_texture);
+	material->set_shader_parameter("burn_flush_rect", Vector4(burn_rect.position.x - cell.x * 0.5f, burn_rect.position.y - cell.y * 0.5f, burn_rect.size.x + cell.x, burn_rect.size.y + cell.y));
+}
+
+// What stands on the area builds again (stale generation: each is replaced once its successor is built).
+void GrassField3D::_burn_dirty(const Rect2 &p_area) {
+	const float margin = burn_ages.is_empty() ? 4.0f : burn_rect.size.x / (burn_nx - 1) + 0.5f;
+	const Rect2 a = p_area.grow(margin);
+	for (KeyValue<Vector2i, Tile> &kv : tiles) {
+		if (a.intersects(Rect2(Vector2(kv.key) * tile_size, Vector2(tile_size, tile_size)), true)) {
+			kv.value.generation = generation - 1;
+		}
+	}
+	for (KeyValue<Vector3i, RingTile> &kv : ring_tiles) {
+		const float w = RING_TILE * float(1 << kv.key.z);
+		if (a.intersects(Rect2(kv.key.x * w, kv.key.y * w, w, w), true)) {
+			kv.value.generation = generation - 1;
+		}
+	}
+	for (KeyValue<Vector2i, ShellTile> &kv : shell_tiles) {
+		if (a.intersects(Rect2(Vector2(kv.key) * SHELL_TILE, Vector2(SHELL_TILE, SHELL_TILE)), true)) {
+			kv.value.generation = generation - 1;
+		}
+	}
+	ground_baked = false; // The ground tint (grass_ground_map) over the burn.
+}
+
+void GrassField3D::set_burn_recovery(float p_years) {
+	burn_recovery = MAX(p_years, 0.0f);
+	rebuild();
+}
+
+void GrassField3D::_read_sand_sea(TerrainDataMap3D *p_map) {
+	sea_depth.clear();
+	sea_nx = 0;
+	sea_ny = 0;
+	const TerrainGenerator3D *gen = p_map ? VegetationHoles::source_of(p_map) : nullptr;
+	if (!gen || crop != CROP_NONE || !gen->get_sand_sea_rect().has_area()) {
+		return;
+	}
+	const Rect2 rect = gen->get_sand_sea_rect();
+	const float cell = MAX(MAX(float(gen->get_sand_sea_scale()), 2.0f), MAX(rect.size.x, rect.size.y) / 1023.0f);
+	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 1024);
+	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 1024);
+	LocalVector<float> depth;
+	depth.resize(nx * ny);
+	bool any = false;
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const float d = float(gen->get_sand_sea_height(Vector3(rect.position.x + rect.size.x * x / (nx - 1), 0.0f, rect.position.y + rect.size.y * z / (ny - 1))));
+			depth[z * nx + x] = d;
+			any = any || d > 0.05f;
+		}
+	}
+	if (any) {
+		sea_depth = depth;
+		sea_rect = rect;
+		sea_nx = nx;
+		sea_ny = ny;
+	}
+}
+
+void GrassField3D::_read_burn_age(TerrainDataMap3D *p_map) {
+	burn_ages.clear();
+	burn_nx = 0;
+	burn_ny = 0;
+	const WorldFire *fire = WorldContracts::fire();
+	if (fire) {
+		burn_seen = fire->get_burn_generation();
+	}
+	if (!p_map || crop != CROP_NONE || !fire || !fire->has_provider()) {
+		return;
+	}
+	if (burn_recovery <= 0.0f && (rules.is_null() || rules->get_burn_recovery() <= 0.0f)) {
+		return;
+	}
+	const Rect2 rect = p_map->get_map_rect();
+	if (!rect.has_area()) {
+		return;
+	}
+	const float cell = MAX(2.0f, MAX(rect.size.x, rect.size.y) / 511.0f);
+	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 512);
+	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 512);
+	LocalVector<float> ages;
+	ages.resize(nx * ny);
+	bool any = false;
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const Vector2 xz = rect.position + rect.size * Vector2(float(x) / (nx - 1), float(z) / (ny - 1));
+			const float a = fire->burn_age_at(Vector3(xz.x, 0.0f, xz.y));
+			ages[z * nx + x] = a;
+			any = any || a >= 0.0f;
+		}
+	}
+	if (any) {
+		burn_ages = ages;
+		burn_nx = nx;
+		burn_ny = ny;
+		burn_rect = rect;
+	}
+}
+
+// The sward's cover on burnt ground: 0 on a fresh burn, 1 once burn_recovery years have passed
+// (PlantSpecies.burn_cover: slow at first, then closing in). Bilinear between the grid's ages,
+// with unburnt cells counted as long recovered, so the scar's edge grows in over a cell.
+float GrassField3D::_burn_cover(const PlantSpecies *p_rules, float p_x, float p_z) const {
+	float sand = 1.0f;
+	if (!sea_depth.is_empty() && !(p_rules && (p_rules->uses_dune() || p_rules->uses_coast() || p_rules->uses_sand_mobility()))) {
+		const float gx = (p_x - sea_rect.position.x) / sea_rect.size.x * (sea_nx - 1);
+		const float gz = (p_z - sea_rect.position.y) / sea_rect.size.y * (sea_ny - 1);
+		if (gx >= 0.0f && gz >= 0.0f && gx <= sea_nx - 1 && gz <= sea_ny - 1) {
+			const int ix = MIN(int(gx), sea_nx - 2), iz = MIN(int(gz), sea_ny - 2);
+			const float fx = gx - ix, fz = gz - iz;
+			const float *r0 = &sea_depth[iz * sea_nx + ix];
+			const float *r1 = r0 + sea_nx;
+			const float d = Math::lerp(Math::lerp(r0[0], r0[1], fx), Math::lerp(r1[0], r1[1], fx), fz);
+			sand = 1.0f - Math::smoothstep(0.05f, 0.3f, d);
+		}
+	}
+	if (burn_ages.is_empty() || sand <= 0.0f) {
+		return sand;
+	}
+	const float rec = (p_rules && p_rules->get_burn_recovery() > 0.0f) ? p_rules->get_burn_recovery() : burn_recovery;
+	if (rec <= 0.0f) {
+		return sand;
+	}
+	const float gx = (p_x - burn_rect.position.x) / burn_rect.size.x * (burn_nx - 1);
+	const float gz = (p_z - burn_rect.position.y) / burn_rect.size.y * (burn_ny - 1);
+	if (gx < 0.0f || gz < 0.0f || gx > burn_nx - 1 || gz > burn_ny - 1) {
+		return sand;
+	}
+	const int x0 = MIN(int(gx), burn_nx - 2);
+	const int z0 = MIN(int(gz), burn_ny - 2);
+	const float fx = gx - x0;
+	const float fz = gz - z0;
+	auto c = [&](int x, int z) {
+		const float a = burn_ages[z * burn_nx + x];
+		return a < 0.0f ? 1.0f : Math::smoothstep(0.0f, rec, a);
+	};
+	return sand * Math::lerp(Math::lerp(c(x0, z0), c(x0 + 1, z0), fx), Math::lerp(c(x0, z0 + 1), c(x0 + 1, z0 + 1), fx), fz);
+}
+
+float GrassField3D::get_burn_cover_at(const Vector3 &p_global_position) const {
+	return _burn_cover(rules.ptr(), p_global_position.x, p_global_position.z);
 }
 
 void GrassField3D::set_far_shell_range(float p_range) {
@@ -4258,8 +4571,19 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 	} else if (ground_job.active) {
 		_ground_bake_rows(map, GROUND_BAKE_BUDGET_USEC);
 	}
+	_follow_burns(map);
 	if (crop != CROP_NONE && is_inside_tree()) {
 		_crop_ground_step();
+	}
+	if (radius <= 0.0f) {
+		// radius 0: no blades at all (the near tiles, the far rings and shell); the ground tint keeps its own setting.
+		for (KeyValue<Vector2i, Tile> &kv : tiles) {
+			_free_tile(kv.value);
+		}
+		tiles.clear();
+		_free_rings();
+		_free_shell();
+		return;
 	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	const Vector2 c(p_center.x, p_center.z);
@@ -4350,6 +4674,12 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 	ground_job.active = false;
 	sun_mean = VegetationLight::sun_mean(p_map);
 	fade_band = Vector4(); // Send the band and the far colour again.
+	if (!burn_read) {
+		_read_burn_age(p_map);
+		_read_sand_sea(p_map);
+		burn_read = true;
+		_publish_burn_flush();
+	}
 	if (crop != CROP_NONE) {
 		crop_ground_dirty = true; // The fields' own ground (crop_ground()).
 		return;
@@ -4414,6 +4744,9 @@ void GrassField3D::_ground_bake_rows(TerrainDataMap3D *p_map, uint64_t p_budget_
 			float suit = crop_mask.contains(Vector2(p.x, p.z)) ? 0.0f : r->get_suitability(p_map, p);
 			if (canopy && suit > 0.0f) {
 				suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_stand_shade_at(p));
+			}
+			if (suit > 0.0f) {
+				suit *= _burn_cover(r.ptr(), p.x, p.z);
 			}
 			if (lw) {
 				Color lc;
@@ -5196,6 +5529,7 @@ void GrassField3D::rebuild() {
 	crop_mesh_far.unref();
 	material.unref();
 	ground_baked = false;
+	burn_read = false;
 }
 
 void GrassField3D::_notification(int p_what) {
@@ -5448,7 +5782,7 @@ void GrassField3D::set_lean(float p_lean) {
 	GRASS_SET_REBUILD(lean, CLAMP(p_lean, 0.0f, 1.4f))
 }
 void GrassField3D::set_radius(float p_radius) {
-	GRASS_SET_REBUILD(radius, MAX(p_radius, 1.0f))
+	GRASS_SET_REBUILD(radius, MAX(p_radius, 0.0f))
 }
 void GrassField3D::set_tile_size(float p_size) {
 	GRASS_SET_REBUILD(tile_size, MAX(p_size, 1.0f))
@@ -5680,6 +6014,9 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_far_shell"), &GrassField3D::is_far_shell);
 	ClassDB::bind_method(D_METHOD("set_far_shell_range", "range"), &GrassField3D::set_far_shell_range);
 	ClassDB::bind_method(D_METHOD("get_far_shell_range"), &GrassField3D::get_far_shell_range);
+	ClassDB::bind_method(D_METHOD("set_burn_recovery", "years"), &GrassField3D::set_burn_recovery);
+	ClassDB::bind_method(D_METHOD("get_burn_recovery"), &GrassField3D::get_burn_recovery);
+	ClassDB::bind_method(D_METHOD("get_burn_cover_at", "global_position"), &GrassField3D::get_burn_cover_at);
 	ClassDB::bind_method(D_METHOD("get_shell_column_count"), &GrassField3D::get_shell_column_count);
 	ClassDB::bind_method(D_METHOD("get_shell_tile_count"), &GrassField3D::get_shell_tile_count);
 	ClassDB::bind_method(D_METHOD("get_build_time_msec"), &GrassField3D::get_build_time_msec);
@@ -5726,11 +6063,12 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_tint_enabled"), "set_ground_tint_enabled", "is_ground_tint_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "ground_tint"), "set_ground_tint", "get_ground_tint");
 	ADD_GROUP("Range", "");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radius", PROPERTY_HINT_RANGE, "1,500,0.5,or_greater,suffix:m"), "set_radius", "get_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radius", PROPERTY_HINT_RANGE, "0,500,0.5,or_greater,suffix:m"), "set_radius", "get_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_rings"), "set_far_rings", "is_far_rings");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_ring_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_far_ring_range", "get_far_ring_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_shell"), "set_far_shell", "is_far_shell");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_shell_range", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_far_shell_range", "get_far_shell_range");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "burn_recovery", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater,suffix:yr"), "set_burn_recovery", "get_burn_recovery");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_match_view"), "set_far_match_view", "is_far_match_view");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,64,0.5,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_GROUP("Wind", "");

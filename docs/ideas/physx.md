@@ -1611,6 +1611,472 @@ wood breaks short and brash); the trunk's butt takes the matching face
 and hinges on the stump's lee edge. The capsules, the Blast hulls and the
 Blast soups of the stem below the cut are dropped from the part.
 
+### Standing snags (picked 19 Nov, first of four, part two)
+
+Built. Research: whether a fire kills a tree follows the share of its
+crown scorched and its bark thickness (Ryan and Reinhardt 1988, FOFEM:
+P = 1 / (1 + exp(-1.941 + 6.316 (1 - e^-BT) - 0.000535 CVS^2)), BT in
+inches, CVS in %). Dead trees stand as snags: fine limbs drop in the first
+years, roots and butt hold about a year and then rot, and snags fall at
+the base with half-lives of about 5 to 10 years (Everett et al. 1999;
+Russell et al. 2006; Dunn and Bailey 2016). Here: WorldFire gains
+crown_scorch_at (Van Wagner's lethal scorch height of the front that
+passed, PhysXFireSpread3D's peak_scorch, which a torching crown raises
+over its top) and PhysXFireSpread3D now provides burn_age_at (years of
+the weather's clock since each cell caught: the fire keeps a game-day
+clock from WorldWeather.time_scale). TreeWind3D, once a second while a
+fire provider exists, takes each tree's crown share below the scorch
+height (foliage area of its bones) and bark of 4% of its diameter, and a
+hash steady per tree against P; a killed tree's age dead follows
+burn_age_at. In the storm test its limbs keep 0.2 + 0.8 e^(-t/3) of their
+strength and its roots and butt 0.15 + 0.85 e^(-(t-1)/6), and a snag dead
+over half a year fails at the butt (the snap path: stump, no plate). Test
+(storm bench, `--snag=Y` stub, 18 m/s): alive, nothing breaks; dead 0
+years, nothing; 3 years, 11 limbs; 8 years, 38 limbs and the spruce falls
+at its butt. Left: the dead crowns' needles stay on in the shader (trees
+thread: needle cast in the first year).
+
+### Rain washes the burn scar (picked 19 Nov, second of four)
+
+Built. Research: a hot fire leaves a water-repellent layer a few
+centimetres down (DeBano 2000; Doerr et al. 2000), strongest where it
+burnt long and hot (Huffman et al. 2001), weakening over months and
+mostly gone in one to two years. With the litter gone and the soil
+repellent, infiltration falls to about a tenth (Robichaud 2000), so light
+rain that unburnt ground would soak up runs off, and the runoff carries
+the ash (Cerda and Doerr 2008; Smith et al. 2011: ash and fines at tens of
+kg per m3 of runoff). Here: WorldFire gains water_repellency_at (0 to 1,
+max over providers). PhysXFireSpread3D provides it on burnt-out, unquenched
+cells: 0.35 + 0.65 of the char time over a minute (0.5 under a heavy log),
+fading as e^(-age / 0.75 yr) on the burn-age clock. GroundSurface3D reads
+it with burnt_at every cell refresh: burnt litter is gone and its
+infiltration (pore water and the runoff channels) is cut by 1 - 0.9 R.
+Once a second the fire reads WorldGround.runoff_at on cold burnt 1 m tiles
+and takes 30 kg/m3 of the unit discharge off each cell's ash (the ash map
+dims, get_ash_washed counts it). Test (ground bench `--test=burnscar`,
+3 mm/h on a 15 degree clay bank): repellent scar 0.036 mm sheet, the same
+bank with the scar gone 0 mm; fire scratch run: a 2 mm sheet at 0.3 m/s
+washes 1.3 kg of ash off a 10 m burn in 20 s. Left (water owners): the
+washed ash should darken the stream it reaches (a turbidity or load term
+on WorldWater).
+
+### Smouldering ground fire (picked 19 Nov, third of four)
+
+Built. Research: under the fine fuel lies duff and organic soil that a
+passing front can light and that then smoulders for hours with no flame
+(Rein 2009). It lights with a 50% chance near 110-120% moisture (dry
+basis) in organic soil with little mineral matter, drier as the mineral
+share rises (Frandsen 1987, 1997; Prat-Guitart et al. 2016 find 115-150%
+by bulk density); it creeps sideways at 1-5 cm/h, slower when wetter
+(Prat-Guitart et al. 2016: medians 1-5, spots 0.6-9 cm/h), and burns down
+more slowly still; its smoke is pale (condensed tars and water, little
+soot) and cool, so it hangs low; heavy rain puts it out, light rain does
+not; and under unburnt fuel a breeze can turn it back into flame, the
+holdover fire (Santoso et al. 2019). Ignition indices from duff codes
+(Otway et al. 2006: 50% at DMC 27-29 in aspen duff) back the same
+picture. Here: PhysXSmoulder (flow/physx_smoulder.*) keeps a duff grid
+under PhysXFireSpread3D, on the weather's clock (time_scale): duff_depth
+(by fuel type: 1, 1.5 and 5 cm) at 100 kg/m3, deeper under heavier fuel;
+duff_moisture follows the weather over 12 game days (the DMC's time lag)
+and soaks up half the rain; duff_mineral moves the 50% point
+(1.2 - 1.5 (mineral - 0.1)). Half a burn time after the front, each cell
+gets one steady-hash chance to light (logistic in moisture, width 0.12,
+thinner beds less); a smouldering cell creeps into its four neighbours at
+5 e^(-0.8 M) cm/h (a little faster in wind), burns down at a quarter of
+that (about 1.6 kW/m2 at 8 MJ/kg, part of heat_at), goes out past 1.6
+times the 50% moisture (rain, or poured fluid water, which boils off as
+steam), and under unburnt dry fuel in wind over 1 m/s relights the fine
+fuel (hazard up to once a game hour at 4 m/s). It glows dull red in
+spots on the ground map, leaves pale ash where the duff burnt through,
+and smokes from a gas of its own (2 m tiles, eight emitters, light grey,
+buoyancy 0.8, freed 20 s after the last cell). Test (scratch scene, 10 m
+litter fire, time_scale 3600): the duff lights behind the front (peak
+1,437 of 1,600 cells), burns 465 kg in about a day and goes out; 20 mm/h
+rain puts it out within ten game hours (446 kg burnt), 1 mm/h does not;
+a fire stopped at 3.6 m2 with a 3 m/s wind relit the fuel around it 14
+times in 100 game hours.
+
+### Fire clouds (picked 19 Nov, fourth of four)
+
+Built. Research: a fire's plume rises until its buoyancy is spent; where
+it passes the lifting condensation level its moist air condenses into a
+cumulus cap (pyrocumulus), and a plume that keeps rising on the latent
+heat becomes a pyrocumulonimbus, with lightning and downdraft outflow
+(Fromm et al. 2010; Lareau and Clements 2016, who find the plume's
+condensation level a few hundred metres above the ambient one: the
+plume's heat lifts it, the fire's water vapour lowers it, near evenly;
+Tory et al. 2018 on the heat it takes). Plume rise: Briggs (1975), with
+F = g Q / (pi cp rho T) from the convective heat Q (about three quarters
+of the heat release: radiant fractions 0.15-0.3), 5.0 F^1/4 N^-3/4 calm
+and 2.6 (F / (u N^2))^1/3 bent over, N about 0.0106/s for the standard
+lapse rate; by day the plume first crosses the sun-mixed layer, which
+reaches to about the cumulus base (Stull 1988). LCL: Espy's 125 m per
+kelvin of dew point depression. Here: WorldFire gains plumes(), a list of
+(base, convective heat) from every fire; PhysXFireSpread3D gives one per
+node, from its flaming tiles and burning crowns. WeatherMap3D (weather
+owners' code, flagged to them) turns each plume that reaches the LCL into
+a storm entry marked fire: no rain, cumulus (cover 0.6-0.77, which sets
+the type) over the bent-over plume, radius half the rise, growing over
+five game minutes and evaporating over fifteen once the heat stops; at
+2 km past the LCL it grows into a pyrocumulonimbus (cover 1: a tower,
+10 m/s outflow, 2 mm/h), which WeatherLightning3D already strikes from by
+its cloud top (Price and Rind). `fire_clouds` on by default;
+get_fire_cloud_for(Q) gives the rise, LCL and strength. Numbers (30 C,
+25% humidity, LCL 2.8 km): by day 1 GW caps itself, about 40 GW makes a
+pyrocumulonimbus; at night (mixed layer 200 m) nothing under about 60 GW;
+humid air (60%, LCL 1.1 km) caps a 1 GW fire fully. Scratch test with a
+plume stub (50 GW, sun unknown): a cumulus cap over the plume after 20
+game minutes (cloud type 0.79), gone within two hours of the heat stopping. Each fire cloud's
+base sits at its plume's own condensation level (fire base plus the LCL),
+not the map's cloud_base_height: storms carry an optional base, read by the
+sky shader, the CPU density (shadow bake, path traced sky) and lightning;
+round a storm the base levels out to about four shield radii (weather
+bench `--view=clouds --fire=5e10`: base 2500 m against the map's 1500 m).
+
+The same round adds `fire_age_map` for the trees thread (needle cast on
+fire-killed crowns): R8, game years since each cell caught over 2 (about
+3-day steps), 0 where nothing burnt, over fire_char_rect.
+
+### Smoke haze dims the sun (picked 19 Nov morning, first of three)
+
+Built. Research as in the card notes below: mass extinction about 4.5
+m2/g at 550 nm, single scattering albedo about 0.9, Angstrom exponent
+about 1.8 (Reid et al. 2005); emission factors of PM2.5 about 7 g/kg for
+grass, 17 g/kg for temperate forest (Andreae 2019), about 30 g/kg
+smouldering (Urbanski 2014); afternoons several kelvin cooler under thick
+smoke (Robock 1988). Here: WorldFire gains smoke_sources() (x, y, z,
+kg/s of PM2.5 in the fire's own real time). PhysXFireSpread3D gives two:
+its flames (plume heat / 0.75 / 18.6 MJ/kg times the factor by fuel
+type) and its smouldering duff. WeatherMap3D (weather_smoke.cpp, weather
+owners' code, flagged) keeps cell_smoke, g/m2 in the column over each
+map cell: the sources laid along the step's wind run (no puffs on long
+steps), semi-Lagrangian advection by the wind aloft (log law to 1 km),
+eddy diffusion at 300 m2/s, an e-folding smoke_lifetime of 3 days, and
+the column shifts with the map. Effects at the map's centre: the
+aerosol haze's extinction gains tau / 2000 m; the daily temperature
+range is scaled by e^(-0.35 tau); SkyClock multiplies the sun (and moon)
+light by the smoke's RGB transmittance, read where its ray crosses the
+layer at 2 km, along the slant path, tau x (0.83, 1, 1.35) for red,
+green and blue. Test (scratch, 10 kg/s, about a 10 GW fire, 3 m/s wind,
+three hours): 2.8 g/m2 (tau 12.6) 1 km downwind, 1.9 at 250 m and 0.5 at
+500 m across it, tau 6 at 1.9 km; Q / (u W) gives the same; gone two days
+after the source stops. A 100 m2 grass fire gives about 5 g/s, too little
+to see, as it should be. Left: the cloud shadow bake could take the
+smoke's grey part so plumes shade the ground in patches (weather
+owners); the haze is one value over the map's centre, not a field; the
+lofted plume is treated as mixed through 2 km.
+
+### Post-fire mudflows (picked 19 Nov morning, second of three)
+
+Split agreed by the three owners. Valence (WeatherRunoff3D) fires the
+event: USGS M1 likelihood (Staley et al. 2017) and Gartner (2014) volume
+at basin outlets, at P >= 0.5, one per basin per storm, signal
+debris_flow on WeatherRunoff3D and WorldGround, with id, volume, path,
+widths and severity. Mud (GroundDebrisFlow3D) moves the body:
+Bingham/Voellmy on the path, Iverson entrainment, deposit written into
+the ground, front getter get_debris_front(id) and the
+debris_front_changed signal. PhysX (PhysXDebrisSurge3D, nodes/) draws what
+rides the front. Research: post-fire debris flows arrive as surges, tens
+of seconds to minutes apart (Kean et al. 2011, 2013); a bouldery snout
+forms because the surface outruns the front and carries clasts forward
+(Iverson 1997); peak discharge Q = 0.1 V^(5/6) and front speed v = 2.1
+Q^(1/3) S^(1/3) (Rickenmann 1999); fans and deposition below about 4
+degrees (Ikeya 1981). Built: a train of up to four surges (one per 400
+m3, each 0.6 of the last); a front of its own on the path at
+Rickenmann's speed, easing over a few seconds and stopping below
+stop_slope, replaced by mud's front where its getter reports one;
+boulders as rigid bodies drawn from a D^-2.5 power law up to the flow
+depth, with quadratic drag toward 1.3 times the front speed behind the
+snout and the front speed at it, the slurry's buoyancy, the force
+clamped for stability; mud spray as ballistic drops. Test (scratch:
+1500 m3, 25% channel then a 3% fan): peak Q 44 m3/s, front 3.8 m/s, 1.0
+to 1.8 m deep; boulders stay within a few metres of the snout; the front
+stops 30 m onto the fan with its boulders in the lobe; the second surge
+stops 4 m short of the first. Left: drawing the body and levees is
+mud's; dust ahead of dry fronts; rumble and ground shake.
+
+### Burning wooden buildings (picked 19 Nov morning, third of three)
+
+Built as PhysXBuildingFire3D (flow/physx_building_fire_3d.cpp), a
+compartment-fire zone model per room rather than a PhysXBurnable3D mode:
+a burnable is one surface, a house is rooms that pass fire between them.
+Research: t-squared growth, 1 MW at 300 s for dwellings (EN 1991-1-2
+Annex E); Kawagoe's ventilation limit 1.5 A sqrt(H) MW; McCaffrey,
+Quintiere and Harkleroad's hot layer dT = 6.85 (Q^2 / (A sqrt(H) h_k
+A_T))^(1/3) with a timber lining's h_k = sqrt(k rho c / t); Thomas's
+flashover Q_FO = 7.8 A_T + 378 A sqrt(H) kW; glass falls out at 450 to
+530 C (Babrauskas 2004); fully developed burning at 250 kW/m2 of floor
+with 780 MJ/m2 of fuel (Annex E means for dwellings), the excess over
+the air limit burning outside; external flame length L = H (2.37 (Q /
+(A rho_g sqrt(g H)))^(2/3) - 1) (Annex B); linear decay after 70% burnt;
+notional charring 0.8 mm/min (EN 1995-1-2) scaled by the layer's
+temperature; light frame (50 mm members) fails at 60% section lost;
+ember ignition of furnishings about 1 in 5 (Manzello et al. 2006) and
+ember piles at wall feet (Manzello 2017); structure fires throw about
+40 brands a second per MW (Suzuki and Manzello 2017).
+
+Per room: states cold, growing, flashed, decay, out; doors between rooms
+found where an opening lies on another room's face (mirrored to both
+sides); spread by radiation through doors (half a blackbody at the layer
+temperature, ignition dose as the cladding's), burn-through of walls,
+floors and roofs, a collapsed room lighting the one above (and opening
+its floor), and window flames on the facade breaking the window above
+after 60 s of contact (leapfrog). Outside: each face's cladding takes a
+dose from the ground fire's flames at its foot, Flow's hot gas,
+PhysXBurnable3D and building radiation, and brand piles; it lights at
+the thick-solid dose, spreads at 3 cm/s, lets the fire in where it
+reaches an opening or burns through. Brands in an open window light the
+contents. The window flames' radiation lights the ground fuel below.
+Drawn as Flow emitters (inner fire, smoke from the opening tops before
+flashover, flames after, roof, cladding), one flickering OmniLight3D per
+room at its fire (the flames are its visible source), and the
+PhysXBurnable3D burn material on the target's meshes. WorldFire: heat_at
+over room footprints, burnt_at, plumes (0.7 of the heat), smoke (0.03
+kg/kg). PhysXBurnable3D, cloth burn and firebrands read it.
+
+Test (scratch house: two ground-floor rooms joined by a door, one above,
+an open outer door, three glazed windows; fire time): window breaks at
+6 min, flashover 8.7 min, the next room flashes 7 min after it caught
+through the door, collapse 15 min after flashover, the upper room
+catches through the burnt floor and flashes at 10 min, whole house out
+after about 95 min. Peak 14 MW. Flux 5 m in front of a window about
+4-6 kW/m2 (one 1.4 m2 window; a whole burning facade gives more).
+Left: rooms are boxes (pitched roofs, attics and L-shaped rooms are
+several boxes); no smoke filling rooms ahead of the fire (two-zone
+smoke layer), no firefighting water on rooms yet (Flow/MPM water reaches
+burnables, not buildings), glass is not drawn breaking.
+
+### Water puts building fires out (picked 19 Nov, first of four)
+
+Research: water boils off at 2.6 MJ/kg (heating and evaporation);
+flames go down once the water takes about a third of the heat release
+(Grimwood's gas cooling); Sardqvist's critical application rate for
+compartment fires is about 0.1 to 0.3 kg/s per MW; steam swells about
+1700 times and pushes the hot gas out of the openings. Built: water
+in a room (PhysXParticleFluid3D water particles inside its box, or
+apply_water() from a hose, a bucket brigade or a script) boils off over
+about 8 s and takes 2.6 MJ/kg. The share it takes of 0.3 times what the
+fire could release damps the burning at once (0.7 of it), and a room
+held under it for 20 s goes out. A flashed room falls back to growing
+below half, its hot layer cooling over 15 s. The fire regrows from what
+is left when the water stops. Water on a face (particles within 0.5 m,
+or apply_water near it) puts out burning cladding at 0.5 mm and keeps it
+from catching, drying over ten minutes. The heat taken leaves as
+PhysXSteam at the room's first open opening. Test (the scratch house,
+room A flashed at 4 MW, water from 900 to 1500 s): 0.3 kg/s (0.075
+kg/s/MW) holds it at 2.2 MW and 560 C, and it re-flashes when the water
+stops; 0.6 kg/s puts it out in under two minutes; 1.5 kg/s also does.
+
+### Smoke ahead of the fire (picked 19 Nov, second of four)
+
+Two-zone layer per room (Quintiere; the zone model of CFAST). Plume
+entrainment m = 0.071 Q_c^(1/3) z^(5/3) + 0.0018 Q_c kg/s (Heskestad),
+Q_c = 0.7 Q, z the clear height; buoyant flow out of each opening below
+the layer, m = (2/3) Cd W rho_s sqrt(2 g (1 - rho_s/rho_a)) dh^(3/2) with
+Cd 0.7; through doors into the next room's layer (mass, soot and heat
+mixed), out of windows, open roofs and 0.01 m2 of ceiling leaks; soot at
+smoke_yield, visibility 3 / K with K = 8.7 m2/g times its concentration
+(Mulholland); a layer with no fire under it cools over five minutes.
+The opening emitters smoke from smoke_out and the layer's extinction
+(also from rooms the fire has not reached). Test (scratch house, fire in
+A): A's layer at 1.5 m after a minute (50 kW) and 0.5 m at 1 MW (5 min),
+visibility 3 m at one minute and under 1 m by three; the next room B
+fills through the door just behind A and shows the same visibility 4
+minutes before it catches. Left: no smoke inside rooms drawn through
+windows yet (Flow gas leaks through thin walls); stairs are not yet a
+connection between floors.
+
+### Glass and roofs that break (picked 19 Nov, third of four)
+
+Research: window glass in fire cracks from the frame edge (the shaded
+edge stays cool while the exposed centre expands; Pagni and Joshi 1991)
+at about a 60-80 C difference, and falls out at about 450 to 600 C of
+hot layer, in pieces of a few to some tens of centimetres (Babrauskas
+2004; Shields et al.). Light timber floors and roofs sag as the char
+eats their joists, deflecting fast just before they fail. Built:
+glass_panes (on) draws a transmissive pane (IOR 1.52, thin-walled, a
+soda-lime green edge) in each glazed opening; when the layer breaks it
+the pane splits into about one piece per 0.06 m2 by random cuts, each cut
+again along a diagonal into angular shards, 15% kept in the frame a
+while, the rest rigid bodies pushed out at 0.5 to 2 m/s near flashover
+(at most 300). Without a Blast target, the target's meshes over a room
+(the top 0.3 m to 1.5 m above it: ceiling, the floor above, roof) sag
+by span/20 times the cube of the share of section lost, and fall in as
+rigid bodies (box colliders from their bounds, 400 kg/m3) when the room
+collapses, the target's colliders over the room disabled. Left: shards
+from the 15% left in frames; a pitched roof drawn as one mesh falls as
+one piece.
+
+Doorway smoke: the building's smoke goes to its own gas (BuildingSmoke:
+no combustion, dark grey, slow fade), from a box across the smoky part
+of each opening rather than a small sphere (which gave the grid a cell
+or two of smoke that thinned to nothing within a metre).
+
+Mudflow pooling (Valence: a 4 km2 burnt valley fires 68 events at once):
+events under min_volume (100 m3) are left to the mud body; at most
+max_events (6) events have surges, a bigger one replacing the smallest;
+the boulder cap is shared. Storm test: 68 events, 39,000 m3: 6 events,
+24 surges, 60 boulders.
+
+### Village wind-fire bench (picked 19 Nov, fourth of four)
+
+Research: in wildland-urban interface fires most houses are lit by
+embers, directly or through fuels next to them (mulch, fences, yards),
+and once a few burn, house to house spread by radiation, flame contact
+and the houses' own firebrands takes over in dense parcels (Maranghides
+and Mell 2011, Witch and Guejito fires; NIST TN 2252, Camp Fire, 2021).
+Separation between structures is one of the main hazards in NIST's
+parcel methodology (TN 2205); Cohen's home ignition zone puts what
+decides a house's fate within about 30 m of it. Urban fire spread
+models (Hamada; Himoto and Tanaka 2008) carry fire between buildings by
+window flames, radiation and brands, which PhysXBuildingFire3D already
+does.
+
+Built: docs/bench/village_fire, a grass fire upwind of one or two rows
+of two-room timber houses down a street, the wind blowing down it.
+Options for houses per row, gap, street width, wind, the wildland's
+fuel and the bare buffer before the first houses, lawns, a 1.5 m bed of
+dry fuel against each house (the immediate zone), brands on or off,
+speed and stills. PhysXBuildingFire3D now records its first catch:
+get_ignition_time, get_ignition_cause ("direct", "firebrand", "heat")
+and the ignited signal ("heat" includes beds that embers lit first).
+Headless, 40 fire minutes take about 1.5 min.
+
+First runs (2 rows of 6, tall grass 10 m upwind, 8 m/s, one run each,
+so the counts are noisy): 6 of 12 lost (5 by heat from ember-lit beds,
+1 by brands through a door) over 27 minutes; beds cleared, none lost;
+houses throwing no brands, 4 lost (the first, from the wildland's
+embers); a 15 m gap did not save the street (brands carried it, as the
+surveys find); 4 m/s, 6 lost. A bare wall with no fuel against it does
+not catch from a grass front 10 m off or from embers alone.
+
+### Ash darkens snow (world-links hook, 19 Nov)
+
+Research: light-absorbing particles on snow are counted as black carbon
+equivalent (Warren and Wiscombe 1980; Flanner et al. 2007); burnt-area
+ash and char blown onto snow cut its albedo for seasons after a fire
+(Gleason et al. 2013, Oregon Cascades). Fine ash lifted to about 1.5 m
+and falling at about 0.3 m/s settles over L = u h / v_s downwind. Built:
+PhysXAsh hands the ash it lifts to WorldSnow.add_impurity once a second,
+in three bands along the wind (e^-0 - e^-1, e^-1 - e^-2, e^-2 - e^-3 of
+it), gathered into cells half L across, as 0.05 of its mass in black
+carbon equivalent (char-bearing ash, darker than mineral dust's 0.013).
+Test: 5.2 kg blown in 2 min at 10 m/s gives 247 g BCe on the snow out
+to 150 m downwind, about 10 calls a second.
+
+### Flow raster light matches path tracing (snow's request, 19 Nov)
+
+The raster scattering pass weighed the multiple-scattering octaves
+(Wrenninge et al. 2013; Hillaire 2016) as 1 + 0.5 + 0.25 of the light
+at zero optical depth, so thin gas and the sunlit skin of thick gas got
+1.75 times the light the path tracer gives them, and the lit and shaded
+sides sat together in the tone curve's shoulder: evenly bright puffs.
+The octaves are now normalised to 1 at zero depth (the extra octaves
+still keep dense interiors from going black). Test puff, mean grey down
+its middle (raster before, after, path traced): 185, 166, 152.
+scattering_strength is a raster-only multiplier the path tracer does
+not see; it stays at 1 for parity.
+
+Mud's front wired (19 Nov afternoon): with front_source empty the surge
+finds the scene's GroundDebrisFlow3D itself; only each event's lead
+surge rides the mud body's front, the later surges run behind it as
+pulses. Test (1500 m3 on the 25% gully): the lead surge tracks the mud
+front to its stop at 148 m, the second surge follows at 3.3 m/s.
+
+### Next-round options (card, 19 Nov afternoon)
+
+Window flames as tongues. External flames now read as round fireballs
+because Flow burns the fuel in a ball around a sphere emitter. Real
+window plumes are flat sheets that hug the facade above the opening and
+taper, at Eurocode's length (Law 1978; EN 1991-1-2 Annex B). Plan: slot
+emitters along the top of the opening, angled up the wall, with fuel
+rising to the flame tip, and the wall acting as a solid in Flow.
+
+Wind-driven building fires. Wind on a broken window pushes air through
+the building: the room burns hotter and flames and smoke move toward the
+leeward openings (NIST and FDNY wind-driven fire experiments, 2008-2009;
+Kerber and Madrzykowski). Plan: wind pressure on each opening
+(Cp ρ u²/2) drives the flow between rooms, and the leeward openings
+carry the flames.
+
+Smouldering rubble and rekindles. Collapsed timber keeps glowing for
+hours under the ash, and wind can reignite it, which causes many second
+alarms (NFPA rekindle data). Plan: collapsed rooms leave glowing debris
+using PhysXSmoulder, which throws brands and can relight nearby fuel in
+wind.
+
+Firefighters' hose streams. Water reaching rooms is in already
+(apply_water). Plan: a hose node whose jet is a PhysX particle stream
+(Freeman's nozzle flow, a reach of about 30 m) that aims at openings and
+feeds apply_water where it lands, plus steam and the knock-down seen
+through the windows.
+
+### Next-round options (card, 19 Nov late morning)
+
+Water on burning buildings. Hose streams and MPM water reaching a room
+take heat at 2.6 MJ/kg (heating and boiling); a room needs about 0.1 to
+0.3 kg/s per MW to knock the flames down (Sardqvist's critical flow
+rate). Steam expands about 1700 times and pushes the hot layer out of
+the openings. Plan: water particles entering an opening or hitting the
+cladding feed PhysXSteam and a cooling term in the room's heat balance.
+
+Smoke ahead of the fire. A two-zone layer (Quintiere; CFAST) fills each
+room from the ceiling. The smoke leaves through the top of the openings
+above a neutral plane and passes through doors to the next rooms well
+before any flames do. That gives smoke from the eaves and grey windows
+in the early minutes. Plan: a layer height and smoke density per room,
+drawn as Flow smoke at the openings.
+
+Windows and roofs that break. Glass that falls out at 450 C drops as
+Blast shards (Pagni and Joshi's crack pattern from the frame edge).
+Roofs sag and fall in where the room collapses, rather than the whole
+target breaking at once. Plan: optional glass and roof Destructibles per
+opening and per room.
+
+A settlement in a wind-driven fire. In wildland-urban interface fires,
+most homes are lost to embers rather than flame contact, and home to
+home spread then dominates (Maranghides and Mell 2011, Waldo Canyon;
+Camp Fire NIST 2021). Plan: a village bench where firebrands and the
+radiation between buildings carry a grass fire's front through a street.
+
+### Next-round options (card, 19 Nov)
+
+Research notes for the card that follows the four picks above.
+
+Smoke haze dims the sun. Thick wildfire smoke reaches aerosol optical
+depths of 1 to 5 at 550 nm, with a mass extinction of about 4.5 m2/g
+and a single scattering albedo near 0.9 (Reid et al. 2005). The
+Angstrom exponent of 1.5 to 2 removes blue light first, so the sun goes
+orange and then red. Under dense plumes the day cools by a few kelvin
+(Robock 1988). Plan: the fire's smoke mass rate (WorldFire.plumes gains
+a smoke term) feeds a column-load field on the weather grid, advected
+by the wind aloft and settling out over days. The weather's haze
+(rt_params 80-84) and its sun read the field, so sun drying and air
+temperature follow.
+
+Post-fire mudflows. In the first one or two years, rain bursts on burnt
+slopes steeper than about 23% start runoff-generated debris flows. USGS
+thresholds sit near 15-minute intensities of 10-25 mm/h (Cannon et al.
+2008; Staley et al. 2017). They grow by scouring rills and channel beds
+as they run (progressive bulking; Kean et al. 2013). Plan: the burn
+scar's runoff (water_repellency_at, runoff_at) already concentrates the
+flow. A channel that passes the threshold picks up ash and soil into a
+Bingham mud body (the mud thread's model) that runs down the gully, then
+fans out and stops where the slope eases. The ground and mud threads own
+that code, so it needs their sign-off.
+
+Burning wooden buildings. Embers light buildings through vents, gutters
+and decks (Manzello 2017). Inside, a room fire grows until flashover,
+when the hot layer reaches about 600 C and the floor takes about 20
+kW/m2 (Drysdale). After that it burns ventilation-limited at about
+1.5 A sqrt(H) MW (Kawagoe), and flames lean out of the windows. Timber
+members char at about 0.65 mm/min (EN 1995-1-2), which is the char
+rate the stem foot already uses, and they fail as the section thins.
+Plan: a PhysXBurnable3D building mode made of rooms with openings,
+using flashover and Kawagoe's heat release, external flames as Flow
+emitters, members charring, and the frame collapsing through Blast when
+the remaining section falls under its load.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

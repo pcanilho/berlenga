@@ -68,6 +68,7 @@ public:
 	virtual float contract_terrain_lee_at(const Vector3 &p_position) const { return NAN; } // rad, Winstral's Sx; NaN: no terrain wind there
 	virtual float contract_rainfall_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of liquid
 	virtual float contract_snowfall_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of water falling as snow
+	virtual float contract_smoke_at(const Vector3 &p_position) const { return 0.0f; } // g/m2 of smoke particulate in the column
 	virtual float contract_canopy_water_at(const Vector3 &p_position) const { return 0.0f; } // mm held on leaves
 	virtual float contract_canopy_wetness_at(const Vector3 &p_position) const { return 0.0f; } // 0..1
 	virtual float contract_canopy_drip_at(const Vector3 &p_position) const { return 0.0f; } // mm/h
@@ -111,6 +112,7 @@ protected:
 	GDVIRTUAL1RC(float, _terrain_lee_at, Vector3)
 	GDVIRTUAL1RC(float, _rainfall_at, Vector3)
 	GDVIRTUAL1RC(float, _snowfall_at, Vector3)
+	GDVIRTUAL1RC(float, _smoke_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_water_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_wetness_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_drip_at, Vector3)
@@ -147,6 +149,7 @@ public:
 	float terrain_lee_at(const Vector3 &p_position) const;
 	float rainfall_at(const Vector3 &p_position) const;
 	float snowfall_at(const Vector3 &p_position) const;
+	float smoke_at(const Vector3 &p_position) const; // g/m2 of smoke particulate over the point (the haze layer)
 	float canopy_water_at(const Vector3 &p_position) const;
 	float canopy_wetness_at(const Vector3 &p_position) const;
 	float canopy_drip_at(const Vector3 &p_position) const;
@@ -160,6 +163,12 @@ public:
 	float surface_temperature_at(const Vector3 &p_position) const;
 	float ground_height_at(const Vector3 &p_position) const;
 	double time_scale() const;
+	// Below-cloud scavenging (washout) of particles in the air by falling rain and snow, 1/s: Lambda = a R^b
+	// (R mm/h of water). Fine smoke (PM2.5, accumulation mode) about 1e-5 at 1 mm/h (Laakso et al. 2003; Wang et
+	// al. 2010); coarse dust (> 10 um) about 3e-4 (Wang et al. 2010); snow about five times rain for the same water
+	// (Kyroe et al. 2009; Zhang et al. 2013). washout_at reads rainfall_at and snowfall_at.
+	static float washout_rate(float p_rain_mm_h, float p_snow_mm_h, bool p_coarse);
+	float washout_at(const Vector3 &p_position, bool p_coarse) const;
 };
 
 // Water: open water of every kind (sea, rivers, pools, live water, standing water on the ground). Several
@@ -174,6 +183,10 @@ public:
 	virtual void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) {}
 	virtual void contract_water_clear(uint64_t p_owner) {}
 	virtual void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) {}
+	// Suspended load (kg/m3): x mineral (silt, clay: brown), y ash and char (grey to black). Zero for clear water.
+	virtual Vector2 contract_water_sediment_at(const Vector3 &p_position) const { return Vector2(); }
+	// A load entering this water at the point (kg/s of each), from runoff, banks or a landslide; it carries it on.
+	virtual void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) {}
 	virtual ~WorldWaterProvider() {}
 };
 
@@ -194,6 +207,8 @@ protected:
 	GDVIRTUAL4(_disturb, uint64_t, Vector3, float, float)
 	GDVIRTUAL1(_clear, uint64_t)
 	GDVIRTUAL3(_impulse, Vector3, float, float)
+	GDVIRTUAL1RC(Vector2, _sediment_at, Vector3)
+	GDVIRTUAL3(_add_sediment, Vector3, float, float)
 
 public:
 	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -207,6 +222,10 @@ public:
 	void disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength);
 	void clear(uint64_t p_owner);
 	void impulse(const Vector3 &p_position, float p_radius, float p_strength);
+	// The water's suspended load at the point (kg/m3): x mineral, y ash and char; the shading clouds and darkens by it.
+	Vector2 sediment_at(const Vector3 &p_position) const;
+	// A load entering the water that answers at the point (kg/s of mineral and of ash); none there: it is lost.
+	void add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s);
 };
 
 // Fire: what burns where, for what it heats (snow, the surface water, the air) and chars.
@@ -217,6 +236,10 @@ public:
 	virtual Vector3 contract_fire_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s, the fire's indraft near the ground
 	virtual float contract_fire_stem_char_at(const Vector3 &p_position) const { return 0.0f; } // m, char a stem foot there took
 	virtual float contract_fire_burn_age_at(const Vector3 &p_position) const { return -1.0f; } // years since it last burnt there, -1 never
+	virtual float contract_fire_crown_scorch_at(const Vector3 &p_position) const { return 0.0f; } // m, crowns killed up to this height
+	virtual float contract_fire_water_repellency_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, burnt soil shedding rain
+	virtual void contract_fire_plumes(PackedVector4Array &r_plumes) const {} // appends its convection columns: (x, y, z of the base, convective heat W)
+	virtual void contract_fire_smoke(PackedVector4Array &r_sources) const {} // appends its smoke: (x, y, z, kg/s of particulate, its own real time)
 	virtual ~WorldFireProvider() {}
 };
 
@@ -225,6 +248,15 @@ class WorldFire : public RefCounted {
 
 	friend class WorldContracts;
 	LocalVector<WorldFireProvider *> providers;
+	// Burnt ground changes, for readers that cache burn_age_at() (regrowth): each report bumps the generation and
+	// logs the area; a reader asks for the union since the generation it last saw.
+	struct BurnChange {
+		uint64_t generation = 0;
+		Rect2 area;
+	};
+	static constexpr int BURN_LOG = 64;
+	uint64_t burn_generation = 0;
+	LocalVector<BurnChange> burn_log;
 
 protected:
 	static void _bind_methods();
@@ -234,6 +266,10 @@ protected:
 	GDVIRTUAL1RC(Vector3, _wind_at, Vector3)
 	GDVIRTUAL1RC(float, _stem_char_at, Vector3)
 	GDVIRTUAL1RC(float, _burn_age_at, Vector3)
+	GDVIRTUAL1RC(float, _crown_scorch_at, Vector3)
+	GDVIRTUAL1RC(float, _water_repellency_at, Vector3)
+	GDVIRTUAL0RC(PackedVector4Array, _plumes)
+	GDVIRTUAL0RC(PackedVector4Array, _smoke_sources)
 
 public:
 	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -250,6 +286,24 @@ public:
 	// Years since the ground at the point last burnt (game time), for regrowth: the most recent of any producer (a fire
 	// in play, an authored WorldBurnScar3D); -1 where it never burnt.
 	float burn_age_at(const Vector3 &p_position) const;
+	// How high the fire killed tree crowns over the point (m): Van Wagner's lethal scorch height of the front that
+	// passed, or a crown that burnt (1000). The most of any fire; 0 where none burnt.
+	float crown_scorch_at(const Vector3 &p_position) const;
+	// How water-repellent the fire left the soil at the point, 0..1 (1: it takes almost no rain in; the ground's
+	// infiltration falls by up to nine tenths). Fades over a year or two. The most of any fire; 0 where none burnt.
+	float water_repellency_at(const Vector3 &p_position) const;
+	PackedVector4Array plumes() const; // every fire's convection columns (x, y, z, convective heat W)
+	PackedVector4Array smoke_sources() const; // every fire's smoke (x, y, z, kg/s of particulate)
+	// Producers report where burn_age_at() changed (x, z in metres; a burn scar placed, moved or aged, ground a
+	// live fire burnt). Report as the ground burns, at most a few times a second (union the cells in between).
+	// WorldContracts::fire_burn_changed() reports to the built-in contract and any stub.
+	void burn_changed(const Rect2 &p_area);
+	uint64_t get_burn_generation() const { return burn_generation; }
+	// The union of the areas reported after generation p_since into r_area; false when the log no longer reaches
+	// back that far (read everything again). True with an empty r_area when nothing changed.
+	bool burn_changes_since(uint64_t p_since, Rect2 &r_area) const;
+	// The same for scripts and tests: {"complete": bool, "area": Rect2}.
+	Dictionary get_burn_changes_since(uint64_t p_since) const;
 };
 
 // Ground: the deformable ground's surface, soil and what lies on it (docs/ideas/world-contracts.md, Ground).
@@ -279,11 +333,22 @@ public:
 	virtual ~WorldGroundProvider() {}
 };
 
+// Runoff at world scale (the catchment routing, WeatherRunoff3D): a separate slot on the ground contract, since the
+// near ground (GroundSurface3D) and the land's drainage come from different producers.
+class WorldRunoffProvider {
+public:
+	// Loose material (kg) put on the runoff at a ground point since the caller's last call; the runoff carries it down
+	// its drainage and hands it to WorldWater.add_sediment where the flow reaches a river or lake.
+	virtual void contract_runoff_add_load(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) = 0;
+	virtual ~WorldRunoffProvider() {}
+};
+
 class WorldGround : public RefCounted {
 	GDCLASS(WorldGround, RefCounted);
 
 	friend class WorldContracts;
 	WorldGroundProvider *provider = nullptr; // the built-in contract's; a script stub overrides the virtuals
+	WorldRunoffProvider *runoff_provider = nullptr;
 
 	Dictionary _soil_at_bind(const Vector3 &p_position) const;
 
@@ -304,6 +369,7 @@ protected:
 	GDVIRTUAL1RC(float, _sand_at, Vector3)
 	GDVIRTUAL1RC(float, _ripple_at, Vector3)
 	GDVIRTUAL1RC(float, _blown_sand_at, Vector3)
+	GDVIRTUAL3(_add_runoff_load, Vector3, float, float)
 
 public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -322,6 +388,11 @@ public:
 	float sand_at(const Vector3 &p_position) const;
 	float ripple_at(const Vector3 &p_position) const;
 	float blown_sand_at(const Vector3 &p_position) const;
+	// Loose material washed off the ground at the point since the caller's last call (kg of mineral, of ash and char):
+	// the runoff carries it down its drainage into WorldWater.add_sediment where the flow reaches water. Dropped
+	// with no runoff producer. Callers: soil erosion, burnt ground's ash (PhysX).
+	void add_runoff_load(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg);
+	bool has_runoff() const { return runoff_provider != nullptr || get_script_instance() != nullptr; }
 };
 
 // Snow: the snowpack and lake ice (docs/ideas/world-contracts.md, Snow). Produced by SnowCover3D.
@@ -333,6 +404,9 @@ public:
 	virtual float contract_snow_surface_at(const Vector3 &p_position) const { return -Math::INF; } // m, the snow top with prints; -INF bare
 	virtual float contract_snow_crust_at(const Vector3 &p_position) const { return 0.0f; } // kPa a crust bears, 0 none
 	virtual Vector2 contract_snow_lake_ice_at(const Vector3 &p_position) const { return Vector2(); } // (m of lake ice, white share)
+	// Light-absorbing particles on the snow, as mg/m2 of black carbon equivalent (dust about 0.013 of its mass).
+	virtual void contract_snow_add_impurity(const Vector3 &p_position, float p_radius, float p_mg_per_m2) {}
+	virtual float contract_snow_impurity_at(const Vector3 &p_position) const { return 0.0f; }
 	virtual ~WorldSnowProvider() {}
 };
 
@@ -351,6 +425,8 @@ protected:
 	GDVIRTUAL1RC(float, _surface_at, Vector3)
 	GDVIRTUAL1RC(float, _crust_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _lake_ice_at, Vector3)
+	GDVIRTUAL3(_add_impurity, Vector3, float, float)
+	GDVIRTUAL1RC(float, _impurity_at, Vector3)
 
 public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_snow) counts
@@ -366,6 +442,11 @@ public:
 	float crust_at(const Vector3 &p_position) const;
 	// Lake ice: (thickness m, share of it that is white snow ice). Ice of 5 cm and more bears a walker.
 	Vector2 lake_ice_at(const Vector3 &p_position) const;
+	// Soot, ash and dust on the snow (light-absorbing particles), mg/m2 of black carbon equivalent: dust counts about
+	// 0.013 of its mass (mass absorption about 0.1 against 7.5 m2/g). Producers of dust settling on snow add it; the
+	// snow darkens and melts sooner. impurity_at: what shows at the surface.
+	void add_impurity(const Vector3 &p_position, float p_radius, float p_mg_per_m2);
+	float impurity_at(const Vector3 &p_position) const;
 };
 
 // A body as every system that feels bodies reads it: one reader instead of a copy in each.
@@ -390,6 +471,7 @@ class WorldContracts : public Object {
 	Ref<WorldGround> builtin_ground;
 	Ref<WorldGround> ground_override;
 	WorldGroundProvider *ground_provider = nullptr;
+	WorldRunoffProvider *runoff_provider = nullptr;
 	Ref<WorldWater> builtin_water;
 	Ref<WorldWater> water_override;
 	Ref<WorldFire> builtin_fire;
@@ -420,10 +502,13 @@ public:
 	static void unregister_weather(WorldWeatherProvider *p_provider);
 	static void register_ground(WorldGroundProvider *p_provider);
 	static void unregister_ground(WorldGroundProvider *p_provider);
+	static void register_runoff(WorldRunoffProvider *p_provider); // one at a time: the last registered answers
+	static void unregister_runoff(WorldRunoffProvider *p_provider);
 	static void register_water(WorldWaterProvider *p_provider);
 	static void unregister_water(WorldWaterProvider *p_provider);
 	static void register_fire(WorldFireProvider *p_provider);
 	static void unregister_fire(WorldFireProvider *p_provider);
+	static void fire_burn_changed(const Rect2 &p_area); // WorldFire.burn_changed() on the contract in use
 	static void register_snow(WorldSnowProvider *p_provider);
 	static void unregister_snow(WorldSnowProvider *p_provider);
 

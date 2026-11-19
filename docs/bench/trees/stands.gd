@@ -13,6 +13,7 @@ extends Node3D
 #   --inside          with --plot: the view from inside the stand, 70 m deep
 #   --deep            with --inside: from among the canopy trees, away from the stream
 #   --variants=N      meshes per species (default 1)
+#   --fire            build the fire band variants too (five meshes a species) and check their meta
 #   --region=path.png make_woodland() over a 6 km massif with its climate (placement only, no
 #                     meshes): the stands as belts on a hillshade
 #   --generated       with --region: a TerrainGenerator3D range (4 km, geology and soil) instead
@@ -39,7 +40,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"woodland", "NA woodland"]
+		"olive grove", "date oasis", "beetle spruce", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -62,6 +63,8 @@ func run(args: Dictionary) -> void:
 		gen.near_needle_range = 0.0
 	if args.has("no-near-leaves"):
 		gen.near_leaf_range = 0.0
+	# Fire band variants (five more meshes a species, trees.md 5ah) serve no placement check: off unless --fire.
+	gen.fire_variants = args.has("fire")
 	if args.has("region"):
 		use_generator = args.has("generated")
 		north_america = args.has("na")
@@ -188,6 +191,17 @@ func _stand_checks(only := -1) -> void:
 				if nm.ends_with("(%s)" % k):
 					regen[k] += n
 		print("  %d plants in %d ms (meshes and placement)" % [f.get_plant_count(), Time.get_ticks_msec() - t])
+		if gen.fire_variants:
+			# Each living tree species carries one variant per fire band after its living ones (world-links.md).
+			for s in sps.size():
+				var nm2: String = sps[s].resource_name
+				if nm2.ends_with("(stand)") or nm2.ends_with("(open)") or nm2.ends_with("(grove)"):
+					var bands := []
+					for m in sps[s].meshes:
+						if m != null and m.has_meta("tree_fire_band"):
+							bands.append(m.get_meta("tree_fire_band"))
+					_check(bands.size() == 5 and bands[0] == Vector2(0, 1) and bands[4] == Vector2(10, 20), "%s: fire band variants %s" % [nm2, str(bands)])
+					break
 		var cut := {"coppice": 0, "young coppice": 0, "pollard": 0}
 		for s in sps.size():
 			for k in cut:
@@ -199,6 +213,42 @@ func _stand_checks(only := -1) -> void:
 			_check(cut.pollard > 0 and regen.sapling == 0 and regen.log > 0, "wood pasture: %d lapsed pollards, no saplings (grazed), %d logs" % [cut.pollard, regen.log])
 		elif i == TreeGenerator.STAND_STONE_PINE:
 			_check(open_count > 0 and stand_count == 0 and regen.sapling > 0 and regen.log > 0, "stone pine parkland: %d open-grown umbrellas, %d saplings, %d logs" % [open_count, regen.sapling, regen.log])
+		elif i == TreeGenerator.STAND_OLIVE_GROVE:
+			# Old olive grove (trees.md, "Ancient olive"): pruned olives about 10 m apart, a tidy
+			# worked grove (no saplings or deadwood).
+			var olives := 0
+			for s in sps.size():
+				if String(sps[s].resource_name).ends_with("(grove)"):
+					olives += f.get_placements(s).size()
+			var per_ha := olives / (SIZE * SIZE / 10000.0)
+			_check(olives > 0 and per_ha > 40.0 and per_ha < 130.0 and regen.sapling == 0 and regen.log == 0, "olive grove: %d olives (%.0f a hectare), no saplings or logs" % [olives, per_ha])
+		elif i == TreeGenerator.STAND_DATE_OASIS:
+			# Date palm oasis (trees.md 5ai): tended grove palms in rows about 8 m apart, a few wild clumps,
+			# olives beneath, no deadwood.
+			var palms := 0
+			for s in sps.size():
+				if String(sps[s].resource_name).ends_with("(grove)"):
+					palms += f.get_placements(s).size()
+			var per_ha := palms / (SIZE * SIZE / 10000.0)
+			_check(palms > 0 and per_ha > 35.0 and per_ha < 220.0 and regen.log == 0, "date oasis: %d grove palms (%.0f a hectare), no logs" % [palms, per_ha])
+		elif i == TreeGenerator.STAND_BEETLE_SPRUCE:
+			# Spruce after bark beetle (trees.md 5aj): a red front and a grey core of killed spruce in spots,
+			# living spruce between; every killed variant carries its years since the attack.
+			var front := 0
+			var grey := 0
+			var tagged := true
+			for s in sps.size():
+				var nm3: String = sps[s].resource_name
+				if nm3.contains("(beetle front)"):
+					front += f.get_placements(s).size()
+				elif nm3.contains("(beetle grey)"):
+					grey += f.get_placements(s).size()
+				else:
+					continue
+				for m in sps[s].meshes:
+					var yrs: float = m.get_meta("tree_beetle_years", -1.0)
+					tagged = tagged and (yrs < 2.5 if nm3.contains("front") else yrs >= 2.5)
+			_check(front > 0 and grey > 0 and stand_count > 0 and tagged, "beetle spruce: %d red-front, %d grey, %d living spruce; variants tagged by stage" % [front, grey, stand_count])
 		elif i == TreeGenerator.STAND_POLLARD_ROW:
 			_check(cut.pollard > 0 and cut.pollard >= open_count, "pollard row: %d willow pollards, %d alders" % [cut.pollard, open_count])
 		elif i == TreeGenerator.STAND_COPPICE_STANDARDS:
@@ -707,6 +757,23 @@ func _render_plot(i: int, args: Dictionary) -> void:
 				var nm: String = biome.species[si].resource_name
 				if o.length() < 25.0 and not nm.begins_with("Hazel") and not nm.contains("sticks") and o.normalized().dot(-cam.global_transform.basis.z * Vector3(1, 0, 1)) > 0.6:
 					print("in view %.1f m: %s" % [o.length(), biome.species[si].resource_name])
+	if args.has("near"):
+		# --near=D: the first species' plant nearest the plot's centre, from D metres (default 7),
+		# eye at 1.7 m, aimed at 1.6 m on it (env SH sets the aim height).
+		var best_p := Vector3()
+		var best_d := 1e9
+		for pp in f.get_placements(0):
+			var dd := Vector2(pp.x, pp.z).length()
+			if dd < best_d:
+				best_d = dd
+				best_p = pp
+		var dist := float(args.get("near", "7"))
+		var e := best_p + Vector3(-0.6, 0, 0.8).normalized() * dist
+		e.y = valley.get_height(e) + 1.7
+		cam.position = e
+		cam.look_at(Vector3(best_p.x, valley.get_height(best_p) + float(OS.get_environment("SH") if OS.get_environment("SH") != "" else "1.6"), best_p.z))
+		cam.fov = 55.0
+		cam.far = 150.0
 	var cv := OS.get_environment("CAM").split(",")
 	if cv.size() >= 6:
 		# CAM="x,y,z,lx,ly,lz[,fov]" overrides the view (eye height over the ground at x, z).

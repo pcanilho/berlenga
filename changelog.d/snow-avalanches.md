@@ -1,0 +1,1 @@
+- Snow: slab avalanches. A metre of new snow on a steep slope releases by the stability index, runs out as a Voellmy flow that picks up snow on its way and piles debris blocks where it ran fast, and pushes what stands in its path; a trigger releases a slab on demand (`SnowCover3D.avalanches_enabled`, on by default; `SnowAvalanche3D.trigger`).

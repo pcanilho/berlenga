@@ -34,6 +34,7 @@
 #include "grass_field_3d.h"
 #include "plant_generator.h"
 #include "plant_species.h"
+#include "tree_bark_detail.h"
 #include "tree_generator.h"
 #include "tree_wind_3d.h"
 #include "vegetation_field_3d.h"
@@ -56,6 +57,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(LeafFall3D);
 	GDREGISTER_CLASS(GrassField3D);
 	GDREGISTER_CLASS(TreeGenerator);
+	GDREGISTER_CLASS(BarkDetail3D);
 	GDREGISTER_CLASS(TreeWind3D);
 	GDREGISTER_CLASS(PlantGenerator);
 	// Declared so terrain shaders using GrassField3D.get_ground_shader_code() compile without a field.
@@ -91,6 +93,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		// PhysXFireSpread3D's plant state (vegetation_fire.h); set only while a fire burns.
 		{ "fire_state_map", "sampler2D" },
 		{ "fire_char_map", "sampler2D" },
+		{ "fire_age_map", "sampler2D" }, // R: years since the ground there burnt / 2 (0 never), over fire_char_rect
 		{ "fire_char_rect", "vec4" },
 		{ "fire_wind_map", "sampler2D" },
 		{ "fire_wind_rect", "vec4" },

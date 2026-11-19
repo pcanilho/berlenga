@@ -2266,6 +2266,176 @@ at the foot. Regrowth internodes are 0.6 of the bush's, leaves 0.65 (hazel, fiel
 0.85 of it. Hawthorn corymbs are tighter (2.4 cm across), 16-32 cream flowers. A segment is now
 160-540k triangles at LOD 0.
 
+### 5ae. Desert shrubs (19 Nov; sand seas, for vegetation)
+
+Asked by vegetation for the sand seas (vegetation.md, "Arid ground"): three woody shrubs as
+`make_shrub_species` presets that it places by RULE_SAND_MOBILITY. Sand banks round them into
+nebkhas; that mound is vegetation's and sand's, not the tree's.
+
+Research:
+- **Calligonum comosum** (Danin 1996, *Plants of Desert Dunes*; Flora Palaestina; Tsoar 2005):
+  1-2 m, many zigzag woody stems from the base with whitish-grey bark that splits in shreds;
+  leafless, the photosynthesis in green jointed twiglets 2-10 cm, two to five from each node,
+  shed in the summer drought (the habit of Ephedra and Casuarina). Fruit an ellipsoid nut
+  8-12 mm with four ribs, each carrying two rows of branched bristles: a ball of bristles
+  15-25 mm, scarlet in April and May, drying to buff. Mobile to semi-stable dunes
+  (mobility 0-0.5); down to about 50 mm of rain.
+- **Retama raetam, white broom** (Zohary 1972; Danin 1996): a broad, rounded broom 1-3 m of
+  slender grooved switches, silky-silvery, erect then hanging at their ends; a few linear
+  leaves 3-8 mm on young shoots, soon gone. White flowers 10-12 mm, calyx purplish, crowding
+  the stems from January to March; small ovoid beaked pods, straw-coloured, not splitting.
+  Stable sand and wadi beds (0-0.35).
+- **Atriplex halimus, Mediterranean saltbush** (Le Houerou 1992; Walker et al. 2014): a dense,
+  much-branched, rounded shrub 1-2.5 m of silty, saline flats and coasts; leaves ovate to
+  rhombic, 2-4 cm, silvery grey from the salt bladders on both faces, matte, kept most of the
+  year; pale woody stems. Interdune flats (0-0.2).
+
+Built (PRESET_CALLIGONUM 46, PRESET_WHITE_BROOM 47, PRESET_SALTBUSH 48; `desert_shrub()`,
+taken by `scrub_shrub()` so young, mature, old, thicket and cushion forms all work):
+- Calligonum: PARAM_NEEDLES with `_add_jointed_twig` instead of a needle: three to five
+  three-sided segments, kinked at each joint, the joint swollen and brown, bowing down to the
+  tip, two or three to a node. Crown part NUT_CALLIGONUM: two stretched balls for the nut and 32
+  forked bristle triangles in eight rows; red to buff by day of year (days 85-215).
+- White broom: broom's flower and pod code with white petals, a purplish calyx and short
+  beaked pods (no split); green-silvery young switches; gravity bending 0.9 and twig droop for
+  the hanging ends. Far colour white in flower; get_leaf_season gives its flowering.
+- Saltbush: small grey leaves on many leaning stems, no light floor, a low leaf specular
+  (0.12, mealy) and a paler underside.
+- Habitats: hot deserts, aridity index from 0.02 (calligonum) to 0.05 (saltbush); no moss,
+  little lichen. make_shrub_species clears the climate rules anyway: vegetation sets them.
+- Bench: `--shrubs --presets=46,47,48 --sand` (sand-coloured ground), `--row=M` for row spacing;
+  `--shrubs --test` checks heights, white broom's season and calligonum's red fruit.
+  Frames: /mnt/project-files/fork/trees/arid/.
+- Not done: Calligonum's small flowers (March), saltbush's autumn fruiting spikes, the twiglets'
+  summer shedding.
+- Cost (vegetation's desert bench, 19 Nov: about 70k triangles a plant in view): calligonum's far mesh draws
+  each twiglet as one face twice as wide (a third of the prisms; the near mesh keeps them), its fruit thins
+  with distance as heath flowers do instead of leaving at LOD 1, 24 bristles a fruit; white broom's pods are
+  a 30-triangle lens; saltbush grows longer internodes and carries its leaves on fewer twigs (its twig
+  tubes were most of its triangles). Far meshes: calligonum 542k to 229k, white broom 289k to 218k (pods
+  in), saltbush 401k to 245k; coarsest levels 20-26k.
+- Near meshes (second pass, same bench: about 59k triangles a shrub after the first): every shrub's full
+  mesh gets a first LOD at 1.2 cm of error (about 8 m at 1080p) before TREE_LODS' 5 cm: stems as plain
+  tubes, twigs under 3 mm across left out, 70% of leaves, flowers and pods, survivors grown by 1/sqrt(0.7)
+  (Cook et al. 2007). Mature plants at that level: calligonum 767k to 512k, white broom 456k to 241k,
+  saltbush 497k to 322k. Raster at about 15 m, LOD threshold 0 against 1: mean difference 0.6/255.
+- Flowers and fruit spikes (19 Nov, leftovers): calligonum flowers February to April (bloom ramp 35-55-80-92), six
+  to twelve 3 mm white flowers with a red-green centre along each flowering twiglet, scattered (thin with distance);
+  far colour takes a quarter of the white. Saltbush carries leafless terminal panicles 6-14 cm from July, two to four
+  spike branches with clusters of three valve pairs every 11 mm, yellow-green in flower, cream-buff reniform valves
+  2-3 mm from September into the new year (Flora iberica; Le Houerou 1992), on a third of the upper tips, scattered.
+  Cost: saltbush far mesh at day 290 286k to 377k (LOD 1 base; thinning further out).
+
+### 5af. Needle cast after fire (19 Nov; PhysX's standing snags)
+
+Foliage a surface fire kills (browned up to the lethal scorch height, Van Wagner 1973) is not
+kept: scorched needles fall over the following months, most within the first year, and the
+needle cast mulches the burnt ground (Pannkuk and Robichaud 2003; Cram et al. 2015 on ponderosa
+pine). Built in the leaf and needle shader (_flutter_material's fire block): PhysXFireSpread3D's
+fire_age_map (R8, game years since the cell caught / 2, over fire_char_rect) gives the age; each
+killed leaf (fire_foliage_apply's scorch share, its leaf hash) is discarded once
+1 - exp(-age / 0.3 yr) passes a second hash: about 55% gone at three months, 96% at a year. Bare
+branches are left; crowns above the scorch height stay green. Leaves on trees the fire killed
+outright (TreeWind3D's snags) but above the scorch height are not cast yet (that needs the
+per-tree state in the shader). Bench: env FIRE_AGE=Y SCORCH=H on main.gd renders; frames
+/mnt/project-files/fork/trees/fire/.
+
+### 5ag. Trees the fire killed outright (19 Nov)
+
+A snag must not keep a green top. One mortality rule, VegetationFire::tree_killed (vegetation_fire.h, C++ and
+the same GLSL in MORTALITY_CODE), used by TreeWind3D's snags and by the leaf shader, so wood that weakens and
+foliage that dies always agree: Ryan and Reinhardt (1988), CVS from the crown's foliage profile (TreeGenerator's
+"tree_fire_crown" mesh meta and the leaf material's fire_crown_q / fire_crown_top / fire_dbh: heights over the
+foot below which 0-100% of the leaves sit by quartile, and the stem's diameter at 1.3 m), bark 4% of that
+diameter, a hash of the tree's world foot (16 cm cells) against P. The scorch height is read as the state map
+stores it (8 bits, truncated as Image::set_pixel does; the shader texelFetches the foot's cell), so CPU and GPU see
+the same number. A killed tree's spared foliage fades to red-brown over the first three months and is cast over
+the following year or two (1 - exp(-(age - 0.25) / 0.5)): the red stage of fire-killed conifers. TreeWind3D keeps
+its bone-area rule only for meshes without the meta (leafless ones). Frames: fire/snag-strip.png (scorch 13 m,
+0.05 / 0.3 / 1 year); storm bench --snag=0 and 8 as before (0 and 38 breaks at 18 m/s).
+
+### 5ah. Regrowth after fire (19 Nov; Paulo's pick)
+
+A generate-time variant, `TreeGenerator.fire_years` (-1 off; 0-30 years since the fire), for trees a fire left
+standing dead above ground. Placement (scene, vegetation) reads WorldFire.burn_age_at at the foot. Each preset has
+a fire response (`get_fire_response`, after Pausas 2004 and Paula et al. 2009, BROT):
+- EPICORMIC (cork oak; Catry et al. 2012): shoot clusters from stem and limb buds within months, every ~45 cm on
+  wood thicker than 3.5 cm, sunny side favoured, 0.25 m growing to 2 m by year 4; the cork chars thinly (char
+  fades over ~3 years) and a burnt cork oak is never drawn stripped (recently stripped stems die).
+- BASAL (holm oak, most broadleaves and resprouting shrubs; Moreira et al. 2009, Konstantinidis 2006): a clump
+  from the root collar between the root ridges, half a metre the first year, 1-2 m by year three, thinning.
+- SEEDER (maritime pine, gum rockrose; Tapias et al. 2001, Trabaud 1987): no regrowth on the snag; seedlings on
+  the ash bed from the first wet season, a flush by year two (serotinous cones open), self-thinning after year 3.
+  Pine seedlings are leaders with spiral needles, 10-30 cm a year; rockrose seedlings small bushes.
+- NONE (Scots pine, spruce, larch, fir, yew, beech, ...): the snag only.
+Shared: twigs under a radius that grows with years are pruned away (fine fuel burnt, then dropping), all old
+foliage removed, and the bark takes ragged char to ~45% of height (max 6 m), fading over ~7 years. The runtime
+mortality rule (5ag) skips these meshes' regrowth foliage (fire_crown cleared). Frames: fire/regrowth-strip.png
+(cork oak, holm oak, maritime pine, rockrose at 0.5 / 2 / 6 years), regrowth-holm-raster-pt.png.
+Docs round 2 (19 Nov): char black (0.022) and kept longer (fade 12 years, cork 6), lichen burnt off under it;
+charred, ember-grey and pale ash twigs lie round the snag (ash gone within a year); resprout leaves a light young
+green, seedlings lighter still and larger; BARK_SCALY (holm oak, spruce, fir, ...) cracks at two scales in patches
+with per-scale height, tilt and tone (the holm collar read as paving). In PT a clump in the stem's shadow is
+near black: sky light only, the same as any shaded leaves.
+
+Fire band variants (19 Nov, vegetation's contract, world-links.md): `fire_variants` (on) makes every placed living
+species (open, stand, understory, old, grove forms) carry five more meshes after its living ones, grown at
+fire_years 0.5, 2, 4.5, 8 and 15 from the first variants' seeds, with mesh meta `tree_fire_years` and
+`tree_fire_band` (0-1, 1-3, 3-6, 6-10, 10-20). generate() sets both metas whenever fire_years >= 0. Near meshes of
+a band variant are grown burnt too (near_living). Stands bench: off unless --fire (beech stand 17 s, 38 s with).
+
+### 5ai. Date palm and oasis (19 Nov; Paulo's pick)
+
+PRESET_DATE_PALM (Phoenix dactylifera; Chao and Krueger 2007, Zaid and de Wet 2002, Tomlinson 1990), laid out
+by _grow_date_palm as the dwarf fan palm is (no shoot growth). No trunk for five years, then about 30 cm a year
+(40 years: 15 m); fronds 1.4-4.6 m by age, 22-70 green on golden-angle insertions, spear upright, old ones
+arching below level (five nodes a frond: wind bones, colliders). _date_palm_frond: rachis tube, acanthophyll
+spines on the lower fifth (LOD 0), induplicate V-folded pinnae 45-95 a side in groups of three planes
+(elevations 0.8 / 0.3 / -0.12 rad), forward-pointing, longest at mid-frond; each pinna a sized part (whole in
+every LOD). _date_palm_trunk: one leaf base ("boot") per frond on the golden-angle spiral, so they fall in the
+8/13 diamond lattice; flattened wedges with lighter cut faces greying down the trunk, sheath fibre under the
+crown; on a wild palm the lowest bases worn short or fallen. Wild palms keep a skirt of dead fronds and
+offshoots at the foot (PARAM_BASAL_SPROUTS, PARAM_STEMS for clumps); `grove_vase` = tended (FORM_GROVE): skirt
+and offshoots cut, bases trimmed square. Flowers February-April (cream strand brooms from split spathes);
+female palms (all in a grove) hang 8-10 bunches on orange stalks bowed by the fruit: dates green to yellow or
+red (khalal, a third of seeds red) to amber-brown, cut by day 300 in a grove. STAND_DATE_OASIS: tended palms
+8 m apart (77 a hectare on the bench valley), wild clumps at 0.12, olives beneath at 0.15. Fire: palms get
+char only (FIRE_NONE, no prune). Frames: fork/trees/palm/ (date-palm, -trunk, -crown-dates, -raster-pt,
+date-oasis). Cost: 312k triangles a grown palm, 0.9 s.
+
+Docs round 1 (19 Nov): the oasis read as clones and the crowns as fuzz. Now each variant draws its own age
+(grove 9-70 years, wild 8-90, so 2-20 m), wild palms lean up to 0.28 rad (tended 0.09) and grow 1-4 stem
+clumps; wild palms only within 18 m of water (RULE_WATER_DISTANCE, 10 m fade) and the grove in patches
+(patch_scale 35 m, cover 0.75). Fronds read at range: pinnae narrower (half width 1.25 cm), rachis paler
+and thicker at the base, groups opened to 0.55 / 0.22 / -0.05 rad so sky shows between them. Dead-frond skirt
+darker (0.13, 0.105, 0.08). PT note: with dates on, some pinnae show date red in PT only; the leaf
+surface's vertex colours hold no red (scanned), so the path tracer reads crown_parts colours for some leaf
+triangles (engine, reported).
+
+### 5aj. Bark beetle kill and beetle spruce stands (19 Nov; Paulo's pick)
+
+Technique: the bark beetle outbreak phases of remote sensing and forest health surveys (Hicke et al. 2012, Forest
+Ecology and Management 271; Wulder et al. 2006; Wermelinger 2004, Ips typographus) mapped onto the deadwood classes
+(5). `beetle_years` on a conifer: under 0.6 green attack (crown green, a duller green late; resin beads on the stem
+from 0.6 m to three quarters of the height, about 25 a metre, milky white within days; pitch tubes on pines; boring
+dust as a red-brown tint in the bark furrows of the low stem and grain drifts against the root collar); 0.6-2.5
+red (decay class 1: needles fade yellow-green to fox red to brown and drop from year 1, 90% by 2.4; woodpecker
+flaking, bark_peel x1-4); 2.5-6 grey (class 2, bark shed in sheets at 2.2x the usual rate: the galleries cut it
+from the wood); 6-12 class 3 (top broken); 12 on a stub. Signs are placed on the bark's real surface (max radius
+per 10 cm x 48 bins from outward-facing bark vertices), so they sit on the plates and the flare. Mesh meta
+`tree_beetle_years`.
+
+STAND_BEETLE_SPRUCE (Kautz et al. 2011, infestation spots in the Bavarian Forest): one patch mask (scale 70 m,
+cover 0.12 + 0.06 a year of `beetle_outbreak`, default 6): a red front in a 5 m band along the spot edges
+(patch_ring; front variants 0.15-2.4 years), a grey core inside (2.6 years to the outbreak's age; canopy opacity
+0.15 so pioneers come up), living spruce on the inverted mask, beetle logs in old spots from 5 years, rowan, birch
+and elder in the light. Beetle species carry no fire bands. Frames: fork/trees/beetle/.
+
+Far mesh trim (19 Nov, vegetation's oasis bench): far meshes (past near_leaf_range) leave out the displaced bark
+relief and the LOD 0-only crown parts, and fold date palm pinnae as one V of two triangles: wild palm clump 668k
+to 318k, tended 227k to 127k. Dropping the oleaster's twigs between 1 mm and 1 cm (3M of its 4.9M) lit its crown
+grey-blue in PT (they shade the crown's inside en masse), so they stay; its bulk is about half a million shoots.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
@@ -2854,6 +3024,17 @@ Paulo's rule: any repeated geometry carries good-quality noise so the repeat doe
 
 ### Polish round (18 Nov evening)
 - Maritime pine bole (docs: sheeny, low contrast): plate roughness 0.95-1 (scanned pine bark sits at 0.9-1), furrow albedo 0.16 (was 0.3), plates a little paler. Frames pine-r9-bole*, raster vs PT crop pine-r9-crop-raster-vs-pt.png (PT keeps the detail).
+- Maritime pine plates (19 Nov; docs: many plates are pointed, feather-like tongues stacked in rows; better as irregular, broken plate outlines). The stretched Voronoi made every cell a lens, its ends meeting in points, and the merged end walls stacked the lenses into feathers. Plates now come from fracture columns (Lefebvre and Neyret 2002, Synthesizing bark: the outer layer tears along the stem into long fissures first, then the strips between break across): three wavy fissures a tile, each wandering round its own place so columns differ in width, some stretches unopened so the plates either side join there and the cross breaks end on the fissure in T junctions; each column breaks across once or twice a tile at its own phase and slope, the breaks narrower than the fissures. Plates are blunt-ended, irregular rectangles about twice as long as wide, staggered against their neighbours. The domain warp, ragged rims, V furrows and scales on the face are as before. Frames pine-r13-bole.png, pine-r13-base.png, raster vs PT crop pine-r13-crop-raster-vs-pt.png.
+- Maritime pine round 14 (19 Nov; docs on r13: cross breaks lined up in rows across neighbouring columns; the base flare's bark smeared, with thin hard black lines; suggestion: warm red-brown in the fissures and on fresh faces). Rows: with three columns a tile, every third column was the same column, breaks at the same heights. The tile is now 1.8 m with six columns (1024 texels, noise frequencies doubled, so the same plate size), each fissure on its own noise lattice; cross breaks sit in four slots a tile, each slot's break shifted up to a quarter slot and missing in half of them (one a tile kept), so plates run 1.5 to 4 widths and never line up. A fissure that shuts narrows to its end, and cross breaks taper out toward it (both hard switches drew straight steps). Hard lines: the scales on the plate faces stood at their own heights with a one-texel step at merged walls; every wall is now a soft groove the scales sink into. Flare: root_collar took the relief off before sweeping the bark out along each root and put the same offsets back after re-laying the UVs by arc length, so the geometry kept the stem's furrows stretched along the root under a texture that no longer matched; the relief is now resampled from the new UVs, and the soil-line fade is 7 cm (was 20; the low flare read flat). Colour: the red-brown floor runs up the lower fissure walls, and patches of plate face where the outer scales flaked show the fresher red-brown layer. Frames pine-r14-bole.png, pine-r14-base.png, pine-r14-crop-raster-vs-pt.png; oak foot checked (furrows continue onto its roots).
+- Maritime pine round 15 (19 Nov; docs on r14: the root flare still swirled with no plates; hard dark slash notches). Flare: root_collar re-laid v by arc length down each column and spread u across each ring separately, so where a root's flank turns the two sheared and the tile swirled. The swept vertices' UVs are now solved together (a guided parameterization: each grid edge maps to its own length round the stem and up the surface at the stem's own tile scale, Gauss-Seidel, unswept rings fixed; cf. Ray et al. 2006), the scale measured on the stem just above the swept rings (the tube runs on to the shoot tip, where one tile goes round a twig). Fissures now run down and out along the roots. Notches: cross breaks are shallow, wide grooves (a third of a fissure's depth), and a fissure shallows as it shuts, so neither ends in a thin deep slash. The two marks left in the bole frame are dead branch stubs (natural pruning, trees.md 5f), not bark. Frames pine-r15-bole.png, pine-r15-base.png, pine-r15-crop-raster-vs-pt.png.
+- Maritime pine round 16 (19 Nov; docs on r15: hollow "o" rings on the bole, stacked shells at the flare's edge, the deepest fissures flat black). The rings were not branch stubs after all (round 15 was wrong): they were fissures that shut over a short stretch, filled to plate level between two hard steps. A fissure now counts as farther by 0.3 of how shut it is (was 1.5, which closed it fully at a tenth shut) and shuts over a wider noise band, so it tapers out into the plate. The black was lighting, not colour (unshaded, the floor is warm brown): the normal map was taken from the full heights while the mesh already carries the furrows, so their walls were tilted twice, past facing each other, under raster and the path tracer alike. Maritime pine's normal map is now taken from the heights less 0.6 of a box-blurred copy about the mesh's grid size (a high-pass, as detail normal maps over displaced meshes are baked); fully high-passed, the furrows read as painted stripes. The floor's albedo is a little lighter (0.3, was 0.16). Flare: the bark relief laid back on the swept surface now fades over 35 cm above the soil down a root's flank (12 cm on the stem's wall); full furrows cut along the steep flank's normal stood out of its silhouette as thin stacked sheets and stepped the soil line. Frames pine-r16-bole.png, pine-r16-base.png, pine-r16-crop-raster-vs-pt.png.
+- Maritime pine round 17 (19 Nov; docs on r16: the plates were gone, long unbroken ridges like oak; an even orange band down both furrow walls read as painted). The r16 high-pass took the cross breaks' shading with the furrows'. The blurred slope is now taken off only where the blurred height is low (the wide furrows, where the mesh carries the walls), weighted 0.9 there and nothing on the plates, so the narrow cross breaks keep their full shading; slopes are blended, not heights (a weight varying over the heights drew ridges of its own). Cross breaks are deeper again (down to 0.12 open, 1.8 crack widths wide) and fissures shut over the r14 band again (the gradual 0.3 closure kept). The warm layer shows only deep in the crack (open under 0.12), broken along it by noise, at 0.75. Frames pine-r17-bole.png, pine-r17-base.png, pine-r17-crop-raster-vs-pt.png.
+- Maritime pine round 18 (19 Nov; docs on r17: plates as stamped round discs in vertical chains; black streaks back in the deepest fissures). The discs were the plate-face scales (a regular Voronoi lattice, each scale domed by its soft rim), which the r16 high-pass had hidden: they are now a faint texture (0.035, was 0.12), and each plate (a column between two cross breaks) is instead a flat facet tilted its own way and lifted to its own level, so the plates read as flat-topped, angular slabs. Cross breaks are narrow, sharp cracks (1.1 crack widths, was 1.8). The normal map's high-pass now follows a mask of the vertical fissures and their walls (stored as the plates are built), weight 0.85, so it reaches the deepest fissures (the blurred-height test of r17 missed them) and never the cross breaks. Frames pine-r18-bole.png, pine-r18-base.png, pine-r18-crop-raster-vs-pt.png.
+- Maritime pine round 19 (19 Nov; docs on r18: plates 1.5 to 4 widths long lined up into vertical strips). Six cross-break slots a tile (was four), each missing with chance 0.27 (was a half), one a column always kept: plates run mostly 1 to 2.5 widths, the odd one longer, their ends staggered by each column's own phase and jitter. Frames pine-r19-bole.png, pine-r19-base.png, pine-r19-crop-raster-vs-pt.png.
+- Maritime pine round 20 (19 Nov; docs on r19: shorter plates read as a brick grid, soft pillows in straight columns with breaks lined up across them). Each cross break now runs at its own angle (up to about 35 degrees either way) and bends a little across its plate, its distance measured square to it; the fissures are set off further from even spacing (plates two to three times as wide as their neighbours) and swing slowly over a metre or so, so columns narrow, widen and touch. Plate walls are steeper (open^0.45, was ^0.7) and cross breaks narrower (0.7 crack widths), so plates have crisp rims rather than pillow edges. Frames pine-r20-bole.png, pine-r20-base.png, pine-r20-crop-raster-vs-pt.png.
+- Maritime pine round 21 (19 Nov; docs on r20: breaks one above another in a column often slanted the same way, a faint herringbone). Each break's slant sign now comes from its own well-mixed hash (murmur3; the linear bark_hash correlated neighbouring slots), the angle up to 35 degrees either way. Frames pine-r21-bole.png, pine-r21-crop-raster-vs-pt.png.
+- Maritime pine round 22 (19 Nov; docs on r21, polish: three parallel slashes in a row in one column). No more than two present breaks running in a column slant alike: the third flips, twice round the tile's slots so the cap holds across the seam. Frames pine-r22-bole.png, pine-r22-crop-raster-vs-pt.png.
+- Saltbush panicles on the far mesh (vegetation desert bench, 19 Nov: +0.5 M primitives on panicle days): beyond the near range each spike branch is two crossed slivers in the fruit tone, no stalks, about a tenth of the near panicle; full panicles on the near mesh only. Far mesh at day 290 377k to 294k (286k without panicles); near and far side by side at 60 m match.
 - Cork thin limbs (docs: busy under 15 cm): a limb thinner than the bark tile carried the whole tile squeezed both ways into a fine net. Young cork on thin limbs splits in long shallow grooves along the limb (Natividade 1950; Pereira 2007), so for cork the tile keeps more of its length along the stem: v per tile length = sqrt(squeezed circumference x tile). Crotch blends, the slid weld and the lichen UV2 use the same length. Frame cork-r14-split.png (trunk unchanged).
 - Hedge (docs: hard top corner, box lower half thin to twigs): the envelope is a rounded box (Quilez rounded-box SDF idea), the segment ends rounded at 0.6 of the top radius (in a row the next segment covers them); box variants keep a 12-20% batter, as hedge guidance cuts every hedge narrower at the top so the low face sees the sky (Hedgelink; Natural England TIN 5). Frame hawthorn-hedge-face-r3.png.
 
@@ -2873,3 +3054,15 @@ Paulo's rule: any repeated geometry carries good-quality noise so the repeat doe
 - FORM_LAID_HEDGE / SHRUB_LAID_HEDGE (make_shrub_species, segment meta like SHRUB_HEDGE). Grown out unclipped for 8-11 years, then `_lay_hedge()` in the year laid_since (1-5) before the end: the thickest 70% of stems are pleached (each turned about a new foot spread along the row, staggered either side, so its foot-to-tip axis lies along +x at 28-40 degrees), the rest cut to stubs. Brushing up removes anything more than 35 cm off the line, below 15 cm, above the binders (1.4 m) or past the next segment. Buds facing the ground die; sprout buds go on the stools and every 25 cm along each pleacher's upper side.
 - After laying the regrowth keeps to a narrow envelope (0.8 m deep, 1.9-2.3 m tall, slight batter, side-trimmed as aftercare). Stems keep their own feet through gravity bending (root children no longer snap back to the root's start once laid).
 - Stakes every 42-50 cm (7-sided poles, 1.25-1.35 m) and two or three hazel binders twisted round their tops, passing in front of one stake and behind the next, in the bark surface (`_laid_hedge_props`). Bench: `--shrubs --forms=6`; frames hedges/laid-r3-close.png.
+
+### Ancient olive grove (built 19 Nov)
+- FORM_GROVE on PRESET_WILD_OLIVE, STAND_OLIVE_GROVE ("Olive Grove": one species "Olive (grove)", 10 m spacing, about 55 a hectare on the bench plot; no saplings or deadwood). Grid planting is the field's to lay out (vegetation), not done yet.
+- Vase pruning (`_vase_prune`, Barranco et al. 2008, the vaso): once the stem stands over 1.7 m (year 4+), the 3-4 thickest limbs from 0.6-1.6 m at least 70 degrees apart are kept, the leader cut above the highest, every other shoot on the stem and any sucker removed. Every other year `_grove_thin` takes young upright shoots within a metre of the axis (the open centre), shoots off the clear stem and everything over grove_top (4.5-6 m, noisy edge).
+- Fruiting wood is kept all round: no bud light floor, no shedding, leaves 1.6x per internode for 4 years: a dense grey-green crown.
+- Split trunk (`_split_trunk`, Arnan et al. 2012 on veteran olives): after growth the stem below the scaffolds is rebuilt as 2-4 strands (variant 4 of every 4 stays whole), each on its own foot on a ring 1.3 stem radii out, turning 0.6-1.3 rad as it rises to its group of scaffolds (grouped by azimuth from the widest gap), bulging at mid-height; the thickest scaffold of a group runs on from the strand. Strands reuse node slots that come before the scaffolds (parents before children). `own_feet` keeps the strands' feet through gravity bending. veteran 0.4-0.8 adds the hollows, burls and rot.
+- Bench: `--stands --stand-test=14`, frames `--plot=14 --raster --near=D` (env SH aim height); olive/olive-r3.png.
+
+## Next-round options (card 19 Nov)
+**Regrowth after fire.** The woody side of the fire loop (PhysX fire_age_map; vegetation does burnt ground and herbs). Resprouters and seeders differ (Pausas and Keeley 2014, Pausas et al. 2004): cork oak resprouts from epicormic buds along the stem and limbs within a year, its crown back in 2-3 (Catry et al. 2012); holm and kermes oak, lentisk, heather and gorse resprout from the root crown or lignotuber, a dense bush of shoots round the burnt base; maritime and Aleppo pine are seeders, killed outright, their serotinous cones opening on the snag and a flush of seedlings on the ash bed in the first 1-3 years (Tapias et al. 2001). Build: an epicormic shoot pass on killed-crown trees of resprouting species keyed to years since fire, basal resprouts on burnt shrubs, cones open on pine snags and a seedling ring placed through make_species. Ref: Pausas and Keeley 2014 (New Phytologist), Catry et al. 2012, Moreira et al. 2009.
+**Date palm oasis.** Phoenix dactylifera for the sand seas the desert shrubs already serve: clumping trunks with offshoots at the base, the old leaf bases (a knobbly diamond lattice of cut petiole stubs), crowns of 100-120 pinnate fronds 4-6 m long with spines at the base, hanging date bunches by season; oasis layout with irrigated rows and wild clumps by springs (Zohary and Hopf 2000; Chao and Krueger 2007, HortScience). Build on the dwarf fan palm code (fans become pinnate fronds; leaf-base stubs as real geometry; offshoot clumps).
+**Beetle-killed conifer stands.** The red, grey and fallen phases of bark beetle outbreaks (Ips typographus on spruce, Dendroctonus in pines): needles fade yellow-red in year 1, drop by year 3 leaving grey snags with bark peeling in sheets, then snags fall over a decade (Hicke et al. 2012; Wermelinger 2004). Build on the killed-tree state from the fire round: a per-stand outbreak age and patch mask instead of the fire map, bark loss and woodpecker flaking on snags, fallen stems at the matching decay class. Fits the open world's large forests.

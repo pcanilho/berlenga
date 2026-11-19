@@ -32,6 +32,7 @@
 
 #include "snow_cover_3d.h"
 
+#include "snow_avalanche_3d.h"
 #include "snow_bodies_3d.h"
 #include "snow_lake_ice_3d.h"
 #include "snow_surface_3d.h"
@@ -52,6 +53,7 @@
 #include "core/templates/sort_array.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/light_3d.h"
+#include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
 #include "scene/resources/3d/world_3d.h"
 #include "servers/physics_3d/physics_server_3d.h"
@@ -176,7 +178,7 @@ void SnowCover3D::_allocate() {
 	cell_canopy.fill(0.0f);
 	cell_canopy_load.resize(nn);
 	cell_canopy_load.fill(0.0f);
-	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet }) {
+	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in }) {
 		f->resize(nn);
 		f->fill(0.0f);
 	}
@@ -310,7 +312,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
 	// where there is one, else the state of the nearest cell that was inside it.
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice };
+	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
@@ -621,6 +623,9 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				cell_white_ice.write[i] = MIN(cell_white_ice[i], ice);
 			}
 			if (ice < ICE_HOLD) {
+				if (cell_lap.size() == n * n) {
+					cell_lap.write[i] = cell_lap_deep.write[i] = cell_lap_cover.write[i] = 0.0f;
+				}
 				cell_swe.write[i] = 0.0f;
 				cell_liquid.write[i] = 0.0f;
 				cell_density.write[i] = 100.0f;
@@ -654,8 +659,36 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			alb += (ALBEDO_FRESH - alb) * MIN(snow / SNOW_REFRESH_MM, 1.0f);
 		}
 
+		// Impurities (light-absorbing particles): deposition lands on the surface; new snow buries what is there
+		// (its depth over it); the melt brings buried particles back up, as they stay
+		// behind while the snow melts around them (melt amplification, Doherty et al. 2013).
+		const bool lap_on = cell_lap.size() == n * n;
+		float lap = 0.0f, lap_deep = 0.0f, lap_cover = 0.0f;
+		if (lap_on) {
+			lap = cell_lap[i];
+			lap_deep = cell_lap_deep[i];
+			lap_cover = cell_lap_cover[i];
+			const float d_new = cell_new_depth[i];
+			if (d_new > 0.0f && lap + lap_deep > 0.0f) {
+				// One buried layer: the surface's and the older buried particles under their new covers, at the
+				// cover that shows as much of them as the two would (e-folding 2 cm in snow).
+				const float total = lap + lap_deep;
+				const float shown = lap * Math::exp(-d_new / 0.02f) + lap_deep * Math::exp(-(lap_cover + d_new) / 0.02f);
+				lap_deep = total;
+				lap = 0.0f;
+				lap_cover = shown > total * 1e-6f ? -0.02f * Math::log(shown / total) : lap_cover + d_new;
+			}
+			if (impurities && cell_lap_in.size() == n * n) {
+				lap += cell_lap_in[i] * in.dt_h;
+			}
+		}
+		const float lap_drop = lap_on ? impurity_albedo_drop(lap + lap_deep * Math::exp(-lap_cover / 0.02f)) : 0.0f;
+
 		if (swe <= SWE_MIN) {
 			// Bare ground: rain passes through.
+			if (lap_on) {
+				cell_lap.write[i] = cell_lap_deep.write[i] = cell_lap_cover.write[i] = 0.0f;
+			}
 			cell_swe.write[i] = 0.0f;
 			cell_liquid.write[i] = 0.0f;
 			cell_density.write[i] = 100.0f;
@@ -695,7 +728,7 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				}
 				g = in.direct_normal * (MAX(normal.dot(in.sun_dir), 0.0f) * vis + DIFFUSE_SHARE * in.sun_dir.y);
 			}
-			const float m = (melt_temperature_factor * t + melt_shortwave_factor * (1.0f - alb) * g) * in.dt_h;
+			const float m = (melt_temperature_factor * t + melt_shortwave_factor * (1.0f - MAX(alb - lap_drop, 0.05f)) * g) * in.dt_h;
 			surface_melt = CLAMP(m, 0.0f, MAX(swe - liq, 0.0f));
 			liq += surface_melt;
 		}
@@ -781,6 +814,21 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		cell_density.write[i] = CLAMP(rho, 30.0f, 917.0f);
 		cell_albedo.write[i] = alb;
 		cell_runoff.write[i] = in.dt_h > 0.0f ? runoff / in.dt_h : 0.0f;
+		if (lap_on) {
+			if (swe <= SWE_MIN) {
+				lap = lap_deep = lap_cover = 0.0f; // the snow is gone: the particles are on the ground
+			} else if (surface_melt > 0.0f && lap_deep > 0.0f) {
+				lap_cover -= surface_melt / MAX(rho, 30.0f);
+				if (lap_cover <= 0.0f) {
+					lap += lap_deep;
+					lap_deep = 0.0f;
+					lap_cover = 0.0f;
+				}
+			}
+			cell_lap.write[i] = lap;
+			cell_lap_deep.write[i] = lap_deep;
+			cell_lap_cover.write[i] = lap_cover;
+		}
 	}
 }
 
@@ -1016,6 +1064,183 @@ void SnowCover3D::_update_begin(double p_weather_dt, bool p_blocking) {
 	const int from = int(update_count % uint64_t((resolution + band - 1) / band)) * band;
 	_refresh_cell_inputs(from, MIN(from + band, resolution), nullptr);
 	_refresh_fire();
+	_refresh_lap();
+	if (!ice_breaks.is_empty()) {
+		_cut_ice(cell_ice, cell_white_ice);
+		ice_breaks.clear(); // the cells carry the holes now (and grow ice in them again by Stefan's law)
+	}
+}
+
+// Floating ice's bearing capacity: Gold's (1971) P = A h^2, P in kg and h in cm, from his survey of loads on lake and
+// river ice: about 3.5 for routine safe loads and failures from about 10 (USACE EM 1110-2-1612; Masterson 2009).
+// White (snow) ice carries about half of clear ice, and ice at its melting point about half again.
+float SnowCover3D::ice_breaking_load(float p_ice, float p_white_share, float p_air_celsius) {
+	const float h = MAX(p_ice, 0.0f) * 100.0f * (1.0f - 0.5f * CLAMP(p_white_share, 0.0f, 1.0f));
+	const float warm = Math::lerp(1.0f, 0.5f, Math::smoothstep(-2.0f, 1.0f, p_air_celsius));
+	return 10.0f * h * h * warm;
+}
+
+void SnowCover3D::_cut_ice(Vector<float> &r_ice, Vector<float> &r_white) const {
+	const int n = resolution;
+	if (r_ice.size() != n * n || !origin_valid) {
+		return;
+	}
+	const float cs = _cell_size();
+	float *ice = r_ice.ptrw();
+	float *white = r_white.size() == n * n ? r_white.ptrw() : nullptr;
+	for (const IceBreak &b : ice_breaks) {
+		const int x0 = MAX(int(Math::floor((b.center.x - b.radius) / cs)) - origin_cell.x, 0);
+		const int x1 = MIN(int(Math::floor((b.center.x + b.radius) / cs)) - origin_cell.x, n - 1);
+		const int z0 = MAX(int(Math::floor((b.center.y - b.radius) / cs)) - origin_cell.y, 0);
+		const int z1 = MIN(int(Math::floor((b.center.y + b.radius) / cs)) - origin_cell.y, n - 1);
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const Vector2 c((origin_cell.x + x + 0.5f) * cs, (origin_cell.y + z + 0.5f) * cs);
+				if (c.distance_to(b.center) <= b.radius + 0.5f * cs) {
+					ice[z * n + x] = 0.0f;
+					if (white) {
+						white[z * n + x] = 0.0f;
+					}
+				}
+			}
+		}
+	}
+}
+
+// Main thread, each physics frame: a body resting on the ice heavier than it bears breaks through. The hole is the
+// body's size and a little more; it shows and stops bearing at once and freezes over again from open water.
+void SnowCover3D::_ice_load_step() {
+	if (driven || owner || !lake_ice_enabled || !is_inside_tree() || !origin_valid || pub.ice.size() != resolution * resolution) {
+		return;
+	}
+	const float air = WorldContracts::weather()->has_provider() ? WorldContracts::weather()->air_temperature_at(_follow_position()) : -5.0f;
+	bool broke = false;
+	for (Node *n : get_tree()->get_nodes_in_group(SNAME("world_contact"))) {
+		const Node3D *n3 = Object::cast_to<Node3D>(n);
+		if (!n3 || !n3->is_visible_in_tree()) {
+			continue;
+		}
+		const WorldContactBody b = WorldContracts::describe_body(n3);
+		if (b.mass <= 0.0f) {
+			continue;
+		}
+		const float ice = get_ice_thickness_at(b.center);
+		const float water = get_water_level_at(b.center);
+		if (ice < 0.003f || !(water > -1e29f)) {
+			continue;
+		}
+		const float top = water + SnowLakeIce3D::freeboard(ice);
+		if (b.center.y - b.half_height - top > 0.3f) {
+			continue; // above the ice, not on it
+		}
+		const float white = get_white_ice_thickness_at(b.center) / MAX(ice, 1e-4f);
+		if (b.mass > ice_breaking_load(ice, white, air)) {
+			IceBreak br;
+			br.center = Vector2(b.center.x, b.center.z);
+			br.radius = b.radius + 0.3f;
+			ice_breaks.push_back(br);
+			ice_break_count++;
+			broke = true;
+		}
+	}
+	if (broke) {
+		_cut_ice(pub.ice, pub.white_ice);
+		if (lake_ice) {
+			lake_ice->rebuild();
+		}
+	}
+}
+
+float SnowCover3D::impurity_albedo_drop(float p_mg_per_m2) {
+	return 0.35f * (1.0f - Math::exp(-MAX(p_mg_per_m2, 0.0f) / 15.0f));
+}
+
+void SnowCover3D::add_impurity(Vector3 p_position, float p_radius, float p_mg_per_m2) {
+	if (p_mg_per_m2 <= 0.0f || impurity_drops.size() >= 1024) {
+		return;
+	}
+	ImpurityDrop d;
+	d.center = Vector2(p_position.x, p_position.z);
+	d.radius = MAX(p_radius, 0.0f);
+	d.mg = p_mg_per_m2;
+	impurity_drops.push_back(d);
+}
+
+float SnowCover3D::get_impurity_at(Vector3 p_position) const {
+	if (world && !get_map_rect().has_point(Vector2(p_position.x, p_position.z))) {
+		return world->get_impurity_at(p_position);
+	}
+	if (pub.lap.size() != resolution * resolution) {
+		return 0.0f;
+	}
+	return MAX(_sample(pub.lap, Vector2(p_position.x, p_position.z)), 0.0f);
+}
+
+// Dirty snow (docs/ideas/world-links.md): the particles settling on the pack, per hour of weather time, from what the
+// contracts report; read on the main thread every few seconds (smoke and burn scars change slowly). Smoke haze: dry
+// deposition of its particulate at about 0.2 cm/s from the layer's 2 km (Seinfeld and Pandis), of which about a tenth
+// is black carbon. Burnt forest: charred bark and debris falling from the burnt trees, about 2 mg/m2 a day of black
+// carbon equivalent the first winter, fading over years since the burn (Gleason et al. 2013; Gleason and Nolin
+// 2016), more under a closed canopy. Producers of dust add theirs through add_impurity (drops applied here).
+void SnowCover3D::_refresh_lap() {
+	const int n = resolution;
+	if (cell_lap.size() != n * n || cell_ground.size() != n * n || driven) {
+		return;
+	}
+	const float cs = get_extent() / n;
+	if (!impurity_drops.is_empty()) {
+		const Rect2 r = get_map_rect();
+		float *lap = cell_lap.ptrw();
+		for (const ImpurityDrop &d : impurity_drops) {
+			const float rad = MAX(d.radius, cs * 0.5f);
+			const int x0 = MAX(int(Math::floor((d.center.x - rad - r.position.x) / cs)), 0);
+			const int x1 = MIN(int(Math::floor((d.center.x + rad - r.position.x) / cs)), n - 1);
+			const int z0 = MAX(int(Math::floor((d.center.y - rad - r.position.y) / cs)), 0);
+			const int z1 = MIN(int(Math::floor((d.center.y + rad - r.position.y) / cs)), n - 1);
+			for (int z = z0; z <= z1; z++) {
+				for (int x = x0; x <= x1; x++) {
+					const Vector2 c(r.position.x + (x + 0.5f) * cs, r.position.y + (z + 0.5f) * cs);
+					if (c.distance_to(d.center) <= rad + cs * 0.5f && cell_swe[z * n + x] > SWE_MIN) {
+						lap[z * n + x] += d.mg;
+					}
+				}
+			}
+		}
+		impurity_drops.clear();
+	}
+	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	// Every few seconds, and every update that stands for a long stretch of weather time (advance, a climate run).
+	if (lap_refresh_usec != 0 && now - lap_refresh_usec < 5000000 && inputs.weather_dt < 600.0) {
+		return;
+	}
+	lap_refresh_usec = now;
+	float *in = cell_lap_in.ptrw();
+	const WorldWeather *wm = WorldContracts::weather();
+	const WorldFire *fire = WorldContracts::fire();
+	const bool smoke = impurities && wm && wm->has_provider();
+	const bool burn = impurities && fire && fire->has_provider();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			float dep = 0.0f;
+			if (smoke || burn) {
+				Vector3 pos = _cell_center(x, z);
+				pos.y = cell_ground[i];
+				if (smoke) {
+					// g/m2 over 2000 m, times 0.002 m/s, a tenth black carbon: mg/m2 per hour.
+					dep += MAX(wm->smoke_at(pos), 0.0f) / 2000.0f * 0.002f * 0.1f * 3.6e6f;
+				}
+				if (burn) {
+					const float age = fire->burn_age_at(pos);
+					if (age >= 0.0f && age < 15.0f) {
+						const float canopy = cell_canopy.size() == n * n ? CLAMP(cell_canopy[i], 0.0f, 1.0f) : 0.0f;
+						dep += 2.0f / 24.0f * Math::exp(-age / 4.0f) * (0.3f + 0.7f * canopy);
+					}
+				}
+			}
+			in[i] = dep;
+		}
+	}
 }
 
 // Fire over the snow (docs/ideas/world-links.md, fire → snow melt): the heat each cell takes from WorldFire, read on
@@ -1103,6 +1328,9 @@ void SnowCover3D::_update_end() {
 	last_step_hours = inputs.dt_h;
 	last_drift = inputs.wind_factor;
 	update_count++;
+	if (avalanche_node) {
+		avalanche_node->_track_recent(this); // every update's new snow and hours (follow-up 20)
+	}
 }
 
 void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
@@ -1119,6 +1347,16 @@ void SnowCover3D::_publish_cells() {
 	pub.liquid = cell_liquid;
 	pub.density = cell_density;
 	pub.albedo = cell_albedo;
+	if (cell_lap.size() == cell_albedo.size()) {
+		// What shows: the clean pack's albedo less the particles at (or just under) the surface.
+		pub.lap.resize(cell_lap.size());
+		float *pl = pub.lap.ptrw();
+		float *pa = pub.albedo.ptrw();
+		for (int i = 0; i < cell_lap.size(); i++) {
+			pl[i] = cell_lap[i] + cell_lap_deep[i] * Math::exp(-cell_lap_cover[i] / 0.02f);
+			pa[i] = MAX(pa[i] - impurity_albedo_drop(pl[i]), 0.05f);
+		}
+	}
 	pub.runoff = cell_runoff;
 	pub.canopy_load = cell_canopy_load;
 	pub.new_depth = cell_new_depth;
@@ -1131,6 +1369,9 @@ void SnowCover3D::_publish_cells() {
 	pub.cornice_crack = cell_cornice_crack;
 	pub.ice = cell_ice;
 	pub.white_ice = cell_white_ice;
+	if (!ice_breaks.is_empty()) {
+		_cut_ice(pub.ice, pub.white_ice); // broken since this update started: the cells take them at the next one
+	}
 }
 
 void SnowCover3D::_start_background(double p_weather_dt, bool p_world) {
@@ -1212,7 +1453,7 @@ void SnowCover3D::_build_upload() {
 		const float hold = liquid_capacity * (swe - cell_liquid[i]);
 		const float wet = hold > 1e-4f ? CLAMP(cell_liquid[i] / hold, 0.0f, 1.0f) : 0.0f;
 		w[i * 4 + 0] = Math::make_half_float(depth);
-		w[i * 4 + 1] = Math::make_half_float(cell_albedo[i]);
+		w[i * 4 + 1] = Math::make_half_float(pub.albedo.size() == n * n ? pub.albedo[i] : cell_albedo[i]);
 		w[i * 4 + 2] = Math::make_half_float(wet);
 		w[i * 4 + 3] = Math::make_half_float(cell_density[i] / 1000.0f);
 	}
@@ -2147,6 +2388,9 @@ void SnowCover3D::add_snow(float p_swe_mm, float p_density) {
 	last_step_hours = 0.0f;
 	last_drift = 0.0f;
 	update_count++;
+	if (avalanche_node) {
+		avalanche_node->_track_recent(this);
+	}
 	_upload();
 }
 
@@ -2382,6 +2626,14 @@ void SnowCover3D::set_lake_ice_enabled(bool p_enabled) {
 	}
 }
 
+void SnowCover3D::set_avalanches_enabled(bool p_enabled) {
+	avalanches_enabled = p_enabled;
+	if (!p_enabled && avalanche_node) {
+		avalanche_node->queue_free();
+		avalanche_node = nullptr;
+	}
+}
+
 void SnowCover3D::set_bodies_enabled(bool p_enabled) {
 	bodies_enabled = p_enabled;
 	if (!p_enabled && bodies_node) {
@@ -2440,6 +2692,11 @@ void SnowCover3D::_notification(int p_what) {
 					bodies_node = memnew(SnowBodies3D);
 					add_child(bodies_node, false, INTERNAL_MODE_BACK);
 				}
+				// Slab avalanches (follow-up 20).
+				if (avalanches_enabled && !owner && !avalanche_node) {
+					avalanche_node = memnew(SnowAvalanche3D);
+					add_child(avalanche_node, false, INTERNAL_MODE_BACK);
+				}
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
@@ -2456,6 +2713,7 @@ void SnowCover3D::_notification(int p_what) {
 			set_physics_process_internal(false);
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
+			_ice_load_step();
 			const WeatherMap3D *weather = WeatherMap3D::get_active();
 			const double scale = weather ? weather->get_time_scale() : time_scale;
 			update_accum += get_physics_process_delta_time();
@@ -2780,12 +3038,22 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("sync_update"), &SnowCover3D::sync_update);
 	ClassDB::bind_method(D_METHOD("get_water_level_at", "position"), &SnowCover3D::get_water_level_at);
 	ClassDB::bind_method(D_METHOD("get_ice_thickness_at", "position"), &SnowCover3D::get_ice_thickness_at);
+	ClassDB::bind_method(D_METHOD("get_ice_break_count"), &SnowCover3D::get_ice_break_count);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("ice_breaking_load", "ice", "white_share", "air_celsius"), &SnowCover3D::ice_breaking_load);
 	ClassDB::bind_method(D_METHOD("get_white_ice_thickness_at", "position"), &SnowCover3D::get_white_ice_thickness_at);
 	ClassDB::bind_method(D_METHOD("get_lake_ice"), &SnowCover3D::get_lake_ice);
 	ClassDB::bind_method(D_METHOD("get_bodies"), &SnowCover3D::get_bodies);
+	ClassDB::bind_method(D_METHOD("get_avalanches"), &SnowCover3D::get_avalanches);
+	ClassDB::bind_method(D_METHOD("set_avalanches_enabled", "enabled"), &SnowCover3D::set_avalanches_enabled);
+	ClassDB::bind_method(D_METHOD("is_avalanches_enabled"), &SnowCover3D::is_avalanches_enabled);
 	ClassDB::bind_method(D_METHOD("set_bodies_enabled", "enabled"), &SnowCover3D::set_bodies_enabled);
 	ClassDB::bind_method(D_METHOD("is_bodies_enabled"), &SnowCover3D::is_bodies_enabled);
 	ClassDB::bind_method(D_METHOD("set_lake_ice_enabled", "enabled"), &SnowCover3D::set_lake_ice_enabled);
+	ClassDB::bind_method(D_METHOD("set_impurities_enabled", "enabled"), &SnowCover3D::set_impurities_enabled);
+	ClassDB::bind_method(D_METHOD("is_impurities_enabled"), &SnowCover3D::is_impurities_enabled);
+	ClassDB::bind_method(D_METHOD("add_impurity", "position", "radius", "mg_per_m2"), &SnowCover3D::add_impurity);
+	ClassDB::bind_method(D_METHOD("get_impurity_at", "position"), &SnowCover3D::get_impurity_at);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("impurity_albedo_drop", "mg_per_m2"), &SnowCover3D::impurity_albedo_drop);
 	ClassDB::bind_method(D_METHOD("is_lake_ice_enabled"), &SnowCover3D::is_lake_ice_enabled);
 	ClassDB::bind_method(D_METHOD("get_snow_texture"), &SnowCover3D::get_snow_texture);
 	ClassDB::bind_method(D_METHOD("set_precipitation_gradient", "share"), &SnowCover3D::set_precipitation_gradient);
@@ -2826,7 +3094,9 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "update_rate", PROPERTY_HINT_RANGE, "0.01,60,0.01,suffix:Hz"), "set_update_rate", "get_update_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "background_updates"), "set_background_updates", "is_background_updates");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lake_ice_enabled"), "set_lake_ice_enabled", "is_lake_ice_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "impurities_enabled"), "set_impurities_enabled", "is_impurities_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "bodies_enabled"), "set_bodies_enabled", "is_bodies_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "avalanches_enabled"), "set_avalanches_enabled", "is_avalanches_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "height_source"), "set_height_source", "get_height_source");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ground_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_ground_collision_mask", "get_ground_collision_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "shelter_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_shelter_collision_mask", "get_shelter_collision_mask");

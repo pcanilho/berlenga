@@ -639,12 +639,41 @@ crest direction, and the near window none of the far variation. Research:
   2018). For a directional pattern its blends between rotated tiles cross crests (ghost gratings), so it is not used:
   a phase-coherent warp plus explicit dislocations keeps every crest continuous.
 Built: GroundRipples::vary() and ground_ripple_vary() (material.cpp, raygen): a three-octave world warp (4 m at 24 m,
-1.6 m at 6 m, 16 cm at 1.7 m: crests turn by up to about 15 degrees and change spacing over tens of metres, bend over
-a few), dislocation pairs in 70% of 1.6 m cells, along the crests, 30 to 90 cm apart, shifting the tile by
+1.2 m at 6 m, 6 cm at 1.7 m: crests turn by up to about 15 degrees and change spacing over tens of metres, bend over
+a few), dislocation pairs in half the 2 m cells, along the crests, 30 to 90 cm apart, shifting the tile by
 exactly one wavelength of its dominant wave vector (found by a DFT of the grown tile, 3 to 40 cm band, sent in the
-ripple map's last row), a stretch along the crests' normal (45 cm at 2 m: crests crowd and open by up to a third, 7 to 15 cm apart), and a height between 15 and 100% over 2 to 6 m. Integer hashes, so the CPU fill of the real
-ripples' window and both renderers agree to the bit and meet crest to crest. Far ripples fade where their crests come closer than about three pixels (prefiltered to the pixel, so they do not alias into moire bands). Next if wanted: true wave ripples
+ripple map's last row), a stretch along the crests' normal (30 cm at 2.5 m: crests crowd and open by up to a fifth, 9 to 14 cm apart; stronger broke the near crests into grain-like noise in the desert bench), and a height between 35 and 100% over 2 to 6 m. Integer hashes, so the CPU fill of the real
+ripples' window and both renderers agree to the bit and meet crest to crest. Far ripples fade where their crests come closer than about three pixels (prefiltered to the pixel, so they do not alias into moire bands). Crest height (19 Nov): the height-dependent hop saturated at 3 mm, so grown ripples stood 4 mm peak to peak (index about 30); real ones stand 5 to 10 mm at 9 m/s (index 15 to 20; Sharp 1963, Andreotti 2006). hop_saturation is now 5 mm: 7.3 mm at 12 cm (index 16), checked by --test=wind. Next if wanted: true wave ripples
 (symmetric, shore-parallel) where the bed is under the sea.
+
+### Rill heads and fans (Paulo's pick, 19 Nov 2026)
+
+The net cut by the runoff solver started heads anywhere on the face and ended in a thin fringe at the waterline.
+Real seepage rills on a sand beach start at heads near the top of the seepage face, join downslope and end in
+small fans where they spread onto the flatter low-tide terrace (Otvos 1999, rain- and seepage-made beach forms;
+Schorghofer et al. 2004 for seepage channels in sand).
+- Heads: seepage erosion (Dunne 1990; Howard and McLane 1988). A cut lies below the saturated table round it, so
+  ground water gathers into it through its walls (Darcy k c / l) on top of the face's own k sin(beta), and the
+  ground round it loses as much: the cut smoothed over 3 cm against its mean on a ring 25 cm out, at most 2.5
+  times the face's own outflow. Taken texel by texel (a 4.5 cm ring) it broke the face into pits. The water also
+  lifts the grains it leaves through (seepage force, i = q / k against a critical gradient of about 1 for sand),
+  lowering the threshold by up to 30% where the seepage gathers. Both in `ground_deform.glsl`
+  (runoff_seep_gather, bed_load_shear_f), GPU near field only.
+- Fans: Exner already lays sand where the transport falls off, but a face falling straight into the water has
+  nowhere to drop it but the waterline. The bench beach now has a low-tide terrace (1 in 12 face over 1 in 50,
+  eased over 40 cm: a reflective face over a dissipative terrace, Wright and Short 1984); `--terrace=0` keeps
+  the plain face. Real beaches get the terrace from the terrain.
+- Plain bug found on the way: with runoff on the GPU, standing water evaporated at the sped-up (morphological)
+  rate while its sources landed at their own, so a terrace's thin seepage dried faster than it seeped and the
+  rills' water vanished on reaching it. Evaporation now runs at the water's own pace there.
+- Moving water: already drawn (flow-mapped ripples on the sheet swept by the Manning velocity, Vlachos 2010; built
+  with the swash marks), both renderers.
+
+Result (`--view=rills`, x120, 84 min): heads in a line along the top of the seepage face, cuts to 11 mm down its
+upper half, the sand laid over the lower face and the break as a braided apron the water spreads over, the water
+reaching the terrace (0.1 to 0.4 mm). Tried and left: a five-octave bed relief to break up the heads' spacing
+(about 10 cm, fairly even); the spacing stayed, so it is the solver's own fastest-growing width, not the relief's.
+Coarsening into fewer, wider rills needs a longer run than the bench's.
 
 ### Drifting on sand (Paulo, 16 Nov 2026)
 

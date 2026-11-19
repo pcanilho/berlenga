@@ -25,27 +25,28 @@ extends Node3D
 #   --pollards        a working willow pollard, a lapsed beech pollard and a hazel coppice stool
 #                     side by side in winter grass (trees.md 5l), seen from 1.7 m, 10 m back
 #   --sun-energy=E    sun energy (default 1.4; 0 for sky light only)
+#   env FIRE_AGE=Y [SCORCH=H]  a past fire Y years ago, crowns killed up to H m (default 30): needle cast
 #   --decays          deadwood: each preset living, then decay classes 1-5, then a log (class 3)
 #   --stands ...      stands and placement instead: see stands.gd
 #   --wind ...        wind on rigged trees: see wind.gd
 #   --storm ...       storm breaks and windthrow: see storm.gd
-#   --shrubs ...      heath, scrub and hedge shrubs (gorse, broom, gum rockrose, kermes oak, lentisk, dwarf fan palm; hawthorn, blackthorn, hazel, field maple, dog rose) in their forms, hedges with --forms=5: see shrubs.gd
+#   --shrubs ...      heath, scrub and hedge shrubs (gorse, broom, gum rockrose, kermes oak, lentisk, dwarf fan palm; hawthorn, blackthorn, hazel, field maple, dog rose; desert calligonum, white broom, saltbush) in their forms, hedges with --forms=5: see shrubs.gd
 
 const NAMES := ["oak", "beech", "birch", "Scots pine", "Norway spruce", "hazel", "hawthorn", "lime", "sycamore maple",
 		"ash", "horse chestnut", "black alder", "white willow", "European larch", "silver fir", "rowan", "elder", "holly", "yew", "box",
 		"sugar maple", "red maple", "red oak", "white oak", "white pine", "hemlock", "American beech", "paper birch",
-		"yellow birch", "witch-hazel", "mountain laurel", "gorse", "broom", "gum rockrose", "kermes oak", "lentisk", "dwarf fan palm", "stone pine", "cork oak", "holm oak", "wild olive", "maritime pine", "carob", "blackthorn", "field maple", "dog rose"]
-const SHRUBS := [5, 6, 16, 17, 18, 19, 29, 30, 31, 32, 33, 34, 35, 36, 43, 45] # Shrubs and evergreens that stay leafy low in a stand.
+		"yellow birch", "witch-hazel", "mountain laurel", "gorse", "broom", "gum rockrose", "kermes oak", "lentisk", "dwarf fan palm", "stone pine", "cork oak", "holm oak", "wild olive", "maritime pine", "carob", "blackthorn", "field maple", "dog rose", "calligonum", "white broom", "saltbush", "date palm"]
+const SHRUBS := [5, 6, 16, 17, 18, 19, 29, 30, 31, 32, 33, 34, 35, 36, 43, 45, 46, 47, 48] # Shrubs and evergreens that stay leafy low in a stand.
 # Stem spacing in a mature stand (m), as in TreeGenerator's habitat table.
 const STAND_SPACING := [9.0, 7.0, 5.0, 5.5, 4.5, 3.0, 3.0, 7.0, 7.0, 7.0, 9.0, 5.0, 7.0, 6.0, 5.0, 4.0, 3.0, 4.0, 5.0, 2.5,
-		7.0, 6.0, 8.0, 9.0, 6.0, 5.0, 7.0, 4.5, 6.0, 3.0, 2.5, 1.6, 1.6, 1.4, 1.8, 2.2, 2.0, 9.0, 10.0, 7.0, 6.0, 6.0, 9.0, 2.5, 6.0, 2.0]
+		7.0, 6.0, 8.0, 9.0, 6.0, 5.0, 7.0, 4.5, 6.0, 3.0, 2.5, 1.6, 1.6, 1.4, 1.8, 2.2, 2.0, 9.0, 10.0, 7.0, 6.0, 6.0, 9.0, 2.5, 6.0, 2.0, 6.0, 5.0, 3.0, 8.0]
 # Plausible heights (m) for the default ages: mature trees, shrubs at full size.
 const HEIGHT_RANGE := [Vector2(12, 30), Vector2(14, 34), Vector2(10, 28), Vector2(12, 32), Vector2(14, 38), Vector2(2.5, 8), Vector2(3, 10),
 		Vector2(12, 38), Vector2(12, 30), Vector2(14, 40), Vector2(12, 28), Vector2(10, 26), Vector2(10, 25), Vector2(15, 38),
 		Vector2(15, 40), Vector2(5, 15), Vector2(2.5, 8), Vector2(4, 15), Vector2(5, 20), Vector2(1.5, 6),
 		Vector2(15, 37), Vector2(12, 30), Vector2(15, 35), Vector2(15, 32), Vector2(18, 46), Vector2(15, 40), Vector2(15, 35),
 		Vector2(12, 30), Vector2(15, 32), Vector2(3, 9), Vector2(1.5, 6), Vector2(1.0, 2.6), Vector2(1.0, 2.6),
-		Vector2(1.0, 2.5), Vector2(0.5, 2.2), Vector2(1.0, 3.0), Vector2(0.4, 2.5), Vector2(10, 25), Vector2(8, 22), Vector2(6, 22), Vector2(3, 12), Vector2(15, 35), Vector2(5, 15), Vector2(1.5, 5), Vector2(6, 16), Vector2(1, 4)]
+		Vector2(1.0, 2.5), Vector2(0.5, 2.2), Vector2(1.0, 3.0), Vector2(0.4, 2.5), Vector2(10, 25), Vector2(8, 22), Vector2(6, 22), Vector2(3, 12), Vector2(15, 35), Vector2(5, 15), Vector2(1.5, 5), Vector2(6, 16), Vector2(1, 4), Vector2(0.8, 3), Vector2(1, 3.5), Vector2(0.8, 3), Vector2(8, 22)]
 
 var junction_side := 1 # --junction-side=-1: the junction view from the limb's other side.
 var test := false
@@ -244,9 +245,9 @@ func _run_test() -> void:
 			print("%-14s %-7s %6.1f  %7.1f  %10.1f  %10d  %6d  %5d  %4d  %8d  %8d  %6.0f" % [NAMES[p], pair[0], d.height, d.crown_radius, d.crown_base, d.internodes, d.leaves, d.dead, d.shed, d.tris, d.bark_tris, d.ms])
 		var r: Vector2 = HEIGHT_RANGE[p]
 		_check(o.height >= r.x and o.height <= r.y, "%s open-grown height %.1f m in %.0f-%.0f m" % [NAMES[p], o.height, r.x, r.y])
-		if not p in SHRUBS and not p in [14, 25]: # Shrubs and shade-tolerant fir and hemlock keep low foliage in a stand.
+		if not p in SHRUBS and not p in [14, 25, 49]: # Shrubs and shade-tolerant fir and hemlock keep low foliage in a stand.
 			_check(f.crown_base > o.crown_base, "%s forest-grown crown base %.1f m above open-grown %.1f m" % [NAMES[p], f.crown_base, o.crown_base])
-		if p != 36: # The palm does not grow by shoots: its fans are the same in a stand.
+		if p != 36 and p != 49: # Palms do not grow by shoots: their leaves are the same in a stand.
 			_check(f.crown_radius < o.crown_radius, "%s forest-grown crown narrower (%.1f m vs %.1f m)" % [NAMES[p], f.crown_radius, o.crown_radius])
 		if p == 37: # Stone pine: an umbrella about as wide as tall on a clear bole (trees.md 5y).
 			_check(o.crown_radius * 2.0 > 0.75 * o.height and o.crown_base > 0.4 * o.height, "stone pine umbrella: crown %.1f m across on a %.1f m tall tree, crown base %.1f m" % [o.crown_radius * 2.0, o.height, o.crown_base])
@@ -404,6 +405,8 @@ func _build_scene() -> void:
 	get_viewport().msaa_3d = Viewport.MSAA_8X
 	if OS.has_environment("LOD0"):
 		get_viewport().mesh_lod_threshold = 0.0
+	if OS.has_environment("FIRE_AGE"):
+		_past_fire(float(OS.get_environment("FIRE_AGE")), float(OS.get_environment("SCORCH")) if OS.has_environment("SCORCH") else 30.0)
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -645,6 +648,18 @@ func _build_scene() -> void:
 			cam.position = Vector3(cx + cv[0], cv[1], cv[2])
 			cam.look_at(Vector3(cx + cv[3], cv[4], cv[5]))
 			cam.fov = cv[6]
+
+# A past fire under the whole bench (env FIRE_AGE years ago, SCORCH metres of crown scorch): the fire globals a
+# PhysXFireSpread3D publishes (vegetation_fire.h), set by hand, no flame now. Foliage below the scorch height is
+# killed brown and, with time, cast (trees.md 5af).
+func _past_fire(p_years: float, p_scorch: float) -> void:
+	var state := Image.create_empty(1, 1, false, Image.FORMAT_RGBA8)
+	state.set_pixel(0, 0, Color(1.0, 0.0, 0.0, sqrt(minf(p_scorch / 48.0, 1.0))))
+	var age := Image.create_empty(1, 1, false, Image.FORMAT_R8)
+	age.set_pixel(0, 0, Color(maxf(clampf(p_years / 2.0, 0.0, 1.0), 1.0 / 255.0), 0, 0))
+	RenderingServer.global_shader_parameter_set("fire_state_map", ImageTexture.create_from_image(state))
+	RenderingServer.global_shader_parameter_set("fire_age_map", ImageTexture.create_from_image(age))
+	RenderingServer.global_shader_parameter_set("fire_char_rect", Color(-200, -200, 400, 400))
 
 func _render_later() -> void:
 	if OS.has_environment("WIRE"):

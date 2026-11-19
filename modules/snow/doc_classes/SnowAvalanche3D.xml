@@ -1,0 +1,280 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SnowAvalanche3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Slab avalanches: release by the stability index, a Voellmy run-out on the snow cover's grid, entrainment and deposits.
+	</brief_description>
+	<description>
+		Watches the [SnowCover3D] it belongs to (which adds it while [member SnowCover3D.avalanches_enabled]). The slab is the new snow since it last bonded (a week), or the snow over a buried crust. Where the stability index, the weak layer's shear strength (Jamieson and Johnston 2001, growing as it sinters) over the slab's shear stress (Foehn 1987), drops below 1 on slopes between [member min_slope] and [member max_slope], the slab releases, and the fracture runs through the neighbouring slab while it stays near failure. Loads trigger it sooner (see [member triggers_enabled]): people, sleds and vehicles add the shear under them, and along a buried crust a collapse can run from the flat to the slope above.
+		The released snow runs as a depth-averaged Voellmy flow (Voellmy 1955; Salm 1993; RAMMS, Christen et al. 2010). Gravity pulls it down the snow surface, against dry friction [member mu] and turbulent friction set by [member xi]. Its mass and momentum move cell to cell by second-order finite volumes (MUSCL reconstruction, HLL fluxes), it entrains the new snow it runs over at [member entrainment], and it deposits where it can no longer overcome its own friction. Snow surfaces near the camera break into blocks ([method SnowClumps3D.drop]). The moving snow stays in the cover's cells while it runs, so the snow map, [SnowSurface3D], plants and [WorldSnow] readers all see it move, and no snow is made or lost. Free rigid bodies in its path take its dynamic pressure, 1/2 rho u².
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="added_shear" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="line_load" type="float" />
+			<param index="1" name="depth" type="float" />
+			<param index="2" name="slope" type="float" />
+			<description>
+				The shear stress, Pa, that a line load of [param line_load] N/m on the snow surface adds at [param depth] m below it, measured normal to a slope of [param slope] radians. It is the peak over the angle below the load, from Flamant's solution for an elastic half-space (Foehn 1987). On the flat it is 0.207 P / D.
+			</description>
+		</method>
+		<method name="apply_load">
+			<return type="int" />
+			<param index="0" name="at" type="Vector3" />
+			<param index="1" name="line_load" type="float" />
+			<param index="2" name="sink" type="float" default="0.0" />
+			<description>
+				Puts a line load of [param line_load] N/m on the snow at [param at], [param sink] m sunk in. Returns 1 if a slab released, 2 if a buried crust collapsed (whumpf) without a release, and 0 if nothing gave. Bodies in [member trigger_groups] do this by themselves every physics frame.
+			</description>
+		</method>
+		<method name="get_collapse_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many times a buried crust has collapsed under a load.
+			</description>
+		</method>
+		<method name="get_deposited_volume" qualifiers="const">
+			<return type="float" />
+			<description>
+				m³ of debris the last avalanche left.
+			</description>
+		</method>
+		<method name="get_entrained_volume" qualifiers="const">
+			<return type="float" />
+			<description>
+				m³ of snow the last avalanche picked up on its way.
+			</description>
+		</method>
+		<method name="get_flow_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The flowing snow's depth at a point, m (0 when none runs).
+			</description>
+		</method>
+		<method name="get_flow_velocity_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The flow's velocity at a point, m/s.
+			</description>
+		</method>
+		<method name="get_flowing_volume" qualifiers="const">
+			<return type="float" />
+			<description>
+				m³ still moving.
+			</description>
+		</method>
+		<method name="get_max_speed" qualifiers="const">
+			<return type="float" />
+			<description>
+				The fastest the last avalanche ran, m/s.
+			</description>
+		</method>
+		<method name="get_max_speed_terminal" qualifiers="const">
+			<return type="float" />
+			<description>
+				Voellmy's steady speed, sqrt(xi h (sin - mu cos)), m/s, for the flow depth and slope where the flow ran fastest. Compare with [method get_max_speed].
+			</description>
+		</method>
+		<method name="get_powder_cloud" qualifiers="const">
+			<return type="SnowPowderCloud3D" />
+			<description>
+				The node that draws the powder cloud.
+			</description>
+		</method>
+		<method name="get_powder_density_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The density of snow in the air at [param position], kg/m³: 3 to 10 in a fresh cloud, thinning as it spreads and settles.
+			</description>
+		</method>
+		<method name="get_powder_reach" qualifiers="const">
+			<return type="float" />
+			<description>
+				How far from the release the cloud has laid snow, m. It runs past the dense flow.
+			</description>
+		</method>
+		<method name="get_powder_settled" qualifiers="const">
+			<return type="float" />
+			<description>
+				The kg of that snow that has settled back onto the cover.
+			</description>
+		</method>
+		<method name="get_powder_taken" qualifiers="const">
+			<return type="float" />
+			<description>
+				The kg of snow the last avalanche blew into the air.
+			</description>
+		</method>
+		<method name="get_recent_snow_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The new snow since it last bonded at a point, m: the slab that can release.
+			</description>
+		</method>
+		<method name="get_release_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many avalanches have released.
+			</description>
+		</method>
+		<method name="get_released_volume" qualifiers="const">
+			<return type="float" />
+			<description>
+				m³ the last avalanche released.
+			</description>
+		</method>
+		<method name="get_run_out" qualifiers="const">
+			<return type="float" />
+			<description>
+				How far the last avalanche's front got from the middle of its release, m.
+			</description>
+		</method>
+		<method name="get_suspended_mass" qualifiers="const">
+			<return type="float" />
+			<description>
+				The kg of snow in the air now.
+			</description>
+		</method>
+		<method name="get_trigger_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many slabs a load has released.
+			</description>
+		</method>
+		<method name="get_trigger_index_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="at" type="Vector3" />
+			<param index="1" name="line_load" type="float" />
+			<param index="2" name="sink" type="float" default="0.0" />
+			<description>
+				Foehn's skier stability index at [param at] under a line load of [param line_load] N/m, sunk [param sink] m in. It is the weak layer's strength over the slab's own shear plus the load's, taken for the weakest layer. Below 1, the load releases the slab. Use 0 N/m for the natural index. Returns a very large number where there is no slab.
+			</description>
+		</method>
+		<method name="is_running" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] while an avalanche runs.
+			</description>
+		</method>
+		<method name="stability_index" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="slab" type="float" />
+			<param index="1" name="slab_density" type="float" />
+			<param index="2" name="weak_density" type="float" />
+			<param index="3" name="age_hours" type="float" />
+			<param index="4" name="slope" type="float" />
+			<description>
+				Foehn's (1987) stability index of a slab [param slab] m deep at [param slab_density] on [param slope] (radians), over a weak layer of [param weak_density] that has sintered [param age_hours]: below 1 it fails.
+			</description>
+		</method>
+		<method name="step">
+			<return type="void" />
+			<param index="0" name="delta" type="float" />
+			<description>
+				Runs the flow [param delta] seconds now (tests, cut scenes).
+			</description>
+		</method>
+		<method name="trigger">
+			<return type="bool" />
+			<param index="0" name="at" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<description>
+				Releases whatever slab lies within [param radius] of [param at] on avalanche terrain, stable or not (a skier, a cornice falling, an explosive). Returns [code]true[/code] if one runs.
+			</description>
+		</method>
+		<method name="weak_layer_strength" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="density" type="float" />
+			<param index="1" name="age_hours" type="float" />
+			<description>
+				Shear strength of a weak layer, Pa: 14.5 (rho / rho_ice)^1.73 kPa (Jamieson and Johnston 2001), growing by its age over two days as it sinters.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="character_mass" type="float" setter="set_character_mass" getter="get_character_mass" default="75.0">
+			The mass, kg, of a [CharacterBody3D] in [member trigger_groups] that has no [code]snow_mass[/code] or [code]ground_mass[/code] meta.
+		</member>
+		<member name="collapse_range" type="float" setter="set_collapse_range" getter="get_collapse_range" default="60.0">
+			How far, m, a collapse of a buried crust's weak layer (a whumpf) runs from the load. Steep slopes it reaches release, even when the load stands on the flat (a remote trigger).
+		</member>
+		<member name="entrainment" type="float" setter="set_entrainment" getter="get_entrainment" default="0.005">
+			The snow the flow takes from the new snow it runs over, m per m/s of speed per second, above 5 m/s.
+		</member>
+		<member name="max_slope" type="float" setter="set_max_slope" getter="get_max_slope" default="55.0">
+			The steepest slope a slab releases on, degrees (steeper sheds as it falls).
+		</member>
+		<member name="min_slab" type="float" setter="set_min_slab" getter="get_min_slab" default="0.2">
+			The thinnest slab that releases by itself, m.
+		</member>
+		<member name="min_slope" type="float" setter="set_min_slope" getter="get_min_slope" default="28.0">
+			The gentlest slope a slab releases on, degrees.
+		</member>
+		<member name="mu" type="float" setter="set_mu" getter="get_mu" default="0.2">
+			Voellmy's dry friction (RAMMS: 0.155 for large avalanches to 0.4 for small ones).
+		</member>
+		<member name="natural_release" type="bool" setter="set_natural_release" getter="is_natural_release" default="true">
+			If [code]true[/code], slabs release by themselves when the stability index fails; [method trigger] works either way.
+		</member>
+		<member name="powder_enabled" type="bool" setter="set_powder_enabled" getter="is_powder_enabled" default="true">
+			If [code]true[/code], a fast dry front blows snow into the air as a powder cloud. The cloud outruns the dense flow, pushes the bodies it passes with 1/2 rho u², and settles as a thin layer of powder. No snow is made or lost. [SnowPowderCloud3D] draws it.
+		</member>
+		<member name="powder_settle" type="float" setter="set_powder_settle" getter="get_powder_settle" default="6.0">
+			The e-folding time of the cloud's snow settling out, s.
+		</member>
+		<member name="powder_share" type="float" setter="set_powder_share" getter="get_powder_share" default="0.3">
+			The share of the front's snow blown into the air for each 10 m it runs, per m/s over [member powder_speed].
+		</member>
+		<member name="powder_speed" type="float" setter="set_powder_speed" getter="get_powder_speed" default="10.0">
+			The speed, m/s, over which a dry front throws snow up. A wet slide (any liquid water in the slab) makes no cloud.
+		</member>
+		<member name="propagation_index" type="float" setter="set_propagation_index" getter="get_propagation_index" default="1.5">
+			A fracture opened by a load runs on through slab whose natural stability index is under this value, or under 1.2 times the index where it opened. A uniform slab goes as a whole.
+		</member>
+		<member name="trigger_groups" type="PackedStringArray" setter="set_trigger_groups" getter="get_trigger_groups" default="PackedStringArray(&quot;snow_deform&quot;, &quot;grass_trample&quot;, &quot;world_contact&quot;)">
+			Bodies in these groups load the slab under them: their weight spread along their footprint (a metre at least; an 80 kg skier gives Foehn's 0.78 kN/m), nearer the weak layer by as far as they have sunk in ([method WorldSnow.surface_at]). Rigid bodies use their mass, characters [member character_mass], and the [code]snow_mass[/code] or [code]ground_mass[/code] meta overrides both. Vehicle wheels carry their share of the vehicle.
+		</member>
+		<member name="triggers_enabled" type="bool" setter="set_triggers_enabled" getter="is_triggers_enabled" default="true">
+			If [code]true[/code], loads can release slabs: bodies in [member trigger_groups], [method apply_load], and cornices that fail ([signal SnowCover3D.cornice_failed]), which land on the slope below at twice their weight.
+		</member>
+		<member name="xi" type="float" setter="set_xi" getter="get_xi" default="1500.0">
+			Voellmy's turbulent friction, m/s² (RAMMS: 1000 to 3000).
+		</member>
+	</members>
+	<signals>
+		<signal name="avalanche_released">
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="volume" type="float" />
+			<description>
+				A slab released: the middle of the release and its volume, m³.
+			</description>
+		</signal>
+		<signal name="avalanche_stopped">
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="volume" type="float" />
+			<param index="2" name="run_out" type="float" />
+			<description>
+				The flow stopped: the middle of its release, the debris volume, m³, and how far it ran, m.
+			</description>
+		</signal>
+		<signal name="avalanche_triggered">
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="body" type="Node" />
+			<description>
+				A load released a slab: where it stood, and the body, or [code]null[/code] for [method apply_load] and cornices.
+			</description>
+		</signal>
+		<signal name="snow_collapsed">
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="area" type="float" />
+			<description>
+				A buried crust's weak layer collapsed under a load (a whumpf): where, and the area it ran through, m².
+			</description>
+		</signal>
+	</signals>
+</class>

@@ -1,0 +1,1 @@
+- Weather: clouds come in a mix of sizes. A second, 2.6 times larger shape field is blended in patches, keeping the cover the same, so low cover shows big and small clouds with uneven gaps instead of even puffs in rows (WeatherMap3D `cloud_size_mix`, 1).

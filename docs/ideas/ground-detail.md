@@ -325,3 +325,130 @@ outlive the area streaming out like the ruts do. The scan skips cells outside th
 inside it a few looks to settle, so a returning field is not read as fresh rims. Snow bench `--away` (field taken
 300 m away and back): 4,172 lying, 4,172 kept while away, 4,129 lying again where they were (the rest crushed by
 the relief check), no new ones broken off. Cost unchanged: clumps 0.78 ms mean, clods 0.88 ms mean per update.
+
+## Coarse rock cells on workers (19 Nov)
+
+`RockField3D.cell_threads` (on): while streaming, the coarse layers' cells (field stones, scree, river and shore stones,
+landforms) are placed on worker threads as the detail cells are. A worker places the cell and packs each shape's
+MultiMesh records, looking shapes up under a lock; a shape not built yet sends the cell back to be placed once it is
+in. The main thread takes out stones on holes and broken ones, uploads one buffer per shape and adds the collision.
+Landform cells stay on the main thread with `cave_mouths` on (they open terrain holes). Rocks bench `--world --walk=120
+--walk-step=0.2` (lavapipe, drawing off), main thread per frame, `--cell-sync` then on: mean 5.2 / 0.6 ms, p95 13.6 /
+0.3 ms, worst 1,020 / 359 ms; the same 120,430 stones once settled (cells land about 8 s after a 12 m/s walk stops on
+this machine, nearest first).
+
+## Close-up bark (plan, 19 Nov)
+
+LOD 0 trunks already carry bark relief as displaced geometry (TreeGenerator `bark_relief`, ten `BarkKind` families), so
+the furrows are only as sharp as the tube's rings and segments, and nothing stands proud of the surface: no loose
+plate edges, lifting flakes or curls of paper bark. Close up those are what reads as bark.
+
+Established technique:
+- Bark as elements on a surface (Pixar, "Elemental Bark", Hery et al.): plates, scales and strips modelled as
+  separate pieces laid over the trunk, not one displacement, so they can overlap, lift and cast their own shadows.
+- Bark synthesis from fracture of a growing skin (Lefebvre and Neyret 2002, "Synthesizing Bark"; Wang et al. 2003,
+  Tsinghua): the plate layout comes from the trunk's own pattern, which here is the BarkSet height image.
+- Game practice: SpeedTree and UE5 trunks pair a displaced mesh (Nanite tessellation) with decal or mesh pieces for
+  peeling bark; the pieces are where close shots spend geometry.
+
+Plan, in `modules/vegetation/tree_bark_detail.*` (BarkDetail3D), the ground detail pattern on trunks:
+- Trunks near the camera from `VegetationField3D.get_trunks_near(center, radius, height)` (c027d1ed): each trunk's
+  capsules up to a few metres, its preset and seed.
+- Per bark kind (`TreeGenerator.bark_kind_for_preset`, 16f1f982), elements placed where `bark_height` says the
+  surface stands: plated and pinaster/pinea plates on plate tops (0 height), their edges lifted over the furrow;
+  flaking: thin flakes peeling at one edge; papery: curls of birch skin rolled outward; scaly: small overlapping
+  scales; furrowed and cork keep their geometry (already deep), with a few broken ridge fragments; smooth and
+  lenticelled get none.
+- Each element one of 8 shapes per kind with its own random bend, size and tint (no visible repetition), drawn as
+  rt_instanced MultiMeshes so the path tracer sees each piece over a shared shape; reach by the pixel rule (3 px).
+- Placed on workers like the detail cells; cost reported on and off (memory, walking main thread, raster and PT frame).
+
+## Close-up bark as built (19 Nov)
+
+`BarkDetail3D` (modules/vegetation/tree_bark_detail.*), bench `docs/bench/bark` (`--test`, `--raster`, `--look`).
+- Pieces per bark family: plates (Scots, stone and maritime pine), scales (holm oak), flakes (flaking), torn
+  curls (paper birch, and short ones on lenticelled bark); smooth, furrowed and cork shed none. 8 shapes per family,
+  each piece its own size, spin, tone and texture offset.
+- Where they lie: placing pieces on the capsule radius plus `bark_height` put them inside the trunk (the LOD 0 tube
+  stands proud of its colliders), so each trunk mesh gets a profile: its bark surface binned 96 round by 2.5 cm
+  along its capsule chain, the outermost bark vertex and mean vertex colour per cell. Pieces sit at that radius
+  and take that colour (the stem's vertex colour is its species tint; without it pieces rendered white). Plates and
+  scales only go where the cell is in the top third of the bark round it (plate tops).
+- The profile from the mesh's own arrays needs a GPU readback (`mesh_get_surface`), 200 ms or more a mesh on the
+  cloud renderer. `BarkDetail3D.make_bark_profile` packs it for a `tree_bark_profile` mesh meta (about 110 KB a
+  mesh, the first 4.2 m) that TreeGenerator stores while it still has the arrays; without the meta the readback
+  is the fallback and the binning runs on the worker.
+- Review round (docs, 19 Nov): birch pieces read as flat tan stickers and pine plates as orange cards at the
+  silhouette. Now: birch strips are torn horizontal bands (ragged edges, narrowing ends) whose middle stays on the
+  stem and whose ends stand up off it and roll back into scrolls, white side out, the peeled plies cream-salmon;
+  pine plates are twice as thick (1.6 to 3 cm) and sunk into the relief, and broken edges are the outer bark in
+  section (darkened, a trace of inner bark) instead of inner bark, which now takes the stem's hue.
+- Second review (docs, 19 Nov): birch read as evenly scattered confetti, two pieces floated at a fork, pieces
+  piled up; pine pieces lay across the furrows like shards and stood out of the silhouette like a saw edge. Now:
+  - Pine and scales: the trunk's own plates are found in its profile (cells above the bark round them, eroded once
+    so furrows split them, flood-filled), and a share of them shed their outer layer: a piece fitted inside that
+    plate's bounds (scaled round and up to it), lying on it and lifting at its lower edge, so none crosses a furrow.
+  - Birch: bands along the lenticels every 3 to 12 cm, each a torn bared patch of inner bark (bent to the stem's
+    own radius) with one to five strips side by side at its ends: long strips peeling at both ends, wide sheets,
+    loose flaps lifting like a page, scrolls; sizes log-normal.
+  - The profile drops cells far proud of their row (another stem at a fork), and every piece claims its cells, so
+    none lands on another.
+- Third review (docs, 19 Nov), birch: pieces read as flat tan tape, stuck out past the silhouette as tabs, and sat
+  on one side of one stem. Now: every stem of a forked trunk gets a profile (each further collider chain that
+  leaves the main stem below the cap, 6 cm thick or more and heading up), each stem's scan keeps only its own bark
+  (a vertex nearer another stem, in that stem's radii, is that stem's) and drops cells far off its row, and no
+  piece goes nearer another stem than its own. Peel is white outside (no salmon tint on the outer face), plies
+  1.4 mm thick, lifting steeply into a 1 cm scroll that hugs the stem; bared patches show the next ply (half
+  white, half salmon), at most a quarter of the way round and bent to the stem's own radius.
+- Fourth review (docs, 19 Nov), birch: a flat white sheet stood across the crotch, tabs poked past the silhouette,
+  pieces ran up the leaning stem as dark sticks, and thin vertical brown slivers read as cracks. Now:
+  - Sheets are turned a quarter round so their roll lies round the stem along the band (it tilts with a leaning
+    stem); their texture is turned back with them, so the lenticels on a sheet run round the stem like the stem's
+    own (the slivers were the texture's lenticels standing upright). Most of a sheet lifts (its attached part is
+    the stem's own bark, so little is drawn over it), at 45 to 60 degrees rather than upright.
+  - Bands every 5 to 14 cm, each with one to three bared patches round it whose torn top and bottom edges are
+    rolled sheets; some bands only have sheets lifting.
+  - A fork's further stems: the capsules follow a leaning stem only roughly (its mesh sat up to a radius off its
+    chain, so its bark was binned lopsided and half of it read as hollow, few pieces landed there). Each of their
+    capsules is moved to the centre of its own bark before binning (the shift is stored in the meta's header);
+    the main stem keeps its chain, since its branches would pull it. Cells still empty take the nearest filled
+    rows of their column.
+  - Sheets and patches lie at the median radius of the cells they cover, bent round to the stem's radius (the
+    shape's 12 cm bend rescaled), and skip spots too uneven to lie on (a collar, a fork's swell), so none stands
+    off past the silhouette.
+- Fourth review passed (docs, 19 Nov), two polish notes: some rolls read as thick rounded lips like small bracket
+  fungi, and the bands stacked in one column up the main stem like a ladder. Now plies are about 1 mm with a 4 to
+  7 mm scroll, sheets at most 1.3 times their shape and never thickened when bent to the stem; each band's patches
+  start a golden angle (137 degrees, jittered) round from the last band's and spread evenly round it; bands every
+  4 to 10 cm.
+- Cost (bench, 4 trunks, 1,045 pieces): main thread 0.15 ms mean, 3.4 ms worst an update with the meta (33 ms
+  mean, 826 ms worst with the readback); 64 bytes a piece in instance buffers (67 KB), 32 shared shapes.
+
+## Next round options (19 Nov)
+
+Litter (vegetation), mud clods, snow clumps and close-up bark are done; the open items of the plan above are 2, 4 and
+the far hand-over (proposal 6). Four candidates, put to Paulo as a decision card:
+
+1. **Seamless far edge (recommended).** Past each class's reach the ground material takes the aggregate look of the
+   grains it stops drawing, so the edge never shows. Technique: Meng et al. 2015, "Multi-scale modeling and
+   rendering of granular materials" (SIGGRAPH): explicit grains near, a volumetric/BSDF aggregate far, the switch by
+   projected grain size. A real-time cut of it: per class, tabulate once from the shape library (offline, from the
+   rocks' own LODs) coverage, mean tilt, a self-shadowing term over sun elevation and the mean albedo and
+   roughness of a lit grain bed; the terrain shader blends rock detail toward those values by distance with a
+   dithered band one cell wide, and the far normal is the existing Worley rock detail. Cost: one small table and a
+   few ALU in the terrain shader. Check by a raster/PT pair straddling the reach at 100% crop.
+2. **Stones that react.** Wheels and feet already write the deform fields; a changed cell sinks or shoves its grains
+   (displacement along the deform gradient), and grains under a contact patch become PhysX rigid bodies (the
+   `break_stone` path), back to records once asleep. Only grains near a contact need bodies: tens at a time.
+3. **River and stream beds.** Imbrication: river pebbles lie overlapping like roof tiles, the long axis across the
+   flow and the upstream edge down, dip 10 to 30 degrees (standard sedimentology; the flow direction comes from the
+   water's own flow map). Size from the stream's shear (coarse in riffles, fine and silted in pools); seen through
+   clear water, so it needs Valence's water to trace them.
+4. **More stones for the same cost.** Peytavie et al.'s tiles of piles (settled once by PhysX, Wang borders) and a
+   compute pass writing TLAS instance records straight into a slot range (Unity 6
+   `RayTracingAccelerationStructure.AddInstancesIndirect`, Unreal's GPU instance buffer path), with per-instance
+   culling by projected size. Needs a cost run on the PC to prove the gain.
+
+Sources: Meng, Papas, Habel, Dachsbacher, Marschner, Gross, Jarosz 2015
+(https://cs.dartmouth.edu/~wjarosz/publications/meng15granular.html); Unity
+`AddInstancesIndirect` (https://docs.unity3d.com/ScriptReference/Rendering.RayTracingAccelerationStructure.AddInstancesIndirect.html).

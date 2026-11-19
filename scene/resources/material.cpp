@@ -1210,6 +1210,52 @@ float vmud_cover_f(float p_f, float p_w) {
 float vmud_cover(float p_level, float p_splat) {
 	return p_level <= 0.0 ? 0.0 : vmud_cover_f(p_splat + 1.2 * p_level, 0.15);
 }
+// Desiccation cracks (mud round 11): drying clay shrinks against the panel it sticks to and splits into plates a few
+// times as wide as the layer is thick (Groisman and Kaplan 1994); a layer under a critical thickness dries whole
+// (Routh 2013), and the cracks open as it dries, the plates' edges curling up off the panel. The plates are cells of a
+// cellular (Worley 1996) distance, F2 - F1, in the vehicle's frame, warped so they read as clay rather than foam.
+vec2 vmud_cells(vec3 p_p) {
+	vec3 i = floor(p_p);
+	vec3 f = p_p - i;
+	float d1 = 8.0;
+	float d2 = 8.0;
+	for (int z = -1; z <= 1; z++) {
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				vec3 o = vec3(float(x), float(y), float(z));
+				vec3 cc = i + o;
+				vec3 jit = vec3(vmud_hash(cc + vec3(911.0, 0.0, 0.0)), vmud_hash(cc + vec3(0.0, 577.0, 0.0)), vmud_hash(cc + vec3(0.0, 0.0, 313.0)));
+				float d = length(o + 0.1 + 0.8 * jit - f);
+				if (d < d1) {
+					d2 = d1;
+					d1 = d;
+				} else if (d < d2) {
+					d2 = d;
+				}
+			}
+		}
+	}
+	return vec2(d1, d2);
+}
+// At p_p (vehicle frame, m) for a cake p_h thick, p_dry dry (0..1) over a footprint p_fw: (the crack's share, the
+// plate's curl, m).
+vec2 vmud_crack(vec3 p_p, float p_h, float p_dry, float p_fw) {
+	float on = smoothstep(0.0028, 0.0045, p_h) * smoothstep(0.45, 0.9, p_dry);
+	if (on <= 0.0 || p_fw > 0.012) {
+		return vec2(0.0);
+	}
+	const float CELL = 0.022;
+	vec3 q = p_p / CELL + 0.35 * vec3(vmud_noise(p_p * 31.0 + 5.0), vmud_noise(p_p * 31.0 + 19.0), vmud_noise(p_p * 31.0 + 37.0));
+	vec2 d = vmud_cells(q);
+	// Half the distance between the two nearest plate centres' bisector, in m: how far to the plate's edge.
+	float e = 0.5 * (d.y - d.x) * CELL;
+	float w = 0.0006 * on;
+	float fw = max(p_fw, 1e-4);
+	// A filtered step over the footprint, faded where a pixel holds many plates.
+	float open = (1.0 - smoothstep(w - 0.5 * fw, w + 0.5 * fw, e)) * (1.0 - smoothstep(0.004, 0.012, p_fw));
+	float curl = 0.0007 * on * (1.0 - smoothstep(w, w + 0.005, e));
+	return vec2(open, curl);
+}
 // The cake's relief (m): thicker where it lies deep (a splat's middle, below the mud line), lumpy, and with a lip a few
 // mm wide just inside its edge where a splash's crown piles up; its edge a step.
 float vmud_height(float p_f, float p_w, float p_level, float p_splat, vec3 p_p, float p_fw) {
@@ -1368,7 +1414,23 @@ vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_fram
 		return vec4(0.0);
 	}
 	float h0 = vmud_height(f, w, lvl, s, p, fw);
-	vec3 g = vec3(vmud_height(fs.x, w, ls.x, ss.x, px, fw), vmud_height(fs.y, w, ls.y, ss.y, py, fw), vmud_height(fs.z, w, ls.z, ss.z, pz, fw)) - h0;
+	vec3 hs = vec3(vmud_height(fs.x, w, ls.x, ss.x, px, fw), vmud_height(fs.y, w, ls.y, ss.y, py, fw), vmud_height(fs.z, w, ls.z, ss.z, pz, fw));
+	// Drying cracks (round 11): the cake's dryness here, its thick middle drying last (as vmud_apply() tones it).
+	float t0 = smoothstep(0.85, 1.2, lvl);
+	float dry = 1.0 - clamp(p_body.z + 0.6 * t0 * (1.0 - p_body.z) + 0.25 * t0, 0.0, 1.0);
+	if (dry > 0.45 && !legs) {
+		vec3 ts = smoothstep(vec3(0.85), vec3(1.2), ls);
+		vec3 drys = 1.0 - clamp(p_body.z + 0.6 * ts * (1.0 - p_body.z) + 0.25 * ts, 0.0, 1.0);
+		vec2 k0 = vmud_crack(p, h0, dry, fw);
+		vec2 kx = vmud_crack(px, hs.x, drys.x, fw);
+		vec2 ky = vmud_crack(py, hs.y, drys.y, fw);
+		vec2 kz = vmud_crack(pz, hs.z, drys.z, fw);
+		h0 = (h0 + k0.y) * (1.0 - k0.x);
+		hs = (hs + vec3(kx.y, ky.y, kz.y)) * (1.0 - vec3(kx.x, ky.x, kz.x));
+		// The panel shows in the crack.
+		c *= 1.0 - k0.x;
+	}
+	vec3 g = hs - h0;
 	g *= (1.0 - smoothstep(0.004, 0.02, fw)) / e;
 	// Back to world space: the frame's rows are a rotation.
 	vec3 gw = g.x * p_frame0.xyz + g.y * p_frame1.xyz + g.z * p_frame2.xyz;
@@ -4547,7 +4609,7 @@ float ground_ripple(vec2 p_xz) {
 // The ripples' variation (nothing repeating may show): the grown field tiles every few metres, so each point reads
 // it through a three-octave world-space warp (crests turn and change spacing over tens of metres and bend over a
 // few) and edge dislocations in pairs along the crests (a crest forks into two and rejoins: the Y-junctions of
-// real ripple fields), with a height that wanders between 15 and 100%. p_k is the grown field's dominant wave
+// real ripple fields), with a height that wanders between 35 and 100%. p_k is the grown field's dominant wave
 // vector (rad/m), so a dislocation shifts its crests by exactly one wavelength. The real ripples' window is filled
 // through the same lines (GroundRipples::vary), so the two meet crest to crest.
 float ground_ripple_hash(ivec2 p_c, uint p_s) {
@@ -4567,29 +4629,29 @@ float ground_ripple_vn(vec2 p_p, uint p_s) {
 vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 	vec2 p = p_xz;
 	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
-	o += 1.6 * (vec2(ground_ripple_vn(p / 6.0, 3u), ground_ripple_vn(p / 6.0, 4u)) - 0.5);
-	o += 0.16 * (vec2(ground_ripple_vn(p / 1.7, 5u), ground_ripple_vn(p / 1.7, 6u)) - 0.5);
-	float amp = mix(0.15, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
+	o += 1.2 * (vec2(ground_ripple_vn(p / 6.0, 3u), ground_ripple_vn(p / 6.0, 4u)) - 0.5);
+	o += 0.06 * (vec2(ground_ripple_vn(p / 1.7, 5u), ground_ripple_vn(p / 1.7, 6u)) - 0.5);
+	float amp = mix(0.35, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
 	float kk = dot(p_k, p_k);
 	if (kk > 0.0) {
 		vec2 kn = p_k / sqrt(kk);
 		vec2 t = vec2(-kn.y, kn.x);
-		// Spacing: a stretch along the crests' normal only, so crests crowd and open by up to a third over a metre or two.
-		o += kn * (0.45 * (ground_ripple_vn(vec2(dot(p, kn) / 2.0, dot(p, t) / 5.0), 14u) - 0.5));
-		ivec2 c0 = ivec2(floor(p / 1.6));
+		// Spacing: a stretch along the crests' normal only, so crests crowd and open by up to a fifth over a few metres.
+		o += kn * (0.3 * (ground_ripple_vn(vec2(dot(p, kn) / 2.5, dot(p, t) / 6.0), 14u) - 0.5));
+		ivec2 c0 = ivec2(floor(p / 2.0));
 		float ph = 0.0;
 		for (int dz = -1; dz <= 1; dz++) {
 			for (int dx = -1; dx <= 1; dx++) {
 				ivec2 c = c0 + ivec2(dx, dz);
-				if (ground_ripple_hash(c, 9u) >= 0.7) {
+				if (ground_ripple_hash(c, 9u) >= 0.5) {
 					continue;
 				}
-				vec2 m = (vec2(c) + vec2(ground_ripple_hash(c, 10u), ground_ripple_hash(c, 11u))) * 1.6;
+				vec2 m = (vec2(c) + vec2(ground_ripple_hash(c, 10u), ground_ripple_hash(c, 11u))) * 2.0;
 				float hl = 0.15 + 0.3 * ground_ripple_hash(c, 12u);
 				vec2 da = p - (m - t * hl);
 				vec2 db = p - (m + t * hl);
 				float sgn = ground_ripple_hash(c, 13u) < 0.5 ? -1.0 : 1.0;
-				ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(0.75, 1.55, length(p - m)));
+				ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(0.9, 1.9, length(p - m)));
 			}
 		}
 		o += p_k * (ph / kk);

@@ -1234,3 +1234,164 @@ driven in, from a shed), raster and path traced alike.
 
 **Next.** Weight on the body (its mass), snow sliding off a tilted roof as a slab, and clumps falling
 off as `SnowClumps3D` pieces when a load sheds.
+
+## Follow-up 19: weight, slabs and clumps from bodies (built 19 Nov 2026)
+
+- **Weight.** Each body's load mass is depth x density x the top area of its meshes' world bounds. Every physics step, `apply_force` presses it on a free `RigidBody3D` at the middle of its top. Check: 10 kg of snow on a weightless 10 kg body gives 4.93 m/s after 0.5 s, against 4.93 expected.
+- **Slabs.** On a tilted top (the body's up axis against the world's), the load slides as one slab under Mohr-Coulomb. The shear rho g d sin(theta) has to exceed the bond c (250 Pa dry, times (1 - wet)^2) plus friction rho g d cos(theta) tan(phi), where phi falls from 25 to 15 degrees with wetness. The same form is used for the cornice crack. With 15 cm at 150 kg/m3: dry snow holds on a 40 degree roof, wet snow slides at 40 degrees but not at 20, and 40 cm of dry snow slides at 80 degrees. Cloth is excluded, since it has no single top.
+- **Clumps.** Snow that falls off (shaken, blown or slid) lands on the snow through `SnowClumps3D.drop(at, radius, volume, wet)`. The amount is limited by how well the snow holds together (`SnowClumps3D.cohesion`), and the clump sizes are log-normal, about 4 cm dry and 8 cm wet (debris granules, Bartelt and McArdell 2009). Slabs land past the low edge, and shaken snow lands in a ring round the body. Check: a crate tipped 75 degrees in deep snow sheds its 30 cm as 64 clumps.
+- **Cloth.** SnowBodies3D writes `snow_load` (kg/m2) to a `PhysXCloth3D` once the cloth has that property; the change is asked of the PhysX thread. The load adds to the solver's areal density, next to the water term, so loaded fabric sags.
+
+## Follow-up 20: avalanches (built 19 Nov 2026)
+
+`SnowAvalanche3D`, added by `SnowCover3D` (`avalanches_enabled`, on).
+
+**Slab.** The slab is the new snow since it last bonded. It is tracked per cell from the cover's new snow, has a mass-weighted age and bonds after a week. The other slab is the snow over a buried crust, with facets on top of the crust as the weak layer.
+
+**Release.** A slab releases on 28-55 degree slopes when the stability index S = tau_strength / (rho g h sin cos) drops below 1 (Foehn 1987). The strength is 14.5 (rho / 917)^1.73 kPa (Jamieson and Johnston 2001) with a weak-layer density of 100 kg/m3, or 150 on a crust. Sintering raises it by (1 + age / 48 h), about double in two days. The fracture spreads to neighbours with S < 1.2. Check: at 38 degrees, 50 cm holds (S 1.32), a metre fails (0.66), and the same metre two days old holds (1.32).
+
+**Flow.** The flow is depth-averaged Voellmy on the cover's grid (Voellmy 1955; Salm 1993; RAMMS, Christen et al. 2010), with mu 0.2 and xi 1500 m/s2.
+- Gravity acts down the snow surface. The surface includes the flow itself, which supplies the pressure term.
+- Mass and momentum move by donor-cell transport under CFL 0.4.
+- Above 5 m/s the flow entrains new snow at 0.005 m per m/s per s.
+- It deposits where it is slower than 0.5 m/s and the slope cannot beat mu.
+- The moving mass lives in the cover's cells and is written back at 5 Hz, so every reader sees it move.
+- At the end, two mass-conserving passes smooth away the grid's checkerboard. Debris breaks into clumps near the camera, only in cells the flow crossed faster than 5 m/s, so the scoured release zone is left clean.
+- Free rigid bodies in the flow take 1/2 rho u^2 over their width times the flow depth.
+
+**Checks.** `--test=avalanche`, 6 checks, on a 38 degree, 80 m face over a flat run-out:
+- 30 cm of new snow stays.
+- One more metre releases: 20800 m3, with 1127 m3 entrained.
+- The flow runs 143 m at up to 15 m/s.
+- Water is kept to 0.2%; the small loss is snow that leaves the grid.
+- About 2 m of debris piles 40 m out from the toe.
+- A trigger releases a slab.
+
+**View.** `--view=avalanche [--before]`. The dark specks on the face in the raster shot are the ground showing through the 1 cm left on the scoured bed. In this bench all the snow is new, so the slab runs to the ground. That is not a rendering fault (the specks are the same with `--glints=grid`).
+
+**Limits and next.**
+- Built in follow-up 22: the higher-order scheme (HLL, as RAMMS uses). Speed is set by the flow's depth (see there).
+- Built in follow-up 23: the powder cloud, in PhysX Flow as a heavy gas fed by the flow's front.
+- Built in follow-up 21: vehicles, boots and cornice failures add stress (Foehn's skier term).
+
+## Next round (proposed 19 Nov 2026): heavier snow on bodies, rain on ruts, avalanches
+
+**Heavier snow on bodies.**
+
+- *Weight:* SnowBodies3D adds the load's mass to the body. That mass is depth × density × the top area facing the sky, where the area is the body's AABB top, or a downward ray grid for a better estimate. The load is applied as a constant force at the top centre, so a loaded trailer handles differently and a laden branch-like prop dips.
+- *Cloth sag:* the same load goes on PhysXCloth3D as extra mass on the particles facing up. PhysX cloth takes per-particle inverse mass.
+- *Slab sliding:* on a tilted face the load slides as a slab once the shear (rho g d sin θ) passes the bond strength. Wet snow on warm metal bonds weakly. Start from the cornice failure criterion we already have (follow-up 7), which uses the same Mohr-Coulomb form.
+- *Clumps:* shed snow (wind, jolts, slides) leaves as SnowClumps3D pieces, the ground thread's parked clumps (4dd45be3), instead of just disappearing. A shake's mass balance goes to clumps, and wind's goes to the blowing-snow flux.
+
+**Rain on ruts.** RainFall3D reads WorldContracts::snow()->surface_at, so drops stop in prints and ruts. This touches a weather file and needs Paulo's line.
+
+**Avalanches.** Slab release where the load on a 30-45° slope exceeds the weak layer. We already have the crust and burial state from follow-up 4, which can serve as the weak layer. The run-out uses a depth-averaged Savage-Hutter or Voellmy flow on the cover grid (RAMMS uses Voellmy with mu around 0.155 and xi 2000 m/s²). The flow deposits snow, buries plants and bodies through the snow contract, and throws powder into the fog.
+
+## Follow-up 21: triggers from people, sleds, vehicles and cornices (built 19 Nov 2026)
+
+Paulo picked all three of round 3 (19 Nov), triggers first. `SnowAvalanche3D.triggers_enabled`, on.
+
+**Load.** Every body in `trigger_groups` (the groups SnowSurface3D prints: `snow_deform`, `grass_trample`, `world_contact`) that stands on at least `min_slab` of snow loads the slab under it, every physics frame.
+- The load is a line load P: the body's weight over its footprint, a metre at least. An 80 kg skier gives Foehn's 0.78 kN/m.
+- Mass comes from rigid bodies, `character_mass` for characters, and the `snow_mass` / `ground_mass` meta. Vehicle wheels carry their share of the vehicle.
+- What the body has sunk in, read from `WorldSnow.surface_at` (its print), brings the load nearer the weak layer. A boot in powder triggers more easily than a ski.
+
+**Index.** The added shear is Flamant's line load on an elastic half-space, as Foehn (1987) applies it to a slope: 2 P sin(t + a) sin^2(t) cos(t) / (pi D), peaked over t. On the flat it is 0.207 P / D. The trigger index is strength / (rho g h sin cos + delta_tau), for the weakest layer (new snow or a buried crust's facets). Under 1, the slab releases.
+
+**Spread.**
+- From the load, the fracture runs through new slab on avalanche terrain while that slab's natural index stays under `propagation_index` (1.5), or under 1.2 times the index where it opened. A uniform storm slab goes as a whole.
+- Along a buried crust the collapse (a whumpf) runs anywhere the crust does, flat ground included, up to `collapse_range` (60 m). It releases the steep cells it reaches whose index is under 1.5: a remote trigger (Johnson et al. 2004; the propagation saw test, Gauthier and Jamieson 2008).
+- A collapsed crust does not collapse again.
+
+**Cornices.** A failed cornice (`SnowCover3D.cornice_failed`) lands on the slope below it at twice its weight along its length.
+
+**Recent snow.** The cover now hands every update's new snow and hours to the avalanche as the update ends, and `add_snow` does too. Before, snow added between two checks, or the hours of a multi-step `advance`, could be missed.
+
+**Background updates.** While an avalanche runs and a background cover update has the cells, the flow waits and catches up afterwards (at most 0.25 s), so the frame never waits for the update. The background-update bench switches avalanches off, since a fresh load there can avalanche and the two runs it compares would then diverge.
+
+**Checks.** `--test=triggers`, 5 checks, on the 38 degree face:
+- Flamant's 0.207 P / D.
+- 60 cm of fresh snow: index 1.10 alone, 0.45 under a person. A person standing on it releases 9600 m3.
+- A metre of snow five cold days old (now 0.49 m at 202 kg/m3): index 1.13 under a person, who stands on it, and 0.75 under a 400 kg sled, which releases it.
+- A week-old slab, 0.57 m over a buried crust: on the flat, index 1.72 under a person (holds) and 0.45 under 3 kN/m. That load collapses the crust and the face 20 m away releases 1650 m3.
+- Snow from the weather map builds the slab update by update: 0.164 m fell in 6 h and all of it counts as new slab (re-checked after the world-links fix 499de57a, which makes the weather map answer snowfall_at for SnowBodies3D too; the body checks still pass and the crates get the ground's 0.147 m in the bodies view).
+- With `triggers_enabled` off, nothing triggers.
+
+**Limits.**
+- Loads are static. A jump landing or a fall (about twice as much, Schweizer and Camponovo 2001) would need the body's vertical speed.
+- Wheels load one at a time, not summed across the vehicle.
+
+## Follow-up 22: second-order flow transport (built 19 Nov 2026)
+
+The flow's advection is now finite volumes of second order, the way RAMMS solves the same Voellmy equations (Christen et al. 2010). It replaces donor-cell transport.
+- MUSCL reconstruction with the minmod limiter of the mass and the velocities at each face (velocities, not momenta, so a thin edge cannot reconstruct a wild speed).
+- HLL Riemann fluxes (Harten, Lax and van Leer 1983; Toro 2001) with wave speeds u +- sqrt(g h), and the dry-bed speeds u - 2c / u + c at a front.
+- Heun's two stages in time. The CFL is on the fastest wave, |u| + c, at 0.2 of a cell each way.
+- Gravity and the earth pressure stay in the source step, as the gradient of the snow surface with the flow on it, so snow at rest stays at rest. Friction stays a separate step.
+
+**Speed.** The test avalanche peaks at 15.6 m/s, which is 84% of Voellmy's steady speed sqrt(xi h (sin - mu cos)) for the flow depth and slope where it ran fastest (18.5 m/s). It was 15.4 m/s with donor cells. The flow here is only about 0.4 m deep (1.2 m of 100 kg/m3 snow becomes 300 kg/m3 flow), and Voellmy's speed goes as the square root of depth. So the 20-30 m/s of measured avalanches needs their deeper flows (1-3 m), from bigger releases and entrainment, not a different scheme. The new scheme's gain is a front that does not smear: it keeps its depth, and so its speed, where donor cells thinned it. The toe deposit is now 1.57 m at 40 m out, against 1.96 m before (the deposit spreads more evenly).
+
+**Check.** `--test=avalanche` adds one check: the peak speed is within 20% of the steady speed for its depth (`get_max_speed_terminal()`). Water is still conserved to 0.1%.
+
+## Follow-up 23: the powder cloud (built 19 Nov 2026)
+
+A fast dry avalanche lifts a suspension cloud off its front. Measured clouds hold 3-10 kg/m3 of snow against air's 1.2, run ahead of the dense core, and leave a thin powder layer past the debris (Vallee de la Sionne: Sovilla et al. 2015, front eruption currents; Turnbull and McElwaine 2008; RAMMS::EXTENDED's second, suspension layer fed by the dense core, Bartelt et al. 2016). `SnowAvalanche3D.powder_enabled`, on.
+
+**Intake.** On the flow's leading slope, the cells whose downstream neighbour carries less, a dry front faster than `powder_speed` (10 m/s) blows `powder_share` (0.3) of its snow into the air for each 10 m it runs, per m/s over that speed. "Dry" means the released slab holds no liquid water (under 0.1% of its mass), so a wet slide makes no cloud. The mass leaves the flow, so the cover loses it there.
+
+**Cloud.**
+- The intake gathers in 8 m bins and becomes parcels every half second.
+- Each parcel keeps the front's velocity, slowed by the air (8 s e-folding). It spreads at 4 m/s up to 40 m across and settles out over `powder_settle` (6 s).
+- What settles is laid on the cover in a cone over the parcel's disc, at 70 kg/m3 and fresh albedo, five times a second.
+- Every kg that goes up comes down, and water is conserved.
+- Free bodies inside a parcel take 1/2 rho_c u^2, where rho_c is the parcel's mass over its volume, capped at 10 kg/m3 (`get_powder_density_at`).
+
+**Look.** `SnowPowderCloud3D`, a child of the avalanche, puts sphere emitters (24, 5 m, overlapping the 8 m bins) on the strongest bins, each fed at least a third of the strongest so the front rises as one wall in a PhysXFlow3D of its own. It is a heavy gas (`smoke_buoyancy` -0.8, `scattering_strength` 1 so raster matches path tracing after the Flow parity fix 8579bb21) with an updraft of 0.3 times the front's speed (the eruption current), resting on the cover's height source as Flow's terrain floor and drifting with the weather's wind. It reaches the PhysX module by class and property names only, so the snow module builds and runs without it, with the same physics and no cloud drawn.
+
+**Checks.** `--test=powder`, 5 checks:
+- The test avalanche lofts 14.5 t, at most 11.4 t in the air at once, and all of it settles within 40 s.
+- The cloud settles snow 167 m from the release, past the dense flow's 143 m.
+- A thin powder layer, about a millimetre, lies at 90 m.
+- Water is conserved (7864 t to 7854 t; the dense flow's edge losses).
+- After a thaw (wetness 0.1), the same avalanche makes no cloud.
+
+**View.** `--view=avalanche --powder [--at=S]`. The avalanche runs in real time so Flow steps the cloud with it. The raster shot 9 s after release shows one continuous billowing wall over the run-out, casting its shadow on the snow. A first tune, with 12 emitters fed by rate, drew three separate puffs and failed the docs' parity check against PT. For path tracing, the bench steps under raster and freezes the scene for the traced still.
+
+**Limits.**
+- This avalanche peaks at 15.6 m/s, so the cloud is modest: the intake grows with speed above 10 m/s.
+- Trees in the blast zone are not broken yet. The trees thread's thrown-tree path could take the parcel pressure (5-10 kPa breaks trunks).
+- Flow needs its SDK built (`flow_sdk=`), which also works in the cloud.
+
+## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
+
+**Triggers from people and vehicles.**
+- Foehn (1987) gives the extra shear a surface load adds at the weak layer's depth: delta_tau = 2 P cos(psi) sin^2(theta) sin(theta + psi) / (pi r). Here P is the line load, theta is the angle below the surface and r is the distance. Its peak sits roughly straight under the load, so it is about 2P / (pi h) for a slab of depth h.
+- The skier stability index SK = tau_strength / (tau_gravity + delta_tau). Our natural S already has every term except delta_tau.
+- The loads are a skier's 0.78 kN/m (Foehn), a boot on foot about twice that on a smaller footprint, and a snowmobile about 2-3 times a skier. Thumlert and Jamieson (2014) measured the snowmobile.
+- Monti et al. (2016) correct for a layered slab, where a stiff layer spreads the load. Our crust flag can scale that.
+- The load comes from SnowSurface3D's prints, which already know mass and footprint, through WorldContracts world_contact. Every body that presses snow can then trigger.
+- A cornice failure (follow-up 7, which already reports position and mass) adds its impact as a large P where it lands.
+- Remote triggers: a whumpf spreads along a buried crust (follow-up 4) for tens of metres, so a person on the flat can release the slope above. Gauthier and Jamieson (2008) give the propagation saw test. Spread the release flood fill from the trigger cell only along the crust.
+- Checks: a skier crossing 60 cm at 38 degrees releases it, the same with no one on it holds, and a sled releases it where a boot does not.
+
+**Sharper, faster flow.**
+- Donor-cell transport smears the front, so the run-out is right but the speed is about half of measured values (15 m/s against 20-30).
+- RAMMS (Christen et al. 2010) solves the same Voellmy equations with a second-order finite-volume scheme. The fix is to swap the transport step for one too:
+  - MUSCL reconstruction with a minmod limiter, then an HLL Riemann flux (Toro 2001, for shallow water) and a Heun time step.
+  - The wave speed |u| + sqrt(g h cos theta) sets the CFL step.
+- Hydrostatic reconstruction (Audusse et al. 2004) keeps a wet/dry front stable on a slope and still snow still.
+- Friction stays a separate implicit step, as now, so mass conservation does not change.
+- Check: front speed within 20% of the 1D Voellmy terminal speed sqrt(xi h (sin theta - mu cos theta)), with the run-out unchanged within one cell.
+
+**Powder cloud.**
+- Big dry-snow avalanches lift a suspension cloud at the front at 3-10 kg/m3, against air's 1.2. It runs faster than the dense core and can go up to 60 m/s.
+- Data comes from Vallee de la Sionne (Sovilla et al. 2015, front eruption currents). The dynamics follow Turnbull and McElwaine (2008); RAMMS::EXTENDED models the cloud as a second layer fed from the dense core's front (Bartelt et al. 2016).
+- In PhysX Flow:
+  - A heavy-gas emitter (negative `smoke_buoyancy`) sits on front cells where the speed is over 10 m/s and the snow is dry and fresh. Its rate is the entrained mass times a share of about 0.1-0.2.
+  - Its initial velocity is the flow's velocity plus an updraft.
+  - Flow's wind and terrain floor carry the cloud, so it runs up the opposite slope and settles. What settles adds a thin powder layer back to the cover.
+- The cloud's dynamic pressure, about 0.5 rho u^2 (several kPa at 40 m/s), pushes bodies and trees past the dense deposit's edge. That is the blast zone.
+- On the raster path it uses Flow's own draw. Under PT it is a participating medium if Flow's volume reaches PT. Otherwise it goes on the PC queue for a check.
+- Check: the cloud outruns the core's front and leaves a thin powder layer beyond the debris. No cloud forms from a wet slide.
+
+**Also worth offering.** An avalanche into a lake displaces water (an impulse wave from the WorldWater contract). The impact on trees: the trees thread's thrown-tree path breaks those above a dynamic pressure of about 5-10 kPa.

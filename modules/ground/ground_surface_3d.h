@@ -78,6 +78,8 @@ public:
 		// Mud slides (docs/ideas/mud.md, round 10): the mud's yield stress over its weight, tau_y / (rho g), m; a
 		// layer h deep holds on ground up to slide_length / h steep, past it flows down (1e3: holds anywhere).
 		float slide_length = 1e3f;
+		// Gullies (round 11): the bed shear runoff needs to start cutting the ground, Pa (sand 0.19, Shields).
+		float crit_shear = 0.19f;
 		float darken = 0.3f; // albedo lost where freshly turned
 		float gloss = 1.0f; // roughness factor where freshly turned
 		float litter = 0.0f; // m of litter on top
@@ -133,6 +135,8 @@ private:
 	// most mud_auto_depth). It counts only when wet: none below mud_wet_start moisture, all at mud_wet_full.
 	bool mud_layer = true;
 	bool mud_slides = true; // round 10: a soaked layer flows off slopes it no longer holds
+	bool subsoil = true; // round 12: a firm base under the loose layer, its depth varied across the ground
+	HashMap<Vector2i, float> mud_deposits; // m of fresh slurry per 1 m cell (debris flows' fans)
 	// Standing water (docs/ideas/mud.md, stage 2): rain, runoff and ground water gather in ruts and prints, on the
 	// GPU field (the virtual pipe model), drawn as the surface there in both renderers.
 	bool standing_water = true;
@@ -199,6 +203,27 @@ private:
 	float outer_spacing = 0.125f;
 	PackedStringArray deform_groups;
 	bool ploughing = true;
+	// Mats (docs/ideas/mud.md, round 12): logs and branches laid on soft ground, as a corduroy road. Rigid bodies in
+	// the "ground_mats" group with a cylinder or capsule shape: once they settle the ground takes them (frozen,
+	// lying on the deformed surface, in the ruts), a wheel on one bears on the wood, and the log spreads that load
+	// along its length into the soil and sinks under it.
+	bool mats = true;
+	struct Mat {
+		ObjectID id;
+		float length = 1.0f;
+		float radius = 0.05f;
+		float sink = 0.0f; // m, below the undisturbed ground under it
+		float pressed = 0.0f; // m, what the field has been pressed to
+		float load = 0.0f; // N, wheels on it since the last update
+		float peak = 0.0f; // N, the most it has carried (its load over a fifth of a second)
+		float carried = 0.0f; // N, the load smoothed over a fifth of a second
+		float friction = 0.5f; // its body's
+		bool broken = false; // snapped under a load past its strength: no longer a mat
+		Vector3 a, b; // its axis ends, world
+	};
+	LocalVector<Mat> mat_list;
+	void _update_mats(float p_dt);
+	bool _mat_shape(Node *p_body, Vector3 &r_a, Vector3 &r_b, float &r_radius) const;
 
 public:
 	struct Spray {
@@ -406,6 +431,7 @@ private:
 		float mud = 0.0f; // deep mud, m (stage 1 of docs/ideas/mud.md)
 		bool fixed = false; // rock or snow: never deforms
 		float frozen = 0.0f; // frozen soil at the surface (round 8): 0..1, how far it holds as a crust
+		float repel = 0.0f; // a fire's water repellency (WorldFire.water_repellency_at), 0..1
 	};
 	LocalVector<CellInput> cell_inputs;
 	float _water_conductivity(const CellInput &p_in) const;
@@ -417,6 +443,7 @@ private:
 	LocalVector<float> water_speed; // m/s of water over the cell, 0 dry
 	LocalVector<float> cell_water; // the saturation and speed the cell was last built with (2 per cell)
 	LocalVector<float> water_depth; // m of water over the cell (the last water update's)
+	LocalVector<float> water_body_depth; // of it, the sea's, a lake's or a river's alone (WorldWater; no standing water)
 	struct Wader {
 		int64_t id = 0;
 		Vector3 axle;
@@ -485,6 +512,7 @@ private:
 	float _far_pore_at(float p_x, float p_z) const;
 	float _pore_step(float p_s, float p_depth, float p_contact, float p_dt, float &r_table) const;
 	static float _value_noise(float p_x, float p_z);
+	float _subsoil_factor(float p_x, float p_z) const;
 	// The look of the pore water (Lagarde 2013): ground_wet_map, n x (n + 1) RGBAF, R wetness, G the saturation (the standing film from 0.95, taken after filtering),
 	// B the share of loose dry sand showing its grains (sand_glints), the last row's texel 0 the rect (x0, z0, size, tag 2.5). Read by the raster and path-traced ground alike.
 	Vector<uint8_t> wet_data;
@@ -575,8 +603,13 @@ private:
 	MeshInstance3D *mesh_instance = nullptr;
 	Ref<ArrayMesh> mesh;
 	Ref<Material> patch_material;
+	Ref<Shader> patch_source_shader; // the source material's shader when the patch copy was made
+	bool patch_params_stale = false;
 	Vector3 patch_uv_offset;
 	Vector2 center;
+	bool mesh_hole_cut = false; // the mesh was built with triangles left out over holes
+	int mesh_hole_count = 0;
+	const TerrainGenerator3D *_hole_generator() const;
 	bool mesh_dirty = true;
 	bool globals_published = false;
 	double cells_accum = 0.0;
@@ -589,6 +622,8 @@ private:
 	void _ensure_children();
 	void _build_mesh();
 	void _update_patch_material();
+	void _on_material_changed() { patch_params_stale = true; }
+	void _sync_patch_params();
 	void _follow(Vector3 p_center);
 	void _sample_ground(Vector2i p_origin, int p_n);
 	void _update_cells();
@@ -769,6 +804,30 @@ public:
 	bool is_mud_layer() const { return mud_layer; }
 	void set_mud_slides(bool p_enabled);
 	bool is_mud_slides() const { return mud_slides; }
+	void set_subsoil(bool p_enabled);
+	bool is_subsoil() const { return subsoil; }
+	// Fresh slurry laid over a disc (a debris flow's deposit, GroundDebrisFlow3D): wet mud whatever the weather.
+	void add_mud_deposit(Vector3 p_position, float p_radius, float p_depth, bool p_update = true);
+	void refresh_cells() { _update_cells(); }
+	float get_mud_deposit_at(Vector3 p_position) const;
+	void set_mats(bool p_enabled) { mats = p_enabled; }
+	bool is_mats() const { return mats; }
+	// The mat a wheel's contact p_contact lies on (within p_tolerance of the wood), or -1.
+	int get_mat_at(Vector3 p_contact, float p_tolerance = 0.06f) const;
+	// A wheel's load on mat p_mat this step, N.
+	void add_mat_load(int p_mat, float p_load);
+	int get_mat_count() const { return (int)mat_list.size(); }
+	// How far mat p_mat has sunk below the undisturbed ground, m.
+	float get_mat_sinkage(int p_mat) const;
+	// The length of mat p_mat that carries a load into the soil (beam on an elastic foundation), m.
+	float get_mat_spread(int p_mat) const;
+	bool is_mat_broken(int p_mat) const { return p_mat >= 0 && p_mat < (int)mat_list.size() && mat_list[p_mat].broken; }
+	float get_mat_friction(int p_mat) const { return p_mat >= 0 && p_mat < (int)mat_list.size() ? mat_list[p_mat].friction : 0.5f; }
+	// For a wheel of radius p_radius centred at p_center: the mat it rests on (-1 for none) and the height of the road
+	// plane under it there (the wheel touching the log's round top), r_support.
+	int get_mat_under_wheel(Vector3 p_center, float p_radius, float &r_support) const;
+	// The loose layer's depth over the firm base at p_position, m.
+	float get_subsoil_depth_at(Vector3 p_position) const;
 	// The steepest ground the mud at p_position stays on now, degrees (90 where there is none or it holds anywhere).
 	float get_mud_slide_angle_at(Vector3 p_position) const;
 	void set_standing_water(bool p_enabled);

@@ -44,6 +44,7 @@
 
 class PhysicsDirectSpaceState3D;
 
+class SnowAvalanche3D;
 class SnowBodies3D;
 class SnowCornice3D;
 class SnowLakeIce3D;
@@ -64,6 +65,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	friend class SnowCornice3D;
 	friend class SnowSurface3D;
 	friend class SnowLakeIce3D;
+	friend class SnowAvalanche3D;
 
 	static SnowCover3D *active;
 
@@ -246,6 +248,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 		Vector<float> crust, crust_cycles, crust_burial, crust_wet;
 		Vector<float> cornice_x, cornice_z, cornice_crack;
 		Vector<float> ice, white_ice;
+		Vector<float> lap; // mg/m2 BC equivalent showing at the surface
 	} pub;
 	bool background_updates = true;
 	WorkerThreadPool::TaskID cover_task = WorkerThreadPool::INVALID_TASK_ID;
@@ -254,6 +257,19 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	// The terrain climate's precipitation per cell (mm a year), read on the main thread.
 	Vector<float> cell_climate_precip;
 	Vector<float> cell_fire; // W/m2 from WorldFire, read on the main thread each update (empty with no fire)
+	// Light-absorbing particles (docs/ideas/world-links.md, dirty snow), mg/m2 of black carbon equivalent: on the
+	// surface, under the snow fallen since (deep) with that snow's depth (m) over it, and the deposition from the
+	// smoke haze and burnt forest (mg/m2 per hour, read on the main thread every few seconds).
+	bool impurities = true;
+	Vector<float> cell_lap, cell_lap_deep, cell_lap_cover, cell_lap_in;
+	uint64_t lap_refresh_usec = 0;
+	struct ImpurityDrop {
+		Vector2 center;
+		float radius = 0.0f;
+		float mg = 0.0f;
+	};
+	LocalVector<ImpurityDrop> impurity_drops;
+	void _refresh_lap();
 	// Water (docs/ideas/snow.md, follow-up 15): the water surface over the cell from the terrain data map
 	// (-INF: dry land), read on the main thread, and the lake ice on it (m).
 	Vector<float> cell_water;
@@ -263,12 +279,24 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	SnowLakeIce3D *lake_ice = nullptr; // the drawn ice, an internal child
 	bool bodies_enabled = true;
 	SnowBodies3D *bodies_node = nullptr; // snow carried by moving things, an internal child
+	bool avalanches_enabled = true;
+	SnowAvalanche3D *avalanche_node = nullptr; // slab release and run-out, an internal child
 	const TerrainDataMap3D *_terrain_map() const;
 	uint64_t main_usec = 0; // main-thread time of the last update (gather, start, swap in)
 	// The textures' images, built off the main thread.
 	Ref<Image> upload_snow;
 	Ref<Image> upload_catch;
 	void _publish_cells();
+	// Lake ice broken under bodies too heavy for it (docs/ideas/world-links.md, bodies → lake ice): world x, z and
+	// radius, cut from the published ice at once and from the cells at the next update's start.
+	struct IceBreak {
+		Vector2 center;
+		float radius = 0.0f;
+	};
+	LocalVector<IceBreak> ice_breaks;
+	int ice_break_count = 0;
+	void _cut_ice(Vector<float> &r_ice, Vector<float> &r_white) const;
+	void _ice_load_step();
 	void _refresh_cell_inputs(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only);
 	void _refresh_fire();
 	void _update_begin(double p_weather_dt, bool p_blocking);
@@ -411,6 +439,9 @@ public:
 	float get_white_ice_thickness_at(Vector3 p_position) const;
 	SnowLakeIce3D *get_lake_ice() const { return lake_ice; }
 	SnowBodies3D *get_bodies() const { return bodies_node; }
+	SnowAvalanche3D *get_avalanches() const { return avalanche_node; }
+	void set_avalanches_enabled(bool p_enabled);
+	bool is_avalanches_enabled() const { return avalanches_enabled; }
 	void set_bodies_enabled(bool p_enabled);
 	bool is_bodies_enabled() const { return bodies_enabled; }
 
@@ -421,6 +452,16 @@ public:
 	float contract_snow_surface_at(const Vector3 &p_position) const override;
 	float contract_snow_crust_at(const Vector3 &p_position) const override { return get_crust_strength_at(p_position); }
 	Vector2 contract_snow_lake_ice_at(const Vector3 &p_position) const override;
+	void contract_snow_add_impurity(const Vector3 &p_position, float p_radius, float p_mg_per_m2) override { add_impurity(p_position, p_radius, p_mg_per_m2); }
+	float contract_snow_impurity_at(const Vector3 &p_position) const override { return get_impurity_at(p_position); }
+	void add_impurity(Vector3 p_position, float p_radius, float p_mg_per_m2);
+	float get_impurity_at(Vector3 p_position) const;
+	// The albedo the particles take off clean snow: 0.35 (1 - e^(-L / 15 mg/m2)), about 0.02 for the first mg/m2 (Warren
+	// and Wiscombe 1980) and near 0.35 for a burnt forest's debris or a dust storm's layer (Painter et al. 2007;
+	// Gleason et al. 2013).
+	static float impurity_albedo_drop(float p_mg_per_m2);
+	void set_impurities_enabled(bool p_enabled) { impurities = p_enabled; }
+	bool is_impurities_enabled() const { return impurities; }
 	void set_lake_ice_enabled(bool p_enabled);
 	bool is_lake_ice_enabled() const { return lake_ice_enabled; }
 	// Lake ice after p_hours at p_air_celsius from p_ice m with p_snow_depth m of snow of p_snow_density
@@ -428,6 +469,9 @@ public:
 	// growing below freezing; it does not melt here (the update melts it in a thaw once the snow is gone).
 	static float lake_ice_growth(float p_ice, float p_air_celsius, float p_snow_depth, float p_snow_density, float p_hours);
 	static float snow_conductivity(float p_density); // W/(m K), Sturm et al. 1997
+	// The load floating ice carries before it breaks: P = A h^2 (kg, h in cm; Gold 1971), A about 10 at failure.
+	static float ice_breaking_load(float p_ice, float p_white_share, float p_air_celsius);
+	int get_ice_break_count() const { return ice_break_count; }
 	static constexpr float ICE_WALK = 0.05f; // m of ice that bears a person (the deep snow and its collision lie on it)
 	static constexpr float ICE_HOLD = 0.02f; // m of ice that keeps snow on it (thinner, snow sinks into slush and melts)
 	// The top crust (docs/ideas/snow.md, follow-up 3d): its thickness, the snow over it, its melt-freeze

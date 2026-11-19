@@ -1,0 +1,1 @@
+- Weather: a fire cloud sits at its plume's own condensation level, not the weather's cloud base, so on a dry day the cap rides kilometres above the usual cumulus (WeatherMap3D storms carry their own cloud base).

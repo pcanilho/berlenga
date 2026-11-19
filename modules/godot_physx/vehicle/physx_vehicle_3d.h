@@ -40,6 +40,9 @@
 #include "scene/resources/physics_material.h"
 
 class PhysXVehicleWheel3D;
+namespace physx {
+class PxRigidActor;
+}
 
 // A real, PhysX-specific 4-wheel vehicle -- offers PxVehicle2 capability
 // stock VehicleBody3D/VehicleWheel3D structurally can't (real engine torque
@@ -186,6 +189,8 @@ public:
 	void set_soft_soil(bool p_enabled);
 	bool is_soft_soil() const { return soft_soil; }
 	real_t get_wheel_sinkage(int p_wheel) const;
+	// The tyre's deflection past its deflection at road pressure (200 kPa, the default), m: how much lower an aired-down tyre stands.
+	real_t get_wheel_deflection(int p_wheel) const;
 	real_t get_wheel_soil_resistance(int p_wheel) const;
 	real_t get_wheel_soil_traction(int p_wheel) const;
 	real_t get_wheel_soil_side_force(int p_wheel) const; // N, sidewall bulldozing against a side slide
@@ -213,12 +218,16 @@ public:
 	// Clods that stuck to the body (mud stage 4b): a splat at p_world, spread along p_velocity, of p_volume m3.
 	void add_mud_splat(const Vector3 &p_world, const Vector3 &p_velocity, float p_volume);
 	int get_mud_splat_count() const;
+	// Stuck clods that dried and shook off on jolts so far (round 11).
+	int get_mud_flakes_shed() const;
 	// Stuck clod p_index: its position in the vehicle's frame and how much of it is left (w, 0..1).
 	Vector4 get_mud_splat(int p_index) const;
 	// For a grains node: the live vehicles, and whether a point is inside one's chassis box.
 	static void get_mud_vehicles(LocalVector<PhysXVehicle3D *> &r_vehicles);
 	bool mud_box_contains(const Vector3 &p_world) const;
 	Vector3 get_actor_position() const;
+	// The chassis actor once built (its frame is this node's), else null; for joints to it (PhysXWinch3D).
+	physx::PxRigidActor *get_px_actor() const;
 
 	PackedStringArray get_configuration_warnings() const override;
 

@@ -8,6 +8,8 @@ extends Node3D
 #   --forms=a,b        TreeGenerator.ShrubForm values (default all: young, mature, old, thicket, cushion; 5 hedge, 6 laid hedge)
 #   --day=N            day of year (default 100)
 #   --variants=N       N variants of each form side by side (default 1)
+#   --row=M            metres between species rows (default 3.5)
+#   --sand             sand-coloured ground (desert shrubs)
 #   --pt --spp=N       path traced
 #   CAM="x,y,z,lx,ly,lz,fov" camera
 
@@ -42,10 +44,11 @@ func run(args: Dictionary) -> void:
 			var t0 := Time.get_ticks_msec()
 			var nv := int(args.get("variants", "1"))
 			var sp: PlantSpecies = TreeGenerator.make_shrub_species(p, f, nv, season)
-			for vi in sp.meshes.size():
+			# Living variants only (the fire band variants follow them in the list).
+			for vi in TreeGenerator.get_living_meshes(sp).size():
 				x = await _place(sp, vi, x, z, args, t0)
 		width = maxf(width, x)
-		z -= 3.5
+		z -= float(args.get("row", "3.5"))
 	await _after_place(args, width, z)
 
 func _place(sp: PlantSpecies, vi: int, x: float, z: float, args: Dictionary, t0: int) -> float:
@@ -110,6 +113,8 @@ func _world(args: Dictionary) -> void:
 	ground.mesh = pm
 	var gm := StandardMaterial3D.new()
 	gm.albedo_color = Color(0.2, 0.19, 0.13)
+	if args.has("sand"):
+		gm.albedo_color = Color(0.62, 0.5, 0.36) # Desert sand (a sand sea's quartz, iron-stained).
 	gm.roughness = 0.95
 	ground.material_override = gm
 	add_child(ground)
@@ -196,3 +201,29 @@ func _test() -> void:
 		var lb := (ls.meshes[0] as Mesh).get_aabb()
 		_check(lb.end.y > 1.0 and lb.end.y < 2.6 and lb.size.x > 1.6 and lb.size.x < 3.0 and lb.size.z < 1.8 and float(ls.get_meta("hedge_segment_length", 0.0)) == 2.0 and not ls.random_yaw, "%s: %.2f m tall, %.2f m along, %.2f m deep, segment meta, no yaw" % [ls.get_name(), lb.end.y, lb.size.x, lb.size.z])
 	_check(TreeGenerator.get_bloom(43, 95) > 0.9 and TreeGenerator.get_bloom(6, 135) > 0.9 and TreeGenerator.get_bloom(45, 170) > 0.9 and TreeGenerator.get_bloom(6, 200) == 0.0, "blackthorn in flower in April, hawthorn in May, dog rose in June")
+	# Desert shrubs (trees.md 5ae): calligonum, white broom and saltbush, 1-2.5 m mature.
+	var winter: Dictionary = main.weather_season(50)
+	for p in [46, 47, 48]:
+		var hs := {}
+		for f in [0, 1, 3]:
+			var ds: PlantSpecies = TreeGenerator.make_shrub_species(p, f, 1, april)
+			_check(ds != null and ds.meshes.size() > 0 and ds.canopy_radius > 0.0, "%s form %d made" % [ds.get_name() if ds else str(p), f])
+			hs[f] = (ds.meshes[0] as Mesh).get_aabb().end.y
+		_check(hs[0] < hs[1] and hs[1] > 0.9 and hs[1] < 2.6 and hs[3] < 2.6, "desert shrub %d: young %.2f < mature %.2f m in 1-2.5 m, thicket %.2f m" % [p, hs[0], hs[1], hs[3]])
+	_check(TreeGenerator.get_bloom(47, 50) > 0.9 and TreeGenerator.get_bloom(47, 150) == 0.0, "white broom in flower in February, not in June")
+	var rf: PlantSpecies = TreeGenerator.make_shrub_species(47, 1, 1, winter)
+	var rs: PlantSpecies = TreeGenerator.make_shrub_species(47, 1, 1, aug)
+	_check(rf.far_color.b > rs.far_color.b + 0.15, "white broom far colour white in flower (%s vs %s)" % [rf.far_color, rs.far_color])
+	# Calligonum's bristly fruit in April: crown parts, red.
+	var cm: Mesh = TreeGenerator.make_shrub_species(46, 1, 1, april).meshes[0]
+	var red := false
+	for si in cm.get_surface_count():
+		if cm.surface_get_name(si) == "crown_parts":
+			var cols: PackedColorArray = cm.surface_get_arrays(si)[Mesh.ARRAY_COLOR]
+			var rsum := 0.0
+			var gsum := 0.0
+			for col in cols:
+				rsum += col.r
+				gsum += col.g
+			red = cols.size() > 1000 and rsum > gsum * 2.0
+	_check(red, "calligonum carries red bristly fruit in April")

@@ -72,6 +72,12 @@ public:
 		float outflow = 10.0f; // peak downburst outflow speed (m/s)
 		float lifetime = 3600.0f; // weather seconds; <= 0 lasts until removed
 		float age = 0.0f;
+		// A fire cloud (pyrocumulus) over a fire's plume (WorldFire.plumes): eased in and out by fade, held over the
+		// plume while it burns.
+		bool fire = false;
+		float fade = 1.0f;
+		float cloud_base = 0.0f; // m, its own cloud base (a fire cloud's plume LCL); <= 0: cloud_base_height
+		float fade_target = 0.0f;
 	};
 
 private:
@@ -105,6 +111,16 @@ private:
 	bool air_daily_cycle = true; // with a SkyClock: cooler nights, warmer afternoons (Parton and Logan 1981)
 	float daily_temperature_range = 10.0f; // K, clear calm day; clouds and rain narrow it
 	bool sun_drying = true; // the sun's net radiation in the evaporation (Penman 1948's combination)
+	bool fire_clouds = true; // fire plumes that reach the condensation level make clouds (pyrocumulus)
+	// Smoke from fires (WorldFire.smoke_sources) as a layer carried by the wind aloft (weather_smoke.cpp): g/m2 of
+	// particulate in the column over each cell.
+	bool smoke_haze = true;
+	float smoke_lifetime = 3.0f * 86400.0f; // s of weather time, dilution out of the layer in dry weather
+	bool smoke_washout = true; // rain and snow wash it out (WorldWeather::washout_rate)
+	Vector<float> cell_smoke;
+	void _smoke_step(double p_weather_dt);
+	void _smoke_shift(Vector2i p_delta);
+	float _smoke_sigma() const; // extinction (1/m) of the smoke near the ground where the map follows
 	bool dew_and_frost = true; // clear calm nights: dew, and hoarfrost below freezing (Monteith 1957)
 	// Season (weather_season.h): the date from a SkyClock, or season_day; the climate from a ClimateRecipe.
 	NodePath sky_clock;
@@ -133,6 +149,7 @@ private:
 	float cloud_lifetime = 900.0f; // s, turnover of the cover noise's largest octave
 	float cloud_churn = 1.5f; // m/s, how fast the cloud shapes change (the shape noise's reads slide apart)
 	float cloud_shear = 1.0f; // scale on the wind shear's lean of the cloud tops (0: upright)
+	float cloud_size_mix = 1.0f; // large clouds among the small (0: one size)
 	double cloud_time = 0.0; // s of weather time the clouds have evolved
 	NodePath sun_light;
 	float cloud_shadow_extent = 6144.0f; // m
@@ -386,6 +403,7 @@ private:
 	float _cloud_noise(Vector2 p_xz) const;
 	float _cloud_evolve() const;
 	float _storm_weight(const Storm &p_storm) const;
+	void _update_fire_clouds(double p_weather_dt);
 	WeatherClouds::State _cloud_state() const;
 	void _start_shadow_bake();
 	void _finish_shadow_bake(bool p_wait);
@@ -559,6 +577,8 @@ public:
 	float get_cloud_churn() const { return cloud_churn; }
 	void set_cloud_shear(float p_scale);
 	float get_cloud_shear() const { return cloud_shear; }
+	void set_cloud_size_mix(float p_mix);
+	float get_cloud_size_mix() const { return cloud_size_mix; }
 	void set_cloud_time(double p_seconds);
 	double get_cloud_time() const { return cloud_time; }
 	void set_sun_light(const NodePath &p_path);
@@ -651,6 +671,26 @@ public:
 	void remove_storm(int p_id);
 	void clear_storms();
 	int get_storm_count() const { return storms.size(); }
+	// Smoke haze (docs/ideas/physx.md, "Smoke haze dims the sun").
+	void set_smoke_haze(bool p_enabled);
+	bool is_smoke_haze() const { return smoke_haze; }
+	void set_smoke_lifetime(float p_seconds) { smoke_lifetime = MAX(p_seconds, 60.0f); }
+	float get_smoke_lifetime() const { return smoke_lifetime; }
+	void set_smoke_washout(bool p_v) { smoke_washout = p_v; }
+	bool is_smoke_washout() const { return smoke_washout; }
+	float get_smoke_at(Vector3 p_position) const; // g/m2 of particulate in the column
+	float get_smoke_optical_depth_at(Vector3 p_position) const; // at 550 nm
+	// The direct sun's transmittance through the smoke layer (RGB) at a point, for a sun along p_to_sun.
+	Vector3 get_smoke_transmittance(Vector3 p_position, Vector3 p_to_sun) const;
+	void add_smoke(Vector3 p_position, float p_kg);
+	void clear_smoke();
+	void set_fire_clouds(bool p_enabled) { fire_clouds = p_enabled; }
+	bool is_fire_clouds() const { return fire_clouds; }
+	int get_fire_cloud_count() const;
+	// The fire cloud a plume of p_heat watts of convective heat makes in this weather: x the plume's rise (m),
+	// y the lifting condensation level (m above the ground), z the cloud's strength (0: none, 1: a full
+	// cumulus over it; beyond 1, a pyrocumulonimbus).
+	Vector3 get_fire_cloud_for(float p_heat) const;
 	// The storm cells, and how far each has grown (0..1, its rise and decay over its lifetime).
 	const Vector<Storm> &get_storms() const { return storms; }
 	float get_storm_strength(const Storm &p_storm) const { return _storm_weight(p_storm); }
@@ -743,6 +783,13 @@ public:
 	float contract_sun_visibility_at(const Vector3 &p_position) const override { return get_sun_visibility_at(p_position); }
 	float contract_canopy_closure_at(const Vector3 &p_position) const override { return get_canopy_closure_at(p_position); }
 	float contract_frost_at(const Vector3 &p_position) const override { return get_frost_at(p_position); }
+	float contract_rainfall_at(const Vector3 &p_position) const override { return get_rainfall_at(p_position); }
+	float contract_snowfall_at(const Vector3 &p_position) const override { return get_snowfall_at(p_position); }
+	float contract_smoke_at(const Vector3 &p_position) const override { return get_smoke_at(p_position); }
+	float contract_canopy_water_at(const Vector3 &p_position) const override { return get_canopy_water_at(p_position); }
+	float contract_canopy_wetness_at(const Vector3 &p_position) const override { return get_canopy_wetness_at(p_position); }
+	float contract_canopy_drip_at(const Vector3 &p_position) const override { return get_canopy_drip_at(p_position); }
+	float contract_ground_water_input_at(const Vector3 &p_position) const override { return get_ground_water_input_at(p_position); }
 	Vector3 contract_mean_wind_at(const Vector3 &p_position) const override {
 		const Vector2 m = get_mean_wind_at(p_position);
 		return Vector3(m.x, 0.0f, m.y);

@@ -38,7 +38,7 @@
 			<param index="2" name="height" type="float" />
 			<param index="3" name="from" type="float" />
 			<description>
-				The weather's aerosol haze in the sky's air: [param extinction] at the ground (1/m; 0 for none), its single-scatter [param albedo], its scale [param height] (m), and the distance [param from] the camera along each view ray where it starts (the volumetric fog's reach, which draws the nearer part). It scatters with the sun's light through the clouds' shadow, so the shafts carry on past the volumetric fog, and dims the sun's disc and the stars. [WeatherMap3D] calls this from [member WeatherMap3D.aerosol_haze].
+				The weather's aerosol haze in the sky's air: [param extinction] at the ground (1/m; 0 for none), its single-scatter [param albedo], its scale [param height] (m), and the distance [param from] the camera along each view ray where it starts (the volumetric fog's reach, which draws the nearer part). It scatters with the sun's light through the clouds' shadow, so the shafts carry on past the volumetric fog, and dims the sun's disc and the stars. [WeatherMap3D] calls this from [member WeatherMap3D.aerosol_haze]. Until it is called, the sky has [WeatherMap3D]'s default haze (40 km dry visibility).
 			</description>
 		</method>
 		<method name="set_cloud_shadow_map">

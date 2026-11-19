@@ -18,7 +18,14 @@ extends Node3D
 #   --desert[=off]   a transverse sand sea (TerrainGenerator3D.sand_sea_rect) with make_desert's flanks and
 #                    interdune sets streamed round a camera 1.7 m up (off: no plants): checks the plants keep
 #                    off the crests and slip faces by the sand's mobility, prints the same costs as --floor
-#                    and with --out saves the view. VEG_DESERT_HIGH=1 looks from 12 m up across the dunes.
+#                    and with --out saves the view. VEG_DESERT_HIGH=1 looks from 12 m up across the dunes;
+#                    VEG_DESERT_DAY=N sets the day of the year; VEG_DESERT_SHRUBS=0 leaves the woody shrubs out.
+#   --burn[=off]     dry heath (make_heath) with four burn scars (WorldBurnScar3D, 0.05, 0.6, 2.5 and 5 years old)
+#                    and make_burn's heath set, streamed round a camera 2.5 m up looking along the scars (off: no scars, no burn set):
+#                    checks each burn plant grows only at its ages and the heather thins on the burns, prints the
+#                    same costs as --floor and with --out saves the view.
+#   --burn=live      quick check: a streamed field of one species recovering over a year; a scar placed after the
+#                    tiles stand, aged, then removed (WorldFire.burn_changed, no rebuild): gone, half back, whole.
 
 const SIZE := 256.0
 var size := SIZE
@@ -36,6 +43,8 @@ var far_volume_view := 0 # --far-volume: 1 with the far plants as volume, 2 with
 var far_match := 0 # --far-match: the far-volume view without volume, 4 m up, on a ground drawing the far colour, waiting for the far shade match; 2 = match off (=off), 3 = shade forced to 0.3 (=dark).
 var floor_view := 0 # --floor: 1 with the small species' pixel reach, 2 without (--floor=off).
 var desert_view := 0 # --desert: 1 with make_desert's plants on a sand sea, 2 the same view without (--desert=off).
+var burn_view := 0 # --burn: 1 with burn scars and make_burn's heath set, 2 the same heath unburnt (--burn=off).
+const BURN_SCARS := [[0.05, -60.0], [0.6, -25.0], [2.5, 10.0], [5.0, 45.0]] # Years since, and the scar's centre z (x 60, 60 x 30 m).
 var mushroom_view := 0 # --mushrooms: 1 with the mushrooms, 2 the same view without them (--mushrooms=off).
 var n := 0
 var dm: TerrainDataMap3D
@@ -88,6 +97,8 @@ func _ready() -> void:
 		elif a.begins_with("--floor"):
 			floor_view = 2 if a == "--floor=off" else 1
 			size = 128.0
+		elif a.begins_with("--burn"):
+			burn_view = 2 if a == "--burn=off" else (3 if a == "--burn=live" else 1)
 		elif a.begins_with("--desert"):
 			desert_view = 2 if a == "--desert=off" else 1
 		elif a.begins_with("--mushrooms"):
@@ -139,7 +150,7 @@ func _ready() -> void:
 	field.data_map = field.get_path_to(dm)
 	if stream_cost:
 		_setup_stream_cost()
-	if not out.is_empty() and desert_view == 0:
+	if not out.is_empty() and desert_view == 0 and burn_view == 0:
 		_build_view()
 
 func _mesh(m: PrimitiveMesh, lift: float, col: Color) -> Mesh:
@@ -253,6 +264,12 @@ func _physics_process(_d: float) -> void:
 		return
 	if desert_view > 0:
 		await _desert_view()
+		return
+	if burn_view == 3:
+		await _burn_live()
+		return
+	if burn_view > 0:
+		await _burn_view()
 		return
 	if stone_view != "":
 		_stones_view()
@@ -461,7 +478,20 @@ func _desert_view() -> void:
 	ground.detail_reference_height = 1080
 	var gb := Biome.new()
 	var desert_set: Array[PlantSpecies] = []
-	desert_set.assign(Array(PlantGenerator.make_desert(PlantGenerator.DESERT_FLANKS, 3, true)) + Array(PlantGenerator.make_desert(PlantGenerator.DESERT_INTERDUNE, 3, true)))
+	var shrubs := OS.get_environment("VEG_DESERT_SHRUBS") != "0" # 0: without the woody shrubs (their cost).
+	# VEG_DESERT_DAY=N: the plants on day N of the year (saltbush panicles 190 to 20, calligonum fruit 85 to 215).
+	var dseason := {} if OS.get_environment("VEG_DESERT_DAY") == "" else {"day_of_year": int(OS.get_environment("VEG_DESERT_DAY"))}
+	desert_set.assign(Array(PlantGenerator.make_desert(PlantGenerator.DESERT_FLANKS, 3, true, dseason, shrubs)) + Array(PlantGenerator.make_desert(PlantGenerator.DESERT_INTERDUNE, 3, true, dseason, shrubs)))
+	if desert_view == 1:
+		# A plain species with no sand rule: the field keeps it off the sand sea's sand by itself.
+		var plain := PlantSpecies.new()
+		var pm := BoxMesh.new()
+		pm.size = Vector3(0.2, 0.3, 0.2)
+		plain.meshes = [pm]
+		plain.spacing = 2.0
+		plain.density = 0.6
+		plain.set_meta("plain", true)
+		desert_set.append(plain)
 	gb.species = desert_set if desert_view == 1 else ([] as Array[PlantSpecies])
 	ground.biome = gb
 	ground.tile_size = 16.0
@@ -529,6 +559,36 @@ func _desert_view() -> void:
 
 # The sand's mobility as VegetationField3D works it out (_read_sand_mobility): the depth's place between its low and
 # high within 12 cells, 0 under thin sand, -1 off the sand. Returns [grid, nx, ny, rect].
+# The meadow sward (GrassField3D) keeps off the sand sea like the plants: no blades on deep sand, some off it.
+func _desert_grass_check(gen: TerrainGenerator3D, map: TerrainDataMap3D) -> void:
+	var g := GrassField3D.new()
+	g.radius = 12.0
+	g.far_rings = false
+	g.far_shell = false
+	g.rules = PlantSpecies.new()
+	add_child(g)
+	g.data_map = g.get_path_to(map)
+	var deep := Vector3()
+	for k in 400:
+		var q := Vector3(randf_range(-350, 350), 0, randf_range(-350, 350))
+		if gen.get_sand_sea_height(q) > 1.5:
+			deep = q
+			break
+	var counts := []
+	for q in [deep, Vector3(460, 0, 460)]:
+		for i in 4:
+			g.update_at(q)
+		var n := 0
+		for ch in g.get_children(true):
+			if ch is MultiMeshInstance3D:
+				var buf := RenderingServer.multimesh_get_buffer(ch.multimesh.get_rid())
+				for b in range(0, buf.size(), 16):
+					if not (buf[b] == 0.0 and buf[b + 2] == 0.0) and Vector2(buf[b + 3] - q.x, buf[b + 11] - q.z).length() < 10.0:
+						n += 1
+		counts.append(n)
+	g.queue_free()
+	_check("desert: the meadow grass keeps off the sand sea (blades on deep sand, off the sea)", counts[0] == 0 and counts[1] > 100, [deep, counts])
+
 func _desert_mobility(gen: TerrainGenerator3D) -> Array:
 	var rect := gen.sand_sea_rect
 	var c := gen.sand_sea_scale
@@ -570,12 +630,29 @@ func _desert_mobility(gen: TerrainGenerator3D) -> Array:
 	return [m, nx, ny, rect]
 
 func _desert_mob_at(mob: Array, p: Vector3) -> float:
+	# As the field reads it (PlaceSetup::mobility_at): bilinear, nearest where a corner is off the sand (-1).
 	var rect: Rect2 = mob[3]
-	var x := clampi(roundi((p.x - rect.position.x) / rect.size.x * (mob[1] - 1)), 0, mob[1] - 1)
-	var z := clampi(roundi((p.z - rect.position.y) / rect.size.y * (mob[2] - 1)), 0, mob[2] - 1)
-	return mob[0][z * mob[1] + x]
+	var nx: int = mob[1]
+	var nz: int = mob[2]
+	var gx := (p.x - rect.position.x) / rect.size.x * (nx - 1)
+	var gz := (p.z - rect.position.y) / rect.size.y * (nz - 1)
+	if gx < 0.0 or gz < 0.0 or gx > nx - 1 or gz > nz - 1:
+		return -1.0
+	var ix := mini(int(gx), nx - 2)
+	var iz := mini(int(gz), nz - 2)
+	var fx := gx - ix
+	var fz := gz - iz
+	var g: PackedFloat32Array = mob[0]
+	var a: float = g[iz * nx + ix]
+	var b: float = g[iz * nx + ix + 1]
+	var c: float = g[(iz + 1) * nx + ix]
+	var d: float = g[(iz + 1) * nx + ix + 1]
+	if minf(minf(a, b), minf(c, d)) < 0.0:
+		return (a if fz < 0.5 else c) if fx < 0.5 else (b if fz < 0.5 else d)
+	return lerpf(lerpf(a, b, fx), lerpf(c, d, fx), fz)
 
 func _desert_checks(ground: VegetationField3D, dset: Array[PlantSpecies], gen: TerrainGenerator3D, map: TerrainDataMap3D, mob: Array) -> void:
+	_desert_grass_check(gen, map)
 	# Per preset: plants, on a crest (mobility over 0.85 here, the near cell), on a slip face (over 30 deg),
 	# share on the flanks (0.1 to 0.8), on stable sand (under 0.2), mean slope.
 	# Keyed by preset, and drinn by stand (the flanks' set comes first, 89; the interdune drinn as -89).
@@ -621,9 +698,381 @@ func _desert_checks(ground: VegetationField3D, dset: Array[PlantSpecies], gen: T
 	_check("desert: the sand sea has mobile crests and stable corridors", hi > 200 and lo > 200, [hi, lo, mob[0].size()])
 	_check("desert: no plant on a crest or a slip face", crest == 0 and slip == 0 and drinn[0] > 50, [crest, slip])
 	_check("desert: the flanks' drinn on the flanks", drinn[0] > 50 and drinn[3] > drinn[0] * 0.7, [drinn[0], drinn[3]])
-	# Mobility here is the nearest cell, the field's bilinear: a fade's width (0.08) of slack.
+	# Mobility here is the field's own (bilinear): a fade's width (0.08) of slack.
 	_check("desert: crust only on stable sand", crust[0] > 500 and crust[4] == crust[0], [crust[0], crust[4]])
+	var shrubs := 0
+	for s in dset.size():
+		if dset[s].get_meta("woody_shrub", false):
+			shrubs += ground.get_placements(s).size()
+	var plain_deep := 0
+	var plain_n := 0
+	for s in dset.size():
+		if dset[s].get_meta("plain", false):
+			for p in ground.get_placements(s):
+				plain_n += 1
+				if gen.get_sand_sea_height(p) > 0.5: # The field fades it out by 0.3 m on a 4 m grid: slack for the grid.
+					plain_deep += 1
+	_check("desert: a species without a sand rule keeps off the sand sea's sand", plain_deep == 0, [plain_n, plain_deep])
+	_check("desert: woody shrubs (calligonum, white broom, saltbush) placed", shrubs > 20 or OS.get_environment("VEG_DESERT_SHRUBS") == "0", [shrubs])
 	_check("desert: annuals between the dunes, not up them", annual[0] > 500 and annual[3] < annual[0] * 0.5, [annual[0], annual[3]])
+
+# Trees grown for a fire (mesh meta "tree_fire_years"): on a burn the variant nearest its age, unburnt ones off it.
+func _fire_variant_check() -> void:
+	var plain := BoxMesh.new()
+	var young := BoxMesh.new()
+	young.set_meta("tree_fire_years", 0.5)
+	young.set_meta("tree_fire_band", Vector2(0, 1))
+	var old := BoxMesh.new()
+	old.set_meta("tree_fire_years", 8.0)
+	old.set_meta("tree_fire_band", Vector2(6, 10))
+	var sp := PlantSpecies.new()
+	sp.meshes = [plain, young, old]
+	sp.spacing = 1.5
+	var scar := WorldBurnScar3D.new()
+	scar.age_years = 0.4
+	scar.size = Vector2(20, 20)
+	scar.position = Vector3(-30, 0, -30)
+	add_child(scar)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species = [sp]
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var on := {plain: 0, young: 0, old: 0}
+	var off := {plain: 0, young: 0, old: 0}
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh and on.has(ch.multimesh.mesh):
+			var mm: MultiMesh = ch.multimesh
+			for i in mm.instance_count:
+				var p: Vector3 = ch.global_transform * mm.get_instance_transform(i).origin
+				var d := maxf(absf(p.x + 30.0), absf(p.z + 30.0))
+				if d < 8.0:
+					on[mm.mesh] += 1
+				elif d > 12.0:
+					off[mm.mesh] += 1
+	scar.free()
+	f.queue_free()
+	var r := [on[plain], on[young], on[old], off[plain], off[young], off[old]]
+	_check("fire variants: trees on a burn take the variant nearest its age, unburnt ones off it", r[1] > 10 and r[0] == 0 and r[2] == 0 and r[3] > 10 and r[4] == 0 and r[5] == 0, r)
+
+# Close-up bark on by default: a field whose species have trunks (tree_colliders) makes and links a BarkDetail3D
+# as an internal child; none for a field without trunks, none with bark_detail off, gone when switched off.
+func _bark_detail_check() -> void:
+	var made := []
+	for k in 3:
+		var m := BoxMesh.new()
+		if k != 1:
+			m.set_meta("tree_colliders", PackedFloat32Array())
+		var sp := PlantSpecies.new()
+		sp.meshes = [m]
+		var f := VegetationField3D.new()
+		f.populate_on_ready = false
+		f.bark_detail = k != 2
+		f.biome = Biome.new()
+		f.biome.species = [sp]
+		add_child(f)
+		made.append(f)
+	var bd = made[0].get_bark_detail_node()
+	var r := [bd != null and bd.get_node(bd.vegetation) == made[0], made[1].get_bark_detail_node() == null, made[2].get_bark_detail_node() == null, made[0].get_child_count() == 0]
+	made[0].bark_detail = false
+	r.append(made[0].get_bark_detail_node() == null or made[0].get_bark_detail_node().is_queued_for_deletion())
+	for f in made:
+		f.queue_free()
+	_check("bark detail: made and linked for a field with trunks, not without, switchable", not r.has(false), r)
+
+# --burn=live: a burn reported after the field streamed in (WorldFire.burn_changed) re-places the tiles over it.
+func _burn_live() -> void:
+	field.queue_free()
+	var sp := PlantSpecies.new()
+	sp.meshes = [BoxMesh.new()]
+	sp.spacing = 0.6
+	sp.density = 0.8
+	sp.burn_recovery = 1.0
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.biome = Biome.new()
+	f.biome.species = [sp]
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.stream_radius = 30.0
+	f.stream_target = f.get_path_to(self)
+	f.streaming = true
+	var counts := []
+	await _burn_live_wait(3.0)
+	burn_live_field = f
+	burn_live_ring0 = _burn_live_count(f, true)
+	burn_live_ring_min = burn_live_ring0
+	counts.append(_burn_live_count(f))
+	var scar := WorldBurnScar3D.new()
+	scar.age_years = 0.02
+	scar.size = Vector2(16, 16)
+	add_child(scar)
+	await _burn_live_wait(3.0)
+	counts.append(_burn_live_count(f))
+	scar.age_years = 0.5
+	await _burn_live_wait(3.0)
+	counts.append(_burn_live_count(f))
+	scar.free()
+	await _burn_live_wait(3.0)
+	counts.append(_burn_live_count(f))
+	var share := float(counts[2]) / maxf(counts[0], 1)
+	_check("burn: a live burn re-places the streamed tiles over it (gone, half back at half the recovery, whole once it goes)", counts[0] > 15 and counts[1] == 0 and share > 0.3 and share < 0.7 and counts[3] == counts[0], counts)
+	_check("burn: the unburnt plants beside it never leave while their tiles are replaced (fewest in any frame)", burn_live_ring0 > 15 and burn_live_ring_min == burn_live_ring0, [burn_live_ring0, burn_live_ring_min])
+	print("VEG_BURN_LIVE_RESULT ", "PASS" if fails == 0 else "FAIL")
+	get_tree().quit(1 if fails > 0 else 0)
+
+var burn_live_field: VegetationField3D
+var burn_live_ring0 := 0
+var burn_live_ring_min := 0
+
+func _burn_live_wait(sec: float) -> void:
+	var t := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - t < sec * 1000.0:
+		await get_tree().process_frame
+		if burn_live_field:
+			burn_live_ring_min = mini(burn_live_ring_min, _burn_live_count(burn_live_field, true))
+
+# Plants on the scar's middle 12 m, or (ring) on the unburnt ground 10 to 16 m out, on tiles the scar touches.
+func _burn_live_count(f: VegetationField3D, ring := false) -> int:
+	var n := 0
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D:
+			var mm: MultiMesh = ch.multimesh
+			for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+				var p := (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+				var m := maxf(absf(p.x), absf(p.z))
+				if (m >= 10.0 and m < 16.0) if ring else (absf(p.x) < 6 and absf(p.z) < 6):
+					n += 1
+	return n
+
+# --burn[=off]: dry heath with burn scars of four ages (WorldBurnScar3D, the fire contract's burn_age_at) and
+# make_burn's heath set, streamed round a camera looking across the scars.
+func _burn_view() -> void:
+	field.queue_free()
+	if burn_view == 1:
+		for s in BURN_SCARS:
+			var scar := WorldBurnScar3D.new()
+			scar.age_years = s[0]
+			scar.size = Vector2(60, 30)
+			scar.position = Vector3(60, 0, s[1])
+			add_child(scar)
+	# From the unburnt heath at the scars' near end, 2.5 m up, looking along them: the fresh burn ahead, then a
+	# six-month one, then two and a half and five years.
+	var at := Vector3(60, 0, -92)
+	at.y = height(at.x, at.z)
+	var cam := Camera3D.new()
+	add_child(cam)
+	cam.far = 300.0
+	cam.position = at + Vector3(0, 2.5, 0)
+	cam.look_at(Vector3(60, height(60, -40), -40))
+	cam.current = true
+	var ground := VegetationField3D.new()
+	ground.far_volume = false
+	ground.name = "Heath"
+	ground.populate_on_ready = false
+	ground.detail_reference_height = 1080
+	var gb := Biome.new()
+	var heath_set: Array[PlantSpecies] = []
+	heath_set.assign(PlantGenerator.make_heath(PlantGenerator.HEATH_DRY, 3, true, {}, false))
+	var burn_set: Array[PlantSpecies] = []
+	if burn_view == 1:
+		burn_set.assign(PlantGenerator.make_burn(PlantGenerator.BURN_HEATH, 3, true))
+	var all: Array[PlantSpecies] = []
+	# The heath first: a field places its species in order, so the recovering heather claims its ground and the burn
+	# plants fill what it leaves (listed first, fireweed and charred stems kept it off five-year-old burns).
+	all.assign(Array(heath_set) + Array(burn_set))
+	gb.species = all
+	ground.biome = gb
+	ground.tile_size = 16.0
+	ground.stream_radius = 90.0
+	add_child(ground)
+	# The checks stream round the scars' middle, so all four and the unburnt heath beyond are in.
+	var mid := Node3D.new()
+	add_child(mid)
+	mid.position = Vector3(60, height(60, 0), 0)
+	ground.stream_target = ground.get_path_to(mid)
+	ground.data_map = ground.get_path_to(dm)
+	var mem0 := OS.get_static_memory_usage()
+	var vid0 := Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED)
+	ground.streaming = true
+	get_viewport().disable_3d = true
+	var warm := 0
+	while warm < 1500 and (warm < 20 or not ground.is_stream_idle()):
+		await get_tree().process_frame
+		warm += 1
+	if burn_view == 1:
+		_burn_checks(ground, all)
+	# The costs and the view on 60 m round the camera: software rendering of the whole 80 m is very slow.
+	ground.stream_radius = 60.0
+	ground.stream_target = ground.get_path_to(cam)
+	warm = 0
+	while warm < 1500 and (warm < 20 or not ground.is_stream_idle()):
+		await get_tree().process_frame
+		warm += 1
+	var walk := float(OS.get_environment("VEG_FLOOR_WALK")) if OS.get_environment("VEG_FLOOR_WALK") != "" else 30.0
+	var ms: Array[float] = []
+	var walked := 0.0
+	var start := cam.position
+	ground.get_stream_stats()
+	while walked < walk:
+		cam.position += Vector3(0, 0, 0.1)
+		cam.position.y = height(cam.position.x, cam.position.z) + 2.5
+		walked += 0.1
+		await get_tree().process_frame
+		ms.append(float(ground.get_stream_stats().frame_max_msec))
+	cam.position = start
+	var settle := 0
+	while settle < 1500 and (settle < 20 or not ground.is_stream_idle()):
+		await get_tree().process_frame
+		settle += 1
+	ms.sort()
+	var total := 0.0
+	for v in ms:
+		total += v
+	get_viewport().disable_3d = false
+	_burn_scene(cam)
+	for i in 30:
+		await get_tree().process_frame
+	for i in 6:
+		await RenderingServer.frame_post_draw
+	var waited := 0
+	while not raster and waited < 600 and get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES) > 0:
+		await RenderingServer.frame_post_draw
+		waited += 1
+	var t0 := Time.get_ticks_usec()
+	for i in 12:
+		await RenderingServer.frame_post_draw
+	var frame_ms := (Time.get_ticks_usec() - t0) / 12000.0
+	print("VEG_BURN walk %.0f m in %d frames: streaming mean %.2f ms, p95 %.2f ms, worst %.2f ms" % [walk, ms.size(), total / maxi(ms.size(), 1), ms[int(ms.size() * 0.95)], ms[-1]])
+	print("VEG_BURN plants %d, memory +%.1f MB, video +%.1f MB, primitives %d, draw calls %d, objects %d, %s frame %.1f ms" % [
+		ground.get_plant_count(), (OS.get_static_memory_usage() - mem0) / 1048576.0,
+		(Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) - vid0) / 1048576.0,
+		Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME), Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME),
+		Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME), "raster" if raster else "path traced", frame_ms])
+	if burn_view == 1:
+		print("VEG_BURN_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+	if out.is_empty():
+		get_tree().quit(1 if fails > 0 else 0)
+	else:
+		_render_later()
+
+# Years since the burn at p from the bench's scars; -1 unburnt.
+func _burn_age_at(p: Vector3) -> float:
+	for s in BURN_SCARS:
+		if absf(p.x - 60.0) <= 30.0 and absf(p.z - s[1]) <= 15.0:
+			return s[0]
+	return -1.0
+
+func _burn_checks(ground: VegetationField3D, all: Array[PlantSpecies]) -> void:
+	_check("burn: the scars answer the fire contract", is_equal_approx(WorldContracts.get_fire().burn_age_at(Vector3(60, 0, 10)), 2.5) and WorldContracts.get_fire().burn_age_at(Vector3(-60, 0, 10)) < 0.0, [WorldContracts.get_fire().burn_age_at(Vector3(60, 0, 10))])
+	# Burn plants: each only at its own ages (its range and fade), none on unburnt ground; the scars' 1 m rims and the
+	# field's 2 m age grid (nearest cell) give a little slack at the edges.
+	var outside := 0
+	var unburnt := 0
+	var burn_plants := 0
+	var by_preset := {}
+	# Heather per scar (x 35 to 85) against the unburnt heath beside it (x 92 to 117, the same z), away from the edges.
+	var heather := {}
+	for s in all.size():
+		var sp := all[s]
+		var key: int = sp.get_meta("plant_preset", -1)
+		var is_burn: bool = sp.get_meta("burn", false)
+		var r := sp.get_rule_range(PlantSpecies.RULE_BURN_AGE)
+		var f := sp.get_rule_fade(PlantSpecies.RULE_BURN_AGE)
+		for p in ground.get_placements(s):
+			var edge := absf(absf(p.x - 60.0) - 30.0) < 2.5 or (absf(p.x - 60.0) < 32.5 and _near_scar_edge(p.z))
+			var age := _burn_age_at(p)
+			if is_burn:
+				burn_plants += 1
+				by_preset[key] = by_preset.get(key, 0) + 1
+				if edge:
+					continue
+				if age < 0.0:
+					unburnt += 1
+				elif age < r.x - f or age > r.y + f:
+					outside += 1
+			elif key == PlantGenerator.PRESET_HEATHER:
+				for sc in BURN_SCARS:
+					if absf(p.z - sc[1]) > 12.5:
+						continue
+					var k := str(sc[0])
+					var hv: Array = heather.get(k, [0, 0])
+					if absf(p.x - 60.0) < 25.0:
+						hv[0] += 1
+					elif p.x > 92.0 and p.x < 117.0:
+						hv[1] += 1
+					heather[k] = hv
+	print("VEG_BURN burn plants by preset: ", by_preset, " heather by burn age (-1 unburnt): ", heather)
+	_check("burn: every burn preset placed", by_preset.size() == 4 and burn_plants > 2000, [by_preset])
+	_check("burn: burn plants only on burnt ground", unburnt == 0, [unburnt])
+	_check("burn: each burn plant at its own ages", outside == 0, [outside])
+	# Density on each scar against beside it (the scar's 50 x 25 m against 25 x 25 m): none on the fresh burn, about
+	# smoothstep(0, 8, 5) = 0.65 of it at five years (heather's burn_recovery, 8 years).
+	var share := {}
+	for k in heather:
+		var hv: Array = heather[k]
+		share[k] = (hv[0] / 50.0) / maxf(hv[1] / 25.0, 1e-3)
+	var fresh: float = share.get(str(0.05), 1.0)
+	var old: float = share.get(str(5.0), 0.0)
+	var beside: int = heather.get(str(5.0), [0, 0])[1]
+	_check("burn: heather gone on the fresh burn, coming back on the old", beside > 500 and fresh < 0.05 and old > 0.4 and old < 0.9, [share])
+
+func _near_scar_edge(z: float) -> bool:
+	for s in BURN_SCARS:
+		if absf(absf(z - s[1]) - 15.0) < 2.5:
+			return true
+	return false
+
+# The burn view's ground (scorched under the fresh scars, ash and soil under the older ones, as the terrain's own
+# burn colour would show it), sky and sun.
+func _burn_scene(cam: Camera3D) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var res := 200
+	var step := 0.75
+	var o := Vector3(cam.position.x - 75.0, 0, cam.position.z - 10.0)
+	for z in res:
+		for x in res:
+			var q := [Vector3(x, 0, z), Vector3(x + 1, 0, z), Vector3(x + 1, 0, z + 1), Vector3(x, 0, z + 1)]
+			for i in [0, 1, 2, 0, 2, 3]:
+				var v: Vector3 = o + q[i] * step
+				v.y = height(v.x, v.z) - 0.02
+				var age := _burn_age_at(v) if burn_view == 1 else -1.0
+				var col := Color(0.16, 0.13, 0.08) # Peaty heath soil under the litter.
+				if age >= 0.0:
+					col = Color(0.03, 0.028, 0.026).lerp(col, smoothstep(0.0, 3.0, age))
+				st.set_color(col)
+				st.add_vertex(v)
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	var gm := StandardMaterial3D.new()
+	gm.vertex_color_use_as_albedo = true
+	gm.roughness = 0.95
+	mi.material_override = gm
+	add_child(mi)
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.55, 0.65, 0.8)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.55, 0.6, 0.7)
+	env.ambient_light_energy = 0.6
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = not raster
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = 2
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-35, 150, 0)
+	sun.light_energy = 1.2
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 100.0
+	add_child(sun)
 
 # The desert's ground, sky and sun for the view.
 func _desert_scene(gen: TerrainGenerator3D, cam: Camera3D) -> void:
@@ -862,6 +1311,8 @@ func _place_form_checks() -> void:
 	await get_tree().process_frame
 
 func _checks() -> void:
+	_bark_detail_check()
+	_fire_variant_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []
 	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH]:
@@ -2101,6 +2552,7 @@ func _deadwood_view() -> void:
 	field.queue_free()
 	var t0 := Time.get_ticks_msec()
 	var tg := TreeGenerator.new()
+	tg.fire_variants = false # No burn in this view: skip the five fire-band meshes (halves the stand build).
 	var wood := VegetationField3D.new()
 	wood.far_volume = false # Not under test here.
 	wood.name = "Wood"

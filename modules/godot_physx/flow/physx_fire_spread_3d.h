@@ -33,6 +33,7 @@
 
 #include "physx_ash.h"
 #include "physx_firebrands.h"
+#include "physx_smoulder.h"
 #include "physx_steam.h"
 
 #include "core/templates/hash_map.h"
@@ -80,6 +81,16 @@ private:
 	int quenched_by_water = 0;
 	LocalVector<uint8_t> steamed; // water has already taken this cell's heat
 	PhysXSteam steam;
+	// Smouldering ground fire (docs/ideas/physx.md, "Smouldering ground fire").
+	PhysXSmoulder smoulder;
+	bool smouldering = true;
+	float duff_depth = -1.0f; // m of duff and organic soil; below 0, by fuel type
+	float duff_moisture = 0.7f; // fraction of dry weight, on a day the fine fuel is at fuel_moisture
+	float duff_mineral = 0.2f; // mineral share of the duff's dry weight
+	// The convection column (WorldFire.plumes): heat-weighted centre of what flames and its convective heat, W.
+	Vector3 plume_at;
+	float plume_heat = 0.0f;
+	float _duff_depth() const;
 	// Fire whirls (docs/ideas/physx.md, "Fire whirls").
 	struct Whirl {
 		Vector3 pos;
@@ -116,8 +127,13 @@ private:
 	Vector3 _indraft_at(const Vector3 &p_position, float p_skip) const;
 	bool blowing_ash = true;
 	bool grass_ash = true;
-	LocalVector<float> ash_blown; // kg/m2 of ash lifted off each cell
+	LocalVector<float> ash_blown; // kg/m2 of ash lifted off each cell by the wind or washed off by runoff
+	float ash_washed = 0.0f; // kg washed off by runoff so far
+	float wash_timer = 0.0f;
+	void _wash_ash(float p_delta);
 	LocalVector<float> char_time; // s of flame (and a third of smouldering logs' time) each cell has stood
+	LocalVector<float> burn_day; // game day (the fire's own weather clock) each cell caught
+	double game_days = 0.0; // weather days since the fire node started (WorldWeather.time_scale)
 	LocalVector<float> burn_moisture; // fuel moisture (fraction) each cell had as it caught, for how completely it burnt
 	LocalVector<PhysXAsh::Source> ash_sources; // this sample's blowing patches
 	PhysXAsh ash;
@@ -162,6 +178,8 @@ private:
 	float map_timer = 0.0f;
 	int band_x0 = 0, band_x1 = -1, band_z0 = 0, band_z1 = -1; // cells that may change
 	float total_burnt = 0.0f; // m2
+	int burn_x0 = 0, burn_x1 = -1, burn_z0 = 0, burn_z1 = -1; // cells caught since the last WorldFire.burn_changed report
+	void _report_burn();
 
 	PhysXFlow3D *flow = nullptr;
 	bool own_flow = false;
@@ -175,6 +193,9 @@ private:
 	// Plants' view of the fire (fire_state_map): burnt, glow, peak flame length, peak crown scorch height.
 	Ref<Image> state_image;
 	Ref<ImageTexture> state_texture;
+	// Years since each cell caught, over 2 (0: never), for plants that change after a fire (fire_age_map).
+	Ref<Image> age_image;
+	Ref<ImageTexture> age_texture;
 	// Large wood (logs and fallen branches from a VegetationField3D): kg/m2, diameter (m), fraction left, ignition time.
 	LocalVector<float> heavy;
 	LocalVector<float> heavy_d;
@@ -252,6 +273,7 @@ private:
 	void _redistance();
 
 	friend class PhysXFirebrands;
+	friend class PhysXSmoulder;
 
 protected:
 	void _notification(int p_what);
@@ -266,6 +288,19 @@ public:
 	float contract_fire_heat_at(const Vector3 &p_position) const override { return get_intensity_at(p_position) * 1000.0f; }
 	float contract_fire_burnt_at(const Vector3 &p_position) const override { return get_char_at(p_position); }
 	float contract_fire_stem_char_at(const Vector3 &p_position) const override { return get_stem_char_at(p_position); }
+	float contract_fire_burn_age_at(const Vector3 &p_position) const override { return get_burn_age_at(p_position); }
+	float contract_fire_crown_scorch_at(const Vector3 &p_position) const override { return get_scorch_height_at(p_position); }
+	float contract_fire_water_repellency_at(const Vector3 &p_position) const override { return get_water_repellency_at(p_position); }
+	void contract_fire_plumes(PackedVector4Array &r_plumes) const override {
+		if (plume_heat > 0.0f) {
+			r_plumes.push_back(Vector4(plume_at.x, plume_at.y, plume_at.z, plume_heat));
+		}
+	}
+	// Its smoke (WorldFire.smoke_sources): PM2.5 from the flames (emission factors by fuel, Andreae 2019) and from
+	// the smouldering duff (more per kilogram: Urbanski 2014), kg per real second.
+	void contract_fire_smoke(PackedVector4Array &r_sources) const override;
+	float get_smoke_rate() const;
+	float get_plume_heat() const { return plume_heat; }
 	Vector3 contract_fire_wind_at(const Vector3 &p_position) const override { return fire_wind ? _indraft_at(p_position, 0.0f) : Vector3(); }
 	float get_flame_length_at(const Vector3 &p_position) const; // peak, m
 	float get_scorch_height_at(const Vector3 &p_position) const; // peak crown scorch height, m
@@ -350,6 +385,22 @@ public:
 	void set_fire_whirls(bool p_v) { fire_whirls = p_v; }
 	bool is_fire_whirls() const { return fire_whirls; }
 	float get_stem_char_at(const Vector3 &p_position) const;
+	float get_burn_age_at(const Vector3 &p_position) const;
+	float get_water_repellency_at(const Vector3 &p_position) const;
+	float get_ash_washed() const { return ash_washed; }
+	void set_smouldering(bool p_v);
+	bool is_smouldering() const { return smouldering; }
+	void set_duff_depth(float p_v) { duff_depth = p_v; }
+	float get_duff_depth() const { return duff_depth; }
+	void set_duff_moisture(float p_v) { duff_moisture = MAX(p_v, 0.0f); }
+	float get_duff_moisture() const { return duff_moisture; }
+	void set_duff_mineral(float p_v) { duff_mineral = CLAMP(p_v, 0.0f, 1.0f); }
+	float get_duff_mineral() const { return duff_mineral; }
+	int get_smouldering_cells() const { return smoulder.get_cells(); }
+	float get_duff_burnt() const { return smoulder.get_burnt_kg(); }
+	int get_rekindled_count() const { return smoulder.get_rekindled(); }
+	float get_smoulder_heat_at(const Vector3 &p_position) const;
+	PhysXFlow3D *get_smoulder_flow() const { return smoulder.get_flow(); }
 	void set_fire_wind(bool p_v);
 	bool is_fire_wind() const { return fire_wind; }
 	Vector3 get_fire_wind_at(const Vector3 &p_position) const { return _indraft_at(p_position, 0.0f); }
