@@ -59,6 +59,7 @@ extends Node3D
 #   --tracks              with --world: a walker and a two-wheeled cart cross the spot on bends before the still
 #   --roll[=m/s]          with --world: a ball rolled across the spot before the still (stones_react; --no-react off)
 #   --no-river-detail     with --world: RockField3D.ground_detail_rivers off (river beds keep only the river layer's stones)
+#   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --gravel-reach[=d]    with --view=river: a gravel-bed reach whose median is nearest d m (0.03)
 #   --no-ground-cover     with --world: RockField3D.ground_detail_cover off (no grain aggregate on the ground past
 #                         each class's reach; a before frame); --save-cover writes the near cover map, --cover-check
@@ -387,7 +388,10 @@ func _world() -> void:
 	tm.rock_detail_enabled = args.get("rock-detail", "1") != "0" # --rock-detail=0: the ground without its joints and stones
 	tm.update_shader()
 	var land := Landscape3D.new()
-	land.cliff_relief = 0.0 # on by default; this bench measures without it
+	# Cliff relief is on by default (frames show the ground as the game draws it: without it a backlit cliff reads as
+	# smooth white spur flanks); the checks measure the bare heightfield, and --no-cliff-relief gives a before frame.
+	if args.has("test") or args.has("no-cliff-relief"):
+		land.cliff_relief = 0.0
 	land.name = "Landscape"
 	add_child(land)
 	land.material = tm
@@ -565,6 +569,11 @@ func _world() -> void:
 		if args.has("only-layer"):
 			for i in LAYERS.size():
 				rocks.set_layer_enabled(i, LAYERS[i] == view)
+		if args.has("skip-layers"):
+			# --skip-layers=a,b: those layers off (to find which layer a stone in a frame comes from)
+			for nm in str(args["skip-layers"]).split(","):
+				if LAYERS.has(nm):
+					rocks.set_layer_enabled(LAYERS.find(nm), false)
 		if args.has("stone-density"):
 			rocks.set_layer_density(LAYERS.find(view), float(args["stone-density"]))
 		# Ground detail: the stones under min_size near the camera as real geometry (docs/ideas/ground-detail.md);
@@ -572,6 +581,8 @@ func _world() -> void:
 		rocks.ground_detail = not (args.has("no-ground-detail") or args.has("test"))
 		rocks.ground_detail_cover = not args.has("no-ground-cover")
 		rocks.ground_detail_rivers = not args.has("no-river-detail")
+		# --tiles / --no-tiles: tiles of piles on or off (else the default), the A/B of the tiles.
+		rocks.ground_detail_tiles = args.has("tiles") or (rocks.ground_detail_tiles and not args.has("no-tiles"))
 		rocks.stones_react = not args.has("no-react")
 		if rocks.ground_detail:
 			rocks.ground_detail_reference_height = int(args.get("detail-ref", "1080"))
@@ -2333,6 +2344,10 @@ func _render_later() -> void:
 		# without --no-ground-detail, path traced, and compare these and the frame time).
 		var vp := get_viewport()
 		print("rt: %d TLAS instances, %d triangles built, %d ground detail grains" % [vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_TLAS_INSTANCES), vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_TRIANGLES_BUILT), rocks.get_ground_detail_count() if rocks else 0])
+		var ri := func(what: int) -> int: return vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, what)
+		print("rt: captured %d, rebakes %d, held %d, budget limited %d, pending %d" % [ri.call(Viewport.RENDER_INFO_RT_CAPTURED_MESHES), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_REBAKES), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_HELD), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_BUDGET_LIMITED), ri.call(Viewport.RENDER_INFO_RT_PENDING_SURFACES)])
+	if rocks and rocks.ground_detail:
+		print("tiles: %s" % rocks.get_ground_detail_tile_stats())
 	if rocks and rocks.moss_cushions:
 		print("moss: %d shells, %d triangles, %d building" % [rocks.get_moss_shell_count(), rocks.get_moss_triangle_count(), rocks.get_moss_pending()])
 	if rocks and rocks.ground_contact and rocks.get_contact_texture():

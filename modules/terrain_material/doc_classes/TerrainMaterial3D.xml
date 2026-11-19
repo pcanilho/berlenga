@@ -86,6 +86,9 @@
 		<member name="far_fade" type="float" setter="set_far_fade" getter="get_far_fade" default="150.0">
 			Distance in metres over which the far blend takes over.
 		</member>
+		<member name="far_shadow_start" type="float" setter="set_far_shadow_start" getter="get_far_shadow_start" default="150.0">
+			Distance (m) from the camera where the far sun shadows start to fade in, full at twice it: the ground's own horizon toward the sun ([member TerrainGenerator3D.sun_shadows]) shades it where the shadow cascades thin out and end, with a soft edge of the sun's half degree. Raster only (the path tracer traces the hills' shadows); needs [member sky_occlusion_enabled]. 0 switches them off.
+		</member>
 		<member name="far_start" type="float" setter="set_far_start" getter="get_far_start" default="300.0">
 			Distance from the camera in metres where the far blend starts.
 		</member>

@@ -395,6 +395,7 @@ void SnowAvalanche3D::_release(SnowCover3D *p_cover, const Vector<int> &p_cells,
 		return;
 	}
 	release_center = c / total;
+	run_down = _fall_line(p_cover, released);
 	if (crowns_enabled) {
 		_build_crown(p_cover, released);
 	}
@@ -580,10 +581,19 @@ void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
 					const float take = MIN(0.5f * h[i], powder_share * h[i] * (speed - powder_speed) * 0.1f * p_dt);
 					const float m = take * cell * cell;
 					const Vector3 at((flow_origin.x + x + 0.5f) * cell, p_cover->cell_ground[ci] + MAX(p_cover->cell_swe[ci] - written[i], 0.0f) / MAX(p_cover->cell_density[ci], 30.0f) + depth, (flow_origin.y + z + 0.5f) * cell);
-					Bin &b = bins[Vector2i(int(Math::floor(at.x / 8.0f)), int(Math::floor(at.z / 8.0f)))];
+					// By 8 m lanes across the run: each lane's intake rises from its leading edge, so the cloud
+					// builds along the whole front as one mass (the slab's sides spill sideways and feed their
+					// lanes, they do not stand as columns of their own).
+					const Vector2 across(-run_down.y, run_down.x);
+					Bin &b = bins[Vector2i(int(Math::floor(Vector2(at.x, at.z).dot(across) / 8.0f)), 0)];
 					b.mass += m;
 					b.momentum += Vector3(u, 0.0f, v) * m;
 					b.position += at * m;
+					const float along = Vector2(at.x, at.z).dot(run_down);
+					if (along > b.lead_along) {
+						b.lead_along = along;
+						b.lead = at;
+					}
 					powder_taken += m;
 					h.write[i] = h[i] - take;
 				}
@@ -1521,7 +1531,7 @@ void SnowAvalanche3D::_powder_step(SnowCover3D *p_cover, float p_dt) {
 			pc.mass = b.mass;
 			parcels.push_back(pc);
 			SnowPowderCloud3D::Source src;
-			src.position = pc.position + Vector3(0.0f, 1.0f, 0.0f);
+			src.position = b.lead + Vector3(0.0f, 1.0f, 0.0f);
 			src.velocity = pc.velocity;
 			src.rate = b.mass / float(MAX(powder_window, 1.0e-3));
 			src.radius = 5.0f; // overlapping the next 8 m bin
@@ -1823,8 +1833,24 @@ void SnowAvalanche3D::_emit_wave(SnowCover3D *p_cover) {
 	const float s = water_thick / m;
 	const float hw = water_depth / m;
 	const float alpha = water_slope / m;
-	// The slide's width across the shore: the cells it reached, about one deep along its run.
-	const float b = MAX(float(water_cell_count) * cell / MAX(Math::ceil(s / cell), 1.0f), cell);
+	// The slide's width: the span of the cells it entered the water by, across its heading (counting the cells
+	// over-counted the width by the length it ran on over the water).
+	float b = cell;
+	{
+		const Vector3 mv = water_momentum;
+		const Vector2 across = Vector2(mv.x, mv.z).length_squared() > 1e-6f ? Vector2(-mv.z, mv.x).normalized() : Vector2(0, 1);
+		float lo = 1e30f, hi = -1e30f;
+		for (int k = 0; k < water_cells.size(); k++) {
+			if (water_cells[k]) {
+				const float v = Vector2(k % res + 0.5f, k / res + 0.5f).dot(across) * cell;
+				lo = MIN(lo, v);
+				hi = MAX(hi, v);
+			}
+		}
+		if (hi >= lo) {
+			b = hi - lo + cell;
+		}
+	}
 	const float product = impulse_product(V, s, m, b, hw, alpha);
 	const float height = impulse_wave_height(product, hw, 0.0f, 0.0f);
 	const Vector3 at = water_position / m;
@@ -1840,6 +1866,12 @@ void SnowAvalanche3D::_emit_wave(SnowCover3D *p_cover) {
 		wave_amplitude = 0.8f * height; // a_M = 4/9 P^4/5 against H_M = 5/9 P^4/5
 	}
 	water_waves++;
+	// The water carries it on (WorldWater.wave: metres and seconds; the ripple solver runs it out at sqrt(g h), water
+	// without one makes a splash). Its period in the near field, a slide's width out from the entry.
+	if (WorldWater *ww = WorldContracts::water()) {
+		const Vector3 flat(dir.x, 0.0f, dir.z);
+		ww->wave(at, flat.length_squared() > 1.0e-6f ? flat.normalized() : Vector3(1, 0, 0), height, impulse_wave_period(m / (1000.0f * b * hw * hw), hw, MAX(b, hw)), b);
+	}
 	emit_signal(SNAME("avalanche_entered_water"), at, dir, m, V, height);
 	print_verbose(vformat("snow: avalanche into water, %.0f t at %.1f m/s, %.2f m thick, %.1f m wide, %.1f m deep, slope %.0f deg: P %.3f, H %.2f m", m / 1000.0f, V, s, b, hw, Math::rad_to_deg(alpha), product, height));
 	water_mass = 0.0f;

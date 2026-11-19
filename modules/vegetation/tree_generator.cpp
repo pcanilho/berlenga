@@ -21808,8 +21808,10 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 				list.push_back(fallen_spot);
 			}
 			// Pioneers in the spots' light (open-grown: only where the canopy is gone).
-			open(PRESET_ROWAN, 0.5f);
-			open(PRESET_BIRCH, 0.4f);
+			// (Not denser: open-grown rowan and birch are 9M and 6M vertices of far mesh, and more of them took the
+			// stand plot's path-traced still past 15 GB.)
+			open(PRESET_ROWAN, 0.35f);
+			open(PRESET_BIRCH, 0.3f);
 			shrub(PRESET_ELDER, 0.25f);
 		} break;
 		case STAND_MAX:

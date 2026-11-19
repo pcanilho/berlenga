@@ -748,6 +748,9 @@ enum {
 	RT_GEOM_FLAG_SELF_SHADOWING = 128u,
 	// Captured geometry that also keeps its vertex() inputs at rest_byte_offset: hit shaders re-run vertex() on them.
 	RT_GEOM_FLAG_REST = 256u,
+	// A merged MultiMesh whose instance records start with the 3x4 transform baked into its BLAS: hit shaders read it
+	// and run vertex() in the instance's own space with MODEL_MATRIX = node x instance, as raster does.
+	RT_GEOM_FLAG_INSTANCE_XFORM = 512u,
 };
 
 // Facing state of the path traced triangles of one TLAS instance.

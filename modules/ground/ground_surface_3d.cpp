@@ -83,6 +83,8 @@ GroundSurface3D *GroundSurface3D::active = nullptr;
 // Bed load of fine sand (0.25 mm quartz) under water flowing at p_water_speed: Meyer-Peter and Mueller (1948),
 // q = 8 sqrt((s - 1) g d^3) (theta - 0.047)^1.5, the Shields number from the bed shear of a depth-averaged
 // speed with a drag coefficient of 0.003 (tau = rho Cd u^2).
+static constexpr float FORD_RIM_LOSS = 0.7f; // the share of a rut's rims a strong current carries off (round 13.2)
+
 float GroundSurface3D::bed_load(float p_water_speed) {
 	return bed_load_shear(1000.0f * 0.003f * p_water_speed * p_water_speed);
 }
@@ -191,6 +193,16 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 			const float k = 1.5f * q / 0.6f * Math::pow(2.0f * Math::PI / 0.3f, 2.0f) * s;
 			c.rate = MAX(c.rate, k);
 			c.tan_repose = Math::lerp(c.tan_repose, 0.05f, s);
+		}
+	}
+	if (p_water_speed > 0.0f && s < 0.5f) {
+		// A ford's bed (round 13.2): the spoil a wheel throws up in running water is remoulded, past its critical
+		// shear (about 0.5 Pa, a sixth of intact soil's; Knapen et al. 2007), and the current takes it before it can
+		// settle as a rim: most of it leaves as the plume (GroundSurface3D::_ford() sends it to the water).
+		const float tau = 1000.0f * 0.003f * p_water_speed * p_water_speed;
+		const float k = Math::smoothstep(0.5f, 3.0f, tau) * (1.0f - 2.0f * s);
+		if (k > 0.0f) {
+			c.rim_share *= 1.0f - FORD_RIM_LOSS * k;
 		}
 	}
 	// Deep mud (docs/ideas/mud.md, stage 1): a soft layer of clay and silt over the firm base, a Bingham fluid whose
@@ -376,6 +388,20 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 		}
 	}
 	ground = next;
+	// The deposits the kept cells carry move with them; new cells take theirs below (_apply_deposits).
+	if (keep && (int)ground_dep.size() == p_n * p_n) {
+		_shift_lattice(ground_dep, ground_origin, p_origin, p_n, 1);
+	} else {
+		ground_dep.resize(p_n * p_n);
+		for (float &v : ground_dep) {
+			v = 0.0f;
+		}
+	}
+	if (!keep) {
+		for (float &v : ground_dep) {
+			v = 0.0f;
+		}
+	}
 	// The pore water moves with the lattice (new cells start as wet as the far lattice has them).
 	if (keep && (int)pore.size() == p_n * p_n) {
 		_shift_lattice(pore, ground_origin, p_origin, p_n, 1);
@@ -447,6 +473,13 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 	ground_n = p_n;
 	ground_origin = p_origin;
 	ground_valid = true;
+	_apply_deposits();
+	_ground_changed();
+	_update_cells();
+}
+
+void GroundSurface3D::_ground_changed() {
+	const int p_n = ground_n;
 	gpu_ground_dirty = true;
 	near_ground_dirty = true;
 	ground_min = 1e20f;
@@ -466,6 +499,65 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 		height_image->set_data(p_n, p_n, false, Image::FORMAT_RF, bytes);
 		height_texture->update(height_image);
 	}
+}
+
+// The mud deposits, a cubic B-spline over their 1 m cells' centres: smooth in slope as well as height, so a fan's
+// surface carries no creases along the cells for the field's slumping to work into terraces.
+float GroundSurface3D::_deposit_smooth_at(float p_x, float p_z) const {
+	if (mud_deposits.is_empty()) {
+		return 0.0f;
+	}
+	const float fx = p_x - 0.5f;
+	const float fz = p_z - 0.5f;
+	const int x0 = int(Math::floor(fx));
+	const int z0 = int(Math::floor(fz));
+	const float tx = fx - float(x0);
+	const float tz = fz - float(z0);
+	auto weights = [](float t, float *w) {
+		const float it = 1.0f - t;
+		w[0] = it * it * it / 6.0f;
+		w[1] = (3.0f * t * t * t - 6.0f * t * t + 4.0f) / 6.0f;
+		w[2] = (-3.0f * t * t * t + 3.0f * t * t + 3.0f * t + 1.0f) / 6.0f;
+		w[3] = t * t * t / 6.0f;
+	};
+	float wx[4];
+	float wz[4];
+	weights(tx, wx);
+	weights(tz, wz);
+	float sum = 0.0f;
+	for (int j = 0; j < 4; j++) {
+		for (int k = 0; k < 4; k++) {
+			const float *v = mud_deposits.getptr(Vector2i(x0 - 1 + k, z0 - 1 + j));
+			if (v) {
+				sum += wx[k] * wz[j] * *v;
+			}
+		}
+	}
+	return sum;
+}
+
+// Brings the lattice to the deposits: each cell rises by what was laid since it last looked. True if any moved.
+bool GroundSurface3D::_apply_deposits() {
+	const int n = ground_n;
+	if (!ground_valid || n <= 0 || (int)ground_dep.size() != n * n || (int)ground.size() != n * n) {
+		return false;
+	}
+	bool moved = false;
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			const float want = _deposit_smooth_at((ground_origin.x + x) * ground_spacing, (ground_origin.y + z) * ground_spacing);
+			if (Math::abs(want - ground_dep[i]) > 1e-4f) {
+				ground[i] += want - ground_dep[i];
+				ground_dep[i] = want;
+				moved = true;
+			}
+		}
+	}
+	return moved;
+}
+
+void GroundSurface3D::refresh_deposits() {
 	_update_cells();
 }
 
@@ -473,6 +565,10 @@ void GroundSurface3D::_update_cells() {
 	const int n = ground_n;
 	if (!ground_valid || n <= 0) {
 		return;
+	}
+	// Deposits laid since (debris fans, flood silt) become the ground the field prints.
+	if (_apply_deposits()) {
+		_ground_changed();
 	}
 	cells.resize(n * n);
 	cell_inputs.resize(n * n);
@@ -548,8 +644,20 @@ void GroundSurface3D::_update_cells() {
 			if (mud_layer && sand < 0.5f && thaw_top > 0.0f) {
 				in.mud = MAX(in.mud, thaw_top);
 			}
+			// A debris flow's fresh deposit is saturated slurry, however dry the weather (round 13).
+			const bool fan = !in.fixed && !mud_deposits.is_empty() && get_mud_deposit_at(p) > 0.0f;
+			if (fan) {
+				in.moisture = MAX(in.moisture, mud_wet_full + 0.05f);
+			}
 			Cell c = wet ? material_cell(in.sand, in.moisture, in.litter, pore[i], water_speed[i], in.mud) : material_cell(in.sand, in.moisture, in.litter, -1.0f, 0.0f, in.mud);
 			c.max_dent *= _subsoil_factor(p.x, p.z);
+			// It came to rest as a body of grains: once its pore pressure drops it holds its snout and levees at
+			// their friction angle, some 30 to 35 degrees (Iverson 1997, Major and Iverson 1999), and does not slide
+			// on as a weak slurry would.
+			if (fan) {
+				c.slide_length = 1e3f;
+				c.tan_repose = MAX(c.tan_repose, 0.6f);
+			}
 			if (wet) {
 				cell_water[i * 2 + 0] = pore[i];
 				cell_water[i * 2 + 1] = water_speed[i];
@@ -622,7 +730,7 @@ float GroundSurface3D::_mud_depth_at(const Vector3 &p_position, float p_moisture
 	return MAX(depth * Math::smoothstep(mud_wet_start, mud_wet_full, p_moisture), get_mud_deposit_at(p_position));
 }
 
-void GroundSurface3D::add_mud_deposit(Vector3 p_position, float p_radius, float p_depth, bool p_update) {
+void GroundSurface3D::add_mud_deposit(Vector3 p_position, float p_radius, float p_depth, bool p_update, Color p_color) {
 	if (p_depth <= 0.0f) {
 		return;
 	}
@@ -640,6 +748,10 @@ void GroundSurface3D::add_mud_deposit(Vector3 p_position, float p_radius, float 
 				*v = MAX(*v, p_depth);
 			} else {
 				mud_deposits.insert(k, p_depth);
+			}
+			// The newest layer's colour shows on top.
+			if (p_color.a > 0.0f) {
+				mud_deposit_colors[k] = p_color;
 			}
 		}
 	}
@@ -681,6 +793,52 @@ void GroundSurface3D::_flood_silt(const Vector3 &p_position, float p_depth, floa
 		silt_pending = 0.0f;
 		silt_dirty = true;
 	}
+}
+
+// The coloured deposits' colour at a point, weighted as _deposit_smooth_at() weights their depths (cubic B-spline
+// over 4 x 4 cells), so the colour's edge follows the smooth ground and not the 1 m cells: rgb the colour, a the
+// coloured share of the deposit there.
+Color GroundSurface3D::_deposit_color_at(float p_x, float p_z) const {
+	if (mud_deposit_colors.is_empty()) {
+		return Color(0, 0, 0, 0);
+	}
+	const float fx = p_x - 0.5f;
+	const float fz = p_z - 0.5f;
+	const int x0 = int(Math::floor(fx));
+	const int z0 = int(Math::floor(fz));
+	const float tx = fx - float(x0);
+	const float tz = fz - float(z0);
+	auto weights = [](float t, float *w) {
+		const float it = 1.0f - t;
+		w[0] = it * it * it / 6.0f;
+		w[1] = (3.0f * t * t * t - 6.0f * t * t + 4.0f) / 6.0f;
+		w[2] = (-3.0f * t * t * t + 3.0f * t * t + 3.0f * t + 1.0f) / 6.0f;
+		w[3] = t * t * t / 6.0f;
+	};
+	float wx[4];
+	float wz[4];
+	weights(tx, wx);
+	weights(tz, wz);
+	Color sum(0, 0, 0, 0);
+	float all = 0.0f;
+	for (int j = 0; j < 4; j++) {
+		for (int k = 0; k < 4; k++) {
+			const Vector2i key(x0 - 1 + k, z0 - 1 + j);
+			if (!mud_deposits.has(key)) {
+				continue;
+			}
+			const float w = wx[k] * wz[j];
+			all += w;
+			if (const Color *c = mud_deposit_colors.getptr(key)) {
+				const float wa = w * c->a;
+				sum += Color(c->r * wa, c->g * wa, c->b * wa, wa);
+			}
+		}
+	}
+	if (sum.a <= 1e-6f || all <= 1e-6f) {
+		return Color(0, 0, 0, 0);
+	}
+	return Color(sum.r / sum.a, sum.g / sum.a, sum.b / sum.a, MIN(sum.a / all, 1.0f));
 }
 
 float GroundSurface3D::get_mud_deposit_at(Vector3 p_position) const {
@@ -2191,6 +2349,19 @@ void GroundSurface3D::_upload() {
 	if (deform_texture.is_valid() && deform_texture->get_rid() != before) {
 		globals_published = false;
 	}
+	deform_serial_dirty = true;
+	_bump_deform_serial();
+}
+
+// Once a frame at most: the patch material's ground_deform_serial (BaseMaterial3D::_ground_deform_code), so the
+// path tracer recaptures the patch's displaced vertices after the field's texture is rewritten in place.
+void GroundSurface3D::_bump_deform_serial() {
+	if (!deform_serial_dirty || patch_material.is_null()) {
+		return;
+	}
+	deform_serial_dirty = false;
+	deform_serial = (deform_serial + 1) % 1000000;
+	RenderingServer::get_singleton()->material_set_param(patch_material->get_rid(), "ground_deform_serial", float(deform_serial));
 }
 
 Vector2 GroundSurface3D::_wind_10m() const {
@@ -2513,6 +2684,56 @@ void GroundSurface3D::_water_update(double p_delta) {
 			g_contact[gz * gn + gx] = wm ? wm->contact_wetness_at(p) : 0.0f;
 		}
 	}
+	// The capillary fringe round water (water_fringe): the water's level carried 2 m out from the cells it covers,
+	// the nearest wet cell's (still water is level, so its shore's level is the pool's), for the dry ground there.
+	LocalVector<float> g_level;
+	if (water_fringe) {
+		g_level.resize(gn * gn);
+		bool any = false;
+		for (int gz = 0; gz < gn; gz++) {
+			for (int gx = 0; gx < gn; gx++) {
+				const int k = gz * gn + gx;
+				const float d = g_depth[k];
+				const int lx = MIN(gx * step, n - 1);
+				const int lz = MIN(gz * step, n - 1);
+				g_level[k] = d > 0.002f ? ground[lz * n + lx] + d : NAN;
+				any = any || d > 0.002f;
+			}
+		}
+		if (!any) {
+			g_level.clear();
+		} else {
+			LocalVector<float> out;
+			out.resize(g_level.size());
+			for (uint32_t k = 0; k < g_level.size(); k++) {
+				out[k] = g_level[k];
+			}
+			const int R = 2;
+			for (int gz = 0; gz < gn; gz++) {
+				for (int gx = 0; gx < gn; gx++) {
+					if (!Math::is_nan(g_level[gz * gn + gx])) {
+						continue;
+					}
+					int best = R * R + R * R + 1;
+					for (int dz = -R; dz <= R; dz++) {
+						for (int dx = -R; dx <= R; dx++) {
+							const int qx = gx + dx;
+							const int qz = gz + dz;
+							const int d2 = dx * dx + dz * dz;
+							if (qx < 0 || qz < 0 || qx >= gn || qz >= gn || d2 >= best || Math::is_nan(g_level[qz * gn + qx])) {
+								continue;
+							}
+							best = d2;
+							out[gz * gn + gx] = g_level[qz * gn + qx];
+						}
+					}
+				}
+			}
+			for (uint32_t k = 0; k < out.size(); k++) {
+				g_level[k] = out[k];
+			}
+		}
+	}
 	const float dt = float(p_delta);
 	bool changed = false;
 	LocalVector<float> &cell_depth = water_depth;
@@ -2544,7 +2765,28 @@ void GroundSurface3D::_water_update(double p_delta) {
 			}
 			cell_depth[i] = depth;
 			const float contact = bil(g_contact);
-			const float s = _pore_step(pore[i], depth, contact, dt, water_table[i]);
+			float s = _pore_step(pore[i], depth, contact, dt, water_table[i]);
+			if (!g_level.is_empty() && depth <= 0.001f) {
+				// Capillary rise (Lu and Likos 2004; fine sand about 15 cm, its height c / (e d10)): the ground up to
+				// WATER_FRINGE over the water's level stays near saturated at the top, so a still pool's shore shows a
+				// band of dark wet sand (wet sand about 35% darker, Lekner and Dorf 1988) fading out above it.
+				float lw = 0.0f;
+				float lsum = 0.0f;
+				const float w4[4] = { (1.0f - tx) * (1.0f - tz), tx * (1.0f - tz), (1.0f - tx) * tz, tx * tz };
+				const int k4[4] = { z0 * gn + x0, z0 * gn + x0 + 1, (z0 + 1) * gn + x0, (z0 + 1) * gn + x0 + 1 };
+				for (int k = 0; k < 4; k++) {
+					if (!Math::is_nan(g_level[k4[k]])) {
+						lsum += w4[k] * g_level[k4[k]];
+						lw += w4[k];
+					}
+				}
+				if (lw > 0.05f) {
+					const float above = ground[i] - lsum / lw;
+					if (above < WATER_FRINGE) {
+						s = MAX(s, 1.0f - 0.6f * Math::smoothstep(0.0f, WATER_FRINGE, MAX(above, 0.0f)));
+					}
+				}
+			}
 			pore[i] = s;
 			water_speed[i] = depth > 0.001f ? bil(g_speed) : 0.0f;
 			// Rebuilt when its water changed enough to matter.
@@ -2649,7 +2891,11 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 			pmud = plant_mud_state[i] > 0.0f;
 		}
 	}
-	const int blocks = 1 + (far ? 1 : 0) + (cracks ? 1 : 0) + (ice ? 1 : 0) + (pmud ? 1 : 0);
+	// Then, with coloured deposits (a debris fan's ash and char), their block (cover; linear colour; texel 5's tag
+	// 7.5): the ground shows the deposit in the colour the flow's sheet draws it with (material.cpp
+	// ground_deposit_state()).
+	const bool dep_block = on && !mud_deposit_colors.is_empty() && (int)ground_dep.size() == n * n && n >= 6;
+	const int blocks = 1 + (far ? 1 : 0) + (cracks ? 1 : 0) + (ice ? 1 : 0) + (pmud ? 1 : 0) + (dep_block ? 1 : 0);
 	const int w = on ? n : (wet_texture.is_valid() ? wet_texture->get_width() : 1);
 	const int h = on ? blocks * n + 1 : (wet_texture.is_valid() ? wet_texture->get_height() : 2);
 	Vector<uint8_t> data;
@@ -2658,7 +2904,9 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 	if (on) {
 		float *d = (float *)data.ptrw();
 		for (int i = 0; i < n * n; i++) {
-			const float s = wet ? pore[i] : 0.0f;
+			// A fresh mud deposit (a debris fan, flood silt) is saturated slurry: it reads as soaked.
+			const float dep = (int)ground_dep.size() == n * n ? ground_dep[i] : 0.0f;
+			const float s = MAX(wet ? pore[i] : 0.0f, 0.6f * Math::smoothstep(0.0f, 0.05f, dep));
 			d[i * 4 + 0] = Math::smoothstep(0.03f, 0.4f, s);
 			// A film of water stands on sand at saturation (under water the water's own surface shows instead). The
 			// saturation itself is published and the shaders take the film from it after filtering: classified per
@@ -2677,7 +2925,7 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 		}
 		float *r = d + blocks * n * n * 4;
 		if (pmud) {
-			float *pd = d + (blocks - 1) * n * n * 4;
+			float *pd = d + (blocks - 1 - (dep_block ? 1 : 0)) * n * n * 4;
 			for (int i = 0; i < n * n; i++) {
 				const float wx = (ground_origin.x + i % n) * ground_spacing;
 				const float wz = (ground_origin.y + i / n) * ground_spacing;
@@ -2688,6 +2936,27 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 				pd[i * 4 + 3] = mc.b;
 			}
 			r[19] = 6.5f;
+		}
+		if (dep_block) {
+			float *dd = d + (blocks - 1) * n * n * 4;
+			for (int i = 0; i < n * n; i++) {
+				if (ground_dep[i] <= 0.0f) {
+					continue;
+				}
+				const float wx = (ground_origin.x + i % n) * ground_spacing;
+				const float wz = (ground_origin.y + i / n) * ground_spacing;
+				const Color c = _deposit_color_at(wx, wz);
+				if (c.a <= 1e-4f) {
+					continue;
+				}
+				// Covered past a few centimetres; the edge wanders with a value noise (about 1.7 m), as a lobe's margin.
+				const float edge = 0.012f * _value_noise(wx / 1.7f + 31.0f, wz / 1.7f + 7.0f);
+				dd[i * 4 + 0] = c.a * Math::smoothstep(0.0f, 0.03f, ground_dep[i] - edge);
+				dd[i * 4 + 1] = c.r;
+				dd[i * 4 + 2] = c.g;
+				dd[i * 4 + 3] = c.b;
+			}
+			r[23] = 7.5f;
 		}
 		if (ice) {
 			float *id = d + (1 + (far ? 1 : 0) + (cracks ? 1 : 0)) * n * n * 4;
@@ -2772,6 +3041,37 @@ float GroundSurface3D::_shelter_flux_at(float p_x, float p_z) const {
 	const int x = int(Math::round(p_x / ground_spacing)) - ground_origin.x;
 	const int z = int(Math::round(p_z / ground_spacing)) - ground_origin.y;
 	return x >= 0 && z >= 0 && x < n && z < n ? shelter_flux[z * n + x] : 1.0f;
+}
+
+// Calm lee zones (Hesp 1981 for the shadow behind an obstacle; Benes and Roa 2004 for the wind shadow in dune
+// models): where the shelter (plants, and rocks, walls and vehicles through WorldWeather.obstacle_lee_at) takes
+// the friction speed under the sand's threshold, nothing saltates and the grains falling out of the slowing
+// cloud bury the ripples under a smooth drape; in the recovering wind further on they show again, low and stopped
+// (the ripple field's own steps already slow there, ripples.mask). The ripples' share there goes as the flux
+// factor at the reference gale (shelter_flux): none under 2% of the open flux, all from 40%; bilinear over the
+// lattice, so the shadow's edge is soft rather than in lattice squares.
+float GroundSurface3D::_ripple_calm_at(float p_x, float p_z) const {
+	const int n = ground_n;
+	if (!lee_calm_ripples || (int)shelter_flux.size() != n * n || n < 2) {
+		return 1.0f;
+	}
+	const float fx = p_x / ground_spacing - ground_origin.x;
+	const float fz = p_z / ground_spacing - ground_origin.y;
+	if (fx < 0.0f || fz < 0.0f || fx > n - 1 || fz > n - 1) {
+		return 1.0f;
+	}
+	const int x0 = MIN((int)fx, n - 2);
+	const int z0 = MIN((int)fz, n - 2);
+	const float ax = fx - x0;
+	const float az = fz - z0;
+	const float *f = shelter_flux.ptr();
+	const float v = Math::lerp(Math::lerp(f[z0 * n + x0], f[z0 * n + x0 + 1], ax), Math::lerp(f[(z0 + 1) * n + x0], f[(z0 + 1) * n + x0 + 1], ax), az);
+	return Math::smoothstep(0.02f, 0.4f, v);
+}
+
+float GroundSurface3D::get_ripple_show_at(const Vector3 &p_position) const {
+	const Cell &c = _cell_at(p_position.x, p_position.z);
+	return c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(p_position.x, p_position.z) : 0.0f;
 }
 
 float GroundSurface3D::_lattice_value(const LocalVector<float> &p_values, const Vector3 &p_position) const {
@@ -3568,11 +3868,39 @@ void GroundSurface3D::_wind_update(double p_delta) {
 			g_lee.clear();
 		}
 	}
+	// Coarse grains armour the sand (WorldGround.coarse_cover_at: the stone fields' pebbles and gravel): a lag of
+	// them takes the wind's stress and shelters the sand between (the same drag partition as the plants', and the
+	// deflation lag's: Bagnold 1941; Nickling and McKenna Neuman 1995), so it no longer blows and grows no ripples
+	// (sparse granule ripples aside, Sharp 1963). The flux share none past 35% cover, all under 10%.
+	LocalVector<float> g_armour;
+	const WorldGround *cover_src = coarse_armour ? WorldContracts::ground() : nullptr;
+	if (cover_src) {
+		g_armour.resize(gn * gn);
+		bool any = false;
+		for (int gz = 0; gz < gn; gz++) {
+			for (int gx = 0; gx < gn; gx++) {
+				const int lx = MIN(gx * step, n - 1);
+				const int lz = MIN(gz * step, n - 1);
+				const Vector3 p((ground_origin.x + lx) * ground_spacing, ground[lz * n + lx], (ground_origin.y + lz) * ground_spacing);
+				const Vector3 v = cover_src->coarse_cover_at(p);
+				const float c = v.x + v.y;
+				g_armour[gz * gn + gx] = Math::is_finite(c) ? 1.0f - Math::smoothstep(0.1f, 0.35f, c) : 1.0f;
+				any = any || g_armour[gz * gn + gx] < 0.999f;
+			}
+		}
+		if (!any) {
+			g_armour.clear();
+		}
+	}
 	const Vector2 wind = _wind_10m();
 	const float speed = wind.length();
 	const float ustar = GroundRipples::friction_speed(speed);
 	const float q_open = GroundRipples::saltation_flux(ustar);
 	bool shelter_changed = false;
+	LocalVector<float> armour; // the sand's share left open among the stones, per texel
+	if (!g_armour.is_empty()) {
+		armour.resize(n * n);
+	}
 	for (int z = 0; z < n; z++) {
 		for (int x = 0; x < n; x++) {
 			const int i = z * n + x;
@@ -3589,7 +3917,11 @@ void GroundSurface3D::_wind_update(double p_delta) {
 				r *= Math::lerp(Math::lerp(g_lee[z0 * gn + x0], g_lee[z0 * gn + x0 + 1], tx), Math::lerp(g_lee[(z0 + 1) * gn + x0], g_lee[(z0 + 1) * gn + x0 + 1], tx), tz);
 			}
 			// The flux factor at a reference gale (u* 0.5 m/s), so the share does not jump with the wind.
-			const float f = GroundRipples::saltation_flux(0.5f * r) / GroundRipples::saltation_flux(0.5f);
+			float f = GroundRipples::saltation_flux(0.5f * r) / GroundRipples::saltation_flux(0.5f);
+			if (!g_armour.is_empty()) {
+				armour[i] = Math::lerp(Math::lerp(g_armour[z0 * gn + x0], g_armour[z0 * gn + x0 + 1], tx), Math::lerp(g_armour[(z0 + 1) * gn + x0], g_armour[(z0 + 1) * gn + x0 + 1], tx), tz);
+				f *= armour[i];
+			}
 			if (Math::abs(f - shelter_flux[i]) > 0.02f) {
 				shelter_changed = true;
 			}
@@ -3639,7 +3971,7 @@ void GroundSurface3D::_wind_update(double p_delta) {
 		const int x = i % n;
 		const int z = i / n;
 		const Cell &c = cells[i];
-		const float supply = c.deformable ? c.blown : 0.0f;
+		const float supply = c.deformable ? c.blown * (armour.is_empty() ? 1.0f : armour[i]) : 0.0f;
 		const float cap = GroundRipples::saltation_flux(ustar * shelter_ratio[i]) * supply;
 		// The flux arriving: from one cell upwind, or saturated over open sand of this kind at the patch's edge.
 		const float ux = x - dir.x;
@@ -3764,7 +4096,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				const float z = (ripples.origin.y + bz + 0.5f * b) * ripples.cell;
 				const Cell &c = _cell_at(x, z);
 				const float m = c.deformable ? c.blown * _shelter_flux_at(x, z) : 0.0f;
-				const float show = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
+				const float show = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(x, z) : 0.0f;
 				for (int z2 = bz; z2 < MIN(bz + b, ripples.n); z2++) {
 					for (int x2 = bx; x2 < MIN(bx + b, ripples.n); x2++) {
 						ripples.mask[z2 * ripples.n + x2] = m;
@@ -3781,8 +4113,10 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		ripple_sand.resize(sn * sn);
 		for (int z = 0; z < sn; z++) {
 			for (int x = 0; x < sn; x++) {
-				const Cell &c = _cell_at(ripple_sand_rect.position.x + (x + 0.5f) * st, ripple_sand_rect.position.y + (z + 0.5f) * st);
-				ripple_sand[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
+				const float px = ripple_sand_rect.position.x + (x + 0.5f) * st;
+				const float pz = ripple_sand_rect.position.y + (z + 0.5f) * st;
+				const Cell &c = _cell_at(px, pz);
+				ripple_sand[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(px, pz) : 0.0f;
 			}
 		}
 		ripple_dirty = true;
@@ -3995,7 +4329,7 @@ void GroundSurface3D::_age(double p_delta) {
 					}
 					if (drift > 0.0f || soften > 0.0f) {
 						const Cell &c = _cell_at((field.origin.x + x + 0.5f) * t, (field.origin.y + z + 0.5f) * t);
-						const float keep = Math::exp(-(drift * c.blown * _shelter_flux_at((field.origin.x + x + 0.5f) * t, (field.origin.y + z + 0.5f) * t) + soften) * dt_h);
+						const float keep = Math::exp(-(drift * (wind_fills_prints ? PRINT_DRIFT_SOFTEN : 1.0f) * c.blown * _shelter_flux_at((field.origin.x + x + 0.5f) * t, (field.origin.y + z + 0.5f) * t) + soften) * dt_h);
 						dn *= keep;
 						rm *= keep;
 					}
@@ -4026,7 +4360,134 @@ void GroundSurface3D::_age(double p_delta) {
 			field.tile_active[tz * nt + tx] = any ? 1 : 0;
 		}
 	}
+	if (wind_fills_prints && drift > 0.0f) {
+		_drift_prints(_wind_10m(), drift, dt);
+	}
 	field.dirty = true;
+}
+
+// Wind fills a print from its upwind side and wears its downwind rim (aeolian infilling): in the hollow the
+// saltation's shear falls (the upwind wall shelters it) while the load the wind brings keeps landing, and the rim
+// facing the wind takes more shear than the plain round it. With the flux lagging the shear by its saturation
+// length (Sauermann, Kroy and Herrmann 2001; Andreotti et al. 2002), larger than a print, the net is the
+// print's relief carried downwind at the bed's celerity c = q / H (Exner), the upwind wall filling first and the
+// hollow shallowing as it creeps on; the first-order upwind scheme's own diffusion (c l / 2) rounds it. c is
+// PRINT_DRIFT_LENGTH over the old fade time, so a print about that long still goes in about the same time,
+// now from one side; a share of the old even fade stays for the softening the shear's sideways spread gives.
+// Conserves the sand: the moved relief leaves one texel as it enters the next, held by each texel's blown share
+// (damp or litter-covered ground neither gives nor takes). GPU: ground_deform.glsl drift_give().
+void GroundSurface3D::_drift_prints(const Vector2 &p_wind, float p_drift, float p_dt) {
+	const float wl = p_wind.length();
+	if (wl <= 0.0f) {
+		return;
+	}
+	const Vector2 w = p_wind / wl;
+	const int n = field.resolution;
+	const int nt = field.tiles();
+	const float t = field.texel();
+	const int T = GroundDeformField::TILE;
+	// Courant number a second's step (well under 1 at any wind: a print moves about a metre an hour).
+	const float cr = p_drift * PRINT_DRIFT_LENGTH / 3600.0f * p_dt / t;
+	if (cr <= 0.0f) {
+		return;
+	}
+	const int steps = int(Math::ceil(cr / 0.5f));
+	const float c = cr / steps;
+	// The tiles that move (active, or beside one, which the moved relief may enter).
+	LocalVector<uint8_t> on;
+	on.resize(nt * nt);
+	bool any = false;
+	for (int tz = 0; tz < nt; tz++) {
+		for (int tx = 0; tx < nt; tx++) {
+			bool a = false;
+			for (int dz = -1; dz <= 1 && !a; dz++) {
+				for (int dx = -1; dx <= 1 && !a; dx++) {
+					const int qx = tx + dx;
+					const int qz = tz + dz;
+					a = qx >= 0 && qz >= 0 && qx < nt && qz < nt && field.tile_active[qz * nt + qx];
+				}
+			}
+			on[tz * nt + tx] = a ? 1 : 0;
+			any = any || a;
+		}
+	}
+	if (!any) {
+		return;
+	}
+	LocalVector<float> d;
+	LocalVector<float> b;
+	d.resize(n * n);
+	b.resize(n * n);
+	for (int i = 0; i < n * n; i++) {
+		d[i] = field.rim[i] - field.dent[i];
+		b[i] = 0.0f;
+	}
+	for (int tz = 0; tz < nt; tz++) {
+		for (int tx = 0; tx < nt; tx++) {
+			if (!on[tz * nt + tx]) {
+				continue;
+			}
+			for (int z = tz * T; z < (tz + 1) * T; z++) {
+				for (int x = tx * T; x < (tx + 1) * T; x++) {
+					const float wx = (field.origin.x + x + 0.5f) * t;
+					const float wz = (field.origin.y + z + 0.5f) * t;
+					const Cell &cell = _cell_at(wx, wz);
+					b[z * n + x] = cell.deformable ? cell.blown * _shelter_flux_at(wx, wz) : 0.0f;
+				}
+			}
+		}
+	}
+	LocalVector<float> fx;
+	LocalVector<float> fz;
+	fx.resize(n * n);
+	fz.resize(n * n);
+	for (int s = 0; s < steps; s++) {
+		// Through each texel's +x and +z faces, from the upwind side; the field's edges closed.
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int i = z * n + x;
+				fx[i] = 0.0f;
+				fz[i] = 0.0f;
+				if (!on[(z / T) * nt + x / T]) {
+					continue;
+				}
+				if (x < n - 1) {
+					const int u = w.x > 0.0f ? i : i + 1;
+					fx[i] = c * w.x * MIN(b[i], b[i + 1]) * d[u];
+				}
+				if (z < n - 1) {
+					const int u = w.y > 0.0f ? i : i + n;
+					fz[i] = c * w.y * MIN(b[i], b[i + n]) * d[u];
+				}
+			}
+		}
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int i = z * n + x;
+				if (!on[(z / T) * nt + x / T]) {
+					continue;
+				}
+				d[i] += (x > 0 ? fx[i - 1] : 0.0f) - fx[i] + (z > 0 ? fz[i - n] : 0.0f) - fz[i];
+			}
+		}
+	}
+	for (int tz = 0; tz < nt; tz++) {
+		for (int tx = 0; tx < nt; tx++) {
+			if (!on[tz * nt + tx]) {
+				continue;
+			}
+			bool a = false;
+			for (int z = tz * T; z < (tz + 1) * T; z++) {
+				for (int x = tx * T; x < (tx + 1) * T; x++) {
+					const int i = z * n + x;
+					field.dent[i] = d[i] < -1e-5f ? -d[i] : 0.0f;
+					field.rim[i] = d[i] > 1e-5f ? d[i] : 0.0f;
+					a = a || d[i] < -1e-5f || d[i] > 1e-5f || field.fresh[i] > 0.0f;
+				}
+			}
+			field.tile_active[tz * nt + tx] = a ? 1 : 0;
+		}
+	}
 }
 
 void GroundSurface3D::settle(float p_seconds, float p_step) {
@@ -4202,6 +4663,7 @@ void GroundSurface3D::_notification(int p_what) {
 			}
 			if (on_gpu && field.valid) {
 				_gpu_take();
+				_bump_deform_serial();
 				Columns cols;
 				cols.surface = this;
 				const Cell &c = _cell_at(center.x, center.y);
@@ -4211,6 +4673,7 @@ void GroundSurface3D::_notification(int p_what) {
 				field.press_bodies(get_tree(), deform_groups, cols, character_mass, character_contact_area, contact_tolerance, delta);
 				field.stamp_sink = nullptr;
 				_plough_bodies();
+				_avalanche_update(delta);
 				_update_mats(delta);
 				age_accum += delta;
 				double age = 0.0;
@@ -4232,6 +4695,7 @@ void GroundSurface3D::_notification(int p_what) {
 				field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
 				field.press_bodies(get_tree(), deform_groups, cols, character_mass, character_contact_area, contact_tolerance, delta);
 				_plough_bodies();
+				_avalanche_update(delta);
 				_update_mats(delta);
 				auto ground_fn = [this](float x, float z) { return _ground_at(x, z); };
 				auto params_fn = [this](float x, float z, float &r_tan, float &r_rate, float &r_max) {
@@ -4371,6 +4835,7 @@ float GroundSurface3D::press_wheel(Vector3 p_position, Vector2 p_size, float p_y
 	const float radius = 0.5f * MAX(p_size.x, p_size.y);
 	const float bottom = _ground_at(p_position.x, p_position.z) - p_sinkage;
 	_ice_break(p_position, radius, 0.06f);
+	_ford(p_position, half, p_yaw, p_sinkage, p_velocity);
 	// The tread's lugs or chains in the rut floor (round 10).
 	field.press_tread = p_tread >= 0 ? MIN(p_tread, 3) + 1 : 0;
 	near_fld.press_tread = field.press_tread;
@@ -4380,10 +4845,157 @@ float GroundSurface3D::press_wheel(Vector3 p_position, Vector2 p_size, float p_y
 		gpu_sink.stamp(cols, p_position, radius, half, p_yaw, true, bottom, p_sinkage, false, contact_tolerance, p_velocity);
 	} else {
 		moved = field.press(cols, p_position, radius, half, p_yaw, true, bottom, p_sinkage, false, contact_tolerance, p_velocity);
+		_avalanche_trigger(p_position, half.length(), bottom);
 	}
 	field.press_tread = 0;
 	near_fld.press_tread = 0;
 	return moved;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Stream fords (docs/ideas/mud.md, round 13.2).
+// The share of a wheel's rims the current carries off at full shear (material_cell()).
+//
+// In the bed: a tyre turning in running water remoulds the bed under it; the current carries the loose spoil off as
+// a plume before it can settle back as a rim (fine silt settles at about 3e-4 m/s, so a 30 cm stream running at
+// 0.5 m/s carries it some 500 m). Off-road vehicle crossings measured as turbidity spikes of hundreds of NTU that
+// pass downstream with each crossing (Alaska DEC Kenai ATV crossings study, 2002; Forest Service low-water crossing
+// guides). Here the rut a wheel presses in the bed loses a share of its depth to the water: the share that rises
+// with the current's shear over the remoulded soil's critical shear (about 0.5 Pa, a sixth of intact soil's; Knapen
+// et al. 2007), and its fines (the soil less its sand) go to WorldWater as a load dropped there.
+//
+// On the bank: a saturated bank fails in shallow slabs (infinite slope, Skempton and DeLory 1957; Simon et al. 1999
+// on pore pressure in streambank stability). A wheel's load on saturated soil is first carried by the pore water
+// (undrained), so it adds to the slab's weight down the slope but none to its friction:
+//   FS = (c' + gamma' z cos^2 b tan phi' + (1 - m) q cos^2 b tan phi') / ((gamma z + q) sin b cos b)
+// with the slab z = 0.5 m deep, m the saturated share, gamma 19 kN/m3 saturated (17 moist), gamma' 9.2, and q the
+// tyre's Bekker pressure spread 2:1 down to the slab's base. Under 1 the slab slides into the water: a dig where it
+// stood, fresh mud at the toe, its fines to the water. Trampled stream banks retreat the same way (Trimble 1994).
+void GroundSurface3D::_ford(const Vector3 &p_position, const Vector2 &p_half, float p_yaw, float p_sinkage, const Vector2 &p_velocity) {
+	if (!stream_fords || p_sinkage <= 0.0f) {
+		return;
+	}
+	WorldWater *ww = WorldContracts::water();
+	if (!ww || !ww->has_provider()) {
+		return;
+	}
+	const Cell &c = _cell_at(p_position.x, p_position.z);
+	if (!c.deformable) {
+		return;
+	}
+	const float dt = MAX(float(get_physics_process_delta_time()), 1e-3f);
+	const float g0 = _ground_at(p_position.x, p_position.z);
+	const float fines = CLAMP(1.0f - c.sand, 0.0f, 1.0f);
+	const float dry_density = 1500.0f; // kg/m3 of the bed's soil
+	Vector3 flow;
+	const float wh = ww->height_except(Vector3(p_position.x, g0, p_position.z), this, &flow);
+	const float depth = Math::is_finite(wh) ? wh - g0 : 0.0f;
+	if (depth >= 0.03f) {
+		const float u = Vector2(flow.x, flow.z).length();
+		const float tau = 1000.0f * 0.003f * u * u; // Pa, as bed_load()
+		const float share = Math::smoothstep(0.5f, 3.0f, tau) * fines;
+		const float travel = p_velocity.length() * dt;
+		if (share > 0.0f && travel > 0.0f) {
+			const float width = 2.0f * p_half.x;
+			const float vol = width * travel * p_sinkage * 0.35f * share;
+			const float r = MAX(0.8f * p_half.x, 0.05f);
+			dig(Vector3(p_position.x, g0, p_position.z), r, vol / (Math::PI * r * r));
+			// With the rims the current took (material_cell(): the share it carries off of what the press
+			// threw, about half the rut's volume on soil).
+			const float rims = width * travel * p_sinkage * 0.5f * FORD_RIM_LOSS * share;
+			const float kg = (vol + rims) * dry_density;
+			ww->add_sediment_mass(Vector3(p_position.x, g0 + 0.5f * depth, p_position.z), kg, 0.0f);
+			ford_plume_kg += kg;
+			ford_scour_m3 += vol;
+		}
+		return;
+	}
+	// A bank: the ground falls toward water within a few metres.
+	const float e = 0.5f;
+	const Vector2 grad((_ground_at(p_position.x + e, p_position.z) - _ground_at(p_position.x - e, p_position.z)) / (2.0f * e),
+			(_ground_at(p_position.x, p_position.z + e) - _ground_at(p_position.x, p_position.z - e)) / (2.0f * e));
+	const float tb = grad.length();
+	if (tb < Math::tan(Math::deg_to_rad(12.0f))) {
+		return;
+	}
+	const Vector2 down = -grad / tb;
+	Vector3 toe;
+	bool water = false;
+	for (int k = 1; k <= 6 && !water; k++) {
+		const Vector2 q = Vector2(p_position.x, p_position.z) + down * (0.5f * k);
+		const float gq = _ground_at(q.x, q.y);
+		const float hq = ww->height_except(Vector3(q.x, gq, q.y), this);
+		if (Math::is_finite(hq) && hq - gq > 0.05f) {
+			water = true;
+			toe = Vector3(q.x, gq, q.y);
+		}
+	}
+	if (!water) {
+		return;
+	}
+	const Vector2i key(int(Math::floor(p_position.x)), int(Math::floor(p_position.z)));
+	const uint64_t now = OS::get_singleton()->get_ticks_msec();
+	if (const uint64_t *t = bank_failed.getptr(key)) {
+		if (now - *t < 4000) {
+			return;
+		}
+	}
+	const GroundSoil soil = get_soil(p_position);
+	// The slab's saturated share: its pore water (a stream's seepage, rain) or the soil's own moisture there.
+	float wet = get_saturation_at(p_position);
+	{
+		const int n = ground_n;
+		const int x = int(Math::round(p_position.x / ground_spacing)) - ground_origin.x;
+		const int zz = int(Math::round(p_position.z / ground_spacing)) - ground_origin.y;
+		if (ground_valid && (int)cell_inputs.size() == n * n && x >= 0 && zz >= 0 && x < n && zz < n) {
+			wet = MAX(wet, cell_inputs[zz * n + x].moisture);
+		}
+	}
+	float m = Math::smoothstep(0.5f, 0.95f, wet);
+	// A bank's water table stands at the stream's level and wets the soil a capillary fringe above it (about 0.3 m
+	// in silt; Simon et al. 1999 take the water table from the stage): the slab's share below that.
+	const float z = 0.5f;
+	{
+		const float level = ww->height_except(toe, this);
+		if (Math::is_finite(level)) {
+			m = MAX(m, CLAMP((level + 0.3f - (g0 - z)) / z, 0.0f, 1.0f));
+		}
+	}
+	const float b = Math::atan(tb);
+	const float cb = Math::cos(b);
+	const float sb = Math::sin(b);
+	const float bw = 2.0f * p_half.x;
+	const float bl = 2.0f * p_half.y;
+	const float p_kpa = MIN(GroundTerramechanics::bekker_k(soil, MIN(bw, bl)) * Math::pow(p_sinkage, soil.n), 250.0f); // no more than a tyre carries
+	const float q = p_kpa * bw * bl / ((bw + z) * (bl + z));
+	const float gamma = Math::lerp(17.0f, 19.0f, m);
+	const float gamma_e = Math::lerp(17.0f, 9.2f, m);
+	const float resist = soil.cohesion + (gamma_e * z + (1.0f - m) * q) * cb * cb * soil.tan_phi;
+	const float drive = (gamma * z + q) * sb * cb;
+	if (drive <= 0.0f || resist / drive >= 1.0f) {
+		return;
+	}
+	// The slab gives way: it leaves the bank under the wheel and slumps to the toe, half its fines into the water.
+	bank_failed[key] = now;
+	bank_failures++;
+	const float r = 0.9f;
+	const float d = 0.25f;
+	const Vector3 top(p_position.x - down.x * 0.3f, g0, p_position.z - down.y * 0.3f);
+	const float vol = dig(top, r, d);
+	const float slab = vol > 0.0f ? vol : Math::PI * r * r * d;
+	const float kg = 0.5f * slab * dry_density * fines;
+	ww->add_sediment_mass(toe, kg, 0.0f);
+	ford_plume_kg += kg;
+	const float lay = slab * (1.0f - 0.5f * fines);
+	add_mud_deposit(toe + Vector3(down.x, 0.0f, down.y) * 0.8f, 0.7f, lay / 2.0f, true);
+}
+
+Dictionary GroundSurface3D::get_ford_stats() const {
+	Dictionary d;
+	d["plume_kg"] = ford_plume_kg;
+	d["scour_m3"] = ford_scour_m3;
+	d["bank_failures"] = bank_failures;
+	return d;
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -4421,7 +5033,7 @@ bool GroundSurface3D::_mat_shape(Node *p_body, Vector3 &r_a, Vector3 &r_b, float
 int GroundSurface3D::get_mat_at(Vector3 p_contact, float p_tolerance) const {
 	for (uint32_t i = 0; i < mat_list.size(); i++) {
 		const Mat &m = mat_list[i];
-		if (m.broken) {
+		if (m.broken || m.buried) {
 			continue;
 		}
 		const Vector3 ab = m.b - m.a;
@@ -4440,7 +5052,7 @@ int GroundSurface3D::get_mat_under_wheel(Vector3 p_center, float p_radius, float
 	r_support = -1e9f;
 	for (uint32_t i = 0; i < mat_list.size(); i++) {
 		const Mat &m = mat_list[i];
-		if (m.broken) {
+		if (m.broken || m.buried) {
 			continue;
 		}
 		const Vector3 ab = m.b - m.a;
@@ -4560,6 +5172,17 @@ void GroundSurface3D::_update_mats(float p_dt) {
 				m.broken = true;
 			}
 		}
+		// A debris flow's deposit deeper than the log is thick buries it (round 13): out of sight, out from under the
+		// wheels, and no longer lifted onto the raised ground.
+		if (!m.buried && get_mud_deposit_at(c) >= 2.0f * m.radius) {
+			m.buried = true;
+			rb->set_visible(false);
+			rb->set_collision_layer(0);
+		}
+		if (m.buried) {
+			i++;
+			continue;
+		}
 		const float w = m.peak + rb->get_mass() * 9.81f;
 		if (soil.soft) {
 			const float spread = _mat_spread(soil, m.radius, m.length);
@@ -4609,6 +5232,154 @@ void GroundSurface3D::_update_mats(float p_dt) {
 		m.a = na;
 		m.b = nb;
 		i++;
+	}
+}
+
+// Slip-face avalanches (docs/ideas/sand.md, dunes). A dune's lee face rests between the angle a dry granular layer
+// stops flowing at and the one it starts at, a degree or two apart (Daerr and Douady 1999, "Two types of avalanche
+// behaviour in granular media", Nature 399; Bagnold's two repose angles). Left alone it stays; a foot or a wheel
+// pressing into it is the disturbance that sets the surface layer running. Dune grain flows are tongues a few tens
+// of centimetres wide that widen downslope, scour a centimetre or two from the upper face and run to the toe, where
+// they stop as a lobe (McDonald and Anderson 1996; Kleinhans 2005; Breton et al. 2008). Built as an event, as the
+// flow is: from the press the path follows the fall line down the undisturbed ground until it eases under the
+// stopping angle (the toe); the scour runs along it at a grain flow's speed (about 1 m/s) taking a tapering layer,
+// and what it took is laid in the lobe once the front reaches the toe. Sand is kept: the lobe gets what was dug.
+// Only dry, loose sand (repose 30 to 36 degrees) on ground whose own slope is between the stopping angle (two degrees
+// under the repose) and a little over the repose; a steeper face is held by the terrain and stays.
+static float _aval_hash(uint32_t p_a, uint32_t p_b) {
+	uint32_t h = p_a * 747796405u + p_b * 2891336453u + 1u;
+	h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+	h = (h >> 22u) ^ h;
+	return float(h) * (1.0f / 4294967296.0f);
+}
+
+void GroundSurface3D::_avalanche_trigger(const Vector3 &p_position, float p_radius, float p_bottom) {
+	if (!slip_avalanches || !field.valid || !ground_valid) {
+		return;
+	}
+	const float gh = _ground_at(p_position.x, p_position.z);
+	if (p_bottom >= gh - 0.002f) {
+		return; // not into the ground
+	}
+	const Cell &c = _cell_at(p_position.x, p_position.z);
+	if (!c.deformable || c.sand < 0.5f || c.tan_repose < 0.58f || c.tan_repose > 0.73f) {
+		return;
+	}
+	const float tan_stop = Math::tan(Math::atan(c.tan_repose) - Math::deg_to_rad(2.0f));
+	auto grad = [this](float p_x, float p_z) {
+		const float h = 0.15f;
+		return Vector2(_ground_at(p_x + h, p_z) - _ground_at(p_x - h, p_z), _ground_at(p_x, p_z + h) - _ground_at(p_x, p_z - h)) / (2.0f * h);
+	};
+	const Vector2 g0 = grad(p_position.x, p_position.z);
+	const float s0 = g0.length();
+	if (s0 < tan_stop || s0 > 1.15f * c.tan_repose) {
+		return;
+	}
+	// One flow per patch of face for a while: a foot pressing on frame after frame is one disturbance.
+	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	const Vector2 at(p_position.x, p_position.z);
+	for (int i = int(avalanche_marks.size()) - 1; i >= 0; i--) {
+		if (now - avalanche_marks[i].usec > 4000000) {
+			avalanche_marks.remove_at_unordered(i);
+		} else if (avalanche_marks[i].at.distance_to(at) < 0.4f) {
+			return;
+		}
+	}
+	if (avalanches.size() >= 16) {
+		return;
+	}
+	AvalancheMark m;
+	m.at = at;
+	m.usec = now;
+	avalanche_marks.push_back(m);
+	Avalanche a;
+	a.seed = uint32_t(int(Math::floor(p_position.x * 37.0f)) * 73856093) ^ uint32_t(int(Math::floor(p_position.z * 37.0f)) * 19349663);
+	// The fall line, 4 cm steps, until the ground eases under the stopping angle (well under: a slip face's own
+	// texture) or 15 m. The tongue starts the print's width and widens down the face.
+	const float step = 0.04f;
+	const float w0 = CLAMP(p_radius, 0.08f, 0.4f);
+	// Each edge wanders on its own (two sine octaves with random phases and rates), the line meanders, and each flow
+	// opens at its own angle, 3 to 10 degrees a side: no two tongues alike.
+	const float open = Math::tan(Math::deg_to_rad(3.0f + 7.0f * _aval_hash(a.seed, 4u)));
+	auto wander = [&a](float p_s, uint32_t p_salt) {
+		const float f1 = 0.8f + 1.2f * _aval_hash(a.seed, p_salt);
+		const float f2 = 3.0f + 3.0f * _aval_hash(a.seed, p_salt + 1u);
+		return 0.65f * Math::sin(6.2831853f * (f1 * p_s + _aval_hash(a.seed, p_salt + 2u))) + 0.35f * Math::sin(6.2831853f * (f2 * p_s + _aval_hash(a.seed, p_salt + 3u)));
+	};
+	Vector2 line = at;
+	for (int k = 0; k < 375; k++) {
+		const Vector2 g = grad(line.x, line.y);
+		const float sl = g.length();
+		if (k > 0 && sl < 0.85f * tan_stop) {
+			break;
+		}
+		const Cell &ck = _cell_at(line.x, line.y);
+		if (!ck.deformable || ck.sand < 0.5f) {
+			break;
+		}
+		const float s = k * step;
+		const Vector2 down = sl > 1e-5f ? -g / sl : Vector2(1.0f, 0.0f);
+		const Vector2 across(-down.y, down.x);
+		const float spread = s * open;
+		const float left = w0 + spread * (1.0f + 0.45f * wander(s, 10u)) + 0.02f * wander(s, 20u);
+		const float right = w0 + spread * (1.0f + 0.45f * wander(s, 30u)) + 0.02f * wander(s, 40u);
+		const float half = MAX(0.5f * (left + right), 0.04f);
+		const Vector2 c = line + across * (0.5f * (right - left) + 0.06f * MIN(s, 1.0f) * wander(0.3f * s, 50u));
+		a.path.push_back(Vector3(c.x, half, c.y));
+		line += down * step;
+	}
+	const int n = (int)a.path.size();
+	if (n < 8) {
+		return;
+	}
+	// The toe: the lobe is the run's last fifth and 30 cm on past it onto the easing ground.
+	a.lobe_from = MAX(int(0.8f * n), 1);
+	const Vector3 last = a.path[n - 1];
+	const Vector3 prev = a.path[n - 2];
+	const Vector2 dir = Vector2(last.x - prev.x, last.z - prev.z).normalized();
+	for (int k = 1; k <= 7; k++) {
+		const Vector2 q = Vector2(last.x, last.z) + dir * (step * k);
+		a.path.push_back(Vector3(q.x, last.y * (1.0f + 0.04f * k), q.y));
+	}
+	for (int k = a.lobe_from; k < (int)a.path.size(); k++) {
+		a.lobe_area += Math::PI * a.path[k].y * a.path[k].y;
+	}
+	avalanches.push_back(a);
+}
+
+void GroundSurface3D::_avalanche_update(double p_delta) {
+	if (avalanches.is_empty()) {
+		return;
+	}
+	const float step = 0.04f;
+	for (int i = int(avalanches.size()) - 1; i >= 0; i--) {
+		Avalanche &a = avalanches[i];
+		// A grain flow runs at about a metre a second (a few cm thick on a slip face; Breton et al. 2008).
+		a.front += float(p_delta) * 1.0f;
+		const int n = (int)a.path.size();
+		const int reach = MIN(int(a.front / step), n);
+		while (a.done < reach) {
+			const int k = a.done++;
+			const Vector3 q = a.path[k];
+			const float r = MAX(q.y, 0.05f);
+			const Vector3 at(q.x, _ground_at(q.x, q.z), q.z);
+			if (k < a.lobe_from) {
+				// The scour: 1.5 cm thinning to 4 mm down the face, as an area-averaged layer over discs 4 cm apart
+				// (each point under about 2r / 4 cm of them).
+				const float t = float(k) / MAX(float(a.lobe_from), 1.0f);
+				const float layer = Math::lerp(0.015f, 0.004f, t) * (0.8f + 0.4f * _aval_hash(a.seed, 100u + uint32_t(k / 5)));
+				const float depth = layer * step * 2.0f * r / (Math::PI * r * r);
+				a.scoured += Math::PI * r * r * depth;
+				_amount(at, r, depth, 0.0f);
+			} else if (a.lobe_area > 0.0f) {
+				// The lobe: what the scour took, spread over its discs, a share each by its area.
+				const float depth = a.scoured / a.lobe_area;
+				_amount(at, r, -depth, 0.0f);
+			}
+		}
+		if (a.done >= n) {
+			avalanches.remove_at(i);
+		}
 	}
 }
 
@@ -4747,6 +5518,9 @@ void GroundSurface3D::_gpu_release() {
 }
 
 void GroundSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) {
+	if (!is_near) {
+		surface->_avalanche_trigger(p_position, p_box ? p_half.length() : p_radius, p_bottom);
+	}
 	if (next && surface->is_near_active()) {
 		next->stamp(p_columns, p_position, p_radius, p_half, p_yaw, p_box, p_bottom, p_sink, p_round, p_contact_tolerance, p_velocity);
 	}
@@ -5635,6 +6409,15 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 	}
 	const float dry = p_age > 0.0 ? Math::exp(-float(p_age) / drying_time) : 1.0f;
 	put(11, 1.0f, float(p_slow), dry, drift);
+	// Wind filling prints from upwind (drift_give()): the wind's direction, the Courant number over p_age, the
+	// share of the even fade kept.
+	{
+		const Vector2 w10 = _wind_10m();
+		const float wl = w10.length();
+		const bool on = wind_fills_prints && drift > 0.0f && wl > 0.0f && p_age > 0.0;
+		const float cr = on ? drift * PRINT_DRIFT_LENGTH / 3600.0f * float(p_age) / p_field.texel() : 0.0f;
+		put(54, on ? w10.x / wl : 0.0f, on ? w10.y / wl : 0.0f, MIN(cr, 0.5f), on ? PRINT_DRIFT_SOFTEN : 1.0f);
+	}
 	put(12, soften, float(p_age) / 3600.0f, p_edge_margin, float(p_field.valid && &p_field == &near_fld ? _near_passes() : 1));
 	// Standing water: the rain, a pipe-model substep, damping, evaporation (rates sped up by runoff_time_scale);
 	// then the seepage length, the conductivity compaction keeps, on, the thinnest film kept once its source stops.
@@ -5836,6 +6619,7 @@ void GroundSurface3D::_gpu_submit_field(GroundDeformGPUHost &r_host, const Groun
 	if (flags & (GroundDeformGPU::STEP_RESET | GroundDeformGPU::STEP_SHIFT | GroundDeformGPU::STEP_STAMPS | GroundDeformGPU::STEP_SLUMP | GroundDeformGPU::STEP_RELAX | GroundDeformGPU::STEP_COVER | GroundDeformGPU::STEP_WATER)) {
 		flags |= GroundDeformGPU::STEP_BLIT;
 		r_host.changed = true;
+		deform_serial_dirty = true;
 	}
 	if ((p_readback && r_host.changed) || p_sync) {
 		flags |= GroundDeformGPU::STEP_READBACK;
@@ -5918,6 +6702,9 @@ float GroundSurface3D::press(Vector3 p_position, float p_radius, float p_bottom,
 	// On the GPU path the CPU copy takes the press too, so the volume returned and queries made before the
 	// next read back see it; the GPU field takes it as a stamp.
 	const float moved = field.press(cols, p_position, p_radius, Vector2(), 0.0f, false, p_bottom, p_sink, p_round, contact_tolerance);
+	if (!_gpu_on()) {
+		_avalanche_trigger(p_position, p_radius, p_bottom);
+	}
 	if (is_near_active()) {
 		near_fld.press_settle = field.press_settle;
 		near_fld.press(cols, p_position, p_radius, Vector2(), 0.0f, false, p_bottom, p_sink, p_round, contact_tolerance);
@@ -5935,6 +6722,9 @@ float GroundSurface3D::press_box(Vector3 p_position, Vector2 p_size, float p_yaw
 	const Cell &c = _cell_at(p_position.x, p_position.z);
 	field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
 	const float moved = field.press(cols, p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, false, contact_tolerance);
+	if (!_gpu_on()) {
+		_avalanche_trigger(p_position, 0.5f * p_size.length(), p_bottom);
+	}
 	if (is_near_active()) {
 		near_fld.press_settle = field.press_settle;
 		near_fld.press(cols, p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, false, contact_tolerance);
@@ -6265,8 +7055,11 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_subsoil", "enabled"), &GroundSurface3D::set_subsoil);
 	ClassDB::bind_method(D_METHOD("is_subsoil"), &GroundSurface3D::is_subsoil);
 	ClassDB::bind_method(D_METHOD("get_subsoil_depth_at", "position"), &GroundSurface3D::get_subsoil_depth_at);
-	ClassDB::bind_method(D_METHOD("add_mud_deposit", "position", "radius", "depth", "update"), &GroundSurface3D::add_mud_deposit, DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("add_mud_deposit", "position", "radius", "depth", "update", "color"), &GroundSurface3D::add_mud_deposit, DEFVAL(true), DEFVAL(Color(0, 0, 0, 0)));
 	ClassDB::bind_method(D_METHOD("get_mud_deposit_at", "position"), &GroundSurface3D::get_mud_deposit_at);
+	ClassDB::bind_method(D_METHOD("set_stream_fords", "enabled"), &GroundSurface3D::set_stream_fords);
+	ClassDB::bind_method(D_METHOD("is_stream_fords"), &GroundSurface3D::is_stream_fords);
+	ClassDB::bind_method(D_METHOD("get_ford_stats"), &GroundSurface3D::get_ford_stats);
 	ClassDB::bind_method(D_METHOD("set_flood_silt", "enabled"), &GroundSurface3D::set_flood_silt);
 	ClassDB::bind_method(D_METHOD("is_flood_silt"), &GroundSurface3D::is_flood_silt);
 	ClassDB::bind_method(D_METHOD("get_flood_silt_total"), &GroundSurface3D::get_flood_silt_total);
@@ -6278,6 +7071,8 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mat_sinkage", "mat"), &GroundSurface3D::get_mat_sinkage);
 	ClassDB::bind_method(D_METHOD("get_mat_spread", "mat"), &GroundSurface3D::get_mat_spread);
 	ClassDB::bind_method(D_METHOD("is_mat_broken", "mat"), &GroundSurface3D::is_mat_broken);
+	ClassDB::bind_method(D_METHOD("is_mat_buried", "mat"), &GroundSurface3D::is_mat_buried);
+	ClassDB::bind_method(D_METHOD("refresh_deposits"), &GroundSurface3D::refresh_deposits);
 	ClassDB::bind_method(D_METHOD("get_mat_friction", "mat"), &GroundSurface3D::get_mat_friction);
 	ClassDB::bind_method(D_METHOD("get_mud_slide_angle_at", "position"), &GroundSurface3D::get_mud_slide_angle_at);
 	ClassDB::bind_method(D_METHOD("set_mud_map", "map"), &GroundSurface3D::set_mud_map);
@@ -6371,6 +7166,10 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_water_sources", "sources"), &GroundSurface3D::set_water_sources);
 	ClassDB::bind_method(D_METHOD("get_water_sources"), &GroundSurface3D::get_water_sources);
 	ClassDB::bind_method(D_METHOD("set_water_coupling", "enabled"), &GroundSurface3D::set_water_coupling);
+	ClassDB::bind_method(D_METHOD("set_water_fringe", "enabled"), &GroundSurface3D::set_water_fringe);
+	ClassDB::bind_method(D_METHOD("set_coarse_armour", "enabled"), &GroundSurface3D::set_coarse_armour);
+	ClassDB::bind_method(D_METHOD("is_coarse_armour"), &GroundSurface3D::is_coarse_armour);
+	ClassDB::bind_method(D_METHOD("is_water_fringe"), &GroundSurface3D::is_water_fringe);
 	ClassDB::bind_method(D_METHOD("is_water_coupling"), &GroundSurface3D::is_water_coupling);
 	ClassDB::bind_method(D_METHOD("get_saturation_at", "position"), &GroundSurface3D::get_saturation_at);
 	ClassDB::bind_method(D_METHOD("get_water_speed_at", "position"), &GroundSurface3D::get_water_speed_at);
@@ -6412,6 +7211,11 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_ripple_cell"), &GroundSurface3D::get_ripple_cell);
 	ClassDB::bind_method(D_METHOD("get_ripple_size"), &GroundSurface3D::get_ripple_size);
 	ClassDB::bind_method(D_METHOD("set_sand_drift_rate", "rate"), &GroundSurface3D::set_sand_drift_rate);
+	ClassDB::bind_method(D_METHOD("set_wind_fills_prints", "enabled"), &GroundSurface3D::set_wind_fills_prints);
+	ClassDB::bind_method(D_METHOD("set_lee_calm_ripples", "enabled"), &GroundSurface3D::set_lee_calm_ripples);
+	ClassDB::bind_method(D_METHOD("is_lee_calm_ripples"), &GroundSurface3D::is_lee_calm_ripples);
+	ClassDB::bind_method(D_METHOD("get_ripple_show_at", "position"), &GroundSurface3D::get_ripple_show_at);
+	ClassDB::bind_method(D_METHOD("is_wind_fills_prints"), &GroundSurface3D::is_wind_fills_prints);
 	ClassDB::bind_method(D_METHOD("get_sand_drift_rate"), &GroundSurface3D::get_sand_drift_rate);
 	ClassDB::bind_method(D_METHOD("set_rain_smoothing", "rate"), &GroundSurface3D::set_rain_smoothing);
 	ClassDB::bind_method(D_METHOD("get_rain_smoothing"), &GroundSurface3D::get_rain_smoothing);
@@ -6470,6 +7274,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_GROUP("Mud", "mud_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_layer"), "set_mud_layer", "is_mud_layer");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flood_silt"), "set_flood_silt", "is_flood_silt");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stream_fords"), "set_stream_fords", "is_stream_fords");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_slides"), "set_mud_slides", "is_mud_slides");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "subsoil"), "set_subsoil", "is_subsoil");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "simulation_paused"), "set_simulation_paused", "is_simulation_paused");
@@ -6496,14 +7301,22 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gpu_simulation"), "set_gpu_simulation", "is_gpu_simulation");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drying_time", PROPERTY_HINT_RANGE, "1,86400,1,suffix:s"), "set_drying_time", "get_drying_time");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sand_drift_rate", PROPERTY_HINT_RANGE, "0,100,0.1"), "set_sand_drift_rate", "get_sand_drift_rate");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wind_fills_prints"), "set_wind_fills_prints", "is_wind_fills_prints");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lee_calm_ripples"), "set_lee_calm_ripples", "is_lee_calm_ripples");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rain_smoothing", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_rain_smoothing", "get_rain_smoothing");
 	ADD_GROUP("Wind", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "wind_override", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind_override", "get_wind_override");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wind_ripples"), "set_wind_ripples", "is_wind_ripples");
+	ClassDB::bind_method(D_METHOD("set_slip_avalanches", "enabled"), &GroundSurface3D::set_slip_avalanches);
+	ClassDB::bind_method(D_METHOD("is_slip_avalanches"), &GroundSurface3D::is_slip_avalanches);
+	ClassDB::bind_method(D_METHOD("get_avalanche_count"), &GroundSurface3D::get_avalanche_count);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "slip_avalanches"), "set_slip_avalanches", "is_slip_avalanches");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_extent", PROPERTY_HINT_RANGE, "1,16,0.25,suffix:m"), "set_ripple_extent", "get_ripple_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_time_scale", PROPERTY_HINT_RANGE, "0,10000,0.1,or_greater"), "set_ripple_time_scale", "get_ripple_time_scale");
 	ADD_GROUP("Water", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "water_coupling"), "set_water_coupling", "is_water_coupling");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "water_fringe"), "set_water_fringe", "is_water_fringe");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "coarse_armour"), "set_coarse_armour", "is_coarse_armour");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "water_sources", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_water_sources", "get_water_sources");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sand_glints"), "set_sand_glints", "is_sand_glints");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "runoff_channels"), "set_runoff_channels", "is_runoff_channels");

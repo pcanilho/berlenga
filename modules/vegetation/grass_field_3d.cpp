@@ -398,11 +398,13 @@ vec4 grass_ground_mud(vec2 p_xz) {
 		return vec4(0.0);
 	}
 	int blocks = 1;
-	for (int k = 1; k < 5; k++) {
+	for (int k = 1; k < 6; k++) {
 		blocks += abs(texelFetch(ground_wet_map, ivec2(k, ts.y - 1), 0).w - (2.5 + float(k))) < 0.01 ? 1 : 0;
 	}
+	// The plant mud block, before a fresh deposit's (texel 5's tag 7.5) when there is one.
+	int at = blocks - 1 - (ts.x > 5 && abs(texelFetch(ground_wet_map, ivec2(5, ts.y - 1), 0).w - 7.5) < 0.01 ? 1 : 0);
 	float rows = float((ts.y - 1) / blocks);
-	float v = clamp(uv.y * rows, 0.5, rows - 0.5) + float(blocks - 1) * rows;
+	float v = clamp(uv.y * rows, 0.5, rows - 0.5) + float(at) * rows;
 	return textureLod(ground_wet_map, vec2(uv.x, v / float(ts.y)), 0.0);
 }
 // What a rut, dig or puddle does to the sward at p_xz: x lays it flat (a print, a tyre's light pass, a mud film), y takes

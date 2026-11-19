@@ -3136,7 +3136,14 @@ void fragment() {)";
 	if (features[FEATURE_GROUND_DEFORM]) {
 		// A film of water standing on saturated sand (Lagarde 2013's accumulated water): its surface hides the
 		// sand's relief and is smooth.
-		code += R"(	NORMAL_MAP_DEPTH *= 1.0 - 0.85 * ground_wet.y;
+		// A fresh deposit (a debris fan, mud round 13) lies over the soil in the flow's own colour, as the flow's sheet
+		// draws it beyond the print field (GroundDebrisFlow3D), so the two meet with no seam.
+		code += R"(	{
+		vec4 gdep = ground_deposit_state((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
+		ALBEDO = mix(ALBEDO, gdep.yzw, clamp(gdep.x, 0.0, 1.0));
+		ROUGHNESS = mix(ROUGHNESS, 0.55, clamp(gdep.x, 0.0, 1.0));
+	}
+	NORMAL_MAP_DEPTH *= 1.0 - 0.85 * ground_wet.y;
 	ROUGHNESS = mix(ROUGHNESS, 0.2, 0.6 * ground_wet.y);
 )";
 	}
@@ -4586,6 +4593,11 @@ global uniform sampler2D ground_wet_map : filter_linear, repeat_disable; // pore
 	} else {
 		code += vformat("const bool ground_deform_patch = %s;\n", p_patch ? "true" : "false");
 	}
+	if (p_patch_uniform || p_patch) {
+		// Bumped by GroundSurface3D each frame its field's texture is rewritten: the path tracer recaptures vertex()
+		// output when a material parameter changes, not when a texture it samples is rewritten in place.
+		code += "uniform float ground_deform_serial = 0.0;\n";
+	}
 	code += R"(
 // The near field's weight at p_xz: 1 inside its square, faded to 0 over its outer metre
 // (GroundSurface3D::NEAR_BLEND). A metre, not less: a rut or print row coming in from outside starts fresh
@@ -4749,10 +4761,11 @@ vec4 ground_wet_block(vec2 p_xz, vec4 p_rect, int p_block, ivec2 p_ts, float p_r
 	return textureLod(ground_wet_map, vec2(uv.x, v / float(p_ts.y)), 0.0);
 }
 // The wet map's blocks: the fine lattice, then the far one (texel 1's tag 3.5), the cracks (texel 2's 4.5), the
-// puddle ice (texel 3's 5.5) and the mud on plants (texel 4's 6.5; GrassField3D reads it), each there only when tagged.
+// puddle ice (texel 3's 5.5), the mud on plants (texel 4's 6.5; GrassField3D reads it) and fresh deposits (texel 5's
+// 7.5), each there only when tagged.
 int ground_wet_blocks(ivec2 p_ts) {
 	int b = 1;
-	for (int k = 1; k < 5; k++) {
+	for (int k = 1; k < 6; k++) {
 		if (p_ts.x > k && abs(texelFetch(ground_wet_map, ivec2(k, p_ts.y - 1), 0).w - (2.5 + float(k))) < 0.01) {
 			b++;
 		}
@@ -5005,6 +5018,20 @@ vec4 ground_ice_state(vec2 p_xz) {
 	}
 	return ground_wet_block(p_xz, r, at, ts, float((ts.y - 1) / ground_wet_blocks(ts)));
 }
+// A fresh deposit at p_xz (a debris fan, mud round 13): the wet map's last block, x its cover (0..1), yzw its linear
+// colour (the flow's ash and char); 0 where none.
+vec4 ground_deposit_state(vec2 p_xz) {
+	ivec2 ts = textureSize(ground_wet_map, 0);
+	if (ts.x < 6 || ts.y < 2) {
+		return vec4(0.0);
+	}
+	vec4 r = texelFetch(ground_wet_map, ivec2(0, ts.y - 1), 0);
+	if (abs(r.w - 2.5) > 0.01 || abs(texelFetch(ground_wet_map, ivec2(5, ts.y - 1), 0).w - 7.5) > 0.01) {
+		return vec4(0.0);
+	}
+	int b = ground_wet_blocks(ts);
+	return ground_wet_block(p_xz, r, b - 1, ts, float((ts.y - 1) / b));
+}
 // The patch's surface with its standing water and its cracks (the cracks the mesh's spacing can carry).
 float ground_deform_top(vec2 p_xz) {
 	vec4 d = ground_deform_sample(p_xz);
@@ -5025,7 +5052,10 @@ vec4 ground_water_look(float p_depth, float p_wet, float p_mud) {
 	float cover = smoothstep(0.0003, 0.002, p_depth);
 	// Thinner, it already glistens: a seepage sheet a few hundredths of a millimetre deep fills the pores between
 	// the top grains and its surface is smooth (Lagarde 2013's accumulated water), though the grains still show.
-	float gloss = smoothstep(0.00002, 0.0003, p_depth);
+	// Fully a mirror only from most of a millimetre: a sheet of a tenth of one between rills is wet sand with a
+	// sheen, so the water in the channels, deepening across them, reads as the brightest and their banks round off
+	// (from 0.3 mm the whole sheet was one mirror, the dry ridges cut out of it as flat-sided steps).
+	float gloss = smoothstep(0.00004, 0.0008, p_depth);
 	// The bed under it is soaked (Lagarde 2013, porosity 0.6: albedo 0.52), less what its pore water already took.
 	float soak = mix(1.0, 0.52, cover * (1.0 - clamp(p_wet, 0.0, 1.0)));
 	// Rut water carries clay: it hides the bed within a centimetre or so (Beer-Lambert down and back up, an

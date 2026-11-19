@@ -120,6 +120,7 @@ private:
 	bool ground_deform_enabled = true;
 	bool sky_occlusion_enabled = true;
 	float sky_occlusion = 1.0f;
+	float far_shadow_start = 150.0f; // m: where the far sun shadows start fading in (0: none)
 
 	Ref<Shader> shader;
 	bool dirty = false;
@@ -170,6 +171,8 @@ public:
 	bool is_sky_occlusion_enabled() const { return sky_occlusion_enabled; }
 	void set_sky_occlusion(float p_amount);
 	float get_sky_occlusion() const { return sky_occlusion; }
+	void set_far_shadow_start(float p_value);
+	float get_far_shadow_start() const { return far_shadow_start; }
 	void set_far_blend_enabled(bool p_enabled);
 	bool is_far_blend_enabled() const { return far_blend_enabled; }
 	void set_far_start(float p_value);

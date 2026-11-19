@@ -1191,7 +1191,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			bed_at.push_back(b);
 			while (b < hi) {
 				const float u = rng.randf();
-				b += mean * (0.2f + 2.4f * u * u * u); // many thin beds, a few very thick ones
+				b += mean * (family == FAMILY_SEA_STACK ? 0.12f + 3.2f * u * u * u : 0.2f + 2.4f * u * u * u); // many thin beds, a few very thick ones
 				bed_at.push_back(b);
 			}
 			bool prev_soft = false;
@@ -1202,7 +1202,9 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 				prev_soft = soft;
 			}
 		}
-		const Vector3 dip = Vector3(0.0f, 0.0f, (rng.randf() - 0.5f) * 0.12f) + (bed_axis == 0 ? Vector3(0, (rng.randf() - 0.5f) * 0.12f, 0) : Vector3((rng.randf() - 0.5f) * 0.12f, 0, 0));
+		// (A stack's beds dip plainly, 3 to 10 degrees: level courses on a column read as masonry.)
+		const float dip_k = family == FAMILY_SEA_STACK ? 2.8f : 1.0f;
+		const Vector3 dip = (Vector3(0.0f, 0.0f, (rng.randf() - 0.5f) * 0.12f) + (bed_axis == 0 ? Vector3(0, (rng.randf() - 0.5f) * 0.12f, 0) : Vector3((rng.randf() - 0.5f) * 0.12f, 0, 0))) * dip_k;
 		const float step_w = 0.75f * h;
 		// The recess at p: its bed's, eased into the neighbours' over a cell, varying along the bed, and hard beds
 		// broken back here and there where a block fell out of the lip.
@@ -1265,7 +1267,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			}
 		}
 		const float notch_x = x_lo + 0.22f * (x_hi - x_lo);
-		const float notch_w = 0.08f * a, notch_d = 0.18f * c;
+		const float notch_w = 0.11f * a, notch_d = 0.2f * c;
 		// A stack is lopsided (Sunamura 1992; Trenhaile 1987): the side facing the dominant swell is undercut much
 		// deeper than the lee, and its top has stepped down where the blocks over a joint fell, so one corner stands
 		// a bed or two higher than the rest. (Their own generator: the shared sequence shapes the rest.)
@@ -1405,6 +1407,25 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						const float paz = Math::atan2(p.z, p.y / c);
 						const Vector3 pq(tt * 2.6f, Math::cos(paz) * 1.1f, Math::sin(paz) * 1.1f);
 						v += stack_taper * c * tt * tt + 1.0f * c * (rk_fbm(pq, nseed + 109u, 3) - 0.5f);
+						// Its arrises are not straight: where two joint faces meet, the edge is the first to go (blocks
+						// fall off corners), so it is chipped back in bites a metre or two long, deeper on some.
+						{
+							float d1 = -1e9f, d2 = -1e9f;
+							for (const RockPlane &pl : planes) {
+								if (Math::abs(pl.n.x) > 0.5f) {
+									continue; // the top and foot planes: their edges are the crest's and the notch's
+								}
+								const float d = pl.n.dot(p) - pl.d;
+								if (d > d1) {
+									d2 = d1;
+									d1 = d;
+								} else if (d > d2) {
+									d2 = d;
+								}
+							}
+							const float edge = 1.0f - Math::smoothstep(0.0f, 0.35f * c, d1 - d2);
+							v += 0.45f * c * edge * Math::smoothstep(0.35f, 0.75f, rk_fbm(p * 1.1f, nseed + 119u, 2));
+						}
 						// And no face is one plane: swells and hollows a third of a face across.
 						v += 0.4f * c * (rk_fbm(p * 0.85f, nseed + 113u, 3) - 0.5f);
 						// The top most broken of all: loose blocks, frost-split, never one sloping slab.
@@ -1423,7 +1444,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						const float t = (p.x - notch_x) / notch_w;
 						const float prof = t > 1.0f ? 0.0f : (t > 0.75f ? 1.0f - (t - 0.75f) / 0.25f : (t > -1.5f ? 0.55f + 0.45f * (t + 1.5f) / 2.25f : 0.55f));
 						const float facing = exp_dir.dot(p) / exp_r + 0.25f * (rk_noise(p * 0.4f, nseed + 107u) - 0.5f);
-						const float exposure = 0.3f + 1.9f * Math::smoothstep(-0.5f, 0.9f, facing);
+						const float exposure = 0.6f + 1.6f * Math::smoothstep(-0.5f, 0.9f, facing);
 						v += notch_d * exposure * prof * (0.85f + 0.3f * rk_noise(p * 2.0f, nseed + 95u));
 						// A broken, jagged crest: blocks loosened along the top joints and fell at different times.
 						{
@@ -1678,10 +1699,10 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						v += 0.1f * c * Math::smoothstep(cap_t - 0.3f, cap_t - 0.03f, t) * (1.0f - cap);
 						v += 0.14f * c * t * (1.0f - cap); // wider at the foot, where the debris apron feeds it
 						// The cap barely wider than the neck's foot, its rim and top rounded off and uneven.
-						v -= cap_over * cap;
+						v -= cap_over * cap * (0.3f + 1.4f * rk_noise(p * 1.1f, nseed + 126u)); // its rim lobed, standing out on some sides only
 						const float dome = Math::smoothstep(cap_t + 0.01f, 1.02f, t + tip);
 						v += cap_dome * dome * dome;
-						v += 0.08f * c * cap * (rk_fbm(p * 1.6f, nseed + 125u, 3) - 0.5f);
+						v += 0.16f * c * cap * (rk_fbm(p * 1.6f, nseed + 125u, 3) - 0.5f);
 						// Faint bedding: thin hard ribs 0.06 to 0.1 apart standing out a little.
 						const float bed = q / (0.07f + 0.02f * rk_noise(Vector3(p.x * 0.3f, 0.0f, 0.0f), nseed + 119u));
 						v += 0.012f * c * (Math::abs(bed - Math::round(bed)) * 2.0f - 0.5f) * (1.0f - cap);
@@ -2021,7 +2042,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// Each hollow over its own box of the grid only (scanning the whole grid per hollow costs seconds a stone).
 		for (uint32_t k = 0; k < hollows.size(); k++) {
 			const RockScoop &hw = hollows[k];
-			const float reach = 1.27f * hw.r / squash[k] + fine.h;
+			const float reach = 1.5f * hw.r / squash[k] + fine.h; // the lobes reach a third past r
 			const Vector3 lo = (hw.c - Vector3(reach, reach, reach) - fine.origin) / fine.h;
 			const Vector3 hi = (hw.c + Vector3(reach, reach, reach) - fine.origin) / fine.h;
 			const int x0 = MAX(0, int(Math::floor(lo.x))), y0 = MAX(0, int(Math::floor(lo.y))), z0 = MAX(0, int(Math::floor(lo.z)));
@@ -2034,10 +2055,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						const Vector3 q0 = p - hw.c;
 						const float qy = q0.dot(t_up);
 						Vector3 q = q0 + t_up * (qy * (1.0f / squash[k] - 1.0f));
-						if (q.length_squared() > 1.6f * hw.r * hw.r) {
+						if (q.length_squared() > 2.2f * hw.r * hw.r) {
 							continue;
 						}
-						float r = hw.r * (1.0f + 0.12f * (rk_fbm(p * (3.0f / MAX(hw.r, 0.05f)), nseed + 151u + k, 2) - 0.5f) * 2.0f);
+						// Lobed, not round: tafoni openings are irregular, cusped where neighbouring cells meet, so the radius
+						// wanders by a third at the scale of the hollow and a little finer (Mustoe 1982; Huinink 2004).
+						float r = hw.r * (1.0f + 0.34f * (rk_fbm(p * (1.6f / MAX(hw.r, 0.05f)), nseed + 151u + k, 3) - 0.5f) * 2.0f);
 						if (qy > 0.0f) {
 							// The roof flakes off in scales (granular disintegration and flaking; Mustoe 1982): shallow
 							// dished scars with their rims hanging down between them.
@@ -2759,6 +2782,10 @@ uniform float snow = 1.0;
 uniform float snow_max_slope = 55.0;
 // Instance data for a stone drawn outside the MultiMesh (a breakable copy): as INSTANCE_CUSTOM.
 uniform vec4 rock_instance = vec4(0.0);
+// A tile of settled grains placed as a whole (RockField3D ground detail tiles): its grains share one set of instance
+// records over every placement, so the ground they sit on comes per placement, as the world plane n.p + w = 0 (n.y
+// over 0; zero: off, each grain's own ground from INSTANCE_CUSTOM.x and its slope).
+instance uniform vec4 rock_tile_plane = vec4(0.0);
 
 varying vec3 v_world;
 varying vec4 v_custom;
@@ -3054,8 +3081,13 @@ void fragment() {
 	float contact = 0.0;
 	float ground_cover = 0.0;
 	if (v_custom.z > 0.0) {
-		// The ground under this point: the plane through the stone's foot along the slope there.
+		// The ground under this point: the plane through the stone's foot along the slope there (a tile's: its plane).
+		vec2 g_slope = v_slope;
 		float above = v_world.y - (v_custom.x + dot(v_slope, v_world.xz - v_origin.xz));
+		if (rock_tile_plane.y > 0.0) {
+			g_slope = -rock_tile_plane.xz / rock_tile_plane.y;
+			above = (dot(rock_tile_plane.xyz, v_world) + rock_tile_plane.w) / rock_tile_plane.y;
+		}
 		float sc = small_linear ? max(v_scale, 0.002) : max(v_scale, 0.25);
 		float bk = small_linear && v_scale < 0.25 ? 2.0 * sc : sqrt(sc); // continuous at 0.25 (0.5 both ways)
 		contact = 1.0 - smoothstep(0.0, contact_height * sc, above);
@@ -3070,8 +3102,8 @@ void fragment() {
 		if (ground_blend && above < ground_blend_height * 2.5 * max(bk, bk_coat)) {
 			float band = ground_blend_height * bk;
 			// Debris banks up on the uphill side (sediment trapped against the stone).
-			float sl = length(v_slope);
-			float up = sl > 1e-3 ? dot(v_slope / sl, v_world.xz - v_origin.xz) / sc : 0.0;
+			float sl = length(g_slope);
+			float up = sl > 1e-3 ? dot(g_slope / sl, v_world.xz - v_origin.xz) / sc : 0.0;
 			band *= 1.0 + 1.2 * clamp(up, 0.0, 1.0) * clamp(sl * 2.0, 0.0, 1.0);
 			float edge = above / band + 0.9 * (cavity - 0.6) + 0.9 * (rk_fbm3(mp * 2.3 + 11.0) - 0.5) - 0.35 * clamp(wn.y, 0.0, 1.0);
 			// A filled foot with a ragged top, and above it a thinning dust of the ground splashed and blown on.
@@ -3101,7 +3133,7 @@ void fragment() {
 			gcol *= mix(1.0, 0.55, damp);
 			col = mix(col, gcol, gb_col);
 			rough = mix(rough, mix(0.95, 0.7, damp), gb_col);
-			vec3 gn = normalize(vec3(-v_slope.x, 1.0, -v_slope.y));
+			vec3 gn = normalize(vec3(-g_slope.x, 1.0, -g_slope.y));
 			wn = normalize(mix(wn, gn, 0.6 * gb * smoothstep(-0.3, 0.4, dot(wn, gn))));
 			fresh *= 1.0 - gb;
 			ground_cover = gb;

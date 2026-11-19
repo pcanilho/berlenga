@@ -1043,6 +1043,64 @@ Bench --test=debris: 2,000 m3 down a 25% channel: front peaks 7.1 m/s, stops 39 
 budget closes to 0.1%, fan laid up to 3 m deep. --view=debris [--t=40] shows a flow spreading at the fan apex.
 Limits: margins are 1.5 m resolution from afar (near the camera the slide pass and PhysX surge carry the detail).
 
+#### Round 13 (picked 19 Nov: all three, in order)
+
+**13.1 Debris fans up close.** Research: grain-size segregation pushes coarse grains to the front and margins, which
+stop first and build lateral levees (Johnson et al. 2012, JGR; Iverson 1997 coarse snout; de Haas et al. 2015 fan
+experiments); a fresh granular deposit holds roughly its friction angle (Major and Iverson 1999); drag on bodies in
+the flow is rho Cd A u^2 / 2. Boulders at the snout and on the levees are PhysX's (it owns the boulders).
+*Built (19 Nov):*
+- `levee_height` (0.5): each body tracks the deepest flow per cell (hmax). Margin cells (run, beside a never-reached
+  cell, at least 4 of 9 neighbours run) lay a ridge of levee_height x the 3x3 mean hmax, varied 0.7 to 1.3 by noise,
+  at most 1 m; the rest of the deposit gives up the volume (at most half of it), so the budget still closes.
+- `push_bodies` (on): RigidBody3Ds the flow reaches get drag rho 1.2 width h u_rel^2 / 2, applied as one impulse per
+  advance over the scaled time and clamped to mass x relative speed. `get_flow_velocity_at(position)`.
+- The fan becomes the ground: the deposit is sampled into 1 m mud_deposits cells (3x3 bilinear mean per flow cell);
+  GroundSurface3D raises its ground lattice by a cubic B-spline of the deposits (`refresh_deposits()`), so the
+  surface is smooth with no cell steps. In the print field the relief under it is buried: ruts fill, rims level.
+  Fan cells read as saturated (wetness from depth, moisture lifted past mud_wet_full), make no slides and hold a
+  repose of at least tan 0.6. The flow sheet draws nothing over field cells it has handed to the ground.
+- Logs (ground_mats) under a deposit at least their diameter deep are buried: hidden, no collision, no grip
+  (`is_mat_buried`).
+Bench --test=fans (valley height): levees 0.33 m against 0.10 m mid-channel; a rut under 2.8 m of fan filled; a log
+buried; a 150 kg crate shoved 1.7 m (peak 8.2 m/s); 2.6 m of soft mud where there was none.
+Also (19 Nov): `add_mud_deposit(..., color)` gives a deposit its own colour; GroundSurface3D publishes coloured
+deposits as a wet map block (texel 5's tag 7.5: cover, linear colour, B-spline weighted like the depths, edge
+wobbled by noise), and the ground's raster and PT shading take it, so the fan in the print field shows the flow's ash
+grey and meets the sheet beyond it with no seam. Slurry water ponding along a levee's foot reads as muddy water.
+
+**13.2 Stream fords.** Research: off-road vehicle crossings show as turbidity spikes that pass downstream with each
+crossing (Alaska DEC, Kenai ATV crossings 2002; Forest Service low-water crossing guides); remoulded soil erodes past
+a far lower critical shear than intact soil (Knapen et al. 2007, about a sixth); saturated banks fail as shallow
+slabs (infinite slope, Skempton and DeLory 1957), the water table standing near the stream's stage (Simon et al.
+1999), and a fast surface load on saturated soil is carried by the pore water first (undrained), adding weight but
+no friction; trampled banks retreat that way (Trimble 1994).
+*Built (19 Nov):* `stream_fords` (on), in `press_wheel`:
+- In water from the contract (3 cm or more): a share of the rut, smoothstep(0.5, 3 Pa) of the current's shear times
+  the soil's fines, is scoured (a dig under the wheel); the press throws 70% less rim (material_cell's rim_share
+  under a current); both go to `WorldWater.add_sediment_mass` as mineral, the plume the stream carries on.
+- On a bank (12 degrees or more, water within 3 m downhill): FS = (c' + gamma' z cos^2 b tan phi' + (1 - m) q cos^2 b
+  tan phi') / ((gamma z + q) sin b cos b), slab z 0.5 m, m its share below the stream's level plus a 0.3 m capillary
+  fringe (or the soil's own wetness), q the tyre's Bekker pressure spread 2:1 to the slab's base (at most 250 kPa).
+  Under 1: the slab is dug out above the wheel, half of it laid as fresh mud at the toe, half its fines into the
+  water; one failure per 1 m cell per 4 s. `get_ford_stats()`.
+Bench --test=fords (height "ford": 30 degree bank into a 35 cm stream at 0.8 m/s): rut 6.7 cm in the stream against
+5.7 on land, 23 kg of plume, rims 1.2 against 2.3 cm; the low saturated bank gives way under one wheel (12 cm lower,
+16 cm at the toe, 477 kg into the water); the same wheel higher up, above the fringe, holds.
+Valence's river carries and shades the load (WorldWater sediment); the ground draws no plume of its own.
+
+**13.3 Off-camber sliding.** Research: a tyre's side force on soft soil is the soil's shear limit (A c + W tan phi)
+times Janosi-Hanamoto's mobilisation on the side slip, so on wet clay (low c, low phi, a clogged tread) the slope's
+pull W sin b beats it and the vehicle slides; sliding sideways a wheel sinks as it does spinning, the soil flowing
+out from under it to the side (Ishigami et al. 2007, J. Field Robotics; Wong 2008), and the lower wheels carry more of
+the load. Already in place: the side force capped by the soil (road friction from the shear limit), side bulldozing
+against the sidewall (Ishigami 2007), the sideways scuff and berm in the print.
+*Built (19 Nov):* GroundTerramechanics::wheel() takes the slip sinkage on the combined slip, sqrt(i^2 + tan^2 a);
+PhysXVehicle3D's soil probe passes the tyre's lateral slip angle, eased in over 0.1 to 0.4 m/s of side speed (at a
+crawl the angle is noise). Bench --test=camber (height "camber", 20 degree side slope): a wheel at 20 degrees of side
+slip sinks 4.3 cm against 2.6 rolling; a 1500 kg 4x4 at 0.4 throttle across the slope in stiff mud slides 6.7 m
+downhill in 5 s, lower wheels 11.2 cm deep against 8.4 upper; on drier soil it holds (0.18 m).
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
