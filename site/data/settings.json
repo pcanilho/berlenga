@@ -1253,7 +1253,7 @@
     "GroundSurface3D.tracked_mud"
    ],
    "note": "",
-   "what": "tyres and boots leaving clay lay a film of mud on firm ground, printed with the tyre's chevron lugs or the boot's heel and forefoot, that fades as they clean and dries pale in place; thrown clods land as cakes of wet clay that dry where they lie.",
+   "what": "tyres, boots and other bodies leaving clay lay a film of mud on firm ground, printed with the tyre's chevron lugs or the boot's heel and forefoot, that fades as they clean and dries pale in place; thrown clods land as cakes of wet clay that dry where they lie.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1852,12 +1852,23 @@
    "topic": "Sea and lakes"
   },
   {
+   "name": "Impulse waves",
+   "settings": [
+    "WorldWater.wave()"
+   ],
+   "note": "",
+   "what": "avalanches, slides and calving ice send waves across lakes that shoal and reflect off the shores.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
    "name": "Oasis springs",
    "settings": [
     "OasisSprings3D"
    ],
    "note": "",
-   "what": "still spring pools in the desert, each sized by its spring's water balance and with its own outline, with sand boils heaving at the vents.",
+   "what": "still spring pools in the desert, each sized by its spring's water balance and with its own outline, with sand boils heaving at the vents, in clear spring water, and only where the ground is hollowed.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -2814,7 +2825,7 @@
     "make_woodland"
    ],
    "note": "",
-   "what": "sixteen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), and date palm oases (`STAND_DATE_OASIS`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
+   "what": "seventeen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), date palm oases (`STAND_DATE_OASIS`) and beetle-killed spruce (`STAND_BEETLE_SPRUCE`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3149,6 +3160,17 @@
    "topic": "Old trees and deadwood"
   },
   {
+   "name": "Bark beetle kill",
+   "settings": [
+    "beetle_years"
+   ],
+   "note": "",
+   "what": "spruce go from green attack, with boring dust on the lower stem and at the foot, to rust-red crowns and then grey snags, in fronts through the stand.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
    "name": "After fire",
    "settings": [
     "fire_years"
@@ -3259,7 +3281,7 @@
     "SnowCover3D"
    ],
    "note": "",
-   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it, and fire melts the snow under it at any air temperature.",
+   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it, and fire melts the snow under it at any air temperature. Sea salt from spray melts shore snow and bare lake ice below freezing, until the brine is diluted or drains away with the melt (`salt_melt`).",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3464,7 +3486,7 @@
     "crowns_enabled"
    ],
    "note": "",
-   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts, leaving a crown wall, flanks that fade downslope and a grey scoured bed; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice and breaks through thin ice.",
+   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts, leaving a crown wall, flanks that fade downslope and a grey scoured bed; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice, breaks through thin ice and pushes a wave across open water.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
@@ -3758,7 +3780,7 @@
     "WeatherMap3D.sea_spray"
    ],
    "note": "",
-   "what": "breaking waves wet the shore and cliff faces downwind and leave salt that rain washes off; salted grass browns at the tips.",
+   "what": "breaking waves wet the shore and cliff faces downwind and leave salt that rain washes off; salted grass browns at the tips, and shrubs and trees brown leaf by leaf.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

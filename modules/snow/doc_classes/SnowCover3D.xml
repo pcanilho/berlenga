@@ -309,6 +309,13 @@
 				Returns the water leaving the snowpack at [param position] during the last update, in mm/h: meltwater and rain beyond what the pack holds, or the rain itself on bare ground.
 			</description>
 		</method>
+		<method name="get_salt_depression_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How far the sea salt in the pack's water lowers its melting point at [param position], in kelvin (0.0593 K per g/kg of brine, down to the 21.1 K eutectic). See [member salt_melt].
+			</description>
+		</method>
 		<method name="get_snow_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<description>
@@ -593,6 +600,9 @@
 		</member>
 		<member name="resolution" type="int" setter="set_resolution" getter="get_resolution" default="256">
 			The number of cells along each side of the map.
+		</member>
+		<member name="salt_melt" type="bool" setter="set_salt_melt" getter="is_salt_melt_enabled" default="true">
+			Sea salt from [method WorldWeather.salt_at] melts the pack and bare lake ice below 0 C: the pack keeps the salt it is given, its brine melts snow until it is diluted to the freezing point of the air's temperature, and draining meltwater takes its share of the salt away.
 		</member>
 		<member name="shelter_collision_mask" type="int" setter="set_shelter_collision_mask" getter="get_shelter_collision_mask" default="0">
 			With a [member height_source], colliders on these layers (roofs, overhangs) found above the terrain catch the snow, and the ground under them stays bare. Without a height source the cast on [member ground_collision_mask] finds them already.

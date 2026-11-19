@@ -755,6 +755,21 @@ float weather_frost_at(vec3 p_world_pos) {
 	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
 	return max(textureLod(weather_frost_map, uv, 0.0).r, 0.0);
 }
+
+global uniform sampler2D weather_spray_map;
+global uniform vec4 weather_spray_rect;
+
+// Sea salt on surfaces (WeatherMap3D sea_spray) as 1 - exp(-g/m2 / 10), 0..1; 0 outside its square, easing out over
+// the square's outer twentieth.
+float weather_salt_at(vec3 p_world_pos) {
+	if (weather_spray_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 uv = (p_world_pos.xz - weather_spray_rect.xy) / weather_spray_rect.zw;
+	vec2 e = min(uv, 1.0 - uv);
+	float edge = smoothstep(0.0, 0.05, min(e.x, e.y));
+	return edge > 0.0 ? textureLod(weather_spray_map, uv, 0.0).g * edge : 0.0;
+}
 )";
 }
 
@@ -808,6 +823,22 @@ float weather_frost_apply(float p_frost, float p_normal_y, inout vec3 r_albedo, 
 	r_albedo = mix(r_albedo, vec3(0.78, 0.8, 0.84), 0.65 * cover);
 	r_roughness = mix(r_roughness, 0.8, cover);
 	return cover;
+}
+
+// Salt spray burn on leaves (Boyce 1954; foliar chloride necrosis): from about 2 g/m2 of sea salt (p_salt 0.15) the
+// leaves brown one by one (p_hash, 0..1 steady per leaf), each from the tip and edges in, until by about 20 g/m2
+// (0.85) most are dead brown. Returns the share browned, for the light through the leaf.
+float weather_salt_burn_apply(float p_salt, float p_hash, inout vec3 r_albedo) {
+	float b = smoothstep(0.15, 0.85, p_salt);
+	if (b <= 0.0) {
+		return 0.0;
+	}
+	float leaf = smoothstep(p_hash - 0.1, p_hash + 0.1, b * 1.1);
+	float lum = dot(r_albedo, vec3(0.2126, 0.7152, 0.0722));
+	vec3 brown = vec3(0.36, 0.25, 0.11) * clamp(lum * 4.0, 0.6, 1.3);
+	float burnt = clamp(0.85 * leaf + 0.15 * b, 0.0, 1.0);
+	r_albedo = mix(r_albedo, brown, burnt);
+	return burnt;
 }
 )";
 	return code;

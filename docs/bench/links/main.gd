@@ -34,6 +34,8 @@ extends Node3D
 #             none offshore or calm; rain washes the salt off; a cliff face takes the spray, its top stays drier
 #   tracks    a body wading out of a stream leaves wet prints fading over a dozen strides, drips where it
 #             stands, and the prints dry with the weather
+#   mud       a body out of mud prints its clay on firm ground, less each step
+#   salt      a storm's sea salt melts a thin snowpack at -2 C, the unsalted snow beside stays
 #   contracts the water contract picks the right water where several overlap (a pool in a hollow below the sea's
 #             level, a body above the water); with no producer it answers -INF; the weather's defaults
 
@@ -89,6 +91,28 @@ class ShoreGround extends WorldGround:
 			return -5.0
 		return p.x * 0.02 + (25.0 if cliff and p.x > 60.0 else 0.0)
 
+
+# A weather stub laying sea salt over x < 0 (g/m2), nothing beyond; the rest of the weather from the map.
+class SaltWeather extends WorldWeather:
+	var salt := 60.0
+
+	func _salt_at(p: Vector3) -> float:
+		return salt if p.x < 0.0 else 0.0
+
+
+# Mud over x < 0, firm ground beyond, recording the mud prints pressed onto it.
+class MudGround extends WorldGround:
+	var prints := []
+
+	func _height_at(_p: Vector3) -> float:
+		return 0.0
+
+	func _mud_depth_at(p: Vector3) -> float:
+		return 0.2 if p.x < 0.0 else 0.0
+
+	func _track_mud(p: Vector3, radius: float, depth: float, wet: float, print: Vector4) -> float:
+		prints.append(Vector4(p.x, p.z, depth, print.x))
+		return PI * radius * radius * depth
 
 # A ground stub taking runoff loads.
 class RunoffStub extends WorldGround:
@@ -215,6 +239,8 @@ func _ready() -> void:
 	await _fog_drip_tests()
 	await _sea_spray_tests()
 	await _wet_track_tests()
+	await _mud_track_tests()
+	await _salt_snow_tests()
 	await _leaf_kick_tests()
 	await _leaf_surface_tests()
 	await _washout_tests()
@@ -985,6 +1011,97 @@ func _wet_track_tests() -> void:
 	m.queue_free()
 	anchor.queue_free()
 	WorldContracts.clear_overrides()
+	await get_tree().physics_frame
+
+
+# Muddy prints: a body walking out of mud presses the clay it carries onto the firm ground, print by print, less
+# each time; none while still in the mud.
+func _mud_track_tests() -> void:
+	WorldContracts.clear_overrides()
+	var g := MudGround.new()
+	WorldContracts.set_ground(g)
+	var m := _new_map()
+	var anchor := Node3D.new()
+	add_child(anchor)
+	m.follow_target = m.get_path_to(anchor)
+	var body := Node3D.new()
+	body.set_meta("trample_radius", 0.3)
+	body.add_to_group("world_contact")
+	add_child(body)
+	body.position = Vector3(-4, 0.3, 0)
+	for i in 10:
+		await get_tree().physics_frame
+	while body.position.x < 12.0:
+		body.position.x += 1.4 / 60.0
+		await get_tree().physics_frame
+	var in_mud := 0
+	var firm := []
+	for pr in g.prints:
+		if pr.x < 0.0:
+			in_mud += 1
+		else:
+			firm.append(pr)
+	var first: float = firm[0].z if firm.size() > 0 else 0.0
+	var last: float = firm[firm.size() - 1].z if firm.size() > 0 else 0.0
+	print("  mud prints: %d on firm ground, first %.2f mm, last %.3f mm, %d in the mud; carried %.4f mm at the end" % [firm.size(), first * 1000.0, last * 1000.0, in_mud, m.get_body_mud(body) * 1000.0])
+	_check("mud: a body out of mud prints its clay on the firm ground, less each step, as soles (none in the mud)", firm.size() >= 8 and in_mud == 0 and first >= 0.0009 and last < 0.4 * first and firm[0].w == 2.0, "%d prints, %.2f -> %.3f mm, %d in the mud" % [firm.size(), first * 1000.0, last * 1000.0, in_mud])
+	body.queue_free()
+	m.queue_free()
+	anchor.queue_free()
+	WorldContracts.clear_overrides()
+	await get_tree().physics_frame
+
+
+# Salt on snow: a storm's sea salt (60 g/m2, near the waterline) on a thin pack melts it at -2 C (its brine freezes
+# lower), the unsalted snow beside stays.
+func _salt_snow_tests() -> void:
+	if not ClassDB.class_exists("SnowCover3D"):
+		_skip("snow: salt melts it", "no SnowCover3D")
+		return
+	WorldContracts.clear_overrides()
+	var ground_node := Node3D.new()
+	ground_node.set_script(load("res://flat_ground.gd"))
+	ground_node.name = "SaltGround"
+	add_child(ground_node)
+	var m := _new_map()
+	m.temperature = -2.0
+	m.humidity = 0.9
+	m.air_follows_climate = false
+	m.rain_rate = 2.0
+	m.cloud_cover = 1.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(1.0)
+	var snow: Node3D = ClassDB.instantiate("SnowCover3D")
+	snow.extent = 64.0
+	snow.resolution = 64
+	snow.update_rate = 0.0001
+	add_child(snow)
+	snow.height_source = snow.get_path_to(ground_node)
+	snow.follow_target = snow.get_path_to(ground_node)
+	snow.refresh_heights()
+	snow.advance(3.0 * 3600.0)
+	m.rain_rate = 0.0
+	m.cloud_cover = 0.0
+	m.snap_to_settings()
+	m.advance(1.0)
+	var salted_at := Vector3(-10, 0, 0)
+	var plain_at := Vector3(10, 0, 0)
+	var before: float = snow.get_depth_at(salted_at)
+	var sw := SaltWeather.new()
+	WorldContracts.set_weather(sw)
+	snow.advance(6.0 * 3600.0)
+	var dep: float = snow.get_salt_depression_at(salted_at)
+	var salted: float = snow.get_depth_at(salted_at)
+	var plain: float = snow.get_depth_at(plain_at)
+	print("  salt snow: %.3f m before; after 6 h at -2 C, %.3f m salted (brine %.1f K lower now), %.3f m unsalted" % [before, salted, dep, plain])
+	# 60 g/m2 of salt at -2 C can only hold about 1.8 kg/m2 of brine, so the
+	# salted pack loses that much and no more; the plain pack only settles.
+	_check("snow: sea salt melts what its brine can hold at -2 C, the unsalted snow beside only settles", before > 0.005 and before - salted > 2.5 * (before - plain) and before - salted > 0.005 and plain > 0.8 * before, "%.3f m salted, %.3f m unsalted (from %.3f m), brine %.1f K" % [salted, plain, before, dep])
+	WorldContracts.clear_overrides()
+	snow.queue_free()
+	ground_node.queue_free()
+	m.queue_free()
 	await get_tree().physics_frame
 
 

@@ -285,6 +285,42 @@ float face_flux(ivec2 a, ivec2 b, float q, float v) {
 	return clamp(f, -most, most);
 }
 
+// An impulse wave (WaterSolver::submit_wave, WorldWater.wave): one crest and one trough, a (xy grid-relative
+// centre, z = -1 - wavelength, w crest-to-trough height) and b (xy direction, z crest width, w celerity). The crest
+// leads: eta = H/2 sin(2 pi s / L) over |s| < L/2 along the direction, flat across the width and tapered past it
+// over a quarter of it. Added once, with its long-wave velocity u = eta c / h in velocity_pass, so it runs one way
+// at the solver's own sqrt(g h) (the caller sizes L = c T to match).
+float wave_eta(vec2 xz, vec4 a, vec4 b) {
+	float wl = -a.z - 1.0;
+	vec2 d = b.xy;
+	vec2 rel = xz - a.xy;
+	float s = dot(rel, d);
+	if (wl <= 0.0 || abs(s) >= 0.5 * wl) {
+		return 0.0;
+	}
+	float n = abs(dot(rel, vec2(-d.y, d.x)));
+	float half_w = 0.5 * b.z;
+	float taper = max(0.25 * b.z, 2.0 * CELL);
+	float lat = n <= half_w ? 1.0 : (n < half_w + taper ? 0.5 + 0.5 * cos(3.14159265 * (n - half_w) / taper) : 0.0);
+	return 0.5 * a.w * sin(6.28318531 * s / wl) * lat;
+}
+
+// The waves' velocity along a face (m/s): x_face, the +x face at grid position pos (cells), else the +z face.
+float wave_face_velocity(vec2 pos, float depth, bool x_face) {
+	vec2 xz = pos / float(GRID_N) * DOMAIN * 2.0 - DOMAIN;
+	float u = 0.0;
+	for (int i = 0; i + 1 < NUM_IMPULSES; i++) {
+		vec4 a = impulses[i];
+		if (a.z < 0.0) {
+			vec4 b = impulses[i + 1];
+			float along = wave_eta(xz, a, b) * b.w / max(depth, MIN_FLOW_DEPTH);
+			u += along * (x_face ? b.x : b.y);
+			i++;
+		}
+	}
+	return u;
+}
+
 void height_pass(ivec2 c, int idx) {
 	vec4 st = state_in[idx];
 	float eta = st.x;
@@ -343,8 +379,16 @@ void height_pass(ivec2 c, int idx) {
 			weight = max(weight, w);
 		}
 	}
+	float wave = 0.0;
 	for (int i = 0; i < NUM_IMPULSES; i++) {
 		vec4 imp = impulses[i];
+		if (imp.z < 0.0) { // a wave: this slot and the next (wave_eta)
+			if (i + 1 < NUM_IMPULSES && still_depth(c) > 0.0) {
+				wave += wave_eta(xz, imp, impulses[i + 1]);
+			}
+			i++;
+			continue;
+		}
 		float t = length(xz - imp.xy) / max(imp.z, 1e-4);
 		if (t < 1.0) {
 			float w = (1.0 - t) * imp.w;
@@ -353,6 +397,7 @@ void height_pass(ivec2 c, int idx) {
 		}
 	}
 	hn += (target * RIPPLE_AMPLITUDE - hn) * weight * clamp(6.0 * DT, 0.0, 1.0);
+	hn += wave;
 	hn = max(hn, -cell_depth(c)); // (never below the ground: a front's last water drains to dry)
 	if (!(abs(hn) < 1e4)) {
 		hn = 0.0; // NaN / runaway guard: one bad cell would spread over the grid
@@ -439,6 +484,9 @@ void velocity_pass(ivec2 c, int idx) {
 			float other = 0.25 * (face_w(c) + face_w(r) + face_w(c - ivec2(0, 1)) + face_w(r - ivec2(0, 1)));
 			bool wall = !has_water(clamp(c + ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1))) || !has_water(clamp(c - ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1))) || !has_water(clamp(r + ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1))) || !has_water(clamp(r - ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1)));
 			u_new = face_velocity(c, r, vec2(c) + vec2(1.0, 0.5), base + st.y, other, base, wall, true);
+			if (NUM_IMPULSES > 1 && has_water(c) && has_water(r)) {
+				u_new += wave_face_velocity(vec2(c) + vec2(1.0, 0.5), face_depth(c, r), true);
+			}
 		}
 	}
 	if (c.y < GRID_N - 1) {
@@ -448,6 +496,9 @@ void velocity_pass(ivec2 c, int idx) {
 			float other = 0.25 * (face_u(c) + face_u(t) + face_u(c - ivec2(1, 0)) + face_u(t - ivec2(1, 0)));
 			bool wall = !has_water(clamp(c + ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1))) || !has_water(clamp(c - ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1))) || !has_water(clamp(t + ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1))) || !has_water(clamp(t - ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1)));
 			w_new = face_velocity(c, t, vec2(c) + vec2(0.5, 1.0), base + st.w, other, base, wall, false);
+			if (NUM_IMPULSES > 1 && has_water(c) && has_water(t)) {
+				w_new += wave_face_velocity(vec2(c) + vec2(0.5, 1.0), face_depth(c, t), false);
+			}
 		}
 	}
 	state_out[idx] = vec4(st.x, u_new, st.z, w_new);

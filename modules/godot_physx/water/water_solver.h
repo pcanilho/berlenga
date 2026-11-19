@@ -503,6 +503,11 @@ public:
 	// One-shot, event-driven (a splash) -- queued, consumed by the next
 	// step(), then cleared. Not persistent like spheres.
 	void submit_impulse(const Vector3 &p_world_pos, float p_radius, float p_strength);
+	// One-shot progressive wave (WorldWater.wave): a single crest and trough p_height high (crest to trough) and
+	// p_wavelength long, centred on p_world_pos and travelling along p_direction (xz) at p_celerity (m/s), its
+	// crest p_width wide with tapered ends. Seeded as height plus the matching long-wave velocity
+	// (u = eta c / h), so it runs one way. Takes two impulse slots; false when they are not free.
+	bool submit_wave(const Vector3 &p_world_pos, const Vector2 &p_direction, float p_height, float p_wavelength, float p_celerity, float p_width);
 
 	// Zero-copy RD texture RIDs (R32_SFLOAT height, meters) for a caller-side
 	// Texture2DRD to wrap directly -- valid once is_available(). This is the
@@ -642,6 +647,7 @@ private:
 		Vector3 world_pos;
 		float radius = 0.0f;
 		float strength = 0.0f;
+		bool raw = false; // packed as given (a wave's second slot), not made grid-relative
 	};
 	Vector<ImpulseSlot> pending_impulses;
 

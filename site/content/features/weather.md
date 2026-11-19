@@ -46,7 +46,7 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
 
 - **Dew and frost** (`dew_and_frost`): clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks.
 - **Fog drip** (`WeatherMap3D.fog_drip`): cloud lying on wooded ground drips from the trees and wets the ground beneath them.
-- **Sea spray** (`WeatherMap3D.sea_spray`): breaking waves wet the shore and cliff faces downwind and leave salt that rain washes off; salted grass browns at the tips.
+- **Sea spray** (`WeatherMap3D.sea_spray`): breaking waves wet the shore and cliff faces downwind and leave salt that rain washes off; salted grass browns at the tips, and shrubs and trees brown leaf by leaf.
 - **Wet tracks** (`WeatherMap3D.wet_tracks`): bodies and vehicles coming out of water, wet mud or puddles leave wet footprints and tyre tracks that fade along the way, drip where they stand, and dry with the weather.
 - **Contact wetness** (`contact_wetness_enabled`): ground that running water crossed stays dark after it drains, then dries with the weather.
 - **Rain on rock** (rock material `rain_rivulets`): rivulets run down rock faces while it rains, and the rock dries in patches after.

@@ -88,6 +88,17 @@
 				Override in a stub to replace [method wake_depth_at].
 			</description>
 		</method>
+		<method name="_wave" qualifiers="virtual">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="direction" type="Vector3" />
+			<param index="2" name="height" type="float" />
+			<param index="3" name="period" type="float" />
+			<param index="4" name="width" type="float" />
+			<description>
+				Override in a stub to replace [method wave].
+			</description>
+		</method>
 		<method name="add_sediment">
 			<return type="void" />
 			<param index="0" name="position" type="Vector3" />
@@ -178,6 +189,17 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				How far the surface over [param position] is pushed down by wakes, in metres.
+			</description>
+		</method>
+		<method name="wave">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="direction" type="Vector3" />
+			<param index="2" name="height" type="float" />
+			<param index="3" name="period" type="float" />
+			<param index="4" name="width" type="float" />
+			<description>
+				An impulse wave in metres and seconds, from a landslide, an avalanche, calving ice or rockfall entering the water at [param position]: one crest and trough [param height] m high (crest to trough), [param period] s long, its crest [param width] m wide, setting off along [param direction]. Given to every producer with water there: [PhysXWaterSurface3D] carries it in its ripple solver ([method PhysXWaterSurface3D.submit_wave]), so it runs out at the long-wave speed, up the shores and back; a producer with no solver takes a splash of the crest's height ([method impulse]).
 			</description>
 		</method>
 	</methods>

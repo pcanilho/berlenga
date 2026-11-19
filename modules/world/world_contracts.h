@@ -209,6 +209,13 @@ public:
 	virtual void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) {}
 	virtual void contract_water_clear(uint64_t p_owner) {}
 	virtual void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) {}
+	// An impulse wave in metres and seconds (a landslide, avalanche, calving or rockfall entering the water): one
+	// crest and trough p_height high (crest to trough), p_period long, its crest p_width wide, setting off from the
+	// point along p_direction. A producer that cannot carry one gets a splash of the crest's height there.
+	virtual void contract_water_wave(const Vector3 &p_position, const Vector3 &p_direction, float p_height, float p_period, float p_width) {
+		const float r = MAX(0.5f * p_width, 0.5f);
+		contract_water_impulse(p_position, r, 0.5f * MAX(p_height, 0.0f) / r);
+	}
 	// Suspended load (kg/m3): x mineral (silt, clay: brown), y ash and char (grey to black). Zero for clear water.
 	virtual Vector2 contract_water_sediment_at(const Vector3 &p_position) const { return Vector2(); }
 	// Height of the waves breaking at the point (m): the broken waves in the surf zone, whitecaps (cover times wave
@@ -238,6 +245,7 @@ protected:
 	GDVIRTUAL4(_disturb, uint64_t, Vector3, float, float)
 	GDVIRTUAL1(_clear, uint64_t)
 	GDVIRTUAL3(_impulse, Vector3, float, float)
+	GDVIRTUAL5(_wave, Vector3, Vector3, float, float, float)
 	GDVIRTUAL1RC(Vector2, _sediment_at, Vector3)
 	GDVIRTUAL1RC(float, _breaking_at, Vector3)
 	GDVIRTUAL3(_add_sediment, Vector3, float, float)
@@ -255,6 +263,9 @@ public:
 	void disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength);
 	void clear(uint64_t p_owner);
 	void impulse(const Vector3 &p_position, float p_radius, float p_strength);
+	// An impulse wave (m and s) from the point along the direction, given to every producer with water there: a
+	// landslide's, an avalanche's or calving ice's (height crest to trough, its period, the crest's width).
+	void wave(const Vector3 &p_position, const Vector3 &p_direction, float p_height, float p_period, float p_width);
 	// The water's suspended load at the point (kg/m3): x mineral, y ash and char; the shading clouds and darkens by it.
 	Vector2 sediment_at(const Vector3 &p_position) const;
 	// Height of the waves breaking at the point (m), the largest any producer reports; 0 where none break.
@@ -365,6 +376,8 @@ public:
 	virtual float contract_ground_rim_at(const Vector3 &p_position) const { return 0.0f; } // m
 	virtual Vector2 contract_ground_runoff_at(const Vector3 &p_position) const { return Vector2(); } // (depth m, speed m/s)
 	virtual float contract_ground_mud_depth_at(const Vector3 &p_position) const { return 0.0f; } // m of slurry
+	// Clay a body carries pressed onto the ground as a print (m of film; print as GroundSurface3D.track_mud). Returns m3 laid.
+	virtual float contract_ground_track_mud(const Vector3 &p_position, float p_radius, float p_depth, float p_wet, const Vector4 &p_print) { return 0.0f; }
 	virtual Vector2 contract_ground_needle_ice_at(const Vector3 &p_position) const { return Vector2(); } // (m, crumbs 0..1)
 	virtual Vector3 contract_ground_rut_guidance_at(const Vector3 &p_contact, const Vector3 &p_lateral, float p_half_width) const { return Vector3(); } // (cross slope, wall -lat m, wall +lat m)
 	virtual float contract_ground_sand_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, loose sand's share of the top
@@ -381,6 +394,16 @@ public:
 	// its drainage and hands it to WorldWater.add_sediment where the flow reaches a river or lake.
 	virtual void contract_runoff_add_load(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) = 0;
 	virtual ~WorldRunoffProvider() {}
+};
+
+// Coarse grains lying on the ground (the stone fields, RockField3D): a separate slot on the ground contract, since
+// the near ground and the stones come from different producers. Several fields may register; each answers 0 where
+// its map does not reach.
+class WorldCoverProvider {
+public:
+	// The share of the ground (0..1) covered by pebbles (x), gravel (y) and fine grains (z) at the point.
+	virtual Vector3 contract_cover_at(const Vector3 &p_position) const = 0;
+	virtual ~WorldCoverProvider() {}
 };
 
 class WorldGround : public RefCounted {
@@ -410,6 +433,8 @@ protected:
 	GDVIRTUAL1RC(float, _ripple_at, Vector3)
 	GDVIRTUAL1RC(float, _blown_sand_at, Vector3)
 	GDVIRTUAL3(_add_runoff_load, Vector3, float, float)
+	GDVIRTUAL5R(float, _track_mud, Vector3, float, float, float, Vector4)
+	GDVIRTUAL1RC(Vector3, _coarse_cover_at, Vector3)
 
 public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -432,7 +457,15 @@ public:
 	// the runoff carries it down its drainage into WorldWater.add_sediment where the flow reaches water. Dropped
 	// with no runoff producer. Callers: soil erosion, burnt ground's ash (PhysX).
 	void add_runoff_load(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg);
+	// Mud a body carries out of mud pressed onto firm ground at the point (a film p_depth m thick over p_radius, wet
+	// 0..1; p_print x 1 a tyre, 2 a sole, y its yaw, z w the sole's length and width): the ground's mud prints. m3 laid;
+	// 0 with no ground producer.
+	float track_mud(const Vector3 &p_position, float p_radius, float p_depth, float p_wet, const Vector4 &p_print);
 	bool has_runoff() const { return runoff_provider != nullptr || get_script_instance() != nullptr; }
+	// The share of the ground (0..1) covered by coarse grains: x pebbles, y gravel, z fine grains (the stone fields'
+	// cover maps). A gravel lag armours the sand under it, so blown sand and ripples read pebble + gravel. 0 with no
+	// stone field; the largest any field reports.
+	Vector3 coarse_cover_at(const Vector3 &p_position) const;
 };
 
 // Snow: the snowpack and lake ice (docs/ideas/world-contracts.md, Snow). Produced by SnowCover3D.
@@ -522,6 +555,7 @@ class WorldContracts : public Object {
 	Ref<WorldGround> ground_override;
 	WorldGroundProvider *ground_provider = nullptr;
 	WorldRunoffProvider *runoff_provider = nullptr;
+	LocalVector<WorldCoverProvider *> cover_providers;
 	Ref<WorldWater> builtin_water;
 	Ref<WorldWater> water_override;
 	Ref<WorldFire> builtin_fire;
@@ -554,6 +588,9 @@ public:
 	static void unregister_ground(WorldGroundProvider *p_provider);
 	static void register_runoff(WorldRunoffProvider *p_provider); // one at a time: the last registered answers
 	static void unregister_runoff(WorldRunoffProvider *p_provider);
+	static void register_cover(WorldCoverProvider *p_provider); // any number: the largest share answers
+	static void unregister_cover(WorldCoverProvider *p_provider);
+	static const LocalVector<WorldCoverProvider *> *cover_providers_list() { return singleton ? &singleton->cover_providers : nullptr; }
 	static void register_water(WorldWaterProvider *p_provider);
 	static void unregister_water(WorldWaterProvider *p_provider);
 	static void register_fire(WorldFireProvider *p_provider);

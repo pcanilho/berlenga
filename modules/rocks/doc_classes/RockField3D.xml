@@ -56,6 +56,13 @@
 				Triangles in the loaded close-up shapes.
 			</description>
 		</method>
+		<method name="get_coarse_cover_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				This field's answer to [method WorldGround.coarse_cover_at]: pebble, gravel and fine shares of the ground (0..1) from the cover maps, bilinear; the near map where it reaches, else the far one; 0 outside both or with [member ground_detail_cover] off.
+			</description>
+		</method>
 		<method name="get_ground_detail_count" qualifiers="const">
 			<return type="int" />
 			<param index="0" name="layer" type="int" default="-1" />
@@ -67,6 +74,13 @@
 			<return type="int" />
 			<description>
 				Coarse cells being placed on worker threads (see [member cell_threads]), and shape libraries being built for them.
+			</description>
+		</method>
+		<method name="get_ground_detail_cover_rect" qualifiers="const">
+			<return type="Rect2" />
+			<param index="0" name="level" type="int" />
+			<description>
+				The world XZ rectangle the cover map of [param level] (0 near, 1 far) covers as built, empty before it is built. See [method get_ground_detail_cover_texture].
 			</description>
 		</method>
 		<method name="get_ground_detail_cover_texture" qualifiers="const">
