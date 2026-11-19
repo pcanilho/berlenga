@@ -219,6 +219,13 @@
 				Cloud water at the canopy over [param position] (g/m3): the sky's clouds where the ground rises into them, 6.7 g/m3 per 1/m of their extinction (droplets of 10 um effective radius, Stephens 1978).
 			</description>
 		</method>
+		<method name="get_high_cloud_cover_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The high cloud sheet's cover over [param position], 0 to 1: its drifting patches plus the anvil shields storms spread downwind of themselves. Not part of [method get_cloud_cover_at]: the sheet is optically thin and shades the ground only through [method get_sun_visibility_at], by its own optical depth.
+			</description>
+		</method>
 		<method name="get_obstacle_height_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -770,6 +777,15 @@
 		</member>
 		<member name="fog_drip" type="bool" setter="set_fog_drip" getter="is_fog_drip_enabled" default="true">
 			Fog drip: where the ground stands in the cloud, plants comb the cloud water out, deposition = LWC x wind x a capture efficiency (Lovett 1984), 0.003 over short plants up to 0.018 under a closed canopy ([method get_canopy_closure_at]; deposition velocities of about 2 to 9 cm/s in a 5 m/s wind, Gallagher et al. 1988, Katata et al. 2008). It enters the canopy's water balance with the rain, so it drips once the leaves hold their storage, wets the ground under the trees and feeds the runoff. In the cloud the air is saturated and the canopy does not dry.
+		</member>
+		<member name="high_cloud_cover" type="float" setter="set_high_cloud_cover" getter="get_high_cloud_cover" default="0.25">
+			The base cover of the high cloud sheet (cirrus, cirrostratus) at [member high_cloud_height]. The weather drives what is drawn: dry air thins it to 0.3 of this, rain set in [member rain_rate] thickens it, easing four times faster than the rain so the sheet arrives first. See docs/ideas/clouds.md.
+		</member>
+		<member name="high_cloud_height" type="float" setter="set_high_cloud_height" getter="get_high_cloud_height" default="8000.0">
+			Height of the high cloud sheet (m above y = 0). It drifts with [method get_wind_aloft] at this height and its fibres lie along that wind.
+		</member>
+		<member name="high_cloud_optical_depth" type="float" setter="set_high_cloud_optical_depth" getter="get_high_cloud_optical_depth" default="1.0">
+			Vertical optical depth of the high sheet at full cover (ice clouds measure 0.03 to 3). Sets how much it veils the sky and dims the sun.
 		</member>
 		<member name="sea_spray" type="bool" setter="set_sea_spray" getter="is_sea_spray_enabled" default="true">
 			Sea spray on the shore: breaking waves ([method WorldWater.breaking_at]) make spray in proportion to the breaker height and the square of the wind past 2 m/s; the wind carries it inland over a square round the follow point. Coarse drops settle within tens of metres ([code]u (1 + H) / 1 m/s[/code]) and wet surfaces and the soil; rising ground catches them, so a cliff face takes the spray and its top stays drier. Fine salt aerosol reaches hundreds of metres ([code]50 s x u[/code]). The salt stays on surfaces until rain washes it off (all but a third by 5 mm) and is published with the spray's wetness as the [code]weather_spray_map[/code] global (R wetness, G [code]1 - exp(-salt / 10 g/m2)[/code]); grass browns at the tips from salt burn.

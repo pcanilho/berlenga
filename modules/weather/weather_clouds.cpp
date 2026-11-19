@@ -107,6 +107,49 @@ float worley(const Vector3 &p_p, int p_period) {
 	return 1.0f - CLAMP(Math::sqrt(best), 0.0f, 1.0f);
 }
 
+// Alligator noise (Side Effects' anoise, which Nubis Cubed builds its wisps from): every cell's feature point
+// has a random strength that falls off smoothly over one cell; the strongest contribution minus the second
+// leaves scalloped ridges between the features. Wrapped every p_period cells, 0..1.
+float alligator(const Vector3 &p_p, int p_period) {
+	const int ix = int(Math::floor(p_p.x));
+	const int iy = int(Math::floor(p_p.y));
+	const int iz = int(Math::floor(p_p.z));
+	float first = 0.0f;
+	float second = 0.0f;
+	for (int dz = -1; dz <= 1; dz++) {
+		for (int dy = -1; dy <= 1; dy++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				const uint32_t h = hash3(wrap(ix + dx, p_period), wrap(iy + dy, p_period), wrap(iz + dz, p_period));
+				const Vector3 feature = Vector3(ix + dx, iy + dy, iz + dz) + Vector3((h & 1023u) / 1023.0f, ((h >> 10) & 1023u) / 1023.0f, ((h >> 20) & 1023u) / 1023.0f);
+				const float t = CLAMP(1.0f - (feature - p_p).length(), 0.0f, 1.0f);
+				const float c = (hash_u(h ^ 0x68e31da4u) & 1023u) / 1023.0f * t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+				if (c > first) {
+					second = first;
+					first = c;
+				} else if (c > second) {
+					second = c;
+				}
+			}
+		}
+	}
+	return first - second;
+}
+
+// Curl noise (Bridson, Hourihan and Nordenstam, "Curl-Noise for Procedural Fluid Flow", SIGGRAPH 2007): the
+// curl of three Perlin potentials, a divergence-free field that turns the alligator scallops into the curling
+// wisps Nubis Cubed calls Curly-Alligator. Wrapped every p_period cells; about -1..1 a component.
+Vector3 curl(const Vector3 &p_p, int p_period) {
+	const float e = 0.02f;
+	auto pot = [&](const Vector3 &q, int k) { return perlin(q + Vector3(17.3f, 41.9f, 7.1f) * float(k), p_period); };
+	auto d = [&](int k, int axis) {
+		Vector3 o;
+		o[axis] = e;
+		return (pot(p_p + o, k) - pot(p_p - o, k)) / (2.0f * e);
+	};
+	// curl (A, B, C) = (dC/dy - dB/dz, dA/dz - dC/dx, dB/dx - dA/dy)
+	return Vector3(d(2, 1) - d(1, 2), d(0, 2) - d(2, 0), d(1, 0) - d(0, 1));
+}
+
 float remap(float p_v, float p_lo, float p_hi, float p_nlo, float p_nhi) {
 	return p_nlo + (p_v - p_lo) * (p_nhi - p_nlo) / (p_hi - p_lo);
 }
@@ -150,11 +193,58 @@ struct NoiseJob {
 	}
 };
 
+// The detail texture of Nubis Cubed (Schneider, Advances 2023): four channels, low and high frequency
+// Curly-Alligator wisps (r, g) and low and high frequency billows (b, a, inverted Worley), each tiling.
+// The sky blends low to high frequency over the depth into the cloud and wisps to billows over height.
+struct DetailJob {
+	int size = 0;
+	float *out = nullptr; // 4 floats a texel
+
+	void slice(uint32_t p_z, void *) {
+		for (int y = 0; y < size; y++) {
+			for (int x = 0; x < size; x++) {
+				const Vector3 u = (Vector3(x, y, int(p_z)) + Vector3(0.5f, 0.5f, 0.5f)) / float(size);
+				// One curl field for both wisp channels, so the fine wisps curl with the coarse ones.
+				const Vector3 c = curl(u * 4.0f, 4) * 0.035f;
+				const Vector3 w = u + c;
+				float *o = out + ((int(p_z) * size + y) * size + x) * 4;
+				o[0] = alligator(w * 4.0f, 4) * 0.625f + alligator(w * 8.0f, 8) * 0.25f + alligator(w * 16.0f, 16) * 0.125f;
+				o[1] = alligator(w * 12.0f, 12) * 0.625f + alligator(w * 24.0f, 24) * 0.25f + alligator(w * 48.0f, 48) * 0.125f;
+				o[2] = worley(u * 4.0f, 4) * 0.625f + worley(u * 8.0f, 8) * 0.25f + worley(u * 16.0f, 16) * 0.125f;
+				o[3] = worley(u * 12.0f, 12) * 0.625f + worley(u * 24.0f, 24) * 0.25f + worley(u * 48.0f, 48) * 0.125f;
+			}
+		}
+	}
+};
+
 Mutex noise_mutex;
 Vector<float> shape_data;
 Vector<float> detail_data;
 Ref<ImageTexture3D> shape_tex;
 Ref<ImageTexture3D> detail_tex;
+
+// Equalise every channel to an even spread over 0..1 (rank over count), so a cover threshold c keeps the
+// share c of the noise: cover 0.4 then clouds about 40% of the sky.
+void equalise(Vector<float> &r_data, int p_channels) {
+	struct Ranked {
+		float v;
+		int i;
+		bool operator<(const Ranked &p_other) const { return v < p_other.v; }
+	};
+	const int n = r_data.size() / p_channels;
+	Vector<Ranked> ranked;
+	ranked.resize(n);
+	float *w = r_data.ptrw();
+	for (int c = 0; c < p_channels; c++) {
+		for (int i = 0; i < n; i++) {
+			ranked.write[i] = { r_data[i * p_channels + c], i };
+		}
+		ranked.sort();
+		for (int r = 0; r < n; r++) {
+			w[ranked[r].i * p_channels + c] = float(r) / float(n - 1);
+		}
+	}
+}
 
 Vector<float> make_noise(int p_size, bool p_detail) {
 	Vector<float> data;
@@ -165,54 +255,55 @@ Vector<float> make_noise(int p_size, bool p_detail) {
 	job.out = data.ptrw();
 	const WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_template_group_task(&job, &NoiseJob::slice, (void *)nullptr, p_size, -1, true, String("Cloud noise"));
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
-	// Equalise to an even spread over 0..1 (rank over count), so a cover threshold c keeps the share c
-	// of the noise: cover 0.4 then clouds about 40% of the sky.
-	struct Ranked {
-		float v;
-		int i;
-		bool operator<(const Ranked &p_other) const { return v < p_other.v; }
-	};
-	Vector<Ranked> ranked;
-	ranked.resize(data.size());
-	for (int i = 0; i < data.size(); i++) {
-		ranked.write[i] = { data[i], i };
-	}
-	ranked.sort();
-	float *w = data.ptrw();
-	for (int r = 0; r < ranked.size(); r++) {
-		w[ranked[r].i] = float(r) / float(ranked.size() - 1);
-	}
+	equalise(data, 1);
 	return data;
 }
 
-// With box-filtered mipmaps, so the sky can read far clouds at the scale of its steps.
-Ref<ImageTexture3D> make_texture(const Vector<float> &p_data, int p_size) {
+Vector<float> make_detail(int p_size) {
+	Vector<float> data;
+	data.resize(p_size * p_size * p_size * 4);
+	DetailJob job;
+	job.size = p_size;
+	job.out = data.ptrw();
+	const WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_template_group_task(&job, &DetailJob::slice, (void *)nullptr, p_size, -1, true, String("Cloud detail noise"));
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+	equalise(data, 4);
+	return data;
+}
+
+// With box-filtered mipmaps, so the sky can read far clouds at the scale of its steps. p_channels 1 (R8) or
+// 4 (RGBA8), interleaved.
+Ref<ImageTexture3D> make_texture(const Vector<float> &p_data, int p_size, int p_channels = 1) {
+	const Image::Format format = p_channels == 4 ? Image::FORMAT_RGBA8 : Image::FORMAT_R8;
+	const int nc = p_channels;
 	Vector<Ref<Image>> slices;
 	Vector<float> level = p_data;
 	int size = p_size;
 	while (size >= 1) {
 		for (int z = 0; z < size; z++) {
 			Vector<uint8_t> bytes;
-			bytes.resize(size * size);
-			for (int i = 0; i < size * size; i++) {
-				bytes.write[i] = uint8_t(CLAMP(int(level[z * size * size + i] * 255.0f + 0.5f), 0, 255));
+			bytes.resize(size * size * nc);
+			for (int i = 0; i < size * size * nc; i++) {
+				bytes.write[i] = uint8_t(CLAMP(int(level[z * size * size * nc + i] * 255.0f + 0.5f), 0, 255));
 			}
-			slices.push_back(Image::create_from_data(size, size, false, Image::FORMAT_R8, bytes));
+			slices.push_back(Image::create_from_data(size, size, false, format, bytes));
 		}
 		if (size == 1) {
 			break;
 		}
 		const int half = size / 2;
 		Vector<float> next;
-		next.resize(half * half * half);
+		next.resize(half * half * half * nc);
 		for (int z = 0; z < half; z++) {
 			for (int y = 0; y < half; y++) {
 				for (int x = 0; x < half; x++) {
-					float s = 0.0f;
-					for (int k = 0; k < 8; k++) {
-						s += level[((2 * z + (k >> 2)) * size + 2 * y + ((k >> 1) & 1)) * size + 2 * x + (k & 1)];
+					for (int c = 0; c < nc; c++) {
+						float s = 0.0f;
+						for (int k = 0; k < 8; k++) {
+							s += level[(((2 * z + (k >> 2)) * size + 2 * y + ((k >> 1) & 1)) * size + 2 * x + (k & 1)) * nc + c];
+						}
+						next.write[((z * half + y) * half + x) * nc + c] = s * 0.125f;
 					}
-					next.write[(z * half + y) * half + x] = s * 0.125f;
 				}
 			}
 		}
@@ -221,7 +312,7 @@ Ref<ImageTexture3D> make_texture(const Vector<float> &p_data, int p_size) {
 	}
 	Ref<ImageTexture3D> tex;
 	tex.instantiate();
-	tex->create(Image::FORMAT_R8, p_size, p_size, p_size, true, slices);
+	tex->create(format, p_size, p_size, p_size, true, slices);
 	return tex;
 }
 
@@ -372,6 +463,28 @@ Vector2 cover_type_at(const State &p_state, Vector2 p_xz) {
 	return Vector2(cover, t);
 }
 
+// Cirrus patches: the cover noise at the high layer's own scale and drift, thresholded as the low cover is;
+// plus each storm's anvil, spread downwind of its core along the wind aloft (an anvil reaches several times
+// a cell's core radius downwind, so the shield arrives hours before the rain). wc_high_cover in the sky.
+float high_cover_at(const State &p_state, Vector2 p_xz) {
+	float c = 0.0f;
+	if (p_state.high_cover > 0.001f) {
+		const float n = cover_noise(p_xz + Vector2(9137.0f, 3301.0f), p_state.high_drift, p_state.high_scale, p_state.evolve);
+		c = CLAMP((n - (1.0f - p_state.high_cover)) / MAX(p_state.high_cover, 0.001f) * 1.5f, 0.0f, 1.0f) * MIN(1.0f, 2.0f * p_state.high_cover);
+	}
+	for (int i = 0; i < p_state.storm_count; i++) {
+		const float *s = p_state.storms[i];
+		const Vector2 centre = Vector2(s[0], s[1]) + p_state.high_dir * (2.5f * s[2]);
+		const float x2 = (p_xz - centre).length_squared() / (9.0f * s[2] * s[2]);
+		c = 1.0f - (1.0f - c) * (1.0f - Math::exp(-x2) * s[3]);
+	}
+	return c;
+}
+
+float high_tau_at(const State &p_state, Vector2 p_xz) {
+	return high_cover_at(p_state, p_xz) * p_state.high_tau;
+}
+
 // The shape noise is stretched twice vertically, so a column through the layer sees about one
 // value of it: the share of sky the clouds cover then follows the cover setting, and the height
 // profile, not the noise, shapes bases and tops.
@@ -495,7 +608,7 @@ const Vector<float> &shape_noise() {
 const Vector<float> &detail_noise() {
 	MutexLock lock(noise_mutex);
 	if (detail_data.is_empty()) {
-		detail_data = make_noise(DETAIL_SIZE, true);
+		detail_data = make_detail(DETAIL_SIZE);
 	}
 	return detail_data;
 }
@@ -513,7 +626,7 @@ Ref<Texture3D> detail_texture() {
 	const Vector<float> &data = detail_noise();
 	MutexLock lock(noise_mutex);
 	if (detail_tex.is_null()) {
-		detail_tex = make_texture(data, DETAIL_SIZE);
+		detail_tex = make_texture(data, DETAIL_SIZE, 4);
 	}
 	return detail_tex;
 }
@@ -549,6 +662,17 @@ uniform vec4 cloud_storms[8];
 // Each storm's own cloud base (m; <= 0: cloud_base_height), and the lowest base of all (the march's bounds).
 uniform float cloud_storm_base[8];
 uniform float cloud_base_min = 1500.0;
+// Nubis Cubed's sharpening exponent at a cloud's thin edge (1: none).
+uniform float cloud_edge_sharpness = 0.45;
+// How deep the detail noise erodes the shape (Nubis's erosion), on its base depth.
+uniform float cloud_detail_strength = 1.5;
+// The high layer (State::high_*).
+uniform float cloud_high_cover = 0.0;
+uniform float cloud_high_height = 8000.0;
+uniform float cloud_high_tau = 1.0;
+uniform float cloud_high_scale = 24000.0;
+uniform vec2 cloud_high_drift = vec2(0.0);
+uniform vec2 cloud_high_dir = vec2(1.0, 0.0);
 
 float wc_hash2(int x, int y) {
 	uint h = uint(x) * 2376512323u ^ uint(y) * 3625334849u;
@@ -699,9 +823,28 @@ float wc_base_at(vec2 xz) {
 	return b;
 }
 
+// The high layer's cover (high_cover_at() on the CPU).
+float wc_high_cover(vec2 xz) {
+	float c = 0.0;
+	if (cloud_high_cover > 0.001) {
+		float n = wc_cover_noise_at(xz + vec2(9137.0, 3301.0) - (cloud_high_drift - cloud_drift), cloud_high_scale);
+		c = clamp((n - (1.0 - cloud_high_cover)) / max(cloud_high_cover, 0.001) * 1.5, 0.0, 1.0) * min(1.0, 2.0 * cloud_high_cover);
+	}
+	for (int i = 0; i < cloud_storm_count; i++) {
+		vec4 s = cloud_storms[i];
+		vec2 centre = s.xy + cloud_high_dir * (2.5 * s.z);
+		vec2 d = xz - centre;
+		c = 1.0 - (1.0 - c) * (1.0 - exp(-dot(d, d) / (9.0 * s.z * s.z)) * s.w);
+	}
+	return c;
+}
+
 // Extinction (1/m) at p. p_detail erodes the edges with the detail noise (Nubis); the shadow bake
 // and the CPU leave it out. p_step is the march's step (m): the noise is read at that scale.
-float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {
+// r_profile: the cloud's depth there before erosion, 0 at its edge to 1 at its core (Nubis Cubed's
+// dimensional profile), which the lighting reads for dark edges, the inner glow and the ambient shell.
+float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_profile) {
+	r_profile = 0.0;
 	if (ct.x <= 0.001) {
 		return 0.0;
 	}
@@ -728,21 +871,37 @@ float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {
 	p.xz -= cloud_shear * min(zs * zs, 9.0);
 	float n = wc_shape(p, p_step);
 	float shape = max(n * dome - (1.0 - ct.x), 0.0) / max(ct.x, 0.001) * base;
+	r_profile = clamp(shape, 0.0, 1.0);
 	if (p_detail && shape > 0.0) {
-		// Erode the edges with the detail noise, wispy below and billowing higher up (Nubis 2017).
+		// Nubis Cubed's up-rez (Schneider, Advances 2023): wisps (Curly-Alligator) low frequency inside and high
+		// frequency at the thin edge; billows (inverted Worley) rounded at the edge and finer toward the core;
+		// wispy under the cloud, billowing higher up and in towering cumulus.
 		vec2 sxz = wc_rotate(p.xz - cloud_drift);
 		vec3 qd = vec3(sxz.x, p.y, sxz.y) / cloud_shape_scale * 8.0 - vec3(0.0, cloud_churn.z, 0.0);
-		// Warped by the detail noise itself at a quarter of its frequency (domain warping, the part curl noise
-		// plays in Nubis): the billows tear into wisps and swirls instead of a cauliflower of round cells.
+		// Warped by the detail's own coarse billows at a quarter of its frequency (domain warping), so the edge
+		// tears into swirls at the scale of the cloud as well as within the texture's own curl.
 		float lod_w = max(log2(p_step / texel), 0.0);
-		vec2 warp = vec2(textureLod(cloud_detail, qd * 0.25 + vec3(0.31, 0.17, 0.73), lod_w).r, textureLod(cloud_detail, qd * 0.25 + vec3(0.59, 0.41, 0.11), lod_w).r) - 0.5;
-		qd += vec3(warp.x, 0.25 * (warp.x + warp.y), warp.y) * mix(1.6, 0.8, clamp(h * 2.0, 0.0, 1.0));
-		float d = textureLod(cloud_detail, qd, max(log2(p_step / (texel * 0.25)), 0.0)).r;
-		float e = 0.45 * mix(d, 1.0 - d, clamp(h * 4.0, 0.0, 1.0));
+		vec2 warp = vec2(textureLod(cloud_detail, qd * 0.25 + vec3(0.31, 0.17, 0.73), lod_w).b, textureLod(cloud_detail, qd * 0.25 + vec3(0.59, 0.41, 0.11), lod_w).b) - 0.5;
+		qd += vec3(warp.x, 0.25 * (warp.x + warp.y), warp.y) * mix(1.2, 0.6, clamp(h * 2.0, 0.0, 1.0));
+		// Mip by the footprint: an eighth of the shape's tile in 128 texels, so a texel is an eighth of the shape's
+		// (2.9 m at the default scale), read at the step's footprint so far billows average instead of aliasing.
+		vec4 dn = textureLod(cloud_detail, qd, max(log2(p_step / (texel * 0.125)), 0.0));
+		float wispy = mix(dn.g, dn.r, r_profile);
+		float billowy = mix(dn.b, dn.a, pow(r_profile, 0.25));
+		float billow = clamp(h * 4.0, 0.0, 1.0) * mix(0.6, 1.0, cu);
+		float e = cloud_detail_strength * mix(0.45 * wispy, 0.4 * billowy, billow);
 		shape = clamp((shape - e) / (1.0 - e), 0.0, 1.0);
+		// Sharpening (Nubis Cubed): thin density raised so each billow ends in a defined edge instead of a
+		// long fade, more where the cloud is thin.
+		shape = pow(shape, mix(cloud_edge_sharpness, 1.0, r_profile));
 	}
 	// Times the cover after the erosion (Schneider 2015; wc_extinction on the CPU).
 	return shape * ct.x * mix(0.04, 0.1, ct.y) * cloud_density;
+}
+
+float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {
+	float profile;
+	return wc_extinction_p(p, ct, p_detail, p_step, profile);
 }
 )";
 

@@ -45,7 +45,7 @@ namespace WeatherClouds {
 
 constexpr int MAX_STORMS = 8;
 constexpr int SHAPE_SIZE = 128; // texels across the base shape noise (tiles)
-constexpr int DETAIL_SIZE = 32; // texels across the detail noise (tiles)
+constexpr int DETAIL_SIZE = 128; // texels across the detail noise (tiles; RGBA: wisps low, high, billows low, high)
 
 // Everything the density needs, as WeatherMap3D last eased it.
 struct State {
@@ -74,6 +74,16 @@ struct State {
 	// Each storm's own cloud base (m above y = 0; <= 0: base_height), as a fire cloud's at its plume's
 	// condensation level. Columns round a storm blend to it as they join its cloud shield (base_at()).
 	float storm_base[MAX_STORMS] = {};
+	// The high cloud layer (cirrus, cirrostratus; docs/ideas/clouds.md): a thin sheet at high_height, its cover
+	// eased by the weather map (get_high_cloud_cover_at), its optical depth at full cover high_tau (ice clouds
+	// are 0.03 to 3), drifting with the faster wind aloft and streaked along high_dir. Storm cells spread an
+	// anvil shield downwind of themselves (the storms above, shield_reach radii ahead).
+	float high_cover = 0.0f;
+	float high_height = 8000.0f;
+	float high_tau = 1.0f;
+	float high_scale = 24000.0f; // m, its patches
+	Vector2 high_drift; // m
+	Vector2 high_dir = Vector2(1, 0); // unit, the wind aloft
 	float top_max = 0.0f; // highest top any column reaches now (m), set by update_top_max()
 	float base_min = 1500.0f; // lowest base any column has now (m), set by update_top_max()
 
@@ -94,6 +104,10 @@ float cover_noise(Vector2 p_xz, Vector2 p_drift, float p_scale, float p_evolve =
 Vector2 cover_type_at(const State &p_state, Vector2 p_xz);
 // The cloud base (m) over world x, z: base_height, blended to each storm's own base over its cloud shield.
 float base_at(const State &p_state, Vector2 p_xz);
+// The high layer's cover (0..1) and vertical optical depth over world x, z (patches and anvil shields; the
+// sky adds the fibres).
+float high_cover_at(const State &p_state, Vector2 p_xz);
+float high_tau_at(const State &p_state, Vector2 p_xz);
 // Extinction (1/m) at a world point, base shape only (the sky adds detail erosion at the edges).
 // Where a world point reads the shape noise first (turned, stretched twice vertically), and the
 // shape there: two reads of the tile at an irrational ratio of scales, evened out (0..1).
@@ -101,7 +115,8 @@ Vector3 shape_coord(const State &p_state, const Vector3 &p_pos);
 float shape_at(const State &p_state, const Vector3 &p_pos);
 float extinction_at(const State &p_state, const Vector3 &p_pos);
 
-// The tiling shape noises (Perlin-Worley base, Worley detail), made once.
+// The tiling shape noises (Perlin-Worley base; detail: Curly-Alligator wisps and Worley billows, low and
+// high frequency, interleaved RGBA), made once.
 const Vector<float> &shape_noise();
 const Vector<float> &detail_noise();
 Ref<Texture3D> shape_texture();
