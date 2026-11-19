@@ -3980,13 +3980,14 @@
    "name": "Debris flows",
    "settings": [
     "WeatherRunoff3D.debris_flows",
+    "GroundDebrisFlow3D",
     "PhysXDebrisSurge3D",
     "surge_count_max",
     "max_boulder",
     "stop_slope"
    ],
    "note": "",
-   "what": "after a fire, intense rain on steep burnt basins sends debris flows down their channels in surges with boulders at the front, throwing mud, until each stops on its fan.",
+   "what": "after a fire, intense rain on steep burnt basins sends debris flows down their channels in surges with boulders at the front, throwing mud; the flow gathers loose bed on the way and spreads into a fan of fresh mud where it stops.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
