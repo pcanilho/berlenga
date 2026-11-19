@@ -44,6 +44,20 @@ class SeaStub extends WorldWater:
 		return 0.0
 
 
+# A pond 1 m deep over x < 0 holding what flows into it: 1000 m3, so 1 kg/s for 1 s is 1 g/L.
+class SiltPondStub extends WorldWater:
+	var load := Vector2()
+
+	func _height_at(p: Vector3) -> float:
+		return 1.0 if p.x < 0.0 else -INF
+
+	func _add_sediment(_p: Vector3, mineral: float, ash: float) -> void:
+		load += Vector2(mineral, ash) / 1000.0
+
+	func _sediment_at(_p: Vector3) -> Vector2:
+		return load
+
+
 class PoolStub extends WorldWater:
 	func _height_at(p: Vector3) -> float:
 		return -5.0 if p.x < 0.0 else -INF
@@ -474,6 +488,16 @@ func _contract_tests() -> void:
 	m.queue_free()
 	WorldContracts.clear_overrides()
 	await get_tree().physics_frame
+	# Sediment: a load goes to the water that answers where it enters, and that water reports it.
+	WorldContracts.clear_overrides()
+	var pond := SiltPondStub.new()
+	WorldContracts.add_water_stub(pond)
+	var ws: WorldWater = WorldContracts.get_water()
+	ws.add_sediment(Vector3(-5, 0, 0), 0.0, 2.0)
+	ws.add_sediment(Vector3(5, 0, 0), 9.0, 9.0) # no water there: dropped
+	var sed := ws.sediment_at(Vector3(-5, 0, 0))
+	_check("contracts: ash washed into a pond clouds it, none lands where there is no water", is_equal_approx(sed.y, 0.002) and sed.x == 0.0 and ws.sediment_at(Vector3(5, 0, 0)) == Vector2.ZERO, "%.4f kg/m3 ash, %.4f mineral" % [sed.y, sed.x])
+	WorldContracts.clear_overrides()
 	var wx: WorldWeather = WorldContracts.get_weather()
 	if not wx.has_provider():
 		_check("contracts: weather defaults with no producer", wx.air_temperature_at(Vector3.ZERO) == 15.0 and wx.wind_at(Vector3.ZERO) == Vector3.ZERO and wx.rain_share_at(Vector3.ZERO) == 1.0, "")

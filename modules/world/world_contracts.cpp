@@ -299,6 +299,26 @@ void WorldWater::impulse(const Vector3 &p_position, float p_radius, float p_stre
 	}
 }
 
+Vector2 WorldWater::sediment_at(const Vector3 &p_position) const {
+	Vector2 r;
+	if (GDVIRTUAL_CALL(_sediment_at, p_position, r)) {
+		return r;
+	}
+	float h;
+	WorldWaterProvider *top = _top_at(p_position, h);
+	return top ? top->contract_water_sediment_at(p_position) : Vector2();
+}
+
+void WorldWater::add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) {
+	if (GDVIRTUAL_CALL(_add_sediment, p_position, p_mineral_kg_s, p_ash_kg_s)) {
+		return;
+	}
+	float h;
+	if (WorldWaterProvider *top = _top_at(p_position, h)) {
+		top->contract_water_add_sediment(p_position, MAX(p_mineral_kg_s, 0.0f), MAX(p_ash_kg_s, 0.0f));
+	}
+}
+
 void WorldWater::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldWater::has_provider);
 	ClassDB::bind_method(D_METHOD("height_at", "position"), &WorldWater::height_at);
@@ -308,6 +328,8 @@ void WorldWater::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("disturb", "owner", "position", "radius", "strength"), &WorldWater::disturb);
 	ClassDB::bind_method(D_METHOD("clear", "owner"), &WorldWater::clear);
 	ClassDB::bind_method(D_METHOD("impulse", "position", "radius", "strength"), &WorldWater::impulse);
+	ClassDB::bind_method(D_METHOD("sediment_at", "position"), &WorldWater::sediment_at);
+	ClassDB::bind_method(D_METHOD("add_sediment", "position", "mineral_kg_s", "ash_kg_s"), &WorldWater::add_sediment);
 
 	GDVIRTUAL_BIND(_height_at, "position");
 	GDVIRTUAL_BIND(_flow_at, "position");
@@ -315,6 +337,8 @@ void WorldWater::_bind_methods() {
 	GDVIRTUAL_BIND(_disturb, "owner", "position", "radius", "strength");
 	GDVIRTUAL_BIND(_clear, "owner");
 	GDVIRTUAL_BIND(_impulse, "position", "radius", "strength");
+	GDVIRTUAL_BIND(_sediment_at, "position");
+	GDVIRTUAL_BIND(_add_sediment, "position", "mineral_kg_s", "ash_kg_s");
 }
 
 // Snow.
@@ -493,6 +517,8 @@ public:
 	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override { stub->disturb(p_owner, p_position, p_radius, p_strength); }
 	void contract_water_clear(uint64_t p_owner) override { stub->clear(p_owner); }
 	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override { stub->impulse(p_position, p_radius, p_strength); }
+	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return stub->sediment_at(p_position); }
+	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override { stub->add_sediment(p_position, p_mineral_kg_s, p_ash_kg_s); }
 };
 
 void WorldContracts::add_water_stub(const Ref<WorldWater> &p_stub) {
