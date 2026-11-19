@@ -1,3 +1,19 @@
+- **Caps as geometry.** The generator records a site on every needle brush whose shoot lies within 26 degrees
+  of level (Schmidt and Gluns 1991: interception falls off steeply as branches tilt), and merges them into one
+  cushion per 60 cm tile of each branch's fan (by bone, heading in eight sectors and distance out; tiles of
+  under four brushes are the crown's bare inside and get none). Each cushion is an ellipse with a raised,
+  off-centre middle and a ragged rim tucked into the needles, its outline varied by two random harmonics, so
+  none repeat; 25 vertices, skinned to its bone. Three meshes (mesh meta `tree_snow_caps`: light 2.5 cm on the
+  bigger half, full 6 cm, heavy 12 cm and wider), about 1% of a spruce's vertices (51k against 6.7M).
+  TreeWind3D picks a level per tree from `canopy_load_at / canopy_capacity_at`, the ratio the crown whitening
+  reads (8%, 35%, 70%), within `snow_cap_range` (150 m), and draws each level as a MultiMesh under the trees'
+  one with the same bone records (other instances collapsed): the caps ride the wind and bend with the load,
+  and the path tracer sees real geometry. The material reads the records as particle trails, as the trees'.
+  A first try with a pad per brush (258k pads, 3.9M vertices) buried the tree white and cost more than it.
+- **Clumps.** Where a crown's load drops by over 10% (5 kg at least; the cover's own unloading in wind and
+  warmth) or a break shakes it, the lost kg fall as lumps of about 1.5 kg from random cap sites, up to 40 a
+  tree, within 80 m: tumbling, crumbling and slowed to some 5 m/s, gone on the ground (`WorldGround.height_at`),
+  where the cover keeps the mass. `snow_clumps_enabled` (on).
 # Procedural trees, shrubs and deadwood
 
 Research note, 10 Nov 2026, written before any code. Scope: every woody form from hazel and
@@ -2489,7 +2505,7 @@ on). Contract lines `canopy_load_at`, `canopy_capacity_at`, `shake_canopy` agree
   60, tops and limbs go (11 breaks).
 - **Shake.** A break or fall throws the crown's snow onto the pack: `WorldSnow.shake_canopy` at the tree, the
   broken part's share of the leaf area (all of it for a felled tree). `get_snow_shaken_kg`.
-- Bench: `--storm --snow-test` (5 checks; WorldSnow stub snow_load_stub.gd), `--storm --snow=L` to look.
+- Bench: `--storm --snow-test` (11 checks; WorldSnow stub snow_load_stub.gd), `--storm --snow=L` to look.
 - **Caps as geometry.** The generator records cap sites on the upper side of conifer sprays and broad limbs
   (mesh meta `tree_snow_caps`: bone, position, up, size). Near the camera, TreeWind3D places shared lumpy
   cap pads there (a few noise shapes, so nothing repeats), riding their bones and as thick as the load. They
@@ -3151,6 +3167,48 @@ Paulo's rule: any repeated geometry carries good-quality noise so the repeat doe
 **Regrowth after fire.** The woody side of the fire loop (PhysX fire_age_map; vegetation does burnt ground and herbs). Resprouters and seeders differ (Pausas and Keeley 2014, Pausas et al. 2004): cork oak resprouts from epicormic buds along the stem and limbs within a year, its crown back in 2-3 (Catry et al. 2012); holm and kermes oak, lentisk, heather and gorse resprout from the root crown or lignotuber, a dense bush of shoots round the burnt base; maritime and Aleppo pine are seeders, killed outright, their serotinous cones opening on the snag and a flush of seedlings on the ash bed in the first 1-3 years (Tapias et al. 2001). Build: an epicormic shoot pass on killed-crown trees of resprouting species keyed to years since fire, basal resprouts on burnt shrubs, cones open on pine snags and a seedling ring placed through make_species. Ref: Pausas and Keeley 2014 (New Phytologist), Catry et al. 2012, Moreira et al. 2009.
 **Date palm oasis.** Phoenix dactylifera for the sand seas the desert shrubs already serve: clumping trunks with offshoots at the base, the old leaf bases (a knobbly diamond lattice of cut petiole stubs), crowns of 100-120 pinnate fronds 4-6 m long with spines at the base, hanging date bunches by season; oasis layout with irrigated rows and wild clumps by springs (Zohary and Hopf 2000; Chao and Krueger 2007, HortScience). Build on the dwarf fan palm code (fans become pinnate fronds; leaf-base stubs as real geometry; offshoot clumps).
 **Beetle-killed conifer stands.** The red, grey and fallen phases of bark beetle outbreaks (Ips typographus on spruce, Dendroctonus in pines): needles fade yellow-red in year 1, drop by year 3 leaving grey snags with bark peeling in sheets, then snags fall over a decade (Hicke et al. 2012; Wermelinger 2004). Build on the killed-tree state from the fire round: a per-stand outbreak age and patch mask instead of the fire map, bark loss and woodpecker flaking on snags, fallen stems at the matching decay class. Fits the open world's large forests.
+
+## Far forests to the horizon (research, 19 Nov; Paulo asked, card pending)
+
+Paulo wants vegetation's far-reach approach for trees too (vegetation.md, "Far vegetation without bald ground"):
+full density over the inner half of the range, then a gentle thinning with the survivors widened (Ghost of
+Tsushima's grass), denser far instances, the ground under far plants taking their colour, and cover to the
+horizon (vegetation's draped canopy-height surface to 4 km at 2/8/32 m cells).
+
+**What the references do.**
+- *Ghost of Tsushima* (Sucker Punch, "Procedural Grass in Ghost of Tsushima", GDC 2021): full density near, then
+  thinning with the survivors widened, what vegetation just adopted. *Ghost of Yotei* streams millions of assets
+  with GPU instancing (PlayStation blog). Neither talk details far trees; the ridgeline-silhouette idea below is
+  ours, not theirs.
+- *Horizon Forbidden West* (Guerrilla, "Adventures with Deferred Texturing", GDC 2022): vegetation is most of the
+  frame's geometry, with many LODs per plant; the talk is about shading it cheaply, not far forests.
+- *Unreal 5.7+ Nanite Foliage* (Epic docs, experimental): assemblies (branches micro-instanced, up to 65k parts
+  per tree; the Witcher 4 tree 3.5 GB to 29 MB), skinned wind on bone hierarchies (0.1 ms per 100k bones),
+  and voxel clusters (4x4x4 bricks, a normal distribution per voxel sampled per pixel) where triangles go
+  sub-pixel. Animation stops below 10% screen size.
+- *Impostors* (octahedral or azimuth/elevation atlases; Forza Horizon 6 via Simplygon; browser engines with a
+  million GPU-driven quads): cheap but flat cards, wrong in path-traced shadows and reflections (section 4).
+- *Stochastic simplification* (Cook et al. 2007, section 4): fewer, larger parts keep area and contrast; what
+  our leaf LODs and vegetation's widened survivors already do.
+
+**Where trees stand.** Trees ride VegetationField3D's species streaming, so its new rank thinning
+(`_stream_rank`, `_far_keep`) can cover them. Their own LODs stop at TREE_LODS[2] (0.8 m error, 4% of leaves,
+8 cm bark): real geometry at every level (PT-safe) but still tens of thousands of triangles a tree, and the
+far meshes start at LOD 1 (8d). Past a species' visibility range a tree is gone and only vegetation's canopy
+surface shows.
+
+**Options for the card.**
+1. *Tree thinning by rank, Cook-widened.* Trees join vegetation's distance ranks: every tree kept over the inner
+   half of the range, then two gentle steps, survivors grown (crown and stem) so the canopy's cover and colour
+   hold. Cheap; matches the grass and shrubs.
+2. *Crown hulls past LOD 2.* A fourth tree level for 0.5-4 km: each crown as a closed, lumpy hull mesh (a few
+   hundred triangles; leaf-cluster normals, colour from the drawn leaves, gaps where the crown is open), the
+   stem a 4-sided tube. Real geometry, so path-traced shadows and sky occlusion stay right, unlike cards. Lets
+   trees be drawn far beyond today's ranges before the canopy surface takes over.
+3. *Skyline trees.* Trees whose crowns break the skyline seen from the camera are never thinned (ridgeline
+   silhouettes are what reads at distance); the rest thin as option 1.
+Recommended: all three, in the order 1, 2, 3. The canopy-height surface to 4 km stays vegetation's; trees supply
+its per-species heights and colours from their own meshes.
 
 ## Next-round options (card 19 Nov evening)
 **Snow-laden crowns.** Conifer crowns catch snow (up to 30-60% of a storm's snowfall in a closed spruce stand; Hedstrom and Pomeroy 1998, Pomeroy et al. 1998 interception model): the load bends branch tips down (spruce and fir laterals droop 10-30 degrees under a few kg; Schmidt and Pomeroy 1990 branch bending), white caps sit on the upper side of each spray as real geometry, and it unloads in gusts, sun and thaw as falling clumps (Storck et al. 2002; Roesch et al. 2012 unloading rates). Heavy wet snow breaks tops and stems (snow breakage, Nykanen et al. 1997; Peltola et al. 1999 critical loads), through the TreeWind3D storm path. Reads the snow/weather contracts (snowfall, air temperature, wind); load per tree kept in TreeWind3D, released as Flow/particle clumps. Needs a WorldSnow line agreed with the snow thread (who owns snow on crowns).

@@ -474,7 +474,7 @@ public:
 	virtual void global_shader_parameters_load_settings(bool p_load_textures = true) override;
 	virtual void global_shader_parameters_clear() override;
 
-	virtual int32_t global_shader_parameters_instance_allocate(RID p_instance) override;
+	virtual int32_t global_shader_parameters_instance_allocate(RID p_instance, int p_count) override;
 	virtual void global_shader_parameters_instance_free(RID p_instance) override;
 	virtual void global_shader_parameters_instance_update(RID p_instance, int p_index, const Variant &p_value, int p_flags_count = 0) override;
 	// Advances whenever any instance's slice of the global uniform buffer is allocated, freed or written.

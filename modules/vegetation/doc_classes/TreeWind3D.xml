@@ -24,6 +24,14 @@
 				Instances that have colliders now.
 			</description>
 		</method>
+		<method name="get_instance_cap_level" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="target" type="Node" />
+			<param index="1" name="instance" type="int" />
+			<description>
+				Snow caps drawn on [param instance] of the MultiMesh node [param target]: 0 none, 1 light, 2 full, 3 heavy (the canopy's load over its capacity).
+			</description>
+		</method>
 		<method name="get_instance_snow_kg" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="target" type="Node" />
@@ -56,6 +64,24 @@
 			<return type="int" />
 			<description>
 				Parts that broke under their snow more than the wind.
+			</description>
+		</method>
+		<method name="get_snow_caps_drawn" qualifiers="const">
+			<return type="int" />
+			<description>
+				Trees wearing snow caps last frame.
+			</description>
+		</method>
+		<method name="get_snow_clumps_dropped" qualifiers="const">
+			<return type="int" />
+			<description>
+				Snow clumps dropped from crowns so far.
+			</description>
+		</method>
+		<method name="get_snow_clumps_falling" qualifiers="const">
+			<return type="int" />
+			<description>
+				Snow clumps in the air now.
 			</description>
 		</method>
 		<method name="get_snow_shaken_kg" qualifiers="const">
@@ -235,6 +261,12 @@
 		</member>
 		<member name="max_bend" type="float" setter="set_max_bend" getter="get_max_bend" default="0.5">
 			Largest turn of one bone (radians), approached smoothly.
+		</member>
+		<member name="snow_cap_range" type="float" setter="set_snow_cap_range" getter="get_snow_cap_range" default="150.0">
+			Trees within this distance of the camera wear snow caps (real geometry from the mesh meta [code]tree_snow_caps[/code], riding the branches); past it the crown whitening alone shows the snow.
+		</member>
+		<member name="snow_clumps_enabled" type="bool" setter="set_snow_clumps_enabled" getter="is_snow_clumps_enabled" default="true">
+			Snow leaving a crown (unloading, a break) falls as clumps from its caps near the camera; where it lands is the snow cover's.
 		</member>
 		<member name="snow_creep_hours" type="float" setter="set_snow_creep_hours" getter="get_snow_creep_hours" default="3.0">
 			Time constant of the wood's creep under a held snow load: branches bow on by about a third more over it (Ray and Bret-Harte 2019). 0 turns creep off.

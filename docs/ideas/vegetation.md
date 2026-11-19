@@ -713,6 +713,61 @@ water systems own):
   rushes 0.6 to 4.5 m behind (Phragmites australis and Juncus rigidus / maritimus fringe Egypt's oasis pools and
   springs: Zahran and Willis 2009, "The Vegetation of Egypt"; Ozenda 1977 for the Sahara).
 
+## Far vegetation without bald ground (Paulo 19 Nov: "at a distance it's bald")
+
+What the showcase stills show: past 30 to 45 m (each plant layer's visibility range) the meadow, heath and scrub read
+as a smooth flat green; the far grass rings and shell (to 500 m) and the plants' far volume (to 150 m) carry the
+colour but almost none of the structure (clumps, tussocks, flower and dry patches, the shadows between them). Real
+ground cover keeps a grain to the horizon: clumps cast shadow, mixed species show as colour patches, the sward's sheen
+changes with slope and wind.
+
+Published ways to carry it:
+- Real geometry, thinned: Ghost of Tsushima (Wohllaib, GDC 2021) keeps procedural blades out to hundreds of metres by
+  widening fewer blades with distance; Jahrmann and Wimmer 2017 the same on the GPU. Costly but the best match.
+- Voxelised far foliage: UE 5.7's Nanite foliage (State of Unreal 2025, the Witcher 4 demo) turns far plant
+  instances into voxel aggregates that keep their silhouette and porosity to the horizon; our hedges already do this
+  (far voxel bricks) and the plants' far_volume shell is the same idea at 150 m.
+- Vegetation-aware terrain shading: the placement's density feeds the terrain a macro normal, AO and colour variance
+  so the ground past the geometry keeps the clumps' light and shade (Serious Sam 4, "4 Million Acres", GDC 2019;
+  Pesce 2024, "Making a greener grass", far grass normals returning to the terrain's with a sheen term).
+
+Plan (card to Paulo):
+1. Far shell and far volume with structure: per-cell height from the placed plants' own clumping (patch noise the
+   placement uses), colour from the species actually there (flower and dry patches), AO in the gaps, the fibre
+   sheen as a far term. Match ground detail's and trees' far handoff distances.
+2. Shrubs, heath and scrub as voxel clusters out to 1 to 2 km (as the hedges), so slopes keep their dark patches.
+3. A density map for the terrain material (owner: terrain material) to darken and roughen the ground under far
+   cover: only the provider side here.
+4. Measure each layer's end on current main first (the p2 and v10 stills may predate the far shell).
+
+Paulo picked the plan with real geometry carried further (19 Nov). Measured on main first: the grass bench with its
+far rings and shell keeps the sward's grain to the horizon (rings to 250 m, shell to 500 m), so the bald look is the
+plant layers': a flower at 15 m range thinned from 5 m and was gone at 15 m, a 30 m tussock at 30 m, and past that
+only the far volume (off in several benches) or the ground's colour.
+
+Step 1, the plants' far tail (VegetationField3D.far_reach, default 3): a streaming species keeps all its plants to
+half its range, then by rank the share (r/2 / d)^2, the survivors grown by its inverse square root up to 1.6 times
+(Ghost of Tsushima's widening), fading out over the last quarter of range times far_reach. Instance counts grow about
+2.2 times over the old fade for a 15 m species with the default (the integral of the kept share), not the 9 times a
+plain longer range costs, because each streamed tile's cells hold only the ranks its nearest point keeps
+(_stream_rank(), a tile of slack) and are built again, new cells first, when the camera comes 30% nearer in keep. The
+plant shader and the impostor share the curve (vegetation_far_scale(), custom x: rank in the fraction, the tail's end
+in whole metres). Small items (detail_size) keep their pixel reach; non-streaming fields keep the old fade.
+
+Step 2, the far shell (VegetationField3D.far_shell, to far_shell_range 4 km): past the streamed plants every ranged
+species becomes one surface draped over the ground, the "canopy height model" of remote sensing: per cell each
+species' cover is its suitability (with its patches) times density times far_color alpha; the cell stands at 0.4 of
+their expected height by cover (lumped by a hash; low enough that GrassField3D's far rings and columns stand through
+it), in their mean drawn colour by cover (_mesh_albedo(): base_color times vertex colour with the shader's worn-tissue
+yellowing, so a summer sward is gold, not its leaves' green), darkened for the shade between tops and mottled at 3 m
+and 23 m. Corners take the mean of the cells round them, so it thins down into the ground with no boxes (the first
+try, voxel-like columns, read as scattered blocks). Cells 2 m to 400 m, 8 m to 1600 m, 32 m past it; it rises out of
+the ground from 0.6 of where the plants stream. Shade-needing, sand, coast and pool species are left out.
+
+What it does not replace: a sward's blades. Paulo's montado frame (19 Nov) was bald past 60 m because the floor set
+alone has no GrassField3D; with the summer sward (rings to 250 m, columns to 500 m) blades show to the horizon. The
+scene wires the sward under the cork and pine stands.
+
 ## Mediterranean woodland ground layer (audit 19 Nov; card to Paulo)
 
 The showcase's cork oak stand stands on bare sand with litter: every other forest has a floor set, the cork oak and

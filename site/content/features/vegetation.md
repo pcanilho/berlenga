@@ -39,7 +39,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
   *Grass in wind: gusts sweep across the field downwind.*
 
 - **Grass on the GPU** (`GrassField3D.gpu_fill`): grass tiles are filled in compute, about 40% less main-thread cost per tile.
-- **Grass edge fade** (always on): blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond (measured from a render of the blades, so any grass look matches), so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.
+- **Grass edge fade** (always on): grass holds full density over the inner half of the grass radius, then blades thin and shrink across the outer band, and the ground takes their colour beyond (measured from a render of the blades, so any grass look matches), so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.
 
   ![Grass seen from above its radius: a hard edge before, a fade after](media/grass-outer-band.jpg)
 
@@ -146,7 +146,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Sun and shade growth** (always on): grass and ground plants take the colour and height of the light they grow in, like sun and shade leaves.
 - **Per-stem sway** (always on): each frond, cane and stem rocks about its own base at a frequency set by its height and stiffness.
 - **Near and far meshes** (`PlantSpecies.near_meshes`, `near_range`): heavier meshes near the camera, crossfaded with dithering a few plants at a time.
-- **Far thinning** (`PlantSpecies.far_color`): plants thin out one by one in blue-noise order with distance and leave their colour on the ground beyond, with no tile pops.
+- **Far thinning** (`PlantSpecies.far_color`; VegetationField3D `far_reach`, `far_shell`): plants thin out one by one in blue-noise order with distance, out to three times their range, and leave their colour on the ground beyond, with no tile pops; taller cover drapes on to the horizon as a shell.
 - **Far plants as volume** (`VegetationField3D.far_volume`): past their range, plants keep a porous voxel shell of their leaf cover out to 150 m.
 - **Plant impostors** (`PlantGenerator.make_impostor()`, `add_impostors()`, `impostor_range`): large plants turn into octahedral impostors past a range in raster (brambles and bracken past 15 m), while path tracing keeps the meshes; an oak wood view drops from 3.91M to 2.98M triangles.
 

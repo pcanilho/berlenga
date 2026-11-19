@@ -35,6 +35,7 @@ extends Node3D
 #   tracks    a body wading out of a stream leaves wet prints fading over a dozen strides, drips where it
 #             stands, and the prints dry with the weather
 #   mud       a body out of mud prints its clay on firm ground, less each step
+#   walker    every CharacterBody3D is a walker: deformers press its soles, not its capsule
 #   salt      a storm's sea salt melts a thin snowpack at -2 C, the unsalted snow beside stays
 #   contracts the water contract picks the right water where several overlap (a pool in a hollow below the sea's
 #             level, a body above the water); with no producer it answers -INF; the weather's defaults
@@ -240,6 +241,7 @@ func _ready() -> void:
 	await _sea_spray_tests()
 	await _wet_track_tests()
 	await _mud_track_tests()
+	_walker_tests()
 	await _salt_snow_tests()
 	await _leaf_kick_tests()
 	await _leaf_surface_tests()
@@ -1016,6 +1018,30 @@ func _wet_track_tests() -> void:
 
 # Muddy prints: a body walking out of mud presses the clay it carries onto the firm ground, print by print, less
 # each time; none while still in the mud.
+# Characters print with their feet: every CharacterBody3D is a walker (deformers press its soles step by step, not
+# its capsule), a meta turns that off or says its feet are contact bodies of their own.
+func _walker_tests() -> void:
+	var wc: Object = Engine.get_singleton("WorldContracts")
+	var ch := CharacterBody3D.new()
+	var cs := CollisionShape3D.new()
+	var cap := CapsuleShape3D.new()
+	cap.height = 1.8
+	cs.shape = cap
+	ch.add_child(cs)
+	add_child(ch)
+	var rb := RigidBody3D.new()
+	add_child(rb)
+	var d1: Dictionary = wc.describe_body(ch)
+	var d2: Dictionary = wc.describe_body(rb)
+	ch.set_meta("world_contact_feet", true)
+	var d3: Dictionary = wc.describe_body(ch)
+	ch.set_meta("world_contact_walker", false)
+	var d4: Dictionary = wc.describe_body(ch)
+	_check("contact: a character is a walker (soles, not its capsule), a rigid body is not; metas say feet print or opt out", d1["walker"] and not d1["feet"] and not d2["walker"] and d3["feet"] and not d4["walker"], "character %s, rigid %s, with feet %s, opted out %s" % [d1["walker"], d2["walker"], d3["feet"], d4["walker"]])
+	ch.queue_free()
+	rb.queue_free()
+
+
 func _mud_track_tests() -> void:
 	WorldContracts.clear_overrides()
 	var g := MudGround.new()

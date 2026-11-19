@@ -51,6 +51,7 @@
 #include "core/templates/hash_set.h"
 #include "core/templates/hashfuncs.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/multimesh_instance_3d.h"
 #include "scene/main/viewport.h"
 #include "scene/resources/environment.h"
@@ -712,6 +713,12 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			continue;
 		}
 		ps.range = _species_range(ps.sp, pixel);
+		if (streaming && far_shell && ps.range > 0.0f && !ps.sp->get_meshes().is_empty()) {
+			ps.far_albedo = _mesh_albedo(ps.sp->get_meshes()[0]);
+		}
+		// The far tail streams only (each tile's cells hold the ranks its distance keeps); small items keep their
+		// pixel reach.
+		ps.reach = streaming && far_reach > 1.0f && ps.range > 0.0f && ps.sp->get_detail_size() <= 0.0f ? ps.range * far_reach : ps.range;
 		const TypedArray<Mesh> meshes = ps.sp->get_meshes();
 		for (int i = 0; i < meshes.size(); i++) {
 			ps.meshes.push_back(meshes[i]);
@@ -1963,7 +1970,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// green): full on a fresh burn, gone by a year and a half.
 					const float burn_age = p_setup.burn.is_empty() ? -1.0f : p_setup.burn_at(xz);
 					const float flush = burn_age < 0.0f ? 0.0f : 1.0f - Math::smoothstep(0.0f, 1.5f, burn_age);
-					out->species[s].customs[variant].push_back(Color(CLAMP(rank / MAX(keep, 1e-4f), 0.0f, 1.0f), range_light, scale, float(s) + flush * 0.99f));
+					// x: the rank in its fraction and the far tail's end in whole metres (vegetation_far_scale()).
+					const float tail = ps.reach > range ? Math::floor(ps.reach) : 0.0f;
+					out->species[s].customs[variant].push_back(Color(tail + CLAMP(rank / MAX(keep, 1e-4f), 0.0f, 0.999f), range_light, scale, float(s) + flush * 0.99f));
 					if (ps.far_color.a > 0.0f && range > 0.0f) {
 						// The ground a plant hides: a disc of half its spacing, scaled.
 						const float rr = 0.5f * sp->get_spacing() * scale;
@@ -2067,13 +2076,30 @@ void VegetationField3D::_lazy_near_drop(MultiMeshInstance3D *p_far) {
 
 // Adds a placed tile's plants to the scene: one MultiMeshInstance3D per species mesh variant,
 // split into cells where the species swaps meshes by distance. Main thread.
-void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes) {
+// The share of a species' plants (by rank) kept p_distance metres from the camera: the plant shader's
+// vegetation_far_scale() without its 1.12 overlap. Past half the range with the square of the distance when the
+// species has a far tail (p_reach > p_range), fading out over the tail's last quarter; else from 1 at 35% of the
+// range to 0 at the range.
+float VegetationField3D::_far_keep(float p_range, float p_reach, float p_distance) {
+	if (p_range <= 0.0f) {
+		return 1.0f;
+	}
+	if (p_reach <= p_range) {
+		return CLAMP((p_range - p_distance) / (p_range * 0.65f), 0.0f, 1.0f);
+	}
+	const float d0 = 0.5f * p_range;
+	const float tail = d0 * d0 / MAX(p_distance * p_distance, d0 * d0);
+	return tail * CLAMP((p_reach - p_distance) / (p_reach * 0.25f), 0.0f, 1.0f);
+}
+
+void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes, float p_max_rank) {
 	const PlaceSpecies &ps = p_setup.species[p_species];
 	if (ps.sp.is_null() || ps.meshes.is_empty()) {
 		return;
 	}
 	const TileOut::Species &so = p_tile.species[p_species];
 	const float range = ps.range;
+	const float reach = MAX(ps.reach, range);
 	const float near_range = ps.sp->get_near_range();
 	// Cells for the near swap: a quarter of the swap distance, at least 4 m. A species with a range is cut too where
 	// tiles are big against it, into cells of its range (at least 16 m: cells are draw calls), and every cell is kept
@@ -2116,6 +2142,9 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 		LocalVector<LocalVector<uint32_t>> buckets;
 		buckets.resize(cells * cells);
 		for (uint32_t i = 0; i < so.xforms[v].size(); i++) {
+			if (p_max_rank < 1.0f && Math::fmod(so.customs[v][i].r, 1.0f) >= p_max_rank) {
+				continue; // Thinned out at the tile's distance (the far tail).
+			}
 			const Vector3 o = p_setup.global_xf.xform(so.xforms[v][i].origin);
 			const int cx = CLAMP(int((o.x - tile_origin.x) / ts * cells), 0, cells - 1);
 			const int cz = CLAMP(int((o.z - tile_origin.y) / ts * cells), 0, cells - 1);
@@ -2167,7 +2196,7 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 					// by rank and shrinks them out before the range (docs/ideas/plant-generator.md,
 					// "Far distance"), so the tile is cut only once every plant in it is gone.
 					// Godot measures to the cell's centre: a plant can be up to its half diagonal nearer.
-					mmi->set_visibility_range_end(range * 1.05f + 0.75f * ts / cells);
+					mmi->set_visibility_range_end(reach * 1.05f + 0.75f * ts / cells);
 				}
 				add_child(mmi, false, INTERNAL_MODE_BACK);
 				r_nodes.push_back(mmi);
@@ -2367,17 +2396,519 @@ Ref<ArrayMesh> VegetationField3D::_build_far_volume(const PlaceSetup &p_setup, c
 	Ref<ArrayMesh> mesh;
 	mesh.instantiate();
 	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	mesh->surface_set_material(0, _far_volume_mat());
+	mesh->set_meta(SNAME("far_volume"), true);
+	return mesh;
+}
+
+Ref<StandardMaterial3D> VegetationField3D::_far_volume_mat() const {
 	Ref<StandardMaterial3D> mat = far_volume_material;
 	if (mat.is_null()) {
 		mat.instantiate();
 		mat->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
-		mat->set_roughness(0.9f);
+		mat->set_roughness(1.0f);
+		// A leaf canopy's own sheen is broken up in its gaps: a smooth surface's sheen (specular 0.5) lit the far
+		// layer grey with the sky at grazing angles, over every meadow (as GrassField3D's far shell found).
+		mat->set_specular(0.1f);
 		mat->set_albedo(Color(far_shade, far_shade, far_shade).linear_to_srgb()); // The far match's darkening (far_match_view).
 		const_cast<VegetationField3D *>(this)->far_volume_material = mat;
 	}
-	mesh->surface_set_material(0, mat);
+	return mat;
+}
+
+// The far shell (far_shell): the plant cover as one surface draped over the ground, from where the streamed plants
+// thin out to far_shell_range, in tiles of 32 x 32 cells: 64 m tiles (2 m cells) to 400 m, four times wider (8 m) to
+// 1600 m, and four times again (32 m) past it, a few pixels a cell at 1080p each. A tile is built for the centre it
+// was seen from (its inner edge rises out of the ground over a band there) and built again once the centre has moved
+// a cell while it holds an edge.
+namespace {
+constexpr float FAR_SHELL_TILE = 64.0f;
+constexpr int FAR_SHELL_LEVELS = 3;
+constexpr float FAR_SHELL_SPLIT[FAR_SHELL_LEVELS - 1] = { 400.0f, 1600.0f };
+constexpr int FAR_SHELL_CELLS = 32;
+
+uint32_t far_shell_hash(int p_x, int p_z, uint32_t p_salt) {
+	return hash_murmur3_one_32(uint32_t(p_x), hash_murmur3_one_32(uint32_t(p_z), p_salt));
+}
+
+float far_shell_unit(uint32_t p_h, int p_shift) {
+	return float((p_h >> p_shift) & 0xFFFFu) / 65535.0f;
+}
+
+// Value noise in [0, 1] on a lattice p_scale metres wide (smooth between its points), for the shell's patches.
+float far_shell_noise(float p_x, float p_z, float p_scale, uint32_t p_salt) {
+	const float gx = p_x / p_scale, gz = p_z / p_scale;
+	const int ix = int(Math::floor(gx)), iz = int(Math::floor(gz));
+	float fx = gx - ix, fz = gz - iz;
+	fx = fx * fx * (3.0f - 2.0f * fx);
+	fz = fz * fz * (3.0f - 2.0f * fz);
+	const float a = far_shell_unit(far_shell_hash(ix, iz, p_salt), 0), b = far_shell_unit(far_shell_hash(ix + 1, iz, p_salt), 0);
+	const float c = far_shell_unit(far_shell_hash(ix, iz + 1, p_salt), 0), d = far_shell_unit(far_shell_hash(ix + 1, iz + 1, p_salt), 0);
+	return Math::lerp(Math::lerp(a, b, fx), Math::lerp(c, d, fx), fz);
+}
+
+// The distances a level's tiles cover.
+void far_shell_band(int p_level, float p_start, float p_end, float &r_lo, float &r_hi) {
+	r_lo = p_level > 0 ? MAX(p_start, FAR_SHELL_SPLIT[p_level - 1]) : p_start;
+	r_hi = p_level < FAR_SHELL_LEVELS - 1 ? MIN(p_end, FAR_SHELL_SPLIT[p_level]) : p_end;
+}
+} // namespace
+
+void VegetationField3D::set_far_shell(bool p_on) {
+	far_shell = p_on;
+	if (!far_shell) {
+		_free_far_shell();
+	}
+}
+
+void VegetationField3D::_free_far_shell() {
+	for (KeyValue<Vector3i, FarShellTile> &kv : far_shell_tiles) {
+		if (kv.value.mi) {
+			if (kv.value.mi->get_parent()) {
+				kv.value.mi->get_parent()->remove_child(kv.value.mi);
+			}
+			memdelete(kv.value.mi);
+		}
+	}
+	far_shell_tiles.clear();
+	far_shell_columns = 0;
+}
+
+// A plant mesh's mean albedo as the plant shader draws it (linear): base_color times the vertex colour, the worn
+// share (vertex alpha) yellowed and browned as the shader does, by triangle area over every surface. The far shell's
+// colour, so the far stand has the near plants' own hue (a dry sward's gold, not its leaves' green).
+Color VegetationField3D::_mesh_albedo(const Ref<Mesh> &p_mesh) {
+	if (p_mesh.is_null()) {
+		return Color(0, 0, 0, 0);
+	}
+	double r = 0.0, g = 0.0, b = 0.0, area = 0.0;
+	for (int si = 0; si < p_mesh->get_surface_count(); si++) {
+		if (p_mesh->surface_get_primitive_type(si) != Mesh::PRIMITIVE_TRIANGLES) {
+			continue;
+		}
+		const Array arr = p_mesh->surface_get_arrays(si);
+		const PackedVector3Array v = arr[Mesh::ARRAY_VERTEX];
+		const PackedColorArray c = arr[Mesh::ARRAY_COLOR];
+		const PackedInt32Array ix = arr[Mesh::ARRAY_INDEX];
+		Color base(1, 1, 1), dead_c(0.36f, 0.24f, 0.11f);
+		const Ref<ShaderMaterial> sm = p_mesh->surface_get_material(si);
+		if (sm.is_valid() && sm->get_shader_parameter(SNAME("albedo_tex")).get_type() == Variant::OBJECT) {
+			// Textured cards: their colour is the texture's (its mean, where opaque), white without it.
+			const Ref<Texture2D> tex = sm->get_shader_parameter(SNAME("albedo_tex"));
+			Ref<Image> img = tex.is_valid() ? tex->get_image() : Ref<Image>();
+			if (img.is_null() || img->is_empty()) {
+				return Color(0, 0, 0, 0); // Unknown: the far colour stands.
+			}
+			img = img->duplicate();
+			if (img->is_compressed()) {
+				img->decompress();
+			}
+			img->convert(Image::FORMAT_RGBA8);
+			const int step = MAX(1, MAX(img->get_width(), img->get_height()) / 64);
+			double tr = 0.0, tg = 0.0, tb = 0.0, tw = 0.0;
+			for (int y = 0; y < img->get_height(); y += step) {
+				for (int x = 0; x < img->get_width(); x += step) {
+					const Color px = img->get_pixel(x, y);
+					if (px.a < 0.5f) {
+						continue;
+					}
+					const Color l = px.srgb_to_linear();
+					tr += l.r;
+					tg += l.g;
+					tb += l.b;
+					tw += 1.0;
+				}
+			}
+			if (tw <= 0.0) {
+				return Color(0, 0, 0, 0);
+			}
+			base = Color(tr / tw, tg / tw, tb / tw);
+		} else if (sm.is_valid()) {
+			const Variant bc = sm->get_shader_parameter(SNAME("base_color"));
+			if (bc.get_type() == Variant::COLOR) {
+				base = Color(bc).srgb_to_linear();
+			}
+			const Variant dc = sm->get_shader_parameter(SNAME("dead_color"));
+			if (dc.get_type() == Variant::COLOR) {
+				dead_c = Color(dc).srgb_to_linear();
+			}
+		}
+		const int tris = ix.is_empty() ? v.size() / 3 : ix.size() / 3;
+		for (int t = 0; t < tris; t++) {
+			const int i0 = ix.is_empty() ? t * 3 : ix[t * 3], i1 = ix.is_empty() ? t * 3 + 1 : ix[t * 3 + 1], i2 = ix.is_empty() ? t * 3 + 2 : ix[t * 3 + 2];
+			const float a = 0.5f * (v[i1] - v[i0]).cross(v[i2] - v[i0]).length();
+			if (a <= 0.0f) {
+				continue;
+			}
+			Color vc = c.size() == v.size() ? (c[i0] + c[i1] + c[i2]) / 3.0f : Color(1, 1, 1, 1);
+			Color al(base.r * vc.r, base.g * vc.g, base.b * vc.b);
+			const float dead = 1.0f - vc.a;
+			if (dead > 0.0f) {
+				const float luma = al.r * 0.2126f + al.g * 0.7152f + al.b * 0.0722f;
+				const float ky = CLAMP(luma * 8.0f, 0.6f, 1.4f), kb = CLAMP(luma * 6.0f, 0.55f, 1.5f);
+				const Color yellow(0.30f * ky, 0.20f * ky, 0.025f * ky);
+				const Color brown(dead_c.r * kb, dead_c.g * kb, dead_c.b * kb);
+				const Color worn = yellow.lerp(brown, Math::smoothstep(0.35f, 0.85f, dead));
+				al = al.lerp(worn, Math::smoothstep(0.0f, 0.5f, dead));
+			}
+			r += al.r * a;
+			g += al.g * a;
+			b += al.b * a;
+			area += a;
+		}
+	}
+	if (area <= 0.0) {
+		return Color(0, 0, 0, 0);
+	}
+	return Color(r / area, g / area, b / area, 1.0f);
+}
+
+// Where the shell starts: inside the streamed plants' thinning, so it rises under them.
+float VegetationField3D::_far_shell_start() const {
+	float reach = 0.0f;
+	for (const PlaceSpecies &ps : stream_setup.species) {
+		if (ps.sp.is_valid() && ps.range > 0.0f) {
+			reach = MAX(reach, MAX(ps.reach, ps.range));
+		}
+	}
+	const float streamed = MIN(stream_radius, reach > 0.0f ? reach : stream_radius);
+	return MAX(streamed * 0.6f, 4.0f);
+}
+
+// Returns true while tiles are still to build.
+bool VegetationField3D::_update_far_shell(const Vector2 &p_centre, uint64_t p_t0, uint64_t p_budget) {
+	if (!far_shell || !stream_setup_valid || !stream_setup.map) {
+		if (!far_shell_tiles.is_empty()) {
+			_free_far_shell();
+		}
+		return false;
+	}
+	const float start = _far_shell_start();
+	const float end = far_shell_range;
+	if (end <= start) {
+		if (!far_shell_tiles.is_empty()) {
+			_free_far_shell();
+		}
+		return false;
+	}
+	struct Want {
+		Vector3i key;
+		float d;
+		bool operator<(const Want &o) const { return d < o.d; }
+	};
+	LocalVector<Want> want;
+	HashSet<Vector3i> wanted;
+	float size = FAR_SHELL_TILE;
+	for (int level = 0; level < FAR_SHELL_LEVELS; level++, size *= 4.0f) {
+		const float cell = size / FAR_SHELL_CELLS;
+		float lo_d, hi_d;
+		far_shell_band(level, start, end, lo_d, hi_d);
+		if (hi_d <= lo_d) {
+			continue;
+		}
+		const Vector2i lo(int(Math::floor((p_centre.x - hi_d) / size)), int(Math::floor((p_centre.y - hi_d) / size)));
+		const Vector2i hi(int(Math::floor((p_centre.x + hi_d) / size)), int(Math::floor((p_centre.y + hi_d) / size)));
+		for (int z = lo.y; z <= hi.y; z++) {
+			for (int x = lo.x; x <= hi.x; x++) {
+				const Vector2 p0(x * size, z * size);
+				const Vector2 nearest(CLAMP(p_centre.x, p0.x, p0.x + size), CLAMP(p_centre.y, p0.y, p0.y + size));
+				const float d_near = nearest.distance_to(p_centre);
+				const float d_far = Vector2(MAX(Math::abs(p_centre.x - p0.x), Math::abs(p_centre.x - p0.x - size)), MAX(Math::abs(p_centre.y - p0.y), Math::abs(p_centre.y - p0.y - size))).length();
+				if (d_near > hi_d || d_far < lo_d || !stream_setup.rect.intersects(Rect2(p0, Vector2(size, size)))) {
+					continue;
+				}
+				const Vector3i k(x, z, level);
+				wanted.insert(k);
+				const FarShellTile *have = far_shell_tiles.getptr(k);
+				// Holding an edge (or the inner rise): built again once the centre has moved a cell.
+				const bool edge = d_near < lo_d + start * 0.5f + cell || d_far > hi_d;
+				if (!have || (edge && have->built_at.distance_to(p_centre) > cell)) {
+					want.push_back({ k, d_near });
+				}
+			}
+		}
+	}
+	want.sort();
+	bool busy = false;
+	const bool first = far_shell_tiles.is_empty();
+	for (const Want &w : want) {
+		if (!first && OS::get_singleton()->get_ticks_usec() - p_t0 > p_budget) {
+			busy = true;
+			break;
+		}
+		FarShellTile tile;
+		tile.built_at = p_centre;
+		tile.mi = _build_far_shell_tile(w.key, p_centre, start, tile.columns);
+		FarShellTile *have = far_shell_tiles.getptr(w.key);
+		if (have) {
+			far_shell_columns -= have->columns;
+			if (have->mi) {
+				remove_child(have->mi);
+				memdelete(have->mi);
+			}
+			*have = tile;
+		} else {
+			far_shell_tiles.insert(w.key, tile);
+		}
+		far_shell_columns += tile.columns;
+	}
+	LocalVector<Vector3i> drop;
+	for (const KeyValue<Vector3i, FarShellTile> &kv : far_shell_tiles) {
+		if (!wanted.has(kv.key)) {
+			drop.push_back(kv.key);
+		}
+	}
+	for (const Vector3i &k : drop) {
+		FarShellTile &t = far_shell_tiles[k];
+		far_shell_columns -= t.columns;
+		if (t.mi) {
+			remove_child(t.mi);
+			memdelete(t.mi);
+		}
+		far_shell_tiles.erase(k);
+	}
+	return busy;
+}
+
+// One tile of the far shell. Each cell reads every ranged species' cover there: its suitability (with its patches)
+// times its density times the ground it hides (far_color alpha). The cell's canopy is their expected height (each
+// species' mesh at its mean scale, by its cover), varied by a hash so the stand is lumpy, and their mean far colour
+// by cover; the surface's corners take the mean of the cells round them, so it is one draped layer that thins down
+// into the ground where the cover thins, with no boxes (the "canopy height model" of remote sensing, and the far
+// grass shell's idea). It rises out of the ground over a band inside the streamed plants' thinning. Species that
+// need the crowns' shade, sand, a coast or pools are left out: their rules cannot be read this far out.
+MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, const Vector2 &p_centre, float p_start, int &r_columns) {
+	r_columns = 0;
+	const PlaceSetup &su = stream_setup;
+	TerrainDataMap3D *map = su.map;
+	struct Kind {
+		const PlantSpecies *sp;
+		float height;
+		Color color;
+		float cover; // At most.
+	};
+	LocalVector<Kind> kinds;
+	for (const PlaceSpecies &ps : su.species) {
+		if (ps.sp.is_null() || ps.range <= 0.0f || ps.far_color.a <= 0.0f || ps.meshes.is_empty() || ps.meshes[0].is_null() || ps.nebkha_slot >= 0) {
+			continue;
+		}
+		const PlantSpecies *sp = ps.sp.ptr();
+		if (sp->get_rule_range(PlantSpecies::RULE_SHADE).x > 0.0f || sp->uses_dune() || sp->uses_coast() || sp->uses_spring() || sp->uses_pool() || ps.deadwood_reach > 0.0f) {
+			continue;
+		}
+		const Vector2 sr = sp->get_scale_range();
+		const float h = ps.meshes[0]->get_aabb().get_end().y * 0.5f * (sr.x + sr.y);
+		// The share of ground its leaves hide where it grows at full suitability: its plants a square metre (a Poisson
+		// disc pattern of its spacing holds about 0.7 / spacing^2, times its density), each a disc of its crown's
+		// half width at its mean scale, half of it leaves, overlapping at random (1 - e^-x).
+		const AABB ab = ps.meshes[0]->get_aabb();
+		const float r = 0.25f * (ab.size.x + ab.size.z) * 0.5f * (sr.x + sr.y);
+		const float per_m2 = 0.7f * sp->get_density() / MAX(sp->get_spacing() * sp->get_spacing(), 1e-4f);
+		const float cover = 1.0f - Math::exp(-per_m2 * Math::PI * r * r * 0.5f) * 1.0f;
+		if (h < 0.5f || cover <= 0.01f) {
+			// Low herbs and grasses: the sward's own far blades and columns (GrassField3D) and the ground's far colour
+			// carry them; a layer here would stand over the far blades and hide them.
+			continue;
+		}
+		// The plant's own drawn hue when known (its far colour is its leaves' only: a dry sward is gold, not green),
+		// no brighter than a little over its far colour: white umbels or petals are a small share of a plant seen
+		// from afar, under and between its leaves.
+		Color tone = ps.far_color;
+		if (ps.far_albedo.a > 0.0f) {
+			const float lf = ps.far_color.get_luminance();
+			const float la = MAX(ps.far_albedo.get_luminance(), 1e-4f);
+			const float k = MIN(la, 1.3f * lf) / la;
+			tone = Color(ps.far_albedo.r * k, ps.far_albedo.g * k, ps.far_albedo.b * k, 1.0f);
+		}
+		kinds.push_back({ sp, h, tone, cover });
+		if (OS::get_singleton()->get_environment("VEG_FAR_SHELL_DEBUG") == "1" && p_key == Vector3i(0, 0, 0)) {
+			print_line(vformat("far shell kind h %.2f cover %.2f spacing %.2f density %.2f", h, cover, sp->get_spacing(), sp->get_density()));
+		}
+	}
+	if (kinds.is_empty()) {
+		return nullptr;
+	}
+	const int level = p_key.z;
+	float size = FAR_SHELL_TILE;
+	for (int l = 0; l < level; l++) {
+		size *= 4.0f;
+	}
+	const float cell = size / FAR_SHELL_CELLS;
+	float lo_d, hi_d;
+	far_shell_band(level, p_start, far_shell_range, lo_d, hi_d);
+	const float rise = p_start * 0.5f; // The band it rises out of the ground over, past p_start.
+	const int bx = p_key.x * FAR_SHELL_CELLS;
+	const int bz = p_key.y * FAR_SHELL_CELLS;
+	const int n = FAR_SHELL_CELLS + 2;
+	const float gy = get_global_position().y;
+	const uint32_t salt = 0x7F4A7C15u;
+	// Cells with a ring of neighbours, so the tiles' edges agree.
+	LocalVector<float> hgt;
+	LocalVector<Color> col;
+	hgt.resize(n * n);
+	col.resize(n * n);
+	for (int j = 0; j < n; j++) {
+		for (int i = 0; i < n; i++) {
+			const int cx = bx + i - 1, cz = bz + j - 1;
+			const Vector2 q((cx + 0.5f) * cell, (cz + 0.5f) * cell);
+			hgt[j * n + i] = 0.0f;
+			col[j * n + i] = Color(0, 0, 0, 0);
+			if (!su.rect.has_point(q)) {
+				continue;
+			}
+			const Vector3 at(q.x, gy, q.y);
+			float none = 1.0f;
+			float sum = 0.0f;
+			float hs = 0.0f;
+			Color cs(0, 0, 0, 0);
+			for (const Kind &k : kinds) {
+				const float c = k.cover * CLAMP(k.sp->get_suitability(map, at), 0.0f, 1.0f);
+				if (c <= 0.0f) {
+					continue;
+				}
+				sum += c;
+				hs += c * k.height;
+				cs += k.color * c;
+				none *= 1.0f - c;
+			}
+			if (sum <= 0.0f) {
+				continue;
+			}
+			const float cover = 1.0f - none;
+			const uint32_t h = far_shell_hash(cx, cz, salt ^ uint32_t(level));
+			// Expected height where it grows, by the cover; clumped by the hash (more variation where it is thin).
+			const float lump = 1.0f + (far_shell_unit(h, 0) - 0.5f) * (0.5f + 0.6f * (1.0f - cover));
+			// Its mass, not its tips: the stand's tops are mostly air, and a sward's own blades (GrassField3D's far
+			// rings and columns) stand through it.
+			hgt[j * n + i] = 0.4f * hs / sum * cover * lump;
+			col[j * n + i] = Color(cs.r / sum, cs.g / sum, cs.b / sum, cover);
+		}
+	}
+	// Corners: the mean of the cells round them, on the ground (jittered by a hash shared with the neighbours).
+	const int m = FAR_SHELL_CELLS + 1;
+	LocalVector<Vector3> corner;
+	LocalVector<float> ch;
+	LocalVector<Color> cc;
+	corner.resize(m * m);
+	ch.resize(m * m);
+	cc.resize(m * m);
+	for (int j = 0; j < m; j++) {
+		for (int i = 0; i < m; i++) {
+			const uint32_t h = far_shell_hash(bx + i, bz + j, salt ^ 0x85EBCA6Bu ^ uint32_t(level));
+			const float x = (bx + i + (far_shell_unit(h, 0) - 0.5f) * 0.5f) * cell;
+			const float z = (bz + j + (far_shell_unit(h, 16) - 0.5f) * 0.5f) * cell;
+			float hh = 0.0f;
+			Color c(0, 0, 0, 0);
+			float w = 0.0f;
+			for (int dj = 0; dj < 2; dj++) {
+				for (int di = 0; di < 2; di++) {
+					const int k = (j + dj) * n + i + di;
+					hh += hgt[k];
+					if (col[k].a > 0.0f) {
+						c += Color(col[k].r, col[k].g, col[k].b, 1.0f) * col[k].a;
+						w += col[k].a;
+					}
+				}
+			}
+			const float d = Vector2(x, z).distance_to(p_centre);
+			const float up = rise > 0.0f ? CLAMP((d - p_start) / rise, 0.0f, 1.0f) : 1.0f;
+			ch[j * m + i] = 0.25f * hh * up * up * (3.0f - 2.0f * up);
+			cc[j * m + i] = w > 0.0f ? Color(c.r / w, c.g / w, c.b / w, CLAMP(w * 0.25f, 0.0f, 1.0f)) : Color(0, 0, 0, 0);
+			corner[j * m + i] = Vector3(x, map->get_height_at(Vector3(x, gy, z)), z);
+		}
+	}
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedColorArray colors;
+	PackedInt32Array idx;
+	const Transform3D to_local = get_global_transform().affine_inverse();
+	// One vertex a corner (shared), normals from the surface's slope.
+	LocalVector<int> vid;
+	vid.resize(m * m);
+	const float lift_min = 0.03f; // Under this the corner is ground: the surface sinks a little into it there.
+	for (int j = 0; j < m; j++) {
+		for (int i = 0; i < m; i++) {
+			vid[j * m + i] = -1;
+		}
+	}
+	for (int j = 0; j < FAR_SHELL_CELLS; j++) {
+		for (int i = 0; i < FAR_SHELL_CELLS; i++) {
+			const int k[4] = { j * m + i, j * m + i + 1, (j + 1) * m + i + 1, (j + 1) * m + i };
+			float top = 0.0f;
+			for (int c = 0; c < 4; c++) {
+				top = MAX(top, ch[k[c]]);
+			}
+			// Each cell kept stands inside the band and has some cover above the ground.
+			const Vector2 mid = (Vector2(corner[k[0]].x, corner[k[0]].z) + Vector2(corner[k[2]].x, corner[k[2]].z)) * 0.5f;
+			const float dm = mid.distance_to(p_centre);
+			if (top < lift_min || dm < lo_d || dm >= hi_d) {
+				continue;
+			}
+			r_columns++;
+			for (int c = 0; c < 4; c++) {
+				if (vid[k[c]] >= 0) {
+					continue;
+				}
+				const int ci = k[c] % m, cj = k[c] / m;
+				// The surface's slope from the neighbouring corners.
+				const int il = MAX(ci - 1, 0), ir = MIN(ci + 1, m - 1), jl = MAX(cj - 1, 0), jr = MIN(cj + 1, m - 1);
+				const Vector3 pl = corner[cj * m + il] + Vector3(0, ch[cj * m + il], 0);
+				const Vector3 pr = corner[cj * m + ir] + Vector3(0, ch[cj * m + ir], 0);
+				const Vector3 pd = corner[jl * m + ci] + Vector3(0, ch[jl * m + ci], 0);
+				const Vector3 pu = corner[jr * m + ci] + Vector3(0, ch[jr * m + ci], 0);
+				Vector3 nn = (pu - pd).cross(pr - pl).normalized();
+				if (nn.y < 0.0f) {
+					nn = -nn;
+				}
+				const float hc = ch[k[c]];
+				const Vector3 p = corner[k[c]] + Vector3(0, hc >= lift_min ? hc : -0.05f, 0);
+				// Down into the stand where it is low (its own shade), the colour of what grows round it.
+				const Color base = cc[k[c]].a > 0.0f ? cc[k[c]] : Color(0.1f, 0.1f, 0.08f, 0.0f);
+				// A sward or scrub seen from afar is its lit tops over the shade between them (darker than the leaves'
+				// own colour, the more so where it is thin), mottled at the clumps' scale and in larger patches.
+				const float mottle = (0.8f + 0.4f * far_shell_noise(corner[k[c]].x, corner[k[c]].z, 3.0f, 0x2545F491u)) * (0.75f + 0.5f * far_shell_noise(corner[k[c]].x, corner[k[c]].z, 23.0f, 0x9E3779B9u));
+				const float shade = (0.55f + 0.2f * CLAMP(cc[k[c]].a, 0.0f, 1.0f)) * mottle;
+				vid[k[c]] = verts.size();
+				verts.push_back(to_local.xform(p));
+				normals.push_back(to_local.basis.xform(nn).normalized());
+				colors.push_back(Color(base.r * shade, base.g * shade, base.b * shade, 1.0f));
+			}
+			// Godot's front faces wind clockwise seen from the front (up here).
+			idx.append_array(PackedInt32Array({ vid[k[0]], vid[k[1]], vid[k[2]], vid[k[0]], vid[k[2]], vid[k[3]] }));
+		}
+	}
+	if (verts.is_empty()) {
+		return nullptr;
+	}
+	// Winding check on the first triangle: facing up, or flip all.
+	{
+		const Vector3 a = verts[idx[0]], b = verts[idx[1]], c = verts[idx[2]];
+		if ((b - a).cross(c - a).dot(to_local.basis.xform(Vector3(0, 1, 0))) > 0.0f) {
+			for (int t = 0; t < idx.size(); t += 3) {
+				const int tmp = idx[t + 1];
+				idx.write[t + 1] = idx[t + 2];
+				idx.write[t + 2] = tmp;
+			}
+		}
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = verts;
+	arrays[Mesh::ARRAY_NORMAL] = normals;
+	arrays[Mesh::ARRAY_COLOR] = colors;
+	arrays[Mesh::ARRAY_INDEX] = idx;
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	mesh->surface_set_material(0, _far_volume_mat());
 	mesh->set_meta(SNAME("far_volume"), true);
-	return mesh;
+	MeshInstance3D *mi = memnew(MeshInstance3D);
+	mi->set_mesh(mesh);
+	// Under a pixel's shadow this far out; the path tracer traces them anyway.
+	mi->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+	mi->set_name(vformat("FarShell_%d_%d_%d", p_key.x, p_key.y, level));
+	add_child(mi, false, INTERNAL_MODE_BACK);
+	return mi;
 }
 
 // The maps from placed tiles (canopy, stand shade, forest floor, far colour), computed from the
@@ -3833,6 +4364,7 @@ void VegetationField3D::_stream_free_species(StreamTile *p_tile, int p_species) 
 }
 
 void VegetationField3D::_stream_clear() {
+	_free_far_shell();
 	stream_setup_valid = false; // The maps job's result is dropped.
 	_stream_maps_finish();
 	for (StreamJob *job : stream_jobs) {
@@ -3854,6 +4386,13 @@ void VegetationField3D::_stream_clear() {
 	stream_maps_centre = Vector2(1e30f, 1e30f);
 	stream_idle = false;
 	plant_count = 0;
+}
+
+// The ranks a streamed tile's cells hold for a species with a far tail, a tile nearer than it is (so the camera can
+// come a tile closer before they are built again), with the plant shader's overlap; 1: all.
+static float _stream_rank(float p_range, float p_reach, float p_distance, float p_tile) {
+	const float k = VegetationField3D::_far_keep(p_range, p_reach, MAX(p_distance - p_tile, 0.0f)) * 1.12f + 0.02f;
+	return k >= 1.0f ? 1.0f : k;
 }
 
 static float _tile_distance(const Vector2i &p_tile, float p_size, const Vector2 &p_xz) {
@@ -3902,16 +4441,19 @@ void VegetationField3D::_stream_update(double p_delta) {
 			t->out = job->out[0];
 			t->nodes.resize(species_count);
 			t->committed.resize(species_count);
+			t->committed_keep.resize(species_count);
 			for (int s = 0; s < species_count; s++) {
 				t->committed[s] = false;
+				t->committed_keep[s] = 1.0f;
 			}
 			if (old_tile) {
 				// A replacement (holes or burn ages changed): what the old tile shows is committed at once and
 				// the old instances go in the same frame, so no plant pops out and back in.
 				for (int s = 0; s < species_count; s++) {
 					if (old_tile->committed[s]) {
-						_commit_species(stream_setup, t->out, s, t->nodes[s]);
+						_commit_species(stream_setup, t->out, s, t->nodes[s], old_tile->committed_keep[s]);
 						t->committed[s] = true;
+						t->committed_keep[s] = old_tile->committed_keep[s];
 					}
 					_stream_free_species(old_tile, s);
 				}
@@ -3999,12 +4541,15 @@ void VegetationField3D::_stream_update(double p_delta) {
 				continue;
 			}
 			const float range = ps.range;
-			const bool wanted = range <= 0.0f || d <= range * 1.05f + ts * 0.5f;
-			const bool keep = range <= 0.0f || d <= range * 1.05f + ts * 1.5f;
+			const float reach = MAX(ps.reach, range);
+			const bool wanted = range <= 0.0f || d <= reach * 1.05f + ts * 0.5f;
+			const bool keep = range <= 0.0f || d <= reach * 1.05f + ts * 1.5f;
 			if (kv.value->committed[s] && !keep) {
 				_stream_free_species(kv.value, s);
 			} else if (!kv.value->committed[s] && wanted) {
 				pending.push_back({ d, kv.key });
+			} else if (kv.value->committed[s] && reach > range && kv.value->committed_keep[s] < 1.0f && _stream_rank(range, reach, d, ts) > kv.value->committed_keep[s] * 1.3f) {
+				pending.push_back({ d, kv.key }); // Closer: its cells need more of the tail's plants.
 			}
 		}
 	}
@@ -4027,15 +4572,26 @@ void VegetationField3D::_stream_update(double p_delta) {
 	for (const Pending &p : pending) {
 		StreamTile *t = stream_tiles[p.tile];
 		for (int s = 0; s < species_count; s++) {
-			if (t->committed[s]) {
-				continue;
-			}
 			const float range = stream_setup.species[s].range;
-			if (stream_setup.species[s].sp.is_null() || (range > 0.0f && p.d > range * 1.05f + ts * 0.5f)) {
+			const float reach = MAX(stream_setup.species[s].reach, range);
+			if (stream_setup.species[s].sp.is_null() || (range > 0.0f && p.d > reach * 1.05f + ts * 0.5f)) {
 				continue;
 			}
-			_commit_species(stream_setup, t->out, s, t->nodes[s]);
+			const float rank = reach > range ? _stream_rank(range, reach, p.d, ts) : 1.0f;
+			if (t->committed[s]) {
+				if (rank <= t->committed_keep[s] * 1.3f || t->committed_keep[s] >= 1.0f) {
+					continue;
+				}
+				// The tail's plants for the nearer distance: the new cells first, then the old go, in one frame.
+				LocalVector<MultiMeshInstance3D *> fresh;
+				_commit_species(stream_setup, t->out, s, fresh, rank);
+				_stream_free_species(t, s);
+				t->nodes[s] = fresh;
+			} else {
+				_commit_species(stream_setup, t->out, s, t->nodes[s], rank);
+			}
 			t->committed[s] = true;
+			t->committed_keep[s] = rank;
 		}
 		if (OS::get_singleton()->get_ticks_usec() - t0 > budget) {
 			busy = true;
@@ -4083,6 +4639,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 		}
 	}
 	busy = busy || !stream_jobs.is_empty();
+	busy = _update_far_shell(centre, t0, budget) || busy;
 
 	// The maps (canopy, stand, floor, far colour), a couple of times a second at most.
 	stream_maps_wait -= p_delta;
@@ -4564,6 +5121,13 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_far_volume"), &VegetationField3D::is_far_volume);
 	ClassDB::bind_method(D_METHOD("set_far_volume_range", "range"), &VegetationField3D::set_far_volume_range);
 	ClassDB::bind_method(D_METHOD("get_far_volume_range"), &VegetationField3D::get_far_volume_range);
+	ClassDB::bind_method(D_METHOD("set_far_shell", "enabled"), &VegetationField3D::set_far_shell);
+	ClassDB::bind_method(D_METHOD("is_far_shell"), &VegetationField3D::is_far_shell);
+	ClassDB::bind_method(D_METHOD("set_far_shell_range", "range"), &VegetationField3D::set_far_shell_range);
+	ClassDB::bind_method(D_METHOD("get_far_shell_range"), &VegetationField3D::get_far_shell_range);
+	ClassDB::bind_method(D_METHOD("get_far_shell_column_count"), &VegetationField3D::get_far_shell_column_count);
+	ClassDB::bind_method(D_METHOD("set_far_reach", "reach"), &VegetationField3D::set_far_reach);
+	ClassDB::bind_method(D_METHOD("get_far_reach"), &VegetationField3D::get_far_reach);
 	ClassDB::bind_method(D_METHOD("set_detail_reach", "enabled"), &VegetationField3D::set_detail_reach);
 	ClassDB::bind_method(D_METHOD("get_detail_reach"), &VegetationField3D::get_detail_reach);
 	ClassDB::bind_method(D_METHOD("set_detail_pixels", "pixels"), &VegetationField3D::set_detail_pixels);
@@ -4622,6 +5186,9 @@ void VegetationField3D::_bind_methods() {
 	ADD_GROUP("Far volume", "far_volume");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_volume"), "set_far_volume", "is_far_volume");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_volume_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_far_volume_range", "get_far_volume_range");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_shell"), "set_far_shell", "is_far_shell");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_shell_range", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_far_shell_range", "get_far_shell_range");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_reach", PROPERTY_HINT_RANGE, "1,8,0.1"), "set_far_reach", "get_far_reach");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "detail_reach"), "set_detail_reach", "get_detail_reach");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_pixels", PROPERTY_HINT_RANGE, "0.25,16,0.25,suffix:px"), "set_detail_pixels", "get_detail_pixels");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "detail_reference_height", PROPERTY_HINT_RANGE, "0,4320,1,suffix:px"), "set_detail_reference_height", "get_detail_reference_height");

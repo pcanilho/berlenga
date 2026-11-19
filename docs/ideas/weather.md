@@ -280,6 +280,8 @@ Limits:
 
 ## Step 3: clouds and cloud shadows (10 Nov 2026)
 
+Next steps toward crisp crests and richer cloud light: [clouds.md](clouds.md).
+
 Research for this step. The Frostbite and Nubis 2022/2023 slides were read in
 full this time; Unreal and HDRP are from their documentation as remembered.
 

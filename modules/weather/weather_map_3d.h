@@ -960,6 +960,9 @@ public:
 	Vector2 get_body_water(Node *p_body) const;
 	// The clay film it carries out of mud (m), pressed off print by print through WorldGround.track_mud.
 	float get_body_mud(Node *p_body) const;
+	// Steps the contact square and the bodies' wet and muddy tracks by p_seconds without a frame (benches move
+	// bodies along a path faster than the renderer draws).
+	void step_contact(float p_seconds);
 	// The water reaching the ground (mm/h): a snowpack's runoff where one lies (set_surface_water_source), else the
 	// rain at its liquid share. What WeatherRunoff3D routes.
 	float get_ground_water_input_at(Vector3 p_position) const;
