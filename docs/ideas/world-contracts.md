@@ -122,6 +122,7 @@ terramechanics and pressing calls, which stay on the producer for now).
 | `runoff_at(pos)` | mm/h | 0 |
 | `canopy_load_at(pos)` | kg/m2 | 0 |
 | `lake_ice_at(pos)` | (m, white share) | (0, 0) |
+| `avalanche_pressure_at(pos)`, `avalanche_peak_pressure_at(pos)` | Pa (dense flow, else powder cloud; peak so far) | 0 |
 | `add_impurity(pos, radius, mg_per_m2)`, `impurity_at(pos)` | mg/m2 black carbon equivalent (dust 0.013 of its mass) | no-op, 0 |
 | shader globals `snow_cover`, `snow_rect`, `snow_depth` | | |
 

@@ -216,6 +216,12 @@
 				How fast wind-blown sand is piling up at [param position], in m/s (negative where the wind is taking it away): where the saltation flux falls, among plants ([member wind_shelters]) or onto damp sand, the sand it carried lands. A gale over a grass tuft piles about 2 cm an hour on its windward edge.
 			</description>
 		</method>
+		<method name="get_flood_silt_total" qualifiers="const">
+			<return type="float" />
+			<description>
+				Silt and ash laid by floodwater since the start (kg/m2, summed over the 1 m points it fell on).
+			</description>
+		</method>
 		<method name="get_footing_at" qualifiers="const">
 			<return type="Dictionary" />
 			<param index="0" name="position" type="Vector3" />
@@ -688,6 +694,9 @@
 		</member>
 		<member name="dust_emission" type="float" setter="set_dust_emission" getter="get_dust_emission" default="0.06">
 			The dust a tyre lifts from fully dry, bare sand, in kilograms per second per metre of tyre width per metre per second of speed (sliding counts twice). Scaled by how much of the ground the wind could move there; damp sand gives none. Carried by a [GroundDust3D].
+		</member>
+		<member name="flood_silt" type="bool" setter="set_flood_silt" getter="is_flood_silt" default="true">
+			Water from any other producer on the water contract (a river over its banks, a lake, live water) soaks the ground it covers, and still or slow water lays its suspended load ([method WorldWater.sediment_at]) as fresh mud at the silt's settling speed (D = C w_s dt, w_s 3e-4 m/s; Pizzuto 1987). A current over about 0.5 m/s keeps it up.
 		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
 			The node the field follows; the camera when empty.

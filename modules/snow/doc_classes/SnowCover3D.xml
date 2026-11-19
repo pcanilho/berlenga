@@ -322,6 +322,13 @@
 				Returns the precipitation falling as snow at [param position], in millimetres of water an hour (the snow share of Jennings et al. 2018 at that height). [SnowFall3D] reads it.
 			</description>
 		</method>
+		<method name="get_surface_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The depth, m, as [SnowSurface3D] draws it and collides with it: Catmull-Rom between the cells (no creases along their edges), held within the four nearest cells' range. [method get_depth_at] is bilinear.
+			</description>
+		</method>
 		<method name="get_swe_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />

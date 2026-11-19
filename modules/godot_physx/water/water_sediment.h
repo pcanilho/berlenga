@@ -51,6 +51,9 @@ struct WaterSediment {
 	static Vector3 ash_scattering() { return Vector3(150.0f, 150.0f, 150.0f); }
 	static constexpr float MINERAL_SETTLE_TIME = 0.5f * 86400.0f; // s, e-folding in still water
 	static constexpr float ASH_SETTLE_TIME = 2.0f * 86400.0f; // s
+	// The most water carries as a flood (kg/m3): hyperconcentrated flow reaches about 60% sediment by weight
+	// (Beverage and Culbertson 1964; Pierson 2005); denser, the mixture is a debris flow, the ground's to move.
+	static constexpr float MAX_LOAD = 1000.0f;
 
 	static Vector3 absorption(const Vector2 &p_c) { return mineral_absorption() * p_c.x + ash_absorption() * p_c.y; }
 	static Vector3 scattering(const Vector2 &p_c) { return mineral_scattering() * p_c.x + ash_scattering() * p_c.y; }

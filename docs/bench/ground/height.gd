@@ -25,6 +25,13 @@ func get_height(p: Vector3) -> float:
 		"beach":
 			# A foreshore rising 1 in 12 toward +z out of still water at z = 0, with a little relief.
 			return p.z / 12.0 + 0.03 * noise.get_noise_2d(p.x * 2.0, p.z * 2.0)
+		"beach_terrace":
+			# The same face falling onto a low-tide terrace: 1 in 12 above z = 2, 1 in 50 below, the break eased over
+			# about 40 cm (the profile of a reflective face over a dissipative terrace, Wright and Short 1984). Rills
+			# leaving the face slow on the terrace and lay their sand down as fans (Otvos 1999).
+			var t := (p.z - 2.0) / 0.4
+			var soft := 0.4 * (log(1.0 + exp(t)) if t < 30.0 else t) # softplus: max(z - 2, 0), eased
+			return 2.0 / 12.0 + (p.z - 2.0 - soft) / 50.0 + soft / 12.0 + 0.03 * noise.get_noise_2d(p.x * 2.0, p.z * 2.0)
 		"hollows":
 			# Flat ground with three shallow dips 4 to 5 m across, 20 to 30 cm deep (where puddles gather).
 			var h := 0.0

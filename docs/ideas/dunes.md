@@ -201,3 +201,22 @@ ratio, so tails vary 0-5 heights.
   nebkhas land.
 - Cost: one 32 m bucket lookup per get_height call, a handful of mounds each.
 
+## Built: compound dunes (19 Nov, Paulo's pick "big dunes with small dunes on top")
+
+Large ergs carry two scales of dune: draa (megadunes, 300-1000 m apart, 50-150 m high) with ordinary dunes on
+their flanks (Wilson 1972; Lancaster 1988, 1995; Kocurek and Ewing 2005). Draa cores are old and largely still while
+the small dunes migrate over them (Bristow, Bugler and Parker 2000, Namib linear draa). Games say little: AC Origins
+started from a procedural base, then brushes, masks and erosion, "global to detail"; Dune: Awakening (UE 5.2) does
+not describe its dunes.
+
+- Tried first: coarse-to-fine (twice the steps on a 2x grid, upsample, a third of the steps on the full grid).
+  It gave big smooth dunes with wide bare floors; the small dunes did not form on them even with noise, a longer
+  fine stage or a thin mobile layer over the draa.
+- Built (`sand_sea_compound`, default on, not for barchans): the coarse run's sand, upsampled, 0.6 of it becomes a
+  still core added to the ground under the sea; a fresh cover of 0.6 of the depth then runs the full steps on the
+  full grid, so ordinary dunes grow over the draa as over hills. Output is core plus cover.
+- Desert bench map (1600 m square, 2 m a pixel): sand power at wavelengths over 300 m 66% (plain 47%), stoss median
+  7.8 degrees (12.6), highest 51 m (46). Sea time 138 s against 86 s.
+- terrain_gen --test: power at 267-800 m over 80-200 m 4.5 against 2.4 plain (300 steps, 60 m edge), same seed same
+  sea.
+

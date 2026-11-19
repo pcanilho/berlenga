@@ -132,8 +132,42 @@ vec2 snow_deform_vertex(vec2 p) {
 	}
 	return 0.25 * (snow_deform(p + vec2(-r, -r)) + snow_deform(p + vec2(r, -r)) + snow_deform(p + vec2(-r, r)) + snow_deform(p + vec2(r, r)));
 }
+// The pack's depth between cell centres: Catmull-Rom over the 4 x 4 cells around (C1, so the surface has no
+// creases along the cell edges as bilinear leaves; Keys 1981), held within the four nearest cells' range so it
+// never overshoots into ripples. SnowCover3D.get_surface_depth_at is the same on the CPU.
+float snow_depth_smooth(vec2 p) {
+	vec2 uv = (p - snow_rect.xy) / max(snow_rect.zw, vec2(1e-4));
+	if (!snow_inside(uv)) {
+		return 0.0;
+	}
+	ivec2 size = textureSize(snow_tex, 0);
+	vec2 f = uv * vec2(size) - 0.5;
+	vec2 b = floor(f);
+	vec2 t = f - b;
+	vec4 wx = vec4(t.x * (-0.5 + t.x * (1.0 - 0.5 * t.x)), 1.0 + t.x * t.x * (-2.5 + 1.5 * t.x), t.x * (0.5 + t.x * (2.0 - 1.5 * t.x)), t.x * t.x * (-0.5 + 0.5 * t.x));
+	vec4 wz = vec4(t.y * (-0.5 + t.y * (1.0 - 0.5 * t.y)), 1.0 + t.y * t.y * (-2.5 + 1.5 * t.y), t.y * (0.5 + t.y * (2.0 - 1.5 * t.y)), t.y * t.y * (-0.5 + 0.5 * t.y));
+	float sum = 0.0;
+	float lo = 1e9;
+	float hi = -1e9;
+	for (int j = 0; j < 4; j++) {
+		for (int i = 0; i < 4; i++) {
+			ivec2 c = clamp(ivec2(b) + ivec2(i - 1, j - 1), ivec2(0), size - 1);
+			float v = texelFetch(snow_tex, c, 0).r;
+			sum += v * wx[i] * wz[j];
+			if (i >= 1 && i <= 2 && j >= 1 && j <= 2) {
+				lo = min(lo, v);
+				hi = max(hi, v);
+			}
+		}
+	}
+	float d = clamp(sum, lo, hi);
+	if (has_catch && textureLod(catch_tex, uv, 0.0).r > snow_ground(p) + 0.5) {
+		d = 0.0;
+	}
+	return d;
+}
 float snow_height_with(vec2 p, vec2 dr) {
-	float d = snow_pack(p).r * snow_fade(p) - dr.x + dr.y;
+	float d = snow_depth_smooth(p) * snow_fade(p) - dr.x + dr.y;
 	// Under min_depth the snow is the ground material's; the surface tucks 5 cm under the ground.
 	float lift = d >= min_depth ? d : mix(-0.05, min_depth, max(d, 0.0) / min_depth);
 	return snow_ground(p) + lift;
@@ -601,7 +635,7 @@ float SnowSurface3D::_surface_at(float p_x, float p_z, const SnowCover3D *p_cove
 	const float edge = MIN(MIN(p_x - (mesh_center.x - half), mesh_center.x + half - p_x), MIN(p_z - (mesh_center.y - half), mesh_center.y + half - p_z));
 	const float fade = edge_fade > 0.0f ? Math::smoothstep(0.0f, edge_fade, edge) : (edge >= 0.0f ? 1.0f : 0.0f);
 	// Under a roof the pack lies on the roof (the cover's ground there is the roof): none on the ground.
-	float d = p_cover->get_ground_height_at(Vector3(p_x, 0, p_z)) > g + 0.5f ? 0.0f : p_cover->get_depth_at(Vector3(p_x, 0, p_z)) * fade;
+	float d = p_cover->get_ground_height_at(Vector3(p_x, 0, p_z)) > g + 0.5f ? 0.0f : p_cover->get_surface_depth_at(Vector3(p_x, 0, p_z)) * fade;
 	if (deform_enabled && field.valid) {
 		d += field.rim_at(p_x, p_z) - field.dent_at(p_x, p_z);
 	}
@@ -622,7 +656,7 @@ float SnowSurface3D::press_box(Vector3 p_position, Vector2 p_size, float p_yaw, 
 GroundDeformField::Column SnowSurface3D::SnowColumns::column(float p_x, float p_z) const {
 	GroundDeformField::Column c;
 	const Vector3 wp(p_x, 0, p_z);
-	const float depth = cover->get_depth_at(wp);
+	const float depth = cover->get_surface_depth_at(wp); // as the surface is drawn
 	if (depth < surface->min_depth) {
 		return c;
 	}

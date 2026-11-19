@@ -54,6 +54,9 @@ class SiltPondStub extends WorldWater:
 	func _add_sediment(_p: Vector3, mineral: float, ash: float) -> void:
 		load += Vector2(mineral, ash) / 1000.0
 
+	func _add_sediment_mass(_p: Vector3, mineral: float, ash: float) -> void:
+		load += Vector2(mineral, ash) / 1000.0
+
 	func _sediment_at(_p: Vector3) -> Vector2:
 		return load
 
@@ -98,6 +101,19 @@ class LeafSnowStub extends WorldSnow:
 
 	func _depth_at(p: Vector3) -> float:
 		return depth if p.x > -30.0 and p.x < -10.0 else 0.0
+
+
+# A flood 0.3 m deep over x < 0 carrying 5 kg/m3 of silt and 1 of ash: still over -6 < x < 0, a 1 m/s current
+# beyond.
+class FloodStub extends WorldWater:
+	func _height_at(p: Vector3) -> float:
+		return 0.3 if p.x < 0.0 else -INF
+
+	func _flow_at(p: Vector3) -> Vector3:
+		return Vector3(0, 0, 1.0) if p.x < -6.0 else Vector3.ZERO
+
+	func _sediment_at(p: Vector3) -> Vector2:
+		return Vector2(5.0, 1.0) if p.x < 0.0 else Vector2.ZERO
 
 
 # Ground burnt a year ago over x < -10 (no fire burning now).
@@ -165,6 +181,7 @@ func _ready() -> void:
 	await _contact_tests()
 	await _snow_fire_tests()
 	await _dirty_snow_tests()
+	await _flood_ground_tests()
 	await _leaf_kick_tests()
 	await _leaf_surface_tests()
 	await _washout_tests()
@@ -692,6 +709,46 @@ func _dirty_snow_tests() -> void:
 	await get_tree().physics_frame
 
 
+# Floods on the ground (WorldWater into GroundSurface3D): any producer's water soaks the ground it covers, and still
+# water lays its load as fresh mud; a fast current keeps it up; dry ground beside gets neither.
+func _flood_ground_tests() -> void:
+	if not ClassDB.class_exists("GroundSurface3D"):
+		_skip("ground: floods", "no GroundSurface3D")
+		return
+	WorldContracts.clear_overrides()
+	var ground_node := Node3D.new()
+	ground_node.set_script(load("res://flat_ground.gd"))
+	ground_node.name = "FloodGround"
+	add_child(ground_node)
+	var g: Node3D = ClassDB.instantiate("GroundSurface3D")
+	g.name = "FloodSurface"
+	g.gpu_simulation = false
+	g.near_field = false
+	g.runoff_channels = false
+	g.standing_water = false
+	g.wind_ripples = false
+	g.world_puddles = false
+	add_child(g)
+	g.height_source = g.get_path_to(ground_node)
+	g.follow_target = g.get_path_to(ground_node)
+	await get_tree().physics_frame
+	WorldContracts.add_water_stub(FloodStub.new())
+	for i in 480:
+		await get_tree().physics_frame
+	var wet_still: float = g.get_saturation_at(Vector3(-3, 0, 0))
+	var wet_fast: float = g.get_saturation_at(Vector3(-9, 0, 0))
+	var dry: float = g.get_saturation_at(Vector3(3, 0, 0))
+	var silt_still: float = g.get_mud_deposit_at(Vector3(-3, 0, 0))
+	var silt_fast: float = g.get_mud_deposit_at(Vector3(-9, 0, 0))
+	var silt_dry: float = g.get_mud_deposit_at(Vector3(3, 0, 0)) # Green-Ampt fills the top 2 cm in about 10 s: over half in 8
+	_check("ground: floodwater from any producer soaks the ground it covers, not beside it", wet_still > 0.5 and wet_fast > 0.5 and dry < 0.1, "saturation %.2f under still water, %.2f under the current, %.2f on dry ground" % [wet_still, wet_fast, dry])
+	_check("ground: still floodwater lays its silt as fresh mud, a current keeps it up", silt_still > 1e-6 and silt_fast == 0.0 and silt_dry == 0.0, "%.1f um of silt under still water, %.1f um under the current, %.1f um beside" % [silt_still * 1e6, silt_fast * 1e6, silt_dry * 1e6])
+	WorldContracts.clear_overrides()
+	g.queue_free()
+	ground_node.queue_free()
+	await get_tree().physics_frame
+
+
 func _contract_tests() -> void:
 	WorldContracts.clear_overrides()
 	var w: WorldWater = WorldContracts.get_water()
@@ -795,6 +852,11 @@ func _contract_tests() -> void:
 	ws.add_sediment(Vector3(5, 0, 0), 9.0, 9.0) # no water there: dropped
 	var sed := ws.sediment_at(Vector3(-5, 0, 0))
 	_check("contracts: ash washed into a pond clouds it, none lands where there is no water", is_equal_approx(sed.y, 0.002) and sed.x == 0.0 and ws.sediment_at(Vector3(5, 0, 0)) == Vector2.ZERO, "%.4f kg/m3 ash, %.4f mineral" % [sed.y, sed.x])
+	# A debris flow's fines dropped in at once (kg, not kg/s), and none where there is no water.
+	ws.add_sediment_mass(Vector3(-5, 0, 0), 3000.0, 0.0)
+	ws.add_sediment_mass(Vector3(5, 0, 0), 9000.0, 0.0)
+	sed = ws.sediment_at(Vector3(-5, 0, 0))
+	_check("contracts: a debris flow's fines dumped into a pond mix through it", is_equal_approx(sed.x, 3.0) and ws.sediment_at(Vector3(5, 0, 0)) == Vector2.ZERO, "%.3f kg/m3 mineral" % sed.x)
 	WorldContracts.clear_overrides()
 	var wx: WorldWeather = WorldContracts.get_weather()
 	if not wx.has_provider():

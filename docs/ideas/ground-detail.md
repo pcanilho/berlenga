@@ -452,3 +452,57 @@ the far hand-over (proposal 6). Four candidates, put to Paulo as a decision card
 Sources: Meng, Papas, Habel, Dachsbacher, Marschner, Gross, Jarosz 2015
 (https://cs.dartmouth.edu/~wjarosz/publications/meng15granular.html); Unity
 `AddInstancesIndirect` (https://docs.unity3d.com/ScriptReference/Rendering.RayTracingAccelerationStructure.AddInstancesIndirect.html).
+
+## Seamless far edge as built (19 Nov)
+
+Picked first of the four (Paulo, 19 Nov: all of them, in order). The drawn classes stop at their reach (pebbles 32 m,
+gravel 12 m, fine gravel 6 m at 720p), and past it the ground showed plain sand: a line across every beach and talus.
+
+- **Cover maps (RockField3D).** Two camera-centred RGBA8 maps, 256 texels each, at 1 m (256 m) and 8 m (2 km) texels:
+  R, G, B each class's cover of the ground (0 to 0.5), A the rock type. Filled from the same laws the detail cells
+  place by (the shore's log-normal from the beach slope above the water line, the talus power law), on a worker when
+  the camera has moved an eighth of a map; `build_area` fills them at once. `ground_detail_cover` (on by default),
+  `get_ground_detail_cover_texture(level)`. A bench check (`--cover-check`) compares the map with the stones actually
+  placed per 4 m square: no square with placed stones the map misses.
+- **Aggregate (TerrainMaterial3D, `set_ground_cover`).** Meng et al. 2015's split, cut down to a few ALU: past each
+  class's reach (blended over its cell size) the ground draws single hashed grains (domed normal, darker at the
+  foot) while a pixel spans under a quarter of a grain, and their mean by the time it spans most of one. The mean is
+  Poisson cover of grains standing about 0.6 of their width tall: the share of the view they fill grows with the
+  tangent of the view angle (edge on they hide the bed), the bed they leave is in their shade by the tangent of the
+  sun's, and edge on or against a low sun the camera sees their shaded sides. Colour: the rock type's linear albedo as
+  the stones' shader mixes it (mineral, specks, rind), half dusted to the ground's. Grains hide the bed's sheen
+  (specular off, roughness 0.72 after the wet sand's gloss). Patch noise at two octaves below the map's metre keeps it
+  from an even smear (no visible repetition).
+- **Calibration.** Against frames with every stone drawn (`--detail-pixels=0.75`), mean brightness of the hand-over
+  area: at eye height 2074 before, 1639 every stone, 1711 aggregate; from 11 m up 141, 132, 126. Constants: view
+  cover 0.8 cov (1 + 0.75 tan), bed shade 0.2 cov tan(sun). Polish after the docs check: the edge where cover thins is cut by two noise octaves (0.6 and 1.7 per m) so it breaks up, a third octave (5.3 per m) clusters the mean lighter and darker, and the grains stay single until a pixel spans more than one (footprint taken as the mean across and along the view).
+- **Path tracing.** All of it is in the ground material, which the path tracer runs as is; the sun direction comes
+  from `relief_sun_direction()` and the grain switch from the ray-cone footprint, so raster and PT pick the same
+  grains.
+- **Cost.** One 256 x 256 fill on a worker per eighth-of-a-map move, two texture reads and up
+  to three hashed grain tests per ground pixel past the reach. No new instances.
+- **Left.** Very sparse scattered stones (cover under 0.01) vanish in the aggregate where the drawn frame shows a few
+  dark specks; any other ground layer (Terrain3D) needs the same uniforms wired.
+
+## River and stream beds (19 Nov)
+
+The river layer already lays cobbles by Shields' threshold and Sternberg's fining, imbricated; below `min_size` the
+beds were bare ground, so a gravel-bed stream (most of them in a 2 km world: channels about a metre wide) showed no
+stones at all. Ground detail now carries the river layer's bed on below it, as it does the shore's.
+
+- **Technique.** The bed's median from the river layer (same formulas, shared per segment: `_river_segments`), then
+  the pool-riffle sequence: riffles coarse and pools fine, about six channel widths apart (Leopold, Wolman and Miller
+  1964; Keller and Melhorn 1978: 5 to 7 widths), median x (0.5 + 0.9 riffle), and finer on the bars at the sides than
+  down the thalweg (x 0.65 at the banks). The pools' slack water drapes fines over the bed: their grains' cover drops
+  by up to three quarters and they sit deeper. Sizes from a log-normal of sigma 0.6 (poorly sorted at the fine end,
+  as the shore's), cover as the shore's (weight share, clast-supported 0.85).
+- **Imbrication.** Every grain's long axis across the flow, its a-b plane dipping upstream 10 to 30 degrees (Rust
+  1972; the stacked "roof tile" fabric of a flowing gravel bed), as the river layer's cobbles. Wet film on.
+- **Rock.** 70% of grains carry the headwaters' rock, as the cobbles do.
+- **Far cover.** The same beds go into the far hand-over's cover maps (rasterised per segment; a bed narrower than a
+  texel is spread over it, thinner by as much), so a stream's gravel continues past the drawn reach.
+- **Switch.** `RockField3D.ground_detail_rivers` (on). Bench: `--view=river --gravel-reach[=d]` picks an open
+  gravel-bed reach whose median is nearest d (0.03 m); `--no-river-detail` for the before frame.
+- **Through clear water.** The grains are ordinary detail instances, so the water's own transmission shows them; the
+  check needs river water (PhysXRiver3D), which the cloud build here lacks (no PhysX SDK in this container): on the
+  PC queue, or with a PhysX cloud build.

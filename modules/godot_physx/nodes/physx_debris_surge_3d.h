@@ -72,6 +72,7 @@ class PhysXDebrisSurge3D : public Node3D {
 		float speed = 0.0f; // m/s
 		float depth = 0.0f; // m
 		float delay = 0.0f; // s before it starts
+		bool lead = false; // the event's first surge: the one at the mud body's front
 		float stopped_time = -1.0f; // s since it stopped
 		bool done = false;
 	};
@@ -88,6 +89,9 @@ class PhysXDebrisSurge3D : public Node3D {
 	Ref<Material> rock_material;
 
 	NodePath front_source; // an object with get_debris_front(event_id) -> Dictionary (the mud system)
+	ObjectID found_front; // the scene's GroundDebrisFlow3D when front_source is empty
+	uint64_t next_front_search = 0;
+	Object *_front();
 	bool listen = true;
 	int surge_count = 4; // the most surges per event
 	float surge_interval = 60.0f; // s

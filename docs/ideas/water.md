@@ -3622,3 +3622,44 @@ it already damped their slope per pixel: the film's elasticity), so foam lies on
 detail uses an analytic footprint (distance and the smooth surface's tilt; orthographic aware) instead of fwidth,
 and the crisp step's width is the pattern's world gradient (chain rule) times that footprint, so neither jumps
 from facet to facet. Raster and PT checked on the creek bench.
+
+## Oasis spring pools (19 Nov, coordinator: VegetationField3D springs 900 m apart want still pools)
+
+What they are. Desert oases are fed by artesian springs where a confined aquifer (the Nubian Sandstone under
+Egypt's Western Desert depressions, the Great Artesian Basin under Lake Eyre) reaches the surface along faults.
+Siwa alone has about 200 springs ("ain", eye) and four salt lakes downstream of them. The forms that matter for
+the look:
+- Pool springs: a round to lobed pool a few metres to a few tens of metres across, often walled or cut into a
+  terrace, water clear to blue-green over pale sand or limestone, 1-4 m deep at the vent, shelving to a shallow
+  rim. Siwa's Cleopatra and Juba springs are this kind.
+- Sand boils: at the vents the upwelling fluidises the bed sand into small craters that pulse and "dance"; the
+  surface above shows a faint dome of upwelling and rings (the classic look, also every sand-boil photograph).
+- Mound springs (Lake Eyre): carbonate (tufa) builds a low mound with the pool on top and a tail of wetland
+  downhill. A variant for later, not the default.
+- Around them: a ring of reeds (Phragmites) and sedges, date palms behind, a white salt crust where the outflow
+  spreads and evaporates (the sabkha). The outflow is a channel to the gardens or a seep into the sand.
+
+Size from the water balance (the established way, a spring pool at steady state): the pool grows until
+evaporation and seepage take what the spring gives, A = Q / (E + I). Open-water evaporation in the Western Desert
+is about 2-3 m a year (6-8 mm a day in summer); seepage I on a sand bed is of the same order. A small spring of
+0.05 L/s (1600 m3 a year) holds about 300-800 m2: a pool 20-30 m across. The pool is set by its discharge and the
+climate's evaporation, not picked by hand; a dry season lowers the level by evaporation alone.
+
+What we have. PhysXWaterSurface3D already draws a small still pool (#354: no shore rim without waves), with any
+outline (surface_mesh), a measured seabed (shallow rims, dry shore), clear water seen through (raster bed march,
+PT medium), received shadows, registered with WorldWater as a provider (height, depth, flow 0,
+sediment), wind ripples from the weather and rain rings. A pool per spring is configuration, not new rendering.
+
+Scope proposed (to confirm before building):
+1. OasisSprings3D (water module): reads the springs (position, water level, optional discharge, default 0.05 L/s)
+   from a source node (VegetationField3D.get_springs() or a plain array), and for each places a
+   PhysXWaterSurface3D sized by A = Q / (E + I) (E from WorldWeather's temperature through a Hargreaves-type pan
+   estimate, I a setting), its outline a disc broken by low-frequency noise (no two pools the same shape: the
+   no-repetition rule), seabed measured, wind amplitude low, clear water.
+2. The vent: a sand boil on the bed (a small crater in the measured bed with a slow pulse in the bed's normal and a
+   faint upwelling dome and ring on the surface), raster and PT alike.
+3. Hand-offs, not Valence's: the basin itself (terrain-gen or the ground's TerrainDeformer3D carves the hollow
+   under each spring to the measured depth profile), the salt crust and wet sand ring (ground/sand), reeds
+   (vegetation; it already places the palms along the water).
+4. Later, not now: outflow channels (a PhysXRiver3D from the pool's lip), mound springs, level falling through a
+   dry season.

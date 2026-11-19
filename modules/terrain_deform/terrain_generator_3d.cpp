@@ -3641,6 +3641,7 @@ void TerrainGenerator3D::_build_sand_sea() {
 		return TerrainDuneSea::Wind{ p_speed * Math::cos(a), p_speed * Math::sin(a), p_share };
 	};
 	const double depth = double(sand_sea_depth) / sc;
+	LocalVector<float> sea_core;
 	// The start: an even cover with a little noise (Paris 2019), or for barchans the same sand gathered in low
 	// cones some 8 to 16 cells across.
 	uint64_t ctr = 0;
@@ -3690,22 +3691,77 @@ void TerrainGenerator3D::_build_sand_sea() {
 			sea.sand[i] = float(depth * (0.75 + 0.5 * uni())) * (sea_mask.is_empty() ? 1.0f : sea_mask[i]);
 		}
 	}
-	const int bands = sea.band_count();
-	for (int step = 0; step < sand_sea_steps; step++) {
-		if (sea.begin_shear(step)) {
-			WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_sand_sea_shear, &sea, (h + 15) / 16, -1, true, SNAME("TerrainGenerator3D sand shear"));
-			WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+	auto run_sea = [](TerrainDuneSea &p_sea, int p_steps) {
+		const int bands = p_sea.band_count();
+		for (int step = 0; step < p_steps; step++) {
+			if (p_sea.begin_shear(step)) {
+				WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_sand_sea_shear, &p_sea, (p_sea.h + 15) / 16, -1, true, SNAME("TerrainGenerator3D sand shear"));
+				WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+			}
+			if (bands == 0) {
+				p_sea.run_band(step, 0);
+				continue;
+			}
+			for (int phase = 0; phase < 2; phase++) {
+				SandSeaJob job{ &p_sea, step, phase };
+				WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_sand_sea_band, &job, bands / 2, -1, true, SNAME("TerrainGenerator3D sand sea"));
+				WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+			}
 		}
-		if (bands == 0) {
-			sea.run_band(step, 0);
-			continue;
+	};
+	// Compound dunes (docs/ideas/dunes.md, "Compound dunes"): the large dunes of big ergs (draa, megadunes, some
+	// 300-1000 m apart and 50-150 m high) carry smaller dunes of the ordinary size on their flanks (Wilson 1972;
+	// Lancaster 1988, 1995 for the Namib; Kocurek and Ewing 2005). The draa are old: their cores hold still while
+	// the small dunes migrate over them (Bristow, Bugler and Parker 2000: Namib linear draa with stabilised cores;
+	// Lancaster 1988). So the sea is grown twice. First twice the steps on a grid of twice the cell (a quarter of
+	// the cells): the draa. Upsampled, 0.6 of that sand becomes a still core (added to the ground the sand moves
+	// over) and a fresh cover of 0.6 of the depth, with the usual noise, runs the full steps on the full grid:
+	// the ordinary dunes form over the draa as they do over hills. The result is core plus cover. About 1.6 times
+	// the plain sea's time. Not for barchans (a thin cover: they stay single crescents on a bare floor).
+	const int coarse_steps = (sand_sea_compound && sand_sea_kind != SAND_SEA_BARCHAN && w >= 64 && h >= 64) ? 2 * sand_sea_steps : 0;
+	if (coarse_steps > 0) {
+		TerrainDuneSea cs = sea;
+		const int cw = (w + 1) / 2, ch = (h + 1) / 2;
+		cs.w = cw;
+		cs.h = ch;
+		cs.shear.clear();
+		cs.base.assign(cw * ch, 0.0f);
+		cs.sand.assign(cw * ch, 0.0f);
+		for (int z = 0; z < ch; z++) {
+			for (int x = 0; x < cw; x++) {
+				double b = 0.0, sd = 0.0;
+				int k = 0;
+				for (int dz = 0; dz < 2; dz++) {
+					for (int dx = 0; dx < 2; dx++) {
+						const int fx = MIN(2 * x + dx, w - 1), fz = MIN(2 * z + dz, h - 1);
+						b += sea.base[fz * w + fx];
+						sd += sea.sand[fz * w + fx];
+						k++;
+					}
+				}
+				// Heights in cells: a coarse cell is two fine ones.
+				cs.base[z * cw + x] = float(0.5 * b / k);
+				cs.sand[z * cw + x] = float(0.5 * sd / k);
+			}
 		}
-		for (int phase = 0; phase < 2; phase++) {
-			SandSeaJob job{ &sea, step, phase };
-			WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_sand_sea_band, &job, bands / 2, -1, true, SNAME("TerrainGenerator3D sand sea"));
-			WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+		run_sea(cs, coarse_steps);
+		// Back to the full grid: bilinear, wrapped as the sea is, at the fine cell's height scale; 0.6 of it the core.
+		sea_core.resize(w * h);
+		for (int z = 0; z < h; z++) {
+			for (int x = 0; x < w; x++) {
+				const double gx = 0.5 * x, gz = 0.5 * z;
+				const int x0 = int(gx), z0 = int(gz);
+				const double fx = gx - x0, fz = gz - z0;
+				auto S = [&](int a, int b) { return double(cs.sand[((b % ch + ch) % ch) * cw + (a % cw + cw) % cw]); };
+				const double v = (1 - fx) * (1 - fz) * S(x0, z0) + fx * (1 - fz) * S(x0 + 1, z0) + (1 - fx) * fz * S(x0, z0 + 1) + fx * fz * S(x0 + 1, z0 + 1);
+				const int i = z * w + x;
+				sea_core[i] = float(MAX(2.0 * v, 0.0) * 0.6);
+				sea.base[i] += sea_core[i];
+				sea.sand[i] = float(depth * 0.6 * (0.75 + 0.5 * uni())) * (sea_mask.is_empty() ? 1.0f : sea_mask[i]);
+			}
 		}
 	}
+	run_sea(sea, sand_sea_steps);
 	// The result: one 1-2-1 smoothing pass (the slabs leave a speckle a cell wide), in metres, thinned out at the
 	// edge, on steep ground and on water.
 	sea_sand.resize(w * h);
@@ -3745,7 +3801,8 @@ void TerrainGenerator3D::_build_sand_sea() {
 			double acc = 0.0;
 			for (int dz = -1; dz <= 1; dz++) {
 				for (int dx = -1; dx <= 1; dx++) {
-					acc += (2 - dz * dz) * (2 - dx * dx) * sea.sand[((z + dz + h) % h) * w + (x + dx + w) % w];
+					const int ii = ((z + dz + h) % h) * w + (x + dx + w) % w;
+					acc += (2 - dz * dz) * (2 - dx * dx) * (sea.sand[ii] + (sea_core.is_empty() ? 0.0f : sea_core[ii]));
 				}
 			}
 			const real_t px = r.position.x + x * sc, pz = r.position.y + z * sc;
@@ -3958,7 +4015,7 @@ void TerrainGenerator3D::_build_sand_sea() {
 	}
 	last_sand_sea_max = mx;
 	last_sand_sea_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
-	print_verbose(vformat("TerrainGenerator3D: sand sea on %dx%d at %.1f m, %d bands, highest %.1f m, %.0f ms.", w, h, sc, bands, mx, last_sand_sea_msec));
+	print_verbose(vformat("TerrainGenerator3D: sand sea on %dx%d at %.1f m, %d bands, highest %.1f m, %.0f ms.", w, h, sc, sea.band_count(), mx, last_sand_sea_msec));
 }
 
 /* Nebkhas (docs/ideas/dunes.md, "Nebkhas") */
@@ -8585,6 +8642,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sand_sea_steps"), &TerrainGenerator3D::get_sand_sea_steps);
 	ClassDB::bind_method(D_METHOD("set_sand_sea_edge", "edge"), &TerrainGenerator3D::set_sand_sea_edge);
 	ClassDB::bind_method(D_METHOD("get_sand_sea_edge"), &TerrainGenerator3D::get_sand_sea_edge);
+	ClassDB::bind_method(D_METHOD("set_sand_sea_compound", "enabled"), &TerrainGenerator3D::set_sand_sea_compound);
+	ClassDB::bind_method(D_METHOD("is_sand_sea_compound"), &TerrainGenerator3D::is_sand_sea_compound);
 	ClassDB::bind_method(D_METHOD("set_sand_sea_mask", "mask"), &TerrainGenerator3D::set_sand_sea_mask);
 	ClassDB::bind_method(D_METHOD("get_sand_sea_mask"), &TerrainGenerator3D::get_sand_sea_mask);
 	ClassDB::bind_method(D_METHOD("set_nebkha_density", "density"), &TerrainGenerator3D::set_nebkha_density);
@@ -8830,6 +8889,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sand_sea_scale", PROPERTY_HINT_RANGE, "0.5,64,0.1,suffix:m"), "set_sand_sea_scale", "get_sand_sea_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "sand_sea_steps", PROPERTY_HINT_RANGE, "0,5000,1,or_greater"), "set_sand_sea_steps", "get_sand_sea_steps");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sand_sea_edge", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_sand_sea_edge", "get_sand_sea_edge");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sand_sea_compound"), "set_sand_sea_compound", "is_sand_sea_compound");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "sand_sea_mask", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_sand_sea_mask", "get_sand_sea_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "nebkha_density", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_nebkha_density", "get_nebkha_density");
 	ADD_GROUP("Lakes", "");

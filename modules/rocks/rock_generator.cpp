@@ -855,8 +855,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			th[k] = acc;
 			acc += float(Math::TAU) / sides * (0.45f + 1.1f * rng.randf());
 		}
-		const float lean = (hoodoo ? 0.01f + 0.03f * rng.randf() : 0.04f + 0.08f * rng.randf()), lean_az = rng.randf() * float(Math::TAU);
+		float lean = (hoodoo ? 0.01f + 0.03f * rng.randf() : 0.04f + 0.08f * rng.randf());
+		const float lean_az = rng.randf() * float(Math::TAU);
 		const float taper = hoodoo ? 0.02f + 0.03f * rng.randf() : 0.05f + 0.08f * rng.randf();
+		if (!hoodoo) {
+			lean += 0.06f + 0.06f * float(rk_hash(nseed + 0x7703u) & 0xFFFu) / 4095.0f; // a stack leans plainly one way
+		}
 		for (int k = 0; k < sides; k++) {
 			const float cy = Math::cos(th[k]), sz = Math::sin(th[k]);
 			// Leaning toward lean_az tilts the faces on that side out, the far side in; all of them in for the taper.
@@ -868,11 +872,21 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		}
 		planes.push_back({ jitter_dir(Vector3(-1, 0, 0), 3.0f), a, false });
 		const int tops = 2 + int(rng.randf() * 1.99f);
+		// A stack's top is not a gable: it slopes one way, down the dip or toward the side the falls come off, with a
+		// break or two on that same side (Old Harry, the Twelve Apostles). Its own generator keeps the shared sequence.
+		RandomPCG trng(uint64_t(nseed) * 0x9E3779B97F4A7C15ull + 0x7701ull);
+		const float top_az = trng.randf() * float(Math::TAU);
 		for (int k = 0; k < tops; k++) {
-			const float az = rng.randf() * float(Math::TAU);
-			const float slope = hoodoo ? 0.05f + 0.15f * rng.randf() : 0.15f + 0.6f * rng.randf(); // a caprock stays nearly flat
+			float az = rng.randf() * float(Math::TAU);
+			float slope = hoodoo ? 0.05f + 0.15f * rng.randf() : 0.15f + 0.6f * rng.randf(); // a caprock stays nearly flat
+			float off = 0.82f + 0.16f * rng.randf();
+			if (!hoodoo) {
+				az = top_az + (k == 0 ? 0.0f : (trng.randf() - 0.5f) * 1.6f);
+				slope = k == 0 ? 0.4f + 0.45f * trng.randf() : 0.7f + 0.6f * trng.randf();
+				off = k == 0 ? 0.92f + 0.06f * trng.randf() : 0.78f + 0.12f * trng.randf();
+			}
 			const Vector3 n = Vector3(1.0f, slope * Math::cos(az), slope * Math::sin(az)).normalized();
-			planes.push_back({ n, n.x * a * (0.82f + 0.16f * rng.randf()), k > 0 && rng.randf() < 0.5f });
+			planes.push_back({ n, n.x * a * off, k > 0 && rng.randf() < 0.5f });
 		}
 	} else if (lith.columnar && family != FAMILY_PEBBLE && family != FAMILY_SEA_ARCH && family != FAMILY_SEA_PLATFORM && family != FAMILY_PAVEMENT && family != FAMILY_FIN && family != FAMILY_POTHOLE && family != FAMILY_CAVE_MOUTH) {
 		// Columnar basalt: a 5 to 7-sided prism (contraction joints, mean six; Goehring 2009) along x, cut across.
@@ -1247,6 +1261,31 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		}
 		const float notch_x = x_lo + 0.22f * (x_hi - x_lo);
 		const float notch_w = 0.08f * a, notch_d = 0.18f * c;
+		// A stack is lopsided (Sunamura 1992; Trenhaile 1987): the side facing the dominant swell is undercut much
+		// deeper than the lee, and its top has stepped down where the blocks over a joint fell, so one corner stands
+		// a bed or two higher than the rest. (Their own generator: the shared sequence shapes the rest.)
+		RandomPCG lrng(uint64_t(nseed) * 0x9E3779B97F4A7C15ull + 0x7702ull);
+		const float exp_az = lrng.randf() * float(Math::TAU);
+		const Vector3 exp_dir(0.0f, Math::cos(exp_az), Math::sin(exp_az));
+		const float exp_r = Math::sqrt(c * c * exp_dir.y * exp_dir.y + exp_dir.z * exp_dir.z);
+		const bool stepped = family == FAMILY_SEA_STACK && lrng.randf() < 0.7f;
+		const float step_az = exp_az + float(Math::PI) * (0.5f + lrng.randf()); // toward the lee or a flank
+		const Vector3 step_dir(0.0f, Math::cos(step_az), Math::sin(step_az));
+		const float step_r = Math::sqrt(c * c * step_dir.y * step_dir.y + step_dir.z * step_dir.z);
+		const float step_d = step_r * (-0.2f + 0.35f * lrng.randf()); // a third to over half the top falls
+		float step_x = x_lo + (0.58f + 0.17f * lrng.randf()) * (x_hi - x_lo);
+		if (stepped && bed_axis == 0 && bed_at.size() > 2) {
+			// The step's tread is a bed's top.
+			uint32_t best = 0;
+			for (uint32_t k = 0; k < bed_at.size(); k++) {
+				if (Math::abs(bed_at[k] - step_x) < Math::abs(bed_at[best] - step_x)) {
+					best = k;
+				}
+			}
+			if (bed_at[best] > x_lo + 0.5f * (x_hi - x_lo) && bed_at[best] < x_hi - 0.12f * (x_hi - x_lo)) {
+				step_x = bed_at[best];
+			}
+		}
 		// Open joints: planar slots down the stack from its top (unloading opens them there first), a dark gap with
 		// flat walls, not a groove; they close at the tip.
 		struct Joint {
@@ -1344,7 +1383,16 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						// back, so the column does not widen into a plinth under the water.
 						const float t = (p.x - notch_x) / notch_w;
 						const float prof = t > 1.0f ? 0.0f : (t > 0.75f ? 1.0f - (t - 0.75f) / 0.25f : (t > -1.5f ? 0.55f + 0.45f * (t + 1.5f) / 2.25f : 0.55f));
-						v += notch_d * prof * (0.85f + 0.3f * rk_noise(p * 2.0f, nseed + 95u));
+						const float facing = exp_dir.dot(p) / exp_r + 0.25f * (rk_noise(p * 0.4f, nseed + 107u) - 0.5f);
+						const float exposure = 0.3f + 1.9f * Math::smoothstep(-0.5f, 0.9f, facing);
+						v += notch_d * exposure * prof * (0.85f + 0.3f * rk_noise(p * 2.0f, nseed + 95u));
+						if (stepped) {
+							// The fallen corner: everything above the tread and past the joint, the joint face a
+							// little rough, the tread following its bed.
+							const float tread = p.x + dip.dot(p) + 0.03f * (rk_noise(p * 0.9f, nseed + 92u) - 0.5f) - step_x;
+							const float wall = step_dir.dot(p) - step_d - 0.04f * c * (rk_noise(p * 1.3f, nseed + 108u) - 0.5f);
+							v = MAX(v, MIN(tread, wall));
+						}
 						for (const Joint &jt : joints) {
 							const float off = jt.n.dot(p) - jt.d - 0.03f * c * (rk_noise(p * 1.7f, nseed + 97u) - 0.5f);
 							const float tip = CLAMP((p.x - jt.x0) / (0.25f * (x_hi - x_lo)), 0.0f, 1.0f);
@@ -1427,7 +1475,15 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// Hoodoo profile (Bryce, Drumheller): a few bulges and necks up the column where harder and softer beds alternate,
 		// each a smooth swell rather than a step, since rain wash rounds them; fine bedding over it only as faint lines.
 		LocalVector<float> knot_at, knot_rec;
-		const float cap_t = 0.87f + 0.07f * rng.randf(); // where the caprock starts, as a share of the height: a thin cap
+		float cap_t = 0.87f + 0.07f * rng.randf(); // where the caprock starts, as a share of the height: a thin cap
+		// No two caps alike (Bryce, Goreme, Drumheller): thin or thick, flush or overhanging, flat or domed, tipped where
+		// the neck under one side wore first; one column in five has lost its cap and weathers to a spire.
+		RandomPCG crng(uint64_t(nseed) * 0x9E3779B97F4A7C15ull + 0x7704ull);
+		const bool capless = crng.randf() < 0.2f;
+		cap_t = 0.8f + 0.14f * crng.randf();
+		const float cap_over = capless ? -0.06f * c : (0.01f + 0.09f * crng.randf()) * c; // how far the cap stands out
+		const float cap_dome = capless ? 0.45f * c : (0.04f + 0.24f * crng.randf()) * c;
+		const float cap_tip_az = crng.randf() * float(Math::TAU), cap_tip = 0.25f * crng.randf();
 		if (family == FAMILY_HOODOO) {
 			float b = x_lo - 0.3f;
 			bool soft = rng.randf() < 0.5f;
@@ -1556,15 +1612,16 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						}
 						const float f = Math::smoothstep(knot_at[i], knot_at[i + 1], q);
 						const float r = knot_rec[i] + (knot_rec[i + 1] - knot_rec[i]) * f;
-						const float cap = Math::smoothstep(cap_t - 0.02f, cap_t + 0.02f, t);
+						const float tip = cap_tip * 0.25f * (Math::cos(cap_tip_az) * p.y / c + Math::sin(cap_tip_az) * p.z);
+						const float cap = Math::smoothstep(cap_t - 0.02f, cap_t + 0.02f, t + tip);
 						// Swells below, none in the cap; the neck just under the cap thinnest; the cap a little wider.
 						v += r * (0.8f + 0.4f * rk_noise(p * 1.2f, nseed + 112u)) * (1.0f - cap);
 						v += 0.1f * c * Math::smoothstep(cap_t - 0.3f, cap_t - 0.03f, t) * (1.0f - cap);
 						v += 0.14f * c * t * (1.0f - cap); // wider at the foot, where the debris apron feeds it
 						// The cap barely wider than the neck's foot, its rim and top rounded off and uneven.
-						v -= 0.02f * c * cap;
-						const float dome = Math::smoothstep(cap_t + 0.01f, 1.02f, t);
-						v += 0.18f * c * dome * dome;
+						v -= cap_over * cap;
+						const float dome = Math::smoothstep(cap_t + 0.01f, 1.02f, t + tip);
+						v += cap_dome * dome * dome;
 						v += 0.08f * c * cap * (rk_fbm(p * 1.6f, nseed + 125u, 3) - 0.5f);
 						// Faint bedding: thin hard ribs 0.06 to 0.1 apart standing out a little.
 						const float bed = q / (0.07f + 0.02f * rk_noise(Vector3(p.x * 0.3f, 0.0f, 0.0f), nseed + 119u));
@@ -2580,6 +2637,7 @@ render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_sc
 uniform vec3 base_color = vec3(0.30, 0.28, 0.26);
 uniform vec3 speck_color = vec3(0.04);
 uniform float speck_share = 0.18;
+uniform float instance_tint = 0.0; // per-instance hue and brightness spread (hoodoos: each column its own bed)
 // Granite: the crystals come from the same map as the close-up geometry (rk_relief), so quartz and feldspar stand
 // proud and biotite sits in its pits in colour as in relief.
 uniform bool crystal_map = false;
@@ -2816,6 +2874,8 @@ void fragment() {
 	// Mineral colour: broad mottling, bands along the beds, specks of the dark (or light) mineral.
 	vec3 col = base_color * (0.82 + 0.36 * rk_fbm3(mp * 1.7));
 	col *= 0.9 + 0.2 * rk_noise3(vec3(seed));
+	// Landforms that stand in groups (hoodoos): each column its own bed of the formation, warmer or paler.
+	col *= 1.0 + instance_tint * ((rk_noise3(vec3(seed) + 7.1) - 0.5) * vec3(0.55, 0.12, -0.45) + (rk_noise3(vec3(seed) + 3.3) - 0.5) * 0.6);
 	// Beds lie across the short axis of a lying stone, the long one of an upright form, the b axis of a fin (COLOR.b).
 	float bed_q = COLOR.b > 0.75 ? lp.x : (COLOR.b > 0.25 ? lp.z : lp.y);
 	float bands = 0.5 + 0.5 * sin(6.2831853 * (bed_q * v_scale / band_spacing + 0.6 * rk_fbm3(mp * 0.8)));

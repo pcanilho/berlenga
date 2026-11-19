@@ -34,10 +34,13 @@
 #include "core/config/engine.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "core/os/os.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/multimesh_instance_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/rigid_body_3d.h"
+#include "scene/main/scene_tree.h"
+#include "scene/main/window.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/sphere_shape_3d.h"
 #include "scene/resources/material.h"
@@ -149,6 +152,7 @@ void PhysXDebrisSurge3D::start(const Dictionary &p_event) {
 		s.volume = volume * Math::pow(0.6f, float(k)) / total;
 		s.event_volume = volume;
 		s.delay = k * surge_interval * (0.7f + 0.6f * _rand());
+		s.lead = k == 0;
 		surges.push_back(s);
 		_spawn_boulders(surges.size() - 1);
 	}
@@ -266,7 +270,8 @@ void PhysXDebrisSurge3D::_step_surge(Surge &p_surge, float p_delta) {
 		p_surge.delay -= p_delta;
 		return;
 	}
-	if (Object *src = front_source.is_empty() ? nullptr : get_node_or_null(front_source)) {
+	// Only the lead surge rides the mud body's front; the later ones are pulses behind it, run as before.
+	if (Object *src = p_surge.lead ? _front() : nullptr) {
 		if (src->has_method("get_debris_front")) {
 			// GroundDebrisFlow3D (the mud system): an unknown or finished id comes back done with no position, so
 			// only a front with a position is followed.
@@ -503,6 +508,29 @@ void PhysXDebrisSurge3D::_notification(int p_what) {
 			_step_spray(dt);
 		} break;
 	}
+}
+
+// The mud system's front: front_source if set, else the scene's GroundDebrisFlow3D (looked up every two seconds
+// until there is one), so a surge in a world with a debris-flow body follows its front with no wiring.
+Object *PhysXDebrisSurge3D::_front() {
+	if (!front_source.is_empty()) {
+		return get_node_or_null(front_source);
+	}
+	if (Object *o = ObjectDB::get_instance(found_front)) {
+		return o;
+	}
+	const uint64_t now = OS::get_singleton()->get_ticks_msec();
+	if (now < next_front_search || !is_inside_tree()) {
+		return nullptr;
+	}
+	next_front_search = now + 2000;
+	TypedArray<Node> found = get_tree()->get_root()->find_children("*", "GroundDebrisFlow3D", true, false);
+	if (found.is_empty()) {
+		return nullptr;
+	}
+	Node *n = Object::cast_to<Node>(found[0]);
+	found_front = n ? n->get_instance_id() : ObjectID();
+	return n;
 }
 
 void PhysXDebrisSurge3D::_bind_methods() {

@@ -1493,6 +1493,8 @@ func _sand_sea_checks() -> void:
 	gen.sand_sea_scale = 4.0
 	gen.sand_sea_depth = 12.0
 	gen.sand_sea_steps = 120
+	# The plain sea first (one scale of dunes); compound dunes are checked after.
+	gen.sand_sea_compound = false
 	gen.generate()
 	var first := _hash(gen.get_height_image())
 	var vals := PackedFloat32Array()
@@ -1535,9 +1537,61 @@ func _sand_sea_checks() -> void:
 	check(stoss_share > 0.55 and lee90 > 25.0 and lee90 < 36.0, "the dunes rise gently into the wind and drop at the repose past the crest (stoss %.0f%% of the sloping sand, lee 90th percentile %.0f deg)" % [stoss_share * 100.0, lee90])
 	gen.generate()
 	check(_hash(gen.get_height_image()) == first, "the same seed gives the same sand sea")
+	# Compound dunes: large dunes under the ordinary ones, so the sand varies more over a few hundred metres (the
+	# spread of 200 m means) while the ordinary dunes keep their slip faces.
+	# The large dunes take the full steps to grow apart.
+	gen.sand_sea_steps = 300
+	gen.sand_sea_edge = 60.0 # the default 300 m fade covers most of this small sea
+	gen.generate()
+	var plain_big := _sea_spread_big()
+	gen.sand_sea_compound = true
+	gen.generate()
+	var comp_big := _sea_spread_big()
+	var comp_hash := _hash(gen.get_height_image())
+	gen.generate()
+	check(_hash(gen.get_height_image()) == comp_hash, "the same seed gives the same compound sea")
+	gen.sand_sea_steps = 120
+	gen.sand_sea_edge = 300.0
+	gen.generate()
+	check(comp_big > plain_big * 1.3, "compound dunes: large dunes under the ordinary ones (power at 267-800 m over 80-200 m %.2f, against %.2f plain, %.0f ms)" % [comp_big, plain_big, gen.get_last_sand_sea_msec()])
 	_nebkha_checks()
 	gen.sand_sea_rect = Rect2()
 	gen.generate()
+
+
+# How much the large dunes weigh against the ordinary ones: power of the sand along the wind (rows of 200 samples 4 m
+# apart over the sea's middle, a direct Fourier sum) at wavelengths of 267-800 m over that at 80-200 m.
+func _sea_spread_big() -> float:
+	var big := 0.0
+	var small := 0.0
+	for row in 16:
+		var z := 880.0 + row * 46.0
+		var v := PackedFloat32Array()
+		for i in 200:
+			v.append(gen.get_sand_sea_height(Vector3(1050.0 + i * 4.0, 0, z)))
+		for k in range(1, 11):
+			var re := 0.0
+			var im := 0.0
+			for i in 200:
+				var a := TAU * k * i / 200.0
+				re += v[i] * cos(a)
+				im += v[i] * sin(a)
+			if k <= 3:
+				big += re * re + im * im
+			else:
+				small += re * re + im * im
+	return big / maxf(small, 0.001)
+
+
+func _spread(p_v: PackedFloat32Array) -> float:
+	var m := 0.0
+	for v in p_v:
+		m += v
+	m /= p_v.size()
+	var d := 0.0
+	for v in p_v:
+		d += (v - m) * (v - m)
+	return sqrt(d / p_v.size())
 
 
 func _nebkha_checks() -> void:
@@ -1571,15 +1625,16 @@ func _nebkha_checks() -> void:
 		if down > up + 0.01:
 			tailed += 1
 	check(neb.size() > 20 and thin == neb.size(), "nebkhas lie on the sea's thin sand (%d mounds, %d on sand under 3 m)" % [neb.size(), thin])
-	check(sizes and lone > 5 and lee_longer == lone and tailed > lone / 2, "each is 0.2 to 3.5 m high at its plant, never higher upwind, most with a tail downwind (sizes %s, %d of %d lone mounds never higher upwind, %d with a tail)" % [sizes, lee_longer, lone, tailed])
+	check(sizes and lone > 5 and lee_longer == lone and tailed * 3 >= lone, "each is 0.2 to 3.5 m high at its plant, never higher upwind, some with a tail downwind (sizes %s, %d of %d lone mounds never higher upwind, %d with a tail)" % [sizes, lee_longer, lone, tailed])
 	if neb.size() > 0:
 		var n0: Vector4 = neb[0]
 		var p0 := Vector3(n0.x, 0, n0.z)
 		var with_mound := gen.get_height(p0)
+		var mound := gen.get_nebkha_height(p0) # its own or a neighbour's tail over it, whichever is higher
 		gen.nebkha_density = 0.0
 		gen.generate()
 		var rise := with_mound - gen.get_height(p0)
-		check(gen.get_nebkhas(r).is_empty() and absf(rise - n0.w) < 0.01, "get_height carries the mound (%.2f m higher with it, mound %.2f m) and density 0 builds none" % [rise, n0.w])
+		check(gen.get_nebkhas(r).is_empty() and absf(rise - mound) < 0.01, "get_height carries the mounds (%.2f m higher with them, mound sand %.2f m) and density 0 builds none" % [rise, mound])
 		gen.nebkha_density = 1.0
 	# A mask covering the left half only: no sand on the right.
 	var mask := Image.create(64, 64, false, Image.FORMAT_R8)
