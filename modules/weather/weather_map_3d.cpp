@@ -1935,6 +1935,10 @@ void WeatherMap3D::set_cloud_shear(float p_scale) {
 	cloud_shear = MAX(p_scale, 0.0f);
 }
 
+void WeatherMap3D::set_cloud_size_mix(float p_mix) {
+	cloud_size_mix = CLAMP(p_mix, 0.0f, 1.0f);
+}
+
 void WeatherMap3D::set_cloud_churn(float p_speed) {
 	cloud_churn = MAX(p_speed, 0.0f);
 }
@@ -1993,6 +1997,7 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 			st.shear = shear / s * lean;
 		}
 	}
+	st.size_mix = cloud_size_mix;
 	st.evolve = _cloud_evolve();
 	if (cloud_evolution) {
 		// The shape noise's second read slides against the first at cloud_churn (m/s, in its own texture's
@@ -2632,6 +2637,8 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_cloud_lifetime"), &WeatherMap3D::get_cloud_lifetime);
 	ClassDB::bind_method(D_METHOD("set_cloud_shear", "scale"), &WeatherMap3D::set_cloud_shear);
 	ClassDB::bind_method(D_METHOD("get_cloud_shear"), &WeatherMap3D::get_cloud_shear);
+	ClassDB::bind_method(D_METHOD("set_cloud_size_mix", "mix"), &WeatherMap3D::set_cloud_size_mix);
+	ClassDB::bind_method(D_METHOD("get_cloud_size_mix"), &WeatherMap3D::get_cloud_size_mix);
 	ClassDB::bind_method(D_METHOD("set_cloud_churn", "speed"), &WeatherMap3D::set_cloud_churn);
 	ClassDB::bind_method(D_METHOD("get_cloud_churn"), &WeatherMap3D::get_cloud_churn);
 	ClassDB::bind_method(D_METHOD("set_cloud_time", "seconds"), &WeatherMap3D::set_cloud_time);
@@ -2723,6 +2730,7 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_lifetime", PROPERTY_HINT_RANGE, "0,7200,1,or_greater,suffix:s"), "set_cloud_lifetime", "get_cloud_lifetime");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_churn", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:m/s"), "set_cloud_churn", "get_cloud_churn");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_shear", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater"), "set_cloud_shear", "get_cloud_shear");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_size_mix", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_cloud_size_mix", "get_cloud_size_mix");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_shadow_extent", PROPERTY_HINT_RANGE, "16,100000,1,or_greater,suffix:m"), "set_cloud_shadow_extent", "get_cloud_shadow_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "cloud_shadow_resolution", PROPERTY_HINT_RANGE, "16,2048,1"), "set_cloud_shadow_resolution", "get_cloud_shadow_resolution");

@@ -609,6 +609,7 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	rs->material_set_param(m, "cloud_shape_scale", p_state.shape_scale);
 	rs->material_set_param(m, "cloud_drift", p_state.drift);
 	rs->material_set_param(m, "cloud_shear", p_state.shear);
+	rs->material_set_param(m, "cloud_size_mix", p_state.size_mix);
 	rs->material_set_param(m, "cloud_evolve", p_state.evolve);
 	rs->material_set_param(m, "cloud_churn", Vector3(p_state.shift.x, p_state.shift.y, p_state.rise_detail));
 	rs->material_set_param(m, "cloud_storm_count", p_state.storm_count);
