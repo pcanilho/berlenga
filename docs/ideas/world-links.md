@@ -126,7 +126,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Fire → trees (crowns killed stand as snags, which weaken with the years) | linked (19 Nov) | WorldFire `crown_scorch_at`, `burn_age_at` | PhysX c15a10b7: TreeWind3D kills trees scorched to the crown; snags weaken by burn age |
 | Terrain wind (lee of a ridge) → fire whirls | linked (18 Nov) | WorldWeather `terrain_lee_at` (Winstral Sx) | PhysX c3c529f4: lee-slope whirls form where the wind has separated behind a crest, driven by the ridge's free wind |
 | Fire → ash on burnt grass, litter | linked (18 Nov) | fire_char_map (`VegetationFire::ASH_CODE`) | PhysX c3c529f4: white ash where it burnt out, black char where not, thinned by wind and darkened by rain |
-| Fire → regrowth (burnt ground greens again) | in work | WorldFire `burn_age_at` (fires in play, WorldBurnScar3D) | contract, scar node and fires in play (PhysX c15a10b7) in; VegetationField3D then GrassField3D read it |
+| Fire → regrowth (burnt ground greens again) | linked (19 Nov), grass to come | WorldFire `burn_age_at` (fires in play, WorldBurnScar3D) | VegetationField3D: RULE_BURN_AGE, PlantSpecies.burn_recovery (38c29f47); GrassField3D green-up still to come |
 | Burnt ground → runoff (water-repellent soil, ash washed off) | linked (19 Nov) | WorldFire `water_repellency_at`, WorldGround `runoff_at` | PhysX 837fea90 |
 | Ash, silt runoff → stream colour | in work | WorldWater `add_sediment`, `sediment_at` | contract in (world links); rivers and lakes carry and shade it (Valence); runoff delivers the load where it reaches water |
 | Weather wind → free-standing Flow smoke | linked (18 Nov) | wind | `PhysXFlow3D.weather_wind` (wind work) |
