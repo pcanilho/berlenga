@@ -3746,6 +3746,17 @@
    "topic": ""
   },
   {
+   "name": "Wet tracks",
+   "settings": [
+    "WeatherMap3D.wet_tracks"
+   ],
+   "note": "",
+   "what": "bodies and vehicles coming out of water, wet mud or puddles leave wet footprints and tyre tracks that fade along the way, drip where they stand, and dry with the weather.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Contact wetness",
    "settings": [
     "contact_wetness_enabled"
