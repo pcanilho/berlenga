@@ -49,9 +49,15 @@ struct DesertSprings {
 	static constexpr float RISE = 1.0f; // m the water stands above the hollow's floor.
 	static constexpr float ROOT_REACH = 5.0f; // m above the water where the wetness reaches 0.
 	static constexpr float REACH = 250.0f; // m from a spring where it reaches 0.
+	// Discharge: a hollow cuts into the water table, and the deeper the cut the more head drives the seep (Darcy:
+	// flow grows with the head). DISCHARGE L/s at MIN_HOLLOW, in proportion to the depth, within the bounds.
+	static constexpr float DISCHARGE = 0.05f;
+	static constexpr float DISCHARGE_MIN = 0.02f;
+	static constexpr float DISCHARGE_MAX = 0.5f;
 
 	LocalVector<float> wet; // 0 dry to 1 wet; -1 off the sand sea.
 	LocalVector<Vector3> springs; // x, water level, z.
+	LocalVector<float> discharge; // L/s, one per spring.
 	Rect2 rect;
 	int nx = 0;
 	int ny = 0;

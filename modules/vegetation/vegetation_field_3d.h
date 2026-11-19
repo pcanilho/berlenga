@@ -406,6 +406,10 @@ private:
 	LocalVector<StreamJob *> stream_jobs;
 	PlaceSetup stream_setup;
 	bool stream_setup_valid = false;
+	// Still shots: once streaming round the camera has settled, no more streaming until it moves 0.5 m.
+	bool still_shot = false;
+	bool still_frozen = false;
+	Vector3 still_at;
 	ObjectID hole_source; // The generator whose holes_changed this field follows.
 	Rect2 holes_dirty; // Ground opened or closed since the streamed tiles were placed (no area: none).
 	void _follow_holes(TerrainDataMap3D *p_map);
@@ -622,6 +626,12 @@ public:
 	float get_stream_maps_radius() const { return stream_maps_radius; }
 	int get_stream_tile_count() const { return stream_tiles.size(); }
 	bool is_stream_idle() const { return stream_idle; }
+	void set_still_shot(bool p_enabled) {
+		still_shot = p_enabled;
+		still_frozen = false;
+	}
+	bool is_still_shot() const { return still_shot; }
+	bool is_still_frozen() const { return still_frozen; }
 	Dictionary get_stream_stats();
 
 	Error populate();
@@ -657,5 +667,5 @@ public:
 	static constexpr float LITTER_SPREAD = 6.0f; // Metres: the drift's e-folding distance past a crown's edge.
 	float get_litter_at(const Vector3 &p_global_position) const;
 	float get_spring_wetness_at(const Vector3 &p_global_position) const { return springs_seen.at(Vector2(p_global_position.x, p_global_position.z)); }
-	PackedVector3Array get_springs() const;
+	PackedVector4Array get_springs() const;
 };

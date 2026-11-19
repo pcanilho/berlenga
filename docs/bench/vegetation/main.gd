@@ -770,7 +770,9 @@ func _oasis_checks(ground: VegetationField3D, dset: Array[PlantSpecies], cam: Ca
 	_check("oasis: a spring found in the sand sea's hollows", springs.size() >= 1, [springs.size()])
 	if springs.is_empty():
 		return
-	var sp: Vector3 = springs[0]
+	var sp4: Vector4 = springs[0]
+	var sp := Vector3(sp4.x, sp4.y, sp4.z)
+	_check("oasis: the spring's discharge is in range (L/s)", sp4.w >= 0.02 and sp4.w <= 0.5, [sp4.w])
 	# The wet ground round it, on a 4 m grid: area wet enough for palms, the shrub ring's, and the sand under the palms.
 	var a_palm := 0
 	var a_ring := 0

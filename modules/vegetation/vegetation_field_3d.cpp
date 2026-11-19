@@ -385,10 +385,11 @@ void VegetationField3D::_read_sand_mobility(const TerrainGenerator3D *p_gen, Pla
 	r_setup.sea_depth = depth;
 }
 
-PackedVector3Array VegetationField3D::get_springs() const {
-	PackedVector3Array out;
-	for (const Vector3 &p : springs_seen.springs) {
-		out.push_back(p);
+PackedVector4Array VegetationField3D::get_springs() const {
+	PackedVector4Array out;
+	for (uint32_t i = 0; i < springs_seen.springs.size(); i++) {
+		const Vector3 &p = springs_seen.springs[i];
+		out.push_back(Vector4(p.x, p.y, p.z, springs_seen.discharge[i]));
 	}
 	return out;
 }
@@ -4243,7 +4244,18 @@ void VegetationField3D::_notification(int p_what) {
 			}
 			_follow_burns(get_process_delta_time());
 			if (streaming) {
-				_stream_update(get_process_delta_time());
+				if (still_shot && still_frozen && _stream_centre().distance_to(still_at) >= 0.5f) {
+					still_frozen = false;
+				}
+				if (!(still_shot && still_frozen)) {
+					_stream_update(get_process_delta_time());
+					if (still_shot && stream_idle && stream_setup_valid) {
+						// Settled: freeze, and drop the placement patterns (rebuilt if it moves on).
+						still_frozen = true;
+						still_at = _stream_centre();
+						patterns.clear();
+					}
+				}
 			}
 			if (!lazy_near.is_empty()) {
 				_lazy_near_update(_stream_centre());
@@ -4467,6 +4479,10 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_stream_maps_radius"), &VegetationField3D::get_stream_maps_radius);
 	ClassDB::bind_method(D_METHOD("get_stream_tile_count"), &VegetationField3D::get_stream_tile_count);
 	ClassDB::bind_method(D_METHOD("is_stream_idle"), &VegetationField3D::is_stream_idle);
+	ClassDB::bind_method(D_METHOD("set_still_shot", "enabled"), &VegetationField3D::set_still_shot);
+	ClassDB::bind_method(D_METHOD("is_still_shot"), &VegetationField3D::is_still_shot);
+	ClassDB::bind_method(D_METHOD("is_still_frozen"), &VegetationField3D::is_still_frozen);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "still_shot"), "set_still_shot", "is_still_shot");
 	ClassDB::bind_method(D_METHOD("get_stream_stats"), &VegetationField3D::get_stream_stats);
 
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "biome", PROPERTY_HINT_RESOURCE_TYPE, "Biome"), "set_biome", "get_biome");

@@ -37,6 +37,7 @@
 void DesertSprings::clear() {
 	wet.clear();
 	springs.clear();
+	discharge.clear();
 	nx = 0;
 	ny = 0;
 }
@@ -134,6 +135,7 @@ void DesertSprings::build(const TerrainGenerator3D *p_gen) {
 		}
 		if (!near) {
 			springs.push_back(Vector3(p.x, h[c.i] + RISE, p.y));
+			discharge.push_back(CLAMP(DISCHARGE * c.hollow / MIN_HOLLOW, DISCHARGE_MIN, DISCHARGE_MAX));
 		}
 	}
 	// Wetness: the best of the springs within reach, by the ground's height over its water and the distance.

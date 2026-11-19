@@ -48,9 +48,9 @@
 			</description>
 		</method>
 		<method name="get_springs" qualifiers="const">
-			<return type="PackedVector3Array" />
+			<return type="PackedVector4Array" />
 			<description>
-				The desert springs found with the last placement: x, the water's level and z each. For the water and terrain systems to put a pool there. Empty unless a species uses [constant PlantSpecies.RULE_SPRING].
+				The desert springs found with the last placement: x, the water's level, z and the discharge in litres a second (w) each. The discharge is 0.05 L/s for the shallowest hollow that holds a spring and grows with the hollow's depth, from 0.02 to 0.5 L/s. For the water and terrain systems to put a pool there. Empty unless a species uses [constant PlantSpecies.RULE_SPRING].
 			</description>
 		</method>
 		<method name="get_stream_stats">
@@ -72,6 +72,12 @@
 			<param index="2" name="height" type="float" default="4.0" />
 			<description>
 				Returns the placed trees within [param radius] metres of [param center] whose meshes carry TreeGenerator's [code]tree_colliders[/code], each once, as a [Dictionary]: [code]base[/code], [code]up[/code] (the trunk's axis), [code]height[/code], [code]radius_base[/code], [code]radius_top[/code], [code]segments[/code] (the trunk's capsules up to [param height] metres, each [code][a, b, radius][/code]), all in world space; [code]preset[/code] (the species' [code]preset[/code] meta), [code]species[/code], [code]variant[/code], [code]basis[/code], [code]custom[/code] (the instance's custom data) and [code]seed[/code] (from where it stands). For close-up bark detail.
+			</description>
+		</method>
+		<method name="is_still_frozen" qualifiers="const">
+			<return type="bool" />
+			<description>
+				With [member still_shot]: [code]true[/code] once it has settled and stopped updating.
 			</description>
 		</method>
 		<method name="is_stream_idle" qualifiers="const">
@@ -291,6 +297,9 @@
 		</member>
 		<member name="obstacles" type="PackedVector4Array" setter="set_obstacles" getter="get_obstacles" default="PackedVector4Array()">
 			Rocks on the ground that no plant grows through: each a disc (x, ground y, z, radius), the radius where the rock meets the soil, for example from [method TerrainGenerator3D.get_boulders]. A ground plant's stem keeps 3 cm off a rock, a tree's trunk foot and a log's length keep clear of it. A ground plant's leaves reach at most 8 cm in over a rock's foot: one that would reach farther grows smaller and leans away from the rock (down to 45% of its size), or is not placed. Give the widest radius of a rock that bulges out above the soil. Give the same list to the [GrassField3D] layers. Takes effect at the next [method populate].
+		</member>
+		<member name="still_shot" type="bool" setter="set_still_shot" getter="is_still_shot" default="false">
+			For still shots on a tight memory budget: once [member streaming] has settled round its centre, the field stops streaming and drops its placement patterns until the centre moves 0.5 m. [method is_still_frozen] says when it has settled.
 		</member>
 		<member name="stone_top_normals" type="PackedVector3Array" setter="set_stone_top_normals" getter="get_stone_top_normals" default="PackedVector3Array()">
 			Optional, one per [member stone_tops] entry: the surface normal of each cap, measured on the stone (for example by a ray down onto its collision hull). With them, a cap is a flat patch of the stone's surface: a plant there is set on the plane through the cap's point and tilted to its normal, which fits sloping and flat stone faces; give a cap radius only as wide as the surface stays within about a centimetre of that plane. Ignored unless it has as many entries as [member stone_tops]. Takes effect at the next [method populate].
