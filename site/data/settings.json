@@ -3975,7 +3975,7 @@
     "collapse_share"
    ],
    "note": "",
-   "what": "wooden buildings catch from embers and ground fire; rooms flash over, the window glass breaks into falling shards and flames lean out (`glass_panes`), fire spreads room to room, ceilings and roofs sag and fall in, and the frame collapses. A hose or fluid water knocks a room back below flashover and puts it out, with steam pouring from its windows; a weak stream only holds it (`apply_water()`).",
+   "what": "wooden buildings catch from embers and ground fire; rooms flash over, the window glass breaks into falling shards (`glass_panes`) and flames run up the wall above as sheets bent by the wind; wind blows in through windward openings, pushes hot gas through the doors and drives the flames out to leeward; fire spreads room to room, ceilings and roofs sag and fall in, and the frame collapses. Burnt-out rooms smoulder for hours, smoking and shedding embers in the wind, and can rekindle. A hose or fluid water knocks a room back below flashover and puts it out, with steam pouring from its windows; a weak stream only holds it (`apply_water()`).",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
