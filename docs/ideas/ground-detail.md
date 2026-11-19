@@ -635,3 +635,61 @@ cached per MultiMesh, `_shared_merged_mm_handle`, and each RS instance over it i
 - On (19 Nov, with `rock_tile_plane`): shore top view path traced at 640, TLAS 73,848 without tiles to 47,324 with
   (36 % fewer), mean colour within 1 of 255 per channel; raster eye level 1.5 % brighter low in the frame (the tile
   plane's blend band where the plane sits a little over the ground).
+
+## Tiles shared across cells (round 4, 19 Nov)
+
+Paulo picked three follow-ups in order: share tiles across cells, tiles on bumpy ground, drop sub-pixel stones in ray
+tracing. This is the first.
+
+**Today.** Each detail cell cuts up to four tiles from its own squares and drops any tile used only once. On the
+shore view that is about 115 tiles for about 400 placements: 2.5 M triangles baked into tile BLAS (about 150 MB), and
+roughly a third of the eligible squares stay single because their cell had no matching cut left.
+
+**How others do it.**
+- Peytavie, Galin, Grosjean, Merillou 2009, *Procedural Generation of Rock Piles using Aperiodic Tiling*: a small
+  precomputed set of pile tiles reused over the whole terrain. The tile set is built once per pile type, never per
+  area, and variety comes from the set size and the aperiodic choice.
+- Lagae and Dutre (tile-based methods, Wang and corner tiles): a few tiles per class, chosen per square by a hash, so
+  the choice depends only on where the square is.
+- Instancing in ray tracing (Moana on the GPU, Kim 2025; DXR clustered geometry and partitioned TLAS preview, Oct
+  2026; UE Nanite assemblies; NVIDIA vk_partitioned_tlas sample): build each template's BLAS once and keep many
+  instances of it. Memory goes with the number of templates, not the number of uses.
+
+**As built (19 Nov).** The first design (one anchor cell per 4 x 4 block) gave no saving: the anchor often sat off
+the shore band (no pebble tiles at all), and each block's tiles went unshared outside the few cells in view. What
+works:
+- One set per block of 16 x 16 detail cells (128, 64 and 32 m for pebble, gravel and fine).
+- Stratified sampling: the block in 16 x 16 parts, one square from each, the first of eight hashed tries there with
+  grains to tile, each placed on its own without the coarse stones round it. A pure function of the block, the seed and
+  the ground, so streaming order never changes the tiles and raster and path-traced runs match.
+- Thinned to a cover: a sample is kept only while fewer than three kept ones match it, so each kind of ground has a
+  few tiles.
+- Matching uses what a square already varies by chance: grain count within 1.5 Poisson standard errors (never under
+  15%), mean log size within 1.5 standard errors of its spread (never under 0.12), rock shares within 1.5 binomial
+  errors (never under 0.08), wetness within 0.15.
+- A square picks by its hash from its first two matches, past them only when a neighbour has one, at most six times a
+  cell; squares with no match still cut their own (now 3 to 6 tiles in view instead of about 115).
+- Each candidate's MultiMesh and BLAS are built when a placement first takes it.
+
+Shore view, 1280 x 720 top: before 115 tiles, 2.5 M triangles baked, 66 to 69 k grains drawn by tiles. Now about 70
+tiles (66 shared, 3 own), 1.83 M triangles, 82 k grains drawn by tiles (71% of the field), 515 placements. Tile BLAS
+memory down about 27% while a fifth more ground is tiled; per tiled grain about 40% less. The colour and density
+match the untiled field closely (a rock-share test keeps mixed squares' colours).
+
+**Design (first version, superseded above).**
+- One tile set per block of 4 x 4 detail cells (32, 16 and 8 m for pebble, gravel and fine). It is cut from one anchor
+  cell, picked by a hash of the block, so it carries the block's own rocks, sizes and wetness.
+- The anchor is placed without the coarse stones round it (they only shape grains near those stones, and tile squares
+  stay clear of them). That makes the set a pure function of the block, the seed and the ground, the same whatever
+  order cells stream in, so raster and path-traced runs show the same tiles.
+- Every eligible anchor square becomes a candidate (up to 16). A square of any cell in the block takes a matching
+  candidate (same rocks, count within 0.85 to 1.18, log size within 0.12, wetness within 0.15) chosen by its own hash,
+  never the same one as its left or upper neighbour, at most four times per cell, turned by a random quarter turn.
+- Squares that match no shared candidate fall back to today's own cuts.
+- A candidate's MultiMesh and BLAS are built only when a placement first uses it, and freed with the set when the last
+  cell of the block leaves.
+- The first cell to need a block's set computes it on its worker; the block's other cells wait for it rather than
+  repeat it.
+
+**Expected.** Up to 16 shared tiles per block instead of up to 64 own cuts, and each cell has up to 16 candidates
+instead of 4, so more squares take a tile and each cell shows more different tiles than today.
