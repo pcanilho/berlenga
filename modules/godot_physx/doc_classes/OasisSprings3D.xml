@@ -29,7 +29,7 @@
 			<return type="PhysXWaterSurface3D" />
 			<param index="0" name="index" type="int" />
 			<description>
-				The pool at [param index], a [PhysXWaterSurface3D] (an internal child).
+				The pool at [param index], a [PhysXWaterSurface3D] (an internal child). [code]null[/code] where the ground over the spring is not hollowed below its level (the floor found above the water at the spring and at the pool's centre): no pool or boils are drawn there, and a warning names the spring. [method TerrainGenerator3D.carve_oases] carves it and rebuilds the pools.
 			</description>
 		</method>
 		<method name="get_pool_area" qualifiers="const">

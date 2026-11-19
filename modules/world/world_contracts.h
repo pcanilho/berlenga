@@ -209,6 +209,13 @@ public:
 	virtual void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) {}
 	virtual void contract_water_clear(uint64_t p_owner) {}
 	virtual void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) {}
+	// An impulse wave in metres and seconds (a landslide, avalanche, calving or rockfall entering the water): one
+	// crest and trough p_height high (crest to trough), p_period long, its crest p_width wide, setting off from the
+	// point along p_direction. A producer that cannot carry one gets a splash of the crest's height there.
+	virtual void contract_water_wave(const Vector3 &p_position, const Vector3 &p_direction, float p_height, float p_period, float p_width) {
+		const float r = MAX(0.5f * p_width, 0.5f);
+		contract_water_impulse(p_position, r, 0.5f * MAX(p_height, 0.0f) / r);
+	}
 	// Suspended load (kg/m3): x mineral (silt, clay: brown), y ash and char (grey to black). Zero for clear water.
 	virtual Vector2 contract_water_sediment_at(const Vector3 &p_position) const { return Vector2(); }
 	// Height of the waves breaking at the point (m): the broken waves in the surf zone, whitecaps (cover times wave
@@ -238,6 +245,7 @@ protected:
 	GDVIRTUAL4(_disturb, uint64_t, Vector3, float, float)
 	GDVIRTUAL1(_clear, uint64_t)
 	GDVIRTUAL3(_impulse, Vector3, float, float)
+	GDVIRTUAL5(_wave, Vector3, Vector3, float, float, float)
 	GDVIRTUAL1RC(Vector2, _sediment_at, Vector3)
 	GDVIRTUAL1RC(float, _breaking_at, Vector3)
 	GDVIRTUAL3(_add_sediment, Vector3, float, float)
@@ -255,6 +263,9 @@ public:
 	void disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength);
 	void clear(uint64_t p_owner);
 	void impulse(const Vector3 &p_position, float p_radius, float p_strength);
+	// An impulse wave (m and s) from the point along the direction, given to every producer with water there: a
+	// landslide's, an avalanche's or calving ice's (height crest to trough, its period, the crest's width).
+	void wave(const Vector3 &p_position, const Vector3 &p_direction, float p_height, float p_period, float p_width);
 	// The water's suspended load at the point (kg/m3): x mineral, y ash and char; the shading clouds and darkens by it.
 	Vector2 sediment_at(const Vector3 &p_position) const;
 	// Height of the waves breaking at the point (m), the largest any producer reports; 0 where none break.

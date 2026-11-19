@@ -530,7 +530,31 @@ void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
 				deposited_volume += depth * cell * cell;
 				// The cover holds what was last written here; it may be less than the flow brought since.
 				written.write[i] = written[i] - h[i];
-				deposit.write[i] = deposit[i] + h[i];
+				// It comes to rest over its neighbours too, half here and an eighth on each side (as the end of the
+				// run smooths the deposit): the grid's 2 m is finer than a debris lobe, and a cell dropping its whole
+				// load alone stands as a column among snow still creeping past. The neighbours' share is written
+				// into the cover by the next flush (it reads as written below what is there).
+				{
+					float kept = h[i];
+					const int nb4[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+					for (const auto &o : nb4) {
+						const int xx = x + o[0], zz = z + o[1];
+						if (xx < 0 || zz < 0 || xx >= n || zz >= n || _cover_index(p_cover, zz * n + xx) < 0) {
+							continue;
+						}
+						const int j = zz * n + xx;
+						const float share = 0.125f * h[i];
+						deposit.write[j] = deposit[j] + share;
+						written.write[j] = written[j] - share; // the flush adds it to the cover
+						kept -= share;
+					}
+					// What leaves this cell is in its cover cell already: take it out there.
+					const float moved = h[i] - kept;
+					if (moved > 0.0f) {
+						written.write[i] = written[i] + moved;
+					}
+					deposit.write[i] = deposit[i] + kept;
+				}
 				h.write[i] = 0.0f;
 				hu.write[i] = 0.0f;
 				hv.write[i] = 0.0f;
@@ -794,6 +818,87 @@ void SnowAvalanche3D::_flush(SnowCover3D *p_cover) {
 	}
 }
 
+void SnowAvalanche3D::_slump(SnowCover3D *p_cover, int p_passes) {
+	// Debris that has stopped while the rest still runs slumps to its angle of repose (talus relaxation, as at the
+	// end of the run): a cell that stops on a slow margin drops its whole load as a column, and no column of debris
+	// stands above its neighbours, moving or not. Only stopped debris gives, even with moving snow over it; it may
+	// land under moving snow.
+	const int n = res;
+	if (deposit.size() != n * n) {
+		return;
+	}
+	const float repose = Math::tan(Math::deg_to_rad(Math::lerp(32.0f, 40.0f, run_wet))) * cell;
+	Vector<float> top;
+	top.resize(n * n);
+	for (int i = 0; i < n * n; i++) {
+		const int ci = _cover_index(p_cover, i);
+		top.write[i] = ci < 0 ? Math::NaN : p_cover->cell_ground[ci] + MAX(p_cover->cell_swe[ci] - deposit[i] - written[i], 0.0f) / MAX(p_cover->cell_density[ci], 30.0f) + (deposit[i] + MAX(written[i], 0.0f)) / rho_run;
+	}
+	Vector<float> delta;
+	delta.resize(n * n);
+	delta.fill(0.0f);
+	bool any = false;
+	for (int pass = 0; pass < p_passes; pass++) {
+		bool moved = false;
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int i = z * n + x;
+				const float have = deposit[i] + delta[i];
+				if (have <= 0.0f || Math::is_nan(top[i])) {
+					continue;
+				}
+				const int nb[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+				for (const auto &o : nb) {
+					const int xx = x + o[0], zz = z + o[1];
+					if (xx < 0 || zz < 0 || xx >= n || zz >= n) {
+						continue;
+					}
+					const int j = zz * n + xx;
+					if (Math::is_nan(top[j])) {
+						continue;
+					}
+					const float step = top[i] - top[j] - repose;
+					if (step > 0.01f) {
+						const float give = MIN(0.25f * step * rho_run, 0.25f * (deposit[i] + delta[i]));
+						delta.write[i] -= give;
+						delta.write[j] += give;
+						top.write[i] -= give / rho_run;
+						top.write[j] += give / rho_run;
+						moved = true;
+					}
+				}
+			}
+		}
+		any = any || moved;
+		if (!moved) {
+			break;
+		}
+	}
+	if (!any) {
+		return;
+	}
+	for (int i = 0; i < n * n; i++) {
+		const float d = delta[i];
+		if (Math::abs(d) < 1e-4f) {
+			continue;
+		}
+		const int ci = _cover_index(p_cover, i);
+		if (ci < 0) {
+			continue;
+		}
+		deposit.write[i] = MAX(deposit[i] + d, 0.0f);
+		const float swe_old = MAX(p_cover->cell_swe[ci], 0.0f);
+		const float swe_new = MAX(swe_old + d, 0.0f);
+		if (d > 0.0f) {
+			const float depth = (swe_old > 0.01f ? swe_old / MAX(p_cover->cell_density[ci], 30.0f) : 0.0f) + d / rho_run;
+			p_cover->cell_density.write[ci] = CLAMP(swe_new / MAX(depth, 1.0e-6f), 30.0f, 917.0f);
+		}
+		p_cover->cell_swe.write[ci] = swe_new;
+	}
+	p_cover->update_count++;
+	p_cover->_upload();
+}
+
 void SnowAvalanche3D::_hit_bodies(SnowCover3D *p_cover) {
 	// Bodies in the flow take its dynamic pressure, 1/2 rho u^2, on about their width times the flow's depth.
 	SnowBodies3D *bodies = p_cover->get_bodies();
@@ -1002,6 +1107,7 @@ void SnowAvalanche3D::step(double p_delta) {
 	if (flush_accum >= FLUSH_INTERVAL) {
 		flush_accum = 0.0;
 		_flush(cover);
+		_slump(cover, 4);
 	}
 }
 

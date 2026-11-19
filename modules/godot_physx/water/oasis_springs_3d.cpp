@@ -127,9 +127,9 @@ void fragment() {
 	// with pale, clean sand. sand_color is the bed's own (under water, as the ground round it draws it), so the
 	// apron fades into the bed with no patch.
 	float g = 0.87 + 0.26 * vnoise(v_world.xz * 7.0) + 0.22 * (hash12(floor(v_world.xz * 220.0)) - 0.5);
-	float throat = 1.0 - smoothstep(0.15, 0.7, v_r);
+	float throat = 1.0 - smoothstep(0.2, 0.8, v_r);
 	float lip = exp(-pow((v_r - 1.0) / 0.4, 2.0));
-	vec3 c = sand_color * g * (1.0 - 0.1 * lip) * mix(1.0, mix(0.45, 1.1, v_pulse), throat);
+	vec3 c = sand_color * g * (1.0 - 0.1 * lip) * mix(1.0, mix(0.3, 1.05, v_pulse), throat);
 	ALBEDO = c;
 	ROUGHNESS = 0.9;
 }
@@ -353,6 +353,18 @@ void OasisSprings3D::_rebuild() {
 		pool->set_crest_spray(false);
 		add_child(pool, false, INTERNAL_MODE_FRONT);
 		pool->set_global_position(s.pool_centre);
+		// Spring water: groundwater out of sandstone carries no dissolved organic matter and few particles, so it is
+		// near pure water (Pope and Fry 1997: about 0.36, 0.065 and 0.02 per metre in red, green and blue), much
+		// clearer than the coastal default. Raster and the path tracer both read it.
+		Ref<ShaderMaterial> wm = pool->get_water_material();
+		if (wm.is_valid()) {
+			wm->set_shader_parameter(SNAME("pathtraced_absorption"), Vector3(0.36f, 0.065f, 0.02f));
+			wm->set_shader_parameter(SNAME("pathtraced_scattering"), Vector3(0.012f, 0.014f, 0.018f));
+			// Still water: no swash, so no foam rim at the edge. The wet margin (capillary rise, a hand or two up the
+			// beach) is the ground's to draw, so it shows alike in raster and the path tracer, which draws no film.
+			wm->set_shader_parameter(SNAME("shore_rim_strength"), 0.0f);
+			wm->set_shader_parameter(SNAME("wet_sand_color"), Color(0.16f, 0.12f, 0.07f, 0.0f));
+		}
 		s.pool = pool;
 
 		// One to three vents a pace or two apart (their discs never overlap): springs seldom rise through one eye.
@@ -363,11 +375,12 @@ void OasisSprings3D::_rebuild() {
 			if (i > 0) {
 				// The second to one side of the first, the third across from it (at least 120 degrees apart).
 				const float a = a0 + (i == 1 ? 0.0f : Math::PI + Math::lerp(-1.0f, 1.0f, rng.randf()));
-				const float d = Math::lerp(1.05f, 1.6f, rng.randf()) * 2.0f * boil_radius * BOIL_EXTENT;
+				const float d = Math::lerp(1.05f, 1.6f, rng.randf()) * 2.0f * 1.45f * boil_radius * BOIL_EXTENT;
 				at += Vector3(Math::cos(a) * d, 0.0f, Math::sin(a) * d);
 			}
 			s.vents.push_back(at);
 			s.vent_phase.push_back(rng.randf() * Math::TAU);
+			s.vent_scale.push_back(Math::lerp(0.65f, 1.45f, rng.randf()));
 		}
 		built.push_back(s);
 	}
@@ -381,32 +394,43 @@ void OasisSprings3D::_place_vents() {
 	if (boil_material.is_null()) {
 		boil_material = _boil_shader_material();
 	}
-	const float rmax = boil_radius * BOIL_EXTENT;
 	for (Spring &s : built) {
-		for (uint32_t vi = 0; vi < s.vents.size(); vi++) {
-			Vector3 &vent = s.vents[vi];
-			auto bed_at = [&](const Vector3 &p) -> float {
-				const float fallback = s.position.y - fallback_depth;
-				if (space == nullptr || !seabed_from_floor) {
-					return fallback;
-				}
-				PhysicsDirectSpaceState3D::RayParameters ray;
-				ray.from = Vector3(p.x, s.position.y + 2.0f, p.z);
-				ray.to = Vector3(p.x, s.position.y - 60.0f, p.z);
-				ray.collision_mask = seabed_collision_mask;
-				ray.collide_with_areas = false;
-				for (int skip = 0; skip < 4; skip++) {
-					PhysicsDirectSpaceState3D::RayResult result;
-					if (!space->intersect_ray(ray, result)) {
-						break;
-					}
-					if (ps->body_get_mode(result.rid) == PhysicsServer3D::BODY_MODE_STATIC) {
-						return result.position.y;
-					}
-					ray.exclude.insert(result.rid);
-				}
+		auto bed_at = [&](const Vector3 &p, float above = 2.0f) -> float {
+			const float fallback = s.position.y - fallback_depth;
+			if (space == nullptr || !seabed_from_floor) {
 				return fallback;
-			};
+			}
+			PhysicsDirectSpaceState3D::RayParameters ray;
+			ray.from = Vector3(p.x, s.position.y + above, p.z);
+			ray.to = Vector3(p.x, s.position.y - 60.0f, p.z);
+			ray.collision_mask = seabed_collision_mask;
+			ray.collide_with_areas = false;
+			for (int skip = 0; skip < 4; skip++) {
+				PhysicsDirectSpaceState3D::RayResult result;
+				if (!space->intersect_ray(ray, result)) {
+					break;
+				}
+				if (ps->body_get_mode(result.rid) == PhysicsServer3D::BODY_MODE_STATIC) {
+					return result.position.y;
+				}
+				ray.exclude.insert(result.rid);
+			}
+			return fallback;
+		};
+		// Ground not carved for the spring (the floor found above the water at the eye and at the pool's centre):
+		// no pool. Its sheet would lie on the sand as a wet film with a dark rim, and boils have no bed to sit in.
+		// A later rebuild (as TerrainGenerator3D.carve_oases() makes) places it again.
+		// From high up: an uncarved dune can stand metres over the level, and a ray starting inside it finds no floor.
+		if (s.pool != nullptr && bed_at(s.position, 40.0f) >= s.position.y - 0.05f && bed_at(s.pool_centre, 40.0f) >= s.position.y - 0.05f) {
+			WARN_PRINT(vformat("OasisSprings3D: the ground over the spring at %s is not hollowed below its level (%.2f m); no pool there. Carve it (TerrainGenerator3D.carve_oases()) or lower the spring.", s.position, s.position.y));
+			s.pool->queue_free();
+			s.pool = nullptr;
+			continue;
+		}
+		for (uint32_t vi = 0; vi < s.vents.size(); vi++) {
+			const float radius = boil_radius * s.vent_scale[vi];
+			const float rmax = radius * BOIL_EXTENT;
+			Vector3 &vent = s.vents[vi];
 			vent.y = bed_at(vent);
 			if (vent.y >= s.position.y - 0.05f) {
 				continue; // dry here: the bed rises above the water
@@ -475,7 +499,7 @@ void OasisSprings3D::_place_vents() {
 			// Each boil its own copy: its phase and size.
 			Ref<ShaderMaterial> m = boil_material->duplicate();
 			m->set_shader_parameter(SNAME("sand_color"), sand_color);
-			m->set_shader_parameter(SNAME("boil_radius"), boil_radius);
+			m->set_shader_parameter(SNAME("boil_radius"), radius);
 			m->set_shader_parameter(SNAME("strength"), boil_strength);
 			m->set_shader_parameter(SNAME("phase"), s.vent_phase[vi]);
 			mesh->surface_set_material(0, m);
@@ -502,7 +526,7 @@ void OasisSprings3D::_pulse(double p_delta) {
 		for (uint32_t vi = 0; vi < s.vents.size(); vi++) {
 			const float ph = s.vent_phase[vi];
 			const float pulse = Math::pow(0.5f + 0.5f * Math::sin(t * 1.7f + ph + 1.3f * Math::sin(t * 0.37f + ph * 1.7f)), 3.0f);
-			const float radius = boil_radius * 2.5f;
+			const float radius = boil_radius * s.vent_scale[vi] * 2.5f;
 			const Vector3 at(s.vents[vi].x, s.position.y, s.vents[vi].z);
 			s.pool->submit_impulse(at, radius, 0.0025f * boil_strength * (0.3f + pulse));
 		}
