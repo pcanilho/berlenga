@@ -754,6 +754,20 @@ plain longer range costs, because each streamed tile's cells hold only the ranks
 plant shader and the impostor share the curve (vegetation_far_scale(), custom x: rank in the fraction, the tail's end
 in whole metres). Small items (detail_size) keep their pixel reach; non-streaming fields keep the old fade.
 
+Step 2, the far shell (VegetationField3D.far_shell, to far_shell_range 4 km): past the streamed plants every ranged
+species becomes one surface draped over the ground, the "canopy height model" of remote sensing: per cell each
+species' cover is its suitability (with its patches) times density times far_color alpha; the cell stands at 0.4 of
+their expected height by cover (lumped by a hash; low enough that GrassField3D's far rings and columns stand through
+it), in their mean drawn colour by cover (_mesh_albedo(): base_color times vertex colour with the shader's worn-tissue
+yellowing, so a summer sward is gold, not its leaves' green), darkened for the shade between tops and mottled at 3 m
+and 23 m. Corners take the mean of the cells round them, so it thins down into the ground with no boxes (the first
+try, voxel-like columns, read as scattered blocks). Cells 2 m to 400 m, 8 m to 1600 m, 32 m past it; it rises out of
+the ground from 0.6 of where the plants stream. Shade-needing, sand, coast and pool species are left out.
+
+What it does not replace: a sward's blades. Paulo's montado frame (19 Nov) was bald past 60 m because the floor set
+alone has no GrassField3D; with the summer sward (rings to 250 m, columns to 500 m) blades show to the horizon. The
+scene wires the sward under the cork and pine stands.
+
 ## Mediterranean woodland ground layer (audit 19 Nov; card to Paulo)
 
 The showcase's cork oak stand stands on bare sand with litter: every other forest has a floor set, the cork oak and
