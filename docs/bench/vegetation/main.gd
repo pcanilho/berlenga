@@ -366,7 +366,7 @@ func _floor_view() -> void:
 		sward.dryness = 0.85
 		sward.base_color = Color(0.32, 0.27, 0.13)
 		sward.tip_color = Color(0.78, 0.66, 0.38)
-		sward.ground_tint_enabled = false
+		sward.ground_tint = Color(0.2, 0.16, 0.08, 1.0) # The thinned far blades' ground takes the sward's colour (as Ghost of Tsushima's terrain does).
 		add_child(sward)
 		sward.data_map = sward.get_path_to(dm)
 		sward.canopy_field = sward.get_path_to(wood)
@@ -2560,6 +2560,22 @@ void fragment() {
 		var smat := ShaderMaterial.new()
 		smat.shader = sh
 		mi.material_override = smat
+	elif floor_view > 0 and OS.get_environment("VEG_FLOOR_STAND") == "mediterranean" and OS.get_environment("VEG_FLOOR_SWARD") != "0":
+		# The montado's sward tints its ground (GrassField3D.get_ground_shader_code()), as the terrain material does:
+		# where its far blades thin, the ground between them takes their colour.
+		var gsh := Shader.new()
+		gsh.code = "shader_type spatial;\n" + GrassField3D.get_ground_shader_code() + """
+varying vec3 wp;
+void vertex() { wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
+void fragment() {
+	ALBEDO = grass_ground(wp, vec3(0.025, 0.013, 0.007));
+	ROUGHNESS = 0.95;
+	SPECULAR = grass_ground_specular(wp, 0.5);
+}
+"""
+		var gmat := ShaderMaterial.new()
+		gmat.shader = gsh
+		mi.material_override = gmat
 	add_child(mi)
 	var water := MeshInstance3D.new()
 	var wp := PlaneMesh.new()

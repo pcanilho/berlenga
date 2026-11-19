@@ -1310,9 +1310,10 @@ void fragment() {
 	fib *= 1.0 - smoothstep(0.3, 0.8, fw);
 	ROUGHNESS = mix(ROUGHNESS, max(ROUGHNESS, 0.8), v_soft);
 	{
-		vec3 ndx = dFdx(NORMAL);
-		vec3 ndy = dFdy(NORMAL);
-		float kernel = min(0.5 * (dot(ndx, ndx) + dot(ndy, ndy)), 0.18);
+		// fwidth(), not dFdx()/dFdy(): the path tracer's translation has only fwidth() (about zero there, where the
+		// samples do this). (|dx| + |dy|)^2 / 4 stands for the variance's 2 (dx^2 + dy^2) / 4.
+		vec3 nw = fwidth(NORMAL);
+		float kernel = min(0.25 * dot(nw, nw), 0.18);
 		float a = ROUGHNESS * ROUGHNESS;
 		ROUGHNESS = sqrt(sqrt(a * a + kernel));
 	}
@@ -1374,8 +1375,10 @@ void fragment() {
 }
 
 int GrassField3D::_lod_for(float p_distance) const {
+	// Full density over the inner half, then a half and a quarter (Ghost of Tsushima holds its blades' density far
+	// out and thins late; Wohllaib GDC 2021). The far rings carry on from the quarter.
 	const float f = p_distance / MAX(radius, 0.001f);
-	return f < 0.25f ? 0 : (f < 0.5f ? 1 : (f < 0.75f ? 2 : 3));
+	return f < 0.5f ? 0 : (f < 0.75f ? 1 : 2);
 }
 
 // The cereals (vegetation.md, farmland plan): modern straw lengths to the ear's base, ear and awn
@@ -2840,6 +2843,7 @@ namespace {
 constexpr float RING_TILE = 16.0f; // m, a level-0 tile; level L is 2^L times wider and holds as many blades.
 constexpr int RING_MAX_LEVEL = 8;
 constexpr float RING_WIDEN_MAX = 16.0f;
+constexpr float RING_BASE_SHARE = 4.0f; // The rings' density at their start: the near tiles' coarsest level.
 constexpr float RING_BUDGET_MSEC = 4.0f; // Ring tiles built a frame, past the first.
 
 uint32_t ring_child(int p_x, int p_z, int p_level) {
@@ -2888,7 +2892,7 @@ Ref<ArrayMesh> GrassField3D::_make_ring_mesh(int p_segments) const {
 	m->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
 	// Bent and widened in the shader: bounds for the tallest blade at the widest.
 	const float h = MAX(blade_height.x, blade_height.y) * 1.1f;
-	const float wd = blade_width * Math::sqrt(8.0f) * RING_WIDEN_MAX * 1.5f + h;
+	const float wd = blade_width * Math::sqrt(RING_BASE_SHARE) * RING_WIDEN_MAX * 1.5f + h;
 	m->set_custom_aabb(AABB(Vector3(-wd, -0.05f, -wd), Vector3(2.0f * wd, h + 0.1f, 2.0f * wd)));
 	m->surface_set_material(0, material);
 	return m;
@@ -3031,8 +3035,8 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 	const float ring_start = MAX(ring_band.x, 1.0f);
 	const float min_neg_log_rank = p_near > ring_start ? 2.0f * Math::log2(p_near / ring_start) : 0.0f;
 	const int level = p_key.z;
-	// The base density: the near tiles' coarsest level (an eighth), its cell fitted to the tile.
-	const float base_density = MAX(density, 0.01f) / 8.0f;
+	// The base density: the near tiles' coarsest level (a quarter, RING_BASE_SHARE), its cell fitted to the tile.
+	const float base_density = MAX(density, 0.01f) / RING_BASE_SHARE;
 	const int n = MAX(int(Math::ceil(RING_TILE * Math::sqrt(base_density))), 1);
 	const float cell0 = RING_TILE / float(n);
 	const float width0 = blade_width * Math::sqrt(MAX(density, 0.01f) / base_density);

@@ -2406,7 +2406,10 @@ Ref<StandardMaterial3D> VegetationField3D::_far_volume_mat() const {
 	if (mat.is_null()) {
 		mat.instantiate();
 		mat->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
-		mat->set_roughness(0.9f);
+		mat->set_roughness(1.0f);
+		// A leaf canopy's own sheen is broken up in its gaps: a smooth surface's sheen (specular 0.5) lit the far
+		// layer grey with the sky at grazing angles, over every meadow (as GrassField3D's far shell found).
+		mat->set_specular(0.1f);
 		mat->set_albedo(Color(far_shade, far_shade, far_shade).linear_to_srgb()); // The far match's darkening (far_match_view).
 		const_cast<VegetationField3D *>(this)->far_volume_material = mat;
 	}
@@ -2489,7 +2492,38 @@ Color VegetationField3D::_mesh_albedo(const Ref<Mesh> &p_mesh) {
 		const PackedInt32Array ix = arr[Mesh::ARRAY_INDEX];
 		Color base(1, 1, 1), dead_c(0.36f, 0.24f, 0.11f);
 		const Ref<ShaderMaterial> sm = p_mesh->surface_get_material(si);
-		if (sm.is_valid()) {
+		if (sm.is_valid() && sm->get_shader_parameter(SNAME("albedo_tex")).get_type() == Variant::OBJECT) {
+			// Textured cards: their colour is the texture's (its mean, where opaque), white without it.
+			const Ref<Texture2D> tex = sm->get_shader_parameter(SNAME("albedo_tex"));
+			Ref<Image> img = tex.is_valid() ? tex->get_image() : Ref<Image>();
+			if (img.is_null() || img->is_empty()) {
+				return Color(0, 0, 0, 0); // Unknown: the far colour stands.
+			}
+			img = img->duplicate();
+			if (img->is_compressed()) {
+				img->decompress();
+			}
+			img->convert(Image::FORMAT_RGBA8);
+			const int step = MAX(1, MAX(img->get_width(), img->get_height()) / 64);
+			double tr = 0.0, tg = 0.0, tb = 0.0, tw = 0.0;
+			for (int y = 0; y < img->get_height(); y += step) {
+				for (int x = 0; x < img->get_width(); x += step) {
+					const Color px = img->get_pixel(x, y);
+					if (px.a < 0.5f) {
+						continue;
+					}
+					const Color l = px.srgb_to_linear();
+					tr += l.r;
+					tg += l.g;
+					tb += l.b;
+					tw += 1.0;
+				}
+			}
+			if (tw <= 0.0) {
+				return Color(0, 0, 0, 0);
+			}
+			base = Color(tr / tw, tg / tw, tb / tw);
+		} else if (sm.is_valid()) {
 			const Variant bc = sm->get_shader_parameter(SNAME("base_color"));
 			if (bc.get_type() == Variant::COLOR) {
 				base = Color(bc).srgb_to_linear();
@@ -2664,13 +2698,32 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 		}
 		const Vector2 sr = sp->get_scale_range();
 		const float h = ps.meshes[0]->get_aabb().get_end().y * 0.5f * (sr.x + sr.y);
-		const float cover = MIN(sp->get_density() * ps.far_color.a * 1.5f, 1.0f);
-		if (h < 0.02f || cover <= 0.01f) {
+		// The share of ground its leaves hide where it grows at full suitability: its plants a square metre (a Poisson
+		// disc pattern of its spacing holds about 0.7 / spacing^2, times its density), each a disc of its crown's
+		// half width at its mean scale, half of it leaves, overlapping at random (1 - e^-x).
+		const AABB ab = ps.meshes[0]->get_aabb();
+		const float r = 0.25f * (ab.size.x + ab.size.z) * 0.5f * (sr.x + sr.y);
+		const float per_m2 = 0.7f * sp->get_density() / MAX(sp->get_spacing() * sp->get_spacing(), 1e-4f);
+		const float cover = 1.0f - Math::exp(-per_m2 * Math::PI * r * r * 0.5f) * 1.0f;
+		if (h < 0.5f || cover <= 0.01f) {
+			// Low herbs and grasses: the sward's own far blades and columns (GrassField3D) and the ground's far colour
+			// carry them; a layer here would stand over the far blades and hide them.
 			continue;
 		}
-		// The plant's own drawn colour when known (its far colour is its leaves' only).
-		const Color tone = ps.far_albedo.a > 0.0f ? Color(ps.far_albedo.r, ps.far_albedo.g, ps.far_albedo.b, 1.0f) : ps.far_color;
+		// The plant's own drawn hue when known (its far colour is its leaves' only: a dry sward is gold, not green),
+		// no brighter than a little over its far colour: white umbels or petals are a small share of a plant seen
+		// from afar, under and between its leaves.
+		Color tone = ps.far_color;
+		if (ps.far_albedo.a > 0.0f) {
+			const float lf = ps.far_color.get_luminance();
+			const float la = MAX(ps.far_albedo.get_luminance(), 1e-4f);
+			const float k = MIN(la, 1.3f * lf) / la;
+			tone = Color(ps.far_albedo.r * k, ps.far_albedo.g * k, ps.far_albedo.b * k, 1.0f);
+		}
 		kinds.push_back({ sp, h, tone, cover });
+		if (OS::get_singleton()->get_environment("VEG_FAR_SHELL_DEBUG") == "1" && p_key == Vector3i(0, 0, 0)) {
+			print_line(vformat("far shell kind h %.2f cover %.2f spacing %.2f density %.2f", h, cover, sp->get_spacing(), sp->get_density()));
+		}
 	}
 	if (kinds.is_empty()) {
 		return nullptr;
