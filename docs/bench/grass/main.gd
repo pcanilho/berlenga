@@ -2022,6 +2022,45 @@ func _burn_checks() -> void:
 		_check("burnt ground (%s fill): sward gone on a fresh burn, about half back and shorter at four months" % ("GPU" if gpu else "CPU"), before[0][0] > 20 and after[0][0] * 20 <= before[0][0] and share > 0.3 and share < 0.75 and hr < 0.95, res)
 	grass.gpu_fill = true
 	_burn_count(c, centres)
+	# A fire burning ground after the grass was built (no rebuild): the scar's report (WorldFire.burn_changed)
+	# alone thins the tiles over it, and only those; then it ages to four months.
+	var far_tiles := grass.get_tile_count()
+	var scar := WorldBurnScar3D.new()
+	scar.age_years = 0.04
+	scar.size = Vector2(8, 8)
+	scar.position = Vector3(centres[0].x, 0.0, centres[0].z)
+	add_child(scar)
+	var live := []
+	for step in 2:
+		var t0 := Time.get_ticks_msec()
+		while Time.get_ticks_msec() - t0 < 600:
+			OS.delay_msec(50)
+		for i in 3:
+			grass.update_at(c)
+		live.append(_burn_tally(centres[0]))
+		scar.age_years = 0.35
+	scar.free()
+	var t1 := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - t1 < 600:
+		OS.delay_msec(50)
+	for i in 3:
+		grass.update_at(c)
+	var back := _burn_tally(centres[0])
+	_check("burnt ground follows a live fire without a rebuild (burn_changed): gone, then half back, then whole", live[0] * 20 <= back and back > 20 and float(live[1]) / back > 0.3 and float(live[1]) / back < 0.75 and grass.get_tile_count() >= far_tiles, [live, back, far_tiles, grass.get_tile_count()])
+
+func _burn_tally(centre: Vector3) -> int:
+	var n := 0
+	for ch in grass.get_children(true):
+		if ch is MultiMeshInstance3D:
+			var mm: MultiMesh = ch.multimesh
+			var buf := RenderingServer.multimesh_get_buffer(mm.get_rid())
+			for i in mm.instance_count:
+				var b := i * 16
+				if buf[b] == 0.0 and buf[b + 2] == 0.0:
+					continue
+				if absf(buf[b + 3] - centre.x) < 1.5 and absf(buf[b + 11] - centre.z) < 1.5:
+					n += 1
+	return n
 
 # Blades and their summed heights in the middle 3 m of each burn scar's square, after a rebuild.
 func _burn_count(c: Vector3, centres: Array) -> Array:

@@ -3094,6 +3094,7 @@ void GrassField3D::set_far_ring_range(float p_range) {
 // the field's centre).
 namespace {
 constexpr float SHELL_TILE = 64.0f;
+constexpr int BURN_FOLLOW_MSEC = 500; // GrassField3D._follow_burns(): at most twice a second.
 } // namespace
 
 float GrassField3D::_shell_column(int p_x, int p_z, float p_cell, const PlantSpecies *p_rules, TerrainDataMap3D *p_map) const {
@@ -3362,6 +3363,75 @@ void GrassField3D::set_far_shell(bool p_enabled) {
 	}
 }
 
+// Burn ages changed somewhere (WorldFire.burn_changed): sample the grid again there and rebuild what stands on it.
+void GrassField3D::_follow_burns(TerrainDataMap3D *p_map) {
+	const WorldFire *fire = WorldContracts::fire();
+	if (!fire || !p_map || crop != CROP_NONE || !burn_read || fire->get_burn_generation() == burn_seen) {
+		return;
+	}
+	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	if (now - burn_follow_usec < uint64_t(BURN_FOLLOW_MSEC) * 1000) {
+		return;
+	}
+	burn_follow_usec = now;
+	if (burn_recovery <= 0.0f && (rules.is_null() || rules->get_burn_recovery() <= 0.0f)) {
+		burn_seen = fire->get_burn_generation();
+		return;
+	}
+	Rect2 area;
+	const bool partial = fire->burn_changes_since(burn_seen, area);
+	const Rect2 map_rect = p_map->get_map_rect();
+	if (!partial || burn_ages.is_empty()) {
+		const bool had = !burn_ages.is_empty();
+		_read_burn_age(p_map);
+		if (!partial) {
+			area = map_rect;
+		} else if (!had && burn_ages.is_empty()) {
+			return; // Still nothing burnt on this map.
+		}
+	} else {
+		burn_seen = fire->get_burn_generation();
+		const float cx = burn_rect.size.x / (burn_nx - 1);
+		const float cz = burn_rect.size.y / (burn_ny - 1);
+		const int x0 = CLAMP(int(Math::floor((area.position.x - burn_rect.position.x) / cx)) - 1, 0, burn_nx - 1);
+		const int x1 = CLAMP(int(Math::ceil((area.get_end().x - burn_rect.position.x) / cx)) + 1, 0, burn_nx - 1);
+		const int z0 = CLAMP(int(Math::floor((area.position.y - burn_rect.position.y) / cz)) - 1, 0, burn_ny - 1);
+		const int z1 = CLAMP(int(Math::ceil((area.get_end().y - burn_rect.position.y) / cz)) + 1, 0, burn_ny - 1);
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const Vector2 xz = burn_rect.position + Vector2(x * cx, z * cz);
+				burn_ages[z * burn_nx + x] = fire->burn_age_at(Vector3(xz.x, 0.0f, xz.y));
+			}
+		}
+	}
+	if (area.intersects(map_rect, true)) {
+		_burn_dirty(area);
+	}
+}
+
+// What stands on the area builds again (stale generation: each is replaced once its successor is built).
+void GrassField3D::_burn_dirty(const Rect2 &p_area) {
+	const float margin = burn_ages.is_empty() ? 4.0f : burn_rect.size.x / (burn_nx - 1) + 0.5f;
+	const Rect2 a = p_area.grow(margin);
+	for (KeyValue<Vector2i, Tile> &kv : tiles) {
+		if (a.intersects(Rect2(Vector2(kv.key) * tile_size, Vector2(tile_size, tile_size)), true)) {
+			kv.value.generation = generation - 1;
+		}
+	}
+	for (KeyValue<Vector3i, RingTile> &kv : ring_tiles) {
+		const float w = RING_TILE * float(1 << kv.key.z);
+		if (a.intersects(Rect2(kv.key.x * w, kv.key.y * w, w, w), true)) {
+			kv.value.generation = generation - 1;
+		}
+	}
+	for (KeyValue<Vector2i, ShellTile> &kv : shell_tiles) {
+		if (a.intersects(Rect2(Vector2(kv.key) * SHELL_TILE, Vector2(SHELL_TILE, SHELL_TILE)), true)) {
+			kv.value.generation = generation - 1;
+		}
+	}
+	ground_baked = false; // The ground tint (grass_ground_map) over the burn.
+}
+
 void GrassField3D::set_burn_recovery(float p_years) {
 	burn_recovery = MAX(p_years, 0.0f);
 	rebuild();
@@ -3372,6 +3442,9 @@ void GrassField3D::_read_burn_age(TerrainDataMap3D *p_map) {
 	burn_nx = 0;
 	burn_ny = 0;
 	const WorldFire *fire = WorldContracts::fire();
+	if (fire) {
+		burn_seen = fire->get_burn_generation();
+	}
 	if (!p_map || crop != CROP_NONE || !fire || !fire->has_provider()) {
 		return;
 	}
@@ -4375,6 +4448,7 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 	} else if (ground_job.active) {
 		_ground_bake_rows(map, GROUND_BAKE_BUDGET_USEC);
 	}
+	_follow_burns(map);
 	if (crop != CROP_NONE && is_inside_tree()) {
 		_crop_ground_step();
 	}
@@ -4467,7 +4541,10 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 	ground_job.active = false;
 	sun_mean = VegetationLight::sun_mean(p_map);
 	fade_band = Vector4(); // Send the band and the far colour again.
-	_read_burn_age(p_map);
+	if (!burn_read) {
+		_read_burn_age(p_map);
+		burn_read = true;
+	}
 	if (crop != CROP_NONE) {
 		crop_ground_dirty = true; // The fields' own ground (crop_ground()).
 		return;
@@ -5317,6 +5394,7 @@ void GrassField3D::rebuild() {
 	crop_mesh_far.unref();
 	material.unref();
 	ground_baked = false;
+	burn_read = false;
 }
 
 void GrassField3D::_notification(int p_what) {

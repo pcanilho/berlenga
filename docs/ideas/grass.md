@@ -604,8 +604,14 @@ recovered, so the scar's edge grows in over a cell rather than on a hard line.
   first. get_burn_cover_at(position) for scripts.
 - Bench: grass --test checks a fortnight-old scar (no blades) and a four-month one (0.51 of the blades,
   0.87 of the height) on the GPU and CPU fill; `--burn=A` frames a scar A years old.
-- Not yet: the ages are read once a bake, so a live PhysX fire shows after the next rebuild; the fresh-flush
-  colour of regrowth (brighter green) would need a channel to the blades.
+- Live fires: the fire contract carries a change log (WorldFire.burn_changed(area), get_burn_generation(),
+  burn_changes_since()). WorldBurnScar3D reports on enter/exit, move and edits; a fire in play reports the
+  cells it burns. GrassField3D checks the generation at most twice a second, samples its grid again over
+  the changed area only, and marks the near tiles, rings, shell tiles and ground tint over it stale; each is
+  replaced once its successor is built, so nothing flashes. Bench: grass --test burns ground after the
+  grass is built, with no rebuild: 0 blades, then 17 of 35 at four months, then all back once it goes.
+- Not yet: VegetationField3D still reads ages once a setup; the fresh-flush colour of regrowth (brighter
+  green) would need a channel to the blades.
 
 ## References
 

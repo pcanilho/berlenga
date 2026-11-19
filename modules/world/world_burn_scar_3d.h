@@ -47,6 +47,9 @@ class WorldBurnScar3D : public Node3D, public WorldFireProvider {
 	Vector2 size = Vector2(40.0f, 40.0f);
 	PackedVector2Array polygon;
 
+	Rect2 reported; // The area last reported to WorldFire.burn_changed().
+	void _report();
+
 protected:
 	void _notification(int p_what);
 	static void _bind_methods();
@@ -60,6 +63,7 @@ public:
 	PackedVector2Array get_polygon() const { return polygon; }
 
 	bool covers(const Vector3 &p_position) const;
+	Rect2 get_area() const; // x, z in metres, the scar's world bounds
 
 	float contract_fire_heat_at(const Vector3 &p_position) const override { return 0.0f; }
 	float contract_fire_burn_age_at(const Vector3 &p_position) const override { return covers(p_position) ? age_years : -1.0f; }

@@ -502,7 +502,38 @@ PackedVector4Array WorldFire::plumes() const {
 	return r;
 }
 
+void WorldFire::burn_changed(const Rect2 &p_area) {
+	burn_generation++;
+	BurnChange c;
+	c.generation = burn_generation;
+	c.area = p_area;
+	if (burn_log.size() >= uint32_t(BURN_LOG)) {
+		burn_log.remove_at(0);
+	}
+	burn_log.push_back(c);
+}
+
+bool WorldFire::burn_changes_since(uint64_t p_since, Rect2 &r_area) const {
+	r_area = Rect2();
+	if (p_since >= burn_generation) {
+		return true;
+	}
+	if (burn_log.is_empty() || burn_log[0].generation > p_since + 1) {
+		return false; // Older reports have left the log.
+	}
+	bool any = false;
+	for (const BurnChange &c : burn_log) {
+		if (c.generation > p_since) {
+			r_area = any ? r_area.merge(c.area) : c.area;
+			any = true;
+		}
+	}
+	return true;
+}
+
 void WorldFire::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("burn_changed", "area"), &WorldFire::burn_changed);
+	ClassDB::bind_method(D_METHOD("get_burn_generation"), &WorldFire::get_burn_generation);
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldFire::has_provider);
 	ClassDB::bind_method(D_METHOD("heat_at", "position"), &WorldFire::heat_at);
 	ClassDB::bind_method(D_METHOD("burnt_at", "position"), &WorldFire::burnt_at);
@@ -795,6 +826,16 @@ void WorldContracts::register_fire(WorldFireProvider *p_provider) {
 void WorldContracts::unregister_fire(WorldFireProvider *p_provider) {
 	if (singleton) {
 		singleton->builtin_fire->providers.erase(p_provider);
+	}
+}
+
+void WorldContracts::fire_burn_changed(const Rect2 &p_area) {
+	if (!singleton) {
+		return;
+	}
+	singleton->builtin_fire->burn_changed(p_area);
+	if (singleton->fire_override.is_valid()) {
+		singleton->fire_override->burn_changed(p_area);
 	}
 }
 
