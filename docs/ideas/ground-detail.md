@@ -524,6 +524,14 @@ stones at all. Ground detail now carries the river layer's bed on below it, as i
   - the rest (and flicks past the cap or too small) squeezed sideways to the footprint's edge, their place along the
     way kept, into a low berm.
   A first try that cleared every stone from the footprint read as a swept channel; a rolling contact mostly presses.
+- **Prints and ruts (docs check, 19 Nov).** A ball in a straight line read as a painted stripe. Now: pressed in
+  the middle of the print (across the body's line when it moves along, so a stone met at the leading edge still counts
+  as in the middle), pushed out at the edge into a rim (a little further out for some, lying on the stones there,
+  higher by up to most of their size). Pressed stones lie flat (yaw kept) and every disturbed stone shows a damp
+  underside (water film 0.85) and drops its ground blend. Where a deformable ground lies under the stones
+  (`WorldGround.height_at`, GroundSurface3D's sand or mud), a pressed stone sits in the dent that ground took: the
+  print is a real depression. Bench `--tracks`: a walker (boots coming down every 0.45 s, alternating) and a
+  two-wheeled cart on 6 and 8 m bends; `--tracks-verbose`.
 - **Drawing.** A loose stone stays an instance of its own MultiMesh; each frame its instance transform is the body's,
   so raster and the path tracer draw it exactly as before (no node swap, no separate mesh). At rest (asleep, or
   under 5 cm/s for 0.4 s, or 8 s old, or through the ground) its body is freed and the record keeps where it lies.
