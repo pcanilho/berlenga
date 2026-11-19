@@ -5825,9 +5825,15 @@ void TreeGenerator::_laid_hedge_props(Builder &r_bark) {
 	if (x1 - x0 < 0.3f) {
 		return;
 	}
+	// A run starts and ends at a stake (a hedger drives the first and last stakes at the ends of
+	// the laid length and pegs the binders off on them), so the stakes divide [x0, x1] into equal
+	// gaps near 45 cm; only the inner stakes wander a few cm either way.
 	LocalVector<float> stake_x;
-	for (float x = x0 + 0.05f + 0.1f * pr.randf(); x < x1 - 0.05f; x += 0.42f + 0.08f * pr.randf()) {
-		stake_x.push_back(x);
+	const int gaps = MAX(1, int(Math::round((x1 - x0) / 0.45f)));
+	const float step = (x1 - x0) / float(gaps);
+	for (int k = 0; k <= gaps; k++) {
+		const float j = (k == 0 || k == gaps) ? 0.0f : 0.06f * step * (pr.randf() - 0.5f);
+		stake_x.push_back(x0 + step * float(k) + j);
 	}
 	// Grey-brown hazel or ash poles with their bark on; the binders a warmer brown.
 	const Color stake_c = Color(0.46f, 0.39f, 0.3f).srgb_to_linear();
@@ -5858,8 +5864,9 @@ void TreeGenerator::_laid_hedge_props(Builder &r_bark) {
 		LocalVector<float> rad;
 		const float phase = float(b) * float(Math::PI) * 2.0f / float(binders);
 		const float r0 = 0.011f + 0.004f * pr.randf();
-		for (float x = x0 - 0.05f; x <= x1 + 0.1f; x += 0.05f) {
-			const float s = x / 0.42f * float(Math::PI) + phase;
+		// Binders end a hand's width past the end stakes, where they are tucked off.
+		for (float x = x0 - 0.06f; x <= x1 + 0.06f; x += 0.05f) {
+			const float s = (x - x0) / step * float(Math::PI) + phase;
 			pts.push_back(base + Vector3(x, top - 0.02f + 0.025f * Math::cos(s), 0.035f * Math::sin(s)));
 			rad.push_back(r0);
 		}
@@ -13277,15 +13284,32 @@ PackedFloat32Array TreeGenerator::_rig_data() const {
 
 // LOD levels: screen-space error in metres (what Godot compares against the pixel threshold),
 // share of leaves kept, and the thinnest bark tube kept.
-static const struct {
+struct TreeLod {
 	float error;
 	float keep;
 	float min_radius;
-} TREE_LODS[] = {
+};
+static const TreeLod TREE_LODS[] = {
 	{ 0.05f, 0.5f, 0.01f },
 	{ 0.2f, 0.15f, 0.03f },
 	{ 0.8f, 0.04f, 0.08f },
 };
+// A shrub's full mesh adds a first level at 1.2 cm of error (about 8 m at 1080p): stems as plain
+// tubes (the bark relief, millimetres deep on stems a few centimetres across, is under a pixel
+// there), the twigs under 3 mm across left out (a quarter pixel there) and 70% of leaves, flowers and pods, grown by 1/sqrt(0.7) to keep the leaf
+// area (Cook et al. 2007). Close up nothing changes; it carries the shrubs between there and the
+// 0.05 level, where their full meshes cost most (vegetation desert bench, 19 Nov). Far meshes
+// (split off, starting at their LOD 1) keep TREE_LODS.
+static const TreeLod SHRUB_LODS[] = {
+	{ 0.012f, 0.7f, 0.0015f },
+	{ 0.05f, 0.5f, 0.01f },
+	{ 0.2f, 0.15f, 0.03f },
+	{ 0.8f, 0.04f, 0.08f },
+};
+static Span<TreeLod> tree_lods(bool p_shrub) {
+	return p_shrub ? Span<TreeLod>(SHRUB_LODS, sizeof(SHRUB_LODS) / sizeof(TreeLod)) : Span<TreeLod>(TREE_LODS, sizeof(TREE_LODS) / sizeof(TreeLod));
+}
+static bool is_shrub(TreeGenerator::Preset p_preset);
 // The thinnest bark tube a far mesh keeps when its near mesh is split off (trees.md 5x.2): leaf
 // twigs under this radius are near only.
 static constexpr float FAR_TWIG_RADIUS = 0.001f;
@@ -17182,7 +17206,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// survivors grown about their base by 1/sqrt(keep) (Cook et al. 2007); the other
 					// parts before big_end stay whole, those after it are LOD 0 only.
 					const int full = b.indices.size();
-					for (const auto &level : TREE_LODS) {
+					for (const TreeLod &level : tree_lods(is_shrub(preset) && !far_leaves)) {
 						const float grow = 1.0f / Math::sqrt(level.keep);
 						PackedInt32Array idx;
 						for (uint32_t i = 0; i < b.parts.size(); i++) {
@@ -17602,7 +17626,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 Dictionary TreeGenerator::_bark_lods(const Builder &p_bark) const {
 	Dictionary lods;
 	const int s_full_count = p_bark.indices.size();
-	for (const auto &level : TREE_LODS) {
+	for (const TreeLod &level : tree_lods(is_shrub(preset) && !far_leaves)) {
 		PackedInt32Array idx;
 		for (uint32_t i = 0; i < p_bark.parts.size(); i++) {
 			if (p_bark.part_size[i] < level.min_radius || p_bark.part_role[i] == Builder::ROLE_RELIEF) {
@@ -18282,7 +18306,7 @@ Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves, bool p_twins) const {
 	Dictionary lods;
 	const int s_full_count = r_leaves.indices.size();
 	const uint32_t count = r_leaves.parts.size();
-	for (const auto &level : TREE_LODS) {
+	for (const TreeLod &level : tree_lods(is_shrub(preset) && !far_leaves)) {
 		// Survivors grow about their base by 1/sqrt(keep), so the kept leaf area matches.
 		const float grow = 1.0f / Math::sqrt(level.keep);
 		PackedInt32Array idx;
