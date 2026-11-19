@@ -82,6 +82,9 @@ private:
 		float ground_dose = 0.0f; // (W/m2)^2 s on the ground under its flames
 		float break_at = 450.0f; // C of the hot layer that drops its glass
 		ObjectID emitter;
+		ObjectID smoke_emitter;
+		ObjectID pane; // its glass, drawn while whole
+		bool shattered = false;
 	};
 	struct Room {
 		AABB box; // node-local
@@ -123,6 +126,16 @@ private:
 		float layer_temp = 20.0f; // C
 		float soot = 0.0f; // kg in the layer
 		float smoke_out = 0.0f; // kg/s leaving to the outside
+		// Its ceiling or roof (the target's meshes over it, and their colliders): sags as the framing chars, falls in
+		// when it collapses.
+		struct RoofPiece {
+			ObjectID mesh;
+			Transform3D rest; // global
+			LocalVector<ObjectID> shapes;
+		};
+		LocalVector<RoofPiece> roof;
+		bool roof_found = false;
+		bool roof_fallen = false;
 		float steam_j = 0.0f; // heat to leave as steam
 		float face_water[FACE_COUNT] = {}; // kg on each face's cladding
 		float face_fluid_kg[FACE_COUNT] = {};
@@ -153,12 +166,20 @@ private:
 	float time_scale = 1.0f;
 	float sample_timer = 0.0f;
 	float flicker = 0.0f;
+	float clock = 0.0f; // fire seconds since it started stepping
+	float ignited_at = -1.0f;
+	String ignition_cause;
+	String cause = "heat"; // what the next room ignition is put down to
+	void _note_ignition(const String &p_cause);
 	uint32_t rng = 1u;
 
 	PhysXFireSpread3D *fire = nullptr;
 	PhysXFlow3D *flow = nullptr;
 	ObjectID destructible_id;
 	bool look_done = false;
+	bool glass_panes = true;
+	int shard_count = 0;
+	Ref<Material> glass_material;
 	PhysXFirebrands brands;
 	PhysXSteam steam;
 	Vector3 wind;
@@ -186,10 +207,17 @@ private:
 	void _update_brands(float p_delta);
 	void _update_steam(float p_delta);
 	void _smoke(float p_delta);
+	void _update_glass();
+	void _shatter(int p_room, Opening &r_opening);
+	void _find_roof(int p_room);
+	void _update_roof(int p_room);
+	Ref<Material> _glass();
 	float _extinction(const Room &p_room) const; // 1/m in its layer
 	void _sample_fluids(const Transform3D &p_inv);
 	void _update_look();
-	PhysXFlowEmitter3D *_emitter(ObjectID &r_id, const String &p_name);
+	PhysXFlowEmitter3D *_emitter(ObjectID &r_id, const String &p_name, PhysXFlow3D *p_flow = nullptr);
+	PhysXFlow3D *_smoke_flow();
+	ObjectID smoke_flow_id;
 	static void _disable(ObjectID p_id);
 	float _external_flame(const Room &p_room, const Opening &p_opening) const; // m above its top
 	static float _radiant_flux_bind(const Vector3 &p_position) { return radiant_flux_at(p_position); }
@@ -234,6 +262,8 @@ public:
 	int get_firebrand_count() const { return brands.get_count(); }
 	int get_spot_fire_count() const { return brands.get_spot_fires(); }
 	bool is_burning() const;
+	float get_ignition_time() const { return ignited_at; }
+	String get_ignition_cause() const { return ignition_cause; }
 
 	void set_target(const NodePath &p_path);
 	NodePath get_target() const { return target; }
@@ -265,6 +295,9 @@ public:
 	bool has_firebrands() const { return firebrands; }
 	void set_firebrand_rate(float p_v) { firebrand_rate = MAX(p_v, 0.0f); }
 	float get_firebrand_rate() const { return firebrand_rate; }
+	void set_glass_panes(bool p_v) { glass_panes = p_v; }
+	bool has_glass_panes() const { return glass_panes; }
+	int get_shard_count() const { return shard_count; }
 	void set_time_scale(float p_v) { time_scale = MAX(p_v, 0.0f); }
 	float get_time_scale() const { return time_scale; }
 
