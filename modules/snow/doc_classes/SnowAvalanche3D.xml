@@ -97,6 +97,12 @@
 				How many cells have opened a glide crack.
 			</description>
 		</method>
+		<method name="get_ice_broken" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many lake-ice cells the running (or last) avalanche broke through. Ice breaks where the flow's mass over a cell is more than it bears ([method SnowCover3D.ice_breaking_load]); thinner than 2 cm it holds nothing.
+			</description>
+		</method>
 		<method name="get_max_speed" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -198,6 +204,63 @@
 			<param index="2" name="sink" type="float" default="0.0" />
 			<description>
 				Foehn's skier stability index at [param at] under a line load of [param line_load] N/m, sunk [param sink] m in. It is the weak layer's strength over the slab's own shear plus the load's, taken for the weakest layer. Below 1, the load releases the slab. Use 0 N/m for the natural index. Returns a very large number where there is no slab.
+			</description>
+		</method>
+		<method name="get_water_entry_mass" qualifiers="const">
+			<return type="float" />
+			<description>
+				The snow, kg, the running (or last) avalanche put into open water.
+			</description>
+		</method>
+		<method name="get_wave_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many impulse waves the running (or last) avalanche made: one for each entry into water (an entry ends after three seconds with no snow going in).
+			</description>
+		</method>
+		<method name="get_wave_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The height (crest to trough), m, of the run's biggest impulse wave at [param position], from [method impulse_wave_height] at its distance and angle from the entry. 0 when no avalanche has gone into water.
+			</description>
+		</method>
+		<method name="get_wave_period_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The period, s, of the leading impulse wave at [param position] ([method impulse_wave_period]).
+			</description>
+		</method>
+		<method name="impulse_product" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="speed" type="float" />
+			<param index="1" name="thickness" type="float" />
+			<param index="2" name="mass" type="float" />
+			<param index="3" name="width" type="float" />
+			<param index="4" name="water_depth" type="float" />
+			<param index="5" name="slope" type="float" />
+			<description>
+				Heller and Hager's (2010) impulse product parameter [code]P = F S^1/2 M^1/4 cos(6/7 α)^1/2[/code] for a slide of [param mass] kg, [param thickness] m thick and [param width] m wide entering water [param water_depth] m deep at [param speed] m/s down a slope of [param slope] radians: [code]F = V / √(g h)[/code], [code]S = s / h[/code], [code]M = m / (ρw b h²)[/code].
+			</description>
+		</method>
+		<method name="impulse_wave_height" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="product" type="float" />
+			<param index="1" name="water_depth" type="float" />
+			<param index="2" name="distance" type="float" />
+			<param index="3" name="angle" type="float" />
+			<description>
+				The impulse wave's height, m, [param distance] m from where the slide entered and [param angle] radians off its direction: the near-field maximum [code]H_M / h = 5/9 P^4/5[/code] (Heller and Hager 2010), spreading as [code]H / h = 3/2 P^4/5 cos²(2γ / 3) (r / h)^-2/3[/code] (Heller et al. 2009), and never more than 0.8 h (breaking).
+			</description>
+		</method>
+		<method name="impulse_wave_period" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="mass_ratio" type="float" />
+			<param index="1" name="water_depth" type="float" />
+			<param index="2" name="distance" type="float" />
+			<description>
+				The leading impulse wave's period, s, at [param distance] m: [code]T √(g / h) = 5.5 M^0.05 (r / h)^0.36[/code] (Heller and Spinneken 2015), [param mass_ratio] being the relative slide mass M.
 			</description>
 		</method>
 		<method name="is_running" qualifiers="const">
@@ -305,6 +368,9 @@
 		<member name="triggers_enabled" type="bool" setter="set_triggers_enabled" getter="is_triggers_enabled" default="true">
 			If [code]true[/code], loads can release slabs: bodies in [member trigger_groups], [method apply_load], and cornices that fail ([signal SnowCover3D.cornice_failed]), which land on the slope below at twice their weight.
 		</member>
+		<member name="water_enabled" type="bool" setter="set_water_enabled" getter="is_water_enabled" default="true">
+			Avalanches into water. Over a lake (the cover's water), ice that bears the flow carries it on; open water, or ice it breaks, takes the snow (it melts in), and each entry makes an impulse wave (see [signal avalanche_entered_water], [method get_wave_height_at]).
+		</member>
 		<member name="wet_cohesion" type="float" setter="set_wet_cohesion" getter="get_wet_cohesion" default="300.0">
 			The yield stress, Pa, of a fully wet flow on its base. It stops thin margins first, which stand as levees, and shortens the run-out (Bartelt et al. 2015).
 		</member>
@@ -328,6 +394,16 @@
 		</member>
 	</members>
 	<signals>
+		<signal name="avalanche_entered_water">
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="direction" type="Vector3" />
+			<param index="2" name="mass" type="float" />
+			<param index="3" name="speed" type="float" />
+			<param index="4" name="wave_height" type="float" />
+			<description>
+				An avalanche put [param mass] kg of snow into water at [param position], running along [param direction] at [param speed] m/s. It makes an impulse wave [param wave_height] m high near the entry ([method impulse_wave_height]); water systems take it from here.
+			</description>
+		</signal>
 		<signal name="avalanche_released">
 			<param index="0" name="position" type="Vector3" />
 			<param index="1" name="volume" type="float" />

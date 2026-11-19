@@ -93,6 +93,23 @@ class SnowAvalanche3D : public Node3D {
 	float run_wet = 0.0f; // the running flow's wetness, 0 dry to 1 saturated
 	float mu_run = 0.2f, xi_run = 1500.0f, rho_run = 300.0f, cohesion_run = 0.0f;
 	float _wet_factor(const SnowCover3D *p_cover, int p_ci) const;
+	// Avalanches into water (follow-up 26).
+	bool water_enabled = true;
+	float water_mass = 0.0f; // kg of this entry so far
+	Vector3 water_momentum, water_position; // kg m/s; mass-weighted position sum
+	float water_thick = 0.0f, water_depth = 0.0f, water_slope = 0.0f; // mass-weighted sums
+	Vector<uint8_t> water_cells; // cells this entry reached
+	int water_cell_count = 0;
+	bool water_entered_now = false;
+	float water_quiet = 0.0f; // s since snow last went in
+	float water_total = 0.0f; // kg into water this run
+	int water_waves = 0;
+	int ice_broken = 0;
+	int ice_broken_drawn = 0;
+	Vector3 wave_position, wave_direction;
+	float wave_height = 0.0f, wave_amplitude = 0.0f, wave_depth = 0.0f, wave_product = 0.0f, wave_mass_ratio = 0.0f;
+	void _water_entry(SnowCover3D *p_cover, int p_i, int p_ci, float p_speed, float p_u, float p_v, float p_depth, float p_slope);
+	void _emit_wave(SnowCover3D *p_cover);
 	float _hold(const SnowCover3D *p_cover, int p_ci) const { return _anchoring(p_cover, p_ci) * _wet_factor(p_cover, p_ci); }
 	void _glide_advance(SnowCover3D *p_cover, float p_hours);
 	bool _check_glide(SnowCover3D *p_cover);
@@ -209,6 +226,16 @@ public:
 	float get_peak_pressure_at(const Vector3 &p_position) const; // Pa, the dense flow's highest this run
 	float get_detrained_volume() const { return detrained_volume; }
 	float get_glide_at(const Vector3 &p_position) const;
+	static float impulse_product(float p_speed, float p_thickness, float p_mass, float p_width, float p_water_depth, float p_slope);
+	static float impulse_wave_height(float p_product, float p_water_depth, float p_distance, float p_angle);
+	static float impulse_wave_period(float p_mass_ratio, float p_water_depth, float p_distance);
+	float get_wave_height_at(const Vector3 &p_position) const;
+	float get_wave_period_at(const Vector3 &p_position) const;
+	float get_water_entry_mass() const { return water_total; }
+	int get_wave_count() const { return water_waves; }
+	int get_ice_broken() const { return ice_broken; }
+	void set_water_enabled(bool p_enable) { water_enabled = p_enable; }
+	bool is_water_enabled() const { return water_enabled; }
 	int get_glide_count() const { return glide_count; }
 	int get_glide_crack_count() const { return glide_cracks; }
 	float get_flow_wetness() const { return run_wet; }
