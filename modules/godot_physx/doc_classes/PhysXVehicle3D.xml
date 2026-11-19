@@ -175,6 +175,13 @@
 				The gear the gearbox is shifting to, numbered as [member gear] (the current gear when no shift is under way). A new gear is taken only once the current shift has finished ([member gear_switch_time]).
 			</description>
 		</method>
+		<method name="get_wheel_deflection" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				How much further tyre [param wheel] is squashed than at road pressure (200 kPa, the default), in metres: an aired-down tyre (low [member PhysXVehicleWheel3D.tire_pressure]) stands lower on a longer flat. Negative above road pressure. Wheel index as in [method get_wheel_jounce].
+			</description>
+		</method>
 		<method name="get_wheel_jounce" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="wheel" type="int" />

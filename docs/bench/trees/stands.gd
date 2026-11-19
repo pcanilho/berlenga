@@ -40,7 +40,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"olive grove", "woodland", "NA woodland"]
+		"olive grove", "date oasis", "beetle spruce", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -230,7 +230,25 @@ func _stand_checks(only := -1) -> void:
 				if String(sps[s].resource_name).ends_with("(grove)"):
 					palms += f.get_placements(s).size()
 			var per_ha := palms / (SIZE * SIZE / 10000.0)
-			_check(palms > 0 and per_ha > 60.0 and per_ha < 220.0 and regen.log == 0, "date oasis: %d grove palms (%.0f a hectare), no logs" % [palms, per_ha])
+			_check(palms > 0 and per_ha > 35.0 and per_ha < 220.0 and regen.log == 0, "date oasis: %d grove palms (%.0f a hectare), no logs" % [palms, per_ha])
+		elif i == TreeGenerator.STAND_BEETLE_SPRUCE:
+			# Spruce after bark beetle (trees.md 5aj): a red front and a grey core of killed spruce in spots,
+			# living spruce between; every killed variant carries its years since the attack.
+			var front := 0
+			var grey := 0
+			var tagged := true
+			for s in sps.size():
+				var nm3: String = sps[s].resource_name
+				if nm3.contains("(beetle front)"):
+					front += f.get_placements(s).size()
+				elif nm3.contains("(beetle grey)"):
+					grey += f.get_placements(s).size()
+				else:
+					continue
+				for m in sps[s].meshes:
+					var yrs: float = m.get_meta("tree_beetle_years", -1.0)
+					tagged = tagged and (yrs < 2.5 if nm3.contains("front") else yrs >= 2.5)
+			_check(front > 0 and grey > 0 and stand_count > 0 and tagged, "beetle spruce: %d red-front, %d grey, %d living spruce; variants tagged by stage" % [front, grey, stand_count])
 		elif i == TreeGenerator.STAND_POLLARD_ROW:
 			_check(cut.pollard > 0 and cut.pollard >= open_count, "pollard row: %d willow pollards, %d alders" % [cut.pollard, open_count])
 		elif i == TreeGenerator.STAND_COPPICE_STANDARDS:

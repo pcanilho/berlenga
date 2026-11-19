@@ -9,6 +9,15 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="_add_impurity" qualifiers="virtual">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="mg_per_m2" type="float" />
+			<description>
+				Override in a stub to replace [method add_impurity].
+			</description>
+		</method>
 		<method name="_crust_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -30,6 +39,13 @@
 				Override in a test stub to answer [method depth_at].
 			</description>
 		</method>
+		<method name="_impurity_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method impurity_at].
+			</description>
+		</method>
 		<method name="_lake_ice_at" qualifiers="virtual const">
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />
@@ -49,6 +65,15 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Override in a test stub to answer [method wetness_at].
+			</description>
+		</method>
+		<method name="add_impurity">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="mg_per_m2" type="float" />
+			<description>
+				Light-absorbing particles (soot, ash, dust) settling on the snow within [param radius] of [param position], as mg/m2 of black carbon equivalent; mineral dust counts about 0.013 of its mass. The snow darkens and melts sooner.
 			</description>
 		</method>
 		<method name="crust_at" qualifiers="const">
@@ -76,6 +101,13 @@
 			<return type="bool" />
 			<description>
 				Returns [code]true[/code] when a snow cover is in the tree.
+			</description>
+		</method>
+		<method name="impurity_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Light-absorbing particles showing at the snow's surface at [param position], mg/m2 of black carbon equivalent (those buried under fresh snow show less). Default 0.
 			</description>
 		</method>
 		<method name="lake_ice_at" qualifiers="const">

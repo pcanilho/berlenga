@@ -2403,6 +2403,39 @@ red (khalal, a third of seeds red) to amber-brown, cut by day 300 in a grove. ST
 char only (FIRE_NONE, no prune). Frames: fork/trees/palm/ (date-palm, -trunk, -crown-dates, -raster-pt,
 date-oasis). Cost: 312k triangles a grown palm, 0.9 s.
 
+Docs round 1 (19 Nov): the oasis read as clones and the crowns as fuzz. Now each variant draws its own age
+(grove 9-70 years, wild 8-90, so 2-20 m), wild palms lean up to 0.28 rad (tended 0.09) and grow 1-4 stem
+clumps; wild palms only within 18 m of water (RULE_WATER_DISTANCE, 10 m fade) and the grove in patches
+(patch_scale 35 m, cover 0.75). Fronds read at range: pinnae narrower (half width 1.25 cm), rachis paler
+and thicker at the base, groups opened to 0.55 / 0.22 / -0.05 rad so sky shows between them. Dead-frond skirt
+darker (0.13, 0.105, 0.08). PT note: with dates on, some pinnae show date red in PT only; the leaf
+surface's vertex colours hold no red (scanned), so the path tracer reads crown_parts colours for some leaf
+triangles (engine, reported).
+
+### 5aj. Bark beetle kill and beetle spruce stands (19 Nov; Paulo's pick)
+
+Technique: the bark beetle outbreak phases of remote sensing and forest health surveys (Hicke et al. 2012, Forest
+Ecology and Management 271; Wulder et al. 2006; Wermelinger 2004, Ips typographus) mapped onto the deadwood classes
+(5). `beetle_years` on a conifer: under 0.6 green attack (crown green, a duller green late; resin beads on the stem
+from 0.6 m to three quarters of the height, about 25 a metre, milky white within days; pitch tubes on pines; boring
+dust as a red-brown tint in the bark furrows of the low stem and grain drifts against the root collar); 0.6-2.5
+red (decay class 1: needles fade yellow-green to fox red to brown and drop from year 1, 90% by 2.4; woodpecker
+flaking, bark_peel x1-4); 2.5-6 grey (class 2, bark shed in sheets at 2.2x the usual rate: the galleries cut it
+from the wood); 6-12 class 3 (top broken); 12 on a stub. Signs are placed on the bark's real surface (max radius
+per 10 cm x 48 bins from outward-facing bark vertices), so they sit on the plates and the flare. Mesh meta
+`tree_beetle_years`.
+
+STAND_BEETLE_SPRUCE (Kautz et al. 2011, infestation spots in the Bavarian Forest): one patch mask (scale 70 m,
+cover 0.12 + 0.06 a year of `beetle_outbreak`, default 6): a red front in a 5 m band along the spot edges
+(patch_ring; front variants 0.15-2.4 years), a grey core inside (2.6 years to the outbreak's age; canopy opacity
+0.15 so pioneers come up), living spruce on the inverted mask, beetle logs in old spots from 5 years, rowan, birch
+and elder in the light. Beetle species carry no fire bands. Frames: fork/trees/beetle/.
+
+Far mesh trim (19 Nov, vegetation's oasis bench): far meshes (past near_leaf_range) leave out the displaced bark
+relief and the LOD 0-only crown parts, and fold date palm pinnae as one V of two triangles: wild palm clump 668k
+to 318k, tended 227k to 127k. Dropping the oleaster's twigs between 1 mm and 1 cm (3M of its 4.9M) lit its crown
+grey-blue in PT (they shade the crown's inside en masse), so they stay; its bulk is about half a million shoots.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

@@ -189,6 +189,8 @@ public:
 	void set_soft_soil(bool p_enabled);
 	bool is_soft_soil() const { return soft_soil; }
 	real_t get_wheel_sinkage(int p_wheel) const;
+	// The tyre's deflection past its deflection at road pressure (200 kPa, the default), m: how much lower an aired-down tyre stands.
+	real_t get_wheel_deflection(int p_wheel) const;
 	real_t get_wheel_soil_resistance(int p_wheel) const;
 	real_t get_wheel_soil_traction(int p_wheel) const;
 	real_t get_wheel_soil_side_force(int p_wheel) const; // N, sidewall bulldozing against a side slide

@@ -52,7 +52,7 @@
 			How much forward/backward (acceleration or braking) force the tire develops per unit of longitudinal slip. Higher values put down power more directly for the same throttle/brake input, at the cost of feeling less forgiving/more twitchy.
 		</member>
 		<member name="tire_pressure" type="float" setter="set_tire_pressure" getter="get_tire_pressure" default="200.0">
-			The tyre's inflation pressure, in kPa. Only on soft ground ([member PhysXVehicle3D.soft_soil]): below the pressure a rigid wheel would put on the soil, the tyre flattens and sinks less, so airing down gets a car through dry sand.
+			The tyre's inflation pressure, in kPa, read live (airing down or a tyre inflation system can change it while driving). The tyre stands on its air plus its carcass's own stiffness (about 15 kPa) over a flat that lengthens as the pressure falls, until it bottoms at about a third of its section height. On soft ground ([member PhysXVehicle3D.soft_soil]), below the pressure a rigid wheel would put on the soil, the tyre flattens and sinks less, so airing down gets a car through sand and mud. Below the 200 kPa default an aired-down tyre also stands lower ([method PhysXVehicle3D.get_wheel_deflection]), corners more softly and rolls with more resistance on firm ground (on soft ground the soil's own resistance applies); it also aquaplanes at a lower speed.
 		</member>
 		<member name="tread" type="int" setter="set_tread" getter="get_tread" enum="PhysXVehicleWheel3D.Tread" default="1">
 			The tyre's tread. On soft ground ([member PhysXVehicle3D.soft_soil]) it sets how far the tread bites into the soil and how fast sticky clay packs into it and is thrown out. [method tread_firm_grip] gives its grip on firm ground, ice and snow.

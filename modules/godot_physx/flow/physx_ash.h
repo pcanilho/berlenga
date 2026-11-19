@@ -55,7 +55,10 @@ private:
 	LocalVector<PhysXFlowEmitter3D *> emitters;
 	float idle = 0.0f;
 	float total = 0.0f;
+	float settle_timer = 0.0f;
+	LocalVector<Source> settling; // lifted since the last hand-over to the snow (rate holds kg)
 	void _build(Node3D *p_owner);
+	void _settle_on_snow(const Vector3 &p_wind);
 
 public:
 	static constexpr int MAX_EMITTERS = 8;

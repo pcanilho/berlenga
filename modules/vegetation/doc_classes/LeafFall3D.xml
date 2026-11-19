@@ -59,16 +59,34 @@
 				Drops one leaf of [param kind] at [param position] now.
 			</description>
 		</method>
+		<method name="get_buried_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Lying leaves that snow has fallen over ([method WorldSnow.surface_at] above them); they stay put until it melts.
+			</description>
+		</method>
 		<method name="get_crown_count" qualifiers="const">
 			<return type="int" />
 			<description>
 				The number of crowns, added by hand and automatic.
 			</description>
 		</method>
+		<method name="get_floating_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Leaves floating on open water ([WorldWater]): carried by its current plus [member leeway] of the wind.
+			</description>
+		</method>
 		<method name="get_kind_count" qualifiers="const">
 			<return type="int" />
 			<description>
 				The number of leaf kinds.
+			</description>
+		</method>
+		<method name="get_kicked_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Leaves thrown up so far by moving bodies in the [code]world_contact[/code] group passing through them.
 			</description>
 		</method>
 		<method name="get_leaf_count" qualifiers="const">
@@ -145,6 +163,9 @@
 		</member>
 		<member name="leaf_area_index" type="float" setter="set_leaf_area_index" getter="get_leaf_area_index" default="4.0">
 			Leaf area index of the automatic crowns (one-sided leaf area per crown ground area), which sets how many leaves a crown holds.
+		</member>
+		<member name="leeway" type="float" setter="set_leeway" getter="get_leeway" default="0.03">
+			Share of the 10 m wind that a leaf floating on water drifts at, on top of the water's current (about 3% for flat floating debris, Breivik et al. 2011).
 		</member>
 		<member name="lie_time" type="float" setter="set_lie_time" getter="get_lie_time" default="180.0">
 			Seconds a leaf lies on the ground before it is recycled (it joins the litter).

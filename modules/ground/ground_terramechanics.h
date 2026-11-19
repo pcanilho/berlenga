@@ -64,6 +64,9 @@ struct GroundSoil {
 	float stickiness = 0.0f; // 0..1, how it clings to rubber and steel (docs/ideas/mud.md, stage 3)
 	float adhesion = 0.0f; // kPa, its tangential adhesion to rubber and steel (Wong's ca)
 	bool soft = false; // false: firm ground, rock, no soil
+	// A firm subsoil under the loose layer (docs/ideas/mud.md, round 12): the layer stiffens as it thins under a
+	// load, and a tyre that reaches the base grips on it. Off: the base is only a hard stop at max_sinkage.
+	bool layered = false;
 };
 
 struct GroundWheelSoil {
@@ -78,8 +81,34 @@ struct GroundWheelSoil {
 	bool soft = false;
 };
 
+// A pneumatic tyre's flat on the ground (docs/ideas/mud.md, round 12): its ground pressure, the flat's length and the
+// tyre's deflection for its load and inflation (GroundTerramechanics::tyre_flat()).
+struct GroundTyreFlat {
+	float pressure = 0.0f; // kPa, mean over the flat: inflation plus the carcass's own, more once the tyre bottoms
+	float length = 0.0f; // m
+	float deflection = 0.0f; // m
+};
+
 namespace GroundTerramechanics {
+// The carcass's own share of the ground pressure (Wong 2008, sec. 2.4: p_g = p_i + p_c), kPa: carcass stiffness
+// pressures measured for radial tyres on hard ground are of the order of 10 to 30 kPa (Cranfield's agricultural
+// tyre work); 15 for a light truck's off-road tyre.
+static constexpr float TYRE_CARCASS_KPA = 15.0f;
+// The road pressure deflection, cornering stiffness and rolling resistance are measured against, kPa: the wheel's
+// default (PhysXVehicleWheel3D.tire_pressure), so a tyre left at it drives as before.
+static constexpr float TYRE_ROAD_KPA = 200.0f;
+GroundTyreFlat tyre_flat(float p_load, float p_radius, float p_width, float p_inflation);
+// Rolling resistance coefficient on firm ground for inflation p_inflation kPa at p_speed m/s (Gillespie 1992).
+float tyre_rolling_coefficient(float p_inflation, float p_speed);
 float bekker_k(const GroundSoil &p_soil, float p_width);
+// Friction of rubber on the firm base under a mud or soil layer: a wet, compacted clay or gravelly subsoil.
+static constexpr float PAN_FRICTION = 0.5f;
+// The sinkage z (m) of a load of width p_width (m) on a layered soil: once the layer left under it is thinner than
+// the load is wide, the stress bulb meets the base and the soil stiffens (see the .cpp).
+float layered_sinkage(const GroundSoil &p_soil, float p_sinkage, float p_width);
+// The share of a load carried by the base at sinkage p_sinkage (0..1), and the shear limit with it.
+float pan_share(const GroundSoil &p_soil, float p_sinkage);
+float pan_shear_limit(const GroundSoil &p_soil, float p_load, float p_sinkage, float p_shear_limit);
 // p_load N, p_radius and p_width m, p_inflation kPa (0: rigid).
 float wheel_static_sinkage(const GroundSoil &p_soil, float p_load, float p_radius, float p_width, float p_inflation);
 float slip_sinkage(float p_static, float p_slip);

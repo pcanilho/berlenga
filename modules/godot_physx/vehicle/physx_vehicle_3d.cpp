@@ -80,6 +80,8 @@ struct PhysXVehicleSoilWheel {
 	float side_bulldozing = 0.0f; // N, the sidewall's push against a side slide, the last substep's
 	float traction = 0.0f; // N, the soil's limit at the last substep's slip
 	float base_long_stiff = -1.0f; // the tyre's own, restored off the soil
+	float base_lat_stiff = -1.0f; // the tyre's own at road pressure (round 12: scaled by its inflation)
+	float deflect = 0.0f; // m, the tyre's deflection past its deflection at road pressure (round 12)
 	float spin_sum = 0.0f; // rad/s, summed over the step's substeps
 	int spin_n = 0;
 	float slip = 0.0f; // terramechanics slip, smoothed over a tenth of a second
@@ -162,7 +164,7 @@ static void _clog_update(PhysXVehicleSoilWheel &p_sw, Vehicle4W &p_v, PxU32 p_i,
 // - wet: a water film takes a tyre's peak friction on asphalt from about 0.9-1.0 to 0.5-0.8, falling with speed
 //   as the film has less time to squeeze out (Pacejka 2012, ch. 4; Leu and Henry 1978's speed gradient);
 // - aquaplaning: water deeper than the tread can drain lifts the tyre near Horne's speed, v = 6.36 sqrt(p) km/h
-//   for an inflation pressure p in kPa (Horne and Dreher 1963), so a car on 220 kPa floats from about 94 km/h;
+//   for an inflation pressure p in kPa (Horne and Dreher 1963), so a car on 220 kPa floats from about 94 km/h (the tyre's own pressure: aired down it floats sooner);
 // - ice: about 0.1-0.2 on cold ice and nearer 0.05-0.1 on ice at its melting point under a water film (Hayhoe
 //   and Shapley 1989's winter runway measurements): puddle ice from the ground (unless broken into plates), and
 //   a glaze where a wet surface's film freezes in the air below zero (black ice).
@@ -172,7 +174,7 @@ static constexpr float TYRE_PRESSURE_KPA = 220.0f;
 // lugs bite snow). Snow from the snow contract (WorldSnow): a tyre on snow holds about 0.2 on new powder to 0.35 on
 // packed snow, less as it turns to slush (Shoop et al., CRREL tyre traction on snow; winter-tyre tests put packed
 // snow at 0.2-0.4); a hard melt-freeze crust is near ice, about 0.15. Bare lake ice counts as ice.
-static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_water, const Vector2 &p_ice, int p_tread) {
+static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_water, const Vector2 &p_ice, int p_tread, float p_inflation = TYRE_PRESSURE_KPA) {
 	float film = 0.0f;
 	float depth = MAX(p_standing_water, 0.0f); // m
 	float air = 10.0f;
@@ -184,7 +186,7 @@ static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_wat
 	const float kmh = Math::abs(p_speed) * 3.6f;
 	const float wet = MAX(CLAMP(film, 0.0f, 1.0f), Math::smoothstep(0.0f, 0.0005f, depth));
 	float grip = Math::lerp(1.0f, 0.75f - 0.15f * Math::smoothstep(0.0f, 120.0f, kmh), wet);
-	const float horne = 6.36f * Math::sqrt(TYRE_PRESSURE_KPA);
+	const float horne = 6.36f * Math::sqrt(MAX(p_inflation, 10.0f));
 	grip *= 1.0f - 0.9f * Math::smoothstep(0.001f, 0.006f, depth) * Math::smoothstep(0.7f * horne, horne, kmh);
 	const float glaze = wet * Math::smoothstep(0.0f, 2.0f, -air);
 	const float sheet = CLAMP(p_ice.x / 0.002f, 0.0f, 1.0f) * (1.0f - CLAMP(p_ice.y, 0.0f, 1.0f));
@@ -239,6 +241,26 @@ public:
 				sw.base_long_stiff = v.tireForceParams[i].longStiff;
 			}
 			v.tireForceParams[i].longStiff = sw.base_long_stiff;
+			// Tyre pressure (docs/ideas/mud.md, round 12). An aired-down tyre stands lower on its flat (the deflection
+			// past the one at road pressure lowers the axle), and its softer carcass gives less cornering stiffness:
+			// MF 6.1's pressure term, (1 + p_py1 dp) with dp = (p - p0) / p0 (Besselink, Schmeitz and Pacejka 2010;
+			// p_py1 about 0.6 for passenger and light truck tyres), kept within half to 1.15 times.
+			if (sw.base_lat_stiff < 0.0f) {
+				sw.base_lat_stiff = v.tireForceParams[i].latStiffY;
+			}
+			{
+				const float dp = (sw.inflation - GroundTerramechanics::TYRE_ROAD_KPA) / GroundTerramechanics::TYRE_ROAD_KPA;
+				v.tireForceParams[i].latStiffY = sw.base_lat_stiff * CLAMP(1.0f + 0.6f * dp, 0.5f, 1.15f);
+				const PxVehicleWheelParams &tw = v.wheelParams[i];
+				const float tl = v.tireGripStates[i].load;
+				const float tw2 = 2.0f * tw.halfWidth;
+				const float target = tl > 0.0f ? GroundTerramechanics::tyre_flat(tl, tw.radius, tw2, sw.inflation).deflection - GroundTerramechanics::tyre_flat(tl, tw.radius, tw2, GroundTerramechanics::TYRE_ROAD_KPA).deflection : 0.0f;
+				// Settles over a tenth of a second, as the load does.
+				sw.deflect += (target - sw.deflect) * MIN(p_dt / 0.1f, 1.0f);
+				if (road.hitState) {
+					road.plane.d += sw.deflect;
+				}
+			}
 			if (!ground || !road.hitState) {
 				if (clogging) {
 					_clog_update(sw, v, i, v.wheelRigidBody1dStates[i].rotationSpeed, p_dt, false, 0.0f);
@@ -247,7 +269,7 @@ public:
 				if (road.hitState) {
 					// No ground surface (a street, a road mesh): the weather's wet, flooded and frozen state still holds.
 					const PxTransform hp = v.rigidBodyState.pose * v.wheelLocalPoses[i].localPose;
-					sw.grip = _firm_grip(Vector3(hp.p.x, hp.p.y, hp.p.z), v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], 0.0f, Vector2(), sw.tread);
+					sw.grip = _firm_grip(Vector3(hp.p.x, hp.p.y, hp.p.z), v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], 0.0f, Vector2(), sw.tread, sw.inflation);
 					road.friction *= sw.grip;
 				}
 				sw.soft = false;
@@ -264,11 +286,26 @@ public:
 			const Vector3 at((real_t)contact.x, (real_t)contact.y, (real_t)contact.z);
 			sw.soil = ground->get_soil(at);
 			sw.soft = sw.soil.soft;
+			// On a log or branch laid on the ground (round 12): the tyre bears on the wood (its own friction, from the
+			// body's material), which carries the load into the soil along its length and sinks with it.
+			// The wheel bridges the gaps between logs (the road query's ray can pass between them): it rests on the
+			// highest log whose top it touches.
+			if (sw.soft) {
+				float support = 0.0f;
+				const int mat = ground->get_mat_under_wheel(Vector3(pose.p.x, pose.p.y, pose.p.z), v.wheelParams[i].radius, support);
+				if (mat >= 0 && support > (real_t)contact.y - 0.3f) {
+					ground->add_mat_load(mat, v.tireGripStates[i].load);
+					const PxVec3 on(contact.x, MAX(support, contact.y), contact.z);
+					road.plane.d = -n.dot(on) + sw.deflect;
+					road.friction = ground->get_mat_friction(mat);
+					sw.soft = false;
+				}
+			}
 			if (!sw.soft) {
 				if (clogging) {
 					_clog_update(sw, v, i, v.wheelRigidBody1dStates[i].rotationSpeed, p_dt, false, ground->get_standing_water_at(at));
 				}
-				sw.grip = _firm_grip(at, v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], ground->get_standing_water_at(at), ground->get_ice_at(at), sw.tread);
+				sw.grip = _firm_grip(at, v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], ground->get_standing_water_at(at), ground->get_ice_at(at), sw.tread, sw.inflation);
 				road.friction *= sw.grip;
 				sw.printed = false;
 				sw.sinkage = 0.0f;
@@ -321,8 +358,12 @@ public:
 				// The tread's lugs or chains shear deeper; chains still bite through a clogged tread's slick (round 10).
 				const PhysXVehicleWheel3D::TreadSoil ts = PhysXVehicleWheel3D::tread_soil((PhysXVehicleWheel3D::Tread)sw.tread);
 				sw.grip = Math::lerp(1.0f, GroundTerramechanics::clogged_grip(sw.soil, load, probe.contact_length * width), sw.mud * (1.0f - ts.clog_bite)) * ts.grip;
-				road.friction = probe.shear_limit * sw.grip / load / peak;
-				const float slope = probe.shear_limit * probe.contact_length / (2.0f * MAX(sw.soil.shear_k, 1e-3f));
+				// Down on a firm subsoil (round 12) the tread grips on the base: from the wheel's actual sinkage, ruts
+				// included, not the probe's fresh-soil one.
+				// A clogged tread's slick only matters in the soil: on the base the wet rubber grips the firm clay or gravel.
+				const float limit = GroundTerramechanics::pan_shear_limit(sw.soil, load, sw.sinkage, probe.shear_limit * sw.grip);
+				road.friction = limit / load / peak;
+				const float slope = GroundTerramechanics::pan_shear_limit(sw.soil, load, sw.sinkage, probe.shear_limit) * probe.contact_length / (2.0f * MAX(sw.soil.shear_k, 1e-3f));
 				const float substep = p_dt / 3.0f;
 				const float stable = 1.5f * wp.moi * SOIL_SLIP_SPEED / (MAX(substep, 1e-4f) * wp.radius * wp.radius);
 				v.tireForceParams[i].longStiff = MIN(MIN(sw.base_long_stiff, slope), stable);
@@ -426,6 +467,20 @@ public:
 			PhysXVehicleSoilWheel &sw = wheels[i];
 			sw.spin_sum += v.wheelRigidBody1dStates[i].rotationSpeed;
 			sw.spin_n++;
+			// An aired-down tyre's carcass flexes more as it rolls: the rolling resistance past the one at road
+			// pressure (Gillespie 1992, a hard-surface relation), at the axle against the travel on firm ground (on soft
+			// soil the soil's own compaction and bulldozing are the resistance), eased in over 0.3 m/s.
+			if (!sw.soft && v.roadGeomStates[i].hitState && sw.inflation < GroundTerramechanics::TYRE_ROAD_KPA && v.tireGripStates[i].load > 0.0f) {
+				const float v_roll = v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL];
+				const float extra = (GroundTerramechanics::tyre_rolling_coefficient(sw.inflation, v_roll) - GroundTerramechanics::tyre_rolling_coefficient(GroundTerramechanics::TYRE_ROAD_KPA, v_roll)) * v.tireGripStates[i].load * CLAMP(v_roll / 0.3f, -1.0f, 1.0f);
+				if (extra != 0.0f) {
+					const PxVec3 lng_r = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLONGITUDINAL];
+					const PxVec3 dF = lng_r * -extra;
+					const PxVec3 arm = v.rigidBodyState.pose.rotate(v.suspensionParams[i].suspensionAttachment.transform(v.suspensionComplianceStates[i].tireForceAppPoint));
+					v.tireForces[i].forces[PxVehicleTireDirectionModes::eLONGITUDINAL] += dF;
+					v.tireForces[i].torques[PxVehicleTireDirectionModes::eLONGITUDINAL] += arm.cross(dF);
+				}
+			}
 			if (!sw.soft || !v.roadGeomStates[i].hitState) {
 				sw.resistance = 0.0f;
 				sw.side_bulldozing = 0.0f;
@@ -1614,6 +1669,11 @@ real_t PhysXVehicle3D::get_wheel_sinkage(int p_wheel) const {
 	return i < 0 || !impl->soil_wheels[i].soft ? 0.0 : (real_t)impl->soil_wheels[i].sinkage;
 }
 
+real_t PhysXVehicle3D::get_wheel_deflection(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 ? 0.0 : (real_t)impl->soil_wheels[i].deflect;
+}
+
 real_t PhysXVehicle3D::get_wheel_soil_resistance(int p_wheel) const {
 	const int i = _soil_slot(p_wheel);
 	return i < 0 || !impl->soil_wheels[i].soft ? 0.0 : (real_t)impl->soil_wheels[i].resistance;
@@ -1951,6 +2011,7 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_forward"), &PhysXVehicle3D::get_forward);
 	ClassDB::bind_method(D_METHOD("get_wheel_jounce", "wheel"), &PhysXVehicle3D::get_wheel_jounce);
 	ClassDB::bind_method(D_METHOD("get_wheel_sinkage", "wheel"), &PhysXVehicle3D::get_wheel_sinkage);
+	ClassDB::bind_method(D_METHOD("get_wheel_deflection", "wheel"), &PhysXVehicle3D::get_wheel_deflection);
 	ClassDB::bind_method(D_METHOD("get_wheel_soil_side_force", "wheel"), &PhysXVehicle3D::get_wheel_soil_side_force);
 	ClassDB::bind_method(D_METHOD("get_wheel_soil_resistance", "wheel"), &PhysXVehicle3D::get_wheel_soil_resistance);
 	ClassDB::bind_method(D_METHOD("get_wheel_soil_traction", "wheel"), &PhysXVehicle3D::get_wheel_soil_traction);

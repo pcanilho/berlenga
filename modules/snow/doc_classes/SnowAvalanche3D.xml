@@ -5,7 +5,7 @@
 	</brief_description>
 	<description>
 		Watches the [SnowCover3D] it belongs to (which adds it while [member SnowCover3D.avalanches_enabled]). The slab is the new snow since it last bonded (a week), or the snow over a buried crust. Where the stability index, the weak layer's shear strength (Jamieson and Johnston 2001, growing as it sinters) over the slab's shear stress (Foehn 1987), drops below 1 on slopes between [member min_slope] and [member max_slope], the slab releases, and the fracture runs through the neighbouring slab while it stays near failure. Loads trigger it sooner (see [member triggers_enabled]): people, sleds and vehicles add the shear under them, and along a buried crust a collapse can run from the flat to the slope above.
-		The released snow runs as a depth-averaged Voellmy flow (Voellmy 1955; Salm 1993; RAMMS, Christen et al. 2010). Gravity pulls it down the snow surface, against dry friction [member mu] and turbulent friction set by [member xi]. Its mass and momentum move cell to cell, it entrains the new snow it runs over at [member entrainment], and it deposits where it can no longer overcome its own friction. Snow surfaces near the camera break into blocks ([method SnowClumps3D.drop]). The moving snow stays in the cover's cells while it runs, so the snow map, [SnowSurface3D], plants and [WorldSnow] readers all see it move, and no snow is made or lost. Free rigid bodies in its path take its dynamic pressure, 1/2 rho u².
+		The released snow runs as a depth-averaged Voellmy flow (Voellmy 1955; Salm 1993; RAMMS, Christen et al. 2010). Gravity pulls it down the snow surface, against dry friction [member mu] and turbulent friction set by [member xi]. Its mass and momentum move cell to cell by second-order finite volumes (MUSCL reconstruction, HLL fluxes), it entrains the new snow it runs over at [member entrainment], and it deposits where it can no longer overcome its own friction. Snow surfaces near the camera break into blocks ([method SnowClumps3D.drop]). The moving snow stays in the cover's cells while it runs, so the snow map, [SnowSurface3D], plants and [WorldSnow] readers all see it move, and no snow is made or lost. Free rigid bodies in its path take its dynamic pressure, 1/2 rho u².
 	</description>
 	<tutorials>
 	</tutorials>
@@ -72,6 +72,43 @@
 				The fastest the last avalanche ran, m/s.
 			</description>
 		</method>
+		<method name="get_max_speed_terminal" qualifiers="const">
+			<return type="float" />
+			<description>
+				Voellmy's steady speed, sqrt(xi h (sin - mu cos)), m/s, for the flow depth and slope where the flow ran fastest. Compare with [method get_max_speed].
+			</description>
+		</method>
+		<method name="get_powder_cloud" qualifiers="const">
+			<return type="SnowPowderCloud3D" />
+			<description>
+				The node that draws the powder cloud.
+			</description>
+		</method>
+		<method name="get_powder_density_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The density of snow in the air at [param position], kg/m³: 3 to 10 in a fresh cloud, thinning as it spreads and settles.
+			</description>
+		</method>
+		<method name="get_powder_reach" qualifiers="const">
+			<return type="float" />
+			<description>
+				How far from the release the cloud has laid snow, m. It runs past the dense flow.
+			</description>
+		</method>
+		<method name="get_powder_settled" qualifiers="const">
+			<return type="float" />
+			<description>
+				The kg of that snow that has settled back onto the cover.
+			</description>
+		</method>
+		<method name="get_powder_taken" qualifiers="const">
+			<return type="float" />
+			<description>
+				The kg of snow the last avalanche blew into the air.
+			</description>
+		</method>
 		<method name="get_recent_snow_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -95,6 +132,12 @@
 			<return type="float" />
 			<description>
 				How far the last avalanche's front got from the middle of its release, m.
+			</description>
+		</method>
+		<method name="get_suspended_mass" qualifiers="const">
+			<return type="float" />
+			<description>
+				The kg of snow in the air now.
 			</description>
 		</method>
 		<method name="get_trigger_count" qualifiers="const">
@@ -177,6 +220,18 @@
 		</member>
 		<member name="natural_release" type="bool" setter="set_natural_release" getter="is_natural_release" default="true">
 			If [code]true[/code], slabs release by themselves when the stability index fails; [method trigger] works either way.
+		</member>
+		<member name="powder_enabled" type="bool" setter="set_powder_enabled" getter="is_powder_enabled" default="true">
+			If [code]true[/code], a fast dry front blows snow into the air as a powder cloud. The cloud outruns the dense flow, pushes the bodies it passes with 1/2 rho u², and settles as a thin layer of powder. No snow is made or lost. [SnowPowderCloud3D] draws it.
+		</member>
+		<member name="powder_settle" type="float" setter="set_powder_settle" getter="get_powder_settle" default="6.0">
+			The e-folding time of the cloud's snow settling out, s.
+		</member>
+		<member name="powder_share" type="float" setter="set_powder_share" getter="get_powder_share" default="0.3">
+			The share of the front's snow blown into the air for each 10 m it runs, per m/s over [member powder_speed].
+		</member>
+		<member name="powder_speed" type="float" setter="set_powder_speed" getter="get_powder_speed" default="10.0">
+			The speed, m/s, over which a dry front throws snow up. A wet slide (any liquid water in the slab) makes no cloud.
 		</member>
 		<member name="propagation_index" type="float" setter="set_propagation_index" getter="get_propagation_index" default="1.5">
 			A fracture opened by a load runs on through slab whose natural stability index is under this value, or under 1.2 times the index where it opened. A uniform slab goes as a whole.

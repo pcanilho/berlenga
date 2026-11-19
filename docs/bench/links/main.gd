@@ -83,6 +83,29 @@ class SnowStub extends WorldSnow:
 		return 350.0
 
 
+# A pond 0.5 m deep over 10 < x < 30, its surface water running +x at 0.5 m/s; snow of a set depth over
+# -30 < x < -10.
+class LeafPondStub extends WorldWater:
+	func _height_at(p: Vector3) -> float:
+		return 0.5 if p.x > 10.0 and p.x < 30.0 else -INF
+
+	func _flow_at(p: Vector3) -> Vector3:
+		return Vector3(0.5, 0, 0) if p.x > 10.0 and p.x < 30.0 else Vector3.ZERO
+
+
+class LeafSnowStub extends WorldSnow:
+	var depth := 0.2
+
+	func _depth_at(p: Vector3) -> float:
+		return depth if p.x > -30.0 and p.x < -10.0 else 0.0
+
+
+# Ground burnt a year ago over x < -10 (no fire burning now).
+class BurntStub extends WorldFire:
+	func _burn_age_at(p: Vector3) -> float:
+		return 1.0 if p.x < -10.0 else -1.0
+
+
 # A fire stub: 50 kW/m2 burning over x > 0.
 class FireStub extends WorldFire:
 	func _heat_at(p: Vector3) -> float:
@@ -141,7 +164,9 @@ func _ready() -> void:
 	_fire_tests()
 	await _contact_tests()
 	await _snow_fire_tests()
+	await _dirty_snow_tests()
 	await _leaf_kick_tests()
+	await _leaf_surface_tests()
 	await _washout_tests()
 	_tyre_snow_tests()
 	await _contract_tests()
@@ -431,6 +456,67 @@ func _leaf_kick_tests() -> void:
 	await get_tree().physics_frame
 
 
+# Leaves land on water and snow (WorldWater, WorldSnow): on a pond they float and drift with its current; on
+# snow they lie on its surface, are buried when more falls and set down on the ground when it melts.
+func _leaf_surface_tests() -> void:
+	if not ClassDB.class_exists("LeafFall3D"):
+		_skip("leaves: water and snow", "no LeafFall3D")
+		return
+	WorldContracts.clear_overrides()
+	WorldContracts.add_water_stub(LeafPondStub.new())
+	var snow := LeafSnowStub.new()
+	WorldContracts.set_snow(snow)
+	var lf: Node3D = ClassDB.instantiate("LeafFall3D")
+	lf.auto_crowns = false
+	lf.lie_time = 3600.0
+	add_child(lf)
+	var q := QuadMesh.new()
+	q.size = Vector2(0.06, 0.05)
+	lf.add_kind(q, 0.06, 0.003, 0.0003, 0.5)
+	for i in 6:
+		lf.drop_leaf(Vector3(15.0 + 0.5 * i, 1.5, 0.0), 0)
+		lf.drop_leaf(Vector3(-20.0 + 0.5 * i, 1.0, 0.0), 0)
+	for i in 240:
+		await get_tree().physics_frame
+	var floating: int = lf.get_floating_count()
+	var on_water_x := 0.0
+	var on_snow_y := 0.0
+	var nw := 0
+	var ns := 0
+	for st in lf.get_leaf_states():
+		if st.x > 10.0:
+			on_water_x += st.x
+			nw += 1
+		elif st.x < -10.0 and st.w > 0.5:
+			on_snow_y += st.y
+			ns += 1
+	on_water_x /= maxf(nw, 1)
+	on_snow_y /= maxf(ns, 1)
+	for i in 120:
+		await get_tree().physics_frame
+	var later_x := 0.0
+	for st in lf.get_leaf_states():
+		if st.x > 10.0:
+			later_x += st.x / maxf(nw, 1)
+	var drift := later_x - on_water_x
+	_check("leaves: on a pond they float and drift with the current", floating == 6 and drift > 0.6 and drift < 1.4, "%d floating, drifted %.2f m in 2 s on a 0.5 m/s current" % [floating, drift])
+	snow.depth = 0.35
+	for i in 10:
+		await get_tree().physics_frame
+	var buried: int = lf.get_buried_count()
+	snow.depth = 0.0
+	for i in 10:
+		await get_tree().physics_frame
+	var melted_y := 0.0
+	for st in lf.get_leaf_states():
+		if st.x < -10.0:
+			melted_y = maxf(melted_y, st.y)
+	_check("leaves: on snow they lie on top, more snow buries them, the thaw sets them on the ground", ns == 6 and absf(on_snow_y - 0.2) < 0.02 and buried == 6 and lf.get_buried_count() == 0 and melted_y < 0.02, "%d on snow at %.3f m, %d buried by 15 cm more, highest after the thaw %.3f m" % [ns, on_snow_y, buried, melted_y])
+	lf.queue_free()
+	WorldContracts.clear_overrides()
+	await get_tree().physics_frame
+
+
 # Tyres on snow (WorldSnow): grip falls to packed snow's, and chains win much of it back.
 func _tyre_snow_tests() -> void:
 	if not ClassDB.class_exists("PhysXVehicle3D"):
@@ -527,6 +613,80 @@ func _snow_fire_tests() -> void:
 	_check("snow: a fire melts the pack under it, not beside it, at -4 C", before > 0.05 and burning < 0.6 * beside and beside > 0.9 * before, "%.3f m before, %.3f m under the fire, %.3f m beside it" % [before, burning, beside])
 	WorldContracts.clear_overrides()
 	snow.queue_free()
+	ground_node.queue_free()
+	m.queue_free()
+	await get_tree().physics_frame
+
+
+# Dirty snow: particles on the snow lower its albedo and speed the melt in sun; fresh snow buries them and the melt
+# brings them back; burnt forest sheds its char onto the snow under it.
+func _dirty_snow_tests() -> void:
+	if not ClassDB.class_exists("SnowCover3D"):
+		_skip("snow: dirty snow", "no SnowCover3D")
+		return
+	WorldContracts.clear_overrides()
+	var ground_node := Node3D.new()
+	ground_node.set_script(load("res://flat_ground.gd"))
+	ground_node.name = "DirtyGround"
+	add_child(ground_node)
+	var m := _new_map()
+	m.temperature = -4.0
+	m.humidity = 0.9
+	m.rain_rate = 3.0
+	m.cloud_cover = 1.0
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(1.0)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-50, 0, 0)
+	add_child(sun)
+	var snow: Node3D = ClassDB.instantiate("SnowCover3D")
+	snow.extent = 64.0
+	snow.resolution = 64
+	snow.update_rate = 0.0001
+	add_child(snow)
+	snow.height_source = snow.get_path_to(ground_node)
+	snow.follow_target = snow.get_path_to(ground_node)
+	snow.sun_light = snow.get_path_to(sun)
+	snow.refresh_heights()
+	snow.advance(10.0 * 3600.0)
+	var dirty := Vector3(10, 0, 0)
+	var clean := Vector3(-5, 0, 0)
+	snow.add_impurity(dirty, 5.0, 30.0)
+	snow.advance(60.0)
+	var a_dirty: float = snow.get_albedo_at(dirty)
+	var a_clean: float = snow.get_albedo_at(clean)
+	var shown: float = snow.get_impurity_at(dirty)
+	# Fresh snow over it.
+	snow.advance(3.0 * 3600.0)
+	var buried: float = snow.get_impurity_at(dirty)
+	_check("snow: dust darkens the snow it lands on; fresh snow buries it", absf(shown - 30.0) < 3.0 and a_clean - a_dirty > 0.2 and buried < 0.2 * shown and snow.get_impurity_at(clean) == 0.0, "albedo %.2f clean, %.2f dusty (%.0f mg/m2); %.1f mg/m2 showing after 3 h of snowfall" % [a_clean, a_dirty, shown, buried])
+	# A sunny thaw: the dust melts out and the dusty snow goes faster.
+	m.rain_rate = 0.0
+	m.cloud_cover = 0.0
+	m.temperature = 2.0
+	m.snap_to_settings()
+	m.advance(1.0)
+	var d0: float = snow.get_depth_at(dirty)
+	var c0: float = snow.get_depth_at(clean)
+	snow.advance(8.0 * 3600.0)
+	var dirty_melt: float = d0 - snow.get_depth_at(dirty)
+	var clean_melt: float = c0 - snow.get_depth_at(clean)
+	var out: float = snow.get_impurity_at(dirty)
+	_check("snow: the thaw brings the dust back up and the dusty snow melts faster", out > 15.0 and dirty_melt > 1.15 * clean_melt and clean_melt > 0.0, "%.1f mg/m2 showing again; melt %.3f m dusty, %.3f m clean over 8 h" % [out, dirty_melt, clean_melt])
+	# Burnt forest a year ago: its char falls on the snow over ten cold, dry days.
+	m.temperature = -10.0
+	m.snap_to_settings()
+	m.advance(1.0)
+	WorldContracts.set_fire(BurntStub.new())
+	snow.advance(10.0 * 86400.0)
+	var burnt: float = snow.get_impurity_at(Vector3(-20, 0, 0))
+	var unburnt: float = snow.get_impurity_at(clean)
+	_check("snow: burnt forest sheds char onto the snow under it", burnt > 1.0 and unburnt < 0.05, "%.2f mg/m2 under the burn after 10 days, %.2f beside it" % [burnt, unburnt])
+	WorldContracts.clear_overrides()
+	snow.queue_free()
+	sun.queue_free()
 	ground_node.queue_free()
 	m.queue_free()
 	await get_tree().physics_frame

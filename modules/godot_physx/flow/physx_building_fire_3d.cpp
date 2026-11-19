@@ -44,6 +44,10 @@
 #include "core/object/class_db.h"
 #include "scene/3d/light_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/3d/physics/collision_shape_3d.h"
+#include "scene/3d/physics/rigid_body_3d.h"
+#include "scene/resources/3d/box_shape_3d.h"
+#include "scene/resources/3d/primitive_meshes.h"
 
 LocalVector<PhysXBuildingFire3D *> PhysXBuildingFire3D::buildings;
 
@@ -159,6 +163,7 @@ void PhysXBuildingFire3D::_build_rooms() {
 		}
 		for (Opening &o : r.openings) {
 			_disable(o.emitter);
+			_disable(o.smoke_emitter);
 		}
 		if (Node *l = Object::cast_to<Node>(ObjectDB::get_instance(r.light))) {
 			l->queue_free();
@@ -295,9 +300,21 @@ void PhysXBuildingFire3D::_ignite_room(int p_room, const Vector3 &p_local) {
 	}
 	r.state = ROOM_GROWING;
 	r.t = 0.0f;
+	_note_ignition(cause);
 	const Vector3 lo = r.box.position + Vector3(0.3f, 0.0f, 0.3f);
 	const Vector3 hi = r.box.position + r.box.size - Vector3(0.3f, 0.0f, 0.3f);
 	r.origin = Vector3(CLAMP(p_local.x, lo.x, MAX(hi.x, lo.x)), r.box.position.y, CLAMP(p_local.z, lo.z, MAX(hi.z, lo.z)));
+}
+
+// The building's first catch, for whoever counts losses (a village bench, a game's damage report): when and by
+// what, the way post-fire surveys of wildland-urban interface fires class it (Maranghides and Mell 2011).
+void PhysXBuildingFire3D::_note_ignition(const String &p_cause) {
+	if (ignited_at >= 0.0f) {
+		return;
+	}
+	ignited_at = clock;
+	ignition_cause = p_cause;
+	emit_signal(SNAME("ignited"), p_cause);
 }
 
 void PhysXBuildingFire3D::ignite(const Vector3 &p_position) {
@@ -316,7 +333,9 @@ void PhysXBuildingFire3D::ignite(const Vector3 &p_position) {
 		}
 	}
 	if (best >= 0) {
+		cause = "direct";
 		_ignite_room(best, l);
+		cause = "heat";
 	}
 }
 
@@ -523,6 +542,10 @@ void PhysXBuildingFire3D::_sample(float p_delta) {
 				const Vector2 uv = _face_uv(r, f, inv.xform(hot));
 				r.clad_origin[f] = Vector2(CLAMP(uv.x, 0.0f, fs.x), CLAMP(uv.y, 0.0f, fs.y));
 				r.clad_r[f] = 0.05f;
+				// A glowing pile of brands against the face giving most of its heat: lit by embers; otherwise by the
+				// heat of flames nearby (radiation or contact).
+				const float qb = 50.0f * MIN(r.brand_glow[f] / 20.0f, 1.0f);
+				_note_ignition(qb >= 0.5f * q ? "firebrand" : "heat");
 			}
 		}
 	}
@@ -914,6 +937,272 @@ void PhysXBuildingFire3D::_spread(float p_delta) {
 	}
 }
 
+Ref<Material> PhysXBuildingFire3D::_glass() {
+	if (glass_material.is_null()) {
+		Ref<StandardMaterial3D> m;
+		m.instantiate();
+		m->set_albedo(Color(1, 1, 1));
+		m->set_roughness(0.04f);
+		m->set_transmission(1.0f);
+		m->set_transmission_ior(1.52f);
+		m->set_transmission_thin_walled(true);
+		m->set_transmission_attenuation_color(Color(0.86f, 0.95f, 0.92f)); // soda-lime's green edge
+		m->set_transmission_attenuation_distance(0.05f);
+		glass_material = m;
+	}
+	return glass_material;
+}
+
+// Window glass: a pane in each glazed opening while it is whole (glass_panes); when the hot layer drops it, it
+// cracks from the shaded edge in and falls out in pieces (Pagni and Joshi 1991; Babrauskas 2004: shards of a few
+// to some tens of centimetres), mostly down, some pushed out by the fire's pressure.
+void PhysXBuildingFire3D::_update_glass() {
+	const Transform3D xf = get_global_transform();
+	for (uint32_t i = 0; i < rooms.size(); i++) {
+		Room &r = rooms[i];
+		for (Opening &o : r.openings) {
+			if (!o.glazed || o.to_room >= 0) {
+				continue;
+			}
+			MeshInstance3D *pane = Object::cast_to<MeshInstance3D>(ObjectDB::get_instance(o.pane));
+			if (o.broken) {
+				if (!o.shattered) {
+					o.shattered = true;
+					if (pane) {
+						pane->queue_free();
+						o.pane = ObjectID();
+					}
+					if (glass_panes) {
+						_shatter(i, o);
+					}
+				}
+				continue;
+			}
+			if (!glass_panes || pane) {
+				continue;
+			}
+			pane = memnew(MeshInstance3D);
+			Ref<BoxMesh> bm;
+			bm.instantiate();
+			bm->set_size(o.face == FACE_TOP ? Vector3(o.rect.size.x, 0.005f, o.rect.size.y) : Vector3(o.rect.size.x, o.rect.size.y, 0.005f));
+			bm->set_material(_glass());
+			pane->set_mesh(bm);
+			add_child(pane, false, INTERNAL_MODE_FRONT);
+			const Vector3 n = _face_normal(o.face);
+			const Vector3 c = _face_point(r, o.face, o.rect.get_center()) + n * 0.05f;
+			Basis b;
+			if (o.face == FACE_NEG_X || o.face == FACE_POS_X) {
+				b = Basis(Vector3(0, 1, 0), Math::PI * 0.5f);
+			}
+			pane->set_transform(Transform3D(b, c));
+			o.pane = pane->get_instance_id();
+		}
+	}
+	(void)xf;
+}
+
+void PhysXBuildingFire3D::_shatter(int p_room, Opening &r_opening) {
+	const Room &r = rooms[p_room];
+	// The pane split into pieces by random cuts, the larger piece cut again (about one per 0.03 m2).
+	LocalVector<Rect2> pieces;
+	pieces.push_back(Rect2(Vector2(), r_opening.rect.size));
+	const int want = CLAMP(int(r_opening.rect.get_area() / 0.06f), 3, 20);
+	while ((int)pieces.size() < want) {
+		uint32_t big = 0;
+		for (uint32_t k = 1; k < pieces.size(); k++) {
+			if (pieces[k].get_area() > pieces[big].get_area()) {
+				big = k;
+			}
+		}
+		const Rect2 p = pieces[big];
+		const float t = 0.3f + 0.4f * _rand();
+		Rect2 a = p, b = p;
+		if (p.size.x > p.size.y) {
+			a.size.x = p.size.x * t;
+			b.position.x += a.size.x;
+			b.size.x -= a.size.x;
+		} else {
+			a.size.y = p.size.y * t;
+			b.position.y += a.size.y;
+			b.size.y -= a.size.y;
+		}
+		pieces[big] = a;
+		pieces.push_back(b);
+	}
+	const Transform3D xf = get_global_transform();
+	const Vector3 n = xf.basis.xform(_face_normal(r_opening.face)).normalized();
+	const bool hot = r.state == ROOM_FLASHED || r.temperature > 500.0f;
+	Basis b;
+	if (r_opening.face == FACE_NEG_X || r_opening.face == FACE_POS_X) {
+		b = Basis(Vector3(0, 1, 0), Math::PI * 0.5f);
+	} else if (r_opening.face == FACE_TOP) {
+		b = Basis(Vector3(1, 0, 0), -Math::PI * 0.5f);
+	}
+	for (const Rect2 &p : pieces) {
+		// Each piece cut once more along a diagonal, its corner moved a little: angular shards, not tiles.
+		const bool diag = _rand() < 0.5f;
+		const Vector2 c[4] = { p.position, p.position + Vector2(p.size.x, 0), p.get_end(), p.position + Vector2(0, p.size.y) };
+		const Vector2 tris[2][3] = {
+			{ c[0], c[1], c[diag ? 2 : 3] },
+			{ c[diag ? 0 : 1], c[2], c[3] },
+		};
+		for (int tri = 0; tri < 2; tri++) {
+			if (shard_count >= 300 || _rand() < 0.15f) { // some stay in the frame a while
+				continue;
+			}
+			Vector2 v[3] = { tris[tri][0], tris[tri][1], tris[tri][2] };
+			const Vector2 mid = (v[0] + v[1] + v[2]) / 3.0f;
+			// Pane coordinates centred on the shard, x right and y up on the pane.
+			PackedVector3Array verts;
+			PackedVector3Array norms;
+			for (int side = 0; side < 2; side++) {
+				for (int k = 0; k < 3; k++) {
+					const Vector2 q = v[side == 0 ? k : 2 - k] - mid;
+					verts.push_back(Vector3(q.x, q.y, side == 0 ? 0.003f : -0.003f));
+					norms.push_back(Vector3(0, 0, side == 0 ? 1.0f : -1.0f));
+				}
+			}
+			Array arrays;
+			arrays.resize(Mesh::ARRAY_MAX);
+			arrays[Mesh::ARRAY_VERTEX] = verts;
+			arrays[Mesh::ARRAY_NORMAL] = norms;
+			Ref<ArrayMesh> am;
+			am.instantiate();
+			am->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+			am->surface_set_material(0, _glass());
+			Vector2 lo = v[0] - mid, hi = v[0] - mid;
+			for (int k = 1; k < 3; k++) {
+				lo = lo.min(v[k] - mid);
+				hi = hi.max(v[k] - mid);
+			}
+			RigidBody3D *rb = memnew(RigidBody3D);
+			CollisionShape3D *cs = memnew(CollisionShape3D);
+			Ref<BoxShape3D> sh;
+			sh.instantiate();
+			sh->set_size(Vector3((hi.x - lo.x) * 0.7f, (hi.y - lo.y) * 0.7f, 0.006f));
+			cs->set_shape(sh);
+			rb->add_child(cs);
+			MeshInstance3D *mi = memnew(MeshInstance3D);
+			mi->set_mesh(am);
+			rb->add_child(mi);
+			const float area = 0.5f * Math::abs((v[1] - v[0]).cross(v[2] - v[0]));
+			rb->set_mass(MAX(2500.0f * area * 0.006f, 0.01f));
+			add_child(rb, false, INTERNAL_MODE_FRONT);
+			rb->set_as_top_level(true);
+			const Vector3 local = _face_point(r, r_opening.face, r_opening.rect.position + mid) + _face_normal(r_opening.face) * 0.05f;
+			rb->set_global_transform(Transform3D(xf.basis * b, xf.xform(local)));
+			// Out with the fire's pressure (a metre or two a second near flashover), turning as it goes.
+			rb->set_linear_velocity(n * (hot ? 0.5f + 1.5f * _rand() : 0.2f * _rand()) + Vector3(0, -0.3f * _rand(), 0));
+			rb->set_angular_velocity(Vector3(_rand() - 0.5f, _rand() - 0.5f, _rand() - 0.5f) * 6.0f);
+			shard_count++;
+		}
+	}
+}
+
+// The target's pieces that make a room's ceiling or roof: meshes over its floor whose centre lies within the top
+// 0.3 m of the room or up to 1.5 m above it, with the colliders over the same span.
+void PhysXBuildingFire3D::_find_roof(int p_room) {
+	Room &r = rooms[p_room];
+	r.roof_found = true;
+	Node3D *t = _target();
+	if (!t || !destructible_id.is_null()) {
+		return;
+	}
+	const Transform3D inv = get_global_transform().affine_inverse();
+	const AABB span(Vector3(r.box.position.x, r.box.position.y + r.box.size.y - 0.3f, r.box.position.z), Vector3(r.box.size.x, 1.8f, r.box.size.z));
+	auto inside = [&](const Vector3 &p_global) {
+		const Vector3 l = inv.xform(p_global);
+		return span.grow(0.05f).has_point(l);
+	};
+	LocalVector<Node *> stack;
+	stack.push_back(t);
+	LocalVector<CollisionShape3D *> shapes;
+	while (!stack.is_empty()) {
+		Node *nd = stack[stack.size() - 1];
+		stack.resize(stack.size() - 1);
+		for (int c = 0; c < nd->get_child_count(); c++) {
+			stack.push_back(nd->get_child(c));
+		}
+		if (MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(nd)) {
+			if (mi->get_mesh().is_valid() && inside(mi->get_global_transform().xform(mi->get_aabb().get_center()))) {
+				Room::RoofPiece rp;
+				rp.mesh = mi->get_instance_id();
+				rp.rest = mi->get_global_transform();
+				r.roof.push_back(rp);
+			}
+		} else if (CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(nd)) {
+			if (inside(cs->get_global_position())) {
+				shapes.push_back(cs);
+			}
+		}
+	}
+	for (Room::RoofPiece &rp : r.roof) {
+		for (CollisionShape3D *cs : shapes) {
+			rp.shapes.push_back(cs->get_instance_id());
+		}
+		break; // the first piece holds them all; they go together
+	}
+}
+
+// Sagging as the framing chars: a deflection growing as the cube of the share of the section lost, to a twentieth
+// of the span just before failure; then it falls in, each piece a rigid body, its colliders gone.
+void PhysXBuildingFire3D::_update_roof(int p_room) {
+	Room &r = rooms[p_room];
+	if (r.roof_fallen || r.state == ROOM_COLD || !destructible_id.is_null()) {
+		return;
+	}
+	if (!r.roof_found) {
+		_find_roof(p_room);
+	}
+	if (r.roof.is_empty()) {
+		return;
+	}
+	const float lost = CLAMP(2.0f * r.char_depth / (collapse_share * member_size), 0.0f, 1.0f);
+	const float span = MIN(r.box.size.x, r.box.size.z);
+	if (!r.collapsed) {
+		const float sag = span / 20.0f * lost * lost * lost;
+		for (const Room::RoofPiece &rp : r.roof) {
+			if (MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(ObjectDB::get_instance(rp.mesh))) {
+				Transform3D g = rp.rest;
+				g.origin.y -= sag;
+				mi->set_global_transform(g);
+			}
+		}
+		return;
+	}
+	r.roof_fallen = true;
+	for (Room::RoofPiece &rp : r.roof) {
+		for (ObjectID id : rp.shapes) {
+			if (CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(ObjectDB::get_instance(id))) {
+				cs->set_disabled(true);
+			}
+		}
+		MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(ObjectDB::get_instance(rp.mesh));
+		if (!mi) {
+			continue;
+		}
+		const Transform3D g = mi->get_global_transform();
+		const AABB box = mi->get_aabb();
+		RigidBody3D *rb = memnew(RigidBody3D);
+		CollisionShape3D *cs = memnew(CollisionShape3D);
+		Ref<BoxShape3D> sh;
+		sh.instantiate();
+		sh->set_size((box.size * g.basis.get_scale()).maxf(0.02f));
+		cs->set_shape(sh);
+		rb->add_child(cs);
+		add_child(rb, false, INTERNAL_MODE_FRONT);
+		rb->set_as_top_level(true);
+		const Vector3 centre = g.xform(box.get_center());
+		rb->set_global_transform(Transform3D(g.basis.orthonormalized(), centre));
+		rb->set_mass(MAX(400.0f * box.size.x * box.size.y * box.size.z * g.basis.get_scale().x * g.basis.get_scale().y * g.basis.get_scale().z, 1.0f));
+		mi->get_parent()->remove_child(mi);
+		rb->add_child(mi);
+		mi->set_transform(Transform3D(g.basis.orthonormalized().inverse() * g.basis, -box.get_center() * g.basis.get_scale()));
+		// It gives way at one end first.
+		rb->set_angular_velocity(Vector3(_rand() - 0.5f, 0.0f, _rand() - 0.5f) * 0.8f);
+	}
+}
+
 // A PhysXDestructible3D target (Blast) gives way where a room's framing fails: its bonds there are damaged as the
 // char eats the members (as PhysXBurnable3D), all at once when it collapses.
 void PhysXBuildingFire3D::_weaken(int p_room) {
@@ -938,13 +1227,44 @@ void PhysXBuildingFire3D::_weaken(int p_room) {
 #endif
 }
 
-PhysXFlowEmitter3D *PhysXBuildingFire3D::_emitter(ObjectID &r_id, const String &p_name) {
+// The building's smoke: its own gas, dark with soot and slow to fade, so the smoke from its windows hangs and drifts
+// rather than vanishing as the flames' smoke does.
+PhysXFlow3D *PhysXBuildingFire3D::_smoke_flow() {
+	PhysXFlow3D *f = Object::cast_to<PhysXFlow3D>(ObjectDB::get_instance(smoke_flow_id));
+	if (f) {
+		return f;
+	}
+	f = memnew(PhysXFlow3D);
+	f->set_name("BuildingSmoke");
+	f->set_cell_size(0.2f);
+	f->set_max_blocks(1024);
+	f->set_combustion(false);
+	f->set_emission_strength(0.0f);
+	f->set_temperature_range(1.0f);
+	f->set_buoyancy(1.0f);
+	f->set_cooling_rate(0.6f);
+	f->set_vorticity(1.0f);
+	f->set_smoke_color(Color(0.16f, 0.15f, 0.14f));
+	f->set_smoke_density(2.0f);
+	f->set_smoke_buoyancy(0.6f);
+	f->set_smoke_fade(0.06f);
+	f->set_fire_light(false);
+	f->set_embers(false);
+	add_child(f, false, INTERNAL_MODE_FRONT);
+	f->set_as_top_level(true);
+	f->set_global_transform(Transform3D());
+	smoke_flow_id = f->get_instance_id();
+	return f;
+}
+
+PhysXFlowEmitter3D *PhysXBuildingFire3D::_emitter(ObjectID &r_id, const String &p_name, PhysXFlow3D *p_flow) {
 	PhysXFlowEmitter3D *e = Object::cast_to<PhysXFlowEmitter3D>(ObjectDB::get_instance(r_id));
-	if (!e && flow) {
+	PhysXFlow3D *into = p_flow ? p_flow : flow;
+	if (!e && into) {
 		e = memnew(PhysXFlowEmitter3D);
 		e->set_name(String(get_name()) + p_name);
-		flow->add_child(e);
-		e->set_flow_path(e->get_path_to(flow));
+		into->add_child(e);
+		e->set_flow_path(e->get_path_to(into));
 		e->set_shape(PhysXFlowEmitter3D::SHAPE_SPHERE);
 		r_id = e->get_instance_id();
 	}
@@ -996,10 +1316,18 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 			const bool smoking = open && o.to_room < 0 && r.smoke_out > 0.002f && (o.face == FACE_TOP || layer < o.rect.get_end().y);
 			if ((!burning && !smoking) || !open || o.to_room >= 0) {
 				_disable(o.emitter);
+				_disable(o.smoke_emitter);
 				continue;
 			}
 			const Vector3 n = _face_normal(o.face);
-			PhysXFlowEmitter3D *e = _emitter(o.emitter, base + "Opening" + itos(k));
+			const float l = _external_flame(r, o);
+			const bool flames = l > 0.0f || (o.face == FACE_TOP && burning && r.state != ROOM_GROWING);
+			// Flames go into the fire's gas; smoke into the building's own, which keeps it longer.
+			_disable(flames ? o.smoke_emitter : o.emitter);
+			PhysXFlowEmitter3D *e = flames ? _emitter(o.emitter, base + "Opening" + itos(k)) : _emitter(o.smoke_emitter, base + "Smoke" + itos(k), _smoke_flow());
+			if (!e) {
+				continue;
+			}
 			e->set_enabled(true);
 			e->set_burn(0.0f);
 			e->set_couple_rate(2.0f);
@@ -1012,8 +1340,7 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 				const Vector2 uv(o.rect.get_center().x, o.rect.position.y + o.rect.size.y * 0.8f);
 				e->set_global_position(xf.xform(_face_point(r, o.face, uv) + n * 0.25f));
 			}
-			const float l = _external_flame(r, o);
-			if (l > 0.0f || (o.face == FACE_TOP && r.state != ROOM_GROWING)) {
+			if (flames) {
 				// Tongues about the window's width, reaching Eurocode's length above it (not fireballs).
 				e->set_temperature(1.0f);
 				e->set_fuel(CLAMP(0.2f + 0.15f * l, 0.2f, 0.55f));
@@ -1025,9 +1352,25 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 				const float k = _extinction(r);
 				const float h = CLAMP((r.layer_temp - 20.0f) / 500.0f, 0.0f, 1.0f);
 				const float amount = CLAMP(k / 2.0f, 0.05f, 1.0f) * CLAMP(r.smoke_out / 0.5f, 0.1f, 1.0f);
-				e->set_temperature(0.05f + 0.2f * h);
+				// A slab across the opening's smoky part (above the layer's base), just outside the wall: a sphere that
+				// small gives the grid only a cell or two of smoke, which thins to nothing within a metre.
+				e->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
+				if (o.face != FACE_TOP) {
+					const float top = o.rect.get_end().y;
+					const float base = CLAMP(layer, o.rect.position.y, top - 0.2f);
+					const Vector2 uv(o.rect.get_center().x, 0.5f * (base + top));
+					const float w = MAX(o.rect.size.x, 0.4f);
+					const float hh = MAX(top - base, 0.3f);
+					const Vector3 size = o.face < FACE_NEG_Z ? Vector3(0.4f, hh, w) : Vector3(w, hh, 0.4f);
+					e->set_size(size);
+					e->set_global_transform(Transform3D(xf.basis.orthonormalized(), xf.xform(_face_point(r, o.face, uv) + n * 0.3f)));
+				} else {
+					e->set_size(Vector3(o.rect.size.x, 0.4f, o.rect.size.y));
+				}
+				e->set_couple_rate(4.0f);
+				e->set_temperature(0.15f + 0.45f * h);
 				e->set_fuel(0.0f);
-				e->set_smoke(amount);
+				e->set_smoke(3.0f * amount);
 				e->set_velocity(xf.basis.xform(n * (0.4f + 0.6f * h) + Vector3(0, 0.3f + 0.4f * h, 0)));
 			}
 		}
@@ -1074,6 +1417,10 @@ void PhysXBuildingFire3D::_update_visuals(float p_delta) {
 				light->set_name(base + "Light");
 				light->set_color(Color(1.0f, 0.55f, 0.25f));
 				light->set_shadow(true);
+				// Tight shadows: walls and floors are thin next to the light's range, and must not let it through.
+				light->set_param(Light3D::PARAM_SHADOW_BIAS, 0.02f);
+				light->set_param(Light3D::PARAM_SHADOW_NORMAL_BIAS, 0.3f);
+				light->set_shadow_mode(OmniLight3D::SHADOW_CUBE);
 				add_child(light, false, INTERNAL_MODE_FRONT);
 				r.light = light->get_instance_id();
 			}
@@ -1332,7 +1679,9 @@ void PhysXBuildingFire3D::add_brand(const Vector3 &p_position, const Vector3 &p_
 	for (const Opening &o : r.openings) {
 		if (o.face == best_face && o.to_room < 0 && (!o.glazed || o.broken) && o.rect.grow(0.05f).has_point(uv)) {
 			if (_rand() < 0.2f * p_glow) {
+				cause = "firebrand";
 				_ignite_room(best, l - _face_normal(best_face) * 0.5f);
+				cause = "heat";
 			}
 			return;
 		}
@@ -1526,6 +1875,7 @@ void PhysXBuildingFire3D::_notification(int p_what) {
 						e->queue_free();
 					}
 					o.emitter = ObjectID();
+					o.smoke_emitter = ObjectID(); // freed with the smoke gas, a child
 				}
 			}
 		} break;
@@ -1553,12 +1903,15 @@ void PhysXBuildingFire3D::_notification(int p_what) {
 				for (uint32_t i = 0; i < rooms.size(); i++) {
 					_step_room(i, dt);
 				}
+				clock += dt;
 				_smoke(dt);
 				_spread(dt);
 			}
 			for (uint32_t i = 0; i < rooms.size(); i++) {
 				_weaken(i);
+				_update_roof(i);
 			}
+			_update_glass();
 			_update_visuals(real_dt);
 			_update_steam(real_dt);
 			_update_brands(real_dt);
@@ -1600,6 +1953,9 @@ void PhysXBuildingFire3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_firebrands"), &PhysXBuildingFire3D::has_firebrands);
 	ClassDB::bind_method(D_METHOD("set_firebrand_rate", "per_second_per_mw"), &PhysXBuildingFire3D::set_firebrand_rate);
 	ClassDB::bind_method(D_METHOD("get_firebrand_rate"), &PhysXBuildingFire3D::get_firebrand_rate);
+	ClassDB::bind_method(D_METHOD("set_glass_panes", "enabled"), &PhysXBuildingFire3D::set_glass_panes);
+	ClassDB::bind_method(D_METHOD("has_glass_panes"), &PhysXBuildingFire3D::has_glass_panes);
+	ClassDB::bind_method(D_METHOD("get_shard_count"), &PhysXBuildingFire3D::get_shard_count);
 	ClassDB::bind_method(D_METHOD("set_time_scale", "scale"), &PhysXBuildingFire3D::set_time_scale);
 	ClassDB::bind_method(D_METHOD("get_time_scale"), &PhysXBuildingFire3D::get_time_scale);
 
@@ -1625,7 +1981,11 @@ void PhysXBuildingFire3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_firebrand_count"), &PhysXBuildingFire3D::get_firebrand_count);
 	ClassDB::bind_method(D_METHOD("get_spot_fire_count"), &PhysXBuildingFire3D::get_spot_fire_count);
 	ClassDB::bind_method(D_METHOD("is_burning"), &PhysXBuildingFire3D::is_burning);
+	ClassDB::bind_method(D_METHOD("get_ignition_time"), &PhysXBuildingFire3D::get_ignition_time);
+	ClassDB::bind_method(D_METHOD("get_ignition_cause"), &PhysXBuildingFire3D::get_ignition_cause);
 	ClassDB::bind_static_method("PhysXBuildingFire3D", D_METHOD("radiant_flux_at", "position"), &PhysXBuildingFire3D::_radiant_flux_bind);
+
+	ADD_SIGNAL(MethodInfo("ignited", PropertyInfo(Variant::STRING, "cause")));
 
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "rooms"), "set_rooms", "get_rooms");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "target"), "set_target", "get_target");
@@ -1643,6 +2003,7 @@ void PhysXBuildingFire3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "light_energy", PROPERTY_HINT_RANGE, "0,32,0.1"), "set_light_energy", "get_light_energy");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "firebrands"), "set_firebrands", "has_firebrands");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "firebrand_rate", PROPERTY_HINT_RANGE, "0,500,0.1"), "set_firebrand_rate", "get_firebrand_rate");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "glass_panes"), "set_glass_panes", "has_glass_panes");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "time_scale", PROPERTY_HINT_RANGE, "0,3600,0.1"), "set_time_scale", "get_time_scale");
 
 	BIND_ENUM_CONSTANT(ROOM_COLD);

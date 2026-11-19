@@ -2983,6 +2983,7 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 	if (!sea_sand.is_empty()) {
 		// The sand buries the ground's detail and gullies: it settles on the simulated ground the sea was grown on,
 		// not on the noise added after, which would print through as lumps a few metres high all over the stoss.
+		// Nebkhas sit on that surface (they are too small to fill a gully).
 		const float sand = _sea_sample(p_x, p_z);
 		if (sand > 0.0f) {
 			const float bury = float(Math::smoothstep(0.2, 2.0, double(sand)));
@@ -2990,6 +2991,7 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 			g = g + (base - g) * bury;
 			g += sand;
 		}
+		g += _nebkha_sample(p_x, p_z);
 	}
 	return g;
 }
@@ -3560,6 +3562,10 @@ float TerrainGenerator3D::_sea_sample(real_t p_x, real_t p_z) const {
 void TerrainGenerator3D::_build_sand_sea() {
 	sea_sand.clear();
 	sea_cover.clear();
+	sea_mask.clear();
+	nebkhas.clear();
+	neb_buckets.clear();
+	neb_bx = neb_bz = 0;
 	sea_nx = sea_nz = 0;
 	last_sand_sea_msec = 0.0;
 	last_sand_sea_max = 0.0;
@@ -3579,6 +3585,30 @@ void TerrainGenerator3D::_build_sand_sea() {
 	}
 	const int w = MAX(int(Math::ceil(r.size.x / sc)) + 1, 16);
 	const int h = MAX(int(Math::ceil(r.size.y / sc)) + 1, 16);
+	// The mask (sand_sea_mask), stretched over the rect and resampled on the grid: the sand lies only where it is set,
+	// for ergs whose outline follows basins or a drawn shape instead of the rect.
+	sea_mask.clear();
+	if (sand_sea_mask.is_valid() && !sand_sea_mask->is_empty()) {
+		Ref<Image> m = sand_sea_mask->duplicate();
+		if (m->is_compressed()) {
+			m->decompress();
+		}
+		const int mw = m->get_width(), mh = m->get_height();
+		const Rect2 full = sand_sea_rect;
+		sea_mask.resize(w * h);
+		for (int z = 0; z < h; z++) {
+			for (int x = 0; x < w; x++) {
+				const real_t u = CLAMP((r.position.x + x * sc - full.position.x) / full.size.x * mw - 0.5, 0.0, mw - 1.0);
+				const real_t v = CLAMP((r.position.y + z * sc - full.position.y) / full.size.y * mh - 0.5, 0.0, mh - 1.0);
+				const int u0 = MIN(int(u), mw - 1), v0 = MIN(int(v), mh - 1);
+				const int u1 = MIN(u0 + 1, mw - 1), v1 = MIN(v0 + 1, mh - 1);
+				const real_t fu = u - u0, fv = v - v0;
+				const real_t a = Math::lerp(m->get_pixel(u0, v0).r, m->get_pixel(u1, v0).r, float(fu));
+				const real_t b = Math::lerp(m->get_pixel(u0, v1).r, m->get_pixel(u1, v1).r, float(fu));
+				sea_mask[z * w + x] = float(CLAMP(Math::lerp(a, b, fv), real_t(0.0), real_t(1.0)));
+			}
+		}
+	}
 	TerrainDuneSea sea;
 	sea.w = w;
 	sea.h = h;
@@ -3596,7 +3626,7 @@ void TerrainGenerator3D::_build_sand_sea() {
 			const real_t px = r.position.x + x * sc, pz = r.position.y + z * sc;
 			const double d = MIN(MIN(px - r.position.x, r.position.x + r.size.x - px), MIN(pz - r.position.y, r.position.y + r.size.y - pz));
 			double k = CLAMP(d / edge, 0.0, 1.0);
-			keep_edge[z * w + x] = float(k * k * (3.0 - 2.0 * k));
+			keep_edge[z * w + x] = float(k * k * (3.0 - 2.0 * k)) * (sea_mask.is_empty() ? 1.0f : sea_mask[z * w + x]);
 			sea.base[z * w + x] = float(_sample(heights, px, pz) / sc);
 			base_mean += sea.base[z * w + x];
 		}
@@ -3657,7 +3687,7 @@ void TerrainGenerator3D::_build_sand_sea() {
 		}
 	} else {
 		for (int i = 0; i < w * h; i++) {
-			sea.sand[i] = float(depth * (0.75 + 0.5 * uni()));
+			sea.sand[i] = float(depth * (0.75 + 0.5 * uni())) * (sea_mask.is_empty() ? 1.0f : sea_mask[i]);
 		}
 	}
 	const int bands = sea.band_count();
@@ -3910,12 +3940,18 @@ void TerrainGenerator3D::_build_sand_sea() {
 		const double d = MIN(MIN(px - r.position.x, r.position.x + r.size.x - px), MIN(pz - r.position.y, r.position.y + r.size.y - pz));
 		double k = CLAMP(d / edge, 0.0, 1.0);
 		k = k * k * (3.0 - 2.0 * k);
+		if (!sea_mask.is_empty()) {
+			const int mx_i = CLAMP(int(Math::round((px - r.position.x) / sc)), 0, w - 1), mz_i = CLAMP(int(Math::round((pz - r.position.y) / sc)), 0, h - 1);
+			k *= sea_mask[mz_i * w + mx_i];
+		}
 		const double gx = (_sample(heights, px + cell_size, pz) - _sample(heights, px - cell_size, pz)) / (2.0 * cell_size);
 		const double gz = (_sample(heights, px, pz + cell_size) - _sample(heights, px, pz - cell_size)) / (2.0 * cell_size);
 		const double flat = 1.0 - CLAMP((Math::sqrt(gx * gx + gz * gz) - 0.3) / 0.2, 0.0, 1.0);
 		const bool wet = water_body.size() == uint32_t(n) && water_body[i] != 0;
 		sea_cover[i] = wet ? 0.0f : MAX(CLAMP(_sea_sample(px, pz) / 0.2f, 0.0f, 1.0f), float(k * flat));
 	}
+	neb_dir = Vector2(Math::cos(turn), Math::sin(turn));
+	_build_nebkhas();
 	Ref<Image> geo = get_geology_image();
 	if (geology_texture.is_valid() && geo.is_valid() && geology_texture->get_width() == nx && geology_texture->get_height() == ny) {
 		geology_texture->update(geo);
@@ -3923,6 +3959,196 @@ void TerrainGenerator3D::_build_sand_sea() {
 	last_sand_sea_max = mx;
 	last_sand_sea_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	print_verbose(vformat("TerrainGenerator3D: sand sea on %dx%d at %.1f m, %d bands, highest %.1f m, %.0f ms.", w, h, sc, bands, mx, last_sand_sea_msec));
+}
+
+/* Nebkhas (docs/ideas/dunes.md, "Nebkhas") */
+
+namespace {
+const real_t NEB_SPACING = 10.0; // m between candidate sites
+const real_t NEB_BUCKET = 32.0;
+const real_t NEB_REACH = 24.0; // m, the most a mound reaches from its plant (dome or tail)
+
+uint32_t neb_hash(uint32_t p_a, uint32_t p_b, uint32_t p_c) {
+	uint32_t h = p_a * 0x9E3779B1u ^ (p_b + 0x7F4A7C15u) * 0x85EBCA77u ^ (p_c + 0x165667B1u) * 0xC2B2AE3Du;
+	h ^= h >> 15;
+	h *= 0x2C1B3C6Du;
+	h ^= h >> 12;
+	h *= 0x297A2D39u;
+	h ^= h >> 15;
+	return h;
+}
+
+real_t neb_unit(uint32_t p_h) {
+	return real_t(p_h) * real_t(1.0 / 4294967296.0);
+}
+
+// Smooth value noise 0..1 over unit cells.
+real_t neb_patch(uint32_t p_k, real_t p_x, real_t p_z) {
+	const real_t fx = Math::floor(p_x), fz = Math::floor(p_z);
+	const int ix = int(fx), iz = int(fz);
+	real_t tx = p_x - fx, tz = p_z - fz;
+	tx = tx * tx * (3.0 - 2.0 * tx);
+	tz = tz * tz * (3.0 - 2.0 * tz);
+	auto v = [&](int a, int b) { return neb_unit(neb_hash(p_k ^ 0xA77Cu, uint32_t(a) * 73856093u, uint32_t(b) * 19349663u)); };
+	return Math::lerp(Math::lerp(v(ix, iz), v(ix + 1, iz), tx), Math::lerp(v(ix, iz + 1), v(ix + 1, iz + 1), tx), tz);
+}
+} // namespace
+
+// Nebkhas (coppice dunes): a shrub on thin, stable sand traps the blowing sand round itself into a dome and a tail
+// in its lee (a shadow dune, Hesp 1981), 0.4 to 2 m high and a few metres across at most in hyper-arid fields and on
+// erg margins (Tengberg 1995; Khalaf et al. 1995 for Kuwait: most under 1.5 m; Cheng et al. 2024 for the Tengger:
+// means about 1.2 m, the largest 3.6 m). They need little sand supply and the
+// plant to keep pace, so they lie where the sea's sand is thin (interdune flats and the thinning margin), on gentle
+// ground and off water; none in the dunes' slip faces or on deep sand. Sites on a jittered 10 m lattice, each kept
+// with a chance of 0.9 x suitability x nebkha_density, clustered in patches; height from a skewed draw (most small),
+// the dome under the repose, a quarter wearing down, tails 0 to 5 heights long (Hesp's shadow dunes run out over a
+// few plant heights; many field mounds are round).
+void TerrainGenerator3D::_build_nebkhas() {
+	nebkhas.clear();
+	neb_buckets.clear();
+	neb_bx = neb_bz = 0;
+	if (nebkha_density <= 0.0 || sea_sand.is_empty() || sea_cover.size() != uint32_t(nx * ny)) {
+		return;
+	}
+	const Rect2 r(sea_origin, Vector2((sea_nx - 1) * sea_cell, (sea_nz - 1) * sea_cell));
+	const int cx = int(r.size.x / NEB_SPACING), cz = int(r.size.y / NEB_SPACING);
+	const bool has_water = water_body.size() == uint32_t(nx * ny);
+	for (int z = 0; z < cz; z++) {
+		for (int x = 0; x < cx; x++) {
+			const uint32_t k = uint32_t(seed) ^ 0x4E42u;
+			const uint32_t id = uint32_t(z) * 65521u + uint32_t(x);
+			const real_t keep = neb_unit(neb_hash(k, id, 0u));
+			if (keep > real_t(0.6) * nebkha_density) {
+				continue;
+			}
+			const Vector2 p(r.position.x + (x + 0.15 + 0.7 * neb_unit(neb_hash(k, id, 1u))) * NEB_SPACING, r.position.y + (z + 0.15 + 0.7 * neb_unit(neb_hash(k, id, 2u))) * NEB_SPACING);
+			const float cover = _sample(sea_cover, p.x, p.y);
+			if (cover < 0.6f) {
+				continue;
+			}
+			if (has_water) {
+				const int gi = CLAMP(int(Math::round((p.y - result_rect.position.y) / cell_size)), 0, ny - 1) * nx + CLAMP(int(Math::round((p.x - result_rect.position.x) / cell_size)), 0, nx - 1);
+				if (water_body[gi] != 0) {
+					continue;
+				}
+			}
+			// Thin sand: full below 1 m, none past 3 m (the dunes themselves).
+			const real_t sand = _sea_sample(p.x, p.y);
+			real_t suit = 1.0 - Math::smoothstep(real_t(1.0), real_t(3.0), sand);
+			// Gentle surface (the full ground with its sand) over 3 m: full under 5 degrees, none past 12. Not in a
+			// gully or channel the grid does not hold (the full ground more than a metre off the grid's plus sand).
+			const real_t e = 3.0;
+			auto surf = [&](real_t px, real_t pz) { return get_height(Vector3(px, 0.0, pz)); };
+			{
+				const real_t ring = 0.25 * (surf(p.x + 8.0, p.y) + surf(p.x - 8.0, p.y) + surf(p.x, p.y + 8.0) + surf(p.x, p.y - 8.0));
+				if (ring - surf(p.x, p.y) > 0.5) {
+					continue;
+				}
+			}
+			const real_t gx = (surf(p.x + e, p.y) - surf(p.x - e, p.y)) / (2.0 * e);
+			const real_t gz = (surf(p.x, p.y + e) - surf(p.x, p.y - e)) / (2.0 * e);
+			suit *= 1.0 - Math::smoothstep(real_t(0.09), real_t(0.21), Math::sqrt(gx * gx + gz * gz));
+			// Fields cluster (Cheng et al. 2024: autocorrelated within some 30 m, round the shallow water): patches
+			// from a value noise of about 60 m.
+			suit *= Math::smoothstep(real_t(0.3), real_t(0.6), neb_patch(k, p.x / 60.0, p.y / 60.0));
+			if (keep > real_t(0.9) * nebkha_density * suit) {
+				continue;
+			}
+			const real_t u = neb_unit(neb_hash(k, id, 3u));
+			Nebkha nb;
+			nb.pos = p;
+			// Heights skewed to the small, mean about 1.2 m, the rare largest 3.5 m (Tengger: means 1.1-1.2 m, most
+			// 3.6 m). The dome at least 2.4 heights in radius so its steepest flank stays under the repose (about
+			// 32 degrees; 28 on average in the field, Charbonneau et al. 2026); up to 8 m (some 200 m2).
+			real_t hgt = 0.3 + 3.2 * Math::pow(u, real_t(2.5));
+			real_t rad = MAX(1.0 + 1.4 * hgt, 2.4 * hgt) * (1.0 + 0.3 * neb_unit(neb_hash(k, id, 4u)));
+			// A quarter are wearing down (the shrub dying back): lower and spread wider.
+			if (neb_unit(neb_hash(k, id, 6u)) < 0.25) {
+				hgt *= 0.6;
+				rad *= 1.3;
+			}
+			rad = MIN(rad, real_t(8.0));
+			hgt = MIN(hgt, rad / 2.4);
+			nb.height = float(hgt);
+			nb.radius = float(rad);
+			// Tails vary: field mounds are often round (length to width about 1), wind-tunnel ones 1.4; Hesp's
+			// shadow dunes run several heights. 0 to 5 heights past the dome.
+			nb.tail = float(MIN(rad + hgt * 5.0 * neb_unit(neb_hash(k, id, 5u)), NEB_REACH));
+			nebkhas.push_back(nb);
+		}
+	}
+	if (nebkhas.is_empty()) {
+		return;
+	}
+	neb_origin = r.position - Vector2(NEB_REACH, NEB_REACH);
+	neb_bx = int(Math::ceil((r.size.x + 2.0 * NEB_REACH) / NEB_BUCKET)) + 1;
+	neb_bz = int(Math::ceil((r.size.y + 2.0 * NEB_REACH) / NEB_BUCKET)) + 1;
+	neb_buckets.resize(neb_bx * neb_bz);
+	for (uint32_t i = 0; i < nebkhas.size(); i++) {
+		const Nebkha &nb = nebkhas[i];
+		const real_t reach = MAX(real_t(nb.radius), real_t(nb.tail));
+		const int bx0 = CLAMP(int((nb.pos.x - reach - neb_origin.x) / NEB_BUCKET), 0, neb_bx - 1);
+		const int bx1 = CLAMP(int((nb.pos.x + reach - neb_origin.x) / NEB_BUCKET), 0, neb_bx - 1);
+		const int bz0 = CLAMP(int((nb.pos.y - reach - neb_origin.y) / NEB_BUCKET), 0, neb_bz - 1);
+		const int bz1 = CLAMP(int((nb.pos.y + reach - neb_origin.y) / NEB_BUCKET), 0, neb_bz - 1);
+		for (int bz = bz0; bz <= bz1; bz++) {
+			for (int bx = bx0; bx <= bx1; bx++) {
+				neb_buckets[bz * neb_bx + bx].push_back(i);
+			}
+		}
+	}
+	print_verbose(vformat("TerrainGenerator3D: %d nebkhas.", int(nebkhas.size())));
+}
+
+// The mounds' sand at a point: a dome round the plant (upwind half, (1 - q)^1.5 of the height) and a tail in its lee
+// narrowing and thinning to nothing at its end; overlapping mounds merge by their highest.
+float TerrainGenerator3D::_nebkha_sample(real_t p_x, real_t p_z) const {
+	if (neb_buckets.is_empty()) {
+		return 0.0f;
+	}
+	const int bx = int(Math::floor((p_x - neb_origin.x) / NEB_BUCKET)), bz = int(Math::floor((p_z - neb_origin.y) / NEB_BUCKET));
+	if (bx < 0 || bz < 0 || bx >= neb_bx || bz >= neb_bz) {
+		return 0.0f;
+	}
+	float best = 0.0f;
+	for (uint32_t i : neb_buckets[bz * neb_bx + bx]) {
+		const Nebkha &nb = nebkhas[i];
+		const real_t dx = p_x - nb.pos.x, dz = p_z - nb.pos.y;
+		const real_t d = dx * neb_dir.x + dz * neb_dir.y; // along the wind, downwind positive
+		const real_t c = -dx * neb_dir.y + dz * neb_dir.x;
+		real_t hgt = 0.0;
+		if (d <= 0.0) {
+			const real_t q = (d * d + c * c) / (nb.radius * nb.radius);
+			if (q < 1.0) {
+				hgt = nb.height * Math::pow(1.0 - q, real_t(1.5));
+			}
+		} else if (d < nb.tail) {
+			// Along the tail the crest falls from the dome's top to nothing, convex near the plant (the sand drifts on
+			// level in the lee before thinning out); the width narrows from the dome's to a third of it.
+			const real_t t = d / nb.tail;
+			const real_t crest = nb.height * (1.0 - t * t * (3.0 - 2.0 * t));
+			const real_t half = nb.radius * (1.0 - 0.67 * t);
+			const real_t a = c / half;
+			if (a * a < 1.0) {
+				// Near the plant the dome's round shape takes over (the tail starts at its full width).
+				const real_t q = (d * d + c * c) / (nb.radius * nb.radius);
+				const real_t dome = q < 1.0 ? nb.height * Math::pow(1.0 - q, real_t(1.5)) : 0.0;
+				hgt = MAX(dome, crest * Math::pow(1.0 - a * a, real_t(1.5)));
+			}
+		}
+		best = MAX(best, float(hgt));
+	}
+	return best;
+}
+
+PackedVector4Array TerrainGenerator3D::get_nebkhas(const Rect2 &p_rect) const {
+	PackedVector4Array out;
+	for (const Nebkha &nb : nebkhas) {
+		if (p_rect.has_point(nb.pos)) {
+			out.push_back(Vector4(nb.pos.x, get_height(Vector3(nb.pos.x, 0.0, nb.pos.y)), nb.pos.y, nb.height));
+		}
+	}
+	return out;
 }
 
 Rect2 TerrainGenerator3D::get_dune_rect() const {
@@ -5052,7 +5278,7 @@ PackedVector4Array TerrainGenerator3D::get_boulders(const Rect2 &p_rect, real_t 
 					sand += _dune_sample(dune_sand, p.x, p.y);
 				}
 				if (!sea_sand.is_empty()) {
-					sand += _sea_sample(p.x, p.y);
+					sand += _sea_sample(p.x, p.y) + _nebkha_sample(p.x, p.y);
 				}
 				if (sand > 0.5f * radius) {
 					continue;
@@ -5868,6 +6094,10 @@ void TerrainGenerator3D::_build_sea_mask(LocalVector<uint8_t> &r_sea) const {
 // offshore, then a shelf sloping on, with low fBm relief (bars and troughs) so it is not a perfect ramp. Above it:
 // a beach of beach_slope over a width that varies along the coast, blended into the land behind; where the land is
 // already lower than that (a flat valley mouth) it stays as it is.
+static constexpr double PLUNGE_LAND = 30.0; // m inland the cliff's slope is carried down to the swash line
+static constexpr double PLUNGE_SEA = 160.0; // m out to sea the plunging face and its foot reach
+static constexpr double PLUNGE_DEPTH = 25.0; // m below the sea the face runs before the floor
+
 void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 	const int n = nx * ny;
 	std::vector<uint8_t> land(n);
@@ -5890,6 +6120,113 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 			beach_guides.push_back(g);
 		}
 	}
+	auto beach_w = [&](double px, double pz) {
+		double w = 0.0;
+		if (beach_width > 0.0) {
+			const double vary = CLAMP(0.5 + 0.5 * TerrainErosionFilter::fbm(s ^ 0x5bd1e995u, px, pz, MAX(double(coast_wavelength) * 0.5, 50.0), 3), 0.0, 1.0);
+			const double t0 = CLAMP((vary - 0.3) / 0.4, 0.0, 1.0);
+			w = 2.0 * beach_width * t0 * t0 * (3.0 - 2.0 * t0);
+		}
+		// Drawn beaches: a coast guide's own width along its line, a beach guide's within its band (blended over
+		// the band's outer quarter), in tree order.
+		for (const TerrainGuide3D *g : beach_guides) {
+			const bool coast_g = g->get_mode() == TerrainGuide3D::MODE_COAST;
+			const double reach = coast_g ? 2.0 * MAX(double(g->get_beach_width()), 0.0) + 120.0 + cell_size : double(g->get_width());
+			const double d = g->distance_to(Vector2(px, pz));
+			if (d >= reach) {
+				continue;
+			}
+			const double tb = CLAMP((reach - d) / (0.25 * reach), 0.0, 1.0);
+			w = Math::lerp(w, double(g->get_beach_width()), tb * tb * (3.0 - 2.0 * tb));
+		}
+		return w;
+	};
+	// Plunging cliffs (Sunamura 1992, Geomorphology of Rocky Coasts; Trenhaile 1987): where steep rock meets deep
+	// water the waves reflect off the face instead of breaking, cut no platform, and the cliff runs on below the sea
+	// (a drowned steep coast, as the Holocene rise left many). The run grades every coast to a beach-like foot: a
+	// strip a metre over the swash and a seabed a metre or two deep for tens of metres, so no cliff ever reached the
+	// water. Here the land's slope 15 to 80 m in from the sea (its mean over some 40 m along the coast) is carried
+	// down through that strip and on below the sea, to PLUNGE_DEPTH, where it is steeper than about 31 degrees
+	// (full past 40), save in coves that keep a pocket beach; the beach goes there and the seabed joins the Dean
+	// profile further out.
+	std::vector<float> plunge(n, 0.0f), plunge_slope(n, 0.0f);
+	if (plunging_cliffs) {
+		std::vector<double> num(n, 0.0), den(n, 0.0), tmpd(n, 0.0);
+		for (int i = 0; i < n; i++) {
+			if (p_sea[i] || to_sea[i] > 80.0 || to_sea[i] < 15.0) {
+				continue;
+			}
+			const int x = i % nx, z = i / nx;
+			double g = 0.0;
+			if (x > 0 && x < nx - 1 && z > 0 && z < ny - 1) {
+				const double gx = (heights[i + 1] - heights[i - 1]) / (2.0 * cell_size);
+				const double gz = (heights[i + nx] - heights[i - nx]) / (2.0 * cell_size);
+				g = Math::sqrt(gx * gx + gz * gz);
+			}
+			num[i] = g;
+			den[i] = 1.0;
+		}
+		const int rad = MAX(int(Math::ceil(20.0 / cell_size)), 1);
+		auto blur = [&](std::vector<double> &v) {
+			for (int axis = 0; axis < 2; axis++) {
+				for (int z = 0; z < ny; z++) {
+					for (int x = 0; x < nx; x++) {
+						double acc = 0.0;
+						for (int d = -rad; d <= rad; d++) {
+							const int xx = axis == 0 ? x + d : x, zz = axis == 1 ? z + d : z;
+							if (xx >= 0 && zz >= 0 && xx < nx && zz < ny) {
+								acc += v[zz * nx + xx];
+							}
+						}
+						tmpd[z * nx + x] = acc;
+					}
+				}
+				v.swap(tmpd);
+			}
+		};
+		blur(num);
+		blur(den);
+		for (int i = 0; i < n; i++) {
+			if (den[i] > 0.5) {
+				const double sl = num[i] / den[i];
+				plunge_slope[i] = float(MIN(sl, 1.5));
+				// Most steep stretches plunge; some keep a pocket beach in a cove (a low noise along the coast).
+				const double px = result_rect.position.x + (i % nx) * cell_size, pz = result_rect.position.y + (i / nx) * cell_size;
+				const double cove = 0.5 + 0.5 * TerrainErosionFilter::fbm(s ^ 0x2545F491u, px, pz, 350.0, 2);
+				plunge[i] = float(Math::smoothstep(0.6, 0.84, sl) * Math::smoothstep(0.3, 0.45, cove));
+			}
+		}
+		// Out to sea (and down to the swash line) from the nearest coast that has a value: grown a cell a pass.
+		const int passes = int(Math::ceil(PLUNGE_SEA / cell_size)) + 2;
+		for (int pass = 0; pass < passes; pass++) {
+			bool grew = false;
+			std::vector<float> np = plunge, ns = plunge_slope;
+			for (int i = 0; i < n; i++) {
+				if (den[i] > 0.5 || plunge[i] > 0.0f) {
+					continue;
+				}
+				const int x = i % nx, z = i / nx;
+				float best = 0.0f, bs = 0.0f;
+				const int nb[4] = { x > 0 ? i - 1 : -1, x < nx - 1 ? i + 1 : -1, z > 0 ? i - nx : -1, z < ny - 1 ? i + nx : -1 };
+				for (int k = 0; k < 4; k++) {
+					if (nb[k] >= 0 && plunge[nb[k]] > best) {
+						best = plunge[nb[k]];
+						bs = plunge_slope[nb[k]];
+					}
+				}
+				if (best > 0.0f) {
+					np[i] = best;
+					ns[i] = bs;
+					grew = true;
+				}
+			}
+			plunge.swap(np);
+			plunge_slope.swap(ns);
+			if (!grew) {
+				break;
+			}
+		}
+	}
 	for (int i = 0; i < n; i++) {
 		const double px = result_rect.position.x + (i % nx) * cell_size;
 		const double pz = result_rect.position.y + (i / nx) * cell_size;
@@ -5897,6 +6234,13 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 			const double x = to_land[i] < 1e29 ? MAX(to_land[i] - half, 0.25 * cell_size) : 1e9;
 			double depth = seabed_profile * Math::pow(x, 2.0 / 3.0) + shelf_slope * MAX(x - surf, 0.0);
 			depth *= 1.0 + 0.2 * TerrainErosionFilter::fbm(s, px, pz, 400.0, 3);
+			const double pl = plunge[i] > 0.0f ? double(plunge[i]) * (1.0 - CLAMP(beach_w(px, pz) * (1.0 - Math::smoothstep(0.0, 0.5, double(plunge[i]))) / 10.0, 0.0, 1.0)) : 0.0;
+			if (pl > 0.0 && x < PLUNGE_SEA) {
+				// The face goes on below the water to PLUNGE_DEPTH, then the floor eases into the profile by PLUNGE_SEA.
+				const double face = MIN(double(plunge_slope[i]) * x, PLUNGE_DEPTH);
+				const double fade = 1.0 - Math::smoothstep(0.5 * PLUNGE_SEA, PLUNGE_SEA, x);
+				depth = MAX(depth, pl * fade * face);
+			}
 			heights[i] = float(water - CLAMP(depth, 0.1, double(max_sea_depth)));
 		} else if (to_sea[i] < 1e29) {
 			const double x = MAX(to_sea[i] - half, 0.0);
@@ -5906,23 +6250,12 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 			heights[i] = float(MAX(double(heights[i]), floor_h));
 			// Beaches along some stretches of the coast and none along others (cliffs), from low noise: a beach
 			// face of beach_slope up to w from the waterline, then a backshore blending into the land over 60 m.
-			double w = 0.0;
-			if (beach_width > 0.0) {
-				const double vary = CLAMP(0.5 + 0.5 * TerrainErosionFilter::fbm(s ^ 0x5bd1e995u, px, pz, MAX(double(coast_wavelength) * 0.5, 50.0), 3), 0.0, 1.0);
-				const double t0 = CLAMP((vary - 0.3) / 0.4, 0.0, 1.0);
-				w = 2.0 * beach_width * t0 * t0 * (3.0 - 2.0 * t0);
-			}
-			// Drawn beaches: a coast guide's own width along its line, a beach guide's within its band (blended over
-			// the band's outer quarter), in tree order.
-			for (const TerrainGuide3D *g : beach_guides) {
-				const bool coast_g = g->get_mode() == TerrainGuide3D::MODE_COAST;
-				const double reach = coast_g ? 2.0 * MAX(double(g->get_beach_width()), 0.0) + 120.0 + cell_size : double(g->get_width());
-				const double d = g->distance_to(Vector2(px, pz));
-				if (d >= reach) {
-					continue;
-				}
-				const double tb = CLAMP((reach - d) / (0.25 * reach), 0.0, 1.0);
-				w = Math::lerp(w, double(g->get_beach_width()), tb * tb * (3.0 - 2.0 * tb));
+			// A plunging stretch has no beach: the waves reflect off the face and carry the sand away.
+			const double w = beach_w(px, pz) * (1.0 - Math::smoothstep(0.0, 0.5, double(plunge[i])));
+			// Plunging cliffs: the cliff's slope carried down to the water (no strip at the swash line).
+			const double pl = double(plunge[i]) * (1.0 - CLAMP(w / 10.0, 0.0, 1.0));
+			if (pl > 0.0 && x < PLUNGE_LAND) {
+				heights[i] = float(MAX(double(heights[i]), water + 0.15 + pl * double(plunge_slope[i]) * x));
 			}
 			if (w <= 0.0) {
 				continue;
@@ -8207,6 +8540,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_shelf_slope", "value"), &TerrainGenerator3D::set_shelf_slope);
 	ClassDB::bind_method(D_METHOD("get_shelf_slope"), &TerrainGenerator3D::get_shelf_slope);
 	ClassDB::bind_method(D_METHOD("set_max_sea_depth", "depth"), &TerrainGenerator3D::set_max_sea_depth);
+	ClassDB::bind_method(D_METHOD("set_plunging_cliffs", "enabled"), &TerrainGenerator3D::set_plunging_cliffs);
+	ClassDB::bind_method(D_METHOD("is_plunging_cliffs"), &TerrainGenerator3D::is_plunging_cliffs);
 	ClassDB::bind_method(D_METHOD("get_max_sea_depth"), &TerrainGenerator3D::get_max_sea_depth);
 	ClassDB::bind_method(D_METHOD("set_beach_width", "width"), &TerrainGenerator3D::set_beach_width);
 	ClassDB::bind_method(D_METHOD("get_beach_width"), &TerrainGenerator3D::get_beach_width);
@@ -8250,6 +8585,12 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sand_sea_steps"), &TerrainGenerator3D::get_sand_sea_steps);
 	ClassDB::bind_method(D_METHOD("set_sand_sea_edge", "edge"), &TerrainGenerator3D::set_sand_sea_edge);
 	ClassDB::bind_method(D_METHOD("get_sand_sea_edge"), &TerrainGenerator3D::get_sand_sea_edge);
+	ClassDB::bind_method(D_METHOD("set_sand_sea_mask", "mask"), &TerrainGenerator3D::set_sand_sea_mask);
+	ClassDB::bind_method(D_METHOD("get_sand_sea_mask"), &TerrainGenerator3D::get_sand_sea_mask);
+	ClassDB::bind_method(D_METHOD("set_nebkha_density", "density"), &TerrainGenerator3D::set_nebkha_density);
+	ClassDB::bind_method(D_METHOD("get_nebkha_density"), &TerrainGenerator3D::get_nebkha_density);
+	ClassDB::bind_method(D_METHOD("get_nebkha_height", "global_position"), &TerrainGenerator3D::get_nebkha_height);
+	ClassDB::bind_method(D_METHOD("get_nebkhas", "rect"), &TerrainGenerator3D::get_nebkhas);
 	ClassDB::bind_method(D_METHOD("get_sand_sea_height", "global_position"), &TerrainGenerator3D::get_sand_sea_height);
 	ClassDB::bind_method(D_METHOD("get_last_sand_sea_msec"), &TerrainGenerator3D::get_last_sand_sea_msec);
 	ClassDB::bind_method(D_METHOD("get_last_sand_sea_max"), &TerrainGenerator3D::get_last_sand_sea_max);
@@ -8469,6 +8810,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "seabed_profile", PROPERTY_HINT_RANGE, "0,0.5,0.001,or_greater"), "set_seabed_profile", "get_seabed_profile");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shelf_slope", PROPERTY_HINT_RANGE, "0,0.1,0.0001,or_greater"), "set_shelf_slope", "get_shelf_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_sea_depth", PROPERTY_HINT_RANGE, "0.1,1000,0.1,or_greater,suffix:m"), "set_max_sea_depth", "get_max_sea_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plunging_cliffs"), "set_plunging_cliffs", "is_plunging_cliffs");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beach_width", PROPERTY_HINT_RANGE, "0,500,0.1,or_greater,suffix:m"), "set_beach_width", "get_beach_width");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beach_slope", PROPERTY_HINT_RANGE, "0.001,1,0.001"), "set_beach_slope", "get_beach_slope");
 	ADD_SUBGROUP("Dunes", "dune");
@@ -8488,6 +8830,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sand_sea_scale", PROPERTY_HINT_RANGE, "0.5,64,0.1,suffix:m"), "set_sand_sea_scale", "get_sand_sea_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "sand_sea_steps", PROPERTY_HINT_RANGE, "0,5000,1,or_greater"), "set_sand_sea_steps", "get_sand_sea_steps");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sand_sea_edge", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_sand_sea_edge", "get_sand_sea_edge");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "sand_sea_mask", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_sand_sea_mask", "get_sand_sea_mask");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "nebkha_density", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_nebkha_density", "get_nebkha_density");
 	ADD_GROUP("Lakes", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "lake_count", PROPERTY_HINT_RANGE, "0,256,1"), "set_lake_count", "get_lake_count");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "lakes", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_lakes", "get_lakes");

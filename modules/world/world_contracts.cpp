@@ -71,6 +71,7 @@ float WorldWeather::canopy_closure_at(const Vector3 &p_position) const WW_CALL(_
 float WorldWeather::frost_at(const Vector3 &p_position) const WW_CALL(_frost_at, contract_frost_at(p_position), 0.0f, p_position)
 float WorldWeather::rainfall_at(const Vector3 &p_position) const WW_CALL(_rainfall_at, contract_rainfall_at(p_position), 0.0f, p_position)
 float WorldWeather::snowfall_at(const Vector3 &p_position) const WW_CALL(_snowfall_at, contract_snowfall_at(p_position), 0.0f, p_position)
+float WorldWeather::smoke_at(const Vector3 &p_position) const WW_CALL(_smoke_at, contract_smoke_at(p_position), 0.0f, p_position)
 float WorldWeather::canopy_water_at(const Vector3 &p_position) const WW_CALL(_canopy_water_at, contract_canopy_water_at(p_position), 0.0f, p_position)
 float WorldWeather::canopy_wetness_at(const Vector3 &p_position) const WW_CALL(_canopy_wetness_at, contract_canopy_wetness_at(p_position), 0.0f, p_position)
 float WorldWeather::canopy_drip_at(const Vector3 &p_position) const WW_CALL(_canopy_drip_at, contract_canopy_drip_at(p_position), 0.0f, p_position)
@@ -180,6 +181,7 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("snowfall_at", "position"), &WorldWeather::snowfall_at);
 	ClassDB::bind_static_method("WorldWeather", D_METHOD("washout_rate", "rain_mm_h", "snow_mm_h", "coarse"), &WorldWeather::washout_rate);
 	ClassDB::bind_method(D_METHOD("washout_at", "position", "coarse"), &WorldWeather::washout_at);
+	ClassDB::bind_method(D_METHOD("smoke_at", "position"), &WorldWeather::smoke_at);
 	ClassDB::bind_method(D_METHOD("canopy_water_at", "position"), &WorldWeather::canopy_water_at);
 	ClassDB::bind_method(D_METHOD("canopy_wetness_at", "position"), &WorldWeather::canopy_wetness_at);
 	ClassDB::bind_method(D_METHOD("canopy_drip_at", "position"), &WorldWeather::canopy_drip_at);
@@ -209,6 +211,7 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_terrain_lee_at, "position");
 	GDVIRTUAL_BIND(_rainfall_at, "position");
 	GDVIRTUAL_BIND(_snowfall_at, "position");
+	GDVIRTUAL_BIND(_smoke_at, "position");
 	GDVIRTUAL_BIND(_canopy_water_at, "position");
 	GDVIRTUAL_BIND(_canopy_wetness_at, "position");
 	GDVIRTUAL_BIND(_canopy_drip_at, "position");
@@ -404,6 +407,23 @@ Vector2 WorldSnow::lake_ice_at(const Vector3 &p_position) const {
 	return provider ? provider->contract_snow_lake_ice_at(p_position) : Vector2();
 }
 
+void WorldSnow::add_impurity(const Vector3 &p_position, float p_radius, float p_mg_per_m2) {
+	if (GDVIRTUAL_CALL(_add_impurity, p_position, p_radius, p_mg_per_m2)) {
+		return;
+	}
+	if (provider) {
+		provider->contract_snow_add_impurity(p_position, p_radius, p_mg_per_m2);
+	}
+}
+
+float WorldSnow::impurity_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_impurity_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_snow_impurity_at(p_position) : 0.0f;
+}
+
 void WorldSnow::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldSnow::has_provider);
 	ClassDB::bind_method(D_METHOD("depth_at", "position"), &WorldSnow::depth_at);
@@ -412,12 +432,16 @@ void WorldSnow::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("surface_at", "position"), &WorldSnow::surface_at);
 	ClassDB::bind_method(D_METHOD("crust_at", "position"), &WorldSnow::crust_at);
 	ClassDB::bind_method(D_METHOD("lake_ice_at", "position"), &WorldSnow::lake_ice_at);
+	ClassDB::bind_method(D_METHOD("add_impurity", "position", "radius", "mg_per_m2"), &WorldSnow::add_impurity);
+	ClassDB::bind_method(D_METHOD("impurity_at", "position"), &WorldSnow::impurity_at);
 	GDVIRTUAL_BIND(_depth_at, "position");
 	GDVIRTUAL_BIND(_density_at, "position");
 	GDVIRTUAL_BIND(_wetness_at, "position");
 	GDVIRTUAL_BIND(_surface_at, "position");
 	GDVIRTUAL_BIND(_crust_at, "position");
 	GDVIRTUAL_BIND(_lake_ice_at, "position");
+	GDVIRTUAL_BIND(_add_impurity, "position", "radius", "mg_per_m2");
+	GDVIRTUAL_BIND(_impurity_at, "position");
 }
 
 // Fire.

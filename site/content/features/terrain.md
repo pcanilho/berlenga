@@ -173,8 +173,8 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Near field: faceted holes become boot soles with a rounded heel, a waist and a toe.*
 
-- **Soft ground** (PhysXVehicle3D `soft_soil`; PhysXVehicleWheel3D `tire_pressure`; GroundSurface3D `ploughing`): vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down sink less in sand; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out.
-- **Deep mud** (`GroundSurface3D.mud_layer`, `mud_map`, `data_map`): wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry.
+- **Soft ground** (PhysXVehicle3D `soft_soil`; PhysXVehicleWheel3D `tire_pressure`; GroundSurface3D `ploughing`): vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out.
+- **Deep mud** (`GroundSurface3D.mud_layer`, `mud_map`, `data_map`): wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry. It lies on a firm base of varying depth that wheels can dig down to for grip (`subsoil`), and logs and branches settled in it become corduroy that spreads wheel load and snaps when too thin (`mats`).
 - **Tyre clogging** (`PhysXVehicle3D.tyre_clogging`): sticky clay packs the tread until it grips like a slick, and spinning throws it off.
 - **Treads and chains** (`PhysXVehicleWheel3D.tread`): road, all-terrain, mud or chains per wheel; mud tyres and chains bite deeper and clog less in sticky clay, and each prints its own pattern in the rut.
 - **Belly drag** (`PhysXVehicle3D.belly_drag`): a car sunk past its clearance rides on its belly, is dragged by the soil and can high-centre.
@@ -212,6 +212,6 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
   *Wet sand: dry prints keep sharp walls, the drained band holds a sheen, and prints at the waterline wash out to shallow dips.*
 
 - **Swash marks** (`GroundSurface3D.swash_marks`): each wave leaves a thin scalloped ridge of sand at its highest reach, and higher waves smooth older lines.
-- **Runoff channels** (`GroundSurface3D.runoff_channels`): water seeping out of a beach after the tide, and rain the ground cannot take, cuts a braided net of rills and lays the sand down at their foot; on soil it cuts gullies along ruts and spreads a fan below, faster on softer ground.
+- **Runoff channels** (`GroundSurface3D.runoff_channels`): water seeping out of a beach after the tide, and rain the ground cannot take, cuts a braided net of rills from the top of the seepage face and lays the sand down at their foot on a low-tide terrace; on soil it cuts gullies along ruts and spreads a fan below, faster on softer ground.
 
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.

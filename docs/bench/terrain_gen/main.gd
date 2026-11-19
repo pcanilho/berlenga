@@ -1535,8 +1535,67 @@ func _sand_sea_checks() -> void:
 	check(stoss_share > 0.55 and lee90 > 25.0 and lee90 < 36.0, "the dunes rise gently into the wind and drop at the repose past the crest (stoss %.0f%% of the sloping sand, lee 90th percentile %.0f deg)" % [stoss_share * 100.0, lee90])
 	gen.generate()
 	check(_hash(gen.get_height_image()) == first, "the same seed gives the same sand sea")
+	_nebkha_checks()
 	gen.sand_sea_rect = Rect2()
 	gen.generate()
+
+
+func _nebkha_checks() -> void:
+	# Nebkhas (Hesp 1981; Tengberg 1995): mounds on the sea's thin sand only, 0.4 to 2 m, longer downwind (+x) than
+	# upwind, part of get_height, and none at density 0. A sand_sea_mask keeps the sand inside it.
+	var r := gen.sand_sea_rect
+	var neb := gen.get_nebkhas(r)
+	var thin := 0
+	var sizes := true
+	var lee_longer := 0
+	var lone := 0
+	var tailed := 0
+	for n in neb:
+		var p := Vector3(n.x, 0, n.z)
+		if gen.get_sand_sea_height(p) < 3.0:
+			thin += 1
+		sizes = sizes and n.w >= 0.17 and n.w <= 3.51 and gen.get_nebkha_height(p) >= n.w - 0.01
+		# Mounds standing alone (none within 20 m), so a neighbour's tail does not reach the samples.
+		var alone := true
+		for m in neb:
+			if m != n and Vector2(m.x - n.x, m.z - n.z).length() < 20.0:
+				alone = false
+				break
+		if not alone:
+			continue
+		lone += 1
+		var up := gen.get_nebkha_height(p + Vector3(-1.5 * n.w, 0, 0))
+		var down := gen.get_nebkha_height(p + Vector3(1.5 * n.w, 0, 0))
+		if down >= up - 0.001:
+			lee_longer += 1
+		if down > up + 0.01:
+			tailed += 1
+	check(neb.size() > 20 and thin == neb.size(), "nebkhas lie on the sea's thin sand (%d mounds, %d on sand under 3 m)" % [neb.size(), thin])
+	check(sizes and lone > 5 and lee_longer == lone and tailed > lone / 2, "each is 0.2 to 3.5 m high at its plant, never higher upwind, most with a tail downwind (sizes %s, %d of %d lone mounds never higher upwind, %d with a tail)" % [sizes, lee_longer, lone, tailed])
+	if neb.size() > 0:
+		var n0: Vector4 = neb[0]
+		var p0 := Vector3(n0.x, 0, n0.z)
+		var with_mound := gen.get_height(p0)
+		gen.nebkha_density = 0.0
+		gen.generate()
+		var rise := with_mound - gen.get_height(p0)
+		check(gen.get_nebkhas(r).is_empty() and absf(rise - n0.w) < 0.01, "get_height carries the mound (%.2f m higher with it, mound %.2f m) and density 0 builds none" % [rise, n0.w])
+		gen.nebkha_density = 1.0
+	# A mask covering the left half only: no sand on the right.
+	var mask := Image.create(64, 64, false, Image.FORMAT_R8)
+	for y in 64:
+		for x in 64:
+			mask.set_pixel(x, y, Color(clampf((40.0 - x) / 16.0, 0.0, 1.0), 0, 0))
+	gen.sand_sea_mask = mask
+	gen.generate()
+	var left := 0.0
+	var right := 0.0
+	for i in 100:
+		var z := r.position.y + 100.0 + (i % 10) * 70.0
+		left += gen.get_sand_sea_height(Vector3(r.position.x + 150.0 + (i / 10) * 25.0, 0, z))
+		right += gen.get_sand_sea_height(Vector3(r.position.x + r.size.x * 0.75 + (i / 10) * 15.0, 0, z))
+	check(left > 200.0 and right < 1.0, "a sand_sea_mask keeps the sand inside it (%.0f m summed inside, %.1f m outside)" % [left, right])
+	gen.sand_sea_mask = null
 
 
 # Valley floors: how much of the land below the mountains is flat, how deep its alluvium, by drainage area.
