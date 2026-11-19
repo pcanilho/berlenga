@@ -589,6 +589,30 @@ Built:
   fade band, so the shadow pass and the path tracer see the same.
 - Cost: a few ALU per vertex; no new data.
 
+## Grass on burnt ground (built 19 Nov)
+
+Grassland is the quickest cover back after a fire: perennial grasses resprout from the crowns within weeks
+and close the sward within the first growing season, short and sparse at first (fire ecology reviews of
+temperate and Mediterranean grassland; the same 0.7 year recovery PlantGenerator.get_burn_recovery gives the
+grass presets). The engine side follows VegetationField3D: the fire contract's WorldFire.burn_age_at, sampled
+once a bake on a grid over the map (cell at least 2 m), bilinear between cells with unburnt cells counted as
+recovered, so the scar's edge grows in over a cell rather than on a hard line.
+
+- GrassField3D.burn_recovery (default 0.7 yr; the rules' PlantSpecies.burn_recovery wins when set; 0 off).
+- The cover multiplies the rules' suitability on every path: CPU blades, the GPU fill's 0.5 m grid, the far
+  shell, the ground tint. The blade height follows the same suitability (_edge_height), so regrowth is short
+  first. get_burn_cover_at(position) for scripts.
+- Bench: grass --test checks a fortnight-old scar (no blades) and a four-month one (0.51 of the blades,
+  0.87 of the height) on the GPU and CPU fill; `--burn=A` frames a scar A years old.
+- Live fires: the fire contract carries a change log (WorldFire.burn_changed(area), get_burn_generation(),
+  burn_changes_since()). WorldBurnScar3D reports on enter/exit, move and edits; a fire in play reports the
+  cells it burns. GrassField3D checks the generation at most twice a second, samples its grid again over
+  the changed area only, and marks the near tiles, rings, shell tiles and ground tint over it stale; each is
+  replaced once its successor is built, so nothing flashes. Bench: grass --test burns ground after the
+  grass is built, with no rebuild: 0 blades, then 17 of 35 at four months, then all back once it goes.
+- Not yet: VegetationField3D still reads ages once a setup; the fresh-flush colour of regrowth (brighter
+  green) would need a channel to the blades.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.

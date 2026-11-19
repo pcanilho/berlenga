@@ -408,16 +408,19 @@ void VegetationField3D::_read_burn_age(PlaceSetup &r_setup) const {
 	r_setup.burn_nx = 0;
 	r_setup.burn_ny = 0;
 	const WorldFire *fire = WorldContracts::fire();
-	if (!fire || !fire->has_provider() || biome.is_null() || !r_setup.rect.has_area()) {
-		return;
+	if (fire) {
+		burn_seen = fire->get_burn_generation();
 	}
 	bool wanted = false;
-	const TypedArray<PlantSpecies> list = biome->get_species();
-	for (int i = 0; i < list.size() && !wanted; i++) {
-		const Ref<PlantSpecies> sp = list[i];
-		wanted = sp.is_valid() && (sp->uses_burn_age() || sp->get_burn_recovery() > 0.0f);
+	if (biome.is_valid()) {
+		const TypedArray<PlantSpecies> list = biome->get_species();
+		for (int i = 0; i < list.size() && !wanted; i++) {
+			const Ref<PlantSpecies> sp = list[i];
+			wanted = sp.is_valid() && (sp->uses_burn_age() || sp->get_burn_recovery() > 0.0f);
+		}
 	}
-	if (!wanted) {
+	burn_follow = wanted;
+	if (!wanted || !fire || !fire->has_provider() || !r_setup.rect.has_area()) {
 		return;
 	}
 	const Rect2 rect = r_setup.rect;
@@ -3641,6 +3644,36 @@ void VegetationField3D::_stream_update(double p_delta) {
 		}
 		holes_dirty = Rect2();
 	}
+	// Burn ages changed: the grid samples the area again (all of it when it held no burn) and the tiles there go,
+	// to be placed again with the new ages.
+	if (burn_dirty.has_area() && stream_jobs.is_empty()) {
+		PlaceSetup &su = stream_setup;
+		if (su.burn.is_empty() || burn_dirty.encloses(su.rect)) {
+			_read_burn_age(su);
+		} else {
+			const WorldFire *fire = WorldContracts::fire();
+			const float cx = su.burn_rect.size.x / (su.burn_nx - 1);
+			const float cz = su.burn_rect.size.y / (su.burn_ny - 1);
+			const int x0 = CLAMP(int(Math::floor((burn_dirty.position.x - su.burn_rect.position.x) / cx)) - 1, 0, su.burn_nx - 1);
+			const int x1 = CLAMP(int(Math::ceil((burn_dirty.get_end().x - su.burn_rect.position.x) / cx)) + 1, 0, su.burn_nx - 1);
+			const int z0 = CLAMP(int(Math::floor((burn_dirty.position.y - su.burn_rect.position.y) / cz)) - 1, 0, su.burn_ny - 1);
+			const int z1 = CLAMP(int(Math::ceil((burn_dirty.get_end().y - su.burn_rect.position.y) / cz)) + 1, 0, su.burn_ny - 1);
+			for (int z = z0; z <= z1; z++) {
+				for (int x = x0; x <= x1; x++) {
+					const Vector2 xz = su.burn_rect.position + Vector2(x * cx, z * cz);
+					su.burn[z * su.burn_nx + x] = fire ? fire->burn_age_at(Vector3(xz.x, 0.0f, xz.y)) : -1.0f;
+				}
+			}
+		}
+		const float cell = su.burn.is_empty() ? 2.0f : su.burn_rect.size.x / (su.burn_nx - 1);
+		const Rect2 near = burn_dirty.grow(cell + su.max_footprint);
+		for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+			if (Rect2(Vector2(kv.key) * ts, Vector2(ts, ts)).intersects(near) && !gone.has(kv.key)) {
+				gone.push_back(kv.key);
+			}
+		}
+		burn_dirty = Rect2();
+	}
 	struct Pending {
 		float d;
 		Vector2i tile;
@@ -3707,7 +3740,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 
 	// Missing tiles within the radius, nearest first, as many at once as there are workers.
 	const int max_jobs = MAX(1, WorkerThreadPool::get_singleton()->get_thread_count());
-	if (int(stream_jobs.size()) < max_jobs && !holes_dirty.has_area()) {
+	if (int(stream_jobs.size()) < max_jobs && !holes_dirty.has_area() && !burn_dirty.has_area()) {
 		const int r = int(Math::ceil(stream_radius / ts)) + 1;
 		const Vector2i ct(int(Math::floor(centre.x / ts)), int(Math::floor(centre.y / ts)));
 		const Rect2i map_tiles(Vector2i(int(Math::floor(rect.position.x / ts)), int(Math::floor(rect.position.y / ts))),
@@ -3924,6 +3957,35 @@ void VegetationField3D::_follow_holes(TerrainDataMap3D *p_map) {
 	gen->connect(SNAME("holes_changed"), on_holes);
 }
 
+// Burn ages changed (WorldFire.burn_changed, a live fire or a scar placed, moved or aged): the streamed tiles over
+// the area are placed again (_stream_update, once no tile is being placed); a populated field populates again.
+void VegetationField3D::_follow_burns(double p_delta) {
+	burn_check -= p_delta;
+	if (!burn_follow || burn_check > 0.0) {
+		return;
+	}
+	burn_check = 0.5;
+	const WorldFire *fire = WorldContracts::fire();
+	if (!fire || fire->get_burn_generation() == burn_seen) {
+		return;
+	}
+	Rect2 area;
+	if (!fire->burn_changes_since(burn_seen, area)) {
+		area = Rect2(-1e6f, -1e6f, 2e6f, 2e6f);
+	}
+	burn_seen = fire->get_burn_generation();
+	if (!area.has_area()) {
+		return;
+	}
+	if (streaming) {
+		if (stream_setup_valid && area.intersects(stream_setup.rect)) {
+			burn_dirty = burn_dirty.has_area() ? burn_dirty.merge(area) : area;
+		}
+	} else if (plant_count > 0) {
+		queue_populate();
+	}
+}
+
 // Crop fields came, went or moved (GrassField3D.fields): rebuild clear of them.
 void VegetationField3D::_on_crop_fields_changed() {
 	_on_holes_changed(Rect2(-1e6f, -1e6f, 2e6f, 2e6f));
@@ -3978,6 +4040,7 @@ void VegetationField3D::_notification(int p_what) {
 					_update_impostors(traced);
 				}
 			}
+			_follow_burns(get_process_delta_time());
 			if (streaming) {
 				_stream_update(get_process_delta_time());
 			}

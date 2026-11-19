@@ -64,6 +64,26 @@
 				Override in a stub to replace [method wind_at].
 			</description>
 		</method>
+		<method name="burn_changed">
+			<return type="void" />
+			<param index="0" name="area" type="Rect2" />
+			<description>
+				Reports that [method burn_age_at] changed over [param area] (x, z in metres): a burn scar placed, moved or aged, or ground a live fire burnt. Readers that cache the ages (grass regrowth) sample them again there and rebuild only what stands on it. Report as the ground burns, at most a few times a second, with the union of the cells in between.
+			</description>
+		</method>
+		<method name="get_burn_changes_since" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="generation" type="int" />
+			<description>
+				The areas reported by [method burn_changed] after [param generation], merged: [code]{"complete": bool, "area": Rect2}[/code]. [code]complete[/code] is [code]false[/code] when the log (the last 64 reports) no longer reaches back that far: read every age again. An empty [code]area[/code] with [code]complete[/code] true: nothing changed.
+			</description>
+		</method>
+		<method name="get_burn_generation" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many [method burn_changed] reports there have been. A reader keeps the generation it last read at and compares.
+			</description>
+		</method>
 		<method name="burn_age_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />

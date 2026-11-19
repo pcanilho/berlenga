@@ -435,6 +435,13 @@ private:
 	static void _fill_cell(const Ref<MultiMesh> &p_mm, const Ref<Mesh> &p_mesh, const LocalVector<Transform3D> &p_xforms, const LocalVector<Color> &p_customs);
 	bool impostors_traced = false;
 	double impostor_check = 0.0;
+	// Live fires (WorldFire.burn_changed): checked twice a second; streamed tiles over the changed area are placed
+	// again once no tile is being placed, a populated field populates again.
+	mutable uint64_t burn_seen = 0; // WorldFire.get_burn_generation() the setup's burn grid holds
+	mutable bool burn_follow = false; // A species reads burn ages.
+	double burn_check = 0.0;
+	Rect2 burn_dirty;
+	void _follow_burns(double p_delta);
 	bool _path_traced() const;
 	void _update_impostors(bool p_traced);
 	LocalVector<LocalVector<Vector3>> placements; // Per species, world positions.

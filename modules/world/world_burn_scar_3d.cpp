@@ -39,23 +39,64 @@ void WorldBurnScar3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
 			WorldContracts::register_fire(this);
+			set_notify_transform(true);
+			reported = Rect2();
+			_report();
+		} break;
+		case NOTIFICATION_TRANSFORM_CHANGED: {
+			_report();
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			WorldContracts::unregister_fire(this);
+			if (reported.has_area()) {
+				WorldContracts::fire_burn_changed(reported);
+			}
+			reported = Rect2();
 		} break;
 	}
 }
 
+// Tell the burn readers (regrowth) where the ages changed: the area it covered and the area it covers now.
+void WorldBurnScar3D::_report() {
+	if (!is_inside_tree()) {
+		return;
+	}
+	const Rect2 area = get_area();
+	WorldContracts::fire_burn_changed(reported.has_area() ? reported.merge(area) : area);
+	reported = area;
+}
+
+Rect2 WorldBurnScar3D::get_area() const {
+	const Transform3D t = is_inside_tree() ? get_global_transform() : get_transform();
+	PackedVector2Array pts = polygon;
+	if (pts.size() < 3) {
+		pts = { Vector2(-0.5f, -0.5f) * size, Vector2(0.5f, -0.5f) * size, Vector2(0.5f, 0.5f) * size, Vector2(-0.5f, 0.5f) * size };
+	}
+	Rect2 r;
+	for (int i = 0; i < pts.size(); i++) {
+		const Vector3 p = t.xform(Vector3(pts[i].x, 0.0f, pts[i].y));
+		if (i == 0) {
+			r = Rect2(p.x, p.z, 0.0f, 0.0f);
+		} else {
+			r.expand_to(Vector2(p.x, p.z));
+		}
+	}
+	return r;
+}
+
 void WorldBurnScar3D::set_age_years(float p_years) {
 	age_years = MAX(p_years, 0.0f);
+	_report();
 }
 
 void WorldBurnScar3D::set_size(const Vector2 &p_size) {
 	size = Vector2(MAX(p_size.x, 0.0f), MAX(p_size.y, 0.0f));
+	_report();
 }
 
 void WorldBurnScar3D::set_polygon(const PackedVector2Array &p_polygon) {
 	polygon = p_polygon;
+	_report();
 }
 
 bool WorldBurnScar3D::covers(const Vector3 &p_position) const {
@@ -78,6 +119,7 @@ void WorldBurnScar3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_polygon", "polygon"), &WorldBurnScar3D::set_polygon);
 	ClassDB::bind_method(D_METHOD("get_polygon"), &WorldBurnScar3D::get_polygon);
 	ClassDB::bind_method(D_METHOD("covers", "position"), &WorldBurnScar3D::covers);
+	ClassDB::bind_method(D_METHOD("get_area"), &WorldBurnScar3D::get_area);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "age_years", PROPERTY_HINT_RANGE, "0,200,0.1,or_greater,suffix:years"), "set_age_years", "get_age_years");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "size", PROPERTY_HINT_NONE, "suffix:m"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR2_ARRAY, "polygon"), "set_polygon", "get_polygon");

@@ -238,6 +238,15 @@ class WorldFire : public RefCounted {
 
 	friend class WorldContracts;
 	LocalVector<WorldFireProvider *> providers;
+	// Burnt ground changes, for readers that cache burn_age_at() (regrowth): each report bumps the generation and
+	// logs the area; a reader asks for the union since the generation it last saw.
+	struct BurnChange {
+		uint64_t generation = 0;
+		Rect2 area;
+	};
+	static constexpr int BURN_LOG = 64;
+	uint64_t burn_generation = 0;
+	LocalVector<BurnChange> burn_log;
 
 protected:
 	static void _bind_methods();
@@ -273,6 +282,16 @@ public:
 	// infiltration falls by up to nine tenths). Fades over a year or two. The most of any fire; 0 where none burnt.
 	float water_repellency_at(const Vector3 &p_position) const;
 	PackedVector4Array plumes() const; // every fire's convection columns (x, y, z, convective heat W)
+	// Producers report where burn_age_at() changed (x, z in metres; a burn scar placed, moved or aged, ground a
+	// live fire burnt). Report as the ground burns, at most a few times a second (union the cells in between).
+	// WorldContracts::fire_burn_changed() reports to the built-in contract and any stub.
+	void burn_changed(const Rect2 &p_area);
+	uint64_t get_burn_generation() const { return burn_generation; }
+	// The union of the areas reported after generation p_since into r_area; false when the log no longer reaches
+	// back that far (read everything again). True with an empty r_area when nothing changed.
+	bool burn_changes_since(uint64_t p_since, Rect2 &r_area) const;
+	// The same for scripts and tests: {"complete": bool, "area": Rect2}.
+	Dictionary get_burn_changes_since(uint64_t p_since) const;
 };
 
 // Ground: the deformable ground's surface, soil and what lies on it (docs/ideas/world-contracts.md, Ground).
@@ -447,6 +466,7 @@ public:
 	static void unregister_water(WorldWaterProvider *p_provider);
 	static void register_fire(WorldFireProvider *p_provider);
 	static void unregister_fire(WorldFireProvider *p_provider);
+	static void fire_burn_changed(const Rect2 &p_area); // WorldFire.burn_changed() on the contract in use
 	static void register_snow(WorldSnowProvider *p_provider);
 	static void unregister_snow(WorldSnowProvider *p_provider);
 
