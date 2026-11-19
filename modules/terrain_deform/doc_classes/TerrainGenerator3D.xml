@@ -735,6 +735,9 @@
 		<member name="max_sea_depth" type="float" setter="set_max_sea_depth" getter="get_max_sea_depth" default="60.0">
 			Deepest the seabed goes (m below sea level).
 		</member>
+		<member name="plunging_cliffs" type="bool" setter="set_plunging_cliffs" getter="is_plunging_cliffs" default="true">
+			Steep coasts with no beach run on below the sea: the land's slope 15 to 80 m inland, where steeper than about 31 degrees, is carried down through the swash line and under the water to 25 m, the floor joining the seabed profile within 160 m (plunging cliffs, Sunamura 1992). Off, every coast keeps a low strip over the swash and a shallow seabed.
+		</member>
 		<member name="max_soil_depth" type="float" setter="set_max_soil_depth" getter="get_max_soil_depth" default="2.0">
 			Deepest soil and alluvium (basin fill comes on top).
 		</member>

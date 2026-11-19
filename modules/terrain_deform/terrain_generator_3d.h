@@ -171,6 +171,7 @@ private:
 	real_t seabed_profile = 0.1; // A in the Dean profile depth = A x^(2/3) (m^(1/3)); fine sand ~0.1
 	real_t shelf_slope = 0.03; // added past the surf zone (300 m)
 	real_t max_sea_depth = 60.0; // m
+	bool plunging_cliffs = true; // steep coasts without a beach run on below the sea (no strip at the swash line)
 	real_t beach_width = 80.0; // m, mean; it varies along the coast
 	real_t beach_slope = 0.03;
 	// Coastal dunes (terrain_dunes.h): wind-blown sand off the beaches, on its own fine grid over the belt behind them.
@@ -699,6 +700,8 @@ public:
 	real_t get_shelf_slope() const { return shelf_slope; }
 	void set_max_sea_depth(real_t p_value) { max_sea_depth = MAX(p_value, real_t(0.1)); }
 	real_t get_max_sea_depth() const { return max_sea_depth; }
+	void set_plunging_cliffs(bool p_value) { plunging_cliffs = p_value; }
+	bool is_plunging_cliffs() const { return plunging_cliffs; }
 	void set_beach_width(real_t p_value) { beach_width = MAX(p_value, real_t(0.0)); }
 	real_t get_beach_width() const { return beach_width; }
 	void set_beach_slope(real_t p_value) { beach_slope = CLAMP(p_value, real_t(0.001), real_t(1.0)); }

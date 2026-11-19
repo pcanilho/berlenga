@@ -5868,6 +5868,10 @@ void TerrainGenerator3D::_build_sea_mask(LocalVector<uint8_t> &r_sea) const {
 // offshore, then a shelf sloping on, with low fBm relief (bars and troughs) so it is not a perfect ramp. Above it:
 // a beach of beach_slope over a width that varies along the coast, blended into the land behind; where the land is
 // already lower than that (a flat valley mouth) it stays as it is.
+static constexpr double PLUNGE_LAND = 30.0; // m inland the cliff's slope is carried down to the swash line
+static constexpr double PLUNGE_SEA = 160.0; // m out to sea the plunging face and its foot reach
+static constexpr double PLUNGE_DEPTH = 25.0; // m below the sea the face runs before the floor
+
 void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 	const int n = nx * ny;
 	std::vector<uint8_t> land(n);
@@ -5890,6 +5894,113 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 			beach_guides.push_back(g);
 		}
 	}
+	auto beach_w = [&](double px, double pz) {
+		double w = 0.0;
+		if (beach_width > 0.0) {
+			const double vary = CLAMP(0.5 + 0.5 * TerrainErosionFilter::fbm(s ^ 0x5bd1e995u, px, pz, MAX(double(coast_wavelength) * 0.5, 50.0), 3), 0.0, 1.0);
+			const double t0 = CLAMP((vary - 0.3) / 0.4, 0.0, 1.0);
+			w = 2.0 * beach_width * t0 * t0 * (3.0 - 2.0 * t0);
+		}
+		// Drawn beaches: a coast guide's own width along its line, a beach guide's within its band (blended over
+		// the band's outer quarter), in tree order.
+		for (const TerrainGuide3D *g : beach_guides) {
+			const bool coast_g = g->get_mode() == TerrainGuide3D::MODE_COAST;
+			const double reach = coast_g ? 2.0 * MAX(double(g->get_beach_width()), 0.0) + 120.0 + cell_size : double(g->get_width());
+			const double d = g->distance_to(Vector2(px, pz));
+			if (d >= reach) {
+				continue;
+			}
+			const double tb = CLAMP((reach - d) / (0.25 * reach), 0.0, 1.0);
+			w = Math::lerp(w, double(g->get_beach_width()), tb * tb * (3.0 - 2.0 * tb));
+		}
+		return w;
+	};
+	// Plunging cliffs (Sunamura 1992, Geomorphology of Rocky Coasts; Trenhaile 1987): where steep rock meets deep
+	// water the waves reflect off the face instead of breaking, cut no platform, and the cliff runs on below the sea
+	// (a drowned steep coast, as the Holocene rise left many). The run grades every coast to a beach-like foot: a
+	// strip a metre over the swash and a seabed a metre or two deep for tens of metres, so no cliff ever reached the
+	// water. Here the land's slope 15 to 80 m in from the sea (its mean over some 40 m along the coast) is carried
+	// down through that strip and on below the sea, to PLUNGE_DEPTH, where it is steeper than about 31 degrees
+	// (full past 40), save in coves that keep a pocket beach; the beach goes there and the seabed joins the Dean
+	// profile further out.
+	std::vector<float> plunge(n, 0.0f), plunge_slope(n, 0.0f);
+	if (plunging_cliffs) {
+		std::vector<double> num(n, 0.0), den(n, 0.0), tmpd(n, 0.0);
+		for (int i = 0; i < n; i++) {
+			if (p_sea[i] || to_sea[i] > 80.0 || to_sea[i] < 15.0) {
+				continue;
+			}
+			const int x = i % nx, z = i / nx;
+			double g = 0.0;
+			if (x > 0 && x < nx - 1 && z > 0 && z < ny - 1) {
+				const double gx = (heights[i + 1] - heights[i - 1]) / (2.0 * cell_size);
+				const double gz = (heights[i + nx] - heights[i - nx]) / (2.0 * cell_size);
+				g = Math::sqrt(gx * gx + gz * gz);
+			}
+			num[i] = g;
+			den[i] = 1.0;
+		}
+		const int rad = MAX(int(Math::ceil(20.0 / cell_size)), 1);
+		auto blur = [&](std::vector<double> &v) {
+			for (int axis = 0; axis < 2; axis++) {
+				for (int z = 0; z < ny; z++) {
+					for (int x = 0; x < nx; x++) {
+						double acc = 0.0;
+						for (int d = -rad; d <= rad; d++) {
+							const int xx = axis == 0 ? x + d : x, zz = axis == 1 ? z + d : z;
+							if (xx >= 0 && zz >= 0 && xx < nx && zz < ny) {
+								acc += v[zz * nx + xx];
+							}
+						}
+						tmpd[z * nx + x] = acc;
+					}
+				}
+				v.swap(tmpd);
+			}
+		};
+		blur(num);
+		blur(den);
+		for (int i = 0; i < n; i++) {
+			if (den[i] > 0.5) {
+				const double sl = num[i] / den[i];
+				plunge_slope[i] = float(MIN(sl, 1.5));
+				// Most steep stretches plunge; some keep a pocket beach in a cove (a low noise along the coast).
+				const double px = result_rect.position.x + (i % nx) * cell_size, pz = result_rect.position.y + (i / nx) * cell_size;
+				const double cove = 0.5 + 0.5 * TerrainErosionFilter::fbm(s ^ 0x2545F491u, px, pz, 350.0, 2);
+				plunge[i] = float(Math::smoothstep(0.6, 0.84, sl) * Math::smoothstep(0.3, 0.45, cove));
+			}
+		}
+		// Out to sea (and down to the swash line) from the nearest coast that has a value: grown a cell a pass.
+		const int passes = int(Math::ceil(PLUNGE_SEA / cell_size)) + 2;
+		for (int pass = 0; pass < passes; pass++) {
+			bool grew = false;
+			std::vector<float> np = plunge, ns = plunge_slope;
+			for (int i = 0; i < n; i++) {
+				if (den[i] > 0.5 || plunge[i] > 0.0f) {
+					continue;
+				}
+				const int x = i % nx, z = i / nx;
+				float best = 0.0f, bs = 0.0f;
+				const int nb[4] = { x > 0 ? i - 1 : -1, x < nx - 1 ? i + 1 : -1, z > 0 ? i - nx : -1, z < ny - 1 ? i + nx : -1 };
+				for (int k = 0; k < 4; k++) {
+					if (nb[k] >= 0 && plunge[nb[k]] > best) {
+						best = plunge[nb[k]];
+						bs = plunge_slope[nb[k]];
+					}
+				}
+				if (best > 0.0f) {
+					np[i] = best;
+					ns[i] = bs;
+					grew = true;
+				}
+			}
+			plunge.swap(np);
+			plunge_slope.swap(ns);
+			if (!grew) {
+				break;
+			}
+		}
+	}
 	for (int i = 0; i < n; i++) {
 		const double px = result_rect.position.x + (i % nx) * cell_size;
 		const double pz = result_rect.position.y + (i / nx) * cell_size;
@@ -5897,6 +6008,13 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 			const double x = to_land[i] < 1e29 ? MAX(to_land[i] - half, 0.25 * cell_size) : 1e9;
 			double depth = seabed_profile * Math::pow(x, 2.0 / 3.0) + shelf_slope * MAX(x - surf, 0.0);
 			depth *= 1.0 + 0.2 * TerrainErosionFilter::fbm(s, px, pz, 400.0, 3);
+			const double pl = plunge[i] > 0.0f ? double(plunge[i]) * (1.0 - CLAMP(beach_w(px, pz) * (1.0 - Math::smoothstep(0.0, 0.5, double(plunge[i]))) / 10.0, 0.0, 1.0)) : 0.0;
+			if (pl > 0.0 && x < PLUNGE_SEA) {
+				// The face goes on below the water to PLUNGE_DEPTH, then the floor eases into the profile by PLUNGE_SEA.
+				const double face = MIN(double(plunge_slope[i]) * x, PLUNGE_DEPTH);
+				const double fade = 1.0 - Math::smoothstep(0.5 * PLUNGE_SEA, PLUNGE_SEA, x);
+				depth = MAX(depth, pl * fade * face);
+			}
 			heights[i] = float(water - CLAMP(depth, 0.1, double(max_sea_depth)));
 		} else if (to_sea[i] < 1e29) {
 			const double x = MAX(to_sea[i] - half, 0.0);
@@ -5906,23 +6024,12 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 			heights[i] = float(MAX(double(heights[i]), floor_h));
 			// Beaches along some stretches of the coast and none along others (cliffs), from low noise: a beach
 			// face of beach_slope up to w from the waterline, then a backshore blending into the land over 60 m.
-			double w = 0.0;
-			if (beach_width > 0.0) {
-				const double vary = CLAMP(0.5 + 0.5 * TerrainErosionFilter::fbm(s ^ 0x5bd1e995u, px, pz, MAX(double(coast_wavelength) * 0.5, 50.0), 3), 0.0, 1.0);
-				const double t0 = CLAMP((vary - 0.3) / 0.4, 0.0, 1.0);
-				w = 2.0 * beach_width * t0 * t0 * (3.0 - 2.0 * t0);
-			}
-			// Drawn beaches: a coast guide's own width along its line, a beach guide's within its band (blended over
-			// the band's outer quarter), in tree order.
-			for (const TerrainGuide3D *g : beach_guides) {
-				const bool coast_g = g->get_mode() == TerrainGuide3D::MODE_COAST;
-				const double reach = coast_g ? 2.0 * MAX(double(g->get_beach_width()), 0.0) + 120.0 + cell_size : double(g->get_width());
-				const double d = g->distance_to(Vector2(px, pz));
-				if (d >= reach) {
-					continue;
-				}
-				const double tb = CLAMP((reach - d) / (0.25 * reach), 0.0, 1.0);
-				w = Math::lerp(w, double(g->get_beach_width()), tb * tb * (3.0 - 2.0 * tb));
+			// A plunging stretch has no beach: the waves reflect off the face and carry the sand away.
+			const double w = beach_w(px, pz) * (1.0 - Math::smoothstep(0.0, 0.5, double(plunge[i])));
+			// Plunging cliffs: the cliff's slope carried down to the water (no strip at the swash line).
+			const double pl = double(plunge[i]) * (1.0 - CLAMP(w / 10.0, 0.0, 1.0));
+			if (pl > 0.0 && x < PLUNGE_LAND) {
+				heights[i] = float(MAX(double(heights[i]), water + 0.15 + pl * double(plunge_slope[i]) * x));
 			}
 			if (w <= 0.0) {
 				continue;
@@ -8207,6 +8314,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_shelf_slope", "value"), &TerrainGenerator3D::set_shelf_slope);
 	ClassDB::bind_method(D_METHOD("get_shelf_slope"), &TerrainGenerator3D::get_shelf_slope);
 	ClassDB::bind_method(D_METHOD("set_max_sea_depth", "depth"), &TerrainGenerator3D::set_max_sea_depth);
+	ClassDB::bind_method(D_METHOD("set_plunging_cliffs", "enabled"), &TerrainGenerator3D::set_plunging_cliffs);
+	ClassDB::bind_method(D_METHOD("is_plunging_cliffs"), &TerrainGenerator3D::is_plunging_cliffs);
 	ClassDB::bind_method(D_METHOD("get_max_sea_depth"), &TerrainGenerator3D::get_max_sea_depth);
 	ClassDB::bind_method(D_METHOD("set_beach_width", "width"), &TerrainGenerator3D::set_beach_width);
 	ClassDB::bind_method(D_METHOD("get_beach_width"), &TerrainGenerator3D::get_beach_width);
@@ -8469,6 +8578,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "seabed_profile", PROPERTY_HINT_RANGE, "0,0.5,0.001,or_greater"), "set_seabed_profile", "get_seabed_profile");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shelf_slope", PROPERTY_HINT_RANGE, "0,0.1,0.0001,or_greater"), "set_shelf_slope", "get_shelf_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_sea_depth", PROPERTY_HINT_RANGE, "0.1,1000,0.1,or_greater,suffix:m"), "set_max_sea_depth", "get_max_sea_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plunging_cliffs"), "set_plunging_cliffs", "is_plunging_cliffs");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beach_width", PROPERTY_HINT_RANGE, "0,500,0.1,or_greater,suffix:m"), "set_beach_width", "get_beach_width");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beach_slope", PROPERTY_HINT_RANGE, "0.001,1,0.001"), "set_beach_slope", "get_beach_slope");
 	ADD_SUBGROUP("Dunes", "dune");
