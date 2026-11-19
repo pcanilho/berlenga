@@ -3735,6 +3735,17 @@
    "topic": ""
   },
   {
+   "name": "Sea spray",
+   "settings": [
+    "WeatherMap3D.sea_spray"
+   ],
+   "note": "",
+   "what": "breaking waves wet the shore and cliff faces downwind and leave salt that rain washes off; salted grass browns at the tips.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Contact wetness",
    "settings": [
     "contact_wetness_enabled"
