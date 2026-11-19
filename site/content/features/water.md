@@ -193,7 +193,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
   - A river leaving a lake carries what the lake passes over its sill, drowned or free, and the lake settles at the level where its outlets pass its inflow (`source_lake`, `level_from_flows`).
   - Cascades into white water; `carve` emits channel brushes for a terrain deformer.
   - River surface (`foam_crisp`, `ripple_detail`, `caustics_strength`): crisp foam that drains into lace, capillary ripples, and sun caustics on the bed from the river's own ripples.
-  - Live ripples (`live_surface_waves`): ripples near the camera travel at their own speed, wrap round stones and reflect off the banks.
+  - Live ripples (`live_surface_waves`): ripples travel at their own speed, wrap round stones and reflect off the banks.
   - Rocks part the current and trail foam (`obstacle_collision_mask`); near the camera they shed eddies and a swinging wake (`live_flow`).
 
     ![A river parting round a rock, raster vs path traced](media/river-rocks.jpg)
