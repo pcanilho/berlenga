@@ -285,6 +285,26 @@ private:
 	bool clods = true; // GroundClods3D: lumps of clay near the camera (ground detail)
 	GroundClods3D *clods_node = nullptr;
 	void _plough_bodies();
+	// Slip-face avalanches (docs/ideas/sand.md, dunes): a press on a dry dune's slip face sets off a grain flow down
+	// it, a tongue that scours the face's surface layer and lays it in a lobe at the toe.
+	bool slip_avalanches = true;
+	struct Avalanche {
+		LocalVector<Vector3> path; // x, z, the half width at each 4 cm step down the fall line (y)
+		int lobe_from = 0; // the first step of the lobe at the toe
+		int done = 0; // steps applied
+		float front = 0.0f; // m of path the flow has reached
+		float scoured = 0.0f; // m3 taken from the face so far
+		float lobe_area = 0.0f; // m2 the lobe's discs cover, summed
+		uint32_t seed = 0;
+	};
+	LocalVector<Avalanche> avalanches;
+	struct AvalancheMark {
+		Vector2 at;
+		uint64_t usec = 0;
+	};
+	LocalVector<AvalancheMark> avalanche_marks;
+	void _avalanche_trigger(const Vector3 &p_position, float p_radius, float p_bottom);
+	void _avalanche_update(double p_delta);
 	float contact_tolerance = 0.03f;
 	float character_mass = 75.0f;
 	float character_contact_area = 0.035f;
@@ -303,6 +323,17 @@ private:
 	// Wind ripples (docs/ideas/sand.md, stage 3): a fine height layer over the middle of the field, its own
 	// finer ring of the patch. Off by default until its cost is measured.
 	bool wind_ripples = true;
+	// Wind fills prints from their upwind side (_drift_prints()).
+	bool wind_fills_prints = true;
+	// Dry ground up to WATER_FRINGE over a water body's level is kept wet by capillary rise (_water_update()).
+	bool water_fringe = true;
+	// Pebbles and gravel (WorldGround.coarse_cover_at) shelter the sand between them: no blowing, no ripples.
+	bool coarse_armour = true;
+	static constexpr float WATER_FRINGE = 0.15f; // m, fine sand
+	// Ripples fade out where the wind's lee stops the sand (_ripple_calm_at()).
+	bool lee_calm_ripples = true;
+	static constexpr float PRINT_DRIFT_LENGTH = 0.5f; // m: c = this times the fade rate (about 1 m an hour at 10 m/s)
+	static constexpr float PRINT_DRIFT_SOFTEN = 0.4f; // of the old even fade kept with it
 	float ripple_time_scale = 1.0f;
 	float ripple_extent = 4.0f; // m, the square of real ripple geometry round the follow point
 	GroundRipples ripples;
@@ -621,6 +652,12 @@ private:
 	const TerrainGenerator3D *_hole_generator() const;
 	bool mesh_dirty = true;
 	bool globals_published = false;
+	// The patch's deformation was rewritten (a GPU blit or a CPU upload) since the patch material's
+	// ground_deform_serial was last bumped: the path tracer recaptures vertex() output when a material parameter
+	// changes, not when a texture it samples is rewritten in place (as SnowSurface3D's snow_serial).
+	bool deform_serial_dirty = false;
+	uint32_t deform_serial = 0;
+	void _bump_deform_serial();
 	double cells_accum = 0.0;
 	double age_accum = 0.0;
 	double step_msec = 0.0;
@@ -637,6 +674,8 @@ private:
 	void _sample_ground(Vector2i p_origin, int p_n);
 	void _update_cells();
 	void _age(double p_delta);
+	void _drift_prints(const Vector2 &p_wind, float p_drift, float p_dt);
+	float _ripple_calm_at(float p_x, float p_z) const;
 	void _upload();
 	void _publish();
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
@@ -807,7 +846,25 @@ public:
 	float get_skirt_fade() const { return skirt_fade; }
 	void set_wind_override(const Vector2 &p_wind) { wind_override = p_wind; }
 	Vector2 get_wind_override() const { return wind_override; }
+	void set_slip_avalanches(bool p_enabled) { slip_avalanches = p_enabled; }
+	bool is_slip_avalanches() const { return slip_avalanches; }
+	int get_avalanche_count() const { return (int)avalanches.size(); }
 	void set_wind_ripples(bool p_enabled);
+	void set_wind_fills_prints(bool p_enabled) { wind_fills_prints = p_enabled; }
+	bool is_wind_fills_prints() const { return wind_fills_prints; }
+	void set_water_fringe(bool p_enabled) { water_fringe = p_enabled; }
+	bool is_water_fringe() const { return water_fringe; }
+	void set_coarse_armour(bool p_enabled) {
+		coarse_armour = p_enabled;
+		ripple_mask_accum = 1e9;
+	}
+	bool is_coarse_armour() const { return coarse_armour; }
+	void set_lee_calm_ripples(bool p_enabled) {
+		lee_calm_ripples = p_enabled;
+		ripple_mask_accum = 1e9;
+	}
+	bool is_lee_calm_ripples() const { return lee_calm_ripples; }
+	float get_ripple_show_at(const Vector3 &p_position) const;
 	bool is_wind_ripples() const { return wind_ripples; }
 	void set_mud_layer(bool p_enabled);
 	bool is_mud_layer() const { return mud_layer; }
