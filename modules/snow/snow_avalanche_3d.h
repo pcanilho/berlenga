@@ -160,6 +160,8 @@ class SnowAvalanche3D : public Node3D {
 	LocalVector<SnowPowderCloud3D::Source> sources;
 	Vector<float> powder_pending; // kg/m2 settled onto each cover cell, not yet written
 	double powder_window = 0.0;
+	LocalVector<float> source_lift; // each emitter's height over the snow
+	uint32_t powder_windows = 0; // half-second windows so far, seeding each window's billows
 	double powder_flush = 0.0;
 	double parcel_deposit = 0.0;
 	float release_liquid = 0.0f; // the released slab's liquid water, share of its mass
