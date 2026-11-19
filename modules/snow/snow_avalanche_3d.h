@@ -77,6 +77,7 @@ class SnowAvalanche3D : public Node3D {
 	Vector<float> hv;
 	Vector<float> written; // kg/m2 of flow already written into the cover's cells
 	Vector<float> deposit; // kg/m2 the flow left in each cell
+	Vector<float> peak; // m/s, the fastest the flow ran through each cell
 	double flow_time = 0.0;
 	double flush_accum = 0.0;
 	float released_volume = 0.0f; // m3
