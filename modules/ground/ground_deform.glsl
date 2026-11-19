@@ -1060,8 +1060,13 @@ float runoff_gnoise(vec2 q, int salt) {
 }
 // The face's own relief, fixed per place: grain-scale roughness (3 cm) on the swash's low ridges and hollows
 // (15 and 50 cm, a few mm), which gather the seepage into fewer, joining rills.
+// Each octave fades out where the field's texel cannot hold it (under about 1.5 texels a wavelength): on the
+// coarse main field the 3 cm grain roughness aliased into a busy, even pattern over the whole beach.
 float runoff_rough(vec2 p) {
-	return params.water3.z * (runoff_gnoise(p / 0.03, 0) + 1.5 * runoff_gnoise(p / 0.15, 1) + 2.0 * runoff_gnoise(p / 0.5, 2));
+	float t = texel();
+	float a = 1.0 - smoothstep(0.55 * 0.03, 0.8 * 0.03, t);
+	float b = 1.0 - smoothstep(0.55 * 0.15, 0.8 * 0.15, t);
+	return params.water3.z * (a * runoff_gnoise(p / 0.03, 0) + 1.5 * b * runoff_gnoise(p / 0.15, 1) + 2.0 * runoff_gnoise(p / 0.5, 2));
 }
 
 float water_bed(int x, int z) {
@@ -1071,41 +1076,40 @@ float water_bed(int x, int z) {
 }
 
 // Seepage gathers into the cuts it makes (seepage erosion: Dunne 1990; Howard and McLane 1988; Schorghofer et al.
-// 2004). The soaked sand's water table lies at the surface, so a hollow cut c below its surroundings draws ground
-// water in through its walls, Darcy k c / l over the few centimetres l to them, on top of the face's own k sin(beta);
-// the ridges between lose as much (a symmetric mean). So a channel head, once begun, takes the seepage from round it,
-// cuts on and works back up the face to where the seepage begins: heads at the seepage line, joining downslope,
-// rather than rills starting anywhere on the face. The ratio to the face's own outflow, 0 to 2.5 (a head draws the
-// seepage of a few times its own width).
+// 2004). On a seeping face the table stands at the surface; once channels cut below it, the ground between them
+// drains to them and stops seeping, and each channel takes the outflow of the strip it drains (drain spacing,
+// Hooghoudt 1940): the table settles to a smooth surface over the cuts and water leaves the ground where the bed
+// lies below it, in proportion to how far below (here over 1 cm, the 2 cm the face's own rule uses near the
+// surface being for a table falling under a plane). A deeper channel lowers the table further round it and takes
+// its neighbours' share, so the small heads at the seepage line feed a few trunks that win, rather than an even comb
+// (Kirchner 1993's drainage competition). The table is the cut smoothed over 8 cm set against its mean on rings
+// 25 and 60 cm out; the ratio to the face's own outflow, 0 to 4, conserved on the mean.
 float runoff_seep_gather(int x, int z) {
 	int n = fn();
-	// The table answers to the cut's shape over its own depth, not texel by texel: the cut is taken smoothed over
-	// 3 cm and set against its mean on a ring 25 cm out, so a single-texel pit draws no more water than the ground
-	// round it and only a channel's width gathers it (a texel-scale feedback broke the face into pits). The ring
-	// sets the scale heads compete over: at 12 cm they stood in an even comb, one every 10 cm.
-	int r = 16;
-	if (x < r || z < r || x >= n - r || z >= n - r) {
+	int r1 = int(round(0.25 / texel()));
+	int r2 = int(round(0.6 / texel()));
+	if (r1 < 2 || x < r2 || z < r2 || x >= n - r2 || z >= n - r2) {
 		return 1.0;
 	}
-	float l = float(r) * texel();
-	vec2 wp = texel_world(x, z);
-	vec2 g = vec2(ground_at(wp + vec2(l, 0.0)) - ground_at(wp - vec2(l, 0.0)), ground_at(wp + vec2(0.0, l)) - ground_at(wp - vec2(0.0, l))) / (2.0 * l);
-	float sinb = max(sqrt(dot(g, g) / (1.0 + dot(g, g))), 0.02);
 	// The cut only (the field's own height change): the bed's fixed roughness steers the surface flow, not this.
+	// The bed under the table smoothed over about a channel's width (a dense 5 x 5 texel box): a pit along a
+	// channel's floor draws no more than the floor round it, or the extra seepage digs it on into a chain of pits
+	// (sparse taps did the same at their own spacing).
 	float b = 0.0;
-	for (int dz = -1; dz <= 1; dz++) {
-		for (int dx = -1; dx <= 1; dx++) {
+	for (int dz = -2; dz <= 2; dz++) {
+		for (int dx = -2; dx <= 2; dx++) {
 			vec4 sj = state[(z + dz) * n + x + dx];
-			b += float((2 - abs(dx)) * (2 - abs(dz))) / 16.0 * (sj.y - sj.x);
+			b += 0.04 * (sj.y - sj.x);
 		}
 	}
 	float m = 0.0;
 	for (int k = 0; k < 8; k++) {
-		vec2 o = float(r) * vec2(cos(0.7853982 * float(k)), sin(0.7853982 * float(k)));
-		vec4 sj = state[(z + int(round(o.y))) * n + x + int(round(o.x))];
-		m += 0.125 * (sj.y - sj.x);
+		vec2 dir = vec2(cos(0.7853982 * float(k) + 0.3), sin(0.7853982 * float(k) + 0.3));
+		vec4 s1 = state[(z + int(round(dir.y * float(r1)))) * n + x + int(round(dir.x * float(r1)))];
+		vec4 s2 = state[(z + int(round(dir.y * float(r2)))) * n + x + int(round(dir.x * float(r2)))];
+		m += 0.0625 * ((s1.y - s1.x) + (s2.y - s2.x));
 	}
-	return clamp(1.0 + (m - b) / (l * sinb), 0.0, 2.5);
+	return clamp(1.0 + (m - b) / 0.01, 0.0, 4.0);
 }
 
 // Tyres wading (mud stage 4c): a tyre in the water is an obstacle in the pipe model. Water cannot stand inside it,

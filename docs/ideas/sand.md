@@ -669,11 +669,21 @@ Schorghofer et al. 2004 for seepage channels in sand).
 - Moving water: already drawn (flow-mapped ripples on the sheet swept by the Manning velocity, Vlachos 2010; built
   with the swash marks), both renderers.
 
-Result (`--view=rills`, x120, 84 min): heads in a line along the top of the seepage face, cuts to 11 mm down its
-upper half, the sand laid over the lower face and the break as a braided apron the water spreads over, the water
-reaching the terrace (0.1 to 0.4 mm). Tried and left: a five-octave bed relief to break up the heads' spacing
-(about 10 cm, fairly even); the spacing stayed, so it is the solver's own fastest-growing width, not the relief's.
-Coarsening into fewer, wider rills needs a longer run than the bench's.
+Docs round 1 (partial): the rills read as an even comb with no trunks, walls stretched like streaks, a busy
+even pattern on the sand round them, rows of round pits in the rill floors. Fixes:
+- Trunks: a real face is not a plane. The bench face now carries beach cusps, horns and bays about 5 cm deep over
+  2 to 3 m (Komar 1998; Coco et al. 1999); the bays gather the small heads into a few trunks that converge and end
+  in arcuate deposit fronts. 1 cm of relief barely bent the comb, and a five-octave bed roughness or a longer run
+  did not either: on a plane the solver keeps its own fastest-growing width, about 10 cm.
+- Capture: once channels cut below the table, the ground between them stops seeping and each channel takes the
+  outflow of the strip it drains (drain spacing, Hooghoudt 1940; Kirchner 1993's drainage competition): seepage
+  goes as how far the bed (smoothed over a 5 x 5 texel box) lies under its mean on rings 25 and 60 cm out, over
+  1 cm, 0 to 4 times the face's own, conserved on the mean.
+- Pits: the capture taken texel by texel, or with sparse taps, dug chains of pits at the tap spacing (the bed's
+  second difference along the rills doubled); the dense box keeps it at the plain solver's level.
+- Busy pattern: the bed's fixed roughness was drawn on the coarse main field (6 cm texels) too, where its 3 cm
+  octave aliased into an even pattern over the whole beach. Each octave now fades out under about 1.5 texels a
+  wavelength.
 
 ### Drifting on sand (Paulo, 16 Nov 2026)
 
