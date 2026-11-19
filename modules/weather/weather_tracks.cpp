@@ -209,6 +209,14 @@ Vector2 WeatherMap3D::get_body_water(Node *p_body) const {
 	return t ? Vector2(t->load, t->drip) : Vector2();
 }
 
+void WeatherMap3D::step_contact(float p_seconds) {
+	if (!(p_seconds > 0.0f)) {
+		return;
+	}
+	_update_contact(double(p_seconds) * time_scale);
+	_tracks_step(p_seconds);
+}
+
 float WeatherMap3D::get_body_mud(Node *p_body) const {
 	if (!p_body) {
 		return 0.0f;
@@ -222,5 +230,6 @@ void WeatherMap3D::_bind_tracks_methods() {
 	ClassDB::bind_method(D_METHOD("is_wet_tracks_enabled"), &WeatherMap3D::is_wet_tracks_enabled);
 	ClassDB::bind_method(D_METHOD("get_body_water", "body"), &WeatherMap3D::get_body_water);
 	ClassDB::bind_method(D_METHOD("get_body_mud", "body"), &WeatherMap3D::get_body_mud);
+	ClassDB::bind_method(D_METHOD("step_contact", "seconds"), &WeatherMap3D::step_contact);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wet_tracks"), "set_wet_tracks", "is_wet_tracks_enabled");
 }
