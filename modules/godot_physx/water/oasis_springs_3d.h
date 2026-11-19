@@ -65,6 +65,7 @@ public:
 		LocalVector<MeshInstance3D *> boils;
 		LocalVector<Vector3> vents; // world, on the bed
 		LocalVector<float> vent_phase;
+		LocalVector<float> vent_scale; // of boil_radius: no two boils the same size
 	};
 
 private:
