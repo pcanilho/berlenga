@@ -42,7 +42,7 @@
 
 static constexpr float SMOKE_MASS_EXTINCTION = 4.5f; // m2/g at 550 nm
 static constexpr float SMOKE_DIFFUSION = 300.0f; // m2/s, horizontal eddy diffusion
-static constexpr float SMOKE_LAYER = 2000.0f; // m, the layer's height (the sun's ray crosses it there) and depth
+static constexpr float SMOKE_LAYER = 2000.0f; // m, the layer's depth from the ground (mixed through it)
 // Optical depth per colour against 550 nm: (lambda / 550)^-1.8 at 610, 550 and 465 nm.
 static const Vector3 SMOKE_SPECTRUM(0.83f, 1.0f, 1.35f);
 
@@ -171,14 +171,13 @@ float WeatherMap3D::get_smoke_optical_depth_at(Vector3 p_position) const {
 
 Vector3 WeatherMap3D::get_smoke_transmittance(Vector3 p_position, Vector3 p_to_sun) const {
 	const Vector3 d = p_to_sun.normalized();
-	if (d.y <= 0.01f) {
-		// At the horizon the ray runs through the layer for tens of kilometres: whatever smoke the map holds here.
-		const float tau = get_smoke_optical_depth_at(p_position) * 10.0f;
-		return Vector3(Math::exp(-tau * SMOKE_SPECTRUM.x), Math::exp(-tau * SMOKE_SPECTRUM.y), Math::exp(-tau * SMOKE_SPECTRUM.z));
-	}
-	// The sun's ray crosses the layer at about its height: the column there, along the slant path.
-	const Vector3 at = p_position + d * (SMOKE_LAYER / d.y);
-	const float tau = get_smoke_optical_depth_at(at) / d.y;
+	// The sun's ray crosses the layer's middle (half its depth) here, no further out than the map reaches (a low sun
+	// reads the edge of the map's smoke, not empty air beyond it); the slant path through the layer is the column over
+	// sin(elevation), with a Chapman-like floor so it stays smooth to the horizon (about ten air masses there).
+	const float hd = Vector2(d.x, d.z).length();
+	const float reach = hd > 1e-4f ? MIN(SMOKE_LAYER * 0.5f / MAX(d.y, 1e-3f), extent * 0.45f) : 0.0f;
+	const Vector3 at = p_position + (hd > 1e-4f ? Vector3(d.x, 0.0f, d.z) / hd * reach : Vector3());
+	const float tau = get_smoke_optical_depth_at(at) / Math::sqrt(d.y * MAX(d.y, 0.0f) + 0.01f);
 	return Vector3(Math::exp(-tau * SMOKE_SPECTRUM.x), Math::exp(-tau * SMOKE_SPECTRUM.y), Math::exp(-tau * SMOKE_SPECTRUM.z));
 }
 
