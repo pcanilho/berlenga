@@ -113,6 +113,8 @@ void SnowAvalanche3D::_track_recent(SnowCover3D *p_cover) {
 		recent.fill(0.0f);
 		recent_age.resize(n * n);
 		recent_age.fill(0.0f);
+		recent_pack.resize(n * n);
+		recent_pack.fill(0.0f);
 		recent_res = n;
 		recent_origin = p_cover->origin_cell;
 	} else if (recent_origin != p_cover->origin_cell) {
@@ -133,6 +135,8 @@ void SnowAvalanche3D::_track_recent(SnowCover3D *p_cover) {
 		}
 		recent = r2;
 		recent_age = a2;
+		recent_pack.resize(n * n);
+		recent_pack.fill(0.0f); // re-read below
 		recent_origin = p_cover->origin_cell;
 	}
 	const float hours = p_cover->last_step_hours;
@@ -141,13 +145,24 @@ void SnowAvalanche3D::_track_recent(SnowCover3D *p_cover) {
 		const float add = has_new ? MAX(p_cover->cell_new_depth[i], 0.0f) : 0.0f;
 		float r = recent[i];
 		float a = recent_age[i] + hours;
+		const float rho = MAX(p_cover->cell_density[i], 30.0f);
+		const float depth = p_cover->cell_swe[i] > 0.01f ? p_cover->cell_swe[i] / rho : 0.0f;
+		// The new snow settles and melts with the pack (it is the part that settles fastest, so this is if
+		// anything generous to it): scaled by how much the pack under the old reading shrank, not counting what
+		// fell since. Without it a settled storm reads as the whole pack and a release scours to the ground.
+		const float before = recent_pack[i];
+		if (r > 0.0f && before > 1e-3f) {
+			const float now = MAX(depth - add, 0.0f);
+			if (now < before) {
+				r *= now / before;
+			}
+		}
 		if (add > 0.0f) {
 			a = (a * r) / (r + add);
 			r += add;
 		}
-		const float rho = MAX(p_cover->cell_density[i], 30.0f);
-		const float depth = p_cover->cell_swe[i] > 0.01f ? p_cover->cell_swe[i] / rho : 0.0f;
 		r = MIN(r, depth);
+		recent_pack.write[i] = depth;
 		if (a > RECENT_BONDED_HOURS) {
 			r = 0.0f;
 			a = 0.0f;
@@ -292,6 +307,9 @@ void SnowAvalanche3D::_release(SnowCover3D *p_cover, const Vector<int> &p_cells,
 		written.write[i] = s * rho;
 		if (recent_res == n && recent_origin == flow_origin) {
 			recent.write[i] = MAX(recent[i] - s, 0.0f);
+			if (recent_pack.size() == n * n) {
+				recent_pack.write[i] = MAX(recent_pack[i] - s, 0.0f); // gone with the slab, not settled
+			}
 		}
 		released_volume += s * cell * cell;
 		if (p_cover->cell_liquid.size() == p_cover->cell_swe.size()) {
@@ -316,6 +334,26 @@ void SnowAvalanche3D::_release(SnowCover3D *p_cover, const Vector<int> &p_cells,
 	running = true;
 	release_count++;
 	emit_signal(SNAME("avalanche_released"), release_center, released_volume);
+}
+
+// Smooth value noise in [0, 1] over world cells, about 3 cells across (integer hash, no sine: it holds far from the
+// origin).
+static float _patch_noise(int p_x, int p_z) {
+	auto hash = [](int x, int z) {
+		uint32_t h = uint32_t(x) * 1664525u + uint32_t(z) * 22695477u + 1013904223u;
+		h ^= h >> 16;
+		h *= 0x7feb352du;
+		h ^= h >> 15;
+		h *= 0x846ca68bu;
+		h ^= h >> 16;
+		return float(h >> 8) * (1.0f / 16777216.0f);
+	};
+	const float fx = float(p_x) / 3.0f, fz = float(p_z) / 3.0f;
+	const int x0 = int(Math::floor(fx)), z0 = int(Math::floor(fz));
+	float tx = fx - x0, tz = fz - z0;
+	tx = tx * tx * (3.0f - 2.0f * tx);
+	tz = tz * tz * (3.0f - 2.0f * tz);
+	return Math::lerp(Math::lerp(hash(x0, z0), hash(x0 + 1, z0), tx), Math::lerp(hash(x0, z0 + 1), hash(x0 + 1, z0 + 1), tx), tz);
 }
 
 void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
@@ -409,7 +447,11 @@ void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
 			// A wet flow's cohesion is a yield stress on its base (Bartelt et al. 2015: cohesion shortens the run-out and
 			// narrows the flow); it stops thin margins first, which stand as levees beside the running core.
 			const float coh = cohesion_run / (rho_run * MAX(depth, 0.05f));
-			const float drag = ((mu_run + forest_friction * forest) * GRAVITY * cos_t + coh + GRAVITY * speed * speed / (xi_run * MAX(depth, 0.01f))) * p_dt;
+			// Wet snow's friction varies with its water and grain from place to place: a front with patchy
+			// friction breaks into lobes and fingers (fingering in granular fronts, Pouliquen et al. 1997; the
+			// lobate snouts of wet snow avalanches, Bartelt et al. 2012). +-25% at full wetness, over about 3 cells.
+			const float mu_here = mu_run * (1.0f + 0.25f * run_wet * (2.0f * _patch_noise(flow_origin.x + x, flow_origin.y + z) - 1.0f));
+			const float drag = ((mu_here + forest_friction * forest) * GRAVITY * cos_t + coh + GRAVITY * speed * speed / (xi_run * MAX(depth, 0.01f))) * p_dt;
 			if (forest > 0.01f) {
 				const float det = MIN(h[i], forest_detrainment * forest / MAX(speed, 1.0f) * p_dt);
 				if (det > 0.0f) {
@@ -435,7 +477,7 @@ void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
 				v *= k;
 				speed -= drag;
 			}
-			if (speed < STOP_SPEED && GRAVITY * grad * cos_t <= mu_run * GRAVITY * cos_t + coh) {
+			if (speed < STOP_SPEED && GRAVITY * grad * cos_t <= mu_here * GRAVITY * cos_t + coh) {
 				// Deposited: the flow's snow stays in the cover as static snow, its surface broken into blocks near
 				// the camera (avalanche debris: granules, Bartelt and McArdell 2009).
 				deposited_volume += depth * cell * cell;
@@ -474,6 +516,9 @@ void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
 				if (take > 0.0f) {
 					const float rho = MAX(p_cover->cell_density[ci], 30.0f);
 					recent.write[ci] = recent[ci] - take;
+					if (recent_pack.size() == recent.size()) {
+						recent_pack.write[ci] = MAX(recent_pack[ci] - take, 0.0f);
+					}
 					h.write[i] = h[i] + take * rho;
 					written.write[i] = written[i] + take * rho; // it was in the cover already
 					entrained_volume += take * cell * cell;
@@ -838,8 +883,11 @@ void SnowAvalanche3D::_finish(SnowCover3D *p_cover) {
 	// Granules on the settled debris, once per cell, where the flow arrived fast (the run-out), not on the thin
 	// remnants in the release zone.
 	for (int i = 0; i < n * n; i++) {
-		if (d[i] > 0.05f * rho_run && peak[i] > ENTRAIN_SPEED) {
-			_debris(Vector3((flow_origin.x + i % n + 0.5f) * cell, 0.0f, (flow_origin.y + i / n + 0.5f) * cell), d[i] / rho_run * cell * cell);
+		// The granules gather where the debris is thick (the snout, the levees, the pile-ups) and thin out to its
+		// edge: their share grows with the debris' depth over 30 cm, full from 1.5 m.
+		const float dd = d[i] / rho_run;
+		if (dd > 0.3f && peak[i] > ENTRAIN_SPEED) {
+			_debris(Vector3((flow_origin.x + i % n + 0.5f) * cell, 0.0f, (flow_origin.y + i / n + 0.5f) * cell), dd * cell * cell * CLAMP((dd - 0.3f) / 1.2f, 0.0f, 1.0f));
 		}
 	}
 	written.fill(0.0f);

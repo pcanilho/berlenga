@@ -56,6 +56,7 @@ extends Node3D
 #                         --detail-pixels=n (3);
 #                         --detail-sync places the detail cells on the main thread (ground_detail_threads off),
 #                         --cell-sync the coarse layers' cells (cell_threads off)
+#   --roll[=m/s]          with --world: a ball rolled across the spot before the still (stones_react; --no-react off)
 #   --no-river-detail     with --world: RockField3D.ground_detail_rivers off (river beds keep only the river layer's stones)
 #   --gravel-reach[=d]    with --view=river: a gravel-bed reach whose median is nearest d m (0.03)
 #   --no-ground-cover     with --world: RockField3D.ground_detail_cover off (no grain aggregate on the ground past
@@ -96,6 +97,7 @@ var cam: Camera3D
 
 var breaking := false
 var form_stone := {} # the stone --form framed
+var spot_pos := Vector3.ZERO # the view's spot (--roll)
 
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -389,7 +391,7 @@ func _world() -> void:
 	add_child(land)
 	land.material = tm
 	land.source = land.get_path_to(gen)
-	land.collision_enabled = args.has("water") # the sea's seabed_from_floor measures the bed through it
+	land.collision_enabled = args.has("water") or args.has("roll") # the sea's seabed_from_floor measures the bed through it; --roll's stones land on it
 	land.camera = land.get_path_to(cam)
 	land.rebuild()
 	land.load_all_heights()
@@ -479,6 +481,7 @@ func _world() -> void:
 	var spot := _densest(LAYERS.find(view)) if rocks else Vector3(0, 0, 0)
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
+	spot_pos = spot
 	var dist := {"rockfall": 14.0, "scree": 7.0, "glacial": 12.0, "river": 14.0, "shore": 12.0, "cliff": 30.0, "tor": 22.0, "coast": 60.0, "landform": 30.0}.get(view, 10.0) as float
 	if args.has("dist"):
 		dist = float(args["dist"])
@@ -568,6 +571,7 @@ func _world() -> void:
 		rocks.ground_detail = not (args.has("no-ground-detail") or args.has("test"))
 		rocks.ground_detail_cover = not args.has("no-ground-cover")
 		rocks.ground_detail_rivers = not args.has("no-river-detail")
+		rocks.stones_react = not args.has("no-react")
 		if rocks.ground_detail:
 			rocks.ground_detail_reference_height = int(args.get("detail-ref", "1080"))
 			if args.has("detail-pixels"):
@@ -2136,10 +2140,49 @@ func _walk() -> void:
 		stats.call(ms), stats.call(dms), rocks.get_stone_count()])
 
 
+# --roll[=m/s]: a 0.3 m ball (40 kg, in world_contact) rolled 8 m across the spot from left to right of the view, then
+# taken away before the still: the stones it touched (RockField3D.stones_react) lie where it left them.
+func _roll() -> void:
+	var speed := float(args["roll"]) if args["roll"] != "1" else 3.0
+	var side := cam.global_transform.basis.x
+	side.y = 0.0
+	side = side.normalized()
+	var ball := RigidBody3D.new()
+	ball.mass = 40.0
+	var cs := CollisionShape3D.new()
+	var sph := SphereShape3D.new()
+	sph.radius = 0.3
+	cs.shape = sph
+	ball.add_child(cs)
+	ball.set_meta("trample_radius", 0.3)
+	ball.add_to_group("world_contact")
+	add_child(ball)
+	var start := spot_pos - side * 4.0
+	start.y = gen.get_height(start) + 0.32
+	ball.global_position = start
+	ball.linear_velocity = side * speed
+	ball.angular_velocity = side.cross(Vector3.DOWN) * (speed / 0.3)
+	get_viewport().disable_3d = true
+	var most := 0
+	for i in 300:
+		await get_tree().physics_frame
+		most = maxi(most, rocks.get_loose_count())
+	var settle := 0
+	while rocks.get_loose_count() > 0 and settle < 600:
+		await get_tree().physics_frame
+		settle += 1
+	print("roll: ball went %.1f m; stones %s, at most %d loose at once, all at rest %d frames later" % [ball.global_position.distance_to(start), rocks.get_react_stats(), most, settle])
+	ball.queue_free()
+	await get_tree().process_frame
+	get_viewport().disable_3d = false
+
+
 func _render_later() -> void:
 	await get_tree().process_frame
 	if args.has("walk") and rocks:
 		await _walk()
+	if args.has("roll") and rocks:
+		await _roll()
 	while breaking:
 		await get_tree().process_frame
 	if args.has("hide-stream-water"):

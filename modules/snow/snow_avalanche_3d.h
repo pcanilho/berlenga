@@ -158,6 +158,7 @@ class SnowAvalanche3D : public Node3D {
 	// Recent snow per cover cell (m), and its age in hours, in the cover's cell coordinates.
 	Vector<float> recent;
 	Vector<float> recent_age;
+	Vector<float> recent_pack; // the pack's depth when recent was last updated: the new snow settles and melts with it
 	Vector2i recent_origin;
 	int recent_res = 0;
 	uint64_t seen_update = UINT64_MAX;

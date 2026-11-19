@@ -452,6 +452,24 @@ public:
 
 private:
 	bool rockfall_dust = true;
+	// Stones that react (docs/ideas/ground-detail.md, "Stones that react"): under a world_contact body (feet, wheels,
+	// anything in the group) the small stones it touches become rigid bodies for a moment (an active zone of
+	// particles round the contact, as Servin et al.'s multiscale terrain), drawn by their own instance as they move,
+	// and go back to records once at rest; the finest are shoved out of the footprint without bodies.
+	bool stones_react = true;
+	int react_max_bodies = 32;
+	struct Loose {
+		RID body, shape;
+		Vector3i cell;
+		uint32_t group = 0, k = 0;
+		float scale = 1.0f, reach = 0.0f, idle = 0.0f, age = 0.0f;
+	};
+	LocalVector<Loose> loose;
+	HashMap<ObjectID, Vector3> react_last; // contact bodies' last centres (their speed when they are not physics bodies)
+	uint64_t react_promoted = 0, react_shoved = 0, react_settled = 0;
+	void _update_react(double p_delta);
+	void _free_loose(uint32_t p_index);
+	void _clear_react();
 	real_t dust_per_joule = 2e-5; // kg of airborne fines per joule an impact takes out of a piece
 	struct PieceTrack {
 		Vector3 velocity;
@@ -581,6 +599,12 @@ public:
 	void set_cell_threads(bool p_enabled);
 	bool is_cell_threads() const { return cell_threads; }
 	void set_ground_detail_rivers(bool p_enabled);
+	void set_stones_react(bool p_enabled);
+	bool is_stones_react() const { return stones_react; }
+	void set_react_max_bodies(int p_count) { react_max_bodies = MAX(p_count, 0); }
+	int get_react_max_bodies() const { return react_max_bodies; }
+	int get_loose_count() const { return int(loose.size()); }
+	Dictionary get_react_stats() const;
 	bool is_ground_detail_rivers() const { return detail_rivers; }
 	void set_ground_detail_cover(bool p_enabled);
 	bool is_ground_detail_cover() const { return ground_cover; }
