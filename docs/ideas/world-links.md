@@ -49,6 +49,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Rain, puddles → ground wetness, mud | linked | cells | |
 | Air → puddle ice, soil frost, thaw | linked | air, season | |
 | Wind → sand transport, dust | linked | wind | |
+| Obstacles → blown sand drops in their lee | linked (19 Nov) | WorldWeather `obstacle_lee_at` (0.15 in the cavity to 2 H, recovering over 6 H) | GroundSurface3D `obstacle_lee` scales u* by it with the plants' Raupach ratio: the flux falls and sand lands behind boulders, walls and parked cars (shadow dunes, Hesp 1981) |
 | Season → regrowth of ruts | linked | season | |
 | Snow → ground | linked | snow cover | |
 | Water bodies → wet sand (swash) | linked | contact wetness | |
@@ -63,6 +64,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Air → snowfall, melt | linked (18 Nov) | air | live air with snow's own lapse rate |
 | Sun, cloud shadow → melt | linked | sun, cloud shadow | |
 | Wind → drifts, cornices | linked | wind | |
+| Obstacles (rocks, walls, buildings, vehicles) → snow drifts in their lee | linked (19 Nov) | WorldWeather `obstacle_height_at` (WeatherMap3D shelter: the `weather_shelter` group, `get_wind_obstacles(rect)` on RockField3D boulders over 0.5 m and PhysXVehicle3D chassis) | SnowCover3D `drift_obstacles` counts them as terrain in Winstral's Sx (Winstral and Marks 2002): tops stripped, lee filled to about 15 H (Tabler 1991); a moved vehicle rebakes within 2 s |
 | Rain → wet snow, crust | linked | cells | |
 | Canopy → interception | linked | shelter | |
 | Snow → plants (burial, pressing) | linked (18 Nov) | snow cover (snow map) | grass and plant shaders: load ρ g d against stem stiffness lays plants down, deep snow hides them |
@@ -239,7 +241,9 @@ Gaps found by reading the readers, each on a contract that exists.
    the channel falling off over tens to hundreds of metres (Pizzuto 1987; Asselman and Middelkoop 1995). When the
    water goes it leaves a wet silt or ash veneer that dries and cracks (mud's cracks), and the plants it laid stay
    laid.
-2. Sand and snow drift in the lee of rocks, walls, buildings and vehicles. The snow cover's drift reads Winstral's Sx
+2. Sand and snow drift in the lee of rocks, walls, buildings and vehicles (built 19 Nov: the contract carries the
+   obstacles' height and their lee rather than `wind_at` at a height, since Sx wants heights and the sand wants the
+   near-ground ratio). The snow cover's drift reads Winstral's Sx
    from the terrain alone; the sand's flux is sheltered by plants alone (Raupach). The weather map already bakes
    obstacles into its near-ground wind (WeatherShelter). Reading that through `WorldWeather.wind_at` at 0.1-2 m lets
    both settle where the wind slows: a snow fence's drift reaches about 12-15 H downwind and 1.2 H high at

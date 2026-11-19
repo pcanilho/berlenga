@@ -52,6 +52,7 @@
 #include "scene/main/viewport.h"
 #include "scene/resources/3d/capsule_shape_3d.h"
 #include "scene/resources/3d/cylinder_shape_3d.h"
+#include "scene/resources/image_texture.h"
 #include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"
 
@@ -643,9 +644,11 @@ void TreeWind3D::_scan_node(Node *p_node) {
 				t.slot.resize(n);
 				t.base_char.resize(n);
 				t.snag_age.resize(n);
+				t.avalanche_hit.resize(n);
 				for (int c = 0; c < n; c++) {
 					t.base_char[c] = 0.0f;
 					t.snag_age[c] = -1.0f;
+					t.avalanche_hit[c] = 0;
 				}
 				const float *r = t.buffer.ptr();
 				for (int i = 0; i < n; i++) {
@@ -772,6 +775,8 @@ void TreeWind3D::update(double p_delta) {
 				}
 			}
 		}
+		_avalanche_check();
+		_cut_canopy();
 	}
 	_gather_contacts(p_delta);
 	LocalVector<Target *> changed;
@@ -877,6 +882,9 @@ void TreeWind3D::update(double p_delta) {
 				_storm_fail(*job.target, job.instance, job.world, job.load);
 			}
 		}
+	}
+	if (!avalanche_pending.is_empty()) {
+		_avalanche_fail(changed);
 	}
 	if (!storm_parts.is_empty() || !caps.is_empty()) {
 		_storm_parts(p_delta);
@@ -1812,6 +1820,16 @@ void TreeWind3D::_storm_fail(Target &r_target, int p_instance, const Transform3D
 	} else {
 		storm_breaks++;
 	}
+	// A felled tree or snapped stem takes its leaves out of the weather map's canopy, so snow, rain and wind
+	// under it see the gap (a cleared avalanche lane stops anchoring and braking the next one).
+	if (thrown || stem_joint) {
+		CanopyHole hole;
+		hole.xz = Vector2(tree.origin.x, tree.origin.z);
+		hole.radius = _crown_radius(rig) * scale;
+		// A snapped stem keeps the foliage below its break: about half the share of the height under it.
+		hole.keep = thrown ? 0.0f : CLAMP(0.5f * bone.pivot.y / MAX(rig.extent, 0.1f), 0.0f, 0.6f);
+		canopy_holes.push_back(hole);
+	}
 	Dictionary pit;
 	if (thrown && !snap) {
 		// The pit the plate leaves (5k, tree_root_pit): its centre, radius and depth, world space.
@@ -1820,6 +1838,235 @@ void TreeWind3D::_storm_fail(Target &r_target, int p_instance, const Transform3D
 		pit["depth"] = CLAMP(1.6f * rig.plate_thick * scale, 0.35f, 0.95f);
 	}
 	emit_signal(SNAME("storm_damage"), tree.xform(cap_at), (thrown ? rig.bones[1].radius : bone.radius) * scale, thrown && !snap, pit);
+}
+
+// Avalanche impact on trees (docs/ideas/trees.md 5ak). The stem's breaking pressure as a power of its
+// diameter, fitted to Bartelt and Stoeckli 2001 (Annals of Glaciology 32): trunks of 30-50 cm break from
+// about 10-20 kPa of dense flow, so P = 15 kPa (D / 0.4 m)^1.36, which gives 1-4 kPa for stems of 5-12 cm,
+// the range a powder cloud reaches (Sovilla et al. 2015). A crown on a stem that holds snaps from about
+// 3 kPa: the powder cloud's front takes the tops of mature trees (RAMMS::EXTENDED's suspension layer).
+float TreeWind3D::avalanche_strength(float p_stem_diameter, bool p_crown) {
+	if (p_crown) {
+		return 3000.0f;
+	}
+	return MAX(15000.0f * Math::pow(MAX(p_stem_diameter, 0.01f) / 0.4f, 1.36f), 500.0f);
+}
+
+float TreeWind3D::_crown_radius(const Rig &p_rig) {
+	float r = 0.0f;
+	for (uint32_t c = 1; c < p_rig.bones.size(); c++) {
+		const Bone &b = p_rig.bones[c];
+		const Vector3 tip = b.pivot + b.dir * b.length;
+		r = MAX(r, Vector2(tip.x, tip.z).length() + b.reach);
+	}
+	return MAX(r, 0.5f);
+}
+
+// Once a second: the highest pressure an avalanche has put at each tree's foot (WorldSnow, Pa) against its
+// strength. A tree that fails waits for the frame's solve (its pose records) in avalanche_pending.
+void TreeWind3D::_avalanche_check() {
+	if (!avalanche_enabled || !is_inside_tree()) {
+		return;
+	}
+	const WorldSnow *snow = WorldContracts::snow();
+	if (!snow || !snow->has_provider()) {
+		return;
+	}
+	const WorldGround *ground = WorldContracts::ground();
+	const bool has_ground = ground && ground->has_provider();
+	for (uint32_t ti = 0; ti < targets.size(); ti++) {
+		Target &t = targets[ti];
+		MultiMeshInstance3D *mmi = ObjectDB::get_instance<MultiMeshInstance3D>(t.node);
+		if (!mmi || !mmi->is_inside_tree() || !t.rig || !t.rig->storm || t.rig->bones.size() < 2 || t.avalanche_hit.size() != t.placements.size()) {
+			continue;
+		}
+		const Rig &rig = *t.rig;
+		const uint32_t n = rig.bones.size();
+		const Transform3D cw = mmi->get_global_transform();
+		for (uint32_t i = 0; i < t.placements.size(); i++) {
+			if (t.avalanche_hit[i] >= 2) {
+				continue;
+			}
+			const Touch *tc = t.touch.getptr(int(i));
+			if (tc && tc->uprooted) {
+				continue;
+			}
+			const Transform3D tree = cw * t.placements[i];
+			const Vector3 at = tree.origin;
+			const float p = snow->avalanche_peak_pressure_at(at);
+			if (p < 300.0f) {
+				continue;
+			}
+			const float scale = MAX(Math::pow(float(Math::abs(tree.basis.determinant())), 1.0f / 3.0f), 1e-3f);
+			// The stem's diameter above its flare (the collider spanning 2.5 m; the first one holds the flare).
+			float r = rig.bones[1].radius;
+			const float bh = 2.5f / scale;
+			const float *co = rig.colliders.ptr();
+			for (int k = 0; k < rig.colliders.size() / 8; k++) {
+				const float *o = co + k * 8;
+				if (int(o[7]) == 1 && MIN(o[1], o[4]) <= bh && MAX(o[1], o[4]) >= bh) {
+					r = o[6];
+					break;
+				}
+			}
+			const float d = 2.0f * r * scale;
+			// Wood defects, rot and rooting: each tree's own strength, steady per tree.
+			const uint32_t seed = uint32_t(i) * 2654435761u + ti * 40503u;
+			const bool whole = p >= avalanche_strength(d, false) * (0.75f + 0.5f * hash01(seed, 11u));
+			int bone = 0;
+			if (!whole) {
+				if (t.avalanche_hit[i] != 0 || d < 0.15f || p < avalanche_strength(d, true) * (0.6f + 0.8f * hash01(seed, 12u))) {
+					continue;
+				}
+				// The stem joint nearest 0.6 of the tree's reach: the top of the crown goes.
+				bone = -1;
+				float best = 1e9f;
+				if (rig.groups.size() == n) {
+					for (uint32_t c = 2; c < n; c++) {
+						if (rig.groups[c] != rig.groups[1] || rig.groups[c] == int(c) || (tc && tc->broken.size() == n && tc->broken[c])) {
+							continue;
+						}
+						const float off = Math::abs(rig.bones[c].pivot.y - 0.6f * rig.extent);
+						if (off < best) {
+							best = off;
+							bone = int(c);
+						}
+					}
+				}
+				if (bone < 0) {
+					continue;
+				}
+			}
+			// The flow runs downslope; the tree falls with it.
+			Vector3 down;
+			if (has_ground) {
+				const float gx = ground->height_at(at + Vector3(3, 0, 0)) - ground->height_at(at - Vector3(3, 0, 0));
+				const float gz = ground->height_at(at + Vector3(0, 0, 3)) - ground->height_at(at - Vector3(0, 0, 3));
+				down = Vector3(-gx, 0.0f, -gz);
+			}
+			if (down.length_squared() < 1e-4f) {
+				down = Vector3(base_direction.x, 0.0f, base_direction.y);
+			}
+			down = down.length_squared() > 1e-8f ? down.normalized() : Vector3(1, 0, 0);
+			AvalancheFail f;
+			f.target = int(ti);
+			f.instance = int(i);
+			// The flow speed from its pressure, 0.5 rho u^2 with dense flow at 300 kg/m3.
+			f.load.wind = down * Math::sqrt(2.0f * p / 300.0f);
+			f.load.bone = bone;
+			if (whole) {
+				// Frozen soil holds the roots: most stems in an avalanche path break near the foot, some go with
+				// their root plate (Bartelt and Stoeckli 2001).
+				f.load.root_ratio = 2.0f;
+				f.load.base_snap = hash01(seed, 13u) < 0.7f;
+				t.avalanche_hit[i] = 2;
+			} else {
+				f.load.ratio = 2.0f;
+				t.avalanche_hit[i] = 1;
+			}
+			avalanche_pending.push_back(f);
+		}
+	}
+}
+
+void TreeWind3D::_avalanche_fail(LocalVector<Target *> &r_changed) {
+	for (const AvalancheFail &f : avalanche_pending) {
+		if (f.target < 0 || f.target >= int(targets.size())) {
+			continue;
+		}
+		Target &t = targets[f.target];
+		MultiMeshInstance3D *mmi = ObjectDB::get_instance<MultiMeshInstance3D>(t.node);
+		if (!mmi || !t.rig || !t.write || f.instance >= int(t.placements.size())) {
+			continue;
+		}
+		const uint32_t had = storm_parts.size();
+		_storm_fail(t, f.instance, mmi->is_inside_tree() ? mmi->get_global_transform() : Transform3D(), f.load);
+		// The flow shoves what it broke downslope: the part leaves its hinge at about 1.5 m/s, and gravity
+		// takes it from there (a storm's wind does this push for windthrow; on a still day nothing would).
+		if (storm_parts.size() > had) {
+			RigidBody3D *body = ObjectDB::get_instance<RigidBody3D>(storm_parts[storm_parts.size() - 1].body);
+			if (body) {
+				const Vector3 down = f.load.wind.length_squared() > 1e-8f ? f.load.wind.normalized() : Vector3(1, 0, 0);
+				body->apply_central_impulse(down * body->get_mass() * 1.5f);
+			}
+		}
+		if (f.load.bone == 0) {
+			avalanche_throws++;
+		} else {
+			avalanche_breaks++;
+		}
+		if (r_changed.find(&t) < 0) {
+			r_changed.push_back(&t);
+		}
+	}
+	avalanche_pending.clear();
+}
+
+// The felled crowns' leaf area out of the weather map's canopy_map (the map VegetationField3D paints from its
+// crowns, LAI / 4 in green): inside a crown's core the leaves go, fading out to 1.4 crown radii as the
+// field's own crown term does. Once a second at most, on our own copy of the map.
+void TreeWind3D::_cut_canopy() {
+	if (canopy_holes.is_empty()) {
+		return;
+	}
+	WeatherMap3D *wm = Object::cast_to<WeatherMap3D>(get_node_or_null(weather_map_path));
+	if (!wm) {
+		Node *root = get_node_or_null(target_path);
+		if (root) {
+			const Variant path = root->get(SNAME("weather_map"));
+			if (path.get_type() == Variant::NODE_PATH && !NodePath(path).is_empty()) {
+				wm = Object::cast_to<WeatherMap3D>(root->get_node_or_null(path));
+			}
+		}
+	}
+	const Ref<Texture2D> tex = wm ? wm->get_canopy_map() : Ref<Texture2D>();
+	const Rect2 rect = wm ? wm->get_canopy_map_rect() : Rect2();
+	if (tex.is_null() || !rect.has_area()) {
+		canopy_holes.clear();
+		return;
+	}
+	if (canopy_edit.is_null() || tex->get_instance_id() != canopy_texture) {
+		const Ref<Image> img = tex->get_image();
+		if (img.is_null() || img->is_empty()) {
+			canopy_holes.clear();
+			return;
+		}
+		canopy_edit = img->duplicate();
+		if (canopy_edit->is_compressed()) {
+			canopy_edit->decompress();
+		}
+	}
+	const int w = canopy_edit->get_width();
+	const int h = canopy_edit->get_height();
+	const Vector2 cell = rect.size / Vector2(w, h);
+	for (const CanopyHole &hole : canopy_holes) {
+		const float reach = hole.radius * 1.4f;
+		const int x0 = MAX(int(Math::floor((hole.xz.x - reach - rect.position.x) / cell.x)), 0);
+		const int x1 = MIN(int(Math::ceil((hole.xz.x + reach - rect.position.x) / cell.x)), w - 1);
+		const int y0 = MAX(int(Math::floor((hole.xz.y - reach - rect.position.y) / cell.y)), 0);
+		const int y1 = MIN(int(Math::ceil((hole.xz.y + reach - rect.position.y) / cell.y)), h - 1);
+		for (int y = y0; y <= y1; y++) {
+			for (int x = x0; x <= x1; x++) {
+				const Vector2 p = rect.position + Vector2(x + 0.5f, y + 0.5f) * cell;
+				const float d = p.distance_to(hole.xz) / MAX(hole.radius, 0.1f);
+				if (d >= 1.4f) {
+					continue;
+				}
+				Color c = canopy_edit->get_pixel(x, y);
+				c.g *= Math::lerp(hole.keep, 1.0f, Math::smoothstep(0.6f, 1.4f, d));
+				if (c.g < 1e-3f) {
+					c.g = 0.0f;
+					c.r = 0.0f;
+				}
+				canopy_edit->set_pixel(x, y, c);
+			}
+		}
+	}
+	canopy_holes_cut += canopy_holes.size();
+	canopy_holes.clear();
+	const Ref<ImageTexture> nt = ImageTexture::create_from_image(canopy_edit);
+	wm->set_canopy_map(nt);
+	canopy_texture = nt->get_instance_id();
 }
 
 // Wind on the parts a storm broke off, while they fall (the drag of the crown they carry, with
@@ -2908,6 +3155,12 @@ void TreeWind3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_storm_min_wind"), &TreeWind3D::get_storm_min_wind);
 	ClassDB::bind_method(D_METHOD("get_storm_break_count"), &TreeWind3D::get_storm_break_count);
 	ClassDB::bind_method(D_METHOD("get_storm_throw_count"), &TreeWind3D::get_storm_throw_count);
+	ClassDB::bind_method(D_METHOD("set_avalanche_enabled", "enabled"), &TreeWind3D::set_avalanche_enabled);
+	ClassDB::bind_method(D_METHOD("is_avalanche_enabled"), &TreeWind3D::is_avalanche_enabled);
+	ClassDB::bind_method(D_METHOD("get_avalanche_break_count"), &TreeWind3D::get_avalanche_break_count);
+	ClassDB::bind_method(D_METHOD("get_avalanche_throw_count"), &TreeWind3D::get_avalanche_throw_count);
+	ClassDB::bind_method(D_METHOD("get_canopy_holes_cut"), &TreeWind3D::get_canopy_holes_cut);
+	ClassDB::bind_static_method("TreeWind3D", D_METHOD("avalanche_strength", "stem_diameter", "crown"), &TreeWind3D::avalanche_strength);
 	ClassDB::bind_method(D_METHOD("get_storm_fall_count"), &TreeWind3D::get_storm_fall_count);
 	ClassDB::bind_method(D_METHOD("get_storm_snap_count"), &TreeWind3D::get_storm_snap_count);
 	ClassDB::bind_method(D_METHOD("get_snag_count"), &TreeWind3D::get_snag_count);
@@ -2955,6 +3208,7 @@ void TreeWind3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "storm_anchorage", PROPERTY_HINT_RANGE, "0.1,4,0.01"), "set_storm_anchorage", "get_storm_anchorage");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "storm_min_radius", PROPERTY_HINT_RANGE, "0,0.3,0.005,suffix:m"), "set_storm_min_radius", "get_storm_min_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "storm_min_wind", PROPERTY_HINT_RANGE, "0,60,0.5,suffix:m/s"), "set_storm_min_wind", "get_storm_min_wind");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "avalanche_enabled"), "set_avalanche_enabled", "is_avalanche_enabled");
 	ADD_SIGNAL(MethodInfo("storm_damage", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "radius"), PropertyInfo(Variant::BOOL, "uprooted"), PropertyInfo(Variant::DICTIONARY, "pit")));
 }
 

@@ -225,6 +225,11 @@ public:
 	// For a grains node: the live vehicles, and whether a point is inside one's chassis box.
 	static void get_mud_vehicles(LocalVector<PhysXVehicle3D *> &r_vehicles);
 	bool mud_box_contains(const Vector3 &p_world) const;
+	// The chassis box as a wind obstacle for the weather's shelter (the weather_shelter group): snow and sand
+	// drift in a parked vehicle's lee.
+	Array get_wind_obstacles(const Rect2 &p_rect) const;
+	void set_wind_obstacle(bool p_enabled);
+	bool is_wind_obstacle() const { return wind_obstacle; }
 	Vector3 get_actor_position() const;
 	// The chassis actor once built (its frame is this node's), else null; for joints to it (PhysXWinch3D).
 	physx::PxRigidActor *get_px_actor() const;
@@ -259,6 +264,7 @@ private:
 	bool tyre_clogging = true;
 	bool belly_drag = true;
 	bool body_mud = true;
+	bool wind_obstacle = true;
 	void _belly_step(float p_delta);
 	void _body_mud_step(float p_delta);
 	void _wade_step();

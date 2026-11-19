@@ -257,6 +257,16 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	// The terrain climate's precipitation per cell (mm a year), read on the main thread.
 	Vector<float> cell_climate_precip;
 	Vector<float> cell_fire; // W/m2 from WorldFire, read on the main thread each update (empty with no fire)
+	// Wind obstacles (rocks, walls, buildings, vehicles; WorldWeather.obstacle_height_at), m over the ground: Sx
+	// counts them as terrain. Read on the main thread a band of rows an update into obstacle_next; an Sx bake takes
+	// it in when it starts (its rows read cell_obstacle on workers).
+	Vector<float> cell_obstacle, obstacle_next;
+	Vector<float> cell_lee; // the near-ground wind behind them over the open (WorldWeather.obstacle_lee_at), for blowing snow
+	Vector2i obstacle_origin;
+	int obstacle_row = 0; // the sweep reads a band of rows each update
+	bool obstacle_sweep_changed = false, obstacle_sweep_any = false;
+	bool obstacle_active = false; // the last full sweep found obstacles or lee
+	bool drift_obstacles = true;
 	// Light-absorbing particles (docs/ideas/world-links.md, dirty snow), mg/m2 of black carbon equivalent: on the
 	// surface, under the snow fallen since (deep) with that snow's depth (m) over it, and the deposition from the
 	// smoke haze and burnt forest (mg/m2 per hour, read on the main thread every few seconds).
@@ -299,6 +309,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	void _ice_load_step();
 	void _refresh_cell_inputs(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only);
 	void _refresh_fire();
+	void _refresh_obstacles();
 	void _update_begin(double p_weather_dt, bool p_blocking);
 	void _update_cells(bool p_parallel);
 	void _update_end();
@@ -367,6 +378,8 @@ public:
 	float get_slide_min_holding() const { return slide_min_holding; }
 	void set_slide_holding_decay(float p_per_degree);
 	float get_slide_holding_decay() const { return slide_holding_decay; }
+	void set_drift_obstacles(bool p_enabled);
+	bool is_drift_obstacles_enabled() const { return drift_obstacles; }
 	void set_drift_enabled(bool p_enabled);
 	bool is_drift_enabled() const { return drift_enabled; }
 	void set_drift_distance(float p_m);

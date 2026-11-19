@@ -34,7 +34,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Shelter: bare ground under the roof; tree crowns hold their snow.*
 
-- **Wind moves lying snow** (`SnowCover3D.wind_transport_enabled`): windward shoulders and crests are scoured and the lee fills with wind-packed snow.
+- **Wind moves lying snow** (`SnowCover3D.wind_transport_enabled`, `drift_obstacles`): windward shoulders and crests are scoured and the lee fills with wind-packed snow; snow drifts in behind rocks, walls, buildings and vehicles and blows off their tops.
 
   ![A ridge after a day of 15 m/s wind: snow transport off, then on in raster and path traced](media/snow-wind.jpg)
 

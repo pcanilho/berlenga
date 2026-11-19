@@ -1370,10 +1370,11 @@
   {
    "name": "Blowing sand",
    "settings": [
-    "GroundStreamers3D"
+    "GroundStreamers3D",
+    "GroundSurface3D.obstacle_lee"
    ],
    "note": "",
-   "what": "grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind.",
+   "what": "grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind, and drop in the lee of boulders, walls and parked vehicles.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -3293,10 +3294,11 @@
   {
    "name": "Wind moves lying snow",
    "settings": [
-    "SnowCover3D.wind_transport_enabled"
+    "SnowCover3D.wind_transport_enabled",
+    "drift_obstacles"
    ],
    "note": "",
-   "what": "windward shoulders and crests are scoured and the lee fills with wind-packed snow.",
+   "what": "windward shoulders and crests are scoured and the lee fills with wind-packed snow; snow drifts in behind rocks, walls, buildings and vehicles and blows off their tops.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3537,10 +3539,12 @@
    "settings": [
     "add_canopy",
     "add_shelter_box",
-    "gust_patch_size"
+    "gust_patch_size",
+    "wind_obstacles",
+    "wind_obstacle"
    ],
    "note": "",
-   "what": "shelter inside plant canopies and behind buildings; gust patches sweep across fields.",
+   "what": "shelter inside plant canopies and behind buildings, boulders and vehicles; gust patches sweep across fields.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

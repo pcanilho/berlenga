@@ -4437,6 +4437,19 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 						if (st.footprint > 0.0f) {
 							cell.obstacles.push_back(Vector4(st.position.x, st.ground, st.position.z, st.footprint));
 							cell.sizes.push_back(2.0f * st.scale);
+							// Its top: the hull's support straight up when the shape is built (as get_stones), else
+							// about 0.7 b (the c axis) over the origin, where the mesh's base sits.
+							real_t top = st.position.y + 1.4f * st.scale;
+							const Library *lib = libraries.getptr(st.library);
+							if (lib && st.variant < lib->hulls.size() && !lib->hulls[st.variant].is_empty()) {
+								const PackedVector3Array &hull = lib->hulls[st.variant];
+								real_t best = -1e20;
+								for (int h = 0; h < hull.size(); h++) {
+									best = MAX(best, st.basis.rows[1].dot(hull[h]));
+								}
+								top = st.position.y + best;
+							}
+							cell.heights.push_back(MAX(float(top - st.ground), 0.0f));
 						}
 					}
 					oc = &obstacle_cache.insert(key, std::move(cell))->value;
@@ -4451,6 +4464,52 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 		}
 	}
 	return out;
+}
+
+Array RockField3D::get_wind_obstacles(const Rect2 &p_rect) {
+	Array out;
+	if (!wind_obstacles || !_get_generator()) {
+		return out; // no ground yet: nothing placed (and nothing cached empty)
+	}
+	const PackedVector4Array obs = get_obstacles(p_rect, 0.7);
+	// get_obstacles fills the cache for the rect; read the heights back from it.
+	for (int l = 0; l < LAYER_MAX; l++) {
+		if (!layer_enabled[l] || l == LAYER_CLIFF || _is_detail(l)) {
+			continue;
+		}
+		const real_t cs = _cell_size(Layer(l));
+		const int x0 = int(Math::floor(p_rect.position.x / cs)), x1 = int(Math::floor(p_rect.get_end().x / cs));
+		const int z0 = int(Math::floor(p_rect.position.y / cs)), z1 = int(Math::floor(p_rect.get_end().y / cs));
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const ObstacleCell *oc = obstacle_cache.getptr(Vector3i(l, x, z));
+				if (!oc) {
+					continue;
+				}
+				for (uint32_t k = 0; k < oc->obstacles.size(); k++) {
+					const Vector4 &o = oc->obstacles[k];
+					const float h = k < oc->heights.size() ? oc->heights[k] : 0.0f;
+					if (h < 0.5f || !p_rect.has_point(Vector2(o.x, o.z))) {
+						continue;
+					}
+					// The footprint's square, a little narrower than its disc (the same area).
+					const real_t r = o.w * 0.886;
+					out.push_back(AABB(Vector3(o.x - r, o.y, o.z - r), Vector3(2.0 * r, h, 2.0 * r)));
+				}
+			}
+		}
+	}
+	(void)obs;
+	return out;
+}
+
+void RockField3D::set_wind_obstacles(bool p_enabled) {
+	wind_obstacles = p_enabled;
+	if (p_enabled) {
+		add_to_group(SNAME("weather_shelter"));
+	} else if (is_in_group(SNAME("weather_shelter"))) {
+		remove_from_group(SNAME("weather_shelter"));
+	}
 }
 
 Array RockField3D::get_stones(int p_layer, const Rect2 &p_rect) {
@@ -5470,6 +5529,12 @@ void RockField3D::set_ground_contact(bool p_enabled) {
 
 void RockField3D::_notification(int p_what) {
 	switch (p_what) {
+		case NOTIFICATION_ENTER_TREE: {
+			// Before any node is ready, so the weather's first shelter bake finds the boulders.
+			if (wind_obstacles) {
+				add_to_group(SNAME("weather_shelter"));
+			}
+		} break;
 		case NOTIFICATION_READY: {
 			auto_ground_found = false;
 			_update_process();
@@ -5601,6 +5666,9 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("build_area", "rect"), &RockField3D::build_area);
 	ClassDB::bind_method(D_METHOD("clear"), &RockField3D::clear);
 	ClassDB::bind_method(D_METHOD("get_obstacles", "rect", "min_size"), &RockField3D::get_obstacles, DEFVAL(0.25));
+	ClassDB::bind_method(D_METHOD("get_wind_obstacles", "rect"), &RockField3D::get_wind_obstacles);
+	ClassDB::bind_method(D_METHOD("set_wind_obstacles", "enabled"), &RockField3D::set_wind_obstacles);
+	ClassDB::bind_method(D_METHOD("is_wind_obstacles_enabled"), &RockField3D::is_wind_obstacles_enabled);
 	ClassDB::bind_method(D_METHOD("set_ground_contact", "enabled"), &RockField3D::set_ground_contact);
 	ClassDB::bind_method(D_METHOD("set_ground_detail", "enabled"), &RockField3D::set_ground_detail);
 	ClassDB::bind_method(D_METHOD("is_ground_detail"), &RockField3D::is_ground_detail);
@@ -5660,6 +5728,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_blend_height", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_ground_blend_height", "get_ground_blend_height");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "ground_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_ground_material", "get_ground_material");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_contact"), "set_ground_contact", "is_ground_contact_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wind_obstacles"), "set_wind_obstacles", "is_wind_obstacles_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "moss_cushions"), "set_moss_cushions", "is_moss_cushions_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_size", PROPERTY_HINT_RANGE, "0.01,1,0.01,suffix:m"), "set_min_size", "get_min_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_min_area", PROPERTY_HINT_RANGE, "1000,10000000,1000,or_greater,suffix:m²"), "set_river_min_area", "get_river_min_area");

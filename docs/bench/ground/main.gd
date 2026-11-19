@@ -21,7 +21,7 @@ extends Node3D
 #   --test=water        sand and water (stage 4): bed load against the Shields threshold, pore water filling
 #                         under water and draining after, a damp wall holding where dry and saturated slump,
 #                         a print rounded off under flowing water and kept under slow water, volume kept
-#   --test=shelter      dune grass (wind_shelters): Raupach drag partition, flux dies among the plants, sand lands
+#   --test=shelter      dune grass (wind_shelters): Raupach drag partition, flux dies among the plants, sand lands; a wall's lee (WorldWeather.obstacle_lee_at) drops the sand behind it
 #   --test=near         the finer near field (docs/ideas/mud.md, stage 0; needs a GPU): a boot print's walls
 #                         sharper than on the main field, volume kept, dry sand still slumps to its repose
 #                         in 3 s, a print made outside the near field is there when the field arrives
@@ -91,6 +91,15 @@ extends Node3D
 #   --spp=N --bounces=N path tracing samples and bounces (default 16, 3)
 #   --gpu=0             the field on the CPU (default: compute shaders where there is a GPU; --headless
 #                       always runs it on the CPU, so --test under a window and headless compares both)
+
+# A wall 1 m high across x = 5, for the obstacle lee (WorldWeather.obstacle_lee_at, as WeatherMap3D's shelter gives it).
+class WallLeeStub extends WorldWeather:
+	func _obstacle_lee_at(p: Vector3) -> float:
+		var x := p.x - 5.0
+		if x < 0.0:
+			return 1.0
+		return 0.15 + 0.85 * (1.0 - exp(-maxf(x - 2.0, 0.0) / 6.0))
+
 
 const HeightScript := preload("res://height.gd")
 
@@ -3225,6 +3234,10 @@ func _build_wade() -> void:
 # The frame, path traced unless --raster; with --pair, the raster frame first as <out>_raster.png and then the path
 # traced one from the same run, everything held still between them (the same clods, the same water).
 func _save_view(env: Environment) -> void:
+	# --still: the ground stops simulating once the view is set up (GroundSurface3D.simulation_paused), as a still
+	# shot does; --prop=light_budget:true gives it the smaller fields too.
+	if "--still" in OS.get_cmdline_user_args() and is_instance_valid(surface):
+		surface.simulation_paused = true
 	if "--pair" in OS.get_cmdline_user_args() and not out.is_empty():
 		var pt_out := out
 		out = pt_out.get_basename() + "_raster.png"
@@ -3592,6 +3605,22 @@ func _run_shelter_tests() -> void:
 	_check("a mound builds round the grass (nebkha)", dep > 0.005 and rise > 0.5 * dep, "%.1f mm deposited, %.1f mm risen" % [dep * 1000.0, rise * 1000.0])
 	_check("open sand gets none", surface.get_sand_deposit_at(up) == 0.0, "%.1f mm" % (surface.get_sand_deposit_at(up) * 1000.0))
 	_check("the wind step is cheap", surface.get_wind_step_usec() < 3000.0, "%.2f ms twice a second" % (surface.get_wind_step_usec() / 1000.0))
+	# A 1 m wall across the wind at x = 5 (a stand-in for the weather's obstacle lee, WorldWeather.obstacle_lee_at):
+	# the cavity behind it to 2 heights, recovering over 6. The sand slows and drops in its lee (a shadow dune).
+	WorldContracts.set_weather(WallLeeStub.new())
+	for i in 70:
+		await get_tree().physics_frame
+	var lee := Vector3(7.0, 0, 0)
+	var q_lee := surface.get_sand_flux_at(lee).length()
+	var d_lee := surface.get_deposition_rate_at(Vector3(5.5, 0, 0))
+	_check("blown sand slows and drops in a wall's lee (the weather's obstacle lee)", q_lee < 0.3 * q_open and d_lee * 3.6e6 > 1.0, "%.4f kg/m/s 2 m behind the wall against %.4f open; %.2f mm/h at its foot" % [q_lee, q_open, d_lee * 3.6e6])
+	surface.obstacle_lee = false
+	for i in 2:
+		await get_tree().physics_frame
+	await get_tree().create_timer(0.6).timeout
+	_check("the lee switches off with obstacle_lee", surface.get_sand_flux_at(lee).length() > 0.8 * q_open, "%.4f kg/m/s" % surface.get_sand_flux_at(lee).length())
+	surface.obstacle_lee = true
+	WorldContracts.clear_overrides()
 	surface.wind_override = Vector2.ZERO
 
 

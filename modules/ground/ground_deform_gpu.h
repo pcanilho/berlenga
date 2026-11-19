@@ -198,6 +198,7 @@ public:
 	LocalVector<float> tile_stamped; // per field tile: time of the last stamp
 	double time = 0.0;
 	double slump_until = -1.0;
+	uint32_t cells_hash = 0; // the last cell upload's hash: an unchanged refresh neither uploads nor restarts slides
 	int n = 0;
 	bool reset = true;
 	bool changed = true; // since the last read back

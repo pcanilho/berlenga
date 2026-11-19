@@ -108,6 +108,20 @@
 				Override in a stub to replace [method mean_wind_at].
 			</description>
 		</method>
+		<method name="_obstacle_height_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method obstacle_height_at].
+			</description>
+		</method>
+		<method name="_obstacle_lee_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method obstacle_lee_at].
+			</description>
+		</method>
 		<method name="_precipitation_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -324,6 +338,20 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The mean wind at 10 m over [param position] in m/s (y 0), with the terrain's speed-up and turning but no gusts. Zero with no weather.
+			</description>
+		</method>
+		<method name="obstacle_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How high wind-blocking obstacles (rocks, walls, buildings, vehicles) stand over the ground at [param position], m, on the provider's shelter grid. Snow drift counts them as terrain in Winstral's Sx. Default 0.
+			</description>
+		</method>
+		<method name="obstacle_lee_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The near-ground wind at [param position] behind upwind obstacles over the open wind: about 0.15 in the cavity to 2 heights downwind, recovering over 6 heights, 1 past 25 heights or in the open. [param position]'s height over the ground counts as a surface raised in the lee (a snow drift): the lee fades out as it reaches 1.2 times the obstacle's height, a drift at equilibrium (Tabler 1991); pass the ground's height for the bare ground. Blowing snow and sand slow and drop there. Default 1.
 			</description>
 		</method>
 		<method name="precipitation_at" qualifiers="const">

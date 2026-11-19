@@ -2436,6 +2436,25 @@ relief and the LOD 0-only crown parts, and fold date palm pinnae as one V of two
 to 318k, tended 227k to 127k. Dropping the oleaster's twigs between 1 mm and 1 cm (3M of its 4.9M) lit its crown
 grey-blue in PT (they shade the crown's inside en masse), so they stay; its bulk is about half a million shoots.
 
+
+### 5ak. Avalanches break trees (19 Nov; snow's WorldSnow getters)
+
+`TreeWind3D.avalanche_enabled` (on). Once a second each rigged tree reads
+`WorldSnow.avalanche_peak_pressure_at` at its foot (Pa; snow follow-up 24 records 0.5 rho u^2,
+dense flow then powder).
+- Stem strength: P = 15 kPa (D / 0.4 m)^1.36, D the stem above its flare (collider spanning 2.5 m),
+  a power fit to Bartelt and Stoeckli 2001 (30-50 cm trunks from 10-20 kPa); 1-4 kPa for 5-12 cm
+  stems, the powder cloud's range. Per tree x0.75-1.25. `TreeWind3D.avalanche_strength()`.
+- Under that, a stem over 15 cm loses its crown from 3 kPa (x0.6-1.4): the stem joint nearest 0.6 of
+  the tree's reach snaps (the powder front takes the tops; RAMMS::EXTENDED suspension layer).
+- A stem that fails breaks at the foot (70%; frozen soil holds the roots) or goes with its root plate,
+  through the storm path (`_storm_fail`), falling downslope (`WorldGround.height_at` at 3 m) with a
+  1.5 m/s shove from the flow.
+- Felled trees and snapped stems (wind too) cut their leaf area out of the weather map's
+  `canopy_map` (fading to 1.4 crown radii like VegetationField3D's crown term), so snow's anchoring
+  and braking, rain and wind see the lane. A VegetationField3D repaint restores it (it owns the map).
+- Bench: `--storm --avalanche-test` (WorldSnow/WorldGround stubs, 7 checks) and
+  `--storm --avalanche=P` frames. Old 34 m open-grown spruce (D 1.37 m) holds to ~80 kPa.
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
