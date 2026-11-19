@@ -145,11 +145,12 @@ private:
 	friend struct CaveMeshJob;
 	HashMap<Vector3i, Chunk> chunks;
 	real_t mesh_cell = 0.3;
+	bool cave_ambient_probes = true; // interior probes deep in the rock: no sky ambient there in raster
 	// Near the follow target (or the point refine_meshes is given), chunks are meshed on a finer grid, so the walls
 	// round the camera hold real relief down to a few centimetres; a refined chunk overlaps its coarse neighbours by
 	// one coarse cell, so the seam between them has no crack.
 	real_t near_mesh_cell = 0.1;
-	real_t near_mesh_radius = 6.0;
+	real_t near_mesh_radius = 10.0;
 	real_t _cell_for(const Vector3i &p_key, const Vector3 &p_focus, real_t p_slack = 0.0) const;
 	void _replace_chunk(Chunk &p_chunk, const Ref<Material> &p_wall);
 	real_t chunk_size = 16.0;
@@ -263,6 +264,8 @@ public:
 	void set_near_mesh_radius(real_t p_value) { near_mesh_radius = MAX(p_value, real_t(0.0)); }
 	real_t get_near_mesh_radius() const { return near_mesh_radius; }
 	int refine_meshes(const Vector3 &p_center);
+	void set_cave_ambient_probes(bool p_enable) { cave_ambient_probes = p_enable; }
+	bool get_cave_ambient_probes() const { return cave_ambient_probes; }
 	void set_patch_radius(real_t p_value) { patch_radius = CLAMP(p_value, real_t(0.0), real_t(100.0)); }
 	real_t get_patch_radius() const { return patch_radius; }
 	void set_roughness(real_t p_value) { roughness = CLAMP(p_value, real_t(0.0), real_t(4.0)); }

@@ -122,6 +122,10 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Fire → snow melt | linked (18 Nov) | WorldFire `heat_at` | as above (snow) |
 | Fire → heat shimmer | linked (18 Nov) | Flow temperature, weather air | `PhysXFlow3D.heat_shimmer`: raster screen pass and bent PT camera rays (heat-shimmer.md) |
 | Fire indraft → grass, plants, cloth, hair, leaves, ash, smoke, dust | linked (18 Nov) | WorldFire `wind_at` (fire_wind_map in shaders) | PhysX e141399d (grass, cloth); plants, hair, LeafFall3D, firebrands, other Flows and rock dust add it to their wind, fading over the first few metres for airborne things |
+| Fire → trees (charred stems snap in later storms) | linked (18 Nov) | WorldFire `stem_char_at` | PhysX f7510da2: TreeWind3D weakens the stem by its char depth |
+| Terrain wind (lee of a ridge) → fire whirls | linked (18 Nov) | WorldWeather `terrain_lee_at` (Winstral Sx) | PhysX c3c529f4: lee-slope whirls form where the wind has separated behind a crest, driven by the ridge's free wind |
+| Fire → ash on burnt grass, litter | linked (18 Nov) | fire_char_map (`VegetationFire::ASH_CODE`) | PhysX c3c529f4: white ash where it burnt out, black char where not, thinned by wind and darkened by rain |
+| Fire → regrowth (burnt ground greens again) | in work | WorldFire `burn_age_at` (fires in play, WorldBurnScar3D) | contract and scar node in (world links); PhysX adds the age for fires in play; VegetationField3D then GrassField3D read it |
 | Weather wind → free-standing Flow smoke | linked (18 Nov) | wind | `PhysXFlow3D.weather_wind` (wind work) |
 
 ### Cloth, hair, bodies
@@ -142,6 +146,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Soft soil → sinkage, grip, ruts | linked | ground terramechanics | |
 | Puddles → spray, washed tread | linked | ground | |
 | Wet, flooded, icy firm ground → grip, aquaplaning | linked (18 Nov) | weather contract, ground ice | |
+| Snow, lake ice → tyre grip | linked (18 Nov) | WorldSnow (depth, density, wetness, crust, lake ice) | packed snow 0.2-0.35, slush lower, crust near ice; tread_firm_grip scales by tread (chains, lugs) |
 | Vehicles → water wakes | linked | buoyancy | |
 | Vehicles → grass, branches, snow | linked (18 Nov) | world_contact | snow ruts: snow checks the wheel stamp |
 | Vehicles → Flow (bodies as solids) | linked | Flow | |

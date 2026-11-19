@@ -484,6 +484,62 @@ float flow_phases(vec2 world_xz, out vec2 o_a, out vec2 o_b) {
 	return 1.0 - abs(1.0 - 2.0 * p_a);
 }
 
+// Tiling and blending (Heitz and Neyret, "High-Performance By-Example Noise using a Histogram-Preserving Blending
+// Operator", HPG 2018): an FFT tile repeats exactly, so the same crests, glints and whitecaps come back every tile side.
+// The plane is cut into equilateral triangles (sides about 0.58 of a tile); each corner reads the tile shifted by its own
+// random offset, and the three reads are blended by the barycentric weights over sqrt(sum w^2). The wave field is a sum
+// of many independent waves, a Gaussian field, and that sum of independent Gaussian copies keeps its variance (the
+// same wave height and slope everywhere, no washed-out seams) while no stretch of sea repeats. Offsets only, never
+// rotations, so the waves keep running with the wind. The CPU twin is PhysXWaterSurface3D::_tile_blend_sample().
+uniform bool tile_blend = false;
+const float TB_LATTICE = 2.0; // triangle rows per tile side
+
+vec2 tb_offset(vec2 v) {
+	uvec2 q = uvec2(ivec2(v) + ivec2(32768));
+	uint h = q.x * 1597334677u ^ q.y * 3812015801u;
+	h = (h ^ (h >> 16u)) * 2246822519u;
+	h = (h ^ (h >> 13u)) * 3266489917u;
+	h ^= h >> 16u;
+	return vec2(float(h & 65535u), float(h >> 16u)) * (1.0 / 65536.0);
+}
+
+// The triangle around p (in lattice units): its three corners and p's barycentric weights.
+void tb_triangle(vec2 p, out vec2 v0, out vec2 v1, out vec2 v2, out vec3 w) {
+	vec2 sk = vec2(p.x - p.y * 0.57735027, p.y * 1.15470054);
+	vec2 b = floor(sk);
+	vec2 f = sk - b;
+	float z = 1.0 - f.x - f.y;
+	if (z > 0.0) {
+		w = vec3(z, f.y, f.x);
+		v0 = b;
+		v1 = b + vec2(0.0, 1.0);
+		v2 = b + vec2(1.0, 0.0);
+	} else {
+		w = vec3(-z, 1.0 - f.y, 1.0 - f.x);
+		v0 = b + vec2(1.0, 1.0);
+		v1 = b + vec2(1.0, 0.0);
+		v2 = b + vec2(0.0, 1.0);
+	}
+}
+
+// A wave tile read at uv (tile units), tiled and blended. Every ocean texture holds zero-mean fields (heights,
+// displacements, their derivatives) except the foam, which its readers clamp. Only for the finest cascade and the
+// detail tile: their many short waves make copies a few metres apart independent, as the blend needs. A swell tile's
+// few long waves stay correlated over the lattice, so three copies in step would raise those waves by up to sqrt(3);
+// those tiles are long (hundreds of metres) and detuned against each other instead (get_wave_cascade_size()).
+vec4 tb_tex(sampler2D tex, vec2 uv, bool on) {
+	if (!on) {
+		return texture(tex, uv);
+	}
+	vec2 v0;
+	vec2 v1;
+	vec2 v2;
+	vec3 w;
+	tb_triangle(uv * TB_LATTICE, v0, v1, v2, w);
+	vec4 s = texture(tex, uv + tb_offset(v0)) * w.x + texture(tex, uv + tb_offset(v1)) * w.y + texture(tex, uv + tb_offset(v2)) * w.z;
+	return s * inversesqrt(dot(w, w));
+}
+
 // An ocean texture at world_xz, carried by the flow.
 vec4 ocean_tex(sampler2D tex, vec2 world_xz) {
 	vec2 o_a;
@@ -491,9 +547,9 @@ vec4 ocean_tex(sampler2D tex, vec2 world_xz) {
 	float w = flow_phases(world_xz, o_a, o_b);
 	vec2 uv = world_xz / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic, anchored to the world
 	if (w >= 1.0) {
-		return texture(tex, uv);
+		return tb_tex(tex, uv, tile_blend);
 	}
-	return texture(tex, uv - o_a / ocean_domain_size) * w + texture(tex, uv - o_b / ocean_domain_size) * (1.0 - w);
+	return tb_tex(tex, uv - o_a / ocean_domain_size, tile_blend) * w + tb_tex(tex, uv - o_b / ocean_domain_size, tile_blend) * (1.0 - w);
 }
 
 // The same for a larger cascade's tile.
@@ -502,10 +558,11 @@ vec4 cascade_tex(sampler2D tex, vec2 domain, vec2 world_xz) {
 	vec2 o_b;
 	float w = flow_phases(world_xz, o_a, o_b);
 	vec2 uv = world_xz / domain + 0.5;
+	bool tb = tile_blend && domain.x < ocean_domain_size.x * 1.01; // the detail tile; not the swell cascades
 	if (w >= 1.0) {
-		return texture(tex, uv);
+		return tb_tex(tex, uv, tb);
 	}
-	return texture(tex, uv - o_a / domain) * w + texture(tex, uv - o_b / domain) * (1.0 - w);
+	return tb_tex(tex, uv - o_a / domain, tb) * w + tb_tex(tex, uv - o_b / domain, tb) * (1.0 - w);
 }
 
 // All cascades summed (heights, displacements and their derivatives add; foam is the most of any).
@@ -603,7 +660,7 @@ float ocean_foam_all(vec2 world_xz) {
 	if (wave_cascade_count > 3) {
 		f = max(f, cascade_tex(cascade_foam_3, cascade_domain_3, world_xz).r);
 	}
-	return f;
+	return min(f, 1.0); // (tiling and blending can lift a whitecap past 1)
 }
 
 // Offset of the surface point that rests at world_xz: (dx, height, dz).
@@ -995,7 +1052,7 @@ float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 		float d1 = 1.5 + 5.0 * foam_hash(vec2(lane, 3.7));
 		float d2 = 4.0 + 8.0 * foam_hash(vec2(lane, 9.1));
 		// The finest cascade's foam only: the long ones' cells are metres wide and trail as blurred smears.
-		float trail = max(ocean_tex(ocean_foam_tex, world_xz - sd * d1).r * (1.0 - d1 / 14.0), ocean_tex(ocean_foam_tex, world_xz - sd * d2).r * (1.0 - d2 / 14.0));
+		float trail = min(max(ocean_tex(ocean_foam_tex, world_xz - sd * d1).r * (1.0 - d1 / 14.0), ocean_tex(ocean_foam_tex, world_xz - sd * d2).r * (1.0 - d2 / 14.0)), 1.0);
 		amount = max(amount, 0.8 * trail * fade * foam_streaks);
 		// The windrows themselves (Beaufort 8 and up: "foam blown in well-marked streaks along the wind"): narrow
 		// lines along the wind a few metres apart, wandering a little and broken into lengths of tens of metres.
@@ -2297,6 +2354,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_detail_slope_variance"), &PhysXWaterSurface3D::get_detail_slope_variance);
 	ClassDB::bind_method(D_METHOD("set_wave_cascade_ratio", "ratio"), &PhysXWaterSurface3D::set_wave_cascade_ratio);
 	ClassDB::bind_method(D_METHOD("get_wave_cascade_ratio"), &PhysXWaterSurface3D::get_wave_cascade_ratio);
+	ClassDB::bind_method(D_METHOD("set_wave_tile_breakup", "enabled"), &PhysXWaterSurface3D::set_wave_tile_breakup);
+	ClassDB::bind_method(D_METHOD("get_wave_tile_breakup"), &PhysXWaterSurface3D::get_wave_tile_breakup);
 	ClassDB::bind_method(D_METHOD("get_wave_cascade_size", "index"), &PhysXWaterSurface3D::get_wave_cascade_size);
 	ClassDB::bind_method(D_METHOD("set_wave_amplitude", "amplitude"), &PhysXWaterSurface3D::set_wave_amplitude);
 	ClassDB::bind_method(D_METHOD("get_wave_amplitude"), &PhysXWaterSurface3D::get_wave_amplitude);
@@ -2494,6 +2553,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_amplitude"), "set_wave_amplitude", "get_wave_amplitude");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "wave_cascades", PROPERTY_HINT_RANGE, "1,4,1"), "set_wave_cascades", "get_wave_cascades");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_cascade_ratio", PROPERTY_HINT_RANGE, "2,16,0.1"), "set_wave_cascade_ratio", "get_wave_cascade_ratio");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wave_tile_breakup"), "set_wave_tile_breakup", "get_wave_tile_breakup");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "detail_waves"), "set_detail_waves", "get_detail_waves");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fetch", PROPERTY_HINT_RANGE, "0,100000,1,or_greater,suffix:m"), "set_fetch", "get_fetch");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "wave_spreading", PROPERTY_HINT_ENUM, "Cos2,Donelan-Banner,Hasselmann"), "set_wave_spreading", "get_wave_spreading");
@@ -2638,8 +2698,26 @@ void PhysXWaterSurface3D::set_wave_cascade_ratio(float p_ratio) {
 	_rebuild();
 }
 
+// Tiles whose sides are whole multiples of each other repeat together: with a ratio of 6 the 40 m and 240 m tiles sum
+// to a pattern that repeats exactly every 240 m, and the 5 m detail tile (an eighth of 40 m) lines up with cascade 0
+// every 40 m, so the same chop, glints and whitecaps come back on a grid. Detuned, each tile is a little larger than
+// the ratio asks, by a factor that leaves the ratio between neighbours as far from any simple fraction as can be
+// (a fractional part of 0.382, 1 / phi^2, whose continued fraction is all ones after its first term): no two tiles
+// line up again within kilometres (Tessendorf, "Simulating Ocean Water", 2001, on choosing patch sizes; the Godot
+// FFT ocean by 2Retr0 picks unrelated cascade sizes for the same reason). Only grows a tile, so every tile still
+// keeps its band's waves shorter than a quarter of its side.
+static constexpr float WAVE_TILE_GOLDEN_FRACTION = 0.381966f;
+
 Vector2 PhysXWaterSurface3D::get_wave_cascade_size(int p_index) const {
-	return ocean_domain_size * Math::pow(wave_cascade_ratio, (float)CLAMP(p_index, 0, MAX_WAVE_CASCADES - 1));
+	const float i = (float)CLAMP(p_index, 0, MAX_WAVE_CASCADES - 1);
+	// The ratio between neighbours grows by 0.382 (6 -> 6.382).
+	const float ratio = wave_tile_breakup ? wave_cascade_ratio + WAVE_TILE_GOLDEN_FRACTION : wave_cascade_ratio;
+	return ocean_domain_size * Math::pow(ratio, i);
+}
+
+void PhysXWaterSurface3D::set_wave_tile_breakup(bool p_enabled) {
+	wave_tile_breakup = p_enabled;
+	_rebuild();
 }
 
 // Cascade i keeps the waves shorter than a quarter of its tile; longer ones go to
@@ -2761,7 +2839,8 @@ float PhysXWaterSurface3D::_detail_k_min() const {
 // The detail tile keeps, like every cascade, the waves shorter than a quarter of its side: a side of 8 pi / k_min
 // starts its band just where cascade 0's grid stops (5 m for 40 m on 64 texels), held to 1..8 m.
 Vector2 PhysXWaterSurface3D::get_detail_wave_tile() const {
-	const float side = CLAMP(8.0f * Math::PI / _detail_k_min(), 1.0f, 8.0f);
+	// Detuned: cascade 0's side over this one's is 7.382 rather than 8 (see get_wave_cascade_size()).
+	const float side = CLAMP(8.0f * Math::PI / _detail_k_min() * (wave_tile_breakup ? 8.0f / (7.0f + WAVE_TILE_GOLDEN_FRACTION) : 1.0f), 1.0f, 8.0f);
 	return Vector2(side, side);
 }
 
@@ -5620,15 +5699,60 @@ float PhysXWaterSurface3D::_flow_phases(float p_x, float p_z, Vector2 &r_offset_
 	return 1.0f - Math::abs(1.0f - 2.0f * pa);
 }
 
+// The CPU twin of the shader's tb_tex() (tiling and blending, Heitz and Neyret 2018): a wave tile read at world (x, z),
+// the tile shifted by a random offset at each corner of the triangle around it, blended over sqrt(sum w^2), so the
+// heights a boat rides are the ones drawn. Same lattice, hash and weights as the shader.
+static Vector2 _tb_offset(int p_x, int p_y) {
+	uint32_t qx = (uint32_t)(p_x + 32768);
+	uint32_t qy = (uint32_t)(p_y + 32768);
+	uint32_t h = (qx * 1597334677u) ^ (qy * 3812015801u);
+	h = (h ^ (h >> 16u)) * 2246822519u;
+	h = (h ^ (h >> 13u)) * 3266489917u;
+	h ^= h >> 16u;
+	return Vector2((float)(h & 65535u), (float)(h >> 16u)) * (1.0f / 65536.0f);
+}
+
+float PhysXWaterSurface3D::_tile_blend_sample(const Vector<float> &p_grid, int p_n, Vector2 p_domain, float p_world_x, float p_world_z) const {
+	// The finest cascade only, as the shader (the swell cascades are not blended).
+	if (!wave_tile_breakup || p_domain.x > cached_ocean_domain.x * 1.01f) {
+		return _bilinear_sample(p_grid, p_n, p_domain, p_world_x, p_world_z, true);
+	}
+	// uv as the shader has it (world / domain + 0.5), on the lattice of TB_LATTICE = 2 rows per tile.
+	const float px = (p_world_x / p_domain.x + 0.5f) * 2.0f;
+	const float py = (p_world_z / p_domain.y + 0.5f) * 2.0f;
+	const float skx = px - py * 0.57735027f;
+	const float sky = py * 1.15470054f;
+	const int bx = (int)Math::floor(skx);
+	const int by = (int)Math::floor(sky);
+	const float fx = skx - bx;
+	const float fy = sky - by;
+	const float z = 1.0f - fx - fy;
+	int vx[3], vy[3];
+	float w[3];
+	if (z > 0.0f) {
+		w[0] = z, w[1] = fy, w[2] = fx;
+		vx[0] = bx, vy[0] = by, vx[1] = bx, vy[1] = by + 1, vx[2] = bx + 1, vy[2] = by;
+	} else {
+		w[0] = -z, w[1] = 1.0f - fy, w[2] = 1.0f - fx;
+		vx[0] = bx + 1, vy[0] = by + 1, vx[1] = bx + 1, vy[1] = by, vx[2] = bx, vy[2] = by + 1;
+	}
+	float sum = 0.0f;
+	for (int i = 0; i < 3; i++) {
+		const Vector2 o = _tb_offset(vx[i], vy[i]) * p_domain;
+		sum += w[i] * _bilinear_sample(p_grid, p_n, p_domain, p_world_x + o.x, p_world_z + o.y, true);
+	}
+	return sum / Math::sqrt(MAX(w[0] * w[0] + w[1] * w[1] + w[2] * w[2], 1e-6f));
+}
+
 float PhysXWaterSurface3D::_ocean_flow_sample(const Vector<float> &p_grid, float p_x, float p_z, float p_weight, const Vector2 &p_offset_a, const Vector2 &p_offset_b, int p_n, Vector2 p_domain) const {
 	const int n = p_n < 0 ? cached_ocean_n : p_n;
 	const Vector2 domain = p_n < 0 ? cached_ocean_domain : p_domain;
 	const float wx = p_x + grid_center.x, wz = p_z + grid_center.y;
-	const float a = _bilinear_sample(p_grid, n, domain, wx - p_offset_a.x, wz - p_offset_a.y, true);
+	const float a = _tile_blend_sample(p_grid, n, domain, wx - p_offset_a.x, wz - p_offset_a.y);
 	if (p_weight >= 1.0f) {
 		return a;
 	}
-	return a * p_weight + _bilinear_sample(p_grid, n, domain, wx - p_offset_b.x, wz - p_offset_b.y, true) * (1.0f - p_weight);
+	return a * p_weight + _tile_blend_sample(p_grid, n, domain, wx - p_offset_b.x, wz - p_offset_b.y) * (1.0f - p_weight);
 }
 
 Vector3 PhysXWaterSurface3D::sample_flow(Vector3 p_world_pos) const {
@@ -6971,6 +7095,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 	_update_detail_material();
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("wave_cascade_count", 1 + (int)extra_cascades.size());
+		water_material->set_shader_parameter("tile_blend", wave_tile_breakup);
 		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? _live_foam_threshold() : -100.0f);
 	}
 	textures_bound = true;

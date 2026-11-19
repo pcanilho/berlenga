@@ -173,6 +173,11 @@ func run(args: Dictionary) -> void:
 				RenderingServer.force_draw(false)
 			get_viewport().get_texture().get_image().save_png(dir.path_join("storm_%04d.png" % f))
 			print("frame %d t=%.2f parts %d" % [f, t, _parts()])
+	for st in wind.get_children(true):
+		if String(st.name).begins_with("TreeStump"):
+			for m in st.get_children():
+				if m is MeshInstance3D:
+					print("stump mesh %s scale %.2f aabb %s" % [m.mesh.get_class(), m.scale.x, m.mesh.get_aabb()])
 	print("storm: %d breaks, %d thrown (%d snapped at a charred foot), %d Blast falls" % [wind.get_storm_break_count(), wind.get_storm_throw_count(), wind.get_storm_snap_count(), wind.get_storm_fall_count()])
 	get_tree().quit(1 if fails > 0 else 0)
 

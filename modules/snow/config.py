@@ -15,6 +15,7 @@ def get_doc_classes():
         "SnowFall3D",
         "SnowIcicles3D",
         "SnowLakeIce3D",
+        "SnowBodies3D",
         "SnowSurface3D",
     ]
 

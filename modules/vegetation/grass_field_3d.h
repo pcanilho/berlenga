@@ -46,6 +46,7 @@
 #include "scene/resources/mesh.h"
 
 class MultiMeshInstance3D;
+class MeshInstance3D;
 class TerrainDataMap3D;
 
 // Grass blades around the camera (docs/ideas/grass.md), after Ghost of Tsushima (Wohllaib,
@@ -310,6 +311,47 @@ private:
 	Rect2 height_rect;
 
 	HashMap<Vector2i, Tile> tiles;
+	// Far rings (docs/ideas/grass.md, "Far grass"): past the near tiles, one set of blades out to far_ring_range,
+	// thinned with the square of the distance in the shader and widened to keep their cover, on a quadtree of
+	// tiles (key: x, z in tiles of RING_TILE << level, level) so each holds about the same number of blades. Only
+	// the widest meadow field (the fade owner) has them.
+	bool far_rings = true;
+	float far_ring_range = 250.0f;
+	struct RingTile {
+		MultiMeshInstance3D *mmi = nullptr;
+		uint32_t generation = 0;
+		float built_near = 0.0f; // Holds every blade kept at this distance or farther.
+	};
+	HashMap<Vector3i, RingTile> ring_tiles;
+	Ref<ArrayMesh> ring_mesh_near; // Two segments.
+	Ref<ArrayMesh> ring_mesh_far; // One: a triangle.
+	Vector4 ring_band; // Shader: start (all kept), end, end band, widest widening.
+	int ring_blade_count = 0;
+	double ring_build_msec = 0.0; // The last frame's ring building.
+	bool _rings_active() const;
+	void _update_rings(const Vector2 &p_center, TerrainDataMap3D *p_map);
+	void _build_ring_tile(const Vector3i &p_key, float p_near, TerrainDataMap3D *p_map, RingTile &r_tile);
+	void _free_ring_tile(RingTile &p_tile);
+	void _free_rings();
+	Ref<ArrayMesh> _make_ring_mesh(int p_segments) const;
+	// Far shell (docs/ideas/grass.md, "Far grass"): past the rings, the sward as voxel columns standing on the
+	// ground (VegetationVoxelLod's idea, the hedges' and VegetationField3D.far_volume's), rising out of it over the
+	// rings' end band and sinking back by far_shell_range. Tiles of SHELL_TILE metres, keyed by tile.
+	bool far_shell = true;
+	float far_shell_range = 500.0f;
+	struct ShellTile {
+		MeshInstance3D *mi = nullptr;
+		uint32_t generation = 0;
+		int cells = 0; // Columns a side.
+	};
+	HashMap<Vector2i, ShellTile> shell_tiles;
+	Ref<ShaderMaterial> shell_material;
+	int shell_column_count = 0;
+	void _update_shell(const Vector2 &p_center, TerrainDataMap3D *p_map);
+	void _build_shell_tile(const Vector2i &p_key, int p_cells, TerrainDataMap3D *p_map, ShellTile &r_tile);
+	void _free_shell_tile(ShellTile &p_tile);
+	void _free_shell();
+	float _shell_column(int p_x, int p_z, float p_cell, const PlantSpecies *p_rules, TerrainDataMap3D *p_map) const;
 	Ref<ArrayMesh> blade_mesh;
 	Ref<ShaderMaterial> material;
 	int blade_count = 0;
@@ -546,6 +588,19 @@ public:
 	void update_at(const Vector3 &p_center);
 	int get_blade_count() const { return blade_count; }
 	int get_tile_count() const { return tiles.size(); }
+	void set_far_rings(bool p_enabled);
+	bool is_far_rings() const { return far_rings; }
+	void set_far_ring_range(float p_range);
+	float get_far_ring_range() const { return far_ring_range; }
+	int get_ring_blade_count() const { return ring_blade_count; }
+	int get_ring_tile_count() const { return ring_tiles.size(); }
+	double get_ring_build_msec() const { return ring_build_msec; }
+	void set_far_shell(bool p_enabled);
+	bool is_far_shell() const { return far_shell; }
+	void set_far_shell_range(float p_range);
+	float get_far_shell_range() const { return far_shell_range; }
+	int get_shell_column_count() const { return shell_column_count; }
+	int get_shell_tile_count() const { return shell_tiles.size(); }
 	double get_build_time_msec() const { return build_msec; }
 	Ref<ShaderMaterial> get_material() const { return material; }
 

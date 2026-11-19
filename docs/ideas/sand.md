@@ -639,11 +639,11 @@ crest direction, and the near window none of the far variation. Research:
   2018). For a directional pattern its blends between rotated tiles cross crests (ghost gratings), so it is not used:
   a phase-coherent warp plus explicit dislocations keeps every crest continuous.
 Built: GroundRipples::vary() and ground_ripple_vary() (material.cpp, raygen): a three-octave world warp (4 m at 24 m,
-1.2 m at 7 m, 16 cm at 1.7 m: crests turn by up to about 15 degrees and change spacing over tens of metres, bend over
-a few), dislocation pairs in about half the 2.5 m cells, along the crests, 40 to 120 cm apart, shifting the tile by
+1.6 m at 6 m, 16 cm at 1.7 m: crests turn by up to about 15 degrees and change spacing over tens of metres, bend over
+a few), dislocation pairs in 70% of 1.6 m cells, along the crests, 30 to 90 cm apart, shifting the tile by
 exactly one wavelength of its dominant wave vector (found by a DFT of the grown tile, 3 to 40 cm band, sent in the
-ripple map's last row), and a height between 30 and 100% over 2 to 9 m. Integer hashes, so the CPU fill of the real
-ripples' window and both renderers agree to the bit and meet crest to crest. Next if wanted: true wave ripples
+ripple map's last row), a stretch along the crests' normal (45 cm at 2 m: crests crowd and open by up to a third, 7 to 15 cm apart), and a height between 15 and 100% over 2 to 6 m. Integer hashes, so the CPU fill of the real
+ripples' window and both renderers agree to the bit and meet crest to crest. Far ripples fade where their crests come closer than about three pixels (prefiltered to the pixel, so they do not alias into moire bands). Next if wanted: true wave ripples
 (symmetric, shore-parallel) where the bed is under the sea.
 
 ### Drifting on sand (Paulo, 16 Nov 2026)

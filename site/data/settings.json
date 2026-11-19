@@ -3627,7 +3627,7 @@
     "wind_drag"
    ],
    "note": "",
-   "what": "water waves grow with the weather's wind (`follow_weather`) and gusts darken the ripples in moving cat's paws (`cats_paws` shader uniform); cloth, hair and smoke move in it (`weather_wind`); particles drift with it and its gusts (`wind_drag`); tyres lose grip on wet, flooded and icy ground and aquaplane at speed.",
+   "what": "water waves grow with the weather's wind (`follow_weather`) and gusts darken the ripples in moving cat's paws (`cats_paws` shader uniform); cloth, hair and smoke move in it (`weather_wind`); particles drift with it and its gusts (`wind_drag`); tyres lose grip on wet, flooded and icy ground and aquaplane at speed, and slip on lying snow (most on powder and slush, almost as on ice on a hard crust) and on bare lake ice, where chains and lugs win it back.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -3818,7 +3818,7 @@
     "fuel_patchiness"
    ],
    "note": "",
-   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water (which billows up as white steam, also where fire meets a shore), behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height. Strong wind lifts ash off cold burnt ground as low grey dust (`blowing_ash`). The fire draws air in at its base, and nearby plants, hair, falling leaves, ash, embers, smoke and dust lean or drift into it.",
+   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water (which billows up as white steam, also where fire meets a shore), behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height. Burnt grass shows its ash, white-grey where dry fuel burnt out and black char where it was damp, thinned by wind and darkened by rain (`grass_ash`); strong wind lifts ash off cold burnt ground as low grey dust (`blowing_ash`). The fire draws air in at its base, and nearby plants, hair, falling leaves, ash, embers, smoke and dust lean or drift into it.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3877,7 +3877,7 @@
     "foliar_moisture"
    ],
    "note": "",
-   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; fire whirls spin up on strong flanks in a cross wind and on steep lee slopes, loft firebrands higher and run across the slope, spreading the fire sideways (`fire_whirls`); a torched tree drops burning twigs and stands as bare black branches over grey ash. Fire chars the stem feet, and a charred tree can snap there in a later storm.",
+   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; fire whirls spin up on strong flanks in a cross wind, on steep lee slopes and where the terrain wind separates behind a crest, loft firebrands higher and run across the slope, spreading the fire sideways (`fire_whirls`); a torched tree drops burning twigs and stands as bare black branches over grey ash. Fire chars the stem feet, and a charred tree can snap there in a later storm.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

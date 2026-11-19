@@ -47,6 +47,7 @@
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/multimesh_instance_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
+#include "scene/3d/reflection_probe.h"
 #include "scene/3d/physics/static_body_3d.h"
 #include "scene/resources/3d/concave_polygon_shape_3d.h"
 #include "scene/resources/curve.h"
@@ -1101,6 +1102,7 @@ inline real_t cave_stream_u(const Vector3 &p_line, uint32_t p_seed, real_t p_hal
 real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p, real_t p_cell) const {
 	const real_t cell = p_cell > 0.0 ? p_cell : mesh_cell;
 	real_t d = 1e9;
+	real_t above_floor = 1e9; // height over the nearest floor (the fine relief leaves floors to the coarse field)
 	for (const Segment *sg : p_src.segments) {
 		Vector3 t = sg->b - sg->a;
 		const real_t len = t.length();
@@ -1150,6 +1152,9 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p, real_t 
 			dc = MAX(dc, floor_v - q.dot(v_axis));
 		}
 		const real_t ds = s > 0.0 ? (dc > 0.0 ? Math::sqrt(s * s + dc * dc) : s) : dc;
+		if (ds < 1.0) {
+			above_floor = MIN(above_floor, Math::abs(q.dot(v_axis) - floor_v));
+		}
 		d = cave_smin(d, ds, 0.8);
 	}
 	for (const Chamber *c : p_src.chambers) {
@@ -1157,6 +1162,9 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p, real_t 
 		const Vector3 n = q / c->radii;
 		real_t dc = (n.length() - 1.0) * MIN(c->radii.x, MIN(c->radii.y, c->radii.z));
 		dc = MAX(dc, -0.55 * c->radii.y - q.y);
+		if (dc < 1.0) {
+			above_floor = MIN(above_floor, Math::abs(q.y + 0.55 * c->radii.y));
+		}
 		d = cave_smin(d, dc, 2.0);
 	}
 	if (roughness > 0.0 && d < 2.5) {
@@ -1165,10 +1173,13 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p, real_t 
 		// Finer relief where the grid can hold it (a wavelength of at least 2.5 cells): knobs, solution pockets and
 		// spall scars a decimetre or two across, then a few centimetres, so a near wall has real relief to catch a
 		// lamp, not a smooth skin with a painted texture (the coarse grid keeps only the two octaves above).
-		if (cell < 0.2 && d < 0.6) {
-			d += roughness * 0.05 * (cave_fbm(p_p / 0.25f, ns + 13u, 2) - 0.5f);
+		// Not on the floors: the stones and pools laid on them measure the coarse field, and a floor's own fine
+		// texture is its sediment's (shader and stones).
+		const real_t off_floor = Math::smoothstep(real_t(0.35), real_t(1.0), above_floor); // the banks too (spalls lie on them)
+		if (cell < 0.2 && d < 0.6 && off_floor > 0.0) {
+			d += off_floor * roughness * 0.05 * (cave_fbm(p_p / 0.25f, ns + 13u, 2) - 0.5f);
 			if (cell < 0.07) {
-				d += roughness * 0.015 * (cave_fbm(p_p / 0.08f, ns + 17u, 2) - 0.5f);
+				d += off_floor * roughness * 0.015 * (cave_fbm(p_p / 0.08f, ns + 17u, 2) - 0.5f);
 			}
 		}
 		if (scallops > 0.0) {
@@ -2970,6 +2981,38 @@ void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
 	}
 	add_child(mi);
 	mi->set_global_transform(Transform3D());
+	// Deep in the rock the sky does not reach (raster): an interior reflection probe over the chunk replaces the
+	// environment's sky ambient and reflections with the cave's own dark ambient, as indoor probes do (Godot's
+	// ReflectionProbe interior mode; the light-leak fix of interior volumes in Unreal and HDRP). It renders nothing
+	// (cull mask 0), so it costs no captures. Over the entrance patch itself the probe stays off. The path tracer
+	// gathers the real light anyway.
+	if (cave_ambient_probes) {
+		const AABB box(Vector3(p_chunk.key) * chunk_size, Vector3(chunk_size, chunk_size, chunk_size));
+		real_t near_sky = 1e9;
+		for (const Cave &cv : caves) {
+			near_sky = MIN(near_sky, box.get_center().distance_to(cv.entrance));
+			for (const Vector3 &bh : cv.blowholes) {
+				near_sky = MIN(near_sky, box.get_center().distance_to(bh));
+			}
+		}
+		// The sky's share falls off over the first tens of metres in (as the walls' COLOR.a does): the probe's
+		// ambient goes from a dim daylight bounce at the mouth to the dark of the deep cave.
+		const real_t sky = 1.0 - Math::smoothstep(real_t(6.0), real_t(40.0), MAX(near_sky - 0.5 * chunk_size, real_t(0.0)));
+		if (near_sky > 0.6 * chunk_size) {
+			ReflectionProbe *probe = memnew(ReflectionProbe);
+			probe->set_name("Cave ambient");
+			probe->set_size(Vector3(chunk_size, chunk_size, chunk_size) + Vector3(2, 2, 2));
+			probe->set_blend_distance(2.0);
+			probe->set_as_interior(true);
+			probe->set_cull_mask(0);
+			probe->set_update_mode(ReflectionProbe::UPDATE_ONCE);
+			probe->set_ambient_mode(ReflectionProbe::AMBIENT_COLOR);
+			probe->set_ambient_color(Color(0.035, 0.032, 0.028).lerp(Color(0.3, 0.3, 0.3), float(sky * sky)));
+			probe->set_ambient_color_energy(1.0);
+			mi->add_child(probe);
+			probe->set_global_transform(Transform3D(Basis(), box.get_center()));
+		}
+	}
 	if (collision) {
 		StaticBody3D *body = memnew(StaticBody3D);
 		CollisionShape3D *cs = memnew(CollisionShape3D);
@@ -3527,7 +3570,8 @@ void CaveNetwork3D::_scatter_clasts(const LocalVector<Vector3> &p_pts, const Loc
 					// Fallen any way up, tilted by the bank and by landing on each other.
 					Basis bs = Basis(Vector3(0, 1, 0), rng.randf() * Math::TAU);
 					bs = Basis(Vector3(rng.randf() - 0.5, 0, rng.randf() - 0.5).normalized(), Math::deg_to_rad(10.0 + 25.0 * rng.randf())) * bs;
-					put(kCobbles + kAllo + int(rng.rand() % uint32_t(kChips)), Vector3(c.x, fy, c.z), bs, sc, 0.3 + 0.15 * rng.randf(), fy - 1.0, fy < c0.y + 0.02 ? 0.6 : 0.0);
+					// Not fresh white chips: silt from the floods coats them and banks round their feet (contact band).
+					put(kCobbles + kAllo + int(rng.rand() % uint32_t(kChips)), Vector3(c.x, fy, c.z), bs, sc, 0.35 + 0.2 * rng.randf(), fy, fy < c0.y + 0.02 ? 0.6 : 0.3);
 				}
 			}
 		}
@@ -4001,6 +4045,8 @@ void CaveNetwork3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_near_mesh_radius", "metres"), &CaveNetwork3D::set_near_mesh_radius);
 	ClassDB::bind_method(D_METHOD("get_near_mesh_radius"), &CaveNetwork3D::get_near_mesh_radius);
 	ClassDB::bind_method(D_METHOD("refine_meshes", "center"), &CaveNetwork3D::refine_meshes);
+	ClassDB::bind_method(D_METHOD("set_cave_ambient_probes", "enable"), &CaveNetwork3D::set_cave_ambient_probes);
+	ClassDB::bind_method(D_METHOD("get_cave_ambient_probes"), &CaveNetwork3D::get_cave_ambient_probes);
 	ClassDB::bind_method(D_METHOD("set_patch_radius", "metres"), &CaveNetwork3D::set_patch_radius);
 	ClassDB::bind_method(D_METHOD("get_patch_radius"), &CaveNetwork3D::get_patch_radius);
 	ClassDB::bind_method(D_METHOD("set_roughness", "value"), &CaveNetwork3D::set_roughness);
@@ -4050,6 +4096,7 @@ void CaveNetwork3D::_bind_methods() {
 
 	ADD_GROUP("Meshes", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mesh_cell", PROPERTY_HINT_RANGE, "0.05,4,0.01,suffix:m"), "set_mesh_cell", "get_mesh_cell");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cave_ambient_probes"), "set_cave_ambient_probes", "get_cave_ambient_probes");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_mesh_cell", PROPERTY_HINT_RANGE, "0,4,0.01,suffix:m"), "set_near_mesh_cell", "get_near_mesh_cell");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_mesh_radius", PROPERTY_HINT_RANGE, "0,64,0.5,suffix:m"), "set_near_mesh_radius", "get_near_mesh_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_radius", PROPERTY_HINT_RANGE, "0,100,0.5,suffix:m"), "set_patch_radius", "get_patch_radius");

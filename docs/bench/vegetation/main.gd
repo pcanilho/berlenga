@@ -273,6 +273,7 @@ func _physics_process(_d: float) -> void:
 		await _lazy_near_checks()
 		_deadwood_checks()
 		await _place_form_checks()
+		_trunk_checks()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
@@ -669,6 +670,42 @@ func _desert_scene(gen: TerrainGenerator3D, cam: Camera3D) -> void:
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 80.0
 	add_child(sun)
+
+# get_trunks_near (for close-up bark): a stand-in tree mesh carrying TreeGenerator's tree_colliders (a trunk of two
+# capsules, then a branch elsewhere); each placed tree near the point comes back once, with its trunk in world space.
+func _trunk_checks() -> void:
+	var cone := CylinderMesh.new()
+	cone.top_radius = 0.0
+	cone.bottom_radius = 1.0
+	cone.height = 6.0
+	var m := _mesh(cone, 3.0, Color(0.3, 0.25, 0.2))
+	m.set_meta("tree_colliders", PackedFloat32Array([0, 0, 0, 0, 2, 0, 0.3, 0, 0, 2, 0, 0, 4, 0, 0.25, 0, 0.5, 3, 0, 2, 4, 0, 0.08, 0]))
+	var sp := PlantSpecies.new()
+	sp.meshes = [m]
+	sp.spacing = 6.0
+	sp.density = 0.6
+	sp.set_meta("preset", 7)
+	var f := VegetationField3D.new()
+	f.far_volume = false
+	f.populate_on_ready = false
+	f.biome = Biome.new()
+	f.biome.species = [sp]
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var at := Vector3(-20, height(-20, -20), -20)
+	var trunks := f.get_trunks_near(at, 15.0)
+	var want := 0
+	for p in f.get_placements(0):
+		if p.distance_to(at) <= 15.0:
+			want += 1
+	var ok := trunks.size() == want and want > 0
+	for t in trunks:
+		var base: Vector3 = t["base"]
+		var s := (t["radius_base"] as float) / 0.3
+		ok = ok and base.distance_to(at) <= 15.001 and absf(base.y - height(base.x, base.z)) < 0.05 and (t["segments"] as Array).size() == 2 and absf(t["height"] - 4.0 * s) < 0.01 and t["preset"] == 7 and (t["up"] as Vector3).y > 0.99
+	_check("trunks near a point: each tree once, its trunk's two capsules to the branch, in world space", ok, [trunks.size(), want])
+	f.queue_free()
 
 # Mean and standard deviation of a cover map's alpha, inside its border.
 func _alpha_stats(img: Image) -> Array:

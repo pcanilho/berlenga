@@ -14817,6 +14817,64 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			pts.push_back(n.end());
 			rad.push_back(r_end);
 		}
+		if (first.order == 0 && r0 > 0.05f && !cut_tree && !fallen && !fallen_branch && pts.size() >= 3) {
+			// The pipe model hands a limb its share of the stem's girth at the node it leaves,
+			// so the bole stepped down within one internode at each big limb: a dark ring round
+			// an oak standard's bole and a rim under its fork, the stem above it a narrower
+			// sleeve (docs, 18 Nov). The cambium lays its rings along the stem as a smooth taper
+			// (Larson 1963, stem form and silviculture), so the girth along a stem is averaged
+			// over a metre and a half of its length: each step becomes a taper.
+			LocalVector<float> arc;
+			arc.resize(pts.size());
+			arc[0] = 0.0f;
+			for (uint32_t i = 1; i < pts.size(); i++) {
+				arc[i] = arc[i - 1] + pts[i].distance_to(pts[i - 1]);
+			}
+			// Past a fork (a limb of over 0.6 of the stem's girth leaves) the stem holds its girth
+			// for a stem radius and a half: the fork's base runs up inside it (below), and where
+			// the stem narrowed at once that base stood proud of it as a rim (docs, 18 Nov).
+			{
+				float at = 0.0f;
+				uint32_t pi = 0;
+				for (int c = 0; c < int(chain.size()); c++) {
+					const Node &n = nodes[chain[c]];
+					at += n.length;
+					bool fork = false;
+					for (int l = n.first_lateral; l >= 0 && !fork; l = nodes[l].next_sibling) {
+						fork = !nodes[l].removed && !nodes[l].dead && nodes[l].radius >= 0.6f * n.radius;
+					}
+					if (!fork) {
+						continue;
+					}
+					const float L = 1.5f * n.radius;
+					for (pi = 0; pi < rad.size(); pi++) {
+						const float d = arc[pi] - at;
+						if (d > 0.0f && d < L) {
+							rad[pi] = MAX(rad[pi], n.radius * (1.0f - 0.25f * d / L));
+						}
+					}
+				}
+			}
+			LocalVector<float> sm;
+			sm.resize(rad.size());
+			const float half = 0.75f;
+			for (uint32_t i = 0; i < rad.size(); i++) {
+				float sum = 0.0f, wsum = 0.0f;
+				for (uint32_t k = 0; k < rad.size(); k++) {
+					const float d = Math::abs(arc[k] - arc[i]);
+					if (d < half) {
+						const float w = 1.0f - d / half;
+						sum += rad[k] * w;
+						wsum += w;
+					}
+				}
+				sm[i] = wsum > 0.0f ? sum / wsum : rad[i];
+			}
+			// The tip keeps its own taper; the base its full girth (the flare builds on it).
+			for (uint32_t i = 1; i + 1 < rad.size(); i++) {
+				rad[i] = MAX(sm[i], 0.85f * rad[i]);
+			}
+		}
 		const bool stem = first.parent == 0;
 		if (s == wound_stem && pts.size() >= 2) {
 			wound_pts = pts;
@@ -18682,12 +18740,13 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			// trees.
 			timber_stems = true;
 			Ref<PlantSpecies> oak = _stand_species(PRESET_OAK, false, p_variants);
-			oak->set_density(0.35f);
-			oak->set_spacing(oak->get_spacing() * 1.4f);
+			// Open-grown spacing is a crown apart (about 28 m for oak): at full density that is
+			// a dozen oaks a hectare, with ash and tellers 20-30 standards in all (Rackham 2006:
+			// a dozen to thirty; docs, 18 Nov: at 0.35 and 1.4x spacing, four a hectare).
+			oak->set_density(1.0f);
 			list.push_back(oak);
 			Ref<PlantSpecies> ash = _stand_species(PRESET_ASH, false, p_variants);
-			ash->set_density(0.3f);
-			ash->set_spacing(ash->get_spacing() * 1.4f);
+			ash->set_density(0.6f);
 			ash->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.55f));
 			ash->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
 			list.push_back(ash);
@@ -18760,8 +18819,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			}
 			timber_stems = true;
 			Ref<PlantSpecies> teller = _stand_species(PRESET_OAK, false, p_variants);
-			teller->set_density(0.2f);
-			teller->set_spacing(teller->get_spacing() * 1.4f);
+			teller->set_density(0.5f);
 			teller->set_scale_range(Vector2(0.45f, 0.7f));
 			teller->set_patch_scale(50.0f);
 			teller->set_patch_seed(patch_seed + 11);

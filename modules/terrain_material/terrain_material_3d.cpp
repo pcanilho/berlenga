@@ -1283,7 +1283,7 @@ void fragment() {
 		c += "\tvec2 gd = ground_deform_tint(wp);\n\talbedo *= gd.x;\n\trough = clamp(rough * gd.y, 0.0, 1.0);\n";
 		// Wind ripples past their real geometry (GroundSurface3D's 4 m window): the grown field's slope as a normal
 		// over the sand of the patch, as BaseMaterial3D draws it.
-		c += "\tvec2 gr_far = ground_ripple_far_slope(wp.xz);\n\tsn = normalize(sn - vec3(gr_far.x, 0.0, gr_far.y));\n";
+		c += "\tvec2 gr_far = ground_ripple_far_slope(wp.xz, length(tm_dpx));\n\tsn = normalize(sn - vec3(gr_far.x, 0.0, gr_far.y));\n";
 	}
 	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5;\n";
 	if (grass_tint_enabled) {

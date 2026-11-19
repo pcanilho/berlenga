@@ -3532,3 +3532,51 @@ grain, for three reasons, now fixed:
 Result at 640, 32 frames: the bed shows the ripple-scale light pattern; finer lines need more samples (PC).
 Rocks' riffle check (stream_riffle_*960): the raster glint in the cave is the known raster sky-ambient excess
 underground, not a PT loss; PT shows the expected sparse glints.
+
+Refraction march bands (rocks' stream riffle, 18 Nov): the river's screen-space refraction marched ten fixed steps and
+took the first past the scene, so stones under the water read back as stacked horizontal bands. It now bisects the
+crossing (4 steps, as the screen reflections do) and gives up where the refined point lies well behind the screen's
+surface. Not jittered: without a temporal filter the per-pixel start dithered into teeth. The vertical comb
+streaks behind stones (Valence's review) were the refraction after all (gone with refraction off; the same with
+screen reflections off or a q_last fallback): rays passing behind a stone converge on its silhouette, stretching it
+down over every row behind it. Where the bisection's last bracket spans a jump in the screen's depth (a silhouette,
+not a face the ray meets) the straight-through pixel stands in. A few faint teeth remain on small stones.
+PT caustic bank lines: fading the bent count to the straight twin's over the first 15 cm of water (Valence's
+shift diagnosis) left the lines unchanged on the river rocks bench, so the cause is elsewhere (back to Valence).
+surface (a thickness test). Not jittered: without a temporal filter the per-pixel start dithered into teeth. The
+vertical striations left on stone sides seen through the water are the same with screen reflections off and are
+not the march (sent to rocks: likely the stones' texture on steep faces).
+
+## Sea tiles that do not repeat (18 Nov, Paulo: "All geometry that repeats ... good quality noise")
+
+### Problem
+
+The finest wave cascade is a 40 m FFT tile and repeats exactly: the same crests, glints and whitecaps come back
+every 40 m. Measured from straight above (water_surface bench, `--view=storm_glitter --cam=0,160,-200,0,0,-200.01
+--raster`, high-passed frame): the image's autocorrelation has its strongest peak at exactly 40 m (0.11). The other
+tiles made it worse: their sides were whole multiples (40, 240, 1440 m; the 5 m detail tile is 40 / 8), so the sum
+repeated every 240 m and the detail lined up with cascade 0 every 40 m.
+
+### Techniques looked at
+
+- Cascades of unrelated sizes (Tessendorf 2001 on patch sizes; 2Retr0's GodotOceanWaves picks unrelated sizes).
+  Stops tiles lining up with each other, but each tile still repeats by itself.
+- Hex or triangle tiling with random offsets per cell: Mikkelsen, hex-tiling (JCGT 2022); Heitz and Neyret,
+  tiling and blending (HPG 2018). For a Gaussian field (an FFT sea is a sum of many independent waves) blending
+  copies by w / sqrt(sum w^2) keeps the variance, so no washed-out seams. Chosen.
+- Spatially varying amplitude (gusts): wind's cat's paws already do this to the short waves.
+
+### As built (`PhysXWaterSurface3D.wave_tile_breakup`, on)
+
+- The plane is cut into equilateral triangles (two rows per tile side); each corner reads the tile at its own
+  random offset (an integer hash of the corner), blended by barycentric weight over sqrt(sum w^2). Offsets only,
+  never rotations, so waves keep running with the wind. Cascade 0 and the detail tile only: a swell tile's few
+  long waves stay correlated across a triangle, so three copies in step would raise them by up to sqrt(3).
+- The swell cascades are detuned instead: each tile is ratio + 0.382 times the last (6.382), and the detail tile
+  40 / 7.382, ratios whose continued fractions are all ones (1 / phi^2), so no two tiles line up for kilometres.
+- CPU twin (`_tile_blend_sample`) in the height reads, so boats ride the surface that is drawn.
+- Result: the 40 m autocorrelation falls from 0.11 to -0.02 (no peak left above 0.03); the high-passed contrast
+  changes by 3%; with one cascade Hs is unchanged (0.91 m both). Cost: three reads instead of one for cascade 0 and
+  the detail tile.
+- Not blended: the shore swash and shore foam passes (they already read the ocean grid-relative) and the
+  light-space caustics map.

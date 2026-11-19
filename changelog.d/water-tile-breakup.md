@@ -1,0 +1,1 @@
+- Water: the sea no longer repeats every 40 m. Its finest wave tile is tiled and blended with random offsets, and the larger tiles are sized so they never line up (PhysXWaterSurface3D `wave_tile_breakup`, on).

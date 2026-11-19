@@ -46,6 +46,15 @@
 				The number of placed tiles held around the centre while [member streaming].
 			</description>
 		</method>
+		<method name="get_trunks_near" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="center" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="height" type="float" default="4.0" />
+			<description>
+				Returns the placed trees within [param radius] metres of [param center] whose meshes carry TreeGenerator's [code]tree_colliders[/code], each once, as a [Dictionary]: [code]base[/code], [code]up[/code] (the trunk's axis), [code]height[/code], [code]radius_base[/code], [code]radius_top[/code], [code]segments[/code] (the trunk's capsules up to [param height] metres, each [code][a, b, radius][/code]), all in world space; [code]preset[/code] (the species' [code]preset[/code] meta), [code]species[/code], [code]variant[/code], [code]basis[/code], [code]custom[/code] (the instance's custom data) and [code]seed[/code] (from where it stands). For close-up bark detail.
+			</description>
+		</method>
 		<method name="is_stream_idle" qualifiers="const">
 			<return type="bool" />
 			<description>

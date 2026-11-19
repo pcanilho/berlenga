@@ -1843,6 +1843,9 @@ func _weather_settings() -> void:
 	weather.cloud_type = 0.85 if storm else 0.4
 	weather.rain_rate = 8.0 if storm else 0.0
 	weather.temperature = 5.0 if storm else 12.0
+	# The storm brings its own cold air mass: the air follows the temperature set here, not the date's climate
+	# (air_follows_climate, on by default, would put mid-May air under the storm).
+	weather.air_follows_climate = not storm
 	weather.humidity = float(args.get("humidity", "0.95" if storm else "0.6"))
 	# --haze=1 [--haze-visibility=KM] [--cloud-cover=C]: background aerosol haze, lit through the cloud shadow (godrays).
 	weather.aerosol_haze = args.get("haze", "0") != "0"
