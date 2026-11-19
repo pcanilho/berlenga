@@ -685,6 +685,31 @@ func _desert_checks(ground: VegetationField3D, dset: Array[PlantSpecies], gen: T
 	_check("desert: woody shrubs (calligonum, white broom, saltbush) placed", shrubs > 20 or OS.get_environment("VEG_DESERT_SHRUBS") == "0", [shrubs])
 	_check("desert: annuals between the dunes, not up them", annual[0] > 500 and annual[3] < annual[0] * 0.5, [annual[0], annual[3]])
 
+# Close-up bark on by default: a field whose species have trunks (tree_colliders) makes and links a BarkDetail3D
+# as an internal child; none for a field without trunks, none with bark_detail off, gone when switched off.
+func _bark_detail_check() -> void:
+	var made := []
+	for k in 3:
+		var m := BoxMesh.new()
+		if k != 1:
+			m.set_meta("tree_colliders", PackedFloat32Array())
+		var sp := PlantSpecies.new()
+		sp.meshes = [m]
+		var f := VegetationField3D.new()
+		f.populate_on_ready = false
+		f.bark_detail = k != 2
+		f.biome = Biome.new()
+		f.biome.species = [sp]
+		add_child(f)
+		made.append(f)
+	var bd = made[0].get_bark_detail_node()
+	var r := [bd != null and bd.get_node(bd.vegetation) == made[0], made[1].get_bark_detail_node() == null, made[2].get_bark_detail_node() == null, made[0].get_child_count() == 0]
+	made[0].bark_detail = false
+	r.append(made[0].get_bark_detail_node() == null or made[0].get_bark_detail_node().is_queued_for_deletion())
+	for f in made:
+		f.queue_free()
+	_check("bark detail: made and linked for a field with trunks, not without, switchable", not r.has(false), r)
+
 # --burn=live: a burn reported after the field streamed in (WorldFire.burn_changed) re-places the tiles over it.
 func _burn_live() -> void:
 	field.queue_free()
@@ -1213,6 +1238,7 @@ func _place_form_checks() -> void:
 	await get_tree().process_frame
 
 func _checks() -> void:
+	_bark_detail_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []
 	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH]:
