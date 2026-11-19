@@ -3706,3 +3706,30 @@ wave breaking, McCowan). Two impulse slots carry it to the GPU (a negative radiu
 Water with no solver (a river's ribbon) gets a splash of the crest's height through impulse(). Test:
 docs/bench/water_surface/wave_test.gd (-s): 0.5 m, 4 s in 4 m of water arrives where sqrt(g h) puts it (within
 0.6 m after 2 s), holds 0.24 of its 0.25 m crest and leaves 0.006 m behind.
+
+## River plumes and settling (19 Nov, coordinator's ask after mud's debris flows)
+
+What happens. A tributary, a slipping bank or a debris flow puts its load in at one side of a river, and the load
+runs down that bank as a plume: a brown ribbon against clear water that widens slowly and reaches the far bank only
+after some tens of channel widths (the plumes below confluences in every aerial photograph; Rhine and Mosel at
+Koblenz, Rio Negro and Solimoes for kilometres). Where the water slackens (eddies by the banks, pools, the inside of
+bends) the silt drops out and lays a skin of mud on the bed.
+
+Technique. Depth-averaged advection-diffusion, the standard model for transverse mixing (Elder 1959; Fischer, List,
+Koh, Imberger and Brooks 1979, Mixing in Inland and Coastal Waters, ch. 5; Rutherford 1994, River Mixing):
+- Along: each lane of the river's cross samples carries its load at its own speed (semi-Lagrangian), so the fast
+  thread outruns the banks.
+- Across: eps_t = 0.6 d u* for natural channels (0.15 in straight flumes; Rutherford gives 0.3 to 1.0), u* from
+  Manning (u n sqrt(g) / d^(1/6)); flux weighted by the shallower depth, solved implicitly per section (Thomas), so
+  any step is stable and mass is kept. The mixing length is about 0.4 u W^2 / eps_t: a 20 m river 1 m deep at
+  1 m/s (u* 0.11) mixes over about 2.4 km, some 120 widths.
+- Settling: Krone's (1962) deposition rate w_s C (1 - tau_b / tau_d), tau_d 0.1 Pa (Mehta and Partheniades 1975:
+  0.06 to 0.15 for cohesive silt and clay); w_s by Stokes for 13 um silt (0.15 mm/s) and five times slower for ash
+  and char, the same as the lake e-folding times already used. The fast thread (tau_b about 10 Pa) carries its load
+  on; slack lanes by the banks drop theirs. What settles is kept as a deposit in kg/m2,
+  `WorldWater.sediment_deposit_at()`, for the ground to lay as silt.
+- Secondary currents in bends (helical flow, which pushes a plume to the outer bank) are left out: they need a 3D
+  velocity the ribbon does not carry.
+
+The shading reads the load from a sections-by-lanes texture (its third channel the section's half extent, so the
+shader finds the lane from its distance across), in raster and the path tracer alike.

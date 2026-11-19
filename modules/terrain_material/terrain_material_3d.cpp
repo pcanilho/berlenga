@@ -612,6 +612,9 @@ float tm_cl_shadow(vec3 p, vec3 nb, float k, vec3 l, float e, float j) {
 		// Prints in the ground (GroundSurface3D): the terrain sinks under the printed patch, and the patch, drawn
 		// with a copy of this material, takes the printed surface.
 		c += "\tground_deform_vertex(MODEL_MATRIX, VERTEX, NORMAL, TANGENT, BINORMAL);\n";
+		// Read, so the path tracer counts the parameter among what its capture depends on (GroundSurface3D bumps it
+		// when the field's texture is rewritten in place, which alone recaptures nothing).
+		c += "\tVERTEX.y += 0.0 * ground_deform_serial;\n";
 	}
 	c += "}\n";
 	if (rock_detail_enabled) {

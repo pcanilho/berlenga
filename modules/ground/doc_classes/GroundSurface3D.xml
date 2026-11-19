@@ -621,6 +621,45 @@
 				Presses a flat print [param size] wide (x) and long (z), turned by [param yaw] about up: a crate, or with [param sole] a boot's sole (a heel and a forefoot through the waist, the toe toward +z, its tread in the floor). Returns the volume moved, in m³.
 			</description>
 		</method>
+		<method name="add_wear">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="size" type="Vector2" />
+			<param index="2" name="yaw" type="float" />
+			<param index="3" name="passes" type="float" />
+			<description>
+				Adds [param passes] wheel passes (negative to take them away) over a rectangle [param size] wide (x) and long (z), turned by [param yaw]: an old track laid out by a scene, see [member worn_tracks].
+			</description>
+		</method>
+		<method name="get_buried_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" default="0.1" />
+			<description>
+				How far below the ground at [param position] the shallowest hidden stone or root under a disc [param radius] wide lies, m ([code]1000[/code] where there is none; [member buried_obstacles]).
+			</description>
+		</method>
+		<method name="get_buried_near" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<description>
+				The hidden stones and roots within [param radius] of [param position]: dictionaries with [code]a[/code] and [code]b[/code] (a root's ends; a stone's centre in both), [code]radius[/code], [code]root[/code] and [code]id[/code].
+			</description>
+		</method>
+		<method name="clear_wear">
+			<return type="void" />
+			<description>
+				Forgets every worn track ([member worn_tracks]).
+			</description>
+		</method>
+		<method name="get_wear_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The wheel passes the ground at [param position] has taken, faded by [member wear_regrowth_days] ([member worn_tracks]).
+			</description>
+		</method>
 		<method name="press_wheel">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -696,6 +735,13 @@
 			<param index="2" name="mass" type="float" />
 			<description>
 				Stirs [param mass] kg of the bed's clay into the standing water over a disc of [param radius] at [param position] (a boot through a puddle, a clod landing in it), where the bed is cohesive (see [member muddy_water]). Applied by the next water step on the GPU.
+			</description>
+		</method>
+		<method name="wear_compaction" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="passes" type="float" />
+			<description>
+				How far [param passes] wheel passes pack the soil, 0 to 1: most of it in the first few ([code]1 - exp(-passes / 4)[/code]).
 			</description>
 		</method>
 	</methods>
@@ -792,6 +838,21 @@
 		</member>
 		<member name="mud_layer" type="bool" setter="set_mud_layer" getter="is_mud_layer" default="true">
 			Deep mud: where the ground is wet, a soft layer of clay and silt over the firm base, as deep as [member mud_map] and the rules of [member mud_auto_depth] give. It flows as a Bingham fluid (stiff mud holds a rut, slurry closes it), bears and grips as clay, and lets wheels sink to the base.
+		</member>
+		<member name="buried_density" type="float" setter="set_buried_density" getter="get_buried_density" default="0.05">
+			Hidden stones and roots per square metre of deep mud ([member buried_obstacles]).
+		</member>
+		<member name="buried_obstacles" type="bool" setter="set_buried_obstacles" getter="is_buried_obstacles" default="true">
+			Stones and tree roots lie hidden in the [member mud_layer] (roots where trees shade the ground): a wheel sinking into the mud stops on them and rides up ([method get_buried_depth_at]), and its rut floor stays on their tops. Near the followed point each is a [StaticBody3D] in the [code]ground_buried[/code] group with its mesh, so once ruts or water uncover one it is solid for wheels and bodies. The same stones are there every time.
+		</member>
+		<member name="worn_tracks" type="bool" setter="set_worn_tracks" getter="is_worn_tracks" default="true">
+			Wheels wear tracks in: each wheel pass over a 25 cm cell is counted ([method get_wear_at]), the passes pack the soil (it bears a wheel better, sinks less and takes in less rain, so water stands in used tracks; [method wear_compaction]) and wear the grass away (published as the [code]ground_wear_map[/code] and [code]ground_wear_rect[/code] shader globals, which [GrassField3D] reads). Soft mud is churned, not packed. The passes fade over [member wear_regrowth_days].
+		</member>
+		<member name="wear_regrowth_days" type="float" setter="set_wear_regrowth_days" getter="get_wear_regrowth_days" default="30.0">
+			Days of game time (sped up by [member runoff_time_scale]) over which a track's passes halve, as the grass regrows and the soil loosens. [code]0[/code]: tracks never fade.
+		</member>
+		<member name="mud_waves" type="bool" setter="set_mud_waves" getter="is_mud_waves" default="true">
+			Liquid mud runs as a shallow Bingham flow: in a soaked [member mud_layer] (slurry to soft mud) what a wheel or a body pushes aside travels on as a wave, and the rut behind closes as the mud runs back in, until the surface is under the slope the yield stress holds. Stiff mud only slumps. Volume is kept. Runs on the GPU field.
 		</member>
 		<member name="mud_slides" type="bool" setter="set_mud_slides" getter="is_mud_slides" default="true">
 			Soaked mud slides downhill: where rain has thinned the [member mud_layer] until its own weight down the slope passes its yield stress, the layer flows off the slope (down to the depth that still holds, [method get_mud_slide_angle_at]) and piles in the ruts and hollows below. Volume is kept. Runs on the GPU field.

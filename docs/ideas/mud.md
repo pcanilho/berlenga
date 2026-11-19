@@ -1105,6 +1105,51 @@ crawl the angle is noise). Bench --test=camber (height "camber", 20 degree side 
 slip sinks 4.3 cm against 2.6 rolling; a 1500 kg 4x4 at 0.4 throttle across the slope in stiff mud slides 6.7 m
 downhill in 5 s, lower wheels 11.2 cm deep against 8.4 upper; on drier soil it holds (0.18 m).
 
+#### Round 14 (picked 19 Nov: all three, in order)
+
+**14.1 Bow waves in liquid mud.** Research: slurry is a Bingham fluid with inertia; at a vehicle's speed its Reynolds
+number rho U h / mu is of order 10 to 100, so what a tyre or a belly shoves aside runs off as a wave and the rut
+closes with a slosh, not a creep. Shallow Bingham flow: depth-averaged shallow water with the plug's bed stress
+tau_b = tau_y + 3 mu u / h (Huang and Garcia 1998, JFM; FLO-2D's quadratic rheology without its turbulent part,
+O'Brien et al. 1993), stepped as the local inertial pipe model (Bates, Horritt and Fewtrell 2010, J. Hydrology), as
+the standing water already is. It stands where g h S < tau_y / rho, the same critical slope slumping and slides use.
+*Built (19 Nov):* `mud_waves` (on). Cells from slurry to soft mud (stiff share under a half) carry tau_y / rho and
+mu / rho (cover cell 3 z, w); on those texels the GPU field runs MODE_MUD_FLUX / MODE_MUD_DEPTH instead of
+slumping: per face q += dt g h d(eta) / l, minus the yield's dt tau_y / rho (never past zero), the viscous part
+semi-implicit, outflow capped at the layer (max_dent - dent + rim); arriving mud fills the dent first, leaving mud
+takes the rim first. Firm ground and stiff mud are walls. Substeps under CFL (0.5 l / sqrt(g 1.2 m)), a press keeps
+the field moving 4 s. Bench --test=mudwave (80 cm of slurry, a 25 cm rut): 1.1 cm deep after 1 s against 5.1
+slumping, the layer 75 cm out drops 3 mm as it runs in (slumping does not reach), volume kept, it settles at 1
+degree; stiff mud unchanged.
+
+**14.3 Hidden stones and roots.** Research: MudRunner and SnowRunner hide rocks and logs under mud (the surface reads
+even; a wheel sinking rides up onto what it cannot see); stones weather out of soil and lie through the layer;
+tree roots spread mostly in the top 20-30 cm within about the crown's reach (Stone and Kalisz 1991). Stiff bodies in
+a soft layer bound the sinkage: the wheel's contact can go no lower than their tops.
+*Built (19 Nov):* `buried_obstacles` (on), `buried_density` (0.05 per m2 of deep mud). Each 2 m cell with a mud
+layer (as deep as when soaked) holds a few from its hash: stones radius 8 to 25 cm at any depth in the layer, roots
+(capsules 3 to 8 cm thick, 0.8 to 2 m long, near level, 3 to 20 cm down) with probability 0.7 x canopy closure.
+`get_buried_depth_at(position, radius)` is the shallowest top under a disc; press_wheel and PhysXVehicle3D cap the
+sinkage there, so the wheel jolts up onto it and its rut floor stays on it. Within 16 m of the followed point each is
+a StaticBody3D (group ground_buried; sphere or capsule shape) with a lumpy stone or knotted root mesh, wet-looking;
+uncovered by ruts or water they collide as any rock. `get_buried_near`. Bench --test=buried (density 0.5): 25 within
+4 m, same every query; depth to a stone is its top's; a 70 cm press stops on a stone 10.5 cm down while clear ground
+takes 36 cm; bodies near the probe; none when off or without mud. Ground bench _setup turns it off for other checks.
+Limits: the cap applies across a whole wheel print (the stone stops the print, it does not dig round it).
+
+#### Round 15 candidates (card 19 Nov)
+
+- **Flood silt skin.** WorldWater.sediment_deposit_at (kg/m2, Valence 77919272) laid as a thin fresh layer: depth =
+  mass / dry bulk density (about 1300 kg/m3 for fresh silt, Asselman and Middelkoop 1995), saturated at first (a slick
+  film: low tread grip, Wong's adhesion), drying and cracking with the existing desiccation cracks. Merge with
+  add_mud_deposit's overbank silt so there is one deposit store.
+- **Stones dug round and kicked loose.** Round 14.3's limit: the stone caps the whole print. Instead stamp the print
+  minus the stone's footprint (cap per texel on the GPU from a small list of nearby obstacle discs), and an exposed
+  stone whose bearing in the mud fails under a tyre's shear (Terzaghi bearing on a buried sphere; Ishigami's side
+  bulldozing force) turns into a PhysX rigid body and is pushed out.
+- **Worn tracks kept between sessions.** Save wear_cells with keep_ruts (same file, same time scaling as ruts' ageing),
+  so a used route is still packed and bare on return.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

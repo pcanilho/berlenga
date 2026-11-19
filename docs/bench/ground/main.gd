@@ -51,6 +51,7 @@ extends Node3D
 #   --test=avalanche    footsteps on a dune's slip face set off grain avalanches down it; not on the stoss slope
 #   --test=infill       wind fills a print from its upwind side; nothing under the threshold
 #   --view=fringe       a still pool's shore in a desert: the wet margin and the salt crust
+#   --test=steps        a character with no feet of its own prints boot soles step by step, not its capsule
 #   --test=fringe       a wet margin of sand up to 15 cm over still water's level (capillary rise), salt in a desert
 #   --view=avalanche    a walker's prints across a dune's slip face and the tongues of sand running down from them
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
@@ -130,6 +131,7 @@ var drift_test := false
 var avalanche_test := false
 var infill_test := false
 var fringe_test := false
+var steps_test := false
 var near_test := false
 var mud_test := false
 var clog_test := false
@@ -145,6 +147,9 @@ var debris_test := false
 var fans_test := false
 var fords_test := false
 var camber_test := false
+var mudwave_test := false
+var wear_test := false
+var buried_test := false
 var tread_arg := -1 # --view=ruts: the car's PhysXVehicleWheel3D.Tread (mud round 10)
 var puddle_test := false
 var crack_test := false
@@ -198,6 +203,7 @@ func _ready() -> void:
 		elif a == "--test=avalanche": avalanche_test = true
 		elif a == "--test=infill": infill_test = true
 		elif a == "--test=fringe": fringe_test = true
+		elif a == "--test=steps": steps_test = true
 		elif a == "--test=near": near_test = true
 		elif a == "--test=mud": mud_test = true
 		elif a == "--test=clog": clog_test = true
@@ -213,6 +219,9 @@ func _ready() -> void:
 		elif a == "--test=fans": fans_test = true
 		elif a == "--test=fords": fords_test = true
 		elif a == "--test=camber": camber_test = true
+		elif a == "--test=mudwave": mudwave_test = true
+		elif a == "--test=wear": wear_test = true
+		elif a == "--test=buried": buried_test = true
 		elif a == "--test=puddles": puddle_test = true
 		elif a == "--test=cracks": crack_test = true
 		elif a == "--test=legs": legs_test = true
@@ -288,7 +297,7 @@ func _ready() -> void:
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test:
+	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test:
 		if clog_test:
 			await _run_clog_tests()
 		if treads_test:
@@ -315,6 +324,12 @@ func _ready() -> void:
 			await _run_ford_tests()
 		if camber_test:
 			await _run_camber_tests()
+		if mudwave_test:
+			await _run_mudwave_tests()
+		if wear_test:
+			await _run_wear_tests()
+		if buried_test:
+			await _run_buried_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -350,6 +365,11 @@ func _ready() -> void:
 		return
 	if fringe_test:
 		await _run_fringe_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if steps_test:
+		await _run_steps_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -498,6 +518,8 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 		surface.frozen_ground = false
 		surface.world_puddles = false
 		surface.subsoil = false
+		surface.worn_tracks = false
+		surface.buried_obstacles = false
 	# --prop=name:value sets any of the surface's properties (repeatable), for an A/B.
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--prop="):
@@ -2140,6 +2162,8 @@ func _run_clog_tests() -> void:
 	var belly := {}
 	for k in ["off", "on"]:
 		await _soil_scene("soil")
+		# The plough's own trough: the liquid mud's waves (round 14.1) run it full again within a second.
+		surface.mud_waves = false
 		await _paint_mud(0.8, 1.0)
 		var low := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
 		(low.get_child(0) as CollisionShape3D).position = Vector3(0, 0.1, 0)
@@ -2295,8 +2319,10 @@ func _run_slide_tests() -> void:
 		print("  %s: %.1f cm of mud left on the upper bank, its surface %.1f deg (holds to %.1f deg); rut at the foot %.1f cm, then %.1f cm; volume change %.4f m3" % [k, left * 100.0, res[k][6], res[k][4], rut0 * 100.0, rut1 * 100.0, res[k][3]])
 	_check("stiff mud holds on a 15 degree bank", res["stiff"][0] > 0.95 * res["stiff"][5] and absf(res["stiff"][2] - res["stiff"][1]) < 0.02, "%.1f cm left of %.1f" % [res["stiff"][0] * 100.0, res["stiff"][5] * 100.0])
 	# A Bingham layer stands where its weight down its free surface stays under the yield stress, rho g h tan(surface)
-	# <= tau_y (Coussot 1997): soaked, the bank's mud runs down until its surface is that gentle.
-	_check("soaked, it slides down the bank until its surface is as gentle as it holds", res["soaked"][0] < 0.7 * res["soaked"][5] and res["soaked"][6] <= res["soaked"][4] + 1.5 and res["soaked"][6] < 13.0,
+	# <= tau_y (Coussot 1997): soaked, the bank's mud runs down until its surface is that gentle. On a long even bank
+	# the layer that stops is the infinite slope's critical depth h = tau_y / (rho g sin theta), its surface parallel
+	# to the ground (as the liquid mud's waves leave it, round 14.1); slumping alone left it gentler.
+	_check("soaked, it slides down the bank until its surface is as gentle as it holds", res["soaked"][0] < 0.7 * res["soaked"][5] and res["soaked"][6] <= res["soaked"][4] + 1.5,
 			"%.1f cm left of %.1f on the upper bank, its surface %.1f deg (holds to %.1f) on 15 degree ground" % [res["soaked"][0] * 100.0, res["soaked"][5] * 100.0, res["soaked"][6], res["soaked"][4]])
 	_check("and fills the rut at the foot, volume kept", res["soaked"][2] < res["soaked"][1] - 0.08 and absf(res["soaked"][3]) < 0.02,
 			"%.1f cm to %.1f cm; volume change %.4f m3" % [res["soaked"][1] * 100.0, res["soaked"][2] * 100.0, res["soaked"][3]])
@@ -2883,7 +2909,13 @@ func _build_bodymud() -> void:
 	sun.rotation_degrees = Vector3(-35.0, 120.0, 0.0) if sun_arg.size() < 2 else Vector3(sun_arg[0], sun_arg[1], 0.0)
 	sun.directional_shadow_max_distance = 20.0
 	add_child(sun)
-	await _paint_mud(0.8, STIFF_MUD)
+	# --slurry: soaked to a slurry (mud round 14.1: the bow wave it pushes and the wake running back in)
+	await _paint_mud(0.8, 1.0 if "--slurry" in OS.get_cmdline_user_args() else STIFF_MUD)
+	surface.mud_waves = not "--no-waves" in OS.get_cmdline_user_args()
+	# --buried: stones and roots hidden in the layer, dense (mud round 14.3), for the ruts to uncover
+	if "--buried" in OS.get_cmdline_user_args():
+		surface.buried_obstacles = true
+		surface.buried_density = 0.6
 	var car := _make_car(1500.0, 700.0, Vector3(0.0, _undisturbed(Vector3.ZERO) + 0.9, 0.0))
 	_dress_car(car)
 	surface.follow_target = surface.get_path_to(car)
@@ -4162,6 +4194,8 @@ func _build_trail() -> void:
 	(ws.shape as CapsuleShape3D).radius = 0.14
 	(ws.shape as CapsuleShape3D).height = 1.6
 	walker.add_child(ws)
+	# Its boots print themselves: the deformers skip the capsule (WorldContactBody.feet).
+	walker.set_meta("world_contact_feet", true)
 	walker.position = Vector3(-7.0, 1.0, 1.3)
 	add_child(walker)
 	for k in 2:
@@ -5230,6 +5264,57 @@ func _infill_stats(pr: PackedFloat32Array) -> Vector3:
 	return Vector3(up / 28.0, dn / 28.0, at)
 
 
+# A walker with no feet of its own (WorldContactBody.walker): the ground presses its soles, a step about 0.41 of its
+# stature, the feet 18 cm apart (WorldWalkerSteps), never its capsule.
+func _run_steps_tests() -> void:
+	await _setup("flat", GroundSurface3D.GROUND_SAND, 0.4, 0.0)
+	_apply("damp_sand")
+	var w := CharacterBody3D.new()
+	var ws := CollisionShape3D.new()
+	ws.shape = CapsuleShape3D.new()
+	(ws.shape as CapsuleShape3D).radius = 0.14
+	(ws.shape as CapsuleShape3D).height = 1.7
+	w.add_child(ws)
+	w.add_to_group("world_contact")
+	var g0: float = height.get_height(Vector3(-1.5, 0, 0))
+	w.position = Vector3(-1.5, g0 + 0.85, 0.0)
+	add_child(w)
+	for i in 10:
+		await get_tree().physics_frame
+	surface.clear_deformation()
+	for i in 4:
+		await get_tree().physics_frame
+	for i in 120:
+		w.position.x = -1.5 + 3.0 * float(i) / 119.0
+		await get_tree().physics_frame
+	for i in 10:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	# Along each foot's line and the body's: where the surface went down over 1.5 mm.
+	var dips := []
+	for zl in [0.09, -0.09, 0.0]:
+		var count := 0
+		var gap := 100
+		var lowered := 0
+		var x := -1.4
+		while x < 1.4:
+			var d: float = height.get_height(Vector3(x, 0, zl)) - surface.get_surface_height_at(Vector3(x, 0, zl))
+			# One print: its heel and forefoot dips (up to 15 cm apart, the raised waist between them) count once.
+			if d > 0.0015:
+				lowered += 1
+				if gap > 15:
+					count += 1
+				gap = 0
+			else:
+				gap += 1
+			x += 0.01
+		dips.append(Vector2(count, lowered / 280.0))
+	var prints: float = dips[0].x + dips[1].x
+	_check("a footless walker prints boot soles, step by step (WorldWalkerSteps)", prints >= 3 and prints <= 5 and dips[0].x >= 1 and dips[1].x >= 1, "%d prints left, %d right over 2.8 m (a 1.7 m walker steps about 0.7 m)" % [dips[0].x, dips[1].x])
+	_check("not its capsule: no trench along its path", dips[2].y < 0.5, "%.0f%% of its centre line lowered" % (dips[2].y * 100.0))
+	w.queue_free()
+
+
 # The point up the beach (x = 0.5) where the ground stands p_above over the level.
 func _fringe_point(level: float, above: float) -> Vector3:
 	var z := 0.0
@@ -5964,3 +6049,189 @@ func _build_camber() -> void:
 	get_window().size = full
 	await _save_view(env)
 	get_tree().quit()
+
+
+# Waves in liquid mud (mud round 14.1): a rut pressed into 80 cm of slurry, with the waves (a shallow Bingham flow)
+# and with slumping alone. The waves carry what the press shoved aside further and close the rut faster, keep the
+# volume, stop where the yield stress holds the surface, and leave stiff mud alone.
+func _run_mudwave_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	var o := Vector3(0.3, 0, 0.2)
+	var far := o + Vector3(0.75, 0, 0)
+	var res := {}
+	for k in ["waves", "slump", "stiff_waves", "stiff_slump"]:
+		surface.mud_waves = k.ends_with("waves")
+		await _paint_mud(0.8, STIFF_MUD if k.begins_with("stiff") else 1.0)
+		surface.clear_deformation()
+		for i in 3:
+			await get_tree().physics_frame
+		surface.press_box(o, Vector2(0.3, 1.5), 0.0, -0.25, 0.25)
+		surface.sync_deformation()
+		var v0 := surface.get_moved_volume()
+		var d0 := -surface.get_surface_height_at(o)
+		surface.settle(1.0, 1.0 / 60.0)
+		var d1 := -surface.get_surface_height_at(o)
+		var f1 := surface.get_surface_height_at(far)
+		surface.settle(30.0, 0.05)
+		var v2 := surface.get_moved_volume()
+		var d2 := -surface.get_surface_height_at(o)
+		var s2 := _max_slope(o, 0.5)
+		res[k] = {"d0": d0, "d1": d1, "d2": d2, "far": f1, "net0": v0.x - v0.y, "net2": v2.x - v2.y, "slope": s2}
+		print("  %s: rut %.1f cm, %.1f after 1 s, %.1f after 31 s; %.1f mm at 75 cm out after 1 s; steepest %.0f deg; net %.2f to %.2f l" % [k, d0 * 100.0, d1 * 100.0, d2 * 100.0, f1 * 1000.0, s2, (v0.x - v0.y) * 1000.0, (v2.x - v2.y) * 1000.0])
+	# A wheel driven 3 m through the slurry at 2 m/s, 30 cm deep: the surface behind it after half a second, its
+	# roughness the worst step of a texel off the mean of its four neighbours (ripples and spikes show there).
+	var rough := {}
+	for k in ["waves", "slump"]:
+		surface.mud_waves = k == "waves"
+		await _paint_mud(0.8, 1.0)
+		surface.clear_deformation()
+		for i in 3:
+			await get_tree().physics_frame
+		var p := Vector3(-1.5, 0, 0)
+		for i in 90:
+			surface.press_wheel(p, Vector2(0.25, 0.3), 0.0, 0.3, Vector2(2.0, 0.0))
+			p.x += 2.0 / 60.0
+			surface.settle(1.0 / 60.0, 1.0 / 60.0)
+		surface.settle(0.5, 1.0 / 60.0)
+		var t := surface.deform_extent / surface.deform_resolution
+		var worst := 0.0
+		var x := -1.5
+		while x <= 1.5:
+			var z := -0.6
+			while z <= 0.6:
+				var q := Vector3(x, 0, z)
+				var mean := 0.25 * (surface.get_surface_height_at(q + Vector3(t, 0, 0)) + surface.get_surface_height_at(q - Vector3(t, 0, 0)) + surface.get_surface_height_at(q + Vector3(0, 0, t)) + surface.get_surface_height_at(q - Vector3(0, 0, t)))
+				worst = maxf(worst, absf(surface.get_surface_height_at(q) - mean))
+				z += t
+			x += t
+		rough[k] = [worst, -surface.get_surface_height_at(Vector3(0, 0, 0))]
+		if "--profile" in OS.get_cmdline_user_args():
+			var line := ""
+			var zz := -0.6
+			while zz <= 0.6:
+				line += " %.0f" % (surface.get_surface_height_at(Vector3(0, 0, zz)) * 1000.0)
+				zz += t
+			print("  z profile mm:" + line)
+			line = ""
+			var xx := -1.0
+			while xx <= 1.0:
+				line += " %.0f" % (surface.get_surface_height_at(Vector3(xx, 0, 0.2)) * 1000.0)
+				xx += t
+			print("  x profile at z 0.2 mm:" + line)
+		print("  %s: worst %.1f mm off its neighbours behind the wheel, rut %.1f cm" % [k, worst * 1000.0, rough[k][1] * 100.0])
+	_check("a wheel's wake in slurry is smooth, no spikes", rough["waves"][0] < 1.5 * rough["slump"][0] + 0.002,
+			"%.1f mm (%.1f slumping)" % [rough["waves"][0] * 1000.0, rough["slump"][0] * 1000.0])
+	surface.mud_waves = true
+	var w: Dictionary = res["waves"]
+	var s: Dictionary = res["slump"]
+	_check("liquid mud closes a rut faster with waves than by slumping alone", w["d1"] < 0.8 * s["d1"] and w["d1"] < 0.7 * w["d0"],
+			"%.1f cm deep after 1 s (%.1f slumping, %.1f pressed)" % [w["d1"] * 100.0, s["d1"] * 100.0, w["d0"] * 100.0])
+	# What the press squeezed out (the compaction's 3 l) the whole layer pays back: the surface 75 cm out drops as the
+	# mud runs in, where slumping never reaches.
+	_check("the wave reaches further than slumping", absf(w["far"]) > 0.001 and absf(w["far"]) > 3.0 * absf(s["far"]),
+			"%.1f mm at 75 cm out (%.1f mm slumping)" % [w["far"] * 1000.0, s["far"] * 1000.0])
+	_check("the waves keep the volume", absf(w["net2"] - w["net0"]) < 0.02 * absf(w["net0"]) + 2e-4,
+			"net %.2f l pressed, %.2f l after 31 s" % [w["net0"] * 1000.0, w["net2"] * 1000.0])
+	_check("the yield stress stops it: the surface settles nearly flat, not rippling", w["slope"] < 15.0 and w["d2"] < 0.3 * w["d0"],
+			"steepest %.0f degrees, %.1f cm deep" % [w["slope"], w["d2"] * 100.0])
+	var a: Dictionary = res["stiff_waves"]
+	var b: Dictionary = res["stiff_slump"]
+	_check("stiff mud does not wave", absf(a["d2"] - b["d2"]) < 0.002 and absf(a["far"] - b["far"]) < 0.001,
+			"%.1f and %.1f cm deep" % [a["d2"] * 100.0, b["d2"] * 100.0])
+	near_on = true
+
+
+# Worn-in tracks (mud round 14.2): wheel passes counted per 25 cm cell, once while a wheel stays on it; the passes pack
+# the soil (a loaded wheel sinks less on a used track) and halve over wear_regrowth_days.
+func _run_wear_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.3, 0.0)
+	surface.worn_tracks = true
+	surface.clear_wear()
+	var c4 := GroundSurface3D.wear_compaction(4.0)
+	_check("most packing comes in the first passes", c4 > 0.55 and c4 < 0.7 and GroundSurface3D.wear_compaction(20.0) > 0.98, "%.2f packed after 4 passes" % c4)
+	var o := Vector3(0.5, 0, 0.3)
+	# A wheel standing on the cell for a second, then gone half a second, then back: two passes.
+	for i in 60:
+		surface.press_wheel(o, Vector2(0.25, 0.3), 0.0, 0.02, Vector2())
+		await get_tree().physics_frame
+	var one := surface.get_wear_at(o)
+	for i in 30:
+		await get_tree().physics_frame
+	for i in 10:
+		surface.press_wheel(o, Vector2(0.25, 0.3), 0.0, 0.02, Vector2())
+		await get_tree().physics_frame
+	var two := surface.get_wear_at(o)
+	var beside := surface.get_wear_at(o + Vector3(0.6, 0, 0))
+	_check("a wheel resting counts one pass, coming back a second", absf(one - 1.0) < 0.05 and absf(two - 2.0) < 0.05 and beside < 0.01, "%.2f, then %.2f; %.2f beside" % [one, two, beside])
+	# A loaded wheel (3 kN, 70 cm tyre at 200 kPa) on fresh soil and on a track of 10 passes.
+	var q := Vector3(-1.5, 0, -1.0)
+	var s0: float = surface.get_wheel_soil(q, 3000.0, 0.35, 0.25, 200.0, 0.0, 0.0)["sinkage"]
+	surface.add_wear(q, Vector2(1.0, 1.0), 0.0, 10.0)
+	var s1: float = surface.get_wheel_soil(q, 3000.0, 0.35, 0.25, 200.0, 0.0, 0.0)["sinkage"]
+	_check("a used track bears a wheel better", s1 < 0.7 * s0 and s1 > 0.0, "%.1f mm on the track, %.1f mm fresh" % [s1 * 1000.0, s0 * 1000.0])
+	# Regrowth: 30 days (sped up) halve the passes.
+	var w0 := surface.get_wear_at(q)
+	surface.runoff_time_scale = 30.0 * 86400.0 / 4.0
+	for i in 245: # just over 4 s
+		await get_tree().physics_frame
+	surface.runoff_time_scale = 1.0
+	var w1 := surface.get_wear_at(q)
+	_check("the passes halve over the regrowth time", w1 > 0.35 * w0 and w1 < 0.65 * w0, "%.1f to %.1f passes" % [w0, w1])
+	surface.worn_tracks = false
+	var s2: float = surface.get_wheel_soil(q, 3000.0, 0.35, 0.25, 200.0, 0.0, 0.0)["sinkage"]
+	_check("off, the track is fresh soil again", absf(s2 - s0) < 1e-4, "%.1f mm" % (s2 * 1000.0))
+	surface.worn_tracks = true
+	near_on = true
+
+
+# Hidden stones and roots (mud round 14.3): what lies in 80 cm of slurry is the same each time it is asked for; a wheel's
+# rut stops on a stone's top; bodies stand near the followed point; dry or without mud there are none.
+func _run_buried_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	surface.buried_obstacles = true
+	surface.buried_density = 0.5
+	await _paint_mud(0.8, 1.0)
+	var found := surface.get_buried_near(Vector3.ZERO, 4.0)
+	var again := surface.get_buried_near(Vector3.ZERO, 4.0)
+	_check("stones lie hidden in the mud, the same every time", found.size() >= 6 and str(found) == str(again), "%d within 4 m" % found.size())
+	# The shallowest stone near the middle, and a spot 0.6 m clear of everything.
+	var stone := {}
+	for d in found:
+		if not d["root"] and (stone.is_empty() or (d["a"] as Vector3).y > (stone["a"] as Vector3).y) and (d["a"] as Vector3).length() < 3.0:
+			stone = d
+	var c: Vector3 = stone["a"]
+	var top_depth := surface.get_surface_height_at(Vector3(c.x, 0, c.z)) - (c.y + float(stone["radius"]))
+	var clear := Vector3.ZERO
+	for k in 200:
+		var q := Vector3(randf_range(-3, 3), 0, randf_range(-3, 3))
+		if surface.get_buried_depth_at(q, 0.6) > 5.0:
+			clear = q
+			break
+	var dq := surface.get_buried_depth_at(Vector3(c.x, 0, c.z), 0.05)
+	_check("the depth to a stone is its top's", absf(dq - top_depth) < 0.01, "%.1f cm (top %.1f cm down)" % [dq * 100.0, top_depth * 100.0])
+	for i in 20:
+		surface.press_wheel(Vector3(c.x, 0, c.z), Vector2(0.2, 0.2), 0.0, 0.7, Vector2())
+		surface.press_wheel(clear, Vector2(0.2, 0.2), 0.0, 0.7, Vector2())
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var on_stone := surface.get_dent_at(Vector3(c.x, 0, c.z))
+	var off := surface.get_dent_at(clear)
+	_check("a wheel's rut stops on the stone", on_stone < top_depth + 0.02 and off > on_stone + 0.1, "%.1f cm deep on it (top %.1f cm), %.1f cm clear of it" % [on_stone * 100.0, top_depth * 100.0, off * 100.0])
+	for i in 40:
+		await get_tree().physics_frame
+	var bodies := get_tree().get_nodes_in_group("ground_buried").size()
+	_check("bodies stand for them near the followed point", bodies >= 6, "%d bodies" % bodies)
+	surface.buried_obstacles = false
+	var none := surface.get_buried_near(Vector3.ZERO, 4.0).size()
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var left := get_tree().get_nodes_in_group("ground_buried").size()
+	surface.buried_obstacles = true
+	surface.mud_layer = false
+	var dry := surface.get_buried_near(Vector3.ZERO, 4.0).size()
+	surface.mud_layer = true
+	_check("off, or with no mud layer, there are none", none == 0 and left == 0 and dry == 0, "%d, %d bodies, %d without mud" % [none, left, dry])
+	near_on = true

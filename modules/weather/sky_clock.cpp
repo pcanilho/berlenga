@@ -380,6 +380,17 @@ void SkyClock::advance(double p_seconds) {
 	set_julian_day(get_julian_day() + p_seconds / 86400.0);
 }
 
+// The fires' smoke transmittance on the sun's light now (1 with no weather map or no smoke).
+Vector3 SkyClock::_sun_smoke() {
+	const WeatherMap3D *map = WeatherMap3D::get_active();
+	if (map == nullptr) {
+		return Vector3(1, 1, 1);
+	}
+	_update();
+	const Rect2 r = map->get_map_rect();
+	return map->get_smoke_transmittance(Vector3(r.get_center().x, 0.0f, r.get_center().y), _alt_az_to_world(sky.sun_alt, sky.sun_az));
+}
+
 void SkyClock::_apply_lights() {
 	if (!is_inside_tree()) {
 		return;
@@ -421,6 +432,9 @@ void SkyClock::_apply_lights() {
 				const Rect2 r = map->get_map_rect();
 				const Vector3 st = map->get_smoke_transmittance(Vector3(r.get_center().x, 0.0f, r.get_center().y), dir);
 				t = Vector3(t.x * st.x, t.y * st.y, t.z * st.z);
+				if (b.path == &sun_light) {
+					applied_smoke = st;
+				}
 			}
 			const double peak = MAX(MAX(t.x, t.y), t.z);
 			if (peak > 1e-6) {
@@ -529,8 +543,11 @@ void SkyClock::_notification(int p_what) {
 			if (time_scale != 0.0 && !Engine::get_singleton()->is_editor_hint()) {
 				advance(get_process_delta_time() * time_scale);
 			} else if (drive_light_energy) {
+				// The clock held (a still): the lights still follow a new sky, and the fires' smoke drifting over or
+				// added (WeatherMap3D.add_smoke), which would otherwise dim and redden the sun only once time moves.
 				Ref<WeatherSkyMaterial> sky_mat = WeatherSkyMaterial::find_for(this);
-				if (sky_mat.is_valid() && sky_mat->get_instance_id() != sky_material_id) {
+				const Vector3 smoke = _sun_smoke();
+				if ((sky_mat.is_valid() && sky_mat->get_instance_id() != sky_material_id) || (smoke - applied_smoke).length() > 0.005f) {
 					_apply_lights();
 				}
 			}
