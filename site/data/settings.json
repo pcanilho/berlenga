@@ -3724,6 +3724,17 @@
    "topic": ""
   },
   {
+   "name": "Fog drip",
+   "settings": [
+    "WeatherMap3D.fog_drip"
+   ],
+   "note": "",
+   "what": "cloud lying on wooded ground drips from the trees and wets the ground beneath them.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Contact wetness",
    "settings": [
     "contact_wetness_enabled"
