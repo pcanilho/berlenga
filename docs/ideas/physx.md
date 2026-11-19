@@ -2030,6 +2030,30 @@ drifts off it. Test (A hosed out at 25 min): in still air its ember dies
 within the hour; in an 8 m/s wind it relights 80 min after the hose
 stopped.
 
+### Next-round options (card, 19 Nov evening)
+
+Firefighters' hose streams. apply_water already knocks fires down.
+Plan: a hose node whose jet is a PhysX particle stream (a solid stream
+reaches about 20 to 30 m; Freeman's nozzle formula), aimed at
+openings, feeding apply_water where it lands, with steam and the
+knock-down seen through the windows.
+
+Embers through vents and gutters. Post-fire surveys and IBHS tests show
+embers getting in through attic and foundation vents and catching the
+dry debris in gutters and on decks; mesh of 3 mm or finer stops most
+(Manzello et al. 2011, NIST ember generator). Plan: vents and gutters
+as openings with a mesh size and a debris load, which brands can light.
+
+Fire in roof spaces and voids. Fire that gets into an attic or a wall
+cavity runs unseen along it and comes out far from where it started;
+it is a common way a whole roof goes (NFPA; BRE). Plan: concealed
+voids as rooms with a low fuel load and no openings to the outside,
+linked by gaps to the rooms below and next to them.
+
+Raster smoke speckle (fix, no pick needed): opacity-matched upsampling
+of the quarter-resolution light (the light per unit of the low-res
+opacity, times the full-res opacity).
+
 ### Next-round options (card, 19 Nov afternoon)
 
 Window flames as tongues. External flames now read as round fireballs
