@@ -1330,7 +1330,21 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						b = Basis(Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f).normalized(), Math::deg_to_rad(4.0f) * (rng.randf() - 0.5f)) * b;
 						st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
 						const real_t bottom = -lib->bottom[st.variant] * st.scale;
-						st.position = Vector3(xz.x, y + bottom, xz.z);
+						real_t base_y = y;
+						if (t == 0 && !p_sea) {
+							// A base block stands on the ground under its own footprint, not the crest's middle: on a
+							// narrow crest a block set beside the top hung out over the falling slope. It sinks to the
+							// lowest ground under its ends and sides (set a little into it, as the middle one is).
+							const Vector3 side_dir(-along.z, 0, along.x);
+							const real_t ha = ax.x * st.scale * 0.8, hs = ax.z * st.scale * 0.8;
+							real_t gmin = gen->get_height(xz);
+							gmin = MIN(gmin, gen->get_height(xz + along * ha));
+							gmin = MIN(gmin, gen->get_height(xz - along * ha));
+							gmin = MIN(gmin, gen->get_height(xz + side_dir * hs));
+							gmin = MIN(gmin, gen->get_height(xz - side_dir * hs));
+							base_y = MIN(y, gmin - 0.1 * ax.y * st.scale);
+						}
+						st.position = Vector3(xz.x, base_y + bottom, xz.z);
 						st.ground = p_sea ? y - 50.0 : gen->get_height(xz);
 						st.footprint = t == 0 && !p_sea ? MAX(ax.x, ax.z) * st.scale * 0.85f : 0.0f;
 						tier_top = MAX(tier_top, st.position.y + ax.y * st.scale);
@@ -1352,7 +1366,14 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				const RockGenerator::RockType type = _type_at(gen, cr.p);
 				const uint32_t key = _library_key(type, RockGenerator::FAMILY_CORESTONE, 0);
 				const real_t ground = gen->get_height(cr.p);
-				if (i == 0 && rng.randf() < tor_rate[type] * float(density) * Math::smoothstep(0.6f, 3.0f, cr.score)) {
+				// A tor needs a summit broad enough for its base (a knife ridge sheds its blocks): the ground a few metres
+				// out from the top falls no more than a third of the way down.
+				real_t fall = 0.0;
+				for (int k = 0; k < 6; k++) {
+					const real_t a = real_t(k) * Math::TAU / 6.0;
+					fall = MAX(fall, ground - gen->get_height(cr.p + Vector3(Math::cos(a) * 4.0, 0, Math::sin(a) * 4.0)));
+				}
+				if (i == 0 && rng.randf() < tor_rate[type] * float(density) * Math::smoothstep(0.6f, 3.0f, cr.score) && fall < 1.4) {
 					// The tor: base blocks 3 to 7 m, set a quarter of their thickness into the bedrock below.
 					const float width = 3.0f + 4.0f * rng.randf();
 					const uint32_t first = r_stones.size();

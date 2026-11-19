@@ -1310,9 +1310,27 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						// blocks meet (a step one cell wide), not as noise lumps. A faint lump stays on each block.
 						const float js1 = jt_dir1.dot(p) / jt_s1 + 0.15f * (rk_noise(p * 0.7f, nseed + 105u) - 0.5f);
 						const float js2 = jt_dir2.dot(p) / jt_s2 + 0.15f * (rk_noise(p * 0.7f, nseed + 106u) - 0.5f);
-						const uint32_t bid = rk_hash(uint32_t(int(Math::floor(js1)) + 1024) * 73856093u ^ uint32_t(int(Math::floor(js2)) + 1024) * 19349663u ^ uint32_t(bed_index(p) + 64) * 83492791u ^ nseed);
-						const float bo = float(bid & 0xFFFFu) / 65535.0f;
-						v += 0.12f * c * (bo - 0.5f) + 0.025f * c * (rk_fbm(p * 2.4f, nseed + 102u, 3) - 0.5f);
+						const float f1 = Math::floor(js1), f2 = Math::floor(js2);
+						const int bi = bed_index(p);
+						const uint32_t bid = rk_hash(uint32_t(int(f1) + 1024) * 73856093u ^ uint32_t(int(f2) + 1024) * 19349663u ^ uint32_t(bi + 64) * 83492791u ^ nseed);
+						const float bo = float(bid & 0xFFFu) / 4095.0f;
+						// Each block's face is its own plane, turned a few degrees from its neighbours' (it settled or
+						// spalled on its own), so the blocks catch the light differently even face on to the sun.
+						const float t1 = float((bid >> 12) & 0xFFu) / 255.0f - 0.5f, t2 = float((bid >> 20) & 0xFFu) / 255.0f - 0.5f;
+						const float u1 = (js1 - f1 - 0.5f) * jt_s1, u2 = (js2 - f2 - 0.5f) * jt_s2;
+						float u3 = 0.0f;
+						if (bi + 1 < int(bed_at.size())) {
+							const float q = p[bed_axis] + dip.dot(p);
+							u3 = q - 0.5f * (bed_at[bi] + bed_at[bi + 1]);
+						}
+						const float t3 = float((bid >> 28) & 0xFu) / 15.0f - 0.5f;
+						v += 0.2f * c * (bo - 0.5f) + 0.35f * (t1 * u1 + t2 * u2) + 0.3f * t3 * u3;
+						// The joints and bed partings between blocks weathered open a little: a shallow V along each,
+						// so a block's arris is a line of shade, not a seam.
+						const float e1 = MIN(js1 - f1, 1.0f - (js1 - f1)) * jt_s1, e2 = MIN(js2 - f2, 1.0f - (js2 - f2)) * jt_s2;
+						const float gw = 0.035f * c;
+						v += 0.03f * c * MAX(0.0f, 1.0f - MIN(e1, e2) / gw);
+						v += 0.025f * c * (rk_fbm(p * 2.4f, nseed + 102u, 3) - 0.5f);
 					} else if (family != FAMILY_SEA_PLATFORM) {
 						// No joint face is a plane at this size: blocks a metre or so across stand proud or sit back
 						// by a hand's breadth (quantised noise, so the facets meet in edges), with a lumpy face on them.
