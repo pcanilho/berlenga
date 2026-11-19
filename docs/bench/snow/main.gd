@@ -2882,9 +2882,9 @@ func _build_avalanche(cam: Camera3D) -> void:
 			cam.look_at(Vector3(-15.0, 12.0, 0.0))
 		else:
 			# Three-quarters from the side, so the head's height and the cloud trailing back up the track both show.
-			cam.position = Vector3(85.0, snow.get_ground_height_at(Vector3(85, 0, 95)) + 22.0, 95.0)
-			cam.look_at(Vector3(-15.0, 14.0, -5.0))
-		cam.fov = 60.0
+			cam.position = Vector3(100.0, snow.get_ground_height_at(Vector3(100, 0, 115)) + 28.0, 115.0)
+			cam.look_at(Vector3(-25.0, 16.0, -10.0))
+		cam.fov = 66.0
 		cam.far = 1000.0
 		if traced:
 			process_mode = Node.PROCESS_MODE_ALWAYS
