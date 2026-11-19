@@ -153,6 +153,7 @@ func run(args: Dictionary) -> void:
 	_world(args.has("pt"), int(args.get("spp", "16")))
 	var snow: WorldSnow = null
 	if args.has("snow"):
+		winter = true
 		var ss: WorldSnow = load("res://snow_load_stub.gd").new()
 		ss.load_kg_m2 = float(args.snow)
 		Engine.get_singleton("WorldContracts").set_snow(ss)
@@ -196,7 +197,7 @@ func run(args: Dictionary) -> void:
 		if snow and t >= 1.0:
 			snow.pressure = float(args.avalanche)
 		if f % 15 == 0:
-			print("t=%.1f wall %d ms parts %d falls %d" % [t, Time.get_ticks_msec(), _parts(), wind.get_storm_fall_count()])
+			print("t=%.1f wall %d ms parts %d falls %d snow caps %d clumps %d dropped %d" % [t, Time.get_ticks_msec(), _parts(), wind.get_storm_fall_count(), wind.get_snow_caps_drawn(), wind.get_snow_clumps_falling(), wind.get_snow_clumps_dropped()])
 			if OS.get_environment("STORM_DEBUG") == "1":
 				for d in wind.get_children(true):
 					if d.get_class() == "PhysXDestructible3D":
@@ -331,6 +332,18 @@ func _snow_test() -> void:
 	for f in 45:
 		await get_tree().physics_frame
 	print(line.call("4 kg/m2:"))
+	var mm_nodes := []
+	for c in get_children():
+		if c is MultiMeshInstance3D:
+			mm_nodes.append(c)
+	var levels := func() -> Array:
+		var out := []
+		for m in mm_nodes:
+			out.append(wind.get_instance_cap_level(m, 0))
+		return out
+	var lv_light: Array = levels.call()
+	var msg := "4 kg/m2 (13 percent of capacity): conifers wear light caps, the bare beech none (levels %s, %d drawn)" % [str(lv_light), wind.get_snow_caps_drawn()]
+	_check(lv_light[0] == 1 and lv_light[1] == 1 and lv_light[3] == 0 and wind.get_snow_caps_drawn() >= 3, msg)
 	var light := []
 	for k in trees.size():
 		light.append((_lateral_bow(k) - base[k]).y)
@@ -339,6 +352,8 @@ func _snow_test() -> void:
 	for f in 45:
 		await get_tree().physics_frame
 	print(line.call("15 kg/m2:"))
+	var lv_full: Array = levels.call()
+	_check(lv_full[0] == 2 and lv_full[1] == 2, "15 kg/m2 (half the capacity): full caps (levels %s)" % str(lv_full))
 	var full: float = (_lateral_bow(0) - base[0]).y
 	# Scots pine is the snow-breakage species (damage from about 20 kg/m2 of crown, Peltola et al. 1999): its
 	# thinnest limbs may go under a full canopy; no top or stem does.
@@ -361,10 +376,19 @@ func _snow_test() -> void:
 	print(line.call("60 kg/m2:"))
 	_check(wind.get_snow_break_count() >= 1, "60 kg/m2 of wet snow breaks tops and limbs (%d breaks, %d stems thrown)" % [wind.get_snow_break_count(), wind.get_storm_throw_count()])
 	_check(snow.shakes >= 1 and snow.shaken_kg > 0.0 and wind.get_snow_shaken_kg() > 0.0, "the breaks shake the snow onto the pack (%d shakes, %.0f kg)" % [snow.shakes, snow.shaken_kg])
+	var lv_heavy: Array = levels.call()
+	_check(lv_heavy[0] == 3 or lv_heavy[1] == 3, "60 kg/m2: heavy caps (levels %s)" % str(lv_heavy))
+	var dropped_before: int = wind.get_snow_clumps_dropped()
+	print("before unload: kg %.0f, dropped %d, falling %d" % [wind.get_instance_snow_kg(mm_nodes[0], 0), dropped_before, wind.get_snow_clumps_falling()])
 	snow.load_kg_m2 = 0.0
 	wind.snow_creep_hours = 0.0
-	for f in 60:
+	for f in 75:
 		await get_tree().physics_frame
+	_check(wind.get_snow_clumps_dropped() > dropped_before and levels.call()[0] == 0, "the snow unloads: %d clumps fall from the crowns near the camera, the caps go" % (wind.get_snow_clumps_dropped() - dropped_before))
+	print("after unload: kg %.0f, dropped %d, falling %d" % [wind.get_instance_snow_kg(mm_nodes[0], 0), wind.get_snow_clumps_dropped(), wind.get_snow_clumps_falling()])
+	for f in 600:
+		await get_tree().physics_frame
+	_check(wind.get_snow_clumps_falling() == 0, "the clumps land within 10 s (%d still falling)" % wind.get_snow_clumps_falling())
 	var back: float = absf((_lateral_bow(3) - base[3]).y)
 	_check(back < 1.0, "the snow gone, the beech's limbs spring back (%.2f deg left)" % back)
 
