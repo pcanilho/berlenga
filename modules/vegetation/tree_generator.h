@@ -101,6 +101,9 @@ public:
 		PRESET_BLACKTHORN, // Prunus spinosa (trees.md 5ad).
 		PRESET_FIELD_MAPLE, // Acer campestre (trees.md 5ad).
 		PRESET_DOG_ROSE, // Rosa canina (trees.md 5ad).
+		PRESET_CALLIGONUM, // Calligonum comosum (trees.md 5ae).
+		PRESET_WHITE_BROOM, // Retama raetam (trees.md 5ae).
+		PRESET_SALTBUSH, // Atriplex halimus (trees.md 5ae).
 		PRESET_MAX,
 	};
 
@@ -775,9 +778,11 @@ private:
 	Ref<Texture2D> _leaflet_texture();
 	void _add_needle(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color);
 	void _add_spine(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color, uint32_t p_hash, bool p_branched);
+	void _add_jointed_twig(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color, uint32_t p_hash);
 	void _add_spray(Builder &r_b, const Vector3 &p_base, const Vector3 &p_dir, float p_length, float p_half_width, const Vector3 &p_side, const Color &p_color);
 	Ref<Texture2D> spray_texture; // Built on first use; per generator so it never outlives the renderer.
 	Ref<Texture2D> _spray_texture();
+public:
 	// Bark (docs/ideas/trees.md section 2a): one tileable procedural set per bark family.
 	enum BarkKind {
 		BARK_SMOOTH,
@@ -792,6 +797,17 @@ private:
 		BARK_PINASTER, // Maritime pine: thick dark plates a hand or two across, deep furrows, dull red-brown at their floor.
 		BARK_MAX,
 	};
+	// For instanced bark detail (plates, flakes; ground detail, tree_bark_detail): a preset's bark
+	// family, and the displaced relief LOD 0's near trunk carries at a point of a stem (metres along
+	// the outward normal, 0 on plate tops, negative in the furrows), so placed pieces sit on the
+	// plates and keep out of the furrows. p_around radians round the stem from its tube frame,
+	// p_along metres up it, p_radius the stem's radius there. p_seed 0 samples LOD 0's own tile
+	// mapping; any other seed slides the tile (as LOD 0's slow world-space twist does) for callers
+	// that do not follow one trunk. Thread-safe.
+	static BarkKind bark_kind_for_preset(int p_preset);
+	static float bark_height(BarkKind p_kind, float p_around, float p_along, float p_radius, int p_seed = 0);
+
+private:
 	struct BarkSet {
 		Ref<Texture2D> albedo;
 		Ref<Texture2D> normal;

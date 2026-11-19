@@ -187,7 +187,7 @@
 			<param index="3" name="season" type="Dictionary" default="{}" />
 			<description>
 				Grows [param variants] heath or scrub shrubs ([constant PRESET_GORSE], [constant PRESET_BROOM], [constant PRESET_GUM_ROCKROSE], [constant PRESET_KERMES_OAK], [constant PRESET_LENTISK], [constant PRESET_DWARF_FAN_PALM]) of one [param form] and returns them as a [PlantSpecies] with meshes, footprint, canopy radius and far colour, and no climate or terrain rules: the caller places it. [param season] is a [method WeatherMap3D.get_season] dictionary; its [code]day_of_year[/code] opens the flowers and ripens pods and fruit, and the far colour turns gold (gorse, broom) or speckled white (gum rockrose) in flower. The dwarf fan palm flowers among its leaf bases in spring (yellow on male plants) and female plants carry dates, green to red-brown, from summer into winter. Gum rockrose has no cushion form and gives its young plant for [constant SHRUB_CUSHION].
-				The hedge shrubs ([constant PRESET_HAWTHORN], [constant PRESET_BLACKTHORN], [constant PRESET_HAZEL], [constant PRESET_FIELD_MAPLE], [constant PRESET_DOG_ROSE]) are also taken: [constant SHRUB_HEDGE] grows a two-metre segment of a flailed field hedge along local X from 0 to 2 m, 1.8-2.5 m tall, A-shaped on even variants and boxed on odd ones, leafy to the ground. A hedge species has no random yaw, spacing 2 m and meta [code]hedge_segment_length[/code] 2.0, so a caller lays segments end to end along a field edge. Hawthorn flowers white in May and carries red haws into winter, blackthorn flowers white on bare twigs in March and April and carries sloes in autumn, dog rose flowers pale pink in June and carries scarlet hips. For these presets [constant SHRUB_THICKET] gives the open-grown bush and [constant SHRUB_CUSHION] a young plant.
+				The hedge shrubs ([constant PRESET_HAWTHORN], [constant PRESET_BLACKTHORN], [constant PRESET_HAZEL], [constant PRESET_FIELD_MAPLE], [constant PRESET_DOG_ROSE]) are also taken: [constant SHRUB_HEDGE] grows a two-metre segment of a flailed field hedge along local X from 0 to 2 m, 1.8-2.5 m tall, A-shaped on even variants and boxed on odd ones, leafy to the ground. A hedge species has no random yaw, spacing 2 m and meta [code]hedge_segment_length[/code] 2.0, so a caller lays segments end to end along a field edge. Hawthorn flowers white in May and carries red haws into winter, blackthorn flowers white on bare twigs in March and April and carries sloes in autumn, dog rose flowers pale pink in June and carries scarlet hips. For these presets [constant SHRUB_THICKET] gives the open-grown bush and [constant SHRUB_CUSHION] a young plant. The desert shrubs ([constant PRESET_CALLIGONUM], [constant PRESET_WHITE_BROOM], [constant PRESET_SALTBUSH]) are taken as scrub shrubs, for the sand seas and their interdune flats.
 			</description>
 		</method>
 		<method name="make_stand">
@@ -611,7 +611,16 @@
 		<constant name="PRESET_DOG_ROSE" value="45" enum="Preset">
 			Dog rose (Rosa canina): arching, prickly green canes to 3 m scrambling through hedges; pinnate leaves of five to seven leaflets; pale pink five-petalled flowers in June, scarlet oval hips in autumn.
 		</constant>
-		<constant name="PRESET_MAX" value="46" enum="Preset">
+		<constant name="PRESET_CALLIGONUM" value="46" enum="Preset">
+			Calligonum (Calligonum comosum): a leafless desert bush 1-2 m of the sand dunes, zigzag stems with whitish shredding bark, the green work done by jointed twiglets in clusters at each node; nuts wrapped in branched red bristles in April and May, fading to buff.
+		</constant>
+		<constant name="PRESET_WHITE_BROOM" value="47" enum="Preset">
+			White broom (Retama raetam): a broad desert broom 1-3 m of silky, silvery, rush-like switches hanging at their ends, near leafless; white flowers crowd the stems from January to March, then small beaked straw-coloured pods.
+		</constant>
+		<constant name="PRESET_SALTBUSH" value="48" enum="Preset">
+			Mediterranean saltbush (Atriplex halimus): a dense, rounded shrub 1-2.5 m of silty, saline flats and coasts, with small silvery-grey ovate leaves held most of the year and pale stems.
+		</constant>
+		<constant name="PRESET_MAX" value="49" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="STAND_BEECH" value="0" enum="Stand">
