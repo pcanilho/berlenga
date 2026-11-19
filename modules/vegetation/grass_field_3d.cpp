@@ -383,7 +383,7 @@ global uniform sampler2D ground_deform_near_map;
 global uniform vec4 ground_deform_near_rect;
 global uniform sampler2D ground_wet_map;
 // Mud thrown or splashed onto the sward and the plants at p_xz (mud round 7): the share of their faces spattered and
-// the clay's linear colour, from the ground's wet map (its last block, tag 6.5; GroundSurface3D::_wet_publish()).
+// the clay's linear colour, from the ground's wet map (its block tagged 6.5; GroundSurface3D::_wet_publish()).
 vec4 grass_ground_mud(vec2 p_xz) {
 	ivec2 ts = textureSize(ground_wet_map, 0);
 	if (ts.x < 5 || ts.y < 2) {
@@ -398,11 +398,15 @@ vec4 grass_ground_mud(vec2 p_xz) {
 		return vec4(0.0);
 	}
 	int blocks = 1;
-	for (int k = 1; k < 5; k++) {
+	for (int k = 1; k < 7; k++) {
 		blocks += abs(texelFetch(ground_wet_map, ivec2(k, ts.y - 1), 0).w - (2.5 + float(k))) < 0.01 ? 1 : 0;
 	}
+	// The plant mud block, before a fresh deposit's (texel 5's tag 7.5) and a salt crust's (texel 6's 8.5) when there
+	// are any.
+	int at = blocks - 1 - (ts.x > 5 && abs(texelFetch(ground_wet_map, ivec2(5, ts.y - 1), 0).w - 7.5) < 0.01 ? 1 : 0)
+			- (ts.x > 6 && abs(texelFetch(ground_wet_map, ivec2(6, ts.y - 1), 0).w - 8.5) < 0.01 ? 1 : 0);
 	float rows = float((ts.y - 1) / blocks);
-	float v = clamp(uv.y * rows, 0.5, rows - 0.5) + float(blocks - 1) * rows;
+	float v = clamp(uv.y * rows, 0.5, rows - 0.5) + float(at) * rows;
 	return textureLod(ground_wet_map, vec2(uv.x, v / float(ts.y)), 0.0);
 }
 // What a rut, dig or puddle does to the sward at p_xz: x lays it flat (a print, a tyre's light pass, a mud film), y takes

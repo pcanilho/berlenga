@@ -30,6 +30,7 @@ extends Node3D
 #   --leaves=0            no falling leaves (LeafFall3D); --leaf-litter=N loose leaves per m2 the gusts can lift (0.5)
 #   --cloud-shadow=0 --sun-shadow=0   no cloud shadow on the sun; no raster sun shadow map
 #   --sun-off             no sun at all: what the sky alone lights
+#   --far-shadows=0       no far sun shadows from the ground's horizon toward the sun (raster A/B)
 #   --sky-occlusion=0     ground ambient light without the hills' sky occlusion; --sky-light=0 an even sky for it
 #   --water-param=name:value[;...]   set water shader uniforms on the sea and lakes (floats, true/false, colours as r,g,b,a)
 #   --caustics                       caustics_enabled on the sea and lakes (raster caustics on clear water)
@@ -320,6 +321,20 @@ func _ready() -> void:
 	await get_tree().physics_frame
 	for r in rivers:
 		r.rebuild()
+	if args.has("silt-probe"):
+		# --silt-probe: where the water is along the view (river depth every 2 m from the camera to the look point), then quit.
+		var ca := String(args.get("cam", "0,0,0")).split(",")
+		var la := String(args.get("look", "0,0,1")).split(",")
+		var c0 := Vector3(float(ca[0]), 0, float(ca[2]))
+		var fw := (Vector3(float(la[0]), 0, float(la[2])) - c0).normalized()
+		for k in 40:
+			var q := c0 + fw * (2.0 * k)
+			var dd := 0.0
+			for rr in rivers:
+				dd = maxf(dd, rr.sample_depth(Vector3(q.x, height_at(q.x, q.z), q.z)))
+			_log("silt probe %d m: (%.0f, %.0f) ground %.1f river depth %.2f" % [2 * k, q.x, q.z, height_at(q.x, q.z), dd])
+		get_tree().quit(0)
+		return
 	if args.has("silt") and float(args["silt"]) > 0.0:
 		# --silt=MG_L: a muddy load (silt and clay off a burnt or eroding slope) entering river --silt-river (5) at its
 		# point nearest --silt-at=x,z, MG_L mg/L once mixed through the discharge, carried down for --silt-wait (20) s.
@@ -338,7 +353,15 @@ func _ready() -> void:
 				best = q
 				bs = cv.get_closest_offset(cv.get_point_position(j))
 		var dq: float = rv.get_discharge_at(bs)
-		rv.add_sediment(best, float(args["silt"]) * 1e-3 * dq, 0.0)
+		var rate := float(args["silt"]) * 1e-3 * dq
+		rv.add_sediment(best, rate, 0.0)
+		# A rate, held 2 s: fed again every second for the rest of the run, so the reach below settles at the load.
+		var feed := Timer.new()
+		feed.wait_time = 1.0
+		feed.process_callback = Timer.TIMER_PROCESS_PHYSICS
+		add_child(feed)
+		feed.timeout.connect(func(): rv.add_sediment(best, rate, 0.0))
+		feed.start()
 		for _i in int(float(args.get("silt-wait", "20")) * Engine.physics_ticks_per_second):
 			await get_tree().physics_frame
 		var probe := best + (best - Vector3(want.x, best.y, want.z)).normalized() * 0.0
@@ -2326,6 +2349,8 @@ func _build_ground() -> void:
 		tm.detail_octaves = int(args.get("mdetail", "4"))
 		tm.rock_detail_enabled = args.get("rock-detail", "1") != "0"
 		tm.cliff_self_shadow = args.get("ledge-shadow", "1") != "0" # --ledge-shadow=0: ledges of --cliff-relief without their per-pixel shadows (raster)
+		if args.get("far-shadows", "1") == "0":
+			tm.far_shadow_start = 0.0 # --far-shadows=0: no far sun shadows from the ground's horizon (an A/B frame)
 		if args.has("far-cover"):
 			# Far ground blend against the plant cover map the world field builds (cover_map_enabled below).
 			tm.far_blend_enabled = true
@@ -2915,12 +2940,20 @@ func _run_weather() -> void:
 		var cpos := c3.global_position if c3 != null else Vector3.ZERO
 		var src := cpos + up * float(args.get("smoke-upwind", "1500"))
 		var kg := float(args["smoke-kg"])
+		var span := float(args.get("smoke-span", "3000")) # the burning front's width and depth, upwind and round the camera
 		for k in int(hours):
-			for j in 7:
-				weather.call("add_smoke", src + sideways * (j - 3) * 500.0, kg)
 			weather.advance(3600.0)
 			snow.advance(3600.0)
 			runoff.advance(3600.0)
+		# The wind carries the layer off the 4 km map within minutes, so the fire feeds it in 5-minute steps at the end
+		# (--smoke-steps, 8): the plume over the camera is the last 40 minutes' smoke.
+		for k in int(args.get("smoke-steps", "8")):
+			for j in 7:
+				for d in 4:
+					weather.call("add_smoke", src + sideways * (j - 3) * span / 6.0 - up * d * span / 4.0, kg)
+			weather.advance(300.0)
+		for probe in [Vector3(500, 0, 0), Vector3(-500, 0, 0), Vector3(0, 0, 500), Vector3(0, 0, -500)]:
+			_log("smoke: optical depth %.2f at camera %s" % [float(weather.call("get_smoke_optical_depth_at", cpos + probe)), str(probe)])
 		_log("smoke: optical depth %.2f over the camera, %.3f g/m2, haze %s" % [float(weather.call("get_smoke_optical_depth_at", cpos)), float(weather.call("get_smoke_at", cpos)), str(weather.get("smoke_haze"))])
 		hours = 0.0
 	for k in int(hours):
@@ -3073,6 +3106,10 @@ func _build_vegetation() -> void:
 	grass.name = "Grass"
 	grass.rules = meadow
 	grass.radius = float(args.get("grass-radius", "40"))
+	if "still_shot" in grass:
+		grass.set("still_shot", args.get("still-shot", "1") != "0") # settle once, then stop streaming (cloud memory); --still-shot=0 for clips
+	if args.get("summer-dry", "0") != "0" and "season_source" in grass and weather != null:
+		grass.set("season_source", grass.get_path_to(weather)) # --summer-dry: the meadow browns with the season (a dry summer)
 	if args.has("far-rings"):
 		grass.set("far_rings", args["far-rings"] != "0") # --far-rings=0: no far blade rings (memory checks)
 	if args.has("far-shell"):
@@ -4052,7 +4089,8 @@ func _build_cover() -> void:
 	# cones and balls), bigger plants first, sorted by the crowns' conifer share.
 	# --floor=beech|oak|hedgerow|montane picks the floor set (beech and oak floors carry the violets and herb robert).
 	var floors := {"montane": PlantGenerator.FLOOR_MONTANE_CONIFER, "beech": PlantGenerator.FLOOR_BEECH,
-			"oak": PlantGenerator.FLOOR_OAK_MIXED, "hedgerow": PlantGenerator.FLOOR_HEDGEROW}
+			"oak": PlantGenerator.FLOOR_OAK_MIXED, "hedgerow": PlantGenerator.FLOOR_HEDGEROW,
+			"mediterranean": 10} # FLOOR_MEDITERRANEAN (montado: cistus, grasses, thistles; by value for older binaries)
 	# The floor plants follow the weather's season (flowering, bracken croziers in spring, russet in autumn): --day=N.
 	var season: Dictionary = weather.get_season() if weather != null and weather.has_method("get_season") else {}
 	var floor_sp: Array = PlantGenerator.make_floor(floors.get(args.get("floor", "montane"), PlantGenerator.FLOOR_MONTANE_CONIFER), 3, true, 15.0, season)
@@ -4118,6 +4156,8 @@ func _build_cover() -> void:
 		b.species = b.species + stone_sp
 		_log("cover: %d stone-crevice species" % stone_sp.size())
 	cover = VegetationField3D.new()
+	if "still_shot" in cover:
+		cover.set("still_shot", args.get("still-shot", "1") != "0")
 	cover.name = "Cover"
 	cover.tile_size = 8.0
 	cover.biome = b

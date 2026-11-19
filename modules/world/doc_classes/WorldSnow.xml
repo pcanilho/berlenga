@@ -32,6 +32,20 @@
 				Override in a stub to replace [method avalanche_pressure_at].
 			</description>
 		</method>
+		<method name="_canopy_capacity_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method canopy_capacity_at].
+			</description>
+		</method>
+		<method name="_canopy_load_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method canopy_load_at].
+			</description>
+		</method>
 		<method name="_crust_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -65,6 +79,15 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Override in a test stub to answer [method lake_ice_at].
+			</description>
+		</method>
+		<method name="_shake_canopy" qualifiers="virtual">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="share" type="float" />
+			<description>
+				Override in a stub to replace [method shake_canopy].
 			</description>
 		</method>
 		<method name="_surface_at" qualifiers="virtual const">
@@ -102,6 +125,20 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Avalanche impact pressure at [param position] now (Pa): the dense flow where it runs, else the powder cloud. Default 0.
+			</description>
+		</method>
+		<method name="canopy_capacity_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The most new snow the tree canopy over [param position] can hold (kg per m2 of ground; Hedstrom and Pomeroy 1998). Default 0.
+			</description>
+		</method>
+		<method name="canopy_load_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Snow held in the tree crowns over [param position] (kg per m2 of ground). Default 0.
 			</description>
 		</method>
 		<method name="crust_at" qualifiers="const">
@@ -143,6 +180,15 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the lake ice at [param position] as (thickness in metres, the share of it that is white snow ice). Ice of 5 cm and more bears a walker.
+			</description>
+		</method>
+		<method name="shake_canopy">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="share" type="float" />
+			<description>
+				A crown shaken from outside the weather (a stem snapping, a tree felled, a body brushing it): [param share] (0 to 1) of the snow held within [param radius] of [param position] falls onto the pack below as fresh snow, keeping its mass. Returns the kg moved. Default: no-op, 0.
 			</description>
 		</method>
 		<method name="surface_at" qualifiers="const">

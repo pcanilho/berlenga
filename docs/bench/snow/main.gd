@@ -4,6 +4,11 @@ extends Node3D
 class FireStub extends WorldFire:
 	func _heat_at(p: Vector3) -> float:
 		return 928.0 if p.x > 2.0 else 0.0
+# Records the impulse waves handed to the water (WorldWater.wave), for the avalanche-into-water checks.
+class WaveStub extends WorldWater:
+	var waves: Array = []
+	func _wave(position: Vector3, direction: Vector3, height: float, period: float, width: float) -> void:
+		waves.append([position, direction, height, period, width])
 # Weather for the body checks: one value everywhere, an hour of weather per second.
 class BodyWeatherStub extends WorldWeather:
 	var t := -5.0
@@ -96,6 +101,7 @@ class BodySnowStub extends WorldSnow:
 #   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
 #   --settled         (trail view) 0.4 m of settled snow (300 kg/m3) instead of fresh: prints break clumps
 #   --no-clumps       (trail view) no snow clumps beside the prints
+#   --prints-close    (trail view) 1.5 m over two boot prints (with --crust=1: the broken crust's pieces)
 #   --clumps-close    (trail view) the camera low beside the small ball's furrow
 #   --away            (trail view) the field leaves for 300 m and comes back: are the clumps kept?
 #   --sled            (trail view) a sled pulled at 4 m/s for 2 s and lifted away: its bow wave and berm
@@ -901,6 +907,15 @@ func _run_shelter_tests() -> void:
 	print("  closure %.2f: canopy holds %.1f mm of %.1f mm capacity; %.1f mm under it, %.1f mm in the open" % [closure, held, cap, under, open])
 	_check("a canopy holds snow and shades the ground", closure > 0.5 and held > 3.0 and held <= cap + 0.01 and under < open * 0.8 and absf(under + held - open) < open * 0.1, "%.1f + %.1f mm against %.1f in the open" % [under, held, open])
 	_check("interception keeps the water", absf(w1 - w0 - (open * 64.0 * 64.0)) < open * 64.0 * 64.0 * 0.05, "%.0f kg on the map against %.0f fallen" % [w1 - w0, open * 64.0 * 64.0])
+	# A crown jolted from outside the weather (WorldSnow.shake_canopy; trees, docs/ideas/trees.md 5al): half the held
+	# snow within 3 m drops onto the pack below at the next update, the water kept.
+	var moved: float = Engine.get_singleton("WorldContracts").get_snow().shake_canopy(Vector3(0, 0, 0), 3.0, 0.5)
+	snow.advance(1.0)
+	var held_s := snow.get_canopy_load_at(Vector3(0, 0, 0))
+	var under_s := snow.get_swe_at(Vector3(0, 0, 0))
+	_check("a shaken crown drops its snow onto the pack (shake_canopy)", moved > 0.0 and absf(held_s - held * 0.5) < held * 0.1 and absf(under_s - under - (held - held_s)) < held * 0.1 and absf(snow.get_total_water() - w1) < w1 * 0.01, "%.0f kg moved; %.1f mm left of %.1f, %.1f mm below (was %.1f)" % [moved, held_s, held, under_s, under])
+	held = held_s
+	under = under_s
 	weather.temperature = -1.0
 	weather.wind_speed = 6.0
 	weather.snap_to_settings()
@@ -1000,13 +1015,15 @@ func _run_background_tests() -> void:
 			top = maxf(top, v)
 		return "mean %.2f ms, worst %.2f ms" % [s / maxf(m.size(), 1), top]
 	print("  main thread per update, 256 x 256 cells and a 64 x 64 world tier every 3rd update: in the frame %s; in the background %s (cells, drift, slides and cornices %.2f ms on a worker)" % [fmt.call(ma), fmt.call(mb), b.work_ms])
-	var top_b := 0.0
-	var top_a := 0.0
-	for v in mb:
-		top_b = maxf(top_b, v)
-	for v in ma:
-		top_a = maxf(top_a, v)
-	_check("the frame no longer waits for the update", top_b < 0.5 * top_a, "worst %.2f ms against %.2f ms" % [top_b, top_a])
+	# Medians, not the worst update: on a loaded machine (a render alongside) the scheduler can stall any one
+	# update in either mode, but the typical frame cost only drops when the work leaves the main thread.
+	var med := func(m: Array[float]) -> float:
+		var c := m.duplicate()
+		c.sort()
+		return c[c.size() / 2] if c.size() > 0 else 0.0
+	var med_a: float = med.call(ma)
+	var med_b: float = med.call(mb)
+	_check("the frame no longer waits for the update", med_b < 0.5 * med_a, "median %.2f ms against %.2f ms" % [med_b, med_a])
 
 
 # A lake around the mountain's foot: a water surface the terrain data map takes as a water source (any node
@@ -1670,9 +1687,17 @@ func _run_impulse_wave_tests() -> void:
 	var side := SnowAvalanche3D.impulse_wave_height(p, 10.0, 300.0, deg_to_rad(90.0))
 	_check("the impulse product and the wave it makes (Heller and Hager 2010; Heller et al. 2009)", absf(p - 1.251) < 0.01 and absf(hm - 6.64) < 0.05 and far < hm and side < far, "P %.3f, H_M %.2f m in 10 m of water; %.2f m 300 m out ahead, %.2f m to the side; leading period %.1f s there" % [p, hm, far, side, SnowAvalanche3D.impulse_wave_period(1.0, 10.0, 300.0)])
 	# The storm avalanche runs into an open lake at the foot of the face.
+	var stub := WaveStub.new()
+	WorldContracts.set_water(stub)
 	var av := await _lake_avalanche(0.0)
+	WorldContracts.clear_overrides()
 	var entered := av.get_water_entry_mass()
 	var wave := av.get_wave_height_at(Vector3(60.0, 0, 0))
+	var biggest: Array = []
+	for w in stub.waves:
+		if biggest.is_empty() or w[2] > biggest[2]:
+			biggest = w
+	_check("the water is handed the wave in metres and seconds (WorldWater.wave)", stub.waves.size() == av.get_wave_count() and not biggest.is_empty() and absf(biggest[2] - av.get_wave_height_at(biggest[0])) < 0.01 * biggest[2] + 1e-3 and biggest[1].x > 0.5 and absf(biggest[1].y) < 1e-4 and biggest[3] > 1.0 and biggest[3] < 60.0 and biggest[4] >= 2.0, "%d sent; biggest %.2f m, %.1f s, %.0f m wide, heading (%.2f, %.2f)" % [stub.waves.size(), biggest[2] if not biggest.is_empty() else 0.0, biggest[3] if not biggest.is_empty() else 0.0, biggest[4] if not biggest.is_empty() else 0.0, biggest[1].x if not biggest.is_empty() else 0.0, biggest[1].z if not biggest.is_empty() else 0.0])
 	_check("an avalanche into open water plunges in and pushes a wave", entered > 1.0e5 and av.get_wave_count() >= 1 and wave > 0.05 and wave < 12.0, "%.0f t into the lake, %d waves; %.2f m high 60 m out (%.0f m deep there)" % [entered / 1000.0, av.get_wave_count(), wave, 15.0])
 	# Thick ice carries it (no wave); thin ice breaks under it.
 	av = await _lake_avalanche(30.0)
@@ -2187,7 +2212,7 @@ func _build_view() -> void:
 	elif view == "lake":
 		await _setup("mountain", 512.0, 128, -12.0)
 	elif view == "avalanche":
-		await _setup("avalanche", 256.0, 128, -8.0)
+		await _setup("avalanche_bowl" if OS.get_cmdline_user_args().has("--powder") else "avalanche", 256.0, 128, -8.0)
 	elif view == "windblown":
 		await _setup("ridge", 512.0, 256, -8.0)
 	elif view == "shelter" or view == "icicles":
@@ -2326,6 +2351,12 @@ func _build_trail(cam: Camera3D) -> void:
 			# Down on the end of the sled's track and the berm its bow wave left.
 			cam.position = Vector3(0.2, 1.0, 5.6)
 			cam.look_at(Vector3(-2.2, 0.2, 3.4))
+	if OS.get_cmdline_user_args().has("--prints-close"):
+		# From 1.5 m over two boot prints, the sun high enough to light their floors: the pieces of a broken crust.
+		cam.position = Vector3(-1.4, 1.05, 2.35)
+		cam.look_at(Vector3(-2.6, 0.3, 1.35))
+		cam.fov = 45.0
+		sun.rotation_degrees = Vector3(-38.0, 100.0, 0.0) # higher and from the side, into the prints
 	if OS.get_cmdline_user_args().has("--clumps-close"):
 		# Low beside the small ball's furrow, looking back along it: the clumps it broke out of the rim.
 		cam.position = Vector3(-1.2, 0.8, 0.2)
@@ -2349,7 +2380,7 @@ func _build_trail(cam: Camera3D) -> void:
 	surface = SnowSurface3D.new()
 	surface.snow_cover = NodePath("../SnowCover3D")
 	surface.follow_target = NodePath("../Probe")
-	if OS.get_cmdline_user_args().has("--close"):
+	if OS.get_cmdline_user_args().has("--close") or OS.get_cmdline_user_args().has("--prints-close"):
 		# Triangles as fine as the deformation texels (6 cm), for the pieces of a broken crust.
 		surface.detail_spacing = 0.0625
 	for a in OS.get_cmdline_user_args():
@@ -2384,6 +2415,7 @@ func _build_trail(cam: Camera3D) -> void:
 	wm.material_override = dark
 	walker.add_child(wm)
 	walker.position = Vector3(-7.0, 1.5, 1.3)
+	walker.set_meta("world_contact_exclude", true) # only its boots print; the capsule is a stand-in
 	add_child(walker)
 	for k in 2:
 		var foot := Node3D.new()
@@ -2802,7 +2834,7 @@ func _build_avalanche(cam: Camera3D) -> void:
 	var powder := OS.get_cmdline_user_args().has("--powder")
 	if OS.get_cmdline_user_args().has("--before") or triggered or powder:
 		av.natural_release = false
-	if triggered:
+	if triggered or powder:
 		# An old, bonded pack under the storm (60 cm a week and more old): the slab breaks away from it, leaving a
 		# crown step and a white bed, as slabs do.
 		snow.add_snow(90.0, 150.0)
@@ -2823,7 +2855,14 @@ func _build_avalanche(cam: Camera3D) -> void:
 	if powder:
 		# A wide dry slab across the face in front of the camera (left to itself the face lets go wherever it is
 		# weakest, here off to both sides of the frame, and its cloud with it).
+		# One physics tick a frame: Flow steps once a frame, so on a slow renderer the gas keeps pace with the slide
+		# (with several ticks a frame it falls behind and the cloud is only the emitters' trail).
+		Engine.max_physics_steps_per_frame = 1
+		var pflow: Node = av.get_powder_cloud().get_flow()
+		if pflow:
+			pflow.set("scattering_resolution", 0) # full: quarter averages away the billows at still sizes
 		av.trigger(Vector3(-40.0, 0, 0), 60.0)
+		surface.extent = 256.0 # the deep-snow geometry over the whole face the camera sees, flank to flank
 		# Mid-run in real time, so PhysX Flow steps the cloud with it: --at=S seconds after release (default 9).
 		var at_s := 9.0
 		for a in OS.get_cmdline_user_args():
@@ -2844,9 +2883,15 @@ func _build_avalanche(cam: Camera3D) -> void:
 			frames += 1
 		var cloud := av.get_powder_cloud()
 		print("powder: %.1f t up, %.1f t in the air, Flow %s, %d sources, front %.1f m/s" % [av.get_powder_taken() / 1000.0, av.get_suspended_mass() / 1000.0, cloud.has_flow(), cloud.get_active_sources(), av.get_max_speed()])
-		cam.position = Vector3(70.0, snow.get_ground_height_at(Vector3(70, 0, 30)) + 14.0, 30.0)
-		cam.look_at(Vector3(-20.0, 10.0, 0.0))
-		cam.fov = 60.0
+		# Back and up far enough to hold the whole front (--head-on: from straight down the track, flank to flank).
+		if OS.get_cmdline_user_args().has("--head-on"):
+			cam.position = Vector3(92.0, snow.get_ground_height_at(Vector3(92, 0, 12)) + 15.0, 12.0)
+			cam.look_at(Vector3(-15.0, 12.0, 0.0))
+		else:
+			# Three-quarters from the side, so the head's height and the cloud trailing back up the track both show.
+			cam.position = Vector3(100.0, snow.get_ground_height_at(Vector3(100, 0, 115)) + 28.0, 115.0)
+			cam.look_at(Vector3(-25.0, 16.0, -10.0))
+		cam.fov = 66.0
 		cam.far = 1000.0
 		if traced:
 			process_mode = Node.PROCESS_MODE_ALWAYS

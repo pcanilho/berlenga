@@ -1033,6 +1033,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Far sun shadows",
+   "settings": [
+    "TerrainMaterial3D.far_shadow_start"
+   ],
+   "note": "",
+   "what": "past the shadow maps' reach, ridges cast the low sun's shadow across distant terrain in raster.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Sky occlusion",
    "settings": [
     "TerrainGenerator3D.sky_occlusion",
@@ -1112,7 +1123,7 @@
     "BaseMaterial3D.ground_deform_enabled"
    ],
    "note": "",
-   "what": "prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose. The prints simulate on the GPU (`gpu_simulation`). Within 8 m of the camera a 1.6 cm field (`near_field`) keeps print rims and lips crisp and matches the ground beyond its edge; boot prints show heel, toe and tread, and wet ground carries on past the deform patch.",
+   "what": "prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose, a step on a dry dune slip face sets off a grain flow down it (`slip_avalanches`), and wind fills prints from the upwind side (`wind_fills_prints`). The prints simulate on the GPU (`gpu_simulation`). Within 8 m of the camera a 1.6 cm field (`near_field`) keeps print rims and lips crisp and matches the ground beyond its edge; boot prints show heel, toe and tread, and wet ground carries on past the deform patch.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1125,7 +1136,7 @@
     "ploughing"
    ],
    "note": "",
-   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out.",
+   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out; wheels sliding sideways across a slope dig in.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1186,6 +1197,17 @@
    ],
    "note": "",
    "what": "a cable winch that slows under load, stalls at its rated pull and slips its brake; the cable sags and lies on the ground.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Stream fords",
+   "settings": [
+    "GroundSurface3D.stream_fords"
+   ],
+   "note": "",
+   "what": "wheels crossing a stream scour its bed and its soft banks give way under them.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1253,7 +1275,7 @@
     "GroundSurface3D.tracked_mud"
    ],
    "note": "",
-   "what": "tyres and boots leaving clay lay a film of mud on firm ground, printed with the tyre's chevron lugs or the boot's heel and forefoot, that fades as they clean and dries pale in place; thrown clods land as cakes of wet clay that dry where they lie.",
+   "what": "tyres, boots and other bodies leaving clay lay a film of mud on firm ground, printed with the tyre's chevron lugs or the boot's heel and forefoot, that fades as they clean and dries pale in place; thrown clods land as cakes of wet clay that dry where they lie.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1362,7 +1384,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile; prints wipe them and they form again.",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1397,7 +1419,7 @@
     "GroundSurface3D.sand_glints"
    ],
    "note": "",
-   "what": "up close, dry sand shows the colours of its grains and the odd grain flashing in the sun.",
+   "what": "up close, dry sand shows the colours of its grains and the odd grain flashing in the sun; in low sun, sun-aligned grain facets glitter across dry sand.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1409,7 +1431,7 @@
     "water_sources"
    ],
    "note": "",
-   "what": "water fills the pores of sand below it and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.",
+   "what": "water fills the pores of sand below it, wets a margin up to 15 cm above still water (`water_fringe`), topped in a dry climate by a pale, patchy salt crust (`salt_crusts`), and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1551,10 +1573,11 @@
     "ground_detail_pixels",
     "ground_detail_cover",
     "ground_detail_rivers",
+    "ground_detail_tiles",
     "stones_react"
    ],
    "note": "",
-   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
+   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one, grouped into shared tiles of piles so it handles far fewer instances. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1600,10 +1623,11 @@
    "settings": [
     "layer_enabled",
     "LAYER_TOR",
-    "LAYER_COAST"
+    "LAYER_COAST",
+    "salt_bloom"
    ],
    "note": "",
-   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks cut into sharp-edged joint blocks with spray pitting only on upward faces, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above.",
+   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks cut into sharp-edged joint blocks with spray pitting only on upward faces, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above; on sheltered rock, sea spray salt dries to a white crust that is gone while the rock is wet.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1852,12 +1876,23 @@
    "topic": "Sea and lakes"
   },
   {
+   "name": "Impulse waves",
+   "settings": [
+    "WorldWater.wave()"
+   ],
+   "note": "",
+   "what": "avalanches, slides and calving ice send waves across lakes that shoal and reflect off the shores.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
    "name": "Oasis springs",
    "settings": [
     "OasisSprings3D"
    ],
    "note": "",
-   "what": "still spring pools in the desert, each sized by its spring's water balance and with its own outline, with sand boils heaving at the vents.",
+   "what": "still spring pools in the desert, each sized by its spring's water balance and with its own outline, with sand boils heaving at the vents, in clear spring water, and only where the ground is hollowed.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -3270,7 +3305,7 @@
     "SnowCover3D"
    ],
    "note": "",
-   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it, and fire melts the snow under it at any air temperature.",
+   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it, and fire melts the snow under it at any air temperature. Sea salt from spray melts shore snow and bare lake ice below freezing, until the brine is diluted or drains away with the melt (`salt_melt`).",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3475,7 +3510,7 @@
     "crowns_enabled"
    ],
    "note": "",
-   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts, leaving a crown wall, flanks that fade downslope and a grey scoured bed; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice and breaks through thin ice.",
+   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts, leaving a crown wall, flanks that fade downslope and a grey scoured bed; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice, breaks through thin ice and pushes a wave across open water.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
@@ -3769,7 +3804,7 @@
     "WeatherMap3D.sea_spray"
    ],
    "note": "",
-   "what": "breaking waves wet the shore and cliff faces downwind and leave salt that rain washes off; salted grass browns at the tips.",
+   "what": "breaking waves wet the shore and cliff faces downwind and leave salt that rain washes off; salted grass browns at the tips, and shrubs and trees brown leaf by leaf.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -4078,13 +4113,15 @@
    "settings": [
     "WeatherRunoff3D.debris_flows",
     "GroundDebrisFlow3D",
+    "levee_height",
+    "push_bodies",
     "PhysXDebrisSurge3D",
     "surge_count_max",
     "max_boulder",
     "stop_slope"
    ],
    "note": "",
-   "what": "after a fire, intense rain on steep burnt basins sends debris flows down their channels in surges with boulders at the front, throwing mud; the flow gathers loose bed on the way and spreads into a fan of fresh mud where it stops.",
+   "what": "after a fire, intense rain on steep burnt basins sends debris flows down their channels in surges with boulders at the front, throwing mud; the flow gathers loose bed on the way and spreads into a fan of fresh mud where it stops, with levees along its edges, burying ruts and shoving logs and props aside.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

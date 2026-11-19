@@ -68,7 +68,7 @@ public:
 		STEP_WATER = 1 << 11, // standing water (ground): Dims::water_passes pipe-model substeps
 		STEP_RUNOFF = 1 << 12, // runoff channels (ground): the water erodes and carries sand in each water substep
 	};
-	static constexpr int PARAMS_BYTES = 880;
+	static constexpr int PARAMS_BYTES = 896;
 	static constexpr int STAMP_BYTES = 80;
 
 	// Sizes: field texels per side, ground lattice per side, cover cells per side, cache slots, collision

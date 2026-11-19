@@ -51,6 +51,7 @@
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
+#include "core/templates/hashfuncs.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/light_3d.h"
 #include "scene/main/scene_tree.h"
@@ -4387,6 +4388,33 @@ void TerrainGenerator3D::_carve_oases() {
 				o.radius[a] = 0.5f * (o.radius[(a + 127) % 128] + o.radius[(a + 1) % 128]);
 			}
 		}
+		// The bank's outline: the pool's, averaged over some 35 degrees round it (a raised-cosine window).
+		for (int a = 0; a < 128; a++) {
+			real_t sum = 0.0, wsum = 0.0;
+			for (int k = -6; k <= 6; k++) {
+				const real_t w = 1.0 + Math::cos(Math::PI * k / 7.0);
+				sum += w * o.radius[(a + k + 128) % 128];
+				wsum += w;
+			}
+			o.bank[a] = float(sum / wsum);
+		}
+		// Seepage runnels: a handful at uneven angles, most dying out part way down the bed; only 2 to 4 reach
+		// the middle, where the spring's water collects.
+		{
+			uint32_t h = o.seed ^ 0x2545F491u;
+			const auto rnd = [&h]() {
+				h = hash_murmur3_one_32(h);
+				return real_t(h) / real_t(4294967295.0);
+			};
+			const int n = 4 + int(rnd() * 6.0);
+			const int deep = 2 + int(rnd() * 3.0);
+			const real_t a0 = rnd() * Math::TAU;
+			for (int k = 0; k < n; k++) {
+				const real_t ang = a0 + Math::TAU * (k + 0.5 * (rnd() - 0.5) * 1.6) / n;
+				const real_t inner = k < deep ? 0.05 + 0.1 * rnd() : 0.35 + 0.4 * rnd();
+				o.runnels.push_back(Vector4(Math::fposmod(ang, real_t(Math::TAU)), inner, 0.5 + 0.9 * rnd(), 0.1 + 0.15 * rnd()));
+			}
+		}
 		// How far the rim's slope runs before it meets the dunes round it.
 		real_t top = o.level;
 		for (int k = 0; k < 16; k++) {
@@ -4424,8 +4452,21 @@ float TerrainGenerator3D::_oasis_height(real_t p_x, real_t p_z, float p_ground) 
 			const real_t bowl = Math::pow(MAX(1.0 - d * d, 0.0), real_t(1.2));
 			const real_t depth = MIN(real_t(2.4), real_t(0.6) + real_t(0.35) * rad);
 			const real_t lumps = (neb_patch(o.seed, p_x / 1.6, p_z / 1.6) - 0.5) * 0.4 + (neb_patch(o.seed + 1u, p_x / 0.7, p_z / 0.7) - 0.5) * 0.15;
-			// Runnels: grooves long down the slope (slow along the radius), a few metres apart round it.
-			const real_t runnel = -0.22 * Math::smoothstep(real_t(0.62), real_t(0.9), neb_patch(o.seed + 2u, ang * rad / 2.5, dist / 9.0));
+			// Runnels: each a groove whose line wanders sideways with distance (low-frequency noise, a couple of
+			// metres), narrowing and fading out at its inner end, so they read as seepage channels, not spokes.
+			real_t runnel = 0.0;
+			for (uint32_t k = 0; k < o.runnels.size(); k++) {
+				const Vector4 &r = o.runnels[k];
+				if (d < r.y) {
+					continue;
+				}
+				const real_t wander = (neb_patch(o.seed + 3u + k, real_t(k) * 7.3, dist / 6.0) - 0.5) * 5.0 + (neb_patch(o.seed + 40u + k, real_t(k) * 3.1, dist / 2.2) - 0.5) * 1.2;
+				const real_t da = Math::fposmod(ang - r.x + real_t(Math::PI), real_t(Math::TAU)) - real_t(Math::PI);
+				const real_t lat = da * MAX(dist, real_t(0.5)) - wander;
+				const real_t along = Math::smoothstep(real_t(r.y), real_t(r.y) + real_t(0.2), d) * (1.0 - Math::smoothstep(real_t(0.85), real_t(1.0), d));
+				const real_t w = r.z * (0.5 + 0.5 * d);
+				runnel = MIN(runnel, -real_t(r.w) * along * Math::exp(-(lat * lat) / (w * w)));
+			}
 			g = float(o.level - depth * bowl + (lumps + runnel) * Math::sqrt(bowl));
 			// A pit some 0.35 m deep and 0.7 m across under each vent: the throat the boil's sand is thrown from.
 			for (const Vector3 &v : o.vents) {
@@ -4435,8 +4476,13 @@ float TerrainGenerator3D::_oasis_height(real_t p_x, real_t p_z, float p_ground) 
 				}
 			}
 		} else {
-			const real_t rim = dist - shore;
-			g = MIN(g, float(o.level + 0.12 * MIN(rim, real_t(3.0)) + 0.45 * MAX(rim - 3.0, real_t(0.0))));
+			// Past the shore the contours ease from the pool's outline to its smoothed one over 6 m, with a little
+			// lumpy noise, so the bank carries no rays from the outline's corners.
+			const real_t bank = Math::lerp(real_t(o.bank[i0]), real_t(o.bank[i1]), t - Math::floor(t));
+			const real_t ease = Math::smoothstep(real_t(0.0), real_t(6.0), dist - shore);
+			real_t rim = dist - 0.92 * Math::lerp(rad, bank, ease) + (neb_patch(o.seed + 5u, p_x / 4.0, p_z / 4.0) - 0.5) * 0.8 * ease;
+			rim = MAX(rim, real_t(0.5) * (dist - shore));
+			g = MIN(g, float(o.level + 0.12 * CLAMP(rim, real_t(0.0), real_t(3.0)) + 0.45 * MAX(rim - 3.0, real_t(0.0))));
 		}
 	}
 	return g;

@@ -431,6 +431,7 @@ public:
 	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override;
 	void contract_water_clear(uint64_t p_owner) override;
 	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override;
+	void contract_water_wave(const Vector3 &p_position, const Vector3 &p_direction, float p_height, float p_period, float p_width) override { submit_wave(p_position, p_direction, p_height, p_period, p_width); }
 	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return sample_depth(p_position) > 0.0f ? sediment : Vector2(); }
 	// Breaking waves for sea spray (WorldWater.breaking_at): the surf zone, where the shore swell is taller than
 	// about 0.78 of the still depth (saturated surf, Thornton and Guza 1982), breaks at 0.78 d; open water gives its
@@ -522,6 +523,12 @@ public:
 	void submit_sphere(int p_owner, Vector3 p_world_pos, float p_radius, float p_strength = 1.0f);
 	void clear_sphere(int p_owner);
 	void submit_impulse(Vector3 p_world_pos, float p_radius, float p_strength);
+	// An impulse wave in metres and seconds (a landslide, an avalanche, calving or rockfall entering the water): one
+	// crest and trough p_height high (crest to trough) and p_period long, its crest p_width wide, setting off from
+	// p_world_pos along p_direction (xz). Its length is the period times the long-wave speed sqrt(g h) at the depth
+	// there, as the ripple solver carries it; at most 0.78 of that depth high (the breaking limit). False where
+	// there is no water or the point is off the simulated grid.
+	bool submit_wave(Vector3 p_world_pos, Vector3 p_direction, float p_height, float p_period, float p_width);
 
 private:
 	WaterSolver solver;

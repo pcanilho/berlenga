@@ -2437,6 +2437,14 @@ to 318k, tended 227k to 127k. Dropping the oleaster's twigs between 1 mm and 1 c
 grey-blue in PT (they shade the crown's inside en masse), so they stay; its bulk is about half a million shoots.
 
 
+Docs, 19 Nov (stand plot): the red front glowed orange like autumn larch, the grey snags read as branchless
+masts, the spots bare. Now: red is a dull rust-brown (fox 0.36, 0.15, 0.06) with little backlight (dead
+needles; then drier 0.28, 0.17, 0.1 after docs found it salmon), thinning from the first winter (35% by 1.3 years) so the skeleton shows; grey snags keep their dead
+whorls (twigs under 4 mm go, not 12 mm), 40% lose their top in the grey years, their bark bleaches silver-grey,
+and killed trees are 0.7-1.1 times the stand's age so heights vary. The spots get their shed limbs and the
+waiting spruce regeneration (Jonasova and Prach 2004) from 2.5 years, logs from 3, more elder.
+The stand's spruce grow in less shade here (stand_forest_shade 0.45: crown ratio 0.41 to 0.48, live branches further down).
+
 ### 5ak. Avalanches break trees (19 Nov; snow's WorldSnow getters)
 
 `TreeWind3D.avalanche_enabled` (on). Once a second each rigged tree reads
@@ -2456,6 +2464,41 @@ dense flow then powder).
   and braking, rain and wind see the lane.
 - Bench: `--storm --avalanche-test` (WorldSnow/WorldGround stubs, 8 checks) and
   `--storm --avalanche=P` frames. Old 34 m open-grown spruce (D 1.37 m) holds to ~80 kPa.
+### 5al. Snow-laden crowns (19 Nov; Paulo's pick)
+
+Snow keeps the mass. `SnowCover3D` intercepts (Hedstrom and Pomeroy 1998), unloads (Roesch et al. 2001, CLM5
+rates) and publishes `WorldSnow.canopy_load_at` (kg per m2 of ground), and crown materials whiten from the catch
+map. Trees keep no copy of the snow: they read the load and do what wood does with it (`TreeWind3D.snow_load_enabled`,
+on). Contract lines `canopy_load_at`, `canopy_capacity_at`, `shake_canopy` agreed with snow and world-links (baf901d4).
+- **Load per tree.** Once a second each crown holds L / C kg per m2 of its spread pi R^2 (C =
+  `WorldWeather.canopy_closure_at`, at least 0.3; R the generator's drip-line radius, mesh meta
+  `tree_crown_radius`), times its catch: bare broadleaves hold some 15% of what conifers do (mesh meta
+  `tree_foliage`, the leaf share the mesh was built with; Hedstrom and Pomeroy on leafless aspen), in leaf all of it.
+- **Droop.** That load is shared over the bones by carried leaf area (`RIG_AREA`) and bends each by r x F / k,
+  k the wood's own stiffness (`Bone.snow_stiffness`: the wind's design floor stands for the gust-stiffened crown,
+  not for slow loads; kept from sagging past 0.5 rad under the bone's own weight). Wood creeps under a held
+  load: softwoods add about 34% of the instant bend over hours (Kelvin retardation spectra peaking at 1-10 h;
+  Ray and Bret-Harte 2019, Front. Plant Sci. 10:59), one first-order step of `snow_creep_hours` (3; 0 off).
+  Bench: a Norway spruce's branch ends bow 3 degrees at 4 kg/m2, 11 at 15 (a full canopy; Schmidt and Pomeroy
+  1990 measured 10-30), 12.5 crept, 25 at 60.
+- **Breakage.** The snow's weight joins the wind in the storm check; loaded trees are checked once a second,
+  calm or not. Each part is built to hold its share of 35 kg/m2 of crown (conifers; wet-snow damage from about
+  20-50, Peltola et al. 1999, Nykanen et al. 1997) or 12 (broadleaves, which meet snow bare: one in leaf breaks
+  under an early or late snow), the defects taking the weakest from about 23. A part bowed more by snow than
+  pushed by wind falls the way it leans. Bench: at 15 kg/m2 a Scots pine may lose a thin limb, nothing more; at
+  60, tops and limbs go (11 breaks).
+- **Shake.** A break or fall throws the crown's snow onto the pack: `WorldSnow.shake_canopy` at the tree, the
+  broken part's share of the leaf area (all of it for a felled tree). `get_snow_shaken_kg`.
+- Bench: `--storm --snow-test` (5 checks; WorldSnow stub snow_load_stub.gd), `--storm --snow=L` to look.
+- **Caps as geometry.** The generator records cap sites on the upper side of conifer sprays and broad limbs
+  (mesh meta `tree_snow_caps`: bone, position, up, size). Near the camera, TreeWind3D places shared lumpy
+  cap pads there (a few noise shapes, so nothing repeats), riding their bones and as thick as the load. They
+  are a MultiMesh, so the path tracer sees real geometry, not a vertex offset it would ignore.
+- **Unloading.** Where a tree's load drops (snow's own unloading, a gust, a snap, a touch), its caps let go:
+  they fall as clumps with a powder trail and land through `SnowClumps3D.drop`. A shake from outside the
+  weather model (a snap, a thrown tree, an avalanche, a body) asks snow to move the mass
+  (`WorldSnow.shake_canopy`, proposed to the snow thread 19 Nov).
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
@@ -2881,6 +2924,9 @@ Beech forests at 40/80 m passed 15 GB on the first draw. Measured (4 cores, lava
   raster frame the same by eye. Not on by default: PT olive crowns went grey-blue without the fine
   shoots that shade their inside (FAR_TWIG_RADIUS stays 1 mm).
 - `fire_variants` adds 45% vertices to a stand (burnt variants ride along).
+- Olive-only far twig floor of 2.7 mm (A/B 19 Nov): halves a grove olive's far mesh (4.25M to 2.14M
+  triangles), but the path-traced grove's crowns went blue-grey (frame mean 47 to 57); dropped. The
+  1-2.7 mm shoots are what shades an olive crown's inside.
 Still recipe: `rigged` false, `fire_variants` false, `near_needle_range` 0, `light_far_meshes` true
 set before `make_stand`/`make_woodland`, `near_leaf_range` ~25, `set_near_build_limit(1)`, one tree
 variant, a frame between stands, wait for `get_near_builds() == 0`.
@@ -3105,3 +3151,8 @@ Paulo's rule: any repeated geometry carries good-quality noise so the repeat doe
 **Regrowth after fire.** The woody side of the fire loop (PhysX fire_age_map; vegetation does burnt ground and herbs). Resprouters and seeders differ (Pausas and Keeley 2014, Pausas et al. 2004): cork oak resprouts from epicormic buds along the stem and limbs within a year, its crown back in 2-3 (Catry et al. 2012); holm and kermes oak, lentisk, heather and gorse resprout from the root crown or lignotuber, a dense bush of shoots round the burnt base; maritime and Aleppo pine are seeders, killed outright, their serotinous cones opening on the snag and a flush of seedlings on the ash bed in the first 1-3 years (Tapias et al. 2001). Build: an epicormic shoot pass on killed-crown trees of resprouting species keyed to years since fire, basal resprouts on burnt shrubs, cones open on pine snags and a seedling ring placed through make_species. Ref: Pausas and Keeley 2014 (New Phytologist), Catry et al. 2012, Moreira et al. 2009.
 **Date palm oasis.** Phoenix dactylifera for the sand seas the desert shrubs already serve: clumping trunks with offshoots at the base, the old leaf bases (a knobbly diamond lattice of cut petiole stubs), crowns of 100-120 pinnate fronds 4-6 m long with spines at the base, hanging date bunches by season; oasis layout with irrigated rows and wild clumps by springs (Zohary and Hopf 2000; Chao and Krueger 2007, HortScience). Build on the dwarf fan palm code (fans become pinnate fronds; leaf-base stubs as real geometry; offshoot clumps).
 **Beetle-killed conifer stands.** The red, grey and fallen phases of bark beetle outbreaks (Ips typographus on spruce, Dendroctonus in pines): needles fade yellow-red in year 1, drop by year 3 leaving grey snags with bark peeling in sheets, then snags fall over a decade (Hicke et al. 2012; Wermelinger 2004). Build on the killed-tree state from the fire round: a per-stand outbreak age and patch mask instead of the fire map, bark loss and woodpecker flaking on snags, fallen stems at the matching decay class. Fits the open world's large forests.
+
+## Next-round options (card 19 Nov evening)
+**Snow-laden crowns.** Conifer crowns catch snow (up to 30-60% of a storm's snowfall in a closed spruce stand; Hedstrom and Pomeroy 1998, Pomeroy et al. 1998 interception model): the load bends branch tips down (spruce and fir laterals droop 10-30 degrees under a few kg; Schmidt and Pomeroy 1990 branch bending), white caps sit on the upper side of each spray as real geometry, and it unloads in gusts, sun and thaw as falling clumps (Storck et al. 2002; Roesch et al. 2012 unloading rates). Heavy wet snow breaks tops and stems (snow breakage, Nykanen et al. 1997; Peltola et al. 1999 critical loads), through the TreeWind3D storm path. Reads the snow/weather contracts (snowfall, air temperature, wind); load per tree kept in TreeWind3D, released as Flow/particle clumps. Needs a WorldSnow line agreed with the snow thread (who owns snow on crowns).
+**Windthrow fields.** What a winter storm leaves (Lothar 1999, Kyrill 2007): gaps of thrown trees lying in drifts along the storm's track, root plates standing up with their pits beside them, snapped stems, leaning survivors, and over the years the plates crumbling into pit-and-mound ground while pioneers fill the gap (Schelhaas et al. 2003; Ulanova 2000; Peterson 2007 pit-mound microtopography). A `STAND_WINDTHROW` with a storm direction and age: stems baked fallen (not run through physics, for open-world scale) from the storm kit's plates and breaks, pits handed to the ground contract (tree_root_pit, as storm_damage does).
+**Old-growth beech.** A primeval beech forest's mosaic (Uholka, Commarmot et al. 2013; Feldmann et al. 2018): small canopy gaps of one to a few fallen giants, every age class under them, veteran beeches with cavities, broken tops and tinder fungus, standing and lying deadwood of 100-200 m3/ha at all decay classes. Builds on the veteran, fungi and deadwood code: a `STAND_OLD_GROWTH_BEECH` with a gap mask and age structure per gap.

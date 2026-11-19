@@ -944,7 +944,9 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			const float support = family == FAMILY_SEA_STACK ? Math::abs(n.y) * c + Math::abs(n.z) + n.x * a * 0.3f : Math::abs(n.x) * a + Math::abs(n.y) * c + Math::abs(n.z);
 			// The last one or two are recent falls: a fresh scar face, paler and without the rind.
 			// (On a stack shallower: a deep one leaves a whole side as one flat slab face.)
-			planes.push_back({ n, support * ((family == FAMILY_SEA_STACK ? 0.74f : 0.62f) + (family == FAMILY_SEA_STACK ? 0.14f : 0.2f) * rng.randf()), k >= count - 1 - int(rng.randf() * 1.5f) });
+			// (Not on a stack: there a fresh face is a third of the column in another colour, a hard break at 30 m.)
+			const bool scar = k >= count - 1 - int(rng.randf() * 1.5f);
+			planes.push_back({ n, support * ((family == FAMILY_SEA_STACK ? 0.74f : 0.62f) + (family == FAMILY_SEA_STACK ? 0.14f : 0.2f) * rng.randf()), scar && family != FAMILY_SEA_STACK });
 		}
 	}
 	// A platform's edge follows the joints and the sea's reach, not a rectangle: a few vertical cuts across corners.
@@ -1191,7 +1193,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			bed_at.push_back(b);
 			while (b < hi) {
 				const float u = rng.randf();
-				b += mean * (0.2f + 2.4f * u * u * u); // many thin beds, a few very thick ones
+				b += mean * (family == FAMILY_SEA_STACK ? 0.35f + 3.0f * u * u * u : 0.2f + 2.4f * u * u * u); // many thin beds, a few very thick ones
 				bed_at.push_back(b);
 			}
 			bool prev_soft = false;
@@ -1202,7 +1204,9 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 				prev_soft = soft;
 			}
 		}
-		const Vector3 dip = Vector3(0.0f, 0.0f, (rng.randf() - 0.5f) * 0.12f) + (bed_axis == 0 ? Vector3(0, (rng.randf() - 0.5f) * 0.12f, 0) : Vector3((rng.randf() - 0.5f) * 0.12f, 0, 0));
+		// (A stack's beds dip plainly, 3 to 10 degrees: level courses on a column read as masonry.)
+		const float dip_k = family == FAMILY_SEA_STACK ? 2.8f : 1.0f;
+		const Vector3 dip = (Vector3(0.0f, 0.0f, (rng.randf() - 0.5f) * 0.12f) + (bed_axis == 0 ? Vector3(0, (rng.randf() - 0.5f) * 0.12f, 0) : Vector3((rng.randf() - 0.5f) * 0.12f, 0, 0))) * dip_k;
 		const float step_w = 0.75f * h;
 		// The recess at p: its bed's, eased into the neighbours' over a cell, varying along the bed, and hard beds
 		// broken back here and there where a block fell out of the lip.
@@ -1247,7 +1251,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			bool prev_soft = false;
 			for (uint32_t k = 0; k + 1 < bed_at.size(); k++) {
 				const bool soft = jrng.randf() < (prev_soft ? 0.25f : 0.55f);
-				bed_shift.push_back(soft ? (0.04f + 0.08f * jrng.randf()) * c : -0.02f * c * jrng.randf());
+				bed_shift.push_back(soft ? (0.07f + 0.13f * jrng.randf()) * c : -0.05f * c * jrng.randf());
 				prev_soft = soft;
 			}
 		}
@@ -1265,7 +1269,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			}
 		}
 		const float notch_x = x_lo + 0.22f * (x_hi - x_lo);
-		const float notch_w = 0.08f * a, notch_d = 0.18f * c;
+		const float notch_w = 0.11f * a, notch_d = 0.2f * c;
 		// A stack is lopsided (Sunamura 1992; Trenhaile 1987): the side facing the dominant swell is undercut much
 		// deeper than the lee, and its top has stepped down where the blocks over a joint fell, so one corner stands
 		// a bed or two higher than the rest. (Their own generator: the shared sequence shapes the rest.)
@@ -1357,7 +1361,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 				pools.push_back({ Vector3((rng.randf() - 0.5f) * 1.6f * a, extent.y + r - depth, (rng.randf() - 0.5f) * 1.4f), r });
 			}
 		}
-		const float near = 0.5f * c;
+		const float near = (family == FAMILY_SEA_STACK ? 1.2f : 0.5f) * c;
 		for (int z = 0; z < fine.nz; z++) {
 			for (int y = 0; y < fine.ny; y++) {
 				for (int x = 0; x < fine.nx; x++) {
@@ -1397,25 +1401,66 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						// not a ring round the column, and the blocks differ less than the beds.
 						float shift = bi < int(bed_shift.size()) ? bed_shift[bi] * (0.3f + 1.4f * rk_noise(p * 0.45f + Vector3(float(bi) * 5.3f, 0, 0), nseed + 110u)) : 0.0f;
 						shift += 0.03f * c * (bo - 0.5f) + (bo > 0.9f ? 0.1f * c : 0.0f);
-						v += shift + 0.035f * c * (rk_fbm(p * 1.6f, nseed + 102u, 3) - 0.5f);
+						v += shift + 0.035f * c * (0.5f * rk_fbm(p * 1.6f, nseed + 102u, 3));
 						// Its outline changes up the column (Twelve Apostles, Am Buachaille): buttresses and
 						// re-entrants that come and go with height, and a taper that steepens toward the top, so
 						// no level reads as the one below it.
 						const float tt = CLAMP((p.x - x_lo) / MAX(x_hi - x_lo, 0.01f), 0.0f, 1.0f);
 						const float paz = Math::atan2(p.z, p.y / c);
 						const Vector3 pq(tt * 2.6f, Math::cos(paz) * 1.1f, Math::sin(paz) * 1.1f);
-						v += stack_taper * c * tt * tt + 1.0f * c * (rk_fbm(pq, nseed + 109u, 3) - 0.5f);
+						v += stack_taper * c * tt * tt + 0.55f * c * (0.5f * rk_fbm(pq, nseed + 109u, 3)) - 0.3f * c; // (the beds' joints stand a little proud of the cut)
+						// Its arrises are not straight: where two joint faces meet, the edge is the first to go (blocks
+						// fall off corners), so it is chipped back in bites a metre or two long, deeper on some.
+						{
+							float d1 = -1e9f, d2 = -1e9f;
+							for (const RockPlane &pl : planes) {
+								if (Math::abs(pl.n.x) > 0.5f) {
+									continue; // the top and foot planes: their edges are the crest's and the notch's
+								}
+								const float d = pl.n.dot(p) - pl.d;
+								if (d > d1) {
+									d2 = d1;
+									d1 = d;
+								} else if (d > d2) {
+									d2 = d;
+								}
+							}
+							const float edge = 1.0f - Math::smoothstep(0.0f, 0.35f * c, d1 - d2);
+							v += 0.5f * c * edge * Math::smoothstep(0.35f, 0.75f, 0.5f + 0.5f * rk_fbm(p * 1.1f, nseed + 119u, 2));
+						}
 						// And no face is one plane: swells and hollows a third of a face across.
-						v += 0.4f * c * (rk_fbm(p * 0.85f, nseed + 113u, 3) - 0.5f);
+						v += 0.45f * c * (0.5f * rk_fbm(p * 0.85f, nseed + 113u, 3));
+						// Clefts down the faces (Old Harry, Duncansby): the joints the sea and frost opened, a dark
+						// slot a few metres deep at the face, running down a few beds and dying out, each joint its own.
+						{
+							const float vb = v;
+							const float jc[2] = { jt_dir1.dot(p) / jt_s1 + 0.08f * (rk_noise(p * 0.7f, nseed + 105u) - 0.5f), jt_dir2.dot(p) / jt_s2 + 0.08f * (rk_noise(p * 0.7f, nseed + 106u) - 0.5f) };
+							const float js[2] = { jt_s1, jt_s2 };
+							for (int s = 0; s < 2; s++) {
+								const float line = Math::round(jc[s]);
+								const uint32_t lh = rk_hash(uint32_t(int(line) + 1024) * 2654435761u ^ uint32_t(s + 1) * 40503u ^ nseed);
+								if ((lh & 0xFFu) > 110u) {
+									continue; // most joints stay tight
+								}
+								const float run = 0.5f + 0.5f * rk_fbm(Vector3(p.x * 0.5f, line * 3.7f, float(s) * 11.0f), nseed + 120u, 2);
+								const float open = Math::smoothstep(0.42f, 0.58f, run);
+								if (open <= 0.0f) {
+									continue;
+								}
+								const float half_w = MAX((0.12f + 0.1f * float((lh >> 8) & 0xFFu) / 255.0f) * c, 1.5f * h) * open;
+								const float slot = half_w - Math::abs(jc[s] - line) * js[s];
+								v = MAX(v, MIN(slot, vb + 0.55f * c * open));
+							}
+						}
 						// The top most broken of all: loose blocks, frost-split, never one sloping slab.
-						v += 0.6f * c * Math::smoothstep(0.65f, 0.95f, tt) * (rk_fbm(p * 1.3f, nseed + 116u, 3) - 0.5f);
+						v += 0.6f * c * Math::smoothstep(0.65f, 0.95f, tt) * (0.5f * rk_fbm(p * 1.3f, nseed + 116u, 3));
 					} else if (family != FAMILY_SEA_PLATFORM) {
 						// No joint face is a plane at this size: blocks a metre or so across stand proud or sit back
 						// by a hand's breadth (quantised noise, so the facets meet in edges), with a lumpy face on them.
 						const float blk = rk_noise(p * 1.6f, nseed + 101u) * 4.0f;
 						const float bi = Math::floor(blk);
 						const float bq = (bi + Math::smoothstep(0.85f, 1.0f, blk - bi)) / 4.0f;
-						v += 0.07f * c * (bq - 0.5f) + 0.05f * c * (rk_fbm(p * 2.4f, nseed + 102u, 3) - 0.5f);
+						v += 0.07f * c * (bq - 0.5f) + 0.05f * c * (0.5f * rk_fbm(p * 2.4f, nseed + 102u, 3));
 					}
 					if (family == FAMILY_SEA_STACK) {
 						// The notch: a sloping floor up to a sharp roof (the visor), and below it the foot stays worn
@@ -1423,12 +1468,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						const float t = (p.x - notch_x) / notch_w;
 						const float prof = t > 1.0f ? 0.0f : (t > 0.75f ? 1.0f - (t - 0.75f) / 0.25f : (t > -1.5f ? 0.55f + 0.45f * (t + 1.5f) / 2.25f : 0.55f));
 						const float facing = exp_dir.dot(p) / exp_r + 0.25f * (rk_noise(p * 0.4f, nseed + 107u) - 0.5f);
-						const float exposure = 0.3f + 1.9f * Math::smoothstep(-0.5f, 0.9f, facing);
+						const float exposure = 0.5f + 1.3f * Math::smoothstep(-0.5f, 0.9f, facing);
 						v += notch_d * exposure * prof * (0.85f + 0.3f * rk_noise(p * 2.0f, nseed + 95u));
 						// A broken, jagged crest: blocks loosened along the top joints and fell at different times.
 						{
 							const float rid = rk_fbm(Vector3(0.0f, p.y * 0.8f / c, p.z * 0.8f), nseed + 111u, 2);
-							const float crest = x_hi - (x_hi - x_lo) * (0.02f + 0.09f * (1.0f - Math::abs(2.0f * rid - 1.0f))) - 0.3f * c * (rk_fbm(p * 1.4f, nseed + 117u, 3) - 0.5f);
+							const float crest = x_hi - (x_hi - x_lo) * (0.02f + 0.09f * (1.0f - Math::abs(rid))) - 0.3f * c * (0.5f * rk_fbm(p * 1.4f, nseed + 117u, 3));
 							v = MAX(v, p.x - crest);
 						}
 						// Notch caves: where the swell's side is jointed the notch runs on into small caves at the
@@ -1441,9 +1486,9 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						if (stepped) {
 							// The fallen corner: everything above the tread and past the joint, the joint face a
 							// little rough, the tread following its bed.
-							const float tread = p.x + dip.dot(p) + 0.03f * (rk_noise(p * 0.9f, nseed + 92u) - 0.5f) + 0.5f * c * (rk_fbm(p * 1.1f, nseed + 118u, 2) - 0.5f) - step_x;
+							const float tread = p.x + dip.dot(p) + 0.03f * (rk_noise(p * 0.9f, nseed + 92u) - 0.5f) + 0.5f * c * (0.5f * rk_fbm(p * 1.1f, nseed + 118u, 2)) - step_x;
 							// (The joint face the corner fell from is no plane either: it steps across the beds.)
-							const float wall = step_dir.dot(p) - step_d - 0.04f * c * (rk_noise(p * 1.3f, nseed + 108u) - 0.5f) - 0.9f * c * (rk_fbm(p * 0.8f, nseed + 114u, 3) - 0.5f);
+							const float wall = step_dir.dot(p) - step_d - 0.04f * c * (rk_noise(p * 1.3f, nseed + 108u) - 0.5f) - 0.9f * c * (0.5f * rk_fbm(p * 0.8f, nseed + 114u, 3));
 							v = MAX(v, MIN(tread, wall));
 						}
 						// (The slot's floor follows the weathered face, not the cut solid's plane; a stepped top has
@@ -1453,7 +1498,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 							if (stepped) {
 								break;
 							}
-							const float off = jt.n.dot(p) - jt.d - 0.03f * c * (rk_noise(p * 1.7f, nseed + 97u) - 0.5f) - 0.1f * c * (rk_fbm(p * 0.9f, nseed + 115u, 2) - 0.5f);
+							const float off = jt.n.dot(p) - jt.d - 0.03f * c * (rk_noise(p * 1.7f, nseed + 97u) - 0.5f) - 0.1f * c * (0.5f * rk_fbm(p * 0.9f, nseed + 115u, 2));
 							const float tip = CLAMP((p.x - jt.x0) / (0.25f * (x_hi - x_lo)), 0.0f, 1.0f);
 							const float slot = 0.5f * jt.w * Math::sqrt(tip) - Math::abs(off);
 							v = MAX(v, MIN(MIN(slot, p.x - jt.x0), vb + jt.depth));
@@ -1533,12 +1578,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		const float span = MAX(x_hi - x_lo, 0.01f);
 		// Hoodoo profile (Bryce, Drumheller): a few bulges and necks up the column where harder and softer beds alternate,
 		// each a smooth swell rather than a step, since rain wash rounds them; fine bedding over it only as faint lines.
-		LocalVector<float> knot_at, knot_rec;
+		LocalVector<float> knot_at, knot_rec, knot_az;
 		float cap_t = 0.87f + 0.07f * rng.randf(); // where the caprock starts, as a share of the height: a thin cap
 		// No two caps alike (Bryce, Goreme, Drumheller): thin or thick, flush or overhanging, flat or domed, tipped where
 		// the neck under one side wore first; one column in five has lost its cap and weathers to a spire.
 		RandomPCG crng(uint64_t(nseed) * 0x9E3779B97F4A7C15ull + 0x7704ull);
-		const bool capless = crng.randf() < 0.2f;
+		const bool capless = crng.randf() < 0.35f;
 		cap_t = 0.8f + 0.14f * crng.randf();
 		const float cap_over = capless ? -0.06f * c : (0.01f + 0.09f * crng.randf()) * c; // how far the cap stands out
 		const float cap_dome = capless ? 0.45f * c : (0.04f + 0.24f * crng.randf()) * c;
@@ -1548,7 +1593,8 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			bool soft = rng.randf() < 0.5f;
 			while (b < x_hi + 0.6f) {
 				knot_at.push_back(b);
-				knot_rec.push_back((soft ? 0.12f + 0.14f * rng.randf() : 0.03f * rng.randf()) * c);
+				knot_rec.push_back((soft ? 0.16f + 0.24f * rng.randf() : 0.03f * rng.randf()) * c);
+				knot_az.push_back(rng.randf() * float(Math::TAU));
 				soft = rng.randf() < 0.75f ? !soft : soft;
 				b += 0.45f + 0.5f * rng.randf();
 			}
@@ -1675,13 +1721,20 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						const float cap = Math::smoothstep(cap_t - 0.02f, cap_t + 0.02f, t + tip);
 						// Swells below, none in the cap; the neck just under the cap thinnest; the cap a little wider.
 						v += r * (0.8f + 0.4f * rk_noise(p * 1.2f, nseed + 112u)) * (1.0f - cap);
+						// The column's axis wanders from bed to bed (each bed's own setback is uneven round it), so the
+						// outline steps sideways up the column, never a turned post.
+						{
+							const float a0 = knot_az[i], a1 = knot_az[i + 1];
+							const float sx = Math::lerp(Math::cos(a0), Math::cos(a1), f), sz = Math::lerp(Math::sin(a0), Math::sin(a1), f);
+							v += 0.09f * c * (sx * p.y / c + sz * p.z) * (1.0f - cap);
+						}
 						v += 0.1f * c * Math::smoothstep(cap_t - 0.3f, cap_t - 0.03f, t) * (1.0f - cap);
 						v += 0.14f * c * t * (1.0f - cap); // wider at the foot, where the debris apron feeds it
 						// The cap barely wider than the neck's foot, its rim and top rounded off and uneven.
-						v -= cap_over * cap;
+						v -= cap_over * cap * (0.3f + 1.4f * rk_noise(p * 1.1f, nseed + 126u)); // its rim lobed, standing out on some sides only
 						const float dome = Math::smoothstep(cap_t + 0.01f, 1.02f, t + tip);
 						v += cap_dome * dome * dome;
-						v += 0.08f * c * cap * (rk_fbm(p * 1.6f, nseed + 125u, 3) - 0.5f);
+						v += 0.16f * c * cap * (0.5f * rk_fbm(p * 1.6f, nseed + 125u, 3));
 						// Faint bedding: thin hard ribs 0.06 to 0.1 apart standing out a little.
 						const float bed = q / (0.07f + 0.02f * rk_noise(Vector3(p.x * 0.3f, 0.0f, 0.0f), nseed + 119u));
 						v += 0.012f * c * (Math::abs(bed - Math::round(bed)) * 2.0f - 0.5f) * (1.0f - cap);
@@ -1690,7 +1743,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						// is fluted top to bottom (Bryce: the cap's rim stands clean over a grooved neck).
 						const float rill = rk_noise(Vector3(p.x * 0.3f, p.y * 5.0f, p.z * 5.0f), nseed + 120u);
 						v += 0.11f * c * (1.0f - Math::abs(2.0f * rill - 1.0f) - 0.5f) * (1.0f - cap);
-						v += 0.05f * c * (rk_fbm(p * 2.2f, nseed + 113u, 3) - 0.5f) * (1.0f - 0.6f * cap);
+						v += 0.05f * c * (0.5f * rk_fbm(p * 2.2f, nseed + 113u, 3)) * (1.0f - 0.6f * cap);
 					} else if (family == FAMILY_CAVE_MOUTH) {
 						const float fh = MAX(z_hi - z_lo, 0.01f);
 						const float zt = (p.z - z_lo) / fh;
@@ -1702,7 +1755,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						const float xt = Math::abs(p.x - 0.5f * (x_lo + x_hi)) / MAX(0.5f * span, 0.01f);
 						v += 0.6f * c * Math::pow(Math::smoothstep(0.55f, 1.0f, xt), 2.0f);
 						v += 0.35f * c * Math::pow(Math::smoothstep(0.75f, 1.0f, zt), 2.0f);
-						v += 0.22f * c * (rk_fbm(p * 0.7f, nseed + 160u, 3) - 0.5f);
+						v += 0.22f * c * (0.5f * rk_fbm(p * 0.7f, nseed + 160u, 3));
 						const float thick = p.z / 0.35f + 0.6f * rk_noise(p * 0.5f, nseed + 164u);
 						v -= 0.02f * c * Math::smoothstep(0.7f, 0.95f, 0.5f + 0.5f * Math::sin(thick * float(Math::TAU)));
 						// The passage: its centre swinging sideways as it goes in, narrowing, its roof flat or a cosh arch,
@@ -1718,21 +1771,21 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						} else {
 							roof = cave_floor + cave_h * narrow * (Math::cosh(1.6f) - Math::cosh(1.6f * MIN(Math::abs(u), 1.0f))) / (Math::cosh(1.6f) - 1.0f);
 						}
-						roof += 0.05f * fh * (rk_fbm(p * 1.5f, nseed + 162u, 2) - 0.5f);
+						roof += 0.05f * fh * (0.5f * rk_fbm(p * 1.5f, nseed + 162u, 2));
 						const float floor_z = cave_floor + 0.15f * cave_h * Math::smoothstep(0.6f * c, 1.6f * c, d_in);
 						float d = MAX(MAX(Math::abs(p.x - cx) - w, floor_z - p.z), p.z - roof);
 						d = MAX(d, into - 1.6f * c); // a blind end, round
 						// The lip rounded back where the passage meets the front.
 						d -= 0.12f * c * Math::smoothstep(0.25f * c, 0.0f, into);
 						v = MAX(v, -d);
-						v += 0.06f * c * (rk_fbm(p * 1.8f, nseed + 163u, 3) - 0.5f);
+						v += 0.06f * c * (0.5f * rk_fbm(p * 1.8f, nseed + 163u, 3));
 						// Inside, the walls are not smooth: the roof spalled along joints and beds into angular scars
 						// (breakdown, Ford and Williams 2007) and the walls dissolved into shallow hollows, rougher the
 						// further in, where no weather has rounded them.
 						const float inside = Math::smoothstep(0.0f, 0.35f * c, into) * Math::smoothstep(0.25f * c, 0.0f, Math::abs(d));
 						if (inside > 0.0f) {
-							const float scar = Math::abs(rk_fbm(p * 2.6f, nseed + 165u, 3) - 0.5f) * 2.0f; // creased: sharp edges
-							v += inside * c * (0.07f * (scar - 0.5f) + 0.05f * (rk_fbm(p * 5.0f, nseed + 166u, 2) - 0.5f));
+							const float scar = Math::abs(rk_fbm(p * 2.6f, nseed + 165u, 3)); // creased: sharp edges
+							v += inside * c * (0.07f * (scar - 0.3f) + 0.05f * (0.5f * rk_fbm(p * 5.0f, nseed + 166u, 2)));
 						}
 					} else if (family == FAMILY_GOBLIN) {
 						// Goblin (Entrada sandstone, Goblin Valley): a knob rounded by spheroidal weathering and sand blast,
@@ -1749,12 +1802,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						v = v + (ell - v) * 0.3f;
 						const float bed = p.x / 0.06f;
 						v += 0.01f * c * (Math::abs(bed - Math::round(bed)) * 2.0f - 0.5f);
-						v += 0.07f * c * (rk_fbm(p * 2.0f, nseed + 150u, 3) - 0.5f);
+						v += 0.07f * c * (0.5f * rk_fbm(p * 2.0f, nseed + 150u, 3));
 					} else if (family == FAMILY_POTHOLE) {
 						const float top_w = Math::smoothstep(y_top - 0.5f * c, y_top, p.y);
 						// Polished, fluted along the flow, the upstream edge rounded over.
 						v += 0.04f * c * top_w * (rk_noise(Vector3(p.x * 0.5f, 0.0f, p.z * 7.0f), nseed + 140u) - 0.5f);
-						v += 0.1f * c * top_w * (rk_fbm(p * 0.9f, nseed + 141u, 2) - 0.5f);
+						v += 0.1f * c * top_w * (0.5f * rk_fbm(p * 0.9f, nseed + 141u, 2));
 						v += 0.8f * c * Math::pow(Math::smoothstep(0.55f, 1.0f, -p.x / MAX(0.5f * span, 0.01f)), 2.0f) * top_w;
 						// All round, the top rolls down into the bed: the exposure meets gravel and banks without a cut edge.
 						const float edge = MAX(Math::abs(p.x - 0.5f * (x_lo + x_hi)) / MAX(0.5f * span, 0.01f), Math::abs(p.z - 0.5f * (z_lo + z_hi)) / MAX(0.5f * (z_hi - z_lo), 0.01f));
@@ -1795,10 +1848,10 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 							// The opening: its walls at +-w(z), the head a cosh curve from the floor's width to the crown.
 							const float u = (p.x - arch_x) / arch_w;
 							const float ch = (Math::cosh(arch_k) - Math::cosh(arch_k * MIN(Math::abs(u), 1.0f))) / (Math::cosh(arch_k) - 1.0f);
-							const float head = arch_floor + arch_h * ch + 0.1f * fh * (rk_fbm(p * 1.1f, nseed + 131u, 2) - 0.5f);
+							const float head = arch_floor + arch_h * ch + 0.1f * fh * (0.5f * rk_fbm(p * 1.1f, nseed + 131u, 2));
 							// One wall leans; both wander where blocks have fallen out of them.
 							const float zl = (p.z - arch_floor) / MAX(arch_h, 0.01f);
-							const float wall = arch_w * (1.0f + arch_lean * zl * SIGN(p.x - arch_x)) + 0.12f * arch_w * (rk_fbm(p * 1.4f, nseed + 135u, 2) - 0.5f);
+							const float wall = arch_w * (1.0f + arch_lean * zl * SIGN(p.x - arch_x)) + 0.12f * arch_w * (0.5f * rk_fbm(p * 1.4f, nseed + 135u, 2));
 							float d = MAX(MAX(Math::abs(p.x - arch_x) - wall, arch_floor - p.z), p.z - head);
 							// Wider where it meets the faces: the rim rounded back, not a drilled hole.
 							d -= 0.6f * c * Math::smoothstep(0.1f * c, 1.1f * c, Math::abs(p.y));
@@ -1806,7 +1859,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						}
 						// Rills down the sides and sheet-wash pitting.
 						v += 0.05f * c * (rk_noise(Vector3(p.x * 4.0f, p.y * 4.0f, p.z * 0.4f), nseed + 132u) - 0.5f);
-						v += 0.06f * c * (rk_fbm(p * 1.8f, nseed + 133u, 3) - 0.5f);
+						v += 0.06f * c * (0.5f * rk_fbm(p * 1.8f, nseed + 133u, 3));
 					} else {
 						const float top = p.y - (y_top - 0.9f * 2.0f * c); // grykes most of the way down
 						const float wob = 0.06f * (rk_noise(p * 1.7f, nseed + 114u) - 0.5f) + 0.25f * (rk_noise(p * 0.6f, nseed + 118u) - 0.5f) * js1; // joints wander and their spacing varies
@@ -1829,11 +1882,11 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						// Rillenkarren and runnels: shallow grooves down the clint tops, and the tops a little domed.
 						const float top_w = Math::smoothstep(y_top - 0.4f * c, y_top, p.y);
 						v += 0.05f * c * top_w * (rk_noise(Vector3(p.x * 6.0f, 0.0f, p.z * 0.8f), nseed + 123u) - 0.5f);
-						v += 0.08f * c * top_w * (rk_fbm(p * 0.9f, nseed + 124u, 2) - 0.5f);
+						v += 0.08f * c * top_w * (0.5f * rk_fbm(p * 0.9f, nseed + 124u, 2));
 						for (const RockScoop &pn : pans) {
 							v = MAX(v, pn.r - (p - pn.c).length());
 						}
-						v += 0.04f * c * (rk_fbm(p * 3.0f, nseed + 117u, 3) - 0.5f);
+						v += 0.04f * c * (0.5f * rk_fbm(p * 3.0f, nseed + 117u, 3));
 					}
 				}
 			}
@@ -1936,6 +1989,10 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		if (family == FAMILY_HOODOO) {
 			tafoni *= 0.25f;
 		}
+		// A stack's hollows are the swell's side's, a few big ones low down; a column dotted with them reads as a face.
+		if (family == FAMILY_SEA_STACK) {
+			tafoni *= 0.5f;
+		}
 		if (family == FAMILY_PEBBLE || family == FAMILY_COBBLE || family == FAMILY_ROCKFALL || family == FAMILY_SCREE || family == FAMILY_CLIFF_BLOCK) {
 			tafoni = 0.0f;
 		}
@@ -2021,7 +2078,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// Each hollow over its own box of the grid only (scanning the whole grid per hollow costs seconds a stone).
 		for (uint32_t k = 0; k < hollows.size(); k++) {
 			const RockScoop &hw = hollows[k];
-			const float reach = 1.27f * hw.r / squash[k] + fine.h;
+			const float reach = 1.5f * hw.r / squash[k] + fine.h; // the lobes reach a third past r
 			const Vector3 lo = (hw.c - Vector3(reach, reach, reach) - fine.origin) / fine.h;
 			const Vector3 hi = (hw.c + Vector3(reach, reach, reach) - fine.origin) / fine.h;
 			const int x0 = MAX(0, int(Math::floor(lo.x))), y0 = MAX(0, int(Math::floor(lo.y))), z0 = MAX(0, int(Math::floor(lo.z)));
@@ -2034,10 +2091,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						const Vector3 q0 = p - hw.c;
 						const float qy = q0.dot(t_up);
 						Vector3 q = q0 + t_up * (qy * (1.0f / squash[k] - 1.0f));
-						if (q.length_squared() > 1.6f * hw.r * hw.r) {
+						if (q.length_squared() > 2.2f * hw.r * hw.r) {
 							continue;
 						}
-						float r = hw.r * (1.0f + 0.12f * (rk_fbm(p * (3.0f / MAX(hw.r, 0.05f)), nseed + 151u + k, 2) - 0.5f) * 2.0f);
+						// Lobed, not round: tafoni openings are irregular, cusped where neighbouring cells meet, so the radius
+						// wanders by a third at the scale of the hollow and a little finer (Mustoe 1982; Huinink 2004).
+						float r = hw.r * (1.0f + 0.34f * rk_fbm(p * (1.6f / MAX(hw.r, 0.05f)), nseed + 151u + k, 3));
 						if (qy > 0.0f) {
 							// The roof flakes off in scales (granular disintegration and flaking; Mustoe 1982): shallow
 							// dished scars with their rims hanging down between them.
@@ -2755,10 +2814,16 @@ uniform float sea_level = -100000.0;
 uniform float tide_range = 2.0;
 uniform float wetness = 1.0;
 uniform bool rain_rivulets = true;
+// Sea salt crusts on the dry stone by the sea (WeatherMap3D sea_spray's salt, docs/ideas/rocks.md "Salt bloom").
+uniform bool salt_bloom = true;
 uniform float snow = 1.0;
 uniform float snow_max_slope = 55.0;
 // Instance data for a stone drawn outside the MultiMesh (a breakable copy): as INSTANCE_CUSTOM.
 uniform vec4 rock_instance = vec4(0.0);
+// A tile of settled grains placed as a whole (RockField3D ground detail tiles): its grains share one set of instance
+// records over every placement, so the ground they sit on comes per placement, as the world plane n.p + w = 0 (n.y
+// over 0; zero: off, each grain's own ground from INSTANCE_CUSTOM.x and its slope).
+instance uniform vec4 rock_tile_plane = vec4(0.0);
 
 varying vec3 v_world;
 varying vec4 v_custom;
@@ -3054,8 +3119,13 @@ void fragment() {
 	float contact = 0.0;
 	float ground_cover = 0.0;
 	if (v_custom.z > 0.0) {
-		// The ground under this point: the plane through the stone's foot along the slope there.
+		// The ground under this point: the plane through the stone's foot along the slope there (a tile's: its plane).
+		vec2 g_slope = v_slope;
 		float above = v_world.y - (v_custom.x + dot(v_slope, v_world.xz - v_origin.xz));
+		if (rock_tile_plane.y > 0.0) {
+			g_slope = -rock_tile_plane.xz / rock_tile_plane.y;
+			above = (dot(rock_tile_plane.xyz, v_world) + rock_tile_plane.w) / rock_tile_plane.y;
+		}
 		float sc = small_linear ? max(v_scale, 0.002) : max(v_scale, 0.25);
 		float bk = small_linear && v_scale < 0.25 ? 2.0 * sc : sqrt(sc); // continuous at 0.25 (0.5 both ways)
 		contact = 1.0 - smoothstep(0.0, contact_height * sc, above);
@@ -3070,8 +3140,8 @@ void fragment() {
 		if (ground_blend && above < ground_blend_height * 2.5 * max(bk, bk_coat)) {
 			float band = ground_blend_height * bk;
 			// Debris banks up on the uphill side (sediment trapped against the stone).
-			float sl = length(v_slope);
-			float up = sl > 1e-3 ? dot(v_slope / sl, v_world.xz - v_origin.xz) / sc : 0.0;
+			float sl = length(g_slope);
+			float up = sl > 1e-3 ? dot(g_slope / sl, v_world.xz - v_origin.xz) / sc : 0.0;
 			band *= 1.0 + 1.2 * clamp(up, 0.0, 1.0) * clamp(sl * 2.0, 0.0, 1.0);
 			float edge = above / band + 0.9 * (cavity - 0.6) + 0.9 * (rk_fbm3(mp * 2.3 + 11.0) - 0.5) - 0.35 * clamp(wn.y, 0.0, 1.0);
 			// A filled foot with a ragged top, and above it a thinning dust of the ground splashed and blown on.
@@ -3101,7 +3171,7 @@ void fragment() {
 			gcol *= mix(1.0, 0.55, damp);
 			col = mix(col, gcol, gb_col);
 			rough = mix(rough, mix(0.95, 0.7, damp), gb_col);
-			vec3 gn = normalize(vec3(-v_slope.x, 1.0, -v_slope.y));
+			vec3 gn = normalize(vec3(-g_slope.x, 1.0, -g_slope.y));
 			wn = normalize(mix(wn, gn, 0.6 * gb * smoothstep(-0.3, 0.4, dot(wn, gn))));
 			fresh *= 1.0 - gb;
 			ground_cover = gb;
@@ -3131,6 +3201,11 @@ void fragment() {
 	// Cover by the surface's age (surface_age, from the stone's family): talus and rockfall stones keep turning over
 	// and are mostly bare, river and swash stones are scoured; tors, cliffs and old boulders carry the most.
 	float lcov = lichen_cover * surface_age;
+	// By the sea the grey and orange lichens thin in over several metres above the splash zone's black band (the
+	// salt and the spray thin out with height), not at one line.
+	if (at_sea > 0.5) {
+		lcov *= smoothstep(tide_range * 2.0, tide_range * 7.0, v_world.y - sea_level + 2.0 * tide_range * (rk_fbm3(mp * 0.4 + 31.0) - 0.5));
+	}
 	if (lcov > 0.01 && open_face > 0.01 && film_in < 0.3) {
 		const float cell_m = 0.09;
 		vec3 lc = rk_lichen_cells(mp / cell_m, 0.5 + 0.7 * lcov, 0.4 + 0.45 * smoothstep(0.1, 0.6, lcov), cell_m, 0.6 * (lcov - 0.5));
@@ -3231,7 +3306,7 @@ void fragment() {
 		float edge = above_sea + (zn - 0.5) * 0.7 * tide_range * 0.5;
 		float tidal = 1.0 - smoothstep(tide_range * 0.4, tide_range * 0.6, edge);
 		// On an exposed stack the swash throws the splash zone several metres up.
-		float splash = (1.0 - tidal) * (1.0 - smoothstep(tide_range * 1.6, tide_range * 3.0, edge + 0.6 * tide_range * (rk_fbm3(mp * 0.9 + 2.0) - 0.5)));
+		float splash = (1.0 - tidal) * (1.0 - smoothstep(tide_range * 1.2, tide_range * 3.6, edge + 1.6 * tide_range * (rk_fbm3(mp * 0.35 + 2.0) - 0.5) + 0.5 * tide_range * (rk_fbm3(mp * 2.1 + 7.0) - 0.5)));
 		// Barnacles: a dull grey-brown crust, specked by the shells' pale plates, not a clean pale band.
 		float shells = smoothstep(0.62, 0.8, rk_noise3(mp * 140.0));
 		vec3 barnacle = mix(vec3(0.13, 0.12, 0.10), vec3(0.42, 0.40, 0.35), shells) * (0.8 + 0.4 * rk_noise3(mp * 23.0));
@@ -3301,6 +3376,23 @@ void fragment() {
 	// sandstone and limestone go about half as bright, granite a third darker; Lekner and Dorf 1988).
 	// Satin, not glazed: the soaked face keeps most of its roughness (the grains stand proud of the film); the gloss
 	// is on the rivulets.
+	// Salt bloom (efflorescence): the spray's salt crystallises where the film dries, a white halite crust that keeps to
+	// the sheltered stone, hollows, the undersides of ledges and overhangs, away from the lines rain runs down, with a
+	// faint bloom on the open faces under a heavy load (Mustoe 1982; Goudie and Viles 1997; Huinink et al. 2004). It
+	// dissolves into any film of water, so it shows only on dry stone and comes back as it dries.
+	if (salt_bloom) {
+		float salt = weather_salt_at(v_world);
+		if (salt > 0.0) {
+			float shelter = clamp(1.3 * (1.0 - cavity) + 0.9 * max(-wn.y, 0.0), 0.0, 1.0);
+			// Faces turned up take the rain and the dew first and keep least.
+			float keep = (0.35 + 0.65 * shelter) * (1.0 - 0.75 * smoothstep(0.25, 0.8, wn.y)) * (1.0 - 0.6 * smoothstep(0.15, 0.6, flow));
+			float crust = smoothstep(0.12, 0.65, salt * keep + 0.35 * (rk_fbm3(mp * 9.0 + 23.0) - 0.5));
+			crust *= (1.0 - smoothstep(0.08, 0.35, wet)) * (1.0 - film) * (1.0 - moss) * (1.0 - 0.8 * lic);
+			vec3 halite = vec3(0.82, 0.81, 0.78) * (0.85 + 0.3 * rk_noise3(mp * 160.0));
+			col = mix(col, halite, 0.8 * crust);
+			rough = mix(rough, 0.92, crust);
+		}
+	}
 	float rough_dry = rough;
 	weather_wetness_apply(wet, max(wn.y, rivulet > 0.0 ? 0.2 : -1.0), metallic, clamp(porosity + 0.4, 0.0, 1.0), col, rough);
 	rough = mix(rough_dry, rough, 0.35);

@@ -57,6 +57,13 @@
 				The depth of debris laid at [param position] by finished bodies, in metres.
 			</description>
 		</method>
+		<method name="get_flow_velocity_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The depth-averaged velocity of the running flow at [param position], in m/s. Zero where no flow runs.
+			</description>
+		</method>
 		<method name="get_flow_depth_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -92,6 +99,9 @@
 		<member name="entrainment" type="float" setter="set_entrainment" getter="get_entrainment" default="0.002">
 			McDougall and Hungr's growth rate E, per metre of travel, scaled by the path's burn severity. 0 keeps the volume as fired.
 		</member>
+		<member name="levee_height" type="float" setter="set_levee_height" getter="get_levee_height" default="0.5">
+			How high the levees a finished flow leaves along its margins stand, as a share of the deepest flow there (Johnson et al. 2012). Volume is kept: the levees take it from the rest of the deposit. 0 lays no levees.
+		</member>
 		<member name="listen" type="bool" setter="set_listen" getter="is_listening" default="true">
 			Starts a body for each [code]debris_flow[/code] event of the active [WorldGround] and advances bodies every physics frame.
 		</member>
@@ -100,6 +110,9 @@
 		</member>
 		<member name="pool_distance" type="float" setter="set_pool_distance" getter="get_pool_distance" default="30.0">
 			How close a new event's outlet must lie to a running body's path to feed that body, in metres. 0 gives every event its own body.
+		</member>
+		<member name="push_bodies" type="bool" setter="set_push_bodies" getter="is_push_bodies" default="true">
+			The running flow shoves [RigidBody3D]s it reaches with a drag of [code]density * 1.2 * width * depth * u² / 2[/code] on their speed relative to the slurry.
 		</member>
 		<member name="show_flow" type="bool" setter="set_show_flow" getter="is_show_flow" default="true">
 			Draws each body's surface as a mesh.

@@ -496,6 +496,8 @@ private:
 		Vector2 centre;
 		float level = 0.0f; // the still water's height
 		float radius[128]; // the pool's outline, at even angles from +X toward +Z
+		float bank[128]; // the same, smoothed round the pool: the bank's contours follow it, so no outline jag runs out as a ray
+		LocalVector<Vector4> runnels; // (angle at the shore, how far in it reaches as a share of the shore, width m, depth m)
 		float reach = 0.0f; // m from the centre the hollow reaches
 		uint32_t seed = 0;
 		PackedVector3Array vents;

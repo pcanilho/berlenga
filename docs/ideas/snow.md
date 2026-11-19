@@ -1450,6 +1450,35 @@ Research: a slab avalanche leaves a crown (a tensile fracture standing the slab'
 - **Spikes under the running flow**: on the slow lateral margins single cells stopped and dropped their whole load (1-3 m) as columns while their neighbours crept on; the snow surface drew them as cones. A stopping cell now comes to rest over its neighbours too (half on itself, an eighth on each side, as the end of the run smooths the deposit), and every flush lets stopped debris slump to its angle of repose (talus relaxation, 4 passes), even under moving snow.
 - **Bench**: `--view=avalanche --powder` releases a wide dry slab in front of the camera (`trigger` at -40, radius 60). Left to itself the face let go off to both sides of the frame, and its cloud with it.
 
+## Follow-up 32: the wave into the water; benches that hold under load (19 Nov 2026)
+
+- **WorldWater.wave**: each impulse wave (follow-up 26) now goes to the water as `WorldWater.wave(position, heading, height, period, width)` (Valence 35b34268): the near-field height H_M crest to trough, the period a slide's width out from the entry, and the slide's width. The ripple solver runs it out at sqrt(g h); water without one makes a splash. The slide's width is now the span of its entry cells across its heading; counting cells over-counted it by the length the slide ran on over the water (166 m against 84 m for the 80 m test slab). Test: a WorldWater stub records the wave (`--test=waves`).
+- **Background timing check**: compares the median main-thread cost per update, not the worst, so a render running alongside cannot fail it.
+- **Powder bench**: an old pack under the storm (the full-depth release showed bare ground, a black hole in the slope), the camera back to hold the whole front, the deep-snow geometry over the whole face, and the still taken at 6 s while the front still feeds the cloud (by 9 s it is decaying into separate puffs).
+
+## Follow-up 33: one cloud along the front; a mountainside for the powder shot (19 Nov 2026)
+
+- **Lanes**: the cloud's intake is gathered in 8 m lanes across the run (the release's fall line), each emitter set at its lane's leading take, fed by the lane's mass. Gathered in 8 m squares, the slab's sides (where the flow spills sideways) stood as columns of their own and the centre had little: three chimneys, not one billowing front.
+- **Slope**: `--powder` shoots an `avalanche_bowl` ground: the face steepens to about 45 degrees and eases out into the run-out without a break, the ridge rises on above it (no plateau), the sides rise into spurs (a cirque) and the ground rolls (3 m of noise over about 80 m). The tests keep the plain 38 degree face.
+
+## Follow-up 34: the cloud as the head of a gravity current; benches that step Flow with the slide (19 Nov 2026)
+
+- A powder avalanche's head stands about twice the body's height and sheds billows off its top (Simpson 1997,
+  gravity currents; Turnbull and McElwaine 2007 on the Vallee de la Sionne radar profiles). Each lane's emitter now
+  lifts by its share of the strongest lane with a fresh random lift every half second (billows of varied height),
+  sheds its air at half the front's speed (the wake trails back up the track) and rides on with the front between
+  windows (a streak, not a puff left every half second). No lane draws more than twice the median: no side column.
+- The bench powder shots were wrong at the root: Flow steps once a rendered frame, but on a slow renderer the
+  avalanche took up to 8 physics ticks a frame, so the gas simulated an eighth of the time and the "cloud" was the
+  emitters' trail (the bolster and the chimney docs saw). The powder view now runs one tick a frame, frames the
+  cloud from three-quarters to the side (`--head-on` keeps the old view) and sets Flow's scattering to full
+  resolution for stills. On a real GPU at frame rate the game never had this problem.
+- Trail bench: the walker's stand-in capsule joined world_contact (every PhysicsBody3D does since 9edd6953) and
+  ploughed a trench through the prints; it is excluded, its boots print as before.
+- Open: a broken crust's plates read only as wider funnels with a few angular pieces from 1.5 m
+  (`--view=trail --prints-close --crust=1`); the pieces are linear ramps per crack sector, smoothed by the 6 cm
+  field. Crisper plates (a step at each sector edge, a lip where a plate tips) are a follow-up.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

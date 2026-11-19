@@ -152,11 +152,16 @@ class SnowAvalanche3D : public Node3D {
 		float mass = 0.0f;
 		Vector3 momentum;
 		Vector3 position; // mass-weighted sum
+		Vector3 lead; // the take farthest down the run
+		float lead_along = -1e30f;
 	};
-	HashMap<Vector2i, Bin> bins; // the front's intake since the last parcels, by 8 m bins
+	Vector2 run_down = Vector2(1, 0); // the release's fall line (xz), the run's heading for the cloud's lanes
+	HashMap<Vector2i, Bin> bins; // the front's intake since the last parcels, by 8 m lanes across the run
 	LocalVector<SnowPowderCloud3D::Source> sources;
 	Vector<float> powder_pending; // kg/m2 settled onto each cover cell, not yet written
 	double powder_window = 0.0;
+	LocalVector<float> source_lift; // each emitter's height over the snow
+	uint32_t powder_windows = 0; // half-second windows so far, seeding each window's billows
 	double powder_flush = 0.0;
 	double parcel_deposit = 0.0;
 	float release_liquid = 0.0f; // the released slab's liquid water, share of its mass

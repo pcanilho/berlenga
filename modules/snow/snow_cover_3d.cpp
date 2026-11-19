@@ -1102,6 +1102,7 @@ void SnowCover3D::_update_begin(double p_weather_dt, bool p_blocking) {
 	_refresh_fire();
 	_refresh_salt();
 	_refresh_lap();
+	_apply_canopy_shakes();
 	_refresh_obstacles();
 	if (!ice_breaks.is_empty()) {
 		_cut_ice(cell_ice, cell_white_ice);
@@ -1202,6 +1203,86 @@ void SnowCover3D::add_impurity(Vector3 p_position, float p_radius, float p_mg_pe
 	d.radius = MAX(p_radius, 0.0f);
 	d.mg = p_mg_per_m2;
 	impurity_drops.push_back(d);
+}
+
+// A crown shaken from outside the weather (trees: a snapped stem, a thrown or felled tree, a body brushing it): the
+// share of the held snow within the radius falls onto the pack below, as it would unload, at once. The kg returned is
+// read off the published load (what the trees saw); the cells give it up at the next update's start.
+float SnowCover3D::shake_canopy(Vector3 p_position, float p_radius, float p_share) {
+	const float share = CLAMP(p_share, 0.0f, 1.0f);
+	const int n = resolution;
+	if (share <= 0.0f || !canopy_enabled || pub.canopy_load.size() != n * n || canopy_shakes.size() >= 1024) {
+		return 0.0f;
+	}
+	const Rect2 r = get_map_rect();
+	const float cs = get_extent() / n;
+	const float rad = MAX(p_radius, cs * 0.5f);
+	const Vector2 at(p_position.x, p_position.z);
+	const int x0 = MAX(int(Math::floor((at.x - rad - r.position.x) / cs)), 0);
+	const int x1 = MIN(int(Math::floor((at.x + rad - r.position.x) / cs)), n - 1);
+	const int z0 = MAX(int(Math::floor((at.y - rad - r.position.y) / cs)), 0);
+	const int z1 = MIN(int(Math::floor((at.y + rad - r.position.y) / cs)), n - 1);
+	float kg = 0.0f;
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			const Vector2 c(r.position.x + (x + 0.5f) * cs, r.position.y + (z + 0.5f) * cs);
+			if (c.distance_to(at) <= rad + cs * 0.5f) {
+				// What earlier shakes queued on this cell since the last update has already left it.
+				float left = pub.canopy_load[z * n + x];
+				for (const CanopyShake &q : canopy_shakes) {
+					if (c.distance_to(q.center) <= q.radius + cs * 0.5f) {
+						left *= 1.0f - q.share;
+					}
+				}
+				kg += left * share * cs * cs; // mm of water = kg/m2
+			}
+		}
+	}
+	if (kg <= 0.0f) {
+		return 0.0f;
+	}
+	CanopyShake s;
+	s.center = at;
+	s.radius = rad;
+	s.share = share;
+	canopy_shakes.push_back(s);
+	return kg;
+}
+
+void SnowCover3D::_apply_canopy_shakes() {
+	const int n = resolution;
+	if (canopy_shakes.is_empty()) {
+		return;
+	}
+	if (cell_canopy_load.size() != n * n || cell_swe.size() != n * n) {
+		canopy_shakes.clear();
+		return;
+	}
+	const Rect2 r = get_map_rect();
+	const float cs = get_extent() / n;
+	for (const CanopyShake &s : canopy_shakes) {
+		const int x0 = MAX(int(Math::floor((s.center.x - s.radius - r.position.x) / cs)), 0);
+		const int x1 = MIN(int(Math::floor((s.center.x + s.radius - r.position.x) / cs)), n - 1);
+		const int z0 = MAX(int(Math::floor((s.center.y - s.radius - r.position.y) / cs)), 0);
+		const int z1 = MIN(int(Math::floor((s.center.y + s.radius - r.position.y) / cs)), n - 1);
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const Vector2 c(r.position.x + (x + 0.5f) * cs, r.position.y + (z + 0.5f) * cs);
+				const int i = z * n + x;
+				if (c.distance_to(s.center) > s.radius + cs * 0.5f || cell_canopy_load[i] <= 0.0f) {
+					continue;
+				}
+				// Held snow lands as it was caught: settled crown snow of about 150 kg/m3 (Pomeroy and Gray 1995).
+				const float drop = cell_canopy_load[i] * s.share;
+				cell_canopy_load.write[i] -= drop;
+				_deposit(i, drop, 150.0f);
+				// It whitens the pack as new snow does (the step's own unloading lands as snowfall).
+				float &alb = cell_albedo.write[i];
+				alb += (ALBEDO_FRESH - alb) * MIN(drop / SNOW_REFRESH_MM, 1.0f);
+			}
+		}
+	}
+	canopy_shakes.clear();
 }
 
 float SnowCover3D::get_impurity_at(Vector3 p_position) const {
@@ -3171,6 +3252,7 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_canopy_enabled", "enabled"), &SnowCover3D::set_canopy_enabled);
 	ClassDB::bind_method(D_METHOD("is_canopy_enabled"), &SnowCover3D::is_canopy_enabled);
 	ClassDB::bind_method(D_METHOD("get_canopy_load_at", "position"), &SnowCover3D::get_canopy_load_at);
+	ClassDB::bind_method(D_METHOD("shake_canopy", "position", "radius", "share"), &SnowCover3D::shake_canopy);
 	ClassDB::bind_method(D_METHOD("get_canopy_capacity_at", "position"), &SnowCover3D::get_canopy_capacity_at);
 	ClassDB::bind_method(D_METHOD("get_catch_texture"), &SnowCover3D::get_catch_texture);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("canopy_capacity", "closure", "snow_density"), &SnowCover3D::canopy_capacity);

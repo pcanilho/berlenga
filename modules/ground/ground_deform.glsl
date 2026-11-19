@@ -21,6 +21,7 @@
 #define MODE_WATER_COPY 11
 #define MODE_WATER_ERODE 12
 #define MODE_WATER_SED 13
+#define MODE_DRIFT_GIVE 14
 
 #define STAMP_BOX 1u
 #define STAMP_ROUND 2u
@@ -65,6 +66,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 water_disc_mud[4]; // the clay each added disc's water carries, kg/m3 (disc k: [k / 4][k % 4])
 	vec4 stir[8]; // clay stirred into standing water this step (stir_water, wade.z of them): x, z, radius, kg/m2 a pass
 	vec4 turbid; // muddy water (mud round 3): on (1), settling m a substep second, tyre churn kg/m2, most kg/m3
+	vec4 drift; // wind filling prints (drift_give()): wind direction x, z, Courant number this ageing, even fade's share kept
 }
 params;
 
@@ -399,8 +401,13 @@ void run_amount_stamp(Stamp s) {
 			st.y -= take;
 			st.x = min(st.x + a - take, c.max_dent);
 			if (ground) {
-				st.w = 1.0;
-				water[i].s.z = 0.0; // dug again: what had grown back over it is gone (mud round 6)
+				// Turned over by its depth: a skim of a millimetre or two (an avalanche's margin, a tent's tail)
+				// barely shows; 3 mm or more is fresh ground (GroundDeformField::add_amount()).
+				float f = min(a / 0.003, 1.0) * (s.c.z > 0.0 && s.c.z < 1.0 ? s.c.z : 1.0); // 0..1: a dig's tint scale
+				st.w = st.w >= 2.0 ? (f >= 1.0 ? 1.0 : st.w) : max(st.w, f);
+				if (f >= 0.5) {
+					water[i].s.z = 0.0; // dug again: what had grown back over it is gone (mud round 6)
+				}
 			}
 		} else {
 			float fill = min(st.x, a);
@@ -1646,6 +1653,37 @@ void water_sed(int x, int z) {
 	state[i] = st;
 }
 
+// Wind fills a print from its upwind side and wears its downwind rim (GroundSurface3D::_drift_prints(), which
+// says why): the relief (rim less dent) carried downwind at the bed's celerity, first-order upwind, through each
+// texel's +x and +z faces into give[i], the share of the two texels' blown sand the lesser; the field's edges
+// closed. MODE_RELAX applies the faces' difference.
+float drift_blown(int x, int z) {
+	return max(ground_cell(texel_world(x, z), 1).z, 0.0);
+}
+
+void drift_give(int x, int z) {
+	int n = fn();
+	int i = z * n + x;
+	vec2 g = vec2(0.0);
+	float c = params.drift.z;
+	if (c > 0.0) {
+		vec4 st = state[i];
+		float d = st.y - st.x;
+		float b = drift_blown(x, z);
+		if (x < n - 1) {
+			vec4 sq = state[i + 1];
+			float u = params.drift.x > 0.0 ? d : sq.y - sq.x;
+			g.x = c * params.drift.x * min(b, drift_blown(x + 1, z)) * u;
+		}
+		if (z < n - 1) {
+			vec4 sq = state[i + n];
+			float u = params.drift.y > 0.0 ? d : sq.y - sq.x;
+			g.y = c * params.drift.y * min(b, drift_blown(x, z + 1)) * u;
+		}
+	}
+	give[i] = g;
+}
+
 void main() {
 	int n = fn();
 	uint gid = gl_GlobalInvocationID.x;
@@ -1723,17 +1761,30 @@ void main() {
 		slump_give(x, z);
 	} else if (push.mode == MODE_SLUMP_TAKE) {
 		slump_take(x, z);
+	} else if (push.mode == MODE_DRIFT_GIVE && is_ground()) {
+		drift_give(x, z);
 	} else if (push.mode == MODE_RELAX && is_ground()) {
 		// GroundSurface3D::_age: turned ground dries, wind fills dry sand prints, rain softens soil prints.
 		vec4 st = state[i];
-		if (st.x <= 0.0 && st.y <= 0.0 && st.w <= 0.0) {
+		// The relief the wind carried in and out (drift_give()).
+		float dd = 0.0;
+		if (params.drift.z > 0.0) {
+			vec2 g = give[i];
+			dd = (x > 0 ? give[i - 1].x : 0.0) - g.x + (z > 0 ? give[i - n].y : 0.0) - g.y;
+		}
+		if (st.x <= 0.0 && st.y <= 0.0 && st.w <= 0.0 && dd == 0.0) {
 			return;
 		}
 		vec2 wp = texel_world(x, z);
 		vec4 m1 = ground_cell(wp, 1);
-		float keep = exp(-(params.kind.w * m1.z + params.age.x) * params.age.y);
+		float keep = exp(-(params.kind.w * (params.drift.z > 0.0 ? params.drift.w : 1.0) * m1.z + params.age.x) * params.age.y);
 		st.x *= keep;
 		st.y *= keep;
+		if (dd != 0.0) {
+			float d = st.y - st.x + dd;
+			st.x = max(-d, 0.0);
+			st.y = max(d, 0.0);
+		}
 		if (st.w >= 4.0) {
 			// Tracked mud dries in place (its film stays).
 			vec2 sq = mud_band_share_wet(st.w);
@@ -1788,6 +1839,20 @@ void main() {
 			// Muddy water (round 3): its clay in place of the turned ground's gloss, which the water's surface
 			// hides (A < 0: minus the concentration over 400 kg/m3).
 			float wd = water[i].w.x;
+			// Runoff's sheet is drawn from its depth under a 1-2-1 filter: shallow flow down a slope carries a
+			// grid-scale wave of a few texels along it (the explicit scheme's short waves, under the scales it
+			// resolves, which spectral and finite-volume models filter out as a matter of course), which the
+			// water's gloss turned into a ladder of bright rungs on every rill. A quarter of a 3-texel wave is left,
+			// nine tenths of a rill's 10-texel width, and the rills' edges round off over a texel as a film's do.
+			if (params.water3.x > 0.5 && x >= 1 && z >= 1 && x < n - 1 && z < n - 1) {
+				float ws = 0.0;
+				for (int dz = -1; dz <= 1; dz++) {
+					for (int dx = -1; dx <= 1; dx++) {
+						ws += float((2 - abs(dx)) * (2 - abs(dz))) * water[i + dz * n + dx].w.x;
+					}
+				}
+				wd = ws / 16.0;
+			}
 			// The soil the runoff carries counts too (round 11), at 1600 kg of it a cubic metre of bed.
 			float cm = wd > 0.002 ? (water[i].s.x + 1600.0 * water[i].s.w) / wd : 0.0;
 			if (cm > 0.5) {

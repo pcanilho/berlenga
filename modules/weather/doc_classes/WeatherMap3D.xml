@@ -738,6 +738,13 @@
 				Jumps the eased weather to the settings at once, without a transition (for example when a scene loads).
 			</description>
 		</method>
+		<method name="step_contact">
+			<return type="void" />
+			<param index="0" name="seconds" type="float" />
+			<description>
+				Steps the contact wetness square and the bodies' wet and muddy tracks (see [member wet_tracks]) by [param seconds] without waiting for a frame, for benches and tests that move bodies faster than the renderer draws. The weather's own processing keeps stepping them every frame.
+			</description>
+		</method>
 		<method name="update_cloud_shadow">
 			<return type="void" />
 			<description>

@@ -85,6 +85,7 @@ water (sea wind, mist, falls), vehicles, lightning.
 | group `world_contact` | | Every CharacterBody3D, RigidBody3D, PhysicalBone3D (project setting `physics/3d/world_contact/auto_join`) and vehicle wheel joins it; meta `world_contact_exclude` stays out |
 | `describe(node)` | Body | Centre, radius, half height, shape (round, box, wheel), mass on the ground, contact area, velocity; one reader for every consumer (metas `trample_radius`, `touch_radius`, `ground_*`, `snow_*`, `deform_wheel_*`, else the first collision shape) |
 | meta `ground_self_pressing` | | The body ruts the ground its own way (car wheels): the generic ground press skips it |
+| walkers | | Every CharacterBody3D is a walker (`describe(node).walker`; meta `world_contact_walker` true or false overrides). The ground, snow, sand and mud never press a walker's body shape: they press its soles one step at a time with `WorldWalkerSteps` (modules/world/world_walker_steps.h: step 0.41 of stature, feet 0.18 m apart, sole 0.27 x 0.10 m, half the weight on the landing foot), unless meta `world_contact_feet` says its feet are contact bodies of their own (then they skip the walker). Grass, plants, branches, water ripples and wet tracks still feel its shape |
 
 Consumers: ground, snow, grass, plants, trees, pollen, water. Each reads the group once per step; a body in two
 groups counts once.
@@ -112,7 +113,15 @@ the live ground.
 | `ripple_at(pos)` | wind ripples' height about their mean, m | 0 |
 | `blown_sand_at(pos)` | share of the sand the wind moves there now (dry, out of shelter), 0..1 | 0 |
 | `track_mud(pos, radius, depth, wet, print)` | m of film in; returns m3 laid | 0 laid with no provider | Clay a body carries pressed onto the ground; print x 1 tyre, 2 sole (0 a thrown lump), y yaw, z w length and width. Callers: WeatherMap3D wet tracks (round 7) |
+| `coarse_cover_at(pos)` | share of the ground 0..1: (pebbles, gravel, fine grains) | 0 | The stone fields' cover maps (RockField3D, a separate `WorldCoverProvider` slot, any number of fields, the largest answers). Reader: GroundSurface3D sand (a gravel lag armours the sand: blown share and ripples x 1 - smoothstep(0.1, 0.35, pebble + gravel); Bagnold 1941, Sharp 1963) |
 | pressing | | through the `world_contact` group |
+
+The ground also publishes a shader global, `ground_wet_map` (GroundSurface3D; drawn by `material.cpp`, the path
+tracer's raygen and GrassField3D). Its last row tags the blocks present: texel k carries w = 2.5 + k for k 0..6
+(0 the fine lattice, 1 the far one, 2 cracks, 3 puddle ice, 4 mud on plants, 5 fresh deposits with their colour,
+6 salt crust). Blocks are stacked in that order and only tagged ones exist, so a reader that finds block N must count
+every tag below it (all seven today), not stop at the ones it reads; a writer adding a block takes the next texel and
+updates every reader's count. `ground_wet_blocks()` in material.cpp is the reference.
 
 Consumers: vehicles, snow, grass (ruts tear the sward), fire (fuel on bare ground), water (wet sand), ground mud on
 legs. Moving the vehicle's direct GroundSurface3D calls onto it is the next step (they also need the richer
@@ -128,6 +137,8 @@ terramechanics and pressing calls, which stay on the producer for now).
 | `surface_height_at(pos)` | m | ground height |
 | `runoff_at(pos)` | mm/h | 0 |
 | `canopy_load_at(pos)` | kg/m2 | 0 |
+| `canopy_capacity_at(pos)` | kg/m2 | 0 |
+| `shake_canopy(pos, radius, share)` | kg moved (the share of the held snow in the radius drops onto the pack below as fresh snow, mass kept; trees call it when a crown is jolted) | no-op, 0 |
 | `lake_ice_at(pos)` | (m, white share) | (0, 0) |
 | `avalanche_pressure_at(pos)`, `avalanche_peak_pressure_at(pos)` | Pa (dense flow, else powder cloud; peak so far) | 0 |
 | `add_impurity(pos, radius, mg_per_m2)`, `impurity_at(pos)` | mg/m2 black carbon equivalent (dust 0.013 of its mass) | no-op, 0 |

@@ -155,6 +155,12 @@ global uniform vec4 terrain_sky_full; // the whole sky's
 global uniform vec4 terrain_sky_full2;
 global uniform float terrain_sky_full3;
 uniform float tm_sky_occlusion = 1.0;
+// Far sun shadows (TerrainGenerator3D.sun_shadows; size zero = none): the ground's horizon tangent toward the sun on a
+// grid turned to the sun's azimuth, frame (to the sun x, z, s0, t0), size (span s, span t, on).
+global uniform sampler2D terrain_sun_horizon_map : filter_linear, repeat_disable;
+global uniform vec4 terrain_sun_horizon_frame;
+global uniform vec4 terrain_sun_horizon_size;
+uniform float tm_far_shadow_start = 150.0;
 
 // Irradiance on n from nine harmonics (Ramamoorthi and Hanrahan 2001), the basis of TerrainSky::sh_basis.
 float tm_sky_irradiance(vec4 a, vec4 b, float c, vec3 n) {
@@ -325,6 +331,39 @@ float tm_vn(vec3 p) {
 	f = f * f * (3.0 - 2.0 * f);
 	return mix(mix(mix(tm_vn_hash(i), tm_vn_hash(i + vec3(1, 0, 0)), f.x), mix(tm_vn_hash(i + vec3(0, 1, 0)), tm_vn_hash(i + vec3(1, 1, 0)), f.x), f.y),
 			mix(mix(tm_vn_hash(i + vec3(0, 0, 1)), tm_vn_hash(i + vec3(1, 0, 1)), f.x), mix(tm_vn_hash(i + vec3(0, 1, 1)), tm_vn_hash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+
+// Sand glitter (docs/ideas/terrain-material.md, "Sand glitter"): a few of the quartz grains (clean cleavage and
+// crystal faces, mica flakes) are near-mirror facets that flash where they reflect the sun, the glitter Journey's
+// sand drew from a random grain normal per pixel (Edwards, GDC 2013). Here physically counted: 0.5 mm grains, 10% of
+// them facets with GGX alpha 0.4 normals, so the flashes stay on their grains as the sun and camera hold still and
+// thin out with distance (a pixel's facets are a smaller share of it) instead of turning to noise.
+uint tm_sg_hash(ivec3 q, uint p_salt) {
+	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u) ^ (p_salt * 2654435761u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	return h;
+}
+vec3 tm_sg_tilt(vec3 p_n, float p_r1, float p_r2) {
+	float tan2 = 0.16 * p_r1 / max(1.0 - p_r1, 1e-3);
+	float ct = inversesqrt(1.0 + tan2);
+	float st = sqrt(max(1.0 - ct * ct, 0.0));
+	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+	vec3 b = cross(p_n, t);
+	float phi = 6.2831853 * p_r2;
+	return normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
+}
+// Under the path tracer every sample lands on one grain: 10% of them are the facets (their own normal, smooth),
+// the rest keep the sand's rough specular, so the tracer integrates the footprint's own glints at any distance.
+vec4 tm_sand_grain_facet(vec3 p_pos, vec3 p_n) {
+	uint h = tm_sg_hash(ivec3(floor(p_pos / 0.0005)), 3u);
+	if (float(h & 0x3ffu) / 1023.0 >= 0.1) {
+		return vec4(p_n, 0.0);
+	}
+	return vec4(tm_sg_tilt(p_n, float((h >> 10u) & 0x3ffu) / 1024.0, float((h >> 20u) & 0x3ffu) / 1023.0), 1.0);
 }
 
 // A tangent-space normal from a projection plane as a world-space perturbation (whiteout-style: added to the
@@ -1173,6 +1212,8 @@ void fragment() {
 	vec3 dn = vec3(0.0);
 	float porosity = 0.0;
 	float por[5] = float[5](tm_rock_porosity, tm_scree_porosity, tm_soil_porosity, tm_alluvium_porosity, tm_sand_porosity);
+	float tm_sand_b = 0.0; // the sand's share of the blend, for its glitter
+	float tm_sand_dry = 1.0;
 	// The height blend's band widens with the pixel's footprint (about 0.1 m at 70 m to 1 m at 700 m at 1080p): a
 	// pixel far off spans many of the stones and patches whose heights decide the blend, so it takes their mix. A
 	// fixed band cut thin slivers and squiggles wherever two layers' weights were close (talus edges, rock
@@ -1186,8 +1227,10 @@ void fragment() {
 		rough += rgh[i] * b;
 		dn += dns[i] * b;
 		porosity += por[i] * b;
+		tm_sand_b = i == 4 ? b : tm_sand_b;
 	}
 	total = max(total, 1e-5);
+	tm_sand_b /= total;
 	albedo /= total;
 	rough /= total;
 	dn /= total;
@@ -1443,6 +1486,7 @@ void fragment() {
 		float soaked = w[4] * (1.0 - smoothstep(runup * 0.6, runup, wp.y - tm_sea_level));
 		albedo *= mix(1.0, 0.55, soaked);
 		rough = mix(rough, rough * 0.45, soaked);
+		tm_sand_dry = 1.0 - soaked;
 		// The grains past the ground detail's reach stay rough on a wet bed.
 		rough = mix(rough, 0.72, tm_gc_any);
 	}
@@ -1479,11 +1523,26 @@ void fragment() {
 	}
 )";
 	}
+	if (ground_deform_enabled) {
+		// The ground's pore water (GroundSurface3D's wet map: a wet margin round still water, runoff, the swash) on the
+		// terrain past the patch, as the path tracer already draws it (g_wet): never wetted twice with the rain's.
+		c += "\tfloat tm_gwet = ground_wet_at(wp, wn).x;\n";
+	} else {
+		c += "\tfloat tm_gwet = 0.0;\n";
+	}
 	if (wetness_enabled) {
 		// Rain soaks the ground by each layer's porosity (Lagarde 2013), before snow lies on it.
-		c += "\tweather_wetness_apply(tm_wetness * weather_wetness_at(wp), wn.y, metallic, porosity, albedo, rough);\n";
+		c += "\tweather_wetness_apply(max(tm_wetness * weather_wetness_at(wp), tm_gwet), wn.y, metallic, porosity, albedo, rough);\n";
+		// A film of rain water drowns the grains' facets.
+		c += "\ttm_sand_dry *= 1.0 - smoothstep(0.05, 0.3, tm_wetness * weather_wetness_at(wp));\n";
 		// Hoarfrost on clear cold nights (WeatherMap3D dew_and_frost).
 		c += "\tweather_frost_apply(weather_frost_at(wp), wn.y, albedo, rough);\n";
+	} else if (ground_deform_enabled) {
+		c += "\t{\n\t\tfloat gw_f = mix(1.0, 0.2, porosity);\n\t\talbedo *= mix(1.0, gw_f, tm_gwet);\n\t\trough *= mix(1.0, gw_f, 0.5 * tm_gwet);\n\t}\n";
+	}
+	if (ground_deform_enabled) {
+		// The salt crust round still water in a dry climate (GroundSurface3D salt_crusts).
+		c += "\tground_salt_apply(wp, wn.y, length(fwidth(wp.xz)), albedo, rough);\n";
 	}
 	if (snow_enabled) {
 		// The snowpack over everything: slides off past its slope, settles first on the flattest facets of the
@@ -1509,7 +1568,33 @@ void fragment() {
 		// Raster ambient light sees only the sky the hills leave open (docs/ideas/terrain-material.md, "Sky
 		// occlusion"): the irradiance of the sky this ground sees over that of the whole sky, both from nine
 		// harmonics, on the shading normal. The path tracer finds the hills itself.
+		// Far sun shadows (docs/ideas/terrain-material.md, "Far sun shadows"): past tm_far_shadow_start, where the
+		// shadow cascades thin out and end, the ground's own horizon toward the sun shades it: lit while the sun
+		// stands over the horizon's tangent, with a penumbra of the sun's half degree plus a grid cell's blur.
+		// Raster only: the path tracer traces the hills' shadows itself.
 		c += R"(#if !defined(RT)
+	if (terrain_sun_horizon_size.z > 0.0 && tm_far_shadow_start > 0.0) {
+		vec3 fs_l = sun_direction();
+		float fs_run = length(fs_l.xz);
+		float fs_dist = length(wp - CAMERA_POSITION_WORLD);
+		float fs_fade = smoothstep(tm_far_shadow_start, 2.0 * tm_far_shadow_start, fs_dist);
+		if (fs_fade > 0.0 && fs_run > 1e-4 && dot(fs_l, fs_l) > 0.5) {
+			vec2 fs_d = terrain_sun_horizon_frame.xy;
+			vec2 fs_st = vec2(dot(wp.xz, fs_d), dot(wp.xz, vec2(-fs_d.y, fs_d.x))) - terrain_sun_horizon_frame.zw;
+			vec2 fs_uv = fs_st / terrain_sun_horizon_size.xy;
+			if (all(greaterThanEqual(fs_uv, vec2(0.0))) && all(lessThanEqual(fs_uv, vec2(1.0)))) {
+				vec2 fs_size = vec2(textureSize(terrain_sun_horizon_map, 0));
+				float fs_hz = textureLod(terrain_sun_horizon_map, (fs_uv * (fs_size - 1.0) + 0.5) / fs_size, 0.0).r;
+				float fs_tan = fs_l.y / fs_run;
+				// The sun's disc (0.53 degrees) and the grid's own smoothing widen the edge; a small bias keeps the
+				// ground from shading itself on its own slope.
+				float fs_lit = smoothstep(fs_hz - 0.006, fs_hz + 0.014, fs_tan);
+				SUN_SHADOW *= mix(1.0, fs_lit, fs_fade);
+			}
+		}
+	}
+#endif
+#if !defined(RT)
 	if (terrain_sky_rect.z > 0.0 && tm_sky_occlusion > 0.0) {
 		vec2 sky_size = vec2(textureSize(terrain_sky_map, 0).xy);
 		vec2 sky_g = clamp((wp.xz - terrain_sky_rect.xy) / terrain_sky_rect.zw, 0.0, 1.0);
@@ -1533,6 +1618,89 @@ void fragment() {
 #endif
 )";
 	}
+	// Sand glitter on dry, open sand (not under grain cover, rain or snow). Under the path tracer the base specular
+	// lies on the facet of the grain each sample hits; in raster the facets mirroring the sun are counted per pixel.
+	c += String(R"(	{
+		float sg = tm_sand_b * tm_gc_spec * tm_sand_dry)") + (snow_enabled ? " * (1.0 - step(0.5, snow))" : "") + R"(;
+		if (sg > 0.01) {
+			if (IN_PATH_TRACER) {
+				vec4 gf = tm_sand_grain_facet(wp, wn);
+				if (gf.w > 0.5) {
+					SPECULAR_NORMAL = normalize((VIEW_MATRIX * vec4(gf.xyz, 0.0)).xyz);
+					ROUGHNESS = mix(ROUGHNESS, 0.12, sg);
+				}
+			} else {
+				// Raster: how many of the facets in the pixel mirror the sun (count = facets in the footprint x the
+				// chance one's normal lies within the sun's disc of the half vector, GGX alpha 0.4 facets, Poisson
+				// drawn per footprint cell: the counting of Zirr and Kaplanyan 2016 / Deliot and Belcour 2023 with
+				// the sun as the one light). Each such facet adds its share of the pixel times the sun's radiance,
+				// drawn as the coat's lobe turned onto the half vector, so it is shadowed and lit as the sun is.
+				vec3 sg_l = sun_direction();
+				if (dot(sg_l, sg_l) > 0.5) {
+					vec3 sg_v = normalize(CAMERA_POSITION_WORLD - wp);
+					vec3 sg_h = normalize(sg_l + sg_v);
+					float noh = dot(sn, sg_h);
+					float voh = max(dot(sg_v, sg_h), 0.05);
+					if (noh > 0.0 && dot(sn, sg_l) > 0.0) {
+						float sg_pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+						float sg_fp = max(PROJECTION_MATRIX[3][3] != 0.0 ? sg_pix : length(VERTEX) * sg_pix, 0.0005);
+						const float grain = 0.0005;
+						// sr a facet catches the sun over: the sun's disc (0.53 degree) blurred by the facets' own
+						// curvature and pitting to some 1.5 degrees across each way.
+						const float omega_acc = 2.1e-3;
+						float dd = noh * noh * (0.16 - 1.0) + 1.0;
+						float df = 0.16 / (3.14159265 * dd * dd);
+						float lam = 0.1 * (sg_fp / grain) * (sg_fp / grain) * df * noh * omega_acc / (4.0 * voh);
+						float level = floor(log2(sg_fp / grain));
+						uint h = tm_sg_hash(ivec3(floor(wp / (grain * exp2(level)))), uint(level) + 11u);
+						float r0 = float(h & 0xffffu) / 65536.0;
+						float r1 = (float(h >> 16u) + 0.5) / 65536.0;
+						float k = 0.0;
+						if (lam < 6.0) {
+							float pk = exp(-lam);
+							float cdf = pk;
+							for (int i = 1; i < 12 && r0 > cdf; i++) {
+								pk *= lam / float(i);
+								cdf += pk;
+								k = float(i);
+							}
+						} else {
+							k = max(round(lam + sqrt(lam) * sqrt(-2.0 * log(r1)) * cos(6.2831853 * r0)), 0.0);
+						}
+						if (k > 0.0) {
+							// Pixel radiance over the coat's peak response: k facets of (grain / footprint)^2 of the
+							// pixel, each the sun's irradiance spread over the facet's catch (1 / omega_acc) against
+							// D_GGX(alpha 0.011) at its peak times the coat's visibility (0.25 / LoH^2).
+							float loh = max(dot(sg_l, sg_h), 0.1);
+							float area = (grain / sg_fp) * (grain / sg_fp);
+							float coat = k * area * sg / omega_acc / (1.0 / (3.14159265 * 0.011 * 0.011) * 0.25 / (loh * loh));
+							vec3 sg_t = normalize(cross(abs(sn.z) < 0.99 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), sn));
+							vec3 vt = normalize((VIEW_MATRIX * vec4(sg_t, 0.0)).xyz);
+							vec3 vb = normalize((VIEW_MATRIX * vec4(cross(sn, sg_t), 0.0)).xyz);
+							vec3 f = normalize((VIEW_MATRIX * vec4(sg_h, 0.0)).xyz);
+							mat3 tbf = mat3(vt, vb, f);
+							if (abs(determinant(tbf)) > 1e-3) {
+								// NORMAL becomes the facets' (the coat's normal) and NORMAL_MAP lands the base back on
+								// the sand's.
+								vec3 kk = inverse(tbf) * NORMAL;
+								if (kk.z > 0.0) {
+									kk /= length(kk);
+									TANGENT = vt;
+									BINORMAL = vb;
+									NORMAL = f;
+									NORMAL_MAP = vec3(kk.xy * 0.5 + 0.5, 1.0);
+									NORMAL_MAP_DEPTH = 1.0;
+									CLEARCOAT = clamp(coat, 0.0, 1.0);
+									CLEARCOAT_ROUGHNESS = 0.1;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+)";
 	if (snow_enabled) {
 		// Sparkle on dry snow. The ground has no mesh tangents, so the frame is built around the normal.
 		c += R"(	{
@@ -1580,6 +1748,7 @@ void TerrainMaterial3D::_update_params() {
 	set_shader_parameter("tm_snow_max_slope", snow_max_slope);
 	if (sky_occlusion_enabled) {
 		set_shader_parameter("tm_sky_occlusion", sky_occlusion);
+		set_shader_parameter("tm_far_shadow_start", far_shadow_start);
 	}
 	if (far_blend_enabled) {
 		set_shader_parameter("tm_far_start", far_start);
@@ -1700,6 +1869,7 @@ void TerrainMaterial3D::set_sky_occlusion_enabled(bool p_enabled) {
 }
 
 MAT_SETTER(float, sky_occlusion, CLAMP(p_value, 0.0f, 1.0f))
+MAT_SETTER(float, far_shadow_start, MAX(p_value, 0.0f))
 
 void TerrainMaterial3D::set_far_blend_enabled(bool p_enabled) {
 	far_blend_enabled = p_enabled;
@@ -1749,6 +1919,7 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_PROP(Variant::BOOL, ground_deform_enabled, is_ground_deform_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, sky_occlusion_enabled, is_sky_occlusion_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, sky_occlusion, get_sky_occlusion, PROPERTY_HINT_RANGE, "0,1,0.01")
+	BIND_PROP(Variant::FLOAT, far_shadow_start, get_far_shadow_start, PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m")
 	BIND_PROP(Variant::BOOL, far_blend_enabled, is_far_blend_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, far_start, get_far_start, PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m")
 	BIND_PROP(Variant::FLOAT, far_fade, get_far_fade, PROPERTY_HINT_RANGE, "1,2000,1,or_greater,suffix:m")

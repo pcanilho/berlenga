@@ -135,11 +135,21 @@ private:
 	// most mud_auto_depth). It counts only when wet: none below mud_wet_start moisture, all at mud_wet_full.
 	bool mud_layer = true;
 	bool mud_slides = true; // round 10: a soaked layer flows off slopes it no longer holds
-	bool simulation_paused = false; // still shots: no simulation, the ground stays as it is
+	bool simulation_paused = false;
 	bool light_budget = false; // still shots: smaller GPU fields and tile cache
 	bool subsoil = true; // round 12: a firm base under the loose layer, its depth varied across the ground
 	HashMap<Vector2i, float> mud_deposits; // m of fresh slurry per 1 m cell (debris flows' fans, flood silt)
+	HashMap<Vector2i, Color> mud_deposit_colors; // its linear colour where the depositor gave one (alpha: cover)
+	Color _deposit_color_at(float p_x, float p_z) const; // premultiplied by cover, bilinear between cell centres
 	bool flood_silt = true; // other water over the ground leaves its suspended load as fresh mud
+	// Stream fords (docs/ideas/mud.md, round 13.2): wheels in running water scour the bed and send its fines
+	// downstream; wheels on a saturated bank break it down into the water.
+	bool stream_fords = true;
+	HashMap<Vector2i, uint64_t> bank_failed; // 1 m cell: when its bank last gave way (ms), so one failure is one event
+	float ford_plume_kg = 0.0f; // sent into the water by wheels and banks
+	float ford_scour_m3 = 0.0f;
+	int bank_failures = 0;
+	void _ford(const Vector3 &p_position, const Vector2 &p_half, float p_yaw, float p_sinkage, const Vector2 &p_velocity);
 	float silt_total = 0.0f; // kg/m2 laid since start, summed over the 1 m points
 	float silt_pending = 0.0f;
 	float silt_timer = 0.0f;
@@ -227,6 +237,7 @@ private:
 		float carried = 0.0f; // N, the load smoothed over a fifth of a second
 		float friction = 0.5f; // its body's
 		bool broken = false; // snapped under a load past its strength: no longer a mat
+		bool buried = false; // under a debris-flow deposit deeper than it is thick: gone from sight and from under wheels
 		Vector3 a, b; // its axis ends, world
 	};
 	LocalVector<Mat> mat_list;
@@ -285,6 +296,28 @@ private:
 	bool clods = true; // GroundClods3D: lumps of clay near the camera (ground detail)
 	GroundClods3D *clods_node = nullptr;
 	void _plough_bodies();
+	// Slip-face avalanches (docs/ideas/sand.md, dunes): a press on a dry dune's slip face sets off a grain flow down
+	// it, a tongue that scours the face's surface layer and lays it in a lobe at the toe.
+	bool slip_avalanches = true;
+	static constexpr float AVAL_TENT = 1.6f; // the scour's and lobe's tents, times the flow's half width
+	struct Avalanche {
+		LocalVector<Vector3> path; // x, z, the half width at each 4 cm step down the fall line (y)
+		int lobe_from = 0; // the first step of the lobe at the toe
+		int done = 0; // steps applied
+		float front = 0.0f; // m of path the flow has reached
+		float scoured = 0.0f; // m3 taken from the face so far
+		float lobe_area = 0.0f; // m2 the lobe's discs cover, summed
+		uint32_t seed = 0;
+	};
+	LocalVector<Avalanche> avalanches;
+	struct AvalancheMark {
+		Vector2 at;
+		uint64_t usec = 0;
+	};
+	LocalVector<AvalancheMark> avalanche_marks;
+	void _avalanche_trigger(const Vector3 &p_position, float p_radius, float p_bottom);
+	void _avalanche_update(double p_delta);
+	static float _aval_lobe_weight(const Avalanche &p_a, int p_k);
 	float contact_tolerance = 0.03f;
 	float character_mass = 75.0f;
 	float character_contact_area = 0.035f;
@@ -303,6 +336,20 @@ private:
 	// Wind ripples (docs/ideas/sand.md, stage 3): a fine height layer over the middle of the field, its own
 	// finer ring of the patch. Off by default until its cost is measured.
 	bool wind_ripples = true;
+	// Wind fills prints from their upwind side (_drift_prints()).
+	bool wind_fills_prints = true;
+	// Dry ground up to WATER_FRINGE over a water body's level is kept wet by capillary rise (_water_update()).
+	bool water_fringe = true;
+	// Pebbles and gravel (WorldGround.coarse_cover_at) shelter the sand between them: no blowing, no ripples.
+	bool coarse_armour = true;
+	static constexpr float WATER_FRINGE = 0.15f; // m, fine sand
+	// A pale salt crust at the fringe's top round still water in a dry climate (_water_update()).
+	bool salt_crusts = true;
+	LocalVector<float> salt_crust; // per lattice point, 0..1
+	// Ripples fade out where the wind's lee stops the sand (_ripple_calm_at()).
+	bool lee_calm_ripples = true;
+	static constexpr float PRINT_DRIFT_LENGTH = 0.5f; // m: c = this times the fade rate (about 1 m an hour at 10 m/s)
+	static constexpr float PRINT_DRIFT_SOFTEN = 0.4f; // of the old even fade kept with it
 	float ripple_time_scale = 1.0f;
 	float ripple_extent = 4.0f; // m, the square of real ripple geometry round the follow point
 	GroundRipples ripples;
@@ -324,6 +371,7 @@ private:
 	void _ripples_far_tile();
 	LocalVector<float> ripple_seen; // the field's surface change at each of its texels over the window
 	Vector2i ripple_seen_origin;
+	LocalVector<float> ripple_change; // its change this update (scratch)
 	Ref<Image> ripple_image;
 	Ref<ImageTexture> ripple_texture;
 	WorkerThreadPool::TaskID ripple_task = WorkerThreadPool::INVALID_TASK_ID;
@@ -538,6 +586,10 @@ private:
 	LocalVector<float> sand_flux; // kg/m/s, along the wind
 	LocalVector<float> sand_dep_rate; // m/s, + piling up, - scoured
 	LocalVector<float> sand_dep; // m written to the ground since the cell came in
+	LocalVector<float> ground_dep; // m of mud deposit (debris fans, flood silt) the ground lattice carries, per cell
+	float _deposit_smooth_at(float p_x, float p_z, float *r_coloured = nullptr) const; // r_coloured: the share with a colour
+	bool _apply_deposits();
+	void _ground_changed();
 	LocalVector<float> sand_dep_pending; // m owed, written in 2 mm steps
 	LocalVector<int> wind_order; // the cells in downwind order
 	Vector2 wind_order_dir;
@@ -621,6 +673,12 @@ private:
 	const TerrainGenerator3D *_hole_generator() const;
 	bool mesh_dirty = true;
 	bool globals_published = false;
+	// The patch's deformation was rewritten (a GPU blit or a CPU upload) since the patch material's
+	// ground_deform_serial was last bumped: the path tracer recaptures vertex() output when a material parameter
+	// changes, not when a texture it samples is rewritten in place (as SnowSurface3D's snow_serial).
+	bool deform_serial_dirty = false;
+	uint32_t deform_serial = 0;
+	void _bump_deform_serial();
 	double cells_accum = 0.0;
 	double age_accum = 0.0;
 	double step_msec = 0.0;
@@ -637,6 +695,8 @@ private:
 	void _sample_ground(Vector2i p_origin, int p_n);
 	void _update_cells();
 	void _age(double p_delta);
+	void _drift_prints(const Vector2 &p_wind, float p_drift, float p_dt);
+	float _ripple_calm_at(float p_x, float p_z) const;
 	void _upload();
 	void _publish();
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
@@ -807,7 +867,28 @@ public:
 	float get_skirt_fade() const { return skirt_fade; }
 	void set_wind_override(const Vector2 &p_wind) { wind_override = p_wind; }
 	Vector2 get_wind_override() const { return wind_override; }
+	void set_slip_avalanches(bool p_enabled) { slip_avalanches = p_enabled; }
+	bool is_slip_avalanches() const { return slip_avalanches; }
+	int get_avalanche_count() const { return (int)avalanches.size(); }
 	void set_wind_ripples(bool p_enabled);
+	void set_wind_fills_prints(bool p_enabled) { wind_fills_prints = p_enabled; }
+	bool is_wind_fills_prints() const { return wind_fills_prints; }
+	void set_water_fringe(bool p_enabled) { water_fringe = p_enabled; }
+	bool is_water_fringe() const { return water_fringe; }
+	void set_salt_crusts(bool p_enabled) { salt_crusts = p_enabled; }
+	bool is_salt_crusts() const { return salt_crusts; }
+	float get_salt_crust_at(const Vector3 &p_position) const;
+	void set_coarse_armour(bool p_enabled) {
+		coarse_armour = p_enabled;
+		ripple_mask_accum = 1e9;
+	}
+	bool is_coarse_armour() const { return coarse_armour; }
+	void set_lee_calm_ripples(bool p_enabled) {
+		lee_calm_ripples = p_enabled;
+		ripple_mask_accum = 1e9;
+	}
+	bool is_lee_calm_ripples() const { return lee_calm_ripples; }
+	float get_ripple_show_at(const Vector3 &p_position) const;
 	bool is_wind_ripples() const { return wind_ripples; }
 	void set_mud_layer(bool p_enabled);
 	bool is_mud_layer() const { return mud_layer; }
@@ -820,10 +901,16 @@ public:
 	void set_subsoil(bool p_enabled);
 	bool is_subsoil() const { return subsoil; }
 	// Fresh slurry laid over a disc (a debris flow's deposit, GroundDebrisFlow3D): wet mud whatever the weather.
-	void add_mud_deposit(Vector3 p_position, float p_radius, float p_depth, bool p_update = true);
+	void add_mud_deposit(Vector3 p_position, float p_radius, float p_depth, bool p_update = true, Color p_color = Color(0, 0, 0, 0));
 	void refresh_cells() { _update_cells(); }
+	// The ground lattice takes the mud deposits laid since (a fan's surface becomes the ground, smooth across its
+	// 1 m cells, that wheels and feet then print), then the cells refresh.
+	void refresh_deposits();
 	float get_mud_deposit_at(Vector3 p_position) const;
 	void set_flood_silt(bool p_enabled) { flood_silt = p_enabled; }
+	void set_stream_fords(bool p_enabled) { stream_fords = p_enabled; }
+	bool is_stream_fords() const { return stream_fords; }
+	Dictionary get_ford_stats() const;
 	bool is_flood_silt() const { return flood_silt; }
 	float get_flood_silt_total() const { return silt_total; }
 	void set_mats(bool p_enabled) { mats = p_enabled; }
@@ -832,6 +919,7 @@ public:
 	int get_mat_at(Vector3 p_contact, float p_tolerance = 0.06f) const;
 	// A wheel's load on mat p_mat this step, N.
 	void add_mat_load(int p_mat, float p_load);
+	bool is_mat_buried(int p_mat) const { return p_mat >= 0 && p_mat < (int)mat_list.size() && mat_list[p_mat].buried; }
 	int get_mat_count() const { return (int)mat_list.size(); }
 	// How far mat p_mat has sunk below the undisturbed ground, m.
 	float get_mat_sinkage(int p_mat) const;
@@ -971,7 +1059,7 @@ public:
 	// Presses the ground like SnowSurface3D.press(): down to p_bottom under a sphere (p_round) or a flat
 	// disc of p_radius, plus p_sink below the undisturbed surface. Returns the volume moved, m3.
 	float press(Vector3 p_position, float p_radius, float p_bottom, float p_sink = 0.0f, bool p_round = true);
-	float press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink = 0.0f);
+	float press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink = 0.0f, bool p_sole = false);
 	// Bekker sinkage of a body of p_mass kg on p_area m2 (width p_width) at a place, m.
 	float get_sinkage_at(Vector3 p_position, float p_mass, float p_area, float p_width = 0.0f) const;
 	// Runs slumping and ageing for p_seconds at once (tests, and settling a scene after loading).

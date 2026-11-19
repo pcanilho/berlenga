@@ -2525,6 +2525,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("submit_sphere", "owner", "world_pos", "radius", "strength"), &PhysXWaterSurface3D::submit_sphere, DEFVAL(1.0f));
 	ClassDB::bind_method(D_METHOD("clear_sphere", "owner"), &PhysXWaterSurface3D::clear_sphere);
 	ClassDB::bind_method(D_METHOD("submit_impulse", "world_pos", "radius", "strength"), &PhysXWaterSurface3D::submit_impulse);
+	ClassDB::bind_method(D_METHOD("submit_wave", "world_pos", "direction", "height", "period", "width"), &PhysXWaterSurface3D::submit_wave);
 	ClassDB::bind_method(D_METHOD("set_inflow", "owner", "at", "direction", "width", "discharge"), &PhysXWaterSurface3D::set_inflow);
 	ClassDB::bind_method(D_METHOD("clear_inflow", "owner"), &PhysXWaterSurface3D::clear_inflow);
 	ClassDB::bind_method(D_METHOD("set_outflow", "owner", "at", "direction", "width", "crest", "coefficient"), &PhysXWaterSurface3D::set_outflow);
@@ -7938,4 +7939,21 @@ void PhysXWaterSurface3D::clear_sphere(int p_owner) {
 
 void PhysXWaterSurface3D::submit_impulse(Vector3 p_world_pos, float p_radius, float p_strength) {
 	solver.submit_impulse(p_world_pos, p_radius, p_strength);
+}
+
+bool PhysXWaterSurface3D::submit_wave(Vector3 p_world_pos, Vector3 p_direction, float p_height, float p_period, float p_width) {
+	const Vector2 rel = Vector2(p_world_pos.x, p_world_pos.z) - solver.get_grid_center();
+	const Vector2 half = solver.get_domain_size() * 0.5f;
+	if (Math::abs(rel.x) >= half.x || Math::abs(rel.y) >= half.y) {
+		return false;
+	}
+	const float h = sample_depth(p_world_pos);
+	if (!(h > 0.0f) || p_period <= 0.0f || p_height <= 0.0f) {
+		return false;
+	}
+	const float c = Math::sqrt(9.81f * h);
+	const float cell = solver.get_domain_size().x / float(MAX(grid_resolution, 1));
+	// At least eight cells long, or the grid smears it into a splash.
+	const float wavelength = MAX(c * p_period, 8.0f * cell);
+	return solver.submit_wave(p_world_pos, Vector2(p_direction.x, p_direction.z), MIN(p_height, 0.78f * h), wavelength, c, MAX(p_width, 2.0f * cell));
 }

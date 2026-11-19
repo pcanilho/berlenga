@@ -740,14 +740,19 @@ uint rt_camera_medium(vec3 p_origin) {
 
 // One photon from the sun into cascade p_cascade's square, and its straight twin.
 // p_sub of p_count: this photon's strip of the pixel (the strips stratify a pixel's photons along x).
-void rt_caustics_photon_cascade(vec3 p_center, uint p_cascade, uint p_write, uvec2 p_pixel, uint p_sub, uint p_count, inout uint rng) {
+// p_block: the photon's cell is the p_block x p_block block of pixels the pixel lies in (2 for the outer
+// cascades, which only one pixel of each 2 x 2 block feeds a frame). With the pixel's own cell there, a
+// frame's photons covered every other column and row: the straight twins sampled that comb at one phase and
+// the bent ones, shifted by refraction in proportion to the depth, at another, so the ratio swung with the
+// depth into bands along the shore's contours under flat water.
+void rt_caustics_photon_cascade(vec3 p_center, uint p_cascade, uint p_write, uvec2 p_pixel, uint p_block, uint p_sub, uint p_count, inout uint rng) {
 	CausticsFrame f;
 	if (!rt_caustics_frame(p_center, p_cascade, f)) {
 		return;
 	}
 	vec2 j = rand2(rng);
 	j.x = (float(p_sub) + j.x) / float(p_count);
-	vec2 uv = (vec2(p_pixel) + j) / vec2(gl_LaunchSizeEXT.xy);
+	vec2 uv = (vec2((p_pixel / p_block) * p_block) + j * float(p_block)) / vec2(gl_LaunchSizeEXT.xy);
 	vec2 q = f.origin + uv * f.size;
 	// Each photon from a point on the sun's disc (at least the real sun's, 0.27 degrees across the
 	// radius, when the light is set sharper): the disc blurs the lines by its angle times the depth,
@@ -836,13 +841,13 @@ void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_
 	// rippled water) sends up to RT_CAUSTICS_MAX_PER_PIXEL each.
 	uint n0 = clamp((RT_CAUSTICS_MIN_PHOTONS * RT_CAUSTICS_RES * RT_CAUSTICS_RES + threads - 1u) / threads, 1u, RT_CAUSTICS_MAX_PER_PIXEL);
 	for (uint k = 0u; k < n0; k++) {
-		rt_caustics_photon_cascade(center, 0u, write, p_pixel, k, n0, rng);
+		rt_caustics_photon_cascade(center, 0u, write, p_pixel, 1u, k, n0, rng);
 	}
 	uint quarter = ((p_pixel.x & 1u) | ((p_pixel.y & 1u) << 1u)) ^ (p_frame & 3u);
 	if (quarter >= 1u && quarter < cascades) {
 		uint n1 = clamp((RT_CAUSTICS_MIN_PHOTONS * RT_CAUSTICS_RES_OUTER * RT_CAUSTICS_RES_OUTER * 4u + threads - 1u) / threads, 1u, RT_CAUSTICS_MAX_PER_PIXEL);
 		for (uint k = 0u; k < n1; k++) {
-			rt_caustics_photon_cascade(center, quarter, write, p_pixel, k, n1, rng);
+			rt_caustics_photon_cascade(center, quarter, write, p_pixel, 2u, k, n1, rng);
 		}
 	}
 }
@@ -2419,12 +2424,46 @@ float ground_ripple_vn(vec2 p_p, uint p_s) {
 	ivec2 c = ivec2(i);
 	return mix(mix(ground_ripple_hash(c, p_s), ground_ripple_hash(c + ivec2(1, 0), p_s), u.x), mix(ground_ripple_hash(c + ivec2(0, 1), p_s), ground_ripple_hash(c + ivec2(1, 1), p_s), u.x), u.y);
 }
+
+// material.cpp ground_salt_cells(), the same lines.
+vec2 ground_salt_cells(vec2 p_p) {
+	vec2 ip = floor(p_p);
+	vec2 fp = p_p - ip;
+	float d1 = 8.0;
+	float d2 = 8.0;
+	vec2 id = ip;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec2 g = vec2(float(i), float(j));
+			uvec2 q = uvec2(ivec2(ip + g) + ivec2(32768));
+			uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u);
+			h = (h ^ (h >> 16u)) * 2246822519u;
+			h ^= h >> 13u;
+			vec2 o = vec2(float(h & 0xffffu), float(h >> 16u)) / 65535.0;
+			vec2 r = g + 0.15 + 0.7 * o - fp;
+			float d = dot(r, r);
+			if (d < d1) {
+				d2 = d1;
+				d1 = d;
+				id = ip + g;
+			} else if (d < d2) {
+				d2 = d;
+			}
+		}
+	}
+	uvec2 q = uvec2(ivec2(id) + ivec2(32768));
+	uint h = (q.x * 2654435761u) ^ (q.y * 2246822519u);
+	h = (h ^ (h >> 15u)) * 2654435761u;
+	return vec2(0.5 * (sqrt(d2) - sqrt(d1)), float(h >> 8u) / 16777215.0);
+}
 vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 	vec2 p = p_xz;
 	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
 	o += 1.2 * (vec2(ground_ripple_vn(p / 6.0, 3u), ground_ripple_vn(p / 6.0, 4u)) - 0.5);
 	o += 0.06 * (vec2(ground_ripple_vn(p / 1.7, 5u), ground_ripple_vn(p / 1.7, 6u)) - 0.5);
-	float amp = mix(0.35, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
+	// Patchy over tens of metres: smooth sheets between ripple fields (material.cpp ground_ripple_vary()).
+	float amp = mix(0.2, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
+	amp *= smoothstep(0.36, 0.6, 0.7 * ground_ripple_vn(p / 16.0, 15u) + 0.3 * ground_ripple_vn(p / 5.0, 16u));
 	float kk = dot(p_k, p_k);
 	if (kk > 0.0) {
 		vec2 kn = p_k / sqrt(kk);
@@ -2478,7 +2517,10 @@ vec4 ground_water_look(float p_depth, float p_wet, float p_mud) {
 	float cover = smoothstep(0.0003, 0.002, p_depth);
 	// Thinner, it already glistens: a seepage sheet a few hundredths of a millimetre deep fills the pores between
 	// the top grains and its surface is smooth (Lagarde 2013's accumulated water), though the grains still show.
-	float gloss = smoothstep(0.00002, 0.0003, p_depth);
+	// Fully a mirror only from most of a millimetre: a sheet of a tenth of one between rills is wet sand with a
+	// sheen, so the water in the channels, deepening across them, reads as the brightest and their banks round off
+	// (from 0.3 mm the whole sheet was one mirror, the dry ridges cut out of it as flat-sided steps).
+	float gloss = smoothstep(0.00004, 0.0008, p_depth);
 	// The bed under it is soaked (Lagarde 2013, porosity 0.6: albedo 0.52), less what its pore water already took.
 	float soak = mix(1.0, 0.52, cover * (1.0 - clamp(p_wet, 0.0, 1.0)));
 	// Rut water carries clay: it hides the bed within a centimetre or so (Beer-Lambert down and back up, an
@@ -3069,7 +3111,9 @@ void main() {
 	float g_water = 0.0; // standing water over the deformed ground, m (mud stage 2)
 	float g_mud = 0.0; // the clay it carries, kg/m3 (mud round 3)
 	vec4 g_crack = vec4(0.0); // desiccation cracks: opening, plate size m, regularity, crust (mud stage 2b)
+	vec4 g_dep = vec4(0.0); // a fresh deposit: cover, linear colour (mud round 13)
 	vec4 g_ice = vec4(0.0); // puddle ice: thickness m, broken share (mud round 7); needle ice: height m, crumbs (round 9)
+	float g_salt = 0.0; // the salt crust round still water in a dry climate, 0 to 1 (salt_crusts)
 	// The terrain round the patch reads the pore water too (the far lattice), with no grains.
 	if (rt_material_ground_deform(mat) || rt_material_ground_terrain(mat)) {
 		uint wmap_g = uint(get_rt_param(RT_PARAM_GROUND_WET_MAP));
@@ -3086,7 +3130,11 @@ void main() {
 			// (material.cpp ground_wet_blocks()).
 			bool gice = gts.x > 3 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(3, gts.y - 1), 0).w - 5.5) < 0.01;
 			bool gpmud = gts.x > 4 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(4, gts.y - 1), 0).w - 6.5) < 0.01;
-			int gblocks = 1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0) + (gice ? 1 : 0) + (gpmud ? 1 : 0);
+			// Then a fresh deposit's block, texel 5's 7.5 (material.cpp ground_deposit_state()).
+			bool gdepb = gts.x > 5 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(5, gts.y - 1), 0).w - 7.5) < 0.01;
+			// The salt crust last: texel 6's 8.5.
+			bool gsalt = gts.x > 6 && abs(texelFetch(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_NEAREST_CLAMP), ivec2(6, gts.y - 1), 0).w - 8.5) < 0.01;
+			int gblocks = 1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0) + (gice ? 1 : 0) + (gpmud ? 1 : 0) + (gdepb ? 1 : 0) + (gsalt ? 1 : 0);
 			float grows = float((gts.y - 1) / gblocks);
 			vec2 gxz = (h.hit_pos + rt_origin.xyz).xz;
 			if (abs(grect.w - 2.5) < 0.01) {
@@ -3118,6 +3166,20 @@ void main() {
 					if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
 						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(1 + (gfar ? 1 : 0) + (gcrk ? 1 : 0)) * grows;
 						g_ice = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, gv / float(gts.y)), 0.0);
+					}
+				}
+				if (gdepb) {
+					vec2 guv = (gxz - grect.xy) / max(grect.z, 1e-3);
+					if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
+						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(gblocks - 1 - (gsalt ? 1 : 0)) * grows;
+						g_dep = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, gv / float(gts.y)), 0.0);
+					}
+				}
+				if (gsalt) {
+					vec2 guv = (gxz - grect.xy) / max(grect.z, 1e-3);
+					if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
+						float gv = clamp(guv.y * grows, 0.5, grows - 0.5) + float(gblocks - 1) * grows;
+						g_salt = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap_g)], SAMPLER_LINEAR_CLAMP), vec2(guv.x, gv / float(gts.y)), 0.0).x;
 					}
 				}
 				g_grain = clamp(gw.z, 0.0, 1.0);
@@ -3264,9 +3326,27 @@ void main() {
 	}
 	// Saturated ground under a film of water: the film's smooth surface hides the sand's relief (Lagarde 2013's
 	// accumulated water), as material.cpp does.
+	if (g_dep.x > 0.0) {
+		// A fresh deposit in the flow's own colour (material.cpp ground_deposit_state()).
+		m.albedo = mix(m.albedo, g_dep.yzw, clamp(g_dep.x, 0.0, 1.0));
+		m.roughness = mix(m.roughness, 0.55, clamp(g_dep.x, 0.0, 1.0));
+	}
 	if (g_sheen > 0.0) {
 		m.normal = normalize(mix(m.normal, h.geometry_normal, 0.85 * g_sheen));
 		m.roughness = mix(m.roughness, 0.2, 0.6 * g_sheen);
+	}
+	// The salt crust over the wet margin (material.cpp ground_salt_apply()).
+	if (g_salt > 0.0) {
+		vec2 gsp = (h.hit_pos + rt_origin.xyz).xz;
+		float gse = g_salt * mix(0.35, 1.0, ground_ripple_vn(gsp / 1.5, 23u));
+		float gsn = 0.6 * ground_ripple_vn(gsp / 0.35, 21u) + 0.4 * ground_ripple_vn(gsp / 0.09, 22u);
+		float gsu = smoothstep(0.3, 0.8, h.geometry_normal.y);
+		vec2 gsv = ground_salt_cells(gsp / 0.1);
+		float gsc = step(gsv.y, smoothstep(1.0 - gse, 1.35 - gse, gsn)) * (0.85 + 0.15 * (1.0 - smoothstep(0.0, 0.08, gsv.x))) * gsu;
+		m.albedo = mix(m.albedo, vec3(0.56, 0.53, 0.48), max(0.75 * gsc, 0.15 * gse * gsu));
+		m.roughness = mix(m.roughness, 0.92, min(gsc, 1.0));
+		float gsg = 0.05 * ground_ripple_vn(gsp / 0.04, 25u);
+		m.albedo *= 1.0 + step(gsv.y, smoothstep(1.0 - gse, 1.35 - gse, gsn)) * gsu * (0.12 * fract(gsv.y * 17.0) - 0.06 - 0.25 * (1.0 - smoothstep(gsg, gsg + 0.02, gsv.x)));
 	}
 	// Standing water in ruts and prints (material.cpp ground_water_look()): the patch already lies on the water's
 	// level there; the surface is water's (F0 0.02, smooth, no relief), the bed under it soaked and, deeper, hidden

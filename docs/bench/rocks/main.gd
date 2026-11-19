@@ -35,6 +35,7 @@ extends Node3D
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
 #   --rain=mm/h           with --rock: rain on the stone for --rain-hours=h (0.5), then --dry-hours=h of drying;
 #                         --no-rivulets for a before frame; --film=f the water film of a stream bed's stones
+#   --salt=k              with --rock: a stand-in sea salt index (0..1) for the salt bloom; --no-salt-bloom: off
 #   --moss=k              the field's moss_cover (0..1)
 #   --cave-mouths         the retired cave-mouth portal blocks (and their terrain holes) in --world frames
 #   --wind=m/s            with --water: the sea's wind speed (and some swell)
@@ -59,6 +60,7 @@ extends Node3D
 #   --tracks              with --world: a walker and a two-wheeled cart cross the spot on bends before the still
 #   --roll[=m/s]          with --world: a ball rolled across the spot before the still (stones_react; --no-react off)
 #   --no-river-detail     with --world: RockField3D.ground_detail_rivers off (river beds keep only the river layer's stones)
+#   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --gravel-reach[=d]    with --view=river: a gravel-bed reach whose median is nearest d m (0.03)
 #   --no-ground-cover     with --world: RockField3D.ground_detail_cover off (no grain aggregate on the ground past
 #                         each class's reach; a before frame); --save-cover writes the near cover map, --cover-check
@@ -295,14 +297,28 @@ func _families() -> void:
 	cam.look_at(Vector3(0.05, 0.3, 2.0))
 
 
+# --salt=0..1: a stand-in for WeatherMap3D sea_spray's salt index over the bench (the weather_spray_map global, G),
+# so the rock material's salt bloom shows without a sea; --no-salt-bloom turns it off (a before frame).
+func _salt_stand_in() -> void:
+	if not args.has("salt"):
+		return
+	var img := Image.create(4, 4, false, Image.FORMAT_RGBAF)
+	img.fill(Color(0.0, float(args["salt"]), 0.0, 1.0))
+	RenderingServer.global_shader_parameter_set("weather_spray_map", ImageTexture.create_from_image(img))
+	RenderingServer.global_shader_parameter_set("weather_spray_rect", Vector4(-100.0, -100.0, 200.0, 200.0))
+
+
 func _one_rock() -> void:
 	_plain_ground(20.0)
 	_rain_weather()
+	_salt_stand_in()
 	var tf: PackedStringArray = args["rock"].split(",")
 	var m := _rock(TYPES.find(tf[0]), FAMILIES.find(tf[1]) if tf.size() > 1 else 0, int(args.get("seed", "3")))
 	print("rock: %d triangles, axes %s" % [m.surface_get_array_index_len(0) / 3, m.get_meta("rock_axes")])
 	if args.has("no-rivulets") and m.surface_get_material(0) is ShaderMaterial:
 		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("rain_rivulets", false)
+	if args.has("no-salt-bloom") and m.surface_get_material(0) is ShaderMaterial:
+		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("salt_bloom", false)
 	if args.has("film") and m.surface_get_material(0) is ShaderMaterial:
 		# --film=f: the water film a stream bed gives its stones (INSTANCE_CUSTOM.y), contact band off.
 		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("rock_instance", Vector4(-1.0e4, float(args["film"]), 0.0, 0.5))
@@ -387,7 +403,10 @@ func _world() -> void:
 	tm.rock_detail_enabled = args.get("rock-detail", "1") != "0" # --rock-detail=0: the ground without its joints and stones
 	tm.update_shader()
 	var land := Landscape3D.new()
-	land.cliff_relief = 0.0 # on by default; this bench measures without it
+	# Cliff relief is on by default (frames show the ground as the game draws it: without it a backlit cliff reads as
+	# smooth white spur flanks); the checks measure the bare heightfield, and --no-cliff-relief gives a before frame.
+	if args.has("test") or args.has("no-cliff-relief"):
+		land.cliff_relief = 0.0
 	land.name = "Landscape"
 	add_child(land)
 	land.material = tm
@@ -565,6 +584,11 @@ func _world() -> void:
 		if args.has("only-layer"):
 			for i in LAYERS.size():
 				rocks.set_layer_enabled(i, LAYERS[i] == view)
+		if args.has("skip-layers"):
+			# --skip-layers=a,b: those layers off (to find which layer a stone in a frame comes from)
+			for nm in str(args["skip-layers"]).split(","):
+				if LAYERS.has(nm):
+					rocks.set_layer_enabled(LAYERS.find(nm), false)
 		if args.has("stone-density"):
 			rocks.set_layer_density(LAYERS.find(view), float(args["stone-density"]))
 		# Ground detail: the stones under min_size near the camera as real geometry (docs/ideas/ground-detail.md);
@@ -572,6 +596,8 @@ func _world() -> void:
 		rocks.ground_detail = not (args.has("no-ground-detail") or args.has("test"))
 		rocks.ground_detail_cover = not args.has("no-ground-cover")
 		rocks.ground_detail_rivers = not args.has("no-river-detail")
+		# --tiles / --no-tiles: tiles of piles on or off (else the default), the A/B of the tiles.
+		rocks.ground_detail_tiles = args.has("tiles") or (rocks.ground_detail_tiles and not args.has("no-tiles"))
 		rocks.stones_react = not args.has("no-react")
 		if rocks.ground_detail:
 			rocks.ground_detail_reference_height = int(args.get("detail-ref", "1080"))
@@ -2333,6 +2359,10 @@ func _render_later() -> void:
 		# without --no-ground-detail, path traced, and compare these and the frame time).
 		var vp := get_viewport()
 		print("rt: %d TLAS instances, %d triangles built, %d ground detail grains" % [vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_TLAS_INSTANCES), vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_TRIANGLES_BUILT), rocks.get_ground_detail_count() if rocks else 0])
+		var ri := func(what: int) -> int: return vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, what)
+		print("rt: captured %d, rebakes %d, held %d, budget limited %d, pending %d" % [ri.call(Viewport.RENDER_INFO_RT_CAPTURED_MESHES), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_REBAKES), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_HELD), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_BUDGET_LIMITED), ri.call(Viewport.RENDER_INFO_RT_PENDING_SURFACES)])
+	if rocks and rocks.ground_detail:
+		print("tiles: %s" % rocks.get_ground_detail_tile_stats())
 	if rocks and rocks.moss_cushions:
 		print("moss: %d shells, %d triangles, %d building" % [rocks.get_moss_shell_count(), rocks.get_moss_triangle_count(), rocks.get_moss_pending()])
 	if rocks and rocks.ground_contact and rocks.get_contact_texture():
@@ -2376,6 +2406,24 @@ func _render_later() -> void:
 						if args.has("cover-verbose") and (a > 0.0 or m > 0.0):
 							print("  class %d at %s: placed %.3f map %.3f" % [k, rc.get_center(), a / 4.0, m])
 				print("cover class %d: placed %.4f, map %.4f (mean over %d squares within %.0f m)" % [k, placed / max(n, 1), mapped / max(n, 1), n, rad])
+			# The ground contract (WorldGround.coarse_cover_at) reads the same map on the CPU (texel centres of the map
+			# as built: it follows the camera only once it has moved an eighth of the map).
+			var mr: Rect2 = rocks.get_ground_detail_cover_rect(0)
+			var worst := 0.0
+			var cov_sum := 0.0
+			var cov_n := 0
+			for tz in range(8, 248, 3):
+				for tx in range(8, 248, 3):
+					var q := mr.position + Vector2(tx + 0.5, tz + 0.5)
+					var px := img.get_pixel(tx, tz)
+					var cv: Vector3 = WorldContracts.get_ground().coarse_cover_at(Vector3(q.x, 0, q.y))
+					var dd := absf(cv.x - px.r * 0.5) + absf(cv.y - px.g * 0.5) + absf(cv.z - px.b * 0.5)
+					if dd > 0.005 and args.has("cover-verbose"):
+						print("  contract %s map %s at %s" % [cv, Vector3(px.r, px.g, px.b) * 0.5, q])
+					worst = max(worst, dd)
+					cov_sum += cv.x + cv.y
+					cov_n += 1
+			print("%s cover contract: WorldGround.coarse_cover_at matches the near map within %.4f (pebble + gravel mean %.3f)" % ["PASS" if worst < 0.005 else "FAIL", worst, cov_sum / max(cov_n, 1)])
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)
