@@ -4449,7 +4449,7 @@ BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt
 	// A fissure that has not opened over a stretch: the plates either side are one there, and
 	// the breaks across them end on it in T junctions, as real crack networks do. It narrows to
 	// its end rather than stopping (a hard stop drew a straight step across the plate).
-	auto shut = [&](int i) { return Math::smoothstep(-0.12f, -0.2f, bark_fbm(float(wrap(i)) / p_cols, p_v, p_cols, 8, 2, p_salt + 41u)); };
+	auto shut = [&](int i) { return Math::smoothstep(-0.04f, -0.3f, bark_fbm(float(wrap(i)) / p_cols, p_v, p_cols, 8, 2, p_salt + 41u)); };
 	int c = int(Math::floor(x));
 	if (x < bound(c)) {
 		c--;
@@ -4462,7 +4462,7 @@ BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt
 	float side = 1e9f, side_shut = 0.0f;
 	for (int i = c - 1; i <= c + 2; i++) {
 		const float sh = shut(i);
-		const float d = Math::abs(x - bound(i)) + 1.5f * sh;
+		const float d = Math::abs(x - bound(i)) + 0.3f * sh;
 		if (d < side) {
 			side = d;
 			side_shut = sh;
@@ -4600,7 +4600,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
 		{ 9, 12, 0.2f, 0.08f, 0.003f, 0.3f, 0.14f }, // Cork (1.2 m tile): long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
-		{ 6, 3, 0.24f, 0.085f, 0.003f, 0.16f, 0.12f }, // Pinaster (1.8 m tile): thick plates a hand or two across, deep furrows (5ac); 6 fracture columns.
+		{ 6, 3, 0.24f, 0.085f, 0.003f, 0.3f, 0.12f }, // Pinaster (1.8 m tile): thick plates a hand or two across, deep furrows (5ac); 6 fracture columns.
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -5131,6 +5131,41 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 	rbytes.resize(N * N * 3);
 	Vector<uint8_t> hbytes;
 	hbytes.resize(N * N * 4);
+	// The heights the normal map is taken from. Maritime pine's furrows are cut into the mesh
+	// (the relief tube); taken from the full heights as well, the normal map tilted the furrow
+	// walls a second time on top of the displaced walls, past facing each other, and the deepest
+	// furrows shaded flat black under raster and the path tracer alike (docs, 19 Nov). Its map
+	// keeps only the detail finer than the mesh's grid: the heights less a box-blurred copy
+	// about the grid's size (a high-pass, as detail normal maps over displaced meshes are baked).
+	LocalVector<float> hn_detail;
+	const float *hn = hw;
+	if (p_kind == BARK_PINASTER) {
+		const int R = 6;
+		LocalVector<float> tmp;
+		tmp.resize(N * N);
+		hn_detail.resize(N * N);
+		for (int y = 0; y < N; y++) {
+			float sum = 0.0f;
+			for (int k = -R; k <= R; k++) {
+				sum += hw[y * N + (k + N) % N];
+			}
+			for (int x = 0; x < N; x++) {
+				tmp[y * N + x] = sum / (2 * R + 1);
+				sum += hw[y * N + (x + R + 1) % N] - hw[y * N + (x - R + N) % N];
+			}
+		}
+		for (int x = 0; x < N; x++) {
+			float sum = 0.0f;
+			for (int k = -R; k <= R; k++) {
+				sum += tmp[((k + N) % N) * N + x];
+			}
+			for (int y = 0; y < N; y++) {
+				hn_detail[y * N + x] = hw[y * N + x] - 0.6f * sum / (2 * R + 1);
+				sum += tmp[((y + R + 1) % N) * N + x] - tmp[((y - R + N) % N) * N + x];
+			}
+		}
+		hn = hn_detail.ptr();
+	}
 	for (int y = 0; y < N; y++) {
 		for (int x = 0; x < N; x++) {
 			const int k = y * N + x;
@@ -5143,8 +5178,8 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				const float f = CLAMP(aw[k * 3 + c] * 0.92f / _bark_headroom(p_kind), 0.0f, 1.0f);
 				abytes.write[k * 3 + c] = uint8_t(Math::round(Color(f, f, f).linear_to_srgb().r * 255.0f));
 			}
-			const float hx = hw[y * N + (x + 1) % N] - hw[y * N + (x + N - 1) % N];
-			const float hy = hw[((y + 1) % N) * N + x] - hw[((y + N - 1) % N) * N + x];
+			const float hx = hn[y * N + (x + 1) % N] - hn[y * N + (x + N - 1) % N];
+			const float hy = hn[((y + 1) % N) * N + x] - hn[((y + N - 1) % N) * N + x];
 			// OpenGL convention (Godot): +y up the image is +v, so the y slope flips.
 			Vector3 n = Vector3(-hx / (2.0f * texel), hy / (2.0f * texel), 1.0f).normalized();
 			nbytes.write[k * 3 + 0] = uint8_t(Math::round((n.x * 0.5f + 0.5f) * 255.0f));
@@ -15140,7 +15175,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				if (!moved[i] || !taken[i] || fn[i] == Vector3() || r_b.relief_off[v].y <= 0.0f) {
 					continue;
 				}
-				const float off = r_b.relief_off[v].y * relief_keep[i] * sample(uw[v]) * Math::smoothstep(0.0f, 0.08f, vv[v].y - ground_y);
+				// Faded towards the soil, over 12 cm on the stem's wall and 35 cm down a root's
+				// flank: the flank turns steeply into the ground, and full furrows cut along its
+				// normal there stood out of its silhouette as thin stacked sheets, the soil line
+				// stepped (docs, 19 Nov). No deeper than half the height above the soil.
+				const float gh = vv[v].y - ground_y;
+				const float fade = Math::smoothstep(0.0f, Math::lerp(0.12f, 0.35f, root_w[i]), gh);
+				const float off = MAX(r_b.relief_off[v].y * relief_keep[i] * sample(uw[v]) * fade, -0.5f * MAX(gh, 0.0f));
 				vv[v] += nw[v] * off;
 				r_b.relief_off[v].x = off;
 			}

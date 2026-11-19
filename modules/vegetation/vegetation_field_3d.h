@@ -321,6 +321,11 @@ private:
 	// Plants past their range as real volume (docs/ideas/vegetation.md, "Far plants as volume"):
 	// a voxel shell per tile and species, from the range out to far_volume_range.
 	bool far_volume = true;
+	// Close-up bark (BarkDetail3D, ground detail): made and linked as an internal child when a species has trunks
+	// (tree_colliders), so every forest gets it; tests switch it off.
+	bool bark_detail = true;
+	ObjectID bark_detail_node;
+	void _update_bark_detail();
 	float far_volume_range = 150.0f;
 	// Small species (PlantSpecies.detail_size > 0) drawn out to where they are still detail_pixels tall
 	// (vegetation_detail.h; docs/ideas/ground-detail-vegetation.md).
@@ -558,6 +563,9 @@ public:
 	TypedArray<NodePath> get_cover_grass_layers() const { return cover_grass_layers; }
 	void set_cover_cell(float p_cell) { cover_cell = CLAMP(p_cell, 0.5f, 64.0f); }
 	void set_far_volume(bool p_on) { far_volume = p_on; }
+	void set_bark_detail(bool p_enabled);
+	bool is_bark_detail() const { return bark_detail; }
+	Node *get_bark_detail_node() const;
 	void set_far_match_view(bool p_enabled);
 	bool is_far_match_view() const { return far_match_view; }
 	float get_far_shade() const { return far_shade; }

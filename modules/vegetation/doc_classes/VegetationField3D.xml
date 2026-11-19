@@ -9,6 +9,12 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_bark_detail_node" qualifiers="const">
+			<return type="Node" />
+			<description>
+				The [BarkDetail3D] the field made (see [member bark_detail]), or [code]null[/code].
+			</description>
+		</method>
 		<method name="get_contact_trample_at" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />
@@ -218,6 +224,9 @@
 		</member>
 		<member name="density_mask_rect" type="Rect2" setter="set_density_mask_rect" getter="get_density_mask_rect" default="Rect2(0, 0, 0, 0)">
 			The world rectangle (x and z, metres) that [member density_mask] covers.
+		</member>
+		<member name="bark_detail" type="bool" setter="set_bark_detail" getter="is_bark_detail" default="true">
+			Close-up bark on this field's trunks: when a species has trunks ([code]tree_colliders[/code] mesh meta), the field makes a [BarkDetail3D] as an internal child, linked to the field and following the camera. A [BarkDetail3D] the scene puts under the field itself is kept instead. Switch off for tests and benches that do not need it.
 		</member>
 		<member name="biome" type="Biome" setter="set_biome" getter="get_biome">
 			The species to place.

@@ -36,6 +36,7 @@
 #include "vegetation_light.h"
 
 // Rigged trees (TreeWind3D, from the trees work) when that class is in the module.
+#include "tree_bark_detail.h"
 #if __has_include("tree_wind_3d.h")
 #include "tree_wind_3d.h"
 #define VEGETATION_HAS_TREE_WIND
@@ -517,6 +518,7 @@ float VegetationField3D::get_species_range(int p_species) const {
 }
 
 bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
+	_update_bark_detail(); // The species are final by now.
 	r_setup = PlaceSetup();
 	ERR_FAIL_COND_V_MSG(biome.is_null(), false, "VegetationField3D: no biome.");
 	TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
@@ -3458,6 +3460,9 @@ Array VegetationField3D::get_trunks_near(const Vector3 &p_center, float p_radius
 			if (t.origin.distance_squared_to(p_center) > r2) {
 				continue;
 			}
+			if (t.basis.get_scale().y < 1e-3f) {
+				continue; // A tree taken out of the stand (felled, thrown, burnt down): its instance is collapsed.
+			}
 			const Vector3i key(int(Math::round(t.origin.x * 100.0f)), int(Math::round(t.origin.y * 100.0f)), int(Math::round(t.origin.z * 100.0f)));
 			if (seen.has(key)) {
 				continue;
@@ -4030,6 +4035,7 @@ void VegetationField3D::_notification(int p_what) {
 				break;
 			}
 			add_to_group(SNAME("vegetation_crop_aware"));
+			_update_bark_detail();
 			TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
 			if (map) {
 				// Repopulate whenever the map is baked again (terrain edits).
@@ -4114,6 +4120,60 @@ void VegetationField3D::_contact_trample_step(double p_delta) {
 
 void VegetationField3D::set_biome(const Ref<Biome> &p_biome) {
 	biome = p_biome;
+	_update_bark_detail();
+}
+
+void VegetationField3D::set_bark_detail(bool p_enabled) {
+	bark_detail = p_enabled;
+	_update_bark_detail();
+}
+
+Node *VegetationField3D::get_bark_detail_node() const {
+	return Object::cast_to<Node>(ObjectDB::get_instance(bark_detail_node));
+}
+
+// The close-up bark on this field's trunks: a BarkDetail3D made once a species has trunks (tree_colliders), as an
+// internal child (not saved with the scene) following this field and the camera; gone when switched off. A scene
+// that adds its own BarkDetail3D under the field keeps it, and none is made.
+void VegetationField3D::_update_bark_detail() {
+	if (!is_inside_tree() || Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+	Node *existing = get_bark_detail_node();
+	bool want = bark_detail && biome.is_valid();
+	if (want) {
+		for (int i = 0; i < get_child_count(false); i++) {
+			if (Object::cast_to<BarkDetail3D>(get_child(i, false))) {
+				want = false; // The scene's own.
+			}
+		}
+	}
+	if (want) {
+		bool trunks = false;
+		const TypedArray<PlantSpecies> list = biome->get_species();
+		for (int i = 0; i < list.size() && !trunks; i++) {
+			const Ref<PlantSpecies> sp = list[i];
+			if (sp.is_null()) {
+				continue;
+			}
+			const TypedArray<Mesh> meshes = sp->get_meshes();
+			for (int m = 0; m < meshes.size() && !trunks; m++) {
+				const Ref<Mesh> mesh = meshes[m];
+				trunks = mesh.is_valid() && mesh->has_meta(SNAME("tree_colliders"));
+			}
+		}
+		want = trunks;
+	}
+	if (want && !existing) {
+		BarkDetail3D *bd = memnew(BarkDetail3D);
+		bd->set_name("BarkDetail");
+		add_child(bd, false, INTERNAL_MODE_BACK);
+		bd->set_vegetation(bd->get_path_to(this));
+		bark_detail_node = bd->get_instance_id();
+	} else if (!want && existing && !bark_detail) {
+		existing->queue_free();
+		bark_detail_node = ObjectID();
+	}
 }
 
 void VegetationField3D::set_data_map(const NodePath &p_path) {
@@ -4197,6 +4257,9 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_cover_grass_layers"), &VegetationField3D::get_cover_grass_layers);
 	ClassDB::bind_method(D_METHOD("set_cover_cell", "cell"), &VegetationField3D::set_cover_cell);
 	ClassDB::bind_method(D_METHOD("set_far_volume", "enabled"), &VegetationField3D::set_far_volume);
+	ClassDB::bind_method(D_METHOD("set_bark_detail", "enabled"), &VegetationField3D::set_bark_detail);
+	ClassDB::bind_method(D_METHOD("is_bark_detail"), &VegetationField3D::is_bark_detail);
+	ClassDB::bind_method(D_METHOD("get_bark_detail_node"), &VegetationField3D::get_bark_detail_node);
 	ClassDB::bind_method(D_METHOD("set_far_match_view", "enabled"), &VegetationField3D::set_far_match_view);
 	ClassDB::bind_method(D_METHOD("is_far_match_view"), &VegetationField3D::is_far_match_view);
 	ClassDB::bind_method(D_METHOD("get_far_shade"), &VegetationField3D::get_far_shade);
@@ -4253,6 +4316,7 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "cover_grass_layers", PROPERTY_HINT_ARRAY_TYPE, vformat("%s/%s:%s", Variant::NODE_PATH, PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GrassField3D")), "set_cover_grass_layers", "get_cover_grass_layers");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cover_cell", PROPERTY_HINT_RANGE, "0.5,64,0.5,suffix:m"), "set_cover_cell", "get_cover_cell");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_match_view"), "set_far_match_view", "is_far_match_view");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "bark_detail"), "set_bark_detail", "is_bark_detail");
 	ADD_GROUP("Far volume", "far_volume");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_volume"), "set_far_volume", "is_far_volume");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_volume_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_far_volume_range", "get_far_volume_range");
