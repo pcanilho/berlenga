@@ -1766,6 +1766,35 @@ smoke's grey part so plumes shade the ground in patches (weather
 owners); the haze is one value over the map's centre, not a field; the
 lofted plume is treated as mixed through 2 km.
 
+### Post-fire mudflows (picked 19 Nov morning, second of three)
+
+Split agreed by the three owners. Valence (WeatherRunoff3D) fires the
+event: USGS M1 likelihood (Staley et al. 2017) and Gartner (2014) volume
+at basin outlets, at P >= 0.5, one per basin per storm, signal
+debris_flow on WeatherRunoff3D and WorldGround, with id, volume, path,
+widths and severity. Mud (GroundDebrisFlow3D) moves the body:
+Bingham/Voellmy on the path, Iverson entrainment, deposit written into
+the ground, front getter get_debris_front(id) and the
+debris_front_changed signal. PhysX (PhysXDebrisSurge3D, nodes/) draws what
+rides the front. Research: post-fire debris flows arrive as surges, tens
+of seconds to minutes apart (Kean et al. 2011, 2013); a bouldery snout
+forms because the surface outruns the front and carries clasts forward
+(Iverson 1997); peak discharge Q = 0.1 V^(5/6) and front speed v = 2.1
+Q^(1/3) S^(1/3) (Rickenmann 1999); fans and deposition below about 4
+degrees (Ikeya 1981). Built: a train of up to four surges (one per 400
+m3, each 0.6 of the last); a front of its own on the path at
+Rickenmann's speed, easing over a few seconds and stopping below
+stop_slope, replaced by mud's front where its getter reports one;
+boulders as rigid bodies drawn from a D^-2.5 power law up to the flow
+depth, with quadratic drag toward 1.3 times the front speed behind the
+snout and the front speed at it, the slurry's buoyancy, the force
+clamped for stability; mud spray as ballistic drops. Test (scratch:
+1500 m3, 25% channel then a 3% fan): peak Q 44 m3/s, front 3.8 m/s, 1.0
+to 1.8 m deep; boulders stay within a few metres of the snout; the front
+stops 30 m onto the fan with its boulders in the lobe; the second surge
+stops 4 m short of the first. Left: drawing the body and levees is
+mud's; dust ahead of dry fronts; rumble and ground shake.
+
 ### Burning wooden buildings (picked 19 Nov morning, third of three)
 
 Built as PhysXBuildingFire3D (flow/physx_building_fire_3d.cpp), a
