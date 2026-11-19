@@ -768,6 +768,31 @@ What it does not replace: a sward's blades. Paulo's montado frame (19 Nov) was b
 alone has no GrassField3D; with the summer sward (rings to 250 m, columns to 500 m) blades show to the horizon. The
 scene wires the sward under the cork and pine stands.
 
+Step 3, Ghost of Tsushima's density curve on the sward (19 Nov, Paulo: "why aren't we just applying those
+strategies?"): GrassField3D keeps full density to half its radius, then halves at 0.5 and 0.75 (_lod_for), and the
+far rings start at a quarter of the near density (RING_BASE_SHARE 4, was 8). Meadow bench: primitives 7.6 M to 10.9 M
+(+43%), +165 MB. The far shell's height and colour were tuned against it (specular 0.1, roughness 1: at grazing angles
+the sky's reflection read grey; textured cards take their texture's mean colour). GPU timing is on the PC queue.
+
+### Next round (card 19 Nov late)
+
+1. GPU-built far blades. Ghost of Tsushima (Wohllaib, GDC 2021) and Horizon Zero Dawn (van Muijden, GDC 2017) build
+   grass per frame in compute from tile masks, so far blades cost no stored mesh: a tile writes its visible blades into
+   an indirect draw, and the count follows distance. Our far rings are CPU-built and cost 69 MB plus the GoT share. The
+   step: a compute pass over the ring tiles reading the same rules texture the CPU bake reads (GPU fill is already
+   matched to the CPU check, quantised in 1/16), writing an instance buffer for multimesh_set_rt_instanced. PT needs
+   the blades in a BLAS, so the RT side keeps a coarse CPU-built set or rebuilds the BLAS per tile on change only
+   (camera moves of a tile). Measure memory and lavapipe frame time against the rings.
+2. Far blades blend into the ground. Pesce ("Making a greener grass", 2024) and GoT both bend far blade normals
+   towards the terrain's and add a sheen term, so a far field shades like a soft surface and does not shimmer. Ours:
+   far blades keep their own normals (the sparkle prefilter only widens roughness). The step: ease normals to the
+   terrain normal by a distance factor in the grass shader (both raster and the PT translation, fwidth only), cut far
+   blades to 3 vertices (GoT's far LOD), and match the far shell's sheen so rings and shell meet with no seam.
+3. Heath and scrub far silhouettes. The far shell is a smooth draped surface; gorse, heather and broom stands keep
+   a lumpy outline to the horizon in photos and in UE 5.7's voxelised Nanite foliage. The step: for shrubs between
+   0.5 and 2 m, displace the shell's cells by a clump field from their own spacing (as the hedges' far bricks), with
+   AO in the gaps, so hills past 1 km keep their texture. Shell only, no new instances.
+
 ## Mediterranean woodland ground layer (audit 19 Nov; card to Paulo)
 
 The showcase's cork oak stand stands on bare sand with litter: every other forest has a floor set, the cork oak and
