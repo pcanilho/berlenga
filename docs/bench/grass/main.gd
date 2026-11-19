@@ -36,6 +36,8 @@ extends Node3D
 #   --close          the closer view used by --trample
 #   --ruts           with a GroundSurface3D of wet soil: a pair of tyre ruts in the close view; the blades lie
 #                    flat or are torn out where the ground is pressed (docs/ideas/mud.md)
+#   --ruts=worn      a worn-in track instead (mud round 14.2): two wheel lines worn by 60 passes near the eye down
+#                    to 2 further off, no ruts; the sward lies flat, thins and goes bare with the passes
 #   --ruts=mud       the same, with clay thrown onto the sward beside the left rut and muddy water splashed beside
 #                    the right one (mud round 7: mud on the blades and plants)
 #   --notex          plants without their generated leaf textures
@@ -113,6 +115,7 @@ var crop_fields := false
 var stubble_view := false # --fields=stubble: from 1.7 m at the stubble field's edge, over its swaths.
 var close := false
 var ruts_view := false
+var ruts_worn := false
 var ruts_ground: GroundSurface3D
 var ruts_mud := false # --ruts=mud: clay thrown beside the left rut, muddy water splashed beside the right (mud round 7)
 var ruts_aged := 0.0 # --ruts=aged[:scale]: kept, then read back by a new ground with this ruts_time_scale (weeks away)
@@ -215,10 +218,11 @@ func _ready() -> void:
 			far_grass = 2 if a == "--far-grass=off" else (3 if a == "--far-grass=rings" else 1)
 			farmland = true
 			SIZE = 640.0
-		elif a == "--ruts" or a.begins_with("--ruts=aged") or a == "--ruts=mud":
+		elif a == "--ruts" or a.begins_with("--ruts=aged") or a == "--ruts=mud" or a == "--ruts=worn":
 			ruts_view = true
 			close = true
 			ruts_mud = a == "--ruts=mud"
+			ruts_worn = a == "--ruts=worn"
 			if a.begins_with("--ruts=aged"):
 				ruts_aged = 6e5 if a == "--ruts=aged" else float(a.substr(12))
 		elif a == "--forest": forest = true
@@ -2230,7 +2234,15 @@ func _process(dt: float) -> void:
 		for i in 800:
 			grass.update_at(cam.global_position)
 			(get_node("Meadow") as GrassField3D).update_at(cam.global_position)
-	if ruts_view and n == 6:
+	if ruts_worn and n == 6:
+		# A worn-in track instead (mud round 14.2): two wheel lines 1.6 m apart, no ruts pressed, worn by 60 wheel
+		# passes nearest the eye down to 2 passes 6 m away.
+		for side in [0.2, 1.8]:
+			for k in 14:
+				var z := 16.0 - k * 0.45
+				var x: float = side - 0.08 * k
+				ruts_ground.add_wear(Vector3(x, 0, z), Vector2(0.3, 0.5), 0.17, 60.0 * pow(2.0 / 60.0, k / 13.0))
+	elif ruts_view and n == 6:
 		# A pair of tyre ruts 1.6 m apart running away from the eye, 8 cm deep.
 		for side in [0.2, 1.8]:
 			for k in 12:

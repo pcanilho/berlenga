@@ -34,6 +34,7 @@
 #include "rock_moss.h"
 
 #include "modules/world/world_contracts.h"
+#include "modules/world/world_walker_steps.h"
 
 #include "core/math/random_pcg.h"
 #include "core/object/worker_thread_pool.h"
@@ -554,6 +555,13 @@ private:
 	};
 	LocalVector<Loose> loose;
 	HashMap<ObjectID, Vector3> react_last; // contact bodies' last centres (their speed when they are not physics bodies)
+	WorldWalkerSteps react_walkers; // characters' footfalls (they press their soles, not their body shapes)
+	struct ReactPress { // what one contact presses this frame
+		Vector3 center, vel;
+		float bottom = 0.0f, foot = 0.0f, hu = 0.0f, hw = 0.0f;
+		Vector2 fu, fv;
+		bool oval = false, wheel = false;
+	};
 	uint64_t react_promoted = 0, react_shoved = 0, react_pressed = 0, react_settled = 0;
 	void _update_react(double p_delta);
 	void _free_loose(uint32_t p_index);

@@ -368,6 +368,20 @@ private:
 	void _date_palm_trunk(Builder &r_bark, int p_trunk_first, int p_trunk_last);
 	void _palm_geometry(Builder &r_bark, Builder &r_leaves);
 	LocalVector<float> node_drag; // m2 of effective frontal area per node (wood and foliage).
+	// Snow caps (trees.md 5al): one site per needle brush that lies level enough to hold snow.
+	struct CapSite {
+		int node = 0;
+		Vector3 center; // Middle of the brush's top (tree space).
+		Vector3 along; // Horizontal, out along the brush.
+		float slope = 0.0f; // Rise per metre along `along`.
+		float length = 0.0f;
+		float half_width = 0.0f;
+		uint32_t seed = 0;
+	};
+	LocalVector<CapSite> cap_sites;
+	mutable Ref<StandardMaterial3D> cap_material;
+	Array _snow_cap_meshes(const LocalVector<CapSite> &p_sites) const;
+	LocalVector<CapSite> _merged_cap_sites() const;
 	LocalVector<float> node_mass; // kg per node.
 	LocalVector<float> axis_offset; // Per node: arc length from its axis start to the node's start.
 	HashMap<int, Vector2> stem_segments; // Stem axis -> (segments, segment length).

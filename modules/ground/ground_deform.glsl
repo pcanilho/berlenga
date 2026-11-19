@@ -22,6 +22,8 @@
 #define MODE_WATER_ERODE 12
 #define MODE_WATER_SED 13
 #define MODE_DRIFT_GIVE 14
+#define MODE_MUD_FLUX 15
+#define MODE_MUD_DEPTH 16
 
 #define STAMP_BOX 1u
 #define STAMP_ROUND 2u
@@ -67,6 +69,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 stir[8]; // clay stirred into standing water this step (stir_water, wade.z of them): x, z, radius, kg/m2 a pass
 	vec4 turbid; // muddy water (mud round 3): on (1), settling m a substep second, tyre churn kg/m2, most kg/m3
 	vec4 drift; // wind filling prints (drift_give()): wind direction x, z, Courant number this ageing, even fade's share kept
+	vec4 mudwave; // waves in liquid mud (mud round 14): on (1), substep s, unused, unused
 }
 params;
 
@@ -127,6 +130,11 @@ layout(set = 0, binding = 12, std430) restrict buffer Water {
 };
 layout(set = 0, binding = 13, std430) restrict buffer WaterTmp {
 	float water_tmp[]; // the shifted depth, copied back by MODE_WATER_COPY; then the faces' discharges (water_face()); then the shifted clay; then the shifted regrowth; then the runoff's soil concentration (water_susp())
+};
+// Waves in liquid mud (ground only): per texel the mud layer's unit discharges through its +x and +z faces, m2/s,
+// kept from step to step (xy), and the new ones of this substep (zw) (mud_flux()).
+layout(set = 0, binding = 15, std430) restrict buffer MudFlow {
+	vec4 mudf[];
 };
 layout(set = 0, binding = 14, std430) restrict buffer Ledger {
 	uint ledger[4]; // add_water's discs, mm3 (cumulative): [0] takes could not find, [1] added, [2] taken
@@ -878,7 +886,12 @@ bool slump_params(vec2 p, out float tan_r, out float rate, out float max_dent, o
 	tan_r = m.y;
 	rate = m.z;
 	max_dent = m.w;
-	slide = ground_cell(p, 3).x;
+	vec4 c3 = ground_cell(p, 3);
+	slide = c3.x;
+	// Liquid mud moves by its own waves (mud_flux()), not by slumping.
+	if (params.mudwave.x > 0.5 && c3.w > 0.0) {
+		return false;
+	}
 	return true;
 }
 
@@ -1684,6 +1697,114 @@ void drift_give(int x, int z) {
 	give[i] = g;
 }
 
+// Waves in liquid mud (docs/ideas/mud.md, round 14.1). Slurry is a Bingham fluid with inertia: at a vehicle's speed
+// its Reynolds number rho U h / mu is of order 100, so what a tyre or a belly shoves aside runs off as a wave that the
+// yield stress and the viscosity damp, and the rut closes behind with a slosh rather than a creep. The layer over its
+// firm base is a shallow Bingham flow: the local inertial shallow water equations (Bates, Horritt and Fewtrell 2010)
+// with the plug's bed stress, the yield stress plus the laminar viscous term tau_b = tau_y + 3 mu u / h (Huang and
+// Garcia 1998, Herschel-Bulkley mud on a slope; FLO-2D's quadratic rheology, O'Brien et al. 1993, without its
+// turbulent part): each face's unit discharge q gains g h dt (d eta / l), loses the yield's tau_y / rho dt (never past
+// zero: the plug stands), and its viscous part is taken semi-implicitly. A layer stands where g h S < tau_y / rho,
+// the same critical slope the slumping kept (round 1) and slides use (round 10). Only mud the cells mark liquid
+// (cover cell 3: z tau_y / rho, w mu / rho, 0 for stiff mud and plain ground); firm ground is a wall.
+bool mud_liquid(vec2 p, out float tau, out float nu, out float max_dent) {
+	vec4 c3 = ground_cell(p, 3);
+	tau = c3.z;
+	nu = c3.w;
+	max_dent = ground_cell(p, 0).w;
+	return nu > 0.0 && ground_cell(p, 1).w > 0.5;
+}
+
+// The mud layer's thickness over its firm base at a texel (the deepest dent below the undisturbed ground, plus rim).
+float mud_layer(float p_max_dent, vec4 p_st) {
+	return max(p_max_dent - p_st.x + p_st.y, 0.0);
+}
+
+// One face's unit discharge, m2/s, from texel a to texel b (b = a + 1 or a + n), its old value q, and the old values of
+// the faces before and after it on the same line (de Almeida, Bates, Freer and Souvignet 2012: the theta weighting
+// damps the local inertial scheme's checkerboard where little friction holds it).
+float mud_face(int n, ivec2 a, ivec2 b, float q, float q_before, float q_after) {
+	if (b.x >= n - 1 || b.y >= n - 1) {
+		return 0.0; // the field's border is a wall (mud_depth() leaves it as it is)
+	}
+	vec2 ap = texel_world(a.x, a.y);
+	vec2 bp = texel_world(b.x, b.y);
+	float ta;
+	float na;
+	float ma;
+	float tb;
+	float nb;
+	float mb;
+	if (!mud_liquid(ap, ta, na, ma) || !mud_liquid(bp, tb, nb, mb)) {
+		return 0.0; // firm ground and stiff mud are walls
+	}
+	vec4 sa = state[a.y * n + a.x];
+	vec4 sb = state[b.y * n + b.x];
+	float ga = ground_at(ap);
+	float gb = ground_at(bp);
+	float ea = ga + sa.y - sa.x;
+	float eb = gb + sb.y - sb.x;
+	// Bates et al. 2010: the flow depth at the face, the higher surface over the higher base.
+	float h = max(ea, eb) - max(ga - ma, gb - mb);
+	if (h < 0.01) {
+		return 0.0;
+	}
+	float dt = params.mudwave.y;
+	float l = texel();
+	const float THETA = 0.8;
+	float qt = THETA * q + 0.5 * (1.0 - THETA) * (q_before + q_after) - dt * WATER_G * h * (eb - ea) / l;
+	// The plug stands until its weight down the slope passes the yield stress, and the stress never reverses it.
+	qt = sign(qt) * max(abs(qt) - dt * 0.5 * (ta + tb), 0.0);
+	qt /= 1.0 + dt * 1.5 * (na + nb) / (h * h);
+	// No texel sends more than a quarter of its layer through one face in a substep.
+	float hs = qt > 0.0 ? mud_layer(ma, sa) : mud_layer(mb, sb);
+	return clamp(qt, -0.25 * hs * l / dt, 0.25 * hs * l / dt);
+}
+
+// Waves in liquid mud: the discharges through each texel's +x and +z faces (mudf .zw from the old .xy).
+void mud_flux(int x, int z) {
+	int n = fn();
+	int i = z * n + x;
+	vec4 f = mudf[i];
+	if (x < 1 || z < 1 || x >= n - 1 || z >= n - 1) {
+		mudf[i] = vec4(f.xy, 0.0, 0.0);
+		return;
+	}
+	float qx = mud_face(n, ivec2(x, z), ivec2(x + 1, z), f.x, mudf[i - 1].x, mudf[i + 1].x);
+	float qz = mud_face(n, ivec2(x, z), ivec2(x, z + 1), f.y, mudf[i - n].y, mudf[i + n].y);
+	mudf[i] = vec4(f.xy, qx, qz);
+}
+
+void mud_depth(int x, int z) {
+	int n = fn();
+	int i = z * n + x;
+	vec4 f = mudf[i];
+	if (x < 1 || z < 1 || x >= n - 1 || z >= n - 1) {
+		mudf[i] = vec4(f.zw, f.zw);
+		return;
+	}
+	float dv = (mudf[i - 1].z - f.z + mudf[i - n].w - f.w) * params.mudwave.y / texel();
+	mudf[i] = vec4(f.zw, f.zw);
+	if (abs(dv) < 1e-7) {
+		return;
+	}
+	vec4 st = state[i];
+	if (dv > 0.0) {
+		// Mud arriving fills a hollow pressed here first, then stands on top.
+		float fill = min(st.x, dv);
+		st.x -= fill;
+		st.y += dv - fill;
+	} else {
+		// Mud leaving takes what stands on top first, then lowers the surface toward the base.
+		float take = min(st.y, -dv);
+		st.y -= take;
+		st.x += -dv - take;
+	}
+	// Moving ground is fresh and keeps its slumping owed, so it settles on as the field ages it.
+	st.z = max(st.z, 1.0);
+	state[i] = st;
+}
+
 void main() {
 	int n = fn();
 	uint gid = gl_GlobalInvocationID.x;
@@ -1744,7 +1865,11 @@ void main() {
 	int x = int(gid) % n;
 	int z = int(gid) / n;
 	int i = int(gid);
-	if (push.mode == MODE_WATER_FLUX) {
+	if (push.mode == MODE_MUD_FLUX) {
+		mud_flux(x, z);
+	} else if (push.mode == MODE_MUD_DEPTH) {
+		mud_depth(x, z);
+	} else if (push.mode == MODE_WATER_FLUX) {
 		water_flux(x, z);
 	} else if (push.mode == MODE_WATER_DEPTH) {
 		water_depth(x, z);

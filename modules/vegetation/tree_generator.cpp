@@ -4799,6 +4799,233 @@ void TreeGenerator::_add_spray(Builder &r_b, const Vector3 &p_base, const Vector
 	}
 }
 
+// Snow caps (trees.md 5al): the pillows snow builds on level conifer brushes, as real geometry so the path tracer
+// keeps them. Three meshes for a light, a full and a heavy load (TreeWind3D picks one per tree from the canopy's load
+// over its capacity, as the crown whitening reads it), each a lofted pad (3 across, 4-9 along) per shoot skinned to its
+// bone: domed across and along (a cohesive pillow, its edges tucked into the needles), its height and outline
+// varied per site so no two lie alike. Light snow sits on the bigger, flatter brushes only (Pomeroy and Gray
+// 1995: new snow bridges the gaps between needles first where they are densest).
+// The brushes of a branch carry pillows along it, one per 60 cm tile of the fan they spread (by bone, the shoots'
+// heading in eight sectors and their distance out from the bone's base): snow bridges the gaps between brushes
+// (Pomeroy and Gray 1995), and a pad per brush cost more vertices than the tree.
+LocalVector<TreeGenerator::CapSite> TreeGenerator::_merged_cap_sites() const {
+	HashMap<uint64_t, int> by_key;
+	LocalVector<CapSite> out;
+	LocalVector<Vector2> span; // Per merged site: min and max along its axis.
+	LocalVector<float> reach; // Per merged site: furthest brush edge off its axis.
+	LocalVector<Vector3> sum;
+	LocalVector<Vector3> heading;
+	LocalVector<int> count;
+	const float tile = 0.6f;
+	for (const CapSite &cs : cap_sites) {
+		const int bone = cs.node < int(node_bone.size()) ? node_bone[cs.node] : 0;
+		const Vector3 pivot = bone < int(rig.size()) ? rig[bone].pivot : Vector3();
+		const float ang = Math::atan2(cs.along.z, cs.along.x);
+		const int sector = int(Math::floor((ang + float(Math::PI)) / float(Math::TAU) * 8.0f)) & 7;
+		const Vector3 off = cs.center - pivot;
+		const int ring = int(Math::floor(Vector2(off.x, off.z).length() / tile));
+		const uint64_t key = (uint64_t(bone) << 20) | (uint64_t(sector) << 16) | uint64_t(ring & 0xffff);
+		int *at = by_key.getptr(key);
+		if (!at) {
+			by_key.insert(key, out.size());
+			out.push_back(cs);
+			span.push_back(Vector2(-cs.length * 0.5f, cs.length * 0.5f));
+			reach.push_back(cs.half_width);
+			sum.push_back(cs.center);
+			heading.push_back(cs.along);
+			count.push_back(1);
+			continue;
+		}
+		sum[*at] += cs.center;
+		heading[*at] += cs.along;
+		count[*at]++;
+	}
+	// Second pass: each tile's extent along and across its mean heading.
+	for (uint32_t i = 0; i < out.size(); i++) {
+		const Vector3 h = heading[i].length_squared() > 1e-6f ? heading[i].normalized() : out[i].along;
+		out[i].along = h;
+		out[i].center = sum[i] / float(count[i]);
+		span[i] = Vector2(1e9f, -1e9f);
+		reach[i] = 0.0f;
+	}
+	LocalVector<float> slopes;
+	slopes.resize(out.size());
+	for (uint32_t i = 0; i < out.size(); i++) {
+		slopes[i] = 0.0f;
+	}
+	for (const CapSite &cs : cap_sites) {
+		const int bone = cs.node < int(node_bone.size()) ? node_bone[cs.node] : 0;
+		const Vector3 pivot = bone < int(rig.size()) ? rig[bone].pivot : Vector3();
+		const float ang = Math::atan2(cs.along.z, cs.along.x);
+		const int sector = int(Math::floor((ang + float(Math::PI)) / float(Math::TAU) * 8.0f)) & 7;
+		const Vector3 off = cs.center - pivot;
+		const int ring = int(Math::floor(Vector2(off.x, off.z).length() / tile));
+		const uint64_t key = (uint64_t(bone) << 20) | (uint64_t(sector) << 16) | uint64_t(ring & 0xffff);
+		const int at = by_key[key];
+		const CapSite &m = out[at];
+		const Vector3 d = cs.center - m.center;
+		const Vector3 side = Vector3(0, 1, 0).cross(m.along).normalized();
+		const float t = d.dot(m.along);
+		span[at].x = MIN(span[at].x, t - cs.length * 0.3f);
+		span[at].y = MAX(span[at].y, t + cs.length * 0.3f);
+		reach[at] = MAX(reach[at], Math::abs(d.dot(side)) + cs.half_width * 0.5f);
+		slopes[at] += cs.slope;
+	}
+	LocalVector<CapSite> kept;
+	for (uint32_t i = 0; i < out.size(); i++) {
+		CapSite m = out[i];
+		const float mid = (span[i].x + span[i].y) * 0.5f;
+		m.length = MIN(span[i].y - span[i].x, tile * 1.4f);
+		// The pillow spans the brushes' spread across the tile, at most 90 cm (a cohesive cushion).
+		m.half_width = CLAMP(reach[i], 0.06f, 0.45f);
+		m.slope = slopes[i] / float(count[i]);
+		// A tile with few brushes is the bare inside of the crown (spruce sheds its shaded needles): no pillow.
+		if (m.length < 0.2f || count[i] < 4) {
+			continue;
+		}
+		m.center += m.along * mid + Vector3(0.0f, m.slope * mid, 0.0f);
+		kept.push_back(m);
+	}
+	return kept;
+}
+
+Array TreeGenerator::_snow_cap_meshes(const LocalVector<CapSite> &p_sites) const {
+	Array out;
+	if (p_sites.is_empty()) {
+		return out;
+	}
+	// One material for all of this generator's caps (one batch across its trees and variants).
+	if (cap_material.is_null()) {
+	Ref<StandardMaterial3D> mat;
+	mat.instantiate();
+	mat->set_name("snow_cap");
+	// Fresh snow: albedo about 0.9 in the visible, rough and a little translucent (Warren 1982).
+	mat->set_albedo(Color(0.9f, 0.91f, 0.93f));
+	mat->set_roughness(0.8f);
+	mat->set_specular(0.3f);
+	// Top side only: from below the needles under a pillow show, as they do (the pad's underside is not snow seen).
+	mat->set_cull_mode(BaseMaterial3D::CULL_BACK);
+	mat->set_feature(BaseMaterial3D::FEATURE_SUBSURFACE_SCATTERING, true);
+	mat->set_subsurface_scattering_strength(0.25f);
+	if (rigged) {
+		// Skinned per instance from TreeWind3D's bone records, read as particle trails (the trees' own path).
+		mat->set_flag(BaseMaterial3D::FLAG_PARTICLE_TRAILS_MODE, true);
+	}
+	cap_material = mat;
+	}
+	const Ref<StandardMaterial3D> mat = cap_material;
+	const float heights[3] = { 0.025f, 0.06f, 0.12f };
+	const float widths[3] = { 0.5f, 0.65f, 0.8f };
+	for (int level = 0; level < 3; level++) {
+		PackedVector3Array verts;
+		PackedVector3Array normals;
+		PackedVector2Array uvs;
+		PackedInt32Array idx;
+		PackedInt32Array bones;
+		PackedFloat32Array weights;
+		for (const CapSite &cs : p_sites) {
+			RandomPCG r;
+			r.seed(uint64_t(cs.seed) * 0x9e3779b97f4a7c15ull + 1u);
+			const float pick = r.randf();
+			const float size_jit = 0.8f + 0.4f * r.randf();
+			if (level == 0 && (pick > 0.55f || cs.length < 0.15f)) {
+				continue;
+			}
+			const float hgt = heights[level] * (0.7f + 0.6f * r.randf()) * MIN(1.0f, cs.length / 0.4f + 0.3f);
+			const float len = cs.length * size_jit;
+			const float wid = cs.half_width * widths[level] * (0.85f + 0.3f * r.randf());
+			const Vector3 side = Vector3(0, 1, 0).cross(cs.along).normalized();
+			const int bone = cs.node < int(node_bone.size()) ? node_bone[cs.node] : 0;
+			const int base = verts.size();
+			// An elliptical cushion: a raised middle, an inner ring at 55% and a ragged outer rim tucked into the
+			// needles, its radius varied by two low harmonics with random phases (no two outlines alike).
+			const int SEG = 12;
+			const float ph1 = r.randf() * float(Math::TAU);
+			const float ph2 = r.randf() * float(Math::TAU);
+			const float a1 = 0.12f + 0.1f * r.randf();
+			const float a2 = 0.06f + 0.08f * r.randf();
+			const Vector2 crest(0.15f * (r.randf() - 0.5f), 0.3f * (r.randf() - 0.5f)); // Off-centre ridge.
+			auto place = [&](float p_u, float p_v, float p_h) {
+				const float uu = p_u * 0.5f * len;
+				verts.push_back(cs.center + cs.along * uu + side * (p_v * wid) + Vector3(0.0f, uu * cs.slope + p_h, 0.0f));
+				uvs.push_back(Vector2((p_u + 1.0f) * 0.5f, (p_v + 1.0f) * 0.5f));
+				normals.push_back(Vector3(0, 1, 0));
+				bones.push_back(bone);
+				bones.push_back(0);
+				bones.push_back(0);
+				bones.push_back(0);
+				weights.push_back(1.0f);
+				weights.push_back(0.0f);
+				weights.push_back(0.0f);
+				weights.push_back(0.0f);
+			};
+			place(crest.x, crest.y, hgt);
+			for (int ring = 1; ring <= 2; ring++) {
+				for (int k = 0; k < SEG; k++) {
+					const float th = float(Math::TAU) * k / SEG;
+					const float rr = 1.0f + a1 * Math::sin(2.0f * th + ph1) + a2 * Math::sin(3.0f * th + ph2);
+					const float f = ring == 1 ? 0.55f : 1.0f;
+					const float u = Math::cos(th) * rr * f;
+					const float v = Math::sin(th) * rr * f;
+					const float h = ring == 1 ? hgt * (0.75f + 0.25f * r.randf()) : -MIN(0.2f * wid, 0.03f);
+					place(u + crest.x * (1.0f - f), v + crest.y * (1.0f - f), h);
+				}
+			}
+			for (int k = 0; k < SEG; k++) {
+				const int k1 = (k + 1) % SEG;
+				// Clockwise seen from above (Godot's front face), the cushion's top.
+				idx.push_back(base);
+				idx.push_back(base + 1 + k1);
+				idx.push_back(base + 1 + k);
+				idx.push_back(base + 1 + k);
+				idx.push_back(base + 1 + k1);
+				idx.push_back(base + 1 + SEG + k);
+				idx.push_back(base + 1 + SEG + k);
+				idx.push_back(base + 1 + k1);
+				idx.push_back(base + 1 + SEG + k1);
+			}
+			// Smooth normals: the area-weighted faces round each vertex.
+			Vector3 *vw = verts.ptrw();
+			Vector3 *nw = normals.ptrw();
+			const int nv = 1 + 2 * SEG;
+			for (int v = 0; v < nv; v++) {
+				nw[base + v] = Vector3();
+			}
+			const int *iw = idx.ptr();
+			for (int t = idx.size() - 9 * SEG; t < idx.size(); t += 3) {
+				const Vector3 fn = (vw[iw[t + 1]] - vw[iw[t]]).cross(vw[iw[t + 2]] - vw[iw[t]]);
+				for (int q = 0; q < 3; q++) {
+					nw[iw[t + q]] += fn;
+				}
+			}
+			for (int v = 0; v < nv; v++) {
+				Vector3 n = nw[base + v];
+				if (n.y < 0.0f) {
+					n = -n;
+				}
+				nw[base + v] = n.length_squared() > 1e-12f ? n.normalized() : Vector3(0, 1, 0);
+			}
+		}
+		Ref<ArrayMesh> m;
+		m.instantiate();
+		if (!idx.is_empty()) {
+			Array arrays;
+			arrays.resize(Mesh::ARRAY_MAX);
+			arrays[Mesh::ARRAY_VERTEX] = verts;
+			arrays[Mesh::ARRAY_NORMAL] = normals;
+			arrays[Mesh::ARRAY_TEX_UV] = uvs;
+			arrays[Mesh::ARRAY_INDEX] = idx;
+			arrays[Mesh::ARRAY_BONES] = bones;
+			arrays[Mesh::ARRAY_WEIGHTS] = weights;
+			m->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+			m->surface_set_material(0, mat);
+			m->surface_set_name(0, "snow_cap");
+		}
+		out.push_back(m);
+	}
+	return out;
+}
+
 // The needle image: a twig up the middle and needles leaving it forward at about 50 degrees on
 // both sides. Mipmaps keep the needle coverage of the full image (Castano, "Computing Alpha
 // Mipmaps", 2010), so sprays do not fade to bare twigs at distance.
@@ -14876,6 +15103,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	Builder moss;
 	moss.use_tangents = true;
 	leaf_count = 0;
+	cap_sites.clear();
 	supports.clear();
 	climber_leaves.clear();
 	leaf_twins = Builder();
@@ -18268,6 +18496,22 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						leaves.end(part, 0.0f);
 					}
 					leaf_count += per_brush;
+					// Snow lies on a brush that is near level (Schmidt and Gluns 1991: interception falls off
+					// steeply as branches tilt past some 40 degrees); upright leaders shed it.
+					// The shoot, not the brush, sets the pillow's line: brushes leave it to both sides.
+					const Vector3 hz(n.dir.x, 0.0f, n.dir.z);
+					if (rigged && hz.length() > 0.9f) {
+						CapSite cs;
+						cs.node = int(i);
+						cs.along = hz.normalized();
+						cs.slope = n.dir.y / hz.length();
+						cs.length = (blen + size * 0.5f) * 0.75f;
+						cs.half_width = half * 0.8f;
+						// On the needle tops: the crossed spray reaches about half its width above the twig.
+						cs.center = b0 + bdir * ((blen + size * 0.5f) * 0.5f) + Vector3(0.0f, half * 0.45f, 0.0f);
+						cs.seed = uint32_t(i) * 2654435761u + uint32_t(sh) * 40503u + uint32_t(seed);
+						cap_sites.push_back(cs);
+					}
 				}
 				// The brush as a bottle-brush silhouette, for the wind rig.
 				const float shoot = (blen + size * 0.5f) * size * 1.6f;
@@ -19071,6 +19315,19 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		mesh->set_meta(SNAME("tree_rig"), _rig_data());
 		// The crown's spread (95th percentile of the leaves' reach), for the snow it holds (TreeWind3D; trees.md 5al).
 		mesh->set_meta(SNAME("tree_crown_radius"), crown_radius);
+		const LocalVector<CapSite> merged = _merged_cap_sites();
+		if (!merged.is_empty()) {
+			mesh->set_meta(SNAME("tree_snow_caps"), _snow_cap_meshes(merged));
+			// Where the caps lie (bone, x, y, z per site, tree space): TreeWind3D drops clumps from them.
+			PackedFloat32Array sites;
+			for (const CapSite &cs : merged) {
+				sites.push_back(float(cs.node < int(node_bone.size()) ? node_bone[cs.node] : 0));
+				sites.push_back(cs.center.x);
+				sites.push_back(cs.center.y);
+				sites.push_back(cs.center.z);
+			}
+			mesh->set_meta(SNAME("tree_snow_cap_sites"), sites);
+		}
 		{
 			// The share of its foliage the tree carries in this mesh's season (1 evergreen or in full leaf).
 			const LeafSeason fls = _leaf_season(preset, season);
@@ -20780,6 +21037,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	leaflet_texture = p_from.leaflet_texture;
 	leaflet_entire_texture = p_from.leaflet_entire_texture;
 	spray_texture = p_from.spray_texture;
+	cap_material = p_from.cap_material;
 	for (int i = 0; i < BARK_MAX; i++) {
 		bark_sets[i] = p_from.bark_sets[i];
 	}

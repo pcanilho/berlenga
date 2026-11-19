@@ -78,6 +78,10 @@ public:
 		// Mud slides (docs/ideas/mud.md, round 10): the mud's yield stress over its weight, tau_y / (rho g), m; a
 		// layer h deep holds on ground up to slide_length / h steep, past it flows down (1e3: holds anywhere).
 		float slide_length = 1e3f;
+		// Waves in liquid mud (round 14.1): the layer's yield stress and viscosity over its density, m2/s2 and m2/s
+		// (wave_nu 0: not liquid, it slumps).
+		float wave_tau = 0.0f;
+		float wave_nu = 0.0f;
 		// Gullies (round 11): the bed shear runoff needs to start cutting the ground, Pa (sand 0.19, Shields).
 		float crit_shear = 0.19f;
 		float darken = 0.3f; // albedo lost where freshly turned
@@ -135,10 +139,54 @@ private:
 	// most mud_auto_depth). It counts only when wet: none below mud_wet_start moisture, all at mud_wet_full.
 	bool mud_layer = true;
 	bool mud_slides = true; // round 10: a soaked layer flows off slopes it no longer holds
+	bool mud_waves = true; // round 14.1: liquid mud runs as a shallow Bingham flow (bow waves, rut closing)
+	bool mud_liquid_any = false;
 	bool simulation_paused = false;
 	bool light_budget = false; // still shots: smaller GPU fields and tile cache
 	bool subsoil = true; // round 12: a firm base under the loose layer, its depth varied across the ground
 	HashMap<Vector2i, float> mud_deposits; // m of fresh slurry per 1 m cell (debris flows' fans, flood silt)
+	// Worn-in tracks (docs/ideas/mud.md, round 14.2): the wheel passes each 25 cm cell has taken, decaying as the
+	// sward regrows and the soil loosens, and when it was last pressed (a pass starts when a cell pressed is not
+	// already under a wheel).
+	struct Wear {
+		float passes = 0.0f;
+		double last = -1e9;
+	};
+	static constexpr float WEAR_CELL = 0.25f;
+	static constexpr float WEAR_GAP = 0.25f; // s a cell must go unpressed before the next press is a new pass
+	HashMap<Vector2i, Wear> wear_cells;
+	// Hidden stones and roots (docs/ideas/mud.md, round 14.3): what lies in a mud layer, per 2 m cell, made on demand
+	// from the cell's hash; a stone a sphere (a == b), a root a capsule from a to b; y's are absolute.
+	struct Buried {
+		Vector3 a;
+		Vector3 b;
+		float r = 0.1f;
+		bool root = false;
+		uint32_t id = 0;
+	};
+	static constexpr float BURIED_CELL = 2.0f;
+	bool buried_obstacles = true;
+	float buried_density = 0.05f; // per m2 of deep mud
+	float buried_body_range = 16.0f;
+	mutable HashMap<Vector2i, LocalVector<Buried>> buried_cache;
+	HashMap<uint32_t, ObjectID> buried_bodies;
+	double buried_accum = 0.0;
+	const LocalVector<Buried> &_buried_cell(const Vector2i &p_cell) const;
+	float _buried_depth(const Vector3 &p_position, float p_radius) const;
+	void _buried_update();
+	void _buried_clear_bodies();
+	Ref<ArrayMesh> buried_meshes[6]; // four stones, two roots
+	Ref<Material> buried_materials[2];
+	Ref<ArrayMesh> _buried_mesh(bool p_root, uint32_t p_seed);
+	bool worn_tracks = true;
+	float wear_regrowth_days = 30.0f;
+	double wear_clock = 0.0;
+	bool wear_dirty = false;
+	Vector2i wear_origin = Vector2i(INT32_MAX, INT32_MAX);
+	Ref<ImageTexture> wear_texture;
+	void _wear_press(const Vector3 &p_position, const Vector2 &p_half, float p_yaw);
+	void _wear_update(double p_delta);
+	void _wear_publish();
 	HashMap<Vector2i, Color> mud_deposit_colors; // its linear colour where the depositor gave one (alpha: cover)
 	Color _deposit_color_at(float p_x, float p_z) const; // premultiplied by cover, bilinear between cell centres
 	bool flood_silt = true; // other water over the ground leaves its suspended load as fresh mud
@@ -422,6 +470,7 @@ private:
 	float _runoff_seep(int p_i) const;
 	bool runoff_seep_any = false; // some lattice cell seeps (GPU runoff)
 	void _gpu_submit(double p_delta, double p_age, bool p_readback, bool p_sync);
+	int _mud_wave_passes(const GroundDeformField &p_field, double p_delta) const;
 	void _gpu_submit_field(GroundDeformGPUHost &r_host, const GroundDeformField &p_field, bool &r_ground_dirty, bool &r_cells_dirty, double &r_slow_accum, int p_passes, float p_edge_margin, double p_delta, double p_age, bool p_readback, bool p_sync);
 	void _gpu_take();
 	void _gpu_release();
@@ -488,6 +537,7 @@ private:
 		bool fixed = false; // rock or snow: never deforms
 		float frozen = 0.0f; // frozen soil at the surface (round 8): 0..1, how far it holds as a crust
 		float repel = 0.0f; // a fire's water repellency (WorldFire.water_repellency_at), 0..1
+		float compacted = 0.0f; // worn-in tracks (round 14.2): how far the passes have packed the soil, 0..1
 	};
 	LocalVector<CellInput> cell_inputs;
 	float _water_conductivity(const CellInput &p_in) const;
@@ -894,6 +944,22 @@ public:
 	bool is_mud_layer() const { return mud_layer; }
 	void set_mud_slides(bool p_enabled);
 	bool is_mud_slides() const { return mud_slides; }
+	void set_buried_obstacles(bool p_enabled);
+	bool is_buried_obstacles() const { return buried_obstacles; }
+	void set_buried_density(float p_density);
+	float get_buried_density() const { return buried_density; }
+	float get_buried_depth_at(Vector3 p_position, float p_radius = 0.1f) const;
+	Array get_buried_near(Vector3 p_position, float p_radius) const;
+	void set_worn_tracks(bool p_enabled);
+	bool is_worn_tracks() const { return worn_tracks; }
+	void set_wear_regrowth_days(float p_days);
+	float get_wear_regrowth_days() const { return wear_regrowth_days; }
+	float get_wear_at(Vector3 p_position) const;
+	void add_wear(Vector3 p_position, Vector2 p_size, float p_yaw, float p_passes);
+	void clear_wear();
+	static float wear_compaction(float p_passes);
+	void set_mud_waves(bool p_enabled);
+	bool is_mud_waves() const { return mud_waves; }
 	void set_simulation_paused(bool p_paused) { simulation_paused = p_paused; }
 	bool is_simulation_paused() const { return simulation_paused; }
 	void set_light_budget(bool p_light);

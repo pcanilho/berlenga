@@ -132,6 +132,7 @@ var worn_paths: Array = [] # --worn-path: {points, width, passes} shared by the 
 var cover: VegetationField3D # meadow herbs and waterside plants near the camera
 var prints: GroundSurface3D
 var prints_probe: Node3D
+var slip_walk: PackedVector3Array # --view=slipface: the walk across the slip face (start, end, along, fall)
 var sun: DirectionalLight3D
 var boulder_obstacles := PackedVector4Array() # (x, ground y, z, radius at the soil) for the plant fields
 var boulder_spot := Vector3.ZERO
@@ -401,8 +402,12 @@ func _ready() -> void:
 	if args.get("prints", "1") != "0":
 		_build_prints()
 	_build_camera()
+	if clock != null:
+		_log("sun altitude %.1f deg, azimuth %.1f deg" % [clock.get_sun_altitude(), clock.get_sun_azimuth()])
 	if args.has("worn-path"):
 		_build_worn_path()
+	if args.has("farm-track") and prints != null and prints.has_method("add_wear"):
+		_build_farm_track()
 	if args.get("plants", "1") != "0":
 		_build_cover()
 	_build_mist_pollen()
@@ -712,6 +717,8 @@ func _ready() -> void:
 		await _campfire()
 	if args.has("hut"):
 		await _hut()
+	if slip_walk.size() == 4 and prints != null:
+		await _slip_walk()
 	if (args.has("face-sun") or args.has("face-away")) and sun != null:
 		# --face-sun=PITCH: turn the camera to the sun's azimuth, PITCH degrees below the horizon (godray shots).
 		var cam5: Camera3D = get_viewport().get_camera_3d()
@@ -2955,6 +2962,7 @@ func _run_weather() -> void:
 		for probe in [Vector3(500, 0, 0), Vector3(-500, 0, 0), Vector3(0, 0, 500), Vector3(0, 0, -500)]:
 			_log("smoke: optical depth %.2f at camera %s" % [float(weather.call("get_smoke_optical_depth_at", cpos + probe)), str(probe)])
 		_log("smoke: optical depth %.2f over the camera, %.3f g/m2, haze %s" % [float(weather.call("get_smoke_optical_depth_at", cpos)), float(weather.call("get_smoke_at", cpos)), str(weather.get("smoke_haze"))])
+		_log("smoke: aerosol haze %s /m at the camera after the smoke" % str(weather.get_precipitation_extinction_at(cpos)))
 		hours = 0.0
 	for k in int(hours):
 		weather.advance(3600.0)
@@ -3045,7 +3053,7 @@ func _build_vegetation() -> void:
 	biome.species = [conifer, broad]
 	var generated_trees: bool = args.get("trees", "cones") == "generated"
 	if generated_trees:
-		biome = _generated_forest(args.get("layout", "range") == "valley")
+		biome = _generated_forest(args.get("layout", "range") == "valley" and not args.has("montado"))
 	veg = VegetationField3D.new()
 	veg.name = "Forest"
 	veg.biome = biome
@@ -3108,10 +3116,23 @@ func _build_vegetation() -> void:
 	grass.radius = float(args.get("grass-radius", "40"))
 	if "still_shot" in grass:
 		grass.set("still_shot", args.get("still-shot", "1") != "0") # settle once, then stop streaming (cloud memory); --still-shot=0 for clips
+	if args.has("montado"):
+		# The montado's summer sward (as the vegetation bench's _floor_view): sparse tall dry blades in clumps,
+		# straw tips over a brown base, thinning under the crowns through canopy_field (the forest field).
+		grass.density = float(args.get("sward-density", "90"))
+		grass.blade_height = Vector2(0.2, 0.45)
+		grass.clump_size = 0.6
+		grass.dryness = 0.85
+		grass.base_color = Color(0.32, 0.27, 0.13)
+		grass.tip_color = Color(0.78, 0.66, 0.38)
+		grass.ground_tint = Color(0.2, 0.16, 0.08, 1.0) # canopy_field: set with the rest of the sward below
 	if args.get("summer-dry", "0") != "0" and "season_source" in grass and weather != null:
 		grass.set("season_source", grass.get_path_to(weather)) # --summer-dry: the meadow browns with the season (a dry summer)
 	if args.has("far-rings"):
 		grass.set("far_rings", args["far-rings"] != "0") # --far-rings=0: no far blade rings (memory checks)
+	if args.has("fibre"):
+		for g in [grass]:
+			g.set("fibre_shading", float(args["fibre"])) # --fibre=0: no fibre shading on the blades (A/B; default 0.8)
 	if args.has("far-shell"):
 		grass.set("far_shell", args["far-shell"] != "0") # --far-shell=0: no far voxel shell
 	grass.ground_tint_enabled = args.get("ground-tint", "1") != "0" # --ground-tint=0: no sward colour on the ground (isolates the terrain material)
@@ -3165,6 +3186,11 @@ func _build_vegetation() -> void:
 		add_child(turf)
 		turf.data_map = turf.get_path_to(data_map)
 		sward = [grass, under, turf]
+		if args.has("montado"):
+			for g in [under, turf]: # the summer-dry montado: the short layers straw too
+				g.dryness = 0.85
+				g.base_color = Color(0.3, 0.25, 0.12)
+				g.tip_color = Color(0.72, 0.6, 0.34)
 		# The sward thins out under the forest's crowns.
 		for g in sward:
 			var r: PlantSpecies = g.rules
@@ -3273,7 +3299,18 @@ func _generated_forest(clearing: bool) -> Biome:
 			"montane": TreeGenerator.STAND_MONTANE_CONIFER, "hedgerow": TreeGenerator.STAND_HEDGEROW,
 			"stonepine": 13} # STAND_STONE_PINE (by value: older binaries parse it too)
 	var b: Biome
-	if args.has("tree-stand"):
+	if args.has("montado"):
+		# --montado: the Iberian wood pasture, open-grown cork oaks with stone pines among them over a summer-dry
+		# sward (the stone pine parkland stand plus cork oak, open-grown, --montado-spacing m apart (14)).
+		b = tg.make_stand(13, variants) # STAND_STONE_PINE
+		tg.preset = TreeGenerator.PRESET_CORK_OAK
+		var cork: PlantSpecies = tg.make_species(false, variants)
+		var msp := float(args.get("montado-spacing", "14"))
+		cork.spacing = msp
+		var all: Array[PlantSpecies] = [cork]
+		all.append_array(b.species)
+		b.species = all
+	elif args.has("tree-stand"):
 		# --tree-stand=beech|oak|montane|hedgerow|stonepine: one stand only (its trees, sapling, snag and log).
 		b = tg.make_stand(stands.get(args["tree-stand"], TreeGenerator.STAND_BEECH), variants)
 	else:
@@ -3374,6 +3411,8 @@ func _build_camera() -> void:
 		view = "meadow"
 	var coast_z := _coast_z(0.0)
 	match view:
+		"slipface":
+			_slipface_camera()
 		"lake":
 			# The generator puts the lake anywhere: look at it from the open side inside the world, high enough that
 			# no ground stands between the camera and the water.
@@ -5982,3 +6021,194 @@ func _place_buggy() -> void:
 	if args.has("buggy-hold"):
 		PhysicsServer3D.set_active(false) # mid-slide: hold the moment for the capture frames (a zero time scale makes PhysX vehicles complain)
 		_log("buggy held mid-motion: speed %.1f m/s" % (car.get("linear_velocity") as Vector3).length() if car.get("linear_velocity") != null else "buggy held")
+
+
+# --view=slipface (--layout=desert): a bare slip face of the sand sea at 30-34 degrees with its brink above, the
+# camera --slip-dist m (6) off a line of boot prints across it, looking along the face --slip-angle degrees (30) into
+# it, eye --slip-eye m (1.6). Faces whose strike runs nearest the sun's azimuth win (side light, so the avalanche
+# tongues cast shadow): pick the sun with --time and the faces with --sand-sea-wind. --slip-probe logs and quits.
+func _slipface_camera() -> void:
+	var r: Rect2 = gen.sand_sea_rect
+	if not r.has_area():
+		r = gen.get_dune_rect()
+	r = r.grow(-80.0)
+	var sun_h := Vector3(1, 0, 0)
+	if clock != null:
+		var sd := clock.get_sun_direction()
+		sun_h = Vector3(sd.x, 0, sd.z).normalized()
+		_log("slipface: sun toward %s, altitude %.1f deg, azimuth %.1f deg" % [str(sd), clock.get_sun_altitude(), clock.get_sun_azimuth()])
+	var stp := float(args.get("slip-step", "3"))
+	var amin := deg_to_rad(float(args.get("slip-min", "30")))
+	var amax := deg_to_rad(float(args.get("slip-max", "34")))
+	var best := {}
+	var best_s := -INF
+	var found := 0
+	var zz := r.position.y
+	while zz < r.end.y:
+		var xx := r.position.x
+		while xx < r.end.x:
+			var g := _slip_grad(Vector3(xx, 0, zz))
+			var a := atan(g.length())
+			if a >= amin and a <= amax:
+				var d := Vector3(-g.x, 0, -g.y).normalized() # downslope
+				# The brink: uphill until the ground flattens under 12 degrees, 2-10 m up; the toe: downhill under 15.
+				var up := -1.0
+				for k in 40:
+					var q := Vector3(xx, 0, zz) - d * (0.5 + 0.5 * k)
+					if atan(_slip_grad(q).length()) < deg_to_rad(12.0):
+						up = 0.5 + 0.5 * k
+						break
+				var down := -1.0
+				for k in 60:
+					var q := Vector3(xx, 0, zz) + d * (0.5 + 0.5 * k)
+					if atan(_slip_grad(q).length()) < deg_to_rad(15.0):
+						down = 0.5 + 0.5 * k
+						break
+				if up >= 2.0 and up <= 10.0 and down >= 3.0:
+					found += 1
+					var t := Vector3(d.z, 0, -d.x)
+					# Side light: the face's strike along the sun, the sun a little in front of the face (onto it).
+					var s := absf(t.dot(sun_h)) * 2.0 - absf(sun_h.dot(d) - 0.25) + minf(up + down, 16.0) * 0.05
+					if s > best_s:
+						best_s = s
+						best = {"p": Vector3(xx, 0, zz), "d": d, "t": t, "up": up, "down": down, "a": rad_to_deg(a)}
+			xx += stp
+		zz += stp
+	if best.is_empty():
+		_log("slipface: no slip face at %.0f-%.0f deg in %s" % [rad_to_deg(amin), rad_to_deg(amax), str(r)])
+		if args.has("slip-probe"):
+			get_tree().quit(1)
+		return
+	var p0: Vector3 = best["p"]
+	var d0: Vector3 = best["d"]
+	var t0: Vector3 = best["t"]
+	if t0.dot(sun_h) < 0.0:
+		t0 = -t0 # walk and look toward the sun's side: the camera looks across the light
+	# The walk: across the face a third of the way down from the brink, 7 m, drifting 8 cm down a 70 cm stride.
+	var up0: float = best["up"]
+	var down0: float = best["down"]
+	var mid := p0 - d0 * up0 + d0 * (up0 + down0) * float(args.get("slip-walk-at", "0.33"))
+	var half := float(args.get("slip-walk-len", "7")) * 0.5
+	var a0 := mid - t0 * half - d0 * half * 0.08 / 0.7
+	var b0 := mid + t0 * half + d0 * half * 0.08 / 0.7
+	slip_walk = PackedVector3Array([a0, b0, t0, d0])
+	var ang := deg_to_rad(float(args.get("slip-angle", "30")))
+	var v := t0 * cos(ang) - d0 * sin(ang) # along the face, turned into it
+	var dist := float(args.get("slip-dist", "6"))
+	var cp := mid - v * dist
+	cam.fov = float(args.get("slip-fov", "50"))
+	cam.near = 0.05
+	cam.position = Vector3(cp.x, gen.get_height(cp) + float(args.get("slip-eye", "1.6")), cp.z)
+	var look := mid - d0 * float(args.get("slip-look-up", "1.0"))
+	cam.look_at(Vector3(look.x, gen.get_height(look) + float(args.get("slip-look-dy", "0.3")), look.z))
+	if prints != null:
+		prints_probe.global_position = Vector3(mid.x, gen.get_height(mid), mid.z)
+		prints.follow_target = prints.get_path_to(prints_probe)
+	_log("slipface: %d faces; picked %s at %.1f deg, brink %.1f m up, toe %.1f m down, fall %s, strike.sun %.2f, cam %s, walk %s to %s" % [found, str(p0.round()), best["a"], up0, down0, str(d0), t0.dot(sun_h), str(cam.position), str(a0), str(b0)])
+	if args.has("slip-probe"):
+		get_tree().quit(0)
+
+
+# The ground's gradient (dh/dx, dh/dz) at p, over a metre.
+func _slip_grad(p: Vector3) -> Vector2:
+	var hx := gen.get_height(p + Vector3(0.5, 0, 0)) - gen.get_height(p - Vector3(0.5, 0, 0))
+	var hz := gen.get_height(p + Vector3(0, 0, 0.5)) - gen.get_height(p - Vector3(0, 0, 0.5))
+	return Vector2(hx, hz)
+
+
+# The walk across the slip face: two boot bodies in world_contact (80 kg on 0.035 m2, ground_sole), each planted for
+# --slip-plant frames (20) then lifted (hidden: GroundSurface3D skips hidden bodies), alternating 9 cm either side of
+# the walk line, toed out about 6 degrees; then --slip-run s (12) for the avalanches to run down to the toe. Drawing
+# is off while it runs unless --sim-render=1.
+func _slip_walk() -> void:
+	var a0 := slip_walk[0]
+	var b0 := slip_walk[1]
+	var t0 := slip_walk[2]
+	var d0 := slip_walk[3]
+	var feet: Array[Node3D] = []
+	for k in 2:
+		var foot := Node3D.new()
+		foot.name = "SlipFoot%d" % k
+		var fs := CollisionShape3D.new()
+		fs.shape = BoxShape3D.new()
+		(fs.shape as BoxShape3D).size = Vector3(0.11, 0.06, 0.29)
+		foot.add_child(fs)
+		foot.set_meta("ground_mass", 80.0)
+		foot.set_meta("ground_contact_area", 0.035)
+		foot.set_meta("ground_sole", true)
+		foot.add_to_group("world_contact")
+		foot.visible = false
+		add_child(foot)
+		feet.append(foot)
+	for i in 30:
+		await get_tree().physics_frame
+	var drawn_off: bool = args.get("sim-render", "0") == "0"
+	if drawn_off:
+		RenderingServer.render_loop_enabled = false
+	var n := int(a0.distance_to(b0) / 0.7) + 1
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(args.get("slip-seed", "5"))
+	var plant := int(args.get("slip-plant", "20"))
+	var tongues0: int = prints.call("get_avalanche_count") if prints.has_method("get_avalanche_count") else -1
+	for k in n:
+		var foot := feet[k % 2]
+		var side := 0.09 if k % 2 == 0 else -0.09
+		var p := a0.lerp(b0, float(k) / maxf(n - 1, 1)) + d0 * (side + rng.randf_range(-0.02, 0.02)) + t0 * rng.randf_range(-0.04, 0.04)
+		var toe := (0.1 if k % 2 == 0 else -0.1) + rng.randf_range(-0.05, 0.05)
+		var fwd := t0.rotated(Vector3.UP, toe)
+		foot.global_basis = Basis.looking_at(-fwd) # the sole's toe along local +z
+		prints.sync_deformation()
+		foot.global_position = Vector3(p.x, prints.get_surface_height_at(p) + 0.03, p.z)
+		foot.visible = true
+		for i in plant:
+			await get_tree().physics_frame
+		foot.visible = false
+		for i in 6:
+			await get_tree().physics_frame
+	for i in int(float(args.get("slip-run", "12")) * 60.0):
+		await get_tree().physics_frame
+	prints.sync_deformation()
+	for i in 3:
+		await get_tree().physics_frame
+	if drawn_off:
+		RenderingServer.render_loop_enabled = true
+	var tongues1: int = prints.call("get_avalanche_count") if prints.has_method("get_avalanche_count") else -1
+	_log("slipface walk: %d steps, avalanches %d -> %d, dent at the walk's middle %.3f m" % [n, tongues0, tongues1, prints.get_dent_at(a0.lerp(b0, 0.5))])
+
+
+# --farm-track: an old farm track worn in by wheels (GroundSurface3D.worn_tracks, add_wear): two wheel ruts 1.6 m apart
+# and 0.4 m wide running --track-length m (90) ahead from under the camera, bending --track-bend degrees (12) over it,
+# --track-passes (400) passes each, a lighter worn crown between them (an eighth). The camera stands in the left rut.
+# --track-age=D: then D days of regrowth (the ground's own time, faded over wear_regrowth_days) for a slider pair.
+func _build_farm_track() -> void:
+	var c3 := get_viewport().get_camera_3d()
+	var fwd := -c3.global_basis.z
+	fwd.y = 0.0
+	fwd = fwd.normalized()
+	var side := Vector3(fwd.z, 0, -fwd.x)
+	var length := float(args.get("track-length", "90"))
+	var bend := deg_to_rad(float(args.get("track-bend", "12")))
+	var passes := float(args.get("track-passes", "400"))
+	var start := c3.global_position - side * 0.8 - fwd * 2.0 # the camera in the left rut
+	var p := start
+	var dir := fwd
+	var seg := 2.0
+	var n := int(length / seg)
+	for k in n:
+		var mid := p + dir * seg * 0.5
+		var yaw := atan2(dir.x, dir.z)
+		var sd := Vector3(dir.z, 0, -dir.x)
+		for w in [-0.8, 0.8]:
+			var q: Vector3 = mid + sd * w
+			q.y = height_at(q.x, q.z)
+			prints.call("add_wear", q, Vector2(0.4, seg + 0.2), yaw, passes)
+		var qc := mid
+		qc.y = height_at(qc.x, qc.z)
+		prints.call("add_wear", qc, Vector2(0.9, seg + 0.2), yaw, passes * 0.125)
+		p += dir * seg
+		dir = dir.rotated(Vector3.UP, bend / n)
+	if args.has("track-age"):
+		var days := float(args["track-age"])
+		prints.call("settle", days * 86400.0, 3600.0 * 6.0)
+		_log("farm track: aged %.0f days" % days)
+	_log("farm track: %d segments, %.0f passes, wear under the camera %.0f, 30 m on %.0f" % [n, passes, float(prints.call("get_wear_at", start + side * 0.8 * 0 )), float(prints.call("get_wear_at", start + fwd * 30.0))])
