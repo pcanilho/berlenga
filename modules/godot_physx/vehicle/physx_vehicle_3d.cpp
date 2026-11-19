@@ -352,6 +352,9 @@ public:
 			}
 			const float tau = MAX(0.1f, probe.contact_length / MAX(Math::abs(v_lng), 0.1f));
 			sw.sinkage += (target - sw.sinkage) * MIN(p_dt / tau, 1.0f);
+			// A stone or root hidden in the mud (mud round 14.3): the wheel sinks no further than its top and rides
+			// up onto it.
+			sw.sinkage = MIN(sw.sinkage, ground->get_buried_depth_at(at, wp.halfWidth));
 			road.plane.d += sw.sinkage;
 			// The grip of the soil: the tyre's peak force to its shear limit, its stiffness to Janosi-Hanamoto's.
 			if (load > 0.0f) {
