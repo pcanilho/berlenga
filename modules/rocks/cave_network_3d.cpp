@@ -1299,6 +1299,23 @@ real_t CaveNetwork3D::_rock(const FieldSource &p_src, const TerrainGenerator3D *
 		}
 		f = g;
 	}
+	// Where a passage runs out over the ground in front of its mouth (a sea cave's floor level with the beach) the two
+	// surfaces lie within centimetres of each other and the lower one wins by noise: the floor came out a speckle of
+	// cave and ground quads, the two materials in jagged islands. There the side of the face decides instead: ground
+	// in front of the mouth, cave floor under the overhang, the line between them wandering a metre with noise.
+	if (r_ground && Math::abs(cave - g) < 0.5) {
+		for (uint32_t pi = 0; pi < p_src.patches.size(); pi++) {
+			const Vector3 d = p_p - p_src.patches[pi];
+			if (d.x * d.x + d.z * d.z > patch_radius * patch_radius * 2.0) {
+				continue;
+			}
+			const Vector3 o = Vector3(p_src.patch_out[pi].x, 0, p_src.patch_out[pi].z).normalized();
+			const real_t along = d.x * o.x + d.z * o.z;
+			const real_t wander = real_t(TerrainErosionFilter::fbm(0x5ea1u, p_p.x, p_p.z, 2.5, 2));
+			*r_ground = along > wander;
+			break;
+		}
+	}
 	// Where the cave breaks out of the ground (a mouth's rim, a sea cave's cliff face) the two surfaces meet in a
 	// knife edge of rock; a smooth union (polynomial smooth min, Quilez) rounds it into a worn lip over half a metre.
 	const real_t kr = 0.5;
