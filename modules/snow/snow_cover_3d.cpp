@@ -53,6 +53,7 @@
 #include "core/templates/sort_array.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/light_3d.h"
+#include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
 #include "scene/resources/3d/world_3d.h"
 #include "servers/physics_3d/physics_server_3d.h"
@@ -1017,6 +1018,90 @@ void SnowCover3D::_update_begin(double p_weather_dt, bool p_blocking) {
 	const int from = int(update_count % uint64_t((resolution + band - 1) / band)) * band;
 	_refresh_cell_inputs(from, MIN(from + band, resolution), nullptr);
 	_refresh_fire();
+	if (!ice_breaks.is_empty()) {
+		_cut_ice(cell_ice, cell_white_ice);
+		ice_breaks.clear(); // the cells carry the holes now (and grow ice in them again by Stefan's law)
+	}
+}
+
+// Floating ice's bearing capacity: Gold's (1971) P = A h^2, P in kg and h in cm, from his survey of loads on lake and
+// river ice: about 3.5 for routine safe loads and failures from about 10 (USACE EM 1110-2-1612; Masterson 2009).
+// White (snow) ice carries about half of clear ice, and ice at its melting point about half again.
+float SnowCover3D::ice_breaking_load(float p_ice, float p_white_share, float p_air_celsius) {
+	const float h = MAX(p_ice, 0.0f) * 100.0f * (1.0f - 0.5f * CLAMP(p_white_share, 0.0f, 1.0f));
+	const float warm = Math::lerp(1.0f, 0.5f, Math::smoothstep(-2.0f, 1.0f, p_air_celsius));
+	return 10.0f * h * h * warm;
+}
+
+void SnowCover3D::_cut_ice(Vector<float> &r_ice, Vector<float> &r_white) const {
+	const int n = resolution;
+	if (r_ice.size() != n * n || !origin_valid) {
+		return;
+	}
+	const float cs = _cell_size();
+	float *ice = r_ice.ptrw();
+	float *white = r_white.size() == n * n ? r_white.ptrw() : nullptr;
+	for (const IceBreak &b : ice_breaks) {
+		const int x0 = MAX(int(Math::floor((b.center.x - b.radius) / cs)) - origin_cell.x, 0);
+		const int x1 = MIN(int(Math::floor((b.center.x + b.radius) / cs)) - origin_cell.x, n - 1);
+		const int z0 = MAX(int(Math::floor((b.center.y - b.radius) / cs)) - origin_cell.y, 0);
+		const int z1 = MIN(int(Math::floor((b.center.y + b.radius) / cs)) - origin_cell.y, n - 1);
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const Vector2 c((origin_cell.x + x + 0.5f) * cs, (origin_cell.y + z + 0.5f) * cs);
+				if (c.distance_to(b.center) <= b.radius + 0.5f * cs) {
+					ice[z * n + x] = 0.0f;
+					if (white) {
+						white[z * n + x] = 0.0f;
+					}
+				}
+			}
+		}
+	}
+}
+
+// Main thread, each physics frame: a body resting on the ice heavier than it bears breaks through. The hole is the
+// body's size and a little more; it shows and stops bearing at once and freezes over again from open water.
+void SnowCover3D::_ice_load_step() {
+	if (driven || owner || !lake_ice_enabled || !is_inside_tree() || !origin_valid || pub.ice.size() != resolution * resolution) {
+		return;
+	}
+	const float air = WorldContracts::weather()->has_provider() ? WorldContracts::weather()->air_temperature_at(_follow_position()) : -5.0f;
+	bool broke = false;
+	for (Node *n : get_tree()->get_nodes_in_group(SNAME("world_contact"))) {
+		const Node3D *n3 = Object::cast_to<Node3D>(n);
+		if (!n3 || !n3->is_visible_in_tree()) {
+			continue;
+		}
+		const WorldContactBody b = WorldContracts::describe_body(n3);
+		if (b.mass <= 0.0f) {
+			continue;
+		}
+		const float ice = get_ice_thickness_at(b.center);
+		const float water = get_water_level_at(b.center);
+		if (ice < 0.003f || !(water > -1e29f)) {
+			continue;
+		}
+		const float top = water + SnowLakeIce3D::freeboard(ice);
+		if (b.center.y - b.half_height - top > 0.3f) {
+			continue; // above the ice, not on it
+		}
+		const float white = get_white_ice_thickness_at(b.center) / MAX(ice, 1e-4f);
+		if (b.mass > ice_breaking_load(ice, white, air)) {
+			IceBreak br;
+			br.center = Vector2(b.center.x, b.center.z);
+			br.radius = b.radius + 0.3f;
+			ice_breaks.push_back(br);
+			ice_break_count++;
+			broke = true;
+		}
+	}
+	if (broke) {
+		_cut_ice(pub.ice, pub.white_ice);
+		if (lake_ice) {
+			lake_ice->rebuild();
+		}
+	}
 }
 
 // Fire over the snow (docs/ideas/world-links.md, fire → snow melt): the heat each cell takes from WorldFire, read on
@@ -1132,6 +1217,9 @@ void SnowCover3D::_publish_cells() {
 	pub.cornice_crack = cell_cornice_crack;
 	pub.ice = cell_ice;
 	pub.white_ice = cell_white_ice;
+	if (!ice_breaks.is_empty()) {
+		_cut_ice(pub.ice, pub.white_ice); // broken since this update started: the cells take them at the next one
+	}
 }
 
 void SnowCover3D::_start_background(double p_weather_dt, bool p_world) {
@@ -2470,6 +2558,7 @@ void SnowCover3D::_notification(int p_what) {
 			set_physics_process_internal(false);
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
+			_ice_load_step();
 			const WeatherMap3D *weather = WeatherMap3D::get_active();
 			const double scale = weather ? weather->get_time_scale() : time_scale;
 			update_accum += get_physics_process_delta_time();
@@ -2794,6 +2883,8 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("sync_update"), &SnowCover3D::sync_update);
 	ClassDB::bind_method(D_METHOD("get_water_level_at", "position"), &SnowCover3D::get_water_level_at);
 	ClassDB::bind_method(D_METHOD("get_ice_thickness_at", "position"), &SnowCover3D::get_ice_thickness_at);
+	ClassDB::bind_method(D_METHOD("get_ice_break_count"), &SnowCover3D::get_ice_break_count);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("ice_breaking_load", "ice", "white_share", "air_celsius"), &SnowCover3D::ice_breaking_load);
 	ClassDB::bind_method(D_METHOD("get_white_ice_thickness_at", "position"), &SnowCover3D::get_white_ice_thickness_at);
 	ClassDB::bind_method(D_METHOD("get_lake_ice"), &SnowCover3D::get_lake_ice);
 	ClassDB::bind_method(D_METHOD("get_bodies"), &SnowCover3D::get_bodies);

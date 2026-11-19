@@ -694,6 +694,8 @@ void WorldGround::add_runoff_load(const Vector3 &p_position, float p_mineral_kg,
 void WorldGround::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_runoff_load", "position", "mineral_kg", "ash_kg"), &WorldGround::add_runoff_load);
 	ClassDB::bind_method(D_METHOD("has_runoff"), &WorldGround::has_runoff);
+	// The runoff's post-fire debris flows (WeatherRunoff3D): one event per basin per storm, for the moving flow.
+	ADD_SIGNAL(MethodInfo("debris_flow", PropertyInfo(Variant::DICTIONARY, "event")));
 	GDVIRTUAL_BIND(_add_runoff_load, "position", "mineral_kg", "ash_kg");
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldGround::has_provider);
 	ClassDB::bind_method(D_METHOD("height_at", "position"), &WorldGround::height_at);

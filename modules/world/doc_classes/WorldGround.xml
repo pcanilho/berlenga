@@ -240,4 +240,12 @@
 			</description>
 		</method>
 	</methods>
+	<signals>
+		<signal name="debris_flow">
+			<param index="0" name="event" type="Dictionary" />
+			<description>
+				A post-fire debris flow started on the runoff's drainage (WeatherRunoff3D), for the ground and physics to run it; [param event] as [signal WeatherRunoff3D.debris_flow] gives it.
+			</description>
+		</signal>
+	</signals>
 </class>
