@@ -31,6 +31,8 @@
 
 #include "ground_deform_field.h"
 
+#include "modules/world/world_contracts.h"
+
 #include "core/io/image.h"
 #include "core/math/math_funcs.h"
 #include "core/templates/hashfuncs.h"
@@ -941,6 +943,8 @@ void GroundDeformField::press_bodies(SceneTree *p_tree, const PackedStringArray 
 		return;
 	}
 	HashSet<ObjectID> done;
+	walker_steps.begin();
+	LocalVector<WorldWalkerStep> steps_out;
 	for (const String &group : p_groups) {
 		const Vector<Node *> nodes = p_tree->get_nodes_in_group(StringName(group));
 		for (Node *node : nodes) {
@@ -951,6 +955,27 @@ void GroundDeformField::press_bodies(SceneTree *p_tree, const PackedStringArray 
 			done.insert(n3->get_instance_id());
 			Body b;
 			read_body(n3, p_character_mass, p_character_area, b);
+			// A walker prints with its feet, never its body shape (WorldContactBody::walker): its own foot bodies
+			// when it has them (they come through the groups themselves), otherwise its soles, one step at a time
+			// (WorldWalkerSteps), each a boot outline at the walker's pressure.
+			const WorldContactBody wb = WorldContracts::describe_body(n3);
+			if (wb.walker) {
+				if (wb.feet) {
+					continue;
+				}
+				steps_out.clear();
+				walker_steps.step(n3, wb, steps_out);
+				for (const WorldWalkerStep &st : steps_out) {
+					Body sb = b;
+					sb.center = st.position + Vector3(0.0f, 0.05f, 0.0f);
+					sb.half_height = 0.05f;
+					sb.radius = 0.5f * st.length;
+					sb.width = st.width;
+					const float ssink = p_columns.sinkage(sb);
+					press(p_columns, st.position, 0.5f * st.length, Vector2(0.5f * st.length, 0.5f * st.width), st.yaw, true, st.position.y, ssink, true, p_contact_tolerance, Vector2());
+				}
+				continue;
+			}
 			const float sink = p_columns.sinkage(b);
 			const Vector3 center = b.center;
 			Mover *m = movers.getptr(n3->get_instance_id());
@@ -969,6 +994,7 @@ void GroundDeformField::press_bodies(SceneTree *p_tree, const PackedStringArray 
 			movers[n3->get_instance_id()] = Mover{ center, frame };
 		}
 	}
+	walker_steps.end();
 	// Forget movers that left.
 	LocalVector<ObjectID> gone;
 	for (const KeyValue<ObjectID, Mover> &kv : movers) {

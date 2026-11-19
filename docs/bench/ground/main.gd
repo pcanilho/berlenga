@@ -51,6 +51,7 @@ extends Node3D
 #   --test=avalanche    footsteps on a dune's slip face set off grain avalanches down it; not on the stoss slope
 #   --test=infill       wind fills a print from its upwind side; nothing under the threshold
 #   --view=fringe       a still pool's shore in a desert: the wet margin and the salt crust
+#   --test=steps        a character with no feet of its own prints boot soles step by step, not its capsule
 #   --test=fringe       a wet margin of sand up to 15 cm over still water's level (capillary rise), salt in a desert
 #   --view=avalanche    a walker's prints across a dune's slip face and the tongues of sand running down from them
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
@@ -130,6 +131,7 @@ var drift_test := false
 var avalanche_test := false
 var infill_test := false
 var fringe_test := false
+var steps_test := false
 var near_test := false
 var mud_test := false
 var clog_test := false
@@ -201,6 +203,7 @@ func _ready() -> void:
 		elif a == "--test=avalanche": avalanche_test = true
 		elif a == "--test=infill": infill_test = true
 		elif a == "--test=fringe": fringe_test = true
+		elif a == "--test=steps": steps_test = true
 		elif a == "--test=near": near_test = true
 		elif a == "--test=mud": mud_test = true
 		elif a == "--test=clog": clog_test = true
@@ -362,6 +365,11 @@ func _ready() -> void:
 		return
 	if fringe_test:
 		await _run_fringe_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if steps_test:
+		await _run_steps_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -4186,6 +4194,8 @@ func _build_trail() -> void:
 	(ws.shape as CapsuleShape3D).radius = 0.14
 	(ws.shape as CapsuleShape3D).height = 1.6
 	walker.add_child(ws)
+	# Its boots print themselves: the deformers skip the capsule (WorldContactBody.feet).
+	walker.set_meta("world_contact_feet", true)
 	walker.position = Vector3(-7.0, 1.0, 1.3)
 	add_child(walker)
 	for k in 2:
@@ -5252,6 +5262,57 @@ func _infill_stats(pr: PackedFloat32Array) -> Vector3:
 			deep = pr[k]
 			at = x
 	return Vector3(up / 28.0, dn / 28.0, at)
+
+
+# A walker with no feet of its own (WorldContactBody.walker): the ground presses its soles, a step about 0.41 of its
+# stature, the feet 18 cm apart (WorldWalkerSteps), never its capsule.
+func _run_steps_tests() -> void:
+	await _setup("flat", GroundSurface3D.GROUND_SAND, 0.4, 0.0)
+	_apply("damp_sand")
+	var w := CharacterBody3D.new()
+	var ws := CollisionShape3D.new()
+	ws.shape = CapsuleShape3D.new()
+	(ws.shape as CapsuleShape3D).radius = 0.14
+	(ws.shape as CapsuleShape3D).height = 1.7
+	w.add_child(ws)
+	w.add_to_group("world_contact")
+	var g0: float = height.get_height(Vector3(-1.5, 0, 0))
+	w.position = Vector3(-1.5, g0 + 0.85, 0.0)
+	add_child(w)
+	for i in 10:
+		await get_tree().physics_frame
+	surface.clear_deformation()
+	for i in 4:
+		await get_tree().physics_frame
+	for i in 120:
+		w.position.x = -1.5 + 3.0 * float(i) / 119.0
+		await get_tree().physics_frame
+	for i in 10:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	# Along each foot's line and the body's: where the surface went down over 1.5 mm.
+	var dips := []
+	for zl in [0.09, -0.09, 0.0]:
+		var count := 0
+		var gap := 100
+		var lowered := 0
+		var x := -1.4
+		while x < 1.4:
+			var d: float = height.get_height(Vector3(x, 0, zl)) - surface.get_surface_height_at(Vector3(x, 0, zl))
+			# One print: its heel and forefoot dips (up to 15 cm apart, the raised waist between them) count once.
+			if d > 0.0015:
+				lowered += 1
+				if gap > 15:
+					count += 1
+				gap = 0
+			else:
+				gap += 1
+			x += 0.01
+		dips.append(Vector2(count, lowered / 280.0))
+	var prints: float = dips[0].x + dips[1].x
+	_check("a footless walker prints boot soles, step by step (WorldWalkerSteps)", prints >= 3 and prints <= 5 and dips[0].x >= 1 and dips[1].x >= 1, "%d prints left, %d right over 2.8 m (a 1.7 m walker steps about 0.7 m)" % [dips[0].x, dips[1].x])
+	_check("not its capsule: no trench along its path", dips[2].y < 0.5, "%.0f%% of its centre line lowered" % (dips[2].y * 100.0))
+	w.queue_free()
 
 
 # The point up the beach (x = 0.5) where the ground stands p_above over the level.
