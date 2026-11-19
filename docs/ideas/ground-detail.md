@@ -416,5 +416,10 @@ Plan, in `modules/vegetation/tree_bark_detail.*` (BarkDetail3D), the ground deta
   - Sheets and patches lie at the median radius of the cells they cover, bent round to the stem's radius (the
     shape's 12 cm bend rescaled), and skip spots too uneven to lie on (a collar, a fork's swell), so none stands
     off past the silhouette.
+- Fourth review passed (docs, 19 Nov), two polish notes: some rolls read as thick rounded lips like small bracket
+  fungi, and the bands stacked in one column up the main stem like a ladder. Now plies are about 1 mm with a 4 to
+  7 mm scroll, sheets at most 1.3 times their shape and never thickened when bent to the stem; each band's patches
+  start a golden angle (137 degrees, jittered) round from the last band's and spread evenly round it; bands every
+  4 to 10 cm.
 - Cost (bench, 4 trunks, 1,045 pieces): main thread 0.15 ms mean, 3.4 ms worst an update with the meta (33 ms
   mean, 826 ms worst with the readback); 64 bytes a piece in instance buffers (67 KB), 32 shared shapes.
