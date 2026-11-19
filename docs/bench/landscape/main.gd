@@ -1255,6 +1255,12 @@ func _save_dune_map(spec: String) -> void:
 		for z in range(sz.y):
 			for x in range(sz.x):
 				hf.store_float(hm.get_pixel(x, z).r)
+	# And the sand alone (its depth over the ground), to tell the dunes' shapes from the ground under them.
+	var sf := FileAccess.open(spec.split(",")[0] + ".sand.f32", FileAccess.WRITE)
+	if sf != null:
+		for z in range(sz.y):
+			for x in range(sz.x):
+				sf.store_float(gen.get_sand_sea_height(Vector3(r.position.x + x * step, 0, r.position.y + z * step)))
 	_log("dune map saved %s (%s, %.1f m a pixel, %d x %d)" % [spec.split(",")[0], r, step, sz.x, sz.y])
 
 
