@@ -1823,8 +1823,24 @@ void SnowAvalanche3D::_emit_wave(SnowCover3D *p_cover) {
 	const float s = water_thick / m;
 	const float hw = water_depth / m;
 	const float alpha = water_slope / m;
-	// The slide's width across the shore: the cells it reached, about one deep along its run.
-	const float b = MAX(float(water_cell_count) * cell / MAX(Math::ceil(s / cell), 1.0f), cell);
+	// The slide's width: the span of the cells it entered the water by, across its heading (counting the cells
+	// over-counted the width by the length it ran on over the water).
+	float b = cell;
+	{
+		const Vector3 mv = water_momentum;
+		const Vector2 across = Vector2(mv.x, mv.z).length_squared() > 1e-6f ? Vector2(-mv.z, mv.x).normalized() : Vector2(0, 1);
+		float lo = 1e30f, hi = -1e30f;
+		for (int k = 0; k < water_cells.size(); k++) {
+			if (water_cells[k]) {
+				const float v = Vector2(k % res + 0.5f, k / res + 0.5f).dot(across) * cell;
+				lo = MIN(lo, v);
+				hi = MAX(hi, v);
+			}
+		}
+		if (hi >= lo) {
+			b = hi - lo + cell;
+		}
+	}
 	const float product = impulse_product(V, s, m, b, hw, alpha);
 	const float height = impulse_wave_height(product, hw, 0.0f, 0.0f);
 	const Vector3 at = water_position / m;
@@ -1840,6 +1856,12 @@ void SnowAvalanche3D::_emit_wave(SnowCover3D *p_cover) {
 		wave_amplitude = 0.8f * height; // a_M = 4/9 P^4/5 against H_M = 5/9 P^4/5
 	}
 	water_waves++;
+	// The water carries it on (WorldWater.wave: metres and seconds; the ripple solver runs it out at sqrt(g h), water
+	// without one makes a splash). Its period in the near field, a slide's width out from the entry.
+	if (WorldWater *ww = WorldContracts::water()) {
+		const Vector3 flat(dir.x, 0.0f, dir.z);
+		ww->wave(at, flat.length_squared() > 1.0e-6f ? flat.normalized() : Vector3(1, 0, 0), height, impulse_wave_period(m / (1000.0f * b * hw * hw), hw, MAX(b, hw)), b);
+	}
 	emit_signal(SNAME("avalanche_entered_water"), at, dir, m, V, height);
 	print_verbose(vformat("snow: avalanche into water, %.0f t at %.1f m/s, %.2f m thick, %.1f m wide, %.1f m deep, slope %.0f deg: P %.3f, H %.2f m", m / 1000.0f, V, s, b, hw, Math::rad_to_deg(alpha), product, height));
 	water_mass = 0.0f;

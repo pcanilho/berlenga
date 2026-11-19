@@ -1,0 +1,1 @@
+- Snow: an avalanche into a lake sets off its impulse wave in the water through `WorldWater.wave`.
