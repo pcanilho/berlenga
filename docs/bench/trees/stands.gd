@@ -82,7 +82,8 @@ func run(args: Dictionary) -> void:
 		_mask_check()
 		await _wind_check()
 		await _wind_lod_check(int(args.get("frames", "40")))
-		await _near_leaves_check()
+		# The near-leaf check grows its own oaks (8.7 GB peak alone) and runs as --near-leaves: inside --test
+		# the stands' meshes still held by the scene push the run past 15 GB.
 		get_tree().quit(1 if fails > 0 else 0)
 	elif args.has("stand-test"):
 		_stand_checks(int(args["stand-test"]))
@@ -787,6 +788,10 @@ func _render_plot(i: int, args: Dictionary) -> void:
 	var out: String = args.get("out", "/tmp/plot.png")
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
+	# Near meshes still building (one at a time over all species): let them end before the exit frees
+	# their sources (a build cut off by the exit hung it).
+	while TreeGenerator.get_near_builds() > 0:
+		await RenderingServer.frame_post_draw
 	get_tree().quit()
 
 

@@ -2846,6 +2846,25 @@ oak far against full 1.61M vs 13.6M. The stand bench's wind LOD error fell from 
 p99 with the lighter meshes (still over its 1 px bar, a check failing since before 5q). A
 denoised PT pair at 60 and 100 m goes on the PC list.
 
+## 8e. Memory for still shots (19 Nov; scene blocked on cloud memory)
+
+Beech forests at 40/80 m passed 15 GB on the first draw. Measured (4 cores, lavapipe):
+- One beech `generate()` peaks at 1.9 GB (12.2M vertices). Near meshes are requested on the first
+  frame and up to four built at once: the first-draw spike. `TreeGenerator.set_near_build_limit(n)`
+  caps parallel near builds (default cores/4, at least 1); `get_near_builds()` says how many run.
+  Wait for it to reach 0 before saving a still or freeing the scene.
+- Freed meshes leave GPU memory (system RAM under lavapipe) only once a frame draws. The presets
+  test grew 0.8 GB per tree and died at white willow (13.5 GB); drawing a frame between trees keeps
+  it under 5.6 GB. Building many stands without a frame between them piles up the same way.
+- `light_far_meshes` (off; for stills and benches): far meshes start one LOD later (TREE_LODS[1])
+  and drop bark under 1 cm. Beech stand far variant 16.0M to 6.9M vertices (0.85 to 0.51 GB),
+  raster frame the same by eye. Not on by default: PT olive crowns went grey-blue without the fine
+  shoots that shade their inside (FAR_TWIG_RADIUS stays 1 mm).
+- `fire_variants` adds 45% vertices to a stand (burnt variants ride along).
+Still recipe: `rigged` false, `fire_variants` false, `near_needle_range` 0, `light_far_meshes` true
+set before `make_stand`/`make_woodland`, `near_leaf_range` ~25, `set_near_build_limit(1)`, one tree
+variant, a frame between stands, wait for `get_near_builds() == 0`.
+
 ## 8a. Species, habitats and stands (as built)
 
 Seventeen presets: oak, beech, birch, Scots pine, Norway spruce, hazel, hawthorn, small-leaved
