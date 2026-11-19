@@ -209,7 +209,7 @@ private:
 	int ground_detail_reference_height = 0; // px; 0: the viewport's own height
 	real_t ground_detail_max_radius = 40.0; // m
 	int ground_detail_max_per_cell = 40000;
-	bool ground_detail_tiles = false; // (on once the rock shader takes rock_tile_plane) tiles of piles: squares of settled grains drawn as reused tiles
+	bool ground_detail_tiles = true; // tiles of piles: squares of settled grains drawn as reused tiles
 	uint64_t tile_stats[3] = {}; // tiles cut, placements, grains drawn by placements
 	mutable SafeNumeric<uint64_t> tile_skips[5]; // squares left single: few grains or a hole, coarse stones, bent ground, no match, total
 	static bool _is_detail(int p_layer) { return p_layer >= LAYER_DETAIL_PEBBLE && p_layer <= LAYER_DETAIL_FINE; }

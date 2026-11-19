@@ -611,7 +611,7 @@ cached per MultiMesh, `_shared_merged_mm_handle`, and each RS instance over it i
 
 ### As built (19 Nov)
 
-- `RockField3D.ground_detail_tiles` (off until the rock shader takes `rock_tile_plane`; then on). Each detail cell is
+- `RockField3D.ground_detail_tiles` (on since the rock shader took `rock_tile_plane`, rocks 029e0566). Each detail cell is
   cut into 4 x 4 squares. A square takes a tile when it has 8 or more grains on the ground, no hole, no coarse stone
   (over four times its grains) reaching in, and ground within 0.35 of its grains' scale of a plane. Up to four tiles
   are cut per cell from its own squares (in a hashed order), and a square takes the first tile matching its rocks,
@@ -632,3 +632,6 @@ cached per MultiMesh, `_shared_merged_mm_handle`, and each RS instance over it i
   0.4 of 255), no seams or repeats seen. The walker and the cart split 90 placements.
 - Left: tiles shared across cells (one set per class and rock), which would cut the baked triangles; the PC cost run
   (GPU trace time with and without, `--tiles` / `--no-tiles`).
+- On (19 Nov, with `rock_tile_plane`): shore top view path traced at 640, TLAS 73,848 without tiles to 47,324 with
+  (36 % fewer), mean colour within 1 of 255 per channel; raster eye level 1.5 % brighter low in the frame (the tile
+  plane's blend band where the plane sits a little over the ground).
