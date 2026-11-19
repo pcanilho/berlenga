@@ -142,6 +142,7 @@ func _ready() -> void:
 	await _contact_tests()
 	await _snow_fire_tests()
 	await _leaf_kick_tests()
+	await _washout_tests()
 	_tyre_snow_tests()
 	await _contract_tests()
 	await _shimmer_tests()
@@ -442,6 +443,50 @@ func _tyre_snow_tests() -> void:
 	var chains: float = ClassDB.class_call_static("PhysXVehicle3D", "get_firm_grip_at", Vector3(5, 0, 0), 10.0, 3)
 	_check("tyres: packed snow takes a road tyre's grip down, chains bring much of it back", on_snow < 0.4 * road and chains > 1.8 * on_snow, "road %.2f, snow %.2f, snow with chains %.2f" % [road, on_snow, chains])
 	WorldContracts.clear_overrides()
+
+
+# Rain washes smoke and dust out of the air (below-cloud scavenging): the weather contract's rate, coarse dust far
+# faster than fine smoke and snow faster than rain; the weather map's smoke haze thins under hours of rain.
+class WashStub extends WorldWeather:
+	func _rainfall_at(p: Vector3) -> float:
+		return 10.0 if p.x < 0.0 else 0.0
+	func _snowfall_at(p: Vector3) -> float:
+		return 10.0 if p.x > 100.0 else 0.0
+
+
+func _washout_tests() -> void:
+	WorldContracts.clear_overrides()
+	WorldContracts.set_weather(WashStub.new())
+	var w: WorldWeather = WorldContracts.get_weather()
+	var smoke_rain := w.washout_at(Vector3(-5, 0, 0), false)
+	var dust_rain := w.washout_at(Vector3(-5, 0, 0), true)
+	var dry := w.washout_at(Vector3(5, 0, 0), true)
+	var smoke_snow := w.washout_at(Vector3(150, 0, 0), false)
+	_check("washout: dust washes out of rain far faster than smoke, snow faster than rain, none when dry", dry == 0.0 and dust_rain > 20.0 * smoke_rain and smoke_snow > 3.0 * smoke_rain and smoke_rain > 1e-5 and smoke_rain < 2e-4, "per hour: smoke %.3f, dust %.2f, dry %.2f, smoke in snow %.3f" % [smoke_rain * 3600.0, dust_rain * 3600.0, dry * 3600.0, smoke_snow * 3600.0])
+	WorldContracts.clear_overrides()
+	# The haze: the same smoke over a wet and a dry map, an hour of heavy rain apart.
+	var amounts := []
+	var rains := []
+	for rain in [0.0, 30.0]:
+		var m := _new_map()
+		m.extent = 40000.0
+		m.wind_speed = 0.0
+		m.temperature = 12.0
+		m.humidity = 0.95
+		m.cloud_cover = 1.0
+		m.rain_rate = rain
+		m.snap_to_settings()
+		await get_tree().physics_frame
+		m.advance(1.0)
+		m.add_smoke(Vector3(0, 0, 0), 2.0e6)
+		var before: float = m.get_smoke_at(Vector3())
+		m.advance(3600.0)
+		amounts.append(m.get_smoke_at(Vector3()) / maxf(before, 1e-9))
+		rains.append(WorldContracts.get_weather().rainfall_at(Vector3()) if rain > 0.0 else 0.0)
+		m.queue_free()
+		await get_tree().physics_frame
+	var ratio: float = amounts[1] / maxf(amounts[0], 1e-9)
+	_check("washout: an hour of heavy rain thins the smoke haze, the contract reports the map's rain", ratio < 0.85 and ratio > 0.2 and rains[1] > 1.0, "dry keeps %.3f, wet %.3f of it (%.2f); contract rainfall %.1f mm/h" % [amounts[0], amounts[1], ratio, rains[1]])
 
 
 # Fire on lying snow: the fire contract's heat melts the pack under it, whatever the air.

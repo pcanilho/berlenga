@@ -160,6 +160,12 @@ public:
 	float surface_temperature_at(const Vector3 &p_position) const;
 	float ground_height_at(const Vector3 &p_position) const;
 	double time_scale() const;
+	// Below-cloud scavenging (washout) of particles in the air by falling rain and snow, 1/s: Lambda = a R^b
+	// (R mm/h of water). Fine smoke (PM2.5, accumulation mode) about 1e-5 at 1 mm/h (Laakso et al. 2003; Wang et
+	// al. 2010); coarse dust (> 10 um) about 3e-4 (Wang et al. 2010); snow about five times rain for the same water
+	// (Kyroe et al. 2009; Zhang et al. 2013). washout_at reads rainfall_at and snowfall_at.
+	static float washout_rate(float p_rain_mm_h, float p_snow_mm_h, bool p_coarse);
+	float washout_at(const Vector3 &p_position, bool p_coarse) const;
 };
 
 // Water: open water of every kind (sea, rivers, pools, live water, standing water on the ground). Several

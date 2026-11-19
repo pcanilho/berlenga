@@ -28,6 +28,12 @@
 				Diagnostics: [code]running[/code], [code]error[/code], [code]start_ms[/code] (grid creation), [code]step_ms[/code], [code]render_calls[/code], [code]render_outputs[/code], [code]readback_bytes[/code], [code]bounds[/code] (the gas, with [member cpu_readback]), [code]active_blocks[/code] (sparse blocks in use, of [member max_blocks]), [code]scatter_lights[/code] / [code]scatter_passes[/code] / [code]scatter_no_source[/code] (see [member light_scattering]: lights picked last step, scattering passes run, frames Flow had no volume to hand over), and Flow's pipeline / pass / resource counts.
 			</description>
 		</method>
+		<method name="get_washout_rate" qualifiers="const">
+			<return type="float" />
+			<description>
+				The rate (1/s) at which the last step's rain and snow washed smoke out of the gas, from [method WorldWeather.washout_at] at the gas's centre: coarse when [member smoke_buoyancy] is below 0 (dust). 0 without [member rain_washout] or a weather producer.
+			</description>
+		</method>
 		<method name="is_running" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -141,6 +147,9 @@
 		</member>
 		<member name="push_bodies" type="bool" setter="set_push_bodies" getter="is_push_bodies" default="true">
 			When enabled, the gas pushes the dynamic bodies in it (debris, Blast pieces, crates) with quadratic drag, [code]0.5 * 1.2 * body_drag * A * |u - v| * (u - v)[/code], where [code]u[/code] is the gas velocity, [code]v[/code] the body's and [code]A[/code] the shape's mean projected area (its surface over four). A blast's front or a fire's updraft carries light debris, as NVIDIA APEX Turbulence did. The bodies push back as moving solids through [member collide_with_bodies]. The gas velocity is read back while such bodies are near it, a few frames late.
+		</member>
+		<member name="rain_washout" type="bool" setter="set_rain_washout" getter="is_rain_washout" default="true">
+			Rain and snow over the gas wash its smoke out ([method WorldWeather.washout_at]), on top of Flow's own loss of 0.3 of the smoke a second: heavy dust clears noticeably faster in a downpour, fine smoke hardly at all.
 		</member>
 		<member name="scattering_anisotropy" type="float" setter="set_scattering_anisotropy" getter="get_scattering_anisotropy" default="0.4">
 			With [member light_scattering], how much the gas scatters light forward (toward a camera looking at the light) rather than evenly in every direction: [code]0[/code] glows the same from every side, higher values make a bright halo when looking toward a light, negative values light the gas most when the light is behind the camera.
