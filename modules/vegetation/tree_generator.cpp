@@ -13413,10 +13413,15 @@ void TreeGenerator::_apply_decay() {
 		}
 	}
 	// A shed limb keeps its length: only its finest twigs drop (Harmon 1986), and no top breaks.
-	const float min_r = MIN_RADIUS[decay_class] * (fallen_branch ? 0.35f : 1.0f);
+	// A beetle-killed spruce dies in a summer with all its branches: the grey snag keeps its dead whorls for years,
+	// only the twigs going (docs, 19 Nov: snags read as branchless masts). Spruce holds dead branches for decades.
+	const float min_r = (beetle_active && decay_class == 2 ? 0.004f : MIN_RADIUS[decay_class]) * (fallen_branch ? 0.35f : 1.0f);
 	float cut_y = 1e9f;
 	if (fallen_branch) {
 		// The limb falls whole; class 4 and 5 stubs and stumps only apply to standing wood.
+	} else if (decay_class == 2 && beetle_active && dr.randf() < 0.4f) {
+		// The top, riddled by the beetles and woodpeckers, often snaps in the grey years already.
+		cut_y = height * Math::lerp(0.65f, 0.9f, dr.randf());
 	} else if (decay_class == 3) {
 		cut_y = height * Math::lerp(0.55f, 0.85f, dr.randf());
 	} else if (decay_class == 4) {
@@ -18718,9 +18723,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// alike, keeps the relief.
 			// The twigs between a millimetre and a centimetre stay: under a pixel each, but en masse they shade the
 			// crown's inside, and without them an oleaster's crown lit up grey-blue in the path tracer (19 Nov).
+			float twig_floor = light_far_meshes ? TREE_LODS[0].min_radius : FAR_TWIG_RADIUS;
 			auto skip_part = [&](uint32_t i) {
 				if (far_twigs) {
-					return b.part_role[i] == Builder::ROLE_RELIEF || (b.part_role[i] == Builder::ROLE_ALL && b.part_size[i] < (light_far_meshes ? TREE_LODS[0].min_radius : FAR_TWIG_RADIUS));
+					return b.part_role[i] == Builder::ROLE_RELIEF || (b.part_role[i] == Builder::ROLE_ALL && b.part_size[i] < twig_floor);
 				}
 				return b.part_role[i] == Builder::ROLE_PLAIN;
 			};
@@ -18986,7 +18992,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
 			m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
-			m->set_backlight(leaf_color * 0.6f);
+			// Dead needles (a beetle's red stage) are dry and dull: little light through them (they glowed, docs 19 Nov).
+			m->set_backlight(leaf_color * (beetle_active && decay_class >= 1 ? 0.15f : 0.6f));
 			mesh->surface_set_name(mesh->get_surface_count() - 1, needles ? "needles" : "leaves");
 		}
 		if ((s == 1 && !needles) || s == 3) {
@@ -20691,6 +20698,11 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.21f, 1.0f);
 		const float front = tv < 0.15f ? Math::lerp(0.2f, 0.5f, tv / 0.15f) : Math::lerp(0.85f, 2.2f, (tv - 0.15f) / 0.85f);
 		beetle_years = beetle_band == 1 ? front : Math::lerp(2.6f, MAX(beetle_outbreak, 3.0f), tv);
+		// The killed trees are of every age the stand holds (the beetles take the big ones first, not only them):
+		// heights vary, not a row of masts (docs, 19 Nov).
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.7f, 1.1f, Math::fmod(tv * 3.7f + 0.13f, 1.0f)));
 	}
 }
 
@@ -21765,20 +21777,40 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 				list.push_back(core);
 			}
 			canopy(PRESET_NORWAY_SPRUCE, 1.0f, spot_scale, cover, true, true);
-			if (ob >= 5.0f) {
-				// The first snags down: logs criss-crossed in the old spots (snag fall from about five years).
+			if (ob >= 2.5f) {
+				// Under the killed trees: the dead tops and limbs they shed, and the next spruce, already waiting in
+				// the stand's shade, released by the light (advance regeneration; Jonasova and Prach 2004, Sumava:
+				// thousands a hectare under the grey spots). Docs, 19 Nov: the spots read bare to the ground.
+				Ref<PlantSpecies> shed = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_BRANCH);
+				shed->set_name("Norway Spruce (beetle fallen branch)");
+				shed->set_density(0.6f);
+				shed->set_patch_scale(spot_scale);
+				shed->set_patch_cover(cover);
+				shed->set_patch_seed(patch_seed);
+				list.push_back(shed);
+				Ref<PlantSpecies> young = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_SAPLING);
+				young->set_name("Norway Spruce (beetle regeneration)");
+				young->set_density(0.7f);
+				young->set_patch_scale(spot_scale);
+				young->set_patch_cover(cover);
+				young->set_patch_seed(patch_seed);
+				list.push_back(young);
+			}
+			if (ob >= 3.0f) {
+				// The first snags down: logs criss-crossed in the old spots (windthrow takes a few from the third
+				// year, then snag fall from about five).
 				Ref<PlantSpecies> fallen_spot = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_LOG);
 				fallen_spot->set_name("Norway Spruce (beetle log)");
-				fallen_spot->set_density(0.5f * Math::smoothstep(5.0f, 14.0f, ob) + 0.1f);
+				fallen_spot->set_density(0.5f * Math::smoothstep(5.0f, 14.0f, ob) + 0.15f);
 				fallen_spot->set_patch_scale(spot_scale);
 				fallen_spot->set_patch_cover(MAX(cover - 0.1f, 0.05f));
 				fallen_spot->set_patch_seed(patch_seed);
 				list.push_back(fallen_spot);
 			}
 			// Pioneers in the spots' light (open-grown: only where the canopy is gone).
-			open(PRESET_ROWAN, 0.35f);
-			open(PRESET_BIRCH, 0.3f);
-			shrub(PRESET_ELDER, 0.15f);
+			open(PRESET_ROWAN, 0.5f);
+			open(PRESET_BIRCH, 0.4f);
+			shrub(PRESET_ELDER, 0.25f);
 		} break;
 		case STAND_MAX:
 			break;
@@ -22315,6 +22347,11 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	head_r = 0.0f;
 	if (decay_class > 0) {
 		_apply_decay();
+		if (beetle && decay_class >= 2) {
+			// The grey stage is named for it: the bark that is left and the bared wood bleach silver-grey in the sun
+			// within a few years (Hicke et al. 2012). Docs, 19 Nov: the snags read brown, the phase did not show.
+			bark_color = bark_color.lerp(Color(0.52f, 0.51f, 0.48f), 0.65f);
+		}
 		if (beetle && decay_class == 1) {
 			// The red stage: the needles fade from the top down through yellow-green and straw to fox red, then
 			// brown, and fall from the second year (Wulder et al. 2006, the "red attack" crowns read from the air).
@@ -22322,9 +22359,11 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			// Saturated: the needle sprays' texture and sheen grey any colour toward tan (0.47, 0.21, 0.06 drew as straw).
 			// The fade is a dull olive, short: spruce goes rust-red within weeks of yellowing (a lemon fade drew whole
 			// patches yellow in the stand plot, 19 Nov).
-			const Color fade = Color(0.25f, 0.25f, 0.09f), fox = Color(0.5f, 0.16f, 0.04f), brown = Color(0.33f, 0.11f, 0.04f);
+			// Rust-brown, not an autumn larch's orange (docs, 19 Nov: the front glowed): dead needles are dull and
+			// thin out from the first winter, so the branch skeleton shows through them.
+			const Color fade = Color(0.25f, 0.25f, 0.09f), fox = Color(0.36f, 0.15f, 0.06f), brown = Color(0.27f, 0.13f, 0.07f);
 			leaf_color = y < 0.95f ? fade.lerp(fox, Math::smoothstep(0.55f, 0.95f, y)) : fox.lerp(brown, Math::smoothstep(0.95f, 2.3f, y));
-			const float drop = 0.9f * Math::smoothstep(1.0f, 2.4f, y);
+			const float drop = 0.35f * Math::smoothstep(0.8f, 1.3f, y) + 0.55f * Math::smoothstep(1.3f, 2.4f, y);
 			for (uint32_t i = 0; i < nodes.size(); i++) {
 				if (nodes[i].leafy && float(hash_murmur3_one_32(i, uint32_t(seed) * 2654435761u + 0x62656574u) & 0xffff) / 65535.0f < drop) {
 					nodes[i].leafy = false;

@@ -30,6 +30,7 @@ extends Node3D
 #   --leaves=0            no falling leaves (LeafFall3D); --leaf-litter=N loose leaves per m2 the gusts can lift (0.5)
 #   --cloud-shadow=0 --sun-shadow=0   no cloud shadow on the sun; no raster sun shadow map
 #   --sun-off             no sun at all: what the sky alone lights
+#   --far-shadows=0       no far sun shadows from the ground's horizon toward the sun (raster A/B)
 #   --sky-occlusion=0     ground ambient light without the hills' sky occlusion; --sky-light=0 an even sky for it
 #   --water-param=name:value[;...]   set water shader uniforms on the sea and lakes (floats, true/false, colours as r,g,b,a)
 #   --caustics                       caustics_enabled on the sea and lakes (raster caustics on clear water)
@@ -2326,6 +2327,8 @@ func _build_ground() -> void:
 		tm.detail_octaves = int(args.get("mdetail", "4"))
 		tm.rock_detail_enabled = args.get("rock-detail", "1") != "0"
 		tm.cliff_self_shadow = args.get("ledge-shadow", "1") != "0" # --ledge-shadow=0: ledges of --cliff-relief without their per-pixel shadows (raster)
+		if args.get("far-shadows", "1") == "0":
+			tm.far_shadow_start = 0.0 # --far-shadows=0: no far sun shadows from the ground's horizon (an A/B frame)
 		if args.has("far-cover"):
 			# Far ground blend against the plant cover map the world field builds (cover_map_enabled below).
 			tm.far_blend_enabled = true

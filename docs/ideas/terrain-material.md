@@ -147,3 +147,37 @@ seconds while the sky changes. GPU timings on the PC before merge are owed.
 - Confirm `snow_map`, `snow_world_map` and `weather_state_map` are readable from a custom hit shader under path
   tracing; if not, bind them the way the ray generation shader does.
 - GPU timings on the PC (raster frame time, path traced hit cost).
+
+## Sand glitter (19 Nov, Paulo picked it from the desert research)
+
+Dry quartz sand glints: a share of the grains (clean crystal and cleavage faces, mica) are near-mirror facets that
+reflect the sun as points far brighter than the sand. Journey drew it with a random per-pixel grain normal and a
+threshold (Edwards, GDC 2013, "Sand Rendering in Journey"; Zucconi's 2019 breakdown); our snow already counts facets
+per pixel (snow_glint: Zirr and Kaplanyan 2016; Deliot and Belcour 2023).
+
+- Grains 0.5 mm, 10% of them facets with GGX alpha 0.4 normals. Each facet catches the sun over about 1.5 degrees
+  (the sun's 0.53 degree disc blurred by the facets' curvature and pits), 2.1e-3 sr.
+- Raster: the count of facets in the pixel mirroring the sun is Poisson with mean facets x D(h) cos x
+  omega / (4 VoH), drawn per footprint cell so a glint stays on its grains while sun and camera hold still. Each
+  adds (grain / footprint)^2 of the pixel at the sun's irradiance over omega, drawn as the coat lobe turned onto
+  the half vector (alpha 0.011), so the sun's shadow and colour apply. Glints thin out with distance (a pixel's
+  facets are a smaller share of it) instead of turning to noise.
+- Path tracer: every sample lands on one grain; a facet grain puts the base specular on its own normal
+  (SPECULAR_NORMAL) at roughness 0.12, the rest keep the sand's. The tracer integrates the footprint itself.
+- Off under rain (wetness 0.05-0.3), on the soaked swash, under grain cover and under snow.
+
+## Far sun shadows (19 Nov, item 4 of the round)
+
+At a low sun the shadow cascades smear and then end; far ridges cast nothing. Height field self-shadowing
+(Timonen and Westerholm 2010, "Scalable height field self-shadowing"; horizon mapping, Max 1988) gives exact
+terrain shadows at any range from the ground's horizon toward the sun.
+
+- TerrainGenerator3D keeps the sky grid's heights (sky_cell, 8 m) and, when the sun's azimuth moves a quarter
+  degree, sweeps each line of a grid turned to the sun with the upper convex hull of the ground already passed
+  (amortised constant time a point), giving each point's horizon tangent toward the sun. The map does not depend
+  on the elevation, so the whole day costs a rebuild every quarter degree of azimuth.
+- Shader globals terrain_sun_horizon_map / _frame / _size. TerrainMaterial3D shades SUN_SHADOW by
+  smoothstep(tangent - 0.006, tangent + 0.014, tan(sun elevation)), fading in from far_shadow_start (150 m) to
+  twice it, so the cascades keep the near ground. Raster only; the path tracer traces the hills.
+- The sun is sun_light, or the first visible DirectionalLight3D (polled five times a second).
+

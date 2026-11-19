@@ -58,6 +58,7 @@ enum {
 	MODE_WATER_COPY = 11,
 	MODE_WATER_ERODE = 12,
 	MODE_WATER_SED = 13,
+	MODE_DRIFT_GIVE = 14,
 };
 
 bool GroundDeformGPU::is_available() {
@@ -367,6 +368,7 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 	RD::ComputeListID cl = rd->compute_list_begin();
 	rd->compute_list_bind_compute_pipeline(cl, pipeline);
 	if (p_flags & STEP_RELAX) {
+		_dispatch(cl, MODE_DRIFT_GIVE, 0, field_groups);
 		_dispatch(cl, MODE_RELAX, 0, field_groups);
 	}
 	if ((p_flags & STEP_STAMPS) && stamp_count > 0) {

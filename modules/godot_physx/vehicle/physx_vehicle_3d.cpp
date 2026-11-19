@@ -331,7 +331,10 @@ public:
 			const PxVec3 lat = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLATERAL];
 			const float v_lng = v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL];
 			// The soil the wheel is about to press: just ahead of its contact.
-			const GroundWheelSoil probe = GroundTerramechanics::wheel(sw.soil, load, wp.radius, width, sw.inflation, slip, 0.0f, 0.0f);
+			// Sliding sideways (off camber, in a drift) it digs in as it does spinning (mud round 13.3).
+			// Only a real slide: at a crawl the slip angle is noise, so it comes in over 0.1 to 0.4 m/s of side speed.
+			const float side_slip = v.tireSlipStates[i].slips[PxVehicleTireDirectionModes::eLATERAL] * Math::smoothstep(0.1f, 0.4f, Math::abs(v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLATERAL]));
+			const GroundWheelSoil probe = GroundTerramechanics::wheel(sw.soil, load, wp.radius, width, sw.inflation, slip, side_slip, 0.0f);
 			const float ahead = (v_lng >= 0.0f ? 1.0f : -1.0f) * (0.5f * probe.contact_length + 0.05f);
 			const Vector3 front = at + Vector3(lng.x, lng.y, lng.z) * ahead;
 			sw.already = MAX(ground->get_dent_at(front) - ground->get_rim_at(front), 0.0f);

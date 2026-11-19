@@ -25,8 +25,9 @@
 			<param index="1" name="radius" type="float" />
 			<param index="2" name="depth" type="float" />
 			<param index="3" name="update" type="bool" default="true" />
+			<param index="4" name="color" type="Color" default="Color(0, 0, 0, 0)" />
 			<description>
-				Lays fresh saturated slurry [param depth] metres deep over 1 m cells within [param radius] of [param position], such as the fan a debris flow leaves. It reads as soft mud whatever the weather (the deeper of this and the [member mud_layer] depth wins). With [param update] false the cells refresh later, which suits many small deposits in one step.
+				Lays fresh saturated slurry [param depth] metres deep over 1 m cells within [param radius] of [param position], such as the fan a debris flow leaves. It reads as soft mud whatever the weather (the deeper of this and the [member mud_layer] depth wins), raises the ground and buries the relief under it. With [param update] false the cells refresh later ([method refresh_deposits]), which suits many small deposits in one step. A [param color] (linear, alpha its cover) shows the deposit in that colour on the ground in raster and path tracing, as a debris flow's ash; alpha 0 leaves the soil's own.
 			</description>
 		</method>
 		<method name="add_wader">
@@ -231,6 +232,12 @@
 				The footing at [param position] for a walker of [param mass] kg on [param area] m² of boot: [code]soft[/code], [code]sinkage[/code] (m), [code]effort[/code] (the work of walking against firm ground, 2.1 on dry sand), [code]speed_scale[/code] (its inverse) and [code]slide[/code] (an acceleration down a face steeper than the material holds, m/s²). The game decides how a controller uses them.
 			</description>
 		</method>
+		<method name="get_ford_stats" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				What [member stream_fords] has done so far: [code]plume_kg[/code] (soil sent into the water by wheels and banks), [code]scour_m3[/code] (scoured from the bed under wheels) and [code]bank_failures[/code].
+			</description>
+		</method>
 		<method name="get_fresh_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -318,6 +325,12 @@
 				The copy of [member material] the patch is drawn with.
 			</description>
 		</method>
+		<method name="get_avalanche_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The grain flows running down slip faces now (see [member slip_avalanches]).
+			</description>
+		</method>
 		<method name="get_rim_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -337,6 +350,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The wind ripple height at [param position] over the ripple layer's mean, in metres; [code]0.0[/code] outside the ripple window or with [member wind_ripples] off.
+			</description>
+		</method>
+		<method name="get_ripple_show_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The share of the ripples shown at [param position], 0 to 1: the sand share under any litter, faded out in a calm lee (see [member lee_calm_ripples]).
 			</description>
 		</method>
 		<method name="get_ripple_cell" qualifiers="const">
@@ -538,6 +558,13 @@
 				Whether mat [param mat] has snapped: the bending under the heaviest load it carried passed green wood's strength (about 40 MPa). A broken mat no longer carries wheels.
 			</description>
 		</method>
+		<method name="is_mat_buried" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="mat" type="int" />
+			<description>
+				Whether mat [param mat] lies under a deposit ([method add_mud_deposit]) at least as deep as it is thick. A buried mat no longer carries wheels and is hidden.
+			</description>
+		</method>
 		<method name="is_near_active" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -604,6 +631,12 @@
 				Samples the height source again (after the terrain changed).
 			</description>
 		</method>
+		<method name="refresh_deposits">
+			<return type="void" />
+			<description>
+				Raises the ground by the deposits added since the last refresh ([method add_mud_deposit] with [code]update[/code] false) and refreshes the cells. The deposit buries the relief under it: ruts fill and rims are levelled.
+			</description>
+		</method>
 		<method name="settle">
 			<return type="void" />
 			<param index="0" name="seconds" type="float" />
@@ -668,6 +701,9 @@
 		<member name="clods" type="bool" setter="set_clods" getter="is_clods" default="true">
 			Clods of clay standing on the ground near the camera: thrown clay that lands as a lump, and lumps torn out of a rut's rim in sticky soil. Drawn by an internal [GroundClods3D] (see [method get_clods_node]).
 		</member>
+		<member name="coarse_armour" type="bool" setter="set_coarse_armour" getter="is_coarse_armour" default="true">
+			Pebbles and gravel (WorldGround.coarse_cover_at, from the stone fields) armour the sand between them: past about 35% cover it no longer blows and shows no wind ripples (a deflation lag; Bagnold 1941).
+		</member>
 		<member name="contact_tolerance" type="float" setter="set_contact_tolerance" getter="get_contact_tolerance" default="0.03">
 			How close a body's underside must come to the surface to press it, in metres.
 		</member>
@@ -718,6 +754,9 @@
 		</member>
 		<member name="height_source" type="NodePath" setter="set_height_source" getter="get_height_source" default="NodePath(&quot;&quot;)">
 			The terrain: a [code]TerrainDeformer3D[/code], a baked [code]TerrainDataMap3D[/code], a [code]TerrainGenerator3D[/code], anything with [code]get_height(position)[/code] or Terrain3D. Empty: a downward ray on [member ground_collision_mask].
+		</member>
+		<member name="lee_calm_ripples" type="bool" setter="set_lee_calm_ripples" getter="is_lee_calm_ripples" default="true">
+			Ripples fade out where the shelter (plants, and rocks, walls and vehicles through [member obstacle_lee]) stops the sand: a smooth calm lee behind them, low stopped ripples where the wind recovers (Hesp 1981; Benes and Roa 2004). None under 2% of the open flux, all from 40%.
 		</member>
 		<member name="light_budget" type="bool" setter="set_light_budget" getter="is_light_budget" default="false">
 			For still shots and benches on a software GPU: sets [member deform_resolution] and [member near_resolution] to 256 and [member max_cached_tiles] to 64, about a fifth of the GPU work and some 300 MB less memory, with coarser prints (12.5 cm and 3 cm cells). Turning it off sets them back to 512, 512 and 1024. Off by default.
@@ -836,8 +875,14 @@
 		<member name="skirt_fade" type="float" setter="set_skirt_fade" getter="get_skirt_fade" default="2.0">
 			Over how many metres the lowering reaches its full depth, past [member terrain_margin].
 		</member>
+		<member name="slip_avalanches" type="bool" setter="set_slip_avalanches" getter="is_slip_avalanches" default="true">
+			A step on a dry dune slip face (dune sand between its stopping and starting angles) sets off a grain flow down the fall line: a tongue that widens downslope, scoured 4 mm to 1.5 cm deep, ending in a lobe at the toe, the sand kept (Daerr and Douady 1999; McDonald and Anderson 1996).
+		</member>
 		<member name="snow_cover" type="NodePath" setter="set_snow_cover" getter="get_snow_cover" default="NodePath(&quot;&quot;)">
 			A [code]SnowCover3D[/code]: where it has more than 3 cm of snow, the snow surface takes the print instead.
+		</member>
+		<member name="stream_fords" type="bool" setter="set_stream_fords" getter="is_stream_fords" default="true">
+			Wheels in running water from the water contract scour the bed: a share of the rut (rising with the current's shear past the remoulded soil's 0.5 Pa) and most of its rims leave as fines dropped into the water ([method WorldWater.add_sediment_mass]), a plume the stream carries on. A wheel on a bank over water tests the bank as an infinite-slope slab 0.5 m deep (Skempton and DeLory 1957) under its load, carried undrained by the pore water where the slab lies below the water table (the stream's level plus a 0.3 m fringe); under a factor of safety of 1 the slab slumps to the toe as fresh mud and half its fines go into the water.
 		</member>
 		<member name="subsoil" type="bool" setter="set_subsoil" getter="is_subsoil" default="true">
 			A firm base under the loose layer of soil or mud. The layer's depth over it varies across the ground (0.7 to 1.3 times the material's depth, over a few metres; [method get_subsoil_depth_at]). As a wheel or foot presses the layer thinner than its own width, the soil stiffens against the base (finite-depth pressure-sinkage), and a tyre that reaches the base grips on it (friction 0.5) instead of on the mud above. Off: the base is only a hard stop.
@@ -873,6 +918,9 @@
 			If [code]true[/code], water over the ground changes it. Water from [member water_sources] and the [code]WeatherMap3D[/code] contact wetness fills the pores of the top layer (saturated in about 10 s under water), which drain to field capacity in a minute or two and dry over hours. Damp sand is firm and holds steep walls; saturated sand slumps as dry sand does. Water flowing faster than the Shields threshold (about 0.25 m/s) moves the sand ([method bed_load]): prints under the swash or a stream are rounded off within a minute, the volume kept.
 			The pore water also shows: wet sand darkens and turns smoother (Lagarde's porous wet surfaces), and a film stands glossy on saturated sand and under the water, in raster and under the path tracer alike, through the [code]ground_wet_map[/code] shader global.
 		</member>
+		<member name="water_fringe" type="bool" setter="set_water_fringe" getter="is_water_fringe" default="true">
+			Dry ground up to 15 cm over a nearby water body's level stays wet by capillary rise, so still pools and lakes get a band of dark wet sand along their shore, fading out above it (Lu and Likos 2004).
+		</member>
 		<member name="water_sources" type="NodePath[]" setter="set_water_sources" getter="get_water_sources" default="[]">
 			The water nodes the ground reads, sampled on a 1 m grid twice a second: any node with [code]sample_depth(position)[/code] (or [code]sample_height(position)[/code]), [code]sample_flow(position)[/code] and, for a sea's swash, [code]sample_swash(position)[/code], such as the water surface, river and live water nodes.
 		</member>
@@ -881,6 +929,9 @@
 		</member>
 		<member name="world_puddles" type="bool" setter="set_world_puddles" getter="is_world_puddles" default="true">
 			If [code]true[/code], the ground places puddles itself where water would gather: hollows in the ground, and with a [member data_map] the wet flats its wetness index marks and the first metres beside water, on flat bare soil (not sand, rock or litter). Each is [method add_puddle]'s hollow, the same at each place every time; filled with slightly muddy water when the ground round it is wet, a dry hollow (which can crack) when it is not; rain fills it later like any hollow. Needs [member standing_water]. With [member keep_ruts] a puddle already kept is not dug again.
+		</member>
+		<member name="wind_fills_prints" type="bool" setter="set_wind_fills_prints" getter="is_wind_fills_prints" default="true">
+			Wind over the sand's threshold fills prints from their upwind side and wears their downwind rims, so a print shallows as it creeps downwind (aeolian infilling; Sauermann, Kroy and Herrmann 2001), instead of fading evenly. The rate follows [member sand_drift_rate]. CPU and GPU fields.
 		</member>
 		<member name="wind_override" type="Vector2" setter="set_wind_override" getter="get_wind_override" default="Vector2(0, 0)">
 			The 10 m wind over the ground in m/s, as world XZ. [code]Vector2(0, 0)[/code] reads it from the [code]WeatherMap3D[/code].

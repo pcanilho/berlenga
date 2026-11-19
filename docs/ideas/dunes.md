@@ -232,8 +232,13 @@ ground under them; OasisSprings3D (Valence) sizes each pool by its water balance
 - **Wiring**: OasisSprings3D.spring_source = the generator; generator.oasis_springs = the OasisSprings3D.
   generate() places the springs, rebuilds the pools and reads each outline (matched to the nearest spring).
 - **Hollow**: inside 0.92 of the outline a bed (1 - d^2)^1.2 down to min(2.4, 0.6 + 0.35 R) m, with lumps
-  (value noise 1.6 m and 0.7 m, 0.4 and 0.15 m) and runnels (radial grooves, 0.22 m) fading to nothing at the
-  shore; the bed meets the still water at 0.92 of the outline, as Valence asked, so the clipped water edge never
+  (value noise 1.6 m and 0.7 m, 0.4 and 0.15 m) and seepage runnels fading to nothing at the shore. The first
+  runnels were one polar noise patch and read as even spokes in clear water (Valence, 19 Nov). Now each oasis
+  has 4 to 9 runnels at uneven angles, each a Gaussian groove 0.5 to 1.4 m wide and 0.1 to 0.25 m deep whose line
+  wanders sideways with distance (value noise over 6 m and 2.2 m, about 2.5 m either way); only 2 to 4 reach the
+  middle, the rest die out 35 to 75% of the way in, as seepage channels on a spring mound's flank do. The bank's
+  contours ease over 6 m from the outline to the outline averaged over some 35 degrees, with 0.4 m of noise, so
+  the outline's jags do not run out up the bank as rays; the bed meets the still water at 0.92 of the outline, as Valence asked, so the clipped water edge never
   shows. Past it a 7 degree beach for 3 m, then 24 degrees up to the dunes; the hollow only lowers the ground.
 - A pit 0.35 m deep and 0.7 m in radius under each get_vents(i) point (x and z only; the vents' heights land on the
   measured bed a frame later).

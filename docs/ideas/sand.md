@@ -685,6 +685,84 @@ even pattern on the sand round them, rows of round pits in the rill floors. Fixe
   octave aliased into an even pattern over the whole beach. Each octave now fades out under about 1.5 texels a
   wavelength.
 
+Docs round 2 (partial): still a comb lower down, banks like steps with pixel-stair edges, a busy pattern beside
+the rills, cusp bays not visible from the front camera. Fixes:
+- The steps were a wave about 3 texels (4.7 cm) long down every rill in the water depth and, weaker, in the bed:
+  the explicit shallow water scheme's short waves on steep thin flow, under the scales it resolves (it showed in
+  every run's depth spectrum along the flow and never across it). The water's gloss read it as a ladder of bright
+  rungs. The depth is drawn under a 1-2-1 filter (a quarter of a 3-texel wave left, nine tenths of a rill), which
+  also rounds the rills' edges over a texel as a film's are; the water reads as a full mirror only from about
+  0.8 mm, so the channels' deeper water shows brightest and the thin sheet beside them stays matte.
+- Cusps: the bays now run down the face (the relief stretched about three times downslope) and are 7 cm deep,
+  so they gather the heads into trunks all the way down. Regular cusps (|sin|^0.7 horns and bays every 2.5 m, 6 cm
+  deep) were tried and gathered the whole seepage into a sheet a bay wide: no rills. `--cam2` adds a low side-on frame along the beach.
+
+### Footstep avalanches on slip faces (Paulo's pick, 19 Nov 2026)
+
+Dry sand on a dune's slip face rests between its stopping and starting angles (about 31 and 33 degrees,
+hysteresis: Daerr and Douady 1999). A step on it pushes the surface layer past the starting angle and a grain
+flow runs down the face as a tongue that widens downslope and ends in a lobe at the toe (McDonald and Anderson
+1996; Kleinhans 2005; Breton et al. 2008 for the scar and lobe shapes). A cellular slump rule with the two angles
+only crept a fraction of a millimetre a step (it is diffusive): the flow is an event instead.
+- Trigger: a press (CPU press, press_box, press_wheel; GPU main sink stamps) on dry sand whose repose is a dune
+  sand's (tan 0.58 to 0.73), sand share at least a half, on ground between 2 degrees under repose and 1.15 times
+  its tangent. One flow per 40 cm per 4 s, at most 16 at once.
+- Path: down the fall line in 4 cm steps until the slope falls under 0.85 of the stopping angle. The front runs
+  at about 1 m/s; the tongue's two edges wander on their own (3 to 10 degrees a side), so no two tongues match.
+- Sand: a surface layer 1.5 cm deep at the top thinning to 4 mm is scoured from the tongue and laid as the lobe
+  over the last fifth of the path and a little beyond; the volume is kept. `slip_avalanches` (on).
+- Bench: `--test=avalanche` (reach, nothing beside it, volume kept, a shallow scar, none on the stoss slope);
+  `--view=avalanche` a line of steps across a 32 degree face (`dune` height kind).
+
+### Wind fills prints from upwind (Paulo's pick, 19 Nov 2026)
+
+Wind does not fade a print evenly. Its upwind wall shelters the hollow, so the saltation's shear falls there and
+the load the wind brings lands; the rim facing the wind takes more shear than the plain and wears. With the flux
+lagging the shear by its saturation length, about a metre, longer than a print (Sauermann, Kroy and Herrmann
+2001; Andreotti, Claudin and Douady 2002), the net effect on a print is its relief carried downwind at the bed's
+celerity c = q / H (Exner): the upwind wall fills first and the hollow shallows as it creeps downwind.
+- `_drift_prints()` (CPU) and `drift_give()` plus MODE_RELAX (GPU): the relief (rim less dent) advected,
+  first-order upwind and conservative, through each texel's faces, gated by the lesser blown share of the two
+  texels (damp or littered sand neither gives nor takes; shelter included). Its numerical diffusion, c l / 2,
+  rounds the walls. c is 0.5 m times the old fade rate (about 1 m an hour at 10 m/s, 1.4 at 12; field flux at
+  10 m/s, about 1e-5 m2/s, over a 2 cm print gives 2 m an hour); 40% of the old even fade stays for the
+  softening the shear's sideways spread gives. `wind_fills_prints` (on).
+- Bench: `--test=infill` (upwind half fills first, the hollow moves downwind, nothing under the threshold).
+
+### Calm lee zones and stopped ripples (Paulo's pick, 19 Nov 2026)
+
+Behind a boulder, wall, parked car or nebkha the wind near the ground falls under the sand's threshold: nothing
+saltates, and the grains falling out of the slowing cloud bury the ripples under a smooth drape (the shadow
+behind an obstacle, Hesp 1981; the wind shadow of dune models, Benes and Roa 2004). Further on, where the wind
+recovers, ripples show again, low and nearly stopped.
+- Built on world-links' lee (WorldWeather.obstacle_lee_at, scaling the sand's friction speed with the plants'
+  drag partition): the ripples' shown share goes as the flux factor at a reference gale (none under 2% of the
+  open flux, all from 40%), bilinear over the lattice so the shadow's edge is soft. The ripple field's own steps
+  already slow there. Raster and path tracer alike (the ripple map's share channel and the far sand share).
+  `lee_calm_ripples` (on). `--test=shelter` checks the cavity, the recovery and the open sand.
+
+### Pebbles and gravel armour the sand (ground detail, 19 Nov 2026)
+
+On a shingle or gravel beach the coarse grains take the wind's stress and shelter the sand between them (a
+deflation lag; Bagnold 1941; Nickling and McKenna Neuman 1995): it neither blows nor grows ripples (only sparse
+granule ripples, Sharp 1963). Ripples shown among pebbles read as fine stripes from above. GroundSurface3D reads
+WorldGround.coarse_cover_at (the stone fields' cover) on its 1 m wind grid: the sand's supply and flux share fall
+to none past 35% pebble and gravel cover (all under 10%). `coarse_armour` (on); checked in `--test=shelter`.
+
+### Wet margins round still water (oasis pools, 19 Nov 2026)
+
+Sand by a pool or lake stays wet above the water's level by capillary rise, about 15 cm in fine sand (Lu and Likos
+2004), so a still pool's shore shows a band of dark wet sand (about 35% darker, Lekner and Dorf 1988) fading out
+above it. The water's level (any water source or the water contract) is carried 2 m out from the cells it covers,
+the nearest wet cell's; dry ground under 15 cm over it is kept near saturated at the top, falling to 0.4 at the
+fringe's top. `water_fringe` (on); `--test=fringe`. Next: a salt crust where the fringe's top evaporates.
+
+### Path traced dents follow the field
+
+The path tracer recaptures a mesh's vertex() output when a material parameter changes, not when a texture it
+samples is rewritten in place, so a fresh rut could show at an older, shallower depth there. The patch material
+carries `ground_deform_serial`, bumped at most once a frame whenever the field's texture was rewritten.
+
 ### Drifting on sand (Paulo, 16 Nov 2026)
 
 Asked: a fast slide through a sharp turn should throw sand, and dry sand should raise dust that has to settle.

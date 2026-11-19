@@ -6176,6 +6176,13 @@ bool RTTlasBuilder::_add_merged_mm_surface(const PendingMMSurface &p_pending, co
 		geom.instance_data_primitive_divisor = merged_sd.geometry.primitive_count / p_pending.source.count;
 		geom.instance_data_layout = p_instance_data.layout;
 		sources.instance_data = p_instance_data.source;
+		// 3D records (the first field after the transform at 12, not 8) of plain instances, not particles,
+		// billboards or vertex captures: the hit shader can put each instance's own transform back.
+		const RTInstanceSource &src = p_pending.source;
+		const uint32_t first_field = MIN(src.color_offset, src.custom_offset);
+		if (!src.particles && p_pending.bake.billboard_index == UINT32_MAX && (geom.flags & RT_GEOM_FLAG_CAPTURED) == 0 && first_field >= 12 && first_field != UINT32_MAX) {
+			geom.flags |= RT_GEOM_FLAG_INSTANCE_XFORM;
+		}
 	}
 	const uint32_t facing_flags = _push_tlas_instance(p_pending.instance_transform, merged_sd.blas, p_pending.key, p_pending.transparent, p_pending.raster_mirror);
 	_push_tlas_entry(geom, sources, facing_flags, p_pending.mat_data, p_pending.material_flags, p_pending.layer_mask, p_pending.instance_uniforms_ofs, p_pending.instance_alpha,

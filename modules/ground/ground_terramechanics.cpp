@@ -214,8 +214,14 @@ GroundWheelSoil wheel(const GroundSoil &p_soil, float p_load, float p_radius, fl
 	// The base stiffens what the load presses; what a spinning wheel digs out on top of that it throws out (Lyasko's slip sinkage).
 	const float free_z = _free_sinkage(p_soil, p_load, p_radius, p_width, p_inflation);
 	r.static_sinkage = MIN(layered_sinkage(p_soil, free_z, p_width), p_soil.max_sinkage);
-	// The extra a spinning wheel digs is soil thrown out, not pressed, so the base does not stiffen it.
-	r.sinkage = MIN(r.static_sinkage + MAX(slip_sinkage(free_z, p_slip) - free_z, 0.0f), p_soil.max_sinkage);
+	// The extra a spinning wheel digs is soil thrown out, not pressed, so the base does not stiffen it. A wheel
+	// sliding sideways digs in too: the soil flows out from under it to the side, and the sinkage grows with the
+	// slip angle as with the slip ratio (Ishigami et al. 2007, J. Field Robotics, "Terramechanics-based model for
+	// steering maneuver of planetary exploration rovers on loose soil"; Wong 2008 on lateral slip sinkage). Here
+	// on the combined slip, the slip ratio and tan of the slip angle (the side slip's share of the travel).
+	const float side = Math::abs(Math::tan(CLAMP(p_slip_angle, -1.4f, 1.4f)));
+	const float combined = MIN(Math::sqrt(p_slip * p_slip + side * side), 1.0f);
+	r.sinkage = MIN(r.static_sinkage + MAX(slip_sinkage(free_z, combined) - free_z, 0.0f), p_soil.max_sinkage);
 	// The contact: the arc a rigid wheel of radius r has under the surface at sinkage z, or the flat of a
 	// flattened tyre (its load over its inflation pressure), whichever is longer.
 	const float z = r.sinkage;
