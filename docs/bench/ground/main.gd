@@ -2913,7 +2913,7 @@ func _run_wind_tests() -> void:
 	print("  grown in %.1f s (a worker); 8 m/s along x: wavelength %.1f cm along, %.1f cm across, slope energy %.0fx along, %.1f mm peak to peak" % [grow_s, st[0] * 100.0, st[1] * 100.0, st[2], st[3] * 1000.0])
 	_check("ripples 5 to 15 cm long along the wind (Bagnold 1941; Andreotti 2006)", st[0] > 0.05 and st[0] < 0.15, "%.1f cm" % (st[0] * 100.0))
 	_check("crests across the wind", st[2] > 4.0 and st[1] > 3.0 * st[0], "slope energy along / across %.1f, crests %.0f cm long between turns" % [st[2], st[1] * 100.0])
-	_check("ripple index about 15 (7 mm at 11 cm)", st[3] > 0.003 and st[3] < 0.012, "%.1f mm peak to peak" % (st[3] * 1000.0))
+	_check("ripple index about 15 (7 mm at 11 cm)", st[3] > 0.005 and st[3] < 0.012, "%.1f mm peak to peak" % (st[3] * 1000.0))
 	# At real time the wind moves a cell's sand by q: a step every few seconds at 8 m/s.
 	var s0 := surface.get_ripple_steps()
 	for i in 600:

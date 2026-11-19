@@ -643,7 +643,7 @@ Built: GroundRipples::vary() and ground_ripple_vary() (material.cpp, raygen): a 
 a few), dislocation pairs in half the 2 m cells, along the crests, 30 to 90 cm apart, shifting the tile by
 exactly one wavelength of its dominant wave vector (found by a DFT of the grown tile, 3 to 40 cm band, sent in the
 ripple map's last row), a stretch along the crests' normal (30 cm at 2.5 m: crests crowd and open by up to a fifth, 9 to 14 cm apart; stronger broke the near crests into grain-like noise in the desert bench), and a height between 35 and 100% over 2 to 6 m. Integer hashes, so the CPU fill of the real
-ripples' window and both renderers agree to the bit and meet crest to crest. Far ripples fade where their crests come closer than about three pixels (prefiltered to the pixel, so they do not alias into moire bands). Next if wanted: true wave ripples
+ripples' window and both renderers agree to the bit and meet crest to crest. Far ripples fade where their crests come closer than about three pixels (prefiltered to the pixel, so they do not alias into moire bands). Crest height (19 Nov): the height-dependent hop saturated at 3 mm, so grown ripples stood 4 mm peak to peak (index about 30); real ones stand 5 to 10 mm at 9 m/s (index 15 to 20; Sharp 1963, Andreotti 2006). hop_saturation is now 5 mm: 7.3 mm at 12 cm (index 16), checked by --test=wind. Next if wanted: true wave ripples
 (symmetric, shore-parallel) where the bed is under the sea.
 
 ### Drifting on sand (Paulo, 16 Nov 2026)
