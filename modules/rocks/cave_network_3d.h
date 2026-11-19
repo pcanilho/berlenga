@@ -91,6 +91,7 @@ public:
 		AABB bounds;
 		bool holed = false; // the landscape has its hole over this cave's patch
 		bool sea = false;
+		real_t mouth = 0.0; // a sea cave's mouth radius (its patch is sized to it)
 		LocalVector<Vector3> blowholes; // where a sea cave's roof shaft opens at the ground
 	};
 
@@ -141,6 +142,7 @@ private:
 		LocalVector<const Block *> blocks;
 		LocalVector<Vector3> patches; // entrances whose patch reaches this chunk
 		LocalVector<Vector3> patch_out;
+		LocalVector<real_t> patch_r; // each patch's half size (_patch_half)
 	};
 	friend struct CaveMeshJob;
 	HashMap<Vector3i, Chunk> chunks;
@@ -155,6 +157,9 @@ private:
 	void _replace_chunk(Chunk &p_chunk, const Ref<Material> &p_wall);
 	real_t chunk_size = 16.0;
 	real_t patch_radius = 14.0;
+	// A cave's patch half size: patch_radius, a sea cave's no wider than its mouth needs (the beach's own sand surface
+	// is cut away over the whole patch, and the bare ground there showed its heightfield's facets).
+	real_t _patch_half(const Cave &p_cave) const { return p_cave.sea && p_cave.mouth > 0.0 ? MIN(patch_radius, p_cave.mouth * 1.3 + 3.0) : patch_radius; }
 	real_t roughness = 1.0;
 	real_t scallops = 1.0; // Worley dish hollows on the walls (0 off)
 	real_t speleothems = 1.0; // drip formations: density (0 none)

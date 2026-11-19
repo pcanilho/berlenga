@@ -144,6 +144,13 @@
 				Override in a stub: [method season_at].
 			</description>
 		</method>
+		<method name="_smoke_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method smoke_at].
+			</description>
+		</method>
 		<method name="_snowfall_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -353,6 +360,13 @@
 			<param index="1" name="day" type="int" default="-1" />
 			<description>
 				The season's state at the point's height on a day of the year (below 1: today), with the live departure from the climate: phenology, snowpack, soil frost (the keys of WeatherMap3D.get_season). Default: the default climate.
+			</description>
+		</method>
+		<method name="smoke_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Fires' smoke in the air over [param position], g/m2 of particulate in the column (the weather's smoke haze layer, about 2 km deep). Default 0.
 			</description>
 		</method>
 		<method name="snowfall_at" qualifiers="const">

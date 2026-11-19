@@ -194,13 +194,15 @@ func _ready() -> void:
 				break
 		print("[landscape] guide preview at %.0f m cells: %.0f ms with the write (full run %.0f ms without)" % [gen.cell_size * gen.guide_preview_scale, gen.get_last_preview_msec(), full_ms])
 	if args.has("find-caves"):
-		# --find-caves[=N]: cave entrances (CaveNetwork3D.find_entrances) on this terrain, printed, then quit.
+		# --find-caves[=N]: cave entrances (CaveNetwork3D.find_entrances, then find_sea_entrances) on this terrain, printed, then quit.
 		var net := CaveNetwork3D.new()
 		gen.add_child(net)
 		net.generator = net.get_path_to(gen)
 		var n := int(args["find-caves"]) if args["find-caves"] != "1" else 8
 		for e in net.find_entrances(gen.get_world_rect(), n):
 			print("[landscape] cave entrance %s facing %s" % [e["position"], e["out"]])
+		for e in net.find_sea_entrances(gen.get_world_rect(), n):
+			print("[landscape] sea cave entrance %s facing %s" % [e["position"], e["out"]])
 		get_tree().quit(0)
 		return
 	if args.has("dune-map"):

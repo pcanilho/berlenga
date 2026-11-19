@@ -81,6 +81,10 @@ class GroundDust3D : public Node3D {
 	LocalVector<float> floor_y; // ground height per column
 	LocalVector<GroundSurface3D::Dust> sources;
 	double airborne = 0.0; // kg
+	// Dust settled per column since the last hand-over to the snow (WorldSnow.add_impurity: dirty snow).
+	LocalVector<float> snow_fallen;
+	float snow_timer = 0.0f;
+	void _hand_dust_to_snow(float p_dt);
 	double deposited = 0.0; // kg settled to the ground since the last reset (dust carried out of the grid is not counted)
 	double emitted = 0.0;
 	Vector3 last_follow;

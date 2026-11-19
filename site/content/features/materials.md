@@ -48,3 +48,4 @@ summary: "Clearcoat, back lighting, thin-glass transmission, subsurface scatteri
 - `sun_direction()` in spatial shaders gives the sun's world-space direction, and the fragment output `SUN_SHADOW` multiplies the sun's shadow (raster, Forward+ and Mobile).
 - `OPAQUE_PREPASS_THRESHOLD` in `fragment()` picks which fragments of a `depth_prepass_alpha` material write depth (default 0.99), in all three renderers.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders; `SPECULAR_NORMAL` output, a separate normal for the specular lobe under path tracing.
+- `RAY_FOOTPRINT` in spatial shaders: under path tracing, reads the ray cone's width at the hit, to filter detail smaller than a pixel.

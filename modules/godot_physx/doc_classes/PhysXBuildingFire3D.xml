@@ -5,7 +5,7 @@
 	</brief_description>
 	<description>
 		Add it to a building and describe its rooms in [member rooms]: each is a fire compartment with a box, a fuel load and its openings (doors, windows, hatches). An opening that lies on another room's face is a door between the two.
-		A room on fire grows as t² ([member growth_time] to 1 MW) and takes air through its open openings, which limits it to Kawagoe's 1.5 A√H MW. Its hot layer heats as McCaffrey, Quintiere and Harkleroad's correlation gives, and glass falls out at about [member glass_break_temperature]. It flashes over at Thomas's heat release; after that its fuel burns at [member heat_release_rate] per square metre of floor, and what the air inside cannot burn comes out of the windows as flames of Eurocode's length (EN 1991-1-2 Annex B). Once 70% of its fuel has burnt it dies down linearly. Its timber chars at 0.8 mm a minute in a fully developed fire; the fire burns through walls ([member wall_thickness]), floors ([member floor_thickness]) and the roof ([member roof_thickness]) into the rooms beyond, and the room collapses when its framing has lost [member collapse_share] of [member member_size]. A [code]PhysXDestructible3D[/code] [member target] breaks up as it does.
+		A room on fire grows as t² ([member growth_time] to 1 MW) and takes air through its open openings, which limits it to Kawagoe's 1.5 A√H MW. Its hot layer heats as McCaffrey, Quintiere and Harkleroad's correlation gives, and glass falls out at about [member glass_break_temperature]. It flashes over at Thomas's heat release; after that its fuel burns at [member heat_release_rate] per square metre of floor, and what the air inside cannot burn comes out of the windows as flames of Eurocode's length (EN 1991-1-2 Annex B). Once 70% of its fuel has burnt it dies down linearly. Its timber chars at 0.8 mm a minute in a fully developed fire; the fire burns through walls ([member wall_thickness]), floors ([member floor_thickness]) and the roof ([member roof_thickness]) into the rooms beyond, and the room collapses when its framing has lost [member collapse_share] of [member member_size]. A [code]PhysXDestructible3D[/code] [member target] breaks up as it does. Otherwise the target's meshes over each room (its ceiling, the floor above, its roof) sag as the framing chars, then fall in as rigid bodies when that room collapses, room by room, and their colliders go with them.
 		Smoke runs ahead of the fire. A burning room's plume fills a smoke layer under its ceiling (Heskestad's entrainment), carrying soot at [member smoke_yield]. The layer comes down until it reaches the tops of the openings and flows out of them, through doors into the next rooms (which fill and smoke in turn) and out of windows and eaves. So grey smoke pours from a house minutes before any flames show.
 		Fire spreads between rooms through doors (radiation from a hot layer, flames through once it flashes), through burnt walls and floors, from a room that collapses onto the one below, and from flames out of a window to the window above.
 		Water puts it out. Water in a room boils off and takes 2.6 MJ per kilogram. Taking about a third of what the fire could release puts the flames down (about 0.15 kg/s per MW, as fire services find), and the steam pours out of the windows. A flashed-over room falls back to a growing fire, and it goes out if the water keeps winning for twenty seconds. A weaker stream only holds it back, and the fire grows again when the water stops. Half a millimetre of water on burning cladding puts it out, and wet cladding does not catch.
@@ -54,6 +54,18 @@
 			<return type="float" />
 			<description>
 				The whole building's heat release in kW: its rooms, the flames outside them and the burning cladding.
+			</description>
+		</method>
+		<method name="get_ignition_cause" qualifiers="const">
+			<return type="String" />
+			<description>
+				What first set the building alight: [code]"direct"[/code] ([method ignite]), [code]"firebrand"[/code] (embers through an opening, or a glowing pile of them against the cladding) or [code]"heat"[/code] (radiation or flame contact from fires nearby). Empty until it catches.
+			</description>
+		</method>
+		<method name="get_ignition_time" qualifiers="const">
+			<return type="float" />
+			<description>
+				Fire seconds from when it started stepping to its first catch (scaled by [member time_scale]), or [code]-1[/code] if it has not caught.
 			</description>
 		</method>
 		<method name="get_room_char_depth" qualifiers="const">
@@ -125,6 +137,12 @@
 				The temperature of a room's hot layer in °C.
 			</description>
 		</method>
+		<method name="get_shard_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Pieces of window glass it has dropped (at most 300).
+			</description>
+		</method>
 		<method name="get_smoke_rate" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -191,6 +209,9 @@
 		<member name="flow" type="NodePath" setter="set_flow" getter="get_flow" default="NodePath(&quot;&quot;)">
 			The [PhysXFlow3D] the flames and smoke are drawn in; empty uses [member fire]'s.
 		</member>
+		<member name="glass_panes" type="bool" setter="set_glass_panes" getter="has_glass_panes" default="true">
+			If [code]true[/code], it draws a pane of glass in each glazed opening, and when the heat breaks it the pane falls out as angular shards, pushed outward when the room is near flashover. Turn it off for a building whose meshes already have glass.
+		</member>
 		<member name="glass_break_temperature" type="float" setter="set_glass_break_temperature" getter="get_glass_break_temperature" default="450.0">
 			The hot-layer temperature in °C at which window glass falls out (each pane up to 80 °C later).
 		</member>
@@ -225,6 +246,14 @@
 			Metres of timber a fire chars through before it reaches the next room, or the cladding before it reaches inside.
 		</member>
 	</members>
+	<signals>
+		<signal name="ignited">
+			<param index="0" name="cause" type="String" />
+			<description>
+				Emitted once, when the building first catches; [param cause] as [method get_ignition_cause].
+			</description>
+		</signal>
+	</signals>
 	<constants>
 		<constant name="ROOM_COLD" value="0" enum="RoomState">
 			Not alight.

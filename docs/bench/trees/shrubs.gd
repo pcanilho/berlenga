@@ -44,7 +44,8 @@ func run(args: Dictionary) -> void:
 			var t0 := Time.get_ticks_msec()
 			var nv := int(args.get("variants", "1"))
 			var sp: PlantSpecies = TreeGenerator.make_shrub_species(p, f, nv, season)
-			for vi in sp.meshes.size():
+			# Living variants only (the fire band variants follow them in the list).
+			for vi in TreeGenerator.get_living_meshes(sp).size():
 				x = await _place(sp, vi, x, z, args, t0)
 		width = maxf(width, x)
 		z -= float(args.get("row", "3.5"))

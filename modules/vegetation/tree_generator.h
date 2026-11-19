@@ -134,6 +134,7 @@ public:
 		STAND_STONE_PINE, // Stone pine parkland on coastal sands: open-grown umbrellas a crown apart.
 		STAND_OLIVE_GROVE, // Old olive grove: open-centre olives on split, twisted trunks, about 10 m apart.
 		STAND_DATE_OASIS, // Date palm oasis: tended palms in irrigated rows, wild clumps by the water, fruit trees beneath (trees.md 5ai).
+		STAND_BEETLE_SPRUCE, // Spruce after a bark beetle outbreak: grey snag spots with a red front, living spruce between (trees.md 5aj).
 		STAND_MAX,
 	};
 
@@ -665,6 +666,15 @@ public:
 	// and 15) after their living ones, mesh meta tree_fire_years and tree_fire_band; VegetationField3D picks by
 	// WorldFire.burn_age_at (world-links.md). Off for scouts and tests that do not burn.
 	bool fire_variants = true;
+	// Years since bark beetles killed the tree (trees.md 5aj), -1 none; conifers only. Under 0.6 green attack (resin
+	// beads, boring dust), then the needles fade yellow to red and drop (to 2.5), grey snag with the bark falling in
+	// sheets (to 6), top broken (to 12), then a stub.
+	float beetle_years = -1.0f;
+	// STAND_BEETLE_SPRUCE: years since the outbreak began; the spots grow and age with it.
+	float beetle_outbreak = 6.0f;
+	bool beetle_active = false; // This generate() grows a beetle kill.
+	int beetle_band = 0; // While a beetle stand grows its species: 1 the red front, 2 the grey core.
+	void _grow_beetle_signs(Builder &p_bark, Builder &r_parts);
 	float cork_stripped_years = -1.0f; // Cork oak: years since the last cork harvest (5aa); -1 picks by seed, 30 or more never worked.
 	float _cork_strip_age() const;
 	// Exposure to a prevailing wind blowing toward +X (trees.md 5q): ice and sand kill the windward
@@ -973,6 +983,10 @@ public:
 	void set_bark_peel(float p_peel) { bark_peel = MAX(p_peel, 0.0f); }
 	void set_fire_years(float p_years) { fire_years = p_years < 0.0f ? -1.0f : p_years; }
 	void set_fire_variants(bool p_on) { fire_variants = p_on; }
+	void set_beetle_years(float p_years) { beetle_years = p_years < 0.0f ? -1.0f : p_years; }
+	float get_beetle_years() const { return beetle_years; }
+	void set_beetle_outbreak(float p_years) { beetle_outbreak = MAX(p_years, 0.0f); }
+	float get_beetle_outbreak() const { return beetle_outbreak; }
 	bool get_fire_variants() const { return fire_variants; }
 	void set_cork_stripped_years(float p_years) { cork_stripped_years = MAX(p_years, -1.0f); }
 	float get_cork_stripped_years() const { return cork_stripped_years; }
@@ -1090,6 +1104,9 @@ public:
 		SHRUB_MAX,
 	};
 	static Ref<PlantSpecies> make_shrub_species(Preset p_preset, ShrubForm p_form, int p_variants, const Dictionary &p_season);
+	// A species' living variants only: placed species carry their fire band variants after them (meta
+	// tree_fire_band), so code that cycles meshes by index must use this.
+	static TypedArray<Mesh> get_living_meshes(const Ref<PlantSpecies> &p_species);
 	// Open share of a heath shrub's flowers on a day of the year (0 for other presets).
 	static float get_bloom(Preset p_preset, float p_day_of_year);
 	Ref<Biome> make_stand(Stand p_stand, int p_variants);

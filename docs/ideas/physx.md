@@ -1886,11 +1886,96 @@ minutes before it catches. Left: no smoke inside rooms drawn through
 windows yet (Flow gas leaks through thin walls); stairs are not yet a
 connection between floors.
 
+### Glass and roofs that break (picked 19 Nov, third of four)
+
+Research: window glass in fire cracks from the frame edge (the shaded
+edge stays cool while the exposed centre expands; Pagni and Joshi 1991)
+at about a 60-80 C difference, and falls out at about 450 to 600 C of
+hot layer, in pieces of a few to some tens of centimetres (Babrauskas
+2004; Shields et al.). Light timber floors and roofs sag as the char
+eats their joists, deflecting fast just before they fail. Built:
+glass_panes (on) draws a transmissive pane (IOR 1.52, thin-walled, a
+soda-lime green edge) in each glazed opening; when the layer breaks it
+the pane splits into about one piece per 0.06 m2 by random cuts, each cut
+again along a diagonal into angular shards, 15% kept in the frame a
+while, the rest rigid bodies pushed out at 0.5 to 2 m/s near flashover
+(at most 300). Without a Blast target, the target's meshes over a room
+(the top 0.3 m to 1.5 m above it: ceiling, the floor above, roof) sag
+by span/20 times the cube of the share of section lost, and fall in as
+rigid bodies (box colliders from their bounds, 400 kg/m3) when the room
+collapses, the target's colliders over the room disabled. Left: shards
+from the 15% left in frames; a pitched roof drawn as one mesh falls as
+one piece.
+
+Doorway smoke: the building's smoke goes to its own gas (BuildingSmoke:
+no combustion, dark grey, slow fade), from a box across the smoky part
+of each opening rather than a small sphere (which gave the grid a cell
+or two of smoke that thinned to nothing within a metre).
+
 Mudflow pooling (Valence: a 4 km2 burnt valley fires 68 events at once):
 events under min_volume (100 m3) are left to the mud body; at most
 max_events (6) events have surges, a bigger one replacing the smallest;
 the boulder cap is shared. Storm test: 68 events, 39,000 m3: 6 events,
 24 surges, 60 boulders.
+
+### Village wind-fire bench (picked 19 Nov, fourth of four)
+
+Research: in wildland-urban interface fires most houses are lit by
+embers, directly or through fuels next to them (mulch, fences, yards),
+and once a few burn, house to house spread by radiation, flame contact
+and the houses' own firebrands takes over in dense parcels (Maranghides
+and Mell 2011, Witch and Guejito fires; NIST TN 2252, Camp Fire, 2021).
+Separation between structures is one of the main hazards in NIST's
+parcel methodology (TN 2205); Cohen's home ignition zone puts what
+decides a house's fate within about 30 m of it. Urban fire spread
+models (Hamada; Himoto and Tanaka 2008) carry fire between buildings by
+window flames, radiation and brands, which PhysXBuildingFire3D already
+does.
+
+Built: docs/bench/village_fire, a grass fire upwind of one or two rows
+of two-room timber houses down a street, the wind blowing down it.
+Options for houses per row, gap, street width, wind, the wildland's
+fuel and the bare buffer before the first houses, lawns, a 1.5 m bed of
+dry fuel against each house (the immediate zone), brands on or off,
+speed and stills. PhysXBuildingFire3D now records its first catch:
+get_ignition_time, get_ignition_cause ("direct", "firebrand", "heat")
+and the ignited signal ("heat" includes beds that embers lit first).
+Headless, 40 fire minutes take about 1.5 min.
+
+First runs (2 rows of 6, tall grass 10 m upwind, 8 m/s, one run each,
+so the counts are noisy): 6 of 12 lost (5 by heat from ember-lit beds,
+1 by brands through a door) over 27 minutes; beds cleared, none lost;
+houses throwing no brands, 4 lost (the first, from the wildland's
+embers); a 15 m gap did not save the street (brands carried it, as the
+surveys find); 4 m/s, 6 lost. A bare wall with no fuel against it does
+not catch from a grass front 10 m off or from embers alone.
+
+### Ash darkens snow (world-links hook, 19 Nov)
+
+Research: light-absorbing particles on snow are counted as black carbon
+equivalent (Warren and Wiscombe 1980; Flanner et al. 2007); burnt-area
+ash and char blown onto snow cut its albedo for seasons after a fire
+(Gleason et al. 2013, Oregon Cascades). Fine ash lifted to about 1.5 m
+and falling at about 0.3 m/s settles over L = u h / v_s downwind. Built:
+PhysXAsh hands the ash it lifts to WorldSnow.add_impurity once a second,
+in three bands along the wind (e^-0 - e^-1, e^-1 - e^-2, e^-2 - e^-3 of
+it), gathered into cells half L across, as 0.05 of its mass in black
+carbon equivalent (char-bearing ash, darker than mineral dust's 0.013).
+Test: 5.2 kg blown in 2 min at 10 m/s gives 247 g BCe on the snow out
+to 150 m downwind, about 10 calls a second.
+
+### Flow raster light matches path tracing (snow's request, 19 Nov)
+
+The raster scattering pass weighed the multiple-scattering octaves
+(Wrenninge et al. 2013; Hillaire 2016) as 1 + 0.5 + 0.25 of the light
+at zero optical depth, so thin gas and the sunlit skin of thick gas got
+1.75 times the light the path tracer gives them, and the lit and shaded
+sides sat together in the tone curve's shoulder: evenly bright puffs.
+The octaves are now normalised to 1 at zero depth (the extra octaves
+still keep dense interiors from going black). Test puff, mean grey down
+its middle (raster before, after, path traced): 185, 166, 152.
+scattering_strength is a raster-only multiplier the path tracer does
+not see; it stays at 1 for parity.
 
 ### Next-round options (card, 19 Nov late morning)
 

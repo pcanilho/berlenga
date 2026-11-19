@@ -2191,6 +2191,7 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.renames["RAY_IS_SINGULAR"] = "rt_ray_is_singular(payload.packed_bounces_flags)";
 		actions.renames["RAY_BOUNCES"] = "int(get_total_bounces(payload.packed_bounces_flags))";
 		actions.renames["RAY_DIFFUSE_BOUNCES"] = "int(get_diffuse_bounces(payload.packed_bounces_flags))";
+		actions.renames["RAY_FOOTPRINT"] = "(rt_cone_footprint_log2 > -1e29 ? exp2(rt_cone_footprint_log2) : 0.0)";
 		actions.renames["NORMAL_MAP"] = "normal_map";
 		actions.renames["BENT_NORMAL_MAP"] = "bent_normal_map"; // raster ambient only; the path tracer traces the real light
 		actions.renames["NORMAL_MAP_DEPTH"] = "normal_map_depth";

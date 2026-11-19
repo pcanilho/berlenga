@@ -341,7 +341,7 @@ float hg_phase(float c, float g) {
 }
 
 float ms_transmittance(float tau) {
-	return exp(-tau) + 0.5 * exp(-0.5 * tau) + 0.25 * exp(-0.25 * tau);
+	return (exp(-tau) + 0.5 * exp(-0.5 * tau) + 0.25 * exp(-0.25 * tau)) * (1.0 / 1.75);
 }
 
 float ign(vec2 px) {

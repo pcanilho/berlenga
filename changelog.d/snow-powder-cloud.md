@@ -1,0 +1,1 @@
+- Snow: fast dry avalanches throw up a powder cloud, drawn as a heavy gas in PhysX Flow. It runs ahead of the flow, pushes what it passes and settles as a thin layer of fresh powder; wet slides make none (`SnowAvalanche3D.powder_enabled`, on by default).

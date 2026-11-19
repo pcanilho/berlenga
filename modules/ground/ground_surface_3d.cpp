@@ -46,6 +46,10 @@
 #include "modules/world/world_contracts.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/physics/rigid_body_3d.h"
+#include "scene/3d/physics/collision_shape_3d.h"
+#include "scene/resources/3d/capsule_shape_3d.h"
+#include "scene/resources/3d/cylinder_shape_3d.h"
+#include "scene/resources/physics_material.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
@@ -545,6 +549,7 @@ void GroundSurface3D::_update_cells() {
 				in.mud = MAX(in.mud, thaw_top);
 			}
 			Cell c = wet ? material_cell(in.sand, in.moisture, in.litter, pore[i], water_speed[i], in.mud) : material_cell(in.sand, in.moisture, in.litter, -1.0f, 0.0f, in.mud);
+			c.max_dent *= _subsoil_factor(p.x, p.z);
 			if (wet) {
 				cell_water[i * 2 + 0] = pore[i];
 				cell_water[i * 2 + 1] = water_speed[i];
@@ -612,8 +617,43 @@ float GroundSurface3D::_mud_depth_at(const Vector3 &p_position, float p_moisture
 		const float flat = 1.0f - Math::smoothstep(Math::deg_to_rad(4.0f), Math::deg_to_rad(12.0f), slope);
 		depth = MAX(depth, mud_auto_depth * gather * flat);
 	}
-	// Only wet mud is soft: a dry track bears like soil (MudRunner's hidden mud, "Extrudes To Wetness").
-	return depth * Math::smoothstep(mud_wet_start, mud_wet_full, p_moisture);
+	// Only wet mud is soft: a dry track bears like soil (MudRunner's hidden mud, "Extrudes To Wetness"). A debris
+	// flow's fresh deposit is saturated slurry whatever the weather.
+	return MAX(depth * Math::smoothstep(mud_wet_start, mud_wet_full, p_moisture), get_mud_deposit_at(p_position));
+}
+
+void GroundSurface3D::add_mud_deposit(Vector3 p_position, float p_radius, float p_depth, bool p_update) {
+	if (p_depth <= 0.0f) {
+		return;
+	}
+	const int r = MAX(int(Math::ceil(p_radius)), 0);
+	const Vector2i c(int(Math::floor(p_position.x)), int(Math::floor(p_position.z)));
+	for (int z = -r; z <= r; z++) {
+		for (int x = -r; x <= r; x++) {
+			const Vector2 d(float(c.x + x) + 0.5f - p_position.x, float(c.y + z) + 0.5f - p_position.z);
+			if (d.length() > MAX(p_radius, 0.5f)) {
+				continue;
+			}
+			const Vector2i k(c.x + x, c.y + z);
+			float *v = mud_deposits.getptr(k);
+			if (v) {
+				*v = MAX(*v, p_depth);
+			} else {
+				mud_deposits.insert(k, p_depth);
+			}
+		}
+	}
+	if (p_update) {
+		_update_cells();
+	}
+}
+
+float GroundSurface3D::get_mud_deposit_at(Vector3 p_position) const {
+	if (mud_deposits.is_empty()) {
+		return 0.0f;
+	}
+	const float *v = mud_deposits.getptr(Vector2i(int(Math::floor(p_position.x)), int(Math::floor(p_position.z))));
+	return v ? *v : 0.0f;
 }
 
 // The sand reads of the ground contract (WorldGround): loose sand's share of the top, and how much of it the wind
@@ -837,6 +877,16 @@ void GroundSurface3D::set_mud_layer(bool p_enabled) {
 void GroundSurface3D::set_mud_slides(bool p_enabled) {
 	mud_slides = p_enabled;
 	_update_cells();
+}
+
+void GroundSurface3D::set_subsoil(bool p_enabled) {
+	subsoil = p_enabled;
+	_update_cells();
+}
+
+float GroundSurface3D::get_subsoil_depth_at(Vector3 p_position) const {
+	const Cell &c = _cell_at(p_position.x, p_position.z);
+	return c.deformable ? c.max_dent : 0.0f;
 }
 
 float GroundSurface3D::get_mud_slide_angle_at(Vector3 p_position) const {
@@ -2437,6 +2487,7 @@ void GroundSurface3D::_water_update(double p_delta) {
 			if (Math::abs(s - bs) > 0.02f || Math::abs(water_speed[i] - bv) > 0.05f || (s == 0.0f && bs != 0.0f)) {
 				const CellInput &in = cell_inputs[i];
 				Cell c = material_cell(in.sand, in.moisture, in.litter, s, water_speed[i], in.mud);
+				c.max_dent *= _subsoil_factor((ground_origin.x + x) * ground_spacing, (ground_origin.y + z) * ground_spacing);
 				c.deformable = !in.fixed;
 				cells[i] = c;
 				bs = s;
@@ -2454,6 +2505,17 @@ void GroundSurface3D::_water_update(double p_delta) {
 }
 
 // Smooth value noise in 0..1 on a unit lattice (hashed corners, smoothstep blend).
+float GroundSurface3D::_subsoil_factor(float p_x, float p_z) const {
+	// The loose layer's depth over the base varies as soil does over a few metres (rooting depth, old channels,
+	// stones): two octaves, 2.5 m and 0.9 m, from 0.7 to 1.3 times the material's depth, so no rut bottoms out at
+	// one even depth (Paulo's rule: nothing repeating without variation).
+	if (!subsoil) {
+		return 1.0f;
+	}
+	const float v = 0.65f * _value_noise(p_x / 2.5f, p_z / 2.5f) + 0.35f * _value_noise(p_x / 0.9f + 31.0f, p_z / 0.9f + 11.0f);
+	return 0.7f + 0.6f * v;
+}
+
 float GroundSurface3D::_value_noise(float p_x, float p_z) {
 	const int x0 = (int)Math::floor(p_x);
 	const int z0 = (int)Math::floor(p_z);
@@ -4045,6 +4107,7 @@ void GroundSurface3D::_notification(int p_what) {
 				field.press_bodies(get_tree(), deform_groups, cols, character_mass, character_contact_area, contact_tolerance, delta);
 				field.stamp_sink = nullptr;
 				_plough_bodies();
+				_update_mats(delta);
 				age_accum += delta;
 				double age = 0.0;
 				if (age_accum >= 1.0) {
@@ -4065,6 +4128,7 @@ void GroundSurface3D::_notification(int p_what) {
 				field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
 				field.press_bodies(get_tree(), deform_groups, cols, character_mass, character_contact_area, contact_tolerance, delta);
 				_plough_bodies();
+				_update_mats(delta);
 				auto ground_fn = [this](float x, float z) { return _ground_at(x, z); };
 				auto params_fn = [this](float x, float z, float &r_tan, float &r_rate, float &r_max) {
 					const Cell &cl = _cell_at(x, z);
@@ -4160,6 +4224,7 @@ GroundSoil GroundSurface3D::get_soil(Vector3 p_position) const {
 	soil.unit_weight = c.unit_weight;
 	soil.tan_repose = c.tan_repose;
 	soil.max_sinkage = c.max_dent;
+	soil.layered = subsoil;
 	soil.stickiness = c.stickiness;
 	soil.adhesion = c.adhesion;
 	return soil;
@@ -4215,6 +4280,232 @@ float GroundSurface3D::press_wheel(Vector3 p_position, Vector2 p_size, float p_y
 	field.press_tread = 0;
 	near_fld.press_tread = 0;
 	return moved;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Mats (docs/ideas/mud.md, round 12): a corduroy of logs or a brush mat laid in the ruts.
+
+bool GroundSurface3D::_mat_shape(Node *p_body, Vector3 &r_a, Vector3 &r_b, float &r_radius) const {
+	Node3D *body = Object::cast_to<Node3D>(p_body);
+	if (!body) {
+		return false;
+	}
+	for (int i = 0; i < body->get_child_count(); i++) {
+		CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(body->get_child(i));
+		if (!cs || cs->get_shape().is_null()) {
+			continue;
+		}
+		float h = 0.0f;
+		if (Ref<CylinderShape3D> cy = cs->get_shape(); cy.is_valid()) {
+			h = cy->get_height();
+			r_radius = cy->get_radius();
+		} else if (Ref<CapsuleShape3D> ca = cs->get_shape(); ca.is_valid()) {
+			h = ca->get_height();
+			r_radius = ca->get_radius();
+		} else {
+			continue;
+		}
+		const Transform3D t = cs->get_global_transform();
+		const Vector3 axis = t.basis.get_column(1).normalized() * (0.5f * h);
+		r_a = t.origin - axis;
+		r_b = t.origin + axis;
+		return true;
+	}
+	return false;
+}
+
+int GroundSurface3D::get_mat_at(Vector3 p_contact, float p_tolerance) const {
+	for (uint32_t i = 0; i < mat_list.size(); i++) {
+		const Mat &m = mat_list[i];
+		if (m.broken) {
+			continue;
+		}
+		const Vector3 ab = m.b - m.a;
+		const float t = CLAMP((p_contact - m.a).dot(ab) / MAX(ab.length_squared(), 1e-6f), 0.0f, 1.0f);
+		if ((m.a + ab * t).distance_to(p_contact) <= m.radius + p_tolerance) {
+			return (int)i;
+		}
+	}
+	return -1;
+}
+
+int GroundSurface3D::get_mat_under_wheel(Vector3 p_center, float p_radius, float &r_support) const {
+	// A wheel bridges the gaps of a corduroy: it rests on any log whose round top it touches, at the height where
+	// circle meets circle, h = y_axis + sqrt((R + r)^2 - dx^2) - R for a horizontal offset dx across the log.
+	int best = -1;
+	r_support = -1e9f;
+	for (uint32_t i = 0; i < mat_list.size(); i++) {
+		const Mat &m = mat_list[i];
+		if (m.broken) {
+			continue;
+		}
+		const Vector3 ab = m.b - m.a;
+		const float t = (p_center - m.a).dot(ab) / MAX(ab.length_squared(), 1e-6f);
+		if (t < 0.0f || t > 1.0f) {
+			continue;
+		}
+		const Vector3 on = m.a + ab * t;
+		const float dx = Vector2(p_center.x - on.x, p_center.z - on.z).length();
+		const float reach = p_radius + m.radius;
+		if (dx >= 0.9f * reach) {
+			continue;
+		}
+		const float h = on.y + Math::sqrt(reach * reach - dx * dx) - p_radius;
+		if (h > r_support) {
+			r_support = h;
+			best = (int)i;
+		}
+	}
+	return best;
+}
+
+void GroundSurface3D::add_mat_load(int p_mat, float p_load) {
+	if (p_mat >= 0 && p_mat < (int)mat_list.size()) {
+		mat_list[p_mat].load += MAX(p_load, 0.0f);
+	}
+}
+
+float GroundSurface3D::get_mat_sinkage(int p_mat) const {
+	return p_mat >= 0 && p_mat < (int)mat_list.size() ? mat_list[p_mat].sink : 0.0f;
+}
+
+static float _mat_lambda(const GroundSoil &p_soil, float p_radius) {
+	const float d = 2.0f * MAX(p_radius, 0.005f);
+	const float ks = 1000.0f * (p_soil.kc / d + p_soil.kphi);
+	const float ei = 9.0e9f * (float)Math::PI * Math::pow(MAX(p_radius, 0.005f), 4.0f) / 4.0f;
+	return MAX(Math::pow(ks * d / (4.0f * ei), 0.25f), 1e-3f);
+}
+
+static float _mat_spread(const GroundSoil &p_soil, float p_radius, float p_length) {
+	// A log on soft ground is a beam on an elastic foundation (Hetényi 1946): a point load bends it over about
+	// pi / lambda, lambda = (k_s d / (4 E I))^(1/4), so a stiff log on soft mud spreads a wheel's load over its whole
+	// length and a twig only over a hand's width. k_s from Bekker's modulus (kc / d + kphi, kN/m^(n+2), taken as
+	// linear), E 9 GPa for green wood (USDA Wood Handbook, 2021), I = pi r^4 / 4.
+	return MIN(p_length, (float)Math::PI / _mat_lambda(p_soil, p_radius));
+}
+
+float GroundSurface3D::get_mat_spread(int p_mat) const {
+	if (p_mat < 0 || p_mat >= (int)mat_list.size()) {
+		return 0.0f;
+	}
+	const Mat &m = mat_list[p_mat];
+	return _mat_spread(get_soil((m.a + m.b) * 0.5f), m.radius, m.length);
+}
+
+void GroundSurface3D::_update_mats(float p_dt) {
+	if (!mats || !field.valid || !is_inside_tree()) {
+		mat_list.clear();
+		return;
+	}
+	// Bodies newly settled on soft ground: the ground takes them.
+	for (Node *node : get_tree()->get_nodes_in_group(SNAME("ground_mats"))) {
+		RigidBody3D *rb = Object::cast_to<RigidBody3D>(node);
+		if (!rb || rb->is_freeze_enabled()) {
+			continue;
+		}
+		Vector3 a, b;
+		float r = 0.05f;
+		if (!_mat_shape(rb, a, b, r)) {
+			continue;
+		}
+		const Vector3 c = (a + b) * 0.5f;
+		const bool still = rb->is_sleeping() || (rb->get_linear_velocity().length() < 0.15f && rb->get_angular_velocity().length() < 0.5f);
+		const bool down = MIN(a.y, b.y) - r <= get_surface_height_at(c) + contact_tolerance + 0.05f;
+		if (!still || !down || !get_soil(c).soft) {
+			continue;
+		}
+		rb->set_freeze_mode(RigidBody3D::FREEZE_MODE_KINEMATIC);
+		rb->set_freeze_enabled(true);
+		Mat m;
+		m.id = rb->get_instance_id();
+		if (rb->get_physics_material_override().is_valid()) {
+			m.friction = rb->get_physics_material_override()->get_friction();
+		}
+		m.radius = r;
+		m.length = a.distance_to(b);
+		m.a = a;
+		m.b = b;
+		mat_list.push_back(m);
+	}
+	for (uint32_t i = 0; i < mat_list.size();) {
+		Mat &m = mat_list[i];
+		RigidBody3D *rb = Object::cast_to<RigidBody3D>(ObjectDB::get_instance(m.id));
+		if (!rb || !rb->is_inside_tree() || !rb->is_freeze_enabled()) {
+			mat_list.remove_at_unordered(i);
+			continue;
+		}
+		Vector3 a, b;
+		float r = m.radius;
+		_mat_shape(rb, a, b, r);
+		const Vector3 c = (a + b) * 0.5f;
+		Vector3 d = b - a;
+		d.y = 0.0f;
+		const float lh = MAX(d.length(), 1e-3f);
+		d /= lh;
+		GroundSoil soil = get_soil(c);
+		// The wheels on it (the heaviest pass presses deepest) and its own weight, spread along the length that bends
+		// into the soil.
+		m.carried += (m.load - m.carried) * MIN(p_dt / 0.2f, 1.0f);
+		m.peak = MAX(m.peak, m.carried);
+		m.load = 0.0f;
+		// It snaps where the bending under a wheel passes green wood's strength: the beam's moment under a point load,
+		// P / (4 lambda) (Hetényi 1946), against MOR pi r^3 / 4 with MOR about 40 MPa (USDA Wood Handbook, green).
+		if (!m.broken && soil.soft && m.peak > 0.0f) {
+			const float moment = m.peak / (4.0f * _mat_lambda(soil, m.radius));
+			if (moment > 40.0e6f * (float)Math::PI * Math::pow(m.radius, 3.0f) / 4.0f) {
+				m.broken = true;
+			}
+		}
+		const float w = m.peak + rb->get_mass() * 9.81f;
+		if (soil.soft) {
+			const float spread = _mat_spread(soil, m.radius, m.length);
+			const float dia = 2.0f * m.radius;
+			const float k = GroundTerramechanics::bekker_k(soil, dia);
+			const float p = w / 1000.0f / (spread * dia);
+			const float z = MIN(GroundTerramechanics::layered_sinkage(soil, Math::pow(p / MAX(k, 1e-3f), 1.0f / CLAMP(soil.n, 0.1f, 2.9f)), dia), soil.max_sinkage);
+			// Settles over a second, as the soil yields.
+			m.sink += (MAX(m.sink, z) - m.sink) * MIN(p_dt, 1.0f);
+			if (m.sink > m.pressed + 0.002f) {
+				press_wheel(c, Vector2(dia, m.length), Math::atan2(d.x, d.z), m.sink);
+				m.pressed = m.sink;
+			}
+		}
+		// It lies on its highest supports along each half: the deformed ground (its own print, the ruts' floors and
+		// berms), raised by its radius.
+		float ya = -1e9f;
+		float yb = -1e9f;
+		for (int k = 0; k <= 8; k++) {
+			const float t = float(k) / 8.0f;
+			const Vector3 q = a.lerp(b, t);
+			const float h = get_surface_height_at(q);
+			if (t <= 0.5f) {
+				ya = MAX(ya, h);
+			}
+			if (t >= 0.5f) {
+				yb = MAX(yb, h);
+			}
+		}
+		const Vector3 na(a.x, ya + m.radius, a.z);
+		const Vector3 nb(b.x, yb + m.radius, b.z);
+		if (na.distance_to(a) > 0.002f || nb.distance_to(b) > 0.002f) {
+			// Turn the body so its axis runs from na to nb and move it so the axis' centre lies there.
+			const Vector3 from = (b - a).normalized();
+			const Vector3 to = (nb - na).normalized();
+			Transform3D t = rb->get_global_transform();
+			const Vector3 axis = from.cross(to);
+			if (axis.length() > 1e-5f) {
+				const float ang = Math::acos(CLAMP(from.dot(to), -1.0f, 1.0f));
+				const Basis rot(axis.normalized(), ang);
+				t.basis = rot * t.basis;
+				t.origin = c + rot.xform(t.origin - c);
+			}
+			t.origin += (na + nb) * 0.5f - c;
+			rb->set_global_transform(t);
+		}
+		m.a = na;
+		m.b = nb;
+		i++;
+	}
 }
 
 void GroundSurface3D::_plough_bodies() {
@@ -5853,6 +6144,20 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_mud_layer"), &GroundSurface3D::is_mud_layer);
 	ClassDB::bind_method(D_METHOD("set_mud_slides", "enabled"), &GroundSurface3D::set_mud_slides);
 	ClassDB::bind_method(D_METHOD("is_mud_slides"), &GroundSurface3D::is_mud_slides);
+	ClassDB::bind_method(D_METHOD("set_subsoil", "enabled"), &GroundSurface3D::set_subsoil);
+	ClassDB::bind_method(D_METHOD("is_subsoil"), &GroundSurface3D::is_subsoil);
+	ClassDB::bind_method(D_METHOD("get_subsoil_depth_at", "position"), &GroundSurface3D::get_subsoil_depth_at);
+	ClassDB::bind_method(D_METHOD("add_mud_deposit", "position", "radius", "depth", "update"), &GroundSurface3D::add_mud_deposit, DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("get_mud_deposit_at", "position"), &GroundSurface3D::get_mud_deposit_at);
+	ClassDB::bind_method(D_METHOD("set_mats", "enabled"), &GroundSurface3D::set_mats);
+	ClassDB::bind_method(D_METHOD("is_mats"), &GroundSurface3D::is_mats);
+	ClassDB::bind_method(D_METHOD("get_mat_at", "contact", "tolerance"), &GroundSurface3D::get_mat_at, DEFVAL(0.06));
+	ClassDB::bind_method(D_METHOD("add_mat_load", "mat", "load"), &GroundSurface3D::add_mat_load);
+	ClassDB::bind_method(D_METHOD("get_mat_count"), &GroundSurface3D::get_mat_count);
+	ClassDB::bind_method(D_METHOD("get_mat_sinkage", "mat"), &GroundSurface3D::get_mat_sinkage);
+	ClassDB::bind_method(D_METHOD("get_mat_spread", "mat"), &GroundSurface3D::get_mat_spread);
+	ClassDB::bind_method(D_METHOD("is_mat_broken", "mat"), &GroundSurface3D::is_mat_broken);
+	ClassDB::bind_method(D_METHOD("get_mat_friction", "mat"), &GroundSurface3D::get_mat_friction);
 	ClassDB::bind_method(D_METHOD("get_mud_slide_angle_at", "position"), &GroundSurface3D::get_mud_slide_angle_at);
 	ClassDB::bind_method(D_METHOD("set_mud_map", "map"), &GroundSurface3D::set_mud_map);
 	ClassDB::bind_method(D_METHOD("set_standing_water", "enabled"), &GroundSurface3D::set_standing_water);
@@ -6042,6 +6347,8 @@ void GroundSurface3D::_bind_methods() {
 	ADD_GROUP("Mud", "mud_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_layer"), "set_mud_layer", "is_mud_layer");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_slides"), "set_mud_slides", "is_mud_slides");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "subsoil"), "set_subsoil", "is_subsoil");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mats"), "set_mats", "is_mats");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "mud_map", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_mud_map", "get_mud_map");
 	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "mud_map_rect"), "set_mud_map_rect", "get_mud_map_rect");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mud_max_depth", PROPERTY_HINT_RANGE, "0,3,0.05,suffix:m"), "set_mud_max_depth", "get_mud_max_depth");

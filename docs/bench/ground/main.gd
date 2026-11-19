@@ -115,6 +115,10 @@ var slides_test := false
 var gullies_test := false
 var winch_test := false
 var flakes_test := false
+var pressure_test := false
+var subsoil_test := false
+var mats_test := false
+var debris_test := false
 var tread_arg := -1 # --view=ruts: the car's PhysXVehicleWheel3D.Tread (mud round 10)
 var puddle_test := false
 var crack_test := false
@@ -173,6 +177,10 @@ func _ready() -> void:
 		elif a == "--test=gullies": gullies_test = true
 		elif a == "--test=winch": winch_test = true
 		elif a == "--test=flakes": flakes_test = true
+		elif a == "--test=pressure": pressure_test = true
+		elif a == "--test=subsoil": subsoil_test = true
+		elif a == "--test=mats": mats_test = true
+		elif a == "--test=debris": debris_test = true
 		elif a == "--test=puddles": puddle_test = true
 		elif a == "--test=cracks": crack_test = true
 		elif a == "--test=legs": legs_test = true
@@ -248,7 +256,7 @@ func _ready() -> void:
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test:
+	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test:
 		if clog_test:
 			await _run_clog_tests()
 		if treads_test:
@@ -261,6 +269,14 @@ func _ready() -> void:
 			await _run_winch_tests()
 		if flakes_test:
 			await _run_flake_tests()
+		if pressure_test:
+			await _run_pressure_tests()
+		if subsoil_test:
+			await _run_subsoil_tests()
+		if mats_test:
+			await _run_mat_tests()
+		if debris_test:
+			await _run_debris_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -334,6 +350,12 @@ func _ready() -> void:
 		return
 	if view == "winch":
 		await _build_winch()
+		return
+	if view == "mats":
+		await _build_mats()
+		return
+	if view == "debris":
+		await _build_debris()
 		return
 	if view == "roost":
 		await _build_roost()
@@ -413,6 +435,7 @@ func _setup(height_kind: String, ground_type: int, moisture: float, litter: floa
 		surface.desiccation_cracks = cracks_on
 		surface.frozen_ground = false
 		surface.world_puddles = false
+		surface.subsoil = false
 	# --prop=name:value sets any of the surface's properties (repeatable), for an A/B.
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--prop="):
@@ -2532,6 +2555,207 @@ func _run_flake_tests() -> void:
 	_check("wet ones hold", res["wet"][2] == 0, "%d shed" % res["wet"][2])
 
 
+# Tyre pressure (mud round 12): the same car at road pressure and aired down, on firm ground and in mud.
+func _pressure_car(p_kpa: float, p_mud: bool) -> PhysXVehicle3D:
+	await _soil_scene("soil")
+	if p_mud:
+		await _paint_mud(0.3, STIFF_MUD)
+	var car := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+	for c in car.get_children():
+		if c is PhysXVehicleWheel3D:
+			c.tire_pressure = p_kpa
+	if p_mud:
+		surface.follow_target = surface.get_path_to(car)
+	else:
+		# The firm floor under the patch: no soft soil.
+		surface.follow_target = NodePath()
+		surface.queue_free()
+	for i in 90:
+		await get_tree().physics_frame
+	return car
+
+
+func _run_pressure_tests() -> void:
+	if not ClassDB.class_exists("PhysXVehicle3D"):
+		print("(no PhysX: pressure checks skipped)")
+		return
+	# Standing on firm ground: an aired-down tyre is squashed further and the car stands lower.
+	var res := {}
+	for kpa in [200.0, 80.0]:
+		var car := await _pressure_car(kpa, false)
+		var y := car.global_position.y
+		var dfl := car.get_wheel_deflection(0)
+		# Coasting: up to speed, then off the throttle; the speed lost in 3 s.
+		car.throttle = 0.4
+		for i in 150:
+			await get_tree().physics_frame
+		car.throttle = 0.0
+		for i in 10:
+			await get_tree().physics_frame
+		var v0 := car.get_forward_speed()
+		for i in 180:
+			await get_tree().physics_frame
+		res[kpa] = [y, dfl, v0 - car.get_forward_speed()]
+		print("  %.0f kPa on firm ground: deflection past road pressure %.1f mm, body at %.3f m, %.2f m/s lost coasting 3 s from %.1f m/s" % [kpa, dfl * 1000.0, y, res[kpa][2], v0])
+	var drop: float = res[200.0][0] - res[80.0][0]
+	_check("at road pressure the tyre stands as before", absf(res[200.0][1]) < 0.0005, "%.2f mm" % (res[200.0][1] * 1000.0))
+	_check("aired down to 80 kPa it squashes 1 to 4 cm further (vertical stiffness after Rhyne 2005)", res[80.0][1] > 0.01 and res[80.0][1] < 0.04, "%.1f mm" % (res[80.0][1] * 1000.0))
+	_check("and the car stands that much lower", absf(drop - res[80.0][1]) < 0.3 * res[80.0][1], "%.1f mm lower" % (drop * 1000.0))
+	# Gillespie: f_r about 0.018 against 0.010 at these pressures, 0.0078 g more: 0.23 m/s over 3 s.
+	var extra: float = res[80.0][2] - res[200.0][2]
+	_check("it rolls with more resistance (Gillespie 1992: about 0.22 m/s more lost in 3 s)", extra > 0.12 and extra < 0.4, "%.2f m/s more" % extra)
+	# In soft mud: the longer, softer flat sinks less and gets further.
+	var mud := {}
+	for kpa in [200.0, 80.0]:
+		var car := await _pressure_car(kpa, true)
+		var rest := 0.0
+		for w in 4:
+			rest += car.get_wheel_sinkage(w) / 4.0
+		mud[kpa] = await _drive(car, 8.0, 0.4)
+		mud[kpa].append(rest)
+		print("  %.0f kPa in stiff mud: %.1f cm sunk standing; %.2f m in 8 s, sinkage %.1f cm, slip %.2f" % [kpa, rest * 100.0, mud[kpa][0], mud[kpa][1] * 100.0, mud[kpa][2]])
+	_check("in mud, aired down it sinks less standing (the elastic mode, Wong 2008)", mud[80.0][3] < 0.85 * mud[200.0][3], "%.1f cm against %.1f cm" % [mud[80.0][3] * 100.0, mud[200.0][3] * 100.0])
+	_check("and gets further", mud[80.0][0] > 1.15 * mud[200.0][0], "%.2f m against %.2f m" % [mud[80.0][0], mud[200.0][0]])
+
+
+# A firm subsoil under the mud (round 12).
+func _run_subsoil_tests() -> void:
+	await _soil_scene("soil")
+	await _paint_mud(0.3, 0.9)
+	var o := Vector3(0, 0, 0)
+	# The layer's depth: one depth with the base off; varied over metres with it on.
+	var off_depth := surface.get_subsoil_depth_at(o)
+	surface.subsoil = true
+	await get_tree().physics_frame
+	var lo := 10.0
+	var hi := 0.0
+	var mean := 0.0
+	var m2 := 0.0
+	var cnt := 0
+	for xi in 21:
+		for zi in 21:
+			var dd := surface.get_subsoil_depth_at(Vector3(-10.0 + xi, 0, -10.0 + zi))
+			lo = minf(lo, dd)
+			hi = maxf(hi, dd)
+			mean += dd
+			m2 += dd * dd
+			cnt += 1
+	mean /= cnt
+	var sd := sqrt(maxf(m2 / cnt - mean * mean, 0.0))
+	print("  layer depth: %.2f m with no base; with it %.2f to %.2f m, mean %.2f, sd %.3f" % [off_depth, lo, hi, mean, sd])
+	_check("the layer's depth over the base varies over metres, within 0.7 to 1.3 times", lo >= 0.69 * off_depth and hi <= 1.31 * off_depth and sd > 0.06 * mean, "%.2f to %.2f m, sd %.3f" % [lo, hi, sd])
+	# A light load stops short of the base as the thin layer stiffens; a heavy one still goes down to it.
+	var h := surface.get_subsoil_depth_at(o)
+	var light: Dictionary = surface.get_wheel_soil(o, 2000.0, 0.35, 0.26, 0.0, 0.0, 0.0)
+	var heavy: Dictionary = surface.get_wheel_soil(o, 150000.0, 0.35, 0.26, 0.0, 0.0, 0.0)
+	surface.subsoil = false
+	await get_tree().physics_frame
+	var light_off: Dictionary = surface.get_wheel_soil(o, 2000.0, 0.35, 0.26, 0.0, 0.0, 0.0)
+	print("  in slurry %.2f m deep: a 2 kN wheel sinks %.1f cm (%.1f cm with no base), a 150 kN one %.1f cm; shear limits %.0f N and %.0f N" % [h, light["static_sinkage"] * 100.0, light_off["static_sinkage"] * 100.0, heavy["static_sinkage"] * 100.0, light["shear_limit"], heavy["shear_limit"]])
+	_check("as the layer under a wheel thins the soil stiffens against the base (finite depth: Salman 2022)", light["static_sinkage"] < 0.95 * h and light_off["static_sinkage"] >= 0.99 * light_off["static_sinkage"], "%.1f cm of %.1f cm" % [light["static_sinkage"] * 100.0, h * 100.0])
+	_check("a heavy load still goes down to it, and grips on it (friction 0.5)", heavy["static_sinkage"] > 0.98 * h and heavy["shear_limit"] >= 0.45 * 150000.0, "%.1f cm, %.0f N" % [heavy["static_sinkage"] * 100.0, heavy["shear_limit"]])
+	# A car in slurry deep enough to bog it with no base, through to firm subsoil: it pulls itself out on the base.
+	if not ClassDB.class_exists("PhysXVehicle3D"):
+		return
+	var dist := {}
+	for on in [false, true]:
+		await _soil_scene("soil")
+		# Shallow enough that the belly clears it once the tyres are down on the base.
+		await _paint_mud(0.16, 0.9)
+		surface.subsoil = on
+		var car := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+		surface.follow_target = surface.get_path_to(car)
+		var r: Array = await _drive(car, 8.0, 0.6)
+		dist[on] = r
+		print("  slurry 16 cm, base %s: %.2f m in 8 s, sinkage %.1f cm, slip %.2f" % ["on" if on else "off", r[0], r[1] * 100.0, r[2]])
+	_check("in slurry down to the base the tyres bite on the subsoil: they stop spinning and the car crawls on", dist[true][0] > 3.0 * dist[false][0] and dist[true][2] < 0.6 and dist[false][2] > 0.9, "%.2f m at slip %.2f against %.2f m at slip %.2f" % [dist[true][0], dist[true][2], dist[false][0], dist[false][2]])
+
+
+# A log or branch for a corduroy (round 12): a cylinder of green wood lying across the track at p_at.
+func _make_log(p_at: Vector3, p_radius: float, p_length: float) -> RigidBody3D:
+	var log := RigidBody3D.new()
+	log.add_to_group("ground_mats")
+	log.mass = 800.0 * PI * p_radius * p_radius * p_length
+	var pm := PhysicsMaterial.new()
+	pm.friction = 0.5 # rubber on wet bark
+	log.physics_material_override = pm
+	var cs := CollisionShape3D.new()
+	var cy := CylinderShape3D.new()
+	cy.radius = p_radius
+	cy.height = p_length
+	cs.shape = cy
+	cs.rotation_degrees = Vector3(0, 0, 90)
+	log.add_child(cs)
+	var mi := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = p_radius * 0.92
+	cm.bottom_radius = p_radius
+	cm.height = p_length
+	cm.radial_segments = 16
+	mi.mesh = cm
+	mi.rotation_degrees = Vector3(0, 0, 90)
+	var bark := StandardMaterial3D.new()
+	bark.albedo_color = Color(0.27, 0.21, 0.15)
+	bark.roughness = 0.9
+	mi.material_override = bark
+	log.add_child(mi)
+	log.position = p_at
+	add_child(log)
+	return log
+
+
+# Logs laid across a slurry track (round 12): the corduroy road.
+func _run_mat_tests() -> void:
+	if not ClassDB.class_exists("PhysXVehicle3D"):
+		print("(no PhysX: mat checks skipped)")
+		return
+	var res := {}
+	for laid in [false, true]:
+		await _soil_scene("soil")
+		await _paint_mud(0.25, 0.9)
+		var logs := 0
+		if laid:
+			var z := -2.0
+			while z < 10.0:
+				_make_log(Vector3(0, surface.get_surface_height_at(Vector3(0, 0, z)) + 0.15, z), 0.08, 2.4)
+				logs += 1
+				z += 0.42
+			for i in 120:
+				await get_tree().physics_frame
+			print("  %d logs laid, %d taken by the ground" % [logs, surface.get_mat_count()])
+			_check("logs settled on the soft ground are taken by it (frozen, lying on it)", surface.get_mat_count() == logs, "%d of %d" % [surface.get_mat_count(), logs])
+		var car := _make_car(1500.0, 700.0, Vector3(0, surface.get_surface_height_at(Vector3.ZERO) + 1.0, 0))
+		surface.follow_target = surface.get_path_to(car)
+		var r: Array = await _drive(car, 8.0, 0.6)
+		var sink := 0.0
+		var most := 0.0
+		for m in surface.get_mat_count():
+			sink += surface.get_mat_sinkage(m) / maxi(surface.get_mat_count(), 1)
+			most = maxf(most, surface.get_mat_sinkage(m))
+		res[laid] = [r[0], r[1], sink, most]
+		print("  slurry 25 cm, %s: %.2f m in 8 s, tyre sinkage %.1f cm, slip %.2f; logs sunk %.1f cm on average, %.1f cm at most" % ["on logs" if laid else "bare", r[0], r[1] * 100.0, r[2], sink * 100.0, most * 100.0])
+		if laid:
+			print("  load spread: %.2f m of a 16 cm log" % surface.get_mat_spread(0))
+	_check("on a corduroy of logs the car drives through slurry it bogs in bare", res[true][0] > 4.0 and res[true][0] > 4.0 * res[false][0], "%.2f m against %.2f m" % [res[true][0], res[false][0]])
+	_check("the logs spread the load along their length and sink far less than a tyre would (beam on elastic foundation)", res[true][3] > 0.002 and res[true][3] < 0.5 * res[false][1], "%.1f cm at most against %.1f cm" % [res[true][3] * 100.0, res[false][1] * 100.0])
+	# A wheel's load on a log and on a branch: the log carries it, the branch snaps (green wood's strength).
+	await _soil_scene("soil")
+	await _paint_mud(0.25, 0.9)
+	_make_log(Vector3(0, surface.get_surface_height_at(Vector3.ZERO) + 0.05, 0), 0.08, 2.4)
+	_make_log(Vector3(0, surface.get_surface_height_at(Vector3(0, 0, 2)) + 0.05, 2.0), 0.015, 1.2)
+	for i in 120:
+		await get_tree().physics_frame
+	if surface.get_mat_count() == 2:
+		for i in 60:
+			surface.add_mat_load(0, 3700.0)
+			surface.add_mat_load(1, 3700.0)
+			await get_tree().physics_frame
+		print("  under a 3.7 kN wheel: log spread %.2f m, %s; 3 cm branch spread %.2f m, %s" % [surface.get_mat_spread(0), "broken" if surface.is_mat_broken(0) else "whole", surface.get_mat_spread(1), "broken" if surface.is_mat_broken(1) else "whole"])
+		_check("a 16 cm log carries a wheel; a 3 cm branch snaps under it (bending P / 4 lambda past green wood's 40 MPa)", not surface.is_mat_broken(0) and surface.is_mat_broken(1), "log %s, branch %s" % [surface.is_mat_broken(0), surface.is_mat_broken(1)])
+	else:
+		_check("both the log and the branch are taken by the ground", false, "%d" % surface.get_mat_count())
+
+
 # Meshes for a bench car (mud stage 3b): a painted body over the chassis box and a cab, tyres on the wheels.
 func _dress_car(car: PhysXVehicle3D) -> void:
 	var paint := StandardMaterial3D.new()
@@ -4276,6 +4500,86 @@ func _build_winch() -> void:
 	get_tree().quit()
 
 
+# Mud round 12: a corduroy of logs laid across a muddy track, a car driven onto it from its own ruts. --wframes=N
+# (default 360) frames of driving before the shot; --cam=x,y,z,tx,ty,tz as for the other views.
+func _build_mats() -> void:
+	kind = "soil"
+	await _setup("meadow", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := Environment.new()
+	var sky := Sky.new()
+	sky.sky_material = ProceduralSkyMaterial.new()
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.set("pathtracing_sky_shader_enabled", true)
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = false
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-28.0, 210.0, 0.0) if sun_arg.size() < 2 else Vector3(sun_arg[0], sun_arg[1], 0.0)
+	sun.directional_shadow_max_distance = 30.0
+	add_child(sun)
+	await _paint_mud(0.3, 0.75)
+	surface.subsoil = true
+	var full := get_window().size
+	get_window().size = Vector2i(160, 90)
+	# Logs of 12 to 18 cm, 2.4 m long, laid across the track a hand apart, each a little askew.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 12
+	var z := 1.6
+	while z < 7.5:
+		var r := rng.randf_range(0.06, 0.09)
+		var lg := _make_log(Vector3(rng.randf_range(-0.1, 0.1), surface.get_surface_height_at(Vector3(0, 0, z)) + r + 0.05, z), r, rng.randf_range(2.2, 2.6))
+		lg.rotation_degrees.y = rng.randf_range(-6.0, 6.0)
+		z += 2.0 * r + rng.randf_range(0.02, 0.08)
+	for i in 120:
+		await get_tree().physics_frame
+	var car := _make_car(1500.0, 700.0, Vector3(0.0, surface.get_surface_height_at(Vector3(0, 0, 0.3)) + 0.9, 0.3))
+	_dress_car(car)
+	surface.follow_target = surface.get_path_to(car)
+	car.throttle = 0.6
+	var wframes := 360
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--wframes="):
+			wframes = int(a.substr(10))
+	for i in wframes:
+		await get_tree().physics_frame
+	car.throttle = 0.0
+	car.brake = 1.0
+	for i in 30:
+		await get_tree().physics_frame
+	print("mats: car at %s, %d logs taken, deepest %.1f cm" % [car.global_position, surface.get_mat_count(), _deepest_mat() * 100.0])
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([3.6, 1.4, car.global_position.z - 2.6, 0.0, 0.2, car.global_position.z + 0.6])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 50.0
+	surface.follow_target = surface.get_path_to(cam)
+	for i in 20:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	get_window().size = full
+	await _save_view(env)
+	get_tree().quit()
+
+
+func _deepest_mat() -> float:
+	var d := 0.0
+	for m in surface.get_mat_count():
+		d = maxf(d, surface.get_mat_sinkage(m))
+	return d
+
+
 func _make_env() -> Environment:
 	var env := Environment.new()
 	var sky := Sky.new()
@@ -4798,3 +5102,146 @@ func _run_burnscar_tests() -> void:
 	var off: Vector2 = await _burn_runoff(0.0)
 	print("  runoff sheet: repellent scar %.3f mm (unburnt below %.3f mm); scar gone %.3f mm" % [on.x * 1000.0, on.y * 1000.0, off.x * 1000.0])
 	_check("water-repellent burnt soil sheds the rain (Robichaud 2000)", on.x > 0.0 and on.x > 2.0 * off.x, "%.3f mm against %.3f mm" % [on.x * 1000.0, off.x * 1000.0])
+
+
+# Post-fire debris flow (after mud round 12): a burnt channel down a 25% valley side onto a 4% fan.
+class DebrisValley extends WorldGround:
+	func _height_at(p: Vector3) -> float:
+		# A V-shaped channel along +z: 25% down to z = 120, then a 4% fan; banks rise 15% to each side.
+		var z := p.z
+		var along := -0.25 * minf(z, 120.0) - 0.04 * maxf(z - 120.0, 0.0)
+		var bank := 0.15 * absf(p.x) if z < 120.0 else 0.02 * absf(p.x)
+		return along + bank
+
+
+func _debris_event(p_id: int, p_from: float, p_volume: float) -> Dictionary:
+	var path := PackedVector3Array()
+	var widths := PackedFloat32Array()
+	var sev := PackedFloat32Array()
+	var z := p_from
+	while z <= 120.0:
+		path.append(Vector3(0, 0, z))
+		widths.append(4.0)
+		sev.append(1.0)
+		z += 5.0
+	return {"id": p_id, "position": path[0], "volume": p_volume, "path": path, "widths": widths, "severity": sev}
+
+
+func _run_debris_tests() -> void:
+	await _soil_scene("soil")
+	var stub := DebrisValley.new()
+	WorldContracts.set_ground(stub)
+	var flow = ClassDB.instantiate("GroundDebrisFlow3D")
+	flow.listen = false
+	flow.show_flow = false
+	add_child(flow)
+	var signalled := {"changed": 0, "finished": []}
+	flow.debris_front_changed.connect(func(id: int) -> void:
+		if id == 1:
+			signalled["changed"] += 1)
+	flow.debris_flow_finished.connect(func(id: int) -> void: signalled["finished"].append(id))
+	flow.start(_debris_event(1, 0.0, 2000.0))
+	# A second gully's small event joins it 20 m down.
+	flow.start(_debris_event(2, 20.0, 150.0))
+	_check("a small event whose outlet lies on a running flow's path feeds that flow", flow.get_body_count() == 1, "%d bodies" % flow.get_body_count())
+	var peak_speed := 0.0
+	var fronts := []
+	var t := 0.0
+	var moving_pos := false
+	while t < 900.0 and flow.get_active_bodies() > 0:
+		flow.advance(5.0, 0.05)
+		t += 5.0
+		var f: Dictionary = flow.get_debris_front(1)
+		if f.has("position") and not f["done"]:
+			moving_pos = true
+		peak_speed = maxf(peak_speed, f.get("speed", 0.0))
+		fronts.append(f.get("position", Vector3()))
+	var f: Dictionary = flow.get_debris_front(1)
+	var b: Dictionary = flow.get_budget(1)
+	var stop_z: float = f.get("position", Vector3()).z
+	print("  ran %.0f s: front stopped at z %.1f m (fan from 120 m), peak front speed %.1f m/s, %.1f m deep there, %.1f m wide" % [t, stop_z, peak_speed, f.get("depth", 0.0), f.get("width", 0.0)])
+	print("  budget: %.0f m3 fed, %.0f m3 entrained, %.0f m3 off the end, %.0f m3 lying" % [b["in"], b["entrained"], b["out"], b["now"]])
+	_check("the front runs down the channel at debris-flow speeds (Rickenmann 1999: a few to 10 m/s)", peak_speed > 2.0 and peak_speed < 15.0, "%.1f m/s" % peak_speed)
+	_check("and stops on the fan, where the slope falls under the basal friction (about 10%)", stop_z > 120.0 and stop_z < 200.0 and f["done"], "z %.1f m, done %s" % [stop_z, f["done"]])
+	_check("it bulks up along the burnt channel (McDougall and Hungr 2005)", b["entrained"] > 0.1 * b["in"], "%.0f of %.0f m3" % [b["entrained"], b["in"]])
+	_check("no slurry is made or lost", absf(b["now"] + b["out"] - b["in"] - b["entrained"]) < 0.02 * b["in"], "%.0f + %.0f against %.0f + %.0f" % [b["now"], b["out"], b["in"], b["entrained"]])
+	_check("PhysX can follow the front while it moves", moving_pos, "")
+	_check("debris_front_changed fires as it moves, and both pooled events hear debris_flow_finished", signalled["changed"] > 10 and 1 in signalled["finished"] and 2 in signalled["finished"], "%d changes, finished %s" % [signalled["changed"], signalled["finished"]])
+	var lying := 0.0
+	for z in range(122, int(stop_z), 2):
+		lying = maxf(lying, surface.get_mud_deposit_at(Vector3(0, 0, z)))
+	_check("the fan is laid on the ground as fresh slurry", lying > 0.1, "%.2f m at most" % lying)
+	WorldContracts.set_ground(null)
+	flow.queue_free()
+
+
+# The bench's own height source as the world's ground, for the debris view.
+class HeightGround extends WorldGround:
+	var src: Node3D
+
+	func _height_at(p: Vector3) -> float:
+		return src.get_height(p)
+
+
+# --view=debris [--t=45]: a post-fire debris flow down a burnt channel spreading on its fan, --t seconds after it fires.
+func _build_debris() -> void:
+	await _setup("valley", GroundSurface3D.GROUND_SOIL, 0.5, 0.0)
+	_apply("soil")
+	var mat := _ground_material("soil")
+	surface.material = mat
+	_add_terrain(160.0, 320, mat)
+	var env := Environment.new()
+	var sky := Sky.new()
+	sky.sky_material = ProceduralSkyMaterial.new()
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.set("pathtracing_sky_shader_enabled", true)
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = false
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-35.0, 140.0, 0.0) if sun_arg.size() < 2 else Vector3(sun_arg[0], sun_arg[1], 0.0)
+	sun.directional_shadow_max_distance = 120.0
+	add_child(sun)
+	var stub := HeightGround.new()
+	stub.src = height
+	WorldContracts.set_ground(stub)
+	var flow = ClassDB.instantiate("GroundDebrisFlow3D")
+	flow.listen = false
+	add_child(flow)
+	var path := PackedVector3Array()
+	var widths := PackedFloat32Array()
+	var sev := PackedFloat32Array()
+	var z := -110.0
+	while z <= 0.0:
+		path.append(Vector3(0, 0, z))
+		widths.append(4.0)
+		sev.append(1.0)
+		z += 5.0
+	flow.start({"id": 1, "position": path[0], "volume": 2000.0, "path": path, "widths": widths, "severity": sev})
+	var secs := 40.0
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--t="):
+			secs = float(a.substr(4))
+	flow.advance(secs, 0.05)
+	var f: Dictionary = flow.get_debris_front(1)
+	print("debris: front at %s, %.2f m deep, %.1f m/s, %.0f m3" % [f.get("position", Vector3()), f["depth"], f["speed"], f["volume"]])
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([30.0, 45.0, -60.0, 0.0, 0.0, 5.0])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 55.0
+	surface.follow_target = surface.get_path_to(cam)
+	for i in 20:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	await _save_view(env)
+	WorldContracts.set_ground(null)
+	get_tree().quit()

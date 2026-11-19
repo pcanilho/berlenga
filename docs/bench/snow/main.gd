@@ -58,6 +58,8 @@ class BodySnowStub extends WorldSnow:
 #   --view=cornice   a corniced ridge from below its lee face
 #   --view=avalanche  a metre of new snow on a 38 degree face releases and piles at the toe (--before: the
 #                     loaded face before it goes); --test=avalanche for the checks
+#                     --powder [--at=S]: the run in real time, shot S s after release (default 9) with its
+#                     powder cloud (PhysX Flow); --test=triggers, --test=powder for triggers and the cloud
 #   --view=bodies     three crates after a snowfall: one left out, one just driven in, one from a shed (SnowBodies3D)
 #   --test=bodies     snow on moving things (follow-up 18): seeded, built by snowfall, sheltered, blown and shaken
 #                     off, melted, burnt
@@ -186,6 +188,8 @@ func _ready() -> void:
 			await _run_avalanche_tests()
 		elif only == "triggers":
 			await _run_trigger_tests()
+		elif only == "powder":
+			await _run_powder_tests()
 		elif only == "bodies":
 			await _run_body_tests()
 			await _run_body_slab_tests()
@@ -384,6 +388,7 @@ func _run_tests() -> void:
 	await _run_body_slab_tests()
 	await _run_avalanche_tests()
 	await _run_trigger_tests()
+	await _run_powder_tests()
 
 	# Cost: a 512 m map at 2 m (256 x 256), snowing with drift.
 	await _setup("mountain", 512.0, 256, -2.0)
@@ -1317,6 +1322,7 @@ func _run_avalanche_tests() -> void:
 	var face := snow.get_depth_at(Vector3(-40.0, 0, 0))
 	_check("30 cm of new snow stays; a metre more releases on the 38 degree face", calm == 0 and released >= 1, "%d releases after 30 cm, %d after the storm" % [calm, released])
 	_check("it runs out past the toe and stops (Voellmy mu 0.2, xi 1500)", not av.is_running() and av.get_run_out() > 60.0 and av.get_max_speed() > 10.0 and av.get_max_speed() < 70.0, "%.0f m run-out, %.1f m/s at most, %.0f s" % [av.get_run_out(), av.get_max_speed(), t])
+	_check("it runs at Voellmy's steady speed for its depth, within 20% (second-order HLL transport)", av.get_max_speed() > 0.8 * av.get_max_speed_terminal() and av.get_max_speed() < 1.2 * av.get_max_speed_terminal(), "%.1f m/s against %.1f m/s" % [av.get_max_speed(), av.get_max_speed_terminal()])
 	_check("the snow moves, none is made or lost", av.get_released_volume() > 1000.0 and absf(water1 - water0) < 0.005 * water0, "%.0f m3 released, %.0f m3 entrained, water %.0f -> %.0f t" % [av.get_released_volume(), av.get_entrained_volume(), water0 / 1000.0, water1 / 1000.0])
 	_check("debris piles at the toe; the face keeps its old snow", toe > 1.3 and face < 1.0, "%.2f m at the toe (40 m out), %.2f m on the face" % [toe, face])
 	# A trigger (a skier, a cornice drop) releases what natural release left.
@@ -1424,6 +1430,13 @@ func _run_trigger_tests() -> void:
 	_check("a buried crust: a person on the flat holds, a heavy load collapses it and the face releases from afar", light == 0 and heavy == 1 and av.get_collapse_count() == 1 and av.is_running() and av.get_released_volume() > 500.0, "results %d, %d; %d collapse; %.2f m over the crust; index on the flat %.2f under a person, %.2f under 3 kN/m; %.0f m3 released" % [light, heavy, av.get_collapse_count(), snow.get_depth_at(flat_at), i_light, i_heavy, av.get_released_volume()])
 	while av.is_running():
 		av.step(0.5)
+	# Snow from the weather map (not add_snow) builds the slab too, update by update.
+	av = await _trigger_setup()
+	_precipitate(6.0, 2.0)
+	for i in 3:
+		await get_tree().physics_frame
+	var fell := snow.get_depth_at(face)
+	_check("snowfall from the weather map builds the slab", fell > 0.02 and absf(av.get_recent_snow_at(face) - fell) < 0.1 * fell, "%.3f m fell, %.3f m of it new slab" % [fell, av.get_recent_snow_at(face)])
 	# Nothing triggers with triggers off.
 	av = await _trigger_setup()
 	av.triggers_enabled = false
@@ -1434,6 +1447,50 @@ func _run_trigger_tests() -> void:
 		await get_tree().physics_frame
 	_check("triggers_enabled off: the person stands on it", av.get_trigger_count() == 0 and not av.is_running(), "%d triggered" % av.get_trigger_count())
 	person.queue_free()
+
+
+func _run_powder_tests() -> void:
+	print("Powder cloud (follow-up 23)")
+	var av := await _trigger_setup()
+	av.natural_release = true
+	var far := Vector3(90.0, 0.0, 0.0)
+	snow.add_snow(30.0, 100.0)
+	await get_tree().physics_frame
+	var far0 := snow.get_depth_at(far)
+	snow.add_snow(90.0, 90.0)
+	var water0 := snow.get_total_water()
+	var far1 := snow.get_depth_at(far)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var t := 0.0
+	var peak_air := 0.0
+	var peak_rho := 0.0
+	while (av.is_running() or av.get_suspended_mass() > 0.0) and t < 300.0:
+		av.step(0.25)
+		t += 0.25
+		peak_air = maxf(peak_air, av.get_suspended_mass())
+	var water1 := snow.get_total_water()
+	var layer := snow.get_depth_at(far) - far1
+	_check("a fast dry avalanche throws snow into the air, and all of it settles", av.get_powder_taken() > 1000.0 and absf(av.get_powder_settled() - av.get_powder_taken()) < 0.01 * av.get_powder_taken() and av.get_suspended_mass() == 0.0, "%.1f t up (%.1f t in the air at once), %.1f t down, %.0f s" % [av.get_powder_taken() / 1000.0, peak_air / 1000.0, av.get_powder_settled() / 1000.0, t])
+	_check("the cloud outruns the dense flow", av.get_powder_reach() > av.get_run_out() + 10.0, "powder settles %.0f m from the release, the dense flow ran %.0f m" % [av.get_powder_reach(), av.get_run_out()])
+	_check("it leaves a thin layer of powder past the debris", layer > 0.0005 and layer < 0.15, "%.1f cm at %.0f m (%.2f m of old snow there)" % [layer * 100.0, far.x, far0])
+	_check("no snow is made or lost", absf(water1 - water0) < 0.005 * water0, "water %.0f -> %.0f t" % [water0 / 1000.0, water1 / 1000.0])
+	# A wet slide: the same load after a thaw makes no cloud.
+	av = await _trigger_setup()
+	snow.add_snow(30.0, 100.0)
+	snow.add_snow(90.0, 90.0)
+	weather.temperature = 4.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	snow.advance(3.0 * 3600.0)
+	await get_tree().physics_frame
+	var wet := snow.get_wetness_at(Vector3(-40.0, 0, 0))
+	av.trigger(Vector3(-50.0, 0, 0), 30.0)
+	t = 0.0
+	while (av.is_running() or av.get_suspended_mass() > 0.0) and t < 300.0:
+		av.step(0.25)
+		t += 0.25
+	_check("a wet slide makes no powder cloud", av.get_release_count() >= 1 and av.get_powder_taken() == 0.0, "wetness %.2f, %d released at %.1f m/s, %.0f kg up" % [wet, av.get_release_count(), av.get_max_speed(), av.get_powder_taken()])
 
 
 func _run_fire_tests() -> void:
@@ -2530,6 +2587,37 @@ func _build_avalanche(cam: Camera3D) -> void:
 	snow.add_snow(90.0, 90.0)
 	await get_tree().physics_frame
 	await get_tree().physics_frame
+	if OS.get_cmdline_user_args().has("--powder"):
+		# Mid-run in real time, so PhysX Flow steps the cloud with it: --at=S seconds after release (default 9).
+		var at_s := 9.0
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with("--at="):
+				at_s = float(a.substr(5))
+		# Stepped under raster (path tracing every frame would take hours here), then frozen for the path-traced still.
+		var wenv: Environment = get_viewport().find_world_3d().environment
+		if wenv == null:
+			for c in get_children():
+				if c is WorldEnvironment:
+					wenv = c.environment
+		var traced := wenv != null and wenv.pathtracing_enabled
+		if traced:
+			wenv.pathtracing_enabled = false
+		var frames := 0
+		while av.is_running() and frames < int(at_s * Engine.physics_ticks_per_second):
+			await get_tree().physics_frame
+			frames += 1
+		var cloud := av.get_powder_cloud()
+		print("powder: %.1f t up, %.1f t in the air, Flow %s, %d sources, front %.1f m/s" % [av.get_powder_taken() / 1000.0, av.get_suspended_mass() / 1000.0, cloud.has_flow(), cloud.get_active_sources(), av.get_max_speed()])
+		cam.position = Vector3(70.0, snow.get_ground_height_at(Vector3(70, 0, 30)) + 14.0, 30.0)
+		cam.look_at(Vector3(-20.0, 10.0, 0.0))
+		cam.fov = 60.0
+		cam.far = 1000.0
+		if traced:
+			process_mode = Node.PROCESS_MODE_ALWAYS
+			get_tree().paused = true
+			wenv.pathtracing_enabled = true
+		await _save_frame("")
+		return
 	var t := 0.0
 	while av.is_running() and t < 200.0:
 		av.step(0.25)

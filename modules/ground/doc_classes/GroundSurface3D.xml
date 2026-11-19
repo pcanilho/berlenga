@@ -11,6 +11,24 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="add_mat_load">
+			<return type="void" />
+			<param index="0" name="mat" type="int" />
+			<param index="1" name="load" type="float" />
+			<description>
+				A wheel's load on mat [param mat] this physics step, in newtons. [PhysXVehicle3D] calls it for its wheels; a custom vehicle or character can too. See [member mats].
+			</description>
+		</method>
+		<method name="add_mud_deposit">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="depth" type="float" />
+			<param index="3" name="update" type="bool" default="true" />
+			<description>
+				Lays fresh saturated slurry [param depth] metres deep over 1 m cells within [param radius] of [param position], such as the fan a debris flow leaves. It reads as soft mud whatever the weather (the deeper of this and the [member mud_layer] depth wins). With [param update] false the cells refresh later, which suits many small deposits in one step.
+			</description>
+		</method>
 		<method name="add_wader">
 			<return type="void" />
 			<param index="0" name="id" type="int" />
@@ -104,6 +122,41 @@
 			<return type="Rect2" />
 			<description>
 				The field's world XZ rectangle.
+			</description>
+		</method>
+		<method name="get_mat_at" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="contact" type="Vector3" />
+			<param index="1" name="tolerance" type="float" default="0.06" />
+			<description>
+				The mat whose wood lies within [param tolerance] metres of [param contact], or [code]-1[/code]. See [member mats].
+			</description>
+		</method>
+		<method name="get_mat_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many logs and branches the ground has taken as mats. See [member mats].
+			</description>
+		</method>
+		<method name="get_mat_friction" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="mat" type="int" />
+			<description>
+				The friction of mat [param mat]'s wood: its body's [member RigidBody3D.physics_material_override] friction, [code]0.5[/code] without one.
+			</description>
+		</method>
+		<method name="get_mat_sinkage" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="mat" type="int" />
+			<description>
+				How far mat [param mat] has sunk below the undisturbed ground, in metres.
+			</description>
+		</method>
+		<method name="get_mat_spread" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="mat" type="int" />
+			<description>
+				The length of mat [param mat] that carries a wheel's load into the soil, in metres: a beam on an elastic foundation spreads a load over about pi / lambda, so a stiff log spreads it along its whole length and a thin branch only locally.
 			</description>
 		</method>
 		<method name="get_plant_mud_at" qualifiers="const">
@@ -211,6 +264,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The clay's colour at [param position]: [member mud_color_map] where it covers [member mud_map_rect], else [member mud_color].
+			</description>
+		</method>
+		<method name="get_mud_deposit_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The depth of fresh slurry laid at [param position] by [method add_mud_deposit], in metres (0 where none was laid).
 			</description>
 		</method>
 		<method name="get_mud_depth_at" qualifiers="const">
@@ -375,6 +435,13 @@
 				The depth of standing water at [param position] in metres (see [member standing_water]), from the latest read back of the GPU field; 0 without one.
 			</description>
 		</method>
+		<method name="get_subsoil_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The loose layer's depth over the firm base at [param position], in metres ([code]0[/code] where the ground does not deform). See [member subsoil].
+			</description>
+		</method>
 		<method name="get_surface_height_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -456,6 +523,13 @@
 			<return type="bool" />
 			<description>
 				Returns [code]true[/code] when the field runs in compute shaders: [member gpu_simulation] is on and there is a [RenderingDevice] (Forward+ or Mobile).
+			</description>
+		</method>
+		<method name="is_mat_broken" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="mat" type="int" />
+			<description>
+				Whether mat [param mat] has snapped: the bending under the heaviest load it carried passed green wood's strength (about 40 MPa). A broken mat no longer carries wheels.
 			</description>
 		</method>
 		<method name="is_near_active" qualifiers="const">
@@ -645,6 +719,9 @@
 		<member name="material" type="Material" setter="set_material" getter="get_material">
 			The terrain's material. The patch is drawn with a copy of it; turn on [member BaseMaterial3D.ground_deform_enabled] on the original (or call the shader code from a [ShaderMaterial]) so the terrain is lowered under the patch. Map it by world position so the two line up.
 		</member>
+		<member name="mats" type="bool" setter="set_mats" getter="is_mats" default="true">
+			Logs and branches laid on soft ground act as a corduroy road. Put a [RigidBody3D] with a [CylinderShape3D] or [CapsuleShape3D] in the [code]ground_mats[/code] group: once it settles on soft ground the ground takes it (frozen, lying on the deformed surface, in the ruts). A wheel that touches it rests on the wood and grips with its friction; the log spreads the load along the length a beam on soft ground bends over (Hetényi 1946), presses its print into the soil and sinks with it. A branch too thin for the load snaps ([method is_mat_broken]).
+		</member>
 		<member name="max_cached_tiles" type="int" setter="set_max_cached_tiles" getter="get_max_cached_tiles" default="1024">
 			How many tiles of prints are kept after the field leaves them.
 		</member>
@@ -743,6 +820,9 @@
 		</member>
 		<member name="snow_cover" type="NodePath" setter="set_snow_cover" getter="get_snow_cover" default="NodePath(&quot;&quot;)">
 			A [code]SnowCover3D[/code]: where it has more than 3 cm of snow, the snow surface takes the print instead.
+		</member>
+		<member name="subsoil" type="bool" setter="set_subsoil" getter="is_subsoil" default="true">
+			A firm base under the loose layer of soil or mud. The layer's depth over it varies across the ground (0.7 to 1.3 times the material's depth, over a few metres; [method get_subsoil_depth_at]). As a wheel or foot presses the layer thinner than its own width, the soil stiffens against the base (finite-depth pressure-sinkage), and a tyre that reaches the base grips on it (friction 0.5) instead of on the mud above. Off: the base is only a hard stop.
 		</member>
 		<member name="terrain_margin" type="float" setter="set_terrain_margin" getter="get_terrain_margin" default="2.0">
 			How far inside the field's edge the terrain starts to be lowered, in metres; at least the terrain's vertex spacing, so no lowered triangle reaches past the patch.

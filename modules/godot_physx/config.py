@@ -63,6 +63,7 @@ def get_doc_classes():
         "PXTGI3D",
         "PhysXVehicle3D",
         "PhysXVehicleWheel3D",
+        "PhysXWinch3D",
         "PhysXMotorcycle3D",
         "PhysXTank3D",
         "PhysXRiver3D",

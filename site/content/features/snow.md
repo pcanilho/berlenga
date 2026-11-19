@@ -8,6 +8,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 ## Snowpack
 
 - **Snow cover** (`SnowCover3D`): a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it, and fire melts the snow under it at any air temperature.
+- **Dirty snow** (`SnowCover3D.impurities_enabled`): smoke, burnt forest and settling dust darken the snow and make it melt sooner, until fresh snow buries the dirt.
 
   ![Snow on a mountain, raster and path traced](media/snow-mountain.jpg)
 
@@ -100,7 +101,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
 ## Cornices and ice
 
-- **Avalanches** (`SnowCover3D.avalanches_enabled`, `SnowAvalanche3D.trigger()`): slabs release where the snowpack's stability index fails and run out as a Voellmy flow that picks up snow on the way and piles debris where it stops.
+- **Avalanches** (`SnowCover3D.avalanches_enabled`, `SnowAvalanche3D.trigger()`, `triggers_enabled`, `powder_enabled`): slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow.
 
 - **Cornices** (`SnowCornice3D`): overhangs on lee crests, with collision; milder ranges grow them too (crest wind speed-up).
 

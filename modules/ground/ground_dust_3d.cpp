@@ -31,6 +31,8 @@
 
 #include "ground_dust_3d.h"
 
+#include "modules/world/world_contracts.h"
+
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "scene/3d/fog_volume.h"
@@ -380,7 +382,11 @@ void GroundDust3D::_step(float p_dt) {
 				tmp[i] = back.y < back_floor - 0.5f * h ? 0.0f : _sample(conc, back);
 				// The lowest air cell of a column loses its settling flux to the ground.
 				if ((origin.y + y - 0.5f) * h < fl) {
-					fallen += double(conc[i]) * MIN(ws * p_dt / h, 1.0f) * h * h * h;
+					const float f = conc[i] * MIN(ws * p_dt / h, 1.0f) * h * h * h;
+					fallen += double(f);
+					if (snow_fallen.size() == uint32_t(nx * nz)) {
+						snow_fallen[z * nx + x] += f;
+					}
 				}
 				jet_tmp[i] = jet[i] * decay;
 			}
@@ -418,6 +424,41 @@ void GroundDust3D::_step(float p_dt) {
 	deposited += fallen;
 	airborne = now;
 	texture_dirty = true;
+	_hand_dust_to_snow(p_dt);
+}
+
+// Dust settling on snow darkens it (dust on snow, Painter et al. 2007): each second the settled mass per column goes
+// to the snow contract as black carbon equivalent, 0.013 of the dust's mass (mass absorption about 0.1 m2/g against
+// soot's 7.5).
+void GroundDust3D::_hand_dust_to_snow(float p_dt) {
+	WorldSnow *snow = WorldContracts::snow();
+	if (!snow || !snow->has_provider()) {
+		snow_fallen.clear();
+		return;
+	}
+	if (snow_fallen.size() != uint32_t(nx * nz)) {
+		snow_fallen.resize(nx * nz);
+		for (float &f : snow_fallen) {
+			f = 0.0f;
+		}
+		return;
+	}
+	snow_timer += p_dt;
+	if (snow_timer < 1.0f) {
+		return;
+	}
+	snow_timer = 0.0f;
+	const float h = cell_size;
+	for (int z = 0; z < nz; z++) {
+		for (int x = 0; x < nx; x++) {
+			float &f = snow_fallen[z * nx + x];
+			if (f > 1e-9f) {
+				const Vector3 p((origin.x + x + 0.5f) * h, floor_y[z * nx + x], (origin.z + z + 0.5f) * h);
+				snow->add_impurity(p, h * 0.5f, f * 1.0e6f * 0.013f / (h * h));
+			}
+			f = 0.0f;
+		}
+	}
 }
 
 void GroundDust3D::_draw() {
