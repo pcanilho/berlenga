@@ -716,6 +716,48 @@ func _desert_checks(ground: VegetationField3D, dset: Array[PlantSpecies], gen: T
 	_check("desert: woody shrubs (calligonum, white broom, saltbush) placed", shrubs > 20 or OS.get_environment("VEG_DESERT_SHRUBS") == "0", [shrubs])
 	_check("desert: annuals between the dunes, not up them", annual[0] > 500 and annual[3] < annual[0] * 0.5, [annual[0], annual[3]])
 
+# Trees grown for a fire (mesh meta "tree_fire_years"): on a burn the variant nearest its age, unburnt ones off it.
+func _fire_variant_check() -> void:
+	var plain := BoxMesh.new()
+	var young := BoxMesh.new()
+	young.set_meta("tree_fire_years", 0.5)
+	young.set_meta("tree_fire_band", Vector2(0, 1))
+	var old := BoxMesh.new()
+	old.set_meta("tree_fire_years", 8.0)
+	old.set_meta("tree_fire_band", Vector2(6, 10))
+	var sp := PlantSpecies.new()
+	sp.meshes = [plain, young, old]
+	sp.spacing = 1.5
+	var scar := WorldBurnScar3D.new()
+	scar.age_years = 0.4
+	scar.size = Vector2(20, 20)
+	scar.position = Vector3(-30, 0, -30)
+	add_child(scar)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species = [sp]
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var on := {plain: 0, young: 0, old: 0}
+	var off := {plain: 0, young: 0, old: 0}
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh and on.has(ch.multimesh.mesh):
+			var mm: MultiMesh = ch.multimesh
+			for i in mm.instance_count:
+				var p: Vector3 = ch.global_transform * mm.get_instance_transform(i).origin
+				var d := maxf(absf(p.x + 30.0), absf(p.z + 30.0))
+				if d < 8.0:
+					on[mm.mesh] += 1
+				elif d > 12.0:
+					off[mm.mesh] += 1
+	scar.free()
+	f.queue_free()
+	var r := [on[plain], on[young], on[old], off[plain], off[young], off[old]]
+	_check("fire variants: trees on a burn take the variant nearest its age, unburnt ones off it", r[1] > 10 and r[0] == 0 and r[2] == 0 and r[3] > 10 and r[4] == 0 and r[5] == 0, r)
+
 # Close-up bark on by default: a field whose species have trunks (tree_colliders) makes and links a BarkDetail3D
 # as an internal child; none for a field without trunks, none with bark_detail off, gone when switched off.
 func _bark_detail_check() -> void:
@@ -1270,6 +1312,7 @@ func _place_form_checks() -> void:
 
 func _checks() -> void:
 	_bark_detail_check()
+	_fire_variant_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []
 	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH]:
