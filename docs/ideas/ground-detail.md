@@ -539,3 +539,25 @@ stones at all. Ground detail now carries the river layer's bed on below it, as i
   40 kg ball rolled 8 m across the spot (terrain collision on), taken away before the still; `--no-react`.
 - **Not yet.** Grains do not sink into soft ground (the ground's dent and soil from `WorldGround` would give it), and
   stones that leave their cell's bounds stay in that cell (drawn, but streamed out with it).
+
+## More stones for the same cost: what is left to gain (19 Nov)
+
+Before building tiles of piles or GPU-written TLAS records, what the fork already does:
+
+- **TLAS records already persist on the GPU.** Ray tracing keeps persistent instance slots
+  (`render_raytracing_persistent.h`) and keyed TLAS builds (`RD::TLASBuild::keyed`): records live in a GPU buffer
+  between builds and only changed ones are written. A static grain costs no CPU per frame after its first; a moved one
+  (stones that react) one record. A compute pass writing records (Unity 6 `AddInstancesIndirect`, Unreal's GPU
+  instance path) would save the first write of a streamed cell and the CPU expansion of a MultiMesh into rows. That
+  is worth having only if the PC shows cell streaming spikes in the RT update, which nothing here has shown yet.
+- **Tiles of piles (Peytavie, Galin, Grosjean and Mérillou 2009, aperiodic rock-pile tiles; corner-coloured Wang
+  tiles, Lagae and Dutré 2006).** One BLAS per tile of settled grains, instanced: TLAS entries drop by the grains per
+  tile (a 0.5 m fine-gravel tile at full cover holds about 700 grains), but each tile BLAS is its grains' triangles
+  baked in (700 x 64 = 45 k triangles; 16 corner tiles x 2 rock types x 3 cover levels about 4 M triangles, some
+  250 MB of BLAS). The top-level traversal cost grows with log N, so 100 k entries against 150 is a few levels of the
+  tree, and a TLAS rebuild of 100 k instances is about a millisecond on current GPUs. Against that: the grains of a
+  tile can no longer react one by one (a tile under a contact must be split back into instances), cover becomes three
+  levels instead of continuous, and the tiles' repeats must be hidden (Paulo's rule: no visible repetition).
+- **So:** measure first. The PC cost bench (rocks bench, shore eye view, path traced, RENDER_INFO_RT_TLAS_INSTANCES and
+  GPU frame time with ground detail on and off) tells whether the TLAS is worth shrinking at all. If the detail's
+  share of the frame is small, item 4 is not worth its memory and repetition risk.
