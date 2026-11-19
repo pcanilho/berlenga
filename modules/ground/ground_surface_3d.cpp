@@ -35,6 +35,7 @@
 #include "core/config/engine.h"
 #include "core/io/dir_access.h"
 #include "core/math/geometry_2d.h"
+#include "core/object/callable_mp.h"
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
@@ -1753,6 +1754,9 @@ void GroundSurface3D::_update_patch_material() {
 		src = m;
 	}
 	patch_material = src->duplicate();
+	const ShaderMaterial *src_sm = Object::cast_to<ShaderMaterial>(src.ptr());
+	patch_source_shader = src_sm ? src_sm->get_shader() : Ref<Shader>();
+	patch_params_stale = false;
 	if (BaseMaterial3D *bm = Object::cast_to<BaseMaterial3D>(patch_material.ptr())) {
 		bm->set_feature(BaseMaterial3D::FEATURE_GROUND_DEFORM, true);
 		bm->set_ground_deform_patch(true);
@@ -3970,6 +3974,9 @@ void GroundSurface3D::_notification(int p_what) {
 				active = this;
 				WorldContracts::register_ground(this);
 			}
+			if (patch_params_stale) {
+				_sync_patch_params();
+			}
 			_follow(_follow_position());
 			if (!pending_puddles.is_empty()) {
 				_puddles_update(delta);
@@ -5721,8 +5728,45 @@ void GroundSurface3D::set_outer_spacing(float p_spacing) {
 	}
 }
 
+// The near patch draws a copy of the material (with the ground_deform_patch switch on), so a parameter set on the
+// material afterwards (TerrainMaterial3D.scree_blocks_distance from RockField3D, weather) has to reach the copy:
+// the source's changed signal marks it, and once a physics frame the copy takes the source's shader parameters
+// (a new copy only when the source's shader itself was replaced).
+void GroundSurface3D::_sync_patch_params() {
+	patch_params_stale = false;
+	ShaderMaterial *src = Object::cast_to<ShaderMaterial>(material.ptr());
+	if (!src) {
+		_update_patch_material(); // a BaseMaterial3D: its copy is cheap
+		return;
+	}
+	ShaderMaterial *dst = Object::cast_to<ShaderMaterial>(patch_material.ptr());
+	if (!dst || src->get_shader() != patch_source_shader || src->get_shader().is_null()) {
+		_update_patch_material();
+		return;
+	}
+	List<PropertyInfo> params;
+	src->get_shader()->get_shader_uniform_list(&params);
+	static const StringName patch_flag = "ground_deform_patch";
+	for (const PropertyInfo &pi : params) {
+		if (pi.usage & (PROPERTY_USAGE_GROUP | PROPERTY_USAGE_SUBGROUP | PROPERTY_USAGE_CATEGORY)) {
+			continue;
+		}
+		const StringName name = pi.name;
+		if (name == patch_flag) {
+			continue;
+		}
+		dst->set_shader_parameter(name, src->get_shader_parameter(name));
+	}
+}
+
 void GroundSurface3D::set_material(const Ref<Material> &p_material) {
+	if (material.is_valid() && material->is_connected(CoreStringName(changed), callable_mp(this, &GroundSurface3D::_on_material_changed))) {
+		material->disconnect(CoreStringName(changed), callable_mp(this, &GroundSurface3D::_on_material_changed));
+	}
 	material = p_material;
+	if (material.is_valid()) {
+		material->connect(CoreStringName(changed), callable_mp(this, &GroundSurface3D::_on_material_changed));
+	}
 	_update_patch_material();
 	if (is_inside_tree()) {
 		center = Vector2(Math::INF, Math::INF); // re-apply the UV offset
