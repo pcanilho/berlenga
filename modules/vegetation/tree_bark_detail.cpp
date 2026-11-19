@@ -63,7 +63,7 @@ const BarkSpec BARK_SPECS[TreeGenerator::BARK_MAX] = {
 	// Furrowed (oaks, ash, lime): the ridges are the stem's own geometry; no loose pieces.
 	{ BarkDetail3D::PIECE_PLATE, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, Color(0.45f, 0.35f, 0.27f), Color(0.36f, 0.33f, 0.3f), 0.4f },
 	// Plated (Scots pine, larch): thin plates 5 to 15 cm lifting at their lower edge over the orange-red inner bark.
-	{ BarkDetail3D::PIECE_PLATE, 0.09f, 0.055f, 0.016f, 35.0f, 0.22f, Color(0.56f, 0.34f, 0.22f), Color(0.36f, 0.29f, 0.24f), 0.4f },
+	{ BarkDetail3D::PIECE_PLATE, 0.09f, 0.055f, 0.012f, 35.0f, 0.2f, Color(0.56f, 0.34f, 0.22f), Color(0.36f, 0.29f, 0.24f), 0.4f },
 	// Scaly (holm oak, blackthorn, carob): small squarish scales a few centimetres across.
 	{ BarkDetail3D::PIECE_SCALE, 0.035f, 0.028f, 0.007f, 110.0f, 0.12f, Color(0.47f, 0.34f, 0.25f), Color(0.27f, 0.25f, 0.23f), 0.4f },
 	// Flaking (plane-like, saltbush, calligonum): thin flakes curling out at one end, paler fresh bark under them.
@@ -74,11 +74,11 @@ const BarkSpec BARK_SPECS[TreeGenerator::BARK_MAX] = {
 	// Lenticelled (hazel, rowan): thin skin peeling in short strips.
 	{ BarkDetail3D::PIECE_CURL, 0.04f, 0.012f, 0.0005f, 6.0f, 0.8f, Color(0.58f, 0.46f, 0.35f), Color(0.5f, 0.45f, 0.4f), 0.4f },
 	// Stone pine: long flat grey-brown plates over orange-red fissures.
-	{ BarkDetail3D::PIECE_PLATE, 0.18f, 0.07f, 0.022f, 14.0f, 0.14f, Color(0.6f, 0.36f, 0.24f), Color(0.45f, 0.4f, 0.36f), 0.4f },
+	{ BarkDetail3D::PIECE_PLATE, 0.18f, 0.07f, 0.015f, 14.0f, 0.12f, Color(0.6f, 0.36f, 0.24f), Color(0.45f, 0.4f, 0.36f), 0.4f },
 	// Cork: its ridges are the stem's own geometry.
 	{ BarkDetail3D::PIECE_PLATE, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, Color(0.6f, 0.35f, 0.22f), Color(0.55f, 0.5f, 0.44f), 1.2f },
 	// Maritime pine: thick dark plates a hand across over dull red-brown.
-	{ BarkDetail3D::PIECE_PLATE, 0.15f, 0.09f, 0.03f, 14.0f, 0.18f, Color(0.5f, 0.25f, 0.15f), Color(0.26f, 0.21f, 0.18f), 0.9f },
+	{ BarkDetail3D::PIECE_PLATE, 0.15f, 0.09f, 0.018f, 14.0f, 0.16f, Color(0.5f, 0.25f, 0.15f), Color(0.26f, 0.21f, 0.18f), 0.9f },
 };
 
 float bd_noise(uint32_t p_seed, int p_i) {
@@ -182,14 +182,48 @@ Ref<ArrayMesh> BarkDetail3D::_make_shape(TreeGenerator::BarkKind p_bark, int p_s
 	const BarkSpec &bs = BARK_SPECS[p_bark];
 	const uint32_t seed = uint32_t(p_bark) * 977u + uint32_t(p_shape) * 131u + 17u;
 	ShapeBuilder sb;
+	if (bs.kind == PIECE_CURL && p_shape >= 6) {
+		// Where a sheet has come away: a torn horizontal patch of the paler inner bark, flush on the stem (bent to a
+		// typical stem's curvature), the strips standing off at its ends. Its top shows the inner bark.
+		const int K = 14;
+		const float L = bs.length * (1.0f + 0.8f * bd_noise(seed, 0));
+		const float W = bs.width * (0.8f + 0.8f * bd_noise(seed, 1));
+		const float T = 0.0004f;
+		const float stem_r = 0.12f;
+		int top[K + 1][2], bot[K + 1][2];
+		for (int i = 0; i <= K; i++) {
+			const float x = (float(i) / K - 0.5f) * L;
+			const float t = Math::abs(2.0f * float(i) / K - 1.0f);
+			const float taper = 1.0f - 0.6f * Math::pow(t, 2.5f) * (0.5f + bd_noise(seed, 300 + i));
+			const float z = -x * x / (2.0f * stem_r) + 0.0004f;
+			for (int j = 0; j < 2; j++) {
+				const float y = (j == 0 ? -0.5f : 0.5f) * W * taper * (0.75f + 0.35f * bd_noise(seed, 320 + i * 2 + j));
+				top[i][j] = sb.add(Vector3(x, y, z + 0.5f * T), 0.0f);
+				bot[i][j] = sb.add(Vector3(x, y, z - 0.5f * T), 0.0f);
+			}
+		}
+		for (int i = 0; i < K; i++) {
+			sb.quad(top[i][0], top[i + 1][0], top[i + 1][1], top[i][1], Vector3(0, 0, 1));
+		}
+		sb.close_group();
+		for (int i = 0; i < K; i++) {
+			sb.quad(bot[i][0], bot[i + 1][0], bot[i + 1][1], bot[i][1], Vector3(0, 0, -1));
+		}
+		sb.close_group();
+		return sb.finish();
+	}
 	if (bs.kind == PIECE_CURL) {
 		// A horizontal strip torn along the lenticels: its middle still on the stem (bent to a typical stem's
 		// curvature), one or both ends peeling off it and rolled into a scroll standing off the bark.
 		const int M = 16; // samples an arm
-		const float L = bs.length * (0.75f + 0.5f * bd_noise(seed, 0));
-		const float W = bs.width * (0.7f + 0.6f * bd_noise(seed, 1));
+		// Shapes 0 and 1 are long strips peeling at both ends, 2 and 3 wide sheets, 4 and 5 loose flaps lifting away
+		// from the stem like a page (their pale underside and the shadow under them showing); 6 and 7 are the bared
+		// patches above.
+		const bool flap = p_shape == 4 || p_shape == 5;
+		const float L = bs.length * (0.75f + 0.5f * bd_noise(seed, 0)) * (p_shape < 2 ? 1.8f : (flap ? 1.4f : 1.0f));
+		const float W = bs.width * (0.7f + 0.6f * bd_noise(seed, 1)) * (p_shape == 2 || p_shape == 3 ? 1.8f : 1.0f);
 		const float T = bs.thick;
-		const bool both = bd_noise(seed, 5) < 0.4f;
+		const bool both = p_shape < 2 || (!flap && bd_noise(seed, 5) < 0.3f);
 		const float stem_r = 0.12f;
 		const float lift_angle = 1.9f + 0.5f * bd_noise(seed, 8); // stands up and leans back over itself, so the roll clears the stem
 		const float side = bd_noise(seed, 4) < 0.5f ? -1.0f : 1.0f;
@@ -213,7 +247,11 @@ Ref<ArrayMesh> BarkDetail3D::_make_shape(TreeGenerator::BarkKind p_bark, int p_s
 					// Peels off the stem at an angle, then rolls back on itself (birch bark rolls with its white face out,
 					// the salmon underside showing at the lip and under the lift).
 					const float free = MAX(p_len - p_attached, 1e-4f);
-					k = f < 0.22f ? lift_angle / (0.22f * free) : -1.0f / (p_roll * (1.0f - 0.3f * f));
+					if (flap) {
+						k = f < 0.3f ? 0.45f / (0.3f * free) : 1.2f / free * f; // a shallow lift, its end curling out
+					} else {
+						k = f < 0.22f ? lift_angle / (0.22f * free) : -1.0f / (p_roll * (1.0f - 0.3f * f));
+					}
 				}
 				h += k * ds;
 				q += Vector2(Math::cos(h), Math::sin(h)) * ds;
@@ -317,7 +355,7 @@ Ref<ArrayMesh> BarkDetail3D::_make_shape(TreeGenerator::BarkKind p_bark, int p_s
 		} else {
 			z = lift * L * 0.5f * MAX(0.0f, -yn) * MAX(0.0f, -yn) * (1.0f + 0.3f * xn); // the lower edge lifts
 		}
-		return z - 0.45f * T; // its foot into the stem's relief
+		return z + 0.3f * T; // on the plate it peels from, its underside a little into the relief
 	};
 	auto thick = [&](float p_rho) { return T * (0.75f + 0.25f * (1.0f - p_rho * p_rho)); };
 	const float rings[2] = { 0.5f, 1.0f };
@@ -637,6 +675,29 @@ void BarkDetail3D::_build_profile(Profile *pr) {
 				cnt[idx]++;
 			}
 		}
+		// Cells far proud of their row (another stem at a fork, a branch collar): dropped, filled like empty ones below.
+		{
+			LocalVector<float> row;
+			for (int li = 0; li < pr->nl; li++) {
+				row.clear();
+				for (int ai = 0; ai < pr->na; ai++) {
+					if (pr->rad[li * pr->na + ai] > 0.0f) {
+						row.push_back(pr->rad[li * pr->na + ai]);
+					}
+				}
+				if (row.size() < 8) {
+					continue;
+				}
+				row.sort();
+				const float med = row[row.size() / 2];
+				for (int ai = 0; ai < pr->na; ai++) {
+					float &rr = pr->rad[li * pr->na + ai];
+					if (rr > med + MAX(0.03f, 0.25f * med)) {
+						rr = 0.0f;
+					}
+				}
+			}
+		}
 		// Cells no vertex fell in: the mean of the filled ones round them (a few passes), else the capsule.
 		for (int pass = 0; pass < 4; pass++) {
 			for (int li = 0; li < pr->nl; li++) {
@@ -713,6 +774,8 @@ void BarkDetail3D::_ensure_family(TreeGenerator::BarkKind p_bark, const Ref<Mate
 		f.material->set_shader_parameter("lift_tint", bs.kind == PIECE_CURL ? 0.6f : 0.0f);
 		for (int s = 0; s < SHAPES; s++) {
 			f.meshes[s] = _make_shape(p_bark, s);
+			const AABB ab = f.meshes[s]->get_aabb();
+			f.shape_size[s] = Vector2(MAX(ab.size.x, 0.001f), MAX(ab.size.y, 0.001f));
 		}
 	}
 	if (!f.textured) {
@@ -777,65 +840,217 @@ void BarkDetail3D::_place(Trunk &r_trunk, const Dictionary &p_trunk, const Profi
 	RandomPCG rng(uint64_t(uint32_t(seed)) * 6364136223846793005ull + uint64_t(bark));
 	const bool plates = bs.kind == PIECE_PLATE || bs.kind == PIECE_SCALE;
 	if (p_profile && p_profile->nl > 0 && !p_profile->a.is_empty()) {
-		// On the mesh's own bark surface: each piece at the outermost bark vertex of its cell (mesh space, then the
-		// instance's transform), taking that cell's vertex colour.
+		// On the mesh's own bark surface (mesh space, then the instance's transform), taking its vertex colour.
 		const Profile &pr = *p_profile;
+		const Family &fam = families[bark];
 		const Basis ib = p_trunk.get("basis", Basis());
 		const Transform3D to_world(ib, Vector3(p_trunk.get("base", Vector3())) - ib.xform(pr.a0));
-		const float top = MIN(pr.total, float(height));
-		uint32_t sgi = 0;
-		for (int li = int(0.3f / pr.step); li < pr.nl; li++) {
-			const float al_lo = li * pr.step;
-			if (al_lo >= top) {
-				break;
-			}
-			while (sgi + 1 < pr.a.size() && pr.along0[sgi + 1] <= al_lo) {
+		const int na = pr.na;
+		const bool plates_kind = bs.kind == PIECE_PLATE || bs.kind == PIECE_SCALE;
+		const int l0 = int(0.3f / pr.step);
+		const int l1 = MIN(pr.nl, int(MIN(pr.total, float(height)) / pr.step));
+		if (l1 - l0 < 4) {
+			return;
+		}
+		LocalVector<int> seg_of;
+		seg_of.resize(pr.nl);
+		for (int li = 0, sgi = 0; li < pr.nl; li++) {
+			while (sgi + 1 < int(pr.a.size()) && pr.along0[sgi + 1] <= li * pr.step) {
 				sgi++;
 			}
-			const float r = pr.r[sgi];
-			if (r < 0.02f) {
-				continue;
+			seg_of[li] = sgi;
+		}
+		auto wrap = [&](int c) { return ((c % na) + na) % na; };
+		auto at = [&](int li, int ai) { return li * na + wrap(ai); };
+		auto cell_w = [&](int li) { return float(Math::TAU) * pr.r[seg_of[li]] / na; };
+		// Cells taken, so pieces never pile on each other.
+		LocalVector<uint8_t> occ;
+		occ.resize(pr.nl * na);
+		memset(occ.ptr(), 0, occ.size());
+		auto claim = [&](int lc, int ac, int hr, int hc) {
+			if (lc - hr < l0 || lc + hr >= l1) {
+				return false;
 			}
-			const float area = float(Math::TAU) * r * pr.step;
-			const float want = area * bs.per_m2 * float(density) * (plates ? 1.8f : 1.0f); // plate families try more: only tops take one
-			const int count = int(want) + (rng.randf() < want - int(want) ? 1 : 0);
-			for (int k = 0; k < count; k++) {
-				const float along = al_lo + pr.step * rng.randf();
-				const float th = float(Math::TAU) * rng.randf();
-				const int ai = CLAMP(int(th / float(Math::TAU) * pr.na), 0, pr.na - 1);
-				const int idx = li * pr.na + ai;
-				const float rad = pr.rad[idx];
-				if (plates) {
-					// A plate top: near the highest of the bark round it.
-					float mn = 1e9f, mx = 0.0f;
-					for (int dl = -2; dl <= 2; dl++) {
-						const int l2 = CLAMP(li + dl, 0, pr.nl - 1);
-						for (int da = -3; da <= 3; da++) {
-							const float rr = pr.rad[l2 * pr.na + (ai + da + pr.na) % pr.na];
-							mn = MIN(mn, rr);
-							mx = MAX(mx, rr);
-						}
-					}
-					if (mx - mn > 0.002f && rad < mn + 0.65f * (mx - mn)) {
-						continue; // in a furrow
+			for (int li = lc - hr; li <= lc + hr; li++) {
+				for (int ai = ac - hc; ai <= ac + hc; ai++) {
+					if (occ[at(li, ai)]) {
+						return false;
 					}
 				}
-				const float t = along - pr.along0[sgi];
-				const Vector3 u = pr.u[sgi];
-				const Vector3 out = pr.e1[sgi] * Math::cos(th) + pr.e2[sgi] * Math::sin(th);
-				const Vector3 round = u.cross(out);
+			}
+			for (int li = lc - hr; li <= lc + hr; li++) {
+				for (int ai = ac - hc; ai <= ac + hc; ai++) {
+					occ[at(li, ai)] = 1;
+				}
+			}
+			return true;
+		};
+		// One piece: row (fractional), angle, radius, scale round / along, spin, shape.
+		auto emit = [&](float p_row, float p_th, float p_rad, float p_sx, float p_sy, float p_spin, int p_shape, const Color &p_col, float p_sz = -1.0f) {
+			const int li = CLAMP(int(p_row), 0, pr.nl - 1);
+			const int sgi = seg_of[li];
+			const float t = p_row * pr.step - pr.along0[sgi];
+			const Vector3 u = pr.u[sgi];
+			const Vector3 out = pr.e1[sgi] * Math::cos(p_th) + pr.e2[sgi] * Math::sin(p_th);
+			const Vector3 round = u.cross(out);
+			Basis basis(round, u, out); // columns: x round the stem, y up it, z out
+			basis = basis * Basis(Vector3(0, 0, 1), p_spin);
+			basis.scale_local(Vector3(p_sx, p_sy, p_sz > 0.0f ? p_sz : (plates_kind ? 1.0f : 0.5f * (p_sx + p_sy)))); // plates keep their thickness
+			Piece pc;
+			pc.xform = to_world * Transform3D(basis, pr.a[sgi] + u * t + out * p_rad);
+			pc.custom = Color(p_col.r, p_col.g, p_col.b, rng.randf());
+			pc.shape = p_shape;
+			r_trunk.pieces.push_back(pc);
+		};
+		auto th_of = [&](float p_col) { return (p_col + 0.5f) / na * float(Math::TAU); };
+
+		if (bs.kind == PIECE_PLATE || bs.kind == PIECE_SCALE) {
+			// The stem's own plates: cells above the bark round them, eroded once so furrows split them, then joined.
+			// A share of them shed their outer layer: a piece fitted inside the plate's bounds, lifting at its lower
+			// edge, so it never lies across a furrow.
+			const int n = pr.nl * na;
+			LocalVector<uint8_t> topc, kept;
+			topc.resize(n);
+			kept.resize(n);
+			for (int li = 0; li < pr.nl; li++) {
+				for (int ai = 0; ai < na; ai++) {
+					float sum = 0.0f;
+					int m = 0;
+					for (int dl = -3; dl <= 3; dl++) {
+						const int l2 = li + dl;
+						if (l2 < 0 || l2 >= pr.nl) {
+							continue;
+						}
+						for (int da = -4; da <= 4; da++) {
+							sum += pr.rad[at(l2, ai + da)];
+							m++;
+						}
+					}
+					topc[li * na + ai] = pr.rad[li * na + ai] > sum / m + 0.0004f ? 1 : 0;
+				}
+			}
+			for (int li = 0; li < pr.nl; li++) {
+				for (int ai = 0; ai < na; ai++) {
+					const bool up = li + 1 >= pr.nl || topc[at(li + 1, ai)], down = li == 0 || topc[at(li - 1, ai)];
+					kept[li * na + ai] = topc[li * na + ai] && up && down && topc[at(li, ai - 1)] && topc[at(li, ai + 1)];
+				}
+			}
+			LocalVector<int> label;
+			label.resize(n);
+			for (int i = 0; i < n; i++) {
+				label[i] = -1;
+			}
+			LocalVector<Vector2i> stack, cells;
+			const float share = CLAMP(bs.per_m2 / 35.0f * 0.65f * float(density), 0.0f, 0.75f);
+			for (int ls = l0; ls < l1; ls++) {
+				for (int as = 0; as < na; as++) {
+					if (!kept[ls * na + as] || label[ls * na + as] >= 0) {
+						continue;
+					}
+					// Flood the plate, keeping its columns unwrapped from the seed.
+					cells.clear();
+					stack.clear();
+					stack.push_back(Vector2i(ls, as));
+					label[ls * na + as] = 1;
+					while (!stack.is_empty()) {
+						const Vector2i c = stack[stack.size() - 1];
+						stack.remove_at(stack.size() - 1);
+						cells.push_back(c);
+						const Vector2i nb[4] = { Vector2i(c.x + 1, c.y), Vector2i(c.x - 1, c.y), Vector2i(c.x, c.y + 1), Vector2i(c.x, c.y - 1) };
+						for (const Vector2i &q : nb) {
+							if (q.x < 0 || q.x >= pr.nl || cells.size() + stack.size() > 4000) {
+								continue;
+							}
+							const int qi = at(q.x, q.y);
+							if (kept[qi] && label[qi] < 0) {
+								label[qi] = 1;
+								stack.push_back(q);
+							}
+						}
+					}
+					if (cells.size() < 4 || rng.randf() >= share) {
+						continue;
+					}
+					int rmin = 1 << 30, rmax = -(1 << 30), cmin = 1 << 30, cmax = -(1 << 30);
+					float rsum = 0.0f, rtop = 0.0f;
+					Color col(0, 0, 0, 0);
+					for (const Vector2i &c : cells) {
+						rmin = MIN(rmin, c.x);
+						rmax = MAX(rmax, c.x);
+						cmin = MIN(cmin, c.y);
+						cmax = MAX(cmax, c.y);
+						const int ci = at(c.x, c.y);
+						rsum += pr.rad[ci];
+						rtop = MAX(rtop, pr.rad[ci]);
+						col += pr.col[ci];
+					}
+					if (rmax - rmin < 1 || rmin < l0 || rmax >= l1 || cmax - cmin >= na / 3) {
+						continue;
+					}
+					const float lc = 0.5f * (rmin + rmax);
+					// The eroded ring back on (one cell each side), then inside the plate's furrows.
+					const float ext_along = (rmax - rmin + 3) * pr.step * 0.78f;
+					const float ext_round = (cmax - cmin + 3) * cell_w(int(lc)) * 0.78f;
+					const int shape = int(rng.rand() % SHAPES);
+					const float sx = CLAMP(MIN(ext_round, 2.0f * bs.width) / fam.shape_size[shape].x, 0.3f, 3.0f);
+					const float sy = CLAMP(MIN(ext_along, 2.0f * bs.length) / fam.shape_size[shape].y, 0.3f, 3.0f);
+					const float rad = 0.5f * (rsum / cells.size() + rtop);
+					emit(lc + 0.5f, th_of(0.5f * (cmin + cmax)), rad, sx, sy, (rng.randf() - 0.5f) * 0.12f, shape, col / float(cells.size()));
+				}
+			}
+			return;
+		}
+		if (bs.kind == PIECE_CURL) {
+			// Paper bark tears along the lenticel bands: bands up the stem, each with a run of strips side by side
+			// round part of it (wide sheets, long strips, short curls), sizes log-normal.
+			float row = l0 + 2.0f + rng.randf() * 4.0f;
+			while (row < l1 - 2) {
+				const int lc = int(row);
+				const float cw = cell_w(lc);
+				int in_band = 1 + int(rng.randf() * 5.0f);
+				float col = rng.randf() * na;
+				if (rng.randf() < 0.6f) {
+					// The bared patch the band's strips came off, under them (it takes no cells: they lie on it).
+					const int ps = 6 + int(rng.rand() % 2);
+					const float size = CLAMP(Math::exp(rng.randfn(0.2f, 0.3f)), 0.7f, 2.2f);
+					const float pc = col + 0.5f * fam.shape_size[ps].x * size / cw * (0.4f + 0.4f * rng.randf());
+					const float prad = pr.rad[at(lc, int(pc))];
+					// Bent to this stem: the shape's 12 cm curvature, rescaled round by `size`, made the stem's radius.
+					emit(lc + 0.5f, th_of(pc), prad, size, CLAMP(size * 0.8f, 0.6f, 1.6f), (rng.randf() - 0.5f) * 0.08f, ps, pr.col[at(lc, int(pc))], CLAMP(size * size * 0.12f / MAX(prad, 0.03f), 0.05f, 8.0f));
+				}
+				for (int k = 0; k < in_band; k++) {
+					const int shape = int(rng.rand() % 6);
+					const float size = CLAMP(Math::exp(rng.randfn(0.0f, 0.3f)), 0.6f, 1.8f);
+					const Vector2 ext = fam.shape_size[shape] * size;
+					const int hc = MAX(1, int(Math::ceil(0.5f * ext.x / cw)));
+					const int hr = MAX(0, int(Math::ceil(0.5f * ext.y / pr.step)));
+					const int ac = int(col) + hc;
+					const int lr = lc + int(Math::round(rng.randfn(0.0f, 0.6f)));
+					if (claim(lr, ac, hr, hc)) {
+						emit(lr + 0.5f, th_of(float(ac)), pr.rad[at(lr, ac)] - 0.0005f, size, size, (rng.randf() - 0.5f) * 0.12f, shape, pr.col[at(lr, ac)]);
+					}
+					col = float(ac + hc) + rng.randf() * 3.0f;
+				}
+				// Bands every 3 to 12 cm, closer with density.
+				row += (0.03f + 0.09f * rng.randf()) / pr.step / MAX(float(density), 0.1f);
+			}
+			return;
+		}
+		// Flakes: scattered, none on another.
+		for (int li = l0; li < l1; li++) {
+			const float area = float(Math::TAU) * pr.r[seg_of[li]] * pr.step;
+			const float want = area * bs.per_m2 * float(density);
+			const int count = int(want) + (rng.randf() < want - int(want) ? 1 : 0);
+			for (int k = 0; k < count; k++) {
+				const int shape = int(rng.rand() % SHAPES);
 				const float size = CLAMP(Math::exp(rng.randfn(0.0f, 0.25f)), 0.6f, 1.6f);
-				const float spin = (rng.randf() - 0.5f) * (bs.kind == PIECE_SCALE ? 0.7f : 0.3f);
-				Basis basis(round, u, out); // columns: x round the stem, y up it, z out
-				basis = basis * Basis(Vector3(0, 0, 1), spin);
-				basis.scale_local(Vector3(size, size, size));
-				const Vector3 p = pr.a[sgi] + u * t + out * rad;
-				const Color c = pr.col[idx];
-				Piece pc;
-				pc.xform = to_world * Transform3D(basis, p);
-				pc.custom = Color(c.r, c.g, c.b, rng.randf());
-				pc.shape = int(rng.rand() % SHAPES);
-				r_trunk.pieces.push_back(pc);
+				const Vector2 ext = fam.shape_size[shape] * size;
+				const int ac = int(rng.randf() * na);
+				const int hc = MAX(0, int(0.5f * ext.x / cell_w(li)));
+				const int hr = MAX(0, int(0.5f * ext.y / pr.step));
+				if (claim(li, ac, hr, hc)) {
+					emit(li + rng.randf(), th_of(float(ac)), pr.rad[at(li, ac)], size, size, (rng.randf() - 0.5f) * 0.3f, shape, pr.col[at(li, ac)]);
+				}
 			}
 		}
 		return;

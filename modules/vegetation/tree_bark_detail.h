@@ -76,6 +76,7 @@ private:
 		Ref<MultiMesh> multimeshes[SHAPES];
 		MultiMeshInstance3D *instances[SHAPES] = {};
 		Ref<ShaderMaterial> material;
+		Vector2 shape_size[SHAPES]; // each shape's extent round the stem and up it (m)
 		bool textured = false;
 	};
 

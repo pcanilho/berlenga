@@ -383,5 +383,15 @@ Plan, in `modules/vegetation/tree_bark_detail.*` (BarkDetail3D), the ground deta
   stem and whose ends stand up off it and roll back into scrolls, white side out, the peeled plies cream-salmon;
   pine plates are twice as thick (1.6 to 3 cm) and sunk into the relief, and broken edges are the outer bark in
   section (darkened, a trace of inner bark) instead of inner bark, which now takes the stem's hue.
+- Second review (docs, 19 Nov): birch read as evenly scattered confetti, two pieces floated at a fork, pieces
+  piled up; pine pieces lay across the furrows like shards and stood out of the silhouette like a saw edge. Now:
+  - Pine and scales: the trunk's own plates are found in its profile (cells above the bark round them, eroded once
+    so furrows split them, flood-filled), and a share of them shed their outer layer: a piece fitted inside that
+    plate's bounds (scaled round and up to it), lying on it and lifting at its lower edge, so none crosses a furrow.
+  - Birch: bands along the lenticels every 3 to 12 cm, each a torn bared patch of inner bark (bent to the stem's
+    own radius) with one to five strips side by side at its ends: long strips peeling at both ends, wide sheets,
+    loose flaps lifting like a page, scrolls; sizes log-normal.
+  - The profile drops cells far proud of their row (another stem at a fork), and every piece claims its cells, so
+    none lands on another.
 - Cost (bench, 4 trunks, 1,045 pieces): main thread 0.15 ms mean, 3.4 ms worst an update with the meta (33 ms
   mean, 826 ms worst with the readback); 64 bytes a piece in instance buffers (67 KB), 32 shared shapes.
