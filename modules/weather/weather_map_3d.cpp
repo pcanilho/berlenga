@@ -1660,6 +1660,10 @@ void WeatherMap3D::_update_fire_clouds(double p_weather_dt) {
 		// towers (type 0.9), with a downdraft's outflow and a little rain.
 		const float deep = CLAMP(cloud.z - 1.0f, 0.0f, 1.0f);
 		s.cloud_cover = Math::lerp(0.6f + 0.17f * MIN(cloud.z, 1.0f), 1.0f, deep);
+		// Its base at the plume's own condensation level over the fire (Lareau and Clements 2016 measure it a few
+		// hundred metres over the ambient LCL, the plume's heat and the fire's water vapour about cancelling), not
+		// the map's cloud_base_height: on a dry afternoon the cap sits kilometres over a humid morning's deck.
+		s.cloud_base = MAX(p.y + cloud.y, 1.0f);
 		s.outflow = 10.0f * deep;
 		s.rain_rate = 2.0f * deep;
 		s.fade_target = MAX(s.fade_target, MIN(cloud.z, 1.0f));
@@ -2135,6 +2139,7 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 		o[1] = s.position.y;
 		o[2] = s.radius;
 		o[3] = s.cloud_cover * env;
+		st.storm_base[st.storm_count - 1] = s.cloud_base;
 	}
 	st.update_top_max();
 	return st;
@@ -2142,7 +2147,8 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 
 float WeatherMap3D::get_cloud_top_at(Vector3 p_position) const {
 	const WeatherClouds::State st = _cloud_state();
-	return st.base_height + WeatherClouds::top_height(st, WeatherClouds::cover_type_at(st, Vector2(p_position.x, p_position.z)).y);
+	const Vector2 xz(p_position.x, p_position.z);
+	return WeatherClouds::base_at(st, xz) + WeatherClouds::top_height(st, WeatherClouds::cover_type_at(st, xz).y);
 }
 
 float WeatherMap3D::get_cloud_density_at(Vector3 p_position) const {
@@ -2160,7 +2166,7 @@ void WeatherMap3D::ShadowBake::row(uint32_t p_row, void *) {
 	for (int x = 0; x < n; x++) {
 		const float a = corner.x + (x + 0.5f) * texel;
 		const Vector3 p0 = axis_u * a + axis_v * b;
-		const float s0 = (state.base_height - p0.y) / to_sun.y;
+		const float s0 = (state.base_min - p0.y) / to_sun.y;
 		const float s1 = (state.top_max - p0.y) / to_sun.y;
 		const float ds = (s1 - s0) / steps;
 		float tau = 0.0f;

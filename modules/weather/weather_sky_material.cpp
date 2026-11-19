@@ -222,13 +222,13 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 #endif
 	r_depth = 0.0;
 	vec3 ro = vec3(0.0, PLANET_RADIUS + cam.y, 0.0);
-	float r_base = PLANET_RADIUS + cloud_base_height;
+	float r_base = PLANET_RADIUS + cloud_base_min;
 	float r_top = PLANET_RADIUS + cloud_top_max;
 	vec2 hb = sphere_hits(ro, rd, r_base);
 	vec2 ht = sphere_hits(ro, rd, r_top);
 	float t0;
 	float t1;
-	if (cam.y < cloud_base_height) {
+	if (cam.y < cloud_base_min) {
 		if (sphere_hits(ro, rd, PLANET_RADIUS).x > 0.0) {
 			return vec4(0.0, 0.0, 0.0, 1.0); // the ground is in the way
 		}
@@ -302,7 +302,7 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 		// diffuse light this also is) keeps most of its brightness (four times darkened decks to a storm).
 		float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * 2.0);
 		light += sun_radiance * diffuse * (2.0 / (4.0 * PI));
-		float hf = clamp((p.y - cloud_base_height) / wc_top_height(ct.y), 0.0, 1.0);
+		float hf = clamp((p.y - wc_base_at(p.xz)) / wc_top_height(ct.y), 0.0, 1.0);
 		light += mix(ambient_bottom, ambient_top, hf);
 		// Energy-conserving step (Hillaire 2016): albedo 1, so the scattering is the extinction.
 		float tr = exp(-sigma * ds);
@@ -619,6 +619,13 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 		storms.write[i] = Vector4(p_state.storms[i][0], p_state.storms[i][1], MAX(p_state.storms[i][2], 1.0f), p_state.storms[i][3]);
 	}
 	rs->material_set_param(m, "cloud_storms", storms);
+	PackedFloat32Array bases;
+	bases.resize(WeatherClouds::MAX_STORMS);
+	for (int i = 0; i < WeatherClouds::MAX_STORMS; i++) {
+		bases.write[i] = i < p_state.storm_count ? p_state.storm_base[i] : 0.0f;
+	}
+	rs->material_set_param(m, "cloud_storm_base", bases);
+	rs->material_set_param(m, "cloud_base_min", p_state.base_min);
 }
 
 void WeatherSkyMaterial::set_lightning(const Vector4 *p_flashes, int p_count, const Color &p_color) {

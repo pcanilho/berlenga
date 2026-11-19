@@ -310,7 +310,7 @@ float atmo_phase_mie(float c, float g) {
 vec2 atmo_cloud_transmittance(vec3 q, vec3 l, vec2 cam_xz, float p_step, float p_dist) {
 	float r = length(q);
 	float mu_s = dot(q, l) / r;
-	float rb = atmo_radii.x + cloud_base_height;
+	float rb = atmo_radii.x + cloud_base_min;
 	float rt = atmo_radii.x + cloud_top_max;
 	if (r >= rt) {
 		return vec2(1.0);
