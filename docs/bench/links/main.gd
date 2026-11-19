@@ -454,6 +454,23 @@ func _contract_tests() -> void:
 	var burning: float = m.get_wetness_at(Vector3(200, 0, 0))
 	var beside: float = m.get_wetness_at(Vector3(-200, 0, 0))
 	_check("contracts: a fire dries the ground under it", burning < 0.05 and beside > 0.5, "wetness %.2f under the fire, %.2f beside it" % [burning, beside])
+	# Burn age: an authored scar answers over its area; the most recent of overlapping burns wins; -1 elsewhere.
+	WorldContracts.clear_overrides()
+	var old_scar := WorldBurnScar3D.new()
+	old_scar.age_years = 12.0
+	old_scar.size = Vector2(100, 100)
+	add_child(old_scar)
+	var new_scar := WorldBurnScar3D.new()
+	new_scar.age_years = 2.0
+	new_scar.polygon = PackedVector2Array([Vector2(0, 0), Vector2(30, 0), Vector2(0, 30)])
+	add_child(new_scar)
+	var fa: WorldFire = WorldContracts.get_fire()
+	var a_old := fa.burn_age_at(Vector3(-20, 0, -20))
+	var a_new := fa.burn_age_at(Vector3(5, 0, 5))
+	var a_none := fa.burn_age_at(Vector3(200, 0, 0))
+	_check("contracts: burn age from authored scars, the latest burn wins", a_old == 12.0 and a_new == 2.0 and a_none == -1.0, "%.0f, %.0f, %.0f years" % [a_old, a_new, a_none])
+	old_scar.queue_free()
+	new_scar.queue_free()
 	m.queue_free()
 	WorldContracts.clear_overrides()
 	await get_tree().physics_frame

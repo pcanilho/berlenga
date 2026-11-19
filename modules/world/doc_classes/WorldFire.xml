@@ -9,6 +9,13 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="_burn_age_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method burn_age_at].
+			</description>
+		</method>
 		<method name="_burnt_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -35,6 +42,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Override in a stub to replace [method wind_at].
+			</description>
+		</method>
+		<method name="burn_age_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Years of game time since the ground at [param position] last burnt, for the vegetation's regrowth: the most recent of any producer, a fire in play or an authored [WorldBurnScar3D]. [code]-1[/code] where it never burnt.
 			</description>
 		</method>
 		<method name="burnt_at" qualifiers="const">

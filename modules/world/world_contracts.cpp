@@ -429,6 +429,20 @@ float WorldFire::stem_char_at(const Vector3 &p_position) const {
 	return r;
 }
 
+float WorldFire::burn_age_at(const Vector3 &p_position) const {
+	float r = -1.0f;
+	if (GDVIRTUAL_CALL(_burn_age_at, p_position, r)) {
+		return r;
+	}
+	for (WorldFireProvider *f : providers) {
+		const float a = f->contract_fire_burn_age_at(p_position);
+		if (a >= 0.0f && (r < 0.0f || a < r)) {
+			r = a;
+		}
+	}
+	return r;
+}
+
 void WorldFire::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldFire::has_provider);
 	ClassDB::bind_method(D_METHOD("heat_at", "position"), &WorldFire::heat_at);
@@ -439,6 +453,8 @@ void WorldFire::_bind_methods() {
 	GDVIRTUAL_BIND(_wind_at, "position");
 	ClassDB::bind_method(D_METHOD("stem_char_at", "position"), &WorldFire::stem_char_at);
 	GDVIRTUAL_BIND(_stem_char_at, "position");
+	ClassDB::bind_method(D_METHOD("burn_age_at", "position"), &WorldFire::burn_age_at);
+	GDVIRTUAL_BIND(_burn_age_at, "position");
 }
 
 // A script stub standing in as one water producer among the real ones.
