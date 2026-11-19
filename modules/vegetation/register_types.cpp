@@ -90,6 +90,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		{ "grass_trample_rect", "vec4" },
 		// PhysXFireSpread3D's plant state (vegetation_fire.h); set only while a fire burns.
 		{ "fire_state_map", "sampler2D" },
+		{ "fire_char_map", "sampler2D" },
 		{ "fire_char_rect", "vec4" },
 		{ "fire_wind_map", "sampler2D" },
 		{ "fire_wind_rect", "vec4" },

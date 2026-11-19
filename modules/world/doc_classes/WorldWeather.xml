@@ -172,6 +172,13 @@
 				Override in a stub to replace [method surface_wetness_at].
 			</description>
 		</method>
+		<method name="_terrain_lee_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method terrain_lee_at].
+			</description>
+		</method>
 		<method name="_time_scale" qualifiers="virtual const">
 			<return type="float" />
 			<description>
@@ -374,6 +381,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				How wet open surfaces are at [param position] (0..1: the water film over its storage; 1 where puddles stand). Default 0.
+			</description>
+		</method>
+		<method name="terrain_lee_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How deep [param position] lies in the lee of upwind ground, in radians: Winstral's Sx, the steepest rise of the ground upwind within the terrain wind's reach (positive in a ridge's lee, negative where the ground is exposed). The wind separates from the ground behind a crest when it passes about 0.3 (17 degrees). [code]NAN[/code] where no terrain wind covers the point or with no weather.
 			</description>
 		</method>
 		<method name="time_scale" qualifiers="const">
