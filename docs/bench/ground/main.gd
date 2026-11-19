@@ -3234,6 +3234,10 @@ func _build_wade() -> void:
 # The frame, path traced unless --raster; with --pair, the raster frame first as <out>_raster.png and then the path
 # traced one from the same run, everything held still between them (the same clods, the same water).
 func _save_view(env: Environment) -> void:
+	# --still: the ground stops simulating once the view is set up (GroundSurface3D.simulation_paused), as a still
+	# shot does; --prop=light_budget:true gives it the smaller fields too.
+	if "--still" in OS.get_cmdline_user_args() and is_instance_valid(surface):
+		surface.simulation_paused = true
 	if "--pair" in OS.get_cmdline_user_args() and not out.is_empty():
 		var pt_out := out
 		out = pt_out.get_basename() + "_raster.png"

@@ -135,6 +135,8 @@ private:
 	// most mud_auto_depth). It counts only when wet: none below mud_wet_start moisture, all at mud_wet_full.
 	bool mud_layer = true;
 	bool mud_slides = true; // round 10: a soaked layer flows off slopes it no longer holds
+	bool simulation_paused = false; // still shots: no simulation, the ground stays as it is
+	bool light_budget = false; // still shots: smaller GPU fields and tile cache
 	bool subsoil = true; // round 12: a firm base under the loose layer, its depth varied across the ground
 	HashMap<Vector2i, float> mud_deposits; // m of fresh slurry per 1 m cell (debris flows' fans, flood silt)
 	bool flood_silt = true; // other water over the ground leaves its suspended load as fresh mud
@@ -811,6 +813,10 @@ public:
 	bool is_mud_layer() const { return mud_layer; }
 	void set_mud_slides(bool p_enabled);
 	bool is_mud_slides() const { return mud_slides; }
+	void set_simulation_paused(bool p_paused) { simulation_paused = p_paused; }
+	bool is_simulation_paused() const { return simulation_paused; }
+	void set_light_budget(bool p_light);
+	bool is_light_budget() const { return light_budget; }
 	void set_subsoil(bool p_enabled);
 	bool is_subsoil() const { return subsoil; }
 	// Fresh slurry laid over a disc (a debris flow's deposit, GroundDebrisFlow3D): wet mud whatever the weather.

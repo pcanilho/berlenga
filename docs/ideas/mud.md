@@ -1035,7 +1035,7 @@ pools events whose outlets lie within pool_distance (30 m) of a running body's p
 corridor_width 60 m, carried 40 m past the path's end for the fan; local inertial momentum with a semi-implicit
 Voellmy turbulent term (voellmy_xi 400) and a Coulomb plus yield stop (voellmy_mu 0.1, yield_stress 1500 Pa);
 Rickenmann hydrograph feeds; entrainment 0.002/m times severity, max_scour 0.6 m. On stopping: add_mud_deposit on the
-active GroundSurface3D, TerrainBrush3D add rectangles on terrain_deformer if set, WorldWater.add_sediment where the
+active GroundSurface3D, TerrainBrush3D add rectangles on terrain_deformer if set, WorldWater.add_sediment_mass where the
 water is deeper than 10 cm. PhysX reads get_debris_front(id) and debris_front_changed(id) (once per physics frame per
 body, pooled ids too); debris_flow_started / debris_flow_finished. The sheet mesh clips at the 1 cm contour (marching
 triangles), smooths drawn depth over neighbours and carries ash streak noise at 4 m and 1.3 m.
