@@ -4611,6 +4611,13 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 	Vector<float> alb;
 	alb.resize(N * N * 3);
 	Vector<float> rough;
+	// Maritime pine: how far into a vertical fissure each texel lies (1 in it, 0 on the plate), where
+	// the normal map gives up the slope the mesh already carries.
+	LocalVector<float> furrow;
+	furrow.resize(N * N);
+	for (float &f : furrow) {
+		f = 0.0f;
+	}
 	rough.resize(N * N);
 	float *hw = h.ptrw();
 	float *aw = alb.ptrw();
@@ -4658,7 +4665,10 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					const float n = ragged - c.edge;
 					// A fissure shallows as it shuts, so its tapered end is a fading groove, not a
 					// thin deep slash (docs, 19 Nov).
-					open = MIN(MAX(Math::smoothstep(0.0f, crack_w, c.f1 + n), 0.85f * c.shallow), 0.12f + 0.88f * Math::smoothstep(0.0f, crack_w * 1.8f, c.cross + n));
+					// Round 18 (docs, 19 Nov: plates as soft round dents): cross breaks are narrow, sharp
+					// cracks, about a fissure's own width, not wide soft grooves.
+					open = MIN(MAX(Math::smoothstep(0.0f, crack_w, c.f1 + n), 0.85f * c.shallow), 0.12f + 0.88f * Math::smoothstep(0.0f, crack_w * 1.1f, c.cross + n));
+					furrow[k] = (1.0f - Math::smoothstep(0.0f, crack_w * 2.5f, c.f1 + n)) * (1.0f - c.shallow);
 				}
 				// Flaking bark is mostly smooth: only a fallen flake leaves an edge, around a shallow
 				// scar of fresh, warmer inner bark (sycamore, plane, horse chestnut).
@@ -4803,7 +4813,14 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					const float step_soft = Math::smoothstep(0.0f, 0.35f, f.edge + 0.06f * bark_fbm(u, v, 40 * F, 30 * F, 2, salt + 119u));
 					const float scales = (0.2f * lift + 0.8f * own) * step_soft;
 					const float on_plate = Math::smoothstep(0.55f, 0.85f, open);
-					plate = valley * (0.62f + 0.2f * r1 + 0.08f * r2 + 0.06f * grit) + 0.12f * scales * on_plate;
+					// Round 18 (docs, 19 Nov: the scales read as stamped round discs in chains): the face
+					// scales are only a faint texture now, and each plate (a column between two cross
+					// breaks) is a flat facet tilted its own way and lifted to its own level, so the
+					// plates read as flat-topped, angular slabs of varied relief.
+					const float du = CLAMP(((wu - Math::floor(wu)) * L.cu - c.site.x) * 2.0f, -1.0f, 1.0f);
+					const float dv = CLAMP(((wv - Math::floor(wv)) - c.site.y) * 4.0f, -1.0f, 1.0f);
+					const float facet = (bark_hash(int(c.id), 9, salt + 137u) - 0.5f) * du + (bark_hash(int(c.id), 10, salt + 137u) - 0.5f) * dv + 0.6f * (bark_hash(int(c.id), 11, salt + 137u) - 0.5f);
+					plate = valley * (0.62f + 0.2f * r1 + 0.08f * r2 + 0.06f * grit) + (0.035f * scales + 0.2f * facet) * on_plate;
 				} else if (p_kind == BARK_PLATED || p_kind == BARK_PINEA) {
 					// Flat plate tops, steep walls, and each plate built of thin flaking layers.
 					const float layers = Math::floor((bark_fbm(u, v, 12, 6, 3, salt + 57u) + 0.5f) * 4.0f) / 4.0f;
@@ -5144,19 +5161,11 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 	// the grid's size (a high-pass, as detail normal maps over displaced meshes are baked).
 	LocalVector<float> hn_detail; // The blurred heights.
 	const float *hn = nullptr;
-	float h_lo = 0.0f, h_span = 1.0f;
 	if (p_kind == BARK_PINASTER) {
 		const int R = 6;
 		LocalVector<float> tmp;
 		tmp.resize(N * N);
 		hn_detail.resize(N * N);
-		float h_hi = -1e9f;
-		h_lo = 1e9f;
-		for (int k = 0; k < N * N; k++) {
-			h_lo = MIN(h_lo, hw[k]);
-			h_hi = MAX(h_hi, hw[k]);
-		}
-		h_span = MAX(h_hi - h_lo, 1e-6f);
 		for (int y = 0; y < N; y++) {
 			float sum = 0.0f;
 			for (int k = -R; k <= R; k++) {
@@ -5194,12 +5203,12 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 			float hx = hw[y * N + (x + 1) % N] - hw[y * N + (x + N - 1) % N];
 			float hy = hw[((y + 1) % N) * N + x] - hw[((y + N - 1) % N) * N + x];
 			if (hn) {
-				// The blurred slope taken off only down in the wide furrows (the blurred height
-				// low), where the mesh carries the walls; the narrow cross breaks keep their full
-				// shading, or the plates' ends and stagger washed out into unbroken ridges (docs,
+				// The blurred slope taken off only in and beside the vertical fissures (round 18: by
+				// the blurred height alone, the deepest fissures were missed and shaded black again),
+				// where the mesh carries the walls; the narrow cross breaks keep their full shading, or the plates' ends and stagger washed out into unbroken ridges (docs,
 				// 19 Nov, round 17). Slopes blended, not heights: a weight varying over the heights
 				// drew its own ridges.
-				const float w = 0.9f * (1.0f - Math::smoothstep(h_lo + 0.4f * h_span, h_lo + 0.7f * h_span, hn[k]));
+				const float w = 0.85f * furrow[k];
 				hx -= w * (hn[y * N + (x + 1) % N] - hn[y * N + (x + N - 1) % N]);
 				hy -= w * (hn[((y + 1) % N) * N + x] - hn[((y + N - 1) % N) * N + x]);
 			}
