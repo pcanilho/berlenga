@@ -39,7 +39,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"woodland", "NA woodland"]
+		"olive grove", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -51,6 +51,10 @@ var north_america := false
 func run(args: Dictionary) -> void:
 	variants = int(args.get("variants", "1"))
 	gen = TreeGenerator.new()
+	# GSET="prop:value,prop:value" sets generator properties (a debugging switch).
+	for kv in OS.get_environment("GSET").split(",", false):
+		var p2 := kv.split(":")
+		gen.set(p2[0], float(p2[1]))
 	gen.seed = int(args.get("seed", "1"))
 	# Full-needle near meshes (about 30M vertices a conifer species) serve no placement check and
 	# overrun a 15 GB machine: off here unless asked for with --near-needles.
@@ -195,6 +199,15 @@ func _stand_checks(only := -1) -> void:
 			_check(cut.pollard > 0 and regen.sapling == 0 and regen.log > 0, "wood pasture: %d lapsed pollards, no saplings (grazed), %d logs" % [cut.pollard, regen.log])
 		elif i == TreeGenerator.STAND_STONE_PINE:
 			_check(open_count > 0 and stand_count == 0 and regen.sapling > 0 and regen.log > 0, "stone pine parkland: %d open-grown umbrellas, %d saplings, %d logs" % [open_count, regen.sapling, regen.log])
+		elif i == TreeGenerator.STAND_OLIVE_GROVE:
+			# Old olive grove (trees.md, "Ancient olive"): pruned olives about 10 m apart, a tidy
+			# worked grove (no saplings or deadwood).
+			var olives := 0
+			for s in sps.size():
+				if String(sps[s].resource_name).ends_with("(grove)"):
+					olives += f.get_placements(s).size()
+			var per_ha := olives / (SIZE * SIZE / 10000.0)
+			_check(olives > 0 and per_ha > 40.0 and per_ha < 130.0 and regen.sapling == 0 and regen.log == 0, "olive grove: %d olives (%.0f a hectare), no saplings or logs" % [olives, per_ha])
 		elif i == TreeGenerator.STAND_POLLARD_ROW:
 			_check(cut.pollard > 0 and cut.pollard >= open_count, "pollard row: %d willow pollards, %d alders" % [cut.pollard, open_count])
 		elif i == TreeGenerator.STAND_COPPICE_STANDARDS:
@@ -608,7 +621,7 @@ func _render_plot(i: int, args: Dictionary) -> void:
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-38, 30, 0)
 	sun.light_energy = 1.4
-	sun.shadow_enabled = true
+	sun.shadow_enabled = OS.get_environment("NOSHADOW") == ""
 	sun.directional_shadow_max_distance = 400.0
 	add_child(sun)
 	var cam := Camera3D.new()
@@ -679,7 +692,7 @@ func _render_plot(i: int, args: Dictionary) -> void:
 			for sp_pos in stds:
 				for k in 16:
 					var d := Vector3(cos(k * PI / 8), 0, sin(k * PI / 8))
-					var e: Vector3 = Vector3(sp_pos.x, 0, sp_pos.z) - d * 8.0
+					var e: Vector3 = Vector3(sp_pos.x, 0, sp_pos.z) - d * float(OS.get_environment("SD") if OS.get_environment("SD") != "" else "8")
 					var ce: Vector3 = csp.get_coupe_at(e)
 					var cb: Vector3 = csp.get_coupe_at(Vector3(sp_pos.x, 0, sp_pos.z) + d * 12.0)
 					if ce.x > 7 or ce.z > 0.5 or absf(e.x) > 75 or absf(e.z) > 75:
@@ -689,7 +702,7 @@ func _render_plot(i: int, args: Dictionary) -> void:
 						best = score
 						e.y = valley.get_height(e) + 1.7
 						cam.position = e
-						cam.look_at(Vector3(sp_pos.x, valley.get_height(sp_pos) + 4.0, sp_pos.z))
+						cam.look_at(Vector3(sp_pos.x, valley.get_height(sp_pos) + float(OS.get_environment("SH") if OS.get_environment("SH") != "" else "4"), sp_pos.z))
 						cam.fov = 60.0
 						cam.far = 120.0
 						found = true
@@ -703,6 +716,23 @@ func _render_plot(i: int, args: Dictionary) -> void:
 				var nm: String = biome.species[si].resource_name
 				if o.length() < 25.0 and not nm.begins_with("Hazel") and not nm.contains("sticks") and o.normalized().dot(-cam.global_transform.basis.z * Vector3(1, 0, 1)) > 0.6:
 					print("in view %.1f m: %s" % [o.length(), biome.species[si].resource_name])
+	if args.has("near"):
+		# --near=D: the first species' plant nearest the plot's centre, from D metres (default 7),
+		# eye at 1.7 m, aimed at 1.6 m on it (env SH sets the aim height).
+		var best_p := Vector3()
+		var best_d := 1e9
+		for pp in f.get_placements(0):
+			var dd := Vector2(pp.x, pp.z).length()
+			if dd < best_d:
+				best_d = dd
+				best_p = pp
+		var dist := float(args.get("near", "7"))
+		var e := best_p + Vector3(-0.6, 0, 0.8).normalized() * dist
+		e.y = valley.get_height(e) + 1.7
+		cam.position = e
+		cam.look_at(Vector3(best_p.x, valley.get_height(best_p) + float(OS.get_environment("SH") if OS.get_environment("SH") != "" else "1.6"), best_p.z))
+		cam.fov = 55.0
+		cam.far = 150.0
 	var cv := OS.get_environment("CAM").split(",")
 	if cv.size() >= 6:
 		# CAM="x,y,z,lx,ly,lz[,fov]" overrides the view (eye height over the ground at x, z).

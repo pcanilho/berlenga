@@ -33,6 +33,8 @@
 
 #include "weather_map_3d.h"
 
+#include "modules/world/world_contracts.h"
+
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "scene/3d/camera_3d.h"
@@ -512,25 +514,20 @@ WeatherMap3D *RainFall3D::_weather() const {
 }
 
 Node *RainFall3D::_snow_cover() const {
-	// SnowCover3D lives in the snow module, which builds on this one: reached by its methods.
+	// An explicit SnowCover3D (snow_cover), reached by its methods; otherwise the snow contract (_update_ground).
 	if (!snow_cover.is_empty() && is_inside_tree()) {
 		return get_node_or_null(snow_cover);
 	}
-	return Object::cast_to<Node>(ObjectDB::get_instance(found_snow));
+	return nullptr;
 }
 
 void RainFall3D::_scan_scene() {
-	// The snowpack and the water bodies, found by class name (their modules build on this one or are optional).
-	found_snow = ObjectID();
+	// The water bodies, found by class name (their module is optional). The snowpack comes through WorldContracts.
 	found_water.clear();
 	if (!is_inside_tree()) {
 		return;
 	}
 	Node *root = get_tree()->get_root();
-	TypedArray<Node> snow = root->find_children("*", "SnowCover3D", true, false);
-	if (!snow.is_empty()) {
-		found_snow = Object::cast_to<Node>(snow[0])->get_instance_id();
-	}
 	for (const char *type : { "PhysXWaterSurface3D", "PhysXRiver3D", "PhysXLiveWater3D" }) {
 		TypedArray<Node> water = root->find_children("*", type, true, false);
 		for (int i = 0; i < water.size(); i++) {
@@ -614,6 +611,10 @@ void RainFall3D::_update_ground(Vector3 p_center) {
 	float *w = reinterpret_cast<float *>(bytes.ptrw());
 	Node *snow = _snow_cover();
 	const bool snow_ok = snow && snow->has_method(SNAME("get_ground_height_at")) && snow->has_method(SNAME("get_depth_at"));
+	WorldSnow *snow_contract = snow_ok ? nullptr : WorldContracts::snow();
+	if (snow_contract && !snow_contract->has_provider()) {
+		snow_contract = nullptr;
+	}
 	// Water bodies by their methods (they live in the PhysX module): a sea or lake's level over its domain, a river's
 	// or live water's surface where it has water.
 	LocalVector<Node3D *> seas;
@@ -638,6 +639,12 @@ void RainFall3D::_update_ground(Vector3 p_center) {
 				const float depth = snow->call(SNAME("get_depth_at"), p);
 				if (depth > 0.005f) {
 					h = float(snow->call(SNAME("get_ground_height_at"), p)) + depth;
+				}
+			} else if (snow_contract && snow_contract->depth_at(p) > 0.005f) {
+				// The snow's own top, ruts and footprints included (-INF where there is none).
+				const float top = snow_contract->surface_at(p);
+				if (Math::is_finite(top)) {
+					h = top;
 				}
 			}
 			for (Node3D *n : seas) {

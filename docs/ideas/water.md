@@ -3543,3 +3543,59 @@ down over every row behind it. Where the bisection's last bracket spans a jump i
 not a face the ray meets) the straight-through pixel stands in. A few faint teeth remain on small stones.
 PT caustic bank lines: fading the bent count to the straight twin's over the first 15 cm of water (Valence's
 shift diagnosis) left the lines unchanged on the river rocks bench, so the cause is elsewhere (back to Valence).
+surface (a thickness test). Not jittered: without a temporal filter the per-pixel start dithered into teeth. The
+vertical striations left on stone sides seen through the water are the same with screen reflections off and are
+not the march (sent to rocks: likely the stones' texture on steep faces).
+
+## Sea tiles that do not repeat (18 Nov, Paulo: "All geometry that repeats ... good quality noise")
+
+### Problem
+
+The finest wave cascade is a 40 m FFT tile and repeats exactly: the same crests, glints and whitecaps come back
+every 40 m. Measured from straight above (water_surface bench, `--view=storm_glitter --cam=0,160,-200,0,0,-200.01
+--raster`, high-passed frame): the image's autocorrelation has its strongest peak at exactly 40 m (0.11). The other
+tiles made it worse: their sides were whole multiples (40, 240, 1440 m; the 5 m detail tile is 40 / 8), so the sum
+repeated every 240 m and the detail lined up with cascade 0 every 40 m.
+
+### Techniques looked at
+
+- Cascades of unrelated sizes (Tessendorf 2001 on patch sizes; 2Retr0's GodotOceanWaves picks unrelated sizes).
+  Stops tiles lining up with each other, but each tile still repeats by itself.
+- Hex or triangle tiling with random offsets per cell: Mikkelsen, hex-tiling (JCGT 2022); Heitz and Neyret,
+  tiling and blending (HPG 2018). For a Gaussian field (an FFT sea is a sum of many independent waves) blending
+  copies by w / sqrt(sum w^2) keeps the variance, so no washed-out seams. Chosen.
+- Spatially varying amplitude (gusts): wind's cat's paws already do this to the short waves.
+
+### As built (`PhysXWaterSurface3D.wave_tile_breakup`, on)
+
+- The plane is cut into equilateral triangles (two rows per tile side); each corner reads the tile at its own
+  random offset (an integer hash of the corner), blended by barycentric weight over sqrt(sum w^2). Offsets only,
+  never rotations, so waves keep running with the wind. Cascade 0 and the detail tile only: a swell tile's few
+  long waves stay correlated across a triangle, so three copies in step would raise them by up to sqrt(3).
+- The swell cascades are detuned instead: each tile is ratio + 0.382 times the last (6.382), and the detail tile
+  40 / 7.382, ratios whose continued fractions are all ones (1 / phi^2), so no two tiles line up for kilometres.
+- CPU twin (`_tile_blend_sample`) in the height reads, so boats ride the surface that is drawn.
+- Result: the 40 m autocorrelation falls from 0.11 to -0.02 (no peak left above 0.03); the high-passed contrast
+  changes by 3%; with one cascade Hs is unchanged (0.91 m both). Cost: three reads instead of one for cascade 0 and
+  the detail tile.
+- Not blended: the shore swash and shore foam passes (they already read the ocean grid-relative) and the
+  light-space caustics map.
+
+
+### Ripples that bounce off boulders (19 Nov; item 2 of Paulo's four)
+
+PhysXRiver3D `live_surface_waves` (on) and `live_surface_wave_strength` (1): a dispersive surface-wave layer over
+the live window (water_surface_waves.glsl), after Jeschke and Wojtan, "Generalizing Shallow Water Simulations with
+Dispersive Surface Waves" (ACM ToG 2023). The shallow-water grid keeps the bulk flow; the surface waves run on a
+512^2 grid over the same 48 m window (9.4 cm cells), stepped exactly in Fourier space with Airy's dispersion
+omega^2 = g k tanh(k d) at four depths (0.15, 0.4, 1, 2.5 m) blended per cell in log depth, carried
+semi-Lagrangian by the live velocity, held at zero in dry cells (so they reflect off banks and wrap round
+stones) and damped in a 24-cell sponge at the window's edge (the transform wraps). One-way: the paper splits the
+bulk's own high frequencies off; the live grid's 25 cm cells hold none worth splitting, so the layer is fed by:
+- stagnation head 0.5 v^2 / g of the arriving water on a stone's upstream face (ship-wake pressure patch);
+- turbulence: p' ~ u'^2 / g with u' = l |grad v| (Prandtl mixing length, l one live cell), as value noise over
+  3 fine cells redrawn every 0.15 s. This is what makes the visible ripples: the stagnation head of a 0.5-1 m/s
+  stream is millimetres.
+Cost per step: 3 small passes, a one-field and a four-field 512^2 shared-memory FFT (water_fft_rows.glsl).
+Bench switch: `--river=live_surface_waves:false`. Raster and PT read the same slope (river shader live_waves).
+Not yet on PhysXWaterSurface3D (lakes, sea shallows).

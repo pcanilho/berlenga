@@ -651,6 +651,9 @@ func _caves(cam: Camera3D) -> void:
 		if id == 0 and args.has("cave-mesh"):
 			var land_m: Landscape3D = get_node("Landscape")
 			net.ground_material = land_m.material
+			# The bench already has no ambient underground (the environment's is zeroed for cave views), so the
+			# network's interior ambient probes would only add light the path tracer does not have.
+			net.cave_ambient_probes = false
 			if args.has("cave-cell"):
 				net.mesh_cell = float(args["cave-cell"]) # --cave-cell=m: the cave mesh's grid (0.3 by default)
 			var mr := float(args.get("mesh-radius", "50"))
@@ -1985,7 +1988,7 @@ func _render_later() -> void:
 	# The beach's sand (grain, ripples, wetness) is drawn by its GroundSurface3D once the ripples are built.
 	var gs := get_node_or_null("Beach") as GroundSurface3D
 	var rw := 0
-	while gs and not gs.is_ripples_ready() and rw < 1200:
+	while gs and gs.wind_ripples and not gs.is_ripples_ready() and rw < 1200:
 		await get_tree().process_frame
 		rw += 1
 	while args.has("plants") and rocks and not plants_ready:
@@ -2057,6 +2060,10 @@ func _beach_surface(tm: TerrainMaterial3D) -> void:
 			img.set_pixel(i, j, Color(sand, 0, 0))
 	gs.type_map = img
 	gs.type_map_rect = Rect2(-half, -half, WORLD, WORLD)
+	# --gs-prop=name:value[,name:value...]: any of the beach GroundSurface3D's properties (A/B one layer).
+	for kv in str(args.get("gs-prop", "")).split(",", false):
+		var nv := kv.split(":")
+		gs.set(nv[0], str_to_var(nv[1]))
 
 
 func _hide_class(n: Node, cls: String) -> void:

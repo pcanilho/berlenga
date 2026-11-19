@@ -177,6 +177,8 @@ public:
 	float get_detail_slope_variance() const;
 	void set_wave_cascade_ratio(float p_ratio);
 	float get_wave_cascade_ratio() const { return wave_cascade_ratio; }
+	void set_wave_tile_breakup(bool p_enabled);
+	bool get_wave_tile_breakup() const { return wave_tile_breakup; }
 	// Tile size of cascade i (0 = ocean_domain_size).
 	Vector2 get_wave_cascade_size(int p_index) const;
 	// Shore waves (docs/ideas/water.md "Step 5b"): swell that turns with the
@@ -537,6 +539,7 @@ private:
 	int wave_cascades = 1;
 	bool detail_waves = true;
 	float wave_cascade_ratio = 6.0f;
+	bool wave_tile_breakup = true;
 	bool shore_waves = true;
 	float shore_wave_height = 0.8f; // m, offshore
 	float shore_wave_period = 8.0f; // s
@@ -822,6 +825,7 @@ private:
 	// The shader's flow_phases() at grid-relative (x, z): the two phases' offsets and the first's weight.
 	float _flow_phases(float p_x, float p_z, Vector2 &r_offset_a, Vector2 &r_offset_b) const;
 	// An ocean grid at grid-relative (x, z), carried by the flow (the shader's ocean_tex()).
+	float _tile_blend_sample(const Vector<float> &p_grid, int p_n, Vector2 p_domain, float p_world_x, float p_world_z) const;
 	float _ocean_flow_sample(const Vector<float> &p_grid, float p_x, float p_z, float p_weight, const Vector2 &p_offset_a, const Vector2 &p_offset_b, int p_n = -1, Vector2 p_domain = Vector2()) const;
 	ObjectID wakes[MAX_WAKES];
 	Vector2 mesh_offset; // see _update_mesh_offset()

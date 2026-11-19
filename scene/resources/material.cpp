@@ -1441,6 +1441,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.wetness_canopy = features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy;
 		rt.snow = features[FEATURE_SNOW];
 		rt.snow_from_weather = snow_from_weather;
+		rt.snow_on_body = features[FEATURE_SNOW] && snow_on_body;
 		rt.ground_deform_patch = features[FEATURE_GROUND_DEFORM] && ground_deform_patch;
 		rt.ground_deform_terrain = features[FEATURE_GROUND_DEFORM] && !ground_deform_patch;
 		rt.mud = features[FEATURE_MUD];
@@ -1907,6 +1908,11 @@ uniform float snow_amount : hint_range(0.0, 1.0, 0.01);
 uniform float snow_max_slope : hint_range(0.0, 90.0, 0.1);
 )";
 		code += get_snow_functions_code(snow_from_weather);
+		if (snow_on_body) {
+			// The snow a moving body carries (SnowBodies, docs/ideas/snow.md follow-up 18): depth m, albedo, melt water,
+			// 1 + density / 1000 (0: not tracked). Slot 12, after the mud slots; the path tracer reads the same slot.
+			code += "instance uniform vec4 snow_body : instance_index(12);\n";
+		}
 	}
 
 	if (features[FEATURE_MUD]) {
@@ -2961,7 +2967,7 @@ void fragment() {)";
 		// roughness. On a print's curved wall the sheen made a mirror-sharp spot of sun.
 		float gd_up = smoothstep(0.5, 0.85, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y);
 		ROUGHNESS = clamp(ROUGHNESS * mix(1.0, gd_tint.y, gd_up), 0.0, 1.0);
-		vec2 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
+		vec2 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y));
 		if (gr_far != vec2(0.0)) {
 			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gr_far.x, 0.0, gr_far.y, 0.0)).xyz);
 		}
@@ -3183,6 +3189,17 @@ void fragment() {)";
 		if (snow_from_weather) {
 			code += R"(		snow_s = snow_cover_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
 		snow_s.x *= snow_amount;
+)";
+		}
+		if (snow_on_body) {
+			// A tracked body's own load (Niu and Yang 2007 cover from its depth and density), else the cover above, or
+			// none when the body's snow does not come from the weather.
+			code += R"(		if (snow_body.w > 0.5) {
+			snow_s = vec4(snow_amount * tanh(max(snow_body.x, 0.0) / (0.025 * max((snow_body.w - 1.0) * 10.0, 0.5))), snow_body.y, clamp(snow_body.z, 0.0, 1.0), 1.0);
+		})";
+			code += snow_from_weather ? "\n" : R"( else {
+			snow_s.x = 0.0;
+		}
 )";
 		}
 		code += R"(		float snow = snow_cover_weight(snow_s.x, snow_max_slope, snow_n_geo, snow_n);
@@ -4427,6 +4444,18 @@ bool BaseMaterial3D::is_snow_from_weather() const {
 	return snow_from_weather;
 }
 
+void BaseMaterial3D::set_snow_on_body(bool p_enable) {
+	if (snow_on_body == p_enable) {
+		return;
+	}
+	snow_on_body = p_enable;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_snow_on_body() const {
+	return snow_on_body;
+}
+
 void BaseMaterial3D::set_ground_deform_patch(bool p_enable) {
 	if (ground_deform_patch == p_enable) {
 		return;
@@ -4518,7 +4547,7 @@ float ground_ripple(vec2 p_xz) {
 // The ripples' variation (nothing repeating may show): the grown field tiles every few metres, so each point reads
 // it through a three-octave world-space warp (crests turn and change spacing over tens of metres and bend over a
 // few) and edge dislocations in pairs along the crests (a crest forks into two and rejoins: the Y-junctions of
-// real ripple fields), with a height that wanders between 30 and 100%. p_k is the grown field's dominant wave
+// real ripple fields), with a height that wanders between 15 and 100%. p_k is the grown field's dominant wave
 // vector (rad/m), so a dislocation shifts its crests by exactly one wavelength. The real ripples' window is filled
 // through the same lines (GroundRipples::vary), so the two meet crest to crest.
 float ground_ripple_hash(ivec2 p_c, uint p_s) {
@@ -4538,34 +4567,40 @@ float ground_ripple_vn(vec2 p_p, uint p_s) {
 vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 	vec2 p = p_xz;
 	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
-	o += 1.2 * (vec2(ground_ripple_vn(p / 7.0, 3u), ground_ripple_vn(p / 7.0, 4u)) - 0.5);
+	o += 1.6 * (vec2(ground_ripple_vn(p / 6.0, 3u), ground_ripple_vn(p / 6.0, 4u)) - 0.5);
 	o += 0.16 * (vec2(ground_ripple_vn(p / 1.7, 5u), ground_ripple_vn(p / 1.7, 6u)) - 0.5);
-	float amp = mix(0.3, 1.0, smoothstep(0.15, 0.85, 0.6 * ground_ripple_vn(p / 9.0, 7u) + 0.4 * ground_ripple_vn(p / 2.2, 8u)));
+	float amp = mix(0.15, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
 	float kk = dot(p_k, p_k);
 	if (kk > 0.0) {
 		vec2 kn = p_k / sqrt(kk);
 		vec2 t = vec2(-kn.y, kn.x);
-		ivec2 c0 = ivec2(floor(p / 2.5));
+		// Spacing: a stretch along the crests' normal only, so crests crowd and open by up to a third over a metre or two.
+		o += kn * (0.45 * (ground_ripple_vn(vec2(dot(p, kn) / 2.0, dot(p, t) / 5.0), 14u) - 0.5));
+		ivec2 c0 = ivec2(floor(p / 1.6));
 		float ph = 0.0;
 		for (int dz = -1; dz <= 1; dz++) {
 			for (int dx = -1; dx <= 1; dx++) {
 				ivec2 c = c0 + ivec2(dx, dz);
-				if (ground_ripple_hash(c, 9u) >= 0.55) {
+				if (ground_ripple_hash(c, 9u) >= 0.7) {
 					continue;
 				}
-				vec2 m = (vec2(c) + vec2(ground_ripple_hash(c, 10u), ground_ripple_hash(c, 11u))) * 2.5;
-				float hl = 0.2 + 0.4 * ground_ripple_hash(c, 12u);
+				vec2 m = (vec2(c) + vec2(ground_ripple_hash(c, 10u), ground_ripple_hash(c, 11u))) * 1.6;
+				float hl = 0.15 + 0.3 * ground_ripple_hash(c, 12u);
 				vec2 da = p - (m - t * hl);
 				vec2 db = p - (m + t * hl);
 				float sgn = ground_ripple_hash(c, 13u) < 0.5 ? -1.0 : 1.0;
-				ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(1.2, 2.4, length(p - m)));
+				ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(0.75, 1.55, length(p - m)));
 			}
 		}
 		o += p_k * (ph / kk);
 	}
 	return vec3(o, amp);
 }
-vec2 ground_ripple_far_slope(vec2 p_xz) {
+// p_fp: the pixel's width on the ground (m), its narrow axis. Crests closer than about three pixels fade out: drawn
+// any finer they alias into even moire bands (a stripe pattern no real field has, worst through the water's
+// refraction, which resamples the screen), so the far ripples are prefiltered to the pixel as LEAN-style filtering
+// would.
+vec2 ground_ripple_far_slope(vec2 p_xz, float p_fp) {
 	if (ground_ripple_rect.z <= 0.0) {
 		return vec2(0.0);
 	}
@@ -4596,6 +4631,11 @@ vec2 ground_ripple_far_slope(vec2 p_xz) {
 		return vec2(0.0);
 	}
 	// Cell c's centre is at c * cell, its texel (c mod n).
+	float lam = dot(m3.xy, m3.xy) > 0.0 ? 6.2831853 / length(m3.xy) : 0.11;
+	w *= 1.0 - smoothstep(0.22 * lam, 0.4 * lam, p_fp);
+	if (w <= 0.0) {
+		return vec2(0.0);
+	}
 	vec3 vr = ground_ripple_vary(p_xz, m3.xy);
 	vec2 tuv = ((p_xz + vr.xy) / ground_ripple_rect.w + 0.5) / m1.w * ground_ripple_rect.w;
 	return w * vr.z * texture(ground_ripple_far, tuv).rg;
@@ -5772,6 +5812,8 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_ground_deform_patch"), &BaseMaterial3D::is_ground_deform_patch);
 	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_ground_deform_shader_code"), &BaseMaterial3D::get_ground_deform_shader_code);
 	ClassDB::bind_method(D_METHOD("is_snow_from_weather"), &BaseMaterial3D::is_snow_from_weather);
+	ClassDB::bind_method(D_METHOD("set_snow_on_body", "enable"), &BaseMaterial3D::set_snow_on_body);
+	ClassDB::bind_method(D_METHOD("is_snow_on_body"), &BaseMaterial3D::is_snow_on_body);
 
 	ClassDB::bind_method(D_METHOD("set_point_size", "point_size"), &BaseMaterial3D::set_point_size);
 	ClassDB::bind_method(D_METHOD("get_point_size"), &BaseMaterial3D::get_point_size);
@@ -6094,6 +6136,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_snow_amount", "get_snow_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_max_slope", PROPERTY_HINT_RANGE, "0,90,0.1,degrees"), "set_snow_max_slope", "get_snow_max_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_from_weather"), "set_snow_from_weather", "is_snow_from_weather");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_on_body"), "set_snow_on_body", "is_snow_on_body");
 
 	ADD_GROUP("Ground Deform", "ground_deform_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "ground_deform_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_GROUND_DEFORM);

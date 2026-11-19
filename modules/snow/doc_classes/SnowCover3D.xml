@@ -133,6 +133,12 @@
 				The snow water the wind moved in the last update, mm per cell on average.
 			</description>
 		</method>
+		<method name="get_bodies" qualifiers="const">
+			<return type="SnowBodies3D" />
+			<description>
+				The [SnowBodies3D] it added, or [code]null[/code].
+			</description>
+		</method>
 		<method name="get_canopy_capacity_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -454,6 +460,9 @@
 	<members>
 		<member name="background_updates" type="bool" setter="set_background_updates" getter="is_background_updates" default="true">
 			If [code]true[/code], each update (and the world tier's turn) runs on a worker thread and its results are swapped in when it is done, so no frame waits for it. The main thread only gathers the weather the cells read first. The results are the same as with [code]false[/code], which runs each update in the frame that starts it; the getters answer from the last finished update until the next one lands.
+		</member>
+		<member name="bodies_enabled" type="bool" setter="set_bodies_enabled" getter="is_bodies_enabled" default="true">
+			If [code]true[/code], moving things carry their own snow: the cover adds a [SnowBodies3D].
 		</member>
 		<member name="canopy_enabled" type="bool" setter="set_canopy_enabled" getter="is_canopy_enabled" default="true">
 			Trees in the [WeatherMap3D]'s canopy hold falling snow in their crowns and unload it later in wind and warmth (Hedstrom and Pomeroy 1998; Roesch et al. 2001).

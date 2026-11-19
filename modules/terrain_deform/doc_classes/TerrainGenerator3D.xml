@@ -378,6 +378,13 @@
 				Sand (m) the sand sea added to the ground at [param global_position] (x and z); 0 outside [member sand_sea_rect].
 			</description>
 		</method>
+		<method name="get_scree_sorting" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				How far down its talus apron a world position lies, 0..1: 0 at the apex under the wall, 1 at the toe (the distance down the receivers from the apron's top over the whole run through that point). Big blocks run furthest, so a stone placer grades its sizes by it (fall sorting, Kirkby and Statham 1975). 0 off the scree ([method get_talus] under 0.3).
+			</description>
+		</method>
 		<method name="get_sediment_depth" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />

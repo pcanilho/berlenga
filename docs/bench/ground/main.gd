@@ -43,6 +43,7 @@ extends Node3D
 #   --test=splash       a 4x4 through rut water past Froude 1 (mud stage 4c): sheets thrown, landed back, volume kept
 #   --test=ruts         kept ruts (mud round 3): a print back after the field drives 600 m off and in a new node
 #   --meadow            --view=ruts: the patch drawn with a TerrainMaterial3D under a full sward (its grass globals set by hand)
+#   --test=burnscar    rain on a burn scar: water-repellent burnt soil (WorldFire) sheds most of the rain as runoff
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
@@ -102,6 +103,7 @@ var wind_test := false
 var water_test := false
 var shelter_test := false
 var runoff_test := false
+var burnscar_test := false
 var drift_test := false
 var near_test := false
 var mud_test := false
@@ -155,6 +157,7 @@ func _ready() -> void:
 		elif a == "--test=water": water_test = true
 		elif a == "--test=shelter": shelter_test = true
 		elif a == "--test=runoff": runoff_test = true
+		elif a == "--test=burnscar": burnscar_test = true
 		elif a == "--test=splash": splash_test = true
 		elif a == "--test=drift": drift_test = true
 		elif a == "--test=near": near_test = true
@@ -279,6 +282,8 @@ func _ready() -> void:
 		return
 	if runoff_test:
 		await _run_runoff_tests()
+	if burnscar_test:
+		await _run_burnscar_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -2852,6 +2857,9 @@ func _ripple_stats(from_x := 0, from_z := 0, size := -1) -> Array:
 	var h := surface.get_ripple_heights()
 	var n := surface.get_ripple_size()
 	var c := surface.get_ripple_cell()
+	if OS.has_environment("RIPPLE_DUMP"): # the window's heights as raw float32 (n x n), for offline spectra
+		var f := FileAccess.open(OS.get_environment("RIPPLE_DUMP"), FileAccess.WRITE)
+		f.store_buffer(h.to_byte_array())
 	if size < 0:
 		size = n
 	var mean := 0.0
@@ -4213,3 +4221,39 @@ func _run_drift_tests() -> void:
 	_check("the sand pushes back on a sliding sidewall (Ishigami et al. 2007)", results["dry_sand"][1] > 100.0, "%.0f N" % results["dry_sand"][1])
 	_check("dry sand raises a dust plume about as tall as the car", results["dry_sand"][2] > 0.1 and results["dry_sand"][3] >= 1.0, "%.2f kg, to %.2f m" % [results["dry_sand"][2], results["dry_sand"][3]])
 	_check("damp sand raises no dust", results["damp_sand"][2] == 0.0, "%.3f kg" % results["damp_sand"][2])
+
+
+# Light rain (3 mm/h) on a 15 degree bank whose upper half a fire left bare and water-repellent (DeBano 2000): the
+# unburnt clay soaks it all up, the scar sheds it, and the runoff stops when the repellency is gone.
+func _burn_runoff(p_repel: float) -> Vector2:
+	var stub: WorldFire = load("res://burn_stub.gd").new()
+	stub.repel = p_repel
+	Engine.get_singleton("WorldContracts").set_fire(stub)
+	await _setup("bank", GroundSurface3D.GROUND_SOIL, 0.25, 0.0)
+	surface.runoff_channels = true
+	surface.runoff_time_scale = 100.0
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 1.0
+	wm.rain_rate = 3.0
+	wm.humidity = 0.9
+	wm.temperature = 15.0
+	add_child(wm)
+	wm.snap_to_settings()
+	var burnt := 0.0
+	var green := 0.0
+	for i in 360:
+		await get_tree().physics_frame
+	for i in 60:
+		await get_tree().physics_frame
+		burnt += surface.get_runoff_at(Vector3(1.0, 0, 0.3)).x / 60.0
+		green += surface.get_runoff_at(Vector3(-1.0, 0, 0.3)).x / 60.0
+	wm.queue_free()
+	Engine.get_singleton("WorldContracts").set_fire(null)
+	return Vector2(burnt, green)
+
+
+func _run_burnscar_tests() -> void:
+	var on: Vector2 = await _burn_runoff(1.0)
+	var off: Vector2 = await _burn_runoff(0.0)
+	print("  runoff sheet: repellent scar %.3f mm (unburnt below %.3f mm); scar gone %.3f mm" % [on.x * 1000.0, on.y * 1000.0, off.x * 1000.0])
+	_check("water-repellent burnt soil sheds the rain (Robichaud 2000)", on.x > 0.0 and on.x > 2.0 * off.x, "%.3f mm against %.3f mm" % [on.x * 1000.0, off.x * 1000.0])

@@ -146,29 +146,31 @@ static inline float _rv_smoothstep(float p_a, float p_b, float p_x) {
 Vector3 GroundRipples::vary(Vector2 p_xz, Vector2 p_k) {
 	const Vector2 p = p_xz;
 	Vector2 o = 4.0f * (Vector2(_rv_noise(p / 24.0f, 1u), _rv_noise(p / 24.0f, 2u)) - Vector2(0.5f, 0.5f));
-	o += 1.2f * (Vector2(_rv_noise(p / 7.0f, 3u), _rv_noise(p / 7.0f, 4u)) - Vector2(0.5f, 0.5f));
+	o += 1.6f * (Vector2(_rv_noise(p / 6.0f, 3u), _rv_noise(p / 6.0f, 4u)) - Vector2(0.5f, 0.5f));
 	o += 0.16f * (Vector2(_rv_noise(p / 1.7f, 5u), _rv_noise(p / 1.7f, 6u)) - Vector2(0.5f, 0.5f));
-	const float amp = Math::lerp(0.3f, 1.0f, _rv_smoothstep(0.15f, 0.85f, 0.6f * _rv_noise(p / 9.0f, 7u) + 0.4f * _rv_noise(p / 2.2f, 8u)));
+	const float amp = Math::lerp(0.15f, 1.0f, _rv_smoothstep(0.1f, 0.9f, 0.5f * _rv_noise(p / 6.0f, 7u) + 0.5f * _rv_noise(p / 1.8f, 8u)));
 	const float kk = p_k.dot(p_k);
 	if (kk > 0.0f) {
 		const Vector2 kn = p_k / Math::sqrt(kk);
 		const Vector2 t(-kn.y, kn.x);
-		const int cx = (int)Math::floor(p.x / 2.5f);
-		const int cz = (int)Math::floor(p.y / 2.5f);
+		// Spacing: a stretch along the crests' normal only, so crests crowd and open by up to a third over a metre or two.
+		o += kn * (0.45f * (_rv_noise(Vector2(p.dot(kn) / 2.0f, p.dot(t) / 5.0f), 14u) - 0.5f));
+		const int cx = (int)Math::floor(p.x / 1.6f);
+		const int cz = (int)Math::floor(p.y / 1.6f);
 		float ph = 0.0f;
 		for (int dz = -1; dz <= 1; dz++) {
 			for (int dx = -1; dx <= 1; dx++) {
 				const int x = cx + dx;
 				const int z = cz + dz;
-				if (_rv_hash(x, z, 9u) >= 0.55f) {
+				if (_rv_hash(x, z, 9u) >= 0.7f) {
 					continue;
 				}
-				const Vector2 m = (Vector2((float)x, (float)z) + Vector2(_rv_hash(x, z, 10u), _rv_hash(x, z, 11u))) * 2.5f;
-				const float half = 0.2f + 0.4f * _rv_hash(x, z, 12u);
+				const Vector2 m = (Vector2((float)x, (float)z) + Vector2(_rv_hash(x, z, 10u), _rv_hash(x, z, 11u))) * 1.6f;
+				const float half = 0.15f + 0.3f * _rv_hash(x, z, 12u);
 				const Vector2 da = p - (m - t * half);
 				const Vector2 db = p - (m + t * half);
 				const float sgn = _rv_hash(x, z, 13u) < 0.5f ? -1.0f : 1.0f;
-				ph += sgn * Math::atan2(da.x * db.y - da.y * db.x, da.dot(db)) * (1.0f - _rv_smoothstep(1.2f, 2.4f, (p - m).length()));
+				ph += sgn * Math::atan2(da.x * db.y - da.y * db.x, da.dot(db)) * (1.0f - _rv_smoothstep(0.75f, 1.55f, (p - m).length()));
 			}
 		}
 		o += p_k * (ph / kk);

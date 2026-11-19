@@ -68,6 +68,12 @@
 				Instances posed by the last [method update].
 			</description>
 		</method>
+		<method name="get_snag_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Trees a fire has killed so far ([method WorldFire.crown_scorch_at] against their bark, Ryan and Reinhardt 1988). They stand as snags: over the years since the fire ([method WorldFire.burn_age_at], the weather's clock) their limbs and then roots rot, so storms strip their limbs and they fall at the rotten butt, leaving a stump.
+			</description>
+		</method>
 		<method name="get_storm_break_count" qualifiers="const">
 			<return type="int" />
 			<description>

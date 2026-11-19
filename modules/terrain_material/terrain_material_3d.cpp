@@ -974,7 +974,14 @@ void fragment() {
 		float regolith = smoothstep(0.05, 0.3, sg) * (1.0 - till);
 		scree += rest * regolith;
 		rest *= 1.0 - regolith;
-		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w);
+		// Past the rock slope (40 degrees) beside a wall no soil holds, whatever the 8 m geology cell says: a steep gully
+		// between a wall and its apron is thin grey debris (a smooth olive wedge with a hard edge at a cliff foot before), and
+		// alluvium lies only on gentle ground (a channel's fill does not stand on a 45 degree gully floor).
+		// Only beside walls and aprons (the geology's rock or scree near): open steep hillsides keep their soil and sward.
+		float bare_near = steep * max(smoothstep(0.02, 0.2, clamp(g.y, 0.0, 1.0)), smoothstep(0.02, 0.2, clamp(g.z, 0.0, 1.0)));
+		scree += rest * bare_near;
+		rest *= 1.0 - bare_near;
+		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w) * smoothstep(0.88, 0.95, wn.y);
 		w[0] = rock;
 		w[1] = scree;
 		w[2] = rest * (1.0 - alluvium);
@@ -1283,7 +1290,7 @@ void fragment() {
 		c += "\tvec2 gd = ground_deform_tint(wp);\n\talbedo *= gd.x;\n\trough = clamp(rough * gd.y, 0.0, 1.0);\n";
 		// Wind ripples past their real geometry (GroundSurface3D's 4 m window): the grown field's slope as a normal
 		// over the sand of the patch, as BaseMaterial3D draws it.
-		c += "\tvec2 gr_far = ground_ripple_far_slope(wp.xz);\n\tsn = normalize(sn - vec3(gr_far.x, 0.0, gr_far.y));\n";
+		c += "\tvec2 gr_far = ground_ripple_far_slope(wp.xz, length(tm_dpx));\n\tsn = normalize(sn - vec3(gr_far.x, 0.0, gr_far.y));\n";
 	}
 	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5;\n";
 	if (grass_tint_enabled) {
