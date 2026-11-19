@@ -116,6 +116,16 @@ bool SnowBodies3D::is_tracked(Node *p_node) const {
 	return p_node && bodies.has(p_node->get_instance_id());
 }
 
+TypedArray<Node> SnowBodies3D::get_tracked() const {
+	TypedArray<Node> out;
+	for (const KeyValue<ObjectID, Body> &kv : bodies) {
+		if (Node *n = ObjectDB::get_instance<Node>(kv.key)) {
+			out.push_back(n);
+		}
+	}
+	return out;
+}
+
 float SnowBodies3D::get_body_depth(Node *p_node) const {
 	ERR_FAIL_NULL_V(p_node, 0.0f);
 	const Body *b = bodies.getptr(p_node->get_instance_id());
@@ -515,6 +525,7 @@ void SnowBodies3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("untrack", "node"), &SnowBodies3D::untrack);
 	ClassDB::bind_method(D_METHOD("is_tracked", "node"), &SnowBodies3D::is_tracked);
 	ClassDB::bind_method(D_METHOD("get_tracked_count"), &SnowBodies3D::get_tracked_count);
+	ClassDB::bind_method(D_METHOD("get_tracked"), &SnowBodies3D::get_tracked);
 	ClassDB::bind_method(D_METHOD("get_body_depth", "node"), &SnowBodies3D::get_body_depth);
 	ClassDB::bind_method(D_METHOD("get_body_density", "node"), &SnowBodies3D::get_body_density);
 	ClassDB::bind_method(D_METHOD("get_body_wetness", "node"), &SnowBodies3D::get_body_wetness);

@@ -31,6 +31,7 @@
 #pragma once
 
 #include "core/templates/hash_map.h"
+#include "core/variant/typed_array.h"
 #include "scene/3d/node_3d.h"
 
 class GeometryInstance3D;
@@ -104,6 +105,7 @@ public:
 	void untrack(Node *p_node);
 	bool is_tracked(Node *p_node) const;
 	int get_tracked_count() const { return bodies.size(); }
+	TypedArray<Node> get_tracked() const;
 	float get_body_depth(Node *p_node) const; // m
 	float get_body_density(Node *p_node) const; // kg/m3
 	float get_body_wetness(Node *p_node) const; // 0..1
