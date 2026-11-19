@@ -1,0 +1,1 @@
+- Snow: avalanche debris settles to its angle of repose and breaks into granules once per cell (snowballs when wet), and the deep-snow surface is smooth between map cells (Catmull-Rom, no creases). Avalanche pressure is readable through the world snow contract.

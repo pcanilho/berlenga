@@ -439,10 +439,6 @@ void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
 				// Deposited: the flow's snow stays in the cover as static snow, its surface broken into blocks near
 				// the camera (avalanche debris: granules, Bartelt and McArdell 2009).
 				deposited_volume += depth * cell * cell;
-				// Blocks only where the flow arrived fast (the run-out), not the thin remnants in the release zone.
-				if (peak[i] > ENTRAIN_SPEED) {
-					_debris(Vector3((flow_origin.x + x + 0.5f) * cell, 0.0f, (flow_origin.y + z + 0.5f) * cell), depth * cell * cell);
-				}
 				// The cover holds what was last written here; it may be less than the flow brought since.
 				written.write[i] = written[i] - h[i];
 				deposit.write[i] = deposit[i] + h[i];
@@ -665,8 +661,8 @@ void SnowAvalanche3D::_debris(const Vector3 &p_at, float p_volume) {
 	if (cam && Vector2(cam->get_global_position().x - p_at.x, cam->get_global_position().z - p_at.z).length() > debris_radius) {
 		return;
 	}
-	// A share of the deposit's top as blocks, the cell's own size apart.
-	clumps->drop(p_at, 0.5f * cell, p_volume * debris_share, 0.3f);
+	// A share of the deposit's top as granules over the cell: blocks, and snowballs when wet.
+	clumps->drop(p_at, 0.7f * cell, p_volume * debris_share, 0.3f + 0.7f * run_wet, 2.0f + 3.0f * run_wet);
 }
 
 void SnowAvalanche3D::_flush(SnowCover3D *p_cover) {
@@ -768,6 +764,53 @@ void SnowAvalanche3D::_finish(SnowCover3D *p_cover) {
 		}
 		d = d2;
 	}
+	// The debris settles to its angle of repose: steeper steps between cells slump, half the excess each pass
+	// (talus relaxation, the thermal erosion of Musgrave et al. 1989). Avalanche debris stands at about 30-35
+	// degrees dry and steeper wet (cohesive), so a cell left standing alone as a spike slumps into a heap.
+	{
+		const float repose = Math::tan(Math::deg_to_rad(Math::lerp(32.0f, 40.0f, run_wet))) * cell;
+		Vector<float> base;
+		base.resize(n * n);
+		for (int i = 0; i < n * n; i++) {
+			const int ci = _cover_index(p_cover, i);
+			base.write[i] = ci < 0 ? Math::NaN : p_cover->cell_ground[ci] + MAX(p_cover->cell_swe[ci] - deposit[i], 0.0f) / MAX(p_cover->cell_density[ci], 30.0f);
+		}
+		for (int pass = 0; pass < 16; pass++) {
+			bool moved = false;
+			Vector<float> d2 = d;
+			for (int z = 0; z < n; z++) {
+				for (int x = 0; x < n; x++) {
+					const int i = z * n + x;
+					if (d[i] <= 0.0f || Math::is_nan(base[i])) {
+						continue;
+					}
+					const float hi = base[i] + d[i] / rho_run;
+					const int nb[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+					for (const auto &o : nb) {
+						const int xx = x + o[0], zz = z + o[1];
+						if (xx < 0 || zz < 0 || xx >= n || zz >= n) {
+							continue;
+						}
+						const int j = zz * n + xx;
+						if (Math::is_nan(base[j])) {
+							continue;
+						}
+						const float step = hi - (base[j] + d[j] / rho_run) - repose;
+						if (step > 0.01f) {
+							const float give = MIN(0.25f * step * rho_run, 0.25f * d[i]);
+							d2.write[i] -= give;
+							d2.write[j] += give;
+							moved = true;
+						}
+					}
+				}
+			}
+			d = d2;
+			if (!moved) {
+				break;
+			}
+		}
+	}
 	bool any = false;
 	for (int i = 0; i < n * n; i++) {
 		const float delta = d[i] - deposit[i];
@@ -791,6 +834,13 @@ void SnowAvalanche3D::_finish(SnowCover3D *p_cover) {
 	if (any) {
 		p_cover->update_count++;
 		p_cover->_upload();
+	}
+	// Granules on the settled debris, once per cell, where the flow arrived fast (the run-out), not on the thin
+	// remnants in the release zone.
+	for (int i = 0; i < n * n; i++) {
+		if (d[i] > 0.05f * rho_run && peak[i] > ENTRAIN_SPEED) {
+			_debris(Vector3((flow_origin.x + i % n + 0.5f) * cell, 0.0f, (flow_origin.y + i / n + 0.5f) * cell), d[i] / rho_run * cell * cell);
+		}
 	}
 	written.fill(0.0f);
 	h.fill(0.0f);
