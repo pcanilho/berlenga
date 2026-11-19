@@ -405,8 +405,8 @@ void GroundDebrisFlow3D::_deposit(Body &p_body) {
 				const Vector3 p = _cell_position(b, r, c);
 				const float wd = water.is_valid() ? water->depth_at(p) : 0.0f;
 				if (wd > 0.1f) {
-					// Into a river or lake: its solids as sediment (the call takes kg/s: here, over one second).
-					water->add_sediment(p, h * b.cell * b.cell * sediment_share * 2650.0f, 0.0f);
+					// Into a river or lake: its solids as sediment, in kg.
+					water->add_sediment_mass(p, h * b.cell * b.cell * sediment_share * 2650.0f, 0.0f);
 				} else if (gs) {
 					gs->add_mud_deposit(p, 0.75f * b.cell, h, false);
 				}
