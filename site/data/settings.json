@@ -1112,7 +1112,7 @@
     "BaseMaterial3D.ground_deform_enabled"
    ],
    "note": "",
-   "what": "prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose. The prints simulate on the GPU (`gpu_simulation`). Within 8 m of the camera a 1.6 cm field (`near_field`) keeps print rims and lips crisp and matches the ground beyond its edge; boot prints show heel, toe and tread, and wet ground carries on past the deform patch.",
+   "what": "prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose, a step on a dry dune slip face sets off a grain flow down it (`slip_avalanches`), and wind fills prints from the upwind side (`wind_fills_prints`). The prints simulate on the GPU (`gpu_simulation`). Within 8 m of the camera a 1.6 cm field (`near_field`) keeps print rims and lips crisp and matches the ground beyond its edge; boot prints show heel, toe and tread, and wet ground carries on past the deform patch.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1362,7 +1362,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile; prints wipe them and they form again.",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile; prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1409,7 +1409,7 @@
     "water_sources"
    ],
    "note": "",
-   "what": "water fills the pores of sand below it and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.",
+   "what": "water fills the pores of sand below it, wets a margin up to 15 cm above still water (`water_fringe`), and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"

@@ -163,7 +163,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 - **Landscape3D collision** (`collision_enabled`, `collision_radius`, `collision_target`): full-detail heightfield tiles follow the player and match the drawn triangles.
 
-- **Footprints in ground** (`GroundSurface3D`, `BaseMaterial3D.ground_deform_enabled`): prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose. The prints simulate on the GPU (`gpu_simulation`). Within 8 m of the camera a 1.6 cm field (`near_field`) keeps print rims and lips crisp and matches the ground beyond its edge; boot prints show heel, toe and tread, and wet ground carries on past the deform patch.
+- **Footprints in ground** (`GroundSurface3D`, `BaseMaterial3D.ground_deform_enabled`): prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose, a step on a dry dune slip face sets off a grain flow down it (`slip_avalanches`), and wind fills prints from the upwind side (`wind_fills_prints`). The prints simulate on the GPU (`gpu_simulation`). Within 8 m of the camera a 1.6 cm field (`near_field`) keeps print rims and lips crisp and matches the ground beyond its edge; boot prints show heel, toe and tread, and wet ground carries on past the deform patch.
 
   ![Footprints and tracks in dry sand, damp sand, soil, mud and leaf litter, raster and path traced](media/ground-footprints.jpg)
 
@@ -193,7 +193,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 - **Frozen ground** (`GroundSurface3D.frozen_ground`, `needle_ice`): soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days. Frosty nights lift wet bare soil on ice needles, and the thaw leaves loose crumbs that print deep.
 - **Desiccation cracks** (`GroundSurface3D.desiccation_cracks`): soaked clay dries to a pale matte crust that cracks into plates; rain closes the cracks, and each wet-dry cycle makes the pattern more regular.
 - **Thrown sand** (`PhysXGroundGrains3D`: `tread_depth`, `kick()`): spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept; a drifting car throws sand out of the turn, heaps a berm on the outside and scuffs a wide track, and the sand pushes back on the sliding tyre.
-- **Wind ripples** (`GroundSurface3D.wind_ripples`; `ripple_extent`): the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile; prints wipe them and they form again.
+- **Wind ripples** (`GroundSurface3D.wind_ripples`; `ripple_extent`): the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile; prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).
 - **Blowing sand** (`GroundStreamers3D`; `GroundSurface3D.obstacle_lee`): grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind, and drop in the lee of boulders, walls and parked vehicles.
 - **Dust** (`GroundDust3D`, `GroundSurface3D.dust_emission`): the wind lifts dust off dry sand, and sliding tyres lift billowing clouds of it, carried on the wind until it settles; needs volumetric fog.
 - **Sand glints** (`GroundSurface3D.sand_glints`): up close, dry sand shows the colours of its grains and the odd grain flashing in the sun.
@@ -202,7 +202,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Sand glints: the blurred sand surface resolves into single grains up close.*
 
-- **Wet sand** (`GroundSurface3D.water_coupling`; `water_sources`): water fills the pores of sand below it and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.
+- **Wet sand** (`GroundSurface3D.water_coupling`; `water_sources`): water fills the pores of sand below it, wets a margin up to 15 cm above still water (`water_fringe`), and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.
 
   ![A beach at the swash line with a row of footprints, before and after wet sand, raster](media/sand-wet.jpg)
 
