@@ -37,6 +37,12 @@
 				Override in a stub to replace [method heat_at].
 			</description>
 		</method>
+		<method name="_plumes" qualifiers="virtual const">
+			<return type="PackedVector4Array" />
+			<description>
+				Override in a stub to replace [method plumes].
+			</description>
+		</method>
 		<method name="_stem_char_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -90,6 +96,12 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The fire's heat release over the ground at [param position] now, in W/m2; 0 where nothing burns.
+			</description>
+		</method>
+		<method name="plumes" qualifiers="const">
+			<return type="PackedVector4Array" />
+			<description>
+				Every fire's convection column: x, y and z of where its plume rises from and w its convective heat, W. [WeatherMap3D] lifts each through the air and, where it passes the condensation level, makes a fire cloud over it (pyrocumulus; a pyrocumulonimbus from the largest fires). Empty where nothing flames.
 			</description>
 		</method>
 		<method name="stem_char_at" qualifiers="const">

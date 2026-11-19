@@ -229,6 +229,7 @@ public:
 	virtual float contract_fire_burn_age_at(const Vector3 &p_position) const { return -1.0f; } // years since it last burnt there, -1 never
 	virtual float contract_fire_crown_scorch_at(const Vector3 &p_position) const { return 0.0f; } // m, crowns killed up to this height
 	virtual float contract_fire_water_repellency_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, burnt soil shedding rain
+	virtual void contract_fire_plumes(PackedVector4Array &r_plumes) const {} // appends its convection columns: (x, y, z of the base, convective heat W)
 	virtual ~WorldFireProvider() {}
 };
 
@@ -248,6 +249,7 @@ protected:
 	GDVIRTUAL1RC(float, _burn_age_at, Vector3)
 	GDVIRTUAL1RC(float, _crown_scorch_at, Vector3)
 	GDVIRTUAL1RC(float, _water_repellency_at, Vector3)
+	GDVIRTUAL0RC(PackedVector4Array, _plumes)
 
 public:
 	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -270,6 +272,7 @@ public:
 	// How water-repellent the fire left the soil at the point, 0..1 (1: it takes almost no rain in; the ground's
 	// infiltration falls by up to nine tenths). Fades over a year or two. The most of any fire; 0 where none burnt.
 	float water_repellency_at(const Vector3 &p_position) const;
+	PackedVector4Array plumes() const; // every fire's convection columns (x, y, z, convective heat W)
 };
 
 // Ground: the deformable ground's surface, soil and what lies on it (docs/ideas/world-contracts.md, Ground).

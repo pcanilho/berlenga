@@ -489,6 +489,19 @@ float WorldFire::water_repellency_at(const Vector3 &p_position) const {
 	return r;
 }
 
+// Each fire's convection columns, all of them: where its plume rises from and the heat it carries up (the weather
+// makes fire clouds from them).
+PackedVector4Array WorldFire::plumes() const {
+	PackedVector4Array r;
+	if (GDVIRTUAL_CALL(_plumes, r)) {
+		return r;
+	}
+	for (WorldFireProvider *f : providers) {
+		f->contract_fire_plumes(r);
+	}
+	return r;
+}
+
 void WorldFire::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldFire::has_provider);
 	ClassDB::bind_method(D_METHOD("heat_at", "position"), &WorldFire::heat_at);
@@ -504,7 +517,9 @@ void WorldFire::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("crown_scorch_at", "position"), &WorldFire::crown_scorch_at);
 	GDVIRTUAL_BIND(_crown_scorch_at, "position");
 	ClassDB::bind_method(D_METHOD("water_repellency_at", "position"), &WorldFire::water_repellency_at);
+	ClassDB::bind_method(D_METHOD("plumes"), &WorldFire::plumes);
 	GDVIRTUAL_BIND(_water_repellency_at, "position");
+	GDVIRTUAL_BIND(_plumes);
 }
 
 // A script stub standing in as one water producer among the real ones.

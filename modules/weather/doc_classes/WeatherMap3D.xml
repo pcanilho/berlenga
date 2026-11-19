@@ -158,6 +158,19 @@
 				The live air at [param position] (C): [method get_air_temperature] less 6.5 K per km above the map's [member ground_height] (the standard lapse rate).
 			</description>
 		</method>
+		<method name="get_fire_cloud_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Fire clouds over the fires' plumes now (they are also among [method get_storm_count]'s storms, with no rain unless they grow into a pyrocumulonimbus).
+			</description>
+		</method>
+		<method name="get_fire_cloud_for" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="heat" type="float" />
+			<description>
+				The fire cloud a plume carrying [param heat] watts of convective heat would make in this weather: x its rise (m; through the sun-mixed layer near the ground, then by Briggs's 1975 laws in the stable air above, bent over by the wind), y the lifting condensation level (125 m per kelvin of dew point depression), z its strength (0: none; 1: a full cumulus cap; up to 2 as it grows into a pyrocumulonimbus, from about 2 km of rise past the condensation level).
+			</description>
+		</method>
 		<method name="get_frost_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -719,6 +732,9 @@
 		</member>
 		<member name="drive_environment_fog" type="bool" setter="set_drive_environment_fog" getter="get_drive_environment_fog" default="true">
 			The haze from [method set_precipitation_extinction] drives the environment's fog and volumetric fog, while the game runs. Off, the sources only answer [method get_precipitation_extinction_at].
+		</member>
+		<member name="fire_clouds" type="bool" setter="set_fire_clouds" getter="is_fire_clouds" default="true">
+			Fire plumes ([method WorldFire.plumes]) that rise past the lifting condensation level make clouds over them: a pyrocumulus cap that grows over about five minutes of weather time while the fire feeds it, held over the bent-over plume, then drifts off and evaporates over a quarter of an hour once it stops. A plume that rises some 2 km past it towers into a pyrocumulonimbus: storm cloud, lightning ([WeatherLightning3D]), a downdraft's outflow and a little rain. Small fires on a stable night make none; on a sunny afternoon a fire of about a gigawatt caps itself.
 		</member>
 		<member name="extent" type="float" setter="set_extent" getter="get_extent" default="4096.0">
 			Width of the map, in metres.
