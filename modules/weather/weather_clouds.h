@@ -62,6 +62,7 @@ struct State {
 	// the base by the wind shear while it rose: tops lean over (Nubis's cloud top offset), growing as height
 	// squared (shear_offset()).
 	Vector2 shear;
+	float size_mix = 0.0f; // 0..1: large clouds among the small (shape_at)
 	// Clouds that form and clear (step 3e): the cover noise's time in lifetimes (below 0: frozen), how far the
 	// shape noise's second read has slid against the first, and how far the sky's detail noise has risen
 	// (texture units, wrapped).

@@ -690,6 +690,9 @@
 		<member name="cloud_shape_scale" type="float" setter="set_cloud_shape_scale" getter="get_cloud_shape_scale" default="3000.0">
 			Size of one tile of the 3D shape noise, in metres. Single clouds are about a quarter of it across.
 		</member>
+		<member name="cloud_size_mix" type="float" setter="set_cloud_size_mix" getter="get_cloud_size_mix" default="1.0">
+			Large clouds among the small. A third read of the shape noise, 2.618 times larger, is blended in by a slow noise, so some stretches of sky hold a few big cumulus and others many small ones, as fair-weather cumulus sizes spread over a decade. [code]0[/code] gives every cloud the same size (the old look); costs one more noise read per cloud sample.
+		</member>
 		<member name="cloud_shear" type="float" setter="set_cloud_shear" getter="get_cloud_shear" default="1.0">
 			Scale on how far the wind shear leans the clouds' tops downwind of their bases. The wind aloft grows and veers with height, so tissue that rose higher was carried further: towers lean and their tops stream out, the lean growing as height squared so the base stays upright. [code]0[/code] keeps the clouds upright.
 		</member>
