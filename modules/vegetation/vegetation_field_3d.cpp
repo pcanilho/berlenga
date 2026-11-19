@@ -3460,6 +3460,9 @@ Array VegetationField3D::get_trunks_near(const Vector3 &p_center, float p_radius
 			if (t.origin.distance_squared_to(p_center) > r2) {
 				continue;
 			}
+			if (t.basis.get_scale().y < 1e-3f) {
+				continue; // A tree taken out of the stand (felled, thrown, burnt down): its instance is collapsed.
+			}
 			const Vector3i key(int(Math::round(t.origin.x * 100.0f)), int(Math::round(t.origin.y * 100.0f)), int(Math::round(t.origin.z * 100.0f)));
 			if (seen.has(key)) {
 				continue;
