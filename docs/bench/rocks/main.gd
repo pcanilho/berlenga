@@ -1988,7 +1988,7 @@ func _render_later() -> void:
 	# The beach's sand (grain, ripples, wetness) is drawn by its GroundSurface3D once the ripples are built.
 	var gs := get_node_or_null("Beach") as GroundSurface3D
 	var rw := 0
-	while gs and not gs.is_ripples_ready() and rw < 1200:
+	while gs and gs.wind_ripples and not gs.is_ripples_ready() and rw < 1200:
 		await get_tree().process_frame
 		rw += 1
 	while args.has("plants") and rocks and not plants_ready:
@@ -2060,6 +2060,10 @@ func _beach_surface(tm: TerrainMaterial3D) -> void:
 			img.set_pixel(i, j, Color(sand, 0, 0))
 	gs.type_map = img
 	gs.type_map_rect = Rect2(-half, -half, WORLD, WORLD)
+	# --gs-prop=name:value[,name:value...]: any of the beach GroundSurface3D's properties (A/B one layer).
+	for kv in str(args.get("gs-prop", "")).split(",", false):
+		var nv := kv.split(":")
+		gs.set(nv[0], str_to_var(nv[1]))
 
 
 func _hide_class(n: Node, cls: String) -> void:

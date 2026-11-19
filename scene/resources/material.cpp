@@ -2967,7 +2967,7 @@ void fragment() {)";
 		// roughness. On a print's curved wall the sheen made a mirror-sharp spot of sun.
 		float gd_up = smoothstep(0.5, 0.85, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y);
 		ROUGHNESS = clamp(ROUGHNESS * mix(1.0, gd_tint.y, gd_up), 0.0, 1.0);
-		vec2 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
+		vec2 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y));
 		if (gr_far != vec2(0.0)) {
 			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gr_far.x, 0.0, gr_far.y, 0.0)).xyz);
 		}
@@ -4547,7 +4547,7 @@ float ground_ripple(vec2 p_xz) {
 // The ripples' variation (nothing repeating may show): the grown field tiles every few metres, so each point reads
 // it through a three-octave world-space warp (crests turn and change spacing over tens of metres and bend over a
 // few) and edge dislocations in pairs along the crests (a crest forks into two and rejoins: the Y-junctions of
-// real ripple fields), with a height that wanders between 30 and 100%. p_k is the grown field's dominant wave
+// real ripple fields), with a height that wanders between 15 and 100%. p_k is the grown field's dominant wave
 // vector (rad/m), so a dislocation shifts its crests by exactly one wavelength. The real ripples' window is filled
 // through the same lines (GroundRipples::vary), so the two meet crest to crest.
 float ground_ripple_hash(ivec2 p_c, uint p_s) {
@@ -4567,34 +4567,40 @@ float ground_ripple_vn(vec2 p_p, uint p_s) {
 vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 	vec2 p = p_xz;
 	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
-	o += 1.2 * (vec2(ground_ripple_vn(p / 7.0, 3u), ground_ripple_vn(p / 7.0, 4u)) - 0.5);
+	o += 1.6 * (vec2(ground_ripple_vn(p / 6.0, 3u), ground_ripple_vn(p / 6.0, 4u)) - 0.5);
 	o += 0.16 * (vec2(ground_ripple_vn(p / 1.7, 5u), ground_ripple_vn(p / 1.7, 6u)) - 0.5);
-	float amp = mix(0.3, 1.0, smoothstep(0.15, 0.85, 0.6 * ground_ripple_vn(p / 9.0, 7u) + 0.4 * ground_ripple_vn(p / 2.2, 8u)));
+	float amp = mix(0.15, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
 	float kk = dot(p_k, p_k);
 	if (kk > 0.0) {
 		vec2 kn = p_k / sqrt(kk);
 		vec2 t = vec2(-kn.y, kn.x);
-		ivec2 c0 = ivec2(floor(p / 2.5));
+		// Spacing: a stretch along the crests' normal only, so crests crowd and open by up to a third over a metre or two.
+		o += kn * (0.45 * (ground_ripple_vn(vec2(dot(p, kn) / 2.0, dot(p, t) / 5.0), 14u) - 0.5));
+		ivec2 c0 = ivec2(floor(p / 1.6));
 		float ph = 0.0;
 		for (int dz = -1; dz <= 1; dz++) {
 			for (int dx = -1; dx <= 1; dx++) {
 				ivec2 c = c0 + ivec2(dx, dz);
-				if (ground_ripple_hash(c, 9u) >= 0.55) {
+				if (ground_ripple_hash(c, 9u) >= 0.7) {
 					continue;
 				}
-				vec2 m = (vec2(c) + vec2(ground_ripple_hash(c, 10u), ground_ripple_hash(c, 11u))) * 2.5;
-				float hl = 0.2 + 0.4 * ground_ripple_hash(c, 12u);
+				vec2 m = (vec2(c) + vec2(ground_ripple_hash(c, 10u), ground_ripple_hash(c, 11u))) * 1.6;
+				float hl = 0.15 + 0.3 * ground_ripple_hash(c, 12u);
 				vec2 da = p - (m - t * hl);
 				vec2 db = p - (m + t * hl);
 				float sgn = ground_ripple_hash(c, 13u) < 0.5 ? -1.0 : 1.0;
-				ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(1.2, 2.4, length(p - m)));
+				ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(0.75, 1.55, length(p - m)));
 			}
 		}
 		o += p_k * (ph / kk);
 	}
 	return vec3(o, amp);
 }
-vec2 ground_ripple_far_slope(vec2 p_xz) {
+// p_fp: the pixel's width on the ground (m), its narrow axis. Crests closer than about three pixels fade out: drawn
+// any finer they alias into even moire bands (a stripe pattern no real field has, worst through the water's
+// refraction, which resamples the screen), so the far ripples are prefiltered to the pixel as LEAN-style filtering
+// would.
+vec2 ground_ripple_far_slope(vec2 p_xz, float p_fp) {
 	if (ground_ripple_rect.z <= 0.0) {
 		return vec2(0.0);
 	}
@@ -4625,6 +4631,11 @@ vec2 ground_ripple_far_slope(vec2 p_xz) {
 		return vec2(0.0);
 	}
 	// Cell c's centre is at c * cell, its texel (c mod n).
+	float lam = dot(m3.xy, m3.xy) > 0.0 ? 6.2831853 / length(m3.xy) : 0.11;
+	w *= 1.0 - smoothstep(0.22 * lam, 0.4 * lam, p_fp);
+	if (w <= 0.0) {
+		return vec2(0.0);
+	}
 	vec3 vr = ground_ripple_vary(p_xz, m3.xy);
 	vec2 tuv = ((p_xz + vr.xy) / ground_ripple_rect.w + 0.5) / m1.w * ground_ripple_rect.w;
 	return w * vr.z * texture(ground_ripple_far, tuv).rg;

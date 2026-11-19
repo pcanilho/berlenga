@@ -2852,6 +2852,9 @@ func _ripple_stats(from_x := 0, from_z := 0, size := -1) -> Array:
 	var h := surface.get_ripple_heights()
 	var n := surface.get_ripple_size()
 	var c := surface.get_ripple_cell()
+	if OS.has_environment("RIPPLE_DUMP"): # the window's heights as raw float32 (n x n), for offline spectra
+		var f := FileAccess.open(OS.get_environment("RIPPLE_DUMP"), FileAccess.WRITE)
+		f.store_buffer(h.to_byte_array())
 	if size < 0:
 		size = n
 	var mean := 0.0
