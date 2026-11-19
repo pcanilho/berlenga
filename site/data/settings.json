@@ -3951,6 +3951,20 @@
    "topic": ""
   },
   {
+   "name": "Debris flows",
+   "settings": [
+    "PhysXDebrisSurge3D",
+    "surge_count_max",
+    "max_boulder",
+    "stop_slope"
+   ],
+   "note": "",
+   "what": "after a fire, rain sends debris flows down burnt slopes in surges with boulders at the front, throwing mud, until each stops on its fan.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Spot fires",
    "settings": [
     "PhysXFireSpread3D.spotting",
