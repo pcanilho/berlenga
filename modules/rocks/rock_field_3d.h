@@ -443,6 +443,13 @@ private:
 	};
 	HashMap<uint64_t, DustTrack> dust_tracks; // by the breakable's ObjectID
 	LocalVector<Dust> dust_events;
+	struct SnowDust {
+		Vector3 at; // mass-weighted sum of positions
+		float mass = 0.0f; // kg
+		float radius = 0.0f;
+	};
+	HashMap<Vector2i, SnowDust> snow_dust; // fines settling near their hit, to the snow contract once a second
+	float snow_dust_timer = 0.0f;
 	real_t dust_total = 0.0; // kg, since the field entered the tree
 	int dust_impacts = 0;
 	uint64_t dust_tick = 0;

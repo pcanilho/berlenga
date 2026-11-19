@@ -1945,7 +1945,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					st.ground = g - 0.4; // bedrock at the surface: the ground-blend band only at its buried edges
 					r_stones.push_back(st);
 				} else {
-					// Hoodoos: 3 to 9 columns in a row along a joint, 3 to 8 m apart, 4 to 20 m tall, the foot sunk in
+					// Hoodoos: 3 to 9 columns in a row along a joint, 2 to 10 m apart, 3 to 20 m tall, the foot sunk in
 					// the debris apron.
 					const uint32_t key = _library_key(type, RockGenerator::FAMILY_HOODOO, 0);
 					Library *lib = _ensure_library(key);
@@ -1955,29 +1955,39 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					const real_t yaw = rng.randf() * Math::TAU;
 					const Vector3 along(Math::cos(yaw), 0, Math::sin(yaw));
 					const int count = 3 + int(rng.randf() * 6.99f);
-					Vector3 at = s.p - along * real_t(count) * 2.5;
+					const Vector3 across(-along.z, 0, along.x);
+					// No two alike in a row (Bryce, Goreme): the row's own height, each column well off it, a lean of a
+					// few degrees, spacing from 2 to 10 m with gaps where one fell, and the line wandering across.
+					const real_t row_h = 5.0 + 9.0 * rng.randf();
+					Vector3 at = s.p - along * real_t(count) * 2.8;
+					real_t drift = 0.0;
 					for (int k = 0; k < count; k++) {
-						at += along * real_t(3.0 + 5.0 * rng.randf()) + Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f) * 2.0f;
-						if (gen->get_water_depth(at) > 0.0) {
-							continue;
+						const real_t u = rng.randf();
+						at += along * real_t(2.0 + 8.0 * u * u);
+						drift = CLAMP(drift + (rng.randf() - 0.5f) * 3.0f, real_t(-3.5), real_t(3.5));
+						const Vector3 p_at = at + across * drift + along * (rng.randf() - 0.5f) * 1.5f;
+						const float hu = rng.randf(), tilt = rng.randf(), tilt_az = rng.randf() * float(Math::TAU), spin = rng.randf();
+						if (gen->get_water_depth(p_at) > 0.0 || rng.randf() < 0.15f) {
+							continue; // in water, or fallen
 						}
 						Stone st;
 						st.layer = p_layer;
 						st.library = key;
 						st.variant = pick_variant(lib);
 						const AABB box = lib->meshes[st.variant]->get_aabb();
-						const real_t height = 4.0 + 16.0 * rng.randf() * rng.randf();
+						const real_t height = CLAMP(row_h * (0.45 + 1.1 * hu), real_t(3.0), real_t(20.0));
 						st.scale = height / MAX(real_t(box.size.x), real_t(0.5));
-						const Basis b = Basis(Vector3(0, 1, 0), yaw + rng.randf() * Math::TAU) * Basis(Vector3(0, 0, 1), Math::PI * 0.5);
+						const Vector3 tilt_axis(Math::cos(tilt_az), 0, Math::sin(tilt_az));
+						const Basis b = Basis(tilt_axis, Math::deg_to_rad(1.0f + 7.0f * tilt * tilt)) * Basis(Vector3(0, 1, 0), yaw + spin * Math::TAU) * Basis(Vector3(0, 0, 1), Math::PI * 0.5);
 						st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
 						// The lowest ground under its foot, so no side hangs over the slope.
 						const real_t r = real_t(box.size.y) * st.scale * 0.5;
-						real_t g = gen->get_height(at);
+						real_t g = gen->get_height(p_at);
 						for (int j = 0; j < 6; j++) {
-							g = MIN(g, gen->get_height(at + Vector3(Math::cos(j * Math::TAU / 6.0), 0, Math::sin(j * Math::TAU / 6.0)) * r));
+							g = MIN(g, gen->get_height(p_at + Vector3(Math::cos(j * Math::TAU / 6.0), 0, Math::sin(j * Math::TAU / 6.0)) * r));
 						}
-						st.position = Vector3(at.x, g - 0.12 * height - box.position.x * st.scale, at.z);
-						st.ground = gen->get_height(at);
+						st.position = Vector3(p_at.x, g - 0.12 * height, p_at.z) - b.xform(Vector3(box.position.x, 0, 0)) * st.scale;
+						st.ground = gen->get_height(p_at);
 						r_stones.push_back(st);
 					}
 				}
@@ -2253,7 +2263,8 @@ Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockG
 	// stone colour the courses read as pale plates stuck on the face).
 	const bool p_cliff = p_family == RockGenerator::FAMILY_CAVE_MOUTH || p_family == RockGenerator::FAMILY_CLIFF_BLOCK;
 	const float age = rock_surface_age(p_family);
-	const int mkey = int(p_type) + (p_cliff ? 1000 : 0) + int(age * 10.0f + 0.5f) * 10000 + (p_detail ? 2000 : 0);
+	const bool p_group = p_family == RockGenerator::FAMILY_HOODOO || p_family == RockGenerator::FAMILY_GOBLIN;
+	const int mkey = int(p_type) + (p_cliff ? 1000 : 0) + int(age * 10.0f + 0.5f) * 10000 + (p_detail ? 2000 : 0) + (p_group ? 4000 : 0);
 	if (Ref<ShaderMaterial> *m = materials.getptr(mkey)) {
 		return *m;
 	}
@@ -2261,6 +2272,7 @@ Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockG
 	m->set_shader_parameter("cliff_match", p_cliff);
 	m->set_shader_parameter("lichen_cover", lichen_cover);
 	m->set_shader_parameter("surface_age", age);
+	m->set_shader_parameter("instance_tint", p_group ? 0.45f : 0.0f);
 	m->set_shader_parameter("moss_cover", moss_cover);
 	// Ground detail grains: a foot band in proportion to the grain (the field's stones keep theirs), and the ground's
 	// dust coat the field's small stones carry, so a grain matches the pebbles round it.
@@ -3986,6 +3998,7 @@ void RockField3D::set_rockfall_dust(bool p_enabled) {
 	if (!rockfall_dust) {
 		dust_tracks.clear();
 		dust_events.clear();
+		snow_dust.clear();
 	}
 	if (is_inside_tree()) {
 		_update_dust_node();
@@ -4034,6 +4047,15 @@ void RockField3D::_add_dust(const Vector3 &p_position, const Vector3 &p_velocity
 		return;
 	}
 	dust_total += p_mass;
+	// The coarse part of the fines (most of the mass: silt and sand) settles within a few metres of the hit, on snow
+	// as dirt (dust on snow, Painter et al. 2007): black carbon equivalent at 0.013 of the dust's mass, as
+	// GroundDust3D hands its own over. The fine part rides the Flow plume and is that system's to settle.
+	// Gathered in 4 m cells and handed over once a second (a rolling piece sheds a little every tick).
+	const Vector2i cell(int(Math::floor(p_position.x / 4.0f)), int(Math::floor(p_position.z / 4.0f)));
+	SnowDust &sd = snow_dust[cell];
+	sd.at += p_position * p_mass;
+	sd.mass += p_mass;
+	sd.radius = MAX(sd.radius, p_radius);
 	if (dust_events.size() >= 256) {
 		return; // nobody is draining them
 	}
@@ -4059,6 +4081,17 @@ void RockField3D::_update_dust(double p_delta) {
 	}
 	dust_tick++;
 	const float dt = float(p_delta);
+	snow_dust_timer += dt;
+	if (snow_dust_timer >= 1.0f && !snow_dust.is_empty()) {
+		snow_dust_timer = 0.0f;
+		if (WorldSnow *snow = WorldContracts::snow(); snow && snow->has_provider()) {
+			for (const KeyValue<Vector2i, SnowDust> &kv : snow_dust) {
+				const float r = 2.0f + 4.0f * kv.value.radius;
+				snow->add_impurity(kv.value.at / MAX(kv.value.mass, 1e-12f), r, 0.7f * kv.value.mass * 1.0e6f * 0.013f / (float(Math::PI) * r * r));
+			}
+		}
+		snow_dust.clear();
+	}
 	const WeatherMap3D *w = WeatherMap3D::get_active();
 	const TerrainGenerator3D *gen = _get_generator();
 	HashSet<uint64_t> live;
