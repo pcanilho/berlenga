@@ -44,6 +44,7 @@
 
 class PhysicsDirectSpaceState3D;
 
+class SnowAvalanche3D;
 class SnowBodies3D;
 class SnowCornice3D;
 class SnowLakeIce3D;
@@ -64,6 +65,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	friend class SnowCornice3D;
 	friend class SnowSurface3D;
 	friend class SnowLakeIce3D;
+	friend class SnowAvalanche3D;
 
 	static SnowCover3D *active;
 
@@ -263,6 +265,8 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	SnowLakeIce3D *lake_ice = nullptr; // the drawn ice, an internal child
 	bool bodies_enabled = true;
 	SnowBodies3D *bodies_node = nullptr; // snow carried by moving things, an internal child
+	bool avalanches_enabled = true;
+	SnowAvalanche3D *avalanche_node = nullptr; // slab release and run-out, an internal child
 	const TerrainDataMap3D *_terrain_map() const;
 	uint64_t main_usec = 0; // main-thread time of the last update (gather, start, swap in)
 	// The textures' images, built off the main thread.
@@ -411,6 +415,9 @@ public:
 	float get_white_ice_thickness_at(Vector3 p_position) const;
 	SnowLakeIce3D *get_lake_ice() const { return lake_ice; }
 	SnowBodies3D *get_bodies() const { return bodies_node; }
+	SnowAvalanche3D *get_avalanches() const { return avalanche_node; }
+	void set_avalanches_enabled(bool p_enabled);
+	bool is_avalanches_enabled() const { return avalanches_enabled; }
 	void set_bodies_enabled(bool p_enabled);
 	bool is_bodies_enabled() const { return bodies_enabled; }
 

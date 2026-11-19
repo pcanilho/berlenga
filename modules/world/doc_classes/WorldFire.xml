@@ -43,6 +43,12 @@
 				Override in a stub to replace [method plumes].
 			</description>
 		</method>
+		<method name="_smoke_sources" qualifiers="virtual const">
+			<return type="PackedVector4Array" />
+			<description>
+				Override in a stub to replace [method smoke_sources].
+			</description>
+		</method>
 		<method name="_stem_char_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -122,6 +128,12 @@
 			<return type="PackedVector4Array" />
 			<description>
 				Every fire's convection column: x, y and z of where its plume rises from and w its convective heat, W. [WeatherMap3D] lifts each through the air and, where it passes the condensation level, makes a fire cloud over it (pyrocumulus; a pyrocumulonimbus from the largest fires). Empty where nothing flames.
+			</description>
+		</method>
+		<method name="smoke_sources" qualifiers="const">
+			<return type="PackedVector4Array" />
+			<description>
+				Every fire's smoke: x, y and z of where it rises from and w its particulate (PM2.5) in kg per second of the fire's own (real) time. [WeatherMap3D] carries it as a smoke layer that hazes the air and dims and reddens the sun.
 			</description>
 		</method>
 		<method name="stem_char_at" qualifiers="const">

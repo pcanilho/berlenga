@@ -112,6 +112,14 @@ private:
 	float daily_temperature_range = 10.0f; // K, clear calm day; clouds and rain narrow it
 	bool sun_drying = true; // the sun's net radiation in the evaporation (Penman 1948's combination)
 	bool fire_clouds = true; // fire plumes that reach the condensation level make clouds (pyrocumulus)
+	// Smoke from fires (WorldFire.smoke_sources) as a layer carried by the wind aloft (weather_smoke.cpp): g/m2 of
+	// particulate in the column over each cell.
+	bool smoke_haze = true;
+	float smoke_lifetime = 3.0f * 86400.0f; // s of weather time, washout and dilution out of the layer
+	Vector<float> cell_smoke;
+	void _smoke_step(double p_weather_dt);
+	void _smoke_shift(Vector2i p_delta);
+	float _smoke_sigma() const; // extinction (1/m) of the smoke near the ground where the map follows
 	bool dew_and_frost = true; // clear calm nights: dew, and hoarfrost below freezing (Monteith 1957)
 	// Season (weather_season.h): the date from a SkyClock, or season_day; the climate from a ClimateRecipe.
 	NodePath sky_clock;
@@ -662,6 +670,17 @@ public:
 	void remove_storm(int p_id);
 	void clear_storms();
 	int get_storm_count() const { return storms.size(); }
+	// Smoke haze (docs/ideas/physx.md, "Smoke haze dims the sun").
+	void set_smoke_haze(bool p_enabled);
+	bool is_smoke_haze() const { return smoke_haze; }
+	void set_smoke_lifetime(float p_seconds) { smoke_lifetime = MAX(p_seconds, 60.0f); }
+	float get_smoke_lifetime() const { return smoke_lifetime; }
+	float get_smoke_at(Vector3 p_position) const; // g/m2 of particulate in the column
+	float get_smoke_optical_depth_at(Vector3 p_position) const; // at 550 nm
+	// The direct sun's transmittance through the smoke layer (RGB) at a point, for a sun along p_to_sun.
+	Vector3 get_smoke_transmittance(Vector3 p_position, Vector3 p_to_sun) const;
+	void add_smoke(Vector3 p_position, float p_kg);
+	void clear_smoke();
 	void set_fire_clouds(bool p_enabled) { fire_clouds = p_enabled; }
 	bool is_fire_clouds() const { return fire_clouds; }
 	int get_fire_cloud_count() const;

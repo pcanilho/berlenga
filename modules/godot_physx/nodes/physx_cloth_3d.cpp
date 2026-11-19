@@ -64,7 +64,8 @@ void PhysXCloth3D::_apply_solver_settings() {
 	s.damping = MAX(damping, 0.0f);
 	s.drag = MAX(drag, 0.0f);
 	s.lift = MAX(lift, 0.0f);
-	s.density = MAX(density, 1.0e-3f) * (1.0f + water_capacity * wet.effective());
+	// Snow lying on it adds its weight too (SnowBodies3D), so the fabric sags under it.
+	s.density = MAX(density, 1.0e-3f) * (1.0f + water_capacity * wet.effective()) + snow_load;
 	s.tear_factor = is_tearing() ? tear_factor : 0.0f;
 	solver.settings = s;
 }
@@ -540,6 +541,19 @@ void PhysXCloth3D::_update_wetness(double p_delta, const Vector3 &p_wind) {
 void PhysXCloth3D::set_wetness(float p_v) {
 	wet.wetness = CLAMP(p_v, 0.0f, 1.0f);
 	wet_applied = wet.effective();
+	_apply_solver_settings();
+	if (built && !gpu_cloth.is_valid()) {
+		solver.refresh_masses();
+	}
+}
+
+// Without a rebuild (set_density rebuilds): the snow side writes it about ten times a second.
+void PhysXCloth3D::set_snow_load(float p_v) {
+	const float v = MAX(p_v, 0.0f);
+	if (Math::abs(v - snow_load) < 1.0e-4f) {
+		return;
+	}
+	snow_load = v;
 	_apply_solver_settings();
 	if (built && !gpu_cloth.is_valid()) {
 		solver.refresh_masses();
@@ -1238,6 +1252,8 @@ void PhysXCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("move_pins", "vertices", "positions"), &PhysXCloth3D::move_pins);
 	ClassDB::bind_method(D_METHOD("tear", "from", "to"), &PhysXCloth3D::tear);
 	ClassDB::bind_method(D_METHOD("set_wetness", "wetness"), &PhysXCloth3D::set_wetness);
+	ClassDB::bind_method(D_METHOD("set_snow_load", "kg_per_m2"), &PhysXCloth3D::set_snow_load);
+	ClassDB::bind_method(D_METHOD("get_snow_load"), &PhysXCloth3D::get_snow_load);
 	ClassDB::bind_method(D_METHOD("get_wetness"), &PhysXCloth3D::get_wetness);
 	ClassDB::bind_method(D_METHOD("set_weather_wetting", "enable"), &PhysXCloth3D::set_weather_wetting);
 	ClassDB::bind_method(D_METHOD("is_weather_wetting"), &PhysXCloth3D::is_weather_wetting);
@@ -1346,6 +1362,7 @@ void PhysXCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tear_factor", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_tear_factor", "get_tear_factor");
 	ADD_GROUP("Wetness", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness", "get_wetness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_load", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater,suffix:kg/m²"), "set_snow_load", "get_snow_load");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weather_wetting"), "set_weather_wetting", "is_weather_wetting");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_capacity", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_water_capacity", "get_water_capacity");
 	ADD_GROUP("Burning", "");

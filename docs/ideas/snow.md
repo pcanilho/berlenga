@@ -1235,6 +1235,45 @@ driven in, from a shed), raster and path traced alike.
 **Next.** Weight on the body (its mass), snow sliding off a tilted roof as a slab, and clumps falling
 off as `SnowClumps3D` pieces when a load sheds.
 
+## Follow-up 19: weight, slabs and clumps from bodies (built 19 Nov 2026)
+
+- **Weight.** Each body's load mass is depth x density x the top area of its meshes' world bounds. Every physics step, `apply_force` presses it on a free `RigidBody3D` at the middle of its top. Check: 10 kg of snow on a weightless 10 kg body gives 4.93 m/s after 0.5 s, against 4.93 expected.
+- **Slabs.** On a tilted top (the body's up axis against the world's), the load slides as one slab under Mohr-Coulomb. The shear rho g d sin(theta) has to exceed the bond c (250 Pa dry, times (1 - wet)^2) plus friction rho g d cos(theta) tan(phi), where phi falls from 25 to 15 degrees with wetness. The same form is used for the cornice crack. With 15 cm at 150 kg/m3: dry snow holds on a 40 degree roof, wet snow slides at 40 degrees but not at 20, and 40 cm of dry snow slides at 80 degrees. Cloth is excluded, since it has no single top.
+- **Clumps.** Snow that falls off (shaken, blown or slid) lands on the snow through `SnowClumps3D.drop(at, radius, volume, wet)`. The amount is limited by how well the snow holds together (`SnowClumps3D.cohesion`), and the clump sizes are log-normal, about 4 cm dry and 8 cm wet (debris granules, Bartelt and McArdell 2009). Slabs land past the low edge, and shaken snow lands in a ring round the body. Check: a crate tipped 75 degrees in deep snow sheds its 30 cm as 64 clumps.
+- **Cloth.** SnowBodies3D writes `snow_load` (kg/m2) to a `PhysXCloth3D` once the cloth has that property; the change is asked of the PhysX thread. The load adds to the solver's areal density, next to the water term, so loaded fabric sags.
+
+## Follow-up 20: avalanches (built 19 Nov 2026)
+
+`SnowAvalanche3D`, added by `SnowCover3D` (`avalanches_enabled`, on).
+
+**Slab.** The slab is the new snow since it last bonded. It is tracked per cell from the cover's new snow, has a mass-weighted age and bonds after a week. The other slab is the snow over a buried crust, with facets on top of the crust as the weak layer.
+
+**Release.** A slab releases on 28-55 degree slopes when the stability index S = tau_strength / (rho g h sin cos) drops below 1 (Foehn 1987). The strength is 14.5 (rho / 917)^1.73 kPa (Jamieson and Johnston 2001) with a weak-layer density of 100 kg/m3, or 150 on a crust. Sintering raises it by (1 + age / 48 h), about double in two days. The fracture spreads to neighbours with S < 1.2. Check: at 38 degrees, 50 cm holds (S 1.32), a metre fails (0.66), and the same metre two days old holds (1.32).
+
+**Flow.** The flow is depth-averaged Voellmy on the cover's grid (Voellmy 1955; Salm 1993; RAMMS, Christen et al. 2010), with mu 0.2 and xi 1500 m/s2.
+- Gravity acts down the snow surface. The surface includes the flow itself, which supplies the pressure term.
+- Mass and momentum move by donor-cell transport under CFL 0.4.
+- Above 5 m/s the flow entrains new snow at 0.005 m per m/s per s.
+- It deposits where it is slower than 0.5 m/s and the slope cannot beat mu.
+- The moving mass lives in the cover's cells and is written back at 5 Hz, so every reader sees it move.
+- At the end, two mass-conserving passes smooth away the grid's checkerboard. Debris near the camera breaks into clumps.
+- Free rigid bodies in the flow take 1/2 rho u^2 over their width times the flow depth.
+
+**Checks.** `--test=avalanche`, 6 checks, on a 38 degree, 80 m face over a flat run-out:
+- 30 cm of new snow stays.
+- One more metre releases: 20800 m3, with 1127 m3 entrained.
+- The flow runs 143 m at up to 15 m/s.
+- Water is kept to 0.2%; the small loss is snow that leaves the grid.
+- About 2 m of debris piles 40 m out from the toe.
+- A trigger releases a slab.
+
+**View.** `--view=avalanche [--before]`.
+
+**Limits and next.**
+- The flow is thin at the front, so it runs slower than measured avalanches of this size (20-30 m/s). A higher-order scheme (HLL, as RAMMS uses) would keep the front sharper.
+- A powder cloud is not built yet. It belongs in PhysX Flow as a heavy-gas emitter fed by the flow's front.
+- Vehicles and boots should add stress (Foehn's skier term), and so should cornice failures (follow-up 7), which already report position and mass.
+
 ## Next round (proposed 19 Nov 2026): heavier snow on bodies, rain on ruts, avalanches
 
 **Heavier snow on bodies.**

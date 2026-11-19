@@ -55,6 +55,8 @@ class PhysXSmoulder {
 	LocalVector<uint32_t> active;
 	float moisture = -1.0f; // the duff's moisture now (fraction of dry weight), before per-cell patches
 	float burnt_kg = 0.0f;
+	float rate_kg_s = 0.0f; // duff burnt per real second over the last step
+	Vector3 centre; // of the smouldering cells
 	int rekindled = 0;
 	uint32_t seed = 0x9e3779b9u;
 	// The gas.
@@ -90,6 +92,8 @@ public:
 	float consumed(uint32_t p_i) const; // share of the cell's duff burnt away
 	int get_cells() const { return active.size(); }
 	float get_burnt_kg() const { return burnt_kg; }
+	float get_rate() const { return active.is_empty() ? 0.0f : rate_kg_s; }
+	Vector3 get_centre() const { return centre; }
 	int get_rekindled() const { return rekindled; }
 	float get_moisture() const { return moisture; }
 	PhysXFlow3D *get_flow() const { return flow; }

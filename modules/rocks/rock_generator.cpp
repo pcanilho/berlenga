@@ -1207,7 +1207,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			if (bed_at.size() < 2) {
 				return 0;
 			}
-			const float q = p_p[bed_axis] + dip.dot(p_p);
+			const float q = p_p[bed_axis] + dip.dot(p_p) + 0.04f * (rk_noise(p_p * 0.9f, nseed + 92u) - 0.5f);
 			int i = 0;
 			while (i + 2 < int(bed_at.size()) && bed_at[i + 1] <= q) {
 				i++;
@@ -1220,6 +1220,18 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		const float jth = jrng.randf() * float(Math::TAU), jth2 = jth + float(Math::PI) * (0.33f + 0.17f * jrng.randf());
 		const Vector3 jt_dir1(0.0f, Math::cos(jth), Math::sin(jth)), jt_dir2(0.0f, Math::cos(jth2), Math::sin(jth2));
 		const float jt_s1 = (0.32f + 0.2f * jrng.randf()) * c, jt_s2 = (0.32f + 0.2f * jrng.randf()) * c;
+		// A stack's beds, each set back or standing out as a whole (Old Harry, the Twelve Apostles, Bedruthan): a soft
+		// bed weathers back 0.3 to 1 m under the hard one above, which overhangs it; the breaks between beds are
+		// sharp. Big enough to read from the shore at 30 m, where block-scale relief is lost.
+		LocalVector<float> bed_shift;
+		if (family == FAMILY_SEA_STACK) {
+			bool prev_soft = false;
+			for (uint32_t k = 0; k + 1 < bed_at.size(); k++) {
+				const bool soft = jrng.randf() < (prev_soft ? 0.25f : 0.55f);
+				bed_shift.push_back(soft ? (0.09f + 0.2f * jrng.randf()) * c : -0.04f * c * jrng.randf());
+				prev_soft = soft;
+			}
+		}
 		// Stack: the notch a fifth of the way up the solid as it stands after the cuts (not the grid's box).
 		float x_lo = 1e9f, x_hi = -1e9f;
 		for (int z = 0; z < fine.nz; z++) {
@@ -1296,7 +1308,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						if (v0 > -near) {
 							shape(p, &fr);
 						}
-						float rec = bed_recess(p) * (fr ? 0.25f : 1.0f);
+						float rec = family == FAMILY_SEA_STACK ? 0.0f : bed_recess(p) * (fr ? 0.25f : 1.0f);
 						if (family == FAMILY_SEA_STACK) {
 							// Below the notch's roof the waves plane the beds back alike: no lips there to read as a plinth.
 							rec = Math::lerp(0.2f * c * layered, rec, Math::smoothstep(notch_x + 0.6f * notch_w, notch_x + notch_w, p.x));
@@ -1310,27 +1322,15 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						// blocks meet (a step one cell wide), not as noise lumps. A faint lump stays on each block.
 						const float js1 = jt_dir1.dot(p) / jt_s1 + 0.15f * (rk_noise(p * 0.7f, nseed + 105u) - 0.5f);
 						const float js2 = jt_dir2.dot(p) / jt_s2 + 0.15f * (rk_noise(p * 0.7f, nseed + 106u) - 0.5f);
-						const float f1 = Math::floor(js1), f2 = Math::floor(js2);
 						const int bi = bed_index(p);
-						const uint32_t bid = rk_hash(uint32_t(int(f1) + 1024) * 73856093u ^ uint32_t(int(f2) + 1024) * 19349663u ^ uint32_t(bi + 64) * 83492791u ^ nseed);
+						const uint32_t bid = rk_hash(uint32_t(int(Math::floor(js1)) + 1024) * 73856093u ^ uint32_t(int(Math::floor(js2)) + 1024) * 19349663u ^ uint32_t(bi + 64) * 83492791u ^ nseed);
 						const float bo = float(bid & 0xFFFu) / 4095.0f;
-						// Each block's face is its own plane, turned a few degrees from its neighbours' (it settled or
-						// spalled on its own), so the blocks catch the light differently even face on to the sun.
-						const float t1 = float((bid >> 12) & 0xFFu) / 255.0f - 0.5f, t2 = float((bid >> 20) & 0xFFu) / 255.0f - 0.5f;
-						const float u1 = (js1 - f1 - 0.5f) * jt_s1, u2 = (js2 - f2 - 0.5f) * jt_s2;
-						float u3 = 0.0f;
-						if (bi + 1 < int(bed_at.size())) {
-							const float q = p[bed_axis] + dip.dot(p);
-							u3 = q - 0.5f * (bed_at[bi] + bed_at[bi + 1]);
-						}
-						const float t3 = float((bid >> 28) & 0xFu) / 15.0f - 0.5f;
-						v += 0.2f * c * (bo - 0.5f) + 0.35f * (t1 * u1 + t2 * u2) + 0.3f * t3 * u3;
-						// The joints and bed partings between blocks weathered open a little: a shallow V along each,
-						// so a block's arris is a line of shade, not a seam.
-						const float e1 = MIN(js1 - f1, 1.0f - (js1 - f1)) * jt_s1, e2 = MIN(js2 - f2, 1.0f - (js2 - f2)) * jt_s2;
-						const float gw = 0.035f * c;
-						v += 0.03f * c * MAX(0.0f, 1.0f - MIN(e1, e2) / gw);
-						v += 0.025f * c * (rk_fbm(p * 2.4f, nseed + 102u, 3) - 0.5f);
+						// The bed's own setback (sharp at its top and bottom: a one-cell step, so a hard bed's
+						// underside is a real overhang), then its blocks a little in and out of it, a few fallen
+						// further back.
+						float shift = bi < int(bed_shift.size()) ? bed_shift[bi] : 0.0f;
+						shift += 0.05f * c * (bo - 0.5f) + (bo > 0.9f ? 0.12f * c : 0.0f);
+						v += shift + 0.02f * c * (rk_fbm(p * 2.4f, nseed + 102u, 3) - 0.5f);
 					} else if (family != FAMILY_SEA_PLATFORM) {
 						// No joint face is a plane at this size: blocks a metre or so across stand proud or sit back
 						// by a hand's breadth (quantised noise, so the facets meet in edges), with a lumpy face on them.

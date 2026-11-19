@@ -296,6 +296,10 @@ public:
 			r_plumes.push_back(Vector4(plume_at.x, plume_at.y, plume_at.z, plume_heat));
 		}
 	}
+	// Its smoke (WorldFire.smoke_sources): PM2.5 from the flames (emission factors by fuel, Andreae 2019) and from
+	// the smouldering duff (more per kilogram: Urbanski 2014), kg per real second.
+	void contract_fire_smoke(PackedVector4Array &r_sources) const override;
+	float get_smoke_rate() const;
 	float get_plume_heat() const { return plume_heat; }
 	Vector3 contract_fire_wind_at(const Vector3 &p_position) const override { return fire_wind ? _indraft_at(p_position, 0.0f) : Vector3(); }
 	float get_flame_length_at(const Vector3 &p_position) const; // peak, m

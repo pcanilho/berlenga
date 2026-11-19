@@ -19,6 +19,9 @@ func get_height(p: Vector3) -> float:
 		"bank":
 			# A 15 degree bank 4 m wide rising toward +x, flat above and below (mud round 10: mud slides).
 			return clampf(p.x, -2.0, 2.0) * tan(deg_to_rad(15.0))
+		"incline":
+			# A plain 6 degree slope falling toward -x, flat below x = -5 (mud round 11: gullies in ruts).
+			return maxf(p.x, -5.0) * tan(deg_to_rad(6.0))
 		"beach":
 			# A foreshore rising 1 in 12 toward +z out of still water at z = 0, with a little relief.
 			return p.z / 12.0 + 0.03 * noise.get_noise_2d(p.x * 2.0, p.z * 2.0)

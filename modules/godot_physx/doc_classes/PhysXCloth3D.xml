@@ -162,6 +162,9 @@
 		<member name="simulation_mode" type="int" setter="set_simulation_mode" getter="get_simulation_mode" enum="PhysXCloth3D.SimulationMode" default="0">
 			Which solver runs the cloth. [constant SIM_AUTO] uses the GPU deformable surface when a CUDA device is available and the built-in CPU solver otherwise. The GPU option is hidden in the inspector on machines without CUDA; a scene saved with it still loads elsewhere and falls back to the CPU solver. See [method is_gpu_accelerated].
 		</member>
+		<member name="snow_load" type="float" setter="set_snow_load" getter="get_snow_load" default="0.0">
+			Snow lying on the fabric, kg/m², added to its weight so it sags under it ([SnowBodies3D] writes it as snow settles and slides off). Takes effect without rebuilding the cloth (CPU solver).
+		</member>
 		<member name="source_mesh" type="Mesh" setter="set_source_mesh" getter="get_source_mesh">
 			A triangle mesh to simulate instead of a generated grid. Its first surface is used.
 		</member>

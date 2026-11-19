@@ -78,6 +78,8 @@ public:
 		// Mud slides (docs/ideas/mud.md, round 10): the mud's yield stress over its weight, tau_y / (rho g), m; a
 		// layer h deep holds on ground up to slide_length / h steep, past it flows down (1e3: holds anywhere).
 		float slide_length = 1e3f;
+		// Gullies (round 11): the bed shear runoff needs to start cutting the ground, Pa (sand 0.19, Shields).
+		float crit_shear = 0.19f;
 		float darken = 0.3f; // albedo lost where freshly turned
 		float gloss = 1.0f; // roughness factor where freshly turned
 		float litter = 0.0f; // m of litter on top
@@ -418,6 +420,7 @@ private:
 	LocalVector<float> water_speed; // m/s of water over the cell, 0 dry
 	LocalVector<float> cell_water; // the saturation and speed the cell was last built with (2 per cell)
 	LocalVector<float> water_depth; // m of water over the cell (the last water update's)
+	LocalVector<float> water_body_depth; // of it, the sea's, a lake's or a river's alone (WorldWater; no standing water)
 	struct Wader {
 		int64_t id = 0;
 		Vector3 axle;

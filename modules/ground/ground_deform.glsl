@@ -59,7 +59,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 water; // standing water (docs/ideas/mud.md, stage 2): rain m/s, substep s, flux damping per s, evaporation m/s
 	vec4 water2; // seepage length m, compaction's share of the conductivity kept, conductivity scale, thinnest film kept m
 	vec4 water3; // runoff channels (sand): on (1), morphological factor, bed roughness m, source landing factor
-	vec4 wade; // tyres wading (mud stage 4c): count (up to 4), unused
+	vec4 wade; // tyres wading (mud stage 4c): count (up to 4), water discs, stirs, runoff morphological factor (round 11)
 	vec4 wade_m[8]; // per tyre: (axle x, y, z, radius), (heading angle, unused, half width, speed m/s)
 	vec4 water_disc[16]; // water added (+) or taken (-) this step (add_water, wade.y of them): x, z, radius, depth a pass m
 	vec4 water_disc_mud[4]; // the clay each added disc's water carries, kg/m3 (disc k: [k / 4][k % 4])
@@ -83,7 +83,8 @@ layout(set = 0, binding = 4, std430) restrict readonly buffer Ground {
 layout(set = 0, binding = 5, std430) restrict readonly buffer Cover {
 	// Snow: per cover cell, two: (swe mm, density, crust thickness, crust burial), (new snow m, cover ground m, 0, 0).
 	// Ground: per lattice point, four: (rim share, tan repose, slumping rate, deepest dent), (darken, gloss, blown sand,
-	// deformable), (water inputs: GroundSurface3D::_gpu_cells), (mud slides: tau_y / (rho g) m, 0, 0, 0).
+	// deformable), (water inputs: GroundSurface3D::_gpu_cells), (mud slides: tau_y / (rho g) m, runoff's critical
+	// bed shear Pa (round 11), 0, 0).
 	vec4 cover_cells[];
 };
 struct Stamp {
@@ -123,7 +124,7 @@ layout(set = 0, binding = 12, std430) restrict buffer Water {
 	WaterCell water[];
 };
 layout(set = 0, binding = 13, std430) restrict buffer WaterTmp {
-	float water_tmp[]; // the shifted depth, copied back by MODE_WATER_COPY; then the faces' discharges (water_face()); then the shifted clay; then the shifted regrowth
+	float water_tmp[]; // the shifted depth, copied back by MODE_WATER_COPY; then the faces' discharges (water_face()); then the shifted clay; then the shifted regrowth; then the runoff's soil concentration (water_susp())
 };
 layout(set = 0, binding = 14, std430) restrict buffer Ledger {
 	uint ledger[4]; // add_water's discs, mm3 (cumulative): [0] takes could not find, [1] added, [2] taken
@@ -1156,12 +1157,18 @@ void water_sed_close(int i, float p_d) {
 	water[i].s.x = p_d < 1e-4 ? 0.0 : min(water[i].s.x, p_d * params.turbid.w);
 }
 
+void water_susp(int x, int z, float p_d, float p_load);
+
 void water_flux(int x, int z) {
 	int n = fn();
 	int i = z * n + x;
 	float d = water[i].w.x;
 	// The clay's concentration as this substep begins: the pipes carry it out at the rate they carry the water.
 	water[i].s.y = d > 1e-5 ? water[i].s.x / d : 0.0;
+	if (params.water3.x > 0.5) {
+		// And the soil the runoff carries (water_susp()), kept beside the faces' discharges.
+		water_tmp[5 * n * n + i] = d > 1e-5 ? water[i].s.w / d : 0.0;
+	}
 	if (d <= 0.0) {
 		water[i].flux = vec4(0.0);
 		return;
@@ -1291,6 +1298,23 @@ void water_depth(int x, int z) {
 			}
 		}
 	}
+	// The soil the runoff carries (round 11), moved as the clay is, at the faces' upwind concentrations.
+	float load = 0.0;
+	if (params.water3.x > 0.5) {
+		load = water[i].s.w - (f.x + f.y + f.z + f.w) * dt * water_tmp[5 * n * n + i];
+		if (x > 0) {
+			load += water[i - 1].flux.y * dt * water_tmp[5 * n * n + i - 1];
+		}
+		if (x < n - 1) {
+			load += water[i + 1].flux.x * dt * water_tmp[5 * n * n + i + 1];
+		}
+		if (z > 0) {
+			load += water[i - n].flux.w * dt * water_tmp[5 * n * n + i - n];
+		}
+		if (z < n - 1) {
+			load += water[i + n].flux.z * dt * water_tmp[5 * n * n + i + n];
+		}
+	}
 	vec4 m2 = ground_cell(wp, 2); // conductivity m/s, water table depth m, moisture deficit
 	if (turbid) {
 		sed = water_stir(wp, water_bed(x, z), max(d, 0.0), m2.x, sed, c0);
@@ -1304,17 +1328,20 @@ void water_depth(int x, int z) {
 		// The sea or a lake over this cell (-1): the runoff joins it.
 		water[i].w.x = 0.0;
 		water[i].s.x = 0.0;
+		water[i].s.w = 0.0;
 		return;
 	}
 	if (seep > 0.0) {
 		d = max(d + (rain + seep - (d > 0.0 ? params.water.w : 0.0)) * dt, 0.0);
 		water[i].w.x = d;
 		water_sed_close(i, d);
+		water_susp(x, z, d, load);
 		return;
 	}
 	if (m2.x <= 0.0 && d <= 0.0 && rain <= 0.0) {
 		water[i].w.x = 0.0;
 		water[i].s.x = 0.0;
+		water_susp(x, z, 0.0, load);
 		return;
 	}
 	vec4 st = state[i];
@@ -1341,6 +1368,7 @@ void water_depth(int x, int z) {
 	bool fed = src > 0.0 || level < table;
 	water[i].w.x = d < params.water2.w && !fed ? 0.0 : d;
 	water_sed_close(i, water[i].w.x);
+	water_susp(x, z, water[i].w.x, load);
 }
 
 // Runoff channels (docs/ideas/sand.md): the water moves the sand as bed load, Meyer-Peter and Mueller's
@@ -1371,13 +1399,88 @@ vec2 water_velocity(int x, int z) {
 	return lu > um && lu > 0.0 ? u * (um / lu) : u;
 }
 
-float bed_load_shear(float tau) {
+// Meyer-Peter and Mueller past the bed's own threshold: Shields' for loose sand, a cohesive soil's critical shear
+// p_tauc (Pa) where higher (round 11: gullies).
+float bed_load_shear(float tau, float p_tauc) {
 	float dg = 0.00025;
 	float theta = tau / (1650.0 * WATER_G * dg);
-	if (theta <= 0.047) {
+	float theta_c = max(0.047, p_tauc / (1650.0 * WATER_G * dg));
+	if (theta <= theta_c) {
 		return 0.0;
 	}
-	return 8.0 * sqrt(1.65 * WATER_G * dg * dg * dg) * pow(theta - 0.047, 1.5);
+	return 8.0 * sqrt(1.65 * WATER_G * dg * dg * dg) * pow(theta - theta_c, 1.5);
+}
+
+// The ground's critical shear at texel i (round 11): the cell's, halved where tyres or boots have freshly turned it
+// (loose aggregates: ruts shed several times the sediment of the untouched road, Foltz 1996), raised tenfold where
+// the sward has grown back over it (roots, Knapen et al. 2007).
+float bed_crit_shear(vec2 p_wp, int p_i) {
+	float tc = ground_cell(p_wp, 3).y;
+	float f = state[p_i].w;
+	float loose = f < 2.0 ? clamp(f, 0.0, 1.0) : 0.5;
+	return tc * (1.0 - 0.5 * loose) * (1.0 + 9.0 * clamp(water[p_i].s.z, 0.0, 1.0));
+}
+
+// Cohesive ground (round 11: gullies): runoff over soil detaches it rather than rolling it as bed load. WEPP's rill
+// detachment (Nearing, Foster, Lane and Finkner 1989), Kr (tau - tau_c), the Partheniades (1965) excess shear law, at
+// Kr 0.006 s/m (cropland's baseline; Flanagan and Nearing 1995), three times that freshly turned, over a bulk density of 1600 kg/m3; the soil goes into
+// suspension and rides the water (water[].s.w, m of bed a m2), and settles out at an aggregate's 1 mm/s where the
+// flow's shear falls under the ground's own (Krone 1962, its deposition threshold taken as the erosion one): so the
+// cut deepens where the flow gathers and the soil lands as a fan where it slows or ponds, not on the cut's own floor.
+// The share of this against the bed load goes from none on loose sand (tau_c 0.25 Pa) to all of it past 1 Pa. Bed
+// moved by the morphological factor as the bed load is; the settling at the water's own pace.
+void water_susp(int x, int z, float p_d, float p_load) {
+	int n = fn();
+	int i = z * n + x;
+	if (params.water3.x < 0.5) {
+		return;
+	}
+	vec2 wp = texel_world(x, z);
+	float load = max(p_load, 0.0);
+	float dt = params.water.y;
+	float cut = 0.0;
+	float settle = load;
+	if (p_d > 1e-4) {
+		settle = 0.0;
+		float tc = ground_cell(wp, 3).y;
+		float coh = smoothstep(0.25, 1.0, tc);
+		vec4 f = water[i].flux;
+		float fl = x > 0 ? water[i - 1].flux.y : 0.0;
+		float fr = x < n - 1 ? water[i + 1].flux.x : 0.0;
+		float fd = z > 0 ? water[i - n].flux.w : 0.0;
+		float fu = z < n - 1 ? water[i + n].flux.z : 0.0;
+		vec2 u = 0.5 * vec2((fl - f.x) + (f.y - fr), (fd - f.z) + (f.w - fu)) * texel() / p_d;
+		float um = 2.0 * sqrt(WATER_G * p_d);
+		float speed = min(length(u), um);
+		float tau = 1000.0 * WATER_G * 0.025 * 0.025 * speed * speed / pow(p_d, 1.0 / 3.0);
+		float tcl = max(bed_crit_shear(wp, i), 0.05);
+		if (coh > 0.0 && x >= 1 && z >= 1 && x < n - 1 && z < n - 1 && ground_cell(wp, 2).w >= 0.0 && ground_deformable(wp)) {
+			// Held to half a millimetre a substep, under the bed's own stability.
+			// Freshly turned ground (tread churned, st.w under 2) up to 0.018, WEPP's freshly tilled soils.
+			float fr = state[i].w;
+			float kr = 0.006 * (1.0 + 2.0 * (fr < 2.0 ? clamp(fr, 0.0, 1.0) : 0.0));
+			cut = min(coh * kr * max(tau - tcl, 0.0) / 1600.0 * dt * params.wade.w, 5e-4);
+		}
+		settle = min(load, 1e-3 * load / p_d * max(1.0 - tau / tcl, 0.0) * dt);
+	}
+	water[i].s.w = load + cut - settle;
+	float dz = settle - cut;
+	if (dz == 0.0 || isnan(dz) || isinf(dz)) {
+		return;
+	}
+	water[i].w.z -= dz;
+	vec4 st = state[i];
+	if (dz < 0.0) {
+		float r = min(st.y, -dz);
+		st.y -= r;
+		st.x = min(st.x - dz - r, 0.3);
+	} else {
+		float g = min(st.x, dz);
+		st.x -= g;
+		st.y += dz - g;
+	}
+	st.z = max(st.z, 2.0);
+	state[i] = st;
 }
 
 // The bed load (m2/s, along the flow) at each texel, into w.yw.
@@ -1411,7 +1514,10 @@ void water_erode(int x, int z) {
 				}
 				// The bed shear from the flow's own friction (Manning, n 0.025): rho g n^2 u^2 / h^(1/3).
 				float tau = 1000.0 * WATER_G * 0.025 * 0.025 * speed * speed / pow(dj, 1.0 / 3.0);
-				qv += wgt * bed_load_shear(tau) * u / speed;
+				vec2 wq = texel_world(x + dx, z + dz);
+				// Cohesive ground's share goes to suspension instead (water_susp()).
+				float loose = 1.0 - smoothstep(0.25, 1.0, ground_cell(wq, 3).y);
+				qv += wgt * loose * bed_load_shear(tau, bed_crit_shear(wq, i + dz * n + dx)) * u / speed;
 				dm += wgt * dj;
 			}
 		}
@@ -1627,7 +1733,8 @@ void main() {
 			// Muddy water (round 3): its clay in place of the turned ground's gloss, which the water's surface
 			// hides (A < 0: minus the concentration over 400 kg/m3).
 			float wd = water[i].w.x;
-			float cm = wd > 0.002 ? water[i].s.x / wd : 0.0;
+			// The soil the runoff carries counts too (round 11), at 1600 kg of it a cubic metre of bed.
+			float cm = wd > 0.002 ? (water[i].s.x + 1600.0 * water[i].s.w) / wd : 0.0;
 			if (cm > 0.5) {
 				tint.y = -min(cm / 400.0, 1.0);
 			} else if (st.w < 0.05 && water[i].s.z > 0.0) {

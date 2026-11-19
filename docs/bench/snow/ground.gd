@@ -19,6 +19,11 @@ func get_height(p: Vector3) -> float:
 		"wall":
 			# Flat ground, a 60 degree face 40 m high from x = 0 to x = 23 m, a plateau beyond.
 			return clampf(p.x * tan(deg_to_rad(60.0)), 0.0, 40.0)
+		"avalanche":
+			# A 38 degree face 80 m long (62 m high) from x = -80 m down to x = 0, a plateau above, a flat run-out
+			# below; a shallow gully along it (z = 0) so the flow gathers.
+			var t := clampf(-p.x, 0.0, 80.0) * tan(deg_to_rad(38.0))
+			return t - 4.0 * exp(-p.z * p.z / 400.0) * clampf(-p.x / 20.0, 0.0, 1.0)
 		"meadow":
 			# Gentle ground with knee-high hummocks, for the trail view.
 			return 0.25 * noise.get_noise_2d(p.x * 30.0, p.z * 30.0) + 0.03 * p.x

@@ -178,7 +178,8 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 - **Tyre clogging** (`PhysXVehicle3D.tyre_clogging`): sticky clay packs the tread until it grips like a slick, and spinning throws it off.
 - **Treads and chains** (`PhysXVehicleWheel3D.tread`): road, all-terrain, mud or chains per wheel; mud tyres and chains bite deeper and clog less in sticky clay, and each prints its own pattern in the rut.
 - **Belly drag** (`PhysXVehicle3D.belly_drag`): a car sunk past its clearance rides on its belly, is dragged by the soil and can high-centre.
-- **Mud on vehicles** (`PhysXVehicle3D.body_mud`; GroundSurface3D `mud_color`, `mud_color_map`): tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first and drying pale.
+- **Winch** (`PhysXWinch3D`: `rated_pull`, `line_speed`, `brake_hold`): a cable winch that slows under load, stalls at its rated pull and slips its brake; the cable sags and lies on the ground.
+- **Mud on vehicles** (`PhysXVehicle3D.body_mud`; GroundSurface3D `mud_color`, `mud_color_map`): tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first; it dries with the weather, cracks into curling plates and shakes off on bumps.
 - **Mud spray** (`PhysXGroundGrains3D.mud_spray`): spinning wheels fling clods of wet clay that land back in the ground.
 - **Mud splats** (`PhysXVehicle3D.add_mud_splat()`): clods that hit a vehicle stick as domed splats that drip, dry and wash off in water.
 - **Mud on plants** (`GroundSurface3D.plant_mud`): thrown clay and muddy splashes spatter grass and plants, and rain washes it off.
@@ -211,6 +212,6 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
   *Wet sand: dry prints keep sharp walls, the drained band holds a sheen, and prints at the waterline wash out to shallow dips.*
 
 - **Swash marks** (`GroundSurface3D.swash_marks`): each wave leaves a thin scalloped ridge of sand at its highest reach, and higher waves smooth older lines.
-- **Runoff channels** (`GroundSurface3D.runoff_channels`): water seeping out of a beach after the tide, and rain the ground cannot take, cuts a braided net of rills and lays the sand down at their foot.
+- **Runoff channels** (`GroundSurface3D.runoff_channels`): water seeping out of a beach after the tide, and rain the ground cannot take, cuts a braided net of rills and lays the sand down at their foot; on soil it cuts gullies along ruts and spreads a fan below, faster on softer ground.
 
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.

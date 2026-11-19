@@ -156,7 +156,9 @@ func _environment() -> void:
 		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 		env.ambient_light_color = Color(0, 0, 0)
 		env.ambient_light_energy = 0.0
-		env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
+		if not args.has("look-out"):
+			# (Looking out through a mouth the sky is in the frame: the path tracer draws its misses from it.)
+			env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
 	env.pathtracing_sky_shader_enabled = args.has("clouds")
 	env.pathtracing_enabled = not raster

@@ -2140,6 +2140,25 @@ float PhysXFireSpread3D::_duff_depth() const {
 	return depth[CLAMP((int)fuel_type, 0, FUEL_MAX - 1)];
 }
 
+float PhysXFireSpread3D::get_smoke_rate() const {
+	// PM2.5 per kg burnt: about 7 g for grass (savanna and grassland), 17 g for forest litter and crowns (temperate
+	// forest; Andreae 2019), 30 g smouldering (Urbanski 2014).
+	static const float ef[FUEL_MAX] = { 0.007f, 0.007f, 0.017f };
+	const float flaming = plume_heat / 0.75f / HEAT_CONTENT; // kg/s of fuel
+	return flaming * ef[CLAMP((int)fuel_type, 0, FUEL_MAX - 1)] + smoulder.get_rate() * 0.03f;
+}
+
+void PhysXFireSpread3D::contract_fire_smoke(PackedVector4Array &r_sources) const {
+	static const float ef[FUEL_MAX] = { 0.007f, 0.007f, 0.017f };
+	if (plume_heat > 0.0f) {
+		r_sources.push_back(Vector4(plume_at.x, plume_at.y, plume_at.z, plume_heat / 0.75f / HEAT_CONTENT * ef[CLAMP((int)fuel_type, 0, FUEL_MAX - 1)]));
+	}
+	if (smoulder.get_rate() > 0.0f) {
+		const Vector3 c = smoulder.get_centre();
+		r_sources.push_back(Vector4(c.x, c.y, c.z, smoulder.get_rate() * 0.03f));
+	}
+}
+
 void PhysXFireSpread3D::set_smouldering(bool p_v) {
 	smouldering = p_v;
 	if (!smouldering) {
@@ -2329,6 +2348,8 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_rekindled_count"), &PhysXFireSpread3D::get_rekindled_count);
 	ClassDB::bind_method(D_METHOD("get_smoulder_heat_at", "position"), &PhysXFireSpread3D::get_smoulder_heat_at);
 	ClassDB::bind_method(D_METHOD("get_smoulder_flow"), &PhysXFireSpread3D::get_smoulder_flow);
+	ClassDB::bind_method(D_METHOD("get_smoke_rate"), &PhysXFireSpread3D::get_smoke_rate);
+	ClassDB::bind_method(D_METHOD("get_plume_heat"), &PhysXFireSpread3D::get_plume_heat);
 	ClassDB::bind_method(D_METHOD("set_fire_whirls", "enabled"), &PhysXFireSpread3D::set_fire_whirls);
 	ClassDB::bind_method(D_METHOD("is_fire_whirls"), &PhysXFireSpread3D::is_fire_whirls);
 	ClassDB::bind_method(D_METHOD("set_spotting", "enabled"), &PhysXFireSpread3D::set_spotting);

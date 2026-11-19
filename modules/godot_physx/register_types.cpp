@@ -77,6 +77,7 @@
 #include "vehicle/physx_tank_3d.h"
 #include "vehicle/physx_vehicle_3d.h"
 #include "vehicle/physx_vehicle_wheel_3d.h"
+#include "vehicle/physx_winch_3d.h"
 #include "water/physx_boat_3d.h"
 #include "water/physx_buoyancy_3d.h"
 #include "water/physx_live_water_3d.h"
@@ -166,6 +167,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(GodotPhysXVehicleProbe);
 		GDREGISTER_CLASS(PhysXVehicle3D);
 		GDREGISTER_CLASS(PhysXVehicleWheel3D);
+		GDREGISTER_CLASS(PhysXWinch3D);
 		// Runtime-bridge MVP probe, not public API yet -- see vehicle/godot_physx_motorcycle_probe.h.
 		GDREGISTER_CLASS(GodotPhysXMotorcycleProbe);
 		GDREGISTER_CLASS(PhysXMotorcycle3D);

@@ -121,6 +121,12 @@
 				Returns the albedo of the snow at [param position]: 0.84 when fresh, ageing toward 0.70 when dry and 0.50 when melting.
 			</description>
 		</method>
+		<method name="get_avalanches" qualifiers="const">
+			<return type="SnowAvalanche3D" />
+			<description>
+				The [SnowAvalanche3D] it added, or [code]null[/code].
+			</description>
+		</method>
 		<method name="get_blown_flux_max" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -458,6 +464,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="avalanches_enabled" type="bool" setter="set_avalanches_enabled" getter="is_avalanches_enabled" default="true">
+			If [code]true[/code], slabs release and run as avalanches: the cover adds a [SnowAvalanche3D].
+		</member>
 		<member name="background_updates" type="bool" setter="set_background_updates" getter="is_background_updates" default="true">
 			If [code]true[/code], each update (and the world tier's turn) runs on a worker thread and its results are swapped in when it is done, so no frame waits for it. The main thread only gathers the weather the cells read first. The results are the same as with [code]false[/code], which runs each update in the frame that starts it; the getters answer from the last finished update until the next one lands.
 		</member>

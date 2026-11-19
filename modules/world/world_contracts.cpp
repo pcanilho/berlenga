@@ -539,6 +539,19 @@ Dictionary WorldFire::get_burn_changes_since(uint64_t p_since) const {
 	return d;
 }
 
+// Each fire's smoke, all of it: particulate (PM2.5) in kg per second of real time, where it rises from (the weather
+// carries it as a smoke layer that dims the sun).
+PackedVector4Array WorldFire::smoke_sources() const {
+	PackedVector4Array r;
+	if (GDVIRTUAL_CALL(_smoke_sources, r)) {
+		return r;
+	}
+	for (WorldFireProvider *f : providers) {
+		f->contract_fire_smoke(r);
+	}
+	return r;
+}
+
 void WorldFire::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_burn_changes_since", "generation"), &WorldFire::get_burn_changes_since);
 	ClassDB::bind_method(D_METHOD("burn_changed", "area"), &WorldFire::burn_changed);
@@ -558,8 +571,10 @@ void WorldFire::_bind_methods() {
 	GDVIRTUAL_BIND(_crown_scorch_at, "position");
 	ClassDB::bind_method(D_METHOD("water_repellency_at", "position"), &WorldFire::water_repellency_at);
 	ClassDB::bind_method(D_METHOD("plumes"), &WorldFire::plumes);
+	ClassDB::bind_method(D_METHOD("smoke_sources"), &WorldFire::smoke_sources);
 	GDVIRTUAL_BIND(_water_repellency_at, "position");
 	GDVIRTUAL_BIND(_plumes);
+	GDVIRTUAL_BIND(_smoke_sources);
 }
 
 // A script stub standing in as one water producer among the real ones.

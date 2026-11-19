@@ -126,6 +126,9 @@ public:
 
 	// Scans the print field now and draws (tests and tools).
 	void update_now();
+	// Snow falling off something (a roof slab, a shaken vehicle, docs/ideas/snow.md follow-up 19): p_volume m3 breaks
+	// into clumps lying on the snow within p_radius of p_at, larger in wet snow; returns how many.
+	int drop(const Vector3 &p_at, float p_radius, float p_volume, float p_wetness);
 	void clear();
 	int get_clump_count() const { return int(clumps.size()); }
 	int get_spawned_total() const { return spawned_total; }
