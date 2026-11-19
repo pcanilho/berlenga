@@ -339,6 +339,17 @@ private:
 	// rings' end band and sinking back by far_shell_range. Tiles of SHELL_TILE metres, keyed by tile.
 	bool far_shell = true;
 	float far_shell_range = 500.0f;
+
+	// Burnt ground (WorldFire.burn_age_at): the sward is gone on a fresh burn and grows back, short
+	// blades first, over burn_recovery years (the rules' own burn_recovery when they set one).
+	// Sampled once a bake on a grid over the map (cell at least 2 m), like VegetationField3D.
+	float burn_recovery = 0.7f;
+	LocalVector<float> burn_ages;
+	Rect2 burn_rect;
+	int burn_nx = 0;
+	int burn_ny = 0;
+	void _read_burn_age(TerrainDataMap3D *p_map);
+	float _burn_cover(const PlantSpecies *p_rules, float p_x, float p_z) const;
 	struct ShellTile {
 		MeshInstance3D *mi = nullptr;
 		uint32_t generation = 0;
@@ -599,6 +610,9 @@ public:
 	bool is_far_shell() const { return far_shell; }
 	void set_far_shell_range(float p_range);
 	float get_far_shell_range() const { return far_shell_range; }
+	void set_burn_recovery(float p_years);
+	float get_burn_recovery() const { return burn_recovery; }
+	float get_burn_cover_at(const Vector3 &p_global_position) const;
 	int get_shell_column_count() const { return shell_column_count; }
 	int get_shell_tile_count() const { return shell_tiles.size(); }
 	double get_build_time_msec() const { return build_msec; }
