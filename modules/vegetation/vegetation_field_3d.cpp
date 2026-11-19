@@ -315,6 +315,7 @@ void VegetationField3D::_read_sand(const TerrainGenerator3D *p_gen, PlaceSetup &
 // cells apart), and 0 under thin sand. Slip faces are raised at placement from the ground's slope.
 void VegetationField3D::_read_sand_mobility(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup) {
 	r_setup.mobility.clear();
+	r_setup.sea_depth.clear();
 	r_setup.mobility_nx = 0;
 	r_setup.mobility_ny = 0;
 	if (!p_gen || !p_gen->get_sand_sea_rect().has_area()) {
@@ -380,6 +381,23 @@ void VegetationField3D::_read_sand_mobility(const TerrainGenerator3D *p_gen, Pla
 	r_setup.mobility_nx = nx;
 	r_setup.mobility_ny = ny;
 	r_setup.mobility_rect = rect;
+	r_setup.sea_depth = depth;
+}
+
+float VegetationField3D::PlaceSetup::sea_depth_at(const Vector2 &p_xz) const {
+	if (sea_depth.is_empty()) {
+		return 0.0f;
+	}
+	const float gx = (p_xz.x - mobility_rect.position.x) / mobility_rect.size.x * (mobility_nx - 1);
+	const float gz = (p_xz.y - mobility_rect.position.y) / mobility_rect.size.y * (mobility_ny - 1);
+	if (gx < 0.0f || gz < 0.0f || gx > mobility_nx - 1 || gz > mobility_ny - 1) {
+		return 0.0f;
+	}
+	const int ix = MIN(int(gx), mobility_nx - 2), iz = MIN(int(gz), mobility_ny - 2);
+	const float fx = gx - ix, fz = gz - iz;
+	const float *r0 = &sea_depth[iz * mobility_nx + ix];
+	const float *r1 = r0 + mobility_nx;
+	return Math::lerp(Math::lerp(r0[0], r0[1], fx), Math::lerp(r1[0], r1[1], fx), fz);
 }
 
 // Burnt ground (docs/ideas/vegetation.md, "Burnt ground and regrowth"): the fire contract's years since the ground last
@@ -527,17 +545,8 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		r_setup.coast = gen && gen->has_sea_result() ? gen : nullptr;
 		r_setup.sea_y = gen ? float(gen->get_sea_level() + gen->get_height_offset()) : 0.0f;
 		_read_sand(gen, r_setup);
-		bool mobility_rule = false;
-		if (biome.is_valid()) {
-			const TypedArray<PlantSpecies> list = biome->get_species();
-			for (int i = 0; i < list.size(); i++) {
-				const Ref<PlantSpecies> sp = list[i];
-				mobility_rule = mobility_rule || (sp.is_valid() && sp->uses_sand_mobility());
-			}
-		}
-		if (mobility_rule) {
-			_read_sand_mobility(gen, r_setup);
-		}
+		// Every field on a sand sea reads it: sand plants by their mobility rule, and the rest to keep off the sand.
+		_read_sand_mobility(gen, r_setup);
 	}
 	_read_burn_age(r_setup);
 	r_setup.stone_tops = stone_top_grid;
@@ -1175,6 +1184,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					} else if (burn_recovery && suit > 0.0f) {
 						// Everything else thins on a fresh burn and closes in again over its own years.
 						suit *= sp->burn_cover(p_setup.burn_at(xz));
+					}
+					if (!sand_plant && suit > 0.0f && !p_setup.sea_depth.is_empty()) {
+						// Desert sand seas: only sand plants (RULE_SAND_MOBILITY) root in their loose sand; the rest
+						// thin out as it deepens from 5 to 30 cm.
+						suit *= 1.0f - Math::smoothstep(0.05f, 0.3f, p_setup.sea_depth_at(xz));
 					}
 					if (!sand_plant && suit > 0.0f && !p_setup.sand.is_empty()) {
 						// Loose sand (beach, dune, sand sea): no soil to root in or to hold litter.

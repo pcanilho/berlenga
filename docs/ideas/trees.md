@@ -2314,6 +2314,11 @@ taken by `scrub_shrub()` so young, mature, old, thicket and cushion forms all wo
   a 30-triangle lens; saltbush grows longer internodes and carries its leaves on fewer twigs (its twig
   tubes were most of its triangles). Far meshes: calligonum 542k to 229k, white broom 289k to 218k (pods
   in), saltbush 401k to 245k; coarsest levels 20-26k.
+- Near meshes (second pass, same bench: about 59k triangles a shrub after the first): every shrub's full
+  mesh gets a first LOD at 1.2 cm of error (about 8 m at 1080p) before TREE_LODS' 5 cm: stems as plain
+  tubes, twigs under 3 mm across left out, 70% of leaves, flowers and pods, survivors grown by 1/sqrt(0.7)
+  (Cook et al. 2007). Mature plants at that level: calligonum 767k to 512k, white broom 456k to 241k,
+  saltbush 497k to 322k. Raster at about 15 m, LOD threshold 0 against 1: mean difference 0.6/255.
 
 ### 5af. Needle cast after fire (19 Nov; PhysX's standing snags)
 

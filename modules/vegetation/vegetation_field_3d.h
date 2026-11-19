@@ -245,12 +245,16 @@ private:
 		Rect2 sand_rect;
 		float sand_at(const Vector2 &p_xz) const;
 		// Desert sand seas (PlantSpecies.RULE_SAND_MOBILITY): 0 stable to 1 moving, -1 off them, on the sand sea's
-		// own grid; read only when a species uses the rule.
+		// own grid; read whenever the generator has a sand sea.
 		LocalVector<float> mobility;
 		int mobility_nx = 0;
 		int mobility_ny = 0;
 		Rect2 mobility_rect;
 		float mobility_at(const Vector2 &p_xz) const;
+		// The sand sea's depth (m) on the same grid, read whenever the generator has a sand sea: species that are not
+		// sand plants keep off where it lies over 5 to 30 cm.
+		LocalVector<float> sea_depth;
+		float sea_depth_at(const Vector2 &p_xz) const;
 		// Years since the ground burnt (WorldFire.burn_age_at), -1 never, on a grid over the map, nearest cell; read
 		// only when the fire contract has a provider and a species uses the burn rule or recovers from fire.
 		LocalVector<float> burn;

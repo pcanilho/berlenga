@@ -1494,10 +1494,15 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				Basis b(Vector3(strike.x, 0, strike.z), Vector3(0, 1, 0), Vector3(-sp.to_land.x, 0, -sp.to_land.z)); // right-handed
 				st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
 				const Vector3 at = foot - sp.to_land * (ax.z * st.scale * 0.75f);
+				// Where a beach stands over the platform's level the sand buries it (a platform shows only where the waves
+				// keep it bare): a slab there only pokes through the sand in jagged edges, so none is laid.
+				const real_t over = MAX(gen->get_height(at), gen->get_height(foot - sp.to_land * 3.0)) - (level + 0.6);
 				st.position = Vector3(at.x, level + 0.6 - ax.y * st.scale, at.z); // above mean sea level: bare at low tide
 				st.ground = gen->get_height(at);
 				st.film = 0.6f;
-				r_stones.push_back(st);
+				if (over <= 0.2) {
+					r_stones.push_back(st);
+				}
 			}
 		} break;
 		case LAYER_LANDFORM: {
