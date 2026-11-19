@@ -616,8 +616,9 @@
 			<param index="2" name="yaw" type="float" />
 			<param index="3" name="bottom" type="float" />
 			<param index="4" name="sink" type="float" default="0.0" />
+			<param index="5" name="sole" type="bool" default="false" />
 			<description>
-				Presses a flat print [param size] wide (x) and long (z), turned by [param yaw] about up: a boot, a crate. Returns the volume moved, in m³.
+				Presses a flat print [param size] wide (x) and long (z), turned by [param yaw] about up: a crate, or with [param sole] a boot's sole (a heel and a forefoot through the waist, the toe toward +z, its tread in the floor). Returns the volume moved, in m³.
 			</description>
 		</method>
 		<method name="press_wheel">

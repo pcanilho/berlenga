@@ -401,8 +401,13 @@ void run_amount_stamp(Stamp s) {
 			st.y -= take;
 			st.x = min(st.x + a - take, c.max_dent);
 			if (ground) {
-				st.w = 1.0;
-				water[i].s.z = 0.0; // dug again: what had grown back over it is gone (mud round 6)
+				// Turned over by its depth: a skim of a millimetre or two (an avalanche's margin, a tent's tail)
+				// barely shows; 3 mm or more is fresh ground (GroundDeformField::add_amount()).
+				float f = min(a / 0.003, 1.0) * (s.c.z > 0.0 && s.c.z < 1.0 ? s.c.z : 1.0); // 0..1: a dig's tint scale
+				st.w = st.w >= 2.0 ? (f >= 1.0 ? 1.0 : st.w) : max(st.w, f);
+				if (f >= 0.5) {
+					water[i].s.z = 0.0; // dug again: what had grown back over it is gone (mud round 6)
+				}
 			}
 		} else {
 			float fill = min(st.x, a);

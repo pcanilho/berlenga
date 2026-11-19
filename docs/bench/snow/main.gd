@@ -101,6 +101,7 @@ class BodySnowStub extends WorldSnow:
 #   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
 #   --settled         (trail view) 0.4 m of settled snow (300 kg/m3) instead of fresh: prints break clumps
 #   --no-clumps       (trail view) no snow clumps beside the prints
+#   --prints-close    (trail view) 1.5 m over two boot prints (with --crust=1: the broken crust's pieces)
 #   --clumps-close    (trail view) the camera low beside the small ball's furrow
 #   --away            (trail view) the field leaves for 300 m and comes back: are the clumps kept?
 #   --sled            (trail view) a sled pulled at 4 m/s for 2 s and lifted away: its bow wave and berm
@@ -2350,6 +2351,12 @@ func _build_trail(cam: Camera3D) -> void:
 			# Down on the end of the sled's track and the berm its bow wave left.
 			cam.position = Vector3(0.2, 1.0, 5.6)
 			cam.look_at(Vector3(-2.2, 0.2, 3.4))
+	if OS.get_cmdline_user_args().has("--prints-close"):
+		# From 1.5 m over two boot prints, the sun high enough to light their floors: the pieces of a broken crust.
+		cam.position = Vector3(-1.4, 1.05, 2.35)
+		cam.look_at(Vector3(-2.6, 0.3, 1.35))
+		cam.fov = 45.0
+		sun.rotation_degrees = Vector3(-38.0, 100.0, 0.0) # higher and from the side, into the prints
 	if OS.get_cmdline_user_args().has("--clumps-close"):
 		# Low beside the small ball's furrow, looking back along it: the clumps it broke out of the rim.
 		cam.position = Vector3(-1.2, 0.8, 0.2)
@@ -2373,7 +2380,7 @@ func _build_trail(cam: Camera3D) -> void:
 	surface = SnowSurface3D.new()
 	surface.snow_cover = NodePath("../SnowCover3D")
 	surface.follow_target = NodePath("../Probe")
-	if OS.get_cmdline_user_args().has("--close"):
+	if OS.get_cmdline_user_args().has("--close") or OS.get_cmdline_user_args().has("--prints-close"):
 		# Triangles as fine as the deformation texels (6 cm), for the pieces of a broken crust.
 		surface.detail_spacing = 0.0625
 	for a in OS.get_cmdline_user_args():
@@ -2408,6 +2415,7 @@ func _build_trail(cam: Camera3D) -> void:
 	wm.material_override = dark
 	walker.add_child(wm)
 	walker.position = Vector3(-7.0, 1.5, 1.3)
+	walker.set_meta("world_contact_exclude", true) # only its boots print; the capsule is a stand-in
 	add_child(walker)
 	for k in 2:
 		var foot := Node3D.new()
@@ -2847,6 +2855,12 @@ func _build_avalanche(cam: Camera3D) -> void:
 	if powder:
 		# A wide dry slab across the face in front of the camera (left to itself the face lets go wherever it is
 		# weakest, here off to both sides of the frame, and its cloud with it).
+		# One physics tick a frame: Flow steps once a frame, so on a slow renderer the gas keeps pace with the slide
+		# (with several ticks a frame it falls behind and the cloud is only the emitters' trail).
+		Engine.max_physics_steps_per_frame = 1
+		var pflow: Node = av.get_powder_cloud().get_flow()
+		if pflow:
+			pflow.set("scattering_resolution", 0) # full: quarter averages away the billows at still sizes
 		av.trigger(Vector3(-40.0, 0, 0), 60.0)
 		surface.extent = 256.0 # the deep-snow geometry over the whole face the camera sees, flank to flank
 		# Mid-run in real time, so PhysX Flow steps the cloud with it: --at=S seconds after release (default 9).
@@ -2869,10 +2883,15 @@ func _build_avalanche(cam: Camera3D) -> void:
 			frames += 1
 		var cloud := av.get_powder_cloud()
 		print("powder: %.1f t up, %.1f t in the air, Flow %s, %d sources, front %.1f m/s" % [av.get_powder_taken() / 1000.0, av.get_suspended_mass() / 1000.0, cloud.has_flow(), cloud.get_active_sources(), av.get_max_speed()])
-		# Back and up far enough to hold the whole front, flank to flank.
-		cam.position = Vector3(92.0, snow.get_ground_height_at(Vector3(92, 0, 12)) + 15.0, 12.0)
-		cam.look_at(Vector3(-15.0, 12.0, 0.0))
-		cam.fov = 60.0
+		# Back and up far enough to hold the whole front (--head-on: from straight down the track, flank to flank).
+		if OS.get_cmdline_user_args().has("--head-on"):
+			cam.position = Vector3(92.0, snow.get_ground_height_at(Vector3(92, 0, 12)) + 15.0, 12.0)
+			cam.look_at(Vector3(-15.0, 12.0, 0.0))
+		else:
+			# Three-quarters from the side, so the head's height and the cloud trailing back up the track both show.
+			cam.position = Vector3(100.0, snow.get_ground_height_at(Vector3(100, 0, 115)) + 28.0, 115.0)
+			cam.look_at(Vector3(-25.0, 16.0, -10.0))
+		cam.fov = 66.0
 		cam.far = 1000.0
 		if traced:
 			process_mode = Node.PROCESS_MODE_ALWAYS

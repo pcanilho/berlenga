@@ -58,6 +58,7 @@ public:
 		Vector3 dir;
 		float area = 0.0f;
 		float stiffness = 0.0f;
+		float snow_stiffness = 0.0f; // The wood's own stiffness under a slow load (no floor for the wind), N m/rad.
 		float omega = 0.0f; // rad/s at scale 1.
 		float zeta = 0.1f;
 		float radius = 0.0f; // Wood radius (m).
@@ -71,6 +72,9 @@ public:
 		LocalVector<int> groups; // Per bone: first bone of its stem (shared resonant phase).
 		float vogel = -0.7f;
 		float extent = 0.0f; // Furthest bone tip from the base (m).
+		float leaf_area = 0.0f; // Carried area of the stems at the root: shares the crown's snow by bone.
+		float crown_radius = 0.5f; // Horizontal reach of the crown (m, tree space).
+		float snow_catch = 1.0f; // Share of the canopy's snow this crown holds: bare broadleaves catch on twigs only.
 		PackedFloat32Array colliders; // TreeGenerator.get_collision_capsules().
 		Ref<Mesh> mesh;
 		// Storms (docs/ideas/trees.md section 5t), from TreeGenerator's storm kit.
@@ -95,6 +99,7 @@ public:
 		// A tree the fire killed (a snag), in: its age dead (years, -1 alive). Its roots and wood rot over the years,
 		// and it fails at the rotten butt (no root plate).
 		float snag_age = -1.0f;
+		bool snow = false; // Out: the failing part broke under its snow more than the wind.
 	};
 	// Touch on one instance: each bone's extra turn (tree space, axis * angle) and its rate, and
 	// the bones that snapped off.
@@ -135,6 +140,8 @@ private:
 		LocalVector<float> base_char; // Per instance: char at the stem's foot from a fire (m), refreshed now and then.
 		LocalVector<float> snag_age; // Per instance: years since the fire killed it, -1 alive.
 		LocalVector<uint8_t> avalanche_hit; // Per instance: 1 an avalanche took its crown, 2 the whole tree.
+		LocalVector<float> snow_kg; // Per instance: snow held in the crown (kg, WorldSnow.canopy_load_at), as the wood feels it.
+		LocalVector<float> snow_creep; // Per instance: the crept part of that (kg; the wood's slow bend under a held load).
 		HashMap<int, Touch> touch;
 		struct Body {
 			RID body;
@@ -175,6 +182,14 @@ private:
 	float char_timer = 0.0f;
 	// Avalanches (WorldSnow.avalanche_peak_pressure_at, docs/ideas/trees.md 5ak).
 	bool avalanche_enabled = true;
+	// Snow-laden crowns (docs/ideas/trees.md section 5al): the crown's load from WorldSnow bends the branches and
+	// can break them; a tree that breaks or falls shakes its snow onto the pack (WorldSnow.shake_canopy).
+	bool snow_load_enabled = true;
+	float snow_creep_hours = 3.0f;
+	bool snow_frame = false; // Loaded trees get the storm check this frame (once a second).
+	int snow_breaks = 0;
+	float snow_shaken_kg = 0.0f;
+	void _snow_check(float p_dt);
 	int avalanche_breaks = 0; // Crowns snapped.
 	int avalanche_throws = 0; // Whole trees broken at the foot or thrown.
 	struct AvalancheFail {
@@ -299,6 +314,7 @@ private:
 		Transform3D world; // MultiMesh space to world.
 		float min_length = 0.0f; // Bones shorter than this (tree space) ride their parent.
 		bool storm = false; // Test the storm load this frame.
+		float snow_kg = 0.0f; // Snow on the crown (kg).
 		StormLoad load;
 	};
 	LocalVector<Job> jobs;
@@ -343,7 +359,7 @@ public:
 	// The wind a point sees: mean, gust frame and sigma (weather map or fallback).
 	WindSample sample_wind(const Vector3 &p_position, float p_height) const;
 	// The skinning transforms (in the tree's own space) of one instance at the current time.
-	void solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32_t p_seed, Transform3D *r_bones, const Touch *p_touch = nullptr, float p_min_length = 0.0f, StormLoad *r_storm = nullptr) const;
+	void solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32_t p_seed, Transform3D *r_bones, const Touch *p_touch = nullptr, float p_min_length = 0.0f, StormLoad *r_storm = nullptr, float p_snow_kg = 0.0f) const;
 
 	// A MultiMesh of rigged trees at rest: bones_per_instance records per placement.
 	static Ref<MultiMesh> make_multimesh(const Ref<Mesh> &p_mesh, const TypedArray<Transform3D> &p_transforms, const PackedColorArray &p_custom_data = PackedColorArray());
@@ -393,6 +409,13 @@ public:
 	void set_avalanche_enabled(bool p_enabled) { avalanche_enabled = p_enabled; }
 	bool is_avalanche_enabled() const { return avalanche_enabled; }
 	int get_avalanche_break_count() const { return avalanche_breaks; }
+	void set_snow_load_enabled(bool p_enabled) { snow_load_enabled = p_enabled; }
+	bool is_snow_load_enabled() const { return snow_load_enabled; }
+	void set_snow_creep_hours(float p_hours) { snow_creep_hours = MAX(p_hours, 0.0f); }
+	float get_snow_creep_hours() const { return snow_creep_hours; }
+	int get_snow_break_count() const { return snow_breaks; }
+	float get_snow_shaken_kg() const { return snow_shaken_kg; }
+	float get_instance_snow_kg(Node *p_target, int p_instance) const;
 	int get_avalanche_throw_count() const { return avalanche_throws; }
 	int get_canopy_holes_cut() const { return canopy_holes_cut; }
 	static float avalanche_strength(float p_stem_diameter, bool p_crown);

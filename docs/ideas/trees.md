@@ -2464,6 +2464,41 @@ dense flow then powder).
   and braking, rain and wind see the lane.
 - Bench: `--storm --avalanche-test` (WorldSnow/WorldGround stubs, 8 checks) and
   `--storm --avalanche=P` frames. Old 34 m open-grown spruce (D 1.37 m) holds to ~80 kPa.
+### 5al. Snow-laden crowns (19 Nov; Paulo's pick)
+
+Snow keeps the mass. `SnowCover3D` intercepts (Hedstrom and Pomeroy 1998), unloads (Roesch et al. 2001, CLM5
+rates) and publishes `WorldSnow.canopy_load_at` (kg per m2 of ground), and crown materials whiten from the catch
+map. Trees keep no copy of the snow: they read the load and do what wood does with it (`TreeWind3D.snow_load_enabled`,
+on). Contract lines `canopy_load_at`, `canopy_capacity_at`, `shake_canopy` agreed with snow and world-links (baf901d4).
+- **Load per tree.** Once a second each crown holds L / C kg per m2 of its spread pi R^2 (C =
+  `WorldWeather.canopy_closure_at`, at least 0.3; R the generator's drip-line radius, mesh meta
+  `tree_crown_radius`), times its catch: bare broadleaves hold some 15% of what conifers do (mesh meta
+  `tree_foliage`, the leaf share the mesh was built with; Hedstrom and Pomeroy on leafless aspen), in leaf all of it.
+- **Droop.** That load is shared over the bones by carried leaf area (`RIG_AREA`) and bends each by r x F / k,
+  k the wood's own stiffness (`Bone.snow_stiffness`: the wind's design floor stands for the gust-stiffened crown,
+  not for slow loads; kept from sagging past 0.5 rad under the bone's own weight). Wood creeps under a held
+  load: softwoods add about 34% of the instant bend over hours (Kelvin retardation spectra peaking at 1-10 h;
+  Ray and Bret-Harte 2019, Front. Plant Sci. 10:59), one first-order step of `snow_creep_hours` (3; 0 off).
+  Bench: a Norway spruce's branch ends bow 3 degrees at 4 kg/m2, 11 at 15 (a full canopy; Schmidt and Pomeroy
+  1990 measured 10-30), 12.5 crept, 25 at 60.
+- **Breakage.** The snow's weight joins the wind in the storm check; loaded trees are checked once a second,
+  calm or not. Each part is built to hold its share of 35 kg/m2 of crown (conifers; wet-snow damage from about
+  20-50, Peltola et al. 1999, Nykanen et al. 1997) or 12 (broadleaves, which meet snow bare: one in leaf breaks
+  under an early or late snow), the defects taking the weakest from about 23. A part bowed more by snow than
+  pushed by wind falls the way it leans. Bench: at 15 kg/m2 a Scots pine may lose a thin limb, nothing more; at
+  60, tops and limbs go (11 breaks).
+- **Shake.** A break or fall throws the crown's snow onto the pack: `WorldSnow.shake_canopy` at the tree, the
+  broken part's share of the leaf area (all of it for a felled tree). `get_snow_shaken_kg`.
+- Bench: `--storm --snow-test` (5 checks; WorldSnow stub snow_load_stub.gd), `--storm --snow=L` to look.
+- **Caps as geometry.** The generator records cap sites on the upper side of conifer sprays and broad limbs
+  (mesh meta `tree_snow_caps`: bone, position, up, size). Near the camera, TreeWind3D places shared lumpy
+  cap pads there (a few noise shapes, so nothing repeats), riding their bones and as thick as the load. They
+  are a MultiMesh, so the path tracer sees real geometry, not a vertex offset it would ignore.
+- **Unloading.** Where a tree's load drops (snow's own unloading, a gust, a snap, a touch), its caps let go:
+  they fall as clumps with a powder trail and land through `SnowClumps3D.drop`. A shake from outside the
+  weather model (a snap, a thrown tree, an avalanche, a body) asks snow to move the mass
+  (`WorldSnow.shake_canopy`, proposed to the snow thread 19 Nov).
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

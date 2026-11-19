@@ -1227,7 +1227,14 @@ float SnowCover3D::shake_canopy(Vector3 p_position, float p_radius, float p_shar
 		for (int x = x0; x <= x1; x++) {
 			const Vector2 c(r.position.x + (x + 0.5f) * cs, r.position.y + (z + 0.5f) * cs);
 			if (c.distance_to(at) <= rad + cs * 0.5f) {
-				kg += pub.canopy_load[z * n + x] * share * cs * cs; // mm of water = kg/m2
+				// What earlier shakes queued on this cell since the last update has already left it.
+				float left = pub.canopy_load[z * n + x];
+				for (const CanopyShake &q : canopy_shakes) {
+					if (c.distance_to(q.center) <= q.radius + cs * 0.5f) {
+						left *= 1.0f - q.share;
+					}
+				}
+				kg += left * share * cs * cs; // mm of water = kg/m2
 			}
 		}
 	}
@@ -1269,6 +1276,9 @@ void SnowCover3D::_apply_canopy_shakes() {
 				const float drop = cell_canopy_load[i] * s.share;
 				cell_canopy_load.write[i] -= drop;
 				_deposit(i, drop, 150.0f);
+				// It whitens the pack as new snow does (the step's own unloading lands as snowfall).
+				float &alb = cell_albedo.write[i];
+				alb += (ALBEDO_FRESH - alb) * MIN(drop / SNOW_REFRESH_MM, 1.0f);
 			}
 		}
 	}
