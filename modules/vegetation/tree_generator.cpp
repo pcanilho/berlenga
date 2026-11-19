@@ -4444,16 +4444,21 @@ BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt,
 BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt, float p_end) {
 	const float x = p_u * p_cols;
 	auto wrap = [&](int i) { return ((i % p_cols) + p_cols) % p_cols; };
-	// Each fissure wanders round its own place, so the columns differ in width.
-	auto bound = [&](int i) { return float(i) + 0.35f * (bark_hash(wrap(i), 6, p_salt) - 0.5f) + 0.5f * bark_fbm(float(wrap(i)) / p_cols, p_v, p_cols, 18, 3, p_salt + 13u); };
+	// Each fissure wanders round its own place, so the columns differ in width. Round 20 (docs,
+	// 19 Nov: straight columns of near-identical plates read as stacked bricks): set off further
+	// from the even spacing (plates two to three times as wide as their neighbours) and swinging
+	// slowly over a metre or so as well, so the columns narrow and widen and two fissures may
+	// touch and run on as one.
+	auto bound = [&](int i) { return float(i) + 0.6f * (bark_hash(wrap(i), 6, p_salt) - 0.5f) + 0.5f * bark_fbm(float(wrap(i)) / p_cols, p_v, p_cols, 18, 3, p_salt + 13u) + 0.6f * bark_fbm(float(wrap(i)) / p_cols + 0.37f, p_v, p_cols, 3, 2, p_salt + 17u); };
 	// A fissure that has not opened over a stretch: the plates either side are one there, and
 	// the breaks across them end on it in T junctions, as real crack networks do. It narrows to
 	// its end rather than stopping (a hard stop drew a straight step across the plate).
 	auto shut = [&](int i) { return Math::smoothstep(-0.12f, -0.24f, bark_fbm(float(wrap(i)) / p_cols, p_v, p_cols, 8, 2, p_salt + 41u)); };
 	int c = int(Math::floor(x));
-	if (x < bound(c)) {
+	for (int it = 0; it < 3 && x < bound(c); it++) {
 		c--;
-	} else if (x >= bound(c + 1)) {
+	}
+	for (int it = 0; it < 3 && x >= bound(c + 1); it++) {
 		c++;
 	}
 	const float l = bound(c), r = bound(c + 1);
@@ -4479,29 +4484,46 @@ BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt
 	// lined the plates up into vertical strips.)
 	constexpr int S = 6;
 	const float phase = bark_hash(ci, 2, p_salt + 3u);
-	const float tilt = 0.5f * (bark_hash(ci, 4, p_salt + 3u) - 0.5f);
-	const float t = p_v * S + phase * S + tilt * (x - 0.5f * (l + r)) + 0.35f * bark_fbm(p_u, p_v, p_cols * 3, 14, 2, p_salt + 29u);
+	const float t = p_v * S + phase * S + 0.35f * bark_fbm(p_u, p_v, p_cols * 3, 14, 2, p_salt + 29u);
 	const int k = int(Math::floor(t));
-	auto brk = [&](int j, float &r_at) {
-		const int jw = ((j % S) + S) % S;
-		r_at = float(j) + 0.5f * (bark_hash(ci * S + jw, 7, p_salt + 5u) - 0.5f);
-		return jw == 0 || bark_hash(ci * S + jw, 8, p_salt + 5u) > 0.27f;
+	const float dx = x - 0.5f * (l + r); // Across the column, in column widths.
+	// Round 20 (docs, 19 Nov: breaks lined up across neighbouring columns into a ladder): each
+	// break runs at its own angle, up to about 35 degrees either way, and bends a little across
+	// the plate, so breaks meet the furrows at varied angles and plates end in skewed, uneven
+	// edges. Its distance is measured square to it (taken up the stem, a slanted break thinned).
+	const float to_m = float(p_cols) / float(S); // A slot's height in column widths.
+	struct Brk {
+		bool on;
+		float at, slope; // at: where it crosses this x, in slots; slope: rise per column width, in slots.
 	};
-	float below = -1e9f, above = 1e9f;
+	auto brk = [&](int j) {
+		const int jw = ((j % S) + S) % S;
+		const uint32_t id = uint32_t(ci * S + jw);
+		Brk b;
+		b.on = jw == 0 || bark_hash(id, 8, p_salt + 5u) > 0.27f;
+		const float tilt = 1.4f * (bark_hash(id, 4, p_salt + 7u) - 0.5f) / to_m; // tan 35 = 0.7
+		const float bend = 0.8f * (bark_hash(id, 9, p_salt + 7u) - 0.5f) / to_m;
+		b.at = float(j) + 0.5f * (bark_hash(id, 7, p_salt + 5u) - 0.5f) + tilt * dx + bend * dx * dx;
+		b.slope = (tilt + 2.0f * bend * dx) * to_m;
+		return b;
+	};
+	float below_d = 1e9f, above_d = 1e9f;
 	int below_j = k - 4;
 	for (int j = k - 4; j <= k + 4; j++) {
-		float at;
-		if (!brk(j, at)) {
+		const Brk b = brk(j);
+		if (!b.on) {
 			continue;
 		}
-		if (at <= t && at > below) {
-			below = at;
+		const float d = (t - b.at) * to_m / Math::sqrt(1.0f + b.slope * b.slope);
+		if (d >= 0.0f && d < below_d) {
+			below_d = d;
 			below_j = j;
-		} else if (at > t && at < above) {
-			above = at;
+		} else if (d < 0.0f && -d < above_d) {
+			above_d = -d;
 		}
 	}
-	const float across = MIN(t - below, above - t) * float(p_cols) / float(S) + fade;
+	const float below = t - below_d / to_m, above = t + above_d / to_m; // For the plate's middle, roughly.
+	const float across = MIN(below_d, above_d) + fade;
 	BarkCell cell;
 	cell.edge = MIN(side, across * p_end);
 	cell.f1 = side;
@@ -4669,7 +4691,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// thin deep slash (docs, 19 Nov).
 					// Round 18 (docs, 19 Nov: plates as soft round dents): cross breaks are narrow, sharp
 					// cracks, about a fissure's own width, not wide soft grooves.
-					open = MIN(MAX(Math::smoothstep(0.0f, crack_w, c.f1 + n), 0.85f * c.shallow), 0.12f + 0.88f * Math::smoothstep(0.0f, crack_w * 1.1f, c.cross + n));
+					open = MIN(MAX(Math::smoothstep(0.0f, crack_w, c.f1 + n), 0.85f * c.shallow), 0.12f + 0.88f * Math::smoothstep(0.0f, crack_w * 0.7f, c.cross + n));
 					furrow[k] = (1.0f - Math::smoothstep(0.0f, crack_w * 2.5f, c.f1 + n)) * (1.0f - c.shallow);
 				}
 				// Flaking bark is mostly smooth: only a fallen flake leaves an edge, around a shallow
@@ -4797,7 +4819,9 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// centimetres across that overlap downward, standing at their own heights with
 					// soft-edged steps between (shingles, as the scaly family; a few walls merged so
 					// the scales are irregular).
-					const float valley = Math::pow(CLAMP(open, 0.0f, 1.0f), 0.7f);
+					// Round 20 (docs, 19 Nov: plates as soft rounded pillows): the wall steepens and the
+					// face flattens sooner, so each plate has a crisp rim.
+					const float valley = Math::pow(CLAMP(open, 0.0f, 1.0f), 0.45f);
 					// Round 9 (docs, 18 Nov: pointed, feather-like tongues stacked in rows): the scales'
 					// outlines are broken and irregular, not shingles. The cell lattice is warped both
 					// ways (domain warping; Quilez 2002), and each scale stands at its own level with a

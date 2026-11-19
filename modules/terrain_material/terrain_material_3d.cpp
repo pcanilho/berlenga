@@ -361,8 +361,11 @@ vec3 tm_grain_n(vec2 x) {
 		if (grain) {
 			c += R"(vec3 tm_sand_grain(vec3 p, float fp, inout vec3 albedo) {
 	vec3 dn = vec3(0.0);
+	// Dry sand has no relief of its own at these scales (its grains are under half a millimetre; the
+	// centimetre relief is the wind ripples', GroundSurface3D): the octaves are mostly tone, with only a faint
+	// tilt left. At full strength the 3.5 cm octave lit as an even stamp of dots under a low sun.
 	const float L[3] = float[3](0.035, 0.014, 0.006);
-	const float S[3] = float[3](0.10, 0.09, 0.07);
+	const float S[3] = float[3](0.0, 0.03, 0.03);
 	for (int k = 0; k < 3; k++) {
 		float f = 1.0 - smoothstep(0.25 * L[k], 0.6 * L[k], fp);
 		if (f <= 0.0) {
