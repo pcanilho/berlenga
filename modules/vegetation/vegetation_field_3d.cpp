@@ -3611,7 +3611,9 @@ void VegetationField3D::_stream_update(double p_delta) {
 			continue;
 		}
 		WorkerThreadPool::get_singleton()->wait_for_task_completion(job->task);
-		if (_tile_distance(job->tile, ts, centre) <= stream_radius + ts * 1.5f && !stream_tiles.has(job->tile)) {
+		StreamTile **existing = stream_tiles.getptr(job->tile);
+		StreamTile *old_tile = (existing && (*existing)->stale) ? *existing : nullptr;
+		if (_tile_distance(job->tile, ts, centre) <= stream_radius + ts * 1.5f && (!existing || old_tile)) {
 			StreamTile *t = memnew(StreamTile);
 			t->out = job->out[0];
 			t->nodes.resize(species_count);
@@ -3619,7 +3621,26 @@ void VegetationField3D::_stream_update(double p_delta) {
 			for (int s = 0; s < species_count; s++) {
 				t->committed[s] = false;
 			}
-			stream_tiles.insert(job->tile, t);
+			if (old_tile) {
+				// A replacement (holes or burn ages changed): what the old tile shows is committed at once and
+				// the old instances go in the same frame, so no plant pops out and back in.
+				for (int s = 0; s < species_count; s++) {
+					if (old_tile->committed[s]) {
+						_commit_species(stream_setup, t->out, s, t->nodes[s]);
+						t->committed[s] = true;
+					}
+					_stream_free_species(old_tile, s);
+				}
+				plant_count -= old_tile->out.count;
+				if (stream_maps_job) {
+					stream_graveyard.push_back(old_tile);
+				} else {
+					memdelete(old_tile);
+				}
+				*existing = t;
+			} else {
+				stream_tiles.insert(job->tile, t);
+			}
 			plant_count += t->out.count;
 			stream_maps_dirty = true;
 			shelter_dirty = true;
@@ -3639,13 +3660,13 @@ void VegetationField3D::_stream_update(double p_delta) {
 		const Rect2 near = holes_dirty.grow(stream_setup.deadwood_reach + stream_setup.max_footprint + OBSTACLE_MARGIN);
 		for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
 			if (Rect2(Vector2(kv.key) * ts, Vector2(ts, ts)).intersects(near)) {
-				gone.push_back(kv.key);
+				kv.value->stale = true; // Placed again; the old one shows until the new one is in.
 			}
 		}
 		holes_dirty = Rect2();
 	}
-	// Burn ages changed: the grid samples the area again (all of it when it held no burn) and the tiles there go,
-	// to be placed again with the new ages.
+	// Burn ages changed: the grid samples the area again (all of it when it held no burn) and the tiles there are
+	// placed again with the new ages, each swapped in when its replacement is ready.
 	if (burn_dirty.has_area() && stream_jobs.is_empty()) {
 		PlaceSetup &su = stream_setup;
 		if (su.burn.is_empty() || burn_dirty.encloses(su.rect)) {
@@ -3668,8 +3689,8 @@ void VegetationField3D::_stream_update(double p_delta) {
 		const float cell = su.burn.is_empty() ? 2.0f : su.burn_rect.size.x / (su.burn_nx - 1);
 		const Rect2 near = burn_dirty.grow(cell + su.max_footprint);
 		for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
-			if (Rect2(Vector2(kv.key) * ts, Vector2(ts, ts)).intersects(near) && !gone.has(kv.key)) {
-				gone.push_back(kv.key);
+			if (Rect2(Vector2(kv.key) * ts, Vector2(ts, ts)).intersects(near)) {
+				kv.value->stale = true; // Placed again; the old one shows until the new one is in.
 			}
 		}
 		burn_dirty = Rect2();
@@ -3741,7 +3762,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 	// Missing tiles within the radius, nearest first, as many at once as there are workers.
 	const int max_jobs = MAX(1, WorkerThreadPool::get_singleton()->get_thread_count());
 	if (int(stream_jobs.size()) < max_jobs && !holes_dirty.has_area() && !burn_dirty.has_area()) {
-		const int r = int(Math::ceil(stream_radius / ts)) + 1;
+		const int r = int(Math::ceil(stream_radius / ts)) + 2;
 		const Vector2i ct(int(Math::floor(centre.x / ts)), int(Math::floor(centre.y / ts)));
 		const Rect2i map_tiles(Vector2i(int(Math::floor(rect.position.x / ts)), int(Math::floor(rect.position.y / ts))),
 				Vector2i(int(Math::ceil((rect.position.x + rect.size.x) / ts)) - int(Math::floor(rect.position.x / ts)),
@@ -3750,12 +3771,13 @@ void VegetationField3D::_stream_update(double p_delta) {
 		for (int dz = -r; dz <= r; dz++) {
 			for (int dx = -r; dx <= r; dx++) {
 				const Vector2i tile = ct + Vector2i(dx, dz);
-				if (!map_tiles.has_point(tile) || stream_tiles.has(tile)) {
+				const StreamTile *const *have = stream_tiles.getptr(tile);
+				if (!map_tiles.has_point(tile) || (have && !(*have)->stale)) {
 					continue;
 				}
 				const float d = _tile_distance(tile, ts, centre);
-				if (d > stream_radius) {
-					continue;
+				if (d > stream_radius + (have ? ts * 1.5f : 0.0f)) {
+					continue; // A stale tile is replaced as far out as tiles are kept.
 				}
 				bool queued = false;
 				for (const StreamJob *job : stream_jobs) {

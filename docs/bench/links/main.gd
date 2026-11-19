@@ -58,6 +58,14 @@ class SiltPondStub extends WorldWater:
 		return load
 
 
+# A ground stub taking runoff loads.
+class RunoffStub extends WorldGround:
+	var ash := 0.0
+
+	func _add_runoff_load(_p: Vector3, _mineral: float, a: float) -> void:
+		ash += a
+
+
 class PoolStub extends WorldWater:
 	func _height_at(p: Vector3) -> float:
 		return -5.0 if p.x < 0.0 else -INF
@@ -501,6 +509,16 @@ func _contract_tests() -> void:
 	m.queue_free()
 	WorldContracts.clear_overrides()
 	await get_tree().physics_frame
+	# Runoff load: dropped quietly with no runoff producer, taken by a stub.
+	var gr: WorldGround = WorldContracts.get_ground()
+	var had_runoff := gr.has_runoff()
+	gr.add_runoff_load(Vector3(5, 0, 0), 1.0, 1.0)
+	var rs := RunoffStub.new()
+	WorldContracts.set_ground(rs)
+	WorldContracts.get_ground().add_runoff_load(Vector3(5, 0, 0), 0.0, 0.5)
+	WorldContracts.get_ground().add_runoff_load(Vector3(6, 0, 0), 0.0, 0.25)
+	_check("contracts: runoff loads reach the runoff producer (a stub here), none without one", rs.ash == 0.75 and rs.has_runoff() and not had_runoff, "%.2f kg ash" % rs.ash)
+	WorldContracts.clear_overrides()
 	# Sediment: a load goes to the water that answers where it enters, and that water reports it.
 	WorldContracts.clear_overrides()
 	var pond := SiltPondStub.new()

@@ -1280,7 +1280,7 @@ float PhysXFireSpread3D::get_water_repellency_at(const Vector3 &p_position) cons
 // Smith et al. 2011; ash is the first thing it moves, Cerda and Doerr 2008), each cell giving up its ash to the flow
 // leaving it (q / cell). Once a second, the runoff read once per metre tile.
 void PhysXFireSpread3D::_wash_ash(float p_delta) {
-	const WorldGround *gr = WorldContracts::ground();
+	WorldGround *gr = WorldContracts::ground();
 	if (!gr || !gr->has_provider() || t_ignite.is_empty() || total_burnt <= 0.0f) {
 		return;
 	}
@@ -1302,6 +1302,7 @@ void PhysXFireSpread3D::_wash_ash(float p_delta) {
 				continue;
 			}
 			const float take = 30.0f * q / cell_size * p_delta; // kg/m2
+			const float before = ash_washed;
 			for (int z = tz; z < MIN(tz + tile, nz); z++) {
 				for (int x = tx; x < MIN(tx + tile, nx); x++) {
 					const uint32_t i = z * nx + x;
@@ -1313,6 +1314,10 @@ void PhysXFireSpread3D::_wash_ash(float p_delta) {
 					ash_blown[i] += lift;
 					ash_washed += lift * cell_area;
 				}
+			}
+			// Into the runoff that carries it to the streams (WorldGround.add_runoff_load, kg since the last call).
+			if (ash_washed > before) {
+				gr->add_runoff_load(wp, 0.0f, ash_washed - before);
 			}
 		}
 	}

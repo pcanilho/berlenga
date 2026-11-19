@@ -620,6 +620,9 @@ Live fires (19 Nov): the fire contract's change log (WorldFire.burn_changed(area
 checked twice a second. A streamed field samples its burn grid again over the changed area, once no tile is
 being placed, and places the tiles over it again (as for cave holes); a populated field populates again.
 Bench vegetation `--burn=live`: 23 plants, 0 on the fresh burn, 11 at half the recovery, 23 once it goes.
+Replaced tiles (burn or cave holes) keep showing until their replacement is placed: StreamTile.stale, and when
+the new tile comes back the species the old one showed are committed and the old instances freed in the same
+frame, as grass swaps its tiles. The bench counts the unburnt plants beside the scar every frame: 680, never fewer.
 
 ## Arid ground: plants and crust on the desert sand seas (Paulo's pick 17 Nov; built 18 Nov)
 

@@ -130,7 +130,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Fire age → trees cast dead needles | linked (19 Nov) | shader global `fire_age_map` | PhysX ebdad64b |
 | Fire → regrowth (burnt ground greens again) | linked (19 Nov) | WorldFire `burn_age_at` (fires in play, WorldBurnScar3D) | VegetationField3D: RULE_BURN_AGE, PlantSpecies.burn_recovery (38c29f47); GrassField3D green-up (30b7085a, a7c6a8fb); both refresh through the burn change log (VegetationField3D 0197e5b2, vegetation bench `--burn=live`) |
 | Burnt ground → runoff (water-repellent soil, ash washed off) | linked (19 Nov) | WorldFire `water_repellency_at`, WorldGround `runoff_at` | PhysX 837fea90 |
-| Ash, silt runoff → stream colour | in work | WorldWater `add_sediment`, `sediment_at` | contract in (world links); rivers and lakes carry and shade it (Valence); runoff delivers the load where it reaches water |
+| Ash, silt runoff → stream colour | in work | WorldGround `add_runoff_load` → runoff (WeatherRunoff3D) → WorldWater `add_sediment`, `sediment_at` | contracts in (world links); PhysX puts washed ash on the runoff (5f14b542); Valence routes it and carries and shades it in rivers and lakes |
 | Weather wind → free-standing Flow smoke | linked (18 Nov) | wind | `PhysXFlow3D.weather_wind` (wind work) |
 
 ### Cloth, hair, bodies

@@ -4362,6 +4362,8 @@ float bark_fbm(float p_x, float p_y, int p_px, int p_py, int p_octaves, uint32_t
 // cell's id and its site.
 struct BarkCell {
 	float f1 = 1e9f;
+	float cross = 1e9f; // bark_fracture_columns: distance to the nearest cross break alone (end-weighted).
+	float shallow = 0.0f; // bark_fracture_columns: how far the nearest fissure has shut (0 open, 1 shut).
 	float edge = 1e9f;
 	uint32_t id = 0;
 	uint32_t across = 0; // The neighbour across the nearest edge.
@@ -4456,9 +4458,14 @@ BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt
 	const float l = bound(c), r = bound(c + 1);
 	// Distance to the nearest fissure, a shut one counting as farther by how shut it is (the same
 	// sum from either side of it, so nothing steps where the columns change).
-	float side = 1e9f;
+	float side = 1e9f, side_shut = 0.0f;
 	for (int i = c - 1; i <= c + 2; i++) {
-		side = MIN(side, Math::abs(x - bound(i)) + 1.5f * shut(i));
+		const float sh = shut(i);
+		const float d = Math::abs(x - bound(i)) + 1.5f * sh;
+		if (d < side) {
+			side = d;
+			side_shut = sh;
+		}
 	}
 	// Cross breaks fade out toward a shut fissure, so on a joined plate they end in a taper rather
 	// than a square notch where the columns meet.
@@ -4494,6 +4501,9 @@ BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt
 	const float across = MIN(t - below, above - t) * float(p_cols) / float(S) + fade;
 	BarkCell cell;
 	cell.edge = MIN(side, across * p_end);
+	cell.f1 = side;
+	cell.cross = across * p_end;
+	cell.shallow = MAX(side_shut, Math::smoothstep(0.0f, 1.5f, fade));
 	cell.id = uint32_t(ci * 64 + ((below_j % S) + S) % S);
 	cell.site = Vector2(0.5f * (l + r), (0.5f * (below + above) - phase * S) / S);
 	return cell;
@@ -4638,6 +4648,17 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				const float crack_w = L.crack * (0.5f + 2.0f * (bark_fbm(u, v, 6 * F, 3 * F, 2, salt + 33u) + 0.5f));
 				const float ragged = c.edge + (p_kind == BARK_PINASTER ? 0.22f : 0.12f) * bark_fbm(u, v, 24 * F, 24 * F, 3, salt + 81u) + (p_kind == BARK_FLAKING ? 1.2f * bark_fbm(u, v, 8, 8, 2, salt + 83u) : 0.0f);
 				float open = Math::smoothstep(0.0f, crack_w, ragged);
+				if (p_kind == BARK_PINASTER) {
+					// Cross breaks are shallower than the fissures (the strips break across
+					// through the outer plates only): a wide, soft groove a third of the fissure's
+					// depth, not a cliff (docs, 19 Nov: hard dark slash notches, deep cross grooves in
+					// shadow under the plate above).
+					// Taken as the lower of the two, so the depth stays continuous where they meet.
+					const float n = ragged - c.edge;
+					// A fissure shallows as it shuts, so its tapered end is a fading groove, not a
+					// thin deep slash (docs, 19 Nov).
+					open = MIN(MAX(Math::smoothstep(0.0f, crack_w, c.f1 + n), 0.85f * c.shallow), 0.55f + 0.45f * Math::smoothstep(0.0f, crack_w * 1.3f, c.cross + n));
+				}
 				// Flaking bark is mostly smooth: only a fallen flake leaves an edge, around a shallow
 				// scar of fresh, warmer inner bark (sycamore, plane, horse chestnut).
 				const bool scar = scar_cut > 0.0f && bark_hash(int(c.id), 5, salt + 43u) > scar_cut; // 0 in the crack, 1 on the plate.
@@ -8818,6 +8839,26 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 					const Vector3 b0 = at + up * (len * at_u);
 					const Vector3 bd = bq == 0 ? up : (up * 0.75f + sd.rotated(up, bq * 2.4f) * 0.6f).normalized();
 					const float bl = bq == 0 ? len : len * Math::lerp(0.55f, 0.3f, at_u);
+					if (far_leaves) {
+						// The far mesh (split from the near one, seen from beyond the near range): each
+						// spike branch as two crossed slivers in the fruit's tone, the length and width
+						// of its clustered valves, no stalk (a fraction of a pixel there). About a tenth
+						// of the near panicle's triangles (vegetation desert bench, 19 Nov).
+						const Color tone = c0 * Math::lerp(0.9f, 1.04f, cr.randf());
+						const Vector3 ax = bd.cross(sd).normalized();
+						for (int half = 0; half < 2; half++) {
+							const Vector3 m0 = b0 + bd * (bl * (0.15f + 0.425f * half)), m1 = m0 + bd * (bl * 0.425f);
+							const float w = Math::lerp(0.0045f, 0.006f, ripe);
+							for (int cross_q = 0; cross_q < 2; cross_q++) {
+								const Vector3 side = (cross_q == 0 ? sd : ax) * w;
+								const int q0 = vert(m0 - side * 0.6f, Vector2(), tone * 0.9f), q1 = vert(m0 + side * 0.6f, Vector2(), tone * 0.9f);
+								const int q2 = vert(m1 + side, Vector2(), tone), q3 = vert(m1 - side, Vector2(), tone);
+								tri(q0, q1, q2);
+								tri(q0, q2, q3);
+							}
+						}
+						continue;
+					}
 					stalk(b0, b0 + bd * bl, bq == 0 ? 0.0009f : 0.0006f, axis_c);
 					// Clusters every 11-13 mm along the spike, three valve pairs each.
 					const int clusters = MAX(2, int(bl / 0.011f));
@@ -14962,6 +15003,116 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					const int i = i0 + k;
 					if (root_w[i] > 0.0f || root_ratio[i] != 1.0f) {
 						uw[p_part.z + i].x += root_sda[i] * dudang * (root_ratio[i] - 1.0f);
+					}
+				}
+			}
+		}
+		// Guided UV relaxation over the swept part (pine round 15; docs, 19 Nov: the flare still
+		// smeared in swirls). The per-column arc length and per-ring spread above treat v and u
+		// separately, so where a root's flank turns the two shear against each other and the tile
+		// swirls. Each swept vertex's UV is solved from its neighbours so that every grid edge
+		// maps to its own length round the stem (u, along the azimuth) and up the surface (v,
+		// across it), at the stem's own scale: a guided parameterization (a discrete Poisson
+		// solve of a target gradient field, as in Ray et al. 2006, Periodic Global
+		// Parameterization; Gauss-Seidel), the unswept rings fixed as the boundary. The tile then
+		// keeps its size and aspect over the flare and the roots instead of stretching.
+		{
+			const int sides = ring - 1;
+			Vector2 *uw = r_b.uvs.ptrw();
+			// The stem's scale: u per metre round, v per metre up, from the unswept stem just above
+			// the swept rings (the tube runs on to the shoot's tip, where one tile goes round a
+			// twig: measured there the scale was thousands of times too fine).
+			int top_moved = -1;
+			for (int i = 0; i < p_part.w; i++) {
+				if (moved[i]) {
+					top_moved = MAX(top_moved, i / ring);
+				}
+			}
+			const int rs = MIN(top_moved + 2, rings - 1);
+			float su = 0.0f, sv = 0.0f;
+			int nsu = 0, nsv = 0;
+			auto e_az = [&](const Vector3 &p_p) {
+				const Vector2 rel(p_p.x - p_axis.x, p_p.z - p_axis.z);
+				const float l = rel.length();
+				return l > 1e-6f ? Vector3(-rel.y / l, 0.0f, rel.x / l) : Vector3(1, 0, 0);
+			};
+			auto t_up = [&](const Vector3 &p_p, const Vector3 &p_n) {
+				Vector3 t = e_az(p_p).cross(p_n);
+				const Vector3 rad = Vector3(p_p.x - p_axis.x, 0.0f, p_p.z - p_axis.z);
+				if (t.y - 0.5f * t.dot(rad.normalized()) < 0.0f) {
+					t = -t;
+				}
+				return t.length_squared() > 1e-10f ? t.normalized() : Vector3(0, 1, 0);
+			};
+			// Measured on the ring's own radius and bearings, not its displaced vertices (the bark
+			// relief on them made the scale noisy). The tile is square: v per metre is u's, its
+			// sign the stem's own (v grows up the stem).
+			if (rs >= 1 && sides >= 3 && rs < int(p_rad.size())) {
+				for (int k = 0; k < sides; k++) {
+					const int a = p_part.z + rs * ring + k, b = a + 1;
+					const float aa = Math::atan2(vv[a].z - p_axis.z, vv[a].x - p_axis.x), ab = Math::atan2(vv[b].z - p_axis.z, vv[b].x - p_axis.x);
+					const float dang = Math::angle_difference(aa, ab);
+					if (Math::abs(dang) > 1e-5f) {
+						su += (uw[b].x - uw[a].x) / (dang * MAX(p_rad[rs], 1e-3f));
+						nsu++;
+					}
+					const int c = p_part.z + (rs - 1) * ring + k;
+					sv += uw[a].y - uw[c].y;
+					nsv++;
+				}
+			}
+			if (nsu > 0 && nsv > 0) {
+				su /= nsu;
+				sv = (sv >= 0.0f ? 1.0f : -1.0f) * Math::abs(su);
+				nsv = 1;
+			}
+			bool any = false;
+			for (int i = 0; i < p_part.w && !any; i++) {
+				any = moved[i];
+			}
+			if (nsu > 0 && nsv > 0 && any) {
+				LocalVector<float> seam;
+				seam.resize(rings);
+				for (int r = 0; r < rings; r++) {
+					seam[r] = uw[p_part.z + r * ring + sides].x - uw[p_part.z + r * ring].x;
+				}
+				for (int it = 0; it < 160; it++) {
+					for (int r = 0; r < rings; r++) {
+						for (int k = 0; k < sides; k++) {
+							const int i = r * ring + k;
+							if (!moved[i]) {
+								continue;
+							}
+							const int vi = p_part.z + i;
+							const Vector3 n_i = nw[vi];
+							Vector2 sum;
+							int cnt = 0;
+							auto add_n = [&](int p_j, const Vector2 &p_shift) {
+								const Vector3 d = vv[p_j] - vv[vi];
+								const Vector3 mid = (vv[p_j] + vv[vi]) * 0.5f;
+								const Vector2 want(d.dot(e_az(mid)) * su, d.dot(t_up(mid, n_i)) * sv);
+								sum += uw[p_j] + p_shift - want;
+								cnt++;
+							};
+							if (r > 0) {
+								add_n(vi - ring, Vector2());
+							}
+							if (r + 1 < rings) {
+								add_n(vi + ring, Vector2());
+							}
+							if (k > 0) {
+								add_n(vi - 1, Vector2());
+							} else {
+								add_n(p_part.z + r * ring + sides - 1, Vector2(-seam[r], 0.0f));
+							}
+							add_n(vi + 1, Vector2()); // k + 1 <= sides: the seam copy at the end.
+							if (cnt > 0) {
+								uw[vi] = sum / float(cnt);
+							}
+							if (k == 0) {
+								uw[p_part.z + r * ring + sides] = uw[vi] + Vector2(seam[r], 0.0f);
+							}
+						}
 					}
 				}
 			}

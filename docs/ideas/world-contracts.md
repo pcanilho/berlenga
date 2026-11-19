@@ -95,6 +95,7 @@ the live ground.
 | `frost_at(pos)` | (thawed top m, frost depth m, weakening 0..1) | 0 |
 | `dent_at(pos)`, `rim_at(pos)` | m | 0 |
 | `runoff_at(pos)` | (depth m, speed m/s) | 0 |
+| `add_runoff_load(pos, mineral_kg, ash_kg)` | kg since the caller's last call | dropped with no runoff producer | Loose material put on the runoff there; the catchment carries it down its D8 path into `WorldWater.add_sediment` where the flow reaches a river or lake. A separate producer slot (`WorldRunoffProvider`, `WorldContracts::register_runoff`; WeatherRunoff3D), so the near ground need not implement it. `has_runoff()`. Callers: burnt ground's ash (PhysX), soil erosion |
 | `mud_depth_at(pos)` | m of slurry | 0 |
 | `needle_ice_at(pos)` | (height m, crumbs 0..1) | 0 |
 | `rut_guidance_at(contact, lateral, half_width)` | (cross slope along lateral, wall m on -lateral, wall m on +lateral) | 0 |

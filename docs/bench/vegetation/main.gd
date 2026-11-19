@@ -18,7 +18,8 @@ extends Node3D
 #   --desert[=off]   a transverse sand sea (TerrainGenerator3D.sand_sea_rect) with make_desert's flanks and
 #                    interdune sets streamed round a camera 1.7 m up (off: no plants): checks the plants keep
 #                    off the crests and slip faces by the sand's mobility, prints the same costs as --floor
-#                    and with --out saves the view. VEG_DESERT_HIGH=1 looks from 12 m up across the dunes.
+#                    and with --out saves the view. VEG_DESERT_HIGH=1 looks from 12 m up across the dunes;
+#                    VEG_DESERT_DAY=N sets the day of the year; VEG_DESERT_SHRUBS=0 leaves the woody shrubs out.
 #   --burn[=off]     dry heath (make_heath) with four burn scars (WorldBurnScar3D, 0.05, 0.6, 2.5 and 5 years old)
 #                    and make_burn's heath set, streamed round a camera 2.5 m up looking along the scars (off: no scars, no burn set):
 #                    checks each burn plant grows only at its ages and the heather thins on the burns, prints the
@@ -478,7 +479,9 @@ func _desert_view() -> void:
 	var gb := Biome.new()
 	var desert_set: Array[PlantSpecies] = []
 	var shrubs := OS.get_environment("VEG_DESERT_SHRUBS") != "0" # 0: without the woody shrubs (their cost).
-	desert_set.assign(Array(PlantGenerator.make_desert(PlantGenerator.DESERT_FLANKS, 3, true, {}, shrubs)) + Array(PlantGenerator.make_desert(PlantGenerator.DESERT_INTERDUNE, 3, true, {}, shrubs)))
+	# VEG_DESERT_DAY=N: the plants on day N of the year (saltbush panicles 190 to 20, calligonum fruit 85 to 215).
+	var dseason := {} if OS.get_environment("VEG_DESERT_DAY") == "" else {"day_of_year": int(OS.get_environment("VEG_DESERT_DAY"))}
+	desert_set.assign(Array(PlantGenerator.make_desert(PlantGenerator.DESERT_FLANKS, 3, true, dseason, shrubs)) + Array(PlantGenerator.make_desert(PlantGenerator.DESERT_INTERDUNE, 3, true, dseason, shrubs)))
 	if desert_view == 1:
 		# A plain species with no sand rule: the field keeps it off the sand sea's sand by itself.
 		var plain := PlantSpecies.new()
@@ -701,6 +704,9 @@ func _burn_live() -> void:
 	f.streaming = true
 	var counts := []
 	await _burn_live_wait(3.0)
+	burn_live_field = f
+	burn_live_ring0 = _burn_live_count(f, true)
+	burn_live_ring_min = burn_live_ring0
 	counts.append(_burn_live_count(f))
 	var scar := WorldBurnScar3D.new()
 	scar.age_years = 0.02
@@ -716,22 +722,31 @@ func _burn_live() -> void:
 	counts.append(_burn_live_count(f))
 	var share := float(counts[2]) / maxf(counts[0], 1)
 	_check("burn: a live burn re-places the streamed tiles over it (gone, half back at half the recovery, whole once it goes)", counts[0] > 15 and counts[1] == 0 and share > 0.3 and share < 0.7 and counts[3] == counts[0], counts)
+	_check("burn: the unburnt plants beside it never leave while their tiles are replaced (fewest in any frame)", burn_live_ring0 > 15 and burn_live_ring_min == burn_live_ring0, [burn_live_ring0, burn_live_ring_min])
 	print("VEG_BURN_LIVE_RESULT ", "PASS" if fails == 0 else "FAIL")
 	get_tree().quit(1 if fails > 0 else 0)
+
+var burn_live_field: VegetationField3D
+var burn_live_ring0 := 0
+var burn_live_ring_min := 0
 
 func _burn_live_wait(sec: float) -> void:
 	var t := Time.get_ticks_msec()
 	while Time.get_ticks_msec() - t < sec * 1000.0:
 		await get_tree().process_frame
+		if burn_live_field:
+			burn_live_ring_min = mini(burn_live_ring_min, _burn_live_count(burn_live_field, true))
 
-func _burn_live_count(f: VegetationField3D) -> int:
+# Plants on the scar's middle 12 m, or (ring) on the unburnt ground 10 to 16 m out, on tiles the scar touches.
+func _burn_live_count(f: VegetationField3D, ring := false) -> int:
 	var n := 0
 	for ch in f.get_children(true):
 		if ch is MultiMeshInstance3D:
 			var mm: MultiMesh = ch.multimesh
 			for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
 				var p := (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
-				if absf(p.x) < 6 and absf(p.z) < 6:
+				var m := maxf(absf(p.x), absf(p.z))
+				if (m >= 10.0 and m < 16.0) if ring else (absf(p.x) < 6 and absf(p.z) < 6):
 					n += 1
 	return n
 
