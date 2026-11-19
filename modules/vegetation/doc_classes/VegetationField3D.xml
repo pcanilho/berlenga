@@ -71,7 +71,7 @@
 		<method name="get_springs" qualifiers="const">
 			<return type="PackedVector4Array" />
 			<description>
-				The desert springs found with the last placement: x, the water's level, z and the discharge in litres a second (w) each. The discharge is 0.05 L/s for the shallowest hollow that holds a spring and grows with the hollow's depth, from 0.02 to 0.5 L/s. For the water and terrain systems to put a pool there. Empty unless a species uses [constant PlantSpecies.RULE_SPRING].
+				The desert springs the last placement used, from the terrain ([method TerrainGenerator3D.get_springs]): x, the water's level, z and the discharge in litres a second (w; 0 takes the pools' default) each. For the water and terrain systems to put a pool there. Empty unless a species uses [constant PlantSpecies.RULE_SPRING].
 			</description>
 		</method>
 		<method name="get_stream_stats">

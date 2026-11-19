@@ -696,17 +696,18 @@ Where oases are (research):
 
 Model (VegetationField3D and GrassField3D read the same, from the generator; no private copy of a water state the
 water systems own):
-- Springs: the deepest hollows of the sand sea's surface below its own smoothed level (a 150 m window), at least
-  2 m deep, no closer than 900 m to each other and 60 m inside the sea's edge.
-- Each spring's water stands 1 m above its hollow's floor; `PlantSpecies.RULE_SPRING` is the wetness, 1 where the
+- Springs: the terrain's (see "One spring list" below; first built here as a hollow search, now removed).
+- `PlantSpecies.RULE_SPRING` is the wetness, 1 where the
   ground lies at or under that level, falling to 0 where it stands 5 m above it (out of a palm's root reach), and
   to 0 by 250 m out; -1 off the sand seas. It follows the corridor's shape, since the dunes' flanks rise out of it.
 - `make_desert(DESERT_OASIS)`: the oasis stand (tended palms 0.55 to 1, wild palm clumps by the water 0.8 to 1,
   olives beneath 0.5 to 0.95) and a shrub ring (calligonum, white broom, saltbush, 0.08 to 0.6). Crust and the
   annuals keep to wetness under 0.4. A species using the rule grows on the sand like a sand plant.
 - GrassField3D lets its sward onto the sand sea where the wetness passes 0.5 to 0.85.
-- The water is the water system's: `get_springs()` gives x, water level, z and the discharge (L/s, 0.05 at the
-  shallowest hollow, in proportion to its depth, 0.02 to 0.5), which OasisSprings3D sizes its pools from.
+- One spring list (19 Nov): the terrain's (`TerrainGenerator3D.get_springs()`, its lowest interdune floors, which it
+  carves to the water system's pools when `oasis_springs` names the OasisSprings3D). The field's own hollow search
+  is gone, so the palms, the pools and the carved ground cannot disagree; `VegetationField3D.get_springs()` passes the
+  terrain's list on (discharge 0: the pools' default).
 - Round the pools (`VegetationField3D.spring_pools` to the OasisSprings3D; `PlantSpecies.RULE_POOL_DISTANCE`, metres
   from the shore by `get_outline()`, negative in the water): common reed from 2 m into the pool to 1.2 m up the shore,
   rushes 0.6 to 4.5 m behind (Phragmites australis and Juncus rigidus / maritimus fringe Egypt's oasis pools and

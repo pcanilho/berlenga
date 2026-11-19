@@ -42,35 +42,6 @@ void DesertSprings::clear() {
 	ny = 0;
 }
 
-// Box mean over a radius in cells, by prefix sums along x then z.
-static void _box_mean(const LocalVector<float> &p_in, LocalVector<float> &r_out, int p_nx, int p_ny, int p_r) {
-	LocalVector<float> tmp;
-	tmp.resize(p_nx * p_ny);
-	r_out.resize(p_nx * p_ny);
-	LocalVector<double> pre;
-	pre.resize(MAX(p_nx, p_ny) + 1);
-	for (int z = 0; z < p_ny; z++) {
-		pre[0] = 0.0;
-		for (int x = 0; x < p_nx; x++) {
-			pre[x + 1] = pre[x] + p_in[z * p_nx + x];
-		}
-		for (int x = 0; x < p_nx; x++) {
-			const int a = MAX(x - p_r, 0), b = MIN(x + p_r, p_nx - 1);
-			tmp[z * p_nx + x] = float((pre[b + 1] - pre[a]) / (b - a + 1));
-		}
-	}
-	for (int x = 0; x < p_nx; x++) {
-		pre[0] = 0.0;
-		for (int z = 0; z < p_ny; z++) {
-			pre[z + 1] = pre[z] + tmp[z * p_nx + x];
-		}
-		for (int z = 0; z < p_ny; z++) {
-			const int a = MAX(z - p_r, 0), b = MIN(z + p_r, p_ny - 1);
-			r_out[z * p_nx + x] = float((pre[b + 1] - pre[a]) / (b - a + 1));
-		}
-	}
-}
-
 void DesertSprings::build(const TerrainGenerator3D *p_gen) {
 	clear();
 	if (!p_gen || !p_gen->get_sand_sea_rect().has_area()) {
@@ -97,46 +68,13 @@ void DesertSprings::build(const TerrainGenerator3D *p_gen) {
 		clear();
 		return;
 	}
-	// The smoothed surface: three box passes, close to a Gaussian over the window.
-	const int r = MAX(1, int(Math::round(WINDOW / (3.0f * MAX(cx, cz)))));
-	LocalVector<float> a, b;
-	_box_mean(h, a, nx, ny, r);
-	_box_mean(a, b, nx, ny, r);
-	_box_mean(b, a, nx, ny, r);
-	// Candidates: hollows at least MIN_HOLLOW deep, inside the edge, deepest first.
-	struct Cand {
-		float hollow;
-		int i;
-		bool operator<(const Cand &p_o) const { return hollow > p_o.hollow; }
-	};
-	LocalVector<Cand> cands;
-	const int ex = int(Math::ceil(EDGE / cx)), ez = int(Math::ceil(EDGE / cz));
-	for (int z = ez; z < ny - ez; z++) {
-		for (int x = ex; x < nx - ex; x++) {
-			const int i = z * nx + x;
-			const float hollow = a[i] - h[i];
-			if (hollow >= MIN_HOLLOW) {
-				cands.push_back({ hollow, i });
-			}
-		}
-	}
-	if (!cands.is_empty()) {
-		SortArray<Cand> sorter;
-		sorter.sort(cands.ptr(), cands.size());
-	}
-	for (const Cand &c : cands) {
-		const Vector2 p(rect.position.x + cx * (c.i % nx), rect.position.y + cz * (c.i / nx));
-		bool near = false;
-		for (const Vector3 &s : springs) {
-			if (p.distance_squared_to(Vector2(s.x, s.z)) < SPACING * SPACING) {
-				near = true;
-				break;
-			}
-		}
-		if (!near) {
-			springs.push_back(Vector3(p.x, h[c.i] + RISE, p.y));
-			discharge.push_back(CLAMP(DISCHARGE * c.hollow / MIN_HOLLOW, DISCHARGE_MIN, DISCHARGE_MAX));
-		}
+	// The springs are the terrain's (TerrainGenerator3D.get_springs(): its lowest interdune floors, the hollows it
+	// carves for the water system's pools), so the oasis plants, the pools and the carved ground share one list.
+	const PackedVector4Array found = p_gen->get_springs();
+	for (int k = 0; k < found.size(); k++) {
+		const Vector4 q = found[k];
+		springs.push_back(Vector3(q.x, q.y, q.z));
+		discharge.push_back(q.w); // L/s; 0: the pools' default.
 	}
 	// Wetness: the best of the springs within reach, by the ground's height over its water and the distance.
 	wet.resize(nx * ny);

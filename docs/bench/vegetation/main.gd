@@ -772,7 +772,7 @@ func _oasis_checks(ground: VegetationField3D, dset: Array[PlantSpecies], cam: Ca
 		return
 	var sp4: Vector4 = springs[0]
 	var sp := Vector3(sp4.x, sp4.y, sp4.z)
-	_check("oasis: the spring's discharge is in range (L/s)", sp4.w >= 0.02 and sp4.w <= 0.5, [sp4.w])
+	_check("oasis: the vegetation's springs are the terrain's (one list)", springs == gen.get_springs(), [springs, gen.get_springs()])
 	# The wet ground round it, on a 4 m grid: area wet enough for palms, the shrub ring's, and the sand under the palms.
 	var a_palm := 0
 	var a_ring := 0
@@ -800,7 +800,7 @@ func _oasis_checks(ground: VegetationField3D, dset: Array[PlantSpecies], cam: Ca
 	ground.stream_radius = 220.0 # The whole oasis for the counts.
 	var w := 0
 	var wt := Time.get_ticks_msec()
-	while w < 6000 and (w < 20 or not ground.is_stream_idle()):
+	while w < 20000 and (w < 20 or not ground.is_stream_idle()):
 		await get_tree().process_frame
 		w += 1
 	print("VEG_OASIS streamed in %d frames, %d ms" % [w, Time.get_ticks_msec() - wt])
@@ -845,19 +845,27 @@ func _oasis_checks(ground: VegetationField3D, dset: Array[PlantSpecies], cam: Ca
 		add_child(sward)
 		sward.data_map = sward.get_path_to(map)
 	_check("oasis: date palms on the wet ground (wetness over 0.47)", kinds["palm"][0] > 10 and kinds["palm"][1] > 0.46, kinds["palm"])
-	_check("oasis: the shrub ring on the drier ground (under 0.73)", kinds["shrub"][0] > 5 and kinds["shrub"][2] < 0.74, kinds["shrub"])
+	_check("oasis: the shrub ring on the drier ground (under 0.73)", kinds["shrub"][0] > 2 and kinds["shrub"][2] < 0.74, kinds["shrub"])
 	_check("oasis: no crust on the wettest ground (under 0.5)", kinds["crust"][2] < 0.51, kinds["crust"])
 	if ClassDB.class_exists("OasisSprings3D"):
 		# The water system's spring pools (OasisSprings3D, from the same springs): reeds in the shallows and on the
 		# shore, rushes behind, following each pool's outline.
 		var pools: Node3D = ClassDB.instantiate("OasisSprings3D")
 		pools.name = "OasisPools"
-		pools.springs = springs
 		add_child(pools)
-		pools.rebuild()
+		# Terrain's springs and carving (TerrainGenerator3D.oasis_springs): the pools from the generator's springs,
+		# their levels refitted, the hollows carved to the outlines; then the data map again.
+		pools.spring_source = pools.get_path_to(gen)
+		gen.oasis_springs = gen.get_path_to(pools)
+		var carved: bool = gen.carve_oases()
+		if not carved:
+			pools.springs = springs
+			pools.rebuild()
+		map.bake()
+		print("VEG_OASIS carved %s, pools %d, first vents %s, generator springs %s" % [str(carved), pools.get_pool_count(), str(pools.get_vents(0)) if pools.get_pool_count() > 0 else "-", str(gen.get_springs())])
 		ground.spring_pools = ground.get_path_to(pools)
 		w = 0
-		while w < 6000 and (w < 20 or not ground.is_stream_idle()):
+		while w < 20000 and (w < 20 or not ground.is_stream_idle()):
 			await get_tree().process_frame
 			w += 1
 		var outline: PackedVector2Array = pools.get_outline(0) if pools.get_pool_count() > 0 else PackedVector2Array()

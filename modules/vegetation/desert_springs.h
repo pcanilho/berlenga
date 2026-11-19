@@ -37,27 +37,16 @@
 #include "core/math/vector3.h"
 #include "core/templates/local_vector.h"
 
-// Oases at desert springs (docs/ideas/vegetation.md, "Oases at desert springs"): the sand sea's deepest hollows below
-// its own smoothed surface hold springs; each spring's water stands a little above its floor, and the ground round
-// it is wet as far as it lies within a palm's root reach of that level. VegetationField3D (PlantSpecies.RULE_SPRING)
-// and GrassField3D read the same from the generator.
+// Oases at desert springs (docs/ideas/vegetation.md, "Oases at desert springs"): the terrain's springs
+// (TerrainGenerator3D.get_springs()) and the wetness round them: the ground is wet as far as it lies within a palm's
+// root reach of a spring's water level. VegetationField3D (PlantSpecies.RULE_SPRING) and GrassField3D read the same.
 struct DesertSprings {
-	static constexpr float WINDOW = 150.0f; // m: the smoothed surface a hollow is measured against.
-	static constexpr float MIN_HOLLOW = 2.0f; // m below it for a spring.
-	static constexpr float SPACING = 900.0f; // m between springs.
-	static constexpr float EDGE = 60.0f; // m inside the sand sea's edge.
-	static constexpr float RISE = 1.0f; // m the water stands above the hollow's floor.
 	static constexpr float ROOT_REACH = 5.0f; // m above the water where the wetness reaches 0.
 	static constexpr float REACH = 250.0f; // m from a spring where it reaches 0.
-	// Discharge: a hollow cuts into the water table, and the deeper the cut the more head drives the seep (Darcy:
-	// flow grows with the head). DISCHARGE L/s at MIN_HOLLOW, in proportion to the depth, within the bounds.
-	static constexpr float DISCHARGE = 0.05f;
-	static constexpr float DISCHARGE_MIN = 0.02f;
-	static constexpr float DISCHARGE_MAX = 0.5f;
 
 	LocalVector<float> wet; // 0 dry to 1 wet; -1 off the sand sea.
 	LocalVector<Vector3> springs; // x, water level, z.
-	LocalVector<float> discharge; // L/s, one per spring.
+	LocalVector<float> discharge; // L/s, one per spring; 0: the pools' default.
 	Rect2 rect;
 	int nx = 0;
 	int ny = 0;
