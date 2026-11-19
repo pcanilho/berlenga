@@ -42,6 +42,8 @@ contract returns with no provider.
 | `obstacle_height_at(pos)` | m | 0 | Wind-blocking obstacles (rocks, walls, buildings, vehicles) over the ground, on the provider's shelter grid |
 | `obstacle_lee_at(pos)` | 0..1 | 1 | Near-ground wind behind upwind obstacles over the open wind: 0.15 in the cavity, back to 1 by 25 H |
 | `washout_at(pos, coarse)`, static `washout_rate(rain, snow, coarse)` | 1/s | 0 | Below-cloud scavenging of particles, a R^b: fine smoke about 1e-5 at 1 mm/h, coarse dust about 3e-4, snow five times rain |
+| `fog_water_at(pos)` | g/m3 | 0 | Cloud liquid water at pos (cloud on the ground: hill fog) |
+| `fog_drip_at(pos)` | mm/h | 0 | Fog water combed out by the canopy and dripping to the ground (part of the ground water input) |
 | `surface_wetness_at(pos)` | 0..1 | 0 | Film over storage; 1 where puddles stand |
 | `puddle_at(pos)` | mm | 0 | |
 | `contact_wetness_at(pos)` / `add_contact_wetness(pos, radius, amount)` | 0..1 | 0 / no-op | Water any system splashes |

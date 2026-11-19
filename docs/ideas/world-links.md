@@ -39,6 +39,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Wind → clouds, storms | linked | cells | |
 | Weather → haze | linked | air humidity, precipitation | |
 | Clear calm nights → dew, hoarfrost | linked (18 Nov) | air, net radiation | `dew_and_frost`, Monteith 1957; `weather_frost_map` on terrain, grass, plants, rocks |
+| Hill cloud (fog) → drip under trees | linked (19 Nov) | cloud extinction at the ground, canopy closure | `fog_drip`: LWC = 6.7 x extinction (r_e 10 um); catch 3.6 LWC u (0.003 + 0.015 closure) mm/h into Rutter's canopy, no drying in cloud; the fog's drip share wets the film and the soil (`fog_water_at`, `fog_drip_at`). Lovett 1984; Bruijnzeel et al. 2005 |
 | Lightning ← storms, freezing level | linked | cells, air | |
 | Lightning → tall things | linked (18 Nov) | ray + canopy map | rolling sphere |
 
@@ -256,5 +257,15 @@ Gaps found by reading the readers, each on a contract that exists.
    drives a spout on the wave crests (blowholes; the spout's pressure scales with the wave's rho g H at the mouth).
    Needs Valence for the drawing.
 
-Later: fog drip (cloud water caught by leaves and needles wets the ground under trees on foggy ridges, about 0.1-1
+Built 19 Nov (round 6, below): fog drip (cloud water caught by leaves and needles wets the ground under trees on foggy ridges, about 0.1-1
 mm a day; Bruijnzeel et al. 2005).
+
+## Round 6 (19 Nov, Paulo picked all three, in this order)
+
+1. Fog drip under trees (built 19 Nov). Where cloud sits on the ground, leaves and needles comb its droplets out:
+   catch = LWC u E per leaf area, about 0.05-0.5 mm/h on exposed ridges (Lovett 1984; Bruijnzeel et al. 2005).
+   The weather map takes the liquid water content from the cloud's extinction at canopy height
+   (LWC = 2/3 rho_w r_e beta, r_e 10 um), adds the catch to Rutter's canopy store and keeps the store from drying
+   while in cloud; the drip's fog share goes to the surface film and the soil water.
+2. Sea spray wets and salts the shore: surf wets and salts rocks, ground and plants downwind.
+3. Wet tracks out of water and mud: bodies leaving water or mud leave wet prints and drips that dry in sun and wind.

@@ -80,6 +80,20 @@
 				Override in a stub: [method day_of_year].
 			</description>
 		</method>
+		<method name="_fog_drip_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method fog_drip_at].
+			</description>
+		</method>
+		<method name="_fog_water_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method fog_water_at].
+			</description>
+		</method>
 		<method name="_frost_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -304,6 +318,20 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The dew point (C) of the air at [param position], from the two above.
+			</description>
+		</method>
+		<method name="fog_drip_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Fog water the vegetation combs out of the passing cloud and drips onto the ground at [param position], mm/h: about 0.03 to 0.1 under a closed forest in a moderate wind once its leaves are full, a tenth of that over open ground. Already part of [method ground_water_input_at]. Default 0.
+			</description>
+		</method>
+		<method name="fog_water_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Cloud water at the ground at [param position], g/m3: where the terrain stands in the cloud (hill fog), about 0.1 to 0.5. Default 0.
 			</description>
 		</method>
 		<method name="frost_at" qualifiers="const">

@@ -814,6 +814,7 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	}
 	_gather_water_sources();
 	c.inflow = cell_inflow.ptr();
+	c.fog_drip = fog_drip && cell_fog_drip.size() == resolution * resolution ? cell_fog_drip.ptr() : nullptr;
 	// Rows in parallel: each cell depends only on the weather and its own history.
 	WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &WeatherMap3D::_update_row, &cell_pass, resolution, -1, true, String("WeatherMap3D cells"));
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
@@ -1026,7 +1027,7 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 			}
 			c.frost[i] = fr;
 			// Where a snowpack lies, what reaches the surface is its runoff (rain through it and melt).
-			const float in = c.inflow[i] >= 0.0f ? c.inflow[i] : r * c.rain_fraction;
+			const float in = (c.inflow[i] >= 0.0f ? c.inflow[i] : r * c.rain_fraction) + (c.fog_drip ? c.fog_drip[i] : 0.0f);
 			f += in * c.dt_h;
 			float pd = c.puddle[i];
 			if (f > surface_storage) {
