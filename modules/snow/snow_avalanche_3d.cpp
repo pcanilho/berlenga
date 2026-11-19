@@ -52,6 +52,7 @@ namespace {
 const float GRAVITY = 9.81f;
 const float FLOW_MIN = 1.0f; // kg/m2 (about 3 mm of debris): less is not flowing
 const float STOP_SPEED = 0.5f; // m/s
+const float BED_ALBEDO = 0.66f; // the old surface a slab leaves bare
 const float ENTRAIN_SPEED = 5.0f; // m/s
 const float WEAK_DENSITY = 100.0f; // kg/m3, the new snow's base or facets: the weak layer
 const float BURIED_WEAK_DENSITY = 150.0f; // kg/m3, facets on a buried crust
@@ -77,6 +78,43 @@ float SnowAvalanche3D::stability_index(float p_slab, float p_slab_density, float
 		return 1.0e6f;
 	}
 	return weak_layer_strength(p_weak_density, p_age_hours) / load;
+}
+
+// Smooth value noise in [0, 1] over world cells, about 3 cells across (integer hash, no sine: it holds far from the
+// origin).
+static float _patch_noise(int p_x, int p_z) {
+	auto hash = [](int x, int z) {
+		uint32_t h = uint32_t(x) * 1664525u + uint32_t(z) * 22695477u + 1013904223u;
+		h ^= h >> 16;
+		h *= 0x7feb352du;
+		h ^= h >> 15;
+		h *= 0x846ca68bu;
+		h ^= h >> 16;
+		return float(h >> 8) * (1.0f / 16777216.0f);
+	};
+	const float fx = float(p_x) / 3.0f, fz = float(p_z) / 3.0f;
+	const int x0 = int(Math::floor(fx)), z0 = int(Math::floor(fz));
+	float tx = fx - x0, tz = fz - z0;
+	tx = tx * tx * (3.0f - 2.0f * tx);
+	tz = tz * tz * (3.0f - 2.0f * tz);
+	return Math::lerp(Math::lerp(hash(x0, z0), hash(x0 + 1, z0), tx), Math::lerp(hash(x0, z0 + 1), hash(x0 + 1, z0 + 1), tx), tz);
+}
+
+// The fall line (downhill, unit, xz) over the cells weighted by p_weight (cover cells), from the ground's mean
+// gradient.
+Vector2 SnowAvalanche3D::_fall_line(const SnowCover3D *p_cover, const Vector<float> &p_weight) {
+	const int n = p_cover->resolution;
+	const Vector<float> &g = p_cover->cell_ground;
+	Vector2 d;
+	for (int z = 1; z + 1 < n; z++) {
+		for (int x = 1; x + 1 < n; x++) {
+			const float w = p_weight[z * n + x];
+			if (w > 0.0f) {
+				d -= w * Vector2(g[z * n + x + 1] - g[z * n + x - 1], g[(z + 1) * n + x] - g[(z - 1) * n + x]);
+			}
+		}
+	}
+	return d.length_squared() > 1e-12f ? d.normalized() : Vector2(1, 0);
 }
 
 SnowCover3D *SnowAvalanche3D::_cover() const {
@@ -232,9 +270,11 @@ bool SnowAvalanche3D::_check_release(SnowCover3D *p_cover) {
 	Vector<int> stack;
 	stack.push_back(seed);
 	seen.write[seed] = 1;
-	while (!stack.is_empty() && cells.size() < MAX_RELEASE_CELLS) {
-		const int i = stack[stack.size() - 1];
-		stack.resize(stack.size() - 1);
+	// Breadth first: when the cap stops it, the release is a compact patch around the seed (depth first leaves
+	// every other row behind in the stack).
+	int head = 0;
+	while (head < stack.size() && cells.size() < MAX_RELEASE_CELLS) {
+		const int i = stack[head++];
 		cells.push_back(i);
 		amounts.push_back(slab[i]);
 		const int x = i % n, z = i / n;
@@ -328,6 +368,21 @@ void SnowAvalanche3D::_release(SnowCover3D *p_cover, const Vector<int> &p_cells,
 		c += at * s;
 		total += s;
 	}
+	// The bed the slab leaves is the old surface it slid on: the weak layer's faceted grains and the aged crust
+	// under them, greyer than the new snow around (aged snow, albedo about 0.65-0.7; Gardner and Sharp 2010), and
+	// streaked down the fall line where the slab's base scoured it.
+	if (p_cover->cell_albedo.size() == n * n && total > 0.0f) {
+		const Vector2 down = _fall_line(p_cover, released);
+		for (int i = 0; i < n * n; i++) {
+			if (released[i] < 0.05f) {
+				continue;
+			}
+			const Vector2 wc(float(flow_origin.x + i % n), float(flow_origin.y + i / n));
+			const float u = wc.dot(down), v = wc.dot(Vector2(-down.y, down.x));
+			const float streak = _patch_noise(int(Math::floor(v * 3.0f)), int(Math::floor(u / 3.0f)));
+			p_cover->cell_albedo.write[i] = MIN(p_cover->cell_albedo[i], BED_ALBEDO + 0.07f * (streak - 0.5f));
+		}
+	}
 	release_liquid = total > 0.0f ? release_liquid / total : 0.0f; // the slab's liquid water share of its mass
 	// A wet slab runs as a wet flow: denser, slower, with higher friction and cohesion (wet snow avalanches, Naaim
 	// et al. 2013; Bartelt et al. 2015), by its liquid share of what the pack can hold.
@@ -346,26 +401,6 @@ void SnowAvalanche3D::_release(SnowCover3D *p_cover, const Vector<int> &p_cells,
 	running = true;
 	release_count++;
 	emit_signal(SNAME("avalanche_released"), release_center, released_volume);
-}
-
-// Smooth value noise in [0, 1] over world cells, about 3 cells across (integer hash, no sine: it holds far from the
-// origin).
-static float _patch_noise(int p_x, int p_z) {
-	auto hash = [](int x, int z) {
-		uint32_t h = uint32_t(x) * 1664525u + uint32_t(z) * 22695477u + 1013904223u;
-		h ^= h >> 16;
-		h *= 0x7feb352du;
-		h ^= h >> 15;
-		h *= 0x846ca68bu;
-		h ^= h >> 16;
-		return float(h >> 8) * (1.0f / 16777216.0f);
-	};
-	const float fx = float(p_x) / 3.0f, fz = float(p_z) / 3.0f;
-	const int x0 = int(Math::floor(fx)), z0 = int(Math::floor(fz));
-	float tx = fx - x0, tz = fz - z0;
-	tx = tx * tx * (3.0f - 2.0f * tx);
-	tz = tz * tz * (3.0f - 2.0f * tz);
-	return Math::lerp(Math::lerp(hash(x0, z0), hash(x0 + 1, z0), tx), Math::lerp(hash(x0, z0 + 1), hash(x0 + 1, z0 + 1), tx), tz);
 }
 
 void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
@@ -979,13 +1014,31 @@ bool SnowAvalanche3D::trigger(const Vector3 &p_at, float p_radius) {
 	const float lo = Math::deg_to_rad(min_slope);
 	Vector<int> cells;
 	Vector<float> amounts;
+	// A slab's outline, not the load's circle: a crown across the slope above, flanks down the fall line on either
+	// side (drawing in a little toward the foot) and the stauchwall below (McClung and Schaerer 2006). The crown
+	// and flanks run irregular lines: they wander by up to 12% of the radius over about 12 m (the slab's strength
+	// and thickness vary along them).
+	Vector<float> near;
+	near.resize(n * n);
+	near.fill(0.0f);
 	for (int z = 0; z < n; z++) {
 		for (int x = 0; x < n; x++) {
 			const Vector2 at((cover->origin_cell.x + x + 0.5f) * cs, (cover->origin_cell.y + z + 0.5f) * cs);
-			// The fracture runs an irregular line, not the load's circle: the reach varies by +-15% over about
-			// 12 m (the slab's strength and thickness vary along it).
-			const float reach = p_radius * (0.85f + 0.3f * _patch_noise((cover->origin_cell.x + x) / 2, (cover->origin_cell.y + z) / 2));
-			if (at.distance_to(Vector2(p_at.x, p_at.z)) > reach) {
+			near.write[z * n + x] = at.distance_to(Vector2(p_at.x, p_at.z)) <= p_radius ? 1.0f : 0.0f;
+		}
+	}
+	const Vector2 down = _fall_line(cover, near);
+	const Vector2 across(-down.y, down.x);
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const Vector2 at((cover->origin_cell.x + x + 0.5f) * cs, (cover->origin_cell.y + z + 0.5f) * cs);
+			const Vector2 rel = at - Vector2(p_at.x, p_at.z);
+			const float u = rel.dot(down) / p_radius; // downslope
+			const float v = rel.dot(across) / p_radius;
+			const float wobble = 0.24f * (_patch_noise((cover->origin_cell.x + x) / 2, (cover->origin_cell.y + z) / 2) - 0.5f);
+			const float crown = -0.65f * (1.0f - 0.12f * v * v) + wobble; // bowed a little downslope at its ends
+			const float flank = 1.0f - 0.12f * MAX(u, 0.0f) + wobble;
+			if (u < crown || u > 0.8f + wobble || Math::abs(v) > flank) {
 				continue;
 			}
 			const int i = z * n + x;
@@ -1113,9 +1166,11 @@ int SnowAvalanche3D::_load(SnowCover3D *p_cover, const Vector3 &p_at, float p_li
 	stack.push_back(seed);
 	seen.write[seed] = 1;
 	int visited = 0;
-	while (!stack.is_empty() && visited < MAX_RELEASE_CELLS) {
-		const int i = stack[stack.size() - 1];
-		stack.resize(stack.size() - 1);
+	// Breadth first: when the cap stops it, the release is a compact patch around the seed (depth first leaves
+	// every other row behind in the stack).
+	int head = 0;
+	while (head < stack.size() && visited < MAX_RELEASE_CELLS) {
+		const int i = stack[head++];
 		visited++;
 		const int x = i % n, z = i / n;
 		const float slope = _slope_at(p_cover, x, z);
@@ -1541,9 +1596,11 @@ bool SnowAvalanche3D::_check_glide(SnowCover3D *p_cover) {
 	Vector<int> stack;
 	stack.push_back(seed);
 	seen.write[seed] = 1;
-	while (!stack.is_empty() && cells.size() < MAX_RELEASE_CELLS) {
-		const int i = stack[stack.size() - 1];
-		stack.resize(stack.size() - 1);
+	// Breadth first: when the cap stops it, the release is a compact patch around the seed (depth first leaves
+	// every other row behind in the stack).
+	int head = 0;
+	while (head < stack.size() && cells.size() < MAX_RELEASE_CELLS) {
+		const int i = stack[head++];
 		cells.push_back(i);
 		amounts.push_back(p_cover->cell_swe[i] / MAX(p_cover->cell_density[i], 30.0f));
 		glide.write[i] = 0.0f;
@@ -1692,29 +1749,47 @@ float SnowAvalanche3D::get_wave_period_at(const Vector3 &p_position) const {
 }
 
 void SnowAvalanche3D::_build_crown(SnowCover3D *p_cover, const Vector<float> &p_released) {
-	// The crown and flank walls of the slab that left: every edge between a released cell and one that kept its
-	// snow, chained into lines over the cells' corners, rounded (Chaikin's corner cutting, three passes) and set
-	// wandering by up to a third of a cell so the grid does not show, then stood up as a wall from the bed to the
-	// snow surface beside it. The released cell's own surface drops over the cell's width; the wall stands at the
-	// edge and shows (and shadows) the step above that slope.
+	// The walls the slab leaves (McClung and Schaerer 2006): the crown, a tensile fracture standing the slab's
+	// full depth across the top; the flanks, shear fractures down either side that lose height toward the foot;
+	// and no wall at the foot (the stauchwall), where the slab rode out over the snow below. Every edge between a
+	// released cell and one that kept its snow is chained into lines over the cells' corners (all of them, so
+	// the lines run unbroken), rounded (Chaikin's corner cutting, three passes) and set wandering so the grid
+	// does not show. Each point stands as high as the step there, times its fade: by its height within the
+	// release (full in the upper half, nothing at the foot) and by which way it faces (a wall facing up the
+	// slope, the foot's, has none). A cap runs from the wall's top back to the snow outside (the cover's smooth
+	// surface rounds the step off over a cell; the cap keeps its edge sharp), and the wall's base shows the weak
+	// layer the slab slid on, grey.
 	const int n = p_cover->resolution;
 	const float cs = p_cover->_cell_size();
 	if (p_released.size() != n * n || !is_inside_tree()) {
+		return;
+	}
+	const Vector2 down = _fall_line(p_cover, p_released);
+	float g_lo = 1e30f, g_hi = -1e30f;
+	for (int i = 0; i < n * n; i++) {
+		if (p_released[i] >= 0.05f) {
+			g_lo = MIN(g_lo, p_cover->cell_ground[i]);
+			g_hi = MAX(g_hi, p_cover->cell_ground[i]);
+		}
+	}
+	if (g_hi < g_lo) {
 		return;
 	}
 	struct Seg {
 		Vector2i a, b;
 		float height;
 		Vector2 normal; // toward the released side
+		float albedo; // the snow outside's
 	};
 	LocalVector<Seg> segs;
 	for (int z = 0; z < n; z++) {
 		for (int x = 0; x < n; x++) {
 			const int i = z * n + x;
 			const float s = p_released[i];
-			if (s < 0.15f) {
+			if (s < 0.05f) {
 				continue;
 			}
+			const float up = g_hi - g_lo > 0.5f ? (p_cover->cell_ground[i] - g_lo) / (g_hi - g_lo) : 1.0f;
 			const int nb[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
 			for (const auto &o : nb) {
 				const int xx = x + o[0], zz = z + o[1];
@@ -1722,19 +1797,13 @@ void SnowAvalanche3D::_build_crown(SnowCover3D *p_cover, const Vector<float> &p_
 					continue;
 				}
 				const int j = zz * n + xx;
-				if (p_released[j] > 0.0f) {
+				if (p_released[j] > 0.5f * s) {
 					continue;
 				}
-				// The crown above and the flanks beside: not the foot (the stauchwall, where the slab rode out over
-				// the snow below it and leaves no wall to see).
-				if (p_cover->cell_ground[j] < p_cover->cell_ground[i] - 0.5f) {
-					continue;
-				}
+				const Vector2 nrm(-o[0], -o[1]);
+				const float facing = nrm.dot(down); // 1 at the crown, 0 on a flank, -1 at the foot
 				const float dj = p_cover->cell_swe[j] > 0.01f ? p_cover->cell_swe[j] / MAX(p_cover->cell_density[j], 30.0f) : 0.0f;
-				const float hgt = MIN(s, dj);
-				if (hgt < 0.15f) {
-					continue;
-				}
+				const float fade = Math::smoothstep(0.05f, 0.55f, up) * CLAMP((facing + 0.75f) / 0.6f, 0.0f, 1.0f);
 				Seg sg;
 				// The shared edge, in corner coordinates (cover cells, corner (x, z) at the cell's low corner).
 				if (o[0] != 0) {
@@ -1746,8 +1815,9 @@ void SnowAvalanche3D::_build_crown(SnowCover3D *p_cover, const Vector<float> &p_
 					sg.a = Vector2i(x, ez);
 					sg.b = Vector2i(x + 1, ez);
 				}
-				sg.height = hgt;
-				sg.normal = Vector2(-o[0], -o[1]);
+				sg.height = MIN(s - p_released[j], dj) * fade;
+				sg.normal = nrm;
+				sg.albedo = p_cover->cell_albedo.size() == n * n ? p_cover->cell_albedo[j] : 0.84f;
 				segs.push_back(sg);
 			}
 		}
@@ -1770,17 +1840,18 @@ void SnowAvalanche3D::_build_crown(SnowCover3D *p_cover, const Vector<float> &p_
 		Vector2 xz;
 		float height;
 		Vector2 normal;
+		float albedo;
 	};
 	LocalVector<LocalVector<P>> lines;
 	auto walk = [&](uint32_t p_start, Vector2i p_from) {
 		LocalVector<P> line;
 		Vector2i corner = p_from;
 		uint32_t k = p_start;
-		line.push_back({ Vector2(corner) , segs[k].height, segs[k].normal });
+		line.push_back({ Vector2(corner), segs[k].height, segs[k].normal, segs[k].albedo });
 		while (true) {
 			used[k] = 1;
 			const Vector2i next = segs[k].a == corner ? segs[k].b : segs[k].a;
-			line.push_back({ Vector2(next), segs[k].height, segs[k].normal });
+			line.push_back({ Vector2(next), segs[k].height, segs[k].normal, segs[k].albedo });
 			corner = next;
 			uint32_t found = UINT32_MAX;
 			for (uint32_t c : at_corner[corner]) {
@@ -1812,6 +1883,9 @@ void SnowAvalanche3D::_build_crown(SnowCover3D *p_cover, const Vector<float> &p_
 	st->begin(Mesh::PRIMITIVE_TRIANGLES);
 	float height_sum = 0.0f, length_sum = 0.0f;
 	Vector3 center_sum;
+	auto lerp_p = [](const P &p0, const P &p1, float t) -> P {
+		return { p0.xz.lerp(p1.xz, t), Math::lerp(p0.height, p1.height, t), p0.normal.lerp(p1.normal, t), Math::lerp(p0.albedo, p1.albedo, t) };
+	};
 	for (LocalVector<P> &line : lines) {
 		if (line.size() < 2) {
 			continue;
@@ -1821,42 +1895,80 @@ void SnowAvalanche3D::_build_crown(SnowCover3D *p_cover, const Vector<float> &p_
 			LocalVector<P> out;
 			out.push_back(line[0]);
 			for (uint32_t q = 0; q + 1 < line.size(); q++) {
-				const P &p0 = line[q];
-				const P &p1 = line[q + 1];
-				out.push_back({ p0.xz.lerp(p1.xz, 0.25f), Math::lerp(p0.height, p1.height, 0.25f), p0.normal.lerp(p1.normal, 0.25f) });
-				out.push_back({ p0.xz.lerp(p1.xz, 0.75f), Math::lerp(p0.height, p1.height, 0.75f), p0.normal.lerp(p1.normal, 0.75f) });
+				out.push_back(lerp_p(line[q], line[q + 1], 0.25f));
+				out.push_back(lerp_p(line[q], line[q + 1], 0.75f));
 			}
 			out.push_back(line[line.size() - 1]);
 			line = std::move(out);
 		}
-		// To world space, wandering along the normal (smooth noise over the corners' world position).
-		LocalVector<Vector3> top, bottom;
-		LocalVector<Vector3> normals;
+		// To world space. The wall stands a little inside the released cell (a sixth to a half of a cell, wandering
+		// over about 2 m), where the cover's rounded step has dropped most of its height, so the face shows.
+		struct W {
+			Vector3 top, band, bottom, outer;
+			Vector3 normal;
+			float albedo;
+			float height;
+		};
+		LocalVector<W> ws;
 		for (const P &p : line) {
 			const Vector2 nrm = p.normal.length_squared() > 1e-6f ? p.normal.normalized() : Vector2(1, 0);
 			const Vector2 wc = (p.xz + Vector2(p_cover->origin_cell)) * cs;
-			const float wander = (_patch_noise(int(Math::floor(wc.x * 1.5f)), int(Math::floor(wc.y * 1.5f))) - 0.5f) * 0.66f * cs;
+			const float wander = (0.15f + 0.35f * _patch_noise(int(Math::floor(wc.x * 1.5f)), int(Math::floor(wc.y * 1.5f)))) * cs;
 			const Vector2 w = wc + nrm * wander;
-			// The snow surface on the side that kept its snow, before the slab leaves.
-			const Vector3 outside(w.x - nrm.x * 0.5f * cs, 0.0f, w.y - nrm.y * 0.5f * cs);
+			// The snow surface on the side that kept its snow, at the outside cell's middle.
+			const Vector3 outside(wc.x - nrm.x * 0.5f * cs, 0.0f, wc.y - nrm.y * 0.5f * cs);
 			const float surface = p_cover->get_ground_height_at(outside) + p_cover->get_surface_depth_at(outside);
 			const float ragged = 0.04f * (_patch_noise(int(w.x * 8.0f), int(w.y * 8.0f)) - 0.5f);
-			top.push_back(Vector3(w.x, surface + ragged, w.y));
-			bottom.push_back(Vector3(w.x, surface - p.height - 0.05f, w.y));
-			normals.push_back(Vector3(nrm.x, 0.0f, nrm.y));
+			// The cap's top follows the slope from the outside cell's middle to the wall.
+			const Vector3 at(w.x, 0.0f, w.y);
+			const float rise = (p_cover->get_ground_height_at(at) - p_cover->get_ground_height_at(outside));
+			const float top_y = surface + rise + ragged;
+			const float hgt = MAX(p.height, 0.0f);
+			W e;
+			e.top = Vector3(w.x, top_y, w.y);
+			e.band = Vector3(w.x, top_y - MAX(hgt - 0.12f, 0.6f * hgt), w.y);
+			e.bottom = Vector3(w.x, top_y - hgt - 0.05f, w.y);
+			e.outer = Vector3(outside.x, surface + 0.01f, outside.z);
+			e.normal = Vector3(nrm.x, 0.0f, nrm.y);
+			e.albedo = p.albedo;
+			e.height = hgt;
+			ws.push_back(e);
 		}
-		for (uint32_t q = 0; q + 1 < top.size(); q++) {
-			const Vector3 nq = (normals[q] + normals[q + 1]).normalized();
-			const Vector3 quad[4] = { top[q], top[q + 1], bottom[q + 1], bottom[q] };
-			const int tri[6] = { 0, 1, 2, 0, 2, 3 };
-			for (int t : tri) {
-				st->set_normal(nq);
-				st->add_vertex(quad[t]);
+		for (uint32_t q = 0; q + 1 < ws.size(); q++) {
+			const W &e0 = ws[q];
+			const W &e1 = ws[q + 1];
+			if (MAX(e0.height, e1.height) < 0.04f) {
+				continue;
 			}
-			const float len = top[q].distance_to(top[q + 1]);
+			const Vector3 nq = (e0.normal + e1.normal).normalized();
+			const Color c0(e0.albedo, e0.albedo, e0.albedo), c1(e1.albedo, e1.albedo, e1.albedo);
+			const Color weak(BED_ALBEDO - 0.04f, BED_ALBEDO - 0.04f, BED_ALBEDO - 0.03f);
+			auto quad = [&](const Vector3 &a, const Vector3 &b, const Vector3 &c, const Vector3 &d, const Color &ca, const Color &cb, const Color &cc, const Color &cd, const Vector3 &nrm) {
+				const Vector3 v[4] = { a, b, c, d };
+				const Color col[4] = { ca, cb, cc, cd };
+				// Wound to face the way its normal does (clockwise front, as Godot's): the path tracer takes the
+				// winding's side as the front and leaves a normal behind it unlit.
+				const bool flip = Plane(a, b, c).normal.dot(nrm) < 0.0f;
+				const int tri_front[6] = { 0, 1, 2, 0, 2, 3 };
+				const int tri_back[6] = { 0, 2, 1, 0, 3, 2 };
+				for (int t : (flip ? tri_back : tri_front)) {
+					st->set_normal(nrm);
+					st->set_color(col[t]);
+					st->add_vertex(v[t]);
+				}
+			};
+			// The face: the slab's section, then the weak layer at its base.
+			quad(e0.top, e1.top, e1.band, e0.band, c0, c1, c1, c0, nq);
+			quad(e0.band, e1.band, e1.bottom, e0.bottom, c0, c1, weak, weak, nq);
+			// The cap, from the wall's top back to the snow outside.
+			Vector3 up = (e1.top - e0.top).cross(e0.outer - e0.top);
+			up = up.y < 0.0f ? -up : up;
+			up = up.length_squared() > 1e-8f ? up.normalized() : Vector3(0, 1, 0);
+			quad(e0.outer, e1.outer, e1.top, e0.top, c0, c1, c1, c0, up);
+			const float len = e0.top.distance_to(e1.top);
 			length_sum += len;
-			height_sum += (line[q].height) * len;
-			center_sum += top[q] * len;
+			height_sum += e0.height * len;
+			center_sum += e0.top * len;
 		}
 	}
 	if (length_sum <= 0.0f) {
@@ -1864,7 +1976,8 @@ void SnowAvalanche3D::_build_crown(SnowCover3D *p_cover, const Vector<float> &p_
 	}
 	if (crown_material.is_null()) {
 		crown_material.instantiate();
-		crown_material->set_albedo(Color(0.9f, 0.92f, 0.95f));
+		crown_material->set_albedo(Color(1.0f, 1.0f, 1.0f));
+		crown_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true); // linear: the cover's albedo
 		crown_material->set_roughness(0.8f);
 		crown_material->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
 	}

@@ -1471,7 +1471,11 @@ func _run_powder_tests() -> void:
 	var far0 := snow.get_depth_at(far)
 	snow.add_snow(90.0, 90.0)
 	var water0 := snow.get_total_water()
-	var far1 := snow.get_depth_at(far)
+	# A grid over the run-out, 8 m apart: past each column's debris toe the cloud's layer is all that changed.
+	var grid0: Array[float] = []
+	for kz in 25:
+		for kx in 31:
+			grid0.append(snow.get_depth_at(Vector3(8.0 * kx, 0.0, -96.0 + 8.0 * kz)))
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 	var t := 0.0
@@ -1482,10 +1486,20 @@ func _run_powder_tests() -> void:
 		t += 0.25
 		peak_air = maxf(peak_air, av.get_suspended_mass())
 	var water1 := snow.get_total_water()
-	var layer := snow.get_depth_at(far) - far1
+	var layer := 0.0
+	for kz in 25:
+		for kx in range(30, -1, -1):
+			var at := Vector3(8.0 * kx, 0.0, -96.0 + 8.0 * kz)
+			var d := snow.get_depth_at(at) - grid0[kz * 31 + kx]
+			if d >= 0.15:
+				break # this column's debris toe
+			if d > layer:
+				layer = d
+				far = at
+	far0 = snow.get_depth_at(far) - layer
 	_check("a fast dry avalanche throws snow into the air, and all of it settles", av.get_powder_taken() > 1000.0 and absf(av.get_powder_settled() - av.get_powder_taken()) < 0.01 * av.get_powder_taken() and av.get_suspended_mass() == 0.0, "%.1f t up (%.1f t in the air at once), %.1f t down, %.0f s" % [av.get_powder_taken() / 1000.0, peak_air / 1000.0, av.get_powder_settled() / 1000.0, t])
 	_check("the cloud outruns the dense flow", av.get_powder_reach() > av.get_run_out() + 10.0, "powder settles %.0f m from the release, the dense flow ran %.0f m" % [av.get_powder_reach(), av.get_run_out()])
-	_check("it leaves a thin layer of powder past the debris", layer > 0.0005 and layer < 0.15, "%.1f cm at %.0f m (%.2f m of old snow there)" % [layer * 100.0, far.x, far0])
+	_check("it leaves a thin layer of powder past the debris", layer > 0.0005 and layer < 0.15, "%.1f cm at (%.0f, %.0f) (%.2f m of snow there before)" % [layer * 100.0, far.x, far.z, far0])
 	_check("no snow is made or lost", absf(water1 - water0) < 0.005 * water0, "water %.0f -> %.0f t" % [water0 / 1000.0, water1 / 1000.0])
 	# A wet slide: the same load after a thaw makes no cloud.
 	av = await _trigger_setup()
@@ -2184,7 +2198,7 @@ func _build_view() -> void:
 	# A sky, so path traced shadows are lit by it as raster's are by the ambient.
 	var sky := Sky.new()
 	var sky_material := ProceduralSkyMaterial.new()
-	if view == "icicles":
+	if view == "icicles" or view == "avalanche":
 		# A snowy land below the horizon, not the default brown: clear ice shows what lies behind and below it.
 		sky_material.ground_horizon_color = Color(0.72, 0.75, 0.8)
 		sky_material.ground_bottom_color = Color(0.55, 0.58, 0.62)

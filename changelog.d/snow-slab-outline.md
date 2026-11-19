@@ -1,0 +1,1 @@
+- Snow: a triggered slab releases with a crown across the slope, flanks that fade toward the foot and an open foot; its walls run unbroken with a sharp top and the weak layer at their base, and the bed it leaves is grey old snow streaked down the fall line. Natural releases stay one compact patch. The avalanche powder cloud is whiter and smoother.
