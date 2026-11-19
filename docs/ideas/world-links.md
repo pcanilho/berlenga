@@ -111,6 +111,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Wading → wet legs, clothes | linked (18 Nov) | WorldWater | ClothWetness (PhysX, d90fa990) |
 | Cold air over water → steam fog | linked (18 Nov) | air, WorldWater, `get_water_temperature()` | VegetationMist3D cells over water |
 | Rain, melt → river level | linked (18 Nov) | WeatherRunoff3D (SCS curve number, D8 routing) | rain thread: rivers add the discharge reaching them; snowmelt runs off too |
+| Floodwater → ground soaked, silted | linked (19 Nov) | WorldWater `height_except` (every producer but the ground's own standing water), `flow_at`, `sediment_at` | GroundSurface3D soaks the ground any water covers (Green-Ampt) and still or slow water (under 0.2-0.5 m/s) lays its load as fresh mud, D = C w_s dt with w_s 3e-4 m/s (Pizzuto 1987; Asselman and Middelkoop 1995) |
 | Cold → lake ice | linked | air, snow | SnowCover3D lake ice, Stefan's law under the snow (Leppaeranta 1993) |
 | Bodies → lake ice (break through) | linked (19 Nov) | world_contact bodies (mass), SnowCover3D lake ice | a load past Gold's P = A h^2 (A 10, white ice half, thawing ice half) breaks a hole the body's size; it stops bearing at once and refreezes by Stefan's law |
 | Fire → steam on water | linked (18 Nov) | WorldFire, WorldWater | water landing on fire and fire at the water's edge (PhysX, ebb5f254) |
@@ -230,7 +231,7 @@ Two gaps found while building round 3; both read contracts that exist.
 
 Gaps found by reading the readers, each on a contract that exists.
 
-1. Floodwater soaks and silts the ground it covers. GroundSurface3D reads its own `water_sources` list for water over
+1. Floodwater soaks and silts the ground it covers (built 19 Nov). GroundSurface3D reads its own `water_sources` list for water over
    the ground (sand and water, stage 4), not WorldWater, so a river rising over its banks (WeatherRunoff3D), live
    water or a waterfall's pool never wets the ground they cover. Moving that read to `WorldWater.height_at`,
    `flow_at` and `sediment_at` (19 Nov) makes every water producer soak the ground (Green-Ampt as now), and the

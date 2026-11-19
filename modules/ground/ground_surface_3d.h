@@ -136,7 +136,13 @@ private:
 	bool mud_layer = true;
 	bool mud_slides = true; // round 10: a soaked layer flows off slopes it no longer holds
 	bool subsoil = true; // round 12: a firm base under the loose layer, its depth varied across the ground
-	HashMap<Vector2i, float> mud_deposits; // m of fresh slurry per 1 m cell (debris flows' fans)
+	HashMap<Vector2i, float> mud_deposits; // m of fresh slurry per 1 m cell (debris flows' fans, flood silt)
+	bool flood_silt = true; // other water over the ground leaves its suspended load as fresh mud
+	float silt_total = 0.0f; // kg/m2 laid since start, summed over the 1 m points
+	float silt_pending = 0.0f;
+	float silt_timer = 0.0f;
+	bool silt_dirty = false;
+	void _flood_silt(const Vector3 &p_position, float p_depth, float p_speed, const Vector2 &p_load, float p_dt);
 	// Standing water (docs/ideas/mud.md, stage 2): rain, runoff and ground water gather in ruts and prints, on the
 	// GPU field (the virtual pipe model), drawn as the surface there in both renderers.
 	bool standing_water = true;
@@ -810,6 +816,9 @@ public:
 	void add_mud_deposit(Vector3 p_position, float p_radius, float p_depth, bool p_update = true);
 	void refresh_cells() { _update_cells(); }
 	float get_mud_deposit_at(Vector3 p_position) const;
+	void set_flood_silt(bool p_enabled) { flood_silt = p_enabled; }
+	bool is_flood_silt() const { return flood_silt; }
+	float get_flood_silt_total() const { return silt_total; }
 	void set_mats(bool p_enabled) { mats = p_enabled; }
 	bool is_mats() const { return mats; }
 	// The mat a wheel's contact p_contact lies on (within p_tolerance of the wood), or -1.
