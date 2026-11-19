@@ -4473,9 +4473,11 @@ BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt
 	const float fade = 1.5f * MAX(shut(c) * Math::smoothstep(0.5f, 0.0f, x - l), shut(c + 1) * Math::smoothstep(0.5f, 0.0f, r - x));
 	const int ci = wrap(c);
 	// Cross breaks: S slots a tile, each column's own phase and slope, and each slot's break
-	// shifted up or down by up to a quarter slot and missing in half the slots, so plates run
-	// 1.5 to 4 widths long and never line up in rows with their neighbours'.
-	constexpr int S = 4;
+	// shifted up or down by up to a quarter slot and missing in about a quarter of the slots, so
+	// plates run mostly 1 to 2.5 widths long, the odd one longer, and never line up in rows with
+	// their neighbours'. (Round 19, docs 19 Nov: four slots with half missing, 1.5 to 4 widths,
+	// lined the plates up into vertical strips.)
+	constexpr int S = 6;
 	const float phase = bark_hash(ci, 2, p_salt + 3u);
 	const float tilt = 0.5f * (bark_hash(ci, 4, p_salt + 3u) - 0.5f);
 	const float t = p_v * S + phase * S + tilt * (x - 0.5f * (l + r)) + 0.35f * bark_fbm(p_u, p_v, p_cols * 3, 14, 2, p_salt + 29u);
@@ -4483,7 +4485,7 @@ BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt
 	auto brk = [&](int j, float &r_at) {
 		const int jw = ((j % S) + S) % S;
 		r_at = float(j) + 0.5f * (bark_hash(ci * S + jw, 7, p_salt + 5u) - 0.5f);
-		return jw % 4 == 0 || bark_hash(ci * S + jw, 8, p_salt + 5u) > 0.5f;
+		return jw == 0 || bark_hash(ci * S + jw, 8, p_salt + 5u) > 0.27f;
 	};
 	float below = -1e9f, above = 1e9f;
 	int below_j = k - 4;
@@ -4818,7 +4820,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// breaks) is a flat facet tilted its own way and lifted to its own level, so the
 					// plates read as flat-topped, angular slabs of varied relief.
 					const float du = CLAMP(((wu - Math::floor(wu)) * L.cu - c.site.x) * 2.0f, -1.0f, 1.0f);
-					const float dv = CLAMP(((wv - Math::floor(wv)) - c.site.y) * 4.0f, -1.0f, 1.0f);
+					const float dv = CLAMP(((wv - Math::floor(wv)) - c.site.y) * 6.0f, -1.0f, 1.0f);
 					const float facet = (bark_hash(int(c.id), 9, salt + 137u) - 0.5f) * du + (bark_hash(int(c.id), 10, salt + 137u) - 0.5f) * dv + 0.6f * (bark_hash(int(c.id), 11, salt + 137u) - 0.5f);
 					plate = valley * (0.62f + 0.2f * r1 + 0.08f * r2 + 0.06f * grit) + (0.035f * scales + 0.2f * facet) * on_plate;
 				} else if (p_kind == BARK_PLATED || p_kind == BARK_PINEA) {
