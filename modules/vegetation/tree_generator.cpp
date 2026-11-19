@@ -4492,6 +4492,32 @@ BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt
 	// the plate, so breaks meet the furrows at varied angles and plates end in skewed, uneven
 	// edges. Its distance is measured square to it (taken up the stem, a slanted break thinned).
 	const float to_m = float(p_cols) / float(S); // A slot's height in column widths.
+	// Each break's slant sign from its own, well-mixed hash (docs, 19 Nov: with the linear
+	// bark_hash, breaks one above another in a column often slanted the same way, a faint
+	// herringbone), and never three present breaks running in a column slanted alike (round 22:
+	// three parallel slashes in a row still read as a pattern). Twice round the tile's slots, so
+	// the run is capped across the tile's seam too.
+	float sgns[S];
+	{
+		auto present = [&](int jw) { return jw == 0 || bark_hash(ci * S + jw, 8, p_salt + 5u) > 0.27f; };
+		for (int jw = 0; jw < S; jw++) {
+			sgns[jw] = (hash_murmur3_one_32(uint32_t(ci * S + jw) * 2654435761u + 0x9e37u, p_salt + 11u) & 1u) ? 1.0f : -1.0f;
+		}
+		float last = 0.0f;
+		int run = 0;
+		for (int pass = 0; pass < 2; pass++) {
+			for (int jw = 0; jw < S; jw++) {
+				if (!present(jw)) {
+					continue;
+				}
+				if (sgns[jw] == last && run >= 2) {
+					sgns[jw] = -sgns[jw];
+				}
+				run = sgns[jw] == last ? run + 1 : 1;
+				last = sgns[jw];
+			}
+		}
+	}
 	struct Brk {
 		bool on;
 		float at, slope; // at: where it crosses this x, in slots; slope: rise per column width, in slots.
@@ -4501,9 +4527,7 @@ BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt
 		const uint32_t id = uint32_t(ci * S + jw);
 		Brk b;
 		b.on = jw == 0 || bark_hash(id, 8, p_salt + 5u) > 0.27f;
-		// The sign from its own, well-mixed hash (docs, 19 Nov: with the linear bark_hash, breaks
-		// one above another in a column often slanted the same way, a faint herringbone).
-		const float sgn = (hash_murmur3_one_32(id * 2654435761u + 0x9e37u, p_salt + 11u) & 1u) ? 1.0f : -1.0f;
+		const float sgn = sgns[jw];
 		const float tilt = sgn * 0.7f * bark_hash(id, 4, p_salt + 7u) / to_m; // tan 35 = 0.7
 		const float bend = 0.8f * (bark_hash(id, 9, p_salt + 7u) - 0.5f) / to_m;
 		b.at = float(j) + 0.5f * (bark_hash(id, 7, p_salt + 5u) - 0.5f) + tilt * dx + bend * dx * dx;
