@@ -2202,7 +2202,7 @@ func _build_view() -> void:
 	elif view == "lake":
 		await _setup("mountain", 512.0, 128, -12.0)
 	elif view == "avalanche":
-		await _setup("avalanche", 256.0, 128, -8.0)
+		await _setup("avalanche_bowl" if OS.get_cmdline_user_args().has("--powder") else "avalanche", 256.0, 128, -8.0)
 	elif view == "windblown":
 		await _setup("ridge", 512.0, 256, -8.0)
 	elif view == "shelter" or view == "icicles":

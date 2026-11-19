@@ -1456,6 +1456,11 @@ Research: a slab avalanche leaves a crown (a tensile fracture standing the slab'
 - **Background timing check**: compares the median main-thread cost per update, not the worst, so a render running alongside cannot fail it.
 - **Powder bench**: an old pack under the storm (the full-depth release showed bare ground, a black hole in the slope), the camera back to hold the whole front, the deep-snow geometry over the whole face, and the still taken at 6 s while the front still feeds the cloud (by 9 s it is decaying into separate puffs).
 
+## Follow-up 33: one cloud along the front; a mountainside for the powder shot (19 Nov 2026)
+
+- **Lanes**: the cloud's intake is gathered in 8 m lanes across the run (the release's fall line), each emitter set at its lane's leading take, fed by the lane's mass. Gathered in 8 m squares, the slab's sides (where the flow spills sideways) stood as columns of their own and the centre had little: three chimneys, not one billowing front.
+- **Slope**: `--powder` shoots an `avalanche_bowl` ground: the face steepens to about 45 degrees and eases out into the run-out without a break, the ridge rises on above it (no plateau), the sides rise into spurs (a cirque) and the ground rolls (3 m of noise over about 80 m). The tests keep the plain 38 degree face.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
