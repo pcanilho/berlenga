@@ -205,11 +205,28 @@
 				Bakes an octahedral impostor of a plant (Brucks, 2018): the plant seen from [param frames] by [param frames] directions over the upper hemisphere, each [param frame_size] texels square and fitted to the plant, into an albedo and coverage atlas and a normal, depth and back light atlas. Returns a quad whose shader turns it to the view, blends the three nearest views, and moves each pixel to the plant's surface by the baked depth, so it meets the ground and casts and receives shadows like the mesh. Wind, wetness, snow and [VegetationField3D]'s far thinning work as on the plant shader. The quad has the meta [code]impostor_of[/code] set to [param mesh]. About 2.8 MB of textures with the defaults; baking runs on all cores.
 			</description>
 		</method>
+		<method name="get_burn_recovery" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="preset" type="int" enum="PlantGenerator.Preset" />
+			<description>
+				Returns the years a preset takes to full cover after a fire ([member PlantSpecies.burn_recovery]): grasses and sedges 0.7 (they resprout from their crowns within weeks), bracken, nettle and bramble 1.2, most herbs 1.5, litter 3, woodland herbs and ferns 4, bilberry 4, Mediterranean scrub 5, heaths 8, mosses 10, alpine cushions 15, soil crust 30. 0 for water plants and the burn presets, which [constant PlantSpecies.RULE_BURN_AGE] places instead.
+			</description>
+		</method>
 		<method name="get_trample_resistance" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="preset" type="int" enum="PlantGenerator.Preset" />
 			<description>
 				Returns the walkers a year that halve a preset's cover on a worn path, from trampling studies (Cole 1995). Plantain 1000, grasses 300, heaths and scrub 40, ferns 30; 0 for presets that are not ground plants.
+			</description>
+		</method>
+		<method name="make_burn" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.BurnStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				The plants of burnt ground as [PlantSpecies] for a [Biome], placed by [constant PlantSpecies.RULE_BURN_AGE] from [method WorldFire.burn_age_at]: each burn preset in bands of the years since the fire, its meshes built at that band's age (the season's [code]burn_age[/code]). Black stems with ash, then weathering silver-grey and falling; fire moss from three months to three years; fireweed as leafy shoots in the first year and flowering spikes from the second; tussocks green from the second week. Ground that never burnt takes none of them; the stand's other plants come back by their [member PlantSpecies.burn_recovery].
 			</description>
 		</method>
 		<method name="make_desert" qualifiers="static">
@@ -571,7 +588,19 @@
 		<constant name="PRESET_SOIL_CRUST" value="91" enum="Preset">
 			Biological soil crust: a dark, knobbly, pinnacled skin of cyanobacteria, lichens and mosses on stable desert sand, flecked grey, green and orange.
 		</constant>
-		<constant name="PRESET_MAX" value="92" enum="Preset">
+		<constant name="PRESET_FIREWEED" value="92" enum="Preset">
+			Rosebay willowherb (fireweed) on burnt ground: clonal reddish stems 0.7 to 1.4 m with spiral lanceolate leaves and a raceme of magenta four-petalled flowers opening from the bottom up, long pods below that split to white fluff. Leafy shoots only in the first year after a burn (the season's [code]burn_age[/code]).
+		</constant>
+		<constant name="PRESET_FIRE_MOSS" value="93" enum="Preset">
+			Fire mosses on burnt soil (Funaria hygrometrica with some Ceratodon purpureus): a low yellow-green carpet with a forest of orange setae and nodding capsules, green ripening to orange-brown, thickest about two years after the burn.
+		</constant>
+		<constant name="PRESET_CHARRED_STEMS" value="94" enum="Preset">
+			Burnt heather or scrub: black stem skeletons with ash on the tips, weathering silver-grey, breaking and falling over 2 to 5 years, green resprouts from the stem bases from the first season (the season's [code]burn_age[/code]).
+		</constant>
+		<constant name="PRESET_BURNT_TUSSOCK" value="95" enum="Preset">
+			A grass tussock after a fire: black stubble over a charred crown, a green flush from the second week, whole again by about a year (the season's [code]burn_age[/code]).
+		</constant>
+		<constant name="PRESET_MAX" value="96" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -660,6 +689,18 @@
 		</constant>
 		<constant name="DESERT_MAX" value="2" enum="DesertStand">
 			Number of desert stands.
+		</constant>
+		<constant name="BURN_HEATH" value="0" enum="BurnStand">
+			Burnt heather moor: charred stems, fire moss, fireweed, resprouting moor-grass.
+		</constant>
+		<constant name="BURN_GRASS" value="1" enum="BurnStand">
+			Burnt grassland: resprouting tussocks, a little fire moss and fireweed in the gaps.
+		</constant>
+		<constant name="BURN_SCRUB" value="2" enum="BurnStand">
+			Burnt scrub: tall charred skeletons standing up to seven years, fireweed and resprouting grasses between.
+		</constant>
+		<constant name="BURN_MAX" value="3" enum="BurnStand">
+			Number of burn stands.
 		</constant>
 		<constant name="ALPINE_FELLFIELD" value="0" enum="AlpineStand">
 			Fellfield on exposed ridges blown free of snow: moss campion cushions, purple saxifrage and mountain avens mats far apart on gravel, curved sedge in the lee.

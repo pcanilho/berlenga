@@ -60,6 +60,7 @@
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/weather/weather_map_3d.h"
 #include "modules/weather/weather_sky_material.h"
+#include "modules/world/world_contracts.h"
 
 namespace {
 
@@ -381,6 +382,62 @@ void VegetationField3D::_read_sand_mobility(const TerrainGenerator3D *p_gen, Pla
 	r_setup.mobility_rect = rect;
 }
 
+// Burnt ground (docs/ideas/vegetation.md, "Burnt ground and regrowth"): the fire contract's years since the ground last
+// burnt, sampled once per setup on a grid of 2 m or more over the map (at most 512 a side). Regrowth takes seasons, so
+// a fire burning now shows once the field places again.
+void VegetationField3D::_read_burn_age(PlaceSetup &r_setup) const {
+	r_setup.burn.clear();
+	r_setup.burn_nx = 0;
+	r_setup.burn_ny = 0;
+	const WorldFire *fire = WorldContracts::fire();
+	if (!fire || !fire->has_provider() || biome.is_null() || !r_setup.rect.has_area()) {
+		return;
+	}
+	bool wanted = false;
+	const TypedArray<PlantSpecies> list = biome->get_species();
+	for (int i = 0; i < list.size() && !wanted; i++) {
+		const Ref<PlantSpecies> sp = list[i];
+		wanted = sp.is_valid() && (sp->uses_burn_age() || sp->get_burn_recovery() > 0.0f);
+	}
+	if (!wanted) {
+		return;
+	}
+	const Rect2 rect = r_setup.rect;
+	const float cell = MAX(2.0f, MAX(rect.size.x, rect.size.y) / 511.0f);
+	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 512);
+	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 512);
+	LocalVector<float> ages;
+	ages.resize(nx * ny);
+	bool any = false;
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const Vector2 xz = rect.position + rect.size * Vector2(float(x) / (nx - 1), float(z) / (ny - 1));
+			const float a = fire->burn_age_at(Vector3(xz.x, 0.0f, xz.y));
+			ages[z * nx + x] = a;
+			any = any || a >= 0.0f;
+		}
+	}
+	if (!any) {
+		return;
+	}
+	r_setup.burn = ages;
+	r_setup.burn_nx = nx;
+	r_setup.burn_ny = ny;
+	r_setup.burn_rect = rect;
+}
+
+float VegetationField3D::PlaceSetup::burn_at(const Vector2 &p_xz) const {
+	if (burn.is_empty()) {
+		return -1.0f;
+	}
+	const int x = int(Math::round((p_xz.x - burn_rect.position.x) / burn_rect.size.x * (burn_nx - 1)));
+	const int z = int(Math::round((p_xz.y - burn_rect.position.y) / burn_rect.size.y * (burn_ny - 1)));
+	if (x < 0 || z < 0 || x >= burn_nx || z >= burn_ny) {
+		return -1.0f;
+	}
+	return burn[z * burn_nx + x];
+}
+
 float VegetationField3D::PlaceSetup::mobility_at(const Vector2 &p_xz) const {
 	if (mobility.is_empty()) {
 		return -1.0f;
@@ -482,6 +539,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			_read_sand_mobility(gen, r_setup);
 		}
 	}
+	_read_burn_age(r_setup);
 	r_setup.stone_tops = stone_top_grid;
 	r_setup.stone_top_normals = stone_top_grid_normals;
 	// Another field's crowns (canopy_field): a camera-local herb layer under a world forest.
@@ -1008,6 +1066,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool coast_rule = sp->uses_coast();
 		const bool field_rule = sp->uses_field_edge();
 		const bool mobility_rule = sp->uses_sand_mobility();
+		const bool burn_rule = sp->uses_burn_age();
+		const bool burn_recovery = !burn_rule && sp->get_burn_recovery() > 0.0f && !p_setup.burn.is_empty();
 		const bool sand_plant = sp->uses_dune() || coast_rule || mobility_rule;
 		if (coast_rule && !p_setup.coast) {
 			continue; // Coast plants need a sea to measure from.
@@ -1108,6 +1168,13 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							m = MAX(m, Math::smoothstep(20.0f, 30.0f, float(Math::rad_to_deg(map->get_slope_at(p3)))));
 						}
 						suit *= sp->rule_weight(PlantSpecies::RULE_SAND_MOBILITY, m);
+					}
+					if (burn_rule && suit > 0.0f) {
+						// Burnt ground: the burn presets by the years since (charred stems, fire moss, fireweed); -1 never burnt.
+						suit *= sp->rule_weight(PlantSpecies::RULE_BURN_AGE, p_setup.burn_at(xz));
+					} else if (burn_recovery && suit > 0.0f) {
+						// Everything else thins on a fresh burn and closes in again over its own years.
+						suit *= sp->burn_cover(p_setup.burn_at(xz));
 					}
 					if (!sand_plant && suit > 0.0f && !p_setup.sand.is_empty()) {
 						// Loose sand (beach, dune, sand sea): no soil to root in or to hold litter.

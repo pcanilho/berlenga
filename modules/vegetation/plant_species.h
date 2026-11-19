@@ -70,6 +70,7 @@ public:
 		RULE_BEACH, // Beach mask, 1 on the beach face fading over the backshore, 0 inland (TerrainGenerator3D.get_beach_at).
 		RULE_FIELD_EDGE, // Metres from the nearest crop field's edge (GrassField3D.fields), negative inside the field. A species using it may grow in the fields; without fields it is not placed.
 		RULE_SAND_MOBILITY, // Desert sand seas (TerrainGenerator3D.sand_sea_rect): 0 stable interdune ground to 1 moving crest or slip face; -1 off the sand seas. A species using it grows on their loose sand.
+		RULE_BURN_AGE, // Years since the ground last burnt (WorldFire.burn_age_at); -1 never. A species using it grows only on ground that burnt (the burn presets).
 		RULE_MAX,
 	};
 	// How the species meets fallen wood placed in the field (meshes with tree_deadwood_axis).
@@ -86,6 +87,7 @@ private:
 	float footprint = 0.5f;
 	float sward_shade = 0.0f; // How much of the grass a stand of it shades out under it (bracken, bramble).
 	float trample_resistance = 0.0f; // Passes a year on a worn path that halve its cover (Cole 1995); 0: not trampled.
+	float burn_recovery = 0.0f; // Years to full cover after a fire; 0: fire does not thin it.
 	float detail_size = 0.0f; // m; > 0: a small item whose range the field takes from its pixel reach (vegetation_detail.h).
 public:
 	// Ground litter colours for undergrowth (linear): dead bracken fronds, sRGB about (150, 100, 60);
@@ -248,6 +250,7 @@ public:
 	static float season_temperature(float p_january, float p_july);
 	bool uses_field_edge() const { return ranges[RULE_FIELD_EDGE].x > -100000.0f || ranges[RULE_FIELD_EDGE].y < 100000.0f; }
 	bool uses_dune() const { return ranges[RULE_DUNE].x > -1.0f || ranges[RULE_DUNE].y < 1.0f; }
+	bool uses_burn_age() const { return ranges[RULE_BURN_AGE].x > -1.0f || ranges[RULE_BURN_AGE].y < 1000.0f; }
 	bool uses_sand_mobility() const { return ranges[RULE_SAND_MOBILITY].x > -1.0f || ranges[RULE_SAND_MOBILITY].y < 1.0f; }
 	// True when a coast rule (tide height, exposure, beach) is narrower than "anywhere".
 	bool uses_coast() const {
@@ -263,6 +266,16 @@ public:
 	float get_sward_shade() const { return sward_shade; }
 	void set_trample_resistance(float p_passes) { trample_resistance = MAX(p_passes, 0.0f); }
 	float get_trample_resistance() const { return trample_resistance; }
+	void set_burn_recovery(float p_years) { burn_recovery = MAX(p_years, 0.0f); }
+	float get_burn_recovery() const { return burn_recovery; }
+	// The share of its cover back on ground that burnt p_age years ago (-1: never; 1): none on a fresh burn, rising to
+	// full over burn_recovery years (smoothstep: slow at first, then closing in).
+	float burn_cover(float p_age) const {
+		if (burn_recovery <= 0.0f || p_age < 0.0f) {
+			return 1.0f;
+		}
+		return Math::smoothstep(0.0f, burn_recovery, p_age);
+	}
 	void set_detail_size(float p_size) { detail_size = MAX(p_size, 0.0f); }
 	float get_detail_size() const { return detail_size; }
 	// Trampling (Cole 1995): cover falls along a log-logistic curve of the passes (slope 2), halved

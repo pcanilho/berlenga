@@ -653,6 +653,50 @@ stable sand, annuals between the dunes. Cost, 120 m streamed round a walker on l
 +9.5 MB memory, +1 MB video, +134k primitives, +604 draw calls, walking worst 0.44 ms (0.03 off), raster frame
 504 ms against 162 ms. Path traced cost goes on the PC queue.
 
+## Burnt ground and regrowth (Paulo's pick 17 Nov; built 19 Nov)
+
+PhysX burns plants now (fire_state_map: char, scorch, stubble; fire_char_map: ash). Nothing grows back: a burn stays a
+fresh burn. What comes back, and when (temperate heath, grassland, scrub):
+
+- **Days to weeks.** Grasses resprout from protected crowns: a green flush through the black within 2 to 4 weeks in
+  the growing season (the "green-up" grazers follow). Ash blows and washes off in the first rains (PhysX does this).
+- **Months to 3 years: fire bryophytes.** Funaria hygrometrica (the "fire moss": a pale green carpet with orange-brown
+  setae and nodding capsules), Ceratodon purpureus (red-brown tufts), Marchantia polymorpha (flat liverwort thalli
+  with umbrella-like receptacles) colonise the bare burnt soil within months and fade as vascular plants close in
+  (British Bryological Society, Field Bryology 129, 2023; Frontiers in Plant Science 2024, bryophytes after fire).
+- **Year 1 to 6: fireweed and resprouters.** Chamaenerion angustifolium (rosebay willowherb, "fireweed") floods burns
+  from wind-blown seed and rhizomes, flowering magenta from the second summer. Bracken resprouts from rhizomes in the
+  first season and can take over.
+- **Heather.** Calluna resprouts from stem bases if the stand was young (under about 15 years) and germinates from
+  the seed bank (heat and smoke cue); the pioneer phase is 3 to 6 years, building 7 to 15, mature 15 to 25,
+  degenerate past that (Gimingham 1972; FEIS, Calluna vulgaris). Charred heather stems stand for 2 to 5 years before
+  they break down.
+- **Scrub.** Mediterranean resprouters (kermes oak, lentisk) send up shoots within months; seeders (rockroses)
+  germinate after the first autumn rains (Calvo et al.).
+
+Plan:
+
+1. A contract: `WorldFire.burn_age_at(pos)`, the years since the ground last burnt (negative: never). Provider
+   PhysXFireSpread3D for fires in play (game time), plus authored scars (a scene's old burns). Asked of world-links.
+2. `PlantSpecies.RULE_BURN_AGE` (years; default range takes every age and "never") for burn species, and
+   `PlantSpecies.burn_recovery` (years to full cover after a burn, from the preset) so every existing species thins
+   on a fresh burn and comes back over its own time, with no per-set wiring.
+3. Presets: charred shrub stems (black twiggy skeletons, breaking down with age), fire moss (Funaria carpet with
+   setae), fireweed (rosette in year 1, tall magenta spikes from year 2), resprouting grass tussock (charred base with
+   green shoots). Marchantia: PRESET_LIVERWORT already.
+4. `PlantGenerator.make_burn(BURN_HEATH | BURN_GRASS | BURN_SCRUB)`: the sets by age.
+5. Bench: a burn with patches of several ages (a stub WorldFire), raster frame, on/off costs.
+
+Built (19 Nov): world-links' `WorldFire.burn_age_at` (b7e28ec4; WorldBurnScar3D for authored scars, PhysXFireSpread3D
+for fires in play, c15a10b7). VegetationField3D samples it on a grid (2 m or more, at most 512 a side) when a species
+needs it; `PlantSpecies.RULE_BURN_AGE` places the burn presets, `PlantSpecies.burn_recovery` (from
+`PlantGenerator.get_burn_recovery`, set by tag_species) thins everything else: grasses back in 0.7 years, herbs 1.5,
+heaths 8, mosses 10, soil crust 30. Presets PRESET_FIREWEED, PRESET_FIRE_MOSS, PRESET_CHARRED_STEMS,
+PRESET_BURNT_TUSSOCK (plant_burn.cpp) read the season's `burn_age`; `make_burn(BURN_HEATH | BURN_GRASS | BURN_SCRUB)`
+builds each in age bands. Bench vegetation `--burn[=off]`: four scars 0.05 to 5 years old in dry heath; all checks
+pass (heather 122 per metre of strip unburnt, 0 on the fresh burn, 84 at five years). A fire burning now shows once
+the field places again (regrowth is slow). Next: the grass sward's own green-up (GrassField3D) by burn age.
+
 ## Salt marsh and shingle plants (built 17 Nov)
 
 Where the land meets a sheltered sea the ground is mud and the plants sort by how often the tide
