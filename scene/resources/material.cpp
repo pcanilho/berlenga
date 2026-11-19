@@ -2162,6 +2162,11 @@ void vertex() {)";
 	if (features[FEATURE_GROUND_DEFORM]) {
 		// First, so everything below (triplanar positions, world normals) sees the moved vertex.
 		code += "\n	ground_deform_vertex(MODEL_MATRIX, VERTEX, NORMAL, TANGENT, BINORMAL);\n";
+		if (ground_deform_patch) {
+			// vertex() must read the serial for the path tracer to count the material's parameters among what its
+			// capture depends on; declared and unread, bumping it recaptured nothing.
+			code += "	VERTEX.y += 0.0 * ground_deform_serial;\n";
+		}
 	}
 
 	if (flags[FLAG_SRGB_VERTEX_COLOR]) {
@@ -3146,6 +3151,8 @@ void fragment() {)";
 	NORMAL_MAP_DEPTH *= 1.0 - 0.85 * ground_wet.y;
 	ROUGHNESS = mix(ROUGHNESS, 0.2, 0.6 * ground_wet.y);
 )";
+		// The salt crust round still water in a dry climate (GroundSurface3D salt_crusts), over the wet margin.
+		code += "\tground_salt_apply((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, length(fwidth((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz)), ALBEDO, ROUGHNESS);\n";
 	}
 	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
 		// Standing water in ruts and prints (mud stage 2): the patch lies on the water's level there (its
@@ -4655,7 +4662,7 @@ float ground_ripple(vec2 p_xz) {
 // The ripples' variation (nothing repeating may show): the grown field tiles every few metres, so each point reads
 // it through a three-octave world-space warp (crests turn and change spacing over tens of metres and bend over a
 // few) and edge dislocations in pairs along the crests (a crest forks into two and rejoins: the Y-junctions of
-// real ripple fields), with a height that wanders between 35 and 100%. p_k is the grown field's dominant wave
+// real ripple fields), with a height that wanders between 20 and 100% and smooth sheets between fields. p_k is the grown field's dominant wave
 // vector (rad/m), so a dislocation shifts its crests by exactly one wavelength. The real ripples' window is filled
 // through the same lines (GroundRipples::vary), so the two meet crest to crest.
 float ground_ripple_hash(ivec2 p_c, uint p_s) {
@@ -4677,7 +4684,11 @@ vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
 	o += 1.2 * (vec2(ground_ripple_vn(p / 6.0, 3u), ground_ripple_vn(p / 6.0, 4u)) - 0.5);
 	o += 0.06 * (vec2(ground_ripple_vn(p / 1.7, 5u), ground_ripple_vn(p / 1.7, 6u)) - 0.5);
-	float amp = mix(0.35, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
+	// Ripple fields on a real beach are patchy over tens of metres: smooth sheets where the surface was damp or
+	// crusted when the wind blew (beach moisture patchiness, Davidson-Arnott et al. 2008; Bauer et al. 2009)
+	// between fields of low and full ripples, so no even texture runs to the horizon.
+	float amp = mix(0.2, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
+	amp *= smoothstep(0.36, 0.6, 0.7 * ground_ripple_vn(p / 16.0, 15u) + 0.3 * ground_ripple_vn(p / 5.0, 16u));
 	float kk = dot(p_k, p_k);
 	if (kk > 0.0) {
 		vec2 kn = p_k / sqrt(kk);
@@ -4761,11 +4772,11 @@ vec4 ground_wet_block(vec2 p_xz, vec4 p_rect, int p_block, ivec2 p_ts, float p_r
 	return textureLod(ground_wet_map, vec2(uv.x, v / float(p_ts.y)), 0.0);
 }
 // The wet map's blocks: the fine lattice, then the far one (texel 1's tag 3.5), the cracks (texel 2's 4.5), the
-// puddle ice (texel 3's 5.5), the mud on plants (texel 4's 6.5; GrassField3D reads it) and fresh deposits (texel 5's
-// 7.5), each there only when tagged.
+// puddle ice (texel 3's 5.5), the mud on plants (texel 4's 6.5; GrassField3D reads it), fresh deposits (texel 5's
+// 7.5) and the salt crust (texel 6's 8.5), each there only when tagged.
 int ground_wet_blocks(ivec2 p_ts) {
 	int b = 1;
-	for (int k = 1; k < 6; k++) {
+	for (int k = 1; k < 7; k++) {
 		if (p_ts.x > k && abs(texelFetch(ground_wet_map, ivec2(k, p_ts.y - 1), 0).w - (2.5 + float(k))) < 0.01) {
 			b++;
 		}
@@ -5030,7 +5041,81 @@ vec4 ground_deposit_state(vec2 p_xz) {
 		return vec4(0.0);
 	}
 	int b = ground_wet_blocks(ts);
-	return ground_wet_block(p_xz, r, b - 1, ts, float((ts.y - 1) / b));
+	int salt = ts.x > 6 && abs(texelFetch(ground_wet_map, ivec2(6, ts.y - 1), 0).w - 8.5) < 0.01 ? 1 : 0;
+	return ground_wet_block(p_xz, r, b - 1 - salt, ts, float((ts.y - 1) / b));
+}
+// The salt crust at p_xz (GroundSurface3D salt_crusts): the wet map's last block (texel 6's tag 8.5), 0 to 1; 0 where none.
+float ground_salt_state(vec2 p_xz) {
+	ivec2 ts = textureSize(ground_wet_map, 0);
+	if (ts.x < 7 || ts.y < 2) {
+		return 0.0;
+	}
+	vec4 r = texelFetch(ground_wet_map, ivec2(0, ts.y - 1), 0);
+	if (abs(r.w - 2.5) > 0.01 || abs(texelFetch(ground_wet_map, ivec2(6, ts.y - 1), 0).w - 8.5) > 0.01) {
+		return 0.0;
+	}
+	int b = ground_wet_blocks(ts);
+	return ground_wet_block(p_xz, r, b - 1, ts, float((ts.y - 1) / b)).x;
+}
+// Salt polygons (the crust buckles into plates some 10 cm across with raised rims, Lasser et al. 2023): a Voronoi
+// lattice in cell units, x the distance to the cell's edge (cell units), y the cell's random 0..1.
+vec2 ground_salt_cells(vec2 p_p) {
+	vec2 ip = floor(p_p);
+	vec2 fp = p_p - ip;
+	float d1 = 8.0;
+	float d2 = 8.0;
+	vec2 id = ip;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec2 g = vec2(float(i), float(j));
+			uvec2 q = uvec2(ivec2(ip + g) + ivec2(32768));
+			uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u);
+			h = (h ^ (h >> 16u)) * 2246822519u;
+			h ^= h >> 13u;
+			vec2 o = vec2(float(h & 0xffffu), float(h >> 16u)) / 65535.0;
+			vec2 r = g + 0.15 + 0.7 * o - fp;
+			float d = dot(r, r);
+			if (d < d1) {
+				d2 = d1;
+				d1 = d;
+				id = ip + g;
+			} else if (d < d2) {
+				d2 = d;
+			}
+		}
+	}
+	uvec2 q = uvec2(ivec2(id) + ivec2(32768));
+	uint h = (q.x * 2654435761u) ^ (q.y * 2246822519u);
+	h = (h ^ (h >> 15u)) * 2654435761u;
+	return vec2(0.5 * (sqrt(d2) - sqrt(d1)), float(h >> 8u) / 16777215.0);
+}
+// A salt crust (efflorescence) round still water in a dry climate: the salts the fringe's water leaves as it
+// evaporates, white and matte in patches that join as the crust thickens (playa crusts' albedo about 0.5 to 0.7,
+// Nield et al. 2015). The same lines in scene_raytracing_raygen.glsl.
+// p_fp: the pixel's footprint in metres (0 for full detail): past about a plate the plates give way to their share.
+void ground_salt_apply(vec3 p_world, float p_normal_y, float p_fp, inout vec3 r_albedo, inout float r_roughness) {
+	float c = ground_salt_state(p_world.xz);
+	if (c <= 0.0) {
+		return;
+	}
+	// Thicker and thinner along the shore (1.5 m), in patches (35 and 9 cm) of polygonal plates 10 cm across, whole
+	// plates crusted or bare, with whiter raised rims; a thin bloom under the crusts: off-white, never the snow's white.
+	vec2 p = p_world.xz;
+	float ce = c * mix(0.35, 1.0, ground_ripple_vn(p / 1.5, 23u));
+	float nz = 0.6 * ground_ripple_vn(p / 0.35, 21u) + 0.4 * ground_ripple_vn(p / 0.09, 22u);
+	float up = smoothstep(0.3, 0.8, p_normal_y);
+	float share = smoothstep(1.0 - ce, 1.35 - ce, nz);
+	vec2 cell = ground_salt_cells(p / 0.1);
+	float plate = step(cell.y, share) * (0.85 + 0.15 * (1.0 - smoothstep(0.0, 0.08, cell.x)));
+	float cover = mix(plate, 0.9 * share, smoothstep(0.03, 0.1, p_fp)) * up;
+	r_albedo = mix(r_albedo, vec3(0.56, 0.53, 0.48), max(0.75 * cover, 0.15 * ce * up));
+	r_roughness = mix(r_roughness, 0.92, min(cover, 1.0));
+	// The cracks between the plates, a few millimetres wide, showing the damp sand under them (gone past a few mm
+	// a pixel, where their share is in the plates' mix).
+	// Plate by plate a little whiter or greyer; the cracks open and close along their length.
+	float gap = 0.05 * ground_ripple_vn(p / 0.04, 25u);
+	float near = (1.0 - smoothstep(0.004, 0.012, p_fp)) * step(cell.y, share) * up;
+	r_albedo *= 1.0 + near * (0.12 * fract(cell.y * 17.0) - 0.06 - 0.25 * (1.0 - smoothstep(gap, gap + 0.02, cell.x)));
 }
 // The patch's surface with its standing water and its cracks (the cracks the mesh's spacing can carry).
 float ground_deform_top(vec2 p_xz) {

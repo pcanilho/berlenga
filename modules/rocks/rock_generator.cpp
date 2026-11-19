@@ -944,7 +944,9 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			const float support = family == FAMILY_SEA_STACK ? Math::abs(n.y) * c + Math::abs(n.z) + n.x * a * 0.3f : Math::abs(n.x) * a + Math::abs(n.y) * c + Math::abs(n.z);
 			// The last one or two are recent falls: a fresh scar face, paler and without the rind.
 			// (On a stack shallower: a deep one leaves a whole side as one flat slab face.)
-			planes.push_back({ n, support * ((family == FAMILY_SEA_STACK ? 0.74f : 0.62f) + (family == FAMILY_SEA_STACK ? 0.14f : 0.2f) * rng.randf()), k >= count - 1 - int(rng.randf() * 1.5f) });
+			// (Not on a stack: there a fresh face is a third of the column in another colour, a hard break at 30 m.)
+			const bool scar = k >= count - 1 - int(rng.randf() * 1.5f);
+			planes.push_back({ n, support * ((family == FAMILY_SEA_STACK ? 0.74f : 0.62f) + (family == FAMILY_SEA_STACK ? 0.14f : 0.2f) * rng.randf()), scar && family != FAMILY_SEA_STACK });
 		}
 	}
 	// A platform's edge follows the joints and the sea's reach, not a rectangle: a few vertical cuts across corners.
@@ -1576,12 +1578,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		const float span = MAX(x_hi - x_lo, 0.01f);
 		// Hoodoo profile (Bryce, Drumheller): a few bulges and necks up the column where harder and softer beds alternate,
 		// each a smooth swell rather than a step, since rain wash rounds them; fine bedding over it only as faint lines.
-		LocalVector<float> knot_at, knot_rec;
+		LocalVector<float> knot_at, knot_rec, knot_az;
 		float cap_t = 0.87f + 0.07f * rng.randf(); // where the caprock starts, as a share of the height: a thin cap
 		// No two caps alike (Bryce, Goreme, Drumheller): thin or thick, flush or overhanging, flat or domed, tipped where
 		// the neck under one side wore first; one column in five has lost its cap and weathers to a spire.
 		RandomPCG crng(uint64_t(nseed) * 0x9E3779B97F4A7C15ull + 0x7704ull);
-		const bool capless = crng.randf() < 0.2f;
+		const bool capless = crng.randf() < 0.35f;
 		cap_t = 0.8f + 0.14f * crng.randf();
 		const float cap_over = capless ? -0.06f * c : (0.01f + 0.09f * crng.randf()) * c; // how far the cap stands out
 		const float cap_dome = capless ? 0.45f * c : (0.04f + 0.24f * crng.randf()) * c;
@@ -1591,7 +1593,8 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			bool soft = rng.randf() < 0.5f;
 			while (b < x_hi + 0.6f) {
 				knot_at.push_back(b);
-				knot_rec.push_back((soft ? 0.12f + 0.14f * rng.randf() : 0.03f * rng.randf()) * c);
+				knot_rec.push_back((soft ? 0.16f + 0.24f * rng.randf() : 0.03f * rng.randf()) * c);
+				knot_az.push_back(rng.randf() * float(Math::TAU));
 				soft = rng.randf() < 0.75f ? !soft : soft;
 				b += 0.45f + 0.5f * rng.randf();
 			}
@@ -1718,6 +1721,13 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						const float cap = Math::smoothstep(cap_t - 0.02f, cap_t + 0.02f, t + tip);
 						// Swells below, none in the cap; the neck just under the cap thinnest; the cap a little wider.
 						v += r * (0.8f + 0.4f * rk_noise(p * 1.2f, nseed + 112u)) * (1.0f - cap);
+						// The column's axis wanders from bed to bed (each bed's own setback is uneven round it), so the
+						// outline steps sideways up the column, never a turned post.
+						{
+							const float a0 = knot_az[i], a1 = knot_az[i + 1];
+							const float sx = Math::lerp(Math::cos(a0), Math::cos(a1), f), sz = Math::lerp(Math::sin(a0), Math::sin(a1), f);
+							v += 0.09f * c * (sx * p.y / c + sz * p.z) * (1.0f - cap);
+						}
 						v += 0.1f * c * Math::smoothstep(cap_t - 0.3f, cap_t - 0.03f, t) * (1.0f - cap);
 						v += 0.14f * c * t * (1.0f - cap); // wider at the foot, where the debris apron feeds it
 						// The cap barely wider than the neck's foot, its rim and top rounded off and uneven.
@@ -3191,6 +3201,11 @@ void fragment() {
 	// Cover by the surface's age (surface_age, from the stone's family): talus and rockfall stones keep turning over
 	// and are mostly bare, river and swash stones are scoured; tors, cliffs and old boulders carry the most.
 	float lcov = lichen_cover * surface_age;
+	// By the sea the grey and orange lichens thin in over several metres above the splash zone's black band (the
+	// salt and the spray thin out with height), not at one line.
+	if (at_sea > 0.5) {
+		lcov *= smoothstep(tide_range * 2.0, tide_range * 7.0, v_world.y - sea_level + 2.0 * tide_range * (rk_fbm3(mp * 0.4 + 31.0) - 0.5));
+	}
 	if (lcov > 0.01 && open_face > 0.01 && film_in < 0.3) {
 		const float cell_m = 0.09;
 		vec3 lc = rk_lichen_cells(mp / cell_m, 0.5 + 0.7 * lcov, 0.4 + 0.45 * smoothstep(0.1, 0.6, lcov), cell_m, 0.6 * (lcov - 0.5));
@@ -3291,7 +3306,7 @@ void fragment() {
 		float edge = above_sea + (zn - 0.5) * 0.7 * tide_range * 0.5;
 		float tidal = 1.0 - smoothstep(tide_range * 0.4, tide_range * 0.6, edge);
 		// On an exposed stack the swash throws the splash zone several metres up.
-		float splash = (1.0 - tidal) * (1.0 - smoothstep(tide_range * 1.6, tide_range * 3.0, edge + 0.6 * tide_range * (rk_fbm3(mp * 0.9 + 2.0) - 0.5)));
+		float splash = (1.0 - tidal) * (1.0 - smoothstep(tide_range * 1.2, tide_range * 3.6, edge + 1.6 * tide_range * (rk_fbm3(mp * 0.35 + 2.0) - 0.5) + 0.5 * tide_range * (rk_fbm3(mp * 2.1 + 7.0) - 0.5)));
 		// Barnacles: a dull grey-brown crust, specked by the shells' pale plates, not a clean pale band.
 		float shells = smoothstep(0.62, 0.8, rk_noise3(mp * 140.0));
 		vec3 barnacle = mix(vec3(0.13, 0.12, 0.10), vec3(0.42, 0.40, 0.35), shells) * (0.8 + 0.4 * rk_noise3(mp * 23.0));
@@ -3369,8 +3384,9 @@ void fragment() {
 		float salt = weather_salt_at(v_world);
 		if (salt > 0.0) {
 			float shelter = clamp(1.3 * (1.0 - cavity) + 0.9 * max(-wn.y, 0.0), 0.0, 1.0);
-			float keep = (0.5 + 0.5 * shelter) * (1.0 - 0.6 * smoothstep(0.15, 0.6, flow));
-			float crust = smoothstep(0.2, 0.8, salt * keep + 0.35 * (rk_fbm3(mp * 9.0 + 23.0) - 0.5));
+			// Faces turned up take the rain and the dew first and keep least.
+			float keep = (0.35 + 0.65 * shelter) * (1.0 - 0.75 * smoothstep(0.25, 0.8, wn.y)) * (1.0 - 0.6 * smoothstep(0.15, 0.6, flow));
+			float crust = smoothstep(0.12, 0.65, salt * keep + 0.35 * (rk_fbm3(mp * 9.0 + 23.0) - 0.5));
 			crust *= (1.0 - smoothstep(0.08, 0.35, wet)) * (1.0 - film) * (1.0 - moss) * (1.0 - 0.8 * lic);
 			vec3 halite = vec3(0.82, 0.81, 0.78) * (0.85 + 0.3 * rk_noise3(mp * 160.0));
 			col = mix(col, halite, 0.8 * crust);

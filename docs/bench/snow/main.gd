@@ -906,6 +906,15 @@ func _run_shelter_tests() -> void:
 	print("  closure %.2f: canopy holds %.1f mm of %.1f mm capacity; %.1f mm under it, %.1f mm in the open" % [closure, held, cap, under, open])
 	_check("a canopy holds snow and shades the ground", closure > 0.5 and held > 3.0 and held <= cap + 0.01 and under < open * 0.8 and absf(under + held - open) < open * 0.1, "%.1f + %.1f mm against %.1f in the open" % [under, held, open])
 	_check("interception keeps the water", absf(w1 - w0 - (open * 64.0 * 64.0)) < open * 64.0 * 64.0 * 0.05, "%.0f kg on the map against %.0f fallen" % [w1 - w0, open * 64.0 * 64.0])
+	# A crown jolted from outside the weather (WorldSnow.shake_canopy; trees, docs/ideas/trees.md 5al): half the held
+	# snow within 3 m drops onto the pack below at the next update, the water kept.
+	var moved: float = Engine.get_singleton("WorldContracts").get_snow().shake_canopy(Vector3(0, 0, 0), 3.0, 0.5)
+	snow.advance(1.0)
+	var held_s := snow.get_canopy_load_at(Vector3(0, 0, 0))
+	var under_s := snow.get_swe_at(Vector3(0, 0, 0))
+	_check("a shaken crown drops its snow onto the pack (shake_canopy)", moved > 0.0 and absf(held_s - held * 0.5) < held * 0.1 and absf(under_s - under - (held - held_s)) < held * 0.1 and absf(snow.get_total_water() - w1) < w1 * 0.01, "%.0f kg moved; %.1f mm left of %.1f, %.1f mm below (was %.1f)" % [moved, held_s, held, under_s, under])
+	held = held_s
+	under = under_s
 	weather.temperature = -1.0
 	weather.wind_speed = 6.0
 	weather.snap_to_settings()
@@ -2399,6 +2408,7 @@ func _build_trail(cam: Camera3D) -> void:
 	wm.material_override = dark
 	walker.add_child(wm)
 	walker.position = Vector3(-7.0, 1.5, 1.3)
+	walker.set_meta("world_contact_exclude", true) # only its boots print; the capsule is a stand-in
 	add_child(walker)
 	for k in 2:
 		var foot := Node3D.new()
@@ -2838,6 +2848,12 @@ func _build_avalanche(cam: Camera3D) -> void:
 	if powder:
 		# A wide dry slab across the face in front of the camera (left to itself the face lets go wherever it is
 		# weakest, here off to both sides of the frame, and its cloud with it).
+		# One physics tick a frame: Flow steps once a frame, so on a slow renderer the gas keeps pace with the slide
+		# (with several ticks a frame it falls behind and the cloud is only the emitters' trail).
+		Engine.max_physics_steps_per_frame = 1
+		var pflow: Node = av.get_powder_cloud().get_flow()
+		if pflow:
+			pflow.set("scattering_resolution", 0) # full: quarter averages away the billows at still sizes
 		av.trigger(Vector3(-40.0, 0, 0), 60.0)
 		surface.extent = 256.0 # the deep-snow geometry over the whole face the camera sees, flank to flank
 		# Mid-run in real time, so PhysX Flow steps the cloud with it: --at=S seconds after release (default 9).
@@ -2860,10 +2876,15 @@ func _build_avalanche(cam: Camera3D) -> void:
 			frames += 1
 		var cloud := av.get_powder_cloud()
 		print("powder: %.1f t up, %.1f t in the air, Flow %s, %d sources, front %.1f m/s" % [av.get_powder_taken() / 1000.0, av.get_suspended_mass() / 1000.0, cloud.has_flow(), cloud.get_active_sources(), av.get_max_speed()])
-		# Back and up far enough to hold the whole front, flank to flank.
-		cam.position = Vector3(92.0, snow.get_ground_height_at(Vector3(92, 0, 12)) + 15.0, 12.0)
-		cam.look_at(Vector3(-15.0, 12.0, 0.0))
-		cam.fov = 60.0
+		# Back and up far enough to hold the whole front (--head-on: from straight down the track, flank to flank).
+		if OS.get_cmdline_user_args().has("--head-on"):
+			cam.position = Vector3(92.0, snow.get_ground_height_at(Vector3(92, 0, 12)) + 15.0, 12.0)
+			cam.look_at(Vector3(-15.0, 12.0, 0.0))
+		else:
+			# Three-quarters from the side, so the head's height and the cloud trailing back up the track both show.
+			cam.position = Vector3(100.0, snow.get_ground_height_at(Vector3(100, 0, 115)) + 28.0, 115.0)
+			cam.look_at(Vector3(-25.0, 16.0, -10.0))
+		cam.fov = 66.0
 		cam.far = 1000.0
 		if traced:
 			process_mode = Node.PROCESS_MODE_ALWAYS

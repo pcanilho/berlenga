@@ -476,6 +476,15 @@
 				Returns the ground height at [param position] straight from [member height_source] (or a ray down on [member ground_collision_mask]), finer than the cells. NaN where nothing answers.
 			</description>
 		</method>
+		<method name="shake_canopy">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="share" type="float" />
+			<description>
+				Moves [param share] (0 to 1) of the snow held in the crowns within [param radius] of [param position] onto the pack below at the next update (fresh snow of 150 kg/m3; mass kept). Returns the kg, from the published load. Answers [method WorldSnow.shake_canopy].
+			</description>
+		</method>
 		<method name="snow_conductivity" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="density" type="float" />
