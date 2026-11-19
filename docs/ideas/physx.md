@@ -1597,6 +1597,20 @@ covered 659 m2 against 581 m2 without whirls.
    condensation level), drawn by the weather's cloud volume, and its
    outflow added to the fire's wind.
 
+### Charred stumps (picked 19 Nov, first of four, part one)
+
+Built. Fire-killed and fire-weakened trees break in the charred band at
+the foot (the catface), leaving stumps of about 0.3 to 1.5 m (Gill 1974;
+hazard-tree guides). Here: a snap now cuts the stem 0.3 to 0.9 m up (steady
+per tree). TreeWind3D's piece meshes clip the stem's triangles exactly at
+the cut (one-plane Sutherland-Hodgman, attributes interpolated): the
+falling part keeps everything above, the stump the bark below. The stump
+is a static body (a cylinder collider, on the trees' collision layer and
+layer 1) with a fracture cap a third as tall as a green break (charred
+wood breaks short and brash); the trunk's butt takes the matching face
+and hinges on the stump's lee edge. The capsules, the Blast hulls and the
+Blast soups of the stem below the cut are dropped from the part.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

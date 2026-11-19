@@ -46,9 +46,11 @@
 #include "scene/3d/physics/collision_object_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/rigid_body_3d.h"
+#include "scene/3d/physics/static_body_3d.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
 #include "scene/resources/3d/capsule_shape_3d.h"
+#include "scene/resources/3d/cylinder_shape_3d.h"
 #include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"
 
@@ -1021,7 +1023,7 @@ bool TreeWind3D::_touch_instance(Target &r_target, int p_instance, const Transfo
 }
 
 // The bones on a snapped branch, as a mesh of their own (cut from the tree's surfaces once).
-Ref<ArrayMesh> TreeWind3D::_piece_mesh(const Rig &p_rig, int p_bone, const LocalVector<uint8_t> *p_exclude, uint64_t p_key) {
+Ref<ArrayMesh> TreeWind3D::_piece_mesh(const Rig &p_rig, int p_bone, const LocalVector<uint8_t> *p_exclude, uint64_t p_key, float p_cut, int p_cut_side) {
 	const uint64_t key = p_key ? p_key : (p_rig.mesh.is_valid() ? uint64_t(p_rig.mesh->get_instance_id()) : 0u) * 1315423911u + uint64_t(p_bone);
 	if (piece_meshes.has(key)) {
 		return piece_meshes[key];
@@ -1041,6 +1043,11 @@ Ref<ArrayMesh> TreeWind3D::_piece_mesh(const Rig &p_rig, int p_bone, const Local
 		}
 	}
 	for (int s = 0; s < p_rig.mesh->get_surface_count(); s++) {
+		const Ref<ArrayMesh> named = p_rig.mesh;
+		const bool bark = named.is_valid() && named->surface_get_name(s) == "bark";
+		if (p_cut_side < 0 && !bark) {
+			continue; // A stump is bare wood and bark.
+		}
 		const Array arr = p_rig.mesh->surface_get_arrays(s);
 		const PackedVector3Array verts = arr[Mesh::ARRAY_VERTEX];
 		const PackedVector3Array normals = arr[Mesh::ARRAY_NORMAL];
@@ -1062,10 +1069,84 @@ Ref<ArrayMesh> TreeWind3D::_piece_mesh(const Rig &p_rig, int p_bone, const Local
 		PackedVector2Array ou;
 		PackedColorArray oc;
 		PackedInt32Array oi;
+		// A vertex where a triangle crosses the cut, interpolated between two of its own.
+		auto emit_mix = [&](int p_a, int p_b, float p_t) {
+			ov.push_back(verts[p_a].lerp(verts[p_b], p_t));
+			const Vector3 na = p_a < normals.size() ? normals[p_a] : Vector3(0, 1, 0);
+			const Vector3 nb = p_b < normals.size() ? normals[p_b] : Vector3(0, 1, 0);
+			on.push_back(na.lerp(nb, p_t).normalized());
+			ou.push_back((p_a < uvs.size() ? uvs[p_a] : Vector2()).lerp(p_b < uvs.size() ? uvs[p_b] : Vector2(), p_t));
+			oc.push_back((p_a < colors.size() ? colors[p_a] : Color(1, 1, 1)).lerp(p_b < colors.size() ? colors[p_b] : Color(1, 1, 1), p_t));
+			if (has_uv2) {
+				ou2.push_back(uv2s[p_a].lerp(uv2s[p_b], p_t));
+			}
+			if (has_tan) {
+				for (int q = 0; q < 4; q++) {
+					ot.push_back(q < 3 ? Math::lerp(tangents[p_a * 4 + q], tangents[p_b * 4 + q], p_t) : tangents[p_a * 4 + 3]);
+				}
+			}
+			return ov.size() - 1;
+		};
+		auto emit_vertex = [&](int v) {
+			const int *got = remap.getptr(v);
+			if (got) {
+				return *got;
+			}
+			const int ni = ov.size();
+			remap[v] = ni;
+			ov.push_back(verts[v]);
+			on.push_back(v < normals.size() ? normals[v] : Vector3(0, 1, 0));
+			ou.push_back(v < uvs.size() ? uvs[v] : Vector2());
+			oc.push_back(v < colors.size() ? colors[v] : Color(1, 1, 1));
+			if (has_uv2) {
+				ou2.push_back(uv2s[v]);
+			}
+			if (has_tan) {
+				for (int q = 0; q < 4; q++) {
+					ot.push_back(tangents[v * 4 + q]);
+				}
+			}
+			return ni;
+		};
 		for (int i = 0; i + 2 < index.size(); i += 3) {
 			const int bb = bones[index[i] * 4];
 			if (bb < 0 || bb >= int(n) || !inside[bb]) {
 				continue;
+			}
+			if (p_cut_side < 0 && bb > 1) {
+				continue;
+			}
+			if (p_cut_side != 0 && bb <= 1) {
+				// Clipped at the cut (Sutherland-Hodgman on one plane): the kept side has d >= 0.
+				float d[3];
+				int keep = 0;
+				for (int k = 0; k < 3; k++) {
+					d[k] = (verts[index[i + k]].y - p_cut) * float(p_cut_side);
+					keep += d[k] >= 0.0f ? 1 : 0;
+				}
+				if (keep == 0) {
+					continue;
+				}
+				if (keep < 3) {
+					int poly[4];
+					int count = 0;
+					for (int k = 0; k < 3; k++) {
+						const int a = index[i + k], b2 = index[i + (k + 1) % 3];
+						const float da = d[k], db = d[(k + 1) % 3];
+						if (da >= 0.0f) {
+							poly[count++] = emit_vertex(a);
+						}
+						if ((da >= 0.0f) != (db >= 0.0f)) {
+							poly[count++] = emit_mix(a, b2, da / (da - db));
+						}
+					}
+					for (int k = 1; k + 1 < count; k++) {
+						oi.push_back(poly[0]);
+						oi.push_back(poly[k]);
+						oi.push_back(poly[k + 1]);
+					}
+					continue;
+				}
 			}
 			for (int k = 0; k < 3; k++) {
 				const int v = index[i + k];
@@ -1278,7 +1359,7 @@ RigidBody3D *TreeWind3D::_make_part(Target &r_target, int p_instance, const Tran
 	body->set_contact_monitor(true);
 	body->set_max_contacts_reported(8);
 	MeshInstance3D *mi = memnew(MeshInstance3D);
-	mi->set_mesh(_piece_mesh(rig, p_bone, &p_exclude, p_key));
+	mi->set_mesh(_piece_mesh(rig, p_bone, &p_exclude, p_key, making_snap ? snap_cut : 0.0f, making_snap ? 1 : 0));
 	mi->set_scale(Vector3(scale, scale, scale));
 	body->add_child(mi);
 	// Its wood's capsules (TreeGenerator collider_radius and up).
@@ -1290,9 +1371,21 @@ RigidBody3D *TreeWind3D::_make_part(Target &r_target, int p_instance, const Tran
 		if (bone < 0 || bone >= int(n) || !inside[bone] || ((p_bone > 0 || making_snap) && bone == 0)) {
 			continue;
 		}
-		const Vector3 a = Vector3(o[0], o[1], o[2]) * scale;
-		const Vector3 bb = Vector3(o[3], o[4], o[5]) * scale;
+		Vector3 a = Vector3(o[0], o[1], o[2]) * scale;
+		Vector3 bb = Vector3(o[3], o[4], o[5]) * scale;
 		const float r = o[6] * scale;
+		if (making_snap && bone <= 1) {
+			// The stem's wood below the cut stays on the stump.
+			const float cut = snap_cut * scale;
+			if (a.y < cut && bb.y < cut) {
+				continue;
+			}
+			if (a.y < cut) {
+				a = a.lerp(bb, (cut - a.y) / (bb.y - a.y));
+			} else if (bb.y < cut) {
+				bb = bb.lerp(a, (cut - bb.y) / (a.y - bb.y));
+			}
+		}
 		if (a.distance_to(bb) < 1e-3f) {
 			continue;
 		}
@@ -1454,9 +1547,23 @@ void TreeWind3D::_storm_fail(Target &r_target, int p_instance, const Transform3D
 		}
 	}
 
+	// A charred stem breaks a little above the ground, in its charred band (the catface; burnt-out trees
+	// leave stumps of 0.3 to 1.5 m), at a height steady per tree; the stem's radius there.
+	float cut = 0.0f, cut_r = rig.bones.size() > 1 ? rig.bones[1].radius : 0.1f;
 	if (snap) {
-		key ^= 0x9e3779b97f4a7c15ull; // Its own asset: the same tree without its plate.
+		cut = (0.3f + 0.6f * hash01(uint32_t(p_instance) * 2654435761u + 0x7f4a7c15u, 3u)) / scale;
+		const float *co = rig.colliders.ptr();
+		for (int k = 0; k < rig.colliders.size() / 8; k++) {
+			const float *o = co + k * 8;
+			if (int(o[7]) == 1 && MIN(o[1], o[4]) <= cut && MAX(o[1], o[4]) >= cut) {
+				cut_r = o[6];
+				break;
+			}
+		}
+		key ^= 0x9e3779b97f4a7c15ull; // Its own asset: the same tree without its plate, cut over its stump.
+		key = key * 1099511628211ull + uint64_t(Math::round(cut * 100.0f));
 	}
+	snap_cut = cut;
 	making_snap = snap;
 	RigidBody3D *body = _make_part(r_target, p_instance, tree, b, at, exclude, key);
 	making_snap = false;
@@ -1509,6 +1616,52 @@ void TreeWind3D::_storm_fail(Target &r_target, int p_instance, const Transform3D
 		butt->set_transform(Transform3D(pb * scale, cap_at * scale));
 		body->add_child(butt);
 		butt_xf = Transform3D(pb, cap_at);
+	} else if (snap && cap_kit.size() > 0) {
+		// The stump: the stem's bark below the cut, closed by a fracture cap, a static body where the tree stood.
+		const Vector3 up(0, 1, 0);
+		Vector3 side = tens - up * tens.dot(up);
+		side = side.length_squared() > 1e-6f ? side.normalized() : Vector3(1, 0, 0);
+		const float cr = cut_r * 1.05f;
+		Basis cb;
+		cb.set_column(0, side * cr);
+		// Charred wood breaks short and brash, not in the long splinters of green wood: the cap a third as tall.
+		cb.set_column(1, up * (0.3f * cr));
+		cb.set_column(2, side.cross(up) * cr);
+		StaticBody3D *stump = memnew(StaticBody3D);
+		stump->set_name("TreeStump");
+		stump->set_as_top_level(true);
+		stump->set_collision_layer(collision_layer | 1u);
+		MeshInstance3D *sm = memnew(MeshInstance3D);
+		sm->set_mesh(_piece_mesh(rig, 0, nullptr, key ^ 0x51ed270b27f6c3a1ull, cut, -1));
+		sm->set_scale(Vector3(scale, scale, scale));
+		stump->add_child(sm);
+		MeshInstance3D *top = memnew(MeshInstance3D);
+		top->set_mesh(_kit_mesh(rig, false));
+		top->set_transform(Transform3D(cb * scale, Vector3(0, cut, 0) * scale));
+		stump->add_child(top);
+		Ref<CylinderShape3D> cyl;
+		cyl.instantiate();
+		cyl->set_radius(cut_r * scale);
+		cyl->set_height(cut * scale);
+		CollisionShape3D *cs = memnew(CollisionShape3D);
+		cs->set_shape(cyl);
+		cs->set_position(Vector3(0, 0.5f * cut * scale, 0));
+		stump->add_child(cs);
+		add_child(stump);
+		stump->set_global_transform(Transform3D(rot, tree.origin));
+		PhysicsServer3D::get_singleton()->body_add_collision_exception(body->get_rid(), stump->get_rid());
+		PhysicsServer3D::get_singleton()->body_add_collision_exception(stump->get_rid(), body->get_rid());
+		tc.parts.push_back(stump->get_instance_id());
+		// The trunk's butt: the matching face, turned down.
+		Basis pb;
+		pb.set_column(0, side * cr);
+		pb.set_column(1, -up * (0.3f * cr));
+		pb.set_column(2, side.cross(-up) * cr);
+		MeshInstance3D *butt = memnew(MeshInstance3D);
+		butt->set_mesh(_kit_mesh(rig, false));
+		butt->set_transform(Transform3D(pb * scale, Vector3(0, cut, 0) * scale));
+		body->add_child(butt);
+		butt_xf = Transform3D(pb, Vector3(0, cut, 0));
 	}
 
 	// The hinge: on the leeward edge of the break (its compression side holds longest), or the root
@@ -1522,7 +1675,7 @@ void TreeWind3D::_storm_fail(Target &r_target, int p_instance, const Transform3D
 	sp.bone = b;
 	sp.scale = scale;
 	sp.key = key;
-	sp.snap = snap;
+	sp.snap_cut = snap ? cut : 0.0f;
 	sp.exclude.resize(n);
 	for (uint32_t c = 0; c < n; c++) {
 		sp.exclude[c] = exclude[c];
@@ -1541,10 +1694,8 @@ void TreeWind3D::_storm_fail(Target &r_target, int p_instance, const Transform3D
 	sp.load = (area > 1e-6f ? load / area : bone.pivot) * scale;
 	Vector3 hinge_at, hinge_axis;
 	if (thrown) {
-		// Over the root plate's lee rim; a charred stem folds over its own lee side at the foot.
-		// (low and a little out, so the butt's colliders clear the ground as it turns).
-		const float foot_r = rig.bones.size() > 1 ? rig.bones[1].radius : 0.1f;
-		hinge_at = snap ? dw * (1.2f * foot_r) - Vector3(0, 0.6f * foot_r, 0) : Vector3(0, 0, 0) + dw * (0.75f * rig.plate_radius) - Vector3(0, 0.1f, 0);
+		// Over the root plate's lee rim; a charred stem folds over the lee edge of its stump.
+		hinge_at = snap ? dw * cut_r + Vector3(0, cut, 0) : Vector3(0, 0, 0) + dw * (0.75f * rig.plate_radius) - Vector3(0, 0.1f, 0);
 		hinge_axis = Vector3(0, 1, 0).cross(dw);
 		sp.release = 0.0f;
 	} else {
@@ -1732,7 +1883,8 @@ void TreeWind3D::_blast_chunks(const Rig &p_rig, int p_bone, const LocalVector<u
 // node's health). The whole tree's root plate rides the stem's foot.
 // Pure (no node, server or cache state): it runs on a worker thread, from the break on, so the asset is
 // ready by the time the part lands.
-Ref<Resource> TreeWind3D::_blast_asset(const Rig &p_rig, const Array &p_surface_arrays, int p_bone, const LocalVector<uint8_t> &p_exclude, const Transform3D &p_butt, const Vector3 &p_fall, bool p_snap, Array &r_materials) {
+Ref<Resource> TreeWind3D::_blast_asset(const Rig &p_rig, const Array &p_surface_arrays, int p_bone, const LocalVector<uint8_t> &p_exclude, const Transform3D &p_butt, const Vector3 &p_fall, float p_snap_cut, Array &r_materials) {
+	const bool p_snap = p_snap_cut > 0.0f; // Snapped at a charred foot: no plate, cut at p_snap_cut over its stump.
 	const uint64_t t_start = OS::get_singleton()->get_ticks_usec();
 	Object *authoring = ClassDB::instantiate("PhysXBlastAuthoring");
 	if (!authoring) {
@@ -1809,6 +1961,10 @@ Ref<Resource> TreeWind3D::_blast_asset(const Rig &p_rig, const Array &p_surface_
 		for (int i = 0; i + 2 < index.size(); i += 3) {
 			const int bb = bp[ip[i] * 4];
 			if (bb < 0 || bb >= int(n) || chunk_of[bb] < 0) {
+				continue;
+			}
+			// A snapped stem's wood below the cut stays on the stump.
+			if (p_snap && bb <= 1 && (vp[ip[i]].y + vp[ip[i + 1]].y + vp[ip[i + 2]].y) < 3.0f * p_snap_cut) {
 				continue;
 			}
 			const int c = chunk_of[bb];
@@ -1944,6 +2100,9 @@ Ref<Resource> TreeWind3D::_blast_asset(const Rig &p_rig, const Array &p_surface_
 				}
 			}
 			start = MIN(start, 0.4f * bone.length);
+			if (p_snap && b == 1) {
+				start = MAX(start, (p_snap_cut - bone.pivot.y) / MAX(d.y, 0.3f)); // Above the stump.
+			}
 			cylinder(r_h, bone.pivot + d * start, bone.pivot + d * MAX(bone.length - 0.005f, start + 0.01f), MAX(bone.radius * 0.85f, 0.005f));
 		}
 	};
@@ -1963,7 +2122,7 @@ Ref<Resource> TreeWind3D::_blast_asset(const Rig &p_rig, const Array &p_surface_
 	const uint64_t t_plate_end = OS::get_singleton()->get_ticks_usec();
 	// The part's butt: its fracture cap (unit size, placed by p_butt), on the part's first chunk.
 	Array butt;
-	if (p_bone > 0 && p_butt.basis.determinant() != 0.0f && p_rig.cap_kit.size() > 0) {
+	if ((p_bone > 0 || p_snap) && p_butt.basis.determinant() != 0.0f && p_rig.cap_kit.size() > 0) {
 		const Array e = p_rig.cap_kit[0];
 		Array a = Array(e[1]).duplicate(true);
 		PackedVector3Array v = a[Mesh::ARRAY_VERTEX];
@@ -2084,7 +2243,7 @@ Ref<Resource> TreeWind3D::_blast_asset(const Rig &p_rig, const Array &p_surface_
 }
 
 void TreeWind3D::_blast_job(BlastJob *p_job) {
-	p_job->asset = _blast_asset(p_job->rig, p_job->surface_arrays, p_job->bone, p_job->exclude, p_job->butt, p_job->fall, p_job->snap, p_job->materials);
+	p_job->asset = _blast_asset(p_job->rig, p_job->surface_arrays, p_job->bone, p_job->exclude, p_job->butt, p_job->fall, p_job->snap_cut, p_job->materials);
 	if (p_job->asset.is_valid() && p_job->asset->has_method("prepare_render")) {
 		// Its chunks' render arrays in GPU format now, so the swap only uploads them.
 		const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
@@ -2118,7 +2277,7 @@ void TreeWind3D::_blast_request(const StormPart &p_part) {
 	job->exclude = p_part.exclude;
 	job->butt = p_part.butt;
 	job->fall = p_part.fall;
-	job->snap = p_part.snap;
+	job->snap_cut = p_part.snap_cut;
 	job->task = WorkerThreadPool::get_singleton()->add_template_task(this, &TreeWind3D::_blast_job, job, false, String("TreeWind3D Blast"));
 	blast_jobs[p_part.key] = job;
 }

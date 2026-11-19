@@ -167,6 +167,7 @@ private:
 	int storm_snaps = 0; // Of the throws: fire-charred stems that snapped at the foot.
 	float char_timer = 0.0f;
 	bool making_snap = false; // _make_part: a charred stem snapped at its foot (no root plate)
+	float snap_cut = 0.0f; // _make_part: its cut over the stump (tree space)
 	// A part a storm broke off or threw, while the wind still pushes it.
 	struct StormPart {
 		ObjectID body;
@@ -185,7 +186,7 @@ private:
 		LocalVector<uint8_t> exclude; // Bones broken off before (not part of it).
 		Transform3D butt; // Its fracture cap, tree space (none for a thrown tree).
 		Vector3 fall; // Downwind, tree space: the way it fell.
-		bool snap = false; // Burnt through at its foot: no root plate.
+		float snap_cut = 0.0f; // Burnt through at its foot, cut this high (tree space) over its stump: no root plate.
 		bool swapped = false;
 		// A hard hit that came before its Blast asset was ready: swapped when it is.
 		bool hit = false;
@@ -213,7 +214,7 @@ private:
 		LocalVector<uint8_t> exclude;
 		Transform3D butt;
 		Vector3 fall;
-		bool snap = false;
+		float snap_cut = 0.0f;
 		Ref<Resource> asset;
 		Array materials;
 		uint64_t task = 0;
@@ -283,10 +284,12 @@ private:
 	void _free_colliders(Target &r_target);
 	bool _touch_instance(Target &r_target, int p_instance, const Transform3D &p_tree, double p_delta);
 	void _snap(Target &r_target, int p_instance, const Transform3D &p_tree, int p_bone, const Vector3 &p_velocity);
-	Ref<ArrayMesh> _piece_mesh(const Rig &p_rig, int p_bone, const LocalVector<uint8_t> *p_exclude = nullptr, uint64_t p_key = 0);
+	// p_cut_side: 0 whole; 1 the stem (bones 0 and 1) cut away below height p_cut (tree space); -1 only the stem's
+	// bark below it (a stump).
+	Ref<ArrayMesh> _piece_mesh(const Rig &p_rig, int p_bone, const LocalVector<uint8_t> *p_exclude = nullptr, uint64_t p_key = 0, float p_cut = 0.0f, int p_cut_side = 0);
 	Ref<ArrayMesh> _kit_mesh(const Rig &p_rig, bool p_plate);
 	RigidBody3D *_make_part(Target &r_target, int p_instance, const Transform3D &p_tree, int p_bone, const Transform3D &p_at, const LocalVector<uint8_t> &p_exclude, uint64_t p_key);
-	static Ref<Resource> _blast_asset(const Rig &p_rig, const Array &p_surface_arrays, int p_bone, const LocalVector<uint8_t> &p_exclude, const Transform3D &p_butt, const Vector3 &p_fall, bool p_snap, Array &r_materials);
+	static Ref<Resource> _blast_asset(const Rig &p_rig, const Array &p_surface_arrays, int p_bone, const LocalVector<uint8_t> &p_exclude, const Transform3D &p_butt, const Vector3 &p_fall, float p_snap_cut, Array &r_materials);
 	static void _blast_chunks(const Rig &p_rig, int p_bone, const LocalVector<uint8_t> &p_exclude, LocalVector<int> &r_chunk_of, LocalVector<int> &r_chunk_bone);
 	void _storm_settle(double p_delta);
 	void _blast_request(const StormPart &p_part);
