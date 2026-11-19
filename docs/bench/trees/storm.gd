@@ -11,6 +11,9 @@ extends Node3D
 #   --presets=a,b      species (default 4,1: Norway spruce, beech); --seed=S
 #   --char=C           a past fire charred every stem foot C metres deep (a WorldFire stub), so they snap there
 #   --snag=Y           a past fire killed every tree Y years ago (standing snags, rotting)
+#   --avalanche=P      an avalanche puts P Pa on every tree from 1 s (WorldSnow stub), on a slope down +Z
+#   --avalanche-test   avalanche checks (WorldSnow and WorldGround stubs): pressure breaks crowns, then stems,
+#                      downslope, and the felled crowns leave the weather map's canopy
 #   --spp=N with --pt  path traced; default raster
 #   CAM="x,y,z,lx,ly,lz,fov" camera
 
@@ -119,11 +122,20 @@ func _setup(args: Dictionary) -> Array:
 	return trees
 
 func run(args: Dictionary) -> void:
+	if args.has("avalanche-test"):
+		await _avalanche_test()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if args.has("test"):
 		await _test()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	_world(args.has("pt"), int(args.get("spp", "16")))
+	var snow: WorldSnow = null
+	if args.has("avalanche"):
+		snow = load("res://avalanche_stub.gd").new()
+		Engine.get_singleton("WorldContracts").set_snow(snow)
+		Engine.get_singleton("WorldContracts").set_ground(load("res://slope_stub.gd").new())
 	var trees := _setup(args)
 	var tallest := 0.0
 	var span := 0.0
@@ -157,6 +169,8 @@ func run(args: Dictionary) -> void:
 	for f in frames:
 		await get_tree().process_frame
 		var t := f / 30.0
+		if snow and t >= 1.0:
+			snow.pressure = float(args.avalanche)
 		if f % 15 == 0:
 			print("t=%.1f wall %d ms parts %d falls %d" % [t, Time.get_ticks_msec(), _parts(), wind.get_storm_fall_count()])
 			if OS.get_environment("STORM_DEBUG") == "1":
@@ -225,3 +239,65 @@ func _test() -> void:
 		if e.uprooted:
 			_check(e.pit.has("radius") and e.pit.radius > 0.4, "a thrown tree leaves a pit (radius %.2f m)" % e.pit.get("radius", 0.0))
 			break
+
+# Avalanche impact (TreeWind3D, trees.md 5ak): a calm day, so the wind breaks nothing; a WorldSnow stub
+# sets the peak pressure on every tree and a WorldGround stub tilts the ground toward +Z.
+func _avalanche_test() -> void:
+	var body := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	cs.shape = WorldBoundaryShape3D.new()
+	body.add_child(cs)
+	add_child(body)
+	ramp = 0.0
+	var snow: WorldSnow = load("res://avalanche_stub.gd").new()
+	Engine.get_singleton("WorldContracts").set_snow(snow)
+	Engine.get_singleton("WorldContracts").set_ground(load("res://slope_stub.gd").new())
+	# A closed canopy over the row (LAI 4, closure 0.86), as VegetationField3D paints it.
+	var wm := WeatherMap3D.new()
+	add_child(wm)
+	var img := Image.create_empty(160, 40, false, Image.FORMAT_RGF)
+	img.fill(Color(20.0, 1.0, 0.0))
+	wm.canopy_map_rect = Rect2(-20, -20, 160, 40)
+	wm.canopy_map = ImageTexture.create_from_image(img)
+	var trees := _setup({"speed": "5", "presets": "4,1,2"})
+	wind.weather_map = wind.get_path_to(wm)
+	var sizes := []
+	for t in trees:
+		sizes.append("%.0f m" % t.height)
+	snow.pressure = 500.0
+	for f in 90:
+		await get_tree().physics_frame
+	_check(wind.get_avalanche_break_count() + wind.get_avalanche_throw_count() == 0 and wind.get_storm_break_count() == 0, "0.5 kPa: no tree breaks (%d crowns, %d stems)" % [wind.get_avalanche_break_count(), wind.get_avalanche_throw_count()])
+	snow.pressure = 4500.0
+	for f in 90:
+		await get_tree().physics_frame
+	_check(wind.get_avalanche_break_count() >= 2 and wind.get_avalanche_throw_count() == 0, "4.5 kPa (powder cloud): crowns snap, stems hold (%d crowns of trees %s, %d stems)" % [wind.get_avalanche_break_count(), ", ".join(sizes), wind.get_avalanche_throw_count()])
+	snow.pressure = 20000.0
+	for f in 60:
+		await get_tree().physics_frame
+	var mid: int = wind.get_avalanche_throw_count()
+	_check(mid >= 1 and mid < trees.size(), "20 kPa: the thinner stems go, the old spruce stands (%d of %d)" % [mid, trees.size()])
+	snow.pressure = 100000.0
+	for f in 300:
+		await get_tree().physics_frame
+	_check(wind.get_avalanche_throw_count() == trees.size(), "100 kPa (a large dense flow): every stem goes (%d of %d)" % [wind.get_avalanche_throw_count(), trees.size()])
+	# What fell lies downslope (+Z) of where it stood.
+	var zs := 0.0
+	var n := 0
+	for c in wind.get_children(true):
+		if c is RigidBody3D:
+			zs += (c.global_transform * c.center_of_mass).z
+			n += 1
+		elif c.has_method("get_piece_count"):
+			for i in c.get_piece_count():
+				zs += c.get_piece_center(i).z
+				n += 1
+	_check(n > 0 and zs / n > 1.0, "the trees fall downslope (mean part z %.1f m over %d parts)" % [zs / maxf(n, 1), n])
+	var canopy: Image = wm.canopy_map.get_image()
+	var worst := 0.0
+	for t in trees:
+		var px := int(t.x + 20.0)
+		worst = maxf(worst, canopy.get_pixel(px, 20).g)
+	var kept := canopy.get_pixel(int(trees[0].x + 20.0), 2).g # 18 m upslope of the first stem.
+	_check(worst < 0.05 and kept > 0.95, "felled crowns leave the canopy map (leaf area left %.2f at the stems, %.2f away)" % [worst * 4.0, kept * 4.0])
+	_check(wm.get_canopy_closure_at(Vector3(trees[0].x, 0, 0)) < 0.1, "the weather map sees the gap (closure %.2f at the first stem)" % wm.get_canopy_closure_at(Vector3(trees[0].x, 0, 0)))

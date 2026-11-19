@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "core/io/image.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
@@ -133,6 +134,7 @@ private:
 		LocalVector<uint8_t> slot; // Per instance: its frame within an update period (staggers the load).
 		LocalVector<float> base_char; // Per instance: char at the stem's foot from a fire (m), refreshed now and then.
 		LocalVector<float> snag_age; // Per instance: years since the fire killed it, -1 alive.
+		LocalVector<uint8_t> avalanche_hit; // Per instance: 1 an avalanche took its crown, 2 the whole tree.
 		HashMap<int, Touch> touch;
 		struct Body {
 			RID body;
@@ -171,6 +173,30 @@ private:
 	int storm_snaps = 0; // Of the throws: fire-charred stems that snapped at the foot.
 	int storm_snags = 0; // Trees a fire killed, standing dead.
 	float char_timer = 0.0f;
+	// Avalanches (WorldSnow.avalanche_peak_pressure_at, docs/ideas/trees.md 5ak).
+	bool avalanche_enabled = true;
+	int avalanche_breaks = 0; // Crowns snapped.
+	int avalanche_throws = 0; // Whole trees broken at the foot or thrown.
+	struct AvalancheFail {
+		int target = -1;
+		int instance = -1;
+		StormLoad load;
+	};
+	LocalVector<AvalancheFail> avalanche_pending;
+	// Canopy a felled tree or crown took out of the weather map's canopy_map, applied once a second.
+	struct CanopyHole {
+		Vector2 xz;
+		float radius = 0.0f;
+		float keep = 0.0f; // Leaf area left inside the crown's core.
+	};
+	LocalVector<CanopyHole> canopy_holes;
+	Ref<Image> canopy_edit;
+	ObjectID canopy_texture;
+	int canopy_holes_cut = 0;
+	void _avalanche_check();
+	void _avalanche_fail(LocalVector<Target *> &r_changed);
+	void _cut_canopy();
+	static float _crown_radius(const Rig &p_rig);
 	bool making_snap = false; // _make_part: a charred stem snapped at its foot (no root plate)
 	float snap_cut = 0.0f; // _make_part: its cut over the stump (tree space)
 	// A part a storm broke off or threw, while the wind still pushes it.
@@ -364,6 +390,12 @@ public:
 	void set_break_radius(float p_radius) { break_radius = MAX(p_radius, 0.0f); }
 	float get_break_radius() const { return break_radius; }
 	void set_storm_enabled(bool p_enabled) { storm_enabled = p_enabled; }
+	void set_avalanche_enabled(bool p_enabled) { avalanche_enabled = p_enabled; }
+	bool is_avalanche_enabled() const { return avalanche_enabled; }
+	int get_avalanche_break_count() const { return avalanche_breaks; }
+	int get_avalanche_throw_count() const { return avalanche_throws; }
+	int get_canopy_holes_cut() const { return canopy_holes_cut; }
+	static float avalanche_strength(float p_stem_diameter, bool p_crown);
 	bool is_storm_enabled() const { return storm_enabled; }
 	void set_storm_strength(float p_scale) { storm_strength = MAX(p_scale, 0.01f); }
 	float get_storm_strength() const { return storm_strength; }
