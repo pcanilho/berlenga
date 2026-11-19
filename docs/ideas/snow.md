@@ -1475,6 +1475,9 @@ Research: a slab avalanche leaves a crown (a tensile fracture standing the slab'
   resolution for stills. On a real GPU at frame rate the game never had this problem.
 - Trail bench: the walker's stand-in capsule joined world_contact (every PhysicsBody3D does since 9edd6953) and
   ploughed a trench through the prints; it is excluded, its boots print as before.
+- Open: a broken crust's plates read only as wider funnels with a few angular pieces from 1.5 m
+  (`--view=trail --prints-close --crust=1`); the pieces are linear ramps per crack sector, smoothed by the 6 cm
+  field. Crisper plates (a step at each sector edge, a lip where a plate tips) are a follow-up.
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
