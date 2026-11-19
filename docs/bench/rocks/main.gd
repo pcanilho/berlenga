@@ -59,6 +59,7 @@ extends Node3D
 #   --tracks              with --world: a walker and a two-wheeled cart cross the spot on bends before the still
 #   --roll[=m/s]          with --world: a ball rolled across the spot before the still (stones_react; --no-react off)
 #   --no-river-detail     with --world: RockField3D.ground_detail_rivers off (river beds keep only the river layer's stones)
+#   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --gravel-reach[=d]    with --view=river: a gravel-bed reach whose median is nearest d m (0.03)
 #   --no-ground-cover     with --world: RockField3D.ground_detail_cover off (no grain aggregate on the ground past
 #                         each class's reach; a before frame); --save-cover writes the near cover map, --cover-check
@@ -387,7 +388,10 @@ func _world() -> void:
 	tm.rock_detail_enabled = args.get("rock-detail", "1") != "0" # --rock-detail=0: the ground without its joints and stones
 	tm.update_shader()
 	var land := Landscape3D.new()
-	land.cliff_relief = 0.0 # on by default; this bench measures without it
+	# Cliff relief is on by default (frames show the ground as the game draws it: without it a backlit cliff reads as
+	# smooth white spur flanks); the checks measure the bare heightfield, and --no-cliff-relief gives a before frame.
+	if args.has("test") or args.has("no-cliff-relief"):
+		land.cliff_relief = 0.0
 	land.name = "Landscape"
 	add_child(land)
 	land.material = tm
