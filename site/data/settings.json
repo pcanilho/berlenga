@@ -1177,6 +1177,20 @@
    "topic": "Ground"
   },
   {
+   "name": "Winch",
+   "settings": [
+    "PhysXWinch3D",
+    "rated_pull",
+    "line_speed",
+    "brake_hold"
+   ],
+   "note": "",
+   "what": "a cable winch that slows under load, stalls at its rated pull and slips its brake; the cable sags and lies on the ground.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Mud on vehicles",
    "settings": [
     "PhysXVehicle3D.body_mud",
@@ -1184,7 +1198,7 @@
     "mud_color_map"
    ],
    "note": "",
-   "what": "tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first and drying pale.",
+   "what": "tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first; it dries with the weather, cracks into curling plates and shakes off on bumps.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1405,7 +1419,7 @@
     "GroundSurface3D.runoff_channels"
    ],
    "note": "",
-   "what": "water seeping out of a beach after the tide, and rain the ground cannot take, cuts a braided net of rills and lays the sand down at their foot.",
+   "what": "water seeping out of a beach after the tide, and rain the ground cannot take, cuts a braided net of rills and lays the sand down at their foot; on soil it cuts gullies along ruts and spreads a fan below, faster on softer ground.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1603,7 +1617,7 @@
     "terrain3d"
    ],
    "note": "",
-   "what": "cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening, also on Terrain3D; stalactites, stalagmites and columns grow where water drips through the roof, and flow scallops the walls; streams run over washed, wet gravel beds. Sea caves follow cracks into sea cliffs, flooded at the mouth, some ending in a chamber with a blowhole to the cliff top.",
+   "what": "cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening, also on Terrain3D; stalactites, stalagmites and columns grow where water drips through the roof, and flow scallops the walls; streams run over washed, wet gravel beds. Sea caves follow cracks into sea cliffs, their walls stepped by beds of uneven thickness, flooded at the mouth, some ending in a chamber with a blowhole to the cliff top.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -3548,6 +3562,17 @@
    ],
    "note": "",
    "what": "under path tracing the haze is a traced medium lit through shadows and the clouds' direct beam, so shafts stay sharp at any distance and show in reflections.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Smoke haze",
+   "settings": [
+    "WeatherMap3D.smoke_haze"
+   ],
+   "note": "",
+   "what": "smoke from fires drifts on the wind as a haze layer that dims and reddens the sun and cools the day.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

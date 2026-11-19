@@ -383,5 +383,22 @@ Plan, in `modules/vegetation/tree_bark_detail.*` (BarkDetail3D), the ground deta
   stem and whose ends stand up off it and roll back into scrolls, white side out, the peeled plies cream-salmon;
   pine plates are twice as thick (1.6 to 3 cm) and sunk into the relief, and broken edges are the outer bark in
   section (darkened, a trace of inner bark) instead of inner bark, which now takes the stem's hue.
+- Second review (docs, 19 Nov): birch read as evenly scattered confetti, two pieces floated at a fork, pieces
+  piled up; pine pieces lay across the furrows like shards and stood out of the silhouette like a saw edge. Now:
+  - Pine and scales: the trunk's own plates are found in its profile (cells above the bark round them, eroded once
+    so furrows split them, flood-filled), and a share of them shed their outer layer: a piece fitted inside that
+    plate's bounds (scaled round and up to it), lying on it and lifting at its lower edge, so none crosses a furrow.
+  - Birch: bands along the lenticels every 3 to 12 cm, each a torn bared patch of inner bark (bent to the stem's
+    own radius) with one to five strips side by side at its ends: long strips peeling at both ends, wide sheets,
+    loose flaps lifting like a page, scrolls; sizes log-normal.
+  - The profile drops cells far proud of their row (another stem at a fork), and every piece claims its cells, so
+    none lands on another.
+- Third review (docs, 19 Nov), birch: pieces read as flat tan tape, stuck out past the silhouette as tabs, and sat
+  on one side of one stem. Now: every stem of a forked trunk gets a profile (each further collider chain that
+  leaves the main stem below the cap, 6 cm thick or more and heading up), each stem's scan keeps only its own bark
+  (a vertex nearer another stem, in that stem's radii, is that stem's) and drops cells far off its row, and no
+  piece goes nearer another stem than its own. Peel is white outside (no salmon tint on the outer face), plies
+  1.4 mm thick, lifting steeply into a 1 cm scroll that hugs the stem; bared patches show the next ply (half
+  white, half salmon), at most a quarter of the way round and bent to the stem's own radius.
 - Cost (bench, 4 trunks, 1,045 pieces): main thread 0.15 ms mean, 3.4 ms worst an update with the meta (33 ms
   mean, 826 ms worst with the readback); 64 bytes a piece in instance buffers (67 KB), 32 shared shapes.

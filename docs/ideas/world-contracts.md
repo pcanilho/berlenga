@@ -169,6 +169,7 @@ Consumers: fire (crown fire), lightning (attachment), weather (shelter), snow (i
 | `burn_age_at(pos)` | years (game time) | -1 (never burnt) | Since the ground last burnt, the most recent of any producer; vegetation's regrowth stage |
 | `water_repellency_at(pos)` | 0..1 | 0 | Burnt soil shedding rain (fades over 1-2 game years); the ground cuts its infiltration by up to 0.9 |
 | `burn_changed(area)`, `get_burn_generation()`, `burn_changes_since(gen, &area)` (scripts: `get_burn_changes_since(gen)`) | Rect2 in x, z (m) | generation 0 | Change log for `burn_age_at`: producers report where ages changed (`WorldContracts::fire_burn_changed(area)` reaches the built-in contract and any stub); readers keep the generation they read at and refresh only the merged area. The log keeps 64 reports; false: read everything again |
+| `smoke_sources()` | (x, y, z, kg/s) | empty | Every fire's smoke particulate (PM2.5) per second of its own time; the weather carries it as a smoke layer (haze, sun, cooler day) |
 | `plumes()` | (x, y, z, W) | empty | Every fire's convection column: its base and convective heat; the weather makes fire clouds from them |
 | `crown_scorch_at(pos)` | m | 0 | Height crowns were killed to (lethal scorch, 1000 for a burnt crown), the most of any fire; trees die and stand as snags |
 | shader globals `fire_wind_map`, `fire_wind_rect` | m/s | rect width 0 | The same indraft over the fire's area (RG: x, z), for grass |

@@ -76,6 +76,7 @@ private:
 		Ref<MultiMesh> multimeshes[SHAPES];
 		MultiMeshInstance3D *instances[SHAPES] = {};
 		Ref<ShaderMaterial> material;
+		Vector2 shape_size[SHAPES]; // each shape's extent round the stem and up it (m)
 		bool textured = false;
 	};
 
@@ -105,11 +106,17 @@ private:
 		PackedVector3Array verts; // the bark surface, until it is binned (on the worker)
 		PackedColorArray colors;
 		bool built = false;
+		float skip = 0.0f; // m up this stem before pieces (a fork's further stems: clear of the crotch)
+		float base_h = 0.0f; // m up the main stem this stem leaves it
+		Profile *next = nullptr; // the trunk's next stem
+		const Profile *first = nullptr; // the trunk's first stem (its siblings, for the scan)
 	};
 	HashMap<const Mesh *, Profile *> profiles;
 	Profile *_profile(const Ref<Mesh> &p_mesh);
 	static void _build_profile(Profile *p_profile);
-	static Profile *_profile_chain(const PackedFloat32Array &p_colliders, float p_cap);
+	static Profile *_profile_chain(const PackedFloat32Array &p_colliders, float p_cap, int p_start = 0);
+	static Profile *_profile_stems(const PackedFloat32Array &p_colliders, float p_cap);
+	static void _free_profile(Profile *p_profile);
 	static constexpr float PROFILE_CAP = 4.2f; // m up the stem a tree's own profile covers
 	Ref<Mesh> _trunk_mesh_of(const Dictionary &p_trunk) const;
 

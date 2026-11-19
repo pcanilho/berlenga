@@ -230,6 +230,7 @@ public:
 	virtual float contract_fire_crown_scorch_at(const Vector3 &p_position) const { return 0.0f; } // m, crowns killed up to this height
 	virtual float contract_fire_water_repellency_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, burnt soil shedding rain
 	virtual void contract_fire_plumes(PackedVector4Array &r_plumes) const {} // appends its convection columns: (x, y, z of the base, convective heat W)
+	virtual void contract_fire_smoke(PackedVector4Array &r_sources) const {} // appends its smoke: (x, y, z, kg/s of particulate, its own real time)
 	virtual ~WorldFireProvider() {}
 };
 
@@ -259,6 +260,7 @@ protected:
 	GDVIRTUAL1RC(float, _crown_scorch_at, Vector3)
 	GDVIRTUAL1RC(float, _water_repellency_at, Vector3)
 	GDVIRTUAL0RC(PackedVector4Array, _plumes)
+	GDVIRTUAL0RC(PackedVector4Array, _smoke_sources)
 
 public:
 	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -282,6 +284,7 @@ public:
 	// infiltration falls by up to nine tenths). Fades over a year or two. The most of any fire; 0 where none burnt.
 	float water_repellency_at(const Vector3 &p_position) const;
 	PackedVector4Array plumes() const; // every fire's convection columns (x, y, z, convective heat W)
+	PackedVector4Array smoke_sources() const; // every fire's smoke (x, y, z, kg/s of particulate)
 	// Producers report where burn_age_at() changed (x, z in metres; a burn scar placed, moved or aged, ground a
 	// live fire burnt). Report as the ground burns, at most a few times a second (union the cells in between).
 	// WorldContracts::fire_burn_changed() reports to the built-in contract and any stub.

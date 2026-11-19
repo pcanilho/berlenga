@@ -24,11 +24,37 @@
 				The depth of snow the body carries, m (0 if it is not tracked).
 			</description>
 		</method>
+		<method name="get_body_load_mass" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="node" type="Node" />
+			<description>
+				The mass of snow on the body, kg: depth times density times [method get_body_top_area]. Its weight presses on the top of a [RigidBody3D] every physics step while [member weight_enabled].
+			</description>
+		</method>
+		<method name="get_body_top_area" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="node" type="Node" />
+			<description>
+				The body's footprint seen from above, m², from its meshes' bounds.
+			</description>
+		</method>
 		<method name="get_body_wetness" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="node" type="Node" />
 			<description>
 				The melt water in the body's snow, 0 to 1.
+			</description>
+		</method>
+		<method name="get_clumps_dropped" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many clumps shed snow has made so far.
+			</description>
+		</method>
+		<method name="get_slabs_slid" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many loads have slid off as slabs so far.
 			</description>
 		</method>
 		<method name="get_tracked_count" qualifiers="const">
@@ -55,8 +81,20 @@
 			<return type="void" />
 			<param index="0" name="node" type="Node" />
 			<param index="1" name="depth" type="float" />
+			<param index="2" name="density" type="float" default="-1.0" />
 			<description>
-				Sets the snow the body carries, m, tracking it if it was not (a vehicle out of a garage, a scripted scene).
+				Sets the snow the body carries, m, and its density, kg/m³, when [param density] is given, tracking the body if it was not (a vehicle out of a garage, a scripted scene).
+			</description>
+		</method>
+		<method name="slab_slides" qualifiers="static">
+			<return type="bool" />
+			<param index="0" name="depth" type="float" />
+			<param index="1" name="density" type="float" />
+			<param index="2" name="wetness" type="float" />
+			<param index="3" name="slope" type="float" />
+			<param index="4" name="cohesion" type="float" />
+			<description>
+				Mohr-Coulomb on the bed: [code]true[/code] when the load's shear, density times g times [param depth] times sin([param slope]) (radians), passes the bond [param cohesion] (Pa, lost with melt water) plus friction at 25 degrees (15 when wet).
 			</description>
 		</method>
 		<method name="step">
@@ -88,6 +126,9 @@
 		<member name="auto_track" type="bool" setter="set_auto_track" getter="is_auto_track" default="true">
 			If [code]true[/code], every node [method is_carrier] accepts is tracked as it enters the tree.
 		</member>
+		<member name="clumps_enabled" type="bool" setter="set_clumps_enabled" getter="is_clumps_enabled" default="true">
+			If [code]true[/code], snow that falls off a body (shaken, blown or sliding) lands on the snow as clumps ([method SnowClumps3D.drop]), as much as it holds together.
+		</member>
 		<member name="max_depth" type="float" setter="set_max_depth" getter="get_max_depth" default="0.4">
 			The most snow a body holds, m.
 		</member>
@@ -97,8 +138,17 @@
 		<member name="shake_threshold" type="float" setter="set_shake_threshold" getter="get_shake_threshold" default="0.5">
 			The acceleration that starts throwing snow off, in g.
 		</member>
+		<member name="slab_cohesion" type="float" setter="set_slab_cohesion" getter="get_slab_cohesion" default="250.0">
+			The bond of dry snow to the surface under it, Pa; melt water takes it away (see [method slab_slides]).
+		</member>
+		<member name="slide_enabled" type="bool" setter="set_slide_enabled" getter="is_slide_enabled" default="true">
+			If [code]true[/code], the load on a tilted top slides off as one slab when [method slab_slides] says so.
+		</member>
 		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="10.0">
 			Updates per second.
+		</member>
+		<member name="weight_enabled" type="bool" setter="set_weight_enabled" getter="is_weight_enabled" default="true">
+			If [code]true[/code], the load's weight presses on the top of each [RigidBody3D] that is not frozen.
 		</member>
 		<member name="wind_shed_rate" type="float" setter="set_wind_shed_rate" getter="get_wind_shed_rate" default="0.08">
 			How fast wind over the blowing threshold strips the snow: the share lost per second per m/s over it.

@@ -58,6 +58,11 @@ class SnowBodies3D : public Node3D {
 		double ray_accum = 1.0e9;
 		double geometry_accum = 1.0e9;
 		Vector<ObjectID> geometry;
+		float top_area = 0.0f; // m2, the body's footprint seen from above
+		Vector3 top_offset; // from the body's origin to the middle of its top, world axes
+		float top_radius = 0.5f; // m
+		float load_mass = 0.0f; // kg
+		float cloth_base = -1.0f; // a cloth's own snow_load before ours (none: -1)
 		Vector4 sent = Vector4(-1.0f, -1.0f, -1.0f, -1.0f);
 	};
 
@@ -69,7 +74,13 @@ class SnowBodies3D : public Node3D {
 	float max_depth = 0.4f; // m
 	bool auto_materials = true;
 	bool auto_track = true;
+	bool weight_enabled = true;
+	bool slide_enabled = true;
+	bool clumps_enabled = true;
+	float slab_cohesion = 250.0f; // Pa, dry snow's bond to the surface under it
 	double accum = 0.0;
+	int clumps_dropped = 0;
+	int slabs_slid = 0;
 
 	void _consider(Node *p_node);
 	void _scan(Node *p_node);
@@ -77,6 +88,9 @@ class SnowBodies3D : public Node3D {
 	void _collect_geometry(Body &r_body, Node *p_node);
 	void _prepare_geometry(GeometryInstance3D *p_geometry);
 	void _step(double p_dt);
+	void _measure(Body &r_body, Node3D *p_node);
+	void _shed(Body &r_body, Node3D *p_node, float p_depth_lost, const Vector3 &p_toward, float p_temperature);
+	void _apply_weight();
 	float _exposure(Node3D *p_node);
 
 protected:
@@ -93,8 +107,13 @@ public:
 	float get_body_depth(Node *p_node) const; // m
 	float get_body_density(Node *p_node) const; // kg/m3
 	float get_body_wetness(Node *p_node) const; // 0..1
-	void set_body_depth(Node *p_node, float p_depth);
+	void set_body_depth(Node *p_node, float p_depth, float p_density = -1.0f);
 	void step(double p_dt); // one update now, for tests
+	float get_body_load_mass(Node *p_node) const; // kg
+	float get_body_top_area(Node *p_node) const; // m2
+	int get_clumps_dropped() const { return clumps_dropped; }
+	int get_slabs_slid() const { return slabs_slid; }
+	static bool slab_slides(float p_depth, float p_density, float p_wetness, float p_slope, float p_cohesion);
 
 	void set_update_rate(float p_rate);
 	float get_update_rate() const { return update_rate; }
@@ -110,4 +129,12 @@ public:
 	bool is_auto_materials() const { return auto_materials; }
 	void set_auto_track(bool p_enable) { auto_track = p_enable; }
 	bool is_auto_track() const { return auto_track; }
+	void set_weight_enabled(bool p_enable) { weight_enabled = p_enable; }
+	bool is_weight_enabled() const { return weight_enabled; }
+	void set_slide_enabled(bool p_enable) { slide_enabled = p_enable; }
+	bool is_slide_enabled() const { return slide_enabled; }
+	void set_clumps_enabled(bool p_enable) { clumps_enabled = p_enable; }
+	bool is_clumps_enabled() const { return clumps_enabled; }
+	void set_slab_cohesion(float p_pa) { slab_cohesion = MAX(p_pa, 0.0f); }
+	float get_slab_cohesion() const { return slab_cohesion; }
 };

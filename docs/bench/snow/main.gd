@@ -182,6 +182,7 @@ func _ready() -> void:
 			_run_sleet_tests()
 		elif only == "bodies":
 			await _run_body_tests()
+			await _run_body_slab_tests()
 
 		else:
 			await _run_tests()
@@ -374,6 +375,7 @@ func _run_tests() -> void:
 	await _run_fire_tests()
 	_run_sleet_tests()
 	await _run_body_tests()
+	await _run_body_slab_tests()
 
 	# Cost: a 512 m map at 2 m (256 x 256), snowing with drift.
 	await _setup("mountain", 512.0, 256, -2.0)
@@ -1201,10 +1203,53 @@ func _run_body_tests() -> void:
 	sb.untrack(a)
 	var cleared: Variant = (a.get_node("Mesh") as MeshInstance3D).get_instance_shader_parameter("snow_body")
 	_check("an untracked body drops back to its material's own snow", cleared == Vector4(), "%s" % [cleared])
+	# Weight (follow-up 19): 10 cm of 100 kg/m3 on a 1 m2 top is 10 kg pressing a free 10 kg body down at g.
+	var free := _body_box(Vector3(20, 5, 0))
+	free.freeze = false
+	free.gravity_scale = 0.0
+	free.mass = 10.0
+	free.linear_damp_mode = RigidBody3D.DAMP_MODE_REPLACE
+	free.linear_damp = 0.0
+	await get_tree().physics_frame
+	sb.set_body_depth(free, 0.1, 100.0)
+	sb.step(0.1)
+	var load_mass := sb.get_body_load_mass(free)
+	var t0 := Time.get_ticks_usec()
+	for i in 30:
+		await get_tree().physics_frame
+	var vy := free.linear_velocity.y
+	var t_s := 30.0 / Engine.physics_ticks_per_second
+	var expect_v := -load_mass * 9.81 / free.mass * t_s
+	_check("the load weighs on the body (mass = depth x density x top area)", absf(load_mass - 10.0) < 0.5 and absf(vy - expect_v) < 0.15 * absf(expect_v), "%.1f kg of snow on %.2f m2; %.2f m/s down after %.2f s (expected %.2f)" % [load_mass, sb.get_body_top_area(free), -vy, t_s, -expect_v])
+	free.queue_free()
+	# Slabs (Mohr-Coulomb on the bed): dry snow holds on a 40 degree roof, wet snow goes, deep dry snow goes when steep.
+	var dry40 := SnowBodies3D.slab_slides(0.15, 150.0, 0.0, deg_to_rad(40.0), 250.0)
+	var wet40 := SnowBodies3D.slab_slides(0.15, 150.0, 0.6, deg_to_rad(40.0), 250.0)
+	var wet20 := SnowBodies3D.slab_slides(0.15, 150.0, 0.6, deg_to_rad(20.0), 250.0)
+	var deep80 := SnowBodies3D.slab_slides(0.4, 150.0, 0.0, deg_to_rad(80.0), 250.0)
+	_check("a slab slides by Mohr-Coulomb: wet snow off a 40 degree roof, not a 20 degree one; dry holds unless deep and steep", not dry40 and wet40 and not wet20 and deep80, "dry 40: %s, wet 40: %s, wet 20: %s, deep dry 80: %s" % [dry40, wet40, wet20, deep80])
 	WorldContracts.clear_overrides()
 	for c in get_children():
 		c.queue_free()
 	await get_tree().process_frame
+
+
+func _run_body_slab_tests() -> void:
+	# A crate tipped over in deep snow: its 30 cm of settled snow slides off its side as clumps on the snow.
+	await _surface_setup(60.0, 250.0)
+	var sb: SnowBodies3D = snow.get_bodies()
+	sb.update_rate = 0.1
+	var tipped := _body_box(Vector3(0, 1.0, 0))
+	tipped.rotation_degrees = Vector3(0, 0, 75.0)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	sb.step(0.1)
+	var clumps: SnowClumps3D = surface.get_clumps_node()
+	var before := clumps.get_spawned_total() if clumps else 0
+	sb.set_body_depth(tipped, 0.3, 280.0)
+	sb.step(0.1)
+	var made := (clumps.get_spawned_total() if clumps else 0) - before
+	_check("a tipped body's load slides off as a slab and lands as clumps on the snow", sb.get_body_depth(tipped) == 0.0 and sb.get_slabs_slid() >= 1 and made > 0, "%.3f m left, %d slabs, %d clumps" % [sb.get_body_depth(tipped), sb.get_slabs_slid(), made])
 
 
 func _run_fire_tests() -> void:

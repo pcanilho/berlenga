@@ -1,0 +1,1 @@
+- Snow: a body's snow weighs on it, slides off a tilted top as a slab (Mohr-Coulomb: wet snow goes off a 40 degree roof, dry holds), and what falls off lands on the snow as clumps (`SnowBodies3D.weight_enabled`, `slide_enabled`, `clumps_enabled`, on by default).

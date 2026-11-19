@@ -1235,6 +1235,13 @@ driven in, from a shed), raster and path traced alike.
 **Next.** Weight on the body (its mass), snow sliding off a tilted roof as a slab, and clumps falling
 off as `SnowClumps3D` pieces when a load sheds.
 
+## Follow-up 19: weight, slabs and clumps from bodies (built 19 Nov 2026)
+
+- **Weight.** Each body's load mass is depth x density x the top area of its meshes' world bounds. Every physics step, `apply_force` presses it on a free `RigidBody3D` at the middle of its top. Check: 10 kg of snow on a weightless 10 kg body gives 4.93 m/s after 0.5 s, against 4.93 expected.
+- **Slabs.** On a tilted top (the body's up axis against the world's), the load slides as one slab under Mohr-Coulomb. The shear rho g d sin(theta) has to exceed the bond c (250 Pa dry, times (1 - wet)^2) plus friction rho g d cos(theta) tan(phi), where phi falls from 25 to 15 degrees with wetness. The same form is used for the cornice crack. With 15 cm at 150 kg/m3: dry snow holds on a 40 degree roof, wet snow slides at 40 degrees but not at 20, and 40 cm of dry snow slides at 80 degrees. Cloth is excluded, since it has no single top.
+- **Clumps.** Snow that falls off (shaken, blown or slid) lands on the snow through `SnowClumps3D.drop(at, radius, volume, wet)`. The amount is limited by how well the snow holds together (`SnowClumps3D.cohesion`), and the clump sizes are log-normal, about 4 cm dry and 8 cm wet (debris granules, Bartelt and McArdell 2009). Slabs land past the low edge, and shaken snow lands in a ring round the body. Check: a crate tipped 75 degrees in deep snow sheds its 30 cm as 64 clumps.
+- **Cloth.** SnowBodies3D writes `snow_load` (kg/m2) to a `PhysXCloth3D` once the cloth has that property; the change is asked of the PhysX thread. The load adds to the solver's areal density, next to the water term, so loaded fabric sags.
+
 ## Next round (proposed 19 Nov 2026): heavier snow on bodies, rain on ruts, avalanches
 
 **Heavier snow on bodies.**

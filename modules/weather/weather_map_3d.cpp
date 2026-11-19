@@ -439,6 +439,8 @@ void WeatherMap3D::_allocate() {
 	cell_puddle.fill(0.0f);
 	cell_frost.fill(0.0f);
 	cell_cooling.fill(0.0f);
+	cell_smoke.resize(n * n);
+	cell_smoke.fill(0.0f);
 	wind_image = Image::create_empty(n, n, false, Image::FORMAT_RGBAH);
 	state_image = Image::create_empty(n, n, false, Image::FORMAT_RGBAH);
 	frost_image = Image::create_empty(n, n, false, Image::FORMAT_RGH);
@@ -598,7 +600,10 @@ void WeatherMap3D::_update_air() {
 	}
 	// Clouds narrow the range: overcast days have about half the clear-sky range, wet ones less again (Dai,
 	// Trenberth and Karl 1999).
-	const float range = daily_temperature_range * (1.0f - 0.5f * CLAMP(cur_cloud_cover, 0.0f, 1.0f)) * (1.0f - 0.3f * Math::smoothstep(0.0f, 2.0f, cur_rain_rate));
+	// Smoke overhead shades the day the same way (Robock 1988: several kelvin off the afternoon under thick smoke);
+	// what it scatters forward still reaches the ground, so about a third of its optical depth counts.
+	const float smoke_tau = smoke_haze ? get_smoke_optical_depth_at(_follow_position()) : 0.0f;
+	const float range = daily_temperature_range * (1.0f - 0.5f * CLAMP(cur_cloud_cover, 0.0f, 1.0f)) * (1.0f - 0.3f * Math::smoothstep(0.0f, 2.0f, cur_rain_rate)) * Math::exp(-0.35f * smoke_tau);
 	cur_air_temperature = cur_temperature + range * (diurnal_shape(Math::fposmod(hour, 24.0f), y) - diurnal_cache_mean);
 	// The vapour stays through the day (the dew point holds; Monteith and Unsworth): the humidity rises as the
 	// air cools at night and falls in the afternoon.
@@ -709,6 +714,7 @@ void WeatherMap3D::_shift(Vector2i p_new_origin) {
 		}
 	}
 	_rain_shift(d);
+	_smoke_shift(d);
 	origin_cell = p_new_origin;
 }
 
@@ -732,6 +738,7 @@ Rect2 WeatherMap3D::get_map_rect() const {
 
 void WeatherMap3D::_update_cells(double p_weather_dt) {
 	CellPass &c = cell_pass;
+	_smoke_step(p_weather_dt);
 	c.dt_h = float(p_weather_dt) / 3600.0f;
 	const float z0 = MAX(roughness_length, 1e-5f);
 	// Wind at 2 m for Penman, from 10 m on the log law.
@@ -2667,6 +2674,15 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_storm", "position", "radius", "rain_rate", "outflow", "lifetime"), &WeatherMap3D::add_storm, DEFVAL(1500.0f), DEFVAL(30.0f), DEFVAL(10.0f), DEFVAL(3600.0f));
 	ClassDB::bind_method(D_METHOD("remove_storm", "id"), &WeatherMap3D::remove_storm);
 	ClassDB::bind_method(D_METHOD("clear_storms"), &WeatherMap3D::clear_storms);
+	ClassDB::bind_method(D_METHOD("set_smoke_haze", "enabled"), &WeatherMap3D::set_smoke_haze);
+	ClassDB::bind_method(D_METHOD("is_smoke_haze"), &WeatherMap3D::is_smoke_haze);
+	ClassDB::bind_method(D_METHOD("set_smoke_lifetime", "seconds"), &WeatherMap3D::set_smoke_lifetime);
+	ClassDB::bind_method(D_METHOD("get_smoke_lifetime"), &WeatherMap3D::get_smoke_lifetime);
+	ClassDB::bind_method(D_METHOD("get_smoke_at", "position"), &WeatherMap3D::get_smoke_at);
+	ClassDB::bind_method(D_METHOD("get_smoke_optical_depth_at", "position"), &WeatherMap3D::get_smoke_optical_depth_at);
+	ClassDB::bind_method(D_METHOD("get_smoke_transmittance", "position", "to_sun"), &WeatherMap3D::get_smoke_transmittance);
+	ClassDB::bind_method(D_METHOD("add_smoke", "position", "kg"), &WeatherMap3D::add_smoke);
+	ClassDB::bind_method(D_METHOD("clear_smoke"), &WeatherMap3D::clear_smoke);
 	ClassDB::bind_method(D_METHOD("set_fire_clouds", "enabled"), &WeatherMap3D::set_fire_clouds);
 	ClassDB::bind_method(D_METHOD("is_fire_clouds"), &WeatherMap3D::is_fire_clouds);
 	ClassDB::bind_method(D_METHOD("get_fire_cloud_count"), &WeatherMap3D::get_fire_cloud_count);
@@ -2872,6 +2888,8 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "daily_temperature_range", PROPERTY_HINT_RANGE, "0,40,0.1,suffix:K"), "set_daily_temperature_range", "get_daily_temperature_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sun_drying"), "set_sun_drying", "get_sun_drying");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_clouds"), "set_fire_clouds", "is_fire_clouds");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "smoke_haze"), "set_smoke_haze", "is_smoke_haze");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "smoke_lifetime", PROPERTY_HINT_RANGE, "60,1000000,60,or_greater,suffix:s"), "set_smoke_lifetime", "get_smoke_lifetime");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dew_and_frost"), "set_dew_and_frost", "get_dew_and_frost");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "aerosol_haze"), "set_aerosol_haze", "get_aerosol_haze");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "traced_haze"), "set_traced_haze", "get_traced_haze");

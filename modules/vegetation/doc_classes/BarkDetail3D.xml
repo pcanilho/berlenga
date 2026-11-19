@@ -75,7 +75,7 @@
 			<param index="1" name="colors" type="PackedColorArray" />
 			<param index="2" name="colliders" type="PackedFloat32Array" />
 			<description>
-				A trunk mesh's bark surface binned round its stem, for the mesh's [code]tree_bark_profile[/code] meta: [param vertices] and [param colors] are the bark surface's arrays, [param colliders] its [code]tree_colliders[/code] meta. Covers the stem's first 4.2 m. Returns [code][header, radii, colours][/code]: a [PackedFloat32Array] (cells round, rows, row step in metres), the outermost bark radius in each cell in metres, and a [PackedByteArray] of each cell's mean vertex colour (RGB, 0 to 2 in 8 bits).
+				A trunk mesh's bark surface binned round each of its stems, for the mesh's [code]tree_bark_profile[/code] meta: [param vertices] and [param colors] are the bark surface's arrays, [param colliders] its [code]tree_colliders[/code] meta. The stems are the main capsule chain and each further chain that leaves it in the first 4.2 m, 6 cm thick or more and heading up (the second stem of a fork); each is covered to 4.2 m up the main stem. Returns one [code][header, radii, colours][/code] array a stem: a [PackedFloat32Array] (cells round, rows, row step in metres), the outermost bark radius in each cell in metres, and a [PackedByteArray] of each cell's mean vertex colour (RGB, 0 to 2 in 8 bits).
 			</description>
 		</method>
 		<method name="set_sync">
