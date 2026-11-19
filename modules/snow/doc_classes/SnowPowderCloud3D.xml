@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SnowPowderCloud3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Draws an avalanche's powder cloud as a heavy gas in NVIDIA Flow.
+	</brief_description>
+	<description>
+		[SnowAvalanche3D] adds one of these and works out where a fast, dry front blows snow into the air, how much, and where it settles. This node draws that snow through a pool of sphere emitters on the front, in a [code]PhysXFlow3D[/code] of its own. The gas is heavier than air, rests on the terrain, and drifts with the weather's wind. It reaches the PhysX module only by class and property names, so without Flow it draws nothing and everything else behaves the same.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_active_sources" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many emitters are blowing snow now.
+			</description>
+		</method>
+		<method name="get_flow" qualifiers="const">
+			<return type="Node3D" />
+			<description>
+				The [code]PhysXFlow3D[/code] that draws the cloud, or [code]null[/code] before the first cloud or without Flow.
+			</description>
+		</method>
+		<method name="has_flow" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] once a Flow simulation is in place.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="color" type="Color" setter="set_color" getter="get_color" default="Color(0.93, 0.95, 0.98, 1)">
+			The cloud's colour.
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			If [code]false[/code], nothing is drawn. The avalanche still lofts and settles the snow.
+		</member>
+		<member name="heaviness" type="float" setter="set_heaviness" getter="get_heaviness" default="0.8">
+			How much heavier than air the cloud is, as Flow's negative smoke buoyancy. Suspended snow is 3 to 10 kg/m³, against air's 1.2.
+		</member>
+		<member name="max_sources" type="int" setter="set_max_sources" getter="get_max_sources" default="12">
+			The number of emitters along the front. The strongest parts of the front get them.
+		</member>
+		<member name="smoke_per_kg" type="float" setter="set_smoke_per_kg" getter="get_smoke_per_kg" default="0.05">
+			Emitter smoke per kg/s of snow blown into the air.
+		</member>
+		<member name="terrain_path" type="NodePath" setter="set_terrain_path" getter="get_terrain_path" default="NodePath(&quot;&quot;)">
+			The terrain the cloud rests on, Flow's terrain floor. The avalanche sets it to the snow cover's height source.
+		</member>
+		<member name="updraft" type="float" setter="set_updraft" getter="get_updraft" default="0.3">
+			The share of the front's speed that blows up out of it, the eruption current.
+		</member>
+	</members>
+</class>
