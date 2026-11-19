@@ -3446,12 +3446,14 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 			}
 			if (hdata && !cring) {
 				// Faded out at the soil line (the tree's ground is y = 0): plates and furrows cut
-				// the ground plane in a ragged line, read as a rim around the root collar. Not on
+				// the ground plane in a ragged line, read as a rim around the root collar.
+				// Only the last 7 cm: faded over 20 cm, the low root flare lost its plates and read as
+				// smeared, stretched colour (docs, 19 Nov). Not on
 				// fallen wood, which lies across that plane: its underside lost its furrows.
 				const float gy = p_points[r].y + dir.y * rr;
 				// None on a cap's end face: the furrows ran into its centre as pleats.
 				const float face = 1.0f - CLAMP(Math::abs(slope) - 0.5f, 0.0f, 1.0f);
-				rr += p_relief * macro_relief(p_points[r] + dir * p_radii[r]) * relief_at(float(s) / p_sides * repeats + twist(p_points[r]), v) * (p_soil_fade ? Math::smoothstep(-0.02f, 0.2f, gy) : 1.0f) * face *
+				rr += p_relief * macro_relief(p_points[r] + dir * p_radii[r]) * relief_at(float(s) / p_sides * repeats + twist(p_points[r]), v) * (p_soil_fade ? Math::smoothstep(-0.02f, 0.07f, gy) : 1.0f) * face *
 						(tube_fade_r > 0.0f ? Math::smoothstep(tube_fade_r0, tube_fade_r, p_points[r].distance_to(tube_fade_c)) : 1.0f);
 			}
 			const Vector3 n_out = capped ? (dir - t * slope).normalized() : dir;
@@ -4432,18 +4434,19 @@ BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt,
 // Maritime pine's plate network as fracture columns (Lefebvre and Neyret 2002, "Synthesizing
 // bark": the outer layer tears along the stem first, into long vertical fissures, then the strips
 // between them break across). Wavy fissures split the tile into p_cols columns; each column breaks
-// across two or three times a tile, at its own phase and slope, so plates are blunt-ended,
-// irregular rectangles about twice as long as wide, staggered against their neighbours, never the
+// across at its own irregular heights and slope, so plates are blunt-ended,
+// irregular rectangles 1.5 to 4 times as long as wide, staggered against their neighbours, never the
 // pointed lenses a stretched Voronoi gives. Edge distances are in column widths; end breaks count
 // p_end times their distance, so they crack narrower than the fissures.
 BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt, float p_end) {
 	const float x = p_u * p_cols;
 	auto wrap = [&](int i) { return ((i % p_cols) + p_cols) % p_cols; };
 	// Each fissure wanders round its own place, so the columns differ in width.
-	auto bound = [&](int i) { return float(i) + 0.35f * (bark_hash(wrap(i), 6, p_salt) - 0.5f) + 0.5f * bark_fbm(float(wrap(i)) / p_cols, p_v, 1, 9, 3, p_salt + 13u * uint32_t(wrap(i))); };
+	auto bound = [&](int i) { return float(i) + 0.35f * (bark_hash(wrap(i), 6, p_salt) - 0.5f) + 0.5f * bark_fbm(float(wrap(i)) / p_cols, p_v, p_cols, 18, 3, p_salt + 13u); };
 	// A fissure that has not opened over a stretch: the plates either side are one there, and
-	// the breaks across them end on it in T junctions, as real crack networks do.
-	auto open = [&](int i) { return bark_fbm(float(wrap(i)) / p_cols, p_v, 1, 4, 2, p_salt + 41u + 7u * uint32_t(wrap(i))) > -0.04f; };
+	// the breaks across them end on it in T junctions, as real crack networks do. It narrows to
+	// its end rather than stopping (a hard stop drew a straight step across the plate).
+	auto shut = [&](int i) { return Math::smoothstep(-0.12f, -0.2f, bark_fbm(float(wrap(i)) / p_cols, p_v, p_cols, 8, 2, p_salt + 41u)); };
 	int c = int(Math::floor(x));
 	if (x < bound(c)) {
 		c--;
@@ -4451,21 +4454,48 @@ BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt
 		c++;
 	}
 	const float l = bound(c), r = bound(c + 1);
-	const float sl = open(c) ? x - l : x - bound(c - 1);
-	const float sr = open(c + 1) ? r - x : bound(c + 2) - x;
-	const float side = MIN(sl, sr);
+	// Distance to the nearest fissure, a shut one counting as farther by how shut it is (the same
+	// sum from either side of it, so nothing steps where the columns change).
+	float side = 1e9f;
+	for (int i = c - 1; i <= c + 2; i++) {
+		side = MIN(side, Math::abs(x - bound(i)) + 1.5f * shut(i));
+	}
+	// Cross breaks fade out toward a shut fissure, so on a joined plate they end in a taper rather
+	// than a square notch where the columns meet.
+	const float fade = 1.5f * MAX(shut(c) * Math::smoothstep(0.5f, 0.0f, x - l), shut(c + 1) * Math::smoothstep(0.5f, 0.0f, r - x));
 	const int ci = wrap(c);
-	const int n = 1 + int(bark_hash(ci, 1, p_salt + 3u) > 0.4f);
+	// Cross breaks: S slots a tile, each column's own phase and slope, and each slot's break
+	// shifted up or down by up to a quarter slot and missing in half the slots, so plates run
+	// 1.5 to 4 widths long and never line up in rows with their neighbours'.
+	constexpr int S = 4;
 	const float phase = bark_hash(ci, 2, p_salt + 3u);
 	const float tilt = 0.5f * (bark_hash(ci, 4, p_salt + 3u) - 0.5f);
-	const float t = p_v * n + phase + tilt * (x - 0.5f * (l + r)) + 0.35f * bark_fbm(p_u, p_v, p_cols * 3, 7, 2, p_salt + 29u);
+	const float t = p_v * S + phase * S + tilt * (x - 0.5f * (l + r)) + 0.35f * bark_fbm(p_u, p_v, p_cols * 3, 14, 2, p_salt + 29u);
 	const int k = int(Math::floor(t));
-	const float ft = t - float(k);
-	const float across = MIN(ft, 1.0f - ft) * float(p_cols) / float(n);
+	auto brk = [&](int j, float &r_at) {
+		const int jw = ((j % S) + S) % S;
+		r_at = float(j) + 0.5f * (bark_hash(ci * S + jw, 7, p_salt + 5u) - 0.5f);
+		return jw % 4 == 0 || bark_hash(ci * S + jw, 8, p_salt + 5u) > 0.5f;
+	};
+	float below = -1e9f, above = 1e9f;
+	int below_j = k - 4;
+	for (int j = k - 4; j <= k + 4; j++) {
+		float at;
+		if (!brk(j, at)) {
+			continue;
+		}
+		if (at <= t && at > below) {
+			below = at;
+			below_j = j;
+		} else if (at > t && at < above) {
+			above = at;
+		}
+	}
+	const float across = MIN(t - below, above - t) * float(p_cols) / float(S) + fade;
 	BarkCell cell;
 	cell.edge = MIN(side, across * p_end);
-	cell.id = uint32_t(ci * 64 + ((k % n) + n) % n);
-	cell.site = Vector2(0.5f * (l + r), (float(k) + 0.5f - phase) / n);
+	cell.id = uint32_t(ci * 64 + ((below_j % S) + S) % S);
+	cell.site = Vector2(0.5f * (l + r), (0.5f * (below + above) - phase * S) / S);
 	return cell;
 }
 } // namespace
@@ -4477,7 +4507,7 @@ BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt
 // The bark albedo texture's scale: stored divided by it, the material's albedo multiplies it back.
 float TreeGenerator::_bark_headroom(BarkKind p_kind) {
 	// Stone pine's orange-red fissures run far warmer than its grey-brown bark colour.
-	return p_kind == BARK_SMOOTH ? 1.35f : (p_kind == BARK_PINEA ? 3.0f : ((p_kind == BARK_CORK || p_kind == BARK_PINASTER) ? 1.3f : 1.0f));
+	return p_kind == BARK_SMOOTH ? 1.35f : (p_kind == BARK_PINEA ? 3.0f : (p_kind == BARK_PINASTER ? 1.65f : (p_kind == BARK_CORK ? 1.3f : 1.0f)));
 }
 
 TreeGenerator::BarkKind TreeGenerator::bark_kind_for_preset(int p_preset) {
@@ -4539,7 +4569,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 	// Cork's ridges are several centimetres wide: on the common 0.4 m tile a few dozen of them
 	// round a 2 m girth repeat five times and read as a lattice, so cork gets a 1.2 m tile at
 	// twice the texels.
-	const int N = p_kind == BARK_CORK ? 1024 : 512;
+	const int N = (p_kind == BARK_CORK || p_kind == BARK_PINASTER) ? 1024 : 512;
 	const float texel = _bark_tile_of(p_kind) / N;
 	struct Look {
 		int cu, cv; // Plates around and along one tile.
@@ -4559,11 +4589,12 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
 		{ 9, 12, 0.2f, 0.08f, 0.003f, 0.3f, 0.14f }, // Cork (1.2 m tile): long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
-		{ 3, 3, 0.24f, 0.085f, 0.003f, 0.16f, 0.12f }, // Pinaster (0.9 m tile): thick plates a hand or two across, deep furrows (5ac); 3 fracture columns.
+		{ 6, 3, 0.24f, 0.085f, 0.003f, 0.16f, 0.12f }, // Pinaster (1.8 m tile): thick plates a hand or two across, deep furrows (5ac); 6 fracture columns.
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
-	const int F = p_kind == BARK_CORK ? 3 : 1; // Noise cycles a tile, scaled with cork's larger tile.
+	// Noise cycles a tile, scaled with cork's and maritime pine's larger tiles.
+	const int F = p_kind == BARK_CORK ? 3 : (p_kind == BARK_PINASTER ? 2 : 1);
 	Vector<float> h;
 	h.resize(N * N);
 	Vector<float> alb;
@@ -4585,7 +4616,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 			float r = 0.88f + 0.08f * fibre;
 			if (L.crack > 0.0f) {
 				// Warp the lookup so ridges interlace and wander rather than sit on a grid.
-				const float warp = (p_kind == BARK_PLATED || p_kind == BARK_PINEA || p_kind == BARK_PINASTER) ? 2.0f : (p_kind == BARK_FLAKING ? 10.0f : (p_kind == BARK_CORK ? 0.9f : 1.0f)); // Cork: amplitude in its 3x tile.
+				const float warp = (p_kind == BARK_PLATED || p_kind == BARK_PINEA) ? 2.0f : (p_kind == BARK_FLAKING ? 10.0f : (p_kind == BARK_CORK ? 0.9f : (p_kind == BARK_PINASTER ? 1.0f : 1.0f))); // Cork and pinaster: amplitude in their larger tiles.
 				float wu = u + 0.035f * warp * bark_fbm(u, v, 4 * F, 4 * F, 2, salt + 21u);
 				float wv = v + 0.05f * warp * bark_fbm(u, v, 4 * F, 4 * F, 2, salt + 27u);
 				if (p_kind == BARK_PINASTER) {
@@ -4593,8 +4624,8 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// stretched cells' straight walls met in points. A second, finer warp breaks the
 					// walls into the irregular, broken outlines of real plates (domain warping;
 					// Quilez 2002).
-					wu += 0.03f * bark_fbm(u, v, 11 * F, 7 * F, 2, salt + 121u);
-					wv += 0.035f * bark_fbm(u, v, 9 * F, 12 * F, 2, salt + 123u);
+					wu += 0.015f * bark_fbm(u, v, 11 * F, 7 * F, 2, salt + 121u);
+					wv += 0.0175f * bark_fbm(u, v, 9 * F, 12 * F, 2, salt + 123u);
 				}
 				const float merge = (p_kind == BARK_PLATED || p_kind == BARK_PINASTER) ? 0.35f : (p_kind == BARK_PINEA ? 0.05f : (p_kind == BARK_SCALY ? 0.1f : (p_kind == BARK_CORK ? 0.5f : 0.0f)));
 				const float scar_cut = p_kind == BARK_FLAKING ? 0.62f : 0.0f;
@@ -4723,9 +4754,9 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// crumbly ridges (|noise| folded, as ridged multifractal noise does; Musgrave 1994)
 					// standing over a fine grit, with no stepped levels (each step's edge drew a line,
 					// and Voronoi flakes drew a net of cracks over the plate).
-					const float r1 = bark_fbm(u, v, 16, 9, 3, salt + 57u);
-					const float r2 = 0.5f - Math::abs(bark_fbm(u, v, 34, 20, 2, salt + 59u));
-					const float grit = bark_fbm(u, v, 70, 50, 2, salt + 111u);
+					const float r1 = bark_fbm(u, v, 16 * F, 9 * F, 3, salt + 57u);
+					const float r2 = 0.5f - Math::abs(bark_fbm(u, v, 34 * F, 20 * F, 2, salt + 59u));
+					const float grit = bark_fbm(u, v, 70 * F, 50 * F, 2, salt + 111u);
 					// Round 8 (docs, 18 Nov: narrow slits with a sharp lip; large smooth slabs):
 					// furrows are wide V valleys taking about a third of the surface (twice the crack
 					// width, a V profile, not a cliff), and each plate breaks into layered scales a few
@@ -4738,14 +4769,17 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					// ways (domain warping; Quilez 2002), and each scale stands at its own level with a
 					// slight tilt rather than a ramp to a lower edge (the ramp drew a pointed tongue in
 					// every cell, the rows the lattice's).
-					const float fu = u + 0.05f * bark_fbm(u, v, 8, 8, 2, salt + 103u);
-					const float fv = v + 0.04f * bark_fbm(u, v, 7, 9, 2, salt + 117u);
-					const BarkCell f = bark_voronoi(fu - Math::floor(fu), fv - Math::floor(fv), 11, 8, salt + 105u, 0.45f, 0.0f, salt + 113u);
-					const float below = (fv - Math::floor(fv)) * 8.0f - f.site.y;
+					const float fu = u + 0.025f * bark_fbm(u, v, 8 * F, 8 * F, 2, salt + 103u);
+					const float fv = v + 0.02f * bark_fbm(u, v, 7 * F, 9 * F, 2, salt + 117u);
+					const BarkCell f = bark_voronoi(fu - Math::floor(fu), fv - Math::floor(fv), 11 * F, 8 * F, salt + 105u, 0.0f, 0.0f, salt + 113u); // Every wall a groove: a merged wall's own-height step was a hard line.
+					const float below = (fv - Math::floor(fv)) * 8.0f * F - f.site.y;
 					const float lift = CLAMP(0.5f + 0.35f * below, 0.0f, 1.0f);
 					const float own = bark_hash(int(f.id), 3, salt + 107u);
-					const float step_soft = Math::smoothstep(0.0f, 0.3f, f.edge + 0.06f * bark_fbm(u, v, 40, 30, 2, salt + 119u));
-					const float scales = (0.2f * lift + 0.8f * own) * (0.6f + 0.4f * step_soft);
+					// Round 14 (docs, 19 Nov: thin hard black lines like 2D crack strokes): each scale
+					// sinks to the same level at its rim, so neighbouring scales meet in a soft groove,
+					// not a step between their own heights (a step one texel wide drew a hard line).
+					const float step_soft = Math::smoothstep(0.0f, 0.35f, f.edge + 0.06f * bark_fbm(u, v, 40 * F, 30 * F, 2, salt + 119u));
+					const float scales = (0.2f * lift + 0.8f * own) * step_soft;
 					const float on_plate = Math::smoothstep(0.55f, 0.85f, open);
 					plate = valley * (0.62f + 0.2f * r1 + 0.08f * r2 + 0.06f * grit) + 0.12f * scales * on_plate;
 				} else if (p_kind == BARK_PLATED || p_kind == BARK_PINEA) {
@@ -4775,7 +4809,13 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				if (p_kind == BARK_PINASTER) {
 					// Dark plates and dark walls; only the furrow's floor, where the outer bark has
 					// split to the fresh layers, a dull red-brown (bright, they read as orange piping).
-					a = Color(1.5f, 0.98f, 0.76f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.04f, 0.22f, open)) * shade;
+					// Round 14 (docs, 19 Nov: warm red-brown in the fissures and on fresh plate faces):
+					// the warm floor runs up the lower walls, and where a plate's outer scales have
+					// flaked off its face shows the fresher red-brown layer (Alia et al. 1996; maritime
+					// pine's inner bark is purplish red-brown).
+					a = Color(1.62f, 0.95f, 0.7f).lerp(Color(1.0f, 1.0f, 1.0f), Math::smoothstep(0.04f, 0.4f, open)) * shade;
+					const float fresh = Math::smoothstep(0.1f, 0.22f, bark_fbm(u, v, 6 * F, 3 * F, 3, salt + 61u)) * Math::smoothstep(0.6f, 0.9f, open);
+					a = a * Color(1.0f, 1.0f, 1.0f).lerp(Color(1.35f, 0.92f, 0.74f), 0.55f * fresh);
 				}
 				if (p_kind == BARK_PINEA) {
 					// Stone pine (Gymnosperm Database: "red-brown to orange with blackish edges to
@@ -14702,14 +14742,19 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// The bark relief the tube was displaced by, taken off before the sweep and put back
 		// after it, faded out at the swept surface's own soil line: kept at the height it was
 		// built at, the furrows of the roots' tips stood out of the ground as slivers.
-		LocalVector<float> relief_off, root_w, root_sda, root_ratio;
+		LocalVector<float> relief_off, root_w, root_sda, root_ratio, relief_keep;
 		relief_off.resize(p_part.w);
+		relief_keep.resize(p_part.w);
+		LocalVector<uint8_t> taken; // Relief taken off before the sweep (laid again after it).
+		taken.resize(p_part.w);
 		root_w.resize(p_part.w);
 		root_sda.resize(p_part.w);
 		root_ratio.resize(p_part.w);
 		for (int i = 0; i < p_part.w; i++) {
 			moved[i] = 0;
 			relief_off[i] = 0.0f;
+			relief_keep[i] = 1.0f;
+			taken[i] = 0;
 			root_w[i] = 0.0f;
 			root_sda[i] = 0.0f;
 			root_ratio[i] = 1.0f;
@@ -14728,6 +14773,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (h < root_top && ri < int(p_rad.size())) {
 				relief_off[i] = vv[v].distance_to(p_pts[ri]) - p_rad[ri];
 				r_t -= relief_off[i];
+				relief_keep[i] = 1.0f;
+				taken[i] = 1;
 			}
 			const float az = Math::atan2(hd.z, hd.x);
 			float d = r_t + root_push(h, az);
@@ -14772,7 +14819,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					root_ratio[i] = d / MAX(1e-3f, r_t);
 					// The furrows were cut for the stem's girth; swept out along a root they
 					// stretched into deep black grooves. Shallower the further out they go.
-					relief_off[i] *= 1.0f - 0.65f * hm * Math::smoothstep(0.1f, 0.6f, t);
+					relief_keep[i] = 1.0f - 0.65f * hm * Math::smoothstep(0.1f, 0.6f, t);
+					relief_off[i] *= relief_keep[i];
 				}
 				moved[i] = 1;
 			}
@@ -14834,13 +14882,22 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 		}
 		const float sgn = sign_sum < 0.0f ? -1.0f : 1.0f;
+		// Bark relief is laid again below from the swept surface's new UVs (resampled), where the
+		// builder knows the relief's scale; elsewhere (moss) the old offset goes back on.
+		const Image *relief_img = nullptr;
+		if (r_b.relief_off.size() >= uint32_t(p_part.z + p_part.w)) {
+			const Ref<Image> &hi = _bark_set(_bark_kind(preset)).height;
+			relief_img = hi.is_valid() && hi->get_format() == Image::FORMAT_RF ? hi.ptr() : nullptr;
+		}
 		for (int i = 0; i < p_part.w; i++) {
 			if (!moved[i] || fn[i] == Vector3()) {
 				continue;
 			}
 			const int v = p_part.z + i;
 			nw[v] = fn[i] * sgn;
-			vv[v] += nw[v] * (relief_off[i] * Math::smoothstep(0.02f, 0.2f, vv[v].y - ground_y));
+			if (!relief_img || !taken[i] || r_b.relief_off[v].y <= 0.0f) {
+				vv[v] += nw[v] * (relief_off[i] * Math::smoothstep(0.02f, 0.2f, vv[v].y - ground_y));
+			}
 			if (r_b.use_tangents && int(r_b.tangents.size()) >= (v + 1) * 4) {
 				float *tw = r_b.tangents.ptrw() + v * 4;
 				Vector3 tg(tw[0], tw[1], tw[2]);
@@ -14885,6 +14942,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					uw[c].y = vcur;
 				}
 			}
+			// (Relief is laid again after u below.)
 			// Across a root too: u spreads with the distance from the axis, so the tiles keep
 			// their width where the rings are swept out wide (they stretched sideways).
 			for (int r = 0; r < rings; r++) {
@@ -14906,6 +14964,33 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						uw[p_part.z + i].x += root_sda[i] * dudang * (root_ratio[i] - 1.0f);
 					}
 				}
+			}
+		}
+		// The bark relief from the swept surface's own UVs (trees.md, pine round 14; docs, 19 Nov:
+		// the flare's bark stretched into smears): put back as it was built, the relief kept the
+		// stem's furrows stretched out along each root while the bark texture, laid again above,
+		// no longer matched it. Resampled, the plates continue onto the flare at their own size.
+		// Down to a few centimetres above the soil (faded over 20 cm, the low flare read flat).
+		if (relief_img) {
+			const int hn = relief_img->get_width();
+			const Vector<uint8_t> hb = relief_img->get_data();
+			const float *hd = reinterpret_cast<const float *>(hb.ptr());
+			const Vector2 *uw = r_b.uvs.ptr();
+			auto sample = [&](const Vector2 &p_uv) {
+				const float x = (p_uv.x - Math::floor(p_uv.x)) * hn - 0.5f, y = (p_uv.y - Math::floor(p_uv.y)) * hn - 0.5f;
+				const int x0 = int(Math::floor(x)), y0 = int(Math::floor(y));
+				const float fx = x - x0, fy = y - y0;
+				auto at = [&](int a, int b) { return hd[((b % hn + hn) % hn) * hn + ((a % hn + hn) % hn)]; };
+				return Math::lerp(Math::lerp(at(x0, y0), at(x0 + 1, y0), fx), Math::lerp(at(x0, y0 + 1), at(x0 + 1, y0 + 1), fx), fy);
+			};
+			for (int i = 0; i < p_part.w; i++) {
+				const int v = p_part.z + i;
+				if (!moved[i] || !taken[i] || fn[i] == Vector3() || r_b.relief_off[v].y <= 0.0f) {
+					continue;
+				}
+				const float off = r_b.relief_off[v].y * relief_keep[i] * sample(uw[v]) * Math::smoothstep(0.0f, 0.08f, vv[v].y - ground_y);
+				vv[v] += nw[v] * off;
+				r_b.relief_off[v].x = off;
 			}
 		}
 		// Final normals of the swept part from its own triangles, after the relief went back on:
