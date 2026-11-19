@@ -849,7 +849,26 @@ float WorldGround::track_mud(const Vector3 &p_position, float p_radius, float p_
 	return provider && p_depth > 0.0f ? provider->contract_ground_track_mud(p_position, p_radius, p_depth, p_wet, p_print) : 0.0f;
 }
 
+Vector3 WorldGround::coarse_cover_at(const Vector3 &p_position) const {
+	Vector3 r;
+	if (GDVIRTUAL_CALL(_coarse_cover_at, p_position, r)) {
+		return r;
+	}
+	const LocalVector<WorldCoverProvider *> *list = WorldContracts::cover_providers_list();
+	if (list) {
+		for (const WorldCoverProvider *c : *list) {
+			const Vector3 v = c->contract_cover_at(p_position);
+			if (v.x + v.y > r.x + r.y || (v.x + v.y == r.x + r.y && v.z > r.z)) {
+				r = v;
+			}
+		}
+	}
+	return r;
+}
+
 void WorldGround::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("coarse_cover_at", "position"), &WorldGround::coarse_cover_at);
+	GDVIRTUAL_BIND(_coarse_cover_at, "position");
 	ClassDB::bind_method(D_METHOD("add_runoff_load", "position", "mineral_kg", "ash_kg"), &WorldGround::add_runoff_load);
 	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet", "print"), &WorldGround::track_mud);
 	ClassDB::bind_method(D_METHOD("has_runoff"), &WorldGround::has_runoff);
@@ -947,6 +966,18 @@ void WorldContracts::register_runoff(WorldRunoffProvider *p_provider) {
 void WorldContracts::unregister_runoff(WorldRunoffProvider *p_provider) {
 	if (singleton && singleton->runoff_provider == p_provider) {
 		register_runoff(nullptr);
+	}
+}
+
+void WorldContracts::register_cover(WorldCoverProvider *p_provider) {
+	if (singleton && p_provider && singleton->cover_providers.find(p_provider) < 0) {
+		singleton->cover_providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_cover(WorldCoverProvider *p_provider) {
+	if (singleton) {
+		singleton->cover_providers.erase(p_provider);
 	}
 }
 

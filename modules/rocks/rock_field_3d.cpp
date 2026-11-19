@@ -5642,8 +5642,12 @@ void RockField3D::_cover_finish(bool p_wait) {
 	} else {
 		cover_tex[l] = ImageTexture::create_from_image(img);
 	}
-	cover_origin[l] = cover_job->origin;
-	cover_valid[l] = true;
+	{
+		MutexLock lock(cover_data_mutex);
+		cover_data[l] = cover_job->data;
+		cover_origin[l] = cover_job->origin;
+		cover_valid[l] = true;
+	}
 	memdelete(cover_job);
 	cover_job = nullptr;
 	_push_cover();
@@ -5745,8 +5749,40 @@ void RockField3D::_clear_cover() {
 		memdelete(cover_job);
 		cover_job = nullptr;
 	}
-	cover_valid[0] = cover_valid[1] = false;
+	{
+		MutexLock lock(cover_data_mutex);
+		cover_valid[0] = cover_valid[1] = false;
+		cover_data[0].clear();
+		cover_data[1].clear();
+	}
 	_push_cover();
+}
+
+Vector3 RockField3D::contract_cover_at(const Vector3 &p_position) const {
+	static const float texel[2] = { 1.0f, 8.0f };
+	MutexLock lock(cover_data_mutex);
+	for (int l = 0; l < 2; l++) {
+		if (!cover_valid[l] || cover_data[l].size() != COVER_N * COVER_N * 4) {
+			continue;
+		}
+		// Texel centres sit at half a texel; stay a texel inside so the bilinear taps are all in the map.
+		const float fx = (float(p_position.x) - cover_origin[l].x) / texel[l] - 0.5f;
+		const float fz = (float(p_position.z) - cover_origin[l].y) / texel[l] - 0.5f;
+		if (fx < 0.0f || fz < 0.0f || fx >= COVER_N - 1 || fz >= COVER_N - 1) {
+			continue;
+		}
+		const int x = int(fx), z = int(fz);
+		const float tx = fx - x, tz = fz - z;
+		const uint8_t *d = cover_data[l].ptr();
+		Vector3 r;
+		for (int k = 0; k < 3; k++) {
+			const float a = d[(z * COVER_N + x) * 4 + k], b = d[(z * COVER_N + x + 1) * 4 + k];
+			const float c = d[((z + 1) * COVER_N + x) * 4 + k], e = d[((z + 1) * COVER_N + x + 1) * 4 + k];
+			r[k] = Math::lerp(Math::lerp(a, b, tx), Math::lerp(c, e, tx), tz) * (0.5f / 255.0f);
+		}
+		return r;
+	}
+	return Vector3();
 }
 
 // Off: the river beds keep only the river layer's stones (their grains and their far cover go; cells already built
@@ -5776,6 +5812,16 @@ void RockField3D::set_ground_detail_cover(bool p_enabled) {
 	if (!ground_cover) {
 		_clear_cover();
 	}
+}
+
+Rect2 RockField3D::get_ground_detail_cover_rect(int p_level) const {
+	ERR_FAIL_INDEX_V(p_level, 2, Rect2());
+	MutexLock lock(cover_data_mutex);
+	if (!cover_valid[p_level]) {
+		return Rect2();
+	}
+	const float span = COVER_N * (p_level == 0 ? 1.0f : 8.0f);
+	return Rect2(cover_origin[p_level], Vector2(span, span));
 }
 
 Ref<Texture2D> RockField3D::get_ground_detail_cover_texture(int p_level) const {
@@ -5882,6 +5928,7 @@ void RockField3D::set_ground_contact(bool p_enabled) {
 void RockField3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
+			WorldContracts::register_cover(this);
 			// Before any node is ready, so the weather's first shelter bake finds the boulders.
 			if (wind_obstacles) {
 				add_to_group(SNAME("weather_shelter"));
@@ -5911,6 +5958,7 @@ void RockField3D::_notification(int p_what) {
 			_update_react(get_physics_process_delta_time());
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			WorldContracts::unregister_cover(this);
 			_clear_react();
 			_clear_cover();
 			clear();
@@ -5922,6 +5970,7 @@ void RockField3D::_notification(int p_what) {
 }
 
 void RockField3D::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("get_coarse_cover_at", "position"), &RockField3D::get_coarse_cover_at);
 	ClassDB::bind_method(D_METHOD("set_generator", "path"), &RockField3D::set_generator);
 	ClassDB::bind_method(D_METHOD("get_generator"), &RockField3D::get_generator);
 	ClassDB::bind_method(D_METHOD("set_terrain3d", "path"), &RockField3D::set_terrain3d);
@@ -6050,6 +6099,7 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_ground_detail_cover", "enabled"), &RockField3D::set_ground_detail_cover);
 	ClassDB::bind_method(D_METHOD("is_ground_detail_cover"), &RockField3D::is_ground_detail_cover);
 	ClassDB::bind_method(D_METHOD("get_ground_detail_cover_texture", "level"), &RockField3D::get_ground_detail_cover_texture);
+	ClassDB::bind_method(D_METHOD("get_ground_detail_cover_rect", "level"), &RockField3D::get_ground_detail_cover_rect);
 	ClassDB::bind_method(D_METHOD("set_ground_detail_threads", "enabled"), &RockField3D::set_ground_detail_threads);
 	ClassDB::bind_method(D_METHOD("is_ground_detail_threads"), &RockField3D::is_ground_detail_threads);
 	ClassDB::bind_method(D_METHOD("get_ground_detail_pending"), &RockField3D::get_ground_detail_pending);

@@ -25,6 +25,13 @@
 				A stub's [method blown_sand_at].
 			</description>
 		</method>
+		<method name="_coarse_cover_at" qualifiers="virtual const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method coarse_cover_at].
+			</description>
+		</method>
 		<method name="_dent_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -143,6 +150,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				How much of the sand there the wind moves now, 0 to 1: dry sand out of shelter. Default 0.
+			</description>
+		</method>
+		<method name="coarse_cover_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The share of the ground (0..1) covered by coarse grains at [param position]: x pebbles, y gravel, z fine grains, from the [RockField3D] cover maps (the largest any field reports; 0 with none). A gravel lag armours the sand under it, so blown sand and wind ripples read pebble + gravel.
 			</description>
 		</method>
 		<method name="dent_at" qualifiers="const">

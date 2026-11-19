@@ -33,6 +33,8 @@
 #include "rock_generator.h"
 #include "rock_moss.h"
 
+#include "modules/world/world_contracts.h"
+
 #include "core/math/random_pcg.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/mutex.h"
@@ -61,7 +63,7 @@ class StaticBody3D;
 // river stones carry the rock of their headwaters. Each layer streams in square cells round the follow target (or
 // the camera) out to its radius; instances share one mesh per shape (MultiMesh), so one acceleration structure per
 // shape serves every stone of it.
-class RockField3D : public Node3D {
+class RockField3D : public Node3D, public WorldCoverProvider {
 	GDCLASS(RockField3D, Node3D);
 
 public:
@@ -227,6 +229,9 @@ private:
 	Vector2 cover_origin[2];
 	bool cover_valid[2] = {};
 	CoverJob *cover_job = nullptr;
+	// A CPU copy of each cover map for WorldGround.coarse_cover_at (any thread; swapped under the lock).
+	PackedByteArray cover_data[2];
+	mutable Mutex cover_data_mutex;
 	static void _cover_task(void *p_job);
 	static void _cover_fill(CoverJob *p_job);
 	void _update_cover(bool p_wait);
@@ -609,6 +614,7 @@ public:
 	void set_ground_detail_cover(bool p_enabled);
 	bool is_ground_detail_cover() const { return ground_cover; }
 	Ref<Texture2D> get_ground_detail_cover_texture(int p_level) const;
+	Rect2 get_ground_detail_cover_rect(int p_level) const; // the map's world xz rect (empty before it is built)
 	void set_ground_detail_threads(bool p_enabled);
 	bool is_ground_detail_threads() const { return detail_threads; }
 	int get_ground_detail_pending() const { return int(detail_jobs.size()); }
@@ -671,6 +677,10 @@ public:
 	// Boulders standing at least 0.5 m out of the ground, as world boxes for the weather's shelter (the
 	// weather_shelter group): snow and sand drift in their lee.
 	Array get_wind_obstacles(const Rect2 &p_rect);
+	// WorldGround.coarse_cover_at: pebble, gravel and fine shares (0..1) from the cover maps, bilinear; the near map
+	// where it reaches, else the far one; 0 outside both.
+	Vector3 contract_cover_at(const Vector3 &p_position) const override;
+	Vector3 get_coarse_cover_at(const Vector3 &p_position) const { return contract_cover_at(p_position); }
 	void set_wind_obstacles(bool p_enabled);
 	bool is_wind_obstacles_enabled() const { return wind_obstacles; }
 	// The stones of one layer in p_rect, each a Dictionary (position, basis, scale, footprint, film, rock_type,

@@ -2376,6 +2376,24 @@ func _render_later() -> void:
 						if args.has("cover-verbose") and (a > 0.0 or m > 0.0):
 							print("  class %d at %s: placed %.3f map %.3f" % [k, rc.get_center(), a / 4.0, m])
 				print("cover class %d: placed %.4f, map %.4f (mean over %d squares within %.0f m)" % [k, placed / max(n, 1), mapped / max(n, 1), n, rad])
+			# The ground contract (WorldGround.coarse_cover_at) reads the same map on the CPU (texel centres of the map
+			# as built: it follows the camera only once it has moved an eighth of the map).
+			var mr: Rect2 = rocks.get_ground_detail_cover_rect(0)
+			var worst := 0.0
+			var cov_sum := 0.0
+			var cov_n := 0
+			for tz in range(8, 248, 3):
+				for tx in range(8, 248, 3):
+					var q := mr.position + Vector2(tx + 0.5, tz + 0.5)
+					var px := img.get_pixel(tx, tz)
+					var cv: Vector3 = WorldContracts.get_ground().coarse_cover_at(Vector3(q.x, 0, q.y))
+					var dd := absf(cv.x - px.r * 0.5) + absf(cv.y - px.g * 0.5) + absf(cv.z - px.b * 0.5)
+					if dd > 0.005 and args.has("cover-verbose"):
+						print("  contract %s map %s at %s" % [cv, Vector3(px.r, px.g, px.b) * 0.5, q])
+					worst = max(worst, dd)
+					cov_sum += cv.x + cv.y
+					cov_n += 1
+			print("%s cover contract: WorldGround.coarse_cover_at matches the near map within %.4f (pebble + gravel mean %.3f)" % ["PASS" if worst < 0.005 else "FAIL", worst, cov_sum / max(cov_n, 1)])
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)

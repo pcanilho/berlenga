@@ -385,6 +385,16 @@ public:
 	virtual ~WorldRunoffProvider() {}
 };
 
+// Coarse grains lying on the ground (the stone fields, RockField3D): a separate slot on the ground contract, since
+// the near ground and the stones come from different producers. Several fields may register; each answers 0 where
+// its map does not reach.
+class WorldCoverProvider {
+public:
+	// The share of the ground (0..1) covered by pebbles (x), gravel (y) and fine grains (z) at the point.
+	virtual Vector3 contract_cover_at(const Vector3 &p_position) const = 0;
+	virtual ~WorldCoverProvider() {}
+};
+
 class WorldGround : public RefCounted {
 	GDCLASS(WorldGround, RefCounted);
 
@@ -413,6 +423,7 @@ protected:
 	GDVIRTUAL1RC(float, _blown_sand_at, Vector3)
 	GDVIRTUAL3(_add_runoff_load, Vector3, float, float)
 	GDVIRTUAL5R(float, _track_mud, Vector3, float, float, float, Vector4)
+	GDVIRTUAL1RC(Vector3, _coarse_cover_at, Vector3)
 
 public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -440,6 +451,10 @@ public:
 	// 0 with no ground producer.
 	float track_mud(const Vector3 &p_position, float p_radius, float p_depth, float p_wet, const Vector4 &p_print);
 	bool has_runoff() const { return runoff_provider != nullptr || get_script_instance() != nullptr; }
+	// The share of the ground (0..1) covered by coarse grains: x pebbles, y gravel, z fine grains (the stone fields'
+	// cover maps). A gravel lag armours the sand under it, so blown sand and ripples read pebble + gravel. 0 with no
+	// stone field; the largest any field reports.
+	Vector3 coarse_cover_at(const Vector3 &p_position) const;
 };
 
 // Snow: the snowpack and lake ice (docs/ideas/world-contracts.md, Snow). Produced by SnowCover3D.
@@ -529,6 +544,7 @@ class WorldContracts : public Object {
 	Ref<WorldGround> ground_override;
 	WorldGroundProvider *ground_provider = nullptr;
 	WorldRunoffProvider *runoff_provider = nullptr;
+	LocalVector<WorldCoverProvider *> cover_providers;
 	Ref<WorldWater> builtin_water;
 	Ref<WorldWater> water_override;
 	Ref<WorldFire> builtin_fire;
@@ -561,6 +577,9 @@ public:
 	static void unregister_ground(WorldGroundProvider *p_provider);
 	static void register_runoff(WorldRunoffProvider *p_provider); // one at a time: the last registered answers
 	static void unregister_runoff(WorldRunoffProvider *p_provider);
+	static void register_cover(WorldCoverProvider *p_provider); // any number: the largest share answers
+	static void unregister_cover(WorldCoverProvider *p_provider);
+	static const LocalVector<WorldCoverProvider *> *cover_providers_list() { return singleton ? &singleton->cover_providers : nullptr; }
 	static void register_water(WorldWaterProvider *p_provider);
 	static void unregister_water(WorldWaterProvider *p_provider);
 	static void register_fire(WorldFireProvider *p_provider);
