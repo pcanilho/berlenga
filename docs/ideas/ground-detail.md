@@ -475,7 +475,7 @@ gravel 12 m, fine gravel 6 m at 720p), and past it the ground showed plain sand:
   from an even smear (no visible repetition).
 - **Calibration.** Against frames with every stone drawn (`--detail-pixels=0.75`), mean brightness of the hand-over
   area: at eye height 2074 before, 1639 every stone, 1711 aggregate; from 11 m up 141, 132, 126. Constants: view
-  cover 0.8 cov (1 + 1.5 tan), bed shade 0.4 cov tan(sun), edge-on tone down to 0.7.
+  cover 0.8 cov (1 + 0.75 tan), bed shade 0.2 cov tan(sun). Polish after the docs check: the edge where cover thins is cut by two noise octaves (0.6 and 1.7 per m) so it breaks up, a third octave (5.3 per m) clusters the mean lighter and darker, and the grains stay single until a pixel spans more than one (footprint taken as the mean across and along the view).
 - **Path tracing.** All of it is in the ground material, which the path tracer runs as is; the sun direction comes
   from `relief_sun_direction()` and the grain switch from the ray-cone footprint, so raster and PT pick the same
   grains.
