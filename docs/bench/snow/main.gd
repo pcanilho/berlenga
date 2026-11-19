@@ -2768,12 +2768,13 @@ func _build_avalanche(cam: Camera3D) -> void:
 	# The deposit near the camera as geometry (the deep-snow surface), its blocks as clumps.
 	var probe := Marker3D.new()
 	probe.name = "Probe"
-	probe.position = Vector3(22.0, 0.0, 0.0)
+	probe.position = Vector3(15.0, 0.0, 0.0)
 	add_child(probe)
 	surface = SnowSurface3D.new()
 	surface.snow_cover = NodePath("../SnowCover3D")
 	surface.follow_target = NodePath("../Probe")
-	surface.extent = 160.0 # the whole run-out as deep-snow geometry
+	surface.extent = 200.0 # the release and the whole run-out as deep-snow geometry
+	surface.deform_extent = 96.0 # and the debris granules over the whole deposit (they live in the print field)
 	add_child(surface)
 	await get_tree().physics_frame
 	var av: SnowAvalanche3D = snow.get_avalanches()
@@ -2797,7 +2798,7 @@ func _build_avalanche(cam: Camera3D) -> void:
 		await _thaw(5.0, 12.0)
 	if triggered:
 		# --triggered (dry) and --wet release the same face, so the two compare.
-		av.trigger(Vector3(-45.0, 0, 0), 40.0)
+		av.trigger(Vector3(-40.0, 0, 0), 30.0) # inside the face: the crown breaks across the slope, below the ridge
 		print("triggered slide: %.0f%% wet" % (av.get_flow_wetness() * 100.0))
 	if OS.get_cmdline_user_args().has("--powder"):
 		# Mid-run in real time, so PhysX Flow steps the cloud with it: --at=S seconds after release (default 9).

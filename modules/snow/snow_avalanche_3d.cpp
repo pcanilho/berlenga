@@ -43,6 +43,7 @@
 #include "modules/world/world_contracts.h"
 #include "core/object/class_db.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/resources/surface_tool.h"
 #include "scene/3d/physics/rigid_body_3d.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
@@ -171,6 +172,7 @@ void SnowAvalanche3D::_track_recent(SnowCover3D *p_cover) {
 		recent_age.write[i] = a;
 	}
 	_glide_advance(p_cover, hours);
+	_bury_crowns(p_cover);
 }
 
 bool SnowAvalanche3D::_check_release(SnowCover3D *p_cover) {
@@ -294,6 +296,11 @@ void SnowAvalanche3D::_release(SnowCover3D *p_cover, const Vector<int> &p_cells,
 	Vector3 c;
 	float total = 0.0f;
 	release_liquid = 0.0f;
+	Vector<float> released;
+	released.resize(n * n);
+	released.fill(0.0f);
+	released_cells.resize(n * n);
+	released_cells.fill(0);
 	for (int k = 0; k < p_cells.size(); k++) {
 		const int i = p_cells[k];
 		const float rho = MAX(p_cover->cell_density[i], 30.0f);
@@ -302,6 +309,8 @@ void SnowAvalanche3D::_release(SnowCover3D *p_cover, const Vector<int> &p_cells,
 		if (s <= 0.0f) {
 			continue;
 		}
+		released.write[i] = s;
+		released_cells.write[i] = 1;
 		// The slab's snow is already in the cover's cells: it starts moving where it lies.
 		h.write[i] = s * rho;
 		written.write[i] = s * rho;
@@ -331,6 +340,9 @@ void SnowAvalanche3D::_release(SnowCover3D *p_cover, const Vector<int> &p_cells,
 		return;
 	}
 	release_center = c / total;
+	if (crowns_enabled) {
+		_build_crown(p_cover, released);
+	}
 	running = true;
 	release_count++;
 	emit_signal(SNAME("avalanche_released"), release_center, released_volume);
@@ -707,7 +719,7 @@ void SnowAvalanche3D::_debris(const Vector3 &p_at, float p_volume) {
 		return;
 	}
 	// A share of the deposit's top as granules over the cell: blocks, and snowballs when wet.
-	clumps->drop(p_at, 0.7f * cell, p_volume * debris_share, 0.3f + 0.7f * run_wet, 2.0f + 3.0f * run_wet);
+	clumps->drop(p_at, 0.7f * cell, p_volume * debris_share * (1.0f + 1.5f * run_wet), 0.3f + 0.7f * run_wet, 2.0f + 3.0f * run_wet);
 }
 
 void SnowAvalanche3D::_flush(SnowCover3D *p_cover) {
@@ -880,14 +892,26 @@ void SnowAvalanche3D::_finish(SnowCover3D *p_cover) {
 		p_cover->update_count++;
 		p_cover->_upload();
 	}
-	// Granules on the settled debris, once per cell, where the flow arrived fast (the run-out), not on the thin
-	// remnants in the release zone.
+	// Granules on the settled debris, once per cell.
 	for (int i = 0; i < n * n; i++) {
-		// The granules gather where the debris is thick (the snout, the levees, the pile-ups) and thin out to its
-		// edge: their share grows with the debris' depth over 30 cm, full from 1.5 m.
+		// Granules over the whole deposit (debris is rubble throughout, the slow wet snout too; not the thin
+		// remnants in the release zone), densest at its margins and snout, where the blocks roll out and pile
+		// (Jomelli and Bertran 2001; wet debris: Bartelt and McArdell 2009). A margin is a cell whose neighbours
+		// hold much less debris; the snout is the far end of the run.
 		const float dd = d[i] / rho_run;
-		if (dd > 0.3f && peak[i] > ENTRAIN_SPEED) {
-			_debris(Vector3((flow_origin.x + i % n + 0.5f) * cell, 0.0f, (flow_origin.y + i / n + 0.5f) * cell), dd * cell * cell * CLAMP((dd - 0.3f) / 1.2f, 0.0f, 1.0f));
+		if (dd > 0.1f && peak[i] > 0.5f && !(released_cells.size() == n * n && released_cells[i])) {
+			const int x = i % n, z = i / n;
+			float thinnest = dd;
+			const int nb[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+			for (const auto &o : nb) {
+				const int xx = x + o[0], zz = z + o[1];
+				thinnest = MIN(thinnest, (xx < 0 || zz < 0 || xx >= n || zz >= n) ? 0.0f : d[zz * n + xx] / rho_run);
+			}
+			const float margin = CLAMP(1.0f - thinnest / dd, 0.0f, 1.0f);
+			const Vector2 at((flow_origin.x + x + 0.5f) * cell, (flow_origin.y + z + 0.5f) * cell);
+			const float along = run_out > 1.0f ? CLAMP(at.distance_to(Vector2(release_center.x, release_center.z)) / run_out, 0.0f, 1.0f) : 0.0f;
+			const float weight = 0.35f + 0.65f * MAX(margin, along * along * along);
+			_debris(Vector3(at.x, 0.0f, at.y), dd * cell * cell * weight);
 		}
 	}
 	written.fill(0.0f);
@@ -958,7 +982,10 @@ bool SnowAvalanche3D::trigger(const Vector3 &p_at, float p_radius) {
 	for (int z = 0; z < n; z++) {
 		for (int x = 0; x < n; x++) {
 			const Vector2 at((cover->origin_cell.x + x + 0.5f) * cs, (cover->origin_cell.y + z + 0.5f) * cs);
-			if (at.distance_to(Vector2(p_at.x, p_at.z)) > p_radius) {
+			// The fracture runs an irregular line, not the load's circle: the reach varies by +-15% over about
+			// 12 m (the slab's strength and thickness vary along it).
+			const float reach = p_radius * (0.85f + 0.3f * _patch_noise((cover->origin_cell.x + x) / 2, (cover->origin_cell.y + z) / 2));
+			if (at.distance_to(Vector2(p_at.x, p_at.z)) > reach) {
 				continue;
 			}
 			const int i = z * n + x;
@@ -1664,6 +1691,214 @@ float SnowAvalanche3D::get_wave_period_at(const Vector3 &p_position) const {
 	return impulse_wave_period(wave_mass_ratio, wave_depth, Vector2(p_position.x - wave_position.x, p_position.z - wave_position.z).length());
 }
 
+void SnowAvalanche3D::_build_crown(SnowCover3D *p_cover, const Vector<float> &p_released) {
+	// The crown and flank walls of the slab that left: every edge between a released cell and one that kept its
+	// snow, chained into lines over the cells' corners, rounded (Chaikin's corner cutting, three passes) and set
+	// wandering by up to a third of a cell so the grid does not show, then stood up as a wall from the bed to the
+	// snow surface beside it. The released cell's own surface drops over the cell's width; the wall stands at the
+	// edge and shows (and shadows) the step above that slope.
+	const int n = p_cover->resolution;
+	const float cs = p_cover->_cell_size();
+	if (p_released.size() != n * n || !is_inside_tree()) {
+		return;
+	}
+	struct Seg {
+		Vector2i a, b;
+		float height;
+		Vector2 normal; // toward the released side
+	};
+	LocalVector<Seg> segs;
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			const float s = p_released[i];
+			if (s < 0.15f) {
+				continue;
+			}
+			const int nb[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+			for (const auto &o : nb) {
+				const int xx = x + o[0], zz = z + o[1];
+				if (xx < 0 || zz < 0 || xx >= n || zz >= n) {
+					continue;
+				}
+				const int j = zz * n + xx;
+				if (p_released[j] > 0.0f) {
+					continue;
+				}
+				// The crown above and the flanks beside: not the foot (the stauchwall, where the slab rode out over
+				// the snow below it and leaves no wall to see).
+				if (p_cover->cell_ground[j] < p_cover->cell_ground[i] - 0.5f) {
+					continue;
+				}
+				const float dj = p_cover->cell_swe[j] > 0.01f ? p_cover->cell_swe[j] / MAX(p_cover->cell_density[j], 30.0f) : 0.0f;
+				const float hgt = MIN(s, dj);
+				if (hgt < 0.15f) {
+					continue;
+				}
+				Seg sg;
+				// The shared edge, in corner coordinates (cover cells, corner (x, z) at the cell's low corner).
+				if (o[0] != 0) {
+					const int ex = o[0] > 0 ? x + 1 : x;
+					sg.a = Vector2i(ex, z);
+					sg.b = Vector2i(ex, z + 1);
+				} else {
+					const int ez = o[1] > 0 ? z + 1 : z;
+					sg.a = Vector2i(x, ez);
+					sg.b = Vector2i(x + 1, ez);
+				}
+				sg.height = hgt;
+				sg.normal = Vector2(-o[0], -o[1]);
+				segs.push_back(sg);
+			}
+		}
+	}
+	if (segs.is_empty()) {
+		return;
+	}
+	// Chain the edges into lines.
+	HashMap<Vector2i, LocalVector<uint32_t>> at_corner;
+	for (uint32_t k = 0; k < segs.size(); k++) {
+		at_corner[segs[k].a].push_back(k);
+		at_corner[segs[k].b].push_back(k);
+	}
+	LocalVector<uint8_t> used;
+	used.resize(segs.size());
+	for (uint32_t k = 0; k < segs.size(); k++) {
+		used[k] = 0;
+	}
+	struct P {
+		Vector2 xz;
+		float height;
+		Vector2 normal;
+	};
+	LocalVector<LocalVector<P>> lines;
+	auto walk = [&](uint32_t p_start, Vector2i p_from) {
+		LocalVector<P> line;
+		Vector2i corner = p_from;
+		uint32_t k = p_start;
+		line.push_back({ Vector2(corner) , segs[k].height, segs[k].normal });
+		while (true) {
+			used[k] = 1;
+			const Vector2i next = segs[k].a == corner ? segs[k].b : segs[k].a;
+			line.push_back({ Vector2(next), segs[k].height, segs[k].normal });
+			corner = next;
+			uint32_t found = UINT32_MAX;
+			for (uint32_t c : at_corner[corner]) {
+				if (!used[c]) {
+					found = c;
+					break;
+				}
+			}
+			if (found == UINT32_MAX) {
+				break;
+			}
+			k = found;
+		}
+		lines.push_back(std::move(line));
+	};
+	// Open lines first (from a corner with one edge), then what is left (loops).
+	for (const KeyValue<Vector2i, LocalVector<uint32_t>> &kv : at_corner) {
+		if (kv.value.size() == 1 && !used[kv.value[0]]) {
+			walk(kv.value[0], kv.key);
+		}
+	}
+	for (uint32_t k = 0; k < segs.size(); k++) {
+		if (!used[k]) {
+			walk(k, segs[k].a);
+		}
+	}
+	Ref<SurfaceTool> st;
+	st.instantiate();
+	st->begin(Mesh::PRIMITIVE_TRIANGLES);
+	float height_sum = 0.0f, length_sum = 0.0f;
+	Vector3 center_sum;
+	for (LocalVector<P> &line : lines) {
+		if (line.size() < 2) {
+			continue;
+		}
+		// Chaikin: each pass replaces every edge by points at a quarter and three quarters (ends kept).
+		for (int pass = 0; pass < 3; pass++) {
+			LocalVector<P> out;
+			out.push_back(line[0]);
+			for (uint32_t q = 0; q + 1 < line.size(); q++) {
+				const P &p0 = line[q];
+				const P &p1 = line[q + 1];
+				out.push_back({ p0.xz.lerp(p1.xz, 0.25f), Math::lerp(p0.height, p1.height, 0.25f), p0.normal.lerp(p1.normal, 0.25f) });
+				out.push_back({ p0.xz.lerp(p1.xz, 0.75f), Math::lerp(p0.height, p1.height, 0.75f), p0.normal.lerp(p1.normal, 0.75f) });
+			}
+			out.push_back(line[line.size() - 1]);
+			line = std::move(out);
+		}
+		// To world space, wandering along the normal (smooth noise over the corners' world position).
+		LocalVector<Vector3> top, bottom;
+		LocalVector<Vector3> normals;
+		for (const P &p : line) {
+			const Vector2 nrm = p.normal.length_squared() > 1e-6f ? p.normal.normalized() : Vector2(1, 0);
+			const Vector2 wc = (p.xz + Vector2(p_cover->origin_cell)) * cs;
+			const float wander = (_patch_noise(int(Math::floor(wc.x * 1.5f)), int(Math::floor(wc.y * 1.5f))) - 0.5f) * 0.66f * cs;
+			const Vector2 w = wc + nrm * wander;
+			// The snow surface on the side that kept its snow, before the slab leaves.
+			const Vector3 outside(w.x - nrm.x * 0.5f * cs, 0.0f, w.y - nrm.y * 0.5f * cs);
+			const float surface = p_cover->get_ground_height_at(outside) + p_cover->get_surface_depth_at(outside);
+			const float ragged = 0.04f * (_patch_noise(int(w.x * 8.0f), int(w.y * 8.0f)) - 0.5f);
+			top.push_back(Vector3(w.x, surface + ragged, w.y));
+			bottom.push_back(Vector3(w.x, surface - p.height - 0.05f, w.y));
+			normals.push_back(Vector3(nrm.x, 0.0f, nrm.y));
+		}
+		for (uint32_t q = 0; q + 1 < top.size(); q++) {
+			const Vector3 nq = (normals[q] + normals[q + 1]).normalized();
+			const Vector3 quad[4] = { top[q], top[q + 1], bottom[q + 1], bottom[q] };
+			const int tri[6] = { 0, 1, 2, 0, 2, 3 };
+			for (int t : tri) {
+				st->set_normal(nq);
+				st->add_vertex(quad[t]);
+			}
+			const float len = top[q].distance_to(top[q + 1]);
+			length_sum += len;
+			height_sum += (line[q].height) * len;
+			center_sum += top[q] * len;
+		}
+	}
+	if (length_sum <= 0.0f) {
+		return;
+	}
+	if (crown_material.is_null()) {
+		crown_material.instantiate();
+		crown_material->set_albedo(Color(0.9f, 0.92f, 0.95f));
+		crown_material->set_roughness(0.8f);
+		crown_material->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+	}
+	MeshInstance3D *mi = memnew(MeshInstance3D);
+	mi->set_name("Crown");
+	mi->set_as_top_level(true);
+	mi->set_mesh(st->commit());
+	mi->set_material_override(crown_material);
+	add_child(mi, false, INTERNAL_MODE_BACK);
+	mi->set_global_transform(Transform3D());
+	Crown cr;
+	cr.mesh = mi;
+	cr.center = center_sum / length_sum;
+	cr.height = height_sum / length_sum;
+	if (crowns.size() >= 8) {
+		crowns[0].mesh->queue_free();
+		crowns.remove_at(0);
+	}
+	crowns.push_back(cr);
+}
+
+void SnowAvalanche3D::_bury_crowns(SnowCover3D *p_cover) {
+	// New snow fills the step: the wall goes once it has had most of its height.
+	for (uint32_t k = 0; k < crowns.size();) {
+		crowns[k].buried += p_cover->get_new_snow_at(crowns[k].center);
+		if (crowns[k].buried > 0.8f * crowns[k].height) {
+			crowns[k].mesh->queue_free();
+			crowns.remove_at(k);
+		} else {
+			k++;
+		}
+	}
+}
+
 float SnowAvalanche3D::get_glide_at(const Vector3 &p_position) const {
 	const SnowCover3D *cover = _cover();
 	if (!cover || glide.size() != cover->resolution * cover->resolution) {
@@ -1861,6 +2096,9 @@ void SnowAvalanche3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_water_enabled", "enable"), &SnowAvalanche3D::set_water_enabled);
 	ClassDB::bind_method(D_METHOD("is_water_enabled"), &SnowAvalanche3D::is_water_enabled);
 	ClassDB::bind_method(D_METHOD("get_glide_count"), &SnowAvalanche3D::get_glide_count);
+	ClassDB::bind_method(D_METHOD("get_crown_count"), &SnowAvalanche3D::get_crown_count);
+	ClassDB::bind_method(D_METHOD("set_crowns_enabled", "enable"), &SnowAvalanche3D::set_crowns_enabled);
+	ClassDB::bind_method(D_METHOD("is_crowns_enabled"), &SnowAvalanche3D::is_crowns_enabled);
 	ClassDB::bind_method(D_METHOD("get_glide_crack_count"), &SnowAvalanche3D::get_glide_crack_count);
 	ClassDB::bind_method(D_METHOD("get_flow_wetness"), &SnowAvalanche3D::get_flow_wetness);
 	ClassDB::bind_method(D_METHOD("set_forests_enabled", "enable"), &SnowAvalanche3D::set_forests_enabled);
@@ -1930,6 +2168,8 @@ void SnowAvalanche3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_slab", PROPERTY_HINT_RANGE, "0,3,0.01,suffix:m"), "set_min_slab", "get_min_slab");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "entrainment", PROPERTY_HINT_RANGE, "0,0.1,0.0001"), "set_entrainment", "get_entrainment");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "natural_release"), "set_natural_release", "is_natural_release");
+	ADD_GROUP("Crowns", "crowns_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "crowns_enabled"), "set_crowns_enabled", "is_crowns_enabled");
 	ADD_GROUP("Wet snow", "wet_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wet_enabled"), "set_wet_enabled", "is_wet_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_mu", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_wet_mu", "get_wet_mu");
