@@ -32,6 +32,9 @@ extends Node3D
 #   --outlet         the river leaves a lake at the top of the valley over a sill (source_lake): its discharge
 #                    is the lake's head over the sill; --lake=prop:value sets a lake property (e.g.
 #                    --lake=level_from_flows:true --lake=catchment_inflow:3.0); --view=outlet looks at the sill
+#   --silt=M,A       muddy water: M kg/s of silt and A of ash enter at the river's head (WorldWater sediment), the
+#                    clock run 30 times fast until --frames so the load fills the river (use --frames=200 or more);
+#                    with --joins the lake takes what the river leaves it (--lake=sediment:Vector2(0.05,0))
 #   --falls          the step is a 6 m cliff: the river goes over it as a waterfall
 #   --view=fall      the waterfall from the side
 #   --view=fallfront the waterfall from downstream, looking up at the falling sheet
@@ -79,6 +82,7 @@ var mist_dry := false
 var fall_run := 0.1
 var sun_rot := Vector3(-50, -140, 0)
 var lake: Node3D
+var silt := Vector2.ZERO
 var tributary: Node3D
 var focus: Marker3D
 var ground_body: StaticBody3D
@@ -148,6 +152,9 @@ func _ready() -> void:
 		elif a.begins_with("--sound-wav="): sound_wav = a.substr(12)
 		elif a.begins_with("--fall-run="): fall_run = float(a.substr(11))
 		elif a == "--outlet": outlet = true
+		elif a.begins_with("--silt="):
+			var sv := a.substr(7).split(",")
+			silt = Vector2(float(sv[0]), float(sv[1]) if sv.size() > 1 else 0.0)
 		elif a == "--narrows": narrows = true
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
@@ -616,8 +623,16 @@ func _slab(p_size: Vector3, p_pos: Vector3, p_rot: Vector3, p_mat: Material, p_l
 	add_child(body)
 
 
+func _physics_process(_delta: float) -> void:
+	if silt != Vector2.ZERO and river != null and river.is_inside_tree():
+		var c: Curve3D = river.get("curve")
+		river.call("add_sediment", river.to_global(c.sample_baked(3.0)), silt.x, silt.y)
+
+
 func _process(_delta: float) -> void:
 	n += 1
+	if silt != Vector2.ZERO:
+		Engine.time_scale = 30.0 if n < frames - 2 else 1.0
 	if weather != null and n % 60 == 0:
 		var wet_n := 0
 		var total := 0

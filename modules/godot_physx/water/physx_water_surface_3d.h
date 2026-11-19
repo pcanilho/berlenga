@@ -431,6 +431,12 @@ public:
 	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override;
 	void contract_water_clear(uint64_t p_owner) override;
 	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override;
+	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return sample_depth(p_position) > 0.0f ? sediment : Vector2(); }
+	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override;
+	// The body's suspended load (kg/m3: x mineral, y ash), well mixed; it settles out over hours to days.
+	Vector2 get_sediment() const { return sediment; }
+	void set_sediment(const Vector2 &p_kg_m3);
+	float get_water_volume() const; // m3 over the still-water depths
 	// The same, leaving out one wake (a boat's buoyancy reading the water
 	// under it shouldn't sink into its own wake's dip).
 	float sample_height_excluding_wake(Vector3 p_world_pos, ObjectID p_wake) const;
@@ -746,6 +752,14 @@ private:
 	// sample_height().
 	PackedByteArray footprint_mask;
 	PackedFloat32Array cell_depth;
+	// Suspended load (WorldWater sediment), the body well mixed (a lake or pool; the open sea dilutes it to nothing),
+	// and the source rate the contract hands in, held until the caller's next call.
+	Vector2 sediment;
+	Vector2 sediment_src;
+	uint64_t sediment_src_frame = 0;
+	float sediment_src_age = 1e9f;
+	Vector2 sediment_shown = Vector2(-1.0f, -1.0f);
+	void _sediment_update(double p_delta);
 	// WaterSolver::shallow_fade() of each cell_depth, for sample_height()'s
 	// ocean fade (bilinear on this, so a wall cell doesn't drag it down).
 	PackedFloat32Array cell_fade;
