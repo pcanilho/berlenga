@@ -2917,6 +2917,19 @@
    "topic": "Wood and leaves"
   },
   {
+   "name": "Close-up bark",
+   "settings": [
+    "BarkDetail3D",
+    "density",
+    "detail_pixels"
+   ],
+   "note": "",
+   "what": "loose bark as real pieces on trunks near the camera, by bark family: lifting plates on pines, small scales, flakes curling out at one end and torn strips of paper bark, with the inner bark showing on their undersides and broken edges.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
    "name": "Bark stories",
    "settings": [
     "bark_wounds"
@@ -3891,7 +3904,7 @@
     "WeatherMap3D.fire_clouds"
    ],
    "note": "",
-   "what": "a plume that rises past the condensation level grows a pyrocumulus; the largest tower into a pyrocumulonimbus with lightning.",
+   "what": "a plume that rises past its own condensation level, above or below the day's cumulus, grows a pyrocumulus; the largest tower into a pyrocumulonimbus with lightning.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
