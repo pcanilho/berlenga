@@ -1460,6 +1460,19 @@ Vector3 GroundSurface3D::_follow_position() const {
 	return is_inside_tree() ? get_global_position() : Vector3();
 }
 
+// The height source's generator when it has holes under the patch (else null).
+const TerrainGenerator3D *GroundSurface3D::_hole_generator() const {
+	if (!is_inside_tree()) {
+		return nullptr;
+	}
+	const GroundHeightQuery q = GroundHeightQuery::make(this, height_source, ground_collision_mask);
+	if (!q.generator || q.generator->get_hole_count() == 0) {
+		return nullptr;
+	}
+	const float half = deform_extent * 0.5f + 1.0f;
+	return q.generator->has_holes_in(Rect2(center - Vector2(half, half), Vector2(2.0f * half, 2.0f * half))) ? q.generator : nullptr;
+}
+
 void GroundSurface3D::_build_mesh() {
 	// A tensor grid over the field: detail_spacing over its middle half, outer_spacing beyond.
 	const float half = deform_extent * 0.5f;
@@ -1575,9 +1588,36 @@ void GroundSurface3D::_build_mesh() {
 		}
 	}
 	auto fine = [&](int p_x, int p_z) { return fine_base + p_z * fine_m + p_x; };
+	// Openings in the ground (TerrainGenerator3D holes: a cave mouth's passage): the patch leaves out the triangles
+	// whose ground passes through one, as Landscape3D leaves out its quads, so no sand is drawn across the opening.
+	// The test is in world space, so the mesh is built again when the patch moves near a hole (_update).
+	const TerrainGenerator3D *hgen = _hole_generator();
+	mesh_hole_count = hgen ? hgen->get_hole_count() : 0;
+	mesh_hole_cut = hgen != nullptr;
+	auto cut = [&](int p_a, int p_b, int p_c) -> bool {
+		if (!hgen) {
+			return false;
+		}
+		const Vector3 v[3] = { verts[p_a], verts[p_b], verts[p_c] };
+		const Vector2 m = center + Vector2(v[0].x + v[1].x + v[2].x, v[0].z + v[1].z + v[2].z) / 3.0f;
+		const float span = MAX(MAX((v[1] - v[0]).length(), (v[2] - v[0]).length()), (v[2] - v[1]).length());
+		if (!hgen->has_holes_in(Rect2(m, Vector2()).grow(span))) {
+			return false;
+		}
+		real_t lo = 1e30, hi = -1e30;
+		for (int k = 0; k < 3; k++) {
+			const real_t h = hgen->get_height(Vector3(center.x + v[k].x, 0.0f, center.y + v[k].z));
+			lo = MIN(lo, h);
+			hi = MAX(hi, h);
+		}
+		return hgen->is_hole_span(m.x, m.y, lo, hi);
+	};
 	LocalVector<int> tri;
 	// Wound like the grid's (a, b, d) triangles: the normal of the xz winding points down y.
 	auto add_tri = [&](int p_a, int p_b, int p_c) {
+		if (cut(p_a, p_b, p_c)) {
+			return;
+		}
 		const Vector3 va = verts[p_a];
 		const Vector3 vb = verts[p_b];
 		const Vector3 vc = verts[p_c];
@@ -1650,12 +1690,16 @@ void GroundSurface3D::_build_mesh() {
 				const int b = a + 1;
 				const int d = a + fine_m;
 				const int e = d + 1;
-				tri.push_back(a);
-				tri.push_back(b);
-				tri.push_back(d);
-				tri.push_back(b);
-				tri.push_back(e);
-				tri.push_back(d);
+				if (!cut(a, b, d)) {
+					tri.push_back(a);
+					tri.push_back(b);
+					tri.push_back(d);
+				}
+				if (!cut(b, e, d)) {
+					tri.push_back(b);
+					tri.push_back(e);
+					tri.push_back(d);
+				}
 			}
 		}
 	}
@@ -1751,8 +1795,22 @@ void GroundSurface3D::_follow(Vector3 p_center) {
 		globals_published = false;
 	}
 	const Vector2 c = r.position + r.size * 0.5f;
-	if (moved || c != center || (mesh_instance && mesh_instance->get_global_position() != Vector3(c.x, 0, c.y))) {
+	const bool patch_moved = moved || c != center || (mesh_instance && mesh_instance->get_global_position() != Vector3(c.x, 0, c.y));
+	if (patch_moved) {
 		center = c;
+		// Holes are cut in world space: near one (or leaving one, or when the generator's holes change) the
+		// patch's triangles are chosen again.
+		const TerrainGenerator3D *hg = _hole_generator();
+		if (mesh_hole_cut || hg) {
+			mesh_dirty = true;
+		}
+	} else if (!mesh_dirty) {
+		const TerrainGenerator3D *hg = _hole_generator();
+		if ((hg ? hg->get_hole_count() : 0) != mesh_hole_count) {
+			mesh_dirty = true;
+		}
+	}
+	if (patch_moved) {
 		if (mesh_instance) {
 			mesh_instance->set_global_transform(Transform3D(Basis(), Vector3(c.x, 0.0f, c.y)));
 			mesh_instance->set_custom_aabb(AABB(Vector3(-r.size.x * 0.5f, ground_min - skirt - 1.0f, -r.size.y * 0.5f), Vector3(r.size.x, ground_max - ground_min + skirt + 2.0f, r.size.y)));

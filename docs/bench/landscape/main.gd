@@ -343,6 +343,14 @@ func _ready() -> void:
 		while Time.get_ticks_msec() - t_ready < 2000:
 			await get_tree().process_frame
 		_log("ripples ready after %d more frames" % rw)
+		var rh: PackedFloat32Array = prints.get_ripple_heights()
+		var rs := 0.0
+		for v in rh:
+			rs += v * v
+		var cam3 := get_viewport().get_camera_3d()
+		if cam3 != null and prints.has_method("get_material_at"):
+			_log("ground under the camera: %s" % str(prints.get_material_at(cam3.global_position)))
+		_log("ripple window: %d cells, rms %.2f mm; ground holes %d" % [rh.size(), 1000.0 * sqrt(rs / maxf(rh.size(), 1.0)), gen.get_hole_count() if gen != null and gen.has_method("get_hole_count") else -1])
 	if env.pathtracing_enabled:
 		var w := 0
 		var can_ask := RenderingServer.has_method("is_pathtracing_ready")

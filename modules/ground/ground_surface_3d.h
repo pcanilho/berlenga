@@ -578,6 +578,9 @@ private:
 	Ref<Material> patch_material;
 	Vector3 patch_uv_offset;
 	Vector2 center;
+	bool mesh_hole_cut = false; // the mesh was built with triangles left out over holes
+	int mesh_hole_count = 0;
+	const TerrainGenerator3D *_hole_generator() const;
 	bool mesh_dirty = true;
 	bool globals_published = false;
 	double cells_accum = 0.0;
