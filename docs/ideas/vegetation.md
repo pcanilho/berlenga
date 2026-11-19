@@ -615,6 +615,12 @@ juvenile-lobed on the ground and entire on flowering shoots; ivy and old man's b
 (the trees thread owns the stems, this thread the leaves). Placed on rock faces and tree trunks
 by their surface normal and shade.
 
+
+Live fires (19 Nov): the fire contract's change log (WorldFire.burn_changed(area), get_burn_generation()) is
+checked twice a second. A streamed field samples its burn grid again over the changed area, once no tile is
+being placed, and places the tiles over it again (as for cave holes); a populated field populates again.
+Bench vegetation `--burn=live`: 23 plants, 0 on the fresh burn, 11 at half the recovery, 23 once it goes.
+
 ## Arid ground: plants and crust on the desert sand seas (Paulo's pick 17 Nov; built 18 Nov)
 
 The terrain generator's sand seas (`TerrainGenerator3D.sand_sea_rect`, Werner slab dunes) are bare. Desert dune

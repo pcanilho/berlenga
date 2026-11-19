@@ -23,6 +23,8 @@ extends Node3D
 #                    and make_burn's heath set, streamed round a camera 2.5 m up looking along the scars (off: no scars, no burn set):
 #                    checks each burn plant grows only at its ages and the heather thins on the burns, prints the
 #                    same costs as --floor and with --out saves the view.
+#   --burn=live      quick check: a streamed field of one species recovering over a year; a scar placed after the
+#                    tiles stand, aged, then removed (WorldFire.burn_changed, no rebuild): gone, half back, whole.
 
 const SIZE := 256.0
 var size := SIZE
@@ -95,7 +97,7 @@ func _ready() -> void:
 			floor_view = 2 if a == "--floor=off" else 1
 			size = 128.0
 		elif a.begins_with("--burn"):
-			burn_view = 2 if a == "--burn=off" else 1
+			burn_view = 2 if a == "--burn=off" else (3 if a == "--burn=live" else 1)
 		elif a.begins_with("--desert"):
 			desert_view = 2 if a == "--desert=off" else 1
 		elif a.begins_with("--mushrooms"):
@@ -261,6 +263,9 @@ func _physics_process(_d: float) -> void:
 		return
 	if desert_view > 0:
 		await _desert_view()
+		return
+	if burn_view == 3:
+		await _burn_live()
 		return
 	if burn_view > 0:
 		await _burn_view()
@@ -676,6 +681,59 @@ func _desert_checks(ground: VegetationField3D, dset: Array[PlantSpecies], gen: T
 	_check("desert: a species without a sand rule keeps off the sand sea's sand", plain_deep == 0, [plain_n, plain_deep])
 	_check("desert: woody shrubs (calligonum, white broom, saltbush) placed", shrubs > 20 or OS.get_environment("VEG_DESERT_SHRUBS") == "0", [shrubs])
 	_check("desert: annuals between the dunes, not up them", annual[0] > 500 and annual[3] < annual[0] * 0.5, [annual[0], annual[3]])
+
+# --burn=live: a burn reported after the field streamed in (WorldFire.burn_changed) re-places the tiles over it.
+func _burn_live() -> void:
+	field.queue_free()
+	var sp := PlantSpecies.new()
+	sp.meshes = [BoxMesh.new()]
+	sp.spacing = 0.6
+	sp.density = 0.8
+	sp.burn_recovery = 1.0
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.biome = Biome.new()
+	f.biome.species = [sp]
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.stream_radius = 30.0
+	f.stream_target = f.get_path_to(self)
+	f.streaming = true
+	var counts := []
+	await _burn_live_wait(3.0)
+	counts.append(_burn_live_count(f))
+	var scar := WorldBurnScar3D.new()
+	scar.age_years = 0.02
+	scar.size = Vector2(16, 16)
+	add_child(scar)
+	await _burn_live_wait(3.0)
+	counts.append(_burn_live_count(f))
+	scar.age_years = 0.5
+	await _burn_live_wait(3.0)
+	counts.append(_burn_live_count(f))
+	scar.free()
+	await _burn_live_wait(3.0)
+	counts.append(_burn_live_count(f))
+	var share := float(counts[2]) / maxf(counts[0], 1)
+	_check("burn: a live burn re-places the streamed tiles over it (gone, half back at half the recovery, whole once it goes)", counts[0] > 15 and counts[1] == 0 and share > 0.3 and share < 0.7 and counts[3] == counts[0], counts)
+	print("VEG_BURN_LIVE_RESULT ", "PASS" if fails == 0 else "FAIL")
+	get_tree().quit(1 if fails > 0 else 0)
+
+func _burn_live_wait(sec: float) -> void:
+	var t := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - t < sec * 1000.0:
+		await get_tree().process_frame
+
+func _burn_live_count(f: VegetationField3D) -> int:
+	var n := 0
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D:
+			var mm: MultiMesh = ch.multimesh
+			for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+				var p := (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+				if absf(p.x) < 6 and absf(p.z) < 6:
+					n += 1
+	return n
 
 # --burn[=off]: dry heath with burn scars of four ages (WorldBurnScar3D, the fire contract's burn_age_at) and
 # make_burn's heath set, streamed round a camera looking across the scars.
