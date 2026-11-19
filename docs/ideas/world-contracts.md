@@ -167,6 +167,7 @@ Consumers: fire (crown fire), lightning (attachment), weather (shelter), snow (i
 | `stem_char_at(pos)` | m | 0 | Char a stem foot there took (bark and wood), the most of any fire; trees weaken by it |
 | `burn_age_at(pos)` | years (game time) | -1 (never burnt) | Since the ground last burnt, the most recent of any producer; vegetation's regrowth stage |
 | `water_repellency_at(pos)` | 0..1 | 0 | Burnt soil shedding rain (fades over 1-2 game years); the ground cuts its infiltration by up to 0.9 |
+| `burn_changed(area)`, `get_burn_generation()`, `burn_changes_since(gen, &area)` (scripts: `get_burn_changes_since(gen)`) | Rect2 in x, z (m) | generation 0 | Change log for `burn_age_at`: producers report where ages changed (`WorldContracts::fire_burn_changed(area)` reaches the built-in contract and any stub); readers keep the generation they read at and refresh only the merged area. The log keeps 64 reports; false: read everything again |
 | `plumes()` | (x, y, z, W) | empty | Every fire's convection column: its base and convective heat; the weather makes fire clouds from them |
 | `crown_scorch_at(pos)` | m | 0 | Height crowns were killed to (lethal scorch, 1000 for a burnt crown), the most of any fire; trees die and stand as snags |
 | shader globals `fire_wind_map`, `fire_wind_rect` | m/s | rect width 0 | The same indraft over the fire's area (RG: x, z), for grass |
@@ -174,12 +175,13 @@ Consumers: fire (crown fire), lightning (attachment), weather (shelter), snow (i
 | shader global `fire_age_map` (over `fire_char_rect`) | years / 2 (R8) | 0 (never burnt) | Game years since the cell caught over 2, about 3-day steps; trees cast dead needles by it |
 
 Producers: PhysXFireSpread3D (fires in play; `burn_age_at` in the weather's game time; `crown_scorch_at`), WorldBurnScar3D (an
-authored old burn: a rect or polygon and `age_years`, modules/world).
+authored old burn: a rect or polygon and `age_years`, modules/world; reports its old and new area on entering, moving and
+leaving). Every producer of `burn_age_at` reports its changes with `fire_burn_changed`.
 
 Tests: `WorldContracts.set_fire(stub)` (`_burn_age_at` in a stub), or WorldBurnScar3D nodes.
 
 Consumers: weather (the surface film boils off under a fire), plants (char; grass leans into `fire_wind_map`), cloth
-(`wind_at` adds to its wind), trees (TreeWind3D weakens stem feet by `stem_char_at`; trees killed by `crown_scorch_at` stand as snags that weaken by `burn_age_at`), snow (melt), water (steam), vegetation (regrowth by `burn_age_at`, to come).
+(`wind_at` adds to its wind), trees (TreeWind3D weakens stem feet by `stem_char_at`; trees killed by `crown_scorch_at` stand as snags that weaken by `burn_age_at`), snow (melt), water (steam), vegetation (VegetationField3D and GrassField3D regrowth by `burn_age_at`, refreshed through the change log).
 
 ## Testing
 

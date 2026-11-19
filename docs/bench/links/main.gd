@@ -479,6 +479,18 @@ func _contract_tests() -> void:
 	new_scar.polygon = PackedVector2Array([Vector2(0, 0), Vector2(30, 0), Vector2(0, 30)])
 	add_child(new_scar)
 	var fa: WorldFire = WorldContracts.get_fire()
+	# The change log: a scar moved reports its old and new area; a reader older than the log reads everything again.
+	var gen := fa.get_burn_generation()
+	new_scar.position = Vector3(100, 0, 0)
+	await get_tree().process_frame # transform changes reach the node at the frame's flush
+	var ch: Dictionary = fa.get_burn_changes_since(gen)
+	var moved_ok: bool = fa.get_burn_generation() > gen and ch["complete"] and (ch["area"] as Rect2).has_point(Vector2(10, 10)) and (ch["area"] as Rect2).has_point(Vector2(110, 10))
+	var none: Dictionary = fa.get_burn_changes_since(fa.get_burn_generation())
+	for i in 70:
+		fa.burn_changed(Rect2(0, 0, 1, 1))
+	var lost: Dictionary = fa.get_burn_changes_since(gen)
+	_check("contracts: burn change log covers a moved scar's old and new area; too old means read all", moved_ok and none["complete"] and not (none["area"] as Rect2).has_area() and not lost["complete"], "%s, %s" % [ch, lost])
+	new_scar.position = Vector3.ZERO
 	_check("contracts: no fire gives no plumes", fa.plumes().is_empty(), "%d" % fa.plumes().size())
 	var a_old := fa.burn_age_at(Vector3(-20, 0, -20))
 	var a_new := fa.burn_age_at(Vector3(5, 0, 5))
