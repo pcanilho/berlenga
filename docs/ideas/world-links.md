@@ -67,7 +67,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Canopy → interception | linked | shelter | |
 | Snow → plants (burial, pressing) | linked (18 Nov) | snow cover (snow map) | grass and plant shaders: load ρ g d against stem stiffness lays plants down, deep snow hides them |
 | Fire → snow melt | linked (18 Nov) | WorldFire `heat_at` | SnowCover3D melts H dt / L_f under the fire, whatever the air |
-| Smoke, burnt forest, dust → dirty snow | linked (19 Nov) | WorldWeather `smoke_at` (haze), WorldFire `burn_age_at`, WorldSnow `add_impurity` (GroundDust3D settling) | SnowCover3D keeps light-absorbing particles as mg/m2 black carbon equivalent: albedo drop 0.35 (1 - e^(-L/15)), fresh snow buries them, the melt brings them back up; shows grey and melts sooner (Warren and Wiscombe 1980; Painter et al. 2007; Gleason et al. 2013). Rock dust and blowing ash can add theirs through `add_impurity` |
+| Smoke, burnt forest, dust → dirty snow | linked (19 Nov) | WorldWeather `smoke_at` (haze), WorldFire `burn_age_at`, WorldSnow `add_impurity` (GroundDust3D settling, PhysX blown ash 3862f22e, rockfall dust) | SnowCover3D keeps light-absorbing particles as mg/m2 black carbon equivalent: albedo drop 0.35 (1 - e^(-L/15)), fresh snow buries them, the melt brings them back up; shows grey and melts sooner (Warren and Wiscombe 1980; Painter et al. 2007; Gleason et al. 2013). Blowing ash and rockfall fines add theirs through `add_impurity` |
 | Vehicles → snow ruts | linked (18 Nov) | world_contact | snow checks the wheel stamp |
 | Bodies → snow prints | linked | `snow_deform`, `grass_trample` groups | |
 
@@ -225,3 +225,30 @@ Two gaps found while building round 3; both read contracts that exist.
    dust events. Impurities gather at the surface as the snow melts (melt amplification, Doherty et al. 2013) and are
    buried by new snow; the snow material shows them grey.
 
+
+## Round 5 candidates (19 Nov, card to Paulo)
+
+Gaps found by reading the readers, each on a contract that exists.
+
+1. Floodwater soaks and silts the ground it covers. GroundSurface3D reads its own `water_sources` list for water over
+   the ground (sand and water, stage 4), not WorldWater, so a river rising over its banks (WeatherRunoff3D), live
+   water or a waterfall's pool never wets the ground they cover. Moving that read to `WorldWater.height_at`,
+   `flow_at` and `sediment_at` (19 Nov) makes every water producer soak the ground (Green-Ampt as now), and the
+   water's suspended load settles on the ground it floods: overbank deposition D = C w_s t per event, a few mm next to
+   the channel falling off over tens to hundreds of metres (Pizzuto 1987; Asselman and Middelkoop 1995). When the
+   water goes it leaves a wet silt or ash veneer that dries and cracks (mud's cracks), and the plants it laid stay
+   laid.
+2. Sand and snow drift in the lee of rocks, walls, buildings and vehicles. The snow cover's drift reads Winstral's Sx
+   from the terrain alone; the sand's flux is sheltered by plants alone (Raupach). The weather map already bakes
+   obstacles into its near-ground wind (WeatherShelter). Reading that through `WorldWeather.wind_at` at 0.1-2 m lets
+   both settle where the wind slows: a snow fence's drift reaches about 12-15 H downwind and 1.2 H high at
+   equilibrium (Tabler 1980, 1991); sand fills a lee shadow a few H long behind a boulder or a parked car (Hesp 1981,
+   shadow dunes). Rocks (RockField3D) and vehicles join the shelter as obstacles.
+3. The sea surges into sea caves. CaveNetwork3D sea caves have floors at or below low tide but no water. A WorldWater
+   producer for the cave passages (the sea level at the mouth, wave set-up carried in and damped with distance) lets
+   bodies wade and swim there, and Valence's surface draws it; where a roof opening meets the surface the trapped air
+   drives a spout on the wave crests (blowholes; the spout's pressure scales with the wave's rho g H at the mouth).
+   Needs Valence for the drawing.
+
+Later: fog drip (cloud water caught by leaves and needles wets the ground under trees on foggy ridges, about 0.1-1
+mm a day; Bruijnzeel et al. 2005).
