@@ -634,7 +634,10 @@
 		<constant name="FLOOR_PINE_HEMLOCK" value="9" enum="FloorStand">
 			White pine and hemlock: deep needle duff, nearly bare; a little moss, wood sorrel and seedlings.
 		</constant>
-		<constant name="FLOOR_MAX" value="10" enum="FloorStand">
+		<constant name="FLOOR_MEDITERRANEAN" value="10" enum="FloorStand">
+			Cork and holm oak, stone pine (montado, dehesa): a continuous layer of dry annual grass, thinner in the crowns' shade; thistles and French lavender in the open, sage-leaved rockrose in loose patches, thyme; thin oak litter, needles under pine.
+		</constant>
+		<constant name="FLOOR_MAX" value="11" enum="FloorStand">
 			Number of floor stand types.
 		</constant>
 		<constant name="STONES_SCREE" value="0" enum="StoneStand">

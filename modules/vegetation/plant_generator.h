@@ -546,6 +546,7 @@ public:
 		FLOOR_NORTHERN_HARDWOOD,
 		FLOOR_EASTERN_OAK,
 		FLOOR_PINE_HEMLOCK,
+		FLOOR_MEDITERRANEAN, // Cork and holm oak, stone pine (montado, dehesa): dry grass and herbs, rockrose and lavender patches.
 		FLOOR_MAX,
 	};
 	static Array stand_litter_leaves(FloorStand p_stand, const Dictionary &p_season = Dictionary());

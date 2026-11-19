@@ -705,8 +705,27 @@ water systems own):
   olives beneath 0.5 to 0.95) and a shrub ring (calligonum, white broom, saltbush, 0.08 to 0.6). Crust and the
   annuals keep to wetness under 0.4. A species using the rule grows on the sand like a sand plant.
 - GrassField3D lets its sward onto the sand sea where the wetness passes 0.5 to 0.85.
-- Not here: the water itself. The spring list (`get_springs()`, x, water level, z) is for the water and terrain
-  systems; reeds wait for a pool there.
+- The water is the water system's: `get_springs()` gives x, water level, z and the discharge (L/s, 0.05 at the
+  shallowest hollow, in proportion to its depth, 0.02 to 0.5), which OasisSprings3D sizes its pools from.
+- Round the pools (`VegetationField3D.spring_pools` to the OasisSprings3D; `PlantSpecies.RULE_POOL_DISTANCE`, metres
+  from the shore by `get_outline()`, negative in the water): common reed from 2 m into the pool to 1.2 m up the shore,
+  rushes 0.6 to 4.5 m behind (Phragmites australis and Juncus rigidus / maritimus fringe Egypt's oasis pools and
+  springs: Zahran and Willis 2009, "The Vegetation of Egypt"; Ozenda 1977 for the Sahara).
+
+## Mediterranean woodland ground layer (audit 19 Nov; card to Paulo)
+
+The showcase's cork oak stand stands on bare sand with litter: every other forest has a floor set, the cork oak and
+stone pine stands none. Real montado and dehesa (Portugal's and Spain's open cork and holm oak woods) keep a continuous
+layer of annual grasses and herbs under and between the crowns, grazed short, browned by June; where grazing
+stops, cistus and lavender scrub comes in (Joffre et al. 1999, "The dehesa system of southern Spain and Portugal";
+Pinto-Correia et al. 2011 on montado scrub encroachment; Moreno and Pulido 2009). Under the crowns the grass is
+greener and later to dry (shade, nutrient islands: Moreno 2008).
+
+Plan (FLOOR_MEDITERRANEAN in make_floor, existing presets):
+- Dry grass as the main layer, denser in the open than under crowns; thistle and French lavender scattered in the
+  open; sage-leaved rockrose in loose patches (the encroachment), thyme on thin soil.
+- Oak litter (cork oak's leathery leaves fall all year, little at a time) under the crowns only; twigs.
+- GrassField3D under the stand: the meadow sward with summer dryness (the scene wires it).
 
 ## Burnt ground and regrowth (Paulo's pick 17 Nov; built 19 Nov)
 

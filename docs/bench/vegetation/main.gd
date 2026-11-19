@@ -339,7 +339,7 @@ func _floor_view() -> void:
 	ground.detail_reference_height = 1080 # The reach of a 1080p screen, not of the bench's small window.
 	var gb := Biome.new()
 	var floor_set: Array[PlantSpecies] = []
-	floor_set.assign(PlantGenerator.make_floor(PlantGenerator.FLOOR_OAK_MIXED, 3, false))
+	floor_set.assign(PlantGenerator.make_floor(PlantGenerator.FLOOR_MEDITERRANEAN if OS.get_environment("VEG_FLOOR_STAND") == "mediterranean" else PlantGenerator.FLOOR_OAK_MIXED, 3, false)) # VEG_FLOOR_STAND=mediterranean: the montado set
 	if OS.get_environment("VEG_FLOOR_NEAR") == "0":
 		# The litter without its leaf-on-leaf near cards (PlantGenerator.litter_deposit).
 		for sp in floor_set:
@@ -1508,12 +1508,19 @@ func _checks() -> void:
 	_fire_variant_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []
-	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH]:
+	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH, PlantGenerator.FLOOR_MEDITERRANEAN]:
 		for sp in PlantGenerator.make_floor(fs, 1, false):
 			var lr: Vector2 = sp.get_rule_range(PlantSpecies.RULE_LITTER)
 			if lr.x > 0.0 and not (lr.x - sp.get_rule_fade(PlantSpecies.RULE_LITTER) > 0.0):
 				open_litter.append(sp.resource_name)
 	_check("litter: no fallen leaves or twigs on open ground away from crowns", open_litter.is_empty(), open_litter)
+	# Montado and dehesa (FLOOR_MEDITERRANEAN): the dry grass layer runs through the open and under the crowns.
+	var med := PlantGenerator.make_floor(PlantGenerator.FLOOR_MEDITERRANEAN, 1, false)
+	var med_grass: PlantSpecies = null
+	for sp in med:
+		if sp.get_meta("plant_preset", -1) == PlantGenerator.PRESET_DRY_GRASS:
+			med_grass = sp
+	_check("montado: dry grass in the open and under the crowns", med_grass != null and med_grass.get_density() > 0.5 and med_grass.rule_weight(PlantSpecies.RULE_SHADE, 0.0) > 0.9 and med_grass.rule_weight(PlantSpecies.RULE_SHADE, 0.7) > 0.9, [med.size(), med_grass.get_density() if med_grass else 0.0])
 	# Dunes on a generator's dunes (RULE_DUNE): embryo and mobile sets on moving sand, fixed on held
 	# sand, none off the dune sand (-1).
 	var dune_bad := []
