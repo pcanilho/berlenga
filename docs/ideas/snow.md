@@ -1410,6 +1410,16 @@ Docs flagged four things on the wet slide bench: spiky grey cones at the toe, a 
 - **Crown dots and specks** were bare ground. The bench storm lay on bare ground, so the scar and thin patches showed earth. The `--wet` and `--triggered` views now lay an old, bonded 60 cm pack first, so the slab leaves a white bed and a step.
 - **Pressure contract**: `SnowCover3D` answers world-links' `WorldSnow.avalanche_pressure_at` and `avalanche_peak_pressure_at` from its avalanche node. The forest test reads 20 kPa through it. The peak is per run (it resets when the next avalanche releases).
 
+## Follow-up 28: the wet deposit's shape; path-traced surface refresh (19 Nov 2026)
+
+Docs: the wet debris covered the toe evenly at one density with no tongue, lobed edge or pile-up, so it read as gravel.
+
+- **Lobes:** wet snow's friction varies with its water and grain. A front with patchy friction breaks into lobes and fingers (fingering in granular fronts, Pouliquen et al. 1997; the lobate snouts of wet avalanches, Bartelt et al. 2012). mu varies +-25% x wetness through smooth value noise over about 3 cells (integer hash). Dry flows are unchanged.
+- **Granules** gather where the debris is thick (snout, levees, pile-ups): none under 30 cm, full share from 1.5 m.
+- **Recent snow settles with the pack.** It was tracked as the depth that fell and only capped by the pack, so a storm that settled read as the whole pack, and a release scoured to the ground (the dark crown dots). Now it scales with the pack's shrinkage between updates, not counting new snow, released slab or entrained snow.
+- **Bench:** the `--wet` view thaws 12 h at +5 C (35% wet), `--toe` frames the tongue from above, and the deep-snow mesh covers the run-out (extent 160 m).
+- **Path tracing:** the tracer recaptures a mesh's vertex() output when a material parameter changes, not when a texture it samples is rewritten in place. The deep-snow surface's displacement reads the cover's snow texture, so under PT the deposit stayed flat. `SnowSurface3D` now bumps a `snow_serial` uniform whenever the cover updates. Any PT shot of the surface after a change before this (e.g. the round-2 avalanche pair) may show the old surface.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

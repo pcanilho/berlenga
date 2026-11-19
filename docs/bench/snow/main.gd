@@ -2773,6 +2773,7 @@ func _build_avalanche(cam: Camera3D) -> void:
 	surface = SnowSurface3D.new()
 	surface.snow_cover = NodePath("../SnowCover3D")
 	surface.follow_target = NodePath("../Probe")
+	surface.extent = 160.0 # the whole run-out as deep-snow geometry
 	add_child(surface)
 	await get_tree().physics_frame
 	var av: SnowAvalanche3D = snow.get_avalanches()
@@ -2792,8 +2793,8 @@ func _build_avalanche(cam: Camera3D) -> void:
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 	if wet:
-		# --wet: a spring thaw (6 h at +4 C) wets the storm snow, then the slab goes as a wet slide.
-		await _thaw(4.0, 6.0)
+		# --wet: a spring thaw (12 h at +5 C) soaks the storm snow, then the slab goes as a wet slide.
+		await _thaw(5.0, 12.0)
 	if triggered:
 		# --triggered (dry) and --wet release the same face, so the two compare.
 		av.trigger(Vector3(-45.0, 0, 0), 40.0)
@@ -2841,6 +2842,11 @@ func _build_avalanche(cam: Camera3D) -> void:
 		# --close: the debris at the toe from 20 m.
 		cam.position = Vector3(22.0, snow.get_ground_height_at(Vector3(22, 0, 14)) + snow.get_depth_at(Vector3(22, 0, 14)) + 3.0, 14.0)
 		cam.look_at(Vector3(2.0, 1.0, 0.0))
+	if OS.get_cmdline_user_args().has("--toe"):
+		# --toe: the deposit's tongue from above and in front, to see its outline.
+		cam.position = Vector3(45.0, 22.0, 30.0)
+		cam.look_at(Vector3(5.0, 0.0, 0.0))
+		cam.fov = 50.0
 	cam.far = 1000.0
 	await _save_frame("")
 
@@ -3103,6 +3109,14 @@ func _physics_process(delta: float) -> void:
 func _save_frame(suffix: String) -> void:
 	for i in 12:
 		await get_tree().process_frame
+	# Path traced: wait until every displaced surface has been captured for the trace (a big deep-snow mesh
+	# takes several frames), or the still shows it flat.
+	var waited := 0
+	while not raster and waited < 600 and get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES) > 0:
+		await get_tree().process_frame
+		waited += 1
+	if waited > 0:
+		print("waited %d frames for the trace's surfaces" % waited)
 	await RenderingServer.frame_post_draw
 	if not out.is_empty():
 		var path := out.replace(".png", suffix + ".png")
