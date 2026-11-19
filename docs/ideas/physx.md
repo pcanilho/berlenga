@@ -1817,6 +1817,34 @@ several boxes); no smoke filling rooms ahead of the fire (two-zone
 smoke layer), no firefighting water on rooms yet (Flow/MPM water reaches
 burnables, not buildings), glass is not drawn breaking.
 
+### Next-round options (card, 19 Nov late morning)
+
+Water on burning buildings. Hose streams and MPM water reaching a room
+take heat at 2.6 MJ/kg (heating and boiling); a room needs about 0.1 to
+0.3 kg/s per MW to knock the flames down (Sardqvist's critical flow
+rate). Steam expands about 1700 times and pushes the hot layer out of
+the openings. Plan: water particles entering an opening or hitting the
+cladding feed PhysXSteam and a cooling term in the room's heat balance.
+
+Smoke ahead of the fire. A two-zone layer (Quintiere; CFAST) fills each
+room from the ceiling. The smoke leaves through the top of the openings
+above a neutral plane and passes through doors to the next rooms well
+before any flames do. That gives smoke from the eaves and grey windows
+in the early minutes. Plan: a layer height and smoke density per room,
+drawn as Flow smoke at the openings.
+
+Windows and roofs that break. Glass that falls out at 450 C drops as
+Blast shards (Pagni and Joshi's crack pattern from the frame edge).
+Roofs sag and fall in where the room collapses, rather than the whole
+target breaking at once. Plan: optional glass and roof Destructibles per
+opening and per room.
+
+A settlement in a wind-driven fire. In wildland-urban interface fires,
+most homes are lost to embers rather than flame contact, and home to
+home spread then dominates (Maranghides and Mell 2011, Waldo Canyon;
+Camp Fire NIST 2021). Plan: a village bench where firebrands and the
+radiation between buildings carry a grass fire's front through a street.
+
 ### Next-round options (card, 19 Nov)
 
 Research notes for the card that follows the four picks above.
