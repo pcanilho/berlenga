@@ -4,11 +4,20 @@
 		Rain running off the land over kilometres: where it flows, how much, and how deep.
 	</brief_description>
 	<description>
-		A grid round its position over the terrain's heights: depressions filled (Priority-Flood, Barnes et al. 2014), each cell draining to its steepest neighbour (D8), the share of [method WeatherMap3D.get_ground_water_input_at] that runs off by the SCS curve number, routed as linear reservoirs at TR-55 overland and Leopold and Maddock channel speeds. [PhysXRiver3D] and lakes read its discharge to rise in rain, and [WeatherMap3D] wets the ground the runoff flows over. See docs/ideas/rain.md.
+		A grid round its position over the terrain's heights: depressions filled (Priority-Flood, Barnes et al. 2014), each cell draining to its steepest neighbour (D8), the share of [method WeatherMap3D.get_ground_water_input_at] that runs off by the SCS curve number, routed as linear reservoirs at TR-55 overland and Leopold and Maddock channel speeds. [PhysXRiver3D] and lakes read its discharge to rise in rain, and [WeatherMap3D] wets the ground the runoff flows over. It answers the runoff contract ([method WorldGround.add_runoff_load]): the load moves down the drainage with the water and is handed to [method WorldWater.add_sediment] where the flow reaches open water. See docs/ideas/rain.md.
 	</description>
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="add_load">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="mineral_kg" type="float" />
+			<param index="2" name="ash_kg" type="float" />
+			<description>
+				Puts [param mineral_kg] of silt and clay and [param ash_kg] of ash on the runoff at [param position]; the same as [method WorldGround.add_runoff_load] while this node is in the tree. Load off the map is lost.
+			</description>
+		</method>
 		<method name="advance">
 			<return type="void" />
 			<param index="0" name="seconds" type="float" />
@@ -35,6 +44,12 @@
 				How long the last bake took.
 			</description>
 		</method>
+		<method name="get_delivered_load" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				The load (kg: x mineral, y ash) handed to open water so far.
+			</description>
+		</method>
 		<method name="get_depth_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -49,6 +64,13 @@
 				The flow (m³/s) leaving the cell at [param position].
 			</description>
 		</method>
+		<method name="get_load_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The load (kg: x mineral, y ash) carried on the water of the cell at [param position].
+			</description>
+		</method>
 		<method name="get_map_rect" qualifiers="const">
 			<return type="Rect2" />
 			<description>
@@ -60,6 +82,12 @@
 			<param index="0" name="rect" type="Rect2" />
 			<description>
 				The largest flow (m³/s) leaving any cell in [param rect].
+			</description>
+		</method>
+		<method name="get_total_load" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				The load (kg: x mineral, y ash) on the map's water.
 			</description>
 		</method>
 		<method name="get_total_storage" qualifiers="const">
