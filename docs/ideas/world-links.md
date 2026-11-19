@@ -100,6 +100,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Cloud shadow → water | linked | cloud shadow | |
 | Water → wet shore | linked | contact wetness | |
 | Falls → mist → wet rock | linked | mist | |
+| Falls → bodies in them (wet, pushed down) | linked (19 Nov) | WorldWater (PhysXWaterfalls3D) | the sheets and free columns answer the contract inside their water, above where they land: depth q/v, the water's velocity |
 | Bodies with buoyancy → wakes | linked | buoyancy, wake nodes | |
 | Bodies without buoyancy → ripples, splash | linked (18 Nov) | contact | world_contact bodies disturb sea, river |
 | Wading → wet legs, clothes | linked (18 Nov) | WorldWater | ClothWetness (PhysX, d90fa990) |
