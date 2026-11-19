@@ -786,6 +786,11 @@ func _caves(cam: Camera3D) -> void:
 							break
 				cam.position = eye
 				cam.look_at(tgt + Vector3(0, 0.5, 0))
+				if not args.has("no-refine"):
+					# The chunks between the lens and the mouth on the near grid, as round a player (the thin rock at a
+					# mouth tears on the coarse grid); --no-refine: all on the coarse one.
+					var n_in := net.refine_meshes(eye.lerp(pos, 0.8))
+					print("  refined %d chunks between the camera and the mouth (cell %.2f m)" % [n_in, net.near_mesh_cell])
 				if args.has("look-out"):
 					# From inside back out through the mouth (a sea cave onto the lit sea).
 					cam.look_at(pos + Vector3(0, float(args.get("look-height", "1.0")), 0) + o * 6.0)

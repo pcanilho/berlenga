@@ -1061,8 +1061,20 @@ real_t cave_profile(CaveNetwork3D::PassageType p_type, real_t u, real_t v, real_
 			// stepped in and out at each bed (1.1 m), a gabled roof where blocks fell out along two joint sets, the
 			// floor bare rock and boulders, no fill. The sides lean a little with the joint's dip.
 			r_floor = -1.25 * r;
-			const real_t bed = Math::fposmod(real_t(v + 0.37f * r), real_t(1.1)) / 1.1;
-			const real_t step = 0.18 * r * (Math::smoothstep(real_t(0.0), real_t(0.12), bed) - Math::smoothstep(real_t(0.55), real_t(0.67), bed));
+			// Beds of uneven thickness (0.7 to 1.5 m), each stepped out by its own amount: equal beds stood in rows
+			// of identical ridges down both walls.
+			const real_t t = (v + 0.37f * r) / 1.1;
+			int j = int(Math::floor(t));
+			auto bed_lo = [](int p_j) { return real_t(p_j) + 0.35 * (real_t(cave_hash(p_j, 0, 0, 0x5eabedu)) - 0.5); };
+			if (t < bed_lo(j)) {
+				j--;
+			} else if (t >= bed_lo(j + 1)) {
+				j++;
+			}
+			const real_t bed = (t - bed_lo(j)) / (bed_lo(j + 1) - bed_lo(j));
+			const real_t amp = 0.18 * r * (0.3 + 1.4 * real_t(cave_hash(j, 1, 0, 0x5eabedu)));
+			const real_t lip = 0.45 + 0.25 * real_t(cave_hash(j, 2, 0, 0x5eabedu)); // where the bed's soft lower part starts
+			const real_t step = amp * (Math::smoothstep(real_t(0.0), real_t(0.12), bed) - Math::smoothstep(lip, lip + 0.12, bed));
 			const real_t uu = u - 0.12 * v; // the joint's dip
 			const real_t hw = 0.62 * r + step;
 			const real_t sides = Math::abs(uu) - hw;
