@@ -906,6 +906,15 @@ func _run_shelter_tests() -> void:
 	print("  closure %.2f: canopy holds %.1f mm of %.1f mm capacity; %.1f mm under it, %.1f mm in the open" % [closure, held, cap, under, open])
 	_check("a canopy holds snow and shades the ground", closure > 0.5 and held > 3.0 and held <= cap + 0.01 and under < open * 0.8 and absf(under + held - open) < open * 0.1, "%.1f + %.1f mm against %.1f in the open" % [under, held, open])
 	_check("interception keeps the water", absf(w1 - w0 - (open * 64.0 * 64.0)) < open * 64.0 * 64.0 * 0.05, "%.0f kg on the map against %.0f fallen" % [w1 - w0, open * 64.0 * 64.0])
+	# A crown jolted from outside the weather (WorldSnow.shake_canopy; trees, docs/ideas/trees.md 5al): half the held
+	# snow within 3 m drops onto the pack below at the next update, the water kept.
+	var moved: float = Engine.get_singleton("WorldContracts").get_snow().shake_canopy(Vector3(0, 0, 0), 3.0, 0.5)
+	snow.advance(1.0)
+	var held_s := snow.get_canopy_load_at(Vector3(0, 0, 0))
+	var under_s := snow.get_swe_at(Vector3(0, 0, 0))
+	_check("a shaken crown drops its snow onto the pack (shake_canopy)", moved > 0.0 and absf(held_s - held * 0.5) < held * 0.1 and absf(under_s - under - (held - held_s)) < held * 0.1 and absf(snow.get_total_water() - w1) < w1 * 0.01, "%.0f kg moved; %.1f mm left of %.1f, %.1f mm below (was %.1f)" % [moved, held_s, held, under_s, under])
+	held = held_s
+	under = under_s
 	weather.temperature = -1.0
 	weather.wind_speed = 6.0
 	weather.snap_to_settings()
