@@ -76,6 +76,7 @@ public:
 		// plume while it burns.
 		bool fire = false;
 		float fade = 1.0f;
+		float cloud_base = 0.0f; // m, its own cloud base (a fire cloud's plume LCL); <= 0: cloud_base_height
 		float fade_target = 0.0f;
 	};
 
