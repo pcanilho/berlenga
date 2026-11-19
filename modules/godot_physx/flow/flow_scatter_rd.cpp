@@ -340,14 +340,26 @@ float hg_phase(float c, float g) {
 	return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5));
 }
 
-// The multiple-scattering octaves (Wrenninge et al. 2013), normalised to 1 at zero depth. Octave i stands for
-// higher scattering orders, so it is weighed by the single-scattering albedo to the i-th power, relative to
-// the 0.9 the gas has by default (the default looks are unchanged; a whiter medium such as snow powder keeps
-// more of its deep, many-times-scattered light, as it does under path tracing). The orders past the third come as
-// one more, wider octave weighted by sky_map.z.
+// The multiple-scattering octaves (Wrenninge et al. 2013), times the single-scattering albedo (sky_map.x, as
+// the path tracer weighs each scatter). Octave i stands for higher scattering orders, so it is weighed by the
+// albedo to the i-th power relative to 0.9 (a whiter medium such as snow powder keeps more of its deep,
+// many-times-scattered light, as it does under path tracing). The orders past the third come as one more,
+// wider octave weighted by sky_map.z.
+// Fitted to the path tracer (docs/ideas/physx.md, "Flow raster light matches path tracing, refit"), each
+// light on its own on test puffs under a real sky:
+// - SUN_MS_GAIN: the octaves' light at zero depth, over single scattering (1.84: in sunlit gas the light
+//   scattered on from the rest of the cloud adds most of a second scattering's worth again).
+// - SKY_MS_SHARE: the sky's light already arrives from all around, so the octaves overcount it; this share of
+//   it is left, with the 0.9 albedo the gas loses it at every scatter, as the path tracer has it.
+// - SKY_OCCLUSION: the sky reaches a point from the whole hemisphere, mostly along shorter paths out of the
+//   gas than the one straight up the sky map holds.
+const float SUN_MS_GAIN = 1.0 / 0.95;
+const float SKY_MS_SHARE = 0.27;
+const float SKY_OCCLUSION = 0.15;
+
 float ms_transmittance(float tau) {
 	float a = p.sky_map.x * (1.0 / 0.9);
-	return (exp(-tau) + 0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + p.sky_map.z * exp(-0.125 * tau)) * (a / 1.75);
+	return (exp(-tau) + 0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + p.sky_map.z * exp(-0.125 * tau)) * (p.sky_map.x * SUN_MS_GAIN);
 }
 
 float ign(vec2 px) {
@@ -533,7 +545,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 				}
 				if (all(greaterThanEqual(sky_uvw, vec3(0.0))) && all(lessThanEqual(sky_uvw, vec3(1.0)))) {
 					// All the gas above in one fetch.
-					sky_t = ms_transmittance(textureLod(sky_map_tex, sky_uvw, 0.0).r);
+					sky_t = ms_transmittance(textureLod(sky_map_tex, sky_uvw, 0.0).r * SKY_OCCLUSION);
 				} else
 #endif
 				if (shadow_steps > 0) {
@@ -550,7 +562,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					// makes it.
 					sky_t = ms_transmittance(od * sigma * ds);
 				}
-				in_light += ambient * sky_t;
+				in_light += ambient * (sky_t * SKY_MS_SHARE);
 			}
 			sum += transmittance * alpha * in_light;
 			transmittance *= 1.0 - alpha;
@@ -1144,8 +1156,15 @@ bool FlowScatterRD::_fit_shadow(const FlowBackend::ScatterSource &p_source, Shad
 	}
 	int32_t *bi = reinterpret_cast<int32_t *>(r_slot.box_data + 16);
 	bi[0] = CLAMP(r_shadow.resolution, 16, 512);
-	bi[1] = CLAMP(r_shadow.steps, 4, 256);
-	bi[2] = CLAMP(r_shadow.slices, 2, 128);
+	// A step per gas cell along the light, a slice per two (at least the asked-for counts): coarser, each
+	// step adds a dense cell's whole optical depth at once and the shading steps in bands across the gas.
+	float cell = 1e30f;
+	for (int a = 0; a < 3; a++) {
+		cell = MIN(cell, p_source.block_size_world[a] / float(p_source.level[a] + 1u) * inv);
+	}
+	const float cells_along = cell < 1e29f ? size.z / MAX(cell, 1e-4f) : 0.0f;
+	bi[1] = CLAMP(MAX(r_shadow.steps, (int)Math::ceil(cells_along)), 4, 512);
+	bi[2] = CLAMP(MAX(r_shadow.slices, (int)Math::ceil(cells_along * 0.5f)), 2, 128);
 	bi[3] = 0;
 
 	// World -> (u, v, depth) in 0..1.

@@ -2022,6 +2022,36 @@ from 0.9 to 0.99, middle grey (raster vs path traced): test puff +3.0% vs
 +1.6% vs +1.2%. The absolute raster/PT gap at the default (about 7% on
 the puff) is unchanged by design.
 
+### Flow raster light matches path tracing, refit (19 Nov evening)
+
+The first parity check (above) was wrong: its test puff sat under a plain
+colour background, which Godot's raster lights the gas with (ambient
+colour) and the path tracer does not, so raster looked too bright and the
+octaves were normalised down to 1 at zero depth. Under a real sky, each
+light on its own (same puff, middle of the gas against the sky):
+- Sun only: raster 101 vs PT 129 (raster too dark). The raster single
+  scattering also lacked the 0.9 albedo PT applies to every scatter.
+- Sky only: raster 119 vs PT 79 (raster far too bright, brightest on
+  top where PT is evenly dark: a grey-albedo medium lit from all around
+  reflects little, Chandrasekhar's semi-infinite slab).
+Refit: the in-scatter carries the albedo; the octaves give 1/0.95 of
+single scattering at zero depth for the sun (SUN_MS_GAIN); the sky keeps
+0.27 of the octave light (SKY_MS_SHARE) and reads 0.15 of the optical
+depth straight up as its occlusion (SKY_OCCLUSION: the hemisphere's paths
+out of the gas are mostly shorter). Results down the gas column, rows
+top to bottom (raster vs PT): sun only puff 127 vs 129; sun only dense
+puff 165 vs 160; sky only, column 105 79 76 71 68 66 65 vs 92 77 70 66
+64 61 59; sun and sky, right column 184 165 146 129 119 120 117 vs 180
+165 147 132 122 118 114. Sunlit smoke is brighter than before and its
+shaded sides darker.
+
+Banding (snow's powder): the sun's and sky's volumetric shadow maps took
+a fixed 64 steps over the whole grid along the light, about a metre per
+step through the avalanche cloud, so each step added a dense cell's whole
+optical depth and the shading stepped in horizontal bands. They now step
+once per gas cell along the light (up to 512) with a slice per two cells
+(up to 128).
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
