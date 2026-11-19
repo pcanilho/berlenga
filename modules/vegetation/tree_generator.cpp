@@ -4428,6 +4428,46 @@ BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt,
 	}
 	return c;
 }
+
+// Maritime pine's plate network as fracture columns (Lefebvre and Neyret 2002, "Synthesizing
+// bark": the outer layer tears along the stem first, into long vertical fissures, then the strips
+// between them break across). Wavy fissures split the tile into p_cols columns; each column breaks
+// across two or three times a tile, at its own phase and slope, so plates are blunt-ended,
+// irregular rectangles about twice as long as wide, staggered against their neighbours, never the
+// pointed lenses a stretched Voronoi gives. Edge distances are in column widths; end breaks count
+// p_end times their distance, so they crack narrower than the fissures.
+BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt, float p_end) {
+	const float x = p_u * p_cols;
+	auto wrap = [&](int i) { return ((i % p_cols) + p_cols) % p_cols; };
+	// Each fissure wanders round its own place, so the columns differ in width.
+	auto bound = [&](int i) { return float(i) + 0.35f * (bark_hash(wrap(i), 6, p_salt) - 0.5f) + 0.5f * bark_fbm(float(wrap(i)) / p_cols, p_v, 1, 9, 3, p_salt + 13u * uint32_t(wrap(i))); };
+	// A fissure that has not opened over a stretch: the plates either side are one there, and
+	// the breaks across them end on it in T junctions, as real crack networks do.
+	auto open = [&](int i) { return bark_fbm(float(wrap(i)) / p_cols, p_v, 1, 4, 2, p_salt + 41u + 7u * uint32_t(wrap(i))) > -0.04f; };
+	int c = int(Math::floor(x));
+	if (x < bound(c)) {
+		c--;
+	} else if (x >= bound(c + 1)) {
+		c++;
+	}
+	const float l = bound(c), r = bound(c + 1);
+	const float sl = open(c) ? x - l : x - bound(c - 1);
+	const float sr = open(c + 1) ? r - x : bound(c + 2) - x;
+	const float side = MIN(sl, sr);
+	const int ci = wrap(c);
+	const int n = 1 + int(bark_hash(ci, 1, p_salt + 3u) > 0.4f);
+	const float phase = bark_hash(ci, 2, p_salt + 3u);
+	const float tilt = 0.5f * (bark_hash(ci, 4, p_salt + 3u) - 0.5f);
+	const float t = p_v * n + phase + tilt * (x - 0.5f * (l + r)) + 0.35f * bark_fbm(p_u, p_v, p_cols * 3, 7, 2, p_salt + 29u);
+	const int k = int(Math::floor(t));
+	const float ft = t - float(k);
+	const float across = MIN(ft, 1.0f - ft) * float(p_cols) / float(n);
+	BarkCell cell;
+	cell.edge = MIN(side, across * p_end);
+	cell.id = uint32_t(ci * 64 + ((k % n) + n) % n);
+	cell.site = Vector2(0.5f * (l + r), (float(k) + 0.5f - phase) / n);
+	return cell;
+}
 } // namespace
 
 // A tileable bark set (albedo multiplier, tangent-space normal, roughness, height in metres) for
@@ -4519,7 +4559,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
 		{ 9, 12, 0.2f, 0.08f, 0.003f, 0.3f, 0.14f }, // Cork (1.2 m tile): long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
-		{ 4, 3, 0.36f, 0.085f, 0.003f, 0.16f, 0.12f }, // Pinaster (0.9 m tile): thick plates a hand or two across, deep furrows (5ac).
+		{ 3, 3, 0.24f, 0.085f, 0.003f, 0.16f, 0.12f }, // Pinaster (0.9 m tile): thick plates a hand or two across, deep furrows (5ac); 3 fracture columns.
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -4558,7 +4598,9 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				}
 				const float merge = (p_kind == BARK_PLATED || p_kind == BARK_PINASTER) ? 0.35f : (p_kind == BARK_PINEA ? 0.05f : (p_kind == BARK_SCALY ? 0.1f : (p_kind == BARK_CORK ? 0.5f : 0.0f)));
 				const float scar_cut = p_kind == BARK_FLAKING ? 0.62f : 0.0f;
-				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, p_kind == BARK_PINEA ? 0.5f : (p_kind == BARK_PINASTER ? 0.65f : (p_kind == BARK_CORK ? 0.75f : -1.0f)), p_kind == BARK_PINEA ? 1.8f : (p_kind == BARK_PINASTER ? 1.35f : 1.0f));
+				// Round 11 (docs, 18 Nov: pointed, feather-like tongues stacked in rows): maritime pine
+				// plates come from fracture columns, not a stretched Voronoi.
+				const BarkCell c = p_kind == BARK_PINASTER ? bark_fracture_columns(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, salt + 131u, 1.25f) : bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, p_kind == BARK_PINEA ? 0.5f : (p_kind == BARK_PINASTER ? 0.65f : (p_kind == BARK_CORK ? 0.75f : -1.0f)), p_kind == BARK_PINEA ? 1.8f : (p_kind == BARK_PINASTER ? 1.35f : 1.0f));
 				// Cracks open unevenly: wider where the layer split first. Some cell walls never
 				// cracked, so plates join into larger irregular shapes, and the plate rims are
 				// ragged rather than straight (what makes a Voronoi read as tiles).
@@ -7328,6 +7370,10 @@ float TreeGenerator::get_bloom(Preset p_preset, float p_day) {
 		// (Danin 1996; Flora Palaestina).
 		case PRESET_WHITE_BROOM:
 			return ramp(15.0f, 32.0f, 70.0f, 95.0f);
+		// Calligonum flowers February to April on the green twiglets, before its fruit (Danin 1996;
+		// Flora Palaestina: fl. 2-4).
+		case PRESET_CALLIGONUM:
+			return ramp(35.0f, 55.0f, 80.0f, 92.0f);
 		default:
 			return 0.0f;
 	}
@@ -8437,6 +8483,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 		HIP_ROSE,
 		BLOSSOM, // Hedge shrubs in flower (trees.md 5ad): the preset says whose.
 		NUT_CALLIGONUM, // Calligonum's bristly fruit (trees.md 5ae).
+		SPIKE_SALTBUSH, // Saltbush's terminal panicles of flowers, then winged fruit (trees.md 5ae).
 	};
 	Kind kind = NONE;
 	float share = 0.0f, low = 0.0f; // Share of the tips above `low` (0-1 up the crown).
@@ -8517,13 +8564,16 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 		case PRESET_CALLIGONUM:
 			kind = NUT_CALLIGONUM, share = 0.6f, low = 0.0f;
 			break;
+		case PRESET_SALTBUSH:
+			kind = SPIKE_SALTBUSH, share = 0.32f, low = 0.35f;
+			break;
 		default:
 			break;
 	}
 	// Hedge shrubs flower from the same tips that later fruit (trees.md 5ad): hawthorn white over
 	// the whole bush in May, blackthorn white along its bare twigs in March and April, dog rose
 	// pale pink in June.
-	const float blossom = (preset == PRESET_HAWTHORN || preset == PRESET_BLACKTHORN || preset == PRESET_DOG_ROSE) ? get_bloom(preset, day) : 0.0f;
+	const float blossom = (preset == PRESET_HAWTHORN || preset == PRESET_BLACKTHORN || preset == PRESET_DOG_ROSE || preset == PRESET_CALLIGONUM) ? get_bloom(preset, day) : 0.0f;
 	if (blossom > 0.0f) {
 		kind = BLOSSOM;
 		share = preset == PRESET_DOG_ROSE ? 0.4f : 1.0f;
@@ -8583,6 +8633,11 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			// April and May, red; the dry fruits stay on, fading to buff, into the summer.
 			present = in_days(85.0f, 215.0f) ? 1.0f : 0.0f;
 			break;
+		case SPIKE_SALTBUSH:
+			// Flowers from July, the fruits ripe September to December, the dry panicles left into
+			// the new year (Le Houerou 1992; Flora iberica).
+			present = in_days(190.0f, 20.0f) ? 1.0f : 0.0f;
+			break;
 		case CATKIN_HAZEL:
 			present = in_days(210.0f, 100.0f) ? 1.0f : 0.0f;
 			break;
@@ -8616,7 +8671,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 	}
 	// Corymbs carry a hundred berries or more each: a rowan bears some dozens of heads.
 	// A stone pine's crown is spent on cones, three years' worth at once: about a thousand.
-	const float budget = (kind == BERRY_ROWAN || kind == BERRY_ELDER ? 80.0f : (kind == CONE_STONE_PINE ? 900.0f : (kind == BLOSSOM ? 3000.0f : (kind == BERRY_HAW || kind == DRUPE_SLOE || kind == HIP_ROSE || kind == NUT_CALLIGONUM ? 900.0f : 360.0f)))) * fruit_cover;
+	const float budget = (kind == BERRY_ROWAN || kind == BERRY_ELDER ? 80.0f : (kind == CONE_STONE_PINE ? 900.0f : (kind == BLOSSOM ? 3000.0f : (kind == BERRY_HAW || kind == DRUPE_SLOE || kind == HIP_ROSE || kind == NUT_CALLIGONUM || kind == SPIKE_SALTBUSH ? 900.0f : 360.0f)))) * fruit_cover;
 	const float p = MIN(share * fruit_cover * present, eligible > 0 ? budget / eligible : 0.0f);
 	// Catkins open before the leaves: hazel from late January, alder February, birch April.
 	const bool open_catkin = (kind == CATKIN_HAZEL && in_days(20.0f, 100.0f)) || (kind == CATKIN_ALDER && in_days(40.0f, 100.0f)) || (kind == CATKIN_BIRCH && in_days(100.0f, 135.0f));
@@ -8704,6 +8759,58 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				const float len = Math::lerp(0.015f, 0.025f, cr.randf());
 				cone(at, ax, len, len * 0.4f, 22, false, 0.8f, lin(0.4f, 0.29f, 0.18f), lin(0.58f, 0.47f, 0.33f));
 				size = 0.03f;
+			} break;
+			case SPIKE_SALTBUSH: {
+				// Atriplex halimus (Flora iberica; Le Houerou 1992): leafless terminal panicles
+				// 8-20 cm above the leaves, a few spike-like branches set with clusters of tiny
+				// flowers, yellowish green in summer; female flowers ripen to fruits held between two
+				// rounded, reniform valves 3-5 mm, cream to pinkish buff, papery when dry.
+				const float ripe = in_days(250.0f, 20.0f) ? 1.0f : (in_days(190.0f, 250.0f) ? (day - 190.0f) / 60.0f : 1.0f);
+				const Color flower_c = lin(0.62f, 0.62f, 0.36f), fruit_c = lin(0.9f, 0.84f, 0.74f);
+				const Color c0 = flower_c.lerp(fruit_c, ripe);
+				const Color axis_c = lin(0.55f, 0.52f, 0.38f);
+				const Vector3 up = (d * 0.4f + Vector3(0, 1, 0)).normalized();
+				const float len = Math::lerp(0.06f, 0.14f, cr.randf());
+				const int branches = 2 + int(cr.randf() * 3.0f);
+				for (int bq = 0; bq <= branches; bq++) {
+					// The main axis, then branches leaving it at 30-45 degrees, shorter up the axis.
+					const float at_u = bq == 0 ? 0.0f : Math::lerp(0.05f, 0.6f, float(bq - 1) / MAX(1, branches - 1));
+					const Vector3 b0 = at + up * (len * at_u);
+					const Vector3 bd = bq == 0 ? up : (up * 0.75f + sd.rotated(up, bq * 2.4f) * 0.6f).normalized();
+					const float bl = bq == 0 ? len : len * Math::lerp(0.55f, 0.3f, at_u);
+					stalk(b0, b0 + bd * bl, bq == 0 ? 0.0009f : 0.0006f, axis_c);
+					// Clusters every 11-13 mm along the spike, three valve pairs each.
+					const int clusters = MAX(2, int(bl / 0.011f));
+					for (int cq = 0; cq < clusters; cq++) {
+						const Vector3 cc = b0 + bd * (bl * (0.15f + 0.85f * (float(cq) + 0.5f) / clusters));
+						const int fruits = 3;
+						for (int fq = 0; fq < fruits; fq++) {
+							// Two valves face to face round the seed, the pair standing out from the spike.
+							const Vector3 out = sd.rotated(bd, cr.randf() * float(Math::TAU));
+							const Vector3 fc = cc + out * 0.0025f;
+							const float vr = Math::lerp(0.002f, 0.0028f, cr.randf()) * Math::lerp(0.6f, 1.0f, ripe);
+							const Vector3 fu = (out * 0.6f + bd * 0.8f).normalized();
+							const Vector3 fs = fu.cross(out).normalized();
+							const Color tone = c0 * Math::lerp(0.88f, 1.06f, cr.randf());
+							for (int side = -1; side <= 1; side += 2) {
+								// A kidney-shaped valve: a fan of three triangles, notched at the middle.
+								const Vector3 o = fc + fs * (0.0004f * side);
+								const int ci = vert(o, Vector2(), tone * 0.85f);
+								int prev = -1;
+								for (int e = 0; e <= 3; e++) {
+									const float a = float(Math::PI) * (-0.1f + 1.2f * e / 3.0f);
+									const float r = vr * (e == 1 || e == 2 ? 0.85f : 1.0f);
+									const int v = vert(o + (fu * Math::sin(a) + out * Math::cos(a)) * r + fs * (0.0006f * side), Vector2(), tone);
+									if (prev >= 0) {
+										tri(ci, prev, v);
+									}
+									prev = v;
+								}
+							}
+						}
+					}
+				}
+				size = len;
 			} break;
 			case CATKIN_HAZEL:
 			case CATKIN_BIRCH:
@@ -9015,12 +9122,15 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				// 5-25 with pink-purple anthers; blackthorn 10-15 mm, singly or in pairs crowded
 				// along the bare twig, orange anthers; dog rose 4-6 cm, one to three, pale pink with
 				// a paler eye and a yellow boss (Stace 2019).
-				const bool haw = preset == PRESET_HAWTHORN, rose = preset == PRESET_DOG_ROSE;
-				const int k = haw ? 16 + int(cr.randf() * 16.0f) : (rose ? 1 + int(cr.randf() * 2.5f) : 8 + int(cr.randf() * 9.0f));
-				const float fr = haw ? Math::lerp(0.0055f, 0.0075f, cr.randf()) : (rose ? Math::lerp(0.022f, 0.028f, cr.randf()) : Math::lerp(0.006f, 0.0075f, cr.randf()));
-				const Color petal_c = rose ? lin(0.97f, 0.8f, 0.84f) : (haw ? lin(0.97f, 0.94f, 0.84f) : lin(0.96f, 0.95f, 0.91f));
+				// Calligonum: 2-4 small flowers at each joint of the green twiglets, five white tepals
+				// 2-3 mm long with a green-red centre and red-tipped stamens (Flora Palaestina; Danin
+				// 1996), the bush pale with them from a few metres.
+				const bool haw = preset == PRESET_HAWTHORN, rose = preset == PRESET_DOG_ROSE, cal = preset == PRESET_CALLIGONUM;
+				const int k = haw ? 16 + int(cr.randf() * 16.0f) : (rose ? 1 + int(cr.randf() * 2.5f) : (cal ? 6 + int(cr.randf() * 7.0f) : 8 + int(cr.randf() * 9.0f)));
+				const float fr = haw ? Math::lerp(0.0055f, 0.0075f, cr.randf()) : (rose ? Math::lerp(0.022f, 0.028f, cr.randf()) : (cal ? Math::lerp(0.0028f, 0.0036f, cr.randf()) : Math::lerp(0.006f, 0.0075f, cr.randf())));
+				const Color petal_c = rose ? lin(0.97f, 0.8f, 0.84f) : (haw ? lin(0.97f, 0.94f, 0.84f) : (cal ? lin(0.95f, 0.92f, 0.88f) : lin(0.96f, 0.95f, 0.91f)));
 				const Color eye_c = rose ? lin(0.99f, 0.95f, 0.88f) : petal_c;
-				const Color boss_c = haw ? lin(0.55f, 0.22f, 0.32f) : lin(0.95f, 0.75f, 0.2f);
+				const Color boss_c = haw ? lin(0.55f, 0.22f, 0.32f) : (cal ? lin(0.7f, 0.3f, 0.3f) : lin(0.95f, 0.75f, 0.2f));
 				for (int q = 0; q < k; q++) {
 					Vector3 fc;
 					if (haw) {
@@ -9040,7 +9150,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 					if (!rose) {
 						// Small flowers by the thousand: five triangles, the boss coloured at the centre
 						// and fading into the petals, a third of the full flower's cost.
-						const int cc = vert(fc + face * (fr * 0.15f), Vector2(), petal_c.lerp(boss_c, haw ? 0.5f : 0.25f));
+						const int cc = vert(fc + face * (fr * 0.15f), Vector2(), petal_c.lerp(boss_c, haw || cal ? 0.5f : 0.25f));
 						int pv = -1, fv = -1;
 						for (int pk = 0; pk < 5; pk++) {
 							const float a = a0 + float(Math::TAU) * pk / 5.0f;
@@ -9169,9 +9279,11 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 		}
 		// Calligonum's red fruit colours the bush from afar (trees.md 5ae): it thins stochastically with distance as a
 		// heath shrub's flowers do (sized negative) instead of leaving with LOD 0.
-		close_part(part, kind == NUT_CALLIGONUM ? -size : size);
+		// Its flowers likewise.
+		const bool scattered = kind == NUT_CALLIGONUM || kind == SPIKE_SALTBUSH || (kind == BLOSSOM && preset == PRESET_CALLIGONUM);
+		close_part(part, scattered ? -size : size);
 	}
-	if (kind == NUT_CALLIGONUM) {
+	if (kind == NUT_CALLIGONUM || kind == SPIKE_SALTBUSH || (kind == BLOSSOM && preset == PRESET_CALLIGONUM)) {
 		big_end = r_b.indices.size();
 	}
 	(void)ls;
@@ -19243,7 +19355,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		if (p_preset == PRESET_WHITE_BROOM || p_preset == PRESET_CALLIGONUM) {
 			// Leafless desert shrubs: their stems and twigs are the crown, silvery or yellow-green
 			// and open; white broom white from afar in flower (trees.md 5ae).
-			const float bloom = get_bloom(p_preset, season.get("day_of_year", 182.0f)) * 0.5f;
+			// Calligonum's flowers are a few millimetres: a pale cast only.
+			const float bloom = get_bloom(p_preset, season.get("day_of_year", 182.0f)) * (p_preset == PRESET_CALLIGONUM ? 0.25f : 0.5f);
 			const Color stems = p_preset == PRESET_WHITE_BROOM ? Color(0.2f, 0.22f, 0.17f) : Color(0.12f, 0.16f, 0.07f);
 			far = stems.lerp(Color(0.93f, 0.92f, 0.9f), bloom);
 			far.a = p_form == FORM_SAPLING ? 0.5f : 0.7f;

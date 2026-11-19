@@ -348,6 +348,8 @@ void vertex() {
 		// water runs up them (1 m, the solver's run-up band; a dry bank reads below its ground).
 		vec2 off = v_world.xz - live_center;
 		float h = (textureLod(live_height_tex, cuv, 0.0).r - (live_tilt.x + dot(live_tilt.yz, off))) * live * step(-0.99, v_info.r * 4.0 - 1.0);
+		VERTEX.y += h;
+		v_world.y += h;
 		if (live_waves && live_near_spacing > 0.0) {
 			// The surface waves as geometry where the ribbon is dense enough to carry them (Planet Coaster 2's
 			// near-camera water: real silhouettes and parallax, the slope still drawn per pixel).
@@ -358,6 +360,10 @@ void vertex() {
 			// where the grid's last wet cell would otherwise stand up as a spike.
 			float a_max = max(0.39 * (v_info.r * 4.0 - 1.0), 0.0);
 			h = a_max > 1e-4 ? h / sqrt(1.0 + (h * h) / (a_max * a_max)) : 0.0;
+			// White water damps them, as it damps the ripples' slope in fragment() (the film's elasticity): the
+			// foam lies on a calm sheet instead of standing on steep facets as shards.
+			float foam_v = max(COLOR.g, textureLod(live_flow_tex, cuv, 0.0).b * live);
+			h *= 1.0 - smoothstep(0.05, 0.5, foam_v);
 			VERTEX.y += h;
 			v_world.y += h;
 		}
@@ -409,8 +415,16 @@ void fragment() {
 #if defined(RT)
 	float footprint = 0.0;
 #else
-	vec2 fw_xz = fwidth(v_world.xz);
-	float footprint = max(fw_xz.x, fw_xz.y);
+	// From the distance and the smooth (undisplaced) surface's tilt to the eye, not fwidth: over the near mesh's
+	// wave facets the screen derivatives jump from triangle to triangle, and every footprint-scaled detail (the
+	// foam's structure, its crisp edge) changed with them along the polygon edges.
+	vec3 to_eye = CAMERA_POSITION_WORLD - v_world;
+	float eye_d = length(to_eye);
+	// (An orthographic camera's pixel is the same size at every distance, and it looks along its own axis.)
+	bool ortho = PROJECTION_MATRIX[3][3] > 0.5;
+	vec3 eye_dir = ortho ? INV_VIEW_MATRIX[2].xyz : to_eye / max(eye_d, 1e-4);
+	float pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+	float footprint = (ortho ? 1.0 : eye_d) * pix / max(abs(dot(eye_dir, normalize(v_normal))), 0.15);
 #endif
 	float ripple_hidden = 0.0;
 	if (ripple_detail > 0.0) {
@@ -461,8 +475,7 @@ void fragment() {
 #if defined(RT)
 			float rr_fp = 0.0;
 #else
-			vec2 rr_fw = fwidth(v_world.xz);
-			float rr_fp = max(max(rr_fw.x, rr_fw.y), 1e-5);
+			float rr_fp = max(footprint, 1e-5);
 #endif
 			vec3 rr = rain_ripples(v_world.xz - o_a, TIME, rr_rate, rr_fp) * w + rain_ripples(v_world.xz - o_b + vec2(13.1, 7.7), TIME, rr_rate, rr_fp) * (1.0 - w);
 			slope += rr.xy * smoothstep(0.0, 0.05, depth);
@@ -501,7 +514,22 @@ void fragment() {
 #if !defined(RT)
 		// Crisp at every distance: the edge stepped once more at the pixel's own scale (about three pixels wide),
 		// up only as far as the foam beside it reaches, keeping 0.8 of the soft value (the open sea's step).
-		float fwf = max(fwidth(crisp), 1e-3);
+		// The pixel's change is the pattern's world gradient (chain rule through the screen derivatives, exact
+		// on each triangle) times the smooth footprint: fwidth itself jumped from facet to facet over the near
+		// mesh's waves, and the step's sharpness with it, drawing the triangles' edges into the foam.
+		float fwf = fwidth(crisp);
+		{
+			vec2 cdx = dFdx(v_world.xz);
+			vec2 cdy = dFdy(v_world.xz);
+			float cdet = cdx.x * cdy.y - cdx.y * cdy.x;
+			if (abs(cdet) > 1e-12) {
+				float gx = dFdx(crisp);
+				float gy = dFdy(crisp);
+				vec2 g = vec2(cdy.y * gx - cdx.y * gy, cdx.x * gy - cdy.x * gx) / cdet;
+				fwf = min(length(g) * footprint * 1.4, fwf * 4.0);
+			}
+		}
+		fwf = max(fwf, 1e-3);
 		float stepped = clamp((crisp - 0.3) / (3.0 * fwf) + 0.5, 0.0, 1.0) * min(crisp + 2.0 * fwf, 1.0);
 		crisp = max(stepped, 0.8 * crisp);
 #endif
