@@ -26,6 +26,8 @@ extends Node3D
 #   lightning a tall mast takes the strike meant for the ground beside it; striking distance on IEC 62305
 #   fire      a long continuing current lights dry fuel, not wet (PhysX)
 #   contact   a body in world_contact flattens grass without being in grass_trample, and herbs where there is no grass
+#   lee       a wall and a moving prop (get_wind_obstacles) shelter the wind behind them; snow drifts into a wall's
+#             lee and blows off its top, the ground past the drift swept; a moved prop takes its lee along
 #   contracts the water contract picks the right water where several overlap (a pool in a hollow below the sea's
 #             level, a body above the water); with no producer it answers -INF; the weather's defaults
 
@@ -182,6 +184,7 @@ func _ready() -> void:
 	await _snow_fire_tests()
 	await _dirty_snow_tests()
 	await _flood_ground_tests()
+	await _lee_drift_tests()
 	await _leaf_kick_tests()
 	await _leaf_surface_tests()
 	await _washout_tests()
@@ -704,6 +707,92 @@ func _dirty_snow_tests() -> void:
 	WorldContracts.clear_overrides()
 	snow.queue_free()
 	sun.queue_free()
+	ground_node.queue_free()
+	m.queue_free()
+	await get_tree().physics_frame
+
+
+# A prop that gives its own wind obstacles (as RockField3D and PhysXVehicle3D do): one box, 1.5 m high.
+class CrateObstacle extends Node3D:
+	func get_wind_obstacles(_rect: Rect2) -> Array:
+		return [AABB(global_position - Vector3(1, 0, 1), Vector3(2, 1.5, 2))]
+
+
+# Lee drifts (docs/ideas/world-links.md): obstacles in the weather_shelter group slow the wind behind them
+# (WorldWeather.obstacle_lee_at), and stand in the snow's Sx (obstacle_height_at), so snow fills their lee.
+func _lee_drift_tests() -> void:
+	if not ClassDB.class_exists("SnowCover3D"):
+		_skip("lee: snow drifts", "no SnowCover3D")
+		return
+	WorldContracts.clear_overrides()
+	var ground_node := Node3D.new()
+	ground_node.set_script(load("res://flat_ground.gd"))
+	ground_node.name = "LeeGround"
+	add_child(ground_node)
+	# A wall 2 m high and 40 m long across a 14 m/s wind blowing to +x.
+	var wall := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(1, 2, 40)
+	wall.mesh = bm
+	wall.position = Vector3(0, 1, 0)
+	wall.add_to_group("weather_shelter")
+	add_child(wall)
+	var crate := CrateObstacle.new()
+	crate.position = Vector3(-200, 0, 100)
+	crate.add_to_group("weather_shelter")
+	add_child(crate)
+	var m := _new_map()
+	m.wind_speed = 14.0
+	m.wind_direction = Vector2(1, 0)
+	m.temperature = -6.0
+	m.humidity = 0.9
+	m.rain_rate = 2.0
+	m.cloud_cover = 1.0
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.rebake_shelter()
+	m.advance(1.0)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var on_wall: float = w.obstacle_height_at(Vector3(0, 0, 0))
+	var cavity: float = w.obstacle_lee_at(Vector3(3, 0, 0))
+	var ten_h: float = w.obstacle_lee_at(Vector3(20, 0, 0))
+	var upwind: float = w.obstacle_lee_at(Vector3(-6, 0, 0))
+	_check("lee: a wall in the weather_shelter group shelters the wind behind it, from the terrain under it", absf(on_wall - 2.0) < 0.05 and cavity < 0.3 and ten_h > cavity and ten_h < 0.95 and upwind == 1.0, "wall %.2f m high; near-ground wind %.2f at 1.5 H behind, %.2f at 10 H, %.2f upwind" % [on_wall, cavity, ten_h, upwind])
+	var crate_lee: float = w.obstacle_lee_at(Vector3(-196, 0, 100))
+	crate.position = Vector3(-200, 0, 60)
+	for i in 150:
+		await get_tree().physics_frame
+	var left: float = w.obstacle_lee_at(Vector3(-196, 0, 100))
+	var moved: float = w.obstacle_lee_at(Vector3(-196, 0, 60))
+	_check("lee: a prop's own obstacles (get_wind_obstacles) shelter, and a moved one takes its lee along", crate_lee < 0.5 and left == 1.0 and moved < 0.5 and absf(w.obstacle_height_at(Vector3(-200, 0, 60)) - 1.5) < 0.05, "%.2f behind it, %.2f there after it moved, %.2f behind it at its new place" % [crate_lee, left, moved])
+	# Snow over a day of the gale: the wall's lee fills, its top is stripped.
+	var snow: Node3D = ClassDB.instantiate("SnowCover3D")
+	snow.extent = 64.0
+	snow.resolution = 64
+	snow.update_rate = 0.0001
+	add_child(snow)
+	snow.height_source = snow.get_path_to(ground_node)
+	snow.follow_target = snow.get_path_to(ground_node)
+	snow.refresh_heights()
+	snow.advance(6.0 * 3600.0)
+	var lee_d: float = snow.get_depth_at(Vector3(4, 0, 5))
+	var far_d: float = snow.get_depth_at(Vector3(20, 0, 5))
+	var open_d: float = snow.get_depth_at(Vector3(-15, 0, 5))
+	var top_d: float = snow.get_depth_at(Vector3(0, 0, 5))
+	var foot_d: float = snow.get_depth_at(Vector3(2.5, 0, 5))
+	# The wall traps the blowing snow, so the ground past its drift is swept bare until the drift fills (what a snow
+	# fence does for a road; Tabler 1991).
+	_check("lee: snow drifts deep in a wall's lee, blows off its top, and the ground past the drift is swept", foot_d > 2.0 * open_d and lee_d > 1.2 * open_d and far_d < 0.5 * open_d and top_d < open_d and open_d > 0.05, "%.1f cm at its foot, %.1f cm at 2 H behind, %.1f cm at 10 H, %.1f cm in the open upwind, %.1f cm on the wall" % [foot_d * 100.0, lee_d * 100.0, far_d * 100.0, open_d * 100.0, top_d * 100.0])
+	snow.drift_obstacles = false
+	snow.advance(6.0 * 3600.0)
+	var lee_off: float = snow.get_depth_at(Vector3(4, 0, 5)) - lee_d
+	var open_off: float = snow.get_depth_at(Vector3(-15, 0, 5)) - open_d
+	_check("lee: drift_obstacles off, the drift is no longer fed and the wind takes it back", lee_off < 0.0 and open_off > 0.05, "%.1f cm 2 H behind it, %.1f cm in the open over 6 more hours" % [lee_off * 100.0, open_off * 100.0])
+	WorldContracts.clear_overrides()
+	snow.queue_free()
+	wall.queue_free()
+	crate.queue_free()
 	ground_node.queue_free()
 	m.queue_free()
 	await get_tree().physics_frame

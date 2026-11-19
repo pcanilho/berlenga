@@ -530,6 +530,7 @@ private:
 	// Vegetation sheltering the sand (dune grass, docs/ideas/sand.md): plants take a share of the wind's stress
 	// (Raupach 1993 drag partition), the saltation flux falls among them and the sand it carried lands there.
 	TypedArray<NodePath> wind_shelters;
+	bool obstacle_lee = true; // blown sand reads WorldWeather.obstacle_lee_at
 	LocalVector<float> shelter_ratio; // the surface's friction speed over the open ground's, per lattice cell
 	LocalVector<float> shelter_flux; // the flux factor, Q(u* ratio) / Q(u*), 0..1 (1 with no plants)
 	LocalVector<float> sand_flux; // kg/m/s, along the wind
@@ -932,6 +933,8 @@ public:
 	static float bed_load_shear(float p_tau);
 	void set_wind_shelters(const TypedArray<NodePath> &p_shelters) { wind_shelters = p_shelters; }
 	TypedArray<NodePath> get_wind_shelters() const { return wind_shelters; }
+	void set_obstacle_lee(bool p_enabled) { obstacle_lee = p_enabled; }
+	bool is_obstacle_lee_enabled() const { return obstacle_lee; }
 	// Raupach (1993): the surface's share of the friction speed among roughness elements of frontal area index
 	// p_lambda (clamped to 0.5).
 	static float shelter_ratio_for(float p_lambda);

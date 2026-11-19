@@ -41,6 +41,7 @@
 #include "core/io/image.h"
 #include "core/object/object_id.h"
 #include "core/object/worker_thread_pool.h"
+#include "core/templates/pair.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 
@@ -413,6 +414,10 @@ private:
 	Vector3 _gust_at(Vector3 p_position, Vector2 p_mean) const;
 	float _patch_at(Vector2 p_xz, float p_height) const;
 	void _bake_shelter();
+	void _check_shelter_movers();
+	LocalVector<Pair<ObjectID, AABB>> shelter_movers; // obstacles of a few boxes, and their bounds at the last bake
+	float shelter_mover_timer = 0.0f;
+	int shelter_box_count = 0;
 	void _update_terrain_wind();
 	void _find_terrain_source();
 	float _terrain_height(Vector2 p_xz) const;
@@ -650,6 +655,10 @@ public:
 	float get_shelter_bake_time() const { return shelter.bake_ms; }
 	// Mean wind at a height over the open-ground wind there: canopy and lee, 0..1.
 	float get_shelter_at(Vector3 p_position, float p_height_above_ground = -1.0f) const;
+	// Wind-blocking obstacles (the weather_shelter group, add_shelter_box): their height over the ground at a
+	// point, m, and the lee factor of those upwind near the ground (0.15 in a cavity, 1 in the open).
+	float get_obstacle_height_at(Vector3 p_position) const;
+	float get_obstacle_lee_at(Vector3 p_position) const;
 	// The canopy over a point: its height (m) and the share of the sky it closes (0..1).
 	float get_canopy_height_at(Vector3 p_position) const;
 	float get_canopy_closure_at(Vector3 p_position) const;
@@ -786,6 +795,8 @@ public:
 	float contract_rainfall_at(const Vector3 &p_position) const override { return get_rainfall_at(p_position); }
 	float contract_snowfall_at(const Vector3 &p_position) const override { return get_snowfall_at(p_position); }
 	float contract_smoke_at(const Vector3 &p_position) const override { return get_smoke_at(p_position); }
+	float contract_obstacle_height_at(const Vector3 &p_position) const override { return get_obstacle_height_at(p_position); }
+	float contract_obstacle_lee_at(const Vector3 &p_position) const override { return get_obstacle_lee_at(p_position); }
 	float contract_canopy_water_at(const Vector3 &p_position) const override { return get_canopy_water_at(p_position); }
 	float contract_canopy_wetness_at(const Vector3 &p_position) const override { return get_canopy_wetness_at(p_position); }
 	float contract_canopy_drip_at(const Vector3 &p_position) const override { return get_canopy_drip_at(p_position); }

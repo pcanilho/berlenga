@@ -124,6 +124,7 @@ private:
 	struct ObstacleCell {
 		LocalVector<Vector4> obstacles;
 		LocalVector<float> sizes;
+		LocalVector<float> heights; // m over the ground, about the stone's top
 	};
 	HashMap<Vector3i, ObstacleCell> obstacle_cache;
 
@@ -348,6 +349,7 @@ private:
 	// The ground side of the contact (docs/ideas/rocks.md, "Stone and ground contact"): a global mask around the
 	// target the terrain material reads, R the damp ring round each stone's foot, G fines banked on its uphill side.
 	bool ground_contact = true;
+	bool wind_obstacles = true;
 	Ref<ImageTexture> contact_texture;
 	Vector2 contact_origin = Vector2(1e30, 1e30);
 	bool contact_dirty = true;
@@ -621,6 +623,11 @@ public:
 	// Where stones of at least p_min_size (b axis, m) meet the ground in p_rect, as VegetationField3D obstacles:
 	// (x, ground y, z, footprint radius). Computed from the placement rules, built or not.
 	PackedVector4Array get_obstacles(const Rect2 &p_rect, real_t p_min_size = 0.25);
+	// Boulders standing at least 0.5 m out of the ground, as world boxes for the weather's shelter (the
+	// weather_shelter group): snow and sand drift in their lee.
+	Array get_wind_obstacles(const Rect2 &p_rect);
+	void set_wind_obstacles(bool p_enabled);
+	bool is_wind_obstacles_enabled() const { return wind_obstacles; }
 	// The stones of one layer in p_rect, each a Dictionary (position, basis, scale, footprint, film, rock_type,
 	// family, variant): what the layer would place, for tests.
 	Array get_stones(int p_layer, const Rect2 &p_rect);

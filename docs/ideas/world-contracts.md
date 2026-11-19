@@ -39,6 +39,8 @@ contract returns with no provider.
 | `rain_share_at(pos)` | 0..1 | 1 | Liquid share (Jennings 2018) at the air there |
 | `rainfall_at(pos)`, `snowfall_at(pos)` | mm/h of water | 0 | The precipitation split by `rain_share_at` |
 | `smoke_at(pos)` | g/m2 | 0 | Fires' smoke particulate in the column (the haze layer) |
+| `obstacle_height_at(pos)` | m | 0 | Wind-blocking obstacles (rocks, walls, buildings, vehicles) over the ground, on the provider's shelter grid |
+| `obstacle_lee_at(pos)` | 0..1 | 1 | Near-ground wind behind upwind obstacles over the open wind: 0.15 in the cavity, back to 1 by 25 H |
 | `washout_at(pos, coarse)`, static `washout_rate(rain, snow, coarse)` | 1/s | 0 | Below-cloud scavenging of particles, a R^b: fine smoke about 1e-5 at 1 mm/h, coarse dust about 3e-4, snow five times rain |
 | `surface_wetness_at(pos)` | 0..1 | 0 | Film over storage; 1 where puddles stand |
 | `puddle_at(pos)` | mm | 0 | |

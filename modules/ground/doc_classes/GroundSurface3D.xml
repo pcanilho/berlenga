@@ -779,6 +779,9 @@
 		<member name="near_resolution" type="int" setter="set_near_resolution" getter="get_near_resolution" default="512">
 			The near field's texels per side (a multiple of 64).
 		</member>
+		<member name="obstacle_lee" type="bool" setter="set_obstacle_lee" getter="is_obstacle_lee_enabled" default="true">
+			Blown sand slows behind rocks, walls, buildings and vehicles: the friction speed is scaled by WorldWeather.obstacle_lee_at (about 0.15 in the cavity behind one), so the flux falls and the sand drops in their lee as shadow dunes (Hesp 1981). Read every half second with the plants' shelter.
+		</member>
 		<member name="outer_spacing" type="float" setter="set_outer_spacing" getter="get_outer_spacing" default="0.125">
 			The patch's vertex spacing over the outer half of the field, in metres.
 		</member>

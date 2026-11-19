@@ -81,6 +81,7 @@ public:
 	bool dirty = true;
 	Vector2 baked_direction;
 	Vector<float> cells; // 4 per cell
+	Vector<float> heights; // per cell: the tallest obstacle's top over its ground, m (0: none)
 	float bake_ms = 0.0f;
 
 	Ref<Image> image;
@@ -89,13 +90,17 @@ public:
 	float cell_size() const { return extent / resolution; }
 	Rect2 rect() const;
 	bool needs_bake(Vector2 p_center, Vector2 p_direction) const;
-	// p_extra: obstacles found at bake time (nodes in the weather_shelter group), world AABBs.
-	void bake(Vector2 p_center, Vector2 p_direction, const LocalVector<AABB> &p_extra);
+	// p_extra: obstacles found at bake time (nodes in the weather_shelter group), world AABBs. Each box's height
+	// counts from ground_height: the caller lowers boxes standing on higher terrain to it. p_own false leaves
+	// out the boxes in obstacles (the caller passed them, lowered, in p_extra).
+	void bake(Vector2 p_center, Vector2 p_direction, const LocalVector<AABB> &p_extra, bool p_own = true);
 	// The four values at a world point (bilinear, as the texture is read); outside the square, no shelter.
 	void sample(Vector2 p_xz, float r_cell[4]) const;
 	// Mean wind at height p_z over the wind on open ground of roughness p_z0 at the same height: the canopy
 	// profile and the obstacles' lee, 0..1.
 	static float factor(float p_z, float p_z0, const float p_cell[4]);
+	// The obstacles' height over the ground at a world point (the cell it falls in), m; 0 outside the square.
+	float height_at(Vector2 p_xz) const;
 	// The open-ground log law at p_z over the 10 m wind.
 	static float open_profile(float p_z, float p_z0);
 };

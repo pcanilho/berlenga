@@ -3534,6 +3534,27 @@ void GroundSurface3D::_wind_update(double p_delta) {
 			}
 		}
 	}
+	// The lee of rocks, walls, buildings and vehicles (WorldWeather.obstacle_lee_at): the wind near the ground there
+	// over the open wind, on the same grid. Sand slows and drops behind them (shadow dunes, Hesp 1981).
+	LocalVector<float> g_lee;
+	const WorldWeather *lee_src = obstacle_lee ? WorldContracts::weather() : nullptr;
+	if (lee_src && lee_src->has_provider()) {
+		g_lee.resize(gn * gn);
+		bool any = false;
+		for (int gz = 0; gz < gn; gz++) {
+			for (int gx = 0; gx < gn; gx++) {
+				const int lx = MIN(gx * step, n - 1);
+				const int lz = MIN(gz * step, n - 1);
+				const Vector3 p((ground_origin.x + lx) * ground_spacing, ground[lz * n + lx], (ground_origin.y + lz) * ground_spacing);
+				const float v = lee_src->obstacle_lee_at(p);
+				g_lee[gz * gn + gx] = Math::is_finite(v) ? CLAMP(v, 0.0f, 1.0f) : 1.0f;
+				any = any || g_lee[gz * gn + gx] < 0.999f;
+			}
+		}
+		if (!any) {
+			g_lee.clear();
+		}
+	}
 	const Vector2 wind = _wind_10m();
 	const float speed = wind.length();
 	const float ustar = GroundRipples::friction_speed(speed);
@@ -3549,7 +3570,11 @@ void GroundSurface3D::_wind_update(double p_delta) {
 			const float tx = fx - x0;
 			const float tz = fz - z0;
 			const float lambda = Math::lerp(Math::lerp(g_lambda[z0 * gn + x0], g_lambda[z0 * gn + x0 + 1], tx), Math::lerp(g_lambda[(z0 + 1) * gn + x0], g_lambda[(z0 + 1) * gn + x0 + 1], tx), tz);
-			const float r = shelter_ratio_for(lambda);
+			float r = shelter_ratio_for(lambda);
+			if (!g_lee.is_empty()) {
+				// u* scales with the wind at a fixed height over the same roughness: the plants' ratio times the lee.
+				r *= Math::lerp(Math::lerp(g_lee[z0 * gn + x0], g_lee[z0 * gn + x0 + 1], tx), Math::lerp(g_lee[(z0 + 1) * gn + x0], g_lee[(z0 + 1) * gn + x0 + 1], tx), tz);
+			}
 			// The flux factor at a reference gale (u* 0.5 m/s), so the share does not jump with the wind.
 			const float f = GroundRipples::saltation_flux(0.5f * r) / GroundRipples::saltation_flux(0.5f);
 			if (Math::abs(f - shelter_flux[i]) > 0.02f) {
@@ -6323,6 +6348,8 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_sand_glints", "enabled"), &GroundSurface3D::set_sand_glints);
 	ClassDB::bind_method(D_METHOD("is_sand_glints"), &GroundSurface3D::is_sand_glints);
 	ClassDB::bind_method(D_METHOD("set_wind_shelters", "shelters"), &GroundSurface3D::set_wind_shelters);
+	ClassDB::bind_method(D_METHOD("set_obstacle_lee", "enabled"), &GroundSurface3D::set_obstacle_lee);
+	ClassDB::bind_method(D_METHOD("is_obstacle_lee_enabled"), &GroundSurface3D::is_obstacle_lee_enabled);
 	ClassDB::bind_method(D_METHOD("get_wind_shelters"), &GroundSurface3D::get_wind_shelters);
 	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("shelter_ratio_for", "lambda"), &GroundSurface3D::shelter_ratio_for);
 	ClassDB::bind_method(D_METHOD("get_blown_at", "x", "z"), &GroundSurface3D::get_blown_at);
@@ -6467,6 +6494,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "world_puddles"), "set_world_puddles", "is_world_puddles");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "world_puddle_density", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_world_puddle_density", "get_world_puddle_density");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "obstacle_lee"), "set_obstacle_lee", "is_obstacle_lee_enabled");
 	ADD_GROUP("Drawing", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_spacing", PROPERTY_HINT_RANGE, "0.01,1,0.005,suffix:m"), "set_detail_spacing", "get_detail_spacing");

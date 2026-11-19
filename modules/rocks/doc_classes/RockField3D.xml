@@ -205,6 +205,13 @@
 				Stones of a layer in [param rect], placed whether or not they are built, as dictionaries with [code]position[/code], [code]basis[/code], [code]scale[/code], [code]ground[/code], [code]footprint[/code], [code]film[/code], [code skip-lint]rock_type[/code], [code]family[/code], [code]bin[/code], [code]variant[/code], [code skip-lint]layer[/code] and [code]top[/code] (height of its highest point, from its shape as placed).
 			</description>
 		</method>
+		<method name="get_wind_obstacles">
+			<return type="Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				Boulders in [param rect] standing at least 0.5 m out of the ground, as world [AABB]s (the footprint's square, from the ground to about the stone's top). The weather's shelter reads them (the field joins the [code]weather_shelter[/code] group), so snow drifts and blown sand settle in their lee. Empty while [member wind_obstacles] is off.
+			</description>
+		</method>
 		<method name="is_breaking_supported" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -524,6 +531,9 @@
 		</member>
 		<member name="variants" type="int" setter="set_variants" getter="get_variants" default="6">
 			Shapes per rock type and family. Every stone uses one of them as a MultiMesh instance.
+		</member>
+		<member name="wind_obstacles" type="bool" setter="set_wind_obstacles" getter="is_wind_obstacles_enabled" default="true">
+			Boulders block the wind: the field joins the [code]weather_shelter[/code] group and gives its boulders through [method get_wind_obstacles], so WeatherMap3D slows the wind in their lee and snow and sand drift there.
 		</member>
 	</members>
 	<signals>
