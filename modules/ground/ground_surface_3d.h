@@ -728,6 +728,9 @@ private:
 	// changes, not when a texture it samples is rewritten in place (as SnowSurface3D's snow_serial).
 	bool deform_serial_dirty = false;
 	uint32_t deform_serial = 0;
+	// The source material's serial (the terrain lowered under the patch) waits for the next second.
+	bool source_serial_dirty = false;
+	uint64_t source_serial_msec = 0;
 	void _bump_deform_serial();
 	double cells_accum = 0.0;
 	double age_accum = 0.0;

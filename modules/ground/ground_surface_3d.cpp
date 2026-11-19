@@ -2930,11 +2930,22 @@ void GroundSurface3D::_upload() {
 
 // Once a frame at most: the patch material's ground_deform_serial (BaseMaterial3D::_ground_deform_code), so the
 // path tracer recaptures the patch's displaced vertices after the field's texture is rewritten in place.
+// The terrain round the patch (the source material, lowered under it) is bumped too, at most once a second and once
+// more after the last change: a recapture of the whole terrain costs far more than the patch's.
 void GroundSurface3D::_bump_deform_serial() {
+	if (source_serial_dirty && material.is_valid()) {
+		const uint64_t now = OS::get_singleton()->get_ticks_msec();
+		if (now - source_serial_msec >= 1000) {
+			source_serial_dirty = false;
+			source_serial_msec = now;
+			RenderingServer::get_singleton()->material_set_param(material->get_rid(), "ground_deform_serial", float(deform_serial));
+		}
+	}
 	if (!deform_serial_dirty || patch_material.is_null()) {
 		return;
 	}
 	deform_serial_dirty = false;
+	source_serial_dirty = true;
 	deform_serial = (deform_serial + 1) % 1000000;
 	RenderingServer::get_singleton()->material_set_param(patch_material->get_rid(), "ground_deform_serial", float(deform_serial));
 }
