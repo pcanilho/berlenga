@@ -14,6 +14,9 @@ extends Node3D
 #   --avalanche=P      an avalanche puts P Pa on every tree from 1 s (WorldSnow stub), on a slope down +Z
 #   --avalanche-test   avalanche checks (WorldSnow and WorldGround stubs): pressure breaks crowns, then stems,
 #                      downslope, and the felled crowns leave the weather map's canopy
+#   --snow=L           every crown holds L kg/m2 of snow from the start (WorldSnow stub), in a calm
+#   --snow-test        snow-laden crown checks: the branches bow with the load and creep, heavy wet snow
+#                      breaks them and the break shakes the snow off, and they spring back when it goes
 #   --spp=N with --pt  path traced; default raster
 #   CAM="x,y,z,lx,ly,lz,fov" camera
 
@@ -21,12 +24,21 @@ var fails := 0
 var wind: TreeWind3D
 var events := []
 var target_speed := 30.0
+var winter := false # Trees in their January state (bare broadleaves), for the snow checks.
 var ramp := 3.0 # Seconds the wind takes to rise from 12 m/s to the storm's speed.
 
 func _process(_delta: float) -> void:
 	if wind and ramp > 0.0:
 		var t := wind.get_time()
 		wind.fallback_wind = Vector2(lerpf(12.0, target_speed, clampf(t / ramp, 0.0, 1.0)), 0.0)
+
+# Script stubs held by the contracts are dropped before quitting (a script instance freed after the engine's
+# script languages aborts the exit).
+func _release_stubs() -> void:
+	var wc = Engine.get_singleton("WorldContracts")
+	wc.set_snow(null)
+	wc.set_ground(null)
+	wc.set_fire(null)
 
 func _check(ok: bool, what: String) -> void:
 	print(("PASS " if ok else "FAIL ") + what)
@@ -43,6 +55,8 @@ func _tree(p: int, seed: int, at: Vector3) -> Dictionary:
 	g.seed = seed
 	g.rigged = true
 	g.needle_sprays = true
+	if winter:
+		g.season = preload("res://main.gd").weather_season(20)
 	var m := g.generate()
 	var mmi := MultiMeshInstance3D.new()
 	mmi.multimesh = TreeWind3D.make_multimesh(m, [Transform3D(Basis(), at)])
@@ -122,8 +136,14 @@ func _setup(args: Dictionary) -> Array:
 	return trees
 
 func run(args: Dictionary) -> void:
+	if args.has("snow-test"):
+		await _snow_test()
+		_release_stubs()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if args.has("avalanche-test"):
 		await _avalanche_test()
+		_release_stubs()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	if args.has("test"):
@@ -132,6 +152,10 @@ func run(args: Dictionary) -> void:
 		return
 	_world(args.has("pt"), int(args.get("spp", "16")))
 	var snow: WorldSnow = null
+	if args.has("snow"):
+		var ss: WorldSnow = load("res://snow_load_stub.gd").new()
+		ss.load_kg_m2 = float(args.snow)
+		Engine.get_singleton("WorldContracts").set_snow(ss)
 	if args.has("avalanche"):
 		snow = load("res://avalanche_stub.gd").new()
 		Engine.get_singleton("WorldContracts").set_snow(snow)
@@ -242,6 +266,108 @@ func _test() -> void:
 
 # Avalanche impact (TreeWind3D, trees.md 5ak): a calm day, so the wind breaks nothing; a WorldSnow stub
 # sets the peak pressure on every tree and a WorldGround stub tilts the ground toward +Z.
+# Mean drop of the side branches' tips (m) and their mean bow (degrees: drop over length), posed against rest, for
+# the tree at index k (the end segments of laterals: not a stem, level within 45 degrees, over 0.5 m).
+func _lateral_bow(k: int) -> Vector2:
+	var mmis := []
+	for c in get_children():
+		if c is MultiMeshInstance3D:
+			mmis.append(c)
+	var mm: MultiMesh = mmis[k].multimesh
+	var rig: PackedFloat32Array = mm.mesh.get_meta("tree_rig")
+	var st: int = TreeGenerator.RIG_STRIDE
+	var nb := rig.size() / st
+	var buf := RenderingServer.multimesh_get_buffer(mm.get_rid())
+	var drop := 0.0
+	var bow := 0.0
+	var n := 0
+	var parent_of := {}
+	for b in range(1, nb):
+		parent_of[int(rig[b * st + TreeGenerator.RIG_PARENT])] = true
+	for b in range(1, nb):
+		if parent_of.has(b):
+			continue # The branch ends only: where the droop shows.
+		var o := b * st
+		var dir := Vector3(rig[o + TreeGenerator.RIG_DIR_X], rig[o + TreeGenerator.RIG_DIR_Y], rig[o + TreeGenerator.RIG_DIR_Z])
+		var length := rig[o + TreeGenerator.RIG_LENGTH]
+		if int(rig[o + TreeGenerator.RIG_PARENT]) == 0 or absf(dir.normalized().y) > 0.7 or length < 0.5:
+			continue
+		var tip := Vector3(rig[o + TreeGenerator.RIG_PIVOT_X], rig[o + TreeGenerator.RIG_PIVOT_Y], rig[o + TreeGenerator.RIG_PIVOT_Z]) + dir.normalized() * length
+		var f := b * 20
+		var xf := Transform3D(Basis(Vector3(buf[f], buf[f + 4], buf[f + 8]), Vector3(buf[f + 1], buf[f + 5], buf[f + 9]), Vector3(buf[f + 2], buf[f + 6], buf[f + 10])), Vector3(buf[f + 3], buf[f + 7], buf[f + 11]))
+		var posed := xf * tip
+		var rest: Vector3 = mm.get_instance_transform(0).origin + tip
+		drop += rest.y - posed.y
+		bow += rad_to_deg(asin(clampf((rest.y - posed.y) / length, -1.0, 1.0)))
+		n += 1
+	return Vector2(drop / maxf(n, 1), bow / maxf(n, 1))
+
+func _snow_test() -> void:
+	var body := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	cs.shape = WorldBoundaryShape3D.new()
+	body.add_child(cs)
+	add_child(body)
+	ramp = 0.0
+	winter = true
+	var snow: WorldSnow = load("res://snow_load_stub.gd").new()
+	Engine.get_singleton("WorldContracts").set_snow(snow)
+	# Norway spruce, silver fir, Scots pine, beech (bare: snow on its limbs only).
+	var trees := _setup({"speed": "0.3", "turbulence": "0.05", "presets": "4,14,3,1"})
+	wind.snow_creep_hours = 0.0
+	for f in 45:
+		await get_tree().physics_frame
+	var base := []
+	for k in trees.size():
+		base.append(_lateral_bow(k))
+	var line := func(tag: String) -> String:
+		var parts := []
+		for k in trees.size():
+			var b: Vector2 = _lateral_bow(k) - base[k]
+			parts.append("%.0f m: %.1f deg (%.0f cm)" % [trees[k].height, b.y, b.x * 100.0])
+		return tag + " " + ", ".join(parts)
+	# A fresh fall the canopy holds (spruce capacity about 15-30 kg/m2 of ground).
+	snow.load_kg_m2 = 4.0
+	for f in 45:
+		await get_tree().physics_frame
+	print(line.call("4 kg/m2:"))
+	var light := []
+	for k in trees.size():
+		light.append((_lateral_bow(k) - base[k]).y)
+	_check(light[0] > 1.0 and light[0] < 15.0 and wind.get_snow_break_count() == 0, "4 kg/m2: spruce laterals bow %.1f deg, nothing breaks (%d)" % [light[0], wind.get_snow_break_count()])
+	snow.load_kg_m2 = 15.0
+	for f in 45:
+		await get_tree().physics_frame
+	print(line.call("15 kg/m2:"))
+	var full: float = (_lateral_bow(0) - base[0]).y
+	# Scots pine is the snow-breakage species (damage from about 20 kg/m2 of crown, Peltola et al. 1999): its
+	# thinnest limbs may go under a full canopy; no top or stem does.
+	var thick := 0
+	for e in events:
+		if not e.uprooted and e.radius >= 0.05:
+			thick += 1
+	_check(full > light[0] * 1.5 and full >= 8.0 and full <= 35.0 and thick == 0 and wind.get_storm_throw_count() == 0, "15 kg/m2 (a full canopy): spruce laterals bow %.1f deg (10-30 measured); no top or stem breaks (%d thin limbs)" % [full, wind.get_snow_break_count()])
+	# The wood creeps on under a held load (Ray and Bret-Harte 2019: softwoods about a third more over hours).
+	wind.snow_creep_hours = 0.002
+	for f in 300:
+		await get_tree().physics_frame
+	var crept: float = (_lateral_bow(0) - base[0]).y
+	print(line.call("15 kg/m2 crept:"))
+	_check(crept > full * 1.12 and crept < full * 1.6, "creep: the held load bows them on to %.1f deg (%.0f%% more)" % [crept, (crept / full - 1.0) * 100.0])
+	# Heavy wet snow (Peltola et al. 1999; critical crown loads of some 20-50 kg/m2 for pines).
+	snow.load_kg_m2 = 60.0
+	for f in 120:
+		await get_tree().physics_frame
+	print(line.call("60 kg/m2:"))
+	_check(wind.get_snow_break_count() >= 1, "60 kg/m2 of wet snow breaks tops and limbs (%d breaks, %d stems thrown)" % [wind.get_snow_break_count(), wind.get_storm_throw_count()])
+	_check(snow.shakes >= 1 and snow.shaken_kg > 0.0 and wind.get_snow_shaken_kg() > 0.0, "the breaks shake the snow onto the pack (%d shakes, %.0f kg)" % [snow.shakes, snow.shaken_kg])
+	snow.load_kg_m2 = 0.0
+	wind.snow_creep_hours = 0.0
+	for f in 60:
+		await get_tree().physics_frame
+	var back: float = absf((_lateral_bow(3) - base[3]).y)
+	_check(back < 1.0, "the snow gone, the beech's limbs spring back (%.2f deg left)" % back)
+
 func _avalanche_test() -> void:
 	var body := StaticBody3D.new()
 	var cs := CollisionShape3D.new()

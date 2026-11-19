@@ -19069,6 +19069,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	}
 	if (rigged) {
 		mesh->set_meta(SNAME("tree_rig"), _rig_data());
+		// The crown's spread (95th percentile of the leaves' reach), for the snow it holds (TreeWind3D; trees.md 5al).
+		mesh->set_meta(SNAME("tree_crown_radius"), crown_radius);
+		{
+			// The share of its foliage the tree carries in this mesh's season (1 evergreen or in full leaf).
+			const LeafSeason fls = _leaf_season(preset, season);
+			mesh->set_meta(SNAME("tree_foliage"), CLAMP(fls.out * (1.0f - fls.fallen), 0.0f, 1.0f));
+		}
 		if (storm_kit && !fallen && decay_class == 0 && !fallen_branch) {
 			_storm_kit(mesh, static_materials);
 		}
