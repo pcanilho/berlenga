@@ -4987,7 +4987,19 @@ PackedVector4Array TerrainGenerator3D::get_boulders(const Rect2 &p_rect, real_t 
 				if (lost || travelled < 4.0f || !p_rect.has_point(p)) {
 					continue;
 				}
-				out.push_back(Vector4(p.x, _ground(p.x, p.y), p.y, radius));
+				// Blocks that came to rest where dunes or a sand sea now lie are buried: none where the sand stands
+				// deeper than half the block (they only stood out of the dunes as stray tops).
+				real_t sand = 0.0;
+				if (!dune_sand.is_empty()) {
+					sand += _dune_sample(dune_sand, p.x, p.y);
+				}
+				if (!sea_sand.is_empty()) {
+					sand += _sea_sample(p.x, p.y);
+				}
+				if (sand > 0.5f * radius) {
+					continue;
+				}
+				out.push_back(Vector4(p.x, _ground(p.x, p.y) + sand, p.y, radius));
 			}
 		}
 	}
