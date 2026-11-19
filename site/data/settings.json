@@ -3926,6 +3926,20 @@
    "topic": ""
   },
   {
+   "name": "Burning buildings",
+   "settings": [
+    "PhysXBuildingFire3D",
+    "rooms",
+    "growth_time",
+    "collapse_share"
+   ],
+   "note": "",
+   "what": "wooden buildings catch from embers and ground fire; rooms flash over, the windows break and flames lean out of them, fire spreads room to room and the frame collapses.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
    "name": "Burning logs",
    "settings": [
     "PhysXFireSpread3D.vegetation_field"
