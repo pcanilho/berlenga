@@ -1737,6 +1737,35 @@ The same round adds `fire_age_map` for the trees thread (needle cast on
 fire-killed crowns): R8, game years since each cell caught over 2 (about
 3-day steps), 0 where nothing burnt, over fire_char_rect.
 
+### Smoke haze dims the sun (picked 19 Nov morning, first of three)
+
+Built. Research as in the card notes below: mass extinction about 4.5
+m2/g at 550 nm, single scattering albedo about 0.9, Angstrom exponent
+about 1.8 (Reid et al. 2005); emission factors of PM2.5 about 7 g/kg for
+grass, 17 g/kg for temperate forest (Andreae 2019), about 30 g/kg
+smouldering (Urbanski 2014); afternoons several kelvin cooler under thick
+smoke (Robock 1988). Here: WorldFire gains smoke_sources() (x, y, z,
+kg/s of PM2.5 in the fire's own real time). PhysXFireSpread3D gives two:
+its flames (plume heat / 0.75 / 18.6 MJ/kg times the factor by fuel
+type) and its smouldering duff. WeatherMap3D (weather_smoke.cpp, weather
+owners' code, flagged) keeps cell_smoke, g/m2 in the column over each
+map cell: the sources laid along the step's wind run (no puffs on long
+steps), semi-Lagrangian advection by the wind aloft (log law to 1 km),
+eddy diffusion at 300 m2/s, an e-folding smoke_lifetime of 3 days, and
+the column shifts with the map. Effects at the map's centre: the
+aerosol haze's extinction gains tau / 2000 m; the daily temperature
+range is scaled by e^(-0.35 tau); SkyClock multiplies the sun (and moon)
+light by the smoke's RGB transmittance, read where its ray crosses the
+layer at 2 km, along the slant path, tau x (0.83, 1, 1.35) for red,
+green and blue. Test (scratch, 10 kg/s, about a 10 GW fire, 3 m/s wind,
+three hours): 2.8 g/m2 (tau 12.6) 1 km downwind, 1.9 at 250 m and 0.5 at
+500 m across it, tau 6 at 1.9 km; Q / (u W) gives the same; gone two days
+after the source stops. A 100 m2 grass fire gives about 5 g/s, too little
+to see, as it should be. Left: the cloud shadow bake could take the
+smoke's grey part so plumes shade the ground in patches (weather
+owners); the haze is one value over the map's centre, not a field; the
+lofted plume is treated as mixed through 2 km.
+
 ### Next-round options (card, 19 Nov)
 
 Research notes for the card that follows the four picks above.

@@ -183,8 +183,10 @@ void PhysXSmoulder::step(PhysXFireSpread3D *p_fire, float p_delta) {
 		}
 	}
 	if (active.is_empty()) {
+		rate_kg_s = 0.0f;
 		return;
 	}
+	const float burnt_before = burnt_kg;
 	const float wind = f->_wind().length();
 	const float h = f->cell_size;
 	const int nx = f->nx, nz = f->nz;
@@ -244,6 +246,12 @@ void PhysXSmoulder::step(PhysXFireSpread3D *p_fire, float p_delta) {
 			}
 		}
 	}
+	rate_kg_s = (burnt_kg - burnt_before) / MAX(p_delta, 1.0e-4f);
+	Vector3 c;
+	for (uint32_t i : active) {
+		c += f->_cell_world(int(i % nx), int(i / nx));
+	}
+	centre = active.is_empty() ? Vector3() : c / float(active.size());
 }
 
 float PhysXSmoulder::heat_at(uint32_t p_i) const {

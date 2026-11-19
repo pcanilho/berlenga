@@ -32,6 +32,7 @@
 #include "sky_clock.h"
 
 #include "atmosphere.h"
+#include "weather_map_3d.h"
 #include "weather_sky_material.h"
 
 #include "core/config/engine.h"
@@ -414,7 +415,13 @@ void SkyClock::_apply_lights() {
 			// The light at the ground: the body above the air through the air's transmittance (the
 			// atmosphere's own tables, so the light and the sky agree), coloured by what is left.
 			const double top = b.path == &sun_light ? get_sun_illuminance_top() : get_moon_illuminance_top();
-			const Vector3 t = air_transmittance(b.alt / DEG, light->get_global_position().y);
+			Vector3 t = air_transmittance(b.alt / DEG, light->get_global_position().y);
+			// Fires' smoke over the weather map's centre dims and reddens it (WeatherMap3D smoke haze).
+			if (const WeatherMap3D *map = WeatherMap3D::get_active()) {
+				const Rect2 r = map->get_map_rect();
+				const Vector3 st = map->get_smoke_transmittance(Vector3(r.get_center().x, 0.0f, r.get_center().y), dir);
+				t = Vector3(t.x * st.x, t.y * st.y, t.z * st.z);
+			}
 			const double peak = MAX(MAX(t.x, t.y), t.z);
 			if (peak > 1e-6) {
 				light->set_color(Color(t.x / peak, t.y / peak, t.z / peak).linear_to_srgb());

@@ -238,6 +238,12 @@
 				How many times smouldering under unburnt fine fuel has flamed again (a holdover fire).
 			</description>
 		</method>
+		<method name="get_smoke_rate" qualifiers="const">
+			<return type="float" />
+			<description>
+				Smoke particulate (PM2.5) it gives off now, kg per second: about 7 g per kg of grass burnt and 17 g per kg of litter and crowns (Andreae 2019), 30 g per kg of smouldering duff (Urbanski 2014). Its [method WorldFire.smoke_sources] entries.
+			</description>
+		</method>
 		<method name="get_smoulder_flow" qualifiers="const">
 			<return type="PhysXFlow3D" />
 			<description>
