@@ -378,5 +378,10 @@ Plan, in `modules/vegetation/tree_bark_detail.*` (BarkDetail3D), the ground deta
   cloud renderer. `BarkDetail3D.make_bark_profile` packs it for a `tree_bark_profile` mesh meta (about 110 KB a
   mesh, the first 4.2 m) that TreeGenerator stores while it still has the arrays; without the meta the readback
   is the fallback and the binning runs on the worker.
+- Review round (docs, 19 Nov): birch pieces read as flat tan stickers and pine plates as orange cards at the
+  silhouette. Now: birch strips are torn horizontal bands (ragged edges, narrowing ends) whose middle stays on the
+  stem and whose ends stand up off it and roll back into scrolls, white side out, the peeled plies cream-salmon;
+  pine plates are twice as thick (1.6 to 3 cm) and sunk into the relief, and broken edges are the outer bark in
+  section (darkened, a trace of inner bark) instead of inner bark, which now takes the stem's hue.
 - Cost (bench, 4 trunks, 1,045 pieces): main thread 0.15 ms mean, 3.4 ms worst an update with the meta (33 ms
   mean, 826 ms worst with the readback); 64 bytes a piece in instance buffers (67 KB), 32 shared shapes.
