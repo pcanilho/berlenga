@@ -303,10 +303,34 @@
 				Time the last [method write_to_terrain] took, in milliseconds.
 			</description>
 		</method>
+		<method name="get_last_sun_horizon_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Time the last rebuild of the far sun shadows' horizon map took, in milliseconds.
+			</description>
+		</method>
+		<method name="get_springs" qualifiers="const">
+			<return type="PackedVector4Array" />
+			<description>
+				The oasis springs of the last [method generate] (see [member oasis_count]): x, the still water's level y, z, and 0 for the discharge (the pools' default). Set this generator as an [OasisSprings3D]'s [code]spring_source[/code] and that node as [member oasis_springs].
+			</description>
+		</method>
+		<method name="get_sun_horizon_image" qualifiers="const">
+			<return type="Image" />
+			<description>
+				The far sun shadows' horizon map (FORMAT_RF: the tangent of each point's horizon toward the sun, -1 off the ground), null before the first [method update_sun_horizon].
+			</description>
+		</method>
 		<method name="get_mean_runoff" qualifiers="const">
 			<return type="float" />
 			<description>
 				Mean runoff over the land of the last [method generate] with a [member climate_recipe], in mm a year. Lakes balance their inflow and evaporation with it.
+			</description>
+		</method>
+		<method name="carve_oases">
+			<return type="bool" />
+			<description>
+				Carves the oasis hollows again to the pools of [member oasis_springs] (rebuilding them first); [method generate] does it on its own. Call it when the pools change after the ground was made, then write the ground again. Returns [code]true[/code] when any hollow was carved.
 			</description>
 		</method>
 		<method name="get_nebkha_height" qualifiers="const">
@@ -584,6 +608,13 @@
 				Writes the generated heights into the ground's vertices inside the rectangle. Returns the number written.
 			</description>
 		</method>
+		<method name="update_sun_horizon">
+			<return type="bool" />
+			<param index="0" name="to_sun" type="Vector3" />
+			<description>
+				Rebuilds the far sun shadows' horizon map for the sun in direction [param to_sun] (world, toward the light): each point's horizon toward the sun as a tangent, on the sky grid ([member sky_cell]) turned to the sun's azimuth, by a convex-hull sweep along each line (Timonen and Westerholm 2010). Skipped, returning [code]false[/code], while the azimuth stays within a quarter degree of the last built; the map does not depend on the sun's elevation. Called on its own a few times a second while [member sun_shadows] is on; needs [member sky_occlusion].
+			</description>
+		</method>
 		<method name="update_sky_light">
 			<return type="bool" />
 			<param index="0" name="panorama" type="Image" />
@@ -749,6 +780,12 @@
 		<member name="max_sea_depth" type="float" setter="set_max_sea_depth" getter="get_max_sea_depth" default="60.0">
 			Deepest the seabed goes (m below sea level).
 		</member>
+		<member name="oasis_count" type="int" setter="set_oasis_count" getter="get_oasis_count" default="3">
+			Springs on each sand sea, where a confined aquifer reaches its lowest interdune floors (Siwa, Farafra): sites on a 48 m lattice where the sand is thin, scored by how far the floor lies under the ground 120 m round, the deepest kept at least 400 m apart, the still water 0.6 m under the lowest ground at the site. [method get_springs] lists them. 0: none.
+		</member>
+		<member name="oasis_springs" type="NodePath" setter="set_oasis_springs" getter="get_oasis_springs" default="NodePath(&quot;&quot;)">
+			An [OasisSprings3D] whose pools the hollows are carved to: inside 0.92 of each pool's outline a bed falling to some 2.4 m (less for small pools) with lumps and runnels, meeting the still water at 0.92 of the outline so the outline lies under a thin film of water; past it a 7 degree beach for 3 m, then a 24 degree bank up to the dunes.
+		</member>
 		<member name="plunging_cliffs" type="bool" setter="set_plunging_cliffs" getter="is_plunging_cliffs" default="true">
 			Steep coasts with no beach run on below the sea: the land's slope 15 to 80 m inland, where steeper than about 31 degrees, is carried down through the swash line and under the water to 25 m, the floor joining the seabed profile within 160 m (plunging cliffs, Sunamura 1992). Off, every coast keeps a low strip over the swash and a shallow seabed.
 		</member>
@@ -895,6 +932,12 @@
 		</member>
 		<member name="strata_wobble" type="float" setter="set_strata_wobble" getter="get_strata_wobble" default="12.0">
 			Metres the layer heights wander by (fbm noise of 700 m), so the bands do not follow contour lines exactly.
+		</member>
+		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
+			The DirectionalLight3D whose direction the far sun shadows follow. Empty: the first visible one in the scene.
+		</member>
+		<member name="sun_shadows" type="bool" setter="set_sun_shadows" getter="is_sun_shadows" default="true">
+			Far sun shadows for [TerrainMaterial3D] (raster): the ground's horizon toward the sun, rebuilt with [method update_sun_horizon] whenever the sun's azimuth moves, published as the [code]terrain_sun_horizon_map[/code], [code]terrain_sun_horizon_frame[/code] and [code]terrain_sun_horizon_size[/code] shader globals. Exact hill and mountain shadows at any range, where the shadow cascades end. Needs [member sky_occlusion] (it reads the same grid).
 		</member>
 		<member name="talus_angle" type="float" setter="set_talus_angle" getter="get_talus_angle" default="35.0">
 			Angle of repose for scree: rock steeper than this sheds talus, which settles on slopes below it.

@@ -2149,10 +2149,11 @@
    "name": "Streamed placement",
    "settings": [
     "VegetationField3D.streaming",
-    "stream_radius"
+    "stream_radius",
+    "still_shot"
    ],
    "note": "",
-   "what": "tiles are placed on worker threads around the camera, identical to a full placement; 2 to 3 ms of main-thread time a frame through 1 km of oak wood.",
+   "what": "tiles are placed on worker threads around the camera, identical to a full placement, and `still_shot` stops streaming once the view settles; 2 to 3 ms of main-thread time a frame through 1 km of oak wood.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Placement"
@@ -2302,7 +2303,7 @@
     "GrassField3D"
    ],
    "note": "",
-   "what": "blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind (each blade answers gusts at its own frequency, about 2 Hz, and the sway rolls downwind as waves) and darken in rain; near tall grass at 120 blades per m²; the sward darkens inside from its leaf area (raster AO) and casts its blades' true shadow; path traced.",
+   "what": "blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind (each blade answers gusts at its own frequency, about 2 Hz, and the sway rolls downwind as waves) and darken in rain; near tall grass at 120 blades per m²; the sward darkens inside from its leaf area (raster AO) and casts its blades' true shadow; path traced. Highlights run along each blade over a folded mid vein, raster and path traced alike (`fibre_shading`).",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
@@ -2437,6 +2438,7 @@
    "name": "Forest floor",
    "settings": [
     "PlantGenerator.make_floor(stand, variants)",
+    "FLOOR_MEDITERRANEAN",
     "VegetationField3D.forest_floor_enabled"
    ],
    "note": "",
@@ -2617,6 +2619,21 @@
    ],
    "note": "",
    "what": "fellfield, alpine grassland, snowbed and scree sets above the treeline, placed by climate, curvature, sunlight, soil depth and talus.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Desert plants",
+   "settings": [
+    "PlantGenerator.make_desert()",
+    "DESERT_OASIS",
+    "PlantSpecies.RULE_SPRING",
+    "RULE_POOL_DISTANCE",
+    "VegetationField3D.spring_pools"
+   ],
+   "note": "",
+   "what": "oases grow at the terrain's springs with date palms, olives and a ring of shrubs, reeds and rushes edge the spring pools, and each nebkha mound holds a shrub.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -3443,10 +3460,11 @@
     "forests_enabled",
     "wet_enabled",
     "glide_enabled",
-    "water_enabled"
+    "water_enabled",
+    "crowns_enabled"
    ],
    "note": "",
-   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice and breaks through thin ice.",
+   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts, leaving a crown wall, flanks that fade downslope and a grey scoured bed; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice and breaks through thin ice.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
@@ -3741,6 +3759,17 @@
    ],
    "note": "",
    "what": "breaking waves wet the shore and cliff faces downwind and leave salt that rain washes off; salted grass browns at the tips.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Wet tracks",
+   "settings": [
+    "WeatherMap3D.wet_tracks"
+   ],
+   "note": "",
+   "what": "bodies and vehicles coming out of water, wet mud or puddles leave wet footprints and tyre tracks that fade along the way, drip where they stand, and dry with the weather.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

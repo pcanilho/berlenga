@@ -1794,6 +1794,8 @@ func _test() -> void:
 				break
 		var near_chunks := net.get_mesh_chunk_count()
 		var stream_ms := Time.get_ticks_msec() - t_stream
+		# (Why, when it finds nothing: where the target stands against the rock, and whether the network has caves.)
+		print("  cave streaming target %s: %.2f m from the rock (negative in air), %d caves, follow %s, streaming %s" % [walker.global_position, net.get_rock_distance(walker.global_position), net.get_cave_count(), net.get_node_or_null(net.follow_target) != null, net.is_streaming()])
 		walker.global_position += Vector3(400, 0, 0)
 		for i in 3000:
 			await get_tree().process_frame
@@ -2219,6 +2221,7 @@ func _tracks() -> void:
 	var dt := 1.0 / 60.0
 	var t := 0.0
 	var most := 0
+	var plants := {} # step k: where it stands (for --tracks-verbose)
 	while t < 3.5:
 		# The walker: step k plants at arc length 0.7 k, left and right 0.12 m off the line; a boot is in the air
 		# (0.3 m up) between plants, comes down over 0.1 s and stands 0.3 s.
@@ -2235,8 +2238,10 @@ func _tracks() -> void:
 				lift = 0.3 * (1.0 - in_step / 0.22)
 			elif in_step < 0.9:
 				lift = 0.0
-			p.y = g.call(p) + 0.03 + lift
+			p.y = g.call(p) + 0.03 - 0.025 + lift # a sole set down sinks 2.5 cm (a walker's weight on gravel over sand)
 			boot.global_position = p
+			if lift == 0.0:
+				plants[k] = p
 			boot.basis = Basis.looking_at(at[1], Vector3.UP)
 		# The cart: two wheels 1.4 m apart on an 8 m bend, at 2 m/s, pressing 2 cm in.
 		var ca: Array = arc.call(cart_start, 8.0, 2.0 * t)
@@ -2259,6 +2264,16 @@ func _tracks() -> void:
 		await get_tree().physics_frame
 		settle += 1
 	print("tracks: stones %s, at most %d loose at once, all at rest %d frames later" % [rocks.get_react_stats(), most, settle])
+	if args.has("tracks-verbose"):
+		var gs := get_node_or_null("Beach") as GroundSurface3D
+		var mid: Array = arc.call(cart_start, 8.0, 3.0)
+		var wpt: Vector3 = mid[0] + Vector3.UP.cross(mid[1]).normalized() * 0.7
+		for k in plants:
+			var bp: Vector3 = plants[k]
+			print("tracks: print %d: generator %.3f, sand %s" % [k, g.call(bp), "-" if gs == null else "%.3f" % gs.get_surface_height_at(bp)])
+		for o in [-0.3, -0.15, 0.0, 0.15, 0.3]:
+			var q: Vector3 = wpt + Vector3.UP.cross(mid[1]).normalized() * o
+			print("tracks: across %.2f: generator %.3f, sand %s" % [o, g.call(q), "-" if gs == null else "%.3f (ground %.3f)" % [gs.get_surface_height_at(q), gs.get_ground_height_at(q)]])
 	await get_tree().process_frame
 	get_viewport().disable_3d = false
 
@@ -2313,6 +2328,11 @@ func _render_later() -> void:
 		if OS.is_stdout_verbose() or args.has("frame-log"):
 			print("frame %d at %d ms" % [i, Time.get_ticks_msec() - tf])
 	print("frame %.1f ms" % ((Time.get_ticks_usec() - t0) / 4000.0))
+	if not raster:
+		# The ray-tracing cost of the ground detail (the PC cost bench for "more stones for the same cost": run with and
+		# without --no-ground-detail, path traced, and compare these and the frame time).
+		var vp := get_viewport()
+		print("rt: %d TLAS instances, %d triangles built, %d ground detail grains" % [vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_TLAS_INSTANCES), vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_TRIANGLES_BUILT), rocks.get_ground_detail_count() if rocks else 0])
 	if rocks and rocks.moss_cushions:
 		print("moss: %d shells, %d triangles, %d building" % [rocks.get_moss_shell_count(), rocks.get_moss_triangle_count(), rocks.get_moss_pending()])
 	if rocks and rocks.ground_contact and rocks.get_contact_texture():
@@ -2369,6 +2389,8 @@ func _beach_surface(tm: TerrainMaterial3D) -> void:
 	gs.name = "Beach"
 	gs.ground_type = GroundSurface3D.GROUND_SOIL
 	gs.material = tm
+	# Each bench run starts from fresh sand: kept ruts from earlier runs would show up in the before frames.
+	gs.keep_ruts = false
 	add_child(gs)
 	gs.height_source = gs.get_path_to(gen)
 	var n := 512

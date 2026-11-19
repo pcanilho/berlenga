@@ -4764,7 +4764,12 @@ func _build_rills() -> void:
 	for c in get_children():
 		if c is DirectionalLight3D:
 			c.rotation_degrees = Vector3(sun_arg[0], sun_arg[1], 0.0) if sun_arg.size() >= 2 else Vector3(-14.0, 75.0, 0.0)
-	for i in 2400:
+	# --rill-frames=N: a longer run (2400 is 84 minutes at x120), for the net to coarsen into fewer trunks.
+	var frames := 2400
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--rill-frames="):
+			frames = int(a.substr(14))
+	for i in frames:
 		await get_tree().physics_frame
 	surface.sync_deformation()
 	for i in 3:

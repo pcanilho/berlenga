@@ -12352,9 +12352,29 @@ void TreeGenerator::_grow_beetle_signs(Builder &p_bark, Builder &r_parts) {
 			}
 		}
 	}
+	// The tint alone hardly shows (the vertex colour multiplies the furrows' dark albedo), so the dust also
+	// lies as grains: patches of 1-3 mm crumbs caught on the plates' ledges and in the furrows of the low stem,
+	// the sign foresters look for first (Wermelinger 2004).
+	const int patches = int(Math::lerp(18.0f, 30.0f, br.randf()) * (1.0f - 0.6f * dry));
+	for (int k = 0; k < patches; k++) {
+		const float ph = Math::lerp(0.3f, 3.0f, br.randf() * br.randf());
+		const float paz = Math::lerp(-float(Math::PI), float(Math::PI), br.randf());
+		const int crumbs = 12 + int(br.randf() * 20.0f);
+		for (int g = 0; g < crumbs; g++) {
+			Vector3 c, out;
+			int nd;
+			// A patch spreads round and down the stem (dust trickles down from the hole).
+			if (!place(MAX(ph - 0.25f * br.randf() + 0.04f * (br.randf() - 0.5f), 0.05f), paz + 0.12f * (br.randf() - 0.5f), c, out, nd)) {
+				continue;
+			}
+			r_parts.bone = nd < int(node_bone.size()) ? node_bone[nd] : 0;
+			const float gr = Math::lerp(0.0012f, 0.003f, br.randf());
+			blob(c + out * (gr * 0.2f), out, gr, 0.45f, 0.0f, dust_c * (0.8f + 0.4f * br.randf()));
+		}
+	}
 	// The dust piled round the foot: drifts of grains against the root collar, in the lee of the flare.
 	r_parts.bone = 0;
-	const int piles = int(Math::lerp(6.0f, 12.0f, br.randf()) * (1.0f - 0.6f * dry));
+	const int piles = int(Math::lerp(8.0f, 14.0f, br.randf()) * (1.0f - 0.6f * dry));
 	for (int k = 0; k < piles; k++) {
 		const float az = Math::lerp(-float(Math::PI), float(Math::PI), br.randf());
 		Vector3 c, out;
@@ -12363,12 +12383,12 @@ void TreeGenerator::_grow_beetle_signs(Builder &p_bark, Builder &r_parts) {
 			continue;
 		}
 		const Vector3 side(-out.z, 0.0f, out.x);
-		const int grains = 10 + int(br.randf() * 14.0f);
+		const int grains = 24 + int(br.randf() * 24.0f);
 		for (int g = 0; g < grains; g++) {
 			// Thickest against the bark, thinning out; spread along it.
-			const float o = 0.12f * br.randf() * br.randf();
-			const Vector3 at = Vector3(c.x, base_y, c.z) + out * (o + 0.005f) + side * (0.1f * (br.randf() - 0.5f));
-			const float gr = Math::lerp(0.006f, 0.014f, br.randf()) * (1.0f - 3.0f * o);
+			const float o = 0.18f * br.randf() * br.randf();
+			const Vector3 at = Vector3(c.x, base_y, c.z) + out * (o + 0.005f) + side * (0.16f * (br.randf() - 0.5f));
+			const float gr = Math::lerp(0.006f, 0.014f, br.randf()) * (1.0f - 2.0f * o);
 			blob(at, Vector3(0, 1, 0), MAX(gr, 0.004f), 0.5f, 0.0f, dust_c * (0.85f + 0.3f * br.randf()));
 		}
 	}
@@ -20664,10 +20684,13 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		}
 	}
 	if (beetle_band > 0) {
-		// A beetle stand's variants spread over the outbreak's years (trees.md 5aj): the front from fresh green
-		// attack to red, the core from grey back to the first trees killed when the outbreak began.
+		// A beetle stand's variants spread over the outbreak's years (trees.md 5aj): the front red to brown (a few
+		// in fresh green attack, which reads as living from any distance), the core from grey back to the first
+		// trees killed when the outbreak began. The weeks of yellowing are skipped: a front variant there drew a
+		// third of the front khaki from above (stand plot, 19 Nov).
 		const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.21f, 1.0f);
-		beetle_years = beetle_band == 1 ? Math::lerp(0.15f, 2.4f, tv) : Math::lerp(2.6f, MAX(beetle_outbreak, 3.0f), tv);
+		const float front = tv < 0.15f ? Math::lerp(0.2f, 0.5f, tv / 0.15f) : Math::lerp(0.85f, 2.2f, (tv - 0.15f) / 0.85f);
+		beetle_years = beetle_band == 1 ? front : Math::lerp(2.6f, MAX(beetle_outbreak, 3.0f), tv);
 	}
 }
 
@@ -22297,8 +22320,10 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			// brown, and fall from the second year (Wulder et al. 2006, the "red attack" crowns read from the air).
 			const float y = beetle_years;
 			// Saturated: the needle sprays' texture and sheen grey any colour toward tan (0.47, 0.21, 0.06 drew as straw).
-			const Color fade = Color(0.42f, 0.36f, 0.08f), fox = Color(0.52f, 0.14f, 0.03f), brown = Color(0.33f, 0.11f, 0.04f);
-			leaf_color = y < 1.1f ? fade.lerp(fox, Math::smoothstep(0.6f, 1.1f, y)) : fox.lerp(brown, Math::smoothstep(1.1f, 2.3f, y));
+			// The fade is a dull olive, short: spruce goes rust-red within weeks of yellowing (a lemon fade drew whole
+			// patches yellow in the stand plot, 19 Nov).
+			const Color fade = Color(0.25f, 0.25f, 0.09f), fox = Color(0.5f, 0.16f, 0.04f), brown = Color(0.33f, 0.11f, 0.04f);
+			leaf_color = y < 0.95f ? fade.lerp(fox, Math::smoothstep(0.55f, 0.95f, y)) : fox.lerp(brown, Math::smoothstep(0.95f, 2.3f, y));
 			const float drop = 0.9f * Math::smoothstep(1.0f, 2.4f, y);
 			for (uint32_t i = 0; i < nodes.size(); i++) {
 				if (nodes[i].leafy && float(hash_murmur3_one_32(i, uint32_t(seed) * 2654435761u + 0x62656574u) & 0xffff) / 65535.0f < drop) {

@@ -151,6 +151,9 @@
 		<member name="rain_washout" type="bool" setter="set_rain_washout" getter="is_rain_washout" default="true">
 			Rain and snow over the gas wash its smoke out ([method WorldWeather.washout_at]), on top of Flow's own loss of 0.3 of the smoke a second: heavy dust clears noticeably faster in a downpour, fine smoke hardly at all.
 		</member>
+		<member name="scattering_albedo" type="float" setter="set_scattering_albedo" getter="get_scattering_albedo" default="0.9">
+			The share of light the gas scatters at each scattering event rather than absorbs (its single-scattering albedo), in both the path tracer and the raster light scattering pass, on top of [member smoke_color]. Light that scatters many times inside thick gas keeps [code]albedo^n[/code] of itself, so this sets how bright the inside of a dense cloud stays: [code]0.9[/code] suits smoke and dust, ice grains barely absorb (above [code]0.999[/code], Warren 1982), so snow powder wants about [code]0.99[/code]. The raster pass weighs its multiple-scattering approximation by it relative to [code]0.9[/code].
+		</member>
 		<member name="scattering_anisotropy" type="float" setter="set_scattering_anisotropy" getter="get_scattering_anisotropy" default="0.4">
 			With [member light_scattering], how much the gas scatters light forward (toward a camera looking at the light) rather than evenly in every direction: [code]0[/code] glows the same from every side, higher values make a bright halo when looking toward a light, negative values light the gas most when the light is behind the camera.
 		</member>

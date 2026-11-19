@@ -54,10 +54,14 @@ void SnowPowderCloud3D::_build() {
 	flow->set("buoyancy", 0.0f);
 	flow->set("smoke_buoyancy", -heaviness);
 	flow->set("smoke_fade", 0.04f);
-	flow->set("vorticity", 8.0f);
+	// Ice grains barely absorb (single-scattering albedo near 1), so a powder cloud is lit through by its many
+	// scatterings and reads bright and soft: white, and smooth (a strongly curled gas shades its own clumps dark
+	// against the snow and sky behind).
+	flow->set("vorticity", 4.0f);
 	flow->set("emission_strength", 0.0f);
 	flow->set("smoke_density", 1.2f);
 	flow->set("scattering_strength", 1.0f); // raster only; PT never sees it (parity)
+	flow->set("scattering_albedo", 0.99f); // ice grains barely absorb (Warren 1982: above 0.999 in the visible)
 	flow->set("smoke_color", color);
 	flow->set("collide_with_bodies", true);
 	flow->set("collision_range", 30.0f);

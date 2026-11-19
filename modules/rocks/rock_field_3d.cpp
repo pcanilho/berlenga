@@ -48,6 +48,7 @@
 #include "scene/3d/physics/character_body_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/rigid_body_3d.h"
+#include "scene/resources/3d/box_shape_3d.h"
 #include "scene/resources/3d/world_3d.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
@@ -1331,6 +1332,22 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						// stands out of a bend in the face rather than being set into it.
 						if (gen->get_height(centre) < centre.y + 0.1f * course) {
 							continue;
+						}
+						// And the face is where the cell's plane put it: at the crossing and at both ends of the block
+						// (along the strike) the ground stands within a fifth of a course of the block's face, measured
+						// square to the face. Where the real face bends away or steps back (a gully, a convex corner),
+						// the block would stand out of it in the air, read from afar as a slab hung on the cliff.
+						{
+							bool out = false;
+							const real_t ext = axes.x * st.scale * 0.9;
+							for (int e = -1; e <= 1 && !out; e++) {
+								const Vector3 q = surface + x_axis * (ext * e);
+								const real_t gap = (q.y - gen->get_height(q)) * n.y; // + where the face lies under the block's face
+								out = gap > 0.2f * course;
+							}
+							if (out) {
+								continue;
+							}
 						}
 						st.basis = b * Basis().scaled(Vector3(st.scale, st.scale, st.scale));
 						st.position = centre;
@@ -4204,6 +4221,32 @@ void RockField3D::_update_react(double p_delta) {
 		seen.insert(n3->get_instance_id(), wb.center);
 		const float bottom = wb.center.y - wb.half_height;
 		const float foot = wb.wheel ? MAX(wb.width * 0.5f, wb.half_height * 0.35f) : wb.radius;
+		// A box (a boot, a sole): its footprint is its own oblong, not the circle round it.
+		bool oval = false;
+		Vector2 fu, fv;
+		float hu = foot, hw = foot;
+		if (wb.box) {
+			for (int c = 0; c < n3->get_child_count(); c++) {
+				const CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(n3->get_child(c));
+				const BoxShape3D *bx = cs && !cs->is_disabled() ? Object::cast_to<BoxShape3D>(cs->get_shape().ptr()) : nullptr;
+				if (!bx) {
+					continue;
+				}
+				const Basis cb = cs->get_global_basis();
+				const Vector3 ex = cb.get_column(0), ez = cb.get_column(2);
+				fu = Vector2(ex.x, ex.z);
+				fv = Vector2(ez.x, ez.z);
+				if (fu.length() > 1e-3f && fv.length() > 1e-3f) {
+					hu = bx->get_size().x * 0.5f * fu.length();
+					hw = bx->get_size().z * 0.5f * fv.length();
+					fu.normalize();
+					fv.normalize();
+					oval = true;
+				}
+				break;
+			}
+		}
+		const float foot_min = oval ? MIN(hu, hw) : foot;
 		if (gen && bottom > float(gen->get_height(wb.center)) + 0.25f) {
 			continue; // off the ground
 		}
@@ -4212,9 +4255,9 @@ void RockField3D::_update_react(double p_delta) {
 		const Vector2 c2(wb.center.x, wb.center.z);
 		Vector2 hv(vel.x, vel.z);
 		const float speed = hv.length();
-		if (vel.length() < 0.15f) {
-			continue; // at rest on them: what it pressed aside on arrival stays aside (a stone rolling back stays put)
-		}
+		// At rest on them: what it pressed aside on arrival stays aside (a stone rolling back stays put), and the stones
+		// under it only follow the print down as the ground gives (a sole's print deepens while it stands).
+		const bool resting = vel.length() < 0.15f;
 		// Every layer with loose stones: the ground detail classes and the small stones of the coarse layers that
 		// have no collision of their own.
 		static const Layer react_layers[6] = { LAYER_DETAIL_PEBBLE, LAYER_DETAIL_GRAVEL, LAYER_DETAIL_FINE, LAYER_SHORE, LAYER_RIVER, LAYER_SCREE };
@@ -4247,7 +4290,9 @@ void RockField3D::_update_react(double p_delta) {
 							}
 							Vector2 d(o.x - c2.x, o.z - c2.y);
 							const float dl = d.length();
-							if (dl > foot + r || o.y + r < bottom - 0.02f) {
+							// How far out in the footprint, 1 at its edge.
+							const float edge = oval ? Math::sqrt(Math::pow(d.dot(fu) / hu, 2.0f) + Math::pow(d.dot(fv) / hw, 2.0f)) : dl / MAX(foot, 1e-3f);
+							if (edge > 1.0f + r / MAX(foot_min, 1e-3f) || o.y + r < bottom - 0.02f) {
 								continue;
 							}
 							bool is_loose = false;
@@ -4267,7 +4312,8 @@ void RockField3D::_update_react(double p_delta) {
 							// or the sole). Picked per stone (a hash, so a stone gets the same answer on every frame it is under).
 							const uint32_t hs = hash_murmur3_one_32(uint32_t(k) * 2654435761u ^ hash_murmur3_one_32(uint32_t(key.y) * 73856093u ^ uint32_t(key.z) * 19349663u ^ gi));
 							const float pick = float(hs & 0xffffu) / 65536.0f;
-							float ground_here = gen ? float(gen->get_height(o)) : o.y - r;
+							const float ground_gen = gen ? float(gen->get_height(o)) : o.y - r;
+							float ground_here = ground_gen;
 							if (dented) {
 								// A deformable ground under the stones (GroundSurface3D's sand or mud): the print it took.
 								const float h = wg->height_at(o);
@@ -4278,30 +4324,39 @@ void RockField3D::_update_react(double p_delta) {
 							// Pressed in the middle of the print, pushed out at its edge (so the displaced stones heap in a rim).
 							// For a body going along, the middle is its line: distance across it (else a stone first met at the
 							// leading edge would always count as at the edge).
-							float across_d = dl;
-							if (speed > 0.3f) {
-								across_d = Math::abs(d.dot(Vector2(-hv.y, hv.x) / speed));
+							// A sole sets down and presses its whole print, its edge pushing a modest rim; a wheel packs the
+							// stones of its rut flat and closer, squeezing out only those at its edge.
+							float across = edge;
+							if (!oval && speed > 0.3f) {
+								across = Math::abs(d.dot(Vector2(-hv.y, hv.x) / speed)) / MAX(foot, 1e-3f);
 							}
-							const float press = 0.75f * (1.0f - Math::smoothstep(0.45f, 0.95f, across_d / MAX(foot, 1e-3f)));
+							const float press = wb.wheel ? 0.9f * (1.0f - Math::smoothstep(0.7f, 1.0f, across)) : 0.85f * (1.0f - Math::smoothstep(0.7f, 1.05f, across));
 							// A disturbed stone shows its damp underside (the film darkens it, as the wet ones by the water) and
 							// is no longer eased into the ground it sat on.
 							const auto disturb = [&](uint32_t p_k, float p_ground) {
 								Color &cd = g.custom[p_k];
-								cd.g = cd.g >= 2.0f ? MAX(cd.g, 2.85f) : MAX(cd.g, 0.85f);
+								cd.g = cd.g >= 2.0f ? MAX(cd.g, 2.4f) : MAX(cd.g, 0.4f);
 								cd.r = p_ground;
 								g.multimesh->set_instance_custom_data(int(p_k), cd);
 							};
+							if (resting && pick >= press) {
+								continue;
+							}
 							if (pick < press) {
 								// Pressed into the bed and laid flat (its own yaw kept; once: a stone already down stays as it is):
-								// a print or a rut is a flatter, smoother patch of the same stones, darker with the damp from under.
-								const float y = MIN(o.y, ground_here + 0.1f * r);
+								// a print or a rut is a flatter, smoother patch of the same stones (most of each still showing over the
+								// dent, so the stones cover it, not the sand), darker with the damp from under.
+								// Bedded in the dent, but no deeper than 0.6 of its size under the undisturbed ground: the stones
+								// fill the print as packed gravel does (and a ground drawn coarser under the path tracer, its dent
+								// shallower, does not close over them).
+								const float y = MIN(o.y, MAX(ground_here - 0.1f * r, ground_gen - 0.6f * r));
 								if (y < o.y - 1e-4f) {
 									const Vector3 zc = g.xforms[k].basis.get_column(2);
 									const float yaw = Math::atan2(zc.x, zc.z);
 									g.xforms[k] = Transform3D(Basis(Vector3(0, 1, 0), yaw) * Basis::from_scale(Vector3(s, s, s)), Vector3(o.x, y, o.z));
 									g.multimesh->set_instance_transform(int(k), g.xforms[k]);
 									disturb(k, ground_here - r);
-									react_shoved++;
+									react_pressed++;
 								}
 								continue;
 							}
@@ -4344,7 +4399,9 @@ void RockField3D::_update_react(double p_delta) {
 								// Squeezed out sideways to the footprint's edge (its place along the body's way kept), its height
 								// above the ground kept, turned a little.
 								Vector2 to = c2 + out * (foot + r * 1.1f);
-								if (speed > 1e-3f) {
+								if (oval) {
+									to = c2 + d * ((1.0f + 1.1f * r / MAX(foot_min, 1e-3f)) / MAX(edge, 1e-3f));
+								} else if (speed > 1e-3f) {
 									const Vector2 fw = hv / speed;
 									const Vector2 lat(-fw.y, fw.x);
 									const float along = d.dot(fw);
@@ -4358,6 +4415,13 @@ void RockField3D::_update_react(double p_delta) {
 								float y = o.y + (0.3f + 0.5f * (1.0f - extra)) * r;
 								if (gen) {
 									y += float(gen->get_height(Vector3(to.x, 0, to.y)) - gen->get_height(o));
+								}
+								if (dented) {
+									// On top of the rim the ground itself pushed up (the stones cover it, the sand does not).
+									const float h = wg->height_at(Vector3(to.x, 0, to.y));
+									if (Math::is_finite(h)) {
+										y = MAX(y, h + 0.45f * r);
+									}
 								}
 								const float turn = (float(hash_murmur3_one_32(k * 2654435761u + uint32_t(react_shoved)) & 1023u) / 1023.0f - 0.5f) * 1.2f;
 								g.xforms[k] = Transform3D(Basis(Vector3(0, 1, 0), turn) * g.xforms[k].basis, Vector3(to.x, y, to.y));
@@ -4408,6 +4472,7 @@ Dictionary RockField3D::get_react_stats() const {
 	Dictionary d;
 	d["loose"] = int(loose.size());
 	d["promoted"] = int64_t(react_promoted);
+	d["pressed"] = int64_t(react_pressed);
 	d["shoved"] = int64_t(react_shoved);
 	d["settled"] = int64_t(react_settled);
 	return d;

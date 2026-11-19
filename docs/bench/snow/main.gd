@@ -1471,7 +1471,11 @@ func _run_powder_tests() -> void:
 	var far0 := snow.get_depth_at(far)
 	snow.add_snow(90.0, 90.0)
 	var water0 := snow.get_total_water()
-	var far1 := snow.get_depth_at(far)
+	# A grid over the run-out, 8 m apart: past each column's debris toe the cloud's layer is all that changed.
+	var grid0: Array[float] = []
+	for kz in 25:
+		for kx in 31:
+			grid0.append(snow.get_depth_at(Vector3(8.0 * kx, 0.0, -96.0 + 8.0 * kz)))
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 	var t := 0.0
@@ -1482,10 +1486,20 @@ func _run_powder_tests() -> void:
 		t += 0.25
 		peak_air = maxf(peak_air, av.get_suspended_mass())
 	var water1 := snow.get_total_water()
-	var layer := snow.get_depth_at(far) - far1
+	var layer := 0.0
+	for kz in 25:
+		for kx in range(30, -1, -1):
+			var at := Vector3(8.0 * kx, 0.0, -96.0 + 8.0 * kz)
+			var d := snow.get_depth_at(at) - grid0[kz * 31 + kx]
+			if d >= 0.15:
+				break # this column's debris toe
+			if d > layer:
+				layer = d
+				far = at
+	far0 = snow.get_depth_at(far) - layer
 	_check("a fast dry avalanche throws snow into the air, and all of it settles", av.get_powder_taken() > 1000.0 and absf(av.get_powder_settled() - av.get_powder_taken()) < 0.01 * av.get_powder_taken() and av.get_suspended_mass() == 0.0, "%.1f t up (%.1f t in the air at once), %.1f t down, %.0f s" % [av.get_powder_taken() / 1000.0, peak_air / 1000.0, av.get_powder_settled() / 1000.0, t])
 	_check("the cloud outruns the dense flow", av.get_powder_reach() > av.get_run_out() + 10.0, "powder settles %.0f m from the release, the dense flow ran %.0f m" % [av.get_powder_reach(), av.get_run_out()])
-	_check("it leaves a thin layer of powder past the debris", layer > 0.0005 and layer < 0.15, "%.1f cm at %.0f m (%.2f m of old snow there)" % [layer * 100.0, far.x, far0])
+	_check("it leaves a thin layer of powder past the debris", layer > 0.0005 and layer < 0.15, "%.1f cm at (%.0f, %.0f) (%.2f m of snow there before)" % [layer * 100.0, far.x, far.z, far0])
 	_check("no snow is made or lost", absf(water1 - water0) < 0.005 * water0, "water %.0f -> %.0f t" % [water0 / 1000.0, water1 / 1000.0])
 	# A wet slide: the same load after a thaw makes no cloud.
 	av = await _trigger_setup()
@@ -2188,6 +2202,11 @@ func _build_view() -> void:
 		# A snowy land below the horizon, not the default brown: clear ice shows what lies behind and below it.
 		sky_material.ground_horizon_color = Color(0.72, 0.75, 0.8)
 		sky_material.ground_bottom_color = Color(0.55, 0.58, 0.62)
+	elif view == "avalanche":
+		# Snow below the horizon, as bright as the snow there is under this sky (albedo 0.84 under the sky's own
+		# colours), so raster's ambient lights walls as the path tracer's bounce off the real snow does.
+		sky_material.ground_horizon_color = Color(0.53, 0.54, 0.56)
+		sky_material.ground_bottom_color = Color(0.33, 0.38, 0.46)
 	sky.sky_material = sky_material
 	env.sky = sky
 	env.background_mode = Environment.BG_SKY
@@ -2780,7 +2799,8 @@ func _build_avalanche(cam: Camera3D) -> void:
 	var av: SnowAvalanche3D = snow.get_avalanches()
 	var wet := OS.get_cmdline_user_args().has("--wet")
 	var triggered := wet or OS.get_cmdline_user_args().has("--triggered")
-	if OS.get_cmdline_user_args().has("--before") or triggered:
+	var powder := OS.get_cmdline_user_args().has("--powder")
+	if OS.get_cmdline_user_args().has("--before") or triggered or powder:
 		av.natural_release = false
 	if triggered:
 		# An old, bonded pack under the storm (60 cm a week and more old): the slab breaks away from it, leaving a
@@ -2800,7 +2820,10 @@ func _build_avalanche(cam: Camera3D) -> void:
 		# --triggered (dry) and --wet release the same face, so the two compare.
 		av.trigger(Vector3(-40.0, 0, 0), 30.0) # inside the face: the crown breaks across the slope, below the ridge
 		print("triggered slide: %.0f%% wet" % (av.get_flow_wetness() * 100.0))
-	if OS.get_cmdline_user_args().has("--powder"):
+	if powder:
+		# A wide dry slab across the face in front of the camera (left to itself the face lets go wherever it is
+		# weakest, here off to both sides of the frame, and its cloud with it).
+		av.trigger(Vector3(-40.0, 0, 0), 60.0)
 		# Mid-run in real time, so PhysX Flow steps the cloud with it: --at=S seconds after release (default 9).
 		var at_s := 9.0
 		for a in OS.get_cmdline_user_args():
@@ -2836,6 +2859,10 @@ func _build_avalanche(cam: Camera3D) -> void:
 		av.step(0.25)
 		t += 0.25
 	print("avalanche: %d released, %.0f m3, run-out %.0f m, %.1f m/s, toe %.2f m" % [av.get_release_count(), av.get_released_volume(), av.get_run_out(), av.get_max_speed(), snow.get_depth_at(Vector3(40, 0, 0))])
+	# Shot with the sun 55 degrees up from behind the ridge (the slide ran under 30 degrees, which melts the same
+	# but left the whole 38 degree face in shade): it rakes the face, the crown wall stands in its own shade and
+	# throws a band of shadow down the bed.
+	sun.rotation_degrees = Vector3(-55.0, -60.0, 0.0)
 	cam.position = Vector3(42.0, snow.get_ground_height_at(Vector3(42, 0, 9)) + snow.get_depth_at(Vector3(42, 0, 9)) + 2.2, 9.0)
 	cam.look_at(Vector3(-25.0, 18.0, 0.0))
 	cam.fov = 55.0

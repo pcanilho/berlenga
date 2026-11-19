@@ -52,6 +52,9 @@
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/light_3d.h"
+#include "scene/main/scene_tree.h"
+#include "scene/main/window.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/path_3d.h"
 #include "scene/3d/world_environment.h"
@@ -2597,6 +2600,8 @@ bool TerrainGenerator3D::generate() {
 	_erode_tiles();
 	_build_dunes();
 	_build_sand_sea();
+	_place_springs();
+	_carve_oases();
 	// After the tiles: the sky is read from the final ground.
 	_bake_sky();
 	_publish_globals();
@@ -2992,6 +2997,9 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 			g += sand;
 		}
 		g += _nebkha_sample(p_x, p_z);
+		if (!oases.is_empty()) {
+			g = _oasis_height(p_x, p_z, g);
+		}
 	}
 	return g;
 }
@@ -4198,6 +4206,242 @@ float TerrainGenerator3D::_nebkha_sample(real_t p_x, real_t p_z) const {
 	return best;
 }
 
+/* Oases (docs/ideas/dunes.md, "Oases") */
+
+// Springs where a confined aquifer reaches the sand sea's floor (Siwa, Farafra, the Great Artesian Basin's mound
+// springs): the lowest interdune floors, where the sand is thin and the ground lies well under its surroundings.
+// Sites on a 48 m lattice over the sea scored by how far the floor lies under the ground 120 m round, the deepest
+// oasis_count kept at least 400 m apart. The still water stands 0.6 m under the lowest ground at the site.
+void TerrainGenerator3D::_place_springs() {
+	springs_found.clear();
+	oases.clear();
+	if (oasis_count <= 0 || sea_sand.is_empty() || sea_cover.size() != uint32_t(nx * ny)) {
+		return;
+	}
+	const Rect2 r(sea_origin, Vector2((sea_nx - 1) * sea_cell, (sea_nz - 1) * sea_cell));
+	const real_t lattice = 48.0;
+	const bool has_water = water_body.size() == uint32_t(nx * ny);
+	struct Site {
+		Vector2 p;
+		real_t depth;
+	};
+	LocalVector<Site> sites;
+	auto surf = [&](real_t px, real_t pz) { return real_t(_sample(heights, px, pz)) + real_t(_sea_sample(px, pz)); };
+	for (real_t z = r.position.y + 150.0; z < r.position.y + r.size.y - 150.0; z += lattice) {
+		for (real_t x = r.position.x + 150.0; x < r.position.x + r.size.x - 150.0; x += lattice) {
+			const Vector2 p(x, z);
+			if (_sea_sample(x, z) > 0.6f || _sample(sea_cover, x, z) < 0.6f) {
+				continue;
+			}
+			if (has_water) {
+				const int gi = CLAMP(int(Math::round((z - result_rect.position.y) / cell_size)), 0, ny - 1) * nx + CLAMP(int(Math::round((x - result_rect.position.x) / cell_size)), 0, nx - 1);
+				if (water_body[gi] != 0) {
+					continue;
+				}
+			}
+			const real_t h0 = surf(x, z);
+			real_t ring = 0.0;
+			for (int k = 0; k < 8; k++) {
+				const real_t a = Math::TAU * k / 8.0;
+				ring += surf(x + 120.0 * Math::cos(a), z + 120.0 * Math::sin(a));
+			}
+			const real_t depth = ring / 8.0 - h0;
+			if (depth > 1.0) {
+				sites.push_back({ p, depth });
+			}
+		}
+	}
+	std::sort(sites.ptr(), sites.ptr() + sites.size(), [](const Site &a, const Site &b) { return a.depth > b.depth || (a.depth == b.depth && (a.p.x < b.p.x || (a.p.x == b.p.x && a.p.y < b.p.y))); });
+	for (const Site &st : sites) {
+		bool near = false;
+		for (const Vector4 &q : springs_found) {
+			near = near || Vector2(q.x, q.z).distance_to(st.p) < 400.0;
+		}
+		if (near) {
+			continue;
+		}
+		real_t low = get_height(Vector3(st.p.x, 0.0, st.p.y));
+		for (int k = 0; k < 6; k++) {
+			const real_t a = Math::TAU * k / 6.0;
+			low = MIN(low, get_height(Vector3(st.p.x + 6.0 * Math::cos(a), 0.0, st.p.y + 6.0 * Math::sin(a))));
+		}
+		springs_found.push_back(Vector4(st.p.x, low - 0.6, st.p.y, 0.0));
+		if (int(springs_found.size()) >= oasis_count) {
+			break;
+		}
+	}
+}
+
+PackedVector4Array TerrainGenerator3D::get_springs() const {
+	PackedVector4Array out;
+	for (const Vector4 &q : springs_found) {
+		out.push_back(q);
+	}
+	return out;
+}
+
+// The hollows, carved to the pools that oasis_springs (an OasisSprings3D taking its springs from get_springs())
+// sizes: it is rebuilt, and each pool's outline is matched to the nearest spring. Returns true when any was carved.
+bool TerrainGenerator3D::carve_oases() {
+	_carve_oases();
+	return !oases.is_empty();
+}
+
+void TerrainGenerator3D::_carve_oases() {
+	oases.clear();
+	if (springs_found.is_empty() || oasis_springs.is_empty() || !is_inside_tree()) {
+		return;
+	}
+	Node *node = get_node_or_null(oasis_springs);
+	if (!node || !node->has_method(SNAME("get_outline")) || !node->has_method(SNAME("rebuild"))) {
+		return;
+	}
+	node->call(SNAME("rebuild"));
+	// The pools are sized before their level is known to hold: each spring's level is set again to just under the
+	// lowest ground round its outline (a little outside it), so the water cannot stand over the dunes' floor
+	// past the shore, and the pools are built once more at that level.
+	{
+		const int count0 = int(node->call(SNAME("get_pool_count")));
+		bool moved = false;
+		for (int i = 0; i < count0; i++) {
+			const PackedVector2Array outline = node->call(SNAME("get_outline"), i);
+			if (outline.size() < 8) {
+				continue;
+			}
+			Vector2 c;
+			for (const Vector2 &q : outline) {
+				c += q;
+			}
+			c /= real_t(outline.size());
+			int best = -1;
+			real_t best_d = 50.0;
+			for (uint32_t k = 0; k < springs_found.size(); k++) {
+				const real_t d = Vector2(springs_found[k].x, springs_found[k].z).distance_to(c);
+				if (d < best_d) {
+					best_d = d;
+					best = int(k);
+				}
+			}
+			if (best < 0) {
+				continue;
+			}
+			real_t low = springs_found[best].y + 0.6;
+			for (int k = 0; k < outline.size(); k += 4) {
+				const Vector2 q = c + (outline[k] - c) * 1.1;
+				low = MIN(low, get_height(Vector3(q.x, 0.0, q.y)));
+			}
+			if (low - 0.15 < springs_found[best].y) {
+				springs_found[best].y = low - 0.15;
+				moved = true;
+			}
+		}
+		if (moved) {
+			node->call(SNAME("rebuild"));
+		}
+	}
+	const int count = int(node->call(SNAME("get_pool_count")));
+	for (int i = 0; i < count; i++) {
+		const PackedVector2Array outline = node->call(SNAME("get_outline"), i);
+		if (outline.size() < 8) {
+			continue;
+		}
+		Vector2 c;
+		for (const Vector2 &q : outline) {
+			c += q;
+		}
+		c /= real_t(outline.size());
+		int best = -1;
+		real_t best_d = 50.0;
+		for (uint32_t k = 0; k < springs_found.size(); k++) {
+			const real_t d = Vector2(springs_found[k].x, springs_found[k].z).distance_to(c);
+			if (d < best_d) {
+				best_d = d;
+				best = int(k);
+			}
+		}
+		if (best < 0) {
+			continue;
+		}
+		Oasis o;
+		o.centre = c;
+		o.level = springs_found[best].y;
+		o.seed = uint32_t(seed) * 0x9E3779B1u + uint32_t(best) * 0x85EBCA77u;
+		// The outline's radius at even angles (it is a disc broken by harmonics: one radius each way).
+		float rmax = 0.0f;
+		for (int a = 0; a < 128; a++) {
+			const real_t ang = Math::TAU * a / 128.0;
+			const Vector2 dir(Math::cos(ang), Math::sin(ang));
+			real_t rr = 0.0;
+			for (const Vector2 &q : outline) {
+				const Vector2 v = q - c;
+				const real_t along = v.dot(dir);
+				if (along > 0.0 && Math::abs(v.cross(dir)) < along * Math::tan(Math::TAU / 128.0)) {
+					rr = MAX(rr, v.length());
+				}
+			}
+			o.radius[a] = float(rr > 0.0 ? rr : 1.0);
+			rmax = MAX(rmax, o.radius[a]);
+		}
+		for (int a = 0; a < 128; a++) {
+			if (o.radius[a] <= 1.0f) {
+				o.radius[a] = 0.5f * (o.radius[(a + 127) % 128] + o.radius[(a + 1) % 128]);
+			}
+		}
+		// How far the rim's slope runs before it meets the dunes round it.
+		real_t top = o.level;
+		for (int k = 0; k < 16; k++) {
+			const real_t ang = Math::TAU * k / 16.0;
+			top = MAX(top, get_height(Vector3(c.x + (rmax + 30.0) * Math::cos(ang), 0.0, c.y + (rmax + 30.0) * Math::sin(ang))));
+		}
+		if (node->has_method(SNAME("get_vents"))) {
+			o.vents = node->call(SNAME("get_vents"), i);
+		}
+		o.reach = float(MIN(0.92 * rmax + 3.0 + MAX(top - o.level - 0.36, real_t(0.0)) / 0.45 + 2.0, 0.92 * rmax + 150.0));
+		oases.push_back(o);
+	}
+}
+
+// The ground round and under a pool: inside 0.92 of its outline a bed falling to some 2.4 m (less for small
+// pools) with lumps and runnels running down to the middle, meeting the still water at 0.92 of the outline so the
+// outline itself lies under a thin film of water; past it a beach rising gently (7 degrees) for 3 m, then a
+// steeper bank (24 degrees) until it meets the dunes. The hollow only lowers the ground outside the shore.
+float TerrainGenerator3D::_oasis_height(real_t p_x, real_t p_z, float p_ground) const {
+	float g = p_ground;
+	for (const Oasis &o : oases) {
+		const real_t dx = p_x - o.centre.x, dz = p_z - o.centre.y;
+		const real_t d2 = dx * dx + dz * dz;
+		if (d2 > real_t(o.reach) * real_t(o.reach)) {
+			continue;
+		}
+		const real_t dist = Math::sqrt(d2);
+		const real_t ang = Math::fposmod(Math::atan2(dz, dx), real_t(Math::TAU));
+		const real_t t = ang / Math::TAU * 128.0;
+		const int i0 = int(t) % 128, i1 = (i0 + 1) % 128;
+		const real_t rad = Math::lerp(real_t(o.radius[i0]), real_t(o.radius[i1]), t - Math::floor(t));
+		const real_t shore = 0.92 * rad;
+		if (dist <= shore) {
+			const real_t d = dist / MAX(shore, real_t(0.1));
+			const real_t bowl = Math::pow(MAX(1.0 - d * d, 0.0), real_t(1.2));
+			const real_t depth = MIN(real_t(2.4), real_t(0.6) + real_t(0.35) * rad);
+			const real_t lumps = (neb_patch(o.seed, p_x / 1.6, p_z / 1.6) - 0.5) * 0.4 + (neb_patch(o.seed + 1u, p_x / 0.7, p_z / 0.7) - 0.5) * 0.15;
+			// Runnels: grooves long down the slope (slow along the radius), a few metres apart round it.
+			const real_t runnel = -0.22 * Math::smoothstep(real_t(0.62), real_t(0.9), neb_patch(o.seed + 2u, ang * rad / 2.5, dist / 9.0));
+			g = float(o.level - depth * bowl + (lumps + runnel) * Math::sqrt(bowl));
+			// A pit some 0.35 m deep and 0.7 m across under each vent: the throat the boil's sand is thrown from.
+			for (const Vector3 &v : o.vents) {
+				const real_t q = (Vector2(p_x, p_z).distance_squared_to(Vector2(v.x, v.z))) / (0.7 * 0.7);
+				if (q < 1.0) {
+					g -= float(0.35 * (1.0 - q) * (1.0 - q));
+				}
+			}
+		} else {
+			const real_t rim = dist - shore;
+			g = MIN(g, float(o.level + 0.12 * MIN(rim, real_t(3.0)) + 0.45 * MAX(rim - 3.0, real_t(0.0))));
+		}
+	}
+	return g;
+}
+
 PackedVector4Array TerrainGenerator3D::get_nebkhas(const Rect2 &p_rect) const {
 	PackedVector4Array out;
 	for (const Nebkha &nb : nebkhas) {
@@ -5223,6 +5467,14 @@ void TerrainGenerator3D::_publish_globals() {
 	} else {
 		set_global("terrain_sky_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
 	}
+	// Far sun shadows; a zero size switches them off.
+	if (sun_horizon_texture.is_valid() && sun_shadows) {
+		set_global("terrain_sun_horizon_map", sun_horizon_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		set_global("terrain_sun_horizon_frame", sun_horizon_frame, RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_global("terrain_sun_horizon_size", sun_horizon_size, RSE::GLOBAL_VAR_TYPE_VEC4);
+	} else {
+		set_global("terrain_sun_horizon_size", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
 }
 
 /* Boulders below cliffs (docs/ideas/terrain-generation.md, "Rocks below cliffs") */
@@ -5423,6 +5675,8 @@ void TerrainGenerator3D::_bake_sky() {
 	sky_vis.clear();
 	sky_horizon.clear();
 	sky_sh.clear();
+	sun_heights.clear();
+	sun_azimuth_done = -1000.0;
 	sky_nx = sky_ny = 0;
 	if (!sky_occlusion || nx < 2 || ny < 2) {
 		sky_texture.unref();
@@ -5441,6 +5695,9 @@ void TerrainGenerator3D::_bake_sky() {
 			h[i] = result_min;
 		}
 	}
+	sun_heights.resize(n);
+	memcpy(sun_heights.ptr(), h.ptr(), n * sizeof(float));
+	sun_azimuth_done = -1000.0; // the ground changed: redo the sun's horizons
 	sky_vis.resize(n);
 	sky_horizon.resize(size_t(n) * TerrainSky::DIRECTIONS);
 	TerrainSky::compute(h.ptr(), sky_nx, sky_ny, float(sky_cell), float(sky_distance), sky_vis.ptr(), sky_horizon.ptr());
@@ -5545,7 +5802,7 @@ void TerrainGenerator3D::set_sky_light_source(const NodePath &p_path) {
 	sky_light_wait = 0.0;
 	sky_light_last.clear();
 	if (is_inside_tree()) {
-		set_process_internal(!sky_light_source.is_empty());
+		set_process_internal(!sky_light_source.is_empty() || sun_shadows);
 	}
 }
 
@@ -5601,13 +5858,149 @@ void TerrainGenerator3D::_sky_light_poll(double p_delta) {
 	update_sky_light(pano);
 }
 
+/* Far sun shadows (docs/ideas/terrain-material.md, "Far sun shadows") */
+
+namespace {
+struct SunHorizonJob {
+	const float *h;
+	int nx, nz, ns, nt;
+	float cell, ox, oz, dx, dz, s0, t0;
+	float *out; // nt rows of ns
+};
+} // namespace
+
+void TerrainGenerator3D::_sun_horizon_lines(void *p_job, uint32_t p_part) {
+	const SunHorizonJob *job = static_cast<const SunHorizonJob *>(p_job);
+	LocalVector<float> hs, hh;
+	hs.resize(job->ns);
+	hh.resize(job->ns);
+	const int per = 16;
+	for (int line = int(p_part) * per; line < MIN(int(p_part + 1) * per, job->nt); line++) {
+		TerrainSky::sun_horizon_line(job->h, job->nx, job->nz, job->cell, job->ox, job->oz, job->dx, job->dz, job->s0, job->t0, job->ns, line, job->out + size_t(line) * job->ns, hs.ptr(), hh.ptr());
+	}
+}
+
+// The ground's horizon toward the sun (p_to_sun, world, toward the light) for the terrain material's far shadows,
+// on the sky grid's heights turned to the sun's azimuth. Skipped while the azimuth stays within a quarter degree of
+// the last built (the map does not depend on the sun's elevation). Returns true when it was rebuilt.
+bool TerrainGenerator3D::update_sun_horizon(const Vector3 &p_to_sun) {
+	const int n = sky_nx * sky_ny;
+	if (!sun_shadows || sky_nx < 2 || sun_heights.size() != uint32_t(n)) {
+		return false;
+	}
+	const Vector2 d2(p_to_sun.x, p_to_sun.z);
+	if (d2.length() < 1e-4) {
+		return false; // the sun overhead: no shadows to cast
+	}
+	const real_t az = Math::atan2(d2.y, d2.x);
+	if (Math::abs(Math::angle_difference(az, sun_azimuth_done)) < Math::deg_to_rad(real_t(0.25))) {
+		return false;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	const Vector2 d = d2.normalized();
+	const Vector2 u(-d.y, d.x);
+	const real_t c = sky_cell;
+	const Vector2 o = result_rect.position;
+	const Vector2 span((sky_nx - 1) * c, (sky_ny - 1) * c);
+	real_t s_lo = 1e30, s_hi = -1e30, t_lo = 1e30, t_hi = -1e30;
+	for (int k = 0; k < 4; k++) {
+		const Vector2 q = o + Vector2(k & 1 ? span.x : 0.0, k & 2 ? span.y : 0.0);
+		s_lo = MIN(s_lo, q.dot(d));
+		s_hi = MAX(s_hi, q.dot(d));
+		t_lo = MIN(t_lo, q.dot(u));
+		t_hi = MAX(t_hi, q.dot(u));
+	}
+	const int ns = int(Math::ceil((s_hi - s_lo) / c)) + 1;
+	const int nt = int(Math::ceil((t_hi - t_lo) / c)) + 1;
+	Vector<float> data;
+	data.resize(ns * nt);
+	SunHorizonJob job{ sun_heights.ptr(), sky_nx, sky_ny, ns, nt, float(c), float(o.x), float(o.y), float(d.x), float(d.y), float(s_lo), float(t_lo), data.ptrw() };
+	WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_sun_horizon_lines, &job, (nt + 15) / 16, -1, true, SNAME("TerrainSunHorizon"));
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+	Vector<uint8_t> bytes;
+	bytes.resize(data.size() * int(sizeof(float)));
+	memcpy(bytes.ptrw(), data.ptr(), bytes.size());
+	Ref<Image> img = Image::create_from_data(ns, nt, false, Image::FORMAT_RF, bytes);
+	if (sun_horizon_texture.is_valid() && sun_horizon_texture->get_width() == ns && sun_horizon_texture->get_height() == nt) {
+		sun_horizon_texture->update(img);
+	} else {
+		sun_horizon_texture = ImageTexture::create_from_image(img);
+	}
+	sun_horizon_frame = Vector4(d.x, d.y, s_lo, t_lo);
+	sun_horizon_size = Vector4((ns - 1) * c, (nt - 1) * c, 1.0, 0.0);
+	sun_azimuth_done = az;
+	last_sun_horizon_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	_publish_globals();
+	return true;
+}
+
+Ref<Image> TerrainGenerator3D::get_sun_horizon_image() const {
+	return sun_horizon_texture.is_valid() ? sun_horizon_texture->get_image() : Ref<Image>();
+}
+
+void TerrainGenerator3D::set_sun_shadows(bool p_enable) {
+	sun_shadows = p_enable;
+	sun_azimuth_done = -1000.0;
+	if (is_inside_tree()) {
+		_publish_globals();
+		set_process_internal(true);
+	}
+}
+
+void TerrainGenerator3D::set_sun_light(const NodePath &p_path) {
+	sun_light = p_path;
+	sun_light_found = ObjectID();
+	sun_search_wait = 0.0;
+	sun_azimuth_done = -1000.0;
+}
+
+// Follows the sun (sun_light, or the first DirectionalLight3D in the scene) a few times a second.
+void TerrainGenerator3D::_sun_poll(double p_delta) {
+	sun_poll_wait -= p_delta;
+	sun_search_wait -= p_delta;
+	if (sun_poll_wait > 0.0 || sky_nx < 2) {
+		return;
+	}
+	sun_poll_wait = 0.2;
+	DirectionalLight3D *light = nullptr;
+	if (!sun_light.is_empty()) {
+		light = Object::cast_to<DirectionalLight3D>(get_node_or_null(sun_light));
+	} else {
+		light = ObjectDB::get_instance<DirectionalLight3D>(sun_light_found);
+		if (!light && sun_search_wait <= 0.0) {
+			sun_search_wait = 2.0;
+			Node *root = get_tree() ? get_tree()->get_current_scene() : nullptr;
+			if (!root) {
+				root = get_tree() ? get_tree()->get_root() : nullptr;
+			}
+			if (root) {
+				TypedArray<Node> found = root->find_children("*", "DirectionalLight3D", true, false);
+				for (int i = 0; i < found.size() && !light; i++) {
+					DirectionalLight3D *l = Object::cast_to<DirectionalLight3D>(found[i]);
+					if (l && l->is_visible_in_tree()) {
+						light = l;
+					}
+				}
+			}
+			sun_light_found = light ? light->get_instance_id() : ObjectID();
+		}
+	}
+	if (!light || !light->is_inside_tree()) {
+		return;
+	}
+	update_sun_horizon(light->get_global_transform().basis.get_column(2).normalized());
+}
+
 void TerrainGenerator3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY:
 		case NOTIFICATION_ENTER_TREE: {
-			set_process_internal(!sky_light_source.is_empty());
+			set_process_internal(!sky_light_source.is_empty() || sun_shadows);
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
+			if (sun_shadows) {
+				_sun_poll(get_process_delta_time());
+			}
 			if (!sky_light_source.is_empty()) {
 				_sky_light_poll(get_process_delta_time());
 			}
@@ -5623,7 +6016,7 @@ void TerrainGenerator3D::_notification(int p_what) {
 					write_to_terrain();
 				}
 			}
-			if (preview_wait < 0.0 && touch_wait < 0.0 && sky_light_source.is_empty()) {
+			if (preview_wait < 0.0 && touch_wait < 0.0 && sky_light_source.is_empty() && !sun_shadows) {
 				set_process_internal(false);
 			}
 		} break;
@@ -8642,6 +9035,13 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sand_sea_steps"), &TerrainGenerator3D::get_sand_sea_steps);
 	ClassDB::bind_method(D_METHOD("set_sand_sea_edge", "edge"), &TerrainGenerator3D::set_sand_sea_edge);
 	ClassDB::bind_method(D_METHOD("get_sand_sea_edge"), &TerrainGenerator3D::get_sand_sea_edge);
+	ClassDB::bind_method(D_METHOD("set_sun_shadows", "enabled"), &TerrainGenerator3D::set_sun_shadows);
+	ClassDB::bind_method(D_METHOD("is_sun_shadows"), &TerrainGenerator3D::is_sun_shadows);
+	ClassDB::bind_method(D_METHOD("set_sun_light", "path"), &TerrainGenerator3D::set_sun_light);
+	ClassDB::bind_method(D_METHOD("get_sun_light"), &TerrainGenerator3D::get_sun_light);
+	ClassDB::bind_method(D_METHOD("update_sun_horizon", "to_sun"), &TerrainGenerator3D::update_sun_horizon);
+	ClassDB::bind_method(D_METHOD("get_sun_horizon_image"), &TerrainGenerator3D::get_sun_horizon_image);
+	ClassDB::bind_method(D_METHOD("get_last_sun_horizon_msec"), &TerrainGenerator3D::get_last_sun_horizon_msec);
 	ClassDB::bind_method(D_METHOD("set_sand_sea_compound", "enabled"), &TerrainGenerator3D::set_sand_sea_compound);
 	ClassDB::bind_method(D_METHOD("is_sand_sea_compound"), &TerrainGenerator3D::is_sand_sea_compound);
 	ClassDB::bind_method(D_METHOD("set_sand_sea_mask", "mask"), &TerrainGenerator3D::set_sand_sea_mask);
@@ -8650,6 +9050,12 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_nebkha_density"), &TerrainGenerator3D::get_nebkha_density);
 	ClassDB::bind_method(D_METHOD("get_nebkha_height", "global_position"), &TerrainGenerator3D::get_nebkha_height);
 	ClassDB::bind_method(D_METHOD("get_nebkhas", "rect"), &TerrainGenerator3D::get_nebkhas);
+	ClassDB::bind_method(D_METHOD("set_oasis_count", "count"), &TerrainGenerator3D::set_oasis_count);
+	ClassDB::bind_method(D_METHOD("get_oasis_count"), &TerrainGenerator3D::get_oasis_count);
+	ClassDB::bind_method(D_METHOD("set_oasis_springs", "path"), &TerrainGenerator3D::set_oasis_springs);
+	ClassDB::bind_method(D_METHOD("get_oasis_springs"), &TerrainGenerator3D::get_oasis_springs);
+	ClassDB::bind_method(D_METHOD("get_springs"), &TerrainGenerator3D::get_springs);
+	ClassDB::bind_method(D_METHOD("carve_oases"), &TerrainGenerator3D::carve_oases);
 	ClassDB::bind_method(D_METHOD("get_sand_sea_height", "global_position"), &TerrainGenerator3D::get_sand_sea_height);
 	ClassDB::bind_method(D_METHOD("get_last_sand_sea_msec"), &TerrainGenerator3D::get_last_sand_sea_msec);
 	ClassDB::bind_method(D_METHOD("get_last_sand_sea_max"), &TerrainGenerator3D::get_last_sand_sea_max);
@@ -8889,8 +9295,12 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sand_sea_scale", PROPERTY_HINT_RANGE, "0.5,64,0.1,suffix:m"), "set_sand_sea_scale", "get_sand_sea_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "sand_sea_steps", PROPERTY_HINT_RANGE, "0,5000,1,or_greater"), "set_sand_sea_steps", "get_sand_sea_steps");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sand_sea_edge", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_sand_sea_edge", "get_sand_sea_edge");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sun_shadows"), "set_sun_shadows", "is_sun_shadows");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sand_sea_compound"), "set_sand_sea_compound", "is_sand_sea_compound");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "sand_sea_mask", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_sand_sea_mask", "get_sand_sea_mask");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "oasis_count", PROPERTY_HINT_RANGE, "0,64,1"), "set_oasis_count", "get_oasis_count");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "oasis_springs", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_oasis_springs", "get_oasis_springs");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "nebkha_density", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_nebkha_density", "get_nebkha_density");
 	ADD_GROUP("Lakes", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "lake_count", PROPERTY_HINT_RANGE, "0,256,1"), "set_lake_count", "get_lake_count");

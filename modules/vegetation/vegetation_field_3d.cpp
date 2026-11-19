@@ -385,6 +385,88 @@ void VegetationField3D::_read_sand_mobility(const TerrainGenerator3D *p_gen, Pla
 	r_setup.sea_depth = depth;
 }
 
+// A felled crown or snapped stem (TreeWind3D: storms, avalanches) keeps only p_keep of its leaf area: every crown
+// centred within p_radius of p_xz. Leaf area scales, so opacity = 1 - (1 - opacity)^keep (Beer's law, as the
+// canopy map's LAI = -2 ln(1 - opacity)).
+void VegetationField3D::_apply_canopy_losses(LocalVector<Crown> &r_crowns, const LocalVector<Vector4> &p_losses, int p_from) {
+	for (uint32_t i = p_from; i < p_losses.size(); i++) {
+		const Vector4 &l = p_losses[i];
+		const Vector2 c(l.x, l.y);
+		const float keep = CLAMP(l.w, 0.0f, 1.0f);
+		for (Crown &cr : r_crowns) {
+			if (cr.xz.distance_squared_to(c) < l.z * l.z) {
+				cr.opacity = keep <= 0.0f ? 0.0f : 1.0f - Math::pow(MAX(1.0f - cr.opacity, 1e-4f), keep);
+			}
+		}
+	}
+}
+
+void VegetationField3D::add_canopy_loss(const Vector2 &p_xz, float p_radius, float p_keep) {
+	ERR_FAIL_COND(p_radius <= 0.0f);
+	canopy_losses.push_back(Vector4(p_xz.x, p_xz.y, p_radius, CLAMP(p_keep, 0.0f, 1.0f)));
+	// The crowns already placed: get_shade_at() and the plants under them see the gap now; the canopy map at
+	// its next repaint (the caller cuts the live map itself).
+	RWLockWrite guard(crown_lock);
+	_apply_canopy_losses(crowns, canopy_losses, canopy_losses.size() - 1);
+}
+
+PackedVector4Array VegetationField3D::get_canopy_losses() const {
+	PackedVector4Array out;
+	for (const Vector4 &l : canopy_losses) {
+		out.push_back(l);
+	}
+	return out;
+}
+
+void VegetationField3D::set_spring_pools(const NodePath &p_path) {
+	if (spring_pools == p_path) {
+		return;
+	}
+	spring_pools = p_path;
+	if (streaming) {
+		_stream_clear(); // Placed again round the new pools.
+	}
+}
+
+// Signed distance (m) to the nearest pool shore, negative inside a pool; p_reach past every pool's bounds.
+float VegetationField3D::PlaceSetup::pool_distance(const Vector2 &p_xz, float p_reach) const {
+	float best = p_reach;
+	for (uint32_t k = 0; k < pools.size(); k++) {
+		if (!pool_bounds[k].grow(p_reach).has_point(p_xz)) {
+			continue;
+		}
+		const PackedVector2Array &o = pools[k];
+		const int n = o.size();
+		float d2 = 1e30f;
+		bool inside = false;
+		for (int i = 0, j = n - 1; i < n; j = i++) {
+			const Vector2 a = o[j];
+			const Vector2 b = o[i];
+			const Vector2 ab = b - a;
+			const float t = CLAMP((p_xz - a).dot(ab) / MAX(ab.length_squared(), 1e-12f), 0.0f, 1.0f);
+			d2 = MIN(d2, p_xz.distance_squared_to(a + ab * t));
+			if ((a.y > p_xz.y) != (b.y > p_xz.y) && p_xz.x < a.x + (p_xz.y - a.y) * ab.x / ab.y) {
+				inside = !inside;
+			}
+		}
+		const float d = inside ? -Math::sqrt(d2) : Math::sqrt(d2);
+		if (inside) {
+			return d; // Pools do not overlap.
+		}
+		best = MIN(best, d);
+	}
+	return best;
+}
+
+PackedVector4Array VegetationField3D::get_springs() const {
+	PackedVector4Array out;
+	for (uint32_t i = 0; i < springs_seen.springs.size(); i++) {
+		const Vector3 &p = springs_seen.springs[i];
+		out.push_back(Vector4(p.x, p.y, p.z, springs_seen.discharge[i]));
+	}
+	return out;
+}
+
 float VegetationField3D::PlaceSetup::sea_depth_at(const Vector2 &p_xz) const {
 	if (sea_depth.is_empty()) {
 		return 0.0f;
@@ -557,6 +639,46 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		_read_sand(gen, r_setup);
 		// Every field on a sand sea reads it: sand plants by their mobility rule, and the rest to keep off the sand.
 		_read_sand_mobility(gen, r_setup);
+		// Oases at desert springs, for the species that use them.
+		bool spring_rule = false;
+		const TypedArray<PlantSpecies> sl = biome->get_species();
+		for (int i = 0; i < sl.size() && !spring_rule; i++) {
+			const Ref<PlantSpecies> sp = sl[i];
+			spring_rule = sp.is_valid() && sp->uses_spring();
+		}
+		if (spring_rule) {
+			r_setup.springs.build(gen);
+		}
+		springs_seen = r_setup.springs;
+		// Nebkhas: the sand mounds desert shrubs build (terrain-gen; docs/ideas/vegetation.md, "Nebkhas").
+		if (gen && gen->get_nebkha_density() > 0.0f) {
+			r_setup.nebkhas = gen->get_nebkhas(r_setup.rect);
+			for (int i = 0; i < r_setup.nebkhas.size(); i++) {
+				const Vector4 n = r_setup.nebkhas[i];
+				r_setup.nebkha_grid[Vector2i(int(Math::floor(n.x / NEBKHA_CELL)), int(Math::floor(n.z / NEBKHA_CELL)))].push_back(i);
+			}
+		}
+	}
+	// Oasis spring pools (OasisSprings3D, the water thread's): their shores, for the species that grow round them.
+	r_setup.pools.clear();
+	r_setup.pool_bounds.clear();
+	if (!spring_pools.is_empty() && is_inside_tree()) {
+		Node *op = get_node_or_null(spring_pools);
+		if (op && op->has_method("get_pool_count") && op->has_method("get_outline")) {
+			const int count = op->call("get_pool_count");
+			for (int i = 0; i < count; i++) {
+				const PackedVector2Array outline = op->call("get_outline", i);
+				if (outline.size() < 3) {
+					continue;
+				}
+				Rect2 b(outline[0], Vector2());
+				for (const Vector2 &q : outline) {
+					b.expand_to(q);
+				}
+				r_setup.pools.push_back(outline);
+				r_setup.pool_bounds.push_back(b);
+			}
+		}
 	}
 	_read_burn_age(r_setup);
 	r_setup.stone_tops = stone_top_grid;
@@ -743,7 +865,39 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	}
 	r_setup.grid_cell = MAX(1.0f, r_setup.max_footprint * 2.0f);
 	r_setup.sun_mean = VegetationLight::sun_mean(map);
+	// Nebkha shrubs: each mound is crowned by one of them, picked by the mound's hash.
+	for (int s = 0; s < count; s++) {
+		PlaceSpecies &ps = r_setup.species[s];
+		if (ps.sp.is_valid() && bool(ps.sp->get_meta("nebkha", false))) {
+			ps.nebkha_slot = r_setup.nebkha_count++;
+		} else if (ps.sp.is_valid() && bool(ps.sp->get_meta("desert", false)) && bool(ps.sp->get_meta("woody_shrub", false)) && !bool(ps.sp->get_meta("oasis", false))) {
+			ps.desert_shrub = true;
+		}
+	}
 	return true;
+}
+
+bool VegetationField3D::PlaceSetup::near_nebkha(const Vector2 &p_xz) const {
+	if (nebkhas.is_empty()) {
+		return false;
+	}
+	const int cx = int(Math::floor(p_xz.x / NEBKHA_CELL)), cz = int(Math::floor(p_xz.y / NEBKHA_CELL));
+	for (int dz = -1; dz <= 1; dz++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			const LocalVector<int> *cell = nebkha_grid.getptr(Vector2i(cx + dx, cz + dz));
+			if (!cell) {
+				continue;
+			}
+			for (int i : *cell) {
+				const Vector4 n = nebkhas[i];
+				const float reach = NEBKHA_RADIUS * n.w + NEBKHA_CLEAR;
+				if (Vector2(n.x - p_xz.x, n.z - p_xz.y).length_squared() < reach * reach) {
+					return true;
+				}
+			}
+		}
+	}
+	return false;
 }
 
 namespace {
@@ -1107,10 +1261,17 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool mobility_rule = sp->uses_sand_mobility();
 		const bool burn_rule = sp->uses_burn_age();
 		const bool burn_recovery = !burn_rule && sp->get_burn_recovery() > 0.0f && !p_setup.burn.is_empty();
-		const bool sand_plant = sp->uses_dune() || coast_rule || mobility_rule;
+		const bool spring_rule = sp->uses_spring();
+		const bool pool_rule = sp->uses_pool();
+		// Nebkha shrubs grow on the sand they gathered; a pool's reeds on its wet sand.
+		const bool sand_plant = sp->uses_dune() || coast_rule || mobility_rule || spring_rule || pool_rule || ps.nebkha_slot >= 0;
 		if (coast_rule && !p_setup.coast) {
 			continue; // Coast plants need a sea to measure from.
 		}
+		if (pool_rule && p_setup.pools.is_empty()) {
+			continue; // Pool plants need pools to measure from.
+		}
+		const float pool_reach = pool_rule ? MAX(Math::abs(sp->get_rule_range(PlantSpecies::RULE_POOL_DISTANCE).x), Math::abs(sp->get_rule_range(PlantSpecies::RULE_POOL_DISTANCE).y)) + sp->get_rule_fade(PlantSpecies::RULE_POOL_DISTANCE) + 1.0f : 0.0f;
 		const float canopy_r = sp->get_canopy_radius();
 		const float range = ps.range;
 		const bool is_log = ps.deadwood_reach > 0.0f;
@@ -1126,6 +1287,18 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const int tx1 = MIN(p_tiles.position.x + p_tiles.size.x + ht, map_tx1);
 		const int tz1 = MIN(p_tiles.position.y + p_tiles.size.y + ht, map_tz1);
 		const Rect2 reach_rect = core.grow(halo);
+		const bool nebkha_sp = ps.nebkha_slot >= 0;
+		if (nebkha_sp && p_setup.nebkhas.is_empty()) {
+			continue;
+		}
+		// A nebkha shrub's crown: its leaves' reach at unit scale (the mesh's footprint if it has none).
+		float nebkha_unit = ps.spread;
+		if (nebkha_sp && nebkha_unit <= 0.0f && !ps.meshes.is_empty() && ps.meshes[0].is_valid()) {
+			const AABB ab = ps.meshes[0]->get_aabb();
+			nebkha_unit = 0.5f * MAX(ab.size.x, ab.size.z);
+		}
+		LocalVector<Vector2> mound_xz;
+		LocalVector<float> mound_h;
 
 		for (int tz = tz0; tz < tz1; tz++) {
 			for (int tx = tx0; tx < tx1; tx++) {
@@ -1137,16 +1310,45 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					out->species[s].customs.resize(variants);
 				}
 				const float shift = float(tile_hash(tx, tz, p_setup.seed, s) & 0xFFFFFF) / float(0x1000000);
-				for (uint32_t i = 0; i < pat.points.size(); i++) {
-					Vector2 xz = Vector2(tx * ts, tz * ts) + pat.points[i];
+				if (nebkha_sp) {
+					// This species' mounds in the tile: their tops are its points.
+					mound_xz.clear();
+					mound_h.clear();
+					const Rect2 tr(tx * ts, tz * ts, ts, ts);
+					const int c0x = int(Math::floor(tr.position.x / NEBKHA_CELL)), c0z = int(Math::floor(tr.position.y / NEBKHA_CELL));
+					const int c1x = int(Math::floor((tr.position.x + ts) / NEBKHA_CELL)), c1z = int(Math::floor((tr.position.y + ts) / NEBKHA_CELL));
+					for (int cz = c0z; cz <= c1z; cz++) {
+						for (int cx = c0x; cx <= c1x; cx++) {
+							const LocalVector<int> *cell = p_setup.nebkha_grid.getptr(Vector2i(cx, cz));
+							if (!cell) {
+								continue;
+							}
+							for (int mi : *cell) {
+								const Vector4 n = p_setup.nebkhas[mi];
+								const Vector2 m(n.x, n.z);
+								const uint32_t mh = hash_murmur3_one_float(n.x, hash_murmur3_one_float(n.z, uint32_t(p_setup.seed)));
+								if (tr.has_point(m) && int(mh % uint32_t(p_setup.nebkha_count)) == ps.nebkha_slot) {
+									mound_xz.push_back(m);
+									mound_h.push_back(n.w);
+								}
+							}
+						}
+					}
+				}
+				const uint32_t point_count = nebkha_sp ? mound_xz.size() : pat.points.size();
+				for (uint32_t i = 0; i < point_count; i++) {
+					Vector2 xz = nebkha_sp ? mound_xz[i] : Vector2(tx * ts, tz * ts) + pat.points[i];
 					if (!rect.has_point(xz) || (!in_core && !reach_rect.has_point(xz))) {
 						continue;
 					}
 					// Ordered dither: a point survives where its (per-tile shifted) rank is below
 					// the density there, so density changes smoothly and the pattern stays blue noise.
-					const float rank = Math::fmod(pat.ranks[i] + shift, 1.0f);
+					const float rank = nebkha_sp ? 0.0f : Math::fmod(pat.ranks[i] + shift, 1.0f);
 					if (rank >= max_keep) {
 						continue;
+					}
+					if (ps.desert_shrub && p_setup.near_nebkha(xz)) {
+						continue; // A mound's own shrub crowns it; the others keep off its flanks.
 					}
 					Vector3 p3(xz.x, 0.0f, xz.y);
 					float suit = sp->get_suitability(map, p3, false);
@@ -1207,6 +1409,14 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							m = MAX(m, Math::smoothstep(20.0f, 30.0f, float(Math::rad_to_deg(map->get_slope_at(p3)))));
 						}
 						suit *= sp->rule_weight(PlantSpecies::RULE_SAND_MOBILITY, m);
+					}
+					if (spring_rule && suit > 0.0f) {
+						// Oases: wetness round a desert spring (DesertSprings); -1 off the sand seas.
+						suit *= sp->rule_weight(PlantSpecies::RULE_SPRING, p_setup.springs.at(xz));
+					}
+					if (pool_rule && suit > 0.0f) {
+						// Round an oasis spring's pool: by the distance from its shore, negative in the water.
+						suit *= sp->rule_weight(PlantSpecies::RULE_POOL_DISTANCE, p_setup.pool_distance(xz, MIN(pool_reach, 1000.0f)));
 					}
 					if (burn_rule && suit > 0.0f) {
 						// Burnt ground: the burn presets by the years since (charred stems, fire moss, fireweed); -1 never burnt.
@@ -1472,8 +1682,12 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						continue;
 					}
 					// The plant's transform: on the ground, tilted towards its normal, random yaw and size.
-					const float r = pat.randoms[i];
+					const float r = nebkha_sp ? float(hash_murmur3_one_float(xz.x, hash_murmur3_one_float(xz.y)) & 0xFFFFFF) / float(0x1000000) : pat.randoms[i];
 					float scale = Math::lerp(scale_range.x, scale_range.y, Math::fmod(r * 104729.0f, 1.0f)) * trodden;
+					if (nebkha_sp && nebkha_unit > 0.0f) {
+						// The shrub that built the mound: its crown about NEBKHA_CROWN of the mound's radius.
+						scale = NEBKHA_CROWN * NEBKHA_RADIUS * mound_h[i] / nebkha_unit * Math::lerp(0.9f, 1.1f, r);
+					}
 					// At a rock's foot: leaves must not pass into the rock. A plant reaching in over it
 					// grows smaller and leans away, as plants pressed against a boulder do.
 					float rock_fit = 1.0f;
@@ -2178,6 +2392,7 @@ void VegetationField3D::_compute_maps(Maps &r_maps, const LocalVector<const Loca
 			r_maps.max_radius = MAX(r_maps.max_radius, c.radius);
 		}
 	}
+	_apply_canopy_losses(r_maps.crowns, r_maps.canopy_losses);
 	const float reach = r_maps.max_radius * 1.4f;
 	const Rect2 &rect = r_maps.maps_rect;
 	if (!r_maps.crowns.is_empty() && rect.has_area()) {
@@ -2398,6 +2613,7 @@ void VegetationField3D::_compute_maps(Maps &r_maps, const LocalVector<const Loca
 }
 
 void VegetationField3D::_maps_wants(Maps &r_maps) const {
+	r_maps.canopy_losses = canopy_losses;
 	r_maps.want_canopy = !weather_map.is_empty() && is_inside_tree();
 	r_maps.want_floor = forest_floor_enabled && is_inside_tree();
 	r_maps.want_far = true;
@@ -4133,7 +4349,18 @@ void VegetationField3D::_notification(int p_what) {
 			}
 			_follow_burns(get_process_delta_time());
 			if (streaming) {
-				_stream_update(get_process_delta_time());
+				if (still_shot && still_frozen && _stream_centre().distance_to(still_at) >= 0.5f) {
+					still_frozen = false;
+				}
+				if (!(still_shot && still_frozen)) {
+					_stream_update(get_process_delta_time());
+					if (still_shot && stream_idle && stream_setup_valid) {
+						// Settled: freeze, and drop the placement patterns (rebuilt if it moves on).
+						still_frozen = true;
+						still_at = _stream_centre();
+						patterns.clear();
+					}
+				}
 			}
 			if (!lazy_near.is_empty()) {
 				_lazy_near_update(_stream_centre());
@@ -4282,6 +4509,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_canopy_field"), &VegetationField3D::get_canopy_field);
 	ClassDB::bind_method(D_METHOD("set_litter_wind", "wind"), &VegetationField3D::set_litter_wind);
 	ClassDB::bind_method(D_METHOD("get_litter_wind"), &VegetationField3D::get_litter_wind);
+	ClassDB::bind_method(D_METHOD("set_spring_pools", "path"), &VegetationField3D::set_spring_pools);
+	ClassDB::bind_method(D_METHOD("get_spring_pools"), &VegetationField3D::get_spring_pools);
 	ClassDB::bind_method(D_METHOD("set_weather_map", "path"), &VegetationField3D::set_weather_map);
 	ClassDB::bind_method(D_METHOD("get_weather_map"), &VegetationField3D::get_weather_map);
 	ClassDB::bind_method(D_METHOD("set_tile_size", "size"), &VegetationField3D::set_tile_size);
@@ -4312,6 +4541,11 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_forest_floor_enabled"), &VegetationField3D::is_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("get_conifer_at", "global_position"), &VegetationField3D::get_conifer_at);
 	ClassDB::bind_method(D_METHOD("get_litter_at", "global_position"), &VegetationField3D::get_litter_at);
+	ClassDB::bind_method(D_METHOD("get_spring_wetness_at", "global_position"), &VegetationField3D::get_spring_wetness_at);
+	ClassDB::bind_method(D_METHOD("get_springs"), &VegetationField3D::get_springs);
+	ClassDB::bind_method(D_METHOD("add_canopy_loss", "xz", "radius", "keep"), &VegetationField3D::add_canopy_loss, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("get_canopy_losses"), &VegetationField3D::get_canopy_losses);
+	ClassDB::bind_method(D_METHOD("clear_canopy_losses"), &VegetationField3D::clear_canopy_losses);
 	ClassDB::bind_method(D_METHOD("set_cover_map_enabled", "enable"), &VegetationField3D::set_cover_map_enabled);
 	ClassDB::bind_method(D_METHOD("is_cover_map_enabled"), &VegetationField3D::is_cover_map_enabled);
 	ClassDB::bind_method(D_METHOD("set_cover_grass", "path"), &VegetationField3D::set_cover_grass);
@@ -4355,11 +4589,16 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_stream_maps_radius"), &VegetationField3D::get_stream_maps_radius);
 	ClassDB::bind_method(D_METHOD("get_stream_tile_count"), &VegetationField3D::get_stream_tile_count);
 	ClassDB::bind_method(D_METHOD("is_stream_idle"), &VegetationField3D::is_stream_idle);
+	ClassDB::bind_method(D_METHOD("set_still_shot", "enabled"), &VegetationField3D::set_still_shot);
+	ClassDB::bind_method(D_METHOD("is_still_shot"), &VegetationField3D::is_still_shot);
+	ClassDB::bind_method(D_METHOD("is_still_frozen"), &VegetationField3D::is_still_frozen);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "still_shot"), "set_still_shot", "is_still_shot");
 	ClassDB::bind_method(D_METHOD("get_stream_stats"), &VegetationField3D::get_stream_stats);
 
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "biome", PROPERTY_HINT_RESOURCE_TYPE, "Biome"), "set_biome", "get_biome");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "litter_wind"), "set_litter_wind", "get_litter_wind");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "spring_pools", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "OasisSprings3D"), "set_spring_pools", "get_spring_pools");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "weather_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WeatherMap3D"), "set_weather_map", "get_weather_map");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "canopy_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_canopy_field", "get_canopy_field");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "forest_floor_enabled"), "set_forest_floor_enabled", "is_forest_floor_enabled");
