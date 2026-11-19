@@ -621,6 +621,31 @@ recovered, so the scar's edge grows in over a cell rather than on a hard line.
 - radius 0 now draws nothing. Before, radius was clamped to 1 m and the far rings and shell still covered
   the view out to 250 and 500 m.
 
+## Regrowth flush on burns (19 Nov)
+
+Burnt grassland reads greener than the sward around it through its first season: the fire took the standing dead
+(thatch and dry tips) and the regrowth is young leaf, richer in nitrogen on the ash (the post-fire "green flush"
+seen in NDVI after grassland fires). GrassField3D bakes a flush map from its burn grid (1 on a fresh burn,
+smoothstep to 0 by 1.5 years): blades there lose their dry tips and thatch and tint (1.10, 1.22, 0.84).
+VegetationField3D passes the same flush to the plant shader in INSTANCE_CUSTOM.w's fraction (the species index
+keeps the whole part), tinting living tissue the same way. Bench grass `--burn=A --wind=0,0`,
+GRASS_NO_FLUSH=ab saves the frame without it too.
+
+Burn plant LODs: fire moss capsules and the ash on charred stems and burnt tussock are many tiny islands that
+meshoptimizer cannot thin; they now take the leaf cards' rank-ordered chain (Cook et al. 2007, stochastic
+simplification with area kept): fire moss capsules 3.8k to 154 triangles at the far LOD. In the burn bench view
+only 2% fewer primitives (3.10 M to 3.04 M): the heath around, not the burn set, holds most of them.
+
+## Prefiltered far blades (19 Nov)
+
+Past a few metres a blade is a pixel or two wide, and its own base-to-tip ramp and its dry or dead odd one out
+alias into grit (non-linear pre-filtering, Bruneton and Neyret 2012: shade with the footprint's mean, not a
+point sample). The meadow fragment now eases each blade's colour towards the sward's mean (base to tip at 0.6,
+dry tips and thatch by their shares) by half over 6 to 35 m (the same distance softening as the normals and
+tint), and raises its roughness to at least 0.8 there, so the far meadow reads soft. Measured on the far view
+crop: pixel-to-pixel contrast down about 5%. Much of the rest of the softness in the reference (a far meadow
+as a soft mass) comes from temporal AA and upscaling in game, which the cloud bench does not run.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.

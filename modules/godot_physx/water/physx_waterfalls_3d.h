@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "modules/world/world_contracts.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
 
@@ -42,7 +43,7 @@ class MeshInstance3D;
 // horsetail, tiered: "contact falls") get a sheet that follows the face and turns white past the self-aeration
 // inception point (Chanson 1993), spray where it strikes each ledge and at the foot, and mist off the face.
 // docs/ideas/water.md "Step 6a: contact falls".
-class PhysXWaterfalls3D : public Node3D {
+class PhysXWaterfalls3D : public Node3D, public WorldWaterProvider {
 	GDCLASS(PhysXWaterfalls3D, Node3D);
 
 public:
@@ -129,6 +130,18 @@ private:
 
 	LocalVector<Face> faces;
 	LocalVector<Plunge> plunges;
+	// The falling water as the water contract sees it (docs/ideas/world-contracts.md, Water): capsules round each
+	// sheet column's rows and round each free column, with the water's velocity and thickness; built by rebuild().
+	struct WaterTube {
+		Vector3 a, b; // world
+		Vector3 va, vb; // m/s at each end
+		float ra = 0.0f, rb = 0.0f; // m, radius at each end
+		float depth = 0.0f; // m of water a point inside lies under
+	};
+	LocalVector<WaterTube> tubes;
+	AABB tubes_box;
+	void _build_tubes();
+	const WaterTube *_tube_at(const Vector3 &p_position, float &r_t) const;
 	double wind_wait = 0.0;
 	// Standing water from the source (sea level, lakes as rectangle and level): a sheet stops where it meets it.
 	float sea_level = -1e30f;
@@ -159,6 +172,10 @@ public:
 	static String get_contact_shader_code();
 	void set_wet_margin(float p_margin);
 	float get_wet_margin() const;
+
+	// WorldWater: inside the falling sheets and columns, above the pool or ground they land on.
+	float contract_water_height_at(const Vector3 &p_position) const override;
+	Vector3 contract_water_flow_at(const Vector3 &p_position) const override;
 	void set_rock_step(float p_step);
 	float get_rock_step() const;
 	// Share of a steep face a thin flow covers: falls step to step as threads (nappe flow) below the onset of

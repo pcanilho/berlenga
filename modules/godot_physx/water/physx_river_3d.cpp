@@ -36,6 +36,7 @@
 #include "physx_water_surface_3d.h"
 #include "water_fall_sound.h"
 #include "water_foam_shared.h"
+#include "water_sediment.h"
 
 #include "scene/3d/audio_stream_player_3d.h"
 
@@ -100,6 +101,10 @@ uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 // green taken out per metre, more fine silt scattering).
 uniform vec3 pathtraced_absorption = vec3(0.6, 0.14, 0.1);
 uniform vec3 pathtraced_scattering = vec3(0.09, 0.1, 0.09);
+// The suspended load along the river (WorldWater sediment, kg/m3: r mineral, g ash) by arc length: x = (s - s0) / span.
+uniform bool sediment_on = false;
+uniform sampler2D sediment_tex : hint_default_black, filter_linear, repeat_disable;
+uniform vec2 sediment_range = vec2(0.0, 1.0);
 uniform float pathtraced_scattering_anisotropy : hint_range(-0.9, 0.95) = 0.85;
 uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.03;
 // Ripples: cells per metre, and their slope in still water and per m/s of current
@@ -561,6 +566,14 @@ void fragment() {
 	// The ribbon's own sides (where water spread over flat ground reaches them) and its fade into the water at the
 	// mouth, broken by the bank's relief, so neither shows as a ruler-straight edge.
 	float bank_fade = smoothstep(0.0, 0.7, v_info.b * 1.6 - 0.45 + (relief - 0.5) * 0.9);
+	// The load the water carries here (silt browns it, ash greys it), in the medium for raster and path tracer alike.
+	vec3 sed_abs = vec3(0.0);
+	vec3 sed_sca = vec3(0.0);
+	if (sediment_on) {
+		vec2 sc = texture(sediment_tex, vec2((v_s - sediment_range.x) / max(sediment_range.y, 1e-3), 0.5)).rg;
+		sed_abs = sediment_absorption_of(sc);
+		sed_sca = sediment_scattering_of(sc);
+	}
 
 #if defined(RT)
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
@@ -573,8 +586,8 @@ void fragment() {
 	// Clear over the last few cm to the waterline: there the water is a film, but a ray let through it at a grazing
 	// angle can run on under the bank's ground through metres of the medium, tinting a dotted line along the shore.
 	float film = smoothstep(0.0, 0.12, depth);
-	ABSORPTION = pathtraced_absorption * film;
-	SCATTERING = pathtraced_scattering * film;
+	ABSORPTION = (pathtraced_absorption + sed_abs) * film;
+	SCATTERING = (pathtraced_scattering + sed_sca) * film;
 	SCATTERING_ANISOTROPY = pathtraced_scattering_anisotropy;
 	// Gone past the waterline and the banks' fade, as in raster.
 	ALPHA = smoothstep(0.0, max(edge_softness, 1e-3), depth) * bank_fade;
@@ -608,7 +621,7 @@ void fragment() {
 		vec3 seen;
 		vec3 bed_p;
 		float sun_share;
-		base_rgb = water_clear_through_ex(clear_screen, clear_depth, v_world, normalize(v_world - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, max(v_info.r * 4.0 - 1.0, 0.0), pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, sun_dir, sun_irr, sky, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, true, seen, bed_p, sun_share);
+		base_rgb = water_clear_through_ex(clear_screen, clear_depth, v_world, normalize(v_world - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, max(v_info.r * 4.0 - 1.0, 0.0), pathtraced_absorption + sed_abs, pathtraced_scattering + sed_sca, pathtraced_scattering_anisotropy, sun_dir, sun_irr, sky, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, true, seen, bed_p, sun_share);
 		if (caustics_strength > 0.0 && sun_share > 0.0 && sun_dir.y < -0.05) {
 			// Back up the refracted sun ray from the bed to the surface it came through.
 			float z = max(v_world.y - bed_p.y, 0.0);
@@ -698,7 +711,7 @@ static String _river_wind_src() {
 
 // The whole shader: head, the shared wind, the raster reflections (water_raster_reflections.h), tail.
 static const String &river_shader_src() {
-	static const String src = String(RIVER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + _river_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + WATER_FOAM_SHARED_GLSL + RIVER_SHADER_SRC_TAIL;
+	static const String src = String(RIVER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + _river_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + WATER_FOAM_SHARED_GLSL + WATER_SEDIMENT_GLSL + RIVER_SHADER_SRC_TAIL;
 	return src;
 }
 
@@ -812,6 +825,8 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_default_width"), &PhysXRiver3D::get_default_width);
 	ClassDB::bind_method(D_METHOD("set_discharge", "discharge"), &PhysXRiver3D::set_discharge);
 	ClassDB::bind_method(D_METHOD("get_discharge"), &PhysXRiver3D::get_discharge);
+	ClassDB::bind_method(D_METHOD("get_sediment_at", "position"), &PhysXRiver3D::get_sediment_at);
+	ClassDB::bind_method(D_METHOD("add_sediment", "position", "mineral_kg_s", "ash_kg_s"), &PhysXRiver3D::contract_water_add_sediment);
 	ClassDB::bind_method(D_METHOD("set_rain_response", "enable"), &PhysXRiver3D::set_rain_response);
 	ClassDB::bind_method(D_METHOD("get_rain_response"), &PhysXRiver3D::get_rain_response);
 	ClassDB::bind_method(D_METHOD("get_rain_discharge"), &PhysXRiver3D::get_rain_discharge);
@@ -1836,6 +1851,7 @@ void PhysXRiver3D::_notification(int p_what) {
 						[this](const Vector3 &p, float r, float s) { submit_sphere(int(uint64_t(get_instance_id()) ^ 0x5a5a), p, r, s); });
 			}
 			_rain_response_update(get_physics_process_delta_time());
+			_sediment_update(get_physics_process_delta_time());
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			water_time += get_process_delta_time();
@@ -1886,6 +1902,145 @@ void PhysXRiver3D::_rain_response_update(double p_delta) {
 		rain_discharge = q;
 		_queue_build();
 	}
+}
+
+// The river's own sediment grid follows its cross-sections; a rebuild (a storm's rise moves them) keeps the load by
+// resampling it by arc length.
+void PhysXRiver3D::_sediment_resample() {
+	const int count = (int)sections.size();
+	const float s0 = count > 0 ? sections[0].s : 0.0f;
+	const float ds = count > 1 ? sections[1].s - sections[0].s : 0.0f;
+	if ((int)sed_c.size() == count && s0 == sed_s0 && ds == sed_ds) {
+		return;
+	}
+	LocalVector<Vector2> c;
+	c.resize(count);
+	for (int i = 0; i < count; i++) {
+		c[i] = Vector2();
+		if (sed_c.size() > 1 && sed_ds > 0.0f) {
+			const float x = (sections[i].s - sed_s0) / sed_ds;
+			const int k = CLAMP((int)Math::floor(x), 0, (int)sed_c.size() - 2);
+			const float t = CLAMP(x - k, 0.0f, 1.0f);
+			c[i] = sed_c[k].lerp(sed_c[k + 1], t);
+		}
+	}
+	sed_c = c;
+	sed_src.resize(count);
+	sed_src_frame.resize(count);
+	sed_src_age.resize(count);
+	for (int i = 0; i < count; i++) {
+		sed_src[i] = Vector2();
+		sed_src_frame[i] = 0;
+		sed_src_age[i] = 1e9f;
+	}
+	sed_s0 = s0;
+	sed_ds = ds;
+}
+
+void PhysXRiver3D::contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) {
+	int i;
+	float t;
+	float n;
+	if (!_locate(p_position, i, t, n)) {
+		return;
+	}
+	_sediment_resample();
+	const int k = t < 0.5f ? i : i + 1;
+	if (k < 0 || k >= (int)sed_src.size()) {
+		return;
+	}
+	// A source holds its rate until its caller's next call: calls in one frame add, a later frame's replace.
+	const uint64_t frame = Engine::get_singleton()->get_physics_frames();
+	if (sed_src_frame[k] != frame) {
+		sed_src[k] = Vector2();
+		sed_src_frame[k] = frame;
+	}
+	sed_src[k] += Vector2(MAX(p_mineral_kg_s, 0.0f), MAX(p_ash_kg_s, 0.0f));
+	sed_src_age[k] = 0.0f;
+	sed_any = true;
+}
+
+Vector2 PhysXRiver3D::get_sediment_at(const Vector3 &p_world_pos) const {
+	int i;
+	float t;
+	float n;
+	if (!sed_any || !_locate(p_world_pos, i, t, n) || (int)sed_c.size() != (int)sections.size()) {
+		return Vector2();
+	}
+	return sed_c[i].lerp(sed_c[i + 1], t);
+}
+
+// Washload carried at the section's mean speed (semi-Lagrangian along the arc length, so any step is stable), fully
+// mixed across the channel: a source of r kg/s into a discharge Q gives r / Q downstream (each step adds r dt over the
+// water between this section and the next, Q ds / u). Load reaching the mouth leaves the river.
+void PhysXRiver3D::_sediment_update(double p_delta) {
+	if (!sed_any) {
+		return;
+	}
+	_sediment_resample();
+	const int count = (int)sed_c.size();
+	if (count < 2 || sed_ds <= 0.0f) {
+		return;
+	}
+	const float dt = float(p_delta);
+	LocalVector<Vector2> c;
+	c.resize(count);
+	bool any = false;
+	for (int i = 0; i < count; i++) {
+		const Section &sec = sections[i];
+		const float u = MAX(sec.speed, 0.01f);
+		const float x = float(i) - u * dt / sed_ds;
+		Vector2 v;
+		if (x >= 0.0f) {
+			const int k = MIN((int)Math::floor(x), count - 2);
+			const float t = CLAMP(x - k, 0.0f, 1.0f);
+			v = sed_c[k].lerp(sed_c[k + 1], t);
+		}
+		if (sed_src_age[i] < 2.0f) {
+			v += sed_src[i] * (dt * u / (MAX(sec.discharge, 1e-3f) * sed_ds));
+		}
+		sed_src_age[i] += dt;
+		if (sed_src_age[i] < 2.0f) {
+			any = true;
+		}
+		c[i] = v;
+		any = any || v.x > 1e-6f || v.y > 1e-6f;
+	}
+	sed_c = c;
+	sed_any = any;
+	sed_tex_wait -= p_delta;
+	if (sed_tex_wait <= 0.0 || !any) {
+		sed_tex_wait = 0.1;
+		_sediment_texture();
+	}
+}
+
+void PhysXRiver3D::_sediment_texture() {
+	if (water_material.is_null()) {
+		return;
+	}
+	const int count = (int)sed_c.size();
+	if (!sed_any || count < 2) {
+		water_material->set_shader_parameter(SNAME("sediment_on"), false);
+		return;
+	}
+	Vector<uint8_t> bytes;
+	bytes.resize(count * 8);
+	float *f = (float *)bytes.ptrw();
+	for (int i = 0; i < count; i++) {
+		f[i * 2 + 0] = sed_c[i].x;
+		f[i * 2 + 1] = sed_c[i].y;
+	}
+	Ref<Image> img = Image::create_from_data(count, 1, false, Image::FORMAT_RGF, bytes);
+	if (sediment_tex.is_valid() && sediment_tex->get_width() == count) {
+		sediment_tex->update(img);
+	} else {
+		sediment_tex = ImageTexture::create_from_image(img);
+	}
+	// Texel centres at the sections: x = (s - s0 + ds / 2) / (count ds).
+	water_material->set_shader_parameter(SNAME("sediment_tex"), sediment_tex);
+	water_material->set_shader_parameter(SNAME("sediment_range"), Vector2(sed_s0 - 0.5f * sed_ds, sed_ds * count));
+	water_material->set_shader_parameter(SNAME("sediment_on"), true);
 }
 
 void PhysXRiver3D::set_rain_response(bool p_enable) {

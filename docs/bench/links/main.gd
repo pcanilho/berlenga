@@ -141,6 +141,7 @@ func _ready() -> void:
 	_fire_tests()
 	await _contact_tests()
 	await _snow_fire_tests()
+	await _leaf_kick_tests()
 	_tyre_snow_tests()
 	await _contract_tests()
 	await _shimmer_tests()
@@ -391,6 +392,44 @@ func _contact_tests() -> void:
 	body.queue_free()
 
 
+# Bodies kick up fallen leaves: a body walking through lying leaves throws them; one standing still does not.
+func _leaf_kick_tests() -> void:
+	if not ClassDB.class_exists("LeafFall3D"):
+		_skip("leaves: bodies kick them up", "no LeafFall3D")
+		return
+	WorldContracts.clear_overrides()
+	var lf: Node3D = ClassDB.instantiate("LeafFall3D")
+	lf.auto_crowns = false
+	add_child(lf)
+	var q := QuadMesh.new()
+	q.size = Vector2(0.06, 0.05)
+	lf.add_kind(q, 0.06, 0.003, 0.0003, 0.5)
+	for i in 12:
+		lf.drop_leaf(Vector3(0.15 * i, 0.05, 0.0), 0)
+	for i in 120:
+		await get_tree().physics_frame
+	var lying := 0
+	for s in lf.get_leaf_states():
+		if s.w > 0.5:
+			lying += 1
+	var walker := Node3D.new()
+	walker.add_to_group("world_contact")
+	walker.set_meta("trample_radius", 0.3)
+	add_child(walker)
+	walker.position = Vector3(-2, 0.4, 0)
+	for i in 30:
+		await get_tree().physics_frame
+	var still: int = lf.get_kicked_count()
+	for i in 180:
+		walker.position = Vector3(-2.0 + 6.0 * i / 180.0, 0.4, 0)
+		await get_tree().physics_frame
+	var kicked: int = lf.get_kicked_count()
+	_check("leaves: a walking body kicks up the leaves it passes, a still one none", lying >= 10 and still == 0 and kicked >= 8, "%d lying; %d kicked standing, %d walking through" % [lying, still, kicked])
+	walker.queue_free()
+	lf.queue_free()
+	await get_tree().physics_frame
+
+
 # Tyres on snow (WorldSnow): grip falls to packed snow's, and chains win much of it back.
 func _tyre_snow_tests() -> void:
 	if not ClassDB.class_exists("PhysXVehicle3D"):
@@ -509,6 +548,29 @@ func _contract_tests() -> void:
 	m.queue_free()
 	WorldContracts.clear_overrides()
 	await get_tree().physics_frame
+	# A waterfall answers inside its falling water, falling fast, and nowhere beside it.
+	if ClassDB.class_exists("PhysXWaterfalls3D"):
+		WorldContracts.clear_overrides()
+		var cliff := Node3D.new()
+		cliff.set_script(load("res://cliff_source.gd"))
+		cliff.name = "Cliff"
+		add_child(cliff)
+		var falls: Node3D = ClassDB.instantiate("PhysXWaterfalls3D")
+		add_child(falls)
+		falls.source = falls.get_path_to(cliff)
+		falls.rebuild()
+		var wf: WorldWater = WorldContracts.get_water()
+		var fastest := 0.0
+		for xi in 40:
+			for yi in 6:
+				var q := Vector3(0.25 * xi, 5.0 + 4.0 * yi, 0.0)
+				if is_finite(wf.height_at(q)):
+					fastest = minf(fastest, wf.flow_at(q).y)
+		var off_fall := wf.height_at(Vector3(5, 15, 30))
+		_check("contracts: a waterfall's falling water answers the water contract, nothing beside it", fastest < -5.0 and is_inf(off_fall), "fastest %.1f m/s down; beside %f" % [fastest, off_fall])
+		falls.queue_free()
+		cliff.queue_free()
+		await get_tree().process_frame
 	# Runoff load: dropped quietly with no runoff producer, taken by a stub.
 	var gr: WorldGround = WorldContracts.get_ground()
 	var had_runoff := gr.has_runoff()

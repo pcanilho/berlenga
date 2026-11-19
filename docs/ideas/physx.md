@@ -1766,6 +1766,114 @@ smoke's grey part so plumes shade the ground in patches (weather
 owners); the haze is one value over the map's centre, not a field; the
 lofted plume is treated as mixed through 2 km.
 
+### Post-fire mudflows (picked 19 Nov morning, second of three)
+
+Split agreed by the three owners. Valence (WeatherRunoff3D) fires the
+event: USGS M1 likelihood (Staley et al. 2017) and Gartner (2014) volume
+at basin outlets, at P >= 0.5, one per basin per storm, signal
+debris_flow on WeatherRunoff3D and WorldGround, with id, volume, path,
+widths and severity. Mud (GroundDebrisFlow3D) moves the body:
+Bingham/Voellmy on the path, Iverson entrainment, deposit written into
+the ground, front getter get_debris_front(id) and the
+debris_front_changed signal. PhysX (PhysXDebrisSurge3D, nodes/) draws what
+rides the front. Research: post-fire debris flows arrive as surges, tens
+of seconds to minutes apart (Kean et al. 2011, 2013); a bouldery snout
+forms because the surface outruns the front and carries clasts forward
+(Iverson 1997); peak discharge Q = 0.1 V^(5/6) and front speed v = 2.1
+Q^(1/3) S^(1/3) (Rickenmann 1999); fans and deposition below about 4
+degrees (Ikeya 1981). Built: a train of up to four surges (one per 400
+m3, each 0.6 of the last); a front of its own on the path at
+Rickenmann's speed, easing over a few seconds and stopping below
+stop_slope, replaced by mud's front where its getter reports one;
+boulders as rigid bodies drawn from a D^-2.5 power law up to the flow
+depth, with quadratic drag toward 1.3 times the front speed behind the
+snout and the front speed at it, the slurry's buoyancy, the force
+clamped for stability; mud spray as ballistic drops. Test (scratch:
+1500 m3, 25% channel then a 3% fan): peak Q 44 m3/s, front 3.8 m/s, 1.0
+to 1.8 m deep; boulders stay within a few metres of the snout; the front
+stops 30 m onto the fan with its boulders in the lobe; the second surge
+stops 4 m short of the first. Left: drawing the body and levees is
+mud's; dust ahead of dry fronts; rumble and ground shake.
+
+### Burning wooden buildings (picked 19 Nov morning, third of three)
+
+Built as PhysXBuildingFire3D (flow/physx_building_fire_3d.cpp), a
+compartment-fire zone model per room rather than a PhysXBurnable3D mode:
+a burnable is one surface, a house is rooms that pass fire between them.
+Research: t-squared growth, 1 MW at 300 s for dwellings (EN 1991-1-2
+Annex E); Kawagoe's ventilation limit 1.5 A sqrt(H) MW; McCaffrey,
+Quintiere and Harkleroad's hot layer dT = 6.85 (Q^2 / (A sqrt(H) h_k
+A_T))^(1/3) with a timber lining's h_k = sqrt(k rho c / t); Thomas's
+flashover Q_FO = 7.8 A_T + 378 A sqrt(H) kW; glass falls out at 450 to
+530 C (Babrauskas 2004); fully developed burning at 250 kW/m2 of floor
+with 780 MJ/m2 of fuel (Annex E means for dwellings), the excess over
+the air limit burning outside; external flame length L = H (2.37 (Q /
+(A rho_g sqrt(g H)))^(2/3) - 1) (Annex B); linear decay after 70% burnt;
+notional charring 0.8 mm/min (EN 1995-1-2) scaled by the layer's
+temperature; light frame (50 mm members) fails at 60% section lost;
+ember ignition of furnishings about 1 in 5 (Manzello et al. 2006) and
+ember piles at wall feet (Manzello 2017); structure fires throw about
+40 brands a second per MW (Suzuki and Manzello 2017).
+
+Per room: states cold, growing, flashed, decay, out; doors between rooms
+found where an opening lies on another room's face (mirrored to both
+sides); spread by radiation through doors (half a blackbody at the layer
+temperature, ignition dose as the cladding's), burn-through of walls,
+floors and roofs, a collapsed room lighting the one above (and opening
+its floor), and window flames on the facade breaking the window above
+after 60 s of contact (leapfrog). Outside: each face's cladding takes a
+dose from the ground fire's flames at its foot, Flow's hot gas,
+PhysXBurnable3D and building radiation, and brand piles; it lights at
+the thick-solid dose, spreads at 3 cm/s, lets the fire in where it
+reaches an opening or burns through. Brands in an open window light the
+contents. The window flames' radiation lights the ground fuel below.
+Drawn as Flow emitters (inner fire, smoke from the opening tops before
+flashover, flames after, roof, cladding), one flickering OmniLight3D per
+room at its fire (the flames are its visible source), and the
+PhysXBurnable3D burn material on the target's meshes. WorldFire: heat_at
+over room footprints, burnt_at, plumes (0.7 of the heat), smoke (0.03
+kg/kg). PhysXBurnable3D, cloth burn and firebrands read it.
+
+Test (scratch house: two ground-floor rooms joined by a door, one above,
+an open outer door, three glazed windows; fire time): window breaks at
+6 min, flashover 8.7 min, the next room flashes 7 min after it caught
+through the door, collapse 15 min after flashover, the upper room
+catches through the burnt floor and flashes at 10 min, whole house out
+after about 95 min. Peak 14 MW. Flux 5 m in front of a window about
+4-6 kW/m2 (one 1.4 m2 window; a whole burning facade gives more).
+Left: rooms are boxes (pitched roofs, attics and L-shaped rooms are
+several boxes); no smoke filling rooms ahead of the fire (two-zone
+smoke layer), no firefighting water on rooms yet (Flow/MPM water reaches
+burnables, not buildings), glass is not drawn breaking.
+
+### Next-round options (card, 19 Nov late morning)
+
+Water on burning buildings. Hose streams and MPM water reaching a room
+take heat at 2.6 MJ/kg (heating and boiling); a room needs about 0.1 to
+0.3 kg/s per MW to knock the flames down (Sardqvist's critical flow
+rate). Steam expands about 1700 times and pushes the hot layer out of
+the openings. Plan: water particles entering an opening or hitting the
+cladding feed PhysXSteam and a cooling term in the room's heat balance.
+
+Smoke ahead of the fire. A two-zone layer (Quintiere; CFAST) fills each
+room from the ceiling. The smoke leaves through the top of the openings
+above a neutral plane and passes through doors to the next rooms well
+before any flames do. That gives smoke from the eaves and grey windows
+in the early minutes. Plan: a layer height and smoke density per room,
+drawn as Flow smoke at the openings.
+
+Windows and roofs that break. Glass that falls out at 450 C drops as
+Blast shards (Pagni and Joshi's crack pattern from the frame edge).
+Roofs sag and fall in where the room collapses, rather than the whole
+target breaking at once. Plan: optional glass and roof Destructibles per
+opening and per room.
+
+A settlement in a wind-driven fire. In wildland-urban interface fires,
+most homes are lost to embers rather than flame contact, and home to
+home spread then dominates (Maranghides and Mell 2011, Waldo Canyon;
+Camp Fire NIST 2021). Plan: a village bench where firebrands and the
+radiation between buildings carry a grass fire's front through a street.
+
 ### Next-round options (card, 19 Nov)
 
 Research notes for the card that follows the four picks above.

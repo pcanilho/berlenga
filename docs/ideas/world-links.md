@@ -85,6 +85,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Bodies → grass bend, trample | linked | `grass_trample` group | |
 | Bodies → shrubs, crops, hedges, ferns | linked (18 Nov) | contact trample field | VegetationField3D keeps a field where no grass does |
 | Bodies → branches | linked | `tree_touch` group | |
+| Bodies → fallen leaves kicked up | linked (19 Nov) | world_contact bodies (position, speed) | LeafFall3D throws the lying leaves a moving body touches at 0.4-0.9 of its speed with a small lift; leaf litter spawns leaves across the swath; a still body moves none |
 | Vehicles → grass, branches | linked (18 Nov) | world_contact | wheels and bodies join |
 | Lying snow → plants | linked (18 Nov) | snow cover (snow map) | as above (GrassField3D, PlantGenerator) |
 | Flowing water → reeds, grass | linked (18 Nov) | WorldWater flow and surface | the trample fields take the current's drag (Cauchy number, Luhar and Nepf 2011): grass and plants lean downstream, flat in a fast current |
@@ -100,12 +101,14 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Cloud shadow → water | linked | cloud shadow | |
 | Water → wet shore | linked | contact wetness | |
 | Falls → mist → wet rock | linked | mist | |
+| Falls → bodies in them (wet, pushed down) | linked (19 Nov) | WorldWater (PhysXWaterfalls3D) | the sheets and free columns answer the contract inside their water, above where they land: depth q/v, the water's velocity |
 | Bodies with buoyancy → wakes | linked | buoyancy, wake nodes | |
 | Bodies without buoyancy → ripples, splash | linked (18 Nov) | contact | world_contact bodies disturb sea, river |
 | Wading → wet legs, clothes | linked (18 Nov) | WorldWater | ClothWetness (PhysX, d90fa990) |
 | Cold air over water → steam fog | linked (18 Nov) | air, WorldWater, `get_water_temperature()` | VegetationMist3D cells over water |
 | Rain, melt → river level | linked (18 Nov) | WeatherRunoff3D (SCS curve number, D8 routing) | rain thread: rivers add the discharge reaching them; snowmelt runs off too |
 | Cold → lake ice | linked | air, snow | SnowCover3D lake ice, Stefan's law under the snow (Leppaeranta 1993) |
+| Bodies → lake ice (break through) | linked (19 Nov) | world_contact bodies (mass), SnowCover3D lake ice | a load past Gold's P = A h^2 (A 10, white ice half, thawing ice half) breaks a hole the body's size; it stops bearing at once and refreezes by Stefan's law |
 | Fire → steam on water | linked (18 Nov) | WorldFire, WorldWater | water landing on fire and fire at the water's edge (PhysX, ebb5f254) |
 
 ### Fire, gas and lightning
@@ -130,8 +133,10 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Fire → smoke haze downwind | linked (19 Nov) | WorldFire `smoke_sources()` (base, kg/s PM2.5) | PhysX eabdcd98: WeatherMap3D carries the smoke into its haze |
 | Fire age → trees cast dead needles | linked (19 Nov) | shader global `fire_age_map` | PhysX ebdad64b |
 | Fire → regrowth (burnt ground greens again) | linked (19 Nov) | WorldFire `burn_age_at` (fires in play, WorldBurnScar3D) | VegetationField3D: RULE_BURN_AGE, PlantSpecies.burn_recovery (38c29f47); GrassField3D green-up (30b7085a, a7c6a8fb); both refresh through the burn change log (VegetationField3D 0197e5b2, vegetation bench `--burn=live`) |
+| Fire → trees regrow (resprouts, seedlings on the ash) | linked (19 Nov) | WorldFire `burn_age_at` at each tree's foot (VegetationField3D's burn grid) | Trees supply variants built at TreeGenerator.fire_years with mesh meta `tree_fire_years` (years) and `tree_fire_band` (Vector2 years from, to: bands 0-1, 1-3, 3-6, 6-10, 10-20); VegetationField3D places the variant whose band holds the age, unburnt variants off burns and from 20 years; vegetation --test checks it. Also the regrowth flush (cadd0e98) |
 | Burnt ground → runoff (water-repellent soil, ash washed off) | linked (19 Nov) | WorldFire `water_repellency_at`, WorldGround `runoff_at` | PhysX 837fea90 |
-| Ash, silt runoff → stream colour | in work | WorldGround `add_runoff_load` → runoff (WeatherRunoff3D) → WorldWater `add_sediment`, `sediment_at` | contracts in (world links); PhysX puts washed ash on the runoff (5f14b542); WeatherRunoff3D routes it into open water (Valence #393); rivers and lakes carrying and shading it next (Valence) |
+| Ash, silt runoff → stream colour | linked (19 Nov) | WorldGround `add_runoff_load` → runoff (WeatherRunoff3D) → WorldWater `add_sediment`, `sediment_at` | PhysX puts washed ash on the runoff (5f14b542); WeatherRunoff3D routes it into open water (Valence #393); PhysXRiver3D and PhysXWaterSurface3D carry, settle and shade it (Valence eab1d857) |
+| Rain on burnt slopes → debris flow | linked (19 Nov) | WeatherRunoff3D `debris_flow` signal (outlet, volume, path) | Valence fires it, mud's GroundDebrisFlow3D runs the mud body, PhysXDebrisSurge3D carries the bouldery front (Rickenmann 1999 speed) |
 | Weather wind → free-standing Flow smoke | linked (18 Nov) | wind | `PhysXFlow3D.weather_wind` (wind work) |
 
 ### Cloth, hair, bodies
@@ -173,3 +178,25 @@ copy of shared state is listed under "Private copies" until it moves onto the so
   temperature plus sub-grid plume turbulence).
 - One contact group: every system reads `world_contact` as well as its own group; vehicles, characters and PhysX
   bodies join it.
+
+## Next round candidates (19 Nov, card to Paulo)
+
+Every pair above is linked or in work. Three visible gaps remain; each reads a contract that already exists.
+
+1. Bodies break through lake ice (built 19 Nov). Source: `WorldSnow.lake_ice_at` (thickness, white share) and `world_contact` bodies
+   (mass from the physics body). Bearing capacity of floating ice: Gold (1971), P = A h^2 (P in kg, h in cm), A about
+   3.5 for routine safe loads and about 17.5 at failure; white (snow) ice carries about half of clear ice, and
+   thawing ice less again (USACE EM 1110-2-1612; Masterson 2009 review). A body over A_fail h^2 breaks a hole
+   about its own size plus the radial cracks' reach (characteristic length l = (E h^3 / 12 (1 - nu^2) rho_w g)^(1/4),
+   Wyman 1950), which the lake ice keeps open till it refreezes (Stefan's law already in SnowCover3D); the body then
+   meets the water through WorldWater (buoyancy, wet clothes).
+2. Bodies kick up fallen leaves (built 19 Nov). Source: `world_contact` bodies (position, velocity) into LeafFall3D's lying leaves.
+   A foot or wheel moving through litter throws the leaves it touches at about the contact's speed plus a small
+   lift, and its wake lifts the ones a little beyond: the air behind a walker moves at about 0.3-0.5 of walking
+   speed close to the ground (Edge et al. 2005, human wake measurements), well under the gust lift threshold, so only
+   leaves the body touches, plus a wheel's wake at speed, should fly.
+3. Rain washes smoke and dust out of the air (below-cloud scavenging). Source: `WorldWeather.precipitation_at` into
+   PhysXFlow3D smoke and dust. Scavenging coefficient Lambda = a R^b: for PM2.5-sized smoke about 1e-5 to 1e-4 1/s at
+   1-10 mm/h (Laakso et al. 2003; Wang et al. 2010), so a smoke plume barely thins in a shower; for coarse dust
+   (> 10 um) about 1e-3 1/s, so a dust cloud clears within minutes in rain. Applied as a density decay per Flow
+   step, split by the gas's kind.

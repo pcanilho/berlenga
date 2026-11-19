@@ -193,6 +193,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
   - A river leaving a lake carries what the lake passes over its sill, drowned or free, and the lake settles at the level where its outlets pass its inflow (`source_lake`, `level_from_flows`).
   - Cascades into white water; `carve` emits channel brushes for a terrain deformer.
   - River surface (`foam_crisp`, `ripple_detail`, `caustics_strength`): crisp foam that drains into lace, capillary ripples, and sun caustics on the bed from the river's own ripples.
+  - Sediment (`add_sediment()` on rivers and lakes): rivers carry silt and ash downstream and lakes settle it out; silt browns the water and ash greys it, raster and path traced alike.
   - Live ripples (`live_surface_waves`, `live_near_mesh_spacing`): ripples travel at their own speed, wrap round stones and reflect off the banks, and near the camera they are real geometry.
   - Rocks part the current and trail foam (`obstacle_collision_mask`); near the camera they shed eddies and a swinging wake (`live_flow`).
 
@@ -221,7 +222,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
   - Waterfall sound (`PhysXRiver3D.fall_sound`): each fall roars at its foot, synthesised from the ringing of the bubbles its plunge entrains, pitched by impact speed and levelled by its power; nothing is recorded.
 
   - Living waterline (`edge_lap_height`, `edge_relief`, `edge_foam`): edges lap with the flow, look ragged and carry a thin foam band.
-- **Contact waterfalls** (`PhysXWaterfalls3D`, `contact_falls`, `wet_margin`, `surface`): water that clings to steep rock, as wide as its flow, clear at the lip and white below the inception point, with soft wandering edges, wet rock beside it and spray off ledges. Thin falls over stepped rock run ledge to ledge as threads with wet rock between them, as their flow sets (`rock_step`); big flows stay fully covered. The sheets follow cliff relief ledge by ledge.
+- **Contact waterfalls** (`PhysXWaterfalls3D`, `contact_falls`, `wet_margin`, `surface`): water that clings to steep rock, as wide as its flow, clear at the lip and white below the inception point, with soft wandering edges, wet rock beside it and spray off ledges. Thin falls over stepped rock run ledge to ledge as threads with wet rock between them, as their flow sets (`rock_step`); big flows stay fully covered. The sheets follow cliff relief ledge by ledge. Falling water counts as water for everything it touches: bodies and clothes in a fall get wet and are pushed down.
 
   ![A contact waterfall running down a rock face, raster](media/contact-falls.jpg)
 

@@ -123,7 +123,7 @@ terramechanics and pressing calls, which stay on the producer for now).
 Consumers: ground, plants (burial), trees (load), vehicles (grip, ruts), cloth and hair, weather (runoff into the
 surface water).
 
-### Water (`WorldWater`; producers `PhysXWaterSurface3D` (sea, lakes, pools), `PhysXRiver3D`, `PhysXLiveWater3D`, `TerrainDataMap3D` (baked lakes and streams), `GroundSurface3D` (standing water))
+### Water (`WorldWater`; producers `PhysXWaterSurface3D` (sea, lakes, pools), `PhysXRiver3D`, `PhysXLiveWater3D`, `TerrainDataMap3D` (baked lakes and streams), `GroundSurface3D` (standing water), `PhysXWaterfalls3D` (inside the falling sheets and columns, above where they land: thin, fast water))
 
 Every producer is live at once and answers only where it really has water: the sea where its depth over the seabed
 is above 0, a river inside its ribbon, live water and pools in cells with depth, the terrain map where its baked

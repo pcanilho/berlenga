@@ -1761,6 +1761,10 @@ void GroundSurface3D::_update_patch_material() {
 		bm->set_feature(BaseMaterial3D::FEATURE_GROUND_DEFORM, true);
 		bm->set_ground_deform_patch(true);
 		patch_uv_offset = bm->get_uv1_offset();
+		// A fresh copy (the source's parameters changed, _sync_patch_params) keeps the world mapping for the patch's
+		// current centre; otherwise it would hold the source's offset until the patch next moves.
+		const Vector3 sc = bm->get_uv1_scale();
+		bm->set_uv1_offset(patch_uv_offset + Vector3(Math::fposmod(center.x * sc.x, 1.0f), Math::fposmod(center.y * sc.y, 1.0f), 0.0f));
 	} else if (ShaderMaterial *sm = Object::cast_to<ShaderMaterial>(patch_material.ptr())) {
 		sm->set_shader_parameter("ground_deform_patch", true);
 	}

@@ -1065,6 +1065,29 @@ func _run_water_tests() -> void:
 	await get_tree().physics_frame
 	var hit := get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(wet + Vector3(0, top + 20.0, 0), wet + Vector3(0, top - 20.0, 0)))
 	_check("the ice is drawn and walkable", li != null and li.get_quad_count() > 100 and li.get_walkable_count() > 100 and not hit.is_empty() and absf(hit.position.y - top) < 0.05, "%d cells drawn, %d walkable; a ray stops at %.2f m (ice top %.2f m)" % [li.get_quad_count() if li else 0, li.get_walkable_count() if li else 0, hit.position.y if not hit.is_empty() else -INF, top])
+	# Load on the ice (world links): a walker stands on it, a heavy vehicle goes through (Gold 1971, P = A h^2).
+	var spot := wet + Vector3(0, 0, 24)
+	var spot_ice := snow.get_ice_thickness_at(spot)
+	var spot_top := snow.get_water_level_at(spot) + SnowLakeIce3D.freeboard(spot_ice)
+	var walker := Node3D.new()
+	walker.add_to_group("world_contact")
+	walker.set_meta("ground_mass", 80.0)
+	walker.set_meta("trample_radius", 0.3)
+	add_child(walker)
+	walker.global_position = Vector3(spot.x, spot_top + 0.3, spot.z)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var walker_ok := snow.get_ice_break_count() == 0 and snow.get_ice_thickness_at(spot) == spot_ice
+	var load_cap := SnowCover3D.ice_breaking_load(spot_ice, snow.get_white_ice_thickness_at(spot) / maxf(spot_ice, 1e-4), snow.get_air_temperature_at(spot))
+	walker.set_meta("ground_mass", 1.5 * load_cap) # half again what this ice bears
+	walker.set_meta("trample_radius", 1.0)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var through := get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(spot + Vector3(0, spot_top + 5.0, 0), spot + Vector3(0, spot_top - 5.0, 0)))
+	_check("a walker stands on lake ice, a load past its bearing breaks through", spot_ice > 0.05 and walker_ok and snow.get_ice_break_count() >= 1 and snow.get_ice_thickness_at(spot) == 0.0 and through.is_empty() and snow.get_ice_thickness_at(wet) > 0.05, "%.1f cm of ice bears %.0f kg; 80 kg stood, half again broke through (%d breaks, %.1f cm left, ray %s)" % [spot_ice * 100.0, load_cap, snow.get_ice_break_count(), snow.get_ice_thickness_at(spot) * 100.0, "through" if through.is_empty() else "stopped"])
+	walker.queue_free()
+	snow.advance(3600.0)
+	_check("the hole stays broken through the next update and freezes over thin", snow.get_ice_thickness_at(spot) < 0.3 * spot_ice, "%.1f cm an hour later at -10 C (was %.1f cm)" % [snow.get_ice_thickness_at(spot) * 100.0, spot_ice * 100.0])
 	var white0 := snow.get_white_ice_thickness_at(wet)
 	# A thaw: the snow goes first, then the ice.
 	await _weather_to(12.0, 0.0)
