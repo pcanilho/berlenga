@@ -591,7 +591,8 @@ public:
 		DESERT_INTERDUNE, // Interdune corridors: sparse drinn, the rain-flush annuals, soil crust.
 		DESERT_MAX,
 	};
-	static TypedArray<Resource> make_desert(DesertStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// p_shrubs: TreeGenerator's desert shrubs too (calligonum, white broom, saltbush).
+	static TypedArray<Resource> make_desert(DesertStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary(), bool p_shrubs = true);
 	// Burnt ground (docs/ideas/vegetation.md, "Burnt ground and regrowth"), placed by PlantSpecies.RULE_BURN_AGE.
 	enum BurnStand {
 		BURN_HEATH, // Heather moor: charred stems, fire moss, fireweed, resprouting moor-grass.

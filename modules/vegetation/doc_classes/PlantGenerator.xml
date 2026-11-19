@@ -226,7 +226,7 @@
 			<param index="2" name="textures" type="bool" default="true" />
 			<param index="3" name="season" type="Dictionary" default="{}" />
 			<description>
-				The plants of burnt ground as [PlantSpecies] for a [Biome], placed by [constant PlantSpecies.RULE_BURN_AGE] from [method WorldFire.burn_age_at]: each burn preset in bands of the years since the fire, its meshes built at that band's age (the season's [code]burn_age[/code]). Black stems with ash, then weathering silver-grey and falling; fire moss from three months to three years; fireweed as leafy shoots in the first year and flowering spikes from the second; tussocks green from the second week. Ground that never burnt takes none of them; the stand's other plants come back by their [member PlantSpecies.burn_recovery].
+				The plants of burnt ground as [PlantSpecies] for a [Biome], placed by [constant PlantSpecies.RULE_BURN_AGE] from [method WorldFire.burn_age_at]: each burn preset in bands of the years since the fire, its meshes built at that band's age (the season's [code]burn_age[/code]). Black stems with ash, then weathering silver-grey and falling; fire moss from three months to three years; fireweed as leafy shoots in the first year and flowering spikes from the second; tussocks green from the second week. Ground that never burnt takes none of them; the stand's other plants come back by their [member PlantSpecies.burn_recovery]. List these after the stand's own species in the [Biome]: a field places species in order, so the recovering plants claim their ground first and the burn plants fill what they leave.
 			</description>
 		</method>
 		<method name="make_desert" qualifiers="static">
@@ -235,8 +235,9 @@
 			<param index="1" name="variants" type="int" default="3" />
 			<param index="2" name="textures" type="bool" default="true" />
 			<param index="3" name="season" type="Dictionary" default="{}" />
+			<param index="4" name="shrubs" type="bool" default="true" />
 			<description>
-				The plants of a desert sand sea ([member TerrainGenerator3D.sand_sea_rect]) as [PlantSpecies] for a [Biome], placed by [constant PlantSpecies.RULE_SAND_MOBILITY]: nothing on the moving crests and slip faces, drinn on the flanks and plinths, and on the stable interdune sand soil crust and the annuals, green after rain when [param season] has a soil moisture.
+				The plants of a desert sand sea ([member TerrainGenerator3D.sand_sea_rect]) as [PlantSpecies] for a [Biome], placed by [constant PlantSpecies.RULE_SAND_MOBILITY]: nothing on the moving crests and slip faces, drinn on the flanks and plinths, and on the stable interdune sand soil crust and the annuals, green after rain when [param season] has a soil moisture. With [param shrubs], [TreeGenerator]'s desert shrubs too: calligonum on the flanks' moving sand and young in the corridors, white broom and saltbush (the lowest, most stable flats) between the dunes.
 			</description>
 		</method>
 		<method name="make_woody_shrub" qualifiers="static">

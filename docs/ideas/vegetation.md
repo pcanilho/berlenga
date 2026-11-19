@@ -653,6 +653,13 @@ stable sand, annuals between the dunes. Cost, 120 m streamed round a walker on l
 +9.5 MB memory, +1 MB video, +134k primitives, +604 draw calls, walking worst 0.44 ms (0.03 off), raster frame
 504 ms against 162 ms. Path traced cost goes on the PC queue.
 
+Woody shrubs (19 Nov, trees' 16f1f982): `make_desert(..., shrubs = true)` adds calligonum (mature on the flanks,
+mobility 0.1 to 0.6; young in the corridors), white broom and saltbush (corridors, saltbush only the most stable
+flats), sparse and grouped. Bench VEG_DESERT_SHRUBS=0 for the cost: with against without, +3.8 MB memory,
++267 MB video, +1.78 M primitives, +19 draw calls, raster frame 592 ms against 505 ms. The shrub meshes are heavy
+(about 70k triangles each in view): asked trees about LODs/impostors for them. The desert bench now reads mobility
+bilinearly, as the field does (nearest-cell reads failed after the sinuous brinks, 81cae021).
+
 ## Burnt ground and regrowth (Paulo's pick 17 Nov; built 19 Nov)
 
 PhysX burns plants now (fire_state_map: char, scorch, stubble; fire_char_map: ash). Nothing grows back: a burn stays a
@@ -694,7 +701,8 @@ needs it; `PlantSpecies.RULE_BURN_AGE` places the burn presets, `PlantSpecies.bu
 heaths 8, mosses 10, soil crust 30. Presets PRESET_FIREWEED, PRESET_FIRE_MOSS, PRESET_CHARRED_STEMS,
 PRESET_BURNT_TUSSOCK (plant_burn.cpp) read the season's `burn_age`; `make_burn(BURN_HEATH | BURN_GRASS | BURN_SCRUB)`
 builds each in age bands. Bench vegetation `--burn[=off]`: four scars 0.05 to 5 years old in dry heath; all checks
-pass (heather 122 per metre of strip unburnt, 0 on the fresh burn, 84 at five years). A fire burning now shows once
+pass (heather 122 per metre of strip unburnt, 0 on the fresh burn, 84 at five years). Cost (lavapipe, 640x360, raster, 80 m
+streamed): 114.6k plants (heath and burn sets), +31.5 MB memory, +132 MB video, 2.43 M primitives, 1984 draw calls. A fire burning now shows once
 the field places again (regrowth is slow). Next: the grass sward's own green-up (GrassField3D) by burn age.
 
 ## Salt marsh and shingle plants (built 17 Nov)
