@@ -91,7 +91,7 @@
 			Boulders per m³ of surge.
 		</member>
 		<member name="front_source" type="NodePath" setter="set_front_source" getter="get_front_source" default="NodePath(&quot;&quot;)">
-			A node with [code]get_debris_front(event_id)[/code] returning the mud body's front ([code]position[/code], [code]path_index[/code], [code]depth[/code], [code]speed[/code], [code]width[/code], [code]done[/code]), such as the ground's [code]GroundDebrisFlow3D[/code]. Empty, or with no front for an event, the surge runs its own front.
+			A node with [code]get_debris_front(event_id)[/code] returning the mud body's front ([code]position[/code], [code]path_index[/code], [code]depth[/code], [code]speed[/code], [code]width[/code], [code]done[/code]), such as the ground's [code]GroundDebrisFlow3D[/code]. Empty, the scene's first [code]GroundDebrisFlow3D[/code] is used when there is one. With none, or with no front for an event (small events the mud body pooled into a running one get its front), the surge runs its own front.
 		</member>
 		<member name="listen" type="bool" setter="set_listen" getter="is_listening" default="true">
 			If [code]true[/code], starts surges for the weather's debris-flow events.

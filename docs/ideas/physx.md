@@ -1977,6 +1977,40 @@ its middle (raster before, after, path traced): 185, 166, 152.
 scattering_strength is a raster-only multiplier the path tracer does
 not see; it stays at 1 for parity.
 
+Mud's front wired (19 Nov afternoon): with front_source empty the surge
+finds the scene's GroundDebrisFlow3D itself; only each event's lead
+surge rides the mud body's front, the later surges run behind it as
+pulses. Test (1500 m3 on the 25% gully): the lead surge tracks the mud
+front to its stop at 148 m, the second surge follows at 3.3 m/s.
+
+### Next-round options (card, 19 Nov afternoon)
+
+Window flames as tongues. External flames now read as round fireballs
+because Flow burns the fuel in a ball around a sphere emitter. Real
+window plumes are flat sheets that hug the facade above the opening and
+taper, at Eurocode's length (Law 1978; EN 1991-1-2 Annex B). Plan: slot
+emitters along the top of the opening, angled up the wall, with fuel
+rising to the flame tip, and the wall acting as a solid in Flow.
+
+Wind-driven building fires. Wind on a broken window pushes air through
+the building: the room burns hotter and flames and smoke move toward the
+leeward openings (NIST and FDNY wind-driven fire experiments, 2008-2009;
+Kerber and Madrzykowski). Plan: wind pressure on each opening
+(Cp ρ u²/2) drives the flow between rooms, and the leeward openings
+carry the flames.
+
+Smouldering rubble and rekindles. Collapsed timber keeps glowing for
+hours under the ash, and wind can reignite it, which causes many second
+alarms (NFPA rekindle data). Plan: collapsed rooms leave glowing debris
+using PhysXSmoulder, which throws brands and can relight nearby fuel in
+wind.
+
+Firefighters' hose streams. Water reaching rooms is in already
+(apply_water). Plan: a hose node whose jet is a PhysX particle stream
+(Freeman's nozzle flow, a reach of about 30 m) that aims at openings and
+feeds apply_water where it lands, plus steam and the knock-down seen
+through the windows.
+
 ### Next-round options (card, 19 Nov late morning)
 
 Water on burning buildings. Hose streams and MPM water reaching a room
