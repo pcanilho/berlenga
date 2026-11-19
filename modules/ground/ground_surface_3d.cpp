@@ -5543,7 +5543,10 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 		// whole step: their rates are scaled to land the step's water in the substeps.
 		const float gain = runoff_time_scale * float(p_delta) / (sub * passes);
 		// Damping: puddles settle in a second or two rather than sloshing on (the pipe model has no friction).
-		put(13, rain * gain, sub, 2.0f, _evaporation() * gain);
+		// With runoff on the GPU the water runs at its own pace and its sources land at their own rate, so it
+		// evaporates at its own rate too: sped up with the sand, a low-tide terrace's thin seepage dried faster
+		// than it seeped and the rills' water vanished on it before it could spread and lay its fans.
+		put(13, rain * gain, sub, 2.0f, _evaporation() * (_runoff_on_gpu() ? gain / MAX(runoff_time_scale, 1e-6f) : gain));
 		// Compacted ruts drain slower: tyres cut the conductivity several fold (Horn et al. 1995): a third kept.
 		put(14, 0.02f, 1.0f / 3.0f, gain, 2e-5f);
 		if (_runoff_on_gpu()) {

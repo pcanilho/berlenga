@@ -1070,6 +1070,44 @@ float water_bed(int x, int z) {
 	return ground_at(p) + st.y - st.x + (params.water3.x > 0.5 ? runoff_rough(p) : 0.0);
 }
 
+// Seepage gathers into the cuts it makes (seepage erosion: Dunne 1990; Howard and McLane 1988; Schorghofer et al.
+// 2004). The soaked sand's water table lies at the surface, so a hollow cut c below its surroundings draws ground
+// water in through its walls, Darcy k c / l over the few centimetres l to them, on top of the face's own k sin(beta);
+// the ridges between lose as much (a symmetric mean). So a channel head, once begun, takes the seepage from round it,
+// cuts on and works back up the face to where the seepage begins: heads at the seepage line, joining downslope,
+// rather than rills starting anywhere on the face. The ratio to the face's own outflow, 0 to 2.5 (a head draws the
+// seepage of a few times its own width).
+float runoff_seep_gather(int x, int z) {
+	int n = fn();
+	// The table answers to the cut's shape over its own depth, not texel by texel: the cut is taken smoothed over
+	// 3 cm and set against its mean on a ring 25 cm out, so a single-texel pit draws no more water than the ground
+	// round it and only a channel's width gathers it (a texel-scale feedback broke the face into pits). The ring
+	// sets the scale heads compete over: at 12 cm they stood in an even comb, one every 10 cm.
+	int r = 16;
+	if (x < r || z < r || x >= n - r || z >= n - r) {
+		return 1.0;
+	}
+	float l = float(r) * texel();
+	vec2 wp = texel_world(x, z);
+	vec2 g = vec2(ground_at(wp + vec2(l, 0.0)) - ground_at(wp - vec2(l, 0.0)), ground_at(wp + vec2(0.0, l)) - ground_at(wp - vec2(0.0, l))) / (2.0 * l);
+	float sinb = max(sqrt(dot(g, g) / (1.0 + dot(g, g))), 0.02);
+	// The cut only (the field's own height change): the bed's fixed roughness steers the surface flow, not this.
+	float b = 0.0;
+	for (int dz = -1; dz <= 1; dz++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			vec4 sj = state[(z + dz) * n + x + dx];
+			b += float((2 - abs(dx)) * (2 - abs(dz))) / 16.0 * (sj.y - sj.x);
+		}
+	}
+	float m = 0.0;
+	for (int k = 0; k < 8; k++) {
+		vec2 o = float(r) * vec2(cos(0.7853982 * float(k)), sin(0.7853982 * float(k)));
+		vec4 sj = state[(z + int(round(o.y))) * n + x + int(round(o.x))];
+		m += 0.125 * (sj.y - sj.x);
+	}
+	return clamp(1.0 + (m - b) / (l * sinb), 0.0, 2.5);
+}
+
 // Tyres wading (mud stage 4c): a tyre in the water is an obstacle in the pipe model. Water cannot stand inside it,
 // so where it dips below a column's water the water there stands that much higher (its head), and the pipes drive it
 // out from under the tyre; as the tyre rolls on, its front keeps raising the head ahead of it, which runs off as a
@@ -1323,7 +1361,7 @@ void water_depth(int x, int z) {
 	float rain = params.water.x;
 	// Runoff channels: a seepage face (GroundSurface3D::_gpu_cells), where the soaked beach's water table meets the
 	// surface and Darcy outflow k sin(beta) leaves it; the ground there is saturated and takes none back.
-	float seep = params.water3.x > 0.5 ? m2.w * params.water3.w : 0.0;
+	float seep = params.water3.x > 0.5 && m2.w > 0.0 ? m2.w * params.water3.w * runoff_seep_gather(x, z) : 0.0;
 	if (params.water3.x > 0.5 && m2.w < 0.0) {
 		// The sea or a lake over this cell (-1): the runoff joins it.
 		water[i].w.x = 0.0;
@@ -1401,14 +1439,19 @@ vec2 water_velocity(int x, int z) {
 
 // Meyer-Peter and Mueller past the bed's own threshold: Shields' for loose sand, a cohesive soil's critical shear
 // p_tauc (Pa) where higher (round 11: gullies).
-float bed_load_shear(float tau, float p_tauc) {
+// p_f scales the threshold (seepage force, below).
+float bed_load_shear_f(float tau, float p_tauc, float p_f) {
 	float dg = 0.00025;
 	float theta = tau / (1650.0 * WATER_G * dg);
-	float theta_c = max(0.047, p_tauc / (1650.0 * WATER_G * dg));
+	float theta_c = p_f * max(0.047, p_tauc / (1650.0 * WATER_G * dg));
 	if (theta <= theta_c) {
 		return 0.0;
 	}
 	return 8.0 * sqrt(1.65 * WATER_G * dg * dg * dg) * pow(theta - theta_c, 1.5);
+}
+
+float bed_load_shear(float tau, float p_tauc) {
+	return bed_load_shear_f(tau, p_tauc, 1.0);
 }
 
 // The ground's critical shear at texel i (round 11): the cell's, halved where tyres or boots have freshly turned it
@@ -1499,6 +1542,14 @@ void water_erode(int x, int z) {
 		vec2 qv = vec2(0.0);
 		float dm = 0.0;
 		float wsum = 0.0;
+		// Seepage force (Howard and McLane 1988; Iverson and Major 1986): water leaving the bed at q lifts its grains
+		// by the gradient i = q / k against the critical one, (rho_s / rho - 1)(1 - n), about 1 for sand, lowering
+		// the threshold in proportion; most where the seepage gathers, at a head, which is what lets it sap back.
+		float sf = 1.0;
+		float m2s = ground_cell(wp, 2).w;
+		if (m2s > 0.0) {
+			sf = 1.0 - min(m2s * runoff_seep_gather(x, z) / 1e-4, 0.3);
+		}
 		for (int dz = -1; dz <= 1; dz++) {
 			for (int dx = -1; dx <= 1; dx++) {
 				float wgt = float((2 - abs(dx)) * (2 - abs(dz)));
@@ -1517,7 +1568,7 @@ void water_erode(int x, int z) {
 				vec2 wq = texel_world(x + dx, z + dz);
 				// Cohesive ground's share goes to suspension instead (water_susp()).
 				float loose = 1.0 - smoothstep(0.25, 1.0, ground_cell(wq, 3).y);
-				qv += wgt * loose * bed_load_shear(tau, bed_crit_shear(wq, i + dz * n + dx)) * u / speed;
+				qv += wgt * loose * bed_load_shear_f(tau, bed_crit_shear(wq, i + dz * n + dx), sf) * u / speed;
 				dm += wgt * dj;
 			}
 		}

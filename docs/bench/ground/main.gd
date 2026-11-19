@@ -3597,8 +3597,8 @@ func _run_shelter_tests() -> void:
 
 # Runoff channels: a falling tide leaves the beach soaked; the water seeping out of it runs down the face and cuts
 # rills before the sand drains (time scaled for the sand moved, the draining in real time).
-func _runoff_beach(scale: float) -> Node3D:
-	await _setup("beach", GroundSurface3D.GROUND_SAND, 0.0, 0.0)
+func _runoff_beach(scale: float, shape := "beach") -> Node3D:
+	await _setup(shape, GroundSurface3D.GROUND_SAND, 0.0, 0.0)
 	_apply("dry_sand")
 	get_node("Probe").position = Vector3(0, 0, 4)
 	var sea := Node3D.new()
@@ -3621,14 +3621,23 @@ func _runoff_dump() -> void:
 		return
 	# Hillshade of the cut over x -2..2, z 1.5..5.5 at 7.8 mm, lit from the left at a low angle, so pits and
 	# smooth grooves read apart; the cut's depth in red.
+	# RUNOFF_DUMP_WIN=x0,z_top,size (m) for another window.
+	var x0 := -2.0
+	var z1 := 5.5
+	var size := 4.0
+	var win := OS.get_environment("RUNOFF_DUMP_WIN").split(",")
+	if win.size() == 3:
+		x0 = float(win[0])
+		z1 = float(win[1])
+		size = float(win[2])
 	var n := 512
-	var s := 4.0 / n
+	var s := size / n
 	var cut := PackedFloat32Array()
 	cut.resize(n * n)
 	var deepest := 0.0
 	for py in n:
 		for px in n:
-			var c := surface.get_runoff_cut_at(Vector3(-2.0 + px * s, 0, 5.5 - py * s))
+			var c := surface.get_runoff_cut_at(Vector3(x0 + px * s, 0, z1 - py * s))
 			cut[py * n + px] = c
 			deepest = maxf(deepest, c)
 	var img := Image.create(n, n, false, Image.FORMAT_RGB8)
@@ -3649,7 +3658,7 @@ func _runoff_dump() -> void:
 	wd.resize(n * n)
 	for py in n:
 		for px in n:
-			wd[py * n + px] = surface.get_standing_water_at(Vector3(-2.0 + px * s, 0, 5.5 - py * s))
+			wd[py * n + px] = surface.get_standing_water_at(Vector3(x0 + px * s, 0, z1 - py * s))
 	var rawd := FileAccess.open(dump.get_basename() + "_water.f32", FileAccess.WRITE)
 	if rawd:
 		rawd.store_buffer(wd.to_byte_array())
@@ -3658,7 +3667,7 @@ func _runoff_dump() -> void:
 	var wet := 0
 	for py in range(0, n, 8):
 		for px in range(0, n, 8):
-			var w: float = surface.get_runoff_at(Vector3(-2.0 + px * s, 0, 5.5 - py * s)).x
+			var w: float = surface.get_runoff_at(Vector3(x0 + px * s, 0, z1 - py * s)).x
 			wsum += w
 			wmax = maxf(wmax, w)
 			wet += 1 if w > 5e-5 else 0
@@ -4715,7 +4724,9 @@ func _build_grains() -> void:
 # also saves the cut from above.
 func _build_rills() -> void:
 	var on := not OS.get_cmdline_user_args().has("--runoff=0")
-	await _runoff_beach(120.0)
+	# --terrace=0: the plain 1 in 12 face down to the water, without the low-tide terrace the fans form on.
+	var terrace := not OS.get_cmdline_user_args().has("--terrace=0")
+	await _runoff_beach(120.0, "beach_terrace" if terrace else "beach")
 	surface.runoff_channels = on
 	var mat := _ground_material("dry_sand")
 	surface.material = mat
