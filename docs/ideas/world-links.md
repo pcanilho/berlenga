@@ -89,6 +89,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Vehicles → grass, branches | linked (18 Nov) | world_contact | wheels and bodies join |
 | Lying snow → plants | linked (18 Nov) | snow cover (snow map) | as above (GrassField3D, PlantGenerator) |
 | Flowing water → reeds, grass | linked (18 Nov) | WorldWater flow and surface | the trample fields take the current's drag (Cauchy number, Luhar and Nepf 2011): grass and plants lean downstream, flat in a fast current |
+| Springs → oasis plants and grass | linked (19 Nov) | DesertSprings (vegetation, from TerrainGenerator3D sand seas): `VegetationField3D.get_springs()`, `get_spring_wetness_at(pos)` (positions m, wetness 0-1, -1 off the sand seas) | readers VegetationField3D RULE_SPRING and GrassField3D; Valence adds the pools next; the spring finder should move to the terrain generator later. Anything cycling species meshes by index skips meshes with `tree_fire_years` meta |
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
 | Wet ground → mist | linked (18 Nov) | surface wetness, surface cooling | VegetationMist3D: wet ground mists more and sooner |
 
@@ -201,3 +202,23 @@ Every pair above is linked or in work. Three visible gaps remain; each reads a c
    1-10 mm/h (Laakso et al. 2003; Wang et al. 2010), so a smoke plume barely thins in a shower; for coarse dust
    (> 10 um) about 1e-3 1/s, so a dust cloud clears within minutes in rain. Applied as a density decay per Flow
    step, split by the gas's kind.
+
+## Round 4 candidates (19 Nov, card to Paulo)
+
+Two gaps found while building round 3; both read contracts that exist.
+
+1. Fallen leaves land on water and snow. LeafFall3D settles every leaf on the ground under it, through a pond or
+   a snow pack. A leaf reaching `WorldWater.height_at` floats: it drifts at the surface current
+   (`WorldWater.flow_at`) plus a small leeway in the wind (about 2-3% of the 10 m wind for flat floating debris,
+   Breivik et al. 2011), turns in eddies, and waterlogs and sinks over days (leaf breakdown, Webster and Benfield
+   1986), sooner in a fast current. A leaf landing on `WorldSnow` depth lies on top and is buried as new snow
+   falls; a dark leaf in sun sinks into the pack a little (it absorbs about 3x the sun the snow does).
+2. Soot, ash and dust darken snow and speed its melt. SnowCover3D ages albedo (Verseghy 1991) but knows no
+   impurities. Light-absorbing particles lower snow albedo: black carbon about 0.01-0.02 in the visible for 100 ppb
+   (Warren and Wiscombe 1980; Hadley and Kirchstetter 2012); mineral dust 0.1-0.3, bringing melt a month earlier
+   (Painter et al. 2007); burnt forests shed charred bark on the snow, cutting albedo by about 0.4 and melting the
+   pack about 5 days earlier (Gleason et al. 2013). Sources: the weather map's smoke haze (dry deposition at about
+   0.1-0.5 cm/s for PM2.5), WorldFire burn scars (charred debris under burnt trees, `burn_age_at`), ground and rock
+   dust events. Impurities gather at the surface as the snow melts (melt amplification, Doherty et al. 2013) and are
+   buried by new snow; the snow material shows them grey.
+
