@@ -96,6 +96,7 @@ private:
 	struct Profile {
 		LocalVector<Vector3> a, u, e1, e2;
 		LocalVector<float> len, r, along0;
+		LocalVector<Vector3> shift; // each capsule's axis moved to the bark's centre (binning)
 		float step = 0.025f; // m along
 		int na = 96; // cells round
 		int nl = 0;
@@ -196,7 +197,8 @@ public:
 	static int get_bark_kind(int p_preset) { return int(TreeGenerator::bark_kind_for_preset(p_preset)); }
 	// A trunk mesh's bark surface binned round its stem, for its "tree_bark_profile" meta (TreeGenerator sets it from
 	// the bark surface's arrays when it builds the mesh, so nothing is read back from the GPU later): [header
-	// (cells round, rows, row step m), outermost radius per cell (m), vertex colour per cell (RGB8, 0..2)].
+	// (cells round, rows, row step m, each capsule's axis shift xyz), outermost radius per cell (m), vertex colour per cell
+	// (RGB8, 0..2)].
 	static Array make_bark_profile(const PackedVector3Array &p_vertices, const PackedColorArray &p_colors, const PackedFloat32Array &p_colliders);
 
 	BarkDetail3D();
