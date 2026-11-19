@@ -3650,7 +3650,7 @@ outline (surface_mesh), a measured seabed (shallow rims, dry shore), clear water
 PT medium), received shadows, registered with WorldWater as a provider (height, depth, flow 0,
 sediment), wind ripples from the weather and rain rings. A pool per spring is configuration, not new rendering.
 
-Scope proposed (to confirm before building):
+Scope (confirmed 19 Nov; items 1 and 2 built as OasisSprings3D, bench docs/bench/oasis):
 1. OasisSprings3D (water module): reads the springs (position, water level, optional discharge, default 0.05 L/s)
    from a source node (VegetationField3D.get_springs() or a plain array), and for each places a
    PhysXWaterSurface3D sized by A = Q / (E + I) (E from WorldWeather's temperature through a Hargreaves-type pan
@@ -3663,3 +3663,11 @@ Scope proposed (to confirm before building):
    (vegetation; it already places the palms along the water).
 4. Later, not now: outflow channels (a PhysXRiver3D from the pool's lip), mound springs, level falling through a
    dry season.
+
+As built: springs are a PackedVector4Array (x, level, z, discharge L/s), the layout VegetationField3D.get_springs()
+returns. Hargreaves needs the day's temperature range, which the climate does not carry (its
+daily_temperature_spread is the day-to-day spread), so it is a setting (diurnal_range, 14 K for a desert). Siwa's
+climate gives 1.7 m a year. get_outline() hands the shore to the ground: the hollow must meet it, or the water
+ends in a wall where the bed is still below the level. The boil cannot cut into the bed (a disc lying on it), so
+the throat reads as a pit by its dark sand in suspension inside a 7 cm cone; terrain carving a real pit under each
+vent (get_vents) would add the depth.
