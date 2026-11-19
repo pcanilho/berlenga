@@ -30,6 +30,8 @@ extends Node3D
 #             lee and blows off its top, the ground past the drift swept; a moved prop takes its lee along
 #   fog       a forest on ground standing in the cloud combs the fog out: it drips, wets the ground under it,
 #             feeds the runoff; open ground gets little; none under the cloud base
+#   spray     an onshore gale off a surf wets the first tens of metres of the shore and salts it for hundreds;
+#             none offshore or calm; rain washes the salt off; a cliff face takes the spray, its top stays drier
 #   contracts the water contract picks the right water where several overlap (a pool in a hollow below the sea's
 #             level, a body above the water); with no producer it answers -INF; the weather's defaults
 
@@ -63,6 +65,27 @@ class SiltPondStub extends WorldWater:
 
 	func _sediment_at(_p: Vector3) -> Vector2:
 		return load
+
+
+# A sea at 0 m over x < 0: a surf zone of 1 m breakers over its last 40 m, whitecaps (cover times height) beyond.
+class SurfStub extends WorldWater:
+	func _height_at(p: Vector3) -> float:
+		return 0.0 if p.x < 0.0 else -INF
+
+	func _breaking_at(p: Vector3) -> float:
+		if p.x >= 0.0:
+			return 0.0
+		return 1.0 if p.x > -40.0 else 0.03
+
+
+# The shore under it: a 5 m deep seabed, then a beach rising 2 in 100; with cliff, a 25 m cliff 60 m inland.
+class ShoreGround extends WorldGround:
+	var cliff := false
+
+	func _height_at(p: Vector3) -> float:
+		if p.x < 0.0:
+			return -5.0
+		return p.x * 0.02 + (25.0 if cliff and p.x > 60.0 else 0.0)
 
 
 # A ground stub taking runoff loads.
@@ -188,6 +211,7 @@ func _ready() -> void:
 	await _flood_ground_tests()
 	await _lee_drift_tests()
 	await _fog_drip_tests()
+	await _sea_spray_tests()
 	await _leaf_kick_tests()
 	await _leaf_surface_tests()
 	await _washout_tests()
@@ -831,6 +855,75 @@ func _fog_drip_tests() -> void:
 	m.advance(6.0 * 3600.0)
 	_check("fog: none once the cloud base lifts over the ground", w.fog_water_at(forest) == 0.0 and w.fog_drip_at(forest) < 0.2 * drip_f, "%.2f g/m3, %.3f mm/h still draining" % [w.fog_water_at(forest), w.fog_drip_at(forest)])
 	m.queue_free()
+	await get_tree().physics_frame
+
+
+# Sea spray (WorldWater.breaking_at into WeatherMap3D): an onshore gale off a surf wets the first tens of metres of the
+# shore and salts it for hundreds; an offshore or calm wind brings none; rain washes the salt off; a cliff face takes
+# the spray and leaves its top drier.
+func _sea_spray_tests() -> void:
+	WorldContracts.clear_overrides()
+	var ground := ShoreGround.new()
+	WorldContracts.set_ground(ground)
+	WorldContracts.add_water_stub(SurfStub.new())
+	var m := _new_map()
+	m.ground_height = 0.0
+	m.wind_speed = 12.0
+	m.wind_direction = Vector2(1, 0)
+	m.temperature = 12.0
+	m.humidity = 0.8
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(6.0 * 3600.0)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var near := Vector3(6, 0, 0)
+	var mid := Vector3(60, 0, 0)
+	var far := Vector3(220, 0, 0)
+	var s_near: float = w.sea_spray_at(near)
+	var s_mid: float = w.sea_spray_at(mid)
+	var s_far: float = w.sea_spray_at(far)
+	var salt_near: float = w.salt_at(near)
+	var salt_mid: float = w.salt_at(mid)
+	var salt_far: float = w.salt_at(far)
+	print("  spray (12 m/s onshore, 1 m surf): %.3f mm/h at 6 m, %.4f at 60 m, %.5f at 220 m; salt %.2f / %.3f / %.3f g/m2 after 6 h; wetness %.2f / %.2f" % [s_near, s_mid, s_far, salt_near, salt_mid, salt_far, w.surface_wetness_at(near), w.surface_wetness_at(far)])
+	_check("spray: an onshore gale off the surf wets the first tens of metres of the shore (0.05 to 3 mm/h at the waterline)", s_near > 0.05 and s_near < 3.0 and s_mid < 0.3 * s_near and s_far < 0.01 * s_near and w.surface_wetness_at(near) > 0.5 and w.surface_wetness_at(near) > w.surface_wetness_at(far) + 0.3 and w.ground_water_input_at(near) >= s_near * 0.99, "%.3f / %.4f / %.5f mm/h; wetness %.2f near, %.2f far" % [s_near, s_mid, s_far, w.surface_wetness_at(near), w.surface_wetness_at(far)])
+	_check("spray: its salt lies thickest at the shore and, as fine aerosol, still reaches hundreds of metres inland", salt_near > salt_mid and salt_mid > salt_far and salt_far > 0.01 and salt_far < 0.2 * salt_near, "%.2f / %.3f / %.3f g/m2" % [salt_near, salt_mid, salt_far])
+	# Offshore and calm: none comes ashore.
+	m.wind_direction = Vector2(-1, 0)
+	m.snap_to_settings()
+	m.advance(60.0)
+	var off: float = w.sea_spray_at(near)
+	m.wind_direction = Vector2(1, 0)
+	m.wind_speed = 1.5
+	m.snap_to_settings()
+	m.advance(60.0)
+	var calm: float = w.sea_spray_at(near)
+	_check("spray: none comes ashore in an offshore wind or a calm", off < 0.01 * s_near and calm == 0.0, "offshore %.4f, calm %.4f mm/h" % [off, calm])
+	# Rain washes the salt off (about 5 mm takes all but a third).
+	m.cloud_cover = 1.0
+	m.rain_rate = 5.0
+	m.snap_to_settings()
+	m.advance(2.0 * 3600.0)
+	var washed: float = w.salt_at(near)
+	var fell: float = w.rainfall_at(near)
+	m.rain_rate = 0.0
+	m.cloud_cover = 0.0
+	m.snap_to_settings()
+	_check("spray: rain washes the salt off the shore", washed < 0.2 * salt_near and fell > 1.0, "%.2f -> %.2f g/m2 after two hours of %.1f mm/h" % [salt_near, washed, fell])
+	# A cliff 60 m inland: its face catches the spray, its top stays drier than open ground there.
+	m.clear_salt()
+	m.wind_speed = 15.0
+	m.snap_to_settings()
+	m.advance(3600.0)
+	var flat_top: float = w.sea_spray_at(Vector3(70, 0, 0))
+	ground.cliff = true
+	m.advance(3600.0)
+	var face: float = w.sea_spray_at(Vector3(62, 0, 0))
+	var top: float = w.sea_spray_at(Vector3(70, 25, 0))
+	_check("spray: a cliff's face catches the spray, its top gets less than open ground", face > flat_top and top < 0.5 * flat_top, "face %.4f, top %.4f, open ground %.4f mm/h" % [face, top, flat_top])
+	m.queue_free()
+	WorldContracts.clear_overrides()
 	await get_tree().physics_frame
 
 

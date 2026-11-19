@@ -261,7 +261,7 @@ float WeatherMap3D::get_fog_drip_at(Vector3 p_position) const {
 }
 
 float WeatherMap3D::get_ground_water_input_at(Vector3 p_position) const {
-	const float fog = get_fog_drip_at(p_position);
+	const float fog = get_fog_drip_at(p_position) + get_sea_spray_at(p_position); // fog drip and sea spray
 	const int n = resolution;
 	if (origin_valid && cell_inflow.size() == n * n) {
 		const float cs = _cell_size();

@@ -164,6 +164,20 @@
 				Override in a stub to replace [method rainfall_at].
 			</description>
 		</method>
+		<method name="_salt_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method salt_at].
+			</description>
+		</method>
+		<method name="_sea_spray_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method sea_spray_at].
+			</description>
+		</method>
 		<method name="_season_at" qualifiers="virtual const">
 			<return type="Dictionary" />
 			<param index="0" name="position" type="Vector3" />
@@ -408,6 +422,20 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Rain at [param position] (mm/h of liquid). Default 0.
+			</description>
+		</method>
+		<method name="salt_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Sea salt left on surfaces at [param position], in g/m2: sea spray and fine salt aerosol settled from breaking waves upwind, washed off by rain. 0 by default. Plants read it for salt burn.
+			</description>
+		</method>
+		<method name="sea_spray_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Sea spray settling at [param position], in mm/h of sea water: drops torn from breaking waves ([method WorldWater.breaking_at]) carried inland by the wind, within tens of metres of the surf. 0 by default. It wets surfaces and the ground ([method surface_wetness_at], [method ground_water_input_at]).
 			</description>
 		</method>
 		<method name="season_at" qualifiers="const">
