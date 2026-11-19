@@ -667,7 +667,19 @@ float WorldGround::blown_sand_at(const Vector3 &p_position) const WG_CALL(_blown
 Vector2 WorldGround::needle_ice_at(const Vector3 &p_position) const WG_CALL(_needle_ice_at, contract_ground_needle_ice_at(p_position), Vector2(), p_position)
 Vector3 WorldGround::rut_guidance_at(const Vector3 &p_contact, const Vector3 &p_lateral, float p_half_width) const WG_CALL(_rut_guidance_at, contract_ground_rut_guidance_at(p_contact, p_lateral, p_half_width), Vector3(), p_contact, p_lateral, p_half_width)
 
+void WorldGround::add_runoff_load(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) {
+	if (GDVIRTUAL_CALL(_add_runoff_load, p_position, p_mineral_kg, p_ash_kg)) {
+		return;
+	}
+	if (runoff_provider && (p_mineral_kg > 0.0f || p_ash_kg > 0.0f)) {
+		runoff_provider->contract_runoff_add_load(p_position, MAX(p_mineral_kg, 0.0f), MAX(p_ash_kg, 0.0f));
+	}
+}
+
 void WorldGround::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("add_runoff_load", "position", "mineral_kg", "ash_kg"), &WorldGround::add_runoff_load);
+	ClassDB::bind_method(D_METHOD("has_runoff"), &WorldGround::has_runoff);
+	GDVIRTUAL_BIND(_add_runoff_load, "position", "mineral_kg", "ash_kg");
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldGround::has_provider);
 	ClassDB::bind_method(D_METHOD("height_at", "position"), &WorldGround::height_at);
 	ClassDB::bind_method(D_METHOD("soil_at", "position"), &WorldGround::_soil_at_bind);
@@ -745,10 +757,27 @@ void WorldContracts::unregister_ground(WorldGroundProvider *p_provider) {
 	}
 }
 
+void WorldContracts::register_runoff(WorldRunoffProvider *p_provider) {
+	if (singleton) {
+		singleton->runoff_provider = p_provider;
+		singleton->builtin_ground->runoff_provider = p_provider;
+		if (singleton->ground_override.is_valid()) {
+			singleton->ground_override->runoff_provider = p_provider;
+		}
+	}
+}
+
+void WorldContracts::unregister_runoff(WorldRunoffProvider *p_provider) {
+	if (singleton && singleton->runoff_provider == p_provider) {
+		register_runoff(nullptr);
+	}
+}
+
 void WorldContracts::set_ground(const Ref<WorldGround> &p_stub) {
 	ground_override = p_stub;
 	if (ground_override.is_valid()) {
 		ground_override->provider = ground_provider;
+		ground_override->runoff_provider = runoff_provider;
 	}
 }
 

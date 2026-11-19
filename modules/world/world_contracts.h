@@ -321,11 +321,22 @@ public:
 	virtual ~WorldGroundProvider() {}
 };
 
+// Runoff at world scale (the catchment routing, WeatherRunoff3D): a separate slot on the ground contract, since the
+// near ground (GroundSurface3D) and the land's drainage come from different producers.
+class WorldRunoffProvider {
+public:
+	// Loose material (kg) put on the runoff at a ground point since the caller's last call; the runoff carries it down
+	// its drainage and hands it to WorldWater.add_sediment where the flow reaches a river or lake.
+	virtual void contract_runoff_add_load(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) = 0;
+	virtual ~WorldRunoffProvider() {}
+};
+
 class WorldGround : public RefCounted {
 	GDCLASS(WorldGround, RefCounted);
 
 	friend class WorldContracts;
 	WorldGroundProvider *provider = nullptr; // the built-in contract's; a script stub overrides the virtuals
+	WorldRunoffProvider *runoff_provider = nullptr;
 
 	Dictionary _soil_at_bind(const Vector3 &p_position) const;
 
@@ -346,6 +357,7 @@ protected:
 	GDVIRTUAL1RC(float, _sand_at, Vector3)
 	GDVIRTUAL1RC(float, _ripple_at, Vector3)
 	GDVIRTUAL1RC(float, _blown_sand_at, Vector3)
+	GDVIRTUAL3(_add_runoff_load, Vector3, float, float)
 
 public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -364,6 +376,11 @@ public:
 	float sand_at(const Vector3 &p_position) const;
 	float ripple_at(const Vector3 &p_position) const;
 	float blown_sand_at(const Vector3 &p_position) const;
+	// Loose material washed off the ground at the point since the caller's last call (kg of mineral, of ash and char):
+	// the runoff carries it down its drainage into WorldWater.add_sediment where the flow reaches water. Dropped
+	// with no runoff producer. Callers: soil erosion, burnt ground's ash (PhysX).
+	void add_runoff_load(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg);
+	bool has_runoff() const { return runoff_provider != nullptr || get_script_instance() != nullptr; }
 };
 
 // Snow: the snowpack and lake ice (docs/ideas/world-contracts.md, Snow). Produced by SnowCover3D.
@@ -432,6 +449,7 @@ class WorldContracts : public Object {
 	Ref<WorldGround> builtin_ground;
 	Ref<WorldGround> ground_override;
 	WorldGroundProvider *ground_provider = nullptr;
+	WorldRunoffProvider *runoff_provider = nullptr;
 	Ref<WorldWater> builtin_water;
 	Ref<WorldWater> water_override;
 	Ref<WorldFire> builtin_fire;
@@ -462,6 +480,8 @@ public:
 	static void unregister_weather(WorldWeatherProvider *p_provider);
 	static void register_ground(WorldGroundProvider *p_provider);
 	static void unregister_ground(WorldGroundProvider *p_provider);
+	static void register_runoff(WorldRunoffProvider *p_provider); // one at a time: the last registered answers
+	static void unregister_runoff(WorldRunoffProvider *p_provider);
 	static void register_water(WorldWaterProvider *p_provider);
 	static void unregister_water(WorldWaterProvider *p_provider);
 	static void register_fire(WorldFireProvider *p_provider);

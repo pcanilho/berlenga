@@ -9,6 +9,15 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="_add_runoff_load" qualifiers="virtual">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="mineral_kg" type="float" />
+			<param index="2" name="ash_kg" type="float" />
+			<description>
+				Override in a stub to replace [method add_runoff_load].
+			</description>
+		</method>
 		<method name="_blown_sand_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -109,6 +118,15 @@
 				A stub's [method standing_water_at].
 			</description>
 		</method>
+		<method name="add_runoff_load">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="mineral_kg" type="float" />
+			<param index="2" name="ash_kg" type="float" />
+			<description>
+				Loose material washed off the ground at [param position] since the caller's last call, in kg of mineral (soil) and of ash and char. The runoff producer ([code]WeatherRunoff3D[/code]) carries it down its drainage and hands it to [method WorldWater.add_sediment] where the flow reaches a river or lake. Dropped when there is no runoff producer.
+			</description>
+		</method>
 		<method name="blown_sand_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -134,6 +152,12 @@
 			<return type="bool" />
 			<description>
 				[code]true[/code] when a ground is live.
+			</description>
+		</method>
+		<method name="has_runoff" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether a runoff producer (or a script stub) takes [method add_runoff_load].
 			</description>
 		</method>
 		<method name="height_at" qualifiers="const">
