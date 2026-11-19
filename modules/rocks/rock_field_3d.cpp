@@ -34,6 +34,7 @@
 #include "modules/terrain_deform/terrain_generator_3d.h"
 #include "modules/weather/weather_map_3d.h"
 #include "modules/world/world_contracts.h"
+#include "modules/world/world_walker_steps.h"
 
 #include "core/config/engine.h"
 #include "core/math/convex_hull.h"
@@ -4910,6 +4911,8 @@ void RockField3D::_update_react(double p_delta) {
 	if (world.is_null()) {
 		return;
 	}
+	LocalVector<ReactPress> presses;
+	react_walkers.begin();
 	for (Node *n : movers) {
 		Node3D *n3 = Object::cast_to<Node3D>(n);
 		if (!n3 || !n3->is_visible_in_tree() || seen.has(n3->get_instance_id())) {
@@ -4929,13 +4932,39 @@ void RockField3D::_update_react(double p_delta) {
 			vel = Vector3(); // teleported
 		}
 		seen.insert(n3->get_instance_id(), wb.center);
-		const float bottom = wb.center.y - wb.half_height;
-		const float foot = wb.wheel ? MAX(wb.width * 0.5f, wb.half_height * 0.35f) : wb.radius;
+		// A walker (a character) presses its soles, a step at a time (WorldWalkerSteps), never its body shape; one whose
+		// feet are contact bodies of their own presses through them.
+		if (wb.walker) {
+			if (wb.feet) {
+				continue;
+			}
+			LocalVector<WorldWalkerStep> steps;
+			react_walkers.step(n3, wb, steps);
+			for (const WorldWalkerStep &st : steps) {
+				ReactPress pr;
+				pr.center = st.position;
+				pr.bottom = st.position.y;
+				pr.oval = true;
+				pr.fu = Vector2(Math::cos(st.yaw), -Math::sin(st.yaw));
+				pr.fv = Vector2(-pr.fu.y, pr.fu.x);
+				pr.hu = st.length * 0.5f;
+				pr.hw = st.width * 0.5f;
+				pr.foot = pr.hu;
+				presses.push_back(pr); // a sole set down: at rest, it presses
+			}
+			continue;
+		}
+		ReactPress pr;
+		pr.center = wb.center;
+		pr.vel = vel;
+		pr.wheel = wb.wheel;
+		pr.bottom = wb.center.y - wb.half_height;
+		pr.foot = wb.wheel ? MAX(wb.width * 0.5f, wb.half_height * 0.35f) : wb.radius;
+		pr.hu = pr.hw = pr.foot;
 		// A box (a boot, a sole): its footprint is its own oblong, not the circle round it.
-		bool oval = false;
-		Vector2 fu, fv;
-		float hu = foot, hw = foot;
 		if (wb.box) {
+			Vector2 fu, fv;
+			float hu = pr.foot, hw = pr.foot;
 			for (int c = 0; c < n3->get_child_count(); c++) {
 				const CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(n3->get_child(c));
 				const BoxShape3D *bx = cs && !cs->is_disabled() ? Object::cast_to<BoxShape3D>(cs->get_shape().ptr()) : nullptr;
@@ -4951,18 +4980,32 @@ void RockField3D::_update_react(double p_delta) {
 					hw = bx->get_size().z * 0.5f * fv.length();
 					fu.normalize();
 					fv.normalize();
-					oval = true;
+					pr.oval = true;
+					pr.fu = fu;
+					pr.fv = fv;
+					pr.hu = hu;
+					pr.hw = hw;
 				}
 				break;
 			}
 		}
+		presses.push_back(pr);
+	}
+	react_walkers.end();
+	for (const ReactPress &pr : presses) {
+		const bool oval = pr.oval;
+		const Vector2 fu = pr.fu, fv = pr.fv;
+		const float hu = pr.hu, hw = pr.hw, foot = pr.foot, bottom = pr.bottom;
+		const Vector3 vel = pr.vel;
+		const Vector3 centre = pr.center;
+		const bool wheel = pr.wheel;
 		const float foot_min = oval ? MIN(hu, hw) : foot;
-		if (gen && bottom > float(gen->get_height(wb.center)) + 0.25f) {
+		if (gen && bottom > float(gen->get_height(centre)) + 0.25f) {
 			continue; // off the ground
 		}
 		WorldGround *wg = WorldContracts::ground();
 		const bool dented = wg && wg->has_provider();
-		const Vector2 c2(wb.center.x, wb.center.z);
+		const Vector2 c2(centre.x, centre.z);
 		Vector2 hv(vel.x, vel.z);
 		const float speed = hv.length();
 		// At rest on them: what it pressed aside on arrival stays aside (a stone rolling back stays put), and the stones
@@ -5049,7 +5092,7 @@ void RockField3D::_update_react(double p_delta) {
 							if (!oval && speed > 0.3f) {
 								across = Math::abs(d.dot(Vector2(-hv.y, hv.x) / speed)) / MAX(foot, 1e-3f);
 							}
-							const float press = wb.wheel ? 0.9f * (1.0f - Math::smoothstep(0.7f, 1.0f, across)) : 0.85f * (1.0f - Math::smoothstep(0.7f, 1.05f, across));
+							const float press = wheel ? 0.9f * (1.0f - Math::smoothstep(0.7f, 1.0f, across)) : 0.85f * (1.0f - Math::smoothstep(0.7f, 1.05f, across));
 							// A disturbed stone shows its damp underside (the film darkens it, as the wet ones by the water) and
 							// is no longer eased into the ground it sat on.
 							// A pressed stone is set in damp soil from under the surface (0.75); one shoved or flicked onto the
