@@ -1189,6 +1189,9 @@ void SnowCover3D::_update_end() {
 	last_step_hours = inputs.dt_h;
 	last_drift = inputs.wind_factor;
 	update_count++;
+	if (avalanche_node) {
+		avalanche_node->_track_recent(this); // every update's new snow and hours (follow-up 20)
+	}
 }
 
 void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
@@ -2236,6 +2239,9 @@ void SnowCover3D::add_snow(float p_swe_mm, float p_density) {
 	last_step_hours = 0.0f;
 	last_drift = 0.0f;
 	update_count++;
+	if (avalanche_node) {
+		avalanche_node->_track_recent(this);
+	}
 	_upload();
 }
 

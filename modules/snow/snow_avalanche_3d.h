@@ -45,6 +45,7 @@ class SnowCover3D;
 // its path take its dynamic pressure, 1/2 rho u^2. SnowCover3D adds one by itself while avalanches_enabled.
 class SnowAvalanche3D : public Node3D {
 	GDCLASS(SnowAvalanche3D, Node3D);
+	friend class SnowCover3D;
 
 	// Settings.
 	float mu = 0.2f; // Voellmy dry friction (RAMMS: 0.155-0.4)
@@ -57,6 +58,15 @@ class SnowAvalanche3D : public Node3D {
 	float flow_density = 300.0f; // kg/m3
 	float max_time = 180.0f; // s
 	bool natural_release = true;
+	// Triggers (follow-up 21): what stands on the slab adds Foehn's shear under it.
+	bool triggers_enabled = true;
+	PackedStringArray trigger_groups;
+	float character_mass = 75.0f; // kg, a CharacterBody3D without snow_mass / ground_mass
+	float propagation_index = 1.5f; // a fracture a load opens runs through slab with S under this
+	float collapse_range = 60.0f; // m a collapse (whumpf) runs along a buried crust
+	int trigger_count = 0;
+	int collapse_count = 0;
+	Vector<uint8_t> collapsed; // cover cells whose buried crust already collapsed
 	float debris_share = 0.02f; // of the deposit, broken into clumps on its surface
 	float debris_radius = 60.0f; // m round the camera
 
@@ -80,6 +90,7 @@ class SnowAvalanche3D : public Node3D {
 	Vector<float> peak; // m/s, the fastest the flow ran through each cell
 	double flow_time = 0.0;
 	double flush_accum = 0.0;
+	double pending_time = 0.0; // s of flow owed while a background update had the cover
 	float released_volume = 0.0f; // m3
 	float entrained_volume = 0.0f;
 	float deposited_volume = 0.0f;
@@ -99,6 +110,12 @@ class SnowAvalanche3D : public Node3D {
 	void _hit_bodies(SnowCover3D *p_cover);
 	void _finish(SnowCover3D *p_cover);
 	int _cover_index(const SnowCover3D *p_cover, int p_i) const;
+	// The weakest layer at a cover cell under a line load: its trigger index (strength over shear with the load)
+	// and the slab over it; p_crust says the weak layer is the facets on a buried crust.
+	float _trigger_index(const SnowCover3D *p_cover, int p_x, int p_z, float p_line_load, float p_sink, float &r_slab, bool &r_crust) const;
+	int _load(SnowCover3D *p_cover, const Vector3 &p_at, float p_line_load, float p_sink, Node *p_body);
+	void _check_triggers(SnowCover3D *p_cover);
+	void _on_cornice_failed(const Vector3 &p_position, const Vector3 &p_direction, float p_length, float p_mass);
 
 protected:
 	void _notification(int p_what);
@@ -108,6 +125,16 @@ public:
 	// Stability index of a slab: the weak layer's shear strength (Pa) over the slab's shear stress.
 	static float weak_layer_strength(float p_density, float p_age_hours); // Pa
 	static float stability_index(float p_slab, float p_slab_density, float p_weak_density, float p_age_hours, float p_slope);
+
+	// The shear a line load (N/m along it) on the surface adds at depth p_depth below it, normal to a slope of
+	// p_slope radians: its peak over the angle below the load (Foehn 1987).
+	static float added_shear(float p_line_load, float p_depth, float p_slope); // Pa
+	// Puts a line load on the snow at a point: 0 nothing gave, 1 a slab released, 2 a buried crust collapsed
+	// (whumpf) without a release. p_sink: how far the load has sunk into the snow (m).
+	int apply_load(const Vector3 &p_at, float p_line_load, float p_sink = 0.0f);
+	float get_trigger_index_at(const Vector3 &p_at, float p_line_load, float p_sink = 0.0f) const;
+	int get_trigger_count() const { return trigger_count; }
+	int get_collapse_count() const { return collapse_count; }
 
 	bool trigger(const Vector3 &p_at, float p_radius); // release the slab round a point now (a skier, a cornice, a test)
 	void step(double p_delta); // run the flow now, for tests
@@ -137,4 +164,16 @@ public:
 	float get_entrainment() const { return entrainment; }
 	void set_natural_release(bool p_enable) { natural_release = p_enable; }
 	bool is_natural_release() const { return natural_release; }
+	void set_triggers_enabled(bool p_enable) { triggers_enabled = p_enable; }
+	bool is_triggers_enabled() const { return triggers_enabled; }
+	void set_trigger_groups(const PackedStringArray &p_groups) { trigger_groups = p_groups; }
+	PackedStringArray get_trigger_groups() const { return trigger_groups; }
+	void set_character_mass(float p_kg) { character_mass = MAX(p_kg, 0.0f); }
+	float get_character_mass() const { return character_mass; }
+	void set_propagation_index(float p_index) { propagation_index = MAX(p_index, 0.0f); }
+	float get_propagation_index() const { return propagation_index; }
+	void set_collapse_range(float p_m) { collapse_range = MAX(p_m, 0.0f); }
+	float get_collapse_range() const { return collapse_range; }
+
+	SnowAvalanche3D();
 };
