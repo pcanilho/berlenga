@@ -1441,6 +1441,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.wetness_canopy = features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy;
 		rt.snow = features[FEATURE_SNOW];
 		rt.snow_from_weather = snow_from_weather;
+		rt.snow_on_body = features[FEATURE_SNOW] && snow_on_body;
 		rt.ground_deform_patch = features[FEATURE_GROUND_DEFORM] && ground_deform_patch;
 		rt.ground_deform_terrain = features[FEATURE_GROUND_DEFORM] && !ground_deform_patch;
 		rt.mud = features[FEATURE_MUD];
@@ -1907,6 +1908,11 @@ uniform float snow_amount : hint_range(0.0, 1.0, 0.01);
 uniform float snow_max_slope : hint_range(0.0, 90.0, 0.1);
 )";
 		code += get_snow_functions_code(snow_from_weather);
+		if (snow_on_body) {
+			// The snow a moving body carries (SnowBodies, docs/ideas/snow.md follow-up 18): depth m, albedo, melt water,
+			// 1 + density / 1000 (0: not tracked). Slot 12, after the mud slots; the path tracer reads the same slot.
+			code += "instance uniform vec4 snow_body : instance_index(12);\n";
+		}
 	}
 
 	if (features[FEATURE_MUD]) {
@@ -3185,6 +3191,17 @@ void fragment() {)";
 		snow_s.x *= snow_amount;
 )";
 		}
+		if (snow_on_body) {
+			// A tracked body's own load (Niu and Yang 2007 cover from its depth and density), else the cover above, or
+			// none when the body's snow does not come from the weather.
+			code += R"(		if (snow_body.w > 0.5) {
+			snow_s = vec4(snow_amount * tanh(max(snow_body.x, 0.0) / (0.025 * max((snow_body.w - 1.0) * 10.0, 0.5))), snow_body.y, clamp(snow_body.z, 0.0, 1.0), 1.0);
+		})";
+			code += snow_from_weather ? "\n" : R"( else {
+			snow_s.x = 0.0;
+		}
+)";
+		}
 		code += R"(		float snow = snow_cover_weight(snow_s.x, snow_max_slope, snow_n_geo, snow_n);
 		float snow_wet = snow_s.z;
 		float snow_specular = SPECULAR;
@@ -4425,6 +4442,18 @@ void BaseMaterial3D::set_snow_from_weather(bool p_enable) {
 
 bool BaseMaterial3D::is_snow_from_weather() const {
 	return snow_from_weather;
+}
+
+void BaseMaterial3D::set_snow_on_body(bool p_enable) {
+	if (snow_on_body == p_enable) {
+		return;
+	}
+	snow_on_body = p_enable;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_snow_on_body() const {
+	return snow_on_body;
 }
 
 void BaseMaterial3D::set_ground_deform_patch(bool p_enable) {
@@ -5772,6 +5801,8 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_ground_deform_patch"), &BaseMaterial3D::is_ground_deform_patch);
 	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_ground_deform_shader_code"), &BaseMaterial3D::get_ground_deform_shader_code);
 	ClassDB::bind_method(D_METHOD("is_snow_from_weather"), &BaseMaterial3D::is_snow_from_weather);
+	ClassDB::bind_method(D_METHOD("set_snow_on_body", "enable"), &BaseMaterial3D::set_snow_on_body);
+	ClassDB::bind_method(D_METHOD("is_snow_on_body"), &BaseMaterial3D::is_snow_on_body);
 
 	ClassDB::bind_method(D_METHOD("set_point_size", "point_size"), &BaseMaterial3D::set_point_size);
 	ClassDB::bind_method(D_METHOD("get_point_size"), &BaseMaterial3D::get_point_size);
@@ -6094,6 +6125,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_snow_amount", "get_snow_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_max_slope", PROPERTY_HINT_RANGE, "0,90,0.1,degrees"), "set_snow_max_slope", "get_snow_max_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_from_weather"), "set_snow_from_weather", "is_snow_from_weather");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_on_body"), "set_snow_on_body", "is_snow_on_body");
 
 	ADD_GROUP("Ground Deform", "ground_deform_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "ground_deform_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_GROUND_DEFORM);

@@ -3392,6 +3392,19 @@ void main() {
 				snow_cover = 0.0;
 			}
 		}
+		// A moving body's own snow (BaseMaterial3D snow_on_body, SnowBodies): instance uniform slot 12 holds depth
+		// (m), albedo, melt water and 1 + density / 1000, as the raster shader reads it.
+		if (rt_material_snow_on_body(mat)) {
+			uint sbo = geometries[h.geometry_idx].instance_uniforms_ofs;
+			vec4 sb = sbo != 0xFFFFFFFFu ? global_shader_uniforms.data[sbo + 12u] : vec4(0.0);
+			if (sb.w > 0.5) {
+				snow_cover = snow_p.x * tanh(max(sb.x, 0.0) / (0.025 * max((sb.w - 1.0) * 10.0, 0.5)));
+				snow_albedo = sb.y;
+				snow_wet = clamp(sb.z, 0.0, 1.0);
+			} else if (snow_p.w < 0.5) {
+				snow_cover = 0.0;
+			}
+		}
 		float snow_cos_max = min(cos(radians(snow_p.y)), 0.999);
 		float snow_hold = smoothstep(snow_cos_max, cos(radians(max(snow_p.y - 20.0, 0.0))), h.geometry_normal.y);
 		snow_cover = clamp(snow_cover, 0.0, 1.0);

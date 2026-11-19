@@ -496,6 +496,11 @@ private:
 				mk.flags |= ((uint64_t)1 << i);
 			}
 		}
+		// The key's bitfields are full: snow_on_body rides in the flags' top bit (FLAG_MAX is well under 31).
+		static_assert(FLAG_MAX < 31);
+		if (snow_on_body) {
+			mk.flags |= (1u << 31);
+		}
 
 		return mk;
 	}
@@ -645,6 +650,7 @@ private:
 	float snow_amount = 1.0f;
 	float snow_max_slope = 60.0f;
 	bool snow_from_weather = true;
+	bool snow_on_body = false;
 	bool ground_deform_patch = false;
 	float point_size = 0.0f;
 	float alpha_scissor_threshold = 0.0f;
@@ -902,6 +908,8 @@ public:
 
 	void set_snow_from_weather(bool p_enable);
 	bool is_snow_from_weather() const;
+	void set_snow_on_body(bool p_enable);
+	bool is_snow_on_body() const;
 
 	// Ground deformation (docs/ideas/ground-deform.md): set by GroundSurface3D on its copy of the ground
 	// material, which draws the deformed patch; the terrain's own material is lowered under it.

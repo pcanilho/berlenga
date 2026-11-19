@@ -269,7 +269,8 @@ struct alignas(16) RT_MaterialData {
 	struct { // texture_subsurface_scattering: red scales the strength.
 		uint32_t index : TEXTURE_INDEX_BITS;
 		uint32_t wetness_canopy : 1; // BaseMaterial3D wetness_canopy: the canopy's water (RT_PARAM_RAIN_MAP) and beads.
-		uint32_t unused : 7;
+		uint32_t snow_on_body : 1; // BaseMaterial3D snow_on_body: the body's snow from instance uniform slot 12.
+		uint32_t unused : 6;
 	} subsurface_texture;
 	// BaseMaterial3D Hair (RT_MAT_FLAG_HAIR), see rt_material_set_hair() and GLSL rt_material_hair().
 	struct {

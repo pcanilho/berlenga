@@ -1194,3 +1194,43 @@ it does in the field:
 **Results** (`--test=sleet`): x1.00 at -10 C, x2.46 at -0.5 C; melted share 0 at -1 C, 0.27 at 1 C, 0.86
 at 3 C; a 2 mm flake falls at 1.00 m/s dry, 0.98 half melted, 6.55 melted. `--view=snowfall --air=C` shows
 dry snow at -6 C, big aggregates at -1 C and wet sleet streaks at 1.5 C.
+
+## Follow-up 18: snow on moving things (built 19 Nov 2026)
+
+Before this, a moving body with a snow material showed the ground map's snow wherever it stood, so a car
+driven out of a drift kept a full roof at any speed. Now each moving thing keeps its own load.
+
+**What carries snow.** `SnowBodies3D`, added by `SnowCover3D` (`bodies_enabled`, on), tracks every
+`RigidBody3D` (vehicles too), `AnimatableBody3D`, PhysX vehicle and `PhysXCloth3D`, plus the `snow_catch`
+group (`snow_ignore` opts out; characters only through the group). It finds them as they enter the tree.
+
+**The load, per body, at 10 Hz:**
+
+- Seeded on first sight from the ground's cover (`WorldSnow` depth, density, wetness) if the sky is open.
+- Falling snow (`WorldWeather.snowfall_at`) adds `swe / rho_new` (Hedstrom and Pomeroy 1998), only where an
+  upward ray from the body's top finds open sky (checked once a second).
+- Wind strips it above the blowing threshold (Li and Pomeroy 1997), counted as the air *past* the body
+  (wind minus the body's velocity), so driving fast is wind too. The threshold rises with wetness
+  (x(1 + 4 wet)) and settling (x sqrt(rho / 150)), since wet or settled snow sticks (an estimate).
+- Jolts above 0.5 g shed it at 3 per second per g over (an estimate, the same idea as canopy unloading).
+- Thaw melts it at the cover's degree-day factor, fire at 0.334 MJ/kg (`WorldFire.heat_at`), and melt and
+  rain wet it; cold refreezes the water. It settles toward 300 kg/m3 over two days and its albedo ages.
+
+**Drawing it.** `BaseMaterial3D.snow_on_body` declares `instance uniform vec4 snow_body : instance_index(12)`
+(depth m, albedo, melt water, 1 + density / 1000; slots 0-11 are the mud's). When set, it replaces the
+weather cover with Niu and Yang's (2007) `tanh(depth / (0.025 rho / 100))`, and the shared weight and
+apply functions do the rest. The path tracer reads the same slot (`rt_material_snow_on_body`, bit 25 of
+`subsurface_texture`). Only bodies' materials declare it, because every instance whose material has an
+instance uniform takes 16 slots of the global buffer: `SnowBodies3D` turns `snow_on_body` on for the
+materials of the bodies it tracks (`auto_materials`). A material that had no snow gets snow from the body
+only, so untracked instances sharing it stay bare. MaterialKey's bitfields are full, so the flag rides
+in the key's flags' top bit.
+
+**Checks.** `docs/bench/snow -- --test=bodies` (10 checks): found by itself; seeded in the open, bare under
+a roof; snowfall at the new snow density, none under a roof; a breeze keeps it and a 20 m/s gale strips it;
+25 m/s of driving strips it; a crawl keeps it and shaking strips it; a thaw melts and wets it; fire melts
+it; untracking clears it. `--view=bodies` shows three crates after six hours of snow (left out, just
+driven in, from a shed), raster and path traced alike.
+
+**Next.** Weight on the body (its mass), snow sliding off a tilted roof as a slab, and clumps falling
+off as `SnowClumps3D` pieces when a load sheds.
