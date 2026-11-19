@@ -30,7 +30,9 @@
 
 #include "snow_bodies_3d.h"
 
+#include "snow_clumps_3d.h"
 #include "snow_cover_3d.h"
+#include "snow_surface_3d.h"
 #include "snow_fall_3d.h"
 
 #include "core/config/engine.h"
@@ -132,11 +134,14 @@ float SnowBodies3D::get_body_wetness(Node *p_node) const {
 	return b ? b->wet : 0.0f;
 }
 
-void SnowBodies3D::set_body_depth(Node *p_node, float p_depth) {
+void SnowBodies3D::set_body_depth(Node *p_node, float p_depth, float p_density) {
 	ERR_FAIL_NULL(p_node);
 	track(p_node);
 	Body *b = bodies.getptr(p_node->get_instance_id());
 	b->depth = CLAMP(p_depth, 0.0f, max_depth);
+	if (p_density > 0.0f) {
+		b->density = p_density;
+	}
 	b->seen = true;
 	if (Node3D *n = Object::cast_to<Node3D>(p_node)) {
 		b->last_position = n->get_global_position();
@@ -218,6 +223,93 @@ float SnowBodies3D::_exposure(Node3D *p_node) {
 	return space->intersect_ray(rp, rr) ? 0.0f : 1.0f;
 }
 
+bool SnowBodies3D::slab_slides(float p_depth, float p_density, float p_wetness, float p_slope, float p_cohesion) {
+	// Mohr-Coulomb on the bed (as the cornice's crack, follow-up 7): the load's shear rho g d sin(slope) against the
+	// bond c plus friction rho g d cos(slope) tan(phi). Melt water at the bed breaks the bond and lubricates it
+	// (wet snow slides off warm roofs at about 25 degrees); phi falls from 25 to 15 degrees with wetness.
+	if (p_depth <= 0.0f || p_slope <= 0.0f) {
+		return false;
+	}
+	const float w = CLAMP(p_wetness, 0.0f, 1.0f);
+	const float load = p_density * GRAVITY * p_depth; // Pa
+	const float c = p_cohesion * (1.0f - w) * (1.0f - w);
+	const float phi = Math::deg_to_rad(25.0f - 10.0f * w);
+	return load * Math::sin(p_slope) > c + load * Math::cos(p_slope) * Math::tan(phi);
+}
+
+void SnowBodies3D::_measure(Body &r_body, Node3D *p_node) {
+	// The body's footprint from above: its meshes' bounds in world space.
+	AABB box;
+	bool any = false;
+	for (const ObjectID &gid : r_body.geometry) {
+		GeometryInstance3D *g = ObjectDB::get_instance<GeometryInstance3D>(gid);
+		if (!g || !g->is_inside_tree()) {
+			continue;
+		}
+		const AABB b = g->get_global_transform().xform(g->get_aabb());
+		box = any ? box.merge(b) : b;
+		any = true;
+	}
+	if (!any) {
+		r_body.top_area = 0.0f;
+		r_body.top_offset = Vector3();
+		return;
+	}
+	r_body.top_area = box.size.x * box.size.z;
+	r_body.top_radius = 0.5f * MAX(box.size.x, box.size.z);
+	const Vector3 c = box.get_center();
+	r_body.top_offset = Vector3(c.x, box.position.y + box.size.y, c.z) - p_node->get_global_position();
+}
+
+void SnowBodies3D::_shed(Body &r_body, Node3D *p_node, float p_depth_lost, const Vector3 &p_toward, float p_temperature) {
+	// What falls off lands round the body (or past its low edge, for a slab) as clumps, as much as the snow holds
+	// together (SnowClumps3D::cohesion); the rest is powder.
+	if (!clumps_enabled || p_depth_lost <= 0.0f) {
+		return;
+	}
+	SnowSurface3D *surface = SnowSurface3D::get_active();
+	SnowClumps3D *clumps = surface ? surface->get_clumps_node() : nullptr;
+	if (!clumps) {
+		return;
+	}
+	const float share = SnowClumps3D::cohesion(r_body.density, r_body.wet, p_temperature);
+	const float volume = p_depth_lost * r_body.top_area * share;
+	const Vector3 top = p_node->get_global_position() + r_body.top_offset;
+	Vector3 at = top;
+	float radius = r_body.top_radius + 0.3f;
+	if (p_toward != Vector3()) {
+		at = top + p_toward * (r_body.top_radius + 0.25f);
+		radius = 0.5f * r_body.top_radius;
+	}
+	clumps_dropped += clumps->drop(at, radius, volume, r_body.wet);
+}
+
+void SnowBodies3D::_apply_weight() {
+	// The load's weight at the top of the body, every physics step (forces do not carry over).
+	for (const KeyValue<ObjectID, Body> &kv : bodies) {
+		const Body &b = kv.value;
+		if (b.load_mass <= 0.0f) {
+			continue;
+		}
+		RigidBody3D *rb = ObjectDB::get_instance<RigidBody3D>(b.id);
+		if (rb && rb->is_inside_tree() && !rb->is_freeze_enabled()) {
+			rb->apply_force(Vector3(0.0f, -b.load_mass * GRAVITY, 0.0f), b.top_offset);
+		}
+	}
+}
+
+float SnowBodies3D::get_body_load_mass(Node *p_node) const {
+	ERR_FAIL_NULL_V(p_node, 0.0f);
+	const Body *b = bodies.getptr(p_node->get_instance_id());
+	return b ? b->load_mass : 0.0f;
+}
+
+float SnowBodies3D::get_body_top_area(Node *p_node) const {
+	ERR_FAIL_NULL_V(p_node, 0.0f);
+	const Body *b = bodies.getptr(p_node->get_instance_id());
+	return b ? b->top_area : 0.0f;
+}
+
 void SnowBodies3D::_step(double p_dt) {
 	if (p_dt <= 0.0) {
 		return;
@@ -245,6 +337,7 @@ void SnowBodies3D::_step(double p_dt) {
 			b.geometry_accum = 0.0;
 			_collect_geometry(b, n);
 		}
+		_measure(b, n);
 		b.ray_accum += p_dt;
 		if (b.ray_accum >= RAY_INTERVAL) {
 			b.ray_accum = 0.0;
@@ -291,7 +384,21 @@ void SnowBodies3D::_step(double p_dt) {
 		// Jolts and shakes throw it off: braking, bumps, a door slammed, cloth flapping.
 		const float g = a.length() / GRAVITY;
 		if (g > shake_threshold && b.depth > 0.0f) {
+			const float before = b.depth;
 			b.depth *= Math::exp(-shake_shed_rate * (g - shake_threshold) * dt);
+			_shed(b, n, before - b.depth, Vector3(), t);
+		}
+		// A tilted top lets the load go as one slab (not cloth: it has no one top).
+		if (slide_enabled && b.depth > 0.0f && !n->is_class("PhysXCloth3D")) {
+			const Vector3 up = n->get_global_transform().basis.get_column(1).normalized();
+			const float slope = Math::acos(CLAMP(up.y, -1.0f, 1.0f));
+			if (slab_slides(b.depth, b.density, b.wet, slope, slab_cohesion)) {
+				const Vector3 down = Vector3(up.x, 0.0f, up.z).normalized();
+				const float lost = b.depth;
+				b.depth = 0.0f;
+				slabs_slid++;
+				_shed(b, n, lost, down, t);
+			}
 		}
 		// Melt: the cover's degree-day factor in a thaw, and fire's heat; melt water wets what is left, which
 		// refreezes in the cold.
@@ -320,6 +427,15 @@ void SnowBodies3D::_step(double p_dt) {
 		if (b.depth < MIN_DEPTH) {
 			b.depth = 0.0f;
 			b.wet = 0.0f;
+		}
+		b.load_mass = b.depth * b.density * b.top_area;
+		// Cloth carries it as areal mass (kg/m2) on its solver, where the cloth offers a snow_load.
+		if (n->is_class("PhysXCloth3D")) {
+			bool has = false;
+			n->get(SNAME("snow_load"), &has);
+			if (has) {
+				n->set(SNAME("snow_load"), b.depth * b.density);
+			}
 		}
 		// Only real changes go to the GPU.
 		const Vector4 out(b.depth, b.albedo, b.wet, 1.0f + b.density / 1000.0f);
@@ -361,6 +477,9 @@ void SnowBodies3D::_notification(int p_what) {
 			set_physics_process_internal(false);
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
+			if (weight_enabled) {
+				_apply_weight();
+			}
 			accum += get_physics_process_delta_time();
 			if (accum >= 1.0 / MAX(update_rate, 0.1f)) {
 				_step(accum);
@@ -399,8 +518,21 @@ void SnowBodies3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_body_depth", "node"), &SnowBodies3D::get_body_depth);
 	ClassDB::bind_method(D_METHOD("get_body_density", "node"), &SnowBodies3D::get_body_density);
 	ClassDB::bind_method(D_METHOD("get_body_wetness", "node"), &SnowBodies3D::get_body_wetness);
-	ClassDB::bind_method(D_METHOD("set_body_depth", "node", "depth"), &SnowBodies3D::set_body_depth);
+	ClassDB::bind_method(D_METHOD("set_body_depth", "node", "depth", "density"), &SnowBodies3D::set_body_depth, DEFVAL(-1.0f));
 	ClassDB::bind_method(D_METHOD("step", "delta"), &SnowBodies3D::step);
+	ClassDB::bind_method(D_METHOD("get_body_load_mass", "node"), &SnowBodies3D::get_body_load_mass);
+	ClassDB::bind_method(D_METHOD("get_body_top_area", "node"), &SnowBodies3D::get_body_top_area);
+	ClassDB::bind_method(D_METHOD("get_clumps_dropped"), &SnowBodies3D::get_clumps_dropped);
+	ClassDB::bind_method(D_METHOD("get_slabs_slid"), &SnowBodies3D::get_slabs_slid);
+	ClassDB::bind_static_method("SnowBodies3D", D_METHOD("slab_slides", "depth", "density", "wetness", "slope", "cohesion"), &SnowBodies3D::slab_slides);
+	ClassDB::bind_method(D_METHOD("set_weight_enabled", "enable"), &SnowBodies3D::set_weight_enabled);
+	ClassDB::bind_method(D_METHOD("is_weight_enabled"), &SnowBodies3D::is_weight_enabled);
+	ClassDB::bind_method(D_METHOD("set_slide_enabled", "enable"), &SnowBodies3D::set_slide_enabled);
+	ClassDB::bind_method(D_METHOD("is_slide_enabled"), &SnowBodies3D::is_slide_enabled);
+	ClassDB::bind_method(D_METHOD("set_clumps_enabled", "enable"), &SnowBodies3D::set_clumps_enabled);
+	ClassDB::bind_method(D_METHOD("is_clumps_enabled"), &SnowBodies3D::is_clumps_enabled);
+	ClassDB::bind_method(D_METHOD("set_slab_cohesion", "pascals"), &SnowBodies3D::set_slab_cohesion);
+	ClassDB::bind_method(D_METHOD("get_slab_cohesion"), &SnowBodies3D::get_slab_cohesion);
 
 	ClassDB::bind_method(D_METHOD("set_update_rate", "rate"), &SnowBodies3D::set_update_rate);
 	ClassDB::bind_method(D_METHOD("get_update_rate"), &SnowBodies3D::get_update_rate);
@@ -424,4 +556,8 @@ void SnowBodies3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_depth", PROPERTY_HINT_RANGE, "0,2,0.01,suffix:m"), "set_max_depth", "get_max_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_materials"), "set_auto_materials", "is_auto_materials");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_track"), "set_auto_track", "is_auto_track");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weight_enabled"), "set_weight_enabled", "is_weight_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "slide_enabled"), "set_slide_enabled", "is_slide_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clumps_enabled"), "set_clumps_enabled", "is_clumps_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "slab_cohesion", PROPERTY_HINT_RANGE, "0,2000,1,suffix:Pa"), "set_slab_cohesion", "get_slab_cohesion");
 }

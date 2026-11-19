@@ -25,6 +25,16 @@
 				Returns how readily pushed snow holds together as lumps, 0 to 1, from the pack's [param density] (kg/m³), [param wetness] (0 to 1) and the air [param temperature] (°C).
 			</description>
 		</method>
+		<method name="drop">
+			<return type="int" />
+			<param index="0" name="at" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="volume" type="float" />
+			<param index="3" name="wetness" type="float" />
+			<description>
+				Snow falling off something (a roof slab, a shaken vehicle, from [SnowBodies3D]): [param volume] m³ breaks into clumps lying on the snow within [param radius] of [param at], log-normal sizes about 4 cm in dry snow and 8 cm in wet, at most 64 a call. Returns how many it made.
+			</description>
+		</method>
 		<method name="get_clump_count" qualifiers="const">
 			<return type="int" />
 			<description>
