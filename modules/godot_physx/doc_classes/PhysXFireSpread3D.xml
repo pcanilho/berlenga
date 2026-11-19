@@ -20,6 +20,12 @@
 				Kilograms of ash the wind has lifted off the burnt ground so far ([member blowing_ash]).
 			</description>
 		</method>
+		<method name="get_ash_washed" qualifiers="const">
+			<return type="float" />
+			<description>
+				Kilograms of ash the ground's runoff ([method WorldGround.runoff_at]) has washed off the burnt ground so far. The char shows through where it went.
+			</description>
+		</method>
 		<method name="get_fire_wind_at" qualifiers="const">
 			<return type="Vector3" />
 			<param index="0" name="position" type="Vector3" />
@@ -205,6 +211,13 @@
 			<return type="int" />
 			<description>
 				How many trees the fire knows: crowns from [member vegetation_field] over its area and those added by [method add_tree].
+			</description>
+		</method>
+		<method name="get_water_repellency_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How water-repellent the burn left the soil at [param position], 0 to 1: more where the fire flamed longer (up to a minute), half as much where a log burnt out and overheated it, fading over a year or two of the weather's clock. Its [method WorldFire.water_repellency_at], by which [GroundSurface3D] sheds more rain as runoff.
 			</description>
 		</method>
 		<method name="get_whirl_count" qualifiers="const">

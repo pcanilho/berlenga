@@ -406,6 +406,7 @@ private:
 		float mud = 0.0f; // deep mud, m (stage 1 of docs/ideas/mud.md)
 		bool fixed = false; // rock or snow: never deforms
 		float frozen = 0.0f; // frozen soil at the surface (round 8): 0..1, how far it holds as a crust
+		float repel = 0.0f; // a fire's water repellency (WorldFire.water_repellency_at), 0..1
 	};
 	LocalVector<CellInput> cell_inputs;
 	float _water_conductivity(const CellInput &p_in) const;

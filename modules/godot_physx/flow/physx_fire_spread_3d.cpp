@@ -1213,6 +1213,72 @@ float PhysXFireSpread3D::get_burn_age_at(const Vector3 &p_position) const {
 	return float(MAX(game_days - double(burn_day[z * nx + x]), 0.0) / 365.0);
 }
 
+// Water repellency of the burnt soil (docs/ideas/physx.md, "Rain washes the burn scar"): heating drives waxy compounds
+// from the burning litter into the top soil and fixes them on its grains, most between about 175 and 280 C; above
+// some 300 C they burn off at the surface (DeBano 2000; Doerr et al. 2000). A front passing in seconds heats the soil
+// surface into that band only while it flames there, so the coat grows with the flaming time (full after a minute);
+// a log burning out over a cell overheats it (half as repellent at the surface). It fades as the coat breaks down
+// and wets, back to the background in a year or two (Huffman et al. 2001: about 22 months), here e^(-t / 0.75 yr).
+float PhysXFireSpread3D::get_water_repellency_at(const Vector3 &p_position) const {
+	int x, z;
+	if (t_ignite.is_empty() || !_world_cell(p_position, x, z)) {
+		return 0.0f;
+	}
+	const uint32_t i = z * nx + x;
+	if (t_ignite[i] < 0.0f || fuel_left[i] > 0.5f || quenched[i]) {
+		return 0.0f;
+	}
+	float r = 0.35f + 0.65f * MIN(char_time[i] / 60.0f, 1.0f);
+	if (heavy_any && heavy_t[i] >= 0.0f && char_time[i] > 900.0f) {
+		r = 0.5f;
+	}
+	const float age = get_burn_age_at(p_position);
+	return r * Math::exp(-MAX(age, 0.0f) / 0.75f);
+}
+
+// Rain washing the ash off the burn scar: where the ground's runoff runs (WorldGround.runoff_at: depth and speed),
+// it carries the loose ash away at about 30 kg per m3 of water (post-fire runoff carries ash at tens of grams a litre:
+// Smith et al. 2011; ash is the first thing it moves, Cerda and Doerr 2008), each cell giving up its ash to the flow
+// leaving it (q / cell). Once a second, the runoff read once per metre tile.
+void PhysXFireSpread3D::_wash_ash(float p_delta) {
+	const WorldGround *gr = WorldContracts::ground();
+	if (!gr || !gr->has_provider() || t_ignite.is_empty() || total_burnt <= 0.0f) {
+		return;
+	}
+	const FuelModel &m = _model(fuel_type);
+	const int tile = MAX(1, (int)Math::round(1.0f / cell_size));
+	const float cell_area = cell_size * cell_size;
+	for (int tz = 0; tz < nz; tz += tile) {
+		for (int tx = 0; tx < nx; tx += tile) {
+			const int cx = MIN(tx + tile / 2, nx - 1), cz = MIN(tz + tile / 2, nz - 1);
+			const uint32_t ci = cz * nx + cx;
+			if (t_ignite[ci] < 0.0f || time - t_ignite[ci] < 3.0f * m.burn_time) {
+				continue;
+			}
+			Vector3 wp = _cell_world(cx, cz);
+			wp.y = height.is_empty() ? wp.y : height[ci];
+			const Vector2 run = gr->runoff_at(wp);
+			const float q = run.x * run.y; // m2/s
+			if (q <= 1.0e-7f) {
+				continue;
+			}
+			const float take = 30.0f * q / cell_size * p_delta; // kg/m2
+			for (int z = tz; z < MIN(tz + tile, nz); z++) {
+				for (int x = tx; x < MIN(tx + tile, nx); x++) {
+					const uint32_t i = z * nx + x;
+					if (t_ignite[i] < 0.0f) {
+						continue;
+					}
+					const float left = _ash_made(i) - ash_blown[i];
+					const float lift = MIN(take, MAX(left, 0.0f));
+					ash_blown[i] += lift;
+					ash_washed += lift * cell_area;
+				}
+			}
+		}
+	}
+}
+
 float PhysXFireSpread3D::get_stem_char_at(const Vector3 &p_position) const {
 	int x, z;
 	if (char_time.is_empty() || !_world_cell(p_position, x, z)) {
@@ -2074,6 +2140,11 @@ void PhysXFireSpread3D::_notification(int p_what) {
 				_blow_ash(0.25f);
 				_update_indraft();
 			}
+			wash_timer -= dt;
+			if (wash_timer <= 0.0f) {
+				wash_timer = 1.0f;
+				_wash_ash(1.0f);
+			}
 			_step(dt);
 			_update_emitters(_wind());
 			if (spotting && brand_count > 0.0f) {
@@ -2119,6 +2190,8 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_fire_wind_at", "position"), &PhysXFireSpread3D::get_fire_wind_at);
 	ClassDB::bind_method(D_METHOD("get_stem_char_at", "position"), &PhysXFireSpread3D::get_stem_char_at);
 	ClassDB::bind_method(D_METHOD("get_burn_age_at", "position"), &PhysXFireSpread3D::get_burn_age_at);
+	ClassDB::bind_method(D_METHOD("get_water_repellency_at", "position"), &PhysXFireSpread3D::get_water_repellency_at);
+	ClassDB::bind_method(D_METHOD("get_ash_washed"), &PhysXFireSpread3D::get_ash_washed);
 	ClassDB::bind_method(D_METHOD("set_blowing_ash", "enabled"), &PhysXFireSpread3D::set_blowing_ash);
 	ClassDB::bind_method(D_METHOD("is_blowing_ash"), &PhysXFireSpread3D::is_blowing_ash);
 	ClassDB::bind_method(D_METHOD("set_grass_ash", "enabled"), &PhysXFireSpread3D::set_grass_ash);

@@ -164,6 +164,7 @@ Consumers: fire (crown fire), lightning (attachment), weather (shelter), snow (i
 | `wind_at(pos)` | m/s, horizontal | 0 | The fires' indraft near the ground, summed over fires; adds to the weather's wind |
 | `stem_char_at(pos)` | m | 0 | Char a stem foot there took (bark and wood), the most of any fire; trees weaken by it |
 | `burn_age_at(pos)` | years (game time) | -1 (never burnt) | Since the ground last burnt, the most recent of any producer; vegetation's regrowth stage |
+| `water_repellency_at(pos)` | 0..1 | 0 | Burnt soil shedding rain (fades over 1-2 game years); the ground cuts its infiltration by up to 0.9 |
 | `crown_scorch_at(pos)` | m | 0 | Height crowns were killed to (lethal scorch, 1000 for a burnt crown), the most of any fire; trees die and stand as snags |
 | shader globals `fire_wind_map`, `fire_wind_rect` | m/s | rect width 0 | The same indraft over the fire's area (RG: x, z), for grass |
 | shader globals `fire_state_map`, `fire_char_rect` | | | burnt, glow, flame length, scorch height |

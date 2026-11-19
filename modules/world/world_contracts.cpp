@@ -454,6 +454,17 @@ float WorldFire::crown_scorch_at(const Vector3 &p_position) const {
 	return r;
 }
 
+float WorldFire::water_repellency_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_water_repellency_at, p_position, r)) {
+		return r;
+	}
+	for (WorldFireProvider *f : providers) {
+		r = MAX(r, f->contract_fire_water_repellency_at(p_position));
+	}
+	return r;
+}
+
 void WorldFire::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldFire::has_provider);
 	ClassDB::bind_method(D_METHOD("heat_at", "position"), &WorldFire::heat_at);
@@ -468,6 +479,8 @@ void WorldFire::_bind_methods() {
 	GDVIRTUAL_BIND(_burn_age_at, "position");
 	ClassDB::bind_method(D_METHOD("crown_scorch_at", "position"), &WorldFire::crown_scorch_at);
 	GDVIRTUAL_BIND(_crown_scorch_at, "position");
+	ClassDB::bind_method(D_METHOD("water_repellency_at", "position"), &WorldFire::water_repellency_at);
+	GDVIRTUAL_BIND(_water_repellency_at, "position");
 }
 
 // A script stub standing in as one water producer among the real ones.

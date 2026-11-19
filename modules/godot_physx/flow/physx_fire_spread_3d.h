@@ -116,7 +116,10 @@ private:
 	Vector3 _indraft_at(const Vector3 &p_position, float p_skip) const;
 	bool blowing_ash = true;
 	bool grass_ash = true;
-	LocalVector<float> ash_blown; // kg/m2 of ash lifted off each cell
+	LocalVector<float> ash_blown; // kg/m2 of ash lifted off each cell by the wind or washed off by runoff
+	float ash_washed = 0.0f; // kg washed off by runoff so far
+	float wash_timer = 0.0f;
+	void _wash_ash(float p_delta);
 	LocalVector<float> char_time; // s of flame (and a third of smouldering logs' time) each cell has stood
 	LocalVector<float> burn_day; // game day (the fire's own weather clock) each cell caught
 	double game_days = 0.0; // weather days since the fire node started (WorldWeather.time_scale)
@@ -270,6 +273,7 @@ public:
 	float contract_fire_stem_char_at(const Vector3 &p_position) const override { return get_stem_char_at(p_position); }
 	float contract_fire_burn_age_at(const Vector3 &p_position) const override { return get_burn_age_at(p_position); }
 	float contract_fire_crown_scorch_at(const Vector3 &p_position) const override { return get_scorch_height_at(p_position); }
+	float contract_fire_water_repellency_at(const Vector3 &p_position) const override { return get_water_repellency_at(p_position); }
 	Vector3 contract_fire_wind_at(const Vector3 &p_position) const override { return fire_wind ? _indraft_at(p_position, 0.0f) : Vector3(); }
 	float get_flame_length_at(const Vector3 &p_position) const; // peak, m
 	float get_scorch_height_at(const Vector3 &p_position) const; // peak crown scorch height, m
@@ -355,6 +359,8 @@ public:
 	bool is_fire_whirls() const { return fire_whirls; }
 	float get_stem_char_at(const Vector3 &p_position) const;
 	float get_burn_age_at(const Vector3 &p_position) const;
+	float get_water_repellency_at(const Vector3 &p_position) const;
+	float get_ash_washed() const { return ash_washed; }
 	void set_fire_wind(bool p_v);
 	bool is_fire_wind() const { return fire_wind; }
 	Vector3 get_fire_wind_at(const Vector3 &p_position) const { return _indraft_at(p_position, 0.0f); }
