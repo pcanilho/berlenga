@@ -51,6 +51,13 @@ struct WaterSediment {
 	static Vector3 ash_scattering() { return Vector3(150.0f, 150.0f, 150.0f); }
 	static constexpr float MINERAL_SETTLE_TIME = 0.5f * 86400.0f; // s, e-folding in still water
 	static constexpr float ASH_SETTLE_TIME = 2.0f * 86400.0f; // s
+	// Settling in flowing water (m/s), Stokes' law for the fines a flood carries: silt about 13 um (quartz, 2650
+	// kg/m3), and ash and char, light and porous, five times slower; the same as the e-folding times over a few metres
+	// of lake. They settle only where the bed shear stress is under the stress for deposition (Pa; Krone 1962,
+	// Mehta and Partheniades 1975 measured 0.06 to 0.15 for cohesive silt and clay), in proportion to the shortfall.
+	static constexpr float MINERAL_SETTLING_SPEED = 1.5e-4f;
+	static constexpr float ASH_SETTLING_SPEED = 3.0e-5f;
+	static constexpr float DEPOSITION_STRESS = 0.1f;
 	// The most water carries as a flood (kg/m3): hyperconcentrated flow reaches about 60% sediment by weight
 	// (Beverage and Culbertson 1964; Pierson 2005); denser, the mixture is a debris flow, the ground's to move.
 	static constexpr float MAX_LOAD = 1000.0f;

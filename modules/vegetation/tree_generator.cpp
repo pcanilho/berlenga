@@ -97,7 +97,7 @@ static bool hedge_shrub(TreeGenerator::Preset p_preset) {
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
 	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow",
 	"Northern Hardwood Forest", "Eastern Oak Forest", "Pine-Hemlock Forest", "Coppice with Standards", "Wood Pasture", "Pollard Row",
-	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle"
+	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow"
 };
 
 TreeGenerator::TreeGenerator() {
@@ -13649,6 +13649,9 @@ void TreeGenerator::_apply_decay() {
 	} else if (decay_class == 2 && beetle_active && dr.randf() < 0.4f) {
 		// The top, riddled by the beetles and woodpeckers, often snaps in the grey years already.
 		cut_y = height * Math::lerp(0.65f, 0.9f, dr.randf());
+	} else if (windthrow_years >= 0.0f && !fallen && decay_class <= 3) {
+		// A stem the storm snapped (trees.md 5am): the stump of it, broken low, splintered, its top lying beside it.
+		cut_y = height * Math::lerp(0.06f, 0.3f, dr.randf());
 	} else if (decay_class == 3) {
 		cut_y = height * Math::lerp(0.55f, 0.85f, dr.randf());
 	} else if (decay_class == 4) {
@@ -14113,7 +14116,8 @@ void TreeGenerator::_settle_log(float p_ground, float p_trunk_r) {
 void TreeGenerator::_fell() {
 	RandomPCG fr;
 	fr.seed(uint64_t(seed) * 40503u + 5u);
-	const float bearing = fr.randf() * float(Math::TAU);
+	// A storm's trees fall with it, toward +X (trees.md 5am; placement turns +X down the storm's track).
+	const float bearing = windthrow_years >= 0.0f ? -0.5f * float(Math::PI) : fr.randf() * float(Math::TAU);
 	const Vector3 axis = Vector3(Math::cos(bearing), 0.0f, Math::sin(bearing));
 	const Vector3 base = nodes[0].start;
 	float trunk_r = 0.1f;
@@ -19303,6 +19307,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	if (beetle_active) {
 		mesh->set_meta(SNAME("tree_beetle_years"), beetle_years);
 	}
+	if (windthrow_years >= 0.0f) {
+		// Storm damage (trees.md 5am): years since the storm; thrown and leaning trees point along mesh +X.
+		mesh->set_meta(SNAME("tree_windthrow_years"), windthrow_years);
+	}
 	if (fire_crown[5] > 0.0f) {
 		// The crown's foliage profile for fire mortality (VegetationFire::tree_killed; trees.md 5ag).
 		PackedFloat32Array fc;
@@ -20968,6 +20976,35 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		look.set_preset(p_preset);
 		params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.7f, 1.1f, Math::fmod(tv * 3.7f + 0.13f, 1.0f)));
 	}
+	if (windthrow_band > 0) {
+		// A windthrow stand's variants (trees.md 5am): one storm, so every thrown and snapped tree is the same age
+		// since it; they differ in size, in whether the roots or the stem gave, and in how far the survivors lean.
+		windthrow_years = windthrow_storm;
+		const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.37f, 1.0f);
+		if (windthrow_band == 3) {
+			decay_class = 0;
+			fallen = false;
+			uprooted = false;
+		} else {
+			decay_class = _windthrow_class(windthrow_storm);
+			fallen = windthrow_band == 1;
+			// Lothar 1999 in the Swiss lowlands: spruce stands lost 40-60% of their damaged trees to stem breakage, the
+			// rest uprooted (Schutz et al. 2006). So half the thrown trees lie with their root plates, the others are
+			// the tops of the snapped stems (band 2 stands their stumps).
+			uprooted = fallen && p_variant % 2 == 0;
+		}
+		// Storms take the tall trees of the stand first (Schutz et al. 2006: damage from about 28 m top height).
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.85f, 1.25f, tv));
+	}
+}
+
+// Decay class of a tree the storm threw or broke, by the years since (trees.md 5am): a thrown spruce keeps its needles
+// for a year or two (green, then red), loses its twigs over the next years, its bark and limbs by twenty, and is a soft
+// log on the ground after that (Ulanova 2000, Picea abies log decay: needles gone by 11-20 years on the ground).
+int TreeGenerator::_windthrow_class(float p_years) {
+	return p_years < 2.5f ? 1 : (p_years < 8.0f ? 2 : (p_years < 20.0f ? 3 : (p_years < 40.0f ? 4 : 5)));
 }
 
 // Everything generate() reads, so a copy grows the same tree; the textures are shared.
@@ -21005,6 +21042,10 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	beetle_years = p_from.beetle_years;
 	beetle_outbreak = p_from.beetle_outbreak;
 	beetle_band = p_from.beetle_band;
+	windthrow_years = p_from.windthrow_years;
+	windthrow_storm = p_from.windthrow_storm;
+	windthrow_direction = p_from.windthrow_direction;
+	windthrow_band = p_from.windthrow_band;
 	bark_wounds = p_from.bark_wounds;
 	bark_chevrons = p_from.bark_chevrons;
 	wind_exposure = p_from.wind_exposure;
@@ -21151,7 +21192,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		rigged = false;
 	}
 	const int key = (int(p_preset) * int(FORM_MAX) + int(p_form)) * 2 + (rigged ? 1 : 0) + ((p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG) && coppice_ages.x >= 0 ? 100000 * (1 + coppice_ages.x + 64 * coppice_ages.y) : 0) +
-			(beetle_band > 0 ? 40000000 * beetle_band + 1000000 * MIN(int(beetle_outbreak * 2.0f), 30) : 0);
+			(beetle_band > 0 ? 40000000 * beetle_band + 1000000 * MIN(int(beetle_outbreak * 2.0f), 30) : 0) +
+			(windthrow_band > 0 ? 200000000 * windthrow_band + 2000000 * MIN(int(windthrow_storm * 2.0f), 60) : 0);
 	// Placed trees are alive unless a beetle stand grows its kill (single trees keep beetle_years).
 	struct BeetleYearsRestore {
 		float &value;
@@ -21160,6 +21202,11 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	} beetle_years_restore{ beetle_years, beetle_years };
 	if (beetle_band == 0) {
 		beetle_years = -1.0f;
+	}
+	// And untouched by storms unless a windthrow stand grows its damage.
+	BeetleYearsRestore windthrow_years_restore{ windthrow_years, windthrow_years };
+	if (windthrow_band == 0) {
+		windthrow_years = -1.0f;
 	}
 	const Habitat &h = HABITATS[p_preset];
 	if (!mesh_cache.has(key) || mesh_cache[key].size() < MAX(p_variants, 1)) {
@@ -21261,7 +21308,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// The fire band variants (trees.md 5ah): the same seeds as the first living ones, grown burnt.
 		TypedArray<Mesh> fire_meshes;
 		const bool fire_form = p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_OLD || p_form == FORM_GROVE;
-		if (fire_variants && p_variants > 0 && fire_form && beetle_band == 0) {
+		if (fire_variants && p_variants > 0 && fire_form && beetle_band == 0 && windthrow_band == 0) {
 			const float saved_fire = fire_years;
 			for (int b = 0; b < 5; b++) {
 				_setup_variant(p_preset, p_form, b, saved_seed, saved_climber_cover);
@@ -21340,6 +21387,12 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// Placement turns each instance's +X down the prevailing wind instead of a random yaw
 		// (the meshes carry tree_wind_flag; trees.md 5q).
 		sp->set_meta("wind_flag", true);
+	}
+	if (windthrow_band == 1 || windthrow_band == 3) {
+		// Thrown and leaning trees point down the storm's track (mesh +X; trees.md 5am): placement turns them to
+		// fall_dir, with a scatter of fall_scatter radians either side (gusts and eddies in the stand turn them).
+		sp->set_meta("fall_dir", windthrow_direction);
+		sp->set_meta("fall_scatter", windthrow_band == 1 ? 0.45f : 0.3f);
 	}
 	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)", " (bank)", " (thicket)", " (old)", " (hedge)", " (laid hedge)", " (grove)" };
 	sp->set_name(String(preset_names[p_preset]) + form_names[p_form]);
@@ -22083,6 +22136,83 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			shrub(PRESET_ELDER, 0.25f);
 			stand_forest_shade = 0.6f;
 		} break;
+		case STAND_WINDTHROW: {
+			lead = PRESET_NORWAY_SPRUCE;
+			// Spruce after a winter storm (trees.md 5am; Lothar 1999, Vivian 1990, Kyrill 2007). Gaps from a few trees to
+			// many hectares (Schutz et al. 2006: most under a hectare after Lothar; a gap about a tree height wide
+			// destabilises its edge), in them the stand lying where it fell, every stem down the storm's track: half
+			// thrown with their root plates up on edge beside their pits, half snapped low, the stumps standing and the
+			// tops lying. Survivors lean at the gap edges. Then the gap fills: raspberry and willowherb first (the ground
+			// plants'), the spruce that waited under the old stand, rowan, birch and sycamore in the light (Wohlgemuth
+			// et al. 2002, ten years after Vivian: Picea abies, Acer pseudoplatanus and Sorbus aucuparia the commonest;
+			// Ulanova 2000: birch and willow on the pits and bared plates).
+			const float y = MAX(windthrow_storm, 0.0f);
+			const float gap_scale = 90.0f, cover = 0.45f;
+			stand_forest_shade = 0.45f;
+			windthrow_band = 1;
+			Ref<PlantSpecies> thrown = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_LOG);
+			windthrow_band = 0;
+			thrown->set_name("Norway Spruce (windthrow)");
+			// Most of the gap's stand lies in it: the logs about as close as the trees stood.
+			thrown->set_spacing(HABITATS[PRESET_NORWAY_SPRUCE].stand_spacing * 1.2f);
+			thrown->set_density(1.0f);
+			thrown->set_patch_scale(gap_scale);
+			thrown->set_patch_cover(cover);
+			thrown->set_patch_seed(patch_seed);
+			list.push_back(thrown);
+			windthrow_band = 2;
+			Ref<PlantSpecies> snapped = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_SNAG);
+			windthrow_band = 0;
+			snapped->set_name("Norway Spruce (windthrow snapped)");
+			snapped->set_density(0.6f);
+			snapped->set_patch_scale(gap_scale);
+			snapped->set_patch_cover(cover);
+			snapped->set_patch_seed(patch_seed);
+			snapped->set_canopy_opacity(0.0f);
+			list.push_back(snapped);
+			// Leaning survivors along the gap edges, then the closed stand between the gaps.
+			windthrow_band = 3;
+			Ref<PlantSpecies> lean = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_STAND);
+			windthrow_band = 0;
+			lean->set_name("Norway Spruce (windthrow leaning)");
+			lean->set_density(0.5f * (1.0f - Math::smoothstep(10.0f, 25.0f, y)));
+			lean->set_patch_scale(gap_scale);
+			lean->set_patch_cover(cover);
+			lean->set_patch_seed(patch_seed);
+			lean->set_patch_ring(6.0f);
+			if (lean->get_density() > 0.01f) {
+				list.push_back(lean);
+			}
+			canopy(PRESET_NORWAY_SPRUCE, 1.0f, gap_scale, cover, true, true);
+			// In the gaps: limbs and tops torn off in the fall, and the young trees, by the years since.
+			Ref<PlantSpecies> torn = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_BRANCH);
+			torn->set_name("Norway Spruce (windthrow branch)");
+			torn->set_density(0.9f);
+			torn->set_patch_scale(gap_scale);
+			torn->set_patch_cover(cover);
+			torn->set_patch_seed(patch_seed);
+			list.push_back(torn);
+			auto gap_young = [&](Preset p, float p_density, float p_from) {
+				if (y < p_from) {
+					return;
+				}
+				// Saplings for the first dozen years, then open-grown young trees in the gap's light.
+				Ref<PlantSpecies> sp = _stand_species(p, false, p_variants, y < 12.0f ? FORM_SAPLING : FORM_OPEN);
+				sp->set_name(String(preset_names[p]) + " (windthrow regeneration)");
+				sp->set_density(p_density * Math::smoothstep(p_from, p_from + 4.0f, y));
+				sp->set_patch_scale(gap_scale);
+				sp->set_patch_cover(cover);
+				sp->set_patch_seed(patch_seed);
+				list.push_back(sp);
+			};
+			// The spruce that waited under the old canopy (advance regeneration) is there from the storm on.
+			gap_young(PRESET_NORWAY_SPRUCE, 0.6f, 0.0f);
+			gap_young(PRESET_ROWAN, 0.45f, 1.0f);
+			gap_young(PRESET_BIRCH, 0.4f, 2.0f);
+			gap_young(PRESET_SYCAMORE_MAPLE, 0.3f, 3.0f);
+			shrub(PRESET_ELDER, 0.2f);
+			stand_forest_shade = 0.6f;
+		} break;
 		case STAND_MAX:
 			break;
 	}
@@ -22623,6 +22753,21 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			// within a few years (Hicke et al. 2012). Docs, 19 Nov: the snags read brown, the phase did not show.
 			bark_color = bark_color.lerp(Color(0.52f, 0.51f, 0.48f), 0.65f);
 		}
+		if (windthrow_years >= 0.0f && decay_class == 1 && params[PARAM_NEEDLES] > 0.5f) {
+			// A thrown conifer's needles (trees.md 5am): an uprooted tree still holds by the roots that did not tear
+			// and stays green through the first summer; a snapped top browns within months. Then rust-red, falling
+			// from the second year, as the beetle stand's red phase (5aj).
+			const float y = windthrow_years - (uprooted ? 0.6f : 0.25f);
+			// Dull and dark: the sprays' sheen pulls brown toward salmon (stand plot, 19 Nov), so the brown is greyed.
+			const Color fox = Color(0.26f, 0.16f, 0.09f), brown = Color(0.19f, 0.14f, 0.1f);
+			leaf_color = y < 0.6f ? living_leaf.lerp(Color(0.25f, 0.25f, 0.09f), 0.5f * Math::smoothstep(0.0f, 0.6f, y)).lerp(fox, Math::smoothstep(0.3f, 0.6f, y)) : fox.lerp(brown, Math::smoothstep(0.6f, 1.4f, y));
+			const float drop = 0.4f * Math::smoothstep(0.4f, 0.9f, y) + 0.55f * Math::smoothstep(0.9f, 1.6f, y);
+			for (uint32_t i = 0; i < nodes.size(); i++) {
+				if (nodes[i].leafy && float(hash_murmur3_one_32(i, uint32_t(seed) * 2654435761u + 0x77696e64u) & 0xffff) / 65535.0f < drop) {
+					nodes[i].leafy = false;
+				}
+			}
+		}
 		if (beetle && decay_class == 1) {
 			// The red stage: the needles fade from the top down through yellow-green and straw to fox red, then
 			// brown, and fall from the second year (Wulder et al. 2006, the "red attack" crowns read from the air).
@@ -22696,6 +22841,21 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		_shed_branch();
 	} else if (fallen) {
 		_fell();
+	} else if (windthrow_years >= 0.0f && decay_class == 0 && !nodes.is_empty()) {
+		// A survivor at a windthrow gap's edge, part thrown (trees.md 5am): its root plate lifted on the windward side
+		// and the tree leans down the storm's track (+X), 5-20 degrees, held by the roots that did not tear. Survivors
+		// at the edge of a fresh gap are the next to go (Schutz et al. 2006: a gap about a tree height wide
+		// destabilises its edge).
+		RandomPCG lr;
+		lr.seed(uint64_t(seed) * 0x2545f491u + 0x6c65616eu);
+		const float lean = Math::deg_to_rad(Math::lerp(5.0f, 20.0f, lr.randf()));
+		const Basis tilt(Vector3(0, 0, 1), -lean);
+		// About the stem's foot on the lee side, where the plate hinges.
+		const Vector3 pivot = nodes[0].start + Vector3(0.4f * nodes[0].radius, 0.0f, 0.0f);
+		for (Node &n : nodes) {
+			n.start = pivot + tilt.xform(n.start - pivot);
+			n.dir = tilt.xform(n.dir).normalized();
+		}
 	}
 	// Where the wood lies (mesh space), for plants grown through and around it: the thickest
 	// axis from the root. Its butt is measured from its bark as the mesh is built.
@@ -22877,6 +23037,12 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_beetle_years"), &TreeGenerator::get_beetle_years);
 	ClassDB::bind_method(D_METHOD("set_beetle_outbreak", "years"), &TreeGenerator::set_beetle_outbreak);
 	ClassDB::bind_method(D_METHOD("get_beetle_outbreak"), &TreeGenerator::get_beetle_outbreak);
+	ClassDB::bind_method(D_METHOD("set_windthrow_years", "years"), &TreeGenerator::set_windthrow_years);
+	ClassDB::bind_method(D_METHOD("get_windthrow_years"), &TreeGenerator::get_windthrow_years);
+	ClassDB::bind_method(D_METHOD("set_windthrow_storm", "years"), &TreeGenerator::set_windthrow_storm);
+	ClassDB::bind_method(D_METHOD("get_windthrow_storm"), &TreeGenerator::get_windthrow_storm);
+	ClassDB::bind_method(D_METHOD("set_windthrow_direction", "direction"), &TreeGenerator::set_windthrow_direction);
+	ClassDB::bind_method(D_METHOD("get_windthrow_direction"), &TreeGenerator::get_windthrow_direction);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_fire_response", "preset"), &TreeGenerator::get_fire_response);
 	ClassDB::bind_method(D_METHOD("set_cork_stripped_years", "years"), &TreeGenerator::set_cork_stripped_years);
 	ClassDB::bind_method(D_METHOD("get_cork_stripped_years"), &TreeGenerator::get_cork_stripped_years);
@@ -23011,6 +23177,9 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_variants"), "set_fire_variants", "get_fire_variants");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beetle_years", PROPERTY_HINT_RANGE, "-1,30,0.05,suffix:yr"), "set_beetle_years", "get_beetle_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beetle_outbreak", PROPERTY_HINT_RANGE, "0,30,0.5,suffix:yr"), "set_beetle_outbreak", "get_beetle_outbreak");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "windthrow_years", PROPERTY_HINT_RANGE, "-1,60,0.1,suffix:yr"), "set_windthrow_years", "get_windthrow_years");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "windthrow_storm", PROPERTY_HINT_RANGE, "0,60,0.5,suffix:yr"), "set_windthrow_storm", "get_windthrow_storm");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "windthrow_direction"), "set_windthrow_direction", "get_windthrow_direction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cork_stripped_years", PROPERTY_HINT_RANGE, "-1,30,0.01"), "set_cork_stripped_years", "get_cork_stripped_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_wounds", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_bark_wounds", "get_bark_wounds");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_chevrons", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_bark_chevrons", "get_bark_chevrons");
@@ -23143,6 +23312,7 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_OLIVE_GROVE);
 	BIND_ENUM_CONSTANT(STAND_DATE_OASIS);
 	BIND_ENUM_CONSTANT(STAND_BEETLE_SPRUCE);
+	BIND_ENUM_CONSTANT(STAND_WINDTHROW);
 	BIND_ENUM_CONSTANT(STAND_MAX);
 	BIND_ENUM_CONSTANT(REGION_EUROPE);
 	BIND_ENUM_CONSTANT(REGION_NORTH_AMERICA);

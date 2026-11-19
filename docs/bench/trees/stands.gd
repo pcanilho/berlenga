@@ -40,7 +40,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"olive grove", "date oasis", "beetle spruce", "woodland", "NA woodland"]
+		"olive grove", "date oasis", "beetle spruce", "windthrow", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -250,6 +250,45 @@ func _stand_checks(only := -1) -> void:
 					var yrs: float = m.get_meta("tree_beetle_years", -1.0)
 					tagged = tagged and (yrs < 2.5 if nm3.contains("front") else yrs >= 2.5)
 			_check(front > 0 and grey > 0 and stand_count > 0 and tagged, "beetle spruce: %d red-front, %d grey, %d living spruce; variants tagged by stage" % [front, grey, stand_count])
+		elif i == TreeGenerator.STAND_WINDTHROW:
+			# Spruce after windthrow (trees.md 5am): thrown logs and snapped stumps in the gaps, every thrown and
+			# leaning tree turned down the storm's track (mesh +X along windthrow_direction), half with root plates.
+			var thrown := 0
+			var snapped := 0
+			var leaning := 0
+			var off := 0
+			var plates := 0
+			var checked := 0
+			var dir := Vector2(0.92, -0.38).normalized()
+			for s in sps.size():
+				var nm4: String = sps[s].resource_name
+				var pl: PackedVector3Array = f.get_placements(s)
+				if nm4.contains("(windthrow)"):
+					thrown += pl.size()
+					for m in sps[s].meshes:
+						if m.has_meta("tree_root_pit"):
+							plates += 1
+				elif nm4.contains("(windthrow snapped)"):
+					snapped += pl.size()
+				elif nm4.contains("(windthrow leaning)"):
+					leaning += pl.size()
+				else:
+					continue
+				if not sps[s].has_meta("fall_dir") and not nm4.contains("snapped"):
+					off += pl.size()
+				if nm4.contains("snapped"):
+					continue
+				# The drawn instances of its meshes: +X down the storm's track.
+				for mmi in f.find_children("*", "MultiMeshInstance3D", true, false):
+					var mm: MultiMesh = mmi.multimesh
+					if mm == null or not sps[s].meshes.has(mm.mesh):
+						continue
+					checked += mm.instance_count
+					for k in mm.instance_count:
+						var x: Vector3 = mm.get_instance_transform(k).basis.x
+						if Vector2(x.x, x.z).normalized().dot(dir) < cos(0.5):
+							off += 1
+			_check(thrown > 0 and snapped > 0 and leaning > 0 and stand_count > 0 and off == 0 and plates > 0, "windthrow: %d thrown (%d variants with root plates), %d snapped, %d leaning, %d standing; %d of %d drawn turned off the storm's track" % [thrown, plates, snapped, leaning, stand_count, off, checked])
 		elif i == TreeGenerator.STAND_POLLARD_ROW:
 			_check(cut.pollard > 0 and cut.pollard >= open_count, "pollard row: %d willow pollards, %d alders" % [cut.pollard, open_count])
 		elif i == TreeGenerator.STAND_COPPICE_STANDARDS:

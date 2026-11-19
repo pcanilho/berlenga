@@ -85,6 +85,7 @@ public:
 	virtual bool contract_season_climate(WeatherSeason::Climate &r_climate) const { return false; }
 	virtual Dictionary contract_season_at(const Vector3 &p_position, int p_day) const;
 	virtual float contract_cloud_cover_at(const Vector3 &p_position) const { return 0.0f; } // 0..1
+	virtual float contract_high_cloud_cover_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, the high (cirrus) sheet
 	virtual float contract_water_temperature() const { return 15.0f; } // C, open water (lakes lag the air)
 	virtual float contract_surface_temperature_at(const Vector3 &p_position) const { return contract_air_temperature_at(p_position); } // C, exposed ground
 	virtual float contract_ground_height_at(const Vector3 &p_position) const { return 0.0f; } // m, the terrain the weather sees
@@ -132,6 +133,7 @@ protected:
 	GDVIRTUAL0RC(int, _day_of_year)
 	GDVIRTUAL2RC(Dictionary, _season_at, Vector3, int)
 	GDVIRTUAL1RC(float, _cloud_cover_at, Vector3)
+	GDVIRTUAL1RC(float, _high_cloud_cover_at, Vector3)
 	GDVIRTUAL0RC(float, _water_temperature)
 	GDVIRTUAL1RC(float, _surface_temperature_at, Vector3)
 	GDVIRTUAL1RC(float, _ground_height_at, Vector3)
@@ -185,6 +187,7 @@ public:
 	bool season_climate(WeatherSeason::Climate &r_climate) const;
 	Dictionary season_at(const Vector3 &p_position, int p_day = -1) const;
 	float cloud_cover_at(const Vector3 &p_position) const;
+	float high_cloud_cover_at(const Vector3 &p_position) const;
 	float water_temperature() const;
 	float surface_temperature_at(const Vector3 &p_position) const;
 	float ground_height_at(const Vector3 &p_position) const;
@@ -218,6 +221,8 @@ public:
 	}
 	// Suspended load (kg/m3): x mineral (silt, clay: brown), y ash and char (grey to black). Zero for clear water.
 	virtual Vector2 contract_water_sediment_at(const Vector3 &p_position) const { return Vector2(); }
+	// What settled out of this water onto its bed at the point (kg/m2): x mineral, y ash. Stays after the water falls.
+	virtual Vector2 contract_water_sediment_deposit_at(const Vector3 &p_position) const { return Vector2(); }
 	// Height of the waves breaking at the point (m): the broken waves in the surf zone, whitecaps (cover times wave
 	// height) over open water; 0 where none break.
 	virtual float contract_water_breaking_at(const Vector3 &p_position) const { return 0.0f; }
@@ -247,6 +252,7 @@ protected:
 	GDVIRTUAL3(_impulse, Vector3, float, float)
 	GDVIRTUAL5(_wave, Vector3, Vector3, float, float, float)
 	GDVIRTUAL1RC(Vector2, _sediment_at, Vector3)
+	GDVIRTUAL1RC(Vector2, _sediment_deposit_at, Vector3)
 	GDVIRTUAL1RC(float, _breaking_at, Vector3)
 	GDVIRTUAL3(_add_sediment, Vector3, float, float)
 	GDVIRTUAL3(_add_sediment_mass, Vector3, float, float)
@@ -268,6 +274,9 @@ public:
 	void wave(const Vector3 &p_position, const Vector3 &p_direction, float p_height, float p_period, float p_width);
 	// The water's suspended load at the point (kg/m3): x mineral, y ash and char; the shading clouds and darkens by it.
 	Vector2 sediment_at(const Vector3 &p_position) const;
+	// Silt and ash the water has laid on its bed at the point (kg/m2, every producer's summed), there whether or not
+	// water still covers it: slack water by a river's banks and in its pools, a flood's leavings.
+	Vector2 sediment_deposit_at(const Vector3 &p_position) const;
 	// Height of the waves breaking at the point (m), the largest any producer reports; 0 where none break.
 	float breaking_at(const Vector3 &p_position) const;
 	// A load entering the water that answers at the point (kg/s of mineral and of ash); none there: it is lost.
