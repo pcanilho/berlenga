@@ -1997,6 +1997,22 @@ over-lit by the un-normalised octaves. Image:
 /mnt/project-files/fork/physx/powder-pt-vs-raster.png (top raw, bottom
 blurred; left PT, right raster).
 
+### Gas single-scattering albedo (snow's request, 19 Nov)
+
+The path tracer gave every Flow volume a fixed single-scattering albedo
+of 0.9: each scatter keeps 90% of the light, so after the many scatters
+inside a thick cloud little is left and snow powder goes grey however
+white smoke_color is. Ice grains barely absorb in the visible (albedo
+above 0.999, Warren 1982). PhysXFlow3D.scattering_albedo (default 0.9,
+so smoke and dust are unchanged) now sets it. The raster pass weighs its
+multiple-scattering octaves (Wrenninge et al. 2013) by albedo^i for
+octave i, and the whole by albedo, both relative to 0.9, so its default
+look is unchanged (powder frame mean 109.2 before, 109.5 after) and a
+whiter gas keeps more of its deep light there too. Three octaves only
+approximate the many orders PT follows, so raster brightens less than PT
+for very white gas. Test puff, mean grey down its middle at 0.9 and 0.99:
+raster 155.5 and 157.6, path traced 145.0 and 149.5.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
