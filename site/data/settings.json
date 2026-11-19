@@ -1253,7 +1253,7 @@
     "GroundSurface3D.tracked_mud"
    ],
    "note": "",
-   "what": "tyres and boots leaving clay lay a film of mud on firm ground, printed with the tyre's chevron lugs or the boot's heel and forefoot, that fades as they clean and dries pale in place; thrown clods land as cakes of wet clay that dry where they lie.",
+   "what": "tyres, boots and other bodies leaving clay lay a film of mud on firm ground, printed with the tyre's chevron lugs or the boot's heel and forefoot, that fades as they clean and dries pale in place; thrown clods land as cakes of wet clay that dry where they lie.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -3281,7 +3281,7 @@
     "SnowCover3D"
    ],
    "note": "",
-   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it, and fire melts the snow under it at any air temperature.",
+   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it, and fire melts the snow under it at any air temperature. Sea salt from spray melts shore snow and bare lake ice below freezing, until the brine is diluted or drains away with the melt (`salt_melt`).",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3780,7 +3780,7 @@
     "WeatherMap3D.sea_spray"
    ],
    "note": "",
-   "what": "breaking waves wet the shore and cliff faces downwind and leave salt that rain washes off; salted grass browns at the tips.",
+   "what": "breaking waves wet the shore and cliff faces downwind and leave salt that rain washes off; salted grass browns at the tips, and shrubs and trees brown leaf by leaf.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
