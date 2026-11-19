@@ -167,7 +167,7 @@
 		<method name="get_react_stats" qualifiers="const">
 			<return type="Dictionary" />
 			<description>
-				[member stones_react] so far: [code]loose[/code] (rigid bodies now), [code]promoted[/code], [code]shoved[/code] and [code]settled[/code] (counts since the field was made).
+				[member stones_react] so far: [code]loose[/code] (rigid bodies now), [code]promoted[/code], [code]pressed[/code] (into the ground under the footprint), [code]shoved[/code] (out to its rim) and [code]settled[/code] (counts since the field was made).
 			</description>
 		</method>
 		<method name="get_rockfall_dust_impacts" qualifiers="const">
@@ -530,7 +530,7 @@
 			Rock type of the soft beds when [member use_strata] is on.
 		</member>
 		<member name="stones_react" type="bool" setter="set_stones_react" getter="is_stones_react" default="true">
-			Small stones react to whatever stands, walks or drives on them: every node in the [code]world_contact[/code] group (read with [method WorldContracts.describe_body]). The stones under its footprint that have no collision of their own become rigid bodies for a moment, pushed on with a share of its speed (up to [member react_max_bodies] at a time, from 1.2 cm across), and go back to plain instances where they come to rest; the finest are shoved out of the footprint. A loose stone stays in its own [MultiMesh] the whole time, so raster and the path tracer draw it unchanged. Boulders (over 0.3 m) never move. See [method get_react_stats].
+			Small stones react to whatever stands, walks or drives on them: every node in the [code]world_contact[/code] group (read with [method WorldContracts.describe_body]). Of the stones under its footprint that have no collision of their own, most are pressed flat into the ground (into the print a deformable ground took), some are shoved out to the footprint's rim, and a few become rigid bodies for a moment, flicked on with a share of its speed (up to [member react_max_bodies] at a time, from 1.2 cm across), going back to plain instances where they come to rest. A loose stone stays in its own [MultiMesh] the whole time, so raster and the path tracer draw it unchanged. Boulders (over 0.3 m) never move. See [method get_react_stats].
 		</member>
 		<member name="streaming" type="bool" setter="set_streaming" getter="is_streaming" default="true">
 			Builds and frees cells round the follow target as it moves, within [member build_budget_msec] a frame.

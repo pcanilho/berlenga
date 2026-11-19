@@ -529,11 +529,113 @@ TypedArray<Resource> PlantGenerator::make_desert(DesertStand p_stand, int p_vari
 					{ P::PRESET_SOIL_CRUST, 0.35f, 0.0f, 0.75f, 0.8f, 1.6f, Vector2(-0.05f, 0.12f), 6.0f, 0.6f, 25.0f },
 					{ P::PRESET_DESERT_ANNUALS, 0.3f, 0.05f, 0.6f, 0.8f, 1.2f, Vector2(-0.05f, 0.3f), 8.0f, 0.5f, 25.0f } });
 			break;
+		case DESERT_OASIS:
 		case DESERT_MAX:
 			break;
 	}
 	TypedArray<Resource> out;
 	int seed_base = 9500 + int(p_stand) * 100;
+	if (p_stand == DESERT_OASIS) {
+		// Oases at desert springs (docs/ideas/vegetation.md): trees' date palm stand (TreeGenerator.STAND_DATE_OASIS:
+		// tended palms, wild clumps by the water, olives beneath) on the wet ground, then a ring of the desert shrubs
+		// where the water lies deeper, then the open sand. GrassField3D greens the wettest ground.
+		using T = TreeGenerator;
+		Ref<TreeGenerator> tg;
+		tg.instantiate();
+		tg->set_season(p_season);
+		const Ref<Biome> stand = tg->make_stand(T::STAND_DATE_OASIS, p_variants);
+		if (stand.is_valid()) {
+			const TypedArray<PlantSpecies> list = stand->get_species();
+			for (int i = 0; i < list.size(); i++) {
+				Ref<PlantSpecies> sp = list[i];
+				if (sp.is_null()) {
+					continue;
+				}
+				const int preset = int(sp->get_meta("preset", -1));
+				const bool wild_palm = preset == T::PRESET_DATE_PALM && String(sp->get_name()).find("grove") < 0;
+				// Wild palms keep to the water's edge; the tended grove and the olives under it to the irrigated ground.
+				Vector2 wet = wild_palm ? Vector2(0.8f, 1.0f) : (preset == T::PRESET_DATE_PALM ? Vector2(0.55f, 1.0f) : Vector2(0.5f, 0.95f));
+				sp->set_rule_range(PlantSpecies::RULE_SPRING, wet);
+				sp->set_rule_fade(PlantSpecies::RULE_SPRING, 0.08f);
+				sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 20.0f));
+				sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 4.0f);
+				sp->set_meta("desert", true);
+				sp->set_meta("oasis", true);
+				out.push_back(sp);
+			}
+		}
+		if (p_shrubs) {
+			struct RingSpec {
+				int preset, form;
+				float density;
+				Vector2 wet;
+			};
+			const RingSpec ring[3] = { { T::PRESET_CALLIGONUM, T::SHRUB_MATURE, 0.22f, Vector2(0.08f, 0.5f) },
+				{ T::PRESET_WHITE_BROOM, T::SHRUB_MATURE, 0.18f, Vector2(0.15f, 0.6f) },
+				{ T::PRESET_SALTBUSH, T::SHRUB_MATURE, 0.14f, Vector2(0.3f, 0.65f) } };
+			for (const RingSpec &w : ring) {
+				Ref<PlantSpecies> sp = make_woody_shrub(w.preset, w.form, p_variants, p_season, w.density, 14.0f, 0.6f, seed_base + w.preset);
+				if (sp.is_null()) {
+					continue;
+				}
+				sp->set_rule_range(PlantSpecies::RULE_SPRING, w.wet);
+				sp->set_rule_fade(PlantSpecies::RULE_SPRING, 0.08f);
+				sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 25.0f));
+				sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 4.0f);
+				sp->set_meta("desert", true);
+				sp->set_meta("oasis", true);
+				out.push_back(sp);
+			}
+		}
+		// Round the spring pools (OasisSprings3D through VegetationField3D.spring_pools): common reed standing in the
+		// shallows and on the wet shore, rushes on the damp sand behind (Phragmites australis and Juncus rigidus /
+		// maritimus, the oasis pools' and sabkha springs' fringe: Zahran and Willis 2009, "The Vegetation of Egypt";
+		// Ozenda 1977 for the Sahara). Without pools they are not placed.
+		struct PoolSpec {
+			Preset preset;
+			float spacing, footprint, density, scale_min, scale_max;
+			Vector2 shore; // Metres from the pool's shore, negative in the water.
+			float fade, patch_scale, patch_cover, visibility;
+		};
+		const PoolSpec pool_set[2] = { { P::PRESET_REED, 0.45f, 0.12f, 0.95f, 0.9f, 1.3f, Vector2(-2.0f, 1.2f), 0.6f, 6.0f, 0.75f, 70.0f },
+			{ P::PRESET_RUSH, 0.6f, 0.2f, 0.65f, 0.8f, 1.2f, Vector2(0.6f, 4.5f), 1.2f, 5.0f, 0.5f, 30.0f } };
+		for (const PoolSpec &f : pool_set) {
+			Ref<PlantGenerator> gen;
+			gen.instantiate();
+			gen->set_textures(p_textures);
+			gen->set_preset(f.preset);
+			gen->apply_preset_colors();
+			gen->set_seed(seed_base + 50 + int(f.preset));
+			gen->set_season(p_season);
+			Ref<PlantSpecies> sp;
+			sp.instantiate();
+			TypedArray<Mesh> meshes;
+			const TypedArray<ArrayMesh> v = gen->generate_variants(MAX(p_variants, 1));
+			for (int i = 0; i < v.size(); i++) {
+				meshes.push_back(v[i]);
+			}
+			sp->set_meshes(meshes);
+			sp->set_spacing(f.spacing);
+			sp->set_footprint(f.footprint);
+			sp->set_density(f.density * get_presence(f.preset, p_season));
+			sp->set_scale_range(Vector2(f.scale_min, f.scale_max));
+			sp->set_align_to_ground(0.2f);
+			sp->set_rule_range(PlantSpecies::RULE_POOL_DISTANCE, f.shore);
+			sp->set_rule_fade(PlantSpecies::RULE_POOL_DISTANCE, f.fade);
+			sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 25.0f));
+			sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 4.0f);
+			sp->set_patch_scale(f.patch_scale);
+			sp->set_patch_cover(f.patch_cover);
+			sp->set_patch_seed(seed_base + 50 + int(f.preset));
+			sp->set_visibility_range(f.visibility);
+			sp->set_meta("desert", true);
+			sp->set_meta("oasis", true);
+			sp->set_meta("oasis_pool", true);
+			tag_species(sp, f.preset);
+			out.push_back(sp);
+		}
+		return out;
+	}
 	if (p_shrubs) {
 		// Woody shrubs (TreeGenerator, trees.md 5ae; Danin 1996, "Plants of Desert Dunes"): calligonum rides the
 		// flanks' moving sand and grows up through burial; white broom and saltbush keep to the stable corridors,
@@ -564,6 +666,23 @@ TypedArray<Resource> PlantGenerator::make_desert(DesertStand p_stand, int p_vari
 			sp->set_meta("desert", true);
 			out.push_back(sp);
 		}
+		if (p_stand == DESERT_INTERDUNE) {
+			// Nebkhas (TerrainGenerator3D.get_nebkhas): the mounds a shrub gathers round itself from blown sand
+			// (Tengberg 1995; Khalaf et al. 1995, Kuwait; Wang et al. 2006 on Nitraria and tamarisk nebkhas). Each
+			// mound carries one at its top, its crown about 0.4 of the mound's radius (VegetationField3D sizes it).
+			const int mound_shrubs[3] = { T::PRESET_CALLIGONUM, T::PRESET_SALTBUSH, T::PRESET_WHITE_BROOM };
+			for (int m : mound_shrubs) {
+				Ref<PlantSpecies> sp = make_woody_shrub(m, T::SHRUB_MATURE, p_variants, p_season, 1.0f, 0.0f, 0.0f, seed_base + 31 + m);
+				if (sp.is_null()) {
+					continue;
+				}
+				sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 40.0f));
+				sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 4.0f);
+				sp->set_meta("desert", true);
+				sp->set_meta("nebkha", true);
+				out.push_back(sp);
+			}
+		}
 	}
 	for (const DesertSpec &f : set) {
 		Ref<PlantGenerator> gen;
@@ -590,6 +709,11 @@ TypedArray<Resource> PlantGenerator::make_desert(DesertStand p_stand, int p_vari
 		sp->set_rule_range(PlantSpecies::RULE_SAND_MOBILITY, f.mobility);
 		sp->set_rule_fade(PlantSpecies::RULE_SAND_MOBILITY, 0.08f);
 		sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, f.preset == P::PRESET_SOIL_CRUST ? 15.0f : 28.0f));
+		if (f.preset == P::PRESET_SOIL_CRUST || f.preset == P::PRESET_DESERT_ANNUALS) {
+			// No crust on an oasis's wet, worked ground; the annuals give way to its sward.
+			sp->set_rule_range(PlantSpecies::RULE_SPRING, Vector2(-1.0f, 0.4f));
+			sp->set_rule_fade(PlantSpecies::RULE_SPRING, 0.1f);
+		}
 		sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 4.0f);
 		if (f.patch_scale > 0.0f) {
 			sp->set_patch_scale(f.patch_scale);

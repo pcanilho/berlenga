@@ -40,6 +40,40 @@
 				The global shader parameter [code]vegetation_near_radius[/code]: the smallest [member stream_radius] of the fields streaming now, so a terrain far blend has taken over before the first plants run out; 0 when none streams.
 			</description>
 		</method>
+		<method name="get_spring_wetness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The wetness round a desert spring at [param global_position] (x and z), as [constant PlantSpecies.RULE_SPRING] reads it: 0 dry to 1 at the water, -1 off the sand seas. Read with the last placement, and only when a species uses the rule.
+			</description>
+		</method>
+		<method name="add_canopy_loss">
+			<return type="void" />
+			<param index="0" name="xz" type="Vector2" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="keep" type="float" default="0.0" />
+			<description>
+				A felled tree or snapped crown: every placed crown centred within [param radius] of [param xz] keeps only [param keep] of its leaf area. [method get_shade_at] sees it at once, and every later repaint of the canopy ([member WeatherMap3D.canopy_map] through [member weather_map]) takes it out again, so streaming does not restore a felled crown. The caller cuts the live canopy map itself ([TreeWind3D] does).
+			</description>
+		</method>
+		<method name="clear_canopy_losses">
+			<return type="void" />
+			<description>
+				Forgets every [method add_canopy_loss]: the next repaint restores those crowns.
+			</description>
+		</method>
+		<method name="get_canopy_losses" qualifiers="const">
+			<return type="PackedVector4Array" />
+			<description>
+				The felled crowns from [method add_canopy_loss]: x, z, radius and the leaf area kept, each.
+			</description>
+		</method>
+		<method name="get_springs" qualifiers="const">
+			<return type="PackedVector4Array" />
+			<description>
+				The desert springs the last placement used, from the terrain ([method TerrainGenerator3D.get_springs]): x, the water's level, z and the discharge in litres a second (w; 0 takes the pools' default) each. For the water and terrain systems to put a pool there. Empty unless a species uses [constant PlantSpecies.RULE_SPRING].
+			</description>
+		</method>
 		<method name="get_stream_stats">
 			<return type="Dictionary" />
 			<description>
@@ -59,6 +93,12 @@
 			<param index="2" name="height" type="float" default="4.0" />
 			<description>
 				Returns the placed trees within [param radius] metres of [param center] whose meshes carry TreeGenerator's [code]tree_colliders[/code], each once, as a [Dictionary]: [code]base[/code], [code]up[/code] (the trunk's axis), [code]height[/code], [code]radius_base[/code], [code]radius_top[/code], [code]segments[/code] (the trunk's capsules up to [param height] metres, each [code][a, b, radius][/code]), all in world space; [code]preset[/code] (the species' [code]preset[/code] meta), [code]species[/code], [code]variant[/code], [code]basis[/code], [code]custom[/code] (the instance's custom data) and [code]seed[/code] (from where it stands). For close-up bark detail.
+			</description>
+		</method>
+		<method name="is_still_frozen" qualifiers="const">
+			<return type="bool" />
+			<description>
+				With [member still_shot]: [code]true[/code] once it has settled and stopped updating.
 			</description>
 		</method>
 		<method name="is_stream_idle" qualifiers="const">
@@ -279,6 +319,9 @@
 		<member name="obstacles" type="PackedVector4Array" setter="set_obstacles" getter="get_obstacles" default="PackedVector4Array()">
 			Rocks on the ground that no plant grows through: each a disc (x, ground y, z, radius), the radius where the rock meets the soil, for example from [method TerrainGenerator3D.get_boulders]. A ground plant's stem keeps 3 cm off a rock, a tree's trunk foot and a log's length keep clear of it. A ground plant's leaves reach at most 8 cm in over a rock's foot: one that would reach farther grows smaller and leans away from the rock (down to 45% of its size), or is not placed. Give the widest radius of a rock that bulges out above the soil. Give the same list to the [GrassField3D] layers. Takes effect at the next [method populate].
 		</member>
+		<member name="still_shot" type="bool" setter="set_still_shot" getter="is_still_shot" default="false">
+			For still shots on a tight memory budget: once [member streaming] has settled round its centre, the field stops streaming and drops its placement patterns until the centre moves 0.5 m. [method is_still_frozen] says when it has settled.
+		</member>
 		<member name="stone_top_normals" type="PackedVector3Array" setter="set_stone_top_normals" getter="get_stone_top_normals" default="PackedVector3Array()">
 			Optional, one per [member stone_tops] entry: the surface normal of each cap, measured on the stone (for example by a ray down onto its collision hull). With them, a cap is a flat patch of the stone's surface: a plant there is set on the plane through the cap's point and tilted to its normal, which fits sloping and flat stone faces; give a cap radius only as wide as the surface stays within about a centimetre of that plane. Ignored unless it has as many entries as [member stone_tops]. Takes effect at the next [method populate].
 		</member>
@@ -296,6 +339,9 @@
 		</member>
 		<member name="stream_maps_radius" type="float" setter="set_stream_maps_radius" getter="get_stream_maps_radius" default="96.0">
 			While [member streaming], the canopy map, the stand shade and the forest floor map cover this far around the centre (half-metre cells); the far colour map covers [member stream_radius].
+		</member>
+		<member name="spring_pools" type="NodePath" setter="set_spring_pools" getter="get_spring_pools" default="NodePath(&quot;&quot;)">
+			An [OasisSprings3D] whose pools' outlines ([method OasisSprings3D.get_outline]) the species with [constant PlantSpecies.RULE_POOL_DISTANCE] grow round: [method PlantGenerator.make_desert]'s oasis set puts common reed in the shallows and on the shore and rushes behind. Read when the placement is set up, so the pools must be built first.
 		</member>
 		<member name="stream_radius" type="float" setter="set_stream_radius" getter="get_stream_radius" default="200.0">
 			While [member streaming], tiles within this distance of the centre are placed. Each species is drawn only out to its [member PlantSpecies.visibility_range] (all of the radius when it has none); tiles a tile and a half past the radius are freed. The field publishes the radius as the global shader parameter [code]vegetation_near_radius[/code] (0 when it stops streaming; the last streaming field to publish owns it), so a terrain's far blend can start before the placed plants end.

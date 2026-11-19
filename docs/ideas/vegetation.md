@@ -669,6 +669,65 @@ flats), sparse and grouped. Bench VEG_DESERT_SHRUBS=0 for the cost: with against
 (about 70k triangles each in view): asked trees about LODs/impostors for them. The desert bench now reads mobility
 bilinearly, as the field does (nearest-cell reads failed after the sinuous brinks, 81cae021).
 
+Nebkhas (19 Nov, terrain-gen's cf579682): the sand mounds a desert shrub gathers round itself (Tengberg 1995; Khalaf
+et al. 1995; Wang et al. 2006). TerrainGenerator3D.get_nebkhas(rect) gives each mound's top and height; with shrubs,
+`make_desert(DESERT_INTERDUNE)` adds three mound shrubs (calligonum, saltbush, white broom, PlantSpecies meta
+"nebkha"), and VegetationField3D crowns every mound with one of them (picked by the mound's hash), its crown 0.4 of the
+mound's radius (radius about 2.7 times its height). The desert shrubs placed by density keep 2 m off a mound's foot.
+
+## Oases at desert springs (Paulo's pick 19 Nov)
+
+Trees' date palm oasis stand (TreeGenerator.STAND_DATE_OASIS, trees.md 5ai) placed where the sand seas hold water,
+with the desert shrubs round it and a green sward on its damp ground.
+
+Where oases are (research):
+- Ergs hold water where the ground dips to the water table. The Badain Jaran desert has over a hundred permanent
+  lakes in the hollows between its megadunes, fed by groundwater and springs in the lake floors (Yang and Williams
+  2003; Dong et al. 2016); the Ubari sand sea in Libya has its palm-ringed lakes in interdune corridors (Mandara,
+  Gaberoun). The Western Desert's oases (Siwa, Kharga) sit in hollows the wind scoured down to the water table
+  (Said 1990).
+- The water table is a subdued copy of the land's shape (Haitjema and Mitchell-Bruker 2005): flat under the dunes,
+  so the deepest hollows reach it first and a spring's water stands at one level round it.
+- Belts out from the water (Badain Jaran and Saharan oasis surveys): reeds at the edge, then the damp salt meadow
+  and tended palms with fruit trees beneath (Battesti 2005; Zaid and de Wet 2002: the palm wants "its feet in
+  water"; most absorbing roots in the top 2 m, reaching groundwater a few metres down), then a ring of shrubs
+  (tamarisk, calligonum, white broom, saltbush) where the water is deeper, then bare sand.
+- Biological soil crust does not form on wet, worked ground.
+
+Model (VegetationField3D and GrassField3D read the same, from the generator; no private copy of a water state the
+water systems own):
+- Springs: the terrain's (see "One spring list" below; first built here as a hollow search, now removed).
+- `PlantSpecies.RULE_SPRING` is the wetness, 1 where the
+  ground lies at or under that level, falling to 0 where it stands 5 m above it (out of a palm's root reach), and
+  to 0 by 250 m out; -1 off the sand seas. It follows the corridor's shape, since the dunes' flanks rise out of it.
+- `make_desert(DESERT_OASIS)`: the oasis stand (tended palms 0.55 to 1, wild palm clumps by the water 0.8 to 1,
+  olives beneath 0.5 to 0.95) and a shrub ring (calligonum, white broom, saltbush, 0.08 to 0.6). Crust and the
+  annuals keep to wetness under 0.4. A species using the rule grows on the sand like a sand plant.
+- GrassField3D lets its sward onto the sand sea where the wetness passes 0.5 to 0.85.
+- One spring list (19 Nov): the terrain's (`TerrainGenerator3D.get_springs()`, its lowest interdune floors, which it
+  carves to the water system's pools when `oasis_springs` names the OasisSprings3D). The field's own hollow search
+  is gone, so the palms, the pools and the carved ground cannot disagree; `VegetationField3D.get_springs()` passes the
+  terrain's list on (discharge 0: the pools' default).
+- Round the pools (`VegetationField3D.spring_pools` to the OasisSprings3D; `PlantSpecies.RULE_POOL_DISTANCE`, metres
+  from the shore by `get_outline()`, negative in the water): common reed from 2 m into the pool to 1.2 m up the shore,
+  rushes 0.6 to 4.5 m behind (Phragmites australis and Juncus rigidus / maritimus fringe Egypt's oasis pools and
+  springs: Zahran and Willis 2009, "The Vegetation of Egypt"; Ozenda 1977 for the Sahara).
+
+## Mediterranean woodland ground layer (audit 19 Nov; card to Paulo)
+
+The showcase's cork oak stand stands on bare sand with litter: every other forest has a floor set, the cork oak and
+stone pine stands none. Real montado and dehesa (Portugal's and Spain's open cork and holm oak woods) keep a continuous
+layer of annual grasses and herbs under and between the crowns, grazed short, browned by June; where grazing
+stops, cistus and lavender scrub comes in (Joffre et al. 1999, "The dehesa system of southern Spain and Portugal";
+Pinto-Correia et al. 2011 on montado scrub encroachment; Moreno and Pulido 2009). Under the crowns the grass is
+greener and later to dry (shade, nutrient islands: Moreno 2008).
+
+Plan (FLOOR_MEDITERRANEAN in make_floor, existing presets):
+- Dry grass as the main layer, denser in the open than under crowns; thistle and French lavender scattered in the
+  open; sage-leaved rockrose in loose patches (the encroachment), thyme on thin soil.
+- Oak litter (cork oak's leathery leaves fall all year, little at a time) under the crowns only; twigs.
+- GrassField3D under the stand: the meadow sward with summer dryness (the scene wires it).
+
 ## Burnt ground and regrowth (Paulo's pick 17 Nov; built 19 Nov)
 
 PhysX burns plants now (fire_state_map: char, scorch, stubble; fire_char_map: ash). Nothing grows back: a burn stays a

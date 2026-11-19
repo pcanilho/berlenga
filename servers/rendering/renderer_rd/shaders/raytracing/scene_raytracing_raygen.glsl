@@ -676,6 +676,8 @@ vec3 rt_sss_exit_direct(vec3 p_pos, vec3 p_normal, uint p_layers, uint p_shadow_
 	lambert.clearcoatAlpha = 0.0;
 	lambert.coatNormal = p_normal;
 	lambert.subsurface = 0.0;
+	lambert.anisotropy = 0.0;
+	lambert.anisoTangent = vec3(1.0, 0.0, 0.0);
 	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
 	return lights_evaluate_direct_lighting(p_pos, p_normal, p_normal, lambert, rng, p_is_indirect, light_count, p_layers, p_shadow_mask);
 }
@@ -2868,6 +2870,14 @@ void main() {
 	// does), so the shading frame comes from the shader, not the mesh TBN.
 	vec3 world_tangent = normalize(view_to_world * tangent);
 	vec3 world_bitangent = normalize(view_to_world * binormal);
+	// ANISOTROPY: anisotropic GGX on the tangent ANISOTROPY_FLOW turns, as raster's light_compute() (brdf_inc.glsl).
+	if (anisotropy > 0.01) {
+		vec3 at = normalize(anisotropy_flow.x * world_tangent + anisotropy_flow.y * world_bitangent);
+		at -= dot(at, m.normal) * m.normal;
+		if (dot(at, at) > 1e-12) {
+			m.aniso = vec4(normalize(at), clamp(anisotropy, 0.0, 1.0));
+		}
+	}
 
 	// Apply normal map if it was written.
 	vec3 ts_normal = vec3(0.0, 0.0, 1.0);

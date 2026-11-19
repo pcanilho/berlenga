@@ -30,6 +30,7 @@ struct MaterialResult {
 	vec4 hair_params; // Longitudinal roughness, azimuthal roughness, cuticle tilt (degrees), fibre offset h.
 	bool hair_cards; // Light passes through (cards); otherwise a shell folds it back out.
 	bool hair_strand; // Strand geometry (HairMesh): hair_params.w is the true fibre offset at the hit.
+	vec4 aniso; // ANISOTROPY: xyz the world tangent its lobe widens along (after ANISOTROPY_FLOW), w the amount; 0 = none.
 };
 
 void material_result_no_hair(inout MaterialResult r) {
@@ -41,6 +42,7 @@ void material_result_no_hair(inout MaterialResult r) {
 	r.hair_params = vec4(0.3, 0.3, 2.0, 0.0);
 	r.hair_cards = false;
 	r.hair_strand = false;
+	r.aniso = vec4(1.0, 0.0, 0.0, 0.0);
 }
 
 // Sensible default for a mid-grey diffuse surface.

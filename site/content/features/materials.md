@@ -49,3 +49,4 @@ summary: "Clearcoat, back lighting, thin-glass transmission, subsurface scatteri
 - `OPAQUE_PREPASS_THRESHOLD` in `fragment()` picks which fragments of a `depth_prepass_alpha` material write depth (default 0.99), in all three renderers.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders; `SPECULAR_NORMAL` output, a separate normal for the specular lobe under path tracing.
 - `RAY_FOOTPRINT` in spatial shaders: under path tracing, reads the ray cone's width at the hit, to filter detail smaller than a pixel.
+- `ANISOTROPY` and `ANISOTROPY_FLOW` from custom shaders are path traced as anisotropic GGX.

@@ -33,6 +33,7 @@
 
 #include "tree_generator.h"
 #include "vegetation_fire.h"
+#include "vegetation_field_3d.h"
 
 #include "core/config/engine.h"
 #include "core/math/random_pcg.h"
@@ -2009,9 +2010,19 @@ void TreeWind3D::_cut_canopy() {
 	if (canopy_holes.is_empty()) {
 		return;
 	}
+	// The field that placed the crowns keeps the losses (VegetationField3D.add_canopy_loss), so its next repaint
+	// of the canopy, or a streamed cell, does not bring them back; it does not repaint on the call, so the live map
+	// is cut here too.
+	Node *root = get_node_or_null(target_path);
+	VegetationField3D *field = Object::cast_to<VegetationField3D>(root);
+	if (field) {
+		for (const CanopyHole &hole : canopy_holes) {
+			// It takes every crown centred within the radius: a metre catches this stem's crown, not its neighbours'.
+			field->add_canopy_loss(hole.xz, 1.0f, hole.keep);
+		}
+	}
 	WeatherMap3D *wm = Object::cast_to<WeatherMap3D>(get_node_or_null(weather_map_path));
 	if (!wm) {
-		Node *root = get_node_or_null(target_path);
 		if (root) {
 			const Variant path = root->get(SNAME("weather_map"));
 			if (path.get_type() == Variant::NODE_PATH && !NodePath(path).is_empty()) {
