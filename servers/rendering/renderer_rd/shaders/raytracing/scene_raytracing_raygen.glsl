@@ -2146,6 +2146,52 @@ float vmud_cover_f(float p_f, float p_w) {
 float vmud_cover(float p_level, float p_splat) {
 	return p_level <= 0.0 ? 0.0 : vmud_cover_f(p_splat + 1.2 * p_level, 0.15);
 }
+// Desiccation cracks (mud round 11): drying clay shrinks against the panel it sticks to and splits into plates a few
+// times as wide as the layer is thick (Groisman and Kaplan 1994); a layer under a critical thickness dries whole
+// (Routh 2013), and the cracks open as it dries, the plates' edges curling up off the panel. The plates are cells of a
+// cellular (Worley 1996) distance, F2 - F1, in the vehicle's frame, warped so they read as clay rather than foam.
+vec2 vmud_cells(vec3 p_p) {
+	vec3 i = floor(p_p);
+	vec3 f = p_p - i;
+	float d1 = 8.0;
+	float d2 = 8.0;
+	for (int z = -1; z <= 1; z++) {
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				vec3 o = vec3(float(x), float(y), float(z));
+				vec3 cc = i + o;
+				vec3 jit = vec3(vmud_hash(cc + vec3(911.0, 0.0, 0.0)), vmud_hash(cc + vec3(0.0, 577.0, 0.0)), vmud_hash(cc + vec3(0.0, 0.0, 313.0)));
+				float d = length(o + 0.1 + 0.8 * jit - f);
+				if (d < d1) {
+					d2 = d1;
+					d1 = d;
+				} else if (d < d2) {
+					d2 = d;
+				}
+			}
+		}
+	}
+	return vec2(d1, d2);
+}
+// At p_p (vehicle frame, m) for a cake p_h thick, p_dry dry (0..1) over a footprint p_fw: (the crack's share, the
+// plate's curl, m).
+vec2 vmud_crack(vec3 p_p, float p_h, float p_dry, float p_fw) {
+	float on = smoothstep(0.0028, 0.0045, p_h) * smoothstep(0.45, 0.9, p_dry);
+	if (on <= 0.0 || p_fw > 0.012) {
+		return vec2(0.0);
+	}
+	const float CELL = 0.022;
+	vec3 q = p_p / CELL + 0.35 * vec3(vmud_noise(p_p * 31.0 + 5.0), vmud_noise(p_p * 31.0 + 19.0), vmud_noise(p_p * 31.0 + 37.0));
+	vec2 d = vmud_cells(q);
+	// Half the distance between the two nearest plate centres' bisector, in m: how far to the plate's edge.
+	float e = 0.5 * (d.y - d.x) * CELL;
+	float w = 0.0006 * on;
+	float fw = max(p_fw, 1e-4);
+	// A filtered step over the footprint, faded where a pixel holds many plates.
+	float open = (1.0 - smoothstep(w - 0.5 * fw, w + 0.5 * fw, e)) * (1.0 - smoothstep(0.004, 0.012, p_fw));
+	float curl = 0.0007 * on * (1.0 - smoothstep(w, w + 0.005, e));
+	return vec2(open, curl);
+}
 // The cake's relief (m): thicker where it lies deep (a splat's middle, below the mud line), lumpy, and with a lip a few
 // mm wide just inside its edge where a splash's crown piles up; its edge a step.
 float vmud_height(float p_f, float p_w, float p_level, float p_splat, vec3 p_p, float p_fw) {
@@ -2308,7 +2354,23 @@ vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_fram
 		return vec4(0.0);
 	}
 	float h0 = vmud_height(f, w, lvl, s, p, fw);
-	vec3 g = vec3(vmud_height(fs.x, w, ls.x, ss.x, px, fw), vmud_height(fs.y, w, ls.y, ss.y, py, fw), vmud_height(fs.z, w, ls.z, ss.z, pz, fw)) - h0;
+	vec3 hs = vec3(vmud_height(fs.x, w, ls.x, ss.x, px, fw), vmud_height(fs.y, w, ls.y, ss.y, py, fw), vmud_height(fs.z, w, ls.z, ss.z, pz, fw));
+	// Drying cracks (round 11): the cake's dryness here, its thick middle drying last (as vmud_apply() tones it).
+	float t0 = smoothstep(0.85, 1.2, lvl);
+	float dry = 1.0 - clamp(p_body.z + 0.6 * t0 * (1.0 - p_body.z) + 0.25 * t0, 0.0, 1.0);
+	if (dry > 0.45 && !legs) {
+		vec3 ts = smoothstep(vec3(0.85), vec3(1.2), ls);
+		vec3 drys = 1.0 - clamp(p_body.z + 0.6 * ts * (1.0 - p_body.z) + 0.25 * ts, 0.0, 1.0);
+		vec2 k0 = vmud_crack(p, h0, dry, fw);
+		vec2 kx = vmud_crack(px, hs.x, drys.x, fw);
+		vec2 ky = vmud_crack(py, hs.y, drys.y, fw);
+		vec2 kz = vmud_crack(pz, hs.z, drys.z, fw);
+		h0 = (h0 + k0.y) * (1.0 - k0.x);
+		hs = (hs + vec3(kx.y, ky.y, kz.y)) * (1.0 - vec3(kx.x, ky.x, kz.x));
+		// The panel shows in the crack.
+		c *= 1.0 - k0.x;
+	}
+	vec3 g = hs - h0;
 	g *= (1.0 - smoothstep(0.004, 0.02, fw)) / e;
 	// Back to world space: the frame's rows are a rotation.
 	vec3 gw = g.x * p_frame0.xyz + g.y * p_frame1.xyz + g.z * p_frame2.xyz;

@@ -164,6 +164,10 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 	c.wheel_kc = lerp_log(soil.wheel_kc, sand.wheel_kc, s);
 	c.wheel_kphi = lerp_log(soil.wheel_kphi, sand.wheel_kphi, s);
 	c.sand = s;
+	// Runoff cutting (docs/ideas/mud.md, round 11): sand moves past Shields' threshold (0.19 Pa for 0.25 mm grains);
+	// cohesive soil only past its own critical shear, 0.5 to 9 Pa for cropland soils with about 3 typical, less wet
+	// (Knapen et al. 2007's review; WEPP's rill erodibility tables), so a meadow track sheds rain the sand would not.
+	c.crit_shear = Math::lerp(Math::lerp(3.5f, 1.5f, m), 0.19f, s);
 	if (p_saturation >= 0.0f) {
 		// Saturated sand has no water bridges left between its grains (Su et al. 2023's capillary state and past
 		// it): its walls stand no steeper than dry sand's and slump as fast.
@@ -247,6 +251,8 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 		c.darken = Math::lerp(c.darken, mud.darken, mw);
 		c.gloss = Math::lerp(c.gloss, mud.gloss, mw);
 		c.mud = p_mud * mw;
+		// Mud cuts easily: a slurry near its yield stress, stiff clay about as the soil (round 11).
+		c.crit_shear = Math::lerp(c.crit_shear, Math::lerp(0.3f, 2.0f, stiff), mw);
 	}
 	// Stickiness (docs/ideas/mud.md, stage 3): clay clings to rubber and steel most between its plastic and liquid
 	// limits, little dry, less as a slurry that runs off (Fountaine 1954; Ren et al. 2001); sand barely at all.
@@ -261,6 +267,7 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 	c.litter = MAX(p_litter, 0.0f);
 	if (c.litter > 0.0f) {
 		const float lw = MIN(c.litter / 0.02f, 1.0f);
+		c.crit_shear *= 1.0f + 4.0f * lw; // litter armours the surface (round 11)
 		c.max_dent += 0.7f * c.litter;
 		c.rim_share = Math::lerp(c.rim_share, 0.1f, lw);
 		c.darken = MAX(c.darken, 0.45f * lw);
@@ -2386,6 +2393,7 @@ void GroundSurface3D::_water_update(double p_delta) {
 	bool changed = false;
 	LocalVector<float> &cell_depth = water_depth;
 	cell_depth.resize(n * n);
+	water_body_depth.resize(n * n);
 	if ((int)water_table.size() != n * n) {
 		water_table.resize(n * n);
 		for (int i = 0; i < n * n; i++) {
@@ -2405,6 +2413,7 @@ void GroundSurface3D::_water_update(double p_delta) {
 				return Math::lerp(Math::lerp(g[z0 * gn + x0], g[z0 * gn + x0 + 1], tx), Math::lerp(g[(z0 + 1) * gn + x0], g[(z0 + 1) * gn + x0 + 1], tx), tz);
 			};
 			float depth = bil(g_depth);
+			water_body_depth[i] = depth;
 			if (standing_water) {
 				// Standing water in a rut soaks the ground under it (and so softens the mud there).
 				depth = MAX(depth, get_standing_water_at(Vector3((ground_origin.x + x) * ground_spacing, 0.0f, (ground_origin.y + z) * ground_spacing)));
@@ -5159,7 +5168,9 @@ PackedByteArray GroundSurface3D::_gpu_cells() const {
 		o[9] = inputs ? _water_table_depth(i) : 10.0f;
 		o[10] = inputs ? 1.0f - CLAMP(MAX(cell_inputs[i].moisture, (int)pore.size() == n * n ? pore[i] : 0.0f), 0.0f, 1.0f) : 0.0f;
 		// Runoff channels on the GPU: the seepage face's outflow, m/s; -1 under the sea or a lake (the runoff ends).
-		o[11] = runoff_gpu ? ((int)water_depth.size() == n * n && water_depth[i] > 0.002f ? -1.0f : _runoff_seep(i)) : 0.0f;
+		// The water bodies' depth alone: the GPU's own standing water there (a puddle, a flooded rut) is runoff
+		// still, and counting it as a lake deleted every puddle over 2 mm as it formed.
+		o[11] = runoff_gpu ? ((int)water_body_depth.size() == n * n && water_body_depth[i] > 0.002f ? -1.0f : _runoff_seep(i)) : 0.0f;
 		runoff_any = runoff_any || o[11] > 0.0f;
 		// Mud slides (round 10): the steepest slope the layer holds.
 		o[12] = mud_slides ? c.slide_length : 1e3f;
@@ -5173,7 +5184,7 @@ PackedByteArray GroundSurface3D::_gpu_cells() const {
 			}
 			sliding = fall > c.slide_length / c.mud;
 		}
-		o[13] = 0.0f;
+		o[13] = c.crit_shear;
 		o[14] = 0.0f;
 		o[15] = 0.0f;
 		seep = seep || (c.deformable && o[9] < c.max_dent);
@@ -5295,7 +5306,8 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 			}
 			put(53, 1.0f, 1e-4f * real, 2.0f * real, 300.0f);
 		}
-		put(16, float(count), float(discs), float(stirs), 0.0f);
+		// .w: the whole morphological factor, for the runoff's suspended soil (once a water pass, not a morph pass).
+		put(16, float(count), float(discs), float(stirs), _runoff_on_gpu() ? runoff_time_scale : 0.0f);
 	} else if (_runoff_on_gpu()) {
 		// No water step (a still frame): the bed's relief is still drawn (the blit reads it), nothing moves.
 		put(15, 1.0f, 0.0f, 0.002f, 0.0f);

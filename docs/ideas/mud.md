@@ -908,6 +908,56 @@ closes to 5 cm, volume kept, and with PhysX the 4x4 checks above.
 - **Body mud dries and flakes.** Caked mud dries lighter and cracks (the desiccation crack model we use on the
   ground, at body scale), then sheds in flakes on bumps; the clods of the ground-detail thread can carry them.
 
+#### Round 11 (picked 18 Nov: all three, in order)
+
+**11.1 Gullies in ruts: built.** Runoff over cohesive ground now detaches soil instead of rolling it as bed load:
+WEPP's rill detachment (Nearing, Foster, Lane and Finkner 1989), Kr (tau - tau_c), Partheniades' (1965) excess
+shear law, Kr 0.006 s/m (cropland baseline, Flanagan and Nearing 1995) and three times that where tyres freshly
+turned it. The soil rides the water as a suspended load (water[].s.w, metres of bed), moved with it upwind like the
+clay, and settles at 1 mm/s where the shear falls under the ground's own (Krone 1962). The cut deepens downstream as
+the flow gathers and the soil lands as a fan where the slope eases or the water ponds; the old bed-load pull sent the
+walls' soil onto the floor, so ruts filled instead of cutting. Each cell carries a critical shear (cover part 3 .y):
+sand 0.19 Pa (Shields, stays bed load), soil 3.5 to 1.5 Pa by moisture, mud 0.3 to 2 Pa by stiffness, litter up to
+five times (roots); halved on fresh ground, ten times under regrown sward (Knapen et al. 2007). Muddy runoff shows
+in the water's tint. Bench --test=gullies: 20 minutes at 10 mm/h (runoff_time_scale 30) down a 6 degree rut cuts
+14 mm along its floor, none beside it, and lays 21 mm on the flat below.
+
+Bug found on the way: with runoff on, any texel whose own standing water passed 2 mm counted as a lake and its water
+was dropped (the lattice's water depth included the GPU's puddles). Puddles in ruts under runoff never held; now
+only the water bodies' depth ends the runoff. The bench checks 2 L poured in a rut is kept.
+
+**11.2 Winch: built.** PhysXWinch3D, a child of a PhysXVehicle3D at its fairlead, cables to an anchor: any physics
+body (a tree's or rock's static body), another vehicle, or a fixed point. The cable is a PhysX distance joint
+(PxDistanceJoint), tension only: its max distance is the cable paid out, a spring at the rope's axial stiffness EA / L
+past it (6 MN for 9.5 mm steel wire rope), damped near critically against the vehicle's mass. The drum (hold, in,
+free spool) winds at the speed its load allows: an electric winch's line speed falls about linearly from no load to a
+tenth at its rated pull and stalls just past it (WARN's published 10,000 lb curves: 44.5 kN, about 0.14 m/s no load);
+the brake slips past 1.5 times rated. The cable is drawn as a catenary from its length and weight per metre (sag from
+the length when slack, w L^2 / 8 T when taut) and lies on the ground where it would pass under it. Bench
+--test=winch: a free-rolling car comes in at the line speed, a braked one is dragged on its tyres' friction, a slack
+cable sags onto the ground and carries nothing, a taut one sags as theory says, a car is pulled through mud it cannot
+leave alone, and a braked car winches a dead one in.
+
+Bug found on the way: a car on soft soil with its brakes on slid on a seventh of its tyres' friction at walking pace.
+Under 0.2 m/s PhysX's sticky-tyre constraint (a soft damper with no friction limit) replaces the tyre force, and above
+it a braked wheel's slip was over the 3 m/s floor kept for driven wheels on soft soil. Braked with no throttle, the
+sticky regime now starts only at rest (0.02 m/s) and the floors are 0.5 m/s; a locked wheel does not turn, so the
+floor's ringing cannot start.
+
+**11.3 Body mud dries, cracks and flakes off: built.** Mud on a body now dries with the weather: Penman's wind
+function, 0.26 (1 + 0.54 u) times the air's vapour deficit, plus the sun, against a reference day (20 C, half
+humidity, 2 m/s, half sun) that dries a coat in five minutes; rain wets it back (a coat soaks in about two minutes of
+heavy rain) and, past a few mm/h, rinses it thin. Once a thick coat is dry it cracks into plates: Worley cells
+of 2.2 cm, warped, open only where the cake is over the critical cracking thickness (Routh 2013: 2.8 to 4.5 mm by
+place) and drier than 0.45; the cracks are half a millimetre wide, the plate edges curl up 0.7 mm and the paint shows
+in them, in raster and path traced (same code in material.cpp and the raygen). Dry plates fall off on jolts: each
+splat sheds at a rate that grows with the body's acceleration past 0.8 g times its dryness, and a shed plate drops to
+the ground under it as a track_mud mark (vehicle get_mud_flakes_shed()). Wet mud never flakes. Bench --test=flakes:
+a dry caked car over three bars sheds 5 of 12 plates, a wet one none. --view=bodymud --crack shows the cracked coat.
+
+Bug found on the way: a wheel standing still in mud counted as freshly churned (its cake kept topping up), so a
+parked car never dried. The tread must be turning (0.1 m/s at the rim) to pick up fresh mud.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
