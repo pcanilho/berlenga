@@ -5509,6 +5509,23 @@ String PlantGenerator::shader_common_code() {
 	code += VegetationLight::SHADER_CODE;
 	// VegetationField3D packs the light a plant grew in into the fraction of its range (custom y).
 	code += "float vegetation_light_of(float y) { float f = fract(y); return f > 0.5 / 101.0 ? f * (101.0 / 100.0) * 1.5 : 1.0; }\n";
+	// VegetationField3D's far thinning (VegetationField3D::_far_keep(), which this mirrors): custom x holds the plant's
+	// rank in its fraction and the end of its species' far tail in whole metres (0: none), y the range. The scale a
+	// plant is drawn at d metres from the main camera (0: thinned out).
+	code += R"(float vegetation_far_scale(vec4 c, float d) {
+	float range = floor(c.y);
+	float reach = floor(c.x);
+	float rank = fract(c.x);
+	if (reach <= range) {
+		float keep = clamp((range - d) / (range * 0.65), 0.0, 1.0);
+		return smoothstep(rank, rank + 0.12, keep * 1.12) * (1.0 + 0.25 * (1.0 - keep));
+	}
+	float d0 = 0.5 * range;
+	float tail = d0 * d0 / max(d * d, d0 * d0);
+	float keep = tail * clamp((reach - d) / (reach * 0.25), 0.0, 1.0);
+	return smoothstep(rank, rank + 0.12, keep * 1.12) * min(inversesqrt(tail), 1.6);
+}
+)";
 	// The wind code already declares weather_map_rect: the wetness lines without their globals.
 	code += BaseMaterial3D::get_wetness_functions_code(false);
 	code += BaseMaterial3D::get_snow_shader_code();
@@ -5723,17 +5740,14 @@ void vertex() {
 	}
 	// Far distance (docs/ideas/plant-generator.md, stage 6): VegetationField3D gives each instance
 	// its blue-noise rank among the plants kept there (x) and its species' range (y). The share
-	// kept falls from 1 at 35% of the range to 0 at the range; a plant shrinks to nothing as the
-	// share passes its rank, and the survivors grow a little to hold the cover (Horizon Zero
-	// Dawn's thinning by rank, Ghost of Tsushima's widening). Measured from the main camera, so
+	// kept falls from 1 at 35% of the range to 0 at the range, or with a far tail (far_reach) from
+	// half the range with the square of the distance; a plant shrinks to nothing as the share
+	// passes its rank, and the survivors grow to hold the cover (Horizon Zero Dawn's thinning by
+	// rank, Ghost of Tsushima's widening). Measured from the main camera, so
 	// shadow and other passes thin the same plants; the ground's colour takes over (vegetation_far()).
 	v_light = vegetation_light_of(INSTANCE_CUSTOM.y);
 	if (INSTANCE_CUSTOM.y > 0.0) {
-		float range = floor(INSTANCE_CUSTOM.y);
-		float d = length(MODEL_MATRIX[3].xyz - MAIN_CAM_INV_VIEW_MATRIX[3].xyz);
-		float keep = clamp((range - d) / (range * 0.65), 0.0, 1.0);
-		float s = smoothstep(INSTANCE_CUSTOM.x, INSTANCE_CUSTOM.x + 0.12, keep * 1.12);
-		VERTEX *= s * (1.0 + 0.25 * (1.0 - keep));
+		VERTEX *= vegetation_far_scale(INSTANCE_CUSTOM, length(MODEL_MATRIX[3].xyz - MAIN_CAM_INV_VIEW_MATRIX[3].xyz));
 	}
 	// Fire (vegetation_fire.h): a herb under the flame shrivels towards its base as it burns.
 	vec4 fire_v = fire_state_at(MODEL_MATRIX[3].xz);

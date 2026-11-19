@@ -740,6 +740,20 @@ Plan (card to Paulo):
    cover: only the provider side here.
 4. Measure each layer's end on current main first (the p2 and v10 stills may predate the far shell).
 
+Paulo picked the plan with real geometry carried further (19 Nov). Measured on main first: the grass bench with its
+far rings and shell keeps the sward's grain to the horizon (rings to 250 m, shell to 500 m), so the bald look is the
+plant layers': a flower at 15 m range thinned from 5 m and was gone at 15 m, a 30 m tussock at 30 m, and past that
+only the far volume (off in several benches) or the ground's colour.
+
+Step 1, the plants' far tail (VegetationField3D.far_reach, default 3): a streaming species keeps all its plants to
+half its range, then by rank the share (r/2 / d)^2, the survivors grown by its inverse square root up to 1.6 times
+(Ghost of Tsushima's widening), fading out over the last quarter of range times far_reach. Instance counts grow about
+2.2 times over the old fade for a 15 m species with the default (the integral of the kept share), not the 9 times a
+plain longer range costs, because each streamed tile's cells hold only the ranks its nearest point keeps
+(_stream_rank(), a tile of slack) and are built again, new cells first, when the camera comes 30% nearer in keep. The
+plant shader and the impostor share the curve (vegetation_far_scale(), custom x: rank in the fraction, the tail's end
+in whole metres). Small items (detail_size) keep their pixel reach; non-streaming fields keep the old fade.
+
 ## Mediterranean woodland ground layer (audit 19 Nov; card to Paulo)
 
 The showcase's cork oak stand stands on bare sand with litter: every other forest has a floor set, the cork oak and

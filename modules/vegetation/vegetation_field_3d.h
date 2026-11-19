@@ -193,6 +193,7 @@ private:
 	struct PlaceSpecies {
 		Ref<PlantSpecies> sp;
 		float range = 0.0f; // The range it is drawn to (_species_range()).
+		float reach = 0.0f; // Streaming: where its thinned tail ends (range times far_reach); otherwise the range.
 		LocalVector<Ref<Mesh>> meshes;
 		LocalVector<Ref<Mesh>> near_meshes;
 		Pattern pattern;
@@ -316,7 +317,7 @@ private:
 	static void _read_sand_mobility(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
 	void _read_burn_age(PlaceSetup &r_setup) const;
 	void _place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles) const;
-	void _commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes);
+	void _commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes, float p_max_rank = 1.0f);
 	// The maps from the placed crowns and far colour: computed anywhere, applied on the main thread.
 	struct Maps {
 		Rect2 maps_rect; // Canopy, stand shade, forest floor.
@@ -358,6 +359,11 @@ private:
 	ObjectID bark_detail_node;
 	void _update_bark_detail();
 	float far_volume_range = 150.0f;
+	// Streaming species past their range (docs/ideas/vegetation.md, "Far vegetation without bald ground"): a tail of
+	// the same plants thinned with the square of the distance by rank and grown to hold their cover, out to
+	// far_reach times the range (Ghost of Tsushima's far grass; Wohllaib GDC 2021). Each tile's cells hold only the
+	// ranks its nearest point keeps, built again as the camera comes closer. 1: off (the old fade at the range).
+	float far_reach = 3.0f;
 	// Small species (PlantSpecies.detail_size > 0) drawn out to where they are still detail_pixels tall
 	// (vegetation_detail.h; docs/ideas/ground-detail-vegetation.md).
 	bool detail_reach = true;
@@ -403,6 +409,7 @@ private:
 		TileOut out;
 		LocalVector<LocalVector<MultiMeshInstance3D *>> nodes; // Per species.
 		LocalVector<bool> committed;
+		LocalVector<float> committed_keep; // Per species: the share of its plants (by rank) the tile's cells hold.
 		bool stale = false; // Placed before the ground (holes) or burn ages changed: its replacement is on the way.
 	};
 	struct StreamJob {
@@ -621,6 +628,10 @@ public:
 	// The range a species is drawn to: its visibility_range, or for a small species the pixel reach of its
 	// detail_size when that is further (up to detail_max_range).
 	float get_species_range(int p_species) const;
+	void set_far_reach(float p_reach) { far_reach = CLAMP(p_reach, 1.0f, 8.0f); }
+	float get_far_reach() const { return far_reach; }
+	// The share of a species' plants (by rank) kept p_distance from the camera (the plant shader's thinning).
+	static float _far_keep(float p_range, float p_reach, float p_distance);
 	void set_far_volume_cell(float p_cell) { far_volume_cell = CLAMP(p_cell, 0.05f, 4.0f); }
 	float get_far_volume_cell() const { return far_volume_cell; }
 	float get_cover_cell() const { return cover_cell; }

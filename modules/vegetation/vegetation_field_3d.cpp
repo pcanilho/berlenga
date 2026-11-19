@@ -712,6 +712,9 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			continue;
 		}
 		ps.range = _species_range(ps.sp, pixel);
+		// The far tail streams only (each tile's cells hold the ranks its distance keeps); small items keep their
+		// pixel reach.
+		ps.reach = streaming && far_reach > 1.0f && ps.range > 0.0f && ps.sp->get_detail_size() <= 0.0f ? ps.range * far_reach : ps.range;
 		const TypedArray<Mesh> meshes = ps.sp->get_meshes();
 		for (int i = 0; i < meshes.size(); i++) {
 			ps.meshes.push_back(meshes[i]);
@@ -1963,7 +1966,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// green): full on a fresh burn, gone by a year and a half.
 					const float burn_age = p_setup.burn.is_empty() ? -1.0f : p_setup.burn_at(xz);
 					const float flush = burn_age < 0.0f ? 0.0f : 1.0f - Math::smoothstep(0.0f, 1.5f, burn_age);
-					out->species[s].customs[variant].push_back(Color(CLAMP(rank / MAX(keep, 1e-4f), 0.0f, 1.0f), range_light, scale, float(s) + flush * 0.99f));
+					// x: the rank in its fraction and the far tail's end in whole metres (vegetation_far_scale()).
+					const float tail = ps.reach > range ? Math::floor(ps.reach) : 0.0f;
+					out->species[s].customs[variant].push_back(Color(tail + CLAMP(rank / MAX(keep, 1e-4f), 0.0f, 0.999f), range_light, scale, float(s) + flush * 0.99f));
 					if (ps.far_color.a > 0.0f && range > 0.0f) {
 						// The ground a plant hides: a disc of half its spacing, scaled.
 						const float rr = 0.5f * sp->get_spacing() * scale;
@@ -2067,13 +2072,30 @@ void VegetationField3D::_lazy_near_drop(MultiMeshInstance3D *p_far) {
 
 // Adds a placed tile's plants to the scene: one MultiMeshInstance3D per species mesh variant,
 // split into cells where the species swaps meshes by distance. Main thread.
-void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes) {
+// The share of a species' plants (by rank) kept p_distance metres from the camera: the plant shader's
+// vegetation_far_scale() without its 1.12 overlap. Past half the range with the square of the distance when the
+// species has a far tail (p_reach > p_range), fading out over the tail's last quarter; else from 1 at 35% of the
+// range to 0 at the range.
+float VegetationField3D::_far_keep(float p_range, float p_reach, float p_distance) {
+	if (p_range <= 0.0f) {
+		return 1.0f;
+	}
+	if (p_reach <= p_range) {
+		return CLAMP((p_range - p_distance) / (p_range * 0.65f), 0.0f, 1.0f);
+	}
+	const float d0 = 0.5f * p_range;
+	const float tail = d0 * d0 / MAX(p_distance * p_distance, d0 * d0);
+	return tail * CLAMP((p_reach - p_distance) / (p_reach * 0.25f), 0.0f, 1.0f);
+}
+
+void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes, float p_max_rank) {
 	const PlaceSpecies &ps = p_setup.species[p_species];
 	if (ps.sp.is_null() || ps.meshes.is_empty()) {
 		return;
 	}
 	const TileOut::Species &so = p_tile.species[p_species];
 	const float range = ps.range;
+	const float reach = MAX(ps.reach, range);
 	const float near_range = ps.sp->get_near_range();
 	// Cells for the near swap: a quarter of the swap distance, at least 4 m. A species with a range is cut too where
 	// tiles are big against it, into cells of its range (at least 16 m: cells are draw calls), and every cell is kept
@@ -2116,6 +2138,9 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 		LocalVector<LocalVector<uint32_t>> buckets;
 		buckets.resize(cells * cells);
 		for (uint32_t i = 0; i < so.xforms[v].size(); i++) {
+			if (p_max_rank < 1.0f && Math::fmod(so.customs[v][i].r, 1.0f) >= p_max_rank) {
+				continue; // Thinned out at the tile's distance (the far tail).
+			}
 			const Vector3 o = p_setup.global_xf.xform(so.xforms[v][i].origin);
 			const int cx = CLAMP(int((o.x - tile_origin.x) / ts * cells), 0, cells - 1);
 			const int cz = CLAMP(int((o.z - tile_origin.y) / ts * cells), 0, cells - 1);
@@ -2167,7 +2192,7 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 					// by rank and shrinks them out before the range (docs/ideas/plant-generator.md,
 					// "Far distance"), so the tile is cut only once every plant in it is gone.
 					// Godot measures to the cell's centre: a plant can be up to its half diagonal nearer.
-					mmi->set_visibility_range_end(range * 1.05f + 0.75f * ts / cells);
+					mmi->set_visibility_range_end(reach * 1.05f + 0.75f * ts / cells);
 				}
 				add_child(mmi, false, INTERNAL_MODE_BACK);
 				r_nodes.push_back(mmi);
@@ -3856,6 +3881,13 @@ void VegetationField3D::_stream_clear() {
 	plant_count = 0;
 }
 
+// The ranks a streamed tile's cells hold for a species with a far tail, a tile nearer than it is (so the camera can
+// come a tile closer before they are built again), with the plant shader's overlap; 1: all.
+static float _stream_rank(float p_range, float p_reach, float p_distance, float p_tile) {
+	const float k = VegetationField3D::_far_keep(p_range, p_reach, MAX(p_distance - p_tile, 0.0f)) * 1.12f + 0.02f;
+	return k >= 1.0f ? 1.0f : k;
+}
+
 static float _tile_distance(const Vector2i &p_tile, float p_size, const Vector2 &p_xz) {
 	const Vector2 lo = Vector2(p_tile) * p_size;
 	const Vector2 d(MAX(MAX(lo.x - p_xz.x, p_xz.x - (lo.x + p_size)), 0.0f), MAX(MAX(lo.y - p_xz.y, p_xz.y - (lo.y + p_size)), 0.0f));
@@ -3902,16 +3934,19 @@ void VegetationField3D::_stream_update(double p_delta) {
 			t->out = job->out[0];
 			t->nodes.resize(species_count);
 			t->committed.resize(species_count);
+			t->committed_keep.resize(species_count);
 			for (int s = 0; s < species_count; s++) {
 				t->committed[s] = false;
+				t->committed_keep[s] = 1.0f;
 			}
 			if (old_tile) {
 				// A replacement (holes or burn ages changed): what the old tile shows is committed at once and
 				// the old instances go in the same frame, so no plant pops out and back in.
 				for (int s = 0; s < species_count; s++) {
 					if (old_tile->committed[s]) {
-						_commit_species(stream_setup, t->out, s, t->nodes[s]);
+						_commit_species(stream_setup, t->out, s, t->nodes[s], old_tile->committed_keep[s]);
 						t->committed[s] = true;
+						t->committed_keep[s] = old_tile->committed_keep[s];
 					}
 					_stream_free_species(old_tile, s);
 				}
@@ -3999,12 +4034,15 @@ void VegetationField3D::_stream_update(double p_delta) {
 				continue;
 			}
 			const float range = ps.range;
-			const bool wanted = range <= 0.0f || d <= range * 1.05f + ts * 0.5f;
-			const bool keep = range <= 0.0f || d <= range * 1.05f + ts * 1.5f;
+			const float reach = MAX(ps.reach, range);
+			const bool wanted = range <= 0.0f || d <= reach * 1.05f + ts * 0.5f;
+			const bool keep = range <= 0.0f || d <= reach * 1.05f + ts * 1.5f;
 			if (kv.value->committed[s] && !keep) {
 				_stream_free_species(kv.value, s);
 			} else if (!kv.value->committed[s] && wanted) {
 				pending.push_back({ d, kv.key });
+			} else if (kv.value->committed[s] && reach > range && kv.value->committed_keep[s] < 1.0f && _stream_rank(range, reach, d, ts) > kv.value->committed_keep[s] * 1.3f) {
+				pending.push_back({ d, kv.key }); // Closer: its cells need more of the tail's plants.
 			}
 		}
 	}
@@ -4027,15 +4065,26 @@ void VegetationField3D::_stream_update(double p_delta) {
 	for (const Pending &p : pending) {
 		StreamTile *t = stream_tiles[p.tile];
 		for (int s = 0; s < species_count; s++) {
-			if (t->committed[s]) {
-				continue;
-			}
 			const float range = stream_setup.species[s].range;
-			if (stream_setup.species[s].sp.is_null() || (range > 0.0f && p.d > range * 1.05f + ts * 0.5f)) {
+			const float reach = MAX(stream_setup.species[s].reach, range);
+			if (stream_setup.species[s].sp.is_null() || (range > 0.0f && p.d > reach * 1.05f + ts * 0.5f)) {
 				continue;
 			}
-			_commit_species(stream_setup, t->out, s, t->nodes[s]);
+			const float rank = reach > range ? _stream_rank(range, reach, p.d, ts) : 1.0f;
+			if (t->committed[s]) {
+				if (rank <= t->committed_keep[s] * 1.3f || t->committed_keep[s] >= 1.0f) {
+					continue;
+				}
+				// The tail's plants for the nearer distance: the new cells first, then the old go, in one frame.
+				LocalVector<MultiMeshInstance3D *> fresh;
+				_commit_species(stream_setup, t->out, s, fresh, rank);
+				_stream_free_species(t, s);
+				t->nodes[s] = fresh;
+			} else {
+				_commit_species(stream_setup, t->out, s, t->nodes[s], rank);
+			}
 			t->committed[s] = true;
+			t->committed_keep[s] = rank;
 		}
 		if (OS::get_singleton()->get_ticks_usec() - t0 > budget) {
 			busy = true;
@@ -4564,6 +4613,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_far_volume"), &VegetationField3D::is_far_volume);
 	ClassDB::bind_method(D_METHOD("set_far_volume_range", "range"), &VegetationField3D::set_far_volume_range);
 	ClassDB::bind_method(D_METHOD("get_far_volume_range"), &VegetationField3D::get_far_volume_range);
+	ClassDB::bind_method(D_METHOD("set_far_reach", "reach"), &VegetationField3D::set_far_reach);
+	ClassDB::bind_method(D_METHOD("get_far_reach"), &VegetationField3D::get_far_reach);
 	ClassDB::bind_method(D_METHOD("set_detail_reach", "enabled"), &VegetationField3D::set_detail_reach);
 	ClassDB::bind_method(D_METHOD("get_detail_reach"), &VegetationField3D::get_detail_reach);
 	ClassDB::bind_method(D_METHOD("set_detail_pixels", "pixels"), &VegetationField3D::set_detail_pixels);
@@ -4622,6 +4673,7 @@ void VegetationField3D::_bind_methods() {
 	ADD_GROUP("Far volume", "far_volume");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_volume"), "set_far_volume", "is_far_volume");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_volume_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_far_volume_range", "get_far_volume_range");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_reach", PROPERTY_HINT_RANGE, "1,8,0.1"), "set_far_reach", "get_far_reach");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "detail_reach"), "set_detail_reach", "get_detail_reach");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_pixels", PROPERTY_HINT_RANGE, "0.25,16,0.25,suffix:px"), "set_detail_pixels", "get_detail_pixels");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "detail_reference_height", PROPERTY_HINT_RANGE, "0,4320,1,suffix:px"), "set_detail_reference_height", "get_detail_reference_height");

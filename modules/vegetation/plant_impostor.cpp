@@ -657,10 +657,7 @@ void vertex() {
 	v_scale = 1.0;
 	v_light = vegetation_light_of(INSTANCE_CUSTOM.y);
 	if (INSTANCE_CUSTOM.y > 0.0) {
-		float range = floor(INSTANCE_CUSTOM.y);
-		float dist = length(MODEL_MATRIX[3].xyz - MAIN_CAM_INV_VIEW_MATRIX[3].xyz);
-		float keep = clamp((range - dist) / (range * 0.65), 0.0, 1.0);
-		v_scale = smoothstep(INSTANCE_CUSTOM.x, INSTANCE_CUSTOM.x + 0.12, keep * 1.12) * (1.0 + 0.25 * (1.0 - keep));
+		v_scale = vegetation_far_scale(INSTANCE_CUSTOM, length(MODEL_MATRIX[3].xyz - MAIN_CAM_INV_VIEW_MATRIX[3].xyz));
 		p *= v_scale;
 	}
 	VERTEX = p;

@@ -2280,6 +2280,8 @@ func _process(dt: float) -> void:
 			# The whole 640 m map at once is too many cells: streamed round the eye instead.
 			cover.stream_radius = 80.0
 			cover.stream_target = cover.get_path_to(cam)
+			if OS.get_environment("GRASS_FAR_REACH") != "":
+				cover.far_reach = float(OS.get_environment("GRASS_FAR_REACH")) # GRASS_FAR_REACH=1: the plants fade at their range
 			cover.streaming = true
 		elif cover:
 			cover.populate()
@@ -2497,6 +2499,13 @@ func _process(dt: float) -> void:
 		print("GRASS_FAR_RINGS %s: ring blades %d in %d tiles, last build %.1f ms, shell columns %d in %d tiles, near blades %d, memory +%.1f MB, primitives %d, draw calls %d" % [
 			["", "on", "off", "rings"][far_grass], grass.get_ring_blade_count(), grass.get_ring_tile_count(), grass.get_ring_build_msec(), grass.get_shell_column_count(), grass.get_shell_tile_count(), grass.get_blade_count(),
 			(OS.get_static_memory_usage() - far_mem0) / 1048576.0, Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME), Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)])
+		if cover:
+			# The plants drawn (the far tail's share: VegetationField3D.far_reach).
+			var inst := 0
+			for c in cover.get_children(true):
+				if c is MultiMeshInstance3D and c.multimesh and not c.name.begins_with("FarVolume"):
+					inst += c.multimesh.instance_count
+			print("GRASS_FAR_COVER far_reach %.1f: plant instances %d" % [cover.far_reach, inst])
 	await RenderingServer.frame_post_draw
 	if OS.get_environment("GRASS_STILL") == "1":
 		# GrassField3D/VegetationField3D.still_shot: settled and frozen by now; memory against the run's start.
