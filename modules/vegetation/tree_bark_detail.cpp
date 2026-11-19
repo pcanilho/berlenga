@@ -198,7 +198,7 @@ Ref<ArrayMesh> BarkDetail3D::_make_shape(TreeGenerator::BarkKind p_bark, int p_s
 			const float z = -x * x / (2.0f * stem_r) + 0.0004f;
 			for (int j = 0; j < 2; j++) {
 				const float y = (j == 0 ? -0.5f : 0.5f) * W * taper * (0.75f + 0.35f * bd_noise(seed, 320 + i * 2 + j));
-				top[i][j] = sb.add(Vector3(x, y, z + 0.5f * T), 0.0f);
+				top[i][j] = sb.add(Vector3(x, y, z + 0.5f * T), 0.5f); // the next ply down: paler, part salmon
 				bot[i][j] = sb.add(Vector3(x, y, z - 0.5f * T), 0.0f);
 			}
 		}
@@ -216,16 +216,14 @@ Ref<ArrayMesh> BarkDetail3D::_make_shape(TreeGenerator::BarkKind p_bark, int p_s
 		// A horizontal strip torn along the lenticels: its middle still on the stem (bent to a typical stem's
 		// curvature), one or both ends peeling off it and rolled into a scroll standing off the bark.
 		const int M = 16; // samples an arm
-		// Shapes 0 and 1 are long strips peeling at both ends, 2 and 3 wide sheets, 4 and 5 loose flaps lifting away
-		// from the stem like a page (their pale underside and the shadow under them showing); 6 and 7 are the bared
-		// patches above.
-		const bool flap = p_shape == 4 || p_shape == 5;
-		const float L = bs.length * (0.75f + 0.5f * bd_noise(seed, 0)) * (p_shape < 2 ? 1.8f : (flap ? 1.4f : 1.0f));
+		// Shapes 0 and 1 are long strips peeling at both ends, 2 and 3 wide sheets, 4 and 5 single curls; 6 and 7 are
+		// the bared patches above.
+		const float L = bs.length * (0.75f + 0.5f * bd_noise(seed, 0)) * (p_shape < 2 ? 1.8f : 1.0f);
 		const float W = bs.width * (0.7f + 0.6f * bd_noise(seed, 1)) * (p_shape == 2 || p_shape == 3 ? 1.8f : 1.0f);
-		const float T = bs.thick;
-		const bool both = p_shape < 2 || (!flap && bd_noise(seed, 5) < 0.3f);
+		const float T = bs.thick * 1.8f; // paper bark peels several plies thick
+		const bool both = p_shape < 2 || bd_noise(seed, 5) < 0.3f;
 		const float stem_r = 0.12f;
-		const float lift_angle = 1.9f + 0.5f * bd_noise(seed, 8); // stands up and leans back over itself, so the roll clears the stem
+		const float lift_angle = 1.2f + 0.4f * bd_noise(seed, 8); // lifts steeply, so the small roll clears the stem
 		const float side = bd_noise(seed, 4) < 0.5f ? -1.0f : 1.0f;
 		struct Arm {
 			LocalVector<Vector2> p, n; // (round, out)
@@ -247,18 +245,14 @@ Ref<ArrayMesh> BarkDetail3D::_make_shape(TreeGenerator::BarkKind p_bark, int p_s
 					// Peels off the stem at an angle, then rolls back on itself (birch bark rolls with its white face out,
 					// the salmon underside showing at the lip and under the lift).
 					const float free = MAX(p_len - p_attached, 1e-4f);
-					if (flap) {
-						k = f < 0.3f ? 0.45f / (0.3f * free) : 1.2f / free * f; // a shallow lift, its end curling out
-					} else {
-						k = f < 0.22f ? lift_angle / (0.22f * free) : -1.0f / (p_roll * (1.0f - 0.3f * f));
-					}
+					k = f < 0.22f ? lift_angle / (0.22f * free) : -1.0f / (p_roll * (1.0f - 0.3f * f));
 				}
 				h += k * ds;
 				q += Vector2(Math::cos(h), Math::sin(h)) * ds;
 			}
 			return arm;
 		};
-		const float roll = 0.006f + 0.008f * bd_noise(seed, 3);
+		const float roll = 0.004f + 0.003f * bd_noise(seed, 3); // a tight scroll hugging the stem
 		Arm right, left;
 		if (both) {
 			right = make_arm(0.5f * L, 0.12f * L, roll, side);
@@ -503,17 +497,17 @@ Ref<Material> BarkDetail3D::_bark_material_of(const Dictionary &p_trunk) const {
 }
 
 // The stem's capsule chain (mesh space), as VegetationField3D.get_trunks_near follows it, up to p_cap metres.
-BarkDetail3D::Profile *BarkDetail3D::_profile_chain(const PackedFloat32Array &c, float p_cap) {
-	if (c.size() < 8) {
+BarkDetail3D::Profile *BarkDetail3D::_profile_chain(const PackedFloat32Array &c, float p_cap, int p_start) {
+	if (c.size() < p_start + 8) {
 		return nullptr;
 	}
 	Profile *pr = memnew(Profile);
-	Vector3 prev(c[0], c[1], c[2]);
+	Vector3 prev(c[p_start], c[p_start + 1], c[p_start + 2]);
 	pr->a0 = prev;
 	float along = 0.0f;
-	for (int k = 0; k + 7 < c.size(); k += 8) {
+	for (int k = p_start; k + 7 < c.size(); k += 8) {
 		const Vector3 a(c[k], c[k + 1], c[k + 2]), b(c[k + 3], c[k + 4], c[k + 5]);
-		if (k > 0 && a.distance_to(prev) > 1e-3f) {
+		if (k > p_start && a.distance_to(prev) > 1e-3f) {
 			break;
 		}
 		const float l = a.distance_to(b);
@@ -544,29 +538,77 @@ BarkDetail3D::Profile *BarkDetail3D::_profile_chain(const PackedFloat32Array &c,
 	return pr;
 }
 
-Array BarkDetail3D::make_bark_profile(const PackedVector3Array &p_vertices, const PackedColorArray &p_colors, const PackedFloat32Array &p_colliders) {
-	Profile *pr = _profile_chain(p_colliders, PROFILE_CAP);
-	if (!pr) {
-		return Array();
+// The trunk's stems: its main chain, then each further chain that leaves it low (below p_cap up the main stem), thick
+// (6 cm or more) and heading up, as the second stem of a forked birch does; linked through `next`, each capped where
+// the main stem's cap is. Branches are left out.
+BarkDetail3D::Profile *BarkDetail3D::_profile_stems(const PackedFloat32Array &c, float p_cap) {
+	Profile *head = _profile_chain(c, p_cap, 0);
+	if (!head) {
+		return nullptr;
 	}
-	pr->verts = p_vertices;
-	pr->colors = p_colors;
-	_build_profile(pr);
-	const int n = pr->nl * pr->na;
-	PackedFloat32Array head = { float(pr->na), float(pr->nl), pr->step };
-	PackedFloat32Array rad;
-	rad.resize(n);
-	PackedByteArray col;
-	col.resize(n * 3);
-	uint8_t *cw = col.ptrw();
-	for (int i = 0; i < n; i++) {
-		rad.set(i, pr->rad[i]);
-		for (int ch = 0; ch < 3; ch++) {
-			cw[i * 3 + ch] = uint8_t(CLAMP(int(Math::round(pr->col[i][ch] * 127.5f)), 0, 255)); // 0..2
+	const Vector3 up = head->u[0];
+	head->first = head;
+	Profile *tail = head;
+	Vector3 prev(c[0], c[1], c[2]);
+	int chains = 0;
+	for (int k = 0; k + 7 < c.size() && chains < 4; k += 8) {
+		const Vector3 a(c[k], c[k + 1], c[k + 2]), b(c[k + 3], c[k + 4], c[k + 5]);
+		const bool starts = k > 0 && a.distance_to(prev) > 1e-3f;
+		prev = b;
+		if (!starts) {
+			continue;
+		}
+		const float h = (a - head->a0).dot(up);
+		const float l = a.distance_to(b);
+		if (h > p_cap - 0.4f || c[k + 6] < 0.06f || l < 1e-3f || (b - a).dot(up) / l < 0.6f) {
+			continue;
+		}
+		Profile *st = _profile_chain(c, p_cap - h, k);
+		if (st) {
+			st->skip = 0.15f; // clear of the crotch
+			st->base_h = h;
+			st->a0 = head->a0; // the trunk's base: where the instance transform puts it
+			st->first = head;
+			tail->next = st;
+			tail = st;
+			chains++;
 		}
 	}
-	memdelete(pr);
-	return Array{ head, rad, col };
+	return head;
+}
+
+Array BarkDetail3D::make_bark_profile(const PackedVector3Array &p_vertices, const PackedColorArray &p_colors, const PackedFloat32Array &p_colliders) {
+	Profile *stems = _profile_stems(p_colliders, PROFILE_CAP);
+	Array out;
+	for (Profile *pr = stems; pr; pr = pr->next) {
+		pr->verts = p_vertices;
+		pr->colors = p_colors;
+		_build_profile(pr);
+		const int n = pr->nl * pr->na;
+		PackedFloat32Array head = { float(pr->na), float(pr->nl), pr->step };
+		PackedFloat32Array rad;
+		rad.resize(n);
+		PackedByteArray col;
+		col.resize(n * 3);
+		uint8_t *cw = col.ptrw();
+		for (int i = 0; i < n; i++) {
+			rad.set(i, pr->rad[i]);
+			for (int ch = 0; ch < 3; ch++) {
+				cw[i * 3 + ch] = uint8_t(CLAMP(int(Math::round(pr->col[i][ch] * 127.5f)), 0, 255)); // 0..2
+			}
+		}
+		out.push_back(Array{ head, rad, col });
+	}
+	_free_profile(stems);
+	return out;
+}
+
+void BarkDetail3D::_free_profile(Profile *p_profile) {
+	while (p_profile) {
+		Profile *n = p_profile->next;
+		memdelete(p_profile);
+		p_profile = n;
+	}
 }
 
 BarkDetail3D::Profile *BarkDetail3D::_profile(const Ref<Mesh> &p_mesh) {
@@ -579,40 +621,60 @@ BarkDetail3D::Profile *BarkDetail3D::_profile(const Ref<Mesh> &p_mesh) {
 	Profile *pr = nullptr;
 	const PackedFloat32Array c = p_mesh->get_meta(SNAME("tree_colliders"), PackedFloat32Array());
 	const Array packed = p_mesh->get_meta(SNAME("tree_bark_profile"), Array());
-	if (packed.size() == 3) {
-		// Binned when the tree was built (TreeGenerator, make_bark_profile): nothing to read back.
-		const PackedFloat32Array head = packed[0], rad = packed[1];
-		const PackedByteArray col = packed[2];
-		if (head.size() >= 3) {
-			pr = _profile_chain(c, head[1] * head[2] + 1e-4f);
-		}
-		if (pr) {
-			pr->na = int(head[0]);
-			pr->step = head[2];
-			pr->nl = MIN(pr->nl, int(head[1]));
-			const int n = pr->nl * pr->na;
-			if (rad.size() >= n && col.size() >= n * 3) {
-				pr->rad.resize(n);
-				pr->col.resize(n);
-				for (int i = 0; i < n; i++) {
-					pr->rad[i] = rad[i];
-					pr->col[i] = Color(col[i * 3] / 127.5f, col[i * 3 + 1] / 127.5f, col[i * 3 + 2] / 127.5f);
-				}
-				pr->built = true;
-			} else {
-				memdelete(pr);
-				pr = nullptr;
+	if (!packed.is_empty() && packed[0].get_type() == Variant::ARRAY) {
+		// Binned when the tree was built (TreeGenerator, make_bark_profile): nothing to read back. One entry a stem,
+		// in the order _profile_stems finds them.
+		pr = _profile_stems(c, PROFILE_CAP);
+		int i = 0;
+		bool ok = pr != nullptr;
+		for (Profile *st = pr; st && ok; st = st->next, i++) {
+			ok = i < packed.size();
+			if (!ok) {
+				break;
 			}
+			const Array e = packed[i];
+			ok = e.size() == 3;
+			if (!ok) {
+				break;
+			}
+			const PackedFloat32Array head = e[0], rad = e[1];
+			const PackedByteArray col = e[2];
+			ok = head.size() >= 3;
+			if (!ok) {
+				break;
+			}
+			st->na = int(head[0]);
+			st->step = head[2];
+			st->nl = MIN(st->nl, int(head[1]));
+			const int n = st->nl * st->na;
+			ok = rad.size() >= n && col.size() >= n * 3;
+			if (!ok) {
+				break;
+			}
+			st->rad.resize(n);
+			st->col.resize(n);
+			for (int q = 0; q < n; q++) {
+				st->rad[q] = rad[q];
+				st->col[q] = Color(col[q * 3] / 127.5f, col[q * 3 + 1] / 127.5f, col[q * 3 + 2] / 127.5f);
+			}
+			st->built = true;
+		}
+		if (!ok) {
+			_free_profile(pr);
+			pr = nullptr;
 		}
 	}
 	const int si = bd_bark_surface(p_mesh);
 	if (!pr && si >= 0) {
-		// A mesh without one: its bark surface read back here (a stall on the render thread), binned on the worker.
-		pr = _profile_chain(c, MIN(float(height) + 0.2f, PROFILE_CAP));
+		// A mesh without one (or from an older build): its bark surface read back here (a stall on the render
+		// thread), binned on the worker.
+		pr = _profile_stems(c, MIN(float(height) + 0.2f, PROFILE_CAP));
 		if (pr) {
 			const Array arrays = p_mesh->surface_get_arrays(si);
-			pr->verts = arrays[Mesh::ARRAY_VERTEX];
-			pr->colors = arrays[Mesh::ARRAY_COLOR];
+			for (Profile *st = pr; st; st = st->next) {
+				st->verts = arrays[Mesh::ARRAY_VERTEX];
+				st->colors = arrays[Mesh::ARRAY_COLOR];
+			}
 		}
 	}
 	profiles.insert(p_mesh.ptr(), pr);
@@ -657,6 +719,28 @@ void BarkDetail3D::_build_profile(Profile *pr) {
 			if (best < 0) {
 				continue;
 			}
+			// A vertex on another stem of the trunk (closer to its surface, measured in radii) is that stem's: at a
+			// fork, each stem's scan keeps only its own bark, never the other stem across the crotch.
+			bool other = false;
+			const float mine = best_d / MAX(pr->r[best], 0.01f);
+			for (const Profile *o = pr->first; o && !other; o = o->next) {
+				if (o == pr) {
+					continue;
+				}
+				for (uint32_t sgi = 0; sgi < o->a.size(); sgi++) {
+					const float t = (v - o->a[sgi]).dot(o->u[sgi]);
+					if (t < 0.0f || t > o->len[sgi]) {
+						continue;
+					}
+					if ((v - o->a[sgi] - o->u[sgi] * t).length() / MAX(o->r[sgi], 0.01f) < mine) {
+						other = true;
+						break;
+					}
+				}
+			}
+			if (other) {
+				continue;
+			}
 			const float al = pr->along0[best] + CLAMP(best_t, 0.0f, pr->len[best]);
 			const int li = int(al / pr->step);
 			if (li < 0 || li >= pr->nl) {
@@ -675,7 +759,8 @@ void BarkDetail3D::_build_profile(Profile *pr) {
 				cnt[idx]++;
 			}
 		}
-		// Cells far proud of their row (another stem at a fork, a branch collar): dropped, filled like empty ones below.
+		// Cells far off their row (another stem at a fork, a branch collar, a crotch's inner faces): dropped, filled
+		// like empty ones below.
 		{
 			LocalVector<float> row;
 			for (int li = 0; li < pr->nl; li++) {
@@ -692,7 +777,7 @@ void BarkDetail3D::_build_profile(Profile *pr) {
 				const float med = row[row.size() / 2];
 				for (int ai = 0; ai < pr->na; ai++) {
 					float &rr = pr->rad[li * pr->na + ai];
-					if (rr > med + MAX(0.03f, 0.25f * med)) {
+					if (Math::abs(rr - med) > MAX(0.03f, 0.25f * med)) {
 						rr = 0.0f;
 					}
 				}
@@ -771,7 +856,7 @@ void BarkDetail3D::_ensure_family(TreeGenerator::BarkKind p_bark, const Ref<Mate
 		f.material->set_shader_parameter("fallback_color", bs.fallback);
 		f.material->set_shader_parameter("inner_color", bs.inner);
 		f.material->set_shader_parameter("bark_tile", bs.tile);
-		f.material->set_shader_parameter("lift_tint", bs.kind == PIECE_CURL ? 0.6f : 0.0f);
+		f.material->set_shader_parameter("lift_tint", bs.kind == PIECE_CURL ? 0.15f : 0.0f);
 		for (int s = 0; s < SHAPES; s++) {
 			f.meshes[s] = _make_shape(p_bark, s);
 			const AABB ab = f.meshes[s]->get_aabb();
@@ -847,8 +932,8 @@ void BarkDetail3D::_place(Trunk &r_trunk, const Dictionary &p_trunk, const Profi
 		const Transform3D to_world(ib, Vector3(p_trunk.get("base", Vector3())) - ib.xform(pr.a0));
 		const int na = pr.na;
 		const bool plates_kind = bs.kind == PIECE_PLATE || bs.kind == PIECE_SCALE;
-		const int l0 = int(0.3f / pr.step);
-		const int l1 = MIN(pr.nl, int(MIN(pr.total, float(height)) / pr.step));
+		const int l0 = int((pr.skip > 0.0f ? pr.skip : 0.3f) / pr.step); // above the root flare, or clear of the crotch
+		const int l1 = MIN(pr.nl, int(MIN(pr.total, float(height) - pr.base_h) / pr.step));
 		if (l1 - l0 < 4) {
 			return;
 		}
@@ -889,6 +974,9 @@ void BarkDetail3D::_place(Trunk &r_trunk, const Dictionary &p_trunk, const Profi
 		auto emit = [&](float p_row, float p_th, float p_rad, float p_sx, float p_sy, float p_spin, int p_shape, const Color &p_col, float p_sz = -1.0f) {
 			const int li = CLAMP(int(p_row), 0, pr.nl - 1);
 			const int sgi = seg_of[li];
+			if (p_rad < 0.5f * pr.r[sgi]) {
+				return; // a cell the scan could not fill
+			}
 			const float t = p_row * pr.step - pr.along0[sgi];
 			const Vector3 u = pr.u[sgi];
 			const Vector3 out = pr.e1[sgi] * Math::cos(p_th) + pr.e2[sgi] * Math::sin(p_th);
@@ -896,8 +984,22 @@ void BarkDetail3D::_place(Trunk &r_trunk, const Dictionary &p_trunk, const Profi
 			Basis basis(round, u, out); // columns: x round the stem, y up it, z out
 			basis = basis * Basis(Vector3(0, 0, 1), p_spin);
 			basis.scale_local(Vector3(p_sx, p_sy, p_sz > 0.0f ? p_sz : (plates_kind ? 1.0f : 0.5f * (p_sx + p_sy)))); // plates keep their thickness
+			const Vector3 pos = pr.a[sgi] + u * t + out * p_rad;
+			// Never on another stem's side of a fork: a piece nearer another stem (in its radii) belongs to none.
+			const float mine = p_rad / MAX(pr.r[sgi], 0.01f);
+			for (const Profile *o = pr.first; o; o = o->next) {
+				if (o == &pr) {
+					continue;
+				}
+				for (uint32_t q = 0; q < o->a.size(); q++) {
+					const float tq = (pos - o->a[q]).dot(o->u[q]);
+					if (tq >= 0.0f && tq <= o->len[q] && (pos - o->a[q] - o->u[q] * tq).length() / MAX(o->r[q], 0.01f) < mine + 0.1f) {
+						return;
+					}
+				}
+			}
 			Piece pc;
-			pc.xform = to_world * Transform3D(basis, pr.a[sgi] + u * t + out * p_rad);
+			pc.xform = to_world * Transform3D(basis, pos);
 			pc.custom = Color(p_col.r, p_col.g, p_col.b, rng.randf());
 			pc.shape = p_shape;
 			r_trunk.pieces.push_back(pc);
@@ -1007,32 +1109,39 @@ void BarkDetail3D::_place(Trunk &r_trunk, const Dictionary &p_trunk, const Profi
 			while (row < l1 - 2) {
 				const int lc = int(row);
 				const float cw = cell_w(lc);
-				int in_band = 1 + int(rng.randf() * 5.0f);
+				int in_band = 2 + int(rng.randf() * 5.0f);
 				float col = rng.randf() * na;
-				if (rng.randf() < 0.6f) {
+				if (rng.randf() < 0.75f) {
 					// The bared patch the band's strips came off, under them (it takes no cells: they lie on it).
 					const int ps = 6 + int(rng.rand() % 2);
-					const float size = CLAMP(Math::exp(rng.randfn(0.2f, 0.3f)), 0.7f, 2.2f);
+					// At most a quarter of the way round, 25 cm: a patch longer than that would not follow the stem.
+					const float arc = MIN(0.25f, 0.25f * float(Math::TAU) * pr.r[seg_of[lc]]);
+					const float size = MIN(CLAMP(Math::exp(rng.randfn(0.2f, 0.3f)), 0.7f, 2.2f), arc / fam.shape_size[6].x);
 					const float pc = col + 0.5f * fam.shape_size[ps].x * size / cw * (0.4f + 0.4f * rng.randf());
 					const float prad = pr.rad[at(lc, int(pc))];
 					// Bent to this stem: the shape's 12 cm curvature, rescaled round by `size`, made the stem's radius.
-					emit(lc + 0.5f, th_of(pc), prad, size, CLAMP(size * 0.8f, 0.6f, 1.6f), (rng.randf() - 0.5f) * 0.08f, ps, pr.col[at(lc, int(pc))], CLAMP(size * size * 0.12f / MAX(prad, 0.03f), 0.05f, 8.0f));
+					emit(lc + 0.5f, th_of(pc), prad, size, CLAMP(size * 0.8f, 0.6f, 1.6f), (rng.randf() - 0.5f) * 0.08f, ps, pr.col[at(lc, int(pc))], CLAMP(size * size * 0.12f / MAX(prad, 0.03f), 0.3f, 3.0f));
 				}
 				for (int k = 0; k < in_band; k++) {
 					const int shape = int(rng.rand() % 6);
-					const float size = CLAMP(Math::exp(rng.randfn(0.0f, 0.3f)), 0.6f, 1.8f);
+					const float arc = MIN(0.3f, 0.3f * float(Math::TAU) * pr.r[seg_of[lc]]);
+					const float size = MIN(CLAMP(Math::exp(rng.randfn(0.0f, 0.3f)), 0.6f, 1.8f), arc / fam.shape_size[shape].x);
 					const Vector2 ext = fam.shape_size[shape] * size;
 					const int hc = MAX(1, int(Math::ceil(0.5f * ext.x / cw)));
 					const int hr = MAX(0, int(Math::ceil(0.5f * ext.y / pr.step)));
 					const int ac = int(col) + hc;
 					const int lr = lc + int(Math::round(rng.randfn(0.0f, 0.6f)));
 					if (claim(lr, ac, hr, hc)) {
-						emit(lr + 0.5f, th_of(float(ac)), pr.rad[at(lr, ac)] - 0.0005f, size, size, (rng.randf() - 0.5f) * 0.12f, shape, pr.col[at(lr, ac)]);
+						// Depth scaled so the attached middle takes this stem's curvature (the shape is bent to 12 cm),
+						// within limits that keep the scroll round.
+						const float srad = pr.rad[at(lr, ac)];
+						const float sz = CLAMP(size * size * 0.12f / MAX(srad, 0.03f), 0.6f * size, 1.6f * size);
+						emit(lr + 0.5f, th_of(float(ac)), srad - 0.0005f, size, size, (rng.randf() - 0.5f) * 0.12f, shape, pr.col[at(lr, ac)], sz);
 					}
 					col = float(ac + hc) + rng.randf() * 3.0f;
 				}
-				// Bands every 3 to 12 cm, closer with density.
-				row += (0.03f + 0.09f * rng.randf()) / pr.step / MAX(float(density), 0.1f);
+				// Bands every 2 to 8 cm, closer with density.
+				row += (0.02f + 0.06f * rng.randf()) / pr.step / MAX(float(density), 0.1f);
 			}
 			return;
 		}
@@ -1137,8 +1246,13 @@ void BarkDetail3D::_place_job(void *p_job) {
 		t.key = bd_trunk_key(d);
 		t.bark = int(TreeGenerator::bark_kind_for_preset(int(d.get("preset", -1))));
 		t.base = d.get("base", Vector3());
-		_build_profile(j->profs[i]);
-		j->field->_place(t, d, j->profs[i]);
+		if (!j->profs[i]) {
+			j->field->_place(t, d, nullptr);
+		}
+		for (Profile *st = j->profs[i]; st; st = st->next) {
+			_build_profile(st);
+			j->field->_place(t, d, st);
+		}
 	}
 }
 
@@ -1232,8 +1346,13 @@ void BarkDetail3D::update_now() {
 			tr->key = key;
 			tr->bark = bk;
 			tr->base = base;
-			_build_profile(prof);
-			_place(*tr, d, prof);
+			if (!prof) {
+				_place(*tr, d, nullptr);
+			}
+			for (Profile *st = prof; st; st = st->next) {
+				_build_profile(st);
+				_place(*tr, d, st);
+			}
 			tr->seen = updates;
 			dirty = true;
 		} else if (!job) {
@@ -1394,9 +1513,7 @@ void BarkDetail3D::set_height(real_t p_height) {
 	height = CLAMP(p_height, real_t(0.5), real_t(PROFILE_CAP - 0.2f));
 	_clear(); // the job is done: the profiles (built up to the old height) can go
 	for (KeyValue<const Mesh *, Profile *> &kv : profiles) {
-		if (kv.value) {
-			memdelete(kv.value);
-		}
+		_free_profile(kv.value);
 	}
 	profiles.clear();
 }
@@ -1480,8 +1597,6 @@ BarkDetail3D::BarkDetail3D() {
 BarkDetail3D::~BarkDetail3D() {
 	_finish_job(true);
 	for (KeyValue<const Mesh *, Profile *> &kv : profiles) {
-		if (kv.value) {
-			memdelete(kv.value);
-		}
+		_free_profile(kv.value);
 	}
 }

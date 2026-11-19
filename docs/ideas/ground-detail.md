@@ -393,5 +393,12 @@ Plan, in `modules/vegetation/tree_bark_detail.*` (BarkDetail3D), the ground deta
     loose flaps lifting like a page, scrolls; sizes log-normal.
   - The profile drops cells far proud of their row (another stem at a fork), and every piece claims its cells, so
     none lands on another.
+- Third review (docs, 19 Nov), birch: pieces read as flat tan tape, stuck out past the silhouette as tabs, and sat
+  on one side of one stem. Now: every stem of a forked trunk gets a profile (each further collider chain that
+  leaves the main stem below the cap, 6 cm thick or more and heading up), each stem's scan keeps only its own bark
+  (a vertex nearer another stem, in that stem's radii, is that stem's) and drops cells far off its row, and no
+  piece goes nearer another stem than its own. Peel is white outside (no salmon tint on the outer face), plies
+  1.4 mm thick, lifting steeply into a 1 cm scroll that hugs the stem; bared patches show the next ply (half
+  white, half salmon), at most a quarter of the way round and bent to the stem's own radius.
 - Cost (bench, 4 trunks, 1,045 pieces): main thread 0.15 ms mean, 3.4 ms worst an update with the meta (33 ms
   mean, 826 ms worst with the readback); 64 bytes a piece in instance buffers (67 KB), 32 shared shapes.
