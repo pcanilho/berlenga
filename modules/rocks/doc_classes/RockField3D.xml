@@ -393,6 +393,9 @@
 		<member name="ground_detail_cover" type="bool" setter="set_ground_detail_cover" getter="is_ground_detail_cover" default="true">
 			Past where each ground detail class stops drawing its stones, the ground material shows their aggregate instead: how much of the ground they cover, their colour, the bed they hide when seen edge on and the shade they cast under a low sun, so the edge of the drawn stones never shows. The cover comes from the same size and density laws as the stones, in two maps round the camera (1 m texels over 256 m and 8 m texels over 2 km, see [method get_ground_detail_cover_texture]) built on worker threads as it moves. Needs a [TerrainMaterial3D] ground and [member ground_detail] on.
 		</member>
+		<member name="ground_detail_rivers" type="bool" setter="set_ground_detail_rivers" getter="is_ground_detail_rivers" default="true">
+			Ground detail on the river beds: the river layer's bed carried on below [member min_size] (what the flow can move and what still arrives from upstream), coarse in the riffles and fine in the pools between them about six channel widths apart, finer on the bars at the sides, the pools' beds partly hidden under a drape of fines, and every grain imbricated (its long axis across the flow, dipping upstream 10 to 30 degrees). Most grains carry the rock of the river's headwaters. Off, the beds keep only the river layer's stones.
+		</member>
 		<member name="ground_detail_threads" type="bool" setter="set_ground_detail_threads" getter="is_ground_detail_threads" default="true">
 			While streaming, place the ground detail cells on worker threads: the main thread only snapshots what a cell rests on and adds the finished cell, one buffer upload a shape. A finer size class waits until the coarser ones round it are down. When disabled, each cell is placed on the main thread as it is wanted.
 		</member>
