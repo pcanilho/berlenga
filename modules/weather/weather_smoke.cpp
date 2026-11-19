@@ -31,12 +31,12 @@
 
 // Smoke haze (docs/ideas/physx.md, "Smoke haze dims the sun"). Fires report their particulate (WorldFire.
 // smoke_sources); the map keeps it as a layer, grams per square metre in the column over each cell, carried by the
-// wind aloft (semi-Lagrangian, so the plume spreads as it drifts) and lost over a few days (washout, dilution out of
-// the layer). Wildfire smoke's mass extinction is about 4.5 m2/g at 550 nm (Reid et al. 2005), its single scattering
-// albedo about 0.9, and its Angstrom exponent about 1.8, so blue is lost first: thick smoke (optical depth 2 to 5)
-// turns the sun orange, then red, and dims it to nothing; under it the day stays cooler (Robock 1988). The sun's
-// colour comes through SkyClock (get_smoke_transmittance), the haze through the map's aerosol, the cooler day
-// through the daily range.
+// wind aloft (semi-Lagrangian, so the plume spreads as it drifts) and lost over a few days (dilution out of the
+// layer), faster under rain and snow (smoke_washout). Wildfire smoke's mass extinction is about 4.5 m2/g at 550 nm
+// (Reid et al. 2005), its single scattering albedo about 0.9, and its Angstrom exponent about 1.8, so blue is lost
+// first: thick smoke (optical depth 2 to 5) turns the sun orange, then red, and dims it to nothing; under it the day
+// stays cooler (Robock 1988). The sun's colour comes through SkyClock (get_smoke_transmittance), the haze through the
+// map's aerosol, the cooler day through the daily range.
 
 #include "weather_map_3d.h"
 
@@ -67,6 +67,12 @@ void WeatherMap3D::_smoke_step(double p_weather_dt) {
 	if (any) {
 		const Vector2 back = u * dt / cs; // cells
 		const float keep = Math::exp(-dt / MAX(smoke_lifetime, 60.0f));
+		// Rain and snow wash the smoke out under them (below-cloud scavenging, WorldWeather::washout_rate): a
+		// shower barely thins it, hours of heavy rain clear most of it. One rain/snow split for the map, at the
+		// point it follows.
+		const bool wash = smoke_washout && cell_rain.size() == n * n;
+		const float snow_share = wash ? 1.0f - get_rain_share_at(_follow_position()) : 0.0f;
+		const float *rain = wash ? cell_rain.ptr() : nullptr;
 		Vector<float> old = cell_smoke;
 		const float *o = old.ptr();
 		float *w = cell_smoke.ptrw();
@@ -77,7 +83,12 @@ void WeatherMap3D::_smoke_step(double p_weather_dt) {
 				const float tx = fx - x0, tz = fz - z0i;
 				auto at = [&](int xx, int zz) { return (xx < 0 || zz < 0 || xx >= n || zz >= n) ? 0.0f : o[zz * n + xx]; };
 				const float v = Math::lerp(Math::lerp(at(x0, z0i), at(x0 + 1, z0i), tx), Math::lerp(at(x0, z0i + 1), at(x0 + 1, z0i + 1), tx), tz);
-				w[z * n + x] = v * keep;
+				float k = keep;
+				if (rain != nullptr && rain[z * n + x] > 0.0f) {
+					const float r = rain[z * n + x];
+					k *= Math::exp(-dt * WorldWeather::washout_rate(r * (1.0f - snow_share), r * snow_share, false));
+				}
+				w[z * n + x] = v * k;
 			}
 		}
 		// The plume widens as it drifts: eddy diffusion across the wind at about 300 m2/s (a plume some 2 km wide 10 km

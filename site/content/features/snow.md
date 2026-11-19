@@ -45,7 +45,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Melt-freeze crust: boots break it into tipped plates instead of soft prints.*
 
-- **Lake ice** (`SnowCover3D.lake_ice_enabled`): lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm.
+- **Lake ice** (`SnowCover3D.lake_ice_enabled`): lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm; heavier bodies and vehicles break through ice too thin for their weight, and the hole freezes over again.
 
 - **Snow on bodies** (`SnowBodies3D`: `weight_enabled`, `slide_enabled`, `clumps_enabled`): snow lying on a body weighs on it, slides off tilted tops as slabs and drops off in clumps.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced; `get_snow_shader_code()` for ShaderMaterials.

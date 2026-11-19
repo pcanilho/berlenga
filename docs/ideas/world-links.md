@@ -131,6 +131,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Fire → ash on burnt grass, litter | linked (18 Nov) | fire_char_map (`VegetationFire::ASH_CODE`) | PhysX c3c529f4: white ash where it burnt out, black char where not, thinned by wind and darkened by rain |
 | Fire → fire clouds (pyrocumulus over a big fire) | linked (19 Nov) | WorldFire `plumes()` (base, convective W) | PhysX ebdad64b: WeatherMap3D builds the cloud from the plumes |
 | Fire → smoke haze downwind | linked (19 Nov) | WorldFire `smoke_sources()` (base, kg/s PM2.5) | PhysX eabdcd98: WeatherMap3D carries the smoke into its haze |
+| Rain, snow → smoke and dust washed out of the air | linked (19 Nov) | WorldWeather `washout_at` (`rainfall_at`, `snowfall_at`) | below-cloud scavenging Lambda = a R^b: the map's smoke haze thins over hours of rain; Flow gas adds it to its smoke damping (coarse when the gas is heavy dust) |
 | Fire age → trees cast dead needles | linked (19 Nov) | shader global `fire_age_map` | PhysX ebdad64b |
 | Fire → regrowth (burnt ground greens again) | linked (19 Nov) | WorldFire `burn_age_at` (fires in play, WorldBurnScar3D) | VegetationField3D: RULE_BURN_AGE, PlantSpecies.burn_recovery (38c29f47); GrassField3D green-up (30b7085a, a7c6a8fb); both refresh through the burn change log (VegetationField3D 0197e5b2, vegetation bench `--burn=live`) |
 | Fire → trees regrow (resprouts, seedlings on the ash) | linked (19 Nov) | WorldFire `burn_age_at` at each tree's foot (VegetationField3D's burn grid) | Trees supply variants built at TreeGenerator.fire_years with mesh meta `tree_fire_years` (years) and `tree_fire_band` (Vector2 years from, to: bands 0-1, 1-3, 3-6, 6-10, 10-20); VegetationField3D places the variant whose band holds the age, unburnt variants off burns and from 20 years; vegetation --test checks it. Also the regrowth flush (cadd0e98) |
@@ -195,7 +196,7 @@ Every pair above is linked or in work. Three visible gaps remain; each reads a c
    lift, and its wake lifts the ones a little beyond: the air behind a walker moves at about 0.3-0.5 of walking
    speed close to the ground (Edge et al. 2005, human wake measurements), well under the gust lift threshold, so only
    leaves the body touches, plus a wheel's wake at speed, should fly.
-3. Rain washes smoke and dust out of the air (below-cloud scavenging). Source: `WorldWeather.precipitation_at` into
+3. Rain washes smoke and dust out of the air (below-cloud scavenging; built 19 Nov). Source: `WorldWeather.precipitation_at` into
    PhysXFlow3D smoke and dust. Scavenging coefficient Lambda = a R^b: for PM2.5-sized smoke about 1e-5 to 1e-4 1/s at
    1-10 mm/h (Laakso et al. 2003; Wang et al. 2010), so a smoke plume barely thins in a shower; for coarse dust
    (> 10 um) about 1e-3 1/s, so a dust cloud clears within minutes in rain. Applied as a density decay per Flow

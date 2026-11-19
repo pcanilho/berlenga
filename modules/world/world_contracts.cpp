@@ -77,6 +77,17 @@ float WorldWeather::canopy_drip_at(const Vector3 &p_position) const WW_CALL(_can
 float WorldWeather::ground_water_input_at(const Vector3 &p_position) const WW_CALL(_ground_water_input_at, contract_ground_water_input_at(p_position), 0.0f, p_position)
 float WorldWeather::cloud_cover_at(const Vector3 &p_position) const WW_CALL(_cloud_cover_at, contract_cloud_cover_at(p_position), 0.0f, p_position)
 float WorldWeather::ground_height_at(const Vector3 &p_position) const WW_CALL(_ground_height_at, contract_ground_height_at(p_position), 0.0f, p_position)
+float WorldWeather::washout_rate(float p_rain_mm_h, float p_snow_mm_h, bool p_coarse) {
+	const float a = p_coarse ? 3.0e-4f : 1.0e-5f;
+	const float b = p_coarse ? 0.75f : 0.8f;
+	const float r = MAX(p_rain_mm_h, 0.0f), sn = MAX(p_snow_mm_h, 0.0f);
+	return a * (Math::pow(r, b) + 5.0f * Math::pow(sn, b));
+}
+
+float WorldWeather::washout_at(const Vector3 &p_position, bool p_coarse) const {
+	return washout_rate(rainfall_at(p_position), snowfall_at(p_position), p_coarse);
+}
+
 float WorldWeather::surface_temperature_at(const Vector3 &p_position) const {
 	float r = 0.0f;
 	if (GDVIRTUAL_CALL(_surface_temperature_at, p_position, r)) {
@@ -167,6 +178,8 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("terrain_lee_at", "position"), &WorldWeather::terrain_lee_at);
 	ClassDB::bind_method(D_METHOD("rainfall_at", "position"), &WorldWeather::rainfall_at);
 	ClassDB::bind_method(D_METHOD("snowfall_at", "position"), &WorldWeather::snowfall_at);
+	ClassDB::bind_static_method("WorldWeather", D_METHOD("washout_rate", "rain_mm_h", "snow_mm_h", "coarse"), &WorldWeather::washout_rate);
+	ClassDB::bind_method(D_METHOD("washout_at", "position", "coarse"), &WorldWeather::washout_at);
 	ClassDB::bind_method(D_METHOD("canopy_water_at", "position"), &WorldWeather::canopy_water_at);
 	ClassDB::bind_method(D_METHOD("canopy_wetness_at", "position"), &WorldWeather::canopy_wetness_at);
 	ClassDB::bind_method(D_METHOD("canopy_drip_at", "position"), &WorldWeather::canopy_drip_at);

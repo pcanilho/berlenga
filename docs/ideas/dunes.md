@@ -136,3 +136,34 @@ Built: the shear tau = 1 + A (H[h'] + B h') along the wind (A 3, B 0.5, Hilbert 
 smoothed by four 1-2-1 passes as the saturation length, updated every 4 steps on the worker threads) scales the lift
 and divides the settling chance; slides move only the excess; a hop that crosses under the 15 degree line from its
 path drops there. About 2.2 times the old cost. Bench check: stoss 58% of the sloping sand, lee 90th percentile 34.
+
+## Built: brinks, stoss and sand grain for the desert frame (19 Nov, docs round 5)
+
+- Crest-line sinuosity: one-wind seas are shifted along the wind by a smooth noise of the along-crest coordinate
+  (0.6 cell over 10 cells, 0.18 over 3.5), so brinks meander and scallop (grainflow scallops, Hunter 1977;
+  crest-line defects, Ewing, Kocurek and Lake 2006).
+- The slab model leaves lumps 20-40 m across and a few metres high on the stoss. A first-order normalized
+  convolution (Westin, Knutsson and Kikinis 1994: a weighted plane fit per window) smooths them, with no weight on
+  slip faces (dropping downwind past about 29 degrees, dilated two cells) or bare ground; a plain weighted mean
+  pulled the stoss down beside the excluded crest and left a riser just upwind of the brink.
+- Sand buries the ground's detail noise (fades out under 0.2-2 m of sand); boulders under the sand are dropped.
+- The terrain material's sand grain is tone only: its 3.5 cm octave lit as an even stamp of dots under a low sun.
+  The centimetre relief is GroundSurface3D's wind ripples.
+
+## Next round (19 Nov, research for the card)
+
+1. **Dune proportions.** Our ridges stand about 30 m high every 150 m (height/spacing 0.2, stoss 17-27 degrees near
+   the crest). Measured transverse dunes run 0.03-0.1 (Lancaster 1988, 1995: Namib and Gran Desierto; stoss 5-15
+   degrees). In the slab model the spacing grows with time as ridges merge (Werner and Kocurek 1999, defect
+   dynamics), and the height is capped by the sand available and by the atmospheric boundary layer (Andreotti,
+   Fourriere, Ould-Kaddour, Murray and Claudin 2009, Nature). Plan: run the sea longer on a coarser grid (cheap
+   now with the shear on worker threads) and cap the crest height by a boundary-layer depth, with a check on the
+   spacing and stoss angle from the --dune-map heights. Improves the geometry both renderers draw.
+2. **Far terrain shadows in raster.** At a low sun the shadow cascades smear the edges of far cast shadows. Height
+   field self-shadowing (Timonen and Westerholm 2010, "Scalable height field self-shadowing"; horizon mapping,
+   Max 1988) gives exact sun shadows over the whole Landscape3D at any range from a horizon angle per texel,
+   updated as the sun moves. Raster only: the path tracer already traces them.
+3. **Nebkha and erg masks.** Sand gathered behind shrubs (nebkha, Tengberg 1995) where vegetation places desert
+   plants, and sand seas following a mask (a wind-shadow or sediment map) instead of a rect.
+4. Logged earlier: mudflat/fine-sediment mask under salt marsh; compacted soil along vegetation paths; plunging
+   cliffs to the swash line (rocks' sea caves).

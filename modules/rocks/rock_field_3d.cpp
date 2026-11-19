@@ -1230,8 +1230,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						st.variant = pick_variant(lib);
 						const Vector3 axes = lib->axes[st.variant];
 						st.scale = course * (0.85f + 0.2f * rng.randf()) / MAX(2.0f * axes.y, 0.05f);
-						// Long axis along the strike, short axis on the bed normal, b axis into the wall.
-						const Vector3 y_axis = bed_normal;
+						// Long axis along the strike, short axis on the bed normal, b axis into the wall. The bed normal
+						// is turned most of the way toward the face's own up-slope direction: a heightfield face stands at
+						// 50 to 76 degrees, and a block kept square to level beds pushed its top out of it as a pale
+						// shelf (from afar a flake stuck on the slope); turned with the face it lies nearly flush.
+						const Vector3 fn = Vector3(-grad.x, 1.0f, -grad.y).normalized();
+						const Vector3 face_up = (Vector3(0, 1, 0) - fn * fn.y).normalized();
+						const Vector3 y_axis = bed_normal.slerp(face_up, 0.75f).normalized();
 						Vector3 x_axis = Vector3(strike.x, 0, strike.y);
 						x_axis = (x_axis - y_axis * y_axis.dot(x_axis)).normalized();
 						const Vector3 z_axis = x_axis.cross(y_axis).normalized();
@@ -1243,7 +1248,10 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						// The face's outward normal at the crossing; the block's centre that far into the rock.
 						const Vector3 n = Vector3(-grad.x, 1.0f, -grad.y).normalized();
 						const Vector3 surface(bp.x, yk, bp.y);
-						const Vector3 centre = surface - n * (axes.z * st.scale * (0.6f + 0.2f * rng.randf()));
+						// Set deep: a block standing a third of its depth out of a 50 to 76 degree face pushed its level top
+						// out as a pale shelf, read from afar as a flake stuck on the slope. Mostly flush, the course
+						// shows as edges and slight steps.
+						const Vector3 centre = surface - n * (axes.z * st.scale * (0.86f + 0.12f * rng.randf()));
 						// The centre must lie inside the rock (under the terrain at its own plan position), or the block
 						// stands out of a bend in the face rather than being set into it.
 						if (gen->get_height(centre) < centre.y + 0.1f * course) {
@@ -2241,7 +2249,9 @@ static float rock_surface_age(RockGenerator::Family p_family) {
 }
 
 Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockGenerator::Family p_family, bool p_detail) {
-	const bool p_cliff = p_family == RockGenerator::FAMILY_CAVE_MOUTH;
+	// Blocks of the wall itself take the landscape's rock colour (a cave mouth's, and the cliff's courses: in their own
+	// stone colour the courses read as pale plates stuck on the face).
+	const bool p_cliff = p_family == RockGenerator::FAMILY_CAVE_MOUTH || p_family == RockGenerator::FAMILY_CLIFF_BLOCK;
 	const float age = rock_surface_age(p_family);
 	const int mkey = int(p_type) + (p_cliff ? 1000 : 0) + int(age * 10.0f + 0.5f) * 10000 + (p_detail ? 2000 : 0);
 	if (Ref<ShaderMaterial> *m = materials.getptr(mkey)) {

@@ -776,7 +776,10 @@
 			Fires' smoke ([method WorldFire.smoke_sources]) builds a smoke layer over the map, carried and spread by the wind aloft and cleared over [member smoke_lifetime]. Over the map's centre it thickens the aerosol haze, narrows the daily temperature range (a cooler day under thick smoke; Robock 1988), and [SkyClock] dims and reddens the sun through it.
 		</member>
 		<member name="smoke_lifetime" type="float" setter="set_smoke_lifetime" getter="get_smoke_lifetime" default="259200.0">
-			Weather seconds over which the smoke layer clears (washout, dilution out of the layer), as an e-folding time: three days by default.
+			Weather seconds over which the smoke layer clears in dry weather (dilution out of the layer), as an e-folding time: three days by default.
+		</member>
+		<member name="smoke_washout" type="bool" setter="set_smoke_washout" getter="is_smoke_washout" default="true">
+			Rain and snow wash the smoke layer out under them ([method WorldWeather.washout_rate], fine particles): a shower barely thins it, hours of heavy rain clear most of it.
 		</member>
 		<member name="extent" type="float" setter="set_extent" getter="get_extent" default="4096.0">
 			Width of the map, in metres.

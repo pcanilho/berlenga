@@ -2497,7 +2497,7 @@
     "LeafFall3D"
    ],
    "note": "",
-   "what": "leaves fall from the crowns through the wind as autumn sheds them, and gusts lift them off the ground.",
+   "what": "leaves fall from the crowns through the wind as autumn sheds them, and gusts and passing bodies lift them off the ground.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -3293,7 +3293,7 @@
     "SnowCover3D.lake_ice_enabled"
    ],
    "note": "",
-   "what": "lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm.",
+   "what": "lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm; heavier bodies and vehicles break through ice too thin for their weight, and the hole freezes over again.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3617,10 +3617,12 @@
   {
    "name": "Smoke haze",
    "settings": [
-    "WeatherMap3D.smoke_haze"
+    "WeatherMap3D.smoke_haze",
+    "smoke_washout",
+    "PhysXFlow3D.rain_washout"
    ],
    "note": "",
-   "what": "smoke from fires drifts on the wind as a haze layer that dims and reddens the sun and cools the day.",
+   "what": "smoke from fires drifts on the wind as a haze layer that dims and reddens the sun and cools the day; rain and snow wash smoke and dust out of the air.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -3945,7 +3947,7 @@
     "collapse_share"
    ],
    "note": "",
-   "what": "wooden buildings catch from embers and ground fire; rooms flash over, the windows break and flames lean out of them, fire spreads room to room and the frame collapses.",
+   "what": "wooden buildings catch from embers and ground fire; rooms flash over, the windows break and flames lean out of them, fire spreads room to room and the frame collapses. A hose or fluid water knocks a room back below flashover and puts it out, with steam pouring from its windows; a weak stream only holds it (`apply_water()`).",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
