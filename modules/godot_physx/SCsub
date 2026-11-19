@@ -290,6 +290,7 @@ _water_blit_glsl = (
     "water_shore_foam.glsl",
     "water_swash.glsl",
     "water_flow_offset.glsl",
+    "water_surface_waves.glsl",
 )
 for _glsl in _water_blit_glsl:
     env_physx.GLSL_HEADER(os.path.join("water", _glsl))

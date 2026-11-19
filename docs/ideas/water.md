@@ -3580,3 +3580,22 @@ repeated every 240 m and the detail lined up with cascade 0 every 40 m.
   the detail tile.
 - Not blended: the shore swash and shore foam passes (they already read the ocean grid-relative) and the
   light-space caustics map.
+
+
+### Ripples that bounce off boulders (19 Nov; item 2 of Paulo's four)
+
+PhysXRiver3D `live_surface_waves` (on) and `live_surface_wave_strength` (1): a dispersive surface-wave layer over
+the live window (water_surface_waves.glsl), after Jeschke and Wojtan, "Generalizing Shallow Water Simulations with
+Dispersive Surface Waves" (ACM ToG 2023). The shallow-water grid keeps the bulk flow; the surface waves run on a
+512^2 grid over the same 48 m window (9.4 cm cells), stepped exactly in Fourier space with Airy's dispersion
+omega^2 = g k tanh(k d) at four depths (0.15, 0.4, 1, 2.5 m) blended per cell in log depth, carried
+semi-Lagrangian by the live velocity, held at zero in dry cells (so they reflect off banks and wrap round
+stones) and damped in a 24-cell sponge at the window's edge (the transform wraps). One-way: the paper splits the
+bulk's own high frequencies off; the live grid's 25 cm cells hold none worth splitting, so the layer is fed by:
+- stagnation head 0.5 v^2 / g of the arriving water on a stone's upstream face (ship-wake pressure patch);
+- turbulence: p' ~ u'^2 / g with u' = l |grad v| (Prandtl mixing length, l one live cell), as value noise over
+  3 fine cells redrawn every 0.15 s. This is what makes the visible ripples: the stagnation head of a 0.5-1 m/s
+  stream is millimetres.
+Cost per step: 3 small passes, a one-field and a four-field 512^2 shared-memory FFT (water_fft_rows.glsl).
+Bench switch: `--river=live_surface_waves:false`. Raster and PT read the same slope (river shader live_waves).
+Not yet on PhysXWaterSurface3D (lakes, sea shallows).
