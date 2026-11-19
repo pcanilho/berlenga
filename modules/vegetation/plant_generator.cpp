@@ -5628,6 +5628,11 @@ void vertex() {
 		float lv = 1.0 + 0.16 * (h1 - 0.5);
 		float yl = 0.1 * (h2 - 0.5);
 		v_tone = lv * vec3(1.0 + yl, 1.0 + 0.3 * yl, 1.0 - yl);
+		// Regrowth on burnt ground (VegetationField3D, w's fraction): the first season's shoots come up a lighter,
+		// fresher yellow-green than the stand around (young leaves, richer in nitrogen on the ash: the post-fire
+		// green flush), fading over a year and a half. Living tissue only.
+		float flush = fract(INSTANCE_CUSTOM.w) / 0.99;
+		v_tone *= mix(vec3(1.0), vec3(1.10, 1.22, 0.84), clamp(flush, 0.0, 1.0) * light_response);
 	}
 	if (w > 0.0) {
 		float resp = (grass_wind.z > 0.0 ? grass_wind.z : 0.12) / max(stiffness, 0.05);
@@ -6939,7 +6944,11 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		// since edge-collapse simplification stalls on many small islands.
 		// Not petals: a flower's few petals are its colour accent far off, and dropping some of
 		// them dims the drift even with the area kept (seen in the heath shots).
-		if (lods && s == SURFACE_LEAF) {
+		// Also the many-island accents of the burn presets, which meshoptimizer cannot thin either (stochastic
+		// simplification of aggregate detail, Cook et al. 2007): fire moss's capsules, the ash on charred stems and
+		// burnt tussock stubs; their colour holds as the survivors grow to keep the area.
+		const bool island_accents = (preset == PRESET_FIRE_MOSS && s == SURFACE_PETAL) || ((preset == PRESET_CHARRED_STEMS || preset == PRESET_BURNT_TUSSOCK) && s == SURFACE_CENTRE);
+		if (lods && (s == SURFACE_LEAF || island_accents)) {
 			CardSurface cs;
 			if (_card_lods(b, cs)) {
 				arrays[Mesh::ARRAY_CUSTOM0] = cs.custom;

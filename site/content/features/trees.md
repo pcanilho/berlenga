@@ -84,6 +84,7 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 
   *Bark peel: on a class 2 snag the bark has come away in plates from the upper stem, baring grey wood.*
 
+- **After fire** (`fire_years`): burnt stands recover by species: cork oak resprouts along its stem and limbs, holm oak from the root collar, and maritime pine and rockrose reseed on the ash bed, while the bark char fades over the years.
 - **Broken limbs** (`limb_breakage`): snapped ends get a splintered fracture face and torn bark; storms break limbs on living trees, leaving some hanging.
 
   ![A winter oak limb, whole and snapped, raster](media/trees-broken-limb.jpg)

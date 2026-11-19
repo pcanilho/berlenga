@@ -30,6 +30,7 @@
 
 #include "physx_firebrands.h"
 
+#include "physx_building_fire_3d.h"
 #include "physx_burnable_3d.h"
 #include "physx_fire_spread_3d.h"
 #include "physx_flow_3d.h"
@@ -223,6 +224,14 @@ int PhysXFirebrands::step(Node3D *p_owner, PhysXFlow3D *p_flow, const Vector3 &p
 				// Onto something that burns: the brand rests there and heats it (a woodpile, a fence, a deck).
 				if (PhysXBurnable3D *pb = PhysXBurnable3D::find_by_collider(rr.collider)) {
 					pb->add_brand(rr.position, rr.normal, b.n * Math::sqrt(MAX(1.0f - b.age / b.life, 0.0f)));
+					landed++;
+					brands[i] = brands[brands.size() - 1];
+					brands.resize(brands.size() - 1);
+					continue;
+				}
+				// Onto a building: its walls and roof heat, or the brand drops through a window onto what is inside.
+				if (PhysXBuildingFire3D *pbf = PhysXBuildingFire3D::find_by_collider(rr.collider)) {
+					pbf->add_brand(rr.position, rr.normal, b.n * Math::sqrt(MAX(1.0f - b.age / b.life, 0.0f)));
 					landed++;
 					brands[i] = brands[brands.size() - 1];
 					brands.resize(brands.size() - 1);

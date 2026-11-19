@@ -56,8 +56,9 @@ extends Node3D
 #   --grazed         the tall grass grazed short (5 to 14 cm), as on upland pasture
 #   --path[=P]       a worn path winding away from the camera, P passes a year (default 3000, a busy footpath; GrassField3D.paths,
 #                    VegetationField3D.paths): the sward and plants thin and shorten towards its line
-#   --burn=A         a burn scar A years old (WorldBurnScar3D, 26 x 16 m) in the view: the sward grows back over
-#                    GrassField3D.burn_recovery (0.7 years), short and sparse first
+#   --burn=A         a burn scar A years old (WorldBurnScar3D, 20 x 12 m) in the view: the sward grows back over
+#                    GrassField3D.burn_recovery (0.7 years), short and sparse first; GRASS_NO_FLUSH=1 without the
+#                    regrowth flush (the before frame)
 #   --undergrowth-edge  with --undergrowth: its edge from 1 m up, 3.5 m along it (--no-margin: no margin)
 #   --no-rock-foot   with --rocks: the floor species without PlantSpecies.rock_foot
 #   --undergrowth=bracken|bramble   a stand of it in the open meadow, framed from 5 m and 3 m up in side light; the sward
@@ -461,8 +462,8 @@ func _ready() -> void:
 		if burn_age >= 0.0:
 			var scar := WorldBurnScar3D.new()
 			scar.age_years = burn_age
-			scar.size = Vector2(26, 16)
-			scar.position = Vector3(2.0, 0.0, 2.0)
+			scar.size = Vector2(20, 12)
+			scar.position = Vector3(24.0, 0.0, 22.0) if far_view else Vector3(3.0, 0.0, 9.0)
 			add_child(scar)
 		if path_passes > 0.0:
 			# A footpath from beside the camera, bending away over the meadow: a line of points
@@ -2488,8 +2489,21 @@ func _process(dt: float) -> void:
 	if prims:
 		await _print_prims()
 	if not out.is_empty():
+		if burn_age >= 0.0 and OS.get_environment("GRASS_NO_FLUSH") != "":
+			# The before frame: the regrowth flush off (its colour alone).
+			if OS.get_environment("GRASS_NO_FLUSH") == "1":
+				(grass.get_material() as ShaderMaterial).set_shader_parameter("burn_flush_rect", Vector4())
+			for i in 3:
+				await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out)
 		print("saved ", out)
+		if burn_age >= 0.0 and OS.get_environment("GRASS_NO_FLUSH") == "ab":
+			# The same frame again with the regrowth flush off: out_noflush.png.
+			(grass.get_material() as ShaderMaterial).set_shader_parameter("burn_flush_rect", Vector4())
+			for i in 3:
+				await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(out.get_basename() + "_noflush.png")
+
 	get_tree().quit()
 
 

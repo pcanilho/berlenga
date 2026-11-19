@@ -3094,6 +3094,17 @@
    "topic": "Old trees and deadwood"
   },
   {
+   "name": "After fire",
+   "settings": [
+    "fire_years"
+   ],
+   "note": "",
+   "what": "burnt stands recover by species: cork oak resprouts along its stem and limbs, holm oak from the root collar, and maritime pine and rockrose reseed on the ash bed, while the bark char fades over the years.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
    "name": "Broken limbs",
    "settings": [
     "limb_breakage"
@@ -3277,6 +3288,20 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Snow on bodies",
+   "settings": [
+    "SnowBodies3D",
+    "weight_enabled",
+    "slide_enabled",
+    "clumps_enabled"
+   ],
+   "note": "",
+   "what": "snow lying on a body weighs on it, slides off tilted tops as slabs and drops off in clumps.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Snow on materials",
    "settings": [
     "snow_enabled"
@@ -3356,6 +3381,18 @@
    "page": "snow",
    "title": "Snow",
    "topic": "Falling snow"
+  },
+  {
+   "name": "Avalanches",
+   "settings": [
+    "SnowCover3D.avalanches_enabled",
+    "SnowAvalanche3D.trigger()"
+   ],
+   "note": "",
+   "what": "slabs release where the snowpack's stability index fails and run out as a Voellmy flow that picks up snow on the way and piles debris where it stops.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Cornices and ice"
   },
   {
    "name": "Cornices",

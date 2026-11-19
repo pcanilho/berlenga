@@ -2372,6 +2372,11 @@ Shared: twigs under a radius that grows with years are pruned away (fine fuel bu
 foliage removed, and the bark takes ragged char to ~45% of height (max 6 m), fading over ~7 years. The runtime
 mortality rule (5ag) skips these meshes' regrowth foliage (fire_crown cleared). Frames: fire/regrowth-strip.png
 (cork oak, holm oak, maritime pine, rockrose at 0.5 / 2 / 6 years), regrowth-holm-raster-pt.png.
+Docs round 2 (19 Nov): char black (0.022) and kept longer (fade 12 years, cork 6), lichen burnt off under it;
+charred, ember-grey and pale ash twigs lie round the snag (ash gone within a year); resprout leaves a light young
+green, seedlings lighter still and larger; BARK_SCALY (holm oak, spruce, fir, ...) cracks at two scales in patches
+with per-scale height, tilt and tone (the holm collar read as paving). In PT a clump in the stem's shadow is
+near black: sky light only, the same as any shaded leaves.
 
 ## 6. What the games at Paulo's bar do
 

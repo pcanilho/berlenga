@@ -400,5 +400,26 @@ Plan, in `modules/vegetation/tree_bark_detail.*` (BarkDetail3D), the ground deta
   piece goes nearer another stem than its own. Peel is white outside (no salmon tint on the outer face), plies
   1.4 mm thick, lifting steeply into a 1 cm scroll that hugs the stem; bared patches show the next ply (half
   white, half salmon), at most a quarter of the way round and bent to the stem's own radius.
+- Fourth review (docs, 19 Nov), birch: a flat white sheet stood across the crotch, tabs poked past the silhouette,
+  pieces ran up the leaning stem as dark sticks, and thin vertical brown slivers read as cracks. Now:
+  - Sheets are turned a quarter round so their roll lies round the stem along the band (it tilts with a leaning
+    stem); their texture is turned back with them, so the lenticels on a sheet run round the stem like the stem's
+    own (the slivers were the texture's lenticels standing upright). Most of a sheet lifts (its attached part is
+    the stem's own bark, so little is drawn over it), at 45 to 60 degrees rather than upright.
+  - Bands every 5 to 14 cm, each with one to three bared patches round it whose torn top and bottom edges are
+    rolled sheets; some bands only have sheets lifting.
+  - A fork's further stems: the capsules follow a leaning stem only roughly (its mesh sat up to a radius off its
+    chain, so its bark was binned lopsided and half of it read as hollow, few pieces landed there). Each of their
+    capsules is moved to the centre of its own bark before binning (the shift is stored in the meta's header);
+    the main stem keeps its chain, since its branches would pull it. Cells still empty take the nearest filled
+    rows of their column.
+  - Sheets and patches lie at the median radius of the cells they cover, bent round to the stem's radius (the
+    shape's 12 cm bend rescaled), and skip spots too uneven to lie on (a collar, a fork's swell), so none stands
+    off past the silhouette.
+- Fourth review passed (docs, 19 Nov), two polish notes: some rolls read as thick rounded lips like small bracket
+  fungi, and the bands stacked in one column up the main stem like a ladder. Now plies are about 1 mm with a 4 to
+  7 mm scroll, sheets at most 1.3 times their shape and never thickened when bent to the stem; each band's patches
+  start a golden angle (137 degrees, jittered) round from the last band's and spread evenly round it; bands every
+  4 to 10 cm.
 - Cost (bench, 4 trunks, 1,045 pieces): main thread 0.15 ms mean, 3.4 ms worst an update with the meta (33 ms
   mean, 826 ms worst with the readback); 64 bytes a piece in instance buffers (67 KB), 32 shared shapes.

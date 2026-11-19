@@ -1432,6 +1432,8 @@ void TerrainMaterial3D::_update_params() {
 			}
 		}
 	}
+	// Copies of this material (GroundSurface3D's near patch) follow its parameters through this signal.
+	emit_changed();
 }
 
 void TerrainMaterial3D::update_shader() {

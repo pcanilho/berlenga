@@ -364,6 +364,8 @@ private:
 	void _read_burn_age(TerrainDataMap3D *p_map);
 	void _follow_burns(TerrainDataMap3D *p_map);
 	void _burn_dirty(const Rect2 &p_area);
+	Ref<ImageTexture> burn_flush_texture;
+	void _publish_burn_flush();
 	float _burn_cover(const PlantSpecies *p_rules, float p_x, float p_z) const;
 	struct ShellTile {
 		MeshInstance3D *mi = nullptr;

@@ -579,6 +579,8 @@ private:
 	MeshInstance3D *mesh_instance = nullptr;
 	Ref<ArrayMesh> mesh;
 	Ref<Material> patch_material;
+	Ref<Shader> patch_source_shader; // the source material's shader when the patch copy was made
+	bool patch_params_stale = false;
 	Vector3 patch_uv_offset;
 	Vector2 center;
 	bool mesh_hole_cut = false; // the mesh was built with triangles left out over holes
@@ -596,6 +598,8 @@ private:
 	void _ensure_children();
 	void _build_mesh();
 	void _update_patch_material();
+	void _on_material_changed() { patch_params_stale = true; }
+	void _sync_patch_params();
 	void _follow(Vector3 p_center);
 	void _sample_ground(Vector2i p_origin, int p_n);
 	void _update_cells();

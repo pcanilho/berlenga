@@ -57,6 +57,12 @@
 				How many loads have slid off as slabs so far.
 			</description>
 		</method>
+		<method name="get_tracked" qualifiers="const">
+			<return type="Node[]" />
+			<description>
+				The nodes that carry snow.
+			</description>
+		</method>
 		<method name="get_tracked_count" qualifiers="const">
 			<return type="int" />
 			<description>
