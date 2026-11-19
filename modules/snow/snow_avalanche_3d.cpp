@@ -1035,9 +1035,18 @@ bool SnowAvalanche3D::trigger(const Vector3 &p_at, float p_radius) {
 			const Vector2 rel = at - Vector2(p_at.x, p_at.z);
 			const float u = rel.dot(down) / p_radius; // downslope
 			const float v = rel.dot(across) / p_radius;
-			const float wobble = 0.24f * (_patch_noise((cover->origin_cell.x + x) / 2, (cover->origin_cell.y + z) / 2) - 0.5f);
-			const float crown = -0.65f * (1.0f - 0.12f * v * v) + wobble; // bowed a little downslope at its ends
-			const float flank = 1.0f - 0.12f * MAX(u, 0.0f) + wobble;
+			const float wobble = 0.16f * (_patch_noise((cover->origin_cell.x + x) / 2, (cover->origin_cell.y + z) / 2) - 0.5f);
+			// The crown zigzags across the slope in shallow steps: a run every third of a radius, each set up or
+			// down the slope by up to 0.12 radii and slanting one way or the other (the fracture jumps between
+			// weak spots). _patch_noise at whole multiples of 3 is its raw hash.
+			const float vs = v * 3.0f + 17.0f;
+			const int seg = int(Math::floor(vs));
+			const float step = 0.24f * (_patch_noise(seg * 3, 7919) - 0.5f);
+			const float slant = (_patch_noise(seg * 3, 104729) < 0.5f ? -0.1f : 0.1f) * (vs - seg - 0.5f);
+			const float crown = -0.65f * (1.0f - 0.12f * v * v) + step + slant + wobble; // bowed a little downslope at its ends
+			// The flanks wander by up to 0.2 radii over about a third of a radius, each its own way.
+			const float side_wander = 0.4f * (_patch_noise(int(Math::floor(u * 8.0f)) + 50, v < 0.0f ? 311 : 733) - 0.5f);
+			const float flank = 1.0f - 0.12f * MAX(u, 0.0f) + side_wander + wobble;
 			if (u < crown || u > 0.8f + wobble || Math::abs(v) > flank) {
 				continue;
 			}
