@@ -1536,10 +1536,11 @@
    "settings": [
     "RockField3D",
     "ground_detail",
-    "ground_detail_pixels"
+    "ground_detail_pixels",
+    "ground_detail_cover"
    ],
    "note": "",
-   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach or scree around them, each drawn only while it stays a few pixels tall; the path tracer traces every one.",
+   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach or scree around them, each drawn only while it stays a few pixels tall; the path tracer traces every one. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
