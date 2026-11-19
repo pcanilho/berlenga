@@ -2052,6 +2052,27 @@ optical depth and the shading stepped in horizontal bands. They now step
 once per gas cell along the light (up to 512) with a slice per two cells
 (up to 128).
 
+Snow's powder pair, same evening. Three more findings, each checked
+against a path-traced still of the same avalanche frame (640x360, 4 spp):
+- Flow's own raster ray march took each step's opacity as min(smoke, 1)
+  times its step opacity, so gas denser than smoke 1 drew no denser.
+  Patched to Beer-Lambert with the smoke scaling the optical depth,
+  clamped at 2 as the path tracer's density majorant clamps it
+  (misc/physx_patches/0010); the scattering pass clamps at 2 as well.
+  Small on this powder, larger on thick smoke.
+- The soft, translucent look of raster powder next to PT's billows is
+  the light's resolution: the scattering pass runs at a quarter of the
+  frame each way, so at 640 or 960 wide a texel spans about a gas cell
+  and the cell-scale light and shade of the billows is averaged away.
+  Full resolution shows the billows; half is between; the shadow map's
+  size (128 or 512) makes no visible difference. At 1080p a quarter is
+  as many texels as half at 960. Docs and test stills at low resolution
+  should set scattering_resolution to full.
+- The tail for scattering orders past the octaves (above) overshot once
+  the sun's light was refit; it is gone. Powder clouds, mean grey (raster
+  full res vs PT blurred): left cloud 86 vs 78, right column 100 vs 90,
+  low band 115 vs 114.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

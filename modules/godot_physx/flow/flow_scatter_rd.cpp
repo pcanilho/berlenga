@@ -64,7 +64,7 @@ layout(set = 0, binding = 5, std140) uniform Params {
 	vec4 sun_map_xform[3]; // rows: world meters -> the sun's volumetric shadow map (u, v, depth in 0..1)
 	vec4 sun_map; // xyz: world direction toward the light it is built from; w: 1 = present
 	vec4 sky_map_xform[3]; // rows: world meters -> the sky's volumetric shadow map (built looking down)
-	vec4 sky_map; // x: single-scattering albedo; z: weight of the scattering orders past the octaves; w: 1 = present
+	vec4 sky_map; // x: single-scattering albedo; w: 1 = present
 } p;
 
 // The world distance (meters) to what a frame pixel shows (reverse Z: 0 is the far plane), at most
@@ -343,8 +343,7 @@ float hg_phase(float c, float g) {
 // The multiple-scattering octaves (Wrenninge et al. 2013), times the single-scattering albedo (sky_map.x, as
 // the path tracer weighs each scatter). Octave i stands for higher scattering orders, so it is weighed by the
 // albedo to the i-th power relative to 0.9 (a whiter medium such as snow powder keeps more of its deep,
-// many-times-scattered light, as it does under path tracing). The orders past the third come as one more,
-// wider octave weighted by sky_map.z.
+// many-times-scattered light, as it does under path tracing).
 // Fitted to the path tracer (docs/ideas/physx.md, "Flow raster light matches path tracing, refit"), each
 // light on its own on test puffs under a real sky:
 // - SUN_MS_GAIN: the octaves' light at zero depth, over single scattering (1.84: in sunlit gas the light
@@ -353,13 +352,16 @@ float hg_phase(float c, float g) {
 //   it is left, with the 0.9 albedo the gas loses it at every scatter, as the path tracer has it.
 // - SKY_OCCLUSION: the sky reaches a point from the whole hemisphere, mostly along shorter paths out of the
 //   gas than the one straight up the sky map holds.
+// The densest smoke the gas is taken as: the path tracer's density majorant (RTSparseVolume::density_majorant),
+// which clamps the smoke it tracks to it, and Flow's own opacity march (patched, misc/physx_patches 0010).
+const float SMOKE_MAX = 2.0;
 const float SUN_MS_GAIN = 1.0 / 0.95;
 const float SKY_MS_SHARE = 0.27;
 const float SKY_OCCLUSION = 0.15;
 
 float ms_transmittance(float tau) {
 	float a = p.sky_map.x * (1.0 / 0.9);
-	return (exp(-tau) + 0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + p.sky_map.z * exp(-0.125 * tau)) * (p.sky_map.x * SUN_MS_GAIN);
+	return (exp(-tau) + 0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau)) * (p.sky_map.x * SUN_MS_GAIN);
 }
 
 float ign(vec2 px) {
@@ -444,7 +446,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 			continue;
 		}
 		if (smoke > 0.001) {
-			float alpha = 1.0 - exp(-smoke * sigma * step_len);
+			float alpha = 1.0 - exp(-min(smoke, SMOKE_MAX) * sigma * step_len);
 			vec3 in_light = vec3(0.0);
 			vec3 pos_m = pos / upm;
 			for (int l = 0; l < light_count; l++) {
@@ -487,7 +489,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					for (int s = 0; s < shadow_steps; s++) {
 						float ls;
 						smoke_at(pos + ldir * (ds * (float(s) + 0.5)), cell_inv, light_acc, ls);
-						od += ls;
+						od += min(ls, SMOKE_MAX);
 					}
 					light_t = ms_transmittance(od * sigma * ds);
 				}
@@ -525,7 +527,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 						for (int s = 0; s < shadow_steps; s++) {
 							float ls;
 							smoke_at(pos + ldir * (ds * (float(s) + 0.5)), cell_inv, light_acc, ls);
-							od += ls;
+							od += min(ls, SMOKE_MAX);
 						}
 						light_t = ms_transmittance(od * sigma * ds);
 					}
@@ -554,7 +556,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					for (int s = 0; s < shadow_steps; s++) {
 						float ls;
 						smoke_at(pos + vec3(0.0, ds * (float(s) + 0.5), 0.0), cell_inv, light_acc, ls);
-						od += ls;
+						od += min(ls, SMOKE_MAX);
 					}
 					// Multiple scattering, approximated as in Wrenninge et al. 2013 ("Oz: the great and
 					// volumetric") and Hillaire 2016 (Frostbite sky and clouds): octaves of ever weaker,
@@ -626,7 +628,7 @@ void main() {
 				i = max(i + 1, int(ceil(b1 * float(steps) - 0.5)));
 				continue;
 			}
-			od += smoke * sigma_ds;
+			od += min(smoke, SMOKE_MAX) * sigma_ds;
 			i++;
 		}
 		imageStore(shadow_img, ivec3(px, k), vec4(od));
@@ -1023,14 +1025,7 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	}
 	f[w++] = CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
 	f[w++] = 1.0f;
-	{
-		// The scattering orders past the three octaves, as a geometric series: sum over n >= 3 of (c albedo)^n,
-		// c = 0.6 the share of light a scatter keeps inside the gas (fitted to the path tracer on two test puffs),
-		// counted only above the 0.9 default (whose look the three octaves already match).
-		const float om = CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
-		auto tail = [](float x) { const float q = 0.6f * x; return q * q * q / (1.0f - q); };
-		f[w++] = MAX(tail(om) - tail(0.9f), 0.0f);
-	}
+	f[w++] = 0.0f;
 	f[w++] = sky_map ? 1.0f : 0.0f;
 	ERR_FAIL_COND(w != PARAMS_WORDS);
 	p_rd->buffer_update(params_buffer, 0, sizeof(words), words);
