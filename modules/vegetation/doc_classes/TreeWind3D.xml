@@ -101,6 +101,32 @@
 				For tests: the storm load on [param mesh] at [param placement] in the current wind. Keys: [code]bone[/code] (nearest to breaking), [code]ratio[/code] (its moment over its strength), [code]root_ratio[/code] (overturning moment over anchorage), [code]radius[/code], [code]height[/code], [code]storm[/code] (the mesh has a storm kit).
 			</description>
 		</method>
+		<method name="avalanche_strength" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="stem_diameter" type="float" />
+			<param index="1" name="crown" type="bool" />
+			<description>
+				The avalanche impact pressure (Pa) that breaks a stem of [param stem_diameter] metres: 15 kPa times (D / 0.4 m)^1.36, at least 0.5 kPa (Bartelt and Stoeckli 2001). With [param crown], the pressure that snaps a crown on a stem that holds (3 kPa). Each tree varies this by up to 25% (stems) or 40% (crowns).
+			</description>
+		</method>
+		<method name="get_avalanche_break_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Crowns an avalanche snapped off.
+			</description>
+		</method>
+		<method name="get_avalanche_throw_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Whole trees an avalanche broke at the foot or threw.
+			</description>
+		</method>
+		<method name="get_canopy_holes_cut" qualifiers="const">
+			<return type="int" />
+			<description>
+				Felled trees and snapped stems whose leaf area has been cut out of the weather map's [member WeatherMap3D.canopy_map].
+			</description>
+		</method>
 		<method name="get_storm_throw_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -145,6 +171,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="avalanche_enabled" type="bool" setter="set_avalanche_enabled" getter="is_avalanche_enabled" default="true">
+			Avalanches break trees: once a second each rigged tree reads [method WorldSnow.avalanche_peak_pressure_at] at its foot and, past [method avalanche_strength], snaps its crown or breaks at the foot (70%) or goes with its root plate, falling downslope ([method WorldGround.height_at]). Felled crowns leave the weather map's canopy, so snow and rain under them see the gap.
+		</member>
 		<member name="active" type="bool" setter="set_active" getter="is_active" default="true">
 			Updates every frame by itself. Off: call [method update].
 		</member>

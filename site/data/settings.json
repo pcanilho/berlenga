@@ -1370,10 +1370,11 @@
   {
    "name": "Blowing sand",
    "settings": [
-    "GroundStreamers3D"
+    "GroundStreamers3D",
+    "GroundSurface3D.obstacle_lee"
    ],
    "note": "",
-   "what": "grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind.",
+   "what": "grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind, and drop in the lee of boulders, walls and parked vehicles.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -3293,10 +3294,11 @@
   {
    "name": "Wind moves lying snow",
    "settings": [
-    "SnowCover3D.wind_transport_enabled"
+    "SnowCover3D.wind_transport_enabled",
+    "drift_obstacles"
    ],
    "note": "",
-   "what": "windward shoulders and crests are scoured and the lee fills with wind-packed snow.",
+   "what": "windward shoulders and crests are scoured and the lee fills with wind-packed snow; snow drifts in behind rocks, walls, buildings and vehicles and blows off their tops.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3431,7 +3433,7 @@
     "water_enabled"
    ],
    "note": "",
-   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees. In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice and breaks through thin ice.",
+   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice and breaks through thin ice.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
@@ -3537,10 +3539,12 @@
    "settings": [
     "add_canopy",
     "add_shelter_box",
-    "gust_patch_size"
+    "gust_patch_size",
+    "wind_obstacles",
+    "wind_obstacle"
    ],
    "note": "",
-   "what": "shelter inside plant canopies and behind buildings; gust patches sweep across fields.",
+   "what": "shelter inside plant canopies and behind buildings, boulders and vehicles; gust patches sweep across fields.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
