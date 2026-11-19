@@ -33,7 +33,7 @@
 			<param index="6" name="size" type="Vector3" />
 			<param index="7" name="colors" type="PackedColorArray" />
 			<description>
-				Small stones drawn as part of the ground past where real ones stop (set by [RockField3D], see [member RockField3D.ground_detail_cover]). [param near] and [param far] are cover maps over [param near_rect] and [param far_rect] (world X and Z, in metres); [param reach], [param band] and [param size] are the pebbles', gravel's and fine gravel's reach from the camera, the band they hand over in and their mean size; [param colors] the rock types' linear albedo. Single grains are drawn while a pixel covers under a quarter of one, their mean beyond. [code]null[/code] maps turn it off.
+				Small stones drawn as part of the ground past where real ones stop (set by [RockField3D], see [member RockField3D.ground_detail_cover]). [param near] and [param far] are cover maps over [param near_rect] and [param far_rect] (world X and Z, in metres); [param reach], [param band] and [param size] are the pebbles', gravel's and fine gravel's reach from the camera, the band they hand over in and their mean size; [param colors] the rock types' linear albedo. Single grains are drawn while a pixel covers under about a third of one, their mean once it covers more than one. [code]null[/code] maps turn it off.
 			</description>
 		</method>
 		<method name="set_layer">
