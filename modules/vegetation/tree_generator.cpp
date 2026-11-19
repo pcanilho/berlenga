@@ -4428,6 +4428,46 @@ BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt,
 	}
 	return c;
 }
+
+// Maritime pine's plate network as fracture columns (Lefebvre and Neyret 2002, "Synthesizing
+// bark": the outer layer tears along the stem first, into long vertical fissures, then the strips
+// between them break across). Wavy fissures split the tile into p_cols columns; each column breaks
+// across two or three times a tile, at its own phase and slope, so plates are blunt-ended,
+// irregular rectangles about twice as long as wide, staggered against their neighbours, never the
+// pointed lenses a stretched Voronoi gives. Edge distances are in column widths; end breaks count
+// p_end times their distance, so they crack narrower than the fissures.
+BarkCell bark_fracture_columns(float p_u, float p_v, int p_cols, uint32_t p_salt, float p_end) {
+	const float x = p_u * p_cols;
+	auto wrap = [&](int i) { return ((i % p_cols) + p_cols) % p_cols; };
+	// Each fissure wanders round its own place, so the columns differ in width.
+	auto bound = [&](int i) { return float(i) + 0.35f * (bark_hash(wrap(i), 6, p_salt) - 0.5f) + 0.5f * bark_fbm(float(wrap(i)) / p_cols, p_v, 1, 9, 3, p_salt + 13u * uint32_t(wrap(i))); };
+	// A fissure that has not opened over a stretch: the plates either side are one there, and
+	// the breaks across them end on it in T junctions, as real crack networks do.
+	auto open = [&](int i) { return bark_fbm(float(wrap(i)) / p_cols, p_v, 1, 4, 2, p_salt + 41u + 7u * uint32_t(wrap(i))) > -0.04f; };
+	int c = int(Math::floor(x));
+	if (x < bound(c)) {
+		c--;
+	} else if (x >= bound(c + 1)) {
+		c++;
+	}
+	const float l = bound(c), r = bound(c + 1);
+	const float sl = open(c) ? x - l : x - bound(c - 1);
+	const float sr = open(c + 1) ? r - x : bound(c + 2) - x;
+	const float side = MIN(sl, sr);
+	const int ci = wrap(c);
+	const int n = 1 + int(bark_hash(ci, 1, p_salt + 3u) > 0.4f);
+	const float phase = bark_hash(ci, 2, p_salt + 3u);
+	const float tilt = 0.5f * (bark_hash(ci, 4, p_salt + 3u) - 0.5f);
+	const float t = p_v * n + phase + tilt * (x - 0.5f * (l + r)) + 0.35f * bark_fbm(p_u, p_v, p_cols * 3, 7, 2, p_salt + 29u);
+	const int k = int(Math::floor(t));
+	const float ft = t - float(k);
+	const float across = MIN(ft, 1.0f - ft) * float(p_cols) / float(n);
+	BarkCell cell;
+	cell.edge = MIN(side, across * p_end);
+	cell.id = uint32_t(ci * 64 + ((k % n) + n) % n);
+	cell.site = Vector2(0.5f * (l + r), (float(k) + 0.5f - phase) / n);
+	return cell;
+}
 } // namespace
 
 // A tileable bark set (albedo multiplier, tangent-space normal, roughness, height in metres) for
@@ -4519,7 +4559,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.12f }, // Lenticelled: smooth, dense raised pale lenticels, peeling skin.
 		{ 5, 3, 0.15f, 0.045f, 0.002f, 0.8f, 0.16f }, // Pinea: long flat vertical plates, orange-red fissures (5y).
 		{ 9, 12, 0.2f, 0.08f, 0.003f, 0.3f, 0.14f }, // Cork (1.2 m tile): long, irregular, spongy ridges with rounded edges between deep fissures (5aa).
-		{ 4, 3, 0.36f, 0.085f, 0.003f, 0.16f, 0.12f }, // Pinaster (0.9 m tile): thick plates a hand or two across, deep furrows (5ac).
+		{ 3, 3, 0.24f, 0.085f, 0.003f, 0.16f, 0.12f }, // Pinaster (0.9 m tile): thick plates a hand or two across, deep furrows (5ac); 3 fracture columns.
 	};
 	const Look &L = LOOKS[p_kind];
 	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
@@ -4558,7 +4598,9 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 				}
 				const float merge = (p_kind == BARK_PLATED || p_kind == BARK_PINASTER) ? 0.35f : (p_kind == BARK_PINEA ? 0.05f : (p_kind == BARK_SCALY ? 0.1f : (p_kind == BARK_CORK ? 0.5f : 0.0f)));
 				const float scar_cut = p_kind == BARK_FLAKING ? 0.62f : 0.0f;
-				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, p_kind == BARK_PINEA ? 0.5f : (p_kind == BARK_PINASTER ? 0.65f : (p_kind == BARK_CORK ? 0.75f : -1.0f)), p_kind == BARK_PINEA ? 1.8f : (p_kind == BARK_PINASTER ? 1.35f : 1.0f));
+				// Round 11 (docs, 18 Nov: pointed, feather-like tongues stacked in rows): maritime pine
+				// plates come from fracture columns, not a stretched Voronoi.
+				const BarkCell c = p_kind == BARK_PINASTER ? bark_fracture_columns(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, salt + 131u, 1.25f) : bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u, p_kind == BARK_PINEA ? 0.5f : (p_kind == BARK_PINASTER ? 0.65f : (p_kind == BARK_CORK ? 0.75f : -1.0f)), p_kind == BARK_PINEA ? 1.8f : (p_kind == BARK_PINASTER ? 1.35f : 1.0f));
 				// Cracks open unevenly: wider where the layer split first. Some cell walls never
 				// cracked, so plates join into larger irregular shapes, and the plate rims are
 				// ragged rather than straight (what makes a Voronoi read as tiles).
