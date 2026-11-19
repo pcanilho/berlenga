@@ -2359,16 +2359,22 @@ void TreeGenerator::_grow_date_palm() {
 	// A wild clump: more trunks from old offshoots, leaning out; and young offshoots round the foot, each its own
 	// small crown (the grower's cut leaves only the stumps, not modelled).
 	if (!tended) {
+		// The side trunks splay away from the main trunk's lean and from each other, and stand lower: each grew
+		// from an offshoot years after the parent and leaned out for light, so a clump opens like a vase, never a
+		// column of stacked crowns (docs, 19 Nov).
 		const int extra = MAX(0, int(params[PARAM_STEMS]) - 1);
+		const Vector3 lean_h(lean0.x, 0.0f, lean0.z);
+		const float away = lean_h.length() > 1e-4f ? Math::atan2(-lean_h.z, -lean_h.x) : _rand(0.0f, float(Math::TAU));
 		for (int s2 = 0; s2 < extra; s2++) {
-			const float a = _rand(0.0f, float(Math::TAU));
+			const float a = away + (float(s2) - 0.5f * float(extra - 1)) * (float(Math::TAU) / float(MAX(extra + 1, 3))) + _rand(-0.35f, 0.35f);
 			const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
-			const float th = trunk_h * _rand(0.4f, 0.9f);
-			palm(root + out * (trunk_r * 2.2f), (up + out * _rand(0.25f, 0.5f)).normalized(), th, trunk_r * 0.85f, int(alive * 0.8f), dead / 2, frond_len * 0.95f);
+			const float th = trunk_h * _rand(0.35f, 0.75f);
+			palm(root + out * (trunk_r * 2.4f), (up + out * _rand(0.5f, 0.85f)).normalized(), th, trunk_r * 0.85f, int(alive * 0.8f), dead / 2, frond_len * 0.9f);
 		}
 		const int offs = years > 8.0f ? int(params[PARAM_BASAL_SPROUTS] * _rand(2.0f, 9.0f)) : 0;
+		const float off0 = _rand(0.0f, float(Math::TAU));
 		for (int o = 0; o < offs; o++) {
-			const float a = _rand(0.0f, float(Math::TAU));
+			const float a = off0 + float(o) * 2.39996f + _rand(-0.3f, 0.3f); // Golden-angle spread round the foot.
 			const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
 			const float og = _rand(0.15f, 0.5f);
 			const float oth = og > 0.35f ? _rand(0.0f, 1.2f) : 0.0f;
@@ -21373,7 +21379,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			Ref<PlantSpecies> wild = _stand_species(PRESET_DATE_PALM, false, p_variants, FORM_OPEN);
 			// Wild clumps crowd along the water, where the water table is shallowest, and thin away from it.
 			wild->set_density(0.7f);
-			wild->set_spacing(5.0f);
+			wild->set_spacing(6.5f); // A clump is already several crowns: closer, they stacked into one pillar.
 			wild->set_scale_range(Vector2(0.75f, 1.2f));
 			wild->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, 18.0f));
 			wild->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, 10.0f);
