@@ -322,6 +322,13 @@
 				Returns the precipitation falling as snow at [param position], in millimetres of water an hour (the snow share of Jennings et al. 2018 at that height). [SnowFall3D] reads it.
 			</description>
 		</method>
+		<method name="get_surface_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The depth, m, as [SnowSurface3D] draws it and collides with it: Catmull-Rom between the cells (no creases along their edges), held within the four nearest cells' range. [method get_depth_at] is bilinear.
+			</description>
+		</method>
 		<method name="get_swe_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -531,6 +538,9 @@
 		</member>
 		<member name="drift_enabled" type="bool" setter="set_drift_enabled" getter="is_drift_enabled" default="true">
 			If [code]true[/code], wind above [member drift_threshold_wind] moves falling snow into sheltered ground and off exposed ground, by the maximum upwind slope Sx (Winstral, Elder and Davis 2002) over a 30 degree window. The map keeps the snow that fell. Sx is baked on worker threads when the wind turns by more than 10 degrees.
+		</member>
+		<member name="drift_obstacles" type="bool" setter="set_drift_obstacles" getter="is_drift_obstacles_enabled" default="true">
+			Rocks, walls, buildings and vehicles (WorldWeather.obstacle_height_at: the weather's [code]weather_shelter[/code] obstacles) count as terrain in the drift's Sx (Winstral and Marks 2002): the wind strips their tops and snow fills in behind them, out to about 15 heights for a wall (Tabler 1991). Blowing snow also reads their lee (WorldWeather.obstacle_lee_at at the snow's surface): the transport flux drops behind them and the snow carried in settles until the drift reaches about 1.2 times the obstacle's height. Read a sixteenth of the square each update; a change bakes Sx again.
 		</member>
 		<member name="drift_strength" type="float" setter="set_drift_strength" getter="get_drift_strength" default="0.6">
 			How strongly drift redistributes falling snow: at full wind, a fully sheltered cell gets [code]1 + drift_strength[/code] times the snowfall and a fully exposed cell [code]1 - drift_strength[/code] times.

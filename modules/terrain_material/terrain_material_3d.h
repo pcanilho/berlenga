@@ -105,6 +105,10 @@ private:
 	bool rock_detail_enabled = true;
 	float rock_detail_scale = 1.0f;
 	float scree_blocks_distance = 0.0f;
+	Ref<Texture2D> cover_near, cover_far;
+	Rect2 cover_near_rect, cover_far_rect;
+	Vector3 cover_reach, cover_band, cover_size;
+	PackedColorArray cover_colors;
 	bool wetness_enabled = true;
 	bool snow_enabled = true;
 	float snow_max_slope = 60.0f;
@@ -161,6 +165,7 @@ public:
 	float get_rock_detail_scale() const { return rock_detail_scale; }
 	void set_scree_blocks_distance(float p_value);
 	float get_scree_blocks_distance() const { return scree_blocks_distance; }
+	void set_ground_cover(const Ref<Texture2D> &p_near, const Ref<Texture2D> &p_far, const Rect2 &p_near_rect, const Rect2 &p_far_rect, const Vector3 &p_reach, const Vector3 &p_band, const Vector3 &p_size, const PackedColorArray &p_colors);
 	void set_sky_occlusion_enabled(bool p_enabled);
 	bool is_sky_occlusion_enabled() const { return sky_occlusion_enabled; }
 	void set_sky_occlusion(float p_amount);

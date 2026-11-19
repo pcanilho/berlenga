@@ -216,6 +216,12 @@
 				How fast wind-blown sand is piling up at [param position], in m/s (negative where the wind is taking it away): where the saltation flux falls, among plants ([member wind_shelters]) or onto damp sand, the sand it carried lands. A gale over a grass tuft piles about 2 cm an hour on its windward edge.
 			</description>
 		</method>
+		<method name="get_flood_silt_total" qualifiers="const">
+			<return type="float" />
+			<description>
+				Silt and ash laid by floodwater since the start (kg/m2, summed over the 1 m points it fell on).
+			</description>
+		</method>
 		<method name="get_footing_at" qualifiers="const">
 			<return type="Dictionary" />
 			<param index="0" name="position" type="Vector3" />
@@ -689,6 +695,9 @@
 		<member name="dust_emission" type="float" setter="set_dust_emission" getter="get_dust_emission" default="0.06">
 			The dust a tyre lifts from fully dry, bare sand, in kilograms per second per metre of tyre width per metre per second of speed (sliding counts twice). Scaled by how much of the ground the wind could move there; damp sand gives none. Carried by a [GroundDust3D].
 		</member>
+		<member name="flood_silt" type="bool" setter="set_flood_silt" getter="is_flood_silt" default="true">
+			Water from any other producer on the water contract (a river over its banks, a lake, live water) soaks the ground it covers, and still or slow water lays its suspended load ([method WorldWater.sediment_at]) as fresh mud at the silt's settling speed (D = C w_s dt, w_s 3e-4 m/s; Pizzuto 1987). A current over about 0.5 m/s keeps it up.
+		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
 			The node the field follows; the camera when empty.
 		</member>
@@ -709,6 +718,9 @@
 		</member>
 		<member name="height_source" type="NodePath" setter="set_height_source" getter="get_height_source" default="NodePath(&quot;&quot;)">
 			The terrain: a [code]TerrainDeformer3D[/code], a baked [code]TerrainDataMap3D[/code], a [code]TerrainGenerator3D[/code], anything with [code]get_height(position)[/code] or Terrain3D. Empty: a downward ray on [member ground_collision_mask].
+		</member>
+		<member name="light_budget" type="bool" setter="set_light_budget" getter="is_light_budget" default="false">
+			For still shots and benches on a software GPU: sets [member deform_resolution] and [member near_resolution] to 256 and [member max_cached_tiles] to 64, about a fifth of the GPU work and some 300 MB less memory, with coarser prints (12.5 cm and 3 cm cells). Turning it off sets them back to 512, 512 and 1024. Off by default.
 		</member>
 		<member name="litter_cover" type="float" setter="set_litter_cover" getter="get_litter_cover" default="0.0">
 			The canopy closure that drops leaf litter when there is no weather map, from 0 to 1.
@@ -770,6 +782,9 @@
 		<member name="near_resolution" type="int" setter="set_near_resolution" getter="get_near_resolution" default="512">
 			The near field's texels per side (a multiple of 64).
 		</member>
+		<member name="obstacle_lee" type="bool" setter="set_obstacle_lee" getter="is_obstacle_lee_enabled" default="true">
+			Blown sand slows behind rocks, walls, buildings and vehicles: the friction speed is scaled by WorldWeather.obstacle_lee_at (about 0.15 in the cavity behind one), so the flux falls and the sand drops in their lee as shadow dunes (Hesp 1981). Read every half second with the plants' shelter.
+		</member>
 		<member name="outer_spacing" type="float" setter="set_outer_spacing" getter="get_outer_spacing" default="0.125">
 			The patch's vertex spacing over the outer half of the field, in metres.
 		</member>
@@ -811,6 +826,9 @@
 		</member>
 		<member name="muddy_water" type="bool" setter="set_muddy_water" getter="is_muddy_water" default="true">
 			If [code]true[/code], the standing water carries clay: tyres rolling on a soft clay bed under it churn a couple of millimetres of slurry into the water as they pass, feet and landing clods stir more in ([method stir_water]), the flow carries it, it settles out at a silt floc's speed (0.1 mm/s, so a stirred puddle clears over minutes) and drying leaves it on the bed. Sand beds leave the water clear. Both renderers draw the water by its clay: the bed hidden within a millimetre or so and the water milky brown with the ground's colour past some tens of kg/m³. Water thrown up carries it ([method get_water_mud_at]), so tyre sheets fly brown and stain what they hit.
+		</member>
+		<member name="simulation_paused" type="bool" setter="set_simulation_paused" getter="is_simulation_paused" default="false">
+			Stops the ground simulating: no prints, slumping, water, cracks, follow or read-back, while its look and every read ([method get_dent_at], soil and mud queries) stay as they are. For still shots once a scene is set up; [member light_budget] makes the setup itself cheaper.
 		</member>
 		<member name="skirt" type="float" setter="set_skirt" getter="get_skirt" default="0.5">
 			How far the terrain is lowered under the patch, in metres.

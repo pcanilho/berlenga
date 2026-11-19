@@ -1977,6 +1977,33 @@ void PhysXRiver3D::contract_water_add_sediment(const Vector3 &p_position, float 
 	sed_any = true;
 }
 
+// A load dropped in at once: mixed through the water of the nearest section (its cross-section, discharge over
+// speed, times the sections' spacing), then carried on as any other. A debris flow's dump would otherwise be
+// held as a rate for the sources' two seconds (twice its mass), and a second dump into the same section on a
+// later frame replaced the first.
+void PhysXRiver3D::contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) {
+	int i;
+	float t;
+	float n;
+	if (!_locate(p_position, i, t, n)) {
+		return;
+	}
+	_sediment_resample();
+	const int k = t < 0.5f ? i : i + 1;
+	if (k < 0 || k >= (int)sed_c.size() || k >= (int)sections.size() || sed_ds <= 0.0f) {
+		return;
+	}
+	const Section &sec = sections[k];
+	const float volume = MAX(sec.discharge, 1e-3f) / MAX(sec.speed, 0.01f) * sed_ds;
+	Vector2 &c = sed_c[k];
+	c += Vector2(MAX(p_mineral_kg, 0.0f), MAX(p_ash_kg, 0.0f)) / volume;
+	const float total = c.x + c.y;
+	if (total > WaterSediment::MAX_LOAD) {
+		c *= WaterSediment::MAX_LOAD / total;
+	}
+	sed_any = sed_any || total > 0.0f;
+}
+
 Vector2 PhysXRiver3D::get_sediment_at(const Vector3 &p_world_pos) const {
 	int i;
 	float t;

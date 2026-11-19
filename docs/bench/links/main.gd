@@ -26,6 +26,8 @@ extends Node3D
 #   lightning a tall mast takes the strike meant for the ground beside it; striking distance on IEC 62305
 #   fire      a long continuing current lights dry fuel, not wet (PhysX)
 #   contact   a body in world_contact flattens grass without being in grass_trample, and herbs where there is no grass
+#   lee       a wall and a moving prop (get_wind_obstacles) shelter the wind behind them; snow drifts into a wall's
+#             lee and blows off its top, the ground past the drift swept; a moved prop takes its lee along
 #   contracts the water contract picks the right water where several overlap (a pool in a hollow below the sea's
 #             level, a body above the water); with no producer it answers -INF; the weather's defaults
 
@@ -52,6 +54,9 @@ class SiltPondStub extends WorldWater:
 		return 1.0 if p.x < 0.0 else -INF
 
 	func _add_sediment(_p: Vector3, mineral: float, ash: float) -> void:
+		load += Vector2(mineral, ash) / 1000.0
+
+	func _add_sediment_mass(_p: Vector3, mineral: float, ash: float) -> void:
 		load += Vector2(mineral, ash) / 1000.0
 
 	func _sediment_at(_p: Vector3) -> Vector2:
@@ -98,6 +103,19 @@ class LeafSnowStub extends WorldSnow:
 
 	func _depth_at(p: Vector3) -> float:
 		return depth if p.x > -30.0 and p.x < -10.0 else 0.0
+
+
+# A flood 0.3 m deep over x < 0 carrying 5 kg/m3 of silt and 1 of ash: still over -6 < x < 0, a 1 m/s current
+# beyond.
+class FloodStub extends WorldWater:
+	func _height_at(p: Vector3) -> float:
+		return 0.3 if p.x < 0.0 else -INF
+
+	func _flow_at(p: Vector3) -> Vector3:
+		return Vector3(0, 0, 1.0) if p.x < -6.0 else Vector3.ZERO
+
+	func _sediment_at(p: Vector3) -> Vector2:
+		return Vector2(5.0, 1.0) if p.x < 0.0 else Vector2.ZERO
 
 
 # Ground burnt a year ago over x < -10 (no fire burning now).
@@ -165,6 +183,8 @@ func _ready() -> void:
 	await _contact_tests()
 	await _snow_fire_tests()
 	await _dirty_snow_tests()
+	await _flood_ground_tests()
+	await _lee_drift_tests()
 	await _leaf_kick_tests()
 	await _leaf_surface_tests()
 	await _washout_tests()
@@ -692,6 +712,132 @@ func _dirty_snow_tests() -> void:
 	await get_tree().physics_frame
 
 
+# A prop that gives its own wind obstacles (as RockField3D and PhysXVehicle3D do): one box, 1.5 m high.
+class CrateObstacle extends Node3D:
+	func get_wind_obstacles(_rect: Rect2) -> Array:
+		return [AABB(global_position - Vector3(1, 0, 1), Vector3(2, 1.5, 2))]
+
+
+# Lee drifts (docs/ideas/world-links.md): obstacles in the weather_shelter group slow the wind behind them
+# (WorldWeather.obstacle_lee_at), and stand in the snow's Sx (obstacle_height_at), so snow fills their lee.
+func _lee_drift_tests() -> void:
+	if not ClassDB.class_exists("SnowCover3D"):
+		_skip("lee: snow drifts", "no SnowCover3D")
+		return
+	WorldContracts.clear_overrides()
+	var ground_node := Node3D.new()
+	ground_node.set_script(load("res://flat_ground.gd"))
+	ground_node.name = "LeeGround"
+	add_child(ground_node)
+	# A wall 2 m high and 40 m long across a 14 m/s wind blowing to +x.
+	var wall := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(1, 2, 40)
+	wall.mesh = bm
+	wall.position = Vector3(0, 1, 0)
+	wall.add_to_group("weather_shelter")
+	add_child(wall)
+	var crate := CrateObstacle.new()
+	crate.position = Vector3(-200, 0, 100)
+	crate.add_to_group("weather_shelter")
+	add_child(crate)
+	var m := _new_map()
+	m.wind_speed = 14.0
+	m.wind_direction = Vector2(1, 0)
+	m.temperature = -6.0
+	m.humidity = 0.9
+	m.rain_rate = 2.0
+	m.cloud_cover = 1.0
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.rebake_shelter()
+	m.advance(1.0)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var on_wall: float = w.obstacle_height_at(Vector3(0, 0, 0))
+	var cavity: float = w.obstacle_lee_at(Vector3(3, 0, 0))
+	var ten_h: float = w.obstacle_lee_at(Vector3(20, 0, 0))
+	var upwind: float = w.obstacle_lee_at(Vector3(-6, 0, 0))
+	_check("lee: a wall in the weather_shelter group shelters the wind behind it, from the terrain under it", absf(on_wall - 2.0) < 0.05 and cavity < 0.3 and ten_h > cavity and ten_h < 0.95 and upwind == 1.0, "wall %.2f m high; near-ground wind %.2f at 1.5 H behind, %.2f at 10 H, %.2f upwind" % [on_wall, cavity, ten_h, upwind])
+	var crate_lee: float = w.obstacle_lee_at(Vector3(-196, 0, 100))
+	crate.position = Vector3(-200, 0, 60)
+	for i in 150:
+		await get_tree().physics_frame
+	var left: float = w.obstacle_lee_at(Vector3(-196, 0, 100))
+	var moved: float = w.obstacle_lee_at(Vector3(-196, 0, 60))
+	_check("lee: a prop's own obstacles (get_wind_obstacles) shelter, and a moved one takes its lee along", crate_lee < 0.5 and left == 1.0 and moved < 0.5 and absf(w.obstacle_height_at(Vector3(-200, 0, 60)) - 1.5) < 0.05, "%.2f behind it, %.2f there after it moved, %.2f behind it at its new place" % [crate_lee, left, moved])
+	# Snow over a day of the gale: the wall's lee fills, its top is stripped.
+	var snow: Node3D = ClassDB.instantiate("SnowCover3D")
+	snow.extent = 64.0
+	snow.resolution = 64
+	snow.update_rate = 0.0001
+	add_child(snow)
+	snow.height_source = snow.get_path_to(ground_node)
+	snow.follow_target = snow.get_path_to(ground_node)
+	snow.refresh_heights()
+	snow.advance(6.0 * 3600.0)
+	var lee_d: float = snow.get_depth_at(Vector3(4, 0, 5))
+	var far_d: float = snow.get_depth_at(Vector3(20, 0, 5))
+	var open_d: float = snow.get_depth_at(Vector3(-15, 0, 5))
+	var top_d: float = snow.get_depth_at(Vector3(0, 0, 5))
+	var foot_d: float = snow.get_depth_at(Vector3(2.5, 0, 5))
+	# The wall traps the blowing snow, so the ground past its drift is swept bare until the drift fills (what a snow
+	# fence does for a road; Tabler 1991).
+	_check("lee: snow drifts deep in a wall's lee, blows off its top, and the ground past the drift is swept", foot_d > 2.0 * open_d and lee_d > 1.2 * open_d and far_d < 0.5 * open_d and top_d < open_d and open_d > 0.05, "%.1f cm at its foot, %.1f cm at 2 H behind, %.1f cm at 10 H, %.1f cm in the open upwind, %.1f cm on the wall" % [foot_d * 100.0, lee_d * 100.0, far_d * 100.0, open_d * 100.0, top_d * 100.0])
+	snow.drift_obstacles = false
+	snow.advance(6.0 * 3600.0)
+	var lee_off: float = snow.get_depth_at(Vector3(4, 0, 5)) - lee_d
+	var open_off: float = snow.get_depth_at(Vector3(-15, 0, 5)) - open_d
+	_check("lee: drift_obstacles off, the drift is no longer fed and the wind takes it back", lee_off < 0.0 and open_off > 0.05, "%.1f cm 2 H behind it, %.1f cm in the open over 6 more hours" % [lee_off * 100.0, open_off * 100.0])
+	WorldContracts.clear_overrides()
+	snow.queue_free()
+	wall.queue_free()
+	crate.queue_free()
+	ground_node.queue_free()
+	m.queue_free()
+	await get_tree().physics_frame
+
+
+# Floods on the ground (WorldWater into GroundSurface3D): any producer's water soaks the ground it covers, and still
+# water lays its load as fresh mud; a fast current keeps it up; dry ground beside gets neither.
+func _flood_ground_tests() -> void:
+	if not ClassDB.class_exists("GroundSurface3D"):
+		_skip("ground: floods", "no GroundSurface3D")
+		return
+	WorldContracts.clear_overrides()
+	var ground_node := Node3D.new()
+	ground_node.set_script(load("res://flat_ground.gd"))
+	ground_node.name = "FloodGround"
+	add_child(ground_node)
+	var g: Node3D = ClassDB.instantiate("GroundSurface3D")
+	g.name = "FloodSurface"
+	g.gpu_simulation = false
+	g.near_field = false
+	g.runoff_channels = false
+	g.standing_water = false
+	g.wind_ripples = false
+	g.world_puddles = false
+	add_child(g)
+	g.height_source = g.get_path_to(ground_node)
+	g.follow_target = g.get_path_to(ground_node)
+	await get_tree().physics_frame
+	WorldContracts.add_water_stub(FloodStub.new())
+	for i in 480:
+		await get_tree().physics_frame
+	var wet_still: float = g.get_saturation_at(Vector3(-3, 0, 0))
+	var wet_fast: float = g.get_saturation_at(Vector3(-9, 0, 0))
+	var dry: float = g.get_saturation_at(Vector3(3, 0, 0))
+	var silt_still: float = g.get_mud_deposit_at(Vector3(-3, 0, 0))
+	var silt_fast: float = g.get_mud_deposit_at(Vector3(-9, 0, 0))
+	var silt_dry: float = g.get_mud_deposit_at(Vector3(3, 0, 0)) # Green-Ampt fills the top 2 cm in about 10 s: over half in 8
+	_check("ground: floodwater from any producer soaks the ground it covers, not beside it", wet_still > 0.5 and wet_fast > 0.5 and dry < 0.1, "saturation %.2f under still water, %.2f under the current, %.2f on dry ground" % [wet_still, wet_fast, dry])
+	_check("ground: still floodwater lays its silt as fresh mud, a current keeps it up", silt_still > 1e-6 and silt_fast == 0.0 and silt_dry == 0.0, "%.1f um of silt under still water, %.1f um under the current, %.1f um beside" % [silt_still * 1e6, silt_fast * 1e6, silt_dry * 1e6])
+	WorldContracts.clear_overrides()
+	g.queue_free()
+	ground_node.queue_free()
+	await get_tree().physics_frame
+
+
 func _contract_tests() -> void:
 	WorldContracts.clear_overrides()
 	var w: WorldWater = WorldContracts.get_water()
@@ -795,6 +941,11 @@ func _contract_tests() -> void:
 	ws.add_sediment(Vector3(5, 0, 0), 9.0, 9.0) # no water there: dropped
 	var sed := ws.sediment_at(Vector3(-5, 0, 0))
 	_check("contracts: ash washed into a pond clouds it, none lands where there is no water", is_equal_approx(sed.y, 0.002) and sed.x == 0.0 and ws.sediment_at(Vector3(5, 0, 0)) == Vector2.ZERO, "%.4f kg/m3 ash, %.4f mineral" % [sed.y, sed.x])
+	# A debris flow's fines dropped in at once (kg, not kg/s), and none where there is no water.
+	ws.add_sediment_mass(Vector3(-5, 0, 0), 3000.0, 0.0)
+	ws.add_sediment_mass(Vector3(5, 0, 0), 9000.0, 0.0)
+	sed = ws.sediment_at(Vector3(-5, 0, 0))
+	_check("contracts: a debris flow's fines dumped into a pond mix through it", is_equal_approx(sed.x, 3.0) and ws.sediment_at(Vector3(5, 0, 0)) == Vector2.ZERO, "%.3f kg/m3 mineral" % sed.x)
 	WorldContracts.clear_overrides()
 	var wx: WorldWeather = WorldContracts.get_weather()
 	if not wx.has_provider():

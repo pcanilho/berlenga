@@ -39,6 +39,8 @@ contract returns with no provider.
 | `rain_share_at(pos)` | 0..1 | 1 | Liquid share (Jennings 2018) at the air there |
 | `rainfall_at(pos)`, `snowfall_at(pos)` | mm/h of water | 0 | The precipitation split by `rain_share_at` |
 | `smoke_at(pos)` | g/m2 | 0 | Fires' smoke particulate in the column (the haze layer) |
+| `obstacle_height_at(pos)` | m | 0 | Wind-blocking obstacles (rocks, walls, buildings, vehicles) over the ground, on the provider's shelter grid |
+| `obstacle_lee_at(pos)` | 0..1 | 1 | Near-ground wind behind upwind obstacles over the open wind: 0.15 in the cavity, back to 1 by 25 H |
 | `washout_at(pos, coarse)`, static `washout_rate(rain, snow, coarse)` | 1/s | 0 | Below-cloud scavenging of particles, a R^b: fine smoke about 1e-5 at 1 mm/h, coarse dust about 3e-4, snow five times rain |
 | `surface_wetness_at(pos)` | 0..1 | 0 | Film over storage; 1 where puddles stand |
 | `puddle_at(pos)` | mm | 0 | |
@@ -122,6 +124,7 @@ terramechanics and pressing calls, which stay on the producer for now).
 | `runoff_at(pos)` | mm/h | 0 |
 | `canopy_load_at(pos)` | kg/m2 | 0 |
 | `lake_ice_at(pos)` | (m, white share) | (0, 0) |
+| `avalanche_pressure_at(pos)`, `avalanche_peak_pressure_at(pos)` | Pa (dense flow, else powder cloud; peak so far) | 0 |
 | `add_impurity(pos, radius, mg_per_m2)`, `impurity_at(pos)` | mg/m2 black carbon equivalent (dust 0.013 of its mass) | no-op, 0 |
 | shader globals `snow_cover`, `snow_rect`, `snow_depth` | | |
 

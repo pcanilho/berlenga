@@ -22,6 +22,20 @@
 				Returns the shader code the material writes for its current settings.
 			</description>
 		</method>
+		<method name="set_ground_cover">
+			<return type="void" />
+			<param index="0" name="near" type="Texture2D" />
+			<param index="1" name="far" type="Texture2D" />
+			<param index="2" name="near_rect" type="Rect2" />
+			<param index="3" name="far_rect" type="Rect2" />
+			<param index="4" name="reach" type="Vector3" />
+			<param index="5" name="band" type="Vector3" />
+			<param index="6" name="size" type="Vector3" />
+			<param index="7" name="colors" type="PackedColorArray" />
+			<description>
+				Small stones drawn as part of the ground past where real ones stop (set by [RockField3D], see [member RockField3D.ground_detail_cover]). [param near] and [param far] are cover maps over [param near_rect] and [param far_rect] (world X and Z, in metres); [param reach], [param band] and [param size] are the pebbles', gravel's and fine gravel's reach from the camera, the band they hand over in and their mean size; [param colors] the rock types' linear albedo. Single grains are drawn while a pixel covers under about a third of one, their mean once it covers more than one. [code]null[/code] maps turn it off.
+			</description>
+		</method>
 		<method name="set_layer">
 			<return type="void" />
 			<param index="0" name="layer" type="int" enum="TerrainMaterial3D.Layer" />

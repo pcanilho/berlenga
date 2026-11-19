@@ -102,6 +102,18 @@ private:
 		RockGenerator::RockType head_type = RockGenerator::ROCK_GRANITE;
 		Rect2 bounds;
 	};
+	struct RiverSeg {
+		Vector2 a, f, side; // start (world xz), downstream and left unit vectors
+		float len = 0.0f, w = 0.0f, d50 = 0.0f, s0 = 0.0f, phase = 0.0f;
+		RockGenerator::RockType type = RockGenerator::ROCK_GRANITE;
+	};
+	struct RiverBed {
+		float band = 0.0f; // 0..1 inside the bed
+		float d50 = 0.0f; // the local median, m
+		float silt = 0.0f; // 0..1 the fines draped over the bed in a pool
+		Vector2 f, side;
+		RockGenerator::RockType type = RockGenerator::ROCK_GRANITE;
+	};
 
 	struct Library {
 		LocalVector<Ref<ArrayMesh>> meshes;
@@ -124,6 +136,7 @@ private:
 	struct ObstacleCell {
 		LocalVector<Vector4> obstacles;
 		LocalVector<float> sizes;
+		LocalVector<float> heights; // m over the ground, about the stone's top
 	};
 	HashMap<Vector3i, ObstacleCell> obstacle_cache;
 
@@ -188,6 +201,38 @@ private:
 	void _detail_sizes(Layer p_layer, real_t p_upper, float &r_d1, float &r_d2) const;
 	void _update_detail_radii();
 	Vector3 _detail_center() const;
+	// The far hand-over (docs/ideas/ground-detail.md, "Seamless far edge"): each detail class's cover of the ground in
+	// two maps round the camera (1 m and 8 m texels), handed to the ground material (TerrainMaterial3D
+	// set_ground_cover), which draws the grains' aggregate look past where each class's real stones stop.
+	static constexpr int COVER_N = 256;
+	struct CoverJob {
+		const RockField3D *field = nullptr;
+		const TerrainGenerator3D *gen = nullptr;
+		int level = 0;
+		Vector2 origin; // world xz of texel (0, 0)'s corner
+		float texel = 1.0f;
+		float sizes[3][2] = {}; // each class's shore sizes (m)
+		float scree_sizes[3][2] = {}; // and talus sizes (m)
+		float scree_dmin = 0.15f;
+		bool shore = true;
+		bool scree = true;
+		bool river = true;
+		LocalVector<RiverSeg> river_segs; // the river beds under the map
+		PackedByteArray data; // RGBA8: pebble, gravel and fine cover (0..0.5 as 0..255), rock type (x 32)
+		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
+	};
+	bool ground_cover = true;
+	bool detail_rivers = true; // ground detail on the river beds
+	Ref<ImageTexture> cover_tex[2];
+	Vector2 cover_origin[2];
+	bool cover_valid[2] = {};
+	CoverJob *cover_job = nullptr;
+	static void _cover_task(void *p_job);
+	static void _cover_fill(CoverJob *p_job);
+	void _update_cover(bool p_wait);
+	void _cover_finish(bool p_wait);
+	void _push_cover();
+	void _clear_cover();
 	struct DetailSeed {
 		Vector2 xz;
 		float centre;
@@ -319,6 +364,7 @@ private:
 	// The ground side of the contact (docs/ideas/rocks.md, "Stone and ground contact"): a global mask around the
 	// target the terrain material reads, R the damp ring round each stone's foot, G fines banked on its uphill side.
 	bool ground_contact = true;
+	bool wind_obstacles = true;
 	Ref<ImageTexture> contact_texture;
 	Vector2 contact_origin = Vector2(1e30, 1e30);
 	bool contact_dirty = true;
@@ -385,6 +431,10 @@ private:
 	Library *_ensure_library(uint32_t p_key);
 	void _ensure_libraries(const LocalVector<uint32_t> &p_keys);
 	void _prepare_rivers();
+	// Ground detail on river beds (docs/ideas/ground-detail.md, "River and stream beds"): the river layer's segments
+	// near a rectangle, each with its bed's median size, and the bed one gives at a point (its pools and riffles).
+	void _river_segments(const Rect2 &p_rect, LocalVector<RiverSeg> &r_segs) const;
+	static bool _river_bed(const RiverSeg &p_seg, const Vector2 &p_xz, RiverBed &r_bed, float p_texel = 0.0f);
 	RockGenerator::RockType _type_at(const TerrainGenerator3D *p_gen, const Vector3 &p_pos) const;
 
 public:
@@ -414,6 +464,13 @@ private:
 	};
 	HashMap<uint64_t, DustTrack> dust_tracks; // by the breakable's ObjectID
 	LocalVector<Dust> dust_events;
+	struct SnowDust {
+		Vector3 at; // mass-weighted sum of positions
+		float mass = 0.0f; // kg
+		float radius = 0.0f;
+	};
+	HashMap<Vector2i, SnowDust> snow_dust; // fines settling near their hit, to the snow contract once a second
+	float snow_dust_timer = 0.0f;
 	real_t dust_total = 0.0; // kg, since the field entered the tree
 	int dust_impacts = 0;
 	uint64_t dust_tick = 0;
@@ -523,6 +580,11 @@ public:
 	real_t get_build_budget_msec() const { return build_budget_msec; }
 	void set_cell_threads(bool p_enabled);
 	bool is_cell_threads() const { return cell_threads; }
+	void set_ground_detail_rivers(bool p_enabled);
+	bool is_ground_detail_rivers() const { return detail_rivers; }
+	void set_ground_detail_cover(bool p_enabled);
+	bool is_ground_detail_cover() const { return ground_cover; }
+	Ref<Texture2D> get_ground_detail_cover_texture(int p_level) const;
 	void set_ground_detail_threads(bool p_enabled);
 	bool is_ground_detail_threads() const { return detail_threads; }
 	int get_ground_detail_pending() const { return int(detail_jobs.size()); }
@@ -582,6 +644,11 @@ public:
 	// Where stones of at least p_min_size (b axis, m) meet the ground in p_rect, as VegetationField3D obstacles:
 	// (x, ground y, z, footprint radius). Computed from the placement rules, built or not.
 	PackedVector4Array get_obstacles(const Rect2 &p_rect, real_t p_min_size = 0.25);
+	// Boulders standing at least 0.5 m out of the ground, as world boxes for the weather's shelter (the
+	// weather_shelter group): snow and sand drift in their lee.
+	Array get_wind_obstacles(const Rect2 &p_rect);
+	void set_wind_obstacles(bool p_enabled);
+	bool is_wind_obstacles_enabled() const { return wind_obstacles; }
 	// The stones of one layer in p_rect, each a Dictionary (position, basis, scale, footprint, film, rock_type,
 	// family, variant): what the layer would place, for tests.
 	Array get_stones(int p_layer, const Rect2 &p_rect);

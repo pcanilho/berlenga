@@ -57,7 +57,7 @@
 			<return type="int" />
 			<param index="0" name="box" type="AABB" />
 			<description>
-				Adds a solid obstacle (a building, a wall) as a world box and returns its id. Downwind of it the wind near the ground drops to 0.15 of the open wind in a cavity about 2 heights long (Hosker 1984), then recovers over about 6 heights: 0.8 at 10 heights, nearly all at 20 (Heisler and DeWalle 1988). The lee fades out above the obstacle's height. Visible [VisualInstance3D] nodes in the [code]weather_shelter[/code] group are added the same way, from their bounding boxes, at each bake.
+				Adds a solid obstacle (a building, a wall) as a world box and returns its id. Downwind of it the wind near the ground drops to 0.15 of the open wind in a cavity about 2 heights long (Hosker 1984), then recovers over about 6 heights: 0.8 at 10 heights, nearly all at 20 (Heisler and DeWalle 1988). The lee fades out above the obstacle's height. Visible [VisualInstance3D] nodes in the [code]weather_shelter[/code] group are added the same way, from their bounding boxes, at each bake; a node in the group with a [code]get_wind_obstacles(rect: Rect2) -&gt; Array[/code] method gives its own world boxes instead (RockField3D gives its boulders, PhysXVehicle3D its chassis). Each box counts its height from the terrain under its middle. A node with a few boxes (a vehicle) is checked every 2 seconds and the square bakes again when it has moved.
 			</description>
 		</method>
 		<method name="add_storm">
@@ -183,6 +183,20 @@
 			<param index="0" name="heat" type="float" />
 			<description>
 				The fire cloud a plume carrying [param heat] watts of convective heat would make in this weather: x its rise (m; through the sun-mixed layer near the ground, then by Briggs's 1975 laws in the stable air above, bent over by the wind), y the lifting condensation level (125 m per kelvin of dew point depression), z its strength (0: none; 1: a full cumulus cap; up to 2 as it grows into a pyrocumulonimbus, from about 2 km of rise past the condensation level).
+			</description>
+		</method>
+		<method name="get_obstacle_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The height over the ground of shelter obstacles at [param position] (nodes in the [code]weather_shelter[/code] group and [method add_shelter_box] boxes), m, on the shelter grid. 0 in the open. The contract's [code]obstacle_height_at[/code].
+			</description>
+		</method>
+		<method name="get_obstacle_lee_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The lee factor of upwind shelter obstacles near the ground at [param position], 0.15 to 1 (1 in the open); a [param position] raised over the ground (a drift's surface) has less, none at 1.2 times the obstacle's height. The contract's [code]obstacle_lee_at[/code].
 			</description>
 		</method>
 		<method name="get_smoke_at" qualifiers="const">

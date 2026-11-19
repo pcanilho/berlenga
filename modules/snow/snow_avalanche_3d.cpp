@@ -34,10 +34,12 @@
 #include "snow_clumps_3d.h"
 #include "snow_surface_3d.h"
 #include "snow_cover_3d.h"
+#include "snow_lake_ice_3d.h"
 
 #include "core/config/engine.h"
 #include "core/object/callable_mp.h"
 #include "modules/ground/ground_deform_field.h"
+#include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/world/world_contracts.h"
 #include "core/object/class_db.h"
 #include "scene/3d/camera_3d.h"
@@ -153,6 +155,7 @@ void SnowAvalanche3D::_track_recent(SnowCover3D *p_cover) {
 		recent.write[i] = r;
 		recent_age.write[i] = a;
 	}
+	_glide_advance(p_cover, hours);
 }
 
 bool SnowAvalanche3D::_check_release(SnowCover3D *p_cover) {
@@ -191,6 +194,7 @@ bool SnowAvalanche3D::_check_release(SnowCover3D *p_cover) {
 					best_slab = p_cover->pub.crust_burial[i];
 				}
 			}
+			best *= _hold(p_cover, i);
 			stab.write[i] = best;
 			slab.write[i] = best_slab;
 			if (best < seed_s) {
@@ -252,6 +256,15 @@ void SnowAvalanche3D::_release(SnowCover3D *p_cover, const Vector<int> &p_cells,
 	deposit.fill(0.0f);
 	peak.resize(n * n);
 	peak.fill(0.0f);
+	pressure.resize(n * n);
+	pressure.fill(0.0f);
+	detrained_volume = 0.0f;
+	water_mass = 0.0f;
+	water_total = 0.0f;
+	water_waves = 0;
+	wave_height = 0.0f;
+	water_cells.clear();
+	water_entered_now = false;
 	released_volume = 0.0f;
 	entrained_volume = 0.0f;
 	deposited_volume = 0.0f;
@@ -289,6 +302,13 @@ void SnowAvalanche3D::_release(SnowCover3D *p_cover, const Vector<int> &p_cells,
 		total += s;
 	}
 	release_liquid = total > 0.0f ? release_liquid / total : 0.0f; // the slab's liquid water share of its mass
+	// A wet slab runs as a wet flow: denser, slower, with higher friction and cohesion (wet snow avalanches, Naaim
+	// et al. 2013; Bartelt et al. 2015), by its liquid share of what the pack can hold.
+	run_wet = wet_enabled ? CLAMP(release_liquid / MAX(p_cover->liquid_capacity, 0.005f), 0.0f, 1.0f) : 0.0f;
+	mu_run = Math::lerp(mu, MAX(wet_mu, mu), run_wet);
+	xi_run = Math::lerp(xi, wet_xi, run_wet);
+	rho_run = Math::lerp(flow_density, wet_density, run_wet);
+	cohesion_run = wet_cohesion * run_wet;
 	if (total <= 0.0f) {
 		return;
 	}
@@ -312,7 +332,7 @@ void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
 		}
 		const float rho = MAX(p_cover->cell_density[ci], 30.0f);
 		const float stat = MAX(p_cover->cell_swe[ci] - written[i], 0.0f) / rho;
-		zs.write[i] = p_cover->cell_ground[ci] + stat + h[i] / flow_density;
+		zs.write[i] = p_cover->cell_ground[ci] + stat + h[i] / rho_run;
 	}
 	auto zat = [&](int x, int z, float fallback) {
 		if (x < 0 || z < 0 || x >= n || z >= n) {
@@ -338,18 +358,73 @@ void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
 			if (ci < 0) {
 				continue;
 			}
+			if (water_enabled && p_cover->cell_water.size() == p_cover->cell_swe.size() && p_cover->cell_water[ci] > -1e29f) {
+				// Over a lake: ice that bears it carries the flow on, else (open water, or ice it breaks) the snow
+				// plunges in and pushes a wave.
+				float ice = p_cover->lake_ice_enabled && p_cover->pub.ice.size() == p_cover->cell_swe.size() ? p_cover->pub.ice[ci] : 0.0f;
+				if (ice >= SnowCover3D::ICE_HOLD) {
+					const float white = p_cover->pub.white_ice.size() == p_cover->cell_swe.size() ? p_cover->pub.white_ice[ci] / MAX(ice, 1e-4f) : 0.0f;
+					const float air = WorldContracts::weather()->has_provider() ? WorldContracts::weather()->air_temperature_at(Vector3((flow_origin.x + x + 0.5f) * cell, 0.0f, (flow_origin.y + z + 0.5f) * cell)) : -5.0f;
+					if (h[i] * cell * cell > SnowCover3D::ice_breaking_load(ice, white, air)) {
+						SnowCover3D::IceBreak br;
+						br.center = Vector2((flow_origin.x + x + 0.5f) * cell, (flow_origin.y + z + 0.5f) * cell);
+						br.radius = 0.75f * cell;
+						p_cover->ice_breaks.push_back(br);
+						p_cover->_cut_ice(p_cover->pub.ice, p_cover->pub.white_ice);
+						ice_broken++;
+						ice = 0.0f;
+					}
+				}
+				if (ice < SnowCover3D::ICE_HOLD) {
+					const float u0 = hu[i] / h[i], v0 = hv[i] / h[i];
+					float land_slope = 0.0f;
+					int land = 0;
+					const int nb[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+					for (const auto &o : nb) {
+						const int xx = x + o[0], zz = z + o[1];
+						const int cj = (xx < 0 || zz < 0 || xx >= n || zz >= n) ? -1 : _cover_index(p_cover, zz * n + xx);
+						if (cj >= 0 && !(p_cover->cell_water[cj] > -1e29f)) {
+							land_slope += _slope_at(p_cover, cj % p_cover->resolution, cj / p_cover->resolution);
+							land++;
+						}
+					}
+					_water_entry(p_cover, i, ci, Math::sqrt(u0 * u0 + v0 * v0), u0, v0, h[i] / rho_run, land > 0 ? land_slope / land : Math::deg_to_rad(30.0f));
+					continue;
+				}
+			}
 			const float z0 = zs[i];
 			const float gx = (zat(x + 1, z, z0) - zat(x - 1, z, z0)) / (2.0f * cell);
 			const float gz = (zat(x, z + 1, z0) - zat(x, z - 1, z0)) / (2.0f * cell);
 			const float grad = Math::sqrt(gx * gx + gz * gz);
 			const float cos_t = 1.0f / Math::sqrt(1.0f + grad * grad);
-			const float depth = h[i] / flow_density;
+			const float depth = h[i] / rho_run;
 			float u = hu[i] / h[i];
 			float v = hv[i] / h[i];
 			u -= GRAVITY * gx * cos_t * p_dt;
 			v -= GRAVITY * gz * cos_t * p_dt;
 			float speed = Math::sqrt(u * u + v * v);
-			const float drag = (mu * GRAVITY * cos_t + GRAVITY * speed * speed / (xi * MAX(depth, 0.01f))) * p_dt;
+			// A forest brakes it: the stems add friction and take snow out of the flow (detrainment, Feistl et al.
+			// 2014: a rate K / u, K some tens to a hundred Pa by stand), which stays among the trees.
+			const float forest = forests_enabled && p_cover->cell_canopy.size() == p_cover->cell_swe.size() ? CLAMP(p_cover->cell_canopy[ci], 0.0f, 1.0f) : 0.0f;
+			// A wet flow's cohesion is a yield stress on its base (Bartelt et al. 2015: cohesion shortens the run-out and
+			// narrows the flow); it stops thin margins first, which stand as levees beside the running core.
+			const float coh = cohesion_run / (rho_run * MAX(depth, 0.05f));
+			const float drag = ((mu_run + forest_friction * forest) * GRAVITY * cos_t + coh + GRAVITY * speed * speed / (xi_run * MAX(depth, 0.01f))) * p_dt;
+			if (forest > 0.01f) {
+				const float det = MIN(h[i], forest_detrainment * forest / MAX(speed, 1.0f) * p_dt);
+				if (det > 0.0f) {
+					written.write[i] = written[i] - det;
+					deposit.write[i] = deposit[i] + det;
+					deposited_volume += det / rho_run * cell * cell;
+					detrained_volume += det / rho_run * cell * cell;
+					h.write[i] = h[i] - det;
+					hu.write[i] = hu[i] * h[i] / (h[i] + det);
+					hv.write[i] = hv[i] * h[i] / (h[i] + det);
+				}
+				if (h[i] < FLOW_MIN) {
+					continue;
+				}
+			}
 			if (speed <= drag) {
 				u = 0.0f;
 				v = 0.0f;
@@ -360,14 +435,10 @@ void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
 				v *= k;
 				speed -= drag;
 			}
-			if (speed < STOP_SPEED && GRAVITY * grad * cos_t <= mu * GRAVITY * cos_t) {
+			if (speed < STOP_SPEED && GRAVITY * grad * cos_t <= mu_run * GRAVITY * cos_t + coh) {
 				// Deposited: the flow's snow stays in the cover as static snow, its surface broken into blocks near
 				// the camera (avalanche debris: granules, Bartelt and McArdell 2009).
 				deposited_volume += depth * cell * cell;
-				// Blocks only where the flow arrived fast (the run-out), not the thin remnants in the release zone.
-				if (peak[i] > ENTRAIN_SPEED) {
-					_debris(Vector3((flow_origin.x + x + 0.5f) * cell, 0.0f, (flow_origin.y + z + 0.5f) * cell), depth * cell * cell);
-				}
 				// The cover holds what was last written here; it may be less than the flow brought since.
 				written.write[i] = written[i] - h[i];
 				deposit.write[i] = deposit[i] + h[i];
@@ -416,13 +487,26 @@ void SnowAvalanche3D::_flow_step(SnowCover3D *p_cover, float p_dt) {
 				vmax_cos = cos_t;
 			}
 			peak.write[i] = MAX(peak[i], speed);
+			pressure.write[i] = MAX(pressure[i], 0.5f * rho_run * speed * speed);
 		}
 	}
 	if (vmax > max_speed) {
 		max_speed = vmax;
 		// Voellmy's steady speed at that depth and slope: sqrt(xi h (sin - mu cos)).
 		const float sin_t = Math::sqrt(MAX(1.0f - vmax_cos * vmax_cos, 0.0f));
-		max_speed_terminal = Math::sqrt(MAX(xi * vmax_depth * (sin_t - mu * vmax_cos), 0.0f));
+		max_speed_terminal = Math::sqrt(MAX(xi_run * vmax_depth * (sin_t - mu_run * vmax_cos), 0.0f));
+	}
+	// One wave for an entry: it ends when no snow has gone in for three seconds.
+	water_quiet = water_entered_now ? 0.0f : water_quiet + p_dt;
+	if (water_mass > 0.0f && water_quiet > 3.0f) {
+		_emit_wave(p_cover);
+	}
+	water_entered_now = false;
+	if (p_cover->lake_ice) {
+		if (ice_broken != ice_broken_drawn) {
+			ice_broken_drawn = ice_broken;
+			p_cover->lake_ice->rebuild();
+		}
 	}
 	_transport(p_dt);
 	// How far the front got.
@@ -492,7 +576,7 @@ void SnowAvalanche3D::_fluxes(const Vector<float> &p_h, const Vector<float> &p_h
 				const float NR = nr - 0.5f * minmod(nr - nl, np - nr);
 				const float TL = tl + 0.5f * minmod(tl - tm, tr - tl);
 				const float TR = tr - 0.5f * minmod(tr - tl, tp - tr);
-				const float cl = Math::sqrt(GRAVITY * HL / flow_density), cr = Math::sqrt(GRAVITY * HR / flow_density);
+				const float cl = Math::sqrt(GRAVITY * HL / rho_run), cr = Math::sqrt(GRAVITY * HR / rho_run);
 				float sl, sr;
 				if (HL < FLOW_MIN) {
 					sl = NR - 2.0f * cr;
@@ -577,8 +661,8 @@ void SnowAvalanche3D::_debris(const Vector3 &p_at, float p_volume) {
 	if (cam && Vector2(cam->get_global_position().x - p_at.x, cam->get_global_position().z - p_at.z).length() > debris_radius) {
 		return;
 	}
-	// A share of the deposit's top as blocks, the cell's own size apart.
-	clumps->drop(p_at, 0.5f * cell, p_volume * debris_share, 0.3f);
+	// A share of the deposit's top as granules over the cell: blocks, and snowballs when wet.
+	clumps->drop(p_at, 0.7f * cell, p_volume * debris_share, 0.3f + 0.7f * run_wet, 2.0f + 3.0f * run_wet);
 }
 
 void SnowAvalanche3D::_flush(SnowCover3D *p_cover) {
@@ -598,7 +682,7 @@ void SnowAvalanche3D::_flush(SnowCover3D *p_cover) {
 		const float rho_old = MAX(p_cover->cell_density[ci], 30.0f);
 		const float swe_new = MAX(swe_old + d, 0.0f);
 		if (d > 0.0f) {
-			const float depth = (swe_old > 0.01f ? swe_old / rho_old : 0.0f) + d / flow_density;
+			const float depth = (swe_old > 0.01f ? swe_old / rho_old : 0.0f) + d / rho_run;
 			p_cover->cell_density.write[ci] = CLAMP(swe_new / MAX(depth, 1.0e-6f), 30.0f, 917.0f);
 		}
 		p_cover->cell_swe.write[ci] = swe_new;
@@ -639,8 +723,8 @@ void SnowAvalanche3D::_hit_bodies(SnowCover3D *p_cover) {
 			continue;
 		}
 		const float width = Math::sqrt(MAX(bodies->get_body_top_area(rb), 0.25f));
-		const float area = width * MIN(h[i] / flow_density, 2.0f);
-		rb->apply_central_force(vel / rel * 0.5f * flow_density * rel * rel * area);
+		const float area = width * MIN(h[i] / rho_run, 2.0f);
+		rb->apply_central_force(vel / rel * 0.5f * rho_run * rel * rel * area);
 	}
 }
 
@@ -648,7 +732,7 @@ void SnowAvalanche3D::_finish(SnowCover3D *p_cover) {
 	// What still moves stops where it is.
 	for (int i = 0; i < res * res; i++) {
 		if (h[i] > 0.0f) {
-			deposited_volume += h[i] / flow_density * cell * cell;
+			deposited_volume += h[i] / rho_run * cell * cell;
 			deposit.write[i] = deposit[i] + h[i];
 		}
 	}
@@ -680,6 +764,53 @@ void SnowAvalanche3D::_finish(SnowCover3D *p_cover) {
 		}
 		d = d2;
 	}
+	// The debris settles to its angle of repose: steeper steps between cells slump, half the excess each pass
+	// (talus relaxation, the thermal erosion of Musgrave et al. 1989). Avalanche debris stands at about 30-35
+	// degrees dry and steeper wet (cohesive), so a cell left standing alone as a spike slumps into a heap.
+	{
+		const float repose = Math::tan(Math::deg_to_rad(Math::lerp(32.0f, 40.0f, run_wet))) * cell;
+		Vector<float> base;
+		base.resize(n * n);
+		for (int i = 0; i < n * n; i++) {
+			const int ci = _cover_index(p_cover, i);
+			base.write[i] = ci < 0 ? Math::NaN : p_cover->cell_ground[ci] + MAX(p_cover->cell_swe[ci] - deposit[i], 0.0f) / MAX(p_cover->cell_density[ci], 30.0f);
+		}
+		for (int pass = 0; pass < 16; pass++) {
+			bool moved = false;
+			Vector<float> d2 = d;
+			for (int z = 0; z < n; z++) {
+				for (int x = 0; x < n; x++) {
+					const int i = z * n + x;
+					if (d[i] <= 0.0f || Math::is_nan(base[i])) {
+						continue;
+					}
+					const float hi = base[i] + d[i] / rho_run;
+					const int nb[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+					for (const auto &o : nb) {
+						const int xx = x + o[0], zz = z + o[1];
+						if (xx < 0 || zz < 0 || xx >= n || zz >= n) {
+							continue;
+						}
+						const int j = zz * n + xx;
+						if (Math::is_nan(base[j])) {
+							continue;
+						}
+						const float step = hi - (base[j] + d[j] / rho_run) - repose;
+						if (step > 0.01f) {
+							const float give = MIN(0.25f * step * rho_run, 0.25f * d[i]);
+							d2.write[i] -= give;
+							d2.write[j] += give;
+							moved = true;
+						}
+					}
+				}
+			}
+			d = d2;
+			if (!moved) {
+				break;
+			}
+		}
+	}
 	bool any = false;
 	for (int i = 0; i < n * n; i++) {
 		const float delta = d[i] - deposit[i];
@@ -694,7 +825,7 @@ void SnowAvalanche3D::_finish(SnowCover3D *p_cover) {
 		const float rho_old = MAX(p_cover->cell_density[ci], 30.0f);
 		const float swe_new = MAX(swe_old + delta, 0.0f);
 		if (delta > 0.0f) {
-			const float depth = (swe_old > 0.01f ? swe_old / rho_old : 0.0f) + delta / flow_density;
+			const float depth = (swe_old > 0.01f ? swe_old / rho_old : 0.0f) + delta / rho_run;
 			p_cover->cell_density.write[ci] = CLAMP(swe_new / MAX(depth, 1.0e-6f), 30.0f, 917.0f);
 		}
 		p_cover->cell_swe.write[ci] = swe_new;
@@ -704,10 +835,20 @@ void SnowAvalanche3D::_finish(SnowCover3D *p_cover) {
 		p_cover->update_count++;
 		p_cover->_upload();
 	}
+	// Granules on the settled debris, once per cell, where the flow arrived fast (the run-out), not on the thin
+	// remnants in the release zone.
+	for (int i = 0; i < n * n; i++) {
+		if (d[i] > 0.05f * rho_run && peak[i] > ENTRAIN_SPEED) {
+			_debris(Vector3((flow_origin.x + i % n + 0.5f) * cell, 0.0f, (flow_origin.y + i / n + 0.5f) * cell), d[i] / rho_run * cell * cell);
+		}
+	}
 	written.fill(0.0f);
 	h.fill(0.0f);
 	hu.fill(0.0f);
 	hv.fill(0.0f);
+	if (water_mass > 0.0f) {
+		_emit_wave(p_cover);
+	}
 	running = false;
 	emit_signal(SNAME("avalanche_stopped"), release_center, deposited_volume, run_out);
 }
@@ -729,7 +870,7 @@ void SnowAvalanche3D::step(double p_delta) {
 		for (int i = 0; i < h.size(); i++) {
 			if (h[i] >= FLOW_MIN) {
 				const float sp = Math::sqrt(hu[i] * hu[i] + hv[i] * hv[i]) / h[i];
-				wave = MAX(wave, sp + Math::sqrt(GRAVITY * h[i] / flow_density));
+				wave = MAX(wave, sp + Math::sqrt(GRAVITY * h[i] / rho_run));
 			}
 		}
 		const float dt = float(MIN(left, double(0.2f * cell / wave)));
@@ -822,10 +963,11 @@ float SnowAvalanche3D::_trigger_index(const SnowCover3D *p_cover, int p_x, int p
 	const float rho = MAX(p_cover->pub.density[i], 30.0f);
 	const float sc = Math::sin(slope) * Math::cos(slope);
 	float best = 1.0e6f;
+	const float anchor = _hold(p_cover, i);
 	auto test = [&](float p_slab, float p_strength, bool p_is_crust) {
 		const float d = MAX(p_slab - p_sink, 0.02f) * Math::cos(slope);
 		const float tau = rho * GRAVITY * p_slab * sc + added_shear(p_line_load, d, slope);
-		const float sk = tau > 1.0e-3f ? p_strength / tau : 1.0e6f;
+		const float sk = tau > 1.0e-3f ? p_strength * anchor / tau : 1.0e6f;
 		if (sk < best) {
 			best = sk;
 			r_slab = p_slab;
@@ -907,7 +1049,7 @@ int SnowAvalanche3D::_load(SnowCover3D *p_cover, const Vector3 &p_at, float p_li
 		if (crust) {
 			collapsed.write[i] = 1;
 			const float b = p_cover->pub.crust_burial[i];
-			if (steep && (i == seed || stability_index(b, rho, BURIED_WEAK_DENSITY, 0.0f, slope) < propagation_index)) {
+			if (steep && (i == seed || stability_index(b, rho, BURIED_WEAK_DENSITY, 0.0f, slope) * _hold(p_cover, i) < propagation_index)) {
 				cells.push_back(i);
 				amounts.push_back(b);
 			}
@@ -930,7 +1072,7 @@ int SnowAvalanche3D::_load(SnowCover3D *p_cover, const Vector3 &p_at, float p_li
 				go = crusts && p_cover->pub.crust[j] > 0.0f && p_cover->pub.crust_burial[j] >= 0.5f * min_slab && !collapsed[j] && Vector2(xx - x0, zz - z0).length() * cs <= collapse_range;
 			} else {
 				const float sj = _slope_at(p_cover, xx, zz);
-				go = sj >= lo && sj <= hi && recent[j] >= 0.5f * min_slab && stability_index(recent[j], MAX(p_cover->pub.density[j], 30.0f), WEAK_DENSITY, recent_age[j], sj) < spread;
+				go = sj >= lo && sj <= hi && recent[j] >= 0.5f * min_slab && stability_index(recent[j], MAX(p_cover->pub.density[j], 30.0f), WEAK_DENSITY, recent_age[j], sj) * _hold(p_cover, j) < spread;
 			}
 			if (go) {
 				seen.write[j] = 1;
@@ -1221,12 +1363,316 @@ void SnowAvalanche3D::_powder_step(SnowCover3D *p_cover, float p_dt) {
 	}
 }
 
+float SnowAvalanche3D::_anchoring(const SnowCover3D *p_cover, int p_ci) const {
+	// Forest anchors the snow (Bebi et al. 2009; Teich et al. 2012): stems and crowns break the slab up and hold it,
+	// and stands with crown cover over about half rarely release. The weak layer's strength counts five times under a
+	// canopy of 0.5 and grows without bound toward closure 0.55; nothing under 0.2 helps.
+	if (!forests_enabled || p_cover->cell_canopy.size() != p_cover->cell_swe.size() || p_ci < 0) {
+		return 1.0f;
+	}
+	const float a = CLAMP((p_cover->cell_canopy[p_ci] - 0.2f) / 0.3f, 0.0f, 1.0f);
+	return a >= 1.0f ? 1.0e6f : 1.0f + 4.0f * a / (1.0f - 0.9f * a);
+}
+
+float SnowAvalanche3D::_wet_factor(const SnowCover3D *p_cover, int p_ci) const {
+	// Meltwater and rain weaken the pack (wet-snow instability): the weak layer's shear strength falls steeply with
+	// its liquid water (Yamanoi and Endo 2002), and wet slabs release as the water nears what the layers hold and
+	// ponds on them (Mitterer et al. 2011: the LWC index, the mean content over 3% by volume, the share it holds,
+	// active from about 0.33). Here the index is the pack's liquid over what it holds (liquid_capacity), and the
+	// strength is wet_weakening^index: 0.63 at a third, a quarter when it holds all it can, for the default 0.25.
+	const int nn = p_cover->cell_swe.size();
+	if (!wet_enabled || p_ci < 0 || p_cover->cell_liquid.size() != nn || p_cover->cell_swe[p_ci] <= 1.0f) {
+		return 1.0f;
+	}
+	const float index = CLAMP(p_cover->cell_liquid[p_ci] / p_cover->cell_swe[p_ci] / MAX(p_cover->liquid_capacity, 0.005f), 0.0f, 1.0f);
+	return Math::pow(wet_weakening, index);
+}
+
+void SnowAvalanche3D::_glide_advance(SnowCover3D *p_cover, float p_hours) {
+	// Glide: on smooth ground (grass, slabs of rock) a wet base lets the whole pack slide slowly downhill; a glide
+	// crack opens at the top, and the pack releases full depth when the glide speeds up (glide avalanches; In der
+	// Gand and Zupancic 1966; Jones 2004; Ancey and Bain 2015). Water at the base is the condition: the pack drains
+	// (runoff) with its liquid near what it holds. The rate follows the pack's depth and the slope over 15 degrees
+	// (none under, McClung and Clarke 1987). Closed forest stops it (stems pin the pack). The pack refreezing or
+	// drying stops it, and the crack stays.
+	const int n = p_cover->resolution;
+	const int nn = n * n;
+	if (!glide_enabled || p_hours <= 0.0f || p_cover->cell_swe.size() != nn || p_cover->cell_liquid.size() != nn || p_cover->cell_runoff.size() != nn) {
+		return;
+	}
+	if (glide.size() != nn || glide_origin != p_cover->origin_cell) {
+		glide_origin = p_cover->origin_cell; // the map moved: the glide history starts over
+		glide.resize(nn);
+		glide.fill(0.0f);
+		glide_open.resize(nn);
+		glide_open.fill(0);
+	}
+	const float lo = Math::deg_to_rad(15.0f), ref = Math::deg_to_rad(35.0f);
+	const float cap = MAX(p_cover->liquid_capacity, 0.005f);
+	const bool canopy = p_cover->cell_canopy.size() == nn;
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			const float swe = p_cover->cell_swe[i];
+			if (swe <= 10.0f) {
+				glide.write[i] = 0.0f;
+				glide_open.write[i] = 0;
+				continue;
+			}
+			const float wet = CLAMP((p_cover->cell_liquid[i] / swe / cap - 0.5f) * 2.0f, 0.0f, 1.0f);
+			if (wet <= 0.0f || p_cover->cell_runoff[i] <= 0.0f || (canopy && p_cover->cell_canopy[i] > 0.5f)) {
+				continue;
+			}
+			const float slope = _slope_at(p_cover, x, z);
+			if (slope <= lo) {
+				continue;
+			}
+			const float depth = swe / MAX(p_cover->cell_density[i], 30.0f);
+			const float steep = (Math::sin(slope) - Math::sin(lo)) / (Math::sin(ref) - Math::sin(lo));
+			glide.write[i] = glide[i] + glide_rate / 24.0f * p_hours * wet * steep * MIN(depth, 2.0f);
+			if (!glide_open[i] && glide[i] >= 0.05f) {
+				glide_open.write[i] = 1;
+				glide_cracks++;
+				emit_signal(SNAME("glide_crack_opened"), Vector3((p_cover->origin_cell.x + x + 0.5f) * p_cover->_cell_size(), p_cover->cell_ground[i] + depth, (p_cover->origin_cell.y + z + 0.5f) * p_cover->_cell_size()));
+			}
+		}
+	}
+}
+
+bool SnowAvalanche3D::_check_glide(SnowCover3D *p_cover) {
+	// The cell that glided furthest past glide_release takes the pack around it with it: the neighbours whose
+	// glide is past half of it, full depth.
+	const int n = p_cover->resolution;
+	const int nn = n * n;
+	if (!glide_enabled || glide.size() != nn || p_cover->cell_swe.size() != nn) {
+		return false;
+	}
+	int seed = -1;
+	float most = glide_release;
+	for (int i = 0; i < nn; i++) {
+		if (glide[i] >= most) {
+			most = glide[i];
+			seed = i;
+		}
+	}
+	if (seed < 0) {
+		return false;
+	}
+	Vector<int> cells;
+	Vector<float> amounts;
+	Vector<uint8_t> seen;
+	seen.resize(nn);
+	seen.fill(0);
+	Vector<int> stack;
+	stack.push_back(seed);
+	seen.write[seed] = 1;
+	while (!stack.is_empty() && cells.size() < MAX_RELEASE_CELLS) {
+		const int i = stack[stack.size() - 1];
+		stack.resize(stack.size() - 1);
+		cells.push_back(i);
+		amounts.push_back(p_cover->cell_swe[i] / MAX(p_cover->cell_density[i], 30.0f));
+		glide.write[i] = 0.0f;
+		glide_open.write[i] = 0;
+		const int x = i % n, z = i / n;
+		const int nb[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+		for (const auto &o : nb) {
+			const int xx = x + o[0], zz = z + o[1];
+			if (xx < 0 || zz < 0 || xx >= n || zz >= n) {
+				continue;
+			}
+			const int j = zz * n + xx;
+			if (!seen[j] && glide[j] >= 0.5f * glide_release) {
+				seen.write[j] = 1;
+				stack.push_back(j);
+			}
+		}
+	}
+	glide_count++;
+	_release(p_cover, cells, amounts);
+	return true;
+}
+
+void SnowAvalanche3D::_water_entry(SnowCover3D *p_cover, int p_i, int p_ci, float p_speed, float p_u, float p_v, float p_depth, float p_slope) {
+	// The flow's snow in this cell goes into the water: it stays in the cover's cell, which melts snow on open water
+	// into it (follow-up 15), and its mass, speed and thickness add to this entry's wave.
+	const float m = h[p_i] * cell * cell;
+	const Vector3 at((flow_origin.x + p_i % res + 0.5f) * cell, p_cover->cell_water[p_ci], (flow_origin.y + p_i / res + 0.5f) * cell);
+	// The still water depth of the impact zone: the deepest within four cells ahead along the flow (the slide
+	// plunges on from the shoreline, where the depth is nothing).
+	float d = 0.0f;
+	const TerrainDataMap3D *tm = p_cover->_terrain_map();
+	if (tm) {
+		const Vector3 dir = p_speed > 1.0e-3f ? Vector3(p_u, 0.0f, p_v) / p_speed : Vector3();
+		for (int k = 0; k <= 4; k++) {
+			d = MAX(d, tm->get_water_depth_at(at + dir * (float(k) * cell)));
+		}
+	}
+	d = MAX(d, 0.5f);
+	water_mass += m;
+	water_total += m;
+	water_momentum += Vector3(p_u, 0.0f, p_v) * m;
+	water_position += at * m;
+	water_thick += p_depth * m;
+	water_depth += d * m;
+	water_slope += p_slope * m;
+	if (water_cells.size() != res * res) {
+		water_cells.resize(res * res);
+		water_cells.fill(0);
+		water_cell_count = 0;
+	}
+	if (!water_cells[p_i]) {
+		water_cells.write[p_i] = 1;
+		water_cell_count++;
+	}
+	water_entered_now = true;
+	written.write[p_i] = written[p_i] - h[p_i];
+	deposit.write[p_i] = deposit[p_i] + h[p_i];
+	deposited_volume += h[p_i] / rho_run * cell * cell;
+	h.write[p_i] = 0.0f;
+	hu.write[p_i] = 0.0f;
+	hv.write[p_i] = 0.0f;
+}
+
+float SnowAvalanche3D::impulse_product(float p_speed, float p_thickness, float p_mass, float p_width, float p_water_depth, float p_slope) {
+	// Heller and Hager (2010): the impulse product parameter P = F S^1/2 M^1/4 cos(6/7 alpha)^1/2, with the slide
+	// Froude number F = V / sqrt(g h), relative thickness S = s / h, relative mass M = m / (rho_w b h^2), and the
+	// impact (hill slope) angle alpha. It alone predicts the wave from a granular slide into a basin.
+	const float hw = MAX(p_water_depth, 0.1f);
+	const float F = p_speed / Math::sqrt(GRAVITY * hw);
+	const float S = MAX(p_thickness, 0.0f) / hw;
+	const float M = MAX(p_mass, 0.0f) / (1000.0f * MAX(p_width, 0.1f) * hw * hw);
+	return F * Math::sqrt(S) * Math::pow(M, 0.25f) * Math::sqrt(MAX(Math::cos(6.0f / 7.0f * CLAMP(p_slope, 0.0f, Math::PI * 0.5f)), 0.0f));
+}
+
+float SnowAvalanche3D::impulse_wave_height(float p_product, float p_water_depth, float p_distance, float p_angle) {
+	// The wave's height (crest to trough), m, at p_distance from the impact and p_angle off the slide's direction:
+	// in the near field the 2D maximum H_M / h = 5/9 P^4/5 (Heller and Hager 2010), spreading in a basin as
+	// H / h = 3/2 P^4/5 cos^2(2 gamma / 3) (r / h)^-2/3 (Heller et al. 2009, from Huber and Hager 1997), never
+	// more than the near-field maximum nor breaking (H under 0.8 h).
+	const float hw = MAX(p_water_depth, 0.1f);
+	const float p45 = Math::pow(MAX(p_product, 0.0f), 0.8f);
+	const float near = 5.0f / 9.0f * p45;
+	const float c = Math::cos(2.0f / 3.0f * CLAMP(Math::abs(p_angle), 0.0f, Math::PI * 0.5f));
+	const float far = 1.5f * p45 * c * c * Math::pow(MAX(p_distance / hw, 1.0e-3f), -2.0f / 3.0f);
+	return MIN(MIN(near, far), 0.8f) * hw;
+}
+
+float SnowAvalanche3D::impulse_wave_period(float p_mass_ratio, float p_water_depth, float p_distance) {
+	// Heller and Spinneken (2015), the leading wave in a basin: T (g / h)^1/2 = 5.5 M^0.05 (r / h)^0.36.
+	const float hw = MAX(p_water_depth, 0.1f);
+	return 5.5f * Math::pow(MAX(p_mass_ratio, 1.0e-4f), 0.05f) * Math::pow(MAX(p_distance / hw, 1.0f), 0.36f) * Math::sqrt(hw / GRAVITY);
+}
+
+void SnowAvalanche3D::_emit_wave(SnowCover3D *p_cover) {
+	const float m = water_mass;
+	const float V = water_momentum.length() / m;
+	const float s = water_thick / m;
+	const float hw = water_depth / m;
+	const float alpha = water_slope / m;
+	// The slide's width across the shore: the cells it reached, about one deep along its run.
+	const float b = MAX(float(water_cell_count) * cell / MAX(Math::ceil(s / cell), 1.0f), cell);
+	const float product = impulse_product(V, s, m, b, hw, alpha);
+	const float height = impulse_wave_height(product, hw, 0.0f, 0.0f);
+	const Vector3 at = water_position / m;
+	const Vector3 dir = V > 1.0e-3f ? water_momentum.normalized() : Vector3(1, 0, 0);
+	if (height > wave_height || water_waves == 0) {
+		// The getters answer for the run's biggest wave (the trickle after the main entry makes small ones).
+		wave_position = at;
+		wave_direction = dir;
+		wave_depth = hw;
+		wave_product = product;
+		wave_mass_ratio = m / (1000.0f * b * hw * hw);
+		wave_height = height;
+		wave_amplitude = 0.8f * height; // a_M = 4/9 P^4/5 against H_M = 5/9 P^4/5
+	}
+	water_waves++;
+	emit_signal(SNAME("avalanche_entered_water"), at, dir, m, V, height);
+	print_verbose(vformat("snow: avalanche into water, %.0f t at %.1f m/s, %.2f m thick, %.1f m wide, %.1f m deep, slope %.0f deg: P %.3f, H %.2f m", m / 1000.0f, V, s, b, hw, Math::rad_to_deg(alpha), product, height));
+	water_mass = 0.0f;
+	water_momentum = Vector3();
+	water_position = Vector3();
+	water_thick = 0.0f;
+	water_depth = 0.0f;
+	water_slope = 0.0f;
+	water_cells.clear();
+	water_cell_count = 0;
+	(void)p_cover;
+}
+
+float SnowAvalanche3D::get_wave_height_at(const Vector3 &p_position) const {
+	if (water_waves == 0) {
+		return 0.0f;
+	}
+	const Vector3 d = Vector3(p_position.x - wave_position.x, 0.0f, p_position.z - wave_position.z);
+	const float r = d.length();
+	const float gamma = r > 1.0e-3f ? Math::acos(CLAMP(d.normalized().dot(wave_direction), -1.0f, 1.0f)) : 0.0f;
+	return impulse_wave_height(wave_product, wave_depth, r, gamma);
+}
+
+float SnowAvalanche3D::get_wave_period_at(const Vector3 &p_position) const {
+	if (water_waves == 0) {
+		return 0.0f;
+	}
+	return impulse_wave_period(wave_mass_ratio, wave_depth, Vector2(p_position.x - wave_position.x, p_position.z - wave_position.z).length());
+}
+
+float SnowAvalanche3D::get_glide_at(const Vector3 &p_position) const {
+	const SnowCover3D *cover = _cover();
+	if (!cover || glide.size() != cover->resolution * cover->resolution) {
+		return 0.0f;
+	}
+	const float cs = cover->_cell_size();
+	const int x = int(Math::floor(p_position.x / cs)) - cover->origin_cell.x;
+	const int z = int(Math::floor(p_position.z / cs)) - cover->origin_cell.y;
+	const int n = cover->resolution;
+	return (x < 0 || z < 0 || x >= n || z >= n) ? 0.0f : glide[z * n + x];
+}
+
+float SnowAvalanche3D::get_peak_pressure_at(const Vector3 &p_position) const {
+	const int x = int(Math::floor(p_position.x / cell)) - flow_origin.x;
+	const int z = int(Math::floor(p_position.z / cell)) - flow_origin.y;
+	if (x < 0 || z < 0 || x >= res || z >= res || pressure.size() != res * res) {
+		return 0.0f;
+	}
+	return pressure[z * res + x];
+}
+
+float SnowAvalanche3D::get_pressure_at(const Vector3 &p_position) const {
+	// The moving snow's dynamic pressure on what stands in it now (Pa): the dense flow's 1/2 rho u^2 up to its
+	// height, else the powder cloud's.
+	float pa = 0.0f;
+	const int x = int(Math::floor(p_position.x / cell)) - flow_origin.x;
+	const int z = int(Math::floor(p_position.z / cell)) - flow_origin.y;
+	if (running && x >= 0 && z >= 0 && x < res && z < res) {
+		const int i = z * res + x;
+		if (h[i] >= FLOW_MIN) {
+			const float u2 = (hu[i] * hu[i] + hv[i] * hv[i]) / (h[i] * h[i]);
+			pa = 0.5f * rho_run * u2;
+		}
+	}
+	const float rho = get_powder_density_at(p_position);
+	if (rho > 0.0f) {
+		Vector3 v;
+		float w = 0.0f;
+		for (const Parcel &pc : parcels) {
+			if (Vector2(p_position.x - pc.position.x, p_position.z - pc.position.z).length() <= pc.radius) {
+				v += pc.velocity * pc.mass;
+				w += pc.mass;
+			}
+		}
+		if (w > 0.0f) {
+			pa = MAX(pa, 0.5f * rho * (v / w).length_squared());
+		}
+	}
+	return pa;
+}
+
 float SnowAvalanche3D::get_flowing_volume() const {
 	float v = 0.0f;
 	for (int i = 0; i < h.size(); i++) {
 		v += h[i];
 	}
-	return v / flow_density * cell * cell;
+	return v / rho_run * cell * cell;
 }
 
 float SnowAvalanche3D::get_flow_height_at(const Vector3 &p_position) const {
@@ -1238,7 +1684,7 @@ float SnowAvalanche3D::get_flow_height_at(const Vector3 &p_position) const {
 	if (x < 0 || z < 0 || x >= res || z >= res) {
 		return 0.0f;
 	}
-	return h[z * res + x] / flow_density;
+	return h[z * res + x] / rho_run;
 }
 
 Vector3 SnowAvalanche3D::get_flow_velocity_at(const Vector3 &p_position) const {
@@ -1316,8 +1762,8 @@ void SnowAvalanche3D::_notification(int p_what) {
 			}
 			if (cover->update_count != seen_update && !cover->is_updating()) {
 				seen_update = cover->update_count;
-				if (natural_release) {
-					_check_release(cover);
+				if (natural_release && !_check_release(cover)) {
+					_check_glide(cover);
 				}
 			}
 			if (triggers_enabled && !running && recent_res == cover->resolution) {
@@ -1334,6 +1780,47 @@ void SnowAvalanche3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("apply_load", "at", "line_load", "sink"), &SnowAvalanche3D::apply_load, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("get_trigger_index_at", "at", "line_load", "sink"), &SnowAvalanche3D::get_trigger_index_at, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("get_trigger_count"), &SnowAvalanche3D::get_trigger_count);
+	ClassDB::bind_method(D_METHOD("get_pressure_at", "position"), &SnowAvalanche3D::get_pressure_at);
+	ClassDB::bind_method(D_METHOD("get_peak_pressure_at", "position"), &SnowAvalanche3D::get_peak_pressure_at);
+	ClassDB::bind_method(D_METHOD("get_detrained_volume"), &SnowAvalanche3D::get_detrained_volume);
+	ClassDB::bind_method(D_METHOD("set_wet_enabled", "enable"), &SnowAvalanche3D::set_wet_enabled);
+	ClassDB::bind_method(D_METHOD("is_wet_enabled"), &SnowAvalanche3D::is_wet_enabled);
+	ClassDB::bind_method(D_METHOD("set_wet_mu", "mu"), &SnowAvalanche3D::set_wet_mu);
+	ClassDB::bind_method(D_METHOD("get_wet_mu"), &SnowAvalanche3D::get_wet_mu);
+	ClassDB::bind_method(D_METHOD("set_wet_xi", "xi"), &SnowAvalanche3D::set_wet_xi);
+	ClassDB::bind_method(D_METHOD("get_wet_xi"), &SnowAvalanche3D::get_wet_xi);
+	ClassDB::bind_method(D_METHOD("set_wet_cohesion", "pascals"), &SnowAvalanche3D::set_wet_cohesion);
+	ClassDB::bind_method(D_METHOD("get_wet_cohesion"), &SnowAvalanche3D::get_wet_cohesion);
+	ClassDB::bind_method(D_METHOD("set_wet_density", "density"), &SnowAvalanche3D::set_wet_density);
+	ClassDB::bind_method(D_METHOD("get_wet_density"), &SnowAvalanche3D::get_wet_density);
+	ClassDB::bind_method(D_METHOD("set_wet_weakening", "share"), &SnowAvalanche3D::set_wet_weakening);
+	ClassDB::bind_method(D_METHOD("get_wet_weakening"), &SnowAvalanche3D::get_wet_weakening);
+	ClassDB::bind_method(D_METHOD("set_glide_enabled", "enable"), &SnowAvalanche3D::set_glide_enabled);
+	ClassDB::bind_method(D_METHOD("is_glide_enabled"), &SnowAvalanche3D::is_glide_enabled);
+	ClassDB::bind_method(D_METHOD("set_glide_rate", "rate"), &SnowAvalanche3D::set_glide_rate);
+	ClassDB::bind_method(D_METHOD("get_glide_rate"), &SnowAvalanche3D::get_glide_rate);
+	ClassDB::bind_method(D_METHOD("set_glide_release", "glide"), &SnowAvalanche3D::set_glide_release);
+	ClassDB::bind_method(D_METHOD("get_glide_release"), &SnowAvalanche3D::get_glide_release);
+	ClassDB::bind_method(D_METHOD("get_glide_at", "position"), &SnowAvalanche3D::get_glide_at);
+	ClassDB::bind_static_method("SnowAvalanche3D", D_METHOD("impulse_product", "speed", "thickness", "mass", "width", "water_depth", "slope"), &SnowAvalanche3D::impulse_product);
+	ClassDB::bind_static_method("SnowAvalanche3D", D_METHOD("impulse_wave_height", "product", "water_depth", "distance", "angle"), &SnowAvalanche3D::impulse_wave_height);
+	ClassDB::bind_static_method("SnowAvalanche3D", D_METHOD("impulse_wave_period", "mass_ratio", "water_depth", "distance"), &SnowAvalanche3D::impulse_wave_period);
+	ClassDB::bind_method(D_METHOD("get_wave_height_at", "position"), &SnowAvalanche3D::get_wave_height_at);
+	ClassDB::bind_method(D_METHOD("get_wave_period_at", "position"), &SnowAvalanche3D::get_wave_period_at);
+	ClassDB::bind_method(D_METHOD("get_water_entry_mass"), &SnowAvalanche3D::get_water_entry_mass);
+	ClassDB::bind_method(D_METHOD("get_wave_count"), &SnowAvalanche3D::get_wave_count);
+	ClassDB::bind_method(D_METHOD("get_ice_broken"), &SnowAvalanche3D::get_ice_broken);
+	ClassDB::bind_method(D_METHOD("set_water_enabled", "enable"), &SnowAvalanche3D::set_water_enabled);
+	ClassDB::bind_method(D_METHOD("is_water_enabled"), &SnowAvalanche3D::is_water_enabled);
+	ClassDB::bind_method(D_METHOD("get_glide_count"), &SnowAvalanche3D::get_glide_count);
+	ClassDB::bind_method(D_METHOD("get_glide_crack_count"), &SnowAvalanche3D::get_glide_crack_count);
+	ClassDB::bind_method(D_METHOD("get_flow_wetness"), &SnowAvalanche3D::get_flow_wetness);
+	ClassDB::bind_method(D_METHOD("set_forests_enabled", "enable"), &SnowAvalanche3D::set_forests_enabled);
+	ClassDB::bind_method(D_METHOD("is_forests_enabled"), &SnowAvalanche3D::is_forests_enabled);
+	ClassDB::bind_method(D_METHOD("set_forest_friction", "friction"), &SnowAvalanche3D::set_forest_friction);
+	ClassDB::bind_method(D_METHOD("get_forest_friction"), &SnowAvalanche3D::get_forest_friction);
+	ClassDB::bind_method(D_METHOD("set_forest_detrainment", "pascals"), &SnowAvalanche3D::set_forest_detrainment);
+	ClassDB::bind_method(D_METHOD("get_forest_detrainment"), &SnowAvalanche3D::get_forest_detrainment);
 	ClassDB::bind_method(D_METHOD("get_powder_taken"), &SnowAvalanche3D::get_powder_taken);
 	ClassDB::bind_method(D_METHOD("get_powder_settled"), &SnowAvalanche3D::get_powder_settled);
 	ClassDB::bind_method(D_METHOD("get_suspended_mass"), &SnowAvalanche3D::get_suspended_mass);
@@ -1395,6 +1882,23 @@ void SnowAvalanche3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_slab", PROPERTY_HINT_RANGE, "0,3,0.01,suffix:m"), "set_min_slab", "get_min_slab");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "entrainment", PROPERTY_HINT_RANGE, "0,0.1,0.0001"), "set_entrainment", "get_entrainment");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "natural_release"), "set_natural_release", "is_natural_release");
+	ADD_GROUP("Wet snow", "wet_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wet_enabled"), "set_wet_enabled", "is_wet_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_mu", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_wet_mu", "get_wet_mu");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_xi", PROPERTY_HINT_RANGE, "100,10000,1,suffix:m/s²"), "set_wet_xi", "get_wet_xi");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_cohesion", PROPERTY_HINT_RANGE, "0,3000,1,suffix:Pa"), "set_wet_cohesion", "get_wet_cohesion");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_density", PROPERTY_HINT_RANGE, "100,800,1,suffix:kg/m³"), "set_wet_density", "get_wet_density");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_weakening", PROPERTY_HINT_RANGE, "0.01,1,0.01"), "set_wet_weakening", "get_wet_weakening");
+	ADD_GROUP("Glide", "glide_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "glide_enabled"), "set_glide_enabled", "is_glide_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glide_rate", PROPERTY_HINT_RANGE, "0,5,0.01,suffix:m/day"), "set_glide_rate", "get_glide_rate");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glide_release", PROPERTY_HINT_RANGE, "0.01,10,0.01,suffix:m"), "set_glide_release", "get_glide_release");
+	ADD_GROUP("Water", "water_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "water_enabled"), "set_water_enabled", "is_water_enabled");
+	ADD_GROUP("Forests", "forest");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "forests_enabled"), "set_forests_enabled", "is_forests_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "forest_friction", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_forest_friction", "get_forest_friction");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "forest_detrainment", PROPERTY_HINT_RANGE, "0,1000,0.1,suffix:Pa"), "set_forest_detrainment", "get_forest_detrainment");
 	ADD_GROUP("Powder cloud", "powder_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "powder_enabled"), "set_powder_enabled", "is_powder_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "powder_speed", PROPERTY_HINT_RANGE, "0,50,0.1,suffix:m/s"), "set_powder_speed", "get_powder_speed");
@@ -1409,6 +1913,8 @@ void SnowAvalanche3D::_bind_methods() {
 
 	ADD_SIGNAL(MethodInfo("avalanche_triggered", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::OBJECT, "body", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT, "Node")));
 	ADD_SIGNAL(MethodInfo("snow_collapsed", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "area")));
+	ADD_SIGNAL(MethodInfo("avalanche_entered_water", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::VECTOR3, "direction"), PropertyInfo(Variant::FLOAT, "mass"), PropertyInfo(Variant::FLOAT, "speed"), PropertyInfo(Variant::FLOAT, "wave_height")));
+	ADD_SIGNAL(MethodInfo("glide_crack_opened", PropertyInfo(Variant::VECTOR3, "position")));
 	ADD_SIGNAL(MethodInfo("avalanche_released", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "volume")));
 	ADD_SIGNAL(MethodInfo("avalanche_stopped", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "volume"), PropertyInfo(Variant::FLOAT, "run_out")));
 }

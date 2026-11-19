@@ -191,6 +191,7 @@ private:
 	real_t sand_sea_scale = 4.0; // m a cell; dunes come out some 25 cells apart and scale with it
 	int sand_sea_steps = 300;
 	real_t sand_sea_edge = 300.0; // m over which the sand thins out at the sea's edge
+	bool sand_sea_compound = true; // large dunes (draa) with ordinary dunes on their flanks
 	Ref<Image> sand_sea_mask; // optional: 0..1 (red) stretched over sand_sea_rect, where the sea's sand may lie
 	real_t nebkha_density = 1.0; // vegetated sand mounds on the sea's thin sand and margins (0: none)
 
@@ -764,6 +765,8 @@ public:
 	void set_sand_sea_edge(real_t p_value) { sand_sea_edge = MAX(p_value, real_t(0.0)); }
 	real_t get_sand_sea_edge() const { return sand_sea_edge; }
 	real_t get_sand_sea_height(const Vector3 &p_global_position) const { return _sea_sample(p_global_position.x, p_global_position.z); }
+	void set_sand_sea_compound(bool p_value) { sand_sea_compound = p_value; }
+	bool is_sand_sea_compound() const { return sand_sea_compound; }
 	void set_sand_sea_mask(const Ref<Image> &p_mask) { sand_sea_mask = p_mask; }
 	Ref<Image> get_sand_sea_mask() const { return sand_sea_mask; }
 	void set_nebkha_density(real_t p_value) { nebkha_density = MAX(p_value, real_t(0.0)); }

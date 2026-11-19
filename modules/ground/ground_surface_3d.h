@@ -135,8 +135,16 @@ private:
 	// most mud_auto_depth). It counts only when wet: none below mud_wet_start moisture, all at mud_wet_full.
 	bool mud_layer = true;
 	bool mud_slides = true; // round 10: a soaked layer flows off slopes it no longer holds
+	bool simulation_paused = false; // still shots: no simulation, the ground stays as it is
+	bool light_budget = false; // still shots: smaller GPU fields and tile cache
 	bool subsoil = true; // round 12: a firm base under the loose layer, its depth varied across the ground
-	HashMap<Vector2i, float> mud_deposits; // m of fresh slurry per 1 m cell (debris flows' fans)
+	HashMap<Vector2i, float> mud_deposits; // m of fresh slurry per 1 m cell (debris flows' fans, flood silt)
+	bool flood_silt = true; // other water over the ground leaves its suspended load as fresh mud
+	float silt_total = 0.0f; // kg/m2 laid since start, summed over the 1 m points
+	float silt_pending = 0.0f;
+	float silt_timer = 0.0f;
+	bool silt_dirty = false;
+	void _flood_silt(const Vector3 &p_position, float p_depth, float p_speed, const Vector2 &p_load, float p_dt);
 	// Standing water (docs/ideas/mud.md, stage 2): rain, runoff and ground water gather in ruts and prints, on the
 	// GPU field (the virtual pipe model), drawn as the surface there in both renderers.
 	bool standing_water = true;
@@ -524,6 +532,7 @@ private:
 	// Vegetation sheltering the sand (dune grass, docs/ideas/sand.md): plants take a share of the wind's stress
 	// (Raupach 1993 drag partition), the saltation flux falls among them and the sand it carried lands there.
 	TypedArray<NodePath> wind_shelters;
+	bool obstacle_lee = true; // blown sand reads WorldWeather.obstacle_lee_at
 	LocalVector<float> shelter_ratio; // the surface's friction speed over the open ground's, per lattice cell
 	LocalVector<float> shelter_flux; // the flux factor, Q(u* ratio) / Q(u*), 0..1 (1 with no plants)
 	LocalVector<float> sand_flux; // kg/m/s, along the wind
@@ -804,12 +813,19 @@ public:
 	bool is_mud_layer() const { return mud_layer; }
 	void set_mud_slides(bool p_enabled);
 	bool is_mud_slides() const { return mud_slides; }
+	void set_simulation_paused(bool p_paused) { simulation_paused = p_paused; }
+	bool is_simulation_paused() const { return simulation_paused; }
+	void set_light_budget(bool p_light);
+	bool is_light_budget() const { return light_budget; }
 	void set_subsoil(bool p_enabled);
 	bool is_subsoil() const { return subsoil; }
 	// Fresh slurry laid over a disc (a debris flow's deposit, GroundDebrisFlow3D): wet mud whatever the weather.
 	void add_mud_deposit(Vector3 p_position, float p_radius, float p_depth, bool p_update = true);
 	void refresh_cells() { _update_cells(); }
 	float get_mud_deposit_at(Vector3 p_position) const;
+	void set_flood_silt(bool p_enabled) { flood_silt = p_enabled; }
+	bool is_flood_silt() const { return flood_silt; }
+	float get_flood_silt_total() const { return silt_total; }
 	void set_mats(bool p_enabled) { mats = p_enabled; }
 	bool is_mats() const { return mats; }
 	// The mat a wheel's contact p_contact lies on (within p_tolerance of the wood), or -1.
@@ -923,6 +939,8 @@ public:
 	static float bed_load_shear(float p_tau);
 	void set_wind_shelters(const TypedArray<NodePath> &p_shelters) { wind_shelters = p_shelters; }
 	TypedArray<NodePath> get_wind_shelters() const { return wind_shelters; }
+	void set_obstacle_lee(bool p_enabled) { obstacle_lee = p_enabled; }
+	bool is_obstacle_lee_enabled() const { return obstacle_lee; }
 	// Raupach (1993): the surface's share of the friction speed among roughness elements of frontal area index
 	// p_lambda (clamped to 0.5).
 	static float shelter_ratio_for(float p_lambda);

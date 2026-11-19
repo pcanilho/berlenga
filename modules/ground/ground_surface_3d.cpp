@@ -648,6 +648,41 @@ void GroundSurface3D::add_mud_deposit(Vector3 p_position, float p_radius, float 
 	}
 }
 
+// Overbank deposition (Pizzuto 1987; Asselman and Middelkoop 1995): water standing or moving slowly over the ground
+// drops its suspended load at the silt's settling speed, D = C w_s dt (kg/m2), w_s about 3e-4 m/s for 20 um silt
+// (Stokes), none where the current keeps it up (over about 0.5 m/s, fading from 0.2). It lies as fresh, saturated
+// mud (dry bulk density about 1300 kg/m3), so a flood's few millimetres to centimetres near the channel thin out
+// away from it as the load settles; mineral and ash alike (the ash darkens the water and the mud it leaves).
+void GroundSurface3D::_flood_silt(const Vector3 &p_position, float p_depth, float p_speed, const Vector2 &p_load, float p_dt) {
+	if (!flood_silt || p_depth < 0.01f || p_dt <= 0.0f) {
+		return;
+	}
+	const float c = MAX(p_load.x, 0.0f) + MAX(p_load.y, 0.0f); // kg/m3
+	if (c <= 1e-5f) {
+		return;
+	}
+	const float still = 1.0f - Math::smoothstep(0.2f, 0.5f, p_speed);
+	// What settles cannot be more than the column holds.
+	const float kg = MIN(c * 3.0e-4f * p_dt, c * p_depth) * still;
+	if (kg <= 0.0f) {
+		return;
+	}
+	const Vector2i k(int(Math::floor(p_position.x)), int(Math::floor(p_position.z)));
+	const float dm = kg / 1300.0f;
+	float *v = mud_deposits.getptr(k);
+	if (v) {
+		*v += dm;
+	} else {
+		mud_deposits.insert(k, dm);
+	}
+	silt_total += kg;
+	silt_pending += dm;
+	if (silt_pending > 0.002f) {
+		silt_pending = 0.0f;
+		silt_dirty = true;
+	}
+}
+
 float GroundSurface3D::get_mud_deposit_at(Vector3 p_position) const {
 	if (mud_deposits.is_empty()) {
 		return 0.0f;
@@ -2085,6 +2120,19 @@ void GroundSurface3D::set_near_extent(float p_extent) {
 	}
 }
 
+// Still shots on a software GPU: the main field at 256 (12.5 cm over 32 m), the near field at 256 (3 cm) and 64
+// cached tiles, about a fifth of the GPU work and 300 MB less memory than the shipped 512, 512 and 1024. Off restores
+// those.
+void GroundSurface3D::set_light_budget(bool p_light) {
+	if (p_light == light_budget) {
+		return;
+	}
+	light_budget = p_light;
+	set_deform_resolution(p_light ? 256 : 512);
+	set_near_resolution(p_light ? 256 : 512);
+	set_max_cached_tiles(p_light ? 64 : 1024);
+}
+
 void GroundSurface3D::set_near_resolution(int p_resolution) {
 	near_resolution = MAX(p_resolution / GroundDeformField::TILE, 1) * GroundDeformField::TILE;
 	mesh_dirty = true;
@@ -2424,7 +2472,11 @@ void GroundSurface3D::_water_update(double p_delta) {
 			}
 		}
 	}
-	if (sources.is_empty() && !wm) {
+	// Every other water producer through the water contract too (a river over its banks, live water, a fall's pool,
+	// a lake): floods soak the ground they cover and leave their load on it (docs/ideas/world-links.md).
+	const WorldWater *ww = WorldContracts::water();
+	const bool contract_water = ww && ww->has_provider();
+	if (sources.is_empty() && !wm && !contract_water) {
 		return;
 	}
 	const int step = MAX(1, (int)Math::round(1.0f / ground_spacing));
@@ -2442,6 +2494,20 @@ void GroundSurface3D::_water_update(double p_delta) {
 			float depth = 0.0f;
 			float speed = 0.0f;
 			ground_water_at(sources, p, gh, depth, speed);
+			if (contract_water) {
+				Vector3 flow;
+				Vector2 sed;
+				const float h = ww->height_except(p, this, &flow, &sed);
+				const float d = Math::is_finite(h) ? h - gh : 0.0f;
+				if (d > 0.0f) {
+					const float v = Vector2(flow.x, flow.z).length();
+					if (d > depth) {
+						depth = d;
+						speed = v;
+					}
+					_flood_silt(p, d, v, sed, float(p_delta));
+				}
+			}
 			g_depth[gz * gn + gx] = depth;
 			g_speed[gz * gn + gx] = speed;
 			g_contact[gz * gn + gx] = wm ? wm->contact_wetness_at(p) : 0.0f;
@@ -2499,6 +2565,13 @@ void GroundSurface3D::_water_update(double p_delta) {
 	if (changed) {
 		gpu_cells_dirty = true;
 		near_cells_dirty = true;
+	}
+	silt_timer += float(p_delta);
+	if (silt_dirty && silt_timer > 5.0f) {
+		// The cells take the new silt as fresh mud (a few seconds late: it builds slowly).
+		silt_dirty = false;
+		silt_timer = 0.0f;
+		_update_cells();
 	}
 	_far_update(p_delta, sources, wm);
 	water_usec = float(OS::get_singleton()->get_ticks_usec() - t0);
@@ -3474,6 +3547,27 @@ void GroundSurface3D::_wind_update(double p_delta) {
 			}
 		}
 	}
+	// The lee of rocks, walls, buildings and vehicles (WorldWeather.obstacle_lee_at): the wind near the ground there
+	// over the open wind, on the same grid. Sand slows and drops behind them (shadow dunes, Hesp 1981).
+	LocalVector<float> g_lee;
+	const WorldWeather *lee_src = obstacle_lee ? WorldContracts::weather() : nullptr;
+	if (lee_src && lee_src->has_provider()) {
+		g_lee.resize(gn * gn);
+		bool any = false;
+		for (int gz = 0; gz < gn; gz++) {
+			for (int gx = 0; gx < gn; gx++) {
+				const int lx = MIN(gx * step, n - 1);
+				const int lz = MIN(gz * step, n - 1);
+				const Vector3 p((ground_origin.x + lx) * ground_spacing, ground[lz * n + lx], (ground_origin.y + lz) * ground_spacing);
+				const float v = lee_src->obstacle_lee_at(p);
+				g_lee[gz * gn + gx] = Math::is_finite(v) ? CLAMP(v, 0.0f, 1.0f) : 1.0f;
+				any = any || g_lee[gz * gn + gx] < 0.999f;
+			}
+		}
+		if (!any) {
+			g_lee.clear();
+		}
+	}
 	const Vector2 wind = _wind_10m();
 	const float speed = wind.length();
 	const float ustar = GroundRipples::friction_speed(speed);
@@ -3489,7 +3583,11 @@ void GroundSurface3D::_wind_update(double p_delta) {
 			const float tx = fx - x0;
 			const float tz = fz - z0;
 			const float lambda = Math::lerp(Math::lerp(g_lambda[z0 * gn + x0], g_lambda[z0 * gn + x0 + 1], tx), Math::lerp(g_lambda[(z0 + 1) * gn + x0], g_lambda[(z0 + 1) * gn + x0 + 1], tx), tz);
-			const float r = shelter_ratio_for(lambda);
+			float r = shelter_ratio_for(lambda);
+			if (!g_lee.is_empty()) {
+				// u* scales with the wind at a fixed height over the same roughness: the plants' ratio times the lee.
+				r *= Math::lerp(Math::lerp(g_lee[z0 * gn + x0], g_lee[z0 * gn + x0 + 1], tx), Math::lerp(g_lee[(z0 + 1) * gn + x0], g_lee[(z0 + 1) * gn + x0 + 1], tx), tz);
+			}
 			// The flux factor at a reference gale (u* 0.5 m/s), so the share does not jump with the wind.
 			const float f = GroundRipples::saltation_flux(0.5f * r) / GroundRipples::saltation_flux(0.5f);
 			if (Math::abs(f - shelter_flux[i]) > 0.02f) {
@@ -4042,6 +4140,12 @@ void GroundSurface3D::_notification(int p_what) {
 			}
 			if (patch_params_stale) {
 				_sync_patch_params();
+			}
+			// Paused (still shots): the field, its texture and every read stay as they are; nothing steps, follows or
+			// reads back, which on a software GPU is most of a frame.
+			if (simulation_paused) {
+				step_msec = 0.0;
+				break;
 			}
 			_follow(_follow_position());
 			if (!pending_puddles.is_empty()) {
@@ -5672,7 +5776,14 @@ void GroundSurface3D::_gpu_submit_field(GroundDeformGPUHost &r_host, const Groun
 	PackedByteArray cell_bytes;
 	if (r_cells_dirty && ground_valid) {
 		cell_bytes = _gpu_cells();
-		if (cell_bytes.size() > 0) {
+		// The cells refresh every 2 s; most refreshes change nothing (dry still weather), and one that changes
+		// nothing would only re-upload them and keep a slide's minute of slumping going for ever.
+		const uint32_t hash = cell_bytes.size() > 0 ? hash_murmur3_buffer(cell_bytes.ptr(), cell_bytes.size()) : 0;
+		if (cell_bytes.size() > 0 && hash == r_host.cells_hash && !r_host.reset) {
+			r_cells_dirty = false;
+			cell_bytes.clear();
+		} else if (cell_bytes.size() > 0) {
+			r_host.cells_hash = hash;
 			flags |= GroundDeformGPU::STEP_COVER;
 			r_cells_dirty = false;
 			if (mud_sliding) {
@@ -6147,11 +6258,18 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_mud_layer"), &GroundSurface3D::is_mud_layer);
 	ClassDB::bind_method(D_METHOD("set_mud_slides", "enabled"), &GroundSurface3D::set_mud_slides);
 	ClassDB::bind_method(D_METHOD("is_mud_slides"), &GroundSurface3D::is_mud_slides);
+	ClassDB::bind_method(D_METHOD("set_simulation_paused", "paused"), &GroundSurface3D::set_simulation_paused);
+	ClassDB::bind_method(D_METHOD("is_simulation_paused"), &GroundSurface3D::is_simulation_paused);
+	ClassDB::bind_method(D_METHOD("set_light_budget", "light"), &GroundSurface3D::set_light_budget);
+	ClassDB::bind_method(D_METHOD("is_light_budget"), &GroundSurface3D::is_light_budget);
 	ClassDB::bind_method(D_METHOD("set_subsoil", "enabled"), &GroundSurface3D::set_subsoil);
 	ClassDB::bind_method(D_METHOD("is_subsoil"), &GroundSurface3D::is_subsoil);
 	ClassDB::bind_method(D_METHOD("get_subsoil_depth_at", "position"), &GroundSurface3D::get_subsoil_depth_at);
 	ClassDB::bind_method(D_METHOD("add_mud_deposit", "position", "radius", "depth", "update"), &GroundSurface3D::add_mud_deposit, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("get_mud_deposit_at", "position"), &GroundSurface3D::get_mud_deposit_at);
+	ClassDB::bind_method(D_METHOD("set_flood_silt", "enabled"), &GroundSurface3D::set_flood_silt);
+	ClassDB::bind_method(D_METHOD("is_flood_silt"), &GroundSurface3D::is_flood_silt);
+	ClassDB::bind_method(D_METHOD("get_flood_silt_total"), &GroundSurface3D::get_flood_silt_total);
 	ClassDB::bind_method(D_METHOD("set_mats", "enabled"), &GroundSurface3D::set_mats);
 	ClassDB::bind_method(D_METHOD("is_mats"), &GroundSurface3D::is_mats);
 	ClassDB::bind_method(D_METHOD("get_mat_at", "contact", "tolerance"), &GroundSurface3D::get_mat_at, DEFVAL(0.06));
@@ -6260,6 +6378,8 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_sand_glints", "enabled"), &GroundSurface3D::set_sand_glints);
 	ClassDB::bind_method(D_METHOD("is_sand_glints"), &GroundSurface3D::is_sand_glints);
 	ClassDB::bind_method(D_METHOD("set_wind_shelters", "shelters"), &GroundSurface3D::set_wind_shelters);
+	ClassDB::bind_method(D_METHOD("set_obstacle_lee", "enabled"), &GroundSurface3D::set_obstacle_lee);
+	ClassDB::bind_method(D_METHOD("is_obstacle_lee_enabled"), &GroundSurface3D::is_obstacle_lee_enabled);
 	ClassDB::bind_method(D_METHOD("get_wind_shelters"), &GroundSurface3D::get_wind_shelters);
 	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("shelter_ratio_for", "lambda"), &GroundSurface3D::shelter_ratio_for);
 	ClassDB::bind_method(D_METHOD("get_blown_at", "x", "z"), &GroundSurface3D::get_blown_at);
@@ -6349,8 +6469,11 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "near_resolution", PROPERTY_HINT_RANGE, "128,2048,64"), "set_near_resolution", "get_near_resolution");
 	ADD_GROUP("Mud", "mud_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_layer"), "set_mud_layer", "is_mud_layer");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flood_silt"), "set_flood_silt", "is_flood_silt");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_slides"), "set_mud_slides", "is_mud_slides");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "subsoil"), "set_subsoil", "is_subsoil");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "simulation_paused"), "set_simulation_paused", "is_simulation_paused");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "light_budget"), "set_light_budget", "is_light_budget");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mats"), "set_mats", "is_mats");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "mud_map", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_mud_map", "get_mud_map");
 	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "mud_map_rect"), "set_mud_map_rect", "get_mud_map_rect");
@@ -6403,6 +6526,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "world_puddles"), "set_world_puddles", "is_world_puddles");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "world_puddle_density", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_world_puddle_density", "get_world_puddle_density");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "obstacle_lee"), "set_obstacle_lee", "is_obstacle_lee_enabled");
 	ADD_GROUP("Drawing", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_spacing", PROPERTY_HINT_RANGE, "0.01,1,0.005,suffix:m"), "set_detail_spacing", "get_detail_spacing");

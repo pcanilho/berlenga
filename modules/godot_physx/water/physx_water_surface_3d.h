@@ -433,6 +433,7 @@ public:
 	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override;
 	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return sample_depth(p_position) > 0.0f ? sediment : Vector2(); }
 	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override;
+	void contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) override;
 	// The body's suspended load (kg/m3: x mineral, y ash), well mixed; it settles out over hours to days.
 	Vector2 get_sediment() const { return sediment; }
 	void set_sediment(const Vector2 &p_kg_m3);

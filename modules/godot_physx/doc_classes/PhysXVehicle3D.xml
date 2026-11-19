@@ -252,6 +252,13 @@
 				The traction the soft ground under wheel [param wheel] can give at its current slip (Janosi-Hanamoto), in newtons.
 			</description>
 		</method>
+		<method name="get_wind_obstacles" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				The chassis box as a world [AABB] when it overlaps [param rect] (empty before the vehicle is built or while [member wind_obstacle] is off). WeatherMap3D reads it for its shelter: snow and blown sand drift in a parked vehicle's lee.
+			</description>
+		</method>
 		<method name="is_sleeping" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -457,6 +464,9 @@
 		</member>
 		<member name="tyre_clogging" type="bool" setter="set_tyre_clogging" getter="is_tyre_clogging" default="true">
 			In sticky clay the tyre tread packs with mud as it turns, more as it spins: a packed tread grips like a slick (the clay shears against itself) and its mass adds to the wheel's inertia, and the clay's adhesion drags on the wheel. Spun fast enough the tyre throws the mud off; it scours on sand, dries and drops on firm ground and washes off in standing water. See [method get_wheel_mud].
+		</member>
+		<member name="wind_obstacle" type="bool" setter="set_wind_obstacle" getter="is_wind_obstacle" default="true">
+			The chassis blocks the wind: the vehicle joins the [code]weather_shelter[/code] group, so WeatherMap3D slows the wind in its lee and snow and sand drift there. The weather checks it every 2 seconds and bakes its shelter again when the vehicle has moved.
 		</member>
 	</members>
 	<constants>

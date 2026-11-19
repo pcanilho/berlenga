@@ -18700,7 +18700,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// crown's inside, and without them an oleaster's crown lit up grey-blue in the path tracer (19 Nov).
 			auto skip_part = [&](uint32_t i) {
 				if (far_twigs) {
-					return b.part_role[i] == Builder::ROLE_RELIEF || (b.part_role[i] == Builder::ROLE_ALL && b.part_size[i] < FAR_TWIG_RADIUS);
+					return b.part_role[i] == Builder::ROLE_RELIEF || (b.part_role[i] == Builder::ROLE_ALL && b.part_size[i] < (light_far_meshes ? TREE_LODS[0].min_radius : FAR_TWIG_RADIUS));
 				}
 				return b.part_role[i] == Builder::ROLE_PLAIN;
 			};
@@ -20038,6 +20038,11 @@ void TreeGenerator::_promote_lod1(Builder &r_b, Dictionary &r_lods) const {
 	}
 	r_b.indices = r_lods[first];
 	r_lods.erase(first);
+	const Variant second = TREE_LODS[1].error;
+	if (light_far_meshes && r_lods.has(second)) {
+		r_b.indices = r_lods[second];
+		r_lods.erase(second);
+	}
 	_compact_vertices(r_b, r_lods, nullptr);
 }
 
@@ -20706,6 +20711,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	grove_top = p_from.grove_top;
 	timber_stems = p_from.timber_stems;
 	compress_vertices = p_from.compress_vertices;
+	light_far_meshes = p_from.light_far_meshes;
 	climber = p_from.climber;
 	shed_radius_max = p_from.shed_radius_max;
 	climber_cover = p_from.climber_cover;
@@ -20745,6 +20751,14 @@ void TreeGenerator::_near_task(void *p_self) {
 	self->leaf_twin_of.clear();
 	self->climber_leaf_b = Builder();
 	self->climber_adult_b = Builder();
+	near_building.decrement(); // The slot frees when the build ends, claimed or not.
+}
+
+SafeNumeric<int> TreeGenerator::near_building;
+int TreeGenerator::near_build_limit = 0;
+
+int TreeGenerator::_near_limit() {
+	return near_build_limit > 0 ? near_build_limit : MAX(1, OS::get_singleton()->get_processor_count() / 4);
 }
 
 Ref<Mesh> TreeGenerator::request_near_mesh(int p_key, int p_variant) {
@@ -20774,8 +20788,10 @@ Ref<Mesh> TreeGenerator::request_near_mesh(int p_key, int p_variant) {
 		near_ready_variant = -1;
 		return m;
 	}
-	if (near_task == WorkerThreadPool::INVALID_TASK_ID) {
-		// One build at a time per species, at low priority.
+	if (near_task == WorkerThreadPool::INVALID_TASK_ID && near_building.get() < _near_limit()) {
+		// One build at a time per species, at low priority, and a few at most over all species (the rest ask
+		// again next frame).
+		near_building.increment();
 		near_ready.unref(); // Not claimed: the camera moved on.
 		near_ready_variant = -1;
 		near_task_variant = p_variant;
@@ -22543,6 +22559,11 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("make_leaf_mesh", "preset", "season", "variant"), &TreeGenerator::make_leaf_mesh, DEFVAL(Dictionary()), DEFVAL(0));
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_physics", "preset"), &TreeGenerator::get_leaf_physics);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_living_meshes", "species"), &TreeGenerator::get_living_meshes);
+	ClassDB::bind_static_method("TreeGenerator", D_METHOD("set_near_build_limit", "limit"), &TreeGenerator::set_near_build_limit);
+	ClassDB::bind_method(D_METHOD("set_light_far_meshes", "enabled"), &TreeGenerator::set_light_far_meshes);
+	ClassDB::bind_method(D_METHOD("get_light_far_meshes"), &TreeGenerator::get_light_far_meshes);
+	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_near_build_limit"), &TreeGenerator::get_near_build_limit);
+	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_near_builds"), &TreeGenerator::get_near_builds);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("make_shrub_species", "preset", "form", "variants", "season"), &TreeGenerator::make_shrub_species, DEFVAL(SHRUB_MATURE), DEFVAL(3), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_bloom", "preset", "day_of_year"), &TreeGenerator::get_bloom);
 	ClassDB::bind_method(D_METHOD("set_season", "season"), &TreeGenerator::set_season);
@@ -22658,6 +22679,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_needle_range", PROPERTY_HINT_RANGE, "0,100,0.5,suffix:m"), "set_near_needle_range", "get_near_needle_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_leaf_range", PROPERTY_HINT_RANGE, "0,200,0.5,suffix:m"), "set_near_leaf_range", "get_near_leaf_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_lod1"), "set_far_lod1", "get_far_lod1");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "light_far_meshes"), "set_light_far_meshes", "get_light_far_meshes");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "forest_spacing", PROPERTY_HINT_RANGE, "1,20,0.1,suffix:m"), "set_forest_spacing", "get_forest_spacing");
 	ADD_GROUP("Colors", "");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "bark_color"), "set_bark_color", "get_bark_color");

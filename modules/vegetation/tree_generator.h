@@ -498,6 +498,10 @@ private:
 	// Far meshes from LOD 1 (trees.md 8d): with near_leaf_range, every broadleaf's far mesh starts
 	// at the pruned, area-kept LOD 1 leaves; LOD 0 lives only in the near mesh.
 	bool far_lod1 = true;
+	// Cloud and other memory-bound still shots: far meshes start one LOD level further (the second: 15% of the leaves,
+	// wood from a centimetre, no bark relief), a quarter of the far memory. Off by default: the path tracer shows the
+	// fine shoots' shade in a crown (an olive's lit up without them).
+	bool light_far_meshes = false;
 	bool skip_lods = false;
 	float bark_relief = 1.0f; // Scales the displaced bark of LOD 0; 0 = plain tubes only.
 	static constexpr float RELIEF_MIN_RADIUS = 0.08f; // Stems and limbs this thick get relief.
@@ -917,6 +921,11 @@ private:
 	HashMap<int, TypedArray<Mesh>> fire_cache;
 	Ref<ArrayMesh> material_source;
 	static void _near_task(void *p_self);
+	// Near meshes building at once, over every generator (a beech's peaks near 2 GB while it builds): the field
+	// asks for all of them on its first frame. Cap: near_build_limit, 0 picks a core in four (at least one).
+	static SafeNumeric<int> near_building;
+	static int near_build_limit;
+	static int _near_limit();
 
 protected:
 	static void _bind_methods();
@@ -975,6 +984,13 @@ public:
 	void set_climber_cover(float p_cover) { climber_cover = CLAMP(p_cover, 0.0f, 1.0f); }
 	float get_climber_cover() const { return climber_cover; }
 	void set_compress_vertices(bool p_enable) { compress_vertices = p_enable; }
+	void set_light_far_meshes(bool p_on) { light_far_meshes = p_on; }
+	bool get_light_far_meshes() const { return light_far_meshes; }
+	static void set_near_build_limit(int p_limit) { near_build_limit = MAX(p_limit, 0); }
+	static int get_near_build_limit() { return near_build_limit; }
+	// Near meshes building now over every generator: wait for 0 (keep drawing frames) before quitting, or the
+	// exit can free a source while its build runs.
+	static int get_near_builds() { return near_building.get(); }
 	bool is_compress_vertices() const { return compress_vertices; }
 	void set_moss_cover(float p_cover) { moss_cover = MAX(p_cover, 0.0f); }
 	float get_moss_cover() const { return moss_cover; }

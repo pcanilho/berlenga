@@ -149,7 +149,7 @@ func _ready() -> void:
 			# "true"/"false" as 1/0: float("true") is 0, which silently turned a switch off.
 			overrides[kv[0]] = 1.0 if kv[1] == "true" else (0.0 if kv[1] == "false" else float(kv[1]))
 	if test:
-		_run_test()
+		await _run_test()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	_build_scene()
@@ -253,6 +253,10 @@ func _run_test() -> void:
 			_check(o.crown_radius * 2.0 > 0.75 * o.height and o.crown_base > 0.4 * o.height, "stone pine umbrella: crown %.1f m across on a %.1f m tall tree, crown base %.1f m" % [o.crown_radius * 2.0, o.height, o.crown_base])
 		var again := _gen(p, false, seed)
 		_check(again.internodes == o.internodes and is_equal_approx(again.height, o.height), "%s deterministic for one seed" % NAMES[p])
+		# Freed meshes leave the GPU (system memory under lavapipe) only when a frame is drawn: without one the
+		# fifty presets' buffers pile up past 15 GB.
+		o.clear(); f.clear(); again.clear()
+		await RenderingServer.frame_post_draw
 	_season_test()
 	var other := _gen(0, false, seed + 1)
 	var first := _gen(0, false, seed)

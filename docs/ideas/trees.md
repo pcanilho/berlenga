@@ -2436,6 +2436,25 @@ relief and the LOD 0-only crown parts, and fold date palm pinnae as one V of two
 to 318k, tended 227k to 127k. Dropping the oleaster's twigs between 1 mm and 1 cm (3M of its 4.9M) lit its crown
 grey-blue in PT (they shade the crown's inside en masse), so they stay; its bulk is about half a million shoots.
 
+
+### 5ak. Avalanches break trees (19 Nov; snow's WorldSnow getters)
+
+`TreeWind3D.avalanche_enabled` (on). Once a second each rigged tree reads
+`WorldSnow.avalanche_peak_pressure_at` at its foot (Pa; snow follow-up 24 records 0.5 rho u^2,
+dense flow then powder).
+- Stem strength: P = 15 kPa (D / 0.4 m)^1.36, D the stem above its flare (collider spanning 2.5 m),
+  a power fit to Bartelt and Stoeckli 2001 (30-50 cm trunks from 10-20 kPa); 1-4 kPa for 5-12 cm
+  stems, the powder cloud's range. Per tree x0.75-1.25. `TreeWind3D.avalanche_strength()`.
+- Under that, a stem over 15 cm loses its crown from 3 kPa (x0.6-1.4): the stem joint nearest 0.6 of
+  the tree's reach snaps (the powder front takes the tops; RAMMS::EXTENDED suspension layer).
+- A stem that fails breaks at the foot (70%; frozen soil holds the roots) or goes with its root plate,
+  through the storm path (`_storm_fail`), falling downslope (`WorldGround.height_at` at 3 m) with a
+  1.5 m/s shove from the flow.
+- Felled trees and snapped stems (wind too) cut their leaf area out of the weather map's
+  `canopy_map` (fading to 1.4 crown radii like VegetationField3D's crown term), so snow's anchoring
+  and braking, rain and wind see the lane. A VegetationField3D repaint restores it (it owns the map).
+- Bench: `--storm --avalanche-test` (WorldSnow/WorldGround stubs, 7 checks) and
+  `--storm --avalanche=P` frames. Old 34 m open-grown spruce (D 1.37 m) holds to ~80 kPa.
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
@@ -2845,6 +2864,25 @@ Measured: leaf vertices of one far variant, beech 8.19M to 3.35M, oak 3.95M to 1
 oak far against full 1.61M vs 13.6M. The stand bench's wind LOD error fell from 1.55 to 1.35 px
 p99 with the lighter meshes (still over its 1 px bar, a check failing since before 5q). A
 denoised PT pair at 60 and 100 m goes on the PC list.
+
+## 8e. Memory for still shots (19 Nov; scene blocked on cloud memory)
+
+Beech forests at 40/80 m passed 15 GB on the first draw. Measured (4 cores, lavapipe):
+- One beech `generate()` peaks at 1.9 GB (12.2M vertices). Near meshes are requested on the first
+  frame and up to four built at once: the first-draw spike. `TreeGenerator.set_near_build_limit(n)`
+  caps parallel near builds (default cores/4, at least 1); `get_near_builds()` says how many run.
+  Wait for it to reach 0 before saving a still or freeing the scene.
+- Freed meshes leave GPU memory (system RAM under lavapipe) only once a frame draws. The presets
+  test grew 0.8 GB per tree and died at white willow (13.5 GB); drawing a frame between trees keeps
+  it under 5.6 GB. Building many stands without a frame between them piles up the same way.
+- `light_far_meshes` (off; for stills and benches): far meshes start one LOD later (TREE_LODS[1])
+  and drop bark under 1 cm. Beech stand far variant 16.0M to 6.9M vertices (0.85 to 0.51 GB),
+  raster frame the same by eye. Not on by default: PT olive crowns went grey-blue without the fine
+  shoots that shade their inside (FAR_TWIG_RADIUS stays 1 mm).
+- `fire_variants` adds 45% vertices to a stand (burnt variants ride along).
+Still recipe: `rigged` false, `fire_variants` false, `near_needle_range` 0, `light_far_meshes` true
+set before `make_stand`/`make_woodland`, `near_leaf_range` ~25, `set_near_build_limit(1)`, one tree
+variant, a frame between stands, wait for `get_near_builds() == 0`.
 
 ## 8a. Species, habitats and stands (as built)
 

@@ -6,6 +6,7 @@
 	<description>
 		Add it to a building and describe its rooms in [member rooms]: each is a fire compartment with a box, a fuel load and its openings (doors, windows, hatches). An opening that lies on another room's face is a door between the two.
 		A room on fire grows as t² ([member growth_time] to 1 MW) and takes air through its open openings, which limits it to Kawagoe's 1.5 A√H MW. Its hot layer heats as McCaffrey, Quintiere and Harkleroad's correlation gives, and glass falls out at about [member glass_break_temperature]. It flashes over at Thomas's heat release; after that its fuel burns at [member heat_release_rate] per square metre of floor, and what the air inside cannot burn comes out of the windows as flames of Eurocode's length (EN 1991-1-2 Annex B). Once 70% of its fuel has burnt it dies down linearly. Its timber chars at 0.8 mm a minute in a fully developed fire; the fire burns through walls ([member wall_thickness]), floors ([member floor_thickness]) and the roof ([member roof_thickness]) into the rooms beyond, and the room collapses when its framing has lost [member collapse_share] of [member member_size]. A [code]PhysXDestructible3D[/code] [member target] breaks up as it does. Otherwise the target's meshes over each room (its ceiling, the floor above, its roof) sag as the framing chars, then fall in as rigid bodies when that room collapses, room by room, and their colliders go with them.
+		Wind drives the fire through the building. Each opening feels the wind's pressure: about +0.7 of ρu²/2 facing the wind, −0.5 in the lee and −0.6 on the sides and roof. Each room's pressure balances the flows through its openings. The air the wind drives in can feed a hotter fire than the openings let in alone (3 MJ per kg of air). Flames leave by the openings the gas flows out of, not those the wind blows into, and hot gas pushed through a door heats the next room. Window flames are drawn as sheets leaving the top of the opening and running up the wall above to their Eurocode length, bent by the wind.
 		Smoke runs ahead of the fire. A burning room's plume fills a smoke layer under its ceiling (Heskestad's entrainment), carrying soot at [member smoke_yield]. The layer comes down until it reaches the tops of the openings and flows out of them, through doors into the next rooms (which fill and smoke in turn) and out of windows and eaves. So grey smoke pours from a house minutes before any flames show.
 		Fire spreads between rooms through doors (radiation from a hot layer, flames through once it flashes), through burnt walls and floors, from a room that collapses onto the one below, and from flames out of a window to the window above.
 		Water puts it out. Water in a room boils off and takes 2.6 MJ per kilogram. Taking about a third of what the fire could release puts the flames down (about 0.15 kg/s per MW, as fire services find), and the steam pours out of the windows. A flashed-over room falls back to a growing fire, and it goes out if the water keeps winning for twenty seconds. A weaker stream only holds it back, and the fire grows again when the water stops. Half a millimetre of water on burning cladding puts it out, and wet cladding does not catch.
@@ -68,6 +69,12 @@
 				Fire seconds from when it started stepping to its first catch (scaled by [member time_scale]), or [code]-1[/code] if it has not caught.
 			</description>
 		</method>
+		<method name="get_rekindle_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Times a room that had gone out burst back into flame from its smouldering debris.
+			</description>
+		</method>
 		<method name="get_room_char_depth" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="room" type="int" />
@@ -100,6 +107,13 @@
 			<param index="0" name="room" type="int" />
 			<description>
 				Seconds from a room's ignition to its flashover, or -1 if it has not flashed over.
+			</description>
+		</method>
+		<method name="get_room_ember" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="room" type="int" />
+			<description>
+				How hard a burnt-out room's debris still glows, [code]0[/code] (cold) to [code]1[/code]. It dies away over hours in still air, is kept down by rain and water, and is fanned up by wind where the debris lies open. At [code]0.6[/code], if fuel is left, the room relights ([signal rekindled]).
 			</description>
 		</method>
 		<method name="get_room_fuel_left" qualifiers="const">
@@ -251,6 +265,12 @@
 			<param index="0" name="cause" type="String" />
 			<description>
 				Emitted once, when the building first catches; [param cause] as [method get_ignition_cause].
+			</description>
+		</signal>
+		<signal name="rekindled">
+			<param index="0" name="room" type="int" />
+			<description>
+				Emitted when a room that had gone out bursts back into flame from its smouldering debris.
 			</description>
 		</signal>
 	</signals>

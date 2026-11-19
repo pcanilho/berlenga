@@ -69,6 +69,13 @@
 				Coarse cells being placed on worker threads (see [member cell_threads]), and shape libraries being built for them.
 			</description>
 		</method>
+		<method name="get_ground_detail_cover_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<param index="0" name="level" type="int" />
+			<description>
+				The ground detail cover map at [param level] (0: 1 m texels, 1: 8 m texels; see [member ground_detail_cover]): red, green and blue hold the pebbles', gravel's and fine gravel's share of the ground (0 to 0.5 as 0 to 255), alpha the rock type times 32. [code]null[/code] until built.
+			</description>
+		</method>
 		<method name="get_ground_detail_pending" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -196,6 +203,13 @@
 			<param index="1" name="rect" type="Rect2" />
 			<description>
 				Stones of a layer in [param rect], placed whether or not they are built, as dictionaries with [code]position[/code], [code]basis[/code], [code]scale[/code], [code]ground[/code], [code]footprint[/code], [code]film[/code], [code skip-lint]rock_type[/code], [code]family[/code], [code]bin[/code], [code]variant[/code], [code skip-lint]layer[/code] and [code]top[/code] (height of its highest point, from its shape as placed).
+			</description>
+		</method>
+		<method name="get_wind_obstacles">
+			<return type="Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				Boulders in [param rect] standing at least 0.5 m out of the ground, as world [AABB]s (the footprint's square, from the ground to about the stone's top). The weather's shelter reads them (the field joins the [code]weather_shelter[/code] group), so snow drifts and blown sand settle in their lee. Empty while [member wind_obstacles] is off.
 			</description>
 		</method>
 		<method name="is_breaking_supported" qualifiers="const">
@@ -383,6 +397,12 @@
 		<member name="ground_detail" type="bool" setter="set_ground_detail" getter="is_ground_detail" default="true">
 			The stones under [member min_size] near the camera as real instanced geometry instead of the ground material's normal map, so they have silhouettes, contact shadows and parallax under raster and the path tracer alike. Three size classes (1 to 2 cm, 2 to 4 cm, 4 cm to [member min_size]) continue the shore's and the talus's own size laws, so they keep the big stones' sorting and rock; each class is drawn round the camera out to where its stones are still [member ground_detail_pixels] tall, and every stone shares one of the field's shapes, so the path tracer only adds an instance for each (see [method RenderingServer.multimesh_set_rt_instanced]). Cells are placed on worker threads while streaming (see [member ground_detail_threads]). Turn it off in tests that do not need it.
 		</member>
+		<member name="ground_detail_cover" type="bool" setter="set_ground_detail_cover" getter="is_ground_detail_cover" default="true">
+			Past where each ground detail class stops drawing its stones, the ground material shows their aggregate instead: how much of the ground they cover, their colour, the bed they hide when seen edge on and the shade they cast under a low sun, so the edge of the drawn stones never shows. The cover comes from the same size and density laws as the stones, in two maps round the camera (1 m texels over 256 m and 8 m texels over 2 km, see [method get_ground_detail_cover_texture]) built on worker threads as it moves. Needs a [TerrainMaterial3D] ground and [member ground_detail] on.
+		</member>
+		<member name="ground_detail_rivers" type="bool" setter="set_ground_detail_rivers" getter="is_ground_detail_rivers" default="true">
+			Ground detail on the river beds: the river layer's bed carried on below [member min_size] (what the flow can move and what still arrives from upstream), coarse in the riffles and fine in the pools between them about six channel widths apart, finer on the bars at the sides, the pools' beds partly hidden under a drape of fines, and every grain imbricated (its long axis across the flow, dipping upstream 10 to 30 degrees). Most grains carry the rock of the river's headwaters. Off, the beds keep only the river layer's stones.
+		</member>
 		<member name="ground_detail_threads" type="bool" setter="set_ground_detail_threads" getter="is_ground_detail_threads" default="true">
 			While streaming, place the ground detail cells on worker threads: the main thread only snapshots what a cell rests on and adds the finished cell, one buffer upload a shape. A finer size class waits until the coarser ones round it are down. When disabled, each cell is placed on the main thread as it is wanted.
 		</member>
@@ -514,6 +534,9 @@
 		</member>
 		<member name="variants" type="int" setter="set_variants" getter="get_variants" default="6">
 			Shapes per rock type and family. Every stone uses one of them as a MultiMesh instance.
+		</member>
+		<member name="wind_obstacles" type="bool" setter="set_wind_obstacles" getter="is_wind_obstacles_enabled" default="true">
+			Boulders block the wind: the field joins the [code]weather_shelter[/code] group and gives its boulders through [method get_wind_obstacles], so WeatherMap3D slows the wind in their lee and snow and sand drift there.
 		</member>
 	</members>
 	<signals>

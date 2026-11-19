@@ -348,7 +348,10 @@ float SnowCover3D::_sx_at(int p_x, int p_z, Vector2 p_upwind) const {
 	// exposed, wind strips it.
 	const int n = resolution;
 	const float cs = _cell_size();
-	const float z0 = cell_ground[p_z * n + p_x];
+	// Rocks, walls, buildings and vehicles count as terrain (Winstral and Marks 2002 took vegetation and
+	// structures into the surface the same way): the wind strips their tops and snow fills their lee.
+	const float *ob = cell_obstacle.size() == n * n ? cell_obstacle.ptr() : nullptr;
+	const float z0 = cell_ground[p_z * n + p_x] + (ob ? ob[p_z * n + p_x] : 0.0f);
 	const int steps = MAX(1, int(drift_distance / cs));
 	float sum = 0.0f;
 	for (int k = 0; k < SX_DIRECTIONS; k++) {
@@ -363,7 +366,7 @@ float SnowCover3D::_sx_at(int p_x, int p_z, Vector2 p_upwind) const {
 				break;
 			}
 			const float dist = s * cs;
-			best = MAX(best, Math::atan((cell_ground[z * n + x] - z0) / dist));
+			best = MAX(best, Math::atan((cell_ground[z * n + x] + (ob ? ob[z * n + x] : 0.0f) - z0) / dist));
 			any = true;
 		}
 		sum += any ? best : 0.0f;
@@ -383,6 +386,12 @@ void SnowCover3D::_sx_row(uint32_t p_row, void *p_unused) {
 void SnowCover3D::_start_sx(Vector2 p_wind_dir) {
 	// Rows in parallel, in the background: the drift keeps the last Sx until this one lands.
 	_finish_sx(true);
+	// The obstacles read last, for this bake's rows (no rows run now).
+	if (obstacle_active && obstacle_next.size() == resolution * resolution && obstacle_origin == origin_cell) {
+		cell_obstacle = obstacle_next;
+	} else {
+		cell_obstacle.clear();
+	}
 	sx_next.resize(resolution * resolution);
 	sx_next.ptrw(); // unshare before the threads write
 	sx_next_direction = p_wind_dir.normalized();
@@ -1065,6 +1074,7 @@ void SnowCover3D::_update_begin(double p_weather_dt, bool p_blocking) {
 	_refresh_cell_inputs(from, MIN(from + band, resolution), nullptr);
 	_refresh_fire();
 	_refresh_lap();
+	_refresh_obstacles();
 	if (!ice_breaks.is_empty()) {
 		_cut_ice(cell_ice, cell_white_ice);
 		ice_breaks.clear(); // the cells carry the holes now (and grow ice in them again by Stefan's law)
@@ -1266,6 +1276,70 @@ void SnowCover3D::_refresh_fire() {
 	}
 	if (!any) {
 		cell_fire.clear();
+	}
+}
+
+// Wind obstacles over the snow (docs/ideas/world-links.md, lee drifts): their heights from WorldWeather, every few
+// seconds and when the square has moved. A change bakes Sx again.
+void SnowCover3D::_refresh_obstacles() {
+	const int n = resolution;
+	const WorldWeather *wm = WorldContracts::weather();
+	if (!drift_obstacles || !drift_enabled || !wm || cell_ground.size() != n * n) {
+		if (obstacle_active) {
+			sx_dirty = sx_valid;
+			sx_cache.clear();
+		}
+		obstacle_next.clear();
+		cell_lee.clear();
+		obstacle_active = false;
+		return;
+	}
+	if (obstacle_origin != origin_cell || obstacle_next.size() != n * n || cell_lee.size() != n * n) {
+		// A new square: start a sweep from scratch.
+		obstacle_next.resize(n * n);
+		obstacle_next.fill(0.0f);
+		cell_lee.resize(n * n);
+		cell_lee.fill(1.0f);
+		obstacle_origin = origin_cell;
+		obstacle_row = 0;
+		obstacle_sweep_changed = obstacle_active;
+		obstacle_sweep_any = false;
+		obstacle_active = false;
+	}
+	// A band of rows each update (all of them for a long step), so the frame never waits on a whole square.
+	const int band = inputs.weather_dt >= 600.0 ? n : MAX(n / 16, 1);
+	const int end = MIN(obstacle_row + band, n);
+	float *w = obstacle_next.ptrw();
+	float *lw = cell_lee.ptrw();
+	for (int z = obstacle_row; z < end; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			Vector3 pos = _cell_center(x, z);
+			pos.y = cell_ground[i];
+			const float h = MAX(wm->obstacle_height_at(pos), 0.0f);
+			if (Math::abs(h - w[i]) > 0.1f) {
+				obstacle_sweep_changed = true;
+			}
+			w[i] = h;
+			// An obstacle's own top stands in the open wind. Elsewhere the lee at the snow's surface: it fades as
+			// the drift fills it.
+			const float depth = cell_swe[i] > SWE_MIN ? cell_swe[i] / MAX(cell_density[i], 30.0f) : 0.0f;
+			const float lee = h > 0.0f ? 1.0f : wm->obstacle_lee_at(pos + Vector3(0.0f, depth, 0.0f));
+			lw[i] = Math::is_finite(lee) ? CLAMP(lee, 0.0f, 1.0f) : 1.0f;
+			obstacle_sweep_any = obstacle_sweep_any || h > 0.0f || lw[i] < 0.999f;
+		}
+	}
+	obstacle_row = end;
+	if (end >= n) {
+		obstacle_row = 0;
+		if (obstacle_sweep_changed || obstacle_active != obstacle_sweep_any) {
+			// Even while an Sx bake runs (it started before this sweep): the next one takes the obstacles in.
+			sx_dirty = true;
+			sx_cache.clear();
+		}
+		obstacle_active = obstacle_sweep_any;
+		obstacle_sweep_any = false;
+		obstacle_sweep_changed = false;
 	}
 }
 
@@ -1881,7 +1955,12 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 			give = MIN(cell_crust_burial[i] * cell_density[i], swe);
 		}
 		const float t = in.temperature - lapse_rate * 0.001f * (cell_ground[i] - in.ref_height);
-		const float w = 1.0f + 0.5f * (0.5f * slope[i] / smax) + 0.5f * (0.5f * curve[i] / cmax);
+		float w = 1.0f + 0.5f * (0.5f * slope[i] / smax) + 0.5f * (0.5f * curve[i] / cmax);
+		// Behind rocks, walls, buildings and vehicles the wind slows below what lifts snow and the snow carried in
+		// drops (SnowTran-3D's flux divergence, Liston and Sturm 1998): a lee drift.
+		if (obstacle_active && cell_lee.size() == nn) {
+			w *= cell_lee[i];
+		}
 		flux[i] = transport_flux(u * w, t, cell_density[i]);
 		loose[i] = give;
 		qmax = MAX(qmax, flux[i]);
@@ -2441,6 +2520,47 @@ float SnowCover3D::get_depth_at(Vector3 p_position) const {
 	return swe > SWE_MIN ? swe / MAX(get_density_at(p_position), 30.0f) : 0.0f;
 }
 
+float SnowCover3D::get_surface_depth_at(Vector3 p_position) const {
+	// The drawn surface's depth (SnowSurface3D's snow_depth_smooth): Catmull-Rom over the 4 x 4 cells around,
+	// held within the four nearest cells' range. The snow texture holds the cell's swe / density.
+	const int n = resolution;
+	if (_in_world_only(p_position) || !origin_valid || pub.swe.size() != n * n || pub.density.size() != n * n) {
+		return get_depth_at(p_position);
+	}
+	if (!get_map_rect().has_point(Vector2(p_position.x, p_position.z))) {
+		return 0.0f;
+	}
+	const float cs = _cell_size();
+	const float fx = p_position.x / cs - origin_cell.x - 0.5f;
+	const float fz = p_position.z / cs - origin_cell.y - 0.5f;
+	const int bx = int(Math::floor(fx)), bz = int(Math::floor(fz));
+	const float tx = fx - bx, tz = fz - bz;
+	auto weights = [](float t, float *w) {
+		w[0] = t * (-0.5f + t * (1.0f - 0.5f * t));
+		w[1] = 1.0f + t * t * (-2.5f + 1.5f * t);
+		w[2] = t * (0.5f + t * (2.0f - 1.5f * t));
+		w[3] = t * t * (-0.5f + 0.5f * t);
+	};
+	float wx[4], wz[4];
+	weights(tx, wx);
+	weights(tz, wz);
+	float sum = 0.0f, lo = 1e9f, hi = -1e9f;
+	for (int j = 0; j < 4; j++) {
+		for (int i = 0; i < 4; i++) {
+			const int x = CLAMP(bx + i - 1, 0, n - 1), z = CLAMP(bz + j - 1, 0, n - 1);
+			const int c = z * n + x;
+			const float swe = pub.swe[c];
+			const float v = swe > SWE_MIN ? swe / MAX(pub.density[c], 30.0f) : 0.0f;
+			sum += v * wx[i] * wz[j];
+			if (i >= 1 && i <= 2 && j >= 1 && j <= 2) {
+				lo = MIN(lo, v);
+				hi = MAX(hi, v);
+			}
+		}
+	}
+	return CLAMP(sum, lo, hi);
+}
+
 float SnowCover3D::get_swe_at(Vector3 p_position) const {
 	if (_in_world_only(p_position)) {
 		return world->get_swe_at(p_position);
@@ -2611,6 +2731,14 @@ float SnowCover3D::contract_snow_surface_at(const Vector3 &p_position) const {
 	}
 	const float d = get_depth_at(p_position);
 	return d > 0.0f ? get_ground_height_at(p_position) + d : -Math::INF;
+}
+
+float SnowCover3D::contract_snow_avalanche_pressure_at(const Vector3 &p_position) const {
+	return avalanche_node ? avalanche_node->get_pressure_at(p_position) : 0.0f;
+}
+
+float SnowCover3D::contract_snow_avalanche_peak_pressure_at(const Vector3 &p_position) const {
+	return avalanche_node ? avalanche_node->get_peak_pressure_at(p_position) : 0.0f;
 }
 
 Vector2 SnowCover3D::contract_snow_lake_ice_at(const Vector3 &p_position) const {
@@ -2860,6 +2988,10 @@ void SnowCover3D::set_slide_holding_decay(float p_per_degree) {
 	slide_holding_decay = MAX(p_per_degree, 0.0f);
 }
 
+void SnowCover3D::set_drift_obstacles(bool p_enabled) {
+	drift_obstacles = p_enabled;
+}
+
 void SnowCover3D::set_drift_enabled(bool p_enabled) {
 	drift_enabled = p_enabled;
 }
@@ -2984,6 +3116,8 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_slide_min_holding"), &SnowCover3D::get_slide_min_holding);
 	ClassDB::bind_method(D_METHOD("set_slide_holding_decay", "per_degree"), &SnowCover3D::set_slide_holding_decay);
 	ClassDB::bind_method(D_METHOD("get_slide_holding_decay"), &SnowCover3D::get_slide_holding_decay);
+	ClassDB::bind_method(D_METHOD("set_drift_obstacles", "enabled"), &SnowCover3D::set_drift_obstacles);
+	ClassDB::bind_method(D_METHOD("is_drift_obstacles_enabled"), &SnowCover3D::is_drift_obstacles_enabled);
 	ClassDB::bind_method(D_METHOD("set_drift_enabled", "enabled"), &SnowCover3D::set_drift_enabled);
 	ClassDB::bind_method(D_METHOD("is_drift_enabled"), &SnowCover3D::is_drift_enabled);
 	ClassDB::bind_method(D_METHOD("set_drift_distance", "distance"), &SnowCover3D::set_drift_distance);
@@ -3123,6 +3257,7 @@ void SnowCover3D::_bind_methods() {
 	ADD_GROUP("Drift", "drift_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "drift_enabled"), "set_drift_enabled", "is_drift_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_distance", PROPERTY_HINT_RANGE, "1,1000,1,suffix:m"), "set_drift_distance", "get_drift_distance");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "drift_obstacles"), "set_drift_obstacles", "is_drift_obstacles_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_strength", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_drift_strength", "get_drift_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_threshold_wind", PROPERTY_HINT_RANGE, "0,40,0.1,suffix:m/s"), "set_drift_threshold_wind", "get_drift_threshold_wind");
 	ADD_GROUP("Wind Transport", "wind_");

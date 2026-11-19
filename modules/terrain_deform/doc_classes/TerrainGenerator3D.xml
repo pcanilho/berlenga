@@ -794,6 +794,9 @@
 		<member name="river_width_coefficient" type="float" setter="set_river_width_coefficient" getter="get_river_width_coefficient" default="7.0">
 			River width per square root of discharge: [code]width = coefficient * discharge^0.5[/code] (hydraulic geometry, Leopold and Maddock 1953). About 7 for mean flows.
 		</member>
+		<member name="sand_sea_compound" type="bool" setter="set_sand_sea_compound" getter="is_sand_sea_compound" default="true">
+			Compound dunes: the sea first grows large dunes (draa) on a grid of twice [member sand_sea_scale], keeps most of them as a still core, then grows the ordinary dunes from a fresh cover over them, so big dunes carry small dunes on their flanks as in large ergs (Lancaster 1988; Bristow, Bugler and Parker 2000). Not for [constant SAND_SEA_BARCHAN]. Takes some 1.6 times as long; off, the sea is grown once.
+		</member>
 		<member name="sand_sea_depth" type="float" setter="set_sand_sea_depth" getter="get_sand_sea_depth" default="12.0">
 			Sand (m) over the sand sea, on average. Transverse, linear and star dunes want a thick cover (some 2 to 5 times [member sand_sea_scale]); barchans a thin one (under a third of it), between which the bare floor shows.
 		</member>

@@ -814,6 +814,9 @@ void PhysXVehicle3D::_rebuild_if_live() {
 void PhysXVehicle3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
+			if (wind_obstacle) {
+				add_to_group(SNAME("weather_shelter"));
+			}
 			set_physics_process_internal(_build());
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
@@ -1129,6 +1132,27 @@ void PhysXVehicle3D::_mud_register(bool p_on) {
 
 void PhysXVehicle3D::get_mud_vehicles(LocalVector<PhysXVehicle3D *> &r_vehicles) {
 	r_vehicles = mud_vehicles;
+}
+
+Array PhysXVehicle3D::get_wind_obstacles(const Rect2 &p_rect) const {
+	Array out;
+	if (!wind_obstacle || !is_inside_tree() || impl->chassis_half == Vector3()) {
+		return out;
+	}
+	const AABB box = (get_global_transform() * impl->chassis_local).xform(AABB(-impl->chassis_half, impl->chassis_half * 2.0f));
+	if (p_rect.intersects(Rect2(box.position.x, box.position.z, box.size.x, box.size.z))) {
+		out.push_back(box);
+	}
+	return out;
+}
+
+void PhysXVehicle3D::set_wind_obstacle(bool p_enabled) {
+	wind_obstacle = p_enabled;
+	if (p_enabled) {
+		add_to_group(SNAME("weather_shelter"));
+	} else if (is_in_group(SNAME("weather_shelter"))) {
+		remove_from_group(SNAME("weather_shelter"));
+	}
 }
 
 bool PhysXVehicle3D::mud_box_contains(const Vector3 &p_world) const {
@@ -2025,9 +2049,13 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wheel_mud_shed", "wheel"), &PhysXVehicle3D::get_wheel_mud_shed);
 	ClassDB::bind_method(D_METHOD("get_belly_drag"), &PhysXVehicle3D::get_belly_drag);
 	ClassDB::bind_method(D_METHOD("get_belly_support"), &PhysXVehicle3D::get_belly_support);
+	ClassDB::bind_method(D_METHOD("get_wind_obstacles", "rect"), &PhysXVehicle3D::get_wind_obstacles);
+	ClassDB::bind_method(D_METHOD("set_wind_obstacle", "enabled"), &PhysXVehicle3D::set_wind_obstacle);
+	ClassDB::bind_method(D_METHOD("is_wind_obstacle"), &PhysXVehicle3D::is_wind_obstacle);
 	ClassDB::bind_method(D_METHOD("set_body_mud", "enabled"), &PhysXVehicle3D::set_body_mud);
 	ClassDB::bind_method(D_METHOD("is_body_mud"), &PhysXVehicle3D::is_body_mud);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "body_mud"), "set_body_mud", "is_body_mud");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wind_obstacle"), "set_wind_obstacle", "is_wind_obstacle");
 	ClassDB::bind_method(D_METHOD("get_wheel_mud_spray", "wheel"), &PhysXVehicle3D::get_wheel_mud_spray);
 	ClassDB::bind_method(D_METHOD("get_body_mud_line"), &PhysXVehicle3D::get_body_mud_line);
 	ClassDB::bind_method(D_METHOD("get_body_mud_wetness"), &PhysXVehicle3D::get_body_mud_wetness);
