@@ -77,7 +77,7 @@ static bool hedge_shrub(TreeGenerator::Preset p_preset) {
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
 	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow",
 	"Northern Hardwood Forest", "Eastern Oak Forest", "Pine-Hemlock Forest", "Coppice with Standards", "Wood Pasture", "Pollard Row",
-	"Stone Pine Parkland"
+	"Stone Pine Parkland", "Olive Grove"
 };
 
 TreeGenerator::TreeGenerator() {
@@ -2582,7 +2582,7 @@ void TreeGenerator::_bend_under_gravity() {
 		n.dir = acc[i].xform(n.dir).normalized();
 		const Node &par = nodes[n.parent];
 		// A laid hedge's stems keep their own feet along the row (_lay_hedge()).
-		n.start = n.parent == 0 ? (laid_done ? n.start : par.start) : par.end();
+		n.start = n.parent == 0 ? ((laid_done || own_feet) ? n.start : par.start) : par.end();
 		// Branches resting on the ground run along it instead of through it. The axis keeps its
 		// own radius clear of the soil: held only at 8 cm, a thick low limb sank half its girth
 		// into the ground and its bark showed a ragged line where it crossed the surface.
@@ -5629,6 +5629,332 @@ void TreeGenerator::_laid_hedge_props(Builder &r_bark) {
 		_tube(r_bark, pts, rad, 6, 0.0f, binder_c, nullptr, 0.0f, -1.0f, false);
 		r_bark.end(part, r0);
 	}
+}
+
+void TreeGenerator::_remove_subtree(int p_node) {
+	LocalVector<int> st;
+	st.push_back(p_node);
+	while (!st.is_empty()) {
+		const int j = st[st.size() - 1];
+		st.resize(st.size() - 1);
+		nodes[j].removed = true;
+		if (nodes[j].main >= 0) {
+			st.push_back(nodes[j].main);
+		}
+		for (int c = nodes[j].first_lateral; c >= 0; c = nodes[c].next_sibling) {
+			st.push_back(c);
+		}
+	}
+}
+
+// Open-centre pruning of an olive (trees.md, "Ancient olive"; Barranco et al. 2008, the vaso):
+// three or four limbs from 0.6-1.6 m, spread round the stem, are kept as scaffolds; the leader
+// is cut above the highest and every other shoot on the stem below it comes off.
+void TreeGenerator::_vase_prune(int p_year) {
+	_compute_radii();
+	const float base_y = nodes[0].start.y;
+	int stem = -1;
+	for (int i = 1; i < int(nodes.size()); i++) {
+		if (!nodes[i].removed && nodes[i].parent == 0 && (stem < 0 || nodes[i].radius > nodes[stem].radius)) {
+			stem = i;
+		}
+	}
+	if (stem < 0) {
+		return;
+	}
+	LocalVector<int> chain;
+	for (int i = stem; i >= 0 && !nodes[i].removed; i = nodes[i].main) {
+		chain.push_back(i);
+	}
+	struct Cand {
+		int node;
+		float az;
+		float r;
+	};
+	LocalVector<Cand> cand;
+	for (const int c : chain) {
+		for (int l = nodes[c].first_lateral; l >= 0; l = nodes[l].next_sibling) {
+			const Node &n = nodes[l];
+			const float h = n.start.y - base_y;
+			if (!n.removed && !n.dead && h >= 0.6f && h <= 1.6f) {
+				cand.push_back({ l, Math::atan2(n.dir.z, n.dir.x), n.radius });
+			}
+		}
+	}
+	// Thickest first, each at least 70 degrees round from those kept.
+	for (uint32_t a = 1; a < cand.size(); a++) {
+		for (uint32_t b = a; b > 0 && cand[b].r > cand[b - 1].r; b--) {
+			SWAP(cand[b], cand[b - 1]);
+		}
+	}
+	const int want = 3 + int(uint32_t(seed) * 2246822519u % 2u);
+	LocalVector<int> keep;
+	LocalVector<float> keep_az;
+	for (const Cand &c : cand) {
+		bool apart = true;
+		for (const float a : keep_az) {
+			const float d = Math::abs(Math::fposmod(c.az - a + float(Math::PI), float(Math::TAU)) - float(Math::PI));
+			apart = apart && d > Math::deg_to_rad(70.0f);
+		}
+		if (apart && int(keep.size()) < want) {
+			keep.push_back(c.node);
+			keep_az.push_back(c.az);
+		}
+	}
+	if ((keep.size() < 3 && p_year < 9) || keep.is_empty()) {
+		return; // Too few limbs yet: next winter.
+	}
+	HashSet<int> kept;
+	for (const int k : keep) {
+		kept.insert(k);
+	}
+	// The highest scaffold's seat: the stem stops there.
+	int top = -1;
+	for (int ci = 0; ci < int(chain.size()); ci++) {
+		for (int l = nodes[chain[ci]].first_lateral; l >= 0; l = nodes[l].next_sibling) {
+			if (kept.has(l)) {
+				top = ci;
+			}
+		}
+	}
+	for (int ci = 0; ci < int(chain.size()); ci++) {
+		Node &c = nodes[chain[ci]];
+		for (int l = c.first_lateral; l >= 0; l = nodes[l].next_sibling) {
+			if (!kept.has(l) && !nodes[l].removed) {
+				_remove_subtree(l);
+			}
+		}
+		if (ci == top) {
+			if (c.main >= 0) {
+				_remove_subtree(c.main);
+				c.main = -1;
+			}
+			break;
+		}
+	}
+	// Suckers and any other stem from the foot go too.
+	for (int i = 1; i < int(nodes.size()); i++) {
+		if (!nodes[i].removed && nodes[i].parent == 0 && i != stem) {
+			_remove_subtree(i);
+		}
+	}
+	for (Bud &b : buds) {
+		if (b.node < 0 || b.node >= int(nodes.size()) || nodes[b.node].removed) {
+			b.alive = false;
+		}
+	}
+	grove_pruned = true;
+}
+
+// The grove's pruning every other winter: water shoots standing up in the open centre, shoots
+// from the stem below the scaffolds, and wood over the picking height come out.
+void TreeGenerator::_grove_thin(int p_year) {
+	const Vector3 base = nodes[0].start;
+	const int count = int(nodes.size());
+	for (int i = 1; i < count; i++) {
+		Node &n = nodes[i];
+		if (n.removed) {
+			continue;
+		}
+		if (n.parent > 0 && nodes[n.parent].removed) {
+			n.removed = true;
+			continue;
+		}
+		const Vector3 q = n.start - base;
+		const float hd = Vector2(q.x, q.z).length();
+		const bool young = n.born >= p_year - 2;
+		// The open centre: an upright young shoot within a metre of the stem's axis.
+		if (young && n.order >= 1 && n.dir.y > 0.75f && hd < 1.0f && q.y > 0.8f && n.parent > 0 && nodes[n.parent].main != i) {
+			_remove_subtree(i);
+			continue;
+		}
+		// Shoots from the clear stem.
+		if (young && n.order >= 1 && q.y < 0.6f) {
+			_remove_subtree(i);
+			continue;
+		}
+		// Topped at the picking height.
+		const float top = grove_top + 0.3f * (moss_noise(n.start * 0.7f, 0x746f7070u) - 0.5f);
+		if (q.y > top) {
+			_remove_subtree(i);
+		}
+	}
+	for (Bud &b : buds) {
+		if (b.node < 0 || b.node >= count || nodes[b.node].removed) {
+			b.alive = false;
+		}
+	}
+}
+
+// An ancient olive's trunk parts into strands (trees.md, "Ancient olive"): the heartwood rots
+// out and the bark and sapwood live on in sectors, each feeding the scaffolds above it, and the
+// spiral grain twists them round the hollow. The stem below the scaffolds is rebuilt as
+// grove_strands stems, each from its own foot on a ring round the old axis, turning a fraction
+// of a turn as it rises to its group of scaffolds, bulging out at mid-height. The strands reuse
+// the stem's and pruned twigs' node slots, which come before the scaffolds' (parents before
+// children).
+void TreeGenerator::_split_trunk() {
+	const Vector3 base = nodes[0].start;
+	int stem = -1;
+	for (int i = 1; i < int(nodes.size()); i++) {
+		if (!nodes[i].removed && nodes[i].parent == 0 && (stem < 0 || nodes[i].radius > nodes[stem].radius)) {
+			stem = i;
+		}
+	}
+	if (stem < 0) {
+		return;
+	}
+	const float r_stem = nodes[stem].radius;
+	LocalVector<int> chain;
+	HashSet<int> in_chain;
+	for (int i = stem; i >= 0 && !nodes[i].removed; i = nodes[i].main) {
+		chain.push_back(i);
+		in_chain.insert(i);
+	}
+	LocalVector<int> scaff;
+	for (const int c : chain) {
+		for (int l = nodes[c].first_lateral; l >= 0; l = nodes[l].next_sibling) {
+			if (nodes[l].removed) {
+				continue;
+			}
+			if (nodes[l].radius >= 0.25f * r_stem) {
+				scaff.push_back(l);
+			} else {
+				_remove_subtree(l);
+			}
+		}
+	}
+	const int n = MIN(grove_strands, int(scaff.size()));
+	if (n < 2) {
+		return;
+	}
+	int min_sc = int(nodes.size());
+	for (const int s2 : scaff) {
+		min_sc = MIN(min_sc, s2);
+	}
+	LocalVector<int> pool;
+	for (int i = 1; i < min_sc; i++) {
+		if (nodes[i].removed || in_chain.has(i)) {
+			pool.push_back(i);
+		}
+	}
+	const int K = MIN(6, int(pool.size()) / n);
+	if (K < 2) {
+		return;
+	}
+	// Scaffolds round the stem by azimuth, from the widest gap on, cut into n runs.
+	struct Sc {
+		int node;
+		float az;
+	};
+	LocalVector<Sc> sc;
+	for (const int s2 : scaff) {
+		sc.push_back({ s2, Math::atan2(nodes[s2].dir.z, nodes[s2].dir.x) });
+	}
+	for (uint32_t a = 1; a < sc.size(); a++) {
+		for (uint32_t b = a; b > 0 && sc[b].az < sc[b - 1].az; b--) {
+			SWAP(sc[b], sc[b - 1]);
+		}
+	}
+	int gap_at = 0;
+	float gap = -1.0f;
+	for (uint32_t i = 0; i < sc.size(); i++) {
+		const float next = i + 1 < sc.size() ? sc[i + 1].az : sc[0].az + float(Math::TAU);
+		if (next - sc[i].az > gap) {
+			gap = next - sc[i].az;
+			gap_at = int(i + 1) % int(sc.size());
+		}
+	}
+	LocalVector<Sc> ring;
+	for (uint32_t i = 0; i < sc.size(); i++) {
+		ring.push_back(sc[(gap_at + i) % sc.size()]);
+	}
+	RandomPCG gr;
+	gr.seed(uint64_t(seed) * 0x9e3779b97f4a7c15ull + 0x6f6c6976u);
+	const float twist = (gr.randf() < 0.5f ? -1.0f : 1.0f) * Math::lerp(0.6f, 1.3f, gr.randf()); // Radians over a strand.
+	// Strands stand apart round the hollow, a gap between them (the parted trunk of an old olive).
+	const float R = 1.3f * r_stem;
+	// The old stem and the root's other slots are rebuilt.
+	for (const int c : chain) {
+		nodes[c].removed = true;
+	}
+	nodes[0].main = -1;
+	nodes[0].first_lateral = -1;
+	for (int i = 1; i < int(nodes.size()); i++) {
+		if (nodes[i].parent == 0) {
+			nodes[i].removed = true;
+		}
+	}
+	HashSet<int> used;
+	int pi = 0;
+	const int per = int(ring.size()) / n, extra = int(ring.size()) % n;
+	int at = 0;
+	for (int g = 0; g < n; g++) {
+		const int cnt = per + (g < extra ? 1 : 0);
+		LocalVector<int> grp;
+		Vector2 dir_sum;
+		float hj = 1e9f;
+		for (int k = 0; k < cnt; k++) {
+			const int s2 = ring[at + k].node;
+			grp.push_back(s2);
+			dir_sum += Vector2(Math::cos(ring[at + k].az), Math::sin(ring[at + k].az));
+			hj = MIN(hj, nodes[s2].start.y - base.y);
+		}
+		at += cnt;
+		hj = MAX(hj, 0.5f);
+		const float az = Math::atan2(dir_sum.y, dir_sum.x);
+		const float a0 = az - twist;
+		auto path = [&](float t) {
+			const float ang = a0 + twist * t;
+			const float rr = R * (1.15f - 0.15f * t + 0.2f * Math::sin(float(Math::PI) * t)) * (1.0f - 0.35f * t);
+			return base + Vector3(Math::cos(ang) * rr, hj * t, Math::sin(ang) * rr);
+		};
+		int prev = 0;
+		for (int k = 1; k <= K; k++) {
+			const int idx = pool[pi++];
+			used.insert(idx);
+			Node &m = nodes[idx];
+			m = Node();
+			const Vector3 a = path(float(k - 1) / K), b = path(float(k) / K);
+			m.start = a;
+			m.length = a.distance_to(b);
+			m.dir = (b - a) / MAX(m.length, 1e-5f);
+			m.parent = prev;
+			m.order = 0;
+			m.born = 1;
+			m.leafy = false;
+			if (prev == 0) {
+				m.next_sibling = nodes[0].first_lateral;
+				nodes[0].first_lateral = idx;
+			} else {
+				nodes[prev].main = idx;
+			}
+			prev = idx;
+		}
+		// The thickest scaffold runs on from the strand; the others leave its top.
+		for (uint32_t a = 1; a < grp.size(); a++) {
+			for (uint32_t b = a; b > 0 && nodes[grp[b]].radius > nodes[grp[b - 1]].radius; b--) {
+				SWAP(grp[b], grp[b - 1]);
+			}
+		}
+		for (uint32_t k = 0; k < grp.size(); k++) {
+			Node &s2 = nodes[grp[k]];
+			s2.parent = prev;
+			s2.next_sibling = -1;
+			if (k == 0) {
+				nodes[prev].main = grp[k];
+			} else {
+				s2.next_sibling = nodes[prev].first_lateral;
+				nodes[prev].first_lateral = grp[k];
+			}
+		}
+	}
+	for (Bud &b : buds) {
+		if (b.node < 0 || b.node >= int(nodes.size()) || nodes[b.node].removed || used.has(b.node)) {
+			b.alive = false;
+		}
+	}
+	own_feet = true;
 }
 
 void TreeGenerator::_cut_back(bool p_first, int p_year) {
@@ -17781,6 +18107,45 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		ground_slope = slopes[p_variant % 4];
 		bank_erosion = ground_slope > 0.0f ? Math::lerp(0.3f, 0.9f, t) * Math::lerp(0.6f, 1.0f, ground_slope / 0.85f) : 0.0f;
 		root_stone = p_variant % 8 == 2 ? Math::lerp(0.35f, 0.6f, float((h >> 16) & 255u) / 255.0f) : 0.0f;
+	} else if (p_form == FORM_GROVE) {
+		// A cultivated olive in an old grove (trees.md, "Ancient olive"; Connor and Fereres,
+		// Hort. Rev. 31, 2005; Barranco et al., El cultivo del olivo, 2008): planted as one stem,
+		// headed at a metre or so to three or four scaffold limbs spread round an open centre
+		// (vaso), then pruned every other winter, the water shoots in the centre and the tall
+		// shoots taken out, so the crown stays wide and 4-6 m tall for picking. Centuries on,
+		// the heartwood rots out and the trunk parts into strands, each a sector of living
+		// cambium feeding its scaffold, twisted by the spiral grain (Arnan et al. 2012, veteran
+		// olives of the Ebro). Growth is run for a lifetime's crown; the strands and the
+		// old-tree features (veteran) stand in for the centuries.
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		const uint32_t h = uint32_t(seed) * 2654435761u;
+		const float t = float((h >> 8) & 255u) / 255.0f, t2 = float((h >> 16) & 255u) / 255.0f;
+		for (int k = 0; k < PARAM_MAX; k++) {
+			params[k] = look.params[k];
+		}
+		params[PARAM_YEARS] = Math::round(Math::lerp(40.0f, 55.0f, t));
+		params[PARAM_STEMS] = 1.0f;
+		params[PARAM_STEM_SPREAD] = 0.0f;
+		params[PARAM_BASAL_SPROUTS] = 0.0f;
+		params[PARAM_DIRECTION_NOISE] = 16.0f;
+		params[PARAM_TRUNK_GRAVITROPISM] = 0.45f;
+		params[PARAM_GRAVITROPISM] = 0.08f; // Scaffolds upcurved out of the vase.
+		params[PARAM_LEAF_SIZE] = 0.065f; // Cultivated olive: 4-8 cm, larger than the wild one's.
+		params[PARAM_LEAF_WIDTH] = 0.17f;
+		params[PARAM_ROOT_FLARE] = 1.0f;
+		// Pruned for fruiting wood all round the crown, not only at its top: the shaded inner
+		// shoots are kept (no light floor, no shedding), and a grove olive carries a dense
+		// grey-green mass of leaves (docs: the first grove crowns read as bare limbs).
+		params[PARAM_BUD_LIGHT_MIN] = 0.0f;
+		params[PARAM_SHED_RATIO] = 0.0f;
+		params[PARAM_LEAVES_PER_INTERNODE] = look.params[PARAM_LEAVES_PER_INTERNODE] * 1.6f;
+		params[PARAM_LEAF_YEARS] = 4.0f;
+		grove_vase = true;
+		grove_top = Math::lerp(4.5f, 6.0f, t2);
+		// Most old grove trees have parted; a few still stand whole.
+		grove_strands = p_variant % 4 == 3 ? 0 : 2 + int((h >> 24) % 3u);
+		veteran = Math::lerp(0.4f, 0.8f, t2);
 	} else if (p_form == FORM_LAID_HEDGE) {
 		// A hand-laid hedge (trees.md, "Laid hedges"; Brooks and Agate, Hedging, BTCV 1998;
 		// National Hedgelaying Society): a hedge let grow out for 10-15 years, then each stem cut
@@ -18033,6 +18398,9 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	cut_since = p_from.cut_since;
 	coppice_ages = p_from.coppice_ages;
 	laid_since = p_from.laid_since;
+	grove_vase = p_from.grove_vase;
+	grove_strands = p_from.grove_strands;
+	grove_top = p_from.grove_top;
 	timber_stems = p_from.timber_stems;
 	compress_vertices = p_from.compress_vertices;
 	climber = p_from.climber;
@@ -18129,7 +18497,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	}
 	// Pollards stand in pasture and along ditches: open-grown (in forest shade their lapsed poles
 	// grew 22 m whips with a crown at the top).
-	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK && p_form != FORM_THICKET && p_form != FORM_OLD && p_form != FORM_HEDGE && p_form != FORM_LAID_HEDGE &&
+	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK && p_form != FORM_THICKET && p_form != FORM_OLD && p_form != FORM_HEDGE && p_form != FORM_LAID_HEDGE && p_form != FORM_GROVE &&
 			!(p_form == FORM_SAPLING && scrub_shrub(p_preset)) && !((p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG) && coppice_ages.x >= 0);
 	// Wood lying on the ground does not sway: logs and fallen branches are never rigged.
 	const bool saved_rigged = rigged;
@@ -18190,6 +18558,9 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const float saved_batter = envelope_batter;
 		const int saved_sprouts = envelope_sprouts;
 		const int saved_laid = laid_since;
+		const bool saved_vase = grove_vase;
+		const int saved_strands = grove_strands;
+		const float saved_gtop = grove_top;
 		if (p_form == FORM_SAPLING) {
 			// A young heath shrub is three or four years old, already flowering (BSBI, GOERT).
 			const bool heath = scrub_shrub(p_preset);
@@ -18203,7 +18574,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// Gorse's spines are needles but thin stochastically as leaves (trees.md 5x.2): it splits too.
 		const bool near_split = near_leaf_range > 0.0f && p_variants > 0 && (params[PARAM_NEEDLES] <= 0.5f || scrub_shrub(Preset(p_preset))) &&
 				(far_lod1 || leaf_kind == LEAF_LOBED || leaf_kind == LEAF_PALMATE || leaf_kind == LEAF_PINNATE || leaf_kind == LEAF_DIGITATE) &&
-				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK || p_form == FORM_THICKET || p_form == FORM_OLD || p_form == FORM_HEDGE || p_form == FORM_LAID_HEDGE);
+				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK || p_form == FORM_THICKET || p_form == FORM_OLD || p_form == FORM_HEDGE || p_form == FORM_LAID_HEDGE || p_form == FORM_GROVE);
 		if (near_split) {
 			Ref<TreeGenerator> src;
 			src.instantiate();
@@ -18251,6 +18622,9 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		envelope_batter = saved_batter;
 		envelope_sprouts = saved_sprouts;
 		laid_since = saved_laid;
+		grove_vase = saved_vase;
+		grove_strands = saved_strands;
+		grove_top = saved_gtop;
 		ground_slope = saved_slope;
 		bank_erosion = saved_erosion;
 		root_stone = saved_stone;
@@ -18292,7 +18666,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// (the meshes carry tree_wind_flag; trees.md 5q).
 		sp->set_meta("wind_flag", true);
 	}
-	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)", " (bank)", " (thicket)", " (old)", " (hedge)", " (laid hedge)" };
+	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)", " (bank)", " (thicket)", " (old)", " (hedge)", " (laid hedge)", " (grove)" };
 	sp->set_name(String(preset_names[p_preset]) + form_names[p_form]);
 	TypedArray<Mesh> meshes = mesh_cache[key];
 	if (p_variants < meshes.size()) {
@@ -18882,6 +19256,19 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			pine->set_spacing(MAX(pine->get_spacing(), 11.0f));
 			list.push_back(pine);
 		} break;
+		case STAND_OLIVE_GROVE: {
+			// An old olive grove (trees.md, "Ancient olive"): planted on a square about 10 m
+			// apart (traditional dry-farmed groves, 80-120 trees a hectare; Barranco et al.
+			// 2008), every tree pruned to an open centre, the ground between kept bare or grazed.
+			// No wild regeneration or deadwood: a worked grove is tidied. The square grid itself
+			// is the field's to lay out; here they stand a tree's spacing apart.
+			Ref<PlantSpecies> olive = _stand_species(PRESET_WILD_OLIVE, false, p_variants, FORM_GROVE);
+			olive->set_name("Olive (grove)");
+			olive->set_spacing(10.0f);
+			olive->set_density(0.95f);
+			olive->set_scale_range(Vector2(0.9f, 1.1f));
+			list.push_back(olive);
+		} break;
 		case STAND_MAX:
 			break;
 	}
@@ -19096,6 +19483,8 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	int cuts = 0;
 	last_cut_year = -1000;
 	laid_done = false;
+	own_feet = false;
+	grove_pruned = false;
 	const int since = cut_since >= 0 ? cut_since : 2 + int(uint32_t(seed) * 2654435761u % uint32_t(MAX(cut_cycle - 2, 1)));
 	for (int y = 1; y <= years; y++) {
 		// A cut tree's sprouts are its poles, from the head or the stool: no more stems from the base.
@@ -19139,6 +19528,17 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 				b.sprout = true;
 				b.layer = true;
 				buds.push_back(b);
+			}
+		}
+		if (grove_vase && !palm) {
+			// An olive grove's pruning (trees.md, "Ancient olive"): the vase once the stem
+			// stands over the head height, then every other winter a thinning and topping.
+			if (!grove_pruned) {
+				if (y >= 4 && _stem_top() > 1.7f) {
+					_vase_prune(y);
+				}
+			} else if (y % 2 == 0) {
+				_grove_thin(y);
 			}
 		}
 		if (laid_since >= 0 && y == years - laid_since) {
@@ -19239,6 +19639,10 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		if (int(nodes.size()) >= MAX_NODES - 64) {
 			break;
 		}
+	}
+	if (grove_vase && grove_pruned && grove_strands >= 2 && !palm) {
+		_compute_radii();
+		_split_trunk();
 	}
 	_compute_radii();
 	bolling.clear();
@@ -19839,6 +20243,7 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_WOOD_PASTURE);
 	BIND_ENUM_CONSTANT(STAND_POLLARD_ROW);
 	BIND_ENUM_CONSTANT(STAND_STONE_PINE);
+	BIND_ENUM_CONSTANT(STAND_OLIVE_GROVE);
 	BIND_ENUM_CONSTANT(STAND_MAX);
 	BIND_ENUM_CONSTANT(REGION_EUROPE);
 	BIND_ENUM_CONSTANT(REGION_NORTH_AMERICA);

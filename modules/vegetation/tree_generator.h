@@ -128,6 +128,7 @@ public:
 		STAND_WOOD_PASTURE, // Grazed: lapsed beech and oak pollards, open-grown oaks, thorn and holly.
 		STAND_POLLARD_ROW, // Willow pollards along water, placed by the scene along its lines.
 		STAND_STONE_PINE, // Stone pine parkland on coastal sands: open-grown umbrellas a crown apart.
+		STAND_OLIVE_GROVE, // Old olive grove: open-centre olives on split, twisted trunks, about 10 m apart.
 		STAND_MAX,
 	};
 
@@ -507,6 +508,18 @@ private:
 	int laid_since = -1;
 	bool laid_done = false;
 	void _lay_hedge(int p_year);
+	// An olive grove tree (FORM_GROVE): pruned to an open centre (vase) on 3-4 scaffold limbs,
+	// thinned and topped every other year, its old trunk split into grove_strands twisted strands
+	// (0: whole). own_feet: stems keep their own feet (laid or split) under gravity bending.
+	bool grove_vase = false;
+	bool grove_pruned = false;
+	int grove_strands = 0;
+	float grove_top = 5.0f;
+	bool own_feet = false;
+	void _remove_subtree(int p_node);
+	void _vase_prune(int p_year);
+	void _grove_thin(int p_year);
+	void _split_trunk();
 	void _laid_hedge_props(Builder &r_bark);
 	HashSet<int> sprout_roots; // First nodes of shoots grown since the last cut.
 	LocalVector<int> cut_heads; // Stubs and knuckles the head is made of.
@@ -838,6 +851,7 @@ private:
 		FORM_OLD, // A heath shrub near the end of its life: leggy, leaning out, its centre dead and grey (5u).
 		FORM_HEDGE, // A two-metre segment of a cut field hedge, A-shaped or boxed by variant (5ad).
 		FORM_LAID_HEDGE, // A two-metre segment of a hand-laid hedge: pleachers, stakes, binders (trees.md, "Laid hedges").
+		FORM_GROVE, // A cultivated olive in a grove: open-centre pruning, the old trunk split into twisted strands (trees.md, "Ancient olive").
 		FORM_MAX,
 	};
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
