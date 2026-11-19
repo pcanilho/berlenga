@@ -621,6 +621,21 @@ recovered, so the scar's edge grows in over a cell rather than on a hard line.
 - radius 0 now draws nothing. Before, radius was clamped to 1 m and the far rings and shell still covered
   the view out to 250 and 500 m.
 
+## Regrowth flush on burns (19 Nov)
+
+Burnt grassland reads greener than the sward around it through its first season: the fire took the standing dead
+(thatch and dry tips) and the regrowth is young leaf, richer in nitrogen on the ash (the post-fire "green flush"
+seen in NDVI after grassland fires). GrassField3D bakes a flush map from its burn grid (1 on a fresh burn,
+smoothstep to 0 by 1.5 years): blades there lose their dry tips and thatch and tint (1.10, 1.22, 0.84).
+VegetationField3D passes the same flush to the plant shader in INSTANCE_CUSTOM.w's fraction (the species index
+keeps the whole part), tinting living tissue the same way. Bench grass `--burn=A --wind=0,0`,
+GRASS_NO_FLUSH=ab saves the frame without it too.
+
+Burn plant LODs: fire moss capsules and the ash on charred stems and burnt tussock are many tiny islands that
+meshoptimizer cannot thin; they now take the leaf cards' rank-ordered chain (Cook et al. 2007, stochastic
+simplification with area kept): fire moss capsules 3.8k to 154 triangles at the far LOD. In the burn bench view
+only 2% fewer primitives (3.10 M to 3.04 M): the heath around, not the burn set, holds most of them.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.

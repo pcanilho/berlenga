@@ -464,6 +464,8 @@ void GrassField3D::_build_material() {
 	code += "uniform vec4 ring_band;\n";
 	code += "uniform float dormant; // Share of blades dead to the crown in a drought or hard winter (season).\n";
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
+	// Regrowth flush on burnt ground (burn_recovery): 1 on a fresh burn, 0 by a year and a half; rect z 0: none.
+	code += "uniform sampler2D burn_flush_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 burn_flush_rect;\n";
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	code += VegetationFire::WIND_CODE;
@@ -1001,6 +1003,7 @@ void fragment() {
 		code += R"(
 varying float v_t;
 varying float v_dry;
+varying float v_flush; // Regrowth on burnt ground (burn_flush_map).
 varying float v_wet;
 varying float v_frost;
 varying float v_snow; // under the snow surface: 1
@@ -1159,6 +1162,16 @@ void vertex() {
 		NORMAL = normalize(mix(NORMAL, normalize(to_local * vec3(0.0, 1.0, 0.0)), 0.55 * soft));
 		v_tint = mix(v_tint, grass_patch_tint(base_w.xz, 0.5, 0.5, color_variation), 0.5 * soft);
 	}
+	// Regrowth on burnt ground: the new blades come up a lighter, fresher yellow-green than the sward around (the
+	// post-fire green flush), fading over a year and a half; the plants' shader does the same.
+	v_flush = 0.0;
+	if (burn_flush_rect.z > 0.0) {
+		vec2 fuv = (base_w.xz - burn_flush_rect.xy) / burn_flush_rect.zw;
+		if (all(greaterThanEqual(fuv, vec2(0.0))) && all(lessThanEqual(fuv, vec2(1.0)))) {
+			v_flush = textureLod(burn_flush_map, fuv, 0.0).r;
+			v_tint *= mix(vec3(1.0), vec3(1.10, 1.22, 0.84), v_flush);
+		}
+	}
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
@@ -1184,10 +1197,13 @@ void fragment() {
 	float t = smoothstep(0.0, 1.0, v_t);
 	// Shade keeps grass green; a sunny slope dries it first.
 	float dry_share = clamp(dryness * (1.0 - 0.7 * (1.0 - clamp(v_light, 0.0, 1.0))) + 0.25 * smoothstep(1.0, 1.3, v_light), 0.0, 1.0);
+	// The fire took the old growth: regrowth carries no dry tips or thatch yet (a burn reads greener than the sward
+	// around it through its first season).
+	dry_share *= 1.0 - 0.85 * v_flush;
 	vec3 tipc = mix(tip_color, dry_color, step(1.0 - dry_share, v_dry) * smoothstep(0.3, 1.0, v_t));
 	vec3 c = mix(base_color, tipc, t) * v_tint;
 	// Some blades of the dry fraction are dead from the root (thatch), straw that greys with age.
-	float dead = step(1.0 - max(dry_share * 0.3, dormant * 0.85), v_dry);
+	float dead = step(1.0 - max(dry_share * 0.3, dormant * 0.85 * (1.0 - v_flush)), v_dry);
 	// Dead leaves bleach to a pale grey buff, not the warm straw of a dry tip (a saturated straw read
 	// as orange specks on a dark winter sward).
 	vec3 straw = mix(dry_color, vec3(dot(dry_color, vec3(0.3, 0.59, 0.11))) * vec3(1.0, 0.96, 0.88), 0.5) * 0.85;
@@ -1263,6 +1279,7 @@ void fragment() {
 	material->set_shader_parameter("fallback_wind", fallback_wind);
 	material->set_shader_parameter("wind_response", wind_response);
 	material->set_shader_parameter("trample_rect", Vector4());
+	_publish_burn_flush();
 	material->set_shader_parameter("view_facing", view_facing);
 	material->set_shader_parameter("fade_band", fade_band);
 	material->set_shader_parameter("ring_band", ring_band);
@@ -3406,7 +3423,37 @@ void GrassField3D::_follow_burns(TerrainDataMap3D *p_map) {
 	}
 	if (area.intersects(map_rect, true)) {
 		_burn_dirty(area);
+		_publish_burn_flush();
 	}
+}
+
+// The regrowth flush (shader's burn_flush_map) from the burn grid: 1 - smoothstep(0, 1.5 yr, age), 0 unburnt.
+void GrassField3D::_publish_burn_flush() {
+	if (material.is_null()) {
+		return;
+	}
+	if (burn_ages.is_empty()) {
+		material->set_shader_parameter("burn_flush_rect", Vector4());
+		burn_flush_texture.unref();
+		return;
+	}
+	Vector<uint8_t> data;
+	data.resize(burn_nx * burn_ny);
+	uint8_t *w = data.ptrw();
+	for (int i = 0; i < burn_nx * burn_ny; i++) {
+		const float a = burn_ages[i];
+		w[i] = uint8_t(CLAMP(a < 0.0f ? 0.0f : 1.0f - Math::smoothstep(0.0f, 1.5f, a), 0.0f, 1.0f) * 255.0f + 0.5f);
+	}
+	const Ref<Image> img = Image::create_from_data(burn_nx, burn_ny, false, Image::FORMAT_R8, data);
+	if (burn_flush_texture.is_valid() && burn_flush_texture->get_width() == burn_nx && burn_flush_texture->get_height() == burn_ny) {
+		burn_flush_texture->update(img);
+	} else {
+		burn_flush_texture = ImageTexture::create_from_image(img);
+	}
+	// Texel centres on the grid's nodes.
+	const Vector2 cell(burn_rect.size.x / (burn_nx - 1), burn_rect.size.y / (burn_ny - 1));
+	material->set_shader_parameter("burn_flush_map", burn_flush_texture);
+	material->set_shader_parameter("burn_flush_rect", Vector4(burn_rect.position.x - cell.x * 0.5f, burn_rect.position.y - cell.y * 0.5f, burn_rect.size.x + cell.x, burn_rect.size.y + cell.y));
 }
 
 // What stands on the area builds again (stale generation: each is replaced once its successor is built).
@@ -4598,6 +4645,7 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 		_read_burn_age(p_map);
 		_read_sand_sea(p_map);
 		burn_read = true;
+		_publish_burn_flush();
 	}
 	if (crop != CROP_NONE) {
 		crop_ground_dirty = true; // The fields' own ground (crop_ground()).
