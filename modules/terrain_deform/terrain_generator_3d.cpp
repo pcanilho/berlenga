@@ -3768,7 +3768,7 @@ void TerrainGenerator3D::_build_sand_sea() {
 	// nothing, so neither the crest nor the face is pulled into the average, and the result blends in over two
 	// more cells. Three box passes of radius 3, near a Gaussian of 3.5 cells.
 	{
-		LocalVector<float> face, wgt, num, den, tmp;
+		LocalVector<float> face, wgt, tmp;
 		face.resize(w * h);
 		// A slip face drops downwind at the angle of repose (32-34 degrees); a lump's flanks are rarely past 29.
 		// Without one wind (linear, star seas) any steep drop counts.
@@ -3818,25 +3818,83 @@ void TerrainGenerator3D::_build_sand_sea() {
 			}
 		};
 		box(face, 2, true); // within two cells of a face
-		wgt.resize(w * h);
-		num.resize(w * h);
 		// Nor where the ground stands bare (hills out of the sand, the river gaps): their edges stay where they are.
+		// First-order normalized convolution (Westin, Knutsson and Kikinis 1994): a weighted plane fit in each
+		// window rather than a weighted mean, so the stoss keeps its ramp right up to the excluded crest (a plain
+		// mean there pulled the stoss down and left a steep riser just upwind of the brink).
 		const float thin = float(0.5);
-		for (int i = 0; i < w * h; i++) {
-			wgt[i] = (1.0f - face[i]) * CLAMP(sea_sand[i] / thin - 1.0f, 0.0f, 1.0f);
-			num[i] = sea_sand[i] * wgt[i];
+		wgt.resize(w * h);
+		LocalVector<double> f[9]; // sums of w, wx, wz, wxx, wxz, wzz, wv, wvx, wvz (x, z in cells)
+		for (int k = 0; k < 9; k++) {
+			f[k].resize(w * h);
 		}
-		den = wgt;
-		for (int pass = 0; pass < 3; pass++) {
-			box(num, 3, false);
-			box(den, 3, false);
+		for (int z = 0; z < h; z++) {
+			for (int x = 0; x < w; x++) {
+				const int i = z * w + x;
+				wgt[i] = (1.0f - face[i]) * CLAMP(sea_sand[i] / thin - 1.0f, 0.0f, 1.0f);
+				const double ww = wgt[i], v = sea_sand[i];
+				f[0][i] = ww;
+				f[1][i] = ww * x;
+				f[2][i] = ww * z;
+				f[3][i] = ww * x * x;
+				f[4][i] = ww * x * z;
+				f[5][i] = ww * z * z;
+				f[6][i] = ww * v;
+				f[7][i] = ww * v * x;
+				f[8][i] = ww * v * z;
+			}
+		}
+		LocalVector<double> dtmp;
+		dtmp.resize(w * h);
+		auto dbox = [&](LocalVector<double> &p_v, int p_r) {
+			for (int axis = 0; axis < 2; axis++) {
+				for (int z = 0; z < h; z++) {
+					for (int x = 0; x < w; x++) {
+						double acc = 0.0;
+						for (int d = -p_r; d <= p_r; d++) {
+							const int xx = axis == 0 ? x + d : x;
+							const int zz = axis == 1 ? z + d : z;
+							if (xx >= 0 && zz >= 0 && xx < w && zz < h) {
+								acc += p_v[zz * w + xx]; // outside the grid weighs nothing (no clamped copies)
+							}
+						}
+						dtmp[z * w + x] = acc / double(2 * p_r + 1);
+					}
+				}
+				for (int i = 0; i < w * h; i++) {
+					p_v[i] = dtmp[i];
+				}
+			}
+		};
+		for (int k = 0; k < 9; k++) {
+			for (int pass = 0; pass < 3; pass++) {
+				dbox(f[k], 3);
+			}
 		}
 		box(face, 1, false); // the blend out from the faces
 		box(face, 1, false);
-		for (int i = 0; i < w * h; i++) {
-			if (den[i] > 0.05f) {
+		for (int z = 0; z < h; z++) {
+			for (int x = 0; x < w; x++) {
+				const int i = z * w + x;
+				const double s0 = f[0][i];
+				if (s0 < 0.05) {
+					continue;
+				}
+				// The plane a + b (X - x) + c (Z - z) fitted about this cell: moments taken about it.
+				const double mx = f[1][i] / s0 - x, mz = f[2][i] / s0 - z;
+				const double sxx = f[3][i] / s0 - 2.0 * x * f[1][i] / s0 + double(x) * x;
+				const double sxz = f[4][i] / s0 - x * f[2][i] / s0 - z * f[1][i] / s0 + double(x) * z;
+				const double szz = f[5][i] / s0 - 2.0 * z * f[2][i] / s0 + double(z) * z;
+				const double mv = f[6][i] / s0;
+				const double svx = f[7][i] / s0 - x * mv, svz = f[8][i] / s0 - z * mv;
+				// Normal equations [1 mx mz; mx sxx sxz; mz sxz szz] (a b c) = (mv svx svz), by Cramer's rule.
+				const double det = sxx * szz - sxz * sxz - mx * (mx * szz - sxz * mz) + mz * (mx * sxz - sxx * mz);
+				double fit = mv;
+				if (Math::abs(det) > 1e-6) {
+					fit = (mv * (sxx * szz - sxz * sxz) - mx * (svx * szz - sxz * svz) + mz * (svx * sxz - sxx * svz)) / det;
+				}
 				const float k = wgt[i] * (1.0f - CLAMP(face[i] * 1.5f, 0.0f, 1.0f));
-				sea_sand[i] = MAX(Math::lerp(sea_sand[i], num[i] / den[i], k), 0.0f);
+				sea_sand[i] = MAX(Math::lerp(sea_sand[i], float(fit), k), 0.0f);
 			}
 		}
 	}
