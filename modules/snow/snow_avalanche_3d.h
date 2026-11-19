@@ -68,6 +68,35 @@ class SnowAvalanche3D : public Node3D {
 	float character_mass = 75.0f; // kg, a CharacterBody3D without snow_mass / ground_mass
 	float propagation_index = 1.5f; // a fracture a load opens runs through slab with S under this
 	float collapse_range = 60.0f; // m a collapse (whumpf) runs along a buried crust
+	// Forests (follow-up 24).
+	bool forests_enabled = true;
+	float forest_friction = 0.2f; // extra dry friction under closed canopy
+	float forest_detrainment = 100.0f; // Pa: snow the stems take out of the flow, K / u kg/m2/s under closed canopy
+	float detrained_volume = 0.0f; // m3 stopped among trees
+	Vector<float> pressure; // Pa, the highest dynamic pressure the flow put on each cell
+	float _anchoring(const SnowCover3D *p_cover, int p_ci) const;
+	// Wet snow (follow-up 25).
+	bool wet_enabled = true;
+	float wet_mu = 0.4f; // Voellmy dry friction of a wet flow
+	float wet_xi = 1000.0f; // m/s2, its turbulent friction
+	float wet_cohesion = 300.0f; // Pa, the yield stress that holds a wet flow's thin margins (levees)
+	float wet_density = 450.0f; // kg/m3 of a wet flow
+	float wet_weakening = 0.25f; // the weak layer's strength left when the pack holds all the liquid it can
+	bool glide_enabled = true;
+	float glide_rate = 0.5f; // m/day the whole pack glides on a wet base, at 35 degrees and 1 m deep
+	float glide_release = 1.0f; // m of glide before the pack releases full depth
+	Vector<float> glide; // m glided per cover cell
+	Vector<uint8_t> glide_open; // a glide crack shows here
+	Vector2i glide_origin;
+	int glide_count = 0; // glide avalanches released
+	int glide_cracks = 0;
+	float run_wet = 0.0f; // the running flow's wetness, 0 dry to 1 saturated
+	float mu_run = 0.2f, xi_run = 1500.0f, rho_run = 300.0f, cohesion_run = 0.0f;
+	float _wet_factor(const SnowCover3D *p_cover, int p_ci) const;
+	float _hold(const SnowCover3D *p_cover, int p_ci) const { return _anchoring(p_cover, p_ci) * _wet_factor(p_cover, p_ci); }
+	void _glide_advance(SnowCover3D *p_cover, float p_hours);
+	bool _check_glide(SnowCover3D *p_cover);
+
 	// Powder cloud (follow-up 23).
 	bool powder_enabled = true;
 	float powder_speed = 10.0f; // m/s the front must run at to throw snow up
@@ -176,6 +205,13 @@ public:
 	int apply_load(const Vector3 &p_at, float p_line_load, float p_sink = 0.0f);
 	float get_trigger_index_at(const Vector3 &p_at, float p_line_load, float p_sink = 0.0f) const;
 	int get_trigger_count() const { return trigger_count; }
+	float get_pressure_at(const Vector3 &p_position) const; // Pa now: dense flow, else powder cloud
+	float get_peak_pressure_at(const Vector3 &p_position) const; // Pa, the dense flow's highest this run
+	float get_detrained_volume() const { return detrained_volume; }
+	float get_glide_at(const Vector3 &p_position) const;
+	int get_glide_count() const { return glide_count; }
+	int get_glide_crack_count() const { return glide_cracks; }
+	float get_flow_wetness() const { return run_wet; }
 	float get_powder_taken() const { return powder_taken; }
 	float get_powder_settled() const { return powder_laid; }
 	float get_suspended_mass() const;
@@ -213,6 +249,30 @@ public:
 	float get_entrainment() const { return entrainment; }
 	void set_natural_release(bool p_enable) { natural_release = p_enable; }
 	bool is_natural_release() const { return natural_release; }
+	void set_wet_enabled(bool p_enable) { wet_enabled = p_enable; }
+	bool is_wet_enabled() const { return wet_enabled; }
+	void set_wet_mu(float p_mu) { wet_mu = MAX(p_mu, 0.0f); }
+	float get_wet_mu() const { return wet_mu; }
+	void set_wet_xi(float p_xi) { wet_xi = MAX(p_xi, 1.0f); }
+	float get_wet_xi() const { return wet_xi; }
+	void set_wet_cohesion(float p_pa) { wet_cohesion = MAX(p_pa, 0.0f); }
+	float get_wet_cohesion() const { return wet_cohesion; }
+	void set_wet_density(float p_rho) { wet_density = MAX(p_rho, 50.0f); }
+	float get_wet_density() const { return wet_density; }
+	void set_wet_weakening(float p_share) { wet_weakening = CLAMP(p_share, 0.01f, 1.0f); }
+	float get_wet_weakening() const { return wet_weakening; }
+	void set_glide_enabled(bool p_enable) { glide_enabled = p_enable; }
+	bool is_glide_enabled() const { return glide_enabled; }
+	void set_glide_rate(float p_rate) { glide_rate = MAX(p_rate, 0.0f); }
+	float get_glide_rate() const { return glide_rate; }
+	void set_glide_release(float p_m) { glide_release = MAX(p_m, 0.01f); }
+	float get_glide_release() const { return glide_release; }
+	void set_forests_enabled(bool p_enable) { forests_enabled = p_enable; }
+	bool is_forests_enabled() const { return forests_enabled; }
+	void set_forest_friction(float p_mu) { forest_friction = MAX(p_mu, 0.0f); }
+	float get_forest_friction() const { return forest_friction; }
+	void set_forest_detrainment(float p_pa) { forest_detrainment = MAX(p_pa, 0.0f); }
+	float get_forest_detrainment() const { return forest_detrainment; }
 	void set_powder_enabled(bool p_enable) { powder_enabled = p_enable; }
 	bool is_powder_enabled() const { return powder_enabled; }
 	void set_powder_speed(float p_speed) { powder_speed = MAX(p_speed, 0.0f); }

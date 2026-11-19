@@ -1362,6 +1362,29 @@ A fast dry avalanche lifts a suspension cloud off its front. Measured clouds hol
 - Trees in the blast zone are not broken yet. The trees thread's thrown-tree path could take the parcel pressure (5-10 kPa breaks trunks).
 - Flow needs its SDK built (`flow_sdk=`), which also works in the cloud.
 
+## Follow-up 24: forests hold, brake and take pressure from avalanches (built 19 Nov 2026)
+
+Paulo's round-4 pick, forests first. `SnowAvalanche3D.forests_enabled`, on by default. Canopy closure is the cover's `cell_canopy` (the weather map's canopy, refreshed a sixteenth of the rows each update).
+
+- **Anchoring** (Teich et al. 2012; Bebi et al. 2009): the weak layer's strength is multiplied by 1 + 4a/(1 - 0.9a), with a = clamp((closure - 0.2)/0.3). Nothing changes under 0.2. It is 5 times stronger at 0.5, and from 0.5 nothing releases. This applies to natural release (the seed cell and the fracture's spread), to the skier index and to the fracture a load opens. A bug found here: the natural seed was picked before anchoring, so a forest cell could still start a release.
+- **Braking** (Feistl et al. 2014): under canopy the flow meets extra dry friction 0.2 x closure, and the stems detrain snow at K x closure / u kg/m2/s with K = 100 Pa. The detrained snow is laid where the stems took it. Slow flows lose most and stop among the trees, fast big ones run through.
+- **Pressure**: the flow records 0.5 rho u^2 per cell (`get_pressure_at` now, dense flow then powder; `get_peak_pressure_at` for the run). Trunks of 30-50 cm break from about 10-20 kPa (Bartelt and Stoeckli 2001), and the powder cloud's 1-5 kPa takes crowns. Breaking the trees belongs to the trees thread. It needs a WorldSnow contract getter for the pressure, requested from world-links.
+- Checks (`--test=forest`): the storm that releases the bare face leaves a closed forest (closure 0.86) in place, index 5e5 even under a person. A forest strip on the run-out stops the debris (10 cm and more) at 26 m against 40 m in the open, with 2,668 m3 detrained. The toe takes 20 kPa.
+
+## Follow-up 25: wet spring avalanches and glide (built 19 Nov 2026)
+
+Round 4, second part. `SnowAvalanche3D.wet_enabled` and `glide_enabled`, both on by default.
+
+- **Water weakens the pack.** This is the LWC index of Mitterer et al. (2011): the mean liquid water content over 3% by volume, which is roughly what layers hold, with wet activity from about 0.33. Here the index is the cell's liquid over what the cover holds (`liquid_capacity`). The weak layer's strength is multiplied by `wet_weakening`^index, with a default of 0.25: about 0.63 at a third and a quarter when saturated (shear strength falls steeply with water, Yamanoi and Endo 2002). It applies to natural release, to the skier index and to the spread of a fracture.
+  - A first try on volumetric content barely moved light new snow (100 kg/m3 holds little water by volume), so the index is on the share held.
+- **Wet flow.** The slab's liquid share over capacity sets the flow's wetness, and the Voellmy parameters lerp from dry to wet: mu 0.2 to 0.4, xi 1500 to 1000, density 300 to 450 kg/m3 (wet snow avalanches, Naaim et al. 2013). A yield stress `wet_cohesion` of 300 Pa at full wetness sits on the base as C/(rho h), and the stop test includes it. Thin margins stop first and stand as levees while the core runs on. Bartelt et al. (2015) model cohesion in RAMMS and find it shortens run-out and narrows the flow. Their N0 near 1000 Pa enters the activation energy, not as an added stress, so 300 Pa here is the additive equivalent. Wet flows make no powder cloud, as before.
+- **Glide.** Water at the base is the condition: the pack drains (runoff) with its liquid over half of what it holds, on slopes over 15 degrees (none under, McClung and Clarke 1987), outside canopy over 0.5. The rate is `glide_rate` (0.5 m/day) x wetness x the slope term (sin t - sin 15)/(sin 35 - sin 15) x min(depth, 2 m). Observed glide runs from mm to tens of cm a day, accelerating before release (Jones 2004; Ancey and Bain 2015). A crack opens at 5 cm (`glide_crack_opened`, `get_glide_at`). At `glide_release` (1 m) the cell and the neighbours past half of it release full depth.
+  - Drawing the crack (a dark gap in the surface at the top of the gliding pack) is a later visual step.
+- Checks (`--test=wet`):
+  - 60 cm of new snow holds in frost (index 1.10) and releases on its own in a 6 h thaw, the flow 13% wet.
+  - Triggered dry, the same slab runs 15.3 m/s and 97 m and piles 1.29 m. Wet (38%), it runs 10.0 m/s and 67 m and piles 2.29 m.
+  - Rain on a bonded 1 m pack opens glide cracks after 10 h and releases full depth after 58 h (13,000 m3, 95% wet). There is no glide on the flat.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

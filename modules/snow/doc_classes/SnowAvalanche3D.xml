@@ -40,6 +40,12 @@
 				m³ of debris the last avalanche left.
 			</description>
 		</method>
+		<method name="get_detrained_volume" qualifiers="const">
+			<return type="float" />
+			<description>
+				The snow, m³, that trees stopped (detrained) from the running avalanche. It lies where the stems took it.
+			</description>
+		</method>
 		<method name="get_entrained_volume" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -60,10 +66,35 @@
 				The flow's velocity at a point, m/s.
 			</description>
 		</method>
+		<method name="get_flow_wetness" qualifiers="const">
+			<return type="float" />
+			<description>
+				How wet the running (or last) avalanche is, 0 dry to 1 when its slab held all the liquid water it can. Wet flows are denser, slower, rougher and cohesive: see [member wet_mu], [member wet_xi], [member wet_cohesion] and [member wet_density].
+			</description>
+		</method>
 		<method name="get_flowing_volume" qualifiers="const">
 			<return type="float" />
 			<description>
 				m³ still moving.
+			</description>
+		</method>
+		<method name="get_glide_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How far, m, the pack at [param position] has glided on its wet base. A glide crack shows from 5 cm; the pack releases full depth at [member glide_release].
+			</description>
+		</method>
+		<method name="get_glide_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many glide avalanches (full-depth releases of a gliding pack) have run.
+			</description>
+		</method>
+		<method name="get_glide_crack_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many cells have opened a glide crack.
 			</description>
 		</method>
 		<method name="get_max_speed" qualifiers="const">
@@ -76,6 +107,13 @@
 			<return type="float" />
 			<description>
 				Voellmy's steady speed, sqrt(xi h (sin - mu cos)), m/s, for the flow depth and slope where the flow ran fastest. Compare with [method get_max_speed].
+			</description>
+		</method>
+		<method name="get_peak_pressure_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The highest dynamic pressure, Pa, the dense flow put on [param position] this run ([code]0.5 ρ u²[/code]). Trunks break from about 10-20 kPa, crowns and small trees from a few kPa.
 			</description>
 		</method>
 		<method name="get_powder_cloud" qualifiers="const">
@@ -107,6 +145,13 @@
 			<return type="float" />
 			<description>
 				The kg of snow the last avalanche blew into the air.
+			</description>
+		</method>
+		<method name="get_pressure_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The dynamic pressure, Pa, on [param position] now: the dense flow's where it runs, else the powder cloud's. Systems that break or push things (trees, buildings, bodies) read it.
 			</description>
 		</method>
 		<method name="get_recent_snow_at" qualifiers="const">
@@ -206,6 +251,24 @@
 		<member name="entrainment" type="float" setter="set_entrainment" getter="get_entrainment" default="0.005">
 			The snow the flow takes from the new snow it runs over, m per m/s of speed per second, above 5 m/s.
 		</member>
+		<member name="forest_detrainment" type="float" setter="set_forest_detrainment" getter="get_forest_detrainment" default="100.0">
+			How much snow stems take out of the flow under closed canopy, Pa: [code]K / u[/code] kg/m² each second, so slow flows lose most and stop among the trees (Feistl et al. 2014). Scales with the canopy closure.
+		</member>
+		<member name="forest_friction" type="float" setter="set_forest_friction" getter="get_forest_friction" default="0.2">
+			The extra dry friction a flow meets under closed canopy, scaled by the closure.
+		</member>
+		<member name="forests_enabled" type="bool" setter="set_forests_enabled" getter="is_forests_enabled" default="true">
+			Forest holds and brakes avalanches. Canopy closure from the weather map's canopy anchors the slab: from 0.2 it adds strength, and from 0.5 slabs do not release, by themselves or under a load (Teich et al. 2012). A running flow under canopy meets [member forest_friction] and loses snow to [member forest_detrainment].
+		</member>
+		<member name="glide_enabled" type="bool" setter="set_glide_enabled" getter="is_glide_enabled" default="true">
+			Glide: where water reaches the ground under the pack (it drains, holding near all it can) on slopes over 15 degrees outside closed forest, the whole pack slides slowly downhill. A glide crack opens (see [signal glide_crack_opened]) and the pack releases full depth when it has glided [member glide_release] (glide avalanches; Jones 2004; Ancey and Bain 2015).
+		</member>
+		<member name="glide_rate" type="float" setter="set_glide_rate" getter="get_glide_rate" default="0.5">
+			How fast the pack glides on a fully wet base, m a day, for 1 m of snow on 35 degrees. It grows with the depth (up to 2 m) and the slope, and stops when the base dries or refreezes.
+		</member>
+		<member name="glide_release" type="float" setter="set_glide_release" getter="get_glide_release" default="1.0">
+			How far, m, the pack glides before it releases full depth, with the neighbours that have glided half as far.
+		</member>
 		<member name="max_slope" type="float" setter="set_max_slope" getter="get_max_slope" default="55.0">
 			The steepest slope a slab releases on, degrees (steeper sheds as it falls).
 		</member>
@@ -242,6 +305,24 @@
 		<member name="triggers_enabled" type="bool" setter="set_triggers_enabled" getter="is_triggers_enabled" default="true">
 			If [code]true[/code], loads can release slabs: bodies in [member trigger_groups], [method apply_load], and cornices that fail ([signal SnowCover3D.cornice_failed]), which land on the slope below at twice their weight.
 		</member>
+		<member name="wet_cohesion" type="float" setter="set_wet_cohesion" getter="get_wet_cohesion" default="300.0">
+			The yield stress, Pa, of a fully wet flow on its base. It stops thin margins first, which stand as levees, and shortens the run-out (Bartelt et al. 2015).
+		</member>
+		<member name="wet_density" type="float" setter="set_wet_density" getter="get_wet_density" default="450.0">
+			The density, kg/m³, of a fully wet flow (dry flows run at 300 kg/m³).
+		</member>
+		<member name="wet_enabled" type="bool" setter="set_wet_enabled" getter="is_wet_enabled" default="true">
+			Wet snow avalanches. The pack's liquid water weakens its weak layers (see [member wet_weakening]), and a wet slab runs as a wet flow, its friction, density and cohesion following its wetness (see [method get_flow_wetness]). Wet flows make no powder cloud.
+		</member>
+		<member name="wet_mu" type="float" setter="set_wet_mu" getter="get_wet_mu" default="0.4">
+			Voellmy's dry friction for a fully wet flow (wet snow avalanches 0.3-0.55; Naaim et al. 2013).
+		</member>
+		<member name="wet_weakening" type="float" setter="set_wet_weakening" getter="get_wet_weakening" default="0.25">
+			The share of the weak layer's strength left when the pack holds all the liquid water it can; the strength is this to the power of the pack's liquid over what it holds (the LWC index, Mitterer et al. 2011).
+		</member>
+		<member name="wet_xi" type="float" setter="set_wet_xi" getter="get_wet_xi" default="1000.0">
+			Voellmy's turbulent friction, m/s², for a fully wet flow.
+		</member>
 		<member name="xi" type="float" setter="set_xi" getter="get_xi" default="1500.0">
 			Voellmy's turbulent friction, m/s² (RAMMS: 1000 to 3000).
 		</member>
@@ -267,6 +348,12 @@
 			<param index="1" name="body" type="Node" />
 			<description>
 				A load released a slab: where it stood, and the body, or [code]null[/code] for [method apply_load] and cornices.
+			</description>
+		</signal>
+		<signal name="glide_crack_opened">
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A glide crack opened at [param position] (on the snow surface): the pack below it is gliding on a wet base and may release full depth.
 			</description>
 		</signal>
 		<signal name="snow_collapsed">
