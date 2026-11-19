@@ -171,7 +171,7 @@
 			With [member light_scattering], the steps of the march toward each light that lets the gas shade itself (a light inside thick smoke glows near it and dims further in). [code]0[/code] skips it: cheaper, but light then reaches every point as if through clear air.
 		</member>
 		<member name="scattering_strength" type="float" setter="set_scattering_strength" getter="get_scattering_strength" default="1.0">
-			With [member light_scattering], a multiplier on the light the gas scatters. The glow is colored by [member smoke_color].
+			With [member light_scattering], a multiplier on the light the gas scatters. The glow is colored by [member smoke_color]. The path tracer does not see it (its gas scatters as its [member smoke_color] says): keep it at [code]1[/code] for raster and path-traced frames to match.
 		</member>
 		<member name="scattering_temporal" type="bool" setter="set_scattering_temporal" getter="is_scattering_temporal" default="true">
 			When enabled, the light scattering pass ([member light_scattering], [member ambient_scattering], [member sun_scattering]) moves its march's start offset every frame and blends the result with the previous frames, reprojected and clamped to the current frame's neighbourhood, as volumetric fog does. The step pattern then averages out instead of showing as bands at the gas's edges. History is dropped where the scene behind the gas moves, and when the pass runs for more than one view in a frame only the first view is blended.
