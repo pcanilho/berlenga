@@ -479,6 +479,7 @@ func _contract_tests() -> void:
 	new_scar.polygon = PackedVector2Array([Vector2(0, 0), Vector2(30, 0), Vector2(0, 30)])
 	add_child(new_scar)
 	var fa: WorldFire = WorldContracts.get_fire()
+	_check("contracts: no fire gives no plumes", fa.plumes().is_empty(), "%d" % fa.plumes().size())
 	var a_old := fa.burn_age_at(Vector3(-20, 0, -20))
 	var a_new := fa.burn_age_at(Vector3(5, 0, 5))
 	var a_none := fa.burn_age_at(Vector3(200, 0, 0))
