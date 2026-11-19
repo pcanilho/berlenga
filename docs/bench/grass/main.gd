@@ -1989,6 +1989,7 @@ func _checks() -> void:
 		_check("plants carry rank and range for thinning", ranged > 1000 and bad == 0, "%d ranged, %d bad" % [ranged, bad])
 	_path_checks()
 	_burn_checks()
+	_radius_zero_check()
 
 # Burnt ground (GrassField3D.burn_recovery, WorldFire.burn_age_at): two 8 m scars 6 m in front of the
 # camera, a fortnight and four months old, against the same ground unburnt. The sward is gone on the fresh
@@ -2061,6 +2062,20 @@ func _burn_tally(centre: Vector3) -> int:
 				if absf(buf[b + 3] - centre.x) < 1.5 and absf(buf[b + 11] - centre.z) < 1.5:
 					n += 1
 	return n
+
+# radius 0 draws no blades: no near tiles, far rings or shell (a field kept for its rules or ground tint only).
+func _radius_zero_check() -> void:
+	var c := cam.global_position
+	var r0: float = grass.radius
+	grass.radius = 0.0
+	for i in 3:
+		grass.update_at(c)
+	var res := [grass.get_tile_count(), grass.get_ring_tile_count(), grass.get_shell_tile_count()]
+	grass.radius = r0
+	for i in 3:
+		grass.update_at(c)
+	res.append(grass.get_tile_count())
+	_check("radius 0: no blades drawn (tiles, rings, shell), back with its radius", res[0] == 0 and res[1] == 0 and res[2] == 0 and res[3] > 0, res)
 
 # Blades and their summed heights in the middle 3 m of each burn scar's square, after a rebuild.
 func _burn_count(c: Vector3, centres: Array) -> Array:

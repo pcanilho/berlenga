@@ -2755,7 +2755,7 @@ int floor_half(int p_v) {
 } // namespace
 
 bool GrassField3D::_rings_active() const {
-	return far_rings && crop == CROP_NONE && is_inside_tree() && fade_owner == this && far_ring_range > radius;
+	return far_rings && crop == CROP_NONE && is_inside_tree() && fade_owner == this && radius > 0.0f && far_ring_range > radius;
 }
 
 Ref<ArrayMesh> GrassField3D::_make_ring_mesh(int p_segments) const {
@@ -3138,7 +3138,7 @@ void GrassField3D::_free_shell() {
 }
 
 void GrassField3D::_update_shell(const Vector2 &p_center, TerrainDataMap3D *p_map) {
-	if (!far_shell || crop != CROP_NONE || !is_inside_tree() || fade_owner != this) {
+	if (!far_shell || crop != CROP_NONE || !is_inside_tree() || fade_owner != this || radius <= 0.0f) {
 		if (!shell_tiles.is_empty()) {
 			_free_shell();
 		}
@@ -3437,6 +3437,36 @@ void GrassField3D::set_burn_recovery(float p_years) {
 	rebuild();
 }
 
+void GrassField3D::_read_sand_sea(TerrainDataMap3D *p_map) {
+	sea_depth.clear();
+	sea_nx = 0;
+	sea_ny = 0;
+	const TerrainGenerator3D *gen = p_map ? VegetationHoles::source_of(p_map) : nullptr;
+	if (!gen || crop != CROP_NONE || !gen->get_sand_sea_rect().has_area()) {
+		return;
+	}
+	const Rect2 rect = gen->get_sand_sea_rect();
+	const float cell = MAX(MAX(float(gen->get_sand_sea_scale()), 2.0f), MAX(rect.size.x, rect.size.y) / 1023.0f);
+	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 1024);
+	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 1024);
+	LocalVector<float> depth;
+	depth.resize(nx * ny);
+	bool any = false;
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const float d = float(gen->get_sand_sea_height(Vector3(rect.position.x + rect.size.x * x / (nx - 1), 0.0f, rect.position.y + rect.size.y * z / (ny - 1))));
+			depth[z * nx + x] = d;
+			any = any || d > 0.05f;
+		}
+	}
+	if (any) {
+		sea_depth = depth;
+		sea_rect = rect;
+		sea_nx = nx;
+		sea_ny = ny;
+	}
+}
+
 void GrassField3D::_read_burn_age(TerrainDataMap3D *p_map) {
 	burn_ages.clear();
 	burn_nx = 0;
@@ -3481,17 +3511,30 @@ void GrassField3D::_read_burn_age(TerrainDataMap3D *p_map) {
 // (PlantSpecies.burn_cover: slow at first, then closing in). Bilinear between the grid's ages,
 // with unburnt cells counted as long recovered, so the scar's edge grows in over a cell.
 float GrassField3D::_burn_cover(const PlantSpecies *p_rules, float p_x, float p_z) const {
-	if (burn_ages.is_empty()) {
-		return 1.0f;
+	float sand = 1.0f;
+	if (!sea_depth.is_empty() && !(p_rules && (p_rules->uses_dune() || p_rules->uses_coast() || p_rules->uses_sand_mobility()))) {
+		const float gx = (p_x - sea_rect.position.x) / sea_rect.size.x * (sea_nx - 1);
+		const float gz = (p_z - sea_rect.position.y) / sea_rect.size.y * (sea_ny - 1);
+		if (gx >= 0.0f && gz >= 0.0f && gx <= sea_nx - 1 && gz <= sea_ny - 1) {
+			const int ix = MIN(int(gx), sea_nx - 2), iz = MIN(int(gz), sea_ny - 2);
+			const float fx = gx - ix, fz = gz - iz;
+			const float *r0 = &sea_depth[iz * sea_nx + ix];
+			const float *r1 = r0 + sea_nx;
+			const float d = Math::lerp(Math::lerp(r0[0], r0[1], fx), Math::lerp(r1[0], r1[1], fx), fz);
+			sand = 1.0f - Math::smoothstep(0.05f, 0.3f, d);
+		}
+	}
+	if (burn_ages.is_empty() || sand <= 0.0f) {
+		return sand;
 	}
 	const float rec = (p_rules && p_rules->get_burn_recovery() > 0.0f) ? p_rules->get_burn_recovery() : burn_recovery;
 	if (rec <= 0.0f) {
-		return 1.0f;
+		return sand;
 	}
 	const float gx = (p_x - burn_rect.position.x) / burn_rect.size.x * (burn_nx - 1);
 	const float gz = (p_z - burn_rect.position.y) / burn_rect.size.y * (burn_ny - 1);
 	if (gx < 0.0f || gz < 0.0f || gx > burn_nx - 1 || gz > burn_ny - 1) {
-		return 1.0f;
+		return sand;
 	}
 	const int x0 = MIN(int(gx), burn_nx - 2);
 	const int z0 = MIN(int(gz), burn_ny - 2);
@@ -3501,7 +3544,7 @@ float GrassField3D::_burn_cover(const PlantSpecies *p_rules, float p_x, float p_
 		const float a = burn_ages[z * burn_nx + x];
 		return a < 0.0f ? 1.0f : Math::smoothstep(0.0f, rec, a);
 	};
-	return Math::lerp(Math::lerp(c(x0, z0), c(x0 + 1, z0), fx), Math::lerp(c(x0, z0 + 1), c(x0 + 1, z0 + 1), fx), fz);
+	return sand * Math::lerp(Math::lerp(c(x0, z0), c(x0 + 1, z0), fx), Math::lerp(c(x0, z0 + 1), c(x0 + 1, z0 + 1), fx), fz);
 }
 
 float GrassField3D::get_burn_cover_at(const Vector3 &p_global_position) const {
@@ -4452,6 +4495,16 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 	if (crop != CROP_NONE && is_inside_tree()) {
 		_crop_ground_step();
 	}
+	if (radius <= 0.0f) {
+		// radius 0: no blades at all (the near tiles, the far rings and shell); the ground tint keeps its own setting.
+		for (KeyValue<Vector2i, Tile> &kv : tiles) {
+			_free_tile(kv.value);
+		}
+		tiles.clear();
+		_free_rings();
+		_free_shell();
+		return;
+	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	const Vector2 c(p_center.x, p_center.z);
 	const float reach = radius + tile_size * 0.75f;
@@ -4543,6 +4596,7 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 	fade_band = Vector4(); // Send the band and the far colour again.
 	if (!burn_read) {
 		_read_burn_age(p_map);
+		_read_sand_sea(p_map);
 		burn_read = true;
 	}
 	if (crop != CROP_NONE) {
@@ -5647,7 +5701,7 @@ void GrassField3D::set_lean(float p_lean) {
 	GRASS_SET_REBUILD(lean, CLAMP(p_lean, 0.0f, 1.4f))
 }
 void GrassField3D::set_radius(float p_radius) {
-	GRASS_SET_REBUILD(radius, MAX(p_radius, 1.0f))
+	GRASS_SET_REBUILD(radius, MAX(p_radius, 0.0f))
 }
 void GrassField3D::set_tile_size(float p_size) {
 	GRASS_SET_REBUILD(tile_size, MAX(p_size, 1.0f))
@@ -5928,7 +5982,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_tint_enabled"), "set_ground_tint_enabled", "is_ground_tint_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "ground_tint"), "set_ground_tint", "get_ground_tint");
 	ADD_GROUP("Range", "");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radius", PROPERTY_HINT_RANGE, "1,500,0.5,or_greater,suffix:m"), "set_radius", "get_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radius", PROPERTY_HINT_RANGE, "0,500,0.5,or_greater,suffix:m"), "set_radius", "get_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_rings"), "set_far_rings", "is_far_rings");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_ring_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_far_ring_range", "get_far_ring_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_shell"), "set_far_shell", "is_far_shell");
