@@ -3616,3 +3616,9 @@ coarse ribbon lies 1.5 strips outside the window, where the live heights have fa
 Heights are depth-limited, softly, to amplitude 0.39 d (McCowan's H = 0.78 d breaking limit): without it the
 last wet cell at a stone's foot stood up as a spike.
 Bench switch: `--no-near-mesh`.
+Foam on the wave facets (19 Nov, docs review of eaaa4bff): foam stood on steep facets as jagged shards, and
+its crisp edge drew the triangles' edges. Now white water damps the waves' height under it in vertex() (as
+it already damped their slope per pixel: the film's elasticity), so foam lies on a calm sheet. Footprint-scaled
+detail uses an analytic footprint (distance and the smooth surface's tilt; orthographic aware) instead of fwidth,
+and the crisp step's width is the pattern's world gradient (chain rule) times that footprint, so neither jumps
+from facet to facet. Raster and PT checked on the creek bench.
