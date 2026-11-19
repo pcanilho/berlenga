@@ -365,6 +365,8 @@ public:
 	virtual float contract_ground_rim_at(const Vector3 &p_position) const { return 0.0f; } // m
 	virtual Vector2 contract_ground_runoff_at(const Vector3 &p_position) const { return Vector2(); } // (depth m, speed m/s)
 	virtual float contract_ground_mud_depth_at(const Vector3 &p_position) const { return 0.0f; } // m of slurry
+	// Clay a body carries pressed onto the ground as a print (m of film; print as GroundSurface3D.track_mud). Returns m3 laid.
+	virtual float contract_ground_track_mud(const Vector3 &p_position, float p_radius, float p_depth, float p_wet, const Vector4 &p_print) { return 0.0f; }
 	virtual Vector2 contract_ground_needle_ice_at(const Vector3 &p_position) const { return Vector2(); } // (m, crumbs 0..1)
 	virtual Vector3 contract_ground_rut_guidance_at(const Vector3 &p_contact, const Vector3 &p_lateral, float p_half_width) const { return Vector3(); } // (cross slope, wall -lat m, wall +lat m)
 	virtual float contract_ground_sand_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, loose sand's share of the top
@@ -410,6 +412,7 @@ protected:
 	GDVIRTUAL1RC(float, _ripple_at, Vector3)
 	GDVIRTUAL1RC(float, _blown_sand_at, Vector3)
 	GDVIRTUAL3(_add_runoff_load, Vector3, float, float)
+	GDVIRTUAL5R(float, _track_mud, Vector3, float, float, float, Vector4)
 
 public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -432,6 +435,10 @@ public:
 	// the runoff carries it down its drainage into WorldWater.add_sediment where the flow reaches water. Dropped
 	// with no runoff producer. Callers: soil erosion, burnt ground's ash (PhysX).
 	void add_runoff_load(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg);
+	// Mud a body carries out of mud pressed onto firm ground at the point (a film p_depth m thick over p_radius, wet
+	// 0..1; p_print x 1 a tyre, 2 a sole, y its yaw, z w the sole's length and width): the ground's mud prints. m3 laid;
+	// 0 with no ground producer.
+	float track_mud(const Vector3 &p_position, float p_radius, float p_depth, float p_wet, const Vector4 &p_print);
 	bool has_runoff() const { return runoff_provider != nullptr || get_script_instance() != nullptr; }
 };
 

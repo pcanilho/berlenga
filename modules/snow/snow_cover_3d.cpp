@@ -74,6 +74,9 @@ constexpr float SETTLE_RATE = 0.01f; // per hour
 // Below this the cell is bare.
 constexpr float SWE_MIN = 0.01f; // mm
 constexpr float ICE_DENSITY = 917.0f; // kg/m3
+constexpr float SALT_DEPRESSION = 0.0593f; // K per g of NaCl in a kg of water (dilute; 2 ions, Kf 1.86)
+constexpr float SALT_EUTECTIC = 21.1f; // K: no brine stays liquid below -21.1 C
+constexpr float SALT_FILM = 1.0f; // mm, the least brine film the salt dissolves into
 constexpr float ICE_DECAY = 0.005f / 24.0f; // m per C hour above freezing, bare lake ice
 constexpr float ICE_MAX = 1.5f; // m of lake ice at most
 constexpr float ICE_CONDUCTIVITY = 2.24f; // W/(m K)
@@ -312,7 +315,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
 	// where there is one, else the state of the nearest cell that was inside it.
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in };
+	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
@@ -608,6 +611,23 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		float rho = cell_density[i];
 		float alb = cell_albedo[i];
 		float runoff = 0.0f;
+		// Sea salt (WorldWeather.salt_at): it dissolves into the pack's liquid water as brine, whose freezing point
+		// lies lower by about 0.059 K per gram of salt in a kilogram of water (NaCl, to the eutectic at -21 C); the
+		// snow and ice then melt as if the air were that much warmer. The brine is the pack's liquid, at least what it
+		// holds (liquid_capacity), at least a 1 mm film: thin snow salted by spray melts some degrees below 0 C, a deep
+		// pack barely notices.
+		// The salt is the pack's own (what fell on it since, cell_salt_pack), and the meltwater draining out takes
+		// its share, so a salted pack melts until its brine has run out, not for ever. Bare ice reads the surface salt.
+		float salt_dt = 0.0f, salt_dt_ice = 0.0f;
+		const bool salted = cell_salt_pack.size() == n * n;
+		float salt_pack = salted ? cell_salt_pack[i] : 0.0f;
+		if (salt_pack > 0.0f) {
+			const float brine = MAX(MAX(cell_liquid[i], liquid_capacity * MAX(cell_swe[i] - cell_liquid[i], 0.0f)), SALT_FILM);
+			salt_dt = MIN(SALT_DEPRESSION * salt_pack / brine, SALT_EUTECTIC);
+		}
+		if (cell_salt.size() == n * n && cell_salt[i] > 0.0f) {
+			salt_dt_ice = MIN(SALT_DEPRESSION * cell_salt[i] / SALT_FILM, SALT_EUTECTIC);
+		}
 
 		// Water (follow-up 15). Lake ice grows in frost under the snow on it (Stefan's law) and, once the
 		// snow is gone, melts in a thaw at the melt's temperature rate. Snow on open water, or on ice too thin
@@ -618,13 +638,15 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			ice = lake_ice_enabled ? cell_ice[i] : 0.0f;
 			if (lake_ice_enabled) {
 				const float ds = swe > SWE_MIN ? swe / MAX(rho, 30.0f) : 0.0f;
-				if (t < 0.0f) {
-					ice = lake_ice_growth(ice, t, ds, rho, in.dt_h);
+				// Bare ice under salt melts as if warmer by its brine's depression; under snow the pack takes it.
+				const float ti = ds > 0.0f ? t : t + salt_dt_ice;
+				if (ti < 0.0f) {
+					ice = lake_ice_growth(ice, ti, ds, rho, in.dt_h);
 				} else if (ds <= 0.0f && ice > 0.0f) {
 					// The thaw works down from the top, through the white snow ice first. Bare lake ice decays by
 					// degree-days at about 0.5 cm per C day (Bilello 1980; Ashton 1983), sun and warm water
 					// included, faster than snow's melt factor gives.
-					const float m = MIN(ICE_DECAY * t * in.dt_h, ice);
+					const float m = MIN(ICE_DECAY * ti * in.dt_h, ice);
 					ice -= m;
 					cell_white_ice.write[i] = MAX(cell_white_ice[i] - m, 0.0f);
 				}
@@ -720,7 +742,8 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 
 		// Melt (Pellicciotti et al. 2005): M = TF T + SRF (1 - albedo) G above the threshold temperature,
 		// G the shortwave reaching the cell, its own slope facing the sun (Hock 1999).
-		const bool melting = t > melt_threshold;
+		const float ts = t + salt_dt; // the air as the salted snow feels it
+		const bool melting = ts > melt_threshold;
 		if (melting) {
 			float g = 0.0f;
 			if (in.direct_normal > 0.0f) {
@@ -737,7 +760,7 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				}
 				g = in.direct_normal * (MAX(normal.dot(in.sun_dir), 0.0f) * vis + DIFFUSE_SHARE * in.sun_dir.y);
 			}
-			const float m = (melt_temperature_factor * t + melt_shortwave_factor * (1.0f - MAX(alb - lap_drop, 0.05f)) * g) * in.dt_h;
+			const float m = (melt_temperature_factor * ts + melt_shortwave_factor * (1.0f - MAX(alb - lap_drop, 0.05f)) * g) * in.dt_h;
 			surface_melt = CLAMP(m, 0.0f, MAX(swe - liq, 0.0f));
 			liq += surface_melt;
 		}
@@ -750,9 +773,9 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			surface_melt += fm;
 			liq += fm;
 		}
-		if (!melting && surface_melt <= 0.0f && t < 0.0f && liq > 0.0f) {
+		if (!melting && surface_melt <= 0.0f && ts < 0.0f && liq > 0.0f) {
 			// Meltwater and rain refreeze in a cold pack, at the temperature factor's rate.
-			refrozen = MIN(liq, melt_temperature_factor * -t * in.dt_h);
+			refrozen = MIN(liq, melt_temperature_factor * -ts * in.dt_h);
 			liq -= refrozen;
 		}
 		if (crust_enabled) {
@@ -764,6 +787,7 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		const float hold = liquid_capacity * (swe - liq);
 		if (liq > hold) {
 			const float out = liq - hold;
+			salt_pack *= hold / MAX(liq, 1e-6f); // the draining brine takes its salt
 			runoff += out;
 			swe -= out;
 			liq = hold;
@@ -820,6 +844,9 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		cell_crust_wet.write[i] = crust_wet;
 		cell_swe.write[i] = swe;
 		cell_liquid.write[i] = liq;
+		if (salted) {
+			cell_salt_pack.write[i] = swe > SWE_MIN ? salt_pack : 0.0f; // the snow gone, its salt is the ground's
+		}
 		cell_density.write[i] = CLAMP(rho, 30.0f, 917.0f);
 		cell_albedo.write[i] = alb;
 		cell_runoff.write[i] = in.dt_h > 0.0f ? runoff / in.dt_h : 0.0f;
@@ -1073,6 +1100,7 @@ void SnowCover3D::_update_begin(double p_weather_dt, bool p_blocking) {
 	const int from = int(update_count % uint64_t((resolution + band - 1) / band)) * band;
 	_refresh_cell_inputs(from, MIN(from + band, resolution), nullptr);
 	_refresh_fire();
+	_refresh_salt();
 	_refresh_lap();
 	_refresh_obstacles();
 	if (!ice_breaks.is_empty()) {
@@ -1277,6 +1305,68 @@ void SnowCover3D::_refresh_fire() {
 	if (!any) {
 		cell_fire.clear();
 	}
+}
+
+// Sea salt over the snow (docs/ideas/world-links.md, salt melts shore snow and ice): the salt on surfaces from
+// WorldWeather each update. A sparse probe first: with no salt anywhere on the square the cells are not read.
+void SnowCover3D::_refresh_salt() {
+	const int n = resolution;
+	const WorldWeather *w = WorldContracts::weather();
+	if (!salt_melt || driven || cell_ground.size() != n * n || !(w->has_provider() || w->get_script_instance())) {
+		cell_salt.clear();
+		return;
+	}
+	bool any = false;
+	for (int z = 0; z < n && !any; z += 8) {
+		for (int x = 0; x < n && !any; x += 8) {
+			Vector3 pos = _cell_center(x, z);
+			pos.y = cell_ground[z * n + x];
+			any = w->salt_at(pos) > 0.0f;
+		}
+	}
+	if (!any) {
+		cell_salt.clear();
+		cell_salt_seen.fill(0.0f);
+		return;
+	}
+	cell_salt.resize(n * n);
+	if (cell_salt_pack.size() != n * n) {
+		cell_salt_pack.resize(n * n);
+		cell_salt_pack.fill(0.0f);
+		cell_salt_seen.resize(n * n);
+		cell_salt_seen.fill(0.0f);
+	}
+	float *f = cell_salt.ptrw();
+	float *pk = cell_salt_pack.ptrw();
+	float *seen = cell_salt_seen.ptrw();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			Vector3 pos = _cell_center(x, z);
+			pos.y = cell_ground[i];
+			f[i] = MAX(w->salt_at(pos), 0.0f);
+			// New salt settles into the pack where there is one (rain washing the surface's off adds none).
+			if (f[i] > seen[i] && cell_swe[i] > SWE_MIN) {
+				pk[i] += f[i] - seen[i];
+			}
+			seen[i] = f[i];
+		}
+	}
+}
+
+float SnowCover3D::get_salt_depression_at(Vector3 p_position) const {
+	const int n = resolution;
+	if (cell_salt_pack.size() != n * n || cell_swe.size() != n * n) {
+		return 0.0f;
+	}
+	const float s = _sample(cell_salt_pack, Vector2(p_position.x, p_position.z));
+	if (s <= 0.0f) {
+		return 0.0f;
+	}
+	const float swe = _sample(cell_swe, Vector2(p_position.x, p_position.z));
+	const float liq = _sample(cell_liquid, Vector2(p_position.x, p_position.z));
+	const float brine = MAX(MAX(liq, liquid_capacity * MAX(swe - liq, 0.0f)), SALT_FILM);
+	return MIN(SALT_DEPRESSION * s / brine, SALT_EUTECTIC);
 }
 
 // Wind obstacles over the snow (docs/ideas/world-links.md, lee drifts): their heights from WorldWeather, every few
@@ -3183,6 +3273,9 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_bodies_enabled", "enabled"), &SnowCover3D::set_bodies_enabled);
 	ClassDB::bind_method(D_METHOD("is_bodies_enabled"), &SnowCover3D::is_bodies_enabled);
 	ClassDB::bind_method(D_METHOD("set_lake_ice_enabled", "enabled"), &SnowCover3D::set_lake_ice_enabled);
+	ClassDB::bind_method(D_METHOD("set_salt_melt", "enabled"), &SnowCover3D::set_salt_melt);
+	ClassDB::bind_method(D_METHOD("is_salt_melt_enabled"), &SnowCover3D::is_salt_melt_enabled);
+	ClassDB::bind_method(D_METHOD("get_salt_depression_at", "position"), &SnowCover3D::get_salt_depression_at);
 	ClassDB::bind_method(D_METHOD("set_impurities_enabled", "enabled"), &SnowCover3D::set_impurities_enabled);
 	ClassDB::bind_method(D_METHOD("is_impurities_enabled"), &SnowCover3D::is_impurities_enabled);
 	ClassDB::bind_method(D_METHOD("add_impurity", "position", "radius", "mg_per_m2"), &SnowCover3D::add_impurity);
@@ -3228,6 +3321,7 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "update_rate", PROPERTY_HINT_RANGE, "0.01,60,0.01,suffix:Hz"), "set_update_rate", "get_update_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "background_updates"), "set_background_updates", "is_background_updates");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lake_ice_enabled"), "set_lake_ice_enabled", "is_lake_ice_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "salt_melt"), "set_salt_melt", "is_salt_melt_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "impurities_enabled"), "set_impurities_enabled", "is_impurities_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "bodies_enabled"), "set_bodies_enabled", "is_bodies_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "avalanches_enabled"), "set_avalanches_enabled", "is_avalanches_enabled");

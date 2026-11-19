@@ -257,6 +257,12 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	// The terrain climate's precipitation per cell (mm a year), read on the main thread.
 	Vector<float> cell_climate_precip;
 	Vector<float> cell_fire; // W/m2 from WorldFire, read on the main thread each update (empty with no fire)
+	// Sea salt on the snow and lake ice (WorldWeather.salt_at, g/m2): its brine melts them below 0 C (salt_melt).
+	bool salt_melt = true;
+	Vector<float> cell_salt; // empty with none
+	Vector<float> cell_salt_seen; // the surface salt last read (new salt is what it rose by)
+	Vector<float> cell_salt_pack; // g/m2 of salt in the pack's brine (the meltwater draining out takes its share)
+	void _refresh_salt();
 	// Wind obstacles (rocks, walls, buildings, vehicles; WorldWeather.obstacle_height_at), m over the ground: Sx
 	// counts them as terrain. Read on the main thread a band of rows an update into obstacle_next; an Sx bake takes
 	// it in when it starts (its rows read cell_obstacle on workers).
@@ -480,6 +486,10 @@ public:
 	bool is_impurities_enabled() const { return impurities; }
 	void set_lake_ice_enabled(bool p_enabled);
 	bool is_lake_ice_enabled() const { return lake_ice_enabled; }
+	void set_salt_melt(bool p_enabled) { salt_melt = p_enabled; }
+	bool is_salt_melt_enabled() const { return salt_melt; }
+	// The freezing point depression of the salt's brine at a point (K): what salt_melt adds to the air there.
+	float get_salt_depression_at(Vector3 p_position) const;
 	// Lake ice after p_hours at p_air_celsius from p_ice m with p_snow_depth m of snow of p_snow_density
 	// kg/m3 on it: Stefan's law with the snow and the air's boundary layer insulating it (Leppaeranta 1993),
 	// growing below freezing; it does not melt here (the update melts it in a thaw once the snow is gone).

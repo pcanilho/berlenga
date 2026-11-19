@@ -111,6 +111,7 @@ the live ground.
 | `sand_at(pos)` | loose sand's share of the top, 0..1 | 0 |
 | `ripple_at(pos)` | wind ripples' height about their mean, m | 0 |
 | `blown_sand_at(pos)` | share of the sand the wind moves there now (dry, out of shelter), 0..1 | 0 |
+| `track_mud(pos, radius, depth, wet, print)` | m of film in; returns m3 laid | 0 laid with no provider | Clay a body carries pressed onto the ground; print x 1 tyre, 2 sole (0 a thrown lump), y yaw, z w length and width. Callers: WeatherMap3D wet tracks (round 7) |
 | pressing | | through the `world_contact` group |
 
 Consumers: vehicles, snow, grass (ruts tear the sward), fire (fuel on bare ground), water (wet sand), ground mud on
