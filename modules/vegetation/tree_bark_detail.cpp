@@ -63,22 +63,22 @@ const BarkSpec BARK_SPECS[TreeGenerator::BARK_MAX] = {
 	// Furrowed (oaks, ash, lime): the ridges are the stem's own geometry; no loose pieces.
 	{ BarkDetail3D::PIECE_PLATE, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, Color(0.45f, 0.35f, 0.27f), Color(0.36f, 0.33f, 0.3f), 0.4f },
 	// Plated (Scots pine, larch): thin plates 5 to 15 cm lifting at their lower edge over the orange-red inner bark.
-	{ BarkDetail3D::PIECE_PLATE, 0.09f, 0.055f, 0.008f, 35.0f, 0.22f, Color(0.66f, 0.32f, 0.17f), Color(0.36f, 0.29f, 0.24f), 0.4f },
+	{ BarkDetail3D::PIECE_PLATE, 0.09f, 0.055f, 0.016f, 35.0f, 0.22f, Color(0.56f, 0.34f, 0.22f), Color(0.36f, 0.29f, 0.24f), 0.4f },
 	// Scaly (holm oak, blackthorn, carob): small squarish scales a few centimetres across.
-	{ BarkDetail3D::PIECE_SCALE, 0.035f, 0.028f, 0.004f, 110.0f, 0.12f, Color(0.47f, 0.34f, 0.25f), Color(0.27f, 0.25f, 0.23f), 0.4f },
+	{ BarkDetail3D::PIECE_SCALE, 0.035f, 0.028f, 0.007f, 110.0f, 0.12f, Color(0.47f, 0.34f, 0.25f), Color(0.27f, 0.25f, 0.23f), 0.4f },
 	// Flaking (plane-like, saltbush, calligonum): thin flakes curling out at one end, paler fresh bark under them.
 	{ BarkDetail3D::PIECE_FLAKE, 0.08f, 0.05f, 0.0025f, 30.0f, 0.5f, Color(0.72f, 0.66f, 0.46f), Color(0.5f, 0.47f, 0.41f), 0.4f },
 	// Papery (birches): horizontal strips of the white outer bark peeling round the stem and rolling outward.
 	// The rolled underside is the paper's pale salmon-cream inner face, not the darker living bark.
-	{ BarkDetail3D::PIECE_CURL, 0.13f, 0.042f, 0.0008f, 16.0f, 1.0f, Color(0.8f, 0.68f, 0.58f), Color(0.88f, 0.86f, 0.82f), 0.4f },
+	{ BarkDetail3D::PIECE_CURL, 0.2f, 0.045f, 0.0008f, 22.0f, 1.0f, Color(0.8f, 0.68f, 0.58f), Color(0.88f, 0.86f, 0.82f), 0.4f },
 	// Lenticelled (hazel, rowan): thin skin peeling in short strips.
 	{ BarkDetail3D::PIECE_CURL, 0.04f, 0.012f, 0.0005f, 6.0f, 0.8f, Color(0.58f, 0.46f, 0.35f), Color(0.5f, 0.45f, 0.4f), 0.4f },
 	// Stone pine: long flat grey-brown plates over orange-red fissures.
-	{ BarkDetail3D::PIECE_PLATE, 0.18f, 0.07f, 0.014f, 14.0f, 0.14f, Color(0.72f, 0.36f, 0.2f), Color(0.45f, 0.4f, 0.36f), 0.4f },
+	{ BarkDetail3D::PIECE_PLATE, 0.18f, 0.07f, 0.022f, 14.0f, 0.14f, Color(0.6f, 0.36f, 0.24f), Color(0.45f, 0.4f, 0.36f), 0.4f },
 	// Cork: its ridges are the stem's own geometry.
 	{ BarkDetail3D::PIECE_PLATE, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, Color(0.6f, 0.35f, 0.22f), Color(0.55f, 0.5f, 0.44f), 1.2f },
 	// Maritime pine: thick dark plates a hand across over dull red-brown.
-	{ BarkDetail3D::PIECE_PLATE, 0.15f, 0.09f, 0.02f, 14.0f, 0.18f, Color(0.5f, 0.25f, 0.15f), Color(0.26f, 0.21f, 0.18f), 0.9f },
+	{ BarkDetail3D::PIECE_PLATE, 0.15f, 0.09f, 0.03f, 14.0f, 0.18f, Color(0.5f, 0.25f, 0.15f), Color(0.26f, 0.21f, 0.18f), 0.9f },
 };
 
 float bd_noise(uint32_t p_seed, int p_i) {
@@ -98,10 +98,10 @@ struct ShapeBuilder {
 	PackedInt32Array indices;
 	int group_start = 0;
 
-	int add(const Vector3 &p_v, float p_outer) {
+	int add(const Vector3 &p_v, float p_outer, float p_edge = 0.0f) {
 		verts.push_back(p_v);
 		normals.push_back(Vector3());
-		colors.push_back(Color(p_outer, 0, 0, 1));
+		colors.push_back(Color(p_outer, p_edge, 0, 1));
 		uvs.push_back(Vector2(p_v.x, p_v.y));
 		return verts.size() - 1;
 	}
@@ -183,72 +183,114 @@ Ref<ArrayMesh> BarkDetail3D::_make_shape(TreeGenerator::BarkKind p_bark, int p_s
 	const uint32_t seed = uint32_t(p_bark) * 977u + uint32_t(p_shape) * 131u + 17u;
 	ShapeBuilder sb;
 	if (bs.kind == PIECE_CURL) {
-		const int M = 18;
-		const float L = bs.length * (0.8f + 0.4f * bd_noise(seed, 0));
-		const float W = bs.width * (0.75f + 0.5f * bd_noise(seed, 1));
+		// A horizontal strip torn along the lenticels: its middle still on the stem (bent to a typical stem's
+		// curvature), one or both ends peeling off it and rolled into a scroll standing off the bark.
+		const int M = 16; // samples an arm
+		const float L = bs.length * (0.75f + 0.5f * bd_noise(seed, 0));
+		const float W = bs.width * (0.7f + 0.6f * bd_noise(seed, 1));
 		const float T = bs.thick;
-		const float flat = 0.35f + 0.25f * bd_noise(seed, 2); // share lying on the stem
-		const float roll = L * (0.07f + 0.08f * bd_noise(seed, 3)); // the roll's radius
-		const float side = bd_noise(seed, 4) < 0.5f ? -1.0f : 1.0f; // which end peels
-		// The centreline: heading +x, turning toward +z (outward) once off the stem.
-		LocalVector<Vector3> c, n;
-		Vector2 p(-0.5f * flat * L, 0.0f);
-		float heading = 0.0f;
-		const float ds = L / M;
-		for (int i = 0; i <= M; i++) {
-			const float s = float(i) / M;
-			c.push_back(Vector3(p.x * side, 0.0f, p.y));
-			n.push_back(Vector3(-Math::sin(heading) * side, 0.0f, Math::cos(heading)));
-			const float rr = roll * (1.0f - 0.35f * MAX(0.0f, s - flat) / MAX(1.0f - flat, 1e-3f)); // tighter toward its end
-			if (s >= flat) {
-				heading += ds / rr;
+		const bool both = bd_noise(seed, 5) < 0.4f;
+		const float stem_r = 0.12f;
+		const float lift_angle = 1.9f + 0.5f * bd_noise(seed, 8); // stands up and leans back over itself, so the roll clears the stem
+		const float side = bd_noise(seed, 4) < 0.5f ? -1.0f : 1.0f;
+		struct Arm {
+			LocalVector<Vector2> p, n; // (round, out)
+		};
+		auto make_arm = [&](float p_len, float p_attached, float p_roll, float p_dir) {
+			Arm arm;
+			Vector2 q(0, 0);
+			float h = 0.0f;
+			const float ds = p_len / M;
+			for (int i = 0; i <= M; i++) {
+				const float sa = float(i) * ds;
+				arm.p.push_back(Vector2(q.x * p_dir, q.y));
+				arm.n.push_back(Vector2(-Math::sin(h) * p_dir, Math::cos(h)));
+				float k;
+				if (sa < p_attached) {
+					k = -1.0f / stem_r; // lies on the stem
+				} else {
+					const float f = (sa - p_attached) / MAX(p_len - p_attached, 1e-4f);
+					// Peels off the stem at an angle, then rolls back on itself (birch bark rolls with its white face out,
+					// the salmon underside showing at the lip and under the lift).
+					const float free = MAX(p_len - p_attached, 1e-4f);
+					k = f < 0.22f ? lift_angle / (0.22f * free) : -1.0f / (p_roll * (1.0f - 0.3f * f));
+				}
+				h += k * ds;
+				q += Vector2(Math::cos(h), Math::sin(h)) * ds;
 			}
-			p += Vector2(Math::cos(heading), Math::sin(heading)) * ds;
+			return arm;
+		};
+		const float roll = 0.006f + 0.008f * bd_noise(seed, 3);
+		Arm right, left;
+		if (both) {
+			right = make_arm(0.5f * L, 0.12f * L, roll, side);
+			left = make_arm(0.5f * L * (0.6f + 0.4f * bd_noise(seed, 6)), 0.12f * L, roll * (0.8f + 0.4f * bd_noise(seed, 7)), -side);
+		} else {
+			right = make_arm(0.7f * L, 0.2f * L, roll, side);
+			left = make_arm(0.3f * L, 1.0f, roll, -side); // the far end stays on the stem
 		}
-		// A slight sag across the strip, so it is not a ruled sheet.
-		const float sag = 0.15f * W;
-		int top[19][3], bot[19][3];
+		LocalVector<Vector2> c, n;
+		for (int i = M; i >= 1; i--) {
+			c.push_back(left.p[i]);
+			n.push_back(left.n[i]);
+		}
 		for (int i = 0; i <= M; i++) {
+			c.push_back(right.p[i]);
+			n.push_back(right.n[i]);
+		}
+		const int K = int(c.size());
+		// Torn paper: each long edge wanders (two octaves), and the strip narrows raggedly toward each free end.
+		LocalVector<float> ylo, yhi;
+		for (int i = 0; i < K; i++) {
+			const float t = Math::abs(float(i - M)) / M; // 0 middle, 1 at the ends
+			const float taper = 1.0f - 0.45f * Math::pow(t, 3.0f) * (0.6f + 0.8f * bd_noise(seed, 200 + i));
+			ylo.push_back(-0.5f * W * taper * (0.85f + 0.2f * bd_noise(seed, 40 + i) + 0.1f * bd_noise(seed, 80 + i / 3)));
+			yhi.push_back(0.5f * W * taper * (0.85f + 0.2f * bd_noise(seed, 120 + i) + 0.1f * bd_noise(seed, 160 + i / 3)));
+		}
+		auto at = [&](int i, float y, float off) {
+			const Vector2 q = c[i] + n[i] * off;
+			return Vector3(q.x, y, q.y);
+		};
+		LocalVector<int> top, bot; // 3 across: low edge, middle, high edge
+		for (int i = 0; i < K; i++) {
 			for (int j = 0; j < 3; j++) {
-				// Torn paper: each long edge wanders, and the strip narrows toward its free end.
-				const float tear = j == 1 ? 1.0f : 0.75f + 0.5f * bd_noise(seed, 40 + i * 3 + j);
-				const float y = (float(j) - 1.0f) * 0.5f * W * tear * (1.0f - 0.35f * float(i) / M * bd_noise(seed, 10 + j));
-				const float zs = (j == 1 ? 0.0f : 1.0f) * sag * MAX(0.0f, float(i) / M - flat);
-				const Vector3 base = c[i] + Vector3(0, y, 0) + n[i] * zs;
-				top[i][j] = sb.add(base + n[i] * (0.5f * T), 1.0f);
-				bot[i][j] = sb.add(base - n[i] * (0.5f * T), 0.0f);
+				const float y = j == 0 ? ylo[i] : (j == 2 ? yhi[i] : 0.5f * (ylo[i] + yhi[i]));
+				const float sag = j == 1 ? 0.0f : 0.1f * W * (Math::abs(float(i - M)) / M); // a little cupped where free
+				top.push_back(sb.add(at(i, y, 0.5f * T + sag), 1.0f));
+				bot.push_back(sb.add(at(i, y, -0.5f * T + sag), 0.0f));
 			}
 		}
-		for (int i = 0; i < M; i++) {
+		auto nrm = [&](int i) { return Vector3(n[i].x, 0.0f, n[i].y); };
+		for (int i = 0; i + 1 < K; i++) {
 			for (int j = 0; j < 2; j++) {
-				sb.quad(top[i][j], top[i + 1][j], top[i + 1][j + 1], top[i][j + 1], n[i]);
+				sb.quad(top[i * 3 + j], top[(i + 1) * 3 + j], top[(i + 1) * 3 + j + 1], top[i * 3 + j + 1], nrm(i));
 			}
 		}
 		sb.close_group();
-		for (int i = 0; i < M; i++) {
+		for (int i = 0; i + 1 < K; i++) {
 			for (int j = 0; j < 2; j++) {
-				sb.quad(bot[i][j], bot[i + 1][j], bot[i + 1][j + 1], bot[i][j + 1], -n[i]);
+				sb.quad(bot[i * 3 + j], bot[(i + 1) * 3 + j], bot[(i + 1) * 3 + j + 1], bot[i * 3 + j + 1], -nrm(i));
 			}
 		}
 		sb.close_group();
-		// Edges: the two long sides and the two ends.
 		for (int e = 0; e < 2; e++) {
 			const int j = e == 0 ? 0 : 2;
 			const Vector3 out(0, e == 0 ? -1.0f : 1.0f, 0);
-			for (int i = 0; i < M; i++) {
-				const int a = sb.add(sb.verts[top[i][j]], 0.4f), b = sb.add(sb.verts[top[i + 1][j]], 0.4f);
-				const int cc = sb.add(sb.verts[bot[i + 1][j]], 0.4f), d = sb.add(sb.verts[bot[i][j]], 0.4f);
-				sb.quad(a, b, cc, d, out);
+			for (int i = 0; i + 1 < K; i++) {
+				const int qa = sb.add(sb.verts[top[i * 3 + j]], 1.0f, 1.0f), qb = sb.add(sb.verts[top[(i + 1) * 3 + j]], 1.0f, 1.0f);
+				const int qc = sb.add(sb.verts[bot[(i + 1) * 3 + j]], 1.0f, 1.0f), qd = sb.add(sb.verts[bot[i * 3 + j]], 1.0f, 1.0f);
+				sb.quad(qa, qb, qc, qd, out);
 			}
 			sb.close_group();
 		}
 		for (int e = 0; e < 2; e++) {
-			const int i = e == 0 ? 0 : M;
-			const Vector3 out = e == 0 ? Vector3(-side, 0, 0) : (c[M] - c[M - 1]).normalized();
+			const int i = e == 0 ? 0 : K - 1;
+			const int i2 = e == 0 ? 1 : K - 2;
+			const Vector3 out = (Vector3(c[i].x, 0, c[i].y) - Vector3(c[i2].x, 0, c[i2].y)).normalized();
 			for (int j = 0; j < 2; j++) {
-				const int a = sb.add(sb.verts[top[i][j]], 0.4f), b = sb.add(sb.verts[top[i][j + 1]], 0.4f);
-				const int cc = sb.add(sb.verts[bot[i][j + 1]], 0.4f), d = sb.add(sb.verts[bot[i][j]], 0.4f);
-				sb.quad(a, b, cc, d, out);
+				const int qa = sb.add(sb.verts[top[i * 3 + j]], 1.0f, 1.0f), qb = sb.add(sb.verts[top[i * 3 + j + 1]], 1.0f, 1.0f);
+				const int qc = sb.add(sb.verts[bot[i * 3 + j + 1]], 1.0f, 1.0f), qd = sb.add(sb.verts[bot[i * 3 + j]], 1.0f, 1.0f);
+				sb.quad(qa, qb, qc, qd, out);
 			}
 			sb.close_group();
 		}
@@ -275,7 +317,7 @@ Ref<ArrayMesh> BarkDetail3D::_make_shape(TreeGenerator::BarkKind p_bark, int p_s
 		} else {
 			z = lift * L * 0.5f * MAX(0.0f, -yn) * MAX(0.0f, -yn) * (1.0f + 0.3f * xn); // the lower edge lifts
 		}
-		return z - 0.3f * T; // its foot a little into the stem's relief
+		return z - 0.45f * T; // its foot into the stem's relief
 	};
 	auto thick = [&](float p_rho) { return T * (0.75f + 0.25f * (1.0f - p_rho * p_rho)); };
 	const float rings[2] = { 0.5f, 1.0f };
@@ -309,8 +351,8 @@ Ref<ArrayMesh> BarkDetail3D::_make_shape(TreeGenerator::BarkKind p_bark, int p_s
 	// The broken edge, round the outline: a soft normal round it (a worn edge, not a cut one).
 	int et[N], eb[N];
 	for (int i = 0; i < N; i++) {
-		et[i] = sb.add(sb.verts[top[1][i]], 0.4f);
-		eb[i] = sb.add(sb.verts[bot[1][i]], 0.4f);
+		et[i] = sb.add(sb.verts[top[1][i]], 1.0f, 1.0f);
+		eb[i] = sb.add(sb.verts[bot[1][i]], 1.0f, 1.0f);
 	}
 	for (int i = 0; i < N; i++) {
 		const int k = (i + 1) % N;
@@ -342,6 +384,7 @@ uniform vec4 bark_tint : source_color = vec4(1.0);
 uniform vec3 fallback_color : source_color = vec3(0.36, 0.3, 0.25);
 uniform vec3 inner_color : source_color = vec3(0.6, 0.35, 0.2);
 uniform float bark_tile = 0.4;
+uniform float lift_tint = 0.0; // paper bark: the peeled layers off the stem show their cream-salmon inner plies
 
 varying vec4 v_custom;
 varying vec3 v_local;
@@ -370,13 +413,18 @@ void fragment() {
 	float o = smoothstep(0.3, 0.7, COLOR.r);
 	vec3 outer = has_albedo ? texture(bark_albedo, uv).rgb * bark_tint.rgb : fallback_color * (0.8 + 0.4 * bd_noise(v_local * 180.0 + v_custom.w * 50.0));
 	outer *= v_custom.rgb * (0.85 + 0.3 * fract(v_custom.w * 31.3));
+	outer = mix(outer, inner_color * (0.85 + 0.15 * bd_noise(v_local * 90.0)), lift_tint * smoothstep(0.002, 0.012, v_local.z));
 	// Fresh inner bark: smoother, mottled, darker where it has been open longest (toward the piece's edge).
 	float n = bd_noise(v_local * 260.0 + v_custom.w * 37.0);
-	vec3 inner = inner_color * (0.8 + 0.35 * n);
-	ALBEDO = mix(inner, outer, o);
+	// The inner bark in the stem's own hue (its tint, brightness kept), so it is the same tree, a fresher layer.
+	vec3 tint = v_custom.rgb / max(dot(v_custom.rgb, vec3(0.299, 0.587, 0.114)), 0.05);
+	vec3 inner = inner_color * mix(vec3(1.0), tint, 0.5) * (0.8 + 0.35 * n);
+	// Broken edges: the weathered layers in section, the outer bark darkened, a trace of the inner.
+	vec3 edge = mix(outer, inner, 0.2) * (0.6 + 0.2 * n);
+	ALBEDO = mix(mix(inner, outer, o), edge, COLOR.g);
 	ROUGHNESS = mix(0.68, 0.9, o);
 	if (has_normal) {
-		NORMAL_MAP = mix(vec3(0.5, 0.5, 1.0), texture(bark_normal, uv).rgb, o);
+		NORMAL_MAP = mix(vec3(0.5, 0.5, 1.0), texture(bark_normal, uv).rgb, o * (1.0 - COLOR.g));
 	}
 }
 )");
@@ -662,6 +710,7 @@ void BarkDetail3D::_ensure_family(TreeGenerator::BarkKind p_bark, const Ref<Mate
 		f.material->set_shader_parameter("fallback_color", bs.fallback);
 		f.material->set_shader_parameter("inner_color", bs.inner);
 		f.material->set_shader_parameter("bark_tile", bs.tile);
+		f.material->set_shader_parameter("lift_tint", bs.kind == PIECE_CURL ? 0.6f : 0.0f);
 		for (int s = 0; s < SHAPES; s++) {
 			f.meshes[s] = _make_shape(p_bark, s);
 		}
