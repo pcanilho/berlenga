@@ -1478,6 +1478,9 @@ Research: a slab avalanche leaves a crown (a tensile fracture standing the slab'
 - Open: a broken crust's plates read only as wider funnels with a few angular pieces from 1.5 m
   (`--view=trail --prints-close --crust=1`); the pieces are linear ramps per crack sector, smoothed by the 6 cm
   field. Crisper plates (a step at each sector edge, a lip where a plate tips) are a follow-up.
+- Next-round candidate (icicles): every icicle is a smooth straight cone of one shape. Real ones carry ~1 cm growth
+  ripples in the geometry (Ueno's ripple instability; today only a normal map), a slight bend toward the wind or the
+  drip line, a pendant drop at the tip, and neighbours fusing into curtains near the eave.
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 

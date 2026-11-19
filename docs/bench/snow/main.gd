@@ -2862,7 +2862,7 @@ func _build_avalanche(cam: Camera3D) -> void:
 		if pflow:
 			pflow.set("scattering_resolution", 0) # full: quarter averages away the billows at still sizes
 		av.trigger(Vector3(-40.0, 0, 0), 60.0)
-		surface.extent = 256.0 # the deep-snow geometry over the whole face the camera sees, flank to flank
+		surface.extent = 320.0 # the deep-snow geometry over the whole face the camera sees, out to the camera
 		# Mid-run in real time, so PhysX Flow steps the cloud with it: --at=S seconds after release (default 9).
 		var at_s := 9.0
 		for a in OS.get_cmdline_user_args():
@@ -2893,6 +2893,7 @@ func _build_avalanche(cam: Camera3D) -> void:
 			cam.look_at(Vector3(-25.0, 16.0, -10.0))
 		cam.fov = 66.0
 		cam.far = 1000.0
+		sun.directional_shadow_max_distance = 400.0 # the ridge's shadow on the run-out, as the path tracer has it
 		if traced:
 			process_mode = Node.PROCESS_MODE_ALWAYS
 			get_tree().paused = true
