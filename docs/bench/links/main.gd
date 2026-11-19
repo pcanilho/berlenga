@@ -32,6 +32,8 @@ extends Node3D
 #             feeds the runoff; open ground gets little; none under the cloud base
 #   spray     an onshore gale off a surf wets the first tens of metres of the shore and salts it for hundreds;
 #             none offshore or calm; rain washes the salt off; a cliff face takes the spray, its top stays drier
+#   tracks    a body wading out of a stream leaves wet prints fading over a dozen strides, drips where it
+#             stands, and the prints dry with the weather
 #   contracts the water contract picks the right water where several overlap (a pool in a hollow below the sea's
 #             level, a body above the water); with no producer it answers -INF; the weather's defaults
 
@@ -212,6 +214,7 @@ func _ready() -> void:
 	await _lee_drift_tests()
 	await _fog_drip_tests()
 	await _sea_spray_tests()
+	await _wet_track_tests()
 	await _leaf_kick_tests()
 	await _leaf_surface_tests()
 	await _washout_tests()
@@ -923,6 +926,64 @@ func _sea_spray_tests() -> void:
 	var top: float = w.sea_spray_at(Vector3(70, 25, 0))
 	_check("spray: a cliff's face catches the spray, its top gets less than open ground", face > flat_top and top < 0.5 * flat_top, "face %.4f, top %.4f, open ground %.4f mm/h" % [face, top, flat_top])
 	m.queue_free()
+	WorldContracts.clear_overrides()
+	await get_tree().physics_frame
+
+
+# Wet tracks: a body wading out of a stream leaves wet prints that fade over a dozen or so strides and drips where it
+# stands; dry ground beside stays dry; the prints dry with the weather.
+func _track_wet(m: Node3D, x0: float, x1: float) -> float:
+	var best := 0.0
+	var x := x0
+	while x <= x1:
+		var z := -0.4
+		while z <= 0.4:
+			best = maxf(best, m.get_contact_wetness_at(Vector3(x, 0, z)))
+			z += 0.05
+		x += 0.05
+	return best
+
+
+func _wet_track_tests() -> void:
+	WorldContracts.clear_overrides()
+	WorldContracts.add_water_stub(StreamStub.new())
+	var m := _new_map()
+	m.temperature = 15.0
+	m.humidity = 0.6
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	var anchor := Node3D.new()
+	add_child(anchor)
+	m.follow_target = m.get_path_to(anchor)
+	var body := Node3D.new()
+	body.set_meta("trample_radius", 0.3)
+	body.add_to_group("world_contact")
+	add_child(body)
+	body.position = Vector3(-3, 0.3, 0)
+	for i in 30:
+		await get_tree().physics_frame
+	var soaked: Vector2 = m.get_body_water(body)
+	# Walk out at 1.4 m/s to x = 12.
+	while body.position.x < 12.0:
+		body.position.x += 1.4 / 60.0
+		await get_tree().physics_frame
+	var near := _track_wet(m, 0.5, 1.5)
+	var far := _track_wet(m, 9.0, 10.0)
+	var beside: float = m.get_contact_wetness_at(Vector3(5, 0, 2.0))
+	print("  tracks: body water %.2f / %.2f in the stream; prints %.2f at 1 m, %.2f at 9.5 m; beside %.2f" % [soaked.x, soaked.y, near, far, beside])
+	_check("tracks: a body out of a stream leaves wet prints that fade along the way, dry ground beside", soaked.x > 0.99 and near > 0.5 and far < 0.6 * near and far > 0.02 and beside == 0.0, "prints %.2f at 1 m, %.2f at 9.5 m, beside %.2f" % [near, far, beside])
+	for i in 120:
+		await get_tree().physics_frame
+	var under := _track_wet(m, 11.8, 12.6)
+	_check("tracks: standing still, it drips round itself", under > 0.2, "%.2f under it after 2 s (body drip %.2f)" % [under, m.get_body_water(body).y])
+	body.queue_free()
+	m.time_scale = 2000.0
+	for i in 60:
+		await get_tree().physics_frame
+	var dried := _track_wet(m, 0.5, 1.5)
+	_check("tracks: the prints dry with the weather", dried < 0.3 * near, "%.2f -> %.2f after about %.0f s of weather (drying time %.0f s)" % [near, dried, 2000.0, m.get_contact_drying_time()])
+	m.queue_free()
+	anchor.queue_free()
 	WorldContracts.clear_overrides()
 	await get_tree().physics_frame
 

@@ -90,6 +90,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Bodies → shrubs, crops, hedges, ferns | linked (18 Nov) | contact trample field | VegetationField3D keeps a field where no grass does |
 | Bodies → branches | linked | `tree_touch` group | |
 | Bodies → fallen leaves kicked up | linked (19 Nov) | world_contact bodies (position, speed) | LeafFall3D throws the lying leaves a moving body touches at 0.4-0.9 of its speed with a small lift; leaf litter spawns leaves across the swath; a still body moves none |
+| Bodies out of water, mud, puddles → wet prints, drips | linked (19 Nov) | world_contact bodies, WorldWater.depth_at, WorldGround mud/standing water, puddles | WeatherMap3D `wet_tracks`: a load on the feet or tread (1 out of water, 0.8 wet mud, 0.6 puddles); each print a stride apart takes 15% (tyres 3% per 15 cm), so trails fade over a dozen strides; drips round the body e-fold over 40 s; all into the contact wetness square, dried by the weather's drying time (Penman: air, wind, sun) |
 | Water, snow → fallen leaves | linked (19 Nov) | WorldWater (height, flow), WorldSnow (depth, surface, lake ice), weather wind | LeafFall3D leaves land on the top surface: on water they float with the current plus 3% leeway in the wind (Breivik et al. 2011), on snow they lie on top, are buried by more snow and set down when it melts; lake ice holds them |
 | Vehicles → grass, branches | linked (18 Nov) | world_contact | wheels and bodies join |
 | Lying snow → plants | linked (18 Nov) | snow cover (snow map) | as above (GrassField3D, PlantGenerator) |
@@ -276,4 +277,8 @@ mm a day; Bruijnzeel et al. 2005).
    (`WorldWater.breaking_at`; PhysXWaterSurface3D: its surf zone and whitecaps); the weather map carries both sizes
    downwind on a fine square, steady along the wind, wets surfaces and soil and keeps the salt until rain takes it.
    Later readers: snow (salt lowers the melting point), rocks (salt bloom, a drawing job).
-3. Wet tracks out of water and mud: bodies leaving water or mud leave wet prints and drips that dry in sun and wind.
+3. Wet tracks out of water and mud (built 19 Nov). A body out of water, wet mud or a puddle carries a film on its
+   feet or tread and presses a share of it off with each print, the depleting-load trail games use for wet and
+   bloody footprint decals (e.g. Red Dead Redemption 2), and drips round itself as its clothes drain. The prints go
+   into the weather's contact wetness square (already read by grass, ground, rocks and the path tracer), which dries
+   them at the weather's rate. Later: muddy prints that leave mud, not only water (mud's splat decals).

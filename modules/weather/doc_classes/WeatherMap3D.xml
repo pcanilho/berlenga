@@ -178,6 +178,13 @@
 				Clears the smoke layer.
 			</description>
 		</method>
+		<method name="get_body_water" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="body" type="Node" />
+			<description>
+				For a body in the [code]world_contact[/code] group: x, the water on its feet or tread (0..1, 1 just out of water), y, the water running off it (0..1). See [member wet_tracks].
+			</description>
+		</method>
 		<method name="get_fire_cloud_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -983,6 +990,9 @@
 		</member>
 		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="4.0">
 			How often the cells are refreshed, per second. Gusts are evaluated every frame regardless.
+		</member>
+		<member name="wet_tracks" type="bool" setter="set_wet_tracks" getter="is_wet_tracks_enabled" default="true">
+			Wet tracks: bodies in the [code]world_contact[/code] group coming out of water ([method WorldWater.depth_at]), wet mud, standing water or puddles carry water on their feet or tread. Each footprint (a stride apart, alternating sides) presses 15% of it onto the ground, tyres a continuous line losing 3% every 15 cm, so a trail fades over a dozen or so strides; the body also drips round itself, e-folding over 40 s. Prints and drips go into the contact wetness square, which dries them by [method get_contact_drying_time] (air, wind and sun).
 		</member>
 		<member name="wind_direction" type="Vector2" setter="set_wind_direction" getter="get_wind_direction" default="Vector2(1, 0)">
 			The way the wind blows toward, as x and z.

@@ -331,6 +331,21 @@ private:
 	double contact_accum = 0.0;
 	bool contact_global_added = false;
 	void _update_contact(double p_weather_dt);
+	// Wet tracks (weather_tracks.cpp): bodies coming out of water, mud or puddles carry water on their feet or tyres,
+	// leaving prints that each take a share of it, and drip for a while; the contact square dries them.
+	bool wet_tracks = true;
+	struct TrackBody {
+		Vector3 last_print;
+		float load = 0.0f; // 0..1, the water on the feet or tread
+		float drip = 0.0f; // 0..1, the water running off the body
+		float drip_timer = 0.0f;
+		bool left = false; // the next print's side
+		bool seen = false;
+	};
+	HashMap<ObjectID, TrackBody> track_bodies;
+	uint32_t track_seed = 0x9e3779b9u;
+	void _tracks_step(float p_real_dt);
+	static void _bind_tracks_methods();
 
 	static WeatherMap3D *active;
 
@@ -938,6 +953,10 @@ public:
 	int get_sea_spray_resolution() const { return sea_spray_resolution; }
 	Rect2 get_sea_spray_rect() const;
 	void clear_salt();
+	void set_wet_tracks(bool p_enabled);
+	bool is_wet_tracks_enabled() const { return wet_tracks; }
+	// The water a world_contact body carries on its feet or tread (0..1) and running off it (0..1).
+	Vector2 get_body_water(Node *p_body) const;
 	// The water reaching the ground (mm/h): a snowpack's runoff where one lies (set_surface_water_source), else the
 	// rain at its liquid share. What WeatherRunoff3D routes.
 	float get_ground_water_input_at(Vector3 p_position) const;

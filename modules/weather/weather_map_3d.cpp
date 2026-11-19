@@ -1420,6 +1420,7 @@ void WeatherMap3D::_notification(int p_what) {
 			_apply_sky_shadow();
 			_apply_haze();
 			_update_contact(wdt);
+			_tracks_step(float(dt));
 			if (update_accum >= period) {
 				_update_cells(update_accum);
 				update_accum = 0.0;
@@ -3010,6 +3011,7 @@ void WeatherMap3D::_bind_methods() {
 
 	_bind_rain_methods();
 	_bind_spray_methods();
+	_bind_tracks_methods();
 }
 
 WeatherMap3D::WeatherMap3D() {
