@@ -1,0 +1,2 @@
+### Added
+- `WorldWater.add_sediment_mass(position, mineral_kg, ash_kg)`: a load dropped into water at once (a debris flow's or landslide's fines), mixed through the river section or lake it lands in and capped at hyperconcentrated flow (1000 kg/m³). Debris-flow dumps through `add_sediment` were held as a rate for two seconds, doubling their mass, and a second dump into the same river section on a later frame replaced the first.

@@ -433,6 +433,7 @@ public:
 	void contract_water_clear(uint64_t p_owner) override;
 	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return get_sediment_at(p_position); }
 	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override;
+	void contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) override;
 	// The suspended load (kg/m3: x mineral, y ash) at a world position on the river; zero off it.
 	Vector2 get_sediment_at(const Vector3 &p_world_pos) const;
 	// Depth-averaged water velocity (m/s, world) at a world position; zero off the river.

@@ -2960,6 +2960,19 @@ void PhysXWaterSurface3D::contract_water_add_sediment(const Vector3 &p_position,
 	sediment_src_age = 0.0f;
 }
 
+// A load dropped in at once, mixed through the body (as the sources are).
+void PhysXWaterSurface3D::contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) {
+	const float volume = get_water_volume();
+	if (volume <= 0.0f) {
+		return;
+	}
+	sediment += Vector2(MAX(p_mineral_kg, 0.0f), MAX(p_ash_kg, 0.0f)) / volume;
+	const float total = sediment.x + sediment.y;
+	if (total > WaterSediment::MAX_LOAD) {
+		sediment *= WaterSediment::MAX_LOAD / total;
+	}
+}
+
 void PhysXWaterSurface3D::set_sediment(const Vector2 &p_kg_m3) {
 	sediment = Vector2(MAX(p_kg_m3.x, 0.0f), MAX(p_kg_m3.y, 0.0f));
 }
