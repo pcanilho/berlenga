@@ -2319,6 +2319,12 @@ taken by `scrub_shrub()` so young, mature, old, thicket and cushion forms all wo
   tubes, twigs under 3 mm across left out, 70% of leaves, flowers and pods, survivors grown by 1/sqrt(0.7)
   (Cook et al. 2007). Mature plants at that level: calligonum 767k to 512k, white broom 456k to 241k,
   saltbush 497k to 322k. Raster at about 15 m, LOD threshold 0 against 1: mean difference 0.6/255.
+- Flowers and fruit spikes (19 Nov, leftovers): calligonum flowers February to April (bloom ramp 35-55-80-92), six
+  to twelve 3 mm white flowers with a red-green centre along each flowering twiglet, scattered (thin with distance);
+  far colour takes a quarter of the white. Saltbush carries leafless terminal panicles 6-14 cm from July, two to four
+  spike branches with clusters of three valve pairs every 11 mm, yellow-green in flower, cream-buff reniform valves
+  2-3 mm from September into the new year (Flora iberica; Le Houerou 1992), on a third of the upper tips, scattered.
+  Cost: saltbush far mesh at day 290 286k to 377k (LOD 1 base; thinning further out).
 
 ### 5af. Needle cast after fire (19 Nov; PhysX's standing snags)
 
