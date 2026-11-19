@@ -258,4 +258,38 @@ inline void seen_sky(const SkyBins &p_bins, const uint8_t *p_horizon, float *r_s
 	}
 }
 
+// Far sun shadows (docs/ideas/terrain-material.md, "Far sun shadows"): for one sun azimuth, each point's horizon
+// toward the sun as a tangent (rise over run), on a grid turned to the sun: s along the way to the sun, t across.
+// Each line along s is swept from the sun's end with the upper convex hull of the ground already passed, so each
+// point finds its tangent in amortised constant time (Timonen and Westerholm 2010, "Scalable height field
+// self-shadowing"; the hull sweep of Stewart 1998). The tangent does not depend on the sun's elevation: the map
+// is redone only when the azimuth moves. p_h is the height grid (p_nx by p_nz nodes p_cell apart from the
+// origin); p_dir the unit way to the sun in x and z; the turned grid has r_ns by r_nt nodes p_cell apart from
+// (p_s0, p_t0), t along (-dir.z, dir.x). Points off the height grid get -1 (nothing above them).
+inline void sun_horizon_line(const float *p_h, int p_nx, int p_nz, float p_cell, float p_ox, float p_oz, float p_dx, float p_dz, float p_s0, float p_t0, int p_ns, int p_line, float *r_out, float *r_hull_s, float *r_hull_h) {
+	const float t = p_t0 + p_line * p_cell;
+	const float ux = -p_dz, uz = p_dx;
+	int top = 0;
+	for (int k = p_ns - 1; k >= 0; k--) {
+		const float sv = p_s0 + k * p_cell;
+		const float wx = sv * p_dx + t * ux, wz = sv * p_dz + t * uz;
+		const float gx = (wx - p_ox) / p_cell, gz = (wz - p_oz) / p_cell;
+		if (gx < 0.0f || gz < 0.0f || gx > float(p_nx - 1) || gz > float(p_nz - 1)) {
+			r_out[k] = -1.0f;
+			continue;
+		}
+		const int x0 = MIN(int(gx), p_nx - 2), z0 = MIN(int(gz), p_nz - 2);
+		const float fx = gx - x0, fz = gz - z0;
+		const float *r0 = p_h + z0 * p_nx + x0;
+		const float hv = (r0[0] * (1.0f - fx) + r0[1] * fx) * (1.0f - fz) + (r0[p_nx] * (1.0f - fx) + r0[p_nx + 1] * fx) * fz;
+		while (top >= 2 && (r_hull_h[top - 2] - hv) * (r_hull_s[top - 1] - sv) >= (r_hull_h[top - 1] - hv) * (r_hull_s[top - 2] - sv)) {
+			top--;
+		}
+		r_out[k] = top > 0 ? (r_hull_h[top - 1] - hv) / (r_hull_s[top - 1] - sv) : -1.0f;
+		r_hull_s[top] = sv;
+		r_hull_h[top] = hv;
+		top++;
+	}
+}
+
 } // namespace TerrainSky

@@ -193,7 +193,9 @@ private:
 	real_t sand_sea_edge = 300.0; // m over which the sand thins out at the sea's edge
 	bool sand_sea_compound = true; // large dunes (draa) with ordinary dunes on their flanks
 	Ref<Image> sand_sea_mask; // optional: 0..1 (red) stretched over sand_sea_rect, where the sea's sand may lie
-	real_t nebkha_density = 1.0; // vegetated sand mounds on the sea's thin sand and margins (0: none)
+	real_t nebkha_density = 1.0;
+	int oasis_count = 3; // springs per sand sea, on its lowest interdune floors
+	NodePath oasis_springs; // an OasisSprings3D whose pools the hollows are carved to // vegetated sand mounds on the sea's thin sand and margins (0: none)
 
 	// Lakes: natural dams across valleys, the water behind them.
 	int lake_count = 0;
@@ -399,6 +401,21 @@ private:
 	Ref<Texture2DArray> sky_texture; // three layers of RGBA half: harmonics 0-3, 4-7, 8
 	double last_sky_msec = 0.0;
 	double last_sky_light_msec = 0.0;
+	// Far sun shadows (docs/ideas/terrain-material.md, "Far sun shadows"): the ground's horizon toward the sun on a
+	// grid turned to the sun's azimuth, redone when the azimuth moves.
+	bool sun_shadows = true;
+	NodePath sun_light; // a DirectionalLight3D; empty: the first one in the scene
+	ObjectID sun_light_found;
+	double sun_poll_wait = 0.0;
+	double sun_search_wait = 0.0;
+	real_t sun_azimuth_done = -1000.0; // radians; far off: not built
+	LocalVector<float> sun_heights; // the sky grid's heights (sky_nx x sky_ny, sky_cell apart)
+	Ref<ImageTexture> sun_horizon_texture;
+	Vector4 sun_horizon_frame; // (to the sun x, z, s0, t0)
+	Vector4 sun_horizon_size; // (span along s, across t, 1 on)
+	double last_sun_horizon_msec = 0.0;
+	static void _sun_horizon_lines(void *p_job, uint32_t p_part);
+	void _sun_poll(double p_delta);
 	// The sky light, read back from an environment's sky now and then (sky_light_source).
 	NodePath sky_light_source;
 	// Guide preview: a coarse run (guide_preview_scale times the cell size) a moment after a guide changes.
@@ -473,6 +490,21 @@ private:
 		float tail = 0.0f; // m from the plant to the tail's end, downwind
 	};
 	LocalVector<Nebkha> nebkhas;
+	// Oases (docs/ideas/dunes.md, "Oases"): springs on the sand seas' lowest interdune floors, and hollows carved to
+	// the pools OasisSprings3D sizes for them.
+	struct Oasis {
+		Vector2 centre;
+		float level = 0.0f; // the still water's height
+		float radius[128]; // the pool's outline, at even angles from +X toward +Z
+		float reach = 0.0f; // m from the centre the hollow reaches
+		uint32_t seed = 0;
+		PackedVector3Array vents;
+	};
+	LocalVector<Vector4> springs_found; // (x, level, z, discharge 0 = the pools' default)
+	LocalVector<Oasis> oases;
+	void _place_springs();
+	void _carve_oases();
+	float _oasis_height(real_t p_x, real_t p_z, float p_ground) const;
 	LocalVector<LocalVector<uint32_t>> neb_buckets;
 	int neb_bx = 0;
 	int neb_bz = 0;
@@ -773,6 +805,12 @@ public:
 	real_t get_nebkha_density() const { return nebkha_density; }
 	real_t get_nebkha_height(const Vector3 &p_global_position) const { return _nebkha_sample(p_global_position.x, p_global_position.z); }
 	PackedVector4Array get_nebkhas(const Rect2 &p_rect) const;
+	void set_oasis_count(int p_value) { oasis_count = CLAMP(p_value, 0, 64); }
+	int get_oasis_count() const { return oasis_count; }
+	void set_oasis_springs(const NodePath &p_path) { oasis_springs = p_path; }
+	NodePath get_oasis_springs() const { return oasis_springs; }
+	PackedVector4Array get_springs() const;
+	bool carve_oases();
 	real_t get_last_sand_sea_msec() const { return last_sand_sea_msec; }
 	real_t get_last_sand_sea_max() const { return last_sand_sea_max; }
 	void set_lake_count(int p_count) { lake_count = CLAMP(p_count, 0, 256); }
@@ -909,6 +947,13 @@ public:
 	int get_last_touch_up_cells() const { return last_touch_cells; }
 	int get_last_touch_up_lakes() const { return last_touch_lakes; }
 	double get_last_touch_up_msec() const { return last_touch_msec; }
+	void set_sun_shadows(bool p_enable);
+	bool is_sun_shadows() const { return sun_shadows; }
+	void set_sun_light(const NodePath &p_path);
+	NodePath get_sun_light() const { return sun_light; }
+	bool update_sun_horizon(const Vector3 &p_to_sun);
+	Ref<Image> get_sun_horizon_image() const;
+	real_t get_last_sun_horizon_msec() const { return last_sun_horizon_msec; }
 	void set_sky_light_source(const NodePath &p_path);
 	NodePath get_sky_light_source() const { return sky_light_source; }
 	void set_sky_light_interval(real_t p_seconds) { sky_light_interval = MAX(p_seconds, real_t(0.0)); }

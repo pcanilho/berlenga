@@ -1555,6 +1555,8 @@ func _sand_sea_checks() -> void:
 	gen.generate()
 	check(comp_big > plain_big * 1.3, "compound dunes: large dunes under the ordinary ones (power at 267-800 m over 80-200 m %.2f, against %.2f plain, %.0f ms)" % [comp_big, plain_big, gen.get_last_sand_sea_msec()])
 	_nebkha_checks()
+	_oasis_checks()
+	_sun_horizon_checks()
 	gen.sand_sea_rect = Rect2()
 	gen.generate()
 
@@ -1592,6 +1594,87 @@ func _spread(p_v: PackedFloat32Array) -> float:
 	for v in p_v:
 		d += (v - m) * (v - m)
 	return sqrt(d / p_v.size())
+
+
+func _oasis_checks() -> void:
+	# Oases: springs on the sea's deepest interdune floors, and hollows carved to OasisSprings3D's pools: the bed
+	# meets the water at 0.92 of the outline (the outline itself just above the water), deep in the middle.
+	var springs := gen.get_springs()
+	check(springs.size() > 0 and springs.size() <= gen.oasis_count, "springs on the sand sea's low floors (%d)" % springs.size())
+	if springs.is_empty() or not ClassDB.class_exists("OasisSprings3D"):
+		return
+	var oasis: Node3D = ClassDB.instantiate("OasisSprings3D")
+	oasis.seabed_from_floor = false
+	add_child(oasis)
+	oasis.spring_source = oasis.get_path_to(gen)
+	gen.oasis_springs = gen.get_path_to(oasis)
+	gen.generate()
+	var ok: bool = oasis.get_pool_count() == gen.get_springs().size()
+	var worst_in := -100.0
+	var worst_out := 100.0
+	var shallowest := 100.0
+	for i in oasis.get_pool_count():
+		var line: PackedVector2Array = oasis.get_outline(i)
+		var c := Vector2.ZERO
+		for q in line:
+			c += q
+		c /= line.size()
+		var level: float = gen.get_springs()[i].y
+		for q in line:
+			var inner := c + (q - c) * 0.85
+			worst_in = maxf(worst_in, gen.get_height(Vector3(inner.x, 0, inner.y)) - level)
+			worst_out = minf(worst_out, gen.get_height(Vector3(q.x, 0, q.y)) - level)
+		shallowest = minf(shallowest, level - gen.get_height(Vector3(c.x, 0, c.y)))
+	check(ok and worst_in < 0.0 and worst_out > 0.0 and shallowest > 0.5, "oasis hollows meet the water inside the outline (bed at 0.85 of it %.2f m under the water at most, the outline %.2f m over it at least, %.1f m deep in the middle at least)" % [-worst_in, worst_out, shallowest])
+	gen.oasis_springs = NodePath()
+	oasis.queue_free()
+	gen.generate()
+
+
+func _sun_horizon_checks() -> void:
+	# Far sun shadows: the horizon map toward a low sun matches a brute-force march over the ground (8 m steps).
+	var to_sun := Vector3(cos(0.6), 0.25, sin(0.6)).normalized()
+	check(gen.update_sun_horizon(to_sun), "the sun's horizon map builds (%.0f ms)" % gen.get_last_sun_horizon_msec())
+	check(not gen.update_sun_horizon(to_sun), "and is not rebuilt while the azimuth holds")
+	var img := gen.get_sun_horizon_image()
+	if img == null:
+		return
+	var d := Vector2(to_sun.x, to_sun.z).normalized()
+	var u := Vector2(-d.y, d.x)
+	var rect := gen.get_world_rect()
+	var s0 := INF
+	var t0 := INF
+	var s1 := -INF
+	var t1 := -INF
+	for k in 4:
+		var q := rect.position + Vector2(rect.size.x if k & 1 else 0.0, rect.size.y if k & 2 else 0.0)
+		s0 = minf(s0, q.dot(d))
+		t0 = minf(t0, q.dot(u))
+		s1 = maxf(s1, q.dot(d))
+		t1 = maxf(t1, q.dot(u))
+	var err := 0.0
+	var n := 0
+	for i in 40:
+		var p := rect.position + rect.size * Vector2(0.2 + 0.6 * fmod(i * 0.618, 1.0), 0.2 + 0.6 * fmod(i * 0.382 + 0.1, 1.0))
+		var h0 := gen.get_height(Vector3(p.x, 0, p.y))
+		var best := -1.0
+		var best_k := 0
+		for k in range(1, 400):
+			var q := p + d * (k * 8.0)
+			if not rect.has_point(q):
+				break
+			var tq := (gen.get_height(Vector3(q.x, 0, q.y)) - h0) / (k * 8.0)
+			if tq > best:
+				best = tq
+				best_k = k
+		var px := (p.dot(d) - s0) / gen.sky_cell
+		var py := (p.dot(u) - t0) / gen.sky_cell
+		var m := img.get_pixel(clampi(roundi(px), 0, img.get_width() - 1), clampi(roundi(py), 0, img.get_height() - 1)).r
+		# Shadows cast from 200 m and more (the far shadows' work; near the 8 m grid's own smoothing shows).
+		if best > 0.02 and best_k >= 25:
+			err += absf(atan(m) - atan(best))
+			n += 1
+	check(n > 5 and rad_to_deg(err / n) < 1.5, "its horizons match a march over the ground (mean %.2f deg over %d points shaded from 200 m or more)" % [rad_to_deg(err / maxf(n, 1)), n])
 
 
 func _nebkha_checks() -> void:
