@@ -51,6 +51,10 @@ var north_america := false
 func run(args: Dictionary) -> void:
 	variants = int(args.get("variants", "1"))
 	gen = TreeGenerator.new()
+	# GSET="prop:value,prop:value" sets generator properties (a debugging switch).
+	for kv in OS.get_environment("GSET").split(",", false):
+		var p2 := kv.split(":")
+		gen.set(p2[0], float(p2[1]))
 	gen.seed = int(args.get("seed", "1"))
 	# Full-needle near meshes (about 30M vertices a conifer species) serve no placement check and
 	# overrun a 15 GB machine: off here unless asked for with --near-needles.
@@ -608,7 +612,7 @@ func _render_plot(i: int, args: Dictionary) -> void:
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-38, 30, 0)
 	sun.light_energy = 1.4
-	sun.shadow_enabled = true
+	sun.shadow_enabled = OS.get_environment("NOSHADOW") == ""
 	sun.directional_shadow_max_distance = 400.0
 	add_child(sun)
 	var cam := Camera3D.new()
@@ -679,7 +683,7 @@ func _render_plot(i: int, args: Dictionary) -> void:
 			for sp_pos in stds:
 				for k in 16:
 					var d := Vector3(cos(k * PI / 8), 0, sin(k * PI / 8))
-					var e: Vector3 = Vector3(sp_pos.x, 0, sp_pos.z) - d * 8.0
+					var e: Vector3 = Vector3(sp_pos.x, 0, sp_pos.z) - d * float(OS.get_environment("SD") if OS.get_environment("SD") != "" else "8")
 					var ce: Vector3 = csp.get_coupe_at(e)
 					var cb: Vector3 = csp.get_coupe_at(Vector3(sp_pos.x, 0, sp_pos.z) + d * 12.0)
 					if ce.x > 7 or ce.z > 0.5 or absf(e.x) > 75 or absf(e.z) > 75:
@@ -689,7 +693,7 @@ func _render_plot(i: int, args: Dictionary) -> void:
 						best = score
 						e.y = valley.get_height(e) + 1.7
 						cam.position = e
-						cam.look_at(Vector3(sp_pos.x, valley.get_height(sp_pos) + 4.0, sp_pos.z))
+						cam.look_at(Vector3(sp_pos.x, valley.get_height(sp_pos) + float(OS.get_environment("SH") if OS.get_environment("SH") != "" else "4"), sp_pos.z))
 						cam.fov = 60.0
 						cam.far = 120.0
 						found = true

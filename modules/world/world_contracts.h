@@ -65,6 +65,7 @@ public:
 	virtual float contract_frost_at(const Vector3 &p_position) const { return 0.0f; } // mm
 	virtual Vector3 contract_mean_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s at 10 m, no gusts
 	virtual Vector3 contract_wind_aloft_at(const Vector3 &p_position, float p_altitude) const { return Vector3(); } // m/s, free air
+	virtual float contract_terrain_lee_at(const Vector3 &p_position) const { return NAN; } // rad, Winstral's Sx; NaN: no terrain wind there
 	virtual float contract_rainfall_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of liquid
 	virtual float contract_snowfall_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of water falling as snow
 	virtual float contract_canopy_water_at(const Vector3 &p_position) const { return 0.0f; } // mm held on leaves
@@ -107,6 +108,7 @@ protected:
 	GDVIRTUAL1RC(float, _frost_at, Vector3)
 	GDVIRTUAL1RC(Vector3, _mean_wind_at, Vector3)
 	GDVIRTUAL2RC(Vector3, _wind_aloft_at, Vector3, float)
+	GDVIRTUAL1RC(float, _terrain_lee_at, Vector3)
 	GDVIRTUAL1RC(float, _rainfall_at, Vector3)
 	GDVIRTUAL1RC(float, _snowfall_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_water_at, Vector3)
@@ -142,6 +144,7 @@ public:
 	float frost_at(const Vector3 &p_position) const;
 	Vector3 mean_wind_at(const Vector3 &p_position) const;
 	Vector3 wind_aloft_at(const Vector3 &p_position, float p_altitude) const;
+	float terrain_lee_at(const Vector3 &p_position) const;
 	float rainfall_at(const Vector3 &p_position) const;
 	float snowfall_at(const Vector3 &p_position) const;
 	float canopy_water_at(const Vector3 &p_position) const;
@@ -213,6 +216,7 @@ public:
 	virtual float contract_fire_burnt_at(const Vector3 &p_position) const { return 0.0f; } // 0..1
 	virtual Vector3 contract_fire_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s, the fire's indraft near the ground
 	virtual float contract_fire_stem_char_at(const Vector3 &p_position) const { return 0.0f; } // m, char a stem foot there took
+	virtual float contract_fire_burn_age_at(const Vector3 &p_position) const { return -1.0f; } // years since it last burnt there, -1 never
 	virtual ~WorldFireProvider() {}
 };
 
@@ -229,6 +233,7 @@ protected:
 	GDVIRTUAL1RC(float, _burnt_at, Vector3)
 	GDVIRTUAL1RC(Vector3, _wind_at, Vector3)
 	GDVIRTUAL1RC(float, _stem_char_at, Vector3)
+	GDVIRTUAL1RC(float, _burn_age_at, Vector3)
 
 public:
 	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -242,6 +247,9 @@ public:
 	// How deep a stem standing at the point has charred at its foot (m, bark and wood): the flames' and smouldering
 	// logs' time there at a charring rate of 0.8 mm a minute. The most of any fire; 0 where none burnt.
 	float stem_char_at(const Vector3 &p_position) const;
+	// Years since the ground at the point last burnt (game time), for regrowth: the most recent of any producer (a fire
+	// in play, an authored WorldBurnScar3D); -1 where it never burnt.
+	float burn_age_at(const Vector3 &p_position) const;
 };
 
 // Ground: the deformable ground's surface, soil and what lies on it (docs/ideas/world-contracts.md, Ground).
@@ -345,7 +353,7 @@ protected:
 	GDVIRTUAL1RC(Vector2, _lake_ice_at, Vector3)
 
 public:
-	bool has_provider() const { return provider != nullptr; }
+	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_snow) counts
 	// Snow on the ground at the point (m); 0 with no snow system.
 	float depth_at(const Vector3 &p_position) const;
 	// Its bulk density (kg/m3): about 100 for new powder, 250 to 350 settled, 400 to 550 old or wet; 0 bare.

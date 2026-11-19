@@ -3536,6 +3536,10 @@ underground, not a PT loss; PT shows the expected sparse glints.
 Refraction march bands (rocks' stream riffle, 18 Nov): the river's screen-space refraction marched ten fixed steps and
 took the first past the scene, so stones under the water read back as stacked horizontal bands. It now bisects the
 crossing (4 steps, as the screen reflections do) and gives up where the refined point lies well behind the screen's
-surface (a thickness test). Not jittered: without a temporal filter the per-pixel start dithered into teeth. The
-vertical striations left on stone sides seen through the water are the same with screen reflections off and are
-not the march (sent to rocks: likely the stones' texture on steep faces).
+surface. Not jittered: without a temporal filter the per-pixel start dithered into teeth. The vertical comb
+streaks behind stones (Valence's review) were the refraction after all (gone with refraction off; the same with
+screen reflections off or a q_last fallback): rays passing behind a stone converge on its silhouette, stretching it
+down over every row behind it. Where the bisection's last bracket spans a jump in the screen's depth (a silhouette,
+not a face the ray meets) the straight-through pixel stands in. A few faint teeth remain on small stones.
+PT caustic bank lines: fading the bent count to the straight twin's over the first 15 cm of water (Valence's
+shift diagnosis) left the lines unchanged on the river rocks bench, so the cause is elsewhere (back to Valence).

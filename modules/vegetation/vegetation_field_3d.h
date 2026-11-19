@@ -581,6 +581,9 @@ public:
 	int get_plant_count() const { return plant_count; }
 	double get_populate_time_msec() const { return populate_msec; }
 	PackedVector3Array get_placements(int p_species) const;
+	// The placed trees' trunks near a point (for close-up bark detail): their lowest few metres from each mesh's
+	// tree_colliders, in world space.
+	Array get_trunks_near(const Vector3 &p_center, float p_radius, float p_height = 4.0f) const;
 	int get_deadwood_count() const;
 	// The placed crowns over a world rect, 7 floats each: x, z, crown radius, top and crown base above the ground,
 	// conifer (0 or 1), opacity. For fires (crown fire initiation).

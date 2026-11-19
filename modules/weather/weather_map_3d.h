@@ -751,6 +751,9 @@ public:
 		const Vector2 m = get_wind_aloft(p_position, p_altitude);
 		return Vector3(m.x, 0.0f, m.y);
 	}
+	float contract_terrain_lee_at(const Vector3 &p_position) const override {
+		return terrain_wind_enabled && is_terrain_wind_ready() && !Math::is_nan(get_terrain_ground_at(p_position)) ? get_terrain_lee_at(p_position) : NAN;
+	}
 	int contract_day_of_year() const override { return get_day_of_year(); }
 	bool contract_season_climate(WeatherSeason::Climate &r_climate) const override {
 		r_climate = _season_climate();

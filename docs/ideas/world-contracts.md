@@ -34,6 +34,7 @@ contract returns with no provider.
 | `wind_at(pos, height_above_ground)` | m/s, Vector3 | 0 | Mean plus gusts, sheltered by canopy and obstacles, with the terrain's speed-up, turning and updraught; height < 0 is measured from the ground under pos |
 | `mean_wind_at(pos)` | m/s, Vector3 (y 0) | 0 | 10 m mean, terrain included, no gusts |
 | `wind_aloft_at(pos, altitude)` | m/s, Vector3 (y 0) | 0 | Free wind: log law and Ekman veer to `boundary_layer_height`, then `wind_shear_aloft` |
+| `terrain_lee_at(pos)` | rad | NaN | Winstral's Sx from the terrain wind (positive in a lee; NaN outside it); fire's lee-slope whirls |
 | `precipitation_at(pos)` | mm/h | 0 | Water equivalent falling |
 | `rain_share_at(pos)` | 0..1 | 1 | Liquid share (Jennings 2018) at the air there |
 | `surface_wetness_at(pos)` | 0..1 | 0 | Film over storage; 1 where puddles stand |
@@ -162,13 +163,17 @@ Consumers: fire (crown fire), lightning (attachment), weather (shelter), snow (i
 | `burnt_at(pos)` | 0..1 | 0 | |
 | `wind_at(pos)` | m/s, horizontal | 0 | The fires' indraft near the ground, summed over fires; adds to the weather's wind |
 | `stem_char_at(pos)` | m | 0 | Char a stem foot there took (bark and wood), the most of any fire; trees weaken by it |
+| `burn_age_at(pos)` | years (game time) | -1 (never burnt) | Since the ground last burnt, the most recent of any producer; vegetation's regrowth stage |
 | shader globals `fire_wind_map`, `fire_wind_rect` | m/s | rect width 0 | The same indraft over the fire's area (RG: x, z), for grass |
 | shader globals `fire_state_map`, `fire_char_rect` | | | burnt, glow, flame length, scorch height |
 
-Tests: `WorldContracts.set_fire(stub)`.
+Producers: PhysXFireSpread3D (fires in play; `burn_age_at` to come from PhysX, in game time), WorldBurnScar3D (an
+authored old burn: a rect or polygon and `age_years`, modules/world).
+
+Tests: `WorldContracts.set_fire(stub)` (`_burn_age_at` in a stub), or WorldBurnScar3D nodes.
 
 Consumers: weather (the surface film boils off under a fire), plants (char; grass leans into `fire_wind_map`), cloth
-(`wind_at` adds to its wind), trees (TreeWind3D weakens stem feet by `stem_char_at`), snow (melt, to come), water (steam, to come).
+(`wind_at` adds to its wind), trees (TreeWind3D weakens stem feet by `stem_char_at`), snow (melt), water (steam), vegetation (regrowth by `burn_age_at`, to come).
 
 ## Testing
 

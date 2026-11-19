@@ -359,11 +359,16 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 					d1 = textureLod(p_depth, q, 0.0).r;
 					b = inv_proj * vec4(q * 2.0 - 1.0, d1, 1.0);
 					w = (inv_view * vec4(b.xyz / b.w, 1.0)).xyz;
-					// A thickness test, as screen-space reflections make: where the refined point still lies well
-					// behind what the screen shows there, the ray passed behind a stone (its far side, not on the
-					// screen) rather than meeting its face, and reading that pixel smeared the stone's silhouette
-					// down in columns. The straight-through pixel stands in, as for a hidden ray.
-					if (b.z / b.w - ph.z > 0.1 + 0.02 * abs(ph.z)) {
+					// Where the crossing is a jump in the screen's depth (a silhouette) rather than a face the ray
+					// meets, the ray passed behind a stone, whose far side the screen does not hold; reading the
+					// silhouette there stretched the stone's edge down over every row behind it, a comb of vertical
+					// streaks. The straight-through pixel stands in, as for a hidden ray. Measured across the
+					// bisection's last bracket (the scene's depth just before and at the crossing).
+					vec3 pl = vs + vt * lo;
+					vec4 cl = proj * vec4(pl, 1.0);
+					vec2 ql = cl.xy / cl.w * 0.5 + 0.5;
+					vec4 bl = inv_proj * vec4(ql * 2.0 - 1.0, textureLod(p_depth, ql, 0.0).r, 1.0);
+					if (abs(bl.z / bl.w - b.z / b.w) > 0.05 + 0.03 * abs(ph.z) + 2.0 * abs(pl.z - ph.z)) {
 						hidden = true;
 						break;
 					}

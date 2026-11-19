@@ -8,9 +8,12 @@ def configure(env):
 
 def get_doc_classes():
     return [
+        "WorldBurnScar3D",
         "WorldContracts",
+        "WorldFire",
         "WorldGround",
         "WorldSnow",
+        "WorldWater",
         "WorldWeather",
     ]
 

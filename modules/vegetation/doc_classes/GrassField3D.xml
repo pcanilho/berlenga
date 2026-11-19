@@ -51,10 +51,40 @@
 				The dryness the blades and ground show: [member dryness] browned by the season (see [member season_source]).
 			</description>
 		</method>
+		<method name="get_ring_blade_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of blades in the far rings' tiles (see [member far_rings]).
+			</description>
+		</method>
+		<method name="get_ring_build_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the time, in milliseconds, the last frame that built far ring tiles spent on them.
+			</description>
+		</method>
+		<method name="get_ring_tile_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of far ring tiles.
+			</description>
+		</method>
 		<method name="get_season_green" qualifiers="const">
 			<return type="float" />
 			<description>
 				The sward's greenness from the last season read, 0 to 1 (1 without a [member season_source]).
+			</description>
+		</method>
+		<method name="get_shell_column_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of voxel columns in the far shell (see [member far_shell]).
+			</description>
+		</method>
+		<method name="get_shell_tile_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of far shell tiles.
 			</description>
 		</method>
 		<method name="is_far_color_baked" qualifiers="const">
@@ -199,6 +229,18 @@
 		</member>
 		<member name="fallback_wind" type="Vector2" setter="set_fallback_wind" getter="get_fallback_wind" default="Vector2(2, 0.5)">
 			Wind velocity (x, z) in metres per second, used when no [WeatherMap3D] publishes wind.
+		</member>
+		<member name="far_ring_range" type="float" setter="set_far_ring_range" getter="get_far_ring_range" default="250.0">
+			Distance from the camera, in metres, to which the far rings reach. They thin out over the last fifth of it as the far shell rises.
+		</member>
+		<member name="far_rings" type="bool" setter="set_far_rings" getter="is_far_rings" default="true">
+			Past the near tiles, one set of wider blades with fewer vertices out to [member far_ring_range], thinned with the square of the distance by each blade's own rank and widened to keep the sward's cover (Ghost of Tsushima, Wohllaib GDC 2021). They fade in over the near tiles' outer band, so no ring or seam shows. Only the widest meadow field (not a crop) grows them.
+		</member>
+		<member name="far_shell" type="bool" setter="set_far_shell" getter="is_far_shell" default="true">
+			Past the far rings, the sward as voxel columns standing on the ground out to [member far_shell_range]: real geometry in the far ground's own colour, so raster and the path tracer see the same shape. It rises out of the ground as the rings thin out and sinks back at its end.
+		</member>
+		<member name="far_shell_range" type="float" setter="set_far_shell_range" getter="get_far_shell_range" default="500.0">
+			Distance from the camera, in metres, where the far shell has sunk back into the ground.
 		</member>
 		<member name="fields" type="Dictionary[]" setter="set_fields" getter="get_fields" default="[]">
 			With a [member crop]: the fields it grows in, each a [Dictionary]. [code]polygon[/code] ([PackedVector2Array], world XZ) is required; optional [code]drill_angle[/code] and [code]row_spacing[/code] (default the node's), [code]stage[/code] (a fixed BBCH stage; default the node's [member crop_stage]), [code]sown_day[/code] and [code]harvest_day[/code] (days of the year: with a [member season_source] the stage follows a sowing calendar, autumn sowing from day 200 over-wintering, spring sowing through in five months, stubble from harvest to the next sowing), [code]tramline_spacing[/code] (default 24 m; 0 none: paired unsown wheel tracks [code]tramline_gauge[/code] apart, default 1.8 m) and [code]headland[/code] (default 12 m; 0 none: rows run round the edge where the drill turned). Outside the fields nothing grows. Up to 63 fields a node. The ground shader ([method get_ground_shader_code]) draws the drilled soil and darker wheelings under every crop node's fields and, past the tillers, the crop's own colour and cover at its stage ([method crop_canopy_look]). Harvested fields (99) carry the combine's straw swaths, one down each pass (a third of [code]tramline_spacing[/code], or 7.5 m), as lying straw near and paler stripes far off. Grass fields without a crop and [VegetationField3D] plants keep out of every crop node's fields.

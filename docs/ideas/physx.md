@@ -1524,6 +1524,79 @@ of char (`--char=0.12`, a WorldFire stub) snaps at about 2.8 s in a
 thrown at 26 m/s. Left: no stump is drawn (the whole tree falls), and
 char does not yet weaken limbs or the standing tree's sway.
 
+### Burnt grass shows its ash (picked 18 Nov late night, third of four)
+
+Built. Research: how completely fine fuel burns (combustion completeness)
+falls with its moisture: about 0.95 for cured late-season grass against
+0.7 early in the dry season (Shea et al. 1996; Hoffa et al. 1999 in
+savanna). A complete burn leaves white-grey mineral ash (albedo 0.3 to
+0.5), an incomplete one black char (0.03 to 0.05), and the share of white
+ash on a burn scar tracks the fuel consumed (Smith and Hudak 2005; Roy
+et al. 2010). Wet ash darkens as wet soil does (water filling its pores:
+Lobell and Asner 2002) and crusts (Woods and Balfour 2008). Here:
+PhysXFireSpread3D keeps the fuel moisture each cell had as it caught;
+completeness is 1.02 - 1.1 M (0.45 to 1); the char map lays white-grey ash
+over the char from 0.72 completeness up, in patches at tussock scale
+(noise at 0.35 and 1.4 m), deeper where the bed was heavier, thinned by
+the ash the wind has blown off (blowing_ash) and dimmed by the rain the
+cell holds. Crown ash is kept and takes the larger of the two. Grass
+stubble reads the same map (VegetationFire::ASH_CODE, global
+fire_char_map) for its share of white ash flecks (2 to 50%). Setting
+grass_ash, on by default. Test: a 9 m tall-grass burn at 4% moisture
+reads grey with black patches; at 13% mostly black with grey patches; at
+22% the grass does not carry fire.
+
+### Ridge whirls follow the terrain wind (picked 18 Nov late night, fourth of four)
+
+Built. Research: vorticity-driven lateral spread needs flow separated in
+a ridge's lee (Sharples et al. 2012; Simpson et al. 2013 with WRF-Fire);
+separation behind a ridge sets in for lee slopes over about 0.3 (Wood
+1995), and Winstral's Sx (steepest upwind rise within 100 m, Winstral et
+al. 2002) is the terrain wind's measure of that shelter. The 5.5 m/s
+threshold is the ambient (ridge-top) wind, not the slack air in the lee.
+Here: WorldWeather gains terrain_lee_at (Sx in radians, NaN where no
+terrain wind covers the point), which WeatherMap3D provides. A burning
+lee tile is a site where Sx is over 0.3 rad on ground falling away within
+60 degrees of downwind at over 10 degrees; with no terrain wind the old
+local test (20 degrees, 40 degrees) stays. The wind for the threshold and
+the whirls' cross-slope drift is the larger of the fire's wind and the
+free wind at 10 m (WorldWeather.wind_aloft_at). Test: a 20 degree
+windward face to a crest and a 28 degree lee slope under an 8 m/s
+WeatherMap3D: the lee's own wind is 1.5 to 3 m/s (the old test saw no
+whirls there); the new one spawned 6 lee whirls in 150 s and the burn
+covered 659 m2 against 581 m2 without whirls.
+
+### Next-round options (card, 18-19 Nov night)
+
+1. Charred stumps and standing snags. A tree that snaps at a charred foot
+   should leave its stump (now the whole tree falls), and fire-killed
+   trees stand as snags that shed bark and limbs and fall over the
+   following years, faster for small and rotten stems (snag fall rates:
+   Russell et al. 2006; Dunn and Bailey 2016). Here: a stump mesh from
+   the stem's foot with the char on it, kept static; killed trees (crown
+   burnt out) lose fine branches and bark in later winds and fall by a
+   per-tree hazard, using the storm path.
+2. Rain washes the burn scar. Burnt soil turns water-repellent (Doerr et
+   al. 2000), so rain on a fresh scar runs off at once, carrying ash and
+   soil (ash slurry, "black water" in streams: Smith et al. 2011) and
+   cutting rills. Here: the fire's burnt map lowers infiltration on the
+   ground water contract, ash moves with the runoff into the mud and
+   river systems (darker, cloudier water downstream), rills on steep
+   scars through the terrain deformation layer.
+3. Smouldering ground fire. Peat and deep duff burn slowly without flame
+   (a few cm an hour, Rein 2009), with white smoke, under a front that
+   has passed or after it is out, and can rekindle a flaming fire hours
+   or days later when it reaches dry fuel (holdover fires). Here: a duff
+   layer per cell from the fuel map, a slow 2D smoulder front (Rein's
+   rates by moisture and depth), Flow smoke from it, rekindling the
+   surface fire where it meets unburnt dry fuel.
+4. Fire clouds. A strong fire's plume condenses into a pyrocumulus over it
+   (Lareau and Clements 2016) whose downdrafts gust out at the ground and
+   turn the fire. Here: the plume's heat flux and the weather's moisture
+   give a cloud base and growth (Briggs plume rise with the lifting
+   condensation level), drawn by the weather's cloud volume, and its
+   outflow added to the fire's wind.
+
 ### Ray tracing cost
 
 Props and Blast pieces: TLAS transforms only. Cloth: refit per frame with

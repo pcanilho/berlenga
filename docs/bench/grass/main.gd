@@ -74,6 +74,10 @@ extends Node3D
 #                    colour there instead (radius 10 m): prints both mean colours and their ratio
 #                    (GRASS_VIEW_MATCH=0: without the live-view far match; GRASS_DIAG=viewtime: per-frame times)
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
+#   --far-grass[=off|rings]  a meadow to the horizon from 1.7 m (farmland ground): the far rings out to 250 m and
+#                    the voxel shell past them (GrassField3D.far_rings, far_shell; off: neither, rings: no shell),
+#                    prints ring blades, shell columns, tiles, build time,
+#                    memory, primitives, draw calls and the frame time (docs/ideas/grass.md, "Far grass")
 #   CROP_FAR_ONLY=1  with --crop: no tillers, the fields' far canopy everywhere (match its mean against
 #                    the tillers' over the same ground, for crop_canopy_look())
 
@@ -134,6 +138,8 @@ var ug_field: VegetationField3D
 var no_far := false
 var far_view := false
 var prims := false
+var far_grass := 0 # --far-grass: 1 with the far rings and shell, 2 without (--far-grass=off), 3 rings only (=rings).
+var far_mem0 := 0
 var no_impostors := false
 var clearing := -1 # -1 off, 0 the wood without its mask, 1 with it.
 const CLEARING_C := Vector2(0.0, 24.0)
@@ -200,6 +206,10 @@ func _ready() -> void:
 			farmland = true
 			SIZE = 640.0 # Fields and the meadow round them to the horizon.
 		elif a == "--close": close = true
+		elif a.begins_with("--far-grass"):
+			far_grass = 2 if a == "--far-grass=off" else (3 if a == "--far-grass=rings" else 1)
+			farmland = true
+			SIZE = 640.0
 		elif a == "--ruts" or a.begins_with("--ruts=aged") or a == "--ruts=mud":
 			ruts_view = true
 			close = true
@@ -350,6 +360,10 @@ func _ready() -> void:
 				{"polygon": PackedVector2Array([Vector2(4, 0), Vector2(33, -4), Vector2(61, -2), Vector2(70, -33), Vector2(63, -64), Vector2(30, -59), Vector2(5, -60), Vector2(2, -30)]), "drill_angle": deg_to_rad(8.0), "stage": 37.0, "tramline_spacing": 24.0, "headland": 8.0},
 				{"polygon": PackedVector2Array([Vector2(-72, -66), Vector2(-20, -68), Vector2(30, -66), Vector2(71, -70), Vector2(80, -98), Vector2(66, -121), Vector2(10, -114), Vector2(-48, -118), Vector2(-79, -96)]), "drill_angle": deg_to_rad(-30.0), "stage": 99.0, "tramline_spacing": 24.0, "headland": 0.0},
 			]
+	if far_grass > 0:
+		grass.far_rings = far_grass != 2
+		grass.far_shell = far_grass == 1
+		far_mem0 = OS.get_static_memory_usage()
 	add_child(grass)
 	grass.data_map = grass.get_path_to(dm)
 	if crop_fields:
@@ -680,6 +694,11 @@ void fragment() {
 		# From a corner, a little up, across the whole map: near plants, thinning, ground beyond.
 		cam.position = Vector3(42, height(42, 42) + (2.0 if dolly else 7.0), 42)
 		cam.look_at(Vector3(-20, height(-20, -20) - 2.0, -20))
+	if far_grass > 0:
+		# Across the meadow to the horizon, from standing height.
+		cam.position = Vector3(0, height(0, 280) + 1.7, 280)
+		cam.look_at(Vector3(0, height(0, 0) + 1.0, 0))
+		cam.far = 1200.0
 	if swamp and not test:
 		# Walk from the usual view towards the deepest water until the shore, stand back from it.
 		var from := Vector2(6, 20)
@@ -1937,6 +1956,7 @@ func _checks() -> void:
 	grass.update_at(cam.global_position + Vector3(30, 0, 0))
 	print("GRASS_MOVE tiles=%d build_ms=%.1f" % [grass.get_tile_count(), grass.get_build_time_msec()])
 	grass.update_at(cam.global_position)
+	_far_ring_checks()
 	if cover:
 		# Far distance: every ranged plant carries its rank (0..1) and its species' range for the
 		# shader's thinning (whole metres; the fraction is the light it grew in), and the tile is
@@ -1951,7 +1971,10 @@ func _checks() -> void:
 					var sp: PlantSpecies = cover.biome.species[int(cd.a)]
 					if sp.visibility_range > 0.0:
 						ranged += 1
-						if cd.r < 0.0 or cd.r > 1.0 or absf(floorf(cd.g) - floorf(sp.visibility_range)) > 1e-3 or absf(ch.visibility_range_end - sp.visibility_range * 1.05) > 1e-3:
+						# The range a species is drawn to (its pixel reach for small ones, VegetationField3D.detail_reach);
+						# a cell ends past it by up to its own width (0.75 of a tile cut in cells).
+						var rng := cover.get_species_range(int(cd.a))
+						if cd.r < 0.0 or cd.r > 1.0 or absf(floorf(cd.g) - floorf(rng)) > 1e-3 or ch.visibility_range_end < rng * 1.05 - 1e-3 or ch.visibility_range_end > rng * 1.05 + 0.75 * cover.tile_size + 1e-3:
 							bad += 1
 		_check("plants carry rank and range for thinning", ranged > 1000 and bad == 0, "%d ranged, %d bad" % [ranged, bad])
 	_path_checks()
@@ -2118,7 +2141,12 @@ func _process(dt: float) -> void:
 		dm.bake()
 		if rocks > 0 and not forest:
 			_place_rocks()
-		if cover:
+		if cover and far_grass > 0:
+			# The whole 640 m map at once is too many cells: streamed round the eye instead.
+			cover.stream_radius = 80.0
+			cover.stream_target = cover.get_path_to(cam)
+			cover.streaming = true
+		elif cover:
 			cover.populate()
 			var counts := []
 			for i in cover.biome.species.size():
@@ -2330,6 +2358,10 @@ func _process(dt: float) -> void:
 	if t_frames > 0:
 		var blades := grass.get_blade_count() + (under.get_blade_count() if under else 0)
 		print("GRASS_FRAME_MS %.1f blades=%d" % [(Time.get_ticks_usec() - t_frames) / 30000.0, blades])
+	if far_grass > 0:
+		print("GRASS_FAR_RINGS %s: ring blades %d in %d tiles, last build %.1f ms, shell columns %d in %d tiles, near blades %d, memory +%.1f MB, primitives %d, draw calls %d" % [
+			["", "on", "off", "rings"][far_grass], grass.get_ring_blade_count(), grass.get_ring_tile_count(), grass.get_ring_build_msec(), grass.get_shell_column_count(), grass.get_shell_tile_count(), grass.get_blade_count(),
+			(OS.get_static_memory_usage() - far_mem0) / 1048576.0, Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME), Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)])
 	await RenderingServer.frame_post_draw
 	if prims:
 		await _print_prims()
@@ -2337,6 +2369,45 @@ func _process(dt: float) -> void:
 		get_viewport().get_texture().get_image().save_png(out)
 		print("saved ", out)
 	get_tree().quit()
+
+
+# Far rings (GrassField3D.far_rings, docs/ideas/grass.md "Far grass"): one set of blades past the near tiles, each
+# with its rank, kept by the shader while rank < (start / distance)^2: the kept blades thin with the square of the
+# distance, so many per square metre at the start and a quarter of that at twice it.
+func _far_ring_checks() -> void:
+	var c := Vector2(cam.global_position.x, cam.global_position.z)
+	var start := grass.radius * 0.97 - grass.radius * 0.37
+	var near := 0
+	var far := 0
+	var bad := 0
+	for ch in grass.get_children(true):
+		if ch is MultiMeshInstance3D and str(ch.name).begins_with("GrassRing"):
+			var mm: MultiMesh = ch.multimesh
+			for i in mm.instance_count:
+				var cd := mm.get_instance_custom_data(i)
+				var p: Vector3 = ch.global_transform * mm.get_instance_transform(i).origin
+				var d := Vector2(p.x, p.z).distance_to(c)
+				var rank := pow(2.0, -floorf(cd.a) / 1024.0)
+				if cd.g >= 0.0:
+					bad += 1
+				# A sector across the map (-x), clear of its edge and the pond.
+				var dir := (Vector2(p.x, p.z) - c).normalized()
+				if dir.dot(Vector2(-1, 0)) < cos(deg_to_rad(25.0)):
+					continue
+				if rank < minf(1.0, (start / d) * (start / d)):
+					if d > start and d < start + 2.0:
+						near += 1
+					elif d > 1.4 * start and d < 1.4 * start + 2.8:
+						far += 1
+	# Bands at s and 1.4 s, the second 1.4 times as wide: 1.96 times the ground, kept 1 / 1.96 as densely, so as
+	# many blades in each.
+	var ratio := float(far) / maxf(near, 1)
+	_check("far rings: blades past the near tiles, thinning with the square of the distance", grass.get_ring_blade_count() > 1000 and bad == 0 and ratio > 0.7 and ratio < 1.4, [grass.get_ring_blade_count(), near, far, ratio, bad])
+	grass.far_rings = false
+	grass.update_at(cam.global_position)
+	_check("far rings off: none", grass.get_ring_blade_count() == 0 and grass.get_ring_tile_count() == 0, grass.get_ring_blade_count())
+	grass.far_rings = true
+	grass.update_at(cam.global_position)
 
 
 func _hide_grass() -> void:
