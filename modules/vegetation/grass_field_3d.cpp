@@ -1302,7 +1302,20 @@ void fragment() {
 	ROUGHNESS = mix(ROUGHNESS, 0.7, v_snow);
 	// Fibre shading: the strand sheen; wet, frosted, muddy or snow-covered blades lose it (a film or a crust over the fibres).
 	float fib = fibre_shading * (1.0 - max(wet_c, max(frost_c, max(mud_c, v_snow))));
+	// Prefiltered, as the path tracer's many samples a pixel do: once a blade is under a few pixels wide its strand
+	// highlight averages back to the round lobe (full from about 3 pixels wide, gone by 1.25: fwidth(UV.x)), and the lobe
+	// takes the normal's spread across the pixel as extra roughness (Tokuyoshi and Kaplanyan 2019, "Improved Geometric
+	// Specular Antialiasing": alpha^2 += min(2 variance, 0.18)). Without them a single lit pixel of a thin blade
+	// flashes white.
+	fib *= 1.0 - smoothstep(0.3, 0.8, fw);
 	ROUGHNESS = mix(ROUGHNESS, max(ROUGHNESS, 0.8), v_soft);
+	{
+		vec3 ndx = dFdx(NORMAL);
+		vec3 ndy = dFdy(NORMAL);
+		float kernel = min(0.5 * (dot(ndx, ndx) + dot(ndy, ndy)), 0.18);
+		float a = ROUGHNESS * ROUGHNESS;
+		ROUGHNESS = sqrt(sqrt(a * a + kernel));
+	}
 	// The burning band: the stubs' tips glow as the ground's embers do (the char decal's glow energy).
 	EMISSION = fire_glow_color(v_glow) * 4.0 * smoothstep(0.4, 1.0, v_t) * step(1e-3, v_burn);
 	SPECULAR = mix(0.35, 0.2, v_trod);
