@@ -3689,3 +3689,20 @@ identical boils in raster):
   `--synthetic` keeps the old one); the boils now differ in size by vent (0.65 to 1.45) with darker throats.
 - Uncarved ground: a spring whose floor stands above its level (at the eye and at the pool's centre) gets no pool,
   with a warning, instead of a film of water with a dark rim lying on the dune.
+
+## Impulse waves (19 Nov, snow's request: WorldWater.wave for avalanches into lakes)
+
+What they are. A landslide, avalanche, rockfall or calving front entering water pushes up a leading crest and
+trough that run out across the basin (Heller and Hager 2010, the impulse product method snow already uses for the
+height; Fritz et al. 2004). In a lake or bay most of them are long waves: their length (period times speed) is many
+times the depth, so they travel at sqrt(g h), shoal, run up the far shore and reflect.
+
+Technique. The ripple layer is a shallow-water solver (Chentanez and Mueller 2010), which carries long waves
+exactly, so the wave is seeded as an initial condition rather than painted on: one sine period of height H/2
+(crest leading, zero net volume), flat across the width with cosine-tapered ends, plus the progressive long-wave
+velocity u = eta c / h on the faces so it runs one way (a height-only hump would split into two half waves). Its
+length is the period times sqrt(g h) at the entry depth, at least eight cells; its height at most 0.78 h (solitary
+wave breaking, McCowan). Two impulse slots carry it to the GPU (a negative radius marks it), so no new buffers.
+Water with no solver (a river's ribbon) gets a splash of the crest's height through impulse(). Test:
+docs/bench/water_surface/wave_test.gd (-s): 0.5 m, 4 s in 4 m of water arrives where sqrt(g h) puts it (within
+0.6 m after 2 s), holds 0.24 of its 0.25 m crest and leaves 0.006 m behind.
