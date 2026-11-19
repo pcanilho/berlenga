@@ -111,6 +111,10 @@ private:
 	LocalVector<Ref<MultiMesh>> multimeshes;
 	int alive_count = 0;
 	int lifted_count = 0;
+	int kicked_count = 0;
+	HashMap<ObjectID, Vector3> body_last; // world_contact bodies' positions last step
+	HashMap<ObjectID, float> body_kick_accum;
+	void _kick_step(float p_delta, const Vector3 &p_cam);
 	float step_ms = 0.0f;
 
 	Vector3 _camera_position() const;
@@ -172,6 +176,7 @@ public:
 
 	int get_leaf_count() const { return alive_count; }
 	int get_lifted_count() const { return lifted_count; }
+	int get_kicked_count() const { return kicked_count; }
 	float get_step_time() const { return step_ms; }
 	// Per leaf, for checks: position, velocity, normal; lying flag in w of the position.
 	PackedVector4Array get_leaf_states() const;

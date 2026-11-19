@@ -335,6 +335,8 @@ void LeafFall3D::_step(float p_delta) {
 		}
 	}
 
+	_kick_step(p_delta, cam);
+
 	for (uint32_t i = 0; i < leaves.size(); i++) {
 		Leaf &l = leaves[i];
 		if (!l.alive) {
@@ -350,6 +352,72 @@ void LeafFall3D::_step(float p_delta) {
 		}
 	}
 	step_ms = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0f;
+}
+
+// Bodies kick up fallen leaves (docs/ideas/world-links.md): a foot or wheel moving through the litter throws the
+// leaves it touches at about its own speed with a little lift; the air in a walker's wake near the ground moves at
+// only 0.3-0.5 of its speed, under the gust threshold, so only what the body touches flies. Lying leaves under the
+// body are thrown, and the loose litter (litter_density) the body sweeps through gives up a share of its leaves.
+void LeafFall3D::_kick_step(float p_delta, const Vector3 &p_cam) {
+	if (p_delta <= 0.0f || !is_inside_tree()) {
+		return;
+	}
+	HashMap<ObjectID, Vector3> seen;
+	for (Node *n : get_tree()->get_nodes_in_group(SNAME("world_contact"))) {
+		const Node3D *n3 = Object::cast_to<Node3D>(n);
+		if (!n3 || !n3->is_visible_in_tree() || seen.has(n3->get_instance_id())) {
+			continue;
+		}
+		const WorldContactBody b = WorldContracts::describe_body(n3);
+		const ObjectID id = n3->get_instance_id();
+		seen.insert(id, b.center);
+		const Vector3 *last = body_last.getptr(id);
+		if (!last || b.center.distance_to(p_cam) > range) {
+			continue;
+		}
+		Vector3 vel = (b.center - *last) / p_delta;
+		const float speed = Vector2(vel.x, vel.z).length();
+		if (speed < 0.5f || speed > 40.0f) {
+			continue; // standing, or moved by a teleport
+		}
+		const float ground = _ground_at(b.center);
+		if (b.center.y - b.half_height - ground > 0.3f) {
+			continue; // above the litter
+		}
+		vel.y = 0.0f;
+		const float reach = b.radius + 0.15f;
+		const Vector2 c(b.center.x, b.center.z);
+		for (Leaf &l : leaves) {
+			if (!l.alive || l.lying < 0.0f || Vector2(l.p.x, l.p.z).distance_squared_to(c) > reach * reach) {
+				continue;
+			}
+			l.lying = -1.0f;
+			l.v = vel * Math::lerp(0.4f, 0.9f, rng.randf()) + Vector3(0, (0.3f + 0.15f * MIN(speed, 10.0f)) * Math::lerp(0.5f, 1.0f, rng.randf()), 0);
+			l.w = Vector3(rng.randf() - 0.5f, rng.randf() - 0.5f, rng.randf() - 0.5f) * 12.0f;
+			l.p.y = MAX(l.p.y, ground + 0.02f);
+			kicked_count++;
+		}
+		// The loose litter swept: a share of the leaves in the swath 2r wide.
+		if (litter_density > 0.0f && !kinds.is_empty()) {
+			float &acc = body_kick_accum[id];
+			acc += litter_density * 2.0f * b.radius * speed * p_delta * 0.15f;
+			const Vector2 dir = Vector2(vel.x, vel.z) / speed;
+			while (acc >= 1.0f) {
+				acc -= 1.0f;
+				const float side = (rng.randf() * 2.0f - 1.0f) * b.radius;
+				Vector3 p(b.center.x - dir.y * side, 0.0f, b.center.z + dir.x * side);
+				p.y = ground + 0.02f;
+				_spawn(p, vel * Math::lerp(0.4f, 0.9f, rng.randf()) + Vector3(0, (0.3f + 0.15f * MIN(speed, 10.0f)) * Math::lerp(0.5f, 1.0f, rng.randf()), 0), int(rng.rand() % kinds.size()), false);
+				kicked_count++;
+			}
+		}
+	}
+	body_last = seen;
+	for (KeyValue<ObjectID, float> &kv : body_kick_accum) {
+		if (!seen.has(kv.key)) {
+			kv.value = 0.0f;
+		}
+	}
 }
 
 void LeafFall3D::_rebuild_draws() {
@@ -691,6 +759,7 @@ void LeafFall3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("drop_leaf", "position", "kind"), &LeafFall3D::drop_leaf);
 	ClassDB::bind_method(D_METHOD("get_leaf_count"), &LeafFall3D::get_leaf_count);
 	ClassDB::bind_method(D_METHOD("get_lifted_count"), &LeafFall3D::get_lifted_count);
+	ClassDB::bind_method(D_METHOD("get_kicked_count"), &LeafFall3D::get_kicked_count);
 	ClassDB::bind_method(D_METHOD("get_step_time"), &LeafFall3D::get_step_time);
 	ClassDB::bind_method(D_METHOD("get_leaf_states"), &LeafFall3D::get_leaf_states);
 	ClassDB::bind_method(D_METHOD("get_leaf_velocities"), &LeafFall3D::get_leaf_velocities);
