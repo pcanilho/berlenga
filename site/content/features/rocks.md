@@ -27,7 +27,7 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 ## Placement
 
 - **Rock fields** (`RockField3D`: `rockfall_`, `scree_`, `glacial_`, `river_`, `shore_`, `cliff_` layers; `layer_enabled`): rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it.
-- **Ground detail** (`RockField3D`: `ground_detail`, `ground_detail_pixels`, `ground_detail_cover`): pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach or scree around them, each drawn only while it stays a few pixels tall; the path tracer traces every one. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop.
+- **Ground detail** (`RockField3D`: `ground_detail`, `ground_detail_pixels`, `ground_detail_cover`, `ground_detail_rivers`): pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop.
 
   ![A shingle shore at low eye height, ground detail off and on, raster](media/rocks-ground-detail.jpg)
 
