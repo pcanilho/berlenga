@@ -50,7 +50,8 @@ extends Node3D
 #                         and lays the sand at the waterline; volume kept; cost of the step
 #   --test=avalanche    footsteps on a dune's slip face set off grain avalanches down it; not on the stoss slope
 #   --test=infill       wind fills a print from its upwind side; nothing under the threshold
-#   --test=fringe       a wet margin of sand up to 15 cm over still water's level (capillary rise)
+#   --view=fringe       a still pool's shore in a desert: the wet margin and the salt crust
+#   --test=fringe       a wet margin of sand up to 15 cm over still water's level (capillary rise), salt in a desert
 #   --view=avalanche    a walker's prints across a dune's slip face and the tongues of sand running down from them
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
 #                         on the outside; dust: none from damp sand, a plume from dry, Stokes settling, wind drift
@@ -354,6 +355,9 @@ func _ready() -> void:
 		return
 	if view == "avalanche":
 		await _build_avalanche()
+		return
+	if view == "fringe":
+		await _build_fringe()
 		return
 	if drift_test:
 		await _run_drift_tests()
@@ -5244,6 +5248,21 @@ func _run_fringe_tests() -> void:
 	var s10 := surface.get_saturation_at(_fringe_point(0.1, 0.10))
 	var s30 := surface.get_saturation_at(_fringe_point(0.1, 0.30))
 	_check("a wet margin over still water's level (capillary rise)", s2 > 0.8 and s10 > 0.4 and s10 < s2 and s30 < 0.05, "saturation %.2f 3 cm over the level, %.2f at 10 cm, %.2f at 30 cm" % [s2, s10, s30])
+	# No climate: no salt. A desert's (desert_climate.gd): a pale crust at the fringe's top, none at the water's edge
+	# or well above it (GroundSurface3D.salt_crusts).
+	var c0 := surface.get_salt_crust_at(_fringe_point(0.1, 0.18))
+	var wm := WeatherMap3D.new()
+	wm.climate = load("res://desert_climate.gd").new()
+	get_tree().root.add_child(wm)
+	Engine.time_scale = 10.0
+	for i in 240:
+		await get_tree().physics_frame
+	Engine.time_scale = 1.0
+	var c3 := surface.get_salt_crust_at(_fringe_point(0.1, 0.03))
+	var c18 := surface.get_salt_crust_at(_fringe_point(0.1, 0.18))
+	var c50 := surface.get_salt_crust_at(_fringe_point(0.1, 0.50))
+	_check("a salt crust at the fringe's top in a desert only", c0 < 0.01 and c18 > 0.6 and c3 < 0.05 and c50 < 0.05, "crust %.2f at 18 cm without a climate; in a desert %.2f at 3 cm, %.2f at 18 cm, %.2f at 50 cm" % [c0, c3, c18, c50])
+	wm.queue_free()
 
 
 # Wind fills a print from its upwind side (GroundSurface3D::_drift_prints()).
@@ -5282,6 +5301,43 @@ func _run_infill_tests() -> void:
 
 # --view=avalanche: a walker's line of prints across the slip face, each with the tongue of sand it set off running
 # down to the toe, seen from below and to the side under a low sun. --cam=x,dy,z,tx,dy,tz as in the other views.
+# --view=fringe: the shore of a still pool in a desert (desert_climate.gd): the wet margin over the water's level and
+# the salt crust at its top (water_fringe, salt_crusts).
+func _build_fringe() -> void:
+	await _setup("beach", GroundSurface3D.GROUND_SAND, 0.0, 0.0)
+	_apply("dry_sand")
+	var mat := _ground_material("dry_sand")
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := _make_env()
+	for c in get_children():
+		if c is DirectionalLight3D:
+			c.rotation_degrees = Vector3(sun_arg[0], sun_arg[1], 0.0) if sun_arg.size() >= 2 else Vector3(-35.0, 150.0, 0.0)
+	var wm := WeatherMap3D.new()
+	wm.climate = load("res://desert_climate.gd").new()
+	add_child(wm)
+	var pool := Node3D.new()
+	pool.set_script(load("res://water_level_fake.gd"))
+	add_child(pool)
+	pool.level = 0.1
+	surface.water_sources = [surface.get_path_to(pool)]
+	Engine.time_scale = 10.0
+	for i in 240:
+		await get_tree().physics_frame
+	Engine.time_scale = 1.0
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([3.5, 1.4, 6.5, -0.5, 0.0, 2.4])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 50.0
+	for i in 10:
+		await get_tree().physics_frame
+	env.pathtracing_enabled = not raster
+	await _save_frame()
+	get_tree().quit()
+
+
 func _build_avalanche() -> void:
 	await _setup("dune", GroundSurface3D.GROUND_SAND, 0.0, 0.0)
 	_apply("dry_sand")
