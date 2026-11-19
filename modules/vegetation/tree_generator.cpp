@@ -32,6 +32,7 @@
 #include "tree_generator.h"
 
 #include "plant_generator.h"
+#include "tree_bark_detail.h"
 #include "vegetation_fire.h"
 
 #include "core/os/mutex.h"
@@ -17501,6 +17502,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		t->set_flag(BaseMaterial3D::FLAG_PARTICLE_TRAILS_MODE, false);
 		return t;
 	};
+	// The bark surface's arrays as built, for BarkDetail3D's profile (read back later, they stall the render thread).
+	PackedVector3Array bark_profile_verts;
+	PackedColorArray bark_profile_colors;
 	for (int s = 0; s < 10; s++) {
 		Builder &b = *builders[s];
 		if (b.indices.is_empty()) {
@@ -17738,6 +17742,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			arrays[Mesh::ARRAY_WEIGHTS] = b.weights;
 		}
 		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), lods, compress_vertices ? Mesh::ARRAY_FLAG_COMPRESS_ATTRIBUTES : 0);
+		if (s == 0) {
+			bark_profile_verts = b.verts;
+			bark_profile_colors = b.colors;
+		}
 		if (material_source.is_valid()) {
 			// A near mesh shares its far mesh's materials: the same shaders and batches, and no
 			// reads back from the RenderingServer (which wait on the render thread) off the main
@@ -17941,7 +17949,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	if (rigged && static_materials.size() == mesh->get_surface_count()) {
 		mesh->set_meta(SNAME("tree_static_materials"), static_materials);
 	}
-	mesh->set_meta(SNAME("tree_colliders"), _collider_data());
+	const PackedFloat32Array colliders = _collider_data();
+	mesh->set_meta(SNAME("tree_colliders"), colliders);
+	if (!bark_profile_verts.is_empty() && !colliders.is_empty()) {
+		// Close-up bark (BarkDetail3D) lays its pieces on this surface, binned round the stem.
+		mesh->set_meta(SNAME("tree_bark_profile"), BarkDetail3D::make_bark_profile(bark_profile_verts, bark_profile_colors, colliders));
+	}
 	if (!climber_leaves.is_empty()) {
 		mesh->set_meta(SNAME("tree_climber_leaves"), climber_leaves);
 	}
