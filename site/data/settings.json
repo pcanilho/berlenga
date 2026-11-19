@@ -3898,7 +3898,7 @@
     "smoke_buoyancy"
    ],
    "note": "",
-   "what": "Flow gas rests on the terrain and slides downhill, and heavier-than-air smoke pools as dust or fog.",
+   "what": "Flow gas rests on the terrain and slides downhill, and heavier-than-air smoke pools as dust or fog. In raster, smoke, dust and snow clouds shade themselves as under path tracing, darker in the body under bright tops.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -3922,7 +3922,7 @@
     "fuel_patchiness"
    ],
    "note": "",
-   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water (which billows up as white steam, also where fire meets a shore), behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height. Burnt grass shows its ash, white-grey where dry fuel burnt out and black char where it was damp, thinned by wind and darkened by rain (`grass_ash`); strong wind lifts ash off cold burnt ground as low grey dust (`blowing_ash`). Duff smoulders for hours behind the front under pale low smoke until heavy rain puts it out, and wind can relight it (`smouldering`); burnt soil sheds rain, and the runoff washes its ash away. The fire draws air in at its base, and nearby plants, hair, falling leaves, ash, embers, smoke and dust lean or drift into it.",
+   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water (which billows up as white steam, also where fire meets a shore), behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height. Burnt grass shows its ash, white-grey where dry fuel burnt out and black char where it was damp, thinned by wind and darkened by rain (`grass_ash`); strong wind lifts ash off cold burnt ground as low grey dust that darkens snow downwind (`blowing_ash`). Duff smoulders for hours behind the front under pale low smoke until heavy rain puts it out, and wind can relight it (`smouldering`); burnt soil sheds rain, and the runoff washes its ash away. The fire draws air in at its base, and nearby plants, hair, falling leaves, ash, embers, smoke and dust lean or drift into it.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
