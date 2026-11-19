@@ -102,6 +102,7 @@ void PhysXFireSpread3D::_allocate() {
 	ash_blown.resize(n);
 	char_time.resize(n);
 	burn_moisture.resize(n);
+	burn_day.resize(n);
 	quenched_by_water = 0;
 	base_moisture = fuel_moisture;
 	rate.resize(n);
@@ -185,6 +186,7 @@ void PhysXFireSpread3D::_allocate() {
 			ash_blown[i] = 0.0f;
 			char_time[i] = 0.0f;
 			burn_moisture[i] = 0.0f;
+			burn_day[i] = float(game_days);
 			wet[i] = MAX(wet_mul, 0.0f) + (fuel_moisture > 1.0e-4f ? extra_wet / fuel_moisture : extra_wet * 100.0f);
 			height[i] = get_global_position().y;
 			fuel_left[i] = 1.0f;
@@ -541,6 +543,7 @@ void PhysXFireSpread3D::_step(float p_delta) {
 				if (phi[i] <= 0.0f && t_ignite[i] < 0.0f && load[i] > 1.0e-4f) {
 					t_ignite[i] = time + p_delta - remaining;
 					burn_moisture[i] = _moisture(i);
+					burn_day[i] = float(game_days);
 				}
 			}
 		}
@@ -1202,6 +1205,14 @@ Vector3 PhysXFireSpread3D::_indraft_at(const Vector3 &p_position, float p_skip) 
 
 // Char at a stem's foot: the time flames and smouldering logs stood there at softwood's notional charring rate (EN
 // 1995-1-2, 0.8 mm a minute), bark and wood together; TreeWind3D takes off the bark.
+float PhysXFireSpread3D::get_burn_age_at(const Vector3 &p_position) const {
+	int x, z;
+	if (t_ignite.is_empty() || !_world_cell(p_position, x, z) || t_ignite[z * nx + x] < 0.0f) {
+		return -1.0f;
+	}
+	return float(MAX(game_days - double(burn_day[z * nx + x]), 0.0) / 365.0);
+}
+
 float PhysXFireSpread3D::get_stem_char_at(const Vector3 &p_position) const {
 	int x, z;
 	if (char_time.is_empty() || !_world_cell(p_position, x, z)) {
@@ -2048,6 +2059,11 @@ void PhysXFireSpread3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			const float dt = float(get_physics_process_delta_time());
+			// The weather's clock (its time per real second), for how long ago each cell burnt.
+			{
+				const WorldWeather *wwc = WorldContracts::weather();
+				game_days += double(dt) * (wwc->has_provider() ? wwc->time_scale() : 1.0) / 86400.0;
+			}
 			sample_timer -= dt;
 			if (sample_timer <= 0.0f) {
 				sample_timer = 0.25f;
@@ -2102,6 +2118,7 @@ void PhysXFireSpread3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_fire_wind"), &PhysXFireSpread3D::is_fire_wind);
 	ClassDB::bind_method(D_METHOD("get_fire_wind_at", "position"), &PhysXFireSpread3D::get_fire_wind_at);
 	ClassDB::bind_method(D_METHOD("get_stem_char_at", "position"), &PhysXFireSpread3D::get_stem_char_at);
+	ClassDB::bind_method(D_METHOD("get_burn_age_at", "position"), &PhysXFireSpread3D::get_burn_age_at);
 	ClassDB::bind_method(D_METHOD("set_blowing_ash", "enabled"), &PhysXFireSpread3D::set_blowing_ash);
 	ClassDB::bind_method(D_METHOD("is_blowing_ash"), &PhysXFireSpread3D::is_blowing_ash);
 	ClassDB::bind_method(D_METHOD("set_grass_ash", "enabled"), &PhysXFireSpread3D::set_grass_ash);

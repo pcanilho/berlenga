@@ -2535,6 +2535,49 @@ bool TerrainGenerator3D::generate() {
 			talus[i] = MAX(talus[i], t * t * (3.0f - 2.0f * t));
 		}
 	}
+	// Fall sorting along each talus apron (Kirkby and Statham 1975; Statham 1976): the bigger the block, the further it
+	// runs, so the apron coarsens from fines at its apex under the wall to boulders at its toe. Per cell, how far it
+	// lies down its run: the distance from the apron's top along the receivers over that plus the distance on to the
+	// apron's end, 0 at the apex and 1 at the toe. RockField3D grades its stones by it (get_scree_sorting).
+	{
+		scree_sorting.resize(n);
+		const real_t tmin = 0.3f;
+		LocalVector<float> run, rem;
+		run.resize(n);
+		rem.resize(n);
+		for (int i = 0; i < n; i++) {
+			run[i] = 1e30f;
+			rem[i] = 0.0f;
+		}
+		auto step_len = [&](int a, int b) {
+			const int ax = a % nx, az = a / nx, bx = b % nx, bz = b / nx;
+			return float(cell_size * ((ax != bx && az != bz) ? Math::SQRT2 : 1.0));
+		};
+		for (int k = n - 1; k >= 0; k--) { // donors first
+			const int i = stack[k];
+			if (talus[i] < tmin) {
+				continue;
+			}
+			if (run[i] >= 1e29f) {
+				run[i] = 0.0f; // nothing above it on the apron: the apex
+			}
+			const int r = receivers[i];
+			if (r != i && talus[r] >= tmin) {
+				run[r] = MIN(run[r], run[i] + step_len(i, r));
+			}
+		}
+		for (int k = 0; k < n; k++) { // receivers first
+			const int i = stack[k];
+			if (talus[i] < tmin) {
+				continue;
+			}
+			const int r = receivers[i];
+			rem[i] = (r != i && talus[r] >= tmin) ? rem[r] + step_len(i, r) : 0.5f * float(cell_size);
+		}
+		for (int i = 0; i < n; i++) {
+			scree_sorting[i] = talus[i] < tmin ? 0.0f : run[i] / MAX(run[i] + rem[i], 1e-3f);
+		}
+	}
 	Ref<Image> geo = get_geology_image();
 	if (geology_texture.is_valid() && geology_texture->get_width() == nx && geology_texture->get_height() == ny) {
 		geology_texture->update(geo);
@@ -2603,6 +2646,7 @@ void TerrainGenerator3D::clear_result() {
 	soil.clear();
 	rock.clear();
 	talus.clear();
+	scree_sorting.clear();
 	beach.clear();
 	coast_exposure.clear();
 	receivers.clear();
@@ -4034,6 +4078,13 @@ real_t TerrainGenerator3D::get_rock_exposure(const Vector3 &p_global_position) c
 
 real_t TerrainGenerator3D::get_talus(const Vector3 &p_global_position) const {
 	return CLAMP(_sample(talus, p_global_position.x, p_global_position.z), 0.0f, 1.0f);
+}
+
+real_t TerrainGenerator3D::get_scree_sorting(const Vector3 &p_global_position) const {
+	if (scree_sorting.size() != uint32_t(nx * ny) || nx <= 0) {
+		return 0.0;
+	}
+	return CLAMP(_sample(scree_sorting, p_global_position.x, p_global_position.z), 0.0f, 1.0f);
 }
 
 real_t TerrainGenerator3D::get_rock_hardness(const Vector3 &p_global_position) const {
@@ -7885,6 +7936,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_soil_depth", "global_position"), &TerrainGenerator3D::get_soil_depth);
 	ClassDB::bind_method(D_METHOD("get_rock_exposure", "global_position"), &TerrainGenerator3D::get_rock_exposure);
 	ClassDB::bind_method(D_METHOD("get_talus", "global_position"), &TerrainGenerator3D::get_talus);
+	ClassDB::bind_method(D_METHOD("get_scree_sorting", "global_position"), &TerrainGenerator3D::get_scree_sorting);
 	ClassDB::bind_method(D_METHOD("get_geology_at", "global_position"), &TerrainGenerator3D::get_geology_at);
 	ClassDB::bind_method(D_METHOD("set_cliff_ledge_spacing", "value"), &TerrainGenerator3D::set_cliff_ledge_spacing);
 	ClassDB::bind_method(D_METHOD("get_cliff_ledge_spacing"), &TerrainGenerator3D::get_cliff_ledge_spacing);

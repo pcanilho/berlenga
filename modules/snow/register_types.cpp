@@ -35,6 +35,7 @@
 #include "snow_climate.h"
 #include "snow_clumps_3d.h"
 #include "snow_cornice_3d.h"
+#include "snow_bodies_3d.h"
 #include "snow_lake_ice_3d.h"
 #include "snow_cover_3d.h"
 #include "snow_fall_3d.h"
@@ -52,6 +53,7 @@ void initialize_snow_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(SnowCover3D);
 	GDREGISTER_CLASS(SnowCornice3D);
 	GDREGISTER_CLASS(SnowLakeIce3D);
+	GDREGISTER_CLASS(SnowBodies3D);
 	GDREGISTER_CLASS(SnowSurface3D);
 	GDREGISTER_CLASS(SnowFall3D);
 	GDREGISTER_CLASS(SnowIcicles3D);

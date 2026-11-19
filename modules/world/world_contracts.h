@@ -217,6 +217,7 @@ public:
 	virtual Vector3 contract_fire_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s, the fire's indraft near the ground
 	virtual float contract_fire_stem_char_at(const Vector3 &p_position) const { return 0.0f; } // m, char a stem foot there took
 	virtual float contract_fire_burn_age_at(const Vector3 &p_position) const { return -1.0f; } // years since it last burnt there, -1 never
+	virtual float contract_fire_crown_scorch_at(const Vector3 &p_position) const { return 0.0f; } // m, crowns killed up to this height
 	virtual ~WorldFireProvider() {}
 };
 
@@ -234,6 +235,7 @@ protected:
 	GDVIRTUAL1RC(Vector3, _wind_at, Vector3)
 	GDVIRTUAL1RC(float, _stem_char_at, Vector3)
 	GDVIRTUAL1RC(float, _burn_age_at, Vector3)
+	GDVIRTUAL1RC(float, _crown_scorch_at, Vector3)
 
 public:
 	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -250,6 +252,9 @@ public:
 	// Years since the ground at the point last burnt (game time), for regrowth: the most recent of any producer (a fire
 	// in play, an authored WorldBurnScar3D); -1 where it never burnt.
 	float burn_age_at(const Vector3 &p_position) const;
+	// How high the fire killed tree crowns over the point (m): Van Wagner's lethal scorch height of the front that
+	// passed, or a crown that burnt (1000). The most of any fire; 0 where none burnt.
+	float crown_scorch_at(const Vector3 &p_position) const;
 };
 
 // Ground: the deformable ground's surface, soil and what lies on it (docs/ideas/world-contracts.md, Ground).

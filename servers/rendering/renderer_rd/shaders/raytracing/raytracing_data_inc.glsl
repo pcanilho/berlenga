@@ -264,6 +264,11 @@ bool rt_material_mud(MaterialData p_mat) {
 	return (p_mat.subsurface >> 31u) != 0u;
 }
 
+// BaseMaterial3D snow_on_body: the body's own snow from instance uniform slot 12 (SnowBodies).
+bool rt_material_snow_on_body(MaterialData p_mat) {
+	return ((p_mat.subsurface_texture >> 25u) & 1u) != 0u;
+}
+
 // BaseMaterial3D Snow: amount (x), snow_max_slope in degrees (y), on (z), cover from the snow map (w).
 vec4 rt_material_snow(MaterialData p_mat) {
 	return vec4(float((p_mat.hair_crown_z >> 16u) & 0xFFu) / 255.0, float(p_mat.hair_crown_z >> 24u) / 255.0 * 90.0,

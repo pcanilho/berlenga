@@ -32,6 +32,7 @@
 
 #include "snow_cover_3d.h"
 
+#include "snow_bodies_3d.h"
 #include "snow_lake_ice_3d.h"
 #include "snow_surface_3d.h"
 
@@ -2381,6 +2382,14 @@ void SnowCover3D::set_lake_ice_enabled(bool p_enabled) {
 	}
 }
 
+void SnowCover3D::set_bodies_enabled(bool p_enabled) {
+	bodies_enabled = p_enabled;
+	if (!p_enabled && bodies_node) {
+		bodies_node->queue_free();
+		bodies_node = nullptr;
+	}
+}
+
 float SnowCover3D::get_ground_height_at(Vector3 p_position) const {
 	return _sample(cell_ground, Vector2(p_position.x, p_position.z));
 }
@@ -2425,6 +2434,11 @@ void SnowCover3D::_notification(int p_what) {
 				if (lake_ice_enabled && !owner && !lake_ice) {
 					lake_ice = memnew(SnowLakeIce3D);
 					add_child(lake_ice, false, INTERNAL_MODE_BACK);
+				}
+				// Moving things carry their own snow (follow-up 18).
+				if (bodies_enabled && !owner && !bodies_node) {
+					bodies_node = memnew(SnowBodies3D);
+					add_child(bodies_node, false, INTERNAL_MODE_BACK);
 				}
 			}
 		} break;
@@ -2768,6 +2782,9 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_ice_thickness_at", "position"), &SnowCover3D::get_ice_thickness_at);
 	ClassDB::bind_method(D_METHOD("get_white_ice_thickness_at", "position"), &SnowCover3D::get_white_ice_thickness_at);
 	ClassDB::bind_method(D_METHOD("get_lake_ice"), &SnowCover3D::get_lake_ice);
+	ClassDB::bind_method(D_METHOD("get_bodies"), &SnowCover3D::get_bodies);
+	ClassDB::bind_method(D_METHOD("set_bodies_enabled", "enabled"), &SnowCover3D::set_bodies_enabled);
+	ClassDB::bind_method(D_METHOD("is_bodies_enabled"), &SnowCover3D::is_bodies_enabled);
 	ClassDB::bind_method(D_METHOD("set_lake_ice_enabled", "enabled"), &SnowCover3D::set_lake_ice_enabled);
 	ClassDB::bind_method(D_METHOD("is_lake_ice_enabled"), &SnowCover3D::is_lake_ice_enabled);
 	ClassDB::bind_method(D_METHOD("get_snow_texture"), &SnowCover3D::get_snow_texture);
@@ -2809,6 +2826,7 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "update_rate", PROPERTY_HINT_RANGE, "0.01,60,0.01,suffix:Hz"), "set_update_rate", "get_update_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "background_updates"), "set_background_updates", "is_background_updates");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lake_ice_enabled"), "set_lake_ice_enabled", "is_lake_ice_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "bodies_enabled"), "set_bodies_enabled", "is_bodies_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "height_source"), "set_height_source", "get_height_source");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ground_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_ground_collision_mask", "get_ground_collision_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "shelter_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_shelter_collision_mask", "get_shelter_collision_mask");

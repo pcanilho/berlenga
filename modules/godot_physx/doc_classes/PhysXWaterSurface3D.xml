@@ -534,7 +534,10 @@
 			Linear height multiplier for the FFT ocean waves. At [code]1.0[/code] they have physical heights for the JONSWAP spectrum at [member wind_speed] and [member fetch] (in meters); below 1 reduces them proportionally, 0 removes the FFT ocean waves. This does not scale local ripple disturbances.
 		</member>
 		<member name="wave_cascade_ratio" type="float" setter="set_wave_cascade_ratio" getter="get_wave_cascade_ratio" default="6.0">
-			How much larger each wave cascade's tile is than the last.
+			How much larger each wave cascade's tile is than the last (plus 0.382 with [member wave_tile_breakup]).
+		</member>
+		<member name="wave_tile_breakup" type="bool" setter="set_wave_tile_breakup" getter="get_wave_tile_breakup" default="true">
+			Keeps the wave tiles from repeating together. Tiles whose sides are whole multiples of each other (40 m, 240 m, and the 5 m [member detail_waves] tile) line up again every few tens of meters, so the same chop, glints and whitecaps come back on a grid. Detuned, each cascade's tile is [code][member wave_cascade_ratio] + 0.382[/code] times the last (6.382 by default) and the detail tile a little larger, ratios as far from any simple fraction as possible, so no two tiles line up again within kilometers. Tiles only grow, so no band changes. [code]false[/code] restores the exact ratios (for comparison).
 		</member>
 		<member name="wave_cascades" type="int" setter="set_wave_cascades" getter="get_wave_cascades" default="1">
 			Number of FFT tiles summed into the ocean. 1 is the single tile of [member ocean_domain_size], which holds no wave longer than the tile, so a strong wind on open water stays short and low. Each extra cascade is a tile [member wave_cascade_ratio] times larger, carrying the band of longer waves (swell), and every tile keeps only waves shorter than a quarter of its size, so none of them shows its repeat. Each extra cascade costs one more FFT ocean on the GPU.

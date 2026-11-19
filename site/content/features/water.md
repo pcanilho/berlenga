@@ -43,7 +43,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Ocean: sand and caustic light through the water.*
 
-- **Ocean swell** (`wave_cascades`): up to four wave layers give long swell under the chop without visible tiling, whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
+- **Ocean swell** (`wave_cascades`, `wave_tile_breakup`): up to four wave layers give long swell under the chop, each layer blended so its tile never repeats (Heitz and Neyret 2018), whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
 
   ![Deep open sea under overcast sky with three wave layers, raster](media/ocean-swell.jpg)
 

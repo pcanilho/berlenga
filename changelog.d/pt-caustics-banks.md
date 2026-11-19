@@ -1,0 +1,1 @@
+- Path tracing: water caustics no longer draw a bright line along one bank and a dark line along the other (fix).

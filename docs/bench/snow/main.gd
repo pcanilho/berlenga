@@ -4,6 +4,34 @@ extends Node3D
 class FireStub extends WorldFire:
 	func _heat_at(p: Vector3) -> float:
 		return 928.0 if p.x > 2.0 else 0.0
+# Weather for the body checks: one value everywhere, an hour of weather per second.
+class BodyWeatherStub extends WorldWeather:
+	var t := -5.0
+	var wind := Vector3()
+	var snowfall := 0.0
+	var rain := 0.0
+	func _air_temperature_at(_p: Vector3) -> float:
+		return t
+	func _air_humidity_at(_p: Vector3) -> float:
+		return 0.9
+	func _wind_at(_p: Vector3, _h: float) -> Vector3:
+		return wind
+	func _snowfall_at(_p: Vector3) -> float:
+		return snowfall
+	func _rainfall_at(_p: Vector3) -> float:
+		return rain
+	func _precipitation_at(_p: Vector3) -> float:
+		return snowfall + rain
+	func _time_scale() -> float:
+		return 3600.0
+# Ground snow for the body checks: 20 cm of 150 kg/m3 everywhere.
+class BodySnowStub extends WorldSnow:
+	func _depth_at(_p: Vector3) -> float:
+		return 0.2
+	func _density_at(_p: Vector3) -> float:
+		return 150.0
+	func _wetness_at(_p: Vector3) -> float:
+		return 0.0
 # SnowCover3D bench: checks the snowpack against the published relations, and renders snow on a mountain
 # or on props, raster or path traced.
 #
@@ -28,6 +56,9 @@ class FireStub extends WorldFire:
 #                     at 10 m (default 4; 15 or more blows the snow off the ground)
 #   --view=climate   a winter baked over the mountain (SnowClimate): snow line, shaded north faces, loaded lee
 #   --view=cornice   a corniced ridge from below its lee face
+#   --view=bodies     three crates after a snowfall: one left out, one just driven in, one from a shed (SnowBodies3D)
+#   --test=bodies     snow on moving things (follow-up 18): seeded, built by snowfall, sheltered, blown and shaken
+#                     off, melted, burnt
 #   --view=lake       a frozen lake from its shore after two weeks of frost and a light snow (--snow=H)
 #   --view=sparkle    dry new snow at the feet against a low sun ahead: glinting grains; --melt=H hours of thaw
 #                     first wets it (the glints go); --glints=exact (default) / grid: every grain a facet under the path tracer, or the raster's grid
@@ -149,6 +180,8 @@ func _ready() -> void:
 			await _run_fire_tests()
 		elif only == "sleet":
 			_run_sleet_tests()
+		elif only == "bodies":
+			await _run_body_tests()
 
 		else:
 			await _run_tests()
@@ -340,6 +373,7 @@ func _run_tests() -> void:
 	await _run_water_tests()
 	await _run_fire_tests()
 	_run_sleet_tests()
+	await _run_body_tests()
 
 	# Cost: a 512 m map at 2 m (256 x 256), snowing with drift.
 	await _setup("mountain", 512.0, 256, -2.0)
@@ -1053,6 +1087,126 @@ func _run_sleet_tests() -> void:
 	_check("a melting flake keeps its slow fall until mostly melted, then falls as a drop (Mitra et al. 1990)", v_dry > 0.8 and v_dry < 1.5 and v_half < 1.5 * v_dry and absf(v_wet - 6.55) < 0.1, "%.2f m/s dry, %.2f half melted, %.2f melted (2 mm drop)" % [v_dry, v_half, v_wet])
 
 
+func _body_box(at: Vector3) -> RigidBody3D:
+	var b := RigidBody3D.new()
+	b.freeze = true
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size = Vector3(1, 1, 1)
+	cs.shape = sh
+	b.add_child(cs)
+	var mi := MeshInstance3D.new()
+	mi.name = "Mesh"
+	var bm := BoxMesh.new()
+	bm.material = StandardMaterial3D.new()
+	mi.mesh = bm
+	b.add_child(mi)
+	add_child(b)
+	b.global_position = at
+	return b
+
+
+func _run_body_tests() -> void:
+	print("Snow on moving things (follow-up 18)")
+	for c in get_children():
+		c.queue_free()
+	await get_tree().process_frame
+	var w := BodyWeatherStub.new()
+	WorldContracts.set_weather(w)
+	WorldContracts.set_snow(BodySnowStub.new())
+	var sb := SnowBodies3D.new()
+	sb.update_rate = 0.1 # the checks step it by hand
+	add_child(sb)
+	var a := _body_box(Vector3(0, 1, 0))
+	var roofed := _body_box(Vector3(10, 1, 0))
+	var roof := StaticBody3D.new()
+	var rcs := CollisionShape3D.new()
+	var rsh := BoxShape3D.new()
+	rsh.size = Vector3(4, 0.2, 4)
+	rcs.shape = rsh
+	roof.add_child(rcs)
+	add_child(roof)
+	roof.global_position = Vector3(10, 4, 0)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_check("rigid bodies are found and tracked by themselves", sb.is_tracked(a) and sb.is_tracked(roofed) and not sb.is_tracked(roof), "%d tracked" % sb.get_tracked_count())
+	sb.step(0.1)
+	var mat := (a.get_node("Mesh") as MeshInstance3D).get_active_material(0) as StandardMaterial3D
+	_check("a body in the open starts with the ground's snow; one under a roof with none", absf(sb.get_body_depth(a) - 0.2) < 1e-3 and sb.get_body_depth(roofed) == 0.0, "%.3f m open, %.3f m roofed" % [sb.get_body_depth(a), sb.get_body_depth(roofed)])
+	var p: Variant = (a.get_node("Mesh") as MeshInstance3D).get_instance_shader_parameter("snow_body")
+	_check("its materials show the load (snow_on_body, from the body only) and the load reaches them", mat.snow_on_body and mat.snow_enabled and not mat.snow_from_weather and p is Vector4 and absf(p.x - 0.2) < 2e-3, "%s" % [p])
+	# Snowfall: 2 mm/h of water for an hour at -5 C.
+	w.snowfall = 2.0
+	sb.set_body_depth(a, 0.0)
+	sb.set_body_depth(roofed, 0.0)
+	sb.step(1.0)
+	var expect := 2.0 / SnowCover3D.new_snow_density(-5.0)
+	_check("falling snow builds the load at the new snow density (Hedstrom and Pomeroy 1998), not under a roof", absf(sb.get_body_depth(a) - expect) < 1e-3 and sb.get_body_depth(roofed) < 1e-4, "%.4f m in an hour (expected %.4f), %.4f m roofed" % [sb.get_body_depth(a), expect, sb.get_body_depth(roofed)])
+	w.snowfall = 0.0
+	# Wind: calm keeps it, a gale over the blowing threshold strips it.
+	sb.set_body_depth(a, 0.1)
+	w.wind = Vector3(3, 0, 0)
+	for i in 10:
+		sb.step(0.1)
+	var calm := sb.get_body_depth(a)
+	w.wind = Vector3(20, 0, 0)
+	for i in 10:
+		sb.step(0.1)
+	var gale := sb.get_body_depth(a)
+	w.wind = Vector3()
+	_check("wind over the blowing threshold (Li and Pomeroy 1997) strips it; a breeze does not", absf(calm - 0.1) < 1e-3 and gale < 0.05, "%.3f m after 1 s at 3 m/s, %.3f m after 1 s more at 20 m/s (threshold %.1f m/s at -5 C)" % [calm, gale, SnowFall3D.blowing_threshold(-5.0)])
+	# Driving into still air is the same wind.
+	a.global_position.x += 2.5 # up to speed first (the start is a jolt of its own)
+	sb.step(0.1)
+	a.global_position.x += 2.5
+	sb.step(0.1)
+	sb.set_body_depth(a, 0.1)
+	for i in 10:
+		a.global_position.x += 2.5 # 25 m/s
+		sb.step(0.1)
+	var driven := sb.get_body_depth(a)
+	_check("driving fast blows it off too (the air past the body is what counts)", driven < 0.06, "%.3f m after 1 s at 25 m/s" % driven)
+	# Shaking: a jolt of several g throws it off; a steady crawl does not.
+	a.global_position = Vector3(0, 1, 0)
+	sb.step(0.1)
+	sb.step(0.1)
+	sb.set_body_depth(a, 0.1)
+	for i in 10:
+		a.global_position.z += 0.05
+		sb.step(0.1)
+	var crawl := sb.get_body_depth(a)
+	for i in 10:
+		a.global_position.y = 1.0 + (0.1 if i % 2 == 0 else 0.0) # 10 cm up and down every tenth of a second
+		sb.step(0.1)
+	var shaken := sb.get_body_depth(a)
+	_check("jolts over half a g shake it off; a slow crawl keeps it", absf(crawl - 0.1) < 1e-3 and shaken < 0.03, "%.3f m after a crawl, %.3f m after 1 s of shaking at about 20 g" % [crawl, shaken])
+	# Thaw: +5 C for two hours melts and wets it.
+	sb.set_body_depth(a, 0.1)
+	w.t = 5.0
+	sb.step(1.0)
+	sb.step(1.0)
+	var thawed := sb.get_body_depth(a)
+	var wet := sb.get_body_wetness(a)
+	w.t = -5.0
+	_check("a thaw melts it and wets what is left", thawed < 0.1 and thawed > 0.0 and wet > 0.0, "%.4f m of 0.1 after 2 h at 5 C, wetness %.2f" % [thawed, wet])
+	# Fire: a body standing in the FireStub's heat.
+	WorldContracts.set_fire(FireStub.new())
+	sb.set_body_depth(a, 0.05)
+	a.global_position = Vector3(5, 1, 0)
+	sb.step(0.1)
+	sb.set_body_depth(a, 0.05)
+	sb.step(10.0)
+	var burnt := sb.get_body_depth(a)
+	_check("fire's heat melts it at 0.334 MJ/kg", burnt < 0.05, "%.4f m of 0.05 after 10 s in 928 W/m2" % burnt)
+	sb.untrack(a)
+	var cleared: Variant = (a.get_node("Mesh") as MeshInstance3D).get_instance_shader_parameter("snow_body")
+	_check("an untracked body drops back to its material's own snow", cleared == Vector4(), "%s" % [cleared])
+	WorldContracts.clear_overrides()
+	for c in get_children():
+		c.queue_free()
+	await get_tree().process_frame
+
+
 func _run_fire_tests() -> void:
 	print("Fire melts snow (WorldFire)")
 	await _setup("flat", 32.0, 32, -8.0)
@@ -1598,6 +1752,9 @@ func _build_view() -> void:
 	elif view == "icicles":
 		await _build_icicles(cam)
 		return
+	elif view == "bodies":
+		await _build_bodies(cam)
+		return
 	else:
 		snow.drift_enabled = false
 		sun.visible = true
@@ -2109,6 +2266,37 @@ func _build_lake(cam: Camera3D) -> void:
 	cam.far = 2000.0
 	var p := Vector3(x + 30.0, 0, 0)
 	print("lake: level %.2f m, ice %.1f cm (%.1f cm white), snow %.1f mm, %d cells drawn" % [level, snow.get_ice_thickness_at(p) * 100.0, snow.get_white_ice_thickness_at(p) * 100.0, snow.get_swe_at(p), snow.get_lake_ice().get_quad_count()])
+	await _save_frame("")
+
+
+func _build_bodies(cam: Camera3D) -> void:
+	# Three crates after six hours of snow: one left out (it carries the ground's load and the fall on it), one
+	# just driven in on a trailer (the wind of its speed and the bumps took most of it), one from a shed (bare).
+	snow.drift_enabled = false
+	sun.visible = true
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-35.0, -40.0, 0.0)
+	_add_terrain(32.0, 128, Color(0.36, 0.33, 0.28), 2.0)
+	_precipitate(6.0, 2.0)
+	var crates: Array[RigidBody3D] = []
+	for i in 3:
+		var b := _body_box(Vector3(-1.6 + 1.6 * i, ground.get_height(Vector3(-1.6 + 1.6 * i, 0, 0)) + 0.5, 0))
+		var m := (b.get_node("Mesh") as MeshInstance3D).mesh.material as StandardMaterial3D
+		m.albedo_color = Color(0.42, 0.3, 0.18)
+		m.roughness = 0.8
+		crates.append(b)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var sb := snow.get_bodies()
+	sb.update_rate = 0.1
+	sb.step(0.1)
+	sb.set_body_depth(crates[1], 0.006)
+	sb.set_body_depth(crates[2], 0.0)
+	sb.step(0.1)
+	print("bodies: %.3f m, %.3f m, %.3f m on the crates (ground %.3f m)" % [sb.get_body_depth(crates[0]), sb.get_body_depth(crates[1]), sb.get_body_depth(crates[2]), snow.get_depth_at(Vector3())])
+	cam.position = Vector3(0.6, ground.get_height(Vector3(0, 0, 3.4)) + 3.4, 3.4)
+	cam.look_at(Vector3(0, ground.get_height(Vector3()) + 0.6, 0))
+	cam.fov = 50.0
 	await _save_frame("")
 
 
