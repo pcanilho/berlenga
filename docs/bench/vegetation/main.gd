@@ -701,6 +701,9 @@ func _burn_live() -> void:
 	f.streaming = true
 	var counts := []
 	await _burn_live_wait(3.0)
+	burn_live_field = f
+	burn_live_ring0 = _burn_live_count(f, true)
+	burn_live_ring_min = burn_live_ring0
 	counts.append(_burn_live_count(f))
 	var scar := WorldBurnScar3D.new()
 	scar.age_years = 0.02
@@ -716,22 +719,31 @@ func _burn_live() -> void:
 	counts.append(_burn_live_count(f))
 	var share := float(counts[2]) / maxf(counts[0], 1)
 	_check("burn: a live burn re-places the streamed tiles over it (gone, half back at half the recovery, whole once it goes)", counts[0] > 15 and counts[1] == 0 and share > 0.3 and share < 0.7 and counts[3] == counts[0], counts)
+	_check("burn: the unburnt plants beside it never leave while their tiles are replaced (fewest in any frame)", burn_live_ring0 > 15 and burn_live_ring_min == burn_live_ring0, [burn_live_ring0, burn_live_ring_min])
 	print("VEG_BURN_LIVE_RESULT ", "PASS" if fails == 0 else "FAIL")
 	get_tree().quit(1 if fails > 0 else 0)
+
+var burn_live_field: VegetationField3D
+var burn_live_ring0 := 0
+var burn_live_ring_min := 0
 
 func _burn_live_wait(sec: float) -> void:
 	var t := Time.get_ticks_msec()
 	while Time.get_ticks_msec() - t < sec * 1000.0:
 		await get_tree().process_frame
+		if burn_live_field:
+			burn_live_ring_min = mini(burn_live_ring_min, _burn_live_count(burn_live_field, true))
 
-func _burn_live_count(f: VegetationField3D) -> int:
+# Plants on the scar's middle 12 m, or (ring) on the unburnt ground 10 to 16 m out, on tiles the scar touches.
+func _burn_live_count(f: VegetationField3D, ring := false) -> int:
 	var n := 0
 	for ch in f.get_children(true):
 		if ch is MultiMeshInstance3D:
 			var mm: MultiMesh = ch.multimesh
 			for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
 				var p := (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
-				if absf(p.x) < 6 and absf(p.z) < 6:
+				var m := maxf(absf(p.x), absf(p.z))
+				if (m >= 10.0 and m < 16.0) if ring else (absf(p.x) < 6 and absf(p.z) < 6):
 					n += 1
 	return n
 

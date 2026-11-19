@@ -367,6 +367,7 @@ private:
 		TileOut out;
 		LocalVector<LocalVector<MultiMeshInstance3D *>> nodes; // Per species.
 		LocalVector<bool> committed;
+		bool stale = false; // Placed before the ground (holes) or burn ages changed: its replacement is on the way.
 	};
 	struct StreamJob {
 		VegetationField3D *field = nullptr;
