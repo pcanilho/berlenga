@@ -2327,7 +2327,7 @@ void TreeGenerator::_grow_date_palm() {
 				nodes[idx].leafy = false;
 				nodes[idx].dead = dead;
 				// The petiole wide and flat at its sheath (6-8 cm), the rachis tapering to its tip.
-				nodes[idx].radius = Math::lerp(0.03f, 0.007f, float(k) / (NODES - 1)) * Math::lerp(0.5f, 1.0f, grown);
+				nodes[idx].radius = Math::lerp(0.035f, 0.009f, float(k) / (NODES - 1)) * Math::lerp(0.5f, 1.0f, grown);
 				if (first < 0) {
 					first = idx;
 				}
@@ -2354,7 +2354,7 @@ void TreeGenerator::_grow_date_palm() {
 	const int alive = int(Math::lerp(22.0f, 70.0f, grown) * _rand(0.9f, 1.1f));
 	// A wild or neglected palm keeps its dead fronds as a skirt; a tended one has them cut each year.
 	const int dead = tended ? 0 : (trunk_h > 1.5f ? int(_rand(18.0f, 40.0f) * grown) : 0);
-	const Vector3 lean0 = (up + Vector3(_rand(-1.0f, 1.0f), 0.0f, _rand(-1.0f, 1.0f)) * (tended ? 0.04f : 0.12f)).normalized();
+	const Vector3 lean0 = (up + Vector3(_rand(-1.0f, 1.0f), 0.0f, _rand(-1.0f, 1.0f)) * (tended ? 0.09f : 0.28f)).normalized();
 	palm(root, lean0, trunk_h, trunk_r, alive, dead, frond_len);
 	// A wild clump: more trunks from old offshoots, leaning out; and young offshoots round the foot, each its own
 	// small crown (the grower's cut leaves only the stumps, not modelled).
@@ -2428,7 +2428,7 @@ void TreeGenerator::_date_palm_frond(Builder &r_leaves, const PalmFrond &p_f) {
 	pr.seed(uint64_t(seed) * 0x9E3779B97F4A7C15ull + uint64_t(p_f.node) * 7919u + 0x64617465u);
 	const bool dead = p_f.dead;
 	const Color live = leaf_color;
-	const Color dead_c(0.24f, 0.19f, 0.13f);
+	const Color dead_c(0.13f, 0.105f, 0.08f); // Grey-brown: docs, 19 Nov (the straw tone glowed as a pale cone).
 	const float len_k = CLAMP(p_f.blade / 4.0f, 0.4f, 1.15f);
 	auto bone_at = [&](int p_node) {
 		return node_bone.size() > uint32_t(p_node) ? node_bone[p_node] : 0;
@@ -2452,7 +2452,8 @@ void TreeGenerator::_date_palm_frond(Builder &r_leaves, const PalmFrond &p_f) {
 	{
 		// The petiole and rachis: smooth, yellowish green, from a brown fibrous sheath (leaves surface, not
 		// barked; rewound and on one texel as the fan palm's petiole).
-		const Color rc = dead ? dead_c * 0.95f : Color(live.r * 1.25f + 0.03f, live.g * 1.15f + 0.03f, live.b * 0.85f);
+		// The rachis a pale yellow-green line down each frond: it is what draws the fronds apart at range.
+		const Color rc = dead ? dead_c * 0.95f : Color(live.r * 1.6f + 0.06f, live.g * 1.4f + 0.06f, live.b * 0.8f + 0.01f);
 		r_leaves.bone = bone_at(chain[0]);
 		Vector4i pp;
 		r_leaves.begin(pp);
@@ -2495,8 +2496,8 @@ void TreeGenerator::_date_palm_frond(Builder &r_leaves, const PalmFrond &p_f) {
 	// The pinnae.
 	const int n = MAX(6, p_f.segments);
 	const float lp = params[PARAM_LEAF_SIZE] * len_k;
-	const float hw = 0.0105f * MIN(len_k, 1.0f) + 0.002f; // Half the width: pinnae 1.5-2.5 cm.
-	static const float GROUP_EL[3] = { 0.8f, 0.3f, -0.12f }; // The V: pinnae in three planes.
+	const float hw = 0.0125f * MIN(len_k, 1.0f) + 0.002f; // Half the width: pinnae 2-3 cm.
+	static const float GROUP_EL[3] = { 0.55f, 0.22f, -0.05f }; // The V: pinnae in three planes (a tighter V reads as one frond at range).
 	int count = 0;
 	for (int sd = -1; sd <= 1; sd += 2) {
 		for (int i = 0; i < n; i++) {
@@ -20140,8 +20141,12 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		const uint32_t h = uint32_t(seed) * 2654435761u;
 		const float t = float((h >> 8) & 255u) / 255.0f;
 		grove_vase = p_form == FORM_GROVE;
-		params[PARAM_YEARS] = grove_vase ? Math::round(Math::lerp(15.0f, 60.0f, t)) : Math::round(Math::lerp(10.0f, 80.0f, t));
-		params[PARAM_STEMS] = grove_vase ? 1.0f : float(1 + ((h >> 16) % 3u == 0u ? 1 + int((h >> 20) % 2u) : 0));
+		// Docs, 19 Nov (the oasis read as a plantation of clones): an oasis is replanted palm by palm, so its
+		// palms run from young ones of 2 m to old ones of 20 m; the variants step through that range.
+		const float tv = (float(p_variant % 6) + t) / 6.0f;
+		params[PARAM_YEARS] = grove_vase ? Math::round(Math::lerp(9.0f, 70.0f, tv)) : Math::round(Math::lerp(8.0f, 90.0f, tv));
+		params[PARAM_STEMS] = grove_vase ? 1.0f : float(1 + ((h >> 16) % 2u == 0u ? 1 + int((h >> 20) % 3u) : 0));
+		params[PARAM_BASAL_SPROUTS] = grove_vase ? 0.0f : Math::lerp(0.4f, 1.0f, float((h >> 24) & 255u) / 255.0f);
 	} else if (p_form == FORM_GROVE) {
 		// A cultivated olive in an old grove (trees.md, "Ancient olive"; Connor and Fereres,
 		// Hort. Rev. 31, 2005; Barranco et al., El cultivo del olivo, 2008): planted as one stem,
@@ -21363,12 +21368,19 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			palm->set_name("Date Palm (grove)");
 			palm->set_spacing(8.0f);
 			palm->set_density(0.9f);
-			palm->set_scale_range(Vector2(0.9f, 1.1f));
 			list.push_back(palm);
+			palm->set_scale_range(Vector2(0.8f, 1.2f));
 			Ref<PlantSpecies> wild = _stand_species(PRESET_DATE_PALM, false, p_variants, FORM_OPEN);
-			wild->set_density(0.12f);
-			wild->set_spacing(10.0f);
+			// Wild clumps crowd along the water, where the water table is shallowest, and thin away from it.
+			wild->set_density(0.7f);
+			wild->set_spacing(5.0f);
+			wild->set_scale_range(Vector2(0.75f, 1.2f));
+			wild->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, 18.0f));
+			wild->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, 10.0f);
 			list.push_back(wild);
+			// Tended palms in patches (gardens of different owners and ages), not one even scatter.
+			palm->set_patch_scale(35.0f);
+			palm->set_patch_cover(0.75f);
 			// The middle storey: olives under the palms' shade.
 			open(PRESET_WILD_OLIVE, 0.15f);
 		} break;

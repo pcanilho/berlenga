@@ -115,7 +115,8 @@ private:
 	// Smoke from fires (WorldFire.smoke_sources) as a layer carried by the wind aloft (weather_smoke.cpp): g/m2 of
 	// particulate in the column over each cell.
 	bool smoke_haze = true;
-	float smoke_lifetime = 3.0f * 86400.0f; // s of weather time, washout and dilution out of the layer
+	float smoke_lifetime = 3.0f * 86400.0f; // s of weather time, dilution out of the layer in dry weather
+	bool smoke_washout = true; // rain and snow wash it out (WorldWeather::washout_rate)
 	Vector<float> cell_smoke;
 	void _smoke_step(double p_weather_dt);
 	void _smoke_shift(Vector2i p_delta);
@@ -675,6 +676,8 @@ public:
 	bool is_smoke_haze() const { return smoke_haze; }
 	void set_smoke_lifetime(float p_seconds) { smoke_lifetime = MAX(p_seconds, 60.0f); }
 	float get_smoke_lifetime() const { return smoke_lifetime; }
+	void set_smoke_washout(bool p_v) { smoke_washout = p_v; }
+	bool is_smoke_washout() const { return smoke_washout; }
 	float get_smoke_at(Vector3 p_position) const; // g/m2 of particulate in the column
 	float get_smoke_optical_depth_at(Vector3 p_position) const; // at 550 nm
 	// The direct sun's transmittance through the smoke layer (RGB) at a point, for a sun along p_to_sun.
@@ -780,6 +783,12 @@ public:
 	float contract_sun_visibility_at(const Vector3 &p_position) const override { return get_sun_visibility_at(p_position); }
 	float contract_canopy_closure_at(const Vector3 &p_position) const override { return get_canopy_closure_at(p_position); }
 	float contract_frost_at(const Vector3 &p_position) const override { return get_frost_at(p_position); }
+	float contract_rainfall_at(const Vector3 &p_position) const override { return get_rainfall_at(p_position); }
+	float contract_snowfall_at(const Vector3 &p_position) const override { return get_snowfall_at(p_position); }
+	float contract_canopy_water_at(const Vector3 &p_position) const override { return get_canopy_water_at(p_position); }
+	float contract_canopy_wetness_at(const Vector3 &p_position) const override { return get_canopy_wetness_at(p_position); }
+	float contract_canopy_drip_at(const Vector3 &p_position) const override { return get_canopy_drip_at(p_position); }
+	float contract_ground_water_input_at(const Vector3 &p_position) const override { return get_ground_water_input_at(p_position); }
 	Vector3 contract_mean_wind_at(const Vector3 &p_position) const override {
 		const Vector2 m = get_mean_wind_at(p_position);
 		return Vector3(m.x, 0.0f, m.y);

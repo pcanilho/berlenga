@@ -184,6 +184,8 @@ func _ready() -> void:
 			_run_sleet_tests()
 		elif only == "avalanche":
 			await _run_avalanche_tests()
+		elif only == "triggers":
+			await _run_trigger_tests()
 		elif only == "bodies":
 			await _run_body_tests()
 			await _run_body_slab_tests()
@@ -381,6 +383,7 @@ func _run_tests() -> void:
 	await _run_body_tests()
 	await _run_body_slab_tests()
 	await _run_avalanche_tests()
+	await _run_trigger_tests()
 
 	# Cost: a 512 m map at 2 m (256 x 256), snowing with drift.
 	await _setup("mountain", 512.0, 256, -2.0)
@@ -911,6 +914,8 @@ func _background_run(background: bool, updates: int) -> Dictionary:
 	snow.advance(60.0)
 	snow.advance_world(3600.0)
 	snow.background_updates = background
+	# The fresh load can avalanche on these slopes; the flow's timing would differ between the two runs.
+	snow.avalanches_enabled = false
 	snow.update_rate = 2.0
 	var start: int = snow.get_update_count()
 	var main_ms: Array[float] = []
@@ -1323,6 +1328,112 @@ func _run_avalanche_tests() -> void:
 	while av.is_running():
 		av.step(0.5)
 	av.natural_release = true
+
+
+func _trigger_body(at: Vector3, mass: float, size: Vector3) -> RigidBody3D:
+	# A frozen body standing on the snow: a person (size.y over 1 m: a capsule 0.3 m round) or a sled (a box).
+	var b := RigidBody3D.new()
+	b.mass = mass
+	b.freeze = true
+	var cs := CollisionShape3D.new()
+	if size.y > 1.0:
+		var c := CapsuleShape3D.new()
+		c.radius = 0.3
+		c.height = size.y
+		cs.shape = c
+	else:
+		var bx := BoxShape3D.new()
+		bx.size = size
+		cs.shape = bx
+	b.add_child(cs)
+	b.add_to_group("snow_deform")
+	add_child(b)
+	b.global_position = Vector3(at.x, snow.get_ground_height_at(at) + snow.get_depth_at(at) + size.y * 0.5, at.z)
+	return b
+
+
+func _trigger_setup() -> SnowAvalanche3D:
+	await _setup("avalanche", 256.0, 128, -8.0)
+	snow.drift_enabled = false
+	snow.slide_enabled = false
+	var av: SnowAvalanche3D = snow.get_avalanches()
+	av.natural_release = false
+	return av
+
+
+func _run_trigger_tests() -> void:
+	print("Avalanche triggers (follow-up 21)")
+	var flat := SnowAvalanche3D.added_shear(1000.0, 1.0, 0.0)
+	_check("a line load's shear at depth on the flat is Flamant's, 0.207 P / D (Foehn 1987)", absf(flat - 207.0) < 2.0, "%.1f Pa under 1 kN/m at 1 m" % flat)
+	var face := Vector3(-40.0, 0.0, 6.0)
+	var person_load := 80.0 * 9.81
+	# Fresh: 60 cm of new snow holds on the 38 degree face by itself, a person standing on it releases it.
+	var av := await _trigger_setup()
+	snow.add_snow(60.0, 100.0)
+	for i in 3:
+		await get_tree().physics_frame
+	var s_alone := av.get_trigger_index_at(face, 0.0)
+	var s_person := av.get_trigger_index_at(face, person_load)
+	var quiet := av.get_release_count()
+	var person := _trigger_body(face, 80.0, Vector3(0.6, 1.8, 0.6))
+	for i in 3:
+		await get_tree().physics_frame
+	var vol := av.get_released_volume()
+	_check("60 cm of new snow holds alone; a person standing on it releases the slope", quiet == 0 and s_alone > 1.0 and av.get_trigger_count() == 1 and vol > 1000.0, "index %.2f alone, %.2f under a person; %d triggered, %.0f m3" % [s_alone, s_person, av.get_trigger_count(), vol])
+	while av.is_running():
+		av.step(0.5)
+	person.queue_free()
+	# A metre, five cold days on: it has settled and sintered, a person holds, a sled (400 kg, 2.5 m) releases it.
+	av = await _trigger_setup()
+	snow.add_snow(100.0, 100.0)
+	await get_tree().physics_frame
+	snow.advance(120.0 * 3600.0)
+	for i in 3:
+		await get_tree().physics_frame
+	var sled_load := 400.0 * 9.81 / 2.5
+	s_person = av.get_trigger_index_at(face, person_load)
+	var s_sled := av.get_trigger_index_at(face, sled_load)
+	person = _trigger_body(face, 80.0, Vector3(0.6, 1.8, 0.6))
+	for i in 3:
+		await get_tree().physics_frame
+	var after_person := av.get_trigger_count()
+	person.queue_free()
+	await get_tree().physics_frame
+	var sled := _trigger_body(face + Vector3(0, 0, 4.0), 400.0, Vector3(2.5, 0.5, 1.0))
+	for i in 3:
+		await get_tree().physics_frame
+	_check("a metre five days on: a person holds, a sled releases it", after_person == 0 and av.get_trigger_count() == 1, "index %.2f under a person, %.2f under a sled; %d then %d triggered (%.2f m, %.0f kg/m3)" % [s_person, s_sled, after_person, av.get_trigger_count(), snow.get_depth_at(face), snow.get_density_at(face)])
+	while av.is_running():
+		av.step(0.5)
+	sled.queue_free()
+	# A buried crust: a week-old slab over facets on a crust. A heavy load on the flat collapses it (whumpf) and the
+	# collapse runs back along the crust to the face, which releases from 20 m away.
+	av = await _trigger_setup()
+	snow.add_snow(30.0, 100.0)
+	snow.add_crust(0.02, 2.0)
+	snow.add_snow(100.0, 100.0)
+	await get_tree().physics_frame
+	snow.advance(170.0 * 3600.0)
+	for i in 3:
+		await get_tree().physics_frame
+	var flat_at := Vector3(15.0, 0.0, 0.0)
+	var i_light := av.get_trigger_index_at(flat_at, person_load)
+	var i_heavy := av.get_trigger_index_at(flat_at, 3000.0)
+	var light := av.apply_load(flat_at, person_load)
+	var heavy := av.apply_load(flat_at, 3000.0)
+	_check("a buried crust: a person on the flat holds, a heavy load collapses it and the face releases from afar", light == 0 and heavy == 1 and av.get_collapse_count() == 1 and av.is_running() and av.get_released_volume() > 500.0, "results %d, %d; %d collapse; %.2f m over the crust; index on the flat %.2f under a person, %.2f under 3 kN/m; %.0f m3 released" % [light, heavy, av.get_collapse_count(), snow.get_depth_at(flat_at), i_light, i_heavy, av.get_released_volume()])
+	while av.is_running():
+		av.step(0.5)
+	# Nothing triggers with triggers off.
+	av = await _trigger_setup()
+	av.triggers_enabled = false
+	snow.add_snow(60.0, 100.0)
+	await get_tree().physics_frame
+	person = _trigger_body(face, 80.0, Vector3(0.6, 1.8, 0.6))
+	for i in 3:
+		await get_tree().physics_frame
+	_check("triggers_enabled off: the person stands on it", av.get_trigger_count() == 0 and not av.is_running(), "%d triggered" % av.get_trigger_count())
+	person.queue_free()
 
 
 func _run_fire_tests() -> void:

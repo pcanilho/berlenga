@@ -1731,6 +1731,15 @@ func _build_weather() -> void:
 	sun.light_energy = 1.6
 	sun.shadow_enabled = args.get("sun-shadow", "1") != "0"
 	sun.directional_shadow_max_distance = float(args.get("shadow-max", "6000"))
+	# --shadow-splits=a,b,c: the cascades' ends as shares of shadow-max (Godot's defaults 0.1,0.2,0.5); a long low-sun
+	# view puts more of them into the middle distance. --shadow-atlas=N: the directional shadow atlas side (4096).
+	if args.has("shadow-splits"):
+		var sp: PackedStringArray = args["shadow-splits"].split(",")
+		sun.directional_shadow_split_1 = float(sp[0])
+		sun.directional_shadow_split_2 = float(sp[1])
+		sun.directional_shadow_split_3 = float(sp[2])
+	if args.has("shadow-atlas"):
+		RenderingServer.directional_shadow_atlas_set_size(int(args["shadow-atlas"]), true)
 	add_child(sun)
 	# The sun from a date, a time and a place (SkyClock, Meeus): the month is the rivers' month, so the light,
 	# the flows and the snowmelt are one day. World -Z is north; mid-latitude mountains on a western coast.

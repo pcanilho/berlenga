@@ -56,12 +56,38 @@ struct WaterSediment {
 	static Vector3 scattering(const Vector2 &p_c) { return mineral_scattering() * p_c.x + ash_scattering() * p_c.y; }
 };
 
-// The same coefficients in shader text (for a load read on the GPU, as a river's along its length).
+// The same coefficients in shader text (for a load read on the GPU, as a river's along its length), and how the load
+// goes into the water's medium:
+// - Similarity (van de Hulst 1980; Wyman, Patterson and Bigio 1989; Zhao, Wu, Ramamoorthi and Bala 2014): suspended
+//   particles scatter strongly forward (g about 0.85 for silt), so turbid water's light has scattered many times, and
+//   what carries it is the reduced scattering b (1 - g). Kept as that, the medium takes a broader phase as the load
+//   dominates (g toward 0.5 with the load's share of the scattering: broad enough to light evenly, still forward
+//   enough that the bed blurs out with depth rather than staying sharp) and the scattering that keeps b (1 - g): the same
+//   light in the diffusion regime, without a path tracer drawing its sun light through a phase peak a few degrees
+//   wide on random forward bounces (gold glitter that took thousands of samples to settle). Clear water is left as
+//   it is (no load: its own scattering and anisotropy).
+// - White water in loaded water: the light a foam patch sends back has crossed millimetres to centimetres of the water
+//   between its bubbles, so foam takes the water's colour (Dierssen 2019: whitecap spectra shaped by the water's
+//   absorption over an effective path of a few millimetres). Tan in a silty flood, grey in ash.
 inline constexpr const char *WATER_SEDIMENT_GLSL = R"(
 vec3 sediment_absorption_of(vec2 c) {
 	return vec3(12.0, 30.0, 85.0) * c.x + vec3(300.0) * c.y;
 }
 vec3 sediment_scattering_of(vec2 c) {
 	return vec3(200.0) * c.x + vec3(150.0) * c.y;
+}
+float water_medium_g(vec3 b_w, vec3 b_s, float g_w) {
+	vec3 share = b_s / max(b_w + b_s, vec3(1e-6));
+	return mix(g_w, min(g_w, 0.5), max(share.r, max(share.g, share.b)));
+}
+vec3 water_medium_scattering(vec3 b_w, vec3 b_s, float g_w) {
+	if (max(b_s.r, max(b_s.g, b_s.b)) <= 0.0) {
+		return b_w;
+	}
+	float g = water_medium_g(b_w, b_s, g_w);
+	return (max(b_w, vec3(0.0)) * (1.0 - g_w) + max(b_s, vec3(0.0)) * (1.0 - 0.85)) / max(1.0 - g, 0.05);
+}
+vec3 sediment_foam_tint(vec3 a_s) {
+	return exp(-max(a_s, vec3(0.0)) * 0.006);
 }
 )";

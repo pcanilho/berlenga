@@ -37,6 +37,8 @@ contract returns with no provider.
 | `terrain_lee_at(pos)` | rad | NaN | Winstral's Sx from the terrain wind (positive in a lee; NaN outside it); fire's lee-slope whirls |
 | `precipitation_at(pos)` | mm/h | 0 | Water equivalent falling |
 | `rain_share_at(pos)` | 0..1 | 1 | Liquid share (Jennings 2018) at the air there |
+| `rainfall_at(pos)`, `snowfall_at(pos)` | mm/h of water | 0 | The precipitation split by `rain_share_at` |
+| `washout_at(pos, coarse)`, static `washout_rate(rain, snow, coarse)` | 1/s | 0 | Below-cloud scavenging of particles, a R^b: fine smoke about 1e-5 at 1 mm/h, coarse dust about 3e-4, snow five times rain |
 | `surface_wetness_at(pos)` | 0..1 | 0 | Film over storage; 1 where puddles stand |
 | `puddle_at(pos)` | mm | 0 | |
 | `contact_wetness_at(pos)` / `add_contact_wetness(pos, radius, amount)` | 0..1 | 0 / no-op | Water any system splashes |

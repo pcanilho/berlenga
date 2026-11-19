@@ -2403,6 +2403,15 @@ red (khalal, a third of seeds red) to amber-brown, cut by day 300 in a grove. ST
 char only (FIRE_NONE, no prune). Frames: fork/trees/palm/ (date-palm, -trunk, -crown-dates, -raster-pt,
 date-oasis). Cost: 312k triangles a grown palm, 0.9 s.
 
+Docs round 1 (19 Nov): the oasis read as clones and the crowns as fuzz. Now each variant draws its own age
+(grove 9-70 years, wild 8-90, so 2-20 m), wild palms lean up to 0.28 rad (tended 0.09) and grow 1-4 stem
+clumps; wild palms only within 18 m of water (RULE_WATER_DISTANCE, 10 m fade) and the grove in patches
+(patch_scale 35 m, cover 0.75). Fronds read at range: pinnae narrower (half width 1.25 cm), rachis paler
+and thicker at the base, groups opened to 0.55 / 0.22 / -0.05 rad so sky shows between them. Dead-frond skirt
+darker (0.13, 0.105, 0.08). PT note: with dates on, some pinnae show date red in PT only; the leaf
+surface's vertex colours hold no red (scanned), so the path tracer reads crown_parts colours for some leaf
+triangles (engine, reported).
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

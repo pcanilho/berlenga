@@ -2552,6 +2552,7 @@ func _deadwood_view() -> void:
 	field.queue_free()
 	var t0 := Time.get_ticks_msec()
 	var tg := TreeGenerator.new()
+	tg.fire_variants = false # No burn in this view: skip the five fire-band meshes (halves the stand build).
 	var wood := VegetationField3D.new()
 	wood.far_volume = false # Not under test here.
 	wood.name = "Wood"

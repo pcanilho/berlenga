@@ -574,10 +574,14 @@ void fragment() {
 		sed_abs = sediment_absorption_of(sc);
 		sed_sca = sediment_scattering_of(sc);
 	}
+	// The medium with its load (similarity, water_sediment.h), and white water taking the loaded water's colour.
+	vec3 med_sca = water_medium_scattering(pathtraced_scattering, sed_sca, pathtraced_scattering_anisotropy);
+	float med_g = water_medium_g(pathtraced_scattering, sed_sca, pathtraced_scattering_anisotropy);
+	vec3 white_rgb = foam_color.rgb * sediment_foam_tint(sed_abs);
 
 #if defined(RT)
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
-	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
+	ALBEDO = mix(vec3(1.0), white_rgb, foam);
 	ROUGHNESS = mix(river_roughness, 0.8, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
@@ -587,8 +591,8 @@ void fragment() {
 	// angle can run on under the bank's ground through metres of the medium, tinting a dotted line along the shore.
 	float film = smoothstep(0.0, 0.12, depth);
 	ABSORPTION = (pathtraced_absorption + sed_abs) * film;
-	SCATTERING = (pathtraced_scattering + sed_sca) * film;
-	SCATTERING_ANISOTROPY = pathtraced_scattering_anisotropy;
+	SCATTERING = med_sca * film;
+	SCATTERING_ANISOTROPY = med_g;
 	// Gone past the waterline and the banks' fade, as in raster.
 	ALPHA = smoothstep(0.0, max(edge_softness, 1e-3), depth) * bank_fade;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
@@ -621,7 +625,7 @@ void fragment() {
 		vec3 seen;
 		vec3 bed_p;
 		float sun_share;
-		base_rgb = water_clear_through_ex(clear_screen, clear_depth, v_world, normalize(v_world - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, max(v_info.r * 4.0 - 1.0, 0.0), pathtraced_absorption + sed_abs, pathtraced_scattering + sed_sca, pathtraced_scattering_anisotropy, sun_dir, sun_irr, sky, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, true, seen, bed_p, sun_share);
+		base_rgb = water_clear_through_ex(clear_screen, clear_depth, v_world, normalize(v_world - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, max(v_info.r * 4.0 - 1.0, 0.0), pathtraced_absorption + sed_abs, med_sca, med_g, sun_dir, sun_irr, sky, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, true, seen, bed_p, sun_share);
 		if (caustics_strength > 0.0 && sun_share > 0.0 && sun_dir.y < -0.05) {
 			// Back up the refracted sun ray from the bed to the surface it came through.
 			float z = max(v_world.y - bed_p.y, 0.0);
@@ -674,7 +678,7 @@ void fragment() {
 	float keep = a0 * through / a_new;
 	NORMAL = n;
 	EMISSION = refl.rgb;
-	ALBEDO = foam_color.rgb * foam * keep;
+	ALBEDO = white_rgb * foam * keep;
 	ROUGHNESS = 0.85;
 	SPECULAR = 0.25 * foam;
 	METALLIC = 0.0;

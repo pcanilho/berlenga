@@ -230,7 +230,7 @@ func _stand_checks(only := -1) -> void:
 				if String(sps[s].resource_name).ends_with("(grove)"):
 					palms += f.get_placements(s).size()
 			var per_ha := palms / (SIZE * SIZE / 10000.0)
-			_check(palms > 0 and per_ha > 60.0 and per_ha < 220.0 and regen.log == 0, "date oasis: %d grove palms (%.0f a hectare), no logs" % [palms, per_ha])
+			_check(palms > 0 and per_ha > 35.0 and per_ha < 220.0 and regen.log == 0, "date oasis: %d grove palms (%.0f a hectare), no logs" % [palms, per_ha])
 		elif i == TreeGenerator.STAND_POLLARD_ROW:
 			_check(cut.pollard > 0 and cut.pollard >= open_count, "pollard row: %d willow pollards, %d alders" % [cut.pollard, open_count])
 		elif i == TreeGenerator.STAND_COPPICE_STANDARDS:
