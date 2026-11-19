@@ -1443,6 +1443,12 @@ Research: a slab avalanche leaves a crown (a tensile fracture standing the slab'
 - **Bench**: the avalanche view's lower sky is snow under this sky's own light (horizon 0.53, bottom 0.33-0.46), not the default brown (brown walls) nor a brighter white (it lit raster's vertical walls like lamps, a glowing band PT did not show). The slide runs under the old 30 degree sun (the thaw, so the wet run is unchanged); the shot is taken with the sun 55 degrees up from behind the ridge, which rakes the 38 degree face (from 30 degrees the whole face was in shade, so the walls had no light to show by): the crown stands in its own shade and throws shadow down the bed, in both renderers.
 - **Path tracing**: the wall's triangles were wound against their normals. The path tracer treats the winding's side as the front and flips a double-sided normal hit from behind, so the walls came out unlit; each quad is now wound to its normal.
 
+## Follow-up 31: the powder cloud along the whole head (19 Nov 2026)
+
+- **Head**: the eruption current comes from the head, the fastest part of a dry avalanche (Sovilla et al. 2015). In the flow the head's very edge ploughs the snow ahead and slows below the powder speed, so only the slab's sides (where the flow spreads sideways) fed the cloud: a few separate puffs. A cell now also counts as the head when the cell ahead of it is slower than the powder speed (the last fast snow before the ploughing edge), so the cloud rises along the whole front.
+- **Albedo**: PhysXFlow3D.scattering_albedo (PhysX 6568b3d2, raster to match 7b6f7ea0) is 0.99 for the powder: ice grains barely absorb (Warren 1982).
+- **Bench**: `--view=avalanche --powder` releases a wide dry slab in front of the camera (`trigger` at -40, radius 60). Left to itself the face let go off to both sides of the frame, and its cloud with it.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

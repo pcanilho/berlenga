@@ -2799,7 +2799,8 @@ func _build_avalanche(cam: Camera3D) -> void:
 	var av: SnowAvalanche3D = snow.get_avalanches()
 	var wet := OS.get_cmdline_user_args().has("--wet")
 	var triggered := wet or OS.get_cmdline_user_args().has("--triggered")
-	if OS.get_cmdline_user_args().has("--before") or triggered:
+	var powder := OS.get_cmdline_user_args().has("--powder")
+	if OS.get_cmdline_user_args().has("--before") or triggered or powder:
 		av.natural_release = false
 	if triggered:
 		# An old, bonded pack under the storm (60 cm a week and more old): the slab breaks away from it, leaving a
@@ -2819,7 +2820,10 @@ func _build_avalanche(cam: Camera3D) -> void:
 		# --triggered (dry) and --wet release the same face, so the two compare.
 		av.trigger(Vector3(-40.0, 0, 0), 30.0) # inside the face: the crown breaks across the slope, below the ridge
 		print("triggered slide: %.0f%% wet" % (av.get_flow_wetness() * 100.0))
-	if OS.get_cmdline_user_args().has("--powder"):
+	if powder:
+		# A wide dry slab across the face in front of the camera (left to itself the face lets go wherever it is
+		# weakest, here off to both sides of the frame, and its cloud with it).
+		av.trigger(Vector3(-40.0, 0, 0), 60.0)
 		# Mid-run in real time, so PhysX Flow steps the cloud with it: --at=S seconds after release (default 9).
 		var at_s := 9.0
 		for a in OS.get_cmdline_user_args():
