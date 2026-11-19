@@ -2022,6 +2022,7 @@
     "foam_crisp",
     "ripple_detail",
     "caustics_strength",
+    "live_surface_waves",
     "obstacle_collision_mask",
     "live_flow",
     "mouth_target",
