@@ -641,11 +641,12 @@ void sky() {
 	atmo_lights(l0, e0, l1, e1, size0);
 	float cam_h = max(POSITION.y, 1.0);
 	float r_cam = atmo_radii.x + cam_h;
+	float atmo_pixel_angle = max(length(dFdx(EYEDIR)), length(dFdy(EYEDIR)));
 	if (AT_QUARTER_RES_PASS) {
 		// The air alone: smooth, so a quarter of the resolution carries it (Hillaire's sky-view table
 		// is coarser still); its transmittance in alpha for what lies past it.
 		vec3 t_view;
-		vec3 air = atmo_scatter(cam_h, EYEDIR, l0, e0, l1, e1, 1e12, AT_CUBEMAP_PASS ? atmo_radiance_steps : atmo_steps, 0.3, AT_CUBEMAP_PASS ? 0 : atmo_cloud_shadow_steps, POSITION.xz, AT_CUBEMAP_PASS ? 0.0 : atmo_aerosol.w, t_view).rgb;
+		vec3 air = atmo_scatter(cam_h, EYEDIR, l0, e0, l1, e1, 1e12, AT_CUBEMAP_PASS ? atmo_radiance_steps : atmo_steps, 0.3, AT_CUBEMAP_PASS ? 0 : atmo_cloud_shadow_steps, POSITION.xz, AT_CUBEMAP_PASS ? 0.0 : atmo_aerosol.w, atmo_pixel_angle, t_view).rgb;
 		if (atmo_far_water > 0.0 && atmo_hits_ground(r_cam, EYEDIR.y)) {
 			// Open water past the scene: the sky mirrored at the angle the ray meets the curved sea, by
 			// Fresnel (Schlick, water), seen through the air in front (Bruneton 2010 lights an ocean so).
@@ -655,7 +656,7 @@ void sky() {
 			vec2 hz = length(EYEDIR.xz) > 1e-5 ? normalize(EYEDIR.xz) : vec2(1.0, 0.0);
 			vec3 rm = vec3(hz.x * sqrt(1.0 - c * c), c, hz.y * sqrt(1.0 - c * c));
 			vec3 t_m;
-			vec3 mirrored = atmo_scatter(1.0, rm, l0, e0, l1, e1, 1e12, 8, 0.5, 0, POSITION.xz, 0.0, t_m).rgb;
+			vec3 mirrored = atmo_scatter(1.0, rm, l0, e0, l1, e1, 1e12, 8, 0.5, 0, POSITION.xz, 0.0, 0.0, t_m).rgb;
 			float fresnel = 0.02 + 0.98 * pow(1.0 - c, 5.0);
 			air += t_view * atmo_far_water * fresnel * mirrored;
 		}
@@ -685,7 +686,7 @@ void sky() {
 		float r_c = atmo_radii.x + cloud_base_height;
 		vec3 sun_radiance = e0 * atmo_light_transmittance(r_c, l0.y) * cloud_brightness;
 		vec3 t_up;
-		vec3 ambient_top = atmo_scatter(cloud_base_height, UP, l0, e0, l1, e1, 1e12, 8, 0.5, 0, POSITION.xz, 0.0, t_up).rgb * cloud_brightness;
+		vec3 ambient_top = atmo_scatter(cloud_base_height, UP, l0, e0, l1, e1, 1e12, 8, 0.5, 0, POSITION.xz, 0.0, 0.0, t_up).rgb * cloud_brightness;
 		if (airglow_enabled && atmo_driven) {
 			// The airglow over the clouds lights their tops (its mean over the sky, about twice the zenith's).
 			ambient_top += vec3(0.6, 1.15, 0.75) * (2.0 * airglow_luminance * star_energy_per_lux * cloud_brightness);
@@ -707,7 +708,7 @@ void sky() {
 			// Aerial perspective (Hillaire 2020): the clouds seen through the air in front of them, which
 			// also scatters light toward the eye; what the clouds let through sees the whole sky behind.
 			vec3 t_front;
-			vec3 front = atmo_scatter(cam_h, EYEDIR, l0, e0, l1, e1, cloud_depth, atmo_cloud_air_steps, 0.5, AT_CUBEMAP_PASS ? 0 : atmo_cloud_shadow_steps, POSITION.xz, AT_CUBEMAP_PASS ? 0.0 : atmo_aerosol.w, t_front).rgb;
+			vec3 front = atmo_scatter(cam_h, EYEDIR, l0, e0, l1, e1, cloud_depth, atmo_cloud_air_steps, 0.5, AT_CUBEMAP_PASS ? 0 : atmo_cloud_shadow_steps, POSITION.xz, AT_CUBEMAP_PASS ? 0.0 : atmo_aerosol.w, atmo_pixel_angle, t_front).rgb;
 			COLOR = ((1.0 - clouds.a) * front + t_front * clouds.rgb) * exposure + air.rgb * clouds.a;
 		} else {
 			COLOR = air.rgb;

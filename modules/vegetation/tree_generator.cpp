@@ -13680,7 +13680,11 @@ void TreeGenerator::_apply_decay() {
 	} else if (decay_class == 4) {
 		cut_y = height * Math::lerp(0.3f, 0.6f, dr.randf());
 	} else if (decay_class == 5) {
-		cut_y = Math::lerp(0.4f, 1.5f, dr.randf());
+		// A class-5 snag is a stump of crumbling wood; a class-5 log is not a stump lying down but
+		// the bole's collapsed length, a moss-grown mound along the ground (Fraver et al. 2002:
+		// round to oval, mostly sunk, its outline still traceable). It was cut to the stump's
+		// metre or so, a short block (trees.md 5ao).
+		cut_y = fallen ? height * Math::lerp(0.3f, 0.5f, dr.randf()) : Math::lerp(0.4f, 1.5f, dr.randf());
 	}
 	const float base_y = nodes[0].start.y;
 	for (int i = 1; i < int(nodes.size()); i++) {
@@ -16541,6 +16545,33 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 		}
 	}
+	// A soft log slumps (trees.md 5ao): from decay class 4 its wood no longer holds its round, and
+	// a class-5 log is an oval mound, wider than it is tall (Fraver et al. 2002; Harmon et al. 1986,
+	// collapse ratio). Each ring is squashed about its own centre: down by the class's share and
+	// out sideways by half as much. Bark and moss shell take the same squash, so the shell's
+	// reading of the bark under it holds.
+	auto slump_log = [&](Builder &r_b, const Vector4i &p_part, const LocalVector<Vector3> &p_pts, int p_sides) {
+		const float sq = decay_class >= 5 ? 0.32f : (decay_class == 4 ? 0.14f : 0.0f);
+		const int ring = p_sides + 1;
+		if (sq <= 0.0f || p_pts.is_empty() || p_part.w != int(p_pts.size()) * ring) {
+			return;
+		}
+		Vector3 *vv = r_b.verts.ptrw();
+		Vector3 *nw = r_b.normals.ptrw();
+		for (int i = 0; i < p_part.w; i++) {
+			const int v = p_part.z + i;
+			const Vector3 &c = p_pts[i / ring];
+			Vector3 d = vv[v] - c;
+			const float up = d.y;
+			d.y = 0.0f;
+			vv[v] = c + d * (1.0f + 0.5f * sq) + Vector3(0, up * (1.0f - sq), 0);
+			Vector3 n = nw[v];
+			n.x /= 1.0f + 0.5f * sq;
+			n.z /= 1.0f + 0.5f * sq;
+			n.y /= 1.0f - sq;
+			nw[v] = n.normalized();
+		}
+	};
 	auto veteran_deform = [&](Builder &r_b, const Vector4i &p_part, const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_rad, int p_sides, bool p_colour, int p_features) {
 		if ((veteran_features.is_empty() && p_features != 3 && !(p_features == 2 && head_r > 0.0f)) || !p_features) {
 			return;
@@ -17920,6 +17951,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					if (s == wound_stem) {
 						wound_apply(bark, part, true);
 					}
+					if (stem && fallen) {
+						slump_log(bark, part, bp, bsides);
+					}
 					shell_bark_z = part.z;
 					shell_bark_w = part.w;
 				}
@@ -17942,6 +17976,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					}
 					if (vf) {
 						veteran_deform(moss, part, rp, rr, rsides, false, vf);
+					}
+					if (stem && fallen) {
+						slump_log(moss, part, rp, rsides);
 					}
 					// The bark's own displacement under each shell vertex (as the relief tube has it).
 					const Vector<uint8_t> bh_buf = bs.height->get_data();
@@ -17975,7 +18012,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					LocalVector<float> raw;
 					raw.resize(part.w);
 					// No moss on a log's broken butt face (the closed cap's rings).
-					const float cap_end = girth_r > 0.0f ? girth_r * 0.15f + 1e-4f : -1.0f;
+					const float cap_end = girth_r > 0.0f && decay_class < 4 ? girth_r * 0.15f + 1e-4f : -1.0f; // (A soft log's crumbled end grows over.)
 					for (int i = 0; i < part.w; i++) {
 						raw[i] = _moss_at(moss.verts[part.z + i], moss.normals[part.z + i], moss_ground, moss_k, false);
 						if (raw[i] > 0.15f && raw[i] < 0.85f) {
@@ -18035,7 +18072,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 							// top as a level line on a giant's foot (trees.md 5ao).
 							const float hh = moss.verts[v].y - ground_y;
 							const float k_low = 1.0f - Math::smoothstep(0.06f, 0.28f, hh + 0.12f * (moss_noise(moss.verts[v] * 11.0f, 0x6c6f7766u) - 0.5f));
-							if (hh > -0.04f && k_low > 0.0f) {
+							// Not where the shell was sunk on purpose (a hollow's rotten wall, trees.md 5ao):
+							// read from the bark itself, that sink now shows as a deep `under`.
+							if (hh > -0.04f && k_low > 0.0f && under < 0.02f) {
 								fill = MAX(fill, Math::lerp(fill, under + 0.004f, k_low));
 							}
 						}

@@ -193,3 +193,20 @@ short steps inside cloud are the cost the next two items (sun shadow grid, empty
    Cost (lavapipe, `--view=clouds`, raster, frames 30 to 60): 836 ms a frame without, 750 to 773 with (the
    bake shares the same CPU there). Bake about 0.37 s of CPU in all, spread over 32 frames. PT parity: sky
    mean difference 4/255 on `clouds_wide`.
+
+4. **Empty-space skipping: tried, not kept.** A 2D map over the grid's box of the distance from each 256 m
+   column to the nearest column holding any cloud (16 points x 8 heights per column, grown by one, chamfer
+   distance), leaped by the march in clear sky. No visible change, but at fair-weather cover (0.3) 54% of
+   columns hold some cloud and only 7% stay clear after the safety margin (2% at the crest view's cover), so
+   it saved 3 to 4%, within the bench's noise. The clear-sky steps were already cheap (the cover read and one
+   shape read, then out); the frame's cloud cost is inside the clouds (short steps, each with its light
+   samples). A 3D occupancy grid fares no better at these sizes. Not worth its code; the light grid stays the
+   saving.
+
+5. **Banding under the far cloud bases: fixed.** It was not the clouds (a prefiltered far-cloud density, tried
+   first, left it unchanged and smeared the mid-distance clouds, so it was dropped). It was the sky's own far
+   ground, past the scene, lit through the cloud shadow map from one texel per pixel: there neighbouring
+   pixel rows meet the ground kilometres apart, so single 160 m texels of cloud shadow showed as dark
+   horizontal streaks. The sky shadow map now has mipmaps and the ground read takes the mip of the pixel's
+   footprint (t times the pixel's angle over the sine the ray meets the ground at). The air's shafts read as
+   before. PT parity: sky mean difference 5/255 on `clouds_wide`.
