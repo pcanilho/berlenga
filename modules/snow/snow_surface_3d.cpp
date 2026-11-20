@@ -215,6 +215,20 @@ float snow_noise(vec2 p) {
 	f = f * f * (3.0 - 2.0 * f);
 	return mix(mix(snow_hash(i), snow_hash(i + vec2(1.0, 0.0)), f.x), mix(snow_hash(i + vec2(0.0, 1.0)), snow_hash(i + vec2(1.0, 1.0)), f.x), f.y);
 }
+// The same noise with its gradient (x: value, yz: d/dx, d/dy), from the same four corners (Quilez, value
+// noise derivatives).
+vec3 snow_noise_grad(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	vec2 du = 6.0 * f * (1.0 - f);
+	float a = snow_hash(i);
+	float b = snow_hash(i + vec2(1.0, 0.0));
+	float c = snow_hash(i + vec2(0.0, 1.0));
+	float d = snow_hash(i + vec2(1.0, 1.0));
+	float k = a - b - c + d;
+	return vec3(mix(mix(a, b, u.x), mix(c, d, u.x), u.y), du * vec2(b - a + k * u.y, c - a + k * u.x));
+}
 // Snow sparkle (docs/ideas/snow.md, stage 5): the same function as BaseMaterial3D's snow pass, there with
 // its comments. A facet normal and its weight (0: none) for a footprint in metres.
 vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
@@ -272,14 +286,22 @@ vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
 	return normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
 }
 
-float snow_ripple(vec2 p) {
-	// Wind ripples and grain clumps: 4 mm at 35 cm, 1.5 mm at 9 cm. Each octave turns by an irrational angle
-	// so no lattice axis lines up, and a 1.7 m field varies their strength from patch to patch (smoother and
-	// rougher snow), so the pattern never reads as a repeat.
+// Wind ripples and grain clumps: 4 mm at 35 cm, 1.5 mm at 9 cm. Each octave turns by an irrational angle
+// so no lattice axis lines up, and a 1.7 m field varies their strength from patch to patch (smoother and
+// rougher snow), so the pattern never reads as a repeat.
+// The ripples' gradient (per metre) in one evaluation: the octaves' analytic gradients through their turns
+// (v * M is transpose(M) * v). Central differences took four evaluations.
+vec2 snow_ripple_grad(vec2 p) {
 	const mat2 r1 = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8));
 	const mat2 r2 = mat2(vec2(0.28, -0.96), vec2(0.96, 0.28));
-	float strength = 0.55 + 0.9 * snow_noise(r2 * p / 1.7 + 41.0);
-	return micro_relief * strength * (0.004 * snow_noise(r1 * p / 0.35) + 0.0015 * snow_noise(r2 * p / 0.09 + 17.0));
+	vec3 s = snow_noise_grad(r2 * p / 1.7 + 41.0);
+	vec3 a = snow_noise_grad(r1 * p / 0.35);
+	vec3 b = snow_noise_grad(r2 * p / 0.09 + 17.0);
+	float strength = 0.55 + 0.9 * s.x;
+	vec2 g_strength = 0.9 * (s.yz * r2) / 1.7;
+	float o = 0.004 * a.x + 0.0015 * b.x;
+	vec2 g_o = 0.004 * (a.yz * r1) / 0.35 + 0.0015 * (b.yz * r2) / 0.09;
+	return micro_relief * (g_strength * o + strength * g_o);
 }
 
 void vertex() {
@@ -312,9 +334,9 @@ void fragment() {
 	vec3 hd = snow_height_diff(p, e, false);
 	float hx = hd.y;
 	float hz = hd.z;
-	float em = 0.02;
-	hx += (snow_ripple(p + vec2(em, 0.0)) - snow_ripple(p - vec2(em, 0.0))) * e / em;
-	hz += (snow_ripple(p + vec2(0.0, em)) - snow_ripple(p - vec2(0.0, em))) * e / em;
+	vec2 rg = snow_ripple_grad(p) * 2.0 * e;
+	hx += rg.x;
+	hz += rg.y;
 	vec3 nf = normalize(vec3(-hx, 2.0 * e, -hz));
 	vec3 tn = vec3(dot(nf, normalize(w_t)), dot(nf, normalize(w_b)), dot(nf, normalize(w_n)));
 	ALBEDO = tint * pack.g * (1.0 - 0.08 * compact);
