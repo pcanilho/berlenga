@@ -284,3 +284,14 @@ Round 3 follow-ups (docs review of 118c13bc):
    cumulus layer, followed up the sun to the sheet, two-stream transmission as in the ground's shadow bake. Under
    a full altocumulus sheet far cumulus lose about 6% of their brightness (the sheet is thin, optical depth 4 at
    full cover, and most light comes through scattered).
+
+## Round 4 (20 Nov 2026; Paulo: all three)
+
+1. **Light bounced between clouds** (cloud-to-cloud interreflection). The sun light grid's bake also stores how
+   much of each 256 m texel is sunlit cloud (its opacity across a texel times the two-stream sun reaching it).
+   Building the texture blurs that at two reaches, 1.3 and 3.3 km (a cone's footprint widening with distance, as
+   voxel cone tracing reads coarser mips further out; Crassin et al. 2011), leaving out the texel itself, and
+   stores it as the grid's green channel. The march adds sun x 0.7 x that share as diffuse light, entering the
+   shell as the sky's light does: the shaded side of a tower facing a sunlit neighbour warms. `cloud_bounce`
+   (1.0). Frame cost unchanged within noise (one more read of a texture already bound); the bake adds one
+   extinction read a texel and two box blurs. Raster and PT match.
