@@ -447,3 +447,27 @@ nebulosus/fibratus; Tape 1994).
   merge); the grain threshold wanders on 2.5 km, so ripples break into gaps and run together.
 - Halo check: the 22 and 46 degree rings show through the veil toward the sun (raster and PT). Sun-facing frame:
   weather `--view=shafts --cover=0.05 --high-cover=1.0` (sun 20 degrees up, 13 left of the view).
+
+## Round 8: storm details, rain shafts and shelf clouds (20 Nov 2026)
+
+Research: rain's visible extinction from its rate, sigma = 0.31 R^0.67 per km (Atlas 1953, visibility in rain);
+heavy rain falls in shafts a few km across that slant downwind as the drops fall at about 7 m/s. A shelf cloud
+(arcus) forms on a storm's gust front where its cold outflow lifts the warm moist inflow ahead of it to
+saturation below the storm's base: a smooth, low wedge along the leading edge (Doswell 1985; WMO International
+Cloud Atlas, arcus). Mammatus (next): pouches under an anvil from sublimation and evaporation into drier air
+below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
+
+- Rain shafts (sky, `march_rain_shafts`): under each storm's base, the storm's rain (its peak rate times growth,
+  `State.storm_rain`) over a core with an edge, exp(-(r/R)^4), broken into curtains by two octaves of noise (900
+  and 260 m), slanted by the low wind over 7 m/s (`rain_slant`). Lit by the sky's light under the clouds (a third
+  under the storm's shield) and the sun where the cover toward it is thin (HG 0.6). 14 steps over the chord,
+  composited with the cloud layers by distance. Cost on lavapipe within noise (558 to 601 ms a frame).
+- Shelf cloud (`shelf_drop`, CPU and GLSL): the base drops up to 450 m (`SHELF_DROP`, scaled by outflow / 15 m/s and
+  growth) along the gust front, which runs ahead of the core by 1.1 radii plus 0.04 per m/s of outflow on the side
+  the storm moves (`State.storm_dir`, the wind that steers storms); sharp at the front, rising back over 1.2 x 0.6
+  radii; there the cover is raised to one continuous sheet and the type taken to stratus, so it reads as a smooth
+  wedge. `WeatherMap3D.get_cloud_base_at` (and `WorldWeather.cloud_base_at`) include it.
+- Connected: storm rain rate, outflow, the steering wind, the low wind, the sun.
+- Raster and PT match (640). Near the camera the rain is the haze's and RainFall3D's; distant shafts draw against
+  the sky only (terrain in front of a shaft hides it, as it should; a shaft in front of far terrain is not drawn yet).
+- Bench: weather `--storm=x,z,R,mm,outflow` (grown 15 min, the storm moving about 9 km), `--wind-dir=x,z`.
