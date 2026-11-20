@@ -92,7 +92,7 @@ protected:
 public:
 	// Writes p_src (sampled) over p_dst (an RGBA16F storage image), rgb scaled
 	// by p_scale, on the render thread.
-	void copy_texture(RenderingDevice *p_rd, const RID &p_src, const RID &p_dst, const Size2i &p_size, float p_scale = 1.0f);
+	void copy_texture(RenderingDevice *p_rd, const RID &p_src, const RID &p_dst, const Size2i &p_size, float p_scale = 1.0f, bool p_keep_alpha = false);
 	// Adds point / spot light scattering in a flow's gas onto p_color.
 	FlowScatterRD &get_scatter() { return scatter; }
 	// Bends the frame through a flow's hot air (raster).
