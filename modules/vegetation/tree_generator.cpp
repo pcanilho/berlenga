@@ -21189,7 +21189,13 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		TreeGenerator look;
 		look.set_preset(p_preset);
 		const float y0 = look.params[PARAM_YEARS];
-		if (succession_band == 1) {
+		if (succession_band == 3) {
+			// Stand initiation: a young cohort in the open, the first decade or two, 1-6 m (a spruce or pine about a
+			// tenth of its mature height at 10-15 years).
+			// Pioneers outgrow the conifers in the open (birch about 0.5-1 m a year when young).
+			const bool pioneer = p_preset == PRESET_BIRCH || p_preset == PRESET_ROWAN;
+			params[PARAM_YEARS] = MAX(3.0f, Math::round(y0 * (pioneer ? Math::lerp(0.16f, 0.26f, tv) : Math::lerp(0.07f, 0.14f, tv))));
+		} else if (succession_band == 1) {
 			// The pole stage: one cohort, a third to a half of the stand's years, crowns high and narrow in the crush
 			// (snags of the same cohort are the thinned ones).
 			params[PARAM_YEARS] = Math::round(y0 * Math::lerp(0.3f, 0.5f, tv));
@@ -23064,6 +23070,7 @@ Ref<Biome> TreeGenerator::make_succession(Stand p_stand, int p_variants) {
 	}
 	// Stand initiation: pioneers and the lead's seedlings.
 	{
+		succession_band = 3;
 		Ref<PlantSpecies> birch = _stand_species(PRESET_BIRCH, true, p_variants, FORM_SAPLING);
 		birch->set_name("Birch (pioneer)");
 		birch->set_density(1.0f);
@@ -23076,6 +23083,10 @@ Ref<Biome> TreeGenerator::make_succession(Stand p_stand, int p_variants) {
 		seedling->set_name(vformat("%s (seedlings)", seedling->get_name()));
 		seedling->set_density(0.8f);
 		tag(seedling, 2.0f, e1 + 5.0f, -1);
+		// The cohort comes up thick in the open (thousands of stems a hectare before self-thinning).
+		birch->set_spacing(birch->get_spacing() * 0.6f);
+		seedling->set_spacing(seedling->get_spacing() * 0.6f);
+		succession_band = 0;
 	}
 	// Stem exclusion: one cohort of poles, dense, self-thinning.
 	{

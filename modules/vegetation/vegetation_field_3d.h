@@ -183,7 +183,10 @@ private:
 
 	Ref<Biome> biome;
 	LocalVector<int> stand_disturbances; // WorldStand event ids this field reported (_report_stand_disturbances).
+	LocalVector<Vector4> stand_disturbance_discs; // Their (x, z, radius, kind), to skip unchanged re-reports.
+	LocalVector<float> stand_disturbance_years;
 	void _report_stand_disturbances(bool p_clear_only);
+	void _stand_discs(LocalVector<Vector4> &r_discs, LocalVector<float> &r_years) const;
 	NodePath data_map;
 	float tile_size = 32.0f;
 	int seed = 0;
