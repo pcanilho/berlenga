@@ -6164,13 +6164,14 @@ func _hut_icicles() -> void:
 	# --hut-icicles (with --hut, winter): snow on the hut's roof (its materials take the weather's snow) and a week of
 	# icicles (SnowIcicles3D, snow 5f68879a) along its longest eave, the lip found from the roof mesh; the camera
 	# --ice-dist (1.55) m out from the eave, a little above the icicles' middle, on the longest fused pair, the hut's
-	# dark wall behind. --ice-days (7), --ice-fov (26).
+	# dark wall behind. --ice-days (7), --ice-fov (26), --ice-up (0.4 m over the icicles' middle), --ice-look-up (0).
 	var root := get_node_or_null("Hut") as Node3D
 	if root == null or not ClassDB.class_exists("SnowIcicles3D"):
 		_log("hut icicles: no hut or no SnowIcicles3D")
 		return
 	var inv := root.global_transform.affine_inverse()
 	var pts := PackedVector3Array()
+	var snowed := 0
 	for mi in root.find_children("*", "MeshInstance3D", true, false):
 		var m := mi as MeshInstance3D
 		if m.mesh == null or not String(m.name).begins_with("Hut"):
@@ -6181,6 +6182,7 @@ func _hut_icicles() -> void:
 				var mm := (mat as BaseMaterial3D).duplicate() as BaseMaterial3D
 				mm.set("snow_enabled", true)
 				m.set_surface_override_material(si, mm)
+				snowed += 1
 		var xf := inv * m.global_transform
 		for v in m.mesh.get_faces():
 			pts.append(xf * v)
@@ -6269,9 +6271,10 @@ func _hut_icicles() -> void:
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	var wout := (root.global_basis * outward).normalized()
 	var wt := (root.global_basis * tang).normalized()
-	c3.global_position = mid + wout * float(args.get("ice-dist", "1.55")) + Vector3.UP * 0.4 - wt * 0.4
-	c3.look_at(mid)
+	c3.global_position = mid + wout * float(args.get("ice-dist", "1.55")) + Vector3.UP * float(args.get("ice-up", "0.4")) - wt * 0.4
+	c3.look_at(mid + Vector3.UP * float(args.get("ice-look-up", "0")))
 	c3.fov = float(args.get("ice-fov", "26"))
+	_log("hut icicles: %d hut surfaces take the snow, snow %.2f m water at the hut" % [snowed, snow.get_world_swe_at(mid) if snow != null and snow.has_method("get_world_swe_at") else -1.0])
 	_log("hut icicles: eave side %d, %.1f m long at %.2f m, %d sites, longest %.2f m, %.2f kg; hero pair %d (%.2f m) at %s; cam %s" % [best_side, best_len, eave_y, n, float(ice.call("get_longest")), float(ice.call("get_ice_mass")), bk, bl, str(mid), str(c3.global_position)])
 
 
