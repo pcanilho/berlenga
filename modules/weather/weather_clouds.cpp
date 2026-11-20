@@ -674,7 +674,8 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	const float dome = 1.0f - smoothstep(1.0f - round_top, 1.0f, h);
 	const float base = smoothstep(0.0f, Math::lerp(0.2f, 0.03f, cu), h);
 	const Vector2 so = shear_offset(p_state, p_pos.y, b);
-	const float n = shape_at(p_state, Vector3(p_pos.x - so.x, p_pos.y, p_pos.z - so.y));
+	// Flat bases (wc_extinction_p): the lowest 120 m read the noise at its top, so the outline drops straight to the base.
+	const float n = shape_at(p_state, Vector3(p_pos.x - so.x, MAX(p_pos.y, b + 120.0f), p_pos.z - so.y));
 	// Nubis's coverage remap, remap(n p, 1 - c, 1, 0, 1): where the noise is high the cloud reaches
 	// further up the profile, which domes the tops. Then times the cover (Schneider 2015): the few
 	// small clouds of a fair sky are thin and light, where the remap alone made every one as dense as
@@ -1053,11 +1054,15 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 	// base stays upright. The cover stays read at the column's base.
 	float zs = max(p.y - b0, 0.0) / max(cloud_thickness, 1.0);
 	p.xz -= cloud_shear * min(zs * zs, 9.0);
-	float n = wc_shape(p, p_step);
 	// Single clouds carved by the shape noise; a deck is the continuous noise's (extinction_at on the CPU).
 	float hc;
 	vec4 loc;
 	float env = wc_cells(p, b0, ct, 1.0, hc, loc);
+	// Flat bases on one condensation level: below a cloud's lowest stretch (120 m) the noise and the turrets are
+	// read at its top, so the outline drops straight to the base instead of rounding up into floating puffs.
+	float y_lift = max(b0 + 120.0 - p.y, 0.0);
+	float n = wc_shape(p + vec3(0.0, y_lift, 0.0), p_step);
+	loc.y += y_lift / loc.w;
 	hc = mix(h, hc, step(0.001, env));
 	if (env > 0.0) {
 		// Turrets: billows in the cloud's own frame (about four across it, finer octaves inside) cut into the envelope,
@@ -1065,7 +1070,7 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 		// Neyret 1997's rising thermals) and the walls bulge. Cut into the envelope, before the coverage remap, they
 		// move the outline; as an erosion after it they only roughened the skin of one round dome. The base stays flat.
 		float lobes = textureLod(cloud_detail, loc.xyz * 0.4, max(log2(p_step / loc.w * 0.4 * 128.0), 0.0)).b;
-		env = max(env - cloud_turret_strength * (1.0 - lobes) * mix(0.4, 1.0, smoothstep(0.15, 0.6, hc)), 0.0);
+		env = max(env - cloud_turret_strength * (1.0 - lobes) * mix(0.4, 1.0, smoothstep(0.15, 0.6, hc)) * smoothstep(0.0, 0.25, hc), 0.0);
 	}
 	float cells = max(n - (1.0 - env), 0.0) / max(env, 0.001) * base;
 	float deck = max(n * dome - (1.0 - ct.x), 0.0) / max(ct.x, 0.001) * base * smoothstep(0.55, 0.85, ct.x);

@@ -1142,11 +1142,11 @@ func _build_clouds() -> void:
 	await albedo.changed
 	var gm := StandardMaterial3D.new()
 	gm.albedo_texture = albedo
-	gm.uv1_scale = Vector3(30, 30, 1)
+	gm.uv1_scale = Vector3(150, 150, 1)
 	gm.roughness = 0.95
 	var ground := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(12000, 12000)
+	pm.size = Vector2(60000, 60000) # to the horizon from the wide view's 520 m (a 12 km plane ended in a grey band)
 	ground.mesh = pm
 	ground.material_override = gm
 	add_child(ground)

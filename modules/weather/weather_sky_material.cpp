@@ -417,7 +417,7 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 		// density toward the sky; SunshineClouds2 reads the density one step up): one coarse read 100 m above,
 		// so undersides and the lee of towers darken while the tops stay open to the sky.
 		float up_tau = transmittance > 0.15 ? wc_extinction(p + vec3(0.0, 100.0, 0.0), ct, false, 100.0) * 100.0 : 2.0 * (1.0 - hf);
-		light += mix(ambient_bottom, ambient_top, hf) * mix(0.35, 1.0, sqrt(1.0 - profile)) * mix(0.4, 1.0, exp(-up_tau)) * 1.4;
+		light += mix(ambient_bottom, ambient_top, mix(0.4, 1.0, hf)) * mix(0.5, 1.0, sqrt(1.0 - profile)) * mix(0.5, 1.0, exp(-up_tau)) * 1.4;
 		// Energy-conserving step (Hillaire 2016): albedo 1, so the scattering is the extinction.
 		float tr = exp(-sigma * st);
 		radiance += transmittance * light * (1.0 - tr);
@@ -809,7 +809,17 @@ void sky() {
 		float r_c = atmo_radii.x + cloud_base_height;
 		vec3 sun_radiance = e0 * atmo_light_transmittance(r_c, l0.y) * cloud_brightness;
 		vec3 t_up;
-		vec3 ambient_top = atmo_scatter(cloud_base_height, UP, l0, e0, l1, e1, 1e12, 8, 0.5, 0, POSITION.xz, 0.0, 0.0, t_up).rgb * cloud_brightness;
+		// The sky light over a cloud: the mean over the upper hemisphere, not the zenith alone (the zenith is the
+		// sky's darkest part; a cloud in another's shadow at a low sun is lit by the bright sky toward the horizon
+		// and the sun, and came out darker than the sky behind it). Zenith plus two reads 30 degrees up, on the
+		// sun's side and away from it.
+		vec2 sun_h = normalize(l0.xz + vec2(1e-4, 0.0));
+		sun_h = vec2(0.866 * sun_h.x - 0.5 * sun_h.y, 0.5 * sun_h.x + 0.866 * sun_h.y); // 30 degrees off the sun: its glow, not its aureole
+		vec3 d_to = vec3(sun_h.x * 0.866, 0.5, sun_h.y * 0.866);
+		vec3 d_away = vec3(-d_to.x, 0.5, -d_to.z);
+		vec3 ambient_top = (0.4 * atmo_scatter(cloud_base_height, UP, l0, e0, l1, e1, 1e12, 8, 0.5, 0, POSITION.xz, 0.0, 0.0, t_up).rgb
+				+ 0.3 * atmo_scatter(cloud_base_height, d_to, l0, e0, l1, e1, 1e12, 6, 0.5, 0, POSITION.xz, 0.0, 0.0, t_up).rgb
+				+ 0.3 * atmo_scatter(cloud_base_height, d_away, l0, e0, l1, e1, 1e12, 6, 0.5, 0, POSITION.xz, 0.0, 0.0, t_up).rgb) * cloud_brightness;
 		if (airglow_enabled && atmo_driven) {
 			// The airglow over the clouds lights their tops (its mean over the sky, about twice the zenith's).
 			ambient_top += vec3(0.6, 1.15, 0.75) * (2.0 * airglow_luminance * star_energy_per_lux * cloud_brightness);
@@ -871,7 +881,15 @@ void sky() {
 	if (AT_HALF_RES_PASS) {
 		float sun_fade = 1.0 - clamp(1.0 - exp(sun_dir.y), 0.0, 1.0);
 		vec3 sun_radiance = LIGHT0_COLOR * light_energy * air_extinction(sun_dir, sun_fade) * cloud_brightness;
-		vec3 ambient_top = atmosphere(UP, sun_dir, light_energy, LIGHT0_COLOR, LIGHT0_SIZE, false) * cloud_brightness;
+		// The mean over the upper hemisphere, as the scattering model's branch: zenith plus 30 degrees up on the sun's
+		// side and away from it.
+		vec2 sun_h = normalize(sun_dir.xz + vec2(1e-4, 0.0));
+		sun_h = vec2(0.866 * sun_h.x - 0.5 * sun_h.y, 0.5 * sun_h.x + 0.866 * sun_h.y); // 30 degrees off the sun: its glow, not its aureole
+		vec3 d_to = vec3(sun_h.x * 0.866, 0.5, sun_h.y * 0.866);
+		vec3 d_away = vec3(-d_to.x, 0.5, -d_to.z);
+		vec3 ambient_top = (0.4 * atmosphere(UP, sun_dir, light_energy, LIGHT0_COLOR, LIGHT0_SIZE, false)
+				+ 0.3 * atmosphere(d_to, sun_dir, light_energy, LIGHT0_COLOR, LIGHT0_SIZE, false)
+				+ 0.3 * atmosphere(d_away, sun_dir, light_energy, LIGHT0_COLOR, LIGHT0_SIZE, false)) * cloud_brightness;
 		// From below: the sky's light off the ground (its colour as albedo), lit by the sun where clear.
 		vec3 ambient_bottom = ambient_top * 0.5 + ground_color.rgb * sun_radiance * max(sun_dir.y, 0.0) * (1.0 - 0.7 * cloud_cover) / PI;
 		float jitter = AT_CUBEMAP_PASS ? 0.5 : march_jitter(FRAGCOORD.xy, 0.0);

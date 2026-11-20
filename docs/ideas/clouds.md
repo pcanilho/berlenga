@@ -255,3 +255,17 @@ erosion (bake against a 10 m march still 0.002). Shadow share of the ground by c
 PhysX Flow was considered for the shapes: it simulates a grid tens of metres across, so a sky of clouds
 kilometres wide would need either a coarse grid with no crests or far more memory than a frame has; the
 procedural model above is what every shipped sky uses. Not yet: the mid sheet dimming the cumulus' sun.
+
+Round 3 follow-ups (docs review of 118c13bc):
+
+6. **Flat bases**: the lowest 120 m of a cumulus read the shape noise (and its turrets) at that height, so the
+   outline drops straight to the condensation level instead of rounding up underneath; no side turrets in the
+   lowest quarter. Clouds high in a frame from the ground are near ones, seen from below: their bases are on
+   the same level, higher in the frame by perspective.
+7. **Sky light: the hemisphere, not the zenith.** The cloud's sky light was the zenith radiance, the darkest
+   part of the sky; a cumulus in another's shadow at a low sun came out near black, darker than the sky behind
+   it. Now the zenith (0.4) plus two reads 30 degrees up (0.3 each), one 30 degrees round from the sun's
+   azimuth (its glow, not its aureole) and one opposite, in both atmosphere models. Shadowed clouds read grey,
+   about the sky's brightness.
+8. **Bench**: the weather bench's ground was 12 km across, so the wide view from 520 m saw past its edge (a grey
+   band under the horizon). Now 60 km.
