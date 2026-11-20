@@ -120,11 +120,13 @@ void main() {
 		// Drawn this frame: averaged with what this pixel held, so the march's jitter, which
 		// changes every frame, settles instead of showing. Its first sample replaces the upsampled
 		// fill it held (blocky, a sixteenth of the pixels), the next ones make a running mean, then
-		// an exponential mean over about the last four (the history clamp keeps it on the moving clouds; a weight of a
+		// an exponential mean over about the last twelve (the history clamp keeps it on the moving clouds; a weight of a
 		// half left the jitter visible as a fixed checker across each 4x4 block, and kept the first
-		// fill's blocks for several cycles).
+		// fill's blocks for several cycles; over four, thin hard-edged cloud such as a shelf never settled past a
+		// grain, since an exponential mean's noise stops falling at its window). The march's starts are stratified
+		// per pixel across its revisits (REPROJECTION_FRAME), so the mean converges well inside that window.
 		vec4 fresh = texelFetch(new_samples, q, 0);
-		float w = 1.0 / float(min(max(params.drawn, 1u), 4u));
+		float w = 1.0 / float(min(max(params.drawn, 1u), 12u));
 		imageStore(dest, px, seen ? mix(prev, fresh, w) : fresh);
 		return;
 	}
