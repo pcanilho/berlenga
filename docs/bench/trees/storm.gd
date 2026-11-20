@@ -8,7 +8,7 @@ extends Node3D
 #   --every=N          save every Nth frame (default 15); --at=T one frame at T s
 #   --speed=U          mean wind at 10 m, m/s (default 30); --turbulence=I (default 0.25)
 #   --anchorage=A      soil factor on root anchorage (default 1; wet soil 0.6)
-#   --presets=a,b      species (default 4,1: Norway spruce, beech); --seed=S
+#   --presets=a,b      species (default 4,1: Norway spruce, beech); --seed=S; --spacing=M between them (default clear)
 #   --char=C           a past fire charred every stem foot C metres deep (a WorldFire stub), so they snap there
 #   --snag=Y           a past fire killed every tree Y years ago (standing snags, rotting)
 #   --avalanche=P      an avalanche puts P Pa on every tree from 1 s (WorldSnow stub), on a slope down +Z
@@ -129,7 +129,7 @@ func _setup(args: Dictionary) -> Array:
 		var t := _tree(p, int(args.get("seed", "1")), Vector3(x, 0, 0))
 		t["x"] = x
 		trees.append(t)
-		x += t.height * 1.3 + t.crown
+		x += float(args["spacing"]) if args.has("spacing") else t.height * 1.3 + t.crown
 	target_speed = float(args.get("speed", "30"))
 	wind.target = wind.get_path_to(self)
 	wind.rescan()
@@ -224,7 +224,7 @@ func run(args: Dictionary) -> void:
 			for m in st.get_children():
 				if m is MeshInstance3D:
 					print("stump mesh %s scale %.2f aabb %s" % [m.mesh.get_class(), m.scale.x, m.mesh.get_aabb()])
-	print("storm: %d breaks, %d thrown (%d snapped at the foot), %d Blast falls, %d snags" % [wind.get_storm_break_count(), wind.get_storm_throw_count(), wind.get_storm_snap_count(), wind.get_storm_fall_count(), wind.get_snag_count()])
+	print("storm: %d breaks, %d thrown (%d snapped at the foot), %d Blast falls, %d snags, %d stand-replacing patches (stand-age map kind %d at the first tree)" % [wind.get_storm_break_count(), wind.get_storm_throw_count(), wind.get_storm_snap_count(), wind.get_storm_fall_count(), wind.get_snag_count(), wind.get_windthrow_patch_count(), WorldContracts.get_stand().disturbance_at(Vector3.ZERO)])
 	get_tree().quit(1 if fails > 0 else 0)
 
 func _parts() -> int:
@@ -252,6 +252,11 @@ func _test() -> void:
 	for f in 600:
 		await get_tree().physics_frame
 	_check(wind.get_storm_break_count() + wind.get_storm_throw_count() > 0, "34 m/s on wet soil: %d breaks, %d thrown" % [wind.get_storm_break_count(), wind.get_storm_throw_count()])
+	# Stand-replacing windthrow reaches the stand-age map (WorldStand, trees.md 5aq): a 30 m cell with 60% of its
+	# stems thrown (at least three) is reported once as a wind disturbance. These trees stand a tree height or more
+	# apart, one to a cell, so single throws are gaps and none is reported.
+	var patches: int = wind.get_windthrow_patch_count()
+	_check(patches == 0, "windthrow to the stand-age map: %d thrown of %d trees, one to a cell: %d stand-replacing patches" % [wind.get_storm_throw_count(), trees.size(), patches])
 	var low := 1e9
 	var bodies := 0
 	# Falling parts are bodies; landed ones become (internal) Blast destructibles.

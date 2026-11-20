@@ -182,6 +182,8 @@ private:
 	float _shade_at(const Vector2 &p_xz, float *r_conifer = nullptr) const; // No lock: main thread, or under crown_lock.
 
 	Ref<Biome> biome;
+	LocalVector<int> stand_disturbances; // WorldStand event ids this field reported (_report_stand_disturbances).
+	void _report_stand_disturbances(bool p_clear_only);
 	NodePath data_map;
 	float tile_size = 32.0f;
 	int seed = 0;
