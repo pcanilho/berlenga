@@ -160,6 +160,9 @@ bool rt_volume_span(vec3 p_origin, vec3 p_dir, float p_t_max, out float r_t0, ou
 	return r_t1 > r_t0;
 }
 
+// Scattering events in the gas a path may take beyond max_bounces (scene_raytracing_raygen.glsl).
+const uint RT_VOLUME_MAX_SCATTERS = 32u;
+
 float rt_volume_sigma_t(float p_smoke) {
 	return rt_volume.medium.x * clamp(p_smoke, 0.0, rt_volume.medium.w);
 }

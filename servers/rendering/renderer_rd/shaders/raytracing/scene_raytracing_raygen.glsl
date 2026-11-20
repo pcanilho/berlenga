@@ -1017,7 +1017,11 @@ void main() {
 		// Transmission past the first bounce does not count toward max_bounces (see the transmission lobe in
 		// sample_surface_continuation()); the extra segments it may take are capped here.
 		const uint segment_limit = max_bounces + uint(get_rt_param(RT_PARAM_TRANSMISSION_BOUNCES));
-		[[dont_unroll]] for (uint bounce = 0u; bounce <= segment_limit; bounce++) {
+		// Scattering in the simulated gas has its own budget (RT_VOLUME_MAX_SCATTERS), not max_bounces: a white
+		// cloud (snow powder, steam) keeps most of its light through tens of scatters, and cutting the path after the
+		// surface budget (3 by default) darkened its inside to grey. Russian roulette still ends the paths.
+		uint volume_scatters = 0u;
+		[[dont_unroll]] for (uint bounce = 0u; bounce <= segment_limit + volume_scatters; bounce++) {
 			vec3 throughput_entry = ps.throughput;
 			vec3 radiance_pre = ps.radiance;
 			uint flags_entry = ps.packed_bounces_flags;
@@ -1057,7 +1061,14 @@ void main() {
 					ps.radiance = radiance_pre + throughput_entry * vol_emitted;
 					ps.throughput = throughput_entry * albedo;
 					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, rt_volume.medium.z, false, ps.rng_state);
-					ps.packed_bounces_flags = inc_total_bounce(flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG)) | NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
+					// Free of the surface budget while within the volume's own: the total only leaves 0 (no longer the
+					// primary ray), so the surfaces the path meets later still get their max_bounces.
+					uint vol_flags = flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG);
+					bool vol_free = volume_scatters < RT_VOLUME_MAX_SCATTERS;
+					if (vol_free) {
+						volume_scatters++;
+					}
+					ps.packed_bounces_flags = ((vol_free && get_total_bounces(vol_flags) > 0u) ? vol_flags : inc_total_bounce(vol_flags)) | NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
 					ps.hit_t = t_vol;
 					cone_width += rt_cone_spread_angle() * t_vol;
 					if (bounce == 0u) {

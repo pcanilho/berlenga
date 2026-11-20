@@ -123,6 +123,9 @@
 		<member name="floor_height" type="float" setter="set_floor_height" getter="get_floor_height" default="0.0">
 			The world height of the floor's top (used when [member floor_enabled] is on).
 		</member>
+		<member name="ground_albedo" type="float" setter="set_ground_albedo" getter="get_ground_albedo" default="0.25">
+			How much light the ground under the gas reflects, for the raster light scattering pass: the sunlit ground (in the gas's own shadow) lights the gas from below, as the path tracer's bounces off the real ground do, so a cloud's base is not left dark. [code]0.25[/code] suits grass and soil, sand is about [code]0.4[/code], fresh snow about [code]0.8[/code] ([SnowPowderCloud3D] uses that). [code]0[/code] lights the underside only by the sky's lower half. The path tracer ignores it and bounces off the scene itself.
+		</member>
 		<member name="heat_ramp" type="Gradient" setter="set_heat_ramp" getter="get_heat_ramp">
 			How the gas glows by temperature, from [code]0[/code] to [member temperature_range]: each color is the glow at that temperature, its alpha how much it glows instead of showing the lit smoke. Empty uses a blackbody: [code]0[/code] to [member temperature_range] spans 600 K to 1,500 K, coloured as a blackbody at that temperature and as bright as Planck's law makes it at 580 nm (alpha above [code]1[/code] at the top), so a flame has a bright core and sharp tongues and the cooler gas over it reads as smoke.
 		</member>
