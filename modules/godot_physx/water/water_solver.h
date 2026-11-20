@@ -149,6 +149,7 @@ public:
 	RID tex_shore_depth;
 	bool has_cell_depth = false;
 	float shallow_fade_depth = 1.0f;
+	float caustics_foam_shade = 0.8f; // of the sun a full foam cover stops on its way to the bed (water_caustics_map.glsl)
 	// Baked current as face fluxes (RGBA32F, m^2/s: +x, +z, -x, -z faces; see water_ripple.glsl),
 	// read by the shallow-water passes; zeros = still water. And the live total velocity at cell
 	// centres (RGBA16F, m/s in rg) the first pass writes for materials.
@@ -537,6 +538,8 @@ public:
 	// p_shore_band: still-water depth (m) within which waves arriving over the
 	// shallows leave shore foam (0 = none). p_shore_undertow: steady seaward
 	// drift (m/s) the backwash drags that foam back out with.
+	// How much of the sun a full foam cover stops on its way to the bed (0..1): the foam's shade in the caustics map.
+	void set_caustics_foam_shade(float p_shade);
 	void set_foam_settings(bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band, float p_shore_undertow);
 	// R32F shore foam (0..1) on the ripple grid; valid once is_available().
 	RID get_shore_foam_texture_rd_rid() const;
