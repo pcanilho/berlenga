@@ -5000,6 +5000,18 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 		_ground_bake_rows(map, GROUND_BAKE_BUDGET_USEC);
 	}
 	_follow_burns(map);
+	{
+		// Game trails published or changed: the sward and its ground are worn along them.
+		const WorldStand *stand = WorldContracts::stand();
+		const uint64_t now = OS::get_singleton()->get_ticks_usec();
+		if (stand && stand->get_stand_generation() != trails_seen && now - trails_follow_usec >= uint64_t(BURN_FOLLOW_MSEC) * 1000) {
+			trails_follow_usec = now;
+			if (_read_world_trails()) {
+				ground_baked = false;
+				rebuild();
+			}
+		}
+	}
 	if (burn_read && graze_height > 0.0f && crop == CROP_NONE) {
 		// Browse discs added, moved or cleared: the pressure grid is read again (cheap; the texture only).
 		const WorldStand *stand = WorldContracts::stand();
@@ -6210,9 +6222,26 @@ float GrassField3D::_trample_scale(float p_passes) const {
 	return Math::lerp(1.0f, 0.45f, p_passes / (p_passes + trample_resistance));
 }
 
+// Game trails (WorldStand.set_trails, from VegetationField3D.make_game_trails): worn like the field's own paths.
+// True when they changed.
+bool GrassField3D::_read_world_trails() {
+	const WorldStand *stand = WorldContracts::stand();
+	if (!stand) {
+		return false;
+	}
+	trails_seen = stand->get_stand_generation();
+	const Array now = stand->get_trails();
+	if (now == world_trails) {
+		return false;
+	}
+	world_trails = now.duplicate(true);
+	path_grid.build(VegetationPaths::merged(paths, world_trails));
+	return true;
+}
+
 void GrassField3D::set_paths(const Array &p_paths) {
 	paths = p_paths;
-	path_grid.build(paths);
+	path_grid.build(VegetationPaths::merged(paths, world_trails));
 	ground_baked = false; // The ground tint opens on the paths too.
 	rebuild();
 }

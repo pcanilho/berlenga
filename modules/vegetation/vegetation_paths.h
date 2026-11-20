@@ -71,7 +71,7 @@ struct VegetationPaths {
 			const Dictionary d = p_paths[i];
 			const PackedVector3Array pts = d.get("points", PackedVector3Array());
 			const float width = MAX(float(d.get("width", 1.5f)), 0.05f);
-			const float passes = MAX(float(d.get("passes", 0.0f)), 0.0f);
+			const float passes = MAX(float(d.get("passes", d.get("passes_per_year", 0.0f))), 0.0f); // passes_per_year: WorldStand's name.
 			if (pts.size() < 2 || passes <= 0.0f) {
 				continue;
 			}
@@ -98,6 +98,36 @@ struct VegetationPaths {
 	}
 
 	bool is_empty() const { return segments.is_empty(); }
+
+	// The paths a field sets and the world's game trails (WorldStand.get_trails()) as one list.
+	static Array merged(const Array &p_own, const Array &p_world) {
+		if (p_world.is_empty()) {
+			return p_own;
+		}
+		Array all = p_own.duplicate();
+		all.append_array(p_world);
+		return all;
+	}
+
+	// The xz rect a list of paths covers, grown by p_margin (empty when there are none).
+	static Rect2 bounds(const Array &p_paths, float p_margin) {
+		Rect2 r;
+		bool any = false;
+		for (int i = 0; i < p_paths.size(); i++) {
+			const Dictionary d = p_paths[i];
+			const PackedVector3Array pts = d.get("points", PackedVector3Array());
+			for (int k = 0; k < pts.size(); k++) {
+				const Vector2 p(pts[k].x, pts[k].z);
+				if (!any) {
+					r = Rect2(p, Vector2());
+					any = true;
+				} else {
+					r.expand_to(p);
+				}
+			}
+		}
+		return any ? r.grow(p_margin) : Rect2();
+	}
 
 	// The passes a year a point gets: the most of any path near it (where paths cross, the busier
 	// one's walkers set the wear).

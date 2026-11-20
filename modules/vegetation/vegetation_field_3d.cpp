@@ -633,6 +633,8 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 	r_setup.stand_kind.clear();
 	r_setup.browse_rules.clear();
 	r_setup.stand_browse.clear();
+	r_setup.rooting_rules.clear();
+	r_setup.stand_rooting.clear();
 	r_setup.stand_nx = 0;
 	r_setup.stand_ny = 0;
 	const WorldStand *stand = WorldContracts::stand();
@@ -667,6 +669,12 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 					r_setup.browse_rules.push_back(br);
 				}
 			}
+			if (sp.is_valid() && sp->uses_rooting() && b == biome) {
+				const Vector3 rr = sp->get_rooting_rule();
+				if (r_setup.rooting_rules.find(rr) < 0) {
+					r_setup.rooting_rules.push_back(rr);
+				}
+			}
 			if (sp.is_null() || !sp->uses_stand()) {
 				continue;
 			}
@@ -679,8 +687,8 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 	}
 	_read_strikes(r_setup);
 	_read_browse(r_setup);
-	stand_follow = !r_setup.stand_rules.is_empty() || !r_setup.browse_rules.is_empty() || strike_follow || browse_follow;
-	if ((r_setup.stand_rules.is_empty() && r_setup.browse_rules.is_empty()) || !stand || !r_setup.rect.has_area()) {
+	stand_follow = !r_setup.stand_rules.is_empty() || !r_setup.browse_rules.is_empty() || !r_setup.rooting_rules.is_empty() || strike_follow || browse_follow;
+	if ((r_setup.stand_rules.is_empty() && r_setup.browse_rules.is_empty() && r_setup.rooting_rules.is_empty()) || !stand || !r_setup.rect.has_area()) {
 		return;
 	}
 	const Rect2 rect = r_setup.rect;
@@ -693,6 +701,10 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 	if (browse) {
 		r_setup.stand_browse.resize(nx * ny);
 	}
+	const bool rooting = !r_setup.rooting_rules.is_empty();
+	if (rooting) {
+		r_setup.stand_rooting.resize(nx * ny);
+	}
 	for (int z = 0; z < ny; z++) {
 		for (int x = 0; x < nx; x++) {
 			const Vector2 xz = rect.position + rect.size * Vector2(float(x) / (nx - 1), float(z) / (ny - 1));
@@ -701,6 +713,9 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 			r_setup.stand_kind[z * nx + x] = uint8_t(CLAMP(stand->disturbance_at(p), 0, 255));
 			if (browse) {
 				r_setup.stand_browse[z * nx + x] = stand->browse_at(p);
+			}
+			if (rooting) {
+				r_setup.stand_rooting[z * nx + x] = stand->rooting_age_at(p);
 			}
 		}
 	}
@@ -893,7 +908,8 @@ Rect2 VegetationField3D::_update_stand(PlaceSetup &r_setup, const Rect2 &p_area)
 			const float age = stand->stand_age_at(p);
 			const int kind = CLAMP(stand->disturbance_at(p), 0, 255);
 			const float br = r_setup.stand_browse.is_empty() ? 0.0f : stand->browse_at(p);
-			if (r_setup.stand_differs(r_setup.stand_age[i], r_setup.stand_kind[i], age, kind) || (!r_setup.stand_browse.is_empty() && r_setup.browse_differs(r_setup.stand_browse[i], br))) {
+			const float ro = r_setup.stand_rooting.is_empty() ? -1.0f : stand->rooting_age_at(p);
+			if (r_setup.stand_differs(r_setup.stand_age[i], r_setup.stand_kind[i], age, kind) || (!r_setup.stand_browse.is_empty() && r_setup.browse_differs(r_setup.stand_browse[i], br)) || (!r_setup.stand_rooting.is_empty() && r_setup.rooting_differs(r_setup.stand_rooting[i], ro))) {
 				const Rect2 c(xz - Vector2(cx, cz) * 0.5f, Vector2(cx, cz));
 				changed = changed.has_area() ? changed.merge(c) : c;
 			}
@@ -901,6 +917,9 @@ Rect2 VegetationField3D::_update_stand(PlaceSetup &r_setup, const Rect2 &p_area)
 			r_setup.stand_kind[i] = uint8_t(kind);
 			if (!r_setup.stand_browse.is_empty()) {
 				r_setup.stand_browse[i] = br;
+			}
+			if (!r_setup.stand_rooting.is_empty()) {
+				r_setup.stand_rooting[i] = ro;
 			}
 		}
 	}
@@ -920,6 +939,18 @@ int VegetationField3D::PlaceSetup::stand_cell(const Vector2 &p_xz) const {
 		return -1;
 	}
 	return z * stand_nx + x;
+}
+
+bool VegetationField3D::PlaceSetup::rooting_differs(float p_a0, float p_a1) const {
+	if (p_a0 == p_a1) {
+		return false;
+	}
+	for (const Vector3 &r : rooting_rules) {
+		if (PlantSpecies::rooting_weight(r, p_a0) != PlantSpecies::rooting_weight(r, p_a1)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 bool VegetationField3D::PlaceSetup::browse_differs(float p_b0, float p_b1) const {
@@ -1184,6 +1215,9 @@ bool VegetationField3D::_context_only(const PlantSpecies *p_sp) {
 	if (p_sp->uses_browse() && p_sp->rule_weight(PlantSpecies::RULE_BROWSE, 0.0f) <= 0.0f) {
 		return true; // Only where deer browse.
 	}
+	if (p_sp->uses_rooting() && PlantSpecies::rooting_weight(p_sp->get_rooting_rule(), -1.0f) <= 0.0f) {
+		return true; // Only where boar rooted.
+	}
 	return false;
 }
 
@@ -1205,6 +1239,8 @@ void VegetationField3D::_copy_context(const PlaceSetup &p_setup) {
 	_copy_vector(context.stand_kind, p_setup.stand_kind);
 	_copy_vector(context.browse_rules, p_setup.browse_rules);
 	_copy_vector(context.stand_browse, p_setup.stand_browse);
+	_copy_vector(context.rooting_rules, p_setup.rooting_rules);
+	_copy_vector(context.stand_rooting, p_setup.stand_rooting);
 	context.stand_nx = p_setup.stand_nx;
 	context.stand_ny = p_setup.stand_ny;
 	context.stand_rect = p_setup.stand_rect;
@@ -1234,6 +1270,9 @@ float VegetationField3D::_context_weight(const PlantSpecies *p_sp, const Vector2
 	}
 	if (w > 0.0f && p_sp->uses_browse()) {
 		w *= p_sp->rule_weight(PlantSpecies::RULE_BROWSE, context.browse_cell(context.stand_cell(p_xz)));
+	}
+	if (w > 0.0f && p_sp->uses_rooting()) {
+		w *= PlantSpecies::rooting_weight(p_sp->get_rooting_rule(), context.rooting_cell(context.stand_cell(p_xz)));
 	}
 	if (w > 0.0f && p_sp->uses_forest_edge()) {
 		Vector2 r;
@@ -2054,6 +2093,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		}
 		const bool stand_rule = !p_setup.stand_rules.is_empty() && sp->uses_stand();
 		const bool browse_rule = sp->uses_browse();
+		const bool rooting_rule = sp->uses_rooting();
+		const Vector3 rooting_r = sp->get_rooting_rule();
 		Vector2 stand_age_r, stand_kind_r;
 		float stand_age_f = 0.0f, stand_kind_f = 0.0f;
 		if (stand_rule) {
@@ -2290,6 +2331,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (browse_rule && suit > 0.0f) {
 						// Deer browsing pressure (0 where none is known).
 						suit *= sp->rule_weight(PlantSpecies::RULE_BROWSE, p_setup.browse_cell(p_setup.stand_cell(xz)));
+					}
+					if (rooting_rule && suit > 0.0f) {
+						// Boar rooting: years since the soil was turned (-1 never).
+						suit *= PlantSpecies::rooting_weight(rooting_r, p_setup.rooting_cell(p_setup.stand_cell(xz)));
 					}
 					if (!sand_plant && suit > 0.0f && !p_setup.sea_depth.is_empty()) {
 						// Desert sand seas: only sand plants (RULE_SAND_MOBILITY) root in their loose sand; the rest
@@ -4914,7 +4959,40 @@ void VegetationField3D::set_obstacles(const PackedVector4Array &p_obstacles) {
 
 void VegetationField3D::set_paths(const Array &p_paths) {
 	paths = p_paths;
-	path_grid.build(paths);
+	path_grid.build(VegetationPaths::merged(paths, world_trails));
+}
+
+// Game trails (WorldStand.set_trails, from make_game_trails): worn like the field's own paths.
+void VegetationField3D::_read_world_trails() {
+	const WorldStand *stand = WorldContracts::stand();
+	if (!stand) {
+		return;
+	}
+	trails_seen = stand->get_stand_generation();
+	const Array now = stand->get_trails();
+	if (now == world_trails) {
+		return;
+	}
+	const Rect2 old_r = VegetationPaths::bounds(world_trails, 4.0f);
+	const Rect2 new_r = VegetationPaths::bounds(now, 4.0f);
+	world_trails = now.duplicate(true);
+	path_grid.build(VegetationPaths::merged(paths, world_trails));
+	const Rect2 area = old_r.has_area() ? (new_r.has_area() ? old_r.merge(new_r) : old_r) : new_r;
+	if (area.has_area() && (streaming || plant_count > 0)) {
+		_on_holes_changed(area); // Placed again where the trails came or went.
+	}
+}
+
+void VegetationField3D::_follow_trails(double p_delta) {
+	trails_check -= p_delta;
+	if (trails_check > 0.0) {
+		return;
+	}
+	trails_check = 0.5;
+	const WorldStand *stand = WorldContracts::stand();
+	if (stand && stand->get_stand_generation() != trails_seen) {
+		_read_world_trails();
+	}
 }
 
 void VegetationField3D::set_stone_tops(const PackedVector4Array &p_tops) {
@@ -6101,6 +6179,7 @@ void VegetationField3D::_notification(int p_what) {
 			}
 			add_to_group(SNAME("vegetation_crop_aware"));
 			_update_bark_detail();
+			_read_world_trails();
 			TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
 			if (map) {
 				// Repopulate whenever the map is baked again (terrain edits).
@@ -6135,6 +6214,7 @@ void VegetationField3D::_notification(int p_what) {
 			}
 			_follow_burns(get_process_delta_time());
 			_follow_stand(get_process_delta_time());
+			_follow_trails(get_process_delta_time());
 			if (variants_waiting && streaming && stream_setup_valid && stream_jobs.is_empty()) {
 				// A new burn, strike or browse disc (trees.md 5bc): deferred variants it needs are grown, and the field
 				// streams again with them.

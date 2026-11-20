@@ -392,6 +392,7 @@
 		</member>
 		<member name="paths" type="Dictionary[]" setter="set_paths" getter="get_paths" default="[]">
 			Worn paths, each a [Dictionary] with [code]points[/code] ([PackedVector3Array], the path's centre line), [code]width[/code] (metres, default 1.0) and [code]passes[/code] (walkers a year, default 1000). Trampling falls off across a path as a Gaussian with sigma a quarter of its width, over a wider tail (15% of the walkers, three times the sigma), so plants shorten over a metre or so towards the tread. Plants with a [member PlantSpecies.trample_resistance] thin out and grow shorter where passes outweigh it, following Cole's trampling experiments; trees, logs and stone-top plants are never trampled. Changing it repopulates.
+			The world's game trails ([code]WorldStand.get_trails()[/code], published from [method VegetationField3D.make_game_trails]) are worn the same way, on top of these, and followed when they change.
 		</member>
 	</members>
 	<signals>

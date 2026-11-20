@@ -253,7 +253,8 @@ Array VegetationField3D::make_game_trails(Node *p_data_map, const Rect2 &p_area,
 		for (int i : r) {
 			g.flow[i] += passes;
 		}
-		routes.push_back(r);
+		routes.push_back(LocalVector<int>());
+		routes[routes.size() - 1] = r;
 	}
 	// Out as paths: each route cut where its traffic changes (where other routes join or leave), so a stretch shared
 	// by several links carries their summed passes (VegetationPaths takes the busiest path at a point).
