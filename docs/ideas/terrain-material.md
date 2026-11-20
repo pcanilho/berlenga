@@ -247,3 +247,8 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
   of the bump. Its slope also had hard switches (normalising by max(len, 0.5), abs(s) and the sign of s at the
   creases): fine in the geometry, hard-edged patches in per-pixel light. They are rounded (smooth maximum over
   0.3, creases over 0.15).
+- No-scan ground, round two (docs: pale islands with dark rims, smear, diagonal ripple). The value noise hashed
+  with sin(), which loses precision once its argument reaches the thousands (fine octaves a few hundred metres out):
+  an integer hash now. The procedural floor had two bump octaves (0.25 m, 6 cm) on one square lattice: five now,
+  0.6 m to 1 cm, each turned against the last. The erosion detail drops its gullies under about 2 m (smoothstep
+  1.5 to 4 m): drawn in the light alone they were ripples and rimmed islands; the layers carry that scale.
