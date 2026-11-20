@@ -2532,6 +2532,19 @@
    "topic": "Plants"
   },
   {
+   "name": "Deer browsing",
+   "settings": [
+    "WorldStand.add_browse()",
+    "PlantSpecies.RULE_BROWSE",
+    "PRESET_GRAZED_LAWN"
+   ],
+   "note": "",
+   "what": "where deer feed, bramble and raspberry are bitten low, palatable herbs thin, the floor turns grassy and clearings become close-cropped deer lawns.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Stand margins",
    "settings": [
     "PlantSpecies.margin_width",
