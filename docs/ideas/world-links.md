@@ -106,6 +106,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Nebkhas → shrubs | linked (19 Nov) | TerrainGenerator3D `get_nebkhas(rect)` (x, top y, z, height m), `get_nebkha_height(pos)` (mound sand alone); `sand_sea_mask` (Image, red 0..1) shapes the ergs | VegetationField3D places a shrub on each mound top; the mounds are sand for the sand thread, no deformation hook needed (terrain-gen cf579682) |
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
 | Lightning → struck tree variant | linked (20 Nov) | `WorldStand.strike_age_at` | WeatherLightning3D records canopy strikes; VegetationField3D swaps to a `tree_lightning_years` variant (field side: trees) |
+| Beaver dam fails → beaver meadow | linked (20 Nov) | `WorldStand` `DISTURBANCE_BEAVER` (4), age since the pond drained | trees report it when a STAND_BEAVER_POND dam fails; PlantGenerator.make_beaver meadow reads it by RULE_DISTURBANCE (4,4) |
 | Wet ground → mist | linked (18 Nov) | surface wetness, surface cooling | VegetationMist3D: wet ground mists more and sooner |
 
 ### Water (ocean, rivers, pools, falls)
