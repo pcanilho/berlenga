@@ -1606,3 +1606,46 @@ Soot from smoke haze was already built in world-links (21b20d1a, `SnowCover3D._r
 **Avalanches into water.**
 - An avalanche entering a lake or the sea pushes an impulse wave. Heller and Hager (2010) give its height from the slide's mass, speed and thickness and the water depth, from lab and field data (granular slides into reservoirs).
 - This needs Valence's water (WorldWater) to take an impulse. The snow side reports where, how much and how fast through a contract call; the water side makes the wave. It also lays debris on lake ice or breaks it.
+
+## Next round (proposed 20 Nov 2026, round 5): frost, spring snow, spindrift, packed roads
+
+Research notes for Paulo's pick; nothing below is built yet.
+
+**Rime and hoar frost.**
+- *Surface hoar:* on clear, calm nights the snow surface radiates below the air's frost point and vapour
+  deposits as feathery plates and cups, mm to cm long, that flash in low sun (Hachikubo and Akitaya 1997;
+  Colbeck 1988). Growth needs light wind (1-3 m/s) and a humid layer; strong wind breaks it. Buried by the next
+  snow it is the classic persistent weak layer: it would lower the avalanche stability index for weeks (Jamieson
+  and Schweizer 2000), a real link from night weather to avalanches.
+- *Rime:* supercooled fog droplets freeze on contact into feathers that grow into the wind on trees, fences,
+  posts and wires (Makkonen 2000, models for rime, glaze, icicles and wet snow on structures: accretion rate =
+  collision efficiency x liquid water content x wind speed x area). Needs the haze/fog contract's liquid water,
+  WeatherMap3D wind, and a surface list (trees' crowns, props) as icicles take an edge.
+- Build: a hoar layer flag on the cover (grown on clear calm nights, broken by wind or sun, buried as a weak
+  layer), its glints from the existing grain facets at larger size; rime as geometry feathers on props (a
+  shell grown along the wind's direction) and a rime tint on tree crowns via the trees thread.
+
+**Spring snow surface.**
+- Suncups: in clear sunny weather ablation hollows 20-50 cm across grow into a cellular pattern with sharp
+  ridges (Betterton 2001, Phys. Rev. E 63; Rhodes, Armstrong and Warren 1987: dirt in the snow sets whether
+  hollows or dirt cones form). At altitude in dry air they sharpen into penitentes. Dust and soot (already on the
+  cover) gather on the ridges or in the hollows by their amount.
+- Rotten spring snow: a wet isothermal pack bears little (the crust model's wet case), so walkers posthole
+  deep; slush where melt water saturates the base over frozen ground.
+- Build: an ablation-hollow height field on the cover in sunny melt (a cellular noise grown by melt hours,
+  wavelength from the published 20-50 cm), the dirt split by amount, deeper prints in rotten snow.
+
+**Spindrift plumes off ridges.**
+- Snow blown off a ridge or cornice lip streams out in a plume hundreds of metres long in strong wind, a staple
+  of mountain vistas. Stage 3's blowing-snow particles cover the near field only. Per the PhysX rule, the plume
+  is a Flow gas: emitters on lee edges where the cover's transport flux is high (the cornice code already finds
+  them), negative buoyancy for the snow's weight, Flow's wind and terrain floor carrying it.
+- Check: no plume under the threshold wind or from wet snow; plume length grows with wind.
+
+**Packed-snow roads.**
+- Traffic packs snow into a hard layer that polishes to ice where tyres spin or brake (Wallman and Astrom 2001,
+  road friction: packed snow mu 0.2-0.3, ice 0.05-0.15, wet ice lower). Ruts form where wheels run; slush where
+  traffic churns wet snow; tyres throw slush spray.
+- Build: per-cell packing and polish from the shared press bodies (wheels already press the snow), a grip value
+  in the world contract for world-links' tyre slip, ice glaze look (low roughness, clearer), slush spray via
+  PhysX particles.
