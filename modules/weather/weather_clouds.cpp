@@ -851,7 +851,7 @@ float sc_cells_at(const State &p_state, Vector2 p_xz) {
 			}
 		}
 	}
-	return smoothstep(0.0f, 0.35f, f2 - f1);
+	return smoothstep(0.0f, 0.7f, f2 - f1);
 }
 
 float extinction_at(const State &p_state, const Vector3 &p_pos) {
@@ -895,7 +895,15 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	const float sc = sc_share(ct.y);
 	// A sheet: its noise lifted so an overcast layer closes (the shape noise alone left gaps at any cover); a
 	// stratocumulus deck is then mostly its cells, thick in the middle and thin at the rims.
-	const float nd = lay > 0.0f ? Math::lerp(n, (0.5f + 0.5f * n) * (sc > 0.0f ? Math::lerp(1.0f, 0.3f + 0.9f * sc_cells_at(p_state, Vector2(p_pos.x, p_pos.z)), sc) : 1.0f), lay) : n;
+	// Each cell a rounded heap: its top highest in the middle and lower toward the rim, the outline roughened by
+	// the shape noise, so a roll reads as a row of lumpy cells with darker thin gaps between, not one extruded slab.
+	float cell = 1.0f;
+	if (sc > 0.0f) {
+		const float cv = CLAMP(sc_cells_at(p_state, Vector2(p_pos.x, p_pos.z)) + 0.5f * (n - 0.5f), 0.0f, 1.0f);
+		const float ht = 0.25f + 0.75f * cv;
+		cell = Math::lerp(1.0f, (1.0f - smoothstep(0.5f * ht, ht, h)) * (0.5f + 0.7f * cv), sc);
+	}
+	const float nd = lay > 0.0f ? Math::lerp(n, (0.5f + 0.5f * n) * cell, lay) : n;
 	const float deck = MAX(nd * dome - (1.0f - ct.x), 0.0f) / MAX(ct.x, 0.001f) * base * smoothstep(Math::lerp(0.55f, 0.15f, lay), Math::lerp(0.85f, 0.45f, lay), ct.x);
 	const float shape = MAX(cells, deck) * (1.0f + MIN(eff, 0.0f));
 	// Frostbite's measured extinction: stratus about 0.04, cumulus up to 0.1 per metre; a fair sky's clouds a
@@ -1209,7 +1217,7 @@ float wc_sc_cells(vec2 xz) {
 			}
 		}
 	}
-	return smoothstep(0.0, 0.35, f2 - f1);
+	return smoothstep(0.0, 0.7, f2 - f1);
 }
 
 // Density effectors (effector_at() on the CPU, which explains them).
@@ -1471,7 +1479,13 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 	float lay = 1.0 - smoothstep(0.22, 0.36, ct.y); // layered_share() on the CPU
 	float cells = max(n - (1.0 - env), 0.0) / max(env, 0.001) * base * (1.0 - lay);
 	float sc = wc_sc_share(ct.y);
-	float nd = lay > 0.0 ? mix(n, (0.5 + 0.5 * n) * (sc > 0.0 ? mix(1.0, 0.3 + 0.9 * wc_sc_cells(p.xz), sc) : 1.0), lay) : n;
+	float cell = 1.0; // rounded heaps, as on the CPU
+	if (sc > 0.0) {
+		float cv = clamp(wc_sc_cells(p.xz) + 0.5 * (n - 0.5), 0.0, 1.0);
+		float ht = 0.25 + 0.75 * cv;
+		cell = mix(1.0, (1.0 - smoothstep(0.5 * ht, ht, h)) * (0.5 + 0.7 * cv), sc);
+	}
+	float nd = lay > 0.0 ? mix(n, (0.5 + 0.5 * n) * cell, lay) : n;
 	float deck = max(nd * dome - (1.0 - ct.x), 0.0) / max(ct.x, 0.001) * base * smoothstep(mix(0.55, 0.15, lay), mix(0.85, 0.45, lay), ct.x);
 	float shape = max(cells, deck) * (1.0 + min(eff, 0.0));
 	r_profile = clamp(shape, 0.0, 1.0);

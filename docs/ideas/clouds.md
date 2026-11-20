@@ -411,4 +411,10 @@ of dew point depression (Espy), so it rises through the day as the air dries.
   (type above 0.36) is unchanged.
 - Bench: weather `--test=clouds` prints the type, heating and base over a day for calm, windy, dry and rainy air;
   `--view=clouds --type=0.05|0.2 --wind=8`. Raster and PT match (640 px).
+- Cells as heaps (later 20 Nov; docs declined straight extruded rolls): each cell's top highest in its middle and
+  lower toward the rim (top at 0.25 to 1 of the layer by the cell value, roughened by the shape noise), so a roll is
+  a row of rounded lumps with thin darker gaps; rolls stretched at most 2x.
+- Air under a deck: the light the deck transmits diffusely (two-stream, minus the direct beam) now lights the air
+  below it as a source (F / 2 pi, isotropic). Before, only the air's own multiple scattering lit it, so the
+  horizon under an overcast was a dark band below both the deck and the ground.
 - Next: cumulus base detail (per cloud sag, scud under humid bases), cirrocumulus and cirrostratus.
