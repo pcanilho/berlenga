@@ -383,11 +383,12 @@ private:
 	Vector3 _lake_center(int p_lake) const;
 	Ref<ImageTexture> geology_texture;
 	Ref<ImageTexture> detail_keep_texture; // share of the erosion detail kept, per node (_bake_detail_keep)
-	// Loose sand depth (m) on the dune belts and sand seas, per node; -1 off them (_bake_sand_depth, for the materials'
-	// dune-scale tone: thin sand on interdune flats, rubefaction).
-	Ref<ImageTexture> sand_depth_texture;
-	bool sand_depth_dirty = true;
-	void _bake_sand_depth();
+	// Interdune floors on the dune belts and sand seas, 0..1 per node; -1 off them (_bake_sand_interdune, for the
+	// materials' dune-scale tone: the coarse lag and granule ripples on the floors between dunes, rubefaction).
+	LocalVector<float> sand_interdune;
+	Ref<ImageTexture> sand_interdune_texture;
+	bool sand_interdune_dirty = true;
+	void _bake_sand_interdune();
 	// Static spray potential of the falls (0..1) on its own finer grid over the result (_bake_spray).
 	real_t spray_cell = 4.0;
 	int spray_nx = 0, spray_ny = 0;
@@ -805,6 +806,7 @@ public:
 	real_t get_sand_sea_edge() const { return sand_sea_edge; }
 	real_t get_sand_sea_height(const Vector3 &p_global_position) const { return _sea_sample(p_global_position.x, p_global_position.z); }
 	real_t get_sand_depth_at(const Vector3 &p_global_position) const;
+	real_t get_sand_interdune_at(const Vector3 &p_global_position) const;
 	// The dune-building wind (unit, x and z) the sand sea was grown under: granule ripples' crests run across it.
 	Vector2 get_sand_wind_direction() const { return Vector2(Math::cos(Math::deg_to_rad(sand_sea_wind_angle)), Math::sin(Math::deg_to_rad(sand_sea_wind_angle))); }
 	void set_sand_sea_compound(bool p_value) { sand_sea_compound = p_value; }

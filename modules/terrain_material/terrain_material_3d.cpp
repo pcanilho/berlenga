@@ -199,12 +199,12 @@ float tm_dune_vn(vec2 p_p, uint p_s) {
 	ivec2 c = ivec2(i);
 	return mix(mix(tm_dune_hash(c, p_s), tm_dune_hash(c + ivec2(1, 0), p_s), u.x), mix(tm_dune_hash(c + ivec2(0, 1), p_s), tm_dune_hash(c + ivec2(1, 1), p_s), u.x), u.y);
 }
-// The coarse lag's share on an interdune flat (the dune tone's lag term): thin sand on flat ground, patchy.
-float tm_dune_lag(vec2 p_xz, float p_normal_y, float p_depth) {
-	if (p_depth < 0.0) {
+// The coarse lag's share on an interdune flat (the dune tone's lag term): the floors between dunes, flat, patchy.
+float tm_dune_lag(vec2 p_xz, float p_normal_y, float p_interdune) {
+	if (p_interdune < 0.0) {
 		return 0.0;
 	}
-	float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	float thin = p_interdune;
 	return thin * smoothstep(0.93, 0.98, p_normal_y) * mix(0.45, 1.0, tm_dune_vn(p_xz / 23.0, 43u));
 }
 // Granule ripples (megaripples) on that lag: the coarse grains the wind cannot lift creep up into long, low ripples
@@ -274,17 +274,17 @@ vec2 tm_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, out 
 }
 // Dune-scale sand colour (docs/ideas/sand.md, "Dune-scale tone"): three of the changes a dune field shows from afar.
 // Rubefaction: iron-oxide coats redden grains that have lain still for millennia (Walker 1979; Pye and Tsoar 2009),
-// patchy over hundreds of metres and strongest on the stable sand of thin flanks and interdunes. Interdune flats: the
+// patchy over hundreds of metres and strongest on the stable sand of the interdunes. Interdune flats: the
 // wind strips the fine sand and leaves a coarser, darker lag (Sharp 1963; Lancaster 1995). Slip faces: grain flows of
-// fine, well-sorted sand, paler than the windward slope (Bagnold 1941). p_depth: the loose sand's depth (m), below 0
-// off the dune fields or unknown (only the slip faces show there).
-vec3 tm_dune_tone(vec2 p_xz, float p_normal_y, float p_depth) {
+// fine, well-sorted sand, paler than the windward slope (Bagnold 1941). p_interdune: the interdune floor's share
+// (TerrainGenerator3D.get_sand_interdune_at()), below 0 off the dune fields or unknown (only the slip faces show there).
+vec3 tm_dune_tone(vec2 p_xz, float p_normal_y, float p_interdune) {
 	vec3 t = vec3(1.0);
-	if (p_depth >= 0.0) {
-		float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	if (p_interdune >= 0.0) {
+		float thin = p_interdune;
 		float age = smoothstep(0.25, 0.7, 0.65 * tm_dune_vn(p_xz / 420.0, 41u) + 0.35 * tm_dune_vn(p_xz / 130.0, 42u));
 		t *= mix(vec3(1.0), vec3(1.15, 0.93, 0.78), age * (0.7 + 0.3 * thin));
-		float lag = tm_dune_lag(p_xz, p_normal_y, p_depth);
+		float lag = tm_dune_lag(p_xz, p_normal_y, p_interdune);
 		t *= mix(vec3(1.0), vec3(0.72, 0.7, 0.68), lag);
 	}
 	// Slopes of about 29 to 33 degrees: the slip face at the sand's repose.
@@ -1537,7 +1537,7 @@ void fragment() {
 		tm_sand(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		d += tm_sand_grain(wp, tm_fp0, a);
 		// The dune field's colour at this scale: redder old sand, coarse dark interdune flats, pale slip faces.
-		float tm_sdepth = terrain_sand_depth(wp);
+		float tm_sdepth = terrain_sand_interdune(wp);
 		if (tm_dune_tone_on) {
 			a *= tm_dune_tone(wp.xz, wn.y, tm_sdepth);
 		}

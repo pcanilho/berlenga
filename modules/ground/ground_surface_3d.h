@@ -532,12 +532,12 @@ private:
 	Rect2 ripple_sand_rect;
 	LocalVector<float> ripple_tile_slope; // the grown field's slope, 2 per cell, world cell mod n
 	LocalVector<float> ripple_tile_norm; // its height over its mean in standard deviations
-	LocalVector<float> ripple_sand_depth; // the generator's loose sand depth over ripple_sand_rect (m, -1 none)
+	LocalVector<float> ripple_sand_depth; // the generator's interdune floors over ripple_sand_rect (0..1, -1 none)
 	LocalVector<float> ripple_sand_share; // the ground's sand share there
 	LocalVector<float> ripple_sand_blown; // and the share the wind moves (dry, bare: granule ripples form there)
 	static constexpr int RIPPLE_DEPTH_N = 128;
 	static constexpr float RIPPLE_DEPTH_SIZE = 1024.0f; // m
-	LocalVector<float> ripple_far_depth; // the generator's sand depth, RIPPLE_DEPTH_N squared over ripple_far_depth_rect
+	LocalVector<float> ripple_far_depth; // the generator's interdune floors, RIPPLE_DEPTH_N squared over ripple_far_depth_rect
 	Rect2 ripple_far_depth_rect;
 	Vector2 ripple_sand_wind; // the generator's dune-building wind (zero with none)
 	float ripple_tile_sd = 0.0f; // m

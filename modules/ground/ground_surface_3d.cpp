@@ -5787,7 +5787,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		const float st = size / sn;
 		ripple_sand_rect = Rect2(Math::snapped(center.x, st) - 0.5f * size, Math::snapped(center.y, st) - 0.5f * size, size, size);
 		ripple_sand.resize(sn * sn);
-		// And for the dune tone: the generator's loose sand depth (-1 off its dune fields or with none) and the sand share.
+		// And for the dune tone: the generator's interdune floors (0..1, -1 off its dune fields or with none) and the sand share.
 		ripple_sand_depth.resize(sn * sn);
 		ripple_sand_share.resize(sn * sn);
 		ripple_sand_blown.resize(sn * sn);
@@ -5801,10 +5801,10 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				ripple_sand[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(px, pz) : 0.0f;
 				ripple_sand_share[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
 				ripple_sand_blown[z * sn + x] = c.deformable ? c.blown : 0.0f;
-				ripple_sand_depth[z * sn + x] = sgen ? float(sgen->get_sand_depth_at(Vector3(px, 0.0f, pz))) : -1.0f;
+				ripple_sand_depth[z * sn + x] = sgen ? float(sgen->get_sand_interdune_at(Vector3(px, 0.0f, pz))) : -1.0f;
 			}
 		}
-		// The dune tone past the patch: the generator's sand depth over a kilometre round it, in 8 m texels (its own
+		// The dune tone past the patch: the generator's interdune floors over a kilometre round it, in 8 m texels (its own
 		// grid's scale), so ground past the patch with a BaseMaterial3D shows the interdune flats too.
 		{
 			const int fn = RIPPLE_DEPTH_N;
@@ -5814,7 +5814,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 			for (int z = 0; z < fn; z++) {
 				for (int x = 0; x < fn; x++) {
 					const Vector3 fp(ripple_far_depth_rect.position.x + (x + 0.5f) * fs, 0.0f, ripple_far_depth_rect.position.y + (z + 0.5f) * fs);
-					ripple_far_depth[z * fn + x] = sgen ? float(sgen->get_sand_depth_at(fp)) : -1.0f;
+					ripple_far_depth[z * fn + x] = sgen ? float(sgen->get_sand_interdune_at(fp)) : -1.0f;
 				}
 			}
 		}
@@ -5940,7 +5940,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				}
 			}
 		}
-		// Rows n+S+n..n+S+n+D-1: the generator's sand depth round the patch (R), for the dune tone past it.
+		// Rows n+S+n..n+S+n+D-1: the generator's interdune floors round the patch (R), for the dune tone past it.
 		if ((int)ripple_far_depth.size() == dn * dn) {
 			for (int z = 0; z < dn; z++) {
 				for (int x = 0; x < dn; x++) {
