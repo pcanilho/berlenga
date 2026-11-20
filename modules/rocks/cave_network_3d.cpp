@@ -4032,6 +4032,7 @@ void CaveNetwork3D::_open_holes() {
 
 int CaveNetwork3D::build_meshes(const AABB &p_area) {
 	_stream_finish(true);
+	built_by_call = true;
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	HashSet<Vector3i> want, pinned;
 	_wanted(p_area, want, pinned);
@@ -4129,6 +4130,18 @@ void CaveNetwork3D::set_follow_target(const NodePath &p_path) {
 	}
 }
 
+// What streaming follows: follow_target, else (as the weather, the ground and the other world systems) the viewport's
+// current camera, unless build_meshes() was called and the caller owns the meshes, or in the editor.
+const Node3D *CaveNetwork3D::_stream_target() const {
+	if (!follow_target.is_empty()) {
+		return Object::cast_to<Node3D>(get_node_or_null(follow_target));
+	}
+	if (built_by_call || Engine::get_singleton()->is_editor_hint() || !is_inside_tree() || !get_viewport()) {
+		return nullptr;
+	}
+	return get_viewport()->get_camera_3d();
+}
+
 // One step of streaming: integrate a finished batch, else start the next one when the target has moved 4 m (or
 // nothing streamed yet). Freed: chunks past stream_radius plus one chunk, unless pinned.
 void CaveNetwork3D::_stream_update() {
@@ -4138,7 +4151,7 @@ void CaveNetwork3D::_stream_update() {
 		}
 		_stream_finish(true);
 	}
-	const Node3D *target = Object::cast_to<Node3D>(get_node_or_null(follow_target));
+	const Node3D *target = _stream_target();
 	if (!target || caves.is_empty()) {
 		return;
 	}
@@ -4246,7 +4259,7 @@ void CaveNetwork3D::_notification(int p_what) {
 			set_process_internal(true); // streaming round the follow target; live water on the nearest pools
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
-			if (!follow_target.is_empty()) {
+			if (!follow_target.is_empty() || !built_by_call) {
 				_stream_update();
 			}
 			if (!Engine::get_singleton()->is_editor_hint()) {

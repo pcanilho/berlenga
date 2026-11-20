@@ -356,8 +356,10 @@ float hg_phase(float c, float g) {
 // The densest smoke the gas is taken as: the path tracer's density majorant (RTSparseVolume::density_majorant),
 // which clamps the smoke it tracks to it, and Flow's own opacity march (patched, misc/physx_patches 0010).
 const float SMOKE_MAX = 2.0;
-const float SUN_MS_GAIN = 1.1;
+const float SUN_MS_GAIN = 1.05;
 const float SKY_MS_SHARE = 0.18;
+// Fitted on test puffs lit from the side and from behind the camera: 0, the octaves scatter evenly.
+const float MS_ECCENTRICITY = 0.0;
 const float SKY_OCCLUSION = 0.15;
 
 float ms_transmittance(float tau) {
@@ -367,6 +369,18 @@ float ms_transmittance(float tau) {
 	// see-through as under path tracing.
 	float thick = 1.0 - exp(-2.0 * tau);
 	return (exp(-tau) + thick * (0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + p.sky_map.z * exp(-0.125 * tau))) * (p.sky_map.x * SUN_MS_GAIN);
+}
+
+// A light's in-scattering through optical depth tau, cos(view, light) c: the octaves of ms_transmittance, each
+// with its own phase. Each scattering order spreads the light further from the light's direction, so octave i
+// takes the anisotropy g * MS_ECCENTRICITY^i (Wrenninge et al. 2013's eccentricity attenuation, as Frostbite's
+// clouds, Hillaire 2016): a cloud lit from behind the camera, where the first scattering's forward-leaning phase
+// sends little back, still glows with its many-times-scattered light, as under path tracing.
+float ms_light(float tau, float c, float g) {
+	float a = p.sky_map.x * (1.0 / 0.9);
+	float thick = 1.0 - exp(-2.0 * tau);
+	float e = MS_ECCENTRICITY;
+	return (hg_phase(c, g) * exp(-tau) + thick * (hg_phase(c, g * e) * 0.5 * a * exp(-0.5 * tau) + hg_phase(c, g * e * e) * 0.25 * a * a * exp(-0.25 * tau) + hg_phase(c, g * e * e * e) * p.sky_map.z * exp(-0.125 * tau))) * (p.sky_map.x * SUN_MS_GAIN);
 }
 
 float ign(vec2 px) {
@@ -501,7 +515,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					}
 				}
 				// Gas between the point and the light.
-				float light_t = ms_transmittance(0.0);
+				float light_tau = 0.0;
 				if (shadow_steps > 0) {
 					float reach = min(d, p.misc.z) * upm;
 					float ds = reach / float(shadow_steps);
@@ -511,11 +525,9 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 						smoke_at(pos + ldir * (ds * (float(s) + 0.5)), cell_inv, light_acc, ls);
 						od += min(ls, SMOKE_MAX);
 					}
-					light_t = ms_transmittance(od * sigma * ds);
+					light_tau = od * sigma * ds;
 				}
-				float c = dot(dir, ldir);
-				float phase = hg_phase(c, g);
-				in_light += L.color_decay.rgb * (atten * phase * light_t);
+				in_light += L.color_decay.rgb * (atten * ms_light(light_tau, dot(dir, ldir), g));
 			}
 			if (p.sun.x > 0) {
 				vec3 vpos = (p.world_to_view * vec4(pos_m, 1.0)).xyz;
@@ -543,7 +555,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					if (atten <= 0.0) {
 						continue;
 					}
-					float light_t = ms_transmittance(0.0);
+					float light_tau = 0.0;
 					vec3 map_uvw = vec3(-1.0);
 #ifndef SHADOW_PASS
 					if (p.sun_map.w > 0.5 && dot(ldir, p.sun_map.xyz) > 0.9999) {
@@ -552,7 +564,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					}
 					if (all(greaterThanEqual(map_uvw, vec3(0.0))) && all(lessThanEqual(map_uvw, vec3(1.0)))) {
 						// All the gas toward the sun in one fetch (Frostbite's volumetric shadow maps).
-						light_t = ms_transmittance(textureLod(sun_map_tex, map_uvw, 0.0).r);
+						light_tau = textureLod(sun_map_tex, map_uvw, 0.0).r;
 					} else
 #endif
 					if (shadow_steps > 0) {
@@ -563,11 +575,9 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 							smoke_at(pos + ldir * (ds * (float(s) + 0.5)), cell_inv, light_acc, ls);
 							od += min(ls, SMOKE_MAX);
 						}
-						light_t = ms_transmittance(od * sigma * ds);
+						light_tau = od * sigma * ds;
 					}
-					float c = dot(dir, ldir);
-					float phase = hg_phase(c, g);
-					in_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * atten * phase * light_t);
+					in_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * atten * ms_light(light_tau, dot(dir, ldir), g));
 				}
 			}
 			if (ambient_on) {
@@ -1065,9 +1075,9 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	f[w++] = CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
 	f[w++] = CLAMP(p_params.ground_albedo, 0.0f, 1.0f);
 	{
-		// The scattering orders past the three octaves, as a geometric series: the sum over n >= 3 of (c albedo)^n, c = 0.45
+		// The scattering orders past the three octaves, as a geometric series: the sum over n >= 3 of (c albedo)^n, c = 0.6
 		// the share of light a scatter keeps inside the gas (fitted with SUN_MS_GAIN to the path tracer on test puffs).
-		const float q = 0.45f * CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
+		const float q = 0.6f * CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
 		f[w++] = q * q * q / (1.0f - q);
 	}
 	f[w++] = sky_map ? 1.0f : 0.0f;

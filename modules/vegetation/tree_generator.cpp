@@ -97,7 +97,7 @@ static bool hedge_shrub(TreeGenerator::Preset p_preset) {
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
 	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow",
 	"Northern Hardwood Forest", "Eastern Oak Forest", "Pine-Hemlock Forest", "Coppice with Standards", "Wood Pasture", "Pollard Row",
-	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow"
+	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow", "Old-growth Beech"
 };
 
 TreeGenerator::TreeGenerator() {
@@ -21010,6 +21010,37 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		look.set_preset(p_preset);
 		params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.85f, 1.25f, tv));
 	}
+	if (old_growth_band > 0) {
+		// An old-growth stand's ages (trees.md 5an; Uholka, Brandli and Commarmot 2013: 435 living trees a hectare,
+		// about ten of 80 cm and more, beeches to nearly 500 years; three-layered). The generator's beech thins
+		// toward a few shoots on a bare head past about 200 years, so the giants stop at 180 and carry their age in
+		// their microhabitats: cavities, rot, broken limbs and tinder fungus (veteran, limb_breakage).
+		const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.53f, 1.0f);
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		const float y0 = look.params[PARAM_YEARS];
+		if (old_growth_band == 1) {
+			params[PARAM_YEARS] = Math::round(MIN(y0 * Math::lerp(2.6f, 3.6f, tv), 180.0f));
+			veteran = Math::lerp(0.6f, 1.0f, tv);
+			limb_breakage = Math::lerp(1.5f, 2.5f, tv);
+			// Emergent: the giants won their crown room over centuries, wider and deeper than their neighbours'.
+			forest_spacing *= 1.8f;
+			forest_shade *= 0.75f; // Their crowns above the canopy's, in full light on top and sides.
+		} else if (old_growth_band == 2) {
+			// The middle layer: beech waiting in the canopy's shade for decades.
+			params[PARAM_YEARS] = Math::round(y0 * Math::lerp(0.45f, 0.75f, tv));
+			veteran = 0.0f;
+		} else if (old_growth_band == 3) {
+			// The fallen and the broken giants (snags 2-4, logs 2-4 over the variants).
+			params[PARAM_YEARS] = Math::round(MIN(y0 * Math::lerp(2.2f, 3.4f, tv), 180.0f));
+			veteran = 0.5f;
+		} else {
+			// The canopy: of many ages, a third of them habitat trees (WSL 2013: 150 a hectare, 35% of the living).
+			params[PARAM_YEARS] = Math::round(y0 * Math::lerp(1.2f, 2.0f, tv));
+			veteran = p_variant % 3 == 0 ? Math::lerp(0.3f, 0.6f, tv) : 0.0f;
+			limb_breakage = 1.3f;
+		}
+	}
 }
 
 // Crown hull (trees.md 9b): the far level past a placed tree's range, as a few dozen foliage lobes (the lobes of
@@ -21351,6 +21382,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	windthrow_storm = p_from.windthrow_storm;
 	windthrow_direction = p_from.windthrow_direction;
 	windthrow_band = p_from.windthrow_band;
+	old_growth_band = p_from.old_growth_band;
 	bark_wounds = p_from.bark_wounds;
 	bark_chevrons = p_from.bark_chevrons;
 	wind_exposure = p_from.wind_exposure;
@@ -21502,7 +21534,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	}
 	const int key = (int(p_preset) * int(FORM_MAX) + int(p_form)) * 2 + (rigged ? 1 : 0) + ((p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG) && coppice_ages.x >= 0 ? 100000 * (1 + coppice_ages.x + 64 * coppice_ages.y) : 0) +
 			(beetle_band > 0 ? 40000000 * beetle_band + 1000000 * MIN(int(beetle_outbreak * 2.0f), 30) : 0) +
-			(windthrow_band > 0 ? 200000000 * windthrow_band + 2000000 * MIN(int(windthrow_storm * 2.0f), 60) : 0);
+			(windthrow_band > 0 ? 200000000 * windthrow_band + 2000000 * MIN(int(windthrow_storm * 2.0f), 60) : 0) +
+			(old_growth_band > 0 ? 1000000000 + 50000000 * old_growth_band : 0);
 	// Placed trees are alive unless a beetle stand grows its kill (single trees keep beetle_years).
 	struct BeetleYearsRestore {
 		float &value;
@@ -21562,6 +21595,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const int saved_cut_cycle = cut_cycle;
 		const int saved_cut_since = cut_since;
 		const float saved_veteran = veteran;
+		const float saved_breakage = limb_breakage;
 		const float saved_exposure = wind_exposure;
 		const float saved_krummholz = krummholz;
 		const float saved_slope = ground_slope;
@@ -21647,6 +21681,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		cut_cycle = saved_cut_cycle;
 		cut_since = saved_cut_since;
 		veteran = saved_veteran;
+		limb_breakage = saved_breakage;
 		wind_exposure = saved_exposure;
 		krummholz = saved_krummholz;
 		envelope = saved_envelope;
@@ -22555,6 +22590,83 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			shrub(PRESET_ELDER, 0.2f);
 			stand_forest_shade = 0.6f;
 		} break;
+		case STAND_OLD_GROWTH_BEECH: {
+			lead = PRESET_BEECH;
+			// Primeval beech (trees.md 5an; Uholka-Shyrokyi Luh, Brandli and Commarmot 2013, WSL inventory; Hobi et al.
+			// 2015, its gap pattern from satellite): a closed canopy, mainly three-layered, broken by gaps mostly no
+			// larger than one canopy tree's crown (98% under 200 m2), each the place a giant fell; 97% beech;
+			// 582 m3/ha of living wood and 163 m3/ha dead, lying to standing about 5 to 1. In the gaps: the giant on
+			// the ground, the snapped stump of another, and every age under them, from seedlings to the poles waiting
+			// below the canopy.
+			const float gap_scale = 22.0f, gaps = 0.3f; // patch_cover maps through the noise's bell: 0.3 leaves about a tenth of the ground in clear gaps.
+			stand_forest_shade = 0.5f;
+			old_growth_band = 3;
+			Ref<PlantSpecies> giant_log = _stand_species(PRESET_BEECH, true, p_variants, FORM_LOG);
+			giant_log->set_name("Beech (old-growth fallen giant)");
+			giant_log->set_density(1.0f);
+			giant_log->set_spacing(HABITATS[PRESET_BEECH].stand_spacing * 1.5f);
+			giant_log->set_patch_scale(gap_scale);
+			giant_log->set_patch_cover(gaps);
+			giant_log->set_patch_seed(patch_seed);
+			list.push_back(giant_log);
+			Ref<PlantSpecies> giant_snag = _stand_species(PRESET_BEECH, true, p_variants, FORM_SNAG);
+			giant_snag->set_name("Beech (old-growth broken giant)");
+			giant_snag->set_density(0.3f);
+			giant_snag->set_spacing(HABITATS[PRESET_BEECH].stand_spacing * 2.5f);
+			giant_snag->set_patch_scale(gap_scale);
+			giant_snag->set_patch_cover(gaps);
+			giant_snag->set_patch_seed(patch_seed);
+			giant_snag->set_canopy_opacity(0.0f);
+			list.push_back(giant_snag);
+			// The giants among the canopy: about ten a hectare.
+			old_growth_band = 1;
+			Ref<PlantSpecies> giant = _stand_species(PRESET_BEECH, true, p_variants, FORM_STAND);
+			giant->set_name("Beech (old-growth veteran)");
+			giant->set_density(1.0f);
+			giant->set_spacing(24.0f);
+			// Larger than their neighbours in every part (bole to 1.4 m across in Uholka): the variants range from tall
+			// and narrow to broad-crowned, scaled up a fifth.
+			giant->set_scale_range(Vector2(1.1f, 1.3f));
+			giant->set_patch_scale(gap_scale);
+			giant->set_patch_cover(gaps);
+			giant->set_patch_seed(patch_seed);
+			giant->set_patch_invert(true);
+			list.push_back(giant);
+			old_growth_band = 4;
+			Ref<PlantSpecies> crown = canopy(PRESET_BEECH, 1.0f, gap_scale, gaps, true, true);
+			crown->set_name("Beech (old-growth canopy)");
+			canopy(PRESET_SYCAMORE_MAPLE, 0.08f, gap_scale, gaps, true, false);
+			// The middle layer under the canopy (beech tolerates the shade of its own crowns for decades).
+			old_growth_band = 2;
+			Ref<PlantSpecies> pole = _stand_species(PRESET_BEECH, true, p_variants, FORM_STAND);
+			pole->set_name("Beech (old-growth pole)");
+			pole->set_density(0.4f);
+			list.push_back(pole);
+			// In the gaps' light the poles shoot up and the seedlings crowd in.
+			Ref<PlantSpecies> gap_pole = _stand_species(PRESET_BEECH, true, p_variants, FORM_STAND);
+			gap_pole->set_name("Beech (old-growth gap pole)");
+			gap_pole->set_density(0.7f);
+			gap_pole->set_patch_scale(gap_scale);
+			gap_pole->set_patch_cover(gaps);
+			gap_pole->set_patch_seed(patch_seed);
+			list.push_back(gap_pole);
+			old_growth_band = 0;
+			Ref<PlantSpecies> gap_young = _stand_species(PRESET_BEECH, true, p_variants, FORM_SAPLING);
+			gap_young->set_name("Beech (old-growth gap regeneration)");
+			gap_young->set_density(0.9f);
+			gap_young->set_patch_scale(gap_scale);
+			gap_young->set_patch_cover(gaps);
+			gap_young->set_patch_seed(patch_seed);
+			list.push_back(gap_young);
+			Ref<PlantSpecies> gap_maple = _stand_species(PRESET_SYCAMORE_MAPLE, true, p_variants, FORM_SAPLING);
+			gap_maple->set_name("Sycamore (old-growth gap regeneration)");
+			gap_maple->set_density(0.2f);
+			gap_maple->set_patch_scale(gap_scale);
+			gap_maple->set_patch_cover(gaps);
+			gap_maple->set_patch_seed(patch_seed);
+			list.push_back(gap_maple);
+			stand_forest_shade = 0.6f;
+		} break;
 		case STAND_MAX:
 			break;
 	}
@@ -22581,10 +22693,12 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 		// A worked coppice is tidied: its standards are felled for timber before they die, so it
 		// holds a fraction of a wild wood's deadwood.
 		const float dead = p_stand == STAND_COPPICE_STANDARDS ? 0.35f : 1.0f;
+		// Old growth holds about three times a reserve's deadwood, lying to standing 5 to 1 (WSL 2013: 163 m3/ha).
+		const bool primeval = p_stand == STAND_OLD_GROWTH_BEECH;
 		Ref<PlantSpecies> snag = _stand_species(lead, true, p_variants, FORM_SNAG);
-		snag->set_density(0.25f * dead);
+		snag->set_density((primeval ? 0.3f : 0.25f) * dead);
 		Ref<PlantSpecies> log = _stand_species(lead, true, p_variants, FORM_LOG);
-		log->set_density(0.4f * dead);
+		log->set_density((primeval ? 1.0f : 0.4f) * dead);
 		Ref<PlantSpecies> branch = _stand_species(lead, true, p_variants, FORM_BRANCH);
 		branch->set_density(0.7f);
 		Ref<PlantSpecies> sticks = _stand_species(lead, true, p_variants, FORM_STICKS);
@@ -23658,6 +23772,7 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_DATE_OASIS);
 	BIND_ENUM_CONSTANT(STAND_BEETLE_SPRUCE);
 	BIND_ENUM_CONSTANT(STAND_WINDTHROW);
+	BIND_ENUM_CONSTANT(STAND_OLD_GROWTH_BEECH);
 	BIND_ENUM_CONSTANT(STAND_MAX);
 	BIND_ENUM_CONSTANT(REGION_EUROPE);
 	BIND_ENUM_CONSTANT(REGION_NORTH_AMERICA);

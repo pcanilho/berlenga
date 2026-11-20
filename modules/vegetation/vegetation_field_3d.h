@@ -438,6 +438,7 @@ private:
 		LocalVector<LocalVector<MultiMeshInstance3D *>> nodes; // Per species.
 		LocalVector<bool> committed;
 		LocalVector<float> committed_keep; // Per species: the share of its plants (by rank) the tile's cells hold.
+		LocalVector<Vector3> committed_eye; // Per species: the stream centre its skyline trees were judged from (trees.md 9c).
 		bool stale = false; // Placed before the ground (holes) or burn ages changed: its replacement is on the way.
 	};
 	struct StreamJob {

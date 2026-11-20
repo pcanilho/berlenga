@@ -45,7 +45,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"olive grove", "date oasis", "beetle spruce", "windthrow", "woodland", "NA woodland"]
+		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -295,6 +295,39 @@ func _stand_checks(only := -1) -> void:
 						if Vector2(x.x, x.z).normalized().dot(dir) < cos(0.5):
 							off += 1
 			_check(thrown > 0 and snapped > 0 and leaning > 0 and stand_count > 0 and off == 0 and plates > 0, "windthrow: %d thrown (%d variants with root plates), %d snapped, %d leaning, %d standing; %d of %d drawn turned off the storm's track" % [thrown, plates, snapped, leaning, stand_count, off, checked])
+		elif i == TreeGenerator.STAND_OLD_GROWTH_BEECH:
+			# Old-growth beech (trees.md 5an): veteran giants among the canopy (about ten a hectare), a fallen giant in
+			# the gaps, poles and seedlings under them, lying deadwood well over standing.
+			var giants := 0
+			var gap_logs := 0
+			var poles := 0
+			var lying := 0
+			var standing_dead := 0
+			var vet_ok := true
+			for s in sps.size():
+				var nm5: String = sps[s].resource_name
+				var n5: int = f.get_placements(s).size()
+				if nm5.contains("old-growth") or nm5.ends_with("(log)"):
+					var hs := []
+					for m in sps[s].meshes:
+						var ab: AABB = m.get_aabb()
+						hs.append("%.0fx%.0f %s" % [ab.size.y, max(ab.size.x, ab.size.z), str(m.get_meta("crown", Vector3()))])
+					print("  %s: %s" % [nm5, ", ".join(hs)])
+				if nm5.contains("old-growth veteran"):
+					giants += n5
+				elif nm5.contains("fallen giant"):
+					gap_logs += n5
+					lying += n5
+				elif nm5.contains("broken giant"):
+					standing_dead += n5
+				elif nm5.contains("pole"):
+					poles += n5
+				elif nm5.contains("(log)"):
+					lying += n5
+				elif nm5.contains("(snag)"):
+					standing_dead += n5
+			var ha: float = SIZE * SIZE / 10000.0
+			_check(giants / ha >= 4.0 and giants / ha <= 25.0 and gap_logs > 0 and poles > 0 and lying > 2 * standing_dead, "old-growth beech: %.1f veteran giants a hectare, %d fallen giants in gaps, %d poles, %d lying to %d standing dead" % [giants / ha, gap_logs, poles, lying, standing_dead])
 		elif i == TreeGenerator.STAND_POLLARD_ROW:
 			_check(cut.pollard > 0 and cut.pollard >= open_count, "pollard row: %d willow pollards, %d alders" % [cut.pollard, open_count])
 		elif i == TreeGenerator.STAND_COPPICE_STANDARDS:

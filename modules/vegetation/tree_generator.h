@@ -136,6 +136,7 @@ public:
 		STAND_DATE_OASIS, // Date palm oasis: tended palms in irrigated rows, wild clumps by the water, fruit trees beneath (trees.md 5ai).
 		STAND_BEETLE_SPRUCE, // Spruce after a bark beetle outbreak: grey snag spots with a red front, living spruce between (trees.md 5aj).
 		STAND_WINDTHROW, // Spruce after a winter storm: gaps of thrown and snapped trees lying down the storm's track, pioneers coming up (trees.md 5am).
+		STAND_OLD_GROWTH_BEECH, // Primeval beech: a closed, three-layered canopy with veteran giants, gaps of one fallen giant each, every age under them, deadwood at all decay stages (trees.md 5an).
 		STAND_MAX,
 	};
 
@@ -701,6 +702,7 @@ public:
 	float windthrow_storm = 1.0f;
 	Vector2 windthrow_direction = Vector2(0.92f, -0.38f);
 	int windthrow_band = 0; // While a windthrow stand grows its species: 1 thrown, 2 snapped, 3 leaning survivors.
+	int old_growth_band = 0; // While an old-growth stand grows its species: 1 veteran giants, 2 poles, 3 giant deadwood, 4 canopy (trees.md 5an).
 	static int _windthrow_class(float p_years);
 	// Far thinning (trees.md 9a, Paulo's pick 19 Nov): placed trees join VegetationField3D's far tail. Each stand
 	// species 5 m or larger gets a visibility range by its size (30 x its largest extent, 150-1200 m) unless it has one, and
