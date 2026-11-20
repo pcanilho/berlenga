@@ -180,4 +180,11 @@ terrain shadows at any range from the ground's horizon toward the sun.
   smoothstep(tangent - 0.006, tangent + 0.014, tan(sun elevation)), fading in from far_shadow_start (150 m) to
   twice it, so the cascades keep the near ground. Raster only; the path tracer traces the hills.
 - The sun is sun_light, or the first visible DirectionalLight3D (polled five times a second).
+- Each node also keeps one over the run to its hull point and its own grid height, so the material moves the
+  tangent to the pixel's own height: slope + (grid height - pixel height) / run. Crests standing above the 8 m
+  grid stay lit and hollows under it shade, as the cascades show them.
+- Check (19 Nov, docs asked whether it darkens the ambient): it scales SUN_SHADOW only, the sun's direct light. With
+  the default 6 km cascades the frame with far shadows on matches the frame with them off to within 0.3 of a level
+  in mean brightness; the dark range in the first after frame was right for a sun 2 degrees up (the before frame,
+  cascades cut at 300 m, lit what the ridges shade).
 

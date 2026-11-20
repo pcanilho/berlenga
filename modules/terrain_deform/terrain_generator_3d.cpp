@@ -5911,7 +5911,7 @@ struct SunHorizonJob {
 	const float *h;
 	int nx, nz, ns, nt;
 	float cell, ox, oz, dx, dz, s0, t0;
-	float *out; // nt rows of ns
+	float *out; // nt rows of ns samples of (slope, 1 / run, height)
 };
 } // namespace
 
@@ -5922,7 +5922,7 @@ void TerrainGenerator3D::_sun_horizon_lines(void *p_job, uint32_t p_part) {
 	hh.resize(job->ns);
 	const int per = 16;
 	for (int line = int(p_part) * per; line < MIN(int(p_part + 1) * per, job->nt); line++) {
-		TerrainSky::sun_horizon_line(job->h, job->nx, job->nz, job->cell, job->ox, job->oz, job->dx, job->dz, job->s0, job->t0, job->ns, line, job->out + size_t(line) * job->ns, hs.ptr(), hh.ptr());
+		TerrainSky::sun_horizon_line(job->h, job->nx, job->nz, job->cell, job->ox, job->oz, job->dx, job->dz, job->s0, job->t0, job->ns, line, job->out + size_t(line) * job->ns * 3, hs.ptr(), hh.ptr());
 	}
 }
 
@@ -5959,14 +5959,14 @@ bool TerrainGenerator3D::update_sun_horizon(const Vector3 &p_to_sun) {
 	const int ns = int(Math::ceil((s_hi - s_lo) / c)) + 1;
 	const int nt = int(Math::ceil((t_hi - t_lo) / c)) + 1;
 	Vector<float> data;
-	data.resize(ns * nt);
+	data.resize(ns * nt * 3);
 	SunHorizonJob job{ sun_heights.ptr(), sky_nx, sky_ny, ns, nt, float(c), float(o.x), float(o.y), float(d.x), float(d.y), float(s_lo), float(t_lo), data.ptrw() };
 	WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_sun_horizon_lines, &job, (nt + 15) / 16, -1, true, SNAME("TerrainSunHorizon"));
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
 	Vector<uint8_t> bytes;
 	bytes.resize(data.size() * int(sizeof(float)));
 	memcpy(bytes.ptrw(), data.ptr(), bytes.size());
-	Ref<Image> img = Image::create_from_data(ns, nt, false, Image::FORMAT_RF, bytes);
+	Ref<Image> img = Image::create_from_data(ns, nt, false, Image::FORMAT_RGBF, bytes);
 	if (sun_horizon_texture.is_valid() && sun_horizon_texture->get_width() == ns && sun_horizon_texture->get_height() == nt) {
 		sun_horizon_texture->update(img);
 	} else {
