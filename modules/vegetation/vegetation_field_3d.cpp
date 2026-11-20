@@ -624,6 +624,116 @@ void VegetationField3D::_read_burn_age(PlaceSetup &r_setup) const {
 	r_setup.burn_rect = rect;
 }
 
+// Stand age and disturbance (docs/ideas/vegetation.md, "Stand age"; WorldStand in world-contracts.md, Stand): the
+// years since the last stand-replacing disturbance and its kind, on the burn grid's spacing over the map. Read when a
+// species uses the stand rules or is a succession stage (TreeGenerator.make_succession).
+void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
+	r_setup.stand_rules.clear();
+	r_setup.stand_age.clear();
+	r_setup.stand_kind.clear();
+	r_setup.stand_nx = 0;
+	r_setup.stand_ny = 0;
+	const WorldStand *stand = WorldContracts::stand();
+	if (stand) {
+		stand_seen = stand->get_stand_generation();
+	}
+	if (biome.is_valid()) {
+		const TypedArray<PlantSpecies> list = biome->get_species();
+		for (int i = 0; i < list.size(); i++) {
+			const Ref<PlantSpecies> sp = list[i];
+			if (sp.is_null() || !sp->uses_stand()) {
+				continue;
+			}
+			PlaceSetup::StandRule rule;
+			sp->get_stand_rules(rule.age, rule.age_fade, rule.kind, rule.kind_fade);
+			if (r_setup.stand_rules.find(rule) < 0) {
+				r_setup.stand_rules.push_back(rule);
+			}
+		}
+	}
+	stand_follow = !r_setup.stand_rules.is_empty();
+	if (!stand_follow || !stand || !r_setup.rect.has_area()) {
+		return;
+	}
+	const Rect2 rect = r_setup.rect;
+	const float cell = MAX(2.0f, MAX(rect.size.x, rect.size.y) / 511.0f);
+	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 512);
+	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 512);
+	r_setup.stand_age.resize(nx * ny);
+	r_setup.stand_kind.resize(nx * ny);
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const Vector2 xz = rect.position + rect.size * Vector2(float(x) / (nx - 1), float(z) / (ny - 1));
+			const Vector3 p(xz.x, 0.0f, xz.y);
+			r_setup.stand_age[z * nx + x] = stand->stand_age_at(p);
+			r_setup.stand_kind[z * nx + x] = uint8_t(CLAMP(stand->disturbance_at(p), 0, 255));
+		}
+	}
+	r_setup.stand_nx = nx;
+	r_setup.stand_ny = ny;
+	r_setup.stand_rect = rect;
+}
+
+// The stand changed over p_area: its grid cells are read again, and the area where a species' stand weight changed is
+// returned (empty when every change stayed inside every species' stage, as a year passing mostly does).
+Rect2 VegetationField3D::_update_stand(PlaceSetup &r_setup, const Rect2 &p_area) const {
+	const WorldStand *stand = WorldContracts::stand();
+	if (!stand || r_setup.stand_age.is_empty()) {
+		_read_stand(r_setup);
+		return r_setup.stand_age.is_empty() ? Rect2() : r_setup.rect;
+	}
+	stand_seen = stand->get_stand_generation();
+	const Rect2 &sr = r_setup.stand_rect;
+	const int nx = r_setup.stand_nx, ny = r_setup.stand_ny;
+	const float cx = sr.size.x / (nx - 1);
+	const float cz = sr.size.y / (ny - 1);
+	const int x0 = CLAMP(int(Math::floor((p_area.position.x - sr.position.x) / cx)) - 1, 0, nx - 1);
+	const int x1 = CLAMP(int(Math::ceil((p_area.get_end().x - sr.position.x) / cx)) + 1, 0, nx - 1);
+	const int z0 = CLAMP(int(Math::floor((p_area.position.y - sr.position.y) / cz)) - 1, 0, ny - 1);
+	const int z1 = CLAMP(int(Math::ceil((p_area.get_end().y - sr.position.y) / cz)) + 1, 0, ny - 1);
+	Rect2 changed;
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			const Vector2 xz = sr.position + Vector2(x * cx, z * cz);
+			const Vector3 p(xz.x, 0.0f, xz.y);
+			const int i = z * nx + x;
+			const float age = stand->stand_age_at(p);
+			const int kind = CLAMP(stand->disturbance_at(p), 0, 255);
+			if (r_setup.stand_differs(r_setup.stand_age[i], r_setup.stand_kind[i], age, kind)) {
+				const Rect2 c(xz - Vector2(cx, cz) * 0.5f, Vector2(cx, cz));
+				changed = changed.has_area() ? changed.merge(c) : c;
+			}
+			r_setup.stand_age[i] = age;
+			r_setup.stand_kind[i] = uint8_t(kind);
+		}
+	}
+	return changed;
+}
+
+int VegetationField3D::PlaceSetup::stand_cell(const Vector2 &p_xz) const {
+	if (stand_age.is_empty()) {
+		return -1;
+	}
+	const int x = int(Math::round((p_xz.x - stand_rect.position.x) / stand_rect.size.x * (stand_nx - 1)));
+	const int z = int(Math::round((p_xz.y - stand_rect.position.y) / stand_rect.size.y * (stand_ny - 1)));
+	if (x < 0 || z < 0 || x >= stand_nx || z >= stand_ny) {
+		return -1;
+	}
+	return z * stand_nx + x;
+}
+
+bool VegetationField3D::PlaceSetup::stand_differs(float p_age0, int p_kind0, float p_age1, int p_kind1) const {
+	if (p_age0 == p_age1 && p_kind0 == p_kind1) {
+		return false;
+	}
+	for (const StandRule &r : stand_rules) {
+		if (PlantSpecies::stand_weight(r.age, r.age_fade, r.kind, r.kind_fade, p_age0, p_kind0) != PlantSpecies::stand_weight(r.age, r.age_fade, r.kind, r.kind_fade, p_age1, p_kind1)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 float VegetationField3D::PlaceSetup::burn_at(const Vector2 &p_xz) const {
 	if (burn.is_empty()) {
 		return -1.0f;
@@ -770,6 +880,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		}
 	}
 	_read_burn_age(r_setup);
+	_read_stand(r_setup);
 	r_setup.stone_tops = stone_top_grid;
 	r_setup.stone_top_normals = stone_top_grid_normals;
 	// Another field's crowns (canopy_field): a camera-local herb layer under a world forest.
@@ -801,7 +912,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			continue;
 		}
 		ps.range = _species_range(ps.sp, pixel);
-		if (streaming && far_shell && ps.range > 0.0f && !ps.sp->get_meshes().is_empty()) {
+		if (streaming && far_shell && !ps.sp->get_meshes().is_empty()) {
 			ps.far_albedo = _mesh_albedo(ps.sp->get_meshes()[0]);
 		}
 		// The far tail streams only (each tile's cells hold the ranks its distance keeps); small items keep their
@@ -1366,6 +1477,13 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool field_rule = sp->uses_field_edge();
 		const bool mobility_rule = sp->uses_sand_mobility();
 		const bool burn_rule = sp->uses_burn_age();
+		// Succession (WorldStand): the species' stage years and legacy kind; off the grid, old growth.
+		const bool stand_rule = !p_setup.stand_rules.is_empty() && sp->uses_stand();
+		Vector2 stand_age_r, stand_kind_r;
+		float stand_age_f = 0.0f, stand_kind_f = 0.0f;
+		if (stand_rule) {
+			sp->get_stand_rules(stand_age_r, stand_age_f, stand_kind_r, stand_kind_f);
+		}
 		const bool burn_recovery = !burn_rule && sp->get_burn_recovery() > 0.0f && !p_setup.burn.is_empty();
 		const bool spring_rule = sp->uses_spring();
 		const bool pool_rule = sp->uses_pool();
@@ -1530,6 +1648,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					} else if (burn_recovery && suit > 0.0f) {
 						// Everything else thins on a fresh burn and closes in again over its own years.
 						suit *= sp->burn_cover(p_setup.burn_at(xz));
+					}
+					if (stand_rule && suit > 0.0f) {
+						const int sc = p_setup.stand_cell(xz);
+						suit *= PlantSpecies::stand_weight(stand_age_r, stand_age_f, stand_kind_r, stand_kind_f, sc < 0 ? -1.0f : p_setup.stand_age[sc], sc < 0 ? 0 : int(p_setup.stand_kind[sc]));
 					}
 					if (!sand_plant && suit > 0.0f && !p_setup.sea_depth.is_empty()) {
 						// Desert sand seas: only sand plants (RULE_SAND_MOBILITY) root in their loose sand; the rest
@@ -2610,6 +2732,51 @@ float far_shell_noise(float p_x, float p_z, float p_scale, uint32_t p_salt) {
 	return Math::lerp(Math::lerp(a, b, fx), Math::lerp(c, d, fx), fz);
 }
 
+// The far shell's clump field (three value-noise octaves, 7, 19 and 53 m, weights 0.5, 0.3, 0.2, each scaled to
+// [-1, 1]) is far from uniform: most of it sits near 0. Its quantile, from a table sampled once, so a threshold at
+// 1 - cover leaves the cover's share of the ground under clumps.
+float far_shell_clump_quantile(float p_v) {
+	static float table[257];
+	static bool built = false;
+	if (!built) {
+		LocalVector<float> v;
+		v.resize(256 * 256);
+		const float scales[3] = { 7.0f, 19.0f, 53.0f };
+		const float amps[3] = { 0.5f, 0.3f, 0.2f };
+		for (int j = 0; j < 256; j++) {
+			for (int i = 0; i < 256; i++) {
+				float d = 0.0f;
+				for (int o = 0; o < 3; o++) {
+					d += amps[o] * (far_shell_noise(i * 3.71f + 0.3f, j * 3.71f + 0.7f, scales[o], 0x68E31DA4u + uint32_t(o) * 0x9E3779B9u) - 0.5f) * 2.0f;
+				}
+				v[j * 256 + i] = d;
+			}
+		}
+		v.sort();
+		for (int k = 0; k <= 256; k++) {
+			table[k] = v[MIN(k * 256, int(v.size()) - 1)];
+		}
+		built = true;
+	}
+	if (p_v <= table[0]) {
+		return 0.0f;
+	}
+	if (p_v >= table[256]) {
+		return 1.0f;
+	}
+	int lo = 0, hi = 256;
+	while (hi - lo > 1) {
+		const int mid = (lo + hi) / 2;
+		if (table[mid] <= p_v) {
+			lo = mid;
+		} else {
+			hi = mid;
+		}
+	}
+	const float span = table[hi] - table[lo];
+	return (lo + (span > 0.0f ? (p_v - table[lo]) / span : 0.0f)) / 256.0f;
+}
+
 // The distances a level's tiles cover.
 void far_shell_band(int p_level, float p_start, float p_end, float &r_lo, float &r_hi) {
 	r_lo = p_level > 0 ? MAX(p_start, FAR_SHELL_SPLIT[p_level - 1]) : p_start;
@@ -2621,6 +2788,13 @@ void VegetationField3D::set_far_shell(bool p_on) {
 	far_shell = p_on;
 	if (!far_shell) {
 		_free_far_shell();
+	}
+}
+
+void VegetationField3D::set_far_shell_clumps(bool p_enabled) {
+	if (far_shell_clumps != p_enabled) {
+		far_shell_clumps = p_enabled;
+		_free_far_shell(); // Rebuilt on the next update.
 	}
 }
 
@@ -2730,8 +2904,9 @@ Color VegetationField3D::_mesh_albedo(const Ref<Mesh> &p_mesh) {
 float VegetationField3D::_far_shell_start() const {
 	float reach = 0.0f;
 	for (const PlaceSpecies &ps : stream_setup.species) {
-		if (ps.sp.is_valid() && ps.range > 0.0f) {
-			reach = MAX(reach, MAX(ps.reach, ps.range));
+		if (ps.sp.is_valid()) {
+			// An unranged species is drawn as far as the field streams.
+			reach = MAX(reach, ps.range > 0.0f ? MAX(ps.reach, ps.range) : stream_radius);
 		}
 	}
 	const float streamed = MIN(stream_radius, reach > 0.0f ? reach : stream_radius);
@@ -2852,11 +3027,18 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 	};
 	LocalVector<Kind> kinds;
 	for (const PlaceSpecies &ps : su.species) {
-		if (ps.sp.is_null() || ps.range <= 0.0f || ps.far_color.a <= 0.0f || ps.meshes.is_empty() || ps.meshes[0].is_null() || ps.nebkha_slot >= 0) {
+		// Unranged species too: they end where the field stops streaming (a heath's gorse and heather would leave the
+		// ground bare past the stream radius otherwise).
+		if (ps.sp.is_null() || ps.far_color.a <= 0.0f || ps.meshes.is_empty() || ps.meshes[0].is_null() || ps.nebkha_slot >= 0) {
 			continue;
 		}
 		const PlantSpecies *sp = ps.sp.ptr();
 		if (sp->get_rule_range(PlantSpecies::RULE_SHADE).x > 0.0f || sp->uses_dune() || sp->uses_coast() || sp->uses_spring() || sp->uses_pool() || ps.deadwood_reach > 0.0f) {
+			continue;
+		}
+		// A species whose own far form takes over past its plants (meta "far_shell" false: the trees module's crown
+		// hulls and skyline trees) stays out of the shell.
+		if (!bool(sp->get_meta(SNAME("far_shell"), true))) {
 			continue;
 		}
 		const Vector2 sr = sp->get_scale_range();
@@ -2941,13 +3123,41 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 			const uint32_t h = far_shell_hash(cx, cz, salt ^ uint32_t(level));
 			// Expected height where it grows, by the cover; clumped by the hash (more variation where it is thin).
 			const float lump = 1.0f + (far_shell_unit(h, 0) - 0.5f) * (0.5f + 0.6f * (1.0f - cover));
+			// Clumps and gaps (docs/ideas/vegetation.md, "Next round", 3): heath, gorse and scrub stand in clumps with
+			// open ground between, which is what keeps a far hillside's grain (the canopy height models of remote
+			// sensing show the same). Where the cells are fine enough to hold them, the stand stands at its full mass
+			// where a clump field (three octaves, 7, 19 and 53 m) is over its cover's threshold and opens to the ground
+			// elsewhere, so about its cover's share of the ground is under clumps; each octave fades out as the cells
+			// grow past about a third of its size (prefiltered, as a mip), leaving the even mass by cover.
+			float dev = 0.0f, act = 0.0f;
+			const float scales[3] = { 7.0f, 19.0f, 53.0f };
+			const float amps[3] = { 0.5f, 0.3f, 0.2f };
+			for (int o = 0; o < (far_shell_clumps ? 3 : 0); o++) {
+				const float a = 1.0f - Math::smoothstep(0.35f, 0.6f, cell / scales[o]);
+				if (a > 0.0f) {
+					dev += a * amps[o] * (far_shell_noise(q.x, q.y, scales[o], 0x68E31DA4u + uint32_t(o) * 0x9E3779B9u) - 0.5f) * 2.0f;
+					act += a * amps[o];
+				}
+			}
+			float mass = cover;
+			if (act > 0.0f) {
+				// The field's own distribution (far_shell_clump_quantile()) turns it uniform, so a threshold at 1 - cover
+				// puts the clumps on the cover's share of the ground.
+				const float u = far_shell_clump_quantile(dev / act);
+				const float open = Math::smoothstep(1.0f - cover - 0.06f, 1.0f - cover + 0.06f, u);
+				mass = Math::lerp(cover, open, act);
+			}
 			// Its mass, not its tips: the stand's tops are mostly air, and a sward's own blades (GrassField3D's far
 			// rings and columns) stand through it.
-			hgt[j * n + i] = 0.4f * hs / sum * cover * lump;
+			hgt[j * n + i] = 0.4f * hs / sum * mass * lump;
 			col[j * n + i] = Color(cs.r / sum, cs.g / sum, cs.b / sum, cover);
 		}
 	}
 	// Corners: the mean of the cells round them, on the ground (jittered by a hash shared with the neighbours).
+	float hc_top = 0.0f; // The tallest stand's full mass, for the clumps' shade.
+	for (const Kind &k : kinds) {
+		hc_top = MAX(hc_top, 0.4f * k.height);
+	}
 	const int m = FAR_SHELL_CELLS + 1;
 	LocalVector<Vector3> corner;
 	LocalVector<float> ch;
@@ -3027,10 +3237,14 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 				const Vector3 p = corner[k[c]] + Vector3(0, hc >= lift_min ? hc : -0.05f, 0);
 				// Down into the stand where it is low (its own shade), the colour of what grows round it.
 				const Color base = cc[k[c]].a > 0.0f ? cc[k[c]] : Color(0.1f, 0.1f, 0.08f, 0.0f);
-				// A sward or scrub seen from afar is its lit tops over the shade between them (darker than the leaves'
-				// own colour, the more so where it is thin), mottled at the clumps' scale and in larger patches.
+				// Mottled at the clumps' scale and in larger patches. No further darkening for the shade between tops:
+				// the plants' far colour is measured on screen with their own self-shade (docs/ideas/vegetation.md, "Far
+				// colour matched to the plants on screen"), and a darker shell read as black blotches next to the
+				// plants it continues (dry heath bench, 20 Nov: about half their brightness). The low corners round a
+				// clump sit a little in its shade, its tops in light.
 				const float mottle = (0.8f + 0.4f * far_shell_noise(corner[k[c]].x, corner[k[c]].z, 3.0f, 0x2545F491u)) * (0.75f + 0.5f * far_shell_noise(corner[k[c]].x, corner[k[c]].z, 23.0f, 0x9E3779B9u));
-				const float shade = (0.55f + 0.2f * CLAMP(cc[k[c]].a, 0.0f, 1.0f)) * mottle;
+				const float rel = hc_top > 0.0f ? CLAMP(hc / hc_top, 0.0f, 1.0f) : 1.0f;
+				const float shade = mottle * (0.85f + 0.15f * rel);
 				vid[k[c]] = verts.size();
 				verts.push_back(to_local.xform(p));
 				normals.push_back(to_local.basis.xform(nn).normalized());
@@ -3785,6 +3999,10 @@ Error VegetationField3D::populate() {
 	_apply_maps(maps);
 	set_process_internal(!impostor_cells.is_empty() || !lazy_near.is_empty() || has_near_swap || _far_view_active());
 	_report_stand_disturbances(false);
+	// The field's own reports are not a change to follow (else it would populate again for ever).
+	if (const WorldStand *own = WorldContracts::stand()) {
+		stand_seen = own->get_stand_generation();
+	}
 	populate_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("populated"));
 	return OK;
@@ -4721,6 +4939,20 @@ void VegetationField3D::_stream_update(double p_delta) {
 		}
 		burn_dirty = Rect2();
 	}
+	// The stand changed: only where a species crossed its stand range are the tiles placed again.
+	if (stand_dirty.has_area() && stream_jobs.is_empty()) {
+		PlaceSetup &su = stream_setup;
+		const Rect2 changed = _update_stand(su, stand_dirty);
+		if (changed.has_area()) {
+			const Rect2 near = changed.grow(su.max_footprint);
+			for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+				if (Rect2(Vector2(kv.key) * ts, Vector2(ts, ts)).intersects(near)) {
+					kv.value->stale = true;
+				}
+			}
+		}
+		stand_dirty = Rect2();
+	}
 	struct Pending {
 		float d;
 		Vector2i tile;
@@ -4805,7 +5037,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 
 	// Missing tiles within the radius, nearest first, as many at once as there are workers.
 	const int max_jobs = MAX(1, WorkerThreadPool::get_singleton()->get_thread_count());
-	if (int(stream_jobs.size()) < max_jobs && !holes_dirty.has_area() && !burn_dirty.has_area()) {
+	if (int(stream_jobs.size()) < max_jobs && !holes_dirty.has_area() && !burn_dirty.has_area() && !stand_dirty.has_area()) {
 		const int r = int(Math::ceil(stream_radius / ts)) + 2;
 		const Vector2i ct(int(Math::floor(centre.x / ts)), int(Math::floor(centre.y / ts)));
 		const Rect2i map_tiles(Vector2i(int(Math::floor(rect.position.x / ts)), int(Math::floor(rect.position.y / ts))),
@@ -5053,6 +5285,36 @@ void VegetationField3D::_follow_burns(double p_delta) {
 	}
 }
 
+// Stand ages or disturbances changed (WorldStand.stand_changed: a disturbance added, aged or removed, years passing,
+// fire's burns): streamed tiles are placed again where a species crossed its stand range (_stream_update); a
+// populated field populates again.
+void VegetationField3D::_follow_stand(double p_delta) {
+	stand_check -= p_delta;
+	if (!stand_follow || stand_check > 0.0) {
+		return;
+	}
+	stand_check = 0.5;
+	const WorldStand *stand = WorldContracts::stand();
+	if (!stand || stand->get_stand_generation() == stand_seen) {
+		return;
+	}
+	Rect2 area;
+	if (!stand->stand_changes_since(stand_seen, area)) {
+		area = Rect2(-1e6f, -1e6f, 2e6f, 2e6f);
+	}
+	stand_seen = stand->get_stand_generation();
+	if (!area.has_area()) {
+		return;
+	}
+	if (streaming) {
+		if (stream_setup_valid && area.intersects(stream_setup.rect)) {
+			stand_dirty = stand_dirty.has_area() ? stand_dirty.merge(area) : area;
+		}
+	} else if (plant_count > 0) {
+		queue_populate();
+	}
+}
+
 // Crop fields came, went or moved (GrassField3D.fields): rebuild clear of them.
 void VegetationField3D::_on_crop_fields_changed() {
 	_on_holes_changed(Rect2(-1e6f, -1e6f, 2e6f, 2e6f));
@@ -5109,6 +5371,7 @@ void VegetationField3D::_notification(int p_what) {
 				}
 			}
 			_follow_burns(get_process_delta_time());
+			_follow_stand(get_process_delta_time());
 			if (streaming) {
 				if (still_shot && still_frozen && _stream_centre().distance_to(still_at) >= 0.5f) {
 					still_frozen = false;
@@ -5329,6 +5592,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_far_shell"), &VegetationField3D::is_far_shell);
 	ClassDB::bind_method(D_METHOD("set_far_shell_range", "range"), &VegetationField3D::set_far_shell_range);
 	ClassDB::bind_method(D_METHOD("get_far_shell_range"), &VegetationField3D::get_far_shell_range);
+	ClassDB::bind_method(D_METHOD("set_far_shell_clumps", "enabled"), &VegetationField3D::set_far_shell_clumps);
+	ClassDB::bind_method(D_METHOD("is_far_shell_clumps"), &VegetationField3D::is_far_shell_clumps);
 	ClassDB::bind_method(D_METHOD("get_far_shell_column_count"), &VegetationField3D::get_far_shell_column_count);
 	ClassDB::bind_method(D_METHOD("set_far_reach", "reach"), &VegetationField3D::set_far_reach);
 	ClassDB::bind_method(D_METHOD("get_far_reach"), &VegetationField3D::get_far_reach);
@@ -5392,6 +5657,7 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_volume_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_far_volume_range", "get_far_volume_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_shell"), "set_far_shell", "is_far_shell");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_shell_range", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_far_shell_range", "get_far_shell_range");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_shell_clumps"), "set_far_shell_clumps", "is_far_shell_clumps");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_reach", PROPERTY_HINT_RANGE, "1,8,0.1"), "set_far_reach", "get_far_reach");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "detail_reach"), "set_detail_reach", "get_detail_reach");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_pixels", PROPERTY_HINT_RANGE, "0.25,16,0.25,suffix:px"), "set_detail_pixels", "get_detail_pixels");

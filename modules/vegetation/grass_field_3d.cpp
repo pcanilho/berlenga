@@ -186,7 +186,7 @@ struct GrassFillGPU {
 };
 GrassFillGPU grass_fill_gpu;
 
-constexpr int FILL_HEADER = 44;
+constexpr int FILL_HEADER = 48; // grass_fill.glsl's H_* floats.
 // Worn paths: walkers a year on a grid this fine (a path's tread is about a metre wide).
 constexpr float FILL_WEAR_STEP = 0.25f;
 constexpr float FILL_SUIT_STEP = 0.5f;
@@ -494,6 +494,9 @@ void GrassField3D::_build_material() {
 	// The far rings (docs/ideas/grass.md, "Far grass"): their start (where every ring blade is kept), end, end band
 	// and the most a blade widens.
 	code += "uniform vec4 ring_band;\n";
+	// The ground's normal for the far blades (docs/ideas/vegetation.md, "Next round", 2): the data map's heights
+	// (TerrainDataMap3D.get_data_texture(), r: height) over ground_data_rect (z 0: none, the blades ease to up).
+	code += "uniform sampler2D ground_data_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 ground_data_rect;\n";
 	code += "uniform float dormant; // Share of blades dead to the crown in a drought or hard winter (season).\n";
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	// Regrowth flush on burnt ground (burn_recovery): 1 on a fresh burn, 0 by a year and a half; rect z 0: none.
@@ -1212,9 +1215,28 @@ void vertex() {
 	// scale drift. The meadow then reads as a mass of fine fibres (Planet Tech v5), not grit. Measured from the
 	// fade band's centre, so the shadow pass and the path tracer agree.
 	if (fade_band.w > 0.0) {
-		float soft = smoothstep(6.0, 35.0, length(base_w.xz - fade_band.xy));
+		float soft_d = length(base_w.xz - fade_band.xy);
+		float soft = smoothstep(6.0, 35.0, soft_d);
 		v_soft = soft;
-		NORMAL = normalize(mix(NORMAL, normalize(to_local * vec3(0.0, 1.0, 0.0)), 0.55 * soft));
+		// Towards the ground's own normal, not straight up (Ghost of Tsushima; Pesce 2024, "Making a greener grass"),
+		// so a far hillside's blades take the slope's light as the ground and the far shell under them do, and further
+		// over the far rings, where a blade is a pixel or less and its own facing only flickers.
+		vec3 ground_n = vec3(0.0, 1.0, 0.0);
+		if (ground_data_rect.z > 0.0) {
+			vec2 ts = vec2(textureSize(ground_data_map, 0));
+			vec2 uv = (base_w.xz - ground_data_rect.xy) / ground_data_rect.zw;
+			vec2 du = vec2(1.0 / ts.x, 0.0);
+			vec2 dv = vec2(0.0, 1.0 / ts.y);
+			float hx = textureLod(ground_data_map, uv + du, 0.0).r - textureLod(ground_data_map, uv - du, 0.0).r;
+			float hz = textureLod(ground_data_map, uv + dv, 0.0).r - textureLod(ground_data_map, uv - dv, 0.0).r;
+			vec2 cell = 2.0 * ground_data_rect.zw / ts;
+			ground_n = normalize(vec3(-hx / cell.x, 1.0, -hz / cell.y));
+		}
+		float soft_mix = 0.55 * soft;
+		if (ring_blade) {
+			soft_mix = mix(0.55, 0.85, smoothstep(ring_band.x, mix(ring_band.x, ring_band.y, 0.5), soft_d));
+		}
+		NORMAL = normalize(mix(NORMAL, normalize(to_local * ground_n), soft_mix));
 		v_tint = mix(v_tint, grass_patch_tint(base_w.xz, 0.5, 0.5, color_variation), 0.5 * soft);
 	}
 	// Fibre shading (docs/ideas/grass.md): the blade's normals spread across its width, not along it, so its
@@ -1393,6 +1415,8 @@ void fragment() {
 	material->set_shader_parameter("fibre_shading", fibre_shading);
 	material->set_shader_parameter("fade_band", fade_band);
 	material->set_shader_parameter("ring_band", ring_band);
+	material->set_shader_parameter("ground_data_map", ground_data_tex);
+	material->set_shader_parameter("ground_data_rect", ground_data_rect);
 	// One-sided leaf area per ground area: blades per m2 x mean height x width x 0.7 (the taper).
 	material->set_shader_parameter("sward_lai", density * 0.5f * (blade_height.x + blade_height.y) * blade_width * 0.7f);
 	if (blade_mesh.is_valid()) {
@@ -2824,6 +2848,8 @@ void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDat
 	h[40] = float(int(Math::ceil(tile_size / FILL_WEAR_STEP)) + 1);
 	h[41] = FILL_WEAR_STEP;
 	h[42] = trample_resistance;
+	h[43] = 0.0f; // A near tile.
+	h[44] = 1.0f; // The light grid: 1 m.
 	in.resize(off_wear + int(p_wear.size()));
 	float *w = in.ptrw();
 	memcpy(w + off_cand, cand.ptr(), cand.size() * sizeof(float));
@@ -2951,6 +2977,16 @@ void GrassField3D::_free_rings() {
 }
 
 void GrassField3D::_update_rings(const Vector2 &p_center, TerrainDataMap3D *p_map) {
+	// The far blades' ground normal (the shader's ground_data_map).
+	const Ref<Texture2D> ground_tex = p_map ? p_map->get_data_texture() : Ref<Texture2D>();
+	const Rect2 ground_rect = ground_tex.is_valid() ? p_map->get_map_rect() : Rect2();
+	const Vector4 ground_v(ground_rect.position.x, ground_rect.position.y, ground_rect.size.x, ground_rect.size.y);
+	if (material.is_valid() && (ground_tex != ground_data_tex || !ground_v.is_equal_approx(ground_data_rect))) {
+		ground_data_tex = ground_tex;
+		ground_data_rect = ground_v;
+		material->set_shader_parameter("ground_data_map", ground_tex);
+		material->set_shader_parameter("ground_data_rect", ground_v);
+	}
 	if (!_rings_active()) {
 		if (!ring_tiles.is_empty()) {
 			_free_rings();
@@ -3092,10 +3128,51 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 	if (p_map && !map_rect.intersects(rect)) {
 		return;
 	}
+	// GPU-built far blades (docs/ideas/vegetation.md, "Next round", 1): the rules, shade and light on a grid of 33 x 33
+	// over the tile (0.5 m on a level-0 tile, as the near fill) instead of per blade, and the blades placed by
+	// grass_fill.glsl straight into the MultiMesh's buffer, so no copy of them stays on the CPU. A worn path's fine
+	// wear stays on the CPU.
+	const bool use_gpu = gpu_fill && !trodden && is_gpu_fill_available();
+	float sg_step = 1.0f;
+	int sg_n = 1;
+	LocalVector<float> suit_grid;
+	LocalVector<float> light_grid;
+	LocalVector<float> cand;
+	if (use_gpu) {
+		sg_step = MAX(size / 32.0f, FILL_SUIT_STEP);
+		sg_n = int(Math::ceil(size / sg_step)) + 1;
+		suit_grid.resize(sg_n * sg_n);
+		light_grid.resize(sg_n * sg_n);
+		for (int j = 0; j < sg_n; j++) {
+			for (int i = 0; i < sg_n; i++) {
+				const float x = rect.position.x + i * sg_step;
+				const float z = rect.position.y + j * sg_step;
+				const Vector3 p(x, ground_y, z);
+				float v = 1.0f;
+				if (p_map) {
+					v = r->get_suitability(p_map, p);
+					if (canopy && v > 0.0f) {
+						v *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_stand_shade_at(p));
+					}
+					if (v > 0.0f) {
+						v *= _burn_cover(r.ptr(), x, z);
+					}
+					if (under && v > 0.0f) {
+						v *= 1.0f - under->get_sward_shade_at(p);
+					}
+				}
+				suit_grid[j * sg_n + i] = v;
+				light_grid[j * sg_n + i] = (1.0f - (crowns ? crowns->get_shade_at(p) : 0.0f)) * (p_map ? VegetationLight::exposure(p_map, sun_mean, x, z) : 1.0f);
+			}
+		}
+		cand.reserve(n * n * 3 / 2);
+	}
 	LocalVector<Transform3D> xforms;
 	LocalVector<Color> customs;
-	xforms.reserve(n * n);
-	customs.reserve(n * n);
+	if (!use_gpu) {
+		xforms.reserve(n * n);
+		customs.reserve(n * n);
+	}
 	for (int j = 0; j < n; j++) {
 		for (int i = 0; i < n; i++) {
 			const int ci = p_key.x * n + i;
@@ -3145,6 +3222,35 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 			if (holed && _blade_in_hole(p_map, x, z, ground_y)) {
 				continue;
 			}
+			if (use_gpu) {
+				if (p_map) {
+					// As grass_fill.glsl's suitability() and its pick, so the buffer holds only blades that grow (the
+					// path tracer keeps a copy of every record): a cell with a corner where nothing grows stays empty.
+					const float gu = CLAMP((x - rect.position.x) / sg_step, 0.0f, float(sg_n - 1));
+					const float gv = CLAMP((z - rect.position.y) / sg_step, 0.0f, float(sg_n - 1));
+					const int gi = MIN(int(gu), sg_n - 2);
+					const int gj = MIN(int(gv), sg_n - 2);
+					const float *g = suit_grid.ptr() + gj * sg_n + gi;
+					if (MIN(MIN(g[0], g[1]), MIN(g[sg_n], g[sg_n + 1])) <= 0.0f) {
+						continue;
+					}
+					const float fx = gu - gi;
+					const float suit = Math::lerp(Math::lerp(g[0], g[1], fx), Math::lerp(g[sg_n], g[sg_n + 1], fx), gv - gj);
+					if (unit(hb, 16) + unit(hb, 24) / 256.0f >= suit * 1.0001f) {
+						continue;
+					}
+				}
+				union {
+					int32_t i;
+					float f;
+				} ux_bits, uz_bits;
+				ux_bits.i = bx;
+				uz_bits.i = bz;
+				cand.push_back(ux_bits.f);
+				cand.push_back(uz_bits.f);
+				cand.push_back(neg_log_rank);
+				continue;
+			}
 			const float passes = trodden ? path_grid.passes_at(q) : 0.0f;
 			const Vector3 p(x, ground_y, z);
 			float y = ground_y;
@@ -3183,6 +3289,10 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 			customs.push_back(Color(height, -width0, VegetationLight::pack(light) * 4.0f + blade_lean, Math::floor(MIN(neg_log_rank, 63.0f) * 1024.0f) + 0.999f * Math::fmod(rnd + 0.37f * unit(hc, 24), 1.0f)));
 		}
 	}
+	if (use_gpu) {
+		_fill_ring_tile_gpu(p_key, rect, p_map, cell0, width0, sg_step, sg_n, suit_grid, light_grid, cand, r_tile);
+		return;
+	}
 	if (xforms.is_empty()) {
 		return;
 	}
@@ -3204,6 +3314,124 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 	r_tile.mmi->set_name(vformat("GrassRing_%d_%d_%d", p_key.x, p_key.y, level));
 	add_child(r_tile.mmi, false, INTERNAL_MODE_BACK);
 	ring_blade_count += xforms.size();
+}
+
+void GrassField3D::_fill_ring_tile_gpu(const Vector3i &p_key, const Rect2 &p_rect, TerrainDataMap3D *p_map, float p_cell, float p_width, float p_step, int p_n, const LocalVector<float> &p_suit, const LocalVector<float> &p_light, const LocalVector<float> &p_cand, RingTile &r_tile) {
+	const int count = int(p_cand.size() / 3);
+	if (count == 0) {
+		return;
+	}
+	const float ground_y = get_global_position().y;
+	const Transform3D to_local = get_global_transform().affine_inverse();
+	// Heights: the map texels under the tile, so the shader samples exactly as get_height_at() does.
+	int hp_x0 = 0, hp_z0 = 0, hp_w = 1, hp_h = 1;
+	LocalVector<float> heights;
+	Rect2 map_rect;
+	int map_n = 0;
+	float y_min = ground_y, y_max = ground_y;
+	if (p_map) {
+		map_rect = p_map->get_map_rect();
+		if (height_image.is_null() || height_rect != map_rect) {
+			height_image = p_map->get_channel_image(TerrainDataMap3D::CHANNEL_HEIGHT);
+			height_rect = map_rect;
+		}
+		map_n = height_image.is_valid() ? height_image->get_width() : 0;
+		if (map_n > 0) {
+			const float mc = map_rect.size.x / map_n;
+			hp_x0 = CLAMP(int(Math::floor((p_rect.position.x - map_rect.position.x) / mc - 0.5f)), 0, map_n - 1);
+			hp_z0 = CLAMP(int(Math::floor((p_rect.position.y - map_rect.position.y) / mc - 0.5f)), 0, map_n - 1);
+			const int hp_x1 = CLAMP(int(Math::floor((p_rect.position.x + p_rect.size.x - map_rect.position.x) / mc - 0.5f)) + 1, 0, map_n - 1);
+			const int hp_z1 = CLAMP(int(Math::floor((p_rect.position.y + p_rect.size.y - map_rect.position.y) / mc - 0.5f)) + 1, 0, map_n - 1);
+			hp_w = hp_x1 - hp_x0 + 1;
+			hp_h = hp_z1 - hp_z0 + 1;
+			const float *hd = reinterpret_cast<const float *>(height_image->get_data().ptr());
+			heights.resize(hp_w * hp_h);
+			y_min = 1e30f;
+			y_max = -1e30f;
+			for (int j = 0; j < hp_h; j++) {
+				for (int i = 0; i < hp_w; i++) {
+					const float hv = hd[(hp_z0 + j) * map_n + hp_x0 + i];
+					heights[j * hp_w + i] = hv;
+					y_min = MIN(y_min, hv);
+					y_max = MAX(y_max, hv);
+				}
+			}
+		}
+	}
+	if (heights.is_empty()) {
+		heights.push_back(ground_y);
+	}
+	PackedFloat32Array in;
+	in.resize(FILL_HEADER);
+	float *h = in.ptrw();
+	for (int k = 0; k < FILL_HEADER; k++) {
+		h[k] = 0.0f;
+	}
+	h[0] = p_rect.position.x;
+	h[1] = p_rect.position.y;
+	h[2] = p_cell;
+	h[4] = p_width;
+	h[5] = blade_height.x;
+	h[6] = blade_height.y;
+	h[7] = lean;
+	h[8] = clump_size;
+	h[9] = ground_y;
+	h[10] = (p_map && map_n > 0) ? 1.0f : 0.0f;
+	h[11] = p_step;
+	h[12] = float(p_n);
+	h[13] = float(p_n);
+	h[14] = float(hp_x0);
+	h[15] = float(hp_z0);
+	h[16] = float(hp_w);
+	h[17] = float(hp_h);
+	h[18] = map_rect.position.x;
+	h[19] = map_rect.position.y;
+	h[20] = map_n > 0 ? map_rect.size.x / map_n : 1.0f;
+	h[21] = float(MAX(map_n, 1));
+	for (int r = 0; r < 3; r++) {
+		for (int c = 0; c < 3; c++) {
+			h[22 + r * 3 + c] = to_local.basis.rows[r][c];
+		}
+		h[31 + r] = to_local.origin[r];
+	}
+	h[34] = float(count);
+	const int off_cand = FILL_HEADER;
+	const int off_suit = off_cand + int(p_cand.size());
+	const int off_light = off_suit + int(p_suit.size());
+	const int off_height = off_light + int(p_light.size());
+	h[35] = float(off_cand);
+	h[36] = float(off_suit);
+	h[37] = float(off_light);
+	h[38] = float(off_height);
+	h[39] = 0.0f; // No wear: worn tiles are built on the CPU.
+	h[43] = 1.0f; // A ring tile.
+	h[44] = p_step;
+	in.resize(off_height + int(heights.size()));
+	float *w = in.ptrw();
+	memcpy(w + off_cand, p_cand.ptr(), p_cand.size() * sizeof(float));
+	memcpy(w + off_suit, p_suit.ptr(), p_suit.size() * sizeof(float));
+	memcpy(w + off_light, p_light.ptr(), p_light.size() * sizeof(float));
+	memcpy(w + off_height, heights.ptr(), heights.size() * sizeof(float));
+
+	const int level = p_key.z;
+	Ref<MultiMesh> mm;
+	mm.instantiate();
+	mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+	mm->set_use_custom_data(true);
+	mm->set_mesh(level == 0 ? ring_mesh_near : ring_mesh_far);
+	mm->set_instance_count(count);
+	// The records never reach the CPU before the first frame: give culling the tile's box, grown by the widest blade.
+	const float top = MAX(blade_height.x, blade_height.y) * 1.5f + 0.2f;
+	const float grow = blade_width * Math::sqrt(RING_BASE_SHARE) * RING_WIDEN_MAX * 1.5f + top;
+	const AABB world_box(Vector3(p_rect.position.x - grow, y_min - 0.2f, p_rect.position.y - grow), Vector3(p_rect.size.x + 2.0f * grow, y_max - y_min + top + 0.2f, p_rect.size.y + 2.0f * grow));
+	mm->set_custom_aabb(to_local.xform(world_box));
+	RenderingServer::get_singleton()->call_on_render_thread(callable_mp_static(&grass_fill_rt).bind(mm->get_rid(), in, count));
+	r_tile.mmi = memnew(MultiMeshInstance3D);
+	r_tile.mmi->set_multimesh(mm);
+	r_tile.mmi->set_cast_shadows_setting(level <= 1 ? GeometryInstance3D::SHADOW_CASTING_SETTING_ON : GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+	r_tile.mmi->set_name(vformat("GrassRing_%d_%d_%d", p_key.x, p_key.y, level));
+	add_child(r_tile.mmi, false, INTERNAL_MODE_BACK);
+	ring_blade_count += count;
 }
 
 void GrassField3D::set_far_rings(bool p_enabled) {

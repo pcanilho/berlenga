@@ -53,6 +53,8 @@ layout(set = 0, binding = 1, std430) restrict readonly buffer Inputs {
 #define H_WG_N 40
 #define H_WG_STEP 41
 #define H_TRAMPLE_R 42
+#define H_MODE 43 // 0: a near tile; 1: a far ring tile (candidates: bx, bz as int bits, -log2 rank).
+#define H_LG_STEP 44 // The light grid's step (m): 1 for near tiles.
 
 uint murmur3_one(uint p_in, uint p_seed) {
 	p_in *= 0xcc9e2d51u;
@@ -152,8 +154,8 @@ float trample_scale(float p) {
 float light_at(float x, float z) {
 	const int lg = int(inp[H_LG]);
 	const int base = int(inp[H_OFF_LIGHT]);
-	const float lx = clamp(x - inp[H_X0], 0.0, float(lg - 1));
-	const float lz = clamp(z - inp[H_Z0], 0.0, float(lg - 1));
+	const float lx = clamp((x - inp[H_X0]) / inp[H_LG_STEP], 0.0, float(lg - 1));
+	const float lz = clamp((z - inp[H_Z0]) / inp[H_LG_STEP], 0.0, float(lg - 1));
 	const int gx = min(int(lx), lg - 2);
 	const int gz = min(int(lz), lg - 2);
 	const float a = mix(inp[base + gz * lg + gx], inp[base + gz * lg + gx + 1], lx - float(gx));
@@ -192,9 +194,65 @@ void write_zero(uint b) {
 	}
 }
 
+// Far ring tiles (GrassField3D::_build_ring_tile_gpu(), docs/ideas/vegetation.md "GPU-built far blades"): the CPU
+// walks the nested cells and keeps the candidates the tile's rank cut and its obstacles leave; this places each one
+// as GrassField3D::_build_ring_tile_cpu() does, with the rules, light and heights from grids baked over the tile.
+void ring_blade(uint i, uint b) {
+	const int cb = int(inp[H_OFF_CAND]) + int(i) * 3;
+	const int bx = floatBitsToInt(inp[cb]);
+	const int bz = floatBitsToInt(inp[cb + 1]);
+	const float neg_log_rank = inp[cb + 2];
+	const float cell = inp[H_CELL];
+	const uint hj = cell_hash(bx, bz, 0x6C8E9CF5u);
+	const uint hb = cell_hash(bx, bz, 0x1B873593u);
+	const float x = (float(bx) + unit(hj, 0)) * cell;
+	const float z = (float(bz) + unit(hj, 8)) * cell;
+	float y = inp[H_GROUND_Y];
+	float edge = 1.0;
+	if (inp[H_HAS_MAP] > 0.5) {
+		const float suit = suitability(x, z);
+		const float pick = unit(hb, 16) + unit(hb, 24) / 256.0;
+		if (pick >= suit) {
+			write_zero(b);
+			return;
+		}
+		edge = round(mix(0.5, 1.0, smoothstep(0.0, 0.7, suit)) * 16.0) / 16.0; // As _edge_height().
+		y = height_at(x, z);
+	}
+	const float light = light_at(x, z);
+	const float shade_t = 1.0 - clamp(light, 0.0, 1.0);
+	const float sun_t = smoothstep(1.0, 1.3, light);
+	const uint hc = clump_hash(x, z, inp[H_CLUMP]);
+	const float height = mix(inp[H_HMIN], inp[H_HMAX], 0.65 * unit(hc, 0) + 0.35 * unit(hj, 16)) * (1.0 + 0.35 * shade_t - 0.15 * sun_t) * edge;
+	const float yaw = unit(hc, 8) * 6.28318530718 + (unit(hj, 24) - 0.5) * 1.6;
+	const float c = cos(yaw);
+	const float s = sin(yaw);
+	const int t = H_XFORM;
+	for (int r = 0; r < 3; r++) {
+		const float l0 = inp[t + r * 3 + 0];
+		const float l1 = inp[t + r * 3 + 1];
+		const float l2 = inp[t + r * 3 + 2];
+		rec[b + uint(r) * 4u + 0u] = l0 * c - l2 * s;
+		rec[b + uint(r) * 4u + 1u] = l1;
+		rec[b + uint(r) * 4u + 2u] = l0 * s + l2 * c;
+		rec[b + uint(r) * 4u + 3u] = l0 * x + l1 * y + l2 * z + inp[t + 9 + r];
+	}
+	const float rnd = unit(fmix32(hb ^ 0x5BD1E995u), 0);
+	const float blade_lean = min(inp[H_LEAN] * (0.4 + 1.2 * unit(hc, 16)) * (1.0 + 0.8 * shade_t), 3.99);
+	const float packed_light = max(1.0, round(clamp(light / 1.5, 0.0, 1.0) * 100.0));
+	rec[b + 12u] = height;
+	rec[b + 13u] = -inp[H_WIDTH];
+	rec[b + 14u] = packed_light * 4.0 + blade_lean;
+	rec[b + 15u] = floor(min(neg_log_rank, 63.0) * 1024.0) + 0.999 * mod(rnd + 0.37 * unit(hc, 24), 1.0);
+}
+
 void main() {
 	const uint i = gl_GlobalInvocationID.x;
 	if (i >= uint(inp[H_COUNT])) {
+		return;
+	}
+	if (inp[H_MODE] > 0.5) {
+		ring_blade(i, i * 16u);
 		return;
 	}
 	const uint b = i * 16u;

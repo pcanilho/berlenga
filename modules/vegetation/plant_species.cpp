@@ -69,6 +69,53 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_BURN_AGE] = Vector2(-1.0f, 1000.0f);
 	ranges[RULE_SPRING] = Vector2(-1.0f, 1.0f);
 	ranges[RULE_POOL_DISTANCE] = Vector2(-100000.0f, 100000.0f);
+	ranges[RULE_STAND_AGE] = Vector2(-1.0f, 100000.0f);
+	ranges[RULE_DISTURBANCE] = Vector2(0.0f, 100.0f);
+}
+
+bool PlantSpecies::uses_stand() const {
+	Vector2 a, k;
+	float af, kf;
+	get_stand_rules(a, af, k, kf);
+	return a.x > -1.0f || a.y < 100000.0f || k.x > 0.0f || k.y < 100.0f;
+}
+
+void PlantSpecies::get_stand_rules(Vector2 &r_age, float &r_age_fade, Vector2 &r_kind, float &r_kind_fade) const {
+	r_age = ranges[RULE_STAND_AGE];
+	r_age_fade = fades[RULE_STAND_AGE];
+	r_kind = ranges[RULE_DISTURBANCE];
+	r_kind_fade = fades[RULE_DISTURBANCE];
+	// A succession stage (TreeGenerator.make_succession) carries its years and legacy kind as meta; the rules, when
+	// set, win.
+	if (r_age == Vector2(-1.0f, 100000.0f) && r_age_fade == 0.0f && has_meta(SNAME("succession_age"))) {
+		r_age = get_meta(SNAME("succession_age"));
+	}
+	if (r_kind == Vector2(0.0f, 100.0f) && r_kind_fade == 0.0f && has_meta(SNAME("succession_kind"))) {
+		const int k = get_meta(SNAME("succession_kind"));
+		if (k >= 0) {
+			r_kind = Vector2(k, k);
+		}
+	}
+}
+
+float PlantSpecies::stand_weight(const Vector2 &p_age, float p_age_fade, const Vector2 &p_kinds, float p_kind_fade, float p_years, int p_kind) {
+	float w;
+	if (p_years < 0.0f) {
+		// Old growth (no disturbance known): the open-ended last stage, or a range that names -1.
+		w = (p_age.x <= -1.0f || p_age.y >= 10000.0f) ? 1.0f : 0.0f;
+	} else if (p_age_fade <= 0.0f) {
+		w = (p_years >= p_age.x && p_years <= p_age.y) ? 1.0f : 0.0f;
+	} else {
+		w = Math::smoothstep(p_age.x - p_age_fade, p_age.x, p_years) * (1.0f - Math::smoothstep(p_age.y, p_age.y + p_age_fade, p_years));
+	}
+	if (w <= 0.0f) {
+		return 0.0f;
+	}
+	const float k = float(p_kind);
+	if (p_kind_fade <= 0.0f) {
+		return (k >= p_kinds.x && k <= p_kinds.y) ? w : 0.0f;
+	}
+	return w * Math::smoothstep(p_kinds.x - p_kind_fade, p_kinds.x, k) * (1.0f - Math::smoothstep(p_kinds.y, p_kinds.y + p_kind_fade, k));
 }
 
 float PlantSpecies::season_temperature(float p_january, float p_july) {
@@ -609,6 +656,10 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "spring_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_SPRING);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "pool_distance_range", PROPERTY_HINT_NONE, "suffix:m"), "set_rule_range", "get_rule_range", RULE_POOL_DISTANCE);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "pool_distance_fade", PROPERTY_HINT_RANGE, "0,20,0.01,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_POOL_DISTANCE);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "stand_age_range", PROPERTY_HINT_NONE, "suffix:yr"), "set_rule_range", "get_rule_range", RULE_STAND_AGE);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "stand_age_fade", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater,suffix:yr"), "set_rule_fade", "get_rule_fade", RULE_STAND_AGE);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "disturbance_range"), "set_rule_range", "get_rule_range", RULE_DISTURBANCE);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "disturbance_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_DISTURBANCE);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -638,6 +689,8 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_BURN_AGE);
 	BIND_ENUM_CONSTANT(RULE_SPRING);
 	BIND_ENUM_CONSTANT(RULE_POOL_DISTANCE);
+	BIND_ENUM_CONSTANT(RULE_STAND_AGE);
+	BIND_ENUM_CONSTANT(RULE_DISTURBANCE);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 	BIND_ENUM_CONSTANT(DEADWOOD_AVOID);
 	BIND_ENUM_CONSTANT(DEADWOOD_ON);
