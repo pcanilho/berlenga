@@ -1336,3 +1336,11 @@ Design (to build after Paulo's pick):
   stands foxglove 1-6 y and nettle 1-10 y; all with shade 0-0.5 so the closing young stand shades them out. Forest
   mosses take stand age (6 y on, fade 10): thin on a fresh opening, full again in old growth (-1). Vegetation bench
   "clearings" check.
+- Built 20 Nov (edge light on the floor): every forest floor but hedgerow and montado adds edge species on
+  RULE_FOREST_EDGE that tolerate crowns (shade to 0.85) near the edge: tall grass (cocksfoot form; wavy hair grass
+  under conifers) -8 to 12 m fade 10, bramble -6 to 10 m and nettle -4 to 6 m under broadleaves, raspberry -5 to 8 m
+  under conifers. Interior shade herbs and forest mosses (sorrel, woodruff, anemone, violet, moss, feather moss) take
+  12 m on, fade 18 (half at the edge line). A floor field reads the edge of its canopy_field's forest too. With no
+  forest known, open-ended interior rules do nothing and edge rules place nothing.
+- Maps built from rules alone (far shell, cover map, sward shade) leave out context-only species (burn presets,
+  stand stages that skip old growth, edge-only species) instead of spreading them over all their ground.

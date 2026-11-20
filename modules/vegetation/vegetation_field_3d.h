@@ -358,6 +358,7 @@ private:
 	void _read_burn_age(PlaceSetup &r_setup) const;
 	void _read_stand(PlaceSetup &r_setup) const;
 	void _read_forest_edge(PlaceSetup &r_setup) const;
+	static bool _context_only(const PlantSpecies *p_sp);
 	static void _edge_row(void *p_job, uint32_t p_row);
 	static constexpr float EDGE_CLOSED = 0.35f; // Canopy species' summed density times suitability that counts as forest.
 	Rect2 _update_stand(PlaceSetup &r_setup, const Rect2 &p_area) const;

@@ -7277,6 +7277,8 @@ struct FloorSpec {
 	// Stand age (PlantSpecies.RULE_STAND_AGE, years since a stand-replacing disturbance) and its kinds; defaults: any.
 	float stand_from = -1.0f, stand_to = 100000.0f, stand_fade = 0.0f;
 	float kind_min = 0.0f, kind_max = 100.0f;
+	// Forest edge (PlantSpecies.RULE_FOREST_EDGE, metres inside the canopy's edge); defaults: any.
+	float edge_from = -100000.0f, edge_to = 100000.0f, edge_fade = 0.0f;
 };
 } // namespace
 
@@ -7659,6 +7661,25 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 				clearing(P::PRESET_FOXGLOVE, 1.2f, 0.25f, 0.3f, 0.9f, 1.2f, 9.0f, 0.35f, 60.0f, 1.0f, 6.0f, 2.0f);
 				clearing(P::PRESET_NETTLE, 0.5f, 0.15f, 0.5f, 0.9f, 1.3f, 6.0f, 0.3f, 35.0f, 1.0f, 10.0f, 3.0f);
 			}
+			// Forest edges (Harper et al. 2005; Wicklein et al. 2020 on edge herb layers): side light reaches 10-30 m
+			// under the canopy, so light-demanding grasses, bramble and nettle (nutrients drifting in from the open)
+			// grow on under crowns near the edge that would shade them out deeper in. They read the edge from the
+			// field's (or its canopy field's) forest; without one they are not placed.
+			const bool broad = p_stand != FLOOR_PINE_HEATH && p_stand != FLOOR_SUBALPINE && p_stand != FLOOR_PINE_HEMLOCK && p_stand != FLOOR_MONTANE_CONIFER && p_stand != FLOOR_BOREAL_TAIGA;
+			auto edge = [&](P::Preset p_preset, float p_spacing, float p_footprint, float p_density, float p_smin, float p_smax, float p_patch, float p_cover, float p_vis, float p_from, float p_to, float p_fade) {
+				FloorSpec f = { p_preset, p_spacing, p_footprint, p_density, p_smin, p_smax, p_patch, p_cover, 0.0f, 0.85f, 0.15f, 0.0f, 1.0f, p_vis };
+				f.edge_from = p_from;
+				f.edge_to = p_to;
+				f.edge_fade = p_fade;
+				set.push_back(f);
+			};
+			edge(broad ? P::PRESET_COCKSFOOT : P::PRESET_DRY_GRASS, 0.3f, 0.08f, 0.75f, 0.9f, 1.4f, 8.0f, 0.6f, 40.0f, -8.0f, 12.0f, 10.0f);
+			if (broad) {
+				edge(P::PRESET_BRAMBLE, 1.4f, 0.6f, 0.7f, 0.8f, 1.2f, 8.0f, 0.45f, 45.0f, -6.0f, 10.0f, 8.0f);
+				edge(P::PRESET_NETTLE, 0.5f, 0.15f, 0.5f, 0.9f, 1.3f, 6.0f, 0.35f, 35.0f, -4.0f, 6.0f, 6.0f);
+			} else {
+				edge(P::PRESET_RASPBERRY, 0.9f, 0.35f, 0.4f, 0.7f, 1.0f, 8.0f, 0.4f, 70.0f, -5.0f, 8.0f, 6.0f);
+			}
 		}
 		// Soil mushrooms last, after everything else (docs/ideas/mushrooms.md): few, so they claim
 		// no ground from the herbs. Mycorrhizal ones under their hosts' crowns (shade) by stand
@@ -7807,6 +7828,15 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		}
 		if (f.kind_min > 0.0f || f.kind_max < 100.0f) {
 			sp->set_rule_range(PlantSpecies::RULE_DISTURBANCE, Vector2(f.kind_min, f.kind_max));
+		}
+		if (f.edge_from > -100000.0f || f.edge_to < 100000.0f) {
+			sp->set_rule_range(PlantSpecies::RULE_FOREST_EDGE, Vector2(f.edge_from, f.edge_to));
+			sp->set_rule_fade(PlantSpecies::RULE_FOREST_EDGE, f.edge_fade);
+		} else if (f.deadwood == PlantSpecies::DEADWOOD_AVOID && (f.preset == P::PRESET_WOOD_SORREL || f.preset == P::PRESET_WOODRUFF || f.preset == P::PRESET_WOOD_ANEMONE || f.preset == P::PRESET_MOSS || f.preset == P::PRESET_FEATHER_MOSS || f.preset == P::PRESET_VIOLET)) {
+			// Shade herbs and forest mosses of the interior thin out over the edge's first 10-20 m, where the side
+			// light dries and warms the floor (Harper et al. 2005); with no forest edge known the rule does nothing.
+			sp->set_rule_range(PlantSpecies::RULE_FOREST_EDGE, Vector2(12.0f, 100000.0f));
+			sp->set_rule_fade(PlantSpecies::RULE_FOREST_EDGE, 18.0f);
 		}
 		if ((f.preset == P::PRESET_MOSS || f.preset == P::PRESET_FEATHER_MOSS) && f.deadwood == PlantSpecies::DEADWOOD_AVOID) {
 			// Forest mosses dry out and die back on an opened floor and build up again over decades as the stand closes

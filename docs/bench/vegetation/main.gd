@@ -1085,6 +1085,36 @@ func _edge_check() -> void:
 					e_out += 1
 			elif mm.mesh == forest.meshes[0] and r < 24.0:
 				forest_in += 1
+	# The floor under it as its own field (canopy_field): the edge grass of make_floor reads the forest's edge.
+	var fl := VegetationField3D.new()
+	fl.populate_on_ready = false
+	fl.bark_detail = false
+	fl.biome = Biome.new()
+	var fsp := []
+	for sp in PlantGenerator.make_floor(PlantGenerator.FLOOR_OAK_MIXED, 1, false):
+		if sp.get_rule_range(PlantSpecies.RULE_FOREST_EDGE).y < 10000.0:
+			fsp.append(sp)
+	fl.biome.species = fsp
+	add_child(fl)
+	fl.data_map = fl.get_path_to(dm)
+	fl.canopy_field = fl.get_path_to(f)
+	fl.populate()
+	var g_band := 0
+	var g_off := 0
+	for ch in fl.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh:
+			var mm: MultiMesh = ch.multimesh
+			for i in mm.instance_count:
+				var p: Vector3 = (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+				var rr := Vector2(p.x, p.z).distance_to(c)
+				if rr > 36.0:
+					continue
+				if rr > 9.0:
+					g_band += 1
+				else:
+					g_off += 1
+	fl.queue_free()
+	_check("forest edge: a floor field's edge plants follow its canopy field's edge (none deep in the clearing)", fsp.size() >= 3 and g_band > 50 and g_off == 0, [fsp.size(), g_band, g_off])
 	st.clear_disturbances()
 	f.queue_free()
 	var r := [m_in, m_out, e_in, e_out, e_facing, forest_in]
