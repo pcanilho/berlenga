@@ -3258,6 +3258,19 @@
    "topic": "Old trees and deadwood"
   },
   {
+   "name": "Forest edges",
+   "settings": [
+    "make_edge()",
+    "edge_open",
+    "RULE_FOREST_EDGE"
+   ],
+   "note": "",
+   "what": "a shrub mantle in front of the trees, and edge trees with low branches and crowns reaching toward the open, turned to face it.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
    "name": "Broken limbs",
    "settings": [
     "limb_breakage"
