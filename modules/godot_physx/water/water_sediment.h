@@ -84,7 +84,7 @@ struct WaterSediment {
 // - White water in loaded water: the light a foam patch sends back has crossed millimetres to centimetres of the water
 //   between its bubbles, so foam takes the water's colour (Dierssen 2019: whitecap spectra shaped by the water's
 //   absorption; the light bounces through many films and lenses of water between bubbles, an effective path of a
-//   two centimetres in loaded water). Beige in a silty flood, grey in ash.
+//   three to four centimetres in loaded water). Beige in a silty flood, grey in ash.
 inline constexpr const char *WATER_SEDIMENT_GLSL = R"(
 vec3 sediment_absorption_of(vec2 c) {
 	return vec3(6.0, 12.0, 32.0) * c.x + vec3(300.0) * c.y;
@@ -104,6 +104,6 @@ vec3 water_medium_scattering(vec3 b_w, vec3 b_s, float g_w) {
 	return (max(b_w, vec3(0.0)) * (1.0 - g_w) + max(b_s, vec3(0.0)) * (1.0 - 0.95)) / max(1.0 - g, 0.05);
 }
 vec3 sediment_foam_tint(vec3 a_s) {
-	return exp(-max(a_s, vec3(0.0)) * 0.02);
+	return exp(-max(a_s, vec3(0.0)) * 0.035);
 }
 )";
