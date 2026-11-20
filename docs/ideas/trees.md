@@ -2753,6 +2753,8 @@ As built:
 - Not done: flood marks (a silt line on the trunks at the high-water height); the bark's vertex colour can only darken,
   so a silt crust needs its own shader term.
 
+Under the roots (fix, 20 Nov): the root collar's web between the roots, built for level ground, was dropped straight down to the mound and hung from each root's flank as a flat curtain, with the moss sleeve over it as a green sheet. `_bank_shear` now draws that web in toward the stem's foot (radially, into the tussock's core) before the roots arch down, and the roots' flanks follow part way, so each root rounds under into the foot and there is air beneath it. Stands checks 61/61.
+
 ### Next-round options (card 20 Nov midday)
 
 - Taiga details. Char on catfaces: the bark shader's wood branch ignores vertex COLOR, so the scar needs its own

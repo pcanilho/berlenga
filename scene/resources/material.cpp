@@ -5063,15 +5063,19 @@ vec4 ground_crack_height(GroundCracks p_g, float p_fw) {
 	// A footprint wider than a fraction of a domain spans whole plates: their mean, flat, with the cracks' mean
 	// share. The curled rims are wider than the cracks: they go on into footprints up to a few reaches wide, so a
 	// mesh that cannot carry the slots still carries the dished plates.
+	// The slots and the curled rims add: the rim rises from the plate to the slot's lip and the slot cuts down from
+	// there, so a coarse footprint sees a dip between two lifted lips (each plate a shallow dish) and no step where
+	// the slot's half width ends.
 	float fade = 1.0 - smoothstep(0.04 * p_g.scale, 0.12 * p_g.scale, fw);
 	float curl_fade = 1.0 - smoothstep(p_g.reach, 3.0 * p_g.reach, fw);
-	h *= fade;
-	slope *= fade;
-	if (p_g.curl > 0.0 && h == 0.0) {
-		float c = p_g.curl * (p_g.reach / reach) * max(fade, curl_fade);
-		h = c * (1.0 - flat_all);
+	float keep = max(fade, curl_fade);
+	h *= keep;
+	slope *= keep;
+	if (p_g.curl > 0.0) {
+		float c = p_g.curl * (p_g.reach / reach) * keep;
+		h += c * (1.0 - flat_all);
 		vec2 g = fg[0] * fl[1] * fl[2] + fg[1] * fl[0] * fl[2] + fg[2] * fl[0] * fl[1];
-		slope = -c * g;
+		slope -= c * g;
 	}
 	float mean = clamp(dot(p_g.width, vec3(1.0)) * 2.0 / max(p_g.scale, 1e-4), 0.0, 1.0);
 	return vec4(h, slope, mix(mean, cover, fade));
