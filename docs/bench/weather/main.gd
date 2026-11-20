@@ -1270,15 +1270,16 @@ func _build_clouds() -> void:
 	if not storms_arg.is_empty():
 		weather.advance(900.0)
 		var st0: Array = storms_arg[0]
+		# Where the 15 minutes of steering carried it (about 9.6 km along the wind in the bench).
+		var moved: Vector2 = 9600.0 * wind_dir_arg.normalized() if wind_dir_arg != Vector2.ZERO else Vector2.ZERO
 		var line := "storm: cloud base toward the camera, from its first core (m out, base m):"
 		for k in 12:
 			var r := k * 500.0
-			var dz := 9600.0 * wind_dir_arg.y if wind_dir_arg != Vector2.ZERO else 0.0
-			line += " %.0f %.0f," % [r, weather.get_cloud_base_at(Vector3(st0[0], 0.0, st0[1] + dz + r))]
+			line += " %.0f %.0f," % [r, weather.get_cloud_base_at(Vector3(st0[0] + moved.x, 0.0, st0[1] + moved.y + r))]
 		print(line)
 		var dl := "storm: density up the core (height m, 1/m):"
 		for hgt in [1600.0, 2500.0, 4000.0, 6000.0, 8000.0, 8800.0]:
-			dl += " %.0f %.4f," % [hgt, weather.get_cloud_density_at(Vector3(st0[0], hgt, st0[1] + (9600.0 * wind_dir_arg.y if wind_dir_arg != Vector2.ZERO else 0.0)))]
+			dl += " %.0f %.4f," % [hgt, weather.get_cloud_density_at(Vector3(st0[0] + moved.x, hgt, st0[1] + moved.y))]
 		print(dl)
 	for l in cloud_lights_arg: # x, y, z, energy, reach[, r, g, b]
 		var col := Color(1.0, 0.62, 0.32) if l.size() < 8 else Color(l[5], l[6], l[7])

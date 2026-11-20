@@ -2743,7 +2743,8 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 float WeatherMap3D::get_cloud_top_at(Vector3 p_position) const {
 	const WeatherClouds::State st = _cloud_state();
 	const Vector2 xz(p_position.x, p_position.z);
-	return WeatherClouds::base_at(st, xz) + WeatherClouds::top_height(st, WeatherClouds::cover_type_at(st, xz).y);
+	// Under a storm's anvil the column reaches the storm's height.
+	return WeatherClouds::base_at(st, xz) + WeatherClouds::top_height(st, MAX(WeatherClouds::cover_type_at(st, xz).y, WeatherClouds::storm_column_type(st, xz)));
 }
 
 float WeatherMap3D::get_cloud_base_at(Vector3 p_position) const {

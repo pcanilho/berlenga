@@ -489,3 +489,24 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
     with a low sun (a sunset frame).
   - Cost unchanged on lavapipe (538 ms a frame with a storm in view). Raster and PT match. The raster speckle on a
     distant sunlit tower face is the half-res reconstruction (improvements card).
+- Second review (docs, 20 Nov evening: a heap of loose puffs, a jellyfish anvil, no mammatus, cirrus like motion
+  blur). Research: Schneider, "Nubis: Authoring Real-Time Volumetric Cloudscapes" (Advances 2015) and "Real-Time
+  Volumetric Superstorms" (GDC 2022) model a storm as one envelope with its own density and only the edge eroded;
+  photos and the Atlas: an anvil is a thin ice sheet with a flat ceiling, a sharp upwind edge, spreading far
+  downwind; ice anvils are optically about 10 deep near the core and 1 or 2 downstream (Lilly 1988; Garrett 2005).
+  - Tower: narrower at the base (0.75 core radii) widening to 1.1 by 60% of its height, a hard outline (the last
+    tenth of the radius), shaped by the shape noise for its bulges plus a read 1.6 times finer for kilometre
+    cauliflower lobes; the cumulus erosion at a fifth of its strength there. A soft rim let the erosion bore through
+    the whole tower into foam.
+  - Anvil: a fan from a sharp upwind edge, widening 0.35 core radii per radius downwind to about 7.5 radii, a flat
+    top under the tropopause and a flat ceiling below, at a tenth of the tower's density and thinning downwind
+    (`r_thin`). Mammatus sag into its underside (a 1.6 km jittered grid, up to 500 m, where it overhangs and the
+    drier the air); the separate mammatus march is gone.
+  - The crowd: raising the type under the anvil made every single cell there a congestus as tall as the tower. Now
+    the storm's column height is a separate bound (`storm_column_type`, also in `get_cloud_top_at`) and the cells
+    keep their own type's height; cells fade out within 1.8 to 3 core radii of the tower.
+  - The storm body has its own density (0.1 per metre in the tower), not the surrounding cover's and type's.
+  - Cirrus: fibres warped by a 20 km noise (they hook and bend instead of all converging) and a fibril read 3.3 times
+    finer inside each streak.
+  - Raster and PT match (640). 1.1 s a frame on lavapipe with the storm in view at 960x540 (the stills used to read
+    as foam because 3 frames are not enough for the reprojection: review stills use 24).
