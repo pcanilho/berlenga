@@ -100,8 +100,8 @@ class BodySnowStub extends WorldSnow:
 #   --view=cornice --crack=D  D days of thaw after the bake (the tension crack opening); --fall: on until the
 #                     first cornice falls, a moment later (the blocks tumbling)
 #   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
-#                     [--wind=S: a steady wind along the eave by day, the tips lean; --dense: sites 4.5 cm apart,
-#                     thick neighbours fuse into curtains]
+#                     [--wind=S: a steady wind along the eave by day, the tips lean; --dense: a week of melt with
+#                     sites 8 cm apart, rippled icicles bridged into curtains]
 #   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
 #   --settled         (trail view) 0.4 m of settled snow (300 kg/m3) instead of fresh: prints break clumps
 #   --no-clumps       (trail view) no snow clumps beside the prints
@@ -2745,7 +2745,7 @@ func _build_icicles(cam: Camera3D) -> void:
 	ice.name = "Icicles"
 	ice.spacing = 0.12
 	if OS.get_cmdline_user_args().has("--dense"):
-		ice.spacing = 0.045 # --dense: sites close enough that thick neighbours fuse into curtains
+		ice.spacing = 0.08 # --dense: a dripping stretch, sites close enough that neighbours bridge into curtains
 	ice.edge = PackedVector3Array([Vector3(-4.95, eave_y, 0.12), Vector3(-0.05, eave_y, 0.12)])
 	add_child(ice)
 	# Three days: six hours of melt off the sunny roof (0.3 mm/h over its 3.4 m) at -4 C, then a night at -8 C.
@@ -2754,12 +2754,16 @@ func _build_icicles(cam: Camera3D) -> void:
 	if Array(OS.get_cmdline_user_args()).any(func(a): return a.begins_with("--wind=")):
 		day_wind = wind
 		ice.wind_direction = Vector3(-1, 0, 0)
-	for day in 3:
+	# --dense: a week of it (long, thick icicles, rippled).
+	for day in (7 if OS.get_cmdline_user_args().has("--dense") else 3):
 		ice.grow(6.0, -4.0, day_wind, 0.3 * 3.4)
 		ice.grow(18.0, -8.0, 0.5, 0.0)
 	# The last afternoon's melt still running: the tips drip.
 	ice.grow(0.25, -4.0, day_wind, 0.3 * 3.4)
-	print("icicles: %d sites, longest %.2f m, %.2f kg of ice" % [ice.get_icicle_count(), ice.get_longest(), ice.get_ice_mass()])
+	var rmax := 0.0
+	for k in ice.get_icicle_count():
+		rmax = maxf(rmax, ice.get_icicle_radius(k))
+	print("icicles: %d sites, longest %.2f m, thickest %.1f cm across, %.2f kg of ice" % [ice.get_icicle_count(), ice.get_longest(), rmax * 200.0, ice.get_ice_mass()])
 	# At the icicles' height along the eave, the sky and the field behind them.
 	cam.position = Vector3(-0.2, 2.05, 1.1)
 	cam.look_at(Vector3(-2.2, 2.1, 0.17))

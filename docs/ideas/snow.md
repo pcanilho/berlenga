@@ -1528,12 +1528,18 @@ weight gives tan(lean) = 3 rho_air Cd U^2 / (8 rho_w r g), about 0.01 U^2, and t
   back. `wind_direction` (local, horizontal; `advance()` sets it from the weather's wind), `get_icicle_offset`.
 - **Drops**: a tip with water left over after it froze what it could hangs a pendant drop (2.5 mm water sphere,
   the ice's clear material), and melting tips drip too. `is_icicle_dripping`.
-- **Curtains**: where neighbours' walls meet, a web of ice 0.6 of the thinner icicle thick joins their axes
-  down to where they part (`curtains`, on).
-- Ripples stay a normal map: at their 1 cm wavelength geometry would need a ring every 2.5 mm, and the slope
-  that path tracing keeps clean of bands (0.06) is a tenth of a millimetre of relief.
+- **Curtains**: where neighbours hang closer than the thinner one's radius, the film bridges the gap: a web of
+  ice 0.6 of the thinner icicle thick from one wall's surface to the other's, down to where the gap opens past
+  that (`curtains`, on). First built from axis to axis, inside both icicles: the path tracer takes every front
+  face as air into ice, so ice drawn inside ice refracted twice and showed white wedges (docs caught it). Where
+  walls themselves overlap the same limit holds; the bench's dense eave keeps sites 8 cm apart.
+- **Ripples as geometry**: Chen and Morris (2013, arXiv 1301.4734) measured a 1 cm wavelength whatever the
+  conditions and amplitudes from under 0.1 mm (pure water) to a few millimetres (salty), roof melt behaving like
+  tap water; natural icicles 7-10 mm (Maeno et al. via Ueno 2011). Long icicles now carry them in the mesh, four
+  rings a wavelength, 0.25 mm full grown (our pick; slope 0.16), none on the newest 4 cm at the tip; the normal
+  map stays for short ones.
 - Bench: `--test=icicles` adds plumb in still air (steepest 0.078), 27 degrees in a 5 m/s wind, tips dripping
-  while they grow; `--view=icicles --wind=4` leans them, `--dense` (4.5 cm sites) fuses curtains.
+  while they grow; `--view=icicles --wind=4` leans them, `--dense` (a week of melt, 8 cm sites) shows ripples and curtains.
 
 ## Follow-up 38: a broken crust as plates (20 Nov 2026)
 
