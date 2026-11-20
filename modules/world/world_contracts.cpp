@@ -1356,6 +1356,126 @@ void WorldStand::clear_disturbances() {
 	}
 }
 
+static Rect2 _disc_rect(const Vector2 &p_c, float p_r) {
+	return Rect2(p_c - Vector2(p_r, p_r), Vector2(2.0f * p_r, 2.0f * p_r));
+}
+
+void WorldStand::_rebuild_browse_grid() {
+	browse_grid.clear();
+	browse_wide.clear();
+	for (uint32_t i = 0; i < browse.size(); i++) {
+		const Browse &b = browse[i];
+		const Vector2i a(int(Math::floor((b.center.x - b.radius) / GRID_CELL)), int(Math::floor((b.center.y - b.radius) / GRID_CELL)));
+		const Vector2i e(int(Math::floor((b.center.x + b.radius) / GRID_CELL)), int(Math::floor((b.center.y + b.radius) / GRID_CELL)));
+		if (e.x - a.x > 16 || e.y - a.y > 16) {
+			browse_wide.push_back(i);
+			continue;
+		}
+		for (int z = a.y; z <= e.y; z++) {
+			for (int x = a.x; x <= e.x; x++) {
+				browse_grid[Vector2i(x, z)].push_back(i);
+			}
+		}
+	}
+}
+
+void WorldStand::_browse_query(const Vector3 &p_position, float &r_pressure, float &r_reach) const {
+	r_pressure = 0.0f;
+	r_reach = 0.0f;
+	if (browse.is_empty()) {
+		return;
+	}
+	const Vector2 p(p_position.x, p_position.z);
+	auto check = [&](uint32_t p_i) {
+		const Browse &b = browse[p_i];
+		const float d = p.distance_to(b.center);
+		if (d > b.radius) {
+			return;
+		}
+		const float v = b.pressure * (1.0f - Math::smoothstep(0.8f * b.radius, b.radius, d));
+		if (v > r_pressure) {
+			r_pressure = v;
+			r_reach = b.reach;
+		}
+	};
+	for (uint32_t i : browse_wide) {
+		check(i);
+	}
+	if (const LocalVector<uint32_t> *in = browse_grid.getptr(Vector2i(int(Math::floor(p.x / GRID_CELL)), int(Math::floor(p.y / GRID_CELL))))) {
+		for (uint32_t i : *in) {
+			check(i);
+		}
+	}
+}
+
+int WorldStand::add_browse(const Vector3 &p_center, float p_radius, float p_pressure, float p_reach_m) {
+	Browse b;
+	b.id = next_id++;
+	b.center = Vector2(p_center.x, p_center.z);
+	b.radius = MAX(p_radius, 0.0f);
+	b.pressure = CLAMP(p_pressure, 0.0f, 1.0f);
+	b.reach = MAX(p_reach_m, 0.0f);
+	browse.push_back(b);
+	_rebuild_browse_grid();
+	_report(_disc_rect(b.center, b.radius));
+	return b.id;
+}
+
+void WorldStand::set_browse(int p_id, float p_pressure) {
+	for (Browse &b : browse) {
+		if (b.id == p_id) {
+			b.pressure = CLAMP(p_pressure, 0.0f, 1.0f);
+			_report(_disc_rect(b.center, b.radius));
+			return;
+		}
+	}
+}
+
+void WorldStand::remove_browse(int p_id) {
+	for (uint32_t i = 0; i < browse.size(); i++) {
+		if (browse[i].id == p_id) {
+			const Rect2 r = _disc_rect(browse[i].center, browse[i].radius);
+			browse.remove_at(i);
+			_rebuild_browse_grid();
+			_report(r);
+			return;
+		}
+	}
+}
+
+void WorldStand::clear_browse() {
+	if (browse.is_empty()) {
+		return;
+	}
+	Rect2 area = _disc_rect(browse[0].center, browse[0].radius);
+	for (const Browse &b : browse) {
+		area = area.merge(_disc_rect(b.center, b.radius));
+	}
+	browse.clear();
+	_rebuild_browse_grid();
+	_report(area);
+}
+
+float WorldStand::browse_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_browse_at, p_position, r)) {
+		return r;
+	}
+	float reach;
+	_browse_query(p_position, r, reach);
+	return r;
+}
+
+float WorldStand::browse_reach_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_browse_reach_at, p_position, r)) {
+		return r;
+	}
+	float pressure;
+	_browse_query(p_position, pressure, r);
+	return r;
+}
+
 void WorldStand::_rebuild_strike_grid() {
 	strike_grid.clear();
 	for (uint32_t i = 0; i < strikes.size(); i++) {
@@ -1499,6 +1619,12 @@ void WorldStand::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("strike_age_at", "position"), &WorldStand::strike_age_at);
 	ClassDB::bind_method(D_METHOD("get_strike_count"), &WorldStand::get_strike_count);
 	ClassDB::bind_method(D_METHOD("clear_strikes"), &WorldStand::clear_strikes);
+	ClassDB::bind_method(D_METHOD("add_browse", "center", "radius", "pressure", "reach_m"), &WorldStand::add_browse, DEFVAL(1.8f));
+	ClassDB::bind_method(D_METHOD("set_browse", "id", "pressure"), &WorldStand::set_browse);
+	ClassDB::bind_method(D_METHOD("remove_browse", "id"), &WorldStand::remove_browse);
+	ClassDB::bind_method(D_METHOD("clear_browse"), &WorldStand::clear_browse);
+	ClassDB::bind_method(D_METHOD("browse_at", "position"), &WorldStand::browse_at);
+	ClassDB::bind_method(D_METHOD("browse_reach_at", "position"), &WorldStand::browse_reach_at);
 	ClassDB::bind_method(D_METHOD("stand_changed", "area"), &WorldStand::stand_changed);
 	ClassDB::bind_method(D_METHOD("get_stand_generation"), &WorldStand::get_stand_generation);
 	ClassDB::bind_method(D_METHOD("get_stand_changes_since", "generation"), &WorldStand::get_stand_changes_since);
@@ -1506,6 +1632,8 @@ void WorldStand::_bind_methods() {
 	GDVIRTUAL_BIND(_stand_age_at, "position");
 	GDVIRTUAL_BIND(_disturbance_at, "position");
 	GDVIRTUAL_BIND(_strike_age_at, "position");
+	GDVIRTUAL_BIND(_browse_at, "position");
+	GDVIRTUAL_BIND(_browse_reach_at, "position");
 	BIND_ENUM_CONSTANT(DISTURBANCE_NONE);
 	BIND_ENUM_CONSTANT(DISTURBANCE_FIRE);
 	BIND_ENUM_CONSTANT(DISTURBANCE_WIND);

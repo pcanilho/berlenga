@@ -431,6 +431,20 @@ private:
 	LocalVector<Strike> strikes;
 	HashMap<Vector2i, LocalVector<uint32_t>> strike_grid;
 	void _rebuild_strike_grid();
+	// Browsing (deer): discs with a pressure (0..1) and the height the animals reach (m), in the same 64 m grid
+	// scheme as the events.
+	struct Browse {
+		int id = 0;
+		Vector2 center;
+		float radius = 0.0f;
+		float pressure = 0.0f;
+		float reach = 1.8f;
+	};
+	LocalVector<Browse> browse;
+	HashMap<Vector2i, LocalVector<uint32_t>> browse_grid;
+	LocalVector<uint32_t> browse_wide;
+	void _rebuild_browse_grid();
+	void _browse_query(const Vector3 &p_position, float &r_pressure, float &r_reach) const;
 	struct Change {
 		uint64_t generation = 0;
 		Rect2 area;
@@ -447,6 +461,8 @@ protected:
 	GDVIRTUAL1RC(float, _stand_age_at, Vector3)
 	GDVIRTUAL1RC(int, _disturbance_at, Vector3)
 	GDVIRTUAL1RC(float, _strike_age_at, Vector3)
+	GDVIRTUAL1RC(float, _browse_at, Vector3)
+	GDVIRTUAL1RC(float, _browse_reach_at, Vector3)
 
 public:
 	// Years since the last stand-replacing disturbance at the point (the youngest of fire, wind and beetle kills); -1
@@ -468,6 +484,15 @@ public:
 	float strike_age_at(const Vector3 &p_position) const;
 	int get_strike_count() const { return int(strikes.size()); }
 	void clear_strikes();
+	// Browsing pressure (deer, docs/ideas/world-contracts.md): a disc over xz with a pressure 0..1 and the browse line
+	// (m; red deer 1.8, fallow 1.6, roe 1.1). browse_at() is the strongest disc's pressure there, eased out over each
+	// disc's outer 20 %, 0 where none; browse_reach_at() that disc's reach (0 where none). Changes report their area.
+	int add_browse(const Vector3 &p_center, float p_radius, float p_pressure, float p_reach_m = 1.8f);
+	void set_browse(int p_id, float p_pressure);
+	void remove_browse(int p_id);
+	void clear_browse();
+	float browse_at(const Vector3 &p_position) const;
+	float browse_reach_at(const Vector3 &p_position) const;
 	// The world's years pass: every event and strike ages (fire ages through its own producers).
 	void advance_years(float p_years);
 	// Changes, as WorldFire's burn changes (fire's are forwarded here too): signal stand_changed(area), a generation, and

@@ -107,6 +107,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
 | Lightning → struck tree variant | linked (20 Nov) | `WorldStand.strike_age_at` | WeatherLightning3D records canopy strikes; VegetationField3D swaps to a `tree_lightning_years` variant (field side: trees) |
 | Beaver dam fails → beaver meadow | linked (20 Nov) | `WorldStand` `DISTURBANCE_BEAVER` (4), age since the pond drained | trees report it when a STAND_BEAVER_POND dam fails; PlantGenerator.make_beaver meadow reads it by RULE_DISTURBANCE (4,4) |
+| Deer browsing → understorey, saplings | linked (20 Nov) | `WorldStand.browse_at`, `browse_reach_at` | browse discs (pressure, reach); vegetation RULE_BROWSE 31, trees' browsed variants (trees.md 5aw) |
 | Wet ground → mist | linked (18 Nov) | surface wetness, surface cooling | VegetationMist3D: wet ground mists more and sooner |
 
 ### Water (ocean, rivers, pools, falls)

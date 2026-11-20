@@ -229,6 +229,9 @@ scripts; `set_stand(stub)` for a test.
 | `add_disturbance(center, radius, kind, age_years)`, `set_disturbance_age(id, years)`, `remove_disturbance(id)`, `clear_disturbances()` | a disc, years ago; returns an id | |
 | `strike_age_at(pos)` | years since the youngest lightning strike within 3 m of a trunk at pos (xz) | -1 (none) |
 | `add_strike(pos, age_years)`, `clear_strikes()`, `get_strike_count()` | the crown attachment point, years ago; up to 4096, oldest dropped | |
+| `browse_at(pos)` | deer browsing pressure 0..1: the strongest disc's, soft over its outer 20 % | 0 |
+| `browse_reach_at(pos)` | m, that disc's browse line (red deer 1.8, fallow 1.6, roe 1.1) | 0 |
+| `add_browse(center, radius, pressure, reach_m = 1.8)`, `set_browse(id, pressure)`, `remove_browse(id)`, `clear_browse()` | a disc; returns an id; changes go through `stand_changed` | |
 | `advance_years(years)` | ages every event and strike added here (fire ages through its producers) | |
 | signal `stand_changed(area)`, `get_stand_generation()`, `stand_changes_since(gen, area)` / `get_stand_changes_since(gen)` | world xz Rect2; as WorldFire's burn changes, which are forwarded here | |
 
@@ -236,7 +239,7 @@ The youngest disturbance at a point wins. Fire comes from `WorldFire.burn_age_at
 `crown_scorch_at` is between 0 and 5 m (a surface fire); an authored burn scar (no scorch on record) counts. Wind and
 beetle kills are events the trees report: TreeWind3D for a storm's stand-replacing throws, VegetationField3D for
 a placed windthrow or beetle stand (species meta `stand_disturbance`; trees.md 5aq). No stage edges here: each species' own age ranges set them. Strikes come from WeatherLightning3D (`record_tree_strikes`, on), one per canopy strike (20 Nov). Readers:
-vegetation (stand age and disturbance rules, struck-tree variants by `strike_age_at` and mesh meta `tree_lightning_years`), trees (succession).
+vegetation (stand age and disturbance rules, struck-tree variants by `strike_age_at` and mesh meta `tree_lightning_years`), trees (succession). Browse (20 Nov): vegetation RULE_BROWSE 31, trees' browsed variants by pressure.
 
 ## Testing
 

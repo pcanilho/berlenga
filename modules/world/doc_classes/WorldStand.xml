@@ -9,6 +9,20 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="_browse_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override to answer [method browse_at] from a script (a test stub).
+			</description>
+		</method>
+		<method name="_browse_reach_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override to answer [method browse_reach_at] from a script (a test stub).
+			</description>
+		</method>
 		<method name="_disturbance_at" qualifiers="virtual const">
 			<return type="int" />
 			<param index="0" name="position" type="Vector3" />
@@ -28,6 +42,16 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Override to answer [method strike_age_at] from a script (a test stub).
+			</description>
+		</method>
+		<method name="add_browse">
+			<return type="int" />
+			<param index="0" name="center" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="pressure" type="float" />
+			<param index="3" name="reach_m" type="float" default="1.8" />
+			<description>
+				Deer browse a disc (xz) at [param pressure] (0 to 1) up to [param reach_m] metres (red deer 1.8, fallow 1.6, roe 1.1). Returns its id. Reports its area through [signal stand_changed].
 			</description>
 		</method>
 		<method name="add_disturbance">
@@ -53,6 +77,26 @@
 			<param index="0" name="years" type="float" />
 			<description>
 				The world's years pass: every disturbance added here ages by [param years] and its area is reported. Fire ages through its own producers.
+			</description>
+		</method>
+		<method name="browse_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The browsing pressure at [param position] (0 to 1): the strongest disc's, eased out over each disc's outer 20 %, [code]0[/code] where none.
+			</description>
+		</method>
+		<method name="browse_reach_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How high the browsing reaches at [param position] (m): the reach of the disc that gives [method browse_at], [code]0[/code] where none.
+			</description>
+		</method>
+		<method name="clear_browse">
+			<return type="void" />
+			<description>
+				Removes every browse disc.
 			</description>
 		</method>
 		<method name="clear_disturbances">
@@ -93,11 +137,26 @@
 				The number of recorded strikes.
 			</description>
 		</method>
+		<method name="remove_browse">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Removes the browse disc [param id].
+			</description>
+		</method>
 		<method name="remove_disturbance">
 			<return type="void" />
 			<param index="0" name="id" type="int" />
 			<description>
 				Removes the disturbance [param id] and reports its area.
+			</description>
+		</method>
+		<method name="set_browse">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="pressure" type="float" />
+			<description>
+				Sets the browse disc [param id]'s pressure (0 to 1).
 			</description>
 		</method>
 		<method name="set_disturbance_age">
