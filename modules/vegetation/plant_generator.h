@@ -608,6 +608,15 @@ public:
 		BURN_MAX,
 	};
 	static TypedArray<Resource> make_burn(BurnStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Beaver ponds and drained beaver meadows (docs/ideas/vegetation.md, "Beaver ponds and meadows").
+	enum BeaverStand {
+		BEAVER_POND, // An active pond: lilies, bulrush, tussock sedge, then rush, marsh marigold and meadowsweet up the shore.
+		BEAVER_MEADOW, // The drained bed, by years since draining (WorldStand kind 4): rush and sedge, then a sedge and tall-grass meadow.
+		BEAVER_MAX,
+	};
+	// The WorldStand disturbance kind a drained beaver pond is reported as (appended after beetle, 3).
+	static constexpr int DISTURBANCE_BEAVER_KIND = 4;
+	static TypedArray<Resource> make_beaver(BeaverStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 
 	// Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants").
 	enum AlpineStand {
@@ -671,6 +680,7 @@ VARIANT_ENUM_CAST(PlantGenerator::BogStand);
 VARIANT_ENUM_CAST(PlantGenerator::DuneStand);
 VARIANT_ENUM_CAST(PlantGenerator::DesertStand);
 VARIANT_ENUM_CAST(PlantGenerator::BurnStand);
+VARIANT_ENUM_CAST(PlantGenerator::BeaverStand);
 VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
 VARIANT_ENUM_CAST(PlantGenerator::SaltmarshStand);
 VARIANT_ENUM_CAST(PlantGenerator::MarginStand);
