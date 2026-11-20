@@ -43,6 +43,7 @@
 #include "core/math/vector3.h"
 #include "core/variant/dictionary.h"
 #include "core/templates/local_vector.h"
+#include "core/templates/hash_map.h"
 #include "world_season.h"
 
 class Node;
@@ -409,6 +410,12 @@ private:
 	};
 	LocalVector<Event> events;
 	int next_id = 1;
+	// A uniform grid over the events (64 m cells; a query reads one cell), rebuilt when events are added or removed;
+	// events wider than 16 cells sit in a short list every query checks.
+	static constexpr float GRID_CELL = 64.0f;
+	HashMap<Vector2i, LocalVector<uint32_t>> grid;
+	LocalVector<uint32_t> wide;
+	void _rebuild_grid();
 	struct Change {
 		uint64_t generation = 0;
 		Rect2 area;
@@ -495,6 +502,12 @@ class WorldCoverProvider {
 public:
 	// The share of the ground (0..1) covered by pebbles (x), gravel (y) and fine grains (z) at the point.
 	virtual Vector3 contract_cover_at(const Vector3 &p_position) const = 0;
+	// The same at many points (world xz) at once, for readers that sample a grid: a provider with a lock takes it once.
+	virtual void contract_cover_points(const Vector2 *p_points, int p_count, Vector3 *r_cover) const {
+		for (int i = 0; i < p_count; i++) {
+			r_cover[i] = contract_cover_at(Vector3(p_points[i].x, 0.0f, p_points[i].y));
+		}
+	}
 	virtual ~WorldCoverProvider() {}
 };
 
@@ -558,6 +571,8 @@ public:
 	// cover maps). A gravel lag armours the sand under it, so blown sand and ripples read pebble + gravel. 0 with no
 	// stone field; the largest any field reports.
 	Vector3 coarse_cover_at(const Vector3 &p_position) const;
+	// coarse_cover_at at many points (world xz) in one call (a script stub answers point by point).
+	void coarse_cover_points(const Vector2 *p_points, int p_count, Vector3 *r_cover) const;
 };
 
 // Snow: the snowpack and lake ice (docs/ideas/world-contracts.md, Snow). Produced by SnowCover3D.

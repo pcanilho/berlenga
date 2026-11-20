@@ -5156,13 +5156,23 @@ void GroundSurface3D::_wind_update(double p_delta) {
 	const WorldGround *cover_src = coarse_armour ? WorldContracts::ground() : nullptr;
 	if (cover_src) {
 		g_armour.resize(gn * gn);
-		bool any = false;
+		// One batched read of the whole grid (a provider's lock taken once, not per point).
+		LocalVector<Vector2> pts;
+		LocalVector<Vector3> cov;
+		pts.resize(gn * gn);
+		cov.resize(gn * gn);
 		for (int gz = 0; gz < gn; gz++) {
 			for (int gx = 0; gx < gn; gx++) {
 				const int lx = MIN(gx * step, n - 1);
 				const int lz = MIN(gz * step, n - 1);
-				const Vector3 p((ground_origin.x + lx) * ground_spacing, ground[lz * n + lx], (ground_origin.y + lz) * ground_spacing);
-				const Vector3 v = cover_src->coarse_cover_at(p);
+				pts[gz * gn + gx] = Vector2((ground_origin.x + lx) * ground_spacing, (ground_origin.y + lz) * ground_spacing);
+			}
+		}
+		cover_src->coarse_cover_points(pts.ptr(), int(pts.size()), cov.ptr());
+		bool any = false;
+		for (int gz = 0; gz < gn; gz++) {
+			for (int gx = 0; gx < gn; gx++) {
+				const Vector3 v = cov[gz * gn + gx];
 				const float c = v.x + v.y;
 				g_armour[gz * gn + gx] = Math::is_finite(c) ? 1.0f - Math::smoothstep(0.1f, 0.35f, c) : 1.0f;
 				any = any || g_armour[gz * gn + gx] < 0.999f;
