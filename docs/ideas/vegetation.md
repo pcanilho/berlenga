@@ -1403,7 +1403,11 @@ Built:
   Floors place it 0.2 m apart to 18 m.
 - GrassField3D.graze_height (0.04 m): the sward itself is grazed where deer browse hard, in the shader from a pressure
   grid (graze_map, smoothstep 0.3-0.8 of browse_at), so near tiles, rings, GPU fill and the path tracer agree with no
-  rebuild; torn pale ends, fewer dry tips. Followed on stand changes. Grass bench --graze=P (9 m disc).
+  rebuild; torn pale ends, fewer dry tips, a fresher green, blades 30% narrower (fine regrowth; the turf ground under
+  the sward closes the gaps). Followed on stand changes. Meadow species sets need browse rules of their own for the
+  tall grasses and palatable herbs (the grass bench's do: RULE_BROWSE 0-0.45 fade 0.25; rosettes and nettle, dock,
+  thistle keep). Grass bench --graze=P: a 6.5 m disc 6 m ahead framed from 1.6 m (docs pair: --sun-elev=50
+  --sun-yaw=-30 --sun-energy=1.3, --graze=0 for the before).
 - make_floor (all but hedgerow and montado), appended so every other species keeps its seed: bramble and raspberry
   whole to 0.35 (fade 0.15) and bitten (meshes at 0.85) past it; palatable herbs (woodruff, anemone, violet, bilberry,
   ivy, fireweed, herb Robert, wood sorrel) thin to about a fifth at 1; the tall clearing grass gives way past 0.5; deer

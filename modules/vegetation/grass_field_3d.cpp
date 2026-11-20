@@ -1098,6 +1098,9 @@ void vertex() {
 			v_graze = textureLod(graze_map, guv, 0.0).r;
 			float crop_h = graze_height * (0.85 + 0.3 * fract(rnd * 5.31)) * (fract(rnd * 3.17) < 0.15 ? 1.4 : 1.0);
 			h = mix(h, min(h, crop_h), v_graze);
+			// Regrowth after a bite is fine young leaf: narrower blades keep the short turf from reading as teeth. The
+			// turf ground under the sward (get_ground_shader_code()) closes it between them.
+			w *= 1.0 - 0.3 * v_graze;
 		}
 	}
 	// A far ring blade (negative width; GrassField3D::_build_ring_tile()): one of a set thinned with the square of
@@ -1270,6 +1273,8 @@ void vertex() {
 			v_tint *= mix(vec3(1.0), vec3(1.10, 1.22, 0.84), v_flush);
 		}
 	}
+	// Grazed turf is all young leaf: a brighter, fresher green than the standing sward.
+	v_tint *= mix(vec3(1.0), vec3(1.06, 1.16, 0.88), v_graze);
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);

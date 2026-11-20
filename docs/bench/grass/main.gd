@@ -58,7 +58,8 @@ extends Node3D
 #   --grazed         the tall grass grazed short (5 to 14 cm), as on upland pasture
 #   --path[=P]       a worn path winding away from the camera, P passes a year (default 3000, a busy footpath; GrassField3D.paths,
 #                    VegetationField3D.paths): the sward and plants thin and shorten towards its line
-#   --graze=P        a deer browse disc of pressure P (WorldStand.add_browse, 9 m) in the view: the sward grazed to a lawn
+#   --graze=P        a deer browse disc of pressure P (WorldStand.add_browse, 6.5 m) 6 m ahead, framed from 1.6 m: a
+#                    grazed lawn edged by the standing sward
 #   --burn=A         a burn scar A years old (WorldBurnScar3D, 20 x 12 m) in the view: the sward grows back over
 #                    GrassField3D.burn_recovery (0.7 years), short and sparse first; GRASS_NO_FLUSH=1 without the
 #                    regrowth flush (the before frame)
@@ -474,7 +475,7 @@ func _ready() -> void:
 		if graze >= 0.0:
 			var st: WorldStand = WorldContracts.get_stand()
 			st.clear_browse()
-			st.add_browse(Vector3(24.0, 0.0, 22.0) if far_view else Vector3(3.0, 0.0, 9.0), 9.0, graze, 1.8)
+			st.add_browse(Vector3(24.0, 0.0, 22.0) if far_view else Vector3(5.0, 0.0, 14.0), 6.5, graze, 1.8)
 		if burn_age >= 0.0:
 			var scar := WorldBurnScar3D.new()
 			scar.age_years = burn_age
@@ -682,6 +683,9 @@ void fragment() {
 	cam.position = Vector3(6, height(6, 20) + eye_h, 20)
 	add_child(cam)
 	cam.look_at(Vector3(0, -0.5 - 0.6 * (eye_h - 1.7), -8))
+	if graze >= 0.0 and not far_view:
+		cam.position = Vector3(6, height(6, 20) + 1.6, 20)
+		cam.look_at(Vector3(4.5, height(4.5, 11.0), 11.0))
 	if crop_fields:
 		cam.position = Vector3(0, height(0, 14) + 16.0, 14)
 		cam.look_at(Vector3(0, height(0, -30), -30))
@@ -1254,6 +1258,12 @@ func _cover_biome() -> Biome:
 	b.species = [flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry, tall, tall_dry]
 	if OS.get_environment("GRASS_DIAG").contains("notall"):
 		b.species = b.species.slice(0, 10)
+	if graze >= 0.0:
+		# Deer grazing (PlantSpecies.RULE_BROWSE, as make_floor's sets): the tall grasses and palatable herbs go where
+		# the pressure is high; rosettes (plantain, clover, sedge) and the unpalatable nettle, dock and thistle stay.
+		for sp in [flowers, tussock, yarrow, dry, tall, tall_dry]:
+			(sp as PlantSpecies).set_rule_range(PlantSpecies.RULE_BROWSE, Vector2(0.0, 0.45))
+			(sp as PlantSpecies).set_rule_fade(PlantSpecies.RULE_BROWSE, 0.25)
 	if forest:
 		for sp in b.species:
 			(sp as PlantSpecies).set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 0.4))
