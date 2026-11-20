@@ -545,3 +545,19 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
 - Shelf: its top a smooth slope rippled by the noise at large scale, its face lightly eroded (laminar), not a
   frilled grainy rim.
 - Raster and PT match (640). Review stills: storm 15 km (`--storm=0,-24000,...`) and 20 km (`0,-30000`), 24 frames.
+
+## Storm review 4 (20 Nov 2026; docs: figurine tower, UFO shelf, repeating mammatus, faint shaft)
+
+- Proportions: the tower 1.5 core radii across at its base (about 7.5 km for R 2.5 km), widening to 2.4 by 85% of
+  its height into an anvil that starts 1.6 radii wide and widens 0.4 per radius downwind; twelve bubbles (0.6 to 1.9
+  radii across) set 0.45 to 1.0 radii off the axis, and the cumulus erosion back at 45% for a cauliflower skin.
+  Cells fade 2.6 to 3.8 radii out.
+- The "brim" round the base was not the shelf: the storm's raised cover made a flat-topped deck there. The deck now
+  gives way round the tower as the single cells do.
+- Shelf: only along the leading front (cos 0.65 to 0.92 of the storm's motion, about 40 degrees each side), just
+  outside the tower (1.5 radii plus 0.04 per m/s of outflow), a wedge whose top is lowest at the leading edge and
+  rises about 1.5 km back toward the storm.
+- Mammatus: a fifth of the grid cells hold none, sizes 0.45 to 0.85 of the cell and depths 0.25 to 1 vary, in
+  patches about 6 km across.
+- Rain shaft: lit at two fifths of the open sky's light under the shield, so it stands as a dark curtain.
+- Raster and PT match (640).

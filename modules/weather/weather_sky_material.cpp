@@ -896,7 +896,7 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			}
 			// Where the drops at p left the base: upwind by the slant times their fall.
 			vec2 q = p.xz - cloud_rain_slant * (base - p.y);
-			vec2 dq = (q - s.xy) / (0.75 * s.z); // the heavy core about 1.5 radii across, under the tower
+			vec2 dq = (q - s.xy) / (0.9 * s.z); // the heavy core about 1.8 radii across, under the tower
 			float r2 = dot(dq, dq);
 			// A core with an edge (heavy rain falls in shafts a few km across, not a smooth bell).
 			float r = rain * exp(-r2 * r2);
@@ -917,9 +917,9 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			float g = 0.6;
 			float mu = dot(rd, sun_dir);
 			float hg = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
-			// Rain is lighter than the base above it (drops scatter the light coming in under the base from the
-			// sides, where the sky is open): two thirds of the open sky's light, not the third over the shield.
-			vec3 light = ambient_bottom * mix(1.0, 0.65, shield) + sun_radiance * sun_vis * hg;
+			// Under the shield the sky's light is cut to about two fifths: a heavy shaft stands as a dark grey curtain
+			// against the brighter sky behind it.
+			vec3 light = ambient_bottom * mix(1.0, 0.4, shield) + sun_radiance * sun_vis * hg;
 			float st = exp(-sigma * dt);
 			float w = tr * (1.0 - st);
 			col += light * w;
