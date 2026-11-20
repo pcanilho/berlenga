@@ -3250,7 +3250,8 @@ simplification as Ghost of Tsushima's far grass).
   no range (drawn to the stream radius as before), and 150 m or more leaves the field's far voxel volume (to 150 m)
   empty for trees.
 - Widening on the CPU, not in the shader: species meta `far_widen` makes VegetationField3D grow each survivor in its
-  instance transform by the keep its tile was committed for (min(1/sqrt(keep), 1.6) across, a third of that upward
+  instance transform by how far its tile's tail had thinned when committed (the distance d_k where keep fell to the
+  tile's, f = min(d_k / (range / 2), 1.6) across; vegetation's review: the fade alone must not widen), a third of that upward
   so the skyline does not rise), rebuilt with the tile as the camera comes closer. Tried first: a copy of every tree
   material calling the shared vegetation_far_scale() in vertex(). Raster was right, but a camera-dependent vertex()
   makes the path tracer recapture every tree surface (bark, needles, millions of vertices) whenever the camera moves,
@@ -3259,6 +3260,30 @@ simplification as Ghost of Tsushima's far grass).
 - Bench: `--stands --plot=N --far=R` streams the stand with every species ranged R m (far shell and far volume off,
   FAR_SHELL=1 brings the shell back; NO_FAR_SCALE=1 grows the stand without far_thinning). Raster and path traced
   (640x360, --far=50) draw the same survivors at the same places.
+
+### 9b. Crown hulls (built 20 Nov)
+
+Past a species' range each tree swaps to a hull: its crown as foliage lobes, Livny et al. 2011 ("Texture-lobes for
+tree modelling"), as real closed geometry so path-traced shadows and sky occlusion still see a crown (cards would not).
+- Lobes: the leafy shoots (start, middle, end) binned on a grid a fifth of the crown; each bin with 3 or more points a
+  randomly spun icosahedron at its mean, as wide as 1.5 x its spread + 0.25 m, scaled by sqrt(hide), where hide is the
+  optical cover of the bin's leaf area A over its disc (leaves at random angles, G = 0.5: 1 - e^(-0.5 A / pi R^2)).
+  Crowns keep their gaps and grain. A four-sided stem to 0.6 of the crown height. 20 triangles a lobe, at most a
+  5 x 5 x 5 grid of lobes, where LOD 2 has tens of thousands.
+- Colour: the largest foliage surface's mean opaque texel x mean vertex colour x albedo, the leaf area from that
+  surface; shaded by height in the crown, nearness to its axis, a hashed patch, and the lobe's self-shading under
+  Beer's law (mean light (1 - e^(-kL)) / kL, k = 0.5, Monsi and Saeki 1953). Normals bent halfway to the sky: leaves
+  face every way, so a crown's sunlit side is far softer than a solid's. Material: vertex colour, roughness 0.7,
+  specular 0.3 (the leaves').
+- Tried and dropped: vegetation's voxel make_shell (slabs), one smooth envelope per crown (smooth cones and spindles
+  from 700 m, too solid and too bright for broadleaves).
+- Wiring: mesh meta `tree_far_hull` (living, standing trees 5 m and up, with far_thinning); species meta
+  `far_hull_range` (the species range). VegetationField3D adds a third pass per tile ("PlantsHull"): the tree mesh ends at
+  far_hull_range, the hull begins there (5% fade margin, none when impostors are traced), same ranks and widening.
+- Cost: the foliage texture's mean is read back once per texture (cached by RID); near-leaf rebuilds on worker threads
+  build no hull (the far mesh carries it; a texture readback off the main thread hung the near-leaves check).
+- Check (stand plot 2, montane conifer, 700 m, raster): trees only vs hulls only cover 47.9% / 47.1% of the frame,
+  mean colour (63, 77, 60) / (65, 79, 60). Bench: `HULL_AT=m` sets the swap distance (10 = hulls only, 5000 = trees only).
 
 ## Next-round options (card 19 Nov evening)
 **Snow-laden crowns.** Conifer crowns catch snow (up to 30-60% of a storm's snowfall in a closed spruce stand; Hedstrom and Pomeroy 1998, Pomeroy et al. 1998 interception model): the load bends branch tips down (spruce and fir laterals droop 10-30 degrees under a few kg; Schmidt and Pomeroy 1990 branch bending), white caps sit on the upper side of each spray as real geometry, and it unloads in gusts, sun and thaw as falling clumps (Storck et al. 2002; Roesch et al. 2012 unloading rates). Heavy wet snow breaks tops and stems (snow breakage, Nykanen et al. 1997; Peltola et al. 1999 critical loads), through the TreeWind3D storm path. Reads the snow/weather contracts (snowfall, air temperature, wind); load per tree kept in TreeWind3D, released as Flow/particle clumps. Needs a WorldSnow line agreed with the snow thread (who owns snow on crowns).
