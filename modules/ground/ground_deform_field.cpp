@@ -721,6 +721,7 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 				target = MIN(target, c.surface - p_sink * w + lift);
 			}
 			target = MAX(target, c.surface - c.max_dent);
+			target = MAX(target, floor_top(press_floor_a, press_floor_b, wx, wz)); // a stone under it (round 15.2)
 			if (target >= s) {
 				continue;
 			}
