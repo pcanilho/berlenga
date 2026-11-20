@@ -1638,9 +1638,11 @@ void fragment() {
 	}
 	if (wetness_enabled) {
 		// Rain soaks the ground by each layer's porosity (Lagarde 2013), before snow lies on it.
-		c += "\tweather_wetness_apply(max(tm_wetness * weather_wetness_at(wp), tm_gwet), wn.y, metallic, porosity, albedo, rough);\n";
+		// On printed ground a wet track's water lies in its prints (ground_contact_shape()).
+		c += ground_deform_enabled ? "\tfloat tm_wwet = weather_wetness_at(wp, ground_contact_shape(wp.xz));\n" : "\tfloat tm_wwet = weather_wetness_at(wp);\n";
+		c += "\tweather_wetness_apply(max(tm_wetness * tm_wwet, tm_gwet), wn.y, metallic, porosity, albedo, rough);\n";
 		// A film of rain water drowns the grains' facets.
-		c += "\ttm_sand_dry *= 1.0 - smoothstep(0.05, 0.3, tm_wetness * weather_wetness_at(wp));\n";
+		c += "\ttm_sand_dry *= 1.0 - smoothstep(0.05, 0.3, tm_wetness * tm_wwet);\n";
 		// Hoarfrost on clear cold nights (WeatherMap3D dew_and_frost).
 		c += "\tweather_frost_apply(weather_frost_at(wp), wn.y, albedo, rough);\n";
 	} else if (ground_deform_enabled) {

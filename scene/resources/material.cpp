@@ -816,13 +816,18 @@ float weather_contact_wetness_at(vec3 p_world_pos) {
 }
 
 // Ground wetness from the weather map (0 dry, 1 soaked) and where water has been; 0 with no weather map.
-float weather_wetness_at(vec3 p_world_pos) {
+// p_contact_shape scales where water has been: a printed ground's own outline (ground_contact_shape()), finer than
+// the contact map's texels.
+float weather_wetness_at(vec3 p_world_pos, float p_contact_shape) {
 	if (weather_map_rect.z <= 0.0) {
 		return 0.0;
 	}
 	vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
-	return max(textureLod(weather_state_map, uv, 0.0).g, weather_contact_wetness_at(p_world_pos));
+	return max(textureLod(weather_state_map, uv, 0.0).g, weather_contact_wetness_at(p_world_pos) * p_contact_shape);
+}
+float weather_wetness_at(vec3 p_world_pos) {
+	return weather_wetness_at(p_world_pos, 1.0);
 }
 )";
 		code += get_frost_sampling_code();
@@ -3082,7 +3087,9 @@ void fragment() {)";
 				// the geometry is there for the shadow map and the path tracer to shade for real, and this term made
 				// it read far darker in raster than traced.
 				float gspan = max(max(max(gh1, gh2), max(gh3, gh4)), gh0) - min(min(min(gh1, gh2), min(gh3, gh4)), gh0);
-				float gcv = clamp((gh0 - ghm) / 0.0015, -1.0, 1.0) * gdk * (1.0 - smoothstep(0.004, 0.01, gspan));
+				// Faded out over the field's outer fifth, so its square has no edge on the ground past it.
+				vec2 gdr = min(gdp - ground_deform_rect.xy, ground_deform_rect.xy + ground_deform_rect.z - gdp);
+				float gcv = clamp((gh0 - ghm) / 0.0015, -1.0, 1.0) * gdk * (1.0 - smoothstep(0.004, 0.01, gspan)) * smoothstep(0.0, 0.2 * ground_deform_rect.z, min(gdr.x, gdr.y));
 				ALBEDO *= 1.0 + (gcv > 0.0 ? 0.35 : 0.4) * gcv;
 			}
 		}
@@ -3128,12 +3135,16 @@ void fragment() {)";
 	// Wetness: Enabled
 	float wet = wetness_amount;
 )";
+		// Printed ground shapes where a wet track's water lies by its own prints (ground_contact_shape()).
+		const String wet_at = features[FEATURE_GROUND_DEFORM]
+				? String("weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, ground_contact_shape((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz))")
+				: String("weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz)");
 		if (wetness_from_weather && wetness_canopy) {
 			// A canopy stays wet while it holds the water it intercepted (Rutter's store, WeatherMap3D), after the
 			// ground has begun to dry.
-			code += "\twet *= max(weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz), weather_canopy_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz));\n";
+			code += "\twet *= max(" + wet_at + ", weather_canopy_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz));\n";
 		} else if (wetness_from_weather) {
-			code += "\twet *= weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);\n";
+			code += "\twet *= " + wet_at + ";\n";
 		}
 		if (features[FEATURE_GROUND_DEFORM]) {
 			code += "\twet = max(wet, ground_wet.x);\n";
@@ -4650,6 +4661,20 @@ vec4 ground_deform_sample(vec2 p_xz) {
 		d = mix(d, textureLod(ground_deform_near_map, (p_xz - ground_deform_near_rect.xy) / ground_deform_near_rect.z, 0.0), nw);
 	}
 	return d;
+}
+// Where a wet track's water lies on printed ground (WeatherMap3D contact wetness, whose texels are 12.5 cm): in the
+// prints and tread lines the field pressed, 0 between them, so the wet follows a sole's or a tyre's outline and the
+// contact map sets only how wet it is. 1 off the field, eased in over its outer metre.
+float ground_contact_shape(vec2 p_xz) {
+	if (ground_deform_rect.z <= 0.0) {
+		return 1.0;
+	}
+	vec2 e = min(p_xz - ground_deform_rect.xy, ground_deform_rect.xy + ground_deform_rect.z - p_xz);
+	float in_field = smoothstep(0.5, 1.5, min(e.x, e.y));
+	if (in_field <= 0.0) {
+		return 1.0;
+	}
+	return mix(1.0, smoothstep(0.0005, 0.002, ground_deform_sample(p_xz).r), in_field);
 }
 // The deformation's own relief at p_xz (m, up): what is laid less what is pressed, with standing water's level.
 float ground_deform_relief(vec2 p_xz) {
