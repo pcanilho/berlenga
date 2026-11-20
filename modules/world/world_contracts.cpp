@@ -84,6 +84,8 @@ float WorldWeather::canopy_drip_at(const Vector3 &p_position) const WW_CALL(_can
 float WorldWeather::ground_water_input_at(const Vector3 &p_position) const WW_CALL(_ground_water_input_at, contract_ground_water_input_at(p_position), 0.0f, p_position)
 float WorldWeather::cloud_cover_at(const Vector3 &p_position) const WW_CALL(_cloud_cover_at, contract_cloud_cover_at(p_position), 0.0f, p_position)
 float WorldWeather::high_cloud_cover_at(const Vector3 &p_position) const WW_CALL(_high_cloud_cover_at, contract_high_cloud_cover_at(p_position), 0.0f, p_position)
+float WorldWeather::mid_cloud_cover_at(const Vector3 &p_position) const WW_CALL(_mid_cloud_cover_at, contract_mid_cloud_cover_at(p_position), 0.0f, p_position)
+float WorldWeather::cloud_effector_at(const Vector3 &p_position) const WW_CALL(_cloud_effector_at, contract_cloud_effector_at(p_position), 0.0f, p_position)
 float WorldWeather::ground_height_at(const Vector3 &p_position) const WW_CALL(_ground_height_at, contract_ground_height_at(p_position), 0.0f, p_position)
 float WorldWeather::washout_rate(float p_rain_mm_h, float p_snow_mm_h, bool p_coarse) {
 	const float a = p_coarse ? 3.0e-4f : 1.0e-5f;
@@ -203,6 +205,8 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("season_at", "position", "day"), &WorldWeather::season_at, DEFVAL(-1));
 	ClassDB::bind_method(D_METHOD("cloud_cover_at", "position"), &WorldWeather::cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("high_cloud_cover_at", "position"), &WorldWeather::high_cloud_cover_at);
+	ClassDB::bind_method(D_METHOD("mid_cloud_cover_at", "position"), &WorldWeather::mid_cloud_cover_at);
+	ClassDB::bind_method(D_METHOD("cloud_effector_at", "position"), &WorldWeather::cloud_effector_at);
 	ClassDB::bind_method(D_METHOD("water_temperature"), &WorldWeather::water_temperature);
 	ClassDB::bind_method(D_METHOD("surface_temperature_at", "position"), &WorldWeather::surface_temperature_at);
 	ClassDB::bind_method(D_METHOD("ground_height_at", "position"), &WorldWeather::ground_height_at);
@@ -240,6 +244,8 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_season_at, "position", "day");
 	GDVIRTUAL_BIND(_cloud_cover_at, "position");
 	GDVIRTUAL_BIND(_high_cloud_cover_at, "position");
+	GDVIRTUAL_BIND(_mid_cloud_cover_at, "position");
+	GDVIRTUAL_BIND(_cloud_effector_at, "position");
 	GDVIRTUAL_BIND(_water_temperature);
 	GDVIRTUAL_BIND(_surface_temperature_at, "position");
 	GDVIRTUAL_BIND(_ground_height_at, "position");
@@ -1147,6 +1153,196 @@ void WorldContracts::fire_burn_changed(const Rect2 &p_area) {
 	if (singleton->fire_override.is_valid()) {
 		singleton->fire_override->burn_changed(p_area);
 	}
+	// A burn changes the stand's age there too.
+	singleton->builtin_stand->stand_changed(p_area);
+	if (singleton->stand_override.is_valid()) {
+		singleton->stand_override->stand_changed(p_area);
+	}
+}
+
+WorldStand *WorldContracts::stand() {
+	static Ref<WorldStand> fallback;
+	if (singleton == nullptr) {
+		if (fallback.is_null()) {
+			fallback.instantiate();
+		}
+		return fallback.ptr();
+	}
+	return singleton->stand_override.is_valid() ? singleton->stand_override.ptr() : singleton->builtin_stand.ptr();
+}
+
+void WorldContracts::set_stand(const Ref<WorldStand> &p_stub) {
+	stand_override = p_stub;
+}
+
+Ref<WorldStand> WorldContracts::get_stand() const {
+	return stand_override.is_valid() ? stand_override : builtin_stand;
+}
+
+// Stand age.
+
+void WorldStand::_age_and_kind(const Vector3 &p_position, float &r_age, int &r_kind) const {
+	r_age = -1.0f;
+	r_kind = DISTURBANCE_NONE;
+	const WorldFire *f = WorldContracts::fire();
+	const float burn = f->burn_age_at(p_position);
+	if (burn >= 0.0f) {
+		const float scorch = f->crown_scorch_at(p_position);
+		// No scorch on record (an authored burn scar) counts as stand-replacing; a low scorch was a surface fire.
+		if (!(scorch > 0.0f && scorch < SURFACE_FIRE_SCORCH)) {
+			r_age = burn;
+			r_kind = DISTURBANCE_FIRE;
+		}
+	}
+	const Vector2 p(p_position.x, p_position.z);
+	for (const Event &e : events) {
+		if (p.distance_squared_to(e.center) <= e.radius * e.radius && (r_age < 0.0f || e.age < r_age)) {
+			r_age = e.age;
+			r_kind = e.kind;
+		}
+	}
+}
+
+float WorldStand::stand_age_at(const Vector3 &p_position) const {
+	float r = -1.0f;
+	if (GDVIRTUAL_CALL(_stand_age_at, p_position, r)) {
+		return r;
+	}
+	int kind;
+	_age_and_kind(p_position, r, kind);
+	return r;
+}
+
+int WorldStand::disturbance_at(const Vector3 &p_position) const {
+	int r = DISTURBANCE_NONE;
+	if (GDVIRTUAL_CALL(_disturbance_at, p_position, r)) {
+		return r;
+	}
+	float age;
+	_age_and_kind(p_position, age, r);
+	return r;
+}
+
+void WorldStand::_report(const Rect2 &p_area) {
+	stand_changed(p_area);
+}
+
+int WorldStand::add_disturbance(const Vector3 &p_center, float p_radius, int p_kind, float p_age_years) {
+	ERR_FAIL_COND_V_MSG(p_kind <= DISTURBANCE_NONE, 0, "A disturbance needs a kind (fire, wind, beetle).");
+	Event e;
+	e.id = next_id++;
+	e.center = Vector2(p_center.x, p_center.z);
+	e.radius = MAX(p_radius, 0.0f);
+	e.kind = p_kind;
+	e.age = MAX(p_age_years, 0.0f);
+	events.push_back(e);
+	_report(Rect2(e.center - Vector2(e.radius, e.radius), Vector2(2.0f * e.radius, 2.0f * e.radius)));
+	return e.id;
+}
+
+void WorldStand::set_disturbance_age(int p_id, float p_age_years) {
+	for (Event &e : events) {
+		if (e.id == p_id) {
+			e.age = MAX(p_age_years, 0.0f);
+			_report(Rect2(e.center - Vector2(e.radius, e.radius), Vector2(2.0f * e.radius, 2.0f * e.radius)));
+			return;
+		}
+	}
+}
+
+void WorldStand::remove_disturbance(int p_id) {
+	for (uint32_t i = 0; i < events.size(); i++) {
+		if (events[i].id == p_id) {
+			const Event e = events[i];
+			events.remove_at(i);
+			_report(Rect2(e.center - Vector2(e.radius, e.radius), Vector2(2.0f * e.radius, 2.0f * e.radius)));
+			return;
+		}
+	}
+}
+
+void WorldStand::clear_disturbances() {
+	Rect2 area;
+	for (uint32_t i = 0; i < events.size(); i++) {
+		const Rect2 r(events[i].center - Vector2(events[i].radius, events[i].radius), Vector2(2.0f * events[i].radius, 2.0f * events[i].radius));
+		area = i == 0 ? r : area.merge(r);
+	}
+	const bool any = !events.is_empty();
+	events.clear();
+	if (any) {
+		_report(area);
+	}
+}
+
+void WorldStand::advance_years(float p_years) {
+	if (!(p_years > 0.0f) || events.is_empty()) {
+		return;
+	}
+	Rect2 area;
+	for (uint32_t i = 0; i < events.size(); i++) {
+		events[i].age += p_years;
+		const Rect2 r(events[i].center - Vector2(events[i].radius, events[i].radius), Vector2(2.0f * events[i].radius, 2.0f * events[i].radius));
+		area = i == 0 ? r : area.merge(r);
+	}
+	_report(area);
+}
+
+void WorldStand::stand_changed(const Rect2 &p_area) {
+	generation++;
+	Change c;
+	c.generation = generation;
+	c.area = p_area;
+	if (change_log.size() >= uint32_t(CHANGE_LOG)) {
+		change_log.remove_at(0);
+	}
+	change_log.push_back(c);
+	emit_signal(SNAME("stand_changed"), p_area);
+}
+
+bool WorldStand::stand_changes_since(uint64_t p_since, Rect2 &r_area) const {
+	r_area = Rect2();
+	if (p_since >= generation) {
+		return true;
+	}
+	if (change_log.is_empty() || change_log[0].generation > p_since + 1) {
+		return false;
+	}
+	bool any = false;
+	for (const Change &c : change_log) {
+		if (c.generation > p_since) {
+			r_area = any ? r_area.merge(c.area) : c.area;
+			any = true;
+		}
+	}
+	return true;
+}
+
+Dictionary WorldStand::get_stand_changes_since(uint64_t p_since) const {
+	Rect2 area;
+	Dictionary d;
+	d["complete"] = stand_changes_since(p_since, area);
+	d["area"] = area;
+	return d;
+}
+
+void WorldStand::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("stand_age_at", "position"), &WorldStand::stand_age_at);
+	ClassDB::bind_method(D_METHOD("disturbance_at", "position"), &WorldStand::disturbance_at);
+	ClassDB::bind_method(D_METHOD("add_disturbance", "center", "radius", "kind", "age_years"), &WorldStand::add_disturbance);
+	ClassDB::bind_method(D_METHOD("set_disturbance_age", "id", "age_years"), &WorldStand::set_disturbance_age);
+	ClassDB::bind_method(D_METHOD("remove_disturbance", "id"), &WorldStand::remove_disturbance);
+	ClassDB::bind_method(D_METHOD("clear_disturbances"), &WorldStand::clear_disturbances);
+	ClassDB::bind_method(D_METHOD("advance_years", "years"), &WorldStand::advance_years);
+	ClassDB::bind_method(D_METHOD("stand_changed", "area"), &WorldStand::stand_changed);
+	ClassDB::bind_method(D_METHOD("get_stand_generation"), &WorldStand::get_stand_generation);
+	ClassDB::bind_method(D_METHOD("get_stand_changes_since", "generation"), &WorldStand::get_stand_changes_since);
+	ADD_SIGNAL(MethodInfo("stand_changed", PropertyInfo(Variant::RECT2, "area")));
+	GDVIRTUAL_BIND(_stand_age_at, "position");
+	GDVIRTUAL_BIND(_disturbance_at, "position");
+	BIND_ENUM_CONSTANT(DISTURBANCE_NONE);
+	BIND_ENUM_CONSTANT(DISTURBANCE_FIRE);
+	BIND_ENUM_CONSTANT(DISTURBANCE_WIND);
+	BIND_ENUM_CONSTANT(DISTURBANCE_BEETLE);
 }
 
 void WorldContracts::set_fire(const Ref<WorldFire> &p_stub) {
@@ -1216,6 +1412,7 @@ void WorldContracts::clear_overrides() {
 	water_override.unref();
 	fire_override.unref();
 	snow_override.unref();
+	stand_override.unref();
 	_clear_water_stubs();
 }
 
@@ -1344,6 +1541,8 @@ void WorldContracts::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_water_stub", "stub"), &WorldContracts::add_water_stub);
 	ClassDB::bind_method(D_METHOD("set_fire", "stub"), &WorldContracts::set_fire);
 	ClassDB::bind_method(D_METHOD("get_fire"), &WorldContracts::get_fire);
+	ClassDB::bind_method(D_METHOD("set_stand", "stub"), &WorldContracts::set_stand);
+	ClassDB::bind_method(D_METHOD("get_stand"), &WorldContracts::get_stand);
 	ClassDB::bind_method(D_METHOD("set_snow", "stub"), &WorldContracts::set_snow);
 	ClassDB::bind_method(D_METHOD("get_snow"), &WorldContracts::get_snow);
 	ClassDB::bind_method(D_METHOD("clear_overrides"), &WorldContracts::clear_overrides);
@@ -1357,6 +1556,7 @@ WorldContracts::WorldContracts() {
 	builtin_ground.instantiate();
 	builtin_fire.instantiate();
 	builtin_snow.instantiate();
+	builtin_stand.instantiate();
 }
 
 WorldContracts::~WorldContracts() {

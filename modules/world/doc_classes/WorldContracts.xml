@@ -47,6 +47,12 @@
 				Returns the snow contract every system reads: the test stub if one is set, else the built-in one.
 			</description>
 		</method>
+		<method name="get_stand" qualifiers="const">
+			<return type="WorldStand" />
+			<description>
+				The stand-age contract in use: the stub from [method set_stand], else the built-in one.
+			</description>
+		</method>
 		<method name="get_water" qualifiers="const">
 			<return type="WorldWater" />
 			<description>
@@ -78,6 +84,13 @@
 			<return type="void" />
 			<description>
 				Replaces the snow for every system with [param stub], a script extending [WorldSnow]; what it does not override still comes from the snow cover.
+			</description>
+		</method>
+		<method name="set_stand">
+			<return type="void" />
+			<param index="0" name="stub" type="WorldStand" />
+			<description>
+				Replaces the stand-age contract with [param stub] for a test; [code]null[/code] puts the built-in one back.
 			</description>
 		</method>
 		<method name="set_water">

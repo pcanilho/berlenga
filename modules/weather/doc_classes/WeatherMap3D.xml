@@ -34,6 +34,25 @@
 				Adds a round stand of plants (world x, z centre, radius and canopy height in metres) and returns its id. [param density] is Cionco's attenuation coefficient: about 1 for open orchards, 2 to 3 for crops and most forests, 4 for dense stands (Cionco 1978). Under the canopy the wind falls off as [code]u(hc) exp(a (z / hc - 1))[/code]; above it the log law starts from a displaced ground at 0.7 hc with roughness 0.1 hc (Raupach 1994). Takes effect at the next shelter bake (see [method rebake_shelter]).
 			</description>
 		</method>
+		<method name="add_cloud_effector">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="strength" type="float" />
+			<description>
+				Adds a density effector to the cumulus layer and returns its id, or -1 when eight are already present. Within [param radius] metres of [param position] the cloud gains (strength &gt; 0) or loses (strength &lt; 0) density, falling off linearly to the edge; strength -1 clears the cloud at the centre, 1 makes one where the air was clear. An effector rides the clouds: it moves with the cumulus drift ([method get_wind_aloft] at the layer), so [param position] is where it is now. The shadow bake, [method get_cloud_density_at] and the sky all see it. Read the field through [method get_cloud_effector_at] (contract [code]WorldWeather.cloud_effector_at[/code]).
+			</description>
+		</method>
+		<method name="add_cloud_light">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="color" type="Color" />
+			<param index="2" name="energy" type="float" />
+			<param index="3" name="reach" type="float" />
+			<description>
+				Adds a point light that lights the clouds (a fire, a town's glow, a flare) and returns its id, or -1 when eight are already present. [param energy] is its intensity in the sun's units times square metres: at distance d the cloud receives [code]energy / d^2[/code] of what a sun of energy 1 gives, smoothly faded to 0 at [param reach] metres. It lights the clouds only: add an [OmniLight3D] for the ground. Fires registered with WorldFire add their own lights and share the eight shader slots by brightness.
+			</description>
+		</method>
 		<method name="add_contact_wetness">
 			<return type="void" />
 			<param index="0" name="position" type="Vector3" />
@@ -224,6 +243,20 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The high cloud sheet's cover over [param position], 0 to 1: its drifting patches plus the anvil shields storms spread downwind of themselves. Not part of [method get_cloud_cover_at]: the sheet is optically thin and shades the ground only through [method get_sun_visibility_at], by its own optical depth.
+			</description>
+		</method>
+		<method name="get_mid_cloud_cover_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The mid cloud layer's cover (altocumulus, altostratus) over [param position], 0 to 1: its drifting patches plus a band round each storm's anvil. Not part of [method get_cloud_cover_at]: the layer shades the ground only by its own optical depth ([method get_mid_cloud_optical_depth_at]) through [method get_sun_visibility_at].
+			</description>
+		</method>
+		<method name="get_mid_cloud_optical_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The mid cloud layer's vertical optical depth over [param position]: its cover there times [member mid_cloud_optical_depth]. The cloud shadow bake and anything else that shades by the layer read this one number.
 			</description>
 		</method>
 		<method name="get_obstacle_height_at" qualifiers="const">
@@ -695,6 +728,20 @@
 				Removes a canopy added with [method add_canopy].
 			</description>
 		</method>
+		<method name="remove_cloud_effector">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Removes a density effector added with [method add_cloud_effector]. Unknown ids are ignored.
+			</description>
+		</method>
+		<method name="remove_cloud_light">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Removes a cloud light added with [method add_cloud_light]. Unknown ids are ignored.
+			</description>
+		</method>
 		<method name="remove_shelter_box">
 			<return type="void" />
 			<param index="0" name="id" type="int" />
@@ -707,6 +754,27 @@
 			<param index="0" name="id" type="int" />
 			<description>
 				Removes the storm with this [param id].
+			</description>
+		</method>
+		<method name="set_cloud_effector">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<param index="2" name="radius" type="float" />
+			<param index="3" name="strength" type="float" />
+			<description>
+				Moves or changes a density effector added with [method add_cloud_effector]; [param position] is where it is now. Unknown ids are ignored.
+			</description>
+		</method>
+		<method name="set_cloud_light">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<param index="2" name="color" type="Color" />
+			<param index="3" name="energy" type="float" />
+			<param index="4" name="reach" type="float" />
+			<description>
+				Moves or changes a cloud light added with [method add_cloud_light]. Unknown ids are ignored.
 			</description>
 		</method>
 		<method name="set_cloud_time">
@@ -787,6 +855,18 @@
 		<member name="high_cloud_optical_depth" type="float" setter="set_high_cloud_optical_depth" getter="get_high_cloud_optical_depth" default="1.0">
 			Vertical optical depth of the high sheet at full cover (ice clouds measure 0.03 to 3). Sets how much it veils the sky and dims the sun.
 		</member>
+		<member name="mid_cloud_cover" type="float" setter="set_mid_cloud_cover" getter="get_mid_cloud_cover" default="0.15">
+			The base cover of the mid cloud layer (altocumulus; a full cover is an altostratus sheet) at [member mid_cloud_height]. The weather drives what is drawn: dry air thins it to 0.2 of this, rain set in [member rain_rate] thickens it into a sheet, easing twice as fast as the rain (after the cirrus, before the rain). It follows the rain and never makes it: precipitation stays the main layer's. It stays out of [member cloud_cover] and [method get_cloud_cover_at]. It drifts with [method get_wind_aloft] at its height. See docs/ideas/clouds.md.
+		</member>
+		<member name="mid_cloud_height" type="float" setter="set_mid_cloud_height" getter="get_mid_cloud_height" default="4500.0">
+			Height of the middle of the mid cloud layer's slab (m above y = 0). Its cloudlets lie in rows across the wind at this height.
+		</member>
+		<member name="mid_cloud_optical_depth" type="float" setter="set_mid_cloud_optical_depth" getter="get_mid_cloud_optical_depth" default="4.0">
+			Vertical optical depth of the mid cloud layer at full cover (altocumulus measure about 2 to 10). Sets how much it shades the ground and how grey its sheet looks from below.
+		</member>
+		<member name="mid_cloud_thickness" type="float" setter="set_mid_cloud_thickness" getter="get_mid_cloud_thickness" default="400.0">
+			Depth of the mid cloud layer's slab (m).
+		</member>
 		<member name="sea_spray" type="bool" setter="set_sea_spray" getter="is_sea_spray_enabled" default="true">
 			Sea spray on the shore: breaking waves ([method WorldWater.breaking_at]) make spray in proportion to the breaker height and the square of the wind past 2 m/s; the wind carries it inland over a square round the follow point. Coarse drops settle within tens of metres ([code]u (1 + H) / 1 m/s[/code]) and wet surfaces and the soil; rising ground catches them, so a cliff face takes the spray and its top stays drier. Fine salt aerosol reaches hundreds of metres ([code]50 s x u[/code]). The salt stays on surfaces until rain washes it off (all but a third by 5 mm) and is published with the spray's wetness as the [code]weather_spray_map[/code] global (R wetness, G [code]1 - exp(-salt / 10 g/m2)[/code]); grass browns at the tips from salt burn.
 		</member>
@@ -859,8 +939,8 @@
 		<member name="cloud_size_mix" type="float" setter="set_cloud_size_mix" getter="get_cloud_size_mix" default="1.0">
 			Large clouds among the small. A third read of the shape noise, 2.618 times larger, is blended in by a slow noise, so some stretches of sky hold a few big cumulus and others many small ones, as fair-weather cumulus sizes spread over a decade. [code]0[/code] gives every cloud the same size (the old look); costs one more noise read per cloud sample.
 		</member>
-		<member name="cloud_shear" type="float" setter="set_cloud_shear" getter="get_cloud_shear" default="1.0">
-			Scale on how far the wind shear leans the clouds' tops downwind of their bases. The wind aloft grows and veers with height, so tissue that rose higher was carried further: towers lean and their tops stream out, the lean growing as height squared so the base stays upright. [code]0[/code] keeps the clouds upright.
+		<member name="cloud_shear" type="float" setter="set_cloud_shear" getter="get_cloud_shear" default="0.4">
+			Scale on how far the wind shear leans the clouds' tops downwind of their bases. The wind aloft grows and veers with height, so tissue that rose higher was carried further: towers lean and their tops stream out, the lean growing as height squared so the base stays upright. [code]0[/code] keeps the clouds upright. At 1 the full sheared drift smeared fair-weather cumulus into slanted sides (they rise in minutes, through less of the shear than the drift assumes).
 		</member>
 		<member name="cloud_thickness" type="float" setter="set_cloud_thickness" getter="get_cloud_thickness" default="1500.0">
 			Depth of the cloud layer for cumulus ([member cloud_type] 0.7), in metres. Stratus is a quarter of it; cumulonimbus (type above 0.8, as storms make) towers up to five times it.

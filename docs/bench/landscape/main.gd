@@ -12,6 +12,7 @@ extends Node3D
 #   --raster          raster only (TAA + SMAA; --aa=0 without)
 #   --spp=N           path tracing samples (default 16)
 #   --boulders=D     rockfall blocks below cliffs at density D (default 1, 0 none), grey stand-ins
+#   --no-far         no rock far tier (big stones and landmarks to 4 km), the before frame
 #   --rocks=off      grey stand-ins instead of RockField3D stones; --rocks-area=M builds the stones in M m round the camera (1200)
 #   --stone-plants=0 no crevice plants (PlantGenerator.make_stones) between the stones
 #   --far-blend [--far-start=M]   TerrainMaterial3D's far blend over a test plant cover map
@@ -29,6 +30,7 @@ extends Node3D
 #   --day=N               day of the month (default 15)
 #   --leaves=0            no falling leaves (LeafFall3D); --leaf-litter=N loose leaves per m2 the gusts can lift (0.5)
 #   --cloud-shadow=0 --sun-shadow=0   no cloud shadow on the sun; no raster sun shadow map
+#   --sky-params=name:value,...   WeatherSkyMaterial shader parameters (A/B frames)
 #   --sun-off             no sun at all: what the sky alone lights
 #   --far-shadows=0       no far sun shadows from the ground's horizon toward the sun (raster A/B)
 #   --sky-occlusion=0     ground ambient light without the hills' sky occlusion; --sky-light=0 an even sky for it
@@ -386,8 +388,36 @@ func _ready() -> void:
 			for q in pts:
 				rv.add_sediment(q, rate / npts, 0.0))
 		feed.start()
+		get_viewport().disable_3d = true # the river runs undrawn (a drawn frame takes seconds here)
 		for _i in int(float(args.get("silt-wait", "20")) * Engine.physics_ticks_per_second):
 			await get_tree().physics_frame
+		if args.has("silt-dry-days"):
+			# --silt-dry-days=D: the flood's over (the feed stops), then D days of drying on the ground: the fresh
+			# silt skins pale and crack into curled plates (GroundSurface3D flood_silt, desiccation_cracks).
+			feed.stop()
+			for _i in 120:
+				await get_tree().physics_frame
+			if prints != null:
+				prints.settle(float(args["silt-dry-days"]) * 86400.0, 6.0 * 3600.0)
+			for _i in 200: # the coloured deposits are re-baked every 5 s
+				await get_tree().physics_frame
+		get_viewport().disable_3d = false
+		if args.has("silt-bank-cam"):
+			# --silt-bank-cam: on the bank (--silt-bank-side 0/1) at the feed, --silt-cam-back (3) m past the waterline,
+			# eye --silt-cam-h (1.6) m, looking back across the drying silt to the water's edge, down along the river
+			# (--silt-cam-along, 6 m), so the foreground silt at 1-3 m grades to the wet margin.
+			var sd := int(args.get("silt-bank-side", "0"))
+			var edge: Vector3 = best + across * float(half[sd]) * (1.0 if sd == 0 else -1.0)
+			var out := across * (1.0 if sd == 0 else -1.0)
+			var fl := flow.normalized() if flow.length() > 1e-4 else Vector3.FORWARD
+			var cp: Vector3 = edge + out * float(args.get("silt-cam-back", "3"))
+			cp.y = height_at(cp.x, cp.z) + float(args.get("silt-cam-h", "1.6"))
+			var lk: Vector3 = edge - out * 1.0 + fl * float(args.get("silt-cam-along", "6"))
+			lk.y = height_at(lk.x, lk.z)
+			var c4: Camera3D = get_viewport().get_camera_3d()
+			c4.global_position = cp
+			c4.look_at(lk)
+			_log("silt bank cam %.1f,%.1f,%.1f look %.1f,%.1f,%.1f; silt at the foot %s" % [cp.x, cp.y, cp.z, lk.x, lk.y, lk.z, str(prints.get_silt_at(edge + out * 1.5)) if prints != null and prints.has_method("get_silt_at") else "?"])
 		var probe := best + (best - Vector3(want.x, best.y, want.z)).normalized() * 0.0
 		_log("silt: %.0f mg/L into river at %s (discharge %.2f m3/s); load there %s kg/m3" % [float(args["silt"]), str(best.round()), dq, str(rv.get_sediment_at(probe))])
 	if args.has("river-pick"):
@@ -425,8 +455,10 @@ func _ready() -> void:
 	if args.get("prints", "1") != "0":
 		_build_prints()
 	_build_camera()
-	if args.has("wet-follow-cam") and weather != null:
-		weather.follow_target = weather.get_path_to(cam) # contact wetness (64 m square) round the camera, not the origin
+	if args.get("wet-follow-cam", "1") != "0" and weather != null:
+		# WeatherMap3D's local reads (smoke haze, cloud shadow, contact wetness) round the camera for the picture;
+		# the setup above ran on the world anchor. --wet-follow-cam=0 keeps the origin anchor.
+		weather.follow_target = weather.get_path_to(cam)
 	if clock != null:
 		_log("sun altitude %.1f deg, azimuth %.1f deg" % [clock.get_sun_altitude(), clock.get_sun_azimuth()])
 	if args.has("worn-path"):
@@ -613,6 +645,16 @@ func _ready() -> void:
 			return
 		var built := rocks.build_area(Rect2(rc.x - ra * 0.5, rc.z - ra * 0.5, ra, ra))
 		_log("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - rb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
+		# The far tier (modules/rocks): stones over 2 m and landmarks past each layer's radius, to far_radius (4 km).
+		# --no-far: off (the before frame); --far-thin=0: far_thinning off.
+		if args.has("no-far"):
+			rocks.far_radius = 0.0
+		if args.get("far-thin", "1") == "0":
+			rocks.far_thinning = false
+		if rocks.far_radius > 0.0 and rocks.has_method("build_far"):
+			var tfar := Time.get_ticks_msec()
+			rocks.build_far()
+			_log("rocks far tier: %d stones to %.0f m in %d ms" % [rocks.get_far_stone_count(), rocks.far_radius, Time.get_ticks_msec() - tfar])
 		if args.has("stack-view"):
 			# --stack-view[=N]: the N-th biggest coast stone (sea stack, LAYER_COAST = 7) in the built area, framed from
 			# the land side at --stack-dist (3) times its size, --stack-cam-h (1.2) m up, the sun across the view.
@@ -751,6 +793,8 @@ func _ready() -> void:
 		var flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
 		if not args.has("face-sun"):
 			flat = -flat # --face-away=PITCH: the same, looking down-sun (far grass colour pairs)
+		# --face-yaw=DEG: turn that many degrees off the sun's azimuth (left positive), to frame round a landform.
+		flat = flat.rotated(Vector3.UP, deg_to_rad(float(args.get("face-yaw", "0"))))
 		var pitch := deg_to_rad(float(args.get("face-sun", args.get("face-away", "0"))))
 		cam5.look_at(cam5.global_position + flat * cos(pitch) - Vector3.UP * sin(pitch))
 		_log("facing the sun: azimuth dir %s, sun elevation %.1f deg" % [str(flat), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
@@ -1087,6 +1131,9 @@ func _frame_log() -> void:
 	for i in veg.biome.species.size():
 		var sp := veg.biome.species[i] as Resource
 		if sp == null or not String(sp.resource_name).contains("(log)"):
+			continue
+		# --log-match=TEXT: only logs whose species name holds TEXT ("fallen giant": the old-growth gap logs).
+		if args.has("log-match") and not String(sp.resource_name).contains(String(args["log-match"])):
 			continue
 		for tp in veg.get_placements(i):
 			if tp.distance_to(c3.global_position) > float(args.get("log-radius", "70")):
@@ -2750,6 +2797,11 @@ func _build_weather() -> void:
 		# steps), so a single frame has no stipple that TAA would hide in play.
 		sky_mat.set("cloud_reprojection", false)
 		sky_mat.set("cloud_steps", int(args["cloud-still"]) if String(args["cloud-still"]).is_valid_int() else 256)
+	if args.has("sky-params"):
+		# --sky-params=name:value,...: the sky's shader parameters, for A/B docs frames (e.g. cloud_light_grid_enabled:0).
+		for pair in String(args["sky-params"]).split(","):
+			var nv := pair.split(":")
+			sky_mat.set_shader_parameter(nv[0], float(nv[1]))
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	sky.process_mode = Sky.PROCESS_MODE_INCREMENTAL
@@ -2981,6 +3033,12 @@ func _link_shot(kind: String, off: bool) -> void:
 			# walk is far from it, so the square follows the framed camera for the shot.
 			if not movers.is_empty():
 				weather.follow_target = weather.get_path_to(cam7)
+				if prints != null:
+					# The ground's deform window too, so the stamped prints land inside it.
+					prints.follow_target = prints.get_path_to(cam7)
+					for _f in 10:
+						await get_tree().physics_frame
+					_log("tracks: ground deform rect %s" % str(prints.get_deform_rect()))
 			get_viewport().disable_3d = true
 			for mv in movers:
 				var a: Vector2 = mv[1]
@@ -2991,9 +3049,23 @@ func _link_shot(kind: String, off: bool) -> void:
 				for i in steps + 90:
 					var p := a.lerp(b, minf(float(i) / steps, 1.0))
 					var bodies: Array = mv[0]
+					var yaw := atan2(dir.x, dir.y)
 					for k in bodies.size():
 						var q := p + side * (0.0 if bodies.size() == 1 else (k - 0.5) * 1.6)
 						bodies[k].global_position = Vector3(q.x, height_at(q.x, q.y) + float(mv[4]), q.y)
+						# The walk is stepped directly (no ground frames run), so the ground's prints are stamped here
+						# too: soles every 0.7 m, left and right, and the tyres' tread each step.
+						if prints == null or i > steps:
+							continue
+						var hq := height_at(q.x, q.y)
+						if bodies.size() == 1:
+							var stride := int(0.7 / (float(mv[3]) / 60.0))
+							if stride > 0 and i % stride == 0:
+								var fq := q + side * (0.12 if (i / stride) % 2 == 0 else -0.12)
+								var hf := height_at(fq.x, fq.y)
+								prints.press_box(Vector3(fq.x, hf, fq.y), Vector2(0.11, 0.29), yaw, hf - 0.02, 0.0, true)
+						else:
+							prints.press_wheel(Vector3(q.x, hq, q.y), Vector2(0.8, 0.28), yaw, 0.04, dir * float(mv[3]))
 					if args.has("link-verbose") and i % 60 == 0:
 						var b0: Node3D = bodies[0]
 						var gp := b0.global_position
@@ -3003,6 +3075,9 @@ func _link_shot(kind: String, off: bool) -> void:
 						weather.step_contact(1.0 / 60.0)
 					else:
 						await get_tree().physics_frame
+				if prints != null:
+					var mq := a.lerp(b, 0.5)
+					_log("tracks: dent %.3f m mid-walk at %s" % [float(prints.get_dent_at(Vector3(mq.x, height_at(mq.x, mq.y), mq.y))), str(mq)])
 				for bd in mv[0]:
 					_log("tracks: %s water %s at the end" % [bd.name, str(weather.get_body_water(bd))])
 					bd.queue_free()
@@ -3056,6 +3131,8 @@ func _weather_settings() -> void:
 		weather.cloud_cover = float(args["cloud-cover"])
 		if weather.cloud_cover <= 0.0:
 			weather.cloud_variation = 0.0 # a clear sky: the regional variation would still raise clouds out of 0 cover
+	if args.has("cloud-type"):
+		weather.cloud_type = float(args["cloud-type"]) # --cloud-type=T: 0 stratus to 1 towering cumulus
 	if args.has("cloud-variation"):
 		weather.cloud_variation = float(args["cloud-variation"]) # --cloud-variation=V: regional cover variation
 	if args.get("weather", "storm") == "afterrain":
@@ -3439,7 +3516,7 @@ func _generated_forest(clearing: bool) -> Biome:
 	var variants := int(args.get("tree-variants", "1"))
 	var stands := {"beech": TreeGenerator.STAND_BEECH, "oak": TreeGenerator.STAND_OAK_MIXED,
 			"montane": TreeGenerator.STAND_MONTANE_CONIFER, "hedgerow": TreeGenerator.STAND_HEDGEROW,
-			"stonepine": 13, "windthrow": 17} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
+			"stonepine": 13, "windthrow": 17, "old_growth": 18, "taiga": 19, "alder_carr": 20, "floodplain_willow": 21} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
 	var b: Biome
 	if args.has("montado"):
 		# --montado: the Iberian wood pasture, open-grown cork oaks with stone pines among them over a summer-dry
@@ -3453,10 +3530,21 @@ func _generated_forest(clearing: bool) -> Biome:
 		all.append_array(b.species)
 		b.species = all
 	elif args.has("tree-stand"):
-		# --tree-stand=beech|oak|montane|hedgerow|stonepine: one stand only (its trees, sapling, snag and log).
+		# --tree-stand=beech|oak|montane|hedgerow|stonepine|windthrow|old_growth|taiga|alder_carr|floodplain_willow: one stand only (its trees, sapling, snag and log).
 		b = tg.make_stand(stands.get(args["tree-stand"], TreeGenerator.STAND_BEECH), variants)
 	else:
 		b = tg.make_woodland(variants, TreeGenerator.REGION_EUROPE)
+	if args.has("forest-edge") and tg.has_method("make_edge"):
+		# --forest-edge[=stand]: the edge species (trees.md 5as: the shrub mantle out in the open, edge trees one-sided
+		# toward it) with the stand's own; vegetation places them by RULE_FOREST_EDGE off the canopy's edge.
+		var en := String(args["forest-edge"])
+		var es: int = stands.get(en, stands.get(args.get("tree-stand", "beech"), TreeGenerator.STAND_BEECH))
+		var eb: Biome = tg.make_edge(es, variants)
+		var all2: Array[PlantSpecies] = []
+		all2.append_array(b.species)
+		all2.append_array(eb.species)
+		b.species = all2
+		_log("forest edge: %d edge species" % eb.species.size())
 	_log("generated woodland: %d species" % b.species.size())
 	return b
 
@@ -4270,11 +4358,11 @@ func _build_cover() -> void:
 	# cones and balls), bigger plants first, sorted by the crowns' conifer share.
 	# --floor=beech|oak|hedgerow|montane picks the floor set (beech and oak floors carry the violets and herb robert).
 	var floors := {"montane": PlantGenerator.FLOOR_MONTANE_CONIFER, "beech": PlantGenerator.FLOOR_BEECH,
-			"oak": PlantGenerator.FLOOR_OAK_MIXED, "hedgerow": PlantGenerator.FLOOR_HEDGEROW,
-			"mediterranean": 10} # FLOOR_MEDITERRANEAN (montado: cistus, grasses, thistles; by value for older binaries)
+			"oak": PlantGenerator.FLOOR_OAK_MIXED, "hedgerow": PlantGenerator.FLOOR_HEDGEROW, "pineheath": PlantGenerator.FLOOR_PINE_HEATH,
+			"mediterranean": 10, "taiga": 11} # FLOOR_MEDITERRANEAN, FLOOR_BOREAL_TAIGA (montado: cistus, grasses, thistles; by value for older binaries)
 	# The floor plants follow the weather's season (flowering, bracken croziers in spring, russet in autumn): --day=N.
 	var season: Dictionary = weather.get_season() if weather != null and weather.has_method("get_season") else {}
-	var floor_sp: Array = PlantGenerator.make_floor(floors.get(args.get("floor", "montane"), PlantGenerator.FLOOR_MONTANE_CONIFER), 3, true, 15.0, season)
+	var floor_sp: Array = PlantGenerator.make_floor(floors.get(args.get("floor", "taiga" if args.get("tree-stand", "") == "taiga" else "montane"), PlantGenerator.FLOOR_MONTANE_CONIFER), 3, true, 15.0, season)
 	if OS.get_environment("VEG_DW_OFF") != "":
 		# The deadwood pair's before frame (as the vegetation bench): the floor blind to the logs.
 		for sp in floor_sp:

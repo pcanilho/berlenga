@@ -1915,6 +1915,10 @@ GroundCracks ground_cracks(vec2 p_xz, vec4 p_c) {
 	float reg = clamp(p_c.z, 0.0, 1.0);
 	float open = clamp(p_c.x, 0.0, 1.0);
 	float thick = 0.25 * p_c.y;
+	// A silt skin (mud round 15.1, its share sent as a negative regularity by the ground's crack state). Its plates
+	// are some ten times the layer across, so thick here is 2.5 layers. It shrinks more (fresh slurry), cracks
+	// through the layer only, and its plates curl up at their edges well into the plate (mud curls, Allen 1986).
+	float skin = clamp(-p_c.z, 0.0, 1.0);
 	// The first generation's domains: two to three plates across, one as the cycles make them hexagons.
 	float s1 = p_c.y * mix(2.4, 1.1, reg);
 	vec2 q = p_xz / s1;
@@ -1978,21 +1982,22 @@ GroundCracks ground_cracks(vec2 p_xz, vec4 p_c) {
 	vec2 h3s = side > 0.5 ? h3 : ground_crack_hash(id, 4u);
 	float t3 = dot(x, u2) - (h3s.x - 0.5) * 0.5;
 	float len3 = mix(0.25, 0.9, h3s.y);
-	bool split3 = split2 && h3s.x * 0.5 + h3s.y * 0.5 < 0.75 - 0.65 * reg;
+	// A silt skin's plates are small and thin: they split across, rim to rim, and do not grow the short spurs.
+	bool split3 = split2 && skin < 0.5 && h3s.x * 0.5 + h3s.y * 0.5 < 0.75 - 0.65 * reg;
 	// Widths: the layer's shrinkage (8%, Peron et al. 2009 for clays) shared out over the generations, which open
 	// in turn as the layer dries; each wanders along its length.
-	float strain = 0.08 * s1;
+	float strain = mix(0.08, 0.12, skin) * s1;
 	vec2 wander = ground_crack_noise(q * 3.0, 7u);
 	g.width = vec3(0.5 * smoothstep(0.0, 0.5, open), 0.3 * smoothstep(0.3, 0.8, open), 0.17 * smoothstep(0.6, 1.0, open)) * strain;
 	g.width *= vec3(0.55 + 0.9 * wander.x, 0.55 + 0.9 * wander.y, 0.5 + wander.x);
 	g.width.z *= smoothstep(len3, 0.55 * len3, abs(t2)); // the tip tapers out
-	g.depth = thick * vec3(1.0, 0.75, 0.45) * clamp(4.0 * open, 0.0, 1.0);
+	g.depth = thick * mix(1.0, 0.4, skin) * vec3(1.0, 0.75, 0.45) * clamp(4.0 * open, 0.0, 1.0);
 	g.dist = vec3(max(e1, 0.0), split2 ? abs(t2) : 1e3, split3 && abs(t2) < len3 ? abs(t3) : 1e3) * s1;
 	g.dir1 = -n1;
 	g.dir2 = t2 >= 0.0 ? v2 : -v2;
 	g.dir3 = t3 >= 0.0 ? u2 : -u2;
-	g.curl = max(p_c.w, 0.0) * open * 0.35 * thick;
-	g.reach = 0.06 * s1;
+	g.curl = max(p_c.w, 0.0) * open * mix(0.35, 0.5, skin) * thick;
+	g.reach = mix(0.06, 0.18, skin) * s1;
 	g.scale = s1;
 	return g;
 }
@@ -2044,17 +2049,25 @@ vec4 ground_crack_height(GroundCracks p_g, float p_fw) {
 			cover = max(cover, min(w / fw, 1.0) * (t < 0.35 ? s : 1.0));
 		}
 	}
-	if (p_g.curl > 0.0 && h == 0.0) {
-		float c = p_g.curl * (p_g.reach / reach);
-		h = c * (1.0 - flat_all);
-		vec2 g = fg[0] * fl[1] * fl[2] + fg[1] * fl[0] * fl[2] + fg[2] * fl[0] * fl[1];
-		slope = -c * g;
-	}
 	// A footprint wider than a fraction of a domain spans whole plates: their mean, flat, with the cracks' mean
-	// share.
+	// share. The curled rims are wider than the cracks: they go on into footprints up to a few reaches wide, so a
+	// mesh that cannot carry the slots still carries the dished plates.
+	// The slots and the curled rims add: the rim rises from the plate to the slot's lip and the slot cuts down from
+	// there, so a coarse footprint sees a dip between two lifted lips (each plate a shallow dish) and no step where
+	// the slot's half width ends.
 	float fade = 1.0 - smoothstep(0.04 * p_g.scale, 0.12 * p_g.scale, fw);
+	float curl_fade = 1.0 - smoothstep(p_g.reach, 3.0 * p_g.reach, fw);
+	float keep = max(fade, curl_fade);
+	h *= keep;
+	slope *= keep;
+	if (p_g.curl > 0.0) {
+		float c = p_g.curl * (p_g.reach / reach) * keep;
+		h += c * (1.0 - flat_all);
+		vec2 g = fg[0] * fl[1] * fl[2] + fg[1] * fl[0] * fl[2] + fg[2] * fl[0] * fl[1];
+		slope -= c * g;
+	}
 	float mean = clamp(dot(p_g.width, vec3(1.0)) * 2.0 / max(p_g.scale, 1e-4), 0.0, 1.0);
-	return vec4(h * fade, slope * fade, mix(mean, cover, fade));
+	return vec4(h, slope, mix(mean, cover, fade));
 }
 // Mud on a vehicle's body (docs/ideas/mud.md, stage 3b), the same lines in material.cpp and scene_raytracing_raygen.glsl.
 // Off-road games keep an accumulation level per region and let it threshold a splat mask, so mud lands as flecks and
@@ -3293,8 +3306,11 @@ void main() {
 				m.roughness = clamp(m.roughness * mix(1.0, g.a < 0.0 ? 1.0 : g.a, smoothstep(0.5, 0.85, h.geometry_normal.y)), 0.0, 1.0);
 			}
 		}
-		// Far ripples (sand stage 3): the material.cpp ground_ripple_far_slope() lines on the ripple map, with
-		// texelFetch in place of the raster's mipmapped copy (the samples average what mips would).
+	}
+	// Far ripples (sand stage 3): the material.cpp ground_ripple_far_slope() lines on the ripple map, with
+	// texelFetch in place of the raster's mipmapped copy (the samples average what mips would); on the patch and,
+	// past it, over the dune field (GroundSurface3D far_ripples) on the terrain round it.
+	if (rt_material_ground_deform(mat) || rt_material_ground_terrain(mat)) {
 		uint rmap = uint(get_rt_param(RT_PARAM_GROUND_RIPPLE_MAP));
 		if (rmap != 0u) {
 			ivec2 ts = textureSize(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), 0);
@@ -3305,23 +3321,36 @@ void main() {
 			vec2 p = (h.hit_pos + rt_origin.xyz).xz;
 			int rn = int(m2.y + 0.5);
 			int sn = int(m2.z + 0.5);
-			vec2 su = (p - m1.xy) / max(m1.z, 1e-4) * float(sn) - 0.5;
-			if (m2.x > 0.5 && rn > 0 && all(greaterThanEqual(su, vec2(-0.5))) && all(lessThanEqual(su, vec2(float(sn) - 0.5)))) {
-				ivec2 s0 = clamp(ivec2(floor(su)), ivec2(0), ivec2(sn - 1));
-				ivec2 s1 = clamp(s0 + 1, ivec2(0), ivec2(sn - 1));
-				vec2 sf = clamp(su - floor(su), 0.0, 1.0);
-				float sand = mix(mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s0.x, rn + s0.y), 0).r,
-										 texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s1.x, rn + s0.y), 0).r, sf.x),
-						mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s0.x, rn + s1.y), 0).r,
-								texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s1.x, rn + s1.y), 0).r, sf.x),
-						sf.y);
+			if (m2.x > 0.5 && rn > 0) {
+				float far = m2.w > 0.5 ? m3.z : 0.0;
+				float sand = far;
+				vec2 su = (p - m1.xy) / max(m1.z, 1e-4) * float(sn) - 0.5;
+				if (all(greaterThanEqual(su, vec2(-0.5))) && all(lessThanEqual(su, vec2(float(sn) - 0.5)))) {
+					ivec2 s0 = clamp(ivec2(floor(su)), ivec2(0), ivec2(sn - 1));
+					ivec2 s1 = clamp(s0 + 1, ivec2(0), ivec2(sn - 1));
+					vec2 sf = clamp(su - floor(su), 0.0, 1.0);
+					float block = mix(mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s0.x, rn + s0.y), 0).r,
+											  texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s1.x, rn + s0.y), 0).r, sf.x),
+							mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s0.x, rn + s1.y), 0).r,
+									texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s1.x, rn + s1.y), 0).r, sf.x),
+							sf.y);
+					vec2 be = min(p - m1.xy, m1.xy + m1.z - p);
+					sand = mix(far, block, m2.w > 0.5 ? smoothstep(0.0, 4.0, min(be.x, be.y)) : 1.0);
+				}
 				vec2 wuv = (p - m0.xy) / m0.z;
 				vec2 e = min(wuv, 1.0 - wuv) * m0.z;
 				float live = min(e.x, e.y) > 0.0 ? smoothstep(m0.w, 0.15 * m0.z, min(e.x, e.y)) : 0.0;
-				float w = sand * (1.0 - live);
+				// None on slip faces; faded where a footprint spans fewer than three crests (material.cpp).
+				float lam = dot(m3.xy, m3.xy) > 0.0 ? 6.2831853 / length(m3.xy) : 0.11;
+				float rfp = rt_cone_width;
+				float w = sand * (1.0 - live) * smoothstep(0.85, 0.91, h.geometry_normal.y);
+				float resolved = 1.0 - smoothstep(0.22 * lam, 0.4 * lam, rfp);
+				vec3 vr = w > 0.0 ? ground_ripple_vary(p, m3.xy) : vec3(0.0);
+				// Crests finer than the pixel shade it as a patchy tone (material.cpp ground_ripple_far_slope()).
+				m.albedo *= 1.0 - 0.15 * w * vr.z * (1.0 - resolved);
+				w *= resolved;
 				if (w > 0.0) {
 					// The tile: cell c's centre at c * cell, its texel (c mod n), bilinear with wrap.
-					vec3 vr = ground_ripple_vary(p, m3.xy);
 					vec2 tc = (p + vr.xy) / m0.w;
 					ivec2 c0 = ivec2(floor(tc));
 					vec2 cf = tc - vec2(c0);

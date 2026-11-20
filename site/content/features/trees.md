@@ -2,7 +2,7 @@
 title: "Trees"
 weight: 70
 group: "World"
-summary: "Trees and woody shrubs grown by light competition, 50 species in eighteen stand types; bark, moss, lichen, climbers, seasons, pollards, old trees, deadwood and fungi; weather wind out to 1 km, colliders and touch."
+summary: "Trees and woody shrubs grown by light competition, 50 species in twenty-one stand types; bark, moss, lichen, climbers, seasons, pollards, old trees, deadwood and fungi; weather wind out to 1 km, colliders and touch."
 ---
 
 ## Growth
@@ -15,7 +15,7 @@ summary: "Trees and woody shrubs grown by light competition, 50 species in eight
 
 - **Stand and open forms** (`forest_shade`, `forest_spacing`): trees grown in a closed stand shed their lower limbs to a long clear bole under a narrow crown; open-grown trees keep leaves down to their lower limbs.
 - **Conifer crowns** (`crown_cone`): spruce, fir, larch, pine and hemlock keep their cone, with branches to the top.
-- **Stands** (`make_stand`, `make_woodland`): eighteen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), date palm oases (`STAND_DATE_OASIS`) beetle-killed spruce (`STAND_BEETLE_SPRUCE`) and old-growth beech (`STAND_OLD_GROWTH_BEECH`), with veteran giants over a pole layer, gaps where single giants fell and five times more deadwood lying than standing. Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.
+- **Stands** (`make_stand`, `make_woodland`): twenty-one stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), date palm oases (`STAND_DATE_OASIS`) beetle-killed spruce (`STAND_BEETLE_SPRUCE`), alder carr on stilt roots over moss tussocks (`STAND_ALDER_CARR`, `stilt_height`), old broken and leaning floodplain willows (`STAND_FLOODPLAIN_WILLOW`), old-growth beech (`STAND_OLD_GROWTH_BEECH`), with veteran giants over a pole layer, gaps where single giants fell and five times more deadwood lying than standing, and boreal taiga (`STAND_BOREAL_TAIGA`) with fire-scarred survivor pines, charred and cracked into blocks at their foot (`fire_scars`), and silver kelo snags and logs, bare to the soil with spiral grain (`kelo`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.
 - **Pollards and coppice** (`cut_height`, `cut_cycle`, `cut_since`): trees cut back on a cycle regrow straight poles from a swollen, knobbly head or a ground stool; lapsed pollards carry big limbs. Coppice with standards is cut in straight-edged coupes in turn (`coupe_rotation`, `coupe_ages`), so neighbouring coupes stand at different ages, with rides along some edges (`ride_width`). Poles swell into collars and carry branch scars; coppice stools end in old rotted cuts under a callus lip, and their rods swell at the nodes.
 - **Shrubs and hedges** (`stems`, `envelope`): many-stemmed shrubs, drawn up and thin under a canopy; hedges and topiary clipped to a box.
 - **Field hedges** (`SHRUB_HEDGE`): hawthorn, blackthorn, hazel, field maple and dog rose as flailed 2 m hedge segments, with blossom and fruit in season; foliage grows in clumps with gaps and shaded undersides, and each grown-out shrub takes its own habit. Laid hedges (`SHRUB_LAID_HEDGE`, `FORM_LAID_HEDGE`): stems cut and laid over at 28 to 40 degrees between stakes every 45 cm, held by twisted hazel binders.
@@ -87,6 +87,8 @@ summary: "Trees and woody shrubs grown by light competition, 50 species in eight
 
 - **Bark beetle kill** (`beetle_years`): spruce go from green attack, with boring dust on the lower stem and at the foot, to rust-red crowns and then grey snags, in fronts through the stand.
 - **After fire** (`fire_years`): burnt stands recover by species: cork oak resprouts along its stem and limbs, holm oak from the root collar, and maritime pine and rockrose reseed on the ash bed, while the bark char fades over the years.
+- **Forests that age** (`make_succession()`; TreeWind3D `report_windthrow`): after fire, windthrow or beetles, a stand regrows by stage from seedlings and pioneers through crowded poles to the mature stand and old growth with veterans, placed by the years since; storm and beetle kills mark where it starts again.
+- **Forest edges** (`make_edge()`, `edge_open`; PlantSpecies `RULE_FOREST_EDGE`): a shrub mantle in front of the trees, and edge trees with low branches and crowns reaching toward the open, turned to face it.
 - **Broken limbs** (`limb_breakage`): snapped ends get a splintered fracture face and torn bark; storms break limbs on living trees, leaving some hanging.
 
   ![A winter oak limb, whole and snapped, raster](media/trees-broken-limb.jpg)

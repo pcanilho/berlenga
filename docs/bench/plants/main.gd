@@ -25,7 +25,7 @@ extends Node3D
 #   --burn-age=A     years since the ground burnt, for the burn presets (season burn_age)
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley", "pincushion_moss", "ground_ivy", "drinn", "desert_annuals", "soil_crust", "fireweed", "fire_moss", "charred_stems", "burnt_tussock"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley", "pincushion_moss", "ground_ivy", "drinn", "desert_annuals", "soil_crust", "fireweed", "fire_moss", "charred_stems", "burnt_tussock", "reindeer_lichen"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -633,7 +633,8 @@ func _heath_checks() -> void:
 		var ok := set.size() >= 3
 		for sp in set:
 			var s := sp as PlantSpecies
-			ok = ok and s.meshes.size() == 1 and s.has_meta("heath") and s.precipitation_range.x >= 600.0 and s.season_temperature_range.x > 6.0 and s.shade_range.y <= 0.31
+			# TreeGenerator's woody shrubs carry their fire-regrowth variants (one mesh per burn-age band).
+			ok = ok and (s.meshes.size() == 1 or s.has_meta("woody_shrub")) and s.has_meta("heath") and s.precipitation_range.x >= 600.0 and s.season_temperature_range.x > 6.0 and s.shade_range.y <= 0.31
 			var w: Vector2 = s.wetness_range
 			if st == P.HEATH_DRY:
 				ok = ok and w.y <= 8.0
@@ -684,7 +685,7 @@ func _scrub_checks() -> void:
 		var ok := set.size() >= 3
 		for sp in set:
 			var s := sp as PlantSpecies
-			ok = ok and s.meshes.size() == 1 and s.has_meta("scrub") and s.january_temperature_range.x >= 2.0 and s.aridity_range.y <= 0.8 and s.precipitation_range.y <= 1200.0
+			ok = ok and (s.meshes.size() == 1 or s.has_meta("woody_shrub")) and s.has_meta("scrub") and s.january_temperature_range.x >= 2.0 and s.aridity_range.y <= 0.8 and s.precipitation_range.y <= 1200.0
 			var sd: Vector2 = s.soil_depth_range
 			ok = ok and (sd.y <= 0.5 if st == P.SCRUB_GARRIGUE else sd.x >= 0.3)
 		_check("scrub set %d: mild, summer-dry, garrigue on thin soil and maquis on deep" % st, ok, set.size())

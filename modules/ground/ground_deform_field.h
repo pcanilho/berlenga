@@ -126,6 +126,25 @@ public:
 	bool track_fresh = false; // a third channel, 1 where freshly turned, decayed by the owner
 	float press_settle = 0.0f; // seconds of slumping a pressed tile owes (0: none, snow)
 	int press_tread = 0; // a wheel's tread for its box presses (tread_relief(): 0 none, 1 road .. 4 chains)
+	// A hard body in the ground under the next presses (mud round 15.2): a capsule from press_floor_a.xyz to
+	// press_floor_b of radius press_floor_a.w (0: none). The pressed surface stays on its top: the mud is dug out
+	// round a stone a wheel meets, not the whole print held up.
+	Vector4 press_floor_a;
+	Vector3 press_floor_b;
+	// The capsule's top over (x, z), or -1e9 off it.
+	static float floor_top(const Vector4 &p_a, const Vector3 &p_b, float p_x, float p_z) {
+		if (p_a.w <= 0.0f) {
+			return -1e9f;
+		}
+		const Vector2 a2(p_a.x, p_a.z);
+		const Vector2 ab(p_b.x - p_a.x, p_b.z - p_a.z);
+		const float l2 = ab.length_squared();
+		const Vector2 p(p_x, p_z);
+		const float t = l2 > 1e-8f ? CLAMP((p - a2).dot(ab) / l2, 0.0f, 1.0f) : 0.0f;
+		const float d2 = (a2 + ab * t).distance_squared_to(p);
+		const float r2 = p_a.w * p_a.w;
+		return d2 < r2 ? p_a.y + (p_b.y - p_a.y) * t + Math::sqrt(r2 - d2) : -1e9f;
+	}
 	// The heave zone round a print, in footing widths at least (0: half the equivalent radius only, snow).
 	// The ground uses 1: Prandtl's passive wedge beside a strip footing on undrained clay reaches one width
 	// out, so the pushed soil rises as a broad lip rather than a wall round the print.

@@ -336,11 +336,14 @@ private:
 	Ref<ArrayMesh> ring_mesh_near; // Two segments.
 	Ref<ArrayMesh> ring_mesh_far; // One: a triangle.
 	Vector4 ring_band; // Shader: start (all kept), end, end band, widest widening.
+	Ref<Texture2D> ground_data_tex; // The data map's texture, for the far blades' ground normal.
+	Vector4 ground_data_rect;
 	int ring_blade_count = 0;
 	double ring_build_msec = 0.0; // The last frame's ring building.
 	bool _rings_active() const;
 	void _update_rings(const Vector2 &p_center, TerrainDataMap3D *p_map);
 	void _build_ring_tile(const Vector3i &p_key, float p_near, TerrainDataMap3D *p_map, RingTile &r_tile);
+	void _fill_ring_tile_gpu(const Vector3i &p_key, const Rect2 &p_rect, TerrainDataMap3D *p_map, float p_cell, float p_width, float p_step, int p_n, const LocalVector<float> &p_suit, const LocalVector<float> &p_light, const LocalVector<float> &p_cand, RingTile &r_tile);
 	void _free_ring_tile(RingTile &p_tile);
 	void _free_rings();
 	Ref<ArrayMesh> _make_ring_mesh(int p_segments) const;

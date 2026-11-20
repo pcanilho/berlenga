@@ -149,7 +149,7 @@ private:
 	bool cloud_evolution = true;
 	float cloud_lifetime = 900.0f; // s, turnover of the cover noise's largest octave
 	float cloud_churn = 1.5f; // m/s, how fast the cloud shapes change (the shape noise's reads slide apart)
-	float cloud_shear = 1.0f; // scale on the wind shear's lean of the cloud tops (0: upright)
+	float cloud_shear = 0.4f; // scale on the wind shear's lean of the cloud tops (0: upright)
 	float cloud_size_mix = 1.0f; // large clouds among the small (0: one size)
 	// The high cloud layer (cirrus; docs/ideas/clouds.md). high_cloud_cover is the base the weather drives
 	// (humid air thickens it, dry subsiding air thins it, rain on its way brings a sheet ahead of it), kept out
@@ -158,6 +158,13 @@ private:
 	float high_cloud_height = 8000.0f; // m above y = 0
 	float high_cloud_optical_depth = 1.0f; // vertical, at full cover (ice clouds 0.03 to 3)
 	Vector2 high_cloud_drift; // m, moved by get_wind_aloft at high_cloud_height
+	// The mid cloud layer (altocumulus, altostratus; docs/ideas/clouds.md), the same way: humid air thickens it,
+	// dry air thins it, it thickens into a sheet ahead of rain, kept out of cloud_cover and get_cloud_cover_at.
+	float mid_cloud_cover = 0.15f;
+	float mid_cloud_height = 4500.0f; // m above y = 0, the slab's middle
+	float mid_cloud_thickness = 400.0f; // m
+	float mid_cloud_optical_depth = 4.0f; // vertical, at full cover (altocumulus about 2 to 10)
+	Vector2 mid_cloud_drift; // m, moved by get_wind_aloft at mid_cloud_height
 	double cloud_time = 0.0; // s of weather time the clouds have evolved
 	NodePath sun_light;
 	float cloud_shadow_extent = 6144.0f; // m
@@ -170,6 +177,7 @@ private:
 	float cur_cloud_cover = 0.4f;
 	float cur_cloud_type = 0.3f;
 	float cur_high_cloud_cover = 0.25f;
+	float cur_mid_cloud_cover = 0.15f;
 	float cur_rain_rate = 0.0f;
 	float cur_temperature = 15.0f;
 	float cur_humidity = 0.7f;
@@ -308,6 +316,45 @@ private:
 	void _start_sky_shadow_bake();
 	void _finish_sky_shadow_bake(bool p_discard);
 	void _apply_sky_shadow();
+	// The clouds' light grid (Nubis Cubed, Schneider 2023): the optical depth toward the sun from every voxel
+	// of a box round the camera, baked in the background like the shadows. The sky's light march reads it
+	// 512 m along its path in place of its coarse steps from there, and it reaches the whole way out of the
+	// layer, so clouds shade each other over kilometres at a low sun. Baked a level a frame from the top down:
+	// each voxel marches only to the level above and adds that level's value where its path meets it.
+	static constexpr float kLightGridExtent = 32768.0f; // m across
+	static constexpr int kLightGridResolution = 128; // texels across
+	static constexpr int kLightGridLevels = 32; // texels up, base_min to top_max
+	struct LightGridBake {
+		WeatherClouds::State state;
+		Vector3 to_sun;
+		Vector2 corner; // m, world x, z
+		float texel = 256.0f;
+		float y0 = 0.0f;
+		float y1 = 1.0f;
+		int level = -1; // the level being baked, from the top down; -1 when none
+		Vector<float> tau; // x fastest, then z, then level
+		float *tau_w = nullptr;
+		// How much of each texel is sunlit cloud (its opacity across a texel times the sun reaching it), which the
+		// texture blurs into the light the clouds round a point bounce onto it.
+		Vector<float> lit;
+		float *lit_w = nullptr;
+		float above(int p_level, float p_x, float p_z) const;
+		void row(uint32_t p_row, void *);
+	};
+	LightGridBake *light_grid_bake = nullptr;
+	WorkerThreadPool::GroupID light_grid_task = WorkerThreadPool::INVALID_TASK_ID;
+	double light_grid_timer = 0.0;
+	Vector2 light_grid_corner;
+	Vector2 light_grid_drift;
+	float light_grid_y0 = 0.0f;
+	float light_grid_y1 = 1.0f;
+	Ref<ImageTexture3D> light_grid_texture;
+	void _start_light_grid_bake();
+	void _launch_light_grid_level();
+	void _step_light_grid_bake();
+	void _finish_light_grid_bake(bool p_discard);
+	void _build_light_grid_texture();
+	void _apply_light_grid();
 
 	// Wind near the ground: canopy and obstacle shelter on a fine square, and gust patches.
 	WeatherShelter shelter;
@@ -352,6 +399,23 @@ private:
 		bool seen = false;
 	};
 	HashMap<ObjectID, TrackBody> track_bodies;
+	struct CloudLight {
+		Vector3 position;
+		Color color;
+		float energy = 0.0f;
+		float reach = 1.0f;
+	};
+	struct CloudEffector {
+		Vector3 position; // where placed, less the drift then (it rides with the clouds)
+		float radius = 1.0f;
+		float strength = 0.0f;
+	};
+	HashMap<int, CloudLight> cloud_lights;
+	HashMap<int, CloudEffector> cloud_effectors;
+	int cloud_light_next = 1;
+	LocalVector<CloudLight> fire_cloud_lights; // the fires' own (WorldFire plumes), rebuilt each fire update
+	LocalVector<CloudLight> flash_cloud_lights; // lightning's, listed only (the sky draws flashes at full resolution)
+	int cloud_effector_next = 1;
 	uint32_t track_seed = 0x9e3779b9u;
 	void _tracks_step(float p_real_dt);
 	static void _bind_tracks_methods();
@@ -413,6 +477,7 @@ private:
 	void _set_base_to_settings();
 	float _target_temperature() const;
 	float _target_high_cloud_cover() const;
+	float _target_mid_cloud_cover() const;
 	float _net_radiation(const CellPass &p_pass, Vector3 p_position, float p_cover) const;
 	void _update_air();
 	void _snap();
@@ -654,6 +719,14 @@ public:
 	float get_high_cloud_height() const { return high_cloud_height; }
 	void set_high_cloud_optical_depth(float p_tau);
 	float get_high_cloud_optical_depth() const { return high_cloud_optical_depth; }
+	void set_mid_cloud_cover(float p_cover);
+	float get_mid_cloud_cover() const { return mid_cloud_cover; }
+	void set_mid_cloud_height(float p_height);
+	float get_mid_cloud_height() const { return mid_cloud_height; }
+	void set_mid_cloud_thickness(float p_thickness);
+	float get_mid_cloud_thickness() const { return mid_cloud_thickness; }
+	void set_mid_cloud_optical_depth(float p_tau);
+	float get_mid_cloud_optical_depth() const { return mid_cloud_optical_depth; }
 	void set_cloud_time(double p_seconds);
 	double get_cloud_time() const { return cloud_time; }
 	void set_sun_light(const NodePath &p_path);
@@ -819,6 +892,26 @@ public:
 	float get_cloud_cover_at(Vector3 p_position) const;
 	// The high layer's cover (0..1) over a point: its patches and the storms' anvil shields.
 	float get_high_cloud_cover_at(Vector3 p_position) const;
+	float get_mid_cloud_cover_at(Vector3 p_position) const;
+	float get_mid_cloud_optical_depth_at(Vector3 p_position) const;
+
+	// Point lights in the clouds and cloud density effectors (docs/ideas/clouds.md). Ids from add_*; each set_*
+	// re-places one. Effectors ride with the clouds' drift from where they were last placed.
+	int add_cloud_light(Vector3 p_position, Color p_color, float p_energy, float p_reach);
+	void set_cloud_light(int p_id, Vector3 p_position, Color p_color, float p_energy, float p_reach);
+	void remove_cloud_light(int p_id);
+	int get_cloud_light_count() const { return cloud_lights.size(); }
+	Array get_cloud_lights() const;
+	// WeatherLightning3D's flashes this frame (position, colour, energy, reach), for get_cloud_lights(): readers such
+	// as water reflections see every light over the clouds in one list. Not marched by the clouds: the sky draws a
+	// flash's glow at full resolution (WeatherSkyMaterial.set_lightning), where the half-resolution reprojected
+	// clouds would smear a flash that lasts a few frames.
+	void set_flash_cloud_lights(const Vector4 *p_flashes, int p_count, const Color &p_color, float p_reach);
+	int add_cloud_effector(Vector3 p_position, float p_radius, float p_strength);
+	void set_cloud_effector(int p_id, Vector3 p_position, float p_radius, float p_strength);
+	void remove_cloud_effector(int p_id);
+	int get_cloud_effector_count() const { return cloud_effectors.size(); }
+	float get_cloud_effector_at(Vector3 p_position) const;
 	float get_cloud_type_at(Vector3 p_position) const;
 	float get_wetness_at(Vector3 p_position) const; // 0..1
 	float get_puddle_at(Vector3 p_position) const; // mm
@@ -896,6 +989,8 @@ public:
 	Dictionary contract_season_at(const Vector3 &p_position, int p_day) const override;
 	float contract_cloud_cover_at(const Vector3 &p_position) const override { return get_cloud_cover_at(p_position); }
 	float contract_high_cloud_cover_at(const Vector3 &p_position) const override { return get_high_cloud_cover_at(p_position); }
+	float contract_mid_cloud_cover_at(const Vector3 &p_position) const override { return get_mid_cloud_cover_at(p_position); }
+	float contract_cloud_effector_at(const Vector3 &p_position) const override { return get_cloud_effector_at(p_position); }
 	float contract_water_temperature() const override { return get_water_temperature(); }
 	float contract_surface_temperature_at(const Vector3 &p_position) const override { return get_surface_temperature_at(p_position); }
 	float contract_ground_height_at(const Vector3 &p_position) const override {

@@ -41,6 +41,17 @@
 				The weather's aerosol haze in the sky's air: [param extinction] at the ground (1/m; 0 for none), its single-scatter [param albedo], its scale [param height] (m), and the distance [param from] the camera along each view ray where it starts (the volumetric fog's reach, which draws the nearer part). It scatters with the sun's light through the clouds' shadow, so the shafts carry on past the volumetric fog, and dims the sun's disc and the stars. [WeatherMap3D] calls this from [member WeatherMap3D.aerosol_haze]. Until it is called, the sky has [WeatherMap3D]'s default haze (40 km dry visibility).
 			</description>
 		</method>
+		<method name="set_cloud_light_grid">
+			<return type="void" />
+			<param index="0" name="grid" type="Texture3D" />
+			<param index="1" name="corner" type="Vector2" />
+			<param index="2" name="size" type="float" />
+			<param index="3" name="y0" type="float" />
+			<param index="4" name="y1" type="float" />
+			<description>
+				The clouds' optical depth toward the sun, as Nubis Cubed's light voxel grid: a [param grid] whose red is the optical depth of the sun's path from each voxel out of the cloud layer, over a square of [param size] (m) with its world x, z [param corner], from height [param y0] to [param y1]. The cloud march reads it once, 512 m along its path toward the sun, in place of the far part of its light march (the first 512 m it still marches itself, the first 64 m of them with the eroded detail), so shading is cheaper and cloud shadows on other clouds reach across the whole layer. [WeatherMap3D] bakes and sets it (128 by 128 by 32 over 32 km round the camera, a level a frame from the top down, every four shadow intervals, sliding with the clouds between bakes). Outside the box, or without one, the shader marches toward the sun itself.
+			</description>
+		</method>
 		<method name="set_cloud_shadow_map">
 			<return type="void" />
 			<param index="0" name="map" type="Texture2D" />

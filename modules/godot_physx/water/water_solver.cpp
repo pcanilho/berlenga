@@ -845,6 +845,15 @@ void WaterSolverGPU::_rt_build_caustics_grid() {
 	depth_uniform.append_id(sampler_linear);
 	depth_uniform.append_id(tex_cell_depth);
 	uniforms.push_back(depth_uniform);
+	// The foam, which shades the bed under it.
+	for (int i = 0; i < 2; i++) {
+		RD::Uniform foam_uniform;
+		foam_uniform.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+		foam_uniform.binding = 4 + i;
+		foam_uniform.append_id(i == 0 ? sampler_linear_repeat : sampler_linear);
+		foam_uniform.append_id(i == 0 ? tex_ocean_foam : tex_shore_foam);
+		uniforms.push_back(foam_uniform);
+	}
 	uset_caustics = rd->uniform_set_create(uniforms, shader_caustics, 0);
 }
 
@@ -1621,6 +1630,7 @@ void WaterSolverGPU::rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_su
 	put_f(76, ocean_grid_resolution);
 	put_f(80, CAUSTICS_MAP_SIZE);
 	put_f(84, CAUSTICS_MAP_SIZE);
+	put_f(88, caustics_foam_shade);
 	put_v3(96, p_origin, 0.0f);
 	rd->buffer_update(buf_caustics_params, 0, CAUSTICS_PARAMS_BYTES, params.ptr());
 
@@ -2178,6 +2188,12 @@ RID WaterSolver::get_ocean_foam_texture_rd_rid() const {
 		return RID();
 	}
 	return gpu->tex_ocean_foam;
+}
+
+void WaterSolver::set_caustics_foam_shade(float p_shade) {
+	if (gpu.is_valid()) {
+		gpu->caustics_foam_shade = CLAMP(p_shade, 0.0f, 1.0f);
+	}
 }
 
 void WaterSolver::set_foam_settings(bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band, float p_shore_undertow) {

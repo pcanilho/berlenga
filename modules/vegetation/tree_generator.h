@@ -137,7 +137,19 @@ public:
 		STAND_BEETLE_SPRUCE, // Spruce after a bark beetle outbreak: grey snag spots with a red front, living spruce between (trees.md 5aj).
 		STAND_WINDTHROW, // Spruce after a winter storm: gaps of thrown and snapped trees lying down the storm's track, pioneers coming up (trees.md 5am).
 		STAND_OLD_GROWTH_BEECH, // Primeval beech: a closed, three-layered canopy with veteran giants, gaps of one fallen giant each, every age under them, deadwood at all decay stages (trees.md 5an).
+		STAND_BOREAL_TAIGA, // Taiga: narrow spruce and fire-scarred pine in a mosaic, birch in old burns, silver kelo (trees.md 5ap).
+		STAND_ALDER_CARR, // Swamp: stilt-rooted black alder on tussocks over a flooded peat floor, birch on the hummocks (trees.md 5at).
+		STAND_FLOODPLAIN_WILLOW, // Softwood floodplain: old split white willows standing in the floods, willow thickets on the bars (trees.md 5at).
 		STAND_MAX,
+	};
+	// The disturbance whose legacy a make_succession() species is (meta "succession_kind"; -1 any). Fire's legacies are
+	// the fire bands (RULE_BURN_AGE).
+	// Same numbers as vegetation's RULE_DISTURBANCE and WorldStand.disturbance_at (append only).
+	enum SuccessionKind {
+		SUCCESSION_NONE = 0,
+		SUCCESSION_FIRE = 1,
+		SUCCESSION_WIND = 2,
+		SUCCESSION_BEETLE = 3,
 	};
 
 	// Leaf architecture (Ellis et al., Manual of Leaf Architecture, 2009).
@@ -301,6 +313,9 @@ private:
 		// Bark only: per vertex, bare wood where a living stem was wounded (section 5p); vertices
 		// without one read 0. _peel_bark takes the larger of it and dead wood's peeling.
 		LocalVector<float> wound;
+		// Bark only: per vertex, char on a fire scar's wood (0-1; trees.md 5ar), drawn by the bark material's wood
+		// branch from UV2 (a negative v: lichen UV2 is never negative). Empty when nothing is charred.
+		LocalVector<float> wood_char;
 		// Bark only: vertices added after the parts were closed (a log's peel edge, section 5o),
 		// each with the part whose UV2 map it takes.
 		LocalVector<Vector2i> extra_part;
@@ -502,6 +517,9 @@ private:
 	float params[PARAM_MAX] = {};
 	Phyllotaxis phyllotaxis = PHYLLOTAXIS_ALTERNATE;
 	float forest_shade = 0.0f;
+	// A forest edge tree (trees.md 5as): 0 inside the stand, 1 at the edge with the open on its +X side, where the
+	// neighbours' shade is gone and side light keeps the low branches.
+	float edge_open = 0.0f;
 	float forest_spacing = 4.0f;
 	int mask_channel = -1; // Passed to every PlantSpecies the stand methods build.
 	bool needle_sprays = false;
@@ -593,12 +611,15 @@ private:
 	HashSet<int> hanger_bases; // First nodes of snapped limbs left hanging in the crown (_break_limbs()).
 	// Old-tree features (docs/ideas/trees.md 5e): tree-related microhabitats of veteran trees.
 	float veteran = 0.0f;
+	int fire_scars = 0; // Old surface fires survived, each widening one catface at the foot (trees.md 5ap).
+	bool kelo = false; // Dead pine weathered silver, bark shed, standing or lying for a century (trees.md 5ap).
 	enum VeteranKind : uint8_t {
 		VET_BASAL_HOLLOW,
 		VET_ROT_HOLE,
 		VET_WOODPECKER,
 		VET_BURL,
 		VET_EPICORMIC,
+		VET_FIRE_SCAR, // A healed fire scar ("catface") at the stem's foot (trees.md 5ap).
 	};
 	struct VeteranFeature {
 		VeteranKind kind;
@@ -634,7 +655,7 @@ private:
 	Color leaf_color = Color(0.16f, 0.3f, 0.08f);
 
 	// Generated meshes per preset and form, reused by make_species() and make_stand().
-	HashMap<int, TypedArray<Mesh>> mesh_cache;
+	HashMap<int64_t, TypedArray<Mesh>> mesh_cache;
 	bool junction_weld = true; // Limbs welded onto their parent's bark (trees.md 2d).
 	Dictionary season; // Empty: midsummer, full green leaves.
 	struct LeafSeason {
@@ -646,8 +667,8 @@ private:
 		float season_blend() const { return fallen >= 1.0f ? 0.0f : CLAMP((autumn - fallen) / (1.0f - fallen), 0.0f, 1.0f); }
 	};
 	static LeafSeason _leaf_season(Preset p_preset, const Dictionary &p_season);
-	HashMap<int, float> crown_cache;
-	HashMap<int, TypedArray<Mesh>> near_cache;
+	HashMap<int64_t, float> crown_cache;
+	HashMap<int64_t, TypedArray<Mesh>> near_cache;
 
 	LocalVector<Node> nodes;
 	LocalVector<uint8_t> spurs; // Per node: carries short-shoot leaves in the mesh (not in growth).
@@ -702,6 +723,11 @@ public:
 	float windthrow_storm = 1.0f;
 	Vector2 windthrow_direction = Vector2(0.92f, -0.38f);
 	int windthrow_band = 0; // While a windthrow stand grows its species: 1 thrown, 2 snapped, 3 leaning survivors.
+	int succession_band = 0; // While make_succession grows a stage: 1 the pole stage, 2 old growth's veterans, 3 stand initiation (trees.md 5aq).
+	Preset last_stand_lead = PRESET_MAX; // The lead of the last make_stand().
+	int wet_band = 0; // While a wet stand grows its species: 1 stilt-rooted alder, 2 old floodplain willow (trees.md 5at).
+	int edge_band = 0; // While make_edge grows its edge trees: 1 (trees.md 5as).
+	int boreal_band = 0; // While a taiga stand grows its species: 1 narrow spruce, 2 fire-survivor pine, 3 kelo, 4 burn birch (trees.md 5ap).
 	int old_growth_band = 0; // While an old-growth stand grows its species: 1 veteran giants, 2 poles, 3 giant deadwood, 4 canopy (trees.md 5an).
 	static int _windthrow_class(float p_years);
 	// Far thinning (trees.md 9a, Paulo's pick 19 Nov): placed trees join VegetationField3D's far tail. Each stand
@@ -728,6 +754,10 @@ public:
 	// face. Placement turns +Z downhill (meta tree_ground_slope).
 	float ground_slope = 0.0f;
 	float bank_erosion = 0.0f;
+	// Stilt roots (trees.md 5at): an alder on a tussock in a carr whose peat sank round it stands on its roots, which
+	// arch down this far (m) from the foot to the ground. The mesh's ground is at -stilt_height under the root tips;
+	// placement raises the instance by it (mesh meta tree_base_lift).
+	float stilt_height = 0.0f;
 	// A stone the roots drape over (trees.md 5q): radius in metres (0: none), beside the stem on
 	// its +Z side, half in the soil; the generator builds it (surface "soil").
 	float root_stone = 0.0f;
@@ -765,6 +795,8 @@ public:
 		LocalVector<float> az, len, bend;
 	} foot_roots;
 	float _moss_at(const Vector3 &p_pos, const Vector3 &p_normal, float p_ground, float p_amount, bool p_clamp = true) const;
+	float _tussock_y(float p_d) const;
+	void _build_tussock(Builder &r_b) const;
 	static constexpr float MOSS_SHELL_MIN_RADIUS = 0.05f;
 	static constexpr float BARK_TILE = 0.4f; // Metres of bark one texture tile covers.
 	static constexpr float LICHEN_TILE = 0.6f; // Metres of bark the lichen layer's tile covers.
@@ -977,6 +1009,8 @@ public:
 	void set_phyllotaxis(Phyllotaxis p_phyllotaxis) { phyllotaxis = p_phyllotaxis; }
 	Phyllotaxis get_phyllotaxis() const { return phyllotaxis; }
 	void set_forest_shade(float p_shade) { forest_shade = p_shade; }
+	void set_edge_open(float p_open) { edge_open = CLAMP(p_open, 0.0f, 1.0f); }
+	float get_edge_open() const { return edge_open; }
 	float get_forest_shade() const { return forest_shade; }
 	void set_forest_spacing(float p_spacing) { forest_spacing = p_spacing; }
 	float get_forest_spacing() const { return forest_spacing; }
@@ -1056,6 +1090,8 @@ public:
 	void set_ground_slope(float p_v) { ground_slope = CLAMP(p_v, 0.0f, 1.2f); }
 	float get_ground_slope() const { return ground_slope; }
 	void set_bank_erosion(float p_v) { bank_erosion = CLAMP(p_v, 0.0f, 1.0f); }
+	void set_stilt_height(float p_v) { stilt_height = CLAMP(p_v, 0.0f, 1.5f); }
+	float get_stilt_height() const { return stilt_height; }
 	float get_bank_erosion() const { return bank_erosion; }
 	void set_wind_exposure(float p_v) { wind_exposure = CLAMP(p_v, 0.0f, 1.0f); }
 	float get_wind_exposure() const { return wind_exposure; }
@@ -1129,6 +1165,16 @@ public:
 		mesh_cache.clear();
 	}
 	float get_veteran() const { return veteran; }
+	void set_fire_scars(int p_count) {
+		fire_scars = CLAMP(p_count, 0, 4);
+		mesh_cache.clear();
+	}
+	int get_fire_scars() const { return fire_scars; }
+	void set_kelo(bool p_kelo) {
+		kelo = p_kelo;
+		mesh_cache.clear();
+	}
+	bool get_kelo() const { return kelo; }
 	int get_veteran_feature_count() const { return veteran_features.size(); }
 	Array get_veteran_features() const;
 
@@ -1172,6 +1218,8 @@ public:
 	static float get_bloom(Preset p_preset, float p_day_of_year);
 	Ref<Biome> make_stand(Stand p_stand, int p_variants);
 	Ref<Biome> make_woodland(int p_variants, Region p_region = REGION_EUROPE);
+	Ref<Biome> make_succession(Stand p_stand, int p_variants);
+	Ref<Biome> make_edge(Stand p_stand, int p_variants);
 	void clear_cache();
 
 	float get_height() const { return height; }
@@ -1202,3 +1250,4 @@ VARIANT_ENUM_CAST(TreeGenerator::LeafKind);
 VARIANT_ENUM_CAST(TreeGenerator::RigField);
 VARIANT_ENUM_CAST(TreeGenerator::ShrubForm);
 VARIANT_ENUM_CAST(TreeGenerator::FireResponse);
+VARIANT_ENUM_CAST(TreeGenerator::SuccessionKind);

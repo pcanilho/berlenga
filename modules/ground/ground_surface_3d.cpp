@@ -34,6 +34,8 @@
 
 #include "core/config/engine.h"
 #include "core/io/dir_access.h"
+#include "core/io/file_access.h"
+#include "core/os/time.h"
 #include "core/math/geometry_2d.h"
 #include "core/object/callable_mp.h"
 #include "core/config/project_settings.h"
@@ -700,9 +702,14 @@ void GroundSurface3D::_update_cells() {
 				in.mud = MAX(in.mud, thaw_top);
 			}
 			// A debris flow's fresh deposit is saturated slurry, however dry the weather (round 13).
-			const bool fan = !in.fixed && !mud_deposits.is_empty() && get_mud_deposit_at(p) > 0.0f;
+			const float silt = in.fixed ? 0.0f : _silt_at(p.x, p.z);
+			const bool fan = !in.fixed && !mud_deposits.is_empty() && get_mud_deposit_at(p) - silt > 1e-4f;
 			if (fan) {
 				in.moisture = MAX(in.moisture, mud_wet_full + 0.05f);
+			} else if (silt > 0.0f) {
+				// A silt skin (round 15.1) is as wet as the water left in it, and buries the litter.
+				in.moisture = MAX(in.moisture, Math::lerp(in.moisture, mud_wet_full + 0.05f, _silt_water(p.x, p.z)));
+				in.litter *= 1.0f - Math::smoothstep(0.002f, 0.01f, silt);
 			}
 			Cell c = wet ? material_cell(in.sand, in.moisture, in.litter, pore[i], water_speed[i], in.mud) : material_cell(in.sand, in.moisture, in.litter, -1.0f, 0.0f, in.mud);
 			c.max_dent *= _subsoil_factor(p.x, p.z);
@@ -796,7 +803,13 @@ float GroundSurface3D::_mud_depth_at(const Vector3 &p_position, float p_moisture
 	}
 	// Only wet mud is soft: a dry track bears like soil (MudRunner's hidden mud, "Extrudes To Wetness"). A debris
 	// flow's fresh deposit is saturated slurry whatever the weather.
-	return MAX(depth * Math::smoothstep(mud_wet_start, mud_wet_full, p_moisture), get_mud_deposit_at(p_position));
+	// A silt skin (round 15.1) is soft only while wet.
+	const float dep = get_mud_deposit_at(p_position);
+	const float silt = MIN(_silt_at(p_position.x, p_position.z), dep);
+	const float wet = Math::smoothstep(mud_wet_start, mud_wet_full, p_moisture);
+	// The skin holds its own water whatever the weather's (_silt_water()).
+	const float silt_wet = silt > 0.0f ? MAX(wet, _silt_water(p_position.x, p_position.z)) : wet;
+	return MAX(depth * wet, dep - silt + silt * silt_wet);
 }
 
 void GroundSurface3D::add_mud_deposit(Vector3 p_position, float p_radius, float p_depth, bool p_update, Color p_color) {
@@ -849,19 +862,97 @@ void GroundSurface3D::_flood_silt(const Vector3 &p_position, float p_depth, floa
 		return;
 	}
 	const Vector2i k(int(Math::floor(p_position.x)), int(Math::floor(p_position.z)));
+	// Mineral and ash in proportion to the load.
+	_lay_silt(k, Vector2(MAX(p_load.x, 0.0f), MAX(p_load.y, 0.0f)) * (kg / c));
+}
+
+// Silt skins (docs/ideas/mud.md, round 15.1). What settles out of slack water (a flood's backwater, a river's slack
+// lanes, Krone 1962) lies as a skin of fine mud, a few millimetres to centimetres: fresh, it is saturated and slick
+// (fine earth on a hard surface takes tyre friction down to about half, SAE 2007-01-0736; TRL PPR073); as the water
+// goes it dries from the top, pales and cracks into plates in proportion to its thickness (Groisman and Kaplan 1994;
+// _crack_update()), and once dry it bears as the soil under it. Dry bulk density about 1300 kg/m3 (Asselman and
+// Middelkoop 1995). Its colour: a mineral silt's grey-brown, darkened toward black by the ash in it.
+void GroundSurface3D::_lay_silt(const Vector2i &p_cell, const Vector2 &p_kg) {
+	const float kg = p_kg.x + p_kg.y;
+	if (kg <= 0.0f) {
+		return;
+	}
 	const float dm = kg / 1300.0f;
-	float *v = mud_deposits.getptr(k);
+	float *v = mud_deposits.getptr(p_cell);
 	if (v) {
 		*v += dm;
 	} else {
-		mud_deposits.insert(k, dm);
+		mud_deposits.insert(p_cell, dm);
 	}
+	float &s = silt_depth[p_cell];
+	const float before = s;
+	s += dm;
+	// The skin's colour, mixed by mass with what lay there.
+	const float ash = p_kg.y / kg;
+	// Dry, the crust's pale tone (material.cpp lifts the crack state's tone by about 1.9) makes it a light
+	// grey-brown; soaked, the wet ground's darkening takes it dark.
+	const Color fresh = Color(0.42f, 0.37f, 0.30f).lerp(Color(0.12f, 0.12f, 0.12f), ash).srgb_to_linear();
+	Color *col = mud_deposit_colors.getptr(p_cell);
+	if (col && before > 0.0f) {
+		const float w = dm / s;
+		*col = Color(Math::lerp(col->r, fresh.r, w), Math::lerp(col->g, fresh.g, w), Math::lerp(col->b, fresh.b, w), 1.0f);
+	} else if (!col) {
+		mud_deposit_colors[p_cell] = Color(fresh.r, fresh.g, fresh.b, 1.0f);
+	}
+	silt_wet_new.insert(p_cell);
 	silt_total += kg;
 	silt_pending += dm;
 	if (silt_pending > 0.002f) {
 		silt_pending = 0.0f;
 		silt_dirty = true;
 	}
+}
+
+float GroundSurface3D::_silt_at(float p_x, float p_z) const {
+	if (silt_depth.is_empty()) {
+		return 0.0f;
+	}
+	const float *s = silt_depth.getptr(Vector2i(int(Math::floor(p_x)), int(Math::floor(p_z))));
+	return s ? *s : 0.0f;
+}
+
+float GroundSurface3D::_silt_smooth_at(float p_x, float p_z) const {
+	if (silt_depth.is_empty()) {
+		return 0.0f;
+	}
+	const float fx = p_x - 0.5f;
+	const float fz = p_z - 0.5f;
+	const int x0 = int(Math::floor(fx));
+	const int z0 = int(Math::floor(fz));
+	const float tx = fx - float(x0);
+	const float tz = fz - float(z0);
+	auto at = [&](int x, int z) {
+		const float *s = silt_depth.getptr(Vector2i(x, z));
+		return s ? *s : 0.0f;
+	};
+	return Math::lerp(Math::lerp(at(x0, z0), at(x0 + 1, z0), tx), Math::lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), tx), tz);
+}
+
+// The water left in the skin, 0 (dry) to 1 (soaked): the drying layer's (crack_state's) at the lattice point, soaked
+// where silt was laid since.
+float GroundSurface3D::_silt_water(float p_x, float p_z) const {
+	const Vector2i k(int(Math::floor(p_x)), int(Math::floor(p_z)));
+	if (silt_wet_new.has(k)) {
+		return 1.0f;
+	}
+	const int n = ground_n;
+	if (!ground_valid || n < 2 || (int)crack_state.size() != n * n * CRACK_FLOATS) {
+		return 1.0f;
+	}
+	const int x = CLAMP(int(Math::round(p_x / ground_spacing - ground_origin.x)), 0, n - 1);
+	const int z = CLAMP(int(Math::round(p_z / ground_spacing - ground_origin.y)), 0, n - 1);
+	const float st = crack_state[(z * n + x) * CRACK_FLOATS];
+	return st <= 0.0f ? 0.0f : CLAMP(st - 1.0f, 0.0f, 1.0f); // never soaked: a skin's margin past its cells
+}
+
+Vector2 GroundSurface3D::get_silt_at(Vector3 p_position) const {
+	const float s = _silt_at(p_position.x, p_position.z);
+	return s > 0.0f ? Vector2(s, _silt_water(p_position.x, p_position.z)) : Vector2();
 }
 
 // The coloured deposits' colour at a point, weighted as _deposit_smooth_at() weights their depths (cubic B-spline
@@ -1355,6 +1446,9 @@ float GroundSurface3D::_buried_depth(const Vector3 &p_position, float p_radius) 
 	for (int cz = z0; cz <= z1; cz++) {
 		for (int cx = x0; cx <= x1; cx++) {
 			for (const Buried &b : _buried_cell(Vector2i(cx, cz))) {
+				if (buried_loose.has(b.id)) {
+					continue;
+				}
 				const Vector2 a2(b.a.x, b.a.z);
 				const Vector2 ab(b.b.x - b.a.x, b.b.z - b.a.z);
 				const float l2 = ab.length_squared();
@@ -1386,6 +1480,9 @@ Array GroundSurface3D::get_buried_near(Vector3 p_position, float p_radius) const
 	for (int cz = z0; cz <= z1; cz++) {
 		for (int cx = x0; cx <= x1; cx++) {
 			for (const Buried &b : _buried_cell(Vector2i(cx, cz))) {
+				if (buried_loose.has(b.id)) {
+					continue; // knocked loose (round 15.2)
+				}
 				const Vector3 m = (b.a + b.b) * 0.5f;
 				if (Vector2(m.x - p_position.x, m.z - p_position.z).length() > p_radius) {
 					continue;
@@ -1520,6 +1617,106 @@ void GroundSurface3D::_buried_clear_bodies() {
 	buried_bodies.clear();
 }
 
+// Dug round, knocked loose (docs/ideas/mud.md, round 15.2). A wheel's print does not stop as a whole on a stone
+// under part of it: the tyre wraps round it and the mud is pressed out round the stone (the stamp's floor is the
+// stone's top, GroundDeformField::floor_top()), so the stone's crown stands in the rut floor. The body under the
+// print that stands highest over its floor is the one the press keeps to (prints are small and stones sparse).
+bool GroundSurface3D::_buried_under(const Vector3 &p_position, float p_radius, float p_bottom, Buried &r_hit) const {
+	if (!buried_obstacles || buried_density <= 0.0f) {
+		return false;
+	}
+	const float reach = p_radius + 1.25f;
+	const int x0 = int(Math::floor((p_position.x - reach) / BURIED_CELL));
+	const int x1 = int(Math::floor((p_position.x + reach) / BURIED_CELL));
+	const int z0 = int(Math::floor((p_position.z - reach) / BURIED_CELL));
+	const int z1 = int(Math::floor((p_position.z + reach) / BURIED_CELL));
+	const Vector2 p(p_position.x, p_position.z);
+	float best = 0.0f;
+	bool found = false;
+	for (int cz = z0; cz <= z1; cz++) {
+		for (int cx = x0; cx <= x1; cx++) {
+			for (const Buried &b : _buried_cell(Vector2i(cx, cz))) {
+				if (buried_loose.has(b.id)) {
+					continue;
+				}
+				const Vector2 a2(b.a.x, b.a.z);
+				const Vector2 ab(b.b.x - b.a.x, b.b.z - b.a.z);
+				const float l2 = ab.length_squared();
+				const float t = l2 > 1e-8f ? CLAMP((p - a2).dot(ab) / l2, 0.0f, 1.0f) : 0.0f;
+				const float d = (a2 + ab * t).distance_to(p);
+				if (d > b.r + p_radius) {
+					continue;
+				}
+				const float over = Math::lerp(b.a.y, b.b.y, t) + b.r - p_bottom;
+				if (over > best) {
+					best = over;
+					r_hit = b;
+					found = true;
+				}
+			}
+		}
+	}
+	return found;
+}
+
+// A stone the rut has uncovered past its middle is held only by the mud round its lower half; a tyre rolling into
+// it shoves it out (the passive resistance of soft mud round a half-buried boulder is small next to a tyre's push;
+// MudRunner's loose rocks are the same idea). It becomes a PhysX rigid body moving off with part of the tyre's
+// speed, and the mud that lay on and round it closes into its socket. Roots stay: they run on into the ground.
+void GroundSurface3D::_buried_kicks_update() {
+	if (buried_kicks.is_empty() || !is_inside_tree()) {
+		buried_kicks.clear();
+		return;
+	}
+	for (const BuriedKick &k : buried_kicks) {
+		const Buried &b = k.b;
+		if (buried_loose.has(b.id)) {
+			continue;
+		}
+		buried_loose.insert(b.id);
+		if (const ObjectID *got = buried_bodies.getptr(b.id)) {
+			if (Node *n = Object::cast_to<Node>(ObjectDB::get_instance(*got))) {
+				n->queue_free();
+			}
+			buried_bodies.erase(b.id);
+		}
+		RigidBody3D *body = memnew(RigidBody3D);
+		body->set_name(vformat("Loose%d", int64_t(b.id)));
+		CollisionShape3D *cs = memnew(CollisionShape3D);
+		Ref<SphereShape3D> sp;
+		sp.instantiate();
+		sp->set_radius(b.r * 0.85f);
+		cs->set_shape(sp);
+		MeshInstance3D *mi = memnew(MeshInstance3D);
+		mi->set_mesh(_buried_mesh(false, b.id >> 1));
+		mi->set_transform(Transform3D(Basis().scaled(Vector3(b.r, b.r, b.r)), Vector3()));
+		body->add_child(cs);
+		body->add_child(mi);
+		// Granite or a field stone, about 2650 kg/m3 over the collider's sphere.
+		const float rc = b.r * 0.85f;
+		body->set_mass(MAX(2650.0f * 4.18879f * rc * rc * rc, 0.5f));
+		body->add_to_group(SNAME("ground_loose"));
+		add_child(body, false, INTERNAL_MODE_BACK);
+		// Lifted clear of the floor it sat in so it does not start inside the ground.
+		const Vector3 at(b.a.x, MAX(b.a.y, k.floor + rc + 0.01f), b.a.z);
+		body->set_global_transform(Transform3D(Basis(Vector3(0, 1, 0), float(b.id % 628u) * 0.01f), at));
+		body->set_linear_velocity(k.velocity);
+		body->set_angular_velocity(Vector3(k.velocity.z, 0.0f, -k.velocity.x) / MAX(b.r, 0.05f));
+		buried_loose_bodies[b.id] = body->get_instance_id();
+		// The mud on it and round it slumps into its socket: the crown that stood in the rut goes down to the
+		// rut's floor, and a little more where it sat.
+		const float crown = b.a.y + b.r - k.floor;
+		if (crown > 0.0f) {
+			dig(Vector3(b.a.x, 0.0f, b.a.z), b.r * 0.8f, crown + 0.3f * b.r);
+		}
+	}
+	buried_kicks.clear();
+}
+
+void GroundSurface3D::set_buried_kick(bool p_enabled) {
+	buried_kick = p_enabled;
+}
+
 // Near the followed point: a StaticBody3D for each hidden stone and root within buried_body_range, freed past it.
 void GroundSurface3D::_buried_update() {
 	if (!buried_obstacles || buried_density <= 0.0f || !ground_valid || !is_inside_tree()) {
@@ -1529,6 +1726,22 @@ void GroundSurface3D::_buried_update() {
 		return;
 	}
 	const Vector3 c = _follow_position();
+	// Loose stones stay rigid bodies until well out of range.
+	{
+		LocalVector<uint32_t> far;
+		for (const KeyValue<uint32_t, ObjectID> &kv : buried_loose_bodies) {
+			Node3D *n = Object::cast_to<Node3D>(ObjectDB::get_instance(kv.value));
+			if (!n) {
+				far.push_back(kv.key);
+			} else if (n->get_global_position().distance_to(c) > 2.0f * buried_body_range) {
+				n->queue_free();
+				far.push_back(kv.key);
+			}
+		}
+		for (uint32_t id : far) {
+			buried_loose_bodies.erase(id);
+		}
+	}
 	const Array near = get_buried_near(c, buried_body_range);
 	HashSet<uint32_t> keep;
 	for (int i = 0; i < near.size(); i++) {
@@ -1596,6 +1809,16 @@ void GroundSurface3D::_buried_update() {
 void GroundSurface3D::set_buried_obstacles(bool p_enabled) {
 	buried_obstacles = p_enabled;
 	buried_cache.clear();
+	if (!p_enabled) {
+		for (const KeyValue<uint32_t, ObjectID> &kv : buried_loose_bodies) {
+			if (Node *n = Object::cast_to<Node>(ObjectDB::get_instance(kv.value))) {
+				n->queue_free();
+			}
+		}
+		buried_loose_bodies.clear();
+		buried_loose.clear();
+		buried_kicks.clear();
+	}
 	_buried_update();
 }
 
@@ -1776,6 +1999,9 @@ void GroundSurface3D::set_desiccation_cracks(bool p_enabled) {
 void GroundSurface3D::_crack_update(double p_delta) {
 	const int n = ground_n;
 	if (!desiccation_cracks || !ground_valid || n < 2 || (int)cell_inputs.size() != n * n) {
+		if (!desiccation_cracks) {
+			silt_wet_new.clear(); // no drying: the skin reads as soaked (_silt_water()) until it is on
+		}
 		return;
 	}
 	if ((int)crack_state.size() != n * n * CRACK_FLOATS) {
@@ -1792,16 +2018,33 @@ void GroundSurface3D::_crack_update(double p_delta) {
 		float &st = cs[0];
 		float &cycles = cs[1];
 		float &pool = cs[2];
-		// Only clay-rich bare ground cracks: not sand, litter, rock or snow.
-		if (in.fixed || in.sand > 0.5f || in.litter > 0.01f) {
+		const float wx = (ground_origin.x + i % n) * ground_spacing;
+		const float wz = (ground_origin.y + i / n) * ground_spacing;
+		// Only clay-rich bare ground cracks: not sand, litter, rock or snow; a silt skin over any of them does.
+		const float silt = _silt_at(wx, wz);
+		if (in.fixed || ((in.sand > 0.5f || in.litter > 0.01f) && silt <= 0.0f)) {
 			st = 0.0f;
 			pool = 0.0f;
 			continue;
 		}
-		const float wx = (ground_origin.x + i % n) * ground_spacing;
-		const float wz = (ground_origin.y + i / n) * ground_spacing;
 		const float standing = standing_water ? get_standing_water_at(Vector3(wx, 0.0f, wz)) : 0.0f;
-		const bool soaked = (pores && pore[i] >= 0.95f) || standing > 0.001f;
+		// New silt soaks the skin; weighted between the 1 m cells' centres, so a fresh lobe's wet edge is not stepped.
+		float laid = 0.0f;
+		if (silt > 0.0f && !silt_wet_new.is_empty()) {
+			const float fx = wx - 0.5f;
+			const float fz = wz - 0.5f;
+			const int x0 = int(Math::floor(fx));
+			const int z0 = int(Math::floor(fz));
+			const float tx = fx - float(x0);
+			const float tz = fz - float(z0);
+			auto has = [&](int x, int z) { return silt_wet_new.has(Vector2i(x, z)) ? 1.0f : 0.0f; };
+			laid = Math::lerp(Math::lerp(has(x0, z0), has(x0 + 1, z0), tx), Math::lerp(has(x0, z0 + 1), has(x0 + 1, z0 + 1), tx), tz);
+		}
+		if (laid > 0.0f && laid < 0.999f && !((pores && pore[i] >= 0.95f) || standing > 0.001f)) {
+			st = MAX(st, 1.0f + laid); // partly wet: dries on from there
+			continue;
+		}
+		const bool soaked = (pores && pore[i] >= 0.95f) || standing > 0.001f || laid >= 0.999f;
 		if (soaked) {
 			if (st > 0.0f && st < 1.7f) {
 				cycles = MIN(cycles + 1.0f, 10.0f); // it had cracked: a cycle
@@ -1811,12 +2054,15 @@ void GroundSurface3D::_crack_update(double p_delta) {
 			pool = MAX(pool, standing);
 			continue;
 		}
-		if (st <= 0.0f || in.moisture >= mud_wet_start) {
+		// A silt skin dries from its own top whatever the soil under it (its water is its own).
+		if (st <= 0.0f || (in.moisture >= mud_wet_start && silt <= 0.0f)) {
 			continue; // never soaked, or the ground round it is still wet
 		}
-		const float thick = _crack_at_cell(i).y * 0.25f;
+		const float thick = _crack_layer(i);
 		st = MAX(st - evap * float(p_delta) / (0.4f * MAX(thick, 0.002f)), 1.0f);
 	}
+	// The new silt's soaking is taken (the drying runs on from here).
+	silt_wet_new.clear();
 }
 
 void GroundSurface3D::set_puddle_ice(bool p_enabled) {
@@ -2184,7 +2430,10 @@ float GroundSurface3D::_crack_layer(int p_i) const {
 	const float wz = (ground_origin.y + p_i / n) * ground_spacing;
 	const float pool = (int)crack_state.size() == n * n * CRACK_FLOATS ? crack_state[p_i * CRACK_FLOATS + 2] : 0.0f;
 	const float clay = (0.5f + 0.5f * Math::smoothstep(0.5f, 0.2f, in.sand)) * (0.8f + 0.2f * CLAMP(in.mud / 0.3f, 0.0f, 1.0f));
-	return CLAMP(0.006f + 0.6f * pool, 0.006f, 0.05f) * clay * (0.85f + 0.3f * _value_noise(wx / 3.0f, wz / 3.0f));
+	const float layer = CLAMP(0.006f + 0.6f * pool, 0.006f, 0.05f) * clay;
+	// A silt skin is all fine grains: it dries and cracks as a layer its own thickness (round 15.1).
+	const float silt = MIN(_silt_smooth_at(wx, wz), 0.05f);
+	return MAX(layer, silt) * (0.85f + 0.3f * _value_noise(wx / 3.0f, wz / 3.0f));
 }
 
 Vector4 GroundSurface3D::_crack_at_cell(int p_i, float *r_damp) const {
@@ -2201,15 +2450,30 @@ Vector4 GroundSurface3D::_crack_at_cell(int p_i, float *r_damp) const {
 		return Vector4(0.0f, 4.0f * thick, 0.0f, 0.0f);
 	}
 	const float water = st - 1.0f;
+	// A silt skin's own (round 15.1): its tone and cracks show from a millimetre or two.
+	const int skin_x = ground_origin.x + p_i % n;
+	const int skin_z = ground_origin.y + p_i / n;
+	const float skin = _silt_smooth_at(skin_x * ground_spacing, skin_z * ground_spacing);
+	const float skin_shows = Math::smoothstep(0.0005f, 0.003f, skin);
 	// Its tone, from dark with water (-1, soaked) to the pale crust (1) by the time half the water has gone; the
 	// cracks open over the second half of that.
-	const float tone = (1.0f - 2.0f * Math::smoothstep(0.5f, 0.95f, water)) * Math::smoothstep(0.004f, 0.009f, thick);
+	const float tone = (1.0f - 2.0f * Math::smoothstep(0.5f, 0.95f, water)) * MAX(Math::smoothstep(0.004f, 0.009f, thick), skin_shows);
 	if (r_damp) {
 		*r_damp = MAX(-tone, 0.0f); // material.cpp takes the larger of this and the pore water's
 	}
 	// Ground only saturated (a layer of about 6 mm) cracks too finely to show; a pool's bed does, its cracks finer
 	// and fading out towards its rim as the water there stood shallower.
-	const float shows = Math::smoothstep(0.006f, 0.012f, thick);
+	const float shows = MAX(Math::smoothstep(0.006f, 0.012f, thick), skin_shows);
+	// A silt skin's plates (docs/ideas/mud.md, round 15.1 look): a thin layer drying on a substrate that does not
+	// shrink cracks into polygons some ten times its thickness across (Groisman and Kaplan 1994; Weinberger 1999 on
+	// spacing to thickness), their sizes varying from place to place, and each plate curls up at its edges as its top
+	// dries and shrinks first (mud curls: Allen 1986; Minter et al. 2007). The shaders take the skin's share as a
+	// negative regularity (ground_cracks()): wider gaps, deeper curl reaching further into the plate.
+	if (skin_shows > 0.0f) {
+		const float vary = 0.6f + 0.9f * _value_noise(skin_x * ground_spacing / 2.3f + 11.0f, skin_z * ground_spacing / 2.3f + 5.0f);
+		const float plate = Math::lerp(4.0f * thick, 10.0f * MIN(skin, 0.02f) * vary, skin_shows);
+		return Vector4(Math::smoothstep(0.67f, 0.2f, water) * shows, plate, -skin_shows, MAX(tone, 0.0f));
+	}
 	return Vector4(Math::smoothstep(0.67f, 0.2f, water) * shows, 4.0f * thick, MIN(crack_state[p_i * CRACK_FLOATS + 1] / 5.0f, 1.0f), MAX(tone, 0.0f));
 }
 
@@ -3262,7 +3526,22 @@ void GroundSurface3D::_water_update(double p_delta) {
 						depth = d;
 						speed = v;
 					}
-					_flood_silt(p, d, v, sed, float(p_delta));
+					// A river keeps its own record of what settles on its bed: the ground lays that (below) instead.
+					if (ww->sediment_deposit_at(p).length_squared() <= 0.0f) {
+						_flood_silt(p, d, v, sed, float(p_delta));
+					}
+				}
+				if (flood_silt) {
+					const Vector2 dep = ww->sediment_deposit_at(p);
+					if (dep.x > 0.0f || dep.y > 0.0f) {
+						const Vector2i k(int(Math::floor(p.x)), int(Math::floor(p.z)));
+						Vector2 &taken = silt_river_taken[k];
+						const Vector2 add(MAX(dep.x - taken.x, 0.0f), MAX(dep.y - taken.y, 0.0f));
+						if (add.x + add.y > 1e-3f) { // a micron at a time
+							_lay_silt(k, add);
+							taken = taken.max(dep);
+						}
+					}
 				}
 			}
 			g_depth[gz * gn + gx] = depth;
@@ -3539,9 +3818,14 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 	if (on) {
 		float *d = (float *)data.ptrw();
 		for (int i = 0; i < n * n; i++) {
-			// A fresh mud deposit (a debris fan, flood silt) is saturated slurry: it reads as soaked.
+			// A fresh mud deposit (a debris fan) is saturated slurry: it reads as soaked. A silt skin (round 15.1) as
+			// wet as the water left in it: a few millimetres of it soaked already show dark.
 			const float dep = (int)ground_dep.size() == n * n ? ground_dep[i] : 0.0f;
-			const float s = MAX(wet ? pore[i] : 0.0f, 0.6f * Math::smoothstep(0.0f, 0.05f, dep));
+			const float sx = (ground_origin.x + i % n) * ground_spacing;
+			const float sz = (ground_origin.y + i / n) * ground_spacing;
+			const float skin = MIN(_silt_smooth_at(sx, sz), dep);
+			const float skin_wet = skin > 0.0f ? Math::smoothstep(0.0005f, 0.003f, skin) * _silt_water(sx, sz) : 0.0f;
+			const float s = MAX(MAX(wet ? pore[i] : 0.0f, 0.6f * Math::smoothstep(0.0f, 0.05f, dep - skin)), 0.6f * skin_wet);
 			d[i * 4 + 0] = Math::smoothstep(0.03f, 0.4f, s);
 			// A film of water stands on sand at saturation (under water the water's own surface shows instead). The
 			// saturation itself is published and the shaders take the film from it after filtering: classified per
@@ -3598,7 +3882,12 @@ void GroundSurface3D::_wet_publish(bool p_on) {
 				// A film of a few millimetres already hides the soil; the edge wanders with a value noise (about 1.7 m),
 				// as a lobe's margin.
 				const float edge = 0.004f * _value_noise(wx / 1.7f + 31.0f, wz / 1.7f + 7.0f);
-				dd[i * 4 + 0] = c.a * Math::smoothstep(0.0f, 0.006f, ground_dep[i] - edge);
+				// A silt skin (round 15.1) shows its colour as its crust tone does (_crack_at_cell()), so a thin margin is
+				// never the bare dark colour before the drying lifts it.
+				const float skin = MIN(_silt_smooth_at(wx, wz), ground_dep[i]);
+				const float fan_share = ground_dep[i] > 0.0f ? (ground_dep[i] - skin) / ground_dep[i] : 0.0f;
+				const float skin_k = Math::lerp(Math::smoothstep(0.0005f, 0.003f, skin), 1.0f, fan_share);
+				dd[i * 4 + 0] = c.a * Math::smoothstep(0.0f, 0.006f, ground_dep[i] - edge) * skin_k;
 				dd[i * 4 + 1] = c.r;
 				dd[i * 4 + 2] = c.g;
 				dd[i * 4 + 3] = c.b;
@@ -4898,6 +5187,10 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		meta[8] = tile && sand ? 1.0f : 0.0f;
 		meta[9] = (float)n;
 		meta[10] = (float)sn;
+		// The dune field past the patch (far_ripples): on, and the ground's own sand share there (all sand for a
+		// sand ground with no type map; the terrain material gives its own).
+		meta[11] = far_ripples && tile ? 1.0f : 0.0f;
+		meta[14] = ground_type == GROUND_SAND && type_map.is_null() ? 1.0f : 0.0f;
 		meta[12] = ripples.tmpl_k.x; // the template's wave vector, for the shaders' dislocations
 		meta[13] = ripples.tmpl_k.y;
 		if (ripple_image.is_valid() && ripple_image->get_width() == w && ripple_image->get_height() == hgt && ripple_texture.is_valid()) {
@@ -5293,6 +5586,9 @@ void GroundSurface3D::_notification(int p_what) {
 				break;
 			}
 			_follow(_follow_position());
+			if (!buried_kicks.is_empty()) {
+				_buried_kicks_update();
+			}
 			if (!pending_puddles.is_empty()) {
 				_puddles_update(delta);
 			}
@@ -5521,14 +5817,35 @@ float GroundSurface3D::press_wheel(Vector3 p_position, Vector2 p_size, float p_y
 	field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
 	const Vector2 half = p_size * 0.5f;
 	const float radius = 0.5f * MAX(p_size.x, p_size.y);
-	// A stone or root hidden in the mud stops the wheel: the rut floor stays on it (round 14.3).
+	// A stone or root hidden in the mud under the tyre's middle holds the wheel up (round 14.3); one under the
+	// rest of the print the tyre wraps round, and the mud is pressed out round it (round 15.2, below).
 	if (buried_obstacles) {
-		p_sinkage = MIN(p_sinkage, _buried_depth(p_position, 0.5f * MIN(p_size.x, p_size.y)));
+		p_sinkage = MIN(p_sinkage, _buried_depth(p_position, 0.25f * MIN(p_size.x, p_size.y)));
 		if (p_sinkage <= 0.002f) {
 			return 0.0f;
 		}
 	}
 	const float bottom = _ground_at(p_position.x, p_position.z) - p_sinkage;
+	Buried hit;
+	const bool floored = buried_obstacles && _buried_under(p_position, half.length(), bottom, hit);
+	if (floored) {
+		field.press_floor_a = Vector4(hit.a.x, hit.a.y, hit.a.z, hit.r);
+		field.press_floor_b = hit.b;
+		near_fld.press_floor_a = field.press_floor_a;
+		near_fld.press_floor_b = field.press_floor_b;
+		// Uncovered past its middle (the rut floor under its centre) and met by a rolling tyre: knocked loose.
+		const float speed = p_velocity.length();
+		if (buried_kick && !hit.root && bottom < hit.a.y && speed > 0.3f && !buried_loose.has(hit.id)) {
+			const Vector2 to(hit.a.x - p_position.x, hit.a.z - p_position.z);
+			if (to.dot(p_velocity) > 0.0f) { // ahead of the wheel's middle: the tyre runs into it
+				BuriedKick k;
+				k.b = hit;
+				k.floor = bottom;
+				k.velocity = Vector3(p_velocity.x, 0.25f * speed, p_velocity.y) * 0.6f;
+				buried_kicks.push_back(k);
+			}
+		}
+	}
 	_ice_break(p_position, radius, 0.06f);
 	_ford(p_position, half, p_yaw, p_sinkage, p_velocity);
 	if (worn_tracks) {
@@ -5547,6 +5864,10 @@ float GroundSurface3D::press_wheel(Vector3 p_position, Vector2 p_size, float p_y
 	}
 	field.press_tread = 0;
 	near_fld.press_tread = 0;
+	if (floored) {
+		field.press_floor_a = Vector4();
+		near_fld.press_floor_a = Vector4();
+	}
 	return moved;
 }
 
@@ -6266,7 +6587,10 @@ void GroundSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns
 	};
 	const float settle = MAX(surface->field.press_settle, 0.0f);
 	const float d[4] = { 0.0f, float(flags), 0.0f, settle };
-	host.add_stamp(f, v, d, x0, x1, z0, z1);
+	const Vector4 &fa = surface->field.press_floor_a;
+	const Vector3 &fb = surface->field.press_floor_b;
+	const float fl[8] = { fa.x, fa.y, fa.z, fa.w, fb.x, fb.y, fb.z, 0.0f };
+	host.add_stamp(f, v, d, x0, x1, z0, z1, fl);
 	host.slump_until = MAX(host.slump_until, host.time + settle + 0.1);
 }
 
@@ -6538,6 +6862,76 @@ void GroundSurface3D::_ruts_configure() {
 	rut_main.configure(dir, "m", field.texel());
 	rut_near.configure(dir, "n", near_fld.texel());
 	crack_store.configure(desiccation_cracks ? dir : String(), "c", ground_spacing);
+	if (dir != wear_loaded_dir) {
+		wear_loaded_dir = dir;
+		_wear_load();
+	}
+}
+
+// Worn tracks kept with the ruts (docs/ideas/mud.md, round 15.3): the passes of every worn 25 cm cell, written to
+// one file (zstd) in ruts_path when the ruts are saved, and read back when the folder is first used, aged for the
+// time away as the sward would have regrown over them (wear_regrowth_days' half-life at ruts_time_scale). MudRunner
+// and SnowRunner keep a map's deformation in its save; a track driven in yesterday is still a track today.
+static const char *WEAR_FILE = "worn_tracks.wear";
+static constexpr uint32_t WEAR_MAGIC = 0x52414557; // "WEAR"
+
+void GroundSurface3D::_wear_save() {
+	if (!_ruts_on() || !worn_tracks) {
+		return;
+	}
+	const String path = ruts_path.path_join(WEAR_FILE);
+	if (wear_cells.is_empty()) {
+		if (FileAccess::exists(path)) {
+			DirAccess::remove_absolute(path);
+		}
+		return;
+	}
+	if (!DirAccess::dir_exists_absolute(ruts_path)) {
+		DirAccess::make_dir_recursive_absolute(ruts_path);
+	}
+	Ref<FileAccess> f = FileAccess::open_compressed(path, FileAccess::WRITE, FileAccess::COMPRESSION_ZSTD);
+	if (f.is_null()) {
+		return;
+	}
+	f->store_32(WEAR_MAGIC);
+	f->store_32(1);
+	f->store_double(Time::get_singleton()->get_unix_time_from_system());
+	f->store_32(wear_cells.size());
+	for (const KeyValue<Vector2i, Wear> &kv : wear_cells) {
+		f->store_32(uint32_t(kv.key.x));
+		f->store_32(uint32_t(kv.key.y));
+		f->store_float(kv.value.passes);
+	}
+}
+
+void GroundSurface3D::_wear_load() {
+	if (!_ruts_on() || !worn_tracks) {
+		return;
+	}
+	const String path = ruts_path.path_join(WEAR_FILE);
+	if (!FileAccess::exists(path)) {
+		return;
+	}
+	Ref<FileAccess> f = FileAccess::open_compressed(path, FileAccess::READ, FileAccess::COMPRESSION_ZSTD);
+	if (f.is_null() || f->get_32() != WEAR_MAGIC || f->get_32() != 1) {
+		return;
+	}
+	const double when = f->get_double();
+	const double away = when > 0.0 ? MAX(Time::get_singleton()->get_unix_time_from_system() - when, 0.0) : 0.0;
+	const float keep = wear_regrowth_days > 0.0f ? float(Math::exp(-away * double(ruts_time_scale) * 0.69314718 / (double(wear_regrowth_days) * 86400.0))) : 1.0f;
+	const uint32_t count = f->get_32();
+	for (uint32_t i = 0; i < count && !f->eof_reached(); i++) {
+		const int32_t kx = int32_t(f->get_32());
+		const int32_t kz = int32_t(f->get_32());
+		const Vector2i k(kx, kz);
+		const float passes = f->get_float() * keep;
+		if (passes < 0.05f) {
+			continue;
+		}
+		Wear &w = wear_cells[k];
+		w.passes = MAX(w.passes, passes);
+	}
+	wear_dirty = true;
 }
 
 // The lattice moves to p_origin (p_n per side; a new size or the first sample starts it over): the cells it leaves
@@ -6862,6 +7256,7 @@ void GroundSurface3D::save_ruts() {
 		_ruts_save_field(near_fld, rut_near, rut_near_pending);
 	}
 	_cracks_save();
+	_wear_save();
 }
 
 void GroundSurface3D::clear_saved_ruts() {
@@ -6872,7 +7267,7 @@ void GroundSurface3D::clear_saved_ruts() {
 			LocalVector<String> files;
 			da->list_dir_begin();
 			for (String f = da->get_next(); !f.is_empty(); f = da->get_next()) {
-				if (!da->current_is_dir() && (f.ends_with(".rut") || f.ends_with(".cel"))) {
+				if (!da->current_is_dir() && (f.ends_with(".rut") || f.ends_with(".cel") || f.ends_with(".wear"))) {
 					files.push_back(f);
 				}
 			}
@@ -7828,6 +8223,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_buried_density"), &GroundSurface3D::get_buried_density);
 	ClassDB::bind_method(D_METHOD("get_buried_depth_at", "position", "radius"), &GroundSurface3D::get_buried_depth_at, DEFVAL(0.1f));
 	ClassDB::bind_method(D_METHOD("get_buried_near", "position", "radius"), &GroundSurface3D::get_buried_near);
+	ClassDB::bind_method(D_METHOD("set_buried_kick", "enabled"), &GroundSurface3D::set_buried_kick);
+	ClassDB::bind_method(D_METHOD("is_buried_kick"), &GroundSurface3D::is_buried_kick);
+	ClassDB::bind_method(D_METHOD("get_loose_stone_count"), &GroundSurface3D::get_loose_stone_count);
 	ClassDB::bind_method(D_METHOD("set_worn_tracks", "enabled"), &GroundSurface3D::set_worn_tracks);
 	ClassDB::bind_method(D_METHOD("is_worn_tracks"), &GroundSurface3D::is_worn_tracks);
 	ClassDB::bind_method(D_METHOD("set_wear_regrowth_days", "days"), &GroundSurface3D::set_wear_regrowth_days);
@@ -7853,6 +8251,7 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_stream_fords"), &GroundSurface3D::is_stream_fords);
 	ClassDB::bind_method(D_METHOD("get_ford_stats"), &GroundSurface3D::get_ford_stats);
 	ClassDB::bind_method(D_METHOD("set_flood_silt", "enabled"), &GroundSurface3D::set_flood_silt);
+	ClassDB::bind_method(D_METHOD("get_silt_at", "position"), &GroundSurface3D::get_silt_at);
 	ClassDB::bind_method(D_METHOD("is_flood_silt"), &GroundSurface3D::is_flood_silt);
 	ClassDB::bind_method(D_METHOD("get_flood_silt_total"), &GroundSurface3D::get_flood_silt_total);
 	ClassDB::bind_method(D_METHOD("set_mats", "enabled"), &GroundSurface3D::set_mats);
@@ -7955,6 +8354,8 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_near_active"), &GroundSurface3D::is_near_active);
 	ClassDB::bind_method(D_METHOD("set_wind_ripples", "enabled"), &GroundSurface3D::set_wind_ripples);
 	ClassDB::bind_method(D_METHOD("is_wind_ripples"), &GroundSurface3D::is_wind_ripples);
+	ClassDB::bind_method(D_METHOD("set_far_ripples", "enabled"), &GroundSurface3D::set_far_ripples);
+	ClassDB::bind_method(D_METHOD("is_far_ripples"), &GroundSurface3D::is_far_ripples);
 	ClassDB::bind_method(D_METHOD("set_water_sources", "sources"), &GroundSurface3D::set_water_sources);
 	ClassDB::bind_method(D_METHOD("get_water_sources"), &GroundSurface3D::get_water_sources);
 	ClassDB::bind_method(D_METHOD("set_water_coupling", "enabled"), &GroundSurface3D::set_water_coupling);
@@ -8075,6 +8476,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "worn_tracks"), "set_worn_tracks", "is_worn_tracks");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "buried_obstacles"), "set_buried_obstacles", "is_buried_obstacles");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "buried_density", PROPERTY_HINT_RANGE, "0,2,0.001,or_greater"), "set_buried_density", "get_buried_density");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "buried_kick"), "set_buried_kick", "is_buried_kick");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wear_regrowth_days", PROPERTY_HINT_RANGE, "0,365,0.1,or_greater"), "set_wear_regrowth_days", "get_wear_regrowth_days");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "subsoil"), "set_subsoil", "is_subsoil");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "simulation_paused"), "set_simulation_paused", "is_simulation_paused");
@@ -8107,6 +8509,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_GROUP("Wind", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "wind_override", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind_override", "get_wind_override");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wind_ripples"), "set_wind_ripples", "is_wind_ripples");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_ripples"), "set_far_ripples", "is_far_ripples");
 	ClassDB::bind_method(D_METHOD("set_slip_avalanches", "enabled"), &GroundSurface3D::set_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("is_slip_avalanches"), &GroundSurface3D::is_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("get_avalanche_count"), &GroundSurface3D::get_avalanche_count);

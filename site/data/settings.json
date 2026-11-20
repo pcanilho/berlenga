@@ -1157,7 +1157,7 @@
     "data_map"
    ],
    "note": "",
-   "what": "wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry. It lies on a firm base of varying depth that wheels can dig down to for grip (`subsoil`), and logs and branches settled in it become corduroy that spreads wheel load and snaps when too thin (`mats`). Liquid mud a wheel shoves aside runs on as a wave and the rut closes behind it (`mud_waves`), and hidden stones and roots lift a sinking wheel and show as ruts deepen (`buried_obstacles`, `buried_density`).",
+   "what": "wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry. It lies on a firm base of varying depth that wheels can dig down to for grip (`subsoil`), and logs and branches settled in it become corduroy that spreads wheel load and snaps when too thin (`mats`). Liquid mud a wheel shoves aside runs on as a wave and the rut closes behind it (`mud_waves`), and hidden stones and roots lift a sinking wheel and show as ruts deepen (`buried_obstacles`, `buried_density`); tyres press the mud out round a stone, and can knock an uncovered one loose (`buried_kick`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1309,7 +1309,7 @@
     "ruts_regrowth_time"
    ],
    "note": "",
-   "what": "prints, ruts and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate; grass grows back over them with the growing season, stalling in winter and drought; kept puddles keep the clay in their water and the cracks a dried pool left.",
+   "what": "prints, ruts, worn tracks and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate; grass grows back over them with the growing season, stalling in winter and drought; kept puddles keep the clay in their water and the cracks a dried pool left.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1320,7 +1320,7 @@
     "GroundSurface3D.flood_silt"
    ],
    "note": "",
-   "what": "rivers over their banks and other floodwater soak the ground and leave their silt behind as fresh mud.",
+   "what": "rivers over their banks and other floodwater soak the ground and leave their silt behind as fresh mud: a thin skin, slick while wet, that dries pale and cracks.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1404,7 +1404,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1736,10 +1736,11 @@
    "name": "Caustics",
    "settings": [
     "rendering/pathtracing/caustics",
-    "caustics_enabled"
+    "caustics_enabled",
+    "foam_shade"
    ],
    "note": "",
-   "what": "sunlight lines under rippled water. In raster, sunlight focused by the waves moves over the bed under clear water, following the scene's sun.",
+   "what": "sunlight lines under rippled water. In raster, sunlight focused by the waves moves over the bed under clear water, following the scene's sun, and foam shades the sand beneath it while gaps in the swash lace stay lit, as under path tracing.",
    "page": "water",
    "title": "Water",
    "topic": "Light in water"
@@ -2497,10 +2498,23 @@
    "settings": [
     "PlantGenerator.make_floor(stand, variants)",
     "FLOOR_MEDITERRANEAN",
+    "FLOOR_BOREAL_TAIGA",
     "VegetationField3D.forest_floor_enabled"
    ],
    "note": "",
-   "what": "herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.",
+   "what": "herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter. Under boreal pine, pale reindeer lichen carpets the floor in lumpy cushions, crushed underfoot and slow to return after fire.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Stand age",
+   "settings": [
+    "PlantSpecies.RULE_STAND_AGE",
+    "RULE_DISTURBANCE"
+   ],
+   "note": "",
+   "what": "plants follow the years since the last fire, windthrow or beetle kill, so pioneers flood a fresh burn or blowdown and shade plants return as the stand closes; the ground is re-placed live when a disturbance moves a species across its range.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2874,7 +2888,7 @@
     "make_woodland"
    ],
    "note": "",
-   "what": "eighteen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), date palm oases (`STAND_DATE_OASIS`) beetle-killed spruce (`STAND_BEETLE_SPRUCE`) and old-growth beech (`STAND_OLD_GROWTH_BEECH`), with veteran giants over a pole layer, gaps where single giants fell and five times more deadwood lying than standing. Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
+   "what": "twenty-one stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), date palm oases (`STAND_DATE_OASIS`) beetle-killed spruce (`STAND_BEETLE_SPRUCE`), alder carr on stilt roots over moss tussocks (`STAND_ALDER_CARR`, `stilt_height`), old broken and leaning floodplain willows (`STAND_FLOODPLAIN_WILLOW`), old-growth beech (`STAND_OLD_GROWTH_BEECH`), with veteran giants over a pole layer, gaps where single giants fell and five times more deadwood lying than standing, and boreal taiga (`STAND_BOREAL_TAIGA`) with fire-scarred survivor pines, charred and cracked into blocks at their foot (`fire_scars`), and silver kelo snags and logs, bare to the soil with spiral grain (`kelo`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3227,6 +3241,31 @@
    ],
    "note": "",
    "what": "burnt stands recover by species: cork oak resprouts along its stem and limbs, holm oak from the root collar, and maritime pine and rockrose reseed on the ash bed, while the bark char fades over the years.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
+   "name": "Forests that age",
+   "settings": [
+    "make_succession()",
+    "report_windthrow"
+   ],
+   "note": "",
+   "what": "after fire, windthrow or beetles, a stand regrows by stage from seedlings and pioneers through crowded poles to the mature stand and old growth with veterans, placed by the years since; storm and beetle kills mark where it starts again.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
+   "name": "Forest edges",
+   "settings": [
+    "make_edge()",
+    "edge_open",
+    "RULE_FOREST_EDGE"
+   ],
+   "note": "",
+   "what": "a shrub mantle in front of the trees, and edge trees with low branches and crowns reaching toward the open, turned to face it.",
    "page": "trees",
    "title": "Trees",
    "topic": "Old trees and deadwood"
@@ -4003,10 +4042,11 @@
   {
    "name": "Cloud shadows",
    "settings": [
-    "sun_light"
+    "sun_light",
+    "cloud_light_grid_enabled"
    ],
    "note": "",
-   "what": "the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.",
+   "what": "the clouds' shadow is baked into the sun's projector, matching in raster and path tracing, and clouds shade each other across the whole layer, with long shadows at low sun.",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""

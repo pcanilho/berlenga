@@ -37,8 +37,17 @@ extends Node3D
 #                     the landscape bench's clear wide shot (distant clouds at grazing angles)
 #   --view=shafts     broken cumulus from a rise toward a sun 20 degrees up, aerosol haze: shafts under the clouds
 #                     and across the sky (docs/ideas/weather.md, "Godrays", stages 1 and 2)
+#   --view=towers     towering cumulus (cover 0.4, type 0.8) from a rise, a sun 17 degrees up off to the right: the
+#                     towers' shadows on the clouds behind them (the sun shadow grid, docs/ideas/clouds.md)
 #   --sun-up=D        shafts view: the sun D degrees up (default 20)
 #   --sun-yaw=D       shafts view: the sun D degrees right of the view (default -13)
+#   --mid-cover=C     clouds views: the mid (altocumulus) layer's base cover (WeatherMap3D.mid_cloud_cover)
+#   --cloud-light=x,y,z,E,R[,r,g,b]  clouds views: a point light in the clouds (WeatherMap3D.add_cloud_light;
+#                     orange by default, a fire's); repeatable
+#   --cloud-effector=x,y,z,R,S  clouds views: a density effector (S > 0 adds cloud, < 0 clears); repeatable
+#   --sun-energy=E    clouds views: the sun's light_energy (0: night, for cloud lights)
+#   --high-cover=C    clouds views: the cirrus layer's base cover (WeatherMap3D.high_cloud_cover); with the shafts
+#                     view and --cover=0.05, the 22 and 46 degree ice halos round the sun
 #   --cover=C --haze-km=V  shafts view: cloud cover (default 0.45) and the aerosol's dry visibility (default 40)
 #   --froxel-haze     path traced: the aerosol stays a froxel layer (WeatherMap3D.traced_haze off)
 #   --no-sky-shadow   the sky's air without the clouds' shadow (WeatherSkyMaterial atmo_cloud_shadow_steps 0)
@@ -68,6 +77,12 @@ var view := "street"
 var raster := false
 var pt_from := 0
 var frames := 12
+var mid_cover := -1.0
+var high_cover := -1.0
+var cloud_lights_arg: Array = []
+var cloud_effectors_arg: Array = []
+var sun_energy := -1.0
+var half_usec := 0
 var out := ""
 var map_out := ""
 var spp := 16
@@ -127,6 +142,11 @@ func _ready() -> void:
 		elif a.begins_with("--sun-up="): sun_up = float(a.substr(9))
 		elif a.begins_with("--sun-yaw="): sun_yaw = float(a.substr(10))
 		elif a.begins_with("--cover="): cover = float(a.substr(8))
+		elif a.begins_with("--mid-cover="): mid_cover = float(a.substr(12))
+		elif a.begins_with("--high-cover="): high_cover = float(a.substr(13))
+		elif a.begins_with("--cloud-light="): cloud_lights_arg.append(a.substr(14).split_floats(","))
+		elif a.begins_with("--cloud-effector="): cloud_effectors_arg.append(a.substr(17).split_floats(","))
+		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
 		elif a.begins_with("--haze-km="): haze_km = float(a.substr(10))
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
@@ -179,7 +199,7 @@ func _ready() -> void:
 		await _cloud_map()
 		get_tree().quit()
 		return
-	if view in ["clouds", "clouds_low", "clouds_wide", "shafts"]:
+	if view in ["clouds", "clouds_low", "clouds_wide", "shafts", "towers"]:
 		await _build_clouds()
 		return
 	if view == "projector":
@@ -523,6 +543,32 @@ func _cloud_evolution_tests() -> void:
 		if absf(c.get_cloud_density_at(Vector3(-3000 + i * 190.0, 2200.0, 500.0)) - f0[i]) > 1e-6:
 			same = false
 	print("  cloud_evolution off: density unchanged after an hour of cloud time: %s" % same)
+	# Density effectors: a hole where the cloud is thickest, a cloud where the air is clear.
+	var thick := Vector3.ZERO
+	var clear := Vector3.ZERO
+	var d_thick := 0.0
+	var d_clear := 1.0
+	for i in 32:
+		var q := Vector3(-3000 + i * 190.0, 2200.0, 500.0)
+		var d: float = c.get_cloud_density_at(q)
+		if d > d_thick:
+			d_thick = d
+			thick = q
+		if d < d_clear:
+			d_clear = d
+			clear = q
+	var hole: int = c.add_cloud_effector(thick, 400.0, -1.0)
+	var grow: int = c.add_cloud_effector(clear, 400.0, 1.0)
+	print("  effectors: density in the thickest cloud %.4f -> %.4f with a clearing effector (want 0); clear air %.4f -> %.4f with an adding one (want > 0); contract cloud_effector_at %.2f, %.2f (want -1, 1)" % [d_thick, c.get_cloud_density_at(thick), d_clear, c.get_cloud_density_at(clear), c.get_cloud_effector_at(thick), c.get_cloud_effector_at(clear)])
+	c.remove_cloud_effector(hole)
+	c.remove_cloud_effector(grow)
+	print("  effectors removed: density back %.4f, %.4f (want %.4f, %.4f)" % [c.get_cloud_density_at(thick), c.get_cloud_density_at(clear), d_thick, d_clear])
+	var ids := []
+	for i in 9:
+		ids.append(c.add_cloud_light(Vector3(i * 100.0, 500.0, 0.0), Color(1, 0.6, 0.3), 1000.0, 5000.0))
+	print("  cloud lights: ids %s (the ninth -1), listed %d" % [str(ids), c.get_cloud_lights().size()])
+	for id in ids:
+		c.remove_cloud_light(id)
 	c.queue_free()
 	sun.queue_free()
 	await get_tree().physics_frame
@@ -1056,6 +1102,9 @@ func _build_clouds() -> void:
 		var sd := 2668.0 # ahead
 		var yr := deg_to_rad(sun_yaw)
 		sun.look_at_from_position(Vector3(sin(yr) * sd, sd * tan(deg_to_rad(sun_up)), -cos(yr) * sd), Vector3.ZERO)
+	elif view == "towers":
+		var yt := deg_to_rad(75.0)
+		sun.look_at_from_position(Vector3(sin(yt) * 2668.0, 2668.0 * tan(deg_to_rad(17.0)), -cos(yt) * 2668.0), Vector3.ZERO)
 
 	var cam := Camera3D.new()
 	cam.far = 60000.0
@@ -1067,6 +1116,9 @@ func _build_clouds() -> void:
 	elif view == "shafts":
 		cam.position = Vector3(0, 60, 0)
 		cam.look_at_from_position(cam.position, Vector3(-200, 230, -1000), Vector3.UP)
+	elif view == "towers":
+		cam.position = Vector3(0, 60, 0)
+		cam.look_at_from_position(cam.position, Vector3(-150, 330, -1000), Vector3.UP)
 	elif view == "clouds_low":
 		# Looking down on the fields: the shadows.
 		cam.position = Vector3(0, 220, 0)
@@ -1091,7 +1143,21 @@ func _build_clouds() -> void:
 		weather.haze_visibility = haze_km
 		weather.traced_haze = not froxel_haze
 	weather.cloud_type = 0.4 if view == "clouds_wide" else 0.6
+	if view == "towers":
+		weather.cloud_cover = 0.4 if cover < 0.0 else cover
+		weather.cloud_type = 0.8
 	weather.cloud_variation = 0.3
+	if mid_cover >= 0.0:
+		weather.mid_cloud_cover = mid_cover
+	if high_cover >= 0.0:
+		weather.high_cloud_cover = high_cover
+	for l in cloud_lights_arg: # x, y, z, energy, reach[, r, g, b]
+		var col := Color(1.0, 0.62, 0.32) if l.size() < 8 else Color(l[5], l[6], l[7])
+		print("cloud light id %d" % weather.add_cloud_light(Vector3(l[0], l[1], l[2]), col, l[3], l[4]))
+	for e in cloud_effectors_arg: # x, y, z, radius, strength
+		print("cloud effector id %d" % weather.add_cloud_effector(Vector3(e[0], e[1], e[2]), e[3], e[4]))
+	if sun_energy >= 0.0:
+		sun.light_energy = sun_energy
 	weather.transition_time = 0.0
 	weather.cloud_shadow_extent = 8192.0
 	weather.cloud_shadow_resolution = 256
@@ -1125,11 +1191,11 @@ func _build_clouds() -> void:
 	await albedo.changed
 	var gm := StandardMaterial3D.new()
 	gm.albedo_texture = albedo
-	gm.uv1_scale = Vector3(30, 30, 1)
+	gm.uv1_scale = Vector3(150, 150, 1)
 	gm.roughness = 0.95
 	var ground := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(12000, 12000)
+	pm.size = Vector2(60000, 60000) # to the horizon from the wide view's 520 m (a 12 km plane ended in a grey band)
 	ground.mesh = pm
 	ground.material_override = gm
 	add_child(ground)
@@ -1138,7 +1204,7 @@ func _build_clouds() -> void:
 	bm.roughness = 0.8
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
-	for i in 60:
+	for i in (0 if view == "towers" else 60): # the towers view: open fields only (a docs frame)
 		var b := MeshInstance3D.new()
 		var box := BoxMesh.new()
 		box.size = Vector3(rng.randf_range(8, 20), rng.randf_range(6, 30), rng.randf_range(8, 20))
@@ -1351,7 +1417,11 @@ func _process(_delta: float) -> void:
 		env.pathtracing_enabled = not raster
 	if lightning and n == frames - strike_frames - 1:
 		lightning.strike(strike_at, true)
+	if n == frames / 2:
+		half_usec = Time.get_ticks_usec()
 	if out != "" and n >= frames:
+		# The second half's frames, for cost checks (--raster, with --frames well past the warm-up).
+		print("frames %d to %d: %.1f ms a frame" % [frames / 2, frames, (Time.get_ticks_usec() - half_usec) / 1000.0 / (frames - frames / 2)])
 		get_viewport().get_texture().get_image().save_png(out)
 		get_tree().quit()
 

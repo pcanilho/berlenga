@@ -2564,6 +2564,214 @@ canopy tree's crown. Hobi et al. 2015, gaps from satellite: 98% under 200 m2, fe
   The stand-grown beech stops changing shape past about 60 years (canopy and giants at the stand's shade came out
   identical), hence the light and the scale.
 
+### 5ao. Old trunks up close (20 Nov; Paulo's pick)
+
+Close on a veteran beech's foot (`--preset=1 --stand=forest --set=veteran:1 --set=years:160 --view=base`, seeds 2-4)
+the moss sleeve ended in a flat-topped block and the basal hollow was a lens with upright sides.
+- The shell measured the bark under it from the height map alone (`bark_disp`). It missed the macro relief, the root
+  collar's re-laid relief and the flare's pushes, so up to a centimetre of bark stood over a thin sleeve. Below the
+  root sweep the sleeve showed, above it it did not: a level cut at `root_top`. Bark and shell share one grid under a
+  shell, so the shell now reads the bark's own vertex (`under = n . (bark - shell base)`), falling back to the height
+  map when the grids differ.
+- The sleeve's top (Studlar 1982) hardly left 35 cm: value noise averages to its middle. Two octaves (3 and 6 per
+  metre round the stem), stretched back to their full range, plus stemflow streaks that carry the moss up a metre and
+  more in narrow channels (beech sends a fifth of a stand's rain down its stem, Neal et al. 1993). No feature narrower
+  than about four shell vertices (finer ones drew stairs).
+- The forced cover at the soil (roots' flanks) eases out over 6-28 cm with a ragged reach instead of stopping at 25 cm.
+  A root's bare back fades out up the flare and its flanks wander, so it no longer cuts a straight-sided band.
+- Rings every 2.5 cm over the lowest 1.6 m of standing stems of 20 cm and more that carry a shell (5 cm before): about
+  8k more vertices per giant at LOD0 only.
+- Basal hollow: a Gothic arch widest at the soil (Mattheck and Breloer 1994, basal cavity), its height counted only
+  over the centre, flanks tapering from the soil (`1 - 0.72 rise^1.5`); woundwood rolls thickest on the flanks, thin
+  over the crown and at the foot (Shigo 1985).
+- The cover forced down to the soil skips where the shell was sunk on purpose (a hollow's rotten wall): read from the
+  real bark, that sink shows as a deep `under`, and the forcing had mossed the walls.
+- Logs: a fallen class-5 stem was cut to a class-5 snag's 0.4-1.5 m, a short block. It now keeps 30-50% of the bole's
+  length, a moss-grown mound (Fraver et al. 2002). Soft logs slump (`slump_log`): each ring squashed about its centre,
+  down 14% at class 4 and 32% at class 5, out sideways by half that (Harmon et al. 1986, collapse ratio); bark and
+  shell alike. From class 4 the crumbled butt face grows over too. Bench: `--decays --view=log`, env LOG_CLASS.
+- Frames: fork/trees/old-trunks/ (moss sleeve before/after, seeds 2-4; hollow before/after; hollow walls; class-5 log
+  before/after; raster vs PT crops).
+
+### 5ap. Boreal taiga (20 Nov; Paulo's pick)
+
+Research. Natural boreal forests of Fennoscandia are multi-cohort mosaics: small-scale gap dynamics in spruce,
+low- and mixed-severity surface fires on the dry pine ground, stand-replacing fire rarer (Kuuluvainen and Aakala 2011,
+Silva Fennica 45; Kuuluvainen 2002). Before fire suppression, pine heaths burned every 40-100 years (Wallenius 2011);
+Scots pine's thick basal bark survives them, and each fire opens or widens a scar on the bole's lee side, a triangular
+"catface" flanked by thick woundwood ribs, its face dry, resin-soaked and charred (Niklasson and Granstrom 2000, the
+scar chronologies of Swedish pine). Spruce, thin-barked, dies in them; birch comes up in the burnt patches as an even-aged
+cohort. Dead pines stand for a century or more as kelo, decorticated, silver-grey and resin-hard, often twisted in their
+grain, and lie for centuries more once fallen (Niemela et al. 2002). Spruce in the north grows narrow, spire-like crowns
+with drooping branches that shed snow (narrow-crowned Norway spruce; Karki and Tigerstedt 1985).
+
+Build (`STAND_BOREAL_TAIGA`, 19; `boreal_band`):
+- A mosaic at about 60 m: spruce on the mesic patches (narrow spires, band 1, a few of every age), pine on the dry ones:
+  old fire-survivor pines (band 2: twice the pine's age and more, `fire_scars` 1-3, a little veteran), younger pine
+  between them; birch cohorts in old burns (band 4, one age each, scale 40 m); kelo snags and logs on the pine ground
+  (band 3: `kelo`). Rowan beneath. Spruce leads the stand's own saplings, snags and logs.
+- `fire_scars` (any tree, 0-4): a catface (VET_FIRE_SCAR) on the main stem from the soil, taller with each fire,
+  shallow, dry grey wood charred near the soil with resin streaks, woundwood ribs thickest on the flanks, no moss.
+- `kelo` (dead pine): bark fully shed, wood silver-grey standing or lying, spiral checks in the grain.
+
+As built:
+- Bands (`_setup_variant`): 1 spruce years 0.4-0.95x (northern spruce tops near 30 m; at 1.5x it stood 37 m), crown
+  cone x0.6, twig droop x1.35, forest_shade x0.55 (long crowns; at the stand's shade alone they were masts). 2 pine
+  1.05-1.25x (28-32 m; 1.6x gave 37 m), fire_scars 1-3, veteran 0.1-0.35, spacing x1.6, shade x0.75. 3 kelo pine
+  1.0-1.25x, decay class 2, kelo. 4 birch 0.55-0.7x, one cohort per burn, spacing x0.6.
+- Mosaic 60 m at cover 0.45 (pine on it, spruce on the complement), burns 40 m at 0.22 on their own seed. Bench plot
+  (2.56 ha): 15 survivors a hectare, 5 kelo standing and 11 down, 93 younger pine, 71 spruce, birch cohorts in burns,
+  rowan under; spruce leads the saplings and deadwood. `--stands --stand-test=19`.
+- Catface (`VET_FIRE_SCAR`, kind 5 in get_veteran_features): a triangle from the soil, flanks straight to the apex,
+  0.3-0.5 m per fire high (scaled by girth), base about a third of the girth; face sunk 12-20% of the radius, bark
+  drawn as wood through the wound channel (trees.md 5p), woundwood ribs thickest on the flanks and growing with each
+  fire; moss sinks off it. Kelo: `_bare_amount` 1, wood (0.58, 0.57, 0.54) standing and down, far colour the same.
+- Not yet: char on the catface's foot (the wood branch of the bark shader ignores vertex colour; needs a channel),
+  spiral grain on kelo.
+
+### 5aq. Forests that age (20 Nov; Paulo's pick)
+
+Research. After a stand-replacing disturbance a forest passes through four structural stages (Oliver and Larson 1996,
+Forest Stand Dynamics; Franklin et al. 2002, the eight stages of Douglas-fir, for the legacies): stand initiation
+(pioneers and the lead species' seedlings among the dead wood the disturbance left, years 0-15 in temperate Europe),
+stem exclusion (a dense even-aged pole stage, self-thinning, the floor dark and bare, 15-50), understory reinitiation
+(the canopy opens as trees die singly, shade-tolerant saplings come up, 50-120) and old growth (several layers, giants,
+gaps, deadwood of every class, 120+). The disturbance's legacies (Franklin et al. 2000, biological legacies) carry
+over for decades: charred snags after fire, root plates and logs after wind, grey snags after beetles; they decay
+on their own clock (Harmon et al. 1986: logs to class 5 in 40-80 years).
+
+Contract (agreed 20 Nov with vegetation and world-links):
+- Provider (world-links): `WorldContracts.get_stand()` returns `WorldStand`: `stand_age_at(pos)` (years since the
+  last stand-replacing disturbance; -1 = never disturbed, old growth) and `disturbance_at(pos)` (int: 0 none, 1 fire,
+  2 wind, 3 beetle; append only). Fire comes from WorldFire on its own; windthrow and beetle stands report with
+  `add_disturbance(center, radius, kind, age_years)` -> id, `set_disturbance_age(id, years)`,
+  `remove_disturbance(id)`; `advance_years(years)` ages them; the youngest disturbance at a point wins.
+- Placement (vegetation): RULE_STAND_AGE = 28 (years, -1 never) and RULE_DISTURBANCE = 29 (the kind above). No
+  edges are fixed in the field: each species carries its own range, so boreal timing lives in the species. Until
+  the rules are on a species the field reads its meta `succession_age` (Vector2 years from-to) and
+  `succession_kind` (-1 any, else the kind) as defaults. Vegetation also places the taiga floor.
+- Trees: nothing at runtime; the species and their meta.
+
+As built:
+- `TreeGenerator.make_succession(stand, variants)` returns a Biome "<stand> (aging)" with the stand's species once
+  per stage, each tagged with the meta above. Stage edges e1, e2, e3 = 15, 50, 120 years; x1.5 for boreal stands
+  (taiga, subalpine, pine heath). `SuccessionKind` enum: SUCCESSION_NONE 0, FIRE 1, WIND 2, BEETLE 3 (same numbers
+  as RULE_DISTURBANCE).
+- Legacies: the lead's windthrow logs (kind wind, 0-e1 at full density, e1-e2 at 0.6 as they rot) and, for a
+  conifer lead, the grey beetle snags (kind beetle, 0-e1). Fire's legacies stay the fire bands (RULE_BURN_AGE, 5ah).
+- Initiation (0-e1, `succession_band` 3): birch and rowan saplings, the lead's seedlings 2 to e1+5 years, young
+  (the lead's years x0.07-0.14, birch and rowan x0.16-0.26: taiga spruce 4 m, birch 4.5 m, rowan 2.6 m) and dense
+  (spacing x0.6).
+- Stem exclusion (e1-e2, `succession_band` 1): the lead's poles at 0.3-0.5 of its years, spacing x0.55 and shade
+  x1.2 (dark, short crowns), birch poles, small self-thinned snags.
+- Understory reinitiation (e2-e3): the stand as `make_stand()` builds it.
+- Old growth (e3 on, and -1): where beech leads, the old-growth beech stand (5an); else veterans (`succession_band`
+  2: years x1.3-1.6, veteran 0.6-1.0, limb breakage x1.5-2.2, spacing 22 m) over the mature stand.
+- Reporting to the stand-age map (wind and beetle; fire reports itself through WorldFire). Disturbance severity is
+  graded on 30 m cells, as Landsat disturbance maps do (Senf and Seidl 2021); a cell is stand-replacing when most of
+  its canopy is killed (high severity, Frelich 2002). TreeWind3D (`report_windthrow`, on): a cell where a storm threw
+  at least 60% of the stems, three or more, goes in once as a wind disturbance at age 0, a disc centred on the
+  thrown stems (`get_windthrow_patch_count()`); single throws are gaps and stay out. Placed stands: the windthrow
+  stand's thrown and snapped spruce (kind wind, `windthrow_storm` years) and the beetle stand's front (beetle, 0
+  years), grey snags and logs (beetle, `beetle_outbreak` years) carry meta `stand_disturbance` = Vector2(kind,
+  years); VegetationField3D.populate() reports each 30 m cell with three or more of them as a disc reaching its
+  farthest one, at the cell's youngest kill, and takes its report back on clear() or the next populate (streaming
+  fields report nothing). A populate that yields the same discs leaves the map alone, so two fields
+  reading the stand rules do not wake each other. Checks: stands `--stand-test=16` and `=17` (the map has the disturbance at every sampled
+  legacy plant), storm `--test` (trees a tree height apart: no patch), and a clustered storm (`--presets=4,4,4
+  --spacing=6 --speed=36 --anchorage=0.4`: 3 thrown, 1 patch, wind at the trees).
+- The mesh cache key is 64-bit now: band terms stack (the taiga's boreal band plus a succession band overflowed int).
+- Check: stands bench `--succession=N` (every stage present, ranges forward, kinds in range, every year covered by a
+  living stage, poles shorter than the mature stand, veterans no shorter). Taiga: poles 15 m, mature 35 m, veterans
+  43 m; montane conifer 13/35/41 m; beech 11/30/38 m.
+
+### 5ar. Taiga details: catface char and kelo spiral grain (20 Nov; Paulo's pick)
+
+- Char on a catface's wood. The bark shader's wood branch ignored vertex colour, so the char the deform wrote there
+  never showed. Now the scar writes a per-vertex `wood_char` (its char_k: the face's foot, where the fire burned
+  longest) into UV2 as a negative v (lichen UV2 is never negative; lichen is faded where it is). The wood branch draws
+  charred wood checked into blocks ("alligatoring"; Arno and Allison-Bunnell 2002 on catfaces, Babrauskas 2005 on char
+  checking): columns of uneven width from a warped coordinate along the grain, each cut across at its own heights,
+  block faces domed and dull at about 4% reflectance, the cracks near black, and the blocks in the wood's normal too
+  so a path tracer keeps them (raster vs PT crop at 100%: fork/trees/taiga/catface-char-raster-vs-pt.png).
+- Kelo spiral grain. Scots pine grows with spiral grain, left-handed when young and turning right with age (Harris
+  1989, Spiral Grain and Wave Phenomena in Wood Formation); a kelo's checks open along it. The wood branch's pattern
+  coordinate is sheared by uniform `wood_spiral` (tan of the angle); a kelo sets 5-12 degrees by its seed.
+- Bug found on the way: a standing kelo kept its bark under the foot's moss sleeve (moss holds bark on). A standing
+  kelo carries next to no moss (resin-hard, sun-dried; Niemela et al. 2002): its moss amount is x0.1, so it is bare
+  to the foot. Raster vs PT crop: fork/trees/taiga/kelo-spiral-raster-vs-pt.png.
+
+### 5as. Forest edges (20 Nov; Paulo's pick)
+
+Research. Where a stand meets the open, edge influence on structure and light reaches 20-60 m in (Harper et al. 2005,
+Conservation Biology 19). A managed or old edge has a mantle (Waldmantel) of light-demanding shrubs a few metres deep
+in front of the trees and a herb fringe in front of that; the edge trees keep green branches to the ground on the lit
+side, spread their crowns toward the open and lean that way (stems at edges and gaps lean to the light; Young and
+Hubbell 1991).
+
+Contract (vegetation, agreed 20 Nov): PlantSpecies.RULE_FOREST_EDGE = 30, metres from the edge of the placed canopy,
+positive inside the forest, negative in the open, -1000 where there is no canopy; species at the default range take
+meta "edge_distance" (Vector2). Meshes with meta "tree_open_side" (Vector3) are turned to face down the gradient
+toward the open (about 15 degrees of jitter). The herb fringe is the ground plants'.
+
+As built:
+- `edge_open` (0-1, a property): the light model (Palubicki shadow grid with the stand's neighbour shade) drops the
+  neighbours' shade and the closed canopy's under-shade on the +X side, except right at the stem (the tree's own crown
+  still shades its foot, so the stem stays single). `edge_band` 1 in `_setup_variant`: edge_open 0.7-1.0 a variant and
+  phototropism x1.6.
+- `make_edge(stand, variants)` returns a Biome "<stand> (edge)": the stand's lead as edge trees (0 to 12 m in) and a
+  light-demanding second tree (oak, or birch where oak leads; birch on montane and boreal stands; red maple in eastern
+  North America), both with "tree_open_side" = +X on species and meshes; and the mantle, open-grown and a crown or less
+  apart: blackthorn (-6..0 m), hawthorn (-5..1), dog rose (-8..-2), hazel (-2..4), elder (-1..3), field maple (-3..2)
+  in temperate stands; rowan, birch and willow saplings and the lead's own young on montane and boreal ones (hazel and
+  elder too on montane conifer); witch-hazel, mountain laurel, red maple and paper birch saplings in eastern North
+  America; kermes oak, lentisk, gum rockrose, broom round groves and oases (which have no forest lead and get no edge
+  trees).
+- Check: stands `--forest-edge=N`: edge trees' crowns sit 0.2-0.3 of their width toward the open (birch 0.09), the
+  mantle mostly outside.
+
+### 5at. Wet forests: alder carr and floodplain willows (20 Nov; Paulo's pick)
+
+Research. Alder carr (Rodwell 1991, W5 Alnus glutinosa-Carex paniculata; the Erlenbruch, Doring-Mederake 1990):
+black alder on peat flooded through the winter, each tree on a tussock of its own roots and peat, the floor between
+sunk and under water; the roots stand exposed as stilts. Softwood floodplain forest (Salicion albae; Ellenberg 1988;
+the Weichholzaue of the Rhine, Elbe and Danube): white willow on ground flooded for weeks most years, many standing
+in the water at high flow; old trees split, hollow and leaning, torn limbs resprouting (Karrenberg et al. 2002);
+willow thickets on the bars.
+
+As built:
+- `stilt_height` (m, a property): the surface roots run level from the foot and arch down ever more steeply to their
+  tips stilt_height below (-H a^2 over the roots' reach); between the roots the collar sinks just under a peat tussock
+  (`_build_tussock`, surface "soil": a core dome to about half the roots' reach, dark peat, a moss and leaf mat on
+  top), so the roots stand free over the sunken floor. The moss sleeve starts above the stilts. Mesh meta
+  `tree_base_lift` = stilt_height; VegetationField3D raises the instance by it (vegetation f1cceef5).
+- STAND_ALDER_CARR (20): stilt-rooted alder (`wet_band` 1: stilt 0.3-0.9 m a variant) allowed in 0.5 m of water on
+  wet ground (wetness 6 and up), birch on the hummocks, white willow saplings at the open edges, the lead's deadwood.
+- STAND_FLOODPLAIN_WILLOW (21): stand-grown old white willows (`wet_band` 2: years x1.0-1.3, veteran 0.35-0.8, limb
+  breakage 1.4-2.0) in up to 0.7 m of water from 6 m into the channel to 60 m out, dense willow thickets on the bars
+  (shade under 0.35), black alder where the ground rises.
+- Not done: flood marks (a silt line on the trunks at the high-water height); the bark's vertex colour can only darken,
+  so a silt crust needs its own shader term.
+
+Under the roots (fix, 20 Nov): the root collar's web between the roots, built for level ground, was dropped straight down to the mound and hung from each root's flank as a flat curtain, with the moss sleeve over it as a green sheet. `_bank_shear` now draws that web in toward the stem's foot (radially, into the tussock's core) before the roots arch down, and the roots' flanks follow part way, so each root rounds under into the foot and there is air beneath it. Stands checks 61/61.
+
+### Next-round options (card 20 Nov midday)
+
+- Taiga details. Char on catfaces: the bark shader's wood branch ignores vertex COLOR, so the scar needs its own
+  channel (a char amount in the wound channel's spare bits, read in the wood branch: black, rough, cracked into
+  blocks as charred wood checks; Arno and Allison-Bunnell 2002 on catface char rings). Kelo spiral grain: Scots pine
+  grows with spiral grain, mostly left-handed in young trees and turning right in old ones (Harris 1989, Spiral Grain
+  and Wave Phenomena in Wood Formation), and weathering opens checks along it: twist the wood UVs and the check
+  pattern by a per-tree angle of 2-8 degrees.
+- Forest edges. An edge has a mantle of shrubs (blackthorn, hawthorn, hazel, rose) and a fringe of herbs in front of
+  it, and its trees keep green branches to the ground on the lit side (the Waldmantel of the German silvicultural
+  literature; Harper et al. 2005 on edge influence reaching 20-60 m in). Build: an edge distance rule from the stand
+  mask, edge-tree variants with one-sided crowns, and a mantle species list.
+- Wet forests. Alder carr (Alnus glutinosa on peat, stilt-rooted on tussocks; Rodwell, British Plant Communities W5)
+  and riverside softwood stands (Salix alba and fragilis, leaning, often split and resprouting; floodplain forests of
+  the Danube and Rhine). Build: a stilt-root and tussock base, water-level trunks with algae and silt lines (flood
+  marks at the high-water height from the water map), leaning willow variants.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
@@ -3350,3 +3558,17 @@ understory reinitiation, old growth: Oliver and Larson 1996): the bands already 
 young, beetle snags, old-growth poles) chosen by time since disturbance per patch, so a burnt or thrown patch regrows
 in the scene's calendar. Needs a per-patch disturbance age contract with world-links (WorldFire already gives
 burn_age_at).
+
+## Next-round options (card 20 Nov afternoon)
+
+1. **Beaver country.** Aspen, willow and birch along streams gnawed to hourglass stumps with chisel facets (beavers
+   fell stems mostly under 25 cm, within about 30 m of water; Müller-Schwarze 2011), felled crowns pointing to the
+   water, stumps resprouting as coppice, and drowned standing snags in a beaver pond with its meadow after it is left
+   (a new disturbance kind for WorldStand, so the succession picks the beaver meadow).
+2. **Flood marks.** A silt crust on trunks and roots up to the last high water, a sharp line on the upstream face
+   (dendrogeomorphology; Hupp 1988), flood wrack of twigs and grass caught on low branches and piled against
+   upstream sides, scoured roots on the bank. Needs a shader term for the silt (vertex colour can only darken) and a
+   flood height from WorldWater or a stand meta.
+3. **Deer and nurse logs.** A browse line under heavily grazed woods (no foliage below about 1.8 m, saplings bitten to
+   bushes, bark stripped on young spruce and ash; Gill 1992), and seedlings in rows along rotting logs that later
+   stand on stilts in a line where the log was (Harmon and Franklin 1989). Reads a browsing pressure map or stand meta.

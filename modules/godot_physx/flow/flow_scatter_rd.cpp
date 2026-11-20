@@ -375,15 +375,17 @@ const float MS_ECCENTRICITY = 0.0;
 const float SKY_OCCLUSION = 0.15;
 
 // A light's in-scattering through optical depth tau, cos(view, light) c: single scattering and the octaves,
-// each with its own phase. The orders past the first need gas around the point to scatter in: in optically
-// thin gas the light is single scattering only (a powder-style ramp, as Schneider 2015 darkens thin cloud
-// edges), so thin edges stay see-through as under path tracing. Each scattering order spreads the light further from the light's direction, so octave i
+// each with its own phase. The orders past the first need gas around the point to scatter in: tau_around is
+// the gas along the light's line through the point (both ways), and where it is thin the light is single
+// scattering only (a powder-style ramp, as Schneider 2015 darkens thin cloud edges), so wisps stay see-through
+// as under path tracing while the lit face of a deep cloud keeps its many-times-scattered light. Each
+// scattering order spreads the light further from the light's direction, so octave i
 // takes the anisotropy g * MS_ECCENTRICITY^i (Wrenninge et al. 2013's eccentricity attenuation, as Frostbite's
 // clouds, Hillaire 2016): a cloud lit from behind the camera, where the first scattering's forward-leaning phase
 // sends little back, still glows with its many-times-scattered light, as under path tracing.
-float ms_light(float tau, float c, float g) {
+float ms_light(float tau, float tau_around, float c, float g) {
 	float a = p.sky_map.x * (1.0 / 0.9);
-	float thick = 1.0 - exp(-2.0 * tau);
+	float thick = 1.0 - exp(-2.0 * tau_around);
 	float e = MS_ECCENTRICITY;
 	return (hg_phase(c, g) * exp(-tau) + thick * (hg_phase(c, g * e) * 0.5 * a * exp(-0.5 * tau) + hg_phase(c, g * e * e) * 0.25 * a * a * exp(-0.25 * tau) + hg_phase(c, g * e * e * e) * p.sky_map.z * exp(-0.125 * tau))) * (p.sky_map.x * SUN_MS_GAIN);
 }
@@ -542,7 +544,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					}
 					light_tau = od * sigma * ds;
 				}
-				in_light += L.color_decay.rgb * (atten * ms_light(light_tau, dot(dir, ldir), g));
+				in_light += L.color_decay.rgb * (atten * ms_light(light_tau, light_tau, dot(dir, ldir), g));
 			}
 			if (p.sun.x > 0) {
 				vec3 vpos = (p.world_to_view * vec4(pos_m, 1.0)).xyz;
@@ -571,6 +573,9 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 						continue;
 					}
 					float light_tau = 0.0;
+					// The gas on along the sun's line past the point (the sun map's whole column less the gas
+					// toward the sun): with it, how much gas surrounds the point to scatter light on.
+					float tau_beyond = 0.0;
 					vec3 map_uvw = vec3(-1.0);
 #ifndef SHADOW_PASS
 					if (p.sun_map.w > 0.5 && dot(ldir, p.sun_map.xyz) > 0.9999) {
@@ -580,6 +585,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					if (all(greaterThanEqual(map_uvw, vec3(0.0))) && all(lessThanEqual(map_uvw, vec3(1.0)))) {
 						// All the gas toward the sun in one fetch (Frostbite's volumetric shadow maps).
 						light_tau = textureLod(sun_map_tex, map_uvw, 0.0).r;
+						tau_beyond = max(textureLod(sun_map_tex, vec3(map_uvw.xy, 1.0), 0.0).r - light_tau, 0.0);
 					} else
 #endif
 					if (shadow_steps > 0) {
@@ -592,7 +598,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 						}
 						light_tau = od * sigma * ds;
 					}
-					in_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * atten * ms_light(light_tau, dot(dir, ldir), g));
+					in_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * atten * ms_light(light_tau, light_tau + tau_beyond, dot(dir, ldir), g));
 				}
 			}
 			if (ambient_on) {

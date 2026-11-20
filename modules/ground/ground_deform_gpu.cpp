@@ -524,7 +524,7 @@ bool GroundDeformGPUHost::stamp_bounds(const GroundDeformField &p_field, Vector3
 	return r_x0 <= r_x1 && r_z0 <= r_z1;
 }
 
-void GroundDeformGPUHost::add_stamp(GroundDeformField &r_field, const float p_v[12], const float p_d[4], int p_x0, int p_x1, int p_z0, int p_z1) {
+void GroundDeformGPUHost::add_stamp(GroundDeformField &r_field, const float p_v[12], const float p_d[4], int p_x0, int p_x1, int p_z0, int p_z1, const float *p_floor) {
 	const int32_t e[4] = { p_x0, p_x1, p_z0, p_z1 };
 	const int at = stamps.size();
 	stamps.resize(at + GroundDeformGPU::STAMP_BYTES);
@@ -532,6 +532,9 @@ void GroundDeformGPUHost::add_stamp(GroundDeformField &r_field, const float p_v[
 	memcpy(w, p_v, 48);
 	memcpy(w + 48, p_d, 16);
 	memcpy(w + 64, e, 16);
+	// A hard body under the press (round 15.2): capsule a.xyz radius, b.xyz; none by default.
+	static const float no_floor[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+	memcpy(w + 80, p_floor ? p_floor : no_floor, 32);
 	// The tiles it touches are live (they go to the cache when the field moves off them).
 	const int T = GroundDeformField::TILE;
 	const int nt = r_field.tiles();
