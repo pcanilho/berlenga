@@ -188,4 +188,16 @@ vec2 wf_bubble_slope(vec2 p, float footprint) {
 	float hz = wf_fbm((p + vec2(0.0, e)) * 16.0 + 4.7);
 	return vec2(hx - h0, hz - h0) / e * 0.03 * grain;
 }
+
+// The noise two water surfaces cross-fade with in the path tracer, which has no blending: one keeps the water
+// where it is above the blend weight, the other where it is below (stochastic transparency, Enderton et al. 2010),
+// over 2 mm cells of the water, so a pixel's jittered samples average into the blend. A PCG hash (Jarzynski and
+// Olano 2020): exact on large world coordinates, where sin() hashes repeat.
+float water_fade_noise(vec2 world_xz) {
+	uvec2 c = uvec2(ivec2(floor(world_xz * 500.0)));
+	uint h = c.x * 747796405u + c.y * 2891336453u + 2654435769u;
+	h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+	h = (h >> 22u) ^ h;
+	return float(h) / 4294967295.0;
+}
 )";

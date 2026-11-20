@@ -260,6 +260,33 @@ vec4 ground_cell(vec2 p, int part) {
 	return cover_cells[(z * n + x) * 4 + part];
 }
 
+// Hidden stones (mud round 16.1): after the ground's cells, a header (count) and per stone two vec4s (end a xyz,
+// radius; end b xyz). The depth below the undisturbed ground p_g to the highest stone top over p, 1e3 where none.
+float stone_dent(vec2 p, float p_g) {
+	int n = params.res.w;
+	int base = n * n * 4;
+	int count = int(cover_cells[base].x);
+	float best = 1e3;
+	for (int k = 0; k < count; k++) {
+		vec4 a = cover_cells[base + 1 + 2 * k];
+		vec4 b = cover_cells[base + 2 + 2 * k];
+		vec2 lo = min(a.xz, b.xz) - a.w;
+		vec2 hi = max(a.xz, b.xz) + a.w;
+		if (p.x < lo.x || p.y < lo.y || p.x > hi.x || p.y > hi.y) {
+			continue;
+		}
+		vec2 ab = b.xz - a.xz;
+		float l2 = dot(ab, ab);
+		float t = l2 > 1e-8 ? clamp(dot(p - a.xz, ab) / l2, 0.0, 1.0) : 0.0;
+		vec2 q = a.xz + ab * t - p;
+		float d2 = dot(q, q);
+		if (d2 < a.w * a.w) {
+			best = min(best, max(p_g - (mix(a.y, b.y, t) + sqrt(a.w * a.w - d2)), 0.0));
+		}
+	}
+	return best;
+}
+
 bool ground_deformable(vec2 p) {
 	if (ground_cell(p, 1).w < 0.5) {
 		return false;
@@ -901,7 +928,7 @@ bool slump_params(vec2 p, out float tan_r, out float rate, out float max_dent, o
 	vec4 m = ground_cell(p, 0);
 	tan_r = m.y;
 	rate = m.z;
-	max_dent = m.w;
+	max_dent = min(m.w, stone_dent(p, ground_at(p))); // nothing slumps off a stone's top (round 16.1)
 	vec4 c3 = ground_cell(p, 3);
 	slide = c3.x;
 	// Liquid mud moves by its own waves (mud_flux()), not by slumping.
@@ -1728,7 +1755,11 @@ bool mud_liquid(vec2 p, out float tau, out float nu, out float max_dent) {
 	tau = c3.z;
 	nu = c3.w;
 	max_dent = ground_cell(p, 0).w;
-	return nu > 0.0 && ground_cell(p, 1).w > 0.5;
+	if (nu <= 0.0 || ground_cell(p, 1).w <= 0.5) {
+		return false;
+	}
+	max_dent = min(max_dent, stone_dent(p, ground_at(p))); // the mud flows round a stone, not off its top (round 16.1)
+	return true;
 }
 
 // The mud layer's thickness over its firm base at a texel (the deepest dent below the undisturbed ground, plus rim).

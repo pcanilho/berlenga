@@ -190,6 +190,7 @@ private:
 	LocalVector<BuriedKick> buried_kicks;
 	bool _buried_under(const Vector3 &p_position, float p_radius, float p_bottom, Buried &r_hit) const;
 	void _buried_kicks_update();
+	void _loose_shove(const Vector3 &p_position, const Vector2 &p_half, float p_yaw, float p_bottom, const Vector2 &p_velocity);
 	bool worn_tracks = true;
 	float wear_regrowth_days = 30.0f;
 	double wear_clock = 0.0;
@@ -202,6 +203,10 @@ private:
 	String wear_loaded_dir;
 	void _wear_save();
 	void _wear_load();
+	// Deposits kept with the ruts (round 16.2): silt skins, fans and other coloured deposits, the rivers' records
+	// taken, and the stones knocked loose.
+	void _deposits_save();
+	void _deposits_load();
 	void _wear_publish();
 	HashMap<Vector2i, Color> mud_deposit_colors; // its linear colour where the depositor gave one (alpha: cover)
 	Color _deposit_color_at(float p_x, float p_z) const; // premultiplied by cover, bilinear between cell centres
@@ -549,6 +554,10 @@ private:
 	void _ruts_save_field(const GroundDeformField &p_field, GroundRutStore &r_store, const LocalVector<Vector2i> &p_pending);
 	void _publish_near();
 	PackedByteArray _gpu_cells() const;
+	// Hidden stones for the GPU's slumping and mud waves (round 16.1): after the cells, a header (count) and per stone
+	// two vec4s (a xyz radius, b xyz 0), the GPU_STONES nearest the followed point.
+	static constexpr int GPU_STONES = 64;
+	uint32_t buried_gpu_hash = 0;
 
 	int ground_n = 0;
 	Vector2i ground_origin;
@@ -1020,6 +1029,7 @@ public:
 	bool is_flood_silt() const { return flood_silt; }
 	float get_flood_silt_total() const { return silt_total; }
 	Vector2 get_silt_at(Vector3 p_position) const;
+	void clear_mud_deposits();
 	void set_mats(bool p_enabled) { mats = p_enabled; }
 	bool is_mats() const { return mats; }
 	// The mat a wheel's contact p_contact lies on (within p_tolerance of the wood), or -1.

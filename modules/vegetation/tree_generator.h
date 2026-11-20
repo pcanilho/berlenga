@@ -753,6 +753,13 @@ public:
 	bool _beaver_resprouts() const;
 	static Color _beaver_wood(float p_years);
 	float beaver_cut_h = 0.0f; // Height of the waist / the stump's cut over the soil.
+	// Flood marks (trees.md 5av): the last flood stood flood_height (m) over the stem's foot, flood_years ago; 0 none.
+	// Silt on the bark and moss below the waterline (the bark shader's silt term), wrack caught on the low limbs and
+	// piled on the upstream face of the stem. The flow runs toward +X (placement turns +X downstream).
+	float flood_height = 0.0f;
+	float flood_years = 0.3f;
+	float _silt_at(const Vector3 &p_pos, const Vector3 &p_normal) const;
+	void _flood_wrack();
 	int edge_band = 0; // While make_edge grows its edge trees: 1 (trees.md 5as).
 	int boreal_band = 0; // While a taiga stand grows its species: 1 narrow spruce, 2 fire-survivor pine, 3 kelo, 4 burn birch (trees.md 5ap).
 	int old_growth_band = 0; // While an old-growth stand grows its species: 1 veteran giants, 2 poles, 3 giant deadwood, 4 canopy (trees.md 5an).
@@ -1118,6 +1125,10 @@ public:
 	float get_ground_slope() const { return ground_slope; }
 	void set_bank_erosion(float p_v) { bank_erosion = CLAMP(p_v, 0.0f, 1.0f); }
 	void set_stilt_height(float p_v) { stilt_height = CLAMP(p_v, 0.0f, 1.5f); }
+	void set_flood_height(float p_v) { flood_height = CLAMP(p_v, 0.0f, 6.0f); }
+	float get_flood_height() const { return flood_height; }
+	void set_flood_years(float p_v) { flood_years = CLAMP(p_v, 0.0f, 30.0f); }
+	float get_flood_years() const { return flood_years; }
 	void set_beaver_cut(int p_v) { beaver_cut = CLAMP(p_v, 0, 3); }
 	int get_beaver_cut() const { return beaver_cut; }
 	void set_beaver_years(float p_v) { beaver_years = CLAMP(p_v, 0.0f, 60.0f); }

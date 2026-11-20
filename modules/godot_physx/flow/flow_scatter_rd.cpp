@@ -350,11 +350,12 @@ float hg_phase(float c, float g) {
 	return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5));
 }
 
-// The multiple-scattering octaves (Wrenninge et al. 2013), times the single-scattering albedo (sky_map.x, as
-// the path tracer weighs each scatter). Octave i stands for higher scattering orders, so it is weighed by the
-// albedo to the i-th power relative to 0.9 (a whiter medium such as snow powder keeps more of its deep,
-// many-times-scattered light, as it does under path tracing). The orders past the third come as one more, wider
-// octave weighted by sky_map.z.
+// The multiple-scattering octaves (Wrenninge et al. 2013), times the single-scattering albedo per channel: the
+// gas's colour times its scattering albedo (sky_map.x), as the path tracer weighs each scatter. Octave i stands
+// for higher scattering orders, so it is weighed by that albedo to the i-th power relative to 0.9: the colour
+// compounds over the orders as it does under path tracing (a grey-blue gas turns bluer and darker inside, a
+// near-white one such as snow powder keeps nearly all of its many-times-scattered light). The orders past the
+// third come as one more, wider octave: a geometric series in sky_map.z times the albedo.
 // Fitted to the path tracer (docs/ideas/physx.md, "Flow raster light matches path tracing, refit"), each
 // light on its own on test puffs under a real sky:
 // - SUN_MS_GAIN: the octaves' light, over their sum.
@@ -368,7 +369,7 @@ float hg_phase(float c, float g) {
 // which clamps the smoke it tracks to it, and Flow's own opacity march (patched, misc/physx_patches 0010).
 const float SMOKE_MAX = 2.0;
 const float SUN_MS_GAIN = 0.7;
-const float SKY_MS_SHARE = 0.19;
+const float SKY_MS_SHARE = 0.21;
 const float SKY_GAIN = 3.0;
 // Fitted on test puffs lit from the side and from behind the camera: 0, the octaves scatter evenly.
 const float MS_ECCENTRICITY = 0.0;
@@ -383,18 +384,29 @@ const float SKY_OCCLUSION = 0.15;
 // takes the anisotropy g * MS_ECCENTRICITY^i (Wrenninge et al. 2013's eccentricity attenuation, as Frostbite's
 // clouds, Hillaire 2016): a cloud lit from behind the camera, where the first scattering's forward-leaning phase
 // sends little back, still glows with its many-times-scattered light, as under path tracing.
-float ms_light(float tau, float tau_around, float c, float g) {
-	float a = p.sky_map.x * (1.0 / 0.9);
+// The single-scattering albedo per channel (raygen.glsl: smoke_color * albedo at each scatter).
+vec3 ss_albedo() {
+	return p.albedo.rgb * p.sky_map.x;
+}
+// The orders past the third: the sum over n >= 3 of q^n, q = sky_map.z * albedo.
+vec3 octave_tail(vec3 alb) {
+	vec3 q = min(p.sky_map.z * alb, vec3(0.98));
+	return q * q * q / (1.0 - q);
+}
+vec3 ms_light(float tau, float tau_around, float c, float g) {
+	vec3 alb = ss_albedo();
+	vec3 a = alb * (1.0 / 0.9);
 	float thick = 1.0 - exp(-2.0 * tau_around);
 	float e = MS_ECCENTRICITY;
-	return (hg_phase(c, g) * exp(-tau) + thick * (hg_phase(c, g * e) * 0.5 * a * exp(-0.5 * tau) + hg_phase(c, g * e * e) * 0.25 * a * a * exp(-0.25 * tau) + hg_phase(c, g * e * e * e) * p.sky_map.z * exp(-0.125 * tau))) * (p.sky_map.x * SUN_MS_GAIN);
+	return (hg_phase(c, g) * exp(-tau) + thick * (hg_phase(c, g * e) * 0.5 * a * exp(-0.5 * tau) + hg_phase(c, g * e * e) * 0.25 * a * a * exp(-0.25 * tau) + hg_phase(c, g * e * e * e) * octave_tail(alb) * exp(-0.125 * tau))) * (alb * SUN_MS_GAIN);
 }
 
 // The light from all around (sky above, ground below) through optical depth tau.
-float ms_ambient(float tau) {
-	float a = p.sky_map.x * (1.0 / 0.9);
+vec3 ms_ambient(float tau) {
+	vec3 alb = ss_albedo();
+	vec3 a = alb * (1.0 / 0.9);
 	float thick = 1.0 - exp(-2.0 * tau);
-	return SKY_MS_SHARE * (exp(-tau) + thick * (0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + p.sky_map.z * exp(-0.125 * tau))) * p.sky_map.x;
+	return SKY_MS_SHARE * (exp(-tau) + thick * (0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + octave_tail(alb) * exp(-0.125 * tau))) * alb;
 }
 
 float ign(vec2 px) {
@@ -603,8 +615,8 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 			}
 			if (ambient_on) {
 				// How much of the sky the point sees: the gas straight above it (a short march up).
-				float sky_t = ms_ambient(0.0);
-				float ground_t = sky_t;
+				vec3 sky_t = ms_ambient(0.0);
+				vec3 ground_t = sky_t;
 				vec3 sky_uvw = vec3(-1.0);
 #ifndef SHADOW_PASS
 				if (p.sky_map.w > 0.5) {
@@ -647,7 +659,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 	}
 	// Per unit of opacity (the upsample weighs it by Flow's own coverage).
 	float opacity = 1.0 - transmittance;
-	return opacity > 1e-4 ? sum * p.albedo.rgb * p.albedo.w / opacity : vec3(0.0);
+	return opacity > 1e-4 ? sum * p.albedo.w / opacity : vec3(0.0);
 }
 
 #ifdef SHADOW_PASS
@@ -1105,10 +1117,9 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	f[w++] = CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
 	f[w++] = CLAMP(p_params.ground_albedo, 0.0f, 1.0f);
 	{
-		// The scattering orders past the three octaves, as a geometric series: the sum over n >= 3 of (c albedo)^n, c = 0.6
+		// c in the scattering orders past the three octaves, a geometric series: the sum over n >= 3 of (c albedo)^n, c
 		// the share of light a scatter keeps inside the gas (fitted with SUN_MS_GAIN to the path tracer on test puffs).
-		const float q = 0.6f * CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
-		f[w++] = q * q * q / (1.0f - q);
+		f[w++] = 0.68f;
 	}
 	f[w++] = sky_map ? 1.0f : 0.0f;
 	ERR_FAIL_COND(w != PARAMS_WORDS);

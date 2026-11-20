@@ -3594,6 +3594,29 @@ Naiman, Johnston and Kelley 1988 and Muller-Schwarze 2011 (ponds drown the flat'
 - Not done: aspen (no preset yet; it is the beavers' first choice), the logs cut into carried sections, drag paths and the
   dam and lodge (water and props), a beaver meadow stage for make_succession (needs a WorldStand disturbance kind).
 
+### 5av. Flood marks (20 Nov; Paulo's pick)
+
+Sources: Koenig et al. 2016, USGS Techniques and Methods 3-A24 (high-water marks: silt and seed lines, debris lines, wash
+lines; the mark sits higher on the upstream face where water piles against an obstacle); Hupp 1988 and Ballesteros-Canovas
+et al. 2015 (dendrogeomorphic flood evidence: scars, debris caught on riparian trees, silt in the bark).
+
+- `flood_height` (metres over the stem foot, 0 off) and `flood_years` (since that flood). `_silt_at(pos, normal)` gives the
+  silt weight: 1 under the line, a 2.4 cm edge, the line 6 cm higher on the upstream face (-X, against the flow) and 4 cm
+  lower in the lee, wandering 5 cm; washed down to 0.3 over 0.3-3 years.
+- The weight travels to the bark shader in UV2.x as -(0.5 + 1.5 silt) (lichen UV2 is never negative; char uses UV2.y
+  the same way). The shader lays a matte brown-grey film (linear 0.13, 0.105, 0.075, roughness 0.95) that fills the
+  furrows first and leaves the plate tops partly bare (from the relief channel), tints the bark where thin, and is a
+  little darker in the tide band just under the line. No lichen under the line.
+- Moss under the line is browned toward the silt colour.
+- `_flood_wrack` (wood_b): up to six bundles of twigs and grass draped over limbs that cross the line, lying along the
+  flow and hanging down; grass blades plastered round the stem's upstream face at the line; a heap of sticks and straw
+  against the upstream foot when the flood stood 25 cm or more. Older wrack goes (none past 4 years).
+- Floodplain willow (`wet_band` 2) variants get flood heights 0.5-1.6 m and 0.05-2.5 years; the species follows the flow
+  (`follow_flow`), so -X faces upstream in the stand.
+- Bench: `stands.gd --flood` (silt only under the line, none above 1.3 m, wrack on every willow).
+- Not done: scoured, bared roots on the cut bank; flood height from WorldWater's flood stage rather than the variant band;
+  silt on the ground and on the vegetation under the line (vegetation thread).
+
 ## Next-round options (card 20 Nov afternoon)
 
 1. **Beaver country.** Aspen, willow and birch along streams gnawed to hourglass stumps with chisel facets (beavers

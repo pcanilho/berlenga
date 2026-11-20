@@ -245,7 +245,7 @@ void GroundDeformGPU::_rt_ensure(const Dims &p_dims) {
 		tex_out = rd->texture_create(tf, RD::TextureView());
 		rd->texture_clear(tex_out, Color(0, 0, 1, 1), 0, 1, 0, 1);
 		buf_ground = _rt_storage(MAX(p_dims.gn * p_dims.gn, 1) * 4);
-		buf_cover = _rt_storage(MAX(p_dims.cn * p_dims.cn, 1) * 16 * p_dims.cover_vec4s);
+		buf_cover = _rt_storage(p_dims.cover_bytes());
 		buf_collision = _rt_storage(MAX(p_dims.coll_w * p_dims.coll_w, 1) * 4);
 		stamps_capacity = 16;
 		buf_stamps = _rt_storage(stamps_capacity * STAMP_BYTES);
@@ -268,7 +268,7 @@ void GroundDeformGPU::_rt_ensure(const Dims &p_dims) {
 		}
 	};
 	grow(buf_ground, MAX(p_dims.gn * p_dims.gn, 1) * 4, MAX(dims.gn * dims.gn, 1) * 4);
-	grow(buf_cover, MAX(p_dims.cn * p_dims.cn, 1) * 16 * p_dims.cover_vec4s, MAX(dims.cn * dims.cn, 1) * 16 * dims.cover_vec4s);
+	grow(buf_cover, p_dims.cover_bytes(), dims.cover_bytes());
 	grow(buf_collision, MAX(p_dims.coll_w * p_dims.coll_w, 1) * 4, MAX(dims.coll_w * dims.coll_w, 1) * 4);
 	dims = p_dims;
 	if (remake) {
@@ -311,7 +311,7 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 	if ((p_flags & STEP_GROUND) && p_ground.size() == d.gn * d.gn * 4) {
 		rd->buffer_update(buf_ground, 0, p_ground.size(), p_ground.ptr());
 	}
-	if ((p_flags & STEP_COVER) && p_cover.size() == d.cn * d.cn * 16 * d.cover_vec4s) {
+	if ((p_flags & STEP_COVER) && p_cover.size() == d.cover_bytes()) {
 		rd->buffer_update(buf_cover, 0, p_cover.size(), p_cover.ptr());
 	}
 	if (p_flags & STEP_RESET) {

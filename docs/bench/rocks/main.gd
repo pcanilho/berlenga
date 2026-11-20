@@ -12,6 +12,7 @@ extends Node3D
 #   --clouds[=C]          the weather sky (clouds of cover C, atmosphere) instead of the plain gradient
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
+#   --world-size=m        with --world: its side (2048); smaller for path traced stills in less memory
 #   --world               a generated 2 km world (range, strata, glaciers, scree, rivers, a lake, the sea) with a
 #                         RockField3D over it; --view=rockfall|scree|glacial|river|shore|cliff|tor|coast|landform puts the camera at the
 #                         densest place of that layer (default scree)
@@ -30,6 +31,9 @@ extends Node3D
 #                         (--dist m upstream, 2.5); --no-streams turns cave_streams off
 #   --cave-view=rimstone  with --caves --cave-mesh: the busiest rimstone cascade from about --dist m (1.6), a lamp;
 #                         --pool-water=n live water on the n nearest pools (12), --no-pool-water none
+#   --no-sea-water        with --sea-caves --cave-mesh: the sea not drawn inside the caves (a before frame);
+#                         --cave-waves=m the short waves' rms coming in at the mouth (default: from the sea),
+#                         --no-cave-waves the cave's water without them (the surge's level alone)
 #   --no-sea-mist         with --sea-caves --cave-mesh: no mist breathed out of the mouths; --mist-period=s its swell
 #                         period (run with --fixed-fps 60 and --settle=N for N frames of mist)
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
@@ -90,7 +94,7 @@ class SwellStub extends WorldWater:
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
 const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth"]
 const LAYERS := ["rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast", "landform"]
-const WORLD := 2048.0
+var WORLD := 2048.0 # --world-size=m (a smaller world for path traced stills that would not fit the memory)
 
 var args := {}
 var raster := false
@@ -113,6 +117,7 @@ func _ready() -> void:
 			var kv := a.substr(2).split("=", true, 1)
 			args[kv[0]] = kv[1] if kv.size() > 1 else "1"
 	raster = args.has("raster")
+	WORLD = float(args.get("world-size", "2048"))
 	spp = int(args.get("spp", "16"))
 	out = args.get("out", "")
 	if args.has("no-lod"):
@@ -374,7 +379,7 @@ func _world() -> void:
 	for y in 64:
 		var z := -WORLD * 0.5 + (y + 0.5) / 64.0 * WORLD
 		for x in 64:
-			up.set_pixel(x, y, Color(0.12 + 0.88 * (1.0 - smoothstep(-500.0, 500.0, z)), 0, 0))
+			up.set_pixel(x, y, Color(0.12 + 0.88 * (1.0 - smoothstep(-500.0 * WORLD / 2048.0, 500.0 * WORLD / 2048.0, z)), 0, 0))
 	gen.uplift_map = ImageTexture.create_from_image(up)
 	gen.outlet_edges = 0
 	gen.ocean_edges = TerrainGenerator3D.OUTLET_POSITIVE_Z
@@ -773,6 +778,10 @@ func _caves(cam: Camera3D) -> void:
 			var pos: Vector3 = e["position"]
 			net.rimstone_water = not args.has("no-pool-water")
 			net.sea_mist = not args.has("no-sea-mist")
+			net.sea_water = not args.has("no-sea-water")
+			if args.has("no-sea-clip"):
+				# The sea not cut along the passages (a diagnostic: the cave's surface over the sea's own).
+				net.ready.connect(func(): net.remove_from_group("water_clippers"))
 			net.cave_streams = not args.has("no-streams")
 			if args.has("mist-period"):
 				# The mist node is made on the network's first frames: set its swell period once it is there.
@@ -2461,6 +2470,26 @@ func _render_later() -> void:
 					cov_sum += cv.x + cv.y
 					cov_n += 1
 			print("%s cover contract: WorldGround.coarse_cover_at matches the near map within %.4f (pebble + gravel mean %.3f)" % ["PASS" if worst < 0.005 else "FAIL", worst, cov_sum / max(cov_n, 1)])
+	for c in get_children():
+		if c is CaveNetwork3D and (c as CaveNetwork3D).get_cave_count() > 0 and (c as CaveNetwork3D).is_sea_cave(0):
+			var sw: Node = (c as CaveNetwork3D).get_sea_water_node()
+			var w: Dictionary = (c as CaveNetwork3D).get_sea_cave_water(0)
+			var pts: PackedVector3Array = w.get("points", PackedVector3Array())
+			var al: PackedFloat32Array = w.get("along", PackedFloat32Array())
+			if sw and args.has("hide-cave-surface"):
+				(sw as Node3D).visible = false
+			if sw:
+				# The short waves take about a minute to run the passage and back: warm them up before the still.
+				if args.has("cave-waves"):
+					sw.set("wave_inflow", float(args["cave-waves"]))
+				if args.has("no-cave-waves"):
+					sw.set("wavelets", false)
+				sw.warm_up(60.0)
+				print("sea cave waves: sea rms at the mouth %.3f m, short waves rms %.3f m over the cave" % [w.get("wave_rms", 0.0), sw.get_wave_rms(0)])
+				var hws: PackedFloat32Array = w.get("half_widths", PackedFloat32Array())
+				for k in range(0, pts.size(), 4):
+					print("  station %d at %.1f m: %s, half width %.2f" % [k, al[k] if k < al.size() else 0.0, str(pts[k]), hws[k] if k < hws.size() else 0.0])
+			print("sea cave water: %d stations over %.1f m, arch from %.1f m, level at the mouth %s, %d drawn, %d sea clip capsules" % [pts.size(), al[al.size() - 1] if al.size() > 0 else 0.0, w.get("covered_from", 0.0), str(pts[0]) if pts.size() > 0 else "-", sw.get_ribbon_count() if sw else -1, (c as CaveNetwork3D).get_water_clip_capsules().size() / 8])
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)

@@ -8038,6 +8038,180 @@ void TreeGenerator::_fracture(const Vector3 &p_end, const Vector3 &p_dir, float 
 	w.end(part, p_r);
 }
 
+// Flood marks (trees.md 5av). Floodwater carries fine silt and clay; as it stands and falls it leaves a film on
+// everything under the waterline, a pale brown-grey crust once dry, thickest in the bark's furrows, with a sharp top
+// at the high-water mark: the line hydrologists survey as a high-water mark (USGS, Koenig et al. 2016,
+// Identifying and preserving high-water mark data). The current piles up against a stem's upstream face and drops
+// in its lee, so the line stands a few centimetres higher upstream. Rain washes the film off the plates within a
+// year or two; the furrows keep it longer. Debris the flood carried (twigs, reeds, grass: flood wrack) catches on
+// low limbs at the waterline and piles against the upstream side of the stem (Hupp 1988, dendrogeomorphic flood
+// evidence; Ballesteros-Canovas et al. 2015, scars and debris on riparian trees).
+float TreeGenerator::_silt_at(const Vector3 &p_pos, const Vector3 &p_normal) const {
+	if (flood_height <= 0.0f || fallen || fallen_branch || nodes.is_empty()) {
+		return 0.0f;
+	}
+	const float h = p_pos.y - nodes[0].start.y;
+	const float line = flood_height + 0.06f * MAX(-p_normal.x, 0.0f) - 0.04f * MAX(p_normal.x, 0.0f) + 0.05f * (moss_noise(p_pos * Vector3(3.0f, 0.5f, 3.0f), 0x73696c74u) - 0.5f);
+	const float below = 1.0f - Math::smoothstep(line - 0.012f, line + 0.012f, h);
+	if (below <= 0.0f) {
+		return 0.0f;
+	}
+	// Washed off over the years (the shader keeps it in the furrows longest).
+	return below * Math::lerp(1.0f, 0.3f, Math::smoothstep(0.3f, 3.0f, flood_years));
+}
+
+// Flood wrack (trees.md 5av): bundles of twigs and reed and grass caught over the low limbs at the waterline, lying
+// along the flow (+X) and trailing down, and a heap of sticks against the stem's upstream face (-X). Grey-brown and
+// dried; older wrack mostly gone.
+void TreeGenerator::_flood_wrack() {
+	if (flood_height <= 0.0f || fallen || fallen_branch || nodes.size() < 2 || flood_years > 4.0f) {
+		return;
+	}
+	Builder &w = wood_b;
+	RandomPCG wr;
+	wr.seed(uint64_t(seed) * 0x2545f4914f6cdd1dull + 0x77726163u);
+	const float ground = nodes[0].start.y;
+	const float keep = 1.0f - Math::smoothstep(1.0f, 4.0f, flood_years);
+	const Color twig = Color(0.42f, 0.37f, 0.3f).srgb_to_linear();
+	const Color straw = Color(0.6f, 0.55f, 0.42f).srgb_to_linear();
+	auto stick = [&](const Vector3 &p_a, const Vector3 &p_b, float p_r, const Color &p_c, bool p_flat) {
+		// A thin four-sided stick, or a flat blade (two-sided wood material), its own normals.
+		const Vector3 d = (p_b - p_a).normalized();
+		Vector3 u = d.cross(Vector3(0, 1, 0));
+		if (u.length_squared() < 1e-4f) {
+			u = d.cross(Vector3(1, 0, 0));
+		}
+		u.normalize();
+		const Vector3 v = d.cross(u).normalized();
+		Vector4i part;
+		w.begin(part);
+		const int sides = p_flat ? 2 : 4;
+		const int s0 = w.verts.size();
+		const float len = p_a.distance_to(p_b);
+		for (int e = 0; e <= 1; e++) {
+			const Vector3 c = e ? p_b : p_a;
+			const float r = p_r * (e ? 0.6f : 1.0f);
+			for (int k = 0; k < sides; k++) {
+				const float a = float(Math::TAU) * k / sides;
+				const Vector3 off = p_flat ? u * (k == 0 ? -r : r) : (u * Math::cos(a) + v * Math::sin(a)) * r;
+				w.verts.push_back(c + off);
+				w.normals.push_back(p_flat ? v : (u * Math::cos(a) + v * Math::sin(a)));
+				w.uvs.push_back(Vector2(float(k) / sides * 0.2f, e ? len / MAX(p_r * 8.0f, 0.01f) : 0.0f));
+				w.colors.push_back(p_c);
+			}
+		}
+		for (int k = 0; k < (p_flat ? 1 : sides); k++) {
+			const int k1 = (k + 1) % sides;
+			w.indices.push_back(s0 + k);
+			w.indices.push_back(s0 + sides + k);
+			w.indices.push_back(s0 + k1);
+			w.indices.push_back(s0 + k1);
+			w.indices.push_back(s0 + sides + k);
+			w.indices.push_back(s0 + sides + k1);
+		}
+		w.end(part, p_r);
+	};
+	auto jitter = [&](const Color &p_c) {
+		const float t = Math::lerp(0.8f, 1.15f, wr.randf());
+		return Color(p_c.r * t, p_c.g * t, p_c.b * t);
+	};
+	// Bundles over the limbs that cross the waterline (within 20 cm of it), at most six.
+	int bundles = 0;
+	for (int i = 1; i < int(nodes.size()) && bundles < 6; i++) {
+		const Node &n = nodes[i];
+		if (n.removed || n.order < 1 || n.radius < 0.008f || n.radius > 0.1f) {
+			continue;
+		}
+		const float y0 = n.start.y - ground, y1 = n.end().y - ground;
+		const float lo = MIN(y0, y1), hi = MAX(y0, y1);
+		if (hi < flood_height - 0.2f || lo > flood_height + 0.05f) {
+			continue;
+		}
+		if (wr.randf() > 0.5f * keep) {
+			continue;
+		}
+		const float t = Math::abs(y1 - y0) > 1e-3f ? CLAMP((flood_height - 0.05f - y0) / (y1 - y0), 0.0f, 1.0f) : 0.5f;
+		const Vector3 c = n.start.lerp(n.end(), t) + Vector3(0, n.radius, 0);
+		w.bone = i < int(node_bone.size()) ? node_bone[i] : 0;
+		const int count = 6 + int(wr.rand() % 10);
+		for (int q = 0; q < count; q++) {
+			// Lying across the limb along the flow, draped: both ends a little lower.
+			const float len = Math::lerp(0.12f, 0.5f, wr.randf());
+			const Vector3 dir = Vector3(1.0f, Math::lerp(-0.25f, 0.1f, wr.randf()), Math::lerp(-0.45f, 0.45f, wr.randf())).normalized();
+			const Vector3 mid = c + Vector3(Math::lerp(-0.08f, 0.04f, wr.randf()), wr.randf() * 0.03f, Math::lerp(-0.04f, 0.04f, wr.randf()));
+			stick(mid - dir * (len * 0.55f) - Vector3(0, len * 0.12f, 0), mid + dir * (len * 0.45f) - Vector3(0, len * 0.1f, 0), Math::lerp(0.002f, 0.006f, wr.randf()), jitter(twig), false);
+		}
+		const int blades = 8 + int(wr.rand() % 14);
+		for (int q = 0; q < blades; q++) {
+			// Grass and reed blades hanging from the bundle, combed downstream.
+			const Vector3 top = c + Vector3(Math::lerp(-0.12f, 0.08f, wr.randf()), 0.01f, Math::lerp(-0.05f, 0.05f, wr.randf()));
+			const float len = Math::lerp(0.08f, 0.3f, wr.randf());
+			const Vector3 hang = Vector3(Math::lerp(0.2f, 0.6f, wr.randf()), -1.0f, Math::lerp(-0.2f, 0.2f, wr.randf())).normalized();
+			stick(top, top + hang * len, Math::lerp(0.002f, 0.004f, wr.randf()), jitter(straw), true);
+		}
+		bundles++;
+	}
+	{
+		// Grass and reed plastered round the stem's upstream face at the line, combed round it by the current.
+		int k = -1;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			if (!nodes[i].removed && nodes[i].parent == 0 && (k < 0 || nodes[i].radius > nodes[k].radius)) {
+				k = i;
+			}
+		}
+		while (k >= 0 && nodes[k].end().y - ground < flood_height && nodes[k].main >= 0 && !nodes[nodes[k].main].removed) {
+			k = nodes[k].main;
+		}
+		if (k >= 0 && nodes[k].start.y - ground <= flood_height && nodes[k].end().y - ground >= flood_height - 0.05f) {
+			const Node &n = nodes[k];
+			const float t = CLAMP((flood_height - (n.start.y - ground)) / MAX(n.end().y - n.start.y, 1e-3f), 0.0f, 1.0f);
+			const Vector3 c = n.start.lerp(n.end(), t);
+			// Out past the bark's relief (about a tenth of the radius on a furrowed willow).
+			const float r = n.radius * 1.12f + 0.01f;
+			w.bone = k < int(node_bone.size()) ? node_bone[k] : 0;
+			const int blades = int((20 + int(wr.rand() % 30)) * keep);
+			for (int q = 0; q < blades; q++) {
+				const float a = float(Math::PI) + Math::lerp(-1.3f, 1.3f, wr.randf()); // Round -X.
+				const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
+				const Vector3 top = c + out * r + Vector3(0, -wr.randf() * 0.06f, 0);
+				// Down and round the stem toward its lee, lying on the bark.
+				const Vector3 tang = Vector3(0, 1, 0).cross(out) * (Math::sin(a) > 0.0f ? -1.0f : 1.0f);
+				const float len = Math::lerp(0.08f, 0.25f, wr.randf());
+				const Vector3 dir = (Vector3(0, -1.0f, 0) + tang * Math::lerp(0.2f, 0.9f, wr.randf())).normalized();
+				stick(top, top + dir * len + out * 0.01f, Math::lerp(0.002f, 0.004f, wr.randf()), jitter(straw), true);
+			}
+		}
+	}
+	if (flood_height < 0.25f || wr.randf() > 0.9f * keep) {
+		return;
+	}
+	// The heap against the upstream face: sticks lying across the flow, stacked to a third of the depth.
+	float r0 = 0.1f;
+	for (const Node &n : nodes) {
+		if (!n.removed && n.parent == 0) {
+			r0 = MAX(r0, n.radius);
+		}
+	}
+	w.bone = node_bone.size() > 0 ? node_bone[0] : 0;
+	const Vector3 foot = nodes[0].start;
+	const float top = MIN(flood_height * 0.35f, 0.4f);
+	const int count = 14 + int(wr.rand() % 14);
+	for (int q = 0; q < count; q++) {
+		const float hh = top * Math::pow(wr.randf(), 1.5f);
+		const float len = Math::lerp(0.2f, 0.9f, wr.randf());
+		// Pressed against the stem across the current, curving round it a little.
+		const float side = Math::lerp(-1.0f, 1.0f, wr.randf());
+		const Vector3 c = foot + Vector3(-(r0 * 1.15f + Math::lerp(0.0f, 0.12f, wr.randf()) + 0.06f * (1.0f - hh / MAX(top, 0.01f))), hh + 0.01f, side * r0 * 0.5f);
+		const Vector3 dir = Vector3(Math::lerp(-0.25f, 0.25f, wr.randf()), Math::lerp(-0.05f, 0.05f, wr.randf()), 1.0f).normalized();
+		stick(c - dir * len * 0.5f, c + dir * len * 0.5f, Math::lerp(0.004f, 0.015f, wr.randf()), jitter(twig), false);
+	}
+	for (int q = 0; q < count; q++) {
+		const Vector3 c = foot + Vector3(-(r0 * 1.1f + wr.randf() * 0.1f), top * wr.randf(), Math::lerp(-1.0f, 1.0f, wr.randf()) * r0 * 0.7f);
+		const Vector3 dir = Vector3(Math::lerp(-0.3f, 0.3f, wr.randf()), Math::lerp(-0.4f, 0.2f, wr.randf()), 1.0f).normalized();
+		stick(c, c + dir * Math::lerp(0.1f, 0.3f, wr.randf()), 0.003f, jitter(straw), true);
+	}
+}
+
 // Beaver work (trees.md 5au). A beaver fells a stem by gnawing a groove all round it into an hourglass, working
 // from the water side and widening the cut over nights, until the thin core breaks (field guides, e.g.
 // bear-tracker.com's beaver sign; Badyaev, National Wildlife 2015). Most stems cut are thin: a mean 12-14 cm
@@ -18664,6 +18838,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						// Wetter, deeper moss is darker; thin moss on dry faces yellower.
 						const float dry = moss_noise(moss.verts[v] * 1.3f, 0x6d6f7375u);
 						moss.colors.write[v] = Color(0.075f, 0.13f, 0.025f).lerp(Color(0.15f, 0.18f, 0.04f), CLAMP(dry * 1.2f - w * 0.4f, 0.0f, 1.0f));
+						if (flood_height > 0.0f) {
+							// Flood silt settles in the moss under the waterline, browning it (trees.md 5av).
+							const float sw = _silt_at(moss.verts[v], n);
+							if (sw > 0.0f) {
+								moss.colors.write[v] = moss.colors[v].lerp(Color(0.19f, 0.15f, 0.1f), 0.75f * sw);
+							}
+						}
 					}
 					if (collar) {
 						soil_tint(moss, part, 0.7f);
@@ -19442,6 +19623,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	_grow_chevrons(bark);
 	Builder resin;
 	_grow_resin(resin);
+	_flood_wrack();
 	_fire_crown(leaves);
 	if (fire_years >= 0.0f) {
 		// Its foliage is the regrowth: the live map's mortality rule (5ag) must not cast it again.
@@ -19492,7 +19674,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		bool bark_custom = false;
 		if (s == 0) {
 			_peel_bark(b);
-			bark_custom = _bare_amount() > 0.0f || !b.wound.is_empty() || !b.wood_char.is_empty() || _cork_strip_age() >= 0.0f;
+			bark_custom = _bare_amount() > 0.0f || !b.wound.is_empty() || !b.wood_char.is_empty() || _cork_strip_age() >= 0.0f || flood_height > 0.0f;
 		}
 		Array arrays;
 		arrays.resize(Mesh::ARRAY_MAX);
@@ -19698,7 +19880,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				char_uv2 = b.wood_char[v] > 0.0f;
 			}
 		}
-		if (lichen_uv2 || char_uv2) {
+		const bool silt_uv2 = s == 0 && flood_height > 0.0f && !fallen && !fallen_branch;
+		if (lichen_uv2 || char_uv2 || silt_uv2) {
 			PackedVector2Array uv2;
 			uv2.resize(b.verts.size());
 			Vector2 *u2 = uv2.ptrw();
@@ -19726,6 +19909,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			for (uint32_t v = 0; v < b.wood_char.size() && int(v) < uv2.size(); v++) {
 				if (b.wood_char[v] > 0.0f) {
 					u2[v] = Vector2(u2[v].x, -(0.5f + 1.5f * CLAMP(b.wood_char[v], 0.0f, 1.0f)));
+				}
+			}
+			// Flood silt (trees.md 5av): u = -(0.5 + 1.5 silt), on the bark under the waterline (no lichen there).
+			if (silt_uv2) {
+				for (int v = 0; v < uv2.size() && v < b.verts.size(); v++) {
+					const float sw = _silt_at(b.verts[v], v < b.normals.size() ? b.normals[v] : Vector3(0, 1, 0));
+					if (sw > 0.0f) {
+						u2[v] = Vector2(-(0.5f + 1.5f * CLAMP(sw, 0.0f, 1.0f)), u2[v].y);
+					}
 				}
 			}
 			arrays[Mesh::ARRAY_TEX_UV2] = uv2;
@@ -20126,6 +20318,7 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 		float lw = clamp(2.0 * COLOR.a - 1.0, 0.0, 1.0);
 		if (lw > 0.004) {
 			lw *= 1.0 - smoothstep(0.0, -0.5, UV2.y); // UV2 coded as char (a negative v) carries no lichen.
+			lw *= 1.0 - smoothstep(0.0, -0.5, UV2.x); // Nor UV2 coded as flood silt (a negative u).
 			vec4 lm = texture(lichen_map, UV2);
 			// A crust is a skin a fraction of a millimetre thick: the bark's own tone shows through
 			// it (darker in the bark's cracks), as do its relief and normal map.
@@ -20312,6 +20505,29 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			// The fibres' own ridges from their analytic slope (they repeat faster than du).
 			float fib_n = 0.1 * cos(6.2832 * fx) * (1.0 - smoothstep(0.25, 0.6, fw));
 			bark_wood_n = vec3(clamp(0.5 - (h1 - h0) * 4.0 - fib_n, 0.0, 1.0), 0.5, 1.0);
+		}
+	}
+	{
+		// Flood silt (TreeGenerator flood_height, UV2 u below -0.5; trees.md 5av): a matte film of pale brown-grey silt
+		// and clay, filling the furrows first and thinning over the plate tops, its top edge the high-water line; a
+		// darker tide band just under it where the scum dried. Washed off the plates by rain first.
+		float silt = clamp((-UV2.x - 0.5) / 1.5, 0.0, 1.0);
+		if (silt > 0.0) {
+			float relief = texture(texture_roughness, base_uv).b;
+			float sn = texture(lichen_map, base_uv * vec2(2.3, 0.7) + vec2(0.19, 0.77)).r;
+			float sn2 = texture(lichen_map, base_uv * vec2(9.0, 2.5) + vec2(0.61, 0.07)).g;
+			// The plate tops (high relief) show through first; the furrows hold it.
+			float cover = smoothstep(0.35, 0.75, silt * (1.6 - 1.5 * relief) + 0.3 * (sn - 0.5) + 0.12 * (sn2 - 0.5));
+			// Dried silt, linear (sRGB about 0.42, 0.37, 0.3): a thin film, so it tints the bark under it rather than
+			// painting over it; a lighter crust only where it lies thick in the furrows.
+			vec3 silt_c = vec3(0.13, 0.105, 0.075) * (0.85 + 0.3 * sn);
+			silt_c = mix(silt_c, ALBEDO * vec3(1.25, 1.1, 0.9), 0.35 * (1.0 - smoothstep(0.4, 0.8, cover)));
+			cover *= 0.85;
+			// The tide band: where the weight falls off at the line (silt just under 1 there), a little darker.
+			float band = smoothstep(0.6, 0.9, silt) * (1.0 - smoothstep(0.9, 1.0, silt));
+			silt_c *= 1.0 - 0.25 * band;
+			ALBEDO = mix(ALBEDO, silt_c, cover);
+			ROUGHNESS = mix(ROUGHNESS, 0.95, cover);
 		}
 	}
 	{
@@ -21792,6 +22008,10 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 			params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(1.0f, 1.3f, tv));
 			veteran = Math::lerp(0.35f, 0.8f, tv);
 			limb_breakage = Math::lerp(1.4f, 2.0f, tv);
+			// The last flood's marks (trees.md 5av): a softwood floodplain floods most years, 0.5-1.6 m over the
+			// willows' feet, some weeks to a couple of years ago.
+			flood_height = Math::lerp(0.5f, 1.6f, Math::fmod(tv * 2.7f + 0.31f, 1.0f));
+			flood_years = Math::lerp(0.05f, 2.5f, Math::fmod(tv * 1.9f + 0.6f, 1.0f));
 		}
 	}
 	if (beaver_band > 0 && beaver_band <= 3) {
@@ -21807,6 +22027,9 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.3f, 0.65f, Math::fmod(tv * 2.3f + 0.4f, 1.0f)));
 	} else {
 		beaver_cut = BEAVER_NONE;
+	}
+	if (wet_band != 2) {
+		flood_height = 0.0f;
 	}
 	if (edge_band > 0) {
 		// A forest edge's trees (trees.md 5as): the open on +X, most fully, a few half sheltered by a mantle tree.
@@ -22223,6 +22446,8 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	windthrow_storm = p_from.windthrow_storm;
 	windthrow_direction = p_from.windthrow_direction;
 	windthrow_band = p_from.windthrow_band;
+	flood_height = p_from.flood_height;
+	flood_years = p_from.flood_years;
 	beaver_cut = p_from.beaver_cut;
 	beaver_years = p_from.beaver_years;
 	beaver_depth = p_from.beaver_depth;
@@ -22453,6 +22678,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const float saved_erosion = bank_erosion;
 		const float saved_stilt = stilt_height;
 		const int saved_beaver_cut = beaver_cut;
+		const float saved_flood_h = flood_height;
+		const float saved_flood_y = flood_years;
 		const float saved_beaver_years = beaver_years;
 		const float saved_beaver_depth = beaver_depth;
 		const float saved_edge_open = edge_open;
@@ -22554,6 +22781,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		bank_erosion = saved_erosion;
 		stilt_height = saved_stilt;
 		beaver_cut = saved_beaver_cut;
+		flood_height = saved_flood_h;
+		flood_years = saved_flood_y;
 		beaver_years = saved_beaver_years;
 		beaver_depth = saved_beaver_depth;
 		edge_open = saved_edge_open;
@@ -23638,6 +23867,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			Ref<PlantSpecies> old = _stand_species(PRESET_WHITE_WILLOW, true, p_variants, FORM_STAND);
 			wet_band = 0;
 			old->set_name("White Willow (old, floodplain)");
+			old->set_follow_flow(true); // Flood marks: +X downstream (trees.md 5av).
 			old->set_density(1.0f);
 			old->set_rule_range(PlantSpecies::RULE_WATER_DEPTH, Vector2(0.0f, 0.7f));
 			old->set_rule_fade(PlantSpecies::RULE_WATER_DEPTH, 0.15f);
@@ -24872,6 +25102,10 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_ground_slope", "slope"), &TreeGenerator::set_ground_slope);
 	ClassDB::bind_method(D_METHOD("get_ground_slope"), &TreeGenerator::get_ground_slope);
 	ClassDB::bind_method(D_METHOD("set_stilt_height", "height"), &TreeGenerator::set_stilt_height);
+	ClassDB::bind_method(D_METHOD("set_flood_height", "height"), &TreeGenerator::set_flood_height);
+	ClassDB::bind_method(D_METHOD("get_flood_height"), &TreeGenerator::get_flood_height);
+	ClassDB::bind_method(D_METHOD("set_flood_years", "years"), &TreeGenerator::set_flood_years);
+	ClassDB::bind_method(D_METHOD("get_flood_years"), &TreeGenerator::get_flood_years);
 	ClassDB::bind_method(D_METHOD("set_beaver_cut", "cut"), &TreeGenerator::set_beaver_cut);
 	ClassDB::bind_method(D_METHOD("get_beaver_cut"), &TreeGenerator::get_beaver_cut);
 	ClassDB::bind_method(D_METHOD("set_beaver_years", "years"), &TreeGenerator::set_beaver_years);
@@ -25027,6 +25261,8 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_slope", PROPERTY_HINT_RANGE, "0,1.2,0.01,radians_as_degrees"), "set_ground_slope", "get_ground_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bank_erosion", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_bank_erosion", "get_bank_erosion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stilt_height", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_stilt_height", "get_stilt_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flood_height", PROPERTY_HINT_RANGE, "0,6,0.01,suffix:m"), "set_flood_height", "get_flood_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flood_years", PROPERTY_HINT_RANGE, "0,30,0.05,suffix:yr"), "set_flood_years", "get_flood_years");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "beaver_cut", PROPERTY_HINT_ENUM, "None,Gnawed,Stump,Felled"), "set_beaver_cut", "get_beaver_cut");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beaver_years", PROPERTY_HINT_RANGE, "0,60,0.05,suffix:yr"), "set_beaver_years", "get_beaver_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beaver_depth", PROPERTY_HINT_RANGE, "0.05,0.95,0.01"), "set_beaver_depth", "get_beaver_depth");
