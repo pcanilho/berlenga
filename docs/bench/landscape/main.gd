@@ -3490,7 +3490,7 @@ func _generated_forest(clearing: bool) -> Biome:
 	var variants := int(args.get("tree-variants", "1"))
 	var stands := {"beech": TreeGenerator.STAND_BEECH, "oak": TreeGenerator.STAND_OAK_MIXED,
 			"montane": TreeGenerator.STAND_MONTANE_CONIFER, "hedgerow": TreeGenerator.STAND_HEDGEROW,
-			"stonepine": 13, "windthrow": 17, "old_growth": 18, "taiga": 19} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
+			"stonepine": 13, "windthrow": 17, "old_growth": 18, "taiga": 19, "alder_carr": 20, "floodplain_willow": 21} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
 	var b: Biome
 	if args.has("montado"):
 		# --montado: the Iberian wood pasture, open-grown cork oaks with stone pines among them over a summer-dry
@@ -3504,10 +3504,21 @@ func _generated_forest(clearing: bool) -> Biome:
 		all.append_array(b.species)
 		b.species = all
 	elif args.has("tree-stand"):
-		# --tree-stand=beech|oak|montane|hedgerow|stonepine|windthrow|old_growth|taiga: one stand only (its trees, sapling, snag and log).
+		# --tree-stand=beech|oak|montane|hedgerow|stonepine|windthrow|old_growth|taiga|alder_carr|floodplain_willow: one stand only (its trees, sapling, snag and log).
 		b = tg.make_stand(stands.get(args["tree-stand"], TreeGenerator.STAND_BEECH), variants)
 	else:
 		b = tg.make_woodland(variants, TreeGenerator.REGION_EUROPE)
+	if args.has("forest-edge") and tg.has_method("make_edge"):
+		# --forest-edge[=stand]: the edge species (trees.md 5as: the shrub mantle out in the open, edge trees one-sided
+		# toward it) with the stand's own; vegetation places them by RULE_FOREST_EDGE off the canopy's edge.
+		var en := String(args["forest-edge"])
+		var es: int = stands.get(en, stands.get(args.get("tree-stand", "beech"), TreeGenerator.STAND_BEECH))
+		var eb: Biome = tg.make_edge(es, variants)
+		var all2: Array[PlantSpecies] = []
+		all2.append_array(b.species)
+		all2.append_array(eb.species)
+		b.species = all2
+		_log("forest edge: %d edge species" % eb.species.size())
 	_log("generated woodland: %d species" % b.species.size())
 	return b
 
