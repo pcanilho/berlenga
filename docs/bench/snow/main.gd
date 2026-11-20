@@ -64,7 +64,8 @@ class BodySnowStub extends WorldSnow:
 #   --view=avalanche  a metre of new snow on a 38 degree face releases and piles at the toe (--before: the
 #                     loaded face before it goes); --test=avalanche for the checks
 #                     --powder [--at=S]: the run in real time, shot S s after release (default 9) with its
-#                     powder cloud (PhysX Flow); --wet: a thaw first, then a wet slide (--triggered: the
+#                     powder cloud (PhysX Flow; traced, it also saves the raster frame of the same cloud as
+#                     <out>_raster.png); --wet: a thaw first, then a wet slide (--triggered: the
 #                     same release, dry); --test=triggers, --test=powder, --test=forest, --test=wet for
 #                     triggers, the cloud, forests (holding, braking, pressure on trees) and wet snow;
 #                     --test=waves: avalanches into a lake (impulse waves, lake ice)
@@ -150,6 +151,8 @@ var air := INF # --air=C: the snowfall view's air temperature (sleet near and ab
 
 
 func _ready() -> void:
+	# 4x MSAA for raster stills: thin geometry far off (a crown wall a pixel high) is otherwise a row of dots.
+	get_viewport().msaa_3d = Viewport.MSAA_4X
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--view="): view = a.substr(7)
 		if a == "--glints=exact" or a == "--glints=grid":
@@ -2222,7 +2225,12 @@ func _build_view() -> void:
 	elif view == "lake":
 		await _setup("mountain", 512.0, 128, -12.0)
 	elif view == "avalanche":
-		await _setup("avalanche_bowl" if OS.get_cmdline_user_args().has("--powder") else "avalanche", 256.0, 128, -8.0)
+		if OS.get_cmdline_user_args().has("--powder"):
+			# Wider, at the same 2 m cells: the deep-snow geometry the shot sees (320 m) stays over the cover, whose
+			# edge otherwise showed as a dotted seam across the far slope.
+			await _setup("avalanche_bowl", 320.0, 160, -8.0)
+		else:
+			await _setup("avalanche", 256.0, 128, -8.0)
 	elif view == "windblown":
 		await _setup("ridge", 512.0, 256, -8.0)
 	elif view == "shelter" or view == "icicles":
@@ -2825,7 +2833,7 @@ func _build_avalanche(cam: Camera3D) -> void:
 	sun.visible = true
 	sun.shadow_enabled = true
 	sun.rotation_degrees = Vector3(-30.0, -60.0, 0.0)
-	_add_terrain(256.0, 128, Color(0.33, 0.31, 0.27), 16.0)
+	_add_terrain(snow.extent, int(snow.extent / 2.0), Color(0.33, 0.31, 0.27), 16.0)
 	# The deposit near the camera as geometry (the deep-snow surface), its blocks as clumps.
 	var probe := Marker3D.new()
 	probe.name = "Probe"
@@ -2909,6 +2917,9 @@ func _build_avalanche(cam: Camera3D) -> void:
 		# not the other. Light on the camera's side keeps every shadow inside the scene.
 		sun.rotation_degrees = Vector3(-40.0, 40.0, 0.0)
 		if traced:
+			# The raster frame of the same cloud first (_raster.png beside --out): Flow is not bit-for-bit the
+			# same from run to run, so a raster run and a traced run do not show one cloud.
+			await _save_frame("_raster")
 			process_mode = Node.PROCESS_MODE_ALWAYS
 			get_tree().paused = true
 			wenv.pathtracing_enabled = true

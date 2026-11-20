@@ -755,6 +755,7 @@ uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 uniform vec3 pathtraced_absorption = vec3(0.6, 0.14, 0.1);
 // The load the river carries (silt, ash: water_sediment.h), its absorption: the sheet and its white water take its colour.
 uniform vec3 sediment_absorption = vec3(0.0);
+uniform vec3 sediment_scattering = vec3(0.0);
 // The water a ray crosses through the sheet, for its tint under path tracing (m).
 uniform float sheet_thickness = 0.1;
 uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.05;
@@ -777,6 +778,21 @@ float f_noise(vec2 p) {
 			mix(f_hash(i + vec2(0.0, 1.0)), f_hash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
 
+// A loaded sheet scatters: what it sends back is the turbid medium's diffuse reflectance (the river's own, by the
+// similarity relation and Hapke's two-stream: water_raster_reflections.h), over the share of the light the sheet's
+// thickness holds (diffuse attenuation both ways); the rest passes through. Silt makes a fall a tan curtain, not a
+// dark brown glass. Clear water: no scattering, held 0.
+float sheet_held(vec3 a, vec3 b_red) {
+	vec3 sig = sqrt(3.0 * a * (a + b_red));
+	vec3 h = 1.0 - exp(-2.0 * sig * sheet_thickness);
+	return dot(h, vec3(1.0 / 3.0));
+}
+vec3 sheet_diffuse(vec3 a, vec3 b_red) {
+	vec3 wp = b_red / max(a + b_red, vec3(1e-6));
+	vec3 gam = sqrt(max(1.0 - wp, vec3(0.0)));
+	return (1.0 - gam) / (1.0 + gam);
+}
+
 void fragment() {
 	float edge = COLOR.r;
 	float aeration = COLOR.g;
@@ -791,24 +807,32 @@ void fragment() {
 #if defined(RT)
 	// A falling sheet is one surface with holes: traced as a thin wall (straight through, tinted by its thickness),
 	// not as the boundary of a medium, which a path leaving through a hole never left (see the contact sheet).
-	vec3 white = foam_color.rgb * exp(-sediment_absorption * 0.05);
-	ALBEDO = mix(exp(-(pathtraced_absorption + sediment_absorption) * sheet_thickness), white, foam);
-	ROUGHNESS = mix(pathtraced_roughness, 0.8, foam);
+	vec3 white = foam_color.rgb * exp(-sediment_absorption * 0.035);
+	vec3 a_t = pathtraced_absorption + sediment_absorption;
+	vec3 b_red = sediment_scattering * 0.05;
+	float held = sheet_held(a_t, b_red);
+	vec3 body = mix(exp(-a_t * sheet_thickness), sheet_diffuse(a_t, b_red), held);
+	ALBEDO = mix(body, white, foam);
+	ROUGHNESS = mix(pathtraced_roughness, 0.8, max(foam, held));
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
-	TRANSMISSION = 1.0 - foam;
+	TRANSMISSION = (1.0 - foam) * (1.0 - held);
 	ALPHA = cover;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #else
 	// Lit by the scene's lights, shadows and sky like any surface (it was unshaded with a fixed light,
 	// so a fall in a shaded valley glowed flat white): white water scatters diffusely, the clear sheet
 	// is a smooth dielectric showing the sky in its specular.
-	vec3 white = foam_color.rgb * exp(-sediment_absorption * 0.05);
-	ALBEDO = mix(water_color.rgb * exp(-sediment_absorption * 0.05), white, foam);
-	ROUGHNESS = mix(pathtraced_roughness + 0.1, 0.85, foam);
+	vec3 white = foam_color.rgb * exp(-sediment_absorption * 0.035);
+	vec3 a_t = pathtraced_absorption + sediment_absorption;
+	vec3 b_red = sediment_scattering * 0.05;
+	float held = sheet_held(a_t, b_red);
+	vec3 body = mix(water_color.rgb * exp(-sediment_absorption * 0.035), sheet_diffuse(a_t, b_red), held);
+	ALBEDO = mix(body, white, foam);
+	ROUGHNESS = mix(pathtraced_roughness + 0.1, 0.85, max(foam, held));
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
-	ALPHA = mix(water_color.a, foam_color.a, foam) * cover;
+	ALPHA = mix(mix(water_color.a, 1.0, held), foam_color.a, foam) * cover;
 #endif
 }
 )";
@@ -2242,6 +2266,7 @@ void PhysXRiver3D::_sediment_texture() {
 		water_material->set_shader_parameter(SNAME("sediment_on"), false);
 		if (fall_material.is_valid()) {
 			fall_material->set_shader_parameter(SNAME("sediment_absorption"), Vector3());
+			fall_material->set_shader_parameter(SNAME("sediment_scattering"), Vector3());
 		}
 		return;
 	}
@@ -2256,7 +2281,9 @@ void PhysXRiver3D::_sediment_texture() {
 				weight += q;
 			}
 		}
-		fall_material->set_shader_parameter(SNAME("sediment_absorption"), WaterSediment::absorption(weight > 0.0f ? mean / weight : Vector2()));
+		const Vector2 load = weight > 0.0f ? mean / weight : Vector2();
+		fall_material->set_shader_parameter(SNAME("sediment_absorption"), WaterSediment::absorption(load));
+		fall_material->set_shader_parameter(SNAME("sediment_scattering"), WaterSediment::scattering(load));
 	}
 	// One texel per cell: x along the sections, y across the lanes (right bank to left); b the section's half extent,
 	// so the shader finds the lane from its distance across.

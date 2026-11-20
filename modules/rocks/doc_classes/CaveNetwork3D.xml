@@ -224,7 +224,7 @@
 			The least rock over a passage, in metres. It grows by 0.08 m per metre from the entrance, up to 15 m more.
 		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
-			A [Node3D] (usually the camera or the player) to stream meshes round. Chunks within [member stream_radius] are meshed on worker threads without stalling a frame, nearest first, when the target has moved 4 m; chunks further than the radius plus about two chunks are freed. Each entrance's patch chunks stay, since the landscape is open over the patch from any distance. Empty: no streaming ([method build_meshes] only).
+			A [Node3D] (usually the camera or the player) to stream meshes round. Chunks within [member stream_radius] are meshed on worker threads without stalling a frame, nearest first, when the target has moved 4 m; chunks further than the radius plus about two chunks are freed. Each entrance's patch chunks stay, since the landscape is open over the patch from any distance. Empty: the viewport's current camera, as the other world systems follow it; once [method build_meshes] has been called, no streaming (the caller owns the meshes).
 		</member>
 		<member name="gamma" type="float" setter="set_gamma" getter="get_gamma" default="2.0">
 			The gamma-skeleton's exponent. Two key points are linked unless a third lies in their lune. 2 gives branchwork caves (the Gabriel graph). Lower values link more pairs, toward mazes.

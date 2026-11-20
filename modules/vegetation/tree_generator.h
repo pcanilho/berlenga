@@ -136,6 +136,8 @@ public:
 		STAND_DATE_OASIS, // Date palm oasis: tended palms in irrigated rows, wild clumps by the water, fruit trees beneath (trees.md 5ai).
 		STAND_BEETLE_SPRUCE, // Spruce after a bark beetle outbreak: grey snag spots with a red front, living spruce between (trees.md 5aj).
 		STAND_WINDTHROW, // Spruce after a winter storm: gaps of thrown and snapped trees lying down the storm's track, pioneers coming up (trees.md 5am).
+		STAND_OLD_GROWTH_BEECH, // Primeval beech: a closed, three-layered canopy with veteran giants, gaps of one fallen giant each, every age under them, deadwood at all decay stages (trees.md 5an).
+		STAND_BOREAL_TAIGA, // Taiga: narrow spruce and fire-scarred pine in a mosaic, birch in old burns, silver kelo (trees.md 5ap).
 		STAND_MAX,
 	};
 
@@ -592,12 +594,15 @@ private:
 	HashSet<int> hanger_bases; // First nodes of snapped limbs left hanging in the crown (_break_limbs()).
 	// Old-tree features (docs/ideas/trees.md 5e): tree-related microhabitats of veteran trees.
 	float veteran = 0.0f;
+	int fire_scars = 0; // Old surface fires survived, each widening one catface at the foot (trees.md 5ap).
+	bool kelo = false; // Dead pine weathered silver, bark shed, standing or lying for a century (trees.md 5ap).
 	enum VeteranKind : uint8_t {
 		VET_BASAL_HOLLOW,
 		VET_ROT_HOLE,
 		VET_WOODPECKER,
 		VET_BURL,
 		VET_EPICORMIC,
+		VET_FIRE_SCAR, // A healed fire scar ("catface") at the stem's foot (trees.md 5ap).
 	};
 	struct VeteranFeature {
 		VeteranKind kind;
@@ -701,6 +706,8 @@ public:
 	float windthrow_storm = 1.0f;
 	Vector2 windthrow_direction = Vector2(0.92f, -0.38f);
 	int windthrow_band = 0; // While a windthrow stand grows its species: 1 thrown, 2 snapped, 3 leaning survivors.
+	int boreal_band = 0; // While a taiga stand grows its species: 1 narrow spruce, 2 fire-survivor pine, 3 kelo, 4 burn birch (trees.md 5ap).
+	int old_growth_band = 0; // While an old-growth stand grows its species: 1 veteran giants, 2 poles, 3 giant deadwood, 4 canopy (trees.md 5an).
 	static int _windthrow_class(float p_years);
 	// Far thinning (trees.md 9a, Paulo's pick 19 Nov): placed trees join VegetationField3D's far tail. Each stand
 	// species 5 m or larger gets a visibility range by its size (30 x its largest extent, 150-1200 m) unless it has one, and
@@ -1127,6 +1134,16 @@ public:
 		mesh_cache.clear();
 	}
 	float get_veteran() const { return veteran; }
+	void set_fire_scars(int p_count) {
+		fire_scars = CLAMP(p_count, 0, 4);
+		mesh_cache.clear();
+	}
+	int get_fire_scars() const { return fire_scars; }
+	void set_kelo(bool p_kelo) {
+		kelo = p_kelo;
+		mesh_cache.clear();
+	}
+	bool get_kelo() const { return kelo; }
 	int get_veteran_feature_count() const { return veteran_features.size(); }
 	Array get_veteran_features() const;
 

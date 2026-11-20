@@ -45,7 +45,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"olive grove", "date oasis", "beetle spruce", "windthrow", "woodland", "NA woodland"]
+		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -295,6 +295,55 @@ func _stand_checks(only := -1) -> void:
 						if Vector2(x.x, x.z).normalized().dot(dir) < cos(0.5):
 							off += 1
 			_check(thrown > 0 and snapped > 0 and leaning > 0 and stand_count > 0 and off == 0 and plates > 0, "windthrow: %d thrown (%d variants with root plates), %d snapped, %d leaning, %d standing; %d of %d drawn turned off the storm's track" % [thrown, plates, snapped, leaning, stand_count, off, checked])
+		elif i == TreeGenerator.STAND_OLD_GROWTH_BEECH:
+			# Old-growth beech (trees.md 5an): veteran giants among the canopy (about ten a hectare), a fallen giant in
+			# the gaps, poles and seedlings under them, lying deadwood well over standing.
+			var giants := 0
+			var gap_logs := 0
+			var poles := 0
+			var lying := 0
+			var standing_dead := 0
+			var vet_ok := true
+			for s in sps.size():
+				var nm5: String = sps[s].resource_name
+				var n5: int = f.get_placements(s).size()
+				if nm5.contains("old-growth") or nm5.ends_with("(log)"):
+					var hs := []
+					for m in sps[s].meshes:
+						var ab: AABB = m.get_aabb()
+						hs.append("%.0fx%.0f %s" % [ab.size.y, max(ab.size.x, ab.size.z), str(m.get_meta("crown", Vector3()))])
+					print("  %s: %s" % [nm5, ", ".join(hs)])
+				if nm5.contains("old-growth veteran"):
+					giants += n5
+				elif nm5.contains("fallen giant"):
+					gap_logs += n5
+					lying += n5
+				elif nm5.contains("broken giant"):
+					standing_dead += n5
+				elif nm5.contains("pole"):
+					poles += n5
+				elif nm5.contains("(log)"):
+					lying += n5
+				elif nm5.contains("(snag)"):
+					standing_dead += n5
+			var ha: float = SIZE * SIZE / 10000.0
+			_check(giants / ha >= 4.0 and giants / ha <= 25.0 and gap_logs > 0 and poles > 0 and lying > 2 * standing_dead, "old-growth beech: %.1f veteran giants a hectare, %d fallen giants in gaps, %d poles, %d lying to %d standing dead" % [giants / ha, gap_logs, poles, lying, standing_dead])
+		elif i == TreeGenerator.STAND_BOREAL_TAIGA:
+			# Taiga (trees.md 5ap): spruce and pine in a mosaic, fire-survivor pines, kelo standing and down, birch in burns.
+			var tg := {"survivor": 0, "kelo": 0, "burn": 0, "spruce": 0, "pine": 0}
+			for s in sps.size():
+				var nm6: String = sps[s].resource_name
+				var n6: int = f.get_placements(s).size()
+				for k in tg.keys():
+					if nm6.contains("taiga" if k == "pine" else k) and (k != "pine" or nm6.begins_with("Scots pine (taiga)")):
+						tg[k] += n6
+				if nm6.contains("taiga") or nm6.contains("kelo"):
+					var hs6 := []
+					for m in sps[s].meshes:
+						var ab6: AABB = m.get_aabb()
+						hs6.append("%.0fx%.0f" % [ab6.size.y, max(ab6.size.x, ab6.size.z)])
+					print("  %s: %d, %s" % [nm6, n6, ", ".join(hs6)])
+			_check(tg.survivor > 0 and tg.kelo > 0 and tg.burn > 0 and tg.spruce > 0 and tg.pine > 0, "boreal taiga: %d fire survivors, %d kelo, %d burn birch, %d spruce, %d pine" % [tg.survivor, tg.kelo, tg.burn, tg.spruce, tg.pine])
 		elif i == TreeGenerator.STAND_POLLARD_ROW:
 			_check(cut.pollard > 0 and cut.pollard >= open_count, "pollard row: %d willow pollards, %d alders" % [cut.pollard, open_count])
 		elif i == TreeGenerator.STAND_COPPICE_STANDARDS:
@@ -828,11 +877,12 @@ func _render_plot(i: int, args: Dictionary) -> void:
 				if o.length() < 25.0 and not nm.begins_with("Hazel") and not nm.contains("sticks") and o.normalized().dot(-cam.global_transform.basis.z * Vector3(1, 0, 1)) > 0.6:
 					print("in view %.1f m: %s" % [o.length(), biome.species[si].resource_name])
 	if args.has("near"):
-		# --near=D: the first species' plant nearest the plot's centre, from D metres (default 7),
+		# --near=D: the first species' (env NEAR_SPECIES) plant nearest the plot's centre, from D metres (default 7),
 		# eye at 1.7 m, aimed at 1.6 m on it (env SH sets the aim height).
 		var best_p := Vector3()
 		var best_d := 1e9
-		for pp in f.get_placements(0):
+		# env NEAR_SPECIES=k: the k-th species instead of the first.
+		for pp in f.get_placements(int(OS.get_environment("NEAR_SPECIES")) if OS.get_environment("NEAR_SPECIES") != "" else 0):
 			var dd := Vector2(pp.x, pp.z).length()
 			if dd < best_d:
 				best_d = dd

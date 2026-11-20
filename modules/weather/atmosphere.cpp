@@ -212,7 +212,7 @@ uniform float atmo_far_water : hint_range(0, 1) = 0.0; // how much of the ground
 uniform vec4 atmo_aerosol = vec4(8.802e-5, 9.78e-5, 1200.0, 0.0);
 // The clouds' shadow map (WeatherMap3D bakes it in the sun's plane; size 0: none, the shader marches the
 // clouds itself): red the beam's transmittance, green the diffuse. Axes in xyz, the square's corner in w.
-uniform sampler2D atmo_cloud_shadow_map : filter_linear, repeat_disable, hint_default_white;
+uniform sampler2D atmo_cloud_shadow_map : filter_linear_mipmap, repeat_disable, hint_default_white;
 uniform vec4 atmo_cloud_shadow_u = vec4(1.0, 0.0, 0.0, 0.0);
 uniform vec4 atmo_cloud_shadow_v = vec4(0.0, 0.0, 1.0, 0.0);
 uniform float atmo_cloud_shadow_size = 0.0;
@@ -307,7 +307,7 @@ float atmo_phase_mie(float c, float g) {
 // Far off (p_dist past 20 km) the steps along the view are kilometres apart and single clouds' shadows
 // would alias into bands at the horizon: there it turns to the shadow's mean over the cover (the share of
 // the ground under cloud, a typical cloud letting a tenth of the beam through).
-vec2 atmo_cloud_transmittance(vec3 q, vec3 l, vec2 cam_xz, float p_step, float p_dist) {
+vec2 atmo_cloud_transmittance(vec3 q, vec3 l, vec2 cam_xz, float p_step, float p_dist, float p_foot) {
 	float r = length(q);
 	float mu_s = dot(q, l) / r;
 	float rb = atmo_radii.x + cloud_base_min;
@@ -326,7 +326,11 @@ vec2 atmo_cloud_transmittance(vec3 q, vec3 l, vec2 cam_xz, float p_step, float p
 		vec2 uv = (vec2(dot(w, atmo_cloud_shadow_u.xyz), dot(w, atmo_cloud_shadow_v.xyz)) - vec2(atmo_cloud_shadow_u.w, atmo_cloud_shadow_v.w)) / atmo_cloud_shadow_size;
 		vec2 e = abs(uv - 0.5) * 2.0;
 		float edge = smoothstep(0.8, 0.98, max(e.x, e.y));
-		vec2 c = edge < 1.0 ? textureLod(atmo_cloud_shadow_map, uv, 0.0).rg : vec2(1.0);
+		// p_foot: the size (m) of what one read stands for (a far ground point under one pixel), averaged over by
+		// the map's mips; neighbouring pixel rows on the far ground fall kilometres apart, and reading single
+		// texels there drew the cloud shadows as horizontal bands.
+		float lod = log2(max(p_foot * float(textureSize(atmo_cloud_shadow_map, 0).x) / atmo_cloud_shadow_size, 1.0));
+		vec2 c = edge < 1.0 ? textureLod(atmo_cloud_shadow_map, uv, lod).rg : vec2(1.0);
 		if (edge > 0.0) {
 			float cover = wc_cover_type(w.xz).x;
 			c = mix(c, vec2(1.0 - 0.9 * cover, 1.0 - 0.5 * cover), edge);
@@ -389,10 +393,10 @@ void atmo_march(vec3 origin, vec3 rd, float t_a, float t_b, int steps, float jit
 		vec2 c1 = vec2(1.0);
 		if (shadow) {
 			if (mu0 > 0.0) {
-				c0 = atmo_cloud_transmittance(p, l0, cam_xz, dt, t);
+				c0 = atmo_cloud_transmittance(p, l0, cam_xz, dt, t, 0.0);
 			}
 			if (mu1 > 0.0 && dot(e1, vec3(1.0)) > 0.0) {
-				c1 = atmo_cloud_transmittance(p, l1, cam_xz, dt, t);
+				c1 = atmo_cloud_transmittance(p, l1, cam_xz, dt, t, 0.0);
 			}
 		}
 		float as = 0.0;
@@ -425,8 +429,8 @@ void atmo_march(vec3 origin, vec3 rd, float t_a, float t_b, int steps, float jit
 // shadow_steps: more steps for the stretch under the cloud tops, each reading the clouds' shadow (0: no
 // shadow, the whole ray in steps); cam_xz: the camera's place in the world, where the clouds are.
 // aerosol_from: where along the ray the aerosol haze starts (the froxels' reach from the camera; 0 for rays
-// the froxels do not draw).
-vec4 atmo_scatter(float cam_h, vec3 rd, vec3 l0, vec3 e0, vec3 l1, vec3 e1, float max_dist, int steps, float jitter, int shadow_steps, vec2 cam_xz, float aerosol_from, out vec3 transmittance_out) {
+// the froxels do not draw). pixel_angle: the angle (rad) one pixel spans, for the ground's cloud shadow.
+vec4 atmo_scatter(float cam_h, vec3 rd, vec3 l0, vec3 e0, vec3 l1, vec3 e1, float max_dist, int steps, float jitter, int shadow_steps, vec2 cam_xz, float aerosol_from, float pixel_angle, out vec3 transmittance_out) {
 	float r0 = atmo_radii.x + max(cam_h, 1.0);
 	float mu = rd.y;
 	bool ground = atmo_hits_ground(r0, mu);
@@ -460,7 +464,9 @@ vec4 atmo_scatter(float cam_h, vec3 rd, vec3 l0, vec3 e0, vec3 l1, vec3 e1, floa
 		lit = e0 * atmo_light_transmittance(atmo_radii.x + 1.0, g0) * ga0 * max(g0, 0.0) + e1 * atmo_light_transmittance(atmo_radii.x + 1.0, g1) * exp(-atmo_aerosol_tau(atmo_radii.x + 1.0, g1)) * max(g1, 0.0);
 		if (shadow_steps > 0 && t_max < 200000.0 && g0 > 0.0) {
 			// Under the clouds' shadow too: the sun through them, the sky's light through them diffusely.
-			vec2 c = atmo_cloud_transmittance(gp, l0, cam_xz, t_max / float(shadow_steps), t_max);
+			// One pixel's footprint on the ground there: t times its angle over the sine the ray meets the ground at.
+			float foot = t_max * pixel_angle / max(-dot(rd, up), 0.01);
+			vec2 c = atmo_cloud_transmittance(gp, l0, cam_xz, t_max / float(shadow_steps), t_max, foot);
 			lit = e0 * atmo_light_transmittance(atmo_radii.x + 1.0, g0) * ga0 * max(g0, 0.0) * mix(c.y, c.x, 0.8) + e1 * atmo_light_transmittance(atmo_radii.x + 1.0, g1) * exp(-atmo_aerosol_tau(atmo_radii.x + 1.0, g1)) * max(g1, 0.0);
 		}
 		lum += thr * mix(atmo_ground_albedo, vec3(0.02), atmo_far_water) / PI * lit;

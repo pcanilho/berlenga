@@ -158,6 +158,13 @@ private:
 	float high_cloud_height = 8000.0f; // m above y = 0
 	float high_cloud_optical_depth = 1.0f; // vertical, at full cover (ice clouds 0.03 to 3)
 	Vector2 high_cloud_drift; // m, moved by get_wind_aloft at high_cloud_height
+	// The mid cloud layer (altocumulus, altostratus; docs/ideas/clouds.md), the same way: humid air thickens it,
+	// dry air thins it, it thickens into a sheet ahead of rain, kept out of cloud_cover and get_cloud_cover_at.
+	float mid_cloud_cover = 0.15f;
+	float mid_cloud_height = 4500.0f; // m above y = 0, the slab's middle
+	float mid_cloud_thickness = 400.0f; // m
+	float mid_cloud_optical_depth = 4.0f; // vertical, at full cover (altocumulus about 2 to 10)
+	Vector2 mid_cloud_drift; // m, moved by get_wind_aloft at mid_cloud_height
 	double cloud_time = 0.0; // s of weather time the clouds have evolved
 	NodePath sun_light;
 	float cloud_shadow_extent = 6144.0f; // m
@@ -170,6 +177,7 @@ private:
 	float cur_cloud_cover = 0.4f;
 	float cur_cloud_type = 0.3f;
 	float cur_high_cloud_cover = 0.25f;
+	float cur_mid_cloud_cover = 0.15f;
 	float cur_rain_rate = 0.0f;
 	float cur_temperature = 15.0f;
 	float cur_humidity = 0.7f;
@@ -308,6 +316,41 @@ private:
 	void _start_sky_shadow_bake();
 	void _finish_sky_shadow_bake(bool p_discard);
 	void _apply_sky_shadow();
+	// The clouds' light grid (Nubis Cubed, Schneider 2023): the optical depth toward the sun from every voxel
+	// of a box round the camera, baked in the background like the shadows. The sky's light march reads it
+	// 512 m along its path in place of its coarse steps from there, and it reaches the whole way out of the
+	// layer, so clouds shade each other over kilometres at a low sun. Baked a level a frame from the top down:
+	// each voxel marches only to the level above and adds that level's value where its path meets it.
+	static constexpr float kLightGridExtent = 32768.0f; // m across
+	static constexpr int kLightGridResolution = 128; // texels across
+	static constexpr int kLightGridLevels = 32; // texels up, base_min to top_max
+	struct LightGridBake {
+		WeatherClouds::State state;
+		Vector3 to_sun;
+		Vector2 corner; // m, world x, z
+		float texel = 256.0f;
+		float y0 = 0.0f;
+		float y1 = 1.0f;
+		int level = -1; // the level being baked, from the top down; -1 when none
+		Vector<float> tau; // x fastest, then z, then level
+		float *tau_w = nullptr;
+		float above(int p_level, float p_x, float p_z) const;
+		void row(uint32_t p_row, void *);
+	};
+	LightGridBake *light_grid_bake = nullptr;
+	WorkerThreadPool::GroupID light_grid_task = WorkerThreadPool::INVALID_TASK_ID;
+	double light_grid_timer = 0.0;
+	Vector2 light_grid_corner;
+	Vector2 light_grid_drift;
+	float light_grid_y0 = 0.0f;
+	float light_grid_y1 = 1.0f;
+	Ref<ImageTexture3D> light_grid_texture;
+	void _start_light_grid_bake();
+	void _launch_light_grid_level();
+	void _step_light_grid_bake();
+	void _finish_light_grid_bake(bool p_discard);
+	void _build_light_grid_texture();
+	void _apply_light_grid();
 
 	// Wind near the ground: canopy and obstacle shelter on a fine square, and gust patches.
 	WeatherShelter shelter;
@@ -413,6 +456,7 @@ private:
 	void _set_base_to_settings();
 	float _target_temperature() const;
 	float _target_high_cloud_cover() const;
+	float _target_mid_cloud_cover() const;
 	float _net_radiation(const CellPass &p_pass, Vector3 p_position, float p_cover) const;
 	void _update_air();
 	void _snap();
@@ -654,6 +698,14 @@ public:
 	float get_high_cloud_height() const { return high_cloud_height; }
 	void set_high_cloud_optical_depth(float p_tau);
 	float get_high_cloud_optical_depth() const { return high_cloud_optical_depth; }
+	void set_mid_cloud_cover(float p_cover);
+	float get_mid_cloud_cover() const { return mid_cloud_cover; }
+	void set_mid_cloud_height(float p_height);
+	float get_mid_cloud_height() const { return mid_cloud_height; }
+	void set_mid_cloud_thickness(float p_thickness);
+	float get_mid_cloud_thickness() const { return mid_cloud_thickness; }
+	void set_mid_cloud_optical_depth(float p_tau);
+	float get_mid_cloud_optical_depth() const { return mid_cloud_optical_depth; }
 	void set_cloud_time(double p_seconds);
 	double get_cloud_time() const { return cloud_time; }
 	void set_sun_light(const NodePath &p_path);
@@ -819,6 +871,8 @@ public:
 	float get_cloud_cover_at(Vector3 p_position) const;
 	// The high layer's cover (0..1) over a point: its patches and the storms' anvil shields.
 	float get_high_cloud_cover_at(Vector3 p_position) const;
+	float get_mid_cloud_cover_at(Vector3 p_position) const;
+	float get_mid_cloud_optical_depth_at(Vector3 p_position) const;
 	float get_cloud_type_at(Vector3 p_position) const;
 	float get_wetness_at(Vector3 p_position) const; // 0..1
 	float get_puddle_at(Vector3 p_position) const; // mm
@@ -896,6 +950,7 @@ public:
 	Dictionary contract_season_at(const Vector3 &p_position, int p_day) const override;
 	float contract_cloud_cover_at(const Vector3 &p_position) const override { return get_cloud_cover_at(p_position); }
 	float contract_high_cloud_cover_at(const Vector3 &p_position) const override { return get_high_cloud_cover_at(p_position); }
+	float contract_mid_cloud_cover_at(const Vector3 &p_position) const override { return get_mid_cloud_cover_at(p_position); }
 	float contract_water_temperature() const override { return get_water_temperature(); }
 	float contract_surface_temperature_at(const Vector3 &p_position) const override { return get_surface_temperature_at(p_position); }
 	float contract_ground_height_at(const Vector3 &p_position) const override {

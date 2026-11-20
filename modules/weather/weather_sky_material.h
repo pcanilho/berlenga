@@ -65,6 +65,7 @@ private:
 	bool cloud_reprojection = true;
 	AtmosphereModel atmosphere_model = ATMOSPHERE_SCATTERING;
 	RID cloud_shadow_map; // the last one given, so a moving corner does not rebind the texture
+	RID cloud_light_grid; // likewise
 	void _update_shader();
 	void _update_atmosphere_textures();
 
@@ -99,6 +100,9 @@ public:
 	// the diffuse), its axes (world), the corner of its square in that plane and its size (m). Without one
 	// the shader marches the clouds toward the sun itself, coarser.
 	void set_cloud_shadow_map(const Ref<Texture2D> &p_map, const Vector3 &p_axis_u, const Vector3 &p_axis_v, const Vector2 &p_corner, float p_size);
+	// The clouds' light grid (WeatherMap3D): optical depth toward the sun past 64 m, a box p_size across from
+	// p_corner (world x, z), p_y0 to p_y1 high. A null grid turns it off (the sky marches toward the sun itself).
+	void set_cloud_light_grid(const Ref<Texture3D> &p_grid, const Vector2 &p_corner, float p_size, float p_y0, float p_y1);
 
 	// Lightning glowing in the clouds: up to four flashes, each a world position and its energy now.
 	void set_lightning(const Vector4 *p_flashes, int p_count, const Color &p_color);

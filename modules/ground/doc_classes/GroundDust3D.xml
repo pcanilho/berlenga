@@ -85,7 +85,7 @@
 			The size of the dust grid, in meters. It follows [member follow_target], trailing it along its travel.
 		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
-			The node the dust grid follows, usually a vehicle. Empty: this node.
+			The node the dust grid follows, usually a vehicle. Empty: the viewport's current camera (as [GroundSurface3D] and the weather follow it), else this node.
 		</member>
 		<member name="grain_diameter" type="float" setter="set_grain_diameter" getter="get_grain_diameter" default="15.0">
 			The dust's grain diameter, in micrometers. Sets the Stokes settling speed and the extinction per kilogram.

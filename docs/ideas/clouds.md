@@ -160,3 +160,65 @@ Open: the march's uniform steps (tens of metres through a cloud) leave the near 
 occlusion is strong; Schneider 2015's adaptive refinement (step back and take short steps once inside cloud)
 is the next step for crisper edges and would let `cloud_surface_occlusion` go back up to about 1.2, which
 looked best in close views. The horizontal banding under the far cloud bases predates this work.
+
+## Round 2 (20 Nov 2026; Paulo picked everything listed)
+
+1. **Adaptive refinement** (Schneider 2015; Hillaire 2016): long steps through clear air; on reaching cloud,
+   one step back and steps of `cloud_refine` (0.33) of a long one while inside, long again after four empty
+   short steps (iteration cap three times the step count). The grain on far faces went with it, so
+   `cloud_surface_occlusion` is back up to 1.0.
+2. **Sky light shaded from above**: one coarse read 100 m over the sample, ambient times
+   `mix(0.4, 1, exp(-tau_up))` (Nubis Cubed scales ambient by the summed density toward the sky;
+   SunshineClouds2 reads the density one step up). Undersides and the lee of towers darken.
+
+SunshineClouds2 (MIT, code read 20 Nov): its punch comes from art terms on top of the same Schneider model:
+transmittance raised to a "lighting sharpness" power, HG raised to a power, a powder term `pow(density, k)`,
+a density-weighted adaptive step `mix(max, min, pow(density, 0.1))`, light steps spaced quadratically, a
+painted coverage and tint mask. We take the ambient-from-above read; the sharpening powers are not
+energy-conserving and would split raster from path traced bounces, so they stay out.
+
+Cost (lavapipe, crest view, 40 reprojected frames): 800 ms a frame before round 1, 1084 after refinement: the
+short steps inside cloud are the cost the next two items (sun shadow grid, empty-space skipping) pay back.
+
+3. **Sun shadow grid** (Nubis Cubed's light voxel grid, Schneider 2023): `WeatherMap3D` bakes the optical
+   depth toward the sun out of the layer for a 128 x 128 x 32 box (32 km across, cloud base to top) round the
+   camera, from the top level down, one level a frame on worker threads: each voxel marches only to the next
+   level's height (steps of at most 128 m) and adds that level's value where its path meets it (bilinear); off
+   the box's side it marches the rest. Rebaked every four shadow intervals, sliding with the drift between.
+   The sky's light march keeps its first 512 m (detail to 64 m, then 64/128/256 m shape steps) and reads the
+   grid once 512 m along the path for the rest: a small cloud keeps its own shading (a first try that read the
+   grid at the sample itself blurred it, 256 m texels), and shadows now reach right out of the layer, so
+   at a low sun towers shade the clouds behind them over kilometres. `cloud_light_grid_enabled` switches it
+   for A/B checks; outside the box the march is as before.
+   Cost (lavapipe, `--view=clouds`, raster, frames 30 to 60): 836 ms a frame without, 750 to 773 with (the
+   bake shares the same CPU there). Bake about 0.37 s of CPU in all, spread over 32 frames. PT parity: sky
+   mean difference 4/255 on `clouds_wide`.
+
+4. **Empty-space skipping: tried, not kept.** A 2D map over the grid's box of the distance from each 256 m
+   column to the nearest column holding any cloud (16 points x 8 heights per column, grown by one, chamfer
+   distance), leaped by the march in clear sky. No visible change, but at fair-weather cover (0.3) 54% of
+   columns hold some cloud and only 7% stay clear after the safety margin (2% at the crest view's cover), so
+   it saved 3 to 4%, within the bench's noise. The clear-sky steps were already cheap (the cover read and one
+   shape read, then out); the frame's cloud cost is inside the clouds (short steps, each with its light
+   samples). A 3D occupancy grid fares no better at these sizes. Not worth its code; the light grid stays the
+   saving.
+
+5. **Banding under the far cloud bases: fixed.** It was not the clouds (a prefiltered far-cloud density, tried
+   first, left it unchanged and smeared the mid-distance clouds, so it was dropped). It was the sky's own far
+   ground, past the scene, lit through the cloud shadow map from one texel per pixel: there neighbouring
+   pixel rows meet the ground kilometres apart, so single 160 m texels of cloud shadow showed as dark
+   horizontal streaks. The sky shadow map now has mipmaps and the ground read takes the mip of the pixel's
+   footprint (t times the pixel's angle over the sine the ray meets the ground at). The air's shafts read as
+   before. PT parity: sky mean difference 5/255 on `clouds_wide`.
+
+6. **Altocumulus mid layer** (names and driver agreed with the weather owner): `WeatherMap3D.mid_cloud_cover`
+   (0.15), `mid_cloud_height` (4500 m, slab middle), `mid_cloud_thickness` (400 m), `mid_cloud_optical_depth`
+   (4, vertical at full cover), `mid_cloud_drift` (wind aloft at its height), `get_mid_cloud_cover_at`,
+   `get_mid_cloud_optical_depth_at`; contract `WorldWeather.mid_cloud_cover_at`. Out of `cloud_cover`. Humid air
+   thickens it, dry air thins it to 0.2, rain dialled in thickens it into an altostratus sheet (eases 2x faster
+   than the rain, after the cirrus at 4x); it never starts rain. Storms add a band round their anvils. Shades the
+   ground by its own optical depth in the shadow bake. Drawn as its own thin volume (as layered volumetric
+   clouds in Flight Simulator and Unreal): 8 steps across the slab, cloudlets from the detail texture's billows
+   (300 by 450 m cells, rows across the wind: Ludlam's cellular convection), rounded top and bottom, lit like
+   the cumulus (octaves, two-stream diffuse, sky light) with two sun samples through the slab. Not yet: the mid
+   sheet dimming the cumulus' sun beneath it.

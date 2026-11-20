@@ -129,6 +129,13 @@
 				Override in a stub to replace [method mean_wind_at].
 			</description>
 		</method>
+		<method name="_mid_cloud_cover_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub: [method mid_cloud_cover_at].
+			</description>
+		</method>
 		<method name="_obstacle_height_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -394,6 +401,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The mean wind at 10 m over [param position] in m/s (y 0), with the terrain's speed-up and turning but no gusts. Zero with no weather.
+			</description>
+		</method>
+		<method name="mid_cloud_cover_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Mid (altocumulus) cloud cover over the point, 0 to 1. Default 0. Separate from [method cloud_cover_at].
 			</description>
 		</method>
 		<method name="obstacle_height_at" qualifiers="const">
