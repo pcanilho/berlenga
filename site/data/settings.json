@@ -3542,10 +3542,11 @@
   {
    "name": "Melt-freeze crusts",
    "settings": [
-    "SnowCover3D.crust_enabled"
+    "SnowCover3D.crust_enabled",
+    "SnowSurface3D.crust_plates"
    ],
    "note": "",
-   "what": "a thawed surface refreezes into a crust that hardens each cycle; boots break thin ones into tipped pieces and stand on hard ones.",
+   "what": "a thawed surface refreezes into a crust that hardens each cycle; boots stand on hard ones and break thin ones into flat, sharp-edged plates tipped into the hole, with steps between them.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3701,10 +3702,12 @@
    "name": "Icicles",
    "settings": [
     "SnowIcicles3D",
-    "hazy_core"
+    "hazy_core",
+    "curtains",
+    "wind_direction"
    ],
    "note": "",
-   "what": "grown from roof melt water below freezing; clear ice with a hazy core.",
+   "what": "grown from roof melt water below freezing; clear ice with a hazy core, tapering like real dripping icicles, leaning with the wind they grew in, with drops at dripping tips and curtains where neighbours fuse.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
