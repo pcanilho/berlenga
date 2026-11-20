@@ -2182,6 +2182,23 @@ unchanged: light that goes deep and diffuses back out of the lit face is
 beyond the octaves (a diffusion term, as in subsurface scattering, is
 the next step).
 
+### Raster powder: the thin-gas ramp looks along the sun's whole line (20 Nov)
+
+The powder cloud is three times thinner per metre than the test puffs
+(smoke_density 1.2 against 4), and the ramp that keeps wisps single
+scattering judged "thin" by the gas between the point and the sun alone.
+Lit from the camera's side, the visible face of a big cloud has almost
+no gas toward the sun, so it got single scattering only, though deep gas
+lay behind it to scatter light back. The ramp now takes the gas along
+the sun's whole line through the point (the sun map's column: toward the
+sun plus beyond). A new 32-spp PT puff at the powder's density lit from
+the camera's side: raster -5.0% -> -1.1%. Dense puffs: front-lit +2.8%,
+side-lit +1.4% (0.9) and +3.2% (0.99). Snow's powder: mean grey 155 ->
+164 against PT 189 (PT's plain snow is 4% brighter too). A diffusion
+term (similarity-theory albedo and decay, light going deep and coming
+back out of the lit face) was tried: at a strength that would close the
+rest it puts the test puffs 8-18% over PT, so it is not in.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
