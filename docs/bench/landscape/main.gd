@@ -391,7 +391,33 @@ func _ready() -> void:
 		get_viewport().disable_3d = true # the river runs undrawn (a drawn frame takes seconds here)
 		for _i in int(float(args.get("silt-wait", "20")) * Engine.physics_ticks_per_second):
 			await get_tree().physics_frame
+		if args.has("silt-dry-days"):
+			# --silt-dry-days=D: the flood's over (the feed stops), then D days of drying on the ground: the fresh
+			# silt skins pale and crack into curled plates (GroundSurface3D flood_silt, desiccation_cracks).
+			feed.stop()
+			for _i in 120:
+				await get_tree().physics_frame
+			if prints != null:
+				prints.settle(float(args["silt-dry-days"]) * 86400.0, 6.0 * 3600.0)
+			for _i in 200: # the coloured deposits are re-baked every 5 s
+				await get_tree().physics_frame
 		get_viewport().disable_3d = false
+		if args.has("silt-bank-cam"):
+			# --silt-bank-cam: on the bank (--silt-bank-side 0/1) at the feed, --silt-cam-back (3) m past the waterline,
+			# eye --silt-cam-h (1.6) m, looking back across the drying silt to the water's edge, down along the river
+			# (--silt-cam-along, 6 m), so the foreground silt at 1-3 m grades to the wet margin.
+			var sd := int(args.get("silt-bank-side", "0"))
+			var edge: Vector3 = best + across * float(half[sd]) * (1.0 if sd == 0 else -1.0)
+			var out := across * (1.0 if sd == 0 else -1.0)
+			var fl := flow.normalized() if flow.length() > 1e-4 else Vector3.FORWARD
+			var cp: Vector3 = edge + out * float(args.get("silt-cam-back", "3"))
+			cp.y = height_at(cp.x, cp.z) + float(args.get("silt-cam-h", "1.6"))
+			var lk: Vector3 = edge - out * 1.0 + fl * float(args.get("silt-cam-along", "6"))
+			lk.y = height_at(lk.x, lk.z)
+			var c4: Camera3D = get_viewport().get_camera_3d()
+			c4.global_position = cp
+			c4.look_at(lk)
+			_log("silt bank cam %.1f,%.1f,%.1f look %.1f,%.1f,%.1f; silt at the foot %s" % [cp.x, cp.y, cp.z, lk.x, lk.y, lk.z, str(prints.get_silt_at(edge + out * 1.5)) if prints != null and prints.has_method("get_silt_at") else "?"])
 		var probe := best + (best - Vector3(want.x, best.y, want.z)).normalized() * 0.0
 		_log("silt: %.0f mg/L into river at %s (discharge %.2f m3/s); load there %s kg/m3" % [float(args["silt"]), str(best.round()), dq, str(rv.get_sediment_at(probe))])
 	if args.has("river-pick"):

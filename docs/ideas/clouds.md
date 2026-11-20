@@ -284,3 +284,39 @@ Round 3 follow-ups (docs review of 118c13bc):
    cumulus layer, followed up the sun to the sheet, two-stream transmission as in the ground's shadow bake. Under
    a full altocumulus sheet far cumulus lose about 6% of their brightness (the sheet is thin, optical depth 4 at
    full cover, and most light comes through scattered).
+
+## Round 4 (20 Nov 2026; Paulo: all three)
+
+1. **Light bounced between clouds** (cloud-to-cloud interreflection). The sun light grid's bake also stores how
+   much of each 256 m texel is sunlit cloud (its opacity across a texel times the two-stream sun reaching it).
+   Building the texture blurs that at two reaches, 1.3 and 3.3 km (a cone's footprint widening with distance, as
+   voxel cone tracing reads coarser mips further out; Crassin et al. 2011), leaving out the texel itself, and
+   stores it as the grid's green channel. The march adds sun x 0.7 x that share as diffuse light, entering the
+   shell as the sky's light does: the shaded side of a tower facing a sunlit neighbour warms. `cloud_bounce`
+   (1.0). Frame cost unchanged within noise (one more read of a texture already bound); the bake adds one
+   extinction read a texel and two box blurs. Raster and PT match.
+
+2. **Cumulus that grow and dissolve.** Each cell keeps its own clock (a cycle per cloud lifetime, give or take a
+   fifth, offset per cell); each cycle draws a new cloud from the cell (position, size, presence). A cloud is
+   born thin, widens over the first fifth of its life and rises over the first third as its thermals climb,
+   lives, then over its last quarter dissolves from the edges in, its billows turning to wisps as it mixes with
+   dry air (fair-weather cumulus last some 10 to 40 minutes; Plank 1969). CPU (shadows) and GPU agree; frozen
+   clouds sit in mid life as before. While evolving, more cells hold a cloud (2.9 times the cover, 2.2 frozen) so
+   the cover's share of sky holds (shadow share by cover 0.2 to 1.0: 4/9/25/71/94%). Raster and PT match.
+   Bench: weather `--cloud-time=S` strips.
+
+3. **Sunshine Clouds 2 compared** (Bonkahe, MIT, v2.7, a Godot compositor compute effect; source read). What it
+   does and what we take:
+   - Shape: Perlin-Worley coverage remap with a painted height gradient, curl-noise domain advection iterated
+     three times (stronger low in the cloud), and a wind sweep that drags the lowest part downwind. We already
+     warp by the detail's own billows and curl; the base sweep runs against the shear (bases lag upwind in
+     reality), so not taken.
+   - Lighting: Beer's law with an exponentiated HG, a powder term pow(density, k) and a "sun up" weight that
+     treats the air above a height as cloud when the sun is low. Stylisation; Nubis Cubed's multiple-scattering
+     probability field (which we use) replaced powder for the same dark edges. Not taken.
+   - Ambient: one density read above the sample (as ours since round 2, credited there).
+   - Worth taking, both new capabilities, not look tweaks: **point lights in the clouds** (each point light marched
+     three steps through the cloud toward it, HG phase, falloff to a radius) for fires, city glow and flares
+     under a deck at night; and **density effectors** (spheres that add or remove density with a falloff) for
+     smoke plumes feeding a cloud or a blast punching a hole. Both cross systems (fire, lightning, the weather
+     map's contract), so they go to Paulo as a choice first.

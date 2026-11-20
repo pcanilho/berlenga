@@ -2730,6 +2730,31 @@ As built:
 - Check: stands `--forest-edge=N`: edge trees' crowns sit 0.2-0.3 of their width toward the open (birch 0.09), the
   mantle mostly outside.
 
+### 5at. Wet forests: alder carr and floodplain willows (20 Nov; Paulo's pick)
+
+Research. Alder carr (Rodwell 1991, W5 Alnus glutinosa-Carex paniculata; the Erlenbruch, Doring-Mederake 1990):
+black alder on peat flooded through the winter, each tree on a tussock of its own roots and peat, the floor between
+sunk and under water; the roots stand exposed as stilts. Softwood floodplain forest (Salicion albae; Ellenberg 1988;
+the Weichholzaue of the Rhine, Elbe and Danube): white willow on ground flooded for weeks most years, many standing
+in the water at high flow; old trees split, hollow and leaning, torn limbs resprouting (Karrenberg et al. 2002);
+willow thickets on the bars.
+
+As built:
+- `stilt_height` (m, a property): the surface roots run level from the foot and arch down ever more steeply to their
+  tips stilt_height below (-H a^2 over the roots' reach); between the roots the collar sinks just under a peat tussock
+  (`_build_tussock`, surface "soil": a core dome to about half the roots' reach, dark peat, a moss and leaf mat on
+  top), so the roots stand free over the sunken floor. The moss sleeve starts above the stilts. Mesh meta
+  `tree_base_lift` = stilt_height; VegetationField3D raises the instance by it (vegetation f1cceef5).
+- STAND_ALDER_CARR (20): stilt-rooted alder (`wet_band` 1: stilt 0.3-0.9 m a variant) allowed in 0.5 m of water on
+  wet ground (wetness 6 and up), birch on the hummocks, white willow saplings at the open edges, the lead's deadwood.
+- STAND_FLOODPLAIN_WILLOW (21): stand-grown old white willows (`wet_band` 2: years x1.0-1.3, veteran 0.35-0.8, limb
+  breakage 1.4-2.0) in up to 0.7 m of water from 6 m into the channel to 60 m out, dense willow thickets on the bars
+  (shade under 0.35), black alder where the ground rises.
+- Not done: flood marks (a silt line on the trunks at the high-water height); the bark's vertex colour can only darken,
+  so a silt crust needs its own shader term.
+
+Under the roots (fix, 20 Nov): the root collar's web between the roots, built for level ground, was dropped straight down to the mound and hung from each root's flank as a flat curtain, with the moss sleeve over it as a green sheet. `_bank_shear` now draws that web in toward the stem's foot (radially, into the tussock's core) before the roots arch down, and the roots' flanks follow part way, so each root rounds under into the foot and there is air beneath it. Stands checks 61/61.
+
 ### Next-round options (card 20 Nov midday)
 
 - Taiga details. Char on catfaces: the bark shader's wood branch ignores vertex COLOR, so the scar needs its own
@@ -3533,3 +3558,17 @@ understory reinitiation, old growth: Oliver and Larson 1996): the bands already 
 young, beetle snags, old-growth poles) chosen by time since disturbance per patch, so a burnt or thrown patch regrows
 in the scene's calendar. Needs a per-patch disturbance age contract with world-links (WorldFire already gives
 burn_age_at).
+
+## Next-round options (card 20 Nov afternoon)
+
+1. **Beaver country.** Aspen, willow and birch along streams gnawed to hourglass stumps with chisel facets (beavers
+   fell stems mostly under 25 cm, within about 30 m of water; Müller-Schwarze 2011), felled crowns pointing to the
+   water, stumps resprouting as coppice, and drowned standing snags in a beaver pond with its meadow after it is left
+   (a new disturbance kind for WorldStand, so the succession picks the beaver meadow).
+2. **Flood marks.** A silt crust on trunks and roots up to the last high water, a sharp line on the upstream face
+   (dendrogeomorphology; Hupp 1988), flood wrack of twigs and grass caught on low branches and piled against
+   upstream sides, scoured roots on the bank. Needs a shader term for the silt (vertex colour can only darken) and a
+   flood height from WorldWater or a stand meta.
+3. **Deer and nurse logs.** A browse line under heavily grazed woods (no foliage below about 1.8 m, saplings bitten to
+   bushes, bark stripped on young spruce and ash; Gill 1992), and seedlings in rows along rotting logs that later
+   stand on stilts in a line where the log was (Harmon and Franklin 1989). Reads a browsing pressure map or stand meta.

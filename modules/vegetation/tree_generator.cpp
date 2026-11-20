@@ -97,7 +97,7 @@ static bool hedge_shrub(TreeGenerator::Preset p_preset) {
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
 	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow",
 	"Northern Hardwood Forest", "Eastern Oak Forest", "Pine-Hemlock Forest", "Coppice with Standards", "Wood Pasture", "Pollard Row",
-	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow", "Old-growth Beech", "Boreal Taiga"
+	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow", "Old-growth Beech", "Boreal Taiga", "Alder Carr", "Floodplain Willow"
 };
 
 TreeGenerator::TreeGenerator() {
@@ -6302,6 +6302,11 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 	const float top = CLAMP((up - 0.35f) / 0.5f, 0.0f, 1.0f) * 0.75f;
 	const float patch = 0.65f * moss_noise(p_pos * 2.2f, 0x6d6f7373u + uint32_t(seed)) + 0.35f * moss_noise(p_pos * 7.0f, 0x6d6f7374u);
 	float w = p_amount * MAX(foot, top) * (1.9f * patch - 0.25f);
+	if (stilt_height > 0.0f && !fallen && !fallen_branch) {
+		// Stilt roots (trees.md 5at): the foot and roots stand over the sunken, wet floor; the moss sleeve starts
+		// above them (a sleeve over the hollow between the roots hung in the air as a sheet).
+		w *= Math::smoothstep(0.25f, 0.6f, h);
+	}
 	float bare = 0.0f;
 	if (foot_roots.on && !fallen && !fallen_branch && h < 0.6f) {
 		// Out on a surface root's upper face the bark shows (it is drier, scuffed and shed of
@@ -15045,6 +15050,73 @@ void TreeGenerator::_build_root_stone(Builder &r_b) const {
 	r_b.end(part, stone.r.x);
 }
 
+// The tussock under a stilt-rooted tree (trees.md 5at): a low dome of peat and root mat from the stem's foot (y 0)
+// down to the carr floor (-stilt_height) a little past the root tips, falling more steeply toward its edge.
+float TreeGenerator::_tussock_y(float p_d) const {
+	const float tr = MAX(foot_roots.trunk_r, 0.05f);
+	float reach = tr * 3.0f;
+	for (const float l : foot_roots.len) {
+		reach = MAX(reach, tr + l + 0.5f * tr);
+	}
+	// The tussock is the core under the stem; past about half the roots' reach they arch free over the sunken floor.
+	const float a = CLAMP((p_d - 0.8f * tr) / MAX(reach - 0.8f * tr, 0.05f), 0.0f, 1.0f);
+	return -stilt_height * Math::smoothstep(0.05f, 0.6f, a);
+}
+
+void TreeGenerator::_build_tussock(Builder &r_b) const {
+	Vector4i part;
+	r_b.begin(part);
+	const Vector3 ax = nodes[0].start;
+	const float tr = MAX(foot_roots.trunk_r, 0.05f);
+	float reach = tr * 3.0f;
+	for (const float l : foot_roots.len) {
+		reach = MAX(reach, tr + l + 0.5f * tr);
+	}
+	const int rings = 16, segs = 48;
+	const int first = r_b.verts.size();
+	const uint32_t ls = uint32_t(seed) * 2654435761u + 0x74757373u;
+	// Dark peat, the top under a mat of moss and fallen alder leaves, bare wet peat down the sides.
+	const Color peat = Color(0.17f, 0.12f, 0.08f).srgb_to_linear();
+	const Color mat = Color(0.3f, 0.32f, 0.16f).srgb_to_linear();
+	const float r_out = 0.8f * reach;
+	for (int i = 0; i <= rings; i++) {
+		const float t = float(i) / rings;
+		const float d = Math::lerp(0.6f * tr, r_out, t);
+		for (int j = 0; j < segs; j++) {
+			const float ph = float(Math::TAU) * float(j) / segs;
+			const Vector2 dir(Math::cos(ph), Math::sin(ph));
+			const float wob = 1.0f + 0.12f * (moss_noise(Vector3(dir.x * 2.0f, 0.0f, dir.y * 2.0f), ls) - 0.5f);
+			const float dd = d * wob;
+			const float bump = 0.04f * stilt_height * (moss_noise(Vector3(dir.x * dd * 3.0f, 0.0f, dir.y * dd * 3.0f), ls + 3u) - 0.5f);
+			const float y = MIN(_tussock_y(dd) + bump * (1.0f - t), 0.0f) - (i == rings ? 0.05f : 0.0f);
+			const Vector3 p = ax + Vector3(dir.x * dd, y, dir.y * dd);
+			r_b.verts.push_back(p);
+			// Normal from the profile's slope.
+			const float e = 0.02f;
+			const float sl = (_tussock_y(dd + e) - _tussock_y(MAX(dd - e, 0.0f))) / (2.0f * e);
+			r_b.normals.push_back(Vector3(-sl * dir.x, 1.0f, -sl * dir.y).normalized());
+			r_b.uvs.push_back(Vector2(p.x, p.z) * 4.0f);
+			const float top_k = 1.0f - Math::smoothstep(0.35f, 0.75f, -y / MAX(stilt_height, 0.01f));
+			const float mott = 0.85f + 0.3f * moss_noise(p * 5.0f, ls + 9u);
+			Color c = peat.lerp(mat, top_k * Math::smoothstep(0.35f, 0.6f, moss_noise(p * 2.0f, ls + 17u)) + 0.3f * top_k);
+			r_b.colors.push_back(Color(c.r * mott, c.g * mott, c.b * mott));
+		}
+	}
+	for (int i = 0; i < rings; i++) {
+		for (int j = 0; j < segs; j++) {
+			const int a = first + i * segs + j, b = first + i * segs + (j + 1) % segs;
+			const int c = a + segs, d = b + segs;
+			r_b.indices.push_back(a);
+			r_b.indices.push_back(b);
+			r_b.indices.push_back(c);
+			r_b.indices.push_back(b);
+			r_b.indices.push_back(d);
+			r_b.indices.push_back(c);
+		}
+	}
+	r_b.end(part, reach);
+}
+
 // A tree on a bank (trees.md 5q): the ground under it falls toward +Z at ground_slope. The root
 // collar and roots are built for level ground and then sheared onto the slope near the soil
 // (fading out over the lower stem), so the downhill roots run down the face and the uphill ones
@@ -15054,7 +15126,7 @@ void TreeGenerator::_build_root_stone(Builder &r_b) const {
 // shear's Jacobian.
 void TreeGenerator::_bank_shear(Builder &r_b, bool p_drape) const {
 	const bool drape = p_drape && stone.on;
-	if ((ground_slope <= 0.0f && !drape) || fallen || fallen_branch || nodes.is_empty() || r_b.verts.is_empty()) {
+	if ((ground_slope <= 0.0f && !drape && stilt_height <= 0.0f) || fallen || fallen_branch || nodes.is_empty() || r_b.verts.is_empty()) {
 		return;
 	}
 	const float ts = Math::tan(ground_slope);
@@ -15101,9 +15173,67 @@ void TreeGenerator::_bank_shear(Builder &r_b, bool p_drape) const {
 		}
 		return dy * w;
 	};
+	// Stilt roots (trees.md 5at): the surface roots run level from the foot, then arch down ever more steeply to
+	// their tips stilt_height below, as alder roots stand where the peat round a tussock sank or washed away (the
+	// stilt-rooted alders of carrs and fens; Rodwell 1991, W5). The foot stays at the mesh origin; only the roots move.
+	// Between the roots the collar sinks just under the tussock's surface (_build_tussock), so the roots stand over
+	// the peat mound and the stem rises from its top.
+	// How much of a stilt root a point is: its azimuth against the nearest root's, over the root's half width.
+	auto root_k = [&](const Vector2 &p_rel, float p_d) -> float {
+		float k = 0.0f;
+		if (foot_roots.on && p_d > 1e-3f) {
+			const float th = Math::atan2(p_rel.y, p_rel.x);
+			const float half = Math::atan2(MAX(foot_roots.width, 0.02f), p_d);
+			for (const float az : foot_roots.az) {
+				const float dth = Math::abs(Math::wrapf(th - az, -float(Math::PI), float(Math::PI)));
+				k = MAX(k, 1.0f - Math::smoothstep(0.9f * half, 2.2f * half, dth));
+			}
+		}
+		return k;
+	};
+	// Under stilt roots there is air, not a skirt: the collar's web between the roots (built for level ground) is
+	// drawn in toward the stem's foot, into the tussock's core, before the roots arch down. Dropped straight down
+	// instead, it hung from each root's flank to the mound as a flat curtain (and the moss sleeve over it as a sheet).
+	// The roots' flanks follow part way, so each root rounds under into the foot.
+	auto stilt_pull = [&](const Vector3 &p) -> Vector3 {
+		if (stilt_height <= 0.0f || !p_drape) {
+			return p;
+		}
+		const float w = 1.0f - Math::smoothstep(top, top + 2.0f * tr + 0.2f, p.y - ax.y);
+		const Vector2 rel(p.x - ax.x, p.z - ax.z);
+		const float d = rel.length();
+		const float to = 0.9f * tr;
+		if (w <= 0.0f || d <= to) {
+			return p;
+		}
+		const float a = CLAMP((d - 0.8f * tr) / MAX(reach - 0.8f * tr, 0.05f), 0.0f, 1.0f);
+		const float c = (1.0f - root_k(rel, d)) * Math::smoothstep(0.1f, 0.35f, a) * w;
+		if (c <= 0.0f) {
+			return p;
+		}
+		const float nd = Math::lerp(d, to, c);
+		return Vector3(ax.x + rel.x * nd / d, p.y, ax.z + rel.y * nd / d);
+	};
+	auto stilt = [&](const Vector3 &p) -> float {
+		if (stilt_height <= 0.0f || !p_drape) {
+			return 0.0f;
+		}
+		const float hh = p.y - ax.y;
+		const float w = 1.0f - Math::smoothstep(top, top + 2.0f * tr + 0.2f, hh);
+		if (w <= 0.0f) {
+			return 0.0f;
+		}
+		const Vector2 rel(p.x - ax.x, p.z - ax.z);
+		const float d = rel.length();
+		const float a = CLAMP((d - 0.8f * tr) / MAX(reach - 0.8f * tr, 0.05f), 0.0f, 1.0f);
+		const float k = root_k(rel, d);
+		const float root_y = -stilt_height * a * a;
+		const float mound_y = _tussock_y(d) - 0.04f;
+		return Math::lerp(MIN(mound_y, root_y), root_y, k) * w;
+	};
 	auto disp = [&](const Vector3 &p) -> float {
 		const float l = lift(p);
-		return l + shear(p + Vector3(0.0f, l, 0.0f));
+		return l + shear(p + Vector3(0.0f, l, 0.0f)) + stilt(p);
 	};
 	const int nv = r_b.verts.size();
 	Vector3 *vw = r_b.verts.ptrw();
@@ -15111,11 +15241,13 @@ void TreeGenerator::_bank_shear(Builder &r_b, bool p_drape) const {
 	float *tw = (r_b.use_tangents && r_b.tangents.size() >= nv * 4) ? r_b.tangents.ptrw() : nullptr;
 	const float e = 0.005f;
 	for (int v = 0; v < nv; v++) {
-		const Vector3 p = vw[v];
+		const Vector3 p = stilt_pull(vw[v]);
 		const float dy = disp(p);
 		if (dy == 0.0f) {
 			continue;
 		}
+		vw[v].x = p.x;
+		vw[v].z = p.z;
 		const float gx = (disp(p + Vector3(e, 0, 0)) - disp(p - Vector3(e, 0, 0))) / (2.0f * e);
 		const float gy = (disp(p + Vector3(0, e, 0)) - disp(p - Vector3(0, e, 0))) / (2.0f * e);
 		const float gz = (disp(p + Vector3(0, 0, e)) - disp(p - Vector3(0, 0, e))) / (2.0f * e);
@@ -18953,6 +19085,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	if (stone.on) {
 		_build_root_stone(soil_b);
 	}
+	if (stilt_height > 0.0f && !fallen && !fallen_branch && !nodes.is_empty()) {
+		_build_tussock(soil_b);
+	}
 	for (int s = 0; s < 10; s++) {
 		// The stone itself is not draped over itself; it is sheared with the ground.
 		_bank_shear(*builders[s], s != 7);
@@ -21269,6 +21404,23 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 			limb_breakage = 1.3f;
 		}
 	}
+	if (wet_band > 0) {
+		// Wet forests (trees.md 5at).
+		const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.11f, 1.0f);
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		if (wet_band == 1) {
+			// Carr alders on their tussocks: the peat round them sank 0.3-0.9 m.
+			stilt_height = Math::lerp(0.3f, 0.9f, tv);
+		} else {
+			// Old floodplain willows: short-lived, fast, brittle (Salix alba): split, hollow, limbs torn by floods and
+			// ice, resprouting from the stubs (Karrenberg et al. 2002; the softwood Weichholzaue of the Rhine and
+			// Danube floodplains).
+			params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(1.0f, 1.3f, tv));
+			veteran = Math::lerp(0.35f, 0.8f, tv);
+			limb_breakage = Math::lerp(1.4f, 2.0f, tv);
+		}
+	}
 	if (edge_band > 0) {
 		// A forest edge's trees (trees.md 5as): the open on +X, most fully, a few half sheltered by a mantle tree.
 		edge_open = Math::lerp(0.7f, 1.0f, Math::fmod(float(p_variant) * 0.618034f + 0.43f, 1.0f));
@@ -21662,6 +21814,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	kelo = p_from.kelo;
 	boreal_band = p_from.boreal_band;
 	edge_band = p_from.edge_band;
+	wet_band = p_from.wet_band;
 	edge_open = p_from.edge_open;
 	succession_band = p_from.succession_band;
 	bark_color = p_from.bark_color;
@@ -21690,6 +21843,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	ground_slope = p_from.ground_slope;
 	root_stone = p_from.root_stone;
 	bank_erosion = p_from.bank_erosion;
+	stilt_height = p_from.stilt_height;
 	krummholz = p_from.krummholz;
 	fungi_cover = p_from.fungi_cover;
 	fruit_cover = p_from.fruit_cover;
@@ -21839,7 +21993,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			(old_growth_band > 0 ? 1000000000 + 50000000 * old_growth_band : 0) +
 			(boreal_band > 0 ? 1500000000 + 50000000 * boreal_band : 0) +
 			(succession_band > 0 ? int64_t(4000000000LL) * succession_band : 0) + // 64-bit: band terms stack (taiga ages, trees.md 5aq).
-			(edge_band > 0 || edge_open > 0.0f ? int64_t(20000000000LL) * (1 + edge_band + 4 * int(edge_open * 8.0f)) : 0);
+			(edge_band > 0 || edge_open > 0.0f ? int64_t(20000000000LL) * (1 + edge_band + 4 * int(edge_open * 8.0f)) : 0) +
+			(wet_band > 0 ? int64_t(2000000000000LL) * wet_band : 0);
 	// Placed trees are alive unless a beetle stand grows its kill (single trees keep beetle_years).
 	struct BeetleYearsRestore {
 		float &value;
@@ -21904,6 +22059,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const float saved_krummholz = krummholz;
 		const float saved_slope = ground_slope;
 		const float saved_erosion = bank_erosion;
+		const float saved_stilt = stilt_height;
+		const float saved_edge_open = edge_open;
 		const float saved_stone = root_stone;
 		const AABB saved_envelope = envelope;
 		const float saved_batter = envelope_batter;
@@ -21997,6 +22154,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		grove_top = saved_gtop;
 		ground_slope = saved_slope;
 		bank_erosion = saved_erosion;
+		stilt_height = saved_stilt;
+		edge_open = saved_edge_open;
 		root_stone = saved_stone;
 		mesh_cache[key] = meshes;
 		crown_cache[key] = crown / n;
@@ -23033,6 +23192,66 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			shrub(PRESET_ROWAN, 0.25f);
 			stand_forest_shade = 0.6f;
 		} break;
+		case STAND_ALDER_CARR: {
+			lead = PRESET_BLACK_ALDER;
+			// Alder carr (Rodwell 1991, W5 Alnus glutinosa-Carex paniculata woodland; Doring-Mederake 1990 on the
+			// Erlenbruch): a closed canopy of black alder on peat that is flooded through the winter and wet all
+			// year, each tree on a tussock of its own roots and peat, the floor between them sunk and under water; a
+			// little birch on the drier hummocks, grey willow at the open edges. Shallow standing water is allowed.
+			auto wet = [&](const Ref<PlantSpecies> &p_sp, float p_depth) {
+				p_sp->set_rule_range(PlantSpecies::RULE_WATER_DEPTH, Vector2(0.0f, p_depth));
+				p_sp->set_rule_fade(PlantSpecies::RULE_WATER_DEPTH, 0.1f);
+				p_sp->set_rule_range(PlantSpecies::RULE_WETNESS, Vector2(6.0f, 1000.0f));
+				p_sp->set_rule_fade(PlantSpecies::RULE_WETNESS, 1.0f);
+			};
+			wet_band = 1;
+			Ref<PlantSpecies> alder = _stand_species(PRESET_BLACK_ALDER, true, p_variants, FORM_STAND);
+			wet_band = 0;
+			alder->set_name("Black Alder (carr, stilt-rooted)");
+			alder->set_density(1.0f);
+			wet(alder, 0.5f);
+			list.push_back(alder);
+			Ref<PlantSpecies> birch = canopy(PRESET_BIRCH, 0.15f, 0.0f, 0.0f, false, false);
+			wet(birch, 0.0f);
+			Ref<PlantSpecies> willow = _stand_species(PRESET_WHITE_WILLOW, false, p_variants, FORM_SAPLING);
+			willow->set_name("White Willow (carr edge)");
+			willow->set_density(0.35f);
+			willow->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.4f));
+			wet(willow, 0.3f);
+			list.push_back(willow);
+			stand_forest_shade = 0.5f;
+		} break;
+		case STAND_FLOODPLAIN_WILLOW: {
+			lead = PRESET_WHITE_WILLOW;
+			// Softwood floodplain forest (Salicion albae; Ellenberg 1988; the Weichholzaue of the Rhine, Elbe and
+			// Danube): white willows a few metres apart on ground flooded for weeks most years, many standing in the
+			// water at high flow, old ones split, hollow and leaning, torn limbs resprouting; willow thickets on the
+			// gravel and sand bars nearer the channel, black alder and a little ash where the ground rises.
+			wet_band = 2;
+			Ref<PlantSpecies> old = _stand_species(PRESET_WHITE_WILLOW, true, p_variants, FORM_STAND);
+			wet_band = 0;
+			old->set_name("White Willow (old, floodplain)");
+			old->set_density(1.0f);
+			old->set_rule_range(PlantSpecies::RULE_WATER_DEPTH, Vector2(0.0f, 0.7f));
+			old->set_rule_fade(PlantSpecies::RULE_WATER_DEPTH, 0.15f);
+			old->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(-6.0f, 60.0f));
+			old->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, 12.0f);
+			list.push_back(old);
+			Ref<PlantSpecies> thicket = _stand_species(PRESET_WHITE_WILLOW, false, p_variants, FORM_SAPLING);
+			thicket->set_name("White Willow (bar thicket)");
+			thicket->set_density(0.9f);
+			thicket->set_spacing(thicket->get_spacing() * 0.6f);
+			thicket->set_rule_range(PlantSpecies::RULE_WATER_DEPTH, Vector2(0.0f, 0.3f));
+			thicket->set_rule_fade(PlantSpecies::RULE_WATER_DEPTH, 0.1f);
+			thicket->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(-3.0f, 15.0f));
+			thicket->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, 5.0f);
+			thicket->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.35f));
+			thicket->set_rule_fade(PlantSpecies::RULE_SHADE, 0.08f);
+			list.push_back(thicket);
+			Ref<PlantSpecies> alder = open(PRESET_BLACK_ALDER, 0.3f);
+			clip(alder, PlantSpecies::RULE_WATER_DISTANCE, Vector2(4.0f, 60.0f), 6.0f);
+			stand_forest_shade = 0.4f;
+		} break;
 		case STAND_MAX:
 			break;
 	}
@@ -23972,6 +24191,10 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		// Placement turns the mesh's +X down the prevailing wind (trees.md 5q).
 		mesh->set_meta(SNAME("tree_wind_flag"), Vector2(wind_exposure, krummholz));
 	}
+	if (stilt_height > 0.0f && mesh.is_valid() && !fallen && !fallen_branch) {
+		// The ground is stilt_height under the mesh origin (the root tips): placement raises the instance by it.
+		mesh->set_meta(SNAME("tree_base_lift"), stilt_height);
+	}
 	if (ground_slope > 0.0f && mesh.is_valid() && !fallen && !fallen_branch) {
 		// Placement turns the mesh's +Z downhill and picks the variant nearest the ground's slope.
 		mesh->set_meta(SNAME("tree_ground_slope"), Vector2(ground_slope, bank_erosion));
@@ -24118,6 +24341,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_root_stone"), &TreeGenerator::get_root_stone);
 	ClassDB::bind_method(D_METHOD("set_ground_slope", "slope"), &TreeGenerator::set_ground_slope);
 	ClassDB::bind_method(D_METHOD("get_ground_slope"), &TreeGenerator::get_ground_slope);
+	ClassDB::bind_method(D_METHOD("set_stilt_height", "height"), &TreeGenerator::set_stilt_height);
+	ClassDB::bind_method(D_METHOD("get_stilt_height"), &TreeGenerator::get_stilt_height);
 	ClassDB::bind_method(D_METHOD("set_bank_erosion", "erosion"), &TreeGenerator::set_bank_erosion);
 	ClassDB::bind_method(D_METHOD("get_bank_erosion"), &TreeGenerator::get_bank_erosion);
 	ClassDB::bind_method(D_METHOD("set_wind_exposure", "exposure"), &TreeGenerator::set_wind_exposure);
@@ -24265,6 +24490,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "krummholz", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_krummholz", "get_krummholz");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_slope", PROPERTY_HINT_RANGE, "0,1.2,0.01,radians_as_degrees"), "set_ground_slope", "get_ground_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bank_erosion", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_bank_erosion", "get_bank_erosion");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stilt_height", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_stilt_height", "get_stilt_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "root_stone", PROPERTY_HINT_RANGE, "0,2,0.01,suffix:m"), "set_root_stone", "get_root_stone");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fungi_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fungi_cover", "get_fungi_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fruit_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fruit_cover", "get_fruit_cover");
@@ -24392,6 +24618,8 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_WINDTHROW);
 	BIND_ENUM_CONSTANT(STAND_OLD_GROWTH_BEECH);
 	BIND_ENUM_CONSTANT(STAND_BOREAL_TAIGA);
+	BIND_ENUM_CONSTANT(STAND_ALDER_CARR);
+	BIND_ENUM_CONSTANT(STAND_FLOODPLAIN_WILLOW);
 	BIND_ENUM_CONSTANT(SUCCESSION_NONE);
 	BIND_ENUM_CONSTANT(SUCCESSION_FIRE);
 	BIND_ENUM_CONSTANT(SUCCESSION_WIND);

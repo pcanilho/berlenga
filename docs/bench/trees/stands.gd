@@ -13,6 +13,7 @@ extends Node3D
 #   --plot=N          render stand N (TreeGenerator.Stand) on the valley (--out=path.png, --raster, --spp=N)
 #   --wind=U          with --plot: rigged trees posed by a U m/s wind (TreeWind3D) at --time=T s
 #   --far=R           with --plot: every species ranged R m and streamed (the far tail thins and widens past R/2)
+#   EDGE=1            env, with --plot: the stand with make_edge()'s mantle and edge trees
 #   AGE=y [KIND=k]    env, with --plot: the make_succession() stage at y years after disturbance kind k
 #   --inside          with --plot: the view from inside the stand, 70 m deep
 #   --deep            with --inside: from among the canopy trees, away from the stream
@@ -48,7 +49,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "woodland", "NA woodland"]
+		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "alder carr", "floodplain willow", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -244,6 +245,16 @@ func _biome(i: int) -> Biome:
 		return gen.make_woodland(variants)
 	if i == TreeGenerator.STAND_MAX + 1:
 		return gen.make_woodland(variants, TreeGenerator.REGION_NORTH_AMERICA)
+	if OS.get_environment("EDGE") != "":
+		# EDGE=1: the stand with its forest edge (make_edge: mantle and one-sided edge trees, RULE_FOREST_EDGE).
+		var b := gen.make_stand(i, variants)
+		var both: Array[PlantSpecies] = []
+		for sp in gen.make_edge(i, variants).species:
+			both.append(sp)
+		for sp in b.species:
+			both.append(sp)
+		b.species = both
+		return b
 	if OS.get_environment("AGE") != "":
 		# AGE=years [KIND=n]: make_succession(i) as the stand-age rules would place it at one age (trees.md 5aq),
 		# the legacies of disturbance KIND (default 2, wind) only.
@@ -328,7 +339,8 @@ func _stand_checks(only := -1) -> void:
 			var n: int = f.get_placements(s).size()
 			var nm: String = sps[s].resource_name
 			print("%-18s %-27s %6d  %6.0f" % [STAND_NAMES[i], nm, n, n / area_ha])
-			if nm.ends_with("(stand)"):
+			# The wet stands name their stand-grown canopy by its site (trees.md 5at).
+			if nm.ends_with("(stand)") or nm.contains("stilt-rooted") or nm.contains("(old, floodplain)"):
 				stand_count += n
 				canopy_total += n
 			elif nm.ends_with("(open)"):

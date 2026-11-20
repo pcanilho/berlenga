@@ -99,6 +99,8 @@ uniform sampler3D cloud_light_grid : filter_linear, repeat_disable;
 uniform vec4 cloud_light_grid_box = vec4(0.0);
 uniform vec2 cloud_light_grid_y = vec2(0.0, 1.0);
 uniform bool cloud_light_grid_enabled = true;
+// Scale on the light the sunlit clouds bounce onto their neighbours (from the light grid; 0: none).
+uniform float cloud_bounce : hint_range(0, 4) = 1.0;
 // Clouds fade into the atmosphere from half this distance (m).
 uniform float cloud_far : hint_range(1000, 200000, 100) = 40000.0;
 uniform float cloud_brightness : hint_range(0, 8) = 1.0;
@@ -420,6 +422,15 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 		// so undersides and the lee of towers darken while the tops stay open to the sky.
 		float up_tau = transmittance > 0.15 ? wc_extinction(p + vec3(0.0, 100.0, 0.0), ct, false, 100.0) * 100.0 : 2.0 * (1.0 - hf);
 		light += mix(ambient_bottom, ambient_top, mix(0.4, 1.0, hf)) * mix(0.5, 1.0, sqrt(1.0 - profile)) * mix(0.5, 1.0, exp(-up_tau)) * 1.4;
+		// Light bounced off the sunlit clouds round the point (cloud-to-cloud interreflection): the light grid's green
+		// is the sunlit share of the cloud within about 600 m (blurred on the CPU, as voxel cone tracing prefilters
+		// its voxels, Crassin 2011), reflected at a cumulus' albedo-weighted 0.7 and spread like the diffuse term. It
+		// lights the shaded side of a tower that faces a sunlit neighbour; it enters the shell as the sky's light does.
+		vec3 bp = p - vec3(cloud_light_grid_box.x, cloud_light_grid_y.x, cloud_light_grid_box.y);
+		vec3 b_uvw = vec3(bp.x / cloud_light_grid_box.z, bp.z / cloud_light_grid_box.z, bp.y / (cloud_light_grid_y.y - cloud_light_grid_y.x));
+		if (cloud_bounce > 0.0 && cloud_light_grid_enabled && cloud_light_grid_box.w > 0.5 && all(greaterThanEqual(b_uvw, vec3(0.0))) && all(lessThanEqual(b_uvw, vec3(1.0)))) {
+			light += sun_radiance * (cloud_bounce * 0.7 * textureLod(cloud_light_grid, b_uvw, 0.0).g * (2.0 / (4.0 * PI))) * mix(0.5, 1.0, sqrt(1.0 - profile));
+		}
 		// Energy-conserving step (Hillaire 2016): albedo 1, so the scattering is the extinction.
 		float tr = exp(-sigma * st);
 		radiance += transmittance * light * (1.0 - tr);
