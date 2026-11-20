@@ -42,6 +42,10 @@ extends Node3D
 #   --sun-up=D        shafts view: the sun D degrees up (default 20)
 #   --sun-yaw=D       shafts view: the sun D degrees right of the view (default -13)
 #   --mid-cover=C     clouds views: the mid (altocumulus) layer's base cover (WeatherMap3D.mid_cloud_cover)
+#   --cloud-light=x,y,z,E,R[,r,g,b]  clouds views: a point light in the clouds (WeatherMap3D.add_cloud_light;
+#                     orange by default, a fire's); repeatable
+#   --cloud-effector=x,y,z,R,S  clouds views: a density effector (S > 0 adds cloud, < 0 clears); repeatable
+#   --sun-energy=E    clouds views: the sun's light_energy (0: night, for cloud lights)
 #   --high-cover=C    clouds views: the cirrus layer's base cover (WeatherMap3D.high_cloud_cover); with the shafts
 #                     view and --cover=0.05, the 22 and 46 degree ice halos round the sun
 #   --cover=C --haze-km=V  shafts view: cloud cover (default 0.45) and the aerosol's dry visibility (default 40)
@@ -75,6 +79,9 @@ var pt_from := 0
 var frames := 12
 var mid_cover := -1.0
 var high_cover := -1.0
+var cloud_lights_arg: Array = []
+var cloud_effectors_arg: Array = []
+var sun_energy := -1.0
 var half_usec := 0
 var out := ""
 var map_out := ""
@@ -137,6 +144,9 @@ func _ready() -> void:
 		elif a.begins_with("--cover="): cover = float(a.substr(8))
 		elif a.begins_with("--mid-cover="): mid_cover = float(a.substr(12))
 		elif a.begins_with("--high-cover="): high_cover = float(a.substr(13))
+		elif a.begins_with("--cloud-light="): cloud_lights_arg.append(a.substr(14).split_floats(","))
+		elif a.begins_with("--cloud-effector="): cloud_effectors_arg.append(a.substr(17).split_floats(","))
+		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
 		elif a.begins_with("--haze-km="): haze_km = float(a.substr(10))
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
@@ -533,6 +543,32 @@ func _cloud_evolution_tests() -> void:
 		if absf(c.get_cloud_density_at(Vector3(-3000 + i * 190.0, 2200.0, 500.0)) - f0[i]) > 1e-6:
 			same = false
 	print("  cloud_evolution off: density unchanged after an hour of cloud time: %s" % same)
+	# Density effectors: a hole where the cloud is thickest, a cloud where the air is clear.
+	var thick := Vector3.ZERO
+	var clear := Vector3.ZERO
+	var d_thick := 0.0
+	var d_clear := 1.0
+	for i in 32:
+		var q := Vector3(-3000 + i * 190.0, 2200.0, 500.0)
+		var d: float = c.get_cloud_density_at(q)
+		if d > d_thick:
+			d_thick = d
+			thick = q
+		if d < d_clear:
+			d_clear = d
+			clear = q
+	var hole: int = c.add_cloud_effector(thick, 400.0, -1.0)
+	var grow: int = c.add_cloud_effector(clear, 400.0, 1.0)
+	print("  effectors: density in the thickest cloud %.4f -> %.4f with a clearing effector (want 0); clear air %.4f -> %.4f with an adding one (want > 0); contract cloud_effector_at %.2f, %.2f (want -1, 1)" % [d_thick, c.get_cloud_density_at(thick), d_clear, c.get_cloud_density_at(clear), c.get_cloud_effector_at(thick), c.get_cloud_effector_at(clear)])
+	c.remove_cloud_effector(hole)
+	c.remove_cloud_effector(grow)
+	print("  effectors removed: density back %.4f, %.4f (want %.4f, %.4f)" % [c.get_cloud_density_at(thick), c.get_cloud_density_at(clear), d_thick, d_clear])
+	var ids := []
+	for i in 9:
+		ids.append(c.add_cloud_light(Vector3(i * 100.0, 500.0, 0.0), Color(1, 0.6, 0.3), 1000.0, 5000.0))
+	print("  cloud lights: ids %s (the ninth -1), listed %d" % [str(ids), c.get_cloud_lights().size()])
+	for id in ids:
+		c.remove_cloud_light(id)
 	c.queue_free()
 	sun.queue_free()
 	await get_tree().physics_frame
@@ -1115,6 +1151,13 @@ func _build_clouds() -> void:
 		weather.mid_cloud_cover = mid_cover
 	if high_cover >= 0.0:
 		weather.high_cloud_cover = high_cover
+	for l in cloud_lights_arg: # x, y, z, energy, reach[, r, g, b]
+		var col := Color(1.0, 0.62, 0.32) if l.size() < 8 else Color(l[5], l[6], l[7])
+		print("cloud light id %d" % weather.add_cloud_light(Vector3(l[0], l[1], l[2]), col, l[3], l[4]))
+	for e in cloud_effectors_arg: # x, y, z, radius, strength
+		print("cloud effector id %d" % weather.add_cloud_effector(Vector3(e[0], e[1], e[2]), e[3], e[4]))
+	if sun_energy >= 0.0:
+		sun.light_energy = sun_energy
 	weather.transition_time = 0.0
 	weather.cloud_shadow_extent = 8192.0
 	weather.cloud_shadow_resolution = 256

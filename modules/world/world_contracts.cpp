@@ -85,6 +85,7 @@ float WorldWeather::ground_water_input_at(const Vector3 &p_position) const WW_CA
 float WorldWeather::cloud_cover_at(const Vector3 &p_position) const WW_CALL(_cloud_cover_at, contract_cloud_cover_at(p_position), 0.0f, p_position)
 float WorldWeather::high_cloud_cover_at(const Vector3 &p_position) const WW_CALL(_high_cloud_cover_at, contract_high_cloud_cover_at(p_position), 0.0f, p_position)
 float WorldWeather::mid_cloud_cover_at(const Vector3 &p_position) const WW_CALL(_mid_cloud_cover_at, contract_mid_cloud_cover_at(p_position), 0.0f, p_position)
+float WorldWeather::cloud_effector_at(const Vector3 &p_position) const WW_CALL(_cloud_effector_at, contract_cloud_effector_at(p_position), 0.0f, p_position)
 float WorldWeather::ground_height_at(const Vector3 &p_position) const WW_CALL(_ground_height_at, contract_ground_height_at(p_position), 0.0f, p_position)
 float WorldWeather::washout_rate(float p_rain_mm_h, float p_snow_mm_h, bool p_coarse) {
 	const float a = p_coarse ? 3.0e-4f : 1.0e-5f;
@@ -205,6 +206,7 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("cloud_cover_at", "position"), &WorldWeather::cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("high_cloud_cover_at", "position"), &WorldWeather::high_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("mid_cloud_cover_at", "position"), &WorldWeather::mid_cloud_cover_at);
+	ClassDB::bind_method(D_METHOD("cloud_effector_at", "position"), &WorldWeather::cloud_effector_at);
 	ClassDB::bind_method(D_METHOD("water_temperature"), &WorldWeather::water_temperature);
 	ClassDB::bind_method(D_METHOD("surface_temperature_at", "position"), &WorldWeather::surface_temperature_at);
 	ClassDB::bind_method(D_METHOD("ground_height_at", "position"), &WorldWeather::ground_height_at);
@@ -243,6 +245,7 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_cloud_cover_at, "position");
 	GDVIRTUAL_BIND(_high_cloud_cover_at, "position");
 	GDVIRTUAL_BIND(_mid_cloud_cover_at, "position");
+	GDVIRTUAL_BIND(_cloud_effector_at, "position");
 	GDVIRTUAL_BIND(_water_temperature);
 	GDVIRTUAL_BIND(_surface_temperature_at, "position");
 	GDVIRTUAL_BIND(_ground_height_at, "position");

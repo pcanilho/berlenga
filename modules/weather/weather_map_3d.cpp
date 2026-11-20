@@ -1659,6 +1659,114 @@ float WeatherMap3D::get_mid_cloud_optical_depth_at(Vector3 p_position) const {
 	return WeatherClouds::mid_tau_at(_cloud_state(), Vector2(p_position.x, p_position.z));
 }
 
+int WeatherMap3D::add_cloud_light(Vector3 p_position, Color p_color, float p_energy, float p_reach) {
+	if (cloud_lights.size() >= WeatherClouds::MAX_CLOUD_LIGHTS) {
+		return -1;
+	}
+	const int id = cloud_light_next++;
+	cloud_lights.insert(id, CloudLight());
+	set_cloud_light(id, p_position, p_color, p_energy, p_reach);
+	return id;
+}
+
+void WeatherMap3D::set_cloud_light(int p_id, Vector3 p_position, Color p_color, float p_energy, float p_reach) {
+	CloudLight *lp = cloud_lights.getptr(p_id);
+	if (!lp) {
+		return;
+	}
+	CloudLight &l = *lp;
+	l.position = p_position;
+	l.color = p_color;
+	l.energy = MAX(p_energy, 0.0f);
+	l.reach = MAX(p_reach, 1.0f);
+	_push_sky();
+}
+
+Array WeatherMap3D::get_cloud_lights() const {
+	Array a;
+	for (const KeyValue<int, CloudLight> &kv : cloud_lights) {
+		Dictionary d;
+		d["id"] = kv.key;
+		d["position"] = kv.value.position;
+		d["color"] = kv.value.color;
+		d["energy"] = kv.value.energy;
+		d["radius"] = kv.value.reach;
+		d["fire"] = false;
+		d["lightning"] = false;
+		a.push_back(d);
+	}
+	for (const CloudLight &l : fire_cloud_lights) {
+		Dictionary d;
+		d["id"] = -1;
+		d["position"] = l.position;
+		d["color"] = l.color;
+		d["energy"] = l.energy;
+		d["radius"] = l.reach;
+		d["fire"] = true;
+		d["lightning"] = false;
+		a.push_back(d);
+	}
+	for (const CloudLight &l : flash_cloud_lights) {
+		Dictionary d;
+		d["id"] = -1;
+		d["position"] = l.position;
+		d["color"] = l.color;
+		d["energy"] = l.energy;
+		d["radius"] = l.reach;
+		d["lightning"] = true;
+		a.push_back(d);
+	}
+	return a;
+}
+
+void WeatherMap3D::set_flash_cloud_lights(const Vector4 *p_flashes, int p_count, const Color &p_color, float p_reach) {
+	flash_cloud_lights.clear();
+	for (int i = 0; i < p_count; i++) {
+		CloudLight l;
+		l.position = Vector3(p_flashes[i].x, p_flashes[i].y, p_flashes[i].z);
+		l.color = p_color;
+		l.energy = p_flashes[i].w;
+		l.reach = p_reach;
+		flash_cloud_lights.push_back(l);
+	}
+}
+
+void WeatherMap3D::remove_cloud_light(int p_id) {
+	cloud_lights.erase(p_id);
+	_push_sky();
+}
+
+int WeatherMap3D::add_cloud_effector(Vector3 p_position, float p_radius, float p_strength) {
+	if (cloud_effectors.size() >= WeatherClouds::MAX_CLOUD_EFFECTORS) {
+		return -1;
+	}
+	const int id = cloud_effector_next++;
+	cloud_effectors.insert(id, CloudEffector());
+	set_cloud_effector(id, p_position, p_radius, p_strength);
+	return id;
+}
+
+void WeatherMap3D::set_cloud_effector(int p_id, Vector3 p_position, float p_radius, float p_strength) {
+	CloudEffector *ep = cloud_effectors.getptr(p_id);
+	if (!ep) {
+		return;
+	}
+	CloudEffector &e = *ep;
+	e.position = p_position - Vector3(cloud_drift.x, 0.0f, cloud_drift.y);
+	e.radius = MAX(p_radius, 1.0f);
+	e.strength = CLAMP(p_strength, -1.0f, 1.0f);
+	_push_sky();
+}
+
+void WeatherMap3D::remove_cloud_effector(int p_id) {
+	cloud_effectors.erase(p_id);
+	_push_sky();
+}
+
+float WeatherMap3D::get_cloud_effector_at(Vector3 p_position) const {
+	return WeatherClouds::effector_at(_cloud_state(), p_position);
+}
+
 float WeatherMap3D::get_cloud_type_at(Vector3 p_position) const {
 	return CLAMP(_sample(cell_type, Vector2(p_position.x, p_position.z)), 0.0f, 1.0f);
 }
@@ -1746,6 +1854,24 @@ void WeatherMap3D::_update_fire_clouds(double p_weather_dt) {
 	PackedVector4Array plumes;
 	if (any) {
 		plumes = wf->plumes();
+	}
+	// The fires light the clouds over them (cloud lights tagged as fire): a flame radiates about a third of its
+	// heat (Drysdale, "An Introduction to Fire Dynamics"), here as an orange point a little above the plume's base,
+	// its intensity Q_r / 4 pi in W/sr scaled to the sun's 1000 W/m2 at light_energy 1, reaching where it falls
+	// under a ten-thousandth of that (beyond, under moonlight).
+	fire_cloud_lights.clear();
+	if (WorldContracts::fire()->has_provider() || WorldContracts::fire()->get_script_instance()) {
+		for (const Vector4 &p : plumes) {
+			if (p.w <= 0.0f) {
+				continue;
+			}
+			CloudLight l;
+			l.position = Vector3(p.x, p.y + 30.0f, p.z);
+			l.color = Color(1.0f, 0.62f, 0.32f); // sRGB, a flame about 1300 K seen through its smoke
+			l.energy = 0.33f * p.w / (4.0f * float(Math::PI)) / 1000.0f;
+			l.reach = CLAMP(Math::sqrt(l.energy / 1e-4f), 200.0f, 20000.0f);
+			fire_cloud_lights.push_back(l);
+		}
 	}
 	for (int i = 0; i < storms.size(); i++) {
 		if (storms[i].fire) {
@@ -2313,6 +2439,44 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 	{
 		const Vector2 w = get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), high_cloud_height);
 		st.high_dir = w.length_squared() > 1e-6f ? w.normalized() : Vector2(1, 0);
+	}
+	{
+		// The strongest effectors and the brightest lights, at most eight of each.
+		LocalVector<Pair<float, const CloudEffector *>> ef;
+		for (const KeyValue<int, CloudEffector> &kv : cloud_effectors) {
+			ef.push_back(Pair<float, const CloudEffector *>(-Math::abs(kv.value.strength) * kv.value.radius, &kv.value));
+		}
+		ef.sort_custom<PairSort<float, const CloudEffector *>>();
+		for (uint32_t i = 0; i < ef.size() && st.effector_count < WeatherClouds::MAX_CLOUD_EFFECTORS; i++) {
+			const CloudEffector &e = *ef[i].second;
+			float *o = st.effectors[st.effector_count++];
+			o[0] = e.position.x + cloud_drift.x;
+			o[1] = e.position.y;
+			o[2] = e.position.z + cloud_drift.y;
+			o[3] = e.radius;
+			o[4] = e.strength;
+		}
+		// The fires' lights share the budget by brightness: a scene's own light is dropped only for a brighter fire.
+		LocalVector<Pair<float, const CloudLight *>> li;
+		for (const KeyValue<int, CloudLight> &kv : cloud_lights) {
+			li.push_back(Pair<float, const CloudLight *>(-kv.value.energy, &kv.value));
+		}
+		for (const CloudLight &l : fire_cloud_lights) {
+			li.push_back(Pair<float, const CloudLight *>(-l.energy, &l));
+		}
+		li.sort_custom<PairSort<float, const CloudLight *>>();
+		for (uint32_t i = 0; i < li.size() && st.light_count < WeatherClouds::MAX_CLOUD_LIGHTS; i++) {
+			const CloudLight &l = *li[i].second;
+			const Color c = l.color.srgb_to_linear();
+			float *o = st.lights[st.light_count++];
+			o[0] = l.position.x;
+			o[1] = l.position.y;
+			o[2] = l.position.z;
+			o[3] = l.reach;
+			o[4] = c.r * l.energy;
+			o[5] = c.g * l.energy;
+			o[6] = c.b * l.energy;
+		}
 	}
 	st.evolve = _cloud_evolve();
 	if (cloud_evolution) {
@@ -3200,6 +3364,16 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_high_cloud_cover_at", "position"), &WeatherMap3D::get_high_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("get_mid_cloud_cover_at", "position"), &WeatherMap3D::get_mid_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("get_mid_cloud_optical_depth_at", "position"), &WeatherMap3D::get_mid_cloud_optical_depth_at);
+	ClassDB::bind_method(D_METHOD("add_cloud_light", "position", "color", "energy", "reach"), &WeatherMap3D::add_cloud_light);
+	ClassDB::bind_method(D_METHOD("set_cloud_light", "id", "position", "color", "energy", "reach"), &WeatherMap3D::set_cloud_light);
+	ClassDB::bind_method(D_METHOD("remove_cloud_light", "id"), &WeatherMap3D::remove_cloud_light);
+	ClassDB::bind_method(D_METHOD("get_cloud_light_count"), &WeatherMap3D::get_cloud_light_count);
+	ClassDB::bind_method(D_METHOD("get_cloud_lights"), &WeatherMap3D::get_cloud_lights);
+	ClassDB::bind_method(D_METHOD("add_cloud_effector", "position", "radius", "strength"), &WeatherMap3D::add_cloud_effector);
+	ClassDB::bind_method(D_METHOD("set_cloud_effector", "id", "position", "radius", "strength"), &WeatherMap3D::set_cloud_effector);
+	ClassDB::bind_method(D_METHOD("remove_cloud_effector", "id"), &WeatherMap3D::remove_cloud_effector);
+	ClassDB::bind_method(D_METHOD("get_cloud_effector_count"), &WeatherMap3D::get_cloud_effector_count);
+	ClassDB::bind_method(D_METHOD("get_cloud_effector_at", "position"), &WeatherMap3D::get_cloud_effector_at);
 	ClassDB::bind_method(D_METHOD("get_cloud_type_at", "position"), &WeatherMap3D::get_cloud_type_at);
 	ClassDB::bind_method(D_METHOD("get_wetness_at", "position"), &WeatherMap3D::get_wetness_at);
 	ClassDB::bind_method(D_METHOD("get_puddle_at", "position"), &WeatherMap3D::get_puddle_at);

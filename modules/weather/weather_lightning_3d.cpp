@@ -894,6 +894,10 @@ void WeatherLightning3D::_push_sky() {
 	if (count == 0 && !sky_had_flashes) {
 		return;
 	}
+	if (WeatherMap3D *map = WeatherMap3D::get_active()) {
+		// Listed with the clouds' lights (WeatherMap3D.get_cloud_lights), for water reflections and other readers.
+		map->set_flash_cloud_lights(lit, count, channel_color, 8000.0f);
+	}
 	sky->set_lightning(lit, count, channel_color);
 	sky_had_flashes = count > 0;
 }

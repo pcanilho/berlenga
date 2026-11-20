@@ -320,3 +320,26 @@ Round 3 follow-ups (docs review of 118c13bc):
      under a deck at night; and **density effectors** (spheres that add or remove density with a falloff) for
      smoke plumes feeding a cloud or a blast punching a hole. Both cross systems (fire, lightning, the weather
      map's contract), so they go to Paulo as a choice first.
+
+4. **Point lights and density effectors in the clouds** (Paulo picked both; names agreed with the weather owner;
+   both after Sunshine Clouds 2, Bonkahe 2025, MIT).
+   - `WeatherMap3D.add_cloud_light(position, color, energy, reach)` (and `set_`/`remove_`, `get_cloud_lights()`),
+     at most eight, -1 when full. The march adds, per light in reach, three extinction reads toward it over at
+     most 600 m, inverse-square falloff times a smooth window to the reach (Karis 2013), HG 0.6 through the thin
+     part plus the two-stream diffuse rest, as the sun. Energy is in the sun's units times square metres. Lights
+     the clouds only: a scene adds its own OmniLight3D for the ground. The sky now marches clouds at night when
+     any cloud light is present (it skipped the clouds with no sun before).
+   - Fires light their clouds by themselves: each WorldFire plume registers a light 30 m above its base, colour
+     of a flame (1, 0.62, 0.32), energy a third of its heat release as light spread over the sphere. Fires and a
+     scene's lights share the eight slots by brightness.
+   - Lightning stays on its own full-resolution glow: a flash lasts a few frames and the half-resolution,
+     reprojected march would smear it. Flashes are listed in `get_cloud_lights()` (`lightning` true) so readers
+     see every light in the clouds in one place.
+   - `add_cloud_effector(position, radius, strength)` (and `set_`/`remove_`, `get_cloud_effector_at`, contract
+     `WorldWeather.cloud_effector_at`), at most eight. Strength -1..1, linear falloff to the radius: positive adds
+     to the cloud's envelope, negative scales the density down. Effectors ride the cumulus drift. CPU (shadow bake,
+     `get_cloud_density_at`) and GPU agree. Fires do not add effectors: their clouds already grow from the plume
+     (fire clouds, 19 Nov).
+   - Bench: weather `--cloud-light=x,y,z,E,R[,r,g,b]`, `--cloud-effector=x,y,z,R,S`, `--sun-energy=0`; checks in
+     `--test=clouds` (hole clears the thickest cloud to 0, an adding effector makes cloud in clear air, slots full
+     at eight). Raster and PT match.

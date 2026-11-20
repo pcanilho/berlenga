@@ -399,6 +399,23 @@ private:
 		bool seen = false;
 	};
 	HashMap<ObjectID, TrackBody> track_bodies;
+	struct CloudLight {
+		Vector3 position;
+		Color color;
+		float energy = 0.0f;
+		float reach = 1.0f;
+	};
+	struct CloudEffector {
+		Vector3 position; // where placed, less the drift then (it rides with the clouds)
+		float radius = 1.0f;
+		float strength = 0.0f;
+	};
+	HashMap<int, CloudLight> cloud_lights;
+	HashMap<int, CloudEffector> cloud_effectors;
+	int cloud_light_next = 1;
+	LocalVector<CloudLight> fire_cloud_lights; // the fires' own (WorldFire plumes), rebuilt each fire update
+	LocalVector<CloudLight> flash_cloud_lights; // lightning's, listed only (the sky draws flashes at full resolution)
+	int cloud_effector_next = 1;
 	uint32_t track_seed = 0x9e3779b9u;
 	void _tracks_step(float p_real_dt);
 	static void _bind_tracks_methods();
@@ -877,6 +894,24 @@ public:
 	float get_high_cloud_cover_at(Vector3 p_position) const;
 	float get_mid_cloud_cover_at(Vector3 p_position) const;
 	float get_mid_cloud_optical_depth_at(Vector3 p_position) const;
+
+	// Point lights in the clouds and cloud density effectors (docs/ideas/clouds.md). Ids from add_*; each set_*
+	// re-places one. Effectors ride with the clouds' drift from where they were last placed.
+	int add_cloud_light(Vector3 p_position, Color p_color, float p_energy, float p_reach);
+	void set_cloud_light(int p_id, Vector3 p_position, Color p_color, float p_energy, float p_reach);
+	void remove_cloud_light(int p_id);
+	int get_cloud_light_count() const { return cloud_lights.size(); }
+	Array get_cloud_lights() const;
+	// WeatherLightning3D's flashes this frame (position, colour, energy, reach), for get_cloud_lights(): readers such
+	// as water reflections see every light over the clouds in one list. Not marched by the clouds: the sky draws a
+	// flash's glow at full resolution (WeatherSkyMaterial.set_lightning), where the half-resolution reprojected
+	// clouds would smear a flash that lasts a few frames.
+	void set_flash_cloud_lights(const Vector4 *p_flashes, int p_count, const Color &p_color, float p_reach);
+	int add_cloud_effector(Vector3 p_position, float p_radius, float p_strength);
+	void set_cloud_effector(int p_id, Vector3 p_position, float p_radius, float p_strength);
+	void remove_cloud_effector(int p_id);
+	int get_cloud_effector_count() const { return cloud_effectors.size(); }
+	float get_cloud_effector_at(Vector3 p_position) const;
 	float get_cloud_type_at(Vector3 p_position) const;
 	float get_wetness_at(Vector3 p_position) const; // 0..1
 	float get_puddle_at(Vector3 p_position) const; // mm
@@ -955,6 +990,7 @@ public:
 	float contract_cloud_cover_at(const Vector3 &p_position) const override { return get_cloud_cover_at(p_position); }
 	float contract_high_cloud_cover_at(const Vector3 &p_position) const override { return get_high_cloud_cover_at(p_position); }
 	float contract_mid_cloud_cover_at(const Vector3 &p_position) const override { return get_mid_cloud_cover_at(p_position); }
+	float contract_cloud_effector_at(const Vector3 &p_position) const override { return get_cloud_effector_at(p_position); }
 	float contract_water_temperature() const override { return get_water_temperature(); }
 	float contract_surface_temperature_at(const Vector3 &p_position) const override { return get_surface_temperature_at(p_position); }
 	float contract_ground_height_at(const Vector3 &p_position) const override {

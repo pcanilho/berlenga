@@ -44,6 +44,8 @@
 namespace WeatherClouds {
 
 constexpr int MAX_STORMS = 8;
+constexpr int MAX_CLOUD_LIGHTS = 8;
+constexpr int MAX_CLOUD_EFFECTORS = 8;
 constexpr int SHAPE_SIZE = 128; // texels across the base shape noise (tiles)
 constexpr int DETAIL_SIZE = 128; // texels across the detail noise (tiles; RGBA: wisps low, high, billows low, high)
 
@@ -96,6 +98,14 @@ struct State {
 	Vector2 mid_drift; // m
 	Vector2 mid_dir = Vector2(1, 0); // unit, the wind at its height
 	float cell_size = 1200.0f; // m, the cumulus cells (cells_at), each holding at most one cloud
+	// Density effectors (WeatherMap3D.add_cloud_effector): spheres (world x, y, z, radius m) whose strength adds
+	// cloud (> 0: a plume feeding a cumulus) or clears it (< 0: a blast's hole), falling off linearly to the edge.
+	int effector_count = 0;
+	float effectors[MAX_CLOUD_EFFECTORS][5] = {}; // x, y, z, radius, strength
+	// Point lights in the clouds (WeatherMap3D.add_cloud_light): world x, y, z, reach (m); linear r, g, b times
+	// energy. Only the sky reads them.
+	int light_count = 0;
+	float lights[MAX_CLOUD_LIGHTS][7] = {}; // x, y, z, reach, r, g, b
 	float top_max = 0.0f; // highest top any column reaches now (m), set by update_top_max()
 	float base_min = 1500.0f; // lowest base any column has now (m), set by update_top_max()
 
@@ -128,6 +138,8 @@ float mid_tau_at(const State &p_state, Vector2 p_xz);
 // shape there: two reads of the tile at an irrational ratio of scales, evened out (0..1).
 Vector3 shape_coord(const State &p_state, const Vector3 &p_pos);
 float shape_at(const State &p_state, const Vector3 &p_pos);
+// The density effectors at a point: the added share (> 0) or the cleared share (< 0), -1..1.
+float effector_at(const State &p_state, const Vector3 &p_pos);
 float extinction_at(const State &p_state, const Vector3 &p_pos);
 
 // The tiling shape noises (Perlin-Worley base; detail: Curly-Alligator wisps and Worley billows, low and

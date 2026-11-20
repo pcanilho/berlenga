@@ -34,6 +34,25 @@
 				Adds a round stand of plants (world x, z centre, radius and canopy height in metres) and returns its id. [param density] is Cionco's attenuation coefficient: about 1 for open orchards, 2 to 3 for crops and most forests, 4 for dense stands (Cionco 1978). Under the canopy the wind falls off as [code]u(hc) exp(a (z / hc - 1))[/code]; above it the log law starts from a displaced ground at 0.7 hc with roughness 0.1 hc (Raupach 1994). Takes effect at the next shelter bake (see [method rebake_shelter]).
 			</description>
 		</method>
+		<method name="add_cloud_effector">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="strength" type="float" />
+			<description>
+				Adds a density effector to the cumulus layer and returns its id, or -1 when eight are already present. Within [param radius] metres of [param position] the cloud gains (strength &gt; 0) or loses (strength &lt; 0) density, falling off linearly to the edge; strength -1 clears the cloud at the centre, 1 makes one where the air was clear. An effector rides the clouds: it moves with the cumulus drift ([method get_wind_aloft] at the layer), so [param position] is where it is now. The shadow bake, [method get_cloud_density_at] and the sky all see it. Read the field through [method get_cloud_effector_at] (contract [code]WorldWeather.cloud_effector_at[/code]).
+			</description>
+		</method>
+		<method name="add_cloud_light">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="color" type="Color" />
+			<param index="2" name="energy" type="float" />
+			<param index="3" name="reach" type="float" />
+			<description>
+				Adds a point light that lights the clouds (a fire, a town's glow, a flare) and returns its id, or -1 when eight are already present. [param energy] is its intensity in the sun's units times square metres: at distance d the cloud receives [code]energy / d^2[/code] of what a sun of energy 1 gives, smoothly faded to 0 at [param reach] metres. It lights the clouds only: add an [OmniLight3D] for the ground. Fires registered with WorldFire add their own lights and share the eight shader slots by brightness.
+			</description>
+		</method>
 		<method name="add_contact_wetness">
 			<return type="void" />
 			<param index="0" name="position" type="Vector3" />
@@ -709,6 +728,20 @@
 				Removes a canopy added with [method add_canopy].
 			</description>
 		</method>
+		<method name="remove_cloud_effector">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Removes a density effector added with [method add_cloud_effector]. Unknown ids are ignored.
+			</description>
+		</method>
+		<method name="remove_cloud_light">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Removes a cloud light added with [method add_cloud_light]. Unknown ids are ignored.
+			</description>
+		</method>
 		<method name="remove_shelter_box">
 			<return type="void" />
 			<param index="0" name="id" type="int" />
@@ -721,6 +754,27 @@
 			<param index="0" name="id" type="int" />
 			<description>
 				Removes the storm with this [param id].
+			</description>
+		</method>
+		<method name="set_cloud_effector">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<param index="2" name="radius" type="float" />
+			<param index="3" name="strength" type="float" />
+			<description>
+				Moves or changes a density effector added with [method add_cloud_effector]; [param position] is where it is now. Unknown ids are ignored.
+			</description>
+		</method>
+		<method name="set_cloud_light">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<param index="2" name="color" type="Color" />
+			<param index="3" name="energy" type="float" />
+			<param index="4" name="reach" type="float" />
+			<description>
+				Moves or changes a cloud light added with [method add_cloud_light]. Unknown ids are ignored.
 			</description>
 		</method>
 		<method name="set_cloud_time">
