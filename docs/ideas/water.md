@@ -3733,3 +3733,39 @@ Koh, Imberger and Brooks 1979, Mixing in Inland and Coastal Waters, ch. 5; Ruthe
 
 The shading reads the load from a sections-by-lanes texture (its third channel the section's half extent, so the
 shader finds the lane from its distance across), in raster and the path tracer alike.
+
+## Sea-cave water (20 Nov, Paulo: "research the latest techniques ... first")
+
+The question: the ocean plane runs on under sea cliffs, so inside a sea cave passage it shows a flat copy of the sea's
+waves; CaveNetwork3D already solves the surge in the passage (a 1D long wave: delay sqrt(g h), Green's law, damping).
+How do engines and games put the right water in an enclosed space?
+
+Two parts, everywhere:
+1. Take the open sea out of the space.
+   - Crest (Unity): clip surface data, an extra LOD channel the surface reads, written from signed-distance primitives,
+     convex hulls or a texture; above 0.5 the surface is cut (surface only; "Portals and Volumes" also remove the
+     underwater volume). https://crest.readthedocs.io/en/stable/user/clipping.html
+   - Unity HDRP: Water Excluder, a mesh marking screen pixels that get no water (raster only; from above only).
+     https://docs.unity3d.com/Packages/com.unity.render-pipelines.high-definition@15.0/manual/WaterSystem-waterexcluder.html
+   - Unreal Water plugin: Water Body Exclusion Volume hides overlapping water bodies and fails water queries inside.
+     https://dev.epicgames.com/documentation/unreal-engine/water-body-actors-in-unreal-engine
+   - Ship games (Assassin's Creed IV Black Flag, Sea of Thieves): a hull-shaped mask drawn first (depth or stencil)
+     so the sea is not drawn inside the hull. https://simonschreibt.de/gat/black-flag-waterplane/ ,
+     https://history.siggraph.org/?p=84316
+   Screen masks (stencil, excluder) do not reach the path tracer; a clip the surface shader evaluates in world space
+   (Crest's signed-distance primitives) does, as the alpha-scissored surface our water already uses for PT shadows.
+2. Put the enclosed water's own surface there: a separate body with its own level (Crest water bodies, Unreal custom
+   water bodies). For waves meeting walls the research method is Water Surface Wavelets (Jeschke, Skrivan,
+   Mueller-Fischer, Chentanez, Macklin, Wojtan, SIGGRAPH 2018: wave packets that reflect off obstacles, any scale), and
+   for detail on top of a shallow-water level, Jeschke and Wojtan 2023, "Generalizing Shallow Water Simulations with
+   Dispersive Surface Waves" (SIGGRAPH 2023). https://visualcomputing.ist.ac.at/publications/2018/WSW/ ,
+   https://research.nvidia.com/labs/prl/shallow-water-simulation
+
+Plan for the fork:
+- Clip: the ocean (PhysXWaterSurface3D) reads a list of capsules (the sea caves' passage segments, radius = half width,
+  from CaveNetwork3D) and cuts its surface inside them where rock is overhead, in raster and in the path tracer's
+  any-hit (as the scissored medium), a few decimetres in from the mouth so the seam sits under the arch.
+- Surface: PhysXSeaCaveWater3D (branch valence/sea-cave) draws the surge's level, width and current with the river's
+  surface, no state of its own; it overlaps the cut by the same margin so no gap shows.
+- Later, if the cave water should slosh and reflect: wave packets (Water Surface Wavelets) on that surface, the
+  passage walls as reflectors, fed by the sea's waves at the mouth.
