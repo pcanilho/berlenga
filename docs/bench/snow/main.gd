@@ -101,7 +101,7 @@ class BodySnowStub extends WorldSnow:
 #                     first cornice falls, a moment later (the blocks tumbling)
 #   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
 #                     [--wind=S: a steady wind along the eave by day, the tips lean; --dense: a week of melt with
-#                     sites 5 cm apart, rippled icicles bridged into curtains]
+#                     sites 5 cm apart, rippled icicles bridged into curtains] [--no-core: clear ice only]
 #   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
 #   --settled         (trail view) 0.4 m of settled snow (300 kg/m3) instead of fresh: prints break clumps
 #   --no-clumps       (trail view) no snow clumps beside the prints
@@ -2746,6 +2746,8 @@ func _build_icicles(cam: Camera3D) -> void:
 	ice.spacing = 0.12
 	if OS.get_cmdline_user_args().has("--dense"):
 		ice.spacing = 0.05 # --dense: a dripping stretch, sites close enough that neighbours bridge into curtains
+	if OS.get_cmdline_user_args().has("--no-core"):
+		ice.hazy_core = false # --no-core: clear ice only (checks what the core adds)
 	ice.edge = PackedVector3Array([Vector3(-4.95, eave_y, 0.12), Vector3(-0.05, eave_y, 0.12)])
 	add_child(ice)
 	# Three days: six hours of melt off the sunny roof (0.3 mm/h over its 3.4 m) at -4 C, then a night at -8 C.

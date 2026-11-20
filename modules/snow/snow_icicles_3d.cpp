@@ -79,8 +79,11 @@ constexpr int RIPPLE_COLUMNS = 64; // wide, so mipmaps (halving both ways) only 
 // photographs they read as faint, slightly irregular banding in what the ice refracts, not grooves: 0.25 mm
 // (slope 0.16) read as a threaded screw and sawtoothed the silhouette. Our pick, 0.03 mm full grown (slope 0.02,
 // already a visible swing in refraction), each wave 0.5 to 1.5 times that and its spacing wandering by up to 15%,
-// fading over the lower 40% toward the tip. The normal map stays smooth there.
+// fading over the lower 40% toward the tip. The normal map stays smooth there. Near the outline, where the view
+// grazes the ice, even slope 0.02 scalloped the edge of what it refracts into teeth, so the normals carry a
+// third of the ripple's slope: faint bands across the face, smooth refraction edges.
 constexpr float RIPPLE_AMPLITUDE = 0.00003f;
+constexpr float RIPPLE_NORMAL_SHARE = 0.3f;
 constexpr float RIPPLE_JITTER = 0.15f;
 constexpr float RIPPLE_FADE_SHARE = 0.4f;
 // The hazy core: pockets of impure water caught in layers as the icicle thickens (Ladan and Morris 2022) cloud
@@ -490,6 +493,9 @@ void SnowIcicles3D::_build_mesh() {
 				rad = MIN(rad, CORE_MAX_RADIUS); // the hazy core: a thin column
 			}
 			float slope = MIN(root * PROFILE_POWER * Math::pow(MAX(u, 1e-3f), PROFILE_POWER - 1.0f) / MAX(p_ic.length, 1e-4f), 3.0f);
+			if (!p_ripples && p_scale < 1.0f && rad >= CORE_MAX_RADIUS) {
+				slope = 0.0f; // where the cap holds, the core is a straight column: its sides face out, not down
+			}
 			if (ripples) {
 				// Full grown on long icicles, fading toward the tip (the newer ice), none at the root's cap. The
 				// spacing wanders (a smooth noise added to the phase) and each wave has its own depth.
@@ -509,7 +515,7 @@ void SnowIcicles3D::_build_mesh() {
 				const float k = float(Math::TAU) / RIPPLE_WAVELENGTH;
 				const float ph = float(Math::TAU) * (w + wander + p_phase);
 				rad += amp * Math::sin(ph);
-				slope -= amp * k * Math::cos(ph);
+				slope -= RIPPLE_NORMAL_SHARE * amp * k * Math::cos(ph);
 			}
 			if (r == rings) {
 				rad = 0.0f; // the rounded tip closes to a point below the drop
