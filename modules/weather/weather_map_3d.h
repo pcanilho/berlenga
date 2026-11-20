@@ -409,6 +409,10 @@ private:
 		float drip_timer = 0.0f;
 		bool left = false; // the next print's side
 		bool seen = false;
+		// Whether the body lays its own mud (a vehicle, GroundLegMud3D feet), kept per child count: the class checks
+		// walk the class tree by name, every body every frame.
+		int own_mud_children = -1;
+		bool own_mud = false;
 	};
 	HashMap<ObjectID, TrackBody> track_bodies;
 	struct CloudLight {
