@@ -1101,7 +1101,13 @@ void main() {
 			// proportion to sigma T over the segment, weighted by its scattering probability 1 - T); the path's own
 			// collision, drawn independently, only decides whether it scatters there and goes on, so that light is not
 			// counted twice. Far less noise than lighting only the collisions, for the same expectation.
-			if (!in_medium && get_rt_param(RT_PARAM_HAZE_SIGMA) > 0.0) {
+			// A bounce that leaves for the sky takes no haze here: the radiance map it reads holds the aerosol along the
+			// whole ray from its start (atmo_scatter with aerosol_from 0, only the camera's own sky starts at the reach),
+			// and with the ambient light off the sky lights nothing, as in raster. Before, its first reach was counted
+			// twice under the weather sky, and lit the ground under any other sky (a sun-only scene 17% over at a 30
+			// degree sun, more as the sun sank).
+			bool haze_sky_ray = bounce > 0u && ps.hit_t <= 0.0;
+			if (!in_medium && !haze_sky_ray && get_rt_param(RT_PARAM_HAZE_SIGMA) > 0.0) {
 				float seg_len = ps.hit_t > 0.0 ? min(ps.hit_t, t_far) : min(t_far, get_rt_param(RT_PARAM_HAZE_REACH));
 				if (seg_len > 0.0) {
 					float h_a, h_k;
