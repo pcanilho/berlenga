@@ -87,6 +87,9 @@ struct State {
 	float high_scale = 24000.0f; // m, its patches
 	Vector2 high_drift; // m
 	Vector2 high_dir = Vector2(1, 0); // unit, the wind aloft
+	// Cirrocumulus share (round 7): how unstable the shear at the high layer leaves it, 0 (smooth cirrus) to 1
+	// (rippled cirrocumulus in patches); from the gradient Richardson number (WeatherMap3D).
+	float high_cc = 0.0f;
 	// The mid layer (altocumulus, altostratus; docs/ideas/clouds.md): a slab mid_thickness deep centred on
 	// mid_height, its cover eased by the weather map (get_mid_cloud_cover_at), its vertical optical depth at full
 	// cover mid_tau, drifting with the wind aloft at its height; the sky breaks it into cloudlets in rows across

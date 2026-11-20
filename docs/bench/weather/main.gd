@@ -48,6 +48,7 @@ extends Node3D
 #   --cloud-effector=x,y,z,R,S  clouds views: a density effector (S > 0 adds cloud, < 0 clears); repeatable
 #   --type=T          clouds views: cloud_type (0.05 stratus, 0.2 stratocumulus, 0.6 cumulus)
 #   --wind=W          clouds views: wind_speed at 10 m (m/s)
+#   --shear-aloft=S   clouds views: wind_shear_aloft (m/s per km); 5 and up gives cirrocumulus (get_cirrocumulus_share)
 #   --no-wave-clouds  lenticular view: WeatherMap3D.wave_clouds off (cost A/B)
 #   --sun-energy=E    clouds views: the sun's light_energy (0: night, for cloud lights)
 #   --high-cover=C    clouds views: the cirrus layer's base cover (WeatherMap3D.high_cloud_cover); with the shafts
@@ -88,6 +89,7 @@ var cloud_effectors_arg: Array = []
 var sun_energy := -1.0
 var type_arg := -1.0
 var wind_arg := -1.0
+var shear_arg := -1.0
 var wave_clouds_off := false
 var half_usec := 0
 var out := ""
@@ -157,6 +159,7 @@ func _ready() -> void:
 		elif a == "--no-wave-clouds": wave_clouds_off = true
 		elif a.begins_with("--type="): type_arg = float(a.substr(7))
 		elif a.begins_with("--wind="): wind_arg = float(a.substr(7))
+		elif a.begins_with("--shear-aloft="): shear_arg = float(a.substr(14))
 		elif a.begins_with("--haze-km="): haze_km = float(a.substr(10))
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
@@ -209,7 +212,7 @@ func _ready() -> void:
 		await _cloud_map()
 		get_tree().quit()
 		return
-	if view in ["clouds", "clouds_low", "clouds_wide", "shafts", "towers", "lenticular"]:
+	if view in ["clouds", "clouds_low", "clouds_up", "clouds_wide", "shafts", "towers", "lenticular"]:
 		await _build_clouds()
 		return
 	if view == "projector":
@@ -1208,6 +1211,10 @@ func _build_clouds() -> void:
 	elif view == "towers":
 		cam.position = Vector3(0, 60, 0)
 		cam.look_at_from_position(cam.position, Vector3(-150, 330, -1000), Vector3.UP)
+	elif view == "clouds_up":
+		# Looking up 50 degrees: the high and mid layers' texture.
+		cam.position = Vector3(0, 60, 0)
+		cam.look_at_from_position(cam.position, Vector3(0, 60 + 1192, -1000), Vector3.UP)
 	elif view == "clouds_low":
 		# Looking down on the fields: the shadows.
 		cam.position = Vector3(0, 220, 0)
@@ -1240,6 +1247,9 @@ func _build_clouds() -> void:
 		weather.cloud_type = type_arg
 	if wind_arg >= 0.0:
 		weather.wind_speed = wind_arg
+	if shear_arg >= 0.0:
+		weather.wind_shear_aloft = shear_arg
+		print("cirrocumulus share %.2f" % weather.get_cirrocumulus_share())
 	if mid_cover >= 0.0:
 		weather.mid_cloud_cover = mid_cover
 	if high_cover >= 0.0:
