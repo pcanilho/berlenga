@@ -198,3 +198,17 @@ and 0.06 m grit as tone and a light bump (forward differences), each faded out a
 ground blend also stopped painting the plant cover map's one blurred colour: clumps and tone over 12 m and 2 m, and
 gaps where the ground's own texture shows. Real textures (CC0, via LFS) remain the better answer where a layer gets
 them; this is the floor for any layer that has none.
+
+## Next: real layer textures (research, 20 Nov; card pending)
+
+Every bench and the showcase still draw the five ground layers untextured (procedural floor above). Scanned CC0
+sets that fit the layers, all from Poly Haven (CC0, credited one line each in the README References):
+- rock: rock_face_01, cliff_side (bedded faces read with the cliff relief beds), marble_cliff_02 for limestone.
+- scree: rocks_ground_02 (angular clasts), coast_sand_rocks_02 near shores.
+- soil: forest_ground_04 under trees, dirt_floor for bare tracks.
+- alluvium: aerial_mud_1 (silt and drying mud seen from above, scales to a floodplain).
+- sand keeps its procedural grain (its own relief comes from GroundSurface3D ripples).
+ambientCG (also CC0) has Ground0xx soil and gravel sets as a second source. Plan: 2K albedo, normal, roughness and
+height per layer into art-src (Gitea LFS, never GitHub), linked into the benches; hex tiling (already in
+tm_hex) hides repeats, the 9 m / 2.2 m tone stays on top so no two tiles match, and the height maps drive the
+existing height blend. Check: raster against PT at 100% crop, no detail lost.
