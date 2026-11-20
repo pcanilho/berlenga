@@ -1072,7 +1072,15 @@ void sky() {
 		float half_size = 0.5 * size0 * sun_disk_scale;
 		float sundisk = smoothstep(cos(half_size * 2.0), cos(half_size), c0);
 		if (sundisk > 0.0 && !atmo_hits_ground(r_cam, EYEDIR.y)) {
-			disc = e0 * atmo_transmittance_to_top(r_cam, EYEDIR.y) * atmo_aerosol_view(r_cam, EYEDIR) * sundisk;
+			// The haze grey; the fires' smoke by colour over its whole column, as the sun light (SkyClock). The disc is
+			// drawn at the sun's irradiance, not its radiance (that over its solid angle, some 15000 times more), so
+			// it clips white as the real one does; through smoke the real disc stays a blinding white until the
+			// smoke has taken all but that share of it, and only then dims and turns orange, then red (a slant
+			// optical depth of about 8 to 10). So the smoke's share is scaled by the disc's own radiance and
+			// clipped at the clean disc's: white under light smoke, a dim red disc under a thick plume.
+			float omega_sun = 2.0 * PI * (1.0 - cos(0.5 * size0));
+			vec3 smoke_disc = min(atmo_sun_smoke / max(omega_sun, 1e-7), vec3(1.0));
+			disc = e0 * atmo_transmittance_to_top(r_cam, EYEDIR.y) * pow(atmo_aerosol_view(r_cam, EYEDIR), 1.0 - atmo_aerosol_smoke) * smoke_disc * sundisk;
 		}
 		// The moon and the stars through the air, behind the clouds (the stars not in the radiance map: they
 		// light nothing).
@@ -1430,9 +1438,14 @@ void WeatherSkyMaterial::set_moon_angular_size(float p_radians) {
 	RS::get_singleton()->material_set_param(get_rid(), "atmo_moon_angular_size", p_radians);
 }
 
-void WeatherSkyMaterial::set_aerosol(float p_extinction, float p_albedo, float p_height, float p_from) {
+void WeatherSkyMaterial::set_aerosol(float p_extinction, float p_albedo, float p_height, float p_from, float p_smoke_share) {
 	const float e = MAX(p_extinction, 0.0f);
 	RS::get_singleton()->material_set_param(get_rid(), "atmo_aerosol", Vector4(e * CLAMP(p_albedo, 0.0f, 1.0f), e, MAX(p_height, 10.0f), MAX(p_from, 0.0f)));
+	RS::get_singleton()->material_set_param(get_rid(), "atmo_aerosol_smoke", CLAMP(p_smoke_share, 0.0f, 1.0f));
+}
+
+void WeatherSkyMaterial::set_sun_smoke(const Vector3 &p_transmittance) {
+	RS::get_singleton()->material_set_param(get_rid(), "atmo_sun_smoke", p_transmittance.clamp(Vector3(), Vector3(1, 1, 1)));
 }
 
 void WeatherSkyMaterial::set_cloud_shadow_map(const Ref<Texture2D> &p_map, const Vector3 &p_axis_u, const Vector3 &p_axis_v, const Vector2 &p_corner, float p_size) {
@@ -1513,7 +1526,8 @@ void WeatherSkyMaterial::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_atmosphere_model"), &WeatherSkyMaterial::get_atmosphere_model);
 	ClassDB::bind_method(D_METHOD("set_star_sky", "celestial", "energy_per_lux"), &WeatherSkyMaterial::set_star_sky);
 	ClassDB::bind_method(D_METHOD("set_moon_angular_size", "radians"), &WeatherSkyMaterial::set_moon_angular_size);
-	ClassDB::bind_method(D_METHOD("set_aerosol", "extinction", "albedo", "height", "from"), &WeatherSkyMaterial::set_aerosol);
+	ClassDB::bind_method(D_METHOD("set_aerosol", "extinction", "albedo", "height", "from", "smoke_share"), &WeatherSkyMaterial::set_aerosol, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("set_sun_smoke", "transmittance"), &WeatherSkyMaterial::set_sun_smoke);
 	ClassDB::bind_method(D_METHOD("set_cloud_shadow_map", "map", "axis_u", "axis_v", "corner", "size"), &WeatherSkyMaterial::set_cloud_shadow_map);
 	ClassDB::bind_method(D_METHOD("set_cloud_light_grid", "grid", "corner", "size", "y0", "y1"), &WeatherSkyMaterial::set_cloud_light_grid);
 	ClassDB::bind_method(D_METHOD("set_atmosphere_lights", "sun_direction", "sun_irradiance", "moon_direction", "moon_irradiance"), &WeatherSkyMaterial::set_atmosphere_lights);

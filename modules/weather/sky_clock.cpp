@@ -458,6 +458,8 @@ void SkyClock::_apply_lights() {
 		sky_mat->set_atmosphere_lights(get_sun_direction(), Vector3(e_sun, e_sun, e_sun), get_moon_direction(), Vector3(e_moon, e_moon, e_moon));
 		sky_mat->set_star_sky(get_celestial_basis(), float(energy_per_lux * units));
 		sky_mat->set_moon_angular_size(float(2.0 * Math::asin(1737.4 / sky.moon.dist_km)));
+		// The fires' smoke on the sun, as on the light: the sky's disc and the light its air scatters.
+		sky_mat->set_sun_smoke(applied_smoke);
 	}
 	if (drive_exposure && !Engine::get_singleton()->is_editor_hint()) {
 		Viewport *vp = get_viewport();

@@ -1766,6 +1766,18 @@ smoke's grey part so plumes shade the ground in patches (weather
 owners); the haze is one value over the map's centre, not a field; the
 lofted plume is treated as mixed through 2 km.
 
+The sky's sun (20 Nov). The sun light already took the smoke by colour, but the sky's disc and the light its air
+scatters only saw the smoke as part of the grey aerosol haze, so under a thick plume the disc stayed white and the
+sky grey. Now the sky gets the same per-colour transmittance as the light (`WeatherSkyMaterial.set_sun_smoke`, set by
+`SkyClock`) and the smoke's share of the aerosol (`set_aerosol`'s smoke_share). The sunlight reaching each height
+takes the smoke column above it by colour, which reddens the forward-scattering aureole (g 0.6) and browns the sky.
+Multiple scattering uses the transport approximation's forward share, exp(-(1 - w (1 + g) / 2) tau), about 0.28 tau
+with w 0.9 and g 0.6, so the sky under thick smoke stays a dim orange-brown instead of going black. The disc is
+drawn at the sun's irradiance, about 1/15000 of its radiance, so the smoke's transmittance on it is scaled by
+1 / solid angle and clipped at the clean disc. Like the real sun, it stays a white disc in an orange glow until a
+slant optical depth of about 8, then turns a dim yellow-orange and red (Angstrom exponent 1.8, Eck et al. 1999;
+Reid et al. 2005).
+
 ### Post-fire mudflows (picked 19 Nov morning, second of three)
 
 Split agreed by the three owners. Valence (WeatherRunoff3D) fires the
