@@ -3665,3 +3665,18 @@ logs, later stilted rows); Zielonka 2006 (Norway spruce comes in on logs from de
 3. **Deer and nurse logs.** A browse line under heavily grazed woods (no foliage below about 1.8 m, saplings bitten to
    bushes, bark stripped on young spruce and ash; Gill 1992), and seedlings in rows along rotting logs that later
    stand on stilts in a line where the log was (Harmon and Franklin 1989). Reads a browsing pressure map or stand meta.
+
+## Next-round options (card 20 Nov evening)
+
+1. **Lightning-struck trees.** A struck tree carries a strip of bark blown off from the point of strike high in the crown
+   down to the ground, often spiralling with the grain, a few centimetres to a hand wide, sometimes a furrow in the
+   wood; a hard strike splits the stem or shatters the top; the strip later heals with callus lips either side (Taylor
+   1964 and 1969, lightning damage in Montana forests; Alabama Extension FOR-2134, 2023). Tall, isolated and edge
+   trees, oaks and pines most. Reads WeatherLightning3D ground strikes with `canopy` (world-links: lightning to tree):
+   VegetationField3D swaps the struck instance for a fresh-scar variant, as burn ages pick fire variants; old healed
+   scars on a share of the tall veterans.
+2. **Mistletoe and witches' brooms.** Mistletoe balls (Viscum album) in lime, poplar, apple, hawthorn and pine crowns,
+   evergreen and plain in winter; witches' brooms (dense twig clusters from a fungus or mite) on birch, fir and cherry.
+3. **Colonnades and a browsing pressure map.** Rows of stilted spruce along one vanished log (a row placement in
+   VegetationField3D), and a pressure map (WorldStand or vegetation) so the browse line and hedged saplings vary over
+   the land, heavier by meadows and wintering ground.
