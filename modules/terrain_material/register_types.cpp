@@ -58,6 +58,8 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_cover_rect", "vec4" },
 		// Where stones sit (RockField3D.ground_contact publishes it).
 		{ "rock_contact_map", "sampler2D" },
+		{ "rock_far_cover_map", "sampler2D" },
+		{ "rock_far_cover_rect", "vec4" },
 		{ "rock_contact_rect", "vec4" },
 		// The last glaciers' flow and wear, for ice-worn rock in the detail normal (TerrainGenerator3D.ice_worn_detail).
 		{ "terrain_ice_flow", "sampler2D" },
