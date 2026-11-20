@@ -2337,6 +2337,23 @@ bool MeshStorage::_multimesh_is_rt_instanced(RID p_multimesh) const {
 	return multimesh->rt_instanced;
 }
 
+void MeshStorage::_multimesh_set_rt_offscreen_cull(RID p_multimesh, float p_min_degrees) {
+	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
+	ERR_FAIL_NULL(multimesh);
+	const float v = MAX(p_min_degrees, 0.0f);
+	if (multimesh->rt_offscreen_cull == v) {
+		return;
+	}
+	multimesh->rt_offscreen_cull = v;
+	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH);
+}
+
+float MeshStorage::_multimesh_get_rt_offscreen_cull(RID p_multimesh) const {
+	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
+	ERR_FAIL_NULL_V(multimesh, 0.0f);
+	return multimesh->rt_offscreen_cull;
+}
+
 void MeshStorage::_multimesh_request_rd_readback(MultiMesh *multimesh, RID p_multimesh) {
 	const uint32_t block_bytes = multimesh->instances * multimesh->stride_cache * sizeof(float);
 	multimesh->rd_readback_ticket++;

@@ -279,6 +279,14 @@ bool RendererMeshStorage::multimesh_is_rt_instanced(RID p_multimesh) const {
 	return _multimesh_is_rt_instanced(p_multimesh);
 }
 
+void RendererMeshStorage::multimesh_set_rt_offscreen_cull(RID p_multimesh, float p_min_degrees) {
+	_multimesh_set_rt_offscreen_cull(p_multimesh, p_min_degrees);
+}
+
+float RendererMeshStorage::multimesh_get_rt_offscreen_cull(RID p_multimesh) const {
+	return _multimesh_get_rt_offscreen_cull(p_multimesh);
+}
+
 Vector<float> RendererMeshStorage::multimesh_get_buffer(RID p_multimesh) const {
 	return _multimesh_get_buffer(p_multimesh);
 }
