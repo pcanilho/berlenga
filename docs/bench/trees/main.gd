@@ -305,6 +305,9 @@ func _place(mesh: Mesh, pos: Vector3) -> void:
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
 	mi.position = pos
+	# Stilt-rooted trees (trees.md 5at): the ground is under the root tips, tree_base_lift below the origin.
+	if mesh is Mesh and mesh.has_meta("tree_base_lift"):
+		mi.position.y += float(mesh.get_meta("tree_base_lift"))
 	add_child(mi)
 	# env HIDE_SURF=name[,name]: hide those surfaces (e.g. climber_leaves, to see ivy stems).
 	if OS.has_environment("HIDE_SURF"):

@@ -48,7 +48,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "woodland", "NA woodland"]
+		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "alder carr", "floodplain willow", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -328,7 +328,8 @@ func _stand_checks(only := -1) -> void:
 			var n: int = f.get_placements(s).size()
 			var nm: String = sps[s].resource_name
 			print("%-18s %-27s %6d  %6.0f" % [STAND_NAMES[i], nm, n, n / area_ha])
-			if nm.ends_with("(stand)"):
+			# The wet stands name their stand-grown canopy by its site (trees.md 5at).
+			if nm.ends_with("(stand)") or nm.contains("stilt-rooted") or nm.contains("(old, floodplain)"):
 				stand_count += n
 				canopy_total += n
 			elif nm.ends_with("(open)"):
