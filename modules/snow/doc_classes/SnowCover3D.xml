@@ -22,6 +22,13 @@
 				Lays a frozen crust [param thickness] m thick (at most 0.05) on top of the snow everywhere on the map, as if it had been through [param cycles] melt-freeze cycles. For scenes that start on crusted snow. See [method crust_strength].
 			</description>
 		</method>
+		<method name="add_hoar">
+			<return type="void" />
+			<param index="0" name="size_mm" type="float" />
+			<description>
+				Lays surface hoar crystals of [param size_mm] millimetres on all the snow (for tests and set pieces; [member hoar_enabled] grows it from the weather).
+			</description>
+		</method>
 		<method name="add_impurity">
 			<return type="void" />
 			<param index="0" name="position" type="Vector3" />
@@ -59,6 +66,14 @@
 			<param index="1" name="resolution" type="int" />
 			<description>
 				Runs [member climate]'s season over the square [param rect] at [param resolution] cells a side, on this cover's ground and settings, and stores the snowpack it leaves in the climate. The world tier then starts from it and the near square is seeded from it. Blocking: a 182-day winter on 256 x 256 cells takes a few seconds.
+			</description>
+		</method>
+		<method name="buried_hoar_strength" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="size_mm" type="float" />
+			<param index="1" name="age_hours" type="float" />
+			<description>
+				The shear strength in pascals of a buried surface hoar layer of [param size_mm] crystals, [param age_hours] after burial: (400 + 35 days) times sqrt(5 / size), Jamieson and Schweizer (2000).
 			</description>
 		</method>
 		<method name="canopy_capacity" qualifiers="static">
@@ -154,6 +169,27 @@
 				The [SnowBodies3D] it added, or [code]null[/code].
 			</description>
 		</method>
+		<method name="get_buried_hoar_age_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Days since the buried surface hoar layer at [param position] was buried.
+			</description>
+		</method>
+		<method name="get_buried_hoar_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The crystal size in millimetres of the buried surface hoar layer at [param position], 0 where there is none. Avalanches read it as a weak layer.
+			</description>
+		</method>
+		<method name="get_buried_hoar_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The snow over the buried surface hoar layer at [param position], in metres.
+			</description>
+		</method>
 		<method name="get_canopy_capacity_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -247,6 +283,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the ground height the snowpack uses at [param position].
+			</description>
+		</method>
+		<method name="get_hoar_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The surface hoar crystals on the snow at [param position], in millimetres. Materials read them from the catch map's alpha (1 + mm / 10) and draw their plates as larger glints.
 			</description>
 		</method>
 		<method name="get_ice_break_count" qualifiers="const">
@@ -414,6 +457,17 @@
 				Returns [code]true[/code] while a baked [member climate] gives the cover a world tier.
 			</description>
 		</method>
+		<method name="hoar_deposition" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="air_celsius" type="float" />
+			<param index="1" name="humidity" type="float" />
+			<param index="2" name="wind" type="float" />
+			<param index="3" name="cloud" type="float" />
+			<param index="4" name="shortwave" type="float" />
+			<description>
+				The rate surface hoar deposits on the snow in kg/m² per hour for the air temperature, relative humidity (0 to 1), wind at 10 m (m/s), cloud cover (0 to 1) and absorbed shortwave (W/m²); negative where it sublimates. Grows on clear calm nights.
+			</description>
+		</method>
 		<method name="holding_depth" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="slope_degrees" type="float" />
@@ -574,6 +628,9 @@
 		</member>
 		<member name="height_source" type="NodePath" setter="set_height_source" getter="get_height_source" default="NodePath(&quot;&quot;)">
 			Relative humidity (0 to 1) used when no [code]WeatherMap3D[/code] is in the scene.
+		</member>
+		<member name="hoar_enabled" type="bool" setter="set_hoar_enabled" getter="is_hoar_enabled" default="true">
+			Surface hoar: feathery ice crystals deposit on the snow on clear calm nights, flash as glints in a low sun, break up in wind and melt, and once snowed over become a buried weak layer that avalanches release on.
 		</member>
 		<member name="humidity" type="float" setter="set_humidity" getter="get_humidity" default="0.85">
 		</member>

@@ -2560,6 +2560,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Game trails",
+   "settings": [
+    "VegetationField3D.make_game_trails()"
+   ],
+   "note": "",
+   "what": "animals wear a branching network of trails between cover, feeding lawns and water, routed by least cost over slope and water and merging where traffic runs, and grass wears along them.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Stand margins",
    "settings": [
     "PlantSpecies.margin_width",

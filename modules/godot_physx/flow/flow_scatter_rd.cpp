@@ -614,12 +614,19 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 						// better lit.
 						float ground_sun_t = 1.0;
 						if (p.sun_map.w > 0.5 && dot(ldir, p.sun_map.xyz) > 0.9999) {
-							ground_sun_t = 0.0;
+							// A sample off the sun's map (it is fitted to the gas, not to the box) tells nothing: it is
+							// skipped; with both off it, the ground is out of the gas's shadow. (Taking an off-map sample as
+							// lit let it outvote a shadowed one at the map's side.)
+							float best = -1.0;
 							for (int k = 0; k < 2; k++) {
 								vec4 gm = vec4(pos_m.x, k == 0 ? p.world_min.y / upm : max(gas_floor_y, p.world_min.y / upm), pos_m.z, 1.0);
 								vec3 g_uvw = vec3(dot(p.sun_map_xform[0], gm), dot(p.sun_map_xform[1], gm), dot(p.sun_map_xform[2], gm));
-								ground_sun_t = max(ground_sun_t, (all(greaterThanEqual(g_uvw, vec3(0.0))) && all(lessThanEqual(g_uvw, vec3(1.0)))) ? exp(-textureLod(sun_map_tex, g_uvw, 0.0).r) : 1.0);
+								if (all(greaterThanEqual(g_uvw.xy, vec2(0.0))) && all(lessThanEqual(g_uvw.xy, vec2(1.0)))) {
+									// Below the map's last slice: all of its column lies toward the sun.
+									best = max(best, exp(-textureLod(sun_map_tex, vec3(g_uvw.xy, clamp(g_uvw.z, 0.0, 1.0)), 0.0).r));
+								}
 							}
+							ground_sun_t = best >= 0.0 ? best : 1.0;
 						}
 						// Part of the ground the point sees lies toward the camera, out of the gas's shadow (SKY_OPENING).
 						ground_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * ldir.y * mix(ground_sun_t, 1.0, SKY_OPENING * transmittance) * p.sky_map.y);

@@ -76,7 +76,8 @@ class BodySnowStub extends WorldSnow:
 #   --view=lake       a frozen lake from its shore after two weeks of frost and a light snow (--snow=H)
 #   --view=sparkle    dry new snow at the feet against a low sun ahead: glinting grains; --melt=H hours of thaw
 #                     first wets it (the glints go); --glints=exact (default) / grid: every grain a facet under the path tracer, or the raster's grid
-#                     (sparkle) prints the share of glinting pixels and the mean luminance
+#                     (sparkle) prints the share of glinting pixels and the mean luminance; --hoar=MM: surface hoar
+#                     of MM mm over the field (its upright plates flash in the low sun)
 #   --view=shelter    a shed and young spruces after a snowfall: bare ground under the roof, snow in the
 #                     crowns and less under them (--test=shelter for the checks)
 #   --test=background updates on worker threads (follow-up 14): the same pack as updates run in the frame,
@@ -155,6 +156,7 @@ var only := ""
 var melt_hours := 0.0
 var crust_cycles := 0.0
 var transport := true
+var hoar_mm := 0.0 # --hoar=MM: the sparkle view's surface hoar
 var air := INF # --air=C: the snowfall view's air temperature (sleet near and above 0 C)
 
 
@@ -178,6 +180,7 @@ func _ready() -> void:
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a.begins_with("--snow="): snow_hours = float(a.substr(7))
+		elif a.begins_with("--hoar="): hoar_mm = float(a.substr(7))
 		elif a.begins_with("--sun="): sun_hours = float(a.substr(6))
 		elif a.begins_with("--steps="): steps = int(a.substr(8))
 		elif a.begins_with("--wind="): wind = float(a.substr(7))
@@ -3264,7 +3267,13 @@ func _build_sparkle(cam: Camera3D) -> void:
 		weather.snap_to_settings()
 		weather.advance(1.0)
 		snow.advance(melt_hours * 3600.0)
+	if hoar_mm > 0.0:
+		# A clear calm night's surface hoar over the field (SnowCover3D.hoar_enabled grows it; set here so the
+		# look is tested alone): the crystals' upright plates flash in the low sun.
+		snow.add_hoar(hoar_mm)
+		snow.advance(1.0)
 	var p := Vector3(0, 0, 0)
+	print("sparkle: hoar %.1f mm" % snow.get_hoar_at(p))
 	print("sparkle: depth %.2f m, density %.0f, albedo %.2f" % [snow.get_depth_at(p), snow.get_density_at(p), snow.get_albedo_at(p)])
 	await _save_frame("")
 	# The share of glinting pixels: over the snow below the horizon, those a fifth brighter than the ring of

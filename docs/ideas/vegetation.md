@@ -1434,3 +1434,43 @@ Research so far (to confirm before building):
   Dean et al. 1997); molehills are fresh soil heaps 10-20 cm, bare then colonised within a season. Build idea: mounds as
   real ground geometry (ground thread or here as soil meshes with grass), with a mound top species set (thyme, sheep's
   fescue, rockrose) placed by a new mound rule; molehills by soil wetness and earthworm-rich ground.
+
+## Fixes from the lawn reshoot (20 Nov evening)
+- Sorrel and dock flower spikes drew as flat red bars from a few metres. Two causes: even rungs of four flat tepals
+  (a ladder) and meshoptimizer's chain on hundreds of tiny petal islands, whose sloppy fallback welds them into strips.
+  Now loose whorls of 2-8 (sorrel) and 3-8 (dock) drooping tepals on short stalks, spacing, size and colour varied
+  (Rumex acetosa: green flushed red in flower, rusty in fruit), and their petal surfaces take the card LOD chain
+  (rank-ordered shrink, area kept) like fire moss's capsules.
+- Swirl stripes in the near turf: the ground's streaks and thatch turned world xz by a noise angle, which swings far
+  points along arcs round the origin (concentric rings). Now a 2 m grid of rotated streak cells blended bilinearly
+  (grass_streaks). The honami's fronts were also straight lines a sward wide; coherent canopy structures are a few
+  heights across (Finnigan 2000; Py et al. 2006), so the fronts now bend with a slow crosswind warp and the wave's
+  strength comes and goes in patches, with twice the per-clump phase jitter (the fallback wind's gusts the same).
+- Grass bench --deer-wood=P: a clearing in TreeGenerator's real trees (P > 0 STAND_DEER_WOOD and its make_edge, the
+  browse line; P = 0 the beech stand and its mantle), make_floor's beech floor with its browse set, the sward cropped
+  by WorldStand browse P over the clearing and wood, from 1.6 m. About 12.5 GB and 30 min a 1920x1080 raster frame in
+  the cloud: one at a time.
+
+## Game trails (round 3, first pick)
+Deer, boar and other large animals wear narrow, lasting paths between the places they use: cover, feeding lawns,
+water, and the fords and saddles between them (Liddle 1997, ch. 3; Cole 1995 for the plants' tolerance). Trails form
+because each animal prefers ground already trodden: the active walker model (Helbing, Keltsch and Molnar 1997, "Modelling the
+evolution of human trail systems", Nature 388, 47; Helbing, Schweitzer, Keltsch and Molnar 1997, "Active walker model
+for the formation of human and animal trail systems", Phys. Rev. E 56, 2527) gives
+branching networks, not a straight line per pair of places. Least-cost routing over terrain is the usual way to lay
+wildlife corridors and trails in GIS (Adriaensen et al. 2003, least-cost modelling), and games use the same A* over a
+cost field for roads and paths (e.g. Galin et al. 2010, "Procedural generation of roads", Eurographics).
+- `VegetationField3D.make_game_trails(data_map, area, goals, options)` (static, vegetation_trails.cpp): A* on a grid
+  (options.cell, 2 m) for every pair of goals within options.reach (250 m), nearest pairs first; a cell's cost is
+  raised by slope (cheap to about 10 degrees, then steeply; none over max_slope_deg 40), by water (fords only up to
+  ford_depth 0.4 m) and by a seeded two-scale roughness (logs, tussocks, soft ground the map does not hold), and
+  lowered by the traffic already routed over it (attraction 0.6: a worn trail costs down to 40% of fresh ground), so
+  later routes join earlier ones. Out as worn paths (the fields' `paths` Dictionaries plus "kind": "game_trail"): one
+  piece per stretch of equal traffic, a shared stretch carrying the summed passes and widening about 0.1 m each
+  tenfold; corners cut by Chaikin's scheme twice. Default 500 passes a year a link, 0.35 m tread.
+- The fields wear them as any path: GrassField3D.paths and VegetationField3D.paths (VegetationPaths), each plant by
+  its trample resistance.
+- Contract asked of world-links: the network published on WorldStand (or its own provider) so ground detail, mud and
+  snow wear the same lines and the fields read them without the scene copying them.
+- Vegetation bench `--trails` (also in --test): none through deep water or up steep ground, merged, shared stretches
+  busier, repeatable.
