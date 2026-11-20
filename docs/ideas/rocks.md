@@ -1175,3 +1175,13 @@ Four options put to Paulo after the tafoni, wet rock and cave stream round. Noth
 - Technique: the MFD flow routing baked for rivulets (COLOR.a) already gives the runoff paths, so curtains follow it.
   Varnish age comes from the stone's exposure (rockfall and Blast breaks are fresh, so bright). Shader-only, in
   raster and PT alike.
+
+## Sea cave walls in fixed-camera stills (20 Nov)
+
+The bench's `--cam` stills meshed every cave chunk on the coarse 0.3 m grid, while play refines the chunks within
+10 m of the camera to the 0.1 m grid with its knob and spall relief. Lit walls looked smeared and a vertical seam
+showed on the coarse mesh. Stills now refine round the camera (`--no-refine` keeps the coarse grid). Chunk borders were
+checked: the field, border vertices and normals of two neighbouring chunks match exactly. A refined chunk now fades
+its fine relief out over the last 3 m to a face whose neighbour is coarse (geomorphing, as in chunked LOD terrain:
+Ulrich 2002, Lengyel 2010), and is remeshed when that neighbour's grid changes. Debug views: CAVE_WALL_DEBUG=3 chunk
+grid, 4 vertex colour, 5 mesh normal, 6 bumped normal, 7 world x/z bands.
