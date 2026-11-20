@@ -106,6 +106,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Nebkhas → shrubs | linked (19 Nov) | TerrainGenerator3D `get_nebkhas(rect)` (x, top y, z, height m), `get_nebkha_height(pos)` (mound sand alone); `sand_sea_mask` (Image, red 0..1) shapes the ergs | VegetationField3D places a shrub on each mound top; the mounds are sand for the sand thread, no deformation hook needed (terrain-gen cf579682) |
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
 | Lightning → struck tree variant | linked (20 Nov) | `WorldStand.strike_age_at` | WeatherLightning3D records canopy strikes; VegetationField3D swaps to a `tree_lightning_years` variant (field side: trees) |
+| Beaver dam fails → beaver meadow | linked (20 Nov) | `WorldStand` `DISTURBANCE_BEAVER` (4), age since the pond drained | trees report it when a STAND_BEAVER_POND dam fails; PlantGenerator.make_beaver meadow reads it by RULE_DISTURBANCE (4,4) |
 | Wet ground → mist | linked (18 Nov) | surface wetness, surface cooling | VegetationMist3D: wet ground mists more and sooner |
 
 ### Water (ocean, rivers, pools, falls)
@@ -161,6 +162,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Terrain, wind aloft, temperature, humidity, mid/high layers → wave clouds (lenticulars) | linked (20 Nov) | terrain source, `get_wind_aloft`, air, `mid/high_cloud_cover` | `WeatherMap3D.get_wave_cloud_density_at` / `WorldWeather.wave_cloud_density_at`; shadow bake (docs/ideas/clouds.md round 5) |
 | Time of day, wind, humidity, rain → low cloud type (stratus, stratocumulus, cumulus) | linked (20 Nov) | clock, `cur_*` air | `WeatherMap3D.cloud_regime_from_weather`, `get_convective_heating` (docs/ideas/clouds.md round 6) |
 | Wind shear aloft, air temperature → cirrocumulus; high cover (humidity, coming rain) → cirrostratus veil | linked (20 Nov) | `get_wind_aloft`, air | `WeatherMap3D.get_cirrocumulus_share` (docs/ideas/clouds.md round 7) |
+| Storm rain, outflow, steering wind → rain shafts and shelf cloud | linked (20 Nov) | `add_storm` storms | sky rain shafts; `get_cloud_base_at` / `WorldWeather.cloud_base_at` lowered by the shelf (docs/ideas/clouds.md round 8) |
 | Air temperature, dew point → cloud base | linked (20 Nov) | `get_air_dew_point` | `WorldWeather.cloud_base_at`; readers mist, lightning, snow line, orographic rain |
 | Mountain waves → wind aloft | linked (20 Nov) | WeatherMountainWaves | `get_wind_at` vertical part above the boundary layer; `WorldWeather.mountain_wave_velocity_at` alone; ground wind unchanged |
 | Fire → smoke haze downwind | linked (19 Nov) | WorldFire `smoke_sources()` (base, kg/s PM2.5) | PhysX eabdcd98: WeatherMap3D carries the smoke into its haze |

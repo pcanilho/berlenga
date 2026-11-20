@@ -2506,14 +2506,19 @@ vec3 ground_dune_tone(vec2 p_xz, float p_normal_y, float p_depth) {
 	t *= mix(vec3(1.0), vec3(1.08, 1.07, 1.05), slip);
 	return t;
 }
+// The ripple field's patchy height (the amplitude ground_ripple_vary() returns), alone.
+float ground_ripple_amp(vec2 p) {
+	float amp = mix(0.2, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
+	amp *= smoothstep(0.36, 0.6, 0.7 * ground_ripple_vn(p / 16.0, 15u) + 0.3 * ground_ripple_vn(p / 5.0, 16u));
+	return amp;
+}
 vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 	vec2 p = p_xz;
 	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
 	o += 1.2 * (vec2(ground_ripple_vn(p / 6.0, 3u), ground_ripple_vn(p / 6.0, 4u)) - 0.5);
 	o += 0.06 * (vec2(ground_ripple_vn(p / 1.7, 5u), ground_ripple_vn(p / 1.7, 6u)) - 0.5);
 	// Patchy over tens of metres: smooth sheets between ripple fields (material.cpp ground_ripple_vary()).
-	float amp = mix(0.2, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
-	amp *= smoothstep(0.36, 0.6, 0.7 * ground_ripple_vn(p / 16.0, 15u) + 0.3 * ground_ripple_vn(p / 5.0, 16u));
+	float amp = ground_ripple_amp(p);
 	float kk = dot(p_k, p_k);
 	if (kk > 0.0) {
 		vec2 kn = p_k / sqrt(kk);
@@ -3410,7 +3415,7 @@ void main() {
 				float rfp = rt_cone_width;
 				float w = sand * (1.0 - live) * smoothstep(0.85, 0.91, h.geometry_normal.y);
 				float resolved = 1.0 - smoothstep(0.22 * lam, 0.4 * lam, rfp);
-				vec3 vr = w > 0.0 ? ground_ripple_vary(p, m3.xy) : vec3(0.0);
+				vec3 vr = w > 0.0 ? (resolved > 0.0 ? ground_ripple_vary(p, m3.xy) : vec3(0.0, 0.0, ground_ripple_amp(p))) : vec3(0.0);
 				// Crests finer than the pixel shade it as a patchy tone (material.cpp ground_ripple_far_slope()).
 				m.albedo *= 1.0 - 0.15 * w * vr.z * (1.0 - resolved);
 				// Grain sorting (GroundSurface3D ripple_sorting; m3.w the grown field's height spread, 0 when off):

@@ -151,5 +151,8 @@
 		<constant name="DISTURBANCE_BEETLE" value="3" enum="Disturbance">
 			A bark beetle kill. New kinds are only appended.
 		</constant>
+		<constant name="DISTURBANCE_BEAVER" value="4" enum="Disturbance">
+			A beaver pond drained: the age is the years since it drained (a beaver meadow).
+		</constant>
 	</constants>
 </class>

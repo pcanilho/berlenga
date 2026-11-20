@@ -2692,7 +2692,7 @@ float SnowCover3D::get_depth_at(Vector3 p_position) const {
 }
 
 float SnowCover3D::get_surface_depth_at(Vector3 p_position) const {
-	// The drawn surface's depth (SnowSurface3D's snow_depth_smooth): Catmull-Rom over the 4 x 4 cells around,
+	// The drawn surface's depth (SnowSurface3D's snow_depth_smooth_grad): Catmull-Rom over the 4 x 4 cells around,
 	// held within the four nearest cells' range. The snow texture holds the cell's swe / density.
 	const int n = resolution;
 	if (_in_world_only(p_position) || !origin_valid || pub.swe.size() != n * n || pub.density.size() != n * n) {

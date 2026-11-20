@@ -722,6 +722,7 @@ public:
 	float get_cloud_base_now() const;
 	float get_convective_heating() const { return cur_heating; }
 	float get_cirrocumulus_share() const;
+	float get_cloud_base_at(Vector3 p_position) const;
 	float _target_cloud_type() const;
 	void set_cloud_thickness(float p_thickness);
 	float get_cloud_thickness() const { return cloud_thickness; }

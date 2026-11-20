@@ -3146,6 +3146,17 @@ func _link_shot(kind: String, off: bool) -> void:
 				if prints != null:
 					var mq := a.lerp(b, 0.5)
 					_log("tracks: dent %.3f m mid-walk at %s" % [float(prints.get_dent_at(Vector3(mq.x, height_at(mq.x, mq.y), mq.y))), str(mq)])
+				# The wet prints as the map holds them: the most wetness within 0.5 m of five points along the way, and the
+				# square they must lie in to be drawn (weather_contact_rect).
+				var wl := []
+				for k in 5:
+					var wq := a.lerp(b, (k + 0.5) / 5.0)
+					var best := 0.0
+					for oz in range(-4, 5):
+						for ox in range(-4, 5):
+							best = maxf(best, weather.get_contact_wetness_at(Vector3(wq.x + ox * 0.125, 0, wq.y + oz * 0.125)))
+					wl.append("%.2f at %s" % [best, str(wq.round())])
+				_log("tracks: contact wetness along the way %s; square %s, camera %s" % [", ".join(wl), str(weather.get_contact_wetness_rect()), str(get_viewport().get_camera_3d().global_position.round())])
 				for bd in mv[0]:
 					_log("tracks: %s water %s at the end" % [bd.name, str(weather.get_body_water(bd))])
 					bd.queue_free()
@@ -6560,6 +6571,12 @@ func _powder_avalanche() -> void:
 		_log("powder avalanche: no avalanche node on the snow cover")
 		return
 	av.natural_release = false
+	# A storm slab on an older bonded pack (as on the snow bench): it breaks away whole.
+	snow.add_snow(90.0, 150.0)
+	snow.advance(8.0 * 24.0 * 3600.0)
+	await get_tree().physics_frame
+	snow.add_snow(90.0, 90.0)
+	await get_tree().physics_frame
 	var wr: Rect2 = gen.get_world_rect()
 	var stp := float(args.get("av-step", "40"))
 	var to_sun := sun.global_basis.z
@@ -6574,7 +6591,7 @@ func _powder_avalanche() -> void:
 			var p := Vector3(xx, 0, zz)
 			var g := _slip_grad(p)
 			var ang := rad_to_deg(atan(g.length()))
-			if ang >= 35.0 and ang <= 45.0 and snow.get_depth_at(p) >= float(args.get("av-min-snow", "0.3")):
+			if ang >= float(args.get("av-min-deg", "32")) and ang <= 45.0 and snow.get_depth_at(p) >= float(args.get("av-min-snow", "0.3")):
 				var fall := -g.normalized()
 				var score := (1.0 - absf(fall.dot(sun_h))) * 2.0 + gen.get_height(p) / 1000.0
 				if score > best_score:
@@ -6584,7 +6601,15 @@ func _powder_avalanche() -> void:
 			zz += stp
 		xx += stp
 	if best == Vector3.INF:
-		_log("powder avalanche: no 35-45 degree face with snow on it")
+		var deepest := 0.0
+		var xs := wr.position.x + stp
+		while xs < wr.end.x - stp:
+			var zs := wr.position.y + stp
+			while zs < wr.end.y - stp:
+				deepest = maxf(deepest, snow.get_depth_at(Vector3(xs, 0, zs)))
+				zs += stp * 4.0
+			xs += stp * 4.0
+		_log("powder avalanche: no steep face with snow on it (deepest snow %.2f m)" % deepest)
 		return
 	var f3 := Vector3(best_fall.x, 0, best_fall.y)
 	var side := f3.cross(Vector3.UP).normalized()
@@ -6602,12 +6627,6 @@ func _powder_avalanche() -> void:
 	if args.has("av-probe"):
 		get_tree().quit()
 		return
-	# A storm slab on an older bonded pack (as on the snow bench): it breaks away whole.
-	snow.add_snow(90.0, 150.0)
-	snow.advance(8.0 * 24.0 * 3600.0)
-	await get_tree().physics_frame
-	snow.add_snow(90.0, 90.0)
-	await get_tree().physics_frame
 	Engine.max_physics_steps_per_frame = 1 # Flow steps once a frame: one tick a frame keeps the gas with the slide
 	var pflow: Node = av.get_powder_cloud().get_flow()
 	if pflow:

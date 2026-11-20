@@ -1307,7 +1307,7 @@ void WorldStand::_report(const Rect2 &p_area) {
 }
 
 int WorldStand::add_disturbance(const Vector3 &p_center, float p_radius, int p_kind, float p_age_years) {
-	ERR_FAIL_COND_V_MSG(p_kind <= DISTURBANCE_NONE, 0, "A disturbance needs a kind (fire, wind, beetle).");
+	ERR_FAIL_COND_V_MSG(p_kind <= DISTURBANCE_NONE, 0, "A disturbance needs a kind (fire, wind, beetle, beaver).");
 	Event e;
 	e.id = next_id++;
 	e.center = Vector2(p_center.x, p_center.z);
@@ -1510,6 +1510,7 @@ void WorldStand::_bind_methods() {
 	BIND_ENUM_CONSTANT(DISTURBANCE_FIRE);
 	BIND_ENUM_CONSTANT(DISTURBANCE_WIND);
 	BIND_ENUM_CONSTANT(DISTURBANCE_BEETLE);
+	BIND_ENUM_CONSTANT(DISTURBANCE_BEAVER);
 }
 
 void WorldContracts::set_fire(const Ref<WorldFire> &p_stub) {

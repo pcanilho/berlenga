@@ -397,7 +397,8 @@ public:
 		DISTURBANCE_NONE = 0,
 		DISTURBANCE_FIRE = 1,
 		DISTURBANCE_WIND = 2,
-		DISTURBANCE_BEETLE = 3, // new kinds are appended only
+		DISTURBANCE_BEETLE = 3,
+		DISTURBANCE_BEAVER = 4, // a beaver pond drained (age: years since); new kinds are appended only
 	};
 	// A surface fire that scorched crowns only this low (m) leaves the stand standing.
 	static constexpr float SURFACE_FIRE_SCORCH = 5.0f;

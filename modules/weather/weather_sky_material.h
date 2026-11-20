@@ -96,7 +96,8 @@ public:
 	void set_moon_angular_size(float p_radians);
 	// The weather's aerosol haze past the froxel fog: extinction at the ground (1/m, 0 for none), its
 	// single-scatter albedo, scale height (m), and where it starts along the eye's rays (the froxels' reach, m).
-	void set_aerosol(float p_extinction, float p_albedo, float p_height, float p_from);
+	void set_aerosol(float p_extinction, float p_albedo, float p_height, float p_from, float p_smoke_share = 0.0f);
+	void set_sun_smoke(const Vector3 &p_transmittance);
 	// The clouds' shadow for the sky's air: a map in the sun's plane (red: the beam's transmittance; green:
 	// the diffuse), its axes (world), the corner of its square in that plane and its size (m). Without one
 	// the shader marches the clouds toward the sun itself, coarser.

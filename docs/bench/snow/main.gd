@@ -3244,6 +3244,19 @@ func _save_frame(suffix: String) -> void:
 		waited += 1
 	if waited > 0:
 		print("waited %d frames for the trace's surfaces" % waited)
+	# --time=N: the viewport's mean GPU time over N frames (timestamp queries), for cost comparisons.
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--time="):
+			var vp := get_viewport().get_viewport_rid()
+			RenderingServer.viewport_set_measure_render_time(vp, true)
+			for i in 3:
+				await RenderingServer.frame_post_draw
+			var gpu := 0.0
+			var n := int(a.substr(7))
+			for i in n:
+				await RenderingServer.frame_post_draw
+				gpu += RenderingServer.viewport_get_measured_render_time_gpu(vp)
+			print("gpu time: %.2f ms a frame over %d frames" % [gpu / maxf(n, 1), n])
 	await RenderingServer.frame_post_draw
 	if not out.is_empty():
 		var path := out.replace(".png", suffix + ".png")

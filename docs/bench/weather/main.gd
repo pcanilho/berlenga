@@ -48,6 +48,9 @@ extends Node3D
 #   --cloud-effector=x,y,z,R,S  clouds views: a density effector (S > 0 adds cloud, < 0 clears); repeatable
 #   --type=T          clouds views: cloud_type (0.05 stratus, 0.2 stratocumulus, 0.6 cumulus)
 #   --wind=W          clouds views: wind_speed at 10 m (m/s)
+#   --storm=x,z,R,mm,out  clouds views: a storm (WeatherMap3D.add_storm, held), grown 15 min: its rain shafts under the
+#                     base and the shelf cloud on its gust front ahead of it (it moves with the wind, about 9 km in the 15 min); repeatable
+#   --wind-dir=x,z    clouds views: wind_direction (default 0.6,-0.8; 0,1 blows toward the camera)
 #   --shear-aloft=S   clouds views: wind_shear_aloft (m/s per km); 5 and up gives cirrocumulus (get_cirrocumulus_share)
 #   --no-wave-clouds  lenticular view: WeatherMap3D.wave_clouds off (cost A/B)
 #   --sun-energy=E    clouds views: the sun's light_energy (0: night, for cloud lights)
@@ -85,6 +88,8 @@ var frames := 12
 var mid_cover := -1.0
 var high_cover := -1.0
 var cloud_lights_arg: Array = []
+var storms_arg: Array = []
+var wind_dir_arg := Vector2.ZERO
 var cloud_effectors_arg: Array = []
 var sun_energy := -1.0
 var type_arg := -1.0
@@ -154,6 +159,10 @@ func _ready() -> void:
 		elif a.begins_with("--mid-cover="): mid_cover = float(a.substr(12))
 		elif a.begins_with("--high-cover="): high_cover = float(a.substr(13))
 		elif a.begins_with("--cloud-light="): cloud_lights_arg.append(a.substr(14).split_floats(","))
+		elif a.begins_with("--wind-dir="):
+			var wd := a.substr(11).split_floats(",")
+			wind_dir_arg = Vector2(wd[0], wd[1])
+		elif a.begins_with("--storm="): storms_arg.append(a.substr(8).split_floats(","))
 		elif a.begins_with("--cloud-effector="): cloud_effectors_arg.append(a.substr(17).split_floats(","))
 		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
 		elif a == "--no-wave-clouds": wave_clouds_off = true
@@ -1254,6 +1263,19 @@ func _build_clouds() -> void:
 		weather.mid_cloud_cover = mid_cover
 	if high_cover >= 0.0:
 		weather.high_cloud_cover = high_cover
+	if wind_dir_arg != Vector2.ZERO:
+		weather.wind_direction = wind_dir_arg
+	for st in storms_arg: # x, z, radius, rain mm/h, outflow m/s: grown (15 min), then held
+		weather.add_storm(Vector2(st[0], st[1]), st[2], st[3], st[4], 0.0)
+	if not storms_arg.is_empty():
+		weather.advance(900.0)
+		var st0: Array = storms_arg[0]
+		var line := "storm: cloud base toward the camera, from its first core (m out, base m):"
+		for k in 12:
+			var r := k * 500.0
+			var dz := 9600.0 * wind_dir_arg.y if wind_dir_arg != Vector2.ZERO else 0.0
+			line += " %.0f %.0f," % [r, weather.get_cloud_base_at(Vector3(st0[0], 0.0, st0[1] + dz + r))]
+		print(line)
 	for l in cloud_lights_arg: # x, y, z, energy, reach[, r, g, b]
 		var col := Color(1.0, 0.62, 0.32) if l.size() < 8 else Color(l[5], l[6], l[7])
 		print("cloud light id %d" % weather.add_cloud_light(Vector3(l[0], l[1], l[2]), col, l[3], l[4]))
