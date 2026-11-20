@@ -1405,3 +1405,22 @@ Built:
   fern from 0.5. Vegetation bench "deer browsing" checks.
 - Not done: honeysuckle and ivy-on-ground variants by browse (ivy on stems is trees'); browse reach is not used by the
   ground flora (all of it is in reach).
+
+## Next round options (card 20 Nov evening): game trails, boar rooting, anthills and molehills
+Research so far (to confirm before building):
+- Game trails: deer follow the same lines between cover, feeding lawns and water, wearing 20-40 cm paths of bare or
+  short-turfed ground; trampling shifts the plants by tolerance (Cole 1995 trampling resistance, already in
+  get_trample_resistance; Liddle 1997 on paths). Build idea: trail polylines from a least-cost path over slope and
+  cover between browse discs, lawns and water (a shared contract so ground detail and mud can wear the same lines),
+  read by a PlantSpecies rule as metres from the trail; species thin by their trample resistance, plantain and
+  grazed lawn take the verges.
+- Boar rooting: wild boar turn the topsoil 5-15 cm deep in patches of a few to hundreds of square metres, mostly in
+  moist, rich woodland and meadow edges; vegetation cover drops and regrows over one to two years, with ruderals first
+  (Bueno et al. 2013; Barrios-Garcia and Ballari 2012, Biological Invasions review; Welander 2000). Build idea: a
+  rooting disturbance with an age in months (WorldStand-style discs, owned by world-links), turned soil as ground
+  detail (ground thread), uprooted herb meshes and a regrowth band by age here.
+- Anthills and molehills: yellow meadow ant (Lasius flavus) mounds 20-50 cm high and up to 1 m wide on old unploughed
+  grassland, built over decades, sunnier south faces, wild thyme and other small herbs on top (King 1977, J. Ecol.;
+  Dean et al. 1997); molehills are fresh soil heaps 10-20 cm, bare then colonised within a season. Build idea: mounds as
+  real ground geometry (ground thread or here as soil meshes with grass), with a mound top species set (thyme, sheep's
+  fescue, rockrose) placed by a new mound rule; molehills by soil wetness and earthworm-rich ground.
