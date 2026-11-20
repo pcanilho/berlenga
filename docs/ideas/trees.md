@@ -3559,6 +3559,41 @@ young, beetle snags, old-growth poles) chosen by time since disturbance per patc
 in the scene's calendar. Needs a per-patch disturbance age contract with world-links (WorldFire already gives
 burn_age_at).
 
+### 5au. Beaver country (20 Nov; Paulo's pick)
+
+Sources: beaver sign field guides (the hourglass groove gnawed all round, limbs carried off, bark eaten; bear-tracker.com);
+Badyaev, National Wildlife 2015 (more than 70% of larger felled stems fall toward the water: the beaver starts on the water
+side; part-cut stems left for the wind); Dieter and McCabe 1989, Big Sioux River (cut stems a mean 12-14 cm across against
+26 cm uncut, cut a mean 3-8 m from the water, almost none past 10 m; 52% of damaged trees resprouted or stayed alive);
+Naiman, Johnston and Kelley 1988 and Muller-Schwarze 2011 (ponds drown the flat's trees, which stand grey for decades).
+
+- `beaver_cut` (BEAVER_NONE / GNAWED / STUMP / FELLED), `beaver_years` (since the work), `beaver_depth` (a gnawed waist's
+  depth, share of the radius). The cut stands 25-55 cm over the soil (a beaver gnaws sitting).
+- GNAWED: `_beaver_waist` pulls bark, moss shell, climbers, fungi and resin in to an hourglass (lower cone 1.1x the cut's
+  depth tall, upper 1.5x), normals tilted with the cone, the bark marked bare through the wound channel so `_peel_bark`
+  sinks it; moss held off. Bites as 3 mm scallops (rows 1.6 cm, 1.2 cm wide, slanted), below the relief tube's 2.5 cm grid
+  so mostly carried by the wood shader's grain.
+- STUMP: `_beaver_stump` cuts the main stem in the growth loop `beaver_years` before the end and drops every other stem;
+  the end keeps its girth and gets `_gnaw_face`: a cone 1-1.5 radii long to a ragged point a little off centre, tiers of
+  bite scallops at 1.2 cm, in wood_b. Broadleaves resprout from dormant buds under the cut on 55% of seeds
+  (`_beaver_resprouts`), conifers never; a dead stump runs decay classes 1-3 by its years.
+- FELLED: fallen toward +X (not uprooted), its butt the hourglass's upper cone (the log cap kept flat, no fibre tongues:
+  `tube_no_tongue`); `_beaver_strip` takes limbs up to 5 cm (stubs left) over the first season; bark eaten
+  (`_bare_amount` to 0.85 by 1.2 years). Leaves on while fresh (under 0.3 years), then decay classes 1-3.
+- Wood colour `_beaver_wood(years)`: cream, orange-brown within weeks, grey by 4 years; on the gnaw cones and as the bark
+  shader's `bark_wood_color` for gnawed and felled stems.
+- STAND_BEAVER_POND (22): drowned black alder and birch snags in 0.1-1.2 m of water; willow and birch gnawed (to 12 m from the
+  water), stumps and felled (to 10 m), variants spread over 0.03-8 years and 0.3-0.65 of the preset's age (thin stems);
+  willow scrub at the waterline; birch, alder and spruce beyond. Felled species carry meta `fall_to_water` 0.7:
+  VegetationField3D turns that share's +X down the water distance (about 30 degrees either way).
+- Bench: `stands.gd --beaver` (stump cone, resprouts, felled lying, waist), `--stand-test=22` (no work past 12 m, most
+  felled stems to the water, drowned snags); `main.gd --beaver` the vignette row.
+- Fixed on the way: near-leaf keys travelled as 32-bit ints, so the 64-bit band terms (succession, edge, wet, beaver)
+  wrapped them negative and the near cells of those stands never built ("Not a near mesh source for this key"). Folded to
+  a positive 31-bit key.
+- Not done: aspen (no preset yet; it is the beavers' first choice), the logs cut into carried sections, drag paths and the
+  dam and lodge (water and props), a beaver meadow stage for make_succession (needs a WorldStand disturbance kind).
+
 ## Next-round options (card 20 Nov afternoon)
 
 1. **Beaver country.** Aspen, willow and birch along streams gnawed to hourglass stumps with chisel facets (beavers

@@ -1139,6 +1139,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			const Vector2 fd = ps.sp->get_meta(SNAME("fall_dir"), Vector2());
 			ps.fall_dir = fd.length_squared() > 1e-8f ? fd.normalized() : Vector2();
 			ps.fall_scatter = float(ps.sp->get_meta(SNAME("fall_scatter"), 0.0f));
+			ps.fall_water = float(ps.sp->get_meta(SNAME("fall_to_water"), 0.0f));
 		}
 		// Forest edge trees (trees' make_edge): low branches on one side, turned to face the open.
 		ps.open_side = Vector2();
@@ -2256,6 +2257,16 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						// Thrown by one storm (the trees module, trees.md 5am): mesh +X along the storm's track, each
 						// tree turned by the gusts and its neighbours within fall_scatter.
 						yaw = Math::atan2(-ps.fall_dir.y, ps.fall_dir.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 2.0f * ps.fall_scatter;
+					} else if (ps.fall_water > 0.0f && map && Math::fmod(r * 3571.0f, 1.0f) < ps.fall_water) {
+						// Felled by beavers (the trees module, trees.md 5au): most fall toward the water, the beaver
+						// having cut from the water side. +X down the water distance, about 30 degrees either way.
+						const float e = 1.5f;
+						const Vector2 grad(map->get_water_distance_at(Vector3(xz.x + e, 0.0f, xz.y)) - map->get_water_distance_at(Vector3(xz.x - e, 0.0f, xz.y)),
+								map->get_water_distance_at(Vector3(xz.x, 0.0f, xz.y + e)) - map->get_water_distance_at(Vector3(xz.x, 0.0f, xz.y - e)));
+						if (grad.length_squared() > 1e-8f) {
+							const Vector2 to_water = -grad.normalized();
+							yaw = Math::atan2(-to_water.y, to_water.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 1.05f;
+						}
 					} else if (ps.wind_flag && p_setup.wind_dir != Vector2()) {
 						// Flagged by the prevailing wind: mesh +X downwind, a little scatter (eddies
 						// round the land turn it locally).

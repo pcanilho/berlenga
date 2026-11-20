@@ -97,7 +97,7 @@ static bool hedge_shrub(TreeGenerator::Preset p_preset) {
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
 	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow",
 	"Northern Hardwood Forest", "Eastern Oak Forest", "Pine-Hemlock Forest", "Coppice with Standards", "Wood Pasture", "Pollard Row",
-	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow", "Old-growth Beech", "Boreal Taiga", "Alder Carr", "Floodplain Willow"
+	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow", "Old-growth Beech", "Boreal Taiga", "Alder Carr", "Floodplain Willow", "Beaver Pond"
 };
 
 TreeGenerator::TreeGenerator() {
@@ -3643,6 +3643,7 @@ static thread_local Vector3 tube_carry_nrm;
 static thread_local Vector3 tube_last_nrm;
 // Metres of bark one texture tile covers on the tree being built (_build_mesh sets it per bark family).
 static thread_local float tube_tile = 0.4f;
+static thread_local bool tube_no_tongue = false; // A beaver-felled log's butt: its cap stays flat under the gnawed cone (5au).
 // Off for tubes that are not bark or moss (resin runs), which keep their own flat colour.
 static thread_local bool tube_macro_tint = true;
 // Cork (docs, 18 Nov: thin limbs read busy): a limb thinner than the bark tile carries one tile
@@ -4007,7 +4008,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 			// mapped round the stem, the bark tiles converged on its centre as radial pleats.
 			const bool end_face = capped && Math::abs(slope) > 1.0f;
 			Vector3 tongue;
-			if (end_face) {
+			if (end_face && !tube_no_tongue) {
 				// A diffuse fracture (trees.md 5d): the fibres broke at different lengths, so the
 				// face stands out in tongues along the grain, a sector of the girth each, longest
 				// in the heartwood, shorter at the bark rim.
@@ -6302,6 +6303,10 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 	const float top = CLAMP((up - 0.35f) / 0.5f, 0.0f, 1.0f) * 0.75f;
 	const float patch = 0.65f * moss_noise(p_pos * 2.2f, 0x6d6f7373u + uint32_t(seed)) + 0.35f * moss_noise(p_pos * 7.0f, 0x6d6f7374u);
 	float w = p_amount * MAX(foot, top) * (1.9f * patch - 0.25f);
+	if (beaver_now == BEAVER_GNAWED && !beaver_axis.is_empty()) {
+		// No moss on the fresh-gnawed wood (trees.md 5au).
+		w *= Math::smoothstep(0.985f, 0.998f, _beaver_waist_at(p_pos));
+	}
 	if (stilt_height > 0.0f && !fallen && !fallen_branch) {
 		// Stilt roots (trees.md 5at): the foot and roots stand over the sunken, wet floor; the moss sleeve starts
 		// above them (a sleeve over the hollow between the roots hung in the air as a sheet).
@@ -8018,6 +8023,345 @@ void TreeGenerator::_fracture(const Vector3 &p_end, const Vector3 &p_dir, float 
 		}
 	}
 	// Normals from the faces (two-sided material; slivers and strip are thin).
+	Vector3 *nw = w.normals.ptrw();
+	const Vector3 *vw = w.verts.ptr();
+	for (int64_t i = part.x; i + 2 < w.indices.size(); i += 3) {
+		const int a = w.indices[i], b = w.indices[i + 1], c = w.indices[i + 2];
+		const Vector3 fn = (vw[c] - vw[a]).cross(vw[b] - vw[a]);
+		nw[a] += fn;
+		nw[b] += fn;
+		nw[c] += fn;
+	}
+	for (int v = part.z; v < w.verts.size(); v++) {
+		nw[v] = nw[v].length_squared() > 1e-20f ? nw[v].normalized() : g;
+	}
+	w.end(part, p_r);
+}
+
+// Beaver work (trees.md 5au). A beaver fells a stem by gnawing a groove all round it into an hourglass, working
+// from the water side and widening the cut over nights, until the thin core breaks (field guides, e.g.
+// bear-tracker.com's beaver sign; Badyaev, National Wildlife 2015). Most stems cut are thin: a mean 12-14 cm
+// across against 26 cm for those left, almost none over 10 m from the water (Dieter and McCabe 1989, Big Sioux
+// River). The felled stem's limbs are gnawed off and carried away and its bark eaten; half the stumps resprout
+// (Dieter and McCabe: 52% of damaged trees resprouted or stayed alive). Some stems are left part gnawed, standing
+// on an hourglass waist.
+
+// Fresh-cut willow, aspen and birch wood is cream, turning orange-brown within weeks as it oxidises, and grey in a
+// few years in the weather (sRGB).
+Color TreeGenerator::_beaver_wood(float p_years) {
+	const Color cream = Color(0.84f, 0.74f, 0.55f);
+	const Color tan = Color(0.66f, 0.47f, 0.29f);
+	const Color grey = Color(0.5f, 0.48f, 0.44f);
+	return cream.lerp(tan, Math::smoothstep(0.02f, 0.25f, p_years)).lerp(grey, Math::smoothstep(1.0f, 4.0f, p_years));
+}
+
+bool TreeGenerator::_beaver_resprouts() const {
+	// Broadleaves (willow, aspen, birch, alder) sprout again from the stump; a conifer stump stays dead.
+	if (params[PARAM_NEEDLES] > 0.5f) {
+		return false;
+	}
+	return float((uint32_t(seed) * 2246822519u >> 11) & 0xffff) / 65535.0f < 0.55f;
+}
+
+// The stump: the main stem cut beaver_cut_h over the soil, everything above it and every other stem gone. A
+// resprouting stump puts out a few shoots from dormant buds round its side just under the cut.
+void TreeGenerator::_beaver_stump(int p_year) {
+	_compute_radii();
+	const float base_y = nodes[0].start.y;
+	int k = -1;
+	for (int i = 1; i < int(nodes.size()); i++) {
+		if (!nodes[i].removed && nodes[i].parent == 0 && (k < 0 || nodes[i].radius > nodes[k].radius)) {
+			k = i;
+		}
+	}
+	if (k < 0) {
+		return;
+	}
+	while (true) {
+		const Node &n = nodes[k];
+		if (n.end().y - base_y >= beaver_cut_h || n.main < 0 || nodes[n.main].removed) {
+			break;
+		}
+		k = n.main;
+	}
+	Node &top = nodes[k];
+	if (top.dir.y > 0.2f) {
+		top.length = MAX((beaver_cut_h - (top.start.y - base_y)) / top.dir.y, 0.02f);
+	}
+	HashSet<int> keep;
+	for (int c = k; c > 0; c = nodes[c].parent) {
+		keep.insert(c);
+	}
+	for (int i = 1; i < int(nodes.size()); i++) {
+		if (!keep.has(i)) {
+			nodes[i].removed = true;
+		}
+	}
+	for (const int c : keep) {
+		nodes[c].leafy = false;
+		nodes[c].first_lateral = -1;
+		if (c != k) {
+			continue;
+		}
+		nodes[c].main = -1;
+	}
+	// The chain's own links: each kept node's main is the next kept one.
+	for (int c = k; c > 0; c = nodes[c].parent) {
+		const int p = nodes[c].parent;
+		if (p > 0) {
+			nodes[p].main = c;
+		}
+	}
+	for (Bud &b : buds) {
+		b.alive = false;
+	}
+	sprout_roots.clear();
+	beaver_tip = k;
+	if (!_beaver_resprouts()) {
+		return;
+	}
+	// Shoots from round the stump's side under the cut, two to five, spreading a little.
+	const float r = MAX(top.radius, 0.02f);
+	const int count = 2 + int(rng.rand() % 4);
+	for (int q = 0; q < count; q++) {
+		const float a = float(Math::TAU) * (q + 0.4f * (rng.randf() - 0.5f)) / count;
+		const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
+		const Vector3 d = (out + Vector3(0, 0.25f, 0)).normalized();
+		const Vector3 at = top.end() - Vector3(0, Math::lerp(0.25f, 0.6f, rng.randf()) * MIN(beaver_cut_h, 0.3f), 0) - out * (0.3f * r);
+		const int kn = _add_node(k, at, d, r * 0.7f, top.order, p_year, false);
+		nodes[kn].leafy = false;
+		nodes[kn].radius = r * Math::lerp(0.2f, 0.32f, rng.randf());
+		const float tilt = Math::deg_to_rad(Math::lerp(8.0f, 30.0f, rng.randf()));
+		Bud b;
+		b.node = kn;
+		b.dir = (Vector3(0, Math::cos(tilt), 0) + out * Math::sin(tilt) + _random_unit() * 0.08f).normalized();
+		b.sprout = true;
+		buds.push_back(b);
+	}
+}
+
+// A felled stem's limbs (trees.md 5au): over the first season the beavers gnaw off the limbs they can carry
+// (to about 5 cm) and take them to the water, leaving stubs; the rest of the crown stays.
+void TreeGenerator::_beaver_strip() {
+	_compute_radii();
+	const float take = Math::smoothstep(0.03f, 1.2f, beaver_years);
+	if (take <= 0.0f) {
+		return;
+	}
+	const int cut_year = MAX(1, int(params[PARAM_YEARS]) - int(beaver_years));
+	for (int i = 1; i < int(nodes.size()); i++) {
+		Node &n = nodes[i];
+		if (n.removed || n.order < 1 || n.parent <= 0 || nodes[n.parent].order != 0 || nodes[n.parent].main == i || n.radius > 0.05f) {
+			continue;
+		}
+		if (float(hash_murmur3_one_32(uint32_t(i), uint32_t(seed) * 2654435761u + 0x62656176u) & 0xffff) / 65535.0f >= take) {
+			continue;
+		}
+		// Everything it carried goes.
+		LocalVector<int> st;
+		if (n.main >= 0) {
+			st.push_back(n.main);
+		}
+		for (int c = n.first_lateral; c >= 0; c = nodes[c].next_sibling) {
+			st.push_back(c);
+		}
+		while (!st.is_empty()) {
+			const int j = st[st.size() - 1];
+			st.resize(st.size() - 1);
+			nodes[j].removed = true;
+			if (nodes[j].main >= 0) {
+				st.push_back(nodes[j].main);
+			}
+			for (int c = nodes[j].first_lateral; c >= 0; c = nodes[c].next_sibling) {
+				st.push_back(c);
+			}
+		}
+		n.main = -1;
+		n.first_lateral = -1;
+		n.leafy = false;
+		n.length = MIN(n.length, CLAMP(n.radius * 1.5f, 0.02f, 0.08f));
+		cut_stubs.insert(i, cut_year);
+	}
+}
+
+// The gnawed waist's radial factor at a point (1 off it): two cones meeting at the waist, the upper one longer (a
+// beaver gnaws in from above as well as level), the stem beaver_depth of its radius in at the narrowest. r_axis_r:
+// the point's distance from the axis.
+float TreeGenerator::_beaver_waist_at(const Vector3 &p_pos, float *r_axis_r) const {
+	if (beaver_axis.size() < 2) {
+		return 1.0f;
+	}
+	const float base_y = beaver_axis[0].y;
+	const float h = p_pos.y - base_y;
+	const float cut = beaver_r * beaver_depth;
+	const float below = 1.1f * cut + 0.01f, above = 1.5f * cut + 0.015f;
+	if (h < beaver_cut_h - below || h > beaver_cut_h + above) {
+		return 1.0f;
+	}
+	// The axis at this height.
+	Vector3 c = beaver_axis[0];
+	for (uint32_t i = 0; i + 1 < beaver_axis.size(); i++) {
+		const Vector3 &a = beaver_axis[i], &b = beaver_axis[i + 1];
+		if (p_pos.y <= b.y || i + 2 == beaver_axis.size()) {
+			const float t = CLAMP((p_pos.y - a.y) / MAX(b.y - a.y, 1e-4f), 0.0f, 1.0f);
+			c = a.lerp(b, t);
+			break;
+		}
+	}
+	const float d = Vector2(p_pos.x - c.x, p_pos.z - c.z).length();
+	if (r_axis_r) {
+		*r_axis_r = d;
+	}
+	if (d > 2.0f * beaver_r + 0.05f) {
+		return 1.0f;
+	}
+	const float t = h < beaver_cut_h ? (beaver_cut_h - h) / below : (h - beaver_cut_h) / above;
+	return 1.0f - beaver_depth * (1.0f - CLAMP(t, 0.0f, 1.0f));
+}
+
+// The waist on one surface: every vertex round the stem in the band pulled in to the hourglass, its normal tilted
+// with the cone, and on the bark marked bare (the wound channel _peel_bark reads). The gnawed wood is scalloped
+// by the bites: rows of shallow scoops a centimetre or so wide, slanted with the grain.
+void TreeGenerator::_beaver_waist(Builder &r_b, bool p_bark) {
+	const int nv = r_b.verts.size();
+	if (nv == 0 || beaver_axis.size() < 2) {
+		return;
+	}
+	if (p_bark && int(r_b.wound.size()) < nv) {
+		const int from = r_b.wound.size();
+		r_b.wound.resize(nv);
+		for (int v = from; v < nv; v++) {
+			r_b.wound[v] = 0.0f;
+		}
+	}
+	Vector3 *vw = r_b.verts.ptrw();
+	Vector3 *nw = r_b.normals.size() == nv ? r_b.normals.ptrw() : nullptr;
+	const float e = 0.004f;
+	for (int v = 0; v < nv; v++) {
+		float d = 0.0f;
+		const float f = _beaver_waist_at(vw[v], &d);
+		if (f >= 0.9999f || d <= 1e-4f) {
+			continue;
+		}
+		const Vector3 p = vw[v];
+		const float fu = _beaver_waist_at(p + Vector3(0, e, 0)), fd = _beaver_waist_at(p - Vector3(0, e, 0));
+		const float base_y = beaver_axis[0].y;
+		Vector3 ax = beaver_axis[0];
+		for (uint32_t i = 0; i + 1 < beaver_axis.size(); i++) {
+			const Vector3 &a = beaver_axis[i], &b = beaver_axis[i + 1];
+			if (p.y <= b.y || i + 2 == beaver_axis.size()) {
+				const float t = CLAMP((p.y - a.y) / MAX(b.y - a.y, 1e-4f), 0.0f, 1.0f);
+				ax = a.lerp(b, t);
+				break;
+			}
+		}
+		const Vector3 radial = Vector3(p.x - ax.x, 0.0f, p.z - ax.z) / d;
+		// Bites: rows about 1.6 cm tall, scoops about 1.2 cm wide round the stem, every other row offset by half a
+		// bite and slanted with the grain; each scoop a few millimetres deep in the middle, ridges between them.
+		const float hh = p.y - base_y - beaver_cut_h;
+		const float az = Math::atan2(radial.z, radial.x);
+		const float row_f = hh / 0.016f;
+		const float row = Math::floor(row_f);
+		const float bite_n = MAX(8.0f, Math::round(float(Math::TAU) * d * f / 0.012f));
+		const float u = az / float(Math::TAU) * bite_n + 0.5f * row + 0.35f * (row_f - row);
+		const float fu_ = u - Math::floor(u), fv = row_f - row;
+		const float scoop = (1.0f - (2.0f * fu_ - 1.0f) * (2.0f * fu_ - 1.0f)) * Math::sin(float(Math::PI) * fv);
+		const float in = 1.0f - f;
+		const float r_new = d * f - 0.003f * scoop * Math::smoothstep(0.0f, 0.05f, in);
+		vw[v] = Vector3(ax.x, p.y, ax.z) + radial * r_new;
+		if (nw) {
+			// r(h) = d f(h): the outward normal leans by -dr/dh.
+			const float drdh = d * (fu - fd) / (2.0f * e);
+			nw[v] = (radial - Vector3(0, 1, 0) * drdh).normalized();
+		}
+		if (p_bark) {
+			r_b.wound[v] = MAX(r_b.wound[v], Math::smoothstep(0.0f, 0.03f, in));
+		}
+	}
+}
+
+// The gnawed cone at a beaver-cut end (trees.md 5au): from the bark's rim (p_end, radius p_r) out along p_dir to a
+// small torn point a little off centre (the beaver worked more from one side), its surface the bites' scallops in
+// tiers. Fresh-cut willow and aspen wood is cream, orange-brown within weeks, grey in a few years.
+void TreeGenerator::_gnaw_face(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_years, uint32_t p_seed) {
+	Builder &w = wood_b;
+	RandomPCG sr;
+	sr.seed(uint64_t(p_seed) * 6364136223846793005ull + 0x676e6177u);
+	const Vector3 g = p_dir.normalized();
+	Vector3 td = Vector3(0, 1, 0) - g * g.y;
+	if (td.length_squared() < 0.04f) {
+		const float a = sr.randf() * float(Math::TAU);
+		td = Vector3(Math::cos(a), 0.0f, Math::sin(a));
+		td -= g * td.dot(g);
+	}
+	td.normalize();
+	const Vector3 sd = g.cross(td);
+	const float y = p_years;
+	const Color wood = _beaver_wood(y).srgb_to_linear();
+	// The cone: about one to one and a half radii long, its point a fifth of the radius off centre.
+	const float len = p_r * Math::lerp(1.0f, 1.5f, sr.randf());
+	const float off_a = sr.randf() * float(Math::TAU);
+	const Vector3 off = (td * Math::cos(off_a) + sd * Math::sin(off_a)) * (p_r * Math::lerp(0.05f, 0.25f, sr.randf()));
+	const float r_tip = MAX(0.07f * p_r, 0.003f);
+	const float slant = Math::sqrt(len * len + (p_r - r_tip) * (p_r - r_tip));
+	const int rows = CLAMP(int(Math::round(slant / 0.016f)), 3, 40);
+	const int sub = 3; // Rings per row of bites.
+	const int rings = rows * sub + 1;
+	const int bites = CLAMP(int(Math::round(float(Math::TAU) * p_r / 0.012f)), 8, 96);
+	const int sectors = CLAMP(bites * 3, 24, 288);
+	const float scoop_d = MIN(0.0035f, 0.06f * p_r);
+	auto push = [&](const Vector3 &p_p, const Vector2 &p_uv, const Color &p_c) {
+		w.verts.push_back(p_p);
+		w.normals.push_back(Vector3());
+		w.uvs.push_back(p_uv);
+		w.colors.push_back(p_c);
+		return w.verts.size() - 1;
+	};
+	Vector4i part;
+	w.begin(part);
+	const int f0 = w.verts.size();
+	const float phase = sr.randf();
+	for (int i = 0; i < rings; i++) {
+		const float t = float(i) / (rings - 1);
+		// Slightly hollow sides, as the hourglass's are.
+		const float rr = Math::lerp(p_r, r_tip, Math::pow(t, 0.85f));
+		const Vector3 c = p_end + g * (len * t) + off * t;
+		const float row_f = t * rows;
+		const float row = Math::floor(MIN(row_f, float(rows) - 1e-3f));
+		const float fv = row_f - row;
+		for (int k = 0; k < sectors; k++) {
+			const float a = float(Math::TAU) * k / sectors;
+			const float u = float(k) / sectors * bites + 0.5f * row + 0.35f * fv + phase;
+			const float fu = u - Math::floor(u);
+			const float scoop = (1.0f - (2.0f * fu - 1.0f) * (2.0f * fu - 1.0f)) * Math::sin(float(Math::PI) * fv);
+			// The rim stays at the bark's radius (it closes the stem); the bites deepen inward from it.
+			const float depth = scoop_d * scoop * Math::smoothstep(0.0f, 0.08f, t);
+			const Vector3 radial = td * Math::cos(a) + sd * Math::sin(a);
+			const float shade = 1.0f - 0.18f * scoop;
+			const Color col = wood.lerp(wood * 0.75f, 0.3f * t);
+			push(c + radial * (rr - depth), Vector2(float(k) / sectors * 2.0f, t * slant / MAX(p_r, 0.01f) * 0.5f), Color(col.r * shade, col.g * shade, col.b * shade));
+		}
+	}
+	// The torn point: the last fibres that broke, a ragged nub.
+	const int fc = push(p_end + g * (len + r_tip * Math::lerp(0.8f, 2.0f, sr.randf())) + off, Vector2(0.5f, 0.0f), wood * 0.8f);
+	for (int i = 0; i + 1 < rings; i++) {
+		for (int k = 0; k < sectors; k++) {
+			const int k1 = (k + 1) % sectors;
+			const int a0 = f0 + i * sectors + k, a1 = f0 + i * sectors + k1;
+			const int b0 = a0 + sectors, b1 = a1 + sectors;
+			w.indices.push_back(a0);
+			w.indices.push_back(b0);
+			w.indices.push_back(a1);
+			w.indices.push_back(a1);
+			w.indices.push_back(b0);
+			w.indices.push_back(b1);
+		}
+	}
+	for (int k = 0; k < sectors; k++) {
+		w.indices.push_back(f0 + (rings - 1) * sectors + k);
+		w.indices.push_back(fc);
+		w.indices.push_back(f0 + (rings - 1) * sectors + (k + 1) % sectors);
+	}
 	Vector3 *nw = w.normals.ptrw();
 	const Vector3 *vw = w.verts.ptr();
 	for (int64_t i = part.x; i + 2 < w.indices.size(); i += 3) {
@@ -11101,7 +11445,12 @@ float TreeGenerator::_bare_amount() const {
 	if (kelo && decay_class > 0) {
 		return 1.0f; // A kelo pine has shed every scrap (trees.md 5ap).
 	}
-	return bark_peel * AMOUNT[CLAMP(decay_class, 0, 5)];
+	float a = bark_peel * AMOUNT[CLAMP(decay_class, 0, 5)];
+	if (beaver_now == BEAVER_FELLED) {
+		// The beavers eat the felled stem's bark (they eat bark, not wood): most of it within a season or two.
+		a = MAX(a, 0.85f * Math::smoothstep(0.03f, 1.2f, beaver_years));
+	}
+	return a;
 }
 
 float TreeGenerator::_bare_at(const Vector3 &p_pos, const Vector3 &p_normal, const Vector3 &p_axis, float p_ground) const {
@@ -13695,6 +14044,8 @@ void TreeGenerator::_apply_decay() {
 	float cut_y = 1e9f;
 	if (fallen_branch) {
 		// The limb falls whole; class 4 and 5 stubs and stumps only apply to standing wood.
+	} else if (beaver_now == BEAVER_STUMP) {
+		// Cut by the beaver already (_beaver_stump).
 	} else if (decay_class == 2 && beetle_active && dr.randf() < 0.4f) {
 		// The top, riddled by the beetles and woodpeckers, often snaps in the grey years already.
 		cut_y = height * Math::lerp(0.65f, 0.9f, dr.randf());
@@ -14180,7 +14531,8 @@ void TreeGenerator::_fell() {
 	RandomPCG fr;
 	fr.seed(uint64_t(seed) * 40503u + 5u);
 	// A storm's trees fall with it, toward +X (trees.md 5am; placement turns +X down the storm's track).
-	const float bearing = windthrow_years >= 0.0f ? -0.5f * float(Math::PI) : fr.randf() * float(Math::TAU);
+	// A beaver-felled stem falls toward +X too: placement turns most of them to the water (meta fall_to_water, 5au).
+	const float bearing = (windthrow_years >= 0.0f || beaver_now == BEAVER_FELLED) ? -0.5f * float(Math::PI) : fr.randf() * float(Math::TAU);
 	const Vector3 axis = Vector3(Math::cos(bearing), 0.0f, Math::sin(bearing));
 	const Vector3 base = nodes[0].start;
 	float trunk_r = 0.1f;
@@ -17340,7 +17692,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		for (int c = 0; c < int(chain.size()); c++) {
 			const Node &n = nodes[chain[c]];
 			// A pollard's head or a stool's stub ends full-girth in its callus knob (trees.md 5l).
-			float r_end = c + 1 < int(chain.size()) ? nodes[chain[c + 1]].radius : n.radius * (bolling.has(chain[c]) || cut_stubs.has(chain[c]) || split_tip ? 1.0f : 0.6f);
+			float r_end = c + 1 < int(chain.size()) ? nodes[chain[c + 1]].radius : n.radius * (bolling.has(chain[c]) || cut_stubs.has(chain[c]) || split_tip || chain[c] == beaver_tip ? 1.0f : 0.6f);
 			// Where a lateral has outgrown the axis's own continuation (a leader overtaken at a
 			// fork), the axis keeps the lateral's girth to the fork: narrowing to the thinner
 			// continuation, it left the lateral's base standing out as a stub.
@@ -17601,7 +17953,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		int cap_n = 3; // Rings closing the end.
 		if (rim_r >= 0.006f && pts.size() >= 2) {
 			const Vector3 dir_end = (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized();
-			const bool broken = (broken_tip >= 0 && chain[chain.size() - 1] == broken_tip) || broken_ends.has(chain[chain.size() - 1]) || cut_stubs.has(chain[chain.size() - 1]) || _coppice_lobe(chain[chain.size() - 1]);
+			const bool broken = (beaver_tip >= 0 && chain[chain.size() - 1] == beaver_tip) || (broken_tip >= 0 && chain[chain.size() - 1] == broken_tip) || broken_ends.has(chain[chain.size() - 1]) || cut_stubs.has(chain[chain.size() - 1]) || _coppice_lobe(chain[chain.size() - 1]);
 			const float cap_len = broken ? 0.04f : 0.8f; // Under the fracture face, which closes the end.
 			const float ks[3] = { 0.4f, 0.75f, 1.0f };
 			const float rs[3] = { 0.93f, 0.68f, 0.0f };
@@ -17744,7 +18096,16 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const float r_base = rad[0];
 			girth_r = r_base;
 			// Six rings, so the fibre tongues of the break (_tube) have room across the face.
-			const float ks[6] = { 1.0f, 0.97f, 0.9f, 0.78f, 0.6f, 0.35f };
+			float ks[6] = { 1.0f, 0.97f, 0.9f, 0.78f, 0.6f, 0.35f };
+			if (beaver_now == BEAVER_FELLED && fallen && nodes[s].parent == 0) {
+				// The beaver-felled stem's butt (trees.md 5au): the hourglass's upper cone, gnawed to a point. The tube's
+				// cap stays flat under it (no tongues, _tube).
+				for (float &k : ks) {
+					k *= 0.15f;
+				}
+				wood_b.bone = node_bone[s];
+				_gnaw_face(p0, -d0, r_base, beaver_years, uint32_t(s) * 2654435761u + uint32_t(seed) * 7u + 3u);
+			}
 			const float rs[6] = { 0.0f, 0.25f, 0.5f, 0.7f, 0.85f, 0.96f };
 			LocalVector<Vector3> cp;
 			LocalVector<float> cr;
@@ -18384,7 +18745,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		tube_shrink.active = false;
 		bark.role = Builder::ROLE_ALL;
 		const int chain_end = chain[chain.size() - 1];
-		if ((broken_tip >= 0 && chain_end == broken_tip) || broken_ends.has(chain_end)) {
+		if (beaver_tip >= 0 && chain_end == beaver_tip && rim_r >= 0.006f) {
+			// A beaver stump's top (trees.md 5au): the lower cone of the hourglass, gnawed to a point.
+			wood_b.bone = node_bone[chain_end];
+			const Vector3 to_end = pts.size() >= 2 ? pts[pts.size() - 1] - pts[pts.size() - 2] : Vector3();
+			_gnaw_face(rim_pt, to_end.length_squared() > 1e-10f ? to_end.normalized() : nodes[chain_end].dir, rim_r, beaver_years, uint32_t(chain_end) * 2246822519u + uint32_t(seed));
+		} else if ((broken_tip >= 0 && chain_end == broken_tip) || broken_ends.has(chain_end)) {
 			// A snapped end: a jagged fracture face and splinters (trees.md 5j). (A log's broken
 			// butt gets its fibre tongues from _tube instead.)
 			wood_b.bone = node_bone[chain_end];
@@ -19087,6 +19453,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	}
 	if (stilt_height > 0.0f && !fallen && !fallen_branch && !nodes.is_empty()) {
 		_build_tussock(soil_b);
+	}
+	if (beaver_now == BEAVER_GNAWED) {
+		// The gnawed waist (trees.md 5au) on everything round the stem's foot.
+		for (int s : { 0, 2, 3, 4, 6, 9 }) {
+			_beaver_waist(*builders[s], s == 0);
+		}
 	}
 	for (int s = 0; s < 10; s++) {
 		// The stone itself is not draped over itself; it is sheared with the ground.
@@ -20034,7 +20406,8 @@ uniform float wood_spiral = 0.0;
 	// Kelo stays silver lying down too: resin-hard heartwood weathers and does not rot for centuries (Niemela et al. 2002).
 	const Color wood = kelo ? Color(0.58f, 0.57f, 0.54f) : (fallen || fallen_branch || decay_class >= 5) ? Color(0.38f, 0.31f, 0.23f) : decay_class == 4 ? Color(0.42f, 0.38f, 0.32f)
 																																	   : Color(0.47f, 0.45f, 0.41f);
-	m->set_shader_parameter("bark_wood_color", wood);
+	// Beaver-gnawed and peeled wood (trees.md 5au): cream when fresh, orange-brown within weeks, grey in a few years.
+	m->set_shader_parameter("bark_wood_color", (beaver_now == BEAVER_GNAWED || beaver_now == BEAVER_FELLED) ? _beaver_wood(beaver_years) : wood);
 	m->set_shader_parameter("bark_stripped_age", _cork_strip_age());
 	// Scots pine grows with spiral grain, a few degrees, left-handed when young and turning right with age (Harris
 	// 1989); a kelo's weathered checks open along it and show it, by its seed: 5-12 degrees, the old stems at the upper end (trees.md 5ar).
@@ -21421,6 +21794,20 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 			limb_breakage = Math::lerp(1.4f, 2.0f, tv);
 		}
 	}
+	if (beaver_band > 0 && beaver_band <= 3) {
+		// Beaver work (trees.md 5au): the band is the cut (1 gnawed, 2 stumps, 3 felled); the variants spread over the
+		// years since, more of them fresh (the colony works the same shore every winter), and over stem sizes, mostly
+		// thin (Dieter and McCabe 1989: a mean 12-14 cm across cut, 26 cm left standing).
+		const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.71f, 1.0f);
+		beaver_cut = beaver_band;
+		beaver_years = beaver_band == 1 ? Math::lerp(0.05f, 3.0f, tv * tv) : Math::lerp(0.03f, 8.0f, tv * tv);
+		beaver_depth = Math::lerp(0.3f, 0.85f, Math::fmod(tv * 3.7f + 0.2f, 1.0f));
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.3f, 0.65f, Math::fmod(tv * 2.3f + 0.4f, 1.0f)));
+	} else {
+		beaver_cut = BEAVER_NONE;
+	}
 	if (edge_band > 0) {
 		// A forest edge's trees (trees.md 5as): the open on +X, most fully, a few half sheltered by a mantle tree.
 		edge_open = Math::lerp(0.7f, 1.0f, Math::fmod(float(p_variant) * 0.618034f + 0.43f, 1.0f));
@@ -21836,6 +22223,10 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	windthrow_storm = p_from.windthrow_storm;
 	windthrow_direction = p_from.windthrow_direction;
 	windthrow_band = p_from.windthrow_band;
+	beaver_cut = p_from.beaver_cut;
+	beaver_years = p_from.beaver_years;
+	beaver_depth = p_from.beaver_depth;
+	beaver_band = p_from.beaver_band;
 	old_growth_band = p_from.old_growth_band;
 	bark_wounds = p_from.bark_wounds;
 	bark_chevrons = p_from.bark_chevrons;
@@ -21994,7 +22385,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			(boreal_band > 0 ? 1500000000 + 50000000 * boreal_band : 0) +
 			(succession_band > 0 ? int64_t(4000000000LL) * succession_band : 0) + // 64-bit: band terms stack (taiga ages, trees.md 5aq).
 			(edge_band > 0 || edge_open > 0.0f ? int64_t(20000000000LL) * (1 + edge_band + 4 * int(edge_open * 8.0f)) : 0) +
-			(wet_band > 0 ? int64_t(2000000000000LL) * wet_band : 0);
+			(wet_band > 0 ? int64_t(2000000000000LL) * wet_band : 0) +
+			(beaver_band > 0 ? int64_t(20000000000000LL) * beaver_band : 0);
 	// Placed trees are alive unless a beetle stand grows its kill (single trees keep beetle_years).
 	struct BeetleYearsRestore {
 		float &value;
@@ -22060,6 +22452,9 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const float saved_slope = ground_slope;
 		const float saved_erosion = bank_erosion;
 		const float saved_stilt = stilt_height;
+		const int saved_beaver_cut = beaver_cut;
+		const float saved_beaver_years = beaver_years;
+		const float saved_beaver_depth = beaver_depth;
 		const float saved_edge_open = edge_open;
 		const float saved_stone = root_stone;
 		const AABB saved_envelope = envelope;
@@ -22087,7 +22482,10 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			Ref<TreeGenerator> src;
 			src.instantiate();
 			src->_copy_generation_state(*this);
-			src->near_key = key;
+			// The near key travels as a 32-bit int (PlantSpecies.near_mesh_key, the field's cells): the 64-bit
+			// cache key folded to a positive one. Truncated, the band terms (succession, edge, wet, beaver) wrapped
+			// it negative and every near request of those stands failed.
+			src->near_key = int((uint64_t(key) ^ (uint64_t(key) >> 31)) & 0x7fffffffu);
 			src->near_form = p_form;
 			src->near_base_seed = saved_seed;
 			src->near_base_cover = saved_climber_cover;
@@ -22155,6 +22553,9 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		ground_slope = saved_slope;
 		bank_erosion = saved_erosion;
 		stilt_height = saved_stilt;
+		beaver_cut = saved_beaver_cut;
+		beaver_years = saved_beaver_years;
+		beaver_depth = saved_beaver_depth;
 		edge_open = saved_edge_open;
 		root_stone = saved_stone;
 		mesh_cache[key] = meshes;
@@ -22195,6 +22596,12 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// (the meshes carry tree_wind_flag; trees.md 5q).
 		sp->set_meta("wind_flag", true);
 	}
+	if (beaver_band == 3) {
+		// Beaver-felled stems (trees.md 5au): more than 70% of the larger ones fall toward the water (Badyaev, National
+		// Wildlife 2015: the beaver starts its cut on the water side); placement turns mesh +X down the water distance
+		// for that share, the rest at random.
+		sp->set_meta("fall_to_water", 0.7f);
+	}
 	if (windthrow_band == 1 || windthrow_band == 3) {
 		// Thrown and leaning trees point down the storm's track (mesh +X; trees.md 5am): placement turns them to
 		// fall_dir, with a scatter of fall_scatter radians either side (gusts and eddies in the stand turn them).
@@ -22220,7 +22627,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// holds the source (the field keeps only its id).
 		const Ref<TreeGenerator> &src = near_sources[key];
 		sp->set_near_mesh_source(src.ptr());
-		sp->set_near_mesh_key(key);
+		sp->set_near_mesh_key(src->near_key);
 		sp->set_meta(SNAME("_near_mesh_source"), src);
 		sp->set("near_range", near_leaf_range);
 	}
@@ -23252,6 +23659,65 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			clip(alder, PlantSpecies::RULE_WATER_DISTANCE, Vector2(4.0f, 60.0f), 6.0f);
 			stand_forest_shade = 0.4f;
 		} break;
+		case STAND_BEAVER_POND: {
+			lead = PRESET_BIRCH;
+			// A beaver pond (trees.md 5au; Naiman, Johnston and Kelley 1988, Alteration of North American streams by
+			// beaver; Muller-Schwarze 2011, The Beaver): the dam floods the stream's flat, and the trees standing in the
+			// water drown within a few years and stand grey, bark falling, for decades. On the shore the colony works a
+			// band about ten metres deep (Dieter and McCabe 1989: cut stems a mean 3-8 m from the water, almost none
+			// past 10 m), taking willow, aspen and birch first: gnawed stumps, half of them resprouting into bushes,
+			// felled stems lying mostly toward the water with their limbs gone and bark eaten, stems left part gnawed
+			// on an hourglass waist. Behind it the birch and alder wood the beavers have not reached.
+			auto shore = [&](const Ref<PlantSpecies> &p_sp, float p_to) {
+				// Faded out over the last 2 m, none past p_to.
+				p_sp->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, p_to - 2.0f));
+				p_sp->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, 2.0f);
+				p_sp->set_rule_range(PlantSpecies::RULE_WATER_DEPTH, Vector2(0.0f, 0.05f));
+				p_sp->set_rule_fade(PlantSpecies::RULE_WATER_DEPTH, 0.05f);
+				list.push_back(p_sp);
+			};
+			for (const Preset p : { PRESET_BLACK_ALDER, PRESET_BIRCH }) {
+				// The drowned wood: snags of what stood on the flat, standing in the water.
+				Ref<PlantSpecies> drowned = _stand_species(p, true, p_variants, FORM_SNAG);
+				drowned->set_name(String(preset_names[p]) + " (drowned, beaver pond)");
+				drowned->set_density(p == PRESET_BLACK_ALDER ? 0.5f : 0.35f);
+				drowned->set_canopy_opacity(0.0f);
+				drowned->set_rule_range(PlantSpecies::RULE_WATER_DEPTH, Vector2(0.1f, 1.2f));
+				drowned->set_rule_fade(PlantSpecies::RULE_WATER_DEPTH, 0.1f);
+				list.push_back(drowned);
+			}
+			static const char *work_names[4] = { "", " (beaver gnawed)", " (beaver stump)", " (beaver felled)" };
+			for (const Preset p : { PRESET_WHITE_WILLOW, PRESET_BIRCH }) {
+				for (int band = 1; band <= 3; band++) {
+					beaver_band = band;
+					Ref<PlantSpecies> sp = _stand_species(p, true, p_variants, FORM_STAND);
+					beaver_band = 0;
+					sp->set_name(String(preset_names[p]) + work_names[band]);
+					sp->set_density(band == 2 ? 0.7f : (band == 3 ? 0.45f : 0.25f));
+					if (band >= 2) {
+						sp->set_canopy_opacity(0.0f);
+					}
+					if (band == 3) {
+						sp->set_meta("deadwood", true);
+					}
+					shore(sp, band == 1 ? 12.0f : 10.0f);
+				}
+			}
+			// Willow scrub at the waterline: the shoots of the cut stools and browsed bushes.
+			Ref<PlantSpecies> scrub = _stand_species(PRESET_WHITE_WILLOW, false, p_variants, FORM_SAPLING);
+			scrub->set_name("White Willow (beaver pond scrub)");
+			scrub->set_density(0.6f);
+			scrub->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.4f));
+			shore(scrub, 6.0f);
+			// The wood beyond the beavers' reach.
+			Ref<PlantSpecies> birch = canopy(PRESET_BIRCH, 0.8f, 0.0f, 0.0f, false, true);
+			clip(birch, PlantSpecies::RULE_WATER_DISTANCE, Vector2(9.0f, 1000.0f), 4.0f);
+			Ref<PlantSpecies> alder = canopy(PRESET_BLACK_ALDER, 0.5f, 0.0f, 0.0f, false, false);
+			clip(alder, PlantSpecies::RULE_WATER_DISTANCE, Vector2(8.0f, 60.0f), 4.0f);
+			Ref<PlantSpecies> spruce = canopy(PRESET_NORWAY_SPRUCE, 0.5f, 0.0f, 0.0f, false, false);
+			clip(spruce, PlantSpecies::RULE_WATER_DISTANCE, Vector2(18.0f, 1000.0f), 6.0f);
+			stand_forest_shade = 0.45f;
+		} break;
 		case STAND_MAX:
 			break;
 	}
@@ -23689,6 +24155,37 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		// foresters mark infested spruce by), then the bark loosens over the galleries and falls in sheets.
 		bark_peel *= y < 0.6f ? 0.0f : (y < 2.5f ? 1.0f + 3.0f * Math::smoothstep(0.8f, 2.5f, y) : (y < 6.0f ? 2.2f : 1.4f));
 	}
+	// Beaver work (trees.md 5au) on a living broadleaf or conifer; restored on return.
+	struct BeaverRestore {
+		int &dc;
+		bool &fl;
+		bool &up;
+		const int s_dc;
+		const bool s_fl, s_up;
+		~BeaverRestore() {
+			dc = s_dc;
+			fl = s_fl;
+			up = s_up;
+		}
+	} beaver_restore{ decay_class, fallen, uprooted, decay_class, fallen, uprooted };
+	beaver_now = (beaver_cut != BEAVER_NONE && decay_class == 0 && !fallen && !fallen_branch && !beetle && !is_shrub(preset) && !palm_preset(preset)) ? beaver_cut : BEAVER_NONE;
+	beaver_tip = -1;
+	tube_no_tongue = beaver_now == BEAVER_FELLED;
+	if (beaver_now != BEAVER_NONE) {
+		RandomPCG br;
+		br.seed(uint64_t(seed) * 0x9e3779b97f4a7c15ull + 0x62656176u);
+		// A beaver gnaws sitting on its haunches: the cut stands about knee high or lower, 25-55 cm.
+		beaver_cut_h = Math::lerp(0.25f, 0.55f, br.randf());
+		const float y = beaver_years;
+		if (beaver_now == BEAVER_FELLED) {
+			// Felled whole at the waist (not thrown with its roots); fresh, it is still in leaf.
+			fallen = true;
+			uprooted = false;
+			decay_class = y < 0.3f ? 0 : (y < 2.0f ? 1 : (y < 6.0f ? 2 : 3));
+		} else if (beaver_now == BEAVER_STUMP && !_beaver_resprouts()) {
+			decay_class = y < 1.0f ? 1 : (y < 4.0f ? 2 : 3);
+		}
+	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	nodes.clear();
 	buds.clear();
@@ -23745,6 +24242,9 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			add_stem_bud(_rand(0.0f, Math::TAU), spread * _rand(0.3f, 1.0f));
 		}
 		_grow_year(y);
+		if (beaver_now == BEAVER_STUMP && beaver_tip < 0 && y >= MAX(1, years - int(beaver_years))) {
+			_beaver_stump(y);
+		}
 		if (krummholz > 0.0f && y > 6 && int(layer_roots.size()) < 20 && rng.randf() < 0.5f * krummholz) {
 			// Layering (Cooper 1911; Laberge et al. 2000): a mat limb pressed to the ground under
 			// the snow roots where it lies, and its tip or a bud on it turns up as a new stem, so a
@@ -24119,6 +24619,36 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	if (decay_class == 0 && !fallen && !fallen_branch && envelope.size == Vector3()) {
 		_break_limbs();
 	}
+	beaver_axis.clear();
+	if (beaver_now == BEAVER_GNAWED && !nodes.is_empty()) {
+		// The stem's axis and girth at the waist, for _beaver_waist_at: the main stem from the root, up past the waist.
+		int k = -1;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			if (!nodes[i].removed && nodes[i].parent == 0 && (k < 0 || nodes[i].radius > nodes[k].radius)) {
+				k = i;
+			}
+		}
+		const float base_y = nodes[0].start.y;
+		beaver_r = 0.0f;
+		while (k >= 0 && !nodes[k].removed) {
+			const Node &n = nodes[k];
+			beaver_axis.push_back(n.start);
+			if (n.start.y - base_y <= beaver_cut_h) {
+				beaver_r = n.radius;
+			}
+			if (n.end().y - base_y > beaver_cut_h + 4.0f * MAX(n.radius, 0.05f) || n.main < 0) {
+				beaver_axis.push_back(n.end());
+				break;
+			}
+			k = n.main;
+		}
+		if (beaver_axis.size() < 2 || beaver_r <= 0.0f) {
+			beaver_axis.clear();
+		}
+	}
+	if (beaver_now == BEAVER_FELLED) {
+		_beaver_strip();
+	}
 	if (fallen_branch) {
 		_shed_branch();
 	} else if (fallen) {
@@ -24342,6 +24872,12 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_ground_slope", "slope"), &TreeGenerator::set_ground_slope);
 	ClassDB::bind_method(D_METHOD("get_ground_slope"), &TreeGenerator::get_ground_slope);
 	ClassDB::bind_method(D_METHOD("set_stilt_height", "height"), &TreeGenerator::set_stilt_height);
+	ClassDB::bind_method(D_METHOD("set_beaver_cut", "cut"), &TreeGenerator::set_beaver_cut);
+	ClassDB::bind_method(D_METHOD("get_beaver_cut"), &TreeGenerator::get_beaver_cut);
+	ClassDB::bind_method(D_METHOD("set_beaver_years", "years"), &TreeGenerator::set_beaver_years);
+	ClassDB::bind_method(D_METHOD("get_beaver_years"), &TreeGenerator::get_beaver_years);
+	ClassDB::bind_method(D_METHOD("set_beaver_depth", "depth"), &TreeGenerator::set_beaver_depth);
+	ClassDB::bind_method(D_METHOD("get_beaver_depth"), &TreeGenerator::get_beaver_depth);
 	ClassDB::bind_method(D_METHOD("get_stilt_height"), &TreeGenerator::get_stilt_height);
 	ClassDB::bind_method(D_METHOD("set_bank_erosion", "erosion"), &TreeGenerator::set_bank_erosion);
 	ClassDB::bind_method(D_METHOD("get_bank_erosion"), &TreeGenerator::get_bank_erosion);
@@ -24491,6 +25027,9 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_slope", PROPERTY_HINT_RANGE, "0,1.2,0.01,radians_as_degrees"), "set_ground_slope", "get_ground_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bank_erosion", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_bank_erosion", "get_bank_erosion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stilt_height", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_stilt_height", "get_stilt_height");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "beaver_cut", PROPERTY_HINT_ENUM, "None,Gnawed,Stump,Felled"), "set_beaver_cut", "get_beaver_cut");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beaver_years", PROPERTY_HINT_RANGE, "0,60,0.05,suffix:yr"), "set_beaver_years", "get_beaver_years");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beaver_depth", PROPERTY_HINT_RANGE, "0.05,0.95,0.01"), "set_beaver_depth", "get_beaver_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "root_stone", PROPERTY_HINT_RANGE, "0,2,0.01,suffix:m"), "set_root_stone", "get_root_stone");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fungi_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fungi_cover", "get_fungi_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fruit_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fruit_cover", "get_fruit_cover");
@@ -24620,10 +25159,15 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_BOREAL_TAIGA);
 	BIND_ENUM_CONSTANT(STAND_ALDER_CARR);
 	BIND_ENUM_CONSTANT(STAND_FLOODPLAIN_WILLOW);
+	BIND_ENUM_CONSTANT(STAND_BEAVER_POND);
 	BIND_ENUM_CONSTANT(SUCCESSION_NONE);
 	BIND_ENUM_CONSTANT(SUCCESSION_FIRE);
 	BIND_ENUM_CONSTANT(SUCCESSION_WIND);
 	BIND_ENUM_CONSTANT(SUCCESSION_BEETLE);
+	BIND_ENUM_CONSTANT(BEAVER_NONE);
+	BIND_ENUM_CONSTANT(BEAVER_GNAWED);
+	BIND_ENUM_CONSTANT(BEAVER_STUMP);
+	BIND_ENUM_CONSTANT(BEAVER_FELLED);
 	BIND_ENUM_CONSTANT(STAND_MAX);
 	BIND_ENUM_CONSTANT(REGION_EUROPE);
 	BIND_ENUM_CONSTANT(REGION_NORTH_AMERICA);
