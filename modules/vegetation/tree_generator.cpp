@@ -15178,6 +15178,42 @@ void TreeGenerator::_bank_shear(Builder &r_b, bool p_drape) const {
 	// stilt-rooted alders of carrs and fens; Rodwell 1991, W5). The foot stays at the mesh origin; only the roots move.
 	// Between the roots the collar sinks just under the tussock's surface (_build_tussock), so the roots stand over
 	// the peat mound and the stem rises from its top.
+	// How much of a stilt root a point is: its azimuth against the nearest root's, over the root's half width.
+	auto root_k = [&](const Vector2 &p_rel, float p_d) -> float {
+		float k = 0.0f;
+		if (foot_roots.on && p_d > 1e-3f) {
+			const float th = Math::atan2(p_rel.y, p_rel.x);
+			const float half = Math::atan2(MAX(foot_roots.width, 0.02f), p_d);
+			for (const float az : foot_roots.az) {
+				const float dth = Math::abs(Math::wrapf(th - az, -float(Math::PI), float(Math::PI)));
+				k = MAX(k, 1.0f - Math::smoothstep(0.9f * half, 2.2f * half, dth));
+			}
+		}
+		return k;
+	};
+	// Under stilt roots there is air, not a skirt: the collar's web between the roots (built for level ground) is
+	// drawn in toward the stem's foot, into the tussock's core, before the roots arch down. Dropped straight down
+	// instead, it hung from each root's flank to the mound as a flat curtain (and the moss sleeve over it as a sheet).
+	// The roots' flanks follow part way, so each root rounds under into the foot.
+	auto stilt_pull = [&](const Vector3 &p) -> Vector3 {
+		if (stilt_height <= 0.0f || !p_drape) {
+			return p;
+		}
+		const float w = 1.0f - Math::smoothstep(top, top + 2.0f * tr + 0.2f, p.y - ax.y);
+		const Vector2 rel(p.x - ax.x, p.z - ax.z);
+		const float d = rel.length();
+		const float to = 0.9f * tr;
+		if (w <= 0.0f || d <= to) {
+			return p;
+		}
+		const float a = CLAMP((d - 0.8f * tr) / MAX(reach - 0.8f * tr, 0.05f), 0.0f, 1.0f);
+		const float c = (1.0f - root_k(rel, d)) * Math::smoothstep(0.1f, 0.35f, a) * w;
+		if (c <= 0.0f) {
+			return p;
+		}
+		const float nd = Math::lerp(d, to, c);
+		return Vector3(ax.x + rel.x * nd / d, p.y, ax.z + rel.y * nd / d);
+	};
 	auto stilt = [&](const Vector3 &p) -> float {
 		if (stilt_height <= 0.0f || !p_drape) {
 			return 0.0f;
@@ -15190,16 +15226,7 @@ void TreeGenerator::_bank_shear(Builder &r_b, bool p_drape) const {
 		const Vector2 rel(p.x - ax.x, p.z - ax.z);
 		const float d = rel.length();
 		const float a = CLAMP((d - 0.8f * tr) / MAX(reach - 0.8f * tr, 0.05f), 0.0f, 1.0f);
-		// How much of a root this point is: its azimuth against the nearest root's, over the root's half width.
-		float k = 0.0f;
-		if (foot_roots.on && d > 1e-3f) {
-			const float th = Math::atan2(rel.y, rel.x);
-			const float half = Math::atan2(MAX(foot_roots.width, 0.02f), d);
-			for (const float az : foot_roots.az) {
-				const float dth = Math::abs(Math::wrapf(th - az, -float(Math::PI), float(Math::PI)));
-				k = MAX(k, 1.0f - Math::smoothstep(0.9f * half, 2.2f * half, dth));
-			}
-		}
+		const float k = root_k(rel, d);
 		const float root_y = -stilt_height * a * a;
 		const float mound_y = _tussock_y(d) - 0.04f;
 		return Math::lerp(MIN(mound_y, root_y), root_y, k) * w;
@@ -15214,11 +15241,13 @@ void TreeGenerator::_bank_shear(Builder &r_b, bool p_drape) const {
 	float *tw = (r_b.use_tangents && r_b.tangents.size() >= nv * 4) ? r_b.tangents.ptrw() : nullptr;
 	const float e = 0.005f;
 	for (int v = 0; v < nv; v++) {
-		const Vector3 p = vw[v];
+		const Vector3 p = stilt_pull(vw[v]);
 		const float dy = disp(p);
 		if (dy == 0.0f) {
 			continue;
 		}
+		vw[v].x = p.x;
+		vw[v].z = p.z;
 		const float gx = (disp(p + Vector3(e, 0, 0)) - disp(p - Vector3(e, 0, 0))) / (2.0f * e);
 		const float gy = (disp(p + Vector3(0, e, 0)) - disp(p - Vector3(0, e, 0))) / (2.0f * e);
 		const float gz = (disp(p + Vector3(0, 0, e)) - disp(p - Vector3(0, 0, e))) / (2.0f * e);
