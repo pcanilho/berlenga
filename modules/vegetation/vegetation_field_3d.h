@@ -597,6 +597,12 @@ private:
 	mutable bool stand_follow = false;
 	mutable bool strike_follow = false; // A species carries struck variants: strikes re-place their tiles.
 	mutable bool browse_follow = false; // A species carries browsed variants: browse changes re-place their tiles.
+	// Deferred tree variants (TreeGenerator.defer_variants, trees.md 5bc): grown when a burn, strike or browse disc first
+	// lies over the field, in setup or (a new burn, strike or disc) from process, the stream starting again with them.
+	bool _realize_variants(const PlaceSetup &p_setup);
+	bool variants_waiting = false;
+	double variants_check = 0.0;
+	static int _deferred_kinds(const Ref<PlantSpecies> &p_sp) { return p_sp.is_valid() ? int(p_sp->get_meta(SNAME("tree_variants_deferred"), 0)) : 0; }
 	void _read_browse(PlaceSetup &r_setup) const;
 	double stand_check = 0.0;
 	Rect2 stand_dirty;

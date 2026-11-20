@@ -4,6 +4,7 @@ extends Node3D
 # per species), or rendered.
 #
 # godot --path docs/bench/trees --rendering-driver vulkan -- --stands [options]
+#   --strikes --stream  a strike after a streamed field is in grows the deferred struck variants (trees.md 5bc)
 #   --lightning --strikes  struck trees in a placed beech stand: a WorldStand strike swaps that tree only (trees.md 5ax)
 #   --beaver-meadow   a drained beaver pond (WorldStand kind 4): meadow snags, fallen snags and willow come in (trees.md 5bb)
 #   --colonnade       taiga stilted spruce placed in rows along vanished logs (trees.md 5az)
@@ -130,6 +131,10 @@ func run(args: Dictionary) -> void:
 		return
 	if args.has("browse"):
 		await _browse_field_check()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("strikes") and args.has("stream"):
+		await _strike_stream_check()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	if args.has("strikes") and args.has("lightning"):
@@ -376,11 +381,11 @@ func _browse_field_check() -> void:
 		for m in sps[s].meshes:
 			if m != null and m.has_meta("tree_browse"):
 				n += 1
-		if n > 0:
+		if int(sps[s].get_meta("tree_variants_deferred", 0)) & TreeGenerator.VARIANT_BROWSE:
 			with += 1
-			if n != 1 or TreeGenerator.get_living_meshes(sps[s]).size() >= sps[s].meshes.size():
-				bad += 1
-	_check(with > 0 and bad == 0, "beech stand: %d species carry a browsed variant, %d wrong" % [with, bad])
+		if n > 0:
+			bad += 1
+	_check(with > 0 and bad == 0, "beech stand: %d species defer a browsed variant, %d grown before any deer" % [with, bad])
 	if with == 0:
 		return
 	var f := _field(biome)
@@ -411,11 +416,72 @@ func _browse_field_check() -> void:
 	f.populate()
 	for k in 3:
 		await get_tree().process_frame
+	var grown := 0
+	for s in sps.size():
+		var n := 0
+		for m in sps[s].meshes:
+			if m != null and m.has_meta("tree_browse"):
+				n += 1
+		if n == 1 and TreeGenerator.get_living_meshes(sps[s]).size() < sps[s].meshes.size():
+			grown += 1
+	_check(grown == with, "under a browse disc the field grew %d of %d species' browsed variant, not counted living" % [grown, with])
 	var inside: Array = count.call(mid, 0.0, r * 0.75)
 	var outside: Array = count.call(mid, r * 1.05, SIZE)
 	_check(inside[0] > 0 and outside[0] == 0, "a browse disc (r %.0f m, pressure 1): %d browsed of %d instances under it, %d browsed outside" % [r, inside[0], inside[1], outside[0]])
 	ws.remove_browse(id)
 	ws.clear_browse()
+
+
+func _strike_stream_check() -> void:
+	# Deferred struck variants in a streamed field (trees.md 5bc): a strike after the field has streamed in grows the
+	# variants on a worker, and the field streams again with the struck tree in it.
+	var ws = WorldContracts.get_stand()
+	ws.clear_strikes()
+	var biome := gen.make_stand(TreeGenerator.STAND_BEECH, variants)
+	var cam := Camera3D.new()
+	add_child(cam)
+	cam.position = Vector3(SIZE * 0.5, 30, SIZE * 0.5)
+	cam.rotation_degrees = Vector3(89, 0, 0) # At the sky: frames stay cheap on the software renderer.
+	cam.current = true
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.tile_size = 20.0
+	f.streaming = true
+	f.stream_radius = SIZE
+	f.far_shell = false
+	f.far_volume = false
+	f.biome = biome
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	var struck_count := func() -> int:
+		var n := 0
+		for c in f.find_children("*", "MultiMeshInstance3D", true, false):
+			if c is MultiMeshInstance3D and c.multimesh != null and c.multimesh.mesh != null and c.multimesh.mesh.has_meta("tree_lightning_years"):
+				n += c.multimesh.instance_count
+		return n
+	for k in 600:
+		await get_tree().process_frame
+		if f.get_plant_count() > 1000 and k > 60:
+			break
+	var before: int = struck_count.call()
+	print("streamed in: %d plants, %d struck" % [f.get_plant_count(), before])
+	var at := Vector3(SIZE * 0.5, 0, SIZE * 0.5)
+	var pl: PackedVector3Array = f.get_placements(0)
+	if pl.size() > 0:
+		at = pl[pl.size() / 2]
+	ws.add_strike(at + Vector3(0, 25, 0), 0.1)
+	var t0 := Time.get_ticks_msec()
+	var after := 0
+	for k in 3000:
+		await get_tree().process_frame
+		if k % 10 == 0:
+			after = struck_count.call()
+			if k % 200 == 0:
+				print("frame %d: %d plants, %d struck" % [k, f.get_plant_count(), after])
+			if after > 0:
+				break
+	_check(before == 0 and after >= 1, "streamed: no struck tree before (%d), %d after a strike, in %d ms" % [before, after, Time.get_ticks_msec() - t0])
+	ws.clear_strikes()
 
 
 func _strike_field_check() -> void:
@@ -430,16 +496,16 @@ func _strike_field_check() -> void:
 	var biome := gen.make_stand(TreeGenerator.STAND_BEECH, variants)
 	var sps: Array = biome.species
 	var with := -1
-	var struck := 0
 	for s in sps.size():
-		var n := 0
+		if (int(sps[s].get_meta("tree_variants_deferred", 0)) & TreeGenerator.VARIANT_STRIKE) and with < 0:
+			with = s
+	# Deferred (trees.md 5bc): none grown until a field has a strike over it.
+	var grown := 0
+	for s in sps.size():
 		for m in sps[s].meshes:
 			if m != null and m.has_meta("tree_lightning_years"):
-				n += 1
-		if n > 0 and with < 0:
-			with = s
-			struck = n
-	_check(with >= 0 and struck == 2 and TreeGenerator.get_living_meshes(sps[with]).size() < sps[with].meshes.size(), "beech stand: %s carries %d struck variants, not counted living" % [sps[with].resource_name if with >= 0 else "none", struck])
+				grown += 1
+	_check(with >= 0 and grown == 0, "beech stand: %s defers its struck variants (%d grown before any strike)" % [sps[with].resource_name if with >= 0 else "none", grown])
 	if with < 0:
 		return
 	var f := _field(biome)
@@ -473,6 +539,11 @@ func _strike_field_check() -> void:
 		await get_tree().process_frame
 	var near: Array = count_struck.call(at, 0.5)
 	var all: Array = count_struck.call(Vector3(SIZE * 0.5, 0, SIZE * 0.5), SIZE)
+	var struck := 0
+	for m in sps[with].meshes:
+		if m != null and m.has_meta("tree_lightning_years"):
+			struck += 1
+	_check(struck == 2 and TreeGenerator.get_living_meshes(sps[with]).size() <= sps[with].meshes.size() - struck, "under a strike the field grew %s's %d struck variants, not counted living" % [sps[with].resource_name, struck])
 	_check(near[0] == 1 and all[0] >= 1 and all[0] <= 4, "a strike at %s: the tree there struck (%d), %d struck in the stand (neighbours within 3 m may share it)" % [str(at), near[0], all[0]])
 	ws.clear_strikes()
 
