@@ -442,3 +442,8 @@ nebulosus/fibratus; Tape 1994).
 - Raster and PT match (640). Raster shows the half-res reconstruction's stepped edge on fine grains (the known
   dotted rim issue, on the improvements card); PT is smooth.
 - Bench: weather `--view=clouds_up` (50 degrees up), `--shear-aloft=S`, `--high-cover=C`.
+- No lattice (docs: one regular diamond lattice, the texture tiling every 1.8 km): two reads 1.37x apart in scale
+  and 23 degrees apart, blended by a 6 km noise; both domain-warped by the texture's coarse octave (rows bend, part,
+  merge); the grain threshold wanders on 2.5 km, so ripples break into gaps and run together.
+- Halo check: the 22 and 46 degree rings show through the veil toward the sun (raster and PT). Sun-facing frame:
+  weather `--view=shafts --cover=0.05 --high-cover=1.0` (sun 20 degrees up, 13 left of the view).

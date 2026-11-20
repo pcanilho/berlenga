@@ -550,12 +550,21 @@ vec4 march_cirrus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 		float patch = smoothstep(0.45, 0.65, wc_value_noise((xz - cloud_high_drift) / 14000.0 + vec2(41.3, 7.9)));
 		float ccs = cloud_high_cc * patch * (1.0 - cs);
 		if (ccs > 0.001) {
-			vec3 gq = vec3(aw.x / 1800.0, aw.y / 2700.0, 0.83 + cloud_churn.z * 0.3);
+			// No lattice (the texture tiles every 1.8 km): two reads at scales 1.37 apart and rotated 23 degrees,
+			// blended by a 6 km noise, so the grain size wanders; both warped by the texture's own coarse octave
+			// (domain warping) so rows bend, part and merge; and the threshold wanders on 2.5 km, so the ripples
+			// break into gaps in places and run together in others (Atlas: Cc in patches, of irregular grains).
+			vec2 aq = aw + (textureLod(cloud_detail, vec3(aw / 9000.0, 0.29), 0.0).rg - 0.5) * 700.0;
+			vec2 aq2 = mat2(vec2(0.921, 0.391), vec2(-0.391, 0.921)) * aq * 1.37 + vec2(517.0, 1301.0);
 			float glod = max(log2(t * p_pixel / (1800.0 / 128.0)) + 0.5, 0.0);
-			vec4 gd = textureLod(cloud_detail, gq, glod);
-			// Grains from the billows broken up by the finer octave (no two alike), with a soft edge: ice grains
-			// fray, and a hard threshold drew them as blocks.
-			float grain = smoothstep(0.3, 0.85, mix(gd.b, gd.a, 0.35) * mix(0.8, 1.2, gd.r));
+			vec4 ga = textureLod(cloud_detail, vec3(aq.x / 1800.0, aq.y / 2700.0, 0.83 + cloud_churn.z * 0.3), glod);
+			vec4 gb = textureLod(cloud_detail, vec3(aq2.x / 1800.0, aq2.y / 2700.0, 0.47 + cloud_churn.z * 0.3), glod + 0.45);
+			vec2 nq = (xz - cloud_high_drift) / 6000.0;
+			float wsel = smoothstep(0.3, 0.7, wc_value_noise(nq + vec2(3.7, 19.1)));
+			float gv = mix(mix(ga.b, ga.a, 0.35) * mix(0.8, 1.2, ga.r), mix(gb.b, gb.a, 0.35) * mix(0.8, 1.2, gb.r), wsel);
+			float k = (wc_value_noise(nq * 2.4 + vec2(23.3, 5.1)) - 0.5) * 0.45;
+			// Grains with a soft edge: ice grains fray, and a hard threshold drew them as blocks.
+			float grain = smoothstep(0.3 + k, 0.85 + k, gv);
 			fib = mix(fib, grain, ccs);
 		}
 	}
