@@ -528,6 +528,9 @@ void WeatherMap3D::_ease_base(double p_dt) {
 	cur_wind_direction = cur_wind_direction.rotated(ang * a).normalized();
 	cur_cloud_cover = Math::lerp(cur_cloud_cover, cloud_cover, a);
 	cur_cloud_type = Math::lerp(cur_cloud_type, cloud_type, a);
+	// The high sheet leads: it eases four times faster than the rain it heralds, so a change toward rain
+	// thickens the cirrus well before the rain arrives (cirrus runs 12 to 24 h ahead of a warm front's rain).
+	cur_high_cloud_cover = Math::lerp(cur_high_cloud_cover, _target_high_cloud_cover(), 1.0f - Math::exp(-float(p_dt) / (0.25f * transition_time)));
 	cur_rain_rate = Math::lerp(cur_rain_rate, rain_rate, a);
 	cur_temperature = Math::lerp(cur_temperature, _target_temperature(), a);
 	cur_humidity = Math::lerp(cur_humidity, humidity, a);
@@ -561,6 +564,7 @@ void WeatherMap3D::_set_base_to_settings() {
 	cur_wind_direction = wind_direction.length_squared() > 1e-8f ? wind_direction.normalized() : Vector2(1, 0);
 	cur_cloud_cover = cloud_cover;
 	cur_cloud_type = cloud_type;
+	cur_high_cloud_cover = _target_high_cloud_cover();
 	cur_rain_rate = rain_rate;
 	cur_temperature = _target_temperature();
 	cur_humidity = humidity;
@@ -1079,6 +1083,8 @@ void WeatherMap3D::_advance(double p_weather_dt, double p_real_dt) {
 	const float aloft = Math::log(1000.0f / z0) / Math::log(10.0f / z0);
 	const Vector2 steer = cur_wind_direction * cur_wind_speed * aloft;
 	cloud_drift += steer * float(p_weather_dt);
+	// The high sheet rides the wind at its own height (get_wind_aloft: shear above the boundary layer).
+	high_cloud_drift += get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), high_cloud_height) * float(p_weather_dt);
 	cloud_time += p_weather_dt;
 	for (int i = storms.size() - 1; i >= 0; i--) {
 		Storm &s = storms.write[i];
@@ -1628,6 +1634,10 @@ float WeatherMap3D::get_cloud_cover_at(Vector3 p_position) const {
 	return CLAMP(_sample(cell_cover, Vector2(p_position.x, p_position.z)), 0.0f, 1.0f);
 }
 
+float WeatherMap3D::get_high_cloud_cover_at(Vector3 p_position) const {
+	return WeatherClouds::high_cover_at(_cloud_state(), Vector2(p_position.x, p_position.z));
+}
+
 float WeatherMap3D::get_cloud_type_at(Vector3 p_position) const {
 	return CLAMP(_sample(cell_type, Vector2(p_position.x, p_position.z)), 0.0f, 1.0f);
 }
@@ -2165,6 +2175,25 @@ void WeatherMap3D::set_cloud_size_mix(float p_mix) {
 	cloud_size_mix = CLAMP(p_mix, 0.0f, 1.0f);
 }
 
+void WeatherMap3D::set_high_cloud_cover(float p_cover) {
+	high_cloud_cover = CLAMP(p_cover, 0.0f, 1.0f);
+}
+
+void WeatherMap3D::set_high_cloud_height(float p_height) {
+	high_cloud_height = MAX(p_height, 1000.0f);
+}
+
+void WeatherMap3D::set_high_cloud_optical_depth(float p_tau) {
+	high_cloud_optical_depth = CLAMP(p_tau, 0.0f, 5.0f);
+}
+
+// What the high sheet eases toward: the base, thinned in dry air (subsiding, clear) and thickened by rain on its
+// way (the rain setting the map is easing toward), as cirrus and cirrostratus thicken ahead of a front's rain.
+float WeatherMap3D::_target_high_cloud_cover() const {
+	const float humid = Math::lerp(0.3f, 1.0f, Math::smoothstep(0.35f, 0.75f, humidity));
+	return CLAMP(high_cloud_cover * humid + 0.6f * Math::smoothstep(0.0f, 4.0f, rain_rate), 0.0f, 1.0f);
+}
+
 void WeatherMap3D::set_cloud_churn(float p_speed) {
 	cloud_churn = MAX(p_speed, 0.0f);
 }
@@ -2224,6 +2253,14 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 		}
 	}
 	st.size_mix = cloud_size_mix;
+	st.high_cover = cur_high_cloud_cover;
+	st.high_height = high_cloud_height;
+	st.high_tau = high_cloud_optical_depth;
+	st.high_drift = high_cloud_drift;
+	{
+		const Vector2 w = get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), high_cloud_height);
+		st.high_dir = w.length_squared() > 1e-6f ? w.normalized() : Vector2(1, 0);
+	}
 	st.evolve = _cloud_evolve();
 	if (cloud_evolution) {
 		// The shape noise's second read slides against the first at cloud_churn (m/s, in its own texture's
@@ -2276,11 +2313,18 @@ void WeatherMap3D::ShadowBake::row(uint32_t p_row, void *) {
 		for (int i = 0; i < steps; i++) {
 			tau += WeatherClouds::extinction_at(state, p0 + to_sun * (s0 + (i + 0.5f) * ds)) * ds;
 		}
-		const float t = 1.0f / (1.0f + 0.75f * (1.0f - 0.85f) * tau);
+		// The high sheet shades by its own optical depth along the sun's path (thin ice cloud, forward
+		// scattering with g about 0.75), not by adding to the low cover.
+		float tau_h = 0.0f;
+		if (state.high_cover > 0.001f || state.storm_count > 0) {
+			const Vector3 ph = p0 + to_sun * ((state.high_height - p0.y) / to_sun.y);
+			tau_h = WeatherClouds::high_tau_at(state, Vector2(ph.x, ph.z)) / MAX(to_sun.y, 0.05f);
+		}
+		const float t = 1.0f / (1.0f + 0.75f * (1.0f - 0.85f) * tau + 0.75f * (1.0f - 0.75f) * tau_h);
 		const int k = int(p_row) * n + x;
 		transmittance_w[k] = t;
 		if (sky) {
-			bytes_w[k * 4 + 0] = uint8_t(CLAMP(int(Math::exp(-tau) * 255.0f + 0.5f), 0, 255));
+			bytes_w[k * 4 + 0] = uint8_t(CLAMP(int(Math::exp(-tau - tau_h) * 255.0f + 0.5f), 0, 255));
 			bytes_w[k * 4 + 1] = uint8_t(CLAMP(int(t * 255.0f + 0.5f), 0, 255));
 			bytes_w[k * 4 + 2] = 0;
 			bytes_w[k * 4 + 3] = 255;
@@ -2860,6 +2904,7 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_terrain_lee_at", "position"), &WeatherMap3D::get_terrain_lee_at);
 	ClassDB::bind_method(D_METHOD("get_rain_at", "position"), &WeatherMap3D::get_rain_at);
 	ClassDB::bind_method(D_METHOD("get_cloud_cover_at", "position"), &WeatherMap3D::get_cloud_cover_at);
+	ClassDB::bind_method(D_METHOD("get_high_cloud_cover_at", "position"), &WeatherMap3D::get_high_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("get_cloud_type_at", "position"), &WeatherMap3D::get_cloud_type_at);
 	ClassDB::bind_method(D_METHOD("get_wetness_at", "position"), &WeatherMap3D::get_wetness_at);
 	ClassDB::bind_method(D_METHOD("get_puddle_at", "position"), &WeatherMap3D::get_puddle_at);
@@ -2884,6 +2929,12 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_cloud_shear"), &WeatherMap3D::get_cloud_shear);
 	ClassDB::bind_method(D_METHOD("set_cloud_size_mix", "mix"), &WeatherMap3D::set_cloud_size_mix);
 	ClassDB::bind_method(D_METHOD("get_cloud_size_mix"), &WeatherMap3D::get_cloud_size_mix);
+	ClassDB::bind_method(D_METHOD("set_high_cloud_cover", "cover"), &WeatherMap3D::set_high_cloud_cover);
+	ClassDB::bind_method(D_METHOD("get_high_cloud_cover"), &WeatherMap3D::get_high_cloud_cover);
+	ClassDB::bind_method(D_METHOD("set_high_cloud_height", "height"), &WeatherMap3D::set_high_cloud_height);
+	ClassDB::bind_method(D_METHOD("get_high_cloud_height"), &WeatherMap3D::get_high_cloud_height);
+	ClassDB::bind_method(D_METHOD("set_high_cloud_optical_depth", "tau"), &WeatherMap3D::set_high_cloud_optical_depth);
+	ClassDB::bind_method(D_METHOD("get_high_cloud_optical_depth"), &WeatherMap3D::get_high_cloud_optical_depth);
 	ClassDB::bind_method(D_METHOD("set_cloud_churn", "speed"), &WeatherMap3D::set_cloud_churn);
 	ClassDB::bind_method(D_METHOD("get_cloud_churn"), &WeatherMap3D::get_cloud_churn);
 	ClassDB::bind_method(D_METHOD("set_cloud_time", "seconds"), &WeatherMap3D::set_cloud_time);
@@ -2976,6 +3027,9 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_churn", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:m/s"), "set_cloud_churn", "get_cloud_churn");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_shear", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater"), "set_cloud_shear", "get_cloud_shear");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_size_mix", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_cloud_size_mix", "get_cloud_size_mix");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "high_cloud_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_high_cloud_cover", "get_high_cloud_cover");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "high_cloud_height", PROPERTY_HINT_RANGE, "1000,15000,10,suffix:m"), "set_high_cloud_height", "get_high_cloud_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "high_cloud_optical_depth", PROPERTY_HINT_RANGE, "0,5,0.01"), "set_high_cloud_optical_depth", "get_high_cloud_optical_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_shadow_extent", PROPERTY_HINT_RANGE, "16,100000,1,or_greater,suffix:m"), "set_cloud_shadow_extent", "get_cloud_shadow_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "cloud_shadow_resolution", PROPERTY_HINT_RANGE, "16,2048,1"), "set_cloud_shadow_resolution", "get_cloud_shadow_resolution");

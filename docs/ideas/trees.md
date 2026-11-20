@@ -2515,6 +2515,35 @@ on). Contract lines `canopy_load_at`, `canopy_capacity_at`, `shake_canopy` agree
   weather model (a snap, a thrown tree, an avalanche, a body) asks snow to move the mass
   (`WorldSnow.shake_canopy`, proposed to the snow thread 19 Nov).
 
+### 5am. Windthrow fields (19 Nov; Paulo's pick)
+
+Technique: storm-damage survey data from the big European winter storms mapped onto the deadwood kit (5, 5k, 5j).
+What a storm leaves in a spruce stand: gaps from a few trees to many hectares, most under a hectare (Schutz, Gotz,
+Schmid and Mandallaz 2006, Eur. J. For. Res. 125, storm Lothar 1999 in 332 Swiss stands; a gap about a tree height
+wide destabilises its edge), the stand lying in them along the storm's track, 40-60% of damaged spruce snapped and
+the rest uprooted (same source), pit-and-mound cover of 15-25% of the ground after a widespread windthrow (Ulanova
+2000, For. Ecol. Manage. 135), and the gap refilling from the spruce that waited under the old stand, rowan,
+sycamore, birch and willow on the pits and plates, raspberry and willowherb first (Wohlgemuth, Kull and Wuthrich 2002,
+ten years after Vivian 1990). Thrown spruce lose their needles by 11-20 years on the ground (Ulanova 2000, log decay).
+
+As built:
+- `windthrow_years` on a tree (-1 off). A fallen tree falls toward mesh +X; a snag is the stump of a stem snapped at
+  6-30% of its height with a splintered top; a living tree leans 5-20 degrees toward +X about its lee-side foot.
+  Decay class by years: 1 to 2.5, 2 to 8, 3 to 20, 4 to 40. Class 1 needles: an uprooted tree stays green about 0.6
+  years (roots still hold), a snapped top 0.25, then rust-red and brown, falling from the second year. Mesh meta
+  `tree_windthrow_years`.
+- `STAND_WINDTHROW` (`windthrow_storm` years since the storm, default 1; `windthrow_direction` world xz, default
+  east-north-east, the way the westerly storms blew): gap mask (90 m, cover 0.45); thrown spruce (half with root
+  plates and pits, 5k) at 1.2x stand spacing, snapped stumps, leaning survivors in a 6 m band along the gap edges
+  (gone by 25 years), the living stand between gaps, torn branches, and by years: spruce advance regeneration from 0,
+  rowan from 1, birch from 2, sycamore from 3 (saplings to 12 years, then open-grown young trees); elder.
+- Placement: species meta `fall_dir` (Vector2) and `fall_scatter` (radians): VegetationField3D turns mesh +X along it,
+  +-0.45 rad for thrown trees, +-0.3 for leaning ones (a design choice; no survey we read gives the spread).
+- Bench: `docs/bench/trees --stands --stand-test=17` checks thrown, snapped, leaning, standing counts, root plates,
+  and that every drawn thrown or leaning tree points within 0.5 rad of the storm's track.
+- Not yet: the snapped stems' tops lie as whole trees from the butt (the stump and the top are separate variants);
+  plates do not settle into mounds over decades beyond the existing class 3 slump.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

@@ -867,3 +867,11 @@ seepage followed them and cut them in. It is now gradient noise (Perlin 2002), e
 angle, and the rills curve and braid at shallow angles. Tried and dropped on the way: a diffusive bank flux in
 the solver (it worked against the fixed relief and went unstable) and B-spline drawing of the relief (no visible
 change: the shapes were several texels wide, not texel facets).
+
+## Characters print with their feet (world walker contract)
+
+GroundDeformField::press_bodies (shared by sand, mud and snow) never presses a walker's body shape
+(WorldContracts::describe_body(...).walker, every CharacterBody3D unless meta `world_contact_walker` says otherwise).
+A walker with meta `world_contact_feet` has feet that are contact bodies of their own and is skipped; any other walker
+presses WorldWalkerSteps soles, 0.27 x 0.10 m boot outlines (the press_box sole shape), a step 0.41 of stature and the
+feet 18 cm apart. Ground bench `--test=steps`; the snow bench's crust checks drag a boot (`world_contact_walker` false).

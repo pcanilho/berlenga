@@ -131,10 +131,12 @@ private:
 	float rain_discharge = 0.0f; // m^3/s from the runoff at the last build
 	double rain_check = 0.0; // s until the runoff is read again
 	void _rain_response_update(double p_delta);
-	// Suspended load (WorldWater sediment, kg/m3: x mineral, y ash), one value per cross-section, carried down the river
-	// at its speed; the sources the contract hands in (kg/s), held until the caller's next call; the shading reads it
-	// along the river by arc length from a one-row texture.
+	// Suspended load (WorldWater sediment, kg/m3: x mineral, y ash) per cross-section and lane across it (section-major),
+	// carried down each lane at its speed and spread across by turbulence; the sources the contract hands in (kg/s), held
+	// until the caller's next call; what settled out (kg/m2); the shading reads it from a texture, sections by lanes.
 	LocalVector<Vector2> sed_c;
+	LocalVector<Vector2> sed_bed;
+	int sed_lanes = 0;
 	LocalVector<Vector2> sed_src;
 	LocalVector<uint64_t> sed_src_frame;
 	LocalVector<float> sed_src_age; // s since the source was last given
@@ -146,6 +148,8 @@ private:
 	void _sediment_resample();
 	void _sediment_update(double p_delta);
 	void _sediment_texture();
+	bool _sediment_cell(const Vector3 &p_position, int &r_k, int &r_j) const;
+	Vector2 _sediment_lookup(const LocalVector<Vector2> &p_field, const Vector3 &p_world_pos) const;
 	float roughness = 0.035f; // Manning n
 	float max_slope = 0.08f; // steeper drops are cascades
 	bool gradually_varied_flow = true; // standard step profile (backwater, drawdown, jumps) instead of normal depth
@@ -432,10 +436,14 @@ public:
 	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override;
 	void contract_water_clear(uint64_t p_owner) override;
 	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return get_sediment_at(p_position); }
+	Vector2 contract_water_sediment_deposit_at(const Vector3 &p_position) const override { return get_sediment_deposit_at(p_position); }
 	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override;
 	void contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) override;
 	// The suspended load (kg/m3: x mineral, y ash) at a world position on the river; zero off it.
 	Vector2 get_sediment_at(const Vector3 &p_world_pos) const;
+	// What settled out of the load onto the bed there (kg/m2: x mineral, y ash), slack water by the banks and in pools.
+	Vector2 get_sediment_deposit_at(const Vector3 &p_world_pos) const;
+	void clear_sediment_deposit();
 	// Depth-averaged water velocity (m/s, world) at a world position; zero off the river.
 	Vector3 sample_flow(const Vector3 &p_world_pos) const;
 	// Water depth (m) under a world position, <= 0 off the river.

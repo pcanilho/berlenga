@@ -48,7 +48,9 @@ struct WorldWalkerStep {
 	float length = 0.27f; // m, the sole
 	float width = 0.1f; // m
 	int side = 0; // 0 left, 1 right
-	float load_share = 0.5f; // the share of the body's weight on this sole as it lands (one foot down)
+	// The share of the body's weight on this sole: a walk spends most of each stride on one foot (single support), and
+	// the heel strike peaks near 1.2 body weights (Winter 2009), so a deformer presses the full weight on the sole.
+	float load_share = 1.0f;
 };
 
 class WorldWalkerSteps {

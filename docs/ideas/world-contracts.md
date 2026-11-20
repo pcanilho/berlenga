@@ -58,6 +58,7 @@ contract returns with no provider.
 | `season_at(pos, day = -1)` | dictionary (season State) | the default climate at pos.y | At the point's height, the live departure included; day < 1 is today |
 | `season_climate(climate)` (C++) | `WeatherSeason::Climate` | false | The place's climate, for consumers that integrate over days (ground regrowth, frost seed); the math is `modules/world/world_season.h` |
 | `cloud_cover_at(pos)` | 0..1 | 0 | |
+| `high_cloud_cover_at(pos)` | 0..1 | 0 | The high (cirrus) sheet, `WeatherMap3D.get_high_cloud_cover_at`. Kept out of `cloud_cover_at`: optically thin, it shades only through the sun visibility and cloud shadow bake by its own optical depth |
 | `surface_temperature_at(pos)` | C | the air | Exposed ground under a clear night sky runs below the air (`dew_and_frost`) |
 | `water_temperature()` | C | 15 | Open water, lagging the air by about a month |
 | `ground_height_at(pos)` | m | 0 | The terrain the weather sees under the point (its wind terrain), else the map's ground height |
@@ -85,7 +86,7 @@ water (sea wind, mist, falls), vehicles, lightning.
 | group `world_contact` | | Every CharacterBody3D, RigidBody3D, PhysicalBone3D (project setting `physics/3d/world_contact/auto_join`) and vehicle wheel joins it; meta `world_contact_exclude` stays out |
 | `describe(node)` | Body | Centre, radius, half height, shape (round, box, wheel), mass on the ground, contact area, velocity; one reader for every consumer (metas `trample_radius`, `touch_radius`, `ground_*`, `snow_*`, `deform_wheel_*`, else the first collision shape) |
 | meta `ground_self_pressing` | | The body ruts the ground its own way (car wheels): the generic ground press skips it |
-| walkers | | Every CharacterBody3D is a walker (`describe(node).walker`; meta `world_contact_walker` true or false overrides). The ground, snow, sand and mud never press a walker's body shape: they press its soles one step at a time with `WorldWalkerSteps` (modules/world/world_walker_steps.h: step 0.41 of stature, feet 0.18 m apart, sole 0.27 x 0.10 m, half the weight on the landing foot), unless meta `world_contact_feet` says its feet are contact bodies of their own (then they skip the walker). Grass, plants, branches, water ripples and wet tracks still feel its shape |
+| walkers | | Every CharacterBody3D is a walker (`describe(node).walker`; meta `world_contact_walker` true or false overrides). The ground, snow, sand and mud never press a walker's body shape: they press its soles one step at a time with `WorldWalkerSteps` (modules/world/world_walker_steps.h: step 0.41 of stature, feet 0.18 m apart, sole 0.27 x 0.10 m, the full body weight on the landing foot: single support carries it most of the stride, heel strike about 1.2 body weights), unless meta `world_contact_feet` says its feet are contact bodies of their own (then they skip the walker). Grass, plants, branches, water ripples and wet tracks still feel its shape |
 
 Consumers: ground, snow, grass, plants, trees, pollen, water. Each reads the group once per step; a body in two
 groups counts once.

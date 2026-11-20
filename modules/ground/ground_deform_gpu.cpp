@@ -59,6 +59,8 @@ enum {
 	MODE_WATER_ERODE = 12,
 	MODE_WATER_SED = 13,
 	MODE_DRIFT_GIVE = 14,
+	MODE_MUD_FLUX = 15,
+	MODE_MUD_DEPTH = 16,
 };
 
 bool GroundDeformGPU::is_available() {
@@ -126,6 +128,7 @@ void GroundDeformGPU::step(const Dims &p_dims, int p_flags, const PackedByteArra
 	d.push_back(p_dims.cover_vec4s);
 	d.push_back(p_dims.water_passes);
 	d.push_back(p_dims.morph_passes);
+	d.push_back(p_dims.mud_passes);
 	rs->call_on_render_thread(callable_mp(this, &GroundDeformGPU::rt_step).bind(d, p_flags, p_params, p_ground, p_cover, p_stamps, p_stores, p_shift, p_origin, p_collision_center, p_uploads));
 	if (p_flags & STEP_SYNC) {
 		rs->sync();
@@ -172,7 +175,7 @@ void GroundDeformGPU::_rt_free_buffers() {
 		}
 		uset[i] = RID();
 	}
-	RID *bufs[] = { &buf_state[0], &buf_state[1], &buf_give, &buf_ground, &buf_cover, &buf_stamps, &buf_collision, &buf_cache, &buf_tile_ops, &buf_packed, &buf_water, &buf_water_tmp, &buf_ledger, &tex_out };
+	RID *bufs[] = { &buf_state[0], &buf_state[1], &buf_give, &buf_ground, &buf_cover, &buf_stamps, &buf_collision, &buf_cache, &buf_tile_ops, &buf_packed, &buf_water, &buf_water_tmp, &buf_ledger, &buf_mud, &tex_out };
 	for (RID *b : bufs) {
 		if (b->is_valid()) {
 			rd->free_rid(*b);
@@ -212,6 +215,7 @@ void GroundDeformGPU::_rt_make_sets() {
 		add(12, RD::UNIFORM_TYPE_STORAGE_BUFFER, buf_water);
 		add(13, RD::UNIFORM_TYPE_STORAGE_BUFFER, buf_water_tmp);
 		add(14, RD::UNIFORM_TYPE_STORAGE_BUFFER, buf_ledger);
+		add(15, RD::UNIFORM_TYPE_STORAGE_BUFFER, buf_mud);
 		uset[i] = rd->uniform_set_create(uniforms, shader, 0);
 	}
 }
@@ -230,7 +234,8 @@ void GroundDeformGPU::_rt_ensure(const Dims &p_dims) {
 		buf_ledger = _rt_storage(16);
 		// Standing water is the ground's: snow binds a token buffer.
 		buf_water = _rt_storage(p_dims.stride == 2 ? n * n * 48 : 16);
-		buf_water_tmp = _rt_storage(p_dims.stride == 2 ? n * n * 4 * 6 : 16); // the shifted depth, then the +x and +z faces' discharges, then the shifted clay and regrowth, then the runoff's soil concentration
+		buf_water_tmp = _rt_storage(p_dims.stride == 2 ? n * n * 4 * 6 : 16);
+		buf_mud = _rt_storage(p_dims.stride == 2 ? n * n * 16 : 16); // the shifted depth, then the +x and +z faces' discharges, then the shifted clay and regrowth, then the runoff's soil concentration
 		buf_cache = _rt_storage(MAX(p_dims.slots, 1) * TILE * TILE * 4 * cache_uints(p_dims.stride));
 		RD::TextureFormat tf;
 		tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
@@ -284,7 +289,7 @@ void GroundDeformGPU::_dispatch(int64_t p_list, int p_mode, int p_count, int p_g
 
 void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const PackedByteArray &p_params, const PackedByteArray &p_ground, const PackedByteArray &p_cover, const PackedByteArray &p_stamps, const PackedByteArray &p_stores, const PackedByteArray &p_shift, Vector2i p_origin, Vector2 p_collision_center, const PackedByteArray &p_uploads) {
 	_rt_compile();
-	if (failed || p_dims.size() < 10 || p_dims[0] <= 0 || p_dims[5] < 1 || p_dims[5] > 2 || p_params.size() != PARAMS_BYTES) {
+	if (failed || p_dims.size() < 11 || p_dims[0] <= 0 || p_dims[5] < 1 || p_dims[5] > 2 || p_params.size() != PARAMS_BYTES) {
 		return;
 	}
 	Dims d;
@@ -298,6 +303,7 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 	d.cover_vec4s = CLAMP(p_dims[7], 2, 4);
 	d.water_passes = MAX(p_dims[8], 0);
 	d.morph_passes = CLAMP(p_dims[9], 1, 32);
+	d.mud_passes = CLAMP(p_dims[10], 0, 16);
 	_rt_ensure(d);
 	const int n = d.n;
 	const int field_groups = (n * n + WG - 1) / WG;
@@ -313,6 +319,7 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 		rd->buffer_clear(buf_state[1], 0, n * n * 16);
 		if (d.stride == 2) {
 			rd->buffer_clear(buf_water, 0, n * n * 48);
+			rd->buffer_clear(buf_mud, 0, n * n * 16);
 		}
 	}
 	const int stamp_count = p_stamps.size() / STAMP_BYTES;
@@ -363,6 +370,10 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 		}
 		rd->compute_list_end();
 		cur = 1 - cur;
+		if (d.stride == 2) {
+			// The mud's waves start still in the moved field (they are seconds long).
+			rd->buffer_clear(buf_mud, 0, n * n * 16);
+		}
 	}
 
 	RD::ComputeListID cl = rd->compute_list_begin();
@@ -379,6 +390,12 @@ void GroundDeformGPU::rt_step(const PackedInt32Array &p_dims, int p_flags, const
 			_dispatch(cl, MODE_SLUMP_GIVE, 0, field_groups);
 			_dispatch(cl, MODE_SLUMP_TAKE, 0, field_groups);
 			cur = 1 - cur;
+		}
+	}
+	if ((p_flags & STEP_MUDWAVE) && d.stride == 2) {
+		for (int k = 0; k < d.mud_passes; k++) {
+			_dispatch(cl, MODE_MUD_FLUX, 0, field_groups);
+			_dispatch(cl, MODE_MUD_DEPTH, 0, field_groups);
 		}
 	}
 	if ((p_flags & STEP_WATER) && d.stride == 2) {

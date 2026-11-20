@@ -105,6 +105,7 @@ uniform vec3 pathtraced_scattering = vec3(0.09, 0.1, 0.09);
 uniform bool sediment_on = false;
 uniform sampler2D sediment_tex : hint_default_black, filter_linear, repeat_disable;
 uniform vec2 sediment_range = vec2(0.0, 1.0);
+uniform int sediment_lanes = 1;
 uniform float pathtraced_scattering_anisotropy : hint_range(-0.9, 0.95) = 0.85;
 uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.03;
 // Ripples: cells per metre, and their slope in still water and per m/s of current
@@ -197,6 +198,7 @@ varying vec4 v_info;
 varying vec3 v_normal;
 varying vec4 v_wave; // undular train: amplitude, wavenumber, toe arc length, decay length
 varying float v_s;
+varying float v_n; // distance across, m (to the left bank)
 
 float r_hash(vec2 p) {
 	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -334,6 +336,7 @@ void vertex() {
 	v_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	v_wave = CUSTOM0;
 	v_s = UV.x;
+	v_n = UV.y;
 	{
 		float x = UV.x - CUSTOM0.z;
 		if (CUSTOM0.x > 0.0 && x > 0.0) {
@@ -571,7 +574,11 @@ void fragment() {
 	vec3 sed_abs = vec3(0.0);
 	vec3 sed_sca = vec3(0.0);
 	if (sediment_on) {
-		vec2 sc = texture(sediment_tex, vec2((v_s - sediment_range.x) / max(sediment_range.y, 1e-3), 0.5)).rg;
+		// Across by lane (right bank to left): the texel's b is the section's half extent.
+		float sx = (v_s - sediment_range.x) / max(sediment_range.y, 1e-3);
+		float half_extent = max(texture(sediment_tex, vec2(sx, 0.5)).b, 1e-3);
+		float lane = clamp((v_n + half_extent) / (2.0 * half_extent), 0.0, 1.0) * float(sediment_lanes - 1);
+		vec2 sc = texture(sediment_tex, vec2(sx, (lane + 0.5) / float(max(sediment_lanes, 1)))).rg;
 		sed_abs = sediment_absorption_of(sc);
 		sed_sca = sediment_scattering_of(sc);
 	}
@@ -843,6 +850,8 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_discharge", "discharge"), &PhysXRiver3D::set_discharge);
 	ClassDB::bind_method(D_METHOD("get_discharge"), &PhysXRiver3D::get_discharge);
 	ClassDB::bind_method(D_METHOD("get_sediment_at", "position"), &PhysXRiver3D::get_sediment_at);
+	ClassDB::bind_method(D_METHOD("get_sediment_deposit_at", "position"), &PhysXRiver3D::get_sediment_deposit_at);
+	ClassDB::bind_method(D_METHOD("clear_sediment_deposit"), &PhysXRiver3D::clear_sediment_deposit);
 	ClassDB::bind_method(D_METHOD("add_sediment", "position", "mineral_kg_s", "ash_kg_s"), &PhysXRiver3D::contract_water_add_sediment);
 	ClassDB::bind_method(D_METHOD("set_rain_response", "enable"), &PhysXRiver3D::set_rain_response);
 	ClassDB::bind_method(D_METHOD("get_rain_response"), &PhysXRiver3D::get_rain_response);
@@ -1921,134 +1930,298 @@ void PhysXRiver3D::_rain_response_update(double p_delta) {
 	}
 }
 
-// The river's own sediment grid follows its cross-sections; a rebuild (a storm's rise moves them) keeps the load by
-// resampling it by arc length.
+// The load is held per cross-section and per lane across it (the cross samples the depth and speed are kept on),
+// so a source by one bank is a plume along that bank that spreads to the far side only over a mixing length. A
+// rebuild (a storm's rise moves the sections) keeps the load and the deposit by resampling them by arc length.
 void PhysXRiver3D::_sediment_resample() {
 	const int count = (int)sections.size();
 	const float s0 = count > 0 ? sections[0].s : 0.0f;
 	const float ds = count > 1 ? sections[1].s - sections[0].s : 0.0f;
-	if ((int)sed_c.size() == count && s0 == sed_s0 && ds == sed_ds) {
+	const int lanes = count > 0 ? (int)sections[0].depth.size() : 0;
+	if ((int)sed_c.size() == count * lanes && sed_lanes == lanes && s0 == sed_s0 && ds == sed_ds) {
 		return;
 	}
 	LocalVector<Vector2> c;
-	c.resize(count);
+	LocalVector<Vector2> bed;
+	c.resize(count * lanes);
+	bed.resize(count * lanes);
+	const int old_count = sed_lanes > 0 ? (int)sed_c.size() / sed_lanes : 0;
 	for (int i = 0; i < count; i++) {
-		c[i] = Vector2();
-		if (sed_c.size() > 1 && sed_ds > 0.0f) {
-			const float x = (sections[i].s - sed_s0) / sed_ds;
-			const int k = CLAMP((int)Math::floor(x), 0, (int)sed_c.size() - 2);
-			const float t = CLAMP(x - k, 0.0f, 1.0f);
-			c[i] = sed_c[k].lerp(sed_c[k + 1], t);
+		for (int j = 0; j < lanes; j++) {
+			c[i * lanes + j] = Vector2();
+			bed[i * lanes + j] = Vector2();
+			if (old_count > 1 && sed_ds > 0.0f && lanes > 1) {
+				const float x = (sections[i].s - sed_s0) / sed_ds;
+				const int k = CLAMP((int)Math::floor(x), 0, old_count - 2);
+				const float t = CLAMP(x - k, 0.0f, 1.0f);
+				const int jj = CLAMP((int)Math::round(float(j) * (sed_lanes - 1) / (lanes - 1)), 0, sed_lanes - 1);
+				c[i * lanes + j] = sed_c[k * sed_lanes + jj].lerp(sed_c[(k + 1) * sed_lanes + jj], t);
+				if ((int)sed_bed.size() == (int)sed_c.size()) {
+					bed[i * lanes + j] = sed_bed[k * sed_lanes + jj].lerp(sed_bed[(k + 1) * sed_lanes + jj], t);
+				}
+			}
 		}
 	}
 	sed_c = c;
-	sed_src.resize(count);
-	sed_src_frame.resize(count);
-	sed_src_age.resize(count);
-	for (int i = 0; i < count; i++) {
+	sed_bed = bed;
+	sed_src.resize(count * lanes);
+	sed_src_frame.resize(count * lanes);
+	sed_src_age.resize(count * lanes);
+	for (uint32_t i = 0; i < sed_src.size(); i++) {
 		sed_src[i] = Vector2();
 		sed_src_frame[i] = 0;
 		sed_src_age[i] = 1e9f;
 	}
 	sed_s0 = s0;
 	sed_ds = ds;
+	sed_lanes = lanes;
+}
+
+// The cell (section k, lane j) for a point: the nearer section, the nearest lane holding water (a point on a dry
+// bank enters the water at its edge). False off the river.
+bool PhysXRiver3D::_sediment_cell(const Vector3 &p_position, int &r_k, int &r_j) const {
+	int i;
+	float t;
+	float n;
+	if (!_locate(p_position, i, t, n)) {
+		return false;
+	}
+	const int k = t < 0.5f ? i : i + 1;
+	if (k < 0 || k >= (int)sections.size() || sed_lanes < 2 || (int)sed_c.size() != (int)sections.size() * sed_lanes) {
+		return false;
+	}
+	const Section &sec = sections[k];
+	const float half = 0.5f * sec.width + bank_margin;
+	const int j0 = CLAMP((int)Math::round((n + half) / (2.0f * half) * (sed_lanes - 1)), 0, sed_lanes - 1);
+	for (int r = 0; r < sed_lanes; r++) {
+		for (int sgn = -1; sgn <= 1; sgn += 2) {
+			const int j = j0 + sgn * r;
+			if (j >= 0 && j < sed_lanes && sec.depth[j] > 0.0f) {
+				r_k = k;
+				r_j = j;
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 void PhysXRiver3D::contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) {
-	int i;
-	float t;
-	float n;
-	if (!_locate(p_position, i, t, n)) {
-		return;
-	}
 	_sediment_resample();
-	const int k = t < 0.5f ? i : i + 1;
-	if (k < 0 || k >= (int)sed_src.size()) {
+	int k;
+	int j;
+	if (!_sediment_cell(p_position, k, j)) {
 		return;
 	}
 	// A source holds its rate until its caller's next call: calls in one frame add, a later frame's replace.
+	const int cell = k * sed_lanes + j;
 	const uint64_t frame = Engine::get_singleton()->get_physics_frames();
-	if (sed_src_frame[k] != frame) {
-		sed_src[k] = Vector2();
-		sed_src_frame[k] = frame;
+	if (sed_src_frame[cell] != frame) {
+		sed_src[cell] = Vector2();
+		sed_src_frame[cell] = frame;
 	}
-	sed_src[k] += Vector2(MAX(p_mineral_kg_s, 0.0f), MAX(p_ash_kg_s, 0.0f));
-	sed_src_age[k] = 0.0f;
+	sed_src[cell] += Vector2(MAX(p_mineral_kg_s, 0.0f), MAX(p_ash_kg_s, 0.0f));
+	sed_src_age[cell] = 0.0f;
 	sed_any = true;
 }
 
-// A load dropped in at once: mixed through the water of the nearest section (its cross-section, discharge over
-// speed, times the sections' spacing), then carried on as any other. A debris flow's dump would otherwise be
-// held as a rate for the sources' two seconds (twice its mass), and a second dump into the same section on a
-// later frame replaced the first.
+// A load dropped in at once: into the water of the cell it lands in (its depth times the lanes' and the sections'
+// spacing), then carried and spread on as any other; what the cell cannot hold (a hyperconcentrated flood's most) is
+// mixed through the whole section. A debris flow's dump would otherwise be held as a rate for the sources' two
+// seconds (twice its mass), and a second dump into the same place on a later frame replaced the first.
 void PhysXRiver3D::contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) {
-	int i;
-	float t;
-	float n;
-	if (!_locate(p_position, i, t, n)) {
-		return;
-	}
 	_sediment_resample();
-	const int k = t < 0.5f ? i : i + 1;
-	if (k < 0 || k >= (int)sed_c.size() || k >= (int)sections.size() || sed_ds <= 0.0f) {
+	int k;
+	int j;
+	if (sed_ds <= 0.0f || !_sediment_cell(p_position, k, j)) {
 		return;
 	}
 	const Section &sec = sections[k];
-	const float volume = MAX(sec.discharge, 1e-3f) / MAX(sec.speed, 0.01f) * sed_ds;
-	Vector2 &c = sed_c[k];
-	c += Vector2(MAX(p_mineral_kg, 0.0f), MAX(p_ash_kg, 0.0f)) / volume;
-	const float total = c.x + c.y;
-	if (total > WaterSediment::MAX_LOAD) {
-		c *= WaterSediment::MAX_LOAD / total;
+	const float dn = (sec.width + 2.0f * bank_margin) / float(sed_lanes - 1);
+	Vector2 mass(MAX(p_mineral_kg, 0.0f), MAX(p_ash_kg, 0.0f));
+	Vector2 &c = sed_c[k * sed_lanes + j];
+	const float volume = MAX(sec.depth[j], 0.01f) * dn * sed_ds;
+	const float room = MAX(WaterSediment::MAX_LOAD - c.x - c.y, 0.0f) * volume;
+	const float total = mass.x + mass.y;
+	const float into = MIN(total, room);
+	if (total > 0.0f) {
+		c += mass * (into / total) / volume;
+		mass *= (total - into) / total;
+	}
+	if (mass.x + mass.y > 0.0f) {
+		float section_volume = 0.0f;
+		for (int jj = 0; jj < sed_lanes; jj++) {
+			section_volume += MAX(sec.depth[jj], 0.0f) * dn * sed_ds;
+		}
+		for (int jj = 0; jj < sed_lanes && section_volume > 0.0f; jj++) {
+			if (sec.depth[jj] > 0.0f) {
+				Vector2 &cj = sed_c[k * sed_lanes + jj];
+				cj += mass / section_volume;
+				const float t = cj.x + cj.y;
+				if (t > WaterSediment::MAX_LOAD) {
+					cj *= WaterSediment::MAX_LOAD / t;
+				}
+			}
+		}
 	}
 	sed_any = sed_any || total > 0.0f;
 }
 
-Vector2 PhysXRiver3D::get_sediment_at(const Vector3 &p_world_pos) const {
+// Bilinear in the section and the lane (n from the right bank to the left).
+Vector2 PhysXRiver3D::_sediment_lookup(const LocalVector<Vector2> &p_field, const Vector3 &p_world_pos) const {
 	int i;
 	float t;
 	float n;
-	if (!sed_any || !_locate(p_world_pos, i, t, n) || (int)sed_c.size() != (int)sections.size()) {
+	if (sed_lanes < 2 || (int)p_field.size() != (int)sections.size() * sed_lanes || !_locate(p_world_pos, i, t, n)) {
 		return Vector2();
 	}
-	return sed_c[i].lerp(sed_c[i + 1], t);
+	Vector2 v[2];
+	for (int e = 0; e < 2; e++) {
+		const Section &sec = sections[i + e];
+		const float half = 0.5f * sec.width + bank_margin;
+		const float x = CLAMP((n + half) / (2.0f * half), 0.0f, 1.0f) * (sed_lanes - 1);
+		const int j = MIN((int)Math::floor(x), sed_lanes - 2);
+		v[e] = p_field[(i + e) * sed_lanes + j].lerp(p_field[(i + e) * sed_lanes + j + 1], x - j);
+	}
+	return v[0].lerp(v[1], t);
 }
 
-// Washload carried at the section's mean speed (semi-Lagrangian along the arc length, so any step is stable), fully
-// mixed across the channel: a source of r kg/s into a discharge Q gives r / Q downstream (each step adds r dt over the
-// water between this section and the next, Q ds / u). Load reaching the mouth leaves the river.
+Vector2 PhysXRiver3D::get_sediment_at(const Vector3 &p_world_pos) const {
+	return sed_any ? _sediment_lookup(sed_c, p_world_pos) : Vector2();
+}
+
+Vector2 PhysXRiver3D::get_sediment_deposit_at(const Vector3 &p_world_pos) const {
+	return _sediment_lookup(sed_bed, p_world_pos);
+}
+
+void PhysXRiver3D::clear_sediment_deposit() {
+	for (Vector2 &b : sed_bed) {
+		b = Vector2();
+	}
+}
+
+// Washload in each lane, carried at the lane's own speed (semi-Lagrangian along the arc length, any step stable): a
+// source of r kg/s into a lane gives r / (u d dn) downstream of it (each step adds r dt over the cell's water, d dn ds),
+// so one by a slow bank stays a narrow, strong plume. Across, turbulent diffusion spreads it (depth-averaged
+// advection-diffusion, Elder 1959; Fischer et al. 1979, ch. 5): eps_t = 0.6 d u* in natural, meandering channels
+// (0.15 in straight flumes; Rutherford 1994 gives 0.3 to 1.0), u* = u n sqrt(g) / d^(1/6) from Manning, solved
+// implicitly per section with the flux between lanes weighted by the shallower depth, so mass is kept and dry lanes
+// pass none. A bank plume crosses a channel W wide over L about 0.4 u W^2 / eps_t (Fischer's mixing length): tens of
+// widths, as the brown ribbons that hug one bank below a tributary or a slipping bank in every aerial photograph.
+// Settling: where the bed shear falls below the stress for deposition, the load drops out at w_s C (1 - tau_b /
+// tau_d) per area (Krone 1962; Mehta and Partheniades 1975), held as a deposit (kg/m2) the ground can read: slack
+// water by the banks and in pools silts up, the fast thread carries its load on. Load reaching the mouth leaves the river.
 void PhysXRiver3D::_sediment_update(double p_delta) {
 	if (!sed_any) {
 		return;
 	}
 	_sediment_resample();
-	const int count = (int)sed_c.size();
-	if (count < 2 || sed_ds <= 0.0f) {
+	const int count = (int)sections.size();
+	const int lanes = sed_lanes;
+	if (count < 2 || lanes < 2 || sed_ds <= 0.0f) {
 		return;
 	}
 	const float dt = float(p_delta);
 	LocalVector<Vector2> c;
-	c.resize(count);
+	c.resize(count * lanes);
 	bool any = false;
+	// Along: each lane at its own speed.
 	for (int i = 0; i < count; i++) {
 		const Section &sec = sections[i];
-		const float u = MAX(sec.speed, 0.01f);
-		const float x = float(i) - u * dt / sed_ds;
-		Vector2 v;
-		if (x >= 0.0f) {
-			const int k = MIN((int)Math::floor(x), count - 2);
-			const float t = CLAMP(x - k, 0.0f, 1.0f);
-			v = sed_c[k].lerp(sed_c[k + 1], t);
+		const float dn = (sec.width + 2.0f * bank_margin) / float(lanes - 1);
+		for (int j = 0; j < lanes; j++) {
+			const int cell = i * lanes + j;
+			const float d = sec.depth[j];
+			Vector2 v;
+			if (d > 0.0f) {
+				const float u = MAX(sec.speed_at[j], 0.0f);
+				const float x = float(i) - u * dt / sed_ds;
+				if (x >= 0.0f) {
+					const int k = MIN((int)Math::floor(x), count - 2);
+					const float t = CLAMP(x - k, 0.0f, 1.0f);
+					v = sed_c[k * lanes + j].lerp(sed_c[(k + 1) * lanes + j], t);
+				}
+				if (sed_src_age[cell] < 2.0f) {
+					v += sed_src[cell] * (dt / (MAX(d, 0.01f) * dn * sed_ds));
+				}
+			}
+			sed_src_age[cell] += dt;
+			any = any || sed_src_age[cell] < 2.0f;
+			c[cell] = v;
 		}
-		if (sed_src_age[i] < 2.0f) {
-			v += sed_src[i] * (dt * u / (MAX(sec.discharge, 1e-3f) * sed_ds));
+	}
+	// Across, implicit (Thomas), then settling.
+	const float ws_mineral = WaterSediment::MINERAL_SETTLING_SPEED;
+	const float ws_ash = WaterSediment::ASH_SETTLING_SPEED;
+	const float tau_d = WaterSediment::DEPOSITION_STRESS;
+	LocalVector<float> a, b, cc;
+	LocalVector<Vector2> r;
+	a.resize(lanes);
+	b.resize(lanes);
+	cc.resize(lanes);
+	r.resize(lanes);
+	for (int i = 0; i < count; i++) {
+		const Section &sec = sections[i];
+		const float dn = (sec.width + 2.0f * bank_margin) / float(lanes - 1);
+		const float g_n = roughness * Math::sqrt(GRAVITY);
+		for (int j = 0; j < lanes; j++) {
+			a[j] = 0.0f;
+			cc[j] = 0.0f;
 		}
-		sed_src_age[i] += dt;
-		if (sed_src_age[i] < 2.0f) {
-			any = true;
+		for (int j = 0; j + 1 < lanes; j++) {
+			const float d0 = sec.depth[j];
+			const float d1 = sec.depth[j + 1];
+			if (d0 <= 0.0f || d1 <= 0.0f) {
+				continue;
+			}
+			const float h = MIN(d0, d1);
+			const float u = 0.5f * (sec.speed_at[j] + sec.speed_at[j + 1]);
+			const float ustar = u * g_n / Math::pow(h, 1.0f / 6.0f);
+			const float k = 0.6f * h * ustar * h * dt / (dn * dn); // eps_t h, times dt / dn^2
+			cc[j] = -k;
+			a[j + 1] = -k;
 		}
-		c[i] = v;
-		any = any || v.x > 1e-6f || v.y > 1e-6f;
+		for (int j = 0; j < lanes; j++) {
+			const float d = sec.depth[j];
+			if (d > 0.0f) {
+				b[j] = d - a[j] - cc[j];
+				r[j] = c[i * lanes + j] * d;
+			} else {
+				b[j] = 1.0f;
+				r[j] = Vector2();
+			}
+		}
+		for (int j = 1; j < lanes; j++) {
+			const float w = a[j] / b[j - 1];
+			b[j] -= w * cc[j - 1];
+			r[j] -= r[j - 1] * w;
+		}
+		r[lanes - 1] /= b[lanes - 1];
+		for (int j = lanes - 2; j >= 0; j--) {
+			r[j] = (r[j] - r[j + 1] * cc[j]) / b[j];
+		}
+		for (int j = 0; j < lanes; j++) {
+			const int cell = i * lanes + j;
+			const float d = sec.depth[j];
+			Vector2 v = d > 0.0f ? r[j] : Vector2();
+			if (d > 0.0f && (v.x > 0.0f || v.y > 0.0f)) {
+				const float u = MAX(sec.speed_at[j], 0.0f);
+				const float ustar = u * g_n / Math::pow(MAX(d, 0.01f), 1.0f / 6.0f);
+				const float share = MAX(1.0f - 1000.0f * ustar * ustar / tau_d, 0.0f);
+				if (share > 0.0f) {
+					const Vector2 kept(Math::exp(-ws_mineral * share * dt / d), Math::exp(-ws_ash * share * dt / d));
+					const Vector2 settled = v * (Vector2(1.0f, 1.0f) - kept);
+					sed_bed[cell] += settled * d;
+					v *= kept;
+				}
+				const float t = v.x + v.y;
+				if (t > WaterSediment::MAX_LOAD) {
+					v *= WaterSediment::MAX_LOAD / t;
+				}
+			}
+			c[cell] = v;
+			any = any || v.x > 1e-6f || v.y > 1e-6f;
+		}
 	}
 	sed_c = c;
 	sed_any = any;
@@ -2063,8 +2236,9 @@ void PhysXRiver3D::_sediment_texture() {
 	if (water_material.is_null()) {
 		return;
 	}
-	const int count = (int)sed_c.size();
-	if (!sed_any || count < 2) {
+	const int count = (int)sections.size();
+	const int lanes = sed_lanes;
+	if (!sed_any || count < 2 || lanes < 2 || (int)sed_c.size() != count * lanes) {
 		water_material->set_shader_parameter(SNAME("sediment_on"), false);
 		if (fall_material.is_valid()) {
 			fall_material->set_shader_parameter(SNAME("sediment_absorption"), Vector3());
@@ -2074,20 +2248,31 @@ void PhysXRiver3D::_sediment_texture() {
 	if (fall_material.is_valid()) {
 		// The falls take the river's mean load (a fall is a few metres of a river carrying it all the way).
 		Vector2 mean;
+		float weight = 0.0f;
 		for (int i = 0; i < count; i++) {
-			mean += sed_c[i];
+			for (int j = 0; j < lanes; j++) {
+				const float q = MAX(sections[i].depth[j], 0.0f) * sections[i].speed_at[j];
+				mean += sed_c[i * lanes + j] * q;
+				weight += q;
+			}
 		}
-		fall_material->set_shader_parameter(SNAME("sediment_absorption"), WaterSediment::absorption(mean / (float)count));
+		fall_material->set_shader_parameter(SNAME("sediment_absorption"), WaterSediment::absorption(weight > 0.0f ? mean / weight : Vector2()));
 	}
+	// One texel per cell: x along the sections, y across the lanes (right bank to left); b the section's half extent,
+	// so the shader finds the lane from its distance across.
 	Vector<uint8_t> bytes;
-	bytes.resize(count * 8);
+	bytes.resize(count * lanes * 12);
 	float *f = (float *)bytes.ptrw();
-	for (int i = 0; i < count; i++) {
-		f[i * 2 + 0] = sed_c[i].x;
-		f[i * 2 + 1] = sed_c[i].y;
+	for (int j = 0; j < lanes; j++) {
+		for (int i = 0; i < count; i++) {
+			const int p = (j * count + i) * 3;
+			f[p + 0] = sed_c[i * lanes + j].x;
+			f[p + 1] = sed_c[i * lanes + j].y;
+			f[p + 2] = 0.5f * sections[i].width + bank_margin;
+		}
 	}
-	Ref<Image> img = Image::create_from_data(count, 1, false, Image::FORMAT_RGF, bytes);
-	if (sediment_tex.is_valid() && sediment_tex->get_width() == count) {
+	Ref<Image> img = Image::create_from_data(count, lanes, false, Image::FORMAT_RGBF, bytes);
+	if (sediment_tex.is_valid() && sediment_tex->get_width() == count && sediment_tex->get_height() == lanes) {
 		sediment_tex->update(img);
 	} else {
 		sediment_tex = ImageTexture::create_from_image(img);
@@ -2095,6 +2280,7 @@ void PhysXRiver3D::_sediment_texture() {
 	// Texel centres at the sections: x = (s - s0 + ds / 2) / (count ds).
 	water_material->set_shader_parameter(SNAME("sediment_tex"), sediment_tex);
 	water_material->set_shader_parameter(SNAME("sediment_range"), Vector2(sed_s0 - 0.5f * sed_ds, sed_ds * count));
+	water_material->set_shader_parameter(SNAME("sediment_lanes"), lanes);
 	water_material->set_shader_parameter(SNAME("sediment_on"), true);
 }
 
@@ -3527,7 +3713,9 @@ void PhysXRiver3D::_solve_standing_waves() {
 void PhysXRiver3D::_build_mesh() {
 	if (mesh_instance == nullptr) {
 		mesh_instance = memnew(MeshInstance3D);
-		mesh_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+		// Path tracer only: its shadow rays from the bed cross the water, absorbed on the sun's way down.
+		mesh_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_ON);
+		mesh_instance->set_shadow_renderers(RSE::SHADOW_RENDERER_PATH_TRACER);
 		add_child(mesh_instance, false, INTERNAL_MODE_BACK);
 	}
 	if (water_material.is_null()) {

@@ -83,6 +83,7 @@ float WorldWeather::canopy_wetness_at(const Vector3 &p_position) const WW_CALL(_
 float WorldWeather::canopy_drip_at(const Vector3 &p_position) const WW_CALL(_canopy_drip_at, contract_canopy_drip_at(p_position), 0.0f, p_position)
 float WorldWeather::ground_water_input_at(const Vector3 &p_position) const WW_CALL(_ground_water_input_at, contract_ground_water_input_at(p_position), 0.0f, p_position)
 float WorldWeather::cloud_cover_at(const Vector3 &p_position) const WW_CALL(_cloud_cover_at, contract_cloud_cover_at(p_position), 0.0f, p_position)
+float WorldWeather::high_cloud_cover_at(const Vector3 &p_position) const WW_CALL(_high_cloud_cover_at, contract_high_cloud_cover_at(p_position), 0.0f, p_position)
 float WorldWeather::ground_height_at(const Vector3 &p_position) const WW_CALL(_ground_height_at, contract_ground_height_at(p_position), 0.0f, p_position)
 float WorldWeather::washout_rate(float p_rain_mm_h, float p_snow_mm_h, bool p_coarse) {
 	const float a = p_coarse ? 3.0e-4f : 1.0e-5f;
@@ -201,6 +202,7 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("day_of_year"), &WorldWeather::day_of_year);
 	ClassDB::bind_method(D_METHOD("season_at", "position", "day"), &WorldWeather::season_at, DEFVAL(-1));
 	ClassDB::bind_method(D_METHOD("cloud_cover_at", "position"), &WorldWeather::cloud_cover_at);
+	ClassDB::bind_method(D_METHOD("high_cloud_cover_at", "position"), &WorldWeather::high_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("water_temperature"), &WorldWeather::water_temperature);
 	ClassDB::bind_method(D_METHOD("surface_temperature_at", "position"), &WorldWeather::surface_temperature_at);
 	ClassDB::bind_method(D_METHOD("ground_height_at", "position"), &WorldWeather::ground_height_at);
@@ -237,6 +239,7 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_day_of_year);
 	GDVIRTUAL_BIND(_season_at, "position", "day");
 	GDVIRTUAL_BIND(_cloud_cover_at, "position");
+	GDVIRTUAL_BIND(_high_cloud_cover_at, "position");
 	GDVIRTUAL_BIND(_water_temperature);
 	GDVIRTUAL_BIND(_surface_temperature_at, "position");
 	GDVIRTUAL_BIND(_ground_height_at, "position");
@@ -400,6 +403,17 @@ Vector2 WorldWater::sediment_at(const Vector3 &p_position) const {
 	return top ? top->contract_water_sediment_at(p_position) : Vector2();
 }
 
+Vector2 WorldWater::sediment_deposit_at(const Vector3 &p_position) const {
+	Vector2 r;
+	if (GDVIRTUAL_CALL(_sediment_deposit_at, p_position, r)) {
+		return r;
+	}
+	for (const WorldWaterProvider *w : providers) {
+		r += w->contract_water_sediment_deposit_at(p_position);
+	}
+	return r;
+}
+
 float WorldWater::breaking_at(const Vector3 &p_position) const {
 	float r = 0.0f;
 	if (GDVIRTUAL_CALL(_breaking_at, p_position, r)) {
@@ -442,6 +456,7 @@ void WorldWater::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("impulse", "position", "radius", "strength"), &WorldWater::impulse);
 	ClassDB::bind_method(D_METHOD("wave", "position", "direction", "height", "period", "width"), &WorldWater::wave);
 	ClassDB::bind_method(D_METHOD("sediment_at", "position"), &WorldWater::sediment_at);
+	ClassDB::bind_method(D_METHOD("sediment_deposit_at", "position"), &WorldWater::sediment_deposit_at);
 	ClassDB::bind_method(D_METHOD("breaking_at", "position"), &WorldWater::breaking_at);
 	ClassDB::bind_method(D_METHOD("add_sediment", "position", "mineral_kg_s", "ash_kg_s"), &WorldWater::add_sediment);
 	ClassDB::bind_method(D_METHOD("add_sediment_mass", "position", "mineral_kg", "ash_kg"), &WorldWater::add_sediment_mass);
@@ -454,6 +469,7 @@ void WorldWater::_bind_methods() {
 	GDVIRTUAL_BIND(_impulse, "position", "radius", "strength");
 	GDVIRTUAL_BIND(_wave, "position", "direction", "height", "period", "width");
 	GDVIRTUAL_BIND(_sediment_at, "position");
+	GDVIRTUAL_BIND(_sediment_deposit_at, "position");
 	GDVIRTUAL_BIND(_breaking_at, "position");
 	GDVIRTUAL_BIND(_add_sediment, "position", "mineral_kg_s", "ash_kg_s");
 	GDVIRTUAL_BIND(_add_sediment_mass, "position", "mineral_kg", "ash_kg");
@@ -778,6 +794,7 @@ public:
 	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override { stub->impulse(p_position, p_radius, p_strength); }
 	void contract_water_wave(const Vector3 &p_position, const Vector3 &p_direction, float p_height, float p_period, float p_width) override { stub->wave(p_position, p_direction, p_height, p_period, p_width); }
 	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return stub->sediment_at(p_position); }
+	Vector2 contract_water_sediment_deposit_at(const Vector3 &p_position) const override { return stub->sediment_deposit_at(p_position); }
 	float contract_water_breaking_at(const Vector3 &p_position) const override { return stub->breaking_at(p_position); }
 	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override { stub->add_sediment(p_position, p_mineral_kg_s, p_ash_kg_s); }
 	void contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) override { stub->add_sediment_mass(p_position, p_mineral_kg, p_ash_kg); }

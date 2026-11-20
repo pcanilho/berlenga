@@ -290,6 +290,9 @@ private:
 		Plane plane;
 		float lsize = 0.0f, lsd = 0.0f, film = 0.0f, mix = 1.0f; // mean and spread of its grains' log size, its wetness, the share of its first rock
 		uint32_t sig = 0, order = 0;
+		Rect2 rect;
+		int level = 0; // 0: a quarter of the cell across (finer levels: smaller squares)
+		int fail = 0; // why it is not a tile: 1 few grains or a hole, 2 a coarse stone, 3 bent ground
 		bool ok = false;
 	};
 	// Tiles shared across cells (docs/ideas/ground-detail.md, "Tiles shared across cells"): one set per block of
@@ -302,6 +305,8 @@ private:
 		uint32_t sig = 0;
 		float lsize = 0.0f, lsd = 0.0f, film = 0.0f, mix = 1.0f;
 		int count = 0;
+		int level = 0;
+		int requests = 0; // placements that asked for it (main thread)
 		LocalVector<Ref<MultiMesh>> mms; // per shape, once used
 		LocalVector<RID> mats;
 	};
@@ -313,6 +318,7 @@ private:
 	static constexpr int TILE_SAMPLES = 256; // squares sampled over a block for its set (16 x 16 parts)
 	static constexpr int TILE_TRIES = 8; // hashed tries per part for a square with grains
 	static constexpr int TILE_CHOICES = 2; // matching shared tiles a square picks from
+	static constexpr int TILE_MIN_USES = 3; // a shared tile is built from its third placement on
 	HashMap<Vector3i, TileSet *> tile_sets;
 	HashSet<Vector3i> tile_set_pending; // a job is cutting it
 	Vector3i _tile_block(const Vector3i &p_key) const {
@@ -352,7 +358,7 @@ private:
 	void _tile_set_drop(DetailJob &r_job);
 	void _detail_compute(DetailJob &r_job);
 	void _detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, LocalVector<int> &r_place) const;
-	void _split_tile(Cell &r_cell, uint32_t p_index);
+	void _split_tile(Cell &r_cell, uint32_t p_index, bool p_force = false, real_t p_vis = -1.0, real_t p_margin = -1.0);
 	static void _detail_job(void *p_job);
 	void _detail_commit(DetailJob &r_job);
 	void _detail_finish(bool p_wait, real_t p_budget_msec);

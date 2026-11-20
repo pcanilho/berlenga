@@ -750,6 +750,11 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		// ground falls towards mesh +Z.
 		ps.wind_flag = bool(ps.sp->get_meta(SNAME("wind_flag"), false));
 		{
+			const Vector2 fd = ps.sp->get_meta(SNAME("fall_dir"), Vector2());
+			ps.fall_dir = fd.length_squared() > 1e-8f ? fd.normalized() : Vector2();
+			ps.fall_scatter = float(ps.sp->get_meta(SNAME("fall_scatter"), 0.0f));
+		}
+		{
 			bool any_bank = false;
 			for (const Ref<Mesh> &m : ps.meshes) {
 				any_bank = any_bank || (m.is_valid() && m->has_meta(SNAME("tree_ground_slope")));
@@ -1809,6 +1814,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					} else if (bank_variant >= 0 && ps.bank_slopes[bank_variant] > 1e-3f && slope > 1e-3f) {
 						// Its ground falls towards mesh +Z: turn +Z downhill.
 						yaw = Math::atan2(downhill.x, downhill.y);
+					} else if (ps.fall_dir != Vector2()) {
+						// Thrown by one storm (the trees module, trees.md 5am): mesh +X along the storm's track, each
+						// tree turned by the gusts and its neighbours within fall_scatter.
+						yaw = Math::atan2(-ps.fall_dir.y, ps.fall_dir.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 2.0f * ps.fall_scatter;
 					} else if (ps.wind_flag && p_setup.wind_dir != Vector2()) {
 						// Flagged by the prevailing wind: mesh +X downwind, a little scatter (eddies
 						// round the land turn it locally).

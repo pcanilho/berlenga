@@ -1403,7 +1403,8 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						{
 							// The top beds stand freest and are frost-split most: their ledges are the boldest.
 							const float tt0 = CLAMP((p.x - x_lo) / MAX(x_hi - x_lo, 0.01f), 0.0f, 1.0f);
-							shift *= 1.0f + 1.6f * Math::smoothstep(0.55f, 0.9f, tt0);
+							shift *= 1.6f + 1.2f * Math::smoothstep(0.55f, 0.9f, tt0); // (and bold all the way down: the lower half is no smooth lobe)
+							shift *= Math::smoothstep(notch_x, notch_x + notch_w, p.x); // under the notch's roof the waves plane it all back alike
 						}
 						shift += 0.03f * c * (bo - 0.5f) + (bo > 0.9f ? 0.1f * c : 0.0f);
 						v += shift + 0.035f * c * (0.5f * rk_fbm(p * 1.6f, nseed + 102u, 3));
@@ -1413,7 +1414,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						const float tt = CLAMP((p.x - x_lo) / MAX(x_hi - x_lo, 0.01f), 0.0f, 1.0f);
 						const float paz = Math::atan2(p.z, p.y / c);
 						const Vector3 pq(tt * 2.6f, Math::cos(paz) * 1.1f, Math::sin(paz) * 1.1f);
-						v += stack_taper * c * tt * tt + 0.55f * c * (0.5f * rk_fbm(pq, nseed + 109u, 3)) - 0.3f * c; // (the beds' joints stand a little proud of the cut)
+						v += stack_taper * c * tt * tt + 0.4f * c * (0.5f * rk_fbm(pq, nseed + 109u, 3)) - 0.3f * c; // (the beds' joints stand a little proud of the cut)
 						// Its arrises are not straight: where two joint faces meet, the edge is the first to go (blocks
 						// fall off corners), so it is chipped back in bites a metre or two long, deeper on some.
 						{
@@ -1434,7 +1435,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 							v += 0.5f * c * edge * Math::smoothstep(0.35f, 0.75f, 0.5f + 0.5f * rk_fbm(p * 1.1f, nseed + 119u, 2));
 						}
 						// And no face is one plane: swells and hollows a third of a face across.
-						v += 0.45f * c * (0.5f * rk_fbm(p * 0.85f, nseed + 113u, 3));
+						v += 0.3f * c * (0.5f * rk_fbm(p * 0.85f, nseed + 113u, 3));
 						// Clefts down the faces (Old Harry, Duncansby): the joints the sea and frost opened, a dark
 						// slot a few metres deep at the face, running down a few beds and dying out, each joint its own.
 						{
@@ -1452,7 +1453,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 								if (open <= 0.0f) {
 									continue;
 								}
-								const float half_w = MAX((0.12f + 0.1f * float((lh >> 8) & 0xFFu) / 255.0f) * c, 1.5f * h) * open;
+								const float half_w = MAX((0.12f + 0.1f * float((lh >> 8) & 0xFFu) / 255.0f) * c, 1.5f * h) * open * Math::smoothstep(notch_x, notch_x + 2.0f * notch_w, p.x);
 								const float slot = half_w - Math::abs(jc[s] - line) * js[s];
 								v = MAX(v, MIN(slot, vb + 0.55f * c * open));
 							}
@@ -1603,7 +1604,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 				knot_rec.push_back((soft ? 0.14f + 0.2f * rng.randf() : 0.0f) * c); // a soft bed's groove depth
 				knot_az.push_back(rng.randf() * float(Math::TAU));
 				soft = rng.randf() < 0.75f ? !soft : soft;
-				b += 0.45f + 0.5f * rng.randf();
+				b += 0.2f + 1.1f * rng.randf() * rng.randf() + 0.1f * rng.randf(); // thin and thick beds
 			}
 		}
 		// Fin (Arches, Entrada and Navajo sandstone): a wall between two joints, its top and ends rounded by sheet wash,
@@ -1730,7 +1731,15 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						const float paz = Math::atan2(p.z, p.y / c);
 						const float facing = 0.5f + 0.5f * Math::cos(paz - face_az);
 						const float gw = 0.05f + 0.04f * rk_noise(Vector3(p.x * 0.5f, 0.0f, float(gi)), nseed + 127u);
-						const float r = knot_rec[gi] * (0.35f + 1.1f * facing) * (0.7f + 0.6f * rk_noise(p * 0.9f, nseed + 128u)) * MAX(1.0f - dq / gw, 0.0f);
+						// Some grooves die out round the column (the bed hardens there), some are shallow.
+						const float round_on = Math::smoothstep(0.3f, 0.6f, rk_noise(Vector3(Math::cos(paz) * 1.3f, float(gi) * 3.1f, Math::sin(paz) * 1.3f), nseed + 129u));
+						const float r = knot_rec[gi] * (0.35f + 1.1f * facing) * (0.4f + 0.9f * rk_noise(p * 0.9f, nseed + 128u)) * round_on * MAX(1.0f - dq / gw, 0.0f);
+						// Between grooves the face bows: a bed swells or pinches by its own amount, more on one side.
+						{
+							const float mid = 1.0f - Math::abs(2.0f * f - 1.0f);
+							const float bow = (float(rk_hash(uint32_t(i + 77) * 2654435761u ^ nseed) & 0xFFu) / 255.0f - 0.45f) * 0.16f * c;
+							v -= bow * mid * mid * (0.6f + 0.8f * rk_noise(p * 0.7f, nseed + 130u)) * (1.0f - Math::smoothstep(cap_t - 0.03f, cap_t + 0.02f, t));
+						}
 						const float tip = cap_tip * 0.25f * (Math::cos(cap_tip_az) * p.y / c + Math::sin(cap_tip_az) * p.z);
 						const float cap = Math::smoothstep(cap_t - 0.02f, cap_t + 0.02f, t + tip);
 						// Swells below, none in the cap; the neck just under the cap thinnest; the cap a little wider.
@@ -2251,6 +2260,58 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		fine.v[i] = phi;
 	}
 	rk_reinitialize(fine, band, 3);
+	// One stone: carved columns can leave a block cut off from the rest (a cleft and a notch meeting); a loose piece
+	// hanging in the air is dropped (it would have fallen). The largest solid piece is kept.
+	if (family == FAMILY_SEA_STACK || family == FAMILY_SEA_ARCH || family == FAMILY_HOODOO || family == FAMILY_GOBLIN || family == FAMILY_FIN) {
+		const int total = fine.nx * fine.ny * fine.nz;
+		LocalVector<int> comp;
+		comp.resize(total);
+		for (int i = 0; i < total; i++) {
+			comp[i] = -1;
+		}
+		LocalVector<int> sizes, stack;
+		for (int i = 0; i < total; i++) {
+			if (fine.v[i] >= 0.0f || comp[i] >= 0) {
+				continue;
+			}
+			const int id = int(sizes.size());
+			int count = 0;
+			stack.clear();
+			stack.push_back(i);
+			comp[i] = id;
+			while (!stack.is_empty()) {
+				const int k = stack[stack.size() - 1];
+				stack.resize(stack.size() - 1);
+				count++;
+				const int x = k % fine.nx, y = (k / fine.nx) % fine.ny, z = k / (fine.nx * fine.ny);
+				const int nb[6][3] = { { x - 1, y, z }, { x + 1, y, z }, { x, y - 1, z }, { x, y + 1, z }, { x, y, z - 1 }, { x, y, z + 1 } };
+				for (int e = 0; e < 6; e++) {
+					if (nb[e][0] < 0 || nb[e][1] < 0 || nb[e][2] < 0 || nb[e][0] >= fine.nx || nb[e][1] >= fine.ny || nb[e][2] >= fine.nz) {
+						continue;
+					}
+					const int j = fine.idx(nb[e][0], nb[e][1], nb[e][2]);
+					if (fine.v[j] < 0.0f && comp[j] < 0) {
+						comp[j] = id;
+						stack.push_back(j);
+					}
+				}
+			}
+			sizes.push_back(count);
+		}
+		if (sizes.size() > 1) {
+			int best = 0;
+			for (uint32_t c2 = 1; c2 < sizes.size(); c2++) {
+				if (sizes[c2] > sizes[best]) {
+					best = int(c2);
+				}
+			}
+			for (int i = 0; i < total; i++) {
+				if (comp[i] >= 0 && comp[i] != best) {
+					fine.v[i] = 0.5f * fine.h;
+				}
+			}
+		}
+	}
 
 	// 4. Mesh: surface nets (rk_surface_nets). 5. Normals (area-weighted from the faces); cavity and freshness below.
 	LocalVector<Vector3> verts, normals;

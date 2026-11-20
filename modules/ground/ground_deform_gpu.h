@@ -67,8 +67,9 @@ public:
 		STEP_SYNC = 1 << 10, // read back now, blocking (tests)
 		STEP_WATER = 1 << 11, // standing water (ground): Dims::water_passes pipe-model substeps
 		STEP_RUNOFF = 1 << 12, // runoff channels (ground): the water erodes and carries sand in each water substep
+		STEP_MUDWAVE = 1 << 13, // waves in liquid mud (ground): Dims::mud_passes substeps
 	};
-	static constexpr int PARAMS_BYTES = 896;
+	static constexpr int PARAMS_BYTES = 912;
 	static constexpr int STAMP_BYTES = 80;
 
 	// Sizes: field texels per side, ground lattice per side, cover cells per side, cache slots, collision
@@ -84,6 +85,7 @@ public:
 		int cover_vec4s = 2; // vec4s per cover cell: 2 snow, 4 ground (the third: water inputs; the fourth: mud slides)
 		int water_passes = 0; // pipe-model substeps this step (STEP_WATER)
 		int morph_passes = 1; // bed substeps a pipe-model substep (STEP_RUNOFF)
+		int mud_passes = 0; // liquid mud wave substeps this step (STEP_MUDWAVE)
 	};
 
 	static bool is_available();
@@ -140,6 +142,7 @@ private:
 	RID buf_water; // ground: per texel the pipe model's outflows, depth and the clay it carries (3 vec4)
 	RID buf_water_tmp; // ground: the shifted depth and clay
 	RID buf_ledger; // ground: water add_water could not take, mm3 (cumulative, wraps)
+	RID buf_mud; // ground: the liquid mud's pipe outflows (mud round 14)
 	RID tex_out;
 	RID uset[2]; // state = buf_state[i], out = buf_state[1 - i]
 	Dims dims;

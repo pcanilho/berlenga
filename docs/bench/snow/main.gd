@@ -443,6 +443,8 @@ func _walk(z: float, from_x: float = -3.0, to_x: float = 3.0) -> void:
 	(ws.shape as CapsuleShape3D).height = 1.8
 	wk.add_child(ws)
 	wk.add_to_group("snow_deform")
+	# A boot dragged along the line (the crust's answer to a load), not a walk: pressed as its body shape.
+	wk.set_meta("world_contact_walker", false)
 	add_child(wk)
 	var steps_n := int((to_x - from_x) / 0.1)
 	for i in steps_n + 1:
@@ -711,7 +713,15 @@ func _run_surface_tests() -> void:
 		wk.global_position = Vector3(-3.0 + i * 0.1, d0 + 0.9, 3.0)
 		await get_tree().physics_frame
 	surface.sync_deformation() # the GPU field is read back a frame or two late; wait for it
-	var trail := surface.get_dent_at(Vector3(0.0, 0, 3.0))
+	# Its feet print (WorldWalkerSteps), 9 cm either side of its line: the deepest print over 2 m.
+	var trail := 0.0
+	var trail_at := Vector3(0.0, 0, 3.0)
+	for k in 201:
+		for zf in [2.91, 3.09]:
+			var fq := Vector3(-1.0 + 0.01 * k, 0, zf)
+			if surface.get_dent_at(fq) > trail:
+				trail = surface.get_dent_at(fq)
+				trail_at = fq
 	_check("a character walking leaves a trail", trail > 0.1, "%.3f m deep" % trail)
 	wk.queue_free()
 	var probe: Node3D = get_node("Probe")
@@ -723,7 +733,7 @@ func _run_surface_tests() -> void:
 	for i in 4:
 		await get_tree().physics_frame
 	surface.sync_deformation() # the GPU field is read back a frame or two late; wait for it
-	var back := surface.get_dent_at(Vector3(0.0, 0, 3.0))
+	var back := surface.get_dent_at(trail_at)
 	_check("trails survive leaving and coming back", cached > 0 and absf(back - trail) < 0.002, "%d tiles cached, %.3f m after, %.3f m before" % [cached, back, trail])
 
 	# New snow settles into the prints; the pack settling shrinks the step; melt takes it all.
