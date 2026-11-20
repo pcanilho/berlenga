@@ -188,3 +188,13 @@ terrain shadows at any range from the ground's horizon toward the sun.
   in mean brightness; the dark range in the first after frame was right for a sun 2 degrees up (the before frame,
   cascades cut at 300 m, lit what the ridges shade).
 
+
+## Flat layers (20 Nov)
+
+Docs found a flat olive river bank (scene) and a flat green hill (rocks). Both were ground layers with no textures
+(the benches set none: alluvium's default is olive, soil's a dark olive green), drawn as one colour. A layer without
+an albedo texture now gets value-noise tone over 9 m and 2.2 m and, while the pixel is finer than them, 0.25 m clods
+and 0.06 m grit as tone and a light bump (forward differences), each faded out as the footprint nears it. The far
+ground blend also stopped painting the plant cover map's one blurred colour: clumps and tone over 12 m and 2 m, and
+gaps where the ground's own texture shows. Real textures (CC0, via LFS) remain the better answer where a layer gets
+them; this is the floor for any layer that has none.
