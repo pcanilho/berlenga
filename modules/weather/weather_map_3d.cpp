@@ -2966,20 +2966,18 @@ void WeatherMap3D::_apply_sky_shadow() {
 	sky_material->set_cloud_shadow_map(sky_shadow_texture, sky_shadow_axis_u, sky_shadow_axis_v, corner, kSkyShadowExtent);
 }
 
-// The light grid's value at a point of a level, bilinear between voxel centres; negative off the box.
+// The light grid's value at a point of a level: the nearest voxel's; negative off the box. Not bilinear: each level
+// reads the one above, so a filter there blurred the optical depth again at every level (about 700 m after 32),
+// smearing the clouds' depth into the clear paths between them, and a sunlit edge against a low sun lost its bright
+// rim. The nearest voxel moves a value by at most half a texel per level instead, and keeps it sharp.
 float WeatherMap3D::LightGridBake::above(int p_level, float p_x, float p_z) const {
 	const int n = kLightGridResolution;
-	const float fx = (p_x - corner.x) / texel - 0.5f;
-	const float fz = (p_z - corner.y) / texel - 0.5f;
-	if (fx < 0.0f || fz < 0.0f || fx > n - 1 || fz > n - 1) {
+	const int x = int(Math::floor((p_x - corner.x) / texel));
+	const int z = int(Math::floor((p_z - corner.y) / texel));
+	if (x < 0 || z < 0 || x >= n || z >= n) {
 		return -1.0f;
 	}
-	const int x0 = MIN(int(fx), n - 2);
-	const int z0 = MIN(int(fz), n - 2);
-	const float tx = fx - x0;
-	const float tz = fz - z0;
-	const float *t = tau.ptr() + (p_level * n + z0) * n + x0;
-	return Math::lerp(Math::lerp(t[0], t[1], tx), Math::lerp(t[n], t[n + 1], tx), tz);
+	return tau[(p_level * n + z) * n + x];
 }
 
 // One row of the level being baked. Each voxel's optical depth toward the sun out of the layer: its path up to
@@ -3156,6 +3154,42 @@ void WeatherMap3D::_build_light_grid_texture() {
 		}
 		return a;
 	};
+	// Red: the optical depth toward the sun, as the least over each texel's 3 by 3 by 3 neighbours. The sky reads it
+	// trilinearly 512 m along the path, and a texel's value is from its centre: near a cloud's sunward face the
+	// filter mixed in texels whose centres lie inside the cloud, so a thin sunlit edge read the cloud's own depth
+	// and lost its bright rim (the silver lining against a low sun) while the march had just left the cloud. The
+	// least keeps the edge's clear path; deep inside, the 512 m marched before the read are already dark.
+	Vector<float> tau_min;
+	tau_min.resize(n * n * nl);
+	{
+		const float *t = lb.tau.ptr();
+		Vector<float> tmp;
+		tmp.resize(n * n * nl);
+		float *a = tau_min.ptrw();
+		float *b = tmp.ptrw();
+		for (int l = 0; l < nl; l++) { // along x
+			for (int z = 0; z < n; z++) {
+				const float *r = t + (l * n + z) * n;
+				for (int x = 0; x < n; x++) {
+					b[(l * n + z) * n + x] = MIN(r[x], MIN(r[MAX(x - 1, 0)], r[MIN(x + 1, n - 1)]));
+				}
+			}
+		}
+		for (int l = 0; l < nl; l++) { // along z
+			for (int z = 0; z < n; z++) {
+				for (int x = 0; x < n; x++) {
+					const int i = (l * n + z) * n + x;
+					a[i] = MIN(b[i], MIN(b[(l * n + MAX(z - 1, 0)) * n + x], b[(l * n + MIN(z + 1, n - 1)) * n + x]));
+				}
+			}
+		}
+		for (int l = 0; l < nl; l++) { // up
+			for (int i = 0; i < n * n; i++) {
+				b[l * n * n + i] = MIN(a[l * n * n + i], MIN(a[MAX(l - 1, 0) * n * n + i], a[MIN(l + 1, nl - 1) * n * n + i]));
+			}
+		}
+		tau_min = tmp;
+	}
 	const Vector<float> near = box(2, 1);
 	const Vector<float> far = box(6, 2);
 	Vector<Ref<Image>> levels;
@@ -3164,7 +3198,7 @@ void WeatherMap3D::_build_light_grid_texture() {
 		bytes.resize(n * n * 8);
 		float *o = reinterpret_cast<float *>(bytes.ptrw());
 		for (int i = 0; i < n * n; i++) {
-			o[i * 2 + 0] = lb.tau[l * n * n + i];
+			o[i * 2 + 0] = tau_min[l * n * n + i];
 			o[i * 2 + 1] = 0.5f * (near[l * n * n + i] + far[l * n * n + i]);
 		}
 		levels.push_back(Image::create_from_data(n, n, false, Image::FORMAT_RGF, bytes));

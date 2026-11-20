@@ -160,6 +160,7 @@ const vec3 UP = vec3(0.0, 1.0, 0.0);
 const float rayleigh_zenith_size = 8.4e3;
 const float mie_zenith_size = 1.25e3;
 const float PLANET_RADIUS = 6371000.0;
+const float GRID_READ = 512.0; // m along the sun path to the light grid's read
 
 float henyey_greenstein(float cos_theta, float g) {
 	const float k = 0.0795774715459;
@@ -361,10 +362,16 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 		}
 		bool near_detailed = coarse < light_steps;
 		float tau = tau_near;
-		// Past 512 m the baked grid stands in for the rest of the coarse march: one read 512 m along the path, of
+		// Past 512 m (GRID_READ) the baked grid stands in for the rest of the coarse march: one read there, of
 		// the optical depth from there out of the layer. Nearer, its 256 m texels would blur a small cloud's shading
 		// of itself. Above the box the path has left the clouds.
-		vec3 gp = p + sun_dir * 512.0;
+		// Read on a level's centre: between levels the trilinear filter mixed the depths of paths a level apart, which
+		// against a low sun start hundreds of metres apart along it, so a clear path took on its neighbours' clouds and
+		// sunlit rims went dull. Reading where the path crosses a level's height leaves only the 256 m across.
+		float grid_dy = (cloud_light_grid_y.y - cloud_light_grid_y.x) / float(textureSize(cloud_light_grid, 0).z);
+		float grid_f = (p.y + sun_dir.y * GRID_READ - cloud_light_grid_y.x) / grid_dy - 0.5;
+		float grid_d = GRID_READ + (ceil(grid_f) - grid_f) * grid_dy / max(sun_dir.y, 0.02);
+		vec3 gp = p + sun_dir * grid_d;
 		vec3 grid_uvw = vec3((gp.x - cloud_light_grid_box.x) / cloud_light_grid_box.z, (gp.z - cloud_light_grid_box.y) / cloud_light_grid_box.z, (gp.y - cloud_light_grid_y.x) / (cloud_light_grid_y.y - cloud_light_grid_y.x));
 		bool grid = cloud_light_grid_enabled && cloud_light_grid_box.w > 0.5 && all(greaterThanEqual(grid_uvw, vec3(0.0))) && all(lessThanEqual(grid_uvw.xy, vec2(1.0)));
 		if (grid) {
@@ -375,10 +382,10 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 		}
 		for (int j = 0; j < coarse; j++) {
 			if (grid) {
-				if (d >= 511.0) {
+				if (d >= grid_d - 1.0) {
 					break;
 				}
-				step_l = min(step_l, 512.0 - d);
+				step_l = min(step_l, grid_d - d);
 			}
 			vec3 lp = p + sun_dir * (d + 0.5 * step_l);
 			float dt = wc_extinction(lp, wc_cover_type(lp.xz), false, step_l) * step_l;
@@ -391,8 +398,9 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 			d += step_l;
 			step_l *= 2.0;
 		}
-		if (grid && grid_uvw.z < 1.0) {
-			tau += textureLod(cloud_light_grid, grid_uvw, 0.0).r;
+		float grid_z = (ceil(grid_f) + 0.5) * grid_dy / (cloud_light_grid_y.y - cloud_light_grid_y.x);
+		if (grid && grid_z < 1.0) {
+			tau += textureLod(cloud_light_grid, vec3(grid_uvw.xy, grid_z), 0.0).r;
 		}
 		// Multiple scattering by Wrenninge's octaves: scattering, extinction and phase eccentricity
 		// each halved per octave.

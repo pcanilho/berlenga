@@ -510,3 +510,20 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
     finer inside each streak.
   - Raster and PT match (640). 1.1 s a frame on lavapipe with the storm in view at 960x540 (the stills used to read
     as foam because 3 frames are not enough for the reprojection: review stills use 24).
+
+## Light grid contrast (20 Nov 2026; scene: grid on dulled sunlit rims at dawn)
+
+- Reproduced in the weather bench (`--view=shafts --sun-up=8 --cover=0.45 --type=0.9`, A/B with
+  `--sky-params=cloud_light_grid_enabled:0`): with the grid the brightest 1% of the sky fell from 136 to 92.
+- Cause 1, a leak at the read: the sky reads the grid's depth 512 m along the sun path, trilinearly. Between levels
+  that mixed paths a level apart, which against a low sun start hundreds of metres apart along it, and texels whose
+  centres lie inside a cloud, so clear paths took on their neighbours' clouds. Fixes: the read lands on a level's
+  centre (the march runs on to where the path crosses one), the stored depth is the least over each texel's
+  3x3x3 neighbours, and the bake chains levels by the nearest voxel instead of bilinearly (the bilinear chain blurred
+  again at every level). Rims back to 106.
+- The rest is not a fault of the grid: the bake agrees with a 32 m CPU march to 24 km (mean depth 50.27 against
+  50.33 over 1,176 sampled voxels, and of the 489 whose fine march is clear only 3 read over 3 in the grid). Without
+  the grid the shader's doubling steps (several km long far out, read at a coarse mip that the coverage remap turns
+  to zero) miss the clouds 8 to 24 km toward a low sun, so clouds stood sunlit that the clouds between them and the
+  sun shade. The bounce term adds about 3 levels to the darkest tenth (interreflection, as designed).
+- Raster and PT match (640).
