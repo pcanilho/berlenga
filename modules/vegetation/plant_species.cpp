@@ -71,6 +71,22 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_POOL_DISTANCE] = Vector2(-100000.0f, 100000.0f);
 	ranges[RULE_STAND_AGE] = Vector2(-1.0f, 100000.0f);
 	ranges[RULE_DISTURBANCE] = Vector2(0.0f, 100.0f);
+	ranges[RULE_FOREST_EDGE] = Vector2(-100000.0f, 100000.0f);
+}
+
+bool PlantSpecies::uses_forest_edge() const {
+	Vector2 r;
+	float f;
+	get_forest_edge_rule(r, f);
+	return r.x > -100000.0f || r.y < 100000.0f;
+}
+
+void PlantSpecies::get_forest_edge_rule(Vector2 &r_range, float &r_fade) const {
+	r_range = ranges[RULE_FOREST_EDGE];
+	r_fade = fades[RULE_FOREST_EDGE];
+	if (r_range == Vector2(-100000.0f, 100000.0f) && r_fade == 0.0f && has_meta(SNAME("edge_distance"))) {
+		r_range = get_meta(SNAME("edge_distance"));
+	}
 }
 
 bool PlantSpecies::uses_stand() const {
@@ -660,6 +676,8 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "stand_age_fade", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater,suffix:yr"), "set_rule_fade", "get_rule_fade", RULE_STAND_AGE);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "disturbance_range"), "set_rule_range", "get_rule_range", RULE_DISTURBANCE);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "disturbance_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_DISTURBANCE);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "forest_edge_range", PROPERTY_HINT_NONE, "suffix:m"), "set_rule_range", "get_rule_range", RULE_FOREST_EDGE);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "forest_edge_fade", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_FOREST_EDGE);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -691,6 +709,7 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_POOL_DISTANCE);
 	BIND_ENUM_CONSTANT(RULE_STAND_AGE);
 	BIND_ENUM_CONSTANT(RULE_DISTURBANCE);
+	BIND_ENUM_CONSTANT(RULE_FOREST_EDGE);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 	BIND_ENUM_CONSTANT(DEADWOOD_AVOID);
 	BIND_ENUM_CONSTANT(DEADWOOD_ON);

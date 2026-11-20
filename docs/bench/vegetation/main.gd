@@ -1024,6 +1024,72 @@ func _stand_check() -> void:
 	# A 5-year windthrow: pioneers and the wind legacy, no fire stage, no old stand; round it the old stand alone.
 	_check("stand age: a 5-year windthrow holds the pioneers and its own legacy, the old stand round it", on[0] > 10 and on[1] > 2 and on[2] == 0 and on[3] == 0 and off[3] > 10 and off[0] == 0 and off[1] == 0 and off[2] == 0, [on, off])
 
+# Forest edges (RULE_FOREST_EDGE, trees' make_edge meta): a forest of an old stand round a 25 m windthrow clearing.
+# The mantle (meta edge_distance -8 to 3 m) rings the clearing's edge; edge trees (0 to 10 m in, mesh meta
+# tree_open_side +X) stand just inside the forest with +X towards the clearing.
+func _edge_check() -> void:
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_disturbances()
+	var c := Vector2(40, 40)
+	st.add_disturbance(Vector3(c.x, 0, c.y), 25.0, WorldStand.DISTURBANCE_WIND, 5.0)
+	var forest := PlantSpecies.new()
+	forest.meshes = [BoxMesh.new()]
+	forest.spacing = 4.0
+	forest.canopy_radius = 2.0
+	forest.set_meta("succession_age", Vector2(50, 10000))
+	var mantle := PlantSpecies.new()
+	mantle.meshes = [BoxMesh.new()]
+	mantle.spacing = 1.5
+	mantle.set_meta("edge_distance", Vector2(-8, 3))
+	var edge_mesh := BoxMesh.new()
+	edge_mesh.set_meta("tree_open_side", Vector3(1, 0, 0))
+	var edge := PlantSpecies.new()
+	edge.meshes = [edge_mesh]
+	edge.spacing = 3.0
+	edge.set_meta("edge_distance", Vector2(0, 10))
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species = [forest, mantle, edge]
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var m_in := 0
+	var m_out := 0
+	var e_in := 0
+	var e_out := 0
+	var e_facing := 0
+	var forest_in := 0
+	for ch in f.get_children(true):
+		if not (ch is MultiMeshInstance3D and ch.multimesh):
+			continue
+		var mm: MultiMesh = ch.multimesh
+		for i in mm.instance_count:
+			var t: Transform3D = (ch as Node3D).global_transform * mm.get_instance_transform(i)
+			var r := Vector2(t.origin.x, t.origin.z).distance_to(c)
+			if r > 36.0:
+				continue # Past it the bench's ground has gaps of its own (more edges).
+			if mm.mesh == mantle.meshes[0]:
+				if r > 15.0 and r < 31.0:
+					m_in += 1
+				else:
+					m_out += 1
+			elif mm.mesh == edge_mesh:
+				if r > 23.0:
+					e_in += 1
+					var to_c := (c - Vector2(t.origin.x, t.origin.z)).normalized()
+					if Vector2(t.basis.x.x, t.basis.x.z).normalized().dot(to_c) > 0.85:
+						e_facing += 1
+				else:
+					e_out += 1
+			elif mm.mesh == forest.meshes[0] and r < 24.0:
+				forest_in += 1
+	st.clear_disturbances()
+	f.queue_free()
+	var r := [m_in, m_out, e_in, e_out, e_facing, forest_in]
+	_check("forest edge: the mantle rings the clearing's edge, edge trees stand just inside facing the open", m_in > 20 and m_out == 0 and e_in > 10 and e_out == 0 and e_facing >= e_in * 0.9 and forest_in == 0, r)
+
 # --stand=live: a disturbance reported after the field streamed in (WorldStand.stand_changed) re-places the tiles over
 # it; a year passing inside every stage changes nothing; past the pioneer stage they go.
 func _stand_live() -> void:
@@ -1639,6 +1705,7 @@ func _checks() -> void:
 	_bark_detail_check()
 	_fire_variant_check()
 	_stand_check()
+	_edge_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []
 	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH, PlantGenerator.FLOOR_MEDITERRANEAN, PlantGenerator.FLOOR_BOREAL_TAIGA]:
