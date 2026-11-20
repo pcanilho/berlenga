@@ -12,6 +12,7 @@ extends Node3D
 #   --clouds[=C]          the weather sky (clouds of cover C, atmosphere) instead of the plain gradient
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
+#   --exposure=x          the tonemapper's exposure (1): more for a dark cave seen from inside
 #   --taa                 temporal antialiasing as in play (24 frames settle before a sea-cave still)
 #   --world-size=m        with --world: its side (2048); smaller for path traced stills in less memory
 #   --world               a generated 2 km world (range, strata, glaciers, scree, rivers, a lake, the sea) with a
@@ -241,6 +242,9 @@ func _environment() -> void:
 			# (Looking out through a mouth the sky is in the frame: the path tracer draws its misses from it.)
 			env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	# --exposure=x: the tonemapper's exposure (1), for a dark scene such as a cave seen from inside.
+	if args.has("exposure"):
+		env.tonemap_exposure = float(args["exposure"])
 	env.pathtracing_sky_shader_enabled = args.has("clouds")
 	env.pathtracing_enabled = not raster
 	env.pathtracing_samples_per_pixel = spp
