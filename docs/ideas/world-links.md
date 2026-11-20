@@ -105,7 +105,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Springs → oasis plants and grass | linked (19 Nov) | DesertSprings (vegetation, from TerrainGenerator3D sand seas): `VegetationField3D.get_springs()`, `get_spring_wetness_at(pos)` (positions m, wetness 0-1, -1 off the sand seas) | readers VegetationField3D RULE_SPRING and GrassField3D; Valence adds the pools next; the spring finder should move to the terrain generator later. Anything cycling species meshes by index skips meshes with `tree_fire_years` meta |
 | Nebkhas → shrubs | linked (19 Nov) | TerrainGenerator3D `get_nebkhas(rect)` (x, top y, z, height m), `get_nebkha_height(pos)` (mound sand alone); `sand_sea_mask` (Image, red 0..1) shapes the ergs | VegetationField3D places a shrub on each mound top; the mounds are sand for the sand thread, no deformation hook needed (terrain-gen cf579682) |
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
-| Lightning → struck tree variant | linked (20 Nov) | `WorldStand.strike_age_at` | WeatherLightning3D records canopy strikes; VegetationField3D swaps to a `tree_lightning_years` variant (field side: trees) |
+| Lightning → struck tree variant | linked (20 Nov) | `WorldStand.strike_age_at` | WeatherLightning3D records canopy strikes; VegetationField3D swaps a tree within 3 m of a strike under 8 years old to its `tree_lightning_years` variant, from `get_strikes_in` copies (trees d898414194) |
 | Beaver dam fails → beaver meadow | linked (20 Nov) | `WorldStand` `DISTURBANCE_BEAVER` (4), age since the pond drained | trees report it when a STAND_BEAVER_POND dam fails; PlantGenerator.make_beaver meadow reads it by RULE_DISTURBANCE (4,4) |
 | Deer browsing → understorey, saplings | linked (20 Nov) | `WorldStand.browse_at`, `browse_reach_at` | browse discs (pressure, reach); vegetation RULE_BROWSE 31, trees' browsed variants (trees.md 5aw) |
 | Wet ground → mist | linked (18 Nov) | surface wetness, surface cooling | VegetationMist3D: wet ground mists more and sooner |
@@ -174,6 +174,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Burnt ground → runoff (water-repellent soil, ash washed off) | linked (19 Nov) | WorldFire `water_repellency_at`, WorldGround `runoff_at` | PhysX 837fea90 |
 | Ash, silt runoff → stream colour | linked (19 Nov) | WorldGround `add_runoff_load` → runoff (WeatherRunoff3D) → WorldWater `add_sediment`, `sediment_at` | PhysX puts washed ash on the runoff (5f14b542); WeatherRunoff3D routes it into open water (Valence #393); PhysXRiver3D and PhysXWaterSurface3D carry, settle and shade it (Valence eab1d857) |
 | Rain on burnt slopes → debris flow | linked (19 Nov) | WeatherRunoff3D `debris_flow` signal (outlet, volume, path) | Valence fires it, mud's GroundDebrisFlow3D runs the mud body, PhysXDebrisSurge3D carries the bouldery front (Rickenmann 1999 speed) |
+| Ground → loose stones; debris flows findable | linked (20 Nov, mud 20f319f4) | `GroundSurface3D.add_loose_stone(position, radius, velocity)`; group `ground_debris_flows` | any system can drop a loose stone onto the ground; readers find running GroundDebrisFlow3D nodes by group |
 | Weather wind → free-standing Flow smoke | linked (18 Nov) | wind | `PhysXFlow3D.weather_wind` (wind work) |
 
 ### Cloth, hair, bodies

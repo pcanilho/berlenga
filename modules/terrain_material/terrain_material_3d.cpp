@@ -426,9 +426,12 @@ TmProj tm_projection(vec3 p, vec3 n, float scale, bool cliff) {
 	vec2 w = vec2(a[ma], a[me]);
 	w = clamp((w - 0.5773) / (1.0 - 0.5773), 0.0, 1.0);
 	w = w * w * w * w;
-	float s = max(w.x + w.y, 1e-4);
-	r.w0 = w.x / s;
-	r.w1 = w.y / s;
+	// The weights sum to 1 whatever their size: on a face whose normal points nearly along a cube diagonal both are
+	// tiny (0.6 gives 1e-5), and the old floor of the sum at 1e-4 left them summing to a tenth, the layer's textures
+	// near black there.
+	float s = w.x + w.y;
+	r.w0 = s > 1e-12 ? w.x / s : 1.0;
+	r.w1 = s > 1e-12 ? w.y / s : 0.0;
 	return r;
 }
 

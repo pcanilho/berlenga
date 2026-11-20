@@ -720,6 +720,10 @@ public:
 	// and 15) after their living ones, mesh meta tree_fire_years and tree_fire_band; VegetationField3D picks by
 	// WorldFire.burn_age_at (world-links.md). Off for scouts and tests that do not burn.
 	bool fire_variants = true;
+	// Struck tree variants (trees.md 5ax): tall stand and open forms also grow two struck variants (a fresh strike, 0.2
+	// years, and one healing, 3 years) after the fire ones, mesh meta tree_lightning_years; VegetationField3D picks one
+	// where WorldStand.strike_age_at has a strike (world-links.md). Off for scouts and tests that do not strike.
+	bool lightning_variants = true;
 	// Years since bark beetles killed the tree (trees.md 5aj), -1 none; conifers only. Under 0.6 green attack (resin
 	// beads, boring dust), then the needles fade yellow to red and drop (to 2.5), grey snag with the bark falling in
 	// sheets (to 6), top broken (to 12), then a stub.
@@ -1046,8 +1050,11 @@ private:
 	Ref<ArrayMesh> near_result;
 	TypedArray<Mesh> near_far_meshes; // The species' far meshes, whose materials a near mesh shares.
 	TypedArray<Mesh> near_fire_meshes; // Its fire band variants, after near_living living ones in the species.
+	TypedArray<Mesh> near_strike_meshes; // Its struck variants, after the fire ones (near_fire_count of them).
 	int near_living = 0;
+	int near_fire_count = 0;
 	HashMap<int, TypedArray<Mesh>> fire_cache;
+	HashMap<int, TypedArray<Mesh>> strike_cache;
 	Ref<ArrayMesh> material_source;
 	static void _near_task(void *p_self);
 	// Near meshes building at once, over every generator (a beech's peaks near 2 GB while it builds): the field
@@ -1130,6 +1137,8 @@ public:
 	void set_bark_peel(float p_peel) { bark_peel = MAX(p_peel, 0.0f); }
 	void set_fire_years(float p_years) { fire_years = p_years < 0.0f ? -1.0f : p_years; }
 	void set_fire_variants(bool p_on) { fire_variants = p_on; }
+	void set_lightning_variants(bool p_on) { lightning_variants = p_on; }
+	bool get_lightning_variants() const { return lightning_variants; }
 	void set_beetle_years(float p_years) { beetle_years = p_years < 0.0f ? -1.0f : p_years; }
 	float get_beetle_years() const { return beetle_years; }
 	void set_beetle_outbreak(float p_years) { beetle_outbreak = MAX(p_years, 0.0f); }

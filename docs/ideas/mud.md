@@ -1278,7 +1278,7 @@ by its 1 m cell and taken off in texel-sized discs scattered round the spot (the
 trail fades in patches, mass kept at 1.5 kg/m2 for a full film. The wind lifts it from u* 0.3 m/s as a broken silt
 skin (17.3), over the 1 m cells films were laid in near the followed point. Bench --test=trackdust: a wet trail gives
 none; dried, 60 tyre steps lift 0.1 kg and clear it at the spot; a 12 m/s wind lifts 0.22 kg and thins another spot
-from full to 0.62. Limits: film cells are not saved, so a trail read back from saved ruts lifts under tyres only.
+from full to 0.62. Film cells are kept in deposits.dep (d35dbf2e), so a reloaded trail lifts in the wind too.
 
 ### Look (any stage)
 

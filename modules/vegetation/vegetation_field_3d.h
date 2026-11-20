@@ -233,6 +233,10 @@ private:
 		LocalVector<float> fire_years;
 		LocalVector<Vector2> fire_bands; // Per variant, mesh meta "tree_fire_band" (years from, to); empty: nearest years.
 		float fire_years_max = 0.0f;
+		// Per variant, mesh meta "tree_lightning_years" (a struck variant's years since the strike, -1 not struck); empty:
+		// none. A tree under a recorded strike (WorldStand.strike_age_at) takes the struck variant nearest its age.
+		LocalVector<float> strike_years;
+		float strike_years_max = 0.0f;
 		LocalVector<float> base_lifts; // Per variant, mesh meta "tree_base_lift" (m in mesh space: stilt roots, the origin that far above the ground); empty: none.
 		Vector2 open_side; // Mesh meta "tree_open_side" (xz, unit) of its first mesh carrying it: turned to face the open (forest edges); zero none.
 	};
@@ -312,6 +316,11 @@ private:
 			float kind_fade = 0.0f;
 			bool operator==(const StandRule &p_o) const { return age == p_o.age && age_fade == p_o.age_fade && kind == p_o.kind && kind_fade == p_o.kind_fade; }
 		};
+		// Lightning strikes on trees (WorldStand.get_strikes_in: x, z, age), copied for the placing threads, in 16 m cells;
+		// read when a species carries struck variants.
+		LocalVector<Vector3> strikes;
+		HashMap<Vector2i, LocalVector<uint32_t>> strike_cells;
+		float strike_at(const Vector2 &p_xz) const;
 		LocalVector<StandRule> stand_rules;
 		LocalVector<float> stand_age;
 		LocalVector<uint8_t> stand_kind;
@@ -363,6 +372,7 @@ private:
 	static void _read_sand_mobility(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
 	void _read_burn_age(PlaceSetup &r_setup) const;
 	void _read_stand(PlaceSetup &r_setup) const;
+	void _read_strikes(PlaceSetup &r_setup) const;
 	void _read_forest_edge(PlaceSetup &r_setup) const;
 	static bool _context_only(const PlantSpecies *p_sp);
 	// The last setup's context grids (burn ages, stand, forest edge), for reads outside placement (sward_at).
@@ -575,6 +585,7 @@ private:
 	// species crosses its stand range are placed again (advance_years ages every stand without replacing them all).
 	mutable uint64_t stand_seen = 0;
 	mutable bool stand_follow = false;
+	mutable bool strike_follow = false; // A species carries struck variants: strikes re-place their tiles.
 	double stand_check = 0.0;
 	Rect2 stand_dirty;
 	void _follow_stand(double p_delta);

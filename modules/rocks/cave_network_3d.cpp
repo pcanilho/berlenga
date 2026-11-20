@@ -1542,10 +1542,25 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p, real_t 
 		// Not on the floors: the stones and pools laid on them measure the coarse field, and a floor's own fine
 		// texture is its sediment's (shader and stones).
 		const real_t off_floor = Math::smoothstep(real_t(0.35), real_t(1.0), above_floor); // the banks too (spalls lie on them)
-		if (cell < 0.2 && d < 0.6 && off_floor > 0.0) {
-			d += off_floor * roughness * 0.05 * (cave_fbm(p_p / 0.25f, ns + 13u, 2) - 0.5f);
+		// A refined chunk next to a coarse one fades this relief out over the last metres to their shared face (the
+		// geomorphing of chunked LOD terrain: Ulrich 2002, Lengyel 2010), so both grids mesh the same surface there;
+		// switched off at the face, the near grid's knobs would end in a straight seam down the wall.
+		real_t fine_w = off_floor;
+		if (p_src.fine_fade && fine_w > 0.0) {
+			const real_t fd = 3.0; // metres
+			for (int ax = 0; ax < 3; ax++) {
+				if (p_src.fine_fade & (1 << (2 * ax))) {
+					fine_w *= Math::smoothstep(real_t(0.0), fd, p_p[ax] - p_src.fine_lo[ax]);
+				}
+				if (p_src.fine_fade & (2 << (2 * ax))) {
+					fine_w *= Math::smoothstep(real_t(0.0), fd, p_src.fine_hi[ax] - p_p[ax]);
+				}
+			}
+		}
+		if (cell < 0.2 && d < 0.6 && fine_w > 0.0) {
+			d += fine_w * roughness * 0.05 * (cave_fbm(p_p / 0.25f, ns + 13u, 2) - 0.5f);
 			if (cell < 0.07) {
-				d += off_floor * roughness * 0.015 * (cave_fbm(p_p / 0.08f, ns + 17u, 2) - 0.5f);
+				d += fine_w * roughness * 0.015 * (cave_fbm(p_p / 0.08f, ns + 17u, 2) - 0.5f);
 			}
 		}
 		if (scallops > 0.0) {
@@ -1752,9 +1767,10 @@ void CaveNetwork3D::_gather(const AABB &p_box, FieldSource &r_src) const {
 // it crosses joining the four cells round that edge. Each chunk owns the edges that start inside it and samples one
 // cell past its sides, so neighbours share their border vertices exactly. Normals from the field's gradient; quads
 // facing the open side. The ground's own surface (a patch's) is a second surface, drawn with the ground material.
-void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_cell) const {
+void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_cell, uint8_t p_fade) const {
 	const TerrainGenerator3D *gen = mesh_gen;
 	r_chunk.cell = p_cell;
+	r_chunk.fine_fade = p_cell < mesh_cell - 1e-4 ? p_fade : 0;
 	const int N = MAX(1, int(Math::round(chunk_size / p_cell)));
 	const real_t c = chunk_size / real_t(N); // whole cells per chunk, so neighbours share their border samples
 	const Vector3 O = Vector3(p_key) * chunk_size;
@@ -1763,6 +1779,9 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 	const int P = p_cell < mesh_cell - 1e-4 ? 2 + int(Math::ceil(mesh_cell / c)) : 1;
 	const real_t reach = (P + 1) * c;
 	_gather(AABB(O - Vector3(reach, reach, reach), Vector3(chunk_size + 2 * reach, chunk_size + 2 * reach, chunk_size + 2 * reach)), src);
+	src.fine_fade = r_chunk.fine_fade;
+	src.fine_lo = O;
+	src.fine_hi = O + Vector3(chunk_size, chunk_size, chunk_size);
 	r_chunk.key = p_key;
 	r_chunk.triangles = 0;
 	r_chunk.pools.clear();
@@ -2778,6 +2797,7 @@ struct CaveMeshJob {
 	const CaveNetwork3D *net;
 	LocalVector<Vector3i> keys;
 	LocalVector<real_t> cells; // each key's grid (mesh_cell when empty)
+	LocalVector<uint8_t> fades; // each refined key's faces toward coarse neighbours
 	LocalVector<CaveNetwork3D::Chunk> made;
 	LocalVector<CaveNetwork3D::Chunk *> out;
 	HashSet<Vector3i> pinned;
@@ -2785,7 +2805,23 @@ struct CaveMeshJob {
 
 void CaveNetwork3D::_mesh_job(void *p_data, uint32_t p_index) {
 	CaveMeshJob *job = static_cast<CaveMeshJob *>(p_data);
-	job->net->_mesh_chunk(job->keys[p_index], *job->out[p_index], p_index < job->cells.size() ? job->cells[p_index] : job->net->mesh_cell);
+	job->net->_mesh_chunk(job->keys[p_index], *job->out[p_index], p_index < job->cells.size() ? job->cells[p_index] : job->net->mesh_cell, p_index < job->fades.size() ? job->fades[p_index] : 0);
+}
+
+// The faces of a chunk whose neighbour across them is (or is about to be) on the coarse grid.
+template <typename F>
+uint8_t CaveNetwork3D::_fade_faces(const Vector3i &p_key, F p_cell_of) const {
+	uint8_t m = 0;
+	for (int ax = 0; ax < 3; ax++) {
+		for (int sd = 0; sd < 2; sd++) {
+			Vector3i nk = p_key;
+			nk[ax] += sd ? 1 : -1;
+			if (p_cell_of(nk) >= mesh_cell - 1e-4) {
+				m |= uint8_t(1 << (2 * ax + sd));
+			}
+		}
+	}
+	return m;
 }
 
 Ref<Material> CaveNetwork3D::_wall_material() {
@@ -2805,7 +2841,7 @@ uniform vec3 rock_color = vec3(0.30, 0.29, 0.26);
 uniform vec3 sediment_color = vec3(0.13, 0.10, 0.07);
 uniform vec3 sand_color = vec3(0.4, 0.3, 0.17);
 uniform float sea_level = -1e9;
-uniform int debug_view = 0; // CAVE_WALL_DEBUG: 1 streak/wet/floor, 2 shells/crack/foot
+uniform int debug_view = 0; // CAVE_WALL_DEBUG: 1 streak/wet/floor, 2 shells/crack/foot, 3 chunks, 4 COLOR, 5 normal, 6 bumped
 uniform float scallops_amount = 1.0;
 varying vec3 w_pos;
 varying vec3 w_nrm;
@@ -3072,6 +3108,14 @@ void fragment() {
 		SPECULAR = 0.0;
 	} else if (debug_view == 2) {
 		ALBEDO = vec3(shells, crack, COLOR.b);
+		ROUGHNESS = 1.0;
+		SPECULAR = 0.0;
+	} else if (debug_view >= 3) {
+		// 3 the 16 m chunk grid, 4 the vertex colour, 5 the mesh normal, 6 the bumped normal; unlit.
+		vec3 ck = floor(w_pos / 16.0);
+		ALBEDO = debug_view == 3 ? fract(ck * vec3(0.37, 0.61, 0.83) + 0.1) : debug_view == 4 ? COLOR.rgb : debug_view == 5 ? w_nrm * 0.5 + 0.5 : debug_view == 7 ? vec3(fract(w_pos.z), step(0.5, fract(w_pos.z / 2.0)), fract(w_pos.x)) : nb * 0.5 + 0.5;
+		EMISSION = ALBEDO;
+		ALBEDO = vec3(0.0);
 		ROUGHNESS = 1.0;
 		SPECULAR = 0.0;
 	}
@@ -4189,11 +4233,14 @@ int CaveNetwork3D::refine_meshes(const Vector3 &p_center) {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	CaveMeshJob job;
 	job.net = this;
+	auto cell_of = [&](const Vector3i &k) { return _cell_for(k, p_center); };
 	for (const KeyValue<Vector3i, Chunk> &kv : chunks) {
 		const real_t want = _cell_for(kv.key, p_center);
-		if (kv.value.node && kv.value.cell != want) {
+		const uint8_t fade = want < mesh_cell - 1e-4 ? _fade_faces(kv.key, cell_of) : 0;
+		if (kv.value.node && (kv.value.cell != want || kv.value.fine_fade != fade)) {
 			job.keys.push_back(kv.key);
 			job.cells.push_back(want);
+			job.fades.push_back(fade);
 		}
 	}
 	if (job.keys.is_empty()) {
@@ -4287,6 +4334,9 @@ void CaveNetwork3D::_stream_update() {
 	_wanted(AABB(p - Vector3(r, r, r), Vector3(2.0 * r, 2.0 * r, 2.0 * r)), want, pinned, true);
 	LocalVector<Vector3i> keys;
 	LocalVector<real_t> cells;
+	LocalVector<uint8_t> fades;
+	// Each chunk's grid after this batch: the new one for those remeshed, else the one it has (or will get).
+	HashMap<Vector3i, real_t> next_cell;
 	for (const Vector3i &k : want) {
 		if (!(pinned.has(k) || centre(k).distance_to(p) <= r + half)) {
 			continue;
@@ -4297,10 +4347,33 @@ void CaveNetwork3D::_stream_update() {
 			// Meshed already: remeshed only to refine it near the target, or to coarsen it again well past the radius.
 			const bool keep = have->cell == cw || !have->node || (have->cell == near_mesh_cell && _cell_for(k, p, 4.0) == near_mesh_cell);
 			if (keep) {
+				next_cell.insert(k, have->cell);
 				continue;
 			}
 		}
 		keys.push_back(k);
+		next_cell.insert(k, cw);
+	}
+	auto cell_of = [&](const Vector3i &k) {
+		if (const real_t *t = next_cell.getptr(k)) {
+			return *t;
+		}
+		const Chunk *ch = chunks.getptr(k);
+		return ch ? ch->cell : _cell_for(k, p);
+	};
+	// A refined chunk kept as it is is remeshed too when a neighbour's grid changes under its faded faces.
+	const uint32_t n_new = keys.size();
+	for (const KeyValue<Vector3i, real_t> &kv : next_cell) {
+		const Chunk *have = chunks.getptr(kv.key);
+		if (have && have->node && kv.value < mesh_cell - 1e-4 && have->cell == kv.value && have->fine_fade != _fade_faces(kv.key, cell_of)) {
+			bool queued = false;
+			for (uint32_t i = 0; i < n_new && !queued; i++) {
+				queued = keys[i] == kv.key;
+			}
+			if (!queued) {
+				keys.push_back(kv.key);
+			}
+		}
 	}
 	_open_holes();
 	if (keys.is_empty()) {
@@ -4318,13 +4391,16 @@ void CaveNetwork3D::_stream_update() {
 	sorter.compare.cs = chunk_size;
 	sorter.sort(keys.ptr(), keys.size());
 	for (const Vector3i &k : keys) {
-		cells.push_back(_cell_for(k, p));
+		const real_t cw = cell_of(k);
+		cells.push_back(cw);
+		fades.push_back(cw < mesh_cell - 1e-4 ? _fade_faces(k, cell_of) : 0);
 	}
 	mesh_gen = _get_generator();
 	stream_job = memnew(CaveMeshJob);
 	stream_job->net = this;
 	stream_job->keys = keys;
 	stream_job->cells = cells;
+	stream_job->fades = fades;
 	stream_job->pinned = pinned;
 	stream_job->made.resize(keys.size());
 	for (uint32_t i = 0; i < keys.size(); i++) {

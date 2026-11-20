@@ -1527,6 +1527,16 @@ float WorldStand::strike_age_at(const Vector3 &p_position) const {
 	return r;
 }
 
+void WorldStand::get_strikes_in(const Rect2 &p_rect, LocalVector<Vector3> &r_out) const {
+	r_out.clear();
+	const Rect2 r = p_rect.grow(STRIKE_RADIUS);
+	for (const Strike &s : strikes) {
+		if (r.has_point(s.position)) {
+			r_out.push_back(Vector3(s.position.x, s.position.y, s.age));
+		}
+	}
+}
+
 void WorldStand::clear_strikes() {
 	if (strikes.is_empty()) {
 		return;
