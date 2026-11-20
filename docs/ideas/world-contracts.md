@@ -61,6 +61,7 @@ contract returns with no provider.
 | `high_cloud_cover_at(pos)` | 0..1 | 0 | The high (cirrus) sheet, `WeatherMap3D.get_high_cloud_cover_at`. Kept out of `cloud_cover_at`: optically thin, it shades only through the sun visibility and cloud shadow bake by its own optical depth |
 | `mid_cloud_cover_at(pos)` | 0..1 | 0 | The mid (altocumulus) layer, `WeatherMap3D.get_mid_cloud_cover_at`; its optical depth `get_mid_cloud_optical_depth_at`. Kept out of `cloud_cover_at`: it shades only by its own optical depth through the sun visibility. Follows the rain state, never makes rain. |
 | `cloud_effector_at(pos)` | -1..1 | 0 | Summed strength of the cloud density effectors at a point (`WeatherMap3D.add_cloud_effector`): negative clears cloud, positive adds. Effectors ride the cumulus drift. |
+| `cloud_base_at(pos)` | m | 1500 | Base of the low cloud, at the condensation level of the day's air (`WeatherMap3D.get_cloud_base_now`), never under the ground plus 30 m. Readers: mist, lightning, snow line, orographic rain |
 | `mountain_wave_at(pos)` | m | 0 | Vertical displacement in mountain waves (WeatherMap3D, linear theory over the terrain); no rotors |
 | `mountain_wave_velocity_at(pos)` | m/s | 0 | Their vertical wind; `get_wind_at` adds it above the boundary layer, blended over 300 m |
 | `wave_cloud_density_at(pos)` | 1/m | 0 | Wave cloud (lenticular) extinction. Kept out of `cloud_cover_at`; shades the ground by its own optical depth in the shadow bake |

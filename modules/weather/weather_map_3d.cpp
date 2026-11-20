@@ -527,7 +527,7 @@ void WeatherMap3D::_ease_base(double p_dt) {
 	const float ang = cur_wind_direction.angle_to(target);
 	cur_wind_direction = cur_wind_direction.rotated(ang * a).normalized();
 	cur_cloud_cover = Math::lerp(cur_cloud_cover, cloud_cover, a);
-	cur_cloud_type = Math::lerp(cur_cloud_type, cloud_type, a);
+	cur_cloud_type = Math::lerp(cur_cloud_type, _target_cloud_type(), a);
 	// The high sheet leads: it eases four times faster than the rain it heralds, so a change toward rain
 	// thickens the cirrus well before the rain arrives (cirrus runs 12 to 24 h ahead of a warm front's rain).
 	cur_high_cloud_cover = Math::lerp(cur_high_cloud_cover, _target_high_cloud_cover(), 1.0f - Math::exp(-float(p_dt) / (0.25f * transition_time)));
@@ -566,13 +566,13 @@ void WeatherMap3D::_set_base_to_settings() {
 	cur_wind_speed = wind_speed;
 	cur_wind_direction = wind_direction.length_squared() > 1e-8f ? wind_direction.normalized() : Vector2(1, 0);
 	cur_cloud_cover = cloud_cover;
-	cur_cloud_type = cloud_type;
 	cur_high_cloud_cover = _target_high_cloud_cover();
 	cur_mid_cloud_cover = _target_mid_cloud_cover();
 	cur_rain_rate = rain_rate;
 	cur_temperature = _target_temperature();
 	cur_humidity = humidity;
 	_update_air();
+	cur_cloud_type = _target_cloud_type(); // after the air: it reads the day's heating
 }
 
 // The air through the year and the day (docs/ideas/world-links.md, link 1).
@@ -618,6 +618,7 @@ float WeatherMap3D::diurnal_shape(float p_solar_hour, float p_day_length) {
 void WeatherMap3D::_update_air() {
 	cur_air_temperature = cur_temperature;
 	cur_air_humidity = cur_humidity;
+	cur_heating = 1.0f;
 	cur_sun_sine = 0.0f;
 	sun_known = false;
 	const Node *clock = (is_inside_tree() && has_node(sky_clock)) ? get_node(sky_clock) : nullptr;
@@ -651,7 +652,11 @@ void WeatherMap3D::_update_air() {
 	// what it scatters forward still reaches the ground, so about a third of its optical depth counts.
 	const float smoke_tau = smoke_haze ? get_smoke_optical_depth_at(_follow_position()) : 0.0f;
 	const float range = daily_temperature_range * (1.0f - 0.5f * CLAMP(cur_cloud_cover, 0.0f, 1.0f)) * (1.0f - 0.3f * Math::smoothstep(0.0f, 2.0f, cur_rain_rate)) * Math::exp(-0.35f * smoke_tau);
-	cur_air_temperature = cur_temperature + range * (diurnal_shape(Math::fposmod(hour, 24.0f), y) - diurnal_cache_mean);
+	const float shape = diurnal_shape(Math::fposmod(hour, 24.0f), y);
+	cur_air_temperature = cur_temperature + range * (shape - diurnal_cache_mean);
+	// Convective heating follows the day's warming (the surface heat flux leads the air's peak by a couple of
+	// hours, which the cumulus' own lag covers), less under cloud that keeps the sun off the ground.
+	cur_heating = CLAMP(shape * (1.0f - 0.7f * CLAMP(cur_cloud_cover, 0.0f, 1.0f)), 0.0f, 1.0f);
 	// The vapour stays through the day (the dew point holds; Monteith and Unsworth): the humidity rises as the
 	// air cools at night and falls in the afternoon.
 	cur_air_humidity = CLAMP(cur_humidity * saturation_vapour_pressure(cur_temperature) / saturation_vapour_pressure(cur_air_temperature), 0.0f, 1.0f);
@@ -2422,6 +2427,50 @@ void WeatherMap3D::set_publish_shader_globals(bool p_enabled) {
 	}
 }
 
+// The low cloud's type from the weather (round 6). In stable air (a night, a morning before the ground warms) the
+// boundary layer's cloud is layered: stratus in humid, calm air, stratocumulus once the wind mixes it (about 6 m/s at
+// 10 m) or the air is drier (Wood 2012; Stull 1988, 11.2). Convection takes over as the ground heats, up to
+// cloud_type, the afternoon's own type (fair cumulus 0.6, thunder 0.9): morning stratus burns off into cumulus and the
+// evening's spreads back into stratocumulus.
+float WeatherMap3D::_target_cloud_type() const {
+	if (!cloud_regime_from_weather) {
+		return cloud_type;
+	}
+	// While it rains the layer stays stratiform (nimbostratus) whatever the day's heating: rain cools and steadies
+	// the air under it and wets it, so the afternoon's drier air does not break it into cells (only the wind does).
+	// Storm cells bring their own towers (add_storm).
+	const float wet = Math::smoothstep(0.2f, 1.0f, cur_rain_rate);
+	const float mixed = MAX(Math::smoothstep(4.0f, 9.0f, cur_wind_speed), (1.0f - wet) * (1.0f - Math::smoothstep(0.85f, 0.95f, cur_air_humidity)));
+	const float stable = Math::lerp(0.05f, 0.22f, mixed);
+	const float conv = Math::smoothstep(0.15f, 0.6f, cur_heating) * (1.0f - wet);
+	return Math::lerp(MIN(stable, cloud_type), cloud_type, conv);
+}
+
+// The base at the condensation level: 125 m per kelvin of dew point depression (Espy), from the day's air, taken
+// relative to that of the default air (15 C, humidity 0.7) so cloud_base_height stays the base in that air.
+float WeatherMap3D::get_cloud_base_now() const {
+	if (!cloud_regime_from_weather) {
+		return cloud_base_height;
+	}
+	const float g0 = Math::log(0.7f) + 17.62f * 15.0f / (243.12f + 15.0f);
+	const float lcl_ref = 125.0f * (15.0f - 243.12f * g0 / (17.62f - g0));
+	const float lcl = 125.0f * MAX(cur_air_temperature - get_air_dew_point(), 0.0f);
+	// Never below the ground under the camera (30 m over it); a base at the ground is fog, the mist's.
+	float ground = ground_height;
+	if (is_inside_tree()) {
+		const float g = get_terrain_ground_at(_follow_position());
+		if (Math::is_finite(g)) {
+			ground = g;
+		}
+	}
+	return MAX(cloud_base_height + lcl - lcl_ref, ground + 30.0f);
+}
+
+void WeatherMap3D::set_cloud_regime_from_weather(bool p_enabled) {
+	cloud_regime_from_weather = p_enabled;
+	_push_sky();
+}
+
 void WeatherMap3D::set_cloud_base_height(float p_height) {
 	cloud_base_height = p_height;
 }
@@ -2530,7 +2579,7 @@ void WeatherMap3D::set_cloud_shadow_interval(float p_seconds) {
 
 WeatherClouds::State WeatherMap3D::_cloud_state() const {
 	WeatherClouds::State st;
-	st.base_height = cloud_base_height;
+	st.base_height = get_cloud_base_now();
 	st.thickness = cloud_thickness;
 	st.density = cloud_density;
 	st.cover = cur_cloud_cover;
@@ -2547,7 +2596,7 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 		// do not lie down).
 		const Vector3 at = is_inside_tree() ? get_global_position() : Vector3();
 		const float h = MAX(cloud_thickness, 1.0f);
-		const Vector2 shear = (get_wind_aloft(at, cloud_base_height + h) - get_wind_aloft(at, cloud_base_height)) / h;
+		const Vector2 shear = (get_wind_aloft(at, st.base_height + h) - get_wind_aloft(at, st.base_height)) / h;
 		const float s = shear.length();
 		if (s > 1e-7f) {
 			const float lean = MIN(s * h * h / 6.0f, 0.6f * h) * cloud_shear;
@@ -2625,6 +2674,9 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 	}
 	st.air_t0 = cur_air_temperature;
 	st.air_rh0 = CLAMP(cur_air_humidity, 0.01f, 1.0f);
+	// Stratocumulus cells line up along the boundary layer's wind into rolls once it mixes the layer.
+	st.sc_dir = cur_wind_direction.length_squared() > 1e-8f ? cur_wind_direction.normalized() : Vector2(1, 0);
+	st.sc_roll = 1.0f + 2.0f * Math::smoothstep(4.0f, 9.0f, cur_wind_speed);
 	st.air_y0 = ground_height;
 	st.evolve = _cloud_evolve();
 	if (cloud_evolution) {
@@ -3554,6 +3606,10 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_map_rect"), &WeatherMap3D::get_map_rect);
 	ClassDB::bind_method(D_METHOD("set_cloud_base_height", "height"), &WeatherMap3D::set_cloud_base_height);
 	ClassDB::bind_method(D_METHOD("get_cloud_base_height"), &WeatherMap3D::get_cloud_base_height);
+	ClassDB::bind_method(D_METHOD("set_cloud_regime_from_weather", "enabled"), &WeatherMap3D::set_cloud_regime_from_weather);
+	ClassDB::bind_method(D_METHOD("is_cloud_regime_from_weather"), &WeatherMap3D::is_cloud_regime_from_weather);
+	ClassDB::bind_method(D_METHOD("get_cloud_base_now"), &WeatherMap3D::get_cloud_base_now);
+	ClassDB::bind_method(D_METHOD("get_convective_heating"), &WeatherMap3D::get_convective_heating);
 	ClassDB::bind_method(D_METHOD("set_cloud_thickness", "thickness"), &WeatherMap3D::set_cloud_thickness);
 	ClassDB::bind_method(D_METHOD("get_cloud_thickness"), &WeatherMap3D::get_cloud_thickness);
 	ClassDB::bind_method(D_METHOD("set_cloud_density", "density"), &WeatherMap3D::set_cloud_density);
@@ -3666,6 +3722,7 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "painted_map_rect", PROPERTY_HINT_NONE, "suffix:m"), "set_painted_map_rect", "get_painted_map_rect");
 	ADD_GROUP("Cloud Layer", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_base_height", PROPERTY_HINT_RANGE, "0,10000,1,or_greater,suffix:m"), "set_cloud_base_height", "get_cloud_base_height");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cloud_regime_from_weather"), "set_cloud_regime_from_weather", "is_cloud_regime_from_weather");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_thickness", PROPERTY_HINT_RANGE, "10,10000,1,or_greater,suffix:m"), "set_cloud_thickness", "get_cloud_thickness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_density", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_cloud_density", "get_cloud_density");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_shape_scale", PROPERTY_HINT_RANGE, "100,50000,1,or_greater,suffix:m"), "set_cloud_shape_scale", "get_cloud_shape_scale");

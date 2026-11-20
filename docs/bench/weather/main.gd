@@ -46,6 +46,8 @@ extends Node3D
 #   --cloud-light=x,y,z,E,R[,r,g,b]  clouds views: a point light in the clouds (WeatherMap3D.add_cloud_light;
 #                     orange by default, a fire's); repeatable
 #   --cloud-effector=x,y,z,R,S  clouds views: a density effector (S > 0 adds cloud, < 0 clears); repeatable
+#   --type=T          clouds views: cloud_type (0.05 stratus, 0.2 stratocumulus, 0.6 cumulus)
+#   --wind=W          clouds views: wind_speed at 10 m (m/s)
 #   --no-wave-clouds  lenticular view: WeatherMap3D.wave_clouds off (cost A/B)
 #   --sun-energy=E    clouds views: the sun's light_energy (0: night, for cloud lights)
 #   --high-cover=C    clouds views: the cirrus layer's base cover (WeatherMap3D.high_cloud_cover); with the shafts
@@ -84,6 +86,8 @@ var high_cover := -1.0
 var cloud_lights_arg: Array = []
 var cloud_effectors_arg: Array = []
 var sun_energy := -1.0
+var type_arg := -1.0
+var wind_arg := -1.0
 var wave_clouds_off := false
 var half_usec := 0
 var out := ""
@@ -151,6 +155,8 @@ func _ready() -> void:
 		elif a.begins_with("--cloud-effector="): cloud_effectors_arg.append(a.substr(17).split_floats(","))
 		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
 		elif a == "--no-wave-clouds": wave_clouds_off = true
+		elif a.begins_with("--type="): type_arg = float(a.substr(7))
+		elif a.begins_with("--wind="): wind_arg = float(a.substr(7))
 		elif a.begins_with("--haze-km="): haze_km = float(a.substr(10))
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
@@ -575,6 +581,38 @@ func _cloud_evolution_tests() -> void:
 		c.remove_cloud_light(id)
 	c.queue_free()
 	sun.queue_free()
+	await get_tree().physics_frame
+	await _regime_tests()
+
+# Round 6: the low cloud's type and base from the weather (docs/ideas/clouds.md).
+func _regime_tests() -> void:
+	var m := _new_map()
+	var clock: Node = ClassDB.instantiate("SkyClock")
+	add_child(clock)
+	clock.latitude = 45.0
+	clock.longitude = 0.0
+	clock.utc_offset = 0.0
+	clock.time_scale = 0.0
+	m.sky_clock = m.get_path_to(clock)
+	m.air_daily_cycle = true
+	m.cloud_type = 0.6
+	m.cloud_cover = 0.3
+	m.temperature = 15.0
+	for setup in [[2.0, 0.92, 0.0, "calm, humid"], [8.0, 0.92, 0.0, "windy, humid"], [2.0, 0.6, 0.0, "calm, dry"], [2.0, 0.92, 4.0, "calm, humid, rain 4 mm/h"]]:
+		m.wind_speed = setup[0]
+		m.humidity = setup[1]
+		m.rain_rate = setup[2]
+		var line := "  cloud regime (%s, afternoon type 0.6), type / heating / base at hour:" % setup[3]
+		for h in [4.0, 8.0, 11.0, 14.0, 19.0]:
+			clock.time_of_day = h
+			m.snap_to_settings()
+			line += " %.0fh %.2f / %.2f / %.0f m," % [h, m.get_cloud_type_at(Vector3.ZERO), m.get_convective_heating(), m.get_cloud_base_now()]
+		print(line)
+	m.cloud_regime_from_weather = false
+	m.snap_to_settings()
+	print("  cloud regime off: type %.2f (want 0.60), base %.0f m (want %.0f)" % [m.get_cloud_type_at(Vector3.ZERO), m.get_cloud_base_now(), m.cloud_base_height])
+	m.queue_free()
+	clock.queue_free()
 	await get_tree().physics_frame
 
 func _shelter_tests() -> void:
@@ -1198,6 +1236,10 @@ func _build_clouds() -> void:
 		weather.cloud_cover = 0.4 if cover < 0.0 else cover
 		weather.cloud_type = 0.8
 	weather.cloud_variation = 0.3
+	if type_arg >= 0.0:
+		weather.cloud_type = type_arg
+	if wind_arg >= 0.0:
+		weather.wind_speed = wind_arg
 	if mid_cover >= 0.0:
 		weather.mid_cloud_cover = mid_cover
 	if high_cover >= 0.0:

@@ -2480,6 +2480,16 @@ vec2 ground_salt_cells(vec2 p_p) {
 	h = (h ^ (h >> 15u)) * 2654435761u;
 	return vec2(0.5 * (sqrt(d2) - sqrt(d1)), float(h >> 8u) / 16777215.0);
 }
+// Grain sorting on wind ripples: dark heavy minerals in the troughs, coarse paler crests (material.cpp
+// ground_ripple_sort_tint(), the same lines).
+vec3 ground_ripple_sort_tint(float p_t, vec2 p_xz, float p_resolved, float p_amp) {
+	float heavy = mix(0.35, 1.0, ground_ripple_vn(p_xz / 7.0, 31u));
+	vec3 lag = mix(vec3(1.0), vec3(0.5, 0.48, 0.47), 0.6 * heavy);
+	vec3 coarse = vec3(1.05, 1.0, 0.92);
+	vec3 rt = mix(vec3(1.0), lag, smoothstep(0.2, 0.75, -p_t)) * mix(vec3(1.0), coarse, smoothstep(0.3, 0.8, p_t));
+	vec3 mt = mix(vec3(1.0), mix(vec3(1.0), lag, 0.25) * mix(vec3(1.0), coarse, 0.25), clamp(p_amp, 0.0, 1.0));
+	return mix(mt, rt, p_resolved);
+}
 vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 	vec2 p = p_xz;
 	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
@@ -3348,9 +3358,40 @@ void main() {
 				vec3 vr = w > 0.0 ? ground_ripple_vary(p, m3.xy) : vec3(0.0);
 				// Crests finer than the pixel shade it as a patchy tone (material.cpp ground_ripple_far_slope()).
 				m.albedo *= 1.0 - 0.15 * w * vr.z * (1.0 - resolved);
-				w *= resolved;
+				// Grain sorting (GroundSurface3D ripple_sorting; m3.w the grown field's height spread, 0 when off):
+				// the window's ripples (rows 0..n-1, height times share, faded as the raster's) and the far ones (rows
+				// n+S..n+S+n-1, the grown field's height in spreads).
+				if (m3.w > 0.0 && live > 0.0) {
+					vec2 wt = wuv * float(rn) - 0.5;
+					ivec2 w0 = clamp(ivec2(floor(wt)), ivec2(0), ivec2(rn - 1));
+					ivec2 w1 = clamp(w0 + 1, ivec2(0), ivec2(rn - 1));
+					vec2 wf = clamp(wt - floor(wt), 0.0, 1.0);
+					vec2 r00 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), w0, 0).rg;
+					vec2 r10 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(w1.x, w0.y), 0).rg;
+					vec2 r01 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(w0.x, w1.y), 0).rg;
+					vec2 r11 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), w1, 0).rg;
+					float wh = mix(mix(r00.x * r00.y, r10.x * r10.y, wf.x), mix(r01.x * r01.y, r11.x * r11.y, wf.x), wf.y) * live;
+					m.albedo *= ground_ripple_sort_tint(wh / m3.w, p, resolved, 0.0);
+				}
 				if (w > 0.0) {
 					// The tile: cell c's centre at c * cell, its texel (c mod n), bilinear with wrap.
+					vec2 tc = (p + vr.xy) / m0.w;
+					ivec2 c0 = ivec2(floor(tc));
+					vec2 cf = tc - vec2(c0);
+					ivec2 a = ((c0 % rn) + rn) % rn;
+					ivec2 b = (a + 1) % rn;
+					if (m3.w > 0.0) {
+						int hr = rn + sn;
+						float th = mix(mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(a.x, hr + a.y), 0).r,
+												 texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(b.x, hr + a.y), 0).r, cf.x),
+								mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(a.x, hr + b.y), 0).r,
+										texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(b.x, hr + b.y), 0).r, cf.x),
+								cf.y);
+						m.albedo *= mix(vec3(1.0), ground_ripple_sort_tint(vr.z * th, p, resolved, vr.z), w);
+					}
+				}
+				w *= resolved;
+				if (w > 0.0) {
 					vec2 tc = (p + vr.xy) / m0.w;
 					ivec2 c0 = ivec2(floor(tc));
 					vec2 cf = tc - vec2(c0);

@@ -8,12 +8,29 @@
 	</description>
 	<tutorials>
 	</tutorials>
+	<methods>
+		<method name="get_albedo_mean" qualifiers="const">
+			<return type="Color" />
+			<description>
+				Mean linear colour of [member albedo_texture], or white without one. Cached until the texture changes.
+			</description>
+		</method>
+		<method name="get_roughness_mean" qualifiers="const">
+			<return type="float" />
+			<description>
+				Mean of [member roughness_texture]'s green channel, or [code]1.0[/code] without one. Cached until the texture changes.
+			</description>
+		</method>
+	</methods>
 	<members>
 		<member name="albedo_texture" type="Texture2D" setter="set_albedo_texture" getter="get_albedo_texture">
-			Colour texture, multiplied by [member color].
+			Colour texture, multiplied by [member color]. See [member detail_only].
 		</member>
 		<member name="color" type="Color" setter="set_color" getter="get_color" default="Color(1, 1, 1, 1)">
 			Tint of the layer.
+		</member>
+		<member name="detail_only" type="bool" setter="set_detail_only" getter="is_detail_only" default="true">
+			If [code]true[/code], [member albedo_texture] and [member roughness_texture] are divided by their own means, so they add detail only: the layer keeps the average colour of [member color] and the average [member roughness]. Use it with scanned textures, whose colours and roughness follow no common scale, so every scan matches the palette. If [code]false[/code], the textures are used as they are, multiplied by [member color] and [member roughness].
 		</member>
 		<member name="height_texture" type="Texture2D" setter="set_height_texture" getter="get_height_texture">
 			Height texture (red channel) used for height blending: where two layers meet, the higher one wins, so stones poke through sand instead of fading into it.
@@ -31,7 +48,7 @@
 			Roughness, multiplied by [member roughness_texture]'s green channel.
 		</member>
 		<member name="roughness_texture" type="Texture2D" setter="set_roughness_texture" getter="get_roughness_texture">
-			Roughness texture (green channel).
+			Roughness texture (green channel), multiplied by [member roughness]. See [member detail_only].
 		</member>
 		<member name="tile_size" type="float" setter="set_tile_size" getter="get_tile_size" default="4.0">
 			Size in metres one repeat of the textures covers.

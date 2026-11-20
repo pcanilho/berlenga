@@ -89,6 +89,7 @@ public:
 	virtual float contract_high_cloud_cover_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, the high (cirrus) sheet
 	virtual float contract_mid_cloud_cover_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, the mid (altocumulus) sheet
 	virtual float contract_cloud_effector_at(const Vector3 &p_position) const { return 0.0f; } // -1..1, cloud added (> 0) or cleared by effectors
+	virtual float contract_cloud_base_at(const Vector3 &p_position) const { return 1500.0f; } // m above y = 0, the low cloud's base
 	virtual float contract_mountain_wave_at(const Vector3 &p_position) const { return 0.0f; } // m, the air's vertical displacement in mountain waves
 	virtual float contract_mountain_wave_velocity_at(const Vector3 &p_position) const { return 0.0f; } // m/s, their vertical wind
 	virtual float contract_wave_cloud_density_at(const Vector3 &p_position) const { return 0.0f; } // 1/m, wave cloud (lenticular) extinction
@@ -142,6 +143,7 @@ protected:
 	GDVIRTUAL1RC(float, _high_cloud_cover_at, Vector3)
 	GDVIRTUAL1RC(float, _mid_cloud_cover_at, Vector3)
 	GDVIRTUAL1RC(float, _cloud_effector_at, Vector3)
+	GDVIRTUAL1RC(float, _cloud_base_at, Vector3)
 	GDVIRTUAL1RC(float, _mountain_wave_at, Vector3)
 	GDVIRTUAL1RC(float, _mountain_wave_velocity_at, Vector3)
 	GDVIRTUAL1RC(float, _wave_cloud_density_at, Vector3)
@@ -201,6 +203,7 @@ public:
 	float high_cloud_cover_at(const Vector3 &p_position) const;
 	float mid_cloud_cover_at(const Vector3 &p_position) const;
 	float cloud_effector_at(const Vector3 &p_position) const;
+	float cloud_base_at(const Vector3 &p_position) const;
 	float mountain_wave_at(const Vector3 &p_position) const;
 	float mountain_wave_velocity_at(const Vector3 &p_position) const;
 	float wave_cloud_density_at(const Vector3 &p_position) const;

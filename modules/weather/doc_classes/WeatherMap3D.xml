@@ -211,6 +211,43 @@
 				For a body in the [code]world_contact[/code] group: x, the water on its feet or tread (0..1, 1 just out of water), y, the water running off it (0..1). See [member wet_tracks].
 			</description>
 		</method>
+		<method name="get_cloud_base_now" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the low cloud's base now (m above y = 0). With [member cloud_regime_from_weather], [member cloud_base_height] plus how far the condensation level of the day's air (125 m per kelvin of dew point depression, Espy) sits above that of the default air (15 C, humidity 0.7): lower in moist air and at night, rising through a dry afternoon; never under 30 m above the ground under the camera. Contract [code]WorldWeather.cloud_base_at[/code].
+			</description>
+		</method>
+		<method name="get_cloud_effector_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the summed strength of the density effectors at [param position], -1 (cleared) to 1 (added), 0 where there are none.
+			</description>
+		</method>
+		<method name="get_cloud_effector_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many density effectors were added with [method add_cloud_effector].
+			</description>
+		</method>
+		<method name="get_cloud_light_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many cloud lights were added with [method add_cloud_light] (the fires' own and lightning are not counted).
+			</description>
+		</method>
+		<method name="get_cloud_lights" qualifiers="const">
+			<return type="Array" />
+			<description>
+				Returns every light in the clouds now as an Array of Dictionary [code]{id, position, color, energy, radius, fire, lightning}[/code]: the lights added with [method add_cloud_light], the WorldFire plumes' (id -1, [code]fire[/code] true) and this frame's lightning flashes (id -1, [code]lightning[/code] true). Lightning is listed for readers only; the sky draws flashes itself at full resolution.
+			</description>
+		</method>
+		<method name="get_convective_heating" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the ground's convective heating, 0 (a still night) to 1 (a clear afternoon): the day's warming (Parton and Logan) less under cloud. 1 without a SkyClock.
+			</description>
+		</method>
 		<method name="get_fire_cloud_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -257,6 +294,20 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The mid cloud layer's vertical optical depth over [param position]: its cover there times [member mid_cloud_optical_depth]. The cloud shadow bake and anything else that shades by the layer read this one number.
+			</description>
+		</method>
+		<method name="get_mountain_wave_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the air's vertical displacement (m) in mountain waves at [param position], positive where lifted (0 with [member wave_clouds] off or outside the waves' square). Linear theory (Smith 1980): the terrain round the camera (a 51 km square at 400 m, through the same terrain source as the terrain wind) under the wind aloft at the mid layer's height and the buoyancy frequency of the 6.5 K/km lapse rate; only the top U / N of the terrain lifts the air (the dividing streamline). No rotors or lee turbulence.
+			</description>
+		</method>
+		<method name="get_mountain_wave_velocity_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the mountain waves' vertical wind (m/s) at [param position]: the wind aloft times the displacement's slope along it. [method get_wind_at] adds it above [member boundary_layer_height], blended in over 300 m so the air near the ground is unchanged.
 			</description>
 		</method>
 		<method name="get_obstacle_height_at" qualifiers="const">
@@ -408,6 +459,19 @@
 			<return type="float" />
 			<description>
 				Open water's surface temperature (C): with a [member climate], the air's seasonal mean a month earlier (lakes and the sea lag the air; Livingstone and Lotter 1998), never below 0 C; without one, the day's mean air. Steam fog forms where the air is much colder than this.
+			</description>
+		</method>
+		<method name="get_wave_cloud_density_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the wave cloud (lenticular) extinction (1/m) at [param position]. Air lifted by the mountain waves cools at the dry rate and saturates once the lift passes 125 m per kelvin of dew point depression; past that it condenses at the moist adiabat's rate, as droplets, or ice below about -25 C. The humidity aloft is Manabe and Wetherald's profile from the air's humidity, moistened round the mid and high layers' clouds, so lenticulars form where those layers are moist and the waves are strong. Fixed to the terrain; no drift.
+			</description>
+		</method>
+		<method name="get_wave_cloud_slab" qualifiers="const">
+			<return type="Vector4" />
+			<description>
+				Returns the heights (m) where wave cloud can form now: x to y round the mid layer, z to w round the high layer (a pair is empty when its second value is not above its first). The sky marches only these.
 			</description>
 		</method>
 		<method name="get_wind_aloft" qualifiers="const">
@@ -836,6 +900,9 @@
 		</member>
 		<member name="boundary_layer_height" type="float" setter="set_boundary_layer_height" getter="get_boundary_layer_height" default="1000.0">
 			Depth of the atmospheric boundary layer (m): the log law and the Ekman veer of [method get_wind_aloft] reach up to it.
+		</member>
+		<member name="cloud_regime_from_weather" type="bool" setter="set_cloud_regime_from_weather" getter="is_cloud_regime_from_weather" default="true">
+			The low cloud follows the weather: its type eases from stratus (humid, calm, stable air) or stratocumulus (wind or drier air) at night and in the morning to [member cloud_type] as the ground heats, stays stratiform while it rains, and its base follows the condensation level (see [method get_cloud_base_now]). Stratocumulus decks break into closed cells, lined up into rolls along a mixing wind. Off, [member cloud_type] and [member cloud_base_height] are used as set.
 		</member>
 		<member name="daily_temperature_range" type="float" setter="set_daily_temperature_range" getter="get_daily_temperature_range" default="10.0">
 			The range between the day's coldest and warmest air on a clear calm day (K). An overcast sky halves it and rain narrows it further (Dai, Trenberth and Karl 1999).

@@ -60,6 +60,13 @@
 				Override in a stub to replace [method canopy_wetness_at].
 			</description>
 		</method>
+		<method name="_cloud_base_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub: [method cloud_base_at].
+			</description>
+		</method>
 		<method name="_cloud_cover_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -340,6 +347,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				How wet the leaves are (0..1). Default 0.
+			</description>
+		</method>
+		<method name="cloud_base_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The low cloud's base (m above y = 0) over the point: the condensation level of the day's air (WeatherMap3D.get_cloud_base_now), lower round storms with their own bases. Default 1500. Readers: mist and fog, lightning's strike height, the snow line and orographic rain.
 			</description>
 		</method>
 		<method name="cloud_cover_at" qualifiers="const">
