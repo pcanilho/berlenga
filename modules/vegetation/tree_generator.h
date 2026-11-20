@@ -702,6 +702,11 @@ public:
 	Vector2 windthrow_direction = Vector2(0.92f, -0.38f);
 	int windthrow_band = 0; // While a windthrow stand grows its species: 1 thrown, 2 snapped, 3 leaning survivors.
 	static int _windthrow_class(float p_years);
+	// Far thinning (trees.md 9a, Paulo's pick 19 Nov): placed trees join VegetationField3D's far tail. Each stand
+	// species 5 m or larger gets a visibility range by its size (30 x its largest extent, 150-1200 m) unless it has one, and
+	// meta far_widen: the field widens the survivors (the crown across, its height less) so the canopy keeps its cover as
+	// the ranks thin. Off: no range set.
+	bool far_thinning = true;
 	float stand_forest_shade = 0.6f; // _stand_species: the shade a stand-grown tree grows in (make_stand may lower it). // While a beetle stand grows its species: 1 the red front, 2 the grey core.
 	void _grow_beetle_signs(Builder &p_bark, Builder &r_parts);
 	float cork_stripped_years = -1.0f; // Cork oak: years since the last cork harvest (5aa); -1 picks by seed, 30 or more never worked.
@@ -1030,6 +1035,8 @@ public:
 	float get_beetle_outbreak() const { return beetle_outbreak; }
 	void set_windthrow_years(float p_years) { windthrow_years = p_years < 0.0f ? -1.0f : p_years; }
 	float get_windthrow_years() const { return windthrow_years; }
+	void set_far_thinning(bool p_on) { far_thinning = p_on; }
+	bool get_far_thinning() const { return far_thinning; }
 	void set_windthrow_storm(float p_years) { windthrow_storm = MAX(p_years, 0.0f); }
 	float get_windthrow_storm() const { return windthrow_storm; }
 	void set_windthrow_direction(const Vector2 &p_dir) { windthrow_direction = p_dir.length_squared() > 1e-8f ? p_dir.normalized() : Vector2(1, 0); }
