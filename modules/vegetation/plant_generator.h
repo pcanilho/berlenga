@@ -170,6 +170,7 @@ public:
 		PRESET_CHARRED_STEMS,
 		PRESET_BURNT_TUSSOCK,
 		PRESET_REINDEER_LICHEN, // Cladonia rangiferina / stellaris: pale branched cushions on dry boreal pine floors.
+		PRESET_RASPBERRY, // Rubus idaeus: upright suckering canes of clearings and windthrows, pinnate leaves, red fruit.
 		PRESET_MAX,
 	};
 
@@ -308,6 +309,7 @@ private:
 	void _build_fireweed();
 	void _build_fire_moss();
 	void _build_reindeer_lichen();
+	void _build_raspberry();
 	void _build_charred_stems();
 	void _build_burnt_tussock();
 	void _build_moss();

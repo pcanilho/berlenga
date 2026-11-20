@@ -604,7 +604,10 @@
 		<constant name="PRESET_REINDEER_LICHEN" value="96" enum="Preset">
 			Reindeer lichen ([i]Cladonia rangiferina[/i], [i]C. stellaris[/i]): lumpy, cauliflower-like cushions 5 to 10 cm high of densely forked branches, pale ashy grey-green, the tips nodding one way. Carpets the dry boreal pine floor ([constant FLOOR_BOREAL_TAIGA]); crushed underfoot and some 40 years back after a fire.
 		</constant>
-		<constant name="PRESET_MAX" value="97" enum="Preset">
+		<constant name="PRESET_RASPBERRY" value="97" enum="Preset">
+			Raspberry (Rubus idaeus): upright suckering canes of clearings and windthrows, pinnate leaves, red fruit on the second-year canes.
+		</constant>
+		<constant name="PRESET_MAX" value="98" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">

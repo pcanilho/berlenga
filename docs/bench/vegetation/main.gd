@@ -1760,6 +1760,28 @@ func _checks() -> void:
 		if sp.get_meta("plant_preset", -1) == PlantGenerator.PRESET_DRY_GRASS:
 			med_grass = sp
 	_check("montado: dry grass in the open and under the crowns", med_grass != null and med_grass.get_density() > 0.5 and med_grass.rule_weight(PlantSpecies.RULE_SHADE, 0.0) > 0.9 and med_grass.rule_weight(PlantSpecies.RULE_SHADE, 0.7) > 0.9, [med.size(), med_grass.get_density() if med_grass else 0.0])
+	# Clearings (stand age, wind and beetle kinds): every forest floor carries fireweed, raspberry and clearing grass
+	# for the first years to two decades after a windthrow, none in old growth (-1); forest mosses thin after opening.
+	var clear_bad := []
+	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH, PlantGenerator.FLOOR_MONTANE_CONIFER, PlantGenerator.FLOOR_BOREAL_TAIGA]:
+		var found := {}
+		for sp in PlantGenerator.make_floor(fs, 1, false):
+			var p: int = sp.get_meta("plant_preset", -1)
+			var ar: Vector2 = sp.get_rule_range(PlantSpecies.RULE_STAND_AGE)
+			if p in [PlantGenerator.PRESET_FIREWEED, PlantGenerator.PRESET_RASPBERRY, PlantGenerator.PRESET_COCKSFOOT] and ar.x >= 0.0:
+				var w5: float = sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 5.0) * sp.rule_weight(PlantSpecies.RULE_DISTURBANCE, 2.0)
+				var w_fire: float = sp.rule_weight(PlantSpecies.RULE_DISTURBANCE, 1.0)
+				var w60: float = sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 60.0)
+				if w5 > 0.5 and w_fire == 0.0 and w60 == 0.0:
+					found[p] = true
+				else:
+					clear_bad.append([fs, p, w5, w_fire, w60])
+			if p == PlantGenerator.PRESET_FEATHER_MOSS or p == PlantGenerator.PRESET_MOSS:
+				if ar.x > 0.0 and sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 1.0) > 0.5:
+					clear_bad.append([fs, p, "moss not thinned at 1 y"])
+		if found.size() < 3:
+			clear_bad.append([fs, found.keys()])
+	_check("clearings: fireweed, raspberry and clearing grass after windthrow and beetles only, gone in older stands", clear_bad.is_empty(), clear_bad)
 	# Boreal taiga (FLOOR_BOREAL_TAIGA): reindeer lichen, feather moss and bilberry carpet the floor.
 	var taiga_presets := []
 	for sp in PlantGenerator.make_floor(PlantGenerator.FLOOR_BOREAL_TAIGA, 1, false):

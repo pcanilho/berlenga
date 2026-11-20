@@ -1329,3 +1329,10 @@ Design (to build after Paulo's pick):
   30 m; shade herbs and moss carpets fade in from 10 to 30 m. Uses the same edge grid as trees' make_edge.
 - Far rings: on RT devices the multimesh buffers get a CPU copy for the path tracer; far ring tiles are past the PT
   vertex-capture reach, so mark them raster-only (no CPU copy) where the renderer allows. Measure memory before/after.
+- Built 20 Nov (floors that follow forest age): PRESET_RASPBERRY (97; upright suckering canes 0.8-1.7 m, pinnate
+  leaves of 3-5 leaflets, red fruit on second-year canes; ~36k tris, impostors past range like bramble). Every
+  forest floor but hedgerow and montado appends a clearing set on RULE_STAND_AGE with RULE_DISTURBANCE (2, 3):
+  fireweed 0.5-10 y, raspberry 2-18 y, tall clearing grass (cocksfoot form, 1.3-1.8x) 1-20 y, and in broadleaf
+  stands foxglove 1-6 y and nettle 1-10 y; all with shade 0-0.5 so the closing young stand shades them out. Forest
+  mosses take stand age (6 y on, fade 10): thin on a fresh opening, full again in old growth (-1). Vegetation bench
+  "clearings" check.
