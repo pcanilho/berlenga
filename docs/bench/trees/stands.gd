@@ -846,6 +846,10 @@ func _render_plot(i: int, args: Dictionary) -> void:
 		cam.look_at(Vector3(float(cv[3]), float(cv[4]), float(cv[5])))
 		if cv.size() >= 7:
 			cam.fov = float(cv[6])
+		# Far views keep sun shadows over the whole stand.
+		var dist := cam.position.distance_to(Vector3(float(cv[3]), float(cv[4]), float(cv[5])))
+		sun.directional_shadow_max_distance = maxf(sun.directional_shadow_max_distance, dist + SIZE)
+		cam.far = maxf(cam.far, dist + SIZE * 2.0)
 	if args.has("far"):
 		f.stream_target = f.get_path_to(cam)
 		var waited := 0

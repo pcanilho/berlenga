@@ -21202,7 +21202,9 @@ Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
 		const float hide = 1.0f - Math::exp(-0.5f * area / MAX(disc, 1e-3f));
 		covered += hide * disc;
 		discs += disc;
-		const float k = Math::sqrt(MAX(hide, 0.05f));
+		// Area to cover: hide^0.5 matched from 700 m at a telephoto's 80 px a tree, but at the swap distance (about
+		// 20 px a tree) the needles' sub-pixel coverage reads denser; hide^0.35 matches there (stand plot, 20 Nov).
+		const float k = Math::pow(MAX(hide, 0.05f), 0.35f);
 		const Vector3 r = spread * k;
 		const float h = (c.y - box.position.y) / MAX(box.size.y, 1e-3f);
 		// The leaves inside a lobe shade each other: their mean light under Beer's law, (1 - e^(-kL)) / kL with
@@ -21263,7 +21265,7 @@ Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
 		}
 	}
 	const int s0 = verts.size();
-	const Color bark = bark_color.srgb_to_linear() * 0.8f;
+	const Color bark = bark_color.srgb_to_linear() * 0.55f; // In the crown's shade; at 0.8 the bare stems read pale.
 	for (int k = 0; k < 4; k++) {
 		const float a = (k + 0.5f) * float(Math::TAU) / 4.0f;
 		const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
@@ -21760,7 +21762,11 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 					hulls = hulls || (m.is_valid() && m->has_meta(SNAME("tree_far_hull")));
 				}
 				if (hulls) {
-					sp->set_meta("far_hull_range", range);
+					// Only where the tree is about 20 px tall at 1080p and 45 degrees of view (a pixel is d / 1304 there):
+					// a crown of five lobes across then has lobes of a few pixels. Swapped at the range, a 5 m tree went
+					// to hulls at 150 m, 40 px tall, and a close telephoto view showed the lobes as balls (docs framing,
+					// 20 Nov). Past the tile's reach (3 x range) it never swaps.
+					sp->set_meta("far_hull_range", MAX(range, 65.0f * extent));
 				}
 			}
 		}
