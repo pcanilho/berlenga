@@ -2249,7 +2249,8 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 					if (hull_pass) {
 						mmi->set_visibility_range_begin(ps.far_hull_range);
 						mmi->set_visibility_range_begin_margin(hull_margin);
-					} else {
+					} else if (mmi->get_visibility_range_end() <= 0.0f || ps.far_hull_range < mmi->get_visibility_range_end()) {
+						// Never later than the tile's own reach (a hull range past it would draw the trees further).
 						mmi->set_visibility_range_end(ps.far_hull_range);
 						mmi->set_visibility_range_end_margin(hull_margin);
 					}

@@ -1589,6 +1589,9 @@ void BarkDetail3D::_draw() {
 				RS::get_singleton()->multimesh_set_buffer(mm->get_rid(), v);
 				// One TLAS entry a piece over the shared shape, not a merged copy of every piece.
 				RS::get_singleton()->multimesh_set_rt_instanced(mm->get_rid(), true);
+				// Pieces off screen that look smaller than half a degree stay out of the path tracer (as RockField3D's
+				// grains): a few-centimetre flake behind the camera adds nothing a frame can see.
+				RS::get_singleton()->multimesh_set_rt_offscreen_cull(mm->get_rid(), 0.5f);
 			}
 			f.instances[s]->set_visible(n > 0);
 			piece_count += n;
