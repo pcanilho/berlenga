@@ -86,6 +86,7 @@ float WorldWeather::cloud_cover_at(const Vector3 &p_position) const WW_CALL(_clo
 float WorldWeather::high_cloud_cover_at(const Vector3 &p_position) const WW_CALL(_high_cloud_cover_at, contract_high_cloud_cover_at(p_position), 0.0f, p_position)
 float WorldWeather::mid_cloud_cover_at(const Vector3 &p_position) const WW_CALL(_mid_cloud_cover_at, contract_mid_cloud_cover_at(p_position), 0.0f, p_position)
 float WorldWeather::cloud_effector_at(const Vector3 &p_position) const WW_CALL(_cloud_effector_at, contract_cloud_effector_at(p_position), 0.0f, p_position)
+float WorldWeather::cloud_base_at(const Vector3 &p_position) const WW_CALL(_cloud_base_at, contract_cloud_base_at(p_position), 1500.0f, p_position)
 float WorldWeather::mountain_wave_at(const Vector3 &p_position) const WW_CALL(_mountain_wave_at, contract_mountain_wave_at(p_position), 0.0f, p_position)
 float WorldWeather::mountain_wave_velocity_at(const Vector3 &p_position) const WW_CALL(_mountain_wave_velocity_at, contract_mountain_wave_velocity_at(p_position), 0.0f, p_position)
 float WorldWeather::wave_cloud_density_at(const Vector3 &p_position) const WW_CALL(_wave_cloud_density_at, contract_wave_cloud_density_at(p_position), 0.0f, p_position)
@@ -210,6 +211,7 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("high_cloud_cover_at", "position"), &WorldWeather::high_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("mid_cloud_cover_at", "position"), &WorldWeather::mid_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("cloud_effector_at", "position"), &WorldWeather::cloud_effector_at);
+	ClassDB::bind_method(D_METHOD("cloud_base_at", "position"), &WorldWeather::cloud_base_at);
 	ClassDB::bind_method(D_METHOD("mountain_wave_at", "position"), &WorldWeather::mountain_wave_at);
 	ClassDB::bind_method(D_METHOD("mountain_wave_velocity_at", "position"), &WorldWeather::mountain_wave_velocity_at);
 	ClassDB::bind_method(D_METHOD("wave_cloud_density_at", "position"), &WorldWeather::wave_cloud_density_at);
@@ -252,6 +254,7 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_high_cloud_cover_at, "position");
 	GDVIRTUAL_BIND(_mid_cloud_cover_at, "position");
 	GDVIRTUAL_BIND(_cloud_effector_at, "position");
+	GDVIRTUAL_BIND(_cloud_base_at, "position");
 	GDVIRTUAL_BIND(_mountain_wave_at, "position");
 	GDVIRTUAL_BIND(_mountain_wave_velocity_at, "position");
 	GDVIRTUAL_BIND(_wave_cloud_density_at, "position");

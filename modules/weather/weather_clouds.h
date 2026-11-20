@@ -98,6 +98,11 @@ struct State {
 	float mid_scale = 12000.0f; // m, its patches
 	Vector2 mid_drift; // m
 	Vector2 mid_dir = Vector2(1, 0); // unit, the wind at its height
+	// Stratocumulus (round 6): closed cells about sc_cell metres across, stretched sc_roll times along sc_dir (the
+	// boundary layer's wind) into rolls when it blows.
+	Vector2 sc_dir = Vector2(1, 0);
+	float sc_roll = 1.0f;
+	float sc_cell = 1800.0f;
 	float cell_size = 1200.0f; // m, the cumulus cells (cells_at), each holding at most one cloud
 	// Density effectors (WeatherMap3D.add_cloud_effector): spheres (world x, y, z, radius m) whose strength adds
 	// cloud (> 0: a plume feeding a cumulus) or clears it (< 0: a blast's hole), falling off linearly to the edge.
@@ -157,6 +162,11 @@ Vector3 shape_coord(const State &p_state, const Vector3 &p_pos);
 float shape_at(const State &p_state, const Vector3 &p_pos);
 // The density effectors at a point: the added share (> 0) or the cleared share (< 0), -1..1.
 float effector_at(const State &p_state, const Vector3 &p_pos);
+// Stratocumulus closed cells at x, z: 0 on the cells' borders to 1 in their middles (Worley F2 - F1 on a jittered
+// grid, in the wind's frame); and how much of the type is stratocumulus (0..1).
+float sc_cells_at(const State &p_state, Vector2 p_xz);
+float sc_share(float p_type);
+float layered_share(float p_type);
 // Wave clouds: the dew point depression (K) of the air at a point (the model's profile, moistened by the mid and
 // high layers' cover), the lift (m) that saturates it, and the wave cloud's extinction (1/m) there.
 float wave_dew_depression_at(const State &p_state, const Vector3 &p_pos);

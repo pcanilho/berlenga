@@ -388,3 +388,27 @@ As built:
 - Shading (later 20 Nov): the sun read through the whole lens (to 700 m) and the sky light shaded by the cloud
   above the point, so crowns are lit and bellies darker. Next: stacked plates showing more clearly, iridescence near the
   sun; then a docs frame over real terrain from the showcase scene.
+
+## Round 6: stratus and stratocumulus from the weather (20 Nov 2026)
+
+Research: the boundary layer's cloud is layered while the air is stable and convective once the ground heats
+(Stull 1988, 11.2): morning stratus burns off into cumulus, evening cumulus spreads into stratocumulus. Wind or
+drier air mixes a stratus layer into stratocumulus (Wood 2012, Mon. Wea. Rev. 140). Stratocumulus is closed cells
+1.5 to 3 km across a 300 to 500 m deep layer, thick in the middle and thin at the sinking rim, lined into rolls
+along a mixing wind (Atkinson and Zhang 1996). The base sits at the lifting condensation level, 125 m per kelvin
+of dew point depression (Espy), so it rises through the day as the air dries.
+
+- Type from the weather (`WeatherMap3D.cloud_regime_from_weather`, on): heating H = the day's warming curve times
+  (1 - 0.7 cover), 1 with no clock. Stable type = 0.05 (stratus) in calm humid air, 0.22 (stratocumulus) once the
+  wind passes about 6 m/s or the air dries below 0.9. Convection (H, cut by rain) blends to `cloud_type`, the
+  afternoon's own type. While it rains the layer stays nimbostratus. `get_convective_heating`.
+- Base: `cloud_base_height` plus the condensation level now minus that of the default air (15 C, 0.7), never under
+  the ground below the camera plus 30 m (a base on the ground is fog, the mist's job). `get_cloud_base_now`;
+  contract `WorldWeather.cloud_base_at` (default 1500).
+- Shape: below type 0.36 the single clouds give way to one sheet (`layered_share`), whose noise is lifted so an
+  overcast layer closes; it reaches down to a broken sky (cover 0.15 to 0.45). Stratocumulus modulates the sheet
+  by Worley cells (F2 - F1) in the wind frame, 1800 m, stretched up to 3x into rolls by the wind. Cumulus
+  (type above 0.36) is unchanged.
+- Bench: weather `--test=clouds` prints the type, heating and base over a day for calm, windy, dry and rainy air;
+  `--view=clouds --type=0.05|0.2 --wind=8`. Raster and PT match (640 px).
+- Next: cumulus base detail (per cloud sag, scud under humid bases), cirrocumulus and cirrostratus.
