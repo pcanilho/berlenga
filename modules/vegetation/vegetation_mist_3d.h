@@ -66,6 +66,12 @@ class VegetationMist3D : public Node3D {
 		Vector3 position = Vector3(Math::INF, 0, 0);
 		Vector3 velocity = Vector3(Math::INF, 0, 0);
 		float smoke = -1.0f;
+		// The weather at the cell, read when the cell moves or the level refreshes (MIST_LEVEL_PERIOD), not every
+		// frame: wet ground, and the water's surface with the steam fog its warmth would make in calm air.
+		Vector2i read_key = Vector2i(INT32_MAX, INT32_MAX);
+		float wet = 0.0f;
+		float water = -Math::INF;
+		float steam = 0.0f; // before the wind
 	};
 	void _cell_off(Cell &p_cell);
 	LocalVector<Cell> cells;

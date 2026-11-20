@@ -86,6 +86,13 @@ float VegetationMist3D::_ground_height(const Vector3 &p_at) const {
 			}
 		}
 	}
+	// The world's ground answers directly (a heightfield read) where a ground system is in the scene.
+	if (WorldContracts::ground()->has_provider()) {
+		const float h = WorldContracts::ground()->height_at(Vector3(p_at.x, p_at.y + 500.0f, p_at.z));
+		if (Math::is_finite(h)) {
+			return h;
+		}
+	}
 	if (!is_inside_tree() || get_world_3d().is_null()) {
 		return p_at.y;
 	}
@@ -264,8 +271,10 @@ void VegetationMist3D::_step(float p_delta) {
 		return;
 	}
 	level_timer -= p_delta;
+	bool reread = false;
 	if (level_timer <= 0.0f) {
 		level_timer = MIST_LEVEL_PERIOD;
+		reread = true;
 		level = mist_amount >= 0.0f ? MIN(mist_amount, 2.0f) : weather_mist_level();
 	}
 	const Node3D *t = _target();
@@ -305,20 +314,28 @@ void VegetationMist3D::_step(float p_delta) {
 			// beyond instead of ending at a line.
 			const float edge = 1.0f - Math::smoothstep(mist_range * 0.6f, mist_range + mist_cell * 0.5f, off.length());
 			const Vector3 cell_at((key.x + 0.5f) * mist_cell, g.x, (key.y + 0.5f) * mist_cell);
-			float local = 1.0f;
-			if (wm) {
-				local += 0.5f * CLAMP(wm->surface_wetness_at(cell_at), 0.0f, 1.0f); // wet ground mists more
+			if (reread || c.read_key != key) {
+				c.read_key = key;
+				c.wet = 0.0f;
+				c.water = -Math::INF;
+				c.steam = 0.0f;
+				if (wm) {
+					c.wet = CLAMP(wm->surface_wetness_at(cell_at), 0.0f, 1.0f);
+					c.water = WorldContracts::water()->height_at(cell_at + Vector3(0, 2.0f, 0));
+					if (Math::is_finite(c.water) && c.water > g.x - 0.5f) {
+						const float excess = wm->water_temperature() - wm->air_temperature_at(Vector3(cell_at.x, c.water, cell_at.z));
+						c.steam = Math::smoothstep(3.0f, 10.0f, excess) * Math::smoothstep(0.5f, 0.8f, wm->air_humidity_at(cell_at));
+					}
+				}
 			}
+			const float local = 1.0f + 0.5f * c.wet; // wet ground mists more
 			float smoke = level * g.y * local * edge;
 			// Steam fog over open water (sea smoke): air much colder than the water takes up its vapour and
 			// condenses it at once, in any light, while a breeze leaves it lying (Saunders 1964; ten or more
 			// degrees for thick steam). The water lags the season (get_water_temperature).
-			const float water = wm ? WorldContracts::water()->height_at(cell_at + Vector3(0, 2.0f, 0)) : -Math::INF;
-			if (Math::is_finite(water) && water > g.x - 0.5f) {
-				const float excess = wm->water_temperature() - wm->air_temperature_at(Vector3(cell_at.x, water, cell_at.z));
-				const float steam = Math::smoothstep(3.0f, 10.0f, excess) * (1.0f - Math::smoothstep(6.0f, 12.0f, wind.length())) * Math::smoothstep(0.5f, 0.8f, wm->air_humidity_at(cell_at));
-				g.x = water;
-				smoke = MAX(smoke, steam * edge);
+			if (Math::is_finite(c.water) && c.water > g.x - 0.5f) {
+				g.x = c.water;
+				smoke = MAX(smoke, c.steam * (1.0f - Math::smoothstep(6.0f, 12.0f, wind.length())) * edge);
 			}
 			// The emitter couples the layer towards its level, so it holds the mist where the weather
 			// wants it and refills what a walker stirred away. A tiny level keeps it coupled, so the

@@ -637,8 +637,25 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 	if (stand) {
 		stand_seen = stand->get_stand_generation();
 	}
+	// The field's species, and the canopy field's trees when a species here reads the forest edge (the edge follows
+	// their stand stages).
+	LocalVector<Ref<Biome>> biomes;
 	if (biome.is_valid()) {
-		const TypedArray<PlantSpecies> list = biome->get_species();
+		biomes.push_back(biome);
+		const VegetationField3D *other = canopy_field.is_empty() ? nullptr : Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field));
+		if (other && other != this && other->biome.is_valid()) {
+			const TypedArray<PlantSpecies> own = biome->get_species();
+			for (int i = 0; i < own.size(); i++) {
+				const Ref<PlantSpecies> sp = own[i];
+				if (sp.is_valid() && sp->uses_forest_edge()) {
+					biomes.push_back(other->biome);
+					break;
+				}
+			}
+		}
+	}
+	for (const Ref<Biome> &b : biomes) {
+		const TypedArray<PlantSpecies> list = b->get_species();
 		for (int i = 0; i < list.size(); i++) {
 			const Ref<PlantSpecies> sp = list[i];
 			if (sp.is_null() || !sp->uses_stand()) {
@@ -967,6 +984,59 @@ bool VegetationField3D::_context_only(const PlantSpecies *p_sp) {
 		}
 	}
 	return false;
+}
+
+template <typename T>
+static void _copy_vector(LocalVector<T> &r_to, const LocalVector<T> &p_from) {
+	r_to.resize(p_from.size());
+	for (uint32_t i = 0; i < p_from.size(); i++) {
+		r_to[i] = p_from[i];
+	}
+}
+
+void VegetationField3D::_copy_context(const PlaceSetup &p_setup) {
+	_copy_vector(context.burn, p_setup.burn);
+	context.burn_nx = p_setup.burn_nx;
+	context.burn_ny = p_setup.burn_ny;
+	context.burn_rect = p_setup.burn_rect;
+	_copy_vector(context.stand_rules, p_setup.stand_rules);
+	_copy_vector(context.stand_age, p_setup.stand_age);
+	_copy_vector(context.stand_kind, p_setup.stand_kind);
+	context.stand_nx = p_setup.stand_nx;
+	context.stand_ny = p_setup.stand_ny;
+	context.stand_rect = p_setup.stand_rect;
+	_copy_vector(context.edge, p_setup.edge);
+	context.edge_nx = p_setup.edge_nx;
+	context.edge_ny = p_setup.edge_ny;
+	context.edge_rect = p_setup.edge_rect;
+	context_valid = true;
+}
+
+// How much a context-only species (_context_only) grows at a point by the last setup's grids, as placement weighs it:
+// burn age, stand age and kind, forest edge. 0 without a setup.
+float VegetationField3D::_context_weight(const PlantSpecies *p_sp, const Vector2 &p_xz) const {
+	if (!context_valid) {
+		return 0.0f;
+	}
+	float w = 1.0f;
+	if (p_sp->uses_burn_age()) {
+		w *= p_sp->rule_weight(PlantSpecies::RULE_BURN_AGE, context.burn_at(p_xz));
+	}
+	if (w > 0.0f && p_sp->uses_stand()) {
+		Vector2 a, k;
+		float af, kf;
+		p_sp->get_stand_rules(a, af, k, kf);
+		const int sc = context.stand_cell(p_xz);
+		w *= PlantSpecies::stand_weight(a, af, k, kf, sc < 0 ? -1.0f : context.stand_age[sc], sc < 0 ? 0 : int(context.stand_kind[sc]));
+	}
+	if (w > 0.0f && p_sp->uses_forest_edge()) {
+		Vector2 r;
+		float f;
+		p_sp->get_forest_edge_rule(r, f);
+		const float e = context.edge.is_empty() && r.y >= 10000.0f ? r.y : context.edge_at(p_xz);
+		w *= f <= 0.0f ? ((e >= r.x && e <= r.y) ? 1.0f : 0.0f) : Math::smoothstep(r.x - f, r.x, e) * (1.0f - Math::smoothstep(r.y, r.y + f, e));
+	}
+	return w;
 }
 
 float VegetationField3D::PlaceSetup::burn_at(const Vector2 &p_xz) const {
@@ -4253,6 +4323,7 @@ Error VegetationField3D::populate() {
 	if (!_make_setup(setup)) {
 		return ERR_UNCONFIGURED;
 	}
+	_copy_context(setup);
 	_build_cover(setup);
 	const Rect2 rect = setup.rect;
 	const Rect2i tiles(Vector2i(int(Math::floor(rect.position.x / tile_size)), int(Math::floor(rect.position.y / tile_size))),
@@ -4543,10 +4614,14 @@ float VegetationField3D::sward_at(const Vector3 &p_global_position, Color *r_lit
 			continue;
 		}
 		const float lit = r_litter ? sp->get_litter_color().a : 0.0f;
-		if ((sp->get_sward_shade() <= 0.0f && lit <= 0.0f) || _context_only(sp.ptr())) {
+		if (sp->get_sward_shade() <= 0.0f && lit <= 0.0f) {
 			continue;
 		}
 		float v = sp->get_density() * sp->get_suitability(map, p_global_position);
+		if (v > 0.0f && _context_only(sp.ptr())) {
+			// Edge brambles, clearing raspberry, burn regrowth: only where their context holds (the last setup's grids).
+			v *= _context_weight(sp.ptr(), Vector2(p_global_position.x, p_global_position.z));
+		}
 		if (v > 0.0f && sp->uses_shade()) {
 			if (shade < 0.0f) {
 				const Vector2 xz(p_global_position.x, p_global_position.z);
@@ -5119,6 +5194,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 		}
 		stream_setup_valid = true;
 		impostors_traced = _path_traced();
+		_copy_context(stream_setup);
 		_build_cover(stream_setup);
 	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
@@ -5231,6 +5307,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 			}
 		}
 		burn_dirty = Rect2();
+		_copy_context(su);
 	}
 	// The stand changed: only where a species crossed its stand range are the tiles placed again.
 	if (stand_dirty.has_area() && stream_jobs.is_empty()) {
@@ -5266,6 +5343,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 			}
 		}
 		stand_dirty = Rect2();
+		_copy_context(su);
 	}
 	struct Pending {
 		float d;

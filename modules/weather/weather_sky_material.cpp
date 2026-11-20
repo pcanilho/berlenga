@@ -539,12 +539,41 @@ vec4 march_cirrus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	float lod = max(log2(t * p_pixel / (2000.0 / 128.0)), 0.0);
 	vec4 dn = textureLod(cloud_detail, fq, lod);
 	float fib = smoothstep(0.25, 0.85, mix(dn.r, dn.g, 0.4));
+	// Cirrostratus: where the sheet is extensive (a warm front's shield, an anvil) the fibres merge into a veil,
+	// still faintly fibrous (WMO Atlas Cs fibratus/nebulosus), and the halos are its own.
+	float cs = smoothstep(0.55, 0.9, c);
+	fib = mix(fib, 0.7 + 0.3 * fib, cs);
+	// Cirrocumulus: under unstable shear (cloud_high_cc, from the Richardson number) patches of the thinner sheet
+	// break into grains in ripples across the wind, about 200 m apart (near one degree seen from the ground):
+	// the detail noise's billows, 1.8 km over 128 texels along the wind and 2.7 km across it, read half a mip soft.
+	if (cloud_high_cc > 0.001) {
+		float patch = smoothstep(0.45, 0.65, wc_value_noise((xz - cloud_high_drift) / 14000.0 + vec2(41.3, 7.9)));
+		float ccs = cloud_high_cc * patch * (1.0 - cs);
+		if (ccs > 0.001) {
+			// No lattice (the texture tiles every 1.8 km): two reads at scales 1.37 apart and rotated 23 degrees,
+			// blended by a 6 km noise, so the grain size wanders; both warped by the texture's own coarse octave
+			// (domain warping) so rows bend, part and merge; and the threshold wanders on 2.5 km, so the ripples
+			// break into gaps in places and run together in others (Atlas: Cc in patches, of irregular grains).
+			vec2 aq = aw + (textureLod(cloud_detail, vec3(aw / 9000.0, 0.29), 0.0).rg - 0.5) * 700.0;
+			vec2 aq2 = mat2(vec2(0.921, 0.391), vec2(-0.391, 0.921)) * aq * 1.37 + vec2(517.0, 1301.0);
+			float glod = max(log2(t * p_pixel / (1800.0 / 128.0)) + 0.5, 0.0);
+			vec4 ga = textureLod(cloud_detail, vec3(aq.x / 1800.0, aq.y / 2700.0, 0.83 + cloud_churn.z * 0.3), glod);
+			vec4 gb = textureLod(cloud_detail, vec3(aq2.x / 1800.0, aq2.y / 2700.0, 0.47 + cloud_churn.z * 0.3), glod + 0.45);
+			vec2 nq = (xz - cloud_high_drift) / 6000.0;
+			float wsel = smoothstep(0.3, 0.7, wc_value_noise(nq + vec2(3.7, 19.1)));
+			float gv = mix(mix(ga.b, ga.a, 0.35) * mix(0.8, 1.2, ga.r), mix(gb.b, gb.a, 0.35) * mix(0.8, 1.2, gb.r), wsel);
+			float k = (wc_value_noise(nq * 2.4 + vec2(23.3, 5.1)) - 0.5) * 0.45;
+			// Grains with a soft edge: ice grains fray, and a hard threshold drew them as blocks.
+			float grain = smoothstep(0.3 + k, 0.85 + k, gv);
+			fib = mix(fib, grain, ccs);
+		}
+	}
 	float tau_v = cloud_high_tau * c * fib * 2.0 / max(abs(dot(rd, up)), 0.05);
 	float tau_s = cloud_high_tau * c / max(dot(sun_dir, up), 0.05);
 	float cos_theta = dot(rd, sun_dir);
 	// Halos where the ice is columns falling at random: patches of sheet tens of kilometres across, so a ring shows
 	// as arcs across some of the sky and not everywhere.
-	float halo = cloud_halo_strength * smoothstep(0.35, 0.65, wc_value_noise((xz - cloud_high_drift) / 25000.0 + vec2(13.1, 71.7)));
+	float halo = cloud_halo_strength * mix(0.7, 1.4, cs) * smoothstep(0.35, 0.65, wc_value_noise((xz - cloud_high_drift) / 25000.0 + vec2(13.1, 71.7)));
 	vec3 light = sun_radiance * (exp(-0.5 * tau_s) * cirrus_phase(cos_theta, halo) + (1.0 - exp(-0.5 * tau_s)) * (2.0 / (4.0 * PI))) + ambient_top;
 	float tr = exp(-tau_v);
 	r_t = t;
@@ -795,8 +824,97 @@ vec4 cloud_over(vec4 a, float da, vec4 b, float db, out float r_depth) {
 	return o;
 }
 
+// Rain shafts under the storms' bases, seen from afar (near the camera the rain's own haze and drops draw it).
+// Rain's visible extinction from its rate, sigma = 0.31 R^0.67 per km (Atlas 1953; the visibility in rain), with the
+// storm's Gaussian rain core (as the map's rain field) broken into curtains by two octaves of noise, slanted
+// downwind as the drops fall (about 7 m/s). Lit by the light under the storm (the sky's light below the clouds,
+// darkened under the storm's own shield) and by the sun where it reaches below the base, scattered forward by
+// the drops (g 0.6); albedo 1.
+vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_bottom, float jitter, out float r_t) {
+	r_t = 0.0;
+	vec3 col = vec3(0.0);
+	float tr = 1.0;
+	float wsum = 0.0;
+	float dsum = 0.0;
+	for (int i = 0; i < 8; i++) {
+		if (i >= cloud_storm_count) {
+			break;
+		}
+		float rain = cloud_storm_rain[i];
+		if (rain < 0.5) {
+			continue;
+		}
+		vec4 s = cloud_storms[i];
+		float base = (cloud_storm_base[i] > 0.0 ? cloud_storm_base[i] : cloud_base_height);
+		// The chord of the ray through a column 2.2 core radii wide (centred where the drops at mid-height are).
+		vec2 c = s.xy - cloud_rain_slant * (0.5 * base);
+		vec2 o2 = cam.xz - c;
+		vec2 d2 = rd.xz;
+		float a = dot(d2, d2);
+		if (a < 1e-6) {
+			continue;
+		}
+		float rad = 2.2 * s.z + length(cloud_rain_slant) * 0.5 * base;
+		float b = dot(o2, d2);
+		float disc = b * b - a * (dot(o2, o2) - rad * rad);
+		if (disc <= 0.0) {
+			continue;
+		}
+		float sq = sqrt(disc);
+		float t0 = max((-b - sq) / a, 0.0);
+		float t1 = (-b + sq) / a;
+		if (rd.y > 0.0) {
+			t1 = min(t1, (base - cam.y) / rd.y);
+		} else if (cam.y > base) {
+			t0 = max(t0, (base - cam.y) / rd.y);
+		}
+		if (t1 <= t0) {
+			continue;
+		}
+		const int n = 14;
+		float dt = (t1 - t0) / float(n);
+		for (int k = 0; k < n; k++) {
+			float t = t0 + (float(k) + jitter) * dt;
+			vec3 p = cam + rd * t;
+			if (p.y > base || p.y < -50.0) {
+				continue;
+			}
+			// Where the drops at p left the base: upwind by the slant times their fall.
+			vec2 q = p.xz - cloud_rain_slant * (base - p.y);
+			vec2 dq = (q - s.xy) / s.z;
+			float r2 = dot(dq, dq);
+			// A core with an edge (heavy rain falls in shafts a few km across, not a smooth bell).
+			float r = rain * exp(-r2 * r2);
+			if (r < 0.05) {
+				continue;
+			}
+			vec2 qn = q - cloud_drift;
+			float curt = 0.6 * wc_value_noise(qn / 900.0 + vec2(float(i) * 13.7, 3.1)) + 0.4 * wc_value_noise(qn / 260.0 + vec2(7.3, float(i) * 5.9));
+			r *= mix(0.08, 2.0, smoothstep(0.3, 0.75, curt)) * smoothstep(0.0, 120.0, base - p.y);
+			float sigma = 0.31e-3 * pow(r, 0.67);
+			// The light: under the storm's shield the sky's light is cut to about a third; the sun where the cover
+			// toward it over the base is thin.
+			float shield = exp(-r2 / (1.6 * 1.6)) * s.w;
+			vec2 qs = p.xz + sun_dir.xz / max(sun_dir.y, 0.05) * (base - p.y);
+			float sun_vis = exp(-6.0 * wc_cover_type(qs).x) * step(0.0, sun_dir.y);
+			float g = 0.6;
+			float mu = dot(rd, sun_dir);
+			float hg = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
+			vec3 light = ambient_bottom * mix(1.0, 0.35, shield) + sun_radiance * sun_vis * hg;
+			float st = exp(-sigma * dt);
+			float w = tr * (1.0 - st);
+			col += light * w;
+			dsum += t * w;
+			wsum += w;
+			tr *= st;
+		}
+	}
+	r_t = wsum > 0.0 ? dsum / wsum : 0.0;
+	return vec4(col, tr);
+}
+
 // The three layers in the order the camera meets them: low cumulus, the mid slab, the high sheet.
-vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, int steps, float jitter, float p_pixel, out float r_depth) {
+vec4 march_cloud_layers(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, int steps, float jitter, float p_pixel, out float r_depth) {
 	// The mid sheet over the cumulus dims their sun (as it shades the ground in the shadow bake): read once a
 	// pixel, where the view ray crosses the middle of the cumulus layer (at most 30 km out), followed up the sun
 	// to the sheet. Two-stream transmission, as the bake: most of the light comes through scattered, not cut.
@@ -850,6 +968,22 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 		o = cloud_over(o, d, low, d_low, r_depth);
 	}
 	return o;
+}
+
+// The cloud layers and the storms' rain shafts below them, nearer first.
+vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, int steps, float jitter, float p_pixel, out float r_depth) {
+	float d;
+	vec4 o = march_cloud_layers(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, steps, jitter, p_pixel, d);
+	r_depth = d;
+	if (cloud_storm_count == 0) {
+		return o;
+	}
+	float d_rain;
+	vec4 rain = march_rain_shafts(cam, rd, sun_dir, sun_radiance, ambient_bottom, jitter, d_rain);
+	if (rain.a >= 0.999) {
+		return o;
+	}
+	return (d_rain < d || o.a >= 0.999) ? cloud_over(rain, d_rain, o, d, r_depth) : cloud_over(o, d, rain, d_rain, r_depth);
 }
 
 // Lightning inside the clouds. Each flash is a point source whose light diffuses through the cloud as
@@ -1184,6 +1318,20 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 		bases.write[i] = i < p_state.storm_count ? p_state.storm_base[i] : 0.0f;
 	}
 	rs->material_set_param(m, "cloud_storm_base", bases);
+	{
+		PackedFloat32Array rain;
+		PackedFloat32Array outflow;
+		rain.resize(WeatherClouds::MAX_STORMS);
+		outflow.resize(WeatherClouds::MAX_STORMS);
+		for (int i = 0; i < WeatherClouds::MAX_STORMS; i++) {
+			rain.write[i] = i < p_state.storm_count ? p_state.storm_rain[i] : 0.0f;
+			outflow.write[i] = i < p_state.storm_count ? p_state.storm_outflow[i] : 0.0f;
+		}
+		rs->material_set_param(m, "cloud_storm_rain", rain);
+		rs->material_set_param(m, "cloud_storm_outflow", outflow);
+		rs->material_set_param(m, "cloud_rain_slant", p_state.rain_slant);
+		rs->material_set_param(m, "cloud_storm_dir", p_state.storm_dir);
+	}
 	rs->material_set_param(m, "cloud_base_min", p_state.base_min);
 	{
 		PackedVector4Array eff;
@@ -1223,6 +1371,7 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	rs->material_set_param(m, "cloud_high_scale", p_state.high_scale);
 	rs->material_set_param(m, "cloud_high_drift", p_state.high_drift);
 	rs->material_set_param(m, "cloud_high_dir", p_state.high_dir);
+	rs->material_set_param(m, "cloud_high_cc", p_state.high_cc);
 	rs->material_set_param(m, "cloud_cell_size", p_state.cell_size);
 	rs->material_set_param(m, "cloud_mid_cover", p_state.mid_cover);
 	rs->material_set_param(m, "cloud_mid_height", p_state.mid_height);

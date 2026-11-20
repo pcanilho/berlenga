@@ -45,6 +45,7 @@
 namespace WeatherClouds {
 
 constexpr int MAX_STORMS = 8;
+constexpr float SHELF_DROP = 450.0f; // m, a shelf cloud's greatest drop below its storm's base
 constexpr int MAX_CLOUD_LIGHTS = 8;
 constexpr int MAX_CLOUD_EFFECTORS = 8;
 constexpr int SHAPE_SIZE = 128; // texels across the base shape noise (tiles)
@@ -77,6 +78,13 @@ struct State {
 	// Each storm's own cloud base (m above y = 0; <= 0: base_height), as a fire cloud's at its plume's
 	// condensation level. Columns round a storm blend to it as they join its cloud shield (base_at()).
 	float storm_base[MAX_STORMS] = {};
+	// Round 8: each storm's peak rain (mm/h, times its growth) and downburst outflow (m/s). The outflow's gust
+	// front lifts a shelf cloud ahead of the storm, along storm_dir (the way it moves); the sky draws the rain as
+	// shafts under the base.
+	float storm_rain[MAX_STORMS] = {};
+	float storm_outflow[MAX_STORMS] = {};
+	Vector2 storm_dir = Vector2(1, 0); // unit, the way the storms move (the steering wind)
+	Vector2 rain_slant; // horizontal m per m of fall: the low wind over the drops' fall speed (about 7 m/s)
 	// The high cloud layer (cirrus, cirrostratus; docs/ideas/clouds.md): a thin sheet at high_height, its cover
 	// eased by the weather map (get_high_cloud_cover_at), its optical depth at full cover high_tau (ice clouds
 	// are 0.03 to 3), drifting with the faster wind aloft and streaked along high_dir. Storm cells spread an
@@ -87,6 +95,9 @@ struct State {
 	float high_scale = 24000.0f; // m, its patches
 	Vector2 high_drift; // m
 	Vector2 high_dir = Vector2(1, 0); // unit, the wind aloft
+	// Cirrocumulus share (round 7): how unstable the shear at the high layer leaves it, 0 (smooth cirrus) to 1
+	// (rippled cirrocumulus in patches); from the gradient Richardson number (WeatherMap3D).
+	float high_cc = 0.0f;
 	// The mid layer (altocumulus, altostratus; docs/ideas/clouds.md): a slab mid_thickness deep centred on
 	// mid_height, its cover eased by the weather map (get_mid_cloud_cover_at), its vertical optical depth at full
 	// cover mid_tau, drifting with the wind aloft at its height; the sky breaks it into cloudlets in rows across
@@ -166,6 +177,7 @@ float effector_at(const State &p_state, const Vector3 &p_pos);
 // grid, in the wind's frame); and how much of the type is stratocumulus (0..1).
 float sc_cells_at(const State &p_state, Vector2 p_xz);
 float sc_share(float p_type);
+float shelf_drop(const State &p_state, int p_storm, Vector2 p_xz);
 float layered_share(float p_type);
 // Wave clouds: the dew point depression (K) of the air at a point (the model's profile, moistened by the mid and
 // high layers' cover), the lift (m) that saturates it, and the wave cloud's extinction (1/m) there.

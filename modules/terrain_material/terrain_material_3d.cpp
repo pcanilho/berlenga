@@ -181,6 +181,45 @@ String TerrainMaterial3D::get_shader_code() const {
 	c += "// TerrainMaterial3D (docs/ideas/terrain-material.md). Generated: edit the material, not this code.\n";
 	c += "shader_type spatial;\nrender_mode cull_back;\n\n";
 	c += TerrainGenerator3D::get_geology_shader_code();
+	c += TerrainGenerator3D::get_sand_shader_code();
+	c += R"(
+// The dune tone's noise: the same hash and value noise as the ground's (material.cpp ground_ripple_hash and
+// ground_ripple_vn), so the tone meets the GroundSurface3D patch's without a seam.
+float tm_dune_hash(ivec2 p_c, uint p_s) {
+	uint h = (uint(p_c.x) * 0x8da6b343u) ^ (uint(p_c.y) * 0xd8163841u) ^ (p_s * 0xcb1ab31fu);
+	h = (h ^ (h >> 16u)) * 0x7feb352du;
+	h = (h ^ (h >> 15u)) * 0x846ca68bu;
+	h ^= h >> 16u;
+	return float(h >> 8u) * (1.0 / 16777216.0);
+}
+float tm_dune_vn(vec2 p_p, uint p_s) {
+	vec2 i = floor(p_p);
+	vec2 f = p_p - i;
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	ivec2 c = ivec2(i);
+	return mix(mix(tm_dune_hash(c, p_s), tm_dune_hash(c + ivec2(1, 0), p_s), u.x), mix(tm_dune_hash(c + ivec2(0, 1), p_s), tm_dune_hash(c + ivec2(1, 1), p_s), u.x), u.y);
+}
+// Dune-scale sand colour (docs/ideas/sand.md, "Dune-scale tone"): three of the changes a dune field shows from afar.
+// Rubefaction: iron-oxide coats redden grains that have lain still for millennia (Walker 1979; Pye and Tsoar 2009),
+// patchy over hundreds of metres and strongest on the stable sand of thin flanks and interdunes. Interdune flats: the
+// wind strips the fine sand and leaves a coarser, darker lag (Sharp 1963; Lancaster 1995). Slip faces: grain flows of
+// fine, well-sorted sand, paler than the windward slope (Bagnold 1941). p_depth: the loose sand's depth (m), below 0
+// off the dune fields or unknown (only the slip faces show there).
+vec3 tm_dune_tone(vec2 p_xz, float p_normal_y, float p_depth) {
+	vec3 t = vec3(1.0);
+	if (p_depth >= 0.0) {
+		float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+		float age = smoothstep(0.25, 0.7, 0.65 * tm_dune_vn(p_xz / 420.0, 41u) + 0.35 * tm_dune_vn(p_xz / 130.0, 42u));
+		t *= mix(vec3(1.0), vec3(1.15, 0.93, 0.78), age * (0.7 + 0.3 * thin));
+		float lag = thin * smoothstep(0.95, 0.985, p_normal_y) * mix(0.45, 1.0, tm_dune_vn(p_xz / 23.0, 43u));
+		t *= mix(vec3(1.0), vec3(0.72, 0.7, 0.68), lag);
+	}
+	// Slopes of about 29 to 33 degrees: the slip face at the sand's repose.
+	float slip = smoothstep(0.78, 0.84, p_normal_y) * (1.0 - smoothstep(0.88, 0.93, p_normal_y));
+	t *= mix(vec3(1.0), vec3(1.08, 1.07, 1.05), slip);
+	return t;
+}
+)";
 	if (grass_tint_enabled) {
 		c += GrassField3D::get_ground_shader_code();
 	}
@@ -242,6 +281,7 @@ float tm_sky_irradiance(vec4 a, vec4 b, float c, vec3 n) {
 	}
 	c += R"(
 uniform bool tm_geology = true;
+uniform bool tm_dune_tone_on = true;
 uniform float tm_sea_level = 0.0;
 uniform float tm_beach_height = 2.5;
 uniform float tm_rock_cos = 0.766;
@@ -1395,6 +1435,10 @@ void fragment() {
 		float h;
 		tm_sand(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		d += tm_sand_grain(wp, tm_fp0, a);
+		// The dune field's colour at this scale: redder old sand, coarse dark interdune flats, pale slip faces.
+		if (tm_dune_tone_on) {
+			a *= tm_dune_tone(wp.xz, wn.y, terrain_sand_depth(wp));
+		}
 		alb[4] = a;
 		rgh[4] = r;
 		dns[4] = d;
@@ -1922,6 +1966,7 @@ void fragment() {
 
 void TerrainMaterial3D::_update_params() {
 	set_shader_parameter("tm_geology", geology_enabled);
+	set_shader_parameter("tm_dune_tone_on", sand_dune_tone);
 	set_shader_parameter("tm_sea_level", sea_level);
 	set_shader_parameter("tm_beach_height", beach_height);
 	set_shader_parameter("tm_rock_cos", Math::cos(Math::deg_to_rad(rock_slope)));
@@ -2035,6 +2080,7 @@ Ref<TerrainMaterialLayer> TerrainMaterial3D::get_layer(Layer p_layer) const {
 	}
 
 MAT_SETTER(bool, geology_enabled, p_value)
+MAT_SETTER(bool, sand_dune_tone, p_value)
 MAT_SETTER(float, sea_level, p_value)
 MAT_SETTER(float, beach_height, MAX(p_value, 0.0f))
 MAT_SETTER(float, rock_slope, CLAMP(p_value, 0.0f, 90.0f))
@@ -2107,6 +2153,7 @@ void TerrainMaterial3D::_bind_methods() {
 		ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, String(LAYER_NAMES[i]) + "_layer", PROPERTY_HINT_RESOURCE_TYPE, "TerrainMaterialLayer"), "set_layer", "get_layer", i);
 	}
 	BIND_PROP(Variant::BOOL, geology_enabled, is_geology_enabled, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::BOOL, sand_dune_tone, is_sand_dune_tone, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, sea_level, get_sea_level, PROPERTY_HINT_NONE, "suffix:m")
 	BIND_PROP(Variant::FLOAT, beach_height, get_beach_height, PROPERTY_HINT_RANGE, "0,20,0.01,suffix:m")
 	BIND_PROP(Variant::FLOAT, rock_slope, get_rock_slope, PROPERTY_HINT_RANGE, "0,90,0.1,degrees")

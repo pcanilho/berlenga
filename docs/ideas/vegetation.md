@@ -1351,3 +1351,7 @@ Design (to build after Paulo's pick):
   for an existing mirror, a missing custom AABB or rt_instanced. Grass bench --far-grass=rings PT (320x180, 1 spp):
   static memory 603 -> 515 MB, video 6619 -> 6554 MB; images equal within 1-spp noise (block means 85.35 / 85.09).
   gpu_multimesh --test PASS in gpu, cpu and gpu+taa modes, gpu and cpu PT frames identical.
+- Fixed 20 Nov: the sward (GrassField3D.undergrowth_field) thins under context-only plants again, weighed by the
+  last setup's burn, stand and edge grids (VegetationField3D._context_weight; the field keeps a copy, refreshed when
+  burns or the stand change). A floor field reading its canopy field's edge now also reads the stand for those
+  trees' stages (the edge moved round a windthrow only for the trees' own field before).

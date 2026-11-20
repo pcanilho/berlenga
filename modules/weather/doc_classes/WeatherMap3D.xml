@@ -211,6 +211,19 @@
 				For a body in the [code]world_contact[/code] group: x, the water on its feet or tread (0..1, 1 just out of water), y, the water running off it (0..1). See [member wet_tracks].
 			</description>
 		</method>
+		<method name="get_cirrocumulus_share" qualifiers="const">
+			<return type="float" />
+			<description>
+				How far the shear across the high cloud layer overcomes its stability, 0 to 1: from the gradient Richardson number between the mid and high layers (N from a 6.5 K/km lapse at the layer's temperature, the shear from [method get_wind_aloft], so from [member wind_shear_aloft]), ramping from Ri 20 to Ri 2. The sky breaks patches of the thinner cirrus sheet into cirrocumulus grains and ripples by this share; where the high cover is extensive the sheet is a cirrostratus veil instead.
+			</description>
+		</method>
+		<method name="get_cloud_base_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The base of the low cloud over [param position] (m, its x and z): [method get_cloud_base_now], blended to each storm's own base under its shield and lowered along a storm's gust front by its shelf cloud (up to 450 m, ahead of the storm the way it moves, by its outflow). The provider of [method WorldWeather.cloud_base_at].
+			</description>
+		</method>
 		<method name="get_cloud_base_now" qualifiers="const">
 			<return type="float" />
 			<description>

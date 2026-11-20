@@ -1109,12 +1109,21 @@ func _edge_check() -> void:
 				var rr := Vector2(p.x, p.z).distance_to(c)
 				if rr > 36.0:
 					continue
-				if rr > 9.0:
+				if rr > 6.0:
 					g_band += 1
 				else:
 					g_off += 1
+	# The sward under them (GrassField3D.undergrowth_field reads sward_at): thinned under the edge brambles, not out in
+	# the clearing where they do not grow.
+	var sw_edge := 0.0
+	var sw_clear := 0.0
+	for k in 72:
+		var a := k * TAU / 72.0
+		sw_edge = maxf(sw_edge, fl.get_sward_shade_at(Vector3(c.x + cos(a) * 25.0, 0, c.y + sin(a) * 25.0)))
+		sw_clear = maxf(sw_clear, fl.get_sward_shade_at(Vector3(c.x + cos(a) * 5.0, 0, c.y + sin(a) * 5.0)))
+	_check("forest edge: the sward thins under edge brambles, not in the open clearing", sw_edge > 0.2 and sw_clear == 0.0, [snappedf(sw_edge, 0.01), sw_clear])
 	fl.queue_free()
-	_check("forest edge: a floor field's edge plants follow its canopy field's edge (none deep in the clearing)", fsp.size() >= 3 and g_band > 50 and g_off == 0, [fsp.size(), g_band, g_off])
+	_check("forest edge: a floor field's edge plants follow its canopy field's edge (none deep in the clearing, past their fade)", fsp.size() >= 3 and g_band > 50 and g_off == 0, [fsp.size(), g_band, g_off])
 	st.clear_disturbances()
 	f.queue_free()
 	var r := [m_in, m_out, e_in, e_out, e_facing, forest_in]

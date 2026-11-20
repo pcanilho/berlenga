@@ -822,6 +822,9 @@
 		<member name="drying_time" type="float" setter="set_drying_time" getter="get_drying_time" default="900.0">
 			How long freshly turned ground takes to dry to a third of its darkening, in seconds.
 		</member>
+		<member name="dune_tone" type="bool" setter="set_dune_tone" getter="is_dune_tone" default="true">
+			If [code]true[/code], the patch's sand (and a sand [member ground_type]'s ground past it) varies in colour at the dune field's scale as [member TerrainMaterial3D.sand_dune_tone] draws it: redder old sand, a coarse darker lag on interdune flats and pale slip faces, from the height source's [method TerrainGenerator3D.get_sand_depth_at], in raster and path tracing. Needs [member wind_ripples] (it rides on the ripple map).
+		</member>
 		<member name="dust_emission" type="float" setter="set_dust_emission" getter="get_dust_emission" default="0.06">
 			The dust a tyre lifts from fully dry, bare sand, in kilograms per second per metre of tyre width per metre per second of speed (sliding counts twice). Scaled by how much of the ground the wind could move there; damp sand gives none. Carried by a [GroundDust3D].
 		</member>

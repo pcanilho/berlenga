@@ -225,7 +225,7 @@ scripts; `set_stand(stub)` for a test.
 | Member | Unit | Default |
 | --- | --- | --- |
 | `stand_age_at(pos)` | years since the last stand-replacing disturbance (world xz) | -1 (old growth) |
-| `disturbance_at(pos)` | int: 0 none, 1 fire, 2 wind, 3 beetle (new kinds appended only) | 0 |
+| `disturbance_at(pos)` | int: 0 none, 1 fire, 2 wind, 3 beetle, 4 beaver (pond drained; years since) (new kinds appended only) | 0 |
 | `add_disturbance(center, radius, kind, age_years)`, `set_disturbance_age(id, years)`, `remove_disturbance(id)`, `clear_disturbances()` | a disc, years ago; returns an id | |
 | `strike_age_at(pos)` | years since the youngest lightning strike within 3 m of a trunk at pos (xz) | -1 (none) |
 | `add_strike(pos, age_years)`, `clear_strikes()`, `get_strike_count()` | the crown attachment point, years ago; up to 4096, oldest dropped | |

@@ -5401,12 +5401,32 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		const float st = size / sn;
 		ripple_sand_rect = Rect2(Math::snapped(center.x, st) - 0.5f * size, Math::snapped(center.y, st) - 0.5f * size, size, size);
 		ripple_sand.resize(sn * sn);
+		// And for the dune tone: the generator's loose sand depth (-1 off its dune fields or with none) and the sand share.
+		ripple_sand_depth.resize(sn * sn);
+		ripple_sand_share.resize(sn * sn);
+		const TerrainGenerator3D *sgen = is_inside_tree() ? GroundHeightQuery::make(this, height_source, ground_collision_mask).generator : nullptr;
 		for (int z = 0; z < sn; z++) {
 			for (int x = 0; x < sn; x++) {
 				const float px = ripple_sand_rect.position.x + (x + 0.5f) * st;
 				const float pz = ripple_sand_rect.position.y + (z + 0.5f) * st;
 				const Cell &c = _cell_at(px, pz);
 				ripple_sand[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(px, pz) : 0.0f;
+				ripple_sand_share[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
+				ripple_sand_depth[z * sn + x] = sgen ? float(sgen->get_sand_depth_at(Vector3(px, 0.0f, pz))) : -1.0f;
+			}
+		}
+		// The dune tone past the patch: the generator's sand depth over a kilometre round it, in 8 m texels (its own
+		// grid's scale), so ground past the patch with a BaseMaterial3D shows the interdune flats too.
+		{
+			const int fn = RIPPLE_DEPTH_N;
+			const float fs = RIPPLE_DEPTH_SIZE / fn;
+			ripple_far_depth_rect = Rect2(Math::snapped(center.x, fs) - 0.5f * RIPPLE_DEPTH_SIZE, Math::snapped(center.y, fs) - 0.5f * RIPPLE_DEPTH_SIZE, RIPPLE_DEPTH_SIZE, RIPPLE_DEPTH_SIZE);
+			ripple_far_depth.resize(fn * fn);
+			for (int z = 0; z < fn; z++) {
+				for (int x = 0; x < fn; x++) {
+					const Vector3 fp(ripple_far_depth_rect.position.x + (x + 0.5f) * fs, 0.0f, ripple_far_depth_rect.position.y + (z + 0.5f) * fs);
+					ripple_far_depth[z * fn + x] = sgen ? float(sgen->get_sand_depth_at(fp)) : -1.0f;
+				}
 			}
 		}
 		ripple_dirty = true;
@@ -5494,8 +5514,9 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		const int n = ripples.n;
 		const int nn = n * n;
 		const int sn = RIPPLE_SAND_N;
-		const int w = MAX(n, sn);
-		const int hgt = n + sn + n + 1;
+		const int w = MAX(MAX(n, sn), (int)RIPPLE_DEPTH_N);
+		const int dn = RIPPLE_DEPTH_N;
+		const int hgt = n + sn + n + dn + 1;
 		Vector<uint8_t> data;
 		data.resize(w * hgt * 16);
 		memset(data.ptrw(), 0, data.size());
@@ -5516,6 +5537,8 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 			for (int z = 0; z < sn; z++) {
 				for (int x = 0; x < sn; x++) {
 					d[((n + z) * w + x) * 4] = ripple_sand[z * sn + x];
+					d[((n + z) * w + x) * 4 + 1] = (int)ripple_sand_depth.size() == sn * sn ? ripple_sand_depth[z * sn + x] : -1.0f;
+					d[((n + z) * w + x) * 4 + 2] = (int)ripple_sand_share.size() == sn * sn ? ripple_sand_share[z * sn + x] : 0.0f;
 				}
 			}
 		}
@@ -5527,7 +5550,15 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				}
 			}
 		}
-		float *meta = d + (n + sn + n) * w * 4;
+		// Rows n+S+n..n+S+n+D-1: the generator's sand depth round the patch (R), for the dune tone past it.
+		if ((int)ripple_far_depth.size() == dn * dn) {
+			for (int z = 0; z < dn; z++) {
+				for (int x = 0; x < dn; x++) {
+					d[((n + sn + n + z) * w + x) * 4] = ripple_far_depth[z * dn + x];
+				}
+			}
+		}
+		float *meta = d + (n + sn + n + dn) * w * 4;
 		meta[0] = (ripples.origin.x - 0.5f) * ripples.cell;
 		meta[1] = (ripples.origin.y - 0.5f) * ripples.cell;
 		meta[2] = n * ripples.cell;
@@ -5546,6 +5577,10 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		// The grown field's height spread (m), to read the window's heights in the same units; 0 with the
 		// grain sorting off.
 		meta[15] = ripple_sorting ? ripple_tile_sd : 0.0f;
+		meta[16] = dune_tone ? 1.0f : 0.0f; // the dune tone (sand rows G, B)
+		meta[17] = ripple_far_depth_rect.position.x; // and the depth rows' rect
+		meta[18] = ripple_far_depth_rect.position.y;
+		meta[19] = ripple_far_depth_rect.size.x;
 		meta[12] = ripples.tmpl_k.x; // the template's wave vector, for the shaders' dislocations
 		meta[13] = ripples.tmpl_k.y;
 		if (ripple_image.is_valid() && ripple_image->get_width() == w && ripple_image->get_height() == hgt && ripple_texture.is_valid()) {
@@ -9070,6 +9105,8 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_wind_ripples"), &GroundSurface3D::is_wind_ripples);
 	ClassDB::bind_method(D_METHOD("set_far_ripples", "enabled"), &GroundSurface3D::set_far_ripples);
 	ClassDB::bind_method(D_METHOD("set_ripple_sorting", "enabled"), &GroundSurface3D::set_ripple_sorting);
+	ClassDB::bind_method(D_METHOD("set_dune_tone", "enabled"), &GroundSurface3D::set_dune_tone);
+	ClassDB::bind_method(D_METHOD("is_dune_tone"), &GroundSurface3D::is_dune_tone);
 	ClassDB::bind_method(D_METHOD("is_ripple_sorting"), &GroundSurface3D::is_ripple_sorting);
 	ClassDB::bind_method(D_METHOD("is_far_ripples"), &GroundSurface3D::is_far_ripples);
 	ClassDB::bind_method(D_METHOD("set_water_sources", "sources"), &GroundSurface3D::set_water_sources);
@@ -9227,6 +9264,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wind_ripples"), "set_wind_ripples", "is_wind_ripples");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_ripples"), "set_far_ripples", "is_far_ripples");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ripple_sorting"), "set_ripple_sorting", "is_ripple_sorting");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dune_tone"), "set_dune_tone", "is_dune_tone");
 	ClassDB::bind_method(D_METHOD("set_slip_avalanches", "enabled"), &GroundSurface3D::set_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("is_slip_avalanches"), &GroundSurface3D::is_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("get_avalanche_count"), &GroundSurface3D::get_avalanche_count);

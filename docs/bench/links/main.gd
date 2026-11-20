@@ -1085,10 +1085,13 @@ func _stand_tests() -> void:
 	var beetle := st.add_disturbance(Vector3(128, 0, 128), 30.0, WorldStand.DISTURBANCE_BEETLE, 2.0)
 	var storm := st.add_disturbance(Vector3(5000, 0, 0), 1500.0, WorldStand.DISTURBANCE_WIND, 7.0)
 	var grid_ok := st.stand_age_at(Vector3(110, 0, 140)) == 2.0 and st.stand_age_at(Vector3(150, 0, 110)) == 2.0 and st.stand_age_at(Vector3(170, 0, 170)) < 0.0 and st.stand_age_at(Vector3(4000, 0, 900)) == 7.0 and st.disturbance_at(Vector3(4000, 0, 900)) == WorldStand.DISTURBANCE_WIND
+	var beaver := st.add_disturbance(Vector3(-300, 0, 0), 40.0, WorldStand.DISTURBANCE_BEAVER, 6.0)
+	grid_ok = grid_ok and st.disturbance_at(Vector3(-300, 0, 10)) == WorldStand.DISTURBANCE_BEAVER and st.stand_age_at(Vector3(-300, 0, 10)) == 6.0
+	st.remove_disturbance(beaver)
 	st.remove_disturbance(beetle)
 	st.remove_disturbance(storm)
 	grid_ok = grid_ok and st.stand_age_at(Vector3(128, 0, 128)) < 0.0
-	_check("stand: disturbances found across grid cells and wide storm tracks, gone once removed", grid_ok, str(grid_ok))
+	_check("stand: disturbances found across grid cells and wide storm tracks (a drained beaver pond too), gone once removed", grid_ok, str(grid_ok))
 	WorldContracts.set_fire(null)
 	print("  stand: crown fire %.0f y (kind %d), surface fire %.0f, untouched %.0f; windthrow %.0f y (kind %d), 40 y on %.0f (kind %d); change %s" % [a_fire, k_fire, a_surface, a_old, a_wind, k_wind, a_aged, k_aged, str(ch)])
 	_check("stand: the youngest stand-replacing disturbance gives the age (crown fire 30 y, windthrow 3 y over it, then the fire again once the windthrow is older); a surface fire and untouched ground stay old growth (-1)", a_fire == 30.0 and k_fire == WorldStand.DISTURBANCE_FIRE and a_surface < 0.0 and a_old < 0.0 and a_wind == 3.0 and k_wind == WorldStand.DISTURBANCE_WIND and a_aged == 30.0 and k_aged == WorldStand.DISTURBANCE_FIRE, "fire %.0f, surface %.0f, wind %.0f, aged %.0f" % [a_fire, a_surface, a_wind, a_aged])

@@ -2467,6 +2467,21 @@ float WeatherMap3D::get_cloud_base_now() const {
 	return MAX(cloud_base_height + lcl - lcl_ref, MIN(cloud_base_height, ground + 30.0f));
 }
 
+// Cirrocumulus: the cirrus layer breaks into ripples and grains where the shear across it overcomes its
+// stability, Kelvin-Helmholtz billows once the gradient Richardson number Ri = N^2 / S^2 falls toward a few
+// (Ludlam 1967; WMO International Cloud Atlas, Cc undulatus; layer-mean Ri over kilometres runs well above the
+// local 0.25, so the ramp is 20 to 2). N from the environment's 6.5 K/km lapse at the layer's temperature, S the
+// wind aloft's change between the mid and high layers.
+float WeatherMap3D::get_cirrocumulus_share() const {
+	const Vector3 at = is_inside_tree() ? get_global_position() : Vector3();
+	const float dz = MAX(high_cloud_height - mid_cloud_height, 500.0f);
+	const float s = (get_wind_aloft(at, high_cloud_height) - get_wind_aloft(at, mid_cloud_height)).length() / dz;
+	const float t_k = MAX(cur_air_temperature - 0.0065f * MAX(high_cloud_height - ground_height, 0.0f), -80.0f) + 273.15f;
+	const float n2 = 9.81f / t_k * (0.0098f - 0.0065f);
+	const float ri = n2 / MAX(s * s, 1e-12f);
+	return 1.0f - Math::smoothstep(2.0f, 20.0f, ri);
+}
+
 void WeatherMap3D::set_cloud_regime_from_weather(bool p_enabled) {
 	cloud_regime_from_weather = p_enabled;
 	_push_sky();
@@ -2622,6 +2637,9 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 		const Vector2 w = get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), high_cloud_height);
 		st.high_dir = w.length_squared() > 1e-6f ? w.normalized() : Vector2(1, 0);
 	}
+	st.high_cc = get_cirrocumulus_share();
+	st.rain_slant = cur_wind_direction * (cur_wind_speed / 7.0f);
+	st.storm_dir = cur_wind_direction.length_squared() > 1e-8f ? cur_wind_direction.normalized() : Vector2(1, 0);
 	{
 		// The strongest effectors and the brightest lights, at most eight of each.
 		LocalVector<Pair<float, const CloudEffector *>> ef;
@@ -2698,6 +2716,8 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 		o[2] = s.radius;
 		o[3] = s.cloud_cover * env;
 		st.storm_base[st.storm_count - 1] = s.cloud_base;
+		st.storm_rain[st.storm_count - 1] = s.rain_rate * env;
+		st.storm_outflow[st.storm_count - 1] = s.fire ? 0.0f : s.outflow;
 	}
 	st.update_top_max();
 	return st;
@@ -2707,6 +2727,10 @@ float WeatherMap3D::get_cloud_top_at(Vector3 p_position) const {
 	const WeatherClouds::State st = _cloud_state();
 	const Vector2 xz(p_position.x, p_position.z);
 	return WeatherClouds::base_at(st, xz) + WeatherClouds::top_height(st, WeatherClouds::cover_type_at(st, xz).y);
+}
+
+float WeatherMap3D::get_cloud_base_at(Vector3 p_position) const {
+	return WeatherClouds::base_at(_cloud_state(), Vector2(p_position.x, p_position.z));
 }
 
 float WeatherMap3D::get_cloud_density_at(Vector3 p_position) const {
@@ -3542,6 +3566,7 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("get_wind_shader_code"), &WeatherMap3D::get_wind_shader_code);
 	ClassDB::bind_method(D_METHOD("get_mean_wind_at", "position", "terrain"), &WeatherMap3D::get_mean_wind_at, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("get_wind_aloft", "position", "altitude"), &WeatherMap3D::get_wind_aloft);
+	ClassDB::bind_method(D_METHOD("get_cirrocumulus_share"), &WeatherMap3D::get_cirrocumulus_share);
 	ClassDB::bind_method(D_METHOD("set_boundary_layer_height", "height"), &WeatherMap3D::set_boundary_layer_height);
 	ClassDB::bind_method(D_METHOD("get_boundary_layer_height"), &WeatherMap3D::get_boundary_layer_height);
 	ClassDB::bind_method(D_METHOD("set_wind_shear_aloft", "shear"), &WeatherMap3D::set_wind_shear_aloft);
@@ -3610,6 +3635,7 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_cloud_regime_from_weather", "enabled"), &WeatherMap3D::set_cloud_regime_from_weather);
 	ClassDB::bind_method(D_METHOD("is_cloud_regime_from_weather"), &WeatherMap3D::is_cloud_regime_from_weather);
 	ClassDB::bind_method(D_METHOD("get_cloud_base_now"), &WeatherMap3D::get_cloud_base_now);
+	ClassDB::bind_method(D_METHOD("get_cloud_base_at", "position"), &WeatherMap3D::get_cloud_base_at);
 	ClassDB::bind_method(D_METHOD("get_convective_heating"), &WeatherMap3D::get_convective_heating);
 	ClassDB::bind_method(D_METHOD("set_cloud_thickness", "thickness"), &WeatherMap3D::set_cloud_thickness);
 	ClassDB::bind_method(D_METHOD("get_cloud_thickness"), &WeatherMap3D::get_cloud_thickness);
