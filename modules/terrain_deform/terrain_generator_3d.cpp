@@ -3308,6 +3308,7 @@ void TerrainGenerator3D::_dune_tile(void *p_job, uint32_t p_tile) {
 }
 
 void TerrainGenerator3D::_build_dunes() {
+	sand_depth_dirty = true;
 	dune_sand.clear();
 	dune_plants.clear();
 	dune_cover.clear();
@@ -3569,6 +3570,7 @@ float TerrainGenerator3D::_sea_sample(real_t p_x, real_t p_z) const {
 }
 
 void TerrainGenerator3D::_build_sand_sea() {
+	sand_depth_dirty = true;
 	sea_sand.clear();
 	sea_cover.clear();
 	sea_mask.clear();
@@ -5471,9 +5473,59 @@ Ref<Image> TerrainGenerator3D::get_geology_image() const {
 	return Image::create_from_data(nx, ny, false, Image::FORMAT_RGBAF, bytes);
 }
 
+// Loose sand depth (m) at a point on the dune belts and sand seas: the dunes' and the sea's sand over the ground
+// they were grown on; -1 off them (no dune field there, so beaches and bare ground are not read as thin sand).
+real_t TerrainGenerator3D::get_sand_depth_at(const Vector3 &p_global_position) const {
+	const real_t x = p_global_position.x;
+	const real_t z = p_global_position.z;
+	float depth = 0.0f;
+	bool field = false;
+	if (!dune_sand.is_empty()) {
+		const float d = _dune_sample(dune_sand, x, z);
+		depth += MAX(d, 0.0f);
+		field = field || d > 0.01f;
+	}
+	if (!sea_sand.is_empty()) {
+		depth += MAX(_sea_sample(x, z), 0.0f);
+	}
+	if (!field && nx > 1 && sea_cover.size() == uint32_t(nx * ny)) {
+		field = _sample(sea_cover, x, z) > 0.0f;
+	}
+	if (!field && nx > 1 && dune_cover.size() == uint32_t(nx * ny)) {
+		field = _sample(dune_cover, x, z) > 0.0f;
+	}
+	return field ? depth : real_t(-1.0);
+}
+
+void TerrainGenerator3D::_bake_sand_depth() {
+	sand_depth_dirty = false;
+	if (nx < 2 || ny < 2 || (dune_sand.is_empty() && sea_sand.is_empty())) {
+		sand_depth_texture.unref();
+		return;
+	}
+	Vector<uint8_t> bytes;
+	bytes.resize(nx * ny * sizeof(float));
+	float *w = reinterpret_cast<float *>(bytes.ptrw());
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const Vector3 p(result_rect.position.x + x * result_cell, 0.0, result_rect.position.y + z * result_cell);
+			w[z * nx + x] = float(get_sand_depth_at(p));
+		}
+	}
+	const Ref<Image> img = Image::create_from_data(nx, ny, false, Image::FORMAT_RF, bytes);
+	if (sand_depth_texture.is_valid() && sand_depth_texture->get_width() == nx && sand_depth_texture->get_height() == ny) {
+		sand_depth_texture->update(img);
+	} else {
+		sand_depth_texture = ImageTexture::create_from_image(img);
+	}
+}
+
 void TerrainGenerator3D::_publish_globals() {
 	if (!publish_shader_globals || geology_texture.is_null() || !is_inside_tree()) {
 		return;
+	}
+	if (sand_depth_dirty) {
+		_bake_sand_depth();
 	}
 	RenderingServer *rs = RenderingServer::get_singleton();
 	static HashSet<StringName> added;
@@ -5489,6 +5541,13 @@ void TerrainGenerator3D::_publish_globals() {
 	const Rect2 &r = result_rect;
 	set_global("terrain_geology_map", geology_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 	set_global("terrain_geology_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+	// Loose sand depth on the dune fields (the materials' dune-scale tone); a zero rect switches it off.
+	if (sand_depth_texture.is_valid()) {
+		set_global("terrain_sand_depth_map", sand_depth_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		set_global("terrain_sand_depth_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+	} else {
+		set_global("terrain_sand_depth_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
 	if (detail_keep_texture.is_valid()) {
 		set_global("terrain_detail_keep_map", detail_keep_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 	}
@@ -6193,6 +6252,23 @@ String TerrainGenerator3D::get_geology_shader_code() {
 	c += "	vec2 size = vec2(textureSize(terrain_geology_map, 0));\n";
 	c += "	vec2 g = clamp((world_pos.xz - terrain_geology_rect.xy) / terrain_geology_rect.zw, 0.0, 1.0);\n";
 	c += "	return textureLod(terrain_geology_map, (g * (size - 1.0) + 0.5) / size, 0.0);\n";
+	c += "}\n";
+	return c;
+}
+
+String TerrainGenerator3D::get_sand_shader_code() {
+	String c;
+	c += "// Loose sand depth from TerrainGenerator3D (TerrainGenerator3D.get_sand_shader_code()): m on the dune fields,\n";
+	c += "// below 0 off them or with no generator.\n";
+	c += "global uniform sampler2D terrain_sand_depth_map;\n";
+	c += "global uniform vec4 terrain_sand_depth_rect;\n\n";
+	c += "float terrain_sand_depth(vec3 world_pos) {\n";
+	c += "	if (terrain_sand_depth_rect.z <= 0.0) {\n";
+	c += "		return -1.0;\n";
+	c += "	}\n";
+	c += "	vec2 size = vec2(textureSize(terrain_sand_depth_map, 0));\n";
+	c += "	vec2 g = clamp((world_pos.xz - terrain_sand_depth_rect.xy) / terrain_sand_depth_rect.zw, 0.0, 1.0);\n";
+	c += "	return textureLod(terrain_sand_depth_map, (g * (size - 1.0) + 0.5) / size, 0.0).r;\n";
 	c += "}\n";
 	return c;
 }
@@ -9103,6 +9179,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_springs"), &TerrainGenerator3D::get_springs);
 	ClassDB::bind_method(D_METHOD("carve_oases"), &TerrainGenerator3D::carve_oases);
 	ClassDB::bind_method(D_METHOD("get_sand_sea_height", "global_position"), &TerrainGenerator3D::get_sand_sea_height);
+	ClassDB::bind_method(D_METHOD("get_sand_depth_at", "global_position"), &TerrainGenerator3D::get_sand_depth_at);
+	ClassDB::bind_static_method("TerrainGenerator3D", D_METHOD("get_sand_shader_code"), &TerrainGenerator3D::get_sand_shader_code);
 	ClassDB::bind_method(D_METHOD("get_last_sand_sea_msec"), &TerrainGenerator3D::get_last_sand_sea_msec);
 	ClassDB::bind_method(D_METHOD("get_last_sand_sea_max"), &TerrainGenerator3D::get_last_sand_sea_max);
 	ClassDB::bind_method(D_METHOD("set_lake_count", "count"), &TerrainGenerator3D::set_lake_count);

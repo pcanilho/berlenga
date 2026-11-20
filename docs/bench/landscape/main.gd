@@ -458,6 +458,21 @@ func _ready() -> void:
 	if args.get("prints", "1") != "0":
 		_build_prints()
 	_build_camera()
+	if args.has("fov"):
+		get_viewport().get_camera_3d().fov = float(args["fov"]) # --fov=DEG: a wider or narrower lens
+	if args.has("sand-vista") and "sand_sea_rect" in gen:
+		# --sand-vista: from the sand sea's edge (--vista-at, 0.12 of its width in) --vista-h (8) m up, looking across
+		# its middle to the far dunes, so the near ripples and the dune-scale tone far off share the frame.
+		var r: Rect2 = gen.sand_sea_rect
+		var f := float(args.get("vista-at", "0.12"))
+		var cp := Vector3(r.position.x + r.size.x * f, 0.0, r.get_center().y)
+		cp.y = height_at(cp.x, cp.z) + float(args.get("vista-h", "8"))
+		var lk := Vector3(r.get_center().x + r.size.x * 0.2, 0.0, r.get_center().y + r.size.y * float(args.get("vista-turn", "0.0")))
+		lk.y = height_at(lk.x, lk.z)
+		var cv: Camera3D = get_viewport().get_camera_3d()
+		cv.global_position = cp
+		cv.look_at(lk)
+		_log("sand vista cam %.0f,%.0f,%.0f look %.0f,%.0f,%.0f (sand sea %s)" % [cp.x, cp.y, cp.z, lk.x, lk.y, lk.z, str(r)])
 	if args.get("wet-follow-cam", "1") != "0" and weather != null:
 		# WeatherMap3D's local reads (smoke haze, cloud shadow, contact wetness) round the camera for the picture;
 		# the setup above ran on the world anchor. --wet-follow-cam=0 keeps the origin anchor.
@@ -3182,6 +3197,11 @@ func _weather_settings() -> void:
 		weather.set("dew_and_frost", args["dew-frost"] != "0") # --dew-frost=0: no dew or hoarfrost (a docs pair)
 	if args.has("cloud-cover"):
 		weather.cloud_cover = float(args["cloud-cover"])
+	# --high-cover=C, --mid-cover=C: the cirrus and the mid (altocumulus) layers' cover.
+	if args.has("high-cover") and "high_cloud_cover" in weather:
+		weather.high_cloud_cover = float(args["high-cover"])
+	if args.has("mid-cover") and "mid_cloud_cover" in weather:
+		weather.mid_cloud_cover = float(args["mid-cover"])
 		if weather.cloud_cover <= 0.0:
 			weather.cloud_variation = 0.0 # a clear sky: the regional variation would still raise clouds out of 0 cover
 	if args.has("cloud-type"):

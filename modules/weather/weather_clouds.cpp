@@ -901,11 +901,17 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	if (sc > 0.0f) {
 		const float cv = CLAMP(sc_cells_at(p_state, Vector2(p_pos.x, p_pos.z)) + 0.5f * (n - 0.5f), 0.0f, 1.0f);
 		const float ht = 0.25f + 0.75f * cv;
-		cell = Math::lerp(1.0f, (1.0f - smoothstep(0.5f * ht, ht, h)) * (0.5f + 0.7f * cv), sc);
+		// The base sags under each cell's middle and rises toward its rim (the thick middle reaches lower), so the
+		// underside is a row of lumps.
+		const float lift = 0.15f * (1.0f - cv);
+		cell = Math::lerp(1.0f, (1.0f - smoothstep(0.5f * ht, ht, h)) * smoothstep(lift, lift + 0.08f, h) * (0.5f + 0.7f * cv), sc);
 	}
 	const float nd = lay > 0.0f ? Math::lerp(n, (0.5f + 0.5f * n) * cell, lay) : n;
 	const float deck = MAX(nd * dome - (1.0f - ct.x), 0.0f) / MAX(ct.x, 0.001f) * base * smoothstep(Math::lerp(0.55f, 0.15f, lay), Math::lerp(0.85f, 0.45f, lay), ct.x);
-	const float shape = MAX(cells, deck) * (1.0f + MIN(eff, 0.0f));
+	// Stratocumulus cells dense through their middles (liquid water 0.2 to 0.5 g/m3, extinction about 0.03 to 0.06
+	// per metre; Wood 2012) with a soft thin rim: the linear remap left each cell an even, faint disc.
+	const float deck_sc = sc > 0.0f ? Math::lerp(deck, MIN(deck * 3.0f, 1.0f), sc) : deck;
+	const float shape = MAX(cells, deck_sc) * (1.0f + MIN(eff, 0.0f));
 	// Frostbite's measured extinction: stratus about 0.04, cumulus up to 0.1 per metre; a fair sky's clouds a
 	// little lighter than a deck's.
 	return shape * Math::lerp(0.4f, 1.0f, ct.x) * Math::lerp(0.04f, 0.1f, ct.y) * p_state.density;
@@ -1002,6 +1008,7 @@ uniform float cloud_high_tau = 1.0;
 uniform float cloud_high_scale = 24000.0;
 uniform vec2 cloud_high_drift = vec2(0.0);
 uniform vec2 cloud_high_dir = vec2(1.0, 0.0);
+uniform float cloud_high_cc = 0.0;
 // The mid layer (State::mid_*).
 uniform float cloud_mid_cover = 0.0;
 uniform float cloud_mid_height = 4500.0;
@@ -1483,10 +1490,12 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 	if (sc > 0.0) {
 		float cv = clamp(wc_sc_cells(p.xz) + 0.5 * (n - 0.5), 0.0, 1.0);
 		float ht = 0.25 + 0.75 * cv;
-		cell = mix(1.0, (1.0 - smoothstep(0.5 * ht, ht, h)) * (0.5 + 0.7 * cv), sc);
+		float lift = 0.15 * (1.0 - cv);
+		cell = mix(1.0, (1.0 - smoothstep(0.5 * ht, ht, h)) * smoothstep(lift, lift + 0.08, h) * (0.5 + 0.7 * cv), sc);
 	}
 	float nd = lay > 0.0 ? mix(n, (0.5 + 0.5 * n) * cell, lay) : n;
 	float deck = max(nd * dome - (1.0 - ct.x), 0.0) / max(ct.x, 0.001) * base * smoothstep(mix(0.55, 0.15, lay), mix(0.85, 0.45, lay), ct.x);
+	deck = sc > 0.0 ? mix(deck, min(deck * 3.0, 1.0), sc) : deck; // dense cell middles, as on the CPU
 	float shape = max(cells, deck) * (1.0 + min(eff, 0.0));
 	r_profile = clamp(shape, 0.0, 1.0);
 	if (p_detail && shape > 0.0) {

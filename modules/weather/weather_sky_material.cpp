@@ -539,12 +539,41 @@ vec4 march_cirrus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	float lod = max(log2(t * p_pixel / (2000.0 / 128.0)), 0.0);
 	vec4 dn = textureLod(cloud_detail, fq, lod);
 	float fib = smoothstep(0.25, 0.85, mix(dn.r, dn.g, 0.4));
+	// Cirrostratus: where the sheet is extensive (a warm front's shield, an anvil) the fibres merge into a veil,
+	// still faintly fibrous (WMO Atlas Cs fibratus/nebulosus), and the halos are its own.
+	float cs = smoothstep(0.55, 0.9, c);
+	fib = mix(fib, 0.7 + 0.3 * fib, cs);
+	// Cirrocumulus: under unstable shear (cloud_high_cc, from the Richardson number) patches of the thinner sheet
+	// break into grains in ripples across the wind, about 200 m apart (near one degree seen from the ground):
+	// the detail noise's billows, 1.8 km over 128 texels along the wind and 2.7 km across it, read half a mip soft.
+	if (cloud_high_cc > 0.001) {
+		float patch = smoothstep(0.45, 0.65, wc_value_noise((xz - cloud_high_drift) / 14000.0 + vec2(41.3, 7.9)));
+		float ccs = cloud_high_cc * patch * (1.0 - cs);
+		if (ccs > 0.001) {
+			// No lattice (the texture tiles every 1.8 km): two reads at scales 1.37 apart and rotated 23 degrees,
+			// blended by a 6 km noise, so the grain size wanders; both warped by the texture's own coarse octave
+			// (domain warping) so rows bend, part and merge; and the threshold wanders on 2.5 km, so the ripples
+			// break into gaps in places and run together in others (Atlas: Cc in patches, of irregular grains).
+			vec2 aq = aw + (textureLod(cloud_detail, vec3(aw / 9000.0, 0.29), 0.0).rg - 0.5) * 700.0;
+			vec2 aq2 = mat2(vec2(0.921, 0.391), vec2(-0.391, 0.921)) * aq * 1.37 + vec2(517.0, 1301.0);
+			float glod = max(log2(t * p_pixel / (1800.0 / 128.0)) + 0.5, 0.0);
+			vec4 ga = textureLod(cloud_detail, vec3(aq.x / 1800.0, aq.y / 2700.0, 0.83 + cloud_churn.z * 0.3), glod);
+			vec4 gb = textureLod(cloud_detail, vec3(aq2.x / 1800.0, aq2.y / 2700.0, 0.47 + cloud_churn.z * 0.3), glod + 0.45);
+			vec2 nq = (xz - cloud_high_drift) / 6000.0;
+			float wsel = smoothstep(0.3, 0.7, wc_value_noise(nq + vec2(3.7, 19.1)));
+			float gv = mix(mix(ga.b, ga.a, 0.35) * mix(0.8, 1.2, ga.r), mix(gb.b, gb.a, 0.35) * mix(0.8, 1.2, gb.r), wsel);
+			float k = (wc_value_noise(nq * 2.4 + vec2(23.3, 5.1)) - 0.5) * 0.45;
+			// Grains with a soft edge: ice grains fray, and a hard threshold drew them as blocks.
+			float grain = smoothstep(0.3 + k, 0.85 + k, gv);
+			fib = mix(fib, grain, ccs);
+		}
+	}
 	float tau_v = cloud_high_tau * c * fib * 2.0 / max(abs(dot(rd, up)), 0.05);
 	float tau_s = cloud_high_tau * c / max(dot(sun_dir, up), 0.05);
 	float cos_theta = dot(rd, sun_dir);
 	// Halos where the ice is columns falling at random: patches of sheet tens of kilometres across, so a ring shows
 	// as arcs across some of the sky and not everywhere.
-	float halo = cloud_halo_strength * smoothstep(0.35, 0.65, wc_value_noise((xz - cloud_high_drift) / 25000.0 + vec2(13.1, 71.7)));
+	float halo = cloud_halo_strength * mix(0.7, 1.4, cs) * smoothstep(0.35, 0.65, wc_value_noise((xz - cloud_high_drift) / 25000.0 + vec2(13.1, 71.7)));
 	vec3 light = sun_radiance * (exp(-0.5 * tau_s) * cirrus_phase(cos_theta, halo) + (1.0 - exp(-0.5 * tau_s)) * (2.0 / (4.0 * PI))) + ambient_top;
 	float tr = exp(-tau_v);
 	r_t = t;
@@ -1215,6 +1244,7 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	rs->material_set_param(m, "cloud_high_scale", p_state.high_scale);
 	rs->material_set_param(m, "cloud_high_drift", p_state.high_drift);
 	rs->material_set_param(m, "cloud_high_dir", p_state.high_dir);
+	rs->material_set_param(m, "cloud_high_cc", p_state.high_cc);
 	rs->material_set_param(m, "cloud_cell_size", p_state.cell_size);
 	rs->material_set_param(m, "cloud_mid_cover", p_state.mid_cover);
 	rs->material_set_param(m, "cloud_mid_height", p_state.mid_height);

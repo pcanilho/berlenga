@@ -65,7 +65,8 @@ class BodySnowStub extends WorldSnow:
 #                     loaded face before it goes); --test=avalanche for the checks
 #                     --powder [--at=S]: the run in real time, shot S s after release (default 9) with its
 #                     powder cloud (PhysX Flow; traced, it also saves the raster frame of the same cloud as
-#                     <out>_raster.png); --wet: a thaw first, then a wet slide (--triggered: the
+#                     <out>_raster.png; --no-gas: without the cloud, quick); --crown: the crown wall from
+#                     14 m down the bed (--crown-far: from 40 m); --wet: a thaw first, then a wet slide (--triggered: the
 #                     same release, dry); --test=triggers, --test=powder, --test=forest, --test=wet for
 #                     triggers, the cloud, forests (holding, braking, pressure on trees) and wet snow;
 #                     --test=waves: avalanches into a lake (impulse waves, lake ice)
@@ -2876,6 +2877,10 @@ func _build_avalanche(cam: Camera3D) -> void:
 		# One physics tick a frame: Flow steps once a frame, so on a slow renderer the gas keeps pace with the slide
 		# (with several ticks a frame it falls behind and the cloud is only the emitters' trail).
 		Engine.max_physics_steps_per_frame = 1
+		if OS.get_cmdline_user_args().has("--no-gas"):
+			# --no-gas: the snow alone (the slide, its bed and crown), quick: no Flow to keep pace with.
+			av.get_powder_cloud().enabled = false
+			Engine.max_physics_steps_per_frame = 32
 		var pflow: Node = av.get_powder_cloud().get_flow()
 		if pflow:
 			pflow.set("scattering_resolution", 0) # full: quarter averages away the billows at still sizes
@@ -2916,6 +2921,8 @@ func _build_avalanche(cam: Camera3D) -> void:
 		# behind the face, the bowl's rim past the edge of the bench terrain shades the run-out in one renderer and
 		# not the other. Light on the camera's side keeps every shadow inside the scene.
 		sun.rotation_degrees = Vector3(-40.0, 40.0, 0.0)
+		if OS.get_cmdline_user_args().has("--crown"):
+			_crown_camera(cam)
 		if traced:
 			# The raster frame of the same cloud first (_raster.png beside --out): Flow is not bit-for-bit the
 			# same from run to run, so a raster run and a traced run do not show one cloud.
@@ -2941,6 +2948,8 @@ func _build_avalanche(cam: Camera3D) -> void:
 		# --close: the debris at the toe from 20 m.
 		cam.position = Vector3(22.0, snow.get_ground_height_at(Vector3(22, 0, 14)) + snow.get_depth_at(Vector3(22, 0, 14)) + 3.0, 14.0)
 		cam.look_at(Vector3(2.0, 1.0, 0.0))
+	if OS.get_cmdline_user_args().has("--crown"):
+		_crown_camera(cam)
 	if OS.get_cmdline_user_args().has("--toe"):
 		# --toe: the deposit's tongue from above and in front, to see its outline.
 		cam.position = Vector3(45.0, 22.0, 30.0)
@@ -2948,6 +2957,25 @@ func _build_avalanche(cam: Camera3D) -> void:
 		cam.fov = 50.0
 	cam.far = 1000.0
 	await _save_frame("")
+
+
+func _crown_camera(cam: Camera3D) -> void:
+	# --crown: the crown wall from 14 m down the bed (found along z = 0 as the biggest drop in depth).
+	var best := 0.0
+	var cx := -60.0
+	for i in 120:
+		var x := -100.0 + i * 0.5
+		var drop := snow.get_depth_at(Vector3(x, 0, 0)) - snow.get_depth_at(Vector3(x + 0.5, 0, 0))
+		if drop > best:
+			best = drop
+			cx = x
+	# --crown-far: from 40 m off, three-quarters from the side and above, as the wide shots see it.
+	var far := OS.get_cmdline_user_args().has("--crown-far")
+	var gx := cx + (30.0 if far else 14.0)
+	var gz := 28.0 if far else 6.0
+	cam.position = Vector3(gx, snow.get_ground_height_at(Vector3(gx, 0, gz)) + snow.get_depth_at(Vector3(gx, 0, gz)) + (10.0 if far else 3.0), gz)
+	cam.look_at(Vector3(cx, snow.get_ground_height_at(Vector3(cx, 0, 0)) + 0.5, -2.0))
+	print("crown at x %.1f, %.2f m step" % [cx, best])
 
 
 func _build_bodies(cam: Camera3D) -> void:
