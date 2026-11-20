@@ -1116,6 +1116,14 @@ func _set_far_colors(b: Biome) -> void:
 		spc.far_color = Color(lc.r, lc.g, lc.b, clampf(m.get_aabb().end.y / 0.6, 0.2, 0.9))
 
 func _cover_biome() -> Biome:
+	if OS.get_environment("GRASS_FAR_HEATH") == "1":
+		# GRASS_FAR_HEATH=1: dry heath (make_heath: heather, gorse, broom) instead of the meadow's herbs, for the far
+		# shell's clumps and gaps.
+		var hb := Biome.new()
+		var hs: Array[PlantSpecies] = []
+		hs.assign(PlantGenerator.make_heath(PlantGenerator.HEATH_DRY, 3, true))
+		hb.species = hs
+		return hb
 	var flowers := PlantSpecies.new()
 	flowers.meshes = _variants(PlantGenerator.PRESET_DAISY, 3) + _variants(PlantGenerator.PRESET_BUTTERCUP, 3) + _variants(PlantGenerator.PRESET_DANDELION, 3)
 	flowers.spacing = 0.25
@@ -2297,6 +2305,7 @@ func _process(dt: float) -> void:
 				cover.far_reach = float(OS.get_environment("GRASS_FAR_REACH")) # GRASS_FAR_REACH=1: the plants fade at their range
 			if OS.get_environment("GRASS_FAR_SHELL") == "0":
 				cover.far_shell = false # GRASS_FAR_SHELL=0: no far columns for the taller plants
+			cover.far_shell_clumps = OS.get_environment("GRASS_FAR_CLUMPS") != "0" # GRASS_FAR_CLUMPS=0: the far shell as an even mass
 			cover.streaming = true
 		elif cover:
 			cover.populate()

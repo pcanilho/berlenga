@@ -317,7 +317,7 @@
 			While [member streaming], the plant cover past the streamed plants out to [member far_shell_range], as one surface draped over the ground: each cell reads every species with a range and a [member PlantSpecies.far_color] from its own rules (suitability with its patches, times its density and the ground it hides), stands at their expected height by cover, lumped by a hash, in their mean far colour, and thins down into the ground where the cover thins. It rises out of the ground inside the streamed plants' thinning. Cells 2 m wide to 400 m, 8 m to 1600 m, 32 m past it. Species that need canopy shade, sand, a coast or pools are left out.
 		</member>
 		<member name="far_shell_clumps" type="bool" setter="set_far_shell_clumps" getter="is_far_shell_clumps" default="true">
-			Where the [member far_shell]'s cells are fine enough, it opens into clumps and gaps (three octaves at 7, 19 and 53 m, each fading out as the cells grow past a quarter of its size) with shade at the clumps' feet, so about each stand's cover share of the ground is under clumps, as heath, gorse and scrub grow. Off: an even mass by cover.
+			Where the [member far_shell]'s cells are fine enough, it opens into clumps and gaps (three octaves at 7, 19 and 53 m, each fading out as the cells grow past about a third of its size) with shade at the clumps' feet, so about each stand's cover share of the ground is under clumps, as heath, gorse and scrub grow. Off: an even mass by cover.
 		</member>
 		<member name="far_shell_range" type="float" setter="set_far_shell_range" getter="get_far_shell_range" default="4000.0">
 			How far the [member far_shell] reaches, in metres.

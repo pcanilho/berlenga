@@ -713,7 +713,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			continue;
 		}
 		ps.range = _species_range(ps.sp, pixel);
-		if (streaming && far_shell && ps.range > 0.0f && !ps.sp->get_meshes().is_empty()) {
+		if (streaming && far_shell && !ps.sp->get_meshes().is_empty()) {
 			ps.far_albedo = _mesh_albedo(ps.sp->get_meshes()[0]);
 		}
 		// The far tail streams only (each tile's cells hold the ranks its distance keeps); small items keep their
@@ -2456,6 +2456,51 @@ float far_shell_noise(float p_x, float p_z, float p_scale, uint32_t p_salt) {
 	return Math::lerp(Math::lerp(a, b, fx), Math::lerp(c, d, fx), fz);
 }
 
+// The far shell's clump field (three value-noise octaves, 7, 19 and 53 m, weights 0.5, 0.3, 0.2, each scaled to
+// [-1, 1]) is far from uniform: most of it sits near 0. Its quantile, from a table sampled once, so a threshold at
+// 1 - cover leaves the cover's share of the ground under clumps.
+float far_shell_clump_quantile(float p_v) {
+	static float table[257];
+	static bool built = false;
+	if (!built) {
+		LocalVector<float> v;
+		v.resize(256 * 256);
+		const float scales[3] = { 7.0f, 19.0f, 53.0f };
+		const float amps[3] = { 0.5f, 0.3f, 0.2f };
+		for (int j = 0; j < 256; j++) {
+			for (int i = 0; i < 256; i++) {
+				float d = 0.0f;
+				for (int o = 0; o < 3; o++) {
+					d += amps[o] * (far_shell_noise(i * 3.71f + 0.3f, j * 3.71f + 0.7f, scales[o], 0x68E31DA4u + uint32_t(o) * 0x9E3779B9u) - 0.5f) * 2.0f;
+				}
+				v[j * 256 + i] = d;
+			}
+		}
+		v.sort();
+		for (int k = 0; k <= 256; k++) {
+			table[k] = v[MIN(k * 256, int(v.size()) - 1)];
+		}
+		built = true;
+	}
+	if (p_v <= table[0]) {
+		return 0.0f;
+	}
+	if (p_v >= table[256]) {
+		return 1.0f;
+	}
+	int lo = 0, hi = 256;
+	while (hi - lo > 1) {
+		const int mid = (lo + hi) / 2;
+		if (table[mid] <= p_v) {
+			lo = mid;
+		} else {
+			hi = mid;
+		}
+	}
+	const float span = table[hi] - table[lo];
+	return (lo + (span > 0.0f ? (p_v - table[lo]) / span : 0.0f)) / 256.0f;
+}
+
 // The distances a level's tiles cover.
 void far_shell_band(int p_level, float p_start, float p_end, float &r_lo, float &r_hi) {
 	r_lo = p_level > 0 ? MAX(p_start, FAR_SHELL_SPLIT[p_level - 1]) : p_start;
@@ -2583,8 +2628,9 @@ Color VegetationField3D::_mesh_albedo(const Ref<Mesh> &p_mesh) {
 float VegetationField3D::_far_shell_start() const {
 	float reach = 0.0f;
 	for (const PlaceSpecies &ps : stream_setup.species) {
-		if (ps.sp.is_valid() && ps.range > 0.0f) {
-			reach = MAX(reach, MAX(ps.reach, ps.range));
+		if (ps.sp.is_valid()) {
+			// An unranged species is drawn as far as the field streams.
+			reach = MAX(reach, ps.range > 0.0f ? MAX(ps.reach, ps.range) : stream_radius);
 		}
 	}
 	const float streamed = MIN(stream_radius, reach > 0.0f ? reach : stream_radius);
@@ -2705,7 +2751,9 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 	};
 	LocalVector<Kind> kinds;
 	for (const PlaceSpecies &ps : su.species) {
-		if (ps.sp.is_null() || ps.range <= 0.0f || ps.far_color.a <= 0.0f || ps.meshes.is_empty() || ps.meshes[0].is_null() || ps.nebkha_slot >= 0) {
+		// Unranged species too: they end where the field stops streaming (a heath's gorse and heather would leave the
+		// ground bare past the stream radius otherwise).
+		if (ps.sp.is_null() || ps.far_color.a <= 0.0f || ps.meshes.is_empty() || ps.meshes[0].is_null() || ps.nebkha_slot >= 0) {
 			continue;
 		}
 		const PlantSpecies *sp = ps.sp.ptr();
@@ -2804,12 +2852,12 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 			// sensing show the same). Where the cells are fine enough to hold them, the stand stands at its full mass
 			// where a clump field (three octaves, 7, 19 and 53 m) is over its cover's threshold and opens to the ground
 			// elsewhere, so about its cover's share of the ground is under clumps; each octave fades out as the cells
-			// grow past a quarter of its size (prefiltered, as a mip), leaving the even mass by cover.
+			// grow past about a third of its size (prefiltered, as a mip), leaving the even mass by cover.
 			float dev = 0.0f, act = 0.0f;
 			const float scales[3] = { 7.0f, 19.0f, 53.0f };
 			const float amps[3] = { 0.5f, 0.3f, 0.2f };
 			for (int o = 0; o < (far_shell_clumps ? 3 : 0); o++) {
-				const float a = 1.0f - Math::smoothstep(0.25f, 0.5f, cell / scales[o]);
+				const float a = 1.0f - Math::smoothstep(0.35f, 0.6f, cell / scales[o]);
 				if (a > 0.0f) {
 					dev += a * amps[o] * (far_shell_noise(q.x, q.y, scales[o], 0x68E31DA4u + uint32_t(o) * 0x9E3779B9u) - 0.5f) * 2.0f;
 					act += a * amps[o];
@@ -2817,8 +2865,10 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 			}
 			float mass = cover;
 			if (act > 0.0f) {
-				// The value noise's spread is about a third of its range: its threshold for this cover.
-				const float open = Math::smoothstep(-0.12f, 0.12f, dev / act * 0.35f + (cover - 0.5f) * 0.6f);
+				// The field's own distribution (far_shell_clump_quantile()) turns it uniform, so a threshold at 1 - cover
+				// puts the clumps on the cover's share of the ground.
+				const float u = far_shell_clump_quantile(dev / act);
+				const float open = Math::smoothstep(1.0f - cover - 0.06f, 1.0f - cover + 0.06f, u);
 				mass = Math::lerp(cover, open, act);
 			}
 			// Its mass, not its tips: the stand's tops are mostly air, and a sward's own blades (GrassField3D's far
@@ -2911,12 +2961,14 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 				const Vector3 p = corner[k[c]] + Vector3(0, hc >= lift_min ? hc : -0.05f, 0);
 				// Down into the stand where it is low (its own shade), the colour of what grows round it.
 				const Color base = cc[k[c]].a > 0.0f ? cc[k[c]] : Color(0.1f, 0.1f, 0.08f, 0.0f);
-				// A sward or scrub seen from afar is its lit tops over the shade between them (darker than the leaves'
-				// own colour, the more so where it is thin), mottled at the clumps' scale and in larger patches.
+				// Mottled at the clumps' scale and in larger patches. No further darkening for the shade between tops:
+				// the plants' far colour is measured on screen with their own self-shade (docs/ideas/vegetation.md, "Far
+				// colour matched to the plants on screen"), and a darker shell read as black blotches next to the
+				// plants it continues (dry heath bench, 20 Nov: about half their brightness). The low corners round a
+				// clump sit a little in its shade, its tops in light.
 				const float mottle = (0.8f + 0.4f * far_shell_noise(corner[k[c]].x, corner[k[c]].z, 3.0f, 0x2545F491u)) * (0.75f + 0.5f * far_shell_noise(corner[k[c]].x, corner[k[c]].z, 23.0f, 0x9E3779B9u));
-				// The low corners round a clump sit in its shade (ambient occlusion at the clumps' foot), its tops in light.
 				const float rel = hc_top > 0.0f ? CLAMP(hc / hc_top, 0.0f, 1.0f) : 1.0f;
-				const float shade = (0.55f + 0.2f * CLAMP(cc[k[c]].a, 0.0f, 1.0f)) * mottle * (0.8f + 0.2f * rel);
+				const float shade = mottle * (0.85f + 0.15f * rel);
 				vid[k[c]] = verts.size();
 				verts.push_back(to_local.xform(p));
 				normals.push_back(to_local.basis.xform(nn).normalized());
