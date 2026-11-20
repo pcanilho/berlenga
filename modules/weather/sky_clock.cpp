@@ -507,10 +507,14 @@ static double _sky_illuminance(double p_sun_alt_deg) {
 double SkyClock::get_ground_illuminance() {
 	_update();
 	double e = 2e-3; // starlight and airglow on a moonless night
-	e += _sky_illuminance(sky.sun_alt / DEG);
+	// Under fires' smoke the day's light is what its forward scattering carries on, direct and diffuse:
+	// exp(-0.28 tau) of it (the transport approximation's forward share, as the sky takes it), so the eye adapts to
+	// the brown light under a thick plume rather than reading it as near black.
+	const double smoke = Math::pow(double(CLAMP(_sun_smoke().y, 1e-12f, 1.0f)), 0.28);
+	e += _sky_illuminance(sky.sun_alt / DEG) * smoke;
 	if (sky.sun_alt > 0.0) {
 		const Vector3 t = air_transmittance(sky.sun_alt / DEG, 1.0);
-		e += get_sun_illuminance_top() * Math::sin(sky.sun_alt) * t.y;
+		e += get_sun_illuminance_top() * Math::sin(sky.sun_alt) * t.y * smoke;
 	}
 	if (sky.moon_alt > 0.0) {
 		const Vector3 t = air_transmittance(sky.moon_alt / DEG, 1.0);

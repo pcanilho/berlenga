@@ -435,9 +435,13 @@ void atmo_march(vec3 origin, vec3 rd, float t_a, float t_b, int steps, float jit
 			}
 		}
 		vec3 tl0 = atmo_light_transmittance(r, mu0) * a0;
+		// The aerosol scatters the sunlight that reaches it all orders forward: through smoke, the light its
+		// forward scattering carried on (atmo_sun_aerosol_diffuse) shines into its own forward lobe too, which is
+		// the wide ruddy aureole a thick plume keeps round the sun (the same as tl0 with no smoke).
+		vec3 tl0a = atmo_light_transmittance(r, mu0) * atmo_sun_aerosol_diffuse(r, mu0);
 		vec3 tl1 = atmo_light_transmittance(r, mu1) * a1;
 		vec3 s = vec3(0.0);
-		s += e0 * (tl0 * c0.x * (rs * phases.x + ms * phases.y + as * pa0) + atmo_multiscatter(r, mu0) * atmo_sun_aerosol_diffuse(r, mu0) * c0.y * (rs + ms + as));
+		s += e0 * (c0.x * (tl0 * (rs * phases.x + ms * phases.y) + tl0a * as * pa0) + atmo_multiscatter(r, mu0) * atmo_sun_aerosol_diffuse(r, mu0) * c0.y * (rs + ms + as));
 		s += e1 * (tl1 * c1.x * (rs * phases.z + ms * phases.w + as * pa1) + atmo_multiscatter(r, mu1) * a1 * c1.y * (rs + ms + as));
 		// The light the deck lets through diffusely, a source of its own for the air under it: the flux mu E Td
 		// leaves the cloud base as a uniform downward radiance F / pi, and the air scatters F / (2 pi) of it toward
