@@ -2723,6 +2723,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Beaver ponds and meadows",
+   "settings": [
+    "PlantGenerator.make_beaver()"
+   ],
+   "note": "",
+   "what": "pond plants by water depth, and after the dam fails a meadow that runs from rush and sedge through tall grass, buttercup, meadowsweet and marsh marigold over the decades.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Leaf wear",
    "settings": [
     "PlantGenerator.leaf_wear"
