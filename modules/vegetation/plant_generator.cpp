@@ -4014,7 +4014,11 @@ void PlantGenerator::_build_heather() {
 // flat grey-green leaves set alternately in two ranks up the culm, leaning out and drooping at
 // the tip; a large soft plume of purplish-brown spikelets nodding to one side.
 void PlantGenerator::_build_reed() {
-	const int culms = int(_rand(6.0f, 13.0f));
+	// Common reed (Phragmites australis): a clone of many culms from one rhizome patch, splaying outwards and arching
+	// (the outer culms lean out, as in a stand's edge), each with long, broad, drooping blades held out from the culm
+	// and a nodding plume (Haslam 1972, "Phragmites communis Trin.", J. Ecol. 60; Clevering and Lissner 1999). Fewer,
+	// upright, narrow culms read as a fence of sticks from a few metres (oasis docs note, 20 Nov).
+	const int culms = int(_rand(12.0f, 22.0f));
 	const float nod = _rand(0.0f, Math::TAU); // The plumes lean one way, as in a stand in wind.
 	Leaf spk;
 	spk.shape = LEAF_LANCEOLATE;
@@ -4024,28 +4028,32 @@ void PlantGenerator::_build_reed() {
 	spk.bend = 0.2f;
 	spk.segments = 2;
 	for (int c = 0; c < culms; c++) {
-		Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.42f, 1.55f));
-		base.origin = Vector3(_rand(-0.22f, 0.22f), 0.0f, _rand(-0.22f, 0.22f));
-		const float len = _rand(1.3f, 2.2f);
-		const float bend = _rand(0.05f, 0.25f);
+		const Vector2 off(_rand(-0.3f, 0.3f), _rand(-0.3f, 0.3f));
+		// Outer culms lean out further from the clump's middle (up to about 20 degrees) and arch over more.
+		const float out_t = CLAMP(off.length() / 0.42f, 0.0f, 1.0f);
+		const float az = off.length_squared() > 1e-6f ? Math::atan2(off.y, off.x) : _rand(0.0f, Math::TAU);
+		Transform3D base = stem_base(az + _rand(-0.4f, 0.4f), Math::lerp(_rand(1.42f, 1.55f), _rand(1.22f, 1.36f), out_t));
+		base.origin = Vector3(off.x, 0.0f, off.y);
+		const float len = _rand(1.4f, 2.4f) * (1.0f - 0.15f * out_t);
+		const float bend = _rand(0.12f, 0.3f) + 0.25f * out_t;
 		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, 14);
-		const Transform3D top = _add_stem(base, len, 0.0045f, 0.0025f, bend, 14, 0.0f);
-		// Leaves from 15% to 85% of the culm, alternating sides.
-		const int nodes = int(_rand(6.0f, 10.0f));
+		const Transform3D top = _add_stem(base, len, 0.005f, 0.0025f, bend, 14, 0.0f);
+		// Leaves from 15% to 85% of the culm, alternating sides, held out and drooping at their tips.
+		const int nodes = int(_rand(7.0f, 11.0f));
 		const float side0 = _rand(0.0f, Math::TAU);
 		for (int k = 0; k < nodes; k++) {
 			const float u = Math::lerp(0.15f, 0.85f, (k + _rand(0.0f, 0.6f)) / nodes);
 			const Transform3D at = _frame_at(fr, u);
-			const float az = side0 + (k % 2) * Math::PI + _rand(-0.3f, 0.3f);
-			const Vector3 out(Math::cos(az), 0.0f, Math::sin(az));
-			const Vector3 d = (at.basis.get_column(2) * _rand(0.9f, 1.4f) + out).normalized();
+			const float laz = side0 + (k % 2) * Math::PI + _rand(-0.3f, 0.3f);
+			const Vector3 out(Math::cos(laz), 0.0f, Math::sin(laz));
+			const Vector3 d = (at.basis.get_column(2) * _rand(0.6f, 1.1f) + out).normalized();
 			Leaf l;
 			l.shape = LEAF_LINEAR;
-			l.length = _rand(0.22f, 0.42f) * (1.0f - 0.35f * u);
-			l.width = _rand(0.013f, 0.022f);
-			l.fold = 0.15f;
-			l.bend = _rand(0.8f, 1.5f);
-			l.twist = _rand(-0.5f, 0.5f);
+			l.length = _rand(0.3f, 0.5f) * (1.0f - 0.3f * u);
+			l.width = _rand(0.018f, 0.032f);
+			l.fold = 0.2f;
+			l.bend = _rand(1.2f, 2.0f);
+			l.twist = _rand(-0.6f, 0.6f);
 			l.segments = 8;
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), l, u * 0.9f, 0.9f);
 		}
@@ -4053,7 +4061,7 @@ void PlantGenerator::_build_reed() {
 		if (_rand(0.0f, 1.0f) < 0.8f) {
 			const Vector3 lean(Math::cos(nod), 0.0f, Math::sin(nod));
 			Transform3D pb(organ_frame((top.basis.get_column(2) + lean * 0.5f).normalized(), Vector3(0, 1, 0)), top.origin);
-			const float plen = _rand(0.18f, 0.32f);
+			const float plen = _rand(0.22f, 0.4f);
 			const LocalVector<Transform3D> pf = _stem_frames(pb, plen, 0.5f, 6);
 			_add_stem(pb, plen, 0.0018f, 0.0006f, 0.5f, 6, 1.0f);
 			const int branches = int(_rand(10.0f, 16.0f));
