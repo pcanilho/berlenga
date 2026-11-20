@@ -59,6 +59,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Water bodies → wet sand (swash) | linked | contact wetness | |
 | Fire → scorched, ashy ground | linked | fire char decal | PhysXFireSpread3D's decal |
 | Ground → dust (Flow) | linked | Flow | |
+| Tyres, wind → dust off dry silt and sand | linked (20 Nov, mud a4571642) | `GroundSurface3D.add_dust(position, velocity, strength)` (strength = width x speed) | dry silt skins and dry sand answer; wind lifts dust off dry silt |
 | Terrain → runoff, rivers | linked | terrain runoff (monthly) | storm runoff to rivers: rain work |
 
 ### Snow
@@ -104,6 +105,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Springs → oasis plants and grass | linked (19 Nov) | DesertSprings (vegetation, from TerrainGenerator3D sand seas): `VegetationField3D.get_springs()`, `get_spring_wetness_at(pos)` (positions m, wetness 0-1, -1 off the sand seas) | readers VegetationField3D RULE_SPRING and GrassField3D; Valence adds the pools next; the spring finder should move to the terrain generator later. Anything cycling species meshes by index skips meshes with `tree_fire_years` meta |
 | Nebkhas → shrubs | linked (19 Nov) | TerrainGenerator3D `get_nebkhas(rect)` (x, top y, z, height m), `get_nebkha_height(pos)` (mound sand alone); `sand_sea_mask` (Image, red 0..1) shapes the ergs | VegetationField3D places a shrub on each mound top; the mounds are sand for the sand thread, no deformation hook needed (terrain-gen cf579682) |
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
+| Lightning → struck tree variant | linked (20 Nov) | `WorldStand.strike_age_at` | WeatherLightning3D records canopy strikes; VegetationField3D swaps to a `tree_lightning_years` variant (field side: trees) |
 | Wet ground → mist | linked (18 Nov) | surface wetness, surface cooling | VegetationMist3D: wet ground mists more and sooner |
 
 ### Water (ocean, rivers, pools, falls)

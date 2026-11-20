@@ -1353,8 +1353,85 @@ void WorldStand::clear_disturbances() {
 	}
 }
 
+void WorldStand::_rebuild_strike_grid() {
+	strike_grid.clear();
+	for (uint32_t i = 0; i < strikes.size(); i++) {
+		const Vector2 c = strikes[i].position;
+		const Vector2i a(int(Math::floor((c.x - STRIKE_RADIUS) / STRIKE_CELL)), int(Math::floor((c.y - STRIKE_RADIUS) / STRIKE_CELL)));
+		const Vector2i b(int(Math::floor((c.x + STRIKE_RADIUS) / STRIKE_CELL)), int(Math::floor((c.y + STRIKE_RADIUS) / STRIKE_CELL)));
+		for (int z = a.y; z <= b.y; z++) {
+			for (int x = a.x; x <= b.x; x++) {
+				strike_grid[Vector2i(x, z)].push_back(i);
+			}
+		}
+	}
+}
+
+void WorldStand::add_strike(const Vector3 &p_position, float p_age_years) {
+	if (strikes.size() >= uint32_t(MAX_STRIKES)) {
+		uint32_t oldest = 0;
+		for (uint32_t i = 1; i < strikes.size(); i++) {
+			if (strikes[i].age > strikes[oldest].age) {
+				oldest = i;
+			}
+		}
+		strikes.remove_at_unordered(oldest);
+	}
+	Strike s;
+	s.position = Vector2(p_position.x, p_position.z);
+	s.age = MAX(p_age_years, 0.0f);
+	strikes.push_back(s);
+	_rebuild_strike_grid();
+	_report(Rect2(s.position - Vector2(STRIKE_RADIUS, STRIKE_RADIUS), Vector2(2.0f * STRIKE_RADIUS, 2.0f * STRIKE_RADIUS)));
+}
+
+float WorldStand::strike_age_at(const Vector3 &p_position) const {
+	float r = -1.0f;
+	if (GDVIRTUAL_CALL(_strike_age_at, p_position, r)) {
+		return r;
+	}
+	const Vector2 p(p_position.x, p_position.z);
+	const LocalVector<uint32_t> *in = strike_grid.getptr(Vector2i(int(Math::floor(p.x / STRIKE_CELL)), int(Math::floor(p.y / STRIKE_CELL))));
+	if (in == nullptr) {
+		return r;
+	}
+	for (uint32_t i : *in) {
+		const Strike &s = strikes[i];
+		if (p.distance_squared_to(s.position) <= STRIKE_RADIUS * STRIKE_RADIUS && (r < 0.0f || s.age < r)) {
+			r = s.age;
+		}
+	}
+	return r;
+}
+
+void WorldStand::clear_strikes() {
+	if (strikes.is_empty()) {
+		return;
+	}
+	Rect2 area;
+	for (uint32_t i = 0; i < strikes.size(); i++) {
+		const Rect2 r(strikes[i].position - Vector2(STRIKE_RADIUS, STRIKE_RADIUS), Vector2(2.0f * STRIKE_RADIUS, 2.0f * STRIKE_RADIUS));
+		area = i == 0 ? r : area.merge(r);
+	}
+	strikes.clear();
+	strike_grid.clear();
+	_report(area);
+}
+
 void WorldStand::advance_years(float p_years) {
-	if (!(p_years > 0.0f) || events.is_empty()) {
+	if (!(p_years > 0.0f) || (events.is_empty() && strikes.is_empty())) {
+		return;
+	}
+	for (Strike &st : strikes) {
+		st.age += p_years;
+	}
+	if (events.is_empty()) {
+		Rect2 sa;
+		for (uint32_t i = 0; i < strikes.size(); i++) {
+			const Rect2 r(strikes[i].position - Vector2(STRIKE_RADIUS, STRIKE_RADIUS), Vector2(2.0f * STRIKE_RADIUS, 2.0f * STRIKE_RADIUS));
+			sa = i == 0 ? r : sa.merge(r);
+		}
+		_report(sa);
 		return;
 	}
 	Rect2 area;
@@ -1362,6 +1439,9 @@ void WorldStand::advance_years(float p_years) {
 		events[i].age += p_years;
 		const Rect2 r(events[i].center - Vector2(events[i].radius, events[i].radius), Vector2(2.0f * events[i].radius, 2.0f * events[i].radius));
 		area = i == 0 ? r : area.merge(r);
+	}
+	for (const Strike &st : strikes) {
+		area = area.merge(Rect2(st.position - Vector2(STRIKE_RADIUS, STRIKE_RADIUS), Vector2(2.0f * STRIKE_RADIUS, 2.0f * STRIKE_RADIUS)));
 	}
 	_report(area);
 }
@@ -1412,12 +1492,17 @@ void WorldStand::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("remove_disturbance", "id"), &WorldStand::remove_disturbance);
 	ClassDB::bind_method(D_METHOD("clear_disturbances"), &WorldStand::clear_disturbances);
 	ClassDB::bind_method(D_METHOD("advance_years", "years"), &WorldStand::advance_years);
+	ClassDB::bind_method(D_METHOD("add_strike", "position", "age_years"), &WorldStand::add_strike);
+	ClassDB::bind_method(D_METHOD("strike_age_at", "position"), &WorldStand::strike_age_at);
+	ClassDB::bind_method(D_METHOD("get_strike_count"), &WorldStand::get_strike_count);
+	ClassDB::bind_method(D_METHOD("clear_strikes"), &WorldStand::clear_strikes);
 	ClassDB::bind_method(D_METHOD("stand_changed", "area"), &WorldStand::stand_changed);
 	ClassDB::bind_method(D_METHOD("get_stand_generation"), &WorldStand::get_stand_generation);
 	ClassDB::bind_method(D_METHOD("get_stand_changes_since", "generation"), &WorldStand::get_stand_changes_since);
 	ADD_SIGNAL(MethodInfo("stand_changed", PropertyInfo(Variant::RECT2, "area")));
 	GDVIRTUAL_BIND(_stand_age_at, "position");
 	GDVIRTUAL_BIND(_disturbance_at, "position");
+	GDVIRTUAL_BIND(_strike_age_at, "position");
 	BIND_ENUM_CONSTANT(DISTURBANCE_NONE);
 	BIND_ENUM_CONSTANT(DISTURBANCE_FIRE);
 	BIND_ENUM_CONSTANT(DISTURBANCE_WIND);

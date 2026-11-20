@@ -23,6 +23,13 @@
 				Override in a stub to replace [method stand_age_at].
 			</description>
 		</method>
+		<method name="_strike_age_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override to answer [method strike_age_at] from a script (a test stub).
+			</description>
+		</method>
 		<method name="add_disturbance">
 			<return type="int" />
 			<param index="0" name="center" type="Vector3" />
@@ -31,6 +38,14 @@
 			<param index="3" name="age_years" type="float" />
 			<description>
 				A stand-replacing disturbance over a disc around [param center] (world XZ) of [param radius] metres, [param age_years] years ago, of [param kind] ([enum Disturbance]; windthrow and beetle kills, which the trees report; fire comes from [WorldFire]). Returns its id. Reports its area through [signal stand_changed].
+			</description>
+		</method>
+		<method name="add_strike">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="age_years" type="float" />
+			<description>
+				Records a lightning strike into a tree crown at [param position] (the attachment point), [param age_years] ago. [WeatherLightning3D] records its canopy strikes here when [member WeatherLightning3D.record_tree_strikes] is on. At most 4096 are kept; the oldest go first. Reports its area through [signal stand_changed].
 			</description>
 		</method>
 		<method name="advance_years">
@@ -44,6 +59,12 @@
 			<return type="void" />
 			<description>
 				Removes every disturbance added with [method add_disturbance] and reports their area.
+			</description>
+		</method>
+		<method name="clear_strikes">
+			<return type="void" />
+			<description>
+				Removes every recorded strike.
 			</description>
 		</method>
 		<method name="disturbance_at" qualifiers="const">
@@ -64,6 +85,12 @@
 			<return type="int" />
 			<description>
 				Increases with every reported change. Readers keep the generation they last read and ask [method get_stand_changes_since].
+			</description>
+		</method>
+		<method name="get_strike_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of recorded strikes.
 			</description>
 		</method>
 		<method name="remove_disturbance">
@@ -93,6 +120,13 @@
 			<param index="0" name="area" type="Rect2" />
 			<description>
 				Reports that [method stand_age_at] changed over [param area] (world XZ): bumps the generation, logs the area and emits [signal stand_changed]. Fire's burn changes are forwarded here.
+			</description>
+		</method>
+		<method name="strike_age_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Years since the youngest strike within 3 m (xz) of a tree trunk at [param position], or [code]-1[/code] where none. Fields pick a struck tree's variant by it (as [method stand_age_at] picks succession stages).
 			</description>
 		</method>
 	</methods>

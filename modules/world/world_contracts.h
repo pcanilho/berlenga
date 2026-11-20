@@ -416,6 +416,17 @@ private:
 	HashMap<Vector2i, LocalVector<uint32_t>> grid;
 	LocalVector<uint32_t> wide;
 	void _rebuild_grid();
+	// Lightning strikes on trees (struck_tree, strike_age_at): points with ages, in a 16 m grid, at most MAX_STRIKES
+	// (the oldest go first).
+	struct Strike {
+		Vector2 position;
+		float age = 0.0f; // years
+	};
+	static constexpr float STRIKE_CELL = 16.0f;
+	static constexpr int MAX_STRIKES = 4096;
+	LocalVector<Strike> strikes;
+	HashMap<Vector2i, LocalVector<uint32_t>> strike_grid;
+	void _rebuild_strike_grid();
 	struct Change {
 		uint64_t generation = 0;
 		Rect2 area;
@@ -431,6 +442,7 @@ protected:
 
 	GDVIRTUAL1RC(float, _stand_age_at, Vector3)
 	GDVIRTUAL1RC(int, _disturbance_at, Vector3)
+	GDVIRTUAL1RC(float, _strike_age_at, Vector3)
 
 public:
 	// Years since the last stand-replacing disturbance at the point (the youngest of fire, wind and beetle kills); -1
@@ -444,7 +456,15 @@ public:
 	void set_disturbance_age(int p_id, float p_age_years);
 	void remove_disturbance(int p_id);
 	void clear_disturbances();
-	// The world's years pass: every event ages (fire ages through its own producers).
+	// A tree struck by lightning: the strike's attachment point (the crown top; WeatherLightning3D records its canopy
+	// strikes) and how long ago (years). strike_age_at() answers for a tree whose trunk stands within STRIKE_RADIUS (m)
+	// of it: the youngest strike there in years, -1 none. Each strike reports its area.
+	static constexpr float STRIKE_RADIUS = 3.0f;
+	void add_strike(const Vector3 &p_position, float p_age_years);
+	float strike_age_at(const Vector3 &p_position) const;
+	int get_strike_count() const { return int(strikes.size()); }
+	void clear_strikes();
+	// The world's years pass: every event and strike ages (fire ages through its own producers).
 	void advance_years(float p_years);
 	// Changes, as WorldFire's burn changes (fire's are forwarded here too): signal stand_changed(area), a generation, and
 	// the union of the areas reported after a generation (false when the log no longer reaches back that far).
