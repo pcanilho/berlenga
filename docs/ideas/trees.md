@@ -3794,9 +3794,17 @@ grown on demand (lazy generation, as the near leaves of 8c).
 - VegetationField3D asks in setup for the kinds its area needs (any burn, strike or browse over it). A later burn, strike
   or disc asks from process, and the field streams again with the new meshes.
 - Woodland with all three on: 70 meshes, 3.08 GB peak (3.05 GB with none).
-- Grown on the main thread: the first strike, burn or disc of a kind over a streamed field holds that frame about a
-  second a species. On a worker it stalled the field (generate() runs its own group tasks while the field clears its
-  tiles); moving it to a worker is a PC follow-up with a debugger.
+- Grown on a worker from a streamed field (setup still grows what it needs before placing). The first worker build
+  deadlocked: generate() reads shader code through RenderingServer, which waits for the main thread to flush, while the
+  main thread's scene cull waited on a group task that needed a free worker, and four variant builds held all four
+  workers (found with gdb backtraces on a debug-symbol build). Variant builds now share the near trees' build slot
+  (`_near_limit()`, one core in four), so a worker always stays free; a kind that finds the slot taken is asked again on
+  the next poll (every 0.25 s).
+- When a kind is grown, only the grown species are set up again (meshes and variant tables; their order, halos and
+  colonnade and nebkha slots kept), and every tile is marked stale, so the old tile shows until its replacement is in.
+  A whole re-setup held the frame 16 s; the per-species refresh takes under 1 ms.
+- `--strikes --stream` on lavapipe: longest frame with no strike about 200 ms; with a strike 0.8 to 1.3 s, of which the
+  field's own process is about 200 ms. The rest is the software renderer drawing the struck tree for the first time.
 - Checks: `stands.gd --stands --lightning --strikes` and `--browse` (nothing grown before; the field grows them under a
   strike or disc, same placements as the eager build); `--strikes --stream` (a strike after streaming brings the struck
   tree in).

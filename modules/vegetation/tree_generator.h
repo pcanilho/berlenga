@@ -1095,6 +1095,8 @@ private:
 	int variant_built = 0;
 	int variant_task_kinds = 0;
 	TypedArray<Mesh> variant_meshes[3]; // Fire, struck, browsed.
+	WorkerThreadPool::TaskID variant_task = WorkerThreadPool::INVALID_TASK_ID;
+	bool variant_task_sync = false;
 	static void _variant_task(void *p_self);
 	Ref<ArrayMesh> material_source;
 	static void _near_task(void *p_self);
@@ -1140,9 +1142,10 @@ public:
 	// For PlantSpecies.near_mesh_source: the full-leaf mesh of one variant (index into the
 	// species' meshes), or null while it is being built on a worker thread.
 	Ref<Mesh> request_near_mesh(int p_key, int p_variant);
-	// Deferred variants (on a species' _tree_variant_source): grows the kinds asked for and appends them to the species
-	// (and to its near source's lists) in the stand's order. Returns the kinds it still lacks; main thread only.
-	int request_variants(const Ref<PlantSpecies> &p_species, int p_kinds);
+	// Deferred variants (on a species' _tree_variant_source): grows the kinds asked for (p_wait: here and now, else on a
+	// worker, collected by a later call) and appends what is grown to the species (and to its near source's lists) in the
+	// stand's order. Returns the kinds it still lacks; main thread only.
+	int request_variants(const Ref<PlantSpecies> &p_species, int p_kinds, bool p_wait = true);
 	enum VariantKind {
 		VARIANT_FIRE = 1,
 		VARIANT_STRIKE = 2,

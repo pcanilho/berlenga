@@ -8705,18 +8705,40 @@ void TreeGenerator::_variant_task(void *p_self) {
 	}
 	self->far_leaves = false;
 	self->nodes.reset(); // Keep the copy small between requests.
+	if (!self->variant_task_sync) {
+		near_building.decrement(); // The shared build slot frees when the build ends.
+	}
 }
 
-int TreeGenerator::request_variants(const Ref<PlantSpecies> &p_species, int p_kinds) {
+int TreeGenerator::request_variants(const Ref<PlantSpecies> &p_species, int p_kinds, bool p_wait) {
 	ERR_FAIL_COND_V(p_species.is_null(), 0);
-	// Grown here, on the calling (main) thread. On a worker it stalled a streamed field: generate() runs its own group
-	// tasks and a field clearing its tiles at the same time never got them back (trees.md 5bc; to retry on the PC).
-	const int want = p_kinds & variant_kinds & ~variant_built;
-	if (want) {
-		variant_task_kinds = want;
-		_variant_task(this);
-		variant_built |= want;
+	WorkerThreadPool *wtp = WorkerThreadPool::get_singleton();
+	// A build on a worker is collected once done, never waited for here.
+	if (variant_task != WorkerThreadPool::INVALID_TASK_ID && wtp->is_task_completed(variant_task)) {
+		wtp->wait_for_task_completion(variant_task);
+		variant_task = WorkerThreadPool::INVALID_TASK_ID;
+		variant_built |= variant_task_kinds;
 		variant_task_kinds = 0;
+	}
+	const int want = p_kinds & variant_kinds & ~variant_built;
+	if (want && variant_task == WorkerThreadPool::INVALID_TASK_ID) {
+		variant_task_kinds = want;
+		if (p_wait) {
+			variant_task_sync = true;
+			_variant_task(this);
+			variant_task_sync = false;
+			variant_built |= want;
+			variant_task_kinds = 0;
+		} else if (near_building.get() < _near_limit()) {
+			// On a worker, within the near meshes' shared build limit (a core in four): a build waits on the main thread
+			// for its rendering calls (materials, shader code), and the main thread's render waits on workers; four
+			// variant builds at once took every worker and both waited for ever (trees.md 5bc). Over the limit it is
+			// asked again on the next poll.
+			near_building.increment();
+			variant_task = wtp->add_native_task(&TreeGenerator::_variant_task, this, false, "TreeGenerator variants");
+		} else {
+			variant_task_kinds = 0;
+		}
 	}
 	// Append what is grown and the species still lacks, in the stand's order (living, fire, struck, browsed).
 	const int deferred = int(p_species->get_meta(SNAME("tree_variants_deferred"), 0));
@@ -23092,36 +23114,42 @@ Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
 			if (tex.is_null() || n <= best) {
 				continue;
 			}
-			// The texture's mean read back once per texture (a GPU readback each tree was a stall).
+			// The texture's mean read back once per texture (a GPU readback each tree was a stall). The readback is
+			// outside the lock: from a worker it waits for the main thread to flush the rendering calls, and the main
+			// thread wanting the lock for a hull of its own meanwhile deadlocked both (deferred variants, trees.md 5bc).
 			Color mean;
+			bool cached = false;
 			{
 				MutexLock lock(hull_tex_mutex);
 				const Color *found = hull_tex_mean.getptr(tex->get_rid());
 				if (found) {
 					mean = *found;
-				} else {
-					Ref<Image> img = tex->get_image();
-					if (img.is_valid()) {
-						img = img->duplicate();
-						if (img->is_compressed()) {
-							img->decompress();
-						}
-						img->convert(Image::FORMAT_RGBA8);
-						Color sum;
-						float cnt = 0.0f;
-						for (int y = 0; y < 48; y++) {
-							for (int x = 0; x < 48; x++) {
-								const Color c = img->get_pixel(x * img->get_width() / 48, y * img->get_height() / 48);
-								if (c.a >= 0.5f) {
-									sum += c.srgb_to_linear();
-									cnt += 1.0f;
-								}
+					cached = true;
+				}
+			}
+			if (!cached) {
+				Ref<Image> img = tex->get_image();
+				if (img.is_valid()) {
+					img = img->duplicate();
+					if (img->is_compressed()) {
+						img->decompress();
+					}
+					img->convert(Image::FORMAT_RGBA8);
+					Color sum;
+					float cnt = 0.0f;
+					for (int y = 0; y < 48; y++) {
+						for (int x = 0; x < 48; x++) {
+							const Color c = img->get_pixel(x * img->get_width() / 48, y * img->get_height() / 48);
+							if (c.a >= 0.5f) {
+								sum += c.srgb_to_linear();
+								cnt += 1.0f;
 							}
 						}
-						mean = cnt > 0.0f ? Color(sum.r / cnt, sum.g / cnt, sum.b / cnt, cnt / (48.0f * 48.0f)) : Color(0, 0, 0, 0);
 					}
-					hull_tex_mean.insert(tex->get_rid(), mean);
+					mean = cnt > 0.0f ? Color(sum.r / cnt, sum.g / cnt, sum.b / cnt, cnt / (48.0f * 48.0f)) : Color(0, 0, 0, 0);
 				}
+				MutexLock lock(hull_tex_mutex);
+				hull_tex_mean.insert(tex->get_rid(), mean);
 			}
 			const float w = mean.a * 48.0f * 48.0f;
 			if (w > 0.0f) {
@@ -23527,6 +23555,9 @@ int TreeGenerator::get_near_mesh_count() const {
 TreeGenerator::~TreeGenerator() {
 	if (near_task != WorkerThreadPool::INVALID_TASK_ID) {
 		WorkerThreadPool::get_singleton()->wait_for_task_completion(near_task);
+	}
+	if (variant_task != WorkerThreadPool::INVALID_TASK_ID) {
+		WorkerThreadPool::get_singleton()->wait_for_task_completion(variant_task);
 	}
 }
 
@@ -26331,7 +26362,7 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_far_lod1", "enabled"), &TreeGenerator::set_far_lod1);
 	ClassDB::bind_method(D_METHOD("get_far_lod1"), &TreeGenerator::get_far_lod1);
 	ClassDB::bind_method(D_METHOD("request_near_mesh", "key", "variant"), &TreeGenerator::request_near_mesh);
-	ClassDB::bind_method(D_METHOD("request_variants", "species", "kinds"), &TreeGenerator::request_variants);
+	ClassDB::bind_method(D_METHOD("request_variants", "species", "kinds", "wait"), &TreeGenerator::request_variants, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("set_defer_variants", "enabled"), &TreeGenerator::set_defer_variants);
 	ClassDB::bind_method(D_METHOD("get_defer_variants"), &TreeGenerator::get_defer_variants);
 	ClassDB::bind_method(D_METHOD("get_near_mesh_count"), &TreeGenerator::get_near_mesh_count);
