@@ -515,6 +515,9 @@ private:
 	float params[PARAM_MAX] = {};
 	Phyllotaxis phyllotaxis = PHYLLOTAXIS_ALTERNATE;
 	float forest_shade = 0.0f;
+	// A forest edge tree (trees.md 5as): 0 inside the stand, 1 at the edge with the open on its +X side, where the
+	// neighbours' shade is gone and side light keeps the low branches.
+	float edge_open = 0.0f;
 	float forest_spacing = 4.0f;
 	int mask_channel = -1; // Passed to every PlantSpecies the stand methods build.
 	bool needle_sprays = false;
@@ -720,6 +723,7 @@ public:
 	int windthrow_band = 0; // While a windthrow stand grows its species: 1 thrown, 2 snapped, 3 leaning survivors.
 	int succession_band = 0; // While make_succession grows a stage: 1 the pole stage, 2 old growth's veterans, 3 stand initiation (trees.md 5aq).
 	Preset last_stand_lead = PRESET_MAX; // The lead of the last make_stand().
+	int edge_band = 0; // While make_edge grows its edge trees: 1 (trees.md 5as).
 	int boreal_band = 0; // While a taiga stand grows its species: 1 narrow spruce, 2 fire-survivor pine, 3 kelo, 4 burn birch (trees.md 5ap).
 	int old_growth_band = 0; // While an old-growth stand grows its species: 1 veteran giants, 2 poles, 3 giant deadwood, 4 canopy (trees.md 5an).
 	static int _windthrow_class(float p_years);
@@ -996,6 +1000,8 @@ public:
 	void set_phyllotaxis(Phyllotaxis p_phyllotaxis) { phyllotaxis = p_phyllotaxis; }
 	Phyllotaxis get_phyllotaxis() const { return phyllotaxis; }
 	void set_forest_shade(float p_shade) { forest_shade = p_shade; }
+	void set_edge_open(float p_open) { edge_open = CLAMP(p_open, 0.0f, 1.0f); }
+	float get_edge_open() const { return edge_open; }
 	float get_forest_shade() const { return forest_shade; }
 	void set_forest_spacing(float p_spacing) { forest_spacing = p_spacing; }
 	float get_forest_spacing() const { return forest_spacing; }
@@ -1202,6 +1208,7 @@ public:
 	Ref<Biome> make_stand(Stand p_stand, int p_variants);
 	Ref<Biome> make_woodland(int p_variants, Region p_region = REGION_EUROPE);
 	Ref<Biome> make_succession(Stand p_stand, int p_variants);
+	Ref<Biome> make_edge(Stand p_stand, int p_variants);
 	void clear_cache();
 
 	float get_height() const { return height; }

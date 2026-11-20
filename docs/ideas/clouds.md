@@ -269,3 +269,18 @@ Round 3 follow-ups (docs review of 118c13bc):
    about the sky's brightness.
 8. **Bench**: the weather bench's ground was 12 km across, so the wide view from 520 m saw past its edge (a grey
    band under the horizon). Now 60 km.
+
+## Round 2 leftovers (20 Nov 2026)
+
+1. **22 and 46 degree ice halos** (Tape 1994, "Atmospheric Halos"; Greenler): randomly oriented hexagonal
+   columns refract through 60 degree faces with a minimum deviation near 22 degrees (21.7 red to 22.4 blue) and
+   through 90 degree faces near 46. The cirrus phase gets one lobe a ring, per channel: nothing inside the
+   minimum (a sharp red inner rim), an exponential tail outward, normalised over the sphere. The colours overlap
+   through the tail, so the ring is pale, not a rainbow. `cloud_halo_strength` (0.08) is the 22 degree ring's
+   share of the single scattering, the 46 degree ring a fifth of it. Shown only where a slow noise (25 km
+   patches) says the sheet's ice is columns, so rings show as arcs over some of the sky. Raster and PT match.
+   Bench: weather `--view=shafts --cover=0.05 --high-cover=0.7 --sun-yaw=0`.
+2. **The mid sheet dims the cumulus' sun**: read once a pixel where the view ray crosses the middle of the
+   cumulus layer, followed up the sun to the sheet, two-stream transmission as in the ground's shadow bake. Under
+   a full altocumulus sheet far cumulus lose about 6% of their brightness (the sheet is thin, optical depth 4 at
+   full cover, and most light comes through scattered).

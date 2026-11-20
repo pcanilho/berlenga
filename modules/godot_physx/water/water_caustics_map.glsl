@@ -30,7 +30,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 light_up_refdepth; // xyz light-space "up" basis vector (unit), w reference_depth (world units along the refracted ray)
 	vec4 ripple_domain;     // xy ripple layer's domain size, z 1 if per-cell depth is set, w shallow_fade_depth
 	vec4 ocean_domain;      // xy ocean layer's domain size, zw unused
-	vec4 viewport_wh;       // xy render target size in pixels, zw unused
+	vec4 viewport_wh;       // xy render target size in pixels, z the foam's shade, w unused
 	vec4 light_origin;      // xyz center of the projected map, w unused
 };
 
@@ -197,6 +197,14 @@ float ocean_fade(vec2 xz) {
 	return smoothstep(0.0, min(max(ripple_domain.w, 1e-3), 0.3), depth_at(xz));
 }
 
+// The foam on the surface (whitecaps in the ocean's rest coordinates, shore foam on the ripple grid): bubbles send
+// most of the sun back up, so the bed under a foam patch is in its soft shade (docs/ideas/water.md, "Foam shade").
+layout(set = 0, binding = 4) uniform sampler2D ocean_foam_tex;
+layout(set = 0, binding = 5) uniform sampler2D shore_foam_tex;
+// viewport_wh.z: of the sun a full foam cover stops (reflected back up and scattered sideways; PhysXWaterSurface3D's
+// foam_shade, 0.8): whitewater's albedo is 0.5 to 0.6 (Whitlock et al. 1982; Koepke 1984) and the bubble layer
+// scatters most of the rest out of the beam.
+
 layout(location = 0) in vec2 v_flat_xz;
 layout(location = 1) flat in int v_mode;
 
@@ -275,5 +283,15 @@ void main() {
 	// lands on the texel (additive blending), so where folds overlap their light adds. Held below 64 (a
 	// half float's precision there is still a few percent). Receivers read R + (1 - G): the dry share of a texel
 	// is lit evenly.
-	out_color = vec4(min(concentration, 64.0) * wet_at(v_flat_xz), 0.0, 0.0, 0.0);
+	vec2 uv_o = (v_flat_xz + light_origin.xz) / ocean_domain.xy + 0.5;
+	vec2 uv_r = v_flat_xz / ripple_domain.xy + 0.5;
+	// The cover the surface draws from each field (its smoothstep, and for the swash's foam the open lace that
+	// physx_water_surface_3d's shore_foam_at draws: 0.5 g^2 + 0.1 g), not the raw amount.
+	float foam = smoothstep(0.0, 1.0, texture(ocean_foam_tex, uv_o).r) * ocean_fade(v_flat_xz);
+	if (all(greaterThanEqual(uv_r, vec2(0.0))) && all(lessThanEqual(uv_r, vec2(1.0)))) {
+		float g = smoothstep(0.0, 1.0, texture(shore_foam_tex, uv_r).r);
+		foam = max(foam, 0.5 * g * g + 0.1 * g);
+	}
+	float through = 1.0 - viewport_wh.z * clamp(foam, 0.0, 1.0);
+	out_color = vec4(min(concentration, 64.0) * through * wet_at(v_flat_xz), 0.0, 0.0, 0.0);
 }

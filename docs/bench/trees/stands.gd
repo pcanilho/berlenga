@@ -6,6 +6,7 @@ extends Node3D
 # godot --path docs/bench/trees --rendering-driver vulkan -- --stands [options]
 #   --test            place every stand, print the counts and PASS/FAIL, quit
 #   --stand-test=N    the placement checks of stand N only (TreeGenerator.Stand)
+#   --forest-edge=N   make_edge(N): mantle shrubs out in the open, edge trees one-sided toward +X (trees.md 5as)
 #   --succession=N    make_succession(N): every stage present, age ranges and kinds sane, sizes by stage (trees.md 5aq)
 #   --map=path.png    the placement maps of every stand in one image
 #   --edge [--standard]  with --plot: from a fresh coupe across its edge (or at a standard 8 m off)
@@ -73,6 +74,10 @@ func run(args: Dictionary) -> void:
 	# Fire band variants (five more meshes a species, trees.md 5ah) serve no placement check: off unless --fire.
 	gen.fire_variants = args.has("fire")
 	gen.far_thinning = OS.get_environment("NO_FAR_SCALE") == ""
+	if args.has("forest-edge"):
+		_forest_edge_check(int(args["forest-edge"]))
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if args.has("succession"):
 		_succession_check(int(args["succession"]))
 		get_tree().quit(1 if fails > 0 else 0)
@@ -111,6 +116,42 @@ func run(args: Dictionary) -> void:
 		get_tree().quit(1 if fails > 0 else 0)
 	elif args.has("plot"):
 		await _render_plot(int(args["plot"]), args)
+
+# Forest edges (trees.md 5as): edge trees carry tree_open_side on species and meshes and lean their crowns to the
+# open (+X: the crown's centre off the stem that way), the mantle shrubs sit mostly out in the open.
+func _forest_edge_check(i: int) -> void:
+	var biome := gen.make_edge(i, variants)
+	var trees := 0
+	var one_sided := 0
+	var mantle := 0
+	var mantle_out := 0
+	var bad := 0
+	for sp in biome.species:
+		var r: Vector2 = sp.get_meta("edge_distance", Vector2(1e9, -1e9))
+		if r.y <= r.x:
+			bad += 1
+		var nm: String = sp.resource_name
+		if nm.contains("(forest edge)"):
+			trees += 1
+			var ok: bool = sp.has_meta("tree_open_side")
+			var shift := 0.0
+			for m in sp.meshes:
+				ok = ok and m.has_meta("tree_open_side")
+				var ab: AABB = m.get_aabb()
+				shift += (ab.position.x + 0.5 * ab.size.x) / maxf(ab.size.x, 0.1)
+			shift /= maxf(sp.meshes.size(), 1)
+			if ok and shift > 0.05:
+				one_sided += 1
+			print("  %s: %.0f..%.0f m, crown centre %.2f of its width toward the open" % [nm, r.x, r.y, shift])
+		elif nm.contains("(edge mantle)"):
+			mantle += 1
+			if r.x + r.y < 0.0:
+				mantle_out += 1
+			print("  %s: %.0f..%.0f m" % [nm, r.x, r.y])
+	var name_i: String = STAND_NAMES[i] if i < STAND_NAMES.size() else str(i)
+	# Groves, oases and parkland have no leading forest tree: a mantle only.
+	var no_lead := i in [TreeGenerator.STAND_STONE_PINE, TreeGenerator.STAND_OLIVE_GROVE, TreeGenerator.STAND_DATE_OASIS]
+	_check(bad == 0 and (trees > 0 or no_lead) and one_sided == trees and mantle >= 3 and mantle_out * 2 >= mantle, "forest edge of %s: %d edge trees (%d one-sided to the open), %d mantle shrubs (%d mostly outside), %d bad ranges" % [name_i, trees, one_sided, mantle, mantle_out, bad])
 
 # Forests that age (trees.md 5aq): the four structural stages (Oliver and Larson 1996) all present, each species'
 # age range forward and its kind a RULE_DISTURBANCE number or -1, the pole stage shorter than the mature lead and

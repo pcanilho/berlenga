@@ -1485,7 +1485,13 @@ void TreeGenerator::_build_shadow_grid(int p_year) {
 					const float dz = grid_origin.z + (z + 0.5f) * cell - base.z;
 					const float r = Math::sqrt(dx * dx + dz * dz);
 					const float t = CLAMP((r - r0) / (r1 - r0), 0.0f, 1.0f);
-					shadow[_cell_index(Vector3i(x, y, z))] += under + sy * t * t * (3.0f - 2.0f * t);
+					// At a forest edge (edge_open, trees.md 5as) there are no neighbours on the open (+X) side and the
+					// side light reaches under the canopy there: the crown spreads that way and keeps its low limbs
+					// (the edge trees' one-sided crowns and green branches to the ground; Harper et al. 2005).
+					// Near the stem the tree's own crown still shades its foot: the stem stays single and clean below the
+					// first limbs, which reach out long into the light.
+					const float open = edge_open * Math::smoothstep(-0.1f * r0, 0.3f * r0, dx) * Math::smoothstep(0.08f * r0, 0.35f * r0, r);
+					shadow[_cell_index(Vector3i(x, y, z))] += (1.0f - open) * (under + sy * t * t * (3.0f - 2.0f * t));
 				}
 			}
 		}
@@ -21263,6 +21269,15 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 			limb_breakage = 1.3f;
 		}
 	}
+	if (edge_band > 0) {
+		// A forest edge's trees (trees.md 5as): the open on +X, most fully, a few half sheltered by a mantle tree.
+		edge_open = Math::lerp(0.7f, 1.0f, Math::fmod(float(p_variant) * 0.618034f + 0.43f, 1.0f));
+		// Edge trees reach and lean out toward the light (stems at edges and gaps lean to the open; Young and
+		// Hubbell 1991): stronger phototropism than inside the stand.
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		params[PARAM_PHOTOTROPISM] = look.params[PARAM_PHOTOTROPISM] * 1.6f;
+	}
 	if (succession_band > 0) {
 		// Forests that age (trees.md 5aq).
 		const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.29f, 1.0f);
@@ -21646,6 +21661,8 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	fire_scars = p_from.fire_scars;
 	kelo = p_from.kelo;
 	boreal_band = p_from.boreal_band;
+	edge_band = p_from.edge_band;
+	edge_open = p_from.edge_open;
 	succession_band = p_from.succession_band;
 	bark_color = p_from.bark_color;
 	leaf_color = p_from.leaf_color;
@@ -21821,7 +21838,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			(windthrow_band > 0 ? 200000000 * windthrow_band + 2000000 * MIN(int(windthrow_storm * 2.0f), 60) : 0) +
 			(old_growth_band > 0 ? 1000000000 + 50000000 * old_growth_band : 0) +
 			(boreal_band > 0 ? 1500000000 + 50000000 * boreal_band : 0) +
-			(succession_band > 0 ? int64_t(4000000000LL) * succession_band : 0); // 64-bit: band terms stack (taiga ages, trees.md 5aq).
+			(succession_band > 0 ? int64_t(4000000000LL) * succession_band : 0) + // 64-bit: band terms stack (taiga ages, trees.md 5aq).
+			(edge_band > 0 || edge_open > 0.0f ? int64_t(20000000000LL) * (1 + edge_band + 4 * int(edge_open * 8.0f)) : 0);
 	// Placed trees are alive unless a beetle stand grows its kill (single trees keep beetle_years).
 	struct BeetleYearsRestore {
 		float &value;
@@ -23217,6 +23235,132 @@ Ref<Biome> TreeGenerator::make_succession(Stand p_stand, int p_variants) {
 	return biome;
 }
 
+// Forest edges (trees.md 5as; Harper et al. 2005, edge influence; the Waldmantel of Central European silviculture, e.g.
+// Coch 1995): where a stand meets the open, a mantle of light-demanding shrubs a few metres deep stands in front of the
+// trees, and the edge trees keep green branches to the ground on their lit side. The species carry meta
+// "edge_distance" (Vector2 metres from the canopy's edge, positive inside the stand, negative out in the open) for the
+// placing side, and the edge trees "tree_open_side" (their open side, mesh +X) for it to turn them to face the open.
+// The herb fringe in front belongs to the ground plants.
+Ref<Biome> TreeGenerator::make_edge(Stand p_stand, int p_variants) {
+	ERR_FAIL_INDEX_V(int(p_stand), int(STAND_MAX), Ref<Biome>());
+	make_stand(p_stand, p_variants); // Names the lead (cached meshes; the list itself is not used).
+	// A stand without a leading forest tree (groves, oases, parkland) gets no edge trees, only the mantle.
+	const Preset lead = last_stand_lead;
+	TypedArray<PlantSpecies> list;
+	auto tag = [&](const Ref<PlantSpecies> &p_sp, float p_from, float p_to, float p_density) {
+		p_sp->set_meta("edge_distance", Vector2(p_from, p_to));
+		p_sp->set_density(p_density);
+		list.push_back(p_sp);
+	};
+	enum EdgeKind {
+		EDGE_TEMPERATE,
+		EDGE_MOUNTAIN, // Montane and boreal conifers.
+		EDGE_NA,
+		EDGE_MEDITERRANEAN,
+	};
+	EdgeKind kind = EDGE_TEMPERATE;
+	switch (p_stand) {
+		case STAND_MONTANE_CONIFER:
+		case STAND_SUBALPINE:
+		case STAND_PINE_HEATH:
+		case STAND_BEETLE_SPRUCE:
+		case STAND_WINDTHROW:
+		case STAND_BOREAL_TAIGA:
+			kind = EDGE_MOUNTAIN;
+			break;
+		case STAND_NORTHERN_HARDWOOD:
+		case STAND_EASTERN_OAK:
+		case STAND_PINE_HEMLOCK:
+			kind = EDGE_NA;
+			break;
+		case STAND_STONE_PINE:
+		case STAND_OLIVE_GROVE:
+		case STAND_DATE_OASIS:
+			kind = EDGE_MEDITERRANEAN;
+			break;
+		default:
+			break;
+	}
+	// The edge trees: the lead, and a light-demanding tree that takes the edge where the lead is shade-tolerant.
+	const int saved_band = edge_band;
+	const float saved_open = edge_open;
+	edge_band = 1;
+	Ref<PlantSpecies> edge_lead = lead == PRESET_MAX ? Ref<PlantSpecies>() : _stand_species(lead, true, p_variants, FORM_STAND);
+	const Preset second = kind == EDGE_MOUNTAIN ? PRESET_BIRCH : kind == EDGE_NA ? PRESET_RED_MAPLE : kind == EDGE_MEDITERRANEAN ? PRESET_MAX : (lead == PRESET_OAK ? PRESET_BIRCH : PRESET_OAK);
+	Ref<PlantSpecies> edge_second = second == PRESET_MAX ? Ref<PlantSpecies>() : _stand_species(second, true, p_variants, FORM_STAND);
+	edge_band = saved_band;
+	edge_open = saved_open;
+	for (Ref<PlantSpecies> sp : { edge_lead, edge_second }) {
+		if (sp.is_null()) {
+			continue;
+		}
+		sp->set_name(vformat("%s (forest edge)", sp->get_name()));
+		sp->set_meta("tree_open_side", Vector3(1, 0, 0));
+		const TypedArray<Mesh> meshes = sp->get_meshes();
+		for (int m = 0; m < meshes.size(); m++) {
+			Ref<Mesh> mesh = meshes[m];
+			if (mesh.is_valid()) {
+				mesh->set_meta("tree_open_side", Vector3(1, 0, 0));
+			}
+		}
+		tag(sp, 0.0f, 12.0f, sp == edge_lead ? 1.0f : 0.4f);
+	}
+	// The mantle: shrubs, open-grown, densest just outside the trunks, the thorny ones out front.
+	struct Mantle {
+		Preset preset;
+		Form form;
+		float from, to, density;
+	};
+	LocalVector<Mantle> mantle;
+	switch (kind) {
+		case EDGE_TEMPERATE:
+			mantle.push_back({ PRESET_BLACKTHORN, FORM_OPEN, -6.0f, 0.0f, 1.0f });
+			mantle.push_back({ PRESET_HAWTHORN, FORM_OPEN, -5.0f, 1.0f, 0.7f });
+			mantle.push_back({ PRESET_DOG_ROSE, FORM_OPEN, -8.0f, -1.5f, 0.6f });
+			mantle.push_back({ PRESET_HAZEL, FORM_OPEN, -2.0f, 4.0f, 0.8f });
+			mantle.push_back({ PRESET_ELDER, FORM_OPEN, -1.0f, 3.0f, 0.35f });
+			mantle.push_back({ PRESET_FIELD_MAPLE, FORM_OPEN, -3.0f, 2.0f, 0.3f });
+			break;
+		case EDGE_MOUNTAIN:
+			mantle.push_back({ PRESET_ROWAN, FORM_OPEN, -4.0f, 3.0f, 0.8f });
+			mantle.push_back({ PRESET_BIRCH, FORM_SAPLING, -7.0f, 0.0f, 0.9f });
+			mantle.push_back({ PRESET_WHITE_WILLOW, FORM_SAPLING, -6.0f, -1.0f, 0.4f });
+			mantle.push_back({ lead, FORM_SAPLING, -5.0f, 1.0f, 0.7f });
+			if (p_stand == STAND_MONTANE_CONIFER) {
+				mantle.push_back({ PRESET_HAZEL, FORM_OPEN, -3.0f, 3.0f, 0.5f });
+				mantle.push_back({ PRESET_ELDER, FORM_OPEN, -1.0f, 3.0f, 0.3f });
+			}
+			break;
+		case EDGE_NA:
+			mantle.push_back({ PRESET_WITCH_HAZEL, FORM_OPEN, -4.0f, 3.0f, 0.8f });
+			mantle.push_back({ PRESET_MOUNTAIN_LAUREL, FORM_OPEN, -2.0f, 4.0f, 0.7f });
+			mantle.push_back({ PRESET_RED_MAPLE, FORM_SAPLING, -6.0f, 0.0f, 0.7f });
+			mantle.push_back({ PRESET_PAPER_BIRCH, FORM_SAPLING, -7.0f, -1.0f, 0.5f });
+			break;
+		case EDGE_MEDITERRANEAN:
+			mantle.push_back({ PRESET_KERMES_OAK, FORM_OPEN, -6.0f, 1.0f, 1.0f });
+			mantle.push_back({ PRESET_LENTISK, FORM_OPEN, -5.0f, 2.0f, 0.8f });
+			mantle.push_back({ PRESET_GUM_ROCKROSE, FORM_OPEN, -8.0f, -2.0f, 0.6f });
+			mantle.push_back({ PRESET_BROOM, FORM_OPEN, -8.0f, -3.0f, 0.4f });
+			break;
+	}
+	for (const Mantle &mt : mantle) {
+		Ref<PlantSpecies> sp = _stand_species(mt.preset, false, p_variants, mt.form);
+		if (sp.is_null()) {
+			continue;
+		}
+		sp->set_name(vformat("%s (edge mantle)", sp->get_name()));
+		// The mantle is a thicket: shrubs a crown or less apart.
+		sp->set_spacing(sp->get_spacing() * 0.7f);
+		tag(sp, mt.from, mt.to, mt.density);
+	}
+	Ref<Biome> biome;
+	biome.instantiate();
+	biome->set_name(vformat("%s (edge)", stand_names[p_stand]));
+	biome->set_species(list);
+	return biome;
+}
+
 // Every woodland stand in one Biome, in order of competitive strength on its own ground: water
 // edges, then the cold belts, then the shade casters (beech before oak), then pine on what the
 // broadleaves leave dry. Climate rules keep each stand to its belt; where belts overlap, the shade
@@ -23922,6 +24066,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_phyllotaxis", "phyllotaxis"), &TreeGenerator::set_phyllotaxis);
 	ClassDB::bind_method(D_METHOD("get_phyllotaxis"), &TreeGenerator::get_phyllotaxis);
 	ClassDB::bind_method(D_METHOD("set_forest_shade", "shade"), &TreeGenerator::set_forest_shade);
+	ClassDB::bind_method(D_METHOD("set_edge_open", "open"), &TreeGenerator::set_edge_open);
+	ClassDB::bind_method(D_METHOD("get_edge_open"), &TreeGenerator::get_edge_open);
 	ClassDB::bind_method(D_METHOD("get_forest_shade"), &TreeGenerator::get_forest_shade);
 	ClassDB::bind_method(D_METHOD("set_forest_spacing", "spacing"), &TreeGenerator::set_forest_spacing);
 	ClassDB::bind_method(D_METHOD("get_forest_spacing"), &TreeGenerator::get_forest_spacing);
@@ -24060,6 +24206,7 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("make_species", "stand_grown", "variants"), &TreeGenerator::make_species, DEFVAL(3));
 	ClassDB::bind_method(D_METHOD("make_stand", "stand", "variants"), &TreeGenerator::make_stand, DEFVAL(3));
 	ClassDB::bind_method(D_METHOD("make_succession", "stand", "variants"), &TreeGenerator::make_succession);
+	ClassDB::bind_method(D_METHOD("make_edge", "stand", "variants"), &TreeGenerator::make_edge);
 	ClassDB::bind_method(D_METHOD("make_woodland", "variants", "region"), &TreeGenerator::make_woodland, DEFVAL(3), DEFVAL(REGION_EUROPE));
 	ClassDB::bind_method(D_METHOD("clear_cache"), &TreeGenerator::clear_cache);
 	ClassDB::bind_method(D_METHOD("get_height"), &TreeGenerator::get_height);
@@ -24086,6 +24233,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "phyllotaxis", PROPERTY_HINT_ENUM, "Alternate,Opposite,Whorled"), "set_phyllotaxis", "get_phyllotaxis");
 	ADD_GROUP("Stand", "forest_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "forest_shade", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_forest_shade", "get_forest_shade");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "edge_open", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_edge_open", "get_edge_open");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "mask_channel", PROPERTY_HINT_ENUM, "None:-1,Red:0,Green:1,Blue:2,Alpha:3"), "set_mask_channel", "get_mask_channel");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mask_invert"), "set_mask_invert", "get_mask_invert");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "needle_sprays"), "set_needle_sprays", "get_needle_sprays");

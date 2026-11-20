@@ -2509,6 +2509,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_caustics_sun_direction"), &PhysXWaterSurface3D::get_caustics_sun_direction);
 	ClassDB::bind_method(D_METHOD("set_caustics_reference_depth", "depth"), &PhysXWaterSurface3D::set_caustics_reference_depth);
 	ClassDB::bind_method(D_METHOD("get_caustics_reference_depth"), &PhysXWaterSurface3D::get_caustics_reference_depth);
+	ClassDB::bind_method(D_METHOD("set_foam_shade", "shade"), &PhysXWaterSurface3D::set_foam_shade);
+	ClassDB::bind_method(D_METHOD("get_foam_shade"), &PhysXWaterSurface3D::get_foam_shade);
 	ClassDB::bind_method(D_METHOD("get_caustics_texture"), &PhysXWaterSurface3D::get_caustics_texture);
 	ClassDB::bind_method(D_METHOD("get_caustics_light_right"), &PhysXWaterSurface3D::get_caustics_light_right);
 	ClassDB::bind_method(D_METHOD("get_caustics_light_up"), &PhysXWaterSurface3D::get_caustics_light_up);
@@ -2649,6 +2651,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "caustics_enabled"), "set_caustics_enabled", "get_caustics_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "caustics_sun_direction"), "set_caustics_sun_direction", "get_caustics_sun_direction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "caustics_reference_depth", PROPERTY_HINT_RANGE, "0.1,50,0.1,or_greater"), "set_caustics_reference_depth", "get_caustics_reference_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_shade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_foam_shade", "get_foam_shade");
 }
 
 void PhysXWaterSurface3D::set_step_mode(StepMode p_mode) {
@@ -7114,6 +7117,7 @@ void PhysXWaterSurface3D::_after_step() {
 		// The scene's sun when there is one up (the light the water is drawn with), else caustics_sun_direction.
 		const Vector3 sun_travel = water_light_sun_travel.is_zero_approx() ? caustics_sun_direction : water_light_sun_travel;
 		const Vector3 origin(grid_center.x, get_global_position().y, grid_center.y);
+		solver.set_caustics_foam_shade(foam_shade);
 		solver.render_caustics(origin, sun_travel, caustics_reference_depth, 1.333f, _open_beyond());
 		if (water_material.is_valid() && caustics_texture.is_valid()) {
 			water_material->set_shader_parameter("caustics_on", true);

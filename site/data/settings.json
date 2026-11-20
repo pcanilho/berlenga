@@ -1736,10 +1736,11 @@
    "name": "Caustics",
    "settings": [
     "rendering/pathtracing/caustics",
-    "caustics_enabled"
+    "caustics_enabled",
+    "foam_shade"
    ],
    "note": "",
-   "what": "sunlight lines under rippled water. In raster, sunlight focused by the waves moves over the bed under clear water, following the scene's sun.",
+   "what": "sunlight lines under rippled water. In raster, sunlight focused by the waves moves over the bed under clear water, following the scene's sun, and foam shades the sand beneath it while gaps in the swash lace stay lit, as under path tracing.",
    "page": "water",
    "title": "Water",
    "topic": "Light in water"
