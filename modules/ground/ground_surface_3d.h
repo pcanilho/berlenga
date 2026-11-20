@@ -384,6 +384,7 @@ private:
 	// Wind ripples (docs/ideas/sand.md, stage 3): a fine height layer over the middle of the field, its own
 	// finer ring of the patch. Off by default until its cost is measured.
 	bool wind_ripples = true;
+	bool far_ripples = true; // the grown field's ripples as a normal over the dune field past the patch
 	// Wind fills prints from their upwind side (_drift_prints()).
 	bool wind_fills_prints = true;
 	// Dry ground up to WATER_FRINGE over a water body's level is kept wet by capillary rise (_water_update()).
@@ -945,6 +946,11 @@ public:
 	bool is_lee_calm_ripples() const { return lee_calm_ripples; }
 	float get_ripple_show_at(const Vector3 &p_position) const;
 	bool is_wind_ripples() const { return wind_ripples; }
+	void set_far_ripples(bool p_enabled) {
+		far_ripples = p_enabled;
+		ripple_dirty = true;
+	}
+	bool is_far_ripples() const { return far_ripples; }
 	void set_mud_layer(bool p_enabled);
 	bool is_mud_layer() const { return mud_layer; }
 	void set_mud_slides(bool p_enabled);

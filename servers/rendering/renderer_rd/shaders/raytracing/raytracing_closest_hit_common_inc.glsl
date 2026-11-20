@@ -51,6 +51,7 @@ vec3 fetch_object_position(in GeometryData geom, uint idx) {
 void rt_texture_cone(in GeometryData geom, vec3 world_normal) {
 	rt_cone_uv_lod = RT_TEXTURE_LOD_BASE;
 	rt_cone_footprint_log2 = RT_TEXTURE_LOD_BASE;
+	rt_cone_width = 0.0;
 	rt_cone_uv_grad = false;
 	float width = payload_cone_width(payload, rt_cone_eye_width()) + rt_cone_spread_angle() * gl_HitTEXT;
 	if ((payload.packed_bounces_flags & (CAUSTIC_PHOTON_FLAG | PEEL_RAY_FLAG)) == CAUSTIC_PHOTON_FLAG) {
@@ -63,6 +64,7 @@ void rt_texture_cone(in GeometryData geom, vec3 world_normal) {
 	vec3 dir = gl_WorldRayDirectionEXT;
 	float cos_n = max(abs(dot(world_normal, dir)), 0.05);
 	rt_cone_footprint_log2 = log2(width / cos_n);
+	rt_cone_width = width;
 
 	if (geom.uv_byte_offset == OFFSET_NONE || geom.attribute_address == 0ul || geom.vertex_address == 0ul) {
 		return;
