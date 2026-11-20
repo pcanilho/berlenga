@@ -2497,10 +2497,23 @@
    "settings": [
     "PlantGenerator.make_floor(stand, variants)",
     "FLOOR_MEDITERRANEAN",
+    "FLOOR_BOREAL_TAIGA",
     "VegetationField3D.forest_floor_enabled"
    ],
    "note": "",
-   "what": "herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.",
+   "what": "herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter. Under boreal pine, pale reindeer lichen carpets the floor in lumpy cushions, crushed underfoot and slow to return after fire.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Stand age",
+   "settings": [
+    "PlantSpecies.RULE_STAND_AGE",
+    "RULE_DISTURBANCE"
+   ],
+   "note": "",
+   "what": "plants follow the years since the last fire, windthrow or beetle kill, so pioneers flood a fresh burn or blowdown and shade plants return as the stand closes; the ground is re-placed live when a disturbance moves a species across its range.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2874,7 +2887,7 @@
     "make_woodland"
    ],
    "note": "",
-   "what": "nineteen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), date palm oases (`STAND_DATE_OASIS`) beetle-killed spruce (`STAND_BEETLE_SPRUCE`) and old-growth beech (`STAND_OLD_GROWTH_BEECH`), with veteran giants over a pole layer, gaps where single giants fell and five times more deadwood lying than standing, and boreal taiga (`STAND_BOREAL_TAIGA`) with fire-scarred survivor pines (`fire_scars`) and silver kelo snags and logs (`kelo`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
+   "what": "nineteen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), date palm oases (`STAND_DATE_OASIS`) beetle-killed spruce (`STAND_BEETLE_SPRUCE`), old-growth beech (`STAND_OLD_GROWTH_BEECH`), with veteran giants over a pole layer, gaps where single giants fell and five times more deadwood lying than standing, and boreal taiga (`STAND_BOREAL_TAIGA`) with fire-scarred survivor pines (`fire_scars`) and silver kelo snags and logs (`kelo`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3227,6 +3240,18 @@
    ],
    "note": "",
    "what": "burnt stands recover by species: cork oak resprouts along its stem and limbs, holm oak from the root collar, and maritime pine and rockrose reseed on the ash bed, while the bark char fades over the years.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
+   "name": "Forests that age",
+   "settings": [
+    "make_succession()",
+    "report_windthrow"
+   ],
+   "note": "",
+   "what": "after fire, windthrow or beetles, a stand regrows by stage from seedlings and pioneers through crowded poles to the mature stand and old growth with veterans, placed by the years since; storm and beetle kills mark where it starts again.",
    "page": "trees",
    "title": "Trees",
    "topic": "Old trees and deadwood"

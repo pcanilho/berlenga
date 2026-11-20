@@ -3017,9 +3017,23 @@ func _link_shot(kind: String, off: bool) -> void:
 				for i in steps + 90:
 					var p := a.lerp(b, minf(float(i) / steps, 1.0))
 					var bodies: Array = mv[0]
+					var yaw := atan2(dir.x, dir.y)
 					for k in bodies.size():
 						var q := p + side * (0.0 if bodies.size() == 1 else (k - 0.5) * 1.6)
 						bodies[k].global_position = Vector3(q.x, height_at(q.x, q.y) + float(mv[4]), q.y)
+						# The walk is stepped directly (no ground frames run), so the ground's prints are stamped here
+						# too: soles every 0.7 m, left and right, and the tyres' tread each step.
+						if prints == null or i > steps:
+							continue
+						var hq := height_at(q.x, q.y)
+						if bodies.size() == 1:
+							var stride := int(0.7 / (float(mv[3]) / 60.0))
+							if stride > 0 and i % stride == 0:
+								var fq := q + side * (0.12 if (i / stride) % 2 == 0 else -0.12)
+								var hf := height_at(fq.x, fq.y)
+								prints.press_box(Vector3(fq.x, hf, fq.y), Vector2(0.11, 0.29), yaw, hf - 0.02, 0.0, true)
+						else:
+							prints.press_wheel(Vector3(q.x, hq, q.y), Vector2(0.8, 0.28), yaw, 0.04, dir * float(mv[3]))
 					if args.has("link-verbose") and i % 60 == 0:
 						var b0: Node3D = bodies[0]
 						var gp := b0.global_position
@@ -3467,7 +3481,7 @@ func _generated_forest(clearing: bool) -> Biome:
 	var variants := int(args.get("tree-variants", "1"))
 	var stands := {"beech": TreeGenerator.STAND_BEECH, "oak": TreeGenerator.STAND_OAK_MIXED,
 			"montane": TreeGenerator.STAND_MONTANE_CONIFER, "hedgerow": TreeGenerator.STAND_HEDGEROW,
-			"stonepine": 13, "windthrow": 17, "old_growth": 18} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
+			"stonepine": 13, "windthrow": 17, "old_growth": 18, "taiga": 19} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
 	var b: Biome
 	if args.has("montado"):
 		# --montado: the Iberian wood pasture, open-grown cork oaks with stone pines among them over a summer-dry
@@ -3481,7 +3495,7 @@ func _generated_forest(clearing: bool) -> Biome:
 		all.append_array(b.species)
 		b.species = all
 	elif args.has("tree-stand"):
-		# --tree-stand=beech|oak|montane|hedgerow|stonepine|windthrow|old_growth: one stand only (its trees, sapling, snag and log).
+		# --tree-stand=beech|oak|montane|hedgerow|stonepine|windthrow|old_growth|taiga: one stand only (its trees, sapling, snag and log).
 		b = tg.make_stand(stands.get(args["tree-stand"], TreeGenerator.STAND_BEECH), variants)
 	else:
 		b = tg.make_woodland(variants, TreeGenerator.REGION_EUROPE)
@@ -4298,11 +4312,11 @@ func _build_cover() -> void:
 	# cones and balls), bigger plants first, sorted by the crowns' conifer share.
 	# --floor=beech|oak|hedgerow|montane picks the floor set (beech and oak floors carry the violets and herb robert).
 	var floors := {"montane": PlantGenerator.FLOOR_MONTANE_CONIFER, "beech": PlantGenerator.FLOOR_BEECH,
-			"oak": PlantGenerator.FLOOR_OAK_MIXED, "hedgerow": PlantGenerator.FLOOR_HEDGEROW,
-			"mediterranean": 10} # FLOOR_MEDITERRANEAN (montado: cistus, grasses, thistles; by value for older binaries)
+			"oak": PlantGenerator.FLOOR_OAK_MIXED, "hedgerow": PlantGenerator.FLOOR_HEDGEROW, "pineheath": PlantGenerator.FLOOR_PINE_HEATH,
+			"mediterranean": 10, "taiga": 11} # FLOOR_MEDITERRANEAN, FLOOR_BOREAL_TAIGA (montado: cistus, grasses, thistles; by value for older binaries)
 	# The floor plants follow the weather's season (flowering, bracken croziers in spring, russet in autumn): --day=N.
 	var season: Dictionary = weather.get_season() if weather != null and weather.has_method("get_season") else {}
-	var floor_sp: Array = PlantGenerator.make_floor(floors.get(args.get("floor", "montane"), PlantGenerator.FLOOR_MONTANE_CONIFER), 3, true, 15.0, season)
+	var floor_sp: Array = PlantGenerator.make_floor(floors.get(args.get("floor", "taiga" if args.get("tree-stand", "") == "taiga" else "montane"), PlantGenerator.FLOOR_MONTANE_CONIFER), 3, true, 15.0, season)
 	if OS.get_environment("VEG_DW_OFF") != "":
 		# The deadwood pair's before frame (as the vegetation bench): the floor blind to the logs.
 		for sp in floor_sp:

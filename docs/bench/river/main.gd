@@ -10,6 +10,7 @@ extends Node3D
 #   --view=train     low, looking upstream at the jump: the stationary wave train below it (standing_waves)
 #   --view=rocks     straight down on the rocks: the current parting round them, foam trails behind
 #   --view=creek     low, upstream of the middle boulder (with --live): its pillow, the seam and eddies behind it
+#   --shadow-bar=Y  a board hung over the view's centre at height Y (the water) toward the sun: its shadow across the water
 #   --raster         raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 #   --frames=N       frames rendered before --out is saved (default 12)
@@ -158,6 +159,7 @@ func _ready() -> void:
 		elif a.begins_with("--sound-wav="): sound_wav = a.substr(12)
 		elif a.begins_with("--fall-run="): fall_run = float(a.substr(11))
 		elif a == "--outlet": outlet = true
+		elif a.begins_with("--shadow-bar="): _add_shadow_bar.call_deferred(float(a.substr(13)))
 		elif a.begins_with("--silt="):
 			var sv := a.substr(7).split(",")
 			silt = Vector2(float(sv[0]), float(sv[1]) if sv.size() > 1 else 0.0)
@@ -766,3 +768,36 @@ func _process(_delta: float) -> void:
 		get_tree().quit()
 	elif out == "" and n >= frames:
 		get_tree().quit()
+
+# --shadow-bar=Y: a 10 m x 1 m board hung 5 m up toward the sun over the point where the view's centre meets the height
+# Y (the water), so its shadow falls across the water in the middle of the frame (the water shadow check).
+func _add_shadow_bar(y: float) -> void:
+	# The scene is built over a few frames: wait for the view's camera.
+	for i in 600:
+		if get_viewport().get_camera_3d() != null:
+			break
+		await get_tree().process_frame
+	await get_tree().process_frame
+	var cam := get_viewport().get_camera_3d()
+	var sun: DirectionalLight3D = null
+	for c in find_children("*", "DirectionalLight3D", true, false):
+		sun = c
+		break
+	if cam == null or sun == null:
+		return
+	var o := cam.global_position
+	var f := -cam.global_basis.z
+	if absf(f.y) < 1e-3 or (y - o.y) / f.y <= 0.0:
+		return
+	var hit := o + f * ((y - o.y) / f.y)
+	var to_sun := sun.global_basis.z.normalized() # a directional light shines along its -Z
+	var flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
+	var long := Vector3(-flat.z, 0.0, flat.x)
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(10.0, 0.15, 1.0)
+	mi.mesh = bm
+	add_child(mi)
+	mi.global_basis = Basis(long, Vector3.UP, long.cross(Vector3.UP))
+	mi.global_position = hit + to_sun * (5.0 / maxf(to_sun.y, 0.2))
+	print("shadow bar over %s, its shadow on the water at %s" % [str(mi.global_position), str(hit)])

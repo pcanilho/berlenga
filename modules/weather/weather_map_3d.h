@@ -149,7 +149,7 @@ private:
 	bool cloud_evolution = true;
 	float cloud_lifetime = 900.0f; // s, turnover of the cover noise's largest octave
 	float cloud_churn = 1.5f; // m/s, how fast the cloud shapes change (the shape noise's reads slide apart)
-	float cloud_shear = 1.0f; // scale on the wind shear's lean of the cloud tops (0: upright)
+	float cloud_shear = 0.4f; // scale on the wind shear's lean of the cloud tops (0: upright)
 	float cloud_size_mix = 1.0f; // large clouds among the small (0: one size)
 	// The high cloud layer (cirrus; docs/ideas/clouds.md). high_cloud_cover is the base the weather drives
 	// (humid air thickens it, dry subsiding air thins it, rain on its way brings a sheet ahead of it), kept out

@@ -311,6 +311,9 @@ private:
 		// Bark only: per vertex, bare wood where a living stem was wounded (section 5p); vertices
 		// without one read 0. _peel_bark takes the larger of it and dead wood's peeling.
 		LocalVector<float> wound;
+		// Bark only: per vertex, char on a fire scar's wood (0-1; trees.md 5ar), drawn by the bark material's wood
+		// branch from UV2 (a negative v: lichen UV2 is never negative). Empty when nothing is charred.
+		LocalVector<float> wood_char;
 		// Bark only: vertices added after the parts were closed (a log's peel edge, section 5o),
 		// each with the part whose UV2 map it takes.
 		LocalVector<Vector2i> extra_part;

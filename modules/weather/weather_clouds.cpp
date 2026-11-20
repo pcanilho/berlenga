@@ -585,6 +585,71 @@ Vector2 shear_offset(const State &p_state, float p_y) {
 	return shear_offset(p_state, p_y, p_state.base_height);
 }
 
+// Cumulus as single clouds (wc_cells in the shader). A grid of cells, cell_size across, each holding at most one
+// cloud: a jittered centre, a size from a skewed draw (many small, a few large: Plank 1969's size spectrum), a
+// height growing with its width, and a body that is straight-sided low down and domed above (a cumulus' profile).
+// The cell holds a cloud with a probability that follows the local cover, which the cover noise and the cluster
+// noise vary (cover_type_at): clouds come in groups with clear sky between. Returns the strongest cloud's
+// envelope, 0 outside to 1 a third of a radius in; the shape noise then carves it. Cutting one continuous noise
+// at one threshold made shapeless blobs, every top at one height, far rows of stacked pancakes.
+float cells_at(const State &p_state, const Vector3 &p_pos, float p_base, Vector2 p_ct, float p_warp) {
+	const float cell = p_state.cell_size;
+	const Vector2 q = Vector2(p_pos.x - p_state.drift.x, p_pos.z - p_state.drift.y) / cell;
+	const int gx = int(Math::floor(q.x));
+	const int gz = int(Math::floor(q.y));
+	const float top = top_height(p_state, p_ct.y);
+	const float present = p_ct.x * 2.2f;
+	const float grow = Math::lerp(1.0f, 1.3f, smoothstep(0.3f, 0.7f, p_ct.x));
+	float best = 0.0f;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			const int cx = gx + i;
+			const int cz = gz + j;
+			// Present where the cover here beats the cell's draw, fading over a margin: the cover is read at the sample,
+			// so a hard test cut a cloud off by a wall where it crossed a change in cover; now it shrinks toward it.
+			const float keep = CLAMP((present - hash2(cx + 7919, cz - 4241)) * 4.0f, 0.0f, 1.0f);
+			if (keep <= 0.0f) {
+				continue;
+			}
+			const Vector2 centre = Vector2(float(cx) + 0.15f + 0.7f * hash2(cx, cz + 3571), float(cz) + 0.15f + 0.7f * hash2(cx - 2713, cz));
+			const float size = Math::pow(hash2(cx + 1237, cz + 9109), 1.8f);
+			const float r = MIN((0.2f + 0.55f * size) * grow, 0.95f) * Math::sqrt(keep);
+			const float u = (q - centre).length() / r;
+			if (u >= 1.0f) {
+				continue;
+			}
+			// Height from width: humilis about half as tall as wide, mediocris nearly as tall, congestus taller.
+			const float hgt = MIN(top, 2.0f * r * cell * Math::lerp(0.3f, 1.1f, smoothstep(0.2f, 0.9f, p_ct.y)) * Math::lerp(0.75f, 1.25f, hash2(cx + 5, cz + 11)));
+			const float hh = (p_pos.y - p_base) / hgt;
+			if (hh <= 0.0f || hh >= 1.0f) {
+				continue;
+			}
+			// The body: straight-sided up to half its height, a little narrower at the base.
+			const float k = (hh - 0.45f) / 0.55f;
+			float rr = hh < 0.45f ? 1.0f : Math::sqrt(MAX(1.0f - k * k, 0.0f));
+			rr *= Math::lerp(0.85f, 1.0f, smoothstep(0.0f, 0.12f, hh));
+			float env = (rr - u * p_warp) / 0.6f;
+			// Thermal bubbles on top (Neyret 1997's hierarchical bubbles): three domes, each a spheroid half to two
+			// thirds the cloud's width, off its axis (all within its cell) and at their own heights, so the top rises in rounded turrets
+			// of different heights, the cauliflower crest, not one smooth cap.
+			for (int b = 0; b < 3; b++) {
+				const float a = float(Math::TAU) * hash2(cx + 31 * b, cz + 577);
+				const float off = 0.3f * hash2(cx - 97 * b, cz + 1499);
+				const Vector2 cb = centre + Vector2(Math::cos(a), Math::sin(a)) * (off * r);
+				const float rb = r * (0.45f + 0.15f * hash2(cx + 401 * b, cz - 733));
+				const float yb = Math::lerp(0.5f, 0.75f, hash2(cx - 61 * b, cz - 3331));
+				const float vb = 0.3f * rb / r + 0.1f;
+				const Vector2 dq = (q - cb) / rb;
+				const float dy = (hh - yb) / vb;
+				const float d = Math::sqrt(dq.length_squared() + dy * dy);
+				env = MAX(env, (1.0f - d * p_warp) / 0.6f);
+			}
+			best = MAX(best, CLAMP(env, 0.0f, 1.0f));
+		}
+	}
+	return best;
+}
+
 float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	if (p_pos.y < p_state.base_min || p_pos.y > p_state.top_max) {
 		return 0.0f;
@@ -614,9 +679,17 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	// further up the profile, which domes the tops. Then times the cover (Schneider 2015): the few
 	// small clouds of a fair sky are thin and light, where the remap alone made every one as dense as
 	// an overcast deck.
-	const float shape = MAX(n * dome - (1.0f - ct.x), 0.0f) / MAX(ct.x, 0.001f) * base * ct.x;
-	// Frostbite's measured extinction: stratus about 0.04, cumulus up to 0.1 per metre.
-	return shape * Math::lerp(0.04f, 0.1f, ct.y) * p_state.density;
+	// The single clouds (cells_at), carved by the shape noise into lobes: only their shell, the inside stays whole.
+	// A deck (high cover) is the continuous noise's, as before: overcast is one sheet, not cells.
+	// The shape noise warps each cloud's outline (its distances stretched by up to half where the noise is low)
+	// and carves its shell.
+	const float env = cells_at(p_state, Vector3(p_pos.x - so.x, p_pos.y, p_pos.z - so.y), b, ct, 1.0f);
+	const float cells = MAX(n - (1.0f - env), 0.0f) / MAX(env, 0.001f) * base;
+	const float deck = MAX(n * dome - (1.0f - ct.x), 0.0f) / MAX(ct.x, 0.001f) * base * smoothstep(0.55f, 0.85f, ct.x);
+	const float shape = MAX(cells, deck);
+	// Frostbite's measured extinction: stratus about 0.04, cumulus up to 0.1 per metre; a fair sky's clouds a
+	// little lighter than a deck's.
+	return shape * Math::lerp(0.4f, 1.0f, ct.x) * Math::lerp(0.04f, 0.1f, ct.y) * p_state.density;
 }
 
 const Vector<float> &shape_noise() {
@@ -688,6 +761,11 @@ uniform float cloud_base_min = 1500.0;
 uniform float cloud_edge_sharpness = 0.45;
 // How deep the detail noise erodes the shape (Nubis's erosion), on its base depth.
 uniform float cloud_detail_strength = 1.5;
+// How deep the turrets cut into each cumulus: billows at the cloud's own scale over its top half and down its sides
+// (cauliflower crests; 0: one smooth dome).
+uniform float cloud_turret_strength = 0.9;
+// The cumulus cells' size (m): each holds at most one cloud (State::cell_size).
+uniform float cloud_cell_size = 1200.0;
 // The high layer (State::high_*).
 uniform float cloud_high_cover = 0.0;
 uniform float cloud_high_height = 8000.0;
@@ -889,6 +967,66 @@ float wc_mid_cover(vec2 xz) {
 // and the CPU leave it out. p_step is the march's step (m): the noise is read at that scale.
 // r_profile: the cloud's depth there before erosion, 0 at its edge to 1 at its core (Nubis Cubed's
 // dimensional profile), which the lighting reads for dark edges, the inner glow and the ambient shell.
+// Cumulus as single clouds (cells_at() on the CPU, which explains it).
+float wc_cells(vec3 p, float b0, vec2 ct, float p_warp, out float r_hh, out vec4 r_local) {
+	r_hh = 0.0;
+	r_local = vec4(0.0, 0.0, 0.0, 1.0);
+	vec2 q = (p.xz - cloud_drift) / cloud_cell_size;
+	ivec2 g = ivec2(floor(q));
+	float top = wc_top_height(ct.y);
+	float present = ct.x * 2.2;
+	float grow = mix(1.0, 1.3, smoothstep(0.3, 0.7, ct.x));
+	float best = 0.0;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			int cx = g.x + i;
+			int cz = g.y + j;
+			// Present where the cover (read here, not at the cloud's centre) beats the cell's own draw, fading over a
+			// margin: the cloud shrinks toward thinner cover instead of being cut off by a wall where it crosses it.
+			float keep = clamp((present - wc_hash2(cx + 7919, cz - 4241)) * 4.0, 0.0, 1.0);
+			if (keep <= 0.0) {
+				continue;
+			}
+			vec2 centre = vec2(float(cx) + 0.15 + 0.7 * wc_hash2(cx, cz + 3571), float(cz) + 0.15 + 0.7 * wc_hash2(cx - 2713, cz));
+			float size = pow(wc_hash2(cx + 1237, cz + 9109), 1.8);
+			float r = min((0.2 + 0.55 * size) * grow, 0.95) * sqrt(keep);
+			float u = length(q - centre) / r;
+			if (u >= 1.0) {
+				continue;
+			}
+			float hgt = min(top, 2.0 * r * cloud_cell_size * mix(0.3, 1.1, smoothstep(0.2, 0.9, ct.y)) * mix(0.75, 1.25, wc_hash2(cx + 5, cz + 11)));
+			float hh = (p.y - b0) / hgt;
+			if (hh <= 0.0 || hh >= 1.0) {
+				continue;
+			}
+			float k = (hh - 0.45) / 0.55;
+			float rr = hh < 0.45 ? 1.0 : sqrt(max(1.0 - k * k, 0.0));
+			rr *= mix(0.85, 1.0, smoothstep(0.0, 0.12, hh));
+			float env = (rr - u * p_warp) / 0.6;
+			for (int b = 0; b < 3; b++) {
+				float a = TAU * wc_hash2(cx + 31 * b, cz + 577);
+				float off = 0.3 * wc_hash2(cx - 97 * b, cz + 1499);
+				vec2 cb = centre + vec2(cos(a), sin(a)) * (off * r);
+				float rb = r * (0.45 + 0.15 * wc_hash2(cx + 401 * b, cz - 733));
+				float yb = mix(0.5, 0.75, wc_hash2(cx - 61 * b, cz - 3331));
+				float vb = 0.3 * rb / r + 0.1;
+				vec2 dq = (q - cb) / rb;
+				float dy = (hh - yb) / vb;
+				float d = sqrt(dot(dq, dq) + dy * dy);
+				env = max(env, (1.0 - d * p_warp) / 0.6);
+			}
+			env = clamp(env, 0.0, 1.0);
+			if (env > best) {
+				best = env;
+				r_hh = hh;
+				// The cloud's own frame, its radius 1 across: turrets scale with the cloud. Offset by cell.
+				r_local = vec4(vec3((q - centre).x / r, (p.y - b0) / (r * cloud_cell_size), (q - centre).y / r) + vec3(wc_hash2(cx + 17, cz + 29), 0.0, wc_hash2(cx + 43, cz + 71)) * 7.0, r * cloud_cell_size);
+			}
+		}
+	}
+	return best;
+}
+
 float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_profile) {
 	r_profile = 0.0;
 	if (ct.x <= 0.001) {
@@ -916,11 +1054,28 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 	float zs = max(p.y - b0, 0.0) / max(cloud_thickness, 1.0);
 	p.xz -= cloud_shear * min(zs * zs, 9.0);
 	float n = wc_shape(p, p_step);
-	float shape = max(n * dome - (1.0 - ct.x), 0.0) / max(ct.x, 0.001) * base;
+	// Single clouds carved by the shape noise; a deck is the continuous noise's (extinction_at on the CPU).
+	float hc;
+	vec4 loc;
+	float env = wc_cells(p, b0, ct, 1.0, hc, loc);
+	hc = mix(h, hc, step(0.001, env));
+	if (env > 0.0) {
+		// Turrets: billows in the cloud's own frame (about four across it, finer octaves inside) cut into the envelope,
+		// fully over its upper half and less down its sides, so the top is a cluster of rounded crests (cauliflower,
+		// Neyret 1997's rising thermals) and the walls bulge. Cut into the envelope, before the coverage remap, they
+		// move the outline; as an erosion after it they only roughened the skin of one round dome. The base stays flat.
+		float lobes = textureLod(cloud_detail, loc.xyz * 0.4, max(log2(p_step / loc.w * 0.4 * 128.0), 0.0)).b;
+		env = max(env - cloud_turret_strength * (1.0 - lobes) * mix(0.4, 1.0, smoothstep(0.15, 0.6, hc)), 0.0);
+	}
+	float cells = max(n - (1.0 - env), 0.0) / max(env, 0.001) * base;
+	float deck = max(n * dome - (1.0 - ct.x), 0.0) / max(ct.x, 0.001) * base * smoothstep(0.55, 0.85, ct.x);
+	float shape = max(cells, deck);
 	r_profile = clamp(shape, 0.0, 1.0);
 	if (p_detail && shape > 0.0) {
 		// Nubis Cubed's up-rez (Schneider, Advances 2023): wisps (Curly-Alligator) low frequency inside and high
-		// frequency at the thin edge; billows (inverted Worley) rounded at the edge and finer toward the core;
+		// frequency at the thin edge; billows rounded at the edge and finer toward the core, eroding by one minus the
+		// inverted Worley so the feature points stay as bulges (eroding by the Worley itself bored pits into the
+		// surface, a cracked cotton look);
 		// wispy under the cloud, billowing higher up and in towering cumulus.
 		vec2 sxz = wc_rotate(p.xz - cloud_drift);
 		vec3 qd = vec3(sxz.x, p.y, sxz.y) / cloud_shape_scale * 8.0 - vec3(0.0, cloud_churn.z, 0.0);
@@ -929,12 +1084,17 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 		float lod_w = max(log2(p_step / texel), 0.0);
 		vec2 warp = vec2(textureLod(cloud_detail, qd * 0.25 + vec3(0.31, 0.17, 0.73), lod_w).b, textureLod(cloud_detail, qd * 0.25 + vec3(0.59, 0.41, 0.11), lod_w).b) - 0.5;
 		qd += vec3(warp.x, 0.25 * (warp.x + warp.y), warp.y) * mix(1.2, 0.6, clamp(h * 2.0, 0.0, 1.0));
+		// Small turrets on the turrets: the world-scale coarse billows (cells about 100 to 400 m) erode the upper shell
+		// a little more, so the crests cut into the envelope above (wc_cells' frame) carry smaller lobes of their own.
+		float lobes = warp.x + 0.5;
+		float e_big = 0.35 * cloud_turret_strength * (1.0 - lobes) * smoothstep(0.2, 0.7, hc) * mix(0.5, 1.0, cu);
+		shape = clamp((shape - e_big) / max(1.0 - e_big, 0.05), 0.0, 1.0);
 		// Mip by the footprint: an eighth of the shape's tile in 128 texels, so a texel is an eighth of the shape's
 		// (2.9 m at the default scale), read at the step's footprint so far billows average instead of aliasing.
 		vec4 dn = textureLod(cloud_detail, qd, max(log2(p_step / (texel * 0.125)), 0.0));
 		float wispy = mix(dn.g, dn.r, r_profile);
-		float billowy = mix(dn.b, dn.a, pow(r_profile, 0.25));
-		float billow = clamp(h * 4.0, 0.0, 1.0) * mix(0.6, 1.0, cu);
+		float billowy = 1.0 - mix(dn.b, dn.a, pow(r_profile, 0.25));
+		float billow = clamp(hc * 4.0, 0.0, 1.0) * mix(0.6, 1.0, cu);
 		float e = cloud_detail_strength * mix(0.45 * wispy, 0.4 * billowy, billow);
 		shape = clamp((shape - e) / (1.0 - e), 0.0, 1.0);
 		// Sharpening (Nubis Cubed): thin density raised so each billow ends in a defined edge instead of a
@@ -942,7 +1102,7 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 		shape = pow(shape, mix(cloud_edge_sharpness, 1.0, r_profile));
 	}
 	// Times the cover after the erosion (Schneider 2015; wc_extinction on the CPU).
-	return shape * ct.x * mix(0.04, 0.1, ct.y) * cloud_density;
+	return shape * mix(0.4, 1.0, ct.x) * mix(0.04, 0.1, ct.y) * cloud_density;
 }
 
 float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {

@@ -95,6 +95,7 @@ struct State {
 	float mid_scale = 12000.0f; // m, its patches
 	Vector2 mid_drift; // m
 	Vector2 mid_dir = Vector2(1, 0); // unit, the wind at its height
+	float cell_size = 1200.0f; // m, the cumulus cells (cells_at), each holding at most one cloud
 	float top_max = 0.0f; // highest top any column reaches now (m), set by update_top_max()
 	float base_min = 1500.0f; // lowest base any column has now (m), set by update_top_max()
 

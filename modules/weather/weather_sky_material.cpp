@@ -947,6 +947,7 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	rs->material_set_param(m, "cloud_high_scale", p_state.high_scale);
 	rs->material_set_param(m, "cloud_high_drift", p_state.high_drift);
 	rs->material_set_param(m, "cloud_high_dir", p_state.high_dir);
+	rs->material_set_param(m, "cloud_cell_size", p_state.cell_size);
 	rs->material_set_param(m, "cloud_mid_cover", p_state.mid_cover);
 	rs->material_set_param(m, "cloud_mid_height", p_state.mid_height);
 	rs->material_set_param(m, "cloud_mid_thickness", p_state.mid_thickness);
