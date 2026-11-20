@@ -459,6 +459,9 @@ func _world() -> void:
 	var tm := TerrainMaterial3D.new()
 	tm.use_generator(gen)
 	tm.rock_detail_enabled = args.get("rock-detail", "1") != "0" # --rock-detail=0: the ground without its joints and stones
+	tm.cliff_self_shadow = args.get("ledge-shadow", "1") != "0" # --ledge-shadow=0: cliff relief ledges without their per-pixel shadows
+	if args.get("far-shadows", "1") == "0":
+		tm.far_shadow_start = 0.0 # --far-shadows=0: no far sun shadows from the ground's horizon
 	tm.update_shader()
 	if args.get("ground-scans", "1") != "0" and not args.has("test"): # --ground-scans=0: plain ground layers
 		if _apply_ground_scans(tm, ProjectSettings.globalize_path("res://").path_join("../landscape/art/terrain_layers"), args.get("ground-scans", "1")) > 0:
@@ -560,6 +563,29 @@ func _world() -> void:
 							wm.set_shader_parameter(kv[0], str_to_var(kv[1]))
 	var view: String = args.get("view", "scree")
 	var spot := _densest(LAYERS.find(view)) if rocks else Vector3(0, 0, 0)
+	if args.has("bare-spot"):
+		# --bare-spot: the nearest open soil to the spot (no rock or scree near, no alluvium, a gentle 6 to 20 degree
+		# slope well above the sea), for close frames of the ground layers alone.
+		var best := INF
+		var found := spot
+		for zz in range(-600, 601, 8):
+			for xx in range(-600, 601, 8):
+				var p := Vector3(xx, 0, zz)
+				var g := gen.get_geology_at(p)
+				if g.r > 0.1 or gen.get_talus(p) > 0.05:
+					continue
+				var h := gen.get_height(p)
+				if h < gen.sea_level + 15.0:
+					continue
+				var sl := rad_to_deg(atan(Vector2(gen.get_height(p + Vector3(2, 0, 0)) - gen.get_height(p - Vector3(2, 0, 0)), gen.get_height(p + Vector3(0, 0, 2)) - gen.get_height(p - Vector3(0, 0, 2))).length() / 4.0))
+				if sl < 3.0 or sl > 12.0 or h > gen.sea_level + 150.0:
+					continue
+				var dd := Vector2(xx, zz).length()
+				if dd < best:
+					best = dd
+					found = p
+		spot = found
+		print("bare spot ", spot, " geology ", gen.get_geology_at(spot))
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
 	spot_pos = spot
