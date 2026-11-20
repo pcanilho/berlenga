@@ -45,7 +45,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "woodland", "NA woodland"]
+		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -328,6 +328,22 @@ func _stand_checks(only := -1) -> void:
 					standing_dead += n5
 			var ha: float = SIZE * SIZE / 10000.0
 			_check(giants / ha >= 4.0 and giants / ha <= 25.0 and gap_logs > 0 and poles > 0 and lying > 2 * standing_dead, "old-growth beech: %.1f veteran giants a hectare, %d fallen giants in gaps, %d poles, %d lying to %d standing dead" % [giants / ha, gap_logs, poles, lying, standing_dead])
+		elif i == TreeGenerator.STAND_BOREAL_TAIGA:
+			# Taiga (trees.md 5ap): spruce and pine in a mosaic, fire-survivor pines, kelo standing and down, birch in burns.
+			var tg := {"survivor": 0, "kelo": 0, "burn": 0, "spruce": 0, "pine": 0}
+			for s in sps.size():
+				var nm6: String = sps[s].resource_name
+				var n6: int = f.get_placements(s).size()
+				for k in tg.keys():
+					if nm6.contains("taiga" if k == "pine" else k) and (k != "pine" or nm6.begins_with("Scots pine (taiga)")):
+						tg[k] += n6
+				if nm6.contains("taiga") or nm6.contains("kelo"):
+					var hs6 := []
+					for m in sps[s].meshes:
+						var ab6: AABB = m.get_aabb()
+						hs6.append("%.0fx%.0f" % [ab6.size.y, max(ab6.size.x, ab6.size.z)])
+					print("  %s: %d, %s" % [nm6, n6, ", ".join(hs6)])
+			_check(tg.survivor > 0 and tg.kelo > 0 and tg.burn > 0 and tg.spruce > 0 and tg.pine > 0, "boreal taiga: %d fire survivors, %d kelo, %d burn birch, %d spruce, %d pine" % [tg.survivor, tg.kelo, tg.burn, tg.spruce, tg.pine])
 		elif i == TreeGenerator.STAND_POLLARD_ROW:
 			_check(cut.pollard > 0 and cut.pollard >= open_count, "pollard row: %d willow pollards, %d alders" % [cut.pollard, open_count])
 		elif i == TreeGenerator.STAND_COPPICE_STANDARDS:
