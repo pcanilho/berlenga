@@ -801,3 +801,8 @@ to 4 km.
 3. Detail classes: they already hand over without a bald band. A thinning band before the 3 px stop would only add
    aliasing (stones under 3 px shimmer in raster), so not recommended there.
 - Trees are the trees thread's; big landforms (cliffs, tors, coast) already reach 500 to 900 m.
+
+**Outcome (20 Nov).** Paulo picked option 2. The rocks thread had built thinning, the 4 km big-stone tier and a 32 m
+rock cover map to 4 km that morning (4ce85981); this thread added widened survivors, thinning in stills and river
+beds in the far map (docs/ideas/rocks.md, "Far rocks", added 20 Nov). Scree's far look was already the terrain's own
+parallax blocks past the scree radius.

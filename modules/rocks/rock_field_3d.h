@@ -155,6 +155,10 @@ private:
 		LocalVector<bool> broken; // replaced by a breakable copy (break_stone)
 		LocalVector<Node *> shapes; // its CollisionShape3D, or null
 		int keep_min = 0; // its first records are stones the far tier draws past the radius: thinning keeps them
+		// Far thinning's survivors widened so the field keeps its cover (far_widen): the scale its smaller stones (past
+		// keep_min) are drawn at, and the visible count it was worked out for.
+		float widen = 1.0f;
+		int widen_want = -1;
 	};
 
 	// Ground detail tiles (docs/ideas/ground-detail.md, "Tiles of piles"): a square of a detail cell drawn as a placement
@@ -209,6 +213,7 @@ private:
 	real_t layer_radius[LAYER_MAX] = { 600.0, 60.0, 300.0, 120.0, 100.0, 500.0, 900.0, 900.0, 900.0, 20.0, 10.0, 5.0 };
 	// Ground detail (docs/ideas/ground-detail.md): opt-in, an experiment.
 	bool far_thinning = true; // scatter layers thin out over the outer half of their radius (_update_thinning)
+	bool far_widen = true; // thinning's survivors grow (to 1.6x) to keep the stone cover of the records dropped
 	// Far tier (docs/ideas/rocks.md, "Far rocks"): past a layer's radius its big stones and the landmarks are drawn on
 	// to far_radius, from blocks of FAR_BLOCK x FAR_BLOCK cells placed exactly as the near cells would be.
 	real_t far_radius = 4000.0; // m (0: off)
@@ -614,6 +619,11 @@ private:
 	void _build_cell(const Vector3i &p_key);
 	void _free_cell(Cell &r_cell);
 	void _update_thinning(const Vector3 &p_target);
+	static Transform3D _drawn_xform(const Group &p_group, uint32_t p_k) {
+		const real_t s = p_k >= uint32_t(p_group.keep_min) ? p_group.widen : 1.0f;
+		return s == 1.0f ? p_group.xforms[p_k] : Transform3D(p_group.xforms[p_k].basis.scaled(Vector3(s, s, s)), p_group.xforms[p_k].origin);
+	}
+	void _upload_widened(Group &r_group);
 	static const int FAR_BLOCK = 8;
 	struct FarBlock {
 		LocalVector<MultiMeshInstance3D *> instances;
@@ -724,6 +734,9 @@ public:
 	void set_layer_density(int p_layer, real_t p_density);
 	real_t get_layer_density(int p_layer) const;
 	void set_far_thinning(bool p_enabled) { far_thinning = p_enabled; }
+	void set_far_widen(bool p_enabled) { far_widen = p_enabled; }
+	Ref<Texture2D> get_far_cover_texture() const { return far_cover_texture; }
+	bool is_far_widen() const { return far_widen; }
 	void set_far_radius(real_t p_radius);
 	real_t get_far_radius() const { return far_radius; }
 	void set_far_min_size(real_t p_size);
