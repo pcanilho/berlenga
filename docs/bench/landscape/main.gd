@@ -3029,10 +3029,6 @@ func _link_shot(kind: String, off: bool) -> void:
 					add_child(w)
 					pair.append(w)
 				movers.append([pair, Vector2(ty[0], ty[1]), Vector2(ty[2], ty[3]), 3.0, 0.4])
-			# The contact square (64 m) follows the weather's follow target, here the world anchor at the origin: the
-			# walk is far from it, so the square follows the framed camera for the shot.
-			if not movers.is_empty():
-				weather.follow_target = weather.get_path_to(cam7)
 				if prints != null:
 					# The ground's deform window too, so the stamped prints land inside it.
 					prints.follow_target = prints.get_path_to(cam7)

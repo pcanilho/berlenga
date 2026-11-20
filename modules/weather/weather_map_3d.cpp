@@ -716,6 +716,17 @@ float WeatherMap3D::penman_evaporation(float p_net_radiation, float p_wind_2m, f
 	return (delta * MAX(p_net_radiation, 0.0f) / 681.0f + gamma * ea) / (delta + gamma);
 }
 
+// The contact square is a near-field picture (prints, drips, splashes seen up close): it stays round the camera even
+// when the weather window follows a world anchor or a vehicle far from it.
+Vector3 WeatherMap3D::_contact_center() const {
+	if (is_inside_tree() && get_viewport()) {
+		if (const Camera3D *cam = get_viewport()->get_camera_3d()) {
+			return cam->get_global_position();
+		}
+	}
+	return _follow_position();
+}
+
 Vector3 WeatherMap3D::_follow_position() const {
 	if (!follow_target.is_empty()) {
 		const Node3D *n = Object::cast_to<Node3D>(get_node_or_null(follow_target));
@@ -2383,7 +2394,7 @@ void WeatherMap3D::_update_contact(double p_weather_dt) {
 		return;
 	}
 	contact.configure(contact_wetness_resolution, contact_wetness_size);
-	contact.follow(_follow_position());
+	contact.follow(_contact_center());
 	contact_accum += p_weather_dt;
 	if (contact_accum >= 0.1) {
 		const float t = get_contact_drying_time();

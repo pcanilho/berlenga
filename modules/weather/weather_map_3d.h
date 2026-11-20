@@ -493,6 +493,7 @@ private:
 	void _publish_globals();
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
 	Vector3 _follow_position() const;
+	Vector3 _contact_center() const; // the contact square's centre: the active camera, else the follow position
 
 	float _cell_size() const { return extent / resolution; }
 	float _sample(const Vector<float> &p_field, Vector2 p_xz, int p_stride = 1, int p_offset = 0) const;
