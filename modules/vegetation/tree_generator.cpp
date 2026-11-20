@@ -36,6 +36,7 @@
 #include "vegetation_fire.h"
 
 #include "core/os/mutex.h"
+#include "core/templates/sort_array.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
 #include "scene/resources/image_texture.h"
@@ -4718,20 +4719,32 @@ void TreeGenerator::_add_needle(Builder &r_b, const Vector3 &p_base, const Vecto
 	side = side.normalized() * 0.0018f;
 	const Vector3 n = side.cross(p_out).normalized();
 	const Vector3 tip = p_base + p_out * p_size;
+	// One resize per array (a needle tree adds hundreds of thousands): the same values as appending one by one.
 	const int base = r_b.verts.size();
-	r_b.verts.push_back(p_base - side);
-	r_b.verts.push_back(p_base + side);
-	r_b.verts.push_back(tip);
+	const int nb = r_b.normals.size(), cb = r_b.colors.size(), ub = r_b.uvs.size(), ib = r_b.indices.size();
+	r_b.verts.resize(base + 3);
+	r_b.normals.resize(nb + 3);
+	r_b.colors.resize(cb + 3);
+	r_b.uvs.resize(ub + 3);
+	r_b.indices.resize(ib + 3);
+	Vector3 *v = r_b.verts.ptrw() + base;
+	v[0] = p_base - side;
+	v[1] = p_base + side;
+	v[2] = tip;
+	Vector3 *nw = r_b.normals.ptrw() + nb;
+	Color *cw = r_b.colors.ptrw() + cb;
 	for (int i = 0; i < 3; i++) {
-		r_b.normals.push_back(n);
-		r_b.colors.push_back(p_color);
+		nw[i] = n;
+		cw[i] = p_color;
 	}
-	r_b.uvs.push_back(Vector2(0, 0));
-	r_b.uvs.push_back(Vector2(1, 0));
-	r_b.uvs.push_back(Vector2(0.5f, 1));
-	r_b.indices.push_back(base);
-	r_b.indices.push_back(base + 2);
-	r_b.indices.push_back(base + 1);
+	Vector2 *uw = r_b.uvs.ptrw() + ub;
+	uw[0] = Vector2(0, 0);
+	uw[1] = Vector2(1, 0);
+	uw[2] = Vector2(0.5f, 1);
+	int32_t *iw = r_b.indices.ptrw() + ib;
+	iw[0] = base;
+	iw[1] = base + 2;
+	iw[2] = base + 1;
 }
 
 // A Calligonum twiglet (trees.md 5ae): a green, leafless, jointed shoot about a millimetre thick,
@@ -22100,9 +22113,16 @@ void TreeGenerator::_fire_crown(const Builder &p_leaves) {
 	for (int i = 0; i < p_leaves.verts.size(); i++) {
 		ys[i] = p_leaves.verts[i].y - base_y;
 	}
-	ys.sort();
+	// The five quartile heights by selection, not a full sort of every leaf vertex: the same values.
+	SortArray<float> sorter;
+	int64_t from = 0;
 	for (int k = 0; k < 5; k++) {
-		fire_crown[k] = MAX(ys[MIN(uint32_t(k * (ys.size() - 1) / 4), ys.size() - 1)], 0.0f);
+		const int64_t at = MIN(uint32_t(k * (ys.size() - 1) / 4), ys.size() - 1);
+		if (at >= from) {
+			sorter.nth_element(from, ys.size(), at, ys.ptr());
+			from = at + 1;
+		}
+		fire_crown[k] = MAX(ys[at], 0.0f);
 	}
 	float r = 0.0f;
 	for (uint32_t i = 1; i < nodes.size(); i++) {
@@ -22231,7 +22251,18 @@ Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves, bool p_twins) const {
 	for (const TreeLod &level : tree_lods(is_shrub(preset) && !far_leaves)) {
 		// Survivors grow about their base by 1/sqrt(keep), so the kept leaf area matches.
 		const float grow = 1.0f / Math::sqrt(level.keep);
-		PackedInt32Array idx;
+		// The survivors first, then every array grown once and filled in order (it was a push_back per vertex and
+		// attribute, each a copy-on-write check): the same vertices, skin and indices in the same places.
+		struct Kept {
+			Vector4i pt;
+			Vector4i sp;
+			float g;
+			bool twin;
+			bool skinned;
+		};
+		LocalVector<Kept> kept;
+		int add_v = 0, add_i = 0, add_skin = 0;
+		int bones_size = r_leaves.bones.size();
 		for (uint32_t i = 0; i < count; i++) {
 			// A fixed hash per leaf, so each level's survivors are a subset of the level before.
 			const float u = float((uint32_t(i) * 2654435761u) >> 8) / 16777216.0f;
@@ -22243,30 +22274,73 @@ Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves, bool p_twins) const {
 			if (psize < 0.0f || (u >= level.keep && !whole)) {
 				continue;
 			}
-			const float g = whole ? 1.0f : grow;
-			const Vector4i pt = r_leaves.parts[i];
-			const int v0 = r_leaves.verts.size();
-			const Vector3 pivot = r_leaves.verts[pt.z];
+			Kept k;
+			k.g = whole ? 1.0f : grow;
+			k.pt = r_leaves.parts[i];
 			// A species leaf (lobed, palmate, compound) is drawn as its simple twin here.
 			const Vector4i *twin = p_twins ? leaf_twin_of.getptr(int(i)) : nullptr;
-			const Builder &src = twin ? leaf_twins : r_leaves;
-			const Vector4i sp = twin ? *twin : pt;
-			const bool skinned = r_leaves.bones.size() >= (pt.z + 1) * 4;
-			for (int v = 0; v < sp.w; v++) {
-				r_leaves.verts.push_back(pivot + (src.verts[sp.z + v] - pivot) * g);
-				r_leaves.normals.push_back(src.normals[sp.z + v]);
-				r_leaves.uvs.push_back(src.uvs[sp.z + v]);
-				r_leaves.colors.push_back(src.colors[sp.z + v]);
-				if (skinned) {
+			k.twin = twin != nullptr;
+			k.sp = twin ? *twin : k.pt;
+			k.skinned = bones_size >= (k.pt.z + 1) * 4;
+			add_v += k.sp.w;
+			add_i += k.sp.y;
+			if (k.skinned) {
+				add_skin += k.sp.w * 4;
+				bones_size += k.sp.w * 4;
+			}
+			kept.push_back(k);
+		}
+		const int v_start = r_leaves.verts.size();
+		r_leaves.verts.resize(v_start + add_v);
+		r_leaves.normals.resize(r_leaves.normals.size() + add_v);
+		r_leaves.uvs.resize(r_leaves.uvs.size() + add_v);
+		r_leaves.colors.resize(r_leaves.colors.size() + add_v);
+		const int b_start = r_leaves.bones.size();
+		const int w_start = r_leaves.weights.size();
+		r_leaves.bones.resize(b_start + add_skin);
+		r_leaves.weights.resize(w_start + add_skin);
+		PackedInt32Array idx;
+		idx.resize(add_i);
+		Vector3 *vw = r_leaves.verts.ptrw();
+		Vector3 *nw = r_leaves.normals.ptrw() + (r_leaves.normals.size() - add_v);
+		Vector2 *uw = r_leaves.uvs.ptrw() + (r_leaves.uvs.size() - add_v);
+		Color *cw = r_leaves.colors.ptrw() + (r_leaves.colors.size() - add_v);
+		int32_t *bw = r_leaves.bones.ptrw();
+		float *ww = r_leaves.weights.ptrw();
+		int32_t *iw = idx.ptrw();
+		// The source arrays read after the resize (the leaves' own may have moved); twins are another builder.
+		const Vector3 *own_v = r_leaves.verts.ptr();
+		const Vector3 *own_n = r_leaves.normals.ptr();
+		const Vector2 *own_u = r_leaves.uvs.ptr();
+		const Color *own_c = r_leaves.colors.ptr();
+		const int32_t *own_i = r_leaves.indices.ptr();
+		int vn = v_start, bn = b_start, in = 0, an = 0;
+		for (const Kept &k : kept) {
+			const int v0 = vn;
+			const Vector3 pivot = own_v[k.pt.z];
+			const Vector3 *sv = k.twin ? leaf_twins.verts.ptr() : own_v;
+			const Vector3 *sn = k.twin ? leaf_twins.normals.ptr() : own_n;
+			const Vector2 *su = k.twin ? leaf_twins.uvs.ptr() : own_u;
+			const Color *sc = k.twin ? leaf_twins.colors.ptr() : own_c;
+			const int32_t *si = k.twin ? leaf_twins.indices.ptr() : own_i;
+			for (int v = 0; v < k.sp.w; v++) {
+				vw[vn] = pivot + (sv[k.sp.z + v] - pivot) * k.g;
+				nw[an] = sn[k.sp.z + v];
+				uw[an] = su[k.sp.z + v];
+				cw[an] = sc[k.sp.z + v];
+				vn++;
+				an++;
+				if (k.skinned) {
 					// The leaf's own skin (one bone per leaf) from its first vertex.
-					for (int k = 0; k < 4; k++) {
-						r_leaves.bones.push_back(r_leaves.bones[pt.z * 4 + k]);
-						r_leaves.weights.push_back(r_leaves.weights[pt.z * 4 + k]);
+					for (int q = 0; q < 4; q++) {
+						bw[bn] = bw[k.pt.z * 4 + q];
+						ww[w_start + (bn - b_start)] = ww[k.pt.z * 4 + q];
+						bn++;
 					}
 				}
 			}
-			for (int k = 0; k < sp.y; k++) {
-				idx.push_back(src.indices[sp.x + k] - sp.z + v0);
+			for (int q = 0; q < k.sp.y; q++) {
+				iw[in++] = si[k.sp.x + q] - k.sp.z + v0;
 			}
 		}
 		if (idx.is_empty()) {

@@ -332,21 +332,38 @@ private:
 		void end(Vector4i &r_part, float p_size) {
 			r_part.y = indices.size() - r_part.x;
 			r_part.w = verts.size() - r_part.z;
-			while (use_tangents && tangents.size() < verts.size() * 4) {
-				tangents.push_back(1.0f);
-				tangents.push_back(0.0f);
-				tangents.push_back(0.0f);
-				tangents.push_back(1.0f);
+			// Padding grown in one resize each (it was twelve push_backs a vertex, each a copy-on-write check and a
+			// resize): the same values in the same places.
+			if (use_tangents && tangents.size() < verts.size() * 4) {
+				const int old = tangents.size();
+				const int groups = (verts.size() * 4 - old + 3) / 4;
+				tangents.resize(old + groups * 4);
+				float *t = tangents.ptrw() + old;
+				for (int g = 0; g < groups; g++) {
+					t[g * 4 + 0] = 1.0f;
+					t[g * 4 + 1] = 0.0f;
+					t[g * 4 + 2] = 0.0f;
+					t[g * 4 + 3] = 1.0f;
+				}
 			}
-			for (int v = bones.size() / 4; v < verts.size(); v++) {
-				bones.push_back(bone);
-				bones.push_back(0);
-				bones.push_back(0);
-				bones.push_back(0);
-				weights.push_back(1.0f);
-				weights.push_back(0.0f);
-				weights.push_back(0.0f);
-				weights.push_back(0.0f);
+			const int missing = verts.size() - bones.size() / 4;
+			if (missing > 0) {
+				const int ob = bones.size();
+				const int ow = weights.size();
+				bones.resize(ob + missing * 4);
+				weights.resize(ow + missing * 4);
+				int32_t *bp = bones.ptrw() + ob;
+				float *wp = weights.ptrw() + ow;
+				for (int v = 0; v < missing; v++) {
+					bp[v * 4 + 0] = bone;
+					bp[v * 4 + 1] = 0;
+					bp[v * 4 + 2] = 0;
+					bp[v * 4 + 3] = 0;
+					wp[v * 4 + 0] = 1.0f;
+					wp[v * 4 + 1] = 0.0f;
+					wp[v * 4 + 2] = 0.0f;
+					wp[v * 4 + 3] = 0.0f;
+				}
 			}
 			if (r_part.y > 0) {
 				parts.push_back(r_part);
