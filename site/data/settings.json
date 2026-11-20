@@ -1404,7 +1404,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); on dry interdune flats, long low granule ripples with coarse crests run across the dune-building wind (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2532,6 +2532,20 @@
    "topic": "Plants"
   },
   {
+   "name": "Deer browsing",
+   "settings": [
+    "WorldStand.add_browse()",
+    "PlantSpecies.RULE_BROWSE",
+    "PRESET_GRAZED_LAWN",
+    "GrassField3D.graze_height"
+   ],
+   "note": "",
+   "what": "where deer feed, bramble and raspberry are bitten low, palatable herbs thin, the floor turns grassy, the grass is grazed short and clearings become close-cropped deer lawns.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Stand margins",
    "settings": [
     "PlantSpecies.margin_width",
@@ -3136,7 +3150,7 @@
     "witches_brooms"
    ],
    "note": "",
-   "what": "cones, catkins with bract scales, ash keys in bunches, and rowan and elder berries in dense corymbs on branching stalks in season; winter buds on shoot tips; mistletoe on its hosts and witches' brooms as twig nests on birches.",
+   "what": "cones, catkins with bract scales, ash keys in bunches, and rowan and elder berries in dense corymbs on branching stalks in season; winter buds on shoot tips; mistletoe balls up to 0.8 m across on broadleaves, fir and pine, and witches' brooms as twig nests on birches and broom rust on silver fir.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
@@ -3347,7 +3361,7 @@
     "lightning_years"
    ],
    "note": "",
-   "what": "a torn pale strip down the stem with bark and splinters thrown round the foot, greying and healing over the years.",
+   "what": "a torn pale strip down the stem with bark and splinters thrown round the foot, greying and healing over the years; trees the weather's lightning strikes turn fresh-struck, then heal (`lightning_variants`).",
    "page": "trees",
    "title": "Trees",
    "topic": "Old trees and deadwood"
@@ -3529,10 +3543,11 @@
   {
    "name": "Melt-freeze crusts",
    "settings": [
-    "SnowCover3D.crust_enabled"
+    "SnowCover3D.crust_enabled",
+    "SnowSurface3D.crust_plates"
    ],
    "note": "",
-   "what": "a thawed surface refreezes into a crust that hardens each cycle; boots break thin ones into tipped pieces and stand on hard ones.",
+   "what": "a thawed surface refreezes into a crust that hardens each cycle; boots stand on hard ones and break thin ones into flat, sharp-edged plates tipped into the hole, with steps between them.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3688,10 +3703,12 @@
    "name": "Icicles",
    "settings": [
     "SnowIcicles3D",
-    "hazy_core"
+    "hazy_core",
+    "curtains",
+    "wind_direction"
    ],
    "note": "",
-   "what": "grown from roof melt water below freezing; clear ice with a hazy core.",
+   "what": "grown from roof melt water below freezing; clear ice with a hazy core, tapering like real dripping icicles, leaning with the wind they grew in, with drops at dripping tips and curtains where neighbours fuse.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
@@ -4083,7 +4100,7 @@
     "cloud_density"
    ],
    "note": "",
-   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); low stratus and stratocumulus follow the day's heating, wind, humidity and rain, with their base at the condensation level (`WeatherMap3D.cloud_regime_from_weather`); storms hang rain shafts under their base, slanted by the low wind and as dense as the rain is heavy, and a moving storm drops a shelf cloud along its gust front; high up, shear aloft breaks the cirrus into cirrocumulus grains and a spreading high sheet merges into a cirrostratus veil that carries halos; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
+   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); low stratus and stratocumulus follow the day's heating, wind, humidity and rain, with their base at the condensation level (`WeatherMap3D.cloud_regime_from_weather`); storms tower into a leaning cumulonimbus with a flat anvil downwind and mammatus beneath, and hang rain shafts under their base, slanted by the low wind and as dense as the rain is heavy, and a moving storm drops a shelf cloud along its gust front; high up, shear aloft breaks the cirrus into cirrocumulus grains and a spreading high sheet merges into a cirrostratus veil that carries halos; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""

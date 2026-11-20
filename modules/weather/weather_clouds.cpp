@@ -415,10 +415,10 @@ void State::update_top_max() {
 	base_min = base_height;
 	top_max = base_height + top_height(*this, t);
 	for (int i = 0; i < storm_count; i++) {
-		t = MAX(t, 0.9f * storms[i][3]);
+		t = MAX(t, storms[i][3]); // the cumulonimbus body's height (storm_body_at)
 		if (storm_base[i] > 0.0f) {
 			base_min = MIN(base_min, storm_base[i]);
-			top_max = MAX(top_max, storm_base[i] + top_height(*this, MAX(type, 0.9f * storms[i][3])));
+			top_max = MAX(top_max, storm_base[i] + top_height(*this, MAX(type, storms[i][3])));
 		}
 		if (storm_outflow[i] > 0.0f) {
 			base_min = MIN(base_min, (storm_base[i] > 0.0f ? storm_base[i] : base_height) - SHELF_DROP);
@@ -445,7 +445,7 @@ float shelf_drop(const State &p_state, int p_storm, Vector2 p_xz) {
 	}
 	const float r_gf = s[2] * (1.1f + 0.04f * out);
 	const float u = (rr - r_gf) / (0.6f * s[2]);
-	const float arc = smoothstep(0.1f, 0.7f, d.dot(p_state.storm_dir) / rr);
+	const float arc = smoothstep(0.4f, 0.85f, d.dot(p_state.storm_dir) / rr);
 	const float wedge = smoothstep(-1.2f, -0.1f, u) * (1.0f - smoothstep(-0.1f, 0.05f, u));
 	return SHELF_DROP * MIN(out / 15.0f, 1.0f) * s[3] * arc * wedge;
 }
@@ -490,10 +490,12 @@ Vector2 cover_type_at(const State &p_state, Vector2 p_xz) {
 		const float wide = Math::exp(-x2 / (1.6f * 1.6f)) * s[3];
 		cover = 1.0f - (1.0f - cover) * (1.0f - wide);
 		t = MAX(t, 0.9f * wide);
-		// The shelf: one continuous wedge, smooth and layered (the lifted inflow condenses as a sheet, not cells).
-		const float sh = shelf_drop(p_state, i, p_xz) / SHELF_DROP;
-		cover = MAX(cover, 0.95f * sh);
-		t = Math::lerp(t, 0.05f, sh);
+		// The shelf: one continuous wedge (the lifted inflow condenses all along the front), under the storm's own
+		// tower, which it is part of.
+		cover = MAX(cover, 0.95f * shelf_drop(p_state, i, p_xz) / SHELF_DROP);
+		// Under the anvil the column reaches the storm's height (storm_body_at), so its type is the storm's there.
+		const Vector2 ac = Vector2(s[0], s[1]) + p_state.high_dir * (1.6f * s[2]);
+		t = MAX(t, s[3] * (1.0f - smoothstep(2.6f, 3.2f, (p_xz - ac).length() / s[2])));
 	}
 	return Vector2(cover, t);
 }
@@ -887,6 +889,40 @@ float sc_cells_at(const State &p_state, Vector2 p_xz) {
 	return smoothstep(0.0f, 0.7f, f2 - f1);
 }
 
+// A storm's cumulonimbus: one body, not a field of single cumulus (cells_at makes clouds of a kilometre or two).
+// A tower about 1.5 core radii across from the base to near the tropopause (top_height at type 1, times growth),
+// leaning downwind with height, spreading at its top into the anvil: from 78% of its height the radius grows to
+// about 3 core radii, its middle carried 1.6 radii downwind along the wind aloft, flat-topped under the
+// tropopause (Houze 1993, Cloud Dynamics, 8). The envelope, 0 to 1, carved by the shape noise like the cells.
+float storm_body_at(const State &p_state, const Vector3 &p_pos, float p_base, float *r_near) {
+	float best = 0.0f;
+	float near = 0.0f;
+	for (int i = 0; i < p_state.storm_count; i++) {
+		const float *s = p_state.storms[i];
+		if (s[3] <= 0.01f) {
+			continue;
+		}
+		const float hgt = top_height(p_state, 1.0f) * s[3];
+		const float hh = (p_pos.y - p_base) / hgt;
+		if (hh <= 0.0f || hh >= 1.0f) {
+			continue;
+		}
+		const float spread = smoothstep(0.78f, 0.92f, hh);
+		const Vector2 c = Vector2(s[0], s[1]) + p_state.high_dir * (s[2] * (0.4f * hh * hh + 1.6f * spread));
+		const float rad = s[2] * (0.75f + 0.15f * hh + 2.2f * spread);
+		const float d = (Vector2(p_pos.x, p_pos.z) - c).length() / rad;
+		const float e = (1.0f - smoothstep(0.7f, 1.0f, d)) * smoothstep(0.0f, 0.03f, hh) * (1.0f - smoothstep(0.93f, 1.0f, hh));
+		best = MAX(best, e);
+		// Round the body its own updraft's subsidence keeps the air clear of other towers (a few flanking ones
+		// aside): single cells fade out within 1.8 body radii.
+		near = MAX(near, (1.0f - smoothstep(1.0f, 1.8f, d)) * s[3]);
+	}
+	if (r_near) {
+		*r_near = near;
+	}
+	return best;
+}
+
 float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	if (p_pos.y < p_state.base_min || p_pos.y > p_state.top_max) {
 		return 0.0f;
@@ -922,7 +958,10 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	// A deck (high cover) is the continuous noise's, as before: overcast is one sheet, not cells.
 	// The shape noise warps each cloud's outline (its distances stretched by up to half where the noise is low)
 	// and carves its shell.
-	const float env = CLAMP(cells_at(p_state, Vector3(p_pos.x - so.x, p_pos.y, p_pos.z - so.y), b, ct, 1.0f) + 1.5f * MAX(eff, 0.0f), 0.0f, 1.0f);
+	float env = CLAMP(cells_at(p_state, Vector3(p_pos.x - so.x, p_pos.y, p_pos.z - so.y), b, ct, 1.0f) + 1.5f * MAX(eff, 0.0f), 0.0f, 1.0f);
+	// The storm's body: solid through, its outline the shape noise's where the envelope falls off.
+	float near_body = 0.0f;
+	const float body = p_state.storm_count > 0 ? storm_body_at(p_state, p_pos, b, &near_body) : 0.0f;
 	const float lay = layered_share(ct.y);
 	const float cells = MAX(n - (1.0f - env), 0.0f) / MAX(env, 0.001f) * base * (1.0f - lay);
 	const float sc = sc_share(ct.y);
@@ -944,7 +983,19 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	// Stratocumulus cells dense through their middles (liquid water 0.2 to 0.5 g/m3, extinction about 0.03 to 0.06
 	// per metre; Wood 2012) with a soft thin rim: the linear remap left each cell an even, faint disc.
 	const float deck_sc = sc > 0.0f ? Math::lerp(deck, MIN(deck * 3.0f, 1.0f), sc) : deck;
-	const float shape = MAX(cells, deck_sc) * (1.0f + MIN(eff, 0.0f));
+	// The shelf: a solid wedge from its lowered base to 400 m above the storm's own base, smooth underneath, its
+	// upper face roughened by the noise (the lifted inflow condenses all along the front as one cloud).
+	float shelf = 0.0f;
+	float shelf_top = 0.0f;
+	for (int i = 0; i < p_state.storm_count; i++) {
+		const float dr = shelf_drop(p_state, i, Vector2(p_pos.x, p_pos.z));
+		if (dr > shelf_top) {
+			shelf_top = dr;
+			shelf = dr / SHELF_DROP;
+		}
+	}
+	const float wedge = shelf > 0.0f ? smoothstep(0.3f, 0.6f, (0.5f + 0.5f * n) * shelf) * (1.0f - smoothstep(0.7f, 1.0f, (p_pos.y - b) / (shelf_top + 400.0f))) : 0.0f;
+	const float shape = MAX(MAX(MAX(cells * (1.0f - MAX(near_body, shelf)), deck_sc), smoothstep(0.3f, 0.6f, (0.5f + 0.5f * n) * body) * smoothstep(0.0f, 0.05f, body)), wedge) * (1.0f + MIN(eff, 0.0f));
 	// Frostbite's measured extinction: stratus about 0.04, cumulus up to 0.1 per metre; a fair sky's clouds a
 	// little lighter than a deck's.
 	return shape * Math::lerp(0.4f, 1.0f, ct.x) * Math::lerp(0.04f, 0.1f, ct.y) * p_state.density;
@@ -1163,6 +1214,31 @@ float wc_top_height(float t) {
 	return cloud_thickness * mix(0.25, 1.0, smoothstep(0.0, 0.7, t)) * (1.0 + 4.0 * smoothstep(0.8, 1.0, t));
 }
 
+// A storm's cumulonimbus body (storm_body_at() on the CPU, which explains it).
+float wc_storm_body(vec3 p, float b, out float r_near) {
+	float best = 0.0;
+	r_near = 0.0;
+	for (int i = 0; i < 8; i++) {
+		if (i >= cloud_storm_count) {
+			break;
+		}
+		vec4 s = cloud_storms[i];
+		if (s.w <= 0.01) {
+			continue;
+		}
+		float hh = (p.y - b) / (wc_top_height(1.0) * s.w);
+		if (hh <= 0.0 || hh >= 1.0) {
+			continue;
+		}
+		float spread = smoothstep(0.78, 0.92, hh);
+		vec2 c = s.xy + cloud_high_dir * (s.z * (0.4 * hh * hh + 1.6 * spread));
+		float d = length(p.xz - c) / (s.z * (0.75 + 0.15 * hh + 2.2 * spread));
+		best = max(best, (1.0 - smoothstep(0.7, 1.0, d)) * smoothstep(0.0, 0.03, hh) * (1.0 - smoothstep(0.93, 1.0, hh)));
+		r_near = max(r_near, (1.0 - smoothstep(1.0, 1.8, d)) * s.w);
+	}
+	return best;
+}
+
 // A storm's shelf cloud: how far its gust front lowers the base at xz (shelf_drop() on the CPU).
 float wc_shelf_drop(int i, vec2 xz) {
 	float o = cloud_storm_outflow[i];
@@ -1176,7 +1252,7 @@ float wc_shelf_drop(int i, vec2 xz) {
 		return 0.0;
 	}
 	float u = (rr - s.z * (1.1 + 0.04 * o)) / (0.6 * s.z);
-	float arc = smoothstep(0.1, 0.7, dot(d, cloud_storm_dir) / rr);
+	float arc = smoothstep(0.4, 0.85, dot(d, cloud_storm_dir) / rr);
 	float wedge = smoothstep(-1.2, -0.1, u) * (1.0 - smoothstep(-0.1, 0.05, u));
 	return 450.0 * min(o / 15.0, 1.0) * s.w * arc * wedge;
 }
@@ -1201,10 +1277,9 @@ vec2 wc_cover_type(vec2 xz) {
 		float wide = exp(-x2 / (1.6 * 1.6)) * s.w;
 		cover = 1.0 - (1.0 - cover) * (1.0 - wide);
 		t = max(t, 0.9 * wide);
-		// The shelf: one continuous, layered wedge (cover_type_at() on the CPU).
-		float sh = wc_shelf_drop(i, xz) / 450.0;
-		cover = max(cover, 0.95 * sh);
-		t = mix(t, 0.05, sh);
+		// The shelf: one continuous wedge under the storm's own tower (cover_type_at() on the CPU).
+		cover = max(cover, 0.95 * wc_shelf_drop(i, xz) / 450.0);
+		t = max(t, s.w * (1.0 - smoothstep(2.6, 3.2, length(xz - s.xy - cloud_high_dir * (1.6 * s.z)) / s.z)));
 	}
 	return vec2(cover, t);
 }
@@ -1548,6 +1623,8 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 		float lobes = textureLod(cloud_detail, loc.xyz * 0.4, max(log2(p_step / loc.w * 0.4 * 128.0), 0.0)).b;
 		env = max(env - cloud_turret_strength * (1.0 - lobes) * mix(0.4, 1.0, smoothstep(0.15, 0.6, hc)) * smoothstep(0.0, 0.25, hc), 0.0);
 	}
+	float near_body = 0.0;
+	float body = cloud_storm_count > 0 ? wc_storm_body(p_unsheared, b0, near_body) : 0.0; // storm_body_at() on the CPU
 	float lay = 1.0 - smoothstep(0.22, 0.36, ct.y); // layered_share() on the CPU
 	float cells = max(n - (1.0 - env), 0.0) / max(env, 0.001) * base * (1.0 - lay);
 	float sc = wc_sc_share(ct.y);
@@ -1561,7 +1638,24 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 	float nd = lay > 0.0 ? mix(n, (0.5 + 0.5 * n) * cell, lay) : n;
 	float deck = max(nd * dome - (1.0 - ct.x), 0.0) / max(ct.x, 0.001) * base * smoothstep(mix(0.55, 0.15, lay), mix(0.85, 0.45, lay), ct.x);
 	deck = sc > 0.0 ? mix(deck, min(deck * 3.0, 1.0), sc) : deck; // dense cell middles, as on the CPU
-	float shape = max(cells, deck) * (1.0 + min(eff, 0.0));
+	// The shelf: a solid wedge from its lowered base up past the storm's base (shelf_drop() + 400 m), smooth under,
+	// its upper face the noise's (extinction_at() on the CPU).
+	float shelf = 0.0;
+	float shelf_top = 0.0;
+	for (int i = 0; i < 8; i++) {
+		if (i >= cloud_storm_count) {
+			break;
+		}
+		float dr = wc_shelf_drop(i, p_unsheared.xz);
+		if (dr > shelf_top) {
+			shelf_top = dr;
+			shelf = dr / 450.0;
+		}
+	}
+	float wedge = shelf > 0.0 ? smoothstep(0.3, 0.6, (0.5 + 0.5 * n) * shelf) * (1.0 - smoothstep(0.7, 1.0, (p.y - b0) / (shelf_top + 400.0))) : 0.0;
+	// Inside the storm's body (and its shelf) their own outlines rule: single cells there would stand out of
+	// them as loose puffs.
+	float shape = max(max(max(cells * (1.0 - max(near_body, shelf)), deck), smoothstep(0.3, 0.6, (0.5 + 0.5 * n) * body) * smoothstep(0.0, 0.05, body)), wedge) * (1.0 + min(eff, 0.0));
 	r_profile = clamp(shape, 0.0, 1.0);
 	if (p_detail && shape > 0.0) {
 		// Nubis Cubed's up-rez (Schneider, Advances 2023): wisps (Curly-Alligator) low frequency inside and high

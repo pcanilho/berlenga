@@ -871,7 +871,7 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 		if (t1 <= t0) {
 			continue;
 		}
-		const int n = 14;
+		const int n = 24;
 		float dt = (t1 - t0) / float(n);
 		for (int k = 0; k < n; k++) {
 			float t = t0 + (float(k) + jitter) * dt;
@@ -889,8 +889,10 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 				continue;
 			}
 			vec2 qn = q - cloud_drift;
-			float curt = 0.6 * wc_value_noise(qn / 900.0 + vec2(float(i) * 13.7, 3.1)) + 0.4 * wc_value_noise(qn / 260.0 + vec2(7.3, float(i) * 5.9));
-			r *= mix(0.08, 2.0, smoothstep(0.3, 0.75, curt)) * smoothstep(0.0, 120.0, base - p.y);
+			// Curtains: three octaves (1.2 km, 400 m, 130 m), thresholded so lighter gaps open between the
+			// heavier sheets; the finest stretched across the view so its streaks stand upright.
+			float curt = 0.5 * wc_value_noise(qn / 1200.0 + vec2(float(i) * 13.7, 3.1)) + 0.3 * wc_value_noise(qn / 400.0 + vec2(7.3, float(i) * 5.9)) + 0.2 * wc_value_noise(qn / 130.0 + vec2(1.9, 8.3));
+			r *= mix(0.0, 2.6, smoothstep(0.42, 0.72, curt)) * smoothstep(0.0, 120.0, base - p.y);
 			float sigma = 0.31e-3 * pow(r, 0.67);
 			// The light: under the storm's shield the sky's light is cut to about a third; the sun where the cover
 			// toward it over the base is thin.
@@ -910,6 +912,102 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 		}
 	}
 	r_t = wsum > 0.0 ? dsum / wsum : 0.0;
+	return vec4(col, tr);
+}
+
+// Mammatus: pouches hanging under a storm's anvil where its ice and drops fall into drier air below it and
+// sublimate, cooling it into negatively buoyant lobes (Schultz et al. 2006, Mon. Wea. Rev. 134: lobes 1 to 3 km
+// across, about 0.5 km deep, in clusters under the anvil's overhang). The anvil's base where the storm's body
+// spreads (78% of its height); under it each lobe a dome hanging from a jittered grid (1.6 km), its depth by the share: the overhang
+// (the anvil away from the storm's tower) times the drier the air (they need the sub-anvil air dry). Marched in
+// 16 steps across the 700 m slab; lit by the light under the anvil and by the sun through the lobe's skin, so
+// low sun catches their rims (the sunset look).
+float wc_mammatus_share(vec2 xz) {
+	float m = 0.0;
+	for (int i = 0; i < 8; i++) {
+		if (i >= cloud_storm_count) {
+			break;
+		}
+		vec4 s = cloud_storms[i];
+		// Under the body's anvil (wc_storm_body: 3.1 core radii across its top, 1.6 radii downwind).
+		float anvil = (1.0 - smoothstep(0.6, 0.9, length(xz - s.xy - cloud_high_dir * (1.6 * s.z)) / (3.1 * s.z))) * s.w;
+		vec2 dc = xz - s.xy;
+		float tower = exp(-dot(dc, dc) / (s.z * s.z) / (1.6 * 1.6));
+		m = max(m, smoothstep(0.3, 0.7, anvil) * (1.0 - smoothstep(0.2, 0.6, tower)));
+	}
+	return m * (1.0 - 0.7 * smoothstep(0.6, 0.95, cloud_air.y));
+}
+
+// The depth (m) the lobes hang below the anvil's base at xz.
+float wc_mammatus_depth(vec2 xz, float share) {
+	vec2 q = (xz - cloud_high_drift) / 1600.0;
+	ivec2 g = ivec2(floor(q));
+	float dep = 0.0;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			ivec2 c = g + ivec2(i, j);
+			vec2 cp = vec2(c) + vec2(wc_hash2(c.x + 811, c.y - 3373), wc_hash2(c.x - 2939, c.y + 617));
+			float h = wc_hash2(c.x + 4127, c.y + 9133);
+			float rad = 0.45 + 0.25 * h;
+			float r = length(q - cp) / rad;
+			dep = max(dep, (0.6 + 0.4 * h) * sqrt(max(1.0 - r * r, 0.0)));
+		}
+	}
+	return 500.0 * share * dep;
+}
+
+vec4 march_mammatus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_bottom, float jitter, out float r_t) {
+	r_t = 0.0;
+	// Under the anvil of the storm's body (wc_storm_body: it spreads from 78% of the storm's height).
+	float top = cloud_base_height + 0.78 * wc_top_height(1.0);
+	float bot = top - 700.0;
+	if (cloud_storm_count == 0 || abs(rd.y) < 0.02) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	float ta = (bot - cam.y) / rd.y;
+	float tb = (top - cam.y) / rd.y;
+	float t0 = max(min(ta, tb), 0.0);
+	float t1 = min(max(ta, tb), 60000.0);
+	if (t1 <= t0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	vec2 mid = cam.xz + rd.xz * (0.5 * (t0 + t1));
+	if (wc_mammatus_share(mid) < 0.01 && wc_mammatus_share(cam.xz + rd.xz * t0) < 0.01 && wc_mammatus_share(cam.xz + rd.xz * t1) < 0.01) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	const int n = 16;
+	float dt = (t1 - t0) / float(n);
+	vec3 col = vec3(0.0);
+	float tr = 1.0;
+	float wsum = 0.0;
+	float dsum = 0.0;
+	float g = 0.6;
+	float mu = dot(rd, sun_dir);
+	float hg = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
+	for (int k = 0; k < n; k++) {
+		float t = t0 + (float(k) + jitter) * dt;
+		vec3 p = cam + rd * t;
+		float share = wc_mammatus_share(p.xz);
+		if (share < 0.01) {
+			continue;
+		}
+		float hang = top - wc_mammatus_depth(p.xz, share);
+		float inside = p.y - hang; // m above the lobe's skin
+		if (inside <= 0.0) {
+			continue;
+		}
+		float sigma = 0.012 * smoothstep(0.0, 40.0, inside);
+		// The sun through the skin (lit within some tens of metres of it), a low sun more so.
+		float sun_vis = exp(-0.012 * min(inside / max(abs(sun_dir.y), 0.15), 2000.0)) * step(0.0, sun_dir.y);
+		vec3 light = ambient_bottom * 0.8 + sun_radiance * sun_vis * hg;
+		float st = exp(-sigma * dt);
+		float w = tr * (1.0 - st);
+		col += light * w;
+		dsum += t * w;
+		wsum += w;
+		tr *= st;
+	}
+	r_t = wsum > 0.0 ? dsum / wsum : t0;
 	return vec4(col, tr);
 }
 
@@ -935,6 +1033,14 @@ vec4 march_cloud_layers(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3
 	vec4 mid = march_altocumulus(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_mid);
 	float d_high;
 	vec4 high = march_cirrus(cam, rd, sun_dir, sun_radiance, ambient_top, p_pixel, d_high);
+	if (cloud_storm_count > 0) {
+		// The mammatus hang under the storm body's anvil (part of the low march): the nearer first.
+		float d_mam;
+		vec4 mam = march_mammatus(cam, rd, sun_dir, sun_radiance, ambient_bottom, jitter, d_mam);
+		if (mam.a < 0.999) {
+			low = (d_mam < d_low || low.a >= 0.999) ? cloud_over(mam, d_mam, low, d_low, d_low) : cloud_over(low, d_low, mam, d_mam, d_low);
+		}
+	}
 	// The two wave slabs, nearer first (the camera is under both but on a mountain top).
 	float d_wa;
 	vec4 wa = march_wave(cloud_wave_slab.xy, cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_wa);

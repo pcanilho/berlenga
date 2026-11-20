@@ -1276,6 +1276,10 @@ func _build_clouds() -> void:
 			var dz := 9600.0 * wind_dir_arg.y if wind_dir_arg != Vector2.ZERO else 0.0
 			line += " %.0f %.0f," % [r, weather.get_cloud_base_at(Vector3(st0[0], 0.0, st0[1] + dz + r))]
 		print(line)
+		var dl := "storm: density up the core (height m, 1/m):"
+		for hgt in [1600.0, 2500.0, 4000.0, 6000.0, 8000.0, 8800.0]:
+			dl += " %.0f %.4f," % [hgt, weather.get_cloud_density_at(Vector3(st0[0], hgt, st0[1] + (9600.0 * wind_dir_arg.y if wind_dir_arg != Vector2.ZERO else 0.0)))]
+		print(dl)
 	for l in cloud_lights_arg: # x, y, z, energy, reach[, r, g, b]
 		var col := Color(1.0, 0.62, 0.32) if l.size() < 8 else Color(l[5], l[6], l[7])
 		print("cloud light id %d" % weather.add_cloud_light(Vector3(l[0], l[1], l[2]), col, l[3], l[4]))

@@ -112,6 +112,7 @@ private:
 		Node3D *node = nullptr;
 		int triangles = 0;
 		real_t cell = 0.0; // its grid: mesh_cell, or near_mesh_cell round the focus
+		uint8_t fine_fade = 0; // refined: its faces toward coarse neighbours (FieldSource::fine_fade)
 		bool pinned = false; // an entrance patch chunk: kept while the landscape's hole is open
 		Vector<Transform3D> spel[16]; // speleothems by kind * SPEL_VARIANTS + variant (unit shapes placed)
 		Ref<ArrayMesh> rim_mesh; // rimstone dams (world space)
@@ -144,6 +145,10 @@ private:
 		LocalVector<Vector3> patches; // entrances whose patch reaches this chunk
 		LocalVector<Vector3> patch_out;
 		LocalVector<real_t> patch_r; // each patch's half size (_patch_half)
+		// A refined chunk's faces toward coarse neighbours (bits 0..5: -x +x -y +y -z +z) and its box: the fine
+		// relief fades out over the last metres to those faces, so both grids mesh the same surface at the seam.
+		uint8_t fine_fade = 0;
+		Vector3 fine_lo, fine_hi;
 	};
 	friend struct CaveMeshJob;
 	HashMap<Vector3i, Chunk> chunks;
@@ -261,7 +266,9 @@ private:
 	real_t _wall_foot(const FieldSource &p_src, const Vector3 &p_p) const;
 	real_t _rock(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const Vector3 &p_p, bool *r_ground = nullptr, real_t p_cell = -1.0) const;
 	void _gather(const AABB &p_box, FieldSource &r_src) const;
-	void _mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_cell) const;
+	void _mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_cell, uint8_t p_fade = 0) const;
+	template <typename F>
+	uint8_t _fade_faces(const Vector3i &p_key, F p_cell_of) const;
 	void _drips(const FieldSource &p_src, const TerrainGenerator3D *p_gen, const AABB &p_box, LocalVector<Drip> &r_drips) const;
 	static real_t _flowstone(const LocalVector<Drip> &p_drips, const Vector3 &p_p, real_t p_rock, real_t *r_weight = nullptr);
 	Ref<ArrayMesh> _spel_mesh(int p_kind, int p_variant);

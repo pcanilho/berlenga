@@ -230,8 +230,9 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
 - The 9 m / 2.2 m tone now also runs on textured layers (sand included): hex tiling hides seams, not sameness.
 - Godot takes a sampler argument only with one hint per function: tm_hex is written once per map kind (a, n, r, h);
   textured layers had never compiled.
-- tm_hex bounds the footprint to half a tile: faces seen edge on stretched the cone 20 times and anisotropic
-  filtering went out of range (black patches on cliffs under lavapipe).
+- tm_hex bounds the footprint to half a tile (faces seen edge on stretch the cone up to 20 times).
+- Cliff biplanar weights: the sum was floored at 1e-4, so on faces whose normal points near a cube diagonal (both
+  weights about 1e-5) the textures came out at a tenth: black patches on cliffs. Normalised exactly now.
 - Crack lips on rock faces capped at some 34 degrees (depth 0.45 of a lip 2 pixels or 6 cm wide): the 56 to 76
   degree lips drew open joints as black lines on sunlit sea cliffs.
 

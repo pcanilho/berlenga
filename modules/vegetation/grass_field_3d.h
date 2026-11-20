@@ -383,6 +383,18 @@ private:
 	Ref<ImageTexture> burn_flush_texture;
 	void _publish_burn_flush();
 	float _burn_cover(const PlantSpecies *p_rules, float p_x, float p_z) const;
+	// Deer lawns (WorldStand.browse_at; docs/ideas/vegetation.md, "Deer browsing"): where deer browse hard the sward is
+	// grazed to graze_height (0: off), in the shader from a grid of the pressure over the map (graze_map), so near
+	// tiles, rings and the path tracer agree without a rebuild. Followed when the stand changes.
+	float graze_height = 0.04f;
+	Ref<ImageTexture> graze_texture;
+	Rect2 graze_rect;
+	int graze_nx = 0;
+	int graze_ny = 0;
+	uint64_t graze_seen = 0; // WorldStand.get_stand_generation() the texture holds.
+	bool graze_any = false;
+	void _read_graze(TerrainDataMap3D *p_map);
+	void _publish_graze();
 	struct ShellTile {
 		MeshInstance3D *mi = nullptr;
 		uint32_t generation = 0;
@@ -649,6 +661,8 @@ public:
 	void set_far_shell_range(float p_range);
 	float get_far_shell_range() const { return far_shell_range; }
 	void set_burn_recovery(float p_years);
+	void set_graze_height(float p_m);
+	float get_graze_height() const { return graze_height; }
 	float get_burn_recovery() const { return burn_recovery; }
 	float get_burn_cover_at(const Vector3 &p_global_position) const;
 	int get_shell_column_count() const { return shell_column_count; }

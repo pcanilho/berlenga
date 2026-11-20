@@ -292,7 +292,7 @@
 			The kind of plant.
 		</member>
 		<member name="season" type="Dictionary" setter="set_season" getter="get_season" default="{}">
-			The season state as [code]WeatherMap3D.get_season()[/code] returns it; its [code]forcing[/code] (degree days above 5 C since 1 January) and [code]day_of_year[/code] set the flowering of the flowering presets. Each has a window in degree days from the British flowering records: wood anemone, violet and dandelion in early spring, wood sorrel and woodruff in spring, buttercup and sorrel in early summer, foxglove, clover, yarrow, knapweed, wild carrot, scabious and thistle through summer, heather late; daisy, clover, yarrow and herb Robert flower on and off through theirs. Before the window a plant is leaves only (tall flowers are rosettes); each stem then opens in its turn, goes to seed (dandelion clocks, thistledown, buttercup and anemone achenes, foxglove capsules filling the spike from the bottom, wild carrot nests) and, for the tall flowers, dies back to a brown stalk that stands through winter, a share of them into the next spring. Bracken and the woodland fern follow it too: croziers rise and unroll in spring, the fronds stand green through summer, yellow and die with the season's [code]senescence[/code] sum (or a hard frost), lodge under autumn storms and snow, and last year's dead fronds lie flat until the new ones have unrolled. Empty: every stem in flower or, for the tall meadow flowers, a quarter in seed; ferns full and green.
+			The season state as [code]WeatherMap3D.get_season()[/code] returns it; its [code]forcing[/code] (degree days above 5 C since 1 January) and [code]day_of_year[/code] set the flowering of the flowering presets. Each has a window in degree days from the British flowering records: wood anemone, violet and dandelion in early spring, wood sorrel and woodruff in spring, buttercup and sorrel in early summer, foxglove, clover, yarrow, knapweed, wild carrot, scabious and thistle through summer, heather late; daisy, clover, yarrow and herb Robert flower on and off through theirs. Before the window a plant is leaves only (tall flowers are rosettes); each stem then opens in its turn, goes to seed (dandelion clocks, thistledown, buttercup and anemone achenes, foxglove capsules filling the spike from the bottom, wild carrot nests) and, for the tall flowers, dies back to a brown stalk that stands through winter, a share of them into the next spring. Bracken and the woodland fern follow it too: croziers rise and unroll in spring, the fronds stand green through summer, yellow and die with the season's [code]senescence[/code] sum (or a hard frost), lodge under autumn storms and snow, and last year's dead fronds lie flat until the new ones have unrolled. Empty: every stem in flower or, for the tall meadow flowers, a quarter in seed; ferns full and green. A [code]browse[/code] entry (0 to 1) is deer browsing pressure: bramble keeps low spreading canes bitten back with blunt ends and short side shoots, raspberry canes are bitten at the leader and bush out below the bite, leaves are eaten whole or torn, and flowers and fruit grow scarce.
 		</member>
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			Seed of the random variation: each seed gives another plant of the same kind.
@@ -617,7 +617,10 @@
 		<constant name="PRESET_RASPBERRY" value="97" enum="Preset">
 			Raspberry (Rubus idaeus): upright suckering canes of clearings and windthrows, pinnate leaves, red fruit on the second-year canes.
 		</constant>
-		<constant name="PRESET_MAX" value="98" enum="Preset">
+		<constant name="PRESET_GRAZED_LAWN" value="98" enum="Preset">
+			A deer lawn: a dense mat of fine bents and fescues grazed to 2 to 8 cm, most blade ends torn and drying pale over bright regrowth. [method PlantGenerator.make_floor] places it in the light where deer browsing is heavy ([constant PlantSpecies.RULE_BROWSE]).
+		</constant>
+		<constant name="PRESET_MAX" value="99" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">

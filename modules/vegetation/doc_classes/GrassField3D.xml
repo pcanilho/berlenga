@@ -267,6 +267,9 @@
 		<member name="gpu_fill" type="bool" setter="set_gpu_fill" getter="is_gpu_fill" default="true">
 			Fill each tile's blades with a compute shader instead of the CPU loop. The CPU lists the cells the tile keeps at its level and bakes [member rules] into a 0.5 m grid; the shader makes every blade from the same hashes, clumps and light and writes the records straight into the tile's [MultiMesh] ([method RenderingServer.multimesh_mark_buffer_rd_changed]), so the path tracer sees them as before. The blades match the CPU path except within a few centimetres of a rule's edge; the main-thread cost of a tile drops by about 40%. Falls back to the CPU without a [RenderingDevice].
 		</member>
+		<member name="graze_height" type="float" setter="set_graze_height" getter="get_graze_height" default="0.04">
+			Height (m) the sward is grazed to where deer browse hard ([method WorldStand.browse_at]): a dense, even lawn with torn pale blade ends, eased in from pressure 0.3 to 0.8. Done in the shader from a pressure grid over the map, followed when the stand changes, so it needs no rebuild. 0 leaves the sward ungrazed.
+		</member>
 		<member name="ground_tint" type="Color" setter="set_ground_tint" getter="get_ground_tint" default="Color(0.05, 0.09, 0.025, 0.85)">
 			Colour the ground takes under the grass (the shaded thatch between blades), with alpha as the strength. Read by terrain shaders through [method get_ground_shader_code].
 		</member>

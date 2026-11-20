@@ -33,6 +33,7 @@ extends Node3D
 #                         (--dist m upstream, 2.5); --no-streams turns cave_streams off
 #   --cave-view=rimstone  with --caves --cave-mesh: the busiest rimstone cascade from about --dist m (1.6), a lamp;
 #                         --pool-water=n live water on the n nearest pools (12), --no-pool-water none
+#   --no-refine           with --cave-mesh and --cam: the chunks round the camera stay on the coarse grid
 #   --no-sea-water        with --sea-caves --cave-mesh: the sea not drawn inside the caves (a before frame);
 #                         --cave-waves=m the short waves' rms coming in at the mouth (default: from the sea),
 #                         --no-cave-waves the cave's water without them (the surge's level alone)
@@ -846,6 +847,11 @@ func _caves(cam: Camera3D) -> void:
 				net.rimstone_water_max = int(args["pool-water"])
 			var made := net.build_meshes(AABB(pos - Vector3(mr, mr, mr), Vector3(2 * mr, 2 * mr, 2 * mr)))
 			print("  meshes: %d chunks, %d triangles in %.0f ms (cell %.2f m)" % [made, net.get_mesh_triangle_count(), net.get_last_mesh_msec(), net.mesh_cell])
+			if args.has("cam") and not args.has("no-refine"):
+				# A fixed --cam shot: the chunks round the lens on the near grid, as round a player in play (the coarse
+				# grid alone showed walls smoother than anyone sees them); --no-refine keeps the coarse one.
+				var n_cam := net.refine_meshes(cam.position)
+				print("  refined %d chunks round the camera (cell %.2f m)" % [n_cam, net.near_mesh_cell])
 			land_m.load_all_heights()
 			var tri := {"walls": 0, "ground": 0}
 			for ch in net.get_children():

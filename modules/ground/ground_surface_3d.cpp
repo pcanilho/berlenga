@@ -5565,7 +5565,9 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		// And for the dune tone: the generator's loose sand depth (-1 off its dune fields or with none) and the sand share.
 		ripple_sand_depth.resize(sn * sn);
 		ripple_sand_share.resize(sn * sn);
+		ripple_sand_blown.resize(sn * sn);
 		const TerrainGenerator3D *sgen = is_inside_tree() ? GroundHeightQuery::make(this, height_source, ground_collision_mask).generator : nullptr;
+		ripple_sand_wind = sgen ? sgen->get_sand_wind_direction() : Vector2();
 		for (int z = 0; z < sn; z++) {
 			for (int x = 0; x < sn; x++) {
 				const float px = ripple_sand_rect.position.x + (x + 0.5f) * st;
@@ -5573,6 +5575,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				const Cell &c = _cell_at(px, pz);
 				ripple_sand[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(px, pz) : 0.0f;
 				ripple_sand_share[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
+				ripple_sand_blown[z * sn + x] = c.deformable ? c.blown : 0.0f;
 				ripple_sand_depth[z * sn + x] = sgen ? float(sgen->get_sand_depth_at(Vector3(px, 0.0f, pz))) : -1.0f;
 			}
 		}
@@ -5700,6 +5703,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 					d[((n + z) * w + x) * 4] = ripple_sand[z * sn + x];
 					d[((n + z) * w + x) * 4 + 1] = (int)ripple_sand_depth.size() == sn * sn ? ripple_sand_depth[z * sn + x] : -1.0f;
 					d[((n + z) * w + x) * 4 + 2] = (int)ripple_sand_share.size() == sn * sn ? ripple_sand_share[z * sn + x] : 0.0f;
+					d[((n + z) * w + x) * 4 + 3] = (int)ripple_sand_blown.size() == sn * sn ? ripple_sand_blown[z * sn + x] : 0.0f;
 				}
 			}
 		}
@@ -5742,6 +5746,9 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		meta[17] = ripple_far_depth_rect.position.x; // and the depth rows' rect
 		meta[18] = ripple_far_depth_rect.position.y;
 		meta[19] = ripple_far_depth_rect.size.x;
+		meta[20] = ripple_sand_wind.x; // the dune-building wind, for the granule ripples
+		meta[21] = ripple_sand_wind.y;
+		meta[22] = granule_ripples ? 1.0f : 0.0f;
 		meta[12] = ripples.tmpl_k.x; // the template's wave vector, for the shaders' dislocations
 		meta[13] = ripples.tmpl_k.y;
 		if (ripple_image.is_valid() && ripple_image->get_width() == w && ripple_image->get_height() == hgt && ripple_texture.is_valid()) {
@@ -7498,7 +7505,7 @@ void GroundSurface3D::_deposits_save() {
 	for (const KeyValue<Vector2i, Vector2> &kv : silt_river_taken) {
 		keys.insert(kv.key);
 	}
-	if (keys.is_empty() && buried_loose.is_empty() && buried_extra.is_empty()) {
+	if (keys.is_empty() && buried_loose.is_empty() && buried_extra.is_empty() && film_cells.is_empty()) {
 		if (FileAccess::exists(path)) {
 			DirAccess::remove_absolute(path);
 		}
@@ -7549,6 +7556,15 @@ void GroundSurface3D::_deposits_save() {
 			f->store_float(b.a.z);
 			f->store_float(b.r);
 		}
+	}
+	// The 1 m cells tracked mud lies in, and the film owed to the dust already lifted off them (round 18.3), so wind
+	// still finds a trail after a reload.
+	f->store_32(film_cells.size());
+	for (const Vector2i &k : film_cells) {
+		const float *owed = film_owed.getptr(k);
+		f->store_32(uint32_t(k.x));
+		f->store_32(uint32_t(k.y));
+		f->store_float(owed ? *owed : 0.0f);
 	}
 }
 
@@ -7614,6 +7630,19 @@ void GroundSurface3D::_deposits_load() {
 		}
 		if (!have) {
 			buried_extra[cell].push_back(b);
+		}
+	}
+	const uint32_t films = f->eof_reached() ? 0 : f->get_32();
+	for (uint32_t i = 0; i < films && !f->eof_reached(); i++) {
+		const int32_t kx = int32_t(f->get_32());
+		const int32_t kz = int32_t(f->get_32());
+		const Vector2i k(kx, kz);
+		const float owed = f->get_float();
+		if (film_cells.size() < 65536) {
+			film_cells.insert(k);
+		}
+		if (owed > 0.0f) {
+			film_owed[k] = owed;
 		}
 	}
 	buried_cache.clear();
@@ -9411,6 +9440,8 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_far_ripples", "enabled"), &GroundSurface3D::set_far_ripples);
 	ClassDB::bind_method(D_METHOD("set_ripple_sorting", "enabled"), &GroundSurface3D::set_ripple_sorting);
 	ClassDB::bind_method(D_METHOD("set_dune_tone", "enabled"), &GroundSurface3D::set_dune_tone);
+	ClassDB::bind_method(D_METHOD("set_granule_ripples", "enabled"), &GroundSurface3D::set_granule_ripples);
+	ClassDB::bind_method(D_METHOD("is_granule_ripples"), &GroundSurface3D::is_granule_ripples);
 	ClassDB::bind_method(D_METHOD("is_dune_tone"), &GroundSurface3D::is_dune_tone);
 	ClassDB::bind_method(D_METHOD("is_ripple_sorting"), &GroundSurface3D::is_ripple_sorting);
 	ClassDB::bind_method(D_METHOD("is_far_ripples"), &GroundSurface3D::is_far_ripples);
@@ -9570,6 +9601,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_ripples"), "set_far_ripples", "is_far_ripples");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ripple_sorting"), "set_ripple_sorting", "is_ripple_sorting");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dune_tone"), "set_dune_tone", "is_dune_tone");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "granule_ripples"), "set_granule_ripples", "is_granule_ripples");
 	ClassDB::bind_method(D_METHOD("set_slip_avalanches", "enabled"), &GroundSurface3D::set_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("is_slip_avalanches"), &GroundSurface3D::is_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("get_avalanche_count"), &GroundSurface3D::get_avalanche_count);

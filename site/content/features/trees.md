@@ -47,7 +47,7 @@ summary: "Trees and woody shrubs grown by light competition, 50 species in twent
 - **Bark stories** (`bark_wounds`): frost ribs, lightning scars, deer stripping and resin runs on trunks; drying checks open as real splits and knots on lying logs.
 - **Branch-scar chevrons** (`bark_chevrons`): living beech and birch carry dark chevrons below shed limbs, longer and flatter with age, black on birch.
 - **Bark moss** (`moss_cover`): moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions with ragged margins near the camera.
-- **Crown parts** (`fruit_cover`, `mistletoe`, `witches_brooms`): cones, catkins with bract scales, ash keys in bunches, and rowan and elder berries in dense corymbs on branching stalks in season; winter buds on shoot tips; mistletoe on its hosts and witches' brooms as twig nests on birches.
+- **Crown parts** (`fruit_cover`, `mistletoe`, `witches_brooms`): cones, catkins with bract scales, ash keys in bunches, and rowan and elder berries in dense corymbs on branching stalks in season; winter buds on shoot tips; mistletoe balls up to 0.8 m across on broadleaves, fir and pine, and witches' brooms as twig nests on birches and broom rust on silver fir.
 
   ![A rowan berry cluster among its leaves at about 0.6 m, raster](media/trees-rowan.jpg)
 
@@ -93,7 +93,7 @@ summary: "Trees and woody shrubs grown by light competition, 50 species in twent
 - **Flood marks** (`flood_height`, `flood_years`): floodplain trees carry a silt film up to the last high-water line, higher on the upstream face, with flood debris caught at the line.
 - **Deer browse** (`browse`, `browse_height`): browsed saplings grow as low hedged bushes, and grown trees show a level browse line.
 - **Nurse logs** (`nurse_seedlings`, `nurse_stilt`): conifer seedlings root on rotting logs, and trees stand on stilt roots where their log rotted away.
-- **Lightning strikes** (`lightning_years`): a torn pale strip down the stem with bark and splinters thrown round the foot, greying and healing over the years.
+- **Lightning strikes** (`lightning_years`): a torn pale strip down the stem with bark and splinters thrown round the foot, greying and healing over the years; trees the weather's lightning strikes turn fresh-struck, then heal (`lightning_variants`).
 - **Broken limbs** (`limb_breakage`): snapped ends get a splintered fracture face and torn bark; storms break limbs on living trees, leaving some hanging.
 
   ![A winter oak limb, whole and snapped, raster](media/trees-broken-limb.jpg)

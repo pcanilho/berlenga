@@ -1376,3 +1376,61 @@ Built:
   sedge 0-4 y, then dense sedge, tall grass, buttercup 3-38 y, meadowsweet 4-38 y, marsh marigold 2-28 y (fade 3) within
   8 m of the remaining stream. All shade 0-0.4 to 0.6; the trees' STAND_BEAVER_POND supplies the dead pond trees
   and the closing willow and alder. Vegetation bench "beaver" checks.
+
+## Deer browsing (card 20 Nov evening; built 20 Nov)
+Research:
+- Browse heights: roe about 1.1 m, fallow 1.6-1.8 m, red deer 1.8 m (Forestry Commission Practice Note 6; Deer
+  Initiative field signs). The ground flora is all in reach.
+- Under heavy pressure British and European woods lose bramble (the winter staple), honeysuckle, ivy on the floor and
+  palatable forbs (wood anemone, violets, woodruff, bilberry, fireweed); grasses, sedges and unpalatable plants
+  (bracken, Dryopteris ferns, foxglove, nettle) gain: "grassy woods" (Kirby 2001; Gill and Fuller 2007, Ibis 149;
+  Morecroft et al. 2001, Wytham exclosures; Boulanger et al. 2018, Global Change Biology, deer and forest understories).
+- Browsed bramble stays a low hummock of short canes bitten back each winter, many leaves eaten whole or torn, few
+  flowers; browsed raspberry and saplings lose the leader and bush out from the buds below the bite (Bergman 2001).
+- Deer graze clearings and rides into lawns of fine bents and fescues 2-8 cm high with clover and other creeping herbs,
+  kept short year round (Putman 1986; Kuijper et al. 2009, Bialowieza). Deer tear rather than cut (no upper incisors),
+  so blade ends are ragged and dry pale.
+Built:
+- WorldStand browse discs (world-links cef8dbd7): browse_at 0..1, browse_reach_at. PlantSpecies.RULE_BROWSE (31) reads
+  it on the field's stand grid (0 where none); changes re-place only tiles where a browse rule's weight moves. Species
+  that need browsing to grow are context-only (left out of far shell, cover map and sward shade by rules alone).
+- PlantGenerator season "browse" (0..1): bramble canes low and spreading, bitten back with blunt ends and side shoots,
+  leaves eaten or torn; raspberry canes bitten at the leader and bushy below; flowers and fruit scarce. Leaf.cut (the
+  torn end, slanted, drying pale) does the torn blades and leaflets. Unbrowsed meshes are unchanged (same draws).
+- PRESET_GRAZED_LAWN (98), reworked after review (the first version read as a sparse tuft of long blades): a 24 cm
+  cell of 300-380 fine blades cropped to one height (2.5-4 cm, 82% torn at it, new leaves a little over), a flat
+  darker thatch and a few white clover leaves (the petal surface, round leaflets with the chevron); ~3.7k vertices.
+  Floors place it 0.2 m apart to 18 m.
+- GrassField3D.graze_height (0.04 m): the sward itself is grazed where deer browse hard, in the shader from a pressure
+  grid (graze_map, smoothstep 0.3-0.8 of browse_at), so near tiles, rings, GPU fill and the path tracer agree with no
+  rebuild; torn pale ends, fewer dry tips, a fresher green, blades 30% narrower (fine regrowth; the turf ground under
+  the sward closes the gaps). Followed on stand changes. Meadow species sets need browse rules of their own for the
+  tall grasses and palatable herbs (the grass bench's do: RULE_BROWSE 0-0.45 fade 0.25; rosettes and nettle, dock,
+  thistle keep). Grass bench --graze=P: a 6.5 m disc 6 m ahead framed from 1.6 m (docs pair: --sun-elev=50
+  --sun-yaw=-30 --sun-energy=1.3, --graze=0 for the before).
+- make_floor (all but hedgerow and montado), appended so every other species keeps its seed: bramble and raspberry
+  whole to 0.35 (fade 0.15) and bitten (meshes at 0.85) past it; palatable herbs (woodruff, anemone, violet, bilberry,
+  ivy, fireweed, herb Robert, wood sorrel) thin to about a fifth at 1; the tall clearing grass gives way past 0.5; deer
+  lawn and clover in the light (shade to 0.45) from 0.45; grass (wavy hair grass under conifers) under crowns from 0.4;
+  fern from 0.5. Vegetation bench "deer browsing" checks.
+- Not done: honeysuckle and ivy-on-ground variants by browse (ivy on stems is trees'); browse reach is not used by the
+  ground flora (all of it is in reach).
+
+## Next round options (card 20 Nov evening): game trails, boar rooting, anthills and molehills
+Research so far (to confirm before building):
+- Game trails: deer follow the same lines between cover, feeding lawns and water, wearing 20-40 cm paths of bare or
+  short-turfed ground; trampling shifts the plants by tolerance (Cole 1995 trampling resistance, already in
+  get_trample_resistance; Liddle 1997 on paths). Build idea: trail polylines from a least-cost path over slope and
+  cover between browse discs, lawns and water (a shared contract so ground detail and mud can wear the same lines),
+  read by a PlantSpecies rule as metres from the trail; species thin by their trample resistance, plantain and
+  grazed lawn take the verges.
+- Boar rooting: wild boar turn the topsoil 5-15 cm deep in patches of a few to hundreds of square metres, mostly in
+  moist, rich woodland and meadow edges; vegetation cover drops and regrows over one to two years, with ruderals first
+  (Bueno et al. 2013; Barrios-Garcia and Ballari 2012, Biological Invasions review; Welander 2000). Build idea: a
+  rooting disturbance with an age in months (WorldStand-style discs, owned by world-links), turned soil as ground
+  detail (ground thread), uprooted herb meshes and a regrowth band by age here.
+- Anthills and molehills: yellow meadow ant (Lasius flavus) mounds 20-50 cm high and up to 1 m wide on old unploughed
+  grassland, built over decades, sunnier south faces, wild thyme and other small herbs on top (King 1977, J. Ecol.;
+  Dean et al. 1997); molehills are fresh soil heaps 10-20 cm, bare then colonised within a season. Build idea: mounds as
+  real ground geometry (ground thread or here as soil meshes with grass), with a mound top species set (thyme, sheep's
+  fescue, rockrose) placed by a new mound rule; molehills by soil wetness and earthworm-rich ground.
