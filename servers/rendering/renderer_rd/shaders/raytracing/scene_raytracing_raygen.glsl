@@ -1915,6 +1915,10 @@ GroundCracks ground_cracks(vec2 p_xz, vec4 p_c) {
 	float reg = clamp(p_c.z, 0.0, 1.0);
 	float open = clamp(p_c.x, 0.0, 1.0);
 	float thick = 0.25 * p_c.y;
+	// A silt skin (mud round 15.1, its share sent as a negative regularity by the ground's crack state). Its plates
+	// are some ten times the layer across, so thick here is 2.5 layers. It shrinks more (fresh slurry), cracks
+	// through the layer only, and its plates curl up at their edges well into the plate (mud curls, Allen 1986).
+	float skin = clamp(-p_c.z, 0.0, 1.0);
 	// The first generation's domains: two to three plates across, one as the cycles make them hexagons.
 	float s1 = p_c.y * mix(2.4, 1.1, reg);
 	vec2 q = p_xz / s1;
@@ -1981,18 +1985,18 @@ GroundCracks ground_cracks(vec2 p_xz, vec4 p_c) {
 	bool split3 = split2 && h3s.x * 0.5 + h3s.y * 0.5 < 0.75 - 0.65 * reg;
 	// Widths: the layer's shrinkage (8%, Peron et al. 2009 for clays) shared out over the generations, which open
 	// in turn as the layer dries; each wanders along its length.
-	float strain = 0.08 * s1;
+	float strain = mix(0.08, 0.12, skin) * s1;
 	vec2 wander = ground_crack_noise(q * 3.0, 7u);
 	g.width = vec3(0.5 * smoothstep(0.0, 0.5, open), 0.3 * smoothstep(0.3, 0.8, open), 0.17 * smoothstep(0.6, 1.0, open)) * strain;
 	g.width *= vec3(0.55 + 0.9 * wander.x, 0.55 + 0.9 * wander.y, 0.5 + wander.x);
 	g.width.z *= smoothstep(len3, 0.55 * len3, abs(t2)); // the tip tapers out
-	g.depth = thick * vec3(1.0, 0.75, 0.45) * clamp(4.0 * open, 0.0, 1.0);
+	g.depth = thick * mix(1.0, 0.4, skin) * vec3(1.0, 0.75, 0.45) * clamp(4.0 * open, 0.0, 1.0);
 	g.dist = vec3(max(e1, 0.0), split2 ? abs(t2) : 1e3, split3 && abs(t2) < len3 ? abs(t3) : 1e3) * s1;
 	g.dir1 = -n1;
 	g.dir2 = t2 >= 0.0 ? v2 : -v2;
 	g.dir3 = t3 >= 0.0 ? u2 : -u2;
-	g.curl = max(p_c.w, 0.0) * open * 0.35 * thick;
-	g.reach = 0.06 * s1;
+	g.curl = max(p_c.w, 0.0) * open * mix(0.35, 0.5, skin) * thick;
+	g.reach = mix(0.06, 0.18, skin) * s1;
 	g.scale = s1;
 	return g;
 }
@@ -2044,17 +2048,21 @@ vec4 ground_crack_height(GroundCracks p_g, float p_fw) {
 			cover = max(cover, min(w / fw, 1.0) * (t < 0.35 ? s : 1.0));
 		}
 	}
+	// A footprint wider than a fraction of a domain spans whole plates: their mean, flat, with the cracks' mean
+	// share. The curled rims are wider than the cracks: they go on into footprints up to a few reaches wide, so a
+	// mesh that cannot carry the slots still carries the dished plates.
+	float fade = 1.0 - smoothstep(0.04 * p_g.scale, 0.12 * p_g.scale, fw);
+	float curl_fade = 1.0 - smoothstep(p_g.reach, 3.0 * p_g.reach, fw);
+	h *= fade;
+	slope *= fade;
 	if (p_g.curl > 0.0 && h == 0.0) {
-		float c = p_g.curl * (p_g.reach / reach);
+		float c = p_g.curl * (p_g.reach / reach) * max(fade, curl_fade);
 		h = c * (1.0 - flat_all);
 		vec2 g = fg[0] * fl[1] * fl[2] + fg[1] * fl[0] * fl[2] + fg[2] * fl[0] * fl[1];
 		slope = -c * g;
 	}
-	// A footprint wider than a fraction of a domain spans whole plates: their mean, flat, with the cracks' mean
-	// share.
-	float fade = 1.0 - smoothstep(0.04 * p_g.scale, 0.12 * p_g.scale, fw);
 	float mean = clamp(dot(p_g.width, vec3(1.0)) * 2.0 / max(p_g.scale, 1e-4), 0.0, 1.0);
-	return vec4(h * fade, slope * fade, mix(mean, cover, fade));
+	return vec4(h, slope, mix(mean, cover, fade));
 }
 // Mud on a vehicle's body (docs/ideas/mud.md, stage 3b), the same lines in material.cpp and scene_raytracing_raygen.glsl.
 // Off-road games keep an accumulation level per region and let it threshold a splat mask, so mud lands as flecks and
