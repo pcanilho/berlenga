@@ -87,6 +87,7 @@ summary: "Trees and woody shrubs grown by light competition, 50 species in ninet
 
 - **Bark beetle kill** (`beetle_years`): spruce go from green attack, with boring dust on the lower stem and at the foot, to rust-red crowns and then grey snags, in fronts through the stand.
 - **After fire** (`fire_years`): burnt stands recover by species: cork oak resprouts along its stem and limbs, holm oak from the root collar, and maritime pine and rockrose reseed on the ash bed, while the bark char fades over the years.
+- **Forests that age** (`make_succession()`; TreeWind3D `report_windthrow`): after fire, windthrow or beetles, a stand regrows by stage from seedlings and pioneers through crowded poles to the mature stand and old growth with veterans, placed by the years since; storm and beetle kills mark where it starts again.
 - **Broken limbs** (`limb_breakage`): snapped ends get a splintered fracture face and torn bark; storms break limbs on living trees, leaving some hanging.
 
   ![A winter oak limb, whole and snapped, raster](media/trees-broken-limb.jpg)

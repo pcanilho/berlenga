@@ -3245,6 +3245,18 @@
    "topic": "Old trees and deadwood"
   },
   {
+   "name": "Forests that age",
+   "settings": [
+    "make_succession()",
+    "report_windthrow"
+   ],
+   "note": "",
+   "what": "after fire, windthrow or beetles, a stand regrows by stage from seedlings and pioneers through crowded poles to the mature stand and old growth with veterans, placed by the years since; storm and beetle kills mark where it starts again.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
    "name": "Broken limbs",
    "settings": [
     "limb_breakage"
