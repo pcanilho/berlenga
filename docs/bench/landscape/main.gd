@@ -68,6 +68,8 @@ extends Node3D
 #   --atmosphere=scattering|physical   sky air: Hillaire 2020 multiple scattering (default) or the older PhysicalSky model
 #   --clip=N              with --out, N frames in a row (out_0000.png...), for clips; run with --fixed-fps 24
 #   --checks              with --out, run the link checks before the picture (they change the scene)
+#   --link=fog|spray|tracks [--link-off]   world-links docs frames, the link on or off (see _link_shot)
+#                         --link-verbose logs the tracks walk every second (ground, water, contact wetness, body load)
 
 
 # A storm swell on the open sea for --surge-test (answers only over water, as the ocean does).
@@ -2798,6 +2800,8 @@ func _build_weather() -> void:
 #   --burn=x,z,r,years    a WorldBurnScar3D (burnt forest years ago) of radius r; with --snow-days=N the snow under it
 #                         gathers the burnt trees' char over N days of weather (dirty snow)
 func _docs_links_setup() -> void:
+	if args.has("link"):
+		await _link_shot(String(args["link"]), args.has("link-off"))
 	if args.has("burn"):
 		var b := String(args["burn"]).split(",")
 		var scar = ClassDB.instantiate("WorldBurnScar3D")
@@ -2859,6 +2863,121 @@ func _docs_links_setup() -> void:
 					break
 		_log("drop-leaves: %d dropped (%d kinds), %d floating, %d buried after %d physics frames" % [n, kinds, leaf_fall.get_floating_count(), leaf_fall.get_buried_count(), waited])
 
+
+
+# --link=fog|spray|tracks [--link-off] [--link-hours=H]: world-links docs frames (docs/ideas/world-links.md, round 6),
+# the link on or, with --link-off, the same scene without it.
+#   fog     the cloud base dropped 40 m under the camera's ground (in the cloud), H hours (18) of fog: the canopy
+#           combs it out and drips (fog_drip)
+#   spray   H hours (6) of the onshore wind off a surf of at least 1.5 m: spray wets the shore, salt burns the grass
+#           (sea_spray); run with --weather=clear --wind=15
+#   tracks  --track=x0,z0,x1,z1 a walker wading out of the water along the line; --tyre=x0,z0,x1,z1 a pair of tyres
+#           driving out of it (wet_tracks); the bodies are invisible, only their prints show
+func _link_shot(kind: String, off: bool) -> void:
+	var t := Time.get_ticks_msec()
+	var cam7: Camera3D = get_viewport().get_camera_3d()
+	match kind:
+		"fog":
+			weather.fog_drip = not off
+			var g := height_at(cam7.global_position.x, cam7.global_position.z)
+			weather.cloud_base_height = g - 40.0
+			weather.cloud_cover = 1.0
+			weather.cloud_variation = 0.0
+			weather.rain_rate = 0.0
+			weather.humidity = 0.97
+			weather.wind_speed = float(args.get("wind", "5"))
+			weather.snap_to_settings()
+			weather.advance(float(args.get("link-hours", "18")) * 3600.0)
+			var at := cam7.global_position
+			_log("fog: %.2f g/m3, drip %.3f mm/h, wetness %.2f at the camera" % [weather.get_fog_water_at(at), weather.get_fog_drip_at(at), weather.get_wetness_at(at)])
+		"spray":
+			weather.sea_spray = not off
+			weather.rain_rate = 0.0
+			weather.snap_to_settings()
+			if ocean != null:
+				ocean.shore_wave_height = maxf(ocean.shore_wave_height, 1.5)
+			weather.advance(float(args.get("link-hours", "6")) * 3600.0)
+			var at2 := cam7.global_position
+			_log("spray: %.3f mm/h, salt %.2f g/m2, wetness %.2f at the camera; square %s" % [weather.get_sea_spray_at(at2), weather.get_salt_at(at2), weather.get_wetness_at(at2), str(weather.get_sea_spray_rect())])
+		"tracks":
+			weather.wet_tracks = not off
+			var movers := []
+			if not args.has("track") and not args.has("tyre"):
+				# Framed by itself: from the camera straight toward the sea to where the water is 0.4 m deep, a walker
+				# from 10 m out to 16 m up the beach, tyres beside it from 12 m out, the camera turned onto the prints.
+				var c0 := cam7.global_position
+				var fwd := Vector2(-cam7.global_basis.z.x, -cam7.global_basis.z.z).normalized()
+				var wet_at := Vector2.INF
+				for k in 400:
+					var q := Vector2(c0.x, c0.z) + fwd * (k * 0.5)
+					var gq := height_at(q.x, q.y)
+					if WorldContracts.get_water().depth_at(Vector3(q.x, gq, q.y)) > 0.4:
+						wet_at = q
+						break
+				if wet_at == Vector2.INF:
+					_log("tracks: no water within 200 m ahead of the camera")
+				else:
+					var side := Vector2(-fwd.y, fwd.x)
+					args["track"] = "%f,%f,%f,%f" % [wet_at.x, wet_at.y, wet_at.x - fwd.x * 26.0, wet_at.y - fwd.y * 26.0]
+					var t0 := wet_at + side * 2.5 + fwd * 2.0
+					args["tyre"] = "%f,%f,%f,%f" % [t0.x, t0.y, t0.x - fwd.x * 30.0, t0.y - fwd.y * 30.0]
+					var end := wet_at - fwd * 16.0
+					var cp := end - fwd * 9.0 - side * 5.0
+					cam7.global_position = Vector3(cp.x, height_at(cp.x, cp.y) + 1.7, cp.y)
+					var lp := wet_at - fwd * 9.0 + side * 1.2
+					cam7.look_at(Vector3(lp.x, height_at(lp.x, lp.y), lp.y))
+					_log("tracks: water at %s; walker %s; tyres %s; cam %s" % [str(wet_at), args["track"], args["tyre"], str(cam7.global_position)])
+			if args.has("track"):
+				var tr := String(args["track"]).split_floats(",")
+				var walker := Node3D.new()
+				walker.name = "LinkWalker"
+				walker.set_meta("trample_radius", 0.3)
+				walker.add_to_group("world_contact")
+				add_child(walker)
+				movers.append([[walker], Vector2(tr[0], tr[1]), Vector2(tr[2], tr[3]), 1.4, 0.3])
+			if args.has("tyre"):
+				var ty := String(args["tyre"]).split_floats(",")
+				var pair := []
+				for k in 2:
+					var w := Node3D.new()
+					w.name = "LinkTyre%d" % k
+					w.set_meta("deform_wheel_radius", 0.4)
+					w.set_meta("deform_wheel_width", 0.28)
+					w.add_to_group("world_contact")
+					add_child(w)
+					pair.append(w)
+				movers.append([pair, Vector2(ty[0], ty[1]), Vector2(ty[2], ty[3]), 3.0, 0.4])
+			# The contact square (64 m) follows the weather's follow target, here the world anchor at the origin: the
+			# walk is far from it, so the square follows the framed camera for the shot.
+			if not movers.is_empty():
+				weather.follow_target = weather.get_path_to(cam7)
+			get_viewport().disable_3d = true
+			for mv in movers:
+				var a: Vector2 = mv[1]
+				var b: Vector2 = mv[2]
+				var dir := (b - a).normalized()
+				var side := Vector2(-dir.y, dir.x)
+				var steps := int(a.distance_to(b) / (float(mv[3]) / 60.0))
+				for i in steps + 90:
+					var p := a.lerp(b, minf(float(i) / steps, 1.0))
+					var bodies: Array = mv[0]
+					for k in bodies.size():
+						var q := p + side * (0.0 if bodies.size() == 1 else (k - 0.5) * 1.6)
+						bodies[k].global_position = Vector3(q.x, height_at(q.x, q.y) + float(mv[4]), q.y)
+					if args.has("link-verbose") and i % 60 == 0:
+						var b0: Node3D = bodies[0]
+						var gp := b0.global_position
+						_log("tracks: %s step %d at %s: bench ground %.3f, contract ground %.3f, water depth %.3f, wetness %.2f, body %s" % [b0.name, i, str(gp), height_at(gp.x, gp.z), WorldContracts.get_ground().height_at(gp + Vector3(0, 1, 0)), WorldContracts.get_water().depth_at(Vector3(gp.x, height_at(gp.x, gp.z) + 0.05, gp.z)), weather.get_contact_wetness_at(gp), str(weather.get_body_water(b0))] + " square %s" % str(weather.get_contact_wetness_rect()))
+					# Stepped directly: at a renderer frame per step the walk would take hours on a software GPU.
+					if weather.has_method("step_contact"):
+						weather.step_contact(1.0 / 60.0)
+					else:
+						await get_tree().physics_frame
+				for bd in mv[0]:
+					_log("tracks: %s water %s at the end" % [bd.name, str(weather.get_body_water(bd))])
+					bd.queue_free()
+			get_viewport().disable_3d = false
+	_log("link %s %s set up in %d ms" % [kind, "off" if off else "on", Time.get_ticks_msec() - t])
 
 func _bake_snow_winter() -> void:
 	# The snowpack's winter from the same ClimateRecipe as the rivers, the data map and the plants: its
