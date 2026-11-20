@@ -6501,7 +6501,8 @@ Ref<ShaderMaterial> RockField3D::_ground_source() const {
 }
 
 // The ground's layer colours for the blend band: a TerrainMaterial3D's tm_<layer>_color times the mean of its albedo
-// texture (the texture's detail averages out over the band), as linear albedo. Without a ground material, the
+// texture (the texture's detail averages out over the band; not for an detail_only layer, whose mean is its colour),
+// as linear albedo. Without a ground material, the
 // terrain material's own defaults.
 void RockField3D::_apply_ground(const Ref<ShaderMaterial> &p_material) const {
 	_sync_scree_blocks();
@@ -6519,7 +6520,11 @@ void RockField3D::_apply_ground(const Ref<ShaderMaterial> &p_material) const {
 				c = v;
 			}
 			const Ref<Texture2D> tex = ground->get_shader_parameter(StringName(String("tm_") + names[i] + "_albedo_tex"));
-			if (tex.is_valid()) {
+			// A layer with detail_only divides the texture by its own mean (tm_<layer>_albedo_mean), so its average
+			// is the layer colour already.
+			const Variant am = ground->get_shader_parameter(StringName(String("tm_") + names[i] + "_albedo_mean"));
+			const bool detail_only = am.get_type() == Variant::VECTOR3 && Vector3(am) != Vector3(1, 1, 1);
+			if (tex.is_valid() && !detail_only) {
 				Ref<Image> img = tex->get_image();
 				if (img.is_valid() && !img->is_empty()) {
 					img = img->duplicate();

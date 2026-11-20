@@ -32,6 +32,8 @@ extends Node3D
 #   --cloud-shadow=0 --sun-shadow=0   no cloud shadow on the sun; no raster sun shadow map
 #   --sky-params=name:value,...   WeatherSkyMaterial shader parameters (A/B frames)
 #   --sun-off             no sun at all: what the sky alone lights
+#   --ground-scans=0      plain ground layers instead of the CC0 scans in art/terrain_layers (fetch_art.sh);
+#                         --ground-scans=rock,scree scans on those layers only
 #   --far-shadows=0       no far sun shadows from the ground's horizon toward the sun (raster A/B)
 #   --sky-occlusion=0     ground ambient light without the hills' sky occlusion; --sky-light=0 an even sky for it
 #   --water-param=name:value[;...]   set water shader uniforms on the sea and lakes (floats, true/false, colours as r,g,b,a)
@@ -1606,6 +1608,44 @@ func _forest_settle() -> void:
 	_log("forest: %d plants in %d tiles after %d frames" % [veg.get_plant_count(), veg.get_stream_tile_count(), n])
 
 
+# Real ground scans (Poly Haven CC0, art repository terrain/layers, fetched by docs/bench/landscape/fetch_art.sh into
+# docs/bench/landscape/art/terrain_layers). Each layer keeps the geology's colour (detail_only: the scan adds detail
+# only, to colour and roughness) and tiles at the scan's real size. Loaded from the files directly (the folder is .gdignore'd, no import step).
+const GROUND_SCANS := {"rock": ["dark_rock_02", 2.0], "scree": ["rocks_ground_02", 2.0], "soil": ["forest_ground_06", 2.11], "alluvium": ["gravelly_sand", 2.48], "sand": ["sand_03", 2.0]}
+
+func _ground_scan_tex(path: String, normal := false) -> Texture2D:
+	var img := Image.load_from_file(path)
+	if img == null or img.is_empty():
+		return null
+	img.generate_mipmaps(normal)
+	return ImageTexture.create_from_image(img)
+
+func _apply_ground_scans(tm: TerrainMaterial3D, dir: String, only := "1") -> int:
+	var n := 0
+	for layer_name in GROUND_SCANS:
+		if only != "1" and not (layer_name in only.split(",")):
+			continue # --ground-scans=rock,scree: those layers only
+		var scan: String = GROUND_SCANS[layer_name][0]
+		var base := dir.path_join(scan).path_join(scan)
+		if not FileAccess.file_exists(base + "_albedo.jpg"):
+			continue
+		var l := TerrainMaterialLayer.new()
+		var maps: String = args.get("scan-maps", "anrh") # --scan-maps=an: only the albedo and normal maps (A/B)
+		if "a" in maps:
+			l.albedo_texture = _ground_scan_tex(base + "_albedo.jpg")
+		if "n" in maps:
+			l.normal_texture = _ground_scan_tex(base + "_normal.jpg", true)
+		if "r" in maps:
+			l.roughness_texture = _ground_scan_tex(base + "_roughness.jpg")
+		if "h" in maps:
+			l.height_texture = _ground_scan_tex(base + "_height.jpg")
+		l.tile_size = GROUND_SCANS[layer_name][1]
+		var c: Color = tm.get_shader_parameter("tm_%s_color" % layer_name) if tm.get_shader_parameter("tm_%s_color" % layer_name) is Color else Color.WHITE
+		l.color = c # the geology's colour: the scan's mean is divided out (detail_only)
+		tm.set("%s_layer" % layer_name, l)
+		n += 1
+	return n
+
 func _log(s: String) -> void:
 	print("[landscape] ", s)
 
@@ -2431,7 +2471,7 @@ func _build_ground() -> void:
 	add_child(gh)
 	if args.get("ground", "terrain") == "terrain":
 		# TerrainMaterial3D: layers by the generator's geology, height-blended, biplanar cliffs, erosion detail
-		# normals, grass tint, wetness and snow. Plain colours here (textures would come from LFS).
+		# normals, grass tint, wetness and snow; the CC0 ground scans from the art repository when fetched.
 		var tm := TerrainMaterial3D.new()
 		terrain_mat = tm
 		tm.use_generator(gen)
@@ -2468,6 +2508,13 @@ func _build_ground() -> void:
 			RenderingServer.global_shader_parameter_set("terrain_cover_map", cover_tex.get_rid())
 			RenderingServer.global_shader_parameter_set("terrain_cover_rect", Vector4(-2048, -2048, 4096, 4096))
 		tm.update_shader()
+		if args.get("ground-scans", "1") != "0" and not args.has("test"):
+			var ns := _apply_ground_scans(tm, ProjectSettings.globalize_path("res://art/terrain_layers"), args.get("ground-scans", "1"))
+			if ns > 0:
+				tm.update_shader()
+				_log("ground scans: %d layers" % ns)
+			else:
+				_log("ground scans: art/terrain_layers missing (run fetch_art.sh), plain layers")
 		ground_mat = tm
 	else:
 		var sm := StandardMaterial3D.new()

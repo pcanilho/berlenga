@@ -49,11 +49,22 @@ class TerrainMaterialLayer : public Resource {
 	float normal_strength = 1.0f;
 	float tile_size = 4.0f;
 	float porosity = 0.7f;
+	bool detail_only = true;
+	mutable Color albedo_mean;
+	mutable bool albedo_mean_valid = false;
+	mutable float roughness_mean = 1.0f;
+	mutable bool roughness_mean_valid = false;
 
 protected:
 	static void _bind_methods();
 
 public:
+	void set_detail_only(bool p_enable);
+	bool is_detail_only() const { return detail_only; }
+	// The albedo texture's mean (linear) and the roughness texture's (green), what the shader divides them by in
+	// detail_only mode.
+	Color get_albedo_mean() const;
+	float get_roughness_mean() const;
 	void set_albedo_texture(const Ref<Texture2D> &p_texture);
 	Ref<Texture2D> get_albedo_texture() const { return albedo_texture; }
 	void set_normal_texture(const Ref<Texture2D> &p_texture);
