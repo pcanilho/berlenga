@@ -816,8 +816,8 @@ where melt water runs off the snow above into air below freezing.
   While water reaches the tip, the tip lengthens as a tube of spongy ice holding 26% liquid. The tube is
   as wide as the 5 mm pendant drop: `dL/dt = 2 q / (rho_i Lf 0.74)`, 1.05 cm/h at -10 C in still air
   and 4.3 cm/h at 2 m/s. The wall thickens as its wetted half freezes the running film. That share,
-  0.5, is our pick. It puts length growth at 8.2 times diameter growth, the low end of the 8 to 32
-  Maeno, Makkonen, Nishimura, Kosugi and Takahashi (1994) measured. A balance over the whole wall gives
+  0.25, is our pick (0.5 until 20 Nov). It puts length growth at 16 times diameter growth, the middle of the 8 to 32
+  Maeno, Makkonen, Nishimura, Kosugi and Takahashi (1994) measured (0.5 gave the low end, 8.2, and stubby 1:4 icicles). A balance over the whole wall gives
   4. Water the wall and tip do not freeze drips. Once the wall freezes all the water, the icicle only
   thickens. Above 0 C the same coefficients melt it back. An icicle thinned to the drop's size at its
   root falls.
@@ -1532,14 +1532,19 @@ weight gives tan(lean) = 3 rho_air Cd U^2 / (8 rho_w r g), about 0.01 U^2, and t
   ice 0.6 of the thinner icicle thick from one wall's surface to the other's, down to where the gap opens past
   that (`curtains`, on). First built from axis to axis, inside both icicles: the path tracer takes every front
   face as air into ice, so ice drawn inside ice refracted twice and showed white wedges (docs caught it). Where
-  walls themselves overlap the same limit holds; the bench's dense eave keeps sites 8 cm apart.
+  walls themselves overlap the same limit holds; the bench's dense eave keeps sites 5 cm apart (roots 4 cm).
 - **Ripples as geometry**: Chen and Morris (2013, arXiv 1301.4734) measured a 1 cm wavelength whatever the
   conditions and amplitudes from under 0.1 mm (pure water) to a few millimetres (salty), roof melt behaving like
   tap water; natural icicles 7-10 mm (Maeno et al. via Ueno 2011). Long icicles now carry them in the mesh, four
-  rings a wavelength, 0.25 mm full grown (our pick; slope 0.16), none on the newest 4 cm at the tip; the normal
-  map stays for short ones.
+  rings a wavelength. 0.25 mm (slope 0.16) read as a threaded screw and sawtoothed raster outlines (docs), where
+  photographs show faint, slightly irregular banding in refraction: now 0.03 mm full grown (our pick; slope 0.02,
+  already a visible swing in what the ice refracts), each wave 0.5-1.5 times that, spacing wandering up to 15%,
+  fading over the lower 40% toward the tip. Docs' ~1 mm figure is within the salty lab range, not roof melt.
+- **Slender**: the wall's wetted share is now 0.25 (length grows 16 times diameter, the middle of Maeno's 8-32);
+  a week's dense eave grows 0.5 m icicles 4 cm across at the root (1:12). The hazy core stays a column at most
+  3 mm across (scaled with the profile it widened into a white wedge at thick roots).
 - Bench: `--test=icicles` adds plumb in still air (steepest 0.078), 27 degrees in a 5 m/s wind, tips dripping
-  while they grow; `--view=icicles --wind=4` leans them, `--dense` (a week of melt, 8 cm sites) shows ripples and curtains.
+  while they grow; `--view=icicles --wind=4` leans them, `--dense` (a week of melt, 5 cm sites) shows ripples and curtains.
 
 ## Follow-up 38: a broken crust as plates (20 Nov 2026)
 

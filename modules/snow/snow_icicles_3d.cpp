@@ -59,9 +59,10 @@ constexpr float TIP_RADIUS = 0.0025f;
 // The tip grows as spongy ice holding 26% liquid (Makkonen 1988).
 constexpr float SPONGY_LIQUID = 0.26f;
 // The share of the wall the running film keeps at 0 C and freezing: the rest of the ice is below 0 C and
-// grows nothing. Our pick, 0.5, puts length growth at 8 times diameter growth in still air at -10 C, the low
-// end of the 8 to 32 Maeno et al. (1994) measured; heat balance over the whole wall gives 4.
-constexpr float WALL_WETTED = 0.5f;
+// grows nothing. Our pick, 0.25, puts length growth at about 16 times diameter growth in still air at -10 C,
+// the middle of the 8 to 32 Maeno et al. (1994) measured (0.5 gave the low end, and a week's icicles came out
+// 1:4 cones where dripping icicles are slender, 1:10 and more); heat balance over the whole wall gives 4.
+constexpr float WALL_WETTED = 0.25f;
 // Ripples along icicles: about a centimetre apart whatever the icicle (Ueno 2003; Chen and Morris 2013).
 constexpr float RIPPLE_WAVELENGTH = 0.01f;
 // Ripples start flat and grow as the icicle does (Chen and Morris 2013 watched their amplitude grow over
@@ -73,11 +74,15 @@ constexpr float RIPPLE_START_LENGTH = 0.1f;
 constexpr float RIPPLE_FULL_LENGTH = 0.5f;
 constexpr float RIPPLE_TIP_FADE = 0.04f;
 constexpr int RIPPLE_COLUMNS = 64; // wide, so mipmaps (halving both ways) only blend near strengths
-// The ripples as geometry on grown icicles: a few millimetres at most in salty lab water, under the 0.1 mm the
-// camera resolved in pure water (Chen and Morris 2013); roof melt makes ripply icicles like tap water's. Our
-// pick, 0.25 mm full grown (a slope of 0.16 on the 1 cm wavelength), so they read in the silhouette and in what
-// the ice refracts; the normal map then stays smooth there.
-constexpr float RIPPLE_AMPLITUDE = 0.00025f;
+// The ripples in the mesh on grown icicles: a few millimetres at most in salty lab water, under the 0.1 mm the
+// camera resolved in pure water (Chen and Morris 2013); roof melt makes ripply icicles like tap water's. In
+// photographs they read as faint, slightly irregular banding in what the ice refracts, not grooves: 0.25 mm
+// (slope 0.16) read as a threaded screw and sawtoothed the silhouette. Our pick, 0.03 mm full grown (slope 0.02,
+// already a visible swing in refraction), each wave 0.5 to 1.5 times that and its spacing wandering by up to 15%,
+// fading over the lower 40% toward the tip. The normal map stays smooth there.
+constexpr float RIPPLE_AMPLITUDE = 0.00003f;
+constexpr float RIPPLE_JITTER = 0.15f;
+constexpr float RIPPLE_FADE_SHARE = 0.4f;
 // The hazy core: pockets of impure water caught in layers as the icicle thickens (Ladan and Morris 2022) cloud
 // the ice inside the newest clear layer; the tip, the newest ice, stays clear. The cloudy part is a thin central
 // column of bubbles (a quarter of the radius): the clear ice around it is a cylindrical lens that widens it about
@@ -486,10 +491,23 @@ void SnowIcicles3D::_build_mesh() {
 			}
 			float slope = MIN(root * PROFILE_POWER * Math::pow(MAX(u, 1e-3f), PROFILE_POWER - 1.0f) / MAX(p_ic.length, 1e-4f), 3.0f);
 			if (ripples) {
-				// Full grown on long icicles, none over the newest ice at the tip.
-				const float amp = RIPPLE_AMPLITUDE * ripple_grown * CLAMP((p_ic.length - z) / RIPPLE_TIP_FADE, 0.0f, 1.0f) * CLAMP(z / RIPPLE_TIP_FADE, 0.0f, 1.0f);
+				// Full grown on long icicles, fading toward the tip (the newer ice), none at the root's cap. The
+				// spacing wanders (a smooth noise added to the phase) and each wave has its own depth.
+				const float tip_fade = Math::smoothstep(0.0f, RIPPLE_FADE_SHARE * p_ic.length, p_ic.length - z);
+				const float w = z / RIPPLE_WAVELENGTH;
+				const uint32_t seed_i = uint32_t(p_phase * 65536.0f);
+				auto hv = [&](int p_i) { return float(hash_murmur3_one_32(uint32_t(p_i), seed_i) & 0xffff) / 65535.0f; };
+				auto smooth = [&](float p_x, int p_salt) {
+					const int i0 = int(Math::floor(p_x));
+					const float t = p_x - i0;
+					const float st = t * t * (3.0f - 2.0f * t);
+					return Math::lerp(hv(i0 * 2 + p_salt), hv((i0 + 1) * 2 + p_salt), st);
+				};
+				const float wander = RIPPLE_JITTER * (2.0f * smooth(0.5f * w, 0) - 1.0f);
+				const float depth = 0.5f + smooth(w, 1);
+				const float amp = RIPPLE_AMPLITUDE * depth * ripple_grown * tip_fade * CLAMP(z / RIPPLE_TIP_FADE, 0.0f, 1.0f);
 				const float k = float(Math::TAU) / RIPPLE_WAVELENGTH;
-				const float ph = k * z + float(Math::TAU) * p_phase;
+				const float ph = float(Math::TAU) * (w + wander + p_phase);
 				rad += amp * Math::sin(ph);
 				slope -= amp * k * Math::cos(ph);
 			}
