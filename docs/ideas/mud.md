@@ -1216,6 +1216,39 @@ front's berm: Bekker 1956; Ishigami et al. 2007), the push held to the passive e
 depth (Rankine, Kp 3, 20 kN/m3, 2 kPa) plus its sliding friction, at most 6 kN. Bench --test=buried: behind a tyre at
 2 m/s a stone goes 1.95 m ahead and 11 cm aside in a second.
 
+#### Round 17 built (20 Nov)
+
+**Loose stones lie in the mud, not on the terrain.** A loose stone on a mud layer passes through the terrain's own
+collider (a collision exception with the body under it on ground_collision_mask, found by a ray) and is held at its
+settled depth in the deformed mud instead; off the mud, or thrown clear, the colliders hold it again. Settled depth:
+bearing Nc tau A plus the displaced mud's weight against its weight, Nc 6 at the surface (Skempton 1951) rising to 13.9
+fully under, which is Beris et al.'s (1985) criterion for a sphere held in a Bingham fluid (Y 0.048); tau the yield
+stress of slurry and soft mud, the cohesion of stiff mud. Past the criterion it goes to the base.
+
+**17.1 Ploughed.** Moving, the stone presses its underside each step as a moving round print, so the field's bow wave
+heaps mud ahead and levees beside; it rides the undisturbed mud ahead (ground less dents), so it drops into ruts. The
+mud brakes it: rolling resistance sqrt(z / d) of its weight (Bekker 1969) and Rankine passive pressure on its face. A
+tyre shoving it meets it above its middle, so it also drives it down by (R - r) / (R + r) of the push, R about the
+print's length. The push is now the tyre's (at most 6 kN) against that drag, not the 16.3 bulldozing cap. Bench
+--test=buried: a 22 cm stone shoved 1.4 m through soft mud (moisture 0.7) leaves a 0.9 cm furrow and a 0.3 cm heap.
+Small stones in stiff mud plough little (a 1 to 2 cm settled depth); big ones and soft mud plough deep, and soft
+mud's own slumping (tan_repose tau / (rho g h)) softens a narrow furrow. That is the model, not tuned up.
+
+**17.2 Sunk back.** At rest it creeps to its settled depth (Stokes with the plastic viscosity, at most 5 cm/s). Bench:
+1.2 cm into stiff mud, 12.7 cm into slurry (tau 528 Pa) for a 22 cm stone. Out of sight (top 3 cm under the surface),
+sunk or buried by mud laid over it (a fan, silt, a wave), it is a hidden stone again: a Buried record with a new id in
+the cell's extras, a StaticBody near the followed point, kept in deposits.dep after the loose ids (count, then id, xyz,
+r each; older files without it read as none). Bench: a 27 cm deposit over it hides it; saved, cleared, read back.
+
+**17.3 Dry silt as dust.** A dried skin (water under 0.1, 0.5 to 2 mm and up) gives a tyre's dust as dry bare sand
+does (playas and dried floodplains are the main dust sources: Gillette et al. 1980; Reynolds et al. 2007), and loses
+what it gives at 1300 kg/m3; the tyre breaks its crust. Wind: u* = kappa U10 / ln(10 / z0), z0 1 mm; thresholds
+0.3 m/s broken, 1 m/s crusted (Gillette et al. 1980, 1982); dust flux alpha Q, Q White's (1979) saltation flux,
+alpha 1e-3 per m (Gillette 1977; Marticorena et al. 1997). The 64 strongest cells near the followed point feed
+GroundDust3D each step; the skin thins at runoff_time_scale; a broken skin crusts over once wet again. Bench
+--test=silt: 60 tyre steps lift 0.18 kg and thin the skin 0.14 mm; a 12 m/s wind thins the broken cell, not the
+crusted one beside it.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
