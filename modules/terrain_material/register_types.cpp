@@ -54,6 +54,7 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		// Loose sand depth on the dune fields (the sand's dune-scale tone).
 		{ "terrain_sand_depth_map", "sampler2D" },
 		{ "terrain_sand_depth_rect", "vec4" },
+		{ "terrain_sand_wind", "vec4" },
 		// The generator's fall spray, and the plant cover colour the far ground blends to (vegetation publishes it).
 		{ "terrain_spray_potential", "sampler2D" },
 		{ "terrain_spray_rect", "vec4" },

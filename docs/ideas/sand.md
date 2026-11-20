@@ -928,3 +928,13 @@ One function (ground_dune_tone in material.cpp and the raygen, tm_dune_tone in T
 noise) so the patch meets the terrain without a seam. The patch reads the generator's depth and its own sand share
 from the ripple map's sand block (G, B; meta texel 4 x = on), so the path tracer needs no new parameter.
 TerrainMaterial3D runs as a custom hit shader under path tracing, so it needs no copy.
+
+## Granule ripples on the interdune lag (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`, on)
+
+Where deflation leaves a coarse lag (the dune tone's dark interdune flats), the grains too heavy to saltate creep
+under impacts into granule ripples (megaripples): about 1 to 2 m apart, a few centimetres high (ripple index 15 to
+30), broad rounded crests armoured with granules over flat troughs of finer sand, more symmetric than impact ripples
+and slow to move (Sharp 1963; Ellwood, Evans and Wilson 1975; Yizhaq 2008; Lammel et al. 2018). Drawn as a normal
+and tint, h = 0.05 amp c^1.5 with c a raised cosine at 1.2 m, crests across the generator's dune-building wind
+(terrain_sand_wind; ripple map meta texel 5 for the patch and the path tracer), warped over 3 to 9 m and with each
+crest's height varying along it, faded to the crests' mean tone where a pixel spans more than a quarter wavelength.

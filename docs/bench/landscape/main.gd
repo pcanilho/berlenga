@@ -460,6 +460,18 @@ func _ready() -> void:
 	_build_camera()
 	if args.has("fov"):
 		get_viewport().get_camera_3d().fov = float(args["fov"]) # --fov=DEG: a wider or narrower lens
+	if args.has("deer-lawn"):
+		# --deer-lawn[=P]: deer browse a disc --lawn-dist (25) m ahead of the camera, --lawn-radius (22) m, pressure P
+		# (0.9) through WorldStand.add_browse (cef8dbd7): grass grazes to a lawn there, bramble bitten at its edge,
+		# trees keep a browse line (vegetation 5d2594e2, 6b33a29b).
+		var lc: Camera3D = get_viewport().get_camera_3d()
+		var lf := -lc.global_basis.z
+		lf.y = 0.0
+		var lp := lc.global_position + lf.normalized() * float(args.get("lawn-dist", "25"))
+		lp.y = height_at(lp.x, lp.z)
+		var lpress := float(args["deer-lawn"]) if String(args["deer-lawn"]) != "" else 0.9
+		WorldContracts.get_stand().add_browse(lp, float(args.get("lawn-radius", "22")), lpress)
+		_log("deer lawn at %s, browse %.2f there" % [str(lp.round()), WorldContracts.get_stand().browse_at(lp)])
 	if args.has("sand-vista") and "sand_sea_rect" in gen:
 		# --sand-vista: from the sand sea's edge (--vista-at, 0.12 of its width in) --vista-h (8) m up, looking across
 		# its middle to the far dunes, so the near ripples and the dune-scale tone far off share the frame.

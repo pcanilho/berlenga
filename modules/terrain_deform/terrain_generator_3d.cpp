@@ -5545,6 +5545,8 @@ void TerrainGenerator3D::_publish_globals() {
 	if (sand_depth_texture.is_valid()) {
 		set_global("terrain_sand_depth_map", sand_depth_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 		set_global("terrain_sand_depth_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+		const Vector2 sw = get_sand_wind_direction();
+		set_global("terrain_sand_wind", Vector4(sw.x, sw.y, 0.0, 0.0), RSE::GLOBAL_VAR_TYPE_VEC4);
 	} else {
 		set_global("terrain_sand_depth_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
 	}
@@ -6261,7 +6263,8 @@ String TerrainGenerator3D::get_sand_shader_code() {
 	c += "// Loose sand depth from TerrainGenerator3D (TerrainGenerator3D.get_sand_shader_code()): m on the dune fields,\n";
 	c += "// below 0 off them or with no generator.\n";
 	c += "global uniform sampler2D terrain_sand_depth_map;\n";
-	c += "global uniform vec4 terrain_sand_depth_rect;\n\n";
+	c += "global uniform vec4 terrain_sand_depth_rect;\n";
+	c += "global uniform vec4 terrain_sand_wind; // the dune-building wind, x and z (unit)\n\n";
 	c += "float terrain_sand_depth(vec3 world_pos) {\n";
 	c += "	if (terrain_sand_depth_rect.z <= 0.0) {\n";
 	c += "		return -1.0;\n";

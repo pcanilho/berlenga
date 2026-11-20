@@ -870,6 +870,9 @@
 		<member name="ground_spacing" type="float" setter="set_ground_spacing" getter="get_ground_spacing" default="0.25">
 			The spacing of the ground lattice sampled from the height source, in metres.
 		</member>
+		<member name="granule_ripples" type="bool" setter="set_granule_ripples" getter="is_granule_ripples" default="true">
+			If [code]true[/code], granule ripples on the coarse interdune lag, as [member TerrainMaterial3D.sand_granule_ripples] draws them, on the patch and past it, in raster and path tracing. Needs [member dune_tone] and a [TerrainGenerator3D] height source with a sand sea.
+		</member>
 		<member name="ground_type" type="int" setter="set_ground_type" getter="get_ground_type" enum="GroundSurface3D.GroundType" default="1">
 			The ground where [member type_map] says nothing: sand or soil.
 		</member>
