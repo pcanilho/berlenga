@@ -1606,6 +1606,35 @@ size, (400 + 35 days) sqrt(5 / mm) Pa (Jamieson and Schweizer 2000).
 - `--test=hoar` (11 checks: clear calm night grows, wind, cloud, dry air and day do not, burial, weak layer, skier
   load, strength by age); `--view=sparkle --hoar=MM` for the look.
 
+## Follow-up 40: rime (round 5, 20 Nov 2026)
+
+Research: in-cloud icing on structures is Makkonen's (2000) model, dM/dt = a1 a2 a3 w v A: the collision
+efficiency a1 from the droplets' inertia (Stokes number K = rho_w d^2 v / (9 mu D)) on a cylinder of diameter D,
+fitted by Finstad et al. (1988) and used in ISO 12494 and the wind-turbine icing models; a2 and a3 are 1 in dry
+growth (rime, well below 0 C at modest liquid water). Small collectors catch most (a wire or a twig far more
+than a post; under K 0.17 the droplets follow the air round it), so rime gathers on wires, twigs and the edges of
+boards, and the growing deposit widens its collector and slows (the time-dependent form). Its density is
+Macklin's (1962) 110 R^0.76 kg/m3, R = -d v / (2 Ts): soft feathery rime in light cold wind, hard rime toward
+900 in strong wind near freezing. It grows into the wind as feathers and vanes (the classic mountain-top rime
+photographs, e.g. Fikke et al. 2007, COST 727).
+
+- `SnowRime3D`: targets are the meshes under `target_paths` and in the `rime` group. Each mesh's points are
+  welded; a point's collector is the part's smallest width, made up to 0.1 of it at sharp edges and corners, plus
+  twice the rime already there. Per hour below 0 C the windward points (normal into the wind) gain
+  `accretion_rate` times the facing; the way it grew is kept per point. Above 0 C it melts at 4 mm/h per C.
+- The look: a crust a third of the deposit thick (to 3 mm) over the rimed faces, and feathers rooted on it,
+  pointing the way the rime grew (with a fifth of the surface normal), each a flat vane with a ridge, as long as
+  the deposit with a spread, seeded per triangle so they stay put as they lengthen. Spacing 1.2 cm on thick
+  parts, closer on thin ones; `max_feathers` (40,000) thins and widens them past that. White matte ice with a
+  little backlight. Real geometry, so the path tracer shows the same.
+- Weather: `advance()` reads the air temperature, wind and the weather's fog water (`fog_water` overrides it),
+  with each update of the active `SnowCover3D`.
+- `--test=rime` (7 checks: efficiency by size, density soft to hard, rate, none above 0 or without fog, windward
+  growth into the wind, feathers drawn, thaw); `--view=rime [--close]` a fence and a bare shrub after a day in
+  0.25 g/m3 fog at 8 m/s and -6 C.
+- Next: tree crowns (rime on needles and twigs, through the trees thread's crown meshes or a tint they read),
+  glaze (wet growth near 0 C with high liquid water: clear ice, not feathers), and rime shedding in sun.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
