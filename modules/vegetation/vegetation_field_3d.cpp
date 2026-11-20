@@ -3975,6 +3975,10 @@ Error VegetationField3D::populate() {
 	_apply_maps(maps);
 	set_process_internal(!impostor_cells.is_empty() || !lazy_near.is_empty() || has_near_swap || _far_view_active());
 	_report_stand_disturbances(false);
+	// The field's own reports are not a change to follow (else it would populate again for ever).
+	if (const WorldStand *own = WorldContracts::stand()) {
+		stand_seen = own->get_stand_generation();
+	}
 	populate_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("populated"));
 	return OK;

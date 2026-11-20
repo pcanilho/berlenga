@@ -1280,3 +1280,15 @@ Docs declined the first fields frame (18 Nov). Fixes:
   the ears' grain at the pixel's narrow width, band-limited octaves (14, 7, 3.5 per metre) kept
   under their Nyquist limit (Lagae et al. 2010), never coarser (coarser octaves made blotches).
 - Tramline lanes show their soil, part shaded, not black lines.
+
+## Stand age (built 20 Nov, WorldStand contract 399d29a6)
+- RULE_STAND_AGE (28): years since the last stand-replacing disturbance, -1 old growth (inside ranges starting at -1
+  or reaching 10000 y). RULE_DISTURBANCE (29): 0 none, 1 fire, 2 wind, 3 beetle; pick one kind with (k, k).
+- Left at their defaults, a species takes TreeGenerator.make_succession's meta succession_age / succession_kind
+  (-1 any), so stage edges are each species' own.
+- The field samples WorldStand on the burn grid's spacing. On stand_changed it reads the changed cells again and
+  re-places only streamed tiles where some species' stand weight changed (advance_years inside every stage costs
+  nothing). Populated fields populate again; a field's own disturbance reports (trees' stand_disturbance meta) are
+  not followed, so it does not repopulate itself for ever.
+- Known gap: two populated fields that both report disturbances and both use stand rules would wake each other on
+  every populate (each report removes and re-adds its discs). Trees' report could skip unchanged discs.
