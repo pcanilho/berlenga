@@ -94,6 +94,7 @@ public:
 	int get_icicle_count() const { return icicles.size(); }
 	float get_icicle_length(int p_index) const;
 	float get_icicle_radius(int p_index) const;
+	Vector3 get_icicle_position(int p_index) const; // its root, local to the node
 	float get_longest() const;
 	float get_ice_mass() const; // kg
 	float get_last_supply() const { return last_supply; }

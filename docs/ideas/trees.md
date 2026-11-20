@@ -3726,6 +3726,59 @@ fir broom rust (Melampsorella caryophyllacearum).
 - Not done: poplar, apple and cherry hosts (no such species yet); cherry and hornbeam brooms; dieback of the limb past
   an old ball.
 
+### 5az. Browsed trees from the deer pressure map (20 Nov; Paulo's pick, third of three, first half)
+
+The browse line and hedged saplings of 5aw were whole stands (the deer wood); now they follow the land. Deer pressure is
+patchy: heaviest near cover by meadows, wintering yards and feeding sites, light far from them (Gill 1992, A review of
+damage by mammals in north temperate forests: 1. Deer, Forestry 65; Reimoser and Gossow 1996, Impact of ungulates on
+forest vegetation and its dependence on the silvicultural system, For. Ecol. Manage. 88). The world records it as
+WorldStand browse discs (pressure 0..1, reach in metres; world-contracts.md).
+
+- **Browsed variants** (`browse_variants`, on): an open-grown tree, a sapling and an understory plant each carry one more
+  mesh, the first living seed grown under pressure 0.85 at 1.8 m (red deer). The open tree has been browsed its last 20
+  years (a browse line under a crown that grew up before); the sapling and understory plant all their years (hedged).
+  Mesh meta `tree_browse` holds the pressure; `get_living_meshes` leaves them out. Not for a stand already grown browsed.
+- **Picked by the map.** VegetationField3D samples `browse_at` into a grid over its area on the main thread (at most
+  256 x 256, cells of 4 m or more) when a species carries a browsed variant. A living tree there is the browsed variant
+  with the chance smoothstep(0.3, 0.8, pressure), by its own number; elsewhere never. Burnt and struck picks stay first.
+  A changed disc re-places the tiles it covers (stand_changed).
+- Check: `stands.gd --stands --browse`: six beech-stand species carry one browsed variant; no deer, none placed of
+  4167; a full-pressure disc of 32 m browses the trees under it and none outside.
+- Not done: the browse line on grown stand trees (their crowns stand above reach under canopy), roe and fallow reach
+  per disc on the variants (the variant is grown at 1.8 m).
+
+### 5ba. Colonnades (20 Nov; Paulo's pick, third of three, second half)
+
+Seedlings that come up in a row along a nurse log stand on stilts in that same row once the log has rotted away: a
+colonnade (Franklin et al. 1981, Ecological characteristics of old-growth Douglas-fir forests, USDA PNW-118; Harmon and
+Franklin 1989, Ecology 70). 5aw grew the stilted tree; now the field lines them up.
+
+- **Row placement** (VegetationField3D, species meta `colonnade` = slot spacing, longest log; m). One candidate log a
+  16 m cell: centre and bearing by the cell's hash, 45-100% of the longest log; slots every spacing along it with a
+  little jitter, a fifth empty where a seedling died. The whole row is kept or dropped together by density, every tree
+  in it is the same living variant (one log girth, so one stilt height), and each turns its tunnel along the log.
+- **Taiga**: the stilted spruce are colonnades (1.5 m, logs up to 10 m, a quarter of the cells), placed before the other
+  spruce, which keep out of the rows.
+- Check: `stands.gd --stands --colonnade`: 34 stilted spruce on the bench valley, 29 with a row mate 0.9-2.5 m off, 15
+  of 19 with their two nearest mates in line (a neighbouring log's row can come nearer). `main.gd --colonnade` shows
+  five in a row.
+- Not done: the rotted log's last remains (a mossy hump or a line of soft wood) under the row.
+
+### 5bb. The beaver meadow (20 Nov; world-links' DISTURBANCE_BEAVER)
+
+When a dam fails the pond drains to a beaver meadow. The drowned trees stand on in it, grey and losing their tops,
+and fall over the next decades (Naiman, Johnston and Kelley 1988). Trees come back slowly and from the edges, willow and
+alder first: the drowned bed has lost its mycorrhizal fungi and the meadow's voles eat the seedlings (Terwilliger and
+Pastor 1999, Oikos 85; Wright, Jones and Flecker 2002, Oecologia 132), so meadows stay open for decades.
+
+- STAND_BEAVER_POND reads WorldStand disturbance kind 4 (`SUCCESSION_BEAVER`, years since the drain) by RULE_DISTURBANCE
+  and RULE_STAND_AGE: alder and birch snags (0-30 years, fading over 10), their fallen stems (5-60), willow saplings
+  from 6 years and alder from 10, sparse. The pond's own drowned snags (in the water) are kept off a drained bed.
+- The disc comes from whoever owns the dam and its water: `WorldStand.add_disturbance(centre, radius,
+  DISTURBANCE_BEAVER, years)`; the trees and PlantGenerator's meadow follow it through stand_changed.
+- Check: `stands.gd --stands --beaver-meadow`: six meadow species, none placed without a drain; a 40 m disc 12 years
+  on places them inside it and none outside.
+
 ## Next-round options (card 20 Nov evening)
 
 1. **Lightning-struck trees.** Old healed strike strips are in since 5p (WOUND_LIGHTNING, random on tall trees). Missing:

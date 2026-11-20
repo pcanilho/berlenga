@@ -678,7 +678,8 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 		}
 	}
 	_read_strikes(r_setup);
-	stand_follow = !r_setup.stand_rules.is_empty() || !r_setup.browse_rules.is_empty() || strike_follow;
+	_read_browse(r_setup);
+	stand_follow = !r_setup.stand_rules.is_empty() || !r_setup.browse_rules.is_empty() || strike_follow || browse_follow;
 	if ((r_setup.stand_rules.is_empty() && r_setup.browse_rules.is_empty()) || !stand || !r_setup.rect.has_area()) {
 		return;
 	}
@@ -711,6 +712,7 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 // Struck trees (trees.md 5ax; WorldStand strikes in world-links.md): wanted when a species carries struck variants (mesh
 // meta tree_lightning_years). The strikes over the setup's area are copied, so the placing threads read a fixed list.
 void VegetationField3D::_read_strikes(PlaceSetup &r_setup) const {
+	// Main thread only (setup and _stream_update): add_strike / advance_years change the list with no lock.
 	r_setup.strikes.clear();
 	r_setup.strike_cells.clear();
 	bool wanted = false;
@@ -761,13 +763,76 @@ float VegetationField3D::PlaceSetup::strike_at(const Vector2 &p_xz) const {
 	return r;
 }
 
+// Browsed trees (trees.md 5az; WorldStand browse discs, world-contracts.md): wanted when a species carries browsed
+// variants (mesh meta tree_browse). The pressure over the setup's area is sampled into a grid (at most 256 x 256, cells
+// of 4 m or more) on the main thread, so the placing threads read a fixed copy.
+void VegetationField3D::_read_browse(PlaceSetup &r_setup) const {
+	r_setup.browse.clear();
+	r_setup.browse_nx = 0;
+	r_setup.browse_ny = 0;
+	bool wanted = false;
+	if (biome.is_valid()) {
+		const TypedArray<PlantSpecies> list = biome->get_species();
+		for (int i = 0; i < list.size() && !wanted; i++) {
+			const Ref<PlantSpecies> sp = list[i];
+			const TypedArray<Mesh> ms = sp.is_valid() ? sp->get_meshes() : TypedArray<Mesh>();
+			for (int m = 0; m < ms.size() && !wanted; m++) {
+				const Ref<Mesh> mesh = ms[m];
+				wanted = mesh.is_valid() && mesh->has_meta(SNAME("tree_browse"));
+			}
+		}
+	}
+	browse_follow = wanted;
+	const WorldStand *stand = WorldContracts::stand();
+	if (!wanted || !stand || !r_setup.rect.has_area()) {
+		return;
+	}
+	const Rect2 rect = r_setup.rect;
+	const float cell = MAX(4.0f, MAX(rect.size.x, rect.size.y) / 255.0f);
+	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 256);
+	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 256);
+	r_setup.browse.resize(nx * ny);
+	bool any = false;
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const Vector2 xz = rect.position + rect.size * Vector2(float(x) / (nx - 1), float(z) / (ny - 1));
+			const float b = stand->browse_at(Vector3(xz.x, 0.0f, xz.y));
+			r_setup.browse[z * nx + x] = b;
+			any = any || b > 0.0f;
+		}
+	}
+	if (!any) {
+		r_setup.browse.clear(); // No deer here: every tree unbrowsed, nothing to look up.
+		return;
+	}
+	r_setup.browse_nx = nx;
+	r_setup.browse_ny = ny;
+	r_setup.browse_rect = rect;
+}
+
+// Browsing pressure at p_xz, bilinear over the copied grid (0 off it or where none).
+float VegetationField3D::PlaceSetup::browse_at(const Vector2 &p_xz) const {
+	if (browse.is_empty()) {
+		return 0.0f;
+	}
+	const float fx = (p_xz.x - browse_rect.position.x) / browse_rect.size.x * (browse_nx - 1);
+	const float fz = (p_xz.y - browse_rect.position.y) / browse_rect.size.y * (browse_ny - 1);
+	if (fx < 0.0f || fz < 0.0f || fx > browse_nx - 1 || fz > browse_ny - 1) {
+		return 0.0f;
+	}
+	const int x0 = MIN(int(fx), browse_nx - 2), z0 = MIN(int(fz), browse_ny - 2);
+	const float tx = fx - x0, tz = fz - z0;
+	const float *g = browse.ptr() + z0 * browse_nx + x0;
+	return Math::lerp(Math::lerp(g[0], g[1], tx), Math::lerp(g[browse_nx], g[browse_nx + 1], tx), tz);
+}
+
 // The stand changed over p_area: its grid cells are read again, and the area where a species' stand weight changed is
 // returned (empty when every change stayed inside every species' stage, as a year passing mostly does).
 Rect2 VegetationField3D::_update_stand(PlaceSetup &r_setup, const Rect2 &p_area) const {
 	const WorldStand *stand = WorldContracts::stand();
 	if (!stand || r_setup.stand_age.is_empty()) {
 		_read_stand(r_setup);
-		if (strike_follow) {
+		if (strike_follow || browse_follow) {
 			// Struck trees: the strikes added or aged there re-place it.
 			return r_setup.stand_age.is_empty() ? p_area : r_setup.rect;
 		}
@@ -775,6 +840,9 @@ Rect2 VegetationField3D::_update_stand(PlaceSetup &r_setup, const Rect2 &p_area)
 	}
 	if (strike_follow) {
 		_read_strikes(r_setup);
+	}
+	if (browse_follow) {
+		_read_browse(r_setup);
 	}
 	stand_seen = stand->get_stand_generation();
 	const Rect2 &sr = r_setup.stand_rect;
@@ -805,7 +873,7 @@ Rect2 VegetationField3D::_update_stand(PlaceSetup &r_setup, const Rect2 &p_area)
 			}
 		}
 	}
-	if (strike_follow) {
+	if (strike_follow || browse_follow) {
 		changed = changed.has_area() ? changed.merge(p_area) : p_area;
 	}
 	return changed;
@@ -1442,6 +1510,17 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 					ps.strike_years_max = MAX(ps.strike_years_max, sy);
 				}
 			}
+			// Browsed variants (trees.md 5az): marked by mesh meta tree_browse.
+			ps.browsed.clear();
+			bool any_browse = false;
+			for (const Ref<Mesh> &m : ps.meshes) {
+				any_browse = any_browse || (m.is_valid() && m->has_meta(SNAME("tree_browse")));
+			}
+			if (any_browse) {
+				for (const Ref<Mesh> &m : ps.meshes) {
+					ps.browsed.push_back((m.is_valid() && m->has_meta(SNAME("tree_browse"))) ? 1 : 0);
+				}
+			}
 		}
 		ps.frontal = ps.sp->get_wind_frontal_area();
 		if (ps.frontal < 0.0f) {
@@ -1537,6 +1616,10 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	// Nebkha shrubs: each mound is crowned by one of them, picked by the mound's hash.
 	for (int s = 0; s < count; s++) {
 		PlaceSpecies &ps = r_setup.species[s];
+		ps.colonnade = ps.sp.is_valid() ? Vector2(ps.sp->get_meta("colonnade", Vector2())) : Vector2();
+		if (ps.colonnade.x <= 0.0f || ps.colonnade.y <= 0.0f) {
+			ps.colonnade = Vector2();
+		}
 		if (ps.sp.is_valid() && bool(ps.sp->get_meta("nebkha", false))) {
 			ps.nebkha_slot = r_setup.nebkha_count++;
 		} else if (ps.sp.is_valid() && bool(ps.sp->get_meta("desert", false)) && bool(ps.sp->get_meta("woody_shrub", false)) && !bool(ps.sp->get_meta("oasis", false))) {
@@ -1983,6 +2066,13 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		}
 		LocalVector<Vector2> mound_xz;
 		LocalVector<float> mound_h;
+		// Colonnades (trees.md 5az): the tile's slots along its vanished logs, each with the log's direction, rank
+		// (the whole row kept or dropped together by density) and key (one stilt height for the row).
+		const bool row_sp = ps.colonnade.x > 0.0f && !nebkha_sp;
+		LocalVector<Vector2> row_xz;
+		LocalVector<Vector2> row_dir;
+		LocalVector<float> row_rank;
+		LocalVector<uint32_t> row_key;
 
 		for (int tz = tz0; tz < tz1; tz++) {
 			for (int tx = tx0; tx < tx1; tx++) {
@@ -2019,15 +2109,60 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						}
 					}
 				}
-				const uint32_t point_count = nebkha_sp ? mound_xz.size() : pat.points.size();
+				if (row_sp) {
+					// Colonnades: seedlings that came up in a row along a nurse log stand on stilts in that row once it
+					// has rotted away (Harmon and Franklin 1989; Franklin et al. 1981). One candidate log a
+					// COLONNADE_CELL cell: centre and bearing by the cell's hash, 45-100% of the longest log; slots every
+					// spacing along it (a little jitter), a fifth left empty where a seedling died.
+					row_xz.clear();
+					row_dir.clear();
+					row_rank.clear();
+					row_key.clear();
+					const Rect2 tr(tx * ts, tz * ts, ts, ts);
+					const float half = 0.5f * ps.colonnade.y + ps.colonnade.x;
+					const int c0x = int(Math::floor((tr.position.x - half) / COLONNADE_CELL)), c0z = int(Math::floor((tr.position.y - half) / COLONNADE_CELL));
+					const int c1x = int(Math::floor((tr.position.x + ts + half) / COLONNADE_CELL)), c1z = int(Math::floor((tr.position.y + ts + half) / COLONNADE_CELL));
+					for (int cz = c0z; cz <= c1z; cz++) {
+						for (int cx = c0x; cx <= c1x; cx++) {
+							const uint32_t key = tile_hash(cx, cz, p_setup.seed ^ 0x636f6c6e, s);
+							auto u = [&](uint32_t p_salt) {
+								return float(hash_murmur3_one_32(p_salt, key) & 0xFFFFFF) / float(0x1000000);
+							};
+							const Vector2 c((cx + u(1)) * COLONNADE_CELL, (cz + u(2)) * COLONNADE_CELL);
+							const float ang = u(3) * Math::PI;
+							const Vector2 d(Math::cos(ang), Math::sin(ang));
+							const Vector2 side(-d.y, d.x);
+							const float len = Math::lerp(0.45f, 1.0f, u(4)) * ps.colonnade.y;
+							const int ns = MAX(2, int(len / ps.colonnade.x) + 1);
+							const float rank = u(5);
+							for (int k = 0; k < ns; k++) {
+								const uint32_t kh = hash_murmur3_one_32(uint32_t(k), key);
+								const float uk = float(kh & 0xFFFF) / 65535.0f;
+								if (uk < 0.2f) {
+									continue;
+								}
+								const float along = (k - 0.5f * (ns - 1)) * ps.colonnade.x + (float((kh >> 16) & 0xFF) / 255.0f - 0.5f) * 0.3f * ps.colonnade.x;
+								const float lat = (float((kh >> 24) & 0xFF) / 255.0f - 0.5f) * 0.12f;
+								const Vector2 q = c + d * along + side * lat;
+								if (tr.has_point(q)) {
+									row_xz.push_back(q);
+									row_dir.push_back(d);
+									row_rank.push_back(rank);
+									row_key.push_back(key);
+								}
+							}
+						}
+					}
+				}
+				const uint32_t point_count = nebkha_sp ? mound_xz.size() : (row_sp ? row_xz.size() : pat.points.size());
 				for (uint32_t i = 0; i < point_count; i++) {
-					Vector2 xz = nebkha_sp ? mound_xz[i] : Vector2(tx * ts, tz * ts) + pat.points[i];
+					Vector2 xz = nebkha_sp ? mound_xz[i] : (row_sp ? row_xz[i] : Vector2(tx * ts, tz * ts) + pat.points[i]);
 					if (!rect.has_point(xz) || (!in_core && !reach_rect.has_point(xz))) {
 						continue;
 					}
 					// Ordered dither: a point survives where its (per-tile shifted) rank is below
 					// the density there, so density changes smoothly and the pattern stays blue noise.
-					const float rank = nebkha_sp ? 0.0f : Math::fmod(pat.ranks[i] + shift, 1.0f);
+					const float rank = nebkha_sp ? 0.0f : (row_sp ? row_rank[i] : Math::fmod(pat.ranks[i] + shift, 1.0f));
 					if (rank >= max_keep) {
 						continue;
 					}
@@ -2381,7 +2516,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						continue;
 					}
 					// The plant's transform: on the ground, tilted towards its normal, random yaw and size.
-					const float r = nebkha_sp ? float(hash_murmur3_one_float(xz.x, hash_murmur3_one_float(xz.y)) & 0xFFFFFF) / float(0x1000000) : pat.randoms[i];
+					const float r = (nebkha_sp || row_sp) ? float(hash_murmur3_one_float(xz.x, hash_murmur3_one_float(xz.y)) & 0xFFFFFF) / float(0x1000000) : pat.randoms[i];
 					float scale = Math::lerp(scale_range.x, scale_range.y, Math::fmod(r * 104729.0f, 1.0f)) * trodden;
 					if (nebkha_sp && nebkha_unit > 0.0f) {
 						// The shrub that built the mound: its crown about NEBKHA_CROWN of the mound's radius.
@@ -2533,6 +2668,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							yaw = Math::atan2(-open.y, open.x) - Math::atan2(-ps.open_side.y, ps.open_side.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.52f;
 						}
 					}
+					if (row_sp) {
+						// A colonnade tree: its stilts' tunnel (mesh +X) along the vanished log, either way round.
+						const Vector2 d = row_dir[i];
+						yaw = Math::atan2(-d.y, d.x) + ((hash_murmur3_one_32(row_key[i], uint32_t(i) * 2654435761u) & 1u) ? Math::PI : 0.0f) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.12f;
+					}
 					b = b * Basis(Vector3(0, 1, 0), yaw);
 					if (wood_out != Vector2()) {
 						// Out of the bark: the clump's foot tips away from the wood, as it bursts
@@ -2614,6 +2754,49 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						}
 						if (pick >= 0 && (struck || fire_variant < 0 || ps.strike_years[fire_variant] >= 0.0f)) {
 							fire_variant = pick;
+						}
+					}
+					if (!ps.browsed.is_empty()) {
+						// Browsed trees (TreeGenerator.browse, trees.md 5az): where deer press (WorldStand.browse_at, the
+						// setup's grid) a living tree is the browsed variant with the chance smoothstep(0.3, 0.8, pressure),
+						// by its own number; elsewhere never one. Burnt and struck picks stay as they are.
+						const int nv = ps.browsed.size();
+						auto special = [&](int vi) {
+							return (vi < int(ps.fire_years.size()) && ps.fire_years[vi] >= 0.0f) || (vi < int(ps.strike_years.size()) && ps.strike_years[vi] >= 0.0f);
+						};
+						const int cur = fire_variant >= 0 ? fire_variant : (bank_variant >= 0 ? bank_variant : MIN(int(r * variants), variants - 1));
+						if (cur >= nv || !special(cur)) {
+							const float pressure = p_setup.browse_at(xz);
+							const bool want = pressure > 0.0f && Math::fmod(r * 4801.0f, 1.0f) < Math::smoothstep(0.3f, 0.8f, pressure);
+							if (cur >= nv || bool(ps.browsed[cur]) != want) {
+								const int start = MIN(int(Math::fmod(r * 3301.0f, 1.0f) * nv), nv - 1);
+								for (int k = 0; k < nv; k++) {
+									const int vi = (start + k) % nv;
+									if (bool(ps.browsed[vi]) == want && !special(vi)) {
+										fire_variant = vi;
+										break;
+									}
+								}
+							} else {
+								fire_variant = cur;
+							}
+						}
+					}
+					if (row_sp && variants > 1) {
+						// One log, one girth: every tree of a colonnade the same living variant (its stilt height), by the
+						// log's key. Burnt, struck and browsed picks stay as they are.
+						auto special = [&](int vi) {
+							return (vi < int(ps.fire_years.size()) && ps.fire_years[vi] >= 0.0f) || (vi < int(ps.strike_years.size()) && ps.strike_years[vi] >= 0.0f) || (vi < int(ps.browsed.size()) && ps.browsed[vi]);
+						};
+						if (fire_variant < 0 || !special(fire_variant)) {
+							const int start = int(hash_murmur3_one_32(0x726f77u, row_key[i]) % uint32_t(variants));
+							for (int k = 0; k < variants; k++) {
+								const int vi = (start + k) % variants;
+								if (!special(vi)) {
+									fire_variant = vi;
+									break;
+								}
+							}
 						}
 					}
 					const int variant = fire_variant >= 0 ? fire_variant : (bank_variant >= 0 ? bank_variant : MIN(int(r * variants), variants - 1));

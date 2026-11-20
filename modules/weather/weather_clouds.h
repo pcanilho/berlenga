@@ -157,6 +157,8 @@ Vector2 shear_offset(const State &p_state, float p_y, float p_base);
 float cover_noise(Vector2 p_xz, Vector2 p_drift, float p_scale, float p_evolve = -1.0f);
 // Cover and type at world x, z: the weather map's drifting noise plus storms.
 Vector2 cover_type_at(const State &p_state, Vector2 p_xz);
+// How high a storm's column reaches over p_xz, as a cloud type: under its anvil, the storm's own height.
+float storm_column_type(const State &p_state, Vector2 p_xz);
 // The cloud base (m) over world x, z: base_height, blended to each storm's own base over its cloud shield.
 float base_at(const State &p_state, Vector2 p_xz);
 // The high layer's cover (0..1) and vertical optical depth over world x, z (patches and anvil shields; the

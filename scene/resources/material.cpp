@@ -2742,7 +2742,7 @@ void fragment() {)";
 			code += "	float transmission_tex = texture(texture_transmission, base_uv).r;\n";
 		}
 		const char *transmission_uv = features[FEATURE_REFRACTION] ? "refraction_uv" : "SCREEN_UV";
-		code += "	vec3 transmission_absorption = vec3(1.0);\n	vec3 transmission_scatter = vec3(0.0);\n";
+		code += "	vec3 transmission_absorption = vec3(1.0);\n	vec3 transmission_scatter = vec3(0.0);\n	float transmission_lod = 0.0;\n";
 		if (!transmission_thin_walled) {
 			// Into a medium (glTF KHR_materials_volume, KHR_materials_ior): the view ray refracts by the IOR over
 			// the depth behind the surface, and the light it finds is absorbed over that path (Beer-Lambert).
@@ -2779,6 +2779,16 @@ void fragment() {)";
 		transmission_uv = SCREEN_UV;
 		transmission_found = transmission_back;
 	}
+	// Solids (a thickness set): filter the read by its footprint (as texture LOD from UV derivatives, or a ray
+	// cone's spread). Through a strongly curved solid (a thin rod of ice, a drop) the sphere model sends
+	// neighbouring pixels to far apart points, and a sharp read of each speckles and dashes what lies behind; a
+	// real lens averages over that spread. Flat panes map a pixel to about a pixel and stay sharp; open media
+	// (water over a floor, no thickness) are not filtered, so a pool's floor keeps its detail.
+	vec2 transmission_px = vec2(textureSize(screen_texture, 0));
+	vec2 transmission_dx = dFdx(transmission_uv) * transmission_px;
+	vec2 transmission_dy = dFdy(transmission_uv) * transmission_px;
+	float transmission_footprint = max(max(dot(transmission_dx, transmission_dx), dot(transmission_dy, transmission_dy)), 1.0);
+	transmission_lod = transmission_thickness > 0.0 ? clamp(0.5 * log2(transmission_footprint), 0.0, 6.0) : 0.0;
 	if (transmission_attenuation_distance > 0.0) {
 		float transmission_path = transmission_inside >= 0.0 ? transmission_inside : min(distance(transmission_found.xyz, VERTEX), 1.0e4);
 		transmission_absorption = pow(max(transmission_attenuation_color.rgb, vec3(1.0e-4)), vec3(transmission_path / transmission_attenuation_distance));
@@ -2792,7 +2802,7 @@ void fragment() {)";
 	float transmission_amount = clamp(transmission * transmission_tex, 0.0, 1.0) * (1.0 - METALLIC);
 	float transmission_f0 = 0.16 * SPECULAR * SPECULAR;
 	float transmission_fresnel = transmission_f0 + (1.0 - transmission_f0) * pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 5.0);
-	EMISSION += textureLod(screen_texture, %s, ROUGHNESS * 8.0).rgb * ALBEDO * transmission_absorption * (transmission_amount * (1.0 - transmission_fresnel)) * EXPOSURE;
+	EMISSION += textureLod(screen_texture, %s, max(ROUGHNESS * 8.0, transmission_lod)).rgb * ALBEDO * transmission_absorption * (transmission_amount * (1.0 - transmission_fresnel)) * EXPOSURE;
 	ALBEDO *= 1.0 - transmission_amount;
 	ALBEDO += transmission_scatter * transmission_amount;
 	// Force transparency on the material (required to read the screen behind it).

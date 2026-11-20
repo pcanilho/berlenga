@@ -102,6 +102,7 @@ class BodySnowStub extends WorldSnow:
 #   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
 #                     [--wind=S: a steady wind along the eave by day, the tips lean; --dense: a week of melt with
 #                     sites 5 cm apart, rippled icicles bridged into curtains] [--no-core: clear ice only]
+#                     [--hero: a boarded wall behind, 1.7 m off a fused pair, root to tip; pass --resolution 1920x1080]
 #   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
 #   --settled         (trail view) 0.4 m of settled snow (300 kg/m3) instead of fresh: prints break clumps
 #   --no-clumps       (trail view) no snow clumps beside the prints
@@ -2733,6 +2734,31 @@ func _build_icicles(cam: Camera3D) -> void:
 		post.position = p
 		post.material_override = wood
 		add_child(post)
+	var hero := OS.get_cmdline_user_args().has("--hero")
+	if hero:
+		# --hero: the shed's front wall, set back under the eave as a house wall is: vertical boards 14 cm wide
+		# with 1 cm gaps, each its own weathered tone, so the ice has a lit, lined ground to refract.
+		var backing := MeshInstance3D.new()
+		backing.mesh = BoxMesh.new()
+		backing.scale = Vector3(4.6, 2.37, 0.02)
+		backing.position = Vector3(-2.5, 1.185, -0.56)
+		backing.material_override = _ground_material(Color(0.12, 0.09, 0.07), 1.0)
+		add_child(backing)
+		var tones: Array[StandardMaterial3D] = []
+		for k in 5:
+			var v := 0.85 + 0.07 * k
+			tones.append(_ground_material(Color(0.5 * v, 0.41 * v, 0.31 * v), 1.0))
+		var bx := -4.75
+		var nb := 0
+		while bx < -0.25:
+			var board := MeshInstance3D.new()
+			board.mesh = BoxMesh.new()
+			board.scale = Vector3(0.14, 2.37, 0.022)
+			board.position = Vector3(bx + 0.07, 1.185, -0.5)
+			board.material_override = tones[(nb * 7 + nb / 3) % tones.size()]
+			add_child(board)
+			bx += 0.15
+			nb += 1
 	weather.rebake_shelter()
 	await get_tree().physics_frame
 	await get_tree().physics_frame
@@ -2770,7 +2796,31 @@ func _build_icicles(cam: Camera3D) -> void:
 	cam.position = Vector3(-0.2, 2.05, 1.1)
 	cam.look_at(Vector3(-2.2, 2.1, 0.17))
 	cam.fov = 50.0
-	if OS.get_cmdline_user_args().has("--close"):
+	if hero:
+		# Head on from 1.7 m, a little below their middle so the roots show under the eave: a run of icicles
+		# root to tip against the boards,
+		# the longest fused pair (neighbours bridged at the root) in the middle. Shoot with --resolution 1920x1080.
+		var best := -1
+		var best_len := 0.0
+		for k in ice.get_icicle_count() - 1:
+			var a := ice.get_icicle_position(k)
+			var b := ice.get_icicle_position(k + 1)
+			var ra := ice.get_icicle_radius(k)
+			var rb := ice.get_icicle_radius(k + 1)
+			var l := minf(ice.get_icicle_length(k), ice.get_icicle_length(k + 1))
+			var gap := Vector2(a.x - b.x, a.z - b.z).length() - ra - rb
+			if gap > 0.0 and gap < minf(ra, rb) and a.x > -3.6 and a.x < -1.4 and l > best_len:
+				best = k
+				best_len = l
+		var mid := Vector3(-2.5, eave_y - 0.25, 0.12)
+		if best >= 0:
+			mid = (ice.get_icicle_position(best) + ice.get_icicle_position(best + 1)) * 0.5
+			mid.y -= 0.5 * maxf(ice.get_icicle_length(best), ice.get_icicle_length(best + 1))
+			print("hero pair %d/%d at x %.2f, %.2f m" % [best, best + 1, mid.x, best_len])
+		cam.position = mid + Vector3(0.45, -0.08, 1.62)
+		cam.look_at(mid)
+		cam.fov = 26.0
+	elif OS.get_cmdline_user_args().has("--close"):
 		# The longest icicles at 100%: the ripples, the clear sheath and the hazy core.
 		cam.position = Vector3(-0.1, 2.1, 0.75)
 		cam.look_at(Vector3(-0.6, 2.12, 0.17))
