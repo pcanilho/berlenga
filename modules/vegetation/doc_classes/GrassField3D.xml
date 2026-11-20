@@ -338,6 +338,7 @@
 		</member>
 		<member name="paths" type="Dictionary[]" setter="set_paths" getter="get_paths" default="[]">
 			Worn paths, the same format as [member VegetationField3D.paths]. Along a path the sward thins and shortens by [member trample_resistance], and the ground tint shows the bare trodden soil. Changing it rebuilds the tiles.
+			The world's game trails ([code]WorldStand.get_trails()[/code], published from [method VegetationField3D.make_game_trails]) are worn the same way, on top of these, and followed when they change.
 		</member>
 		<member name="trample_resistance" type="float" setter="set_trample_resistance" getter="get_trample_resistance" default="300.0">
 			Walkers a year on a path that halve the sward's cover. Grasses resist trampling well (Cole 1995); 0 turns paths off for this field.

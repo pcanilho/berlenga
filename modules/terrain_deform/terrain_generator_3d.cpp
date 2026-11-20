@@ -6375,19 +6375,17 @@ vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footpri
 		s /= ws;
 		dc = (dc / ws - c * dw / ws) / lambda;
 		ds = (ds / ws - s * dw / ws) / lambda;
+		// Drawn per pixel the detail's slope is the normal, so every place the slope jumps shows as a hard edge in
+		// the light: the normalisation by max(len, 0.5) is rounded over 0.3 (polynomial smooth maximum), and the
+		// gully creases (abs(s), the sign of s) over 0.15 below.
 		float len = sqrt(c * c + s * s);
-		if (len > 0.5) {
-			vec2 dl = (c * dc + s * ds) / len;
-			dc = (dc - c * dl / len) / len;
-			ds = (ds - s * dl / len) / len;
-			c /= len;
-			s /= len;
-		} else {
-			dc *= 2.0;
-			ds *= 2.0;
-			c *= 2.0;
-			s *= 2.0;
-		}
+		float hm = clamp(0.5 + (len - 0.5) / 0.3, 0.0, 1.0);
+		float den = mix(0.5, len, hm) + 0.15 * hm * (1.0 - hm);
+		vec2 dl = len > 1e-6 ? (c * dc + s * ds) / len : vec2(0.0);
+		dc = (dc - c * dl * hm / den) / den;
+		ds = (ds - s * dl * hm / den) / den;
+		c /= den;
+		s /= den;
 		float raw = c * TD_GULLY;
 		float faded = fade + (raw - fade) * mask;
 		fd = fd * (1.0 - mask) + mask * TD_GULLY * dc + (raw - fade) * md;
@@ -6398,12 +6396,14 @@ vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footpri
 		float m0 = clamp(mask, 0.0, 1.0);
 		float reach = 1.0 - pow(1.0 - m0, TD_REACH);
 		float dreach = TD_REACH * pow(max(1.0 - m0, 0.0), TD_REACH - 1.0);
-		float as = abs(s);
+		float sq = sqrt(s * s + 0.0225);
+		float sgn = s / sq;
+		float as = sq - 0.15;
 		float e = td_ease_out(as);
-		float de = as < 1.0 ? 2.0 * (1.0 - as) * sign(s) : 0.0;
+		float de = as < 1.0 ? 2.0 * (1.0 - as) * sgn : 0.0;
 		md = dreach * md * e + reach * de * ds;
 		mask = reach * e;
-		st += -(s >= 0.0 ? 1.0 : -1.0) * TD_DEPTH * 6.2831853 * t;
+		st += -sgn * TD_DEPTH * 6.2831853 * t;
 		lambda /= 2.0;
 	}
 	return r;

@@ -842,6 +842,8 @@ func _ready() -> void:
 		await _campfire()
 	if args.has("hut"):
 		await _hut()
+		if args.has("hut-icicles"):
+			await _hut_icicles()
 	if slip_walk.size() == 4 and prints != null:
 		await _slip_walk()
 	if args.has("powder-avalanche") and snow != null:
@@ -6156,6 +6158,124 @@ func _hut() -> void:
 			if i % (Engine.physics_ticks_per_second * 5) == 0:
 				_log("hut fire t %.0f s: state %d, %.0f C, %.0f kW, fuel %.2f, collapsed %s" % [i * float(bf.get("time_scale")) / Engine.physics_ticks_per_second, int(bf.call("get_room_state", 0)), float(bf.call("get_room_temperature", 0)), float(bf.call("get_heat_release")), float(bf.call("get_room_fuel_left", 0)), str(bf.call("is_room_collapsed", 0))])
 		_log("hut fire at %.0f s: state %d, %.0f kW, flashover %.0f s, char %.1f mm, collapsed %s, firebrands %d" % [secs, int(bf.call("get_room_state", 0)), float(bf.call("get_heat_release")), float(bf.call("get_room_flashover_time", 0)), float(bf.call("get_room_char_depth", 0)) * 1000.0, str(bf.call("is_room_collapsed", 0)), int(bf.call("get_firebrand_count"))])
+
+
+func _hut_icicles() -> void:
+	# --hut-icicles (with --hut, winter): snow on the hut's roof (its materials take the weather's snow) and a week of
+	# icicles (SnowIcicles3D, snow 5f68879a) along its longest eave, the lip found from the roof mesh; the camera
+	# --ice-dist (1.55) m out from the eave, a little above the icicles' middle, on the longest fused pair, the hut's
+	# dark wall behind. --ice-days (7), --ice-fov (26), --ice-up (0.4 m over the icicles' middle), --ice-look-up (0).
+	var root := get_node_or_null("Hut") as Node3D
+	if root == null or not ClassDB.class_exists("SnowIcicles3D"):
+		_log("hut icicles: no hut or no SnowIcicles3D")
+		return
+	var inv := root.global_transform.affine_inverse()
+	var pts := PackedVector3Array()
+	var snowed := 0
+	for mi in root.find_children("*", "MeshInstance3D", true, false):
+		var m := mi as MeshInstance3D
+		if m.mesh == null or not String(m.name).begins_with("Hut"):
+			continue
+		for si in m.mesh.get_surface_count():
+			var mat := m.get_active_material(si)
+			if mat is BaseMaterial3D and "snow_enabled" in mat:
+				var mm := (mat as BaseMaterial3D).duplicate() as BaseMaterial3D
+				mm.set("snow_enabled", true)
+				m.set_surface_override_material(si, mm)
+				snowed += 1
+		var xf := inv * m.global_transform
+		for v in m.mesh.get_faces():
+			pts.append(xf * v)
+	if pts.is_empty():
+		_log("hut icicles: no hut mesh")
+		return
+	var lo := pts[0]
+	var hi := pts[0]
+	for v in pts:
+		lo = lo.min(v)
+		hi = hi.max(v)
+	# The eave: the side whose outermost vertices run level over a long length (the gable ends rise to the ridge).
+	var best_side := -1
+	var best_len := 0.0
+	var eave_y := 0.0
+	var along := Vector2()
+	for side in 4:
+		var ax := 0 if side < 2 else 2
+		var other := 2 if ax == 0 else 0
+		var ext: float = (lo if side % 2 == 0 else hi)[ax]
+		var ys := PackedFloat32Array()
+		var a0 := INF
+		var a1 := -INF
+		for v in pts:
+			if absf(v[ax] - ext) < 0.08:
+				ys.append(v.y)
+				a0 = minf(a0, v[other])
+				a1 = maxf(a1, v[other])
+		if ys.size() < 4:
+			continue
+		ys.sort()
+		var spread := ys[ys.size() - 1] - ys[0]
+		if spread < 0.4 and a1 - a0 > best_len:
+			best_side = side
+			best_len = a1 - a0
+			eave_y = ys[0]
+			along = Vector2(a0, a1)
+	if best_side < 0:
+		_log("hut icicles: no level eave found (box %s to %s)" % [str(lo), str(hi)])
+		return
+	var axis := 0 if best_side < 2 else 2
+	var out_sign := -1.0 if best_side % 2 == 0 else 1.0
+	var lip: float = (lo if best_side % 2 == 0 else hi)[axis]
+	var inward := lip - out_sign * 0.1
+	var e0 := Vector3()
+	var e1 := Vector3()
+	e0[axis] = inward
+	e1[axis] = inward
+	e0[2 if axis == 0 else 0] = along.x + 0.3
+	e1[2 if axis == 0 else 0] = along.y - 0.3
+	e0.y = eave_y - 0.01
+	e1.y = eave_y - 0.01
+	var ice: Node3D = ClassDB.instantiate("SnowIcicles3D")
+	ice.name = "Icicles"
+	ice.set("spacing", 0.05)
+	root.add_child(ice)
+	ice.set("edge", PackedVector3Array([e0, e1]))
+	var catch := 3.4
+	for day in int(args.get("ice-days", "7")):
+		ice.call("grow", 6.0, -4.0, 0.5, 0.3 * catch)
+		ice.call("grow", 18.0, -8.0, 0.5, 0.0)
+	ice.call("grow", 0.25, -4.0, 0.5, 0.3 * catch)
+	var n: int = ice.call("get_icicle_count")
+	var bk := -1
+	var bl := 0.0
+	for k in n - 1:
+		var pa: Vector3 = ice.call("get_icicle_position", k)
+		var pb: Vector3 = ice.call("get_icicle_position", k + 1)
+		var ra: float = ice.call("get_icicle_radius", k)
+		var rb: float = ice.call("get_icicle_radius", k + 1)
+		var l := minf(float(ice.call("get_icicle_length", k)), float(ice.call("get_icicle_length", k + 1)))
+		var gap := Vector2(pa.x - pb.x, pa.z - pb.z).length() - ra - rb
+		var t := float(k) / maxf(n - 1, 1)
+		if gap > 0.0 and gap < minf(ra, rb) and t > 0.25 and t < 0.75 and l > bl:
+			bk = k
+			bl = l
+	var mid_l := (e0 + e1) * 0.5
+	mid_l.y -= 0.25
+	if bk >= 0:
+		mid_l = (Vector3(ice.call("get_icicle_position", bk)) + Vector3(ice.call("get_icicle_position", bk + 1))) * 0.5
+		mid_l.y -= 0.5 * maxf(float(ice.call("get_icicle_length", bk)), float(ice.call("get_icicle_length", bk + 1)))
+	var outward := Vector3()
+	outward[axis] = out_sign
+	var tang := (e1 - e0).normalized()
+	var mid := root.global_transform * mid_l
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var wout := (root.global_basis * outward).normalized()
+	var wt := (root.global_basis * tang).normalized()
+	c3.global_position = mid + wout * float(args.get("ice-dist", "1.55")) + Vector3.UP * float(args.get("ice-up", "0.4")) - wt * 0.4
+	c3.look_at(mid + Vector3.UP * float(args.get("ice-look-up", "0")))
+	c3.fov = float(args.get("ice-fov", "26"))
+	_log("hut icicles: %d hut surfaces take the snow, snow %.2f m water at the hut" % [snowed, snow.get_world_swe_at(mid) if snow != null and snow.has_method("get_world_swe_at") else -1.0])
+	_log("hut icicles: eave side %d, %.1f m long at %.2f m, %d sites, longest %.2f m, %.2f kg; hero pair %d (%.2f m) at %s; cam %s" % [best_side, best_len, eave_y, n, float(ice.call("get_longest")), float(ice.call("get_ice_mass")), bk, bl, str(mid), str(c3.global_position)])
 
 
 func _mem_log(tag: String) -> void:

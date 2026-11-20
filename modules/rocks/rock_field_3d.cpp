@@ -6092,9 +6092,8 @@ int RockField3D::build_area(const Rect2 &p_rect) {
 		}
 	}
 	last_build_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
-	// Far thinning (and its widened survivors) round the target, as streaming applies it each frame, so stills show
-	// what play shows.
-	_update_thinning(_target_position());
+	// (Stills are not thinned here: thinning ~1,000 far MultiMeshes left the near grains wrong in the path-traced still
+	// though raster was unchanged, docs/ideas/rocks.md "Far rocks"; streaming still thins them in play.)
 	// Close-up shapes too, waiting for them (stills and benches want the finished picture): two passes, the first
 	// starts the builds, the second places them.
 	if (close_up_enabled) {

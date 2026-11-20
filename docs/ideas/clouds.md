@@ -561,3 +561,52 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
   patches about 6 km across.
 - Rain shaft: lit at two fifths of the open sky's light under the shield, so it stands as a dark curtain.
 - Raster and PT match (640).
+
+## Storm review 5 and snow shafts (20 Nov 2026)
+
+- Shelf: tapers in height toward both ends of its arc (the leading front, about 30 degrees each side) and rises
+  from a low leading edge back to the tower's base; its face in tiers (bands a quarter of its height, lighter and
+  denser) over a smooth underside, lightly eroded (laminar). The flat slab across the whole base is gone.
+- Mammatus: bell-shaped pouches ((1 - r^2)^1.5) that curve out of the sheet, at the sheet's density, instead of
+  hemispheres with a hard rim at a higher density (read as dark craters from the side).
+- Snow shafts: each storm's snow share is the weather's own rain/snow split (`get_rain_share_at` under it,
+  `State.storm_snow`, `cloud_storm_snow`). Snow's extinction follows SnowFall3D.snowfall_extinction (about 2 km of
+  visibility at 1 mm/h of water, 200 m at 3 mm/h; fitted 0.00196 r^2.1, capped at 5 mm/h); flakes fall at about
+  1 m/s, so the shaft trails seven times further downwind than rain; its veils are softer. Nimbostratus while it
+  snows was already the case (the regime reads the total precipitation). Bench `--temp=C`.
+- Raster and PT match (640).
+
+## Storm review 6 and winter convection (20 Nov 2026; docs: dome shelf, slab snow shaft, smudged winter tower)
+
+- Shelf: a long, low arc wider than the tower (centred 1.9 radii out plus 0.04 per m/s of outflow, along the
+  leading front over a wider angle, smoothstep 0.15 to 0.6 of the alignment), its top low at the leading edge and
+  tapered toward the ends of the arc, sharp underside, tiered lighter face. The anvil's downwind overhang keeps a
+  thin sheet (density 0.25) so it reads as one surface.
+- Snow shafts: flakes fall about 1 m/s against 6 to 9 m/s for rain, so the shaft slants 3.5 times further downwind;
+  a soft core (exp(-r) in place of exp(-r^2)), wider curtain thresholds and a 500 m fade below the base, so it is a
+  veil trailing downwind and not a slab with a hard edge.
+- Winter convection is shallow: snow thunderstorms and lake-effect cells top out at 3 to 6 km against 10 to 15 km
+  in summer (Market et al. 2002, thundersnow climatology; Niziol et al. 1995, lake-effect snow). The storm's height
+  scales by a cold factor from 0.45 at -10 C to 1 at 20 C (the air temperature at the ground from the weather), and
+  the anvil's downwind length scales with it, so a winter storm is a low, lit tower with a short anvil.
+- Grain (the half-resolution reconstruction): each pixel is drawn every 16th frame, and its exponential mean over
+  4 samples stopped reducing noise there, so thin hard-edged cloud (the shelf, about 500 m thick seen at a few
+  degrees through 600 m march steps) kept a grain however long a still ran (256 frames as grainy as 96). Two fixes in
+  the engine: the sky shader reads REPROJECTION_FRAME (the frame number whose low four bits pick the pixel each 4x4
+  block draws; the Bayer order now follows it), so each pixel's march starts form a golden-ratio (R1) sequence over
+  its revisits instead of unrelated noise; and the mean runs over 12 revisits, the min/max history clamp still
+  following moving cloud. Tripling the march steps was tried and only thinned the holes, at three times the cost.
+  Review stills are 192 frames (about 1.1 s at 174 Hz).
+- Raster and PT match (640).
+
+## Next: lake-effect snow bands (plan)
+
+- When cold air crosses open water: the lake at least 13 K warmer than the air at 850 hPa (Niziol et al. 1995,
+  Wea. Forecasting 10), a fetch of about 80 to 100 km or more, little turning of the wind with height.
+- Form from Laird, Kristovich and Walsh 2003 (Mon. Wea. Rev. 131), by U^2/L (wind squared over fetch): mesoscale
+  vortices below 0.02, a shore-parallel band 0.02 to 0.09, wind-parallel bands (horizontal rolls) above 0.09.
+  Roll spacing about 2.5 to 3 times the boundary layer's depth (Kristovich 1993), cloud tops 1.5 to 4 km.
+- Clouds read where each point lies downwind of water, so the sky needs a fetch field, not one value: a coarse
+  grid (64 x 64 over about 100 km round the camera, each cell the distance of open water upwind from
+  WorldWater.height_at along the wind, rebuilt when the wind turns), uploaded with the cover. Cover, type and the
+  roll stretch rise with it downwind of the shore; the weather's snowfall takes the same field (Valence's map).

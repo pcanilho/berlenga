@@ -83,6 +83,7 @@ struct State {
 	// shafts under the base.
 	float storm_rain[MAX_STORMS] = {};
 	float storm_outflow[MAX_STORMS] = {};
+	float storm_snow[MAX_STORMS] = {}; // share of the storm's precipitation falling as snow at the ground (rain_fraction)
 	Vector2 storm_dir = Vector2(1, 0); // unit, the way the storms move (the steering wind)
 	Vector2 rain_slant; // horizontal m per m of fall: the low wind over the drops' fall speed (about 7 m/s)
 	// The high cloud layer (cirrus, cirrostratus; docs/ideas/clouds.md): a thin sheet at high_height, its cover

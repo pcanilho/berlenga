@@ -1829,15 +1829,21 @@ void PlantGenerator::_build_dock() {
 	seed.bend = 0.0f;
 	seed.segments = 2;
 	auto whorls = [&](const LocalVector<Transform3D> &p_fr, float p_from, float p_to, float p_wind) {
-		const int n = int((p_to - p_from) * 26.0f) + 2;
+		// Dense, uneven whorls of hanging fruits on short stalks (not even rungs of four; see sorrel).
+		const int n = int((p_to - p_from) * 30.0f) + 2;
 		for (int k = 0; k < n; k++) {
-			const float s = Math::lerp(p_from, p_to, float(k) / (n - 1));
+			const float s = CLAMP(Math::lerp(p_from, p_to, (float(k) + _rand(-0.4f, 0.4f)) / (n - 1)), p_from, p_to);
 			const Transform3D at = _frame_at(p_fr, s);
 			const float a0 = _rand(0.0f, Math::TAU);
-			for (int j = 0; j < 4; j++) {
-				const float a = a0 + j * Math::TAU / 4.0f;
+			const int m = int(_rand(3.0f, 7.99f));
+			for (int j = 0; j < m; j++) {
+				const float a = a0 + j * Math::TAU / m + _rand(-0.5f, 0.5f);
 				const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame((radial - at.basis.get_column(2) * 0.6f).normalized(), at.basis.get_column(2)), at.origin + radial * 0.002f), seed, p_wind);
+				const Vector3 droop = (radial * _rand(0.4f, 1.0f) - at.basis.get_column(2) * _rand(0.3f, 1.2f)).normalized();
+				Leaf f = seed;
+				f.length = f.width = _rand(0.003f, 0.0045f);
+				const Color tint = Color(1, 1, 1).lerp(Color(0.75f, 0.62f, 0.48f), _rand(0.0f, 0.7f));
+				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(droop, at.basis.get_column(2)), at.origin + radial * 0.0015f + droop * _rand(0.001f, 0.005f)), f, p_wind, 1.0f, tint);
 			}
 		}
 	};
@@ -3812,17 +3818,29 @@ void PlantGenerator::_build_sorrel() {
 	fl.fold = 0.3f;
 	fl.bend = 0.0f;
 	fl.segments = 2;
+	// Loose whorls of drooping flowers on short stalks (Rumex acetosa: whorls of 2 to 8, tepals green
+	// flushed red, the fruiting valves rusty), not even rungs: spacing, count, size, droop and colour
+	// all vary, so a spike reads as a soft rusty haze from a few metres (a regular ladder of flat
+	// petals read as red barcode bars, docs 20 Nov).
 	auto whorls = [&](const LocalVector<Transform3D> &p_fr, float p_from, float p_to, float p_wind) {
-		const Color tint = in_seed ? Color(0.62f, 0.5f, 0.42f) : Color(1, 1, 1);
-		const int n = int((p_to - p_from) * 22.0f) + 2;
+		const int n = int((p_to - p_from) * 26.0f) + 2;
 		for (int k = 0; k < n; k++) {
-			const float s = Math::lerp(p_from, p_to, float(k) / (n - 1));
+			const float s = CLAMP(Math::lerp(p_from, p_to, (float(k) + _rand(-0.4f, 0.4f)) / (n - 1)), p_from, p_to);
 			const Transform3D at = _frame_at(p_fr, s);
 			const float a0 = _rand(0.0f, Math::TAU);
-			for (int j = 0; j < 4; j++) {
-				const float a = a0 + j * Math::TAU / 4.0f;
+			const int m = int(_rand(2.0f, 6.99f) * Math::lerp(1.0f, 0.6f, (s - p_from) / MAX(p_to - p_from, 0.01f)));
+			for (int j = 0; j < MAX(m, 2); j++) {
+				const float a = a0 + j * Math::TAU / MAX(m, 2) + _rand(-0.5f, 0.5f);
 				const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame((radial - at.basis.get_column(2) * 0.5f).normalized(), at.basis.get_column(2)), at.origin + radial * 0.0016f), fl, p_wind, 1.0f, tint);
+				const Vector3 droop = (radial * _rand(0.4f, 1.0f) - at.basis.get_column(2) * _rand(0.3f, 1.2f)).normalized();
+				const float stalk = _rand(0.001f, 0.004f);
+				Leaf f = fl;
+				f.length = f.width = _rand(0.0022f, 0.0036f);
+				// Green flushed red in flower, rust to brown in seed; a little of each on most spikes.
+				const float r = _rand(0.0f, 1.0f);
+				Color tint = in_seed ? Color(0.62f, 0.5f, 0.42f).lerp(Color(0.55f, 0.42f, 0.3f), r) : Color(1, 1, 1).lerp(Color(0.7f, 0.85f, 0.55f), r * r * 0.8f);
+				const Vector3 at_o = at.origin + radial * 0.0012f + droop * stalk;
+				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(droop, at.basis.get_column(2)), at_o), f, p_wind, 1.0f, tint);
 			}
 		}
 	};
@@ -7274,7 +7292,9 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		// Also the many-island accents of the burn presets, which meshoptimizer cannot thin either (stochastic
 		// simplification of aggregate detail, Cook et al. 2007): fire moss's capsules, the ash on charred stems and
 		// burnt tussock stubs; their colour holds as the survivors grow to keep the area.
-		const bool island_accents = (preset == PRESET_FIRE_MOSS && s == SURFACE_PETAL) || ((preset == PRESET_CHARRED_STEMS || preset == PRESET_BURNT_TUSSOCK) && s == SURFACE_CENTRE);
+		// And the flower spikes of sorrel and dock: hundreds of tepals a few mm across, which meshoptimizer's
+		// sloppy fallback welded into flat red bars (docs 20 Nov).
+		const bool island_accents = ((preset == PRESET_FIRE_MOSS || preset == PRESET_SORREL || preset == PRESET_DOCK) && s == SURFACE_PETAL) || ((preset == PRESET_CHARRED_STEMS || preset == PRESET_BURNT_TUSSOCK) && s == SURFACE_CENTRE);
 		if (lods && (s == SURFACE_LEAF || island_accents)) {
 			CardSurface cs;
 			if (_card_lods(b, cs)) {

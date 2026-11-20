@@ -1039,7 +1039,10 @@ Added 20 Nov (ground detail thread, Paulo's pick "thinning plus 4 km rock colour
   to about 0.8 of the radius, where the terrain's own scree blocks come in. Drawn buffer only: xforms, colliders,
   breakables and the far blocks' records stay at true size. Scree bench, eye level round the camera: 226 of 715
   thinned groups widened, 1.36x on average; raster and PT keep the edge's stone cover.
-- build_area applies the thinning round the target, so stills show what play shows (it drew every cell whole).
+- build_area does not thin (tried 20 Nov, reverted): with ~1,170 far coarse MultiMeshes thinned (all 55 m and more
+  from the camera) the near shore grains of a path-traced still turned into dark pits and smooth patches, while the
+  raster frame was identical; leaving the shore layer unthinned mostly cured it. Not the off-screen cull, not
+  c1f09374, not zero counts. Open: whether play (streaming thins every frame) shows the same in PT; check on the PC.
 - The far cover map takes coarse river beds (45% stone over the bed where the median is drawn near). In the bench
   world only narrow boulder streams qualify, so it adds 67 faint texels; it matters where big rivers carry boulders.
   Shore stones are left out: the shingle band is a few metres wide, under a tenth of a 32 m texel.

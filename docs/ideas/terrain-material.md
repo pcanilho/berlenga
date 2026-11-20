@@ -241,3 +241,9 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
   degrees. Under a 32 degree sun those faces turned dark: blotches that read as wet ground, raster and PT alike,
   with or without scans (gone with --detail-octaves=0). The added slope now saturates softly near 0.35 (about 20
   degrees, small rill walls in soil).
+- The erosion detail took its gullies' direction and slope mask from the already bumped normal (procedural clods or
+  a scan's normal map), so they turned every few centimetres: blobs with hard rims, a melted-wax look over bare
+  ground without scans. It now runs on the surface's own normal (cliff relief included) and its tilt goes on top
+  of the bump. Its slope also had hard switches (normalising by max(len, 0.5), abs(s) and the sign of s at the
+  creases): fine in the geometry, hard-edged patches in per-pixel light. They are rounded (smooth maximum over
+  0.3, creases over 0.15).

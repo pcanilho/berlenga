@@ -398,7 +398,8 @@ public:
 		DISTURBANCE_FIRE = 1,
 		DISTURBANCE_WIND = 2,
 		DISTURBANCE_BEETLE = 3,
-		DISTURBANCE_BEAVER = 4, // a beaver pond drained (age: years since); new kinds are appended only
+		DISTURBANCE_BEAVER = 4, // a beaver pond drained (age: years since)
+		DISTURBANCE_ROOTING = 5, // boar rooting turned the soil (age: fractional years since); ground layer only, see rooting_age_at; new kinds are appended only
 	};
 	// A surface fire that scorched crowns only this low (m) leaves the stand standing.
 	static constexpr float SURFACE_FIRE_SCORCH = 5.0f;
@@ -445,6 +446,16 @@ private:
 	LocalVector<uint32_t> browse_wide;
 	void _rebuild_browse_grid();
 	void _browse_query(const Vector3 &p_position, float &r_pressure, float &r_reach) const;
+	// Worn paths (game trails): the published network as given, and its segments in a 64 m grid for trail_at().
+	struct TrailSegment {
+		Vector2 a, b;
+		float half_width = 0.5f;
+		float passes = 0.0f; // per year
+	};
+	Array trails;
+	LocalVector<TrailSegment> trail_segments;
+	HashMap<Vector2i, LocalVector<uint32_t>> trail_grid;
+	Rect2 trail_bounds;
 	struct Change {
 		uint64_t generation = 0;
 		Rect2 area;
@@ -463,6 +474,8 @@ protected:
 	GDVIRTUAL1RC(float, _strike_age_at, Vector3)
 	GDVIRTUAL1RC(float, _browse_at, Vector3)
 	GDVIRTUAL1RC(float, _browse_reach_at, Vector3)
+	GDVIRTUAL1RC(float, _rooting_age_at, Vector3)
+	GDVIRTUAL1RC(Vector2, _trail_at, Vector3)
 
 public:
 	// Years since the last stand-replacing disturbance at the point (the youngest of fire, wind and beetle kills); -1
@@ -496,6 +509,18 @@ public:
 	void clear_browse();
 	float browse_at(const Vector3 &p_position) const;
 	float browse_reach_at(const Vector3 &p_position) const;
+	// Boar rooting (DISTURBANCE_ROOTING discs from add_disturbance): it turns the field layer, not the stand, so
+	// stand_age_at() and disturbance_at() leave it out; this is its own read: years since the youngest rooting over
+	// the point, -1 none.
+	float rooting_age_at(const Vector3 &p_position) const;
+	// Worn paths: the network published by its maker (VegetationField3D.make_game_trails), an Array of Dictionaries
+	// with "points" (PackedVector3Array or PackedVector2Array, world xz), "width" (m), "passes" (per year; or
+	// "passes_per_year") and "kind" ("game_trail"). set_trails() replaces the network and reports the old and new
+	// areas through stand_changed. trail_at() gives (passes per year of the busiest trail over the point, its tread
+	// share 0..1: 1 on the centre line, easing to 0 at the edge), (0, 0) off every trail.
+	void set_trails(const Array &p_trails);
+	Array get_trails() const { return trails; }
+	Vector2 trail_at(const Vector3 &p_position) const;
 	// The world's years pass: every event and strike ages (fire ages through its own producers).
 	void advance_years(float p_years);
 	// Changes, as WorldFire's burn changes (fire's are forwarded here too): signal stand_changed(area), a generation, and

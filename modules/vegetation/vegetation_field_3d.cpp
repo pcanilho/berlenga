@@ -633,6 +633,8 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 	r_setup.stand_kind.clear();
 	r_setup.browse_rules.clear();
 	r_setup.stand_browse.clear();
+	r_setup.rooting_rules.clear();
+	r_setup.stand_rooting.clear();
 	r_setup.stand_nx = 0;
 	r_setup.stand_ny = 0;
 	const WorldStand *stand = WorldContracts::stand();
@@ -667,6 +669,12 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 					r_setup.browse_rules.push_back(br);
 				}
 			}
+			if (sp.is_valid() && sp->uses_rooting() && b == biome) {
+				const Vector3 rr = sp->get_rooting_rule();
+				if (r_setup.rooting_rules.find(rr) < 0) {
+					r_setup.rooting_rules.push_back(rr);
+				}
+			}
 			if (sp.is_null() || !sp->uses_stand()) {
 				continue;
 			}
@@ -679,8 +687,8 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 	}
 	_read_strikes(r_setup);
 	_read_browse(r_setup);
-	stand_follow = !r_setup.stand_rules.is_empty() || !r_setup.browse_rules.is_empty() || strike_follow || browse_follow;
-	if ((r_setup.stand_rules.is_empty() && r_setup.browse_rules.is_empty()) || !stand || !r_setup.rect.has_area()) {
+	stand_follow = !r_setup.stand_rules.is_empty() || !r_setup.browse_rules.is_empty() || !r_setup.rooting_rules.is_empty() || strike_follow || browse_follow;
+	if ((r_setup.stand_rules.is_empty() && r_setup.browse_rules.is_empty() && r_setup.rooting_rules.is_empty()) || !stand || !r_setup.rect.has_area()) {
 		return;
 	}
 	const Rect2 rect = r_setup.rect;
@@ -693,6 +701,10 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 	if (browse) {
 		r_setup.stand_browse.resize(nx * ny);
 	}
+	const bool rooting = !r_setup.rooting_rules.is_empty();
+	if (rooting) {
+		r_setup.stand_rooting.resize(nx * ny);
+	}
 	for (int z = 0; z < ny; z++) {
 		for (int x = 0; x < nx; x++) {
 			const Vector2 xz = rect.position + rect.size * Vector2(float(x) / (nx - 1), float(z) / (ny - 1));
@@ -701,6 +713,9 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 			r_setup.stand_kind[z * nx + x] = uint8_t(CLAMP(stand->disturbance_at(p), 0, 255));
 			if (browse) {
 				r_setup.stand_browse[z * nx + x] = stand->browse_at(p);
+			}
+			if (rooting) {
+				r_setup.stand_rooting[z * nx + x] = stand->rooting_age_at(p);
 			}
 		}
 	}
@@ -711,7 +726,7 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 
 // Deferred tree variants (trees.md 5bc): the kinds the setup's area needs (any burn, strike or browse over it) are
 // asked of each species' variant source; true when a species' meshes grew (its placements must be set up again).
-bool VegetationField3D::_realize_variants(const PlaceSetup &p_setup) {
+bool VegetationField3D::_realize_variants(const PlaceSetup &p_setup, bool p_wait, LocalVector<int> *r_grown) {
 	variants_waiting = false;
 	if (biome.is_null()) {
 		return false;
@@ -732,8 +747,14 @@ bool VegetationField3D::_realize_variants(const PlaceSetup &p_setup) {
 		if (!src) {
 			continue;
 		}
-		const int left = src->call(SNAME("request_variants"), sp, kinds);
-		grew = grew || left != kinds;
+		const int left = src->call(SNAME("request_variants"), sp, kinds, p_wait);
+		if (left != kinds) {
+			grew = true;
+			if (r_grown) {
+				r_grown->push_back(i);
+			}
+		}
+		variants_waiting = variants_waiting || (left != 0 && !p_wait);
 	}
 	return grew;
 }
@@ -893,7 +914,8 @@ Rect2 VegetationField3D::_update_stand(PlaceSetup &r_setup, const Rect2 &p_area)
 			const float age = stand->stand_age_at(p);
 			const int kind = CLAMP(stand->disturbance_at(p), 0, 255);
 			const float br = r_setup.stand_browse.is_empty() ? 0.0f : stand->browse_at(p);
-			if (r_setup.stand_differs(r_setup.stand_age[i], r_setup.stand_kind[i], age, kind) || (!r_setup.stand_browse.is_empty() && r_setup.browse_differs(r_setup.stand_browse[i], br))) {
+			const float ro = r_setup.stand_rooting.is_empty() ? -1.0f : stand->rooting_age_at(p);
+			if (r_setup.stand_differs(r_setup.stand_age[i], r_setup.stand_kind[i], age, kind) || (!r_setup.stand_browse.is_empty() && r_setup.browse_differs(r_setup.stand_browse[i], br)) || (!r_setup.stand_rooting.is_empty() && r_setup.rooting_differs(r_setup.stand_rooting[i], ro))) {
 				const Rect2 c(xz - Vector2(cx, cz) * 0.5f, Vector2(cx, cz));
 				changed = changed.has_area() ? changed.merge(c) : c;
 			}
@@ -901,6 +923,9 @@ Rect2 VegetationField3D::_update_stand(PlaceSetup &r_setup, const Rect2 &p_area)
 			r_setup.stand_kind[i] = uint8_t(kind);
 			if (!r_setup.stand_browse.is_empty()) {
 				r_setup.stand_browse[i] = br;
+			}
+			if (!r_setup.stand_rooting.is_empty()) {
+				r_setup.stand_rooting[i] = ro;
 			}
 		}
 	}
@@ -920,6 +945,18 @@ int VegetationField3D::PlaceSetup::stand_cell(const Vector2 &p_xz) const {
 		return -1;
 	}
 	return z * stand_nx + x;
+}
+
+bool VegetationField3D::PlaceSetup::rooting_differs(float p_a0, float p_a1) const {
+	if (p_a0 == p_a1) {
+		return false;
+	}
+	for (const Vector3 &r : rooting_rules) {
+		if (PlantSpecies::rooting_weight(r, p_a0) != PlantSpecies::rooting_weight(r, p_a1)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 bool VegetationField3D::PlaceSetup::browse_differs(float p_b0, float p_b1) const {
@@ -1184,6 +1221,9 @@ bool VegetationField3D::_context_only(const PlantSpecies *p_sp) {
 	if (p_sp->uses_browse() && p_sp->rule_weight(PlantSpecies::RULE_BROWSE, 0.0f) <= 0.0f) {
 		return true; // Only where deer browse.
 	}
+	if (p_sp->uses_rooting() && PlantSpecies::rooting_weight(p_sp->get_rooting_rule(), -1.0f) <= 0.0f) {
+		return true; // Only where boar rooted.
+	}
 	return false;
 }
 
@@ -1205,6 +1245,8 @@ void VegetationField3D::_copy_context(const PlaceSetup &p_setup) {
 	_copy_vector(context.stand_kind, p_setup.stand_kind);
 	_copy_vector(context.browse_rules, p_setup.browse_rules);
 	_copy_vector(context.stand_browse, p_setup.stand_browse);
+	_copy_vector(context.rooting_rules, p_setup.rooting_rules);
+	_copy_vector(context.stand_rooting, p_setup.stand_rooting);
 	context.stand_nx = p_setup.stand_nx;
 	context.stand_ny = p_setup.stand_ny;
 	context.stand_rect = p_setup.stand_rect;
@@ -1234,6 +1276,9 @@ float VegetationField3D::_context_weight(const PlantSpecies *p_sp, const Vector2
 	}
 	if (w > 0.0f && p_sp->uses_browse()) {
 		w *= p_sp->rule_weight(PlantSpecies::RULE_BROWSE, context.browse_cell(context.stand_cell(p_xz)));
+	}
+	if (w > 0.0f && p_sp->uses_rooting()) {
+		w *= PlantSpecies::rooting_weight(p_sp->get_rooting_rule(), context.rooting_cell(context.stand_cell(p_xz)));
 	}
 	if (w > 0.0f && p_sp->uses_forest_edge()) {
 		Vector2 r;
@@ -1314,6 +1359,202 @@ float VegetationField3D::get_species_range(int p_species) const {
 	return _species_range(biome->get_species()[p_species], VegetationDetail::pixel_angle(this, detail_reference_height));
 }
 
+// One species' placement setup (part of _make_setup; also run again for a species whose meshes grew, trees.md 5bc).
+void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<PlantSpecies> &p_sp, real_t pixel) {
+	PlaceSpecies &ps = r_setup.species[s];
+	ps.sp = p_sp;
+	TerrainDataMap3D *map = r_setup.map;
+	if (ps.sp.is_null()) {
+		return;
+	}
+	ps.range = _species_range(ps.sp, pixel);
+	if (streaming && far_shell && !ps.sp->get_meshes().is_empty()) {
+		ps.far_albedo = _mesh_albedo(ps.sp->get_meshes()[0]);
+	}
+	// The far tail streams only (each tile's cells hold the ranks its distance keeps); small items keep their
+	// pixel reach.
+	ps.reach = streaming && far_reach > 1.0f && ps.range > 0.0f && ps.sp->get_detail_size() <= 0.0f ? ps.range * far_reach : ps.range;
+	const TypedArray<Mesh> meshes = ps.sp->get_meshes();
+	for (int i = 0; i < meshes.size(); i++) {
+		ps.meshes.push_back(meshes[i]);
+	}
+	const TypedArray<Mesh> near = ps.sp->get_near_meshes();
+	for (int i = 0; i < near.size(); i++) {
+		ps.near_meshes.push_back(near[i]);
+	}
+	ps.pattern = _get_pattern(ps.sp->get_spacing(), s); // A copy: the cache may grow.
+	ps.footprint = ps.sp->get_footprint();
+	r_setup.max_footprint = MAX(r_setup.max_footprint, ps.footprint);
+	const float canopy_r = ps.sp->get_canopy_radius();
+	if (canopy_r <= 0.0f) {
+		for (const Ref<Mesh> &m : ps.meshes) {
+			if (m.is_valid()) {
+				const AABB bb = m->get_aabb();
+				ps.spread = MAX(ps.spread, MAX(MAX(Math::abs(bb.position.x), Math::abs(bb.get_end().x)), MAX(Math::abs(bb.position.z), Math::abs(bb.get_end().z))));
+			}
+		}
+	}
+	if (canopy_r > 0.0f && ps.meshes.size() > 0 && ps.meshes[0].is_valid()) {
+		ps.canopy_top = ps.meshes[0]->get_aabb().get_end().y;
+		ps.stem_foot = _foot_radius(ps.meshes[0], ps.footprint > 0.0f ? ps.footprint : 1.0f);
+		ps.canopy_base = _crown_base(ps.meshes[0]);
+	}
+	ps.crown_max = canopy_r * MAX(ps.sp->get_scale_range().x, ps.sp->get_scale_range().y);
+	r_setup.crown_max = MAX(r_setup.crown_max, ps.crown_max);
+	// Trees shaped by the place (the trees module): flagged by the wind, and bank forms whose
+	// ground falls towards mesh +Z.
+	ps.wind_flag = bool(ps.sp->get_meta(SNAME("wind_flag"), false));
+	{
+		const Vector2 fd = ps.sp->get_meta(SNAME("fall_dir"), Vector2());
+		ps.fall_dir = fd.length_squared() > 1e-8f ? fd.normalized() : Vector2();
+		ps.fall_scatter = float(ps.sp->get_meta(SNAME("fall_scatter"), 0.0f));
+		ps.fall_water = float(ps.sp->get_meta(SNAME("fall_to_water"), 0.0f));
+	}
+	// Forest edge trees (trees' make_edge): low branches on one side, turned to face the open.
+	ps.open_side = Vector2();
+	for (const Ref<Mesh> &m : ps.meshes) {
+		if (m.is_valid() && m->has_meta(SNAME("tree_open_side"))) {
+			const Vector3 o = m->get_meta(SNAME("tree_open_side"));
+			const Vector2 o2(o.x, o.z);
+			ps.open_side = o2.length_squared() > 1e-8f ? o2.normalized() : Vector2();
+			break;
+		}
+	}
+	ps.far_widen = bool(ps.sp->get_meta(SNAME("far_widen"), false));
+	ps.far_hull_range = float(ps.sp->get_meta(SNAME("far_hull_range"), 0.0f));
+	if (ps.far_widen && bool(ps.sp->get_meta(SNAME("far_skyline"), true)) && !ps.meshes.is_empty() && ps.meshes[0].is_valid()) {
+		// Meta far_skyline = false: thinned on the skyline too.
+		ps.far_top = ps.meshes[0]->get_aabb().get_end().y;
+	}
+	{
+		bool any_bank = false;
+		for (const Ref<Mesh> &m : ps.meshes) {
+			any_bank = any_bank || (m.is_valid() && m->has_meta(SNAME("tree_ground_slope")));
+		}
+		if (any_bank) {
+			for (const Ref<Mesh> &m : ps.meshes) {
+				const Vector2 gs = m.is_valid() ? Vector2(m->get_meta(SNAME("tree_ground_slope"), Vector2())) : Vector2();
+				ps.bank_slopes.push_back(gs.x);
+			}
+		}
+	}
+	{
+		// Stilt-rooted trees (trees' wet forests): the mesh origin is the stem's foot on its tussock, the ground at
+		// the root tips lies tree_base_lift below it.
+		bool any_lift = false;
+		for (const Ref<Mesh> &m : ps.meshes) {
+			any_lift = any_lift || (m.is_valid() && m->has_meta(SNAME("tree_base_lift")));
+		}
+		if (any_lift) {
+			for (const Ref<Mesh> &m : ps.meshes) {
+				ps.base_lifts.push_back(m.is_valid() ? float(m->get_meta(SNAME("tree_base_lift"), 0.0f)) : 0.0f);
+			}
+		}
+	}
+	{
+		bool any_fire = false;
+		for (const Ref<Mesh> &m : ps.meshes) {
+			any_fire = any_fire || (m.is_valid() && m->has_meta(SNAME("tree_fire_years")));
+		}
+		if (any_fire) {
+			bool any_band = false;
+			for (const Ref<Mesh> &m : ps.meshes) {
+				const float fy = (m.is_valid() && m->has_meta(SNAME("tree_fire_years"))) ? float(m->get_meta(SNAME("tree_fire_years"))) : -1.0f;
+				ps.fire_years.push_back(fy);
+				ps.fire_years_max = MAX(ps.fire_years_max, fy);
+				any_band = any_band || (m.is_valid() && m->has_meta(SNAME("tree_fire_band")));
+			}
+			if (any_band) {
+				for (const Ref<Mesh> &m : ps.meshes) {
+					ps.fire_bands.push_back((m.is_valid() && m->has_meta(SNAME("tree_fire_band"))) ? Vector2(m->get_meta(SNAME("tree_fire_band"))) : Vector2(-1.0f, -1.0f));
+				}
+			}
+		}
+	}
+	{
+		// Struck variants (trees.md 5ax): their years since the strike, -1 for the others.
+		bool any_strike = false;
+		for (const Ref<Mesh> &m : ps.meshes) {
+			any_strike = any_strike || (m.is_valid() && m->has_meta(SNAME("tree_lightning_years")));
+		}
+		ps.strike_years.clear();
+		ps.strike_years_max = 0.0f;
+		if (any_strike) {
+			for (const Ref<Mesh> &m : ps.meshes) {
+				const float sy = (m.is_valid() && m->has_meta(SNAME("tree_lightning_years"))) ? float(m->get_meta(SNAME("tree_lightning_years"))) : -1.0f;
+				ps.strike_years.push_back(sy);
+				ps.strike_years_max = MAX(ps.strike_years_max, sy);
+			}
+		}
+		// Browsed variants (trees.md 5az): marked by mesh meta tree_browse.
+		ps.browsed.clear();
+		bool any_browse = false;
+		for (const Ref<Mesh> &m : ps.meshes) {
+			any_browse = any_browse || (m.is_valid() && m->has_meta(SNAME("tree_browse")));
+		}
+		if (any_browse) {
+			for (const Ref<Mesh> &m : ps.meshes) {
+				ps.browsed.push_back((m.is_valid() && m->has_meta(SNAME("tree_browse"))) ? 1 : 0);
+			}
+		}
+	}
+	ps.frontal = ps.sp->get_wind_frontal_area();
+	if (ps.frontal < 0.0f) {
+		ps.frontal = 0.0f;
+		if (ps.meshes.size() > 0 && ps.meshes[0].is_valid()) {
+			// A tuft's leaves hide about 0.4 of its outline (optical porosity 0.6, grasses).
+			const AABB bb = ps.meshes[0]->get_aabb();
+			ps.frontal = 0.4f * MAX(bb.get_end().y, 0.0f) * 0.5f * (bb.size.x + bb.size.z);
+		}
+	}
+	const Color far_srgb = ps.sp->get_far_color();
+	ps.far_color = Color(far_srgb.r, far_srgb.g, far_srgb.b).srgb_to_linear() * Color(1, 1, 1, 0) + Color(0, 0, 0, far_srgb.a);
+	// Fallen wood from the trees module: each mesh's axis (docs/ideas/forest-floor.md, 6.6).
+	if (bool(ps.sp->get_meta(SNAME("deadwood"), false))) {
+		const float smax = MAX(ps.sp->get_scale_range().x, ps.sp->get_scale_range().y);
+		for (const Ref<Mesh> &m : ps.meshes) {
+			PackedFloat32Array axis;
+			if (m.is_valid() && m->has_meta(SNAME("tree_deadwood_axis"))) {
+				axis = m->get_meta(SNAME("tree_deadwood_axis"));
+			}
+			if (axis.size() < 7) {
+				axis.clear();
+			} else {
+				const float reach = MAX(Vector3(axis[0], axis[1], axis[2]).length(), Vector3(axis[3], axis[4], axis[5]).length()) + axis[6];
+				ps.deadwood_reach = MAX(ps.deadwood_reach, reach * smax);
+			}
+			ps.deadwood_axes.push_back(axis);
+			ps.deadwood_features.push_back(m.is_valid() && m->has_meta(SNAME("tree_deadwood_features")) ? PackedFloat32Array(m->get_meta(SNAME("tree_deadwood_features"))) : PackedFloat32Array());
+			ps.deadwood_pits.push_back(m.is_valid() && m->has_meta(SNAME("tree_root_pit")) ? PackedFloat32Array(m->get_meta(SNAME("tree_root_pit"))) : PackedFloat32Array());
+		}
+	}
+	// A stone under the roots (trees.md 5q): the floor keeps clear of it as of a root pit. The
+	// bank shear only lifts the mesh, so its footprint across the ground holds.
+	{
+		const float smax = MAX(ps.sp->get_scale_range().x, ps.sp->get_scale_range().y);
+		bool any_stone = false;
+		for (const Ref<Mesh> &m : ps.meshes) {
+			PackedFloat32Array st;
+			if (m.is_valid() && m->has_meta(SNAME("tree_root_stone"))) {
+				st = m->get_meta(SNAME("tree_root_stone"));
+			}
+			if (st.size() >= 6) {
+				any_stone = true;
+				ps.stone_reach = MAX(ps.stone_reach, (Vector2(st[0], st[2]).length() + MAX(st[3], st[5]) + ROOT_STONE_MARGIN) * smax);
+			} else {
+				st.clear();
+			}
+			ps.root_stones.push_back(st);
+		}
+		if (!any_stone) {
+			ps.root_stones.clear();
+		}
+	}
+	if (ps.sp->get_deadwood_rule() == PlantSpecies::DEADWOOD_BESIDE) {
+		r_setup.deadwood_reach = MAX(r_setup.deadwood_reach, ps.sp->get_deadwood_band());
+	}
+}
+
 bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	_update_bark_detail(); // The species are final by now.
 	r_setup = PlaceSetup();
@@ -1392,7 +1633,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	}
 	_read_burn_age(r_setup);
 	_read_stand(r_setup);
-	_realize_variants(r_setup);
+	_realize_variants(r_setup, true);
 	r_setup.stone_tops = stone_top_grid;
 	r_setup.stone_top_normals = stone_top_grid_normals;
 	// Another field's crowns (canopy_field): a camera-local herb layer under a world forest.
@@ -1418,197 +1659,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	r_setup.species.resize(count);
 	const real_t pixel = VegetationDetail::pixel_angle(this, detail_reference_height);
 	for (int s = 0; s < count; s++) {
-		PlaceSpecies &ps = r_setup.species[s];
-		ps.sp = species_list[s];
-		if (ps.sp.is_null()) {
-			continue;
-		}
-		ps.range = _species_range(ps.sp, pixel);
-		if (streaming && far_shell && !ps.sp->get_meshes().is_empty()) {
-			ps.far_albedo = _mesh_albedo(ps.sp->get_meshes()[0]);
-		}
-		// The far tail streams only (each tile's cells hold the ranks its distance keeps); small items keep their
-		// pixel reach.
-		ps.reach = streaming && far_reach > 1.0f && ps.range > 0.0f && ps.sp->get_detail_size() <= 0.0f ? ps.range * far_reach : ps.range;
-		const TypedArray<Mesh> meshes = ps.sp->get_meshes();
-		for (int i = 0; i < meshes.size(); i++) {
-			ps.meshes.push_back(meshes[i]);
-		}
-		const TypedArray<Mesh> near = ps.sp->get_near_meshes();
-		for (int i = 0; i < near.size(); i++) {
-			ps.near_meshes.push_back(near[i]);
-		}
-		ps.pattern = _get_pattern(ps.sp->get_spacing(), s); // A copy: the cache may grow.
-		ps.footprint = ps.sp->get_footprint();
-		r_setup.max_footprint = MAX(r_setup.max_footprint, ps.footprint);
-		const float canopy_r = ps.sp->get_canopy_radius();
-		if (canopy_r <= 0.0f) {
-			for (const Ref<Mesh> &m : ps.meshes) {
-				if (m.is_valid()) {
-					const AABB bb = m->get_aabb();
-					ps.spread = MAX(ps.spread, MAX(MAX(Math::abs(bb.position.x), Math::abs(bb.get_end().x)), MAX(Math::abs(bb.position.z), Math::abs(bb.get_end().z))));
-				}
-			}
-		}
-		if (canopy_r > 0.0f && ps.meshes.size() > 0 && ps.meshes[0].is_valid()) {
-			ps.canopy_top = ps.meshes[0]->get_aabb().get_end().y;
-			ps.stem_foot = _foot_radius(ps.meshes[0], ps.footprint > 0.0f ? ps.footprint : 1.0f);
-			ps.canopy_base = _crown_base(ps.meshes[0]);
-		}
-		ps.crown_max = canopy_r * MAX(ps.sp->get_scale_range().x, ps.sp->get_scale_range().y);
-		r_setup.crown_max = MAX(r_setup.crown_max, ps.crown_max);
-		// Trees shaped by the place (the trees module): flagged by the wind, and bank forms whose
-		// ground falls towards mesh +Z.
-		ps.wind_flag = bool(ps.sp->get_meta(SNAME("wind_flag"), false));
-		{
-			const Vector2 fd = ps.sp->get_meta(SNAME("fall_dir"), Vector2());
-			ps.fall_dir = fd.length_squared() > 1e-8f ? fd.normalized() : Vector2();
-			ps.fall_scatter = float(ps.sp->get_meta(SNAME("fall_scatter"), 0.0f));
-			ps.fall_water = float(ps.sp->get_meta(SNAME("fall_to_water"), 0.0f));
-		}
-		// Forest edge trees (trees' make_edge): low branches on one side, turned to face the open.
-		ps.open_side = Vector2();
-		for (const Ref<Mesh> &m : ps.meshes) {
-			if (m.is_valid() && m->has_meta(SNAME("tree_open_side"))) {
-				const Vector3 o = m->get_meta(SNAME("tree_open_side"));
-				const Vector2 o2(o.x, o.z);
-				ps.open_side = o2.length_squared() > 1e-8f ? o2.normalized() : Vector2();
-				break;
-			}
-		}
-		ps.far_widen = bool(ps.sp->get_meta(SNAME("far_widen"), false));
-		ps.far_hull_range = float(ps.sp->get_meta(SNAME("far_hull_range"), 0.0f));
-		if (ps.far_widen && bool(ps.sp->get_meta(SNAME("far_skyline"), true)) && !ps.meshes.is_empty() && ps.meshes[0].is_valid()) {
-			// Meta far_skyline = false: thinned on the skyline too.
-			ps.far_top = ps.meshes[0]->get_aabb().get_end().y;
-		}
-		{
-			bool any_bank = false;
-			for (const Ref<Mesh> &m : ps.meshes) {
-				any_bank = any_bank || (m.is_valid() && m->has_meta(SNAME("tree_ground_slope")));
-			}
-			if (any_bank) {
-				for (const Ref<Mesh> &m : ps.meshes) {
-					const Vector2 gs = m.is_valid() ? Vector2(m->get_meta(SNAME("tree_ground_slope"), Vector2())) : Vector2();
-					ps.bank_slopes.push_back(gs.x);
-				}
-			}
-		}
-		{
-			// Stilt-rooted trees (trees' wet forests): the mesh origin is the stem's foot on its tussock, the ground at
-			// the root tips lies tree_base_lift below it.
-			bool any_lift = false;
-			for (const Ref<Mesh> &m : ps.meshes) {
-				any_lift = any_lift || (m.is_valid() && m->has_meta(SNAME("tree_base_lift")));
-			}
-			if (any_lift) {
-				for (const Ref<Mesh> &m : ps.meshes) {
-					ps.base_lifts.push_back(m.is_valid() ? float(m->get_meta(SNAME("tree_base_lift"), 0.0f)) : 0.0f);
-				}
-			}
-		}
-		{
-			bool any_fire = false;
-			for (const Ref<Mesh> &m : ps.meshes) {
-				any_fire = any_fire || (m.is_valid() && m->has_meta(SNAME("tree_fire_years")));
-			}
-			if (any_fire) {
-				bool any_band = false;
-				for (const Ref<Mesh> &m : ps.meshes) {
-					const float fy = (m.is_valid() && m->has_meta(SNAME("tree_fire_years"))) ? float(m->get_meta(SNAME("tree_fire_years"))) : -1.0f;
-					ps.fire_years.push_back(fy);
-					ps.fire_years_max = MAX(ps.fire_years_max, fy);
-					any_band = any_band || (m.is_valid() && m->has_meta(SNAME("tree_fire_band")));
-				}
-				if (any_band) {
-					for (const Ref<Mesh> &m : ps.meshes) {
-						ps.fire_bands.push_back((m.is_valid() && m->has_meta(SNAME("tree_fire_band"))) ? Vector2(m->get_meta(SNAME("tree_fire_band"))) : Vector2(-1.0f, -1.0f));
-					}
-				}
-			}
-		}
-		{
-			// Struck variants (trees.md 5ax): their years since the strike, -1 for the others.
-			bool any_strike = false;
-			for (const Ref<Mesh> &m : ps.meshes) {
-				any_strike = any_strike || (m.is_valid() && m->has_meta(SNAME("tree_lightning_years")));
-			}
-			ps.strike_years.clear();
-			ps.strike_years_max = 0.0f;
-			if (any_strike) {
-				for (const Ref<Mesh> &m : ps.meshes) {
-					const float sy = (m.is_valid() && m->has_meta(SNAME("tree_lightning_years"))) ? float(m->get_meta(SNAME("tree_lightning_years"))) : -1.0f;
-					ps.strike_years.push_back(sy);
-					ps.strike_years_max = MAX(ps.strike_years_max, sy);
-				}
-			}
-			// Browsed variants (trees.md 5az): marked by mesh meta tree_browse.
-			ps.browsed.clear();
-			bool any_browse = false;
-			for (const Ref<Mesh> &m : ps.meshes) {
-				any_browse = any_browse || (m.is_valid() && m->has_meta(SNAME("tree_browse")));
-			}
-			if (any_browse) {
-				for (const Ref<Mesh> &m : ps.meshes) {
-					ps.browsed.push_back((m.is_valid() && m->has_meta(SNAME("tree_browse"))) ? 1 : 0);
-				}
-			}
-		}
-		ps.frontal = ps.sp->get_wind_frontal_area();
-		if (ps.frontal < 0.0f) {
-			ps.frontal = 0.0f;
-			if (ps.meshes.size() > 0 && ps.meshes[0].is_valid()) {
-				// A tuft's leaves hide about 0.4 of its outline (optical porosity 0.6, grasses).
-				const AABB bb = ps.meshes[0]->get_aabb();
-				ps.frontal = 0.4f * MAX(bb.get_end().y, 0.0f) * 0.5f * (bb.size.x + bb.size.z);
-			}
-		}
-		const Color far_srgb = ps.sp->get_far_color();
-		ps.far_color = Color(far_srgb.r, far_srgb.g, far_srgb.b).srgb_to_linear() * Color(1, 1, 1, 0) + Color(0, 0, 0, far_srgb.a);
-		// Fallen wood from the trees module: each mesh's axis (docs/ideas/forest-floor.md, 6.6).
-		if (bool(ps.sp->get_meta(SNAME("deadwood"), false))) {
-			const float smax = MAX(ps.sp->get_scale_range().x, ps.sp->get_scale_range().y);
-			for (const Ref<Mesh> &m : ps.meshes) {
-				PackedFloat32Array axis;
-				if (m.is_valid() && m->has_meta(SNAME("tree_deadwood_axis"))) {
-					axis = m->get_meta(SNAME("tree_deadwood_axis"));
-				}
-				if (axis.size() < 7) {
-					axis.clear();
-				} else {
-					const float reach = MAX(Vector3(axis[0], axis[1], axis[2]).length(), Vector3(axis[3], axis[4], axis[5]).length()) + axis[6];
-					ps.deadwood_reach = MAX(ps.deadwood_reach, reach * smax);
-				}
-				ps.deadwood_axes.push_back(axis);
-				ps.deadwood_features.push_back(m.is_valid() && m->has_meta(SNAME("tree_deadwood_features")) ? PackedFloat32Array(m->get_meta(SNAME("tree_deadwood_features"))) : PackedFloat32Array());
-				ps.deadwood_pits.push_back(m.is_valid() && m->has_meta(SNAME("tree_root_pit")) ? PackedFloat32Array(m->get_meta(SNAME("tree_root_pit"))) : PackedFloat32Array());
-			}
-		}
-		// A stone under the roots (trees.md 5q): the floor keeps clear of it as of a root pit. The
-		// bank shear only lifts the mesh, so its footprint across the ground holds.
-		{
-			const float smax = MAX(ps.sp->get_scale_range().x, ps.sp->get_scale_range().y);
-			bool any_stone = false;
-			for (const Ref<Mesh> &m : ps.meshes) {
-				PackedFloat32Array st;
-				if (m.is_valid() && m->has_meta(SNAME("tree_root_stone"))) {
-					st = m->get_meta(SNAME("tree_root_stone"));
-				}
-				if (st.size() >= 6) {
-					any_stone = true;
-					ps.stone_reach = MAX(ps.stone_reach, (Vector2(st[0], st[2]).length() + MAX(st[3], st[5]) + ROOT_STONE_MARGIN) * smax);
-				} else {
-					st.clear();
-				}
-				ps.root_stones.push_back(st);
-			}
-			if (!any_stone) {
-				ps.root_stones.clear();
-			}
-		}
-		if (ps.sp->get_deadwood_rule() == PlantSpecies::DEADWOOD_BESIDE) {
-			r_setup.deadwood_reach = MAX(r_setup.deadwood_reach, ps.sp->get_deadwood_band());
-		}
+		_setup_species(r_setup, s, species_list[s], pixel);
 	}
 	// Halo: how far around a tile each species must be placed for the tile to come out exactly
 	// as in one placement of the whole map. Only earlier species act on later ones (footprints
@@ -2054,6 +2105,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		}
 		const bool stand_rule = !p_setup.stand_rules.is_empty() && sp->uses_stand();
 		const bool browse_rule = sp->uses_browse();
+		const bool rooting_rule = sp->uses_rooting();
+		const Vector3 rooting_r = sp->get_rooting_rule();
 		Vector2 stand_age_r, stand_kind_r;
 		float stand_age_f = 0.0f, stand_kind_f = 0.0f;
 		if (stand_rule) {
@@ -2290,6 +2343,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (browse_rule && suit > 0.0f) {
 						// Deer browsing pressure (0 where none is known).
 						suit *= sp->rule_weight(PlantSpecies::RULE_BROWSE, p_setup.browse_cell(p_setup.stand_cell(xz)));
+					}
+					if (rooting_rule && suit > 0.0f) {
+						// Boar rooting: years since the soil was turned (-1 never).
+						suit *= PlantSpecies::rooting_weight(rooting_r, p_setup.rooting_cell(p_setup.stand_cell(xz)));
 					}
 					if (!sand_plant && suit > 0.0f && !p_setup.sea_depth.is_empty()) {
 						// Desert sand seas: only sand plants (RULE_SAND_MOBILITY) root in their loose sand; the rest
@@ -4914,7 +4971,40 @@ void VegetationField3D::set_obstacles(const PackedVector4Array &p_obstacles) {
 
 void VegetationField3D::set_paths(const Array &p_paths) {
 	paths = p_paths;
-	path_grid.build(paths);
+	path_grid.build(VegetationPaths::merged(paths, world_trails));
+}
+
+// Game trails (WorldStand.set_trails, from make_game_trails): worn like the field's own paths.
+void VegetationField3D::_read_world_trails() {
+	const WorldStand *stand = WorldContracts::stand();
+	if (!stand) {
+		return;
+	}
+	trails_seen = stand->get_stand_generation();
+	const Array now = stand->get_trails();
+	if (now == world_trails) {
+		return;
+	}
+	const Rect2 old_r = VegetationPaths::bounds(world_trails, 4.0f);
+	const Rect2 new_r = VegetationPaths::bounds(now, 4.0f);
+	world_trails = now.duplicate(true);
+	path_grid.build(VegetationPaths::merged(paths, world_trails));
+	const Rect2 area = old_r.has_area() ? (new_r.has_area() ? old_r.merge(new_r) : old_r) : new_r;
+	if (area.has_area() && (streaming || plant_count > 0)) {
+		_on_holes_changed(area); // Placed again where the trails came or went.
+	}
+}
+
+void VegetationField3D::_follow_trails(double p_delta) {
+	trails_check -= p_delta;
+	if (trails_check > 0.0) {
+		return;
+	}
+	trails_check = 0.5;
+	const WorldStand *stand = WorldContracts::stand();
+	if (stand && stand->get_stand_generation() != trails_seen) {
+		_read_world_trails();
+	}
 }
 
 void VegetationField3D::set_stone_tops(const PackedVector4Array &p_tops) {
@@ -6101,6 +6191,7 @@ void VegetationField3D::_notification(int p_what) {
 			}
 			add_to_group(SNAME("vegetation_crop_aware"));
 			_update_bark_detail();
+			_read_world_trails();
 			TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
 			if (map) {
 				// Repopulate whenever the map is baked again (terrain edits).
@@ -6135,14 +6226,42 @@ void VegetationField3D::_notification(int p_what) {
 			}
 			_follow_burns(get_process_delta_time());
 			_follow_stand(get_process_delta_time());
+			_follow_trails(get_process_delta_time());
 			if (variants_waiting && streaming && stream_setup_valid && stream_jobs.is_empty()) {
-				// A new burn, strike or browse disc (trees.md 5bc): deferred variants it needs are grown, and the field
-				// streams again with them.
+				// A new burn, strike or browse disc (trees.md 5bc): deferred variants it needs grow on a worker; once in,
+				// the field streams again with them.
 				variants_check -= get_process_delta_time();
 				if (variants_check <= 0.0) {
 					variants_check = 0.25;
-					if (_realize_variants(stream_setup)) {
-						_stream_clear();
+					LocalVector<int> grown;
+					const bool grew_now = _realize_variants(stream_setup, false, &grown);
+					if (grew_now) {
+						// Only the grown species are set up again (their meshes and variant tables; their place in
+						// the order and their halos stay), and every tile is placed again, the old one showing until
+						// its replacement is in, so nothing blinks out and the frame is not held for a whole setup.
+						const real_t pixel = VegetationDetail::pixel_angle(this, detail_reference_height);
+						for (int s : grown) {
+							if (s >= int(stream_setup.species.size())) {
+								continue;
+							}
+							PlaceSpecies &old = stream_setup.species[s];
+							const int nebkha_slot = old.nebkha_slot;
+							const bool desert_shrub = old.desert_shrub;
+							const Vector2 colonnade = old.colonnade;
+							const float halo = old.halo;
+							const Ref<PlantSpecies> sp = old.sp;
+							stream_setup.species[s] = PlaceSpecies();
+							_setup_species(stream_setup, s, sp, pixel);
+							PlaceSpecies &ps = stream_setup.species[s];
+							ps.nebkha_slot = nebkha_slot;
+							ps.desert_shrub = desert_shrub;
+							ps.colonnade = colonnade;
+							ps.halo = halo;
+						}
+						_copy_context(stream_setup);
+						for (KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+							kv.value->stale = true;
+						}
 					}
 				}
 			}
@@ -6335,6 +6454,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_light_at", "global_position"), &VegetationField3D::get_light_at);
 	ClassDB::bind_method(D_METHOD("get_stand_shade_at", "global_position"), &VegetationField3D::get_stand_shade_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_floor_shader_code"), &VegetationField3D::get_floor_shader_code);
+	ClassDB::bind_static_method("VegetationField3D", D_METHOD("make_game_trails", "data_map", "area", "goals", "options"), &VegetationField3D::make_game_trails, DEFVAL(Dictionary()));
 	ClassDB::bind_method(D_METHOD("set_forest_floor_enabled", "enabled"), &VegetationField3D::set_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("is_forest_floor_enabled"), &VegetationField3D::is_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("get_conifer_at", "global_position"), &VegetationField3D::get_conifer_at);

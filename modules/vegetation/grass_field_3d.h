@@ -392,6 +392,10 @@ private:
 	int graze_nx = 0;
 	int graze_ny = 0;
 	uint64_t graze_seen = 0; // WorldStand.get_stand_generation() the texture holds.
+	Array world_trails; // WorldStand.get_trails() as last read: worn with paths.
+	uint64_t trails_seen = 0;
+	uint64_t trails_follow_usec = 0;
+	bool _read_world_trails();
 	bool graze_any = false;
 	void _read_graze(TerrainDataMap3D *p_map);
 	void _publish_graze();

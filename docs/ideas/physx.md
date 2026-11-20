@@ -2309,6 +2309,25 @@ On snow's bench, the darkest point along the cloud's lower edge
 (averaged over the edge): 161 -> 167 against a body of 175, a dip of 8,
 as under PT (180 against 188).
 
+### Raster powder: the slab edge, the lower rim with TAA, and the body gap (20 Nov)
+
+Docs' notes on v18. The ruler-straight left edge and flat top are the
+release slab's flank and crown walls in front of the gas: they show at
+the same place in the gas-hidden render and under PT. Not clipping at the
+grid box. Fixed on the way: a ground sample off the sun's map (fitted to
+the gas, not the box) counted as lit; now skipped.
+
+Lower rim, with TAA on (rocks' tip; snow's bench --taa): the dotted
+look is per-pixel shadow and dither noise and smooths out. The darkest
+point along the lower edge sits 8 below the body (174 -> 166), PT 6
+(190.6 -> 184.5).
+
+Body gap (raster 175 vs PT 188): about 4% is the scene (the plain snow
+next to the cloud: raster 187, PT 194). About 3% is the gas model (a
+white, front-lit block of powder: raster 177, PT 182). Raising the
+octave falloff q from 0.68 to 0.70 closes the gas part on the bench but
+puts the dense test puff 4.9% over PT; kept at 0.68 pending a pick.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

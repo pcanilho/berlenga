@@ -1580,6 +1580,32 @@ angular plates leaning into each hole, steps between neighbours that tipped diff
   stay the field's ramps); separate steps each get theirs.
 - `--test=crust` adds the plates' check; `--view=trail --prints-close --crust=1` shows them.
 
+## Follow-up 39: surface hoar (round 5, 20 Nov 2026)
+
+Research: hoar grows when the surface radiates below the air's frost point on a clear night with a light wind
+(Hachikubo and Akitaya 1997; Colbeck 1988); the deposition is a bulk vapour flux,
+E = rho_air C_E U 0.622 (RH e_w(T_air) - e_i(T_s)) / p, the surface's deficit set by net longwave against the
+turbulent and pack heat flux (Andreas 1987 for C_E over snow). Wind over about 5 m/s at 10 m breaks the crystals.
+Buried, it is the classic persistent weak layer, its shear strength rising with age and falling with crystal
+size, (400 + 35 days) sqrt(5 / mm) Pa (Jamieson and Schweizer 2000).
+
+- `SnowCover3D.hoar_enabled` (on): per cell, the surface's cooling deficit is (70 W/m2 (1 - 0.95 N^2) - absorbed
+  shortwave) / (rho cp C_E U + 5 W/m2K), with C_E 0.0015 and U at 2 m = max(0.75 U10, 0.3); the crystals grow
+  70 mm per kg/m2 deposited, to 30 mm. Wind of 5 m/s breaks them (e-folding 0.5 h); rain, melt, air above 0.5 C
+  or drifting snow clears them.
+- New snow buries them as a layer (the newest, unless an older shallow one is larger). It settles with the pack,
+  melt erodes the burial, dropped after 1000 h. `get_hoar_at`, `get_buried_hoar_at`, `_depth_at`, `_age_at`,
+  static `hoar_deposition` and `buried_hoar_strength`.
+- Avalanches read the buried layer as a weak layer in release and in the skier trigger (no collapse propagation
+  yet).
+- The look: the catch map's alpha is 1 + mm / 10. `snow_glint` and `snow_grain_facet` take the hoar (one function
+  in BaseMaterial3D's snow pass, `SnowSurface3D` and the path tracer): the cell grows to the crystal (0.6 of its
+  size), the share of mirror faces from 0.25 to 0.35, and a share (full above 4 mm) of the facets are plates set every way,
+  their normals spread evenly up to 60 degrees off the snow's: fewer, larger, brighter glints from any sun. Trodden snow and the
+  ground under a roof have none.
+- `--test=hoar` (11 checks: clear calm night grows, wind, cloud, dry air and day do not, burial, weak layer, skier
+  load, strength by age); `--view=sparkle --hoar=MM` for the look.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

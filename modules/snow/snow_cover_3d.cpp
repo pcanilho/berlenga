@@ -181,7 +181,7 @@ void SnowCover3D::_allocate() {
 	cell_canopy.fill(0.0f);
 	cell_canopy_load.resize(nn);
 	cell_canopy_load.fill(0.0f);
-	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in }) {
+	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in }) {
 		f->resize(nn);
 		f->fill(0.0f);
 	}
@@ -315,7 +315,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
 	// where there is one, else the state of the nearest cell that was inside it.
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
+	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
@@ -667,6 +667,7 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				cell_crust_cycles.write[i] = 0.0f;
 				cell_crust_burial.write[i] = 0.0f;
 				cell_crust_wet.write[i] = 0.0f;
+				_clear_hoar(i);
 				continue;
 			}
 		}
@@ -729,6 +730,7 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			cell_crust_cycles.write[i] = 0.0f;
 			cell_crust_burial.write[i] = 0.0f;
 			cell_crust_wet.write[i] = 0.0f;
+			_clear_hoar(i);
 			continue;
 		}
 		const float liq_before = liq;
@@ -837,6 +839,9 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				cell_white_ice.write[i] = MIN(cell_white_ice[i] + grown, ice);
 			}
 		}
+		if (hoar_enabled && cell_hoar.size() == n * n) {
+			_update_hoar(i, pos, t, snow, rain, surface_melt, rho_before, rho, swe, in);
+		}
 		cell_crust.write[i] = crust;
 		cell_crust_cycles.write[i] = cycles;
 		// The snow over the crust settles with the pack.
@@ -898,6 +903,121 @@ void SnowCover3D::_update_crust(float &r_crust, float &r_cycles, float &r_burial
 			r_wet = 0.0f;
 		}
 	}
+}
+
+// Surface hoar (docs/ideas/snow.md, round 5). On a clear night the snow radiates about 70 W/m2 more than the sky
+// gives back (less under cloud, by 1 - 0.95 N^2: an overcast sky gives back nearly all); the air's heat (bulk transfer, rho cp C U) and the pack's
+// (about 5 W/m2 K) hold its surface that much below the air, and the shortwave it absorbs by day warms it back. Below
+// the air's frost point vapour deposits on it, E = rho C_E U (q_air - q_sat,ice(Ts)) (bulk transfer, C_E 0.0015 over
+// snow); the crystals grow as feathery plates and cups, a few millimetres a night, up to centimetres over clear calm
+// nights in a humid layer (Hachikubo and Akitaya 1997; Colbeck 1988). A light wind feeds them; above about 5 m/s at
+// 10 m it breaks them, sun or rain that wets the surface destroys them, a drifting wind sweeps them off.
+static constexpr float HOAR_LONGWAVE = 70.0f; // W/m2, clear-sky net loss of a snow surface at night
+static constexpr float HOAR_PACK = 5.0f; // W/m2 K, the pack's heat toward its cooling surface
+static constexpr float HOAR_CE = 0.0015f; // bulk transfer coefficient over snow (heat and vapour)
+static constexpr float HOAR_MM_PER_KG = 70.0f; // crystal height per kg/m2 deposited (a 0.07 kg/m2 night: 5 mm)
+static constexpr float HOAR_MAX = 30.0f; // mm
+static constexpr float HOAR_BREAK_WIND = 5.0f; // m/s at 10 m
+static constexpr float HOAR_MIN = 0.5f; // mm: smaller crystals do not make a layer
+static constexpr float HOAR_KEEP_HOURS = 1000.0f; // a buried layer counts as weak for about six weeks
+
+static float _vapour_ice(float p_celsius) { // Pa, over ice (Buck 1981)
+	return 611.15f * Math::exp(22.452f * p_celsius / (272.55f + p_celsius));
+}
+static float _vapour_water(float p_celsius) { // Pa, over water (Buck 1981)
+	return 611.21f * Math::exp(17.502f * p_celsius / (240.97f + p_celsius));
+}
+
+float SnowCover3D::hoar_deposition(float p_air_celsius, float p_humidity, float p_wind, float p_cloud, float p_shortwave, float &r_surface_celsius) {
+	const float u = MAX(0.75f * p_wind, 0.3f); // at 2 m, still air never quite still
+	const float h_air = 1.29f * 1005.0f * HOAR_CE * u; // W/m2 K
+	const float n = CLAMP(p_cloud, 0.0f, 1.0f);
+	const float deficit = MAX((HOAR_LONGWAVE * (1.0f - 0.95f * n * n) - MAX(p_shortwave, 0.0f)) / (h_air + HOAR_PACK), 0.0f);
+	r_surface_celsius = MIN(p_air_celsius - deficit, 0.0f);
+	const float e_air = CLAMP(p_humidity, 0.0f, 1.0f) * _vapour_water(p_air_celsius);
+	const float e_surf = _vapour_ice(r_surface_celsius);
+	return 1.29f * HOAR_CE * u * 0.622f * (e_air - e_surf) / 101325.0f * 3600.0f; // kg/m2/h
+}
+
+float SnowCover3D::hoar_deposition_rate(float p_air_celsius, float p_humidity, float p_wind, float p_cloud, float p_shortwave) {
+	float ts;
+	return hoar_deposition(p_air_celsius, p_humidity, p_wind, p_cloud, p_shortwave, ts);
+}
+
+float SnowCover3D::buried_hoar_strength(float p_size_mm, float p_age_hours) {
+	// Jamieson and Schweizer (2000): buried surface hoar holds about 0.3-0.8 kPa when buried, less the larger its
+	// crystals, and gains strength slowly, some tens of Pa a day, staying weak for weeks.
+	return (400.0f + 35.0f * MAX(p_age_hours, 0.0f) / 24.0f) * Math::sqrt(5.0f / MAX(p_size_mm, 1.0f));
+}
+
+void SnowCover3D::_clear_hoar(int p_i) {
+	if (cell_hoar.size() > p_i) {
+		cell_hoar.write[p_i] = 0.0f;
+		cell_hoar_layer.write[p_i] = 0.0f;
+		cell_hoar_burial.write[p_i] = 0.0f;
+		cell_hoar_age.write[p_i] = 0.0f;
+	}
+}
+
+void SnowCover3D::_update_hoar(int p_i, const Vector3 &p_pos, float p_air, float p_snow, float p_rain, float p_melt, float p_rho_before, float p_rho, float p_swe, const Inputs &p_in) {
+	float hoar = cell_hoar[p_i];
+	float layer = cell_hoar_layer[p_i];
+	float burial = cell_hoar_burial[p_i];
+	float age = cell_hoar_age[p_i];
+	if (p_swe <= SWE_MIN) {
+		_clear_hoar(p_i);
+		return;
+	}
+	// New snow buries the crystals: the newest layer, unless an older one lies shallow and has larger crystals.
+	if (p_snow > 0.0f) {
+		const float d = p_snow / new_snow_density(p_air);
+		if (hoar >= HOAR_MIN && (layer <= 0.0f || hoar >= 0.5f * layer || burial > 1.0f)) {
+			layer = hoar;
+			burial = d;
+			age = 0.0f;
+		} else if (layer > 0.0f) {
+			burial += d;
+		}
+		hoar = 0.0f;
+	}
+	if (layer > 0.0f) {
+		age += p_in.dt_h;
+		burial *= p_rho_before / MAX(p_rho, 30.0f); // settles with the pack
+		burial -= p_melt / MAX(p_rho, 30.0f); // melt works down to it; wet through, it is gone
+		if (burial <= 0.0f || age > HOAR_KEEP_HOURS) {
+			layer = burial = age = 0.0f;
+		}
+	}
+	// The surface: growth, sublimation, breaking.
+	const float u10 = last_wind.length();
+	if (p_rain > 0.0f || p_melt > 0.0f || p_air > 0.5f || p_in.wind_factor > 0.0f) {
+		hoar = 0.0f; // wet, or swept off by drifting snow
+	} else {
+		float cloud = 0.0f;
+		float sw = 0.0f;
+		if (p_in.wx.valid) {
+			cloud = p_in.wx.cloud_cover_at(p_pos);
+		}
+		if (p_in.direct_normal > 0.0f && p_in.sun_dir.y > 0.0f) {
+			const float vis = p_in.wx.valid ? (p_in.wx.has_sun ? p_in.wx.sun_visibility_at(p_pos) : 1.0f - 0.75f * Math::pow(cloud, 3.4f)) : 1.0f;
+			sw = (1.0f - cell_albedo[p_i]) * p_in.direct_normal * p_in.sun_dir.y * (vis + DIFFUSE_SHARE);
+		}
+		float ts;
+		const float e = hoar_deposition(p_air, p_in.humidity, u10, cloud, sw, ts);
+		if (e > 0.0f && u10 < HOAR_BREAK_WIND) {
+			hoar += e * p_in.dt_h * HOAR_MM_PER_KG;
+		} else if (e < 0.0f) {
+			hoar += e * p_in.dt_h * HOAR_MM_PER_KG; // sublimates in the dry or the sun
+		}
+		if (u10 >= HOAR_BREAK_WIND) {
+			hoar *= Math::exp(-p_in.dt_h / 0.5f);
+		}
+		hoar = CLAMP(hoar, 0.0f, HOAR_MAX);
+	}
+	cell_hoar.write[p_i] = hoar;
+	cell_hoar_layer.write[p_i] = layer;
+	cell_hoar_burial.write[p_i] = burial;
+	cell_hoar_age.write[p_i] = age;
 }
 
 float SnowCover3D::crust_strength(float p_cycles, float p_thickness) {
@@ -1529,6 +1649,10 @@ void SnowCover3D::_update_cells(bool p_parallel) {
 	cell_crust_cycles.ptrw();
 	cell_crust_burial.ptrw();
 	cell_crust_wet.ptrw();
+	cell_hoar.ptrw();
+	cell_hoar_layer.ptrw();
+	cell_hoar_burial.ptrw();
+	cell_hoar_age.ptrw();
 	cell_new_depth.ptrw();
 	cell_canopy_load.ptrw();
 	cell_cornice_x.ptrw();
@@ -1609,6 +1733,10 @@ void SnowCover3D::_publish_cells() {
 	pub.crust_cycles = cell_crust_cycles;
 	pub.crust_burial = cell_crust_burial;
 	pub.crust_wet = cell_crust_wet;
+	pub.hoar = cell_hoar;
+	pub.hoar_layer = cell_hoar_layer;
+	pub.hoar_burial = cell_hoar_burial;
+	pub.hoar_age = cell_hoar_age;
 	pub.cornice_x = cell_cornice_x;
 	pub.cornice_z = cell_cornice_z;
 	pub.cornice_crack = cell_cornice_crack;
@@ -1703,8 +1831,8 @@ void SnowCover3D::_build_upload() {
 		w[i * 4 + 3] = Math::make_half_float(cell_density[i] / 1000.0f);
 	}
 	upload_snow = Image::create_from_data(n, n, false, Image::FORMAT_RGBAH, bytes);
-	// The catch map: the height of the surface the pack lies on, the canopy's load over its capacity, and
-	// the canopy closure. Materials leave what lies under an overhang bare and give tree crowns their load.
+	// The catch map: the height of the surface the pack lies on, the canopy's load over its capacity, the
+	// canopy closure and the surface hoar. Materials leave what lies under an overhang bare and give tree crowns their load.
 	if (catch_image.is_valid() && catch_image->get_width() == n) {
 		Vector<uint8_t> cb;
 		cb.resize(n * n * 16);
@@ -1715,7 +1843,9 @@ void SnowCover3D::_build_upload() {
 			cw[i * 4 + 0] = cell_ground[i];
 			cw[i * 4 + 1] = cap > 0.0f ? CLAMP(cell_canopy_load[i] / cap, 0.0f, 1.0f) : 0.0f;
 			cw[i * 4 + 2] = closure;
-			cw[i * 4 + 3] = 1.0f;
+			// Alpha: 1 marks the map valid; above it, the surface hoar's crystals in centimetres (materials draw
+			// their glints larger, round 5).
+			cw[i * 4 + 3] = 1.0f + (cell_hoar.size() == n * n ? cell_hoar[i] * 0.1f : 0.0f);
 		}
 		upload_catch = Image::create_from_data(n, n, false, Image::FORMAT_RGBAF, cb);
 	}
@@ -1982,6 +2112,7 @@ void SnowCover3D::_setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_reso
 	melt_shortwave_factor = owner->melt_shortwave_factor;
 	liquid_capacity = owner->liquid_capacity;
 	crust_enabled = owner->crust_enabled;
+	hoar_enabled = owner->hoar_enabled;
 	slide_enabled = owner->slide_enabled;
 	lake_ice_enabled = owner->lake_ice_enabled;
 	slide_angle = owner->slide_angle;
@@ -2634,6 +2765,18 @@ void SnowCover3D::add_snow(float p_swe_mm, float p_density) {
 		if (cell_crust.size() == cell_swe.size() && cell_crust[i] > 0.0f) {
 			cell_crust_burial.write[i] += MAX(p_swe_mm, 0.0f) / rho_new;
 		}
+		if (cell_hoar.size() == cell_swe.size() && p_swe_mm > 0.0f) {
+			// The new snow buries the surface hoar (as an update's snowfall does).
+			const float d = p_swe_mm / rho_new;
+			if (cell_hoar[i] >= HOAR_MIN && (cell_hoar_layer[i] <= 0.0f || cell_hoar[i] >= 0.5f * cell_hoar_layer[i] || cell_hoar_burial[i] > 1.0f)) {
+				cell_hoar_layer.write[i] = cell_hoar[i];
+				cell_hoar_burial.write[i] = d;
+				cell_hoar_age.write[i] = 0.0f;
+			} else if (cell_hoar_layer[i] > 0.0f) {
+				cell_hoar_burial.write[i] += d;
+			}
+			cell_hoar.write[i] = 0.0f;
+		}
 	}
 	last_step_hours = 0.0f;
 	last_drift = 0.0f;
@@ -2760,6 +2903,42 @@ void SnowCover3D::add_crust(float p_thickness, float p_cycles) {
 		cell_crust_cycles.write[i] = on ? p_cycles : 0.0f;
 		cell_crust_burial.write[i] = 0.0f;
 		cell_crust_wet.write[i] = 0.0f;
+	}
+	update_count++;
+	_publish_cells();
+}
+
+float SnowCover3D::get_hoar_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_hoar_at(p_position);
+	}
+	return pub.hoar.is_empty() ? 0.0f : _sample(pub.hoar, Vector2(p_position.x, p_position.z));
+}
+
+float SnowCover3D::get_buried_hoar_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_buried_hoar_at(p_position);
+	}
+	return pub.hoar_layer.is_empty() ? 0.0f : _sample(pub.hoar_layer, Vector2(p_position.x, p_position.z));
+}
+
+float SnowCover3D::get_buried_hoar_depth_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_buried_hoar_depth_at(p_position);
+	}
+	return pub.hoar_burial.is_empty() ? 0.0f : _sample(pub.hoar_burial, Vector2(p_position.x, p_position.z));
+}
+
+float SnowCover3D::get_buried_hoar_age_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_buried_hoar_age_at(p_position);
+	}
+	return pub.hoar_age.is_empty() ? 0.0f : _sample(pub.hoar_age, Vector2(p_position.x, p_position.z)) / 24.0f;
+}
+
+void SnowCover3D::add_hoar(float p_size_mm) {
+	for (int i = 0; i < cell_hoar.size(); i++) {
+		cell_hoar.write[i] = cell_swe[i] > SWE_MIN ? CLAMP(p_size_mm, 0.0f, HOAR_MAX) : 0.0f;
 	}
 	update_count++;
 	_publish_cells();
@@ -3138,6 +3317,10 @@ void SnowCover3D::set_crust_enabled(bool p_enabled) {
 	crust_enabled = p_enabled;
 }
 
+void SnowCover3D::set_hoar_enabled(bool p_enabled) {
+	hoar_enabled = p_enabled;
+}
+
 void SnowCover3D::set_slide_enabled(bool p_enabled) {
 	slide_enabled = p_enabled;
 }
@@ -3326,6 +3509,15 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_crust_depth_at", "position"), &SnowCover3D::get_crust_depth_at);
 	ClassDB::bind_method(D_METHOD("get_crust_cycles_at", "position"), &SnowCover3D::get_crust_cycles_at);
 	ClassDB::bind_method(D_METHOD("get_crust_strength_at", "position"), &SnowCover3D::get_crust_strength_at);
+	ClassDB::bind_method(D_METHOD("get_hoar_at", "position"), &SnowCover3D::get_hoar_at);
+	ClassDB::bind_method(D_METHOD("get_buried_hoar_at", "position"), &SnowCover3D::get_buried_hoar_at);
+	ClassDB::bind_method(D_METHOD("get_buried_hoar_depth_at", "position"), &SnowCover3D::get_buried_hoar_depth_at);
+	ClassDB::bind_method(D_METHOD("get_buried_hoar_age_at", "position"), &SnowCover3D::get_buried_hoar_age_at);
+	ClassDB::bind_method(D_METHOD("add_hoar", "size_mm"), &SnowCover3D::add_hoar);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("buried_hoar_strength", "size_mm", "age_hours"), &SnowCover3D::buried_hoar_strength);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("hoar_deposition", "air_celsius", "humidity", "wind", "cloud", "shortwave"), &SnowCover3D::hoar_deposition_rate);
+	ClassDB::bind_method(D_METHOD("set_hoar_enabled", "enabled"), &SnowCover3D::set_hoar_enabled);
+	ClassDB::bind_method(D_METHOD("is_hoar_enabled"), &SnowCover3D::is_hoar_enabled);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("crust_strength", "cycles", "thickness"), &SnowCover3D::crust_strength);
 	ClassDB::bind_method(D_METHOD("add_crust", "thickness", "cycles"), &SnowCover3D::add_crust);
 	ClassDB::bind_method(D_METHOD("set_crust_enabled", "enabled"), &SnowCover3D::set_crust_enabled);
@@ -3424,6 +3616,7 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "melt_shortwave_factor", PROPERTY_HINT_RANGE, "0,0.1,0.0001"), "set_melt_shortwave_factor", "get_melt_shortwave_factor");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "liquid_capacity", PROPERTY_HINT_RANGE, "0,0.5,0.01"), "set_liquid_capacity", "get_liquid_capacity");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "crust_enabled"), "set_crust_enabled", "is_crust_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hoar_enabled"), "set_hoar_enabled", "is_hoar_enabled");
 	ADD_GROUP("Slide", "slide_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "slide_enabled"), "set_slide_enabled", "is_slide_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "slide_interval", PROPERTY_HINT_RANGE, "0,86400,1,suffix:s"), "set_slide_interval", "get_slide_interval");

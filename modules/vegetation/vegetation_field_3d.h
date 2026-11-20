@@ -146,7 +146,12 @@ private:
 	PackedVector4Array obstacles;
 	VegetationObstacles obstacle_grid;
 	Array paths; // Worn paths (VegetationPaths): Dictionaries of points, width, passes a year.
-	VegetationPaths path_grid;
+	VegetationPaths path_grid; // paths and the world's game trails.
+	Array world_trails; // WorldStand.get_trails() as last read.
+	uint64_t trails_seen = 0;
+	double trails_check = 0.0;
+	void _read_world_trails();
+	void _follow_trails(double p_delta);
 	PackedVector4Array stone_tops; // (x, top y, z, cap radius): where stone_top species grow.
 	VegetationObstacles stone_top_grid;
 	PackedVector3Array stone_top_normals; // Optional, one per stone_tops entry: the cap's surface normal.
@@ -339,6 +344,12 @@ private:
 		LocalVector<Vector3> browse_rules;
 		LocalVector<float> stand_browse;
 		float browse_cell(int p_cell) const { return p_cell < 0 || stand_browse.is_empty() ? 0.0f : stand_browse[p_cell]; }
+		// Boar rooting (WorldStand.rooting_age_at, RULE_ROOTING: years since, -1 never) on the same grid, read when a
+		// species uses the rule.
+		LocalVector<Vector3> rooting_rules;
+		LocalVector<float> stand_rooting;
+		float rooting_cell(int p_cell) const { return p_cell < 0 || stand_rooting.is_empty() ? -1.0f : stand_rooting[p_cell]; }
+		bool rooting_differs(float p_a0, float p_a1) const;
 		int stand_nx = 0;
 		int stand_ny = 0;
 		Rect2 stand_rect;
@@ -598,8 +609,10 @@ private:
 	mutable bool strike_follow = false; // A species carries struck variants: strikes re-place their tiles.
 	mutable bool browse_follow = false; // A species carries browsed variants: browse changes re-place their tiles.
 	// Deferred tree variants (TreeGenerator.defer_variants, trees.md 5bc): grown when a burn, strike or browse disc first
-	// lies over the field, in setup or (a new burn, strike or disc) from process, the stream starting again with them.
-	bool _realize_variants(const PlaceSetup &p_setup);
+	// lies over the field: in setup there and then; for a new burn, strike or disc on a worker, polled from process, the
+	// stream starting again once they are in.
+	bool _realize_variants(const PlaceSetup &p_setup, bool p_wait, LocalVector<int> *r_grown = nullptr);
+	void _setup_species(PlaceSetup &r_setup, int s, const Ref<PlantSpecies> &p_sp, real_t pixel);
 	bool variants_waiting = false;
 	double variants_check = 0.0;
 	static int _deferred_kinds(const Ref<PlantSpecies> &p_sp) { return p_sp.is_valid() ? int(p_sp->get_meta(SNAME("tree_variants_deferred"), 0)) : 0; }
@@ -663,6 +676,8 @@ protected:
 
 public:
 	static String get_floor_shader_code();
+	// Game trails (vegetation_trails.cpp): a worn-path network (paths' Dictionaries) linking p_goals over the map.
+	static Array make_game_trails(Node *p_data_map, const Rect2 &p_area, const PackedVector3Array &p_goals, const Dictionary &p_options = Dictionary());
 	void set_forest_floor_enabled(bool p_enabled);
 	bool is_forest_floor_enabled() const { return forest_floor_enabled; }
 	void set_biome(const Ref<Biome> &p_biome);
