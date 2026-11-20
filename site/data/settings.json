@@ -4003,10 +4003,11 @@
   {
    "name": "Cloud shadows",
    "settings": [
-    "sun_light"
+    "sun_light",
+    "cloud_light_grid_enabled"
    ],
    "note": "",
-   "what": "the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.",
+   "what": "the clouds' shadow is baked into the sun's projector, matching in raster and path tracing, and clouds shade each other across the whole layer, with long shadows at low sun.",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""

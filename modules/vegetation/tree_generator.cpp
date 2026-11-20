@@ -11082,6 +11082,9 @@ void TreeGenerator::_grow_fungi(const Builder &p_bark, Builder &r_fungi) {
 // longest at the foot, a log first on its upper side, where it dries and splits.
 float TreeGenerator::_bare_amount() const {
 	static const float AMOUNT[6] = { 0.0f, 0.08f, 0.35f, 0.65f, 0.95f, 0.97f };
+	if (kelo && decay_class > 0) {
+		return 1.0f; // A kelo pine has shed every scrap (trees.md 5ap).
+	}
 	return bark_peel * AMOUNT[CLAMP(decay_class, 0, 5)];
 }
 
@@ -14017,6 +14020,16 @@ void TreeGenerator::_apply_veteran() {
 		}
 	};
 	const float big = CLAMP((r_stem - 0.08f) / 0.4f, 0.2f, 1.0f); // Girth: more and larger features.
+	// A fire scar (trees.md 5ap; Niklasson and Granstrom 2000): a surface fire's flames eddy round the stem and
+	// burn longest on its lee side, where they kill the cambium in a triangle from the soil. The wound heals from
+	// its flanks in woundwood ribs; the next fire reopens the same face, higher, so one catface grows with every
+	// fire the pine survives. Placed first: the hollow and burls keep clear of it.
+	if (fire_scars > 0) {
+		// Catfaces on Swedish pine run from a hand to two metres high, their base about a third of the girth.
+		// Flame height sets it more than girth does.
+		const float hh = Math::lerp(0.3f, 0.5f, vr.randf()) * (0.6f + 0.3f * float(fire_scars)) * CLAMP(r_stem / 0.22f, 0.6f, 1.3f);
+		add(VET_FIRE_SCAR, hh * 0.8f, hh, r_stem * Math::lerp(0.8f, 1.05f, vr.randf()) * (0.85f + 0.1f * float(fire_scars)), Math::lerp(0.12f, 0.2f, vr.randf()));
+	}
 	// A basal hollow, opening at the root collar.
 	if (vr.randf() < 0.55f * veteran * big) {
 		const float hh = r_stem * Math::lerp(0.9f, 2.2f, vr.randf());
@@ -14054,7 +14067,7 @@ void TreeGenerator::_apply_veteran() {
 	}
 }
 
-// The old-tree features of the last generate(): kind (0 basal hollow, 1 rot hole, 2 woodpecker hole,
+// The old-tree features of the last generate(): kind (0 basal hollow, 1 rot hole, 2 woodpecker hole, 5 fire scar,
 // 3 burl, 4 epicormic shoots), height above the stem base, azimuth (radians from +X towards +Z),
 // half height and half width in metres. Cavities are where birds, bats and beetles live.
 Array TreeGenerator::get_veteran_features() const {
@@ -16622,6 +16635,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			float w_any = 0.0f;
 			float algae = 0.0f;
 			float pale = 0.0f; // Crust lichen on a coppice rod.
+			float scar = 0.0f; // A catface's dead wood face (trees.md 5ap).
+			float char_k = 0.0f; // Its charred foot.
 			float head_win = 0.0f;
 			float hoff = 0.0f; // Pushed along hdir: over the head's top, out from its centre.
 			Vector3 hdir = n;
@@ -16805,7 +16820,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				}
 				// A basal hollow is the main stem's alone: the forks around it took a second dent
 				// at the same bearing, and the two folded through each other.
-				if (f.kind == VET_EPICORMIC || f.kind == VET_WOODPECKER || (f.kind == VET_BASAL_HOLLOW && p_features < 2)) {
+				if (f.kind == VET_EPICORMIC || f.kind == VET_WOODPECKER || ((f.kind == VET_BASAL_HOLLOW || f.kind == VET_FIRE_SCAR) && p_features < 2)) {
 					continue;
 				}
 				const float dh = (h - f.h) / f.half_h;
@@ -16814,7 +16829,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				}
 				float da = Math::angle_difference(f.azimuth, az) * r / f.half_w;
 				float ev = dh;
-				if (f.kind == VET_BASAL_HOLLOW) {
+				if (f.kind == VET_BASAL_HOLLOW || f.kind == VET_FIRE_SCAR) {
 					// A basal hollow opens as a pointed arch, widest at the soil, where the rot
 					// came up through the root collar (Mattheck & Breloer 1994, the field guide's
 					// "basal cavity": a Gothic arch, flanks leaning in, its woundwood lips thickest
@@ -16822,8 +16837,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// (trees.md 5ao): now its height counts only over the centre, and it tapers all
 					// the way from the soil.
 					const float rise = CLAMP((h + 0.05f) / MAX(f.h + f.half_h, 0.05f), 0.0f, 1.0f);
-					da /= 1.0f - 0.72f * rise * Math::sqrt(rise);
-					ev = MAX(dh, 0.0f);
+					// A catface is a sharper triangle, its apex where the flames reached.
+					if (f.kind == VET_FIRE_SCAR) {
+						// Straight flanks closing to the apex: a triangle, as the flames' reach falls off up the lee side.
+						da /= MAX(1.0f - 0.95f * rise, 0.04f);
+						ev = rise >= 1.0f ? 2.0f : 0.0f;
+					} else {
+						da /= 1.0f - 0.72f * rise * Math::sqrt(rise);
+						ev = MAX(dh, 0.0f);
+					}
 				}
 				const float e = Math::sqrt(ev * ev + da * da);
 				if (e > 1.4f) {
@@ -16849,6 +16871,22 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						dark = MIN(dark, Math::lerp(1.0f, 0.5f, Math::sqrt(k) * crease));
 					}
 					w_any = MAX(w_any, k > 0.0f ? 1.0f : 0.0f);
+				} else if (f.kind == VET_FIRE_SCAR) {
+					// The catface (trees.md 5ap): a shallow face of dead wood, nearly flat, sunk below the living
+					// bark around it by the bark's thickness and the years of wood the ribs laid on since; the
+					// ribs (woundwood) stand out along its flanks and roll over its edge.
+					if (e < 1.05f) {
+						const float face = Math::smoothstep(1.02f, 0.75f, e);
+						off -= f.amount * MIN(r, vet_r_stem) * face * (0.92f + 0.16f * moss_noise(p_pts[ring] * 6.0f + n * r * 6.0f, 0x63617466u));
+						scar = MAX(scar, Math::smoothstep(1.0f, 0.85f, e));
+						// Charred low on the face where the fire burned longest; resin streaks run down it.
+						char_k = MAX(char_k, scar * (1.0f - Math::smoothstep(0.05f, 0.7f, h / MAX(f.h + f.half_h, 0.1f))));
+					}
+					const float lip = (e - 0.98f) / 0.17f;
+					const float flank = Math::abs(da) / MAX(e, 1e-3f);
+					// Older scars (more fires) carry thicker ribs.
+					off += 0.22f * (0.35f + 0.85f * flank) * MIN(r, vet_r_stem) * Math::exp(-lip * lip) * (0.7f + 0.15f * float(fire_scars));
+					w_any = 1.0f;
 				} else {
 					// A hollow: deep inside, the floor rough; a callus lip of new wood around it.
 					// The wall falls away gradually from the rim into a deep, dark floor, and the
@@ -16878,11 +16916,28 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (w_any > 0.0f) {
 				if (!p_colour) {
 					// No moss on the rotten wall: the shell sinks under the bark past the rim.
-					off -= 0.08f * rot;
+					off -= 0.08f * MAX(rot, scar);
 				}
 				vv[v] += n * off + hdir * hoff;
 				if (p_colour) {
 					Color c = cc[v].lerp(Color(0.085f, 0.048f, 0.028f, cc[v].a), rot);
+					if (scar > 0.0f) {
+						// Dry, weathered grey wood, amber-brown where resin soaked it, black at the charred foot.
+						const Vector3 sp = p_pts[ring] + n * r;
+						const float resin = Math::smoothstep(0.55f, 0.8f, moss_noise(sp * Vector3(14.0f, 1.2f, 14.0f), 0x7265736eu));
+						Color wood = Color(0.36f, 0.33f, 0.29f, c.a).lerp(Color(0.24f, 0.14f, 0.06f, c.a), 0.7f * resin);
+						wood = wood.lerp(Color(0.035f, 0.03f, 0.028f, c.a), char_k * (0.6f + 0.4f * moss_noise(sp * 9.0f, 0x63686172u)));
+						c = c.lerp(wood, scar);
+						// The bark material draws its wood there (as on a wound, trees.md 5p): grain, checks, no plates.
+						if (int(r_b.wound.size()) < r_b.verts.size()) {
+							const int from = r_b.wound.size();
+							r_b.wound.resize(r_b.verts.size());
+							for (int k = from; k < r_b.verts.size(); k++) {
+								r_b.wound[k] = 0.0f;
+							}
+						}
+						r_b.wound[v] = MAX(r_b.wound[v], scar);
+					}
 					c = c.lerp(Color(0.13f, 0.16f, 0.07f, c.a), algae);
 					c = c.lerp(Color(0.3f, 0.31f, 0.27f, c.a), pale);
 					cc[v] = Color(c.r * dark, c.g * dark, c.b * dark, c.a);
@@ -19761,8 +19816,9 @@ uniform float bark_stripped_age = -1.0;
 	m->set_shader_parameter("lichen_map", _lichen_texture());
 	m->set_shader_parameter("lichen_leafy_share", la.leafy);
 	// Standing dead wood weathers silver-grey in sun and rain; rotting and on the ground it browns.
-	const Color wood = (fallen || fallen_branch || decay_class >= 5) ? Color(0.38f, 0.31f, 0.23f) : decay_class == 4 ? Color(0.42f, 0.38f, 0.32f)
-																													 : Color(0.47f, 0.45f, 0.41f);
+	// Kelo stays silver lying down too: resin-hard heartwood weathers and does not rot for centuries (Niemela et al. 2002).
+	const Color wood = kelo ? Color(0.58f, 0.57f, 0.54f) : (fallen || fallen_branch || decay_class >= 5) ? Color(0.38f, 0.31f, 0.23f) : decay_class == 4 ? Color(0.42f, 0.38f, 0.32f)
+																																	   : Color(0.47f, 0.45f, 0.41f);
 	m->set_shader_parameter("bark_wood_color", wood);
 	m->set_shader_parameter("bark_stripped_age", _cork_strip_age());
 	m->set_shader_parameter("lichen_orange_share", la.orange);
@@ -21127,6 +21183,38 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 			limb_breakage = 1.3f;
 		}
 	}
+	if (boreal_band > 0) {
+		// A taiga stand's variants (trees.md 5ap).
+		const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.71f, 1.0f);
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		const float y0 = look.params[PARAM_YEARS];
+		if (boreal_band == 1) {
+			// Northern spruce: narrow spires of short, drooping branches that shed snow (Karki and Tigerstedt
+			// 1985), every age of a multi-cohort stand.
+			params[PARAM_YEARS] = Math::round(y0 * Math::lerp(0.4f, 0.95f, tv)); // (Northern spruce tops out near 30 m.)
+			params[PARAM_CROWN_CONE] = look.params[PARAM_CROWN_CONE] * 0.6f;
+			params[PARAM_TWIG_DROOP] = look.params[PARAM_TWIG_DROOP] * 1.35f;
+			// Open-structured taiga: the spires keep green branches most of the way down (crown ratios of 0.7 and
+			// more in old northern spruce; masts with a top tuft read as a plantation).
+			forest_shade *= 0.55f;
+		} else if (boreal_band == 2) {
+			// Fire survivors: the old pines of the dry ground, each with the catface of one to three fires.
+			params[PARAM_YEARS] = Math::round(y0 * Math::lerp(1.05f, 1.25f, tv)); // Northern pine stops near 28 m: age shows in girth and crown.
+			fire_scars = 1 + p_variant % 3;
+			veteran = Math::lerp(0.1f, 0.35f, tv);
+			forest_spacing *= 1.6f;
+			forest_shade *= 0.75f;
+		} else if (boreal_band == 3) {
+			// Kelo: pines dead a century or more, standing or down, bare and silver.
+			params[PARAM_YEARS] = Math::round(y0 * Math::lerp(1.0f, 1.25f, tv));
+			kelo = true;
+			decay_class = 2;
+		} else {
+			// A birch cohort in an old burn: one age, within a few years.
+			params[PARAM_YEARS] = Math::round(y0 * Math::lerp(0.55f, 0.7f, tv));
+		}
+	}
 }
 
 // Crown hull (trees.md 9b): the far level past a placed tree's range, as a few dozen foliage lobes (the lobes of
@@ -21449,6 +21537,9 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	envelope_sprouts = p_from.envelope_sprouts;
 	collider_radius = p_from.collider_radius;
 	veteran = p_from.veteran;
+	fire_scars = p_from.fire_scars;
+	kelo = p_from.kelo;
+	boreal_band = p_from.boreal_band;
 	bark_color = p_from.bark_color;
 	leaf_color = p_from.leaf_color;
 	junction_weld = p_from.junction_weld;
@@ -21621,7 +21712,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	const int key = (int(p_preset) * int(FORM_MAX) + int(p_form)) * 2 + (rigged ? 1 : 0) + ((p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG) && coppice_ages.x >= 0 ? 100000 * (1 + coppice_ages.x + 64 * coppice_ages.y) : 0) +
 			(beetle_band > 0 ? 40000000 * beetle_band + 1000000 * MIN(int(beetle_outbreak * 2.0f), 30) : 0) +
 			(windthrow_band > 0 ? 200000000 * windthrow_band + 2000000 * MIN(int(windthrow_storm * 2.0f), 60) : 0) +
-			(old_growth_band > 0 ? 1000000000 + 50000000 * old_growth_band : 0);
+			(old_growth_band > 0 ? 1000000000 + 50000000 * old_growth_band : 0) +
+			(boreal_band > 0 ? 1500000000 + 50000000 * boreal_band : 0);
 	// Placed trees are alive unless a beetle stand grows its kill (single trees keep beetle_years).
 	struct BeetleYearsRestore {
 		float &value;
@@ -22009,7 +22101,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		if (p_form == FORM_SAPLING) {
 			far.a = 0.5f;
 		} else if (p_form == FORM_SNAG || p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
-			const Color wood = bark.lerp(Color(0.42f, 0.39f, 0.33f), 0.6f);
+			const Color wood = boreal_band == 3 ? Color(0.58f, 0.57f, 0.54f) : bark.lerp(Color(0.42f, 0.39f, 0.33f), 0.6f);
 			far = Color(wood.r, wood.g, wood.b, p_form == FORM_SNAG ? 0.15f : 0.1f);
 		}
 		sp->set_far_color(far);
@@ -22753,6 +22845,63 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			list.push_back(gap_maple);
 			stand_forest_shade = 0.6f;
 		} break;
+		case STAND_BOREAL_TAIGA: {
+			lead = PRESET_NORWAY_SPRUCE;
+			// Boreal taiga (trees.md 5ap; Kuuluvainen and Aakala 2011): a mosaic of spruce on the moister ground
+			// and pine on the dry, both of many ages; surface fires every few decades on the pine ground that
+			// the old pines survive with a catface each, birch cohorts where a fire burned hotter, and kelo,
+			// the silver dead pines, standing and lying for centuries.
+			const float mosaic = 60.0f, dry = 0.45f, burn_scale = 40.0f, burns = 0.22f;
+			const int burn_seed = patch_seed + 101;
+			stand_forest_shade = 0.45f;
+			auto patched = [&](const Ref<PlantSpecies> &p_sp, float p_scale, float p_cover, int p_seed, bool p_invert) {
+				p_sp->set_patch_scale(p_scale);
+				p_sp->set_patch_cover(p_cover);
+				p_sp->set_patch_seed(p_seed);
+				p_sp->set_patch_invert(p_invert);
+				list.push_back(p_sp);
+			};
+			// The burns' birch first: an even-aged cohort claims each.
+			boreal_band = 4;
+			Ref<PlantSpecies> burn_birch = _stand_species(PRESET_BIRCH, true, p_variants, FORM_STAND);
+			burn_birch->set_name("Birch (taiga burn cohort)");
+			burn_birch->set_density(1.0f);
+			burn_birch->set_spacing(HABITATS[PRESET_BIRCH].stand_spacing * 0.6f); // A cohort comes up thick.
+
+			patched(burn_birch, burn_scale, burns, burn_seed, false);
+			// The dry ground: old fire survivors, kelo, then the younger pine.
+			boreal_band = 2;
+			Ref<PlantSpecies> survivor = _stand_species(PRESET_SCOTS_PINE, true, p_variants, FORM_STAND);
+			survivor->set_name("Scots pine (taiga fire survivor)");
+			survivor->set_density(1.0f);
+			survivor->set_spacing(14.0f);
+			patched(survivor, mosaic, dry, patch_seed, false);
+			boreal_band = 3;
+			Ref<PlantSpecies> kelo_snag = _stand_species(PRESET_SCOTS_PINE, true, p_variants, FORM_SNAG);
+			kelo_snag->set_name("Scots pine (kelo)");
+			kelo_snag->set_density(0.25f);
+			kelo_snag->set_spacing(HABITATS[PRESET_SCOTS_PINE].stand_spacing * 2.5f);
+			kelo_snag->set_canopy_opacity(0.0f);
+			patched(kelo_snag, mosaic, dry, patch_seed, false);
+			Ref<PlantSpecies> kelo_log = _stand_species(PRESET_SCOTS_PINE, true, p_variants, FORM_LOG);
+			kelo_log->set_name("Scots pine (kelo log)");
+			kelo_log->set_density(0.35f);
+			kelo_log->set_spacing(HABITATS[PRESET_SCOTS_PINE].stand_spacing * 2.0f);
+			patched(kelo_log, mosaic, dry, patch_seed, false);
+			boreal_band = 0;
+			Ref<PlantSpecies> pine = canopy(PRESET_SCOTS_PINE, 0.75f, mosaic, dry, false, false);
+			pine->set_name("Scots pine (taiga)");
+			// The moister ground: narrow northern spruce of every age, a little birch among it.
+			boreal_band = 1;
+			Ref<PlantSpecies> spruce = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_STAND);
+			spruce->set_name("Norway spruce (taiga)");
+			spruce->set_density(1.0f);
+			patched(spruce, mosaic, dry, patch_seed, true);
+			boreal_band = 0;
+			canopy(PRESET_BIRCH, 0.12f, mosaic, dry, true, false);
+			shrub(PRESET_ROWAN, 0.25f);
+			stand_forest_shade = 0.6f;
+		} break;
 		case STAND_MAX:
 			break;
 	}
@@ -23329,7 +23478,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 				}
 			}
 		}
-	} else if (veteran > 0.0f && !fallen && !fallen_branch) {
+	} else if ((veteran > 0.0f || fire_scars > 0) && !fallen && !fallen_branch) {
 		_apply_veteran();
 	}
 	if (beetle && decay_class == 0) {
@@ -23636,6 +23785,10 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_leaf_flutter", "amount"), &TreeGenerator::set_leaf_flutter);
 	ClassDB::bind_method(D_METHOD("set_veteran", "amount"), &TreeGenerator::set_veteran);
 	ClassDB::bind_method(D_METHOD("get_veteran"), &TreeGenerator::get_veteran);
+	ClassDB::bind_method(D_METHOD("set_fire_scars", "count"), &TreeGenerator::set_fire_scars);
+	ClassDB::bind_method(D_METHOD("get_fire_scars"), &TreeGenerator::get_fire_scars);
+	ClassDB::bind_method(D_METHOD("set_kelo", "kelo"), &TreeGenerator::set_kelo);
+	ClassDB::bind_method(D_METHOD("get_kelo"), &TreeGenerator::get_kelo);
 	ClassDB::bind_method(D_METHOD("get_veteran_feature_count"), &TreeGenerator::get_veteran_feature_count);
 	ClassDB::bind_method(D_METHOD("get_veteran_features"), &TreeGenerator::get_veteran_features);
 	ClassDB::bind_method(D_METHOD("get_collision_prune_count"), &TreeGenerator::get_collision_prune_count);
@@ -23698,6 +23851,8 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "climber_plant_leaves"), "set_climber_plant_leaves", "get_climber_plant_leaves");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "leaf_flutter", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_leaf_flutter", "get_leaf_flutter");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "veteran", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_veteran", "get_veteran");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "fire_scars", PROPERTY_HINT_RANGE, "0,4,1"), "set_fire_scars", "get_fire_scars");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "kelo"), "set_kelo", "get_kelo");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "phyllotaxis", PROPERTY_HINT_ENUM, "Alternate,Opposite,Whorled"), "set_phyllotaxis", "get_phyllotaxis");
 	ADD_GROUP("Stand", "forest_");
@@ -23859,6 +24014,7 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_BEETLE_SPRUCE);
 	BIND_ENUM_CONSTANT(STAND_WINDTHROW);
 	BIND_ENUM_CONSTANT(STAND_OLD_GROWTH_BEECH);
+	BIND_ENUM_CONSTANT(STAND_BOREAL_TAIGA);
 	BIND_ENUM_CONSTANT(STAND_MAX);
 	BIND_ENUM_CONSTANT(REGION_EUROPE);
 	BIND_ENUM_CONSTANT(REGION_NORTH_AMERICA);

@@ -2593,6 +2593,42 @@ the moss sleeve ended in a flat-topped block and the basal hollow was a lens wit
 - Frames: fork/trees/old-trunks/ (moss sleeve before/after, seeds 2-4; hollow before/after; hollow walls; class-5 log
   before/after; raster vs PT crops).
 
+### 5ap. Boreal taiga (20 Nov; Paulo's pick)
+
+Research. Natural boreal forests of Fennoscandia are multi-cohort mosaics: small-scale gap dynamics in spruce,
+low- and mixed-severity surface fires on the dry pine ground, stand-replacing fire rarer (Kuuluvainen and Aakala 2011,
+Silva Fennica 45; Kuuluvainen 2002). Before fire suppression, pine heaths burned every 40-100 years (Wallenius 2011);
+Scots pine's thick basal bark survives them, and each fire opens or widens a scar on the bole's lee side, a triangular
+"catface" flanked by thick woundwood ribs, its face dry, resin-soaked and charred (Niklasson and Granstrom 2000, the
+scar chronologies of Swedish pine). Spruce, thin-barked, dies in them; birch comes up in the burnt patches as an even-aged
+cohort. Dead pines stand for a century or more as kelo, decorticated, silver-grey and resin-hard, often twisted in their
+grain, and lie for centuries more once fallen (Niemela et al. 2002). Spruce in the north grows narrow, spire-like crowns
+with drooping branches that shed snow (narrow-crowned Norway spruce; Karki and Tigerstedt 1985).
+
+Build (`STAND_BOREAL_TAIGA`, 19; `boreal_band`):
+- A mosaic at about 60 m: spruce on the mesic patches (narrow spires, band 1, a few of every age), pine on the dry ones:
+  old fire-survivor pines (band 2: twice the pine's age and more, `fire_scars` 1-3, a little veteran), younger pine
+  between them; birch cohorts in old burns (band 4, one age each, scale 40 m); kelo snags and logs on the pine ground
+  (band 3: `kelo`). Rowan beneath. Spruce leads the stand's own saplings, snags and logs.
+- `fire_scars` (any tree, 0-4): a catface (VET_FIRE_SCAR) on the main stem from the soil, taller with each fire,
+  shallow, dry grey wood charred near the soil with resin streaks, woundwood ribs thickest on the flanks, no moss.
+- `kelo` (dead pine): bark fully shed, wood silver-grey standing or lying, spiral checks in the grain.
+
+As built:
+- Bands (`_setup_variant`): 1 spruce years 0.4-0.95x (northern spruce tops near 30 m; at 1.5x it stood 37 m), crown
+  cone x0.6, twig droop x1.35, forest_shade x0.55 (long crowns; at the stand's shade alone they were masts). 2 pine
+  1.05-1.25x (28-32 m; 1.6x gave 37 m), fire_scars 1-3, veteran 0.1-0.35, spacing x1.6, shade x0.75. 3 kelo pine
+  1.0-1.25x, decay class 2, kelo. 4 birch 0.55-0.7x, one cohort per burn, spacing x0.6.
+- Mosaic 60 m at cover 0.45 (pine on it, spruce on the complement), burns 40 m at 0.22 on their own seed. Bench plot
+  (2.56 ha): 15 survivors a hectare, 5 kelo standing and 11 down, 93 younger pine, 71 spruce, birch cohorts in burns,
+  rowan under; spruce leads the saplings and deadwood. `--stands --stand-test=19`.
+- Catface (`VET_FIRE_SCAR`, kind 5 in get_veteran_features): a triangle from the soil, flanks straight to the apex,
+  0.3-0.5 m per fire high (scaled by girth), base about a third of the girth; face sunk 12-20% of the radius, bark
+  drawn as wood through the wound channel (trees.md 5p), woundwood ribs thickest on the flanks and growing with each
+  fire; moss sinks off it. Kelo: `_bare_amount` 1, wood (0.58, 0.57, 0.54) standing and down, far colour the same.
+- Not yet: char on the catface's foot (the wood branch of the bark shader ignores vertex colour; needs a channel),
+  spiral grain on kelo.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

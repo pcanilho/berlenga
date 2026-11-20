@@ -158,6 +158,13 @@ private:
 	float high_cloud_height = 8000.0f; // m above y = 0
 	float high_cloud_optical_depth = 1.0f; // vertical, at full cover (ice clouds 0.03 to 3)
 	Vector2 high_cloud_drift; // m, moved by get_wind_aloft at high_cloud_height
+	// The mid cloud layer (altocumulus, altostratus; docs/ideas/clouds.md), the same way: humid air thickens it,
+	// dry air thins it, it thickens into a sheet ahead of rain, kept out of cloud_cover and get_cloud_cover_at.
+	float mid_cloud_cover = 0.15f;
+	float mid_cloud_height = 4500.0f; // m above y = 0, the slab's middle
+	float mid_cloud_thickness = 400.0f; // m
+	float mid_cloud_optical_depth = 4.0f; // vertical, at full cover (altocumulus about 2 to 10)
+	Vector2 mid_cloud_drift; // m, moved by get_wind_aloft at mid_cloud_height
 	double cloud_time = 0.0; // s of weather time the clouds have evolved
 	NodePath sun_light;
 	float cloud_shadow_extent = 6144.0f; // m
@@ -170,6 +177,7 @@ private:
 	float cur_cloud_cover = 0.4f;
 	float cur_cloud_type = 0.3f;
 	float cur_high_cloud_cover = 0.25f;
+	float cur_mid_cloud_cover = 0.15f;
 	float cur_rain_rate = 0.0f;
 	float cur_temperature = 15.0f;
 	float cur_humidity = 0.7f;
@@ -448,6 +456,7 @@ private:
 	void _set_base_to_settings();
 	float _target_temperature() const;
 	float _target_high_cloud_cover() const;
+	float _target_mid_cloud_cover() const;
 	float _net_radiation(const CellPass &p_pass, Vector3 p_position, float p_cover) const;
 	void _update_air();
 	void _snap();
@@ -689,6 +698,14 @@ public:
 	float get_high_cloud_height() const { return high_cloud_height; }
 	void set_high_cloud_optical_depth(float p_tau);
 	float get_high_cloud_optical_depth() const { return high_cloud_optical_depth; }
+	void set_mid_cloud_cover(float p_cover);
+	float get_mid_cloud_cover() const { return mid_cloud_cover; }
+	void set_mid_cloud_height(float p_height);
+	float get_mid_cloud_height() const { return mid_cloud_height; }
+	void set_mid_cloud_thickness(float p_thickness);
+	float get_mid_cloud_thickness() const { return mid_cloud_thickness; }
+	void set_mid_cloud_optical_depth(float p_tau);
+	float get_mid_cloud_optical_depth() const { return mid_cloud_optical_depth; }
 	void set_cloud_time(double p_seconds);
 	double get_cloud_time() const { return cloud_time; }
 	void set_sun_light(const NodePath &p_path);
@@ -854,6 +871,8 @@ public:
 	float get_cloud_cover_at(Vector3 p_position) const;
 	// The high layer's cover (0..1) over a point: its patches and the storms' anvil shields.
 	float get_high_cloud_cover_at(Vector3 p_position) const;
+	float get_mid_cloud_cover_at(Vector3 p_position) const;
+	float get_mid_cloud_optical_depth_at(Vector3 p_position) const;
 	float get_cloud_type_at(Vector3 p_position) const;
 	float get_wetness_at(Vector3 p_position) const; // 0..1
 	float get_puddle_at(Vector3 p_position) const; // mm
@@ -931,6 +950,7 @@ public:
 	Dictionary contract_season_at(const Vector3 &p_position, int p_day) const override;
 	float contract_cloud_cover_at(const Vector3 &p_position) const override { return get_cloud_cover_at(p_position); }
 	float contract_high_cloud_cover_at(const Vector3 &p_position) const override { return get_high_cloud_cover_at(p_position); }
+	float contract_mid_cloud_cover_at(const Vector3 &p_position) const override { return get_mid_cloud_cover_at(p_position); }
 	float contract_water_temperature() const override { return get_water_temperature(); }
 	float contract_surface_temperature_at(const Vector3 &p_position) const override { return get_surface_temperature_at(p_position); }
 	float contract_ground_height_at(const Vector3 &p_position) const override {

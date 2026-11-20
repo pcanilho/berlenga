@@ -30,6 +30,7 @@ extends Node3D
 #   --day=N               day of the month (default 15)
 #   --leaves=0            no falling leaves (LeafFall3D); --leaf-litter=N loose leaves per m2 the gusts can lift (0.5)
 #   --cloud-shadow=0 --sun-shadow=0   no cloud shadow on the sun; no raster sun shadow map
+#   --sky-params=name:value,...   WeatherSkyMaterial shader parameters (A/B frames)
 #   --sun-off             no sun at all: what the sky alone lights
 #   --far-shadows=0       no far sun shadows from the ground's horizon toward the sun (raster A/B)
 #   --sky-occlusion=0     ground ambient light without the hills' sky occlusion; --sky-light=0 an even sky for it
@@ -2770,6 +2771,11 @@ func _build_weather() -> void:
 		# steps), so a single frame has no stipple that TAA would hide in play.
 		sky_mat.set("cloud_reprojection", false)
 		sky_mat.set("cloud_steps", int(args["cloud-still"]) if String(args["cloud-still"]).is_valid_int() else 256)
+	if args.has("sky-params"):
+		# --sky-params=name:value,...: the sky's shader parameters, for A/B docs frames (e.g. cloud_light_grid_enabled:0).
+		for pair in String(args["sky-params"]).split(","):
+			var nv := pair.split(":")
+			sky_mat.set_shader_parameter(nv[0], float(nv[1]))
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	sky.process_mode = Sky.PROCESS_MODE_INCREMENTAL
@@ -3076,6 +3082,8 @@ func _weather_settings() -> void:
 		weather.cloud_cover = float(args["cloud-cover"])
 		if weather.cloud_cover <= 0.0:
 			weather.cloud_variation = 0.0 # a clear sky: the regional variation would still raise clouds out of 0 cover
+	if args.has("cloud-type"):
+		weather.cloud_type = float(args["cloud-type"]) # --cloud-type=T: 0 stratus to 1 towering cumulus
 	if args.has("cloud-variation"):
 		weather.cloud_variation = float(args["cloud-variation"]) # --cloud-variation=V: regional cover variation
 	if args.get("weather", "storm") == "afterrain":

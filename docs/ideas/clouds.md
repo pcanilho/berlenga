@@ -210,3 +210,15 @@ short steps inside cloud are the cost the next two items (sun shadow grid, empty
    horizontal streaks. The sky shadow map now has mipmaps and the ground read takes the mip of the pixel's
    footprint (t times the pixel's angle over the sine the ray meets the ground at). The air's shafts read as
    before. PT parity: sky mean difference 5/255 on `clouds_wide`.
+
+6. **Altocumulus mid layer** (names and driver agreed with the weather owner): `WeatherMap3D.mid_cloud_cover`
+   (0.15), `mid_cloud_height` (4500 m, slab middle), `mid_cloud_thickness` (400 m), `mid_cloud_optical_depth`
+   (4, vertical at full cover), `mid_cloud_drift` (wind aloft at its height), `get_mid_cloud_cover_at`,
+   `get_mid_cloud_optical_depth_at`; contract `WorldWeather.mid_cloud_cover_at`. Out of `cloud_cover`. Humid air
+   thickens it, dry air thins it to 0.2, rain dialled in thickens it into an altostratus sheet (eases 2x faster
+   than the rain, after the cirrus at 4x); it never starts rain. Storms add a band round their anvils. Shades the
+   ground by its own optical depth in the shadow bake. Drawn as its own thin volume (as layered volumetric
+   clouds in Flight Simulator and Unreal): 8 steps across the slab, cloudlets from the detail texture's billows
+   (300 by 450 m cells, rows across the wind: Ludlam's cellular convection), rounded top and bottom, lit like
+   the cumulus (octaves, two-stream diffuse, sky light) with two sun samples through the slab. Not yet: the mid
+   sheet dimming the cumulus' sun beneath it.

@@ -33,7 +33,7 @@ summary: "Sun and moon set by date, time and place; a scattering atmosphere with
 
 - **Evolving clouds** (`cloud_evolution`; `cloud_lifetime`, `cloud_churn`): clouds form, clear and reshape over time instead of only drifting.
 - **Cloud reprojection** (`WeatherSkyMaterial.cloud_reprojection`): clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.
-- **Cloud shadows** (`sun_light`): the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.
+- **Cloud shadows** (`sun_light`; `cloud_light_grid_enabled`): the clouds' shadow is baked into the sun's projector, matching in raster and path tracing, and clouds shade each other across the whole layer, with long shadows at low sun.
 
   ![Cloud shadows on a field, seen from above, path traced](media/weather-cloud-shadows.jpg)
 
