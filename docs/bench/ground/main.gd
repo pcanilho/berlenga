@@ -6747,6 +6747,38 @@ func _run_trackdust_tests() -> void:
 	var kg3 := surface.get_tracked_dust_lifted()
 	print("  wind 12 m/s on the dried trail: share %.2f -> %.2f, %.3f kg lifted" % [w0.x, w1.x, kg3 - kg2])
 	_check("the wind lifts a dried trail too", kg3 - kg2 > 0.0 and w1.x < w0.x, "share %.2f to %.2f" % [w0.x, w1.x])
+	# Kept with the ruts: a dried trail saved and read back by a new node still lifts in the wind.
+	surface.clear_saved_ruts()
+	ruts_on = true
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.1, 0.0)
+	surface.drying_time = 1.0
+	x = -2.0
+	while x <= 2.0:
+		surface.track_mud(Vector3(x, 0, 2.0), 0.15, 0.001, 1.0)
+		x += 0.1
+	for i in 245:
+		await get_tree().physics_frame
+	surface.save_ruts()
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.1, 0.0)
+	surface.drying_time = 1.0
+	for i in 6:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var r0: Vector2 = surface.get_tracked_mud_at(q)
+	var kg4 := surface.get_tracked_dust_lifted()
+	surface.wind_override = Vector2(12.0, 0.0)
+	surface.runoff_time_scale = 2000.0
+	for i in 120:
+		await get_tree().physics_frame
+	surface.runoff_time_scale = 1.0
+	surface.wind_override = Vector2.ZERO
+	surface.sync_deformation()
+	var r1: Vector2 = surface.get_tracked_mud_at(q)
+	var kg5 := surface.get_tracked_dust_lifted() - kg4
+	print("  reloaded trail, wind 12 m/s: share %.2f -> %.2f, %.3f kg lifted" % [r0.x, r1.x, kg5])
+	_check("wind lifts a dried trail read back from a save", r0.x > 0.3 and kg5 > 0.0 and r1.x < r0.x, "share %.2f to %.2f, %.3f kg" % [r0.x, r1.x, kg5])
+	surface.clear_saved_ruts()
+	ruts_on = false
 	near_on = true
 
 
