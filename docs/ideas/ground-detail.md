@@ -766,6 +766,14 @@ the cell's box is never small.
   RockField3D for its detail MultiMeshes only, through a per-MultiMesh flag next to multimesh_set_rt_instanced.
 - Check: TLAS count and PT frame (eye level and top) before and after, 100% crops; then the PC GPU frame time.
 
+**As built.** RenderingServer.multimesh_set_rt_offscreen_cull(multimesh, degrees) on rt_instanced MultiMeshes; the
+TLAS builder drops a record when it is outside the view widened by 15 degrees a side, more than max(10 r, r + 1 m)
+past that band, and smaller than the angle seen from the camera. The band is redone when the camera turns 7.5 degrees
+or moves 1 m, which bumps the culling instances' generations so persistent slots rebuild. RockField3D sets 0.5 degrees
+on its detail grains. rendering/pathtracing/offscreen_record_cull (on) switches it off to compare. Shore, PT, 640x360:
+eye level 34.1 k to 29.4 k TLAS instances, top view 34.3 k to 24.9 k; both frames match pixel for pixel within noise
+(mean difference under 0.001 of a level, max 8 of 255 on a handful of pixels). GPU time on the PC queue.
+
 ## Stones at distance vs the vegetation far reach (assessment, 20 Nov)
 
 Paulo asked (vegetation thread, 19 Nov) whether vegetation's far approach applies to rocks and other ground stuff:

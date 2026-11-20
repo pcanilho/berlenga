@@ -2086,6 +2086,48 @@ the constants split the difference: SUN_MS_GAIN 1.1, SKY_MS_SHARE 0.18.
 Puff default mean -2% (rms 7%), puff at 0.99 mean -15%, powder band +3%
 and its left column +9%.
 
+### Gas gets its own path-tracing budget; ground light under raster gas (20 Nov)
+
+Snow's v6 powder pair: path tracing read thinner and more see-through
+than raster, raster had a dark, crisp fringe at the cloud base where PT
+is soft and lit, and docs asked for an extinction/albedo check. Both
+paths take the same numbers: extinction is smoke_density per metre times
+the smoke clamped at 2, albedo is smoke_color times scattering_albedo.
+The gaps were elsewhere:
+- PT ended a path after the scene's bounce count, and every scatter in
+  the gas counted as a bounce. Snow's bench uses 3, so light that
+  scatters a dozen times through a white cloud was cut off and the cloud
+  went grey and see-through. Gas scatters now have their own budget (32,
+  RT_VOLUME_MAX_SCATTERS) and stop counting against the surface bounces
+  (the usual split in production path tracers, e.g. Arnold's and
+  Cycles' separate volume depth).
+- Raster had no light from the ground. Under PT the sunlit ground below
+  a cloud lights its base (snow reflects about 0.8), so the base is the
+  brightest part; raster lit it from the sky's lower half only, hence
+  the dark fringe. PhysXFlow3D.ground_albedo (default 0.25, powder 0.8)
+  now adds the ground's light: the sun on the box floor below each
+  point, in the gas's own shadow (one more fetch of the sun's volumetric
+  shadow map), plus the sky, through the gas below the point.
+- Thin gas: raster gave wisps the octaves' full multiple scattering.
+  Light scattered more than once needs gas around it, so the octaves past
+  the first now ramp in with optical depth (1 - exp(-2 tau), Schneider
+  2015's powder term turned around), and thin edges stay see-through.
+Test puffs under sun and sky against fresh 32-spp PT, rows down two
+columns: albedo 0.9 mean +0.5% (rms 2.9%), albedo 0.99 mean +1.4% (rms
+3.5%), with the constants unchanged (SUN_MS_GAIN 1.1, SKY_MS_SHARE 0.18)
+and the ground light unscaled. Before, the same puffs were -16% and
+-17% against the new PT. Snow's powder at 6 s (640x360, PT 16 spp against raster): the PT cloud
+is no longer grey and see-through; mean grey down the cloud, rows top to
+bottom, PT 150 159 149 132 120 114 109 107 112 114 115 vs raster 142 137
+122 114 107 107 108 112 113 112 106 (raster -7%, lit top 10-14% under,
+base even). Still open: PT's cloud is bluer (more sky light) where raster
+is neutral grey, and raster's base keeps a thin crisp edge, which a test
+of gas resting on flat ground traced to Flow's own opacity edge over a
+shaded underside (about 20% under the body), not to a lighting fault.
+Also: the light march now covers its stretch of the ray exactly
+(stratified steps, the last cut at the scene) instead of skipping the
+stretch before its first jittered sample.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

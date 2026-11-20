@@ -835,7 +835,12 @@ float WorldGround::height_at(const Vector3 &p_position) const {
 		return r;
 	}
 	if (provider) {
-		return provider->contract_ground_height_at(p_position);
+		// A provider declines with NaN where it knows nothing (a ground patch's point far off its lattice with no
+		// height source): the colliders below answer instead.
+		const float h = provider->contract_ground_height_at(p_position);
+		if (Math::is_finite(h)) {
+			return h;
+		}
 	}
 	// No ground: the first static physics surface under the point (a floor, a road, a terrain's collider).
 	SceneTree *tree = SceneTree::get_singleton();

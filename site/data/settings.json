@@ -169,6 +169,14 @@
    "title": "Open worlds"
   },
   {
+   "name": "rendering/pathtracing/offscreen_record_cull",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, MultiMeshes that set `RenderingServer.multimesh_set_rt_offscreen_cull` leave out of path tracing their instances outside the camera's view that look smaller than their set angle, as film renderers do with sub-pixel detail.",
+   "page": "rocks",
+   "title": "Rocks"
+  },
+  {
    "name": "rendering/pathtracing/persistent_instances",
    "type": "bool",
    "default": "false",
@@ -1589,7 +1597,7 @@
     "stones_react"
    ],
    "note": "",
-   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one, grouped into shared tiles of piles so it handles far fewer instances. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
+   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one, grouped into tiles of piles shared across cells so it handles far fewer instances, and small stones off screen leave its scene with no change to the image (`rendering/pathtracing/offscreen_record_cull`). Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -3164,10 +3172,11 @@
   {
    "name": "Tree LODs",
    "settings": [
-    "far_lod1"
+    "far_lod1",
+    "far_thinning"
    ],
    "note": "",
-   "what": "far levels drop thin wood and thin out leaves, enlarging the rest so leaf area holds; leaves stay geometry at every level. Far broadleaf meshes use the lighter leaf level, with about 60% fewer leaf vertices and the same path traced look at 60 m.",
+   "what": "far levels drop thin wood and thin out leaves, enlarging the rest so leaf area holds; leaves stay geometry at every level. Far broadleaf meshes use the lighter leaf level, with about 60% fewer leaf vertices and the same path traced look at 60 m. Past a species' range, distant trees swap to light crown hulls of lobes that keep the crown's cover and colour.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
@@ -4029,10 +4038,11 @@
     "ambient_scattering",
     "sun_scattering",
     "cast_shadows",
-    "scattering_temporal"
+    "scattering_temporal",
+    "ground_albedo"
    ],
    "note": "",
-   "what": "smoke takes sky and ambient light and the sun through scene shadows, and shadows the scene; `scattering_temporal` removes step banding at its edges.",
+   "what": "smoke takes sky and ambient light, the sun through scene shadows and light bounced up from sunlit ground, and shadows the scene; `scattering_temporal` removes step banding at its edges.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

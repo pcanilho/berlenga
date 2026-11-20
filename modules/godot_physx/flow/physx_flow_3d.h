@@ -222,6 +222,7 @@ private:
 	float scattering_strength = 1.0f;
 	float scattering_anisotropy = 0.4f;
 	float scattering_albedo = 0.9f;
+	float ground_albedo = 0.25f;
 	int scattering_shadow_steps = 4;
 	float scattering_shadow_reach = 4.0f;
 
@@ -396,6 +397,8 @@ public:
 	float get_scattering_anisotropy() const { return scattering_anisotropy; }
 	void set_scattering_albedo(float p_v) { scattering_albedo = CLAMP(p_v, 0.0f, 1.0f); }
 	float get_scattering_albedo() const { return scattering_albedo; }
+	void set_ground_albedo(float p_v) { ground_albedo = CLAMP(p_v, 0.0f, 1.0f); }
+	float get_ground_albedo() const { return ground_albedo; }
 	void set_scattering_shadow_steps(int p_v) { scattering_shadow_steps = CLAMP(p_v, 0, 64); }
 	int get_scattering_shadow_steps() const { return scattering_shadow_steps; }
 	void set_scattering_shadow_reach(float p_v) { scattering_shadow_reach = MAX(p_v, 0.05f); }
