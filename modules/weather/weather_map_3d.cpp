@@ -2471,6 +2471,7 @@ void WeatherMap3D::_finish_sky_shadow_bake(bool p_discard) {
 	sky_shadow_corner = sb.corner;
 	sky_shadow_drift = sb.state.drift;
 	Ref<Image> img = Image::create_from_data(sb.resolution, sb.resolution, false, Image::FORMAT_RGBA8, sb.bytes);
+	img->generate_mipmaps(); // the sky averages the far ground's shadow over a pixel's footprint
 	if (sky_shadow_texture.is_null()) {
 		sky_shadow_texture = ImageTexture::create_from_image(img);
 	} else {
