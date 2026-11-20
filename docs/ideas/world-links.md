@@ -108,6 +108,8 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Lightning → struck tree variant | linked (20 Nov) | `WorldStand.strike_age_at` | WeatherLightning3D records canopy strikes; VegetationField3D swaps a tree within 3 m of a strike under 8 years old to its `tree_lightning_years` variant, from `get_strikes_in` copies (trees d898414194) |
 | Beaver dam fails → beaver meadow | linked (20 Nov) | `WorldStand` `DISTURBANCE_BEAVER` (4), age since the pond drained | WorldBeaverDam3D (world module): `breach()` or `state` Breached adds the disc over `pond_radius`, `years_drained` old; trees' STAND_BEAVER_POND follows it; PlantGenerator.make_beaver meadow reads it by RULE_DISTURBANCE (4,4) |
 | Deer browsing → understorey, saplings | linked (20 Nov) | `WorldStand.browse_at`, `browse_reach_at` | browse discs (pressure, reach); vegetation RULE_BROWSE 31, trees' browsed variants (trees.md 5aw) |
+| Game trails → ground detail, mud, snow, grass | linked (20 Nov) | `WorldStand.set_trails` (VegetationField3D.make_game_trails), `trail_at` | one network; readers wear their own surface by passes per year and tread share |
+| Boar rooting → field layer, turned soil | linked (20 Nov) | `WorldStand` `DISTURBANCE_ROOTING` (5) discs, `rooting_age_at` | stand age untouched; vegetation and ground read the turned patches |
 | Wet ground → mist | linked (18 Nov) | surface wetness, surface cooling | VegetationMist3D: wet ground mists more and sooner |
 
 ### Water (ocean, rivers, pools, falls)

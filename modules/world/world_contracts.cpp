@@ -31,6 +31,8 @@
 
 #include "world_contracts.h"
 
+#include "core/math/geometry_2d.h"
+
 #include "core/object/class_db.h"
 
 #include <type_traits>
@@ -1247,6 +1249,9 @@ void WorldStand::_age_and_kind(const Vector3 &p_position, float &r_age, int &r_k
 	const Vector2 p(p_position.x, p_position.z);
 	auto check = [&](uint32_t p_i) {
 		const Event &e = events[p_i];
+		if (e.kind == DISTURBANCE_ROOTING) {
+			return; // the field layer's, not the stand's (rooting_age_at)
+		}
 		if (p.distance_squared_to(e.center) <= e.radius * e.radius && (r_age < 0.0f || e.age < r_age)) {
 			r_age = e.age;
 			r_kind = e.kind;
@@ -1307,7 +1312,7 @@ void WorldStand::_report(const Rect2 &p_area) {
 }
 
 int WorldStand::add_disturbance(const Vector3 &p_center, float p_radius, int p_kind, float p_age_years) {
-	ERR_FAIL_COND_V_MSG(p_kind <= DISTURBANCE_NONE, 0, "A disturbance needs a kind (fire, wind, beetle, beaver).");
+	ERR_FAIL_COND_V_MSG(p_kind <= DISTURBANCE_NONE, 0, "A disturbance needs a kind (fire, wind, beetle, beaver, rooting).");
 	Event e;
 	e.id = next_id++;
 	e.center = Vector2(p_center.x, p_center.z);
@@ -1454,6 +1459,103 @@ void WorldStand::clear_browse() {
 	browse.clear();
 	_rebuild_browse_grid();
 	_report(area);
+}
+
+float WorldStand::rooting_age_at(const Vector3 &p_position) const {
+	float r = -1.0f;
+	if (GDVIRTUAL_CALL(_rooting_age_at, p_position, r)) {
+		return r;
+	}
+	const Vector2 p(p_position.x, p_position.z);
+	auto check = [&](uint32_t p_i) {
+		const Event &e = events[p_i];
+		if (e.kind == DISTURBANCE_ROOTING && p.distance_squared_to(e.center) <= e.radius * e.radius && (r < 0.0f || e.age < r)) {
+			r = e.age;
+		}
+	};
+	for (uint32_t i : wide) {
+		check(i);
+	}
+	if (const LocalVector<uint32_t> *in = grid.getptr(Vector2i(int(Math::floor(p.x / GRID_CELL)), int(Math::floor(p.y / GRID_CELL))))) {
+		for (uint32_t i : *in) {
+			check(i);
+		}
+	}
+	return r;
+}
+
+void WorldStand::set_trails(const Array &p_trails) {
+	const Rect2 old = trail_bounds;
+	const bool had = !trail_segments.is_empty();
+	trails = p_trails.duplicate(true);
+	trail_segments.clear();
+	trail_grid.clear();
+	trail_bounds = Rect2();
+	bool any = false;
+	for (int t = 0; t < trails.size(); t++) {
+		const Dictionary d = trails[t];
+		LocalVector<Vector2> pts;
+		const Variant pv = d.get("points", Variant());
+		if (pv.get_type() == Variant::PACKED_VECTOR3_ARRAY) {
+			for (const Vector3 &q : PackedVector3Array(pv)) {
+				pts.push_back(Vector2(q.x, q.z));
+			}
+		} else if (pv.get_type() == Variant::PACKED_VECTOR2_ARRAY) {
+			for (const Vector2 &q : PackedVector2Array(pv)) {
+				pts.push_back(q);
+			}
+		}
+		const float hw = 0.5f * MAX(float(d.get("width", 0.6f)), 0.05f);
+		const float passes = MAX(float(d.has("passes") ? d["passes"] : d.get("passes_per_year", 0.0f)), 0.0f);
+		for (uint32_t i = 0; i + 1 < pts.size(); i++) {
+			TrailSegment sg;
+			sg.a = pts[i];
+			sg.b = pts[i + 1];
+			sg.half_width = hw;
+			sg.passes = passes;
+			const uint32_t id = trail_segments.size();
+			trail_segments.push_back(sg);
+			const Rect2 r = Rect2(sg.a, Vector2()).expand(sg.b).grow(hw);
+			trail_bounds = any ? trail_bounds.merge(r) : r;
+			any = true;
+			const Vector2i c0(int(Math::floor(r.position.x / GRID_CELL)), int(Math::floor(r.position.y / GRID_CELL)));
+			const Vector2i c1(int(Math::floor(r.get_end().x / GRID_CELL)), int(Math::floor(r.get_end().y / GRID_CELL)));
+			for (int z = c0.y; z <= c1.y; z++) {
+				for (int x = c0.x; x <= c1.x; x++) {
+					trail_grid[Vector2i(x, z)].push_back(id);
+				}
+			}
+		}
+	}
+	if (had || any) {
+		_report(had && any ? old.merge(trail_bounds) : (had ? old : trail_bounds));
+	}
+}
+
+Vector2 WorldStand::trail_at(const Vector3 &p_position) const {
+	Vector2 r;
+	if (GDVIRTUAL_CALL(_trail_at, p_position, r)) {
+		return r;
+	}
+	const Vector2 p(p_position.x, p_position.z);
+	const LocalVector<uint32_t> *in = trail_grid.getptr(Vector2i(int(Math::floor(p.x / GRID_CELL)), int(Math::floor(p.y / GRID_CELL))));
+	if (in == nullptr) {
+		return r;
+	}
+	for (uint32_t i : *in) {
+		const TrailSegment &sg = trail_segments[i];
+		const Vector2 q = Geometry2D::get_closest_point_to_segment(p, sg.a, sg.b);
+		const float d = p.distance_to(q);
+		if (d > sg.half_width) {
+			continue;
+		}
+		// The tread: worn flat over the middle half, easing out to the edge.
+		const float tread = 1.0f - Math::smoothstep(0.5f * sg.half_width, sg.half_width, d);
+		if (sg.passes > r.x || (sg.passes == r.x && tread > r.y)) {
+			r = Vector2(sg.passes, tread);
+		}
+	}
+	return r;
 }
 
 float WorldStand::browse_at(const Vector3 &p_position) const {
@@ -1635,6 +1737,10 @@ void WorldStand::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear_browse"), &WorldStand::clear_browse);
 	ClassDB::bind_method(D_METHOD("browse_at", "position"), &WorldStand::browse_at);
 	ClassDB::bind_method(D_METHOD("browse_reach_at", "position"), &WorldStand::browse_reach_at);
+	ClassDB::bind_method(D_METHOD("rooting_age_at", "position"), &WorldStand::rooting_age_at);
+	ClassDB::bind_method(D_METHOD("set_trails", "trails"), &WorldStand::set_trails);
+	ClassDB::bind_method(D_METHOD("get_trails"), &WorldStand::get_trails);
+	ClassDB::bind_method(D_METHOD("trail_at", "position"), &WorldStand::trail_at);
 	ClassDB::bind_method(D_METHOD("stand_changed", "area"), &WorldStand::stand_changed);
 	ClassDB::bind_method(D_METHOD("get_stand_generation"), &WorldStand::get_stand_generation);
 	ClassDB::bind_method(D_METHOD("get_stand_changes_since", "generation"), &WorldStand::get_stand_changes_since);
@@ -1644,11 +1750,14 @@ void WorldStand::_bind_methods() {
 	GDVIRTUAL_BIND(_strike_age_at, "position");
 	GDVIRTUAL_BIND(_browse_at, "position");
 	GDVIRTUAL_BIND(_browse_reach_at, "position");
+	GDVIRTUAL_BIND(_rooting_age_at, "position");
+	GDVIRTUAL_BIND(_trail_at, "position");
 	BIND_ENUM_CONSTANT(DISTURBANCE_NONE);
 	BIND_ENUM_CONSTANT(DISTURBANCE_FIRE);
 	BIND_ENUM_CONSTANT(DISTURBANCE_WIND);
 	BIND_ENUM_CONSTANT(DISTURBANCE_BEETLE);
 	BIND_ENUM_CONSTANT(DISTURBANCE_BEAVER);
+	BIND_ENUM_CONSTANT(DISTURBANCE_ROOTING);
 }
 
 void WorldContracts::set_fire(const Ref<WorldFire> &p_stub) {
