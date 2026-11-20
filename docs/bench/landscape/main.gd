@@ -1019,6 +1019,22 @@ func _ready() -> void:
 	if out != "":
 		get_viewport().get_texture().get_image().save_png(out)
 		_log("saved %s (%d primitives in the frame)" % [out, int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))])
+		if args.has("pt-pair") and not env.pathtracing_enabled:
+			# --pt-pair=PATH (with --raster): the same moment path traced, from this run (Flow is not repeatable run to
+			# run): the scene paused, path tracing on, TAA off, --spp-frames more frames once the tracer is ready.
+			process_mode = Node.PROCESS_MODE_ALWAYS
+			get_tree().paused = true
+			get_viewport().use_taa = false
+			env.pathtracing_enabled = true
+			var w2 := 0
+			while RenderingServer.has_method("is_pathtracing_ready") and w2 < 400 and not RenderingServer.call("is_pathtracing_ready"):
+				await get_tree().process_frame
+				w2 += 1
+			for i in int(args.get("spp-frames", "4")) + int(args.get("pt-pair-frames", "8")):
+				await get_tree().process_frame
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(args["pt-pair"])
+			_log("saved %s (path traced pair, paused)" % args["pt-pair"])
 		if data_map != null and data_map.has_method("get_aridity_at"):
 			var cq: Camera3D = get_viewport().get_camera_3d()
 			var gq := cq.global_position - cq.global_basis.z * 6.0
