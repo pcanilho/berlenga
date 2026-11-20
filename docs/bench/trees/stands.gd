@@ -273,6 +273,10 @@ func _stand_checks(only := -1) -> void:
 						wrong_kind += 1
 		if reported > 0:
 			_check(wrong_kind * 4 < reported, "%s: stand-age map has the disturbance at %d of %d legacy plants" % [STAND_NAMES[i], reported - wrong_kind, reported])
+			# A populate that places the same stand reports nothing new (fields reading the stand rules would wake).
+			var gen0: int = ws.get_stand_generation()
+			f.populate()
+			_check(ws.get_stand_generation() == gen0, "%s: populating again leaves the stand-age map unchanged" % STAND_NAMES[i])
 		if ws:
 			ws.clear_disturbances()
 		var stand_count := 0

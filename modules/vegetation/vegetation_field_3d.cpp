@@ -270,15 +270,38 @@ void VegetationField3D::_report_stand_disturbances(bool p_clear_only) {
 	Ref<WorldStand> stand = wc ? wc->get_stand() : Ref<WorldStand>();
 	if (stand.is_null()) {
 		stand_disturbances.clear();
+		stand_disturbance_discs.clear();
+		stand_disturbance_years.clear();
 		return;
+	}
+	// Discs as (x, z, radius, kind) and years; a populate that places the same ones changes nothing on the map, so
+	// two fields reading the stand rules do not wake each other with identical re-reports.
+	LocalVector<Vector4> discs;
+	LocalVector<float> years;
+	if (!p_clear_only && !streaming && biome.is_valid()) {
+		_stand_discs(discs, years);
+	}
+	if (discs.size() == stand_disturbance_discs.size() && discs.size() == stand_disturbances.size()) {
+		bool same = true;
+		for (uint32_t i = 0; i < discs.size() && same; i++) {
+			same = discs[i].is_equal_approx(stand_disturbance_discs[i]) && Math::is_equal_approx(years[i], stand_disturbance_years[i]);
+		}
+		if (same) {
+			return;
+		}
 	}
 	for (int id : stand_disturbances) {
 		stand->remove_disturbance(id);
 	}
 	stand_disturbances.clear();
-	if (p_clear_only || streaming || biome.is_null()) {
-		return;
+	for (uint32_t i = 0; i < discs.size(); i++) {
+		stand_disturbances.push_back(stand->add_disturbance(Vector3(discs[i].x, 0.0f, discs[i].y), discs[i].z, int(discs[i].w), years[i]));
 	}
+	stand_disturbance_discs = discs;
+	stand_disturbance_years = years;
+}
+
+void VegetationField3D::_stand_discs(LocalVector<Vector4> &r_discs, LocalVector<float> &r_years) const {
 	constexpr float CELL = 30.0f;
 	struct Cell {
 		int n = 0;
@@ -317,7 +340,8 @@ void VegetationField3D::_report_stand_disturbances(bool p_clear_only) {
 			for (const Vector2 &q : kv.value.points) {
 				reach = MAX(reach, c.distance_to(q));
 			}
-			stand_disturbances.push_back(stand->add_disturbance(Vector3(c.x, 0.0f, c.y), MIN(reach + 3.0f, CELL * 0.75f), kind, kv.value.years));
+			r_discs.push_back(Vector4(c.x, c.y, MIN(reach + 3.0f, CELL * 0.75f), float(kind)));
+			r_years.push_back(kv.value.years);
 		}
 	}
 }

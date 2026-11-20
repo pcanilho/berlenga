@@ -2659,7 +2659,9 @@ As built:
   as RULE_DISTURBANCE).
 - Legacies: the lead's windthrow logs (kind wind, 0-e1 at full density, e1-e2 at 0.6 as they rot) and, for a
   conifer lead, the grey beetle snags (kind beetle, 0-e1). Fire's legacies stay the fire bands (RULE_BURN_AGE, 5ah).
-- Initiation (0-e1): birch and rowan saplings, the lead's seedlings 2 to e1+5 years.
+- Initiation (0-e1, `succession_band` 3): birch and rowan saplings, the lead's seedlings 2 to e1+5 years, young
+  (the lead's years x0.07-0.14, birch and rowan x0.16-0.26: taiga spruce 4 m, birch 4.5 m, rowan 2.6 m) and dense
+  (spacing x0.6).
 - Stem exclusion (e1-e2, `succession_band` 1): the lead's poles at 0.3-0.5 of its years, spacing x0.55 and shade
   x1.2 (dark, short crowns), birch poles, small self-thinned snags.
 - Understory reinitiation (e2-e3): the stand as `make_stand()` builds it.
@@ -2674,7 +2676,8 @@ As built:
   years), grey snags and logs (beetle, `beetle_outbreak` years) carry meta `stand_disturbance` = Vector2(kind,
   years); VegetationField3D.populate() reports each 30 m cell with three or more of them as a disc reaching its
   farthest one, at the cell's youngest kill, and takes its report back on clear() or the next populate (streaming
-  fields report nothing). Checks: stands `--stand-test=16` and `=17` (the map has the disturbance at every sampled
+  fields report nothing). A populate that yields the same discs leaves the map alone, so two fields
+  reading the stand rules do not wake each other. Checks: stands `--stand-test=16` and `=17` (the map has the disturbance at every sampled
   legacy plant), storm `--test` (trees a tree height apart: no patch), and a clustered storm (`--presets=4,4,4
   --spacing=6 --speed=36 --anchorage=0.4`: 3 thrown, 1 patch, wind at the trees).
 - The mesh cache key is 64-bit now: band terms stack (the taiga's boreal band plus a succession band overflowed int).
