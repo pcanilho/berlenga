@@ -3146,6 +3146,17 @@ func _link_shot(kind: String, off: bool) -> void:
 				if prints != null:
 					var mq := a.lerp(b, 0.5)
 					_log("tracks: dent %.3f m mid-walk at %s" % [float(prints.get_dent_at(Vector3(mq.x, height_at(mq.x, mq.y), mq.y))), str(mq)])
+				# The wet prints as the map holds them: the most wetness within 0.5 m of five points along the way, and the
+				# square they must lie in to be drawn (weather_contact_rect).
+				var wl := []
+				for k in 5:
+					var wq := a.lerp(b, (k + 0.5) / 5.0)
+					var best := 0.0
+					for oz in range(-4, 5):
+						for ox in range(-4, 5):
+							best = maxf(best, weather.get_contact_wetness_at(Vector3(wq.x + ox * 0.125, 0, wq.y + oz * 0.125)))
+					wl.append("%.2f at %s" % [best, str(wq.round())])
+				_log("tracks: contact wetness along the way %s; square %s, camera %s" % [", ".join(wl), str(weather.get_contact_wetness_rect()), str(get_viewport().get_camera_3d().global_position.round())])
 				for bd in mv[0]:
 					_log("tracks: %s water %s at the end" % [bd.name, str(weather.get_body_water(bd))])
 					bd.queue_free()

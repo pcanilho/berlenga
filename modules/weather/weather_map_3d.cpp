@@ -723,10 +723,27 @@ float WeatherMap3D::penman_evaporation(float p_net_radiation, float p_wind_2m, f
 
 // The contact square is a near-field picture (prints, drips, splashes seen up close): it stays round the camera even
 // when the weather window follows a world anchor or a vehicle far from it.
+// The contact square's centre: the ground the camera looks at, not the camera itself. A camera above the ground looks
+// at ground ahead of it (a fixed isometric view tens of metres off), so a square centred on the camera spent most of its
+// texels behind or under it and missed the prints in view. As view-fitted shadow cascades and terrain clipmaps do, the
+// square shifts along the view to where the view ray meets the ground, by at most 35 % of its side, keeping the
+// camera's own ground inside it.
 Vector3 WeatherMap3D::_contact_center() const {
 	if (is_inside_tree() && get_viewport()) {
 		if (const Camera3D *cam = get_viewport()->get_camera_3d()) {
-			return cam->get_global_position();
+			const Vector3 c = cam->get_global_position();
+			const Vector3 f = -cam->get_global_basis().get_column(2).normalized();
+			const Vector2 fxz(f.x, f.z);
+			if (fxz.length() < 1e-3f) {
+				return c; // straight down
+			}
+			const float g0 = get_terrain_ground_at(c);
+			const float g = Math::is_finite(g0) ? g0 : ground_height;
+			const float reach = 0.35f * contact_wetness_size;
+			// Along the ground to where the view ray reaches it (looking up or level: the full reach).
+			const float along = f.y < -1e-3f ? MIN((c.y - g) / -f.y * fxz.length(), reach) : reach;
+			const Vector2 d = fxz.normalized() * MAX(along, 0.0f);
+			return Vector3(c.x + d.x, c.y, c.z + d.y);
 		}
 	}
 	return _follow_position();
