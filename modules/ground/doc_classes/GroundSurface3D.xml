@@ -266,6 +266,18 @@
 				How many steps a tyre rolling onto a loose stone squeezed it out sideways.
 			</description>
 		</method>
+		<method name="get_stone_scour_volume" qualifiers="const">
+			<return type="float" />
+			<description>
+				Cubic metres the current has dug round loose stones lying in it since start (see [member stream_stones]): a horseshoe hole round each stone's upstream face, a third of it laid as a tail in its lee.
+			</description>
+		</method>
+		<method name="get_stone_silt_lifted" qualifiers="const">
+			<return type="float" />
+			<description>
+				Kilograms of silt loose stones have sent into the water since start, rolled along a muddy bed or scoured round (see [member stream_stones]); the water contract carries it on as a plume.
+			</description>
+		</method>
 		<method name="get_tracked_dust_lifted" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -919,7 +931,7 @@
 			Stones and tree roots lie hidden in the [member mud_layer] (roots where trees shade the ground): a wheel sinking into the mud stops on one under its middle and rides up ([method get_buried_depth_at]); one under the rest of its print it wraps round, the mud pressed out round the stone's top. Slumping and liquid mud flow round a stone's top, not off it. Near the followed point each is a [StaticBody3D] in the [code]ground_buried[/code] group with its mesh, so once ruts or water uncover one it is solid for wheels and bodies. The same stones are there every time.
 		</member>
 		<member name="stream_stones" type="bool" setter="set_stream_stones" getter="is_stream_stones" default="true">
-			Loose stones in a stream or ford (the water contract's height and flow) are pushed by the water's drag on their face above the bed and lifted by its buoyancy and lift: on firm ground one starts once the drag beats its submerged weight past its pivot, rolls on against bedload friction and stops in slack water; on mud the drag joins the mud's own hold and brake.
+			Loose stones in a stream or ford (the water contract's height and flow) are pushed by the water's drag on their face above the bed and lifted by its buoyancy and lift: on firm ground one starts once the drag beats its submerged weight past its pivot, rolls on against bedload friction and stops in slack water; on mud the drag joins the mud's own hold and brake. A stone at rest in a current on mud is scoured round (a horseshoe hole at its upstream face, a tail in its lee) and settles into its hole; one rolled along a muddy bed under water stirs silt into it.
 		</member>
 		<member name="worn_tracks" type="bool" setter="set_worn_tracks" getter="is_worn_tracks" default="true">
 			Wheels wear tracks in: each wheel pass over a 25 cm cell is counted ([method get_wear_at]), the passes pack the soil (it bears a wheel better, sinks less and takes in less rain, so water stands in used tracks; [method wear_compaction]) and wear the grass away (published as the [code]ground_wear_map[/code] and [code]ground_wear_rect[/code] shader globals, which [GrassField3D] reads). Soft mud is churned, not packed. The passes fade over [member wear_regrowth_days].

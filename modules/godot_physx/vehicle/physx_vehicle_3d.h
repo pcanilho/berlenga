@@ -207,6 +207,15 @@ public:
 	real_t get_wheel_mud_shed(int p_wheel) const; // kg thrown off so far
 	real_t get_belly_drag() const;
 	real_t get_belly_support() const;
+	// Water (docs/ideas/mud.md, round 20.1): in any water of the water contract (a river, a ford, a flood, a lake) the
+	// chassis box and the tyres are buoyed by the water they keep out and dragged by the current past them, so a
+	// fording truck is lightened, slips and is carried off past the depth and speed flood tests find.
+	void set_river_forces(bool p_enabled);
+	bool is_river_forces() const { return river_forces; }
+	void set_hull_seal(real_t p_share);
+	real_t get_hull_seal() const { return hull_seal; }
+	real_t get_water_buoyancy() const; // N, the last step
+	Vector3 get_water_drag() const; // N, the last step
 	// Mud on the body (docs/ideas/mud.md, stage 3b): BaseMaterial3D's Mud layer, turned on in copies of the materials of
 	// the meshes under this node and fed from the wheels' clogging and spray and the belly's mud line.
 	void set_body_mud(bool p_enabled);
@@ -263,9 +272,12 @@ private:
 	bool soft_soil = true;
 	bool tyre_clogging = true;
 	bool belly_drag = true;
+	bool river_forces = true; // mud round 20.1: the water contract's buoyancy and current on the chassis and tyres
+	real_t hull_seal = 0.5f; // share of the chassis box that keeps water out
 	bool body_mud = true;
 	bool wind_obstacle = true;
 	void _belly_step(float p_delta);
+	void _water_step(float p_delta);
 	void _body_mud_step(float p_delta);
 	void _wade_step();
 	void _body_mud_meshes();
