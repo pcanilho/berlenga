@@ -2655,6 +2655,8 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 		st.high_dir = w.length_squared() > 1e-6f ? w.normalized() : Vector2(1, 0);
 	}
 	st.high_cc = get_cirrocumulus_share();
+	st.rain_slant = cur_wind_direction * (cur_wind_speed / 7.0f);
+	st.storm_dir = cur_wind_direction.length_squared() > 1e-8f ? cur_wind_direction.normalized() : Vector2(1, 0);
 	{
 		// The strongest effectors and the brightest lights, at most eight of each.
 		LocalVector<Pair<float, const CloudEffector *>> ef;
@@ -2731,6 +2733,8 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 		o[2] = s.radius;
 		o[3] = s.cloud_cover * env;
 		st.storm_base[st.storm_count - 1] = s.cloud_base;
+		st.storm_rain[st.storm_count - 1] = s.rain_rate * env;
+		st.storm_outflow[st.storm_count - 1] = s.fire ? 0.0f : s.outflow;
 	}
 	st.update_top_max();
 	return st;
@@ -2740,6 +2744,10 @@ float WeatherMap3D::get_cloud_top_at(Vector3 p_position) const {
 	const WeatherClouds::State st = _cloud_state();
 	const Vector2 xz(p_position.x, p_position.z);
 	return WeatherClouds::base_at(st, xz) + WeatherClouds::top_height(st, WeatherClouds::cover_type_at(st, xz).y);
+}
+
+float WeatherMap3D::get_cloud_base_at(Vector3 p_position) const {
+	return WeatherClouds::base_at(_cloud_state(), Vector2(p_position.x, p_position.z));
 }
 
 float WeatherMap3D::get_cloud_density_at(Vector3 p_position) const {
@@ -3644,6 +3652,7 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_cloud_regime_from_weather", "enabled"), &WeatherMap3D::set_cloud_regime_from_weather);
 	ClassDB::bind_method(D_METHOD("is_cloud_regime_from_weather"), &WeatherMap3D::is_cloud_regime_from_weather);
 	ClassDB::bind_method(D_METHOD("get_cloud_base_now"), &WeatherMap3D::get_cloud_base_now);
+	ClassDB::bind_method(D_METHOD("get_cloud_base_at", "position"), &WeatherMap3D::get_cloud_base_at);
 	ClassDB::bind_method(D_METHOD("get_convective_heating"), &WeatherMap3D::get_convective_heating);
 	ClassDB::bind_method(D_METHOD("set_cloud_thickness", "thickness"), &WeatherMap3D::set_cloud_thickness);
 	ClassDB::bind_method(D_METHOD("get_cloud_thickness"), &WeatherMap3D::get_cloud_thickness);
