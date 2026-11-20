@@ -4,6 +4,7 @@ extends Node3D
 # per species), or rendered.
 #
 # godot --path docs/bench/trees --rendering-driver vulkan -- --stands [options]
+#   --lightning       a fresh strike's debris round a spruce, none unstruck or three years on (trees.md 5ax)
 #   --test            place every stand, print the counts and PASS/FAIL, quit
 #   --stand-test=N    the placement checks of stand N only (TreeGenerator.Stand)
 #   --forest-edge=N   make_edge(N): mantle shrubs out in the open, edge trees one-sided toward +X (trees.md 5as)
@@ -88,6 +89,10 @@ func run(args: Dictionary) -> void:
 		return
 	if args.has("deer"):
 		_deer_check()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("lightning"):
+		_lightning_check()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	if args.has("beaver"):
@@ -240,6 +245,29 @@ func _flood_check() -> void:
 		_check(under > 0.8 * under_n and over == 0, "willow seed %d: silt on %d of %d bark vertices under 0.9 m, %d over 1.3 m" % [sd, under, under_n, over])
 	_check(found_wrack >= 2, "flood wrack on %d of 4 willows" % found_wrack)
 	g.flood_height = 0.0
+
+func _lightning_check() -> void:
+	# A fresh strike (trees.md 5ax): bark slabs and splinters round a forest spruce's foot, none two years on; the
+	# fresh strip itself is checked by eye (raster and path traced, trees.md 5ax).
+	var g := TreeGenerator.new()
+	g.preset = TreeGenerator.PRESET_NORWAY_SPRUCE
+	g.seed = 3
+	g.forest_shade = 0.6
+	g.near_leaf_range = 0.0
+	var counts := []
+	var far := 0.0
+	for y in [-1.0, 0.05, 3.0]:
+		g.lightning_years = y
+		var m := g.generate()
+		var si := _surface(m, "wood")
+		var n := 0
+		if si >= 0:
+			for q in m.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]:
+				if q.y < 0.15 and Vector2(q.x, q.z).length() > 0.6:
+					n += 1
+					far = maxf(far, Vector2(q.x, q.z).length())
+		counts.append(n)
+	_check(counts[1] > 2000 and counts[0] == 0 and counts[2] == 0 and far < 25.0, "spruce strike debris: %d vertices on the ground fresh (out to %.1f m), %d unstruck, %d three years on" % [counts[1], far, counts[0], counts[2]])
 
 func _deer_check() -> void:
 	# Hedged saplings (trees.md 5aw): fifteen years browsed stay under the reach on every seed; unbrowsed they grow away.

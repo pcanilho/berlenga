@@ -3666,6 +3666,33 @@ logs, later stilted rows); Zielonka 2006 (Norway spruce comes in on logs from de
    bushes, bark stripped on young spruce and ash; Gill 1992), and seedlings in rows along rotting logs that later
    stand on stilts in a line where the log was (Harmon and Franklin 1989). Reads a browsing pressure map or stand meta.
 
+### 5ax. Fresh lightning strikes (20 Nov; Paulo's pick, first of three)
+
+Sources: Taylor 1964, Lightning damage to forest trees in Montana (strip scars
+from the crown to the foot along the grain, bark and wood thrown tens of metres); Taylor 1974 (scar frequency by
+species and height); Murray 1958, Lightning damage to trees (Scottish Forestry); Alabama Extension FOR-2134, Caring for
+lightning-struck trees (2023). The current runs down the wet outer sapwood; the steam blows the bark off in a strip and
+tears a sliver of wood out of its middle.
+
+- `lightning_years` (-1 none): years since a strike. It forces one WOUND_LIGHTNING on the main stem (its own random
+  stream, so the scar keeps its place as the years change) from 75-95% of the stem's length to the foot, 7-18 cm wide,
+  following the grain's spiral. Old scars from the stand's own chance (5p) are unchanged.
+- While fresh (fading 1-6 years) a groove 1-3 cm deep runs down the strip's middle (the torn sapwood sliver), ragged
+  with the grain; the callus rolls in over the following years as for every wound.
+- The strip's wood (`bark_wood_color`, `_lightning_wood`): cream when just bared, straw within months, grey from about
+  1-4 years, the weathered wood after 3-8.
+- No moss on the fresh strip (the strike blew it off with the bark): `_moss_at` reads `_fresh_strike_at`, and the moss
+  shell is hidden there. On older strikes the moss that comes back lies on the sunk wood, not on the shell's floor
+  over the groove (which showed as floating blocks).
+- Debris for the first two years (fewer from 0.4): 60-140 pieces round the foot, half toward the scar's side, mostly
+  within a few metres, out to 0.6 of the height. Bark slabs keep part of the stem's curl, torn ragged along the grain,
+  bark side up or the reddish inner bark up; splinters are thin three-sided slivers of the pale sapwood. They follow
+  `ground_slope`. Surface "wood".
+- Bench: `stands.gd --lightning` (debris on the ground when fresh, none unstruck or three years on).
+- Not done: a hard strike that splits the stem or shatters the top; crown scorch; the world's strikes reaching trees
+  (WeatherLightning3D keeps only its last 32 strikes, no ages: VegetationField3D needs a strike record with ages to
+  pick a struck variant, as burn ages pick fire variants; a world-links contract).
+
 ## Next-round options (card 20 Nov evening)
 
 1. **Lightning-struck trees.** Old healed strike strips are in since 5p (WOUND_LIGHTNING, random on tall trees). Missing:
