@@ -5682,10 +5682,11 @@ bool RTTlasBuilder::_gather_mm_surfaces(const Instance &p_inst, const InstanceMa
 		return false;
 	}
 	bool persistable = !is_particles;
-	if (!is_particles) {
-		// Populate data cache now - first access triggers GPU readback, safe here.
-		mesh_storage->multimesh_get_local_data_ptr(source.base);
-	}
+	// The CPU mirror of the records is only read for expanded surfaces (one TLAS entry per record, or a merge that
+	// falls back to them); captured ones (vertex() captured: grass, plants in wind) read the GPU buffer only. It is
+	// filled below, here in the gather (a first access reads the GPU buffer back, safe now), only when some surface
+	// may expand: a GPU-written MultiMesh whose surfaces are all captured never gets a CPU copy.
+	bool needs_cpu_records = false;
 
 	// World-space particle records are drawn without the node transform.
 	const Transform3D node_transform = source.world_space ? Transform3D() : p_inst.transform;
@@ -5760,7 +5761,15 @@ bool RTTlasBuilder::_gather_mm_surfaces(const Instance &p_inst, const InstanceMa
 		pending.bake.bake_motion = rt_material_can_own_velocity(pending.material_flags, _rt_dominant_layer_alpha()) &&
 				(captured || source.prev_offset != source.current_offset ||
 						(pending.bake.billboard_index != UINT32_MAX && state->merge_billboards[pending.bake.billboard_index] != state->merge_billboards[pending.bake.prev_billboard_index]));
+		// Expanded surfaces, and merged ones that fall back to expanding (add_multimesh_surfaces), read the CPU
+		// records; captured surfaces never do.
+		if (!is_particles && !pending.bake.captured) {
+			needs_cpu_records = true;
+		}
 		pending_mm_surfaces.push_back(pending);
+	}
+	if (needs_cpu_records) {
+		mesh_storage->multimesh_get_local_data_ptr(source.base);
 	}
 	return persistable;
 }

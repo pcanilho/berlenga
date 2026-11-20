@@ -1344,3 +1344,10 @@ Design (to build after Paulo's pick):
   forest known, open-ended interior rules do nothing and edge rules place nothing.
 - Maps built from rules alone (far shell, cover map, sward shade) leave out context-only species (burn presets,
   stand stages that skip old growth, edge-only species) instead of spreading them over all their ground.
+- Built 20 Nov (far rings without CPU copies): the path tracer kept a CPU mirror of every MultiMesh's records on
+  RT devices (a readback after each GPU write, and a warm-up in the TLAS gather), though only expanded surfaces
+  (and merges that fall back to expanding) read it; captured surfaces (grass, plants in wind) read the GPU buffer.
+  Now the gather fills the mirror only when a non-captured surface may expand, and a GPU write reads back only
+  for an existing mirror, a missing custom AABB or rt_instanced. Grass bench --far-grass=rings PT (320x180, 1 spp):
+  static memory 603 -> 515 MB, video 6619 -> 6554 MB; images equal within 1-spp noise (block means 85.35 / 85.09).
+  gpu_multimesh --test PASS in gpu, cpu and gpu+taa modes, gpu and cpu PT frames identical.

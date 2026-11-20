@@ -2539,6 +2539,8 @@ func _process(dt: float) -> void:
 		print("GRASS_STILL frozen grass=%s cover=%s memory %.0f MB" % [grass.is_still_frozen(), cover.is_still_frozen() if cover else "-", OS.get_static_memory_usage() / 1048576.0])
 	if prims:
 		await _print_prims()
+	# CPU and GPU memory at the capture (the path tracer's CPU copies of MultiMesh records count in static memory).
+	print("GRASS_MEM static_mb=%.1f video_mb=%.1f" % [Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0, Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0])
 	if not out.is_empty():
 		if burn_age >= 0.0 and OS.get_environment("GRASS_NO_FLUSH") != "":
 			# The before frame: the regrowth flush off (its colour alone).
