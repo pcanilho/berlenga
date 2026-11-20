@@ -339,7 +339,7 @@ uniform float shore_wave_activity : hint_range(0.0, 1.0) = 1.0;
 // path tracer sees it too): the sea is cut where another surface owns the water, such as a sea cave's
 // passage. Per capsule: its axis (a.x, a.z, b.x, b.z); its radius at a and at b (a negative radius at a cuts
 // flat there instead of round: the arch, where the open sea goes on) and the other surface's weight at a and at
-// b, over which the two cross-fade by a dither (water_fade_noise). Filled from the "water_clippers" group by
+// b, over which the two cross-fade (raster by alpha, the path tracer per sample: water_fade_noise). Filled from the "water_clippers" group by
 // PhysXWaterSurface3D.
 // The capsules are a 32 x 2 texture (row 0 the axes, row 1 the radii and weights): the path tracer's materials take
 // textures but not uniform arrays.
