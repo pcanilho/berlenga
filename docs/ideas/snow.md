@@ -1482,6 +1482,16 @@ Research: a slab avalanche leaves a crown (a tensile fracture standing the slab'
   ripples in the geometry (Ueno's ripple instability; today only a normal map), a slight bend toward the wind or the
   drip line, a pendant drop at the tip, and neighbours fusing into curtains near the eave.
 
+## Follow-up 35: crown walls without slits (20 Nov 2026)
+
+- From afar the crown read as a dotted line, also with the powder cloud hidden. Close up, the wall had slits
+  through to the sky: the outline is chained into lines, and the walk breaks a line wherever three or four edges
+  meet at a corner. Each line set its end point off the corner along its own edge's normal, so two lines meeting
+  there stood their ends up to half a cell apart. Every corner's point is now the mean of all edges meeting
+  there (normal, height, albedo), so lines meet end to end. What is left at the crown's steps is the step's own
+  face in shade. Bench: `--no-gas` hides the powder cloud and lifts the one-tick lockstep (the slide and its
+  crown in about a minute); `--crown` frames the crown from 14 m down the bed, `--crown-far` from 40 m.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

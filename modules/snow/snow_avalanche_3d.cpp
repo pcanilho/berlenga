@@ -2036,16 +2036,35 @@ void SnowAvalanche3D::_build_crown(SnowCover3D *p_cover, const Vector<float> &p_
 		Vector2 normal;
 		float albedo;
 	};
+	// Each corner's point is the mean of every edge meeting there (normal, height, albedo), so two lines that
+	// meet at a corner (the walk breaks the outline where three or four edges meet) stand their ends on the
+	// same spot: from each edge's own normal, the ends were set off the corner different ways and left a slit
+	// between them, a dotted outline from afar.
+	HashMap<Vector2i, P> corner_point;
+	for (const KeyValue<Vector2i, LocalVector<uint32_t>> &kv : at_corner) {
+		P cp = { Vector2(kv.key), 0.0f, Vector2(), 0.0f };
+		for (uint32_t c : kv.value) {
+			cp.height += segs[c].height;
+			cp.normal += segs[c].normal;
+			cp.albedo += segs[c].albedo;
+		}
+		const float inv = 1.0f / float(kv.value.size());
+		cp.height *= inv;
+		cp.albedo *= inv;
+		// Opposite edges (a one-cell sliver) cancel: the first edge's way then.
+		cp.normal = cp.normal.length_squared() > 1e-4f ? cp.normal.normalized() : segs[kv.value[0]].normal;
+		corner_point[kv.key] = cp;
+	}
 	LocalVector<LocalVector<P>> lines;
 	auto walk = [&](uint32_t p_start, Vector2i p_from) {
 		LocalVector<P> line;
 		Vector2i corner = p_from;
 		uint32_t k = p_start;
-		line.push_back({ Vector2(corner), segs[k].height, segs[k].normal, segs[k].albedo });
+		line.push_back(corner_point[corner]);
 		while (true) {
 			used[k] = 1;
 			const Vector2i next = segs[k].a == corner ? segs[k].b : segs[k].a;
-			line.push_back({ Vector2(next), segs[k].height, segs[k].normal, segs[k].albedo });
+			line.push_back(corner_point[next]);
 			corner = next;
 			uint32_t found = UINT32_MAX;
 			for (uint32_t c : at_corner[corner]) {
