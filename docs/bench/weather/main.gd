@@ -68,6 +68,7 @@ var view := "street"
 var raster := false
 var pt_from := 0
 var frames := 12
+var half_usec := 0
 var out := ""
 var map_out := ""
 var spp := 16
@@ -1351,7 +1352,11 @@ func _process(_delta: float) -> void:
 		env.pathtracing_enabled = not raster
 	if lightning and n == frames - strike_frames - 1:
 		lightning.strike(strike_at, true)
+	if n == frames / 2:
+		half_usec = Time.get_ticks_usec()
 	if out != "" and n >= frames:
+		# The second half's frames, for cost checks (--raster, with --frames well past the warm-up).
+		print("frames %d to %d: %.1f ms a frame" % [frames / 2, frames, (Time.get_ticks_usec() - half_usec) / 1000.0 / (frames - frames / 2)])
 		get_viewport().get_texture().get_image().save_png(out)
 		get_tree().quit()
 

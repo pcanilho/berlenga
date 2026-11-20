@@ -1381,6 +1381,7 @@ void WeatherMap3D::_notification(int p_what) {
 			set_physics_process_internal(false);
 			_finish_shadow_bake(true);
 			_finish_sky_shadow_bake(true);
+			_finish_light_grid_bake(true);
 			_release_shadow_light();
 			_restore_fog();
 		} break;
@@ -1424,6 +1425,13 @@ void WeatherMap3D::_notification(int p_what) {
 				_start_sky_shadow_bake();
 			}
 			_apply_sky_shadow();
+			light_grid_timer += dt;
+			if (light_grid_task != WorkerThreadPool::INVALID_TASK_ID) {
+				_step_light_grid_bake();
+			} else if (light_grid_timer >= 4.0 * cloud_shadow_interval) {
+				_start_light_grid_bake();
+			}
+			_apply_light_grid();
 			_apply_haze();
 			_update_contact(wdt);
 			_tracks_step(float(dt));
@@ -2409,6 +2417,9 @@ void WeatherMap3D::update_cloud_shadow() {
 	_finish_sky_shadow_bake(true);
 	_start_sky_shadow_bake();
 	_finish_sky_shadow_bake(false);
+	_finish_light_grid_bake(true);
+	_start_light_grid_bake();
+	_finish_light_grid_bake(false);
 }
 
 void WeatherMap3D::_start_sky_shadow_bake() {
@@ -2480,6 +2491,168 @@ void WeatherMap3D::_apply_sky_shadow() {
 	const Vector3 d3(d.x, 0.0f, d.y);
 	const Vector2 corner = sky_shadow_corner + Vector2(d3.dot(sky_shadow_axis_u), d3.dot(sky_shadow_axis_v));
 	sky_material->set_cloud_shadow_map(sky_shadow_texture, sky_shadow_axis_u, sky_shadow_axis_v, corner, kSkyShadowExtent);
+}
+
+// The light grid's value at a point of a level, bilinear between voxel centres; negative off the box.
+float WeatherMap3D::LightGridBake::above(int p_level, float p_x, float p_z) const {
+	const int n = kLightGridResolution;
+	const float fx = (p_x - corner.x) / texel - 0.5f;
+	const float fz = (p_z - corner.y) / texel - 0.5f;
+	if (fx < 0.0f || fz < 0.0f || fx > n - 1 || fz > n - 1) {
+		return -1.0f;
+	}
+	const int x0 = MIN(int(fx), n - 2);
+	const int z0 = MIN(int(fz), n - 2);
+	const float tx = fx - x0;
+	const float tz = fz - z0;
+	const float *t = tau.ptr() + (p_level * n + z0) * n + x0;
+	return Math::lerp(Math::lerp(t[0], t[1], tx), Math::lerp(t[n], t[n + 1], tx), tz);
+}
+
+// One row of the level being baked. Each voxel's optical depth toward the sun out of the layer: its path up to
+// the next level's height, marched, plus the next level's (already baked) value where the path meets it. Off
+// the box's side, or from the top level, the path is marched the rest of the way (to 24 km).
+void WeatherMap3D::LightGridBake::row(uint32_t p_row, void *) {
+	const int n = kLightGridResolution;
+	const float dy = (y1 - y0) / kLightGridLevels;
+	const float y = y0 + (level + 0.5f) * dy;
+	const float reach = dy / to_sun.y; // along the path, to the next level
+	const int steps = CLAMP(int(Math::ceil(reach / 128.0f)), 1, 16);
+	const float step = reach / steps;
+	for (int xi = 0; xi < n; xi++) {
+		const Vector3 p(corner.x + (xi + 0.5f) * texel, y, corner.y + (p_row + 0.5f) * texel);
+		float t = 0.0f;
+		float rest = -1.0f;
+		if (level + 1 < kLightGridLevels) {
+			const Vector3 q = p + to_sun * reach;
+			rest = above(level + 1, q.x, q.z);
+		}
+		if (rest >= 0.0f) {
+			for (int k = 0; k < steps; k++) {
+				t += WeatherClouds::extinction_at(state, p + to_sun * ((k + 0.5f) * step)) * step;
+			}
+			t += rest;
+		} else {
+			float d = 0.0f;
+			float s = 64.0f;
+			while (d < 24000.0f) {
+				const Vector3 q = p + to_sun * (d + 0.5f * s);
+				if (q.y > state.top_max) {
+					break;
+				}
+				t += WeatherClouds::extinction_at(state, q) * s;
+				d += s;
+				s = MIN(s * 2.0f, 512.0f);
+			}
+		}
+		tau_w[(level * n + int(p_row)) * n + xi] = t;
+	}
+}
+
+void WeatherMap3D::_start_light_grid_bake() {
+	light_grid_timer = 0.0;
+	DirectionalLight3D *light = Object::cast_to<DirectionalLight3D>(get_node_or_null(sun_light));
+	if (!light || !is_inside_tree() || WeatherSkyMaterial::find_for(this).is_null()) {
+		return;
+	}
+	const Vector3 to_sun = light->get_global_basis().orthonormalized().get_column(2);
+	if (to_sun.y < 0.02f) {
+		return;
+	}
+	WeatherClouds::shape_noise();
+	if (!light_grid_bake) {
+		light_grid_bake = memnew(LightGridBake);
+	}
+	LightGridBake &lb = *light_grid_bake;
+	lb.state = _cloud_state();
+	lb.to_sun = to_sun;
+	lb.texel = kLightGridExtent / kLightGridResolution;
+	const Vector3 c = _follow_position();
+	lb.corner = (Vector2(Math::floor(c.x / lb.texel), Math::floor(c.z / lb.texel)) - Vector2(kLightGridResolution / 2, kLightGridResolution / 2)) * lb.texel;
+	lb.y0 = lb.state.base_min;
+	lb.y1 = MAX(lb.state.top_max, lb.y0 + 100.0f);
+	lb.tau.resize(kLightGridResolution * kLightGridResolution * kLightGridLevels);
+	lb.tau_w = lb.tau.ptrw();
+	lb.level = kLightGridLevels - 1;
+	_launch_light_grid_level();
+}
+
+void WeatherMap3D::_launch_light_grid_level() {
+	light_grid_task = WorkerThreadPool::get_singleton()->add_template_group_task(light_grid_bake, &LightGridBake::row, (void *)nullptr, kLightGridResolution, -1, false, String("Cloud light grid"));
+}
+
+// A level a frame (Nubis amortises its grid over frames too): each level needs the one above it done.
+void WeatherMap3D::_step_light_grid_bake() {
+	if (light_grid_task == WorkerThreadPool::INVALID_TASK_ID || !WorkerThreadPool::get_singleton()->is_group_task_completed(light_grid_task)) {
+		return;
+	}
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(light_grid_task);
+	light_grid_task = WorkerThreadPool::INVALID_TASK_ID;
+	LightGridBake &lb = *light_grid_bake;
+	if (lb.level > 0) {
+		lb.level--;
+		_launch_light_grid_level();
+		return;
+	}
+	lb.level = -1;
+	_build_light_grid_texture();
+}
+
+void WeatherMap3D::_finish_light_grid_bake(bool p_discard) {
+	if (light_grid_task == WorkerThreadPool::INVALID_TASK_ID) {
+		return;
+	}
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(light_grid_task);
+	light_grid_task = WorkerThreadPool::INVALID_TASK_ID;
+	LightGridBake &lb = *light_grid_bake;
+	if (p_discard) {
+		lb.level = -1;
+		return;
+	}
+	while (lb.level > 0) {
+		lb.level--;
+		_launch_light_grid_level();
+		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(light_grid_task);
+		light_grid_task = WorkerThreadPool::INVALID_TASK_ID;
+	}
+	lb.level = -1;
+	_build_light_grid_texture();
+}
+
+void WeatherMap3D::_build_light_grid_texture() {
+	const LightGridBake &lb = *light_grid_bake;
+	const int n = kLightGridResolution;
+	Vector<Ref<Image>> levels;
+	for (int l = 0; l < kLightGridLevels; l++) {
+		Vector<uint8_t> bytes;
+		bytes.resize(n * n * 4);
+		memcpy(bytes.ptrw(), lb.tau.ptr() + l * n * n, n * n * 4);
+		levels.push_back(Image::create_from_data(n, n, false, Image::FORMAT_RF, bytes));
+	}
+	if (light_grid_texture.is_null() || light_grid_y0 != lb.y0 || light_grid_y1 != lb.y1) {
+		// A new texture whenever the box's height changes too, so the sky never reads one level against another's.
+		light_grid_texture.instantiate();
+		light_grid_texture->create(Image::FORMAT_RF, n, n, kLightGridLevels, false, levels);
+	} else {
+		light_grid_texture->update(levels);
+	}
+	light_grid_corner = lb.corner;
+	light_grid_drift = lb.state.drift;
+	light_grid_y0 = lb.y0;
+	light_grid_y1 = lb.y1;
+	_apply_light_grid();
+}
+
+void WeatherMap3D::_apply_light_grid() {
+	if (light_grid_texture.is_null() || active != this) {
+		return;
+	}
+	Ref<WeatherSkyMaterial> sky_material = WeatherSkyMaterial::find_for(this);
+	if (sky_material.is_null()) {
+		return;
+	}
+	// Between bakes the grid slides with the clouds.
+	sky_material->set_cloud_light_grid(light_grid_texture, light_grid_corner + (cloud_drift - light_grid_drift), kLightGridExtent, light_grid_y0, light_grid_y1);
 }
 
 void WeatherMap3D::_apply_shadow() {
@@ -3086,4 +3259,8 @@ WeatherMap3D::~WeatherMap3D() {
 		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(sky_shadow_task);
 	}
 	memdelete_notnull(sky_shadow_bake);
+	if (light_grid_task != WorkerThreadPool::INVALID_TASK_ID) {
+		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(light_grid_task);
+	}
+	memdelete_notnull(light_grid_bake);
 }

@@ -92,6 +92,13 @@ uniform int cloud_steps : hint_range(8, 256) = 64;
 uniform int cloud_radiance_steps : hint_range(4, 64) = 16;
 // Steps towards the sun from each sample, at growing distance (Frostbite, Nubis).
 uniform int cloud_light_steps : hint_range(1, 12) = 6;
+// Optical depth toward the sun past the first 64 m, baked on the CPU over a box round the camera (Nubis Cubed's
+// light voxel grid): one read in place of the coarse light march, and shadows reach as far as the box is tall.
+// Set by WeatherMap3D; box = corner x, corner z, size, on.
+uniform sampler3D cloud_light_grid : filter_linear, repeat_disable;
+uniform vec4 cloud_light_grid_box = vec4(0.0);
+uniform vec2 cloud_light_grid_y = vec2(0.0, 1.0);
+uniform bool cloud_light_grid_enabled = true;
 // Clouds fade into the atmosphere from half this distance (m).
 uniform float cloud_far : hint_range(1000, 200000, 100) = 40000.0;
 uniform float cloud_brightness : hint_range(0, 8) = 1.0;
@@ -348,7 +355,25 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 		}
 		bool near_detailed = coarse < light_steps;
 		float tau = tau_near;
+		// Past 512 m the baked grid stands in for the rest of the coarse march: one read 512 m along the path, of
+		// the optical depth from there out of the layer. Nearer, its 256 m texels would blur a small cloud's shading
+		// of itself. Above the box the path has left the clouds.
+		vec3 gp = p + sun_dir * 512.0;
+		vec3 grid_uvw = vec3((gp.x - cloud_light_grid_box.x) / cloud_light_grid_box.z, (gp.z - cloud_light_grid_box.y) / cloud_light_grid_box.z, (gp.y - cloud_light_grid_y.x) / (cloud_light_grid_y.y - cloud_light_grid_y.x));
+		bool grid = cloud_light_grid_enabled && cloud_light_grid_box.w > 0.5 && all(greaterThanEqual(grid_uvw, vec3(0.0))) && all(lessThanEqual(grid_uvw.xy, vec2(1.0)));
+		if (grid) {
+			coarse = 6;
+			if (!near_detailed) {
+				step_l = 64.0;
+			}
+		}
 		for (int j = 0; j < coarse; j++) {
+			if (grid) {
+				if (d >= 511.0) {
+					break;
+				}
+				step_l = min(step_l, 512.0 - d);
+			}
 			vec3 lp = p + sun_dir * (d + 0.5 * step_l);
 			float dt = wc_extinction(lp, wc_cover_type(lp.xz), false, step_l) * step_l;
 			tau += dt;
@@ -359,6 +384,9 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 			}
 			d += step_l;
 			step_l *= 2.0;
+		}
+		if (grid && grid_uvw.z < 1.0) {
+			tau += textureLod(cloud_light_grid, grid_uvw, 0.0).r;
 		}
 		// Multiple scattering by Wrenninge's octaves: scattering, extinction and phase eccentricity
 		// each halved per octave.
@@ -1020,6 +1048,18 @@ void WeatherSkyMaterial::set_cloud_shadow_map(const Ref<Texture2D> &p_map, const
 	rs->material_set_param(m, "atmo_cloud_shadow_size", p_map.is_valid() ? p_size : 0.0f);
 }
 
+void WeatherSkyMaterial::set_cloud_light_grid(const Ref<Texture3D> &p_grid, const Vector2 &p_corner, float p_size, float p_y0, float p_y1) {
+	RenderingServer *rs = RS::get_singleton();
+	const RID m = get_rid();
+	const RID grid = p_grid.is_valid() ? p_grid->get_rid() : RID();
+	if (grid != cloud_light_grid) {
+		rs->material_set_param(m, "cloud_light_grid", grid.is_valid() ? Variant(grid) : Variant());
+		cloud_light_grid = grid;
+	}
+	rs->material_set_param(m, "cloud_light_grid_box", Vector4(p_corner.x, p_corner.y, MAX(p_size, 1.0f), grid.is_valid() ? 1.0f : 0.0f));
+	rs->material_set_param(m, "cloud_light_grid_y", Vector2(p_y0, MAX(p_y1, p_y0 + 1.0f)));
+}
+
 void WeatherSkyMaterial::set_atmosphere_model(AtmosphereModel p_model) {
 	if (atmosphere_model == p_model) {
 		return;
@@ -1064,6 +1104,7 @@ void WeatherSkyMaterial::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_moon_angular_size", "radians"), &WeatherSkyMaterial::set_moon_angular_size);
 	ClassDB::bind_method(D_METHOD("set_aerosol", "extinction", "albedo", "height", "from"), &WeatherSkyMaterial::set_aerosol);
 	ClassDB::bind_method(D_METHOD("set_cloud_shadow_map", "map", "axis_u", "axis_v", "corner", "size"), &WeatherSkyMaterial::set_cloud_shadow_map);
+	ClassDB::bind_method(D_METHOD("set_cloud_light_grid", "grid", "corner", "size", "y0", "y1"), &WeatherSkyMaterial::set_cloud_light_grid);
 	ClassDB::bind_method(D_METHOD("set_atmosphere_lights", "sun_direction", "sun_irradiance", "moon_direction", "moon_irradiance"), &WeatherSkyMaterial::set_atmosphere_lights);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "atmosphere_model", PROPERTY_HINT_ENUM, "Physical Sky,Scattering"), "set_atmosphere_model", "get_atmosphere_model");
 	BIND_ENUM_CONSTANT(ATMOSPHERE_PHYSICAL_SKY);

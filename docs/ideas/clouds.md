@@ -179,3 +179,17 @@ energy-conserving and would split raster from path traced bounces, so they stay 
 
 Cost (lavapipe, crest view, 40 reprojected frames): 800 ms a frame before round 1, 1084 after refinement: the
 short steps inside cloud are the cost the next two items (sun shadow grid, empty-space skipping) pay back.
+
+3. **Sun shadow grid** (Nubis Cubed's light voxel grid, Schneider 2023): `WeatherMap3D` bakes the optical
+   depth toward the sun out of the layer for a 128 x 128 x 32 box (32 km across, cloud base to top) round the
+   camera, from the top level down, one level a frame on worker threads: each voxel marches only to the next
+   level's height (steps of at most 128 m) and adds that level's value where its path meets it (bilinear); off
+   the box's side it marches the rest. Rebaked every four shadow intervals, sliding with the drift between.
+   The sky's light march keeps its first 512 m (detail to 64 m, then 64/128/256 m shape steps) and reads the
+   grid once 512 m along the path for the rest: a small cloud keeps its own shading (a first try that read the
+   grid at the sample itself blurred it, 256 m texels), and shadows now reach right out of the layer, so
+   at a low sun towers shade the clouds behind them over kilometres. `cloud_light_grid_enabled` switches it
+   for A/B checks; outside the box the march is as before.
+   Cost (lavapipe, `--view=clouds`, raster, frames 30 to 60): 836 ms a frame without, 750 to 773 with (the
+   bake shares the same CPU there). Bake about 0.37 s of CPU in all, spread over 32 frames. PT parity: sky
+   mean difference 4/255 on `clouds_wide`.
