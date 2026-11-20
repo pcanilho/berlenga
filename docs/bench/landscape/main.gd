@@ -32,6 +32,8 @@ extends Node3D
 #   --cloud-shadow=0 --sun-shadow=0   no cloud shadow on the sun; no raster sun shadow map
 #   --sky-params=name:value,...   WeatherSkyMaterial shader parameters (A/B frames)
 #   --sun-off             no sun at all: what the sky alone lights
+#   --ground-scans=0      plain ground layers instead of the CC0 scans in art/terrain_layers (fetch_art.sh);
+#                         --ground-scans=rock,scree scans on those layers only
 #   --far-shadows=0       no far sun shadows from the ground's horizon toward the sun (raster A/B)
 #   --sky-occlusion=0     ground ambient light without the hills' sky occlusion; --sky-light=0 an even sky for it
 #   --water-param=name:value[;...]   set water shader uniforms on the sea and lakes (floats, true/false, colours as r,g,b,a)
@@ -70,6 +72,7 @@ extends Node3D
 #   --atmosphere=scattering|physical   sky air: Hillaire 2020 multiple scattering (default) or the older PhysicalSky model
 #   --clip=N              with --out, N frames in a row (out_0000.png...), for clips; run with --fixed-fps 24
 #   --checks              with --out, run the link checks before the picture (they change the scene)
+#   --far-wait=N          stop waiting for the grass far colour bake after N frames (900); 0 for scouts and close shots
 #   --link=fog|spray|tracks [--link-off]   world-links docs frames, the link on or off (see _link_shot)
 #                         --link-verbose logs the tracks walk every second (ground, water, contact wetness, body load)
 
@@ -527,6 +530,8 @@ func _ready() -> void:
 				_log("%s near radius %.1f m (stream radius %.0f)" % [f.name, f.get_near_radius(), f.stream_radius])
 	if args.has("bracken"):
 		await _frame_bracken()
+	if args.has("lightning-cam"):
+		await _frame_struck()
 	if args.has("log"):
 		await _frame_log()
 	if args.has("mushrooms"):
@@ -714,9 +719,14 @@ func _ready() -> void:
 	var layers_bake: Array = sward if not sward.is_empty() else ([grass] if grass != null else [])
 	var bw := 0
 	get_viewport().disable_3d = args.get("bake-draw", "0") == "0" # the bake draws in its own SubViewport; the main view waits undrawn
+	# --far-wait=N: give up on the far colour bake after N frames (default 900). Scouts and close --link frames take
+	# --far-wait=0 (the far grass keeps its last colours, ~50 min saved on lavapipe); docs stills keep the default.
+	var far_wait := int(args.get("far-wait", "900"))
 	while bw < 900:
 		var done := cover == null or cover.is_stream_idle()
 		for g in layers_bake:
+			if bw >= far_wait:
+				break
 			if g.has_method("is_far_color_baked") and not g.is_far_color_baked():
 				done = false
 		if done:
@@ -1598,6 +1608,44 @@ func _forest_settle() -> void:
 	_log("forest: %d plants in %d tiles after %d frames" % [veg.get_plant_count(), veg.get_stream_tile_count(), n])
 
 
+# Real ground scans (Poly Haven CC0, art repository terrain/layers, fetched by docs/bench/landscape/fetch_art.sh into
+# docs/bench/landscape/art/terrain_layers). Each layer keeps the geology's colour (detail_only: the scan adds detail
+# only, to colour and roughness) and tiles at the scan's real size. Loaded from the files directly (the folder is .gdignore'd, no import step).
+const GROUND_SCANS := {"rock": ["dark_rock_02", 2.0], "scree": ["rocks_ground_02", 2.0], "soil": ["forest_ground_06", 2.11], "alluvium": ["gravelly_sand", 2.48], "sand": ["sand_03", 2.0]}
+
+func _ground_scan_tex(path: String, normal := false) -> Texture2D:
+	var img := Image.load_from_file(path)
+	if img == null or img.is_empty():
+		return null
+	img.generate_mipmaps(normal)
+	return ImageTexture.create_from_image(img)
+
+func _apply_ground_scans(tm: TerrainMaterial3D, dir: String, only := "1") -> int:
+	var n := 0
+	for layer_name in GROUND_SCANS:
+		if only != "1" and not (layer_name in only.split(",")):
+			continue # --ground-scans=rock,scree: those layers only
+		var scan: String = GROUND_SCANS[layer_name][0]
+		var base := dir.path_join(scan).path_join(scan)
+		if not FileAccess.file_exists(base + "_albedo.jpg"):
+			continue
+		var l := TerrainMaterialLayer.new()
+		var maps: String = args.get("scan-maps", "anrh") # --scan-maps=an: only the albedo and normal maps (A/B)
+		if "a" in maps:
+			l.albedo_texture = _ground_scan_tex(base + "_albedo.jpg")
+		if "n" in maps:
+			l.normal_texture = _ground_scan_tex(base + "_normal.jpg", true)
+		if "r" in maps:
+			l.roughness_texture = _ground_scan_tex(base + "_roughness.jpg")
+		if "h" in maps:
+			l.height_texture = _ground_scan_tex(base + "_height.jpg")
+		l.tile_size = GROUND_SCANS[layer_name][1]
+		var c: Color = tm.get_shader_parameter("tm_%s_color" % layer_name) if tm.get_shader_parameter("tm_%s_color" % layer_name) is Color else Color.WHITE
+		l.color = c # the geology's colour: the scan's mean is divided out (detail_only)
+		tm.set("%s_layer" % layer_name, l)
+		n += 1
+	return n
+
 func _log(s: String) -> void:
 	print("[landscape] ", s)
 
@@ -2423,7 +2471,7 @@ func _build_ground() -> void:
 	add_child(gh)
 	if args.get("ground", "terrain") == "terrain":
 		# TerrainMaterial3D: layers by the generator's geology, height-blended, biplanar cliffs, erosion detail
-		# normals, grass tint, wetness and snow. Plain colours here (textures would come from LFS).
+		# normals, grass tint, wetness and snow; the CC0 ground scans from the art repository when fetched.
 		var tm := TerrainMaterial3D.new()
 		terrain_mat = tm
 		tm.use_generator(gen)
@@ -2460,6 +2508,13 @@ func _build_ground() -> void:
 			RenderingServer.global_shader_parameter_set("terrain_cover_map", cover_tex.get_rid())
 			RenderingServer.global_shader_parameter_set("terrain_cover_rect", Vector4(-2048, -2048, 4096, 4096))
 		tm.update_shader()
+		if args.get("ground-scans", "1") != "0" and not args.has("test"):
+			var ns := _apply_ground_scans(tm, ProjectSettings.globalize_path("res://art/terrain_layers"), args.get("ground-scans", "1"))
+			if ns > 0:
+				tm.update_shader()
+				_log("ground scans: %d layers" % ns)
+			else:
+				_log("ground scans: art/terrain_layers missing (run fetch_art.sh), plain layers")
 		ground_mat = tm
 	else:
 		var sm := StandardMaterial3D.new()
@@ -3131,6 +3186,9 @@ func _weather_settings() -> void:
 			weather.cloud_variation = 0.0 # a clear sky: the regional variation would still raise clouds out of 0 cover
 	if args.has("cloud-type"):
 		weather.cloud_type = float(args["cloud-type"]) # --cloud-type=T: 0 stratus to 1 towering cumulus
+		# A set cloud type stays put unless --cloud-regime=1 (clouds 2dd4c468: else the type follows time of day).
+		if "cloud_regime_from_weather" in weather:
+			weather.cloud_regime_from_weather = args.get("cloud-regime", "0") != "0"
 	if args.has("cloud-variation"):
 		weather.cloud_variation = float(args["cloud-variation"]) # --cloud-variation=V: regional cover variation
 	if args.get("weather", "storm") == "afterrain":
@@ -3539,6 +3597,21 @@ func _generated_forest(clearing: bool) -> Biome:
 		b = tg.make_stand(stands.get(args["tree-stand"], TreeGenerator.STAND_BEECH), variants)
 	else:
 		b = tg.make_woodland(variants, TreeGenerator.REGION_EUROPE)
+	if args.has("lightning") and "lightning_years" in tg:
+		# --lightning[=Y]: a few Norway spruces struck Y years ago (0.3; trees a9e426e0: the pale strip down the stem,
+		# bark and splinters at the foot for two years, greying over 1-4) among the stand, --lightning-spacing m apart
+		# (60); --view framing with --lightning-cam (side-lit, --lightning-dist 6 m).
+		var keep_preset = tg.preset
+		tg.preset = TreeGenerator.PRESET_NORWAY_SPRUCE
+		tg.lightning_years = float(args.get("lightning", "0.3")) if String(args["lightning"]) != "" else 0.3
+		var struck: PlantSpecies = tg.make_species(false, 1)
+		tg.lightning_years = -1.0
+		tg.preset = keep_preset
+		struck.resource_name = "Norway spruce (lightning struck)"
+		struck.spacing = float(args.get("lightning-spacing", "60"))
+		var all3: Array[PlantSpecies] = [struck]
+		all3.append_array(b.species)
+		b.species = all3
 	if args.has("forest-edge") and tg.has_method("make_edge"):
 		# --forest-edge[=stand]: the edge species (trees.md 5as: the shrub mantle out in the open, edge trees one-sided
 		# toward it) with the stand's own; vegetation places them by RULE_FOREST_EDGE off the canopy's edge.
@@ -6526,3 +6599,38 @@ func _powder_avalanche() -> void:
 		await get_tree().physics_frame
 		frames += 1
 	_log("powder avalanche: trigger %s, %.1f t up, %.1f t in the air, front %.1f m/s, after %d frames" % [str(ok), av.get_powder_taken() / 1000.0, av.get_suspended_mass() / 1000.0, av.get_max_speed(), frames])
+
+
+# --lightning-cam (with --lightning): the struck spruce nearest the first view, the camera --lightning-dist m (6) from
+# it square to the sun (side-lit, so the pale strip and the splinters read against the dark bark), eye 1.7 m, looking
+# at the stem --lightning-look m up (2).
+func _frame_struck() -> void:
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var to_sun := sun.global_basis.z
+	var sun_flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
+	var best := Vector3.INF
+	for i in veg.biome.species.size():
+		var sp := veg.biome.species[i] as Resource
+		if sp == null or not String(sp.resource_name).contains("lightning"):
+			continue
+		for tp in veg.get_placements(i):
+			if best == Vector3.INF or tp.distance_to(c3.global_position) < best.distance_to(c3.global_position):
+				best = tp
+	if best == Vector3.INF:
+		_log("lightning: no struck spruce placed")
+		return
+	var side := sun_flat.cross(Vector3.UP).normalized()
+	var cp := best + side * float(args.get("lightning-dist", "6"))
+	cp.y = height_at(cp.x, cp.z) + 1.7
+	c3.global_position = cp
+	c3.look_at(Vector3(best.x, height_at(best.x, best.z) + float(args.get("lightning-look", "2")), best.z))
+	var n := 0
+	await get_tree().process_frame
+	get_viewport().disable_3d = true
+	while not cover.is_stream_idle() and n < 600:
+		await get_tree().process_frame
+		n += 1
+	get_viewport().disable_3d = false
+	if veg.streaming:
+		await _forest_settle()
+	_log("lightning cam %.1f,%.1f,%.1f at the struck spruce %s" % [cp.x, cp.y, cp.z, str(best.round())])

@@ -5156,13 +5156,23 @@ void GroundSurface3D::_wind_update(double p_delta) {
 	const WorldGround *cover_src = coarse_armour ? WorldContracts::ground() : nullptr;
 	if (cover_src) {
 		g_armour.resize(gn * gn);
-		bool any = false;
+		// One batched read of the whole grid (a provider's lock taken once, not per point).
+		LocalVector<Vector2> pts;
+		LocalVector<Vector3> cov;
+		pts.resize(gn * gn);
+		cov.resize(gn * gn);
 		for (int gz = 0; gz < gn; gz++) {
 			for (int gx = 0; gx < gn; gx++) {
 				const int lx = MIN(gx * step, n - 1);
 				const int lz = MIN(gz * step, n - 1);
-				const Vector3 p((ground_origin.x + lx) * ground_spacing, ground[lz * n + lx], (ground_origin.y + lz) * ground_spacing);
-				const Vector3 v = cover_src->coarse_cover_at(p);
+				pts[gz * gn + gx] = Vector2((ground_origin.x + lx) * ground_spacing, (ground_origin.y + lz) * ground_spacing);
+			}
+		}
+		cover_src->coarse_cover_points(pts.ptr(), int(pts.size()), cov.ptr());
+		bool any = false;
+		for (int gz = 0; gz < gn; gz++) {
+			for (int gx = 0; gx < gn; gx++) {
+				const Vector3 v = cov[gz * gn + gx];
 				const float c = v.x + v.y;
 				g_armour[gz * gn + gx] = Math::is_finite(c) ? 1.0f - Math::smoothstep(0.1f, 0.35f, c) : 1.0f;
 				any = any || g_armour[gz * gn + gx] < 0.999f;
@@ -5485,7 +5495,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		const int nn = n * n;
 		const int sn = RIPPLE_SAND_N;
 		const int w = MAX(n, sn);
-		const int hgt = n + sn + 1;
+		const int hgt = n + sn + n + 1;
 		Vector<uint8_t> data;
 		data.resize(w * hgt * 16);
 		memset(data.ptrw(), 0, data.size());
@@ -5509,7 +5519,15 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				}
 			}
 		}
-		float *meta = d + (n + sn) * w * 4;
+		// Rows n+S..n+S+n-1: the grown field's own height (R), for the grain sorting on the far ripples.
+		if ((int)ripple_tile_norm.size() == nn) {
+			for (int z = 0; z < n; z++) {
+				for (int x = 0; x < n; x++) {
+					d[((n + sn + z) * w + x) * 4] = ripple_tile_norm[z * n + x];
+				}
+			}
+		}
+		float *meta = d + (n + sn + n) * w * 4;
 		meta[0] = (ripples.origin.x - 0.5f) * ripples.cell;
 		meta[1] = (ripples.origin.y - 0.5f) * ripples.cell;
 		meta[2] = n * ripples.cell;
@@ -5525,6 +5543,9 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		// sand ground with no type map; the terrain material gives its own).
 		meta[11] = far_ripples && tile ? 1.0f : 0.0f;
 		meta[14] = ground_type == GROUND_SAND && type_map.is_null() ? 1.0f : 0.0f;
+		// The grown field's height spread (m), to read the window's heights in the same units; 0 with the
+		// grain sorting off.
+		meta[15] = ripple_sorting ? ripple_tile_sd : 0.0f;
 		meta[12] = ripples.tmpl_k.x; // the template's wave vector, for the shaders' dislocations
 		meta[13] = ripples.tmpl_k.y;
 		if (ripple_image.is_valid() && ripple_image->get_width() == w && ripple_image->get_height() == hgt && ripple_texture.is_valid()) {
@@ -5551,8 +5572,22 @@ void GroundSurface3D::_ripples_far_tile() {
 		return;
 	}
 	ripple_tile_slope.resize(n * n * 2);
+	// Its height over its mean in standard deviations, for the grain sorting (troughs below -0.2 or so).
+	double hm = 0.0, hv = 0.0;
+	for (int i = 0; i < n * n; i++) {
+		hm += ripples.tmpl[i];
+	}
+	hm /= double(n * n);
+	for (int i = 0; i < n * n; i++) {
+		hv += (ripples.tmpl[i] - hm) * (ripples.tmpl[i] - hm);
+	}
+	ripple_tile_sd = float(Math::sqrt(hv / double(n * n)));
+	ripple_tile_norm.resize(n * n);
+	for (int i = 0; i < n * n; i++) {
+		ripple_tile_norm[i] = ripple_tile_sd > 1e-6f ? float((ripples.tmpl[i] - hm) / ripple_tile_sd) : 0.0f;
+	}
 	Vector<uint8_t> data;
-	data.resize(n * n * 8);
+	data.resize(n * n * 12);
 	float *d = (float *)data.ptrw();
 	const float inv = 0.5f / ripples.cell;
 	for (int z = 0; z < n; z++) {
@@ -5562,11 +5597,12 @@ void GroundSurface3D::_ripples_far_tile() {
 			const float sz = (t[((z + 1) % n) * n + x] - t[((z + n - 1) % n) * n + x]) * inv;
 			ripple_tile_slope[(z * n + x) * 2 + 0] = sx;
 			ripple_tile_slope[(z * n + x) * 2 + 1] = sz;
-			d[(z * n + x) * 2 + 0] = sx;
-			d[(z * n + x) * 2 + 1] = sz;
+			d[(z * n + x) * 3 + 0] = sx;
+			d[(z * n + x) * 3 + 1] = sz;
+			d[(z * n + x) * 3 + 2] = ripple_tile_norm[z * n + x]; // its height (sd), for the grain sorting
 		}
 	}
-	ripple_far_image = Image::create_from_data(n, n, false, Image::FORMAT_RGF, data);
+	ripple_far_image = Image::create_from_data(n, n, false, Image::FORMAT_RGBF, data);
 	ripple_far_image->generate_mipmaps();
 	if (ripple_far_texture.is_valid() && ripple_far_texture->get_width() == n) {
 		ripple_far_texture->update(ripple_far_image);
@@ -9033,6 +9069,8 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_wind_ripples", "enabled"), &GroundSurface3D::set_wind_ripples);
 	ClassDB::bind_method(D_METHOD("is_wind_ripples"), &GroundSurface3D::is_wind_ripples);
 	ClassDB::bind_method(D_METHOD("set_far_ripples", "enabled"), &GroundSurface3D::set_far_ripples);
+	ClassDB::bind_method(D_METHOD("set_ripple_sorting", "enabled"), &GroundSurface3D::set_ripple_sorting);
+	ClassDB::bind_method(D_METHOD("is_ripple_sorting"), &GroundSurface3D::is_ripple_sorting);
 	ClassDB::bind_method(D_METHOD("is_far_ripples"), &GroundSurface3D::is_far_ripples);
 	ClassDB::bind_method(D_METHOD("set_water_sources", "sources"), &GroundSurface3D::set_water_sources);
 	ClassDB::bind_method(D_METHOD("get_water_sources"), &GroundSurface3D::get_water_sources);
@@ -9188,6 +9226,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "wind_override", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind_override", "get_wind_override");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wind_ripples"), "set_wind_ripples", "is_wind_ripples");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_ripples"), "set_far_ripples", "is_far_ripples");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ripple_sorting"), "set_ripple_sorting", "is_ripple_sorting");
 	ClassDB::bind_method(D_METHOD("set_slip_avalanches", "enabled"), &GroundSurface3D::set_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("is_slip_avalanches"), &GroundSurface3D::is_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("get_avalanche_count"), &GroundSurface3D::get_avalanche_count);

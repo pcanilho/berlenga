@@ -86,6 +86,7 @@ float WorldWeather::cloud_cover_at(const Vector3 &p_position) const WW_CALL(_clo
 float WorldWeather::high_cloud_cover_at(const Vector3 &p_position) const WW_CALL(_high_cloud_cover_at, contract_high_cloud_cover_at(p_position), 0.0f, p_position)
 float WorldWeather::mid_cloud_cover_at(const Vector3 &p_position) const WW_CALL(_mid_cloud_cover_at, contract_mid_cloud_cover_at(p_position), 0.0f, p_position)
 float WorldWeather::cloud_effector_at(const Vector3 &p_position) const WW_CALL(_cloud_effector_at, contract_cloud_effector_at(p_position), 0.0f, p_position)
+float WorldWeather::cloud_base_at(const Vector3 &p_position) const WW_CALL(_cloud_base_at, contract_cloud_base_at(p_position), 1500.0f, p_position)
 float WorldWeather::mountain_wave_at(const Vector3 &p_position) const WW_CALL(_mountain_wave_at, contract_mountain_wave_at(p_position), 0.0f, p_position)
 float WorldWeather::mountain_wave_velocity_at(const Vector3 &p_position) const WW_CALL(_mountain_wave_velocity_at, contract_mountain_wave_velocity_at(p_position), 0.0f, p_position)
 float WorldWeather::wave_cloud_density_at(const Vector3 &p_position) const WW_CALL(_wave_cloud_density_at, contract_wave_cloud_density_at(p_position), 0.0f, p_position)
@@ -210,6 +211,7 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("high_cloud_cover_at", "position"), &WorldWeather::high_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("mid_cloud_cover_at", "position"), &WorldWeather::mid_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("cloud_effector_at", "position"), &WorldWeather::cloud_effector_at);
+	ClassDB::bind_method(D_METHOD("cloud_base_at", "position"), &WorldWeather::cloud_base_at);
 	ClassDB::bind_method(D_METHOD("mountain_wave_at", "position"), &WorldWeather::mountain_wave_at);
 	ClassDB::bind_method(D_METHOD("mountain_wave_velocity_at", "position"), &WorldWeather::mountain_wave_velocity_at);
 	ClassDB::bind_method(D_METHOD("wave_cloud_density_at", "position"), &WorldWeather::wave_cloud_density_at);
@@ -252,6 +254,7 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_high_cloud_cover_at, "position");
 	GDVIRTUAL_BIND(_mid_cloud_cover_at, "position");
 	GDVIRTUAL_BIND(_cloud_effector_at, "position");
+	GDVIRTUAL_BIND(_cloud_base_at, "position");
 	GDVIRTUAL_BIND(_mountain_wave_at, "position");
 	GDVIRTUAL_BIND(_mountain_wave_velocity_at, "position");
 	GDVIRTUAL_BIND(_wave_cloud_density_at, "position");
@@ -945,6 +948,41 @@ Vector3 WorldGround::coarse_cover_at(const Vector3 &p_position) const {
 	return r;
 }
 
+void WorldGround::coarse_cover_points(const Vector2 *p_points, int p_count, Vector3 *r_cover) const {
+	if (p_count <= 0) {
+		return;
+	}
+	if (get_script_instance() != nullptr) {
+		for (int i = 0; i < p_count; i++) {
+			r_cover[i] = coarse_cover_at(Vector3(p_points[i].x, 0.0f, p_points[i].y));
+		}
+		return;
+	}
+	for (int i = 0; i < p_count; i++) {
+		r_cover[i] = Vector3();
+	}
+	const LocalVector<WorldCoverProvider *> *list = WorldContracts::cover_providers_list();
+	if (!list || list->is_empty()) {
+		return;
+	}
+	if (list->size() == 1) {
+		(*list)[0]->contract_cover_points(p_points, p_count, r_cover);
+		return;
+	}
+	LocalVector<Vector3> one;
+	one.resize(p_count);
+	for (const WorldCoverProvider *c : *list) {
+		c->contract_cover_points(p_points, p_count, one.ptr());
+		for (int i = 0; i < p_count; i++) {
+			const Vector3 &v = one[i];
+			Vector3 &r = r_cover[i];
+			if (v.x + v.y > r.x + r.y || (v.x + v.y == r.x + r.y && v.z > r.z)) {
+				r = v;
+			}
+		}
+	}
+}
+
 void WorldGround::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("coarse_cover_at", "position"), &WorldGround::coarse_cover_at);
 	GDVIRTUAL_BIND(_coarse_cover_at, "position");
@@ -1203,11 +1241,43 @@ void WorldStand::_age_and_kind(const Vector3 &p_position, float &r_age, int &r_k
 			r_kind = DISTURBANCE_FIRE;
 		}
 	}
+	if (events.is_empty()) {
+		return;
+	}
 	const Vector2 p(p_position.x, p_position.z);
-	for (const Event &e : events) {
+	auto check = [&](uint32_t p_i) {
+		const Event &e = events[p_i];
 		if (p.distance_squared_to(e.center) <= e.radius * e.radius && (r_age < 0.0f || e.age < r_age)) {
 			r_age = e.age;
 			r_kind = e.kind;
+		}
+	};
+	for (uint32_t i : wide) {
+		check(i);
+	}
+	const Vector2i c(int(Math::floor(p.x / GRID_CELL)), int(Math::floor(p.y / GRID_CELL)));
+	if (const LocalVector<uint32_t> *in = grid.getptr(c)) {
+		for (uint32_t i : *in) {
+			check(i);
+		}
+	}
+}
+
+void WorldStand::_rebuild_grid() {
+	grid.clear();
+	wide.clear();
+	for (uint32_t i = 0; i < events.size(); i++) {
+		const Event &e = events[i];
+		const Vector2i a(int(Math::floor((e.center.x - e.radius) / GRID_CELL)), int(Math::floor((e.center.y - e.radius) / GRID_CELL)));
+		const Vector2i b(int(Math::floor((e.center.x + e.radius) / GRID_CELL)), int(Math::floor((e.center.y + e.radius) / GRID_CELL)));
+		if (b.x - a.x > 16 || b.y - a.y > 16) {
+			wide.push_back(i);
+			continue;
+		}
+		for (int z = a.y; z <= b.y; z++) {
+			for (int x = a.x; x <= b.x; x++) {
+				grid[Vector2i(x, z)].push_back(i);
+			}
 		}
 	}
 }
@@ -1245,6 +1315,7 @@ int WorldStand::add_disturbance(const Vector3 &p_center, float p_radius, int p_k
 	e.kind = p_kind;
 	e.age = MAX(p_age_years, 0.0f);
 	events.push_back(e);
+	_rebuild_grid();
 	_report(Rect2(e.center - Vector2(e.radius, e.radius), Vector2(2.0f * e.radius, 2.0f * e.radius)));
 	return e.id;
 }
@@ -1264,6 +1335,7 @@ void WorldStand::remove_disturbance(int p_id) {
 		if (events[i].id == p_id) {
 			const Event e = events[i];
 			events.remove_at(i);
+			_rebuild_grid();
 			_report(Rect2(e.center - Vector2(e.radius, e.radius), Vector2(2.0f * e.radius, 2.0f * e.radius)));
 			return;
 		}
@@ -1278,13 +1350,91 @@ void WorldStand::clear_disturbances() {
 	}
 	const bool any = !events.is_empty();
 	events.clear();
+	_rebuild_grid();
 	if (any) {
 		_report(area);
 	}
 }
 
+void WorldStand::_rebuild_strike_grid() {
+	strike_grid.clear();
+	for (uint32_t i = 0; i < strikes.size(); i++) {
+		const Vector2 c = strikes[i].position;
+		const Vector2i a(int(Math::floor((c.x - STRIKE_RADIUS) / STRIKE_CELL)), int(Math::floor((c.y - STRIKE_RADIUS) / STRIKE_CELL)));
+		const Vector2i b(int(Math::floor((c.x + STRIKE_RADIUS) / STRIKE_CELL)), int(Math::floor((c.y + STRIKE_RADIUS) / STRIKE_CELL)));
+		for (int z = a.y; z <= b.y; z++) {
+			for (int x = a.x; x <= b.x; x++) {
+				strike_grid[Vector2i(x, z)].push_back(i);
+			}
+		}
+	}
+}
+
+void WorldStand::add_strike(const Vector3 &p_position, float p_age_years) {
+	if (strikes.size() >= uint32_t(MAX_STRIKES)) {
+		uint32_t oldest = 0;
+		for (uint32_t i = 1; i < strikes.size(); i++) {
+			if (strikes[i].age > strikes[oldest].age) {
+				oldest = i;
+			}
+		}
+		strikes.remove_at_unordered(oldest);
+	}
+	Strike s;
+	s.position = Vector2(p_position.x, p_position.z);
+	s.age = MAX(p_age_years, 0.0f);
+	strikes.push_back(s);
+	_rebuild_strike_grid();
+	_report(Rect2(s.position - Vector2(STRIKE_RADIUS, STRIKE_RADIUS), Vector2(2.0f * STRIKE_RADIUS, 2.0f * STRIKE_RADIUS)));
+}
+
+float WorldStand::strike_age_at(const Vector3 &p_position) const {
+	float r = -1.0f;
+	if (GDVIRTUAL_CALL(_strike_age_at, p_position, r)) {
+		return r;
+	}
+	const Vector2 p(p_position.x, p_position.z);
+	const LocalVector<uint32_t> *in = strike_grid.getptr(Vector2i(int(Math::floor(p.x / STRIKE_CELL)), int(Math::floor(p.y / STRIKE_CELL))));
+	if (in == nullptr) {
+		return r;
+	}
+	for (uint32_t i : *in) {
+		const Strike &s = strikes[i];
+		if (p.distance_squared_to(s.position) <= STRIKE_RADIUS * STRIKE_RADIUS && (r < 0.0f || s.age < r)) {
+			r = s.age;
+		}
+	}
+	return r;
+}
+
+void WorldStand::clear_strikes() {
+	if (strikes.is_empty()) {
+		return;
+	}
+	Rect2 area;
+	for (uint32_t i = 0; i < strikes.size(); i++) {
+		const Rect2 r(strikes[i].position - Vector2(STRIKE_RADIUS, STRIKE_RADIUS), Vector2(2.0f * STRIKE_RADIUS, 2.0f * STRIKE_RADIUS));
+		area = i == 0 ? r : area.merge(r);
+	}
+	strikes.clear();
+	strike_grid.clear();
+	_report(area);
+}
+
 void WorldStand::advance_years(float p_years) {
-	if (!(p_years > 0.0f) || events.is_empty()) {
+	if (!(p_years > 0.0f) || (events.is_empty() && strikes.is_empty())) {
+		return;
+	}
+	for (Strike &st : strikes) {
+		st.age += p_years;
+	}
+	if (events.is_empty()) {
+		Rect2 sa;
+		for (uint32_t i = 0; i < strikes.size(); i++) {
+			const Rect2 r(strikes[i].position - Vector2(STRIKE_RADIUS, STRIKE_RADIUS), Vector2(2.0f * STRIKE_RADIUS, 2.0f * STRIKE_RADIUS));
+			sa = i == 0 ? r : sa.merge(r);
+		}
+		_report(sa);
 		return;
 	}
 	Rect2 area;
@@ -1292,6 +1442,9 @@ void WorldStand::advance_years(float p_years) {
 		events[i].age += p_years;
 		const Rect2 r(events[i].center - Vector2(events[i].radius, events[i].radius), Vector2(2.0f * events[i].radius, 2.0f * events[i].radius));
 		area = i == 0 ? r : area.merge(r);
+	}
+	for (const Strike &st : strikes) {
+		area = area.merge(Rect2(st.position - Vector2(STRIKE_RADIUS, STRIKE_RADIUS), Vector2(2.0f * STRIKE_RADIUS, 2.0f * STRIKE_RADIUS)));
 	}
 	_report(area);
 }
@@ -1342,12 +1495,17 @@ void WorldStand::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("remove_disturbance", "id"), &WorldStand::remove_disturbance);
 	ClassDB::bind_method(D_METHOD("clear_disturbances"), &WorldStand::clear_disturbances);
 	ClassDB::bind_method(D_METHOD("advance_years", "years"), &WorldStand::advance_years);
+	ClassDB::bind_method(D_METHOD("add_strike", "position", "age_years"), &WorldStand::add_strike);
+	ClassDB::bind_method(D_METHOD("strike_age_at", "position"), &WorldStand::strike_age_at);
+	ClassDB::bind_method(D_METHOD("get_strike_count"), &WorldStand::get_strike_count);
+	ClassDB::bind_method(D_METHOD("clear_strikes"), &WorldStand::clear_strikes);
 	ClassDB::bind_method(D_METHOD("stand_changed", "area"), &WorldStand::stand_changed);
 	ClassDB::bind_method(D_METHOD("get_stand_generation"), &WorldStand::get_stand_generation);
 	ClassDB::bind_method(D_METHOD("get_stand_changes_since", "generation"), &WorldStand::get_stand_changes_since);
 	ADD_SIGNAL(MethodInfo("stand_changed", PropertyInfo(Variant::RECT2, "area")));
 	GDVIRTUAL_BIND(_stand_age_at, "position");
 	GDVIRTUAL_BIND(_disturbance_at, "position");
+	GDVIRTUAL_BIND(_strike_age_at, "position");
 	BIND_ENUM_CONSTANT(DISTURBANCE_NONE);
 	BIND_ENUM_CONSTANT(DISTURBANCE_FIRE);
 	BIND_ENUM_CONSTANT(DISTURBANCE_WIND);

@@ -844,6 +844,8 @@ public:
 	// WorldGround.coarse_cover_at: pebble, gravel and fine shares (0..1) from the cover maps, bilinear; the near map
 	// where it reaches, else the far one; 0 outside both.
 	Vector3 contract_cover_at(const Vector3 &p_position) const override;
+	void contract_cover_points(const Vector2 *p_points, int p_count, Vector3 *r_cover) const override;
+	Vector3 _cover_sample(const Vector2 &p_xz) const; // under cover_data_mutex
 	Vector3 get_coarse_cover_at(const Vector3 &p_position) const { return contract_cover_at(p_position); }
 	void set_wind_obstacles(bool p_enabled);
 	bool is_wind_obstacles_enabled() const { return wind_obstacles; }

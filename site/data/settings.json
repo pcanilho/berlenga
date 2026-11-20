@@ -1035,7 +1035,7 @@
     "use_generator()"
    ],
    "note": "",
-   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows.",
+   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1157,7 +1157,7 @@
     "data_map"
    ],
    "note": "",
-   "what": "wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry. It lies on a firm base of varying depth that wheels can dig down to for grip (`subsoil`), and logs and branches settled in it become corduroy that spreads wheel load and snaps when too thin (`mats`). Liquid mud a wheel shoves aside runs on as a wave and the rut closes behind it (`mud_waves`), and hidden stones and roots lift a sinking wheel and show as ruts deepen (`buried_obstacles`, `buried_density`); liquid mud flows round them, and tyres press the mud out round a stone, knock an uncovered one loose and shove loose stones ahead and aside (`buried_kick`).",
+   "what": "wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry. It lies on a firm base of varying depth that wheels can dig down to for grip (`subsoil`), and logs and branches settled in it become corduroy that spreads wheel load and snaps when too thin (`mats`). Liquid mud a wheel shoves aside runs on as a wave and the rut closes behind it (`mud_waves`), and hidden stones and roots lift a sinking wheel and show as ruts deepen (`buried_obstacles`, `buried_density`); liquid mud flows round them, and tyres press the mud out round a stone, knock an uncovered one loose and shove loose stones ahead and aside, ploughing a furrow with a heap in front; loose stones settle as deep as the mud bears them, sink in slurry and, once out of sight, become hidden stones again (`buried_kick`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1320,7 +1320,7 @@
     "GroundSurface3D.flood_silt"
    ],
    "note": "",
-   "what": "rivers over their banks and other floodwater soak the ground and leave their silt behind as fresh mud: a thin skin, slick while wet, that dries pale and cracks.",
+   "what": "rivers over their banks and other floodwater soak the ground and leave their silt behind as fresh mud: a thin skin, slick while wet, that dries pale and cracks, and once its crust is broken gives dust under tyres and in the wind.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -3331,6 +3331,17 @@
    "topic": "Old trees and deadwood"
   },
   {
+   "name": "Lightning strikes",
+   "settings": [
+    "lightning_years"
+   ],
+   "note": "",
+   "what": "a torn pale strip down the stem with bark and splinters thrown round the foot, greying and healing over the years.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
    "name": "Broken limbs",
    "settings": [
     "limb_breakage"
@@ -4061,7 +4072,7 @@
     "cloud_density"
    ],
    "note": "",
-   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
+   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); low stratus and stratocumulus follow the day's heating, wind, humidity and rain, with their base at the condensation level (`WeatherMap3D.cloud_regime_from_weather`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""

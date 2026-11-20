@@ -152,6 +152,9 @@
 		<member name="thunder_bus" type="StringName" setter="set_thunder_bus" getter="get_thunder_bus" default="&amp;&quot;Master&quot;">
 			The audio bus thunder plays on.
 		</member>
+		<member name="record_tree_strikes" type="bool" setter="set_record_tree_strikes" getter="is_recording_tree_strikes" default="true">
+			Strikes into a tree crown (the weather's canopy there) are recorded in the stand ([method WorldStand.add_strike]), so fields can swap the struck tree to its scarred variant.
+		</member>
 		<member name="thunder_enabled" type="bool" setter="set_thunder_enabled" getter="is_thunder_enabled" default="true">
 			Flashes make thunder.
 		</member>

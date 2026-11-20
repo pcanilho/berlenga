@@ -447,6 +447,7 @@ private:
 	// finer ring of the patch. Off by default until its cost is measured.
 	bool wind_ripples = true;
 	bool far_ripples = true; // the grown field's ripples as a normal over the dune field past the patch
+	bool ripple_sorting = true; // heavy minerals in the troughs, coarse grains on the crests
 	// Wind fills prints from their upwind side (_drift_prints()).
 	bool wind_fills_prints = true;
 	// Dry ground up to WATER_FRINGE over a water body's level is kept wet by capillary rise (_water_update()).
@@ -476,6 +477,8 @@ private:
 	LocalVector<float> ripple_sand; // RIPPLE_SAND_N squared over ripple_sand_rect
 	Rect2 ripple_sand_rect;
 	LocalVector<float> ripple_tile_slope; // the grown field's slope, 2 per cell, world cell mod n
+	LocalVector<float> ripple_tile_norm; // its height over its mean in standard deviations
+	float ripple_tile_sd = 0.0f; // m
 	Ref<Image> ripple_far_image;
 	Ref<ImageTexture> ripple_far_texture;
 	bool ripple_far_published = false;
@@ -1017,6 +1020,11 @@ public:
 		ripple_dirty = true;
 	}
 	bool is_far_ripples() const { return far_ripples; }
+	void set_ripple_sorting(bool p_enabled) {
+		ripple_sorting = p_enabled;
+		ripple_dirty = true;
+	}
+	bool is_ripple_sorting() const { return ripple_sorting; }
 	void set_mud_layer(bool p_enabled);
 	bool is_mud_layer() const { return mud_layer; }
 	void set_mud_slides(bool p_enabled);

@@ -61,6 +61,7 @@ contract returns with no provider.
 | `high_cloud_cover_at(pos)` | 0..1 | 0 | The high (cirrus) sheet, `WeatherMap3D.get_high_cloud_cover_at`. Kept out of `cloud_cover_at`: optically thin, it shades only through the sun visibility and cloud shadow bake by its own optical depth |
 | `mid_cloud_cover_at(pos)` | 0..1 | 0 | The mid (altocumulus) layer, `WeatherMap3D.get_mid_cloud_cover_at`; its optical depth `get_mid_cloud_optical_depth_at`. Kept out of `cloud_cover_at`: it shades only by its own optical depth through the sun visibility. Follows the rain state, never makes rain. |
 | `cloud_effector_at(pos)` | -1..1 | 0 | Summed strength of the cloud density effectors at a point (`WeatherMap3D.add_cloud_effector`): negative clears cloud, positive adds. Effectors ride the cumulus drift. |
+| `cloud_base_at(pos)` | m | 1500 | Base of the low cloud, at the condensation level of the day's air (`WeatherMap3D.get_cloud_base_now`), never under the ground plus 30 m. Readers: mist, lightning, snow line, orographic rain |
 | `mountain_wave_at(pos)` | m | 0 | Vertical displacement in mountain waves (WeatherMap3D, linear theory over the terrain); no rotors |
 | `mountain_wave_velocity_at(pos)` | m/s | 0 | Their vertical wind; `get_wind_at` adds it above the boundary layer, blended over 300 m |
 | `wave_cloud_density_at(pos)` | 1/m | 0 | Wave cloud (lenticular) extinction. Kept out of `cloud_cover_at`; shades the ground by its own optical depth in the shadow bake |
@@ -226,14 +227,16 @@ scripts; `set_stand(stub)` for a test.
 | `stand_age_at(pos)` | years since the last stand-replacing disturbance (world xz) | -1 (old growth) |
 | `disturbance_at(pos)` | int: 0 none, 1 fire, 2 wind, 3 beetle (new kinds appended only) | 0 |
 | `add_disturbance(center, radius, kind, age_years)`, `set_disturbance_age(id, years)`, `remove_disturbance(id)`, `clear_disturbances()` | a disc, years ago; returns an id | |
-| `advance_years(years)` | ages every event added here (fire ages through its producers) | |
+| `strike_age_at(pos)` | years since the youngest lightning strike within 3 m of a trunk at pos (xz) | -1 (none) |
+| `add_strike(pos, age_years)`, `clear_strikes()`, `get_strike_count()` | the crown attachment point, years ago; up to 4096, oldest dropped | |
+| `advance_years(years)` | ages every event and strike added here (fire ages through its producers) | |
 | signal `stand_changed(area)`, `get_stand_generation()`, `stand_changes_since(gen, area)` / `get_stand_changes_since(gen)` | world xz Rect2; as WorldFire's burn changes, which are forwarded here | |
 
 The youngest disturbance at a point wins. Fire comes from `WorldFire.burn_age_at`, stand-replacing unless
 `crown_scorch_at` is between 0 and 5 m (a surface fire); an authored burn scar (no scorch on record) counts. Wind and
 beetle kills are events the trees report: TreeWind3D for a storm's stand-replacing throws, VegetationField3D for
-a placed windthrow or beetle stand (species meta `stand_disturbance`; trees.md 5aq). No stage edges here: each species' own age ranges set them. Readers:
-vegetation (stand age and disturbance rules), trees (succession).
+a placed windthrow or beetle stand (species meta `stand_disturbance`; trees.md 5aq). No stage edges here: each species' own age ranges set them. Strikes come from WeatherLightning3D (`record_tree_strikes`, on), one per canopy strike (20 Nov). Readers:
+vegetation (stand age and disturbance rules, struck-tree variants by `strike_age_at` and mesh meta `tree_lightning_years`), trees (succession).
 
 ## Testing
 

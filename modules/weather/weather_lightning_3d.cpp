@@ -35,6 +35,8 @@
 #include "weather_map_3d.h"
 #include "weather_sky_material.h"
 
+#include "modules/world/world_contracts.h"
+
 #include "core/object/class_db.h"
 #include "core/os/os.h"
 #include "scene/3d/audio_stream_player_3d.h"
@@ -708,6 +710,10 @@ int WeatherLightning3D::_start_flash(const Vector3 &p_position, bool p_cloud_to_
 			recent_strikes.remove_at(0);
 		}
 		recent_strikes.push_back(s);
+		// A tree hit keeps its scar: the stand records it for the tree's struck variant (world-links, Lightning -> tree).
+		if (s.canopy && record_tree_strikes && WorldContracts::stand()) {
+			WorldContracts::stand()->add_strike(s.position, 0.0f);
+		}
 	}
 
 	if (p_cloud_to_ground) {
@@ -1161,6 +1167,8 @@ void WeatherLightning3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_raster_shadow_distance"), &WeatherLightning3D::get_raster_shadow_distance);
 	ClassDB::bind_method(D_METHOD("set_thunder_enabled", "enabled"), &WeatherLightning3D::set_thunder_enabled);
 	ClassDB::bind_method(D_METHOD("is_thunder_enabled"), &WeatherLightning3D::is_thunder_enabled);
+	ClassDB::bind_method(D_METHOD("set_record_tree_strikes", "enabled"), &WeatherLightning3D::set_record_tree_strikes);
+	ClassDB::bind_method(D_METHOD("is_recording_tree_strikes"), &WeatherLightning3D::is_recording_tree_strikes);
 	ClassDB::bind_method(D_METHOD("set_thunder_volume_db", "db"), &WeatherLightning3D::set_thunder_volume_db);
 	ClassDB::bind_method(D_METHOD("get_thunder_volume_db"), &WeatherLightning3D::get_thunder_volume_db);
 	ClassDB::bind_method(D_METHOD("set_thunder_bus", "bus"), &WeatherLightning3D::set_thunder_bus);
@@ -1197,6 +1205,7 @@ void WeatherLightning3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "raster_shadow_distance", PROPERTY_HINT_RANGE, "10,4000,1,or_greater,suffix:m"), "set_raster_shadow_distance", "get_raster_shadow_distance");
 	ADD_GROUP("Thunder", "thunder_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "thunder_enabled"), "set_thunder_enabled", "is_thunder_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "record_tree_strikes"), "set_record_tree_strikes", "is_recording_tree_strikes");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "thunder_volume_db", PROPERTY_HINT_RANGE, "-80,24,0.1,suffix:dB"), "set_thunder_volume_db", "get_thunder_volume_db");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING_NAME, "thunder_bus"), "set_thunder_bus", "get_thunder_bus");
 
