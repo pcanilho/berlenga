@@ -1475,12 +1475,10 @@ Research: a slab avalanche leaves a crown (a tensile fracture standing the slab'
   resolution for stills. On a real GPU at frame rate the game never had this problem.
 - Trail bench: the walker's stand-in capsule joined world_contact (every PhysicsBody3D does since 9edd6953) and
   ploughed a trench through the prints; it is excluded, its boots print as before.
-- Open: a broken crust's plates read only as wider funnels with a few angular pieces from 1.5 m
+- Done in follow-up 38 (geometry plates). Was open: a broken crust's plates read only as wider funnels with a few angular pieces from 1.5 m
   (`--view=trail --prints-close --crust=1`); the pieces are linear ramps per crack sector, smoothed by the 6 cm
   field. Crisper plates (a step at each sector edge, a lip where a plate tips) are a follow-up.
-- Next-round candidate (icicles): every icicle is a smooth straight cone of one shape. Real ones carry ~1 cm growth
-  ripples in the geometry (Ueno's ripple instability; today only a normal map), a slight bend toward the wind or the
-  drip line, a pendant drop at the tip, and neighbours fusing into curtains near the eave.
+- Next-round candidate (icicles): done in follow-up 37.
 
 ## Follow-up 35: crown walls without slits (20 Nov 2026)
 
@@ -1512,6 +1510,50 @@ Research: a slab avalanche leaves a crown (a tensile fracture standing the slab'
   Nothing there worth trading detail for. Next candidates if a GPU bench on the PC shows the surface still
   high: a mip of the deformation map for the vertex prefilter (one fetch for four) and the 9-tap bilinear form
   of the Catmull-Rom depth for the vertex height (Sigg and Hadwiger; TheRealMJP's 9-tap filter).
+
+## Follow-up 37: icicles shaped as they grow (20 Nov 2026)
+
+Research: the ideal dripping icicle (Short, Baygents and Goldstein 2006, Phys. Fluids 18, 083101) is a
+parameter-free shape whose radius away from the tip goes as the distance from the tip to the power 3/4,
+r = 4/3 a^(1/4) z^(3/4); most lab icicles scatter round that exponent, tap-water ones with a bulge high up
+(Chen and Morris 2013, arXiv 1008.1922). Icicles bend when their root moves, when the film runs down one side,
+and in wind (Maeno, Makkonen and Takahashi 1994, Ann. Glaciol. 19): drag on the 2.44 mm pendant drop over its
+weight gives tan(lean) = 3 rho_air Cd U^2 / (8 rho_w r g), about 0.01 U^2, and they measured leans well past it.
+
+- **Shape**: drawn as the ideal icicle, root radius 0.913 of the growth model's cone so the drawn ice holds the
+  same mass (a 3/4 power profile holds 0.4 R^2 L against the cone's R^2 L / 3), rings closer toward the tip.
+- **Lean**: the axis is kept every 2 cm as the tip lays it down. Each new step leans downwind by twice the drop's
+  drag (at most 45 degrees) plus the site's own lean from its film's side (up to a slope of 0.08, our pick), so
+  an icicle that grew through a windy afternoon and a calm night is bent, not tilted. Melting takes the points
+  back. `wind_direction` (local, horizontal; `advance()` sets it from the weather's wind), `get_icicle_offset`.
+- **Drops**: a tip with water left over after it froze what it could hangs a pendant drop (2.5 mm water sphere,
+  the ice's clear material), and melting tips drip too. `is_icicle_dripping`.
+- **Curtains**: where neighbours' walls meet, a web of ice 0.6 of the thinner icicle thick joins their axes
+  down to where they part (`curtains`, on).
+- Ripples stay a normal map: at their 1 cm wavelength geometry would need a ring every 2.5 mm, and the slope
+  that path tracing keeps clean of bands (0.06) is a tenth of a millimetre of relief.
+- Bench: `--test=icicles` adds plumb in still air (steepest 0.078), 27 degrees in a 5 m/s wind, tips dripping
+  while they grow; `--view=icicles --wind=4` leans them, `--dense` (4.5 cm sites) fuses curtains.
+
+## Follow-up 38: a broken crust as plates (20 Nov 2026)
+
+Research: a crust on soft snow is a plate on an elastic foundation; under a point load it cracks radially first,
+then round at about its characteristic length, and the wedges between the cracks tip into the hole on their
+outer edge (Hetenyi 1946; the same sequence as floating ice breaking through under a load, Kerr 1976). The
+pieces are slabs as thick as the crust with sharp fracture faces; a postholed melt-freeze crust shows them as
+angular plates leaning into each hole, steps between neighbours that tipped differently.
+
+- The shared deform field already tips each of its seven sectors in as a ramp, but its 6 cm texels round the
+  ramps off (follow-up 34's open item: wider funnels, not plates). `SnowSurface3D` now lays each break's plates
+  as geometry over it: per sector (the field's own seed, so each lies on its ramp), a flat slab from the hole's
+  edge to the sector's crack reach with a jag in its outer crack, as thick as the crust, tipped by the ramp's
+  drop (read half way out and extrapolated, not from the footprint's own hole), the hinge edge lifted by up to
+  0.6 of the crust's thickness, 3 mm cracks between plates. Glazed top (roughness 0.45), the fracture faces a
+  little greyer and bluer. Laid a third of a second after the break (the body has sunk); new snow over the
+  rim buries them; up to 256 holes kept. `crust_plates` (on), `get_crust_plate_count`.
+- A body dragged through breaks at the hole's edge as it goes and keeps one set of plates (the trench's edges
+  stay the field's ramps); separate steps each get theirs.
+- `--test=crust` adds the plates' check; `--view=trail --prints-close --crust=1` shows them.
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
