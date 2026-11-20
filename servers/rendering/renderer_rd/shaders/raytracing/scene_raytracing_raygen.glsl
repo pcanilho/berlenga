@@ -2508,6 +2508,36 @@ vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 // texels where the level meets the bed. Interpolating the depth itself and thresholding it near zero (the film's
 // gloss starts at 20 um) draws every dry texel as a square island with stepped edges. p_r and p_g: the four texels'
 // net depression and depth (textureGather order), p_f the position between them.
+// The deformation map at p_xz with the near field blended in inside its square (material.cpp ground_deform_sample()).
+vec4 rt_ground_sample(vec2 p_xz) {
+	uint gmap = uint(get_rt_param(RT_PARAM_GROUND_DEFORM_MAP));
+	vec2 guv = (p_xz - vec2(get_rt_param(RT_PARAM_GROUND_DEFORM_X), get_rt_param(RT_PARAM_GROUND_DEFORM_Z))) / max(get_rt_param(RT_PARAM_GROUND_DEFORM_SIZE), 1e-3);
+	if (gmap == 0u || any(lessThan(guv, vec2(0.0))) || any(greaterThan(guv, vec2(1.0)))) {
+		return vec4(0.0, 0.0, 1.0, 1.0);
+	}
+	vec4 g = textureLod(sampler2D(bindless_textures[nonuniformEXT(gmap)], SAMPLER_LINEAR_CLAMP), guv, 0.0);
+	uint nmap = uint(get_rt_param(RT_PARAM_GROUND_NEAR_MAP));
+	float nsize = get_rt_param(RT_PARAM_GROUND_NEAR_SIZE);
+	if (nmap != 0u && nsize > 0.0) {
+		vec2 n0 = vec2(get_rt_param(RT_PARAM_GROUND_NEAR_X), get_rt_param(RT_PARAM_GROUND_NEAR_Z));
+		vec2 ne = min(p_xz - n0, n0 + nsize - p_xz);
+		float nw = smoothstep(0.0, 1.0, min(ne.x, ne.y));
+		if (nw > 0.0) {
+			g = mix(g, textureLod(sampler2D(bindless_textures[nonuniformEXT(nmap)], SAMPLER_LINEAR_CLAMP), (p_xz - n0) / nsize, 0.0), nw);
+		}
+	}
+	return g;
+}
+// The deformation's own relief at p_xz (m, up; material.cpp ground_deform_relief()): what is laid less what is pressed.
+float rt_ground_relief(vec2 p_xz) {
+	vec4 g = rt_ground_sample(p_xz);
+	return max(g.g, 0.0) - g.r;
+}
+// The net depression at p_xz (m; the deformation map's R).
+float rt_ground_dent(vec2 p_xz) {
+	return rt_ground_sample(p_xz).r;
+}
+
 float ground_water_between(vec4 p_r, vec4 p_g, vec2 p_f) {
 	vec4 wet = step(vec4(1e-7), p_g);
 	float n = dot(wet, vec4(1.0));
@@ -3232,6 +3262,33 @@ void main() {
 				// A < 0: muddy water, its clay in place of the turned ground's gloss (material.cpp ground_deform_tint()).
 				g_mud = 400.0 * max(-g.a, 0.0);
 				m.albedo *= g.b;
+				// The field's millimetre relief, finer than the patch's vertices carry (the bed's runoff roughness, a
+				// swash mark's lip): the material.cpp unsharp mask on the field's heights a texel and a half round, as
+				// raster draws it. Traced, the vertices smoothed it away and grazing sand read flat beside raster.
+				{
+					float gtex = get_rt_param(RT_PARAM_GROUND_DEFORM_SIZE) / float(max(textureSize(sampler2D(bindless_textures[nonuniformEXT(gmap)], SAMPLER_LINEAR_CLAMP), 0).x, 1));
+					if (nmap != 0u && nsize > 0.0) {
+						vec2 n0r = vec2(get_rt_param(RT_PARAM_GROUND_NEAR_X), get_rt_param(RT_PARAM_GROUND_NEAR_Z));
+						vec2 ner = min(gpos.xz - n0r, n0r + nsize - gpos.xz);
+						float ntex = nsize / float(max(textureSize(sampler2D(bindless_textures[nonuniformEXT(nmap)], SAMPLER_LINEAR_CLAMP), 0).x, 1));
+						gtex = mix(gtex, ntex, smoothstep(0.0, 1.0, min(ner.x, ner.y)));
+					}
+					float gde = 1.5 * max(gtex, 1e-3);
+					float gfp = rt_cone_footprint_log2 > RT_TEXTURE_LOD_BASE ? exp2(rt_cone_footprint_log2) : 0.0;
+					float gdk = 1.0 - smoothstep(0.5 * gde, 1.5 * gde, gfp);
+					if (gdk > 0.0) {
+						float gh0 = rt_ground_relief(gpos.xz);
+						float gh1 = rt_ground_relief(gpos.xz + vec2(gde, 0.0));
+						float gh2 = rt_ground_relief(gpos.xz - vec2(gde, 0.0));
+						float gh3 = rt_ground_relief(gpos.xz + vec2(0.0, gde));
+						float gh4 = rt_ground_relief(gpos.xz - vec2(0.0, gde));
+						float ghm = 0.25 * (gh1 + gh2 + gh3 + gh4);
+						float gspan = max(max(max(gh1, gh2), max(gh3, gh4)), gh0) - min(min(min(gh1, gh2), min(gh3, gh4)), gh0);
+						vec2 gdr = min(guv, 1.0 - guv) * get_rt_param(RT_PARAM_GROUND_DEFORM_SIZE);
+						float gcv = clamp((gh0 - ghm) / 0.0015, -1.0, 1.0) * gdk * (1.0 - smoothstep(0.004, 0.01, gspan)) * smoothstep(0.0, 0.2 * get_rt_param(RT_PARAM_GROUND_DEFORM_SIZE), min(gdr.x, gdr.y));
+						m.albedo *= 1.0 + (gcv > 0.0 ? 0.35 : 0.4) * gcv;
+					}
+				}
 				// The fresh sheen on floors only (material.cpp: torn walls keep their roughness).
 				m.roughness = clamp(m.roughness * mix(1.0, g.a < 0.0 ? 1.0 : g.a, smoothstep(0.5, 0.85, h.geometry_normal.y)), 0.0, 1.0);
 			}
@@ -3307,6 +3364,17 @@ void main() {
 					vec2 ce = min(cuv, 1.0 - cuv);
 					float cedge = smoothstep(0.0, 0.1, min(ce.x, ce.y));
 					if (cedge > 0.0) {
+						// On printed ground, in its prints only (material.cpp ground_contact_shape()).
+						float cshape = 1.0;
+						float gsz = get_rt_param(RT_PARAM_GROUND_DEFORM_SIZE);
+						if (rt_material_ground_deform(mat) && uint(get_rt_param(RT_PARAM_GROUND_DEFORM_MAP)) != 0u && gsz > 0.0) {
+							vec2 g0 = vec2(get_rt_param(RT_PARAM_GROUND_DEFORM_X), get_rt_param(RT_PARAM_GROUND_DEFORM_Z));
+							vec2 ge = min(wpos.xz - g0, g0 + gsz - wpos.xz);
+							float gin = smoothstep(0.5, 1.5, min(ge.x, ge.y));
+							if (gin > 0.0) {
+								cshape = mix(1.0, smoothstep(0.0005, 0.002, rt_ground_dent(wpos.xz)), gin);
+							}
+						}
 						// Catmull-Rom from five bilinear taps, as the raster read (material.cpp weather_contact_wetness_at).
 						vec2 cts = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), 0));
 						vec2 csp = cuv * cts;
@@ -3321,7 +3389,7 @@ void main() {
 						vec2 ct12 = (ct1 + cw2 / cw12) / cts;
 						float ca = cw12.x * cw0.y, cb = cw0.x * cw12.y, cc = cw12.x * cw12.y, cd = cw3.x * cw12.y, cg = cw12.x * cw3.y;
 						float cr = textureLod(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), vec2(ct12.x, ct0.y), 0.0).r * ca + textureLod(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), vec2(ct0.x, ct12.y), 0.0).r * cb + textureLod(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), ct12, 0.0).r * cc + textureLod(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), vec2(ct3.x, ct12.y), 0.0).r * cd + textureLod(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), vec2(ct12.x, ct3.y), 0.0).r * cg;
-						weather_wet = max(weather_wet, clamp(cr / (ca + cb + cc + cd + cg), 0.0, 1.0) * cedge);
+						weather_wet = max(weather_wet, clamp(cr / (ca + cb + cc + cd + cg), 0.0, 1.0) * cedge * cshape);
 					}
 				}
 				wet *= weather_wet;

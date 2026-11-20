@@ -2354,7 +2354,10 @@ void TreeGenerator::_grow_date_palm() {
 	const int alive = int(Math::lerp(22.0f, 70.0f, grown) * _rand(0.9f, 1.1f));
 	// A wild or neglected palm keeps its dead fronds as a skirt; a tended one has them cut each year.
 	const int dead = tended ? 0 : (trunk_h > 1.5f ? int(_rand(18.0f, 40.0f) * grown) : 0);
-	const Vector3 lean0 = (up + Vector3(_rand(-1.0f, 1.0f), 0.0f, _rand(-1.0f, 1.0f)) * (tended ? 0.09f : 0.28f)).normalized();
+	// A clump's parent stands near upright, its side trunks leaning out only a little and curving up: steep opposed
+	// leans from one foot read as two palms placed into each other (docs, oasis hero 20 Nov).
+	const bool clump = !tended && int(params[PARAM_STEMS]) > 1;
+	const Vector3 lean0 = (up + Vector3(_rand(-1.0f, 1.0f), 0.0f, _rand(-1.0f, 1.0f)) * (tended ? 0.09f : (clump ? 0.12f : 0.28f))).normalized();
 	palm(root, lean0, trunk_h, trunk_r, alive, dead, frond_len);
 	// A wild clump: more trunks from old offshoots, leaning out; and young offshoots round the foot, each its own
 	// small crown (the grower's cut leaves only the stumps, not modelled).
@@ -2369,7 +2372,10 @@ void TreeGenerator::_grow_date_palm() {
 			const float a = away + (float(s2) - 0.5f * float(extra - 1)) * (float(Math::TAU) / float(MAX(extra + 1, 3))) + _rand(-0.35f, 0.35f);
 			const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
 			const float th = trunk_h * _rand(0.35f, 0.75f);
-			palm(root + out * (trunk_r * 2.4f), (up + out * _rand(0.5f, 0.85f)).normalized(), th, trunk_r * 0.85f, int(alive * 0.8f), dead / 2, frond_len * 0.9f);
+			// Each its own rooted foot a stride off the parent's, not one shared point: offshoots root round the mother
+			// 0.5-1.5 m out (Zaid and de Wet 2002), so a clump stands as separate trunks, not a sharp V from a single
+			// base (docs, oasis hero 20 Nov: read as two palms placed into each other).
+			palm(root + out * (trunk_r * _rand(3.5f, 5.0f)), (up + out * _rand(0.2f, 0.4f)).normalized(), th, trunk_r * 0.85f, int(alive * 0.8f), dead / 2, frond_len * 0.9f);
 		}
 		const int offs = years > 8.0f ? int(params[PARAM_BASAL_SPROUTS] * _rand(2.0f, 9.0f)) : 0;
 		const float off0 = _rand(0.0f, float(Math::TAU));
@@ -21196,7 +21202,9 @@ Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
 		const float hide = 1.0f - Math::exp(-0.5f * area / MAX(disc, 1e-3f));
 		covered += hide * disc;
 		discs += disc;
-		const float k = Math::sqrt(MAX(hide, 0.05f));
+		// Area to cover: hide^0.5 matched from 700 m at a telephoto's 80 px a tree, but at the swap distance (about
+		// 20 px a tree) the needles' sub-pixel coverage reads denser; hide^0.35 matches there (stand plot, 20 Nov).
+		const float k = Math::pow(MAX(hide, 0.05f), 0.35f);
 		const Vector3 r = spread * k;
 		const float h = (c.y - box.position.y) / MAX(box.size.y, 1e-3f);
 		// The leaves inside a lobe shade each other: their mean light under Beer's law, (1 - e^(-kL)) / kL with
@@ -21206,7 +21214,7 @@ Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
 		// Low in the crown and deep inside it less sky reaches; leaf clusters lit and shaded at random.
 		const float inner = 1.0f - CLAMP(Vector2(c.x, c.z).distance_to(Vector2(box.get_center().x, box.get_center().z)) / MAX(0.5f * MAX(box.size.x, box.size.z), 0.5f), 0.0f, 1.0f);
 		const float patch = 0.85f + 0.3f * float(hash_murmur3_one_32(gi, uint32_t(seed) * 2654435761u + 0x68756c6cu) & 0xffff) / 65535.0f;
-		const float shade = Math::lerp(0.7f, 1.0f, h) * Math::lerp(1.0f, 0.85f, inner) * patch * self;
+		const float shade = Math::lerp(0.66f, 0.8f, h) * Math::lerp(1.0f, 0.85f, inner) * patch * self;
 		const Color col(leaf.r * shade, leaf.g * shade, leaf.b * shade);
 		const int v0 = verts.size();
 		const float spin = float(hash_murmur3_one_32(gi, uint32_t(seed) + 0x7370696eu) & 0xffff) / 65535.0f * float(Math::TAU);
@@ -21257,7 +21265,7 @@ Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
 		}
 	}
 	const int s0 = verts.size();
-	const Color bark = bark_color.srgb_to_linear() * 0.8f;
+	const Color bark = bark_color.srgb_to_linear() * 0.55f; // In the crown's shade; at 0.8 the bare stems read pale.
 	for (int k = 0; k < 4; k++) {
 		const float a = (k + 0.5f) * float(Math::TAU) / 4.0f;
 		const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
@@ -21289,8 +21297,8 @@ Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
 	if (hull_material.is_null()) {
 		hull_material.instantiate();
 		hull_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
-		hull_material->set_roughness(0.7f);
-		hull_material->set_specular(0.3f); // The leaves' sheen (their sky-blue tint from far off).
+		hull_material->set_roughness(0.55f);
+		hull_material->set_specular(0.5f); // Sheen of many leaves and needles facing the sky: the trees' highlights carry its blue (docs, 20 Nov: hull tips read yellow-green).
 	}
 	mesh->surface_set_material(0, hull_material);
 	mesh->set_meta(SNAME("hull_cover"), cover);
@@ -21754,7 +21762,11 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 					hulls = hulls || (m.is_valid() && m->has_meta(SNAME("tree_far_hull")));
 				}
 				if (hulls) {
-					sp->set_meta("far_hull_range", range);
+					// Only where the tree is about 20 px tall at 1080p and 45 degrees of view (a pixel is d / 1304 there):
+					// a crown of five lobes across then has lobes of a few pixels. Swapped at the range, a 5 m tree went
+					// to hulls at 150 m, 40 px tall, and a close telephoto view showed the lobes as balls (docs framing,
+					// 20 Nov). Past the tile's reach (3 x range) it never swaps.
+					sp->set_meta("far_hull_range", MAX(range, 65.0f * extent));
 				}
 			}
 		}

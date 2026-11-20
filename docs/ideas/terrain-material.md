@@ -155,8 +155,13 @@ reflect the sun as points far brighter than the sand. Journey drew it with a ran
 threshold (Edwards, GDC 2013, "Sand Rendering in Journey"; Zucconi's 2019 breakdown); our snow already counts facets
 per pixel (snow_glint: Zirr and Kaplanyan 2016; Deliot and Belcour 2023).
 
-- Grains 0.5 mm, 10% of them facets with GGX alpha 0.4 normals. Each facet catches the sun over about 1.5 degrees
-  (the sun's 0.53 degree disc blurred by the facets' curvature and pits), 2.1e-3 sr.
+- Grains 0.5 mm, a quarter of their area facets (cleavage and crystal faces, several to a grain) with GGX alpha 0.4
+  normals. Each facet catches the sun over about 1.6 degrees (the sun's 0.53 degree disc and slight curvature),
+  6e-4 sr. (First 10% and 3 degrees, 2.1e-3 sr: each flash came out 30 times dimmer than a flat face mirroring the
+  sun and docs saw almost none into the mirror direction at 640 wide.) A flash's pixel brightness still scales with
+  (grain / footprint)^2: glitter is a close-up and high-resolution effect, as in life.
+- Path tracer: the same per-footprint count from the ray cone (RAY_FOOTPRINT, back to the pixel's width), each
+  sample taking the facet lobe with its share; a per-grain draw per sample had converged to speckle.
 - Raster: the count of facets in the pixel mirroring the sun is Poisson with mean facets x D(h) cos x
   omega / (4 VoH), drawn per footprint cell so a glint stays on its grains while sun and camera hold still. Each
   adds (grain / footprint)^2 of the pixel at the sun's irradiance over omega, drawn as the coat lobe turned onto

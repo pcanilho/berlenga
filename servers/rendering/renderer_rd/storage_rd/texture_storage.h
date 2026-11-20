@@ -231,8 +231,13 @@ private:
 
 		CanvasTexture *canvas_texture = nullptr;
 
+		// A new value from content_serial whenever the texture's data is rewritten in place (texture_2d_update, a 3D
+		// update, texture_replace), so the path tracer recaptures vertex() output that samples it.
+		uint64_t content_version = 0;
+
 		void cleanup();
 	};
+	uint64_t content_serial = 0;
 
 	// Textures can be created from threads, so this RID_Owner is thread safe.
 	mutable RID_Owner<Texture, true> texture_owner;
@@ -670,6 +675,10 @@ public:
 
 	virtual void texture_rd_initialize(RID p_texture, const RID &p_rd_texture, const RSE::TextureLayeredType p_layer_type = RSE::TEXTURE_LAYERED_2D_ARRAY) override;
 	virtual RID texture_get_rd_texture(RID p_texture, bool p_srgb = false) const override;
+	// Changes whenever the texture's (or the texture it proxies') data is rewritten in place; 0 for none. A texture
+	// made from a RenderingDevice texture (Texture2DRD) that a compute pass writes keeps its version: its owner bumps a
+	// material parameter vertex() reads, or the shader uses rt_vertex_dynamic.
+	uint64_t texture_get_content_version(RID p_texture) const;
 	virtual uint64_t texture_get_native_handle(RID p_texture, bool p_srgb = false) const override;
 
 	//internal usage

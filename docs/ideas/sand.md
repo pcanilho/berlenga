@@ -875,3 +875,15 @@ GroundDeformField::press_bodies (shared by sand, mud and snow) never presses a w
 A walker with meta `world_contact_feet` has feet that are contact bodies of their own and is skipped; any other walker
 presses WorldWalkerSteps soles, 0.27 x 0.10 m boot outlines (the press_box sole shape), a step 0.41 of stature and the
 feet 18 cm apart. Ground bench `--test=steps`; the snow bench's crust checks drag a boot (`world_contact_walker` false).
+
+## Fine relief under path tracing, and wet tracks in their prints
+
+The field's millimetre relief (the bed's runoff roughness, a swash mark's lip) is finer than the patch's vertices, so
+raster draws it as an unsharp mask on the field's heights (Luft, Colditz and Deussen 2006). The path tracer now applies
+the same term from the same map (raygen rt_ground_relief): before, grazing sand read flat traced beside raster (oasis
+bench, about a third of the fine detail). The term fades out over the field's outer fifth, so the field's square has no
+edge on the ground past it.
+
+WeatherMap3D's contact wetness (wet tracks, 12.5 cm texels) is shaped on printed ground by the field's own dents
+(ground_contact_shape(), raygen the same): the water lies in the sole's and tread's outline, and the contact map sets
+only how wet it is.

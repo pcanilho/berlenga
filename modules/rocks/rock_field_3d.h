@@ -154,6 +154,7 @@ private:
 		LocalVector<bool> near; // drawn by the close-up instance instead
 		LocalVector<bool> broken; // replaced by a breakable copy (break_stone)
 		LocalVector<Node *> shapes; // its CollisionShape3D, or null
+		int keep_min = 0; // its first records are stones the far tier draws past the radius: thinning keeps them
 	};
 
 	// Ground detail tiles (docs/ideas/ground-detail.md, "Tiles of piles"): a square of a detail cell drawn as a placement
@@ -207,6 +208,11 @@ private:
 	// The detail layers' radii are set from the camera (_update_detail_radii) while ground_detail is on.
 	real_t layer_radius[LAYER_MAX] = { 600.0, 60.0, 300.0, 120.0, 100.0, 500.0, 900.0, 900.0, 900.0, 20.0, 10.0, 5.0 };
 	// Ground detail (docs/ideas/ground-detail.md): opt-in, an experiment.
+	bool far_thinning = true; // scatter layers thin out over the outer half of their radius (_update_thinning)
+	// Far tier (docs/ideas/rocks.md, "Far rocks"): past a layer's radius its big stones and the landmarks are drawn on
+	// to far_radius, from blocks of FAR_BLOCK x FAR_BLOCK cells placed exactly as the near cells would be.
+	real_t far_radius = 4000.0; // m (0: off)
+	real_t far_min_size = 2.0; // m, the stone's longest axis
 	bool ground_detail = true;
 	real_t ground_detail_pixels = 3.0; // a class is drawn out to where its mean stone is this many pixels tall
 	int ground_detail_reference_height = 0; // px; 0: the viewport's own height
@@ -369,6 +375,7 @@ private:
 	// The main thread takes out stones on holes and broken ones, adds the MultiMeshes and the collision.
 	struct CoarseGroup : DetailGroup {
 		LocalVector<uint32_t> members; // stone indices
+		int big = 0; // its first records at least far_min_size (they lead while the far tier is on)
 	};
 	struct CoarseJob {
 		RockField3D *field = nullptr;
@@ -606,6 +613,42 @@ private:
 	Ref<ShaderMaterial> _material(RockGenerator::RockType p_type, RockGenerator::Family p_family = RockGenerator::FAMILY_ROCKFALL, bool p_detail = false);
 	void _build_cell(const Vector3i &p_key);
 	void _free_cell(Cell &r_cell);
+	void _update_thinning(const Vector3 &p_target);
+	static const int FAR_BLOCK = 8;
+	struct FarBlock {
+		LocalVector<MultiMeshInstance3D *> instances;
+		uint64_t sig = 0; // the cells it holds
+	};
+	struct FarJob {
+		RockField3D *field = nullptr;
+		Vector3i key; // (layer, block x, block z)
+		uint64_t sig = 0;
+		LocalVector<Vector3i> cells;
+		TerrainGenerator3D *gen = nullptr;
+		HashMap<uint64_t, Vector<float>> records; // (library << 16 | variant) -> MultiMesh records
+		LocalVector<uint32_t> missing;
+		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
+	};
+	HashMap<Vector3i, FarBlock> far_blocks;
+	HashMap<Vector3i, FarJob *> far_jobs;
+	Vector3 far_last_target = Vector3(1e20, 0, 1e20);
+	int far_last_cells = -1;
+	bool far_fill = false;
+	bool _far_layer(int p_layer) const;
+	bool _far_on() const { return far_radius > 0.0; }
+	void _far_place(FarJob &r_job);
+	static void _far_job(void *p_job);
+	void _far_commit(FarJob &r_job);
+	void _free_far(FarBlock &r_block);
+	void _far_cancel();
+	void _update_far(const Vector3 &p_target, bool p_all);
+	// The far cover map (rock_far_cover_map): the stones' plan cover and colour to 4 km at 32 m texels, which the
+	// terrain material blends in where the stones themselves are no longer drawn.
+	static const int FAR_COVER_RES = 256;
+	static constexpr real_t FAR_COVER_TEXEL = 32.0;
+	Ref<ImageTexture> far_cover_texture;
+	Vector2 far_cover_origin = Vector2(1e20, 1e20);
+	void _update_far_cover(const Vector3 &p_target, bool p_force);
 	void _update_streaming(bool p_all);
 	void _update_close_up(bool p_wait);
 	void _clear_close_up();
@@ -680,6 +723,14 @@ public:
 	bool is_layer_enabled(int p_layer) const;
 	void set_layer_density(int p_layer, real_t p_density);
 	real_t get_layer_density(int p_layer) const;
+	void set_far_thinning(bool p_enabled) { far_thinning = p_enabled; }
+	void set_far_radius(real_t p_radius);
+	real_t get_far_radius() const { return far_radius; }
+	void set_far_min_size(real_t p_size);
+	real_t get_far_min_size() const { return far_min_size; }
+	int get_far_stone_count() const;
+	void build_far(); // places the far tier now (stills: streaming off)
+	bool is_far_thinning() const { return far_thinning; }
 	void set_layer_radius(int p_layer, real_t p_radius);
 	real_t get_layer_radius(int p_layer) const;
 	void set_min_size(real_t p_size);

@@ -547,6 +547,20 @@ void fragment() { ALBEDO = tint.rgb; }
 	CHECK_MESSAGE(dependencies.global_uniforms == Vector<StringName>({ "wind", "gust" }), "Each global once, in first-read order; tint is only read by fragment().");
 }
 
+TEST_CASE("[RTVertexCapture][SceneTree] Material samplers read by vertex() are collected") {
+	const RTVertexCapture::VertexDependencies dependencies = vertex_dependencies(R"(
+uniform sampler2D height_map;
+uniform sampler2D albedo_map;
+uniform float amount;
+float lift(vec2 p) { return texture(height_map, p).r * amount; }
+void vertex() { VERTEX.y += lift(UV); }
+void fragment() { ALBEDO = texture(albedo_map, UV).rgb; }
+)");
+	CHECK(dependencies.mask == RTVertexCapture::DEP_MATERIAL_UNIFORMS);
+	CHECK_MESSAGE(dependencies.material_textures == Vector<StringName>({ "height_map" }),
+			"Only the sampler vertex() reads; its texture's content version joins the material stamp.");
+}
+
 TEST_CASE("[RTVertexCapture][SceneTree] Static vertex code and parse errors") {
 	CHECK(deps("void vertex() { VERTEX *= 2.0; UV = UV * 0.5; }") == 0);
 	CHECK(deps("void fragment() { ALBEDO = vec3(1.0); }") == 0);

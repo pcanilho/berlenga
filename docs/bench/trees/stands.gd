@@ -28,7 +28,11 @@ class Valley extends Node3D:
 		# A stream along z at x = 0 in a shallow valley, with low swells.
 		var ax: float = abs(p.x)
 		var bank: float = -0.8 + 0.1 * max(ax - STREAM_HALF, 0.0) if ax > STREAM_HALF else -0.8
-		return bank + 0.8 * min(ax / 20.0, 1.0) * sin(p.z * 0.05) * cos(p.x * 0.04)
+		var h: float = bank + 0.8 * min(ax / 20.0, 1.0) * sin(p.z * 0.05) * cos(p.x * 0.04)
+		if OS.get_environment("RIDGE") != "":
+			# RIDGE=1: the ground rises to a crest 25 m up at the plot's -z edge (skyline trees, trees.md 9c).
+			h += 25.0 * pow(clampf((-p.z + 10.0) / 90.0, 0.0, 1.0), 1.5)
+		return h
 
 class Stream extends Node3D:
 	func get_water_level() -> float:
@@ -647,6 +651,8 @@ func _render_plot(i: int, args: Dictionary) -> void:
 		# to 3 R (VegetationField3D.far_reach), so the survivors past R / 2 thin and widen within the valley.
 		for sp in biome.species:
 			sp.visibility_range = float(args["far"])
+			if OS.get_environment("NO_SKYLINE") != "":
+				sp.set_meta("far_skyline", false) # Skyline trees thinned too (trees.md 9c).
 			if sp.has_meta("far_hull_range"):
 				# Crown hulls (trees.md 9b) past the same range; env HULL_AT overrides.
 				sp.set_meta("far_hull_range", float(OS.get_environment("HULL_AT")) if OS.get_environment("HULL_AT") != "" else float(args["far"]))
@@ -846,6 +852,10 @@ func _render_plot(i: int, args: Dictionary) -> void:
 		cam.look_at(Vector3(float(cv[3]), float(cv[4]), float(cv[5])))
 		if cv.size() >= 7:
 			cam.fov = float(cv[6])
+		# Far views keep sun shadows over the whole stand.
+		var dist := cam.position.distance_to(Vector3(float(cv[3]), float(cv[4]), float(cv[5])))
+		sun.directional_shadow_max_distance = maxf(sun.directional_shadow_max_distance, dist + SIZE)
+		cam.far = maxf(cam.far, dist + SIZE * 2.0)
 	if args.has("far"):
 		f.stream_target = f.get_path_to(cam)
 		var waited := 0
