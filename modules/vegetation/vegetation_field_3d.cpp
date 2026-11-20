@@ -256,6 +256,70 @@ void VegetationField3D::_clear_generated() {
 
 void VegetationField3D::clear() {
 	_clear_generated();
+	_report_stand_disturbances(true);
+}
+
+// A placed disturbed stand (TreeGenerator's windthrow and beetle stands: species meta "stand_disturbance" =
+// Vector2(WorldStand kind, years ago)) reports its patches to the stand-age map (WorldStand.add_disturbance;
+// docs/ideas/world-contracts.md Stand, trees.md 5aq), so the vegetation and successions placed there see them:
+// each 30 m cell holding at least three of its legacy plants (Senf and Seidl 2021 grade disturbance on 30 m cells)
+// becomes a disc centred on them. The previous report is taken back first. Streaming fields place no fixed stand
+// and report nothing.
+void VegetationField3D::_report_stand_disturbances(bool p_clear_only) {
+	WorldContracts *wc = WorldContracts::get_singleton();
+	Ref<WorldStand> stand = wc ? wc->get_stand() : Ref<WorldStand>();
+	if (stand.is_null()) {
+		stand_disturbances.clear();
+		return;
+	}
+	for (int id : stand_disturbances) {
+		stand->remove_disturbance(id);
+	}
+	stand_disturbances.clear();
+	if (p_clear_only || streaming || biome.is_null()) {
+		return;
+	}
+	constexpr float CELL = 30.0f;
+	struct Cell {
+		int n = 0;
+		Vector2 sum;
+		float years = 1e9f; // The youngest kill in the cell, as the map's youngest event wins.
+		LocalVector<Vector2> points;
+	};
+	HashMap<Vector2i, Cell> cells[4];
+	const TypedArray<PlantSpecies> list = biome->get_species();
+	for (int s = 0; s < list.size() && s < int(placements.size()); s++) {
+		const Ref<PlantSpecies> sp = list[s];
+		if (sp.is_null() || !sp->has_meta(SNAME("stand_disturbance"))) {
+			continue;
+		}
+		const Vector2 kd = sp->get_meta(SNAME("stand_disturbance"));
+		const int kind = int(kd.x);
+		if (kind < 1 || kind > 3) {
+			continue;
+		}
+		for (const Vector3 &p : placements[s]) {
+			Cell &c = cells[kind][Vector2i(Math::floor(p.x / CELL), Math::floor(p.z / CELL))];
+			c.n++;
+			c.sum += Vector2(p.x, p.z);
+			c.years = MIN(c.years, kd.y);
+			c.points.push_back(Vector2(p.x, p.z));
+		}
+	}
+	for (int kind = 1; kind < 4; kind++) {
+		for (const KeyValue<Vector2i, Cell> &kv : cells[kind]) {
+			if (kv.value.n < 3) {
+				continue;
+			}
+			// The disc reaches the cell's farthest legacy plant (a crown's width more), no wider than the cell.
+			const Vector2 c = kv.value.sum / float(kv.value.n);
+			float reach = 0.0f;
+			for (const Vector2 &q : kv.value.points) {
+				reach = MAX(reach, c.distance_to(q));
+			}
+			stand_disturbances.push_back(stand->add_disturbance(Vector3(c.x, 0.0f, c.y), MIN(reach + 3.0f, CELL * 0.75f), kind, kv.value.years));
+		}
+	}
 }
 
 float VegetationLight::sun_mean(const TerrainDataMap3D *p_map) {
@@ -3910,6 +3974,7 @@ Error VegetationField3D::populate() {
 	_compute_maps(maps, crown_lists, far_lists);
 	_apply_maps(maps);
 	set_process_internal(!impostor_cells.is_empty() || !lazy_near.is_empty() || has_near_swap || _far_view_active());
+	_report_stand_disturbances(false);
 	populate_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("populated"));
 	return OK;

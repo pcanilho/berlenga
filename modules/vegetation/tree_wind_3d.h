@@ -189,6 +189,20 @@ private:
 	float char_timer = 0.0f;
 	// Avalanches (WorldSnow.avalanche_peak_pressure_at, docs/ideas/trees.md 5ak).
 	bool avalanche_enabled = true;
+	// Windthrow patches to the stand-age map (WorldStand.add_disturbance, trees.md 5aq): a 30 m cell where a storm
+	// threw most stems is a stand-replacing disturbance; single throws are gap dynamics and are not reported.
+	bool report_windthrow = true;
+	static constexpr float WINDTHROW_CELL = 30.0f; // m
+	static constexpr float WINDTHROW_SHARE = 0.6f; // of a cell's stems thrown
+	struct ThrowCell {
+		int thrown = 0;
+		Vector2 sum; // of the thrown stems' xz
+		int disturbance = 0; // WorldStand event id, 0 none yet
+	};
+	HashMap<Vector2i, ThrowCell> throw_cells;
+	bool throw_cells_dirty = false;
+	int windthrow_patches = 0;
+	void _report_windthrow();
 	// Snow-laden crowns (docs/ideas/trees.md section 5al): the crown's load from WorldSnow bends the branches and
 	// can break them; a tree that breaks or falls shakes its snow onto the pack (WorldSnow.shake_canopy).
 	bool snow_load_enabled = true;
@@ -437,6 +451,9 @@ public:
 	float get_break_radius() const { return break_radius; }
 	void set_storm_enabled(bool p_enabled) { storm_enabled = p_enabled; }
 	void set_avalanche_enabled(bool p_enabled) { avalanche_enabled = p_enabled; }
+	void set_report_windthrow(bool p_enabled) { report_windthrow = p_enabled; }
+	bool is_report_windthrow() const { return report_windthrow; }
+	int get_windthrow_patch_count() const { return windthrow_patches; }
 	bool is_avalanche_enabled() const { return avalanche_enabled; }
 	int get_avalanche_break_count() const { return avalanche_breaks; }
 	void set_snow_load_enabled(bool p_enabled) { snow_load_enabled = p_enabled; }

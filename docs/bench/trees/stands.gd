@@ -256,6 +256,25 @@ func _stand_checks(only := -1) -> void:
 		var biome := _biome(i)
 		var f := _field(biome)
 		var sps: Array = biome.species
+		# Disturbed stands report their patches to the stand-age map (WorldStand; trees.md 5aq): at a legacy
+		# plant's spot the map gives its kind and, the youngest event winning, an age no older than its years.
+		var reported := 0
+		var wrong_kind := 0
+		var ws = WorldContracts.get_stand()
+		for s in sps.size():
+			if sps[s].has_meta("stand_disturbance") and ws:
+				var kd: Vector2 = sps[s].get_meta("stand_disturbance")
+				var pl: PackedVector3Array = f.get_placements(s)
+				for j in range(0, pl.size(), max(1, pl.size() / 8)):
+					reported += 1
+					var k: int = ws.disturbance_at(pl[j])
+					var age: float = ws.stand_age_at(pl[j])
+					if k == 0 or age < 0.0 or age > kd.y + 0.01:
+						wrong_kind += 1
+		if reported > 0:
+			_check(wrong_kind * 4 < reported, "%s: stand-age map has the disturbance at %d of %d legacy plants" % [STAND_NAMES[i], reported - wrong_kind, reported])
+		if ws:
+			ws.clear_disturbances()
 		var stand_count := 0
 		var open_count := 0
 		var canopy_total := 0

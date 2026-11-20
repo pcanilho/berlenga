@@ -227,7 +227,8 @@ scripts; `set_stand(stub)` for a test.
 
 The youngest disturbance at a point wins. Fire comes from `WorldFire.burn_age_at`, stand-replacing unless
 `crown_scorch_at` is between 0 and 5 m (a surface fire); an authored burn scar (no scorch on record) counts. Wind and
-beetle kills are events the trees report. No stage edges here: each species' own age ranges set them. Readers:
+beetle kills are events the trees report: TreeWind3D for a storm's stand-replacing throws, VegetationField3D for
+a placed windthrow or beetle stand (species meta `stand_disturbance`; trees.md 5aq). No stage edges here: each species' own age ranges set them. Readers:
 vegetation (stand age and disturbance rules), trees (succession).
 
 ## Testing

@@ -838,6 +838,7 @@ void TreeWind3D::update(double p_delta) {
 		_avalanche_check();
 		_snow_check(1.0f);
 		_cut_canopy();
+		_report_windthrow();
 	} else {
 		snow_frame = false;
 	}
@@ -1879,6 +1880,12 @@ void TreeWind3D::_storm_fail(Target &r_target, int p_instance, const Transform3D
 	if (thrown) {
 		storm_throws++;
 		storm_snaps += snap ? 1 : 0;
+		if (report_windthrow) {
+			ThrowCell &cell = throw_cells[Vector2i(Math::floor(tree.origin.x / WINDTHROW_CELL), Math::floor(tree.origin.z / WINDTHROW_CELL))];
+			cell.thrown++;
+			cell.sum += Vector2(tree.origin.x, tree.origin.z);
+			throw_cells_dirty = true;
+		}
 		// A MultiMesh whose every tree is thrown draws nothing but still costs its skinned copy under
 		// path tracing (the fallen trees are drawn by their destructibles): hide it.
 		bool all = true;
@@ -2400,6 +2407,49 @@ void TreeWind3D::_avalanche_fail(LocalVector<Target *> &r_changed) {
 		}
 	}
 	avalanche_pending.clear();
+}
+
+// Windthrow to the stand-age map (WorldStand, docs/ideas/world-contracts.md Stand; trees.md 5aq). Severity by the
+// share of stems thrown, as disturbance maps grade it on 30 m cells (Senf and Seidl 2021, Landsat pixels): a cell
+// where at least WINDTHROW_SHARE of the stems went down is stand-replacing (high severity, Frelich 2002) and is
+// reported once, as a disc over the cell centred on its thrown stems; lighter losses are gaps in a stand that goes on.
+void TreeWind3D::_report_windthrow() {
+	if (!throw_cells_dirty || !report_windthrow) {
+		return;
+	}
+	throw_cells_dirty = false;
+	WorldContracts *wc = WorldContracts::get_singleton();
+	Ref<WorldStand> stand = wc ? wc->get_stand() : Ref<WorldStand>();
+	if (stand.is_null()) {
+		return;
+	}
+	// Stems standing or down per cell that has throws.
+	HashMap<Vector2i, int> stems;
+	for (const Target &t : targets) {
+		Node3D *node = ObjectDB::get_instance<Node3D>(t.node);
+		if (!node || !node->is_inside_tree()) {
+			continue;
+		}
+		const Transform3D cw = node->get_global_transform();
+		for (uint32_t i = 0; i < t.placements.size(); i++) {
+			const Vector3 at = cw.xform(t.placements[i].origin);
+			const Vector2i c(Math::floor(at.x / WINDTHROW_CELL), Math::floor(at.z / WINDTHROW_CELL));
+			const ThrowCell *cell = throw_cells.getptr(c);
+			if (cell && cell->disturbance == 0) {
+				stems[c] = stems.has(c) ? stems[c] + 1 : 1;
+			}
+		}
+	}
+	for (KeyValue<Vector2i, ThrowCell> &kv : throw_cells) {
+		ThrowCell &cell = kv.value;
+		const int *n = stems.getptr(kv.key);
+		if (cell.disturbance != 0 || !n || cell.thrown < 3 || float(cell.thrown) < WINDTHROW_SHARE * float(*n)) {
+			continue;
+		}
+		const Vector2 c = cell.sum / float(cell.thrown);
+		cell.disturbance = stand->add_disturbance(Vector3(c.x, 0.0f, c.y), WINDTHROW_CELL * 0.6f, WorldStand::DISTURBANCE_WIND, 0.0f);
+		windthrow_patches++;
+	}
 }
 
 // The felled crowns' leaf area out of the weather map's canopy_map (the map VegetationField3D paints from its
@@ -3580,6 +3630,9 @@ void TreeWind3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_snow_clumps_enabled"), &TreeWind3D::is_snow_clumps_enabled);
 	ClassDB::bind_method(D_METHOD("get_snow_clumps_dropped"), &TreeWind3D::get_snow_clumps_dropped);
 	ClassDB::bind_method(D_METHOD("get_snow_clumps_falling"), &TreeWind3D::get_snow_clumps_falling);
+	ClassDB::bind_method(D_METHOD("set_report_windthrow", "enabled"), &TreeWind3D::set_report_windthrow);
+	ClassDB::bind_method(D_METHOD("is_report_windthrow"), &TreeWind3D::is_report_windthrow);
+	ClassDB::bind_method(D_METHOD("get_windthrow_patch_count"), &TreeWind3D::get_windthrow_patch_count);
 	ClassDB::bind_method(D_METHOD("set_avalanche_enabled", "enabled"), &TreeWind3D::set_avalanche_enabled);
 	ClassDB::bind_method(D_METHOD("is_avalanche_enabled"), &TreeWind3D::is_avalanche_enabled);
 	ClassDB::bind_method(D_METHOD("get_avalanche_break_count"), &TreeWind3D::get_avalanche_break_count);
@@ -3634,6 +3687,7 @@ void TreeWind3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "storm_min_radius", PROPERTY_HINT_RANGE, "0,0.3,0.005,suffix:m"), "set_storm_min_radius", "get_storm_min_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "storm_min_wind", PROPERTY_HINT_RANGE, "0,60,0.5,suffix:m/s"), "set_storm_min_wind", "get_storm_min_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "avalanche_enabled"), "set_avalanche_enabled", "is_avalanche_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "report_windthrow"), "set_report_windthrow", "is_report_windthrow");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_load_enabled"), "set_snow_load_enabled", "is_snow_load_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_clumps_enabled"), "set_snow_clumps_enabled", "is_snow_clumps_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_cap_range", PROPERTY_HINT_RANGE, "0,1000,1,suffix:m"), "set_snow_cap_range", "get_snow_cap_range");
