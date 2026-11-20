@@ -2375,6 +2375,9 @@ func _build_view() -> void:
 	env.pathtracing_enabled = not raster
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = bounces
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--pt-debug="):
+			env.pathtracing_debug_mode = int(a.substr(11)) # Environment.PathtracingDebugMode
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -2801,8 +2804,10 @@ func _build_icicles(cam: Camera3D) -> void:
 	floor_body.add_child(floor_shape)
 	add_child(floor_body)
 	var wood := _ground_material(Color(0.42, 0.28, 0.16), 1.0)
-	_prop(BoxMesh.new(), Vector3(5.0, 0.12, 3.4), Vector3(-2.5, 2.6, -1.5), Vector3(10, 0, 0), wood)
-	for p in [Vector3(-4.8, 1.25, -0.1), Vector3(-0.2, 1.25, -0.1), Vector3(-4.8, 1.25, -2.9), Vector3(-0.2, 1.25, -2.9)]:
+	var shed := not OS.get_cmdline_user_args().has("--no-shed") # --no-shed: the icicles alone in the air
+	if shed:
+		_prop(BoxMesh.new(), Vector3(5.0, 0.12, 3.4), Vector3(-2.5, 2.6, -1.5), Vector3(10, 0, 0), wood)
+	for p in ([Vector3(-4.8, 1.25, -0.1), Vector3(-0.2, 1.25, -0.1), Vector3(-4.8, 1.25, -2.9), Vector3(-0.2, 1.25, -2.9)] if shed else []):
 		var post := MeshInstance3D.new()
 		post.mesh = BoxMesh.new()
 		post.scale = Vector3(0.15, 2.5, 0.15)
@@ -2849,6 +2854,31 @@ func _build_icicles(cam: Camera3D) -> void:
 	var dense: bool = OS.get_cmdline_user_args().has("--dense") or OS.get_cmdline_user_args().has("--hero")
 	if dense:
 		ice.spacing = 0.05 # --dense: a dripping stretch, sites close enough that neighbours bridge into curtains
+	if OS.get_cmdline_user_args().has("--no-surface") and surface != null:
+		surface.visible = false # --no-surface: the deep-snow surface hidden (what the ice shows without it)
+	if OS.get_cmdline_user_args().has("--plain-ice"):
+		# --plain-ice: the ice's settings without its ripple normal map (what the map does to the trace)
+		var pim := StandardMaterial3D.new()
+		pim.albedo_color = Color(0.97, 0.99, 1.0)
+		pim.roughness = 0.06
+		pim.metallic_specular = 0.335
+		pim.transmission_enabled = true
+		pim.transmission_amount = 1.0
+		pim.transmission_ior = 1.31
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with("--ice-ior="):
+				pim.transmission_ior = float(a.substr(10))
+		pim.transmission_thickness = 0.04
+		ice.material = pim
+	if OS.get_cmdline_user_args().has("--hidden-ice"):
+		# --hidden-ice: the clear ice fully transparent, the core alone (is the core there for the trace?)
+		var hm := StandardMaterial3D.new()
+		hm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+		hm.alpha_scissor_threshold = 0.5
+		hm.albedo_color = Color(1, 1, 1, 0)
+		ice.material = hm
+	if OS.get_cmdline_user_args().has("--no-curtains"):
+		ice.curtains = false # --no-curtains: no webs between fused neighbours
 	if OS.get_cmdline_user_args().has("--no-core"):
 		ice.hazy_core = false # --no-core: clear ice only (checks what the core adds)
 	if OS.get_cmdline_user_args().has("--black-core"):
@@ -2919,6 +2949,10 @@ func _build_icicles(cam: Camera3D) -> void:
 			cam.position = mid + Vector3(-0.4, 0.4, 1.55)
 			if OS.get_cmdline_user_args().has("--under"):
 				cam.position = mid + Vector3(-0.4, 0.4, -1.55) # under the roof, 2.45 m up
+			for a in OS.get_cmdline_user_args():
+				if a.begins_with("--cam-offset="): # --cam-offset=x,y,z: the camera from the hero pair (tests)
+					var c := a.substr(13).split_floats(",")
+					cam.position = mid + Vector3(c[0], c[1], c[2])
 		cam.look_at(mid)
 		cam.fov = 26.0
 	elif OS.get_cmdline_user_args().has("--close"):
@@ -3446,6 +3480,47 @@ func _physics_process(delta: float) -> void:
 
 
 func _save_frame(suffix: String) -> void:
+	# Light probes for raster and path traced comparisons: --no-sun-shadow, --no-sun (the sky alone), --no-sun-specular,
+	# --sun-pitch=D (the sun's elevation), --plain-ground [--white-lambert], --sun-only.
+	if sun != null and OS.get_cmdline_user_args().has("--no-sun-shadow"):
+		sun.shadow_enabled = false
+	if sun != null and OS.get_cmdline_user_args().has("--no-sun"):
+		sun.visible = false
+	if sun != null and OS.get_cmdline_user_args().has("--no-sun-specular"):
+		sun.light_specular = 0.0
+	if OS.get_cmdline_user_args().has("--sun-only"):
+		# The sun alone, untonemapped: a black sky with no ambient (linear values to compare).
+		var wenv: Environment = get_viewport().find_world_3d().environment
+		wenv.background_mode = Environment.BG_COLOR
+		wenv.background_color = Color(0, 0, 0)
+		wenv.ambient_light_source = Environment.AMBIENT_SOURCE_DISABLED
+		wenv.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
+		wenv.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+		wenv.set("pathtracing_sky_shader_enabled", false)
+		wenv.sky = null
+	if OS.get_cmdline_user_args().has("--plain-ground"):
+		# A plain StandardMaterial3D plane with the snow's albedo, roughness and specular over the view: is a gap
+		# the snow material's or the renderer's?
+		var plane := MeshInstance3D.new()
+		var pm := PlaneMesh.new()
+		pm.size = Vector2(400.0, 400.0)
+		plane.mesh = pm
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.83, 0.83, 0.83)
+		mat.roughness = 0.7
+		mat.metallic_specular = 0.335
+		if OS.get_cmdline_user_args().has("--white-lambert"):
+			mat.albedo_color = Color(1, 1, 1)
+			mat.diffuse_mode = BaseMaterial3D.DIFFUSE_LAMBERT
+			mat.metallic_specular = 0.0
+		plane.material_override = mat
+		plane.position.y = 0.5
+		add_child(plane)
+		for i in 4:
+			await get_tree().process_frame
+	for a in OS.get_cmdline_user_args():
+		if sun != null and a.begins_with("--sun-pitch="):
+			sun.rotation_degrees.x = -float(a.substr(12)) # the sun's elevation in degrees
 	for i in (40 if get_viewport().use_taa else 12): # TAA converges over some frames
 		await get_tree().process_frame
 	# Path traced: wait until every displaced surface has been captured for the trace (a big deep-snow mesh
