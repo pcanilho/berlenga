@@ -1090,6 +1090,44 @@ func _edge_check() -> void:
 	var r := [m_in, m_out, e_in, e_out, e_facing, forest_in]
 	_check("forest edge: the mantle rings the clearing's edge, edge trees stand just inside facing the open", m_in > 20 and m_out == 0 and e_in > 10 and e_out == 0 and e_facing >= e_in * 0.9 and forest_in == 0, r)
 
+# Stilt-rooted trees (mesh meta tree_base_lift, trees' alder carr): the origin raised that far above the ground.
+func _base_lift_check() -> void:
+	var sps := []
+	for lift in [0.0, 0.6]:
+		var m := BoxMesh.new()
+		if lift > 0.0:
+			m.set_meta("tree_base_lift", lift)
+		var sp := PlantSpecies.new()
+		sp.meshes = [m]
+		sp.spacing = 3.0
+		sp.align_to_ground = 0.0
+		sp.scale_range = Vector2(1, 1)
+		sps.append(sp)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species = sps
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var dy := [[], []]
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh:
+			var mm: MultiMesh = ch.multimesh
+			var k := 0 if mm.mesh == sps[0].meshes[0] else (1 if mm.mesh == sps[1].meshes[0] else -1)
+			if k < 0:
+				continue
+			for i in mini(mm.instance_count, 200):
+				var p: Vector3 = (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+				dy[k].append(p.y - dm.get_height_at(p))
+	f.queue_free()
+	var mean := [0.0, 0.0]
+	for k in 2:
+		for v in dy[k]:
+			mean[k] += v / maxf(dy[k].size(), 1)
+	_check("stilt roots: tree_base_lift raises the trunk's foot that far over the ground", dy[0].size() > 20 and dy[1].size() > 20 and absf(mean[1] - mean[0] - 0.6) < 0.03, [dy[0].size(), dy[1].size(), snappedf(mean[0], 0.001), snappedf(mean[1], 0.001)])
+
 # --stand=live: a disturbance reported after the field streamed in (WorldStand.stand_changed) re-places the tiles over
 # it; a year passing inside every stage changes nothing; past the pioneer stage they go.
 func _stand_live() -> void:
@@ -1706,6 +1744,7 @@ func _checks() -> void:
 	_fire_variant_check()
 	_stand_check()
 	_edge_check()
+	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []
 	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH, PlantGenerator.FLOOR_MEDITERRANEAN, PlantGenerator.FLOOR_BOREAL_TAIGA]:

@@ -1169,6 +1169,19 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			}
 		}
 		{
+			// Stilt-rooted trees (trees' wet forests): the mesh origin is the stem's foot on its tussock, the ground at
+			// the root tips lies tree_base_lift below it.
+			bool any_lift = false;
+			for (const Ref<Mesh> &m : ps.meshes) {
+				any_lift = any_lift || (m.is_valid() && m->has_meta(SNAME("tree_base_lift")));
+			}
+			if (any_lift) {
+				for (const Ref<Mesh> &m : ps.meshes) {
+					ps.base_lifts.push_back(m.is_valid() ? float(m->get_meta(SNAME("tree_base_lift"), 0.0f)) : 0.0f);
+				}
+			}
+		}
+		{
 			bool any_fire = false;
 			for (const Ref<Mesh> &m : ps.meshes) {
 				any_fire = any_fire || (m.is_valid() && m->has_meta(SNAME("tree_fire_years")));
@@ -2319,7 +2332,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						}
 					}
 					const int variant = fire_variant >= 0 ? fire_variant : (bank_variant >= 0 ? bank_variant : MIN(int(r * variants), variants - 1));
-					const Transform3D world(b, Vector3(xz.x, y, xz.y));
+					// Stilt roots: raised by the variant's lift along its own up (scaled and tilted with it).
+					const Vector3 lift = variant < int(ps.base_lifts.size()) ? b.xform(Vector3(0.0f, ps.base_lifts[variant], 0.0f)) : Vector3();
+					const Transform3D world(b, Vector3(xz.x, y, xz.y) + lift);
 					if (is_log && variant < int(ps.deadwood_axes.size()) && ps.deadwood_axes[variant].size() >= 7) {
 						const PackedFloat32Array &ax = ps.deadwood_axes[variant];
 						const Vector3 la = world.xform(Vector3(ax[0], ax[1], ax[2]));

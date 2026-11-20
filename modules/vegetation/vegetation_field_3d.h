@@ -232,6 +232,7 @@ private:
 		LocalVector<float> fire_years;
 		LocalVector<Vector2> fire_bands; // Per variant, mesh meta "tree_fire_band" (years from, to); empty: nearest years.
 		float fire_years_max = 0.0f;
+		LocalVector<float> base_lifts; // Per variant, mesh meta "tree_base_lift" (m in mesh space: stilt roots, the origin that far above the ground); empty: none.
 		Vector2 open_side; // Mesh meta "tree_open_side" (xz, unit) of its first mesh carrying it: turned to face the open (forest edges); zero none.
 	};
 	struct PlaceSetup {
