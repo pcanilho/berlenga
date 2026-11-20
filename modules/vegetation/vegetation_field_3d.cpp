@@ -750,6 +750,12 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		// ground falls towards mesh +Z.
 		ps.wind_flag = bool(ps.sp->get_meta(SNAME("wind_flag"), false));
 		{
+			const Vector2 fd = ps.sp->get_meta(SNAME("fall_dir"), Vector2());
+			ps.fall_dir = fd.length_squared() > 1e-8f ? fd.normalized() : Vector2();
+			ps.fall_scatter = float(ps.sp->get_meta(SNAME("fall_scatter"), 0.0f));
+		}
+		ps.far_widen = bool(ps.sp->get_meta(SNAME("far_widen"), false));
+		{
 			bool any_bank = false;
 			for (const Ref<Mesh> &m : ps.meshes) {
 				any_bank = any_bank || (m.is_valid() && m->has_meta(SNAME("tree_ground_slope")));
@@ -1809,6 +1815,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					} else if (bank_variant >= 0 && ps.bank_slopes[bank_variant] > 1e-3f && slope > 1e-3f) {
 						// Its ground falls towards mesh +Z: turn +Z downhill.
 						yaw = Math::atan2(downhill.x, downhill.y);
+					} else if (ps.fall_dir != Vector2()) {
+						// Thrown by one storm (the trees module, trees.md 5am): mesh +X along the storm's track, each
+						// tree turned by the gusts and its neighbours within fall_scatter.
+						yaw = Math::atan2(-ps.fall_dir.y, ps.fall_dir.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 2.0f * ps.fall_scatter;
 					} else if (ps.wind_flag && p_setup.wind_dir != Vector2()) {
 						// Flagged by the prevailing wind: mesh +X downwind, a little scatter (eddies
 						// round the land turn it locally).
@@ -2139,6 +2149,17 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 		}
 		const int cells = CLAMP(int(Math::ceil(ts / cell_size)), 1, 16);
 		const Vector2 tile_origin = Vector2(tx * ts, tz * ts);
+		// Trees (meta far_widen, trees.md 9a): the tail's survivors grown in their transforms instead of the plant
+		// shader's vegetation_far_scale(), by the keep this tile was committed for (min(1/sqrt(keep), 1.6), the
+		// cover held as the ranks thin; Cook et al. 2007): across by the full factor, up by a third of it so the
+		// skyline does not rise. Per tile, rebuilt with the tile as the camera comes closer; a tree's surfaces then
+		// need no camera-dependent vertex capture in the path tracer.
+		Basis widen;
+		if (ps.far_widen && p_max_rank < 1.0f) {
+			const float k = MAX((p_max_rank - 0.02f) / 1.12f, 1e-4f);
+			const float f = MIN(1.0f / Math::sqrt(k), 1.6f);
+			widen = Basis::from_scale(Vector3(f, Math::lerp(1.0f, f, 0.33f), f));
+		}
 		LocalVector<LocalVector<uint32_t>> buckets;
 		buckets.resize(cells * cells);
 		for (uint32_t i = 0; i < so.xforms[v].size(); i++) {
@@ -2165,7 +2186,9 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 				LocalVector<Transform3D> bx;
 				LocalVector<Color> bc;
 				for (uint32_t i : buckets[b]) {
-					bx.push_back(so.xforms[v][i]);
+					Transform3D x = so.xforms[v][i];
+					x.basis = x.basis * widen;
+					bx.push_back(x);
 					bc.push_back(so.customs[v][i]);
 				}
 				_fill_cell(mm, draw_mesh, bx, bc);

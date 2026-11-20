@@ -35,6 +35,10 @@ extends Node3D
 #   --silt=M,A       muddy water: M kg/s of silt and A of ash enter at the river's head (WorldWater sediment), the
 #                    clock run 30 times fast until --frames so the load fills the river (use --frames=200 or more);
 #                    with --joins the lake takes what the river leaves it (--lake=sediment:Vector2(0.05,0))
+#   --silt-bank=F    with --silt, the load enters F of the half width off the centre line (1 the left bank, -1 the
+#                    right): a plume along that bank that spreads across downstream
+#   --plume-test     a left-bank silt source (clock 30 times fast): checks that it hugs that bank below the source,
+#                    spreads across further down and settles only where the water is slack; prints PASS/FAIL, quits
 #   --falls          the step is a 6 m cliff: the river goes over it as a waterfall
 #   --view=fall      the waterfall from the side
 #   --view=fallfront the waterfall from downstream, looking up at the falling sheet
@@ -83,6 +87,8 @@ var fall_run := 0.1
 var sun_rot := Vector3(-50, -140, 0)
 var lake: Node3D
 var silt := Vector2.ZERO
+var silt_bank := 0.0
+var plume_test := false
 var tributary: Node3D
 var focus: Marker3D
 var ground_body: StaticBody3D
@@ -155,6 +161,12 @@ func _ready() -> void:
 		elif a.begins_with("--silt="):
 			var sv := a.substr(7).split(",")
 			silt = Vector2(float(sv[0]), float(sv[1]) if sv.size() > 1 else 0.0)
+		elif a.begins_with("--silt-bank="): silt_bank = float(a.substr(12))
+		elif a == "--plume-test":
+			plume_test = true
+			silt = Vector2(20.0, 0.0)
+			silt_bank = 0.8
+			frames = maxi(frames, 300)
 		elif a == "--narrows": narrows = true
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
@@ -625,14 +637,76 @@ func _slab(p_size: Vector3, p_pos: Vector3, p_rot: Vector3, p_mat: Material, p_l
 
 func _physics_process(_delta: float) -> void:
 	if silt != Vector2.ZERO and river != null and river.is_inside_tree():
-		var c: Curve3D = river.get("curve")
-		river.call("add_sediment", river.to_global(c.sample_baked(3.0)), silt.x, silt.y)
+		river.call("add_sediment", _across(3.0, silt_bank), silt.x, silt.y)
+
+
+# The point s metres down the river's centre line, f of its half width towards the left bank (-f the right).
+func _across(s: float, f: float) -> Vector3:
+	var c: Curve3D = river.get("curve")
+	var p := c.sample_baked(s)
+	var t := (c.sample_baked(s + 0.5) - c.sample_baked(maxf(s - 0.5, 0.0)))
+	t.y = 0.0
+	var side := Vector3.UP.cross(t.normalized())
+	var w := 5.0
+	var count: int = river.call("get_section_count")
+	var best := INF
+	for i in count:
+		var sec: Dictionary = river.call("get_section", i)
+		if absf(float(sec["s"]) - s) < best:
+			best = absf(float(sec["s"]) - s)
+			w = float(sec["width"])
+	return river.to_global(p + side * f * 0.5 * w)
+
+
+func _plume_test() -> void:
+	var results := []
+	var near := []
+	for s in [12.0, 25.0, 45.0]:
+		var left: Vector2 = river.call("get_sediment_at", _across(s, 0.7))
+		var right: Vector2 = river.call("get_sediment_at", _across(s, -0.7))
+		near.append([s, left.x, right.x])
+		print("plume %4.0f m: left bank %.4f, right bank %.4f kg/m3" % [s, left.x, right.x])
+	var length: float = river.call("get_length")
+	var far_s := length - 8.0
+	var fl: Vector2 = river.call("get_sediment_at", _across(far_s, 0.7))
+	var fr: Vector2 = river.call("get_sediment_at", _across(far_s, -0.7))
+	print("plume %4.0f m: left bank %.4f, right bank %.4f kg/m3" % [far_s, fl.x, fr.x])
+	var first: Array = near[0]
+	results.append(["hugs the left bank below the source", first[1] > 3.0 * maxf(first[2], 1e-6) and first[1] > 0.0, "%.4f against %.4f" % [first[1], first[2]]])
+	var r0: float = first[2] / maxf(first[1], 1e-9)
+	var r1: float = fr.x / maxf(fl.x, 1e-9)
+	results.append(["spreads across further down", fl.x > 0.0 and r1 > r0, "right/left %.3f at %.0f m, %.3f at %.0f m" % [r0, first[0], r1, far_s]])
+	var bank_dep := 0.0
+	var mid_dep := 0.0
+	var mid_speed := 0.0
+	for s in range(6, int(length) - 4, 2):
+		bank_dep = maxf(bank_dep, (river.call("get_sediment_deposit_at", _across(float(s), 0.95)) as Vector2).x)
+		mid_dep = maxf(mid_dep, (river.call("get_sediment_deposit_at", _across(float(s), 0.0)) as Vector2).x)
+	results.append(["settles only in slack water (bank over the fast middle)", bank_dep > 0.0 and bank_dep > 5.0 * mid_dep, "bank %.5f, middle %.5f kg/m2" % [bank_dep, mid_dep]])
+	var ww = WorldContracts.get_water() if ClassDB.class_exists("WorldContracts") else null
+	if ww != null:
+		var best := Vector2.ZERO
+		for s in range(6, int(length) - 4, 2):
+			var d: Vector2 = ww.sediment_deposit_at(_across(float(s), 0.95))
+			if d.x > best.x:
+				best = d
+		results.append(["WorldWater.sediment_deposit_at reads it", absf(best.x - bank_dep) < 1e-4 * maxf(bank_dep, 1.0), "%.5f" % best.x])
+	var fails := 0
+	for r in results:
+		print("%s %s  (%s)" % ["PASS" if r[1] else "FAIL", r[0], r[2]])
+		if not r[1]:
+			fails += 1
+	print("plume test: %d of %d pass" % [results.size() - fails, results.size()])
 
 
 func _process(_delta: float) -> void:
 	n += 1
 	if silt != Vector2.ZERO:
 		Engine.time_scale = 30.0 if n < frames - 2 else 1.0
+	if plume_test and n == frames:
+		_plume_test()
+		get_tree().quit()
+		return
 	if weather != null and n % 60 == 0:
 		var wet_n := 0
 		var total := 0

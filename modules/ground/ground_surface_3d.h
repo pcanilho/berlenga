@@ -728,6 +728,9 @@ private:
 	// changes, not when a texture it samples is rewritten in place (as SnowSurface3D's snow_serial).
 	bool deform_serial_dirty = false;
 	uint32_t deform_serial = 0;
+	// The source material's serial (the terrain lowered under the patch) waits for the next second.
+	bool source_serial_dirty = false;
+	uint64_t source_serial_msec = 0;
 	void _bump_deform_serial();
 	double cells_accum = 0.0;
 	double age_accum = 0.0;
@@ -751,6 +754,8 @@ private:
 	void _publish();
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
 	float _ground_at(float p_x, float p_z) const;
+	bool _on_lattice(float p_x, float p_z) const;
+	float _off_lattice_height(const Vector3 &p_position) const;
 	// Where the field reads the air (its centre on the ground): the weather contract's air is per point.
 	Vector3 _weather_point() const { return Vector3(center.x, _ground_at(center.x, center.y), center.y); }
 	const Cell &_cell_at(float p_x, float p_z) const;

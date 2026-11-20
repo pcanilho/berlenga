@@ -1137,6 +1137,19 @@ uncovered by ruts or water they collide as any rock. `get_buried_near`. Bench --
 takes 36 cm; bodies near the probe; none when off or without mud. Ground bench _setup turns it off for other checks.
 Limits: the cap applies across a whole wheel print (the stone stops the print, it does not dig round it).
 
+#### Round 15 candidates (card 19 Nov)
+
+- **Flood silt skin.** WorldWater.sediment_deposit_at (kg/m2, Valence 77919272) laid as a thin fresh layer: depth =
+  mass / dry bulk density (about 1300 kg/m3 for fresh silt, Asselman and Middelkoop 1995), saturated at first (a slick
+  film: low tread grip, Wong's adhesion), drying and cracking with the existing desiccation cracks. Merge with
+  add_mud_deposit's overbank silt so there is one deposit store.
+- **Stones dug round and kicked loose.** Round 14.3's limit: the stone caps the whole print. Instead stamp the print
+  minus the stone's footprint (cap per texel on the GPU from a small list of nearby obstacle discs), and an exposed
+  stone whose bearing in the mud fails under a tyre's shear (Terzaghi bearing on a buried sphere; Ishigami's side
+  bulldozing force) turns into a PhysX rigid body and is pushed out.
+- **Worn tracks kept between sessions.** Save wear_cells with keep_ruts (same file, same time scaling as ruts' ageing),
+  so a used route is still packed and bare on return.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

@@ -492,6 +492,8 @@ public:
 	FUNC1RC(int, multimesh_get_bones_per_instance, RID)
 	FUNC2(multimesh_set_rt_instanced, RID, bool)
 	FUNC1RC(bool, multimesh_is_rt_instanced, RID)
+	FUNC2(multimesh_set_rt_offscreen_cull, RID, float)
+	FUNC1RC(float, multimesh_get_rt_offscreen_cull, RID)
 	FUNC1RC(Vector<float>, multimesh_get_buffer, RID)
 
 	FUNC3(multimesh_set_buffer_interpolated, RID, const Vector<float> &, const Vector<float> &)

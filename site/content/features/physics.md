@@ -11,7 +11,7 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 - Either engine: tearable cloth, skinned cloth, Blast destruction, Flow smoke and fire, ocean buoyancy, compute-shader fluids.
 - PhysX only: vehicles, CUDA fluids and deformables.
 - **Path-traced smoke and fire** (`rendering/pathtracing/simulated_gas`).
-- **Lit smoke in raster** (PhysXFlow3D `ambient_scattering`, `sun_scattering`, `cast_shadows`, `scattering_temporal`): smoke takes sky and ambient light and the sun through scene shadows, and shadows the scene; `scattering_temporal` removes step banding at its edges.
+- **Lit smoke in raster** (PhysXFlow3D `ambient_scattering`, `sun_scattering`, `cast_shadows`, `scattering_temporal`, `ground_albedo`): smoke takes sky and ambient light, the sun through scene shadows and light bounced up from sunlit ground, and shadows the scene; `scattering_temporal` removes step banding at its edges.
 
   ![Smoke over a broken wall at a low side sun, raster, cast_shadows off and on](media/physx-smoke-shadow.jpg)
 

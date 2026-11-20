@@ -1021,6 +1021,12 @@ func _build_clouds() -> void:
 	sky_mat.cloud_reprojection = reprojection
 	if no_sky_shadow:
 		sky_mat.set_shader_parameter("atmo_cloud_shadow_steps", 0)
+	for a in OS.get_cmdline_user_args():
+		# --sky-params=name:value,...: the sky's shader parameters, for A/B checks of the cloud lighting.
+		if a.begins_with("--sky-params="):
+			for pair in a.substr(13).split(","):
+				var nv := pair.split(":")
+				sky_mat.set_shader_parameter(nv[0], float(nv[1]))
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	sky.process_mode = Sky.PROCESS_MODE_REALTIME

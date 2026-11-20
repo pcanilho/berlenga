@@ -115,6 +115,13 @@
 				Override in a stub to replace [method ground_water_input_at].
 			</description>
 		</method>
+		<method name="_high_cloud_cover_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub: [method high_cloud_cover_at].
+			</description>
+		</method>
 		<method name="_mean_wind_at" qualifiers="virtual const">
 			<return type="Vector3" />
 			<param index="0" name="position" type="Vector3" />
@@ -373,6 +380,13 @@
 			<return type="bool" />
 			<description>
 				Whether a producer (a [WeatherMap3D] in the tree) stands behind this contract.
+			</description>
+		</method>
+		<method name="high_cloud_cover_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				High (cirrus) cloud cover over the point, 0 to 1. Default 0. Separate from [method cloud_cover_at].
 			</description>
 		</method>
 		<method name="mean_wind_at" qualifiers="const">

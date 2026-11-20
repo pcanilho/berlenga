@@ -62,6 +62,7 @@ void SnowPowderCloud3D::_build() {
 	flow->set("smoke_density", 1.2f);
 	flow->set("scattering_strength", 1.0f); // raster only; PT never sees it (parity)
 	flow->set("scattering_albedo", 0.99f); // ice grains barely absorb (Warren 1982: above 0.999 in the visible)
+	flow->set("ground_albedo", 0.8f); // the snow it rises from lights its underside (fresh snow, broadband; Warren 1982)
 	flow->set("smoke_color", color);
 	flow->set("collide_with_bodies", true);
 	flow->set("collision_range", 30.0f);

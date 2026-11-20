@@ -2515,6 +2515,35 @@ on). Contract lines `canopy_load_at`, `canopy_capacity_at`, `shake_canopy` agree
   weather model (a snap, a thrown tree, an avalanche, a body) asks snow to move the mass
   (`WorldSnow.shake_canopy`, proposed to the snow thread 19 Nov).
 
+### 5am. Windthrow fields (19 Nov; Paulo's pick)
+
+Technique: storm-damage survey data from the big European winter storms mapped onto the deadwood kit (5, 5k, 5j).
+What a storm leaves in a spruce stand: gaps from a few trees to many hectares, most under a hectare (Schutz, Gotz,
+Schmid and Mandallaz 2006, Eur. J. For. Res. 125, storm Lothar 1999 in 332 Swiss stands; a gap about a tree height
+wide destabilises its edge), the stand lying in them along the storm's track, 40-60% of damaged spruce snapped and
+the rest uprooted (same source), pit-and-mound cover of 15-25% of the ground after a widespread windthrow (Ulanova
+2000, For. Ecol. Manage. 135), and the gap refilling from the spruce that waited under the old stand, rowan,
+sycamore, birch and willow on the pits and plates, raspberry and willowherb first (Wohlgemuth, Kull and Wuthrich 2002,
+ten years after Vivian 1990). Thrown spruce lose their needles by 11-20 years on the ground (Ulanova 2000, log decay).
+
+As built:
+- `windthrow_years` on a tree (-1 off). A fallen tree falls toward mesh +X; a snag is the stump of a stem snapped at
+  6-30% of its height with a splintered top; a living tree leans 5-20 degrees toward +X about its lee-side foot.
+  Decay class by years: 1 to 2.5, 2 to 8, 3 to 20, 4 to 40. Class 1 needles: an uprooted tree stays green about 0.6
+  years (roots still hold), a snapped top 0.25, then rust-red and brown, falling from the second year. Mesh meta
+  `tree_windthrow_years`.
+- `STAND_WINDTHROW` (`windthrow_storm` years since the storm, default 1; `windthrow_direction` world xz, default
+  east-north-east, the way the westerly storms blew): gap mask (90 m, cover 0.45); thrown spruce (half with root
+  plates and pits, 5k) at 1.2x stand spacing, snapped stumps, leaning survivors in a 6 m band along the gap edges
+  (gone by 25 years), the living stand between gaps, torn branches, and by years: spruce advance regeneration from 0,
+  rowan from 1, birch from 2, sycamore from 3 (saplings to 12 years, then open-grown young trees); elder.
+- Placement: species meta `fall_dir` (Vector2) and `fall_scatter` (radians): VegetationField3D turns mesh +X along it,
+  +-0.45 rad for thrown trees, +-0.3 for leaning ones (a design choice; no survey we read gives the spread).
+- Bench: `docs/bench/trees --stands --stand-test=17` checks thrown, snapped, leaning, standing counts, root plates,
+  and that every drawn thrown or leaning tree points within 0.5 rad of the storm's track.
+- Not yet: the snapped stems' tops lie as whole trees from the butt (the stump and the top are separate variants);
+  plates do not settle into mounds over decades beyond the existing class 3 slump.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
@@ -3209,6 +3238,27 @@ surface shows.
    silhouettes are what reads at distance); the rest thin as option 1.
 Recommended: all three, in the order 1, 2, 3. The canopy-height surface to 4 km stays vegetation's; trees supply
 its per-species heights and colours from their own meshes.
+
+### 9a. Far thinning by rank (built 20 Nov; Paulo picked all three far-forest options, in order)
+
+Trees join VegetationField3D's far tail (vegetation.md, "Far vegetation without bald ground"; vegetation's contract:
+one hashed rank per plant in INSTANCE_CUSTOM.x, the range in custom.y, keep = _far_keep(range, range x far_reach, d),
+a plant drawn while rank < keep, survivors widened by min(1/sqrt(tail), 1.6), Cook et al. 2007 stochastic
+simplification as Ghost of Tsushima's far grass).
+- Ranges: a stand species 5 m or larger (its first mesh's largest extent) gets 30 m of range a metre, 150-1200 m,
+  unless the scene set one: a 30 m spruce keeps every tree to 450 m and thins to 2.7 km. Smaller wood and saplings keep
+  no range (drawn to the stream radius as before), and 150 m or more leaves the field's far voxel volume (to 150 m)
+  empty for trees.
+- Widening on the CPU, not in the shader: species meta `far_widen` makes VegetationField3D grow each survivor in its
+  instance transform by the keep its tile was committed for (min(1/sqrt(keep), 1.6) across, a third of that upward
+  so the skyline does not rise), rebuilt with the tile as the camera comes closer. Tried first: a copy of every tree
+  material calling the shared vegetation_far_scale() in vertex(). Raster was right, but a camera-dependent vertex()
+  makes the path tracer recapture every tree surface (bark, needles, millions of vertices) whenever the camera moves,
+  and the captures did not finish within a cloud render. Per tile the thinning steps instead of fading; at those
+  distances a tree is a few pixels. `TreeGenerator.far_thinning` (on) sets the ranges and meta.
+- Bench: `--stands --plot=N --far=R` streams the stand with every species ranged R m (far shell and far volume off,
+  FAR_SHELL=1 brings the shell back; NO_FAR_SCALE=1 grows the stand without far_thinning). Raster and path traced
+  (640x360, --far=50) draw the same survivors at the same places.
 
 ## Next-round options (card 19 Nov evening)
 **Snow-laden crowns.** Conifer crowns catch snow (up to 30-60% of a storm's snowfall in a closed spruce stand; Hedstrom and Pomeroy 1998, Pomeroy et al. 1998 interception model): the load bends branch tips down (spruce and fir laterals droop 10-30 degrees under a few kg; Schmidt and Pomeroy 1990 branch bending), white caps sit on the upper side of each spray as real geometry, and it unloads in gusts, sun and thaw as falling clumps (Storck et al. 2002; Roesch et al. 2012 unloading rates). Heavy wet snow breaks tops and stems (snow breakage, Nykanen et al. 1997; Peltola et al. 1999 critical loads), through the TreeWind3D storm path. Reads the snow/weather contracts (snowfall, air temperature, wind); load per tree kept in TreeWind3D, released as Flow/particle clumps. Needs a WorldSnow line agreed with the snow thread (who owns snow on crowns).

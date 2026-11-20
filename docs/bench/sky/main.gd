@@ -7,6 +7,7 @@ extends Node3D
 #            [--chart]  colour patches on grey ground in front of the camera, lit by the clock's sun and moon
 #                       (CameraAttributes.night_vision; --no-night-vision for the A/B, --lamp=E a warm lamp, --pt)
 #            [--exposure=k] [--pitch=deg --yaw=deg --fov=deg] [--no-stars] [--no-airglow] [--milky-way=path] [--month=M --day=D] [--look-moon]
+#            [--pt]  path traced (camera rays that miss run the sky shader), for raster/PT pairs of the clouds
 
 var fails := 0
 
@@ -119,6 +120,9 @@ func _sky(kv: Dictionary) -> void:
 		cam.fov = 60.0
 		if kv.has("pt"):
 			env.pathtracing_enabled = true
+	elif kv.has("pt"):
+		env.pathtracing_enabled = true
+		env.pathtracing_sky_shader_enabled = true
 	# The clock drives the camera's exposure (an adapting eye) unless the bench sets one.
 	clock.drive_exposure = not (kv.has("exposure") or kv.has("pre-exposure"))
 	if kv.has("no-night-vision"):

@@ -92,6 +92,8 @@ private:
 	Sky sky;
 	bool dirty = true;
 	ObjectID sky_material_id; // the sky last given the lights
+	Vector3 applied_smoke = Vector3(1, 1, 1); // the fires' smoke transmittance last put on the sun
+	Vector3 _sun_smoke();
 
 	void _update();
 	void _apply_lights();

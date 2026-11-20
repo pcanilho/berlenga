@@ -37,6 +37,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Sun → surface drying | linked (18 Nov) | sun, cloud shadow, canopy | `sun_drying`, Penman 1948 |
 | Air → rain/snow share | linked | air | Jennings 2018 |
 | Wind → clouds, storms | linked | cells | |
+| Humidity, rain, storms, wind aloft → high cloud (cirrus) | linked (19 Nov) | `high_cloud_cover`, air, storms, `get_wind_aloft` | `get_high_cloud_cover_at` / `WorldWeather.high_cloud_cover_at`: dry air thins it, rain dialled in thickens it ahead of the rain (eases 4x faster), storms spread anvil shields 2.5 radii downwind; shades the ground only by its own optical depth in the cloud shadow bake (docs/ideas/clouds.md) |
 | Weather → haze | linked | air humidity, precipitation | |
 | Clear calm nights → dew, hoarfrost | linked (18 Nov) | air, net radiation | `dew_and_frost`, Monteith 1957; `weather_frost_map` on terrain, grass, plants, rocks |
 | Hill cloud (fog) → drip under trees | linked (19 Nov) | cloud extinction at the ground, canopy closure | `fog_drip`: LWC = 6.7 x extinction (r_e 10 um); catch 3.6 LWC u (0.003 + 0.015 closure) mm/h into Rutter's canopy, no drying in cloud; the fog's drip share wets the film and the soil (`fog_water_at`, `fog_drip_at`). Lovett 1984; Bruijnzeel et al. 2005 |

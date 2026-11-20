@@ -10,6 +10,7 @@ extends Node3D
 #   --edge [--standard]  with --plot: from a fresh coupe across its edge (or at a standard 8 m off)
 #   --plot=N          render stand N (TreeGenerator.Stand) on the valley (--out=path.png, --raster, --spp=N)
 #   --wind=U          with --plot: rigged trees posed by a U m/s wind (TreeWind3D) at --time=T s
+#   --far=R           with --plot: every species ranged R m and streamed (the far tail thins and widens past R/2)
 #   --inside          with --plot: the view from inside the stand, 70 m deep
 #   --deep            with --inside: from among the canopy trees, away from the stream
 #   --variants=N      meshes per species (default 1)
@@ -40,7 +41,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"olive grove", "date oasis", "beetle spruce", "woodland", "NA woodland"]
+		"olive grove", "date oasis", "beetle spruce", "windthrow", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -65,6 +66,7 @@ func run(args: Dictionary) -> void:
 		gen.near_leaf_range = 0.0
 	# Fire band variants (five more meshes a species, trees.md 5ah) serve no placement check: off unless --fire.
 	gen.fire_variants = args.has("fire")
+	gen.far_thinning = OS.get_environment("NO_FAR_SCALE") == ""
 	if args.has("region"):
 		use_generator = args.has("generated")
 		north_america = args.has("na")
@@ -250,6 +252,45 @@ func _stand_checks(only := -1) -> void:
 					var yrs: float = m.get_meta("tree_beetle_years", -1.0)
 					tagged = tagged and (yrs < 2.5 if nm3.contains("front") else yrs >= 2.5)
 			_check(front > 0 and grey > 0 and stand_count > 0 and tagged, "beetle spruce: %d red-front, %d grey, %d living spruce; variants tagged by stage" % [front, grey, stand_count])
+		elif i == TreeGenerator.STAND_WINDTHROW:
+			# Spruce after windthrow (trees.md 5am): thrown logs and snapped stumps in the gaps, every thrown and
+			# leaning tree turned down the storm's track (mesh +X along windthrow_direction), half with root plates.
+			var thrown := 0
+			var snapped := 0
+			var leaning := 0
+			var off := 0
+			var plates := 0
+			var checked := 0
+			var dir := Vector2(0.92, -0.38).normalized()
+			for s in sps.size():
+				var nm4: String = sps[s].resource_name
+				var pl: PackedVector3Array = f.get_placements(s)
+				if nm4.contains("(windthrow)"):
+					thrown += pl.size()
+					for m in sps[s].meshes:
+						if m.has_meta("tree_root_pit"):
+							plates += 1
+				elif nm4.contains("(windthrow snapped)"):
+					snapped += pl.size()
+				elif nm4.contains("(windthrow leaning)"):
+					leaning += pl.size()
+				else:
+					continue
+				if not sps[s].has_meta("fall_dir") and not nm4.contains("snapped"):
+					off += pl.size()
+				if nm4.contains("snapped"):
+					continue
+				# The drawn instances of its meshes: +X down the storm's track.
+				for mmi in f.find_children("*", "MultiMeshInstance3D", true, false):
+					var mm: MultiMesh = mmi.multimesh
+					if mm == null or not sps[s].meshes.has(mm.mesh):
+						continue
+					checked += mm.instance_count
+					for k in mm.instance_count:
+						var x: Vector3 = mm.get_instance_transform(k).basis.x
+						if Vector2(x.x, x.z).normalized().dot(dir) < cos(0.5):
+							off += 1
+			_check(thrown > 0 and snapped > 0 and leaning > 0 and stand_count > 0 and off == 0 and plates > 0, "windthrow: %d thrown (%d variants with root plates), %d snapped, %d leaning, %d standing; %d of %d drawn turned off the storm's track" % [thrown, plates, snapped, leaning, stand_count, off, checked])
 		elif i == TreeGenerator.STAND_POLLARD_ROW:
 			_check(cut.pollard > 0 and cut.pollard >= open_count, "pollard row: %d willow pollards, %d alders" % [cut.pollard, open_count])
 		elif i == TreeGenerator.STAND_COPPICE_STANDARDS:
@@ -600,7 +641,26 @@ func _render_plot(i: int, args: Dictionary) -> void:
 	gen.rigged = args.has("wind")
 	var biome := _biome(i)
 	gen.rigged = false
-	var f := _field(biome)
+	var f: VegetationField3D
+	if args.has("far"):
+		# --far=R: the far tail at a bench's scale (trees.md 9a): every species ranged R m, streamed in 20 m tiles out
+		# to 3 R (VegetationField3D.far_reach), so the survivors past R / 2 thin and widen within the valley.
+		for sp in biome.species:
+			sp.visibility_range = float(args["far"])
+		f = VegetationField3D.new()
+		f.populate_on_ready = false
+		f.tile_size = 20.0
+		f.streaming = true
+		f.stream_radius = SIZE * 1.5
+		f.far_reach = 3.0
+		# Vegetation's draped far shell takes over past 0.6 of the reach; at a bench's ranges it would cover the valley.
+		f.far_shell = OS.get_environment("FAR_SHELL") != ""
+		f.far_volume = false # Its voxel shell from the range to 150 m, likewise.
+		f.biome = biome
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+	else:
+		f = _field(biome)
 	if args.has("wind"):
 		# Posed by the wind at --time seconds (rigged meshes, one TreeWind3D on the field).
 		var wind := TreeWind3D.new()
@@ -783,8 +843,32 @@ func _render_plot(i: int, args: Dictionary) -> void:
 		cam.look_at(Vector3(float(cv[3]), float(cv[4]), float(cv[5])))
 		if cv.size() >= 7:
 			cam.fov = float(cv[6])
+	if args.has("far"):
+		f.stream_target = f.get_path_to(cam)
+		var waited := 0
+		get_viewport().disable_3d = true # Streams without drawing every step (lavapipe).
+		while waited < 3000 and (waited < 10 or not f.is_stream_idle()):
+			await RenderingServer.frame_post_draw
+			waited += 1
+			if waited % 50 == 0:
+				print("far: frame %d, %d plants, idle %s" % [waited, f.get_plant_count(), str(f.is_stream_idle())])
+		get_viewport().disable_3d = false
+		var drawn := 0
+		for mmi in f.find_children("*", "MultiMeshInstance3D", true, false):
+			if mmi.multimesh != null:
+				drawn += mmi.multimesh.visible_instance_count if mmi.multimesh.visible_instance_count >= 0 else mmi.multimesh.instance_count
+		print("far: %d plants placed, %d drawn instances after %d frames" % [f.get_plant_count(), drawn, waited])
 	for k in (8 if raster else 12):
 		await RenderingServer.frame_post_draw
+	if not raster:
+		# Path traced: surfaces whose vertex() is captured join once captured (RT_PENDING_SURFACES).
+		var pw := 0
+		while pw < 300 and get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES) > 0:
+			await RenderingServer.frame_post_draw
+			pw += 1
+		for k in 12:
+			await RenderingServer.frame_post_draw
+		print("pt: waited %d draws for pending surfaces" % pw)
 	var out: String = args.get("out", "/tmp/plot.png")
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)

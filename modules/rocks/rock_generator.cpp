@@ -948,6 +948,10 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			const bool scar = k >= count - 1 - int(rng.randf() * 1.5f);
 			planes.push_back({ n, support * ((family == FAMILY_SEA_STACK ? 0.74f : 0.62f) + (family == FAMILY_SEA_STACK ? 0.14f : 0.2f) * rng.randf()), scar && family != FAMILY_SEA_STACK });
 		}
+		if (family == FAMILY_SEA_STACK) {
+			// The foot stands on the wave-cut platform, full width: the body's rounded end would stand it on a stem.
+			planes.push_back({ Vector3(-1.0f, 0.0f, 0.0f), 0.8f * a, false });
+		}
 	}
 	// A platform's edge follows the joints and the sea's reach, not a rectangle: a few vertical cuts across corners.
 	if (family == FAMILY_SEA_PLATFORM || family == FAMILY_PAVEMENT || family == FAMILY_POTHOLE) {
@@ -1380,7 +1384,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						float rec = family == FAMILY_SEA_STACK ? 0.0f : bed_recess(p) * (fr ? 0.25f : 1.0f);
 						if (family == FAMILY_SEA_STACK) {
 							// Below the notch's roof the waves plane the beds back alike: no lips there to read as a plinth.
-							rec = Math::lerp(0.2f * c * layered, rec, Math::smoothstep(notch_x + 0.6f * notch_w, notch_x + notch_w, p.x));
+							rec = Math::lerp(0.2f * c * layered * Math::smoothstep(notch_x - 2.5f * notch_w, notch_x - 1.5f * notch_w, p.x), rec, Math::smoothstep(notch_x + 0.6f * notch_w, notch_x + notch_w, p.x));
 						}
 						v += rec;
 					}
@@ -1403,9 +1407,16 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						{
 							// The top beds stand freest and are frost-split most: their ledges are the boldest.
 							const float tt0 = CLAMP((p.x - x_lo) / MAX(x_hi - x_lo, 0.01f), 0.0f, 1.0f);
-							shift *= 1.0f + 1.6f * Math::smoothstep(0.55f, 0.9f, tt0);
+							shift *= 1.6f + 1.2f * Math::smoothstep(0.55f, 0.9f, tt0); // (and bold all the way down: the lower half is no smooth lobe)
+							shift *= Math::smoothstep(notch_x, notch_x + notch_w, p.x); // under the notch's roof the waves plane it all back alike
 						}
-						shift += 0.03f * c * (bo - 0.5f) + (bo > 0.9f ? 0.1f * c : 0.0f);
+						// The blocks stand out most low down, where the waves pluck them along the joints (quarrying):
+						// the base is the most sharply jointed part, rounded only right at the foot.
+						{
+							const float tb = CLAMP((p.x - x_lo) / MAX(x_hi - x_lo, 0.01f), 0.0f, 1.0f);
+							const float low = 1.0f - Math::smoothstep(0.3f, 0.55f, tb);
+							shift += (0.03f + 0.11f * low) * c * (bo - 0.5f) + (bo > 0.85f ? (0.1f + 0.1f * low) * c : 0.0f);
+						}
 						v += shift + 0.035f * c * (0.5f * rk_fbm(p * 1.6f, nseed + 102u, 3));
 						// Its outline changes up the column (Twelve Apostles, Am Buachaille): buttresses and
 						// re-entrants that come and go with height, and a taper that steepens toward the top, so
@@ -1413,7 +1424,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						const float tt = CLAMP((p.x - x_lo) / MAX(x_hi - x_lo, 0.01f), 0.0f, 1.0f);
 						const float paz = Math::atan2(p.z, p.y / c);
 						const Vector3 pq(tt * 2.6f, Math::cos(paz) * 1.1f, Math::sin(paz) * 1.1f);
-						v += stack_taper * c * tt * tt + 0.55f * c * (0.5f * rk_fbm(pq, nseed + 109u, 3)) - 0.3f * c; // (the beds' joints stand a little proud of the cut)
+						v += stack_taper * c * tt * tt + 0.4f * c * Math::smoothstep(0.3f, 0.55f, tt) * (0.5f * rk_fbm(pq, nseed + 109u, 3)) - 0.3f * c; // (the beds' joints stand a little proud of the cut)
 						// Its arrises are not straight: where two joint faces meet, the edge is the first to go (blocks
 						// fall off corners), so it is chipped back in bites a metre or two long, deeper on some.
 						{
@@ -1434,7 +1445,14 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 							v += 0.5f * c * edge * Math::smoothstep(0.35f, 0.75f, 0.5f + 0.5f * rk_fbm(p * 1.1f, nseed + 119u, 2));
 						}
 						// And no face is one plane: swells and hollows a third of a face across.
-						v += 0.45f * c * (0.5f * rk_fbm(p * 0.85f, nseed + 113u, 3));
+						v += 0.3f * c * Math::smoothstep(0.3f, 0.55f, tt) * (0.5f * rk_fbm(p * 0.85f, nseed + 113u, 3)); // (no swells low down: blocks)
+						// Never wider at the top than near the foot: the column stays within a cone a little narrower at
+						// the top than at the base (a top-heavy column has already fallen).
+						{
+							const float rad = Vector2(p.y / c, p.z).length();
+							const float lim = 1.08f - 0.32f * tt + 0.08f * (0.5f * rk_fbm(p * 0.9f, nseed + 131u, 2));
+							v = MAX(v, (rad - lim) * MIN(c, 1.0f));
+						}
 						// Clefts down the faces (Old Harry, Duncansby): the joints the sea and frost opened, a dark
 						// slot a few metres deep at the face, running down a few beds and dying out, each joint its own.
 						{
@@ -1452,7 +1470,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 								if (open <= 0.0f) {
 									continue;
 								}
-								const float half_w = MAX((0.12f + 0.1f * float((lh >> 8) & 0xFFu) / 255.0f) * c, 1.5f * h) * open;
+								const float half_w = MAX((0.12f + 0.1f * float((lh >> 8) & 0xFFu) / 255.0f) * c, 1.5f * h) * open * Math::smoothstep(notch_x, notch_x + 2.0f * notch_w, p.x);
 								const float slot = half_w - Math::abs(jc[s] - line) * js[s];
 								v = MAX(v, MIN(slot, vb + 0.55f * c * open));
 							}
@@ -1471,7 +1489,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						// The notch: a sloping floor up to a sharp roof (the visor), and below it the foot stays worn
 						// back, so the column does not widen into a plinth under the water.
 						const float t = (p.x - notch_x) / notch_w;
-						const float prof = t > 1.0f ? 0.0f : (t > 0.75f ? 1.0f - (t - 0.75f) / 0.25f : (t > -1.5f ? 0.55f + 0.45f * (t + 1.5f) / 2.25f : 0.55f));
+						const float prof = t > 1.0f ? 0.0f : (t > 0.75f ? 1.0f - (t - 0.75f) / 0.25f : (t > -1.5f ? 0.55f + 0.45f * (t + 1.5f) / 2.25f : 0.55f - 0.4f * Math::smoothstep(-1.5f, -2.5f, t))); // (a notch is a band: the foot under its floor stands out again, not a plinth but no stem)
 						const float facing = exp_dir.dot(p) / exp_r + 0.25f * (rk_noise(p * 0.4f, nseed + 107u) - 0.5f);
 						const float exposure = 0.5f + 1.3f * Math::smoothstep(-0.5f, 0.9f, facing);
 						v += notch_d * exposure * prof * (0.85f + 0.3f * rk_noise(p * 2.0f, nseed + 95u));
@@ -1552,6 +1570,104 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 				}
 			}
 		}
+		if (family == FAMILY_SEA_STACK) {
+			// Never wider at the top than near the base, and no knob on a neck (a top-heavy column has already
+			// fallen; Hoek and Bray's toppling: a block stands while its weight falls inside its base). Each level's
+			// plan must lie inside the plan of the foot (a little wider allowed low, narrower near the top) and
+			// inside every plan between the notch's roof and it, each grown by a ledge's lip; a slot narrower than
+			// the lip does not count as a neck. The cut follows the blocks, so it reads as a fallen face.
+			const int nx = fine.nx, ny = fine.ny, nz = fine.nz;
+			const float span = MAX(x_hi - x_lo, 0.01f);
+			const float roof_t = (notch_x + notch_w - x_lo) / span;
+			LocalVector<float> dist, reach_base, reach_run;
+			dist.resize(ny * nz);
+			reach_base.resize(ny * nz);
+			reach_run.resize(ny * nz);
+			for (int k = 0; k < ny * nz; k++) {
+				reach_base[k] = 1e9f; // the foot's plan: the union of its levels
+				reach_run[k] = -1e9f; // above the notch: the intersection
+			}
+			const float lip = MAX(0.1f * c, 2.0f * h);
+			bool have_base = false;
+			auto plan_dist = [&](int p_x) -> bool {
+				// Two-pass chamfer distance (world units) to the level's solid cells.
+				bool any = false;
+				for (int z = 0; z < nz; z++) {
+					for (int y = 0; y < ny; y++) {
+						const bool in = fine.v[fine.idx(p_x, y, z)] < 0.0f;
+						any = any || in;
+						dist[z * ny + y] = in ? 0.0f : 1e9f;
+					}
+				}
+				const float d1 = h, d2 = 1.4142f * h;
+				for (int z = 0; z < nz; z++) {
+					for (int y = 0; y < ny; y++) {
+						float &d = dist[z * ny + y];
+						if (y > 0) d = MIN(d, dist[z * ny + y - 1] + d1);
+						if (z > 0) {
+							d = MIN(d, dist[(z - 1) * ny + y] + d1);
+							if (y > 0) d = MIN(d, dist[(z - 1) * ny + y - 1] + d2);
+							if (y < ny - 1) d = MIN(d, dist[(z - 1) * ny + y + 1] + d2);
+						}
+					}
+				}
+				for (int z = nz - 1; z >= 0; z--) {
+					for (int y = ny - 1; y >= 0; y--) {
+						float &d = dist[z * ny + y];
+						if (y < ny - 1) d = MIN(d, dist[z * ny + y + 1] + d1);
+						if (z < nz - 1) {
+							d = MIN(d, dist[(z + 1) * ny + y] + d1);
+							if (y < ny - 1) d = MIN(d, dist[(z + 1) * ny + y + 1] + d2);
+							if (y > 0) d = MIN(d, dist[(z + 1) * ny + y - 1] + d2);
+						}
+					}
+				}
+				return any;
+			};
+			for (int x = 0; x < nx; x++) {
+				const float tt = (fine.pos(x, 0, 0).x - x_lo) / span;
+				if (tt < 0.02f || tt > 1.02f) {
+					continue;
+				}
+				const bool base_lvl = tt < MIN(0.12f, roof_t - 0.1f);
+				if (tt > roof_t + 0.02f) {
+					// Clamp this level first (against the levels below), then let it bound the ones above.
+					const float grow = lip * (0.5f - 1.5f * Math::smoothstep(0.3f, 1.0f, tt)); // the foot's reach, narrowing up
+					for (int z = 0; z < nz; z++) {
+						for (int y = 0; y < ny; y++) {
+							float lim = reach_run[z * ny + y] - lip;
+							if (have_base) {
+								lim = MAX(lim, reach_base[z * ny + y] - grow);
+							}
+							if (lim <= -1e8f) {
+								continue;
+							}
+							const Vector3 p = fine.pos(x, y, z);
+							// The cut face is no plane: blocks a metre or so across, flat, meeting in edges.
+							const float blk = rk_noise(p * 1.4f, nseed + 134u) * 3.0f;
+							const float bq = (Math::floor(blk) + Math::smoothstep(0.85f, 1.0f, blk - Math::floor(blk))) / 3.0f;
+							lim += 0.08f * c * (bq - 0.5f);
+							float &v = fine.v[fine.idx(x, y, z)];
+							v = MAX(v, lim);
+						}
+					}
+				}
+				if (!(base_lvl || tt > roof_t + 0.02f)) {
+					continue;
+				}
+				if (!plan_dist(x)) {
+					continue;
+				}
+				for (int k = 0; k < ny * nz; k++) {
+					if (base_lvl) {
+						reach_base[k] = MIN(reach_base[k], dist[k]);
+					} else {
+						reach_run[k] = MAX(reach_run[k], dist[k]);
+					}
+				}
+				have_base = have_base || base_lvl;
+			}
+		}
 	}
 	// Landforms (docs/ideas/rocks.md, round 3):
 	// - hoodoo: soft bedded rock beaded by its softer beds (deep, uneven recesses), narrowing to a neck under a harder
@@ -1594,7 +1710,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		const float cap_side_az = crng.randf() * float(Math::TAU); // the side it overhangs most
 		const float face_az = crng.randf() * float(Math::TAU); // the wet side, notched deepest
 		const float cap_dome = capless ? 0.45f * c : (0.02f + 0.06f * crng.randf()) * c;
-		const float cap_tip_az = crng.randf() * float(Math::TAU), cap_tip = 0.25f * crng.randf();
+		const float cap_tip_az = crng.randf() * float(Math::TAU), cap_tip = 0.2f + 0.25f * crng.randf(); // tilted a few degrees
 		if (family == FAMILY_HOODOO) {
 			float b = x_lo - 0.3f;
 			bool soft = rng.randf() < 0.5f;
@@ -1603,7 +1719,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 				knot_rec.push_back((soft ? 0.14f + 0.2f * rng.randf() : 0.0f) * c); // a soft bed's groove depth
 				knot_az.push_back(rng.randf() * float(Math::TAU));
 				soft = rng.randf() < 0.75f ? !soft : soft;
-				b += 0.45f + 0.5f * rng.randf();
+				b += 0.2f + 1.1f * rng.randf() * rng.randf() + 0.1f * rng.randf(); // thin and thick beds
 			}
 		}
 		// Fin (Arches, Entrada and Navajo sandstone): a wall between two joints, its top and ends rounded by sheet wash,
@@ -1730,7 +1846,15 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						const float paz = Math::atan2(p.z, p.y / c);
 						const float facing = 0.5f + 0.5f * Math::cos(paz - face_az);
 						const float gw = 0.05f + 0.04f * rk_noise(Vector3(p.x * 0.5f, 0.0f, float(gi)), nseed + 127u);
-						const float r = knot_rec[gi] * (0.35f + 1.1f * facing) * (0.7f + 0.6f * rk_noise(p * 0.9f, nseed + 128u)) * MAX(1.0f - dq / gw, 0.0f);
+						// Some grooves die out round the column (the bed hardens there), some are shallow.
+						const float round_on = Math::smoothstep(0.3f, 0.6f, rk_noise(Vector3(Math::cos(paz) * 1.3f, float(gi) * 3.1f, Math::sin(paz) * 1.3f), nseed + 129u));
+						const float r = knot_rec[gi] * (0.35f + 1.1f * facing) * (0.4f + 0.9f * rk_noise(p * 0.9f, nseed + 128u)) * round_on * MAX(1.0f - dq / gw, 0.0f);
+						// Between grooves the face bows: a bed swells or pinches by its own amount, more on one side.
+						{
+							const float mid = 1.0f - Math::abs(2.0f * f - 1.0f);
+							const float bow = (float(rk_hash(uint32_t(i + 77) * 2654435761u ^ nseed) & 0xFFu) / 255.0f - 0.45f) * 0.16f * c;
+							v -= bow * mid * mid * (0.6f + 0.8f * rk_noise(p * 0.7f, nseed + 130u)) * (1.0f - Math::smoothstep(cap_t - 0.03f, cap_t + 0.02f, t));
+						}
 						const float tip = cap_tip * 0.25f * (Math::cos(cap_tip_az) * p.y / c + Math::sin(cap_tip_az) * p.z);
 						const float cap = Math::smoothstep(cap_t - 0.02f, cap_t + 0.02f, t + tip);
 						// Swells below, none in the cap; the neck just under the cap thinnest; the cap a little wider.
@@ -1752,6 +1876,8 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						const float dome = Math::smoothstep(cap_t + 0.01f, 1.02f, t + tip);
 						v += cap_dome * dome * dome;
 						v += 0.16f * c * cap * (0.5f * rk_fbm(p * 1.6f, nseed + 125u, 3));
+						// Its edges chipped: bites out of the slab's rim.
+						v += 0.1f * c * cap * Math::smoothstep(0.55f, 0.8f, rk_noise(p * 2.6f, nseed + 132u));
 						// Faint bedding: thin hard ribs 0.06 to 0.1 apart standing out a little.
 						const float bed = q / (0.07f + 0.02f * rk_noise(Vector3(p.x * 0.3f, 0.0f, 0.0f), nseed + 119u));
 						v += 0.012f * c * (Math::abs(bed - Math::round(bed)) * 2.0f - 0.5f) * (1.0f - cap);
@@ -2004,11 +2130,11 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		}
 		// A hoodoo's soft column is washed by rain faster than hollows can form: rills and flutes, a few hollows.
 		if (family == FAMILY_HOODOO) {
-			tafoni *= 0.25f;
+			tafoni *= 0.08f; // (a few: paired hollows on a column read as eyes)
 		}
 		// A stack's hollows are the swell's side's, a few big ones low down; a column dotted with them reads as a face.
 		if (family == FAMILY_SEA_STACK) {
-			tafoni *= 0.5f;
+			tafoni *= 0.25f;
 		}
 		if (family == FAMILY_PEBBLE || family == FAMILY_COBBLE || family == FAMILY_ROCKFALL || family == FAMILY_SCREE || family == FAMILY_CLIFF_BLOCK) {
 			tafoni = 0.0f;
@@ -2251,6 +2377,58 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		fine.v[i] = phi;
 	}
 	rk_reinitialize(fine, band, 3);
+	// One stone: carved columns can leave a block cut off from the rest (a cleft and a notch meeting); a loose piece
+	// hanging in the air is dropped (it would have fallen). The largest solid piece is kept.
+	if (family == FAMILY_SEA_STACK || family == FAMILY_SEA_ARCH || family == FAMILY_HOODOO || family == FAMILY_GOBLIN || family == FAMILY_FIN) {
+		const int total = fine.nx * fine.ny * fine.nz;
+		LocalVector<int> comp;
+		comp.resize(total);
+		for (int i = 0; i < total; i++) {
+			comp[i] = -1;
+		}
+		LocalVector<int> sizes, stack;
+		for (int i = 0; i < total; i++) {
+			if (fine.v[i] >= 0.0f || comp[i] >= 0) {
+				continue;
+			}
+			const int id = int(sizes.size());
+			int count = 0;
+			stack.clear();
+			stack.push_back(i);
+			comp[i] = id;
+			while (!stack.is_empty()) {
+				const int k = stack[stack.size() - 1];
+				stack.resize(stack.size() - 1);
+				count++;
+				const int x = k % fine.nx, y = (k / fine.nx) % fine.ny, z = k / (fine.nx * fine.ny);
+				const int nb[6][3] = { { x - 1, y, z }, { x + 1, y, z }, { x, y - 1, z }, { x, y + 1, z }, { x, y, z - 1 }, { x, y, z + 1 } };
+				for (int e = 0; e < 6; e++) {
+					if (nb[e][0] < 0 || nb[e][1] < 0 || nb[e][2] < 0 || nb[e][0] >= fine.nx || nb[e][1] >= fine.ny || nb[e][2] >= fine.nz) {
+						continue;
+					}
+					const int j = fine.idx(nb[e][0], nb[e][1], nb[e][2]);
+					if (fine.v[j] < 0.0f && comp[j] < 0) {
+						comp[j] = id;
+						stack.push_back(j);
+					}
+				}
+			}
+			sizes.push_back(count);
+		}
+		if (sizes.size() > 1) {
+			int best = 0;
+			for (uint32_t c2 = 1; c2 < sizes.size(); c2++) {
+				if (sizes[c2] > sizes[best]) {
+					best = int(c2);
+				}
+			}
+			for (int i = 0; i < total; i++) {
+				if (comp[i] >= 0 && comp[i] != best) {
+					fine.v[i] = 0.5f * fine.h;
+				}
+			}
+		}
+	}
 
 	// 4. Mesh: surface nets (rk_surface_nets). 5. Normals (area-weighted from the faces); cavity and freshness below.
 	LocalVector<Vector3> verts, normals;

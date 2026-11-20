@@ -64,6 +64,11 @@ using namespace RendererSceneRenderImplementation;
 // Grouping variants kept per mesh. Variants appear when material state changes which surfaces merge.
 static constexpr uint32_t RT_MESH_GROUP_MAX_VARIANTS = 4;
 
+// Off-screen cull band (see _update_cull_band).
+static constexpr float RT_CULL_BAND_GUARD = 15.0f; // Degrees a side.
+static constexpr float RT_CULL_BAND_TURN = 7.5f; // Degrees.
+static constexpr float RT_CULL_BAND_MOVE = 1.0f; // Metres.
+
 RTBlasTransformPool::Slot RTBlasTransformPool::allocate(const float *p_matrix) {
 	RD *rd = RD::get_singleton();
 	if (free_slots.is_empty()) {
@@ -315,6 +320,7 @@ static bool _rt_multimesh_source(RID p_multimesh, RTInstanceSource &r_source) {
 	r_source.last_change = mesh_storage->multimesh_get_last_change(p_multimesh);
 	r_source.trail_steps = mesh_storage->multimesh_bones_per_instance(p_multimesh); // Instance bones read like trail records.
 	r_source.instanced = mesh_storage->multimesh_rt_instanced(p_multimesh);
+	r_source.offscreen_cull = mesh_storage->multimesh_rt_offscreen_cull(p_multimesh);
 	return r_source.count > 0;
 }
 
@@ -2084,6 +2090,7 @@ RTPlanArena &RenderRaytracing::_open_plan_arena(RTViewportState *p_state, const 
 	}
 	RTPlanArena &arena = p_state->plan_arenas[p_state->plan_current];
 	if (!opened) {
+		_update_cull_band(p_state, p_render_data); // Before the slots are checked: a new band drops the culling instances' slots.
 		_persistent_open(p_state, p_render_data, p_ctx);
 		RTPersistentInstances *persistent = p_state->persistent && p_state->persistent->active ? p_state->persistent : nullptr;
 		if (persistent) {
@@ -6208,10 +6215,33 @@ bool RTTlasBuilder::_add_expanded_mm_surface(const PendingMMSurface &p_pending, 
 		surf_data = rt._omm_surface(p_pending.mm_surf, p_pending.surface_counter, p_pending.mat_data, p_pending.material_flags, p_pending.instance_alpha, surf_data, dirty_blas_list);
 	}
 
+	// multimesh_set_rt_offscreen_cull(): records outside the viewport's cull band (and 1 m or ten sizes past it, so the
+	// band's own lag and their shadows stay covered) that look smaller than the set angle stay out of the TLAS.
+	const bool cull = source.offscreen_cull > 0.0f && state && state->cull_band_valid && p_pending.bake.billboard_index == UINT32_MAX;
+	const float cull_tan = cull ? Math::tan(Math::deg_to_rad(MIN(source.offscreen_cull, 45.0f))) : 0.0f;
+	const RT_GeometryData &sg = surf_data->geometry;
+	const Vector3 surf_center = Vector3(sg.aabb_pos_x, sg.aabb_pos_y, sg.aabb_pos_z) + Vector3(sg.aabb_size_x, sg.aabb_size_y, sg.aabb_size_z) * 0.5f;
+	const float surf_radius = Vector3(sg.aabb_size_x, sg.aabb_size_y, sg.aabb_size_z).length() * 0.5f;
+	const Vector3 cull_eye = cull ? state->cull_band_camera.origin : Vector3();
+	uint32_t pushed = 0;
+
 	for (uint32_t mi = 0; mi < source.count; mi++) {
 		const float *d = mm_data + (source.current_offset + mi) * source.stride;
 		const float *prev_d = mm_data + (source.prev_offset + mi) * source.stride;
 		Transform3D world = p_pending.instance_transform * _rt_mm_record_transform(d);
+		if (cull) {
+			const Vector3 c = world.xform(surf_center);
+			const float scale = MAX(world.basis.get_column(0).length(), MAX(world.basis.get_column(1).length(), world.basis.get_column(2).length()));
+			const float r = surf_radius * scale;
+			float out = -Math::INF;
+			for (int p = 0; p < 4; p++) {
+				out = MAX(out, (float)state->cull_band_planes[p].distance_to(c));
+			}
+			if (out > MAX(10.0f * r, r + RT_CULL_BAND_MOVE) && r < cull_tan * c.distance_to(cull_eye)) {
+				continue;
+			}
+		}
+		pushed++;
 		Transform3D prev_world = p_pending.prev_instance_transform * _rt_mm_record_transform(prev_d);
 		if (p_pending.bake.billboard_index != UINT32_MAX) {
 			const uint32_t custom_offset = state->merge_billboards[p_pending.bake.billboard_index].custom_offset;
@@ -6235,7 +6265,7 @@ bool RTTlasBuilder::_add_expanded_mm_surface(const PendingMMSurface &p_pending, 
 	if (collect_render_info) {
 		const uint32_t vertices = mesh_storage->mesh_surface_get_vertices_drawn_count(p_pending.mesh_surface);
 		const uint32_t prim_count = _rt_indices_to_primitives(p_pending.mm_surf->primitive, vertices);
-		_record_stats(mark, source.count, prim_count * source.count, prim_count);
+		_record_stats(mark, pushed, prim_count * pushed, prim_count);
 	}
 	return true;
 }
@@ -6355,6 +6385,70 @@ void RenderRaytracing::_update_trace_origin(RTViewportState *p_state, const Rend
 	}
 	p_state->rt_origin_valid = grid > 0.0;
 	trace_origin = p_state->rt_origin;
+}
+
+// The band only moves when the camera turns past half the guard or moves RT_CULL_BAND_MOVE metres, so a record
+// culled against it stays outside the real frustum until then; a new band bumps the rt_generation of every
+// instance whose MultiMesh culls, so their persistent slots are rebuilt against it.
+
+void RenderRaytracing::_update_cull_band(RTViewportState *p_state, const RenderDataRD *p_render_data) {
+	// A new band (or none) changes which records the culling instances keep: their slots are rebuilt.
+	const auto bump_culling = [p_render_data]() {
+		using GeometryInstance = RenderForwardClustered::GeometryInstanceForwardClustered;
+		RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
+		const PagedArray<RenderGeometryInstance *> &instances = *p_render_data->rt_instances;
+		for (uint64_t i = 0; i < instances.size(); i++) {
+			GeometryInstance *inst = static_cast<GeometryInstance *>(instances[i]);
+			if (inst && inst->data && inst->data->base_type == RSE::INSTANCE_MULTIMESH && mesh_storage->multimesh_rt_offscreen_cull(inst->data->base) > 0.0f) {
+				inst->bump_rt_generation();
+			}
+		}
+	};
+	const RenderSceneDataRD *scene_data = p_render_data->scene_data;
+	const bool enabled = GLOBAL_GET_CACHED(bool, "rendering/pathtracing/offscreen_record_cull");
+	if (!enabled || !scene_data || scene_data->cam_orthogonal || scene_data->view_count > 1) {
+		if (p_state->cull_band_valid) {
+			bump_culling();
+		}
+		p_state->cull_band_valid = false;
+		return;
+	}
+	const Transform3D &cam = scene_data->cam_transform;
+	if (p_state->cull_band_valid) {
+		const Vector3 f0 = -p_state->cull_band_camera.basis.get_column(2).normalized();
+		const Vector3 f1 = -cam.basis.get_column(2).normalized();
+		const Vector3 u0 = p_state->cull_band_camera.basis.get_column(1).normalized();
+		const Vector3 u1 = cam.basis.get_column(1).normalized();
+		const float turn_cos = Math::cos(Math::deg_to_rad(RT_CULL_BAND_TURN));
+		if (f0.dot(f1) >= turn_cos && u0.dot(u1) >= turn_cos && cam.origin.distance_to(p_state->cull_band_camera.origin) <= RT_CULL_BAND_MOVE) {
+			return;
+		}
+	}
+	const Projection &proj = scene_data->cam_projection;
+	const real_t fov = proj.get_fov(); // Horizontal, degrees.
+	const real_t aspect = proj.get_aspect();
+	if (!(fov > 0.0) || !(aspect > 0.0)) {
+		if (p_state->cull_band_valid) {
+			bump_culling();
+		}
+		p_state->cull_band_valid = false;
+		return;
+	}
+	// Widen the horizontal and the vertical field each by the guard on both sides.
+	const real_t fovy = Projection::get_fovy(fov, 1.0 / aspect);
+	const real_t wide_x = MIN(fov + 2.0 * RT_CULL_BAND_GUARD, 179.0);
+	const real_t wide_y = MIN(fovy + 2.0 * RT_CULL_BAND_GUARD, 179.0);
+	Projection wide;
+	wide.set_perspective(wide_y, Math::tan(Math::deg_to_rad(wide_x * 0.5)) / Math::tan(Math::deg_to_rad(wide_y * 0.5)), proj.get_z_near(), proj.get_z_far(), false);
+	const Vector<Plane> planes = wide.get_projection_planes(cam);
+	ERR_FAIL_COND(planes.size() < 6);
+	p_state->cull_band_planes[0] = planes[Projection::PLANE_LEFT];
+	p_state->cull_band_planes[1] = planes[Projection::PLANE_TOP];
+	p_state->cull_band_planes[2] = planes[Projection::PLANE_RIGHT];
+	p_state->cull_band_planes[3] = planes[Projection::PLANE_BOTTOM];
+	p_state->cull_band_camera = cam;
+	p_state->cull_band_valid = true;
+	bump_culling();
 }
 
 RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data, uint32_t p_rt_flags, LocalVector<RTCaptureRequest> &r_captures) {

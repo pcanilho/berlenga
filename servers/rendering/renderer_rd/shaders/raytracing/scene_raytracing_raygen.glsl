@@ -1017,7 +1017,11 @@ void main() {
 		// Transmission past the first bounce does not count toward max_bounces (see the transmission lobe in
 		// sample_surface_continuation()); the extra segments it may take are capped here.
 		const uint segment_limit = max_bounces + uint(get_rt_param(RT_PARAM_TRANSMISSION_BOUNCES));
-		[[dont_unroll]] for (uint bounce = 0u; bounce <= segment_limit; bounce++) {
+		// Scattering in the simulated gas has its own budget (RT_VOLUME_MAX_SCATTERS), not max_bounces: a white
+		// cloud (snow powder, steam) keeps most of its light through tens of scatters, and cutting the path after the
+		// surface budget (3 by default) darkened its inside to grey. Russian roulette still ends the paths.
+		uint volume_scatters = 0u;
+		[[dont_unroll]] for (uint bounce = 0u; bounce <= segment_limit + volume_scatters; bounce++) {
 			vec3 throughput_entry = ps.throughput;
 			vec3 radiance_pre = ps.radiance;
 			uint flags_entry = ps.packed_bounces_flags;
@@ -1057,7 +1061,14 @@ void main() {
 					ps.radiance = radiance_pre + throughput_entry * vol_emitted;
 					ps.throughput = throughput_entry * albedo;
 					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, rt_volume.medium.z, false, ps.rng_state);
-					ps.packed_bounces_flags = inc_total_bounce(flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG)) | NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
+					// Free of the surface budget while within the volume's own: the total only leaves 0 (no longer the
+					// primary ray), so the surfaces the path meets later still get their max_bounces.
+					uint vol_flags = flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG);
+					bool vol_free = volume_scatters < RT_VOLUME_MAX_SCATTERS;
+					if (vol_free) {
+						volume_scatters++;
+					}
+					ps.packed_bounces_flags = ((vol_free && get_total_bounces(vol_flags) > 0u) ? vol_flags : inc_total_bounce(vol_flags)) | NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
 					ps.hit_t = t_vol;
 					cone_width += rt_cone_spread_angle() * t_vol;
 					if (bounce == 0u) {
@@ -3800,6 +3811,12 @@ void main() {
 	if (!transparent && !alpha_scissor && !transmissive_shadow) {
 		return; // Ordinary opaque shadow candidate: accept immediately.
 	}
+	// A custom shader that bounds a medium (TRANSMISSION and IOR) and cuts its outline with ALPHA_SCISSOR (water's
+	// shoreline): decided once its fragment has run (below), where it passes the light through its medium as an
+	// unscissored one does. Taken as an opaque scissored caster, the sun reached a bed under water only past the
+	// water's own TLAS mask (water casts no raster shadows), with none of the water's absorption on the way down.
+	bool scissored_medium_candidate = alpha_scissor && !transparent && is_shadow_ray(payload.packed_bounces_flags) &&
+			(mat.flags & RT_MAT_FLAG_CUSTOM_TRANSMITTANCE) != 0u && shadow_transmission;
 
 	uint i0, i1, i2;
 	get_triangle_indices(geom, i0, i1, i2);
@@ -3838,6 +3855,12 @@ void main() {
 	hit_alpha = alpha;
 	hit_tint = clamp(albedo, vec3(0.0), vec3(1.0));
 	scissor_threshold = alpha_scissor_threshold;
+	if (scissored_medium_candidate && ior >= 1.0 && transmission > 0.0) {
+		if (hit_alpha < (scissor_threshold >= 0.0 ? scissor_threshold : 0.5)) {
+			ignoreIntersectionEXT; // cut out: no surface here
+		}
+		transmissive_shadow = true;
+	}
 	if (transmissive_shadow) {
 		// TRANSMISSION and BACKLIGHT, as BaseMaterial3D's Transmission and Back Lighting.
 		PathState shadow_ps = path_unpack(payload);

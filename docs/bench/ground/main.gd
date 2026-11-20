@@ -150,6 +150,7 @@ var camber_test := false
 var mudwave_test := false
 var wear_test := false
 var buried_test := false
+var offpatch_test := false
 var tread_arg := -1 # --view=ruts: the car's PhysXVehicleWheel3D.Tread (mud round 10)
 var puddle_test := false
 var crack_test := false
@@ -222,6 +223,7 @@ func _ready() -> void:
 		elif a == "--test=mudwave": mudwave_test = true
 		elif a == "--test=wear": wear_test = true
 		elif a == "--test=buried": buried_test = true
+		elif a == "--test=offpatch": offpatch_test = true
 		elif a == "--test=puddles": puddle_test = true
 		elif a == "--test=cracks": crack_test = true
 		elif a == "--test=legs": legs_test = true
@@ -297,7 +299,7 @@ func _ready() -> void:
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test:
+	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or offpatch_test:
 		if clog_test:
 			await _run_clog_tests()
 		if treads_test:
@@ -330,6 +332,8 @@ func _ready() -> void:
 			await _run_wear_tests()
 		if buried_test:
 			await _run_buried_tests()
+		if offpatch_test:
+			await _run_offpatch_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -6234,4 +6238,26 @@ func _run_buried_tests() -> void:
 	var dry := surface.get_buried_near(Vector3.ZERO, 4.0).size()
 	surface.mud_layer = true
 	_check("off, or with no mud layer, there are none", none == 0 and left == 0 and dry == 0, "%d, %d bodies, %d without mud" % [none, left, dry])
+	near_on = true
+
+
+# Off the patch (a contract fault, 20 Nov): far outside its lattice the surface asks its height source (or the
+# colliders), not the lattice's nearest edge, so WorldGround.height_at answers the real ground everywhere.
+func _run_offpatch_tests() -> void:
+	near_on = false
+	await _setup("camber", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	var h := get_node("Height")
+	var worst := 0.0
+	var line := ""
+	for k in 6:
+		var p := Vector3(-40.0 + 16.0 * k, 0, 70.0 + 9.0 * k)
+		var want: float = h.get_height(p)
+		var got := surface.get_surface_height_at(p)
+		var via := WorldContracts.get_ground().height_at(p)
+		worst = maxf(worst, maxf(absf(got - want), absf(via - want)))
+		line += " %.2f/%.2f" % [got, want]
+	print("  off the patch, surface/source m:" + line)
+	var near_p := Vector3(0.3, 0, 0.2)
+	var on := absf(surface.get_surface_height_at(near_p) - float(h.get_height(near_p)))
+	_check("off its lattice the ground answers its height source, on it the lattice", worst < 0.01 and on < 0.05, "worst %.3f m off, %.3f m on" % [worst, on])
 	near_on = true

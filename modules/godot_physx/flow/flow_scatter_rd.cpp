@@ -64,7 +64,7 @@ layout(set = 0, binding = 5, std140) uniform Params {
 	vec4 sun_map_xform[3]; // rows: world meters -> the sun's volumetric shadow map (u, v, depth in 0..1)
 	vec4 sun_map; // xyz: world direction toward the light it is built from; w: 1 = present
 	vec4 sky_map_xform[3]; // rows: world meters -> the sky's volumetric shadow map (built looking down)
-	vec4 sky_map; // x: single-scattering albedo; z: weight of the scattering orders past the octaves; w: 1 = present
+	vec4 sky_map; // x: single-scattering albedo; y: ground albedo; z: weight of the scattering orders past the octaves; w: 1 = present
 } p;
 
 // The world distance (meters) to what a frame pixel shows (reverse Z: 0 is the far plane), at most
@@ -362,7 +362,11 @@ const float SKY_OCCLUSION = 0.15;
 
 float ms_transmittance(float tau) {
 	float a = p.sky_map.x * (1.0 / 0.9);
-	return (exp(-tau) + 0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + p.sky_map.z * exp(-0.125 * tau)) * (p.sky_map.x * SUN_MS_GAIN);
+	// The orders past the first need gas around the point to scatter in: in optically thin gas the light is single
+	// scattering only (a powder-style ramp, as Schneider 2015 darkens thin cloud edges), so thin edges stay
+	// see-through as under path tracing.
+	float thick = 1.0 - exp(-2.0 * tau);
+	return (exp(-tau) + thick * (0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + p.sky_map.z * exp(-0.125 * tau))) * (p.sky_map.x * SUN_MS_GAIN);
 }
 
 float ign(vec2 px) {
@@ -419,13 +423,19 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 	// direction, weighed by the anisotropy) by the sky contribution.
 	bool ambient_on = p.sky.w > 0.5;
 	vec3 ambient = vec3(0.0);
+	// The light from below (the sky's lower half: the ground it stands for, often bright snow), which lights the
+	// underside of the gas as the path tracer's bounces off the ground do.
+	vec3 ambient_down = vec3(0.0);
 	if (ambient_on) {
 		ambient = p.ambient.rgb;
+		ambient_down = p.ambient.rgb;
 		if (p.ambient.w > 0.0) {
 			float sky_energy = p.sky.w - 1.0;
 			vec3 isotropic = sky_radiance(vec3(0.0, 1.0, 0.0), p.sky.z);
+			vec3 isotropic_down = sky_radiance(vec3(0.0, -1.0, 0.0), p.sky.z);
 			vec3 anisotropic = sky_radiance(g < 0.0 ? -dir : dir, max(p.sky.z - 1.0, 0.0));
 			ambient = mix(ambient, mix(isotropic, anisotropic, abs(g)) * sky_energy, p.ambient.w);
+			ambient_down = mix(ambient_down, mix(isotropic_down, anisotropic, abs(g)) * sky_energy, p.ambient.w);
 		}
 	}
 
@@ -433,8 +443,14 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 	vec3 sum = vec3(0.0);
 	// The first step's offset: interleaved gradient noise (Jimenez 2014), moved every frame when the
 	// result is blended over time, so the step pattern averages out instead of showing as bands.
-	float t = t0 + step_len * ign(vec2(px) + (p.res.z != 0 ? 5.588238 * float(p.res.y & 63) : 0.0));
-	for (int i = 0; i < p.counts.w && t < t1; i++) {
+	// Each step covers its own stretch of the ray, the last one cut short at the scene (stratified: the
+	// sample falls at the same jittered place in every stretch), so the march neither skips the stretch
+	// before its first sample nor runs a whole step past the scene.
+	float jitter = ign(vec2(px) + (p.res.z != 0 ? 5.588238 * float(p.res.y & 63) : 0.0));
+	float seg = t0;
+	for (int i = 0; i < p.counts.w && seg < t1; i++) {
+		float dt = min(step_len, t1 - seg);
+		float t = seg + jitter * dt;
 		vec3 pos = cam + dir * t;
 		float smoke;
 		if (!smoke_at(pos, cell_inv, view_acc, smoke)) {
@@ -443,13 +459,16 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 			float b0;
 			float b1;
 			intersect_box(cam, rd_inv, bmin, bmin + block, b0, b1);
-			t = max(b1, t) + step_len * 0.5;
+			seg = max(b1, t) + step_len * 0.01;
 			continue;
 		}
 		if (smoke > 0.001) {
-			float alpha = 1.0 - exp(-min(smoke, SMOKE_MAX) * sigma * step_len);
+			float alpha = 1.0 - exp(-min(smoke, SMOKE_MAX) * sigma * dt);
 			vec3 in_light = vec3(0.0);
 			vec3 pos_m = pos / upm;
+			// The light the ground below sends up: the sun on it (in the gas's shadow), added in the sun loop, and
+			// the sky's lower half.
+			vec3 ground_light = ambient_down;
 			for (int l = 0; l < light_count; l++) {
 				Light L = lights[l];
 				vec3 to_light = L.position_range.xyz - pos_m;
@@ -505,11 +524,25 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					if (fog_energy <= 0.001) {
 						continue;
 					}
+					vec3 ldir = normalize(mat3(p.view_to_world) * directional_lights.data[i].direction);
+#ifndef SHADOW_PASS
+					if (ambient_on && p.sky_map.y > 0.0 && ldir.y > 0.0) {
+						// The sunlit ground below the point (the box's floor), in the gas's own shadow.
+						float ground_sun_t = 1.0;
+						if (p.sun_map.w > 0.5 && dot(ldir, p.sun_map.xyz) > 0.9999) {
+							vec4 gm = vec4(pos_m.x, p.world_min.y / upm, pos_m.z, 1.0);
+							vec3 g_uvw = vec3(dot(p.sun_map_xform[0], gm), dot(p.sun_map_xform[1], gm), dot(p.sun_map_xform[2], gm));
+							if (all(greaterThanEqual(g_uvw, vec3(0.0))) && all(lessThanEqual(g_uvw, vec3(1.0)))) {
+								ground_sun_t = exp(-textureLod(sun_map_tex, g_uvw, 0.0).r);
+							}
+						}
+						ground_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * ldir.y * ground_sun_t * p.sky_map.y);
+					}
+#endif
 					float atten = sun_shadow(uint(i), vpos);
 					if (atten <= 0.0) {
 						continue;
 					}
-					vec3 ldir = normalize(mat3(p.view_to_world) * directional_lights.data[i].direction);
 					float light_t = ms_transmittance(0.0);
 					vec3 map_uvw = vec3(-1.0);
 #ifndef SHADOW_PASS
@@ -540,6 +573,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 			if (ambient_on) {
 				// How much of the sky the point sees: the gas straight above it (a short march up).
 				float sky_t = ms_transmittance(0.0);
+				float ground_t = sky_t;
 				vec3 sky_uvw = vec3(-1.0);
 #ifndef SHADOW_PASS
 				if (p.sky_map.w > 0.5) {
@@ -548,7 +582,11 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 				}
 				if (all(greaterThanEqual(sky_uvw, vec3(0.0))) && all(lessThanEqual(sky_uvw, vec3(1.0)))) {
 					// All the gas above in one fetch.
-					sky_t = ms_transmittance(textureLod(sky_map_tex, sky_uvw, 0.0).r * SKY_OCCLUSION);
+					float od_above = textureLod(sky_map_tex, sky_uvw, 0.0).r;
+					sky_t = ms_transmittance(od_above * SKY_OCCLUSION);
+					// The gas below: the whole column's depth less what lies above.
+					float od_column = textureLod(sky_map_tex, vec3(sky_uvw.xy, 1.0), 0.0).r;
+					ground_t = ms_transmittance(max(od_column - od_above, 0.0) * SKY_OCCLUSION);
 				} else
 #endif
 				if (shadow_steps > 0) {
@@ -565,7 +603,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					// makes it.
 					sky_t = ms_transmittance(od * sigma * ds);
 				}
-				in_light += ambient * (sky_t * SKY_MS_SHARE);
+				in_light += (ambient * sky_t + ground_light * ground_t) * (0.5 * SKY_MS_SHARE);
 			}
 			sum += transmittance * alpha * in_light;
 			transmittance *= 1.0 - alpha;
@@ -573,7 +611,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 				break;
 			}
 		}
-		t += step_len;
+		seg += dt;
 	}
 	return sum * p.albedo.rgb * p.albedo.w;
 }
@@ -1025,7 +1063,7 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 		f[w++] = sky_map ? sky_shadow.world_to_shadow.origin[r] : 0.0f;
 	}
 	f[w++] = CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
-	f[w++] = 1.0f;
+	f[w++] = CLAMP(p_params.ground_albedo, 0.0f, 1.0f);
 	{
 		// The scattering orders past the three octaves, as a geometric series: the sum over n >= 3 of (c albedo)^n, c = 0.45
 		// the share of light a scatter keeps inside the gas (fitted with SUN_MS_GAIN to the path tracer on test puffs).
