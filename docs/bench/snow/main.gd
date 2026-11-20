@@ -2903,7 +2903,11 @@ func _build_avalanche(cam: Camera3D) -> void:
 			cam.look_at(Vector3(-25.0, 16.0, -10.0))
 		cam.fov = 66.0
 		cam.far = 1000.0
-		sun.directional_shadow_max_distance = 400.0 # the ridge's shadow on the run-out, as the path tracer has it
+		sun.directional_shadow_max_distance = 400.0
+		# Shot with the sun over the camera's right shoulder (the slide ran under (-30, -60), behind the face): from
+		# behind the face, the bowl's rim past the edge of the bench terrain shades the run-out in one renderer and
+		# not the other. Light on the camera's side keeps every shadow inside the scene.
+		sun.rotation_degrees = Vector3(-40.0, 40.0, 0.0)
 		if traced:
 			process_mode = Node.PROCESS_MODE_ALWAYS
 			get_tree().paused = true

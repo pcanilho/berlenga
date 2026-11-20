@@ -3273,8 +3273,9 @@ tree modelling"), as real closed geometry so path-traced shadows and sky occlusi
 - Colour: the largest foliage surface's mean opaque texel x mean vertex colour x albedo, the leaf area from that
   surface; shaded by height in the crown, nearness to its axis, a hashed patch, and the lobe's self-shading under
   Beer's law (mean light (1 - e^(-kL)) / kL, k = 0.5, Monsi and Saeki 1953). Normals bent halfway to the sky: leaves
-  face every way, so a crown's sunlit side is far softer than a solid's. Material: vertex colour, roughness 0.7,
-  specular 0.3 (the leaves').
+  face every way, so a crown's sunlit side is far softer than a solid's. Material: vertex colour, roughness 0.55,
+  specular 0.5: the trees' highlights carry the sky's blue from their many leaves and needles facing it (docs, 20 Nov: the
+  hull tips read yellow-green; top 10% of pixels now (104, 125, 93) against the trees' (110, 135, 105)).
 - Tried and dropped: vegetation's voxel make_shell (slabs), one smooth envelope per crown (smooth cones and spindles
   from 700 m, too solid and too bright for broadleaves).
 - Wiring: mesh meta `tree_far_hull` (living, standing trees 5 m and up, with far_thinning); species meta
@@ -3287,6 +3288,21 @@ tree modelling"), as real closed geometry so path-traced shadows and sky occlusi
   only vs hulls only, on the stand's pixels: green share 51.6% / 52.0%, mean colour (56, 69, 52) / (56, 70, 51).
   A telephoto close view (5 degrees from 700 m) shows the lobes as balls: hulls are for the swap distance only.
   Bench: `HULL_AT=m` sets the swap distance (10 = hulls only, 5000 = trees only).
+
+### 9c. Skyline trees (built 20 Nov)
+
+Silhouettes are what a simplified far view must keep (view-dependent simplification keeps them: Luebke and Erikson 1997;
+Sander et al. 2000, silhouette clipping); for a far forest that is the crowns along a ridge against the sky, where a
+thinned tail shows gaps first.
+- VegetationField3D, at a tile's commit: a tree the far tail would thin (species with far_widen and far_top) is kept
+  when its crown top is on the skyline from the stream centre: no ground beyond it along the line of sight rises above
+  that line (data map sampled at 10, 20, 40 ... 2560 m), and no canopy as tall as the tree, on the ground between at
+  0.5, 0.7, 0.85 and 0.95 of the way, hides it. The canopy test makes it conservative: from inside or below a forest
+  on level ground nothing extra is kept; over open ground it keeps fewer than it could, never more.
+- Per commit (tiles recommit as the camera comes closer), so a skyline seen from a far other place stays as it was
+  committed until the tile recommits. Species meta `far_skyline = false` thins them too.
+- Bench: RIDGE=1 raises the plot to a 25 m crest at its -z edge; NO_SKYLINE=1 turns the keep off. From 650 m at eye
+  height 4 m, --far=400: 717 trees drawn without, 907 with, the extras along the crest against the sky.
 
 ## Next-round options (card 19 Nov evening)
 **Snow-laden crowns.** Conifer crowns catch snow (up to 30-60% of a storm's snowfall in a closed spruce stand; Hedstrom and Pomeroy 1998, Pomeroy et al. 1998 interception model): the load bends branch tips down (spruce and fir laterals droop 10-30 degrees under a few kg; Schmidt and Pomeroy 1990 branch bending), white caps sit on the upper side of each spray as real geometry, and it unloads in gusts, sun and thaw as falling clumps (Storck et al. 2002; Roesch et al. 2012 unloading rates). Heavy wet snow breaks tops and stems (snow breakage, Nykanen et al. 1997; Peltola et al. 1999 critical loads), through the TreeWind3D storm path. Reads the snow/weather contracts (snowfall, air temperature, wind); load per tree kept in TreeWind3D, released as Flow/particle clumps. Needs a WorldSnow line agreed with the snow thread (who owns snow on crowns).

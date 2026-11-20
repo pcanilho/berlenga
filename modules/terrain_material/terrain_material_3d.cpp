@@ -137,6 +137,8 @@ String TerrainMaterial3D::get_shader_code() const {
 global uniform sampler2D terrain_cover_map : hint_default_black, filter_linear; // rgb sRGB cover colour, a cover share
 global uniform vec4 terrain_cover_rect;
 global uniform sampler2D rock_contact_map : hint_default_black, filter_linear; // RockField3D: r damp ring, g banked fines
+global uniform sampler2D rock_far_cover_map : hint_default_black, filter_linear; // RockField3D far tier: rgb stone colour, a cover
+global uniform vec4 rock_far_cover_rect;
 global uniform vec4 rock_contact_rect;
 uniform float tm_far_start = 300.0;
 uniform float tm_far_fade = 150.0;
@@ -335,7 +337,7 @@ float tm_vn(vec3 p) {
 
 // Sand glitter (docs/ideas/terrain-material.md, "Sand glitter"): a few of the quartz grains (clean cleavage and
 // crystal faces, mica flakes) are near-mirror facets that flash where they reflect the sun, the glitter Journey's
-// sand drew from a random grain normal per pixel (Edwards, GDC 2013). Here physically counted: 0.5 mm grains, 10% of
+// sand drew from a random grain normal per pixel (Edwards, GDC 2013). Here physically counted: 0.5 mm grains, a quarter of
 // them facets with GGX alpha 0.4 normals, so the flashes stay on their grains as the sun and camera hold still and
 // thin out with distance (a pixel's facets are a smaller share of it) instead of turning to noise.
 uint tm_sg_hash(ivec3 q, uint p_salt) {
@@ -371,12 +373,14 @@ float tm_sg_coat(vec3 p_wp, vec3 p_n, vec3 p_l, vec3 p_v, float p_fp, float p_sh
 	}
 	const float grain = 0.0005;
 	float fp = max(p_fp, grain);
-	// sr a facet catches the sun over: the sun's disc (0.53 degree) blurred by the facets' own curvature and pitting
-	// to some 1.5 degrees across each way.
-	const float omega_acc = 2.1e-3;
+	// sr a facet catches the sun over: the sun's disc (0.53 degree) blurred by the facets' own curvature to some 1.6
+	// degrees across. Wider (it was 3 degrees) dims every flash in proportion, below what a near-flat quartz face
+	// mirroring the sun gives: they vanished at 640 wide.
+	const float omega_acc = 6.0e-4;
 	float dd = noh * noh * (0.16 - 1.0) + 1.0;
 	float df = 0.16 / (3.14159265 * dd * dd);
-	float lam = 0.1 * (fp / grain) * (fp / grain) * df * noh * omega_acc / (4.0 * voh);
+	// Facets: a quarter of the grains' area (cleavage and crystal faces, several to a grain).
+	float lam = 0.25 * (fp / grain) * (fp / grain) * df * noh * omega_acc / (4.0 * voh);
 	float level = floor(log2(fp / grain));
 	uint hh = tm_sg_hash(ivec3(floor(p_wp / (grain * exp2(level)))), uint(level) + 11u);
 	float r0 = float(hh & 0xffffu) / 65536.0;
@@ -1581,6 +1585,22 @@ void fragment() {
 			albedo = mix(albedo, fcol, fines);
 			albedo *= mix(1.0, 0.42, damp);
 			rough = mix(rough, rough * 0.75, damp);
+		}
+	}
+)";
+	// Far stones (RockField3D's far tier): past where the rockfall blocks and boulders thin out (whole to 300 m, thinned
+	// to 600 m), their colour and plan cover from the rocks' 32 m map carries them out to 4 km, so a boulder field
+	// stays a stony slope at range instead of fading to the bare layers. Fades at the map's edge.
+	c += R"(	if (rock_far_cover_rect.z > 0.0) {
+		vec2 fuv = (wp.xz - rock_far_cover_rect.xy) / rock_far_cover_rect.zw;
+		if (all(greaterThanEqual(fuv, vec2(0.0))) && all(lessThanEqual(fuv, vec2(1.0)))) {
+			vec4 fc = textureLod(rock_far_cover_map, fuv, 0.0);
+			float far_k = smoothstep(250.0, 700.0, length(wp - CAMERA_POSITION_WORLD));
+			vec2 edge = min(fuv, 1.0 - fuv);
+			far_k *= smoothstep(0.0, 0.05, min(edge.x, edge.y));
+			float k = fc.a * far_k * 0.8 * (0.8 + 0.4 * tm_vn(wp * 0.03 + 41.0));
+			albedo = mix(albedo, fc.rgb, k);
+			rough = mix(rough, max(rough, 0.85), k);
 		}
 	}
 )";

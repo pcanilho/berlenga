@@ -21214,7 +21214,7 @@ Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
 		// Low in the crown and deep inside it less sky reaches; leaf clusters lit and shaded at random.
 		const float inner = 1.0f - CLAMP(Vector2(c.x, c.z).distance_to(Vector2(box.get_center().x, box.get_center().z)) / MAX(0.5f * MAX(box.size.x, box.size.z), 0.5f), 0.0f, 1.0f);
 		const float patch = 0.85f + 0.3f * float(hash_murmur3_one_32(gi, uint32_t(seed) * 2654435761u + 0x68756c6cu) & 0xffff) / 65535.0f;
-		const float shade = Math::lerp(0.7f, 1.0f, h) * Math::lerp(1.0f, 0.85f, inner) * patch * self;
+		const float shade = Math::lerp(0.66f, 0.8f, h) * Math::lerp(1.0f, 0.85f, inner) * patch * self;
 		const Color col(leaf.r * shade, leaf.g * shade, leaf.b * shade);
 		const int v0 = verts.size();
 		const float spin = float(hash_murmur3_one_32(gi, uint32_t(seed) + 0x7370696eu) & 0xffff) / 65535.0f * float(Math::TAU);
@@ -21297,8 +21297,8 @@ Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
 	if (hull_material.is_null()) {
 		hull_material.instantiate();
 		hull_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
-		hull_material->set_roughness(0.7f);
-		hull_material->set_specular(0.3f); // The leaves' sheen (their sky-blue tint from far off).
+		hull_material->set_roughness(0.55f);
+		hull_material->set_specular(0.5f); // Sheen of many leaves and needles facing the sky: the trees' highlights carry its blue (docs, 20 Nov: hull tips read yellow-green).
 	}
 	mesh->surface_set_material(0, hull_material);
 	mesh->set_meta(SNAME("hull_cover"), cover);
