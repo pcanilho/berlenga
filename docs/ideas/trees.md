@@ -2665,6 +2665,18 @@ As built:
 - Understory reinitiation (e2-e3): the stand as `make_stand()` builds it.
 - Old growth (e3 on, and -1): where beech leads, the old-growth beech stand (5an); else veterans (`succession_band`
   2: years x1.3-1.6, veteran 0.6-1.0, limb breakage x1.5-2.2, spacing 22 m) over the mature stand.
+- Reporting to the stand-age map (wind and beetle; fire reports itself through WorldFire). Disturbance severity is
+  graded on 30 m cells, as Landsat disturbance maps do (Senf and Seidl 2021); a cell is stand-replacing when most of
+  its canopy is killed (high severity, Frelich 2002). TreeWind3D (`report_windthrow`, on): a cell where a storm threw
+  at least 60% of the stems, three or more, goes in once as a wind disturbance at age 0, a disc centred on the
+  thrown stems (`get_windthrow_patch_count()`); single throws are gaps and stay out. Placed stands: the windthrow
+  stand's thrown and snapped spruce (kind wind, `windthrow_storm` years) and the beetle stand's front (beetle, 0
+  years), grey snags and logs (beetle, `beetle_outbreak` years) carry meta `stand_disturbance` = Vector2(kind,
+  years); VegetationField3D.populate() reports each 30 m cell with three or more of them as a disc reaching its
+  farthest one, at the cell's youngest kill, and takes its report back on clear() or the next populate (streaming
+  fields report nothing). Checks: stands `--stand-test=16` and `=17` (the map has the disturbance at every sampled
+  legacy plant), storm `--test` (trees a tree height apart: no patch), and a clustered storm (`--presets=4,4,4
+  --spacing=6 --speed=36 --anchorage=0.4`: 3 thrown, 1 patch, wind at the trees).
 - The mesh cache key is 64-bit now: band terms stack (the taiga's boreal band plus a succession band overflowed int).
 - Check: stands bench `--succession=N` (every stage present, ranges forward, kinds in range, every year covered by a
   living stage, poles shorter than the mature stand, veterans no shorter). Taiga: poles 15 m, mature 35 m, veterans

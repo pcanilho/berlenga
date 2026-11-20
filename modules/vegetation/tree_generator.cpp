@@ -22652,6 +22652,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			Ref<PlantSpecies> front = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_STAND);
 			beetle_band = 0;
 			front->set_name("Norway Spruce (beetle front)");
+			front->set_meta("stand_disturbance", Vector2(3.0f, 0.0f)); // The stand-age map (VegetationField3D reports it; trees.md 5aq).
 			front->set_density(1.0f);
 			front->set_patch_scale(spot_scale);
 			front->set_patch_cover(cover);
@@ -22666,6 +22667,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 				Ref<PlantSpecies> core = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_STAND);
 				beetle_band = 0;
 				core->set_name("Norway Spruce (beetle grey)");
+				core->set_meta("stand_disturbance", Vector2(3.0f, ob));
 				core->set_density(0.9f);
 				core->set_patch_scale(spot_scale);
 				core->set_patch_cover(cover);
@@ -22699,6 +22701,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 				// year, then snag fall from about five).
 				Ref<PlantSpecies> fallen_spot = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_LOG);
 				fallen_spot->set_name("Norway Spruce (beetle log)");
+				fallen_spot->set_meta("stand_disturbance", Vector2(3.0f, ob));
 				fallen_spot->set_density(0.5f * Math::smoothstep(5.0f, 14.0f, ob) + 0.15f);
 				fallen_spot->set_patch_scale(spot_scale);
 				fallen_spot->set_patch_cover(MAX(cover - 0.1f, 0.05f));
@@ -22730,6 +22733,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			Ref<PlantSpecies> thrown = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_LOG);
 			windthrow_band = 0;
 			thrown->set_name("Norway Spruce (windthrow)");
+			thrown->set_meta("stand_disturbance", Vector2(2.0f, y)); // The stand-age map (VegetationField3D reports it; trees.md 5aq).
 			// Most of the gap's stand lies in it: the logs about as close as the trees stood.
 			thrown->set_spacing(HABITATS[PRESET_NORWAY_SPRUCE].stand_spacing * 1.2f);
 			thrown->set_density(1.0f);
@@ -22741,6 +22745,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			Ref<PlantSpecies> snapped = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_SNAG);
 			windthrow_band = 0;
 			snapped->set_name("Norway Spruce (windthrow snapped)");
+			snapped->set_meta("stand_disturbance", Vector2(2.0f, y));
 			snapped->set_density(0.6f);
 			snapped->set_patch_scale(gap_scale);
 			snapped->set_patch_cover(cover);
