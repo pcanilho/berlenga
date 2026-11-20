@@ -2266,6 +2266,19 @@ Docs saw a faint dark seam along the powder's lower edge. Two causes:
   Flow's unlit colour. The upsample now fills such pixels with their
   neighbours' light (a hole fill, 5x5 texels).
 
+Follow-up (docs: a dotted line still showed at the contact). A render
+with the gas hidden keeps the upper line along the release outline, so
+that one is the snow's crown wall. The lower one is the gas's own: drawn
+alone, its light falls from about 172 to 70-120 over the last few pixels
+of thin gas against the slope (Flow's coverage is partial there, so the
+snow behind shows through a darker veil). Under path tracing that base
+dims only slightly (180 -> 173): light diffusing down through the cloud
+to its foot, which the octaves' falloff under-gives. Not fixed yet. Two
+robustness changes found on the way, neither of which moves the line:
+the march's step budget counts only samples in gas (a ray grazing the
+ground could spend it on empty blocks), and the bilateral upsample skips
+texels whose march found no gas instead of blending them in as black.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
