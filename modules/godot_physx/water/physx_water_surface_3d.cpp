@@ -962,7 +962,11 @@ vec3 surface_offset(vec2 world_xz) {
 		float gx = depth_r(world_xz - vec2(e, 0.0), clamp(cuv_r - vec2(du.x, 0.0), vec2(0.0), vec2(1.0))) - depth_r(world_xz + vec2(e, 0.0), clamp(cuv_r + vec2(du.x, 0.0), vec2(0.0), vec2(1.0)));
 		float gz = depth_r(world_xz - vec2(0.0, e), clamp(cuv_r - vec2(0.0, du.y), vec2(0.0), vec2(1.0))) - depth_r(world_xz + vec2(0.0, e), clamp(cuv_r + vec2(0.0, du.y), vec2(0.0), vec2(1.0)));
 		float steep = length(vec2(gx, gz)) / (2.0 * e);
-		h = mix(max(h, ground + swash_film_thickness), h, smoothstep(0.6, 1.2, steep));
+		// And only as high as swash runs up a beach (a few metres over the still water): the depth texture is
+		// clamped at the square's edge, so land along the edge carried on outward as ground hundreds of metres
+		// up, and the surface lifted onto it stood in the sky as thin dark posts over the horizon.
+		float runup = 1.0 - smoothstep(3.0, 6.0, ground - water_level);
+		h = mix(h, max(h, ground + swash_film_thickness), runup * (1.0 - smoothstep(0.6, 1.2, steep)));
 	}
 	return vec3(d.x, h, d.y);
 }

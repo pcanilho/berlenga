@@ -141,6 +141,7 @@ public:
 		STAND_ALDER_CARR, // Swamp: stilt-rooted black alder on tussocks over a flooded peat floor, birch on the hummocks (trees.md 5at).
 		STAND_FLOODPLAIN_WILLOW, // Softwood floodplain: old split white willows standing in the floods, willow thickets on the bars (trees.md 5at).
 		STAND_BEAVER_POND, // A beaver pond: drowned snags in the water, gnawed stumps, felled and half-gnawed willow and birch on the shore (trees.md 5au).
+		STAND_DEER_WOOD, // A wood under heavy deer browsing: a browse line under the low crowns, saplings hedged into bushes, poles stripped, no shrub layer (trees.md 5aw).
 		STAND_MAX,
 	};
 	// The disturbance whose legacy a make_succession() species is (meta "succession_kind"; -1 any). Fire's legacies are
@@ -760,6 +761,24 @@ public:
 	float flood_years = 0.3f;
 	float _silt_at(const Vector3 &p_pos, const Vector3 &p_normal) const;
 	void _flood_wrack();
+	// Deer browse (trees.md 5aw): browse 0..1 is the browsing pressure, browse_height the reach (red deer about 1.8 m,
+	// fallow 1.6, roe 1.1), browse_years how many of the last years were browsed (0: all of them). A shoot whose tip
+	// ends in reach is bitten back and pushes again from the buds behind the bite (saplings hedged into bushes), and
+	// the foliage in reach is eaten (the browse line); poles of the barked species are stripped more often.
+	float browse = 0.0f;
+	float browse_height = 1.8f;
+	int browse_years = 0;
+	int browse_band = 0; // While a deer wood grows its species: 1 the canopy, 2 hedged saplings.
+	float _browse_keep(const Vector3 &p_pos) const; // 0 eaten .. 1 kept, for foliage at a point.
+	bool browse_now = false; // This growth year is browsed.
+	float browse_top = 1e6f; // The stem's top over its foot after the last browsed year (a hedged bush while in reach).
+	// Nurse logs (trees.md 5aw): nurse_seedlings 0..1 brings conifer seedlings up along a rotting conifer log's top
+	// (decay class 3 and on; Harmon and Franklin 1989); nurse_stilt (m) is the girth of the log a standing tree grew
+	// on, now rotted away: its roots straddle the gap, which runs along X (a colonnade's tree).
+	float nurse_seedlings = 0.0f;
+	float nurse_stilt = 0.0f;
+	int nurse_band = 0; // While a stand grows its species: 1 nurse logs, 2 trees on a rotted log.
+	void _nurse_seedlings(Builder &r_bark, Builder &r_leaves);
 	int edge_band = 0; // While make_edge grows its edge trees: 1 (trees.md 5as).
 	int boreal_band = 0; // While a taiga stand grows its species: 1 narrow spruce, 2 fire-survivor pine, 3 kelo, 4 burn birch (trees.md 5ap).
 	int old_growth_band = 0; // While an old-growth stand grows its species: 1 veteran giants, 2 poles, 3 giant deadwood, 4 canopy (trees.md 5an).
@@ -1129,6 +1148,16 @@ public:
 	float get_flood_height() const { return flood_height; }
 	void set_flood_years(float p_v) { flood_years = CLAMP(p_v, 0.0f, 30.0f); }
 	float get_flood_years() const { return flood_years; }
+	void set_browse(float p_v) { browse = CLAMP(p_v, 0.0f, 1.0f); }
+	float get_browse() const { return browse; }
+	void set_browse_height(float p_v) { browse_height = CLAMP(p_v, 0.3f, 3.0f); }
+	float get_browse_height() const { return browse_height; }
+	void set_browse_years(int p_v) { browse_years = CLAMP(p_v, 0, 300); }
+	int get_browse_years() const { return browse_years; }
+	void set_nurse_seedlings(float p_v) { nurse_seedlings = CLAMP(p_v, 0.0f, 1.0f); }
+	float get_nurse_seedlings() const { return nurse_seedlings; }
+	void set_nurse_stilt(float p_v) { nurse_stilt = CLAMP(p_v, 0.0f, 1.5f); }
+	float get_nurse_stilt() const { return nurse_stilt; }
 	void set_beaver_cut(int p_v) { beaver_cut = CLAMP(p_v, 0, 3); }
 	int get_beaver_cut() const { return beaver_cut; }
 	void set_beaver_years(float p_v) { beaver_years = CLAMP(p_v, 0.0f, 60.0f); }

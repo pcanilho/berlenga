@@ -3617,6 +3617,41 @@ et al. 2015 (dendrogeomorphic flood evidence: scars, debris caught on riparian t
 - Not done: scoured, bared roots on the cut bank; flood height from WorldWater's flood stage rather than the variant band;
   silt on the ground and on the vegetation under the line (vegetation thread).
 
+### 5aw. Deer browse and nurse logs (20 Nov; Paulo's pick)
+
+Sources: Gill 1992, A review of damage by mammals in north temperate forests (browse lines, hedged regeneration, bark
+stripping); Forestry Commission Practice Note 6 and the Deer Initiative field signs (browse heights: roe about 1.1 m,
+fallow 1.6-1.8 m, red deer 1.8 m and up to 2 m on their hind legs); Kirby 2001 and Fuller and Gill 2001 (woods under heavy
+deer pressure lose the shrub layer and look open); Bergman 2001, Hester et al. 2006 (browsed saplings regrow hard from
+the buds behind the bite); Harmon and Franklin 1989, Tree seedlings on logs in Picea-Tsuga forests (most seedlings on
+logs, later stilted rows); Zielonka 2006 (Norway spruce comes in on logs from decay class 3).
+
+- `browse` (pressure 0-1), `browse_height` (reach, 1.8 m), `browse_years` (the last N years browsed; 0 all of them).
+- In the growth loop a shoot whose tip ends in reach is bitten with chance 1 - (1 - browse)^3, the bite falling off over
+  the 10-50 cm above the reach (deer pull leaders down). The bite keeps 15-40% of the shoot; two or three buds behind it
+  push next year (one carries the axis, the others are side buds, so the vigor pass feeds them). While the tree is in
+  reach the crown cone is off (no leader to set it), the buds get compensatory vigor (x 1 + 1.6 browse) and a light floor
+  of 0.6 (a bush is smaller than the shadow grid's cells), and the pipe model is held to 1.8 mm of ring a year. The
+  result is a hedged bush: browsed 15 years at 0.9, beech, ash, rowan and spruce top out at 1.0-1.3 m (9-12 m unbrowsed).
+- Grown past the reach, the foliage in reach is eaten to a level line wandering about 10 cm (`_browse_keep`, per leaf from
+  its position, so it holds across rebuilds); ivy on the stem too. A hedged bush keeps its leaves, thinned 30%.
+- Bark stripping on pole-stage stems of the barked species goes from 22% to 22% + 60% of browse.
+- STAND_DEER_WOOD (23): beech and oak canopy, open-grown beech and oak in the glades (low limbs clipped from below), ash
+  poles, browsed beech, ash and rowan saplings, the lead's saplings browsed; no shrub layer.
+- `nurse_seedlings` (0-1) on a fallen conifer log of class 3+: seedlings along its top within 50 degrees of it (7 a metre
+  on class 3 to 3.5 on class 5), mostly 3-12 cm, a tail to 0.5-1.6 m on old logs, needles up the leader and whorls past
+  20 cm; saplings over 30 cm run two or three roots over the log and down its flanks.
+- `nurse_stilt` (m): a tree grown on a log since rotted. The stilt build (5at) with the log's section: roots turned across
+  the log (+-Z) and lengthened to reach the soil; they lie on the round top and run down the flanks; anything inside the
+  section (the sunk collar, a trunk wider than the log) is lifted to the tunnel's roof, which wanders with the rot. The
+  drop fades up the stem, so the foot flares into its legs. Placement lifts it by `tree_base_lift`.
+- Taiga (5ap): spruce nurse logs (classes 3-5) and spruce on rotted nurse logs (0.5-1.1 m) on the moist ground.
+- Bench: `stands.gd --deer` (hedged saplings under 2.3 m on four seeds, holly browse line, seedlings on a log, no bark in
+  the tunnel); the deer wood placement check in `--stands --test`.
+- Not done: colonnades (trees in a row along one vanished log; needs a row placement in VegetationField3D); the flank of a
+  stilted tree shows the collar's coarse buried part at ground level from the side; a browsing pressure map (WorldStand
+  or vegetation) so pressure varies over the land; browsed ground flora (vegetation thread).
+
 ## Next-round options (card 20 Nov afternoon)
 
 1. **Beaver country.** Aspen, willow and birch along streams gnawed to hourglass stumps with chisel facets (beavers

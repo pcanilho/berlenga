@@ -1113,6 +1113,9 @@
 		<member name="wind_speed" type="float" setter="set_wind_speed" getter="get_wind_speed" default="5.0">
 			Mean wind speed at 10 m above the ground, in m/s.
 		</member>
+		<member name="wave_clouds" type="bool" setter="set_wave_clouds" getter="is_wave_clouds" default="true">
+			Mountain waves over the terrain and the wave clouds (lenticulars) they raise in moist air; their vertical wind joins [method get_wind_at] above the boundary layer. See [method get_wave_cloud_density_at].
+		</member>
 	</members>
 	<constants>
 		<constant name="GUSTS_PER_AXIS" value="8">

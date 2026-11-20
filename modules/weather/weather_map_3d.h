@@ -34,6 +34,7 @@
 #include "modules/world/world_contracts.h"
 #include "weather_clouds.h"
 #include "weather_contact_wetness.h"
+#include "weather_mountain_waves.h"
 #include "weather_season.h"
 #include "weather_shelter.h"
 #include "weather_terrain_wind.h"
@@ -362,6 +363,12 @@ private:
 	// get_height(position) or Terrain3D's get_data()), else the first TerrainDeformer3D, Landscape3D,
 	// TerrainGenerator3D or Terrain3D in the scene, else rays on terrain_collision_mask.
 	WeatherTerrainWind terrain_wind;
+	// Mountain waves and their wave clouds (lenticulars; docs/ideas/clouds.md): a 51 km square of the same terrain.
+	WeatherMountainWaves mountain_waves;
+	bool wave_clouds = true;
+	Vector4 wave_slab_now; // m, where wave cloud can form (wave_slab(); each pair empty when y <= x)
+	float wave_slab_timer = 0.0f;
+	Ref<ImageTexture> wave_texture;
 	float boundary_layer_height = 1000.0f; // m
 	float wind_shear_aloft = 1.5f; // m/s per km above the boundary layer
 	bool terrain_wind_enabled = true;
@@ -486,6 +493,7 @@ private:
 	void _publish_globals();
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
 	Vector3 _follow_position() const;
+	Vector3 _contact_center() const; // the contact square's centre: the active camera, else the follow position
 
 	float _cell_size() const { return extent / resolution; }
 	float _sample(const Vector<float> &p_field, Vector2 p_xz, int p_stride = 1, int p_offset = 0) const;
@@ -511,6 +519,9 @@ private:
 	float shelter_mover_timer = 0.0f;
 	int shelter_box_count = 0;
 	void _update_terrain_wind();
+	void _update_mountain_waves(float p_dt);
+	void _apply_wave_field();
+	float _wave_buoyancy() const;
 	void _find_terrain_source();
 	float _terrain_height(Vector2 p_xz) const;
 	// Height above the ground: p_height when >= 0, else from the terrain under the point (or ground_height).
@@ -912,6 +923,12 @@ public:
 	void remove_cloud_effector(int p_id);
 	int get_cloud_effector_count() const { return cloud_effectors.size(); }
 	float get_cloud_effector_at(Vector3 p_position) const;
+	void set_wave_clouds(bool p_enabled);
+	bool is_wave_clouds() const { return wave_clouds; }
+	float get_mountain_wave_at(Vector3 p_position) const;
+	float get_mountain_wave_velocity_at(Vector3 p_position) const;
+	float get_wave_cloud_density_at(Vector3 p_position) const;
+	Vector4 get_wave_cloud_slab() const { return wave_slab_now; }
 	float get_cloud_type_at(Vector3 p_position) const;
 	float get_wetness_at(Vector3 p_position) const; // 0..1
 	float get_puddle_at(Vector3 p_position) const; // mm
@@ -991,6 +1008,9 @@ public:
 	float contract_high_cloud_cover_at(const Vector3 &p_position) const override { return get_high_cloud_cover_at(p_position); }
 	float contract_mid_cloud_cover_at(const Vector3 &p_position) const override { return get_mid_cloud_cover_at(p_position); }
 	float contract_cloud_effector_at(const Vector3 &p_position) const override { return get_cloud_effector_at(p_position); }
+	float contract_mountain_wave_at(const Vector3 &p_position) const override { return get_mountain_wave_at(p_position); }
+	float contract_mountain_wave_velocity_at(const Vector3 &p_position) const override { return get_mountain_wave_velocity_at(p_position); }
+	float contract_wave_cloud_density_at(const Vector3 &p_position) const override { return get_wave_cloud_density_at(p_position); }
 	float contract_water_temperature() const override { return get_water_temperature(); }
 	float contract_surface_temperature_at(const Vector3 &p_position) const override { return get_surface_temperature_at(p_position); }
 	float contract_ground_height_at(const Vector3 &p_position) const override {
