@@ -1249,6 +1249,37 @@ GroundDust3D each step; the skin thins at runoff_time_scale; a broken skin crust
 --test=silt: 60 tyre steps lift 0.18 kg and thin the skin 0.14 mm; a 12 m/s wind thins the broken cell, not the
 crusted one beside it.
 
+#### Round 18 built (20 Nov)
+
+**18.1 Carried.** A flowing mud drags a loose stone in it: 0.5 rho Cd A u^2 (Cd 1.2, as GroundDebrisFlow3D's push on
+bodies) plus the yield stress's hold on the same face, 13.9 tau_y A (the factor matching Beris et al.'s criterion),
+never more than brings it to the flow's speed; a yield-stress flow takes a stone held in its plug along at its own
+speed (boulders rafted in debris flows: Iverson 1997). Sources: GroundDebrisFlow3D (now in the group
+ground_debris_flows; get_flow_depth_at / get_flow_velocity_at, its density and yield stress) and the liquid mud layer
+itself, its speed from the GPU mud waves' momentum balance held steady, q = h^2 / (3 nu) (g h S - tau_y / rho) down
+the surface's slope (Liu and Mei 1989; Coussot 1997). The stone drops where the flow stops, and a deposit over it
+hides it again (17.2). add_loose_stone(position, radius, velocity) puts one anywhere. Bench --test=carry: soaked mud
+running down a 15 degree bank takes a 26 cm stone 2.4 m down and buries it in the toe; stiff mud holds it; a debris
+flow sweeps one 60 m down its channel at up to 8 m/s and leaves it on the fan.
+
+**18.2 Rolled onto.** Whether a tyre pushes a stone or rolls onto it is the wheel-over-step geometry: the tread meets a
+stone standing p over the rut floor at alpha from the vertical, cos(alpha) = (R - p) / R; under 30 degrees it rolls
+onto it, steeper it shoves it (16.3). Rolled onto, the carcass presses it with about its inflation plus carcass
+stiffness (100 + 15 kPa, round 12's tyre_flat) over its section, kilonewtons, past what any mud here bears: pressed
+in until its top is at the tyre's floor (or the base). Under the shoulder that force leans out by asin(offset /
+(half width + r)); past the mud's lateral bearing (about 10 tau A, Randolph and Houlsby 1984) it squirts out sideways
+at up to the tyre's speed. Bench --test=carry: under the middle its top goes from 4 cm over the floor to 0.3 cm under;
+under the shoulder it is squeezed 37 cm out of the rut.
+
+**18.3 Tracked-out mud as dust.** The film tyres and boots leave on firm ground (round 3) dries to a crumb traffic
+grinds to powder, the main source of road dust's silt loading (US EPA AP-42 13.2.1; Kuhns et al. 2001 on track-out
+at site exits). Dry (water under 0.1, none past 0.3) it gives a tyre's dust as dry sand does; what is lifted is owed
+by its 1 m cell and taken off in texel-sized discs scattered round the spot (the field's washing-away path), so the
+trail fades in patches, mass kept at 1.5 kg/m2 for a full film. The wind lifts it from u* 0.3 m/s as a broken silt
+skin (17.3), over the 1 m cells films were laid in near the followed point. Bench --test=trackdust: a wet trail gives
+none; dried, 60 tyre steps lift 0.1 kg and clear it at the spot; a 12 m/s wind lifts 0.22 kg and thins another spot
+from full to 0.62. Limits: film cells are not saved, so a trail read back from saved ruts lifts under tyres only.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

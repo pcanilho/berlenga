@@ -199,6 +199,8 @@ private:
 		float ref = NAN; // the undisturbed mud's height it rides
 		RID ground; // the terrain collider it passes through while in the mud
 		float push_down = 0.0f; // N, from a tyre driving it this step
+		float cap = 0.0f; // a tyre's floor over it (round 18.2)
+		uint64_t cap_frame = 0;
 	};
 	HashMap<uint32_t, LooseState> loose_state;
 	HashMap<Vector2i, LocalVector<Buried>> buried_extra; // stones hidden again, kept with the deposits
@@ -206,6 +208,12 @@ private:
 	void _loose_update(float p_delta);
 	float _press_moving(const Vector3 &p_position, float p_radius, float p_bottom, float p_sink, const Vector2 &p_velocity);
 	void _loose_rebury(uint32_t p_id, RigidBody3D *p_body, float p_r);
+	RigidBody3D *_make_loose(const Buried &p_b, const Vector3 &p_at, const Vector3 &p_velocity);
+	static Vector2 _loose_carry(const Vector2 &p_rel, float p_wet, float p_rc, float p_rho, float p_tau, float p_mass, float p_dt);
+	uint32_t loose_added = 0;
+	int loose_squeezed = 0; // steps a tyre squeezed a stone out sideways
+	static bool _loose_rolled_onto(float p_proud, const Vector2 &p_half);
+	void _loose_under(const Vector3 &p_position, const Vector2 &p_half, float p_yaw, float p_bottom, const Vector2 &p_velocity);
 	bool worn_tracks = true;
 	float wear_regrowth_days = 30.0f;
 	double wear_clock = 0.0;
@@ -254,6 +262,7 @@ private:
 	struct SiltWind {
 		Vector2i cell;
 		float rate = 0.0f; // kg/m2/s
+		Vector2 at; // a tracked film's centre in the cell
 	};
 	struct SiltWindStronger {
 		bool operator()(const SiltWind &a, const SiltWind &b) const { return a.rate > b.rate; }
@@ -264,6 +273,15 @@ private:
 	void _silt_take(const Vector2i &p_cell, float p_kg);
 	void _silt_wind_update(float p_dt);
 	void _silt_wind_emit();
+	// Tracked-out mud as dust (round 18.3).
+	LocalVector<SiltWind> film_wind;
+	float film_dust_kg = 0.0f;
+	HashMap<Vector2i, float> film_owed; // kg lifted not yet taken off the film, per 1 m cell
+	uint32_t film_spots = 0;
+	HashSet<Vector2i> film_cells; // 1 m cells tracked mud was laid in
+	float _film_dust_share(const Vector3 &p_position) const;
+	void _film_take(const Vector3 &p_position, float p_kg);
+	void _film_wind_update(float p_dt, float p_ustar);
 	// Standing water (docs/ideas/mud.md, stage 2): rain, runoff and ground water gather in ruts and prints, on the
 	// GPU field (the virtual pipe model), drawn as the surface there in both renderers.
 	bool standing_water = true;
@@ -1052,6 +1070,9 @@ public:
 	int get_loose_stone_count() const { return buried_loose.size(); }
 	int get_reburied_stone_count() const;
 	float get_silt_dust_lifted() const { return silt_dust_kg; }
+	float get_tracked_dust_lifted() const { return film_dust_kg; }
+	int64_t add_loose_stone(Vector3 p_position, float p_radius, Vector3 p_velocity = Vector3());
+	int get_squeezed_stone_count() const { return loose_squeezed; }
 	void set_worn_tracks(bool p_enabled);
 	bool is_worn_tracks() const { return worn_tracks; }
 	void set_wear_regrowth_days(float p_days);
