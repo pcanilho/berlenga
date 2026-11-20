@@ -2232,7 +2232,10 @@ SKY_MS_SHARE 0.21 (was 0.19), series 0.68 (was 0.6). Puffs: side-lit
 +1.8% (0.9) and +3.1% (0.99), front-lit +2.2%, powder-density -1.2%,
 sky-only -3.8% (was -7%); B/R 1.10 to 1.17 against PT's 1.13 to 1.26
 (was 1.07 to 1.11). A dense powder block on bright ground: B/R 1.18
-against PT 1.28 (was 1.08). Snow's powder: POWDER_RESULT.
+against PT 1.28 (was 1.08). Snow's powder (one-run pair, same gas): mean grey 166 -> 174 against PT
+189, B/R 1.051 -> 1.075 against 1.087; the cloud now reads pale
+blue-white over the snow. PT's plain snow is 4% brighter than raster's,
+so about half of the rest is the scene, not the gas.
 
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
