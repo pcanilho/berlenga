@@ -1672,6 +1672,15 @@ void main() {
 			vec3 far_world = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * 10000.0;
 			sky_color = rt_volumetric_fog_apply_sky(sky_color, project_uv(far_world, curr_vp_unjittered));
 		}
+
+		// The environment's ambient light switched off (ambient_light_source DISABLED): raster's ambient term is
+		// gone, so a diffuse bounce leaving the scene gathers nothing either, as in Unreal's path tracer without
+		// a sky light (the sky only lights through it). The sky stays visible to the camera, in reflections and
+		// through glass. A colour or sky ambient keeps the sky here: the trace's own, directional, sky light.
+		if (get_total_bounces(ps.packed_bounces_flags) > 0u && rt_ray_is_diffuse(ps.packed_bounces_flags) &&
+				(scene_data_block.data.flags & SCENE_DATA_FLAGS_USE_AMBIENT_LIGHT) == 0u) {
+			sky_color = vec3(0.0);
+		}
 	}
 
 #ifdef DLSS_RR_ENABLED
