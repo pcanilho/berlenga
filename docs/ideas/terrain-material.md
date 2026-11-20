@@ -252,3 +252,8 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
   an integer hash now. The procedural floor had two bump octaves (0.25 m, 6 cm) on one square lattice: five now,
   0.6 m to 1 cm, each turned against the last. The erosion detail drops its gullies under about 2 m (smoothstep
   1.5 to 4 m): drawn in the light alone they were ripples and rimmed islands; the layers carry that scale.
+- Rock and soil met along smooth slope and geology contours (a cut-out olive edge on grey): the slope thresholds and
+  the geology's rock share are pushed by noise (5 m, and 1.3 m faded with the footprint), so outcrops break into
+  tongues and islands. Under cliff relief the layers go by the heightfield's normal (CUSTOM1), not the displaced
+  faces': each ledge's flat tread took the soil, olive ladder strips under the lips. The path tracer still draws
+  those strips (it reads the displaced normal); the lips' undersides read as thin black lines in raster only.

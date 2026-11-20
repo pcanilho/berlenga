@@ -1389,7 +1389,15 @@ void fragment() {
 	// far "swirls"). Close up they are as before.
 	float tm_fp0 = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 	float tm_sb = 1.0 + 2.0 * smoothstep(0.05, 0.6, tm_fp0);
-	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08 * tm_sb, tm_rock_cos + 0.04 * tm_sb, wn.y);
+	// The slope thresholds and the geology's rock edge are broken by noise (5 m and 1.3 m, the fine one faded out
+	// as the pixel grows): taken as they are, rock and soil met along smooth contours, a clean cut-out edge between
+	// grey and olive. Outcrops break up into tongues and islands.
+	float tm_edge_n = (tm_vn(wp / 5.0 + 11.0) - 0.5) * 0.24 + (tm_vn(wp / 1.3 + 23.0) - 0.5) * 0.12 * (1.0 - smoothstep(0.03, 0.15, tm_fp0));
+	// The layers go by the heightfield's own slope where cliff relief displaced the mesh (CUSTOM1): by the displaced
+	// faces' normal a ledge's flat tread took the soil, olive ladder strips under every lip on a grey cliff.
+	vec3 tm_cn = dot(tm_cl_n, tm_cl_n) > 0.5 ? normalize(mat3(MODEL_MATRIX) * tm_cl_n) : wn;
+	float tm_ny = tm_cn.y + tm_edge_n;
+	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08 * tm_sb, tm_rock_cos + 0.04 * tm_sb, tm_ny);
 	float beach_sand = -1.0;
 	float tm_till = 0.0;
 	if (tm_geology && terrain_geology_rect.z > 0.0) {
@@ -1397,8 +1405,8 @@ void fragment() {
 		beach_sand = clamp(-g.x, 0.0, 1.0);
 		// The generator knows where soil holds (Heimsath soil on slopes up to its repose); below its cells only
 		// faces past the cliff slope are forced bare.
-		float cliff_rock = 1.0 - smoothstep(tm_cliff_cos - 0.08 * tm_sb, tm_cliff_cos + 0.04 * tm_sb, wn.y);
-		float rock = max(clamp(g.y, 0.0, 1.0), cliff_rock);
+		float cliff_rock = 1.0 - smoothstep(tm_cliff_cos - 0.08 * tm_sb, tm_cliff_cos + 0.04 * tm_sb, tm_ny);
+		float rock = max(smoothstep(0.2, 0.8, clamp(g.y, 0.0, 1.0) + tm_edge_n * 2.5), cliff_rock);
 		// Moraine till (negative talus): unsorted debris under a thin soil, soil with stones through it (the height
 		// blend lets the scree's stones stand out of the soil).
 		float till = clamp(-g.z, 0.0, 1.0) * (1.0 - rock);
@@ -1429,7 +1437,7 @@ void fragment() {
 		float bare_near = steep * max(smoothstep(0.02, 0.2, clamp(g.y, 0.0, 1.0)), smoothstep(0.02, 0.2, clamp(g.z, 0.0, 1.0)));
 		scree += rest * bare_near;
 		rest *= 1.0 - bare_near;
-		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w) * smoothstep(0.88, 0.95, wn.y);
+		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w) * smoothstep(0.88, 0.95, tm_cn.y);
 		w[0] = rock;
 		w[1] = scree;
 		w[2] = rest * (1.0 - alluvium);
@@ -1450,7 +1458,7 @@ void fragment() {
 	// (34 degrees, 45 under marram).
 	// Past 47 degrees no sand holds at all: a wide band (to 56) left sand half-mixed over the steeper folds of sea
 	// cliffs behind beaches, pale sand-coloured curtains running up the rock.
-	float sand_steep = beach_sand > 0.0 ? mix(steep, 1.0 - smoothstep(0.682, 0.719, wn.y), beach_sand) : steep;
+	float sand_steep = beach_sand > 0.0 ? mix(steep, 1.0 - smoothstep(0.682, 0.719, tm_cn.y), beach_sand) : steep;
 	sand *= 1.0 - sand_steep;
 	for (int i = 0; i < 4; i++) {
 		w[i] *= 1.0 - sand;
