@@ -561,6 +561,8 @@ func _ready() -> void:
 		await _frame_struck()
 	if args.has("host-cam"):
 		await _frame_host()
+	if args.has("colonnade-cam"):
+		await _frame_colonnade()
 	if args.has("log"):
 		await _frame_log()
 	if args.has("mushrooms"):
@@ -6686,6 +6688,60 @@ func _powder_avalanche() -> void:
 # --lightning-cam (with --lightning): the struck spruce nearest the first view, the camera --lightning-dist m (6) from
 # it square to the sun (side-lit, so the pale strip and the splinters read against the dark bark), eye 1.7 m, looking
 # at the stem --lightning-look m up (2).
+func _frame_colonnade() -> void:
+	# --colonnade-cam: along a row of spruce on stilts over a vanished nurse log (trees 5az), eye height, a few degrees
+	# off the row's axis; picks the row nearest the camera that runs most square to the sun, so the light is from the side.
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var to_sun := sun.global_basis.z
+	var sun_flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
+	var pts: Array[Vector3] = []
+	for i in veg.biome.species.size():
+		var sp := veg.biome.species[i] as Resource
+		if sp != null and sp.has_meta("colonnade"):
+			for tp in veg.get_placements(i):
+				if tp.distance_to(c3.global_position) < 400.0:
+					pts.append(tp)
+	var best_score := -INF
+	var a := Vector3.INF
+	var b := Vector3.INF
+	for p0 in pts:
+		var far := p0
+		var n := 0
+		for q in pts:
+			var dq := Vector2(q.x - p0.x, q.z - p0.z).length()
+			if dq > 0.5 and dq < 11.0:
+				n += 1
+				if dq > Vector2(far.x - p0.x, far.z - p0.z).length():
+					far = q
+		if n < 3:
+			continue
+		var dir := Vector3(far.x - p0.x, 0.0, far.z - p0.z).normalized()
+		var score := absf(dir.cross(sun_flat).y) * 3.0 + n * 0.3 - p0.distance_to(c3.global_position) * 0.01
+		if score > best_score:
+			best_score = score
+			a = p0
+			b = far
+	if a == Vector3.INF:
+		_log("colonnade: no row of %d stilted spruce found" % pts.size())
+		return
+	var dir2 := Vector3(b.x - a.x, 0.0, b.z - a.z).normalized()
+	var side := dir2.cross(Vector3.UP).normalized()
+	var cp := a - dir2 * float(args.get("colonnade-back", "6")) + side * float(args.get("colonnade-side", "1.8"))
+	cp.y = height_at(cp.x, cp.z) + float(args.get("colonnade-h", "1.5"))
+	c3.global_position = cp
+	var mid := (a + b) * 0.5
+	c3.look_at(Vector3(mid.x, height_at(mid.x, mid.z) + 1.2, mid.z))
+	var n2 := 0
+	await get_tree().process_frame
+	get_viewport().disable_3d = true
+	while not cover.is_stream_idle() and n2 < 600:
+		await get_tree().process_frame
+		n2 += 1
+	get_viewport().disable_3d = false
+	if veg.streaming:
+		await _forest_settle()
+	_log("colonnade cam %.1f,%.1f,%.1f along the row %s to %s (sun across %.2f)" % [cp.x, cp.y, cp.z, str(a.round()), str(b.round()), absf(dir2.cross(sun_flat).y)])
+
 func _frame_host() -> void:
 	# --host-cam: under one mistletoe host's crown, looking up into it against the sky (sun behind the camera).
 	var c3: Camera3D = get_viewport().get_camera_3d()
