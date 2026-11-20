@@ -368,8 +368,12 @@ float hg_phase(float c, float g) {
 // The densest smoke the gas is taken as: the path tracer's density majorant (RTSparseVolume::density_majorant),
 // which clamps the smoke it tracks to it, and Flow's own opacity march (patched, misc/physx_patches 0010).
 const float SMOKE_MAX = 2.0;
+const int SHADOW_SLICES_MAX = 128; // _fit_shadow's cap
 const float SUN_MS_GAIN = 0.7;
-const float SKY_MS_SHARE = 0.21;
+const float SKY_MS_SHARE = 0.19;
+const float AMBIENT_ORDER_KEEP = 0.68;
+// The single-scattering albedo the ambient terms were fitted at (test puffs, 0.75 to 0.92 by channel).
+const float AMBIENT_FIT_ALBEDO = 0.85;
 const float SKY_GAIN = 3.0;
 // Fitted on test puffs lit from the side and from behind the camera: 0, the octaves scatter evenly.
 const float MS_ECCENTRICITY = 0.0;
@@ -393,8 +397,8 @@ vec3 ss_albedo() {
 	return p.albedo.rgb * p.sky_map.x;
 }
 // The orders past the third: the sum over n >= 3 of q^n, q = sky_map.z * albedo.
-vec3 octave_tail(vec3 alb) {
-	vec3 q = min(p.sky_map.z * alb, vec3(0.98));
+vec3 octave_tail(vec3 alb, float k) {
+	vec3 q = min(k * alb, vec3(0.98));
 	return q * q * q / (1.0 - q);
 }
 vec3 ms_light(float tau, float tau_around, float c, float g) {
@@ -402,15 +406,24 @@ vec3 ms_light(float tau, float tau_around, float c, float g) {
 	vec3 a = alb * (1.0 / 0.9);
 	float thick = 1.0 - exp(-2.0 * tau_around);
 	float e = MS_ECCENTRICITY;
-	return (hg_phase(c, g) * exp(-tau) + thick * (hg_phase(c, g * e) * 0.5 * a * exp(-0.5 * tau) + hg_phase(c, g * e * e) * 0.25 * a * a * exp(-0.25 * tau) + hg_phase(c, g * e * e * e) * octave_tail(alb) * exp(-0.125 * tau))) * (alb * SUN_MS_GAIN);
+	return (hg_phase(c, g) * exp(-tau) + thick * (hg_phase(c, g * e) * 0.5 * a * exp(-0.5 * tau) + hg_phase(c, g * e * e) * 0.25 * a * a * exp(-0.25 * tau) + hg_phase(c, g * e * e * e) * octave_tail(alb, p.sky_map.z) * exp(-0.125 * tau))) * (alb * SUN_MS_GAIN);
 }
 
 // The light from all around (sky above, ground below) through optical depth tau.
-vec3 ms_ambient(float tau, float tau_around) {
+// Light arriving from all around is lost inside the gas only as fast as the gas absorbs it: by diffusion theory
+// it fades with depth as exp(-tau sqrt(3 (1 - w)(1 - w g))) (the transport coefficient, as in Jensen et al.
+// 2001's dipole), so in bright gas it reaches far deeper than in grey smoke, and deeper again in the channels
+// the gas absorbs least (white gas under a blue sky goes blue inside, as under path tracing). The fit above
+// holds for gas up to AMBIENT_FIT_ALBEDO; brighter gas lets the light in that much deeper.
+vec3 ms_ambient(float tau_in, float tau_around_in) {
 	vec3 alb = ss_albedo();
 	vec3 a = alb * (1.0 / 0.9);
-	float thick = 1.0 - exp(-2.0 * tau_around);
-	return SKY_MS_SHARE * (exp(-tau) + thick * (0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + octave_tail(alb) * exp(-0.125 * tau))) * alb;
+	float g = p.misc.y;
+	float w0 = AMBIENT_FIT_ALBEDO;
+	vec3 reach = min(sqrt(max((1.0 - alb) * (1.0 - alb * g), vec3(1e-5)) / ((1.0 - w0) * (1.0 - w0 * g))), vec3(1.0));
+	vec3 tau = tau_in * reach;
+	vec3 thick = vec3(1.0 - exp(-2.0 * tau_around_in));
+	return SKY_MS_SHARE * (exp(-tau) + thick * (0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + octave_tail(alb, AMBIENT_ORDER_KEEP) * exp(-0.125 * tau))) * alb;
 }
 
 float ign(vec2 px) {
@@ -672,8 +685,12 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 				if (od_above >= 0.0) {
 					// Straight up is not the only way out: a point near the face toward the camera also sees the sky past
 					// it, over about half its hemisphere, as far as the gas between it and the camera lets through.
-					sky_t = ms_ambient(od_above * SKY_OCCLUSION * (1.0 - SKY_OPENING * transmittance), od_above * SKY_OCCLUSION);
-					ground_t = ms_ambient(od_below * SKY_OCCLUSION, od_below * SKY_OCCLUSION);
+					// The orders past the first scatter in the gas all along the vertical through the point (both ways, as
+					// the sun's take the gas along its line): the top of a deep cloud glows with the light its body sends
+					// back up, where judged by the gas above alone it drew single scattering only, dark.
+					float od_around = (od_above + od_below) * SKY_OCCLUSION;
+					sky_t = ms_ambient(od_above * SKY_OCCLUSION * (1.0 - SKY_OPENING * transmittance), od_around);
+					ground_t = ms_ambient(od_below * SKY_OCCLUSION, od_around);
 				} else
 				if (shadow_steps > 0) {
 					float ds = p.misc.z * upm / float(shadow_steps);
@@ -726,40 +743,54 @@ void main() {
 	float upm = p.camera.w;
 	vec3 cell = p.block_size.xyz / vec3(p.level[0].xyz + 1u);
 	vec3 cell_inv = 1.0 / cell;
-	vec2 uv = (vec2(px) + 0.5) / float(box.res.x);
-	vec3 base = box.origin.xyz + box.axis_u.xyz * uv.x + box.axis_v.xyz * uv.y;
 	int steps = max(box.res.y, 1);
-	int slices = max(box.res.z, 1);
+	int slices = min(max(box.res.z, 1), SHADOW_SLICES_MAX);
 	float ds = length(box.axis_w.xyz) / float(steps); // meters
 	float sigma_ds = p.misc.x * ds;
-	Accessor a;
-	a.location = ivec4(0x40000000);
-	a.valid = false;
-	// Fixed steps along the light, jumping over the blocks Flow's sparse table holds no gas in (the
-	// view march does the same); each slice takes the optical depth up to its middle.
-	vec3 ro = base * upm;
 	vec3 rd = box.axis_w.xyz * upm;
 	vec3 rd_inv = 1.0 / rd;
-	int i = 0;
-	float od = 0.0;
+	// The texel's mean transmittance over its footprint, not the one column through its middle: four columns
+	// on a rotated grid (a prefiltered shadow map, as Unreal's cloud shadow map is filtered spatially). One
+	// column per texel aliased the gas's edge into a stair-stepped, hard-edged shadow on the ground.
+	float trans[SHADOW_SLICES_MAX];
 	for (int k = 0; k < slices; k++) {
-		float wk = (float(k) + 0.5) / float(slices);
-		while (i < steps && (float(i) + 0.5) / float(steps) < wk) {
-			float w = (float(i) + 0.5) / float(steps);
-			float smoke;
-			if (!smoke_at(ro + rd * w, cell_inv, a, smoke)) {
-				// An empty block: on to the first sample past where the column leaves it.
-				vec3 bmin = vec3(a.location.xyz) * p.block_size.xyz;
-				float b0;
-				float b1;
-				intersect_box(ro, rd_inv, bmin, bmin + p.block_size.xyz, b0, b1);
-				i = max(i + 1, int(ceil(b1 * float(steps) - 0.5)));
-				continue;
+		trans[k] = 0.0;
+	}
+	const vec2 SUB[4] = vec2[](vec2(-0.125, -0.375), vec2(0.375, -0.125), vec2(0.125, 0.375), vec2(-0.375, 0.125));
+	for (int j = 0; j < 4; j++) {
+		vec2 uv = (vec2(px) + 0.5 + SUB[j]) / float(box.res.x);
+		vec3 base = box.origin.xyz + box.axis_u.xyz * uv.x + box.axis_v.xyz * uv.y;
+		Accessor a;
+		a.location = ivec4(0x40000000);
+		a.valid = false;
+		// Fixed steps along the light, jumping over the blocks Flow's sparse table holds no gas in (the
+		// view march does the same); each slice takes the optical depth up to its middle.
+		vec3 ro = base * upm;
+		int i = 0;
+		float od = 0.0;
+		for (int k = 0; k < slices; k++) {
+			float wk = (float(k) + 0.5) / float(slices);
+			while (i < steps && (float(i) + 0.5) / float(steps) < wk) {
+				float w = (float(i) + 0.5) / float(steps);
+				float smoke;
+				if (!smoke_at(ro + rd * w, cell_inv, a, smoke)) {
+					// An empty block: on to the first sample past where the column leaves it.
+					vec3 bmin = vec3(a.location.xyz) * p.block_size.xyz;
+					float b0;
+					float b1;
+					intersect_box(ro, rd_inv, bmin, bmin + p.block_size.xyz, b0, b1);
+					i = max(i + 1, int(ceil(b1 * float(steps) - 0.5)));
+					continue;
+				}
+				od += min(smoke, SMOKE_MAX) * sigma_ds;
+				i++;
 			}
-			od += min(smoke, SMOKE_MAX) * sigma_ds;
-			i++;
+			trans[k] += 0.25 * exp(-od);
 		}
-		imageStore(shadow_img, ivec3(px, k), vec4(od));
+	}
+	// Stored as optical depth again (the readers take exp(-od)).
+	for (int k = 0; k < slices; k++) {
+		imageStore(shadow_img, ivec3(px, k), vec4(-log(max(trans[k], 1e-6))));
 	}
 }
 #else
@@ -1313,7 +1344,6 @@ bool FlowScatterRD::_fit_shadow(const FlowBackend::ScatterSource &p_source, Shad
 		r_slot.box_data[a * 4 + 3] = 0.0f;
 	}
 	int32_t *bi = reinterpret_cast<int32_t *>(r_slot.box_data + 16);
-	bi[0] = CLAMP(r_shadow.resolution, 16, 512);
 	// A step per gas cell along the light, a slice per two (at least the asked-for counts): coarser, each
 	// step adds a dense cell's whole optical depth at once and the shading steps in bands across the gas.
 	float cell = 1e30f;
@@ -1321,6 +1351,10 @@ bool FlowScatterRD::_fit_shadow(const FlowBackend::ScatterSource &p_source, Shad
 		cell = MIN(cell, p_source.block_size_world[a] / float(p_source.level[a] + 1u) * inv);
 	}
 	const float cells_along = cell < 1e29f ? size.z / MAX(cell, 1e-4f) : 0.0f;
+	// A texel per two gas cells across at least (each texel averages four columns over its footprint): a
+	// coarser map stair-steps the gas's edge on the ground.
+	const float cells_across = cell < 1e29f ? MAX(size.x, size.y) / MAX(cell, 1e-4f) : 0.0f;
+	bi[0] = CLAMP(MAX(r_shadow.resolution, (int)Math::ceil(cells_across * 0.5f)), 16, 256);
 	bi[1] = CLAMP(MAX(r_shadow.steps, (int)Math::ceil(cells_along)), 4, 512);
 	bi[2] = CLAMP(MAX(r_shadow.slices, (int)Math::ceil(cells_along * 0.5f)), 2, 128);
 	bi[3] = 0;
