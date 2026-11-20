@@ -122,6 +122,7 @@ class BodySnowStub extends WorldSnow:
 #   --steps=N         save N frames as the snow builds (time-lapse) to --out with _NNN before .png
 #   --probe           print the snowpack along the axes (mountain view)
 #   --raster          raster only (default path traced)
+#   --taa             raster with TAA (stills set against path traced ones: no per-pixel shadow or dither dots)
 #   --out=path.png    save the last frame and quit
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 
@@ -166,6 +167,10 @@ func _ready() -> void:
 			# Every grain a facet under the path tracer (follow-up 5, the default), or stage 5's footprint grid.
 			RenderingServer.global_shader_parameter_set("snow_exact_glints", a == "--glints=exact")
 		elif a == "--raster": raster = true
+		elif a == "--taa":
+			# Raster stills set against path traced ones: TAA resolves the per-pixel shadow and dither dots
+			# (the bench holds still a few frames before saving, so it converges).
+			get_viewport().use_taa = true
 		elif a.begins_with("--test"):
 			test = true
 			only = a.substr(7)
@@ -189,6 +194,8 @@ func _ready() -> void:
 			await _run_shelter_tests()
 		elif only == "crust":
 			await _run_crust_tests()
+		elif only == "hoar":
+			await _run_hoar_tests()
 		elif only == "transport":
 			await _run_transport_tests()
 		elif only == "failure":
@@ -400,6 +407,7 @@ func _run_tests() -> void:
 	await _run_transport_tests()
 	await _run_surface_tests()
 	await _run_crust_tests()
+	await _run_hoar_tests()
 	await _run_fall_tests()
 	await _run_shelter_tests()
 	await _run_climate_tests()
@@ -612,6 +620,65 @@ func _run_crust_tests() -> void:
 	var none := _trail_stats(-9.0)
 	print("  beside an unbroken trail (crusts off): %.3f m" % none.edge)
 	_check("crust_enabled off: the boot sinks as before", snow.get_crust_strength_at(p) == 0.0 and none.dent > buried.dent + 0.02, "%.3f m deep" % none.dent)
+
+
+func _run_hoar_tests() -> void:
+	print("Surface hoar (round 5):")
+	var r := [0.0]
+	var e_clear := SnowCover3D.hoar_deposition(-10.0, 0.9, 1.5, 0.0, 0.0)
+	var e_cloud := SnowCover3D.hoar_deposition(-10.0, 0.9, 1.5, 1.0, 0.0)
+	var e_dry := SnowCover3D.hoar_deposition(-10.0, 0.3, 1.5, 0.0, 0.0)
+	var e_sun := SnowCover3D.hoar_deposition(-10.0, 0.9, 1.5, 0.0, 250.0)
+	_check("a clear humid night deposits frost; cloud, dry air or sun stop it (bulk transfer)", e_clear > 0.003 and e_clear < 0.02 and e_cloud < 0.3 * e_clear and e_dry < 0.0 and e_sun < e_clear * 0.3, "clear %.4f, overcast %.4f, 30%% humidity %.4f, sunny %.4f kg/m2/h" % [e_clear, e_cloud, e_dry, e_sun])
+	var s5 := SnowCover3D.buried_hoar_strength(5.0, 0.0)
+	var s15 := SnowCover3D.buried_hoar_strength(15.0, 0.0)
+	var s5_old := SnowCover3D.buried_hoar_strength(5.0, 24.0 * 21.0)
+	_check("buried hoar is weak, weaker with larger crystals, gains slowly (Jamieson and Schweizer 2000)", s5 > 300.0 and s5 < 800.0 and s15 < s5 and s5_old > s5 * 1.5 and s5_old < 3.0 * s5, "5 mm %.0f Pa, 15 mm %.0f Pa, 5 mm after three weeks %.0f Pa" % [s5, s15, s5_old])
+	await _surface_setup(80.0, 200.0)
+	var p := Vector3(0.5, 0, 0.5)
+	weather.cloud_cover = 0.0
+	weather.humidity = 0.9
+	weather.wind_speed = 1.5
+	await _weather_to(-10.0, 12.0)
+	var night := snow.get_hoar_at(p)
+	_check("a clear calm night at -10 C grows surface hoar", night > 2.0 and night < 15.0, "%.1f mm" % night)
+	await _weather_to(-10.0, 24.0)
+	var nights := snow.get_hoar_at(p)
+	_check("more clear calm nights grow it on", nights > night * 1.5, "%.1f mm after three nights" % nights)
+	weather.wind_speed = 6.0
+	await _weather_to(-10.0, 2.0)
+	var blown := snow.get_hoar_at(p)
+	_check("a 6 m/s wind breaks it", blown < 0.1 * nights, "%.2f mm" % blown)
+	weather.wind_speed = 1.5
+	weather.cloud_cover = 1.0
+	await _weather_to(-10.0, 12.0)
+	var overcast := snow.get_hoar_at(p)
+	weather.cloud_cover = 0.0
+	await _weather_to(-10.0, 12.0)
+	var regrown := snow.get_hoar_at(p)
+	_check("none under overcast, it grows again under a clear sky", overcast < 1.0 and regrown > 2.0, "%.2f mm overcast, %.1f mm clear" % [overcast, regrown])
+	snow.add_snow(30.0, 100.0)
+	await get_tree().physics_frame
+	var layer := snow.get_buried_hoar_at(p)
+	var depth := snow.get_buried_hoar_depth_at(p)
+	_check("new snow buries it as a weak layer", absf(layer - regrown) < 0.01 and absf(depth - 0.3) < 0.03 and snow.get_hoar_at(p) == 0.0, "%.1f mm crystals under %.2f m" % [layer, depth])
+	var slope := deg_to_rad(38.0)
+	var tau := 100.0 * 9.81 * depth * sin(slope) * cos(slope)
+	var stab := SnowCover3D.buried_hoar_strength(layer, 0.0) / tau
+	var stab_new := SnowAvalanche3D.stability_index(depth, 100.0, 100.0, 48.0, slope)
+	# A skier (Foehn 1987's line load, 1 kN/m) on it.
+	var ski := tau + SnowAvalanche3D.added_shear(1000.0, depth * cos(slope), slope)
+	var sk := SnowCover3D.buried_hoar_strength(layer, 0.0) / ski
+	var sk_new := SnowAvalanche3D.weak_layer_strength(100.0, 48.0) / ski
+	_check("on a 38 degree slope it is weaker than two-day-old new snow, and a skier fails it", stab < stab_new and sk < 1.0 and sk_new > sk * 1.5, "S %.2f over buried hoar (%.2f in the new snow), with a skier %.2f (%.2f)" % [stab, stab_new, sk, sk_new])
+	await _weather_to(-10.0, 48.0)
+	_check("it stays buried and ages", snow.get_buried_hoar_at(p) > 0.0 and snow.get_buried_hoar_age_at(p) > 1.9, "%.1f mm, %.1f days" % [snow.get_buried_hoar_at(p), snow.get_buried_hoar_age_at(p)])
+	await _weather_to(4.0, 1.0)
+	_check("a thaw wets the surface crystals away", snow.get_hoar_at(p) == 0.0, "%.2f mm" % snow.get_hoar_at(p))
+	snow.hoar_enabled = false
+	await _weather_to(-10.0, 12.0)
+	_check("hoar_enabled off: none grows", snow.get_hoar_at(p) == 0.0, "%.2f mm" % snow.get_hoar_at(p))
+	snow.hoar_enabled = true
 
 
 func _surface_setup(swe: float, density: float) -> void:
@@ -3370,7 +3437,7 @@ func _physics_process(delta: float) -> void:
 
 
 func _save_frame(suffix: String) -> void:
-	for i in 12:
+	for i in (40 if get_viewport().use_taa else 12): # TAA converges over some frames
 		await get_tree().process_frame
 	# Path traced: wait until every displaced surface has been captured for the trace (a big deep-snow mesh
 	# takes several frames), or the still shows it flat.
