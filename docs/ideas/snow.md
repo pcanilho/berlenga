@@ -1552,10 +1552,11 @@ weight gives tan(lean) = 3 rho_air Cd U^2 / (8 rho_w r g), about 0.01 U^2, and t
   (smooth noise, a knot every 8 h of melt): rivulets wander as the pack changes. 60% of sites between them stay
   dry, the rest get a thin film and grow stubs whose wall freezes it all. Dense week: 30 long, 25 stubs, 21 bare
   of 97 sites, in clusters. Each taper scatters within 3/4 +- 0.08 (Chen and Morris 2013).
-- **Core in raster**: the PT's wide bright streaks are right. The clear ice is a cylindrical lens: a ray entering
-  at b passes the axis at R sin(asin(b/R) - asin(b/(nR))), so a thin core shows n/(n-1) = 4.2 times its width.
-  Raster's transmission reads almost straight through the middle, so the core's vertex() widens it to that
-  apparent width outside the path tracer and shadow maps (the hair strands' IN_PATH_TRACER pattern).
+- **Core in raster**: the clear ice is a cylindrical lens: a ray entering at b bends to asin(b/(nR)) and passes
+  the axis at b/n, so the core shows n = 1.31 times its width (corrected 20 Nov: an earlier formula gave
+  n/(n-1) = 4.2 and drew the core as a wide opaque band, so icicles read as grey metal spikes against a dark
+  wall). Raster's transmission reads almost straight through the middle, so the core's vertex() widens it to
+  that apparent width outside the path tracer and shadow maps (the hair strands' IN_PATH_TRACER pattern).
 - **Raster transmission on solids**: the read takes the mip of the refracted footprint (UV derivatives), so thin
   curved ice no longer speckles or dashes; panes and open water identical (materials bench).
 - `--hero`: from under the roof 1.7 m back looking out (snow to 64 m); `--hero --wall` head on against boards.
