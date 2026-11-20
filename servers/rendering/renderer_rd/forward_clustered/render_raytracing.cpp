@@ -1842,7 +1842,10 @@ static uint64_t _rt_capture_global_uniforms(RTPlanScratch &r_scratch, const RTVe
 	}
 	const RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
 	const uint64_t stamp = RTVertexCapture::global_uniforms_stamp(p_traits.dependencies.global_uniforms, [material_storage](const StringName &p_name) {
-		return RTVertexCapture::GlobalUniformValue{ material_storage->global_shader_uniform_get_values(p_name), material_storage->global_shader_uniform_get_texture(p_name).get_id() };
+		// The texture and its content version: a global sampler rewritten in place recaptures as one swapped.
+		const RID texture = material_storage->global_shader_uniform_get_texture(p_name);
+		const uint64_t version = RendererRD::TextureStorage::get_singleton()->texture_get_content_version(texture);
+		return RTVertexCapture::GlobalUniformValue{ material_storage->global_shader_uniform_get_values(p_name), texture.get_id() ^ (version * 0x9E3779B97F4A7C15ull) };
 	});
 	r_scratch.global_uniform_stamps.push_back({ &p_traits, stamp });
 	return stamp;
@@ -1881,6 +1884,20 @@ RTVertexCapture::Stamps RenderRaytracing::_capture_inputs(RTPlanScratch &r_scrat
 	if (p_dependencies & RTVertexCapture::DEP_MATERIAL_UNIFORMS) {
 		const uint64_t material[2] = { surf->rt_material.get_id(), material_storage->material_get_rt_invalidation_counter(surf->rt_material) };
 		stamps.material = _rt_hash_bytes(material, sizeof(material));
+		// The textures vertex() samples, rewritten in place: no parameter changes, only their content versions.
+		const Vector<StringName> &textures = surf->shader->rt_capture.dependencies.material_textures;
+		if (!textures.is_empty()) {
+			RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
+			uint64_t versions[2] = { stamps.material, 0 };
+			for (const StringName &name : textures) {
+				const Variant param = material_storage->material_get_param(surf->rt_material, name);
+				if (param.get_type() == Variant::RID || param.get_type() == Variant::OBJECT) {
+					versions[1] = texture_storage->texture_get_content_version(RID(param));
+					versions[0] = _rt_hash_bytes(versions, sizeof(versions));
+				}
+			}
+			stamps.material = versions[0];
+		}
 	}
 	if (inst->mesh_instance.is_valid()) {
 		stamps.deformation = mesh_storage->mesh_instance_get_last_change(inst->mesh_instance, surf->surface_index);
