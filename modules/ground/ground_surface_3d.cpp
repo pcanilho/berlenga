@@ -4898,6 +4898,10 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		meta[8] = tile && sand ? 1.0f : 0.0f;
 		meta[9] = (float)n;
 		meta[10] = (float)sn;
+		// The dune field past the patch (far_ripples): on, and the ground's own sand share there (all sand for a
+		// sand ground with no type map; the terrain material gives its own).
+		meta[11] = far_ripples && tile ? 1.0f : 0.0f;
+		meta[14] = ground_type == GROUND_SAND && type_map.is_null() ? 1.0f : 0.0f;
 		meta[12] = ripples.tmpl_k.x; // the template's wave vector, for the shaders' dislocations
 		meta[13] = ripples.tmpl_k.y;
 		if (ripple_image.is_valid() && ripple_image->get_width() == w && ripple_image->get_height() == hgt && ripple_texture.is_valid()) {
@@ -7955,6 +7959,8 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_near_active"), &GroundSurface3D::is_near_active);
 	ClassDB::bind_method(D_METHOD("set_wind_ripples", "enabled"), &GroundSurface3D::set_wind_ripples);
 	ClassDB::bind_method(D_METHOD("is_wind_ripples"), &GroundSurface3D::is_wind_ripples);
+	ClassDB::bind_method(D_METHOD("set_far_ripples", "enabled"), &GroundSurface3D::set_far_ripples);
+	ClassDB::bind_method(D_METHOD("is_far_ripples"), &GroundSurface3D::is_far_ripples);
 	ClassDB::bind_method(D_METHOD("set_water_sources", "sources"), &GroundSurface3D::set_water_sources);
 	ClassDB::bind_method(D_METHOD("get_water_sources"), &GroundSurface3D::get_water_sources);
 	ClassDB::bind_method(D_METHOD("set_water_coupling", "enabled"), &GroundSurface3D::set_water_coupling);
@@ -8107,6 +8113,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_GROUP("Wind", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "wind_override", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind_override", "get_wind_override");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wind_ripples"), "set_wind_ripples", "is_wind_ripples");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_ripples"), "set_far_ripples", "is_far_ripples");
 	ClassDB::bind_method(D_METHOD("set_slip_avalanches", "enabled"), &GroundSurface3D::set_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("is_slip_avalanches"), &GroundSurface3D::is_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("get_avalanche_count"), &GroundSurface3D::get_avalanche_count);

@@ -255,3 +255,32 @@ erosion (bake against a 10 m march still 0.002). Shadow share of the ground by c
 PhysX Flow was considered for the shapes: it simulates a grid tens of metres across, so a sky of clouds
 kilometres wide would need either a coarse grid with no crests or far more memory than a frame has; the
 procedural model above is what every shipped sky uses. Not yet: the mid sheet dimming the cumulus' sun.
+
+Round 3 follow-ups (docs review of 118c13bc):
+
+6. **Flat bases**: the lowest 120 m of a cumulus read the shape noise (and its turrets) at that height, so the
+   outline drops straight to the condensation level instead of rounding up underneath; no side turrets in the
+   lowest quarter. Clouds high in a frame from the ground are near ones, seen from below: their bases are on
+   the same level, higher in the frame by perspective.
+7. **Sky light: the hemisphere, not the zenith.** The cloud's sky light was the zenith radiance, the darkest
+   part of the sky; a cumulus in another's shadow at a low sun came out near black, darker than the sky behind
+   it. Now the zenith (0.4) plus two reads 30 degrees up (0.3 each), one 30 degrees round from the sun's
+   azimuth (its glow, not its aureole) and one opposite, in both atmosphere models. Shadowed clouds read grey,
+   about the sky's brightness.
+8. **Bench**: the weather bench's ground was 12 km across, so the wide view from 520 m saw past its edge (a grey
+   band under the horizon). Now 60 km.
+
+## Round 2 leftovers (20 Nov 2026)
+
+1. **22 and 46 degree ice halos** (Tape 1994, "Atmospheric Halos"; Greenler): randomly oriented hexagonal
+   columns refract through 60 degree faces with a minimum deviation near 22 degrees (21.7 red to 22.4 blue) and
+   through 90 degree faces near 46. The cirrus phase gets one lobe a ring, per channel: nothing inside the
+   minimum (a sharp red inner rim), an exponential tail outward, normalised over the sphere. The colours overlap
+   through the tail, so the ring is pale, not a rainbow. `cloud_halo_strength` (0.08) is the 22 degree ring's
+   share of the single scattering, the 46 degree ring a fifth of it. Shown only where a slow noise (25 km
+   patches) says the sheet's ice is columns, so rings show as arcs over some of the sky. Raster and PT match.
+   Bench: weather `--view=shafts --cover=0.05 --high-cover=0.7 --sun-yaw=0`.
+2. **The mid sheet dims the cumulus' sun**: read once a pixel where the view ray crosses the middle of the
+   cumulus layer, followed up the sun to the sheet, two-stream transmission as in the ground's shadow bake. Under
+   a full altocumulus sheet far cumulus lose about 6% of their brightness (the sheet is thin, optical depth 4 at
+   full cover, and most light comes through scattered).

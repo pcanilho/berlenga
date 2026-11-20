@@ -3293,8 +3293,11 @@ void main() {
 				m.roughness = clamp(m.roughness * mix(1.0, g.a < 0.0 ? 1.0 : g.a, smoothstep(0.5, 0.85, h.geometry_normal.y)), 0.0, 1.0);
 			}
 		}
-		// Far ripples (sand stage 3): the material.cpp ground_ripple_far_slope() lines on the ripple map, with
-		// texelFetch in place of the raster's mipmapped copy (the samples average what mips would).
+	}
+	// Far ripples (sand stage 3): the material.cpp ground_ripple_far_slope() lines on the ripple map, with
+	// texelFetch in place of the raster's mipmapped copy (the samples average what mips would); on the patch and,
+	// past it, over the dune field (GroundSurface3D far_ripples) on the terrain round it.
+	if (rt_material_ground_deform(mat) || rt_material_ground_terrain(mat)) {
 		uint rmap = uint(get_rt_param(RT_PARAM_GROUND_RIPPLE_MAP));
 		if (rmap != 0u) {
 			ivec2 ts = textureSize(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), 0);
@@ -3305,23 +3308,36 @@ void main() {
 			vec2 p = (h.hit_pos + rt_origin.xyz).xz;
 			int rn = int(m2.y + 0.5);
 			int sn = int(m2.z + 0.5);
-			vec2 su = (p - m1.xy) / max(m1.z, 1e-4) * float(sn) - 0.5;
-			if (m2.x > 0.5 && rn > 0 && all(greaterThanEqual(su, vec2(-0.5))) && all(lessThanEqual(su, vec2(float(sn) - 0.5)))) {
-				ivec2 s0 = clamp(ivec2(floor(su)), ivec2(0), ivec2(sn - 1));
-				ivec2 s1 = clamp(s0 + 1, ivec2(0), ivec2(sn - 1));
-				vec2 sf = clamp(su - floor(su), 0.0, 1.0);
-				float sand = mix(mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s0.x, rn + s0.y), 0).r,
-										 texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s1.x, rn + s0.y), 0).r, sf.x),
-						mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s0.x, rn + s1.y), 0).r,
-								texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s1.x, rn + s1.y), 0).r, sf.x),
-						sf.y);
+			if (m2.x > 0.5 && rn > 0) {
+				float far = m2.w > 0.5 ? m3.z : 0.0;
+				float sand = far;
+				vec2 su = (p - m1.xy) / max(m1.z, 1e-4) * float(sn) - 0.5;
+				if (all(greaterThanEqual(su, vec2(-0.5))) && all(lessThanEqual(su, vec2(float(sn) - 0.5)))) {
+					ivec2 s0 = clamp(ivec2(floor(su)), ivec2(0), ivec2(sn - 1));
+					ivec2 s1 = clamp(s0 + 1, ivec2(0), ivec2(sn - 1));
+					vec2 sf = clamp(su - floor(su), 0.0, 1.0);
+					float block = mix(mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s0.x, rn + s0.y), 0).r,
+											  texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s1.x, rn + s0.y), 0).r, sf.x),
+							mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s0.x, rn + s1.y), 0).r,
+									texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s1.x, rn + s1.y), 0).r, sf.x),
+							sf.y);
+					vec2 be = min(p - m1.xy, m1.xy + m1.z - p);
+					sand = mix(far, block, m2.w > 0.5 ? smoothstep(0.0, 4.0, min(be.x, be.y)) : 1.0);
+				}
 				vec2 wuv = (p - m0.xy) / m0.z;
 				vec2 e = min(wuv, 1.0 - wuv) * m0.z;
 				float live = min(e.x, e.y) > 0.0 ? smoothstep(m0.w, 0.15 * m0.z, min(e.x, e.y)) : 0.0;
-				float w = sand * (1.0 - live);
+				// None on slip faces; faded where a footprint spans fewer than three crests (material.cpp).
+				float lam = dot(m3.xy, m3.xy) > 0.0 ? 6.2831853 / length(m3.xy) : 0.11;
+				float rfp = rt_cone_width;
+				float w = sand * (1.0 - live) * smoothstep(0.85, 0.91, h.geometry_normal.y);
+				float resolved = 1.0 - smoothstep(0.22 * lam, 0.4 * lam, rfp);
+				vec3 vr = w > 0.0 ? ground_ripple_vary(p, m3.xy) : vec3(0.0);
+				// Crests finer than the pixel shade it as a patchy tone (material.cpp ground_ripple_far_slope()).
+				m.albedo *= 1.0 - 0.15 * w * vr.z * (1.0 - resolved);
+				w *= resolved;
 				if (w > 0.0) {
 					// The tile: cell c's centre at c * cell, its texel (c mod n), bilinear with wrap.
-					vec3 vr = ground_ripple_vary(p, m3.xy);
 					vec2 tc = (p + vr.xy) / m0.w;
 					ivec2 c0 = ivec2(floor(tc));
 					vec2 cf = tc - vec2(c0);

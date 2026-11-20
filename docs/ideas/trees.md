@@ -2701,6 +2701,35 @@ As built:
   kelo carries next to no moss (resin-hard, sun-dried; Niemela et al. 2002): its moss amount is x0.1, so it is bare
   to the foot. Raster vs PT crop: fork/trees/taiga/kelo-spiral-raster-vs-pt.png.
 
+### 5as. Forest edges (20 Nov; Paulo's pick)
+
+Research. Where a stand meets the open, edge influence on structure and light reaches 20-60 m in (Harper et al. 2005,
+Conservation Biology 19). A managed or old edge has a mantle (Waldmantel) of light-demanding shrubs a few metres deep
+in front of the trees and a herb fringe in front of that; the edge trees keep green branches to the ground on the lit
+side, spread their crowns toward the open and lean that way (stems at edges and gaps lean to the light; Young and
+Hubbell 1991).
+
+Contract (vegetation, agreed 20 Nov): PlantSpecies.RULE_FOREST_EDGE = 30, metres from the edge of the placed canopy,
+positive inside the forest, negative in the open, -1000 where there is no canopy; species at the default range take
+meta "edge_distance" (Vector2). Meshes with meta "tree_open_side" (Vector3) are turned to face down the gradient
+toward the open (about 15 degrees of jitter). The herb fringe is the ground plants'.
+
+As built:
+- `edge_open` (0-1, a property): the light model (Palubicki shadow grid with the stand's neighbour shade) drops the
+  neighbours' shade and the closed canopy's under-shade on the +X side, except right at the stem (the tree's own crown
+  still shades its foot, so the stem stays single). `edge_band` 1 in `_setup_variant`: edge_open 0.7-1.0 a variant and
+  phototropism x1.6.
+- `make_edge(stand, variants)` returns a Biome "<stand> (edge)": the stand's lead as edge trees (0 to 12 m in) and a
+  light-demanding second tree (oak, or birch where oak leads; birch on montane and boreal stands; red maple in eastern
+  North America), both with "tree_open_side" = +X on species and meshes; and the mantle, open-grown and a crown or less
+  apart: blackthorn (-6..0 m), hawthorn (-5..1), dog rose (-8..-2), hazel (-2..4), elder (-1..3), field maple (-3..2)
+  in temperate stands; rowan, birch and willow saplings and the lead's own young on montane and boreal ones (hazel and
+  elder too on montane conifer); witch-hazel, mountain laurel, red maple and paper birch saplings in eastern North
+  America; kermes oak, lentisk, gum rockrose, broom round groves and oases (which have no forest lead and get no edge
+  trees).
+- Check: stands `--forest-edge=N`: edge trees' crowns sit 0.2-0.3 of their width toward the open (birch 0.09), the
+  mantle mostly outside.
+
 ### Next-round options (card 20 Nov midday)
 
 - Taiga details. Char on catfaces: the bark shader's wood branch ignores vertex COLOR, so the scar needs its own

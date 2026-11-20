@@ -887,3 +887,15 @@ edge on the ground past it.
 WeatherMap3D's contact wetness (wet tracks, 12.5 cm texels) is shaped on printed ground by the field's own dents
 (ground_contact_shape(), raygen the same): the water lies in the sole's and tread's outline, and the contact map sets
 only how wet it is.
+
+## Far ripples over the dune field (GroundSurface3D `far_ripples`, on)
+
+Paulo's pick (20 Nov): wind ripples past the 32 m field. The grown field's periodic slope tile (the near ripples'
+own, wind-aligned, varied by ground_ripple_vary so no repeat shows) is drawn as a normal over all sand terrain past the
+patch: BaseMaterial3D's terrain branch takes the ground's share (all sand for a sand ground_type with no type_map,
+meta[14]); TerrainMaterial3D takes its own sand share (tm_sand_b). It eases in over the sand block's outer 4 m, so the
+block has no edge. None on slip faces past about 30 degrees (Bagnold 1941: the face avalanches and buries them). Crests
+are prefiltered to the pixel as before (faded under three pixels a crest); crests finer than that still shade the pixel
+as a patchy tone, up to 15% darker by the field's amplitude (LEAN mapping's point, Olano and Baker 2010: unresolved
+slopes become the pixel's statistics). The path tracer the same in raygen, with the cone's width as the footprint
+(rt_cone_width).

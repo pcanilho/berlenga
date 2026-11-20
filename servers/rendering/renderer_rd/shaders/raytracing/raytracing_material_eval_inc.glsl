@@ -95,6 +95,7 @@ vec2 rt_cone_uv_dy = vec2(0.0);
 bool rt_cone_uv_grad = false;
 float rt_cone_uv_lod = RT_TEXTURE_LOD_BASE;
 float rt_cone_footprint_log2 = RT_TEXTURE_LOD_BASE;
+float rt_cone_width = 0.0; // The cone's width at the hit (m), across the ray: a pixel's footprint, as raster's.
 
 vec4 sample_bindless_texture(uint tex_idx, vec2 uv) {
 	// The samplers are the render buffers' own (bindings 16-27), so their mipmap bias (the

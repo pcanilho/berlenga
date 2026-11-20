@@ -42,6 +42,8 @@ extends Node3D
 #   --sun-up=D        shafts view: the sun D degrees up (default 20)
 #   --sun-yaw=D       shafts view: the sun D degrees right of the view (default -13)
 #   --mid-cover=C     clouds views: the mid (altocumulus) layer's base cover (WeatherMap3D.mid_cloud_cover)
+#   --high-cover=C    clouds views: the cirrus layer's base cover (WeatherMap3D.high_cloud_cover); with the shafts
+#                     view and --cover=0.05, the 22 and 46 degree ice halos round the sun
 #   --cover=C --haze-km=V  shafts view: cloud cover (default 0.45) and the aerosol's dry visibility (default 40)
 #   --froxel-haze     path traced: the aerosol stays a froxel layer (WeatherMap3D.traced_haze off)
 #   --no-sky-shadow   the sky's air without the clouds' shadow (WeatherSkyMaterial atmo_cloud_shadow_steps 0)
@@ -72,6 +74,7 @@ var raster := false
 var pt_from := 0
 var frames := 12
 var mid_cover := -1.0
+var high_cover := -1.0
 var half_usec := 0
 var out := ""
 var map_out := ""
@@ -133,6 +136,7 @@ func _ready() -> void:
 		elif a.begins_with("--sun-yaw="): sun_yaw = float(a.substr(10))
 		elif a.begins_with("--cover="): cover = float(a.substr(8))
 		elif a.begins_with("--mid-cover="): mid_cover = float(a.substr(12))
+		elif a.begins_with("--high-cover="): high_cover = float(a.substr(13))
 		elif a.begins_with("--haze-km="): haze_km = float(a.substr(10))
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
@@ -1109,6 +1113,8 @@ func _build_clouds() -> void:
 	weather.cloud_variation = 0.3
 	if mid_cover >= 0.0:
 		weather.mid_cloud_cover = mid_cover
+	if high_cover >= 0.0:
+		weather.high_cloud_cover = high_cover
 	weather.transition_time = 0.0
 	weather.cloud_shadow_extent = 8192.0
 	weather.cloud_shadow_resolution = 256
@@ -1142,11 +1148,11 @@ func _build_clouds() -> void:
 	await albedo.changed
 	var gm := StandardMaterial3D.new()
 	gm.albedo_texture = albedo
-	gm.uv1_scale = Vector3(30, 30, 1)
+	gm.uv1_scale = Vector3(150, 150, 1)
 	gm.roughness = 0.95
 	var ground := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(12000, 12000)
+	pm.size = Vector2(60000, 60000) # to the horizon from the wide view's 520 m (a 12 km plane ended in a grey band)
 	ground.mesh = pm
 	ground.material_override = gm
 	add_child(ground)

@@ -106,6 +106,8 @@ uniform float cloud_brightness : hint_range(0, 8) = 1.0;
 uniform float cloud_droplet_size : hint_range(5, 50) = 15.0;
 // Floor on the phase away from the sun, times the isotropic 1 / 4 pi (Bauer 2019).
 uniform float cloud_back_scatter : hint_range(0, 1) = 0.5;
+// The share of the cirrus' single scattering in the 22 degree ice halo (the 46 degree ring takes a fifth as much).
+uniform float cloud_halo_strength : hint_range(0, 0.5) = 0.08;
 // How much the billows toward the sun shade the scattered light (times their optical depth).
 uniform float cloud_surface_occlusion : hint_range(0, 2) = 1.0;
 // Short steps inside cloud as a share of the long ones (1: no refinement).
@@ -417,7 +419,7 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 		// density toward the sky; SunshineClouds2 reads the density one step up): one coarse read 100 m above,
 		// so undersides and the lee of towers darken while the tops stay open to the sky.
 		float up_tau = transmittance > 0.15 ? wc_extinction(p + vec3(0.0, 100.0, 0.0), ct, false, 100.0) * 100.0 : 2.0 * (1.0 - hf);
-		light += mix(ambient_bottom, ambient_top, hf) * mix(0.35, 1.0, sqrt(1.0 - profile)) * mix(0.4, 1.0, exp(-up_tau)) * 1.4;
+		light += mix(ambient_bottom, ambient_top, mix(0.4, 1.0, hf)) * mix(0.5, 1.0, sqrt(1.0 - profile)) * mix(0.5, 1.0, exp(-up_tau)) * 1.4;
 		// Energy-conserving step (Hillaire 2016): albedo 1, so the scattering is the extinction.
 		float tr = exp(-sigma * st);
 		radiance += transmittance * light * (1.0 - tr);
@@ -437,8 +439,29 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 // Ice crystals' phase: Henyey-Greenstein at the asymmetry of bulk ice-cloud models, g about 0.75 (Baum et al.,
 // "Bulk Scattering Properties for the Remote Sensing of Ice Clouds", J. Appl. Meteor. 2005), with the same
 // floor away from the sun as the cumulus.
-float cirrus_phase(float cos_theta) {
-	return max(henyey_greenstein(cos_theta, 0.75), cloud_back_scatter / (4.0 * PI));
+// Ice halos (Tape, "Atmospheric Halos", 1994; Greenler, "Rainbows, Halos and Glories"): randomly oriented
+// hexagonal ice columns refract through 60 degree prism faces with a minimum deviation of about 22 degrees (21.7
+// red to 22.4 blue: the ring's red inner edge), and through 90 degree faces at 46 degrees (a fainter, broader
+// ring). No light is refracted inside the minimum, so each ring has a sharp inner edge and a tail outward. The
+// colours overlap through the tail: a red inner rim, then white, far paler than a rainbow. A
+// lobe each on the phase function, per channel, normalised over the sphere (2 pi sin(theta) over its width),
+// taking the share cloud_halo_strength (22 degrees) and a fifth of it (46 degrees) of the single scattering.
+float halo_ring(float theta, float peak, float width) {
+	float x = theta - peak;
+	float f = x < 0.0 ? exp(-x * x / (0.1 * width * width)) : exp(-x / width);
+	return f / (2.0 * PI * sin(peak) * width * 1.28);
+}
+
+vec3 cirrus_phase(float cos_theta, float p_halo) {
+	float base = max(henyey_greenstein(cos_theta, 0.75), cloud_back_scatter / (4.0 * PI));
+	if (p_halo <= 0.0) {
+		return vec3(base);
+	}
+	float th = acos(clamp(cos_theta, -1.0, 1.0));
+	const float D = PI / 180.0;
+	vec3 h22 = vec3(halo_ring(th, 21.75 * D, 1.6 * D), halo_ring(th, 22.0 * D, 1.6 * D), halo_ring(th, 22.2 * D, 1.6 * D));
+	vec3 h46 = vec3(halo_ring(th, 45.6 * D, 2.5 * D), halo_ring(th, 46.0 * D, 2.5 * D), halo_ring(th, 46.6 * D, 2.5 * D));
+	return vec3(base) * (1.0 - 1.2 * p_halo) + p_halo * (h22 + 0.2 * h46);
 }
 
 // The high layer: a thin sheet at cloud_high_height, so one read where the ray crosses it (Bauer 2019 draws
@@ -477,7 +500,10 @@ vec4 march_cirrus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	float tau_v = cloud_high_tau * c * fib * 2.0 / max(abs(dot(rd, up)), 0.05);
 	float tau_s = cloud_high_tau * c / max(dot(sun_dir, up), 0.05);
 	float cos_theta = dot(rd, sun_dir);
-	vec3 light = sun_radiance * (exp(-0.5 * tau_s) * cirrus_phase(cos_theta) + (1.0 - exp(-0.5 * tau_s)) * (2.0 / (4.0 * PI))) + ambient_top;
+	// Halos where the ice is columns falling at random: patches of sheet tens of kilometres across, so a ring shows
+	// as arcs across some of the sky and not everywhere.
+	float halo = cloud_halo_strength * smoothstep(0.35, 0.65, wc_value_noise((xz - cloud_high_drift) / 25000.0 + vec2(13.1, 71.7)));
+	vec3 light = sun_radiance * (exp(-0.5 * tau_s) * cirrus_phase(cos_theta, halo) + (1.0 - exp(-0.5 * tau_s)) * (2.0 / (4.0 * PI))) + ambient_top;
 	float tr = exp(-tau_v);
 	r_t = t;
 	// Far sheets fade into the air as the low clouds do.
@@ -612,8 +638,22 @@ vec4 cloud_over(vec4 a, float da, vec4 b, float db, out float r_depth) {
 
 // The three layers in the order the camera meets them: low cumulus, the mid slab, the high sheet.
 vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, int steps, float jitter, float p_pixel, out float r_depth) {
+	// The mid sheet over the cumulus dims their sun (as it shades the ground in the shadow bake): read once a
+	// pixel, where the view ray crosses the middle of the cumulus layer (at most 30 km out), followed up the sun
+	// to the sheet. Two-stream transmission, as the bake: most of the light comes through scattered, not cut.
+	vec3 sun_low = sun_radiance;
+	if (cloud_mid_cover > 0.001 || cloud_storm_count > 0) {
+		float y_mid_low = cloud_base_height + 0.5 * cloud_thickness;
+		float t_l = rd.y > 0.01 ? (y_mid_low - cam.y) / rd.y : 30000.0;
+		t_l = clamp(t_l, 0.0, 30000.0);
+		vec3 pl = cam + rd * t_l;
+		float sy = max(sun_dir.y, 0.05);
+		vec2 pm = pl.xz + sun_dir.xz * (max(cloud_mid_height - pl.y, 0.0) / sy);
+		float tau_m = wc_mid_cover(pm) * cloud_mid_tau / max(sun_dir.y, 0.1);
+		sun_low *= 1.0 / (1.0 + 0.75 * 0.15 * tau_m);
+	}
 	float d_low;
-	vec4 low = march_cumulus(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, steps, jitter, p_pixel, d_low);
+	vec4 low = march_cumulus(cam, rd, sun_dir, sun_low, ambient_top, ambient_bottom, steps, jitter, p_pixel, d_low);
 	float d_mid;
 	vec4 mid = march_altocumulus(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_mid);
 	float d_high;
@@ -809,7 +849,17 @@ void sky() {
 		float r_c = atmo_radii.x + cloud_base_height;
 		vec3 sun_radiance = e0 * atmo_light_transmittance(r_c, l0.y) * cloud_brightness;
 		vec3 t_up;
-		vec3 ambient_top = atmo_scatter(cloud_base_height, UP, l0, e0, l1, e1, 1e12, 8, 0.5, 0, POSITION.xz, 0.0, 0.0, t_up).rgb * cloud_brightness;
+		// The sky light over a cloud: the mean over the upper hemisphere, not the zenith alone (the zenith is the
+		// sky's darkest part; a cloud in another's shadow at a low sun is lit by the bright sky toward the horizon
+		// and the sun, and came out darker than the sky behind it). Zenith plus two reads 30 degrees up, on the
+		// sun's side and away from it.
+		vec2 sun_h = normalize(l0.xz + vec2(1e-4, 0.0));
+		sun_h = vec2(0.866 * sun_h.x - 0.5 * sun_h.y, 0.5 * sun_h.x + 0.866 * sun_h.y); // 30 degrees off the sun: its glow, not its aureole
+		vec3 d_to = vec3(sun_h.x * 0.866, 0.5, sun_h.y * 0.866);
+		vec3 d_away = vec3(-d_to.x, 0.5, -d_to.z);
+		vec3 ambient_top = (0.4 * atmo_scatter(cloud_base_height, UP, l0, e0, l1, e1, 1e12, 8, 0.5, 0, POSITION.xz, 0.0, 0.0, t_up).rgb
+				+ 0.3 * atmo_scatter(cloud_base_height, d_to, l0, e0, l1, e1, 1e12, 6, 0.5, 0, POSITION.xz, 0.0, 0.0, t_up).rgb
+				+ 0.3 * atmo_scatter(cloud_base_height, d_away, l0, e0, l1, e1, 1e12, 6, 0.5, 0, POSITION.xz, 0.0, 0.0, t_up).rgb) * cloud_brightness;
 		if (airglow_enabled && atmo_driven) {
 			// The airglow over the clouds lights their tops (its mean over the sky, about twice the zenith's).
 			ambient_top += vec3(0.6, 1.15, 0.75) * (2.0 * airglow_luminance * star_energy_per_lux * cloud_brightness);
@@ -871,7 +921,15 @@ void sky() {
 	if (AT_HALF_RES_PASS) {
 		float sun_fade = 1.0 - clamp(1.0 - exp(sun_dir.y), 0.0, 1.0);
 		vec3 sun_radiance = LIGHT0_COLOR * light_energy * air_extinction(sun_dir, sun_fade) * cloud_brightness;
-		vec3 ambient_top = atmosphere(UP, sun_dir, light_energy, LIGHT0_COLOR, LIGHT0_SIZE, false) * cloud_brightness;
+		// The mean over the upper hemisphere, as the scattering model's branch: zenith plus 30 degrees up on the sun's
+		// side and away from it.
+		vec2 sun_h = normalize(sun_dir.xz + vec2(1e-4, 0.0));
+		sun_h = vec2(0.866 * sun_h.x - 0.5 * sun_h.y, 0.5 * sun_h.x + 0.866 * sun_h.y); // 30 degrees off the sun: its glow, not its aureole
+		vec3 d_to = vec3(sun_h.x * 0.866, 0.5, sun_h.y * 0.866);
+		vec3 d_away = vec3(-d_to.x, 0.5, -d_to.z);
+		vec3 ambient_top = (0.4 * atmosphere(UP, sun_dir, light_energy, LIGHT0_COLOR, LIGHT0_SIZE, false)
+				+ 0.3 * atmosphere(d_to, sun_dir, light_energy, LIGHT0_COLOR, LIGHT0_SIZE, false)
+				+ 0.3 * atmosphere(d_away, sun_dir, light_energy, LIGHT0_COLOR, LIGHT0_SIZE, false)) * cloud_brightness;
 		// From below: the sky's light off the ground (its colour as albedo), lit by the sun where clear.
 		vec3 ambient_bottom = ambient_top * 0.5 + ground_color.rgb * sun_radiance * max(sun_dir.y, 0.0) * (1.0 - 0.7 * cloud_cover) / PI;
 		float jitter = AT_CUBEMAP_PASS ? 0.5 : march_jitter(FRAGCOORD.xy, 0.0);
