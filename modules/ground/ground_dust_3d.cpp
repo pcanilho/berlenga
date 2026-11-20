@@ -35,6 +35,8 @@
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
+#include "scene/3d/camera_3d.h"
+#include "scene/main/viewport.h"
 #include "scene/3d/fog_volume.h"
 #include "core/math/random_pcg.h"
 #include "scene/resources/material.h"
@@ -153,6 +155,12 @@ Vector3 GroundDust3D::_follow_position() const {
 		const Node3D *n = Object::cast_to<Node3D>(get_node_or_null(follow_target));
 		if (n) {
 			return n->get_global_position();
+		}
+	}
+	// As the ground surface and the weather: the viewport's current camera, else this node.
+	if (is_inside_tree() && get_viewport()) {
+		if (const Camera3D *cam = get_viewport()->get_camera_3d()) {
+			return cam->get_global_position();
 		}
 	}
 	return is_inside_tree() ? get_global_position() : Vector3();
