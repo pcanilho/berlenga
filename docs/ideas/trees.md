@@ -2544,6 +2544,26 @@ As built:
 - Not yet: the snapped stems' tops lie as whole trees from the butt (the stump and the top are separate variants);
   plates do not settle into mounds over decades beyond the existing class 3 slump.
 
+### 5an. Old-growth beech (20 Nov; Paulo's pick)
+
+A primeval beech forest, after Uholka-Shyrokyi Luh in the Ukrainian Carpathians, the largest in Europe (WSL inventory,
+Brandli and Commarmot 2013, 314 plots: 97% beech; 435 living trees a hectare from 6 cm; 582 m3/ha living, 163 m3/ha
+dead, lying to standing about 5 to 1; about ten trees a hectare of 80 cm and more, the biggest beech 140 cm; 150 habitat
+trees a hectare, 35% of the living; beeches to nearly 500 years; mainly three-layered, most gaps no larger than one
+canopy tree's crown. Hobi et al. 2015, gaps from satellite: 98% under 200 m2, few large disturbances).
+- `STAND_OLD_GROWTH_BEECH` (18). Gaps: patches of 22 m scale, cover 0.3 (about a tenth of the ground clear; the patch
+  noise's bell makes small covers rarer than they read). In them, in order: a fallen giant (log, decay 2-4, half with
+  root plates), now and then a broken giant (snag), gap poles and the seedlings crowding in (beech, some sycamore).
+- Between the gaps: veteran giants about 24 m apart (6 a hectare on the bench plot), the canopy (a third of it habitat
+  trees with cavities, rot and tinder fungus), a little sycamore, and the pole layer under it (beech waits decades in
+  its own shade). Then the stand's usual saplings, snags and logs, logs at 1.0 against snags 0.3 (a reserve's 0.4 and
+  0.25): the bench counts 36 lying to 13 standing.
+- Ages per band (`old_growth_band`): giants 2.6-3.6x the beech's years capped at 180 (past about 200 the generator's
+  beech dieback leaves a few shoots on a bare head), veteran 0.6-1.0, limb breakage 1.5-2.5, grown at 0.75 of the
+  stand's shade so some crowns spread wide (radius to 9 m), placed 1.1-1.3x; poles 0.45-0.75x; canopy 1.2-2.0x.
+  The stand-grown beech stops changing shape past about 60 years (canopy and giants at the stand's shade came out
+  identical), hence the light and the scale.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
