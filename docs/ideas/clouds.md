@@ -304,3 +304,19 @@ Round 3 follow-ups (docs review of 118c13bc):
    clouds sit in mid life as before. While evolving, more cells hold a cloud (2.9 times the cover, 2.2 frozen) so
    the cover's share of sky holds (shadow share by cover 0.2 to 1.0: 4/9/25/71/94%). Raster and PT match.
    Bench: weather `--cloud-time=S` strips.
+
+3. **Sunshine Clouds 2 compared** (Bonkahe, MIT, v2.7, a Godot compositor compute effect; source read). What it
+   does and what we take:
+   - Shape: Perlin-Worley coverage remap with a painted height gradient, curl-noise domain advection iterated
+     three times (stronger low in the cloud), and a wind sweep that drags the lowest part downwind. We already
+     warp by the detail's own billows and curl; the base sweep runs against the shear (bases lag upwind in
+     reality), so not taken.
+   - Lighting: Beer's law with an exponentiated HG, a powder term pow(density, k) and a "sun up" weight that
+     treats the air above a height as cloud when the sun is low. Stylisation; Nubis Cubed's multiple-scattering
+     probability field (which we use) replaced powder for the same dark edges. Not taken.
+   - Ambient: one density read above the sample (as ours since round 2, credited there).
+   - Worth taking, both new capabilities, not look tweaks: **point lights in the clouds** (each point light marched
+     three steps through the cloud toward it, HG phase, falloff to a radius) for fires, city glow and flares
+     under a deck at night; and **density effectors** (spheres that add or remove density with a falloff) for
+     smoke plumes feeding a cloud or a blast punching a hole. Both cross systems (fire, lightning, the weather
+     map's contract), so they go to Paulo as a choice first.
