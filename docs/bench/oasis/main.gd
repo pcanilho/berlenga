@@ -168,10 +168,11 @@ func _ready() -> void:
 			var la := _arg("--lag-at=", "-120,44").split(",")
 			var lx := float(la[0])
 			var lz := float(la[1])
+			# --lag-eye=x,y,z --lag-target=x,y,z: an exact framing (y above the ground there) instead of the search.
 			var yaw := deg_to_rad(float(_arg("--lag-yaw=", "0")))
 			var fwd := Vector3(-sin(yaw), 0.0, -cos(yaw))
 			var ground := func(x: float, z: float) -> float: return float(gen.get_height(Vector3(x, 0.0, z))) if gen != null else origin.y
-			var sr := float(_arg("--lag-search=", "60"))
+			var sr := float(_arg("--lag-search=", "0"))
 			if sr > 0.0:
 				# The lag lies on flat, low interdune floors (thin sand, ground within ~10 degrees of level): the flattest
 				# low spot within sr m of --lag-at, flat over the 6 m ahead too.
@@ -207,6 +208,12 @@ func _ready() -> void:
 			var eye := Vector3(lx, ground.call(lx, lz) + float(_arg("--lag-h=", "1.5")), lz)
 			var tgt := eye + fwd * float(_arg("--lag-look=", "4"))
 			tgt.y = ground.call(tgt.x, tgt.z)
+			if _arg("--lag-eye=", "") != "":
+				var ea := _arg("--lag-eye=", "").split(",")
+				var ta := _arg("--lag-target=", "0,0,0").split(",")
+				eye = Vector3(float(ea[0]), float(ground.call(float(ea[0]), float(ea[2]))) + float(ea[1]), float(ea[2]))
+				tgt = Vector3(float(ta[0]), float(ground.call(float(ta[0]), float(ta[2]))) + float(ta[1]), float(ta[2]))
+				yaw = atan2(-(tgt - eye).x, -(tgt - eye).z)
 			cam.fov = float(_arg("--fov=", "50"))
 			cam.look_at_from_position(eye, tgt)
 			for n in get_children():
