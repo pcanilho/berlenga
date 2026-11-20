@@ -59,7 +59,15 @@ class VegetationMist3D : public Node3D {
 	struct Cell {
 		Vector2i key;
 		Node3D *emitter = nullptr;
+		// What the emitter was last given: each frame sets only what changed (a property set goes through the
+		// emitter's string lookup, and hundreds of cells ran seven of them a frame).
+		bool on = false;
+		bool shaped = false; // size, temperature and couple rate set for this depth and cell
+		Vector3 position = Vector3(Math::INF, 0, 0);
+		Vector3 velocity = Vector3(Math::INF, 0, 0);
+		float smoke = -1.0f;
 	};
+	void _cell_off(Cell &p_cell);
 	LocalVector<Cell> cells;
 	HashMap<Vector2i, Vector2> ground_cache; // x: height, y: propensity.
 	float level = 0.0f;
@@ -97,7 +105,12 @@ public:
 	float get_mist_range() const { return mist_range; }
 	void set_mist_cell(float p_v);
 	float get_mist_cell() const { return mist_cell; }
-	void set_mist_depth(float p_v) { mist_depth = MAX(p_v, 0.1f); }
+	void set_mist_depth(float p_v) {
+		mist_depth = MAX(p_v, 0.1f);
+		for (Cell &c : cells) {
+			c.shaped = false;
+		}
+	}
 	float get_mist_depth() const { return mist_depth; }
 	void set_extinction(float p_v);
 	float get_extinction() const { return extinction; }

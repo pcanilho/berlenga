@@ -271,7 +271,7 @@ void VegetationMist3D::_step(float p_delta) {
 	const Node3D *t = _target();
 	if (!enabled || !t) {
 		for (Cell &c : cells) {
-			c.emitter->set("enabled", false);
+			_cell_off(c);
 		}
 		active_cells = 0;
 		return;
@@ -297,7 +297,7 @@ void VegetationMist3D::_step(float p_delta) {
 			// A round patch: corner cells past the range stay off.
 			const Vector2 off = Vector2((key.x + 0.5f) * mist_cell - centre.x, (key.y + 0.5f) * mist_cell - centre.z);
 			if (off.length() > mist_range + mist_cell * 0.5f) {
-				c.emitter->set("enabled", false);
+				_cell_off(c);
 				continue;
 			}
 			Vector2 g = _ground_cell(key);
@@ -324,15 +324,39 @@ void VegetationMist3D::_step(float p_delta) {
 			// wants it and refills what a walker stirred away. A tiny level keeps it coupled, so the
 			// mist clears when the level drops instead of lingering.
 			c.key = key;
-			c.emitter->set("enabled", true);
-			c.emitter->set_global_position(Vector3((key.x + 0.5f) * mist_cell, g.x + mist_depth * 0.3f, (key.y + 0.5f) * mist_cell));
-			c.emitter->set("size", Vector3(mist_cell, mist_depth * 0.6f, mist_cell));
-			c.emitter->set("smoke", MAX(smoke, 0.0005f));
-			c.emitter->set("temperature", 0.0f);
-			c.emitter->set("velocity", wind);
-			c.emitter->set("couple_rate", 0.5f);
+			if (!c.on) {
+				c.emitter->set(SNAME("enabled"), true);
+				c.on = true;
+			}
+			const Vector3 pos((key.x + 0.5f) * mist_cell, g.x + mist_depth * 0.3f, (key.y + 0.5f) * mist_cell);
+			if (pos != c.position) {
+				c.emitter->set_global_position(pos);
+				c.position = pos;
+			}
+			if (!c.shaped) {
+				c.emitter->set(SNAME("size"), Vector3(mist_cell, mist_depth * 0.6f, mist_cell));
+				c.emitter->set(SNAME("temperature"), 0.0f);
+				c.emitter->set(SNAME("couple_rate"), 0.5f);
+				c.shaped = true;
+			}
+			const float sm = MAX(smoke, 0.0005f);
+			if (sm != c.smoke) {
+				c.emitter->set(SNAME("smoke"), sm);
+				c.smoke = sm;
+			}
+			if (wind != c.velocity) {
+				c.emitter->set(SNAME("velocity"), wind);
+				c.velocity = wind;
+			}
 			active_cells += smoke > 0.01f ? 1 : 0;
 		}
+	}
+}
+
+void VegetationMist3D::_cell_off(Cell &p_cell) {
+	if (p_cell.on) {
+		p_cell.emitter->set(SNAME("enabled"), false);
+		p_cell.on = false;
 	}
 }
 
@@ -355,6 +379,9 @@ void VegetationMist3D::set_mist_range(float p_v) {
 void VegetationMist3D::set_mist_cell(float p_v) {
 	mist_cell = CLAMP(p_v, 1.0f, 64.0f);
 	ground_cache.clear();
+	for (Cell &c : cells) {
+		c.shaped = false;
+	}
 	_apply_flow_settings();
 	_resize_pool();
 }
