@@ -6180,7 +6180,7 @@ func _hut_icicles() -> void:
 	# --hut-icicles (with --hut, winter): snow on the hut's roof (its materials take the weather's snow) and a week of
 	# icicles (SnowIcicles3D, snow 5f68879a) along its longest eave, the lip found from the roof mesh; the camera
 	# --ice-dist (1.55) m out from the eave, a little above the icicles' middle, on the longest fused pair, the hut's
-	# dark wall behind. --ice-days (7), --ice-fov (26), --ice-up (0.4 m over the icicles' middle), --ice-look-up (0).
+	# dark wall behind. --ice-days (7), --ice-fov (26), --ice-up (0.4 m over the icicles' middle), --ice-look-up (0), --ice-snow (40 mm of water on the roof at least).
 	var root := get_node_or_null("Hut") as Node3D
 	if root == null or not ClassDB.class_exists("SnowIcicles3D"):
 		_log("hut icicles: no hut or no SnowIcicles3D")
@@ -6290,7 +6290,14 @@ func _hut_icicles() -> void:
 	c3.global_position = mid + wout * float(args.get("ice-dist", "1.55")) + Vector3.UP * float(args.get("ice-up", "0.4")) - wt * 0.4
 	c3.look_at(mid + Vector3.UP * float(args.get("ice-look-up", "0")))
 	c3.fov = float(args.get("ice-fov", "26"))
-	_log("hut icicles: %d hut surfaces take the snow, snow %.2f m water at the hut" % [snowed, snow.get_world_swe_at(mid) if snow != null and snow.has_method("get_world_swe_at") else -1.0])
+	var swe0: float = snow.get_world_swe_at(mid) if snow != null and snow.has_method("get_world_swe_at") else -1.0
+	var top_up := float(args.get("ice-snow", "40"))
+	if snow != null and swe0 >= 0.0 and swe0 < top_up:
+		# --ice-snow=MM (40): a winter's snow on the roof and round the hut where the climate left less (low ground).
+		snow.add_snow(top_up - swe0, 120.0)
+		for i in 4:
+			await get_tree().process_frame
+	_log("hut icicles: %d hut surfaces take the snow, snow %.0f mm water at the hut (was %.0f)" % [snowed, snow.get_world_swe_at(mid) if snow != null and snow.has_method("get_world_swe_at") else -1.0, swe0])
 	_log("hut icicles: eave side %d, %.1f m long at %.2f m, %d sites, longest %.2f m, %.2f kg; hero pair %d (%.2f m) at %s; cam %s" % [best_side, best_len, eave_y, n, float(ice.call("get_longest")), float(ice.call("get_ice_mass")), bk, bl, str(mid), str(c3.global_position)])
 
 
