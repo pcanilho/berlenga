@@ -180,6 +180,17 @@
 				It also gives [code]vegetation_far(world_pos, albedo, camera_pos)[/code]: call it after [code]grass_ground()[/code] with [code]CAMERA_POSITION_WORLD[/code]. Where plants with a [member PlantSpecies.far_color] grew, it blends their colour into the ground as the plant shader thins them away with distance, with the same curve: none up to 35% of the species' range, all of it at the range. It reads the [code]vegetation_far_map[/code], [code]vegetation_far_rect[/code] and [code]vegetation_far_range[/code] global shader parameters, published after each [method populate] that places such plants.
 			</description>
 		</method>
+		<method name="make_game_trails" qualifiers="static">
+			<return type="Array" />
+			<param index="0" name="data_map" type="Node" />
+			<param index="1" name="area" type="Rect2" />
+			<param index="2" name="goals" type="PackedVector3Array" />
+			<param index="3" name="options" type="Dictionary" default="{}" />
+			<description>
+				A network of game trails linking [param goals] (the places animals use: cover, feeding lawns, water) over the [TerrainDataMap3D] [param data_map] within [param area] (world xz). Every pair of goals within reach is routed by least cost, nearest pairs first; slope, water and a seeded roughness raise a cell's cost and traffic already routed over it lowers it, so routes merge into a branching network (the active walker model of trail formation). Returns worn paths in the form [member paths] and [member GrassField3D.paths] take: Dictionaries of [code]points[/code], [code]width[/code], [code]passes[/code] a year and [code]kind[/code] ([code]"game_trail"[/code]), one per stretch of equal traffic.
+				[param options]: [code]cell[/code] (grid metres, 2), [code]reach[/code] (furthest goals linked, 250 m), [code]passes[/code] (a year along one link, 1500), [code]width[/code] (tread, 0.35 m), [code]attraction[/code] (0..0.9, how much cheaper worn ground is, 0.6), [code]max_slope_deg[/code] (40), [code]ford_depth[/code] (deepest water waded, 0.4 m), [code]roughness[/code] (0.35), [code]seed[/code] (1).
+			</description>
+		</method>
 		<method name="get_crowns_near" qualifiers="const">
 			<return type="Array" />
 			<param index="0" name="position" type="Vector3" />

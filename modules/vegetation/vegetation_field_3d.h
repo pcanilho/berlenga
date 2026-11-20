@@ -645,6 +645,8 @@ protected:
 
 public:
 	static String get_floor_shader_code();
+	// Game trails (vegetation_trails.cpp): a worn-path network (paths' Dictionaries) linking p_goals over the map.
+	static Array make_game_trails(Node *p_data_map, const Rect2 &p_area, const PackedVector3Array &p_goals, const Dictionary &p_options = Dictionary());
 	void set_forest_floor_enabled(bool p_enabled);
 	bool is_forest_floor_enabled() const { return forest_floor_enabled; }
 	void set_biome(const Ref<Biome> &p_biome);

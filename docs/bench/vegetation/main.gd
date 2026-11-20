@@ -26,6 +26,7 @@ extends Node3D
 #                    same costs as --floor and with --out saves the view.
 #   --burn=live      quick check: a streamed field of one species recovering over a year; a scar placed after the
 #                    tiles stand, aged, then removed (WorldFire.burn_changed, no rebuild): gone, half back, whole.
+#   --trails         quick check: the game trail network (VegetationField3D.make_game_trails) over the valley, printed as VEG_TRAILS
 #   --stand=live     quick check: a streamed field of succession stages (meta succession_age / succession_kind); a
 #                    windthrow added after the tiles stand, aged a year (no re-place), then past the pioneer stage.
 
@@ -46,6 +47,7 @@ var far_match := 0 # --far-match: the far-volume view without volume, 4 m up, on
 var floor_view := 0 # --floor: 1 with the small species' pixel reach, 2 without (--floor=off).
 var desert_view := 0 # --desert: 1 with make_desert's plants on a sand sea, 2 the same view without (--desert=off).
 var stand_live := false # --stand=live
+var trails_only := false # --trails
 var burn_view := 0 # --burn: 1 with burn scars and make_burn's heath set, 2 the same heath unburnt (--burn=off).
 const BURN_SCARS := [[0.05, -60.0], [0.6, -25.0], [2.5, 10.0], [5.0, 45.0]] # Years since, and the scar's centre z (x 60, 60 x 30 m).
 var mushroom_view := 0 # --mushrooms: 1 with the mushrooms, 2 the same view without them (--mushrooms=off).
@@ -100,6 +102,8 @@ func _ready() -> void:
 		elif a.begins_with("--floor"):
 			floor_view = 2 if a == "--floor=off" else 1
 			size = 128.0
+		elif a == "--trails":
+			trails_only = true
 		elif a == "--stand=live":
 			stand_live = true
 		elif a.begins_with("--burn"):
@@ -275,6 +279,10 @@ func _physics_process(_d: float) -> void:
 		return
 	if stand_live:
 		await _stand_live()
+		return
+	if trails_only:
+		_trails_check()
+		get_tree().quit(1 if fails > 0 else 0)
 		return
 	if burn_view > 0:
 		await _burn_view()
@@ -1080,6 +1088,40 @@ func _beaver_check() -> void:
 
 # Deer browsing (RULE_BROWSE, WorldStand.browse_at): a 0.9 browse disc swaps the full bramble for the bitten one and
 # brings the deer lawn; round it the bramble is whole and no lawn grows. make_floor carries the browse response.
+# Game trails (VegetationField3D.make_game_trails, docs/ideas/vegetation.md "Game trails"): goals on both sides of the
+# river and below the cliff band, linked over the map. No trail through deep water or up ground over 40 degrees; the
+# links merge (the network shorter than its links laid end to end); shared stretches carry the summed passes; the same
+# seed gives the same network.
+func _trails_check() -> void:
+	var goals := PackedVector3Array([Vector3(-40, 0, -30), Vector3(-35, 0, 35), Vector3(30, 0, -35), Vector3(35, 0, 30), Vector3(-10, 0, 70), Vector3(20, 0, 5)])
+	var area := Rect2(-SIZE * 0.5, -SIZE * 0.5, SIZE, SIZE)
+	var t0 := Time.get_ticks_usec()
+	var trails: Array = VegetationField3D.make_game_trails(dm, area, goals, {"seed": 3})
+	var ms := (Time.get_ticks_usec() - t0) / 1000.0
+	var bad := 0
+	var length := 0.0
+	var top := 0.0
+	for t in trails:
+		var pts: PackedVector3Array = t["points"]
+		top = maxf(top, t["passes"])
+		for k in pts.size():
+			if dm.get_water_depth_at(pts[k]) > 0.45 or dm.get_slope_at(pts[k]) > deg_to_rad(42.0):
+				bad += 1
+			if k > 0:
+				length += Vector2(pts[k].x - pts[k - 1].x, pts[k].z - pts[k - 1].z).length()
+	var links := 0.0
+	for i in goals.size():
+		for j in range(i + 1, goals.size()):
+			var d := Vector2(goals[i].x - goals[j].x, goals[i].z - goals[j].z).length()
+			if d <= 250.0:
+				links += d
+	var again: Array = VegetationField3D.make_game_trails(dm, area, goals, {"seed": 3})
+	var same := again.size() == trails.size()
+	for i in mini(again.size(), trails.size()):
+		same = same and again[i]["points"] == trails[i]["points"]
+	_check("game trails: none through deep water or up steep ground, merged (network %.0f m vs links %.0f m), shared stretches busier (%.0f passes), repeatable (%.0f ms)" % [length, links, top, ms],
+			trails.size() > 3 and bad == 0 and length < 0.6 * links and top >= 3000.0 and same, [trails.size(), bad, length, links, top, same])
+
 func _browse_check() -> void:
 	var st: WorldStand = WorldContracts.get_stand()
 	st.clear_disturbances()
@@ -1910,6 +1952,7 @@ func _checks() -> void:
 	_edge_check()
 	_beaver_check()
 	_browse_check()
+	_trails_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []
