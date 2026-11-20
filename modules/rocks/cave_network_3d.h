@@ -197,6 +197,7 @@ private:
 		float chamber_area = 0.0f, shaft_area = 0.0f;
 		float spout = 0.0f; // air speed up the blowhole, m/s
 		bool sealed = false;
+		float covered = 0.0f; // along the axis (m): where rock first closes over the water (the arch)
 	};
 	static constexpr float SURGE_HISTORY_STEP = 0.05f;
 	LocalVector<SeaSurge> surges;
@@ -337,6 +338,7 @@ public:
 	void set_surge_damping(real_t p_metres) { surge_damping = MAX(p_metres, real_t(1.0)); surges_dirty = true; }
 	real_t get_surge_damping() const { return surge_damping; }
 	Dictionary get_sea_cave_water(int p_cave) const;
+	PackedFloat32Array get_water_clip_capsules() const;
 	Dictionary get_blowhole_spout(int p_cave) const;
 	void step_sea_surge(double p_delta) { _surge_update(p_delta); }
 	float contract_water_height_at(const Vector3 &p_position) const override;

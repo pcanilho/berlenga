@@ -12,6 +12,7 @@
 		[PhysXWaterWake3D] nodes on moving bodies draw their wakes and foam on the surface (up to four), and [method sample_height] includes them.
 		Both simulation grids are centered on the node's global position (plus the [member surface_mesh] footprint's center), fixed when the node enters the tree or a property changes. The node's rotation and scale are not applied to the simulation, so keep it unrotated and unscaled.
 		Only runs in an actual running game, never in the editor -- placing or moving the node in the Inspector does not simulate.
+		Where another surface owns the water, the sea cuts itself out (Crest's clip surface, in world space so the path tracer sees it too): every node in the [code]water_clippers[/code] group with a [code]get_water_clip_capsules()[/code] method gives capsules (eight floats each: [code]a.x, a.z, b.x, b.z[/code], the radius at a and at b, negative at a for a flat end, and the other surface's weight at a and at b). Up to 32, the nearest the camera first, are read every half second. Inside one the sea fades out by the weight: raster blends by alpha, the path tracer keeps the surface per sample (stochastic transparency). [code]CaveNetwork3D[/code] uses it along its sea caves' passages, where [code]PhysXSeaCaveWater3D[/code] draws the water.
 	</description>
 	<tutorials>
 	</tutorials>

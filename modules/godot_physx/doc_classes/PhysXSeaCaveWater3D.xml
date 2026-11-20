@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="PhysXSeaCaveWater3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
 	<brief_description>
-		Draws the sea inside sea caves with the river's water surface.
+		Draws the sea inside sea caves, with the waves that reflect off the walls.
 	</brief_description>
 	<description>
-		[code]CaveNetwork3D[/code] carries the sea into each sea cave as a long wave along the passage (its surge, which answers the water contract there). This node draws that water: one ribbon per sea cave along the passage's line, each station at the water's level and half width with its current, from [code]CaveNetwork3D.get_sea_cave_water()[/code], rebuilt every frame. The surface is [PhysXRiver3D]'s (clear water, sky and sun reflections, white water where the current runs fast, and the path tracer's refracting medium). It keeps no water state of its own. A [code]CaveNetwork3D[/code] with sea caves makes one for itself while [code]sea_surge[/code] is on.
+		[code]CaveNetwork3D[/code] carries the sea into each sea cave as a long wave along the passage (its surge, which answers the water contract there). This node draws that water: one surface per sea cave along the passage's line, from the arch in, each row at the water's level and half width with its current, from [code]CaveNetwork3D.get_sea_cave_water()[/code], rebuilt every frame. The surface is [PhysXRiver3D]'s (clear water, sky and sun reflections, white water, and the path tracer's refracting medium). The ocean ([PhysXWaterSurface3D]) cuts its own surface out along the passage ([code]CaveNetwork3D.get_water_clip_capsules()[/code]); the two cross-fade over [member fade_length] in from the arch.
+		On the surface run the short waves that come in at the mouth, as Water Surface Wavelets (Jeschke et al. 2018): an amplitude per place and direction, carried at the waves' group speed and by the current, mirrored off the walls and the back of the cave (keeping [member wall_reflection] of their height), fading over [member wave_decay_time], and drawn as real geometry with a shared wave profile (waves 0.6 to 4 m long). Steep faces where they pile up break white. A [code]CaveNetwork3D[/code] with sea caves makes one of these for itself while [code]sea_surge[/code] is on.
 	</description>
 	<tutorials>
+		<link title="Water Surface Wavelets (Jeschke, Skrivan, Mueller-Fischer, Chentanez, Macklin, Wojtan 2018)">https://visualcomputing.ist.ac.at/publications/2018/WSW/</link>
 	</tutorials>
 	<methods>
 		<method name="get_ribbon_count" qualifiers="const">
@@ -18,13 +20,28 @@
 		<method name="get_water_material" qualifiers="const">
 			<return type="ShaderMaterial" />
 			<description>
-				The surface's material (the river's shader), shared by every ribbon.
+				The surface's material (the river's shader), shared by every sea cave.
+			</description>
+		</method>
+		<method name="get_wave_rms" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="cave" type="int" />
+			<description>
+				The short waves' rms height over a sea cave's surface, in metres (0 without [member wavelets]).
 			</description>
 		</method>
 		<method name="update_now">
 			<return type="void" />
+			<param index="0" name="delta" type="float" default="0.0" />
 			<description>
-				Rebuilds the surfaces from the network now. It does so every frame; this is for tests and stills.
+				Rebuilds the surfaces from the network now, stepping the waves [param delta] seconds. It does so every frame; this is for tests and stills.
+			</description>
+		</method>
+		<method name="warm_up">
+			<return type="void" />
+			<param index="0" name="seconds" type="float" />
+			<description>
+				Steps the waves [param seconds] without drawing in between, then builds the surfaces once. For stills: the waves take about a minute to run a cave and back.
 			</description>
 		</method>
 	</methods>
@@ -32,11 +49,32 @@
 		<member name="cave_network" type="NodePath" setter="set_cave_network" getter="get_cave_network" default="NodePath(&quot;&quot;)">
 			The [code]CaveNetwork3D[/code] whose sea caves are drawn.
 		</member>
-		<member name="lanes" type="int" setter="set_lanes" getter="get_lanes" default="9">
+		<member name="fade_length" type="float" setter="set_fade_length" getter="get_fade_length" default="4.0">
+			How far in from the arch, in metres, the ocean's surface hands over to this one. Raster blends the two; the path tracer picks one surface per sample (stochastic transparency), which its samples average.
+		</member>
+		<member name="lanes" type="int" setter="set_lanes" getter="get_lanes" default="17">
 			Vertices across the passage.
+		</member>
+		<member name="station_step" type="float" setter="set_station_step" getter="get_station_step" default="0.25">
+			Metres between rows of vertices along the passage.
 		</member>
 		<member name="wall_margin" type="float" setter="set_wall_margin" getter="get_wall_margin" default="0.25">
 			How far the surface runs past the passage's half width into the walls, in metres, so no gap shows at the rock.
+		</member>
+		<member name="wall_reflection" type="float" setter="set_wall_reflection" getter="get_wall_reflection" default="0.85">
+			The share of a wave's height kept when it reflects off a wall or the back of the cave (rough rock scatters the rest).
+		</member>
+		<member name="wave_decay_time" type="float" setter="set_wave_decay_time" getter="get_wave_decay_time" default="12.0">
+			Seconds for the short waves to lose 1/e of their height (friction, breaking on the rock).
+		</member>
+		<member name="wave_inflow" type="float" setter="set_wave_inflow" getter="get_wave_inflow" default="-1.0">
+			The rms height, in metres, of the short waves coming in at the mouth. Below 0 it follows the sea there: its rms height times [member wave_inflow_share].
+		</member>
+		<member name="wave_inflow_share" type="float" setter="set_wave_inflow_share" getter="get_wave_inflow_share" default="0.5">
+			The share of the sea's rms height at the mouth that comes in as short waves (the rest is the surge's long wave).
+		</member>
+		<member name="wavelets" type="bool" setter="set_wavelets" getter="get_wavelets" default="true">
+			The short waves on the surface. Off, it is the surge's level alone.
 		</member>
 		<member name="white_water_speed" type="float" setter="set_white_water_speed" getter="get_white_water_speed" default="1.5">
 			The current, in m/s, where white water starts. It is full at twice this speed.

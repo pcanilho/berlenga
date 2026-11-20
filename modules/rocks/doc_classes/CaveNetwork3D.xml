@@ -127,7 +127,13 @@
 			<return type="Dictionary" />
 			<param index="0" name="cave" type="int" />
 			<description>
-				The sea inside a sea cave now, for drawing it: [code]points[/code] (the passage's line at the water's level, mouth first, the back chamber last), [code]half_widths[/code], [code]depths[/code] (m over the floor, 0 where dry), [code]flows[/code] (m/s into the cave, negative out), [code]mean_level[/code] (the sea at the mouth with the waves filtered out) and [code]sealed[/code] (a crest fills the passage to its roof somewhere). Empty for a cave that is not a sea cave or while [member sea_surge] is off.
+				The sea inside a sea cave now, for drawing it: [code]points[/code] (the passage's line at the water's level, mouth first, the back chamber last), [code]half_widths[/code], [code]depths[/code] (m over the floor, 0 where dry), [code]flows[/code] (m/s into the cave, negative out), [code]mean_level[/code] (the sea at the mouth with the waves filtered out), [code]sealed[/code] (a crest fills the passage to its roof somewhere), [code]along[/code] (each point's arc length from the first, m), [code]covered_from[/code] (the arc length where the rock first closes over the water: the arch; before it the passage is open to the sky and the sea's own surface goes on) and [code]wave_rms[/code] (the sea's rms height at the mouth over its mean, m). Empty for a cave that is not a sea cave or while [member sea_surge] is off.
+			</description>
+		</method>
+		<method name="get_water_clip_capsules" qualifiers="const">
+			<return type="PackedFloat32Array" />
+			<description>
+				Where the sea's own surface is cut because the sea caves' water surface draws the water there: eight floats per capsule along each sea cave's passage from its arch in, in world space: [code]a.x, a.z, b.x, b.z[/code], the radius at a and at b (negative at a for a cave's first capsule, which is cut flat there), and the cave surface's weight at a and at b (0 at the arch, 1 past its [code]fade_length[/code]; the two surfaces cross-fade between). The radius is the passage's half width plus 0.1 m, inside the cave surface's width, so the two overlap. The network is in the [code]water_clippers[/code] group, which [code]PhysXWaterSurface3D[/code] reads. Empty without a [method get_sea_water_node].
 			</description>
 		</method>
 		<method name="is_streaming" qualifiers="const">

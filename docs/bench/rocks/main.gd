@@ -30,7 +30,9 @@ extends Node3D
 #                         (--dist m upstream, 2.5); --no-streams turns cave_streams off
 #   --cave-view=rimstone  with --caves --cave-mesh: the busiest rimstone cascade from about --dist m (1.6), a lamp;
 #                         --pool-water=n live water on the n nearest pools (12), --no-pool-water none
-#   --no-sea-water        with --sea-caves --cave-mesh: the sea not drawn inside the caves (a before frame)
+#   --no-sea-water        with --sea-caves --cave-mesh: the sea not drawn inside the caves (a before frame);
+#                         --cave-waves=m the short waves' rms coming in at the mouth (default: from the sea),
+#                         --no-cave-waves the cave's water without them (the surge's level alone)
 #   --no-sea-mist         with --sea-caves --cave-mesh: no mist breathed out of the mouths; --mist-period=s its swell
 #                         period (run with --fixed-fps 60 and --settle=N for N frames of mist)
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
@@ -758,6 +760,9 @@ func _caves(cam: Camera3D) -> void:
 			net.rimstone_water = not args.has("no-pool-water")
 			net.sea_mist = not args.has("no-sea-mist")
 			net.sea_water = not args.has("no-sea-water")
+			if args.has("no-sea-clip"):
+				# The sea not cut along the passages (a diagnostic: the cave's surface over the sea's own).
+				net.ready.connect(func(): net.remove_from_group("water_clippers"))
 			net.cave_streams = not args.has("no-streams")
 			if args.has("mist-period"):
 				# The mist node is made on the network's first frames: set its swell period once it is there.
@@ -2448,7 +2453,21 @@ func _render_later() -> void:
 			var sw: Node = (c as CaveNetwork3D).get_sea_water_node()
 			var w: Dictionary = (c as CaveNetwork3D).get_sea_cave_water(0)
 			var pts: PackedVector3Array = w.get("points", PackedVector3Array())
-			print("sea cave water: %d stations, level at the mouth %s, %d drawn" % [pts.size(), str(pts[0]) if pts.size() > 0 else "-", sw.get_ribbon_count() if sw else -1])
+			var al: PackedFloat32Array = w.get("along", PackedFloat32Array())
+			if sw and args.has("hide-cave-surface"):
+				(sw as Node3D).visible = false
+			if sw:
+				# The short waves take about a minute to run the passage and back: warm them up before the still.
+				if args.has("cave-waves"):
+					sw.set("wave_inflow", float(args["cave-waves"]))
+				if args.has("no-cave-waves"):
+					sw.set("wavelets", false)
+				sw.warm_up(60.0)
+				print("sea cave waves: sea rms at the mouth %.3f m, short waves rms %.3f m over the cave" % [w.get("wave_rms", 0.0), sw.get_wave_rms(0)])
+				var hws: PackedFloat32Array = w.get("half_widths", PackedFloat32Array())
+				for k in range(0, pts.size(), 4):
+					print("  station %d at %.1f m: %s, half width %.2f" % [k, al[k] if k < al.size() else 0.0, str(pts[k]), hws[k] if k < hws.size() else 0.0])
+			print("sea cave water: %d stations over %.1f m, arch from %.1f m, level at the mouth %s, %d drawn, %d sea clip capsules" % [pts.size(), al[al.size() - 1] if al.size() > 0 else 0.0, w.get("covered_from", 0.0), str(pts[0]) if pts.size() > 0 else "-", sw.get_ribbon_count() if sw else -1, (c as CaveNetwork3D).get_water_clip_capsules().size() / 8])
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)

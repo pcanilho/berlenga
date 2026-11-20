@@ -3769,3 +3769,21 @@ Plan for the fork:
   surface, no state of its own; it overlaps the cut by the same margin so no gap shows.
 - Later, if the cave water should slosh and reflect: wave packets (Water Surface Wavelets) on that surface, the
   passage walls as reflectors, fed by the sea's waves at the mouth.
+
+Built (20 Nov, Paulo picked "also add wall-reflecting waves"):
+- The cut starts at the arch, not the mouth: CaveNetwork3D finds `covered_from`, the first point along the passage with
+  the ground over the arch's crown (+0.3 m). Before it the passage is open to the sky and the sea's own waves go on.
+- A hard cut at the arch showed a line where the sea's raster look (sky reflection) met the cave surface's. The two
+  now cross-fade over `fade_length` (4 m) in from the arch: raster blends by alpha (sea alpha x (1 - w), cave surface
+  alpha x w); the path tracer, which has no blending, keeps one surface per sample (stochastic transparency, Enderton
+  et al. 2010) over 2 mm cells of a PCG hash, which a pixel's jittered samples average. A dithered raster cross-fade
+  (LOD style) was tried first: without TAA it shows as stipple.
+- Wavelets on PhysXSeaCaveWater3D, on the CPU (a cave is small): a grid of 0.5 m along x 12 across (the passage's width
+  as -1..1, so it follows the walls) x 16 directions; semi-Lagrangian steps at the group speed of 1.5 m waves over the
+  local depth plus the surge's current; a back-trace that leaves the width or the back of the cave is mirrored there
+  (direction mirrored, wall_reflection 0.85 of the height kept); at the mouth the sea's short waves come in (rms =
+  the surge history's rms x wave_inflow_share 0.5, cos^2 spread round the passage); 2% angular diffusion a step;
+  decay over 12 s. Height = sum over directions of amplitude x the profile buffer (one periodic line, 51.2 m, waves
+  0.6 to 4 m with a Phillips k^-3 spectrum, deep-water dispersion over 4 m, unit variance), each direction offset by a
+  fixed random phase. Drawn as geometry (rows every 0.25 m, 17 lanes), so the path tracer has the real waves; steep
+  faces (slope > 0.35) break white.

@@ -41,6 +41,7 @@
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "core/math/face3.h"
+#include "core/math/geometry_2d.h"
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
@@ -333,6 +334,16 @@ uniform float swash_wave_height = 0.3;
 uniform float shore_rim_strength : hint_range(0.0, 1.0) = 0.8;
 // How much the waves run at the edge (0 still water, 1 a sea): the rim is the swash's foam, so a still pool has none.
 uniform float shore_wave_activity : hint_range(0.0, 1.0) = 1.0;
+
+// Water clip capsules (docs/ideas/water.md, "Sea-cave water"; Crest's clip surface, in world space so the
+// path tracer sees it too): the sea is cut where another surface owns the water, such as a sea cave's
+// passage. Per capsule: its axis (a.x, a.z, b.x, b.z); its radius at a and at b (a negative radius at a cuts
+// flat there instead of round: the arch, where the open sea goes on) and the other surface's weight at a and at
+// b, over which the two cross-fade by a dither (water_fade_noise). Filled from the "water_clippers" group by
+// PhysXWaterSurface3D.
+uniform int water_clip_count = 0;
+uniform vec4 water_clip_seg[32];
+uniform vec4 water_clip_radius[32];
 
 varying vec3 v_world_normal;
 varying float v_foam;
@@ -1720,7 +1731,37 @@ void vertex() {
 #endif
 }
 
+// How much another surface owns the water at the point (0: the sea's own), from the water clip capsules.
+float water_clip_weight(vec2 p) {
+	float w = 0.0;
+	for (int i = 0; i < water_clip_count; i++) {
+		vec4 sg = water_clip_seg[i];
+		vec2 ab = sg.zw - sg.xy;
+		float t = dot(p - sg.xy, ab) / max(dot(ab, ab), 1e-6);
+		vec4 r = water_clip_radius[i];
+		if (r.x < 0.0 && t < 0.0) {
+			continue;
+		}
+		t = clamp(t, 0.0, 1.0);
+		float rad = mix(abs(r.x), r.y, t);
+		vec2 d = p - (sg.xy + ab * t);
+		if (dot(d, d) < rad * rad) {
+			w = max(w, mix(r.z, r.w, t));
+		}
+	}
+	return w;
+}
+
 void fragment() {
+	// Where another surface owns the water (water_clip_weight): raster blends the two by alpha, the path tracer
+	// picks one surface per sample (its samples average the blend).
+	float clip_w = water_clip_count > 0 ? water_clip_weight(v_rest_xz) : 0.0;
+	bool clipped = clip_w > 0.0 && water_fade_noise(v_rest_xz) < clip_w;
+#if !defined(RT)
+	if (clip_w >= 1.0) {
+		discard;
+	}
+#endif
 	// Draw only the side of the surface facing the camera's side of the
 	// water: the top from above, the underside from below. The surface is
 	// transparent and double-sided, and its triangles blend in mesh order,
@@ -2109,7 +2150,7 @@ void fragment() {
 #if !defined(BREAKER_LIP)
 	// A lip is water wherever it is (the shore cut-out belongs to the swash film). It writes no alpha at
 	// all: an alpha-tested material is also cut by the any-hit pass, which does not see the lip's varyings.
-	ALPHA = smoothstep(0.0, soft, shore);
+	ALPHA = clipped ? 0.0 : smoothstep(0.0, soft, shore);
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #endif
 #else
@@ -2185,7 +2226,7 @@ void fragment() {
 	ROUGHNESS = 0.85;
 	SPECULAR = 0.25 * lit_w;
 	METALLIC = 0.0;
-	ALPHA = refl.a;
+	ALPHA = refl.a * (1.0 - clip_w);
 #endif
 #endif // UNDERWATER_SURFACE
 }
@@ -6688,6 +6729,7 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 				_update_mesh_offset();
 				_update_underwater();
 				_update_raster_reflections();
+				_update_water_clips(get_process_delta_time());
 			} else if (water_material.is_valid()) {
 				// The editor's view: the clear water still needs the light in the water.
 				const Viewport *vp = get_viewport();
@@ -6695,6 +6737,63 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 			}
 		} break;
 	}
+}
+
+// The sea cut where another surface owns the water (docs/ideas/water.md, "Sea-cave water"): every node in the
+// "water_clippers" group gives capsules as eight floats each: a.x, a.z, b.x, b.z (world space), the radius at a and
+// at b (negative at a: cut flat there) and the other surface's weight at a and at b (the cross-fade). Up to 32 reach
+// the shader, nearest the camera first.
+void PhysXWaterSurface3D::_update_water_clips(double p_delta) {
+	water_clip_poll -= p_delta;
+	if (water_clip_poll > 0.0 || water_material.is_null() || !is_inside_tree()) {
+		return;
+	}
+	water_clip_poll = 0.5;
+	struct Clip {
+		Vector4 seg;
+		Vector4 radius;
+		float dist = 0.0f;
+	};
+	const Viewport *vp = get_viewport();
+	const Camera3D *cam = vp ? vp->get_camera_3d() : nullptr;
+	const Vector2 eye = cam ? Vector2(cam->get_global_position().x, cam->get_global_position().z) : Vector2();
+	const Vector<Node *> nodes = get_tree()->get_nodes_in_group(SNAME("water_clippers"));
+	PackedFloat32Array all;
+	for (Node *n : nodes) {
+		if (n->has_method(SNAME("get_water_clip_capsules"))) {
+			all.append_array(PackedFloat32Array(n->call(SNAME("get_water_clip_capsules"))));
+		}
+	}
+	if (all == water_clip_last) {
+		return;
+	}
+	water_clip_last = all;
+	LocalVector<Clip> clips;
+	const int count = all.size() / 8;
+	for (int i = 0; i < count; i++) {
+		const float *v = all.ptr() + i * 8;
+		Clip c;
+		c.seg = Vector4(v[0], v[1], v[2], v[3]);
+		c.radius = Vector4(v[4], v[5], CLAMP(v[6], 0.0f, 1.0f), CLAMP(v[7], 0.0f, 1.0f));
+		c.dist = eye.distance_to(Geometry2D::get_closest_point_to_segment(eye, Vector2(v[0], v[1]), Vector2(v[2], v[3])));
+		clips.push_back(c);
+	}
+	struct ClipNearer {
+		bool operator()(const Clip &p_a, const Clip &p_b) const { return p_a.dist < p_b.dist; }
+	};
+	clips.sort_custom<ClipNearer>();
+	const int shown = MIN(int(clips.size()), 32);
+	PackedVector4Array segs;
+	PackedVector4Array radii;
+	segs.resize(32);
+	radii.resize(32);
+	for (int i = 0; i < shown; i++) {
+		segs.write[i] = clips[i].seg;
+		radii.write[i] = clips[i].radius;
+	}
+	water_material->set_shader_parameter(SNAME("water_clip_count"), shown);
+	water_material->set_shader_parameter(SNAME("water_clip_seg"), segs);
+	water_material->set_shader_parameter(SNAME("water_clip_radius"), radii);
 }
 
 void PhysXWaterSurface3D::_rebuild() {
