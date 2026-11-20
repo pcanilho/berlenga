@@ -600,7 +600,7 @@
     "KHR_materials_volume"
    ],
    "note": "",
-   "what": "raster refraction leaves a solid through its far side, not just the front face.",
+   "what": "raster refraction leaves a solid through its far side, not just the front face, filtered by the refracted footprint so thin curved ice and drops do not speckle.",
    "page": "materials",
    "title": "Materials",
    "topic": ""

@@ -21,7 +21,7 @@ summary: "Clearcoat, back lighting, thin-glass transmission, subsurface scatteri
 
   *Transmission: the spheres show through and the floor gets green-tinted light.*
 
-- **Raster refraction through solids** (`transmission_thickness`, glTF `KHR_materials_volume` thicknessFactor): raster refraction leaves a solid through its far side, not just the front face.
+- **Raster refraction through solids** (`transmission_thickness`, glTF `KHR_materials_volume` thicknessFactor): raster refraction leaves a solid through its far side, not just the front face, filtered by the refracted footprint so thin curved ice and drops do not speckle.
 
 - **Clearcoat** (`rendering/pathtracing/clearcoat`): matches raster, with traced coat reflections; coat texture.
 
