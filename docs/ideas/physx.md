@@ -2199,6 +2199,41 @@ term (similarity-theory albedo and decay, light going deep and coming
 back out of the lit face) was tried: at a strength that would close the
 rest it puts the test puffs 8-18% over PT, so it is not in.
 
+### Raster gas: the gas colour compounds over the scattering orders (20 Nov)
+
+Research: Wrenninge et al. 2013 (Oz) octaves with attenuation a, b and
+eccentricity c; Hillaire 2016 (Frostbite clouds) the same with an
+energy-conserving step; Hillaire 2020 (scalable sky) the orders past the
+second as a geometric series 1 / (1 - f_ms); Kallweit et al. 2017
+(Disney) a network trained on path-traced clouds, not usable here
+without its training data. A per-point f_ms (Hillaire 2020) from the gas
+around each point (up, down, toward and away from the sun, back to the
+camera) was built and tried first: it darkens thin gas against dense,
+the wrong way for the powder, so it is not in.
+
+What was really wrong: the path tracer's albedo at each scatter is the
+gas colour times its scattering albedo (raygen.glsl), so the colour
+compounds: the n-th order carries its n-th power. Raster weighed the
+octaves by the scattering albedo alone and tinted once at the end. The
+test puffs are grey-blue (0.92, 0.94, 0.97, linear 0.83 to 0.93), so
+under path tracing their deep light is much darker and bluer than
+raster's, and raster's octave gains had been fitted down to it; the
+powder is near white (0.98, 0.99, 1.0), keeps nearly all of its deep
+light under path tracing, and came out grey in raster. Black gas in
+both renderers on snow's bench gives the same silhouette, so the
+cloud's opacity already matched and its "see-through" look under path
+tracing is only its brightness against the snow behind.
+
+Built: each octave takes the per-channel albedo (colour times scattering
+albedo) to its order's power, the orders past the third a geometric
+series in 0.68 times it, single scattering the albedo once; the final
+colour multiply is gone. Refit on the 32-spp puffs: SUN_MS_GAIN 0.7,
+SKY_MS_SHARE 0.21 (was 0.19), series 0.68 (was 0.6). Puffs: side-lit
++1.8% (0.9) and +3.1% (0.99), front-lit +2.2%, powder-density -1.2%,
+sky-only -3.8% (was -7%); B/R 1.10 to 1.17 against PT's 1.13 to 1.26
+(was 1.07 to 1.11). A dense powder block on bright ground: B/R 1.18
+against PT 1.28 (was 1.08). Snow's powder: POWDER_RESULT.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
