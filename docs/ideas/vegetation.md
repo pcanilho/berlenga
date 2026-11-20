@@ -793,6 +793,25 @@ the sky's reflection read grey; textured cards take their texture's mean colour)
    0.5 and 2 m, displace the shell's cells by a clump field from their own spacing (as the hedges' far bricks), with
    AO in the gaps, so hills past 1 km keep their texture. Shell only, no new instances.
 
+Built 20 Nov (Paulo picked all three):
+1. Far ring tiles fill on the GPU (grass_fill.glsl's ring mode): the CPU walks the nested cells and keeps the rank and
+   obstacle survivors, tested against the rules baked on a 33 x 33 grid per tile (0.5 m at level 0), and the shader
+   places them straight into the MultiMesh buffer. Meadow bench: ring build 277 ms to 100 ms, 547k blades (556k
+   before), memory unchanged: on a device with ray tracing the renderer reads every MultiMesh's records back for the
+   TLAS, so a GPU-written buffer keeps its CPU copy, and the CPU drops grid-rejected blades so the buffer holds no
+   zero records. A full GoT per-frame indirect draw would skip that copy only with GPU-built TLAS instances: an
+   engine change, not done. Worn tiles stay on the CPU (the wear grid is 0.25 m).
+2. Blades past 6 m ease to the ground's own normal (finite differences of the data map's height texture, a material
+   uniform, so nothing depends on shader globals) instead of straight up, 0.55 near and 0.85 by the rings' middle.
+3. VegetationField3D.far_shell_clumps: three value-noise octaves (7, 19, 53 m) made uniform by their sampled quantile,
+   thresholded at 1 - cover, so each stand's mass stands on its cover's share of the ground and opens elsewhere; an
+   octave fades as cells pass a third of its size. Found on the way: unranged species (a heath's gorse) left the
+   ground bare past the stream radius (now in the shell), and the shell's darkening for "shade between tops" read at
+   half the near plants' brightness (dry heath bench: shell 0.0075 linear, a near gorse 0.016), as black blotches; the
+   far colour already holds the plants' self-shade, so that factor is gone. Species meta "far_shell" false keeps a
+   species out (the trees' own far forms).
+   Next: measure the shell against the plants on screen as the far match does for the ground (vegetation_far_match.cpp).
+
 ## Mediterranean woodland ground layer (audit 19 Nov; card to Paulo)
 
 The showcase's cork oak stand stands on bare sand with litter: every other forest has a floor set, the cork oak and
