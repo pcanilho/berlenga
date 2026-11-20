@@ -791,6 +791,7 @@ void edt_2d(LocalVector<float> &r_f, int p_nx, int p_ny) {
 struct EdgeJob {
 	const void *setup = nullptr; // VegetationField3D::PlaceSetup
 	LocalVector<int> canopy;
+	LocalVector<const PlantSpecies *> other_canopy; // The canopy field's (kept alive by its biome).
 	Rect2 rect;
 	int nx = 0;
 	int ny = 0;
@@ -825,6 +826,18 @@ void VegetationField3D::_edge_row(void *p_job, uint32_t p_row) {
 				break;
 			}
 		}
+		for (uint32_t i = 0; i < job.other_canopy.size() && sum < EDGE_CLOSED; i++) {
+			const PlantSpecies *sp = job.other_canopy[i];
+			float suit = sp->get_suitability(su.map, p);
+			if (suit > 0.0f && !su.stand_rules.is_empty() && sp->uses_stand()) {
+				Vector2 a, k;
+				float af, kf;
+				sp->get_stand_rules(a, af, k, kf);
+				const int sc = su.stand_cell(xz);
+				suit *= PlantSpecies::stand_weight(a, af, k, kf, sc < 0 ? -1.0f : su.stand_age[sc], sc < 0 ? 0 : int(su.stand_kind[sc]));
+			}
+			sum += suit * sp->get_density();
+		}
 		job.in[p_row * job.nx + x] = sum >= EDGE_CLOSED ? 1 : 0;
 	}
 }
@@ -851,7 +864,17 @@ void VegetationField3D::_read_forest_edge(PlaceSetup &r_setup) const {
 			job.canopy.push_back(int(s));
 		}
 	}
-	if (!wanted || job.canopy.is_empty() || !r_setup.map || !r_setup.rect.has_area()) {
+	// A floor under another field's forest (canopy_field): its canopy species count too (without their masks).
+	if (wanted && r_setup.other && r_setup.other->biome.is_valid()) {
+		const TypedArray<PlantSpecies> list = r_setup.other->biome->get_species();
+		for (int i = 0; i < list.size(); i++) {
+			const Ref<PlantSpecies> sp = list[i];
+			if (sp.is_valid() && !sp->uses_forest_edge() && sp->get_canopy_radius() > 0.0f && !sp->uses_shade() && sp->get_density() > 0.0f) {
+				job.other_canopy.push_back(sp.ptr());
+			}
+		}
+	}
+	if (!wanted || (job.canopy.is_empty() && job.other_canopy.is_empty()) || !r_setup.map || !r_setup.rect.has_area()) {
 		return;
 	}
 	const Rect2 rect = r_setup.rect;
@@ -919,6 +942,31 @@ Vector2 VegetationField3D::PlaceSetup::edge_open(const Vector2 &p_xz) const {
 	const float h = edge_rect.size.x / (edge_nx - 1);
 	const Vector2 g(edge_at(p_xz + Vector2(h, 0.0f)) - edge_at(p_xz - Vector2(h, 0.0f)), edge_at(p_xz + Vector2(0.0f, h)) - edge_at(p_xz - Vector2(0.0f, h)));
 	return g.length_squared() > 1e-8f ? -g.normalized() : Vector2();
+}
+
+// A species that grows only in a passing context (burns, a stand stage after a disturbance, forest edges): the maps
+// made from rules alone (far shell, cover map, sward shade) leave it out, as they would spread it over all its ground.
+bool VegetationField3D::_context_only(const PlantSpecies *p_sp) {
+	if (p_sp->uses_burn_age()) {
+		return true;
+	}
+	if (p_sp->uses_stand()) {
+		Vector2 a, k;
+		float af, kf;
+		p_sp->get_stand_rules(a, af, k, kf);
+		if (PlantSpecies::stand_weight(a, af, k, kf, -1.0f, 0) <= 0.0f) {
+			return true;
+		}
+	}
+	if (p_sp->uses_forest_edge()) {
+		Vector2 r;
+		float f;
+		p_sp->get_forest_edge_rule(r, f);
+		if (r.y < 10000.0f) {
+			return true;
+		}
+	}
+	return false;
 }
 
 float VegetationField3D::PlaceSetup::burn_at(const Vector2 &p_xz) const {
@@ -1869,7 +1917,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					if (edge_rule && suit > 0.0f) {
 						// Forest edges: metres from the canopy's edge, positive inside (the shrub mantle, edge trees).
-						const float e = p_setup.edge_at(xz);
+						// No forest known (no canopy species here or in the canopy field): an interior rule (open-ended inside)
+						// does nothing, an edge rule places nothing.
+						const float e = p_setup.edge.is_empty() && edge_r.y >= 10000.0f ? edge_r.y : p_setup.edge_at(xz);
 						suit *= edge_f <= 0.0f ? ((e >= edge_r.x && e <= edge_r.y) ? 1.0f : 0.0f) : Math::smoothstep(edge_r.x - edge_f, edge_r.x, e) * (1.0f - Math::smoothstep(edge_r.y, edge_r.y + edge_f, e));
 					}
 					if (stand_rule && suit > 0.0f) {
@@ -3276,7 +3326,7 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 			continue;
 		}
 		const PlantSpecies *sp = ps.sp.ptr();
-		if (sp->get_rule_range(PlantSpecies::RULE_SHADE).x > 0.0f || sp->uses_dune() || sp->uses_coast() || sp->uses_spring() || sp->uses_pool() || ps.deadwood_reach > 0.0f) {
+		if (sp->get_rule_range(PlantSpecies::RULE_SHADE).x > 0.0f || sp->uses_dune() || sp->uses_coast() || sp->uses_spring() || sp->uses_pool() || ps.deadwood_reach > 0.0f || _context_only(sp)) {
 			continue;
 		}
 		// A species whose own far form takes over past its plants (meta "far_shell" false: the trees module's crown
@@ -3922,7 +3972,7 @@ void VegetationField3D::_cover_row(void *p_job, uint32_t p_row) {
 		float c_sum = 0.0f;
 		Vector3 plants;
 		for (const PlaceSpecies &ps : setup.species) {
-			if (ps.sp.is_null() || ps.far_color.a <= 0.0f || (ps.sp->get_canopy_radius() > 0.0f && !ps.sp->uses_shade() && !ps.sp->uses_conifer())) {
+			if (ps.sp.is_null() || ps.far_color.a <= 0.0f || (ps.sp->get_canopy_radius() > 0.0f && !ps.sp->uses_shade() && !ps.sp->uses_conifer()) || _context_only(ps.sp.ptr())) {
 				continue;
 			}
 			float suit = suit_at(ps);
@@ -4493,7 +4543,7 @@ float VegetationField3D::sward_at(const Vector3 &p_global_position, Color *r_lit
 			continue;
 		}
 		const float lit = r_litter ? sp->get_litter_color().a : 0.0f;
-		if (sp->get_sward_shade() <= 0.0f && lit <= 0.0f) {
+		if ((sp->get_sward_shade() <= 0.0f && lit <= 0.0f) || _context_only(sp.ptr())) {
 			continue;
 		}
 		float v = sp->get_density() * sp->get_suitability(map, p_global_position);

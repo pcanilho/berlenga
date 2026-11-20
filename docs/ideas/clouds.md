@@ -385,5 +385,6 @@ As built:
   lenses are on screen; zero with empty slabs. Raster and PT match.
 - Bench: weather `--view=lenticular` (a Witch of Agnesi ridge 2 km high; a test stand-in, not for docs frames),
   `--no-wave-clouds`. It prints the slabs, a top-down map, the wave wind aloft against the ground, and a dry run.
-- Next: lens shading (brighter crowns, darker bellies), stacked plates showing more clearly, iridescence near the
+- Shading (later 20 Nov): the sun read through the whole lens (to 700 m) and the sky light shaded by the cloud
+  above the point, so crowns are lit and bellies darker. Next: stacked plates showing more clearly, iridescence near the
   sun; then a docs frame over real terrain from the showcase scene.

@@ -1085,6 +1085,36 @@ func _edge_check() -> void:
 					e_out += 1
 			elif mm.mesh == forest.meshes[0] and r < 24.0:
 				forest_in += 1
+	# The floor under it as its own field (canopy_field): the edge grass of make_floor reads the forest's edge.
+	var fl := VegetationField3D.new()
+	fl.populate_on_ready = false
+	fl.bark_detail = false
+	fl.biome = Biome.new()
+	var fsp := []
+	for sp in PlantGenerator.make_floor(PlantGenerator.FLOOR_OAK_MIXED, 1, false):
+		if sp.get_rule_range(PlantSpecies.RULE_FOREST_EDGE).y < 10000.0:
+			fsp.append(sp)
+	fl.biome.species = fsp
+	add_child(fl)
+	fl.data_map = fl.get_path_to(dm)
+	fl.canopy_field = fl.get_path_to(f)
+	fl.populate()
+	var g_band := 0
+	var g_off := 0
+	for ch in fl.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh:
+			var mm: MultiMesh = ch.multimesh
+			for i in mm.instance_count:
+				var p: Vector3 = (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+				var rr := Vector2(p.x, p.z).distance_to(c)
+				if rr > 36.0:
+					continue
+				if rr > 9.0:
+					g_band += 1
+				else:
+					g_off += 1
+	fl.queue_free()
+	_check("forest edge: a floor field's edge plants follow its canopy field's edge (none deep in the clearing)", fsp.size() >= 3 and g_band > 50 and g_off == 0, [fsp.size(), g_band, g_off])
 	st.clear_disturbances()
 	f.queue_free()
 	var r := [m_in, m_out, e_in, e_out, e_facing, forest_in]
@@ -1760,6 +1790,28 @@ func _checks() -> void:
 		if sp.get_meta("plant_preset", -1) == PlantGenerator.PRESET_DRY_GRASS:
 			med_grass = sp
 	_check("montado: dry grass in the open and under the crowns", med_grass != null and med_grass.get_density() > 0.5 and med_grass.rule_weight(PlantSpecies.RULE_SHADE, 0.0) > 0.9 and med_grass.rule_weight(PlantSpecies.RULE_SHADE, 0.7) > 0.9, [med.size(), med_grass.get_density() if med_grass else 0.0])
+	# Clearings (stand age, wind and beetle kinds): every forest floor carries fireweed, raspberry and clearing grass
+	# for the first years to two decades after a windthrow, none in old growth (-1); forest mosses thin after opening.
+	var clear_bad := []
+	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH, PlantGenerator.FLOOR_MONTANE_CONIFER, PlantGenerator.FLOOR_BOREAL_TAIGA]:
+		var found := {}
+		for sp in PlantGenerator.make_floor(fs, 1, false):
+			var p: int = sp.get_meta("plant_preset", -1)
+			var ar: Vector2 = sp.get_rule_range(PlantSpecies.RULE_STAND_AGE)
+			if p in [PlantGenerator.PRESET_FIREWEED, PlantGenerator.PRESET_RASPBERRY, PlantGenerator.PRESET_COCKSFOOT] and ar.x >= 0.0:
+				var w5: float = sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 5.0) * sp.rule_weight(PlantSpecies.RULE_DISTURBANCE, 2.0)
+				var w_fire: float = sp.rule_weight(PlantSpecies.RULE_DISTURBANCE, 1.0)
+				var w60: float = sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 60.0)
+				if w5 > 0.5 and w_fire == 0.0 and w60 == 0.0:
+					found[p] = true
+				else:
+					clear_bad.append([fs, p, w5, w_fire, w60])
+			if p == PlantGenerator.PRESET_FEATHER_MOSS or p == PlantGenerator.PRESET_MOSS:
+				if ar.x > 0.0 and sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 1.0) > 0.5:
+					clear_bad.append([fs, p, "moss not thinned at 1 y"])
+		if found.size() < 3:
+			clear_bad.append([fs, found.keys()])
+	_check("clearings: fireweed, raspberry and clearing grass after windthrow and beetles only, gone in older stands", clear_bad.is_empty(), clear_bad)
 	# Boreal taiga (FLOOR_BOREAL_TAIGA): reindeer lichen, feather moss and bilberry carpet the floor.
 	var taiga_presets := []
 	for sp in PlantGenerator.make_floor(PlantGenerator.FLOOR_BOREAL_TAIGA, 1, false):
