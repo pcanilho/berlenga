@@ -779,6 +779,13 @@ public:
 	float nurse_stilt = 0.0f;
 	int nurse_band = 0; // While a stand grows its species: 1 nurse logs, 2 trees on a rotted log.
 	void _nurse_seedlings(Builder &r_bark, Builder &r_leaves);
+	// A fresh lightning strike (trees.md 5ax): lightning_years since a strike that ran down the stem, -1 none (the
+	// stand's own scars, section 5p, stay as they were). The strip's wood is pale when fresh and greys over a few years;
+	// bark slabs and splinters lie thrown round the foot for the first two.
+	float lightning_years = -1.0f;
+	static Color _lightning_wood(float p_years);
+	void _lightning_debris();
+	float _fresh_strike_at(const Vector3 &p_pos, bool p_any_age = false) const; // 0..1: on a fresh strike's bare strip (no moss there); p_any_age: on a given strike's strip at any age.
 	int edge_band = 0; // While make_edge grows its edge trees: 1 (trees.md 5as).
 	int boreal_band = 0; // While a taiga stand grows its species: 1 narrow spruce, 2 fire-survivor pine, 3 kelo, 4 burn birch (trees.md 5ap).
 	int old_growth_band = 0; // While an old-growth stand grows its species: 1 veteran giants, 2 poles, 3 giant deadwood, 4 canopy (trees.md 5an).
@@ -1157,6 +1164,8 @@ public:
 	void set_nurse_seedlings(float p_v) { nurse_seedlings = CLAMP(p_v, 0.0f, 1.0f); }
 	float get_nurse_seedlings() const { return nurse_seedlings; }
 	void set_nurse_stilt(float p_v) { nurse_stilt = CLAMP(p_v, 0.0f, 1.5f); }
+	void set_lightning_years(float p_v) { lightning_years = p_v < 0.0f ? -1.0f : MIN(p_v, 60.0f); }
+	float get_lightning_years() const { return lightning_years; }
 	float get_nurse_stilt() const { return nurse_stilt; }
 	void set_beaver_cut(int p_v) { beaver_cut = CLAMP(p_v, 0, 3); }
 	int get_beaver_cut() const { return beaver_cut; }

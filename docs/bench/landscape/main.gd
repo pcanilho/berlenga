@@ -70,6 +70,7 @@ extends Node3D
 #   --atmosphere=scattering|physical   sky air: Hillaire 2020 multiple scattering (default) or the older PhysicalSky model
 #   --clip=N              with --out, N frames in a row (out_0000.png...), for clips; run with --fixed-fps 24
 #   --checks              with --out, run the link checks before the picture (they change the scene)
+#   --far-wait=N          stop waiting for the grass far colour bake after N frames (900); 0 for scouts and close shots
 #   --link=fog|spray|tracks [--link-off]   world-links docs frames, the link on or off (see _link_shot)
 #                         --link-verbose logs the tracks walk every second (ground, water, contact wetness, body load)
 
@@ -714,9 +715,14 @@ func _ready() -> void:
 	var layers_bake: Array = sward if not sward.is_empty() else ([grass] if grass != null else [])
 	var bw := 0
 	get_viewport().disable_3d = args.get("bake-draw", "0") == "0" # the bake draws in its own SubViewport; the main view waits undrawn
+	# --far-wait=N: give up on the far colour bake after N frames (default 900). Scouts and close --link frames take
+	# --far-wait=0 (the far grass keeps its last colours, ~50 min saved on lavapipe); docs stills keep the default.
+	var far_wait := int(args.get("far-wait", "900"))
 	while bw < 900:
 		var done := cover == null or cover.is_stream_idle()
 		for g in layers_bake:
+			if bw >= far_wait:
+				break
 			if g.has_method("is_far_color_baked") and not g.is_far_color_baked():
 				done = false
 		if done:
@@ -1132,7 +1138,7 @@ func _frame_log() -> void:
 	var nlogs := 0
 	for i in veg.biome.species.size():
 		var sp := veg.biome.species[i] as Resource
-		if sp == null or not String(sp.resource_name).contains("(log)"):
+		if sp == null or not String(sp.resource_name).contains("log)"): # "(log)", "(nurse log)"
 			continue
 		# --log-match=TEXT: only logs whose species name holds TEXT ("fallen giant": the old-growth gap logs).
 		if args.has("log-match") and not String(sp.resource_name).contains(String(args["log-match"])):
@@ -3521,7 +3527,7 @@ func _generated_forest(clearing: bool) -> Biome:
 	var variants := int(args.get("tree-variants", "1"))
 	var stands := {"beech": TreeGenerator.STAND_BEECH, "oak": TreeGenerator.STAND_OAK_MIXED,
 			"montane": TreeGenerator.STAND_MONTANE_CONIFER, "hedgerow": TreeGenerator.STAND_HEDGEROW,
-			"stonepine": 13, "windthrow": 17, "old_growth": 18, "taiga": 19, "alder_carr": 20, "floodplain_willow": 21, "beaver_pond": 22} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
+			"stonepine": 13, "windthrow": 17, "old_growth": 18, "taiga": 19, "alder_carr": 20, "floodplain_willow": 21, "beaver_pond": 22, "deer_wood": 23} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
 	var b: Biome
 	if args.has("montado"):
 		# --montado: the Iberian wood pasture, open-grown cork oaks with stone pines among them over a summer-dry
@@ -3535,7 +3541,7 @@ func _generated_forest(clearing: bool) -> Biome:
 		all.append_array(b.species)
 		b.species = all
 	elif args.has("tree-stand"):
-		# --tree-stand=beech|oak|montane|hedgerow|stonepine|windthrow|old_growth|taiga|alder_carr|floodplain_willow|beaver_pond: one stand only (its trees, sapling, snag and log).
+		# --tree-stand=beech|oak|montane|hedgerow|stonepine|windthrow|old_growth|taiga|alder_carr|floodplain_willow|beaver_pond|deer_wood: one stand only (its trees, sapling, snag and log).
 		b = tg.make_stand(stands.get(args["tree-stand"], TreeGenerator.STAND_BEECH), variants)
 	else:
 		b = tg.make_woodland(variants, TreeGenerator.REGION_EUROPE)

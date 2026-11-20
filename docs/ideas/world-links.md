@@ -23,6 +23,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | `SnowCover3D` | snow | `snow_cover` maps, depth, air at height (`get_air_temperature_at`) |
 | `fire_state_map`, `WorldFire` | fire | burnt share and glow per cell; `heat_at` (W/m2), `burnt_at` |
 | `WeatherLightning3D` | weather | `struck` signal and `get_ground_strikes_after()` |
+| `WorldWeather.cloud_base_at` | weather (clouds) | cloud base, m above sea level: `WeatherMap3D.get_cloud_base_now`, LCL 125 m x (T - Td), at least ground + 30 m; `cloud_base_height` without weather (planned 20 Nov) |
 | Contact groups | each system | `world_contact` (every physics body and wheel) read by all, plus the old `grass_trample`, `tree_touch`, `ground_deform`, `snow_deform` |
 | Contracts | world | `WorldContracts.get_weather()`, `get_water()`, `get_ground()`, `get_fire()`, `describe_body()`: see world-contracts.md |
 
@@ -151,6 +152,9 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Fire → fire clouds (pyrocumulus over a big fire) | linked (19 Nov) | WorldFire `plumes()` (base, convective W) | PhysX ebdad64b: WeatherMap3D builds the cloud from the plumes |
 | Fire → light in the clouds | linked (20 Nov) | WorldFire `plumes()` (base, heat release) | WeatherMap3D registers a cloud light per plume (flame colour, a third of the heat as light); lights the cloud bases at night; listed in `get_cloud_lights()` (docs/ideas/clouds.md round 4) |
 | Lightning → cloud lights list | linked (20 Nov) | WeatherLightning3D flashes | Listed in `WeatherMap3D.get_cloud_lights()` for readers; the sky keeps its own full-resolution flash glow |
+| Cloud base → lightning strike height | planned (20 Nov) | `cloud_base_at` | the leader starts at the local base, not `cloud_base_height` |
+| Cloud base → fog | planned (20 Nov) | `cloud_base_at` | base on the ground (T - Td near 0) feeds VegetationMist3D fog |
+| Cloud base → snow line, orographic rain | later | `cloud_base_at` | |
 | Any system → cloud density | linked (20 Nov) | `add_cloud_effector` callers | `WorldWeather.cloud_effector_at`; shadow bake and sky both see it |
 | Terrain, wind aloft, temperature, humidity, mid/high layers → wave clouds (lenticulars) | linked (20 Nov) | terrain source, `get_wind_aloft`, air, `mid/high_cloud_cover` | `WeatherMap3D.get_wave_cloud_density_at` / `WorldWeather.wave_cloud_density_at`; shadow bake (docs/ideas/clouds.md round 5) |
 | Mountain waves → wind aloft | linked (20 Nov) | WeatherMountainWaves | `get_wind_at` vertical part above the boundary layer; `WorldWeather.mountain_wave_velocity_at` alone; ground wind unchanged |

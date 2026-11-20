@@ -49,6 +49,7 @@
 class GroundClods3D;
 class MeshInstance3D;
 class WorldWeather;
+class RigidBody3D;
 
 // Footprints, ruts and dents in bare ground (docs/ideas/ground-deform.md): sand, soil and mud, and the
 // leaf litter over them, pressed by bodies in deform_groups with Bekker sinkage (Wong's soil values),
@@ -191,6 +192,20 @@ private:
 	bool _buried_under(const Vector3 &p_position, float p_radius, float p_bottom, Buried &r_hit) const;
 	void _buried_kicks_update();
 	void _loose_shove(const Vector3 &p_position, const Vector2 &p_half, float p_yaw, float p_bottom, const Vector2 &p_velocity);
+	// Loose stones in the mud (round 17): a moving one ploughs a furrow and heaps a bow ahead; one at rest on mud too
+	// weak to hold it sinks back in (frozen while it sinks) and is hidden again once covered.
+	struct LooseState {
+		float z = 0.0f; // its depth in the mud, m
+		float ref = NAN; // the undisturbed mud's height it rides
+		RID ground; // the terrain collider it passes through while in the mud
+		float push_down = 0.0f; // N, from a tyre driving it this step
+	};
+	HashMap<uint32_t, LooseState> loose_state;
+	HashMap<Vector2i, LocalVector<Buried>> buried_extra; // stones hidden again, kept with the deposits
+	int loose_reburied = 0;
+	void _loose_update(float p_delta);
+	float _press_moving(const Vector3 &p_position, float p_radius, float p_bottom, float p_sink, const Vector2 &p_velocity);
+	void _loose_rebury(uint32_t p_id, RigidBody3D *p_body, float p_r);
 	bool worn_tracks = true;
 	float wear_regrowth_days = 30.0f;
 	double wear_clock = 0.0;
@@ -234,6 +249,21 @@ private:
 	float _silt_at(float p_x, float p_z) const;
 	float _silt_smooth_at(float p_x, float p_z) const; // bilinear between the 1 m cells' centres, for the looks
 	float _silt_water(float p_x, float p_z) const;
+	// Dry silt as dust (round 17.3): cells a tyre broke the crust of, and the cells the wind lifts dust from.
+	HashSet<Vector2i> silt_broken;
+	struct SiltWind {
+		Vector2i cell;
+		float rate = 0.0f; // kg/m2/s
+	};
+	struct SiltWindStronger {
+		bool operator()(const SiltWind &a, const SiltWind &b) const { return a.rate > b.rate; }
+	};
+	LocalVector<SiltWind> silt_wind;
+	float silt_dust_kg = 0.0f; // lifted since start, by tyres and wind
+	float _silt_dust_share(float p_x, float p_z) const;
+	void _silt_take(const Vector2i &p_cell, float p_kg);
+	void _silt_wind_update(float p_dt);
+	void _silt_wind_emit();
 	// Standing water (docs/ideas/mud.md, stage 2): rain, runoff and ground water gather in ruts and prints, on the
 	// GPU field (the virtual pipe model), drawn as the surface there in both renderers.
 	bool standing_water = true;
@@ -363,6 +393,7 @@ public:
 private:
 	LocalVector<Spray> sprays;
 	LocalVector<Dust> dust;
+	void _push_dust(const Dust &p_dust);
 	LocalVector<Dust> near_dust; // inside the claim (claim_dust): for a near-field dust node
 	uint64_t dust_frame = 0;
 	Vector3 dust_claim_center;
@@ -999,6 +1030,8 @@ public:
 	void set_buried_kick(bool p_enabled);
 	bool is_buried_kick() const { return buried_kick; }
 	int get_loose_stone_count() const { return buried_loose.size(); }
+	int get_reburied_stone_count() const;
+	float get_silt_dust_lifted() const { return silt_dust_kg; }
 	void set_worn_tracks(bool p_enabled);
 	bool is_worn_tracks() const { return worn_tracks; }
 	void set_wear_regrowth_days(float p_days);

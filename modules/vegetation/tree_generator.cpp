@@ -6431,6 +6431,10 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 		w = MAX(w, collar * MIN(1.0f, p_amount * 1.6f) * (0.95f + 0.25f * patch));
 		w *= 1.0f - 0.9f * bare;
 	}
+	if (lightning_years >= 0.0f) {
+		// The strike blew the moss off with the bark (trees.md 5ax).
+		w *= 1.0f - _fresh_strike_at(p_pos);
+	}
 	return p_clamp ? CLAMP(w, 0.0f, 1.0f) : w;
 }
 
@@ -8100,6 +8104,176 @@ void TreeGenerator::_fracture(const Vector3 &p_end, const Vector3 &p_dir, float 
 	w.end(part, p_r);
 }
 
+// What a lightning strike throws (trees.md 5ax): the steam in the outer sapwood blows the bark off the strip in
+// slabs and tears splinters of wood out with it, and they lie round the foot, most within ten metres, some thrown
+// thirty (Taylor 1964, Lightning damage to forest trees in Montana; Murray 1958). More fall on the scar's side. In
+// a year or two the litter covers them and they rot, so they are drawn for lightning_years under 2. Bark slabs keep
+// the stem's curl, bark side up or the pale inner face up as they fell; splinters are three-sided slivers of the
+// sapwood. Surface "wood" (two-sided), vertex colours.
+void TreeGenerator::_lightning_debris() {
+	if (lightning_years < 0.0f || lightning_years >= 2.0f || fallen || fallen_branch || nodes.is_empty()) {
+		return;
+	}
+	int wi = -1;
+	for (int i = 0; i < int(wounds.size()); i++) {
+		if (wounds[i].kind == WOUND_LIGHTNING && wounds[i].extra > 0.0f) {
+			wi = i;
+		}
+	}
+	if (wi < 0) {
+		return;
+	}
+	const Wound &wd = wounds[wi];
+	const Vector3 foot = nodes[0].start;
+	const float r0 = nodes[0].radius;
+	const float height = wd.s1 / 0.85f;
+	const float keep = 1.0f - Math::smoothstep(0.4f, 2.0f, lightning_years);
+	const int n = int((60.0f + 80.0f * CLAMP((height - 8.0f) / 20.0f, 0.0f, 1.0f)) * keep);
+	if (n <= 0) {
+		return;
+	}
+	RandomPCG rng;
+	rng.seed(uint64_t(seed) * 2654435761u + 0x64656272u);
+	const float tan_slope = Math::tan(ground_slope);
+	auto ground_y = [&](float p_x, float p_z) { return foot.y - tan_slope * (p_z - foot.z); };
+	const Color wood = _lightning_wood(lightning_years).srgb_to_linear();
+	const Color heart = wood.lerp(Color(0.42f, 0.33f, 0.24f).srgb_to_linear(), 0.25f);
+	const Color bark_c = bark_color.srgb_to_linear();
+	// The inner bark: pale pinkish tan when torn off live, browning as it dries.
+	const Color inner = Color(0.6f, 0.46f, 0.37f).srgb_to_linear().lerp(Color(0.45f, 0.33f, 0.25f).srgb_to_linear(), Math::smoothstep(0.02f, 0.5f, lightning_years));
+	Builder &w = wood_b;
+	Vector4i part;
+	w.begin(part);
+	auto push = [&](const Vector3 &p_p, const Vector2 &p_uv, const Color &p_c) {
+		w.verts.push_back(p_p);
+		w.normals.push_back(Vector3());
+		w.uvs.push_back(p_uv);
+		w.colors.push_back(p_c);
+		return w.verts.size() - 1;
+	};
+	auto quad = [&](int a, int b, int c, int d) {
+		w.indices.push_back(a);
+		w.indices.push_back(b);
+		w.indices.push_back(c);
+		w.indices.push_back(c);
+		w.indices.push_back(b);
+		w.indices.push_back(d);
+	};
+	for (int q = 0; q < n; q++) {
+		// Where it lies: round the foot, half of them toward the scar's side; distance mostly a few metres.
+		const float side = rng.randf() < 0.5f ? wd.az0 + (rng.randf() - 0.5f) * 1.6f : rng.randf() * float(Math::TAU);
+		const float u = rng.randf();
+		const float dist = r0 + 0.3f + MIN(0.6f * height, -Math::log(MAX(1.0f - u, 1e-4f)) * Math::lerp(1.5f, 0.12f * height, rng.randf()));
+		const float px = foot.x + Math::cos(side) * dist, pz = foot.z + Math::sin(side) * dist;
+		const float yaw = rng.randf() * float(Math::TAU);
+		// Lying along yaw on the ground, tipped a little where it fell across litter.
+		const Vector3 along(Math::cos(yaw), 0.0f, Math::sin(yaw));
+		const Vector3 across(-along.z, 0.0f, along.x);
+		const float tip = (rng.randf() - 0.5f) * 0.15f;
+		const float y0 = ground_y(px, pz);
+		const Vector3 c0(px, y0, pz);
+		auto at = [&](float p_a, float p_b, float p_h) {
+			const Vector3 p = c0 + along * p_a + across * p_b;
+			// On the slope, and the piece's own small tilt along its length.
+			return Vector3(p.x, ground_y(p.x, p.z) + p_h + tip * p_a, p.z);
+		};
+		if (rng.randf() < 0.6f) {
+			// A bark slab: a curled sheet as thick as the bark, arched over the ground or lying in its hollow.
+			const float len = Math::lerp(0.1f, 0.9f, rng.randf() * rng.randf());
+			const float wid = Math::lerp(0.03f, 0.14f, rng.randf());
+			const float th = MIN(0.004f + 0.02f * r0, 0.025f);
+			const float curl = 0.5f * MIN(1.0f, wid / MAX(r0, 0.05f)); // Half the arc (radians) it spanned: it flattens as it dries.
+			const bool bark_up = rng.randf() < 0.65f;
+			const float tint = Math::lerp(0.75f, 1.1f, rng.randf());
+			const float wsalt = rng.randf() * 50.0f;
+			const int cols = 4, rows = MAX(2, int(len / 0.04f));
+			const int base = w.verts.size();
+			for (int face = 0; face < 2; face++) {
+				for (int j = 0; j <= rows; j++) {
+					const float f = float(j) / rows;
+					const float a = (f - 0.5f) * len;
+					// The broken ends ragged: each column a little longer or shorter.
+					for (int c = 0; c <= cols; c++) {
+						const float g = float(c) / cols - 0.5f;
+						// Torn along the grain: the width wanders along the slab and narrows to its torn ends.
+						const float wl = (0.55f + 0.6f * moss_noise(Vector3(a * 9.0f, wsalt, float(c > cols / 2)), 0x736c6162u)) * Math::lerp(0.55f, 1.0f, Math::sin(float(Math::PI) * Math::lerp(0.1f, 0.9f, f)));
+						const float b = g * wid * wl;
+						const float rag = (j == 0 || j == rows) ? (rng.randf() - 0.5f) * 0.3f * wid : 0.0f;
+						// Arch: centre high when bark-up (the curl's back up), the edges high when inner-up.
+						const float arc = 0.5f * curl * wid * (0.25f - g * g) * (bark_up ? 1.0f : -1.0f) + (bark_up ? 0.0f : 0.125f * curl * wid);
+						const float h = 0.002f + MAX(arc, 0.0f) + (face == 0 ? th : 0.0f);
+						const bool up_bark = (face == 0) == bark_up;
+						push(at(a + rag * (j == 0 ? -1.0f : 1.0f), b, h), Vector2(g * wid / 0.15f + 0.3f * q, a / 0.15f), Color((up_bark ? bark_c : inner).r * tint, (up_bark ? bark_c : inner).g * tint, (up_bark ? bark_c : inner).b * tint, 1.0f));
+					}
+				}
+			}
+			const int fv = (rows + 1) * (cols + 1);
+			for (int j = 0; j < rows; j++) {
+				for (int c = 0; c < cols; c++) {
+					const int a0 = base + j * (cols + 1) + c;
+					quad(a0, a0 + 1, a0 + cols + 1, a0 + cols + 2);
+					const int b0 = a0 + fv;
+					quad(b0, b0 + cols + 1, b0 + 1, b0 + cols + 2);
+				}
+			}
+			// The edges: the bark's thickness round the rim.
+			for (int j = 0; j < rows; j++) {
+				for (int e = 0; e < 2; e++) {
+					const int c = e == 0 ? 0 : cols;
+					const int t0 = base + j * (cols + 1) + c, t1 = t0 + cols + 1;
+					quad(t0, t1, t0 + fv, t1 + fv);
+				}
+			}
+			for (int c = 0; c < cols; c++) {
+				for (int e = 0; e < 2; e++) {
+					const int j = e == 0 ? 0 : rows;
+					const int t0 = base + j * (cols + 1) + c, t1 = t0 + 1;
+					quad(t0, t1, t0 + fv, t1 + fv);
+				}
+			}
+		} else {
+			// A splinter of sapwood: a three-sided sliver, wide across, thin, pointed at both ends.
+			const float len = Math::lerp(0.12f, 0.9f, rng.randf() * rng.randf());
+			const float wid = len * Math::lerp(0.015f, 0.05f, rng.randf());
+			Color sc = wood.lerp(heart, rng.randf() * 0.6f);
+			const float st = Math::lerp(0.75f, 1.05f, rng.randf());
+			sc = Color(sc.r * st, sc.g * st, sc.b * st, 1.0f);
+			const int segs = 5;
+			const int base = w.verts.size();
+			for (int e = 0; e <= segs; e++) {
+				const float f = float(e) / segs;
+				const float a = (f - 0.5f) * len;
+				const float taper = Math::sin(float(Math::PI) * Math::lerp(0.08f, 0.92f, f));
+				const float ww = wid * taper;
+				const float bow = 0.04f * len * (0.25f - (f - 0.5f) * (f - 0.5f)) * (rng.randf() < 0.5f ? 1.0f : 0.0f);
+				const float vv = a / 0.15f;
+				push(at(a, -ww, 0.001f + bow), Vector2(0.0f + 0.37f * q, vv), sc);
+				push(at(a, ww, 0.001f + bow), Vector2(0.15f + 0.37f * q, vv), sc);
+				push(at(a, 0.15f * ww, 0.001f + bow + 0.45f * ww), Vector2(0.08f + 0.37f * q, vv), heart);
+			}
+			for (int e = 0; e < segs; e++) {
+				for (int sd = 0; sd < 3; sd++) {
+					const int a0 = base + e * 3 + sd, a1 = base + e * 3 + (sd + 1) % 3;
+					quad(a0, a1, a0 + 3, a1 + 3);
+				}
+			}
+		}
+	}
+	Vector3 *nw = w.normals.ptrw();
+	const Vector3 *vw = w.verts.ptr();
+	for (int64_t i = part.x; i + 2 < w.indices.size(); i += 3) {
+		const int a = w.indices[i], b = w.indices[i + 1], c = w.indices[i + 2];
+		Vector3 fn = (vw[c] - vw[a]).cross(vw[b] - vw[a]);
+		nw[a] += fn;
+		nw[b] += fn;
+		nw[c] += fn;
+	}
+	for (int v = part.z; v < w.verts.size(); v++) {
+		nw[v] = nw[v].length_squared() > 1e-20f ? nw[v].normalized() : Vector3(0, 1, 0);
+	}
+	w.end(part, 0.05f);
+}
+
 // Nurse logs (trees.md 5aw). In wet spruce and hemlock forests most seedlings come up on rotting logs, not on the
 // forest floor, where litter and moss smother them and pathogens wait (Harmon and Franklin 1989, Picea-Tsuga forests of
 // Oregon and Washington: logs a few percent of the floor carried most of the seedlings; Zielonka 2006 for Norway spruce
@@ -8452,6 +8626,16 @@ Color TreeGenerator::_beaver_wood(float p_years) {
 	const Color tan = Color(0.66f, 0.47f, 0.29f);
 	const Color grey = Color(0.5f, 0.48f, 0.44f);
 	return cream.lerp(tan, Math::smoothstep(0.02f, 0.25f, p_years)).lerp(grey, Math::smoothstep(1.0f, 4.0f, p_years));
+}
+
+// Wood a lightning strike bared (trees.md 5ax): the outer sapwood is cream-white when the bark has just blown off,
+// yellows to straw in the first months as it dries and oxidises, and greys in the weather over two to five years
+// (sRGB).
+Color TreeGenerator::_lightning_wood(float p_years) {
+	const Color cream = Color(0.86f, 0.8f, 0.64f);
+	const Color straw = Color(0.76f, 0.64f, 0.45f);
+	const Color grey = Color(0.52f, 0.5f, 0.46f);
+	return cream.lerp(straw, Math::smoothstep(0.02f, 0.4f, p_years)).lerp(grey, Math::smoothstep(1.0f, 4.0f, p_years));
 }
 
 bool TreeGenerator::_beaver_resprouts() const {
@@ -12388,7 +12572,7 @@ void TreeGenerator::_plan_wounds() {
 		}
 		return;
 	}
-	if (bark_wounds <= 0.0f || fallen || fallen_branch || decay_class > 1 || nodes.size() < 3 || cut_height > 0.0f) {
+	if ((bark_wounds <= 0.0f && lightning_years < 0.0f) || fallen || fallen_branch || decay_class > 1 || nodes.size() < 3 || cut_height > 0.0f) {
 		return;
 	}
 	const int ms = _main_stem();
@@ -12433,7 +12617,25 @@ void TreeGenerator::_plan_wounds() {
 		static const int MORE[] = { PRESET_OAK, PRESET_RED_OAK, PRESET_WHITE_OAK, PRESET_SCOTS_PINE, PRESET_NORWAY_SPRUCE, PRESET_WHITE_PINE, PRESET_LARCH, PRESET_ASH };
 		float p = 0.035f * CLAMP((len - 6.0f) / 14.0f, 0.0f, 1.5f);
 		p *= wound_species(preset, MORE, 8) ? 2.0f : 1.0f;
-		if (len > 8.0f && chance(p)) {
+		if (lightning_years >= 0.0f && len > 4.0f) {
+			// A given strike (trees.md 5ax): the current comes down from the top, through the crown, and runs to the
+			// foot in the wet outer sapwood, where the steam blows the bark off in a strip 5-20 cm wide following the
+			// grain's spiral (Taylor 1964, 1974; Murray 1958). Its own random stream, so the scar keeps its place as
+			// lightning_years changes.
+			RandomPCG lr;
+			lr.seed(uint64_t(seed) * 2654435761u + 0x6c696768u);
+			Wound w;
+			w.kind = WOUND_LIGHTNING;
+			w.s0 = 0.0f;
+			w.s1 = len * Math::lerp(0.75f, 0.95f, lr.randf());
+			w.az0 = lr.randf() * float(Math::TAU);
+			w.twist = twist * Math::lerp(0.8f, 1.3f, lr.randf());
+			w.half_w = Math::lerp(0.035f, 0.09f, lr.randf());
+			w.age = lightning_years;
+			w.extra = 1.0f; // A strike given, not the stand's chance: _wound_at blows out the groove deeper while fresh.
+			w.salt = lr.rand();
+			wounds.push_back(w);
+		} else if (len > 8.0f && chance(p)) {
 			Wound w;
 			w.kind = WOUND_LIGHTNING;
 			w.s0 = 0.0f;
@@ -12676,6 +12878,27 @@ bool TreeGenerator::_wounds_resin() const {
 
 // x: offset out from the stem surface (metres), y: bare wood 0..1 (0.5 at the edge, ramping over
 // 2 cm so the interpolated value finds the edge between vertices), z: darkening.
+// A fresh strike blew the bark off its strip with the moss and lichen on it (trees.md 5ax): 1 on the strip while
+// it is fresh, fading as the moss comes back over the callus in the following years.
+float TreeGenerator::_fresh_strike_at(const Vector3 &p_pos, bool p_any_age) const {
+	if (lightning_years < 0.0f || (lightning_years >= 6.0f && !p_any_age) || wound_pts.size() < 2) {
+		return 0.0f;
+	}
+	for (int i = 0; i < int(wounds.size()); i++) {
+		if (wounds[i].kind != WOUND_LIGHTNING || wounds[i].extra <= 0.0f) {
+			continue;
+		}
+		StemAt at;
+		if (!stem_at(wound_pts, wound_rad, wound_arc, p_pos, at) || at.dist > 2.0f * at.r + 0.05f) {
+			return 0.0f;
+		}
+		// A margin past the bare edge: moss torn back from it too.
+		const float bare = _wound_at(at.s, at.az, at.r, i).y;
+		return Math::smoothstep(0.0f, 0.2f, bare) * (p_any_age ? 1.0f : 1.0f - Math::smoothstep(2.0f, 6.0f, lightning_years));
+	}
+	return 0.0f;
+}
+
 Vector3 TreeGenerator::_wound_at(float p_s, float p_az, float p_r, int p_only) const {
 	float off = 0.0f, bare = 0.0f, dark = 0.0f;
 	for (int i = 0; i < int(wounds.size()); i++) {
@@ -12706,6 +12929,14 @@ Vector3 TreeGenerator::_wound_at(float p_s, float p_az, float p_r, int p_only) c
 				d = Math::abs(l) - hw;
 				// The wood split down the strip's middle.
 				groove = 0.012f * (1.0f - Math::smoothstep(0.002f, 0.012f, Math::abs(l))) * CLAMP(hw / 0.02f, 0.0f, 1.0f);
+				if (w.extra > 0.0f) {
+					// A fresh strike tears a sliver of the outer sapwood out with the bark down the strip's middle,
+					// a groove 1-3 cm deep and a few wide (Taylor 1964), its edges ragged with the grain; the
+					// woundwood rolls in over it in the following years.
+					const float fresh = 1.0f - Math::smoothstep(1.0f, 6.0f, w.age);
+					const float gw = 0.4f * hw * (0.8f + 0.4f * moss_noise(Vector3(p_s * 6.0f, 4.7f, salt), w.salt + 9u));
+					groove += fresh * MIN(0.025f, 0.15f * p_r) * (1.0f - Math::smoothstep(0.6f * gw, gw + 0.01f, Math::abs(l)));
+				}
 				dark = MAX(dark, 0.7f * (1.0f - Math::smoothstep(0.002f, 0.01f, Math::abs(l))) * CLAMP(hw / 0.02f, 0.0f, 1.0f));
 			} break;
 			case WOUND_FROST: {
@@ -19096,7 +19327,17 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 								fill = MAX(fill, Math::lerp(fill, under + 0.004f, k_low));
 							}
 						}
+						if (lightning_years >= 0.0f && under < floor_d && _fresh_strike_at(moss.verts[v], true) > 0.05f) {
+							// A strike's groove sinks the wood below the shell's floor (trees.md 5ax): the moss that comes
+							// back over it lies on the wood, not on the bark that was (its floor there stood out as
+							// blocks over the groove).
+							fill += under - floor_d;
+						}
 						wv[i] = fill - under;
+						if (lightning_years >= 0.0f && _fresh_strike_at(moss.verts[v]) > 0.05f) {
+							// While fresh, none on the strip at all.
+							wv[i] = -1.0f;
+						}
 						// Below the bark the shell keeps its own depth rather than hugging the bark's
 						// underside: the edge then falls where the fill crosses the bark between two
 						// vertices, not pulled out to the nearer vertex, which drew the edge as stairs
@@ -19410,6 +19651,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		_measure_lying(moss, dw_m0, dw_m1 >= 0 ? dw_m1 : int(moss.verts.size()));
 		_nurse_seedlings(bark, leaves);
 	}
+	_lightning_debris();
 
 	const bool needles = params[PARAM_NEEDLES] > 0.5f;
 	// The year's shoots carry young bark: a birch's are dark red-brown, not its trunk's white.
@@ -20903,7 +21145,9 @@ uniform float wood_spiral = 0.0;
 	const Color wood = kelo ? Color(0.58f, 0.57f, 0.54f) : (fallen || fallen_branch || decay_class >= 5) ? Color(0.38f, 0.31f, 0.23f) : decay_class == 4 ? Color(0.42f, 0.38f, 0.32f)
 																																	   : Color(0.47f, 0.45f, 0.41f);
 	// Beaver-gnawed and peeled wood (trees.md 5au): cream when fresh, orange-brown within weeks, grey in a few years.
-	m->set_shader_parameter("bark_wood_color", (beaver_now == BEAVER_GNAWED || beaver_now == BEAVER_FELLED) ? _beaver_wood(beaver_years) : wood);
+	// A fresh lightning strip (trees.md 5ax): pale sapwood, greying over a few years to the weathered wood.
+	const Color struck = lightning_years >= 0.0f && !fallen && !fallen_branch && decay_class <= 1 ? _lightning_wood(lightning_years).lerp(wood, Math::smoothstep(3.0f, 8.0f, lightning_years)) : wood;
+	m->set_shader_parameter("bark_wood_color", (beaver_now == BEAVER_GNAWED || beaver_now == BEAVER_FELLED) ? _beaver_wood(beaver_years) : struck);
 	m->set_shader_parameter("bark_stripped_age", _cork_strip_age());
 	// Scots pine grows with spiral grain, a few degrees, left-handed when young and turning right with age (Harris
 	// 1989); a kelo's weathered checks open along it and show it, by its seed: 5-12 degrees, the old stems at the upper end (trees.md 5ar).
@@ -22758,6 +23002,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	browse_years = p_from.browse_years;
 	nurse_seedlings = p_from.nurse_seedlings;
 	nurse_stilt = p_from.nurse_stilt;
+	lightning_years = p_from.lightning_years;
 	beaver_cut = p_from.beaver_cut;
 	beaver_years = p_from.beaver_years;
 	beaver_depth = p_from.beaver_depth;
@@ -25506,6 +25751,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_nurse_seedlings"), &TreeGenerator::get_nurse_seedlings);
 	ClassDB::bind_method(D_METHOD("set_nurse_stilt", "girth"), &TreeGenerator::set_nurse_stilt);
 	ClassDB::bind_method(D_METHOD("get_nurse_stilt"), &TreeGenerator::get_nurse_stilt);
+	ClassDB::bind_method(D_METHOD("set_lightning_years", "years"), &TreeGenerator::set_lightning_years);
+	ClassDB::bind_method(D_METHOD("get_lightning_years"), &TreeGenerator::get_lightning_years);
 	ClassDB::bind_method(D_METHOD("set_beaver_cut", "cut"), &TreeGenerator::set_beaver_cut);
 	ClassDB::bind_method(D_METHOD("get_beaver_cut"), &TreeGenerator::get_beaver_cut);
 	ClassDB::bind_method(D_METHOD("set_beaver_years", "years"), &TreeGenerator::set_beaver_years);
@@ -25668,6 +25915,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "browse_years", PROPERTY_HINT_RANGE, "0,300,1,suffix:yr"), "set_browse_years", "get_browse_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "nurse_seedlings", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_nurse_seedlings", "get_nurse_seedlings");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "nurse_stilt", PROPERTY_HINT_RANGE, "0,1.5,0.01,suffix:m"), "set_nurse_stilt", "get_nurse_stilt");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lightning_years", PROPERTY_HINT_RANGE, "-1,60,0.05,suffix:yr"), "set_lightning_years", "get_lightning_years");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "beaver_cut", PROPERTY_HINT_ENUM, "None,Gnawed,Stump,Felled"), "set_beaver_cut", "get_beaver_cut");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beaver_years", PROPERTY_HINT_RANGE, "0,60,0.05,suffix:yr"), "set_beaver_years", "get_beaver_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beaver_depth", PROPERTY_HINT_RANGE, "0.05,0.95,0.01"), "set_beaver_depth", "get_beaver_depth");

@@ -7109,16 +7109,15 @@ void RockField3D::_clear_cover() {
 	_push_cover();
 }
 
-Vector3 RockField3D::contract_cover_at(const Vector3 &p_position) const {
+Vector3 RockField3D::_cover_sample(const Vector2 &p_xz) const {
 	static const float texel[2] = { 1.0f, 8.0f };
-	MutexLock lock(cover_data_mutex);
 	for (int l = 0; l < 2; l++) {
 		if (!cover_valid[l] || cover_data[l].size() != COVER_N * COVER_N * 4) {
 			continue;
 		}
 		// Texel centres sit at half a texel; stay a texel inside so the bilinear taps are all in the map.
-		const float fx = (float(p_position.x) - cover_origin[l].x) / texel[l] - 0.5f;
-		const float fz = (float(p_position.z) - cover_origin[l].y) / texel[l] - 0.5f;
+		const float fx = (p_xz.x - cover_origin[l].x) / texel[l] - 0.5f;
+		const float fz = (p_xz.y - cover_origin[l].y) / texel[l] - 0.5f;
 		if (fx < 0.0f || fz < 0.0f || fx >= COVER_N - 1 || fz >= COVER_N - 1) {
 			continue;
 		}
@@ -7134,6 +7133,19 @@ Vector3 RockField3D::contract_cover_at(const Vector3 &p_position) const {
 		return r;
 	}
 	return Vector3();
+}
+
+Vector3 RockField3D::contract_cover_at(const Vector3 &p_position) const {
+	MutexLock lock(cover_data_mutex);
+	return _cover_sample(Vector2(p_position.x, p_position.z));
+}
+
+// A grid of reads (sand's armour): the lock once for all of them.
+void RockField3D::contract_cover_points(const Vector2 *p_points, int p_count, Vector3 *r_cover) const {
+	MutexLock lock(cover_data_mutex);
+	for (int i = 0; i < p_count; i++) {
+		r_cover[i] = _cover_sample(p_points[i]);
+	}
 }
 
 // Off: the river beds keep only the river layer's stones (their grains and their far cover go; cells already built
