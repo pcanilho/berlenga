@@ -383,6 +383,11 @@ private:
 	Vector3 _lake_center(int p_lake) const;
 	Ref<ImageTexture> geology_texture;
 	Ref<ImageTexture> detail_keep_texture; // share of the erosion detail kept, per node (_bake_detail_keep)
+	// Loose sand depth (m) on the dune belts and sand seas, per node; -1 off them (_bake_sand_depth, for the materials'
+	// dune-scale tone: thin sand on interdune flats, rubefaction).
+	Ref<ImageTexture> sand_depth_texture;
+	bool sand_depth_dirty = true;
+	void _bake_sand_depth();
 	// Static spray potential of the falls (0..1) on its own finer grid over the result (_bake_spray).
 	real_t spray_cell = 4.0;
 	int spray_nx = 0, spray_ny = 0;
@@ -799,6 +804,7 @@ public:
 	void set_sand_sea_edge(real_t p_value) { sand_sea_edge = MAX(p_value, real_t(0.0)); }
 	real_t get_sand_sea_edge() const { return sand_sea_edge; }
 	real_t get_sand_sea_height(const Vector3 &p_global_position) const { return _sea_sample(p_global_position.x, p_global_position.z); }
+	real_t get_sand_depth_at(const Vector3 &p_global_position) const;
 	void set_sand_sea_compound(bool p_value) { sand_sea_compound = p_value; }
 	bool is_sand_sea_compound() const { return sand_sea_compound; }
 	void set_sand_sea_mask(const Ref<Image> &p_mask) { sand_sea_mask = p_mask; }
@@ -964,6 +970,7 @@ public:
 	Ref<Image> get_geology_image() const;
 	Ref<Texture2D> get_geology_texture() const { return geology_texture; }
 	static String get_geology_shader_code();
+	static String get_sand_shader_code();
 	String get_detail_shader_code() const;
 	real_t get_discharge(real_t p_area) const;
 	Array get_rivers(real_t p_min_area) const;

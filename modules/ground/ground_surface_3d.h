@@ -448,6 +448,7 @@ private:
 	bool wind_ripples = true;
 	bool far_ripples = true; // the grown field's ripples as a normal over the dune field past the patch
 	bool ripple_sorting = true; // heavy minerals in the troughs, coarse grains on the crests
+	bool dune_tone = true; // the dune field's colour: rubefaction, coarse interdune flats, pale slip faces
 	// Wind fills prints from their upwind side (_drift_prints()).
 	bool wind_fills_prints = true;
 	// Dry ground up to WATER_FRINGE over a water body's level is kept wet by capillary rise (_water_update()).
@@ -478,6 +479,12 @@ private:
 	Rect2 ripple_sand_rect;
 	LocalVector<float> ripple_tile_slope; // the grown field's slope, 2 per cell, world cell mod n
 	LocalVector<float> ripple_tile_norm; // its height over its mean in standard deviations
+	LocalVector<float> ripple_sand_depth; // the generator's loose sand depth over ripple_sand_rect (m, -1 none)
+	LocalVector<float> ripple_sand_share; // the ground's sand share there
+	static constexpr int RIPPLE_DEPTH_N = 128;
+	static constexpr float RIPPLE_DEPTH_SIZE = 1024.0f; // m
+	LocalVector<float> ripple_far_depth; // the generator's sand depth, RIPPLE_DEPTH_N squared over ripple_far_depth_rect
+	Rect2 ripple_far_depth_rect;
 	float ripple_tile_sd = 0.0f; // m
 	Ref<Image> ripple_far_image;
 	Ref<ImageTexture> ripple_far_texture;
@@ -1025,6 +1032,11 @@ public:
 		ripple_dirty = true;
 	}
 	bool is_ripple_sorting() const { return ripple_sorting; }
+	void set_dune_tone(bool p_enabled) {
+		dune_tone = p_enabled;
+		ripple_dirty = true;
+	}
+	bool is_dune_tone() const { return dune_tone; }
 	void set_mud_layer(bool p_enabled);
 	bool is_mud_layer() const { return mud_layer; }
 	void set_mud_slides(bool p_enabled);
