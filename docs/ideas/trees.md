@@ -3558,3 +3558,17 @@ understory reinitiation, old growth: Oliver and Larson 1996): the bands already 
 young, beetle snags, old-growth poles) chosen by time since disturbance per patch, so a burnt or thrown patch regrows
 in the scene's calendar. Needs a per-patch disturbance age contract with world-links (WorldFire already gives
 burn_age_at).
+
+## Next-round options (card 20 Nov afternoon)
+
+1. **Beaver country.** Aspen, willow and birch along streams gnawed to hourglass stumps with chisel facets (beavers
+   fell stems mostly under 25 cm, within about 30 m of water; Müller-Schwarze 2011), felled crowns pointing to the
+   water, stumps resprouting as coppice, and drowned standing snags in a beaver pond with its meadow after it is left
+   (a new disturbance kind for WorldStand, so the succession picks the beaver meadow).
+2. **Flood marks.** A silt crust on trunks and roots up to the last high water, a sharp line on the upstream face
+   (dendrogeomorphology; Hupp 1988), flood wrack of twigs and grass caught on low branches and piled against
+   upstream sides, scoured roots on the bank. Needs a shader term for the silt (vertex colour can only darken) and a
+   flood height from WorldWater or a stand meta.
+3. **Deer and nurse logs.** A browse line under heavily grazed woods (no foliage below about 1.8 m, saplings bitten to
+   bushes, bark stripped on young spruce and ash; Gill 1992), and seedlings in rows along rotting logs that later
+   stand on stilts in a line where the log was (Harmon and Franklin 1989). Reads a browsing pressure map or stand meta.
