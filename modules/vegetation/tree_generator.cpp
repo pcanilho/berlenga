@@ -21429,6 +21429,24 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		preset = saved_preset;
 	}
 	const float crown = crown_cache[key];
+	if (far_thinning && sp->get_visibility_range() <= 0.0f && !meshes.is_empty()) {
+		// Its range by its size (trees.md 9a): the drawn plants keep every rank to half of it, then thin with the
+		// square of the distance out to VegetationField3D.far_reach times it. A 30 m spruce 900 m (all of them to
+		// 450 m, a tail to 2.7 km at the default reach), a 6 m tree 180 m.
+		// VegetationField3D widens the tail's survivors in their instance transforms (meta far_widen; on the CPU per
+		// streamed tile, so the path tracer needs no camera-dependent vertex capture of every tree surface).
+		sp->set_meta("far_widen", true);
+		const Ref<Mesh> m0 = meshes[0];
+		if (m0.is_valid()) {
+			const AABB ab = m0->get_aabb();
+			const float extent = MAX(ab.size.y, MAX(ab.size.x, ab.size.z));
+			// Trees and logs only: small wood and saplings keep no range (drawn to the stream radius as before), and a
+			// range of 150 m or more leaves the field's far voxel volume (to far_volume_range, 150 m) empty for them.
+			if (extent >= 5.0f) {
+				sp->set_visibility_range(CLAMP(30.0f * extent, 150.0f, 1200.0f));
+			}
+		}
+	}
 	// Needle cover overhead for the forest floor (VegetationField3D.get_conifer_at on the
 	// vegetation branch); a no-op until PlantSpecies has the property.
 	const bool conifer = p_preset == PRESET_SCOTS_PINE || p_preset == PRESET_NORWAY_SPRUCE || p_preset == PRESET_SILVER_FIR || p_preset == PRESET_LARCH || p_preset == PRESET_YEW ||
@@ -23039,6 +23057,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_beetle_outbreak"), &TreeGenerator::get_beetle_outbreak);
 	ClassDB::bind_method(D_METHOD("set_windthrow_years", "years"), &TreeGenerator::set_windthrow_years);
 	ClassDB::bind_method(D_METHOD("get_windthrow_years"), &TreeGenerator::get_windthrow_years);
+	ClassDB::bind_method(D_METHOD("set_far_thinning", "enabled"), &TreeGenerator::set_far_thinning);
+	ClassDB::bind_method(D_METHOD("get_far_thinning"), &TreeGenerator::get_far_thinning);
 	ClassDB::bind_method(D_METHOD("set_windthrow_storm", "years"), &TreeGenerator::set_windthrow_storm);
 	ClassDB::bind_method(D_METHOD("get_windthrow_storm"), &TreeGenerator::get_windthrow_storm);
 	ClassDB::bind_method(D_METHOD("set_windthrow_direction", "direction"), &TreeGenerator::set_windthrow_direction);
@@ -23177,6 +23197,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_variants"), "set_fire_variants", "get_fire_variants");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beetle_years", PROPERTY_HINT_RANGE, "-1,30,0.05,suffix:yr"), "set_beetle_years", "get_beetle_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beetle_outbreak", PROPERTY_HINT_RANGE, "0,30,0.5,suffix:yr"), "set_beetle_outbreak", "get_beetle_outbreak");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_thinning"), "set_far_thinning", "get_far_thinning");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "windthrow_years", PROPERTY_HINT_RANGE, "-1,60,0.1,suffix:yr"), "set_windthrow_years", "get_windthrow_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "windthrow_storm", PROPERTY_HINT_RANGE, "0,60,0.5,suffix:yr"), "set_windthrow_storm", "get_windthrow_storm");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "windthrow_direction"), "set_windthrow_direction", "get_windthrow_direction");

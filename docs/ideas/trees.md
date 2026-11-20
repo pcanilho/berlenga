@@ -3239,6 +3239,27 @@ surface shows.
 Recommended: all three, in the order 1, 2, 3. The canopy-height surface to 4 km stays vegetation's; trees supply
 its per-species heights and colours from their own meshes.
 
+### 9a. Far thinning by rank (built 20 Nov; Paulo picked all three far-forest options, in order)
+
+Trees join VegetationField3D's far tail (vegetation.md, "Far vegetation without bald ground"; vegetation's contract:
+one hashed rank per plant in INSTANCE_CUSTOM.x, the range in custom.y, keep = _far_keep(range, range x far_reach, d),
+a plant drawn while rank < keep, survivors widened by min(1/sqrt(tail), 1.6), Cook et al. 2007 stochastic
+simplification as Ghost of Tsushima's far grass).
+- Ranges: a stand species 5 m or larger (its first mesh's largest extent) gets 30 m of range a metre, 150-1200 m,
+  unless the scene set one: a 30 m spruce keeps every tree to 450 m and thins to 2.7 km. Smaller wood and saplings keep
+  no range (drawn to the stream radius as before), and 150 m or more leaves the field's far voxel volume (to 150 m)
+  empty for trees.
+- Widening on the CPU, not in the shader: species meta `far_widen` makes VegetationField3D grow each survivor in its
+  instance transform by the keep its tile was committed for (min(1/sqrt(keep), 1.6) across, a third of that upward
+  so the skyline does not rise), rebuilt with the tile as the camera comes closer. Tried first: a copy of every tree
+  material calling the shared vegetation_far_scale() in vertex(). Raster was right, but a camera-dependent vertex()
+  makes the path tracer recapture every tree surface (bark, needles, millions of vertices) whenever the camera moves,
+  and the captures did not finish within a cloud render. Per tile the thinning steps instead of fading; at those
+  distances a tree is a few pixels. `TreeGenerator.far_thinning` (on) sets the ranges and meta.
+- Bench: `--stands --plot=N --far=R` streams the stand with every species ranged R m (far shell and far volume off,
+  FAR_SHELL=1 brings the shell back; NO_FAR_SCALE=1 grows the stand without far_thinning). Raster and path traced
+  (640x360, --far=50) draw the same survivors at the same places.
+
 ## Next-round options (card 19 Nov evening)
 **Snow-laden crowns.** Conifer crowns catch snow (up to 30-60% of a storm's snowfall in a closed spruce stand; Hedstrom and Pomeroy 1998, Pomeroy et al. 1998 interception model): the load bends branch tips down (spruce and fir laterals droop 10-30 degrees under a few kg; Schmidt and Pomeroy 1990 branch bending), white caps sit on the upper side of each spray as real geometry, and it unloads in gusts, sun and thaw as falling clumps (Storck et al. 2002; Roesch et al. 2012 unloading rates). Heavy wet snow breaks tops and stems (snow breakage, Nykanen et al. 1997; Peltola et al. 1999 critical loads), through the TreeWind3D storm path. Reads the snow/weather contracts (snowfall, air temperature, wind); load per tree kept in TreeWind3D, released as Flow/particle clumps. Needs a WorldSnow line agreed with the snow thread (who owns snow on crowns).
 **Windthrow fields.** What a winter storm leaves (Lothar 1999, Kyrill 2007): gaps of thrown trees lying in drifts along the storm's track, root plates standing up with their pits beside them, snapped stems, leaning survivors, and over the years the plates crumbling into pit-and-mound ground while pioneers fill the gap (Schelhaas et al. 2003; Ulanova 2000; Peterson 2007 pit-mound microtopography). A `STAND_WINDTHROW` with a storm direction and age: stems baked fallen (not run through physics, for open-world scale) from the storm kit's plates and breaks, pits handed to the ground contract (tree_root_pit, as storm_damage does).
