@@ -1,0 +1,1 @@
+- Snow: surface hoar shows as larger, brighter glints from crystal-sized plates set every way (BaseMaterial3D snow pass, SnowSurface3D and the path tracer); `snow_hoar_at()` in the snow shader functions; `--view=sparkle --hoar=MM` in the snow bench.

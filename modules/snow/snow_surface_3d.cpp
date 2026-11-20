@@ -232,9 +232,15 @@ vec3 snow_noise_grad(vec2 p) {
 }
 // Snow sparkle (docs/ideas/snow.md, stage 5): the same function as BaseMaterial3D's snow pass, there with
 // its comments. A facet normal and its weight (0: none) for a footprint in metres.
-vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
-	const float grain = 0.002;
-	const float share = 0.25;
+vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint, float p_hoar) {
+	// Surface hoar (p_hoar, mm): its crystals are flat ice plates and feathers a few mm to cm across, standing
+	// on the snow (Colbeck 1988; Lang et al. 1984), each one a mirror. Over hoar, the cell is the crystal's size,
+	// most crystals show a smooth face, and a share hf of the facets are plates set every way, their normals
+	// spread evenly over the sky up to 60 degrees off the snow's (past that the coat's grazing Fresnel would only
+	// darken the snow under it): far fewer, larger and brighter glints than the grains', from any sun.
+	float hf = smoothstep(0.5, 4.0, p_hoar);
+	float grain = max(0.002, 0.0006 * p_hoar);
+	float share = mix(0.25, 0.35, hf);
 	float level = floor(max(log2(max(p_footprint, grain) / grain), 0.0));
 	if (level > 5.0) {
 		return vec4(p_n, 0.0);
@@ -255,8 +261,13 @@ vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
 	if (r0 >= chance) {
 		return vec4(p_n, 0.0);
 	}
-	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-3);
-	float ct = inversesqrt(1.0 + tan2);
+	float ct;
+	if (r0 < chance * hf) {
+		ct = mix(0.5, 1.0, r1);
+	} else {
+		float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-3);
+		ct = inversesqrt(1.0 + tan2);
+	}
 	float st = sqrt(max(1.0 - ct * ct, 0.0));
 	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
 	vec3 b = cross(p_n, t);
@@ -267,8 +278,10 @@ vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
 
 // Exact sparkle under the path tracer (docs/ideas/snow.md, follow-up 5): the facet of the grain at a point,
 // the same function as BaseMaterial3D's snow pass and the path tracer's, there with its comments.
-vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
-	const float grain = 0.002;
+vec3 snow_grain_facet(vec3 p_pos, vec3 p_n, float p_hoar) {
+	// Over surface hoar (p_hoar, mm), crystal-sized cells, a share hf of them plates set every way (as snow_glint).
+	float hf = smoothstep(0.5, 4.0, p_hoar);
+	float grain = max(0.002, 0.0006 * p_hoar);
 	ivec3 q = ivec3(floor(p_pos / grain));
 	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u);
 	h ^= h >> 16u;
@@ -278,8 +291,15 @@ vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
 	h ^= h >> 16u;
 	float r1 = float(h & 0xffffu) / 65536.0;
 	float r2 = float(h >> 16u) / 65536.0;
-	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-4);
-	float ct = inversesqrt(1.0 + tan2);
+	uint h2 = h * 0x9e3779b9u;
+	h2 ^= h2 >> 15u;
+	float ct;
+	if (float(h2 & 0xffffu) / 65536.0 < hf) {
+		ct = mix(0.5, 1.0, r1);
+	} else {
+		float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-4);
+		ct = inversesqrt(1.0 + tan2);
+	}
 	float st = sqrt(max(1.0 - ct * ct, 0.0));
 	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
 	vec3 b = cross(p_n, t);
@@ -351,17 +371,25 @@ void fragment() {
 	// them away.
 	float pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 	float fp = PROJECTION_MATRIX[3][3] != 0.0 ? pix : distance(w_pos, INV_VIEW_MATRIX[3].xyz) * pix;
+	// Surface hoar (mm) from the cover's catch map alpha (1 + mm / 10); trodden snow has none left.
+	float hoar = 0.0;
+	if (has_catch) {
+		vec2 huv = (p - snow_rect.xy) / max(snow_rect.zw, vec2(1e-4));
+		vec4 hc = snow_inside(huv) ? textureLod(catch_tex, huv, 0.0) : vec4(0.0);
+		// Under a roof the hoar is on the roof, not here.
+		hoar = hc.r > snow_ground(p) + 0.5 ? 0.0 : max(hc.a - 1.0, 0.0) * 10.0 * (1.0 - compact);
+	}
 	if (IN_PATH_TRACER && snow_exact_glints) {
 		// Under the path tracer: the ice specular lies on the facet of the grain hit, for every grain (the
 		// samples of a pixel integrate them), at the facet's own roughness; the diffuse keeps the snow's
 		// normal. Trodden snow keeps fewer whole grains, the rest stays rough.
 		float ew = (1.0 - smoothstep(0.05, 0.3, pack.b)) * (1.0 - 0.7 * compact);
 		if (ew > 0.0) {
-			SPECULAR_NORMAL = normalize((VIEW_MATRIX * vec4(snow_grain_facet(w_pos, nf), 0.0)).xyz);
+			SPECULAR_NORMAL = normalize((VIEW_MATRIX * vec4(snow_grain_facet(w_pos, nf, hoar), 0.0)).xyz);
 			ROUGHNESS = mix(ROUGHNESS, 0.22, ew);
 		}
 	} else {
-		vec4 g = snow_glint(w_pos, nf, fp);
+		vec4 g = snow_glint(w_pos, nf, fp, hoar);
 		float gw = g.w * (1.0 - smoothstep(0.05, 0.3, pack.b)) * (1.0 - 0.7 * compact);
 		vec3 f = normalize((VIEW_MATRIX * vec4(g.xyz, 0.0)).xyz);
 		mat3 tbf = mat3(TANGENT, BINORMAL, f);
