@@ -3331,6 +3331,17 @@
    "topic": "Old trees and deadwood"
   },
   {
+   "name": "Lightning strikes",
+   "settings": [
+    "lightning_years"
+   ],
+   "note": "",
+   "what": "a torn pale strip down the stem with bark and splinters thrown round the foot, greying and healing over the years.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
    "name": "Broken limbs",
    "settings": [
     "limb_breakage"
