@@ -11,6 +11,15 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="add_dust">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="velocity" type="Vector3" />
+			<param index="2" name="strength" type="float" />
+			<description>
+				Dust lifted at [param position] by a tyre or a body moving over the ground, with the plume's starting [param velocity]; [param strength] is the swept rate, tyre width times speed (m2/s). Only dry, bare sand and dry silt skins give dust ([member dust_emission] per square metre swept); a [GroundDust3D] carries it off. A dry silt skin thins by what it gives and its crust is broken, so the wind lifts it too.
+			</description>
+		</method>
 		<method name="add_mat_load">
 			<return type="void" />
 			<param index="0" name="mat" type="int" />
@@ -234,6 +243,18 @@
 			<return type="int" />
 			<description>
 				How many hidden stones wheels have knocked loose ([member buried_kick]).
+			</description>
+		</method>
+		<method name="get_reburied_stone_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many loose stones have sunk out of sight in soft mud, or been buried by mud laid over them, and lie hidden again. They are kept with the deposits ([method save_ruts]) and forgotten by [method clear_mud_deposits].
+			</description>
+		</method>
+		<method name="get_silt_dust_lifted" qualifiers="const">
+			<return type="float" />
+			<description>
+				Kilograms of dry silt skin lifted as dust since start, by tyres and by wind.
 			</description>
 		</method>
 		<method name="get_flood_silt_total" qualifiers="const">
@@ -808,7 +829,7 @@
 			If [code]true[/code], the grown ripple field is drawn as a normal over the dune field past the patch, in raster and path tracing: on all the ground for a sand [member ground_type] with no [member type_map], and by the sand share of a [code]TerrainMaterial3D[/code]. Varied as on the patch (no repeat shows), none on slip faces past about 30 degrees, and faded where a pixel spans less than three crests. Needs [member wind_ripples].
 		</member>
 		<member name="flood_silt" type="bool" setter="set_flood_silt" getter="is_flood_silt" default="true">
-			Water from any other producer on the water contract (a river over its banks, a lake, live water) soaks the ground it covers, and still or slow water lays its suspended load ([method WorldWater.sediment_at]) as fresh mud at the silt's settling speed (D = C w_s dt, w_s 3e-4 m/s; Pizzuto 1987). A current over about 0.5 m/s keeps it up. Where a river keeps its own record of what settles on its bed ([method WorldWater.sediment_deposit_at]), the ground lays that instead, once. The silt lies as a thin skin (dry bulk density 1300 kg/m3) in its own grey-brown, darker with ash: soaked and slick at first, then drying from its top, paling and cracking into small plates ([member desiccation_cracks]); soft only while wet. See [method get_silt_at].
+			Water from any other producer on the water contract (a river over its banks, a lake, live water) soaks the ground it covers, and still or slow water lays its suspended load ([method WorldWater.sediment_at]) as fresh mud at the silt's settling speed (D = C w_s dt, w_s 3e-4 m/s; Pizzuto 1987). A current over about 0.5 m/s keeps it up. Where a river keeps its own record of what settles on its bed ([method WorldWater.sediment_deposit_at]), the ground lays that instead, once. The silt lies as a thin skin (dry bulk density 1300 kg/m3) in its own grey-brown, darker with ash: soaked and slick at first, then drying from its top, paling and cracking into small plates ([member desiccation_cracks]); soft only while wet. Dry, it is dust: tyres lift it ([method add_dust]) and break its crust, and the wind lifts a broken skin from about 7 m/s (an unbroken crust from about 23 m/s), thinning it. See [method get_silt_at].
 		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
 			The node the field follows; the camera when empty.
@@ -865,7 +886,7 @@
 			Hidden stones and roots per square metre of deep mud ([member buried_obstacles]).
 		</member>
 		<member name="buried_kick" type="bool" setter="set_buried_kick" getter="is_buried_kick" default="true">
-			A hidden stone a rut has uncovered past its middle, met by a rolling tyre, is knocked loose: it becomes a [RigidBody3D] in the [code]ground_loose[/code] group, moving off with part of the tyre's speed, and the mud closes into its socket. It is gone from the hidden stones for good. A loose stone in front of a rolling tyre is shoved on and out to the side, as far as the soil in front of it lets the tyre push. Roots stay.
+			A hidden stone a rut has uncovered past its middle, met by a rolling tyre, is knocked loose: it becomes a [RigidBody3D] in the [code]ground_loose[/code] group, moving off with part of the tyre's speed, and the mud closes into its socket. It is gone from the hidden stones for good. A loose stone in front of a rolling tyre is shoved on and out to the side. On a mud layer a loose stone lies in the deformed mud, not on the terrain's collider: it settles to the depth the mud bears it at, ploughs a furrow with a heap ahead as it moves, sinks deep in slurry, and once out of sight (sunk, or buried by mud laid over it) is a hidden stone again. Roots stay.
 		</member>
 		<member name="buried_obstacles" type="bool" setter="set_buried_obstacles" getter="is_buried_obstacles" default="true">
 			Stones and tree roots lie hidden in the [member mud_layer] (roots where trees shade the ground): a wheel sinking into the mud stops on one under its middle and rides up ([method get_buried_depth_at]); one under the rest of its print it wraps round, the mud pressed out round the stone's top. Slumping and liquid mud flow round a stone's top, not off it. Near the followed point each is a [StaticBody3D] in the [code]ground_buried[/code] group with its mesh, so once ruts or water uncover one it is solid for wheels and bodies. The same stones are there every time.
