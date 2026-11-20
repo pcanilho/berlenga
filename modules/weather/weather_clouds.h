@@ -33,6 +33,7 @@
 
 #include "core/math/vector2.h"
 #include "core/math/vector3.h"
+#include "core/math/vector4.h"
 #include "core/string/ustring.h"
 #include "core/templates/vector.h"
 #include "scene/resources/texture.h"
@@ -106,6 +107,22 @@ struct State {
 	// energy. Only the sky reads them.
 	int light_count = 0;
 	float lights[MAX_CLOUD_LIGHTS][7] = {}; // x, y, z, reach, r, g, b
+	// Wave clouds (lenticulars; WeatherMountainWaves, docs/ideas/clouds.md): the mountain waves' vertical
+	// displacement (m) at four world heights over a square fixed to the ground, and the slab (m) where the lift
+	// can reach saturation (empty when wave_y1 <= wave_y0). The air's temperature (C) and relative humidity
+	// at air_y0 (m) give the humidity aloft, with the mid and high layers' moist air.
+	Vector<float> wave_eta; // wave_n * wave_n * 4
+	int wave_n = 0;
+	Vector2 wave_corner;
+	float wave_size = 0.0f;
+	float wave_levels[4] = { 2000.0f, 3500.0f, 5000.0f, 7000.0f };
+	float wave_y0 = 0.0f; // the slab round the mid layer's moist air
+	float wave_y1 = 0.0f;
+	float wave_y2 = 0.0f; // the slab round the high layer's (lenses of ice: cirrocumulus lenticularis)
+	float wave_y3 = 0.0f;
+	float air_t0 = 15.0f;
+	float air_rh0 = 0.6f;
+	float air_y0 = 0.0f;
 	float top_max = 0.0f; // highest top any column reaches now (m), set by update_top_max()
 	float base_min = 1500.0f; // lowest base any column has now (m), set by update_top_max()
 
@@ -140,6 +157,13 @@ Vector3 shape_coord(const State &p_state, const Vector3 &p_pos);
 float shape_at(const State &p_state, const Vector3 &p_pos);
 // The density effectors at a point: the added share (> 0) or the cleared share (< 0), -1..1.
 float effector_at(const State &p_state, const Vector3 &p_pos);
+// Wave clouds: the dew point depression (K) of the air at a point (the model's profile, moistened by the mid and
+// high layers' cover), the lift (m) that saturates it, and the wave cloud's extinction (1/m) there.
+float wave_dew_depression_at(const State &p_state, const Vector3 &p_pos);
+float wave_extinction_at(const State &p_state, const Vector3 &p_pos);
+// The two slabs (m: x..y round the mid layer's height, z..w above) where wave cloud can form now, from the field's
+// largest lift at each level (empty: y <= x).
+Vector4 wave_slab(const State &p_state, const float *p_eta_max);
 float extinction_at(const State &p_state, const Vector3 &p_pos);
 
 // The tiling shape noises (Perlin-Worley base; detail: Curly-Alligator wisps and Worley billows, low and

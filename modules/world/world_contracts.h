@@ -88,6 +88,9 @@ public:
 	virtual float contract_high_cloud_cover_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, the high (cirrus) sheet
 	virtual float contract_mid_cloud_cover_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, the mid (altocumulus) sheet
 	virtual float contract_cloud_effector_at(const Vector3 &p_position) const { return 0.0f; } // -1..1, cloud added (> 0) or cleared by effectors
+	virtual float contract_mountain_wave_at(const Vector3 &p_position) const { return 0.0f; } // m, the air's vertical displacement in mountain waves
+	virtual float contract_mountain_wave_velocity_at(const Vector3 &p_position) const { return 0.0f; } // m/s, their vertical wind
+	virtual float contract_wave_cloud_density_at(const Vector3 &p_position) const { return 0.0f; } // 1/m, wave cloud (lenticular) extinction
 	virtual float contract_water_temperature() const { return 15.0f; } // C, open water (lakes lag the air)
 	virtual float contract_surface_temperature_at(const Vector3 &p_position) const { return contract_air_temperature_at(p_position); } // C, exposed ground
 	virtual float contract_ground_height_at(const Vector3 &p_position) const { return 0.0f; } // m, the terrain the weather sees
@@ -138,6 +141,9 @@ protected:
 	GDVIRTUAL1RC(float, _high_cloud_cover_at, Vector3)
 	GDVIRTUAL1RC(float, _mid_cloud_cover_at, Vector3)
 	GDVIRTUAL1RC(float, _cloud_effector_at, Vector3)
+	GDVIRTUAL1RC(float, _mountain_wave_at, Vector3)
+	GDVIRTUAL1RC(float, _mountain_wave_velocity_at, Vector3)
+	GDVIRTUAL1RC(float, _wave_cloud_density_at, Vector3)
 	GDVIRTUAL0RC(float, _water_temperature)
 	GDVIRTUAL1RC(float, _surface_temperature_at, Vector3)
 	GDVIRTUAL1RC(float, _ground_height_at, Vector3)
@@ -194,6 +200,9 @@ public:
 	float high_cloud_cover_at(const Vector3 &p_position) const;
 	float mid_cloud_cover_at(const Vector3 &p_position) const;
 	float cloud_effector_at(const Vector3 &p_position) const;
+	float mountain_wave_at(const Vector3 &p_position) const;
+	float mountain_wave_velocity_at(const Vector3 &p_position) const;
+	float wave_cloud_density_at(const Vector3 &p_position) const;
 	float water_temperature() const;
 	float surface_temperature_at(const Vector3 &p_position) const;
 	float ground_height_at(const Vector3 &p_position) const;

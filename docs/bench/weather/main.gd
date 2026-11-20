@@ -32,6 +32,7 @@ extends Node3D
 #   --view=street     a street that the rain has wetted, with puddles, and a flag in the weather's wind
 #   --view=cloud_map  the clouds from straight above over 24 km (column optical depth), saved with --out
 #   --view=clouds     broken cumulus over fields from a rise, WeatherSkyMaterial sky, cloud shadows on the sun
+#   --view=lenticular wind across a ridge 1.5 km high, a moist mid layer: wave clouds (lenticulars) in its lee
 #   --view=clouds_low the same from 220 m, looking down on the cloud shadows
 #   --view=clouds_wide fair-weather cumulus (cover 0.3, type 0.4) from 520 m, 10 degrees down, low sun behind:
 #                     the landscape bench's clear wide shot (distant clouds at grazing angles)
@@ -45,6 +46,7 @@ extends Node3D
 #   --cloud-light=x,y,z,E,R[,r,g,b]  clouds views: a point light in the clouds (WeatherMap3D.add_cloud_light;
 #                     orange by default, a fire's); repeatable
 #   --cloud-effector=x,y,z,R,S  clouds views: a density effector (S > 0 adds cloud, < 0 clears); repeatable
+#   --no-wave-clouds  lenticular view: WeatherMap3D.wave_clouds off (cost A/B)
 #   --sun-energy=E    clouds views: the sun's light_energy (0: night, for cloud lights)
 #   --high-cover=C    clouds views: the cirrus layer's base cover (WeatherMap3D.high_cloud_cover); with the shafts
 #                     view and --cover=0.05, the 22 and 46 degree ice halos round the sun
@@ -82,6 +84,7 @@ var high_cover := -1.0
 var cloud_lights_arg: Array = []
 var cloud_effectors_arg: Array = []
 var sun_energy := -1.0
+var wave_clouds_off := false
 var half_usec := 0
 var out := ""
 var map_out := ""
@@ -147,6 +150,7 @@ func _ready() -> void:
 		elif a.begins_with("--cloud-light="): cloud_lights_arg.append(a.substr(14).split_floats(","))
 		elif a.begins_with("--cloud-effector="): cloud_effectors_arg.append(a.substr(17).split_floats(","))
 		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
+		elif a == "--no-wave-clouds": wave_clouds_off = true
 		elif a.begins_with("--haze-km="): haze_km = float(a.substr(10))
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
@@ -199,7 +203,7 @@ func _ready() -> void:
 		await _cloud_map()
 		get_tree().quit()
 		return
-	if view in ["clouds", "clouds_low", "clouds_wide", "shafts", "towers"]:
+	if view in ["clouds", "clouds_low", "clouds_wide", "shafts", "towers", "lenticular"]:
 		await _build_clouds()
 		return
 	if view == "projector":
@@ -1062,6 +1066,53 @@ func _build_street() -> void:
 
 
 # The cloud layer over open ground: a WeatherSkyMaterial sky, cloud shadows on the sun.
+# The wave field once it is in: the slab where wave cloud can form, the lift and the cloud along a line across the ridge.
+func _wave_report() -> void:
+	for i in 6:
+		await get_tree().process_frame
+	var slab: Vector4 = weather.get_wave_cloud_slab()
+	print("wave cloud slabs %.0f to %.0f m, %.0f to %.0f m, wind aloft at 4500 m %s m/s" % [slab.x, slab.y, slab.z, slab.w, str(weather.get_wind_aloft(Vector3(), 4500.0))])
+	# Top-down round the camera: wave cloud optical depth over 48 km, as characters (the ridge's crest "|").
+	var best := Vector3()
+	var best_tau := 0.0
+	for j in 12:
+		var row := "  "
+		for i in 24:
+			var q := Vector3(pan_cam.position.x - 24000.0 + i * 2000.0, 0.0, pan_cam.position.z - 24000.0 + j * 4000.0)
+			var tau := 0.0
+			var ysum := 0.0
+			for y in range(3500, 9000, 500):
+				var d: float = weather.get_wave_cloud_density_at(Vector3(q.x, y, q.z)) * 500.0
+				tau += d
+				ysum += d * y
+			if tau > best_tau and q.distance_to(Vector3(pan_cam.position.x, 0, pan_cam.position.z)) > 12000.0:
+				best_tau = tau
+				best = Vector3(q.x, ysum / tau, q.z)
+			row += "#" if tau > 3.0 else ("+" if tau > 0.3 else ("|" if absf(q.x + 6000.0) < 1000.0 else " "))
+		print(row)
+	print("  thickest wave cloud over 12 km from the camera: %s, optical depth %.1f" % [str(best), best_tau])
+	# Connected: the vertical wind of the waves aloft, none near the ground; dry air or no wind, no wave cloud.
+	var wl := "  wave vertical wind at 4 km, x -12 to +8 km (m/s):"
+	var gl := "  get_wind_at().y there, at 4 km / at 50 m above ground:"
+	for k in 11:
+		var wx := Vector3(-12000.0 + k * 2000.0, 0.0, 0.0)
+		wl += " %.2f(%.0f)" % [weather.get_mountain_wave_velocity_at(wx + Vector3(0, 4000, 0)), weather.get_mountain_wave_at(wx + Vector3(0, 4000, 0))]
+		gl += " %.2f/%.2f" % [weather.get_wind_at(wx + Vector3(0, 4000, 0), 4000.0).y, weather.get_wind_at(wx + Vector3(0, 50, 0), 50.0).y]
+	print(wl)
+	print(gl)
+	if weather.has_method("get_wave_cloud_density_at"):
+		var h0: float = weather.humidity
+		weather.humidity = 0.3
+		weather.snap_to_settings()
+		for i in 2:
+			await get_tree().create_timer(0.6).timeout
+		var dry: Vector4 = weather.get_wave_cloud_slab()
+		print("  humidity 0.3: slabs %.0f to %.0f, %.0f to %.0f m (want empty or narrower)" % [dry.x, dry.y, dry.z, dry.w])
+		weather.humidity = h0
+		weather.snap_to_settings()
+		for i in 2:
+			await get_tree().create_timer(0.6).timeout
+
 func _build_clouds() -> void:
 	var sky_mat = ClassDB.instantiate("WeatherSkyMaterial")
 	sky_mat.cloud_reprojection = reprojection
@@ -1166,6 +1217,28 @@ func _build_clouds() -> void:
 	weather.cloud_evolution = not frozen
 	if cloud_time >= 0.0:
 		weather.set_cloud_time(cloud_time)
+	if view == "lenticular":
+		# Wind across a ridge (toward +x), a moist mid layer: wave clouds over its lee.
+		weather.wind_direction = Vector2(1.0, 0.0)
+		weather.wind_speed = 7.0
+		weather.cloud_cover = 0.02 if cover < 0.0 else cover
+		if mid_cover < 0.0:
+			weather.mid_cloud_cover = 0.34
+		weather.humidity = 0.8
+		var ridge := Node3D.new()
+		ridge.set_script(load("res://ridge.gd"))
+		ridge.name = "Ridge"
+		add_child(ridge)
+		var rm := StandardMaterial3D.new()
+		rm.albedo_color = Color(0.36, 0.34, 0.3)
+		rm.roughness = 0.9
+		ridge.build_mesh(rm)
+		weather.terrain_source = weather.get_path_to(ridge)
+		weather.wave_clouds = not wave_clouds_off
+		cam.position = Vector3(14000, 300, 24000)
+		cam.look_at_from_position(cam.position, Vector3(2000, 3800, 12000), Vector3.UP)
+		weather.rebake_terrain_wind()
+		_wave_report()
 	if view == "clouds_wide":
 		# The landscape bench's clear weather.
 		weather.extent = 8192.0

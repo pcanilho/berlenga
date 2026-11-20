@@ -670,6 +670,116 @@ vec4 march_altocumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 	return vec4(radiance * fade, mix(1.0, transmittance, fade));
 }
 
+// Wave clouds (lenticulars): the slab where mountain waves lift moist air past saturation, marched
+// (the field is fixed to the ground and smooth: 16 coarse steps over at most 8 km of path, refined in cloud). The lens is laminar: its
+// edge is where the lift meets saturation, roughened only by thin striations along the wind (the moist sheets the
+// air carries through it). Lit as the mid layer: Wrenninge's octaves, two-stream diffuse, the sky's light.
+vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, float jitter, float p_pixel, out float r_t) {
+	r_t = 0.0;
+	float y0 = slab.x;
+	float y1 = slab.y;
+	if (y1 <= y0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	vec3 ro = vec3(0.0, PLANET_RADIUS + cam.y, 0.0);
+	vec2 hb = sphere_hits(ro, rd, PLANET_RADIUS + y0);
+	vec2 ht = sphere_hits(ro, rd, PLANET_RADIUS + y1);
+	float t0;
+	float t1;
+	if (cam.y < y0) {
+		if (sphere_hits(ro, rd, PLANET_RADIUS).x > 0.0) {
+			return vec4(0.0, 0.0, 0.0, 1.0);
+		}
+		t0 = hb.y;
+		t1 = ht.y;
+	} else if (cam.y < y1) {
+		t0 = 0.0;
+		t1 = hb.x > 0.0 ? hb.x : ht.y;
+	} else {
+		if (ht.x < 0.0) {
+			return vec4(0.0, 0.0, 0.0, 1.0);
+		}
+		t0 = ht.x;
+		t1 = hb.x > 0.0 ? hb.x : ht.y;
+	}
+	// The field covers its square only (half its size round the camera).
+	float far = 0.5 * cloud_wave_rect.z * 1.2;
+	if (t0 > far || t1 <= t0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	t1 = min(t1, min(t0 + 8000.0, far));
+	const int n = 16;
+	float ds = (t1 - t0) / float(n);
+	float cos_theta = dot(rd, sun_dir);
+	float phase0 = cloud_phase(cos_theta, 1.0);
+	float phase1 = cloud_phase(cos_theta, 0.5);
+	float phase2 = cloud_phase(cos_theta, 0.25);
+	vec2 wdir = cloud_mid_dir;
+	vec3 radiance = vec3(0.0);
+	float transmittance = 1.0;
+	float depth_sum = 0.0;
+	// Coarse steps find where the lift comes within 150 m of saturation (the moisture, the costly read, once a
+	// step); there four fine samples resolve the lens, whose edge is thinner than a coarse step at grazing angles.
+	for (int i = 0; i < n; i++) {
+		float tc = t0 + (float(i) + 0.5) * ds;
+		vec3 pc = vec3(cam.x + rd.x * tc, length(ro + rd * tc) - PLANET_RADIUS, cam.z + rd.z * tc);
+		if (pc.y < y0 - 0.5 * ds || pc.y > y1 + 0.5 * ds) {
+			continue;
+		}
+		float eta_c = wc_wave_eta(pc);
+		if (eta_c <= -150.0) {
+			continue;
+		}
+		float dep = wc_wave_depression(pc);
+		if (eta_c - 125.0 * dep < -150.0) {
+			continue;
+		}
+		bool lit = false;
+		vec3 light = vec3(0.0);
+		for (int k = 0; k < 4; k++) {
+			// Not jittered: the field is smooth, and a jittered thin edge breaks into dots the reconstruction keeps.
+			float t = t0 + (float(i) + (float(k) + 0.5) * 0.25) * ds;
+			vec3 p = vec3(cam.x + rd.x * t, length(ro + rd * t) - PLANET_RADIUS, cam.z + rd.z * t);
+			if (p.y < y0 || p.y > y1) {
+				continue;
+			}
+			// Striations: the detail noise stretched along the wind, a few tens of metres on the saturation level.
+			vec2 aw = vec2(dot(p.xz, wdir), dot(p.xz, vec2(-wdir.y, wdir.x)));
+			float foot = max(t * p_pixel, 0.0625 * ds);
+			float lod = max(log2(foot / (2400.0 / 128.0)), 0.0);
+			float st = textureLod(cloud_detail, vec3(aw.x / 16000.0, aw.y / 2400.0, p.y / 1200.0), lod).b;
+			float eta = wc_wave_eta(p);
+			float x = eta - 125.0 * dep + 40.0 * (st - 0.5);
+			if (x <= 0.0) {
+				continue;
+			}
+			float sigma = wc_wave_sigma(p, eta, x);
+			float profile = clamp(x / 150.0, 0.0, 1.0);
+			if (!lit) {
+				// The sun's light once a coarse step, from the first sample in cloud.
+				float lr;
+				float dr;
+				float tau = wc_wave_extinction_d(p + sun_dir * 40.0, 0.0, dep, lr, dr) * 80.0 + wc_wave_extinction_d(p + sun_dir * 160.0, 0.0, dep, lr, dr) * 160.0;
+				light = sun_radiance * (exp(-tau) * phase0 + 0.5 * exp(-0.5 * tau) * phase1 + 0.25 * exp(-0.25 * tau) * phase2);
+				float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * 2.0);
+				light += sun_radiance * diffuse * mix(0.25, 1.0, smoothstep(0.0, 0.6, profile)) * (2.0 / (4.0 * PI));
+				lit = true;
+			}
+			vec3 l = light + mix(ambient_bottom, ambient_top, 0.6) * mix(0.35, 1.0, sqrt(1.0 - profile)) * 1.4;
+			float tr = exp(-sigma * 0.25 * ds);
+			radiance += transmittance * l * (1.0 - tr);
+			depth_sum += transmittance * (1.0 - tr) * t;
+			transmittance *= tr;
+		}
+		if (transmittance < 0.01) {
+			break;
+		}
+	}
+	r_t = transmittance < 1.0 ? depth_sum / (1.0 - transmittance) : t0;
+	float fade = 1.0 - smoothstep(0.7 * far, far, t0);
+	return vec4(radiance * fade, mix(1.0, transmittance, fade));
+}
+
 // Over: a layer b behind a (radiance adds through a's transmittance), and the depth the air in front is taken
 // to, weighted by what each hides.
 vec4 cloud_over(vec4 a, float da, vec4 b, float db, out float r_depth) {
@@ -700,8 +810,28 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	vec4 mid = march_altocumulus(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_mid);
 	float d_high;
 	vec4 high = march_cirrus(cam, rd, sun_dir, sun_radiance, ambient_top, p_pixel, d_high);
+	// The two wave slabs, nearer first (the camera is under both but on a mountain top).
+	float d_wa;
+	vec4 wa = march_wave(cloud_wave_slab.xy, cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_wa);
+	float d_wb;
+	vec4 wb = march_wave(cloud_wave_slab.zw, cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_wb);
+	float d_wave;
+	vec4 wave = cam.y < cloud_wave_slab.z ? cloud_over(wa, d_wa, wb, d_wb, d_wave) : cloud_over(wb, d_wb, wa, d_wa, d_wave);
 	float d;
 	vec4 o;
+	if (cam.y < cloud_mid_height) {
+		// Wave cloud below the mid layer is met before it, above it after.
+		if (cloud_wave_slab.y <= cloud_wave_slab.x || 0.5 * (cloud_wave_slab.x + cloud_wave_slab.y) < cloud_mid_height) {
+			o = cloud_over(low, d_low, wave, d_wave, d);
+			o = cloud_over(o, d, mid, d_mid, d);
+		} else {
+			o = cloud_over(low, d_low, mid, d_mid, d);
+			o = cloud_over(o, d, wave, d_wave, d);
+		}
+		o = cloud_over(o, d, high, d_high, r_depth);
+		return o;
+	}
+	low = cloud_over(low, d_low, wave, d_wave, d_low);
 	if (cam.y < cloud_mid_height) {
 		o = cloud_over(low, d_low, mid, d_mid, d);
 		o = cloud_over(o, d, high, d_high, r_depth);
@@ -1068,6 +1198,9 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 		rs->material_set_param(m, "cloud_lights", lights);
 		rs->material_set_param(m, "cloud_light_colors", colors);
 	}
+	rs->material_set_param(m, "cloud_wave_levels", Vector4(p_state.wave_levels[0], p_state.wave_levels[1], p_state.wave_levels[2], p_state.wave_levels[3]));
+	rs->material_set_param(m, "cloud_wave_slab", p_state.wave_n > 0 ? Vector4(p_state.wave_y0, p_state.wave_y1, p_state.wave_y2, p_state.wave_y3) : Vector4());
+	rs->material_set_param(m, "cloud_air", Vector3(p_state.air_t0, p_state.air_rh0, p_state.air_y0));
 	rs->material_set_param(m, "cloud_high_cover", p_state.high_cover);
 	rs->material_set_param(m, "cloud_high_height", p_state.high_height);
 	rs->material_set_param(m, "cloud_high_tau", p_state.high_tau);
@@ -1317,6 +1450,17 @@ void WeatherSkyMaterial::set_cloud_light_grid(const Ref<Texture3D> &p_grid, cons
 	}
 	rs->material_set_param(m, "cloud_light_grid_box", Vector4(p_corner.x, p_corner.y, MAX(p_size, 1.0f), grid.is_valid() ? 1.0f : 0.0f));
 	rs->material_set_param(m, "cloud_light_grid_y", Vector2(p_y0, MAX(p_y1, p_y0 + 1.0f)));
+}
+
+void WeatherSkyMaterial::set_cloud_wave_field(const Ref<Texture2D> &p_field, const Vector2 &p_corner, float p_size, int p_texels) {
+	RenderingServer *rs = RS::get_singleton();
+	const RID m = get_rid();
+	const RID f = p_field.is_valid() ? p_field->get_rid() : RID();
+	if (f != cloud_wave_field) {
+		rs->material_set_param(m, "cloud_wave_field", f.is_valid() ? Variant(f) : Variant());
+		cloud_wave_field = f;
+	}
+	rs->material_set_param(m, "cloud_wave_rect", Vector4(p_corner.x, p_corner.y, MAX(p_size, 1.0f), float(p_texels)));
 }
 
 void WeatherSkyMaterial::set_atmosphere_model(AtmosphereModel p_model) {

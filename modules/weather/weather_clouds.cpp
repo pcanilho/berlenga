@@ -31,6 +31,8 @@
 
 #include "weather_clouds.h"
 
+#include "weather_mountain_waves.h"
+
 #include "core/io/image.h"
 #include "core/math/math_funcs.h"
 #include "core/object/worker_thread_pool.h"
@@ -683,6 +685,137 @@ float effector_at(const State &p_state, const Vector3 &p_pos) {
 	return CLAMP(e, -1.0f, 1.0f);
 }
 
+
+// Wave clouds (lenticulars). Air carried up a mountain wave by eta metres cools at the dry rate (9.8 K/km) and
+// its dew point at 1.8 K/km, so it saturates once eta passes 125 m per kelvin of dew point depression (Wallace and
+// Hobbs 2006, 3.5); past that it condenses at the moist adiabat's rate, about 2 g/kg a kilometre near 0 C,
+// falling with temperature (Clausius-Clapeyron, 6% a kelvin). Optical extinction from the condensed water,
+// 1.5 LWC / (rho r_e) with droplets of 10 um, ice of 30 um below -25 C (Stephens 1978). The humidity aloft is the
+// air round about (Manabe and Wetherald's profile), moistened where the mid or high layer has cover:
+// saturated in its clouds and moist round them (wave_layer_rh()). Within a moist layer the humidity varies in thin sheets (a few hundred
+// metres; the radiosonde's stepped profiles), which stacks the lens into plates (pile d'assiettes).
+// The air round about (not a lifted parcel): Manabe and Wetherald's (1967) relative humidity profile,
+// RH = RH0 (p / p0 - 0.02) / 0.98 (pressure with an 8 km scale height), the temperature at the model's 6.5 K/km;
+// the free troposphere is drier than the ground air, so only the moist layers make wave cloud.
+static float wave_env_depression(float p_t0, float p_rh0, float p_dz) {
+	const float t = p_t0 - 0.0065f * p_dz;
+	const float q = Math::exp(-MAX(p_dz, 0.0f) / 8000.0f);
+	const float rh = CLAMP(p_rh0 * (q - 0.02f) / 0.98f, 0.01f, 1.0f);
+	const float tk = t + 273.15f;
+	return -Math::log(rh) * tk * tk / 5423.0f;
+}
+
+// A moist layer's relative humidity in its clear air: saturated in its clouds, 0.93 at their edges, falling to
+// 0.68 half a cover's width of noise outside them (a moist layer is moist round its clouds as
+// well, which is where the waves raise lenses without other cloud).
+static float wave_layer_rh(float p_noise, float p_cover, float p_c) {
+	const float u = (p_noise - (1.0f - p_cover)) / MAX(p_cover, 0.001f);
+	float rh = CLAMP(0.93f + 0.5f * u, 0.5f, 0.93f);
+	if (p_c > 0.001f) {
+		rh = MAX(rh, 1.0f - 0.03f * (1.0f - p_c));
+	}
+	return rh;
+}
+
+static float wave_rh_depression(float p_rh, float p_tk) {
+	return -Math::log(MAX(p_rh, 0.01f)) * p_tk * p_tk / 5423.0f;
+}
+
+float wave_dew_depression_at(const State &p_state, const Vector3 &p_pos) {
+	const float dz = p_pos.y - p_state.air_y0;
+	const float tk = p_state.air_t0 - 0.0065f * dz + 273.15f;
+	float dep = wave_env_depression(p_state.air_t0, p_state.air_rh0, dz);
+	const Vector2 xz(p_pos.x, p_pos.z);
+	if (p_state.mid_cover > 0.001f) {
+		const float n = cover_noise(xz + Vector2(4721.0f, 8363.0f), p_state.mid_drift, p_state.mid_scale, p_state.evolve);
+		const float rh = wave_layer_rh(n, p_state.mid_cover, mid_cover_at(p_state, xz));
+		const float d = (p_pos.y - p_state.mid_height) / (1.5f * p_state.mid_thickness + 300.0f);
+		const float w = Math::exp(-d * d) * MIN(1.0f, 4.0f * p_state.mid_cover);
+		const float plates = 0.5f + 0.5f * Math::sin(Math::TAU * (p_pos.y - p_state.mid_height) / 350.0f);
+		dep = Math::lerp(dep, MIN(dep, wave_rh_depression(rh, tk) + 0.4f * plates), w);
+	}
+	if (p_state.high_cover > 0.001f) {
+		const float n = cover_noise(xz + Vector2(9137.0f, 3301.0f), p_state.high_drift, p_state.high_scale, p_state.evolve);
+		const float rh = wave_layer_rh(n, p_state.high_cover, high_cover_at(p_state, xz));
+		const float d = (p_pos.y - p_state.high_height) / 800.0f;
+		const float w = Math::exp(-d * d) * MIN(1.0f, 4.0f * p_state.high_cover);
+		dep = Math::lerp(dep, MIN(dep, wave_rh_depression(rh, tk)), w);
+	}
+	return dep;
+}
+
+float wave_extinction_at(const State &p_state, const Vector3 &p_pos) {
+	const bool in_a = p_state.wave_y1 > p_state.wave_y0 && p_pos.y >= p_state.wave_y0 && p_pos.y <= p_state.wave_y1;
+	const bool in_b = p_state.wave_y3 > p_state.wave_y2 && p_pos.y >= p_state.wave_y2 && p_pos.y <= p_state.wave_y3;
+	if (!in_a && !in_b) {
+		return 0.0f;
+	}
+	const float eta = mountain_wave_eta(p_state.wave_eta, p_state.wave_n, p_state.wave_corner, p_state.wave_size, p_state.wave_levels, p_pos);
+	if (eta <= 0.0f) {
+		return 0.0f;
+	}
+	const float x = eta - 125.0f * wave_dew_depression_at(p_state, p_pos);
+	if (x <= 0.0f) {
+		return 0.0f;
+	}
+	const float tc = p_state.air_t0 - 0.0065f * (p_pos.y - p_state.air_y0) - 0.0098f * eta;
+	const float rate = 2.0e-6f * Math::exp(0.06f * MAX(tc, -40.0f)); // kg/kg a metre of lift
+	const float rho_air = 1.225f * Math::exp(-p_pos.y / 8500.0f);
+	const float water = rho_air * rate * x; // kg/m^3
+	const float ice = CLAMP((-20.0f - tc) / 10.0f, 0.0f, 1.0f);
+	return 1.5f * water / Math::lerp(1000.0f * 10e-6f, 917.0f * 30e-6f, ice);
+}
+
+Vector4 wave_slab(const State &p_state, const float *p_eta_max) {
+	const float split = 0.5f * (p_state.mid_height + p_state.high_height);
+	float y0 = 1.0e9f;
+	float y1 = -1.0e9f;
+	float y2 = 1.0e9f;
+	float y3 = -1.0e9f;
+	for (float y = 1000.0f; y <= 10000.0f; y += 250.0f) {
+		// The largest lift at this height (linear between the levels, as mountain_wave_eta()).
+		float e;
+		const float *lv = p_state.wave_levels;
+		if (y <= lv[0]) {
+			e = p_eta_max[0];
+		} else if (y >= lv[3]) {
+			e = p_eta_max[3];
+		} else {
+			int k = 0;
+			while (k < 2 && y > lv[k + 1]) {
+				k++;
+			}
+			e = Math::lerp(p_eta_max[k], p_eta_max[k + 1], (y - lv[k]) / (lv[k + 1] - lv[k]));
+		}
+		if (e <= 0.0f) {
+			continue;
+		}
+		// The moistest the air there can be now: each layer at its fullest local cover.
+		const State &s = p_state;
+		const float dz = y - s.air_y0;
+		const float tk = s.air_t0 - 0.0065f * dz + 273.15f;
+		float dep = wave_env_depression(s.air_t0, s.air_rh0, dz);
+		if (s.mid_cover > 0.001f) {
+			const float d = (y - s.mid_height) / (1.5f * s.mid_thickness + 300.0f);
+			dep = Math::lerp(dep, MIN(dep, wave_rh_depression(0.93f, tk)), Math::exp(-d * d) * MIN(1.0f, 4.0f * s.mid_cover));
+		}
+		if (s.high_cover > 0.001f) {
+			const float d = (y - s.high_height) / 800.0f;
+			dep = Math::lerp(dep, MIN(dep, wave_rh_depression(0.93f, tk)), Math::exp(-d * d) * MIN(1.0f, 4.0f * s.high_cover));
+		}
+		if (e > 125.0f * dep) {
+			if (y < split) {
+				y0 = MIN(y0, y - 250.0f);
+				y1 = MAX(y1, y + 250.0f);
+			} else {
+				y2 = MIN(y2, y - 250.0f);
+				y3 = MAX(y3, y + 250.0f);
+			}
+		}
+	}
+	return Vector4(y0, MIN(y1, split), MAX(y2, split), y3);
+}
+
 float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	if (p_pos.y < p_state.base_min || p_pos.y > p_state.top_max) {
 		return 0.0f;
@@ -1020,6 +1153,118 @@ float wc_effector(vec3 p) {
 		}
 	}
 	return clamp(e, -1.0, 1.0);
+}
+
+// Wave clouds (wave_extinction_at() on the CPU, which explains them). The field's four levels are its RGBA.
+uniform sampler2D cloud_wave_field : filter_linear, repeat_disable;
+uniform vec4 cloud_wave_rect = vec4(0.0); // corner x, z, size (m), texels across
+uniform vec4 cloud_wave_levels = vec4(2000.0, 3500.0, 5000.0, 7000.0);
+uniform vec4 cloud_wave_slab = vec4(0.0); // m, where wave cloud can form: round the mid layer (x..y), above (z..w)
+uniform vec3 cloud_air = vec3(15.0, 0.6, 0.0); // ground temperature (C), relative humidity, its height (m)
+
+float wc_wave_eta(vec3 p) {
+	vec2 uv = (p.xz - cloud_wave_rect.xy) / cloud_wave_rect.z;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return 0.0;
+	}
+	vec4 e = textureLod(cloud_wave_field, uv, 0.0);
+	vec4 lv = cloud_wave_levels;
+	if (p.y <= lv.x) {
+		return e.x;
+	} else if (p.y <= lv.y) {
+		return mix(e.x, e.y, (p.y - lv.x) / (lv.y - lv.x));
+	} else if (p.y <= lv.z) {
+		return mix(e.y, e.z, (p.y - lv.y) / (lv.z - lv.y));
+	} else if (p.y <= lv.w) {
+		return mix(e.z, e.w, (p.y - lv.z) / (lv.w - lv.z));
+	}
+	return e.w;
+}
+
+float wc_wave_layer_rh(float n, float cover, float c) {
+	float u = (n - (1.0 - cover)) / max(cover, 0.001);
+	float rh = clamp(0.93 + 0.5 * u, 0.5, 0.93);
+	if (c > 0.001) {
+		rh = max(rh, 1.0 - 0.03 * (1.0 - c));
+	}
+	return rh;
+}
+
+// The mid and high layers' cover from a cover noise already read (wc_mid_cover(), wc_high_cover() without the read).
+float wc_layer_cover_n(float n, float cover, vec2 xz, bool high) {
+	float c = clamp((n - (1.0 - cover)) / max(cover, 0.001) * 1.5, 0.0, 1.0) * min(1.0, 2.0 * cover);
+	for (int i = 0; i < cloud_storm_count; i++) {
+		vec4 s = cloud_storms[i];
+		vec2 centre = s.xy + cloud_high_dir * ((high ? 2.5 : 1.2) * s.z);
+		vec2 d = xz - centre;
+		c = 1.0 - (1.0 - c) * (1.0 - (high ? 1.0 : 0.6) * exp(-dot(d, d) / ((high ? 9.0 : 4.0) * s.z * s.z)) * s.w);
+	}
+	return c;
+}
+
+float wc_wave_depression(vec3 p) {
+	float dz = p.y - cloud_air.z;
+	float t = cloud_air.x - 0.0065 * dz;
+	float tk = t + 273.15;
+	float rh = clamp(cloud_air.y * (exp(-max(dz, 0.0) / 8000.0) - 0.02) / 0.98, 0.01, 1.0);
+	float dep = -log(rh) * tk * tk / 5423.0;
+	if (cloud_mid_cover > 0.001) {
+		float n = wc_cover_noise_at(p.xz + vec2(4721.0, 8363.0) - (cloud_mid_drift - cloud_drift), cloud_mid_scale);
+		float rh = wc_wave_layer_rh(n, cloud_mid_cover, wc_layer_cover_n(n, cloud_mid_cover, p.xz, false));
+		float d = (p.y - cloud_mid_height) / (1.5 * cloud_mid_thickness + 300.0);
+		float w = exp(-d * d) * min(1.0, 4.0 * cloud_mid_cover);
+		float plates = 0.5 + 0.5 * sin(6.2831853 * (p.y - cloud_mid_height) / 350.0);
+		dep = mix(dep, min(dep, -log(rh) * tk * tk / 5423.0 + 0.4 * plates), w);
+	}
+	if (cloud_high_cover > 0.001) {
+		float n = wc_cover_noise_at(p.xz + vec2(9137.0, 3301.0) - (cloud_high_drift - cloud_drift), cloud_high_scale);
+		float rh = wc_wave_layer_rh(n, cloud_high_cover, wc_layer_cover_n(n, cloud_high_cover, p.xz, true));
+		float d = (p.y - cloud_high_height) / 800.0;
+		float w = exp(-d * d) * min(1.0, 4.0 * cloud_high_cover);
+		dep = mix(dep, min(dep, -log(rh) * tk * tk / 5423.0), w);
+	}
+	return dep;
+}
+
+// r_lift: metres past saturation (the lens's depth there, for the lighting's profile). p_jitter (m) roughens the
+// saturation level a little (the sky's striations); the CPU leaves it out.
+// The extinction of the water condensed x metres of lift past saturation, at p lifted by eta.
+float wc_wave_sigma(vec3 p, float eta, float x) {
+	float tc = cloud_air.x - 0.0065 * (p.y - cloud_air.z) - 0.0098 * eta;
+	float rate = 2.0e-6 * exp(0.06 * max(tc, -40.0));
+	float rho_air = 1.225 * exp(-p.y / 8500.0);
+	float ice = clamp((-20.0 - tc) / 10.0, 0.0, 1.0);
+	return 1.5 * rho_air * rate * x / mix(0.01, 917.0 * 30e-6, ice);
+}
+
+// p_dep >= 0: the dew point depression already read nearby (the sun samples reuse the step's; the moist layers
+// vary over kilometres, so 40 to 160 m toward the sun changes it little).
+float wc_wave_extinction_d(vec3 p, float p_jitter, float p_dep, out float r_lift, out float r_dep) {
+	r_lift = 0.0;
+	r_dep = p_dep;
+	bool in_a = cloud_wave_slab.y > cloud_wave_slab.x && p.y >= cloud_wave_slab.x && p.y <= cloud_wave_slab.y;
+	bool in_b = cloud_wave_slab.w > cloud_wave_slab.z && p.y >= cloud_wave_slab.z && p.y <= cloud_wave_slab.w;
+	if (!in_a && !in_b) {
+		return 0.0;
+	}
+	float eta = wc_wave_eta(p);
+	if (eta <= 0.0) {
+		return 0.0;
+	}
+	if (r_dep < 0.0) {
+		r_dep = wc_wave_depression(p);
+	}
+	float x = eta - 125.0 * r_dep + p_jitter;
+	if (x <= 0.0) {
+		return 0.0;
+	}
+	r_lift = x;
+	return wc_wave_sigma(p, eta, x);
+}
+
+float wc_wave_extinction(vec3 p, float p_jitter, out float r_lift) {
+	float dep;
+	return wc_wave_extinction_d(p, p_jitter, -1.0, r_lift, dep);
 }
 
 // Extinction (1/m) at p. p_detail erodes the edges with the detail noise (Nubis); the shadow bake

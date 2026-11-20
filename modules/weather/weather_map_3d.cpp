@@ -1415,6 +1415,7 @@ void WeatherMap3D::_notification(int p_what) {
 				}
 			}
 			_update_terrain_wind();
+			_update_mountain_waves(float(dt));
 			// Cloud shadows bake in the background; between bakes they slide with the clouds.
 			shadow_timer += dt;
 			if (shadow_task != WorkerThreadPool::INVALID_TASK_ID && WorkerThreadPool::get_singleton()->is_group_task_completed(shadow_task)) {
@@ -1526,6 +1527,11 @@ Vector3 WeatherMap3D::get_wind_at(Vector3 p_position, float p_height_above_groun
 		gust_scale = m.length_squared() > 1e-8f ? Vector2(mean.x, mean.z).length() / m.length() : 1.0f;
 	}
 	const Vector3 gust = _gust_at(p_position, m10) * (Math::sqrt(f) * gust_scale);
+	// Above the boundary layer the mountain waves lift and sink the air (vertical only; linear theory has no
+	// rotors, so the lee turbulence under the crests is not here). Blended in over 300 m so the ground is untouched.
+	if (wave_clouds && mountain_waves.derived && h > boundary_layer_height) {
+		mean.y += get_mountain_wave_velocity_at(p_position) * Math::smoothstep(boundary_layer_height, boundary_layer_height + 300.0f, h);
+	}
 	return mean + gust;
 }
 
@@ -1550,6 +1556,9 @@ void WeatherMap3D::get_wind_parts(Vector3 p_position, float p_height_above_groun
 	if (terrain) {
 		r_mean = WeatherTerrainWind::apply(t, m, h, terrain_wind.fade_length());
 		gust_scale = m.length_squared() > 1e-8f ? Vector2(r_mean.x, r_mean.z).length() / m.length() : 1.0f;
+	}
+	if (wave_clouds && mountain_waves.derived && h > boundary_layer_height) {
+		r_mean.y += get_mountain_wave_velocity_at(p_position) * Math::smoothstep(boundary_layer_height, boundary_layer_height + 300.0f, h);
 	}
 	const float speed = m10.length();
 	r_along = speed > 1e-3f ? m10 / speed : cur_wind_direction;
@@ -1761,6 +1770,118 @@ void WeatherMap3D::set_cloud_effector(int p_id, Vector3 p_position, float p_radi
 void WeatherMap3D::remove_cloud_effector(int p_id) {
 	cloud_effectors.erase(p_id);
 	_push_sky();
+}
+
+// Mountain waves (WeatherMountainWaves): the buoyancy frequency of the free atmosphere over the boundary layer,
+// N^2 = g / T (dry lapse - lapse) with the model's 6.5 K/km (about 0.011 /s), at the mid layer's height.
+float WeatherMap3D::_wave_buoyancy() const {
+	const float tk = cur_air_temperature - 0.0065f * (mid_cloud_height - ground_height) + 273.15f;
+	return Math::sqrt(MAX(9.81f / MAX(tk, 150.0f) * (0.0098f - 0.0065f), 0.0f));
+}
+
+void WeatherMap3D::_update_mountain_waves(float p_dt) {
+	if (!wave_clouds) {
+		wave_slab_now = Vector4();
+		return;
+	}
+	const Vector3 c = _follow_position();
+	const Vector2 center(c.x, c.z);
+	WeatherMountainWaves &mw = mountain_waves;
+	if (mw.needs_heights(center)) {
+		_find_terrain_source();
+		mw.begin_heights(center);
+	}
+	if (mw.is_sampling()) {
+		const int n = mw.resolution;
+		const int rows = MAX(1, 8192 / n);
+		float *h = mw.pending.ptrw();
+		const int end = MIN(n, mw.pending_row + rows);
+		for (int z = mw.pending_row; z < end; z++) {
+			for (int x = 0; x < n; x++) {
+				h[z * n + x] = _terrain_height(mw.pending_cell_center(x, z));
+			}
+		}
+		mw.pending_row = end;
+		if (end >= n) {
+			mw.finish_heights();
+		}
+	}
+	// The waves follow the wind across the layers that carry them (the mid layer's height).
+	const Vector2 u = get_wind_aloft(c, mid_cloud_height);
+	const float nb = _wave_buoyancy();
+	if (mw.needs_derive(u, nb)) {
+		mw.derive(u, nb);
+		_apply_wave_field();
+		wave_slab_timer = 1.0e9f;
+	}
+	// Where the lift can reach saturation follows the humidity aloft, which eases slowly: twice a second.
+	wave_slab_timer += p_dt;
+	if (wave_slab_timer >= 0.5f) {
+		wave_slab_timer = 0.0f;
+		const Vector4 slab = mw.derived ? WeatherClouds::wave_slab(_cloud_state(), mw.eta_max) : Vector4();
+		if (!slab.is_equal_approx(wave_slab_now)) {
+			wave_slab_now = slab;
+			_push_sky();
+		}
+	}
+}
+
+void WeatherMap3D::_apply_wave_field() {
+	const WeatherMountainWaves &mw = mountain_waves;
+	if (!mw.derived || mw.eta.size() < mw.resolution * mw.resolution * WeatherMountainWaves::LEVELS) {
+		return;
+	}
+	const int n = mw.resolution;
+	Vector<uint8_t> bytes;
+	bytes.resize(n * n * 4 * sizeof(float));
+	memcpy(bytes.ptrw(), mw.eta.ptr(), bytes.size());
+	Ref<Image> img = Image::create_from_data(n, n, false, Image::FORMAT_RGBAF, bytes);
+	if (wave_texture.is_valid() && wave_texture->get_width() == n) {
+		wave_texture->update(img);
+	} else {
+		wave_texture = ImageTexture::create_from_image(img);
+	}
+	if (active != this) {
+		return;
+	}
+	Ref<WeatherSkyMaterial> sky_material = WeatherSkyMaterial::find_for(this);
+	if (sky_material.is_valid()) {
+		sky_material->set_cloud_wave_field(wave_texture, mw.rect().position, mw.extent, n);
+	}
+}
+
+void WeatherMap3D::set_wave_clouds(bool p_enabled) {
+	wave_clouds = p_enabled;
+	if (!p_enabled) {
+		wave_slab_now = Vector4();
+		_push_sky();
+	}
+}
+
+float WeatherMap3D::get_mountain_wave_at(Vector3 p_position) const {
+	return wave_clouds ? mountain_waves.eta_at(p_position) : 0.0f;
+}
+
+// The vertical wind of the waves, w = U . grad eta (steady flow along the displaced streamlines).
+float WeatherMap3D::get_mountain_wave_velocity_at(Vector3 p_position) const {
+	if (!wave_clouds || !mountain_waves.derived) {
+		return 0.0f;
+	}
+	const Vector2 u = mountain_waves.wind;
+	const float s = u.length();
+	if (s < 0.1f) {
+		return 0.0f;
+	}
+	const float d = 0.5f * mountain_waves.cell_size();
+	const Vector3 a(u.x / s * d, 0.0f, u.y / s * d);
+	return s * (mountain_waves.eta_at(p_position + a) - mountain_waves.eta_at(p_position - a)) / (2.0f * d);
+}
+
+float WeatherMap3D::get_wave_cloud_density_at(Vector3 p_position) const {
+	if (!wave_clouds || !mountain_waves.derived) {
+		return 0.0f;
+	}
+	return WeatherClouds::wave_extinction_at(_cloud_state(), p_position);
 }
 
 float WeatherMap3D::get_cloud_effector_at(Vector3 p_position) const {
@@ -2478,6 +2599,22 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 			o[6] = c.b * l.energy;
 		}
 	}
+	if (wave_clouds && mountain_waves.derived) {
+		st.wave_eta = mountain_waves.eta;
+		st.wave_n = mountain_waves.resolution;
+		st.wave_corner = mountain_waves.rect().position;
+		st.wave_size = mountain_waves.extent;
+		for (int i = 0; i < WeatherMountainWaves::LEVELS; i++) {
+			st.wave_levels[i] = mountain_waves.levels[i];
+		}
+		st.wave_y0 = wave_slab_now.x;
+		st.wave_y1 = wave_slab_now.y;
+		st.wave_y2 = wave_slab_now.z;
+		st.wave_y3 = wave_slab_now.w;
+	}
+	st.air_t0 = cur_air_temperature;
+	st.air_rh0 = CLAMP(cur_air_humidity, 0.01f, 1.0f);
+	st.air_y0 = ground_height;
 	st.evolve = _cloud_evolve();
 	if (cloud_evolution) {
 		// The shape noise's second read slides against the first at cloud_churn (m/s, in its own texture's
@@ -2544,6 +2681,19 @@ void WeatherMap3D::ShadowBake::row(uint32_t p_row, void *) {
 			tau_m = WeatherClouds::mid_tau_at(state, Vector2(pm.x, pm.z)) / MAX(to_sun.y, 0.05f);
 		}
 		tau += tau_m;
+		// Wave clouds: a few steps through their slab along the sun.
+		for (int sl = 0; sl < 2; sl++) {
+			const float ya = sl == 0 ? state.wave_y0 : state.wave_y2;
+			const float yb = sl == 0 ? state.wave_y1 : state.wave_y3;
+			if (yb <= ya) {
+				continue;
+			}
+			const float w0 = (ya - p0.y) / to_sun.y;
+			const float dw = (yb - ya) / to_sun.y / 8.0f;
+			for (int i = 0; i < 8; i++) {
+				tau += WeatherClouds::wave_extinction_at(state, p0 + to_sun * (w0 + (i + 0.5f) * dw)) * dw;
+			}
+		}
 		const float t = 1.0f / (1.0f + 0.75f * (1.0f - 0.85f) * tau + 0.75f * (1.0f - 0.75f) * tau_h);
 		const int k = int(p_row) * n + x;
 		transmittance_w[k] = t;
@@ -3036,6 +3186,9 @@ void WeatherMap3D::_push_sky() {
 	Ref<WeatherSkyMaterial> sky_material = WeatherSkyMaterial::find_for(this);
 	if (sky_material.is_valid()) {
 		sky_material->set_cloud_state(_cloud_state());
+		if (wave_texture.is_valid()) {
+			sky_material->set_cloud_wave_field(wave_texture, mountain_waves.rect().position, mountain_waves.extent, mountain_waves.resolution);
+		}
 	}
 }
 
@@ -3374,6 +3527,12 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("remove_cloud_effector", "id"), &WeatherMap3D::remove_cloud_effector);
 	ClassDB::bind_method(D_METHOD("get_cloud_effector_count"), &WeatherMap3D::get_cloud_effector_count);
 	ClassDB::bind_method(D_METHOD("get_cloud_effector_at", "position"), &WeatherMap3D::get_cloud_effector_at);
+	ClassDB::bind_method(D_METHOD("set_wave_clouds", "enabled"), &WeatherMap3D::set_wave_clouds);
+	ClassDB::bind_method(D_METHOD("is_wave_clouds"), &WeatherMap3D::is_wave_clouds);
+	ClassDB::bind_method(D_METHOD("get_mountain_wave_at", "position"), &WeatherMap3D::get_mountain_wave_at);
+	ClassDB::bind_method(D_METHOD("get_mountain_wave_velocity_at", "position"), &WeatherMap3D::get_mountain_wave_velocity_at);
+	ClassDB::bind_method(D_METHOD("get_wave_cloud_density_at", "position"), &WeatherMap3D::get_wave_cloud_density_at);
+	ClassDB::bind_method(D_METHOD("get_wave_cloud_slab"), &WeatherMap3D::get_wave_cloud_slab);
 	ClassDB::bind_method(D_METHOD("get_cloud_type_at", "position"), &WeatherMap3D::get_cloud_type_at);
 	ClassDB::bind_method(D_METHOD("get_wetness_at", "position"), &WeatherMap3D::get_wetness_at);
 	ClassDB::bind_method(D_METHOD("get_puddle_at", "position"), &WeatherMap3D::get_puddle_at);
@@ -3511,6 +3670,7 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mid_cloud_height", PROPERTY_HINT_RANGE, "1000,10000,10,suffix:m"), "set_mid_cloud_height", "get_mid_cloud_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mid_cloud_thickness", PROPERTY_HINT_RANGE, "50,3000,10,suffix:m"), "set_mid_cloud_thickness", "get_mid_cloud_thickness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mid_cloud_optical_depth", PROPERTY_HINT_RANGE, "0,30,0.1"), "set_mid_cloud_optical_depth", "get_mid_cloud_optical_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wave_clouds"), "set_wave_clouds", "is_wave_clouds");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_shadow_extent", PROPERTY_HINT_RANGE, "16,100000,1,or_greater,suffix:m"), "set_cloud_shadow_extent", "get_cloud_shadow_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "cloud_shadow_resolution", PROPERTY_HINT_RANGE, "16,2048,1"), "set_cloud_shadow_resolution", "get_cloud_shadow_resolution");

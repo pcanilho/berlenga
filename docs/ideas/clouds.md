@@ -343,3 +343,47 @@ Round 3 follow-ups (docs review of 118c13bc):
    - Bench: weather `--cloud-light=x,y,z,E,R[,r,g,b]`, `--cloud-effector=x,y,z,R,S`, `--sun-energy=0`; checks in
      `--test=clouds` (hole clears the thickest cloud to 0, an adding effector makes cloud in clear air, slots full
      at eight). Raster and PT match.
+
+## Round 5: lenticulars, wave clouds (20 Nov 2026; Paulo: all extra kinds, every one driven by the weather)
+
+Research. Lenticulars (altocumulus standing lenticularis, and their stratocumulus and cirrocumulus kin) are the
+condensed crests of mountain waves: stable air crossing a ridge oscillates at the buoyancy frequency, the waves
+stand still over the ground, and where a moist layer is lifted past saturation it condenses into a smooth lens
+that air flows through. No published game technique models them physically (Vimont et al. 2020 simulate
+orographic cloud on a coarse grid offline; flight simulators place them from weather data), so we build from the
+meteorology:
+- Linear mountain wave theory (Smith 1980, Tellus 32): the terrain's 2D FFT times exp(i m z), non-hydrostatic
+  m^2 = (k^2 + l^2)(N^2 - s^2) / s^2 with s = U k + V l; m takes the sign of s (energy upward), imaginary where
+  waves cannot propagate (they decay). Checked against Queney's analytic ridge (1948): lift +236 m upwind,
+  -270 m downwind at a quarter vertical wavelength for 250 m expected.
+- Flow blocking: only the top U / N of the terrain lifts the air (dividing streamline, Sheppard 1956; Smith 1989).
+- Saturation: lifted air cools 9.8 K/km and its dew point 1.8 K/km, so it saturates after 125 m per kelvin of
+  dew point depression; past that the moist adiabat condenses about 2 g/kg per km near 0 C (6% less per kelvin
+  colder); extinction 1.5 LWC / (rho r_e), droplets 10 um, ice 30 um below -25 C (Stephens 1978).
+- Humidity aloft: Manabe and Wetherald's (1967) RH profile from the ground humidity, moistened within the mid and
+  high layers: saturated in their clouds, 0.93 at their edges, drier further out, with thin sheets 350 m apart in
+  the mid layer (the stepped humidity that stacks plates).
+
+As built:
+- `WeatherMountainWaves` (weather_mountain_waves.cpp): a 51 km square at 400 m round the camera, its heights
+  sampled through the terrain-wind terrain source over two ticks, derived again when the wind aloft turns 5
+  degrees or changes a tenth (a few ms, main thread). Displacement at 2, 3.5, 5 and 7 km, one RGBA float texture.
+- The sky marches two thin slabs (round the mid layer and round the high layer) only where the field's largest
+  lift can reach saturation (`get_wave_cloud_slab`, refreshed twice a second); none when the air is dry or calm,
+  so it costs nothing then. 16 coarse steps over at most 8 km of path; where the lift comes within 150 m of
+  saturation, four fine samples (the moisture read once a step). Lit as the mid layer. Not jittered: a jittered
+  thin edge broke into dots.
+- CPU: `get_wave_cloud_density_at`; the cloud shadow bake marches both slabs (8 steps each), so lenses shade
+  the ground.
+- Wind: `get_mountain_wave_velocity_at` (w = U . grad eta) joins `get_wind_at` above the boundary layer, blended
+  over 300 m (Valence's rule); linear theory has no rotors, so no lee turbulence.
+- Connected: terrain (heights), wind aloft (U), temperature (N, condensate, ice), humidity and the mid/high
+  layers' moisture (driven by humidity, rain and storms), time of day through all of these.
+- Contract: `WorldWeather.mountain_wave_at`, `mountain_wave_velocity_at`, `wave_cloud_density_at`;
+  `WeatherMap3D.wave_clouds` (on).
+- Cost (lavapipe raster, lenticular view): 566 to 595 ms against 529 ms with wave clouds off, about 10% while
+  lenses are on screen; zero with empty slabs. Raster and PT match.
+- Bench: weather `--view=lenticular` (a Witch of Agnesi ridge 2 km high; a test stand-in, not for docs frames),
+  `--no-wave-clouds`. It prints the slabs, a top-down map, the wave wind aloft against the ground, and a dry run.
+- Next: lens shading (brighter crowns, darker bellies), stacked plates showing more clearly, iridescence near the
+  sun; then a docs frame over real terrain from the showcase scene.
