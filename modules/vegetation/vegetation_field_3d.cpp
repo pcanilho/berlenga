@@ -756,6 +756,10 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		}
 		ps.far_widen = bool(ps.sp->get_meta(SNAME("far_widen"), false));
 		ps.far_hull_range = float(ps.sp->get_meta(SNAME("far_hull_range"), 0.0f));
+		if (ps.far_widen && bool(ps.sp->get_meta(SNAME("far_skyline"), true)) && !ps.meshes.is_empty() && ps.meshes[0].is_valid()) {
+			// Meta far_skyline = false: thinned on the skyline too.
+			ps.far_top = ps.meshes[0]->get_aabb().get_end().y;
+		}
 		{
 			bool any_bank = false;
 			for (const Ref<Mesh> &m : ps.meshes) {
@@ -2178,7 +2182,12 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 		buckets.resize(cells * cells);
 		for (uint32_t i = 0; i < so.xforms[v].size(); i++) {
 			if (p_max_rank < 1.0f && Math::fmod(so.customs[v][i].r, 1.0f) >= p_max_rank) {
-				continue; // Thinned out at the tile's distance (the far tail).
+				// Thinned out at the tile's distance (the far tail), unless a tree's crown breaks the skyline from the
+				// camera (trees.md 9c): ridgeline silhouettes against the sky are what reads of a far forest, and a
+				// thinned ridge shows gaps there first.
+				if (!(ps.far_top > 0.0f && stream_eye_valid && p_setup.map && _on_skyline(p_setup.map, stream_eye, p_setup.global_xf.xform(so.xforms[v][i].xform(Vector3(0.0f, ps.far_top, 0.0f)))))) {
+					continue;
+				}
 			}
 			const Vector3 o = p_setup.global_xf.xform(so.xforms[v][i].origin);
 			const int cx = CLAMP(int((o.x - tile_origin.x) / ts * cells), 0, cells - 1);
@@ -4394,6 +4403,36 @@ void VegetationField3D::_stream_job(void *p_job) {
 	job->done.set();
 }
 
+// Skyline trees (trees.md 9c; silhouettes kept in simplification as Luebke and Erikson 1997 and Sander et al. 2000
+// keep them): a crown top is on the skyline from the eye when no ground beyond it, along the line of sight, rises
+// above that line, and no canopy in front hides it (sampled at doubling distances to 2.5 km on the data map; past its edge the map holds its border).
+bool VegetationField3D::_on_skyline(const TerrainDataMap3D *p_map, const Vector3 &p_eye, const Vector3 &p_top) {
+	const Vector2 dh(p_top.x - p_eye.x, p_top.z - p_eye.z);
+	const float dist = dh.length();
+	if (dist < 1.0f) {
+		return false;
+	}
+	const Vector2 dir = dh / dist;
+	const float slope = (p_top.y - p_eye.y) / dist;
+	// In front, a canopy as tall as this tree on the ground between hides it (the nearer crowns are the skyline
+	// then): from inside or below a forest on level ground no far tree is kept, so the tail still thins there.
+	// Where the ground between is open this keeps fewer than it could, never more.
+	const float tall = p_top.y - p_map->get_height_at(Vector3(p_top.x, 0.0f, p_top.z));
+	for (float t : { 0.5f, 0.7f, 0.85f, 0.95f }) {
+		const Vector3 q(p_eye.x + dh.x * t, 0.0f, p_eye.z + dh.y * t);
+		if (p_map->get_height_at(q) + tall > p_eye.y + (p_top.y - p_eye.y) * t + 0.5f) {
+			return false;
+		}
+	}
+	for (float s = 10.0f; s <= 2560.0f; s *= 2.0f) {
+		const Vector3 q(p_top.x + dir.x * s, 0.0f, p_top.z + dir.y * s);
+		if (p_map->get_height_at(q) > p_top.y + slope * s) {
+			return false;
+		}
+	}
+	return true;
+}
+
 Vector3 VegetationField3D::_stream_centre() const {
 	if (!stream_target.is_empty()) {
 		const Node3D *n = Object::cast_to<Node3D>(get_node_or_null(stream_target));
@@ -4480,6 +4519,8 @@ void VegetationField3D::_stream_update(double p_delta) {
 		_stream_maps_finish();
 	}
 	const Vector3 c3 = _stream_centre();
+	stream_eye = c3;
+	stream_eye_valid = true;
 	const Vector2 centre(c3.x, c3.z);
 	const float ts = stream_setup.tile_size;
 	const Rect2 &rect = stream_setup.rect;

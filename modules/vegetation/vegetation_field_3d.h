@@ -219,6 +219,7 @@ private:
 		Vector2 fall_dir; // Meta "fall_dir" (world xz, unit): +X turned along it, +-fall_scatter (storm-thrown trees, trees.md 5am); zero none.
 		float fall_scatter = 0.0f;
 		float far_hull_range = 0.0f; // Meta "far_hull_range" (trees, trees.md 9b): past it each variant's mesh meta tree_far_hull is drawn instead.
+		float far_top = 0.0f; // Trees (far_widen): the first mesh's top, for the skyline test (trees.md 9c).
 		bool far_widen = false; // Meta "far_widen" (trees, trees.md 9a): the far tail's survivors widened in their transforms per tile.
 		LocalVector<float> bank_slopes; // Per variant, mesh meta "tree_ground_slope".x (radians); empty: no bank forms.
 		// Per variant, mesh meta "tree_fire_years" (years since the fire the tree was grown for, -1 unburnt); empty: none.
@@ -323,6 +324,9 @@ private:
 	void _read_burn_age(PlaceSetup &r_setup) const;
 	void _place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles) const;
 	void _commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes, float p_max_rank = 1.0f);
+	Vector3 stream_eye; // The stream centre when tiles were last committed (skyline trees, trees.md 9c).
+	bool stream_eye_valid = false;
+	static bool _on_skyline(const TerrainDataMap3D *p_map, const Vector3 &p_eye, const Vector3 &p_top);
 	// The maps from the placed crowns and far colour: computed anywhere, applied on the main thread.
 	struct Maps {
 		Rect2 maps_rect; // Canopy, stand shade, forest floor.
