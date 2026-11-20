@@ -120,3 +120,43 @@ crops before and after, with the cost per frame.
 - Hillaire, Physically Based Sky, Atmosphere and Cloud Rendering in Frostbite, PBS 2016; Physically Based
   and Scalable Atmospheres in Unreal Engine, EGSR 2020.
 - Cloud Imperium, Star Citizen Monthly Report June 2022 (Gen12 cloud rendering port).
+
+## As built (19 Nov 2026; Paulo picked all three)
+
+- **Detail** (`weather_clouds.cpp`): `DETAIL_SIZE` 128, RGBA. r, g: Curly-Alligator wisps (Alligator noise as
+  Side Effects' anoise, strongest feature minus the second; domain moved by curl noise, Bridson et al. 2007),
+  low and high frequency; b, a: inverted Worley billows, low and high. Each channel equalised. Made once on the
+  CPU (about 2 s on 4 cores). In `wc_extinction_p`: wisps blend low to high frequency toward the thin edge,
+  billows from rounded at the edge to finer inside, wisps to billows with height and type; erosion times
+  `cloud_detail_strength` (1.5); Nubis's sharpening `pow(shape, mix(cloud_edge_sharpness, 1, profile))`
+  (0.45). The profile (shape before erosion) goes out to the lighting.
+- **Light march** (`weather_sky_material.cpp`): two detailed samples toward the sun (0 to 16 m, 16 to 64 m),
+  read at the billows' scale (64 m or four pixels' footprint: finer, the noise shading itself showed as grain
+  on far cloud faces), then coarse steps doubling from 64 m. Behind 85% opacity the coarse march's first
+  75 m stand in for them.
+- **Lighting**: HG + Draine phase at `cloud_droplet_size` (15 um), hoisted out of the march (fixed per ray);
+  floor `cloud_back_scatter` (0.5) / 4 pi away from the sun (Bauer 2019). Nubis's multiple scattering field:
+  the two-stream diffuse times `mix(0.25, 1, smoothstep(0, 0.6, profile))` (dark edges), times
+  `exp(-cloud_surface_occlusion * tau_near)` (0.6; billows shade the scattered light, crests lit, creases dim),
+  absorbed more slowly toward the sun deep inside (inner glow). Ambient through the outer shell,
+  `mix(0.35, 1, sqrt(1 - profile)) * 1.25`.
+- **High layer**: `WeatherMap3D.high_cloud_cover` (0.25 base), `high_cloud_height` (8 km),
+  `high_cloud_optical_depth` (1), `get_high_cloud_cover_at`, contract `WorldWeather.high_cloud_cover_at`
+  (world-contracts.md, world-links.md). Driver: dry air thins it to 0.3 of the base, rain set on the map
+  thickens it and eases four times faster than the rain (the sheet arrives first), each storm spreads an anvil
+  shield 2.5 radii downwind along the wind aloft. Drifts with `get_wind_aloft` at its height; drawn as one
+  read where the ray crosses the sheet (fibres: the wisp channels stretched 8:1 along the wind), ice phase
+  HG g = 0.75 (Baum et al. 2005). Shades the ground only in the cloud shadow bake, by its own optical depth.
+
+Checks (lavapipe, 960x540):
+- Crests (`docs/bench/sky --sky --time=16 --pitch=14 --fov=22 --yaw=160 --reproject`, cover 0.35, type 0.75):
+  billows now have defined rims and darker creases where before they were one soft tone.
+- `docs/bench/weather --view=clouds`: raster and path traced differ by the same amount as before (mean 8/255
+  at 24 frames each, before and after): the clouds are in the shared sky shader.
+- Cost: frame times with the march on every pixel (sky bench, 12 frames, twice each) 601/567 ms before,
+  587/588 after; clear sky 207 and 227. No measurable change on lavapipe; the GPU cost goes on the PC queue.
+
+Open: the march's uniform steps (tens of metres through a cloud) leave the near shading noisy where the
+occlusion is strong; Schneider 2015's adaptive refinement (step back and take short steps once inside cloud)
+is the next step for crisper edges and would let `cloud_surface_occlusion` go back up to about 1.2, which
+looked best in close views. The horizontal banding under the far cloud bases predates this work.

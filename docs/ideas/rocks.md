@@ -992,6 +992,35 @@ along a share of the joints (a slot 0.24 to 0.44c wide and 0.55c deep, dying out
 with height, the voxel pass reaching 1.2c outside the cut. Hoodoos and goblins take the slope's rock colour
 (`cliff_match`), like cliff blocks and cave mouths: they are the bedrock left standing.
 
+Round 8 (20 Nov). The lower half was smooth lobes, and two seeds stood top-heavy (a slab on a narrow foot, a ball on a
+stem). Now:
+- The foot is cut flat where it stands on the platform (the body's rounded end had stood it on a stem), and the notch
+  is a band: under its floor the foot stands out again.
+- Low down the blocks stand out most (quarrying along the joints): block offsets up to 0.14c and fallen blocks
+  0.2c back below a third of the height; the face swells only start above that.
+- No level wider than the foot, no knob on a neck: each level's plan (a chamfer distance in the plan) must lie inside
+  the foot's plan grown by half a lip low down and shrunk by a lip at the top, and inside every plan between the
+  notch's roof and it, grown by a lip (0.1c). A slot narrower than the lip is not a neck. The cut follows quantised
+  blocks, so it reads as a fallen face. Toppling stability: Hoek and Bray, Rock Slope Engineering (1981), ch. 9.
+- Hoodoo caps: chips off the cap edge, a tilt of 3 to 6 degrees, and tafoni down to a few (paired pits read as eyes).
+
+## Far rocks (19 Nov, Paulo picked all three)
+
+Before: each layer ended at a fixed radius with a hard cut (scree 60 m, river 120 m, glacial 300 m, rockfall 600 m,
+tors, coast forms and landforms 900 m), and the ground past it showed nothing of the fields. References: Horizon Zero
+Dawn's GPU placement (van Muijden, GDC 2017) uses the same density maps near and as terrain tint far; Ghost of
+Tsushima holds full density over the inner half of a range and thins in steps (Rockenbeck, GDC 2021); Unreal 5 keeps
+big rocks as cheap far geometry (Nanite, HLOD) and cross-fades instead of popping. Same design as the vegetation's far
+reach (docs/ideas/vegetation.md, "Far vegetation without bald ground").
+
+1. Thin, don't pop (`far_thinning`, on). Each cell's records go to the GPU in rank order (a hash per stone, the big
+   ones last); past half a scatter layer's radius a cell draws only the first (r/2 / d)^2 of them, in eighths, and
+   none by the radius. Landmark layers (tors, coast, landforms) stay whole.
+2. Big stones to the horizon: stones over about 2 m, tors, stacks and hoodoos to 4 km on their coarsest LOD; cells
+   past the near radius keep only those, rebuilt in full as the camera nears.
+3. Far ground takes the rocks' colour: a rock cover map to 4 km (32 m texels) from the same placement rules, read
+   by the terrain material as a tint and roughness where each field is.
+
 ## Next options (17 Nov research, nothing built before Paulo picks)
 
 1. Tafoni and honeycomb weathering as real geometry. Coastal sandstone and granite boulders hollow out into

@@ -693,3 +693,103 @@ match the untiled field closely (a rock-share test keeps mixed squares' colours)
 
 **Expected.** Up to 16 shared tiles per block instead of up to 64 own cuts, and each cell has up to 16 candidates
 instead of 4, so more squares take a tile and each cell shows more different tiles than today.
+
+## Tiles that follow bumpy ground (round 4, 19 Nov)
+
+**Measured.** Scree view: of about 3,200 squares looked at, 1,000 are skipped for a coarse stone inside them and 500
+for bent ground, and no square was tiled at all. River view: 1,650 of 3,900 skipped as bent, 50 placements. The shore
+(flat) tiles 71% of its grains.
+
+**How others do it.**
+- Chunked LOD and quadtree terrain (Ulrich 2002, *Rendering Massive Terrains using Chunked Level of Detail Control*;
+  Losasso and Hoppe 2004 geometry clipmaps): a patch is split while its geometric error (how far the real surface
+  is from the flat patch) is over a tolerance. The error of a flat patch on a curved surface falls with the square of
+  its size, so one split cuts it four times.
+- Recursive Wang tiles (Kopf, Cohen-Or, Deussen, Lischinski 2006, *Recursive Wang Tiles for Real-Time Blue Noise*):
+  a tile set at several scales, each level's tiles drawn from the same distribution, so a split region keeps the same
+  statistics.
+- Peytavie et al. 2009 place their pile tiles over the terrain as rigid tiles; their scenes stay on gentle slopes.
+- A shared tile cannot bend per placement under path tracing (its BLAS is shared and rigid), so a bent square has to be
+  covered by smaller flat tiles, not a warped one.
+
+**Design.**
+- A square skipped for bent ground or for a coarse stone splits once into 2 x 2 half squares (0.25, 0.5 and 1 m for
+  fine, gravel and pebble), each tested again with its own plane, flatness and coarse-stone check, with at least 8
+  grains. The flatness tolerance is per grain size as before, but the error over a half square is about a quarter.
+- Half squares have their own tiles: each shared-set sample also gives its four halves as candidates (no extra
+  placement), thinned per level the same way. A half square only matches half-square tiles.
+- Neighbours are any squares or half squares that touch, so the never-a-neighbour's-tile rule holds across levels.
+
+**As built (20 Nov): tried, measured, not kept.** Splitting bent or crowded squares into halves with their own tile
+sets worked as designed (scree 50 to 266 placements, 6.5 k to 14 k grains drawn by tiles), but the halves rarely
+repeat: talus and river beds change size and mix every few metres, so each half tile was used about 2.5 times. A tile's
+BLAS is a copy of every grain's triangles, so on scree it added 0.8 M baked triangles (about 50 MB) to save about 7.6 k
+TLAS entries (under 1 MB of instance data), and on the shore it added 0.4 M triangles for 1 k more tiled grains. The
+split is taken out; what stays from this step:
+- A shared tile is built only from its third placement on (TILE_MIN_USES); the first two draw as their single grains
+  (the same stones in the same place, so nothing changes on screen). The tiles used once or twice were most of the
+  scree's cost.
+- The square bookkeeping keeps each square's rectangle and level, and neighbours are any squares that touch.
+Bumpy ground stays single grains, instanced per grain over the shared shape BLAS, which is already the cheapest way
+to trace stones that do not repeat.
+
+## Sub-pixel stones in ray tracing (round 4, 20 Nov)
+
+**Where the small stones in the TLAS are.** Inside the view nothing is sub-pixel by design: each detail class stops
+where its mean stone is 3 px (the far-edge aggregate takes over past it), and the shader already fades a grain under
+3 px to its mean colour. What the TLAS holds besides is everything else round the camera: the path tracer takes every
+instance in the camera's ray-tracing box that passes its visibility range (renderer_scene_cull.cpp, "RT: collect ALL
+instances inside the camera AABB"), so the grains beside and behind the camera are there too, for shadows and bounce.
+A detail cell's instance is its whole MultiMesh (2 to 8 m), so the existing off-frustum solid-angle cull
+(rendering/pathtracing/cull_min_size, off by default; the Assassin's Creed Shadows approach) can never drop a grain:
+the cell's box is never small.
+
+**How others do it.**
+- Moana on the GPU (Kim 2025): instance groups below a screen-size threshold leave the acceleration structure; the
+  film camera is fixed, so the set is chosen once.
+- Assassin's Creed Shadows (Ubisoft, GDC 2025) and UE's ray tracing culling (r.RayTracing.Culling, by projected
+  angle and distance behind the camera): small objects outside the view leave the ray tracing scene, kept when big or
+  near enough to shadow what is seen.
+- DXR partitioned TLAS (Oct 2026 preview) and NVIDIA's vk_partitioned_tlas: rebuild only the partitions that change,
+  so a culled set that changes with the camera stays cheap.
+
+**Design.**
+- Per record, not per MultiMesh: when a ground detail MultiMesh (rt_instanced) is expanded into TLAS entries, a grain
+  outside the view (outside the frustum widened by a guard band) is left out when its angular size is under a
+  threshold, unless it is close enough to the frustum to throw a shadow into it (within about ten of its own sizes:
+  a 2 cm grain's shadow at 20 degrees of sun is under 6 cm).
+- Hysteresis so the persistent TLAS slots stay put: the guard band is wide (15 degrees), and a MultiMesh's culled set
+  is only redone when the camera has turned or moved past half the band since it was last done.
+- Inside the view nothing changes, so the camera's own image is the same; shadows cast into the view keep their
+  casters. Raster is untouched.
+- Off by default in the engine (a project setting, rendering/pathtracing/cull_offscreen_records_size), switched on by
+  RockField3D for its detail MultiMeshes only, through a per-MultiMesh flag next to multimesh_set_rt_instanced.
+- Check: TLAS count and PT frame (eye level and top) before and after, 100% crops; then the PC GPU frame time.
+
+## Stones at distance vs the vegetation far reach (assessment, 20 Nov)
+
+Paulo asked (vegetation thread, 19 Nov) whether vegetation's far approach applies to rocks and other ground stuff:
+full density over the inner half of the range, then gentle thinning by (r/2 / d)^2 with the survivors widened up to
+1.6x (Ghost of Tsushima's grass, Sucker Punch GDC 2021), and a draped canopy surface coloured like the drawn plants out
+to 4 km.
+
+**Today.**
+- Ground detail (pebble, gravel, fine): each class drawn to where its mean stone is 3 px (32, 12 and 6 m at the
+  bench), then the far-edge aggregate (two cover maps, 1 m and 8 m texels, 2 km across; Meng 2015) shades the ground
+  with each class's colour and roughness. No bald line, no thinning band: the class stops where it is about to alias.
+- Coarse stone layers stop at a fixed visibility range: scree 60 m, shore 100 m, river beds 120 m, glacial 300 m,
+  rockfall 600 m, cliffs 500 m, tors, coast forms and landforms 900 m. Past their range nothing stands in for them:
+  the cover maps carry only the three detail classes. On a talus slope the scree stones stop at 60 m on a line.
+- Tiles and the far edge are independent of this.
+
+**Where the vegetation approach fits.**
+1. Coarse layers' far thinning (scree, shore, river, glacial): hold full density over the inner half of the range,
+   then keep a hashed share (r/2 / d)^2 of the stones, the survivors scaled up to keep the covered area (capped at
+   1.6x and never past the class's largest stone), and reach two to four times further for about the same instances.
+   The stones themselves stay real geometry; only how many are drawn changes with distance.
+2. Coarse cover in the far aggregate: a fourth class in the cover maps for the scree and shore stones (their cover
+   and rock colour), so the ground past their range takes their tone as it does for the detail classes, and a third
+   cover level (32 m texels) so it reaches 4 km like the canopy surface.
+3. Detail classes: they already hand over without a bald band. A thinning band before the 3 px stop would only add
+   aliasing (stones under 3 px shimmer in raster), so not recommended there.
+- Trees are the trees thread's; big landforms (cliffs, tors, coast) already reach 500 to 900 m.

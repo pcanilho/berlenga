@@ -95,6 +95,12 @@ uniform int cloud_light_steps : hint_range(1, 12) = 6;
 // Clouds fade into the atmosphere from half this distance (m).
 uniform float cloud_far : hint_range(1000, 200000, 100) = 40000.0;
 uniform float cloud_brightness : hint_range(0, 8) = 1.0;
+// Mean droplet diameter (um) for the cloud phase function: cumulus about 10 to 20.
+uniform float cloud_droplet_size : hint_range(5, 50) = 15.0;
+// Floor on the phase away from the sun, times the isotropic 1 / 4 pi (Bauer 2019).
+uniform float cloud_back_scatter : hint_range(0, 1) = 0.5;
+// How much the billows toward the sun shade the scattered light (times their optical depth).
+uniform float cloud_surface_occlusion : hint_range(0, 2) = 0.6;
 group_uniforms;
 
 group_uniforms weather_map; // Set by WeatherMap3D each update.
@@ -191,9 +197,24 @@ vec2 sphere_hits(vec3 ro, vec3 rd, float r) {
 	return vec2(-b - s, -b + s);
 }
 
-// Two Henyey-Greenstein lobes, forward and back (Frostbite); p_c narrows them for the octaves.
+// Draine's phase function (2003): Henyey-Greenstein times (1 + alpha cos^2) over its norm.
+float draine(float cos_theta, float g, float alpha) {
+	return henyey_greenstein(cos_theta, g) * (1.0 + alpha * cos_theta * cos_theta) / (1.0 + alpha * (1.0 + 2.0 * g * g) / 3.0);
+}
+
+// Cloud droplets' phase: Jendersie and d'Eon, "An Approximate Mie Scattering Function for Fog and Cloud
+// Rendering" (SIGGRAPH 2023 Talks): HG for the narrow forward peak (the silver lining) plus Draine for the
+// bulk, each fitted to the droplet diameter (um, 5 to 50; eq. 4 to 7). p_c narrows both for the octaves
+// (Wrenninge). The fit leaves out the glory and fogbow, so the side away from the sun gets a floor
+// (Bauer 2019): a dense cloud seen with the sun behind is lit by light it reflects, not by a dead lobe.
 float cloud_phase(float cos_theta, float p_c) {
-	return mix(henyey_greenstein(cos_theta, 0.8 * p_c), henyey_greenstein(cos_theta, -0.3 * p_c), 0.3);
+	float d = cloud_droplet_size;
+	float g_hg = exp(-0.0990567 / (d - 1.67154));
+	float g_d = exp(-2.20679 / (d + 3.91029) - 0.428934);
+	float alpha = exp(3.62489 - 8.29288 / (d + 5.52825));
+	float w_d = exp(-0.599085 / (d - 0.641583) - 0.665888);
+	float ph = mix(henyey_greenstein(cos_theta, g_hg * p_c), draine(cos_theta, g_d * p_c, alpha), w_d);
+	return max(ph, cloud_back_scatter / (4.0 * PI));
 }
 
 // The march's start: interleaved gradient noise (Jimenez, "Next Generation Post Processing in Call of
@@ -213,7 +234,7 @@ float march_jitter(vec2 p_pixel, float p_time) {
 // at that scale is a few texels across, whose trilinear blend thresholded is a box (flat faces,
 // square corners). Along the ray the jitter (and the reprojection) average the steps instead.
 // r_depth: the distance to the clouds seen, weighted by how much each step hides (for the air in front).
-vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, int steps, float jitter, float p_pixel, out float r_depth) {
+vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, int steps, float jitter, float p_pixel, out float r_depth) {
 #ifdef ATMO_SCATTERING
 	// The air in front hazes far clouds into the horizon (aerial perspective), so the deck runs out to it.
 	const float far = 200000.0;
@@ -260,37 +281,59 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	int light_steps = cloud_light_steps + (sun_dir.y < 0.26 ? 2 : 0);
 	vec3 radiance = vec3(0.0);
 	float transmittance = 1.0;
+	// The view direction is fixed along the ray, so the phase of each octave is too.
+	float phase0 = cloud_phase(cos_theta, 1.0);
+	float phase1 = cloud_phase(cos_theta, 0.5);
+	float phase2 = cloud_phase(cos_theta, 0.25);
+	// Toward the sun the light inside a cloud turns isotropic and is absorbed more slowly (Nubis Cubed's inner
+	// glow): the multiple scattering field's attenuation relaxes looking toward the sun.
+	float toward_sun = smoothstep(0.0, 0.9, cos_theta);
 	for (int i = 0; i < steps; i++) {
 		float t = t0 + (float(i) + jitter) * ds;
 		vec3 pl = ro + rd * t;
 		vec3 p = vec3(cam.x + rd.x * t, length(pl) - PLANET_RADIUS, cam.z + rd.z * t);
 		vec2 ct = wc_cover_type(p.xz);
-		float sigma = wc_extinction(p, ct, true, min(ds, t * p_pixel));
+		float profile;
+		float sigma = wc_extinction_p(p, ct, true, min(ds, t * p_pixel), profile);
 		if (sigma <= 1e-6) {
 			continue;
 		}
-		// Optical depth towards the sun: steps doubling from 25 m (Frostbite's growing distances).
-		float tau = 0.0;
+		// Optical depth towards the sun. The first two samples (0 to 16 m, 16 to 64 m) read the eroded detail
+		// (Nubis Cubed keeps its first two in the view march for this): each billow shades the next, so crests
+		// stand lit over darker creases. Past them, steps doubling from 64 m read the shape alone (Frostbite's
+		// growing distances). Only while the pixel still shows through: behind 85% cover nothing of it is seen.
+		float tau_near = 0.0;
 		float d = 0.0;
+		int coarse = light_steps;
 		float step_l = 25.0;
-		for (int j = 0; j < light_steps; j++) {
+		if (transmittance > 0.15) {
+			vec3 l0p = p + sun_dir * 8.0;
+			vec3 l1p = p + sun_dir * 40.0;
+			// The detail read at the billows' scale (64 m and up, four pixels' footprint far away): the billows
+			// shade each other, while the finest noise shading itself showed as a grain over far cloud faces.
+			float fp = max(64.0, 4.0 * min(ds, t * p_pixel));
+			tau_near = wc_extinction(l0p, ct, true, fp) * 16.0 + wc_extinction(l1p, wc_cover_type(l1p.xz), true, fp) * 48.0;
+			d = 64.0;
+			step_l = 64.0;
+			coarse = light_steps - 1;
+		}
+		bool near_detailed = coarse < light_steps;
+		float tau = tau_near;
+		for (int j = 0; j < coarse; j++) {
 			vec3 lp = p + sun_dir * (d + 0.5 * step_l);
-			tau += wc_extinction(lp, wc_cover_type(lp.xz), false, step_l) * step_l;
+			float dt = wc_extinction(lp, wc_cover_type(lp.xz), false, step_l) * step_l;
+			tau += dt;
+			// Behind the gate the first 75 m of the coarse march stand in for the near samples, so the shading
+			// does not jump between neighbouring pixels whose jittered steps fall either side of the gate.
+			if (!near_detailed && j < 2) {
+				tau_near += dt;
+			}
 			d += step_l;
 			step_l *= 2.0;
 		}
 		// Multiple scattering by Wrenninge's octaves: scattering, extinction and phase eccentricity
 		// each halved per octave.
-		vec3 light = vec3(0.0);
-		float a = 1.0;
-		float b = 1.0;
-		float c = 1.0;
-		for (int n = 0; n < 3; n++) {
-			light += a * sun_radiance * exp(-b * tau) * cloud_phase(cos_theta, c);
-			a *= 0.5;
-			b *= 0.5;
-			c *= 0.5;
-		}
+		vec3 light = sun_radiance * (exp(-tau) * phase0 + 0.5 * exp(-0.5 * tau) * phase1 + 0.25 * exp(-0.25 * tau) * phase2);
 		// Light that has scattered many times: the diffuse field of a thick, non-absorbing layer in the
 		// two-stream approximation (Bohren 1987). The down stream at optical depth tau carries
 		// 1 / (1 + 3/4 (1 - g) tau) of the sun's flux, and the up stream about as much again near the lit
@@ -300,10 +343,20 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 		// 1978). With the march's own tau a cloud's shaded side kept two thirds of its lit side's light, so every
 		// cloud was one flat tone, a cut-out; at twice it the shaded side darkens while an overcast deck (whose
 		// diffuse light this also is) keeps most of its brightness (four times darkened decks to a storm).
-		float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * 2.0);
-		light += sun_radiance * diffuse * (2.0 / (4.0 * PI));
+		// Toward the sun deep inside, the field is absorbed more slowly (the inner glow).
+		float glow = toward_sun * profile;
+		float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * mix(2.0, 1.4, glow));
+		// Nubis's multiple scattering as a probability field (Schneider 2022, 2023): light has had room to
+		// scatter many times only some way into a cloud, so the diffuse field fades toward its thin edge: dark
+		// edges round the billows, as photographs of cumulus show. A deck's inside (profile near 1) keeps all of it.
+		float ms_probability = mix(0.25, 1.0, smoothstep(0.0, 0.6, profile));
+		// The billows between this point and the sun (the detailed near samples) shade the scattered light too, as
+		// Nubis Cubed attenuates its scattering field by the summed density toward the sun: crests lit, creases dim.
+		light += sun_radiance * diffuse * ms_probability * exp(-cloud_surface_occlusion * tau_near) * (2.0 / (4.0 * PI));
+		// Sky light enters a cloud's outer shell only (Nubis's ambient approximation, pow(1 - profile, 0.5)),
+		// with a floor for the light the cloud's own body passes on, so a deck's inside stays lit.
 		float hf = clamp((p.y - wc_base_at(p.xz)) / wc_top_height(ct.y), 0.0, 1.0);
-		light += mix(ambient_bottom, ambient_top, hf);
+		light += mix(ambient_bottom, ambient_top, hf) * mix(0.35, 1.0, sqrt(1.0 - profile)) * 1.25;
 		// Energy-conserving step (Hillaire 2016): albedo 1, so the scattering is the extinction.
 		float tr = exp(-sigma * ds);
 		radiance += transmittance * light * (1.0 - tr);
@@ -317,6 +370,82 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	r_depth = transmittance < 1.0 ? depth_sum / (1.0 - transmittance) : t1;
 	float fade = 1.0 - smoothstep(0.5 * far, far, t0);
 	return vec4(radiance * fade, mix(1.0, transmittance, fade));
+}
+
+// Ice crystals' phase: Henyey-Greenstein at the asymmetry of bulk ice-cloud models, g about 0.75 (Baum et al.,
+// "Bulk Scattering Properties for the Remote Sensing of Ice Clouds", J. Appl. Meteor. 2005), with the same
+// floor away from the sun as the cumulus.
+float cirrus_phase(float cos_theta) {
+	return max(henyey_greenstein(cos_theta, 0.75), cloud_back_scatter / (4.0 * PI));
+}
+
+// The high layer: a thin sheet at cloud_high_height, so one read where the ray crosses it (Bauer 2019 draws
+// cirrus the same way, a 2D layer with the clouds' shading). Its cover from the weather map's field, its
+// fibres from the detail noise stretched along the wind aloft (cirrus streaks lie along the shear), its optical
+// depth along the ray tau / cos. Single scattering with the sun's beam through the sheet plus a diffuse octave,
+// and the sky's light, all at albedo 1.
+vec4 march_cirrus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, float p_pixel, out float r_t) {
+	r_t = 0.0;
+	if (cloud_high_cover <= 0.001 && cloud_storm_count == 0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	vec3 ro = vec3(0.0, PLANET_RADIUS + cam.y, 0.0);
+	float r = PLANET_RADIUS + cloud_high_height;
+	vec2 hits = sphere_hits(ro, rd, r);
+	float t = cam.y < cloud_high_height ? hits.y : hits.x;
+	if (t <= 0.0 || (cam.y < cloud_high_height && sphere_hits(ro, rd, PLANET_RADIUS).x > 0.0)) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	vec3 pl = ro + rd * t;
+	vec3 up = normalize(pl);
+	vec2 xz = vec2(cam.x + rd.x * t, cam.z + rd.z * t);
+	float c = wc_high_cover(xz);
+	if (c <= 0.001) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	// Fibres: the detail noise's wisps, 8 times longer along the wind than across it, read at the pixel's
+	// footprint so the far sheet does not shimmer.
+	vec2 q = xz - cloud_high_drift;
+	vec2 dir = cloud_high_dir;
+	vec2 aw = vec2(dot(q, dir), dot(q, vec2(-dir.y, dir.x)));
+	vec3 fq = vec3(aw.x / 16000.0, aw.y / 2000.0, 0.37 + cloud_churn.z * 0.25);
+	float lod = max(log2(t * p_pixel / (2000.0 / 128.0)), 0.0);
+	vec4 dn = textureLod(cloud_detail, fq, lod);
+	float fib = smoothstep(0.25, 0.85, mix(dn.r, dn.g, 0.4));
+	float tau_v = cloud_high_tau * c * fib * 2.0 / max(abs(dot(rd, up)), 0.05);
+	float tau_s = cloud_high_tau * c / max(dot(sun_dir, up), 0.05);
+	float cos_theta = dot(rd, sun_dir);
+	vec3 light = sun_radiance * (exp(-0.5 * tau_s) * cirrus_phase(cos_theta) + (1.0 - exp(-0.5 * tau_s)) * (2.0 / (4.0 * PI))) + ambient_top;
+	float tr = exp(-tau_v);
+	r_t = t;
+	// Far sheets fade into the air as the low clouds do.
+#ifdef ATMO_SCATTERING
+	float far = 200000.0;
+#else
+	float far = cloud_far * 2.0;
+#endif
+	float fade = 1.0 - smoothstep(0.5 * far, far, t);
+	return vec4(light * (1.0 - tr) * fade, mix(1.0, tr, fade));
+}
+
+// The low clouds in front of the high sheet: radiance adds through the low clouds' transmittance.
+vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, int steps, float jitter, float p_pixel, out float r_depth) {
+	vec4 low = march_cumulus(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, steps, jitter, p_pixel, r_depth);
+	float t_high;
+	vec4 high = march_cirrus(cam, rd, sun_dir, sun_radiance, ambient_top, p_pixel, t_high);
+	if (high.a >= 1.0) {
+		return low;
+	}
+	if (cam.y > cloud_high_height) {
+		// Above the sheet (looking down at it): it is in front.
+		vec4 o = vec4(high.rgb + high.a * low.rgb, high.a * low.a);
+		r_depth = ((1.0 - high.a) * t_high + high.a * (1.0 - low.a) * r_depth) / max(1.0 - o.a, 1e-4);
+		return o;
+	}
+	vec4 o = vec4(low.rgb + low.a * high.rgb, low.a * high.a);
+	// The depth the air in front is taken to: weighted by what each layer hides.
+	r_depth = ((1.0 - low.a) * r_depth + low.a * (1.0 - high.a) * t_high) / max(1.0 - o.a, 1e-4);
+	return o;
 }
 
 // Lightning inside the clouds. Each flash is a point source whose light diffuses through the cloud as
@@ -626,6 +755,12 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	}
 	rs->material_set_param(m, "cloud_storm_base", bases);
 	rs->material_set_param(m, "cloud_base_min", p_state.base_min);
+	rs->material_set_param(m, "cloud_high_cover", p_state.high_cover);
+	rs->material_set_param(m, "cloud_high_height", p_state.high_height);
+	rs->material_set_param(m, "cloud_high_tau", p_state.high_tau);
+	rs->material_set_param(m, "cloud_high_scale", p_state.high_scale);
+	rs->material_set_param(m, "cloud_high_drift", p_state.high_drift);
+	rs->material_set_param(m, "cloud_high_dir", p_state.high_dir);
 }
 
 void WeatherSkyMaterial::set_lightning(const Vector4 *p_flashes, int p_count, const Color &p_color) {

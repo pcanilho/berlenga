@@ -10,6 +10,7 @@ extends Node3D
 #   --edge [--standard]  with --plot: from a fresh coupe across its edge (or at a standard 8 m off)
 #   --plot=N          render stand N (TreeGenerator.Stand) on the valley (--out=path.png, --raster, --spp=N)
 #   --wind=U          with --plot: rigged trees posed by a U m/s wind (TreeWind3D) at --time=T s
+#   --far=R           with --plot: every species ranged R m and streamed (the far tail thins and widens past R/2)
 #   --inside          with --plot: the view from inside the stand, 70 m deep
 #   --deep            with --inside: from among the canopy trees, away from the stream
 #   --variants=N      meshes per species (default 1)
@@ -65,6 +66,7 @@ func run(args: Dictionary) -> void:
 		gen.near_leaf_range = 0.0
 	# Fire band variants (five more meshes a species, trees.md 5ah) serve no placement check: off unless --fire.
 	gen.fire_variants = args.has("fire")
+	gen.far_thinning = OS.get_environment("NO_FAR_SCALE") == ""
 	if args.has("region"):
 		use_generator = args.has("generated")
 		north_america = args.has("na")
@@ -639,7 +641,26 @@ func _render_plot(i: int, args: Dictionary) -> void:
 	gen.rigged = args.has("wind")
 	var biome := _biome(i)
 	gen.rigged = false
-	var f := _field(biome)
+	var f: VegetationField3D
+	if args.has("far"):
+		# --far=R: the far tail at a bench's scale (trees.md 9a): every species ranged R m, streamed in 20 m tiles out
+		# to 3 R (VegetationField3D.far_reach), so the survivors past R / 2 thin and widen within the valley.
+		for sp in biome.species:
+			sp.visibility_range = float(args["far"])
+		f = VegetationField3D.new()
+		f.populate_on_ready = false
+		f.tile_size = 20.0
+		f.streaming = true
+		f.stream_radius = SIZE * 1.5
+		f.far_reach = 3.0
+		# Vegetation's draped far shell takes over past 0.6 of the reach; at a bench's ranges it would cover the valley.
+		f.far_shell = OS.get_environment("FAR_SHELL") != ""
+		f.far_volume = false # Its voxel shell from the range to 150 m, likewise.
+		f.biome = biome
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+	else:
+		f = _field(biome)
 	if args.has("wind"):
 		# Posed by the wind at --time seconds (rigged meshes, one TreeWind3D on the field).
 		var wind := TreeWind3D.new()
@@ -822,8 +843,32 @@ func _render_plot(i: int, args: Dictionary) -> void:
 		cam.look_at(Vector3(float(cv[3]), float(cv[4]), float(cv[5])))
 		if cv.size() >= 7:
 			cam.fov = float(cv[6])
+	if args.has("far"):
+		f.stream_target = f.get_path_to(cam)
+		var waited := 0
+		get_viewport().disable_3d = true # Streams without drawing every step (lavapipe).
+		while waited < 3000 and (waited < 10 or not f.is_stream_idle()):
+			await RenderingServer.frame_post_draw
+			waited += 1
+			if waited % 50 == 0:
+				print("far: frame %d, %d plants, idle %s" % [waited, f.get_plant_count(), str(f.is_stream_idle())])
+		get_viewport().disable_3d = false
+		var drawn := 0
+		for mmi in f.find_children("*", "MultiMeshInstance3D", true, false):
+			if mmi.multimesh != null:
+				drawn += mmi.multimesh.visible_instance_count if mmi.multimesh.visible_instance_count >= 0 else mmi.multimesh.instance_count
+		print("far: %d plants placed, %d drawn instances after %d frames" % [f.get_plant_count(), drawn, waited])
 	for k in (8 if raster else 12):
 		await RenderingServer.frame_post_draw
+	if not raster:
+		# Path traced: surfaces whose vertex() is captured join once captured (RT_PENDING_SURFACES).
+		var pw := 0
+		while pw < 300 and get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES) > 0:
+			await RenderingServer.frame_post_draw
+			pw += 1
+		for k in 12:
+			await RenderingServer.frame_post_draw
+		print("pt: waited %d draws for pending surfaces" % pw)
 	var out: String = args.get("out", "/tmp/plot.png")
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
