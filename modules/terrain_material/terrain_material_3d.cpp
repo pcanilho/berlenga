@@ -1562,12 +1562,14 @@ void fragment() {
 	dn /= total;
 	porosity /= total;
 	vec3 sn = normalize(wn + dn);
+	vec3 tm_macro_n = wn; // the surface's own normal, without the layers' fine bump
 	if (tm_cl_p.w > 0.0) {
 		// Cliff relief: the face's normal per pixel (see tm_cl_normal), with the layers' own detail on top.
 		float cl_fp = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 		vec3 cl_n = tm_cl_normal(tm_cl_p.xyz, normalize(tm_cl_n), tm_cl_p.w, max(0.15, cl_fp));
 		cl_n = normalize(mat3(MODEL_MATRIX) * cl_n);
 		sn = normalize(cl_n + dn);
+		tm_macro_n = cl_n;
 )";
 	if (cliff_self_shadow) {
 		// Where the relief is still wider than a pixel and the pixel faces the sun. sun_direction() is zero under
@@ -1590,7 +1592,10 @@ void fragment() {
 	// under a side sun drew the detail's octaves as fine diagonal hatching while the cone's width alone kept them.
 	float footprint = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 	footprint /= max(abs(dot(normalize(wp - CAMERA_POSITION_WORLD), wn)), 0.1);
-	sn = terrain_detail_normal(wp, sn, tm_detail_octaves, footprint);
+	// The detail's gullies run by the surface's own slope, not by the layers' fine bump (procedural clods or a scan's
+	// normal map): fed those, the gullies' direction turned every few centimetres and drew blobs with hard rims, a
+	// melted-wax look over any bare ground. Its tilt then goes on top of the bumped normal.
+	sn = normalize(sn + terrain_detail_normal(wp, tm_macro_n, tm_detail_octaves, footprint) - tm_macro_n);
 )";
 	}
 	if (rock_detail_enabled) {
