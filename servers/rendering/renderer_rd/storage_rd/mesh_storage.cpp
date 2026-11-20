@@ -2292,8 +2292,10 @@ void MeshStorage::_multimesh_mark_buffer_rd_changed(RID p_multimesh) {
 	multimesh->records_version++;
 	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH_DATA);
 
-	const bool needs_cpu_copy = !multimesh->data_cache.is_empty() || multimesh->custom_aabb == AABB() ||
-			RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_PIPELINE) || RD::get_singleton()->has_feature(RD::SUPPORTS_RAY_QUERY);
+	// The path tracer reads the CPU mirror only for expanded MultiMeshes, and fills it on first use (a merged or
+	// captured one reads the GPU buffer): a mirror is kept fresh once it exists, and made for the AABB when there is
+	// no custom one, never only because the device can trace rays (GPU-filled grass rings would double their memory).
+	const bool needs_cpu_copy = !multimesh->data_cache.is_empty() || multimesh->custom_aabb == AABB() || multimesh->rt_instanced;
 	if (!needs_cpu_copy) {
 		return;
 	}
