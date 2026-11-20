@@ -174,6 +174,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Burnt ground → runoff (water-repellent soil, ash washed off) | linked (19 Nov) | WorldFire `water_repellency_at`, WorldGround `runoff_at` | PhysX 837fea90 |
 | Ash, silt runoff → stream colour | linked (19 Nov) | WorldGround `add_runoff_load` → runoff (WeatherRunoff3D) → WorldWater `add_sediment`, `sediment_at` | PhysX puts washed ash on the runoff (5f14b542); WeatherRunoff3D routes it into open water (Valence #393); PhysXRiver3D and PhysXWaterSurface3D carry, settle and shade it (Valence eab1d857) |
 | Rain on burnt slopes → debris flow | linked (19 Nov) | WeatherRunoff3D `debris_flow` signal (outlet, volume, path) | Valence fires it, mud's GroundDebrisFlow3D runs the mud body, PhysXDebrisSurge3D carries the bouldery front (Rickenmann 1999 speed) |
+| Ground → loose stones; debris flows findable | linked (20 Nov, mud 20f319f4) | `GroundSurface3D.add_loose_stone(position, radius, velocity)`; group `ground_debris_flows` | any system can drop a loose stone onto the ground; readers find running GroundDebrisFlow3D nodes by group |
 | Weather wind → free-standing Flow smoke | linked (18 Nov) | wind | `PhysXFlow3D.weather_wind` (wind work) |
 
 ### Cloth, hair, bodies

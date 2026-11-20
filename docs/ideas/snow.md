@@ -1504,6 +1504,14 @@ Research: a slab avalanche leaves a crown (a tensile fracture standing the slab'
 - Same image: against the old shader, the trail close-up differs by a mean 0.0 levels and the crown view by
   0.04. Bench whole-frame GPU time (lavapipe, `--time=10`): trail close-up 1484 -> 898 ms, avalanche crown view
   2757 -> 1407 ms. The bench's `--time=N` prints the mean GPU time over N frames.
+- Step 2: the wind ripples' share of the pixel normal comes from the noise octaves' analytic gradients (value
+  noise derivatives, Quilez) in one evaluation instead of four (12 noise lookups to 3). Image within 0.07
+  levels; trail close-up 898 -> 826 ms, crown view 1407 -> 1345 ms.
+- CPU side, from `--test` on lavapipe's host: a 256 x 256 cover update runs on a worker (6.7 ms there) and costs
+  the frame 1.3 ms mean, 3.2 ms worst, twice a second; a deep-snow surface step with four rolling bodies 0.08 ms.
+  Nothing there worth trading detail for. Next candidates if a GPU bench on the PC shows the surface still
+  high: a mip of the deformation map for the vertex prefilter (one fetch for four) and the 9-tap bilinear form
+  of the Catmull-Rom depth for the vertex height (Sigg and Hadwiger; TheRealMJP's 9-tap filter).
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
