@@ -693,3 +693,42 @@ match the untiled field closely (a rock-share test keeps mixed squares' colours)
 
 **Expected.** Up to 16 shared tiles per block instead of up to 64 own cuts, and each cell has up to 16 candidates
 instead of 4, so more squares take a tile and each cell shows more different tiles than today.
+
+## Tiles that follow bumpy ground (round 4, 19 Nov)
+
+**Measured.** Scree view: of about 3,200 squares looked at, 1,000 are skipped for a coarse stone inside them and 500
+for bent ground, and no square was tiled at all. River view: 1,650 of 3,900 skipped as bent, 50 placements. The shore
+(flat) tiles 71% of its grains.
+
+**How others do it.**
+- Chunked LOD and quadtree terrain (Ulrich 2002, *Rendering Massive Terrains using Chunked Level of Detail Control*;
+  Losasso and Hoppe 2004 geometry clipmaps): a patch is split while its geometric error (how far the real surface
+  is from the flat patch) is over a tolerance. The error of a flat patch on a curved surface falls with the square of
+  its size, so one split cuts it four times.
+- Recursive Wang tiles (Kopf, Cohen-Or, Deussen, Lischinski 2006, *Recursive Wang Tiles for Real-Time Blue Noise*):
+  a tile set at several scales, each level's tiles drawn from the same distribution, so a split region keeps the same
+  statistics.
+- Peytavie et al. 2009 place their pile tiles over the terrain as rigid tiles; their scenes stay on gentle slopes.
+- A shared tile cannot bend per placement under path tracing (its BLAS is shared and rigid), so a bent square has to be
+  covered by smaller flat tiles, not a warped one.
+
+**Design.**
+- A square skipped for bent ground or for a coarse stone splits once into 2 x 2 half squares (0.25, 0.5 and 1 m for
+  fine, gravel and pebble), each tested again with its own plane, flatness and coarse-stone check, with at least 8
+  grains. The flatness tolerance is per grain size as before, but the error over a half square is about a quarter.
+- Half squares have their own tiles: each shared-set sample also gives its four halves as candidates (no extra
+  placement), thinned per level the same way. A half square only matches half-square tiles.
+- Neighbours are any squares or half squares that touch, so the never-a-neighbour's-tile rule holds across levels.
+
+**As built (20 Nov): tried, measured, not kept.** Splitting bent or crowded squares into halves with their own tile
+sets worked as designed (scree 50 to 266 placements, 6.5 k to 14 k grains drawn by tiles), but the halves rarely
+repeat: talus and river beds change size and mix every few metres, so each half tile was used about 2.5 times. A tile's
+BLAS is a copy of every grain's triangles, so on scree it added 0.8 M baked triangles (about 50 MB) to save about 7.6 k
+TLAS entries (under 1 MB of instance data), and on the shore it added 0.4 M triangles for 1 k more tiled grains. The
+split is taken out; what stays from this step:
+- A shared tile is built only from its third placement on (TILE_MIN_USES); the first two draw as their single grains
+  (the same stones in the same place, so nothing changes on screen). The tiles used once or twice were most of the
+  scree's cost.
+- The square bookkeeping keeps each square's rectangle and level, and neighbours are any squares that touch.
+Bumpy ground stays single grains, instanced per grain over the shared shape BLAS, which is already the cheapest way
+to trace stones that do not repeat.
