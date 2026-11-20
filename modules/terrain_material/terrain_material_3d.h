@@ -104,6 +104,7 @@ public:
 private:
 	Ref<TerrainMaterialLayer> layers[LAYER_MAX];
 	bool geology_enabled = true;
+	bool sand_dune_tone = true; // the sand's dune-scale colour (redder old sand, dark interdune flats, pale slip faces)
 	float sea_level = 0.0f;
 	float beach_height = 2.5f;
 	float rock_slope = 40.0f;
@@ -152,6 +153,8 @@ public:
 
 	void set_geology_enabled(bool p_enabled);
 	bool is_geology_enabled() const { return geology_enabled; }
+	void set_sand_dune_tone(bool p_enabled);
+	bool is_sand_dune_tone() const { return sand_dune_tone; }
 	void set_sea_level(float p_height);
 	float get_sea_level() const { return sea_level; }
 	void set_beach_height(float p_height);
