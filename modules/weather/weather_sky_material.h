@@ -66,6 +66,7 @@ private:
 	AtmosphereModel atmosphere_model = ATMOSPHERE_SCATTERING;
 	RID cloud_shadow_map; // the last one given, so a moving corner does not rebind the texture
 	RID cloud_light_grid; // likewise
+	RID cloud_wave_field; // likewise
 	void _update_shader();
 	void _update_atmosphere_textures();
 
@@ -95,7 +96,8 @@ public:
 	void set_moon_angular_size(float p_radians);
 	// The weather's aerosol haze past the froxel fog: extinction at the ground (1/m, 0 for none), its
 	// single-scatter albedo, scale height (m), and where it starts along the eye's rays (the froxels' reach, m).
-	void set_aerosol(float p_extinction, float p_albedo, float p_height, float p_from);
+	void set_aerosol(float p_extinction, float p_albedo, float p_height, float p_from, float p_smoke_share = 0.0f);
+	void set_sun_smoke(const Vector3 &p_transmittance);
 	// The clouds' shadow for the sky's air: a map in the sun's plane (red: the beam's transmittance; green:
 	// the diffuse), its axes (world), the corner of its square in that plane and its size (m). Without one
 	// the shader marches the clouds toward the sun itself, coarser.
@@ -103,6 +105,8 @@ public:
 	// The clouds' light grid (WeatherMap3D): optical depth toward the sun past 64 m, a box p_size across from
 	// p_corner (world x, z), p_y0 to p_y1 high. A null grid turns it off (the sky marches toward the sun itself).
 	void set_cloud_light_grid(const Ref<Texture3D> &p_grid, const Vector2 &p_corner, float p_size, float p_y0, float p_y1);
+	// The mountain waves' displacement at four heights (WeatherMountainWaves), over the square at p_corner.
+	void set_cloud_wave_field(const Ref<Texture2D> &p_field, const Vector2 &p_corner, float p_size, int p_texels);
 
 	// Lightning glowing in the clouds: up to four flashes, each a world position and its energy now.
 	void set_lightning(const Vector4 *p_flashes, int p_count, const Color &p_color);

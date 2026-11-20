@@ -720,7 +720,7 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 	RandomPCG rng(uint32_t(seed) * 2654435761u + 77u);
 	auto H = [&](real_t p_x, real_t p_z) -> real_t { return gen->get_height(Vector3(p_x, 0, p_z)); };
 	// Why candidates fail, for --find-caves benches (CAVE_SEA_DEBUG=1 prints it).
-	int rej_low = 0, rej_flat = 0, rej_dry = 0, rej_depth = 0, rej_foot = 0, rej_back = 0;
+	int rej_low = 0, rej_flat = 0, rej_dry = 0, rej_depth = 0, rej_open = 0, rej_foot = 0, rej_back = 0;
 	const bool dbg = OS::get_singleton()->get_environment("CAVE_SEA_DEBUG") == "1";
 	for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += 6.0) {
 		for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += 6.0) {
@@ -761,6 +761,23 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 			const real_t depth = sea - H(off.x, off.y);
 			if (depth < 0.3 || depth > 30.0) {
 				rej_depth++;
+				continue;
+			}
+			// Open water out from the mouth: the first wet ground can be a pool or a scour hollow at the cliff's foot
+			// with a beach standing metres high beyond it, which drew a ground slab across the mouth and kept the sea
+			// out. The seabed must stay under the sea for 25 m out (no bar or berm over it).
+			bool open = true;
+			real_t deepest = 0.0;
+			for (real_t t = 1.0; t <= 25.0 && open; t += 1.0) {
+				const Vector2 q = m + dn * t;
+				const real_t hq = H(q.x, q.y);
+				open = hq < sea - 0.1;
+				deepest = MAX(deepest, sea - hq);
+			}
+			// ... and deepen to the 0.8 m the waves need to keep their energy (a flat sheet a few decimetres deep is a
+			// sand flat or an estuary, where no sea cave is cut).
+			if (!open || deepest < 0.8) {
+				rej_open++;
 				continue;
 			}
 
@@ -820,7 +837,7 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 		}
 	}
 	if (OS::get_singleton()->get_environment("CAVE_SEA_DEBUG") == "1") {
-		print_line(vformat("find_sea_entrances: %d candidates; rejected: %d under 6 m, %d flat, %d no sea within 150 m, %d depth, %d no cliff foot at the swash, %d no cliff behind", found.size(), rej_low, rej_flat, rej_dry, rej_depth, rej_foot, rej_back));
+		print_line(vformat("find_sea_entrances: %d candidates; rejected: %d under 6 m, %d flat, %d no sea within 150 m, %d depth, %d no open sea out from the foot, %d no cliff foot at the swash, %d no cliff behind", found.size(), rej_low, rej_flat, rej_dry, rej_depth, rej_open, rej_foot, rej_back));
 	}
 	struct More {
 		_FORCE_INLINE_ bool operator()(const Found &p_a, const Found &p_b) const { return p_a.score > p_b.score; }
@@ -1056,6 +1073,27 @@ void CaveNetwork3D::_surge_build() {
 		for (float &v : sg.history) {
 			v = 0.0f;
 		}
+		// Where the arch begins: the first point along the axis with the ground (the cliff) over the arch's crown. Before
+		// it the passage is open to the sky and the sea's own surface goes on there.
+		sg.covered = 0.0f;
+		if (gen) {
+			sg.covered = sg.along[n - 1];
+			bool found = false;
+			for (int i = 1; i < n && !found; i++) {
+				const float len = sg.along[i] - sg.along[i - 1];
+				const int steps = MAX(1, int(Math::ceil(len / 0.25f)));
+				for (int k = (i == 1 ? 0 : 1); k <= steps; k++) {
+					const float t = float(k) / float(steps);
+					const Vector3 p = sg.axis[i - 1].lerp(sg.axis[i], t);
+					const float crown = Math::lerp(sg.roof[i - 1], sg.roof[i], t);
+					if (gen->get_height(p) > crown + 0.3f) {
+						sg.covered = Math::lerp(sg.along[i - 1], sg.along[i], t);
+						found = true;
+						break;
+					}
+				}
+			}
+		}
 		sg.bounds = c.bounds.grow(2.0);
 		surges.push_back(sg);
 	}
@@ -1205,6 +1243,14 @@ Dictionary CaveNetwork3D::get_sea_cave_water(int p_cave) const {
 		d["depths"] = depth;
 		d["mean_level"] = sg.mean;
 		d["sealed"] = sg.sealed;
+		d["covered_from"] = sg.covered;
+		// The sea's rms height at the mouth (over its mean) through the history the surge keeps.
+		double sq = 0.0;
+		for (float v : sg.history) {
+			sq += double(v) * v;
+		}
+		d["wave_rms"] = float(Math::sqrt(sq / MAX(int(sg.history.size()), 1)));
+		d["along"] = Vector<float>(sg.along);
 	}
 	return d;
 }
@@ -1219,6 +1265,54 @@ Dictionary CaveNetwork3D::get_blowhole_spout(int p_cave) const {
 		}
 	}
 	return d;
+}
+
+// Where the sea's surface is cut: along each sea cave's passage, whose own water PhysXSeaCaveWater3D draws
+// (docs/ideas/water.md, "Sea-cave water"). Eight floats per capsule, world space: a.x, a.z, b.x, b.z, the radius at a
+// and at b (negative at a for the first of a cave: a flat cut at the arch, where the open sea goes on), and the cave
+// surface's weight at a and at b, rising from 0 at the arch over the surface's fade_length (the two cross-fade there).
+// The radius stays under the cave surface's width so the two overlap. Empty without that surface.
+PackedFloat32Array CaveNetwork3D::get_water_clip_capsules() const {
+	PackedFloat32Array out;
+	Node *sw = get_sea_water_node();
+	if (!sw || !sw->is_inside_tree()) {
+		return out;
+	}
+	const float fade = MAX(float(sw->get(SNAME("fade_length"))), 0.01f);
+	const float margin = 0.1f;
+	auto push = [&](const Vector3 &p_a, const Vector3 &p_b, float p_ra, float p_rb, float p_la, float p_lb, bool p_flat) {
+		out.push_back(p_a.x);
+		out.push_back(p_a.z);
+		out.push_back(p_b.x);
+		out.push_back(p_b.z);
+		out.push_back(p_flat ? -p_ra : p_ra);
+		out.push_back(p_rb);
+		out.push_back(CLAMP(p_la / fade, 0.0f, 1.0f));
+		out.push_back(CLAMP(p_lb / fade, 0.0f, 1.0f));
+	};
+	for (const SeaSurge &sg : surges) {
+		const int n = int(sg.axis.size());
+		bool first = true;
+		for (int i = 0; i + 1 < n; i++) {
+			if (sg.along[i + 1] <= sg.covered) {
+				continue;
+			}
+			// The first capsule starts at the arch.
+			const float t = first ? CLAMP((sg.covered - sg.along[i]) / MAX(sg.along[i + 1] - sg.along[i], 1e-4f), 0.0f, 1.0f) : 0.0f;
+			const Vector3 a = sg.axis[i].lerp(sg.axis[i + 1], t);
+			const float ra = Math::lerp(sg.half_width[i], sg.half_width[i + 1], t) + margin;
+			const float la = Math::lerp(sg.along[i], sg.along[i + 1], t) - sg.covered;
+			push(a, sg.axis[i + 1], ra, sg.half_width[i + 1] + margin, la, sg.along[i + 1] - sg.covered, first);
+			first = false;
+		}
+		if (!first) {
+			// The last sample's own round end (the chamber's).
+			const float r = sg.half_width[n - 1] + margin;
+			const float l = sg.along[n - 1] - sg.covered;
+			push(sg.axis[n - 1], sg.axis[n - 1], r, r, l, l, false);
+		}
+	}
+	return out;
 }
 
 PackedVector3Array CaveNetwork3D::get_blowholes(int p_cave) const {
@@ -1465,10 +1559,25 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p, real_t 
 		// Not on the floors: the stones and pools laid on them measure the coarse field, and a floor's own fine
 		// texture is its sediment's (shader and stones).
 		const real_t off_floor = Math::smoothstep(real_t(0.35), real_t(1.0), above_floor); // the banks too (spalls lie on them)
-		if (cell < 0.2 && d < 0.6 && off_floor > 0.0) {
-			d += off_floor * roughness * 0.05 * (cave_fbm(p_p / 0.25f, ns + 13u, 2) - 0.5f);
+		// A refined chunk next to a coarse one fades this relief out over the last metres to their shared face (the
+		// geomorphing of chunked LOD terrain: Ulrich 2002, Lengyel 2010), so both grids mesh the same surface there;
+		// switched off at the face, the near grid's knobs would end in a straight seam down the wall.
+		real_t fine_w = off_floor;
+		if (p_src.fine_fade && fine_w > 0.0) {
+			const real_t fd = 3.0; // metres
+			for (int ax = 0; ax < 3; ax++) {
+				if (p_src.fine_fade & (1 << (2 * ax))) {
+					fine_w *= Math::smoothstep(real_t(0.0), fd, p_p[ax] - p_src.fine_lo[ax]);
+				}
+				if (p_src.fine_fade & (2 << (2 * ax))) {
+					fine_w *= Math::smoothstep(real_t(0.0), fd, p_src.fine_hi[ax] - p_p[ax]);
+				}
+			}
+		}
+		if (cell < 0.2 && d < 0.6 && fine_w > 0.0) {
+			d += fine_w * roughness * 0.05 * (cave_fbm(p_p / 0.25f, ns + 13u, 2) - 0.5f);
 			if (cell < 0.07) {
-				d += off_floor * roughness * 0.015 * (cave_fbm(p_p / 0.08f, ns + 17u, 2) - 0.5f);
+				d += fine_w * roughness * 0.015 * (cave_fbm(p_p / 0.08f, ns + 17u, 2) - 0.5f);
 			}
 		}
 		if (scallops > 0.0) {
@@ -1675,9 +1784,10 @@ void CaveNetwork3D::_gather(const AABB &p_box, FieldSource &r_src) const {
 // it crosses joining the four cells round that edge. Each chunk owns the edges that start inside it and samples one
 // cell past its sides, so neighbours share their border vertices exactly. Normals from the field's gradient; quads
 // facing the open side. The ground's own surface (a patch's) is a second surface, drawn with the ground material.
-void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_cell) const {
+void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_cell, uint8_t p_fade) const {
 	const TerrainGenerator3D *gen = mesh_gen;
 	r_chunk.cell = p_cell;
+	r_chunk.fine_fade = p_cell < mesh_cell - 1e-4 ? p_fade : 0;
 	const int N = MAX(1, int(Math::round(chunk_size / p_cell)));
 	const real_t c = chunk_size / real_t(N); // whole cells per chunk, so neighbours share their border samples
 	const Vector3 O = Vector3(p_key) * chunk_size;
@@ -1686,6 +1796,9 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 	const int P = p_cell < mesh_cell - 1e-4 ? 2 + int(Math::ceil(mesh_cell / c)) : 1;
 	const real_t reach = (P + 1) * c;
 	_gather(AABB(O - Vector3(reach, reach, reach), Vector3(chunk_size + 2 * reach, chunk_size + 2 * reach, chunk_size + 2 * reach)), src);
+	src.fine_fade = r_chunk.fine_fade;
+	src.fine_lo = O;
+	src.fine_hi = O + Vector3(chunk_size, chunk_size, chunk_size);
 	r_chunk.key = p_key;
 	r_chunk.triangles = 0;
 	r_chunk.pools.clear();
@@ -2701,6 +2814,7 @@ struct CaveMeshJob {
 	const CaveNetwork3D *net;
 	LocalVector<Vector3i> keys;
 	LocalVector<real_t> cells; // each key's grid (mesh_cell when empty)
+	LocalVector<uint8_t> fades; // each refined key's faces toward coarse neighbours
 	LocalVector<CaveNetwork3D::Chunk> made;
 	LocalVector<CaveNetwork3D::Chunk *> out;
 	HashSet<Vector3i> pinned;
@@ -2708,7 +2822,23 @@ struct CaveMeshJob {
 
 void CaveNetwork3D::_mesh_job(void *p_data, uint32_t p_index) {
 	CaveMeshJob *job = static_cast<CaveMeshJob *>(p_data);
-	job->net->_mesh_chunk(job->keys[p_index], *job->out[p_index], p_index < job->cells.size() ? job->cells[p_index] : job->net->mesh_cell);
+	job->net->_mesh_chunk(job->keys[p_index], *job->out[p_index], p_index < job->cells.size() ? job->cells[p_index] : job->net->mesh_cell, p_index < job->fades.size() ? job->fades[p_index] : 0);
+}
+
+// The faces of a chunk whose neighbour across them is (or is about to be) on the coarse grid.
+template <typename F>
+uint8_t CaveNetwork3D::_fade_faces(const Vector3i &p_key, F p_cell_of) const {
+	uint8_t m = 0;
+	for (int ax = 0; ax < 3; ax++) {
+		for (int sd = 0; sd < 2; sd++) {
+			Vector3i nk = p_key;
+			nk[ax] += sd ? 1 : -1;
+			if (p_cell_of(nk) >= mesh_cell - 1e-4) {
+				m |= uint8_t(1 << (2 * ax + sd));
+			}
+		}
+	}
+	return m;
 }
 
 Ref<Material> CaveNetwork3D::_wall_material() {
@@ -2728,7 +2858,7 @@ uniform vec3 rock_color = vec3(0.30, 0.29, 0.26);
 uniform vec3 sediment_color = vec3(0.13, 0.10, 0.07);
 uniform vec3 sand_color = vec3(0.4, 0.3, 0.17);
 uniform float sea_level = -1e9;
-uniform int debug_view = 0; // CAVE_WALL_DEBUG: 1 streak/wet/floor, 2 shells/crack/foot
+uniform int debug_view = 0; // CAVE_WALL_DEBUG: 1 streak/wet/floor, 2 shells/crack/foot, 3 chunks, 4 COLOR, 5 normal, 6 bumped
 uniform float scallops_amount = 1.0;
 varying vec3 w_pos;
 varying vec3 w_nrm;
@@ -2995,6 +3125,14 @@ void fragment() {
 		SPECULAR = 0.0;
 	} else if (debug_view == 2) {
 		ALBEDO = vec3(shells, crack, COLOR.b);
+		ROUGHNESS = 1.0;
+		SPECULAR = 0.0;
+	} else if (debug_view >= 3) {
+		// 3 the 16 m chunk grid, 4 the vertex colour, 5 the mesh normal, 6 the bumped normal; unlit.
+		vec3 ck = floor(w_pos / 16.0);
+		ALBEDO = debug_view == 3 ? fract(ck * vec3(0.37, 0.61, 0.83) + 0.1) : debug_view == 4 ? COLOR.rgb : debug_view == 5 ? w_nrm * 0.5 + 0.5 : debug_view == 7 ? vec3(fract(w_pos.z), step(0.5, fract(w_pos.z / 2.0)), fract(w_pos.x)) : nb * 0.5 + 0.5;
+		EMISSION = ALBEDO;
+		ALBEDO = vec3(0.0);
 		ROUGHNESS = 1.0;
 		SPECULAR = 0.0;
 	}
@@ -3285,7 +3423,16 @@ void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
 	mi->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_DOUBLE_SIDED);
 	for (int sfc = 0; sfc < p_chunk.mesh->get_surface_count(); sfc++) {
 		const bool is_ground = p_chunk.mesh->surface_get_name(sfc) == "ground";
-		mi->set_surface_override_material(sfc, is_ground && ground_material.is_valid() ? ground_material : p_wall);
+		Ref<Material> gm = ground_material;
+		if (is_ground && OS::get_singleton()->has_environment("CAVE_GROUND_DEBUG")) {
+			// CAVE_GROUND_DEBUG: the network's own ground quads drawn flat red (to tell them from the landscape's).
+			Ref<StandardMaterial3D> red;
+			red.instantiate();
+			red->set_albedo(Color(1, 0, 0));
+			red->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
+			gm = red;
+		}
+		mi->set_surface_override_material(sfc, is_ground && gm.is_valid() ? gm : p_wall);
 	}
 	add_child(mi);
 	mi->set_global_transform(Transform3D());
@@ -3490,6 +3637,34 @@ void CaveNetwork3D::_pool_water_update() {
 
 // The network's own PhysXCaveMist3D (godot_physx, built with Flow) when it has sea caves, called by name so the
 // module builds without it.
+// The sea drawn inside the sea caves (PhysXSeaCaveWater3D, with the PhysX module): the surge's water as the river's
+// surface along each passage. Made while the network has sea caves and sea_surge is on.
+void CaveNetwork3D::_update_sea_water_node() {
+	Node *n = get_sea_water_node();
+	bool any_sea = false;
+	for (const Cave &cv : caves) {
+		any_sea = any_sea || cv.sea;
+	}
+	if (!sea_water || !sea_surge || !any_sea) {
+		if (n) {
+			n->queue_free();
+		}
+		sea_water_node = ObjectID();
+		return;
+	}
+	if (n || !ClassDB::class_exists("PhysXSeaCaveWater3D")) {
+		return;
+	}
+	Node3D *node = Object::cast_to<Node3D>(ClassDB::instantiate("PhysXSeaCaveWater3D"));
+	if (!node) {
+		return;
+	}
+	node->set_name("SeaWater");
+	add_child(node, false, INTERNAL_MODE_BACK);
+	node->set("cave_network", node->get_path_to(this));
+	sea_water_node = node->get_instance_id();
+}
+
 void CaveNetwork3D::_update_mist_node() {
 	Node *n = get_sea_mist_node();
 	bool any_sea = false;
@@ -4084,11 +4259,14 @@ int CaveNetwork3D::refine_meshes(const Vector3 &p_center) {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	CaveMeshJob job;
 	job.net = this;
+	auto cell_of = [&](const Vector3i &k) { return _cell_for(k, p_center); };
 	for (const KeyValue<Vector3i, Chunk> &kv : chunks) {
 		const real_t want = _cell_for(kv.key, p_center);
-		if (kv.value.node && kv.value.cell != want) {
+		const uint8_t fade = want < mesh_cell - 1e-4 ? _fade_faces(kv.key, cell_of) : 0;
+		if (kv.value.node && (kv.value.cell != want || kv.value.fine_fade != fade)) {
 			job.keys.push_back(kv.key);
 			job.cells.push_back(want);
+			job.fades.push_back(fade);
 		}
 	}
 	if (job.keys.is_empty()) {
@@ -4182,6 +4360,9 @@ void CaveNetwork3D::_stream_update() {
 	_wanted(AABB(p - Vector3(r, r, r), Vector3(2.0 * r, 2.0 * r, 2.0 * r)), want, pinned, true);
 	LocalVector<Vector3i> keys;
 	LocalVector<real_t> cells;
+	LocalVector<uint8_t> fades;
+	// Each chunk's grid after this batch: the new one for those remeshed, else the one it has (or will get).
+	HashMap<Vector3i, real_t> next_cell;
 	for (const Vector3i &k : want) {
 		if (!(pinned.has(k) || centre(k).distance_to(p) <= r + half)) {
 			continue;
@@ -4192,10 +4373,33 @@ void CaveNetwork3D::_stream_update() {
 			// Meshed already: remeshed only to refine it near the target, or to coarsen it again well past the radius.
 			const bool keep = have->cell == cw || !have->node || (have->cell == near_mesh_cell && _cell_for(k, p, 4.0) == near_mesh_cell);
 			if (keep) {
+				next_cell.insert(k, have->cell);
 				continue;
 			}
 		}
 		keys.push_back(k);
+		next_cell.insert(k, cw);
+	}
+	auto cell_of = [&](const Vector3i &k) {
+		if (const real_t *t = next_cell.getptr(k)) {
+			return *t;
+		}
+		const Chunk *ch = chunks.getptr(k);
+		return ch ? ch->cell : _cell_for(k, p);
+	};
+	// A refined chunk kept as it is is remeshed too when a neighbour's grid changes under its faded faces.
+	const uint32_t n_new = keys.size();
+	for (const KeyValue<Vector3i, real_t> &kv : next_cell) {
+		const Chunk *have = chunks.getptr(kv.key);
+		if (have && have->node && kv.value < mesh_cell - 1e-4 && have->cell == kv.value && have->fine_fade != _fade_faces(kv.key, cell_of)) {
+			bool queued = false;
+			for (uint32_t i = 0; i < n_new && !queued; i++) {
+				queued = keys[i] == kv.key;
+			}
+			if (!queued) {
+				keys.push_back(kv.key);
+			}
+		}
 	}
 	_open_holes();
 	if (keys.is_empty()) {
@@ -4213,13 +4417,16 @@ void CaveNetwork3D::_stream_update() {
 	sorter.compare.cs = chunk_size;
 	sorter.sort(keys.ptr(), keys.size());
 	for (const Vector3i &k : keys) {
-		cells.push_back(_cell_for(k, p));
+		const real_t cw = cell_of(k);
+		cells.push_back(cw);
+		fades.push_back(cw < mesh_cell - 1e-4 ? _fade_faces(k, cell_of) : 0);
 	}
 	mesh_gen = _get_generator();
 	stream_job = memnew(CaveMeshJob);
 	stream_job->net = this;
 	stream_job->keys = keys;
 	stream_job->cells = cells;
+	stream_job->fades = fades;
 	stream_job->pinned = pinned;
 	stream_job->made.resize(keys.size());
 	for (uint32_t i = 0; i < keys.size(); i++) {
@@ -4254,6 +4461,7 @@ void CaveNetwork3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
 			WorldContracts::register_water(this);
+			add_to_group(SNAME("water_clippers")); // the sea is cut inside the sea caves (get_water_clip_capsules)
 		} break;
 		case NOTIFICATION_READY: {
 			set_process_internal(true); // streaming round the follow target; live water on the nearest pools
@@ -4265,6 +4473,7 @@ void CaveNetwork3D::_notification(int p_what) {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				_pool_water_update();
 				_update_mist_node();
+				_update_sea_water_node();
 				_update_stream_nodes();
 				_surge_update(get_process_delta_time());
 			}
@@ -4359,6 +4568,10 @@ void CaveNetwork3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_stream_count"), &CaveNetwork3D::get_stream_count);
 	ClassDB::bind_method(D_METHOD("set_sea_mist", "enable"), &CaveNetwork3D::set_sea_mist);
 	ClassDB::bind_method(D_METHOD("get_sea_mist"), &CaveNetwork3D::get_sea_mist);
+	ClassDB::bind_method(D_METHOD("set_sea_water", "enable"), &CaveNetwork3D::set_sea_water);
+	ClassDB::bind_method(D_METHOD("get_sea_water"), &CaveNetwork3D::get_sea_water);
+	ClassDB::bind_method(D_METHOD("get_sea_water_node"), &CaveNetwork3D::get_sea_water_node);
+	ClassDB::bind_method(D_METHOD("get_water_clip_capsules"), &CaveNetwork3D::get_water_clip_capsules);
 	ClassDB::bind_method(D_METHOD("get_sea_mist_node"), &CaveNetwork3D::get_sea_mist_node);
 	ClassDB::bind_method(D_METHOD("set_scallops", "amount"), &CaveNetwork3D::set_scallops);
 	ClassDB::bind_method(D_METHOD("get_scallops"), &CaveNetwork3D::get_scallops);
@@ -4442,6 +4655,7 @@ void CaveNetwork3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "rimstone_water_max", PROPERTY_HINT_RANGE, "0,64,1"), "set_rimstone_water_max", "get_rimstone_water_max");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cave_streams"), "set_cave_streams", "get_cave_streams");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_mist"), "set_sea_mist", "get_sea_mist");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_water"), "set_sea_water", "get_sea_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_surge"), "set_sea_surge", "get_sea_surge");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "surge_damping", PROPERTY_HINT_RANGE, "1,500,1,suffix:m"), "set_surge_damping", "get_surge_damping");
 	ADD_SIGNAL(MethodInfo("blowhole_spout", PropertyInfo(Variant::INT, "cave"), PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "speed")));

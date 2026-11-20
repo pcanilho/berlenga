@@ -763,6 +763,17 @@ func _process(_delta: float) -> void:
 		print("live window, frame %d:" % n)
 		_print_cross()
 	if out != "" and n >= frames + seq:
+		if "--silt-probe" in OS.get_cmdline_user_args() and river is PhysXRiver3D:
+			# --silt-probe: the load (kg/m3) along the river's line every 4 m, with the speed there.
+			var cv: Curve3D = (river as PhysXRiver3D).curve
+			var L := cv.get_baked_length()
+			var line := []
+			var off := 0.0
+			while off < L:
+				var q: Vector3 = river.global_transform * cv.sample_baked(off)
+				line.append("%.0f:%.3f@%.1f" % [off, (river as PhysXRiver3D).get_sediment_at(q).x, (river as PhysXRiver3D).sample_flow(q).length()])
+				off += 4.0
+			print("silt along the river: ", " ".join(line))
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out)
 		get_tree().quit()

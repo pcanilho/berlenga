@@ -588,7 +588,7 @@ void VegetationField3D::_read_burn_age(PlaceSetup &r_setup) const {
 		const TypedArray<PlantSpecies> list = biome->get_species();
 		for (int i = 0; i < list.size() && !wanted; i++) {
 			const Ref<PlantSpecies> sp = list[i];
-			wanted = sp.is_valid() && (sp->uses_burn_age() || sp->get_burn_recovery() > 0.0f);
+			wanted = sp.is_valid() && (sp->uses_burn_age() || sp->get_burn_recovery() > 0.0f || (_deferred_kinds(sp) & 1));
 			const TypedArray<Mesh> ms = sp.is_valid() ? sp->get_meshes() : TypedArray<Mesh>();
 			for (int m = 0; m < ms.size() && !wanted; m++) {
 				const Ref<Mesh> mesh = ms[m];
@@ -631,16 +631,50 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 	r_setup.stand_rules.clear();
 	r_setup.stand_age.clear();
 	r_setup.stand_kind.clear();
+	r_setup.browse_rules.clear();
+	r_setup.stand_browse.clear();
+	r_setup.rooting_rules.clear();
+	r_setup.stand_rooting.clear();
 	r_setup.stand_nx = 0;
 	r_setup.stand_ny = 0;
 	const WorldStand *stand = WorldContracts::stand();
 	if (stand) {
 		stand_seen = stand->get_stand_generation();
 	}
+	// The field's species, and the canopy field's trees when a species here reads the forest edge (the edge follows
+	// their stand stages).
+	LocalVector<Ref<Biome>> biomes;
 	if (biome.is_valid()) {
-		const TypedArray<PlantSpecies> list = biome->get_species();
+		biomes.push_back(biome);
+		const VegetationField3D *other = canopy_field.is_empty() ? nullptr : Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field));
+		if (other && other != this && other->biome.is_valid()) {
+			const TypedArray<PlantSpecies> own = biome->get_species();
+			for (int i = 0; i < own.size(); i++) {
+				const Ref<PlantSpecies> sp = own[i];
+				if (sp.is_valid() && sp->uses_forest_edge()) {
+					biomes.push_back(other->biome);
+					break;
+				}
+			}
+		}
+	}
+	for (const Ref<Biome> &b : biomes) {
+		const TypedArray<PlantSpecies> list = b->get_species();
 		for (int i = 0; i < list.size(); i++) {
 			const Ref<PlantSpecies> sp = list[i];
+			if (sp.is_valid() && sp->uses_browse() && b == biome) {
+				const Vector2 r = sp->get_rule_range(PlantSpecies::RULE_BROWSE);
+				const Vector3 br(r.x, r.y, sp->get_rule_fade(PlantSpecies::RULE_BROWSE));
+				if (r_setup.browse_rules.find(br) < 0) {
+					r_setup.browse_rules.push_back(br);
+				}
+			}
+			if (sp.is_valid() && sp->uses_rooting() && b == biome) {
+				const Vector3 rr = sp->get_rooting_rule();
+				if (r_setup.rooting_rules.find(rr) < 0) {
+					r_setup.rooting_rules.push_back(rr);
+				}
+			}
 			if (sp.is_null() || !sp->uses_stand()) {
 				continue;
 			}
@@ -651,8 +685,10 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 			}
 		}
 	}
-	stand_follow = !r_setup.stand_rules.is_empty();
-	if (!stand_follow || !stand || !r_setup.rect.has_area()) {
+	_read_strikes(r_setup);
+	_read_browse(r_setup);
+	stand_follow = !r_setup.stand_rules.is_empty() || !r_setup.browse_rules.is_empty() || !r_setup.rooting_rules.is_empty() || strike_follow || browse_follow;
+	if ((r_setup.stand_rules.is_empty() && r_setup.browse_rules.is_empty() && r_setup.rooting_rules.is_empty()) || !stand || !r_setup.rect.has_area()) {
 		return;
 	}
 	const Rect2 rect = r_setup.rect;
@@ -661,17 +697,179 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 512);
 	r_setup.stand_age.resize(nx * ny);
 	r_setup.stand_kind.resize(nx * ny);
+	const bool browse = !r_setup.browse_rules.is_empty();
+	if (browse) {
+		r_setup.stand_browse.resize(nx * ny);
+	}
+	const bool rooting = !r_setup.rooting_rules.is_empty();
+	if (rooting) {
+		r_setup.stand_rooting.resize(nx * ny);
+	}
 	for (int z = 0; z < ny; z++) {
 		for (int x = 0; x < nx; x++) {
 			const Vector2 xz = rect.position + rect.size * Vector2(float(x) / (nx - 1), float(z) / (ny - 1));
 			const Vector3 p(xz.x, 0.0f, xz.y);
 			r_setup.stand_age[z * nx + x] = stand->stand_age_at(p);
 			r_setup.stand_kind[z * nx + x] = uint8_t(CLAMP(stand->disturbance_at(p), 0, 255));
+			if (browse) {
+				r_setup.stand_browse[z * nx + x] = stand->browse_at(p);
+			}
+			if (rooting) {
+				r_setup.stand_rooting[z * nx + x] = stand->rooting_age_at(p);
+			}
 		}
 	}
 	r_setup.stand_nx = nx;
 	r_setup.stand_ny = ny;
 	r_setup.stand_rect = rect;
+}
+
+// Deferred tree variants (trees.md 5bc): the kinds the setup's area needs (any burn, strike or browse over it) are
+// asked of each species' variant source; true when a species' meshes grew (its placements must be set up again).
+bool VegetationField3D::_realize_variants(const PlaceSetup &p_setup) {
+	variants_waiting = false;
+	if (biome.is_null()) {
+		return false;
+	}
+	const int need = (p_setup.burn.is_empty() ? 0 : 1) | (p_setup.strikes.is_empty() ? 0 : 2) | (p_setup.browse.is_empty() ? 0 : 4);
+	if (!need) {
+		return false;
+	}
+	bool grew = false;
+	const TypedArray<PlantSpecies> list = biome->get_species();
+	for (int i = 0; i < list.size(); i++) {
+		const Ref<PlantSpecies> sp = list[i];
+		const int kinds = _deferred_kinds(sp) & need;
+		if (!kinds) {
+			continue;
+		}
+		Object *src = Object::cast_to<Object>(sp->get_meta(SNAME("_tree_variant_source"), Variant()));
+		if (!src) {
+			continue;
+		}
+		const int left = src->call(SNAME("request_variants"), sp, kinds);
+		grew = grew || left != kinds;
+	}
+	return grew;
+}
+
+// Struck trees (trees.md 5ax; WorldStand strikes in world-links.md): wanted when a species carries struck variants (mesh
+// meta tree_lightning_years). The strikes over the setup's area are copied, so the placing threads read a fixed list.
+void VegetationField3D::_read_strikes(PlaceSetup &r_setup) const {
+	// Main thread only (setup and _stream_update): add_strike / advance_years change the list with no lock.
+	r_setup.strikes.clear();
+	r_setup.strike_cells.clear();
+	bool wanted = false;
+	if (biome.is_valid()) {
+		const TypedArray<PlantSpecies> list = biome->get_species();
+		for (int i = 0; i < list.size() && !wanted; i++) {
+			const Ref<PlantSpecies> sp = list[i];
+			wanted = (_deferred_kinds(sp) & 2) != 0;
+			const TypedArray<Mesh> ms = sp.is_valid() ? sp->get_meshes() : TypedArray<Mesh>();
+			for (int m = 0; m < ms.size() && !wanted; m++) {
+				const Ref<Mesh> mesh = ms[m];
+				wanted = mesh.is_valid() && mesh->has_meta(SNAME("tree_lightning_years"));
+			}
+		}
+	}
+	strike_follow = wanted;
+	const WorldStand *stand = WorldContracts::stand();
+	if (!wanted || !stand || !r_setup.rect.has_area()) {
+		return;
+	}
+	stand->get_strikes_in(r_setup.rect, r_setup.strikes);
+	const float R = WorldStand::STRIKE_RADIUS;
+	for (uint32_t i = 0; i < r_setup.strikes.size(); i++) {
+		const Vector3 &s = r_setup.strikes[i];
+		for (int z = int(Math::floor((s.y - R) / 16.0f)); z <= int(Math::floor((s.y + R) / 16.0f)); z++) {
+			for (int x = int(Math::floor((s.x - R) / 16.0f)); x <= int(Math::floor((s.x + R) / 16.0f)); x++) {
+				r_setup.strike_cells[Vector2i(x, z)].push_back(i);
+			}
+		}
+	}
+}
+
+// Years since the youngest strike whose reach holds the trunk at p_xz, -1 none (as WorldStand.strike_age_at).
+float VegetationField3D::PlaceSetup::strike_at(const Vector2 &p_xz) const {
+	if (strikes.is_empty()) {
+		return -1.0f;
+	}
+	const LocalVector<uint32_t> *in = strike_cells.getptr(Vector2i(int(Math::floor(p_xz.x / 16.0f)), int(Math::floor(p_xz.y / 16.0f))));
+	float r = -1.0f;
+	if (in) {
+		const float R = WorldStand::STRIKE_RADIUS;
+		for (uint32_t i : *in) {
+			const Vector3 &s = strikes[i];
+			if (p_xz.distance_squared_to(Vector2(s.x, s.y)) <= R * R && (r < 0.0f || s.z < r)) {
+				r = s.z;
+			}
+		}
+	}
+	return r;
+}
+
+// Browsed trees (trees.md 5az; WorldStand browse discs, world-contracts.md): wanted when a species carries browsed
+// variants (mesh meta tree_browse). The pressure over the setup's area is sampled into a grid (at most 256 x 256, cells
+// of 4 m or more) on the main thread, so the placing threads read a fixed copy.
+void VegetationField3D::_read_browse(PlaceSetup &r_setup) const {
+	r_setup.browse.clear();
+	r_setup.browse_nx = 0;
+	r_setup.browse_ny = 0;
+	bool wanted = false;
+	if (biome.is_valid()) {
+		const TypedArray<PlantSpecies> list = biome->get_species();
+		for (int i = 0; i < list.size() && !wanted; i++) {
+			const Ref<PlantSpecies> sp = list[i];
+			wanted = (_deferred_kinds(sp) & 4) != 0;
+			const TypedArray<Mesh> ms = sp.is_valid() ? sp->get_meshes() : TypedArray<Mesh>();
+			for (int m = 0; m < ms.size() && !wanted; m++) {
+				const Ref<Mesh> mesh = ms[m];
+				wanted = mesh.is_valid() && mesh->has_meta(SNAME("tree_browse"));
+			}
+		}
+	}
+	browse_follow = wanted;
+	const WorldStand *stand = WorldContracts::stand();
+	if (!wanted || !stand || !r_setup.rect.has_area()) {
+		return;
+	}
+	const Rect2 rect = r_setup.rect;
+	const float cell = MAX(4.0f, MAX(rect.size.x, rect.size.y) / 255.0f);
+	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 256);
+	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 256);
+	r_setup.browse.resize(nx * ny);
+	bool any = false;
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const Vector2 xz = rect.position + rect.size * Vector2(float(x) / (nx - 1), float(z) / (ny - 1));
+			const float b = stand->browse_at(Vector3(xz.x, 0.0f, xz.y));
+			r_setup.browse[z * nx + x] = b;
+			any = any || b > 0.0f;
+		}
+	}
+	if (!any) {
+		r_setup.browse.clear(); // No deer here: every tree unbrowsed, nothing to look up.
+		return;
+	}
+	r_setup.browse_nx = nx;
+	r_setup.browse_ny = ny;
+	r_setup.browse_rect = rect;
+}
+
+// Browsing pressure at p_xz, bilinear over the copied grid (0 off it or where none).
+float VegetationField3D::PlaceSetup::browse_at(const Vector2 &p_xz) const {
+	if (browse.is_empty()) {
+		return 0.0f;
+	}
+	const float fx = (p_xz.x - browse_rect.position.x) / browse_rect.size.x * (browse_nx - 1);
+	const float fz = (p_xz.y - browse_rect.position.y) / browse_rect.size.y * (browse_ny - 1);
+	if (fx < 0.0f || fz < 0.0f || fx > browse_nx - 1 || fz > browse_ny - 1) {
+		return 0.0f;
+	}
+	const int x0 = MIN(int(fx), browse_nx - 2), z0 = MIN(int(fz), browse_ny - 2);
+	const float tx = fx - x0, tz = fz - z0;
+	const float *g = browse.ptr() + z0 * browse_nx + x0;
+	return Math::lerp(Math::lerp(g[0], g[1], tx), Math::lerp(g[browse_nx], g[browse_nx + 1], tx), tz);
 }
 
 // The stand changed over p_area: its grid cells are read again, and the area where a species' stand weight changed is
@@ -680,7 +878,17 @@ Rect2 VegetationField3D::_update_stand(PlaceSetup &r_setup, const Rect2 &p_area)
 	const WorldStand *stand = WorldContracts::stand();
 	if (!stand || r_setup.stand_age.is_empty()) {
 		_read_stand(r_setup);
+		if (strike_follow || browse_follow) {
+			// Struck trees: the strikes added or aged there re-place it.
+			return r_setup.stand_age.is_empty() ? p_area : r_setup.rect;
+		}
 		return r_setup.stand_age.is_empty() ? Rect2() : r_setup.rect;
+	}
+	if (strike_follow) {
+		_read_strikes(r_setup);
+	}
+	if (browse_follow) {
+		_read_browse(r_setup);
 	}
 	stand_seen = stand->get_stand_generation();
 	const Rect2 &sr = r_setup.stand_rect;
@@ -699,13 +907,24 @@ Rect2 VegetationField3D::_update_stand(PlaceSetup &r_setup, const Rect2 &p_area)
 			const int i = z * nx + x;
 			const float age = stand->stand_age_at(p);
 			const int kind = CLAMP(stand->disturbance_at(p), 0, 255);
-			if (r_setup.stand_differs(r_setup.stand_age[i], r_setup.stand_kind[i], age, kind)) {
+			const float br = r_setup.stand_browse.is_empty() ? 0.0f : stand->browse_at(p);
+			const float ro = r_setup.stand_rooting.is_empty() ? -1.0f : stand->rooting_age_at(p);
+			if (r_setup.stand_differs(r_setup.stand_age[i], r_setup.stand_kind[i], age, kind) || (!r_setup.stand_browse.is_empty() && r_setup.browse_differs(r_setup.stand_browse[i], br)) || (!r_setup.stand_rooting.is_empty() && r_setup.rooting_differs(r_setup.stand_rooting[i], ro))) {
 				const Rect2 c(xz - Vector2(cx, cz) * 0.5f, Vector2(cx, cz));
 				changed = changed.has_area() ? changed.merge(c) : c;
 			}
 			r_setup.stand_age[i] = age;
 			r_setup.stand_kind[i] = uint8_t(kind);
+			if (!r_setup.stand_browse.is_empty()) {
+				r_setup.stand_browse[i] = br;
+			}
+			if (!r_setup.stand_rooting.is_empty()) {
+				r_setup.stand_rooting[i] = ro;
+			}
 		}
+	}
+	if (strike_follow || browse_follow) {
+		changed = changed.has_area() ? changed.merge(p_area) : p_area;
 	}
 	return changed;
 }
@@ -720,6 +939,33 @@ int VegetationField3D::PlaceSetup::stand_cell(const Vector2 &p_xz) const {
 		return -1;
 	}
 	return z * stand_nx + x;
+}
+
+bool VegetationField3D::PlaceSetup::rooting_differs(float p_a0, float p_a1) const {
+	if (p_a0 == p_a1) {
+		return false;
+	}
+	for (const Vector3 &r : rooting_rules) {
+		if (PlantSpecies::rooting_weight(r, p_a0) != PlantSpecies::rooting_weight(r, p_a1)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool VegetationField3D::PlaceSetup::browse_differs(float p_b0, float p_b1) const {
+	if (p_b0 == p_b1) {
+		return false;
+	}
+	for (const Vector3 &r : browse_rules) {
+		auto w = [&r](float p_v) {
+			return r.z <= 0.0f ? ((p_v >= r.x && p_v <= r.y) ? 1.0f : 0.0f) : Math::smoothstep(r.x - r.z, r.x, p_v) * (1.0f - Math::smoothstep(r.y, r.y + r.z, p_v));
+		};
+		if (w(p_b0) != w(p_b1)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 bool VegetationField3D::PlaceSetup::stand_differs(float p_age0, int p_kind0, float p_age1, int p_kind1) const {
@@ -791,6 +1037,7 @@ void edt_2d(LocalVector<float> &r_f, int p_nx, int p_ny) {
 struct EdgeJob {
 	const void *setup = nullptr; // VegetationField3D::PlaceSetup
 	LocalVector<int> canopy;
+	LocalVector<const PlantSpecies *> other_canopy; // The canopy field's (kept alive by its biome).
 	Rect2 rect;
 	int nx = 0;
 	int ny = 0;
@@ -825,6 +1072,18 @@ void VegetationField3D::_edge_row(void *p_job, uint32_t p_row) {
 				break;
 			}
 		}
+		for (uint32_t i = 0; i < job.other_canopy.size() && sum < EDGE_CLOSED; i++) {
+			const PlantSpecies *sp = job.other_canopy[i];
+			float suit = sp->get_suitability(su.map, p);
+			if (suit > 0.0f && !su.stand_rules.is_empty() && sp->uses_stand()) {
+				Vector2 a, k;
+				float af, kf;
+				sp->get_stand_rules(a, af, k, kf);
+				const int sc = su.stand_cell(xz);
+				suit *= PlantSpecies::stand_weight(a, af, k, kf, sc < 0 ? -1.0f : su.stand_age[sc], sc < 0 ? 0 : int(su.stand_kind[sc]));
+			}
+			sum += suit * sp->get_density();
+		}
 		job.in[p_row * job.nx + x] = sum >= EDGE_CLOSED ? 1 : 0;
 	}
 }
@@ -851,7 +1110,17 @@ void VegetationField3D::_read_forest_edge(PlaceSetup &r_setup) const {
 			job.canopy.push_back(int(s));
 		}
 	}
-	if (!wanted || job.canopy.is_empty() || !r_setup.map || !r_setup.rect.has_area()) {
+	// A floor under another field's forest (canopy_field): its canopy species count too (without their masks).
+	if (wanted && r_setup.other && r_setup.other->biome.is_valid()) {
+		const TypedArray<PlantSpecies> list = r_setup.other->biome->get_species();
+		for (int i = 0; i < list.size(); i++) {
+			const Ref<PlantSpecies> sp = list[i];
+			if (sp.is_valid() && !sp->uses_forest_edge() && sp->get_canopy_radius() > 0.0f && !sp->uses_shade() && sp->get_density() > 0.0f) {
+				job.other_canopy.push_back(sp.ptr());
+			}
+		}
+	}
+	if (!wanted || (job.canopy.is_empty() && job.other_canopy.is_empty()) || !r_setup.map || !r_setup.rect.has_area()) {
 		return;
 	}
 	const Rect2 rect = r_setup.rect;
@@ -919,6 +1188,100 @@ Vector2 VegetationField3D::PlaceSetup::edge_open(const Vector2 &p_xz) const {
 	const float h = edge_rect.size.x / (edge_nx - 1);
 	const Vector2 g(edge_at(p_xz + Vector2(h, 0.0f)) - edge_at(p_xz - Vector2(h, 0.0f)), edge_at(p_xz + Vector2(0.0f, h)) - edge_at(p_xz - Vector2(0.0f, h)));
 	return g.length_squared() > 1e-8f ? -g.normalized() : Vector2();
+}
+
+// A species that grows only in a passing context (burns, a stand stage after a disturbance, forest edges): the maps
+// made from rules alone (far shell, cover map, sward shade) leave it out, as they would spread it over all its ground.
+bool VegetationField3D::_context_only(const PlantSpecies *p_sp) {
+	if (p_sp->uses_burn_age()) {
+		return true;
+	}
+	if (p_sp->uses_stand()) {
+		Vector2 a, k;
+		float af, kf;
+		p_sp->get_stand_rules(a, af, k, kf);
+		if (PlantSpecies::stand_weight(a, af, k, kf, -1.0f, 0) <= 0.0f) {
+			return true;
+		}
+	}
+	if (p_sp->uses_forest_edge()) {
+		Vector2 r;
+		float f;
+		p_sp->get_forest_edge_rule(r, f);
+		if (r.y < 10000.0f) {
+			return true;
+		}
+	}
+	if (p_sp->uses_browse() && p_sp->rule_weight(PlantSpecies::RULE_BROWSE, 0.0f) <= 0.0f) {
+		return true; // Only where deer browse.
+	}
+	if (p_sp->uses_rooting() && PlantSpecies::rooting_weight(p_sp->get_rooting_rule(), -1.0f) <= 0.0f) {
+		return true; // Only where boar rooted.
+	}
+	return false;
+}
+
+template <typename T>
+static void _copy_vector(LocalVector<T> &r_to, const LocalVector<T> &p_from) {
+	r_to.resize(p_from.size());
+	for (uint32_t i = 0; i < p_from.size(); i++) {
+		r_to[i] = p_from[i];
+	}
+}
+
+void VegetationField3D::_copy_context(const PlaceSetup &p_setup) {
+	_copy_vector(context.burn, p_setup.burn);
+	context.burn_nx = p_setup.burn_nx;
+	context.burn_ny = p_setup.burn_ny;
+	context.burn_rect = p_setup.burn_rect;
+	_copy_vector(context.stand_rules, p_setup.stand_rules);
+	_copy_vector(context.stand_age, p_setup.stand_age);
+	_copy_vector(context.stand_kind, p_setup.stand_kind);
+	_copy_vector(context.browse_rules, p_setup.browse_rules);
+	_copy_vector(context.stand_browse, p_setup.stand_browse);
+	_copy_vector(context.rooting_rules, p_setup.rooting_rules);
+	_copy_vector(context.stand_rooting, p_setup.stand_rooting);
+	context.stand_nx = p_setup.stand_nx;
+	context.stand_ny = p_setup.stand_ny;
+	context.stand_rect = p_setup.stand_rect;
+	_copy_vector(context.edge, p_setup.edge);
+	context.edge_nx = p_setup.edge_nx;
+	context.edge_ny = p_setup.edge_ny;
+	context.edge_rect = p_setup.edge_rect;
+	context_valid = true;
+}
+
+// How much a context-only species (_context_only) grows at a point by the last setup's grids, as placement weighs it:
+// burn age, stand age and kind, forest edge. 0 without a setup.
+float VegetationField3D::_context_weight(const PlantSpecies *p_sp, const Vector2 &p_xz) const {
+	if (!context_valid) {
+		return 0.0f;
+	}
+	float w = 1.0f;
+	if (p_sp->uses_burn_age()) {
+		w *= p_sp->rule_weight(PlantSpecies::RULE_BURN_AGE, context.burn_at(p_xz));
+	}
+	if (w > 0.0f && p_sp->uses_stand()) {
+		Vector2 a, k;
+		float af, kf;
+		p_sp->get_stand_rules(a, af, k, kf);
+		const int sc = context.stand_cell(p_xz);
+		w *= PlantSpecies::stand_weight(a, af, k, kf, sc < 0 ? -1.0f : context.stand_age[sc], sc < 0 ? 0 : int(context.stand_kind[sc]));
+	}
+	if (w > 0.0f && p_sp->uses_browse()) {
+		w *= p_sp->rule_weight(PlantSpecies::RULE_BROWSE, context.browse_cell(context.stand_cell(p_xz)));
+	}
+	if (w > 0.0f && p_sp->uses_rooting()) {
+		w *= PlantSpecies::rooting_weight(p_sp->get_rooting_rule(), context.rooting_cell(context.stand_cell(p_xz)));
+	}
+	if (w > 0.0f && p_sp->uses_forest_edge()) {
+		Vector2 r;
+		float f;
+		p_sp->get_forest_edge_rule(r, f);
+		const float e = context.edge.is_empty() && r.y >= 10000.0f ? r.y : context.edge_at(p_xz);
+		w *= f <= 0.0f ? ((e >= r.x && e <= r.y) ? 1.0f : 0.0f) : Math::smoothstep(r.x - f, r.x, e) * (1.0f - Math::smoothstep(r.y, r.y + f, e));
+	}
+	return w;
 }
 
 float VegetationField3D::PlaceSetup::burn_at(const Vector2 &p_xz) const {
@@ -1068,6 +1431,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	}
 	_read_burn_age(r_setup);
 	_read_stand(r_setup);
+	_realize_variants(r_setup);
 	r_setup.stone_tops = stone_top_grid;
 	r_setup.stone_top_normals = stone_top_grid_normals;
 	// Another field's crowns (canopy_field): a camera-local herb layer under a world forest.
@@ -1139,6 +1503,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			const Vector2 fd = ps.sp->get_meta(SNAME("fall_dir"), Vector2());
 			ps.fall_dir = fd.length_squared() > 1e-8f ? fd.normalized() : Vector2();
 			ps.fall_scatter = float(ps.sp->get_meta(SNAME("fall_scatter"), 0.0f));
+			ps.fall_water = float(ps.sp->get_meta(SNAME("fall_to_water"), 0.0f));
 		}
 		// Forest edge trees (trees' make_edge): low branches on one side, turned to face the open.
 		ps.open_side = Vector2();
@@ -1198,6 +1563,33 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 					for (const Ref<Mesh> &m : ps.meshes) {
 						ps.fire_bands.push_back((m.is_valid() && m->has_meta(SNAME("tree_fire_band"))) ? Vector2(m->get_meta(SNAME("tree_fire_band"))) : Vector2(-1.0f, -1.0f));
 					}
+				}
+			}
+		}
+		{
+			// Struck variants (trees.md 5ax): their years since the strike, -1 for the others.
+			bool any_strike = false;
+			for (const Ref<Mesh> &m : ps.meshes) {
+				any_strike = any_strike || (m.is_valid() && m->has_meta(SNAME("tree_lightning_years")));
+			}
+			ps.strike_years.clear();
+			ps.strike_years_max = 0.0f;
+			if (any_strike) {
+				for (const Ref<Mesh> &m : ps.meshes) {
+					const float sy = (m.is_valid() && m->has_meta(SNAME("tree_lightning_years"))) ? float(m->get_meta(SNAME("tree_lightning_years"))) : -1.0f;
+					ps.strike_years.push_back(sy);
+					ps.strike_years_max = MAX(ps.strike_years_max, sy);
+				}
+			}
+			// Browsed variants (trees.md 5az): marked by mesh meta tree_browse.
+			ps.browsed.clear();
+			bool any_browse = false;
+			for (const Ref<Mesh> &m : ps.meshes) {
+				any_browse = any_browse || (m.is_valid() && m->has_meta(SNAME("tree_browse")));
+			}
+			if (any_browse) {
+				for (const Ref<Mesh> &m : ps.meshes) {
+					ps.browsed.push_back((m.is_valid() && m->has_meta(SNAME("tree_browse"))) ? 1 : 0);
 				}
 			}
 		}
@@ -1295,6 +1687,10 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	// Nebkha shrubs: each mound is crowned by one of them, picked by the mound's hash.
 	for (int s = 0; s < count; s++) {
 		PlaceSpecies &ps = r_setup.species[s];
+		ps.colonnade = ps.sp.is_valid() ? Vector2(ps.sp->get_meta("colonnade", Vector2())) : Vector2();
+		if (ps.colonnade.x <= 0.0f || ps.colonnade.y <= 0.0f) {
+			ps.colonnade = Vector2();
+		}
 		if (ps.sp.is_valid() && bool(ps.sp->get_meta("nebkha", false))) {
 			ps.nebkha_slot = r_setup.nebkha_count++;
 		} else if (ps.sp.is_valid() && bool(ps.sp->get_meta("desert", false)) && bool(ps.sp->get_meta("woody_shrub", false)) && !bool(ps.sp->get_meta("oasis", false))) {
@@ -1696,6 +2092,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 			sp->get_forest_edge_rule(edge_r, edge_f);
 		}
 		const bool stand_rule = !p_setup.stand_rules.is_empty() && sp->uses_stand();
+		const bool browse_rule = sp->uses_browse();
+		const bool rooting_rule = sp->uses_rooting();
+		const Vector3 rooting_r = sp->get_rooting_rule();
 		Vector2 stand_age_r, stand_kind_r;
 		float stand_age_f = 0.0f, stand_kind_f = 0.0f;
 		if (stand_rule) {
@@ -1740,6 +2139,13 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		}
 		LocalVector<Vector2> mound_xz;
 		LocalVector<float> mound_h;
+		// Colonnades (trees.md 5az): the tile's slots along its vanished logs, each with the log's direction, rank
+		// (the whole row kept or dropped together by density) and key (one stilt height for the row).
+		const bool row_sp = ps.colonnade.x > 0.0f && !nebkha_sp;
+		LocalVector<Vector2> row_xz;
+		LocalVector<Vector2> row_dir;
+		LocalVector<float> row_rank;
+		LocalVector<uint32_t> row_key;
 
 		for (int tz = tz0; tz < tz1; tz++) {
 			for (int tx = tx0; tx < tx1; tx++) {
@@ -1776,15 +2182,60 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						}
 					}
 				}
-				const uint32_t point_count = nebkha_sp ? mound_xz.size() : pat.points.size();
+				if (row_sp) {
+					// Colonnades: seedlings that came up in a row along a nurse log stand on stilts in that row once it
+					// has rotted away (Harmon and Franklin 1989; Franklin et al. 1981). One candidate log a
+					// COLONNADE_CELL cell: centre and bearing by the cell's hash, 45-100% of the longest log; slots every
+					// spacing along it (a little jitter), a fifth left empty where a seedling died.
+					row_xz.clear();
+					row_dir.clear();
+					row_rank.clear();
+					row_key.clear();
+					const Rect2 tr(tx * ts, tz * ts, ts, ts);
+					const float half = 0.5f * ps.colonnade.y + ps.colonnade.x;
+					const int c0x = int(Math::floor((tr.position.x - half) / COLONNADE_CELL)), c0z = int(Math::floor((tr.position.y - half) / COLONNADE_CELL));
+					const int c1x = int(Math::floor((tr.position.x + ts + half) / COLONNADE_CELL)), c1z = int(Math::floor((tr.position.y + ts + half) / COLONNADE_CELL));
+					for (int cz = c0z; cz <= c1z; cz++) {
+						for (int cx = c0x; cx <= c1x; cx++) {
+							const uint32_t key = tile_hash(cx, cz, p_setup.seed ^ 0x636f6c6e, s);
+							auto u = [&](uint32_t p_salt) {
+								return float(hash_murmur3_one_32(p_salt, key) & 0xFFFFFF) / float(0x1000000);
+							};
+							const Vector2 c((cx + u(1)) * COLONNADE_CELL, (cz + u(2)) * COLONNADE_CELL);
+							const float ang = u(3) * Math::PI;
+							const Vector2 d(Math::cos(ang), Math::sin(ang));
+							const Vector2 side(-d.y, d.x);
+							const float len = Math::lerp(0.45f, 1.0f, u(4)) * ps.colonnade.y;
+							const int ns = MAX(2, int(len / ps.colonnade.x) + 1);
+							const float rank = u(5);
+							for (int k = 0; k < ns; k++) {
+								const uint32_t kh = hash_murmur3_one_32(uint32_t(k), key);
+								const float uk = float(kh & 0xFFFF) / 65535.0f;
+								if (uk < 0.2f) {
+									continue;
+								}
+								const float along = (k - 0.5f * (ns - 1)) * ps.colonnade.x + (float((kh >> 16) & 0xFF) / 255.0f - 0.5f) * 0.3f * ps.colonnade.x;
+								const float lat = (float((kh >> 24) & 0xFF) / 255.0f - 0.5f) * 0.12f;
+								const Vector2 q = c + d * along + side * lat;
+								if (tr.has_point(q)) {
+									row_xz.push_back(q);
+									row_dir.push_back(d);
+									row_rank.push_back(rank);
+									row_key.push_back(key);
+								}
+							}
+						}
+					}
+				}
+				const uint32_t point_count = nebkha_sp ? mound_xz.size() : (row_sp ? row_xz.size() : pat.points.size());
 				for (uint32_t i = 0; i < point_count; i++) {
-					Vector2 xz = nebkha_sp ? mound_xz[i] : Vector2(tx * ts, tz * ts) + pat.points[i];
+					Vector2 xz = nebkha_sp ? mound_xz[i] : (row_sp ? row_xz[i] : Vector2(tx * ts, tz * ts) + pat.points[i]);
 					if (!rect.has_point(xz) || (!in_core && !reach_rect.has_point(xz))) {
 						continue;
 					}
 					// Ordered dither: a point survives where its (per-tile shifted) rank is below
 					// the density there, so density changes smoothly and the pattern stays blue noise.
-					const float rank = nebkha_sp ? 0.0f : Math::fmod(pat.ranks[i] + shift, 1.0f);
+					const float rank = nebkha_sp ? 0.0f : (row_sp ? row_rank[i] : Math::fmod(pat.ranks[i] + shift, 1.0f));
 					if (rank >= max_keep) {
 						continue;
 					}
@@ -1868,12 +2319,22 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					if (edge_rule && suit > 0.0f) {
 						// Forest edges: metres from the canopy's edge, positive inside (the shrub mantle, edge trees).
-						const float e = p_setup.edge_at(xz);
+						// No forest known (no canopy species here or in the canopy field): an interior rule (open-ended inside)
+						// does nothing, an edge rule places nothing.
+						const float e = p_setup.edge.is_empty() && edge_r.y >= 10000.0f ? edge_r.y : p_setup.edge_at(xz);
 						suit *= edge_f <= 0.0f ? ((e >= edge_r.x && e <= edge_r.y) ? 1.0f : 0.0f) : Math::smoothstep(edge_r.x - edge_f, edge_r.x, e) * (1.0f - Math::smoothstep(edge_r.y, edge_r.y + edge_f, e));
 					}
 					if (stand_rule && suit > 0.0f) {
 						const int sc = p_setup.stand_cell(xz);
 						suit *= PlantSpecies::stand_weight(stand_age_r, stand_age_f, stand_kind_r, stand_kind_f, sc < 0 ? -1.0f : p_setup.stand_age[sc], sc < 0 ? 0 : int(p_setup.stand_kind[sc]));
+					}
+					if (browse_rule && suit > 0.0f) {
+						// Deer browsing pressure (0 where none is known).
+						suit *= sp->rule_weight(PlantSpecies::RULE_BROWSE, p_setup.browse_cell(p_setup.stand_cell(xz)));
+					}
+					if (rooting_rule && suit > 0.0f) {
+						// Boar rooting: years since the soil was turned (-1 never).
+						suit *= PlantSpecies::rooting_weight(rooting_r, p_setup.rooting_cell(p_setup.stand_cell(xz)));
 					}
 					if (!sand_plant && suit > 0.0f && !p_setup.sea_depth.is_empty()) {
 						// Desert sand seas: only sand plants (RULE_SAND_MOBILITY) root in their loose sand; the rest
@@ -2132,7 +2593,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						continue;
 					}
 					// The plant's transform: on the ground, tilted towards its normal, random yaw and size.
-					const float r = nebkha_sp ? float(hash_murmur3_one_float(xz.x, hash_murmur3_one_float(xz.y)) & 0xFFFFFF) / float(0x1000000) : pat.randoms[i];
+					const float r = (nebkha_sp || row_sp) ? float(hash_murmur3_one_float(xz.x, hash_murmur3_one_float(xz.y)) & 0xFFFFFF) / float(0x1000000) : pat.randoms[i];
 					float scale = Math::lerp(scale_range.x, scale_range.y, Math::fmod(r * 104729.0f, 1.0f)) * trodden;
 					if (nebkha_sp && nebkha_unit > 0.0f) {
 						// The shrub that built the mound: its crown about NEBKHA_CROWN of the mound's radius.
@@ -2256,6 +2717,16 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						// Thrown by one storm (the trees module, trees.md 5am): mesh +X along the storm's track, each
 						// tree turned by the gusts and its neighbours within fall_scatter.
 						yaw = Math::atan2(-ps.fall_dir.y, ps.fall_dir.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 2.0f * ps.fall_scatter;
+					} else if (ps.fall_water > 0.0f && map && Math::fmod(r * 3571.0f, 1.0f) < ps.fall_water) {
+						// Felled by beavers (the trees module, trees.md 5au): most fall toward the water, the beaver
+						// having cut from the water side. +X down the water distance, about 30 degrees either way.
+						const float e = 1.5f;
+						const Vector2 grad(map->get_water_distance_at(Vector3(xz.x + e, 0.0f, xz.y)) - map->get_water_distance_at(Vector3(xz.x - e, 0.0f, xz.y)),
+								map->get_water_distance_at(Vector3(xz.x, 0.0f, xz.y + e)) - map->get_water_distance_at(Vector3(xz.x, 0.0f, xz.y - e)));
+						if (grad.length_squared() > 1e-8f) {
+							const Vector2 to_water = -grad.normalized();
+							yaw = Math::atan2(-to_water.y, to_water.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 1.05f;
+						}
 					} else if (ps.wind_flag && p_setup.wind_dir != Vector2()) {
 						// Flagged by the prevailing wind: mesh +X downwind, a little scatter (eddies
 						// round the land turn it locally).
@@ -2273,6 +2744,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						if (open != Vector2()) {
 							yaw = Math::atan2(-open.y, open.x) - Math::atan2(-ps.open_side.y, ps.open_side.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.52f;
 						}
+					}
+					if (row_sp) {
+						// A colonnade tree: its stilts' tunnel (mesh +X) along the vanished log, either way round.
+						const Vector2 d = row_dir[i];
+						yaw = Math::atan2(-d.y, d.x) + ((hash_murmur3_one_32(row_key[i], uint32_t(i) * 2654435761u) & 1u) ? Math::PI : 0.0f) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.12f;
 					}
 					b = b * Basis(Vector3(0, 1, 0), yaw);
 					if (wood_out != Vector2()) {
@@ -2328,6 +2804,75 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							if (d < best - 1e-4f) {
 								best = d;
 								fire_variant = vi;
+							}
+						}
+					}
+					if (!ps.strike_years.is_empty() && !(fire_variant >= 0 && ps.fire_years[fire_variant] >= 0.0f)) {
+						// Struck trees (TreeGenerator.lightning_years, trees.md 5ax): under a recorded strike
+						// (WorldStand.strike_age_at, copied in the setup) the struck variant nearest the strike's age, until
+						// STRIKE_SHOWN years (8; then its scar has healed into the tree's own); otherwise never a struck one.
+						const float sa = p_setup.strike_at(xz);
+						const bool struck = sa >= 0.0f && sa <= 8.0f;
+						const int nv = ps.strike_years.size();
+						const int start = MIN(int(r * nv), nv - 1);
+						float best = 1e9f;
+						int pick = -1;
+						for (int k = 0; k < nv; k++) {
+							const int vi = (start + k) % nv;
+							const float sy = ps.strike_years[vi];
+							if ((sy >= 0.0f) != struck || (!ps.fire_years.is_empty() && vi < int(ps.fire_years.size()) && ps.fire_years[vi] >= 0.0f)) {
+								continue;
+							}
+							const float d = struck ? Math::abs(sy - sa) : 0.0f;
+							if (d < best - 1e-4f) {
+								best = d;
+								pick = vi;
+							}
+						}
+						if (pick >= 0 && (struck || fire_variant < 0 || ps.strike_years[fire_variant] >= 0.0f)) {
+							fire_variant = pick;
+						}
+					}
+					if (!ps.browsed.is_empty()) {
+						// Browsed trees (TreeGenerator.browse, trees.md 5az): where deer press (WorldStand.browse_at, the
+						// setup's grid) a living tree is the browsed variant with the chance smoothstep(0.3, 0.8, pressure),
+						// by its own number; elsewhere never one. Burnt and struck picks stay as they are.
+						const int nv = ps.browsed.size();
+						auto special = [&](int vi) {
+							return (vi < int(ps.fire_years.size()) && ps.fire_years[vi] >= 0.0f) || (vi < int(ps.strike_years.size()) && ps.strike_years[vi] >= 0.0f);
+						};
+						const int cur = fire_variant >= 0 ? fire_variant : (bank_variant >= 0 ? bank_variant : MIN(int(r * variants), variants - 1));
+						if (cur >= nv || !special(cur)) {
+							const float pressure = p_setup.browse_at(xz);
+							const bool want = pressure > 0.0f && Math::fmod(r * 4801.0f, 1.0f) < Math::smoothstep(0.3f, 0.8f, pressure);
+							if (cur >= nv || bool(ps.browsed[cur]) != want) {
+								const int start = MIN(int(Math::fmod(r * 3301.0f, 1.0f) * nv), nv - 1);
+								for (int k = 0; k < nv; k++) {
+									const int vi = (start + k) % nv;
+									if (bool(ps.browsed[vi]) == want && !special(vi)) {
+										fire_variant = vi;
+										break;
+									}
+								}
+							} else {
+								fire_variant = cur;
+							}
+						}
+					}
+					if (row_sp && variants > 1) {
+						// One log, one girth: every tree of a colonnade the same living variant (its stilt height), by the
+						// log's key. Burnt, struck and browsed picks stay as they are.
+						auto special = [&](int vi) {
+							return (vi < int(ps.fire_years.size()) && ps.fire_years[vi] >= 0.0f) || (vi < int(ps.strike_years.size()) && ps.strike_years[vi] >= 0.0f) || (vi < int(ps.browsed.size()) && ps.browsed[vi]);
+						};
+						if (fire_variant < 0 || !special(fire_variant)) {
+							const int start = int(hash_murmur3_one_32(0x726f77u, row_key[i]) % uint32_t(variants));
+							for (int k = 0; k < variants; k++) {
+								const int vi = (start + k) % variants;
+								if (!special(vi)) {
+									fire_variant = vi;
+									break;
+								}
 							}
 						}
 					}
@@ -3265,7 +3810,7 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 			continue;
 		}
 		const PlantSpecies *sp = ps.sp.ptr();
-		if (sp->get_rule_range(PlantSpecies::RULE_SHADE).x > 0.0f || sp->uses_dune() || sp->uses_coast() || sp->uses_spring() || sp->uses_pool() || ps.deadwood_reach > 0.0f) {
+		if (sp->get_rule_range(PlantSpecies::RULE_SHADE).x > 0.0f || sp->uses_dune() || sp->uses_coast() || sp->uses_spring() || sp->uses_pool() || ps.deadwood_reach > 0.0f || _context_only(sp)) {
 			continue;
 		}
 		// A species whose own far form takes over past its plants (meta "far_shell" false: the trees module's crown
@@ -3911,7 +4456,7 @@ void VegetationField3D::_cover_row(void *p_job, uint32_t p_row) {
 		float c_sum = 0.0f;
 		Vector3 plants;
 		for (const PlaceSpecies &ps : setup.species) {
-			if (ps.sp.is_null() || ps.far_color.a <= 0.0f || (ps.sp->get_canopy_radius() > 0.0f && !ps.sp->uses_shade() && !ps.sp->uses_conifer())) {
+			if (ps.sp.is_null() || ps.far_color.a <= 0.0f || (ps.sp->get_canopy_radius() > 0.0f && !ps.sp->uses_shade() && !ps.sp->uses_conifer()) || _context_only(ps.sp.ptr())) {
 				continue;
 			}
 			float suit = suit_at(ps);
@@ -4192,6 +4737,7 @@ Error VegetationField3D::populate() {
 	if (!_make_setup(setup)) {
 		return ERR_UNCONFIGURED;
 	}
+	_copy_context(setup);
 	_build_cover(setup);
 	const Rect2 rect = setup.rect;
 	const Rect2i tiles(Vector2i(int(Math::floor(rect.position.x / tile_size)), int(Math::floor(rect.position.y / tile_size))),
@@ -4413,7 +4959,40 @@ void VegetationField3D::set_obstacles(const PackedVector4Array &p_obstacles) {
 
 void VegetationField3D::set_paths(const Array &p_paths) {
 	paths = p_paths;
-	path_grid.build(paths);
+	path_grid.build(VegetationPaths::merged(paths, world_trails));
+}
+
+// Game trails (WorldStand.set_trails, from make_game_trails): worn like the field's own paths.
+void VegetationField3D::_read_world_trails() {
+	const WorldStand *stand = WorldContracts::stand();
+	if (!stand) {
+		return;
+	}
+	trails_seen = stand->get_stand_generation();
+	const Array now = stand->get_trails();
+	if (now == world_trails) {
+		return;
+	}
+	const Rect2 old_r = VegetationPaths::bounds(world_trails, 4.0f);
+	const Rect2 new_r = VegetationPaths::bounds(now, 4.0f);
+	world_trails = now.duplicate(true);
+	path_grid.build(VegetationPaths::merged(paths, world_trails));
+	const Rect2 area = old_r.has_area() ? (new_r.has_area() ? old_r.merge(new_r) : old_r) : new_r;
+	if (area.has_area() && (streaming || plant_count > 0)) {
+		_on_holes_changed(area); // Placed again where the trails came or went.
+	}
+}
+
+void VegetationField3D::_follow_trails(double p_delta) {
+	trails_check -= p_delta;
+	if (trails_check > 0.0) {
+		return;
+	}
+	trails_check = 0.5;
+	const WorldStand *stand = WorldContracts::stand();
+	if (stand && stand->get_stand_generation() != trails_seen) {
+		_read_world_trails();
+	}
 }
 
 void VegetationField3D::set_stone_tops(const PackedVector4Array &p_tops) {
@@ -4486,6 +5065,10 @@ float VegetationField3D::sward_at(const Vector3 &p_global_position, Color *r_lit
 			continue;
 		}
 		float v = sp->get_density() * sp->get_suitability(map, p_global_position);
+		if (v > 0.0f && _context_only(sp.ptr())) {
+			// Edge brambles, clearing raspberry, burn regrowth: only where their context holds (the last setup's grids).
+			v *= _context_weight(sp.ptr(), Vector2(p_global_position.x, p_global_position.z));
+		}
 		if (v > 0.0f && sp->uses_shade()) {
 			if (shade < 0.0f) {
 				const Vector2 xz(p_global_position.x, p_global_position.z);
@@ -5058,6 +5641,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 		}
 		stream_setup_valid = true;
 		impostors_traced = _path_traced();
+		_copy_context(stream_setup);
 		_build_cover(stream_setup);
 	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
@@ -5170,11 +5754,14 @@ void VegetationField3D::_stream_update(double p_delta) {
 			}
 		}
 		burn_dirty = Rect2();
+		variants_waiting = true; // A new burn may need deferred fire variants.
+		_copy_context(su);
 	}
 	// The stand changed: only where a species crossed its stand range are the tiles placed again.
 	if (stand_dirty.has_area() && stream_jobs.is_empty()) {
 		PlaceSetup &su = stream_setup;
 		Rect2 changed = _update_stand(su, stand_dirty);
+		variants_waiting = true; // A new strike or browse disc may need deferred variants (checked in process).
 		if (changed.has_area() && !su.edge.is_empty()) {
 			// The canopy's stages moved: the forest edge moves with them (a windthrow opens a new edge).
 			LocalVector<float> old_edge;
@@ -5205,6 +5792,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 			}
 		}
 		stand_dirty = Rect2();
+		_copy_context(su);
 	}
 	struct Pending {
 		float d;
@@ -5591,6 +6179,7 @@ void VegetationField3D::_notification(int p_what) {
 			}
 			add_to_group(SNAME("vegetation_crop_aware"));
 			_update_bark_detail();
+			_read_world_trails();
 			TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
 			if (map) {
 				// Repopulate whenever the map is baked again (terrain edits).
@@ -5625,6 +6214,18 @@ void VegetationField3D::_notification(int p_what) {
 			}
 			_follow_burns(get_process_delta_time());
 			_follow_stand(get_process_delta_time());
+			_follow_trails(get_process_delta_time());
+			if (variants_waiting && streaming && stream_setup_valid && stream_jobs.is_empty()) {
+				// A new burn, strike or browse disc (trees.md 5bc): deferred variants it needs are grown, and the field
+				// streams again with them.
+				variants_check -= get_process_delta_time();
+				if (variants_check <= 0.0) {
+					variants_check = 0.25;
+					if (_realize_variants(stream_setup)) {
+						_stream_clear();
+					}
+				}
+			}
 			if (streaming) {
 				if (still_shot && still_frozen && _stream_centre().distance_to(still_at) >= 0.5f) {
 					still_frozen = false;
@@ -5814,6 +6415,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_light_at", "global_position"), &VegetationField3D::get_light_at);
 	ClassDB::bind_method(D_METHOD("get_stand_shade_at", "global_position"), &VegetationField3D::get_stand_shade_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_floor_shader_code"), &VegetationField3D::get_floor_shader_code);
+	ClassDB::bind_static_method("VegetationField3D", D_METHOD("make_game_trails", "data_map", "area", "goals", "options"), &VegetationField3D::make_game_trails, DEFVAL(Dictionary()));
 	ClassDB::bind_method(D_METHOD("set_forest_floor_enabled", "enabled"), &VegetationField3D::set_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("is_forest_floor_enabled"), &VegetationField3D::is_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("get_conifer_at", "global_position"), &VegetationField3D::get_conifer_at);

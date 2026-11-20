@@ -49,6 +49,7 @@
 class GroundClods3D;
 class MeshInstance3D;
 class WorldWeather;
+class RigidBody3D;
 
 // Footprints, ruts and dents in bare ground (docs/ideas/ground-deform.md): sand, soil and mud, and the
 // leaf litter over them, pressed by bodies in deform_groups with Bekker sinkage (Wong's soil values),
@@ -190,6 +191,48 @@ private:
 	LocalVector<BuriedKick> buried_kicks;
 	bool _buried_under(const Vector3 &p_position, float p_radius, float p_bottom, Buried &r_hit) const;
 	void _buried_kicks_update();
+	void _loose_shove(const Vector3 &p_position, const Vector2 &p_half, float p_yaw, float p_bottom, const Vector2 &p_velocity);
+	// Loose stones in the mud (round 17): a moving one ploughs a furrow and heaps a bow ahead; one at rest on mud too
+	// weak to hold it sinks back in (frozen while it sinks) and is hidden again once covered.
+	struct LooseState {
+		float z = 0.0f; // its depth in the mud, m
+		float ref = NAN; // the undisturbed mud's height it rides
+		RID ground; // the terrain collider it passes through while in the mud
+		float push_down = 0.0f; // N, from a tyre driving it this step
+		float cap = 0.0f; // a tyre's floor over it (round 18.2)
+		uint64_t cap_frame = 0;
+		Transform3D xf; // as it lay at the last step, for a save made as the node leaves the tree (round 19.2)
+		float r = 0.0f; // its mesh's radius
+	};
+	HashMap<uint32_t, LooseState> loose_state;
+	struct LoosePending {
+		uint32_t id = 0;
+		Vector3 at;
+		Quaternion rot;
+		float r = 0.0f; // the mesh's radius
+		float z = 0.0f; // its depth in the mud
+		float ref = NAN; // the mud's height it rides
+	};
+	LocalVector<LoosePending> loose_pending; // read back from the deposits, placed at the next step (round 19.2)
+	HashMap<Vector2i, LocalVector<Buried>> buried_extra; // stones hidden again, kept with the deposits
+	int loose_reburied = 0;
+	void _loose_update(float p_delta);
+	float _press_moving(const Vector3 &p_position, float p_radius, float p_bottom, float p_sink, const Vector2 &p_velocity);
+	void _loose_rebury(uint32_t p_id, RigidBody3D *p_body, float p_r);
+	RigidBody3D *_make_loose(const Buried &p_b, const Vector3 &p_at, const Vector3 &p_velocity);
+	static Vector2 _loose_carry(const Vector2 &p_rel, float p_wet, float p_rc, float p_rho, float p_tau, float p_mass, float p_dt);
+	struct StreamPush {
+		Vector2 drag; // N, horizontal
+		Vector2 near_bed; // m/s, the water's speed at the stone's face
+		float up = 0.0f; // N, buoyancy and lift
+		bool wet = false;
+	};
+	StreamPush _loose_stream(const WorldWater *p_water, const Vector3 &p_at, float p_rc, float p_mass, const Vector3 &p_velocity, float p_bed) const;
+	void _loose_stream_firm(RigidBody3D *p_body, float p_rc, const StreamPush &p_push, float p_dt);
+	uint32_t loose_added = 0;
+	int loose_squeezed = 0; // steps a tyre squeezed a stone out sideways
+	static bool _loose_rolled_onto(float p_proud, const Vector2 &p_half);
+	void _loose_under(const Vector3 &p_position, const Vector2 &p_half, float p_yaw, float p_bottom, const Vector2 &p_velocity);
 	bool worn_tracks = true;
 	float wear_regrowth_days = 30.0f;
 	double wear_clock = 0.0;
@@ -202,6 +245,10 @@ private:
 	String wear_loaded_dir;
 	void _wear_save();
 	void _wear_load();
+	// Deposits kept with the ruts (round 16.2): silt skins, fans and other coloured deposits, the rivers' records
+	// taken, and the stones knocked loose.
+	void _deposits_save();
+	void _deposits_load();
 	void _wear_publish();
 	HashMap<Vector2i, Color> mud_deposit_colors; // its linear colour where the depositor gave one (alpha: cover)
 	Color _deposit_color_at(float p_x, float p_z) const; // premultiplied by cover, bilinear between cell centres
@@ -229,6 +276,31 @@ private:
 	float _silt_at(float p_x, float p_z) const;
 	float _silt_smooth_at(float p_x, float p_z) const; // bilinear between the 1 m cells' centres, for the looks
 	float _silt_water(float p_x, float p_z) const;
+	// Dry silt as dust (round 17.3): cells a tyre broke the crust of, and the cells the wind lifts dust from.
+	HashSet<Vector2i> silt_broken;
+	struct SiltWind {
+		Vector2i cell;
+		float rate = 0.0f; // kg/m2/s
+		Vector2 at; // a tracked film's centre in the cell
+	};
+	struct SiltWindStronger {
+		bool operator()(const SiltWind &a, const SiltWind &b) const { return a.rate > b.rate; }
+	};
+	LocalVector<SiltWind> silt_wind;
+	float silt_dust_kg = 0.0f; // lifted since start, by tyres and wind
+	float _silt_dust_share(float p_x, float p_z) const;
+	void _silt_take(const Vector2i &p_cell, float p_kg);
+	void _silt_wind_update(float p_dt);
+	void _silt_wind_emit();
+	// Tracked-out mud as dust (round 18.3).
+	LocalVector<SiltWind> film_wind;
+	float film_dust_kg = 0.0f;
+	HashMap<Vector2i, float> film_owed; // kg lifted not yet taken off the film, per 1 m cell
+	uint32_t film_spots = 0;
+	HashSet<Vector2i> film_cells; // 1 m cells tracked mud was laid in
+	float _film_dust_share(const Vector3 &p_position) const;
+	void _film_take(const Vector3 &p_position, float p_kg);
+	void _film_wind_update(float p_dt, float p_ustar);
 	// Standing water (docs/ideas/mud.md, stage 2): rain, runoff and ground water gather in ruts and prints, on the
 	// GPU field (the virtual pipe model), drawn as the surface there in both renderers.
 	bool standing_water = true;
@@ -236,6 +308,7 @@ private:
 	bool muddy_water = true;
 	// Mud tracked onto firm ground (round 3): tyres and boots leave the clay they carry as a film (track_mud).
 	bool tracked_mud = true;
+	bool stream_stones = true; // round 19.1: streams and fords roll loose stones on
 	bool mud_sliding = false; // round 10: some cell's mud layer is on ground steeper than it holds
 	bool water_seep = false; // some lattice cell's water table lies within a print's reach: seepage can fill one
 	float water_seen = 0.0f; // the deepest standing water at the last read back, m
@@ -358,6 +431,7 @@ public:
 private:
 	LocalVector<Spray> sprays;
 	LocalVector<Dust> dust;
+	void _push_dust(const Dust &p_dust);
 	LocalVector<Dust> near_dust; // inside the claim (claim_dust): for a near-field dust node
 	uint64_t dust_frame = 0;
 	Vector3 dust_claim_center;
@@ -411,6 +485,9 @@ private:
 	// finer ring of the patch. Off by default until its cost is measured.
 	bool wind_ripples = true;
 	bool far_ripples = true; // the grown field's ripples as a normal over the dune field past the patch
+	bool ripple_sorting = true; // heavy minerals in the troughs, coarse grains on the crests
+	bool granule_ripples = true; // granule ripples on the interdune lag (dune_tone's)
+	bool dune_tone = true; // the dune field's colour: rubefaction, coarse interdune flats, pale slip faces
 	// Wind fills prints from their upwind side (_drift_prints()).
 	bool wind_fills_prints = true;
 	// Dry ground up to WATER_FRINGE over a water body's level is kept wet by capillary rise (_water_update()).
@@ -440,6 +517,16 @@ private:
 	LocalVector<float> ripple_sand; // RIPPLE_SAND_N squared over ripple_sand_rect
 	Rect2 ripple_sand_rect;
 	LocalVector<float> ripple_tile_slope; // the grown field's slope, 2 per cell, world cell mod n
+	LocalVector<float> ripple_tile_norm; // its height over its mean in standard deviations
+	LocalVector<float> ripple_sand_depth; // the generator's loose sand depth over ripple_sand_rect (m, -1 none)
+	LocalVector<float> ripple_sand_share; // the ground's sand share there
+	LocalVector<float> ripple_sand_blown; // and the share the wind moves (dry, bare: granule ripples form there)
+	static constexpr int RIPPLE_DEPTH_N = 128;
+	static constexpr float RIPPLE_DEPTH_SIZE = 1024.0f; // m
+	LocalVector<float> ripple_far_depth; // the generator's sand depth, RIPPLE_DEPTH_N squared over ripple_far_depth_rect
+	Rect2 ripple_far_depth_rect;
+	Vector2 ripple_sand_wind; // the generator's dune-building wind (zero with none)
+	float ripple_tile_sd = 0.0f; // m
 	Ref<Image> ripple_far_image;
 	Ref<ImageTexture> ripple_far_texture;
 	bool ripple_far_published = false;
@@ -549,6 +636,10 @@ private:
 	void _ruts_save_field(const GroundDeformField &p_field, GroundRutStore &r_store, const LocalVector<Vector2i> &p_pending);
 	void _publish_near();
 	PackedByteArray _gpu_cells() const;
+	// Hidden stones for the GPU's slumping and mud waves (round 16.1): after the cells, a header (count) and per stone
+	// two vec4s (a xyz radius, b xyz 0), the GPU_STONES nearest the followed point.
+	static constexpr int GPU_STONES = 64;
+	uint32_t buried_gpu_hash = 0;
 
 	int ground_n = 0;
 	Vector2i ground_origin;
@@ -882,6 +973,8 @@ public:
 	// The tracked mud film at a place (the texel under it): (its share 0..1, its wetness 0..1), (0, 0) for none.
 	Vector2 get_tracked_mud_at(Vector3 p_position) const;
 	void set_tracked_mud(bool p_enabled) { tracked_mud = p_enabled; }
+	void set_stream_stones(bool p_enabled) { stream_stones = p_enabled; }
+	bool is_stream_stones() const { return stream_stones; }
 	bool is_tracked_mud() const { return tracked_mud; }
 	void set_keep_ruts(bool p_enabled);
 	bool is_keeping_ruts() const { return keep_ruts; }
@@ -977,6 +1070,21 @@ public:
 		ripple_dirty = true;
 	}
 	bool is_far_ripples() const { return far_ripples; }
+	void set_ripple_sorting(bool p_enabled) {
+		ripple_sorting = p_enabled;
+		ripple_dirty = true;
+	}
+	bool is_ripple_sorting() const { return ripple_sorting; }
+	void set_dune_tone(bool p_enabled) {
+		dune_tone = p_enabled;
+		ripple_dirty = true;
+	}
+	bool is_dune_tone() const { return dune_tone; }
+	void set_granule_ripples(bool p_enabled) {
+		granule_ripples = p_enabled;
+		ripple_dirty = true;
+	}
+	bool is_granule_ripples() const { return granule_ripples; }
 	void set_mud_layer(bool p_enabled);
 	bool is_mud_layer() const { return mud_layer; }
 	void set_mud_slides(bool p_enabled);
@@ -990,6 +1098,11 @@ public:
 	void set_buried_kick(bool p_enabled);
 	bool is_buried_kick() const { return buried_kick; }
 	int get_loose_stone_count() const { return buried_loose.size(); }
+	int get_reburied_stone_count() const;
+	float get_silt_dust_lifted() const { return silt_dust_kg; }
+	float get_tracked_dust_lifted() const { return film_dust_kg; }
+	int64_t add_loose_stone(Vector3 p_position, float p_radius, Vector3 p_velocity = Vector3());
+	int get_squeezed_stone_count() const { return loose_squeezed; }
 	void set_worn_tracks(bool p_enabled);
 	bool is_worn_tracks() const { return worn_tracks; }
 	void set_wear_regrowth_days(float p_days);
@@ -1020,6 +1133,7 @@ public:
 	bool is_flood_silt() const { return flood_silt; }
 	float get_flood_silt_total() const { return silt_total; }
 	Vector2 get_silt_at(Vector3 p_position) const;
+	void clear_mud_deposits();
 	void set_mats(bool p_enabled) { mats = p_enabled; }
 	bool is_mats() const { return mats; }
 	// The mat a wheel's contact p_contact lies on (within p_tolerance of the wood), or -1.

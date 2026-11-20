@@ -7,9 +7,11 @@ extends Node3D
 #            [--chart]  colour patches on grey ground in front of the camera, lit by the clock's sun and moon
 #                       (CameraAttributes.night_vision; --no-night-vision for the A/B, --lamp=E a warm lamp, --pt)
 #            [--exposure=k] [--pitch=deg --yaw=deg --fov=deg] [--no-stars] [--no-airglow] [--milky-way=path] [--month=M --day=D] [--look-moon]
+#            [--smoke=tau]  fires' smoke of that optical depth overhead (WeatherMap3D smoke haze): the sun reddens
 #            [--pt]  path traced (camera rays that miss run the sky shader), for raster/PT pairs of the clouds
 
 var fails := 0
+var smoke_map: Node = null
 
 
 func _ready() -> void:
@@ -83,6 +85,31 @@ func _sky(kv: Dictionary) -> void:
 	clock.day = int(kv.get("day", "31"))
 	clock.time_of_day = float(kv.get("time", "19.0"))
 	clock.sun_light = clock.get_path_to(sun)
+	if kv.has("smoke"):
+		# --smoke=tau: fires' smoke over the bench, that optical depth overhead at 550 nm (WeatherMap3D smoke haze):
+		# the sun's disc, its aureole and its light dimmed and reddened through it.
+		var map := WeatherMap3D.new()
+		smoke_map = map
+		map.follow_target = NodePath("")
+		add_child(map)
+		map.time_scale = 1.0
+		map.snap_to_settings()
+		await get_tree().physics_frame
+		map.advance(1.0)
+		var want := float(kv["smoke"])
+		# Grams per square metre over the map (4.5 m2/g, Reid et al. 2005), laid in every cell of the map (a trial
+		# load, then scaled to the wanted depth), so a low sun's ray crosses the same smoke.
+		var cs: float = map.extent / float(map.resolution)
+		var cells := int(map.extent * 0.5 / cs)
+		for pass_i in 2:
+			var tau1: float = map.get_smoke_optical_depth_at(Vector3())
+			var kg := 0.1 if pass_i == 0 else 0.1 * (want / maxf(tau1, 1e-6) - 1.0)
+			if kg <= 0.0:
+				break
+			for gz in range(-cells, cells):
+				for gx in range(-cells, cells):
+					map.add_smoke(Vector3((gx + 0.5) * cs, 0.0, (gz + 0.5) * cs), kg)
+		print("[sky] smoke optical depth overhead %.2f" % map.get_smoke_optical_depth_at(Vector3()))
 	if kv.has("chart"):
 		# --chart: a colour chart on grey ground under the clock's sun and moon (night vision checks).
 		var moon := DirectionalLight3D.new()
@@ -146,6 +173,8 @@ func _sky(kv: Dictionary) -> void:
 		await RenderingServer.frame_post_draw
 	var ms := (Time.get_ticks_usec() - t0) / 1000.0 / n
 	print("[sky] %s at %.2f h (sun %.2f deg): %.2f ms a frame; ground %s lux, exposure x%s" % [kv.get("model", "scattering"), clock.time_of_day, clock.get_sun_altitude(), ms, str(clock.get_ground_illuminance()), str(clock.get_exposure_multiplier())])
+	if kv.has("smoke"):
+		print("[sky] smoke on the sun %s, sun light %s" % [str(smoke_map.get_smoke_transmittance(Vector3(), clock.get_sun_direction())), str(sun.light_color)])
 	if kv.has("out"):
 		get_viewport().get_texture().get_image().save_png(kv["out"])
 

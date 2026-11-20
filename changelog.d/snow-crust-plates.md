@@ -1,0 +1,1 @@
+- Snow: a crust broken underfoot lies in real plates, flat slabs as thick as the crust tipped into each hole with sharp edges, steps between them and a lifted lip (`crust_plates`).

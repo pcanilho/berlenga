@@ -119,6 +119,12 @@
 		<member name="sand_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			Beach sand.
 		</member>
+		<member name="sand_dune_tone" type="bool" setter="set_sand_dune_tone" getter="is_sand_dune_tone" default="true">
+			If [code]true[/code], the sand varies in colour at the dune field's scale: redder where grains have lain longer (iron-oxide coats, patchy over hundreds of metres, strongest on thin stable sand), a coarser, darker lag on flat interdune floors, and paler, finer sand on slip faces at the angle of repose. The depth terms need a [TerrainGenerator3D] with dunes or a sand sea ([method TerrainGenerator3D.get_sand_depth_at]); the slip faces show on any sand. The same lines as [member GroundSurface3D.dune_tone], so the two meet without a seam.
+		</member>
+		<member name="sand_granule_ripples" type="bool" setter="set_sand_granule_ripples" getter="is_sand_granule_ripples" default="true">
+			If [code]true[/code], the coarse lag on thin, flat interdune sand (the [member sand_dune_tone]'s dark flats) carries granule ripples: long, low ripples about 1.2 m apart and up to 5 cm high, broad crests of darker coarse grains running across the generator's dune-building wind ([member TerrainGenerator3D.sand_sea_wind_angle]), drawn as a normal and tint; where a pixel spans several crests it takes their mean tone. The same lines as [member GroundSurface3D.granule_ripples].
+		</member>
 		<member name="scree_blocks_distance" type="float" setter="set_scree_blocks_distance" getter="get_scree_blocks_distance" default="0.0">
 			Metres from the camera inside which the scree draws no stones of its own (parallax blocks, their normal and tone), only their bed of gravel and fines, because real stones lie there (RockField3D's scree layer out to its radius). The shader's stones fade in over the last fifth. 0: shader stones everywhere.
 		</member>

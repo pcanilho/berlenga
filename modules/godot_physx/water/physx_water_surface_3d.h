@@ -907,6 +907,11 @@ private:
 	bool raster_reflections = true;
 	WaterRasterReflections raster_reflection_state;
 	void _update_raster_reflections();
+	// Water clip capsules from the "water_clippers" group (each has get_water_clip_capsules()), polled.
+	double water_clip_poll = 0.0;
+	PackedFloat32Array water_clip_last;
+	Ref<ImageTexture> water_clip_texture; // 32 x 2 RGBA float: the capsules (see the shader's water_clip_tex)
+	void _update_water_clips(double p_delta);
 	bool caustics_enabled = true; // a draw pass every frame (the desktop measures and trims it)
 	Vector3 caustics_sun_direction = Vector3(-0.35f, -1.0f, -0.25f);
 	float caustics_reference_depth = 2.5f;

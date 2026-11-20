@@ -204,7 +204,7 @@ ground blend also stopped painting the plant cover map's one blurred colour: clu
 gaps where the ground's own texture shows. Real textures (CC0, via LFS) remain the better answer where a layer gets
 them; this is the floor for any layer that has none.
 
-## Next: real layer textures (research, 20 Nov; card pending)
+## Real layer textures (20 Nov, Paulo picked them)
 
 Every bench and the showcase still draw the five ground layers untextured (procedural floor above). Scanned CC0
 sets that fit the layers, all from Poly Haven (CC0, credited one line each in the README References):
@@ -217,3 +217,33 @@ ambientCG (also CC0) has Ground0xx soil and gravel sets as a second source. Plan
 height per layer into art-src (Gitea LFS, never GitHub), linked into the benches; hex tiling (already in
 tm_hex) hides repeats, the 9 m / 2.2 m tone stays on top so no two tiles match, and the height maps drive the
 existing height blend. Check: raster against PT at 100% crop, no detail lost.
+
+Built. Scans in art-src terrain/layers (2K JPG, Poly Haven CC0, CREDIT.txt): rock dark_rock_02 (2.0 m), scree
+rocks_ground_02 (2.0 m), soil forest_ground_06 (2.11 m), alluvium gravelly_sand (2.48 m), sand sand_03 (2.0 m). The
+benches load them from docs/bench/landscape/art/terrain_layers (fetch_art.sh; .gdignore'd, read with
+Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,scree for some, --scan-maps=anrh.
+- TerrainMaterialLayer.detail_only (on): the albedo and roughness maps are divided by their own means, so a scan adds
+  detail and the layer keeps the geology's colour and roughness. Poly Haven roughness maps follow no common scale
+  (brown_mud_03 averages 0.52, rock_face_04 0.96): taken as they are, a wet-mud scan made dry soil glossy.
+- Picking scans: low contrast around the mean. rock_face_04 (bright leaf litter on dark rock, p98/mean 2.7) put the
+  rock at half the layer colour once normalised; dark_rock_02 (cv 0.22) holds it.
+- The 9 m / 2.2 m tone now also runs on textured layers (sand included): hex tiling hides seams, not sameness.
+- Godot takes a sampler argument only with one hint per function: tm_hex is written once per map kind (a, n, r, h);
+  textured layers had never compiled.
+- tm_hex bounds the footprint to half a tile (faces seen edge on stretch the cone up to 20 times).
+- Cliff biplanar weights: the sum was floored at 1e-4, so on faces whose normal points near a cube diagonal (both
+  weights about 1e-5) the textures came out at a tenth: black patches on cliffs. Normalised exactly now.
+- Crack lips on rock faces capped at some 34 degrees (depth 0.45 of a lip 2 pixels or 6 cm wide): the 56 to 76
+  degree lips drew open joints as black lines on sunlit sea cliffs.
+
+- Erosion detail normal (TerrainGenerator3D terrain_detail_normal): the octaves below the vertex spacing keep the
+  geometry's depth ratio (0.08), so each adds a slope near 0.5 and four of them tilted gentle ground 30 to 50
+  degrees. Under a 32 degree sun those faces turned dark: blotches that read as wet ground, raster and PT alike,
+  with or without scans (gone with --detail-octaves=0). The added slope now saturates softly near 0.35 (about 20
+  degrees, small rill walls in soil).
+- The erosion detail took its gullies' direction and slope mask from the already bumped normal (procedural clods or
+  a scan's normal map), so they turned every few centimetres: blobs with hard rims, a melted-wax look over bare
+  ground without scans. It now runs on the surface's own normal (cliff relief included) and its tilt goes on top
+  of the bump. Its slope also had hard switches (normalising by max(len, 0.5), abs(s) and the sign of s at the
+  creases): fine in the geometry, hard-edged patches in per-pixel light. They are rounded (smooth maximum over
+  0.3, creases over 0.15).

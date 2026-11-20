@@ -31,6 +31,7 @@
 
 #include "register_types.h"
 
+#include "world_beaver_dam_3d.h"
 #include "world_burn_scar_3d.h"
 #include "world_contracts.h"
 
@@ -42,6 +43,7 @@ static WorldContracts *world_contracts = nullptr;
 void initialize_world_module(ModuleInitializationLevel p_level) {
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
 		GDREGISTER_CLASS(WorldBurnScar3D); // a producer node: scene level
+		GDREGISTER_CLASS(WorldBeaverDam3D);
 		return;
 	}
 	// Core level, so the modules that produce and consume contracts (registered at scene level) find it.

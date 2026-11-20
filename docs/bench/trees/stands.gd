@@ -4,9 +4,18 @@ extends Node3D
 # per species), or rendered.
 #
 # godot --path docs/bench/trees --rendering-driver vulkan -- --stands [options]
+#   --strikes --stream  a strike after a streamed field is in grows the deferred struck variants (trees.md 5bc)
+#   --lightning --strikes  struck trees in a placed beech stand: a WorldStand strike swaps that tree only (trees.md 5ax)
+#   --beaver-meadow   a drained beaver pond (WorldStand kind 4): meadow snags, fallen snags and willow come in (trees.md 5bb)
+#   --colonnade       taiga stilted spruce placed in rows along vanished logs (trees.md 5az)
+#   --browse          browsed trees in a placed beech stand: a WorldStand browse disc swaps the trees under it (trees.md 5az)
+#   --lightning       a fresh strike's debris round a spruce, none unstruck or three years on (trees.md 5ax)
 #   --test            place every stand, print the counts and PASS/FAIL, quit
 #   --stand-test=N    the placement checks of stand N only (TreeGenerator.Stand)
 #   --forest-edge=N   make_edge(N): mantle shrubs out in the open, edge trees one-sided toward +X (trees.md 5as)
+#   --beaver          beaver work on single trees: stump cone, felled stem lying, gnawed waist, resprouts (trees.md 5au)
+#   --flood           flood marks on a willow: silt under the waterline only, wrack at it (trees.md 5av)
+#   --deer            deer browse and nurse logs: hedged saplings, the browse line, seedlings on logs, stilts (trees.md 5aw)
 #   --succession=N    make_succession(N): every stage present, age ranges and kinds sane, sizes by stage (trees.md 5aq)
 #   --map=path.png    the placement maps of every stand in one image
 #   --edge [--standard]  with --plot: from a fresh coupe across its edge (or at a standard 8 m off)
@@ -49,7 +58,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "alder carr", "floodplain willow", "woodland", "NA woodland"]
+		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "alder carr", "floodplain willow", "beaver pond", "deer wood", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -74,9 +83,27 @@ func run(args: Dictionary) -> void:
 		gen.near_leaf_range = 0.0
 	# Fire band variants (five more meshes a species, trees.md 5ah) serve no placement check: off unless --fire.
 	gen.fire_variants = args.has("fire")
+	gen.lightning_variants = args.has("strikes")
+	gen.browse_variants = args.has("browse")
 	gen.far_thinning = OS.get_environment("NO_FAR_SCALE") == ""
 	if args.has("forest-edge"):
 		_forest_edge_check(int(args["forest-edge"]))
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("flood"):
+		_flood_check()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("deer"):
+		_deer_check()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("lightning") and not args.has("strikes"):
+		_lightning_check()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("beaver"):
+		_beaver_check()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	if args.has("succession"):
@@ -94,6 +121,26 @@ func run(args: Dictionary) -> void:
 	await get_tree().physics_frame
 	var err := dm.bake()
 	_check(err == OK, "valley data map bakes")
+	if args.has("beaver-meadow"):
+		await _beaver_meadow_check()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("colonnade"):
+		await _colonnade_check()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("browse"):
+		await _browse_field_check()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("strikes") and args.has("stream"):
+		await _strike_stream_check()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("strikes") and args.has("lightning"):
+		await _strike_field_check()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if args.has("test"):
 		_habitat_checks()
 		_stand_checks()
@@ -153,6 +200,495 @@ func _forest_edge_check(i: int) -> void:
 	# Groves, oases and parkland have no leading forest tree: a mantle only.
 	var no_lead := i in [TreeGenerator.STAND_STONE_PINE, TreeGenerator.STAND_OLIVE_GROVE, TreeGenerator.STAND_DATE_OASIS]
 	_check(bad == 0 and (trees > 0 or no_lead) and one_sided == trees and mantle >= 3 and mantle_out * 2 >= mantle, "forest edge of %s: %d edge trees (%d one-sided to the open), %d mantle shrubs (%d mostly outside), %d bad ranges" % [name_i, trees, one_sided, mantle, mantle_out, bad])
+
+# Beaver work (trees.md 5au) on willow and birch: a stump stands under a metre with its gnawed cone (wood surface
+# above the cut), a felled stem lies (longer than tall) with its butt cone, a gnawed stem's waist is pulled in
+# against the same tree ungnawed, and some stumps resprout (leaves on a stump).
+func _surface(m: Mesh, name: String) -> int:
+	for si in m.get_surface_count():
+		if m.surface_get_name(si) == name:
+			return si
+	return -1
+
+func _band_min_r(m: Mesh, y0: float, y1: float) -> float:
+	# The narrowest 2 cm slice of the stem in the band, by its median vertex radius.
+	var si := _surface(m, "bark")
+	if si < 0:
+		return -1.0
+	var v: PackedVector3Array = m.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]
+	var slices := {}
+	for p in v:
+		if p.y > y0 and p.y < y1:
+			var k := int(floor(p.y / 0.02))
+			if not slices.has(k):
+				slices[k] = []
+			slices[k].append(Vector2(p.x, p.z).length())
+	var lo := 1e9
+	for k in slices:
+		var rs: Array = slices[k]
+		if rs.size() < 8:
+			continue
+		rs.sort()
+		lo = minf(lo, rs[int(rs.size() * 0.5)])
+	return lo if lo < 1e8 else -1.0
+
+# Flood marks (trees.md 5av): silt coded on the bark's UV2 (u below -0.5) under the waterline and nowhere above it,
+# and wrack (more wood-surface geometry) at the line; nothing without a flood.
+func _flood_check() -> void:
+	var g := TreeGenerator.new()
+	g.preset = TreeGenerator.PRESET_WHITE_WILLOW
+	g.near_leaf_range = 0.0
+	g.set_param(TreeGenerator.PARAM_YEARS, 35.0)
+	var found_wrack := 0
+	for sd in range(1, 5):
+		g.seed = sd
+		g.flood_height = 0.0
+		var dry := g.generate()
+		g.flood_height = 1.1
+		g.flood_years = 0.2
+		var wet := g.generate()
+		var bi := _surface(wet, "bark")
+		var arr: Array = wet.surface_get_arrays(bi)
+		var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var u2: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV2]
+		var under := 0
+		var under_n := 0
+		var over := 0
+		for k in v.size():
+			var silty := u2.size() == v.size() and u2[k].x < -0.5
+			if v[k].y < 0.9:
+				under_n += 1
+				if silty:
+					under += 1
+			elif v[k].y > 1.3 and silty:
+				over += 1
+		var wd := _surface(dry, "wood")
+		var ww := _surface(wet, "wood")
+		var nd: int = dry.surface_get_array_len(wd) if wd >= 0 else 0
+		var nw: int = wet.surface_get_array_len(ww) if ww >= 0 else 0
+		if nw > nd:
+			found_wrack += 1
+		print("  seed %d: wood vertices %d dry, %d flooded" % [sd, nd, nw])
+		_check(under > 0.8 * under_n and over == 0, "willow seed %d: silt on %d of %d bark vertices under 0.9 m, %d over 1.3 m" % [sd, under, under_n, over])
+	_check(found_wrack >= 2, "flood wrack on %d of 4 willows" % found_wrack)
+	g.flood_height = 0.0
+
+func _beaver_meadow_check() -> void:
+	# The beaver meadow (trees.md 5bb): the pond stand carries species for a drained bed (WorldStand
+	# DISTURBANCE_BEAVER, 4), none placed without one; a drained disc 12 years on puts snags, fallen snags and incoming
+	# willow inside it and none outside, and the pond's own drowned snags are kept off it.
+	var ws = WorldContracts.get_stand()
+	if ws == null:
+		_check(false, "beaver meadow: no WorldStand")
+		return
+	ws.clear_disturbances()
+	var biome := gen.make_stand(TreeGenerator.STAND_BEAVER_POND, variants)
+	var sps: Array = biome.species
+	var meadow: Array[int] = []
+	var pond_off := 0
+	for s in sps.size():
+		var r: Vector2 = sps[s].get_rule_range(PlantSpecies.RULE_DISTURBANCE)
+		if r == Vector2(4, 4):
+			meadow.append(s)
+		elif String(sps[s].resource_name).contains("drowned, beaver pond") and r.y < 4.0:
+			pond_off += 1
+	_check(meadow.size() == 6 and pond_off == 2, "beaver pond stand: %d meadow species, %d pond snag species kept off a drained bed" % [meadow.size(), pond_off])
+	var f := _field(biome)
+	for k in 3:
+		await get_tree().process_frame
+	var count := func(center: Vector3, r0: float, r1: float) -> int:
+		var n := 0
+		for s in meadow:
+			for p in f.get_placements(s):
+				var d := Vector2(p.x - center.x, p.z - center.z).length()
+				if d >= r0 and d <= r1:
+					n += 1
+		return n
+	var mid := Vector3(SIZE * 0.5, 0, SIZE * 0.5)
+	var before: int = count.call(mid, 0.0, SIZE)
+	_check(before == 0, "no drained pond: %d meadow trees" % before)
+	var r := SIZE * 0.25
+	ws.add_disturbance(mid, r, WorldStand.DISTURBANCE_BEAVER, 12.0)
+	f.populate()
+	for k in 3:
+		await get_tree().process_frame
+	var inside: int = count.call(mid, 0.0, r * 0.9)
+	var outside: int = count.call(mid, r * 1.1, SIZE)
+	var kinds := 0
+	for s in meadow:
+		if f.get_placements(s).size() > 0:
+			kinds += 1
+	_check(inside > 10 and outside == 0 and kinds >= 4, "drained 12 years (r %.0f m): %d meadow trees inside, %d outside, %d of %d meadow species placed" % [r, inside, outside, kinds, meadow.size()])
+	ws.clear_disturbances()
+
+
+func _colonnade_check() -> void:
+	# Colonnades (trees.md 5az): the taiga's stilted spruce stand in rows along vanished logs: most have a row mate
+	# 1-2.5 m away, and most trees' two nearest row mates lie on one line through it (not a scatter; a neighbouring
+	# log's row can come nearer).
+	var biome := gen.make_stand(TreeGenerator.STAND_BOREAL_TAIGA, variants)
+	var sps: Array = biome.species
+	var idx := -1
+	for s in sps.size():
+		if sps[s].has_meta("colonnade"):
+			idx = s
+	_check(idx >= 0, "taiga: a species placed as colonnades (%s)" % (sps[idx].resource_name if idx >= 0 else "none"))
+	if idx < 0:
+		return
+	var f := _field(biome)
+	for k in 3:
+		await get_tree().process_frame
+	var pl: PackedVector3Array = f.get_placements(idx)
+	var mates := 0
+	var lined := 0
+	var triples := 0
+	for i in pl.size():
+		var a := Vector2(pl[i].x, pl[i].z)
+		var near: Array = []
+		for j in pl.size():
+			if j == i:
+				continue
+			var d := a.distance_to(Vector2(pl[j].x, pl[j].z))
+			if d < 3.3:
+				near.append([d, Vector2(pl[j].x, pl[j].z)])
+		near.sort_custom(func(x, y): return x[0] < y[0])
+		if near.size() > 0 and near[0][0] >= 0.9 and near[0][0] <= 2.5:
+			mates += 1
+		if near.size() >= 2:
+			triples += 1
+			var u: Vector2 = (near[0][1] - a).normalized()
+			var v: Vector2 = (near[1][1] - a).normalized()
+			if absf(u.dot(v)) > 0.95:
+				lined += 1
+	_check(pl.size() >= 10 and mates >= pl.size() * 0.7 and triples > 0 and lined >= triples * 0.7, "colonnades: %d stilted spruce, %d with a row mate 0.9-2.5 m off, %d of %d with two mates in line" % [pl.size(), mates, lined, triples])
+
+
+func _browse_field_check() -> void:
+	# Browsed variants in the world (trees.md 5az): the beech stand's open, sapling and understory species carry one
+	# browsed variant each, not counted living; with no deer none is placed; a WorldStand browse disc at full pressure
+	# makes the trees under it browsed and leaves those well outside it alone.
+	var ws = WorldContracts.get_stand()
+	if ws == null:
+		_check(false, "browsed trees: no WorldStand")
+		return
+	ws.clear_browse()
+	var biome := gen.make_stand(TreeGenerator.STAND_BEECH, variants)
+	var sps: Array = biome.species
+	var with := 0
+	var bad := 0
+	for s in sps.size():
+		var n := 0
+		for m in sps[s].meshes:
+			if m != null and m.has_meta("tree_browse"):
+				n += 1
+		if int(sps[s].get_meta("tree_variants_deferred", 0)) & TreeGenerator.VARIANT_BROWSE:
+			with += 1
+		if n > 0:
+			bad += 1
+	_check(with > 0 and bad == 0, "beech stand: %d species defer a browsed variant, %d grown before any deer" % [with, bad])
+	if with == 0:
+		return
+	var f := _field(biome)
+	for k in 3:
+		await get_tree().process_frame
+	var count := func(center: Vector3, r0: float, r1: float) -> Array:
+		# Instances of species that carry a browsed variant, in the ring r0..r1 round center; browsed by their mesh.
+		var n_b := 0
+		var n_all := 0
+		for c in f.find_children("*", "MultiMeshInstance3D", true, false):
+			if not (c is MultiMeshInstance3D) or c.multimesh == null or c.multimesh.mesh == null:
+				continue
+			var mm: MultiMesh = c.multimesh
+			var is_b: bool = mm.mesh.has_meta("tree_browse")
+			for k in mm.instance_count:
+				var o: Vector3 = (c.global_transform * mm.get_instance_transform(k)).origin
+				var d := Vector2(o.x - center.x, o.z - center.z).length()
+				if d >= r0 and d <= r1:
+					n_all += 1
+					if is_b:
+						n_b += 1
+		return [n_b, n_all]
+	var mid := Vector3(SIZE * 0.5, 0, SIZE * 0.5)
+	var before: Array = count.call(mid, 0.0, SIZE)
+	_check(before[1] > 0 and before[0] == 0, "no deer: %d instances, %d browsed" % [before[1], before[0]])
+	var r := SIZE * 0.2
+	var id: int = ws.add_browse(mid, r, 1.0, 1.8)
+	f.populate()
+	for k in 3:
+		await get_tree().process_frame
+	var grown := 0
+	for s in sps.size():
+		var n := 0
+		for m in sps[s].meshes:
+			if m != null and m.has_meta("tree_browse"):
+				n += 1
+		if n == 1 and TreeGenerator.get_living_meshes(sps[s]).size() < sps[s].meshes.size():
+			grown += 1
+	_check(grown == with, "under a browse disc the field grew %d of %d species' browsed variant, not counted living" % [grown, with])
+	var inside: Array = count.call(mid, 0.0, r * 0.75)
+	var outside: Array = count.call(mid, r * 1.05, SIZE)
+	_check(inside[0] > 0 and outside[0] == 0, "a browse disc (r %.0f m, pressure 1): %d browsed of %d instances under it, %d browsed outside" % [r, inside[0], inside[1], outside[0]])
+	ws.remove_browse(id)
+	ws.clear_browse()
+
+
+func _strike_stream_check() -> void:
+	# Deferred struck variants in a streamed field (trees.md 5bc): a strike after the field has streamed in grows the
+	# variants on a worker, and the field streams again with the struck tree in it.
+	var ws = WorldContracts.get_stand()
+	ws.clear_strikes()
+	var biome := gen.make_stand(TreeGenerator.STAND_BEECH, variants)
+	var cam := Camera3D.new()
+	add_child(cam)
+	cam.position = Vector3(SIZE * 0.5, 30, SIZE * 0.5)
+	cam.rotation_degrees = Vector3(89, 0, 0) # At the sky: frames stay cheap on the software renderer.
+	cam.current = true
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.tile_size = 20.0
+	f.streaming = true
+	f.stream_radius = SIZE
+	f.far_shell = false
+	f.far_volume = false
+	f.biome = biome
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	var struck_count := func() -> int:
+		var n := 0
+		for c in f.find_children("*", "MultiMeshInstance3D", true, false):
+			if c is MultiMeshInstance3D and c.multimesh != null and c.multimesh.mesh != null and c.multimesh.mesh.has_meta("tree_lightning_years"):
+				n += c.multimesh.instance_count
+		return n
+	for k in 600:
+		await get_tree().process_frame
+		if f.get_plant_count() > 1000 and k > 60:
+			break
+	var before: int = struck_count.call()
+	print("streamed in: %d plants, %d struck" % [f.get_plant_count(), before])
+	var at := Vector3(SIZE * 0.5, 0, SIZE * 0.5)
+	var pl: PackedVector3Array = f.get_placements(0)
+	if pl.size() > 0:
+		at = pl[pl.size() / 2]
+	ws.add_strike(at + Vector3(0, 25, 0), 0.1)
+	var t0 := Time.get_ticks_msec()
+	var after := 0
+	for k in 3000:
+		await get_tree().process_frame
+		if k % 10 == 0:
+			after = struck_count.call()
+			if k % 200 == 0:
+				print("frame %d: %d plants, %d struck" % [k, f.get_plant_count(), after])
+			if after > 0:
+				break
+	_check(before == 0 and after >= 1, "streamed: no struck tree before (%d), %d after a strike, in %d ms" % [before, after, Time.get_ticks_msec() - t0])
+	ws.clear_strikes()
+
+
+func _strike_field_check() -> void:
+	# Struck variants in the world (trees.md 5ax): the beech stand's tall species carry two struck variants (fresh and
+	# healing) that are not living ones; with no strike none is placed; a WorldStand strike at one canopy tree swaps that
+	# tree for the fresh variant and no other.
+	var ws = WorldContracts.get_stand()
+	if ws == null:
+		_check(false, "struck trees: no WorldStand")
+		return
+	ws.clear_strikes()
+	var biome := gen.make_stand(TreeGenerator.STAND_BEECH, variants)
+	var sps: Array = biome.species
+	var with := -1
+	for s in sps.size():
+		if (int(sps[s].get_meta("tree_variants_deferred", 0)) & TreeGenerator.VARIANT_STRIKE) and with < 0:
+			with = s
+	# Deferred (trees.md 5bc): none grown until a field has a strike over it.
+	var grown := 0
+	for s in sps.size():
+		for m in sps[s].meshes:
+			if m != null and m.has_meta("tree_lightning_years"):
+				grown += 1
+	_check(with >= 0 and grown == 0, "beech stand: %s defers its struck variants (%d grown before any strike)" % [sps[with].resource_name if with >= 0 else "none", grown])
+	if with < 0:
+		return
+	var f := _field(biome)
+	for k in 3:
+		await get_tree().process_frame
+	var count_struck := func(center: Vector3, radius: float) -> Array:
+		# The field's drawn instances (each multimesh draws one species mesh), struck ones by their mesh's meta.
+		var n_struck := 0
+		var n_all := 0
+		for c in f.find_children("*", "MultiMeshInstance3D", true, false):
+			if not (c is MultiMeshInstance3D) or c.multimesh == null or c.multimesh.mesh == null:
+				continue
+			var mm: MultiMesh = c.multimesh
+			var is_struck: bool = mm.mesh.has_meta("tree_lightning_years")
+			for k in mm.instance_count:
+				var o: Vector3 = (c.global_transform * mm.get_instance_transform(k)).origin
+				if Vector2(o.x - center.x, o.z - center.z).length() <= radius:
+					n_all += 1
+					if is_struck:
+						n_struck += 1
+		return [n_struck, n_all]
+	var before: Array = count_struck.call(Vector3(SIZE * 0.5, 0, SIZE * 0.5), SIZE)
+	var pl: PackedVector3Array = f.get_placements(with)
+	_check(before[1] > 0 and before[0] == 0 and pl.size() > 0, "no strike: %d trunks, %d struck" % [before[1], before[0]])
+	if pl.is_empty():
+		return
+	var at: Vector3 = pl[pl.size() / 2]
+	ws.add_strike(at + Vector3(0, 25, 0), 0.1)
+	f.populate()
+	for k in 3:
+		await get_tree().process_frame
+	var near: Array = count_struck.call(at, 0.5)
+	var all: Array = count_struck.call(Vector3(SIZE * 0.5, 0, SIZE * 0.5), SIZE)
+	var struck := 0
+	for m in sps[with].meshes:
+		if m != null and m.has_meta("tree_lightning_years"):
+			struck += 1
+	_check(struck == 2 and TreeGenerator.get_living_meshes(sps[with]).size() <= sps[with].meshes.size() - struck, "under a strike the field grew %s's %d struck variants, not counted living" % [sps[with].resource_name, struck])
+	_check(near[0] == 1 and all[0] >= 1 and all[0] <= 4, "a strike at %s: the tree there struck (%d), %d struck in the stand (neighbours within 3 m may share it)" % [str(at), near[0], all[0]])
+	ws.clear_strikes()
+
+func _lightning_check() -> void:
+	# A fresh strike (trees.md 5ax): bark slabs and splinters round a forest spruce's foot, none two years on; the
+	# fresh strip itself is checked by eye (raster and path traced, trees.md 5ax).
+	var g := TreeGenerator.new()
+	g.preset = TreeGenerator.PRESET_NORWAY_SPRUCE
+	g.seed = 3
+	g.forest_shade = 0.6
+	g.near_leaf_range = 0.0
+	var counts := []
+	var far := 0.0
+	for y in [-1.0, 0.05, 3.0]:
+		g.lightning_years = y
+		var m := g.generate()
+		var si := _surface(m, "wood")
+		var n := 0
+		if si >= 0:
+			for q in m.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]:
+				if q.y < 0.15 and Vector2(q.x, q.z).length() > 0.6:
+					n += 1
+					far = maxf(far, Vector2(q.x, q.z).length())
+		counts.append(n)
+	_check(counts[1] > 2000 and counts[0] == 0 and counts[2] == 0 and far < 25.0, "spruce strike debris: %d vertices on the ground fresh (out to %.1f m), %d unstruck, %d three years on" % [counts[1], far, counts[0], counts[2]])
+
+func _deer_check() -> void:
+	# Hedged saplings (trees.md 5aw): fifteen years browsed stay under the reach on every seed; unbrowsed they grow away.
+	for pr in [TreeGenerator.PRESET_BEECH, TreeGenerator.PRESET_ASH, TreeGenerator.PRESET_ROWAN, TreeGenerator.PRESET_NORWAY_SPRUCE]:
+		var g := TreeGenerator.new()
+		g.preset = pr
+		g.near_leaf_range = 0.0
+		g.set_param(TreeGenerator.PARAM_YEARS, 15.0)
+		var tallest := 0.0
+		var free := 0.0
+		var leaves_min := 1 << 30
+		for sd in range(1, 5):
+			g.seed = sd
+			g.browse = 0.9
+			var m := g.generate()
+			tallest = maxf(tallest, m.get_aabb().end.y)
+			leaves_min = mini(leaves_min, g.get_leaf_count())
+			g.browse = 0.0
+			free = maxf(free, g.generate().get_aabb().end.y)
+		_check(tallest < 2.3 and free > tallest + 0.5 and leaves_min > 0, "%s browsed 15 years: top %.2f m (unbrowsed %.2f m), in leaf (%d leaves at least)" % [{TreeGenerator.PRESET_BEECH: "beech", TreeGenerator.PRESET_ASH: "ash", TreeGenerator.PRESET_ROWAN: "rowan", TreeGenerator.PRESET_NORWAY_SPRUCE: "spruce"}[pr], tallest, free, leaves_min])
+	# The browse line: an open-grown holly (leafy to the ground unbrowsed) browsed its last 20 years keeps no leaves
+	# under the line, and its crown above.
+	var t := TreeGenerator.new()
+	t.preset = TreeGenerator.PRESET_HOLLY
+	t.seed = 3
+	t.near_leaf_range = 0.0
+	t.browse = 0.0
+	var before := t.generate()
+	t.browse = 1.0
+	t.browse_years = 20
+	var after := t.generate()
+	var low := [0, 0]
+	var meshes := [before, after]
+	for k in 2:
+		var m: ArrayMesh = meshes[k]
+		var si := _surface(m, "leaves")
+		if si < 0:
+			continue
+		var v: PackedVector3Array = m.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]
+		for q in v:
+			if q.y < 1.6:
+				low[k] += 1
+	_check(low[0] > 1000 and low[1] * 10 < low[0] and after.get_aabb().size.y > 0.8 * before.get_aabb().size.y, "holly browse line: %d leaf vertices under 1.6 m before, %d after; crown kept" % [low[0], low[1]])
+	# Nurse logs: seedlings on a class 4 spruce log, on its top.
+	var lg := TreeGenerator.new()
+	lg.preset = TreeGenerator.PRESET_NORWAY_SPRUCE
+	lg.seed = 2
+	lg.fallen = true
+	lg.decay_class = 4
+	lg.near_leaf_range = 0.0
+	var bare := lg.generate()
+	lg.nurse_seedlings = 1.0
+	var nursed := lg.generate()
+	var nb := _surface(bare, "needles")
+	var nn := _surface(nursed, "needles")
+	var vb: int = bare.surface_get_array_len(nb) if nb >= 0 else 0
+	var vn: int = nursed.surface_get_array_len(nn) if nn >= 0 else 0
+	_check(vn > vb + 3000, "nurse log: %d needle vertices of seedlings (bare log %d)" % [vn - vb, vb])
+	# A tree on a rotted nurse log stands lifted by the log's girth, a tunnel under its foot along X.
+	var st := TreeGenerator.new()
+	st.preset = TreeGenerator.PRESET_NORWAY_SPRUCE
+	st.seed = 2
+	st.near_leaf_range = 0.0
+	st.nurse_stilt = 0.8
+	var sm := st.generate()
+	var lift: float = sm.get_meta("tree_base_lift", 0.0)
+	var bi := _surface(sm, "bark")
+	var in_tunnel := 0
+	if bi >= 0:
+		var bv: PackedVector3Array = sm.surface_get_arrays(bi)[Mesh.ARRAY_VERTEX]
+		for q in bv:
+			# Inside the old log's section, near the stem's foot: none of the bark may hang there.
+			if absf(q.z) < 0.15 and absf(q.x) < 0.3 and q.y < -0.25 and q.y > -0.75:
+				in_tunnel += 1
+	_check(absf(lift - 0.8) < 0.01 and in_tunnel == 0, "tree on a rotted nurse log: lifted %.2f m, %d bark vertices in the tunnel" % [lift, in_tunnel])
+
+func _beaver_check() -> void:
+	for pr in [TreeGenerator.PRESET_WHITE_WILLOW, TreeGenerator.PRESET_BIRCH]:
+		var g := TreeGenerator.new()
+		g.preset = pr
+		g.near_leaf_range = 0.0
+		g.set_param(TreeGenerator.PARAM_YEARS, 18.0)
+		var nm: String = ["willow", "birch"][0 if pr == TreeGenerator.PRESET_WHITE_WILLOW else 1]
+		var stumps := 0
+		var cones := 0
+		var sprouting := 0
+		for sd in range(1, 7):
+			g.seed = sd
+			g.beaver_cut = TreeGenerator.BEAVER_STUMP
+			g.beaver_years = 3.0
+			var m := g.generate()
+			var ab: AABB = m.get_aabb()
+			var wi := _surface(m, "wood")
+			var top := 0.0
+			if wi >= 0:
+				for p in m.surface_get_arrays(wi)[Mesh.ARRAY_VERTEX]:
+					top = maxf(top, p.y)
+			var leafy := _surface(m, "leaves") >= 0
+			if leafy:
+				sprouting += 1
+			elif ab.size.y < 1.2:
+				stumps += 1
+			if top > 0.25:
+				cones += 1
+		_check(stumps + sprouting == 6 and cones == 6 and sprouting > 0 and sprouting < 6, "%s: beaver stumps: %d bare, %d resprouting, %d with a gnawed cone over the cut" % [nm, stumps, sprouting, cones])
+		g.seed = 3
+		g.beaver_cut = TreeGenerator.BEAVER_FELLED
+		g.beaver_years = 1.0
+		var f := g.generate()
+		var fb: AABB = f.get_aabb()
+		_check(maxf(fb.size.x, fb.size.z) > 1.5 * fb.size.y and _surface(f, "wood") >= 0, "%s: beaver-felled stem lies (%.1f m long, %.1f m high) with its butt cone" % [nm, maxf(fb.size.x, fb.size.z), fb.size.y])
+		g.beaver_cut = TreeGenerator.BEAVER_NONE
+		var whole := g.generate()
+		g.beaver_cut = TreeGenerator.BEAVER_GNAWED
+		g.beaver_depth = 0.7
+		var gn := g.generate()
+		var r0 := _band_min_r(whole, 0.15, 0.7)
+		var r1 := _band_min_r(gn, 0.15, 0.7)
+		_check(r0 > 0.0 and r1 > 0.0 and r1 < 0.85 * r0, "%s: gnawed waist pulls the stem in (median radius %.3f against %.3f in the narrowest slice, 0.15-0.7 m)" % [nm, r1, r0])
+		g.beaver_cut = TreeGenerator.BEAVER_NONE
 
 # Forests that age (trees.md 5aq): the four structural stages (Oliver and Larson 1996) all present, each species'
 # age range forward and its kind a RULE_DISTURBANCE number or -1, the pole stage shorter than the mature lead and
@@ -446,6 +982,57 @@ func _stand_checks(only := -1) -> void:
 						if Vector2(x.x, x.z).normalized().dot(dir) < cos(0.5):
 							off += 1
 			_check(thrown > 0 and snapped > 0 and leaning > 0 and stand_count > 0 and off == 0 and plates > 0, "windthrow: %d thrown (%d variants with root plates), %d snapped, %d leaning, %d standing; %d of %d drawn turned off the storm's track" % [thrown, plates, snapped, leaning, stand_count, off, checked])
+		elif i == TreeGenerator.STAND_DEER_WOOD:
+			# A deer wood (trees.md 5aw): browsed saplings placed, every species browsed (none unbrowsed), no shrub layer.
+			var hedged := 0
+			var unbrowsed := 0
+			for s in sps.size():
+				var nm6: String = sps[s].resource_name
+				var pl: PackedVector3Array = f.get_placements(s)
+				if nm6.contains("browsed sapling"):
+					hedged += pl.size()
+				if sps[s].has_meta("preset") and int(sps[s].get_meta("preset")) in [TreeGenerator.PRESET_HAZEL, TreeGenerator.PRESET_HAWTHORN, TreeGenerator.PRESET_HOLLY, TreeGenerator.PRESET_ELDER]:
+					unbrowsed += pl.size()
+			_check(hedged > 0 and unbrowsed == 0, "deer wood: %d hedged saplings, %d shrub-layer plants" % [hedged, unbrowsed])
+		elif i == TreeGenerator.STAND_BEAVER_POND:
+			# A beaver pond (trees.md 5au): the colony's work in a band by the water (none past 12 m), the felled stems
+			# mostly turned toward the water (mesh +X down the water distance), and drowned snags standing in it.
+			var work := 0
+			var far := 0
+			var drowned := 0
+			var felled := 0
+			var to_water := 0
+			for s in sps.size():
+				var nm5: String = sps[s].resource_name
+				var pl: PackedVector3Array = f.get_placements(s)
+				if nm5.contains("(drowned"):
+					drowned += pl.size()
+					continue
+				if not nm5.contains("(beaver "):
+					continue
+				work += pl.size()
+				for p in pl:
+					if dm.get_water_distance_at(f.to_global(p)) > 12.5:
+						far += 1
+				if not nm5.contains("felled"):
+					continue
+				for mmi in f.find_children("*", "MultiMeshInstance3D", true, false):
+					var mm: MultiMesh = mmi.multimesh
+					if mm == null or not sps[s].meshes.has(mm.mesh):
+						continue
+					for k in mm.instance_count:
+						var xf: Transform3D = mmi.global_transform * mm.get_instance_transform(k)
+						var o := xf.origin
+						var gx := dm.get_water_distance_at(o + Vector3(1.5, 0, 0)) - dm.get_water_distance_at(o - Vector3(1.5, 0, 0))
+						var gz := dm.get_water_distance_at(o + Vector3(0, 0, 1.5)) - dm.get_water_distance_at(o - Vector3(0, 0, 1.5))
+						var down := -Vector2(gx, gz)
+						if down.length() < 1e-4:
+							continue
+						felled += 1
+						var x := xf.basis.x
+						if Vector2(x.x, x.z).normalized().dot(down.normalized()) > cos(0.6):
+							to_water += 1
+			_check(work > 0 and far == 0 and felled > 0 and to_water * 2 > felled and drowned > 0 and stand_count > 0, "beaver pond: %d gnawed, cut and felled (%d past 12 m from the water), %d of %d felled stems turned to the water, %d drowned snags" % [work, far, to_water, felled, drowned])
 		elif i == TreeGenerator.STAND_OLD_GROWTH_BEECH:
 			# Old-growth beech (trees.md 5an): veteran giants among the canopy (about ten a hectare), a fallen giant in
 			# the gaps, poles and seedlings under them, lying deadwood well over standing.

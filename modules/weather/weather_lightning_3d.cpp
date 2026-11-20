@@ -35,6 +35,8 @@
 #include "weather_map_3d.h"
 #include "weather_sky_material.h"
 
+#include "modules/world/world_contracts.h"
+
 #include "core/object/class_db.h"
 #include "core/os/os.h"
 #include "scene/3d/audio_stream_player_3d.h"
@@ -386,7 +388,7 @@ Vector3 WeatherLightning3D::_attach_point(const Vector3 &p_below, float p_cloud_
 Vector3 WeatherLightning3D::find_strike_point(const Vector3 &p_position, float p_peak_current) {
 	WeatherMap3D *map = WeatherMap3D::get_active();
 	const float ground = map ? map->get_ground_height() : 0.0f;
-	const float base = map ? WeatherClouds::base_at(map->get_cloud_state(), Vector2(p_position.x, p_position.z)) : ground + 1500.0f;
+	const float base = WorldContracts::weather()->cloud_base_at(p_position); // the local base (WorldWeather.cloud_base_at)
 	bool canopy = false;
 	return _attach_point(Vector3(p_position.x, MAX(base, ground + 500.0f), p_position.z), MAX(base, ground + 500.0f), ground, p_peak_current, map, canopy);
 }
@@ -669,7 +671,8 @@ int WeatherLightning3D::_start_flash(const Vector3 &p_position, bool p_cloud_to_
 	}
 	const Vector2 ct = WeatherClouds::cover_type_at(state, Vector2(p_position.x, p_position.z));
 	const float top_height = WeatherClouds::top_height(state, MAX(ct.y, 0.9f));
-	const float base = WeatherClouds::base_at(state, Vector2(p_position.x, p_position.z));
+	// The local cloud base (WorldWeather.cloud_base_at: the day's condensation level, lower over a storm).
+	const float base = WorldContracts::weather()->cloud_base_at(p_position);
 
 	Flash f;
 	f.id = next_id++;
@@ -708,6 +711,10 @@ int WeatherLightning3D::_start_flash(const Vector3 &p_position, bool p_cloud_to_
 			recent_strikes.remove_at(0);
 		}
 		recent_strikes.push_back(s);
+		// A tree hit keeps its scar: the stand records it for the tree's struck variant (world-links, Lightning -> tree).
+		if (s.canopy && record_tree_strikes && WorldContracts::stand()) {
+			WorldContracts::stand()->add_strike(s.position, 0.0f);
+		}
 	}
 
 	if (p_cloud_to_ground) {
@@ -1161,6 +1168,8 @@ void WeatherLightning3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_raster_shadow_distance"), &WeatherLightning3D::get_raster_shadow_distance);
 	ClassDB::bind_method(D_METHOD("set_thunder_enabled", "enabled"), &WeatherLightning3D::set_thunder_enabled);
 	ClassDB::bind_method(D_METHOD("is_thunder_enabled"), &WeatherLightning3D::is_thunder_enabled);
+	ClassDB::bind_method(D_METHOD("set_record_tree_strikes", "enabled"), &WeatherLightning3D::set_record_tree_strikes);
+	ClassDB::bind_method(D_METHOD("is_recording_tree_strikes"), &WeatherLightning3D::is_recording_tree_strikes);
 	ClassDB::bind_method(D_METHOD("set_thunder_volume_db", "db"), &WeatherLightning3D::set_thunder_volume_db);
 	ClassDB::bind_method(D_METHOD("get_thunder_volume_db"), &WeatherLightning3D::get_thunder_volume_db);
 	ClassDB::bind_method(D_METHOD("set_thunder_bus", "bus"), &WeatherLightning3D::set_thunder_bus);
@@ -1197,6 +1206,7 @@ void WeatherLightning3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "raster_shadow_distance", PROPERTY_HINT_RANGE, "10,4000,1,or_greater,suffix:m"), "set_raster_shadow_distance", "get_raster_shadow_distance");
 	ADD_GROUP("Thunder", "thunder_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "thunder_enabled"), "set_thunder_enabled", "is_thunder_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "record_tree_strikes"), "set_record_tree_strikes", "is_recording_tree_strikes");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "thunder_volume_db", PROPERTY_HINT_RANGE, "-80,24,0.1,suffix:dB"), "set_thunder_volume_db", "get_thunder_volume_db");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING_NAME, "thunder_bus"), "set_thunder_bus", "get_thunder_bus");
 

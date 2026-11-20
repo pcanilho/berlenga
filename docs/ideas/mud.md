@@ -1194,6 +1194,116 @@ ruts (save_ruts, on leaving the tree), read back the first time the folder is us
 ruts_time_scale with wear_regrowth_days' half-life. clear_saved_ruts removes it. Bench --test=wear adds: 8 passes
 saved, 8 read back, none after years away.
 
+#### Round 16 built (20 Nov)
+
+**16.1 Mud flows round stones.** Slumping and the mud waves took the layer's base as the deepest dent everywhere, so
+liquid mud drained off a stone's top down to the base. Now a hidden stone's top is the base over it: the GPU's cover
+buffer ends with the 64 stones nearest the followed point (shallow ones first; GroundSurface3D::_gpu_cells(),
+GroundDeformGPU::STONE_VEC4S), and slump_params() and mud_liquid() take max_dent down to the depth of the highest stone
+top over the texel (stone_dent()); the CPU's Columns does the same with _buried_depth(). The stamp's floor (15.2), the
+slumping and the waves now agree. Bench --test=buried: in slurry a print beside a stone drains to 57 cm while the mud
+over its top (38.8 cm down) stays at 37.8 cm, then the waves close the rut. Limits: 64 stones per field.
+
+**16.2 Deposits kept with the ruts.** One zstd file (deposits.dep) in ruts_path with save_ruts: per 1 m cell the
+deposit's depth, the silt skin's share, its colour and the river record already taken, then the ids of the stones
+knocked loose. Read back the first time the folder is used, merged by the larger value; how dry a skin is comes back
+with the crack state. Deposits do not wear away while away (fresh silt and fan mud last seasons). `clear_mud_deposits`
+for a new game. Bench --test=silt: 4 mm saved, cleared, 4 mm read back dry.
+
+**16.3 Stones shoved along.** A loose stone in front of a rolling tyre's middle, within its width and low enough for
+its front to meet, is driven on toward the tyre's speed and out sideways toward the side it sits on (a bulldozing
+front's berm: Bekker 1956; Ishigami et al. 2007), the push held to the passive earth pressure on its face over the rut
+depth (Rankine, Kp 3, 20 kN/m3, 2 kPa) plus its sliding friction, at most 6 kN. Bench --test=buried: behind a tyre at
+2 m/s a stone goes 1.95 m ahead and 11 cm aside in a second.
+
+#### Round 17 built (20 Nov)
+
+**Loose stones lie in the mud, not on the terrain.** A loose stone on a mud layer passes through the terrain's own
+collider (a collision exception with the body under it on ground_collision_mask, found by a ray) and is held at its
+settled depth in the deformed mud instead; off the mud, or thrown clear, the colliders hold it again. Settled depth:
+bearing Nc tau A plus the displaced mud's weight against its weight, Nc 6 at the surface (Skempton 1951) rising to 13.9
+fully under, which is Beris et al.'s (1985) criterion for a sphere held in a Bingham fluid (Y 0.048); tau the yield
+stress of slurry and soft mud, the cohesion of stiff mud. Past the criterion it goes to the base.
+
+**17.1 Ploughed.** Moving, the stone presses its underside each step as a moving round print, so the field's bow wave
+heaps mud ahead and levees beside; it rides the undisturbed mud ahead (ground less dents), so it drops into ruts. The
+mud brakes it: rolling resistance sqrt(z / d) of its weight (Bekker 1969) and Rankine passive pressure on its face. A
+tyre shoving it meets it above its middle, so it also drives it down by (R - r) / (R + r) of the push, R about the
+print's length. The push is now the tyre's (at most 6 kN) against that drag, not the 16.3 bulldozing cap. Bench
+--test=buried: a 22 cm stone shoved 1.4 m through soft mud (moisture 0.7) leaves a 0.9 cm furrow and a 0.3 cm heap.
+Small stones in stiff mud plough little (a 1 to 2 cm settled depth); big ones and soft mud plough deep, and soft
+mud's own slumping (tan_repose tau / (rho g h)) softens a narrow furrow. That is the model, not tuned up.
+
+**17.2 Sunk back.** At rest it creeps to its settled depth (Stokes with the plastic viscosity, at most 5 cm/s). Bench:
+1.2 cm into stiff mud, 12.7 cm into slurry (tau 528 Pa) for a 22 cm stone. Out of sight (top 3 cm under the surface),
+sunk or buried by mud laid over it (a fan, silt, a wave), it is a hidden stone again: a Buried record with a new id in
+the cell's extras, a StaticBody near the followed point, kept in deposits.dep after the loose ids (count, then id, xyz,
+r each; older files without it read as none). Bench: a 27 cm deposit over it hides it; saved, cleared, read back.
+
+**17.3 Dry silt as dust.** A dried skin (water under 0.1, 0.5 to 2 mm and up) gives a tyre's dust as dry bare sand
+does (playas and dried floodplains are the main dust sources: Gillette et al. 1980; Reynolds et al. 2007), and loses
+what it gives at 1300 kg/m3; the tyre breaks its crust. Wind: u* = kappa U10 / ln(10 / z0), z0 1 mm; thresholds
+0.3 m/s broken, 1 m/s crusted (Gillette et al. 1980, 1982); dust flux alpha Q, Q White's (1979) saltation flux,
+alpha 1e-3 per m (Gillette 1977; Marticorena et al. 1997). The 64 strongest cells near the followed point feed
+GroundDust3D each step; the skin thins at runoff_time_scale; a broken skin crusts over once wet again. Bench
+--test=silt: 60 tyre steps lift 0.18 kg and thin the skin 0.14 mm; a 12 m/s wind thins the broken cell, not the
+crusted one beside it.
+
+#### Round 18 built (20 Nov)
+
+**18.1 Carried.** A flowing mud drags a loose stone in it: 0.5 rho Cd A u^2 (Cd 1.2, as GroundDebrisFlow3D's push on
+bodies) plus the yield stress's hold on the same face, 13.9 tau_y A (the factor matching Beris et al.'s criterion),
+never more than brings it to the flow's speed; a yield-stress flow takes a stone held in its plug along at its own
+speed (boulders rafted in debris flows: Iverson 1997). Sources: GroundDebrisFlow3D (now in the group
+ground_debris_flows; get_flow_depth_at / get_flow_velocity_at, its density and yield stress) and the liquid mud layer
+itself, its speed from the GPU mud waves' momentum balance held steady, q = h^2 / (3 nu) (g h S - tau_y / rho) down
+the surface's slope (Liu and Mei 1989; Coussot 1997). The stone drops where the flow stops, and a deposit over it
+hides it again (17.2). add_loose_stone(position, radius, velocity) puts one anywhere. Bench --test=carry: soaked mud
+running down a 15 degree bank takes a 26 cm stone 2.4 m down and buries it in the toe; stiff mud holds it; a debris
+flow sweeps one 60 m down its channel at up to 8 m/s and leaves it on the fan.
+
+**18.2 Rolled onto.** Whether a tyre pushes a stone or rolls onto it is the wheel-over-step geometry: the tread meets a
+stone standing p over the rut floor at alpha from the vertical, cos(alpha) = (R - p) / R; under 30 degrees it rolls
+onto it, steeper it shoves it (16.3). Rolled onto, the carcass presses it with about its inflation plus carcass
+stiffness (100 + 15 kPa, round 12's tyre_flat) over its section, kilonewtons, past what any mud here bears: pressed
+in until its top is at the tyre's floor (or the base). Under the shoulder that force leans out by asin(offset /
+(half width + r)); past the mud's lateral bearing (about 10 tau A, Randolph and Houlsby 1984) it squirts out sideways
+at up to the tyre's speed. Bench --test=carry: under the middle its top goes from 4 cm over the floor to 0.3 cm under;
+under the shoulder it is squeezed 37 cm out of the rut.
+
+**18.3 Tracked-out mud as dust.** The film tyres and boots leave on firm ground (round 3) dries to a crumb traffic
+grinds to powder, the main source of road dust's silt loading (US EPA AP-42 13.2.1; Kuhns et al. 2001 on track-out
+at site exits). Dry (water under 0.1, none past 0.3) it gives a tyre's dust as dry sand does; what is lifted is owed
+by its 1 m cell and taken off in texel-sized discs scattered round the spot (the field's washing-away path), so the
+trail fades in patches, mass kept at 1.5 kg/m2 for a full film. The wind lifts it from u* 0.3 m/s as a broken silt
+skin (17.3), over the 1 m cells films were laid in near the followed point. Bench --test=trackdust: a wet trail gives
+none; dried, 60 tyre steps lift 0.1 kg and clear it at the spot; a 12 m/s wind lifts 0.22 kg and thins another spot
+from full to 0.62 (the check now averages the whole trail, since the wind thins it in patches). Film cells are kept in deposits.dep (d35dbf2e), so a reloaded trail lifts in the wind too.
+
+#### Round 19 built (20 Nov)
+
+Picked 20 Nov: all three, in order. 19.3 (reloaded trails lift dust) went first as a bug fix (d35dbf2e).
+
+**19.1 Streams carry loose stones.** Research: the onset of motion of a lone grain is a force balance, drag and lift
+against submerged weight past the grain's pivot angle (Wiberg and Smith 1987; Komar and Li 1986). A stone standing
+proud of a bed finer than itself moves at a Shields number far under the 0.045 of a bed of its own size (Komar and
+Li's exposure, theta_c about 0.045 (D/K)^-0.7; Carling 1983 for lone boulders on fine beds). The water contract's
+height and depth-averaged flow give the speed at the stone's face by a log profile over a fine bed (ks 1 cm):
+u = U ln(z/z0) / (ln(h/z0) - 1), z0 = ks/30, z half the face standing above the bed. Drag 0.5 rho Cd A u^2 with Cd 0.76
+(Schmeeckle et al. 2007, a grain on a bed), lift with Cl 0.2, buoyancy on its part under the surface. On firm ground
+(rock, a gravel bed held by the colliders) it starts once drag beats tan 40 deg of its submerged weight less lift and
+rolls on against 0.6 of it (Bagnold's dynamic friction for bedload), so it drops where the water slackens. On mud the
+drag joins the round 17 hold (bearing depth, ploughing and rolling resistance), with the load less buoyancy and lift.
+Bench --test=stream (12 cm stone, 0.5 m deep): still at 1.75 m/s, off at 2.25 m/s (u* 0.14 m/s, Shields 0.006), at
+3 m/s rolled 6 m and stopped 15 cm into the still pool; sunk 5 cm in stiff mud it moved 1.7 m at 2.5 m/s, against 6 m
+on rock. `stream_stones` (on).
+
+**19.2 Loose stones kept.** deposits.dep now ends with each loose stone as it lies: id, position, rotation, mesh
+radius, depth in the mud and the mud height it rides. Read back, they are placed at the first step with the ground up,
+taken out of the hidden stones for good. A save made as the node leaves the tree (its stones have left it first)
+uses each stone's transform from the last step. Bench --test=stream: a stone saved in stiff mud is read back by a new
+node where it lay, at the same depth and turn (under 1 mm off).
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

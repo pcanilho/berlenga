@@ -1039,7 +1039,10 @@ Added 20 Nov (ground detail thread, Paulo's pick "thinning plus 4 km rock colour
   to about 0.8 of the radius, where the terrain's own scree blocks come in. Drawn buffer only: xforms, colliders,
   breakables and the far blocks' records stay at true size. Scree bench, eye level round the camera: 226 of 715
   thinned groups widened, 1.36x on average; raster and PT keep the edge's stone cover.
-- build_area applies the thinning round the target, so stills show what play shows (it drew every cell whole).
+- build_area does not thin (tried 20 Nov, reverted): with ~1,170 far coarse MultiMeshes thinned (all 55 m and more
+  from the camera) the near shore grains of a path-traced still turned into dark pits and smooth patches, while the
+  raster frame was identical; leaving the shore layer unthinned mostly cured it. Not the off-screen cull, not
+  c1f09374, not zero counts. Open: whether play (streaming thins every frame) shows the same in PT; check on the PC.
 - The far cover map takes coarse river beds (45% stone over the bed where the median is drawn near). In the bench
   world only narrow boulder streams qualify, so it adds 67 faint texels; it matters where big rivers carry boulders.
   Shore stones are left out: the shingle band is a few metres wide, under a tenth of a 32 m texel.
@@ -1175,3 +1178,13 @@ Four options put to Paulo after the tafoni, wet rock and cave stream round. Noth
 - Technique: the MFD flow routing baked for rivulets (COLOR.a) already gives the runoff paths, so curtains follow it.
   Varnish age comes from the stone's exposure (rockfall and Blast breaks are fresh, so bright). Shader-only, in
   raster and PT alike.
+
+## Sea cave walls in fixed-camera stills (20 Nov)
+
+The bench's `--cam` stills meshed every cave chunk on the coarse 0.3 m grid, while play refines the chunks within
+10 m of the camera to the 0.1 m grid with its knob and spall relief. Lit walls looked smeared and a vertical seam
+showed on the coarse mesh. Stills now refine round the camera (`--no-refine` keeps the coarse grid). Chunk borders were
+checked: the field, border vertices and normals of two neighbouring chunks match exactly. A refined chunk now fades
+its fine relief out over the last 3 m to a face whose neighbour is coarse (geomorphing, as in chunked LOD terrain:
+Ulrich 2002, Lengyel 2010), and is remeshed when that neighbour's grid changes. Debug views: CAVE_WALL_DEBUG=3 chunk
+grid, 4 vertex colour, 5 mesh normal, 6 bumped normal, 7 world x/z bands.

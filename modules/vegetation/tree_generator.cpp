@@ -36,6 +36,7 @@
 #include "vegetation_fire.h"
 
 #include "core/os/mutex.h"
+#include "core/templates/sort_array.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
 #include "scene/resources/image_texture.h"
@@ -75,6 +76,9 @@ static bool scrub_shrub(TreeGenerator::Preset p_preset) {
 // Fire bands (world-links.md): the years each band variant covers, and the years it is grown at.
 static const float FIRE_BAND_EDGES[6] = { 0.0f, 1.0f, 3.0f, 6.0f, 10.0f, 20.0f };
 static const float FIRE_BAND_YEARS[5] = { 0.5f, 2.0f, 4.5f, 8.0f, 15.0f };
+// Struck variants (trees.md 5ax): a fresh strike and one healing; the field picks the nearer to the strike's age, and an
+// unstruck tree past 8 years (the old scar of 5p stays a matter of the tree's own chance).
+static const float STRIKE_BAND_YEARS[2] = { 0.2f, 3.0f };
 
 // Palms are laid out directly (_grow_palm), not grown by shoots; their leaves are _palm_geometry's.
 static bool palm_preset(TreeGenerator::Preset p_preset) {
@@ -97,7 +101,7 @@ static bool hedge_shrub(TreeGenerator::Preset p_preset) {
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
 	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow",
 	"Northern Hardwood Forest", "Eastern Oak Forest", "Pine-Hemlock Forest", "Coppice with Standards", "Wood Pasture", "Pollard Row",
-	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow", "Old-growth Beech", "Boreal Taiga", "Alder Carr", "Floodplain Willow"
+	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow", "Old-growth Beech", "Boreal Taiga", "Alder Carr", "Floodplain Willow", "Beaver Pond", "Deer Wood"
 };
 
 TreeGenerator::TreeGenerator() {
@@ -1691,6 +1695,11 @@ void TreeGenerator::_grow_year(int p_year) {
 		}
 		const Vector3 p = n.end() + b.dir * (cell * 0.5f);
 		b.light = CLAMP(1.0f + a - _shadow_at(p), 0.0f, 1.0f);
+		if (browse_now && p.y - nodes[0].start.y < browse_height) {
+			// A hedged bush (trees.md 5aw) is smaller than the shadow grid's cells, its buds crowded on short stubs: the
+			// grid shades them all as one dark cell, though the bush stands lit on its outside.
+			b.light = MAX(b.light, 0.6f);
+		}
 		// Branch buds lying on the ground die (contact, snow press, browsing), so lower limbs do not
 		// keep spreading along the ground; stems and basal sprouts are exempt.
 		// A krummholz mat spreads along the ground and roots where its limbs touch (layering;
@@ -1795,7 +1804,7 @@ void TreeGenerator::_grow_year(int p_year) {
 	// the crown, the whole crown keeping a near-constant shape). Shoots that would leave the cone
 	// wait for the leader to rise, so young branches near the top grow at full rate but stay short.
 	// A krummholz mat has no leader to set a cone: its limbs spread at the snow's surface.
-	const float cone = krummholz > 0.0f ? 0.0f : params[PARAM_CROWN_CONE];
+	float cone = krummholz > 0.0f ? 0.0f : params[PARAM_CROWN_CONE];
 	float top = 0.0f;
 	const Vector3 root = nodes[0].start;
 	if (cone > 0.0f) {
@@ -1803,6 +1812,11 @@ void TreeGenerator::_grow_year(int p_year) {
 			if (n.order == 0 && !n.removed) {
 				top = MAX(top, n.end().y);
 			}
+		}
+		// A browsed sapling has lost its leader to the deer year after year: no apical control holds the side shoots
+		// in a cone under it, and they spread into the hedged bush (trees.md 5aw).
+		if (browse_now && top - root.y < browse_height + 0.5f) {
+			cone = 0.0f;
 		}
 	}
 	const float fork_side = _fork_rule().side;
@@ -1832,6 +1846,12 @@ void TreeGenerator::_grow_year(int p_year) {
 			const bool stool = cut_height > 0.0f && cut_height <= 0.5f;
 			if ((buds[bi].sprout || (buds[bi].terminal && on.pole)) && p_year - last_cut_year <= (stool ? 10 : 4)) {
 				buds[bi].vigor *= stool ? (p_year - last_cut_year <= 4 ? 2.0f : 1.4f) : 1.6f;
+			}
+			if (browse_now && on.end().y - root.y < browse_height) {
+				// A browsed sapling's roots have grown on for years under a crown that is bitten back each winter: the
+				// stubs push strong shoots, as a cut stool does (compensatory regrowth; Bergman 2001, Hester et al. 2006),
+				// so the bush thickens instead of starving (trees.md 5aw).
+				buds[bi].vigor *= 1.0f + 1.6f * browse;
 			}
 			if (wind_exposure > 0.0f && buds[bi].terminal && on.order == 0) {
 				// Exposed trees stay short: the leader's shoots are shortened by the wind's drying
@@ -2005,6 +2025,25 @@ void TreeGenerator::_grow_year(int p_year) {
 				hd.normalize();
 				dir = (hd + Vector3(0.0f, MIN(dome_slope, 0.0f) - 0.06f, 0.0f)).normalized();
 			}
+			// Deer browse (trees.md 5aw): a shoot whose tip ends in reach is bitten off over the winter, and the buds behind
+			// the bite push next spring, two or three where one shoot stood; a browsed sapling grows wider, not taller,
+			// into a dense, flat-topped bush (hedged, the bonsai form of browsed regeneration; Gill 1992), until a
+			// leader gets its tip out of reach in a year it was missed, and escapes.
+			bool bitten = false;
+			// Every shoot that pokes out of the bush in reach is taken, the leader first; a deer browses a sapling over
+			// again through the winter, so under heavy pressure hardly a shoot is missed (browse 0.9: one in a thousand),
+			// and it pulls a whippy leader down to bite it, so a tip up to some 50 cm over the reach is still taken, less
+			// often. What is left is a tight ball of short stubs, clipped like topiary.
+			const float tip_h = (pos + dir * len).y - root.y;
+			if (browse_now && tip_h < browse_height + 0.5f) {
+				const float miss = 1.0f - browse;
+				const float p_bite = (1.0f - miss * miss * miss) * (1.0f - Math::smoothstep(browse_height + 0.1f, browse_height + 0.5f, tip_h));
+				bitten = _rand(0.0f, 1.0f) < p_bite;
+			}
+			if (bitten) {
+				// The bite takes most of the year's shoot, back near last year's wood; the stub keeps its lowest buds.
+				len *= _rand(0.15f, 0.4f);
+			}
 			const int idx = _add_node(parent, pos, dir, len, order, p_year, main);
 			if (k == 0 && bud.fork) {
 				nodes[idx].stem_level = from.stem_level + 1;
@@ -2016,6 +2055,24 @@ void TreeGenerator::_grow_year(int p_year) {
 				sprout_roots.insert(idx);
 			}
 			const bool last = k == count - 1;
+			if (bitten) {
+				// The buds behind the bite push next spring, two or three where one shoot stood (the stub's own lateral
+				// buds are these: no others). Capped, so a bush browsed for decades stays a few thousand shoots.
+				if (buds.size() < 2500) {
+					const int nb = 2 + int(_rand(0.0f, 1.0f) < 0.4f);
+					for (int q = 0; q < nb; q++) {
+						Bud t;
+						t.node = idx;
+						Vector3 sd = dir * 0.35f + _random_unit() * 0.9f;
+						t.dir = sd.length_squared() > 1e-6f ? sd.normalized() : dir;
+						// One carries the axis on; the others are side buds (a node has one main child, and the vigor
+						// pass feeds only it and the laterals).
+						t.terminal = q == 0;
+						buds.push_back(t);
+					}
+				}
+				break;
+			}
 			_add_lateral_buds(idx, roll, last);
 			if (last) {
 				Bud t;
@@ -3062,12 +3119,16 @@ void TreeGenerator::_palm_geometry(Builder &r_bark, Builder &r_leaves) {
 void TreeGenerator::_compute_radii() {
 	// A mat's many short shoots would pipe into logs: its limbs are thin for the foliage they
 	// carry, a few centimetres (trees.md 5s).
-	const float e = MAX(1.0f, params[PARAM_PIPE_EXPONENT] + 0.6f * krummholz);
+	// A hedged sapling (trees.md 5aw) is the same: hundreds of bitten stubs on stems a few centimetres thick.
+	const float hedged = browse_now && !nodes.is_empty() && _stem_top() < browse_height + 0.5f ? browse : 0.0f;
+	const float e = MAX(1.0f, params[PARAM_PIPE_EXPONENT] + 0.6f * krummholz + 0.6f * hedged);
 	const float tip = params[PARAM_TIP_RADIUS];
 	LocalVector<float> acc;
 	acc.resize(nodes.size());
+	int now = 0;
 	for (int i = 0; i < int(nodes.size()); i++) {
 		acc[i] = 0.0f;
+		now = MAX(now, nodes[i].born);
 	}
 	for (int i = int(nodes.size()) - 1; i >= 0; i--) {
 		Node &n = nodes[i];
@@ -3079,7 +3140,12 @@ void TreeGenerator::_compute_radii() {
 			if (n.main < 0 || nodes[n.main].removed) {
 				s += Math::pow(tip, e); // The shoot tip.
 			}
-			n.radius = MAX(n.radius, MAX(tip, Math::pow(s, 1.0f / e)));
+			float r = Math::pow(s, 1.0f / e);
+			if (hedged > 0.0f) {
+				// Its rings stay narrow, 1-2 mm a year (suppressed, browsed regeneration), whatever twigs it carries.
+				r = MIN(r, tip + 0.0018f * float(MAX(now - n.born, 0)));
+			}
+			n.radius = MAX(n.radius, MAX(tip, r));
 		}
 		if (n.parent >= 0) {
 			acc[n.parent] += Math::pow(n.radius, e);
@@ -3643,6 +3709,7 @@ static thread_local Vector3 tube_carry_nrm;
 static thread_local Vector3 tube_last_nrm;
 // Metres of bark one texture tile covers on the tree being built (_build_mesh sets it per bark family).
 static thread_local float tube_tile = 0.4f;
+static thread_local bool tube_no_tongue = false; // A beaver-felled log's butt: its cap stays flat under the gnawed cone (5au).
 // Off for tubes that are not bark or moss (resin runs), which keep their own flat colour.
 static thread_local bool tube_macro_tint = true;
 // Cork (docs, 18 Nov: thin limbs read busy): a limb thinner than the bark tile carries one tile
@@ -4007,7 +4074,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 			// mapped round the stem, the bark tiles converged on its centre as radial pleats.
 			const bool end_face = capped && Math::abs(slope) > 1.0f;
 			Vector3 tongue;
-			if (end_face) {
+			if (end_face && !tube_no_tongue) {
 				// A diffuse fracture (trees.md 5d): the fibres broke at different lengths, so the
 				// face stands out in tongues along the grain, a sector of the girth each, longest
 				// in the heartwood, shorter at the bark rim.
@@ -4652,20 +4719,32 @@ void TreeGenerator::_add_needle(Builder &r_b, const Vector3 &p_base, const Vecto
 	side = side.normalized() * 0.0018f;
 	const Vector3 n = side.cross(p_out).normalized();
 	const Vector3 tip = p_base + p_out * p_size;
+	// One resize per array (a needle tree adds hundreds of thousands): the same values as appending one by one.
 	const int base = r_b.verts.size();
-	r_b.verts.push_back(p_base - side);
-	r_b.verts.push_back(p_base + side);
-	r_b.verts.push_back(tip);
+	const int nb = r_b.normals.size(), cb = r_b.colors.size(), ub = r_b.uvs.size(), ib = r_b.indices.size();
+	r_b.verts.resize(base + 3);
+	r_b.normals.resize(nb + 3);
+	r_b.colors.resize(cb + 3);
+	r_b.uvs.resize(ub + 3);
+	r_b.indices.resize(ib + 3);
+	Vector3 *v = r_b.verts.ptrw() + base;
+	v[0] = p_base - side;
+	v[1] = p_base + side;
+	v[2] = tip;
+	Vector3 *nw = r_b.normals.ptrw() + nb;
+	Color *cw = r_b.colors.ptrw() + cb;
 	for (int i = 0; i < 3; i++) {
-		r_b.normals.push_back(n);
-		r_b.colors.push_back(p_color);
+		nw[i] = n;
+		cw[i] = p_color;
 	}
-	r_b.uvs.push_back(Vector2(0, 0));
-	r_b.uvs.push_back(Vector2(1, 0));
-	r_b.uvs.push_back(Vector2(0.5f, 1));
-	r_b.indices.push_back(base);
-	r_b.indices.push_back(base + 2);
-	r_b.indices.push_back(base + 1);
+	Vector2 *uw = r_b.uvs.ptrw() + ub;
+	uw[0] = Vector2(0, 0);
+	uw[1] = Vector2(1, 0);
+	uw[2] = Vector2(0.5f, 1);
+	int32_t *iw = r_b.indices.ptrw() + ib;
+	iw[0] = base;
+	iw[1] = base + 2;
+	iw[2] = base + 1;
 }
 
 // A Calligonum twiglet (trees.md 5ae): a green, leafless, jointed shoot about a millimetre thick,
@@ -6302,6 +6381,10 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 	const float top = CLAMP((up - 0.35f) / 0.5f, 0.0f, 1.0f) * 0.75f;
 	const float patch = 0.65f * moss_noise(p_pos * 2.2f, 0x6d6f7373u + uint32_t(seed)) + 0.35f * moss_noise(p_pos * 7.0f, 0x6d6f7374u);
 	float w = p_amount * MAX(foot, top) * (1.9f * patch - 0.25f);
+	if (beaver_now == BEAVER_GNAWED && !beaver_axis.is_empty()) {
+		// No moss on the fresh-gnawed wood (trees.md 5au).
+		w *= Math::smoothstep(0.985f, 0.998f, _beaver_waist_at(p_pos));
+	}
 	if (stilt_height > 0.0f && !fallen && !fallen_branch) {
 		// Stilt roots (trees.md 5at): the foot and roots stand over the sunken, wet floor; the moss sleeve starts
 		// above them (a sleeve over the hollow between the roots hung in the air as a sheet).
@@ -6363,6 +6446,10 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 		const float collar = 1.0f - Math::smoothstep(edge - 0.18f, edge + 0.18f, h + fray);
 		w = MAX(w, collar * MIN(1.0f, p_amount * 1.6f) * (0.95f + 0.25f * patch));
 		w *= 1.0f - 0.9f * bare;
+	}
+	if (lightning_years >= 0.0f) {
+		// The strike blew the moss off with the bark (trees.md 5ax).
+		w *= 1.0f - _fresh_strike_at(p_pos);
 	}
 	return p_clamp ? CLAMP(w, 0.0f, 1.0f) : w;
 }
@@ -8033,6 +8120,974 @@ void TreeGenerator::_fracture(const Vector3 &p_end, const Vector3 &p_dir, float 
 	w.end(part, p_r);
 }
 
+// What a lightning strike throws (trees.md 5ax): the steam in the outer sapwood blows the bark off the strip in
+// slabs and tears splinters of wood out with it, and they lie round the foot, most within ten metres, some thrown
+// thirty (Taylor 1964, Lightning damage to forest trees in Montana; Murray 1958). More fall on the scar's side. In
+// a year or two the litter covers them and they rot, so they are drawn for lightning_years under 2. Bark slabs keep
+// the stem's curl, bark side up or the pale inner face up as they fell; splinters are three-sided slivers of the
+// sapwood. Surface "wood" (two-sided), vertex colours.
+void TreeGenerator::_lightning_debris() {
+	if (lightning_years < 0.0f || lightning_years >= 2.0f || fallen || fallen_branch || nodes.is_empty()) {
+		return;
+	}
+	int wi = -1;
+	for (int i = 0; i < int(wounds.size()); i++) {
+		if (wounds[i].kind == WOUND_LIGHTNING && wounds[i].extra > 0.0f) {
+			wi = i;
+		}
+	}
+	if (wi < 0) {
+		return;
+	}
+	const Wound &wd = wounds[wi];
+	const Vector3 foot = nodes[0].start;
+	const float r0 = nodes[0].radius;
+	const float height = wd.s1 / 0.85f;
+	const float keep = 1.0f - Math::smoothstep(0.4f, 2.0f, lightning_years);
+	const int n = int((60.0f + 80.0f * CLAMP((height - 8.0f) / 20.0f, 0.0f, 1.0f)) * keep);
+	if (n <= 0) {
+		return;
+	}
+	RandomPCG rng;
+	rng.seed(uint64_t(seed) * 2654435761u + 0x64656272u);
+	const float tan_slope = Math::tan(ground_slope);
+	auto ground_y = [&](float p_x, float p_z) { return foot.y - tan_slope * (p_z - foot.z); };
+	const Color wood = _lightning_wood(lightning_years).srgb_to_linear();
+	const Color heart = wood.lerp(Color(0.42f, 0.33f, 0.24f).srgb_to_linear(), 0.25f);
+	const Color bark_c = bark_color.srgb_to_linear();
+	// The inner bark: pale pinkish tan when torn off live, browning as it dries.
+	const Color inner = Color(0.6f, 0.46f, 0.37f).srgb_to_linear().lerp(Color(0.45f, 0.33f, 0.25f).srgb_to_linear(), Math::smoothstep(0.02f, 0.5f, lightning_years));
+	Builder &w = wood_b;
+	Vector4i part;
+	w.begin(part);
+	auto push = [&](const Vector3 &p_p, const Vector2 &p_uv, const Color &p_c) {
+		w.verts.push_back(p_p);
+		w.normals.push_back(Vector3());
+		w.uvs.push_back(p_uv);
+		w.colors.push_back(p_c);
+		return w.verts.size() - 1;
+	};
+	auto quad = [&](int a, int b, int c, int d) {
+		w.indices.push_back(a);
+		w.indices.push_back(b);
+		w.indices.push_back(c);
+		w.indices.push_back(c);
+		w.indices.push_back(b);
+		w.indices.push_back(d);
+	};
+	for (int q = 0; q < n; q++) {
+		// Where it lies: round the foot, half of them toward the scar's side; distance mostly a few metres.
+		const float side = rng.randf() < 0.5f ? wd.az0 + (rng.randf() - 0.5f) * 1.6f : rng.randf() * float(Math::TAU);
+		const float u = rng.randf();
+		const float dist = r0 + 0.3f + MIN(0.6f * height, -Math::log(MAX(1.0f - u, 1e-4f)) * Math::lerp(1.5f, 0.12f * height, rng.randf()));
+		const float px = foot.x + Math::cos(side) * dist, pz = foot.z + Math::sin(side) * dist;
+		const float yaw = rng.randf() * float(Math::TAU);
+		// Lying along yaw on the ground, tipped a little where it fell across litter.
+		const Vector3 along(Math::cos(yaw), 0.0f, Math::sin(yaw));
+		const Vector3 across(-along.z, 0.0f, along.x);
+		const float tip = (rng.randf() - 0.5f) * 0.15f;
+		const float y0 = ground_y(px, pz);
+		const Vector3 c0(px, y0, pz);
+		auto at = [&](float p_a, float p_b, float p_h) {
+			const Vector3 p = c0 + along * p_a + across * p_b;
+			// On the slope, and the piece's own small tilt along its length.
+			return Vector3(p.x, ground_y(p.x, p.z) + p_h + tip * p_a, p.z);
+		};
+		if (rng.randf() < 0.6f) {
+			// A bark slab: a curled sheet as thick as the bark, arched over the ground or lying in its hollow.
+			const float len = Math::lerp(0.1f, 0.9f, rng.randf() * rng.randf());
+			const float wid = Math::lerp(0.03f, 0.14f, rng.randf());
+			const float th = MIN(0.004f + 0.02f * r0, 0.025f);
+			const float curl = 0.5f * MIN(1.0f, wid / MAX(r0, 0.05f)); // Half the arc (radians) it spanned: it flattens as it dries.
+			const bool bark_up = rng.randf() < 0.65f;
+			const float tint = Math::lerp(0.75f, 1.1f, rng.randf());
+			const float wsalt = rng.randf() * 50.0f;
+			const int cols = 4, rows = MAX(2, int(len / 0.04f));
+			const int base = w.verts.size();
+			for (int face = 0; face < 2; face++) {
+				for (int j = 0; j <= rows; j++) {
+					const float f = float(j) / rows;
+					const float a = (f - 0.5f) * len;
+					// The broken ends ragged: each column a little longer or shorter.
+					for (int c = 0; c <= cols; c++) {
+						const float g = float(c) / cols - 0.5f;
+						// Torn along the grain: the width wanders along the slab and narrows to its torn ends.
+						const float wl = (0.55f + 0.6f * moss_noise(Vector3(a * 9.0f, wsalt, float(c > cols / 2)), 0x736c6162u)) * Math::lerp(0.55f, 1.0f, Math::sin(float(Math::PI) * Math::lerp(0.1f, 0.9f, f)));
+						const float b = g * wid * wl;
+						const float rag = (j == 0 || j == rows) ? (rng.randf() - 0.5f) * 0.3f * wid : 0.0f;
+						// Arch: centre high when bark-up (the curl's back up), the edges high when inner-up.
+						const float arc = 0.5f * curl * wid * (0.25f - g * g) * (bark_up ? 1.0f : -1.0f) + (bark_up ? 0.0f : 0.125f * curl * wid);
+						const float h = 0.002f + MAX(arc, 0.0f) + (face == 0 ? th : 0.0f);
+						const bool up_bark = (face == 0) == bark_up;
+						push(at(a + rag * (j == 0 ? -1.0f : 1.0f), b, h), Vector2(g * wid / 0.15f + 0.3f * q, a / 0.15f), Color((up_bark ? bark_c : inner).r * tint, (up_bark ? bark_c : inner).g * tint, (up_bark ? bark_c : inner).b * tint, 1.0f));
+					}
+				}
+			}
+			const int fv = (rows + 1) * (cols + 1);
+			for (int j = 0; j < rows; j++) {
+				for (int c = 0; c < cols; c++) {
+					const int a0 = base + j * (cols + 1) + c;
+					quad(a0, a0 + 1, a0 + cols + 1, a0 + cols + 2);
+					const int b0 = a0 + fv;
+					quad(b0, b0 + cols + 1, b0 + 1, b0 + cols + 2);
+				}
+			}
+			// The edges: the bark's thickness round the rim.
+			for (int j = 0; j < rows; j++) {
+				for (int e = 0; e < 2; e++) {
+					const int c = e == 0 ? 0 : cols;
+					const int t0 = base + j * (cols + 1) + c, t1 = t0 + cols + 1;
+					quad(t0, t1, t0 + fv, t1 + fv);
+				}
+			}
+			for (int c = 0; c < cols; c++) {
+				for (int e = 0; e < 2; e++) {
+					const int j = e == 0 ? 0 : rows;
+					const int t0 = base + j * (cols + 1) + c, t1 = t0 + 1;
+					quad(t0, t1, t0 + fv, t1 + fv);
+				}
+			}
+		} else {
+			// A splinter of sapwood: a three-sided sliver, wide across, thin, pointed at both ends.
+			const float len = Math::lerp(0.12f, 0.9f, rng.randf() * rng.randf());
+			const float wid = len * Math::lerp(0.015f, 0.05f, rng.randf());
+			Color sc = wood.lerp(heart, rng.randf() * 0.6f);
+			const float st = Math::lerp(0.75f, 1.05f, rng.randf());
+			sc = Color(sc.r * st, sc.g * st, sc.b * st, 1.0f);
+			const int segs = 5;
+			const int base = w.verts.size();
+			for (int e = 0; e <= segs; e++) {
+				const float f = float(e) / segs;
+				const float a = (f - 0.5f) * len;
+				const float taper = Math::sin(float(Math::PI) * Math::lerp(0.08f, 0.92f, f));
+				const float ww = wid * taper;
+				const float bow = 0.04f * len * (0.25f - (f - 0.5f) * (f - 0.5f)) * (rng.randf() < 0.5f ? 1.0f : 0.0f);
+				const float vv = a / 0.15f;
+				push(at(a, -ww, 0.001f + bow), Vector2(0.0f + 0.37f * q, vv), sc);
+				push(at(a, ww, 0.001f + bow), Vector2(0.15f + 0.37f * q, vv), sc);
+				push(at(a, 0.15f * ww, 0.001f + bow + 0.45f * ww), Vector2(0.08f + 0.37f * q, vv), heart);
+			}
+			for (int e = 0; e < segs; e++) {
+				for (int sd = 0; sd < 3; sd++) {
+					const int a0 = base + e * 3 + sd, a1 = base + e * 3 + (sd + 1) % 3;
+					quad(a0, a1, a0 + 3, a1 + 3);
+				}
+			}
+		}
+	}
+	Vector3 *nw = w.normals.ptrw();
+	const Vector3 *vw = w.verts.ptr();
+	for (int64_t i = part.x; i + 2 < w.indices.size(); i += 3) {
+		const int a = w.indices[i], b = w.indices[i + 1], c = w.indices[i + 2];
+		Vector3 fn = (vw[c] - vw[a]).cross(vw[b] - vw[a]);
+		nw[a] += fn;
+		nw[b] += fn;
+		nw[c] += fn;
+	}
+	for (int v = part.z; v < w.verts.size(); v++) {
+		nw[v] = nw[v].length_squared() > 1e-20f ? nw[v].normalized() : Vector3(0, 1, 0);
+	}
+	w.end(part, 0.05f);
+}
+
+// Nurse logs (trees.md 5aw). In wet spruce and hemlock forests most seedlings come up on rotting logs, not on the
+// forest floor, where litter and moss smother them and pathogens wait (Harmon and Franklin 1989, Picea-Tsuga forests of
+// Oregon and Washington: logs a few percent of the floor carried most of the seedlings; Zielonka 2006 for Norway spruce
+// in the Tatra: spruce comes in on logs from decay class 3, once the wood is soft and under moss). They stand along
+// the log's top, densest where the moss is; the seedlings are many and small, the few that live on grow, and their
+// roots run over the log and down its flanks to the soil (later the tree stands on stilts over the gap: nurse_stilt).
+void TreeGenerator::_nurse_seedlings(Builder &r_bark, Builder &r_leaves) {
+	if (nurse_seedlings <= 0.0f || !fallen || fallen_branch || decay_class < 3 || deadwood_stem < 0 || params[PARAM_NEEDLES] <= 0.5f) {
+		return;
+	}
+	float length = 0.0f;
+	for (int k = 0; k + 1 < DEADWOOD_SAMPLES; k++) {
+		length += deadwood_line[k].distance_to(deadwood_line[k + 1]);
+	}
+	if (length < 1.0f) {
+		return;
+	}
+	RandomPCG nr;
+	nr.seed(uint64_t(seed) * 0x9e3779b97f4a7c15ull + 0x6e757273u);
+	const Color shoot_bark = bark_color.lerp(Color(0.4f, 0.27f, 0.15f), 0.6f).srgb_to_linear();
+	const Color green = leaf_color.lerp(Color(0.16f, 0.3f, 0.07f), 0.45f);
+	const float ground = nodes[0].start.y;
+	// Class 3 logs carry a carpet of small ones; by class 4-5 fewer, taller saplings (self-thinning on the log).
+	const float older = Math::smoothstep(3.0f, 5.0f, float(decay_class));
+	const int count = int(nurse_seedlings * length * Math::lerp(7.0f, 3.5f, older) * Math::lerp(0.8f, 1.2f, nr.randf()));
+	const int lean_bins = DEADWOOD_SAMPLES - 1;
+	for (int q = 0; q < count; q++) {
+		// Along the log, away from its two ends (the broken ends are hard or crumbled).
+		const float t = Math::lerp(0.08f, 0.94f, nr.randf());
+		const float f = t * lean_bins;
+		const int k = MIN(int(f), lean_bins - 1);
+		const float ft = f - k;
+		const Vector3 c = deadwood_line[k].lerp(deadwood_line[k + 1], ft);
+		const float g = Math::lerp(deadwood_girth[k], deadwood_girth[k + 1], ft);
+		if (g < 0.1f) {
+			continue;
+		}
+		const Vector3 along = (deadwood_line[k + 1] - deadwood_line[k]).normalized();
+		Vector3 side = along.cross(Vector3(0, 1, 0));
+		side = side.length_squared() > 1e-6f ? side.normalized() : Vector3(0, 0, 1);
+		const Vector3 up = side.cross(along).normalized() * (side.cross(along).y >= 0.0f ? 1.0f : -1.0f);
+		// On the top, within about 50 degrees of it.
+		const float th = (nr.randf() - 0.5f) * 1.7f * Math::lerp(0.6f, 1.0f, nr.randf());
+		const Vector3 nrm = (up * Math::cos(th) + side * Math::sin(th)).normalized();
+		const Vector3 at = c + nrm * (g * 0.97f);
+		if (at.y - ground < 0.1f) {
+			continue;
+		}
+		// Heights: most a few centimetres, a long tail up to over a metre on old logs.
+		const float u = nr.randf();
+		const float h = Math::lerp(0.03f, 0.12f, nr.randf()) + u * u * u * u * Math::lerp(0.35f, 1.6f, older);
+		const Vector3 lean = Vector3(nr.randf() - 0.5f, 0.0f, nr.randf() - 0.5f) * 0.2f;
+		const float r = 0.0012f + 0.006f * h;
+		LocalVector<Vector3> sp;
+		LocalVector<float> sr;
+		sp.push_back(at - nrm * 0.01f);
+		sr.push_back(r);
+		sp.push_back(at + (Vector3(0, 1, 0) + lean * 0.5f).normalized() * (h * 0.5f));
+		sr.push_back(r * 0.7f);
+		sp.push_back(at + (Vector3(0, 1, 0) + lean).normalized() * h);
+		sr.push_back(r * 0.25f);
+		r_bark.bone = 0;
+		Vector4i part;
+		r_bark.begin(part);
+		_tube(r_bark, sp, sr, 3, 0.0f, shoot_bark);
+		r_bark.end(part, r);
+		// A sapling's roots over the log: down both flanks toward the soil, thin and pale-barked.
+		if (h > 0.3f) {
+			const int nroots = 2 + int(nr.randf() * 2.5f);
+			for (int j = 0; j < nroots; j++) {
+				const float sgn = (j & 1) ? 1.0f : -1.0f;
+				const float a0 = (nr.randf() - 0.5f) * 0.6f;
+				LocalVector<Vector3> rp;
+				LocalVector<float> rr;
+				const float reach = MIN(1.0f, 0.25f + 0.6f * h);
+				for (int m = 0; m <= 5; m++) {
+					const float phi = th + sgn * reach * 1.6f * float(m) / 5.0f;
+					const Vector3 rn = (up * Math::cos(phi) + side * Math::sin(phi)).normalized();
+					rp.push_back(c + along * (a0 * g * float(m) / 5.0f) + rn * (g * 0.985f + 0.004f));
+					rr.push_back(MAX(r * 0.45f * (1.0f - 0.7f * float(m) / 5.0f), 0.0015f));
+				}
+				Vector4i rpart;
+				r_bark.begin(rpart);
+				_tube(r_bark, rp, rr, 3, 0.0f, shoot_bark);
+				r_bark.end(rpart, rr[0]);
+			}
+		}
+		// Needles all up the leader and, past about 20 cm, on whorls of side shoots (spruce, hemlock and fir alike).
+		r_leaves.bone = 0;
+		Vector4i lp;
+		r_leaves.begin(lp);
+		const float nl = MIN(params[PARAM_LEAF_SIZE], 0.012f + 0.05f * h) * Math::lerp(0.85f, 1.1f, nr.randf());
+		const int nn = 16 + int(140.0f * MIN(h, 0.8f));
+		for (int m = 0; m < nn; m++) {
+			const float uu = Math::lerp(0.2f, 1.0f, float(m) / nn);
+			const Vector3 p = uu < 0.5f ? sp[0].lerp(sp[1], uu * 2.0f) : sp[1].lerp(sp[2], uu * 2.0f - 1.0f);
+			const float az = m * 2.39996f;
+			_add_needle(r_leaves, p, Vector3(Math::cos(az), 0.7f, Math::sin(az)).normalized(), nl, green);
+		}
+		if (h > 0.2f) {
+			const int whorls = MIN(1 + int(h / 0.18f), 7);
+			for (int wv = 0; wv < whorls; wv++) {
+				const float wt = Math::lerp(0.35f, 0.9f, float(wv) / MAX(whorls - 1, 1));
+				const Vector3 wp = wt < 0.5f ? sp[0].lerp(sp[1], wt * 2.0f) : sp[1].lerp(sp[2], wt * 2.0f - 1.0f);
+				const float bl = h * 0.35f * (1.0f - wt) + 0.03f;
+				for (int b = 0; b < 4; b++) {
+					const float az = float(Math::TAU) * (b + 0.3f * nr.randf()) / 4.0f + wv * 0.7f;
+					const Vector3 bd = Vector3(Math::cos(az), 0.15f, Math::sin(az)).normalized();
+					LocalVector<Vector3> bp;
+					LocalVector<float> brr;
+					bp.push_back(wp);
+					brr.push_back(r * 0.3f);
+					bp.push_back(wp + bd * bl);
+					brr.push_back(0.001f);
+					Vector4i bpart;
+					r_bark.begin(bpart);
+					_tube(r_bark, bp, brr, 3, 0.0f, shoot_bark);
+					r_bark.end(bpart, r * 0.3f);
+					const int bn = 6 + int(bl * 160.0f);
+					for (int m = 0; m < bn; m++) {
+						const Vector3 p = wp.lerp(wp + bd * bl, Math::lerp(0.15f, 1.0f, float(m) / bn));
+						const float a2 = m * 2.39996f;
+						const Vector3 no = (bd * 0.5f + Vector3(Math::cos(a2) * 0.6f, 0.45f, Math::sin(a2) * 0.6f)).normalized();
+						_add_needle(r_leaves, p, no, nl, green);
+					}
+				}
+			}
+		}
+		r_leaves.end(lp, 0.0f);
+		leaf_count += 1;
+	}
+}
+
+// Deer browse (trees.md 5aw): the foliage in reach of the deer is eaten, up to a line as level as a trimmed hedge's
+// underside (the browse line of parks and deer-heavy woods: about 1.8 m for red deer, standing on their hind legs to
+// 2 m; fallow 1.6 m; roe 1.1 m; Gill 1992, Forestry Commission Practice Note 6, Deer Initiative field signs). The line
+// wanders a few centimetres; under it a little survives where the pressure is lighter.
+float TreeGenerator::_browse_keep(const Vector3 &p_pos) const {
+	if (browse <= 0.0f || nodes.is_empty() || fallen || fallen_branch) {
+		return 1.0f;
+	}
+	if (browse_top < browse_height + 0.5f) {
+		// A hedged bush (its top still in reach): browsed all over through the year, but in leaf; a little thinned.
+		return 1.0f - 0.3f * browse;
+	}
+	const float h = p_pos.y - nodes[0].start.y;
+	if (h > browse_height + 0.1f) {
+		return 1.0f;
+	}
+	const float line = browse_height + 0.1f * (moss_noise(p_pos * 1.7f, 0x62726f77u) - 0.5f);
+	return 1.0f - browse * (1.0f - Math::smoothstep(line - 0.08f, line + 0.02f, h));
+}
+
+// A leaf at p_pos kept by the browse (trees.md 5aw): a per-leaf draw against _browse_keep, from the position so it holds
+// across LODs and rebuilds.
+static inline bool browse_kept(float p_keep, const Vector3 &p_pos) {
+	if (p_keep >= 1.0f) {
+		return true;
+	}
+	const uint32_t h = hash_murmur3_one_32(uint32_t(int32_t(p_pos.x * 997.0f)) ^ (uint32_t(int32_t(p_pos.y * 991.0f)) * 0x9e3779b9u) ^ (uint32_t(int32_t(p_pos.z * 983.0f)) * 0x85ebca6bu), 0x62726f77u);
+	return float(h & 0xffffu) / 65535.0f < p_keep;
+}
+
+// Flood marks (trees.md 5av). Floodwater carries fine silt and clay; as it stands and falls it leaves a film on
+// everything under the waterline, a pale brown-grey crust once dry, thickest in the bark's furrows, with a sharp top
+// at the high-water mark: the line hydrologists survey as a high-water mark (USGS, Koenig et al. 2016,
+// Identifying and preserving high-water mark data). The current piles up against a stem's upstream face and drops
+// in its lee, so the line stands a few centimetres higher upstream. Rain washes the film off the plates within a
+// year or two; the furrows keep it longer. Debris the flood carried (twigs, reeds, grass: flood wrack) catches on
+// low limbs at the waterline and piles against the upstream side of the stem (Hupp 1988, dendrogeomorphic flood
+// evidence; Ballesteros-Canovas et al. 2015, scars and debris on riparian trees).
+float TreeGenerator::_silt_at(const Vector3 &p_pos, const Vector3 &p_normal) const {
+	if (flood_height <= 0.0f || fallen || fallen_branch || nodes.is_empty()) {
+		return 0.0f;
+	}
+	const float h = p_pos.y - nodes[0].start.y;
+	const float line = flood_height + 0.06f * MAX(-p_normal.x, 0.0f) - 0.04f * MAX(p_normal.x, 0.0f) + 0.05f * (moss_noise(p_pos * Vector3(3.0f, 0.5f, 3.0f), 0x73696c74u) - 0.5f);
+	const float below = 1.0f - Math::smoothstep(line - 0.012f, line + 0.012f, h);
+	if (below <= 0.0f) {
+		return 0.0f;
+	}
+	// Washed off over the years (the shader keeps it in the furrows longest).
+	return below * Math::lerp(1.0f, 0.3f, Math::smoothstep(0.3f, 3.0f, flood_years));
+}
+
+// Flood wrack (trees.md 5av): bundles of twigs and reed and grass caught over the low limbs at the waterline, lying
+// along the flow (+X) and trailing down, and a heap of sticks against the stem's upstream face (-X). Grey-brown and
+// dried; older wrack mostly gone.
+void TreeGenerator::_flood_wrack() {
+	if (flood_height <= 0.0f || fallen || fallen_branch || nodes.size() < 2 || flood_years > 4.0f) {
+		return;
+	}
+	Builder &w = wood_b;
+	RandomPCG wr;
+	wr.seed(uint64_t(seed) * 0x2545f4914f6cdd1dull + 0x77726163u);
+	const float ground = nodes[0].start.y;
+	const float keep = 1.0f - Math::smoothstep(1.0f, 4.0f, flood_years);
+	const Color twig = Color(0.42f, 0.37f, 0.3f).srgb_to_linear();
+	const Color straw = Color(0.6f, 0.55f, 0.42f).srgb_to_linear();
+	auto stick = [&](const Vector3 &p_a, const Vector3 &p_b, float p_r, const Color &p_c, bool p_flat) {
+		// A thin four-sided stick, or a flat blade (two-sided wood material), its own normals.
+		const Vector3 d = (p_b - p_a).normalized();
+		Vector3 u = d.cross(Vector3(0, 1, 0));
+		if (u.length_squared() < 1e-4f) {
+			u = d.cross(Vector3(1, 0, 0));
+		}
+		u.normalize();
+		const Vector3 v = d.cross(u).normalized();
+		Vector4i part;
+		w.begin(part);
+		const int sides = p_flat ? 2 : 4;
+		const int s0 = w.verts.size();
+		const float len = p_a.distance_to(p_b);
+		for (int e = 0; e <= 1; e++) {
+			const Vector3 c = e ? p_b : p_a;
+			const float r = p_r * (e ? 0.6f : 1.0f);
+			for (int k = 0; k < sides; k++) {
+				const float a = float(Math::TAU) * k / sides;
+				const Vector3 off = p_flat ? u * (k == 0 ? -r : r) : (u * Math::cos(a) + v * Math::sin(a)) * r;
+				w.verts.push_back(c + off);
+				w.normals.push_back(p_flat ? v : (u * Math::cos(a) + v * Math::sin(a)));
+				w.uvs.push_back(Vector2(float(k) / sides * 0.2f, e ? len / MAX(p_r * 8.0f, 0.01f) : 0.0f));
+				w.colors.push_back(p_c);
+			}
+		}
+		for (int k = 0; k < (p_flat ? 1 : sides); k++) {
+			const int k1 = (k + 1) % sides;
+			w.indices.push_back(s0 + k);
+			w.indices.push_back(s0 + sides + k);
+			w.indices.push_back(s0 + k1);
+			w.indices.push_back(s0 + k1);
+			w.indices.push_back(s0 + sides + k);
+			w.indices.push_back(s0 + sides + k1);
+		}
+		w.end(part, p_r);
+	};
+	auto jitter = [&](const Color &p_c) {
+		const float t = Math::lerp(0.8f, 1.15f, wr.randf());
+		return Color(p_c.r * t, p_c.g * t, p_c.b * t);
+	};
+	// Bundles over the limbs that cross the waterline (within 20 cm of it), at most six.
+	int bundles = 0;
+	for (int i = 1; i < int(nodes.size()) && bundles < 6; i++) {
+		const Node &n = nodes[i];
+		if (n.removed || n.order < 1 || n.radius < 0.008f || n.radius > 0.1f) {
+			continue;
+		}
+		const float y0 = n.start.y - ground, y1 = n.end().y - ground;
+		const float lo = MIN(y0, y1), hi = MAX(y0, y1);
+		if (hi < flood_height - 0.2f || lo > flood_height + 0.05f) {
+			continue;
+		}
+		if (wr.randf() > 0.5f * keep) {
+			continue;
+		}
+		const float t = Math::abs(y1 - y0) > 1e-3f ? CLAMP((flood_height - 0.05f - y0) / (y1 - y0), 0.0f, 1.0f) : 0.5f;
+		const Vector3 c = n.start.lerp(n.end(), t) + Vector3(0, n.radius, 0);
+		w.bone = i < int(node_bone.size()) ? node_bone[i] : 0;
+		const int count = 6 + int(wr.rand() % 10);
+		for (int q = 0; q < count; q++) {
+			// Lying across the limb along the flow, draped: both ends a little lower.
+			const float len = Math::lerp(0.12f, 0.5f, wr.randf());
+			const Vector3 dir = Vector3(1.0f, Math::lerp(-0.25f, 0.1f, wr.randf()), Math::lerp(-0.45f, 0.45f, wr.randf())).normalized();
+			const Vector3 mid = c + Vector3(Math::lerp(-0.08f, 0.04f, wr.randf()), wr.randf() * 0.03f, Math::lerp(-0.04f, 0.04f, wr.randf()));
+			stick(mid - dir * (len * 0.55f) - Vector3(0, len * 0.12f, 0), mid + dir * (len * 0.45f) - Vector3(0, len * 0.1f, 0), Math::lerp(0.002f, 0.006f, wr.randf()), jitter(twig), false);
+		}
+		const int blades = 8 + int(wr.rand() % 14);
+		for (int q = 0; q < blades; q++) {
+			// Grass and reed blades hanging from the bundle, combed downstream.
+			const Vector3 top = c + Vector3(Math::lerp(-0.12f, 0.08f, wr.randf()), 0.01f, Math::lerp(-0.05f, 0.05f, wr.randf()));
+			const float len = Math::lerp(0.08f, 0.3f, wr.randf());
+			const Vector3 hang = Vector3(Math::lerp(0.2f, 0.6f, wr.randf()), -1.0f, Math::lerp(-0.2f, 0.2f, wr.randf())).normalized();
+			stick(top, top + hang * len, Math::lerp(0.002f, 0.004f, wr.randf()), jitter(straw), true);
+		}
+		bundles++;
+	}
+	{
+		// Grass and reed plastered round the stem's upstream face at the line, combed round it by the current.
+		int k = -1;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			if (!nodes[i].removed && nodes[i].parent == 0 && (k < 0 || nodes[i].radius > nodes[k].radius)) {
+				k = i;
+			}
+		}
+		while (k >= 0 && nodes[k].end().y - ground < flood_height && nodes[k].main >= 0 && !nodes[nodes[k].main].removed) {
+			k = nodes[k].main;
+		}
+		if (k >= 0 && nodes[k].start.y - ground <= flood_height && nodes[k].end().y - ground >= flood_height - 0.05f) {
+			const Node &n = nodes[k];
+			const float t = CLAMP((flood_height - (n.start.y - ground)) / MAX(n.end().y - n.start.y, 1e-3f), 0.0f, 1.0f);
+			const Vector3 c = n.start.lerp(n.end(), t);
+			// Out past the bark's relief (about a tenth of the radius on a furrowed willow).
+			const float r = n.radius * 1.12f + 0.01f;
+			w.bone = k < int(node_bone.size()) ? node_bone[k] : 0;
+			const int blades = int((20 + int(wr.rand() % 30)) * keep);
+			for (int q = 0; q < blades; q++) {
+				const float a = float(Math::PI) + Math::lerp(-1.3f, 1.3f, wr.randf()); // Round -X.
+				const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
+				const Vector3 top = c + out * r + Vector3(0, -wr.randf() * 0.06f, 0);
+				// Down and round the stem toward its lee, lying on the bark.
+				const Vector3 tang = Vector3(0, 1, 0).cross(out) * (Math::sin(a) > 0.0f ? -1.0f : 1.0f);
+				const float len = Math::lerp(0.08f, 0.25f, wr.randf());
+				const Vector3 dir = (Vector3(0, -1.0f, 0) + tang * Math::lerp(0.2f, 0.9f, wr.randf())).normalized();
+				stick(top, top + dir * len + out * 0.01f, Math::lerp(0.002f, 0.004f, wr.randf()), jitter(straw), true);
+			}
+		}
+	}
+	if (flood_height < 0.25f || wr.randf() > 0.9f * keep) {
+		return;
+	}
+	// The heap against the upstream face: sticks lying across the flow, stacked to a third of the depth.
+	float r0 = 0.1f;
+	for (const Node &n : nodes) {
+		if (!n.removed && n.parent == 0) {
+			r0 = MAX(r0, n.radius);
+		}
+	}
+	w.bone = node_bone.size() > 0 ? node_bone[0] : 0;
+	const Vector3 foot = nodes[0].start;
+	const float top = MIN(flood_height * 0.35f, 0.4f);
+	const int count = 14 + int(wr.rand() % 14);
+	for (int q = 0; q < count; q++) {
+		const float hh = top * Math::pow(wr.randf(), 1.5f);
+		const float len = Math::lerp(0.2f, 0.9f, wr.randf());
+		// Pressed against the stem across the current, curving round it a little.
+		const float side = Math::lerp(-1.0f, 1.0f, wr.randf());
+		const Vector3 c = foot + Vector3(-(r0 * 1.15f + Math::lerp(0.0f, 0.12f, wr.randf()) + 0.06f * (1.0f - hh / MAX(top, 0.01f))), hh + 0.01f, side * r0 * 0.5f);
+		const Vector3 dir = Vector3(Math::lerp(-0.25f, 0.25f, wr.randf()), Math::lerp(-0.05f, 0.05f, wr.randf()), 1.0f).normalized();
+		stick(c - dir * len * 0.5f, c + dir * len * 0.5f, Math::lerp(0.004f, 0.015f, wr.randf()), jitter(twig), false);
+	}
+	for (int q = 0; q < count; q++) {
+		const Vector3 c = foot + Vector3(-(r0 * 1.1f + wr.randf() * 0.1f), top * wr.randf(), Math::lerp(-1.0f, 1.0f, wr.randf()) * r0 * 0.7f);
+		const Vector3 dir = Vector3(Math::lerp(-0.3f, 0.3f, wr.randf()), Math::lerp(-0.4f, 0.2f, wr.randf()), 1.0f).normalized();
+		stick(c, c + dir * Math::lerp(0.1f, 0.3f, wr.randf()), 0.003f, jitter(straw), true);
+	}
+}
+
+// Beaver work (trees.md 5au). A beaver fells a stem by gnawing a groove all round it into an hourglass, working
+// from the water side and widening the cut over nights, until the thin core breaks (field guides, e.g.
+// bear-tracker.com's beaver sign; Badyaev, National Wildlife 2015). Most stems cut are thin: a mean 12-14 cm
+// across against 26 cm for those left, almost none over 10 m from the water (Dieter and McCabe 1989, Big Sioux
+// River). The felled stem's limbs are gnawed off and carried away and its bark eaten; half the stumps resprout
+// (Dieter and McCabe: 52% of damaged trees resprouted or stayed alive). Some stems are left part gnawed, standing
+// on an hourglass waist.
+
+// Fresh-cut willow, aspen and birch wood is cream, turning orange-brown within weeks as it oxidises, and grey in a
+// few years in the weather (sRGB).
+Color TreeGenerator::_beaver_wood(float p_years) {
+	const Color cream = Color(0.84f, 0.74f, 0.55f);
+	const Color tan = Color(0.66f, 0.47f, 0.29f);
+	const Color grey = Color(0.5f, 0.48f, 0.44f);
+	return cream.lerp(tan, Math::smoothstep(0.02f, 0.25f, p_years)).lerp(grey, Math::smoothstep(1.0f, 4.0f, p_years));
+}
+
+// Wood a lightning strike bared (trees.md 5ax): the outer sapwood is cream-white when the bark has just blown off,
+// yellows to straw in the first months as it dries and oxidises, and greys in the weather over two to five years
+// (sRGB).
+// One kind of a species' variants, grown with this generator as _stand_species set it up (the caller restores its
+// state): the five fire bands on the first five seeds (trees.md 5ah), the first seed struck fresh and healing (5ax),
+// the first seed browsed (5az).
+TypedArray<Mesh> TreeGenerator::_variant_kind_meshes(int p_kind, Preset p_preset, Form p_form, int p_base_seed, float p_base_cover, const Vector3 &p_first_crown) {
+	TypedArray<Mesh> out;
+	if (p_kind == VARIANT_FIRE) {
+		for (int b = 0; b < 5; b++) {
+			_setup_variant(p_preset, p_form, b, p_base_seed, p_base_cover);
+			lightning_years = -1.0f;
+			fire_years = FIRE_BAND_YEARS[b];
+			Ref<ArrayMesh> mesh = generate();
+			if (mesh.is_valid()) {
+				mesh->set_meta("crown", Vector3(height, crown_base, crown_radius));
+				out.push_back(mesh);
+			}
+		}
+	} else if (p_kind == VARIANT_STRIKE) {
+		if (p_first_crown.x <= 8.0f) {
+			return out;
+		}
+		for (int b = 0; b < 2; b++) {
+			_setup_variant(p_preset, p_form, 0, p_base_seed, p_base_cover);
+			fire_years = -1.0f;
+			lightning_years = STRIKE_BAND_YEARS[b];
+			Ref<ArrayMesh> mesh = generate();
+			if (mesh.is_valid() && mesh->has_meta(SNAME("tree_lightning_years"))) {
+				mesh->set_meta("crown", Vector3(height, crown_base, crown_radius));
+				out.push_back(mesh);
+			}
+		}
+		lightning_years = -1.0f;
+	} else if (p_kind == VARIANT_BROWSE) {
+		_setup_variant(p_preset, p_form, 0, p_base_seed, p_base_cover);
+		fire_years = -1.0f;
+		lightning_years = -1.0f;
+		_browse_variant_setup(p_form);
+		Ref<ArrayMesh> mesh = generate();
+		if (mesh.is_valid()) {
+			mesh->set_meta("crown", Vector3(height, crown_base, crown_radius));
+			mesh->set_meta(SNAME("tree_browse"), browse);
+			out.push_back(mesh);
+		}
+	}
+	return out;
+}
+
+// Deferred variants: the kinds asked for (variant_task_kinds), in the stand's order.
+void TreeGenerator::_variant_task(void *p_self) {
+	TreeGenerator *self = static_cast<TreeGenerator *>(p_self);
+	self->far_leaves = self->variant_far_leaves;
+	static const int order[3] = { VARIANT_FIRE, VARIANT_STRIKE, VARIANT_BROWSE };
+	for (int k = 0; k < 3; k++) {
+		if (self->variant_task_kinds & order[k]) {
+			self->variant_meshes[k] = self->_variant_kind_meshes(order[k], self->preset, self->near_form, self->near_base_seed, self->near_base_cover, self->variant_first_crown);
+		}
+	}
+	self->far_leaves = false;
+	self->nodes.reset(); // Keep the copy small between requests.
+}
+
+int TreeGenerator::request_variants(const Ref<PlantSpecies> &p_species, int p_kinds) {
+	ERR_FAIL_COND_V(p_species.is_null(), 0);
+	// Grown here, on the calling (main) thread. On a worker it stalled a streamed field: generate() runs its own group
+	// tasks and a field clearing its tiles at the same time never got them back (trees.md 5bc; to retry on the PC).
+	const int want = p_kinds & variant_kinds & ~variant_built;
+	if (want) {
+		variant_task_kinds = want;
+		_variant_task(this);
+		variant_built |= want;
+		variant_task_kinds = 0;
+	}
+	// Append what is grown and the species still lacks, in the stand's order (living, fire, struck, browsed).
+	const int deferred = int(p_species->get_meta(SNAME("tree_variants_deferred"), 0));
+	if (deferred & variant_built) {
+		const int living = int(p_species->get_meta(SNAME("tree_variant_living"), 0));
+		const int has = (variant_kinds & ~deferred) | (deferred & variant_built);
+		const TypedArray<Mesh> old = p_species->get_meshes();
+		TypedArray<Mesh> meshes;
+		for (int i = 0; i < MIN(living, old.size()); i++) {
+			meshes.push_back(old[i]);
+		}
+		static const int order[3] = { VARIANT_FIRE, VARIANT_STRIKE, VARIANT_BROWSE };
+		int counts[3] = { 0, 0, 0 };
+		for (int k = 0; k < 3; k++) {
+			if (has & order[k]) {
+				meshes.append_array(variant_meshes[k]);
+				counts[k] = variant_meshes[k].size();
+			}
+		}
+		p_species->set_meshes(meshes);
+		p_species->set_meta(SNAME("tree_variants_deferred"), deferred & ~variant_built);
+		const Ref<TreeGenerator> ns = p_species->get_meta(SNAME("_near_mesh_source"), Ref<TreeGenerator>());
+		if (ns.is_valid()) {
+			ns->near_living = living;
+			ns->near_fire_count = counts[0];
+			ns->near_strike_count = counts[1];
+			ns->near_fire_meshes = (has & VARIANT_FIRE) ? variant_meshes[0] : TypedArray<Mesh>();
+			ns->near_strike_meshes = (has & VARIANT_STRIKE) ? variant_meshes[1] : TypedArray<Mesh>();
+			ns->near_browse_meshes = (has & VARIANT_BROWSE) ? variant_meshes[2] : TypedArray<Mesh>();
+		}
+	}
+	return int(p_species->get_meta(SNAME("tree_variants_deferred"), 0)) & p_kinds;
+}
+
+// A browsed variant's deer (trees.md 5az): heavy pressure at red deer's reach; a grown open tree browsed its last 20
+// years (a browse line under a crown that grew up before), a sapling or understory plant all its years (hedged).
+void TreeGenerator::_browse_variant_setup(int p_form) {
+	browse = 0.85f;
+	browse_height = 1.8f;
+	browse_years = p_form == FORM_OPEN ? 20 : 0;
+}
+
+Color TreeGenerator::_lightning_wood(float p_years) {
+	const Color cream = Color(0.86f, 0.8f, 0.64f);
+	const Color straw = Color(0.76f, 0.64f, 0.45f);
+	const Color grey = Color(0.52f, 0.5f, 0.46f);
+	return cream.lerp(straw, Math::smoothstep(0.02f, 0.4f, p_years)).lerp(grey, Math::smoothstep(1.0f, 4.0f, p_years));
+}
+
+bool TreeGenerator::_beaver_resprouts() const {
+	// Broadleaves (willow, aspen, birch, alder) sprout again from the stump; a conifer stump stays dead.
+	if (params[PARAM_NEEDLES] > 0.5f) {
+		return false;
+	}
+	return float((uint32_t(seed) * 2246822519u >> 11) & 0xffff) / 65535.0f < 0.55f;
+}
+
+// The stump: the main stem cut beaver_cut_h over the soil, everything above it and every other stem gone. A
+// resprouting stump puts out a few shoots from dormant buds round its side just under the cut.
+void TreeGenerator::_beaver_stump(int p_year) {
+	_compute_radii();
+	const float base_y = nodes[0].start.y;
+	int k = -1;
+	for (int i = 1; i < int(nodes.size()); i++) {
+		if (!nodes[i].removed && nodes[i].parent == 0 && (k < 0 || nodes[i].radius > nodes[k].radius)) {
+			k = i;
+		}
+	}
+	if (k < 0) {
+		return;
+	}
+	while (true) {
+		const Node &n = nodes[k];
+		if (n.end().y - base_y >= beaver_cut_h || n.main < 0 || nodes[n.main].removed) {
+			break;
+		}
+		k = n.main;
+	}
+	Node &top = nodes[k];
+	if (top.dir.y > 0.2f) {
+		top.length = MAX((beaver_cut_h - (top.start.y - base_y)) / top.dir.y, 0.02f);
+	}
+	HashSet<int> keep;
+	for (int c = k; c > 0; c = nodes[c].parent) {
+		keep.insert(c);
+	}
+	for (int i = 1; i < int(nodes.size()); i++) {
+		if (!keep.has(i)) {
+			nodes[i].removed = true;
+		}
+	}
+	for (const int c : keep) {
+		nodes[c].leafy = false;
+		nodes[c].first_lateral = -1;
+		if (c != k) {
+			continue;
+		}
+		nodes[c].main = -1;
+	}
+	// The chain's own links: each kept node's main is the next kept one.
+	for (int c = k; c > 0; c = nodes[c].parent) {
+		const int p = nodes[c].parent;
+		if (p > 0) {
+			nodes[p].main = c;
+		}
+	}
+	for (Bud &b : buds) {
+		b.alive = false;
+	}
+	sprout_roots.clear();
+	beaver_tip = k;
+	if (!_beaver_resprouts()) {
+		return;
+	}
+	// Shoots from round the stump's side under the cut, two to five, spreading a little.
+	const float r = MAX(top.radius, 0.02f);
+	const int count = 2 + int(rng.rand() % 4);
+	for (int q = 0; q < count; q++) {
+		const float a = float(Math::TAU) * (q + 0.4f * (rng.randf() - 0.5f)) / count;
+		const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
+		const Vector3 d = (out + Vector3(0, 0.25f, 0)).normalized();
+		const Vector3 at = top.end() - Vector3(0, Math::lerp(0.25f, 0.6f, rng.randf()) * MIN(beaver_cut_h, 0.3f), 0) - out * (0.3f * r);
+		const int kn = _add_node(k, at, d, r * 0.7f, top.order, p_year, false);
+		nodes[kn].leafy = false;
+		nodes[kn].radius = r * Math::lerp(0.2f, 0.32f, rng.randf());
+		const float tilt = Math::deg_to_rad(Math::lerp(8.0f, 30.0f, rng.randf()));
+		Bud b;
+		b.node = kn;
+		b.dir = (Vector3(0, Math::cos(tilt), 0) + out * Math::sin(tilt) + _random_unit() * 0.08f).normalized();
+		b.sprout = true;
+		buds.push_back(b);
+	}
+}
+
+// A felled stem's limbs (trees.md 5au): over the first season the beavers gnaw off the limbs they can carry
+// (to about 5 cm) and take them to the water, leaving stubs; the rest of the crown stays.
+void TreeGenerator::_beaver_strip() {
+	_compute_radii();
+	const float take = Math::smoothstep(0.03f, 1.2f, beaver_years);
+	if (take <= 0.0f) {
+		return;
+	}
+	const int cut_year = MAX(1, int(params[PARAM_YEARS]) - int(beaver_years));
+	for (int i = 1; i < int(nodes.size()); i++) {
+		Node &n = nodes[i];
+		if (n.removed || n.order < 1 || n.parent <= 0 || nodes[n.parent].order != 0 || nodes[n.parent].main == i || n.radius > 0.05f) {
+			continue;
+		}
+		if (float(hash_murmur3_one_32(uint32_t(i), uint32_t(seed) * 2654435761u + 0x62656176u) & 0xffff) / 65535.0f >= take) {
+			continue;
+		}
+		// Everything it carried goes.
+		LocalVector<int> st;
+		if (n.main >= 0) {
+			st.push_back(n.main);
+		}
+		for (int c = n.first_lateral; c >= 0; c = nodes[c].next_sibling) {
+			st.push_back(c);
+		}
+		while (!st.is_empty()) {
+			const int j = st[st.size() - 1];
+			st.resize(st.size() - 1);
+			nodes[j].removed = true;
+			if (nodes[j].main >= 0) {
+				st.push_back(nodes[j].main);
+			}
+			for (int c = nodes[j].first_lateral; c >= 0; c = nodes[c].next_sibling) {
+				st.push_back(c);
+			}
+		}
+		n.main = -1;
+		n.first_lateral = -1;
+		n.leafy = false;
+		n.length = MIN(n.length, CLAMP(n.radius * 1.5f, 0.02f, 0.08f));
+		cut_stubs.insert(i, cut_year);
+	}
+}
+
+// The gnawed waist's radial factor at a point (1 off it): two cones meeting at the waist, the upper one longer (a
+// beaver gnaws in from above as well as level), the stem beaver_depth of its radius in at the narrowest. r_axis_r:
+// the point's distance from the axis.
+float TreeGenerator::_beaver_waist_at(const Vector3 &p_pos, float *r_axis_r) const {
+	if (beaver_axis.size() < 2) {
+		return 1.0f;
+	}
+	const float base_y = beaver_axis[0].y;
+	const float h = p_pos.y - base_y;
+	const float cut = beaver_r * beaver_depth;
+	const float below = 1.1f * cut + 0.01f, above = 1.5f * cut + 0.015f;
+	if (h < beaver_cut_h - below || h > beaver_cut_h + above) {
+		return 1.0f;
+	}
+	// The axis at this height.
+	Vector3 c = beaver_axis[0];
+	for (uint32_t i = 0; i + 1 < beaver_axis.size(); i++) {
+		const Vector3 &a = beaver_axis[i], &b = beaver_axis[i + 1];
+		if (p_pos.y <= b.y || i + 2 == beaver_axis.size()) {
+			const float t = CLAMP((p_pos.y - a.y) / MAX(b.y - a.y, 1e-4f), 0.0f, 1.0f);
+			c = a.lerp(b, t);
+			break;
+		}
+	}
+	const float d = Vector2(p_pos.x - c.x, p_pos.z - c.z).length();
+	if (r_axis_r) {
+		*r_axis_r = d;
+	}
+	if (d > 2.0f * beaver_r + 0.05f) {
+		return 1.0f;
+	}
+	const float t = h < beaver_cut_h ? (beaver_cut_h - h) / below : (h - beaver_cut_h) / above;
+	return 1.0f - beaver_depth * (1.0f - CLAMP(t, 0.0f, 1.0f));
+}
+
+// The waist on one surface: every vertex round the stem in the band pulled in to the hourglass, its normal tilted
+// with the cone, and on the bark marked bare (the wound channel _peel_bark reads). The gnawed wood is scalloped
+// by the bites: rows of shallow scoops a centimetre or so wide, slanted with the grain.
+void TreeGenerator::_beaver_waist(Builder &r_b, bool p_bark) {
+	const int nv = r_b.verts.size();
+	if (nv == 0 || beaver_axis.size() < 2) {
+		return;
+	}
+	if (p_bark && int(r_b.wound.size()) < nv) {
+		const int from = r_b.wound.size();
+		r_b.wound.resize(nv);
+		for (int v = from; v < nv; v++) {
+			r_b.wound[v] = 0.0f;
+		}
+	}
+	Vector3 *vw = r_b.verts.ptrw();
+	Vector3 *nw = r_b.normals.size() == nv ? r_b.normals.ptrw() : nullptr;
+	const float e = 0.004f;
+	for (int v = 0; v < nv; v++) {
+		float d = 0.0f;
+		const float f = _beaver_waist_at(vw[v], &d);
+		if (f >= 0.9999f || d <= 1e-4f) {
+			continue;
+		}
+		const Vector3 p = vw[v];
+		const float fu = _beaver_waist_at(p + Vector3(0, e, 0)), fd = _beaver_waist_at(p - Vector3(0, e, 0));
+		const float base_y = beaver_axis[0].y;
+		Vector3 ax = beaver_axis[0];
+		for (uint32_t i = 0; i + 1 < beaver_axis.size(); i++) {
+			const Vector3 &a = beaver_axis[i], &b = beaver_axis[i + 1];
+			if (p.y <= b.y || i + 2 == beaver_axis.size()) {
+				const float t = CLAMP((p.y - a.y) / MAX(b.y - a.y, 1e-4f), 0.0f, 1.0f);
+				ax = a.lerp(b, t);
+				break;
+			}
+		}
+		const Vector3 radial = Vector3(p.x - ax.x, 0.0f, p.z - ax.z) / d;
+		// Bites: rows about 1.6 cm tall, scoops about 1.2 cm wide round the stem, every other row offset by half a
+		// bite and slanted with the grain; each scoop a few millimetres deep in the middle, ridges between them.
+		const float hh = p.y - base_y - beaver_cut_h;
+		const float az = Math::atan2(radial.z, radial.x);
+		const float row_f = hh / 0.016f;
+		const float row = Math::floor(row_f);
+		const float bite_n = MAX(8.0f, Math::round(float(Math::TAU) * d * f / 0.012f));
+		const float u = az / float(Math::TAU) * bite_n + 0.5f * row + 0.35f * (row_f - row);
+		const float fu_ = u - Math::floor(u), fv = row_f - row;
+		const float scoop = (1.0f - (2.0f * fu_ - 1.0f) * (2.0f * fu_ - 1.0f)) * Math::sin(float(Math::PI) * fv);
+		const float in = 1.0f - f;
+		const float r_new = d * f - 0.003f * scoop * Math::smoothstep(0.0f, 0.05f, in);
+		vw[v] = Vector3(ax.x, p.y, ax.z) + radial * r_new;
+		if (nw) {
+			// r(h) = d f(h): the outward normal leans by -dr/dh.
+			const float drdh = d * (fu - fd) / (2.0f * e);
+			nw[v] = (radial - Vector3(0, 1, 0) * drdh).normalized();
+		}
+		if (p_bark) {
+			r_b.wound[v] = MAX(r_b.wound[v], Math::smoothstep(0.0f, 0.03f, in));
+		}
+	}
+}
+
+// The gnawed cone at a beaver-cut end (trees.md 5au): from the bark's rim (p_end, radius p_r) out along p_dir to a
+// small torn point a little off centre (the beaver worked more from one side), its surface the bites' scallops in
+// tiers. Fresh-cut willow and aspen wood is cream, orange-brown within weeks, grey in a few years.
+void TreeGenerator::_gnaw_face(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_years, uint32_t p_seed) {
+	Builder &w = wood_b;
+	RandomPCG sr;
+	sr.seed(uint64_t(p_seed) * 6364136223846793005ull + 0x676e6177u);
+	const Vector3 g = p_dir.normalized();
+	Vector3 td = Vector3(0, 1, 0) - g * g.y;
+	if (td.length_squared() < 0.04f) {
+		const float a = sr.randf() * float(Math::TAU);
+		td = Vector3(Math::cos(a), 0.0f, Math::sin(a));
+		td -= g * td.dot(g);
+	}
+	td.normalize();
+	const Vector3 sd = g.cross(td);
+	const float y = p_years;
+	const Color wood = _beaver_wood(y).srgb_to_linear();
+	// The cone: about one to one and a half radii long, its point a fifth of the radius off centre.
+	const float len = p_r * Math::lerp(1.0f, 1.5f, sr.randf());
+	const float off_a = sr.randf() * float(Math::TAU);
+	const Vector3 off = (td * Math::cos(off_a) + sd * Math::sin(off_a)) * (p_r * Math::lerp(0.05f, 0.25f, sr.randf()));
+	const float r_tip = MAX(0.07f * p_r, 0.003f);
+	const float slant = Math::sqrt(len * len + (p_r - r_tip) * (p_r - r_tip));
+	const int rows = CLAMP(int(Math::round(slant / 0.016f)), 3, 40);
+	const int sub = 3; // Rings per row of bites.
+	const int rings = rows * sub + 1;
+	const int bites = CLAMP(int(Math::round(float(Math::TAU) * p_r / 0.012f)), 8, 96);
+	const int sectors = CLAMP(bites * 3, 24, 288);
+	const float scoop_d = MIN(0.0035f, 0.06f * p_r);
+	auto push = [&](const Vector3 &p_p, const Vector2 &p_uv, const Color &p_c) {
+		w.verts.push_back(p_p);
+		w.normals.push_back(Vector3());
+		w.uvs.push_back(p_uv);
+		w.colors.push_back(p_c);
+		return w.verts.size() - 1;
+	};
+	Vector4i part;
+	w.begin(part);
+	const int f0 = w.verts.size();
+	const float phase = sr.randf();
+	for (int i = 0; i < rings; i++) {
+		const float t = float(i) / (rings - 1);
+		// Slightly hollow sides, as the hourglass's are.
+		const float rr = Math::lerp(p_r, r_tip, Math::pow(t, 0.85f));
+		const Vector3 c = p_end + g * (len * t) + off * t;
+		const float row_f = t * rows;
+		const float row = Math::floor(MIN(row_f, float(rows) - 1e-3f));
+		const float fv = row_f - row;
+		for (int k = 0; k < sectors; k++) {
+			const float a = float(Math::TAU) * k / sectors;
+			const float u = float(k) / sectors * bites + 0.5f * row + 0.35f * fv + phase;
+			const float fu = u - Math::floor(u);
+			const float scoop = (1.0f - (2.0f * fu - 1.0f) * (2.0f * fu - 1.0f)) * Math::sin(float(Math::PI) * fv);
+			// The rim stays at the bark's radius (it closes the stem); the bites deepen inward from it.
+			const float depth = scoop_d * scoop * Math::smoothstep(0.0f, 0.08f, t);
+			const Vector3 radial = td * Math::cos(a) + sd * Math::sin(a);
+			const float shade = 1.0f - 0.18f * scoop;
+			const Color col = wood.lerp(wood * 0.75f, 0.3f * t);
+			push(c + radial * (rr - depth), Vector2(float(k) / sectors * 2.0f, t * slant / MAX(p_r, 0.01f) * 0.5f), Color(col.r * shade, col.g * shade, col.b * shade));
+		}
+	}
+	// The torn point: the last fibres that broke, a ragged nub.
+	const int fc = push(p_end + g * (len + r_tip * Math::lerp(0.8f, 2.0f, sr.randf())) + off, Vector2(0.5f, 0.0f), wood * 0.8f);
+	for (int i = 0; i + 1 < rings; i++) {
+		for (int k = 0; k < sectors; k++) {
+			const int k1 = (k + 1) % sectors;
+			const int a0 = f0 + i * sectors + k, a1 = f0 + i * sectors + k1;
+			const int b0 = a0 + sectors, b1 = a1 + sectors;
+			w.indices.push_back(a0);
+			w.indices.push_back(b0);
+			w.indices.push_back(a1);
+			w.indices.push_back(a1);
+			w.indices.push_back(b0);
+			w.indices.push_back(b1);
+		}
+	}
+	for (int k = 0; k < sectors; k++) {
+		w.indices.push_back(f0 + (rings - 1) * sectors + k);
+		w.indices.push_back(fc);
+		w.indices.push_back(f0 + (rings - 1) * sectors + (k + 1) % sectors);
+	}
+	Vector3 *nw = w.normals.ptrw();
+	const Vector3 *vw = w.verts.ptr();
+	for (int64_t i = part.x; i + 2 < w.indices.size(); i += 3) {
+		const int a = w.indices[i], b = w.indices[i + 1], c = w.indices[i + 2];
+		const Vector3 fn = (vw[c] - vw[a]).cross(vw[b] - vw[a]);
+		nw[a] += fn;
+		nw[b] += fn;
+		nw[c] += fn;
+	}
+	for (int v = part.z; v < w.verts.size(); v++) {
+		nw[v] = nw[v].length_squared() > 1e-20f ? nw[v].normalized() : g;
+	}
+	w.end(part, p_r);
+}
+
 // Green wood's modulus of rupture (MPa; Wood Handbook FPL-GTR-282, 2021, tables 5-3a/b, green;
 // GALES for the European conifers: Norway spruce 35.5, Scots pine 39) and the root anchorage per
 // kilogram of stem (N m/kg; Nicoll et al. 2006, Can. J. For. Res. 36:1871, free-draining mineral
@@ -8642,6 +9697,22 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 	}
 	const LeafSeason ls = _leaf_season(preset, season);
 	int big_end = 0;
+	// A parasite's swelling on a limb (mistletoe's sinkers, the fir broom rust's canker): a spindle round the limb,
+	// p_half each way along it, p_r at its middle, easing to the limb's own radius at its ends, a little uneven.
+	auto spindle = [&](const Vector3 &p_at, const Vector3 &p_dir, float p_half, float p_limb_r, float p_r, const Color &p_col) {
+		LocalVector<Vector3> cp;
+		LocalVector<float> rr;
+		LocalVector<Color> cc;
+		const int n = 9;
+		for (int i = 0; i < n; i++) {
+			const float t = float(i) / (n - 1) * 2.0f - 1.0f;
+			cp.push_back(p_at + p_dir * (t * p_half));
+			const float bulge = 1.0f - t * t;
+			rr.push_back(MAX(p_limb_r * 1.01f, Math::lerp(p_limb_r, p_r, bulge * (0.85f + 0.3f * cr.randf()))));
+			cc.push_back(p_col * Color(1, 1, 1, 1).lerp(Color(0.85f, 0.85f, 0.85f, 1.0f), cr.randf()));
+		}
+		tube(cp, rr, 10, cc);
+	};
 	// Mistletoe and brooms first: the coarser LODs keep the index range before big_end.
 	{
 		float host = 0.0f;
@@ -8665,10 +9736,20 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			case PRESET_BLACK_ALDER:
 				host = 0.15f;
 				break;
+			// The conifer races (trees.md 5ay; Zuber 2004, Biology and control of Viscum album, and Barney et al.
+			// 1998 on the subspecies' hosts): subsp. abietis only on silver fir, subsp. austriacum on pines, most of
+			// all Scots and black pine in dry inner valleys (Valais, Spain), where whole stands carry dozens a tree.
+			case PRESET_SILVER_FIR:
+				host = 0.25f;
+				break;
+			case PRESET_SCOTS_PINE:
+				host = 0.2f;
+				break;
 			default:
 				break;
 		}
 		const bool american = preset == PRESET_RED_MAPLE || preset == PRESET_RED_OAK;
+		const bool conifer_race = preset == PRESET_SILVER_FIR || preset == PRESET_SCOTS_PINE;
 		if (host > 0.0f && mistletoe > 0.0f && cr.randf() < MIN(host * mistletoe, 0.95f) && tall > 4.0f) {
 			// Hosts: limbs 1.5-8 cm in the upper, outer crown, where thrushes perch and wipe the
 			// seeds off their bills.
@@ -8679,11 +9760,17 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 					seats.push_back(i);
 				}
 			}
-			const int balls = MIN(int(seats.size()), 1 + int(cr.randf() * 7.0f * MIN(mistletoe, 2.0f)));
-			const Color stem_c = american ? lin(0.42f, 0.5f, 0.2f) : lin(0.5f, 0.56f, 0.22f);
-			const Color leaf0 = american ? lin(0.3f, 0.42f, 0.14f) : lin(0.44f, 0.52f, 0.17f);
-			const Color leaf1 = american ? lin(0.34f, 0.46f, 0.16f) : lin(0.58f, 0.62f, 0.22f);
-			const Color berry = american ? lin(0.92f, 0.92f, 0.86f) : lin(0.93f, 0.94f, 0.88f);
+			// Most infected trees carry a few balls; a tree the birds keep returning to carries dozens, its crown
+			// grey-green with them in winter (one in five infected trees, more where mistletoe is heavy).
+			const bool heavy = cr.randf() < 0.2f * MIN(mistletoe, 2.0f);
+			const int balls = MIN(int(seats.size()), heavy ? 10 + int(cr.randf() * 22.0f) : 1 + int(cr.randf() * 7.0f * MIN(mistletoe, 2.0f)));
+			// The conifer races are yellower, with narrower, shorter leaves (abietis 2-4 cm, austriacum 2-3 cm) and
+			// yellowish berries.
+			const Color stem_c = american ? lin(0.42f, 0.5f, 0.2f) : (conifer_race ? lin(0.5f, 0.53f, 0.25f) : lin(0.5f, 0.56f, 0.22f));
+			const Color leaf0 = american ? lin(0.3f, 0.42f, 0.14f) : (conifer_race ? lin(0.44f, 0.5f, 0.19f) : lin(0.44f, 0.52f, 0.17f));
+			const Color leaf1 = american ? lin(0.34f, 0.46f, 0.16f) : (conifer_race ? lin(0.55f, 0.58f, 0.25f) : lin(0.58f, 0.62f, 0.22f));
+			const Color berry = american ? lin(0.92f, 0.92f, 0.86f) : (conifer_race ? lin(0.92f, 0.9f, 0.72f) : lin(0.93f, 0.94f, 0.88f));
+			const Color swell_c = bark_color.srgb_to_linear() * Color(0.85f, 0.85f, 0.85f, 1.0f);
 			const bool berries = in_days(300.0f, 60.0f);
 			for (int b = 0; b < balls && !seats.is_empty(); b++) {
 				const int si = int(cr.rand() % seats.size());
@@ -8695,27 +9782,48 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				r_b.bone = bone_of(at_node);
 				Vector4i part;
 				r_b.begin(part);
-				// A ball grows one fork a year: 4-8 years.
-				const int levels = 4 + int(cr.randf() * 4.0f);
+				// A ball grows one fork a year (Zuber 2004): its age 3-30 years (the balls one sees are mostly old ones). The first four years it
+				// forks every shoot; after that most shoots run on single and only some fork, the older inner
+				// shoots bare, so an old ball is a sphere of arching stems 0.5-1 m across with leaves on its shell.
+				const int levels = 3 + int(27.0f * cr.randf());
+				// The haustorium's swelling on the host limb: a spindle a little thicker than the limb, larger
+				// under old balls (the sinkers widen the wood for decades).
+				{
+					const float sw = hn.radius * Math::lerp(1.15f, 1.6f, MIN(1.0f, levels / 20.0f));
+					spindle(at, hn.dir, sw * 2.5f, hn.radius, sw, swell_c);
+				}
+				// Stems a ball may draw: an old ball needs more for its size, a heavily infected tree less each.
+				struct Spot {
+					Vector3 e, d, side;
+					bool tip;
+				};
+				LocalVector<Spot> spots;
+				const bool female = cr.randf() < 0.5f;
+				int seg_budget = int(float(CLAMP(150 + 28 * levels, 200, 900)) * (heavy ? 0.5f : 1.0f));
 				struct Seg {
 					Vector3 p, d;
 					int level;
 					float roll;
 				};
 				LocalVector<Seg> stack;
-				const int first = 3 + int(cr.randf() * 4.0f);
+				const int first = 2 + int(cr.randf() * 2.0f);
 				for (int k = 0; k < first; k++) {
-					Vector3 d = Vector3(cr.randf() - 0.5f, cr.randf() * 0.8f - 0.1f, cr.randf() - 0.5f).normalized();
+					// Every way round the limb: the ball hangs below it as much as it stands above (the young shoots
+					// turn up a little, the old stems bow under their own weight).
+					Vector3 d = Vector3(cr.randf() - 0.5f, cr.randf() * 1.2f - 0.5f, cr.randf() - 0.5f).normalized();
 					stack.push_back({ at, d, 0, cr.randf() * float(Math::TAU) });
 				}
 				float reach = 0.0f;
-				while (!stack.is_empty()) {
-					const Seg sg = stack[stack.size() - 1];
-					stack.resize(stack.size() - 1);
-					const float len = Math::lerp(0.035f, 0.06f, cr.randf()) * (sg.level == 0 ? 0.7f : 1.0f);
-					const float r = 0.0035f * (1.0f - 0.08f * sg.level) + 0.0015f * (levels - sg.level) / levels;
-					// Stems swing up a little toward the light.
-					const Vector3 d = (sg.d + Vector3(0, 0.15f, 0)).normalized();
+				// Breadth first, so the budget trims the whole shell evenly rather than one side.
+				for (uint32_t head = 0; head < stack.size(); head++) {
+					const Seg sg = stack[head];
+					seg_budget--;
+					const float len = Math::lerp(0.035f, 0.06f, cr.randf()) * (sg.level == 0 ? 0.7f : (sg.level > 4 ? 0.65f : 1.0f));
+					// The base stems thicken over the years: 2-3 cm on an old ball, a few millimetres at the shell.
+					const float rel = float(levels - sg.level) / float(levels);
+					const float r = MAX(0.0014f, 0.0028f - 0.00008f * sg.level) + 0.011f * rel * rel * MIN(1.0f, levels / 20.0f);
+					// Stems swing up a little toward the light while young.
+					const Vector3 d = (sg.d + Vector3(0, sg.level < 4 ? 0.12f : 0.03f, 0)).normalized();
 					const Vector3 e = sg.p + d * len;
 					reach = MAX(reach, e.distance_to(at));
 					LocalVector<Vector3> cp;
@@ -8729,25 +9837,43 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 					cc.push_back(stem_c);
 					tube(cp, rr, 4, cc);
 					const Vector3 side = perp(d).rotated(d, sg.roll);
-					if (sg.level + 1 < levels) {
-						// Forks in two (now and then three), each plane turned a quarter from the last.
+					const bool grows_on = sg.level + 1 < levels && seg_budget > 0;
+					if (grows_on) {
+						// Forks in two (now and then three), each plane turned a quarter from the last. Past four
+						// years a shoot forks a little under half the time and otherwise runs on, arching out (the
+						// draw's budget stands in for the shoots that die inside the ball).
 						const float spread = Math::deg_to_rad(Math::lerp(28.0f, 42.0f, cr.randf()));
-						stack.push_back({ e, d.rotated(side, spread), sg.level + 1, sg.roll + float(Math::PI) * 0.5f });
-						stack.push_back({ e, d.rotated(side, -spread), sg.level + 1, sg.roll + float(Math::PI) * 0.5f });
-						if (cr.randf() < 0.12f) {
+						const bool fork = sg.level < 4 || cr.randf() < 0.45f;
+						if (!fork) {
+							// Arching out from the ball's centre, so the ball stays round.
+							const Vector3 outw = (e - at).normalized();
+							stack.push_back({ e, (d.rotated(side, 0.25f * (cr.randf() - 0.5f)) + outw * 0.35f).normalized(), sg.level + 1, sg.roll + float(Math::PI) * 0.5f });
+						} else {
+							stack.push_back({ e, d.rotated(side, spread), sg.level + 1, sg.roll + float(Math::PI) * 0.5f });
+							stack.push_back({ e, d.rotated(side, -spread), sg.level + 1, sg.roll + float(Math::PI) * 0.5f });
+						}
+						if (fork && cr.randf() < 0.12f) {
 							stack.push_back({ e, d, sg.level + 1, sg.roll + float(Math::PI) * 0.5f });
 						}
-						if (berries && sg.level + 2 >= levels && cr.randf() < 0.35f) {
-							ball(e + side.cross(d) * 0.004f, 0.0045f, berry);
-						}
-					} else {
-						// A pair of leathery, strap-shaped leaves at the end of each shoot.
-						static const float prof[5] = { 0.3f, 0.8f, 1.0f, 0.85f, 0.35f };
-						for (int q = 0; q < 2; q++) {
-							const Vector3 ld = d.rotated(side, (q ? 1.0f : -1.0f) * Math::deg_to_rad(Math::lerp(20.0f, 40.0f, cr.randf())));
-							const float ll = (american ? 0.035f : 0.045f) * Math::lerp(0.8f, 1.2f, cr.randf());
-							blade(e, ld, side.cross(ld).normalized(), ll, ll * (american ? 0.45f : 0.28f), prof, 0.3f * (cr.randf() - 0.5f), 0.15f, leaf0, leaf1);
-						}
+					}
+					spots.push_back({ e, d, side, !grows_on });
+				}
+				// Leaves last two years: a pair at the end of every shoot of the last two, so the ball's outer shell
+				// is leafy and its inside bare stems. By distance from the seat, as the draw's budget may end the
+				// shoots before the ball's nominal age.
+				static const float prof[5] = { 0.3f, 0.8f, 1.0f, 0.85f, 0.35f };
+				for (const Spot &sp : spots) {
+					if (!sp.tip && sp.e.distance_to(at) < 0.72f * reach) {
+						continue;
+					}
+					for (int q = 0; q < 2; q++) {
+						const Vector3 ld = sp.d.rotated(sp.side, (q ? 1.0f : -1.0f) * Math::deg_to_rad(Math::lerp(20.0f, 40.0f, cr.randf())));
+						const float ll = (american ? 0.035f : (conifer_race ? 0.03f : 0.045f)) * Math::lerp(0.8f, 1.2f, cr.randf());
+						blade(sp.e, ld, sp.side.cross(ld).normalized(), ll, ll * (american ? 0.45f : (conifer_race ? 0.2f : 0.28f)), prof, 0.3f * (cr.randf() - 0.5f), 0.15f, leaf0, leaf1);
+					}
+					// Berries in the forks of the year's shoots, female plants only (dioecious: half the balls).
+					if (berries && female && !sp.tip && cr.randf() < 0.35f) {
+						ball(sp.e + sp.side.cross(sp.d) * 0.004f, 0.0045f, berry);
 					}
 				}
 				close_part(part, MAX(reach, 0.2f));
@@ -8823,6 +9949,100 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 						if (sh.level < 2 && k > 0 && cr.randf() < (sh.level == 0 ? 0.45f : 0.3f)) {
 							const Vector3 sd2 = (d + perp(d).rotated(d, cr.randf() * float(Math::TAU)) * 0.9f + Vector3(0, 0.2f, 0)).normalized();
 							stack.push_back({ p, sd2, sh.r * (1.0f - 0.6f * t) * 0.75f, sh.level + 1 });
+						}
+					}
+					reach = MAX(reach, p.distance_to(at));
+					tube(cp, rr, 3, cc);
+				}
+				close_part(part, MAX(reach, 0.2f));
+			}
+		}
+		// Fir broom rust (trees.md 5ay; Melampsorella caryophyllacearum; Peterson 1964, Solla et al. 2006): on silver
+		// fir a spindle-shaped swelling on a branch puts up a dense cluster of erect shoots, a little tree on the
+		// limb 0.3-1.5 m tall, its needles short, yellow-green and set all round the shoot (not in two ranks as the
+		// fir's own), shed each autumn, so the broom stands bare in winter. Brooms live for decades; old ones weaken
+		// the branch, which often breaks there. A few percent of firs in the mountains carry one, some many.
+		if (preset == PRESET_SILVER_FIR && witches_brooms > 0.0f && cr.randf() < MIN(0.3f * witches_brooms, 0.95f) && tall > 5.0f) {
+			LocalVector<int> seats;
+			for (int i = 1; i < int(nodes.size()); i++) {
+				const Node &n = nodes[i];
+				// Near-level limbs 2-8 cm thick, in the live crown.
+				if (!n.removed && !n.dead && n.order >= 1 && n.radius > 0.02f && n.radius < 0.08f && Math::abs(n.dir.y) < 0.6f && n.end().y - base_y > crown_base) {
+					seats.push_back(i);
+				}
+			}
+			const int brooms = MIN(int(seats.size()), 1 + int(cr.randf() * cr.randf() * 5.0f * MIN(witches_brooms, 2.0f)));
+			const bool in_needle = in_days(140.0f, 285.0f); // Out in June, yellow through summer, shed in October.
+			const Color shoot_c = lin(0.5f, 0.42f, 0.28f);
+			const Color needle0 = lin(0.5f, 0.58f, 0.22f), needle1 = lin(0.66f, 0.7f, 0.3f);
+			const Color swell_c = bark_color.srgb_to_linear().lerp(Color(0.1f, 0.08f, 0.06f), 0.35f);
+			static const float nprof[5] = { 0.5f, 0.9f, 1.0f, 0.9f, 0.6f };
+			for (int b = 0; b < brooms && !seats.is_empty(); b++) {
+				const int si = int(cr.rand() % seats.size());
+				const int at_node = seats[si];
+				seats.remove_at_unordered(si);
+				const Node &hn = nodes[at_node];
+				const Vector3 at = hn.start + hn.dir * (hn.length * Math::lerp(0.2f, 0.8f, cr.randf()));
+				r_b.bone = bone_of(at_node);
+				Vector4i part;
+				r_b.begin(part);
+				// The canker's spindle: up to twice the limb's girth, a hand or two long.
+				const float sw = hn.radius * Math::lerp(1.35f, 1.7f, cr.randf());
+				spindle(at, hn.dir, MIN(0.15f, sw * 3.0f), hn.radius, sw, swell_c);
+				// The broom's age sets its height: 0.3-1.5 m.
+				const float size = Math::lerp(0.3f, 1.5f, cr.randf() * cr.randf());
+				struct Shoot {
+					Vector3 p, d;
+					float r, len;
+					int level;
+				};
+				LocalVector<Shoot> stack;
+				const int primaries = 8 + int(cr.randf() * 8.0f * MIN(1.0f, size / 0.6f));
+				for (int q = 0; q < primaries; q++) {
+					// From the swelling's top, splaying a little: a broom stands up off the limb.
+					const float t = (cr.randf() - 0.5f) * 2.0f;
+					const Vector3 d = (Vector3(0, 1, 0) + Vector3(cr.randf() - 0.5f, 0.0f, cr.randf() - 0.5f) * 1.2f).normalized();
+					stack.push_back({ at + hn.dir * (t * sw * 1.5f) + Vector3(0, sw * 0.7f, 0), d, Math::lerp(0.004f, 0.007f, cr.randf()) * MIN(1.0f, 0.4f + size), size * Math::lerp(0.35f, 0.6f, cr.randf()), 0 });
+				}
+				float reach = 0.0f;
+				int budget = 200;
+				for (uint32_t head = 0; head < stack.size() && budget > 0; head++, budget--) {
+					const Shoot sh = stack[head];
+					// A year's shoots of 4-10 cm, kinked at each bud, keeping upright.
+					const int internodes = MAX(2, int(sh.len / 0.05f));
+					LocalVector<Vector3> cp;
+					LocalVector<float> rr;
+					LocalVector<Color> cc;
+					Vector3 p = sh.p;
+					Vector3 d = sh.d;
+					for (int k = 0; k <= internodes; k++) {
+						const float t = float(k) / internodes;
+						cp.push_back(p);
+						rr.push_back(MAX(0.0012f, sh.r * (1.0f - 0.7f * t)));
+						cc.push_back(shoot_c * Math::lerp(1.0f, 1.2f, t));
+						if (k == internodes) {
+							break;
+						}
+						const Vector3 kick = perp(d).rotated(d, cr.randf() * float(Math::TAU));
+						d = (d + kick * Math::lerp(0.1f, 0.3f, cr.randf()) + Vector3(0, 0.25f, 0)).normalized();
+						const float il = sh.len / internodes;
+						p += d * il;
+						// Side shoots at most buds: the broom is dense.
+						if (sh.level < 3 && k > 0 && cr.randf() < 0.65f) {
+							const Vector3 sd2 = (d + perp(d).rotated(d, cr.randf() * float(Math::TAU)) * 0.8f + Vector3(0, 0.15f, 0)).normalized();
+							// Each a little shorter than the shoot it came from, so the broom fills out into a dense bush.
+							stack.push_back({ p, sd2, sh.r * (1.0f - 0.7f * t) * 0.75f, sh.len * Math::lerp(0.5f, 0.85f, cr.randf()), sh.level + 1 });
+						}
+						if (in_needle) {
+							// Needles all round the shoot, 1.5-3 cm, short and soft, standing out at 50-70 degrees.
+							const int nn = 6;
+							for (int q = 0; q < nn; q++) {
+								const float az = float(Math::TAU) * (q + 0.5f * (k & 1)) / nn + cr.randf() * 0.3f;
+								const Vector3 rad = perp(d).rotated(d, az);
+								const Vector3 nd = (d * 0.45f + rad).normalized();
+								const float nl = Math::lerp(0.016f, 0.026f, cr.randf());
+								blade(p - d * (il * cr.randf()), nd, rad.cross(nd).normalized(), nl, nl * 0.12f, nprof, 0.0f, 0.1f, needle0, needle1);
+							}
 						}
 					}
 					reach = MAX(reach, p.distance_to(at));
@@ -11101,7 +12321,12 @@ float TreeGenerator::_bare_amount() const {
 	if (kelo && decay_class > 0) {
 		return 1.0f; // A kelo pine has shed every scrap (trees.md 5ap).
 	}
-	return bark_peel * AMOUNT[CLAMP(decay_class, 0, 5)];
+	float a = bark_peel * AMOUNT[CLAMP(decay_class, 0, 5)];
+	if (beaver_now == BEAVER_FELLED) {
+		// The beavers eat the felled stem's bark (they eat bark, not wood): most of it within a season or two.
+		a = MAX(a, 0.85f * Math::smoothstep(0.03f, 1.2f, beaver_years));
+	}
+	return a;
 }
 
 float TreeGenerator::_bare_at(const Vector3 &p_pos, const Vector3 &p_normal, const Vector3 &p_axis, float p_ground) const {
@@ -11640,7 +12865,7 @@ void TreeGenerator::_plan_wounds() {
 		}
 		return;
 	}
-	if (bark_wounds <= 0.0f || fallen || fallen_branch || decay_class > 1 || nodes.size() < 3 || cut_height > 0.0f) {
+	if ((bark_wounds <= 0.0f && lightning_years < 0.0f) || fallen || fallen_branch || decay_class > 1 || nodes.size() < 3 || cut_height > 0.0f) {
 		return;
 	}
 	const int ms = _main_stem();
@@ -11685,7 +12910,25 @@ void TreeGenerator::_plan_wounds() {
 		static const int MORE[] = { PRESET_OAK, PRESET_RED_OAK, PRESET_WHITE_OAK, PRESET_SCOTS_PINE, PRESET_NORWAY_SPRUCE, PRESET_WHITE_PINE, PRESET_LARCH, PRESET_ASH };
 		float p = 0.035f * CLAMP((len - 6.0f) / 14.0f, 0.0f, 1.5f);
 		p *= wound_species(preset, MORE, 8) ? 2.0f : 1.0f;
-		if (len > 8.0f && chance(p)) {
+		if (lightning_years >= 0.0f && len > 4.0f) {
+			// A given strike (trees.md 5ax): the current comes down from the top, through the crown, and runs to the
+			// foot in the wet outer sapwood, where the steam blows the bark off in a strip 5-20 cm wide following the
+			// grain's spiral (Taylor 1964, 1974; Murray 1958). Its own random stream, so the scar keeps its place as
+			// lightning_years changes.
+			RandomPCG lr;
+			lr.seed(uint64_t(seed) * 2654435761u + 0x6c696768u);
+			Wound w;
+			w.kind = WOUND_LIGHTNING;
+			w.s0 = 0.0f;
+			w.s1 = len * Math::lerp(0.75f, 0.95f, lr.randf());
+			w.az0 = lr.randf() * float(Math::TAU);
+			w.twist = twist * Math::lerp(0.8f, 1.3f, lr.randf());
+			w.half_w = Math::lerp(0.035f, 0.09f, lr.randf());
+			w.age = lightning_years;
+			w.extra = 1.0f; // A strike given, not the stand's chance: _wound_at blows out the groove deeper while fresh.
+			w.salt = lr.rand();
+			wounds.push_back(w);
+		} else if (len > 8.0f && chance(p)) {
 			Wound w;
 			w.kind = WOUND_LIGHTNING;
 			w.s0 = 0.0f;
@@ -11721,7 +12964,7 @@ void TreeGenerator::_plan_wounds() {
 	// incisors (Gill 1992; Welch and Scott 1998).
 	{
 		static const int DEER[] = { PRESET_ASH, PRESET_BEECH, PRESET_AMERICAN_BEECH, PRESET_NORWAY_SPRUCE, PRESET_ROWAN, PRESET_WHITE_WILLOW, PRESET_SYCAMORE_MAPLE, PRESET_LIME, PRESET_LARCH, PRESET_RED_MAPLE, PRESET_SUGAR_MAPLE, PRESET_SILVER_FIR };
-		if (r13 >= 0.03f && r13 <= 0.15f && wound_species(preset, DEER, 12) && chance(0.22f)) {
+		if (r13 >= 0.03f && r13 <= 0.15f && wound_species(preset, DEER, 12) && chance(0.22f + 0.6f * browse)) {
 			const int n = 1 + int(rng.randf() * 2.5f);
 			const float a_age = age(0.3f, 15.0f);
 			for (int i = 0; i < n; i++) {
@@ -11928,6 +13171,27 @@ bool TreeGenerator::_wounds_resin() const {
 
 // x: offset out from the stem surface (metres), y: bare wood 0..1 (0.5 at the edge, ramping over
 // 2 cm so the interpolated value finds the edge between vertices), z: darkening.
+// A fresh strike blew the bark off its strip with the moss and lichen on it (trees.md 5ax): 1 on the strip while
+// it is fresh, fading as the moss comes back over the callus in the following years.
+float TreeGenerator::_fresh_strike_at(const Vector3 &p_pos, bool p_any_age) const {
+	if (lightning_years < 0.0f || (lightning_years >= 6.0f && !p_any_age) || wound_pts.size() < 2) {
+		return 0.0f;
+	}
+	for (int i = 0; i < int(wounds.size()); i++) {
+		if (wounds[i].kind != WOUND_LIGHTNING || wounds[i].extra <= 0.0f) {
+			continue;
+		}
+		StemAt at;
+		if (!stem_at(wound_pts, wound_rad, wound_arc, p_pos, at) || at.dist > 2.0f * at.r + 0.05f) {
+			return 0.0f;
+		}
+		// A margin past the bare edge: moss torn back from it too.
+		const float bare = _wound_at(at.s, at.az, at.r, i).y;
+		return Math::smoothstep(0.0f, 0.2f, bare) * (p_any_age ? 1.0f : 1.0f - Math::smoothstep(2.0f, 6.0f, lightning_years));
+	}
+	return 0.0f;
+}
+
 Vector3 TreeGenerator::_wound_at(float p_s, float p_az, float p_r, int p_only) const {
 	float off = 0.0f, bare = 0.0f, dark = 0.0f;
 	for (int i = 0; i < int(wounds.size()); i++) {
@@ -11958,6 +13222,14 @@ Vector3 TreeGenerator::_wound_at(float p_s, float p_az, float p_r, int p_only) c
 				d = Math::abs(l) - hw;
 				// The wood split down the strip's middle.
 				groove = 0.012f * (1.0f - Math::smoothstep(0.002f, 0.012f, Math::abs(l))) * CLAMP(hw / 0.02f, 0.0f, 1.0f);
+				if (w.extra > 0.0f) {
+					// A fresh strike tears a sliver of the outer sapwood out with the bark down the strip's middle,
+					// a groove 1-3 cm deep and a few wide (Taylor 1964), its edges ragged with the grain; the
+					// woundwood rolls in over it in the following years.
+					const float fresh = 1.0f - Math::smoothstep(1.0f, 6.0f, w.age);
+					const float gw = 0.4f * hw * (0.8f + 0.4f * moss_noise(Vector3(p_s * 6.0f, 4.7f, salt), w.salt + 9u));
+					groove += fresh * MIN(0.025f, 0.15f * p_r) * (1.0f - Math::smoothstep(0.6f * gw, gw + 0.01f, Math::abs(l)));
+				}
 				dark = MAX(dark, 0.7f * (1.0f - Math::smoothstep(0.002f, 0.01f, Math::abs(l))) * CLAMP(hw / 0.02f, 0.0f, 1.0f));
 			} break;
 			case WOUND_FROST: {
@@ -13111,6 +14383,10 @@ Array TreeGenerator::_plant_climber_leaves(int p_climber) {
 }
 
 void TreeGenerator::_climber_leaf(Builder &r_leaves, const Vector3 &p_at, const Vector3 &p_out, const Vector3 &p_normal, float p_size, int p_bone, const Color &p_color) {
+	// Ivy is the deer's winter food: it is eaten to the same browse line as the host's own foliage (trees.md 5aw).
+	if (!browse_kept(_browse_keep(p_at), p_at)) {
+		return;
+	}
 	// A climber's leaf is about as broad as long (ivy, clematis leaflets, honeysuckle), whatever
 	// the host's leaf width.
 	const float saved_width = params[PARAM_LEAF_WIDTH];
@@ -13695,6 +14971,8 @@ void TreeGenerator::_apply_decay() {
 	float cut_y = 1e9f;
 	if (fallen_branch) {
 		// The limb falls whole; class 4 and 5 stubs and stumps only apply to standing wood.
+	} else if (beaver_now == BEAVER_STUMP) {
+		// Cut by the beaver already (_beaver_stump).
 	} else if (decay_class == 2 && beetle_active && dr.randf() < 0.4f) {
 		// The top, riddled by the beetles and woodpeckers, often snaps in the grey years already.
 		cut_y = height * Math::lerp(0.65f, 0.9f, dr.randf());
@@ -14180,7 +15458,8 @@ void TreeGenerator::_fell() {
 	RandomPCG fr;
 	fr.seed(uint64_t(seed) * 40503u + 5u);
 	// A storm's trees fall with it, toward +X (trees.md 5am; placement turns +X down the storm's track).
-	const float bearing = windthrow_years >= 0.0f ? -0.5f * float(Math::PI) : fr.randf() * float(Math::TAU);
+	// A beaver-felled stem falls toward +X too: placement turns most of them to the water (meta fall_to_water, 5au).
+	const float bearing = (windthrow_years >= 0.0f || beaver_now == BEAVER_FELLED) ? -0.5f * float(Math::PI) : fr.randf() * float(Math::TAU);
 	const Vector3 axis = Vector3(Math::cos(bearing), 0.0f, Math::sin(bearing));
 	const Vector3 base = nodes[0].start;
 	float trunk_r = 0.1f;
@@ -15226,6 +16505,31 @@ void TreeGenerator::_bank_shear(Builder &r_b, bool p_drape) const {
 		const Vector2 rel(p.x - ax.x, p.z - ax.z);
 		const float d = rel.length();
 		const float a = CLAMP((d - 0.8f * tr) / MAX(reach - 0.8f * tr, 0.05f), 0.0f, 1.0f);
+		if (nurse_stilt > 0.0f) {
+			// Over a rotted nurse log (trees.md 5aw): the roots lie on the log's round top (a cylinder along X under the
+			// foot) and run down its flanks to the soil stilt_height below; the log is gone, so the air under them is a
+			// tunnel along X. Roots leaving along X drop off its ends a little later.
+			const float R = 0.5f * stilt_height;
+			const float e = Math::sqrt(rel.y * rel.y + 0.2f * rel.x * rel.x);
+			float yy = e < R ? -R + Math::sqrt(MAX(R * R - e * e, 0.0f)) : MAX(-stilt_height, -R - 1.3f * (e - R));
+			// The drop fades from the foot up the stem, so the trunk flares down into its legs instead of sliding down as
+			// a straight post.
+			const float wn = 1.0f - Math::smoothstep(-0.2f * stilt_height, top + 2.0f * tr + 0.2f, hh);
+			// Nothing is left inside the log's section: the sunk collar and a trunk wider than the log are lifted to the
+			// tunnel's round roof, so it shows right through under the foot.
+			// The log rotted unevenly: the roof's span and height wander along the tunnel and round its arch.
+			const float wob = moss_noise(Vector3(p.x * 1.3f, 0.0f, p.z * 2.1f), uint32_t(seed) + 0x6e757273u) - 0.5f;
+			const float Rn = R * (1.0f + 0.35f * wob);
+			const float az = Math::abs(rel.y);
+			if (az < Rn) {
+				const float roof = (-Rn + Math::sqrt(MAX(Rn * Rn - az * az, 0.0f))) * (1.0f + 0.25f * wob) - 0.12f * R * (moss_noise(p * 5.0f, uint32_t(seed) + 0x726f6f66u) - 0.5f);
+				const float py = p.y - ax.y;
+				if (py + yy * wn < roof) {
+					return roof - py;
+				}
+			}
+			return yy * wn;
+		}
 		const float k = root_k(rel, d);
 		const float root_y = -stilt_height * a * a;
 		const float mound_y = _tussock_y(d) - 0.04f;
@@ -16210,6 +17514,19 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	foot_roots.axis = nodes.is_empty() ? Vector3() : nodes[0].start;
 	foot_roots.trunk_r = trunk_r;
 	foot_roots.width = root_r0 * 1.15f;
+	if (nurse_stilt > 0.0f && roots_on && !fallen && !fallen_branch) {
+		// A tree grown on a nurse log (trees.md 5aw): its roots ran over the log's top and down its two flanks to the soil,
+		// so they leave mostly across the log (+-Z), long enough to reach the ground beside it.
+		const float R = 0.5f * nurse_stilt;
+		for (uint32_t k = 0; k < root_az.size(); k++) {
+			const float side = Math::sin(root_az[k]) >= 0.0f ? float(Math::PI) * 0.5f : -float(Math::PI) * 0.5f;
+			root_az[k] = side + Math::angle_difference(side, root_az[k]) * 0.4f;
+			if (root_len[k] > 0.0f) {
+				root_len[k] = MAX(root_len[k], 1.6f * R + 0.3f * trunk_r);
+			}
+			root_bend[k] *= 0.4f;
+		}
+	}
 	foot_roots.az = root_az;
 	foot_roots.len = root_len;
 	foot_roots.bend = root_bend;
@@ -17340,7 +18657,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		for (int c = 0; c < int(chain.size()); c++) {
 			const Node &n = nodes[chain[c]];
 			// A pollard's head or a stool's stub ends full-girth in its callus knob (trees.md 5l).
-			float r_end = c + 1 < int(chain.size()) ? nodes[chain[c + 1]].radius : n.radius * (bolling.has(chain[c]) || cut_stubs.has(chain[c]) || split_tip ? 1.0f : 0.6f);
+			float r_end = c + 1 < int(chain.size()) ? nodes[chain[c + 1]].radius : n.radius * (bolling.has(chain[c]) || cut_stubs.has(chain[c]) || split_tip || chain[c] == beaver_tip ? 1.0f : 0.6f);
 			// Where a lateral has outgrown the axis's own continuation (a leader overtaken at a
 			// fork), the axis keeps the lateral's girth to the fork: narrowing to the thinner
 			// continuation, it left the lateral's base standing out as a stub.
@@ -17601,7 +18918,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		int cap_n = 3; // Rings closing the end.
 		if (rim_r >= 0.006f && pts.size() >= 2) {
 			const Vector3 dir_end = (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized();
-			const bool broken = (broken_tip >= 0 && chain[chain.size() - 1] == broken_tip) || broken_ends.has(chain[chain.size() - 1]) || cut_stubs.has(chain[chain.size() - 1]) || _coppice_lobe(chain[chain.size() - 1]);
+			const bool broken = (beaver_tip >= 0 && chain[chain.size() - 1] == beaver_tip) || (broken_tip >= 0 && chain[chain.size() - 1] == broken_tip) || broken_ends.has(chain[chain.size() - 1]) || cut_stubs.has(chain[chain.size() - 1]) || _coppice_lobe(chain[chain.size() - 1]);
 			const float cap_len = broken ? 0.04f : 0.8f; // Under the fracture face, which closes the end.
 			const float ks[3] = { 0.4f, 0.75f, 1.0f };
 			const float rs[3] = { 0.93f, 0.68f, 0.0f };
@@ -17744,7 +19061,16 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const float r_base = rad[0];
 			girth_r = r_base;
 			// Six rings, so the fibre tongues of the break (_tube) have room across the face.
-			const float ks[6] = { 1.0f, 0.97f, 0.9f, 0.78f, 0.6f, 0.35f };
+			float ks[6] = { 1.0f, 0.97f, 0.9f, 0.78f, 0.6f, 0.35f };
+			if (beaver_now == BEAVER_FELLED && fallen && nodes[s].parent == 0) {
+				// The beaver-felled stem's butt (trees.md 5au): the hourglass's upper cone, gnawed to a point. The tube's
+				// cap stays flat under it (no tongues, _tube).
+				for (float &k : ks) {
+					k *= 0.15f;
+				}
+				wood_b.bone = node_bone[s];
+				_gnaw_face(p0, -d0, r_base, beaver_years, uint32_t(s) * 2654435761u + uint32_t(seed) * 7u + 3u);
+			}
 			const float rs[6] = { 0.0f, 0.25f, 0.5f, 0.7f, 0.85f, 0.96f };
 			LocalVector<Vector3> cp;
 			LocalVector<float> cr;
@@ -18294,7 +19620,17 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 								fill = MAX(fill, Math::lerp(fill, under + 0.004f, k_low));
 							}
 						}
+						if (lightning_years >= 0.0f && under < floor_d && _fresh_strike_at(moss.verts[v], true) > 0.05f) {
+							// A strike's groove sinks the wood below the shell's floor (trees.md 5ax): the moss that comes
+							// back over it lies on the wood, not on the bark that was (its floor there stood out as
+							// blocks over the groove).
+							fill += under - floor_d;
+						}
 						wv[i] = fill - under;
+						if (lightning_years >= 0.0f && _fresh_strike_at(moss.verts[v]) > 0.05f) {
+							// While fresh, none on the strip at all.
+							wv[i] = -1.0f;
+						}
 						// Below the bark the shell keeps its own depth rather than hugging the bark's
 						// underside: the edge then falls where the fill crosses the bark between two
 						// vertices, not pulled out to the nearer vertex, which drew the edge as stairs
@@ -18303,6 +19639,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						// Wetter, deeper moss is darker; thin moss on dry faces yellower.
 						const float dry = moss_noise(moss.verts[v] * 1.3f, 0x6d6f7375u);
 						moss.colors.write[v] = Color(0.075f, 0.13f, 0.025f).lerp(Color(0.15f, 0.18f, 0.04f), CLAMP(dry * 1.2f - w * 0.4f, 0.0f, 1.0f));
+						if (flood_height > 0.0f) {
+							// Flood silt settles in the moss under the waterline, browning it (trees.md 5av).
+							const float sw = _silt_at(moss.verts[v], n);
+							if (sw > 0.0f) {
+								moss.colors.write[v] = moss.colors[v].lerp(Color(0.19f, 0.15f, 0.1f), 0.75f * sw);
+							}
+						}
 					}
 					if (collar) {
 						soil_tint(moss, part, 0.7f);
@@ -18384,7 +19727,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		tube_shrink.active = false;
 		bark.role = Builder::ROLE_ALL;
 		const int chain_end = chain[chain.size() - 1];
-		if ((broken_tip >= 0 && chain_end == broken_tip) || broken_ends.has(chain_end)) {
+		if (beaver_tip >= 0 && chain_end == beaver_tip && rim_r >= 0.006f) {
+			// A beaver stump's top (trees.md 5au): the lower cone of the hourglass, gnawed to a point.
+			wood_b.bone = node_bone[chain_end];
+			const Vector3 to_end = pts.size() >= 2 ? pts[pts.size() - 1] - pts[pts.size() - 2] : Vector3();
+			_gnaw_face(rim_pt, to_end.length_squared() > 1e-10f ? to_end.normalized() : nodes[chain_end].dir, rim_r, beaver_years, uint32_t(chain_end) * 2246822519u + uint32_t(seed));
+		} else if ((broken_tip >= 0 && chain_end == broken_tip) || broken_ends.has(chain_end)) {
 			// A snapped end: a jagged fracture face and splinters (trees.md 5j). (A log's broken
 			// butt gets its fibre tongues from _tube instead.)
 			wood_b.bone = node_bone[chain_end];
@@ -18562,6 +19910,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 								c = c.lerp(vls.color, 0.8f);
 							}
 							const Vector3 lup = (Vector3(0, 1, 0) + bo * 0.4f).normalized();
+							if (!browse_kept(_browse_keep(at), at)) {
+								continue;
+							}
 							leaves.bone = bb;
 							Vector4i lp;
 							leaves.begin(lp);
@@ -18591,7 +19942,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	if (dw_v0 >= 0) {
 		_measure_lying(bark, dw_v0, dw_v1 >= 0 ? dw_v1 : int(bark.verts.size()));
 		_measure_lying(moss, dw_m0, dw_m1 >= 0 ? dw_m1 : int(moss.verts.size()));
+		_nurse_seedlings(bark, leaves);
 	}
+	_lightning_debris();
 
 	const bool needles = params[PARAM_NEEDLES] > 0.5f;
 	// The year's shoots carry young bark: a birch's are dark red-brown, not its trunk's white.
@@ -18791,6 +20144,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					if (!season_leaf(uint32_t(i) * 4099u + uint32_t(sh), c, spray_size)) {
 						continue;
 					}
+					if (!browse_kept(_browse_keep(b0 + bdir * (blen * 0.5f)), b0)) {
+						continue;
+					}
 					Vector3 flat = plane_side - bdir * plane_side.dot(bdir);
 					flat = flat.length_squared() > 1e-6f ? flat.normalized() : perp;
 					const Vector3 cross = bdir.cross(flat).normalized();
@@ -18843,6 +20199,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					const Vector3 out = (ar * 0.75f + bdir * 0.66f).normalized();
 					float needle_size = size * (0.8f + 0.4f * lr.randf());
 					if (!season_leaf(uint32_t(i) * 4099u + uint32_t(sh * 257 + k), c, needle_size)) {
+						continue;
+					}
+					if (!browse_kept(_browse_keep(base), base)) {
 						continue;
 					}
 					{
@@ -18919,6 +20278,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				Color c = Color(leaf_color.r * jitter, leaf_color.g * jitter, leaf_color.b * (0.9f + 0.2f * lr.randf()));
 				float leaf_size = size * (0.75f + 0.5f * lr.randf());
 				if (!season_leaf(leaf_slot++, c, leaf_size)) {
+					continue;
+				}
+				if (!browse_kept(_browse_keep(at), at)) {
 					continue;
 				}
 				{
@@ -19076,6 +20438,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	_grow_chevrons(bark);
 	Builder resin;
 	_grow_resin(resin);
+	_flood_wrack();
 	_fire_crown(leaves);
 	if (fire_years >= 0.0f) {
 		// Its foliage is the regrowth: the live map's mortality rule (5ag) must not cast it again.
@@ -19085,8 +20448,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	if (stone.on) {
 		_build_root_stone(soil_b);
 	}
-	if (stilt_height > 0.0f && !fallen && !fallen_branch && !nodes.is_empty()) {
+	if (stilt_height > 0.0f && nurse_stilt <= 0.0f && !fallen && !fallen_branch && !nodes.is_empty()) {
 		_build_tussock(soil_b);
+	}
+	if (beaver_now == BEAVER_GNAWED) {
+		// The gnawed waist (trees.md 5au) on everything round the stem's foot.
+		for (int s : { 0, 2, 3, 4, 6, 9 }) {
+			_beaver_waist(*builders[s], s == 0);
+		}
 	}
 	for (int s = 0; s < 10; s++) {
 		// The stone itself is not draped over itself; it is sheared with the ground.
@@ -19120,7 +20489,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		bool bark_custom = false;
 		if (s == 0) {
 			_peel_bark(b);
-			bark_custom = _bare_amount() > 0.0f || !b.wound.is_empty() || !b.wood_char.is_empty() || _cork_strip_age() >= 0.0f;
+			bark_custom = _bare_amount() > 0.0f || !b.wound.is_empty() || !b.wood_char.is_empty() || _cork_strip_age() >= 0.0f || flood_height > 0.0f;
 		}
 		Array arrays;
 		arrays.resize(Mesh::ARRAY_MAX);
@@ -19326,7 +20695,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				char_uv2 = b.wood_char[v] > 0.0f;
 			}
 		}
-		if (lichen_uv2 || char_uv2) {
+		const bool silt_uv2 = s == 0 && flood_height > 0.0f && !fallen && !fallen_branch;
+		if (lichen_uv2 || char_uv2 || silt_uv2) {
 			PackedVector2Array uv2;
 			uv2.resize(b.verts.size());
 			Vector2 *u2 = uv2.ptrw();
@@ -19354,6 +20724,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			for (uint32_t v = 0; v < b.wood_char.size() && int(v) < uv2.size(); v++) {
 				if (b.wood_char[v] > 0.0f) {
 					u2[v] = Vector2(u2[v].x, -(0.5f + 1.5f * CLAMP(b.wood_char[v], 0.0f, 1.0f)));
+				}
+			}
+			// Flood silt (trees.md 5av): u = -(0.5 + 1.5 silt), on the bark under the waterline (no lichen there).
+			if (silt_uv2) {
+				for (int v = 0; v < uv2.size() && v < b.verts.size(); v++) {
+					const float sw = _silt_at(b.verts[v], v < b.normals.size() ? b.normals[v] : Vector3(0, 1, 0));
+					if (sw > 0.0f) {
+						u2[v] = Vector2(-(0.5f + 1.5f * CLAMP(sw, 0.0f, 1.0f)), u2[v].y);
+					}
 				}
 			}
 			arrays[Mesh::ARRAY_TEX_UV2] = uv2;
@@ -19631,6 +21010,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	if (beetle_active) {
 		mesh->set_meta(SNAME("tree_beetle_years"), beetle_years);
 	}
+	if (lightning_years >= 0.0f) {
+		for (const Wound &w : wounds) {
+			if (w.kind == WOUND_LIGHTNING && w.extra > 0.0f) {
+				// A struck tree (trees.md 5ax): VegetationField3D picks it where WorldStand.strike_age_at has a strike.
+				mesh->set_meta(SNAME("tree_lightning_years"), lightning_years);
+				break;
+			}
+		}
+	}
 	if (windthrow_years >= 0.0f) {
 		// Storm damage (trees.md 5am): years since the storm; thrown and leaning trees point along mesh +X.
 		mesh->set_meta(SNAME("tree_windthrow_years"), windthrow_years);
@@ -19754,6 +21142,7 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 		float lw = clamp(2.0 * COLOR.a - 1.0, 0.0, 1.0);
 		if (lw > 0.004) {
 			lw *= 1.0 - smoothstep(0.0, -0.5, UV2.y); // UV2 coded as char (a negative v) carries no lichen.
+			lw *= 1.0 - smoothstep(0.0, -0.5, UV2.x); // Nor UV2 coded as flood silt (a negative u).
 			vec4 lm = texture(lichen_map, UV2);
 			// A crust is a skin a fraction of a millimetre thick: the bark's own tone shows through
 			// it (darker in the bark's cracks), as do its relief and normal map.
@@ -19943,6 +21332,29 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 		}
 	}
 	{
+		// Flood silt (TreeGenerator flood_height, UV2 u below -0.5; trees.md 5av): a matte film of pale brown-grey silt
+		// and clay, filling the furrows first and thinning over the plate tops, its top edge the high-water line; a
+		// darker tide band just under it where the scum dried. Washed off the plates by rain first.
+		float silt = clamp((-UV2.x - 0.5) / 1.5, 0.0, 1.0);
+		if (silt > 0.0) {
+			float relief = texture(texture_roughness, base_uv).b;
+			float sn = texture(lichen_map, base_uv * vec2(2.3, 0.7) + vec2(0.19, 0.77)).r;
+			float sn2 = texture(lichen_map, base_uv * vec2(9.0, 2.5) + vec2(0.61, 0.07)).g;
+			// The plate tops (high relief) show through first; the furrows hold it.
+			float cover = smoothstep(0.35, 0.75, silt * (1.6 - 1.5 * relief) + 0.3 * (sn - 0.5) + 0.12 * (sn2 - 0.5));
+			// Dried silt, linear (sRGB about 0.42, 0.37, 0.3): a thin film, so it tints the bark under it rather than
+			// painting over it; a lighter crust only where it lies thick in the furrows.
+			vec3 silt_c = vec3(0.13, 0.105, 0.075) * (0.85 + 0.3 * sn);
+			silt_c = mix(silt_c, ALBEDO * vec3(1.25, 1.1, 0.9), 0.35 * (1.0 - smoothstep(0.4, 0.8, cover)));
+			cover *= 0.85;
+			// The tide band: where the weight falls off at the line (silt just under 1 there), a little darker.
+			float band = smoothstep(0.6, 0.9, silt) * (1.0 - smoothstep(0.9, 1.0, silt));
+			silt_c *= 1.0 - 0.25 * band;
+			ALBEDO = mix(ALBEDO, silt_c, cover);
+			ROUGHNESS = mix(ROUGHNESS, 0.95, cover);
+		}
+	}
+	{
 		// Fire (vegetation_fire.h): bark charred up to about the flame length that passed, with a
 		// ragged top (the flame wraps the stem unevenly). Char takes the plates first, the
 		// furrows keep a little of the bark's brown.
@@ -20034,7 +21446,10 @@ uniform float wood_spiral = 0.0;
 	// Kelo stays silver lying down too: resin-hard heartwood weathers and does not rot for centuries (Niemela et al. 2002).
 	const Color wood = kelo ? Color(0.58f, 0.57f, 0.54f) : (fallen || fallen_branch || decay_class >= 5) ? Color(0.38f, 0.31f, 0.23f) : decay_class == 4 ? Color(0.42f, 0.38f, 0.32f)
 																																	   : Color(0.47f, 0.45f, 0.41f);
-	m->set_shader_parameter("bark_wood_color", wood);
+	// Beaver-gnawed and peeled wood (trees.md 5au): cream when fresh, orange-brown within weeks, grey in a few years.
+	// A fresh lightning strip (trees.md 5ax): pale sapwood, greying over a few years to the weathered wood.
+	const Color struck = lightning_years >= 0.0f && !fallen && !fallen_branch && decay_class <= 1 ? _lightning_wood(lightning_years).lerp(wood, Math::smoothstep(3.0f, 8.0f, lightning_years)) : wood;
+	m->set_shader_parameter("bark_wood_color", (beaver_now == BEAVER_GNAWED || beaver_now == BEAVER_FELLED) ? _beaver_wood(beaver_years) : struck);
 	m->set_shader_parameter("bark_stripped_age", _cork_strip_age());
 	// Scots pine grows with spiral grain, a few degrees, left-handed when young and turning right with age (Harris
 	// 1989); a kelo's weathered checks open along it and show it, by its seed: 5-12 degrees, the old stems at the upper end (trees.md 5ar).
@@ -20698,9 +22113,16 @@ void TreeGenerator::_fire_crown(const Builder &p_leaves) {
 	for (int i = 0; i < p_leaves.verts.size(); i++) {
 		ys[i] = p_leaves.verts[i].y - base_y;
 	}
-	ys.sort();
+	// The five quartile heights by selection, not a full sort of every leaf vertex: the same values.
+	SortArray<float> sorter;
+	int64_t from = 0;
 	for (int k = 0; k < 5; k++) {
-		fire_crown[k] = MAX(ys[MIN(uint32_t(k * (ys.size() - 1) / 4), ys.size() - 1)], 0.0f);
+		const int64_t at = MIN(uint32_t(k * (ys.size() - 1) / 4), ys.size() - 1);
+		if (at >= from) {
+			sorter.nth_element(from, ys.size(), at, ys.ptr());
+			from = at + 1;
+		}
+		fire_crown[k] = MAX(ys[at], 0.0f);
 	}
 	float r = 0.0f;
 	for (uint32_t i = 1; i < nodes.size(); i++) {
@@ -20829,7 +22251,18 @@ Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves, bool p_twins) const {
 	for (const TreeLod &level : tree_lods(is_shrub(preset) && !far_leaves)) {
 		// Survivors grow about their base by 1/sqrt(keep), so the kept leaf area matches.
 		const float grow = 1.0f / Math::sqrt(level.keep);
-		PackedInt32Array idx;
+		// The survivors first, then every array grown once and filled in order (it was a push_back per vertex and
+		// attribute, each a copy-on-write check): the same vertices, skin and indices in the same places.
+		struct Kept {
+			Vector4i pt;
+			Vector4i sp;
+			float g;
+			bool twin;
+			bool skinned;
+		};
+		LocalVector<Kept> kept;
+		int add_v = 0, add_i = 0, add_skin = 0;
+		int bones_size = r_leaves.bones.size();
 		for (uint32_t i = 0; i < count; i++) {
 			// A fixed hash per leaf, so each level's survivors are a subset of the level before.
 			const float u = float((uint32_t(i) * 2654435761u) >> 8) / 16777216.0f;
@@ -20841,30 +22274,73 @@ Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves, bool p_twins) const {
 			if (psize < 0.0f || (u >= level.keep && !whole)) {
 				continue;
 			}
-			const float g = whole ? 1.0f : grow;
-			const Vector4i pt = r_leaves.parts[i];
-			const int v0 = r_leaves.verts.size();
-			const Vector3 pivot = r_leaves.verts[pt.z];
+			Kept k;
+			k.g = whole ? 1.0f : grow;
+			k.pt = r_leaves.parts[i];
 			// A species leaf (lobed, palmate, compound) is drawn as its simple twin here.
 			const Vector4i *twin = p_twins ? leaf_twin_of.getptr(int(i)) : nullptr;
-			const Builder &src = twin ? leaf_twins : r_leaves;
-			const Vector4i sp = twin ? *twin : pt;
-			const bool skinned = r_leaves.bones.size() >= (pt.z + 1) * 4;
-			for (int v = 0; v < sp.w; v++) {
-				r_leaves.verts.push_back(pivot + (src.verts[sp.z + v] - pivot) * g);
-				r_leaves.normals.push_back(src.normals[sp.z + v]);
-				r_leaves.uvs.push_back(src.uvs[sp.z + v]);
-				r_leaves.colors.push_back(src.colors[sp.z + v]);
-				if (skinned) {
+			k.twin = twin != nullptr;
+			k.sp = twin ? *twin : k.pt;
+			k.skinned = bones_size >= (k.pt.z + 1) * 4;
+			add_v += k.sp.w;
+			add_i += k.sp.y;
+			if (k.skinned) {
+				add_skin += k.sp.w * 4;
+				bones_size += k.sp.w * 4;
+			}
+			kept.push_back(k);
+		}
+		const int v_start = r_leaves.verts.size();
+		r_leaves.verts.resize(v_start + add_v);
+		r_leaves.normals.resize(r_leaves.normals.size() + add_v);
+		r_leaves.uvs.resize(r_leaves.uvs.size() + add_v);
+		r_leaves.colors.resize(r_leaves.colors.size() + add_v);
+		const int b_start = r_leaves.bones.size();
+		const int w_start = r_leaves.weights.size();
+		r_leaves.bones.resize(b_start + add_skin);
+		r_leaves.weights.resize(w_start + add_skin);
+		PackedInt32Array idx;
+		idx.resize(add_i);
+		Vector3 *vw = r_leaves.verts.ptrw();
+		Vector3 *nw = r_leaves.normals.ptrw() + (r_leaves.normals.size() - add_v);
+		Vector2 *uw = r_leaves.uvs.ptrw() + (r_leaves.uvs.size() - add_v);
+		Color *cw = r_leaves.colors.ptrw() + (r_leaves.colors.size() - add_v);
+		int32_t *bw = r_leaves.bones.ptrw();
+		float *ww = r_leaves.weights.ptrw();
+		int32_t *iw = idx.ptrw();
+		// The source arrays read after the resize (the leaves' own may have moved); twins are another builder.
+		const Vector3 *own_v = r_leaves.verts.ptr();
+		const Vector3 *own_n = r_leaves.normals.ptr();
+		const Vector2 *own_u = r_leaves.uvs.ptr();
+		const Color *own_c = r_leaves.colors.ptr();
+		const int32_t *own_i = r_leaves.indices.ptr();
+		int vn = v_start, bn = b_start, in = 0, an = 0;
+		for (const Kept &k : kept) {
+			const int v0 = vn;
+			const Vector3 pivot = own_v[k.pt.z];
+			const Vector3 *sv = k.twin ? leaf_twins.verts.ptr() : own_v;
+			const Vector3 *sn = k.twin ? leaf_twins.normals.ptr() : own_n;
+			const Vector2 *su = k.twin ? leaf_twins.uvs.ptr() : own_u;
+			const Color *sc = k.twin ? leaf_twins.colors.ptr() : own_c;
+			const int32_t *si = k.twin ? leaf_twins.indices.ptr() : own_i;
+			for (int v = 0; v < k.sp.w; v++) {
+				vw[vn] = pivot + (sv[k.sp.z + v] - pivot) * k.g;
+				nw[an] = sn[k.sp.z + v];
+				uw[an] = su[k.sp.z + v];
+				cw[an] = sc[k.sp.z + v];
+				vn++;
+				an++;
+				if (k.skinned) {
 					// The leaf's own skin (one bone per leaf) from its first vertex.
-					for (int k = 0; k < 4; k++) {
-						r_leaves.bones.push_back(r_leaves.bones[pt.z * 4 + k]);
-						r_leaves.weights.push_back(r_leaves.weights[pt.z * 4 + k]);
+					for (int q = 0; q < 4; q++) {
+						bw[bn] = bw[k.pt.z * 4 + q];
+						ww[w_start + (bn - b_start)] = ww[k.pt.z * 4 + q];
+						bn++;
 					}
 				}
 			}
-			for (int k = 0; k < sp.y; k++) {
-				idx.push_back(src.indices[sp.x + k] - sp.z + v0);
+			for (int q = 0; q < k.sp.y; q++) {
+				iw[in++] = si[k.sp.x + q] - k.sp.z + v0;
 			}
 		}
 		if (idx.is_empty()) {
@@ -21419,7 +22895,53 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 			params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(1.0f, 1.3f, tv));
 			veteran = Math::lerp(0.35f, 0.8f, tv);
 			limb_breakage = Math::lerp(1.4f, 2.0f, tv);
+			// The last flood's marks (trees.md 5av): a softwood floodplain floods most years, 0.5-1.6 m over the
+			// willows' feet, some weeks to a couple of years ago.
+			flood_height = Math::lerp(0.5f, 1.6f, Math::fmod(tv * 2.7f + 0.31f, 1.0f));
+			flood_years = Math::lerp(0.05f, 2.5f, Math::fmod(tv * 1.9f + 0.6f, 1.0f));
 		}
+	}
+	if (beaver_band > 0 && beaver_band <= 3) {
+		// Beaver work (trees.md 5au): the band is the cut (1 gnawed, 2 stumps, 3 felled); the variants spread over the
+		// years since, more of them fresh (the colony works the same shore every winter), and over stem sizes, mostly
+		// thin (Dieter and McCabe 1989: a mean 12-14 cm across cut, 26 cm left standing).
+		const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.71f, 1.0f);
+		beaver_cut = beaver_band;
+		beaver_years = beaver_band == 1 ? Math::lerp(0.05f, 3.0f, tv * tv) : Math::lerp(0.03f, 8.0f, tv * tv);
+		beaver_depth = Math::lerp(0.3f, 0.85f, Math::fmod(tv * 3.7f + 0.2f, 1.0f));
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.3f, 0.65f, Math::fmod(tv * 2.3f + 0.4f, 1.0f)));
+	} else {
+		beaver_cut = BEAVER_NONE;
+	}
+	if (wet_band != 2) {
+		flood_height = 0.0f;
+	}
+	if (browse_band > 0) {
+		// A deer wood (trees.md 5aw): heavy pressure, the reach of red and fallow deer. The canopy trees were browsed
+		// only over the last decades (deer numbers rose; they had escaped as saplings before); the saplings all their
+		// lives.
+		const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.29f, 1.0f);
+		browse = Math::lerp(0.75f, 0.95f, tv);
+		browse_height = Math::lerp(1.65f, 1.95f, Math::fmod(tv * 2.3f + 0.1f, 1.0f));
+		browse_years = browse_band == 1 ? int(Math::lerp(12.0f, 35.0f, Math::fmod(tv * 3.1f + 0.5f, 1.0f))) : 0;
+	} else {
+		browse = 0.0f;
+	}
+	if (nurse_band == 1) {
+		// Nurse logs (trees.md 5aw): soft, mossed logs (classes 3-5) with their seedlings.
+		const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.83f, 1.0f);
+		decay_class = 3 + p_variant % 3;
+		nurse_seedlings = Math::lerp(0.6f, 1.0f, tv);
+		nurse_stilt = 0.0f;
+	} else if (nurse_band == 2) {
+		// Trees grown on a log that has since rotted away: 0.5-1.1 m of air under the roots (the old logs were big).
+		nurse_stilt = Math::lerp(0.5f, 1.1f, Math::fmod(float(p_variant) * 0.618034f + 0.37f, 1.0f));
+		nurse_seedlings = 0.0f;
+	} else {
+		nurse_seedlings = 0.0f;
+		nurse_stilt = 0.0f;
 	}
 	if (edge_band > 0) {
 		// A forest edge's trees (trees.md 5as): the open on +X, most fully, a few half sheltered by a mantle tree.
@@ -21829,6 +23351,9 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	cork_stripped_years = p_from.cork_stripped_years;
 	fire_years = p_from.fire_years;
 	fire_variants = p_from.fire_variants;
+	lightning_variants = p_from.lightning_variants;
+	browse_variants = p_from.browse_variants;
+	defer_variants = p_from.defer_variants;
 	beetle_years = p_from.beetle_years;
 	beetle_outbreak = p_from.beetle_outbreak;
 	beetle_band = p_from.beetle_band;
@@ -21836,6 +23361,20 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	windthrow_storm = p_from.windthrow_storm;
 	windthrow_direction = p_from.windthrow_direction;
 	windthrow_band = p_from.windthrow_band;
+	flood_height = p_from.flood_height;
+	flood_years = p_from.flood_years;
+	browse = p_from.browse;
+	browse_height = p_from.browse_height;
+	browse_years = p_from.browse_years;
+	nurse_seedlings = p_from.nurse_seedlings;
+	nurse_stilt = p_from.nurse_stilt;
+	lightning_years = p_from.lightning_years;
+	beaver_cut = p_from.beaver_cut;
+	beaver_years = p_from.beaver_years;
+	beaver_depth = p_from.beaver_depth;
+	beaver_band = p_from.beaver_band;
+	browse_band = p_from.browse_band;
+	nurse_band = p_from.nurse_band;
 	old_growth_band = p_from.old_growth_band;
 	bark_wounds = p_from.bark_wounds;
 	bark_chevrons = p_from.bark_chevrons;
@@ -21879,13 +23418,30 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 
 void TreeGenerator::_near_task(void *p_self) {
 	TreeGenerator *self = static_cast<TreeGenerator *>(p_self);
-	const int fb = self->near_living > 0 && self->near_task_variant >= self->near_living ? self->near_task_variant - self->near_living : -1;
-	if (fb >= 0) {
+	int fb = self->near_living > 0 && self->near_task_variant >= self->near_living ? self->near_task_variant - self->near_living : -1;
+	self->lightning_years = -1.0f;
+	if (fb >= self->near_fire_count + self->near_strike_count) {
+		// A browsed variant: the first living seed, browsed (as _stand_species grew it).
+		const int bb = fb - self->near_fire_count - self->near_strike_count;
+		self->_setup_variant(self->preset, self->near_form, 0, self->near_base_seed, self->near_base_cover);
+		self->fire_years = -1.0f;
+		self->_browse_variant_setup(self->near_form);
+		self->material_source = self->near_browse_meshes.size() > bb ? Ref<ArrayMesh>(self->near_browse_meshes[bb]) : Ref<ArrayMesh>();
+		fb = -2;
+	} else if (fb >= self->near_fire_count) {
+		// A struck variant: the first living seed, struck.
+		const int sb = fb - self->near_fire_count;
+		self->_setup_variant(self->preset, self->near_form, 0, self->near_base_seed, self->near_base_cover);
+		self->fire_years = -1.0f;
+		self->lightning_years = STRIKE_BAND_YEARS[MIN(sb, 1)];
+		self->material_source = self->near_strike_meshes.size() > sb ? Ref<ArrayMesh>(self->near_strike_meshes[sb]) : Ref<ArrayMesh>();
+		fb = -2;
+	} else if (fb >= 0) {
 		// A fire band variant: the same seed as the living one it was grown from, burnt.
 		self->_setup_variant(self->preset, self->near_form, fb, self->near_base_seed, self->near_base_cover);
 		self->fire_years = FIRE_BAND_YEARS[MIN(fb, 4)];
 		self->material_source = self->near_fire_meshes.size() > fb ? Ref<ArrayMesh>(self->near_fire_meshes[fb]) : Ref<ArrayMesh>();
-	} else {
+	} else if (fb == -1) {
 		self->_setup_variant(self->preset, self->near_form, self->near_task_variant, self->near_base_seed, self->near_base_cover);
 		self->fire_years = -1.0f;
 		self->material_source = self->near_far_meshes.size() > self->near_task_variant ? Ref<ArrayMesh>(self->near_far_meshes[self->near_task_variant]) : Ref<ArrayMesh>();
@@ -21994,7 +23550,10 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			(boreal_band > 0 ? 1500000000 + 50000000 * boreal_band : 0) +
 			(succession_band > 0 ? int64_t(4000000000LL) * succession_band : 0) + // 64-bit: band terms stack (taiga ages, trees.md 5aq).
 			(edge_band > 0 || edge_open > 0.0f ? int64_t(20000000000LL) * (1 + edge_band + 4 * int(edge_open * 8.0f)) : 0) +
-			(wet_band > 0 ? int64_t(2000000000000LL) * wet_band : 0);
+			(wet_band > 0 ? int64_t(2000000000000LL) * wet_band : 0) +
+			(beaver_band > 0 ? int64_t(20000000000000LL) * beaver_band : 0) +
+			(browse_band > 0 ? int64_t(100000000000000LL) * browse_band : 0) +
+			(nurse_band > 0 ? int64_t(400000000000000LL) * nurse_band : 0);
 	// Placed trees are alive unless a beetle stand grows its kill (single trees keep beetle_years).
 	struct BeetleYearsRestore {
 		float &value;
@@ -22060,6 +23619,16 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const float saved_slope = ground_slope;
 		const float saved_erosion = bank_erosion;
 		const float saved_stilt = stilt_height;
+		const int saved_beaver_cut = beaver_cut;
+		const float saved_flood_h = flood_height;
+		const float saved_flood_y = flood_years;
+		const float saved_browse = browse;
+		const float saved_browse_h = browse_height;
+		const int saved_browse_y = browse_years;
+		const float saved_nurse_s = nurse_seedlings;
+		const float saved_nurse_t = nurse_stilt;
+		const float saved_beaver_years = beaver_years;
+		const float saved_beaver_depth = beaver_depth;
 		const float saved_edge_open = edge_open;
 		const float saved_stone = root_stone;
 		const AABB saved_envelope = envelope;
@@ -22087,7 +23656,10 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			Ref<TreeGenerator> src;
 			src.instantiate();
 			src->_copy_generation_state(*this);
-			src->near_key = key;
+			// The near key travels as a 32-bit int (PlantSpecies.near_mesh_key, the field's cells): the 64-bit
+			// cache key folded to a positive one. Truncated, the band terms (succession, edge, wet, beaver) wrapped
+			// it negative and every near request of those stands failed.
+			src->near_key = int((uint64_t(key) ^ (uint64_t(key) >> 31)) & 0x7fffffffu);
 			src->near_form = p_form;
 			src->near_base_seed = saved_seed;
 			src->near_base_cover = saved_climber_cover;
@@ -22109,27 +23681,69 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 				meshes.push_back(mesh);
 			}
 		}
-		// The fire band variants (trees.md 5ah): the same seeds as the first living ones, grown burnt.
-		TypedArray<Mesh> fire_meshes;
+		// The fire band (trees.md 5ah), struck (5ax) and browsed (5az) variants: grown here, or deferred (5bc) to a copy
+		// of this generator that grows them when a field first needs them.
 		const bool fire_form = p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_OLD || p_form == FORM_GROVE;
-		if (fire_variants && p_variants > 0 && fire_form && beetle_band == 0 && windthrow_band == 0) {
+		const bool strike_form = p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_OLD || p_form == FORM_GROVE;
+		const bool browse_form = p_form == FORM_OPEN || p_form == FORM_SAPLING || p_form == FORM_UNDERSTORY;
+		const bool undamaged = beetle_band == 0 && windthrow_band == 0;
+		Vector3 first_crown;
+		if (!meshes.is_empty()) {
+			const Ref<Mesh> first = meshes[0];
+			first_crown = first.is_valid() ? Vector3(first->get_meta("crown", Vector3())) : Vector3();
+		}
+		int kinds = 0;
+		if (fire_variants && p_variants > 0 && fire_form && undamaged) {
+			kinds |= VARIANT_FIRE;
+		}
+		// Only trees tall enough to carry a strike (generate() keeps the meta only where the strike was drawn).
+		if (lightning_variants && p_variants > 0 && strike_form && undamaged && !meshes.is_empty() && first_crown.x > 8.0f) {
+			kinds |= VARIANT_STRIKE;
+		}
+		// Not for a stand already grown browsed (the deer wood).
+		if (browse_variants && p_variants > 0 && browse_form && browse_band == 0 && undamaged && !meshes.is_empty()) {
+			kinds |= VARIANT_BROWSE;
+		}
+		TypedArray<Mesh> fire_meshes;
+		TypedArray<Mesh> strike_meshes;
+		TypedArray<Mesh> browse_meshes;
+		if (defer_variants && kinds) {
+			Ref<TreeGenerator> vs;
+			vs.instantiate();
+			vs->_copy_generation_state(*this);
+			vs->preset = p_preset;
+			vs->near_form = p_form;
+			vs->near_base_seed = saved_seed;
+			vs->near_base_cover = saved_climber_cover;
+			vs->variant_first_crown = first_crown;
+			vs->variant_far_leaves = near_split;
+			vs->variant_kinds = kinds;
+			variant_sources[key] = vs;
+		} else {
+			variant_sources.erase(key);
 			const float saved_fire = fire_years;
-			for (int b = 0; b < 5; b++) {
-				_setup_variant(p_preset, p_form, b, saved_seed, saved_climber_cover);
-				fire_years = FIRE_BAND_YEARS[b];
-				Ref<ArrayMesh> mesh = generate();
-				if (mesh.is_valid()) {
-					mesh->set_meta("crown", Vector3(height, crown_base, crown_radius));
-					fire_meshes.push_back(mesh);
-				}
+			const float saved_lightning = lightning_years;
+			if (kinds & VARIANT_FIRE) {
+				fire_meshes = _variant_kind_meshes(VARIANT_FIRE, p_preset, p_form, saved_seed, saved_climber_cover, first_crown);
+			}
+			if (kinds & VARIANT_STRIKE) {
+				strike_meshes = _variant_kind_meshes(VARIANT_STRIKE, p_preset, p_form, saved_seed, saved_climber_cover, first_crown);
+			}
+			if (kinds & VARIANT_BROWSE) {
+				browse_meshes = _variant_kind_meshes(VARIANT_BROWSE, p_preset, p_form, saved_seed, saved_climber_cover, first_crown);
 			}
 			fire_years = saved_fire;
+			lightning_years = saved_lightning;
 		}
 		fire_cache[key] = fire_meshes;
+		strike_cache[key] = strike_meshes;
+		browse_cache[key] = browse_meshes;
 		far_leaves = false;
 		if (near_split) {
 			near_sources[key]->near_far_meshes = meshes;
 			near_sources[key]->near_fire_meshes = fire_meshes;
+			near_sources[key]->near_strike_meshes = strike_meshes;
+			near_sources[key]->near_browse_meshes = browse_meshes;
 		}
 		decay_class = saved_decay;
 		fallen = saved_fallen;
@@ -22155,6 +23769,16 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		ground_slope = saved_slope;
 		bank_erosion = saved_erosion;
 		stilt_height = saved_stilt;
+		beaver_cut = saved_beaver_cut;
+		flood_height = saved_flood_h;
+		flood_years = saved_flood_y;
+		browse = saved_browse;
+		browse_height = saved_browse_h;
+		browse_years = saved_browse_y;
+		nurse_seedlings = saved_nurse_s;
+		nurse_stilt = saved_nurse_t;
+		beaver_years = saved_beaver_years;
+		beaver_depth = saved_beaver_depth;
 		edge_open = saved_edge_open;
 		root_stone = saved_stone;
 		mesh_cache[key] = meshes;
@@ -22195,6 +23819,12 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// (the meshes carry tree_wind_flag; trees.md 5q).
 		sp->set_meta("wind_flag", true);
 	}
+	if (beaver_band == 3) {
+		// Beaver-felled stems (trees.md 5au): more than 70% of the larger ones fall toward the water (Badyaev, National
+		// Wildlife 2015: the beaver starts its cut on the water side); placement turns mesh +X down the water distance
+		// for that share, the rest at random.
+		sp->set_meta("fall_to_water", 0.7f);
+	}
 	if (windthrow_band == 1 || windthrow_band == 3) {
 		// Thrown and leaning trees point down the storm's track (mesh +X; trees.md 5am): placement turns them to
 		// fall_dir, with a scatter of fall_scatter radians either side (gusts and eddies in the stand turn them).
@@ -22208,19 +23838,38 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		meshes.resize(p_variants);
 	}
 	const int living = meshes.size();
+	int fire_n = 0;
 	if (fire_variants && fire_cache.has(key)) {
+		fire_n = fire_cache[key].size();
 		meshes.append_array(fire_cache[key]);
+	}
+	int strike_n = 0;
+	if (lightning_variants && strike_cache.has(key)) {
+		strike_n = strike_cache[key].size();
+		meshes.append_array(strike_cache[key]);
+	}
+	if (browse_variants && browse_cache.has(key)) {
+		meshes.append_array(browse_cache[key]);
 	}
 	if (near_sources.has(key)) {
 		near_sources[key]->near_living = living;
+		near_sources[key]->near_fire_count = fire_n;
+		near_sources[key]->near_strike_count = strike_n;
 	}
 	sp->set_meshes(meshes);
+	if (variant_sources.has(key)) {
+		// Deferred variants (trees.md 5bc): grown by this copy when a field asks (request_variants).
+		const Ref<TreeGenerator> &vs = variant_sources[key];
+		sp->set_meta(SNAME("_tree_variant_source"), vs);
+		sp->set_meta(SNAME("tree_variant_living"), living);
+		sp->set_meta(SNAME("tree_variants_deferred"), vs->variant_kinds);
+	}
 	if (near_leaf_range > 0.0f && near_sources.has(key)) {
 		// VegetationField3D builds the near cells from it as trees come close; the species
 		// holds the source (the field keeps only its id).
 		const Ref<TreeGenerator> &src = near_sources[key];
 		sp->set_near_mesh_source(src.ptr());
-		sp->set_near_mesh_key(key);
+		sp->set_near_mesh_key(src->near_key);
 		sp->set_meta(SNAME("_near_mesh_source"), src);
 		sp->set("near_range", near_leaf_range);
 	}
@@ -22447,7 +24096,7 @@ TypedArray<Mesh> TreeGenerator::get_living_meshes(const Ref<PlantSpecies> &p_spe
 	const TypedArray<Mesh> all = p_species->get_meshes();
 	for (int i = 0; i < all.size(); i++) {
 		const Ref<Mesh> m = all[i];
-		if (m.is_valid() && !m->has_meta(SNAME("tree_fire_band"))) {
+		if (m.is_valid() && !m->has_meta(SNAME("tree_fire_band")) && !m->has_meta(SNAME("tree_lightning_years")) && !m->has_meta(SNAME("tree_browse"))) {
 			out.push_back(m);
 		}
 	}
@@ -22457,6 +24106,9 @@ TypedArray<Mesh> TreeGenerator::get_living_meshes(const Ref<PlantSpecies> &p_spe
 void TreeGenerator::clear_cache() {
 	mesh_cache.clear();
 	fire_cache.clear();
+	strike_cache.clear();
+	browse_cache.clear();
+	variant_sources.clear();
 	crown_cache.clear();
 	near_cache.clear();
 	near_sources.clear();
@@ -23183,10 +24835,28 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			pine->set_name("Scots pine (taiga)");
 			// The moister ground: narrow northern spruce of every age, a little birch among it.
 			boreal_band = 1;
+			// Spruce that grew on a nurse log that has since rotted stands on stilts over the gap (trees.md 5aw), in rows
+			// (5az): a colonnade along each vanished log, trees 1.5 m apart on logs up to 10 m; the density is then the
+			// share of 16 m cells that hold one. Placed before the other spruce, which keep out of the rows.
+			nurse_band = 2;
+			Ref<PlantSpecies> stilted = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_STAND);
+			stilted->set_name("Norway spruce (on a rotted nurse log)");
+			stilted->set_density(0.25f);
+			stilted->set_meta("colonnade", Vector2(1.5f, 10.0f));
+			patched(stilted, mosaic, dry, patch_seed, true);
+			nurse_band = 0;
 			Ref<PlantSpecies> spruce = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_STAND);
 			spruce->set_name("Norway spruce (taiga)");
 			spruce->set_density(1.0f);
 			patched(spruce, mosaic, dry, patch_seed, true);
+			// Nurse logs (trees.md 5aw): on the moist spruce ground the seedlings come up on old, mossed spruce logs.
+			nurse_band = 1;
+			Ref<PlantSpecies> nurse = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_LOG);
+			nurse->set_name("Norway spruce (nurse log)");
+			nurse->set_density(0.3f);
+			nurse->set_spacing(HABITATS[PRESET_NORWAY_SPRUCE].stand_spacing * 2.0f);
+			patched(nurse, mosaic, dry, patch_seed, true);
+			nurse_band = 0;
 			boreal_band = 0;
 			canopy(PRESET_BIRCH, 0.12f, mosaic, dry, true, false);
 			shrub(PRESET_ROWAN, 0.25f);
@@ -23231,6 +24901,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			Ref<PlantSpecies> old = _stand_species(PRESET_WHITE_WILLOW, true, p_variants, FORM_STAND);
 			wet_band = 0;
 			old->set_name("White Willow (old, floodplain)");
+			old->set_follow_flow(true); // Flood marks: +X downstream (trees.md 5av).
 			old->set_density(1.0f);
 			old->set_rule_range(PlantSpecies::RULE_WATER_DEPTH, Vector2(0.0f, 0.7f));
 			old->set_rule_fade(PlantSpecies::RULE_WATER_DEPTH, 0.15f);
@@ -23252,6 +24923,136 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			clip(alder, PlantSpecies::RULE_WATER_DISTANCE, Vector2(4.0f, 60.0f), 6.0f);
 			stand_forest_shade = 0.4f;
 		} break;
+		case STAND_BEAVER_POND: {
+			lead = PRESET_BIRCH;
+			// A beaver pond (trees.md 5au; Naiman, Johnston and Kelley 1988, Alteration of North American streams by
+			// beaver; Muller-Schwarze 2011, The Beaver): the dam floods the stream's flat, and the trees standing in the
+			// water drown within a few years and stand grey, bark falling, for decades. On the shore the colony works a
+			// band about ten metres deep (Dieter and McCabe 1989: cut stems a mean 3-8 m from the water, almost none
+			// past 10 m), taking willow, aspen and birch first: gnawed stumps, half of them resprouting into bushes,
+			// felled stems lying mostly toward the water with their limbs gone and bark eaten, stems left part gnawed
+			// on an hourglass waist. Behind it the birch and alder wood the beavers have not reached.
+			auto shore = [&](const Ref<PlantSpecies> &p_sp, float p_to) {
+				// Faded out over the last 2 m, none past p_to.
+				p_sp->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, p_to - 2.0f));
+				p_sp->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, 2.0f);
+				p_sp->set_rule_range(PlantSpecies::RULE_WATER_DEPTH, Vector2(0.0f, 0.05f));
+				p_sp->set_rule_fade(PlantSpecies::RULE_WATER_DEPTH, 0.05f);
+				list.push_back(p_sp);
+			};
+			for (const Preset p : { PRESET_BLACK_ALDER, PRESET_BIRCH }) {
+				// The drowned wood: snags of what stood on the flat, standing in the water.
+				Ref<PlantSpecies> drowned = _stand_species(p, true, p_variants, FORM_SNAG);
+				drowned->set_name(String(preset_names[p]) + " (drowned, beaver pond)");
+				drowned->set_density(p == PRESET_BLACK_ALDER ? 0.5f : 0.35f);
+				drowned->set_canopy_opacity(0.0f);
+				drowned->set_rule_range(PlantSpecies::RULE_WATER_DEPTH, Vector2(0.1f, 1.2f));
+				drowned->set_rule_fade(PlantSpecies::RULE_WATER_DEPTH, 0.1f);
+				// Not on a drained bed (WorldStand DISTURBANCE_BEAVER): the meadow's own snags stand there instead.
+				drowned->set_rule_range(PlantSpecies::RULE_DISTURBANCE, Vector2(0.0f, 3.0f));
+				list.push_back(drowned);
+			}
+			// The beaver meadow (trees.md 5bb): when the dam fails and the pond drains (WorldStand disturbance kind 4,
+			// DISTURBANCE_BEAVER, its years since), the bed dries to sedge and grass meadow (PlantGenerator's beaver
+			// meadow). The drowned snags stand on in it, grey and losing their tops, and fall over the next decades
+			// (Naiman, Johnston and Kelley 1988); trees come back only slowly and from the edge, willow and alder first,
+			// because the drowned bed has lost its mycorrhizal fungi and the meadow's voles eat the seedlings (Terwilliger
+			// and Pastor 1999, Oikos 85; Wright, Jones and Flecker 2002), so meadows stay open for decades.
+			auto meadow = [&](const Ref<PlantSpecies> &p_sp, float p_from, float p_to, float p_fade) {
+				p_sp->set_rule_range(PlantSpecies::RULE_DISTURBANCE, Vector2(SUCCESSION_BEAVER, SUCCESSION_BEAVER));
+				p_sp->set_rule_range(PlantSpecies::RULE_STAND_AGE, Vector2(p_from, p_to));
+				p_sp->set_rule_fade(PlantSpecies::RULE_STAND_AGE, p_fade);
+				list.push_back(p_sp);
+			};
+			for (const Preset p : { PRESET_BLACK_ALDER, PRESET_BIRCH }) {
+				Ref<PlantSpecies> snag = _stand_species(p, true, p_variants, FORM_SNAG);
+				snag->set_name(String(preset_names[p]) + " (drowned, beaver meadow)");
+				snag->set_density(p == PRESET_BLACK_ALDER ? 0.4f : 0.25f);
+				snag->set_canopy_opacity(0.0f);
+				meadow(snag, 0.0f, 30.0f, 10.0f);
+				const int saved_decay = decay_class;
+				Ref<PlantSpecies> fallen_snag = _stand_species(p, true, p_variants, FORM_LOG);
+				decay_class = saved_decay;
+				fallen_snag->set_name(String(preset_names[p]) + " (fallen snag, beaver meadow)");
+				fallen_snag->set_density(0.3f);
+				meadow(fallen_snag, 5.0f, 60.0f, 5.0f);
+			}
+			{
+				// Willow and alder creeping back in, sparse, from about six years after the drain.
+				Ref<PlantSpecies> willow = _stand_species(PRESET_WHITE_WILLOW, false, p_variants, FORM_SAPLING);
+				willow->set_name("White Willow (beaver meadow)");
+				willow->set_density(0.2f);
+				meadow(willow, 6.0f, 1000.0f, 4.0f);
+				Ref<PlantSpecies> alder_in = _stand_species(PRESET_BLACK_ALDER, true, p_variants, FORM_SAPLING);
+				alder_in->set_name("Black Alder (beaver meadow)");
+				alder_in->set_density(0.12f);
+				meadow(alder_in, 10.0f, 1000.0f, 5.0f);
+			}
+			static const char *work_names[4] = { "", " (beaver gnawed)", " (beaver stump)", " (beaver felled)" };
+			for (const Preset p : { PRESET_WHITE_WILLOW, PRESET_BIRCH }) {
+				for (int band = 1; band <= 3; band++) {
+					beaver_band = band;
+					Ref<PlantSpecies> sp = _stand_species(p, true, p_variants, FORM_STAND);
+					beaver_band = 0;
+					sp->set_name(String(preset_names[p]) + work_names[band]);
+					sp->set_density(band == 2 ? 0.7f : (band == 3 ? 0.45f : 0.25f));
+					if (band >= 2) {
+						sp->set_canopy_opacity(0.0f);
+					}
+					if (band == 3) {
+						sp->set_meta("deadwood", true);
+					}
+					shore(sp, band == 1 ? 12.0f : 10.0f);
+				}
+			}
+			// Willow scrub at the waterline: the shoots of the cut stools and browsed bushes.
+			Ref<PlantSpecies> scrub = _stand_species(PRESET_WHITE_WILLOW, false, p_variants, FORM_SAPLING);
+			scrub->set_name("White Willow (beaver pond scrub)");
+			scrub->set_density(0.6f);
+			scrub->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.4f));
+			shore(scrub, 6.0f);
+			// The wood beyond the beavers' reach.
+			Ref<PlantSpecies> birch = canopy(PRESET_BIRCH, 0.8f, 0.0f, 0.0f, false, true);
+			clip(birch, PlantSpecies::RULE_WATER_DISTANCE, Vector2(9.0f, 1000.0f), 4.0f);
+			Ref<PlantSpecies> alder = canopy(PRESET_BLACK_ALDER, 0.5f, 0.0f, 0.0f, false, false);
+			clip(alder, PlantSpecies::RULE_WATER_DISTANCE, Vector2(8.0f, 60.0f), 4.0f);
+			Ref<PlantSpecies> spruce = canopy(PRESET_NORWAY_SPRUCE, 0.5f, 0.0f, 0.0f, false, false);
+			clip(spruce, PlantSpecies::RULE_WATER_DISTANCE, Vector2(18.0f, 1000.0f), 6.0f);
+			stand_forest_shade = 0.45f;
+		} break;
+		case STAND_DEER_WOOD: {
+			lead = PRESET_BEECH;
+			// A wood under heavy deer browsing (trees.md 5aw; Gill 1992; Kirby 2001, The impact of deer on the ground
+			// flora of British broadleaved woodland; Fuller and Gill 2001): the shrub layer is gone and the regeneration
+			// held down, so the wood is open under its crowns and you see far through it; every low limb and the ivy
+			// are eaten to a level browse line; the saplings that are left are hedged into low, dense bushes; smooth
+			// poles of ash and beech carry the deer's bark stripping.
+			stand_forest_shade = 0.5f;
+			browse_band = 1;
+			Ref<PlantSpecies> beech = canopy(PRESET_BEECH, 1.0f, 0.0f, 0.0f, false, true);
+			beech->set_name("Beech (deer wood)");
+			Ref<PlantSpecies> oak = canopy(PRESET_OAK, 0.35f, 0.0f, 0.0f, false, false);
+			oak->set_name("Oak (deer wood)");
+			// Open-grown trees in the glades keep limbs to the ground, which the deer clip from below.
+			Ref<PlantSpecies> glade = open(PRESET_BEECH, 0.35f);
+			glade->set_name("Beech (deer wood glade)");
+			Ref<PlantSpecies> glade_oak = open(PRESET_OAK, 0.25f);
+			glade_oak->set_name("Oak (deer wood glade)");
+			// Ash poles in the gaps, stripped at browse height.
+			Ref<PlantSpecies> ash = canopy(PRESET_ASH, 0.3f, 0.0f, 0.0f, false, false);
+			ash->set_name("Ash (deer wood)");
+			// The saplings left: hedged bushes, waist high.
+			browse_band = 2;
+			for (const Preset p : { PRESET_BEECH, PRESET_ASH, PRESET_ROWAN }) {
+				Ref<PlantSpecies> sp = _stand_species(p, false, p_variants, FORM_SAPLING);
+				sp->set_name(String(preset_names[p]) + " (browsed sapling)");
+				sp->set_density(p == PRESET_BEECH ? 0.5f : 0.25f);
+				sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.6f));
+				sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
+				list.push_back(sp);
+			}
+			browse_band = 0;
+		} break;
 		case STAND_MAX:
 			break;
 	}
@@ -23272,7 +25073,9 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 		}
 		// A worked coppice's recruits are singled and kept straight for the next standards.
 		timber_stems = p_stand == STAND_COPPICE_STANDARDS;
+		browse_band = p_stand == STAND_DEER_WOOD ? 2 : 0;
 		Ref<PlantSpecies> sap = _stand_species(lead, true, p_variants, FORM_SAPLING);
+		browse_band = 0;
 		timber_stems = false;
 		sap->set_density(0.6f);
 		// A worked coppice is tidied: its standards are felled for timber before they die, so it
@@ -23689,6 +25492,47 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		// foresters mark infested spruce by), then the bark loosens over the galleries and falls in sheets.
 		bark_peel *= y < 0.6f ? 0.0f : (y < 2.5f ? 1.0f + 3.0f * Math::smoothstep(0.8f, 2.5f, y) : (y < 6.0f ? 2.2f : 1.4f));
 	}
+	// Beaver work (trees.md 5au) on a living broadleaf or conifer; restored on return.
+	struct BeaverRestore {
+		int &dc;
+		bool &fl;
+		bool &up;
+		const int s_dc;
+		const bool s_fl, s_up;
+		~BeaverRestore() {
+			dc = s_dc;
+			fl = s_fl;
+			up = s_up;
+		}
+	} beaver_restore{ decay_class, fallen, uprooted, decay_class, fallen, uprooted };
+	// A tree on a rotted nurse log (trees.md 5aw) stands on stilts over the log's gap: the stilt build with the log's
+	// profile (_bank_shear), for this generate() only.
+	struct StiltRestore {
+		float &h;
+		const float s_h;
+		~StiltRestore() { h = s_h; }
+	} stilt_restore{ stilt_height, stilt_height };
+	if (nurse_stilt > 0.0f && !fallen && !fallen_branch) {
+		stilt_height = nurse_stilt;
+	}
+	beaver_now = (beaver_cut != BEAVER_NONE && decay_class == 0 && !fallen && !fallen_branch && !beetle && !is_shrub(preset) && !palm_preset(preset)) ? beaver_cut : BEAVER_NONE;
+	beaver_tip = -1;
+	tube_no_tongue = beaver_now == BEAVER_FELLED;
+	if (beaver_now != BEAVER_NONE) {
+		RandomPCG br;
+		br.seed(uint64_t(seed) * 0x9e3779b97f4a7c15ull + 0x62656176u);
+		// A beaver gnaws sitting on its haunches: the cut stands about knee high or lower, 25-55 cm.
+		beaver_cut_h = Math::lerp(0.25f, 0.55f, br.randf());
+		const float y = beaver_years;
+		if (beaver_now == BEAVER_FELLED) {
+			// Felled whole at the waist (not thrown with its roots); fresh, it is still in leaf.
+			fallen = true;
+			uprooted = false;
+			decay_class = y < 0.3f ? 0 : (y < 2.0f ? 1 : (y < 6.0f ? 2 : 3));
+		} else if (beaver_now == BEAVER_STUMP && !_beaver_resprouts()) {
+			decay_class = y < 1.0f ? 1 : (y < 4.0f ? 2 : 3);
+		}
+	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	nodes.clear();
 	buds.clear();
@@ -23744,7 +25588,17 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		if (sprouts > 0.0f && rng.randf() < sprouts && last_cut < 0) {
 			add_stem_bud(_rand(0.0f, Math::TAU), spread * _rand(0.3f, 1.0f));
 		}
+		browse_now = browse > 0.0f && (browse_years <= 0 || y > years - browse_years);
+		if (y == 1) {
+			browse_top = 1e6f;
+		}
 		_grow_year(y);
+		if (browse_now) {
+			browse_top = _stem_top();
+		}
+		if (beaver_now == BEAVER_STUMP && beaver_tip < 0 && y >= MAX(1, years - int(beaver_years))) {
+			_beaver_stump(y);
+		}
 		if (krummholz > 0.0f && y > 6 && int(layer_roots.size()) < 20 && rng.randf() < 0.5f * krummholz) {
 			// Layering (Cooper 1911; Laberge et al. 2000): a mat limb pressed to the ground under
 			// the snow roots where it lies, and its tip or a bud on it turns up as a new stem, so a
@@ -24119,6 +25973,36 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	if (decay_class == 0 && !fallen && !fallen_branch && envelope.size == Vector3()) {
 		_break_limbs();
 	}
+	beaver_axis.clear();
+	if (beaver_now == BEAVER_GNAWED && !nodes.is_empty()) {
+		// The stem's axis and girth at the waist, for _beaver_waist_at: the main stem from the root, up past the waist.
+		int k = -1;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			if (!nodes[i].removed && nodes[i].parent == 0 && (k < 0 || nodes[i].radius > nodes[k].radius)) {
+				k = i;
+			}
+		}
+		const float base_y = nodes[0].start.y;
+		beaver_r = 0.0f;
+		while (k >= 0 && !nodes[k].removed) {
+			const Node &n = nodes[k];
+			beaver_axis.push_back(n.start);
+			if (n.start.y - base_y <= beaver_cut_h) {
+				beaver_r = n.radius;
+			}
+			if (n.end().y - base_y > beaver_cut_h + 4.0f * MAX(n.radius, 0.05f) || n.main < 0) {
+				beaver_axis.push_back(n.end());
+				break;
+			}
+			k = n.main;
+		}
+		if (beaver_axis.size() < 2 || beaver_r <= 0.0f) {
+			beaver_axis.clear();
+		}
+	}
+	if (beaver_now == BEAVER_FELLED) {
+		_beaver_strip();
+	}
 	if (fallen_branch) {
 		_shed_branch();
 	} else if (fallen) {
@@ -24319,6 +26203,10 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_bark_peel", "peel"), &TreeGenerator::set_bark_peel);
 	ClassDB::bind_method(D_METHOD("set_fire_years", "years"), &TreeGenerator::set_fire_years);
 	ClassDB::bind_method(D_METHOD("set_fire_variants", "enabled"), &TreeGenerator::set_fire_variants);
+	ClassDB::bind_method(D_METHOD("set_lightning_variants", "enabled"), &TreeGenerator::set_lightning_variants);
+	ClassDB::bind_method(D_METHOD("get_lightning_variants"), &TreeGenerator::get_lightning_variants);
+	ClassDB::bind_method(D_METHOD("set_browse_variants", "enabled"), &TreeGenerator::set_browse_variants);
+	ClassDB::bind_method(D_METHOD("get_browse_variants"), &TreeGenerator::get_browse_variants);
 	ClassDB::bind_method(D_METHOD("get_fire_variants"), &TreeGenerator::get_fire_variants);
 	ClassDB::bind_method(D_METHOD("get_fire_years"), &TreeGenerator::get_fire_years);
 	ClassDB::bind_method(D_METHOD("set_beetle_years", "years"), &TreeGenerator::set_beetle_years);
@@ -24342,6 +26230,28 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_ground_slope", "slope"), &TreeGenerator::set_ground_slope);
 	ClassDB::bind_method(D_METHOD("get_ground_slope"), &TreeGenerator::get_ground_slope);
 	ClassDB::bind_method(D_METHOD("set_stilt_height", "height"), &TreeGenerator::set_stilt_height);
+	ClassDB::bind_method(D_METHOD("set_flood_height", "height"), &TreeGenerator::set_flood_height);
+	ClassDB::bind_method(D_METHOD("get_flood_height"), &TreeGenerator::get_flood_height);
+	ClassDB::bind_method(D_METHOD("set_flood_years", "years"), &TreeGenerator::set_flood_years);
+	ClassDB::bind_method(D_METHOD("get_flood_years"), &TreeGenerator::get_flood_years);
+	ClassDB::bind_method(D_METHOD("set_browse", "pressure"), &TreeGenerator::set_browse);
+	ClassDB::bind_method(D_METHOD("get_browse"), &TreeGenerator::get_browse);
+	ClassDB::bind_method(D_METHOD("set_browse_height", "height"), &TreeGenerator::set_browse_height);
+	ClassDB::bind_method(D_METHOD("get_browse_height"), &TreeGenerator::get_browse_height);
+	ClassDB::bind_method(D_METHOD("set_browse_years", "years"), &TreeGenerator::set_browse_years);
+	ClassDB::bind_method(D_METHOD("get_browse_years"), &TreeGenerator::get_browse_years);
+	ClassDB::bind_method(D_METHOD("set_nurse_seedlings", "amount"), &TreeGenerator::set_nurse_seedlings);
+	ClassDB::bind_method(D_METHOD("get_nurse_seedlings"), &TreeGenerator::get_nurse_seedlings);
+	ClassDB::bind_method(D_METHOD("set_nurse_stilt", "girth"), &TreeGenerator::set_nurse_stilt);
+	ClassDB::bind_method(D_METHOD("get_nurse_stilt"), &TreeGenerator::get_nurse_stilt);
+	ClassDB::bind_method(D_METHOD("set_lightning_years", "years"), &TreeGenerator::set_lightning_years);
+	ClassDB::bind_method(D_METHOD("get_lightning_years"), &TreeGenerator::get_lightning_years);
+	ClassDB::bind_method(D_METHOD("set_beaver_cut", "cut"), &TreeGenerator::set_beaver_cut);
+	ClassDB::bind_method(D_METHOD("get_beaver_cut"), &TreeGenerator::get_beaver_cut);
+	ClassDB::bind_method(D_METHOD("set_beaver_years", "years"), &TreeGenerator::set_beaver_years);
+	ClassDB::bind_method(D_METHOD("get_beaver_years"), &TreeGenerator::get_beaver_years);
+	ClassDB::bind_method(D_METHOD("set_beaver_depth", "depth"), &TreeGenerator::set_beaver_depth);
+	ClassDB::bind_method(D_METHOD("get_beaver_depth"), &TreeGenerator::get_beaver_depth);
 	ClassDB::bind_method(D_METHOD("get_stilt_height"), &TreeGenerator::get_stilt_height);
 	ClassDB::bind_method(D_METHOD("set_bank_erosion", "erosion"), &TreeGenerator::set_bank_erosion);
 	ClassDB::bind_method(D_METHOD("get_bank_erosion"), &TreeGenerator::get_bank_erosion);
@@ -24421,6 +26331,9 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_far_lod1", "enabled"), &TreeGenerator::set_far_lod1);
 	ClassDB::bind_method(D_METHOD("get_far_lod1"), &TreeGenerator::get_far_lod1);
 	ClassDB::bind_method(D_METHOD("request_near_mesh", "key", "variant"), &TreeGenerator::request_near_mesh);
+	ClassDB::bind_method(D_METHOD("request_variants", "species", "kinds"), &TreeGenerator::request_variants);
+	ClassDB::bind_method(D_METHOD("set_defer_variants", "enabled"), &TreeGenerator::set_defer_variants);
+	ClassDB::bind_method(D_METHOD("get_defer_variants"), &TreeGenerator::get_defer_variants);
 	ClassDB::bind_method(D_METHOD("get_near_mesh_count"), &TreeGenerator::get_near_mesh_count);
 	ClassDB::bind_method(D_METHOD("set_bark_color", "color"), &TreeGenerator::set_bark_color);
 	ClassDB::bind_method(D_METHOD("get_bark_color"), &TreeGenerator::get_bark_color);
@@ -24476,6 +26389,9 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_peel", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_bark_peel", "get_bark_peel");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fire_years", PROPERTY_HINT_RANGE, "-1,30,0.05,suffix:yr"), "set_fire_years", "get_fire_years");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_variants"), "set_fire_variants", "get_fire_variants");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lightning_variants"), "set_lightning_variants", "get_lightning_variants");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "browse_variants"), "set_browse_variants", "get_browse_variants");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "defer_variants"), "set_defer_variants", "get_defer_variants");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beetle_years", PROPERTY_HINT_RANGE, "-1,30,0.05,suffix:yr"), "set_beetle_years", "get_beetle_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beetle_outbreak", PROPERTY_HINT_RANGE, "0,30,0.5,suffix:yr"), "set_beetle_outbreak", "get_beetle_outbreak");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_thinning"), "set_far_thinning", "get_far_thinning");
@@ -24491,6 +26407,17 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_slope", PROPERTY_HINT_RANGE, "0,1.2,0.01,radians_as_degrees"), "set_ground_slope", "get_ground_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bank_erosion", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_bank_erosion", "get_bank_erosion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stilt_height", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_stilt_height", "get_stilt_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flood_height", PROPERTY_HINT_RANGE, "0,6,0.01,suffix:m"), "set_flood_height", "get_flood_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flood_years", PROPERTY_HINT_RANGE, "0,30,0.05,suffix:yr"), "set_flood_years", "get_flood_years");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "browse", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_browse", "get_browse");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "browse_height", PROPERTY_HINT_RANGE, "0.3,3,0.01,suffix:m"), "set_browse_height", "get_browse_height");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "browse_years", PROPERTY_HINT_RANGE, "0,300,1,suffix:yr"), "set_browse_years", "get_browse_years");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "nurse_seedlings", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_nurse_seedlings", "get_nurse_seedlings");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "nurse_stilt", PROPERTY_HINT_RANGE, "0,1.5,0.01,suffix:m"), "set_nurse_stilt", "get_nurse_stilt");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lightning_years", PROPERTY_HINT_RANGE, "-1,60,0.05,suffix:yr"), "set_lightning_years", "get_lightning_years");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "beaver_cut", PROPERTY_HINT_ENUM, "None,Gnawed,Stump,Felled"), "set_beaver_cut", "get_beaver_cut");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beaver_years", PROPERTY_HINT_RANGE, "0,60,0.05,suffix:yr"), "set_beaver_years", "get_beaver_years");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beaver_depth", PROPERTY_HINT_RANGE, "0.05,0.95,0.01"), "set_beaver_depth", "get_beaver_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "root_stone", PROPERTY_HINT_RANGE, "0,2,0.01,suffix:m"), "set_root_stone", "get_root_stone");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fungi_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fungi_cover", "get_fungi_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fruit_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fruit_cover", "get_fruit_cover");
@@ -24620,10 +26547,20 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_BOREAL_TAIGA);
 	BIND_ENUM_CONSTANT(STAND_ALDER_CARR);
 	BIND_ENUM_CONSTANT(STAND_FLOODPLAIN_WILLOW);
+	BIND_ENUM_CONSTANT(STAND_BEAVER_POND);
+	BIND_ENUM_CONSTANT(STAND_DEER_WOOD);
 	BIND_ENUM_CONSTANT(SUCCESSION_NONE);
 	BIND_ENUM_CONSTANT(SUCCESSION_FIRE);
 	BIND_ENUM_CONSTANT(SUCCESSION_WIND);
 	BIND_ENUM_CONSTANT(SUCCESSION_BEETLE);
+	BIND_ENUM_CONSTANT(SUCCESSION_BEAVER);
+	BIND_ENUM_CONSTANT(VARIANT_FIRE);
+	BIND_ENUM_CONSTANT(VARIANT_STRIKE);
+	BIND_ENUM_CONSTANT(VARIANT_BROWSE);
+	BIND_ENUM_CONSTANT(BEAVER_NONE);
+	BIND_ENUM_CONSTANT(BEAVER_GNAWED);
+	BIND_ENUM_CONSTANT(BEAVER_STUMP);
+	BIND_ENUM_CONSTANT(BEAVER_FELLED);
 	BIND_ENUM_CONSTANT(STAND_MAX);
 	BIND_ENUM_CONSTANT(REGION_EUROPE);
 	BIND_ENUM_CONSTANT(REGION_NORTH_AMERICA);

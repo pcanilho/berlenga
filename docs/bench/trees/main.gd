@@ -26,6 +26,8 @@ extends Node3D
 #                     side by side in winter grass (trees.md 5l), seen from 1.7 m, 10 m back
 #   --sun-energy=E    sun energy (default 1.4; 0 for sky light only)
 #   env FIRE_AGE=Y [SCORCH=H]  a past fire Y years ago, crowns killed up to H m (default 30): needle cast
+#   --colonnade       a colonnade (trees.md 5az): five forest spruce on stilts in a row over one vanished log
+#   --beaver          beaver work (trees.md 5au): a gnawed birch, fresh and old stumps (one resprouting), a felled stem
 #   --decays          deadwood: each preset living, then decay classes 1-5, then a log (class 3)
 #   --stands ...      stands and placement instead: see stands.gd
 #   --wind ...        wind on rigged trees: see wind.gd
@@ -60,6 +62,8 @@ var seed := 1
 var view := "side"
 var overrides := {}
 var decays := false
+var beaver := false
+var colonnade := false
 var litter := false
 var pollards := false
 var pollard_heights: Array[float] = []
@@ -131,6 +135,10 @@ func _ready() -> void:
 			view = a.substr(7)
 		elif a == "--decays":
 			decays = true
+		elif a == "--beaver":
+			beaver = true
+		elif a == "--colonnade":
+			colonnade = true
 		elif a == "--pollards":
 			pollards = true
 		elif a == "--litter":
@@ -332,6 +340,34 @@ func _build_scene() -> void:
 	var xs: Array[float] = []
 	if decays:
 		rows = [0, 1, 2, 3, 4, 5, 6]
+	if colonnade:
+		presets = []
+		# Five spruce that came up on one log 1.5 m apart (the field's slot jitter), all on its 0.8 m girth; the log's
+		# tunnel along +X under the row, as VegetationField3D lines them up.
+		var row := [[1, -3.05], [2, -1.45], [4, 0.0], [5, 1.6], [7, 3.0]]
+		overrides["nurse_stilt"] = 0.8
+		for t in row:
+			var d := _gen(4, true, t[0])
+			_place(d.mesh, Vector3(t[1], 0, 0.05 * (t[0] % 3 - 1)))
+			print("spruce colonnade seed %d at %.2f: %.1f m tall, %d tris" % [t[0], t[1], d.height, d.tris])
+		overrides.clear()
+		xs.append(0.0) # The views centre on the middle tree.
+	if beaver:
+		presets = []
+		# [preset, seed, beaver_cut, years, position]: a birch gnawed to its waist, a fresh stump, a stump three years
+		# on (resprouting), an old grey stump, and a stem felled last autumn lying toward +X (the water).
+		var work := [[2, 4, 1, 0.1, Vector3(0, 0, 0)], [2, 1, 2, 0.1, Vector3(2.2, 0, -0.9)], [2, 2, 2, 3.0, Vector3(4.6, 0, 0.4)],
+				[2, 1, 2, 6.0, Vector3(6.8, 0, -0.7)], [2, 4, 3, 0.6, Vector3(-0.5, 0, 2.6)]]
+		for t in work:
+			overrides["years"] = 20.0
+			overrides["beaver_cut"] = t[2]
+			overrides["beaver_years"] = t[3]
+			overrides["beaver_depth"] = 0.7
+			var d := _gen(t[0], false, t[1])
+			xs.append(t[4].x)
+			_place(d.mesh, t[4])
+			print("%s beaver %d at %.1f y: %.1f m tall, %d tris" % [NAMES[t[0]], t[2], t[3], d.height, d.tris])
+		overrides.clear()
 	if pollards:
 		presets = []
 		# Willow pollard cut every 6 years for 80, 3 years ago; beech last cut 60 years ago, its poles grown on into

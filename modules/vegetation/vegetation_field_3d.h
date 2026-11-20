@@ -146,7 +146,12 @@ private:
 	PackedVector4Array obstacles;
 	VegetationObstacles obstacle_grid;
 	Array paths; // Worn paths (VegetationPaths): Dictionaries of points, width, passes a year.
-	VegetationPaths path_grid;
+	VegetationPaths path_grid; // paths and the world's game trails.
+	Array world_trails; // WorldStand.get_trails() as last read.
+	uint64_t trails_seen = 0;
+	double trails_check = 0.0;
+	void _read_world_trails();
+	void _follow_trails(double p_delta);
 	PackedVector4Array stone_tops; // (x, top y, z, cap radius): where stone_top species grow.
 	VegetationObstacles stone_top_grid;
 	PackedVector3Array stone_top_normals; // Optional, one per stone_tops entry: the cap's surface normal.
@@ -162,6 +167,7 @@ private:
 	Ref<Texture2D> far_texture;
 	static constexpr float CROWN_CELL = 8.0f;
 	static constexpr float NEBKHA_CELL = 16.0f;
+	static constexpr float COLONNADE_CELL = 16.0f; // One candidate log a cell for colonnade species (trees.md 5az).
 	static constexpr float NEBKHA_CLEAR = 2.0f; // Desert shrubs placed by density keep this far from a mound's foot.
 	static constexpr float NEBKHA_RADIUS = 2.7f; // A mound's radius over its height (terrain-gen: 2.4 to 3).
 	static constexpr float NEBKHA_CROWN = 0.4f; // Its shrub's crown radius over the mound's radius.
@@ -210,6 +216,7 @@ private:
 		float crown_max = 0.0f; // The largest crown radius it can place.
 		float halo = 0.0f; // How far around a tile it must be placed for later species.
 		int nebkha_slot = -1; // A nebkha shrub (meta "nebkha"): which of the mounds (hash modulo nebkha_count) it crowns.
+		Vector2 colonnade; // A colonnade (meta "colonnade": slot spacing, longest log, m): placed in rows along vanished logs.
 		bool desert_shrub = false; // A desert woody shrub placed by density: keeps off the nebkhas.
 		Color far_color; // Linear; alpha: how much ground it hides far away.
 		Color far_albedo; // Linear: its leaves' mean albedo as the plant shader draws them (far_shell); alpha 0: unknown.
@@ -223,6 +230,7 @@ private:
 		bool wind_flag = false; // Meta "wind_flag": +X turned down the prevailing wind (flagged trees, krummholz).
 		Vector2 fall_dir; // Meta "fall_dir" (world xz, unit): +X turned along it, +-fall_scatter (storm-thrown trees, trees.md 5am); zero none.
 		float fall_scatter = 0.0f;
+		float fall_water = 0.0f; // Meta "fall_to_water": that share turned +X toward the water (beaver-felled stems, trees.md 5au).
 		float far_hull_range = 0.0f; // Meta "far_hull_range" (trees, trees.md 9b): past it each variant's mesh meta tree_far_hull is drawn instead.
 		float far_top = 0.0f; // Trees (far_widen): the first mesh's top, for the skyline test (trees.md 9c).
 		bool far_widen = false; // Meta "far_widen" (trees, trees.md 9a): the far tail's survivors widened in their transforms per tile.
@@ -232,6 +240,11 @@ private:
 		LocalVector<float> fire_years;
 		LocalVector<Vector2> fire_bands; // Per variant, mesh meta "tree_fire_band" (years from, to); empty: nearest years.
 		float fire_years_max = 0.0f;
+		// Per variant, mesh meta "tree_lightning_years" (a struck variant's years since the strike, -1 not struck); empty:
+		// none. A tree under a recorded strike (WorldStand.strike_age_at) takes the struck variant nearest its age.
+		LocalVector<float> strike_years;
+		float strike_years_max = 0.0f;
+		LocalVector<uint8_t> browsed; // Per variant: 1 for a browsed one (mesh meta tree_browse), empty when none is.
 		LocalVector<float> base_lifts; // Per variant, mesh meta "tree_base_lift" (m in mesh space: stilt roots, the origin that far above the ground); empty: none.
 		Vector2 open_side; // Mesh meta "tree_open_side" (xz, unit) of its first mesh carrying it: turned to face the open (forest edges); zero none.
 	};
@@ -311,14 +324,38 @@ private:
 			float kind_fade = 0.0f;
 			bool operator==(const StandRule &p_o) const { return age == p_o.age && age_fade == p_o.age_fade && kind == p_o.kind && kind_fade == p_o.kind_fade; }
 		};
+		// Lightning strikes on trees (WorldStand.get_strikes_in: x, z, age), copied for the placing threads, in 16 m cells;
+		// read when a species carries struck variants.
+		LocalVector<Vector3> strikes;
+		HashMap<Vector2i, LocalVector<uint32_t>> strike_cells;
+		float strike_at(const Vector2 &p_xz) const;
+		// Deer browsing pressure (WorldStand.browse_at, 0..1), sampled for the placing threads over rect; read when a
+		// species carries browsed variants.
+		LocalVector<float> browse;
+		Rect2 browse_rect;
+		int browse_nx = 0;
+		int browse_ny = 0;
+		float browse_at(const Vector2 &p_xz) const;
 		LocalVector<StandRule> stand_rules;
 		LocalVector<float> stand_age;
 		LocalVector<uint8_t> stand_kind;
+		// Deer browsing pressure (WorldStand.browse_at, RULE_BROWSE) on the same grid, read when a species uses the
+		// rule; the distinct browse rules (range x, y; fade z) tell which changes matter.
+		LocalVector<Vector3> browse_rules;
+		LocalVector<float> stand_browse;
+		float browse_cell(int p_cell) const { return p_cell < 0 || stand_browse.is_empty() ? 0.0f : stand_browse[p_cell]; }
+		// Boar rooting (WorldStand.rooting_age_at, RULE_ROOTING: years since, -1 never) on the same grid, read when a
+		// species uses the rule.
+		LocalVector<Vector3> rooting_rules;
+		LocalVector<float> stand_rooting;
+		float rooting_cell(int p_cell) const { return p_cell < 0 || stand_rooting.is_empty() ? -1.0f : stand_rooting[p_cell]; }
+		bool rooting_differs(float p_a0, float p_a1) const;
 		int stand_nx = 0;
 		int stand_ny = 0;
 		Rect2 stand_rect;
 		int stand_cell(const Vector2 &p_xz) const;
 		bool stand_differs(float p_age0, int p_kind0, float p_age1, int p_kind1) const;
+		bool browse_differs(float p_b0, float p_b1) const;
 		// Signed metres from the forest canopy's edge (RULE_FOREST_EDGE), positive inside, on a grid of 2 m or more over
 		// the map, bilinear; read when a species uses the rule. Empty: no canopy (-1000 everywhere).
 		LocalVector<float> edge;
@@ -356,7 +393,14 @@ private:
 	static void _read_sand_mobility(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
 	void _read_burn_age(PlaceSetup &r_setup) const;
 	void _read_stand(PlaceSetup &r_setup) const;
+	void _read_strikes(PlaceSetup &r_setup) const;
 	void _read_forest_edge(PlaceSetup &r_setup) const;
+	static bool _context_only(const PlantSpecies *p_sp);
+	// The last setup's context grids (burn ages, stand, forest edge), for reads outside placement (sward_at).
+	PlaceSetup context;
+	bool context_valid = false;
+	void _copy_context(const PlaceSetup &p_setup);
+	float _context_weight(const PlantSpecies *p_sp, const Vector2 &p_xz) const;
 	static void _edge_row(void *p_job, uint32_t p_row);
 	static constexpr float EDGE_CLOSED = 0.35f; // Canopy species' summed density times suitability that counts as forest.
 	Rect2 _update_stand(PlaceSetup &r_setup, const Rect2 &p_area) const;
@@ -562,6 +606,15 @@ private:
 	// species crosses its stand range are placed again (advance_years ages every stand without replacing them all).
 	mutable uint64_t stand_seen = 0;
 	mutable bool stand_follow = false;
+	mutable bool strike_follow = false; // A species carries struck variants: strikes re-place their tiles.
+	mutable bool browse_follow = false; // A species carries browsed variants: browse changes re-place their tiles.
+	// Deferred tree variants (TreeGenerator.defer_variants, trees.md 5bc): grown when a burn, strike or browse disc first
+	// lies over the field, in setup or (a new burn, strike or disc) from process, the stream starting again with them.
+	bool _realize_variants(const PlaceSetup &p_setup);
+	bool variants_waiting = false;
+	double variants_check = 0.0;
+	static int _deferred_kinds(const Ref<PlantSpecies> &p_sp) { return p_sp.is_valid() ? int(p_sp->get_meta(SNAME("tree_variants_deferred"), 0)) : 0; }
+	void _read_browse(PlaceSetup &r_setup) const;
 	double stand_check = 0.0;
 	Rect2 stand_dirty;
 	void _follow_stand(double p_delta);
@@ -621,6 +674,8 @@ protected:
 
 public:
 	static String get_floor_shader_code();
+	// Game trails (vegetation_trails.cpp): a worn-path network (paths' Dictionaries) linking p_goals over the map.
+	static Array make_game_trails(Node *p_data_map, const Rect2 &p_area, const PackedVector3Array &p_goals, const Dictionary &p_options = Dictionary());
 	void set_forest_floor_enabled(bool p_enabled);
 	bool is_forest_floor_enabled() const { return forest_floor_enabled; }
 	void set_biome(const Ref<Biome> &p_biome);

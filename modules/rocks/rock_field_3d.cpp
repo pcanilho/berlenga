@@ -6092,9 +6092,8 @@ int RockField3D::build_area(const Rect2 &p_rect) {
 		}
 	}
 	last_build_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
-	// Far thinning (and its widened survivors) round the target, as streaming applies it each frame, so stills show
-	// what play shows.
-	_update_thinning(_target_position());
+	// (Stills are not thinned here: thinning ~1,000 far MultiMeshes left the near grains wrong in the path-traced still
+	// though raster was unchanged, docs/ideas/rocks.md "Far rocks"; streaming still thins them in play.)
 	// Close-up shapes too, waiting for them (stills and benches want the finished picture): two passes, the first
 	// starts the builds, the second places them.
 	if (close_up_enabled) {
@@ -6501,7 +6500,8 @@ Ref<ShaderMaterial> RockField3D::_ground_source() const {
 }
 
 // The ground's layer colours for the blend band: a TerrainMaterial3D's tm_<layer>_color times the mean of its albedo
-// texture (the texture's detail averages out over the band), as linear albedo. Without a ground material, the
+// texture (the texture's detail averages out over the band; not for an detail_only layer, whose mean is its colour),
+// as linear albedo. Without a ground material, the
 // terrain material's own defaults.
 void RockField3D::_apply_ground(const Ref<ShaderMaterial> &p_material) const {
 	_sync_scree_blocks();
@@ -6519,7 +6519,11 @@ void RockField3D::_apply_ground(const Ref<ShaderMaterial> &p_material) const {
 				c = v;
 			}
 			const Ref<Texture2D> tex = ground->get_shader_parameter(StringName(String("tm_") + names[i] + "_albedo_tex"));
-			if (tex.is_valid()) {
+			// A layer with detail_only divides the texture by its own mean (tm_<layer>_albedo_mean), so its average
+			// is the layer colour already.
+			const Variant am = ground->get_shader_parameter(StringName(String("tm_") + names[i] + "_albedo_mean"));
+			const bool detail_only = am.get_type() == Variant::VECTOR3 && Vector3(am) != Vector3(1, 1, 1);
+			if (tex.is_valid() && !detail_only) {
 				Ref<Image> img = tex->get_image();
 				if (img.is_valid() && !img->is_empty()) {
 					img = img->duplicate();
@@ -7109,16 +7113,15 @@ void RockField3D::_clear_cover() {
 	_push_cover();
 }
 
-Vector3 RockField3D::contract_cover_at(const Vector3 &p_position) const {
+Vector3 RockField3D::_cover_sample(const Vector2 &p_xz) const {
 	static const float texel[2] = { 1.0f, 8.0f };
-	MutexLock lock(cover_data_mutex);
 	for (int l = 0; l < 2; l++) {
 		if (!cover_valid[l] || cover_data[l].size() != COVER_N * COVER_N * 4) {
 			continue;
 		}
 		// Texel centres sit at half a texel; stay a texel inside so the bilinear taps are all in the map.
-		const float fx = (float(p_position.x) - cover_origin[l].x) / texel[l] - 0.5f;
-		const float fz = (float(p_position.z) - cover_origin[l].y) / texel[l] - 0.5f;
+		const float fx = (p_xz.x - cover_origin[l].x) / texel[l] - 0.5f;
+		const float fz = (p_xz.y - cover_origin[l].y) / texel[l] - 0.5f;
 		if (fx < 0.0f || fz < 0.0f || fx >= COVER_N - 1 || fz >= COVER_N - 1) {
 			continue;
 		}
@@ -7134,6 +7137,19 @@ Vector3 RockField3D::contract_cover_at(const Vector3 &p_position) const {
 		return r;
 	}
 	return Vector3();
+}
+
+Vector3 RockField3D::contract_cover_at(const Vector3 &p_position) const {
+	MutexLock lock(cover_data_mutex);
+	return _cover_sample(Vector2(p_position.x, p_position.z));
+}
+
+// A grid of reads (sand's armour): the lock once for all of them.
+void RockField3D::contract_cover_points(const Vector2 *p_points, int p_count, Vector3 *r_cover) const {
+	MutexLock lock(cover_data_mutex);
+	for (int i = 0; i < p_count; i++) {
+		r_cover[i] = _cover_sample(p_points[i]);
+	}
 }
 
 // Off: the river beds keep only the river layer's stones (their grains and their far cover go; cells already built

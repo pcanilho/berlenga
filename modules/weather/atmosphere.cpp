@@ -210,6 +210,12 @@ uniform float atmo_far_water : hint_range(0, 1) = 0.0; // how much of the ground
 // 0.9), so a sky alone hazes its far clouds into the horizon as the world's does. Without it the deck ran to the
 // horizon as a crisp strip of small puffs in rows; real cumulus there merge into the boundary layer's haze.
 uniform vec4 atmo_aerosol = vec4(8.802e-5, 9.78e-5, 1200.0, 0.0);
+// Fires' smoke in that aerosol (WeatherMap3D smoke haze): its share of the extinction, and what the whole smoke
+// column lets through of the sun's light, per colour (SkyClock, the same as the sun light's; Angstrom exponent
+// about 1.8, so blue goes first). The sun through the smoke reddens and dims by it, in the disc and in the light
+// the air scatters (the aureole round the sun, the brown of the sky under it), rather than the grey of the haze.
+uniform float atmo_aerosol_smoke = 0.0;
+uniform vec3 atmo_sun_smoke = vec3(1.0);
 // The clouds' shadow map (WeatherMap3D bakes it in the sun's plane; size 0: none, the shader marches the
 // clouds itself): red the beam's transmittance, green the diffuse. Axes in xyz, the square's corner in w.
 uniform sampler2D atmo_cloud_shadow_map : filter_linear_mipmap, repeat_disable, hint_default_white;
@@ -267,6 +273,24 @@ float atmo_aerosol_tau(float r, float mu) {
 	float hs = atmo_aerosol.z;
 	float m = inversesqrt(max(mu, 0.0) * max(mu, 0.0) + 2.0 * hs / (PI * atmo_radii.x));
 	return atmo_aerosol.y * hs * exp(-max(r - atmo_radii.x, 0.0) / hs) * m;
+}
+
+// The aerosol's transmittance on the sun's light from radius r toward cosine mu: the haze grey, the smoke by
+// colour, the share of its column above r (the smoke thins with height as the aerosol does).
+vec3 atmo_sun_aerosol(float r, float mu) {
+	float grey = exp(-atmo_aerosol_tau(r, mu) * (1.0 - atmo_aerosol_smoke));
+	float above = atmo_aerosol.y > 0.0 ? exp(-max(r - atmo_radii.x, 0.0) / atmo_aerosol.z) : 1.0;
+	return grey * pow(max(atmo_sun_smoke, vec3(1e-8)), vec3(above));
+}
+
+// The same for the light the smoke scatters on, all orders: smoke throws most of what it scatters forward (single
+// scattering albedo 0.9, asymmetry 0.6), so the sunlight carried on through a thick plume, direct and scattered,
+// falls as exp(-(1 - w (1 + g) / 2) tau), about tau 0.28 rather than tau (the transport approximation's forward
+// share, as delta scaling). Under thick smoke the sky stays a dim brown-orange instead of going black.
+vec3 atmo_sun_aerosol_diffuse(float r, float mu) {
+	float grey = exp(-atmo_aerosol_tau(r, mu) * (1.0 - atmo_aerosol_smoke));
+	float above = atmo_aerosol.y > 0.0 ? exp(-max(r - atmo_radii.x, 0.0) / atmo_aerosol.z) : 1.0;
+	return grey * pow(max(atmo_sun_smoke, vec3(1e-8)), vec3(above * 0.28));
 }
 
 // What the aerosol past the froxels lets through to the eye from beyond the air (the sun's disc, the stars).
@@ -400,10 +424,9 @@ void atmo_march(vec3 origin, vec3 rd, float t_a, float t_b, int steps, float jit
 			}
 		}
 		float as = 0.0;
-		float a0 = 1.0;
+		vec3 a0 = atmo_sun_aerosol(r, mu0);
 		float a1 = 1.0;
 		if (atmo_aerosol.y > 0.0) {
-			a0 = exp(-atmo_aerosol_tau(r, mu0));
 			a1 = exp(-atmo_aerosol_tau(r, mu1));
 			if (t >= aerosol_from) {
 				float da = exp(-max(r - atmo_radii.x, 0.0) / atmo_aerosol.z);
@@ -412,10 +435,21 @@ void atmo_march(vec3 origin, vec3 rd, float t_a, float t_b, int steps, float jit
 			}
 		}
 		vec3 tl0 = atmo_light_transmittance(r, mu0) * a0;
+		// The aerosol scatters the sunlight that reaches it all orders forward: through smoke, the light its
+		// forward scattering carried on (atmo_sun_aerosol_diffuse) shines into its own forward lobe too, which is
+		// the wide ruddy aureole a thick plume keeps round the sun (the same as tl0 with no smoke).
+		vec3 tl0a = atmo_light_transmittance(r, mu0) * atmo_sun_aerosol_diffuse(r, mu0);
 		vec3 tl1 = atmo_light_transmittance(r, mu1) * a1;
 		vec3 s = vec3(0.0);
-		s += e0 * (tl0 * c0.x * (rs * phases.x + ms * phases.y + as * pa0) + atmo_multiscatter(r, mu0) * a0 * c0.y * (rs + ms + as));
+		s += e0 * (c0.x * (tl0 * (rs * phases.x + ms * phases.y) + tl0a * as * pa0) + atmo_multiscatter(r, mu0) * atmo_sun_aerosol_diffuse(r, mu0) * c0.y * (rs + ms + as));
 		s += e1 * (tl1 * c1.x * (rs * phases.z + ms * phases.w + as * pa1) + atmo_multiscatter(r, mu1) * a1 * c1.y * (rs + ms + as));
+		// The light the deck lets through diffusely, a source of its own for the air under it: the flux mu E Td
+		// leaves the cloud base as a uniform downward radiance F / pi, and the air scatters F / (2 pi) of it toward
+		// the eye (isotropic phase, the upper hemisphere). Without it the air under an overcast was lit only by
+		// its own multiple scattering, and the horizon below a deck went darker than the deck and the ground.
+		if (shadow) {
+			s += (e0 * tl0 * max(mu0, 0.0) * max(c0.y - c0.x, 0.0) + e1 * tl1 * max(mu1, 0.0) * max(c1.y - c1.x, 0.0)) * (rs + ms + as) / (2.0 * PI);
+		}
 		vec3 step_t = exp(-ext * dt);
 		lum += thr * s * (1.0 - step_t) / max(ext, vec3(1e-12));
 		thr *= step_t;
@@ -460,7 +494,7 @@ vec4 atmo_scatter(float cam_h, vec3 rd, vec3 l0, vec3 e0, vec3 l1, vec3 e1, floa
 		float g0 = dot(up, l0);
 		float g1 = dot(up, l1);
 		vec3 lit = e0 * atmo_light_transmittance(atmo_radii.x + 1.0, g0) * max(g0, 0.0) + e1 * atmo_light_transmittance(atmo_radii.x + 1.0, g1) * max(g1, 0.0);
-		float ga0 = exp(-atmo_aerosol_tau(atmo_radii.x + 1.0, g0));
+		vec3 ga0 = atmo_sun_aerosol(atmo_radii.x + 1.0, g0);
 		lit = e0 * atmo_light_transmittance(atmo_radii.x + 1.0, g0) * ga0 * max(g0, 0.0) + e1 * atmo_light_transmittance(atmo_radii.x + 1.0, g1) * exp(-atmo_aerosol_tau(atmo_radii.x + 1.0, g1)) * max(g1, 0.0);
 		if (shadow_steps > 0 && t_max < 200000.0 && g0 > 0.0) {
 			// Under the clouds' shadow too: the sun through them, the sky's light through them diffusely.

@@ -32,6 +32,8 @@ extends Node3D
 #   --cloud-shadow=0 --sun-shadow=0   no cloud shadow on the sun; no raster sun shadow map
 #   --sky-params=name:value,...   WeatherSkyMaterial shader parameters (A/B frames)
 #   --sun-off             no sun at all: what the sky alone lights
+#   --ground-scans=0      plain ground layers instead of the CC0 scans in art/terrain_layers (fetch_art.sh);
+#                         --ground-scans=rock,scree scans on those layers only
 #   --far-shadows=0       no far sun shadows from the ground's horizon toward the sun (raster A/B)
 #   --sky-occlusion=0     ground ambient light without the hills' sky occlusion; --sky-light=0 an even sky for it
 #   --water-param=name:value[;...]   set water shader uniforms on the sea and lakes (floats, true/false, colours as r,g,b,a)
@@ -70,6 +72,7 @@ extends Node3D
 #   --atmosphere=scattering|physical   sky air: Hillaire 2020 multiple scattering (default) or the older PhysicalSky model
 #   --clip=N              with --out, N frames in a row (out_0000.png...), for clips; run with --fixed-fps 24
 #   --checks              with --out, run the link checks before the picture (they change the scene)
+#   --far-wait=N          stop waiting for the grass far colour bake after N frames (900); 0 for scouts and close shots
 #   --link=fog|spray|tracks [--link-off]   world-links docs frames, the link on or off (see _link_shot)
 #                         --link-verbose logs the tracks walk every second (ground, water, contact wetness, body load)
 
@@ -451,10 +454,54 @@ func _ready() -> void:
 		_log("river pick: %d reaches" % n_ok)
 		get_tree().quit(0)
 		return
+	if args.has("beaver-dam") and ClassDB.class_exists("WorldBeaverDam3D"):
+		# --beaver-dam[=Y]: a WorldBeaverDam3D (world-links 1f60b5c4) at --dam-at=x,z (else the --look point), pond
+		# --pond-radius (30) m; Y > 0 breaches it Y years ago, so the stand turns the pond to a beaver meadow of
+		# standing dead trees (trees 771b46b4a2). Placed before the vegetation so the stands read it.
+		var da := String(args.get("dam-at", args.get("look", "0,0,0"))).split(",")
+		var dx := float(da[0])
+		var dz := float(da[2] if da.size() > 2 else da[1])
+		var dam: Node3D = ClassDB.instantiate("WorldBeaverDam3D")
+		dam.name = "BeaverDam"
+		dam.set("pond_radius", float(args.get("pond-radius", "30")))
+		add_child(dam)
+		dam.global_position = Vector3(dx, height_at(dx, dz), dz)
+		var dy := float(args["beaver-dam"]) if String(args["beaver-dam"]) != "" else 0.0
+		if dy > 0.0:
+			dam.set("years_drained", dy)
+			dam.call("breach")
+		_log("beaver dam at %s, pond %.0f m, %s" % [str(dam.global_position.round()), float(dam.get("pond_radius")), ("breached %.1f years" % dy) if dy > 0.0 else "active"])
 	_build_vegetation()
 	if args.get("prints", "1") != "0":
 		_build_prints()
 	_build_camera()
+	if args.has("fov"):
+		get_viewport().get_camera_3d().fov = float(args["fov"]) # --fov=DEG: a wider or narrower lens
+	if args.has("deer-lawn"):
+		# --deer-lawn[=P]: deer browse a disc --lawn-dist (25) m ahead of the camera, --lawn-radius (22) m, pressure P
+		# (0.9) through WorldStand.add_browse (cef8dbd7): grass grazes to a lawn there, bramble bitten at its edge,
+		# trees keep a browse line (vegetation 5d2594e2, 6b33a29b).
+		var lc: Camera3D = get_viewport().get_camera_3d()
+		var lf := -lc.global_basis.z
+		lf.y = 0.0
+		var lp := lc.global_position + lf.normalized() * float(args.get("lawn-dist", "25"))
+		lp.y = height_at(lp.x, lp.z)
+		var lpress := float(args["deer-lawn"]) if String(args["deer-lawn"]) != "" else 0.9
+		WorldContracts.get_stand().add_browse(lp, float(args.get("lawn-radius", "22")), lpress)
+		_log("deer lawn at %s, browse %.2f there" % [str(lp.round()), WorldContracts.get_stand().browse_at(lp)])
+	if args.has("sand-vista") and "sand_sea_rect" in gen:
+		# --sand-vista: from the sand sea's edge (--vista-at, 0.12 of its width in) --vista-h (8) m up, looking across
+		# its middle to the far dunes, so the near ripples and the dune-scale tone far off share the frame.
+		var r: Rect2 = gen.sand_sea_rect
+		var f := float(args.get("vista-at", "0.12"))
+		var cp := Vector3(r.position.x + r.size.x * f, 0.0, r.get_center().y)
+		cp.y = height_at(cp.x, cp.z) + float(args.get("vista-h", "8"))
+		var lk := Vector3(r.get_center().x + r.size.x * 0.2, 0.0, r.get_center().y + r.size.y * float(args.get("vista-turn", "0.0")))
+		lk.y = height_at(lk.x, lk.z)
+		var cv: Camera3D = get_viewport().get_camera_3d()
+		cv.global_position = cp
+		cv.look_at(lk)
+		_log("sand vista cam %.0f,%.0f,%.0f look %.0f,%.0f,%.0f (sand sea %s)" % [cp.x, cp.y, cp.z, lk.x, lk.y, lk.z, str(r)])
 	if args.get("wet-follow-cam", "1") != "0" and weather != null:
 		# WeatherMap3D's local reads (smoke haze, cloud shadow, contact wetness) round the camera for the picture;
 		# the setup above ran on the world anchor. --wet-follow-cam=0 keeps the origin anchor.
@@ -527,6 +574,12 @@ func _ready() -> void:
 				_log("%s near radius %.1f m (stream radius %.0f)" % [f.name, f.get_near_radius(), f.stream_radius])
 	if args.has("bracken"):
 		await _frame_bracken()
+	if args.has("lightning-cam"):
+		await _frame_struck()
+	if args.has("host-cam"):
+		await _frame_host()
+	if args.has("colonnade-cam"):
+		await _frame_colonnade()
 	if args.has("log"):
 		await _frame_log()
 	if args.has("mushrooms"):
@@ -714,9 +767,14 @@ func _ready() -> void:
 	var layers_bake: Array = sward if not sward.is_empty() else ([grass] if grass != null else [])
 	var bw := 0
 	get_viewport().disable_3d = args.get("bake-draw", "0") == "0" # the bake draws in its own SubViewport; the main view waits undrawn
+	# --far-wait=N: give up on the far colour bake after N frames (default 900). Scouts and close --link frames take
+	# --far-wait=0 (the far grass keeps its last colours, ~50 min saved on lavapipe); docs stills keep the default.
+	var far_wait := int(args.get("far-wait", "900"))
 	while bw < 900:
 		var done := cover == null or cover.is_stream_idle()
 		for g in layers_bake:
+			if bw >= far_wait:
+				break
 			if g.has_method("is_far_color_baked") and not g.is_far_color_baked():
 				done = false
 		if done:
@@ -784,8 +842,12 @@ func _ready() -> void:
 		await _campfire()
 	if args.has("hut"):
 		await _hut()
+		if args.has("hut-icicles"):
+			await _hut_icicles()
 	if slip_walk.size() == 4 and prints != null:
 		await _slip_walk()
+	if args.has("powder-avalanche") and snow != null:
+		await _powder_avalanche()
 	if (args.has("face-sun") or args.has("face-away")) and sun != null:
 		# --face-sun=PITCH: turn the camera to the sun's azimuth, PITCH degrees below the horizon (godray shots).
 		var cam5: Camera3D = get_viewport().get_camera_3d()
@@ -1130,7 +1192,7 @@ func _frame_log() -> void:
 	var nlogs := 0
 	for i in veg.biome.species.size():
 		var sp := veg.biome.species[i] as Resource
-		if sp == null or not String(sp.resource_name).contains("(log)"):
+		if sp == null or not String(sp.resource_name).contains("log)"): # "(log)", "(nurse log)"
 			continue
 		# --log-match=TEXT: only logs whose species name holds TEXT ("fallen giant": the old-growth gap logs).
 		if args.has("log-match") and not String(sp.resource_name).contains(String(args["log-match"])):
@@ -1595,6 +1657,44 @@ func _forest_settle() -> void:
 	get_viewport().disable_3d = false
 	_log("forest: %d plants in %d tiles after %d frames" % [veg.get_plant_count(), veg.get_stream_tile_count(), n])
 
+
+# Real ground scans (Poly Haven CC0, art repository terrain/layers, fetched by docs/bench/landscape/fetch_art.sh into
+# docs/bench/landscape/art/terrain_layers). Each layer keeps the geology's colour (detail_only: the scan adds detail
+# only, to colour and roughness) and tiles at the scan's real size. Loaded from the files directly (the folder is .gdignore'd, no import step).
+const GROUND_SCANS := {"rock": ["dark_rock_02", 2.0], "scree": ["rocks_ground_02", 2.0], "soil": ["forest_ground_06", 2.11], "alluvium": ["gravelly_sand", 2.48], "sand": ["sand_03", 2.0]}
+
+func _ground_scan_tex(path: String, normal := false) -> Texture2D:
+	var img := Image.load_from_file(path)
+	if img == null or img.is_empty():
+		return null
+	img.generate_mipmaps(normal)
+	return ImageTexture.create_from_image(img)
+
+func _apply_ground_scans(tm: TerrainMaterial3D, dir: String, only := "1") -> int:
+	var n := 0
+	for layer_name in GROUND_SCANS:
+		if only != "1" and not (layer_name in only.split(",")):
+			continue # --ground-scans=rock,scree: those layers only
+		var scan: String = GROUND_SCANS[layer_name][0]
+		var base := dir.path_join(scan).path_join(scan)
+		if not FileAccess.file_exists(base + "_albedo.jpg"):
+			continue
+		var l := TerrainMaterialLayer.new()
+		var maps: String = args.get("scan-maps", "anrh") # --scan-maps=an: only the albedo and normal maps (A/B)
+		if "a" in maps:
+			l.albedo_texture = _ground_scan_tex(base + "_albedo.jpg")
+		if "n" in maps:
+			l.normal_texture = _ground_scan_tex(base + "_normal.jpg", true)
+		if "r" in maps:
+			l.roughness_texture = _ground_scan_tex(base + "_roughness.jpg")
+		if "h" in maps:
+			l.height_texture = _ground_scan_tex(base + "_height.jpg")
+		l.tile_size = GROUND_SCANS[layer_name][1]
+		var c: Color = tm.get_shader_parameter("tm_%s_color" % layer_name) if tm.get_shader_parameter("tm_%s_color" % layer_name) is Color else Color.WHITE
+		l.color = c # the geology's colour: the scan's mean is divided out (detail_only)
+		tm.set("%s_layer" % layer_name, l)
+		n += 1
+	return n
 
 func _log(s: String) -> void:
 	print("[landscape] ", s)
@@ -2421,7 +2521,7 @@ func _build_ground() -> void:
 	add_child(gh)
 	if args.get("ground", "terrain") == "terrain":
 		# TerrainMaterial3D: layers by the generator's geology, height-blended, biplanar cliffs, erosion detail
-		# normals, grass tint, wetness and snow. Plain colours here (textures would come from LFS).
+		# normals, grass tint, wetness and snow; the CC0 ground scans from the art repository when fetched.
 		var tm := TerrainMaterial3D.new()
 		terrain_mat = tm
 		tm.use_generator(gen)
@@ -2458,6 +2558,13 @@ func _build_ground() -> void:
 			RenderingServer.global_shader_parameter_set("terrain_cover_map", cover_tex.get_rid())
 			RenderingServer.global_shader_parameter_set("terrain_cover_rect", Vector4(-2048, -2048, 4096, 4096))
 		tm.update_shader()
+		if args.get("ground-scans", "1") != "0" and not args.has("test"):
+			var ns := _apply_ground_scans(tm, ProjectSettings.globalize_path("res://art/terrain_layers"), args.get("ground-scans", "1"))
+			if ns > 0:
+				tm.update_shader()
+				_log("ground scans: %d layers" % ns)
+			else:
+				_log("ground scans: art/terrain_layers missing (run fetch_art.sh), plain layers")
 		ground_mat = tm
 	else:
 		var sm := StandardMaterial3D.new()
@@ -3029,10 +3136,6 @@ func _link_shot(kind: String, off: bool) -> void:
 					add_child(w)
 					pair.append(w)
 				movers.append([pair, Vector2(ty[0], ty[1]), Vector2(ty[2], ty[3]), 3.0, 0.4])
-			# The contact square (64 m) follows the weather's follow target, here the world anchor at the origin: the
-			# walk is far from it, so the square follows the framed camera for the shot.
-			if not movers.is_empty():
-				weather.follow_target = weather.get_path_to(cam7)
 				if prints != null:
 					# The ground's deform window too, so the stamped prints land inside it.
 					prints.follow_target = prints.get_path_to(cam7)
@@ -3078,6 +3181,17 @@ func _link_shot(kind: String, off: bool) -> void:
 				if prints != null:
 					var mq := a.lerp(b, 0.5)
 					_log("tracks: dent %.3f m mid-walk at %s" % [float(prints.get_dent_at(Vector3(mq.x, height_at(mq.x, mq.y), mq.y))), str(mq)])
+				# The wet prints as the map holds them: the most wetness within 0.5 m of five points along the way, and the
+				# square they must lie in to be drawn (weather_contact_rect).
+				var wl := []
+				for k in 5:
+					var wq := a.lerp(b, (k + 0.5) / 5.0)
+					var best := 0.0
+					for oz in range(-4, 5):
+						for ox in range(-4, 5):
+							best = maxf(best, weather.get_contact_wetness_at(Vector3(wq.x + ox * 0.125, 0, wq.y + oz * 0.125)))
+					wl.append("%.2f at %s" % [best, str(wq.round())])
+				_log("tracks: contact wetness along the way %s; square %s, camera %s" % [", ".join(wl), str(weather.get_contact_wetness_rect()), str(get_viewport().get_camera_3d().global_position.round())])
 				for bd in mv[0]:
 					_log("tracks: %s water %s at the end" % [bd.name, str(weather.get_body_water(bd))])
 					bd.queue_free()
@@ -3129,10 +3243,18 @@ func _weather_settings() -> void:
 		weather.set("dew_and_frost", args["dew-frost"] != "0") # --dew-frost=0: no dew or hoarfrost (a docs pair)
 	if args.has("cloud-cover"):
 		weather.cloud_cover = float(args["cloud-cover"])
+	# --high-cover=C, --mid-cover=C: the cirrus and the mid (altocumulus) layers' cover.
+	if args.has("high-cover") and "high_cloud_cover" in weather:
+		weather.high_cloud_cover = float(args["high-cover"])
+	if args.has("mid-cover") and "mid_cloud_cover" in weather:
+		weather.mid_cloud_cover = float(args["mid-cover"])
 		if weather.cloud_cover <= 0.0:
 			weather.cloud_variation = 0.0 # a clear sky: the regional variation would still raise clouds out of 0 cover
 	if args.has("cloud-type"):
 		weather.cloud_type = float(args["cloud-type"]) # --cloud-type=T: 0 stratus to 1 towering cumulus
+		# A set cloud type stays put unless --cloud-regime=1 (clouds 2dd4c468: else the type follows time of day).
+		if "cloud_regime_from_weather" in weather:
+			weather.cloud_regime_from_weather = args.get("cloud-regime", "0") != "0"
 	if args.has("cloud-variation"):
 		weather.cloud_variation = float(args["cloud-variation"]) # --cloud-variation=V: regional cover variation
 	if args.get("weather", "storm") == "afterrain":
@@ -3504,10 +3626,25 @@ func _generated_forest(clearing: bool) -> Biome:
 	if "near_needle_range" in tg:
 		tg.near_needle_range = float(args.get("near-needle-range", "30")) # --near-needle-range=0: far needles only (memory)
 	if "fire_variants" in tg:
-		# --fire-variants=1: each species also carries its burnt-stand variants (one a fire band, vegetation picks by
-		# WorldFire burn age). Off here unless asked: each is about the woodland's memory again, and an unburnt stand
-		# never shows them.
-		tg.fire_variants = args.get("fire-variants", "0") != "0"
+		# --fire-variants (1): each species also carries its burnt-stand variants (one a fire band, vegetation picks by
+		# WorldFire burn age). On by default: they are deferred (trees.md 5bc), grown only where a burn lies over the
+		# field, so an unburnt stand costs nothing. --fire-variants=0 skips them.
+		tg.fire_variants = args.get("fire-variants", "1") != "0"
+	if "lightning_variants" in tg:
+		# --strike-variants (1): tall species also carry their two struck variants (vegetation picks them under
+		# WorldStand strikes, trees.md 5ax). On by default, deferred like the fire ones; --strike-variants=0 skips them.
+		tg.lightning_variants = args.get("strike-variants", "1") != "0"
+	if "browse_variants" in tg:
+		# --browse-variants (1): open trees, saplings and understory also carry a browsed variant (vegetation picks it
+		# under WorldStand browse discs, trees.md 5az). On by default, deferred; --browse-variants=0 skips them.
+		tg.browse_variants = args.get("browse-variants", "1") != "0"
+	if "flood_height" in tg:
+		# --flood-height=M (--flood-years=Y): flood marks on the trees, a silt line and caught debris at M m (trees
+		# 591d3247); the floodplain willow stand takes 1.2 m by default.
+		var fh := float(args.get("flood-height", "1.2" if args.get("tree-stand", "") == "floodplain_willow" else "0"))
+		if fh > 0.0:
+			tg.flood_height = fh
+			tg.flood_years = float(args.get("flood-years", "1"))
 	if args.has("fungi-cover") and "fungi_cover" in tg:
 		tg.fungi_cover = float(args["fungi-cover"]) # a fungi off/on pair (0 none, 1 default)
 	if clearing:
@@ -3516,7 +3653,7 @@ func _generated_forest(clearing: bool) -> Biome:
 	var variants := int(args.get("tree-variants", "1"))
 	var stands := {"beech": TreeGenerator.STAND_BEECH, "oak": TreeGenerator.STAND_OAK_MIXED,
 			"montane": TreeGenerator.STAND_MONTANE_CONIFER, "hedgerow": TreeGenerator.STAND_HEDGEROW,
-			"stonepine": 13, "windthrow": 17, "old_growth": 18, "taiga": 19, "alder_carr": 20, "floodplain_willow": 21} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
+			"stonepine": 13, "windthrow": 17, "old_growth": 18, "taiga": 19, "alder_carr": 20, "floodplain_willow": 21, "beaver_pond": 22, "deer_wood": 23} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
 	var b: Biome
 	if args.has("montado"):
 		# --montado: the Iberian wood pasture, open-grown cork oaks with stone pines among them over a summer-dry
@@ -3530,10 +3667,46 @@ func _generated_forest(clearing: bool) -> Biome:
 		all.append_array(b.species)
 		b.species = all
 	elif args.has("tree-stand"):
-		# --tree-stand=beech|oak|montane|hedgerow|stonepine|windthrow|old_growth|taiga|alder_carr|floodplain_willow: one stand only (its trees, sapling, snag and log).
+		# --tree-stand=beech|oak|montane|hedgerow|stonepine|windthrow|old_growth|taiga|alder_carr|floodplain_willow|beaver_pond|deer_wood: one stand only (its trees, sapling, snag and log).
 		b = tg.make_stand(stands.get(args["tree-stand"], TreeGenerator.STAND_BEECH), variants)
 	else:
 		b = tg.make_woodland(variants, TreeGenerator.REGION_EUROPE)
+	if args.has("lightning") and "lightning_years" in tg:
+		# --lightning[=Y]: a few Norway spruces struck Y years ago (0.3; trees a9e426e0: the pale strip down the stem,
+		# bark and splinters at the foot for two years, greying over 1-4) among the stand, --lightning-spacing m apart
+		# (60); --view framing with --lightning-cam (side-lit, --lightning-dist 6 m).
+		var keep_preset = tg.preset
+		tg.preset = TreeGenerator.PRESET_NORWAY_SPRUCE
+		tg.lightning_years = float(args.get("lightning", "0.3")) if String(args["lightning"]) != "" else 0.3
+		var struck: PlantSpecies = tg.make_species(false, 1)
+		tg.lightning_years = -1.0
+		tg.preset = keep_preset
+		struck.resource_name = "Norway spruce (lightning struck)"
+		struck.spacing = float(args.get("lightning-spacing", "60"))
+		var all3: Array[PlantSpecies] = [struck]
+		all3.append_array(b.species)
+		b.species = all3
+	if args.has("host-tree") and "mistletoe" in tg:
+		# --host-tree=lime|silver_fir|scots_pine: a few heavily infested hosts among the stand (trees.md 5n/5ay):
+		# --mistletoe=A (3) balls, --brooms=B (silver fir broom rust, 3), --host-spacing m apart (50); --host-cam frames
+		# one crown from below against the sky (--host-dist 14 m, --host-look 12 m up the stem).
+		var hosts := {"lime": TreeGenerator.PRESET_LIME, "silver_fir": TreeGenerator.PRESET_SILVER_FIR, "scots_pine": TreeGenerator.PRESET_SCOTS_PINE, "hawthorn": TreeGenerator.PRESET_HAWTHORN, "white_willow": TreeGenerator.PRESET_WHITE_WILLOW}
+		var hn := String(args["host-tree"]) if String(args["host-tree"]) != "" else "lime"
+		var keep_p = tg.preset
+		var keep_m: float = tg.mistletoe
+		var keep_w: float = tg.witches_brooms
+		tg.preset = hosts.get(hn, TreeGenerator.PRESET_LIME)
+		tg.mistletoe = float(args.get("mistletoe", "3"))
+		tg.witches_brooms = float(args.get("brooms", "3"))
+		var hsp: PlantSpecies = tg.make_species(false, 1)
+		tg.preset = keep_p
+		tg.mistletoe = keep_m
+		tg.witches_brooms = keep_w
+		hsp.resource_name = "%s (mistletoe host)" % hn
+		hsp.spacing = float(args.get("host-spacing", "50"))
+		var all4: Array[PlantSpecies] = [hsp]
+		all4.append_array(b.species)
+		b.species = all4
 	if args.has("forest-edge") and tg.has_method("make_edge"):
 		# --forest-edge[=stand]: the edge species (trees.md 5as: the shrub mantle out in the open, edge trees one-sided
 		# toward it) with the stand's own; vegetation places them by RULE_FOREST_EDGE off the canopy's edge.
@@ -5987,6 +6160,124 @@ func _hut() -> void:
 		_log("hut fire at %.0f s: state %d, %.0f kW, flashover %.0f s, char %.1f mm, collapsed %s, firebrands %d" % [secs, int(bf.call("get_room_state", 0)), float(bf.call("get_heat_release")), float(bf.call("get_room_flashover_time", 0)), float(bf.call("get_room_char_depth", 0)) * 1000.0, str(bf.call("is_room_collapsed", 0)), int(bf.call("get_firebrand_count"))])
 
 
+func _hut_icicles() -> void:
+	# --hut-icicles (with --hut, winter): snow on the hut's roof (its materials take the weather's snow) and a week of
+	# icicles (SnowIcicles3D, snow 5f68879a) along its longest eave, the lip found from the roof mesh; the camera
+	# --ice-dist (1.55) m out from the eave, a little above the icicles' middle, on the longest fused pair, the hut's
+	# dark wall behind. --ice-days (7), --ice-fov (26), --ice-up (0.4 m over the icicles' middle), --ice-look-up (0).
+	var root := get_node_or_null("Hut") as Node3D
+	if root == null or not ClassDB.class_exists("SnowIcicles3D"):
+		_log("hut icicles: no hut or no SnowIcicles3D")
+		return
+	var inv := root.global_transform.affine_inverse()
+	var pts := PackedVector3Array()
+	var snowed := 0
+	for mi in root.find_children("*", "MeshInstance3D", true, false):
+		var m := mi as MeshInstance3D
+		if m.mesh == null or not String(m.name).begins_with("Hut"):
+			continue
+		for si in m.mesh.get_surface_count():
+			var mat := m.get_active_material(si)
+			if mat is BaseMaterial3D and "snow_enabled" in mat:
+				var mm := (mat as BaseMaterial3D).duplicate() as BaseMaterial3D
+				mm.set("snow_enabled", true)
+				m.set_surface_override_material(si, mm)
+				snowed += 1
+		var xf := inv * m.global_transform
+		for v in m.mesh.get_faces():
+			pts.append(xf * v)
+	if pts.is_empty():
+		_log("hut icicles: no hut mesh")
+		return
+	var lo := pts[0]
+	var hi := pts[0]
+	for v in pts:
+		lo = lo.min(v)
+		hi = hi.max(v)
+	# The eave: the side whose outermost vertices run level over a long length (the gable ends rise to the ridge).
+	var best_side := -1
+	var best_len := 0.0
+	var eave_y := 0.0
+	var along := Vector2()
+	for side in 4:
+		var ax := 0 if side < 2 else 2
+		var other := 2 if ax == 0 else 0
+		var ext: float = (lo if side % 2 == 0 else hi)[ax]
+		var ys := PackedFloat32Array()
+		var a0 := INF
+		var a1 := -INF
+		for v in pts:
+			if absf(v[ax] - ext) < 0.08:
+				ys.append(v.y)
+				a0 = minf(a0, v[other])
+				a1 = maxf(a1, v[other])
+		if ys.size() < 4:
+			continue
+		ys.sort()
+		var spread := ys[ys.size() - 1] - ys[0]
+		if spread < 0.4 and a1 - a0 > best_len:
+			best_side = side
+			best_len = a1 - a0
+			eave_y = ys[0]
+			along = Vector2(a0, a1)
+	if best_side < 0:
+		_log("hut icicles: no level eave found (box %s to %s)" % [str(lo), str(hi)])
+		return
+	var axis := 0 if best_side < 2 else 2
+	var out_sign := -1.0 if best_side % 2 == 0 else 1.0
+	var lip: float = (lo if best_side % 2 == 0 else hi)[axis]
+	var inward := lip - out_sign * 0.1
+	var e0 := Vector3()
+	var e1 := Vector3()
+	e0[axis] = inward
+	e1[axis] = inward
+	e0[2 if axis == 0 else 0] = along.x + 0.3
+	e1[2 if axis == 0 else 0] = along.y - 0.3
+	e0.y = eave_y - 0.01
+	e1.y = eave_y - 0.01
+	var ice: Node3D = ClassDB.instantiate("SnowIcicles3D")
+	ice.name = "Icicles"
+	ice.set("spacing", 0.05)
+	root.add_child(ice)
+	ice.set("edge", PackedVector3Array([e0, e1]))
+	var catch := 3.4
+	for day in int(args.get("ice-days", "7")):
+		ice.call("grow", 6.0, -4.0, 0.5, 0.3 * catch)
+		ice.call("grow", 18.0, -8.0, 0.5, 0.0)
+	ice.call("grow", 0.25, -4.0, 0.5, 0.3 * catch)
+	var n: int = ice.call("get_icicle_count")
+	var bk := -1
+	var bl := 0.0
+	for k in n - 1:
+		var pa: Vector3 = ice.call("get_icicle_position", k)
+		var pb: Vector3 = ice.call("get_icicle_position", k + 1)
+		var ra: float = ice.call("get_icicle_radius", k)
+		var rb: float = ice.call("get_icicle_radius", k + 1)
+		var l := minf(float(ice.call("get_icicle_length", k)), float(ice.call("get_icicle_length", k + 1)))
+		var gap := Vector2(pa.x - pb.x, pa.z - pb.z).length() - ra - rb
+		var t := float(k) / maxf(n - 1, 1)
+		if gap > 0.0 and gap < minf(ra, rb) and t > 0.25 and t < 0.75 and l > bl:
+			bk = k
+			bl = l
+	var mid_l := (e0 + e1) * 0.5
+	mid_l.y -= 0.25
+	if bk >= 0:
+		mid_l = (Vector3(ice.call("get_icicle_position", bk)) + Vector3(ice.call("get_icicle_position", bk + 1))) * 0.5
+		mid_l.y -= 0.5 * maxf(float(ice.call("get_icicle_length", bk)), float(ice.call("get_icicle_length", bk + 1)))
+	var outward := Vector3()
+	outward[axis] = out_sign
+	var tang := (e1 - e0).normalized()
+	var mid := root.global_transform * mid_l
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var wout := (root.global_basis * outward).normalized()
+	var wt := (root.global_basis * tang).normalized()
+	c3.global_position = mid + wout * float(args.get("ice-dist", "1.55")) + Vector3.UP * float(args.get("ice-up", "0.4")) - wt * 0.4
+	c3.look_at(mid + Vector3.UP * float(args.get("ice-look-up", "0")))
+	c3.fov = float(args.get("ice-fov", "26"))
+	_log("hut icicles: %d hut surfaces take the snow, snow %.2f m water at the hut" % [snowed, snow.get_world_swe_at(mid) if snow != null and snow.has_method("get_world_swe_at") else -1.0])
+	_log("hut icicles: eave side %d, %.1f m long at %.2f m, %d sites, longest %.2f m, %.2f kg; hero pair %d (%.2f m) at %s; cam %s" % [best_side, best_len, eave_y, n, float(ice.call("get_longest")), float(ice.call("get_ice_mass")), bk, bl, str(mid), str(c3.global_position)])
+
+
 func _mem_log(tag: String) -> void:
 	# What the renderer holds (lavapipe's GPU memory is system RAM) next to the process's own heap.
 	_log("memory %s: textures %d MB, buffers %d MB, video total %d MB, static %d MB" % [tag,
@@ -6449,3 +6740,203 @@ func _build_farm_track() -> void:
 		prints.call("settle", days * 86400.0, 3600.0 * 6.0)
 		_log("farm track: aged %.0f days" % days)
 	_log("farm track: %d segments, %.0f passes, wear under the camera %.0f, 30 m on %.0f" % [n, passes, float(prints.call("get_wear_at", start + side * 0.8 * 0 )), float(prints.call("get_wear_at", start + fwd * 30.0))])
+
+
+# --powder-avalanche (winter, --month=1): a dry slab released on a real showcase face, run in real time with its powder
+# cloud (SnowAvalanche3D, PhysX Flow) and shot --powder-at s (9) after release, three-quarters from the side so the
+# head's height and the cloud trailing back up the track both show, the release zone in view. The face: the steepest
+# 35-45 degree cell on a --av-step (40) m grid with --av-min-snow (0.3) m of snow on it, scored for side light
+# (the fall line square to the sun). --av-probe: log the pick and quit. --av-dist (260) m camera distance.
+func _powder_avalanche() -> void:
+	var av = snow.get_avalanches()
+	if av == null:
+		_log("powder avalanche: no avalanche node on the snow cover")
+		return
+	av.natural_release = false
+	# A storm slab on an older bonded pack (as on the snow bench): it breaks away whole.
+	snow.add_snow(90.0, 150.0)
+	snow.advance(8.0 * 24.0 * 3600.0)
+	await get_tree().physics_frame
+	snow.add_snow(90.0, 90.0)
+	await get_tree().physics_frame
+	var wr: Rect2 = gen.get_world_rect()
+	var stp := float(args.get("av-step", "40"))
+	var to_sun := sun.global_basis.z
+	var sun_h := Vector2(to_sun.x, to_sun.z).normalized()
+	var best := Vector3.INF
+	var best_fall := Vector2.ZERO
+	var best_score := -INF
+	var xx := wr.position.x + stp
+	while xx < wr.end.x - stp:
+		var zz := wr.position.y + stp
+		while zz < wr.end.y - stp:
+			var p := Vector3(xx, 0, zz)
+			var g := _slip_grad(p)
+			var ang := rad_to_deg(atan(g.length()))
+			if ang >= float(args.get("av-min-deg", "32")) and ang <= 45.0 and snow.get_depth_at(p) >= float(args.get("av-min-snow", "0.3")):
+				var fall := -g.normalized()
+				var score := (1.0 - absf(fall.dot(sun_h))) * 2.0 + gen.get_height(p) / 1000.0
+				if score > best_score:
+					best_score = score
+					best = Vector3(xx, gen.get_height(p), zz)
+					best_fall = fall
+			zz += stp
+		xx += stp
+	if best == Vector3.INF:
+		var deepest := 0.0
+		var xs := wr.position.x + stp
+		while xs < wr.end.x - stp:
+			var zs := wr.position.y + stp
+			while zs < wr.end.y - stp:
+				deepest = maxf(deepest, snow.get_depth_at(Vector3(xs, 0, zs)))
+				zs += stp * 4.0
+			xs += stp * 4.0
+		_log("powder avalanche: no steep face with snow on it (deepest snow %.2f m)" % deepest)
+		return
+	var f3 := Vector3(best_fall.x, 0, best_fall.y)
+	var side := f3.cross(Vector3.UP).normalized()
+	if Vector2(side.x, side.z).dot(sun_h) > 0.0:
+		side = -side # the camera on the face's shaded side looks across it into the light: the cloud side- and back-lit
+	var dist := float(args.get("av-dist", "260"))
+	var cp := best + f3 * dist * 0.55 + side * dist * 0.8
+	cp.y = gen.get_height(cp) + float(args.get("av-cam-h", "30"))
+	var look := best + f3 * 70.0 + Vector3.UP * 15.0
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.global_position = cp
+	c3.look_at(look)
+	c3.far = maxf(c3.far, 4000.0)
+	_log("powder avalanche: release at %s (%.0f deg, %.2f m snow), fall %s; cam %.0f,%.0f,%.0f look %.0f,%.0f,%.0f" % [str(best.round()), rad_to_deg(atan(_slip_grad(best).length())), snow.get_depth_at(best), str(best_fall), cp.x, cp.y, cp.z, look.x, look.y, look.z])
+	if args.has("av-probe"):
+		get_tree().quit()
+		return
+	Engine.max_physics_steps_per_frame = 1 # Flow steps once a frame: one tick a frame keeps the gas with the slide
+	var pflow: Node = av.get_powder_cloud().get_flow()
+	if pflow:
+		pflow.set("scattering_resolution", 0)
+	var ok: bool = av.trigger(best, float(args.get("av-radius", "60")))
+	var frames := 0
+	var at_s := float(args.get("powder-at", "9"))
+	while av.is_running() and frames < int(at_s * Engine.physics_ticks_per_second):
+		await get_tree().physics_frame
+		frames += 1
+	_log("powder avalanche: trigger %s, %.1f t up, %.1f t in the air, front %.1f m/s, after %d frames" % [str(ok), av.get_powder_taken() / 1000.0, av.get_suspended_mass() / 1000.0, av.get_max_speed(), frames])
+
+
+# --lightning-cam (with --lightning): the struck spruce nearest the first view, the camera --lightning-dist m (6) from
+# it square to the sun (side-lit, so the pale strip and the splinters read against the dark bark), eye 1.7 m, looking
+# at the stem --lightning-look m up (2).
+func _frame_colonnade() -> void:
+	# --colonnade-cam: along a row of spruce on stilts over a vanished nurse log (trees 5az), eye height, a few degrees
+	# off the row's axis; picks the row nearest the camera that runs most square to the sun, so the light is from the side.
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var to_sun := sun.global_basis.z
+	var sun_flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
+	var pts: Array[Vector3] = []
+	for i in veg.biome.species.size():
+		var sp := veg.biome.species[i] as Resource
+		if sp != null and sp.has_meta("colonnade"):
+			for tp in veg.get_placements(i):
+				if tp.distance_to(c3.global_position) < 400.0:
+					pts.append(tp)
+	var best_score := -INF
+	var a := Vector3.INF
+	var b := Vector3.INF
+	for p0 in pts:
+		var far := p0
+		var n := 0
+		for q in pts:
+			var dq := Vector2(q.x - p0.x, q.z - p0.z).length()
+			if dq > 0.5 and dq < 11.0:
+				n += 1
+				if dq > Vector2(far.x - p0.x, far.z - p0.z).length():
+					far = q
+		if n < 3:
+			continue
+		var dir := Vector3(far.x - p0.x, 0.0, far.z - p0.z).normalized()
+		var score := absf(dir.cross(sun_flat).y) * 3.0 + n * 0.3 - p0.distance_to(c3.global_position) * 0.01
+		if score > best_score:
+			best_score = score
+			a = p0
+			b = far
+	if a == Vector3.INF:
+		_log("colonnade: no row of %d stilted spruce found" % pts.size())
+		return
+	var dir2 := Vector3(b.x - a.x, 0.0, b.z - a.z).normalized()
+	var side := dir2.cross(Vector3.UP).normalized()
+	var cp := a - dir2 * float(args.get("colonnade-back", "6")) + side * float(args.get("colonnade-side", "1.8"))
+	cp.y = height_at(cp.x, cp.z) + float(args.get("colonnade-h", "1.5"))
+	c3.global_position = cp
+	var mid := (a + b) * 0.5
+	c3.look_at(Vector3(mid.x, height_at(mid.x, mid.z) + 1.2, mid.z))
+	var n2 := 0
+	await get_tree().process_frame
+	get_viewport().disable_3d = true
+	while not cover.is_stream_idle() and n2 < 600:
+		await get_tree().process_frame
+		n2 += 1
+	get_viewport().disable_3d = false
+	if veg.streaming:
+		await _forest_settle()
+	_log("colonnade cam %.1f,%.1f,%.1f along the row %s to %s (sun across %.2f)" % [cp.x, cp.y, cp.z, str(a.round()), str(b.round()), absf(dir2.cross(sun_flat).y)])
+
+func _frame_host() -> void:
+	# --host-cam: under one mistletoe host's crown, looking up into it against the sky (sun behind the camera).
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var to_sun := sun.global_basis.z
+	var sun_flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
+	var best := Vector3.INF
+	for i in veg.biome.species.size():
+		var sp := veg.biome.species[i] as Resource
+		if sp == null or not String(sp.resource_name).contains("mistletoe host"):
+			continue
+		for tp in veg.get_placements(i):
+			if best == Vector3.INF or tp.distance_to(c3.global_position) < best.distance_to(c3.global_position):
+				best = tp
+	if best == Vector3.INF:
+		_log("host cam: no mistletoe host placed")
+		return
+	var cp := best + sun_flat * float(args.get("host-dist", "14"))
+	cp.y = height_at(cp.x, cp.z) + 1.7
+	c3.global_position = cp
+	c3.look_at(Vector3(best.x, height_at(best.x, best.z) + float(args.get("host-look", "12")), best.z))
+	var n := 0
+	await get_tree().process_frame
+	get_viewport().disable_3d = true
+	while not cover.is_stream_idle() and n < 600:
+		await get_tree().process_frame
+		n += 1
+	get_viewport().disable_3d = false
+	if veg.streaming:
+		await _forest_settle()
+	_log("host cam %.1f,%.1f,%.1f at the mistletoe host %s" % [cp.x, cp.y, cp.z, str(best.round())])
+
+func _frame_struck() -> void:
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var to_sun := sun.global_basis.z
+	var sun_flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
+	var best := Vector3.INF
+	for i in veg.biome.species.size():
+		var sp := veg.biome.species[i] as Resource
+		if sp == null or not String(sp.resource_name).contains("lightning"):
+			continue
+		for tp in veg.get_placements(i):
+			if best == Vector3.INF or tp.distance_to(c3.global_position) < best.distance_to(c3.global_position):
+				best = tp
+	if best == Vector3.INF:
+		_log("lightning: no struck spruce placed")
+		return
+	var side := sun_flat.cross(Vector3.UP).normalized()
+	var cp := best + side * float(args.get("lightning-dist", "6"))
+	cp.y = height_at(cp.x, cp.z) + 1.7
+	c3.global_position = cp
+	c3.look_at(Vector3(best.x, height_at(best.x, best.z) + float(args.get("lightning-look", "2")), best.z))
+	var n := 0
+	await get_tree().process_frame
+	get_viewport().disable_3d = true
+	while not cover.is_stream_idle() and n < 600:
+		await get_tree().process_frame
+		n += 1
+	get_viewport().disable_3d = false
+	if veg.streaming:
+		await _forest_settle()
+	_log("lightning cam %.1f,%.1f,%.1f at the struck spruce %s" % [cp.x, cp.y, cp.z, str(best.round())])

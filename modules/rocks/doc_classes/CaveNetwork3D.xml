@@ -127,7 +127,13 @@
 			<return type="Dictionary" />
 			<param index="0" name="cave" type="int" />
 			<description>
-				The sea inside a sea cave now, for drawing it: [code]points[/code] (the passage's line at the water's level, mouth first, the back chamber last), [code]half_widths[/code], [code]depths[/code] (m over the floor, 0 where dry), [code]flows[/code] (m/s into the cave, negative out), [code]mean_level[/code] (the sea at the mouth with the waves filtered out) and [code]sealed[/code] (a crest fills the passage to its roof somewhere). Empty for a cave that is not a sea cave or while [member sea_surge] is off.
+				The sea inside a sea cave now, for drawing it: [code]points[/code] (the passage's line at the water's level, mouth first, the back chamber last), [code]half_widths[/code], [code]depths[/code] (m over the floor, 0 where dry), [code]flows[/code] (m/s into the cave, negative out), [code]mean_level[/code] (the sea at the mouth with the waves filtered out), [code]sealed[/code] (a crest fills the passage to its roof somewhere), [code]along[/code] (each point's arc length from the first, m), [code]covered_from[/code] (the arc length where the rock first closes over the water: the arch; before it the passage is open to the sky and the sea's own surface goes on) and [code]wave_rms[/code] (the sea's rms height at the mouth over its mean, m). Empty for a cave that is not a sea cave or while [member sea_surge] is off.
+			</description>
+		</method>
+		<method name="get_water_clip_capsules" qualifiers="const">
+			<return type="PackedFloat32Array" />
+			<description>
+				Where the sea's own surface is cut because the sea caves' water surface draws the water there: eight floats per capsule along each sea cave's passage from its arch in, in world space: [code]a.x, a.z, b.x, b.z[/code], the radius at a and at b (negative at a for a cave's first capsule, which is cut flat there), and the cave surface's weight at a and at b (0 at the arch, 1 past its [code]fade_length[/code]; the two surfaces cross-fade between). The radius is the passage's half width plus 0.1 m, inside the cave surface's width, so the two overlap. The network is in the [code]water_clippers[/code] group, which [code]PhysXWaterSurface3D[/code] reads. Empty without a [method get_sea_water_node].
 			</description>
 		</method>
 		<method name="is_streaming" qualifiers="const">
@@ -172,6 +178,12 @@
 			<return type="int" />
 			<description>
 				How many pools have live water now (the ones nearest the camera, see [member rimstone_water_max]).
+			</description>
+		</method>
+		<method name="get_sea_water_node" qualifiers="const">
+			<return type="Node" />
+			<description>
+				The network's own sea-cave water node (see [member sea_water]), or [code]null[/code].
 			</description>
 		</method>
 		<method name="get_sea_mist_node" qualifiers="const">
@@ -271,8 +283,11 @@
 		<member name="sea_mist" type="bool" setter="set_sea_mist" getter="get_sea_mist" default="true">
 			When the network has sea caves, it makes its own [code]PhysXCaveMist3D[/code] (with the PhysX module built with Flow), which breathes cold mist out of their mouths with the swell.
 		</member>
+		<member name="sea_water" type="bool" setter="set_sea_water" getter="get_sea_water" default="true">
+			When the network has sea caves and [member sea_surge] is on, it makes a [code]PhysXSeaCaveWater3D[/code] (with the PhysX module) that draws the sea inside them.
+		</member>
 		<member name="sea_surge" type="bool" setter="set_sea_surge" getter="get_sea_surge" default="true">
-			The sea runs into sea caves: the network answers the water contract (WorldWater) inside each sea cave passage, so bodies wade and swim there, the ground and plants get wet, and water surfaces can draw it. The level is the sea's just outside the mouth (any other water producer, such as the ocean; the still sea when none answers), carried in as a long wave: delayed by the shallow-water speed [code]sqrt(g h)[/code], grown by Green's law as the passage narrows and shoals (amplitude as width^-1/2 depth^-1/4), and damped over [member surge_damping]. Currents follow linear long-wave theory, [code]u = eta sqrt(g / h)[/code]. See [method get_sea_cave_water], [method get_blowhole_spout] and [signal blowhole_spout].
+			The sea runs into sea caves: the network answers the water contract (WorldWater) inside each sea cave passage, so bodies wade and swim there, the ground and plants get wet, and water surfaces can draw it. The level is the sea's just outside the mouth (any other water producer, such as the ocean; the still sea when none answers), carried in as a long wave: delayed by the shallow-water speed [code]sqrt(g h)[/code], grown by Green's law as the passage narrows and shoals (amplitude as width^-1/2 depth^-1/4), and damped over [member surge_damping]. Currents follow linear long-wave theory, [code]u = eta sqrt(g / h)[/code]. With the PhysX module, the network makes a [code]PhysXSeaCaveWater3D[/code] child that draws this water. See [method get_sea_cave_water], [method get_blowhole_spout] and [signal blowhole_spout].
 		</member>
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			The seed. Each cave also takes its entrance's position into its own seed.

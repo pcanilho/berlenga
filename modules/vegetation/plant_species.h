@@ -76,6 +76,8 @@ public:
 		RULE_STAND_AGE, // Years since the last stand-replacing disturbance (WorldStand.stand_age_at); -1 old growth, which only ranges reaching -1 or 10000 years take.
 		RULE_DISTURBANCE, // The kind behind the stand age (WorldStand.disturbance_at): 0 none, 1 fire, 2 wind, 3 beetle. Pick one kind with (k, k).
 		RULE_FOREST_EDGE, // Metres from the edge of the field's forest canopy, positive inside, negative in the open; -1000 with no canopy (VegetationField3D).
+		RULE_BROWSE, // Deer browsing pressure, 0 none to 1 heavy (WorldStand.browse_at); 0 where no browsing is known.
+		RULE_ROOTING, // Years since boar last rooted the ground (WorldStand.rooting_age_at); -1 never, which only ranges reaching -1 or 10000 years take.
 		RULE_MAX,
 	};
 	// How the species meets fallen wood placed in the field (meshes with tree_deadwood_axis).
@@ -264,6 +266,16 @@ public:
 	static float stand_weight(const Vector2 &p_age, float p_age_fade, const Vector2 &p_kinds, float p_kind_fade, float p_years, int p_kind);
 	// The forest edge rule, or meta "edge_distance" (Vector2 m; TreeGenerator.make_edge) where it is left at its default.
 	bool uses_forest_edge() const;
+	bool uses_browse() const { return ranges[RULE_BROWSE].x > 0.0f || ranges[RULE_BROWSE].y < 1.0f; }
+	bool uses_rooting() const { return ranges[RULE_ROOTING].x > -1.0f || ranges[RULE_ROOTING].y < 10000.0f; }
+	// Weight of a rooting age (years, -1 never rooted) under a rooting rule (range x, y; fade z).
+	static float rooting_weight(const Vector3 &p_rule, float p_years) {
+		if (p_years < 0.0f) {
+			return (p_rule.x <= -1.0f || p_rule.y >= 10000.0f) ? 1.0f : 0.0f;
+		}
+		return p_rule.z <= 0.0f ? ((p_years >= p_rule.x && p_years <= p_rule.y) ? 1.0f : 0.0f) : Math::smoothstep(p_rule.x - p_rule.z, p_rule.x, p_years) * (1.0f - Math::smoothstep(p_rule.y, p_rule.y + p_rule.z, p_years));
+	}
+	Vector3 get_rooting_rule() const { return Vector3(ranges[RULE_ROOTING].x, ranges[RULE_ROOTING].y, fades[RULE_ROOTING]); }
 	void get_forest_edge_rule(Vector2 &r_range, float &r_fade) const;
 	bool uses_pool() const { return ranges[RULE_POOL_DISTANCE].x > -100000.0f || ranges[RULE_POOL_DISTANCE].y < 100000.0f; }
 	bool uses_spring() const { return ranges[RULE_SPRING].x > -1.0f || ranges[RULE_SPRING].y < 1.0f; }

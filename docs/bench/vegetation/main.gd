@@ -26,6 +26,7 @@ extends Node3D
 #                    same costs as --floor and with --out saves the view.
 #   --burn=live      quick check: a streamed field of one species recovering over a year; a scar placed after the
 #                    tiles stand, aged, then removed (WorldFire.burn_changed, no rebuild): gone, half back, whole.
+#   --trails         quick check: the game trail network (VegetationField3D.make_game_trails) over the valley, printed as VEG_TRAILS
 #   --stand=live     quick check: a streamed field of succession stages (meta succession_age / succession_kind); a
 #                    windthrow added after the tiles stand, aged a year (no re-place), then past the pioneer stage.
 
@@ -46,6 +47,7 @@ var far_match := 0 # --far-match: the far-volume view without volume, 4 m up, on
 var floor_view := 0 # --floor: 1 with the small species' pixel reach, 2 without (--floor=off).
 var desert_view := 0 # --desert: 1 with make_desert's plants on a sand sea, 2 the same view without (--desert=off).
 var stand_live := false # --stand=live
+var trails_only := false # --trails
 var burn_view := 0 # --burn: 1 with burn scars and make_burn's heath set, 2 the same heath unburnt (--burn=off).
 const BURN_SCARS := [[0.05, -60.0], [0.6, -25.0], [2.5, 10.0], [5.0, 45.0]] # Years since, and the scar's centre z (x 60, 60 x 30 m).
 var mushroom_view := 0 # --mushrooms: 1 with the mushrooms, 2 the same view without them (--mushrooms=off).
@@ -100,6 +102,8 @@ func _ready() -> void:
 		elif a.begins_with("--floor"):
 			floor_view = 2 if a == "--floor=off" else 1
 			size = 128.0
+		elif a == "--trails":
+			trails_only = true
 		elif a == "--stand=live":
 			stand_live = true
 		elif a.begins_with("--burn"):
@@ -275,6 +279,10 @@ func _physics_process(_d: float) -> void:
 		return
 	if stand_live:
 		await _stand_live()
+		return
+	if trails_only:
+		_trails_check()
+		get_tree().quit(1 if fails > 0 else 0)
 		return
 	if burn_view > 0:
 		await _burn_view()
@@ -1024,6 +1032,165 @@ func _stand_check() -> void:
 	# A 5-year windthrow: pioneers and the wind legacy, no fire stage, no old stand; round it the old stand alone.
 	_check("stand age: a 5-year windthrow holds the pioneers and its own legacy, the old stand round it", on[0] > 10 and on[1] > 2 and on[2] == 0 and on[3] == 0 and off[3] > 10 and off[0] == 0 and off[1] == 0 and off[2] == 0, [on, off])
 
+# Beaver meadows (make_beaver): a drained pond bed reported as WorldStand kind 4, 6 years old, holds the meadow;
+# the ground round it and a windthrow of the same age hold none of it. The pond set zones by water: lilies float
+# only in deep water, rush only on the shore.
+func _beaver_check() -> void:
+	var st: WorldStand = WorldContracts.get_stand()
+	var c := Vector2(30, 30)
+	var meadow := PlantGenerator.make_beaver(PlantGenerator.BEAVER_MEADOW, 1, false)
+	var counts := []
+	for kind in [PlantGenerator.DISTURBANCE_BEAVER_KIND, WorldStand.DISTURBANCE_WIND]:
+		st.clear_disturbances()
+		st.add_disturbance(Vector3(c.x, 0, c.y), 10.0, kind, 6.0)
+		var f := VegetationField3D.new()
+		f.populate_on_ready = false
+		f.bark_detail = false
+		f.biome = Biome.new()
+		f.biome.species.assign(meadow)
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+		f.populate()
+		var on := 0
+		var off := 0
+		for ch in f.get_children(true):
+			if ch is MultiMeshInstance3D and ch.multimesh:
+				var mm: MultiMesh = ch.multimesh
+				for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+					var q: Vector3 = (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+					var d := Vector2(q.x, q.z).distance_to(c)
+					if d < 7.0:
+						on += 1
+					elif d > 13.0 and d < 30.0:
+						off += 1
+		counts.append([on, off])
+		f.free()
+	st.clear_disturbances()
+	var stages := []
+	for sp in meadow:
+		stages.append([sp.get_meta("plant_preset", -1), snappedf(sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 1.0), 0.01), snappedf(sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 20.0), 0.01)])
+	var young := 0
+	var old := 0
+	for s in stages:
+		if s[1] > 0.5: young += 1
+		if s[2] > 0.5: old += 1
+	_check("beaver meadow: a 6-year drained pond bed (kind 4) holds the meadow, none round it or on a windthrow", counts[0][0] > 30 and counts[0][1] == 0 and counts[1][0] == 0 and counts[1][1] == 0 and young >= 2 and old >= 4, [counts, stages])
+	var pond_bad := []
+	for sp in PlantGenerator.make_beaver(PlantGenerator.BEAVER_POND, 1, false):
+		var p: int = sp.get_meta("plant_preset", -1)
+		var land: float = sp.rule_weight(PlantSpecies.RULE_WATER_DEPTH, 0.0)
+		var deep: float = sp.rule_weight(PlantSpecies.RULE_WATER_DEPTH, 1.0)
+		if p == PlantGenerator.PRESET_WATER_LILY and (not sp.floating or land > 0.0 or deep < 0.9):
+			pond_bad.append(["lily", land, deep])
+		if p == PlantGenerator.PRESET_RUSH and (deep > 0.0 or sp.rule_weight(PlantSpecies.RULE_WATER_DISTANCE, 3.0) < 0.9 or sp.rule_weight(PlantSpecies.RULE_WATER_DISTANCE, 12.0) > 0.0):
+			pond_bad.append(["rush", deep])
+	_check("beaver pond: lilies float in deep water only, rush on the shore only", pond_bad.is_empty(), pond_bad)
+
+# Deer browsing (RULE_BROWSE, WorldStand.browse_at): a 0.9 browse disc swaps the full bramble for the bitten one and
+# brings the deer lawn; round it the bramble is whole and no lawn grows. make_floor carries the browse response.
+# Game trails (VegetationField3D.make_game_trails, docs/ideas/vegetation.md "Game trails"): goals on both sides of the
+# river and below the cliff band, linked over the map. No trail through deep water or up ground over 40 degrees; the
+# links merge (the network shorter than its links laid end to end); shared stretches carry the summed passes; the same
+# seed gives the same network.
+func _trails_check() -> void:
+	var goals := PackedVector3Array([Vector3(-40, 0, -30), Vector3(-35, 0, 35), Vector3(30, 0, -35), Vector3(35, 0, 30), Vector3(-10, 0, 70), Vector3(20, 0, 5)])
+	var area := Rect2(-SIZE * 0.5, -SIZE * 0.5, SIZE, SIZE)
+	var t0 := Time.get_ticks_usec()
+	var trails: Array = VegetationField3D.make_game_trails(dm, area, goals, {"seed": 3})
+	var ms := (Time.get_ticks_usec() - t0) / 1000.0
+	var bad := 0
+	var length := 0.0
+	var top := 0.0
+	for t in trails:
+		var pts: PackedVector3Array = t["points"]
+		top = maxf(top, t["passes"])
+		for k in pts.size():
+			if dm.get_water_depth_at(pts[k]) > 0.45 or dm.get_slope_at(pts[k]) > deg_to_rad(42.0):
+				bad += 1
+			if k > 0:
+				length += Vector2(pts[k].x - pts[k - 1].x, pts[k].z - pts[k - 1].z).length()
+	var links := 0.0
+	for i in goals.size():
+		for j in range(i + 1, goals.size()):
+			var d := Vector2(goals[i].x - goals[j].x, goals[i].z - goals[j].z).length()
+			if d <= 250.0:
+				links += d
+	var again: Array = VegetationField3D.make_game_trails(dm, area, goals, {"seed": 3})
+	var same := again.size() == trails.size()
+	for i in mini(again.size(), trails.size()):
+		same = same and again[i]["points"] == trails[i]["points"]
+	_check("game trails: none through deep water or up steep ground, merged (network %.0f m vs links %.0f m), shared stretches busier (%.0f passes), repeatable (%.0f ms)" % [length, links, top, ms],
+			trails.size() > 3 and bad == 0 and length < 0.6 * links and top >= 1000.0 and same, [trails.size(), bad, length, links, top, same])
+
+func _browse_check() -> void:
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_disturbances()
+	st.clear_browse()
+	var c := Vector2(30, 30)
+	st.add_browse(Vector3(c.x, 0, c.y), 12.0, 0.9, 1.8)
+	var full := PlantSpecies.new()
+	full.meshes = [BoxMesh.new()]
+	full.spacing = 1.2
+	full.set_rule_range(PlantSpecies.RULE_BROWSE, Vector2(0.0, 0.35))
+	full.set_rule_fade(PlantSpecies.RULE_BROWSE, 0.15)
+	var bitten := PlantSpecies.new()
+	bitten.meshes = [BoxMesh.new()]
+	bitten.spacing = 1.2
+	bitten.set_rule_range(PlantSpecies.RULE_BROWSE, Vector2(0.35, 1.0))
+	bitten.set_rule_fade(PlantSpecies.RULE_BROWSE, 0.15)
+	var lawn := PlantSpecies.new()
+	lawn.meshes = [BoxMesh.new()]
+	lawn.spacing = 0.8
+	lawn.set_rule_range(PlantSpecies.RULE_BROWSE, Vector2(0.45, 1.0))
+	lawn.set_rule_fade(PlantSpecies.RULE_BROWSE, 0.2)
+	var sps := [full, bitten, lawn]
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign(sps)
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var on := [0, 0, 0]
+	var off := [0, 0, 0]
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh:
+			var mm: MultiMesh = ch.multimesh
+			var k := -1
+			for j in sps.size():
+				if sps[j].meshes[0] == mm.mesh:
+					k = j
+			if k < 0:
+				continue
+			for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+				var q: Vector3 = (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+				var d := Vector2(q.x, q.z).distance_to(c)
+				if d < 8.0:
+					on[k] += 1
+				elif d > 15.0 and d < 30.0:
+					off[k] += 1
+	f.free()
+	st.clear_browse()
+	_check("deer browsing: bitten bramble and the deer lawn inside a heavy browse disc, whole bramble and no lawn round it", on[0] == 0 and on[1] > 10 and on[2] > 3 and off[0] > 10 and off[1] == 0 and off[2] == 0, [on, off])
+	var fl := PlantGenerator.make_floor(PlantGenerator.FLOOR_OAK_MIXED, 1, false)
+	var found := {}
+	var bad := []
+	for sp in fl:
+		var p: int = sp.get_meta("plant_preset", -1)
+		var w0: float = sp.rule_weight(PlantSpecies.RULE_BROWSE, 0.0)
+		var w9: float = sp.rule_weight(PlantSpecies.RULE_BROWSE, 0.9)
+		if p == PlantGenerator.PRESET_GRAZED_LAWN:
+			found["lawn"] = w0 == 0.0 and w9 > 0.9
+		if p == PlantGenerator.PRESET_BRAMBLE:
+			if sp.has_meta("browsed"):
+				found["bitten"] = w0 == 0.0 and w9 > 0.9
+			elif w9 > 0.0:
+				bad.append(["whole bramble at 0.9", w9])
+		if p == PlantGenerator.PRESET_WOOD_ANEMONE and not (w0 == 1.0 and w9 < 0.5):
+			bad.append(["anemone", w0, w9])
+	_check("deer browsing: the oak floor swaps bramble for bitten bramble, adds the lawn, thins anemone", found.get("lawn", false) and found.get("bitten", false) and bad.is_empty(), [found, bad])
+
 # Forest edges (RULE_FOREST_EDGE, trees' make_edge meta): a forest of an old stand round a 25 m windthrow clearing.
 # The mantle (meta edge_distance -8 to 3 m) rings the clearing's edge; edge trees (0 to 10 m in, mesh meta
 # tree_open_side +X) stand just inside the forest with +X towards the clearing.
@@ -1085,6 +1252,45 @@ func _edge_check() -> void:
 					e_out += 1
 			elif mm.mesh == forest.meshes[0] and r < 24.0:
 				forest_in += 1
+	# The floor under it as its own field (canopy_field): the edge grass of make_floor reads the forest's edge.
+	var fl := VegetationField3D.new()
+	fl.populate_on_ready = false
+	fl.bark_detail = false
+	fl.biome = Biome.new()
+	var fsp := []
+	for sp in PlantGenerator.make_floor(PlantGenerator.FLOOR_OAK_MIXED, 1, false):
+		if sp.get_rule_range(PlantSpecies.RULE_FOREST_EDGE).y < 10000.0:
+			fsp.append(sp)
+	fl.biome.species = fsp
+	add_child(fl)
+	fl.data_map = fl.get_path_to(dm)
+	fl.canopy_field = fl.get_path_to(f)
+	fl.populate()
+	var g_band := 0
+	var g_off := 0
+	for ch in fl.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh:
+			var mm: MultiMesh = ch.multimesh
+			for i in mm.instance_count:
+				var p: Vector3 = (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+				var rr := Vector2(p.x, p.z).distance_to(c)
+				if rr > 36.0:
+					continue
+				if rr > 6.0:
+					g_band += 1
+				else:
+					g_off += 1
+	# The sward under them (GrassField3D.undergrowth_field reads sward_at): thinned under the edge brambles, not out in
+	# the clearing where they do not grow.
+	var sw_edge := 0.0
+	var sw_clear := 0.0
+	for k in 72:
+		var a := k * TAU / 72.0
+		sw_edge = maxf(sw_edge, fl.get_sward_shade_at(Vector3(c.x + cos(a) * 25.0, 0, c.y + sin(a) * 25.0)))
+		sw_clear = maxf(sw_clear, fl.get_sward_shade_at(Vector3(c.x + cos(a) * 5.0, 0, c.y + sin(a) * 5.0)))
+	_check("forest edge: the sward thins under edge brambles, not in the open clearing", sw_edge > 0.2 and sw_clear == 0.0, [snappedf(sw_edge, 0.01), sw_clear])
+	fl.queue_free()
+	_check("forest edge: a floor field's edge plants follow its canopy field's edge (none deep in the clearing, past their fade)", fsp.size() >= 3 and g_band > 50 and g_off == 0, [fsp.size(), g_band, g_off])
 	st.clear_disturbances()
 	f.queue_free()
 	var r := [m_in, m_out, e_in, e_out, e_facing, forest_in]
@@ -1744,6 +1950,9 @@ func _checks() -> void:
 	_fire_variant_check()
 	_stand_check()
 	_edge_check()
+	_beaver_check()
+	_browse_check()
+	_trails_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []
@@ -1760,6 +1969,28 @@ func _checks() -> void:
 		if sp.get_meta("plant_preset", -1) == PlantGenerator.PRESET_DRY_GRASS:
 			med_grass = sp
 	_check("montado: dry grass in the open and under the crowns", med_grass != null and med_grass.get_density() > 0.5 and med_grass.rule_weight(PlantSpecies.RULE_SHADE, 0.0) > 0.9 and med_grass.rule_weight(PlantSpecies.RULE_SHADE, 0.7) > 0.9, [med.size(), med_grass.get_density() if med_grass else 0.0])
+	# Clearings (stand age, wind and beetle kinds): every forest floor carries fireweed, raspberry and clearing grass
+	# for the first years to two decades after a windthrow, none in old growth (-1); forest mosses thin after opening.
+	var clear_bad := []
+	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH, PlantGenerator.FLOOR_MONTANE_CONIFER, PlantGenerator.FLOOR_BOREAL_TAIGA]:
+		var found := {}
+		for sp in PlantGenerator.make_floor(fs, 1, false):
+			var p: int = sp.get_meta("plant_preset", -1)
+			var ar: Vector2 = sp.get_rule_range(PlantSpecies.RULE_STAND_AGE)
+			if p in [PlantGenerator.PRESET_FIREWEED, PlantGenerator.PRESET_RASPBERRY, PlantGenerator.PRESET_COCKSFOOT] and ar.x >= 0.0:
+				var w5: float = sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 5.0) * sp.rule_weight(PlantSpecies.RULE_DISTURBANCE, 2.0)
+				var w_fire: float = sp.rule_weight(PlantSpecies.RULE_DISTURBANCE, 1.0)
+				var w60: float = sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 60.0)
+				if w5 > 0.5 and w_fire == 0.0 and w60 == 0.0:
+					found[p] = true
+				else:
+					clear_bad.append([fs, p, w5, w_fire, w60])
+			if p == PlantGenerator.PRESET_FEATHER_MOSS or p == PlantGenerator.PRESET_MOSS:
+				if ar.x > 0.0 and sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 1.0) > 0.5:
+					clear_bad.append([fs, p, "moss not thinned at 1 y"])
+		if found.size() < 3:
+			clear_bad.append([fs, found.keys()])
+	_check("clearings: fireweed, raspberry and clearing grass after windthrow and beetles only, gone in older stands", clear_bad.is_empty(), clear_bad)
 	# Boreal taiga (FLOOR_BOREAL_TAIGA): reindeer lichen, feather moss and bilberry carpet the floor.
 	var taiga_presets := []
 	for sp in PlantGenerator.make_floor(PlantGenerator.FLOOR_BOREAL_TAIGA, 1, false):
@@ -3013,6 +3244,8 @@ func _deadwood_view() -> void:
 	var t0 := Time.get_ticks_msec()
 	var tg := TreeGenerator.new()
 	tg.fire_variants = false # No burn in this view: skip the five fire-band meshes (halves the stand build).
+	tg.lightning_variants = false # Nor strikes: skip the two struck meshes.
+	tg.browse_variants = false # Nor deer: skip the browsed meshes.
 	var wood := VegetationField3D.new()
 	wood.far_volume = false # Not under test here.
 	wood.name = "Wood"

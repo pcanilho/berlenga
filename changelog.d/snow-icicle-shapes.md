@@ -1,0 +1,1 @@
+- Snow: icicles take the ideal dripping-icicle shape, lean with the wind they grew in and the side their water ran down, hang a drop at a dripping tip, and fuse into curtains where neighbours touch (`curtains`, `wind_direction`).

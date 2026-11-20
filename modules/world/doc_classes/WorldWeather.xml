@@ -60,6 +60,13 @@
 				Override in a stub to replace [method canopy_wetness_at].
 			</description>
 		</method>
+		<method name="_cloud_base_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub: [method cloud_base_at].
+			</description>
+		</method>
 		<method name="_cloud_cover_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -134,6 +141,20 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Override in a stub: [method cloud_effector_at].
+			</description>
+		</method>
+		<method name="_mountain_wave_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub: [method mountain_wave_at].
+			</description>
+		</method>
+		<method name="_mountain_wave_velocity_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub: [method mountain_wave_velocity_at].
 			</description>
 		</method>
 		<method name="_mid_cloud_cover_at" qualifiers="virtual const">
@@ -328,6 +349,13 @@
 				How wet the leaves are (0..1). Default 0.
 			</description>
 		</method>
+		<method name="cloud_base_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The low cloud's base (m above y = 0) over the point: the condensation level of the day's air (WeatherMap3D.get_cloud_base_now), lower round storms with their own bases. Default 1500. Readers: mist and fog, lightning's strike height, the snow line and orographic rain.
+			</description>
+		</method>
 		<method name="cloud_cover_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -415,6 +443,20 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The cloud density effectors at the point, -1 to 1: the share of cloud they add (above 0, a plume feeding a cloud) or clear (below 0, a blast's hole). Default 0. Separate from [method cloud_cover_at]: effectors change the clouds' density, not the cover the rain reads.
+			</description>
+		</method>
+		<method name="mountain_wave_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The air's vertical displacement (m) in mountain waves at the point: positive where the waves lift it. Default 0. From linear theory over the terrain (WeatherMap3D, wave clouds): no rotors or lee turbulence.
+			</description>
+		</method>
+		<method name="mountain_wave_velocity_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The mountain waves' vertical wind (m/s) at the point, the wind times the displacement's slope along it. Default 0. [method WeatherMap3D.get_wind_at] already adds it above the boundary layer; read this for the waves alone (gliders, birds, smoke aloft).
 			</description>
 		</method>
 		<method name="mid_cloud_cover_at" qualifiers="const">
@@ -573,6 +615,20 @@
 			<param index="1" name="height_above_ground" type="float" default="-1.0" />
 			<description>
 				The wind (m/s) at [param position], [param height_above_ground] metres up (below zero: 10 m), sheltered by canopy and obstacles. Default still.
+			</description>
+		</method>
+		<method name="_wave_cloud_density_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub: [method wave_cloud_density_at].
+			</description>
+		</method>
+		<method name="wave_cloud_density_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Wave cloud (lenticular) extinction (1/m) at the point: moist air lifted past saturation by mountain waves. Default 0. Separate from [method cloud_cover_at]; it shades the ground only through its own optical depth in the cloud shadow.
 			</description>
 		</method>
 	</methods>

@@ -170,6 +170,8 @@ public:
 		PRESET_CHARRED_STEMS,
 		PRESET_BURNT_TUSSOCK,
 		PRESET_REINDEER_LICHEN, // Cladonia rangiferina / stellaris: pale branched cushions on dry boreal pine floors.
+		PRESET_RASPBERRY, // Rubus idaeus: upright suckering canes of clearings and windthrows, pinnate leaves, red fruit.
+		PRESET_GRAZED_LAWN, // A deer lawn: a dense mat of fine grasses grazed to 2-8 cm, the blade ends torn and drying.
 		PRESET_MAX,
 	};
 
@@ -194,6 +196,7 @@ public:
 		float lobe_depth = 0.0f;
 		int segments = 10;
 		bool round_lobes = false; // Rounded lobes (oak) instead of teeth pointing back.
+		float cut = 0.0f; // Fraction of the length bitten or grazed off the tip: a torn, drying edge where it ends.
 	};
 
 	enum Venation {
@@ -304,10 +307,13 @@ private:
 	void _build_soil_crust();
 	// Burnt ground (plant_burn.cpp): the season's "burn_age" sets each one's stage.
 	float _burn_age() const;
+	float _browse() const; // Deer browsing pressure from the season's "browse" (0..1), 0 without.
 	void _tint_since(Surface p_surface, int p_from, const Color &p_tint);
 	void _build_fireweed();
 	void _build_fire_moss();
 	void _build_reindeer_lichen();
+	void _build_raspberry();
+	void _build_grazed_lawn();
 	void _build_charred_stems();
 	void _build_burnt_tussock();
 	void _build_moss();
@@ -606,6 +612,15 @@ public:
 		BURN_MAX,
 	};
 	static TypedArray<Resource> make_burn(BurnStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Beaver ponds and drained beaver meadows (docs/ideas/vegetation.md, "Beaver ponds and meadows").
+	enum BeaverStand {
+		BEAVER_POND, // An active pond: lilies, bulrush, tussock sedge, then rush, marsh marigold and meadowsweet up the shore.
+		BEAVER_MEADOW, // The drained bed, by years since draining (WorldStand kind 4): rush and sedge, then a sedge and tall-grass meadow.
+		BEAVER_MAX,
+	};
+	// The WorldStand disturbance kind a drained beaver pond is reported as (appended after beetle, 3).
+	static constexpr int DISTURBANCE_BEAVER_KIND = 4;
+	static TypedArray<Resource> make_beaver(BeaverStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 
 	// Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants").
 	enum AlpineStand {
@@ -669,6 +684,7 @@ VARIANT_ENUM_CAST(PlantGenerator::BogStand);
 VARIANT_ENUM_CAST(PlantGenerator::DuneStand);
 VARIANT_ENUM_CAST(PlantGenerator::DesertStand);
 VARIANT_ENUM_CAST(PlantGenerator::BurnStand);
+VARIANT_ENUM_CAST(PlantGenerator::BeaverStand);
 VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
 VARIANT_ENUM_CAST(PlantGenerator::SaltmarshStand);
 VARIANT_ENUM_CAST(PlantGenerator::MarginStand);

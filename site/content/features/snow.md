@@ -40,11 +40,11 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Wind transport: after a day of 15 m/s wind the windward side is scoured bare and the lee is loaded.*
 
-- **Melt-freeze crusts** (`SnowCover3D.crust_enabled`): a thawed surface refreezes into a crust that hardens each cycle; boots break thin ones into tipped pieces and stand on hard ones.
+- **Melt-freeze crusts** (`SnowCover3D.crust_enabled`; `SnowSurface3D.crust_plates`): a thawed surface refreezes into a crust that hardens each cycle; boots stand on hard ones and break thin ones into flat, sharp-edged plates tipped into the hole, with steps between them.
 
-  ![Footprints in snow without a crust, then through a broken crust, raster and path traced](media/snow-crust.jpg)
+  ![Footprints in snow, soft prints without plates and crust broken into plates](media/snow-crust.jpg)
 
-  *Melt-freeze crust: boots break through it, leaving ragged prints instead of soft rounded ones.*
+  *Melt-freeze crust: soft prints without plates, then the crust broken into flat plates tipped into each print.*
 
 - **Lake ice** (`SnowCover3D.lake_ice_enabled`): lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm; heavier bodies and vehicles break through ice too thin for their weight, and the hole freezes over again.
 
@@ -115,7 +115,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Cornice fall: a crack opens behind the lip, then the lip breaks into tumbling blocks.*
 
-- **Icicles** (`SnowIcicles3D`, `hazy_core`): grown from roof melt water below freezing; clear ice with a hazy core.
+- **Icicles** (`SnowIcicles3D`, `hazy_core`, `curtains`, `wind_direction`): grown from roof melt water below freezing; clear ice with a hazy core, tapering like real dripping icicles, leaning with the wind they grew in, with drops at dripping tips and curtains where neighbours fuse; they hang in clusters under drip points that wet and dry over the days, with stubs and bare gaps between.
 
   ![Backlit icicles under an eave, raster and path traced](media/snow-icicles.jpg)
 

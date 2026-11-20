@@ -501,6 +501,8 @@ void GrassField3D::_build_material() {
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	// Regrowth flush on burnt ground (burn_recovery): 1 on a fresh burn, 0 by a year and a half; rect z 0: none.
 	code += "uniform sampler2D burn_flush_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 burn_flush_rect;\n";
+	// Deer lawns (graze_height): r = how far the sward is grazed down, 0 none to 1 to graze_height; rect z 0: none.
+	code += "uniform sampler2D graze_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 graze_rect;\nuniform float graze_height = 0.04;\n";
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\nglobal uniform sampler2D weather_spray_map;\nglobal uniform vec4 weather_spray_rect;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	// Sea salt on the blades (WeatherMap3D sea_spray, G: 1 - exp(-salt / 10 g/m2)): salt spray burns leaf tips brown
@@ -597,8 +599,16 @@ vec3 grass_weather_wind(vec3 wp, float height, float omega0, float zeta, float j
 	float uc = max(1.8 * profile * f * speed, 0.3);
 	float wa = omega0 * (1.0 - zeta);
 	float wb = omega0 * (1.0 + zeta);
+	// The fronts are not straight lines a sward wide: coherent structures in a canopy are a few
+	// heights across and break up (Finnigan 2000; Py et al. 2006 measured honami patches of a few
+	// metres), so the front is bent by a slow crosswind warp and the wave's strength comes and goes
+	// in patches. Straight, even fronts read as stripes, and in perspective as concentric arcs
+	// (docs 20 Nov).
+	float across_pos = dot(wp.xz, across);
 	float along_pos = dot(wp.xz, along);
-	float res = amp * (cos(wa * (time - along_pos / uc) + jitter * 1.2) + cos(wb * (time - along_pos / uc) + 2.1 + jitter * 1.2));
+	along_pos += 1.6 * sin(across_pos * 0.43 + 1.3 * sin(along_pos * 0.21)) + 0.9 * sin(across_pos * 1.07 - along_pos * 0.37 + 2.0);
+	float patchy = 0.55 + 0.45 * sin(across_pos * 0.29 + along_pos * 0.17 - time * 0.13) * sin(across_pos * 0.61 - along_pos * 0.23 + 1.7);
+	float res = amp * patchy * (cos(wa * (time - along_pos / uc) + jitter * 2.0) + cos(wb * (time - along_pos / uc) + 2.1 + jitter * 2.0));
 	vec2 hz = (along * g.x + across * g.y) * sigma + along * res;
 	return v + vec3(hz.x, g.z * sigma, hz.y);
 }
@@ -613,8 +623,12 @@ vec3 grass_wind_ambient(vec3 wp, float h, float time, float omega0, float jitter
 		return vec3(0.0);
 	}
 	vec2 d = fallback_wind / s;
-	float phase = dot(wp.xz, d) * 0.12 - time * s * 0.12;
-	float g = 1.0 + 0.45 * sin(phase) + 0.2 * sin(phase * 2.7 + dot(wp.xz, vec2(-d.y, d.x)) * 0.2);
+	// Gusts as bent, patchy fronts, not straight bands (see grass_weather_wind()).
+	float al = dot(wp.xz, d);
+	float cr = dot(wp.xz, vec2(-d.y, d.x));
+	al += 1.6 * sin(cr * 0.43 + 1.3 * sin(al * 0.21)) + 0.9 * sin(cr * 1.07 - al * 0.37 + 2.0);
+	float phase = al * 0.12 - time * s * 0.12;
+	float g = 1.0 + 0.45 * sin(phase) * (0.6 + 0.4 * sin(cr * 0.23 + al * 0.11 - time * 0.07)) + 0.2 * sin(phase * 2.7 + cr * 0.2) + 0.12 * (jitter - 0.5);
 	return vec3(fallback_wind.x, 0.0, fallback_wind.y) * g;
 }
 vec3 grass_wind(vec3 wp, float h, float time, float omega0, float jitter) {
@@ -1056,6 +1070,7 @@ void fragment() {
 varying float v_t;
 varying float v_dry;
 varying float v_flush; // Regrowth on burnt ground (burn_flush_map).
+varying float v_graze; // Grazed down to a lawn (graze_map).
 varying float v_soft; // Distance softening, 0 near, 1 from 35 m.
 varying float v_wet;
 varying float v_frost;
@@ -1086,6 +1101,20 @@ void vertex() {
 	float side = VERTEX.x;
 	vec3 base_w = (MODEL_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
 	mat3 to_local = inverse(mat3(MODEL_MATRIX));
+	// Deer lawns (Putman 1986; Kuijper et al. 2009): where deer graze hard the blades are bitten down to about
+	// graze_height, a few new leaves a little over it; the blade keeps its width, so the turf reads dense and even.
+	v_graze = 0.0;
+	if (graze_rect.z > 0.0) {
+		vec2 guv = (base_w.xz - graze_rect.xy) / graze_rect.zw;
+		if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
+			v_graze = textureLod(graze_map, guv, 0.0).r;
+			float crop_h = graze_height * (0.85 + 0.3 * fract(rnd * 5.31)) * (fract(rnd * 3.17) < 0.15 ? 1.4 : 1.0);
+			h = mix(h, min(h, crop_h), v_graze);
+			// Regrowth after a bite is fine young leaf: narrower blades keep the short turf from reading as teeth. The
+			// turf ground under the sward (get_ground_shader_code()) closes it between them.
+			w *= 1.0 - 0.3 * v_graze;
+		}
+	}
 	// A far ring blade (negative width; GrassField3D::_build_ring_tile()): one of a set thinned with the square of
 	// the distance from the field's centre, each blade dropping at its own rank (w's integer part: -log2 of it, in
 	// 1/1024ths) and the ones left widened, so coverage holds and no ring shows (Ghost of Tsushima, Wohllaib GDC
@@ -1256,6 +1285,8 @@ void vertex() {
 			v_tint *= mix(vec3(1.0), vec3(1.10, 1.22, 0.84), v_flush);
 		}
 	}
+	// Grazed turf is all young leaf: a brighter, fresher green than the standing sward.
+	v_tint *= mix(vec3(1.0), vec3(1.06, 1.16, 0.88), v_graze);
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
@@ -1284,8 +1315,12 @@ void fragment() {
 	// The fire took the old growth: regrowth carries no dry tips or thatch yet (a burn reads greener than the sward
 	// around it through its first season).
 	dry_share *= 1.0 - 0.85 * v_flush;
+	// Grazed turf is mostly fresh regrowth: few dry tips survive the bites.
+	dry_share *= 1.0 - 0.7 * v_graze;
 	vec3 tipc = mix(tip_color, dry_color, step(1.0 - dry_share, v_dry) * smoothstep(0.3, 1.0, v_t));
 	vec3 c = mix(base_color, tipc, t) * v_tint;
+	// The bitten ends: torn, not cut (deer have no upper incisors), they dry pale over a few days.
+	c = mix(c, mix(dry_color, vec3(0.62, 0.6, 0.45), 0.4), v_graze * smoothstep(0.82, 1.0, v_t) * step(0.3, fract(v_dry * 17.3)) * 0.7);
 	// Some blades of the dry fraction are dead from the root (thatch), straw that greys with age.
 	float dead = step(1.0 - max(dry_share * 0.3, dormant * 0.85 * (1.0 - v_flush)), v_dry);
 	// Dead leaves bleach to a pale grey buff, not the warm straw of a dry tip (a saturated straw read
@@ -1411,6 +1446,7 @@ void fragment() {
 	material->set_shader_parameter("wind_response", wind_response);
 	material->set_shader_parameter("trample_rect", Vector4());
 	_publish_burn_flush();
+	_publish_graze();
 	material->set_shader_parameter("view_facing", view_facing);
 	material->set_shader_parameter("fibre_shading", fibre_shading);
 	material->set_shader_parameter("fade_band", fade_band);
@@ -3773,6 +3809,72 @@ void GrassField3D::_follow_burns(TerrainDataMap3D *p_map) {
 	}
 }
 
+// Deer lawns: the browse pressure over the map as how far the sward is grazed down, smoothstep(0.3, 0.8, pressure)
+// (a light pressure leaves the sward standing; Putman 1986), on a grid like the burn ages'.
+void GrassField3D::_read_graze(TerrainDataMap3D *p_map) {
+	const WorldStand *stand = WorldContracts::stand();
+	graze_any = false;
+	if (stand) {
+		graze_seen = stand->get_stand_generation();
+	}
+	if (!stand || !p_map || crop != CROP_NONE || graze_height <= 0.0f) {
+		return;
+	}
+	const Rect2 rect = p_map->get_map_rect();
+	if (!rect.has_area()) {
+		return;
+	}
+	const float cell = MAX(2.0f, MAX(rect.size.x, rect.size.y) / 511.0f);
+	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 512);
+	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 512);
+	Vector<uint8_t> data;
+	data.resize(nx * ny);
+	uint8_t *w = data.ptrw();
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const Vector2 xz = rect.position + rect.size * Vector2(float(x) / (nx - 1), float(z) / (ny - 1));
+			const float g = Math::smoothstep(0.3f, 0.8f, stand->browse_at(Vector3(xz.x, 0.0f, xz.y)));
+			w[z * nx + x] = uint8_t(CLAMP(g, 0.0f, 1.0f) * 255.0f + 0.5f);
+			graze_any = graze_any || w[z * nx + x] > 0;
+		}
+	}
+	if (!graze_any) {
+		graze_texture.unref();
+		return;
+	}
+	const Ref<Image> img = Image::create_from_data(nx, ny, false, Image::FORMAT_R8, data);
+	if (graze_texture.is_valid() && graze_nx == nx && graze_ny == ny) {
+		graze_texture->update(img);
+	} else {
+		graze_texture = ImageTexture::create_from_image(img);
+	}
+	graze_nx = nx;
+	graze_ny = ny;
+	graze_rect = rect;
+}
+
+void GrassField3D::_publish_graze() {
+	if (material.is_null()) {
+		return;
+	}
+	if (!graze_any || graze_texture.is_null() || graze_height <= 0.0f) {
+		material->set_shader_parameter("graze_rect", Vector4());
+		return;
+	}
+	const Vector2 cell(graze_rect.size.x / (graze_nx - 1), graze_rect.size.y / (graze_ny - 1));
+	material->set_shader_parameter("graze_map", graze_texture);
+	material->set_shader_parameter("graze_rect", Vector4(graze_rect.position.x - cell.x * 0.5f, graze_rect.position.y - cell.y * 0.5f, graze_rect.size.x + cell.x, graze_rect.size.y + cell.y));
+	material->set_shader_parameter("graze_height", graze_height);
+}
+
+void GrassField3D::set_graze_height(float p_m) {
+	graze_height = MAX(p_m, 0.0f);
+	if (graze_height > 0.0f && graze_texture.is_null()) {
+		graze_seen = 0; // Read it on the next process.
+	}
+	_publish_graze();
+}
+
 // The regrowth flush (shader's burn_flush_map) from the burn grid: 1 - smoothstep(0, 1.5 yr, age), 0 unburnt.
 void GrassField3D::_publish_burn_flush() {
 	if (material.is_null()) {
@@ -4898,6 +5000,30 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 		_ground_bake_rows(map, GROUND_BAKE_BUDGET_USEC);
 	}
 	_follow_burns(map);
+	{
+		// Game trails published or changed: the sward and its ground are worn along them.
+		const WorldStand *stand = WorldContracts::stand();
+		const uint64_t now = OS::get_singleton()->get_ticks_usec();
+		if (stand && stand->get_stand_generation() != trails_seen && now - trails_follow_usec >= uint64_t(BURN_FOLLOW_MSEC) * 1000) {
+			trails_follow_usec = now;
+			if (_read_world_trails()) {
+				// Between frames, as a setter would: the rings and tiles below still use this frame's resources.
+				callable_mp(this, &GrassField3D::rebuild).call_deferred();
+			}
+		}
+	}
+	if (burn_read && graze_height > 0.0f && crop == CROP_NONE) {
+		// Browse discs added, moved or cleared: the pressure grid is read again (cheap; the texture only).
+		const WorldStand *stand = WorldContracts::stand();
+		if (stand && stand->get_stand_generation() != graze_seen) {
+			const uint64_t now = OS::get_singleton()->get_ticks_usec();
+			if (now - burn_follow_usec >= uint64_t(BURN_FOLLOW_MSEC) * 1000) {
+				burn_follow_usec = now;
+				_read_graze(map);
+				_publish_graze();
+			}
+		}
+	}
 	if (crop != CROP_NONE && is_inside_tree()) {
 		_crop_ground_step();
 	}
@@ -5006,6 +5132,8 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 		_read_sand_sea(p_map);
 		burn_read = true;
 		_publish_burn_flush();
+		_read_graze(p_map);
+		_publish_graze();
 	}
 	if (crop != CROP_NONE) {
 		crop_ground_dirty = true; // The fields' own ground (crop_ground()).
@@ -5210,18 +5338,39 @@ float grass_ground_tread(vec3 world_pos) {
 	return textureLod(grass_ground_map, uv, 0.0).g;
 }
 
+// Noise streaked along a direction that turns slowly over the ground (matted blades, litter). Turning world xz itself
+// by a varying angle draws arcs round the world's origin (a small turn swings far points a long way: concentric swirl
+// stripes, 20 Nov), so each 2 m cell turns the offsets from its own centre and the four nearest cells blend (texture
+// bombing, Glanville 2004, GPU Gems ch. 20).
+float grass_streaks(vec2 xz, float p_turn_scale, float p_turn_offset, vec2 p_s1, vec2 p_s2, float p_o2) {
+	vec2 g = xz * 0.5;
+	vec2 i = floor(g);
+	vec2 f = smoothstep(vec2(0.0), vec2(1.0), fract(g));
+	float s = 0.0;
+	for (int k = 0; k < 4; k++) {
+		vec2 o = vec2(float(k % 2), float(k / 2));
+		vec2 c = (i + o) * 2.0;
+		float ang = grass_noise(c * p_turn_scale + p_turn_offset) * 6.2832;
+		vec2 dir = vec2(cos(ang), sin(ang));
+		vec2 d = xz - c;
+		vec2 q = vec2(dot(d, dir), dot(d, vec2(-dir.y, dir.x))) + c * 1.618;
+		float v = grass_noise(q * p_s1) * 0.6 + grass_noise(q * p_s2 + p_o2) * 0.4;
+		vec2 wv = mix(1.0 - f, f, o);
+		s += v * wv.x * wv.y;
+	}
+	// Blending four lowers the contrast mid-cell; most of it back.
+	return clamp(0.5 + (s - 0.5) * 1.3, 0.0, 1.0);
+}
+
 // The turf colour at a point: blades' root colour, patch tint, streaks, thatch.
 vec3 grass_turf(vec3 world_pos) {
 	vec2 xz = world_pos.xz;
 	// Streaks: fine noise stretched along a direction that turns slowly, like matted blades.
-	float ang = grass_noise(xz * 0.6) * 6.2832;
-	vec2 dir = vec2(cos(ang), sin(ang));
-	vec2 q = vec2(dot(xz, dir), dot(xz, vec2(-dir.y, dir.x)));
-	float streak = grass_noise(q * vec2(9.0, 70.0)) * 0.6 + grass_noise(q * vec2(4.0, 31.0) + 7.1) * 0.4;
+	float streak = grass_streaks(xz, 0.6, 0.0, vec2(9.0, 70.0), vec2(4.0, 31.0), 7.1);
 	vec3 c = grass_ground_color.rgb * grass_patch_tint(xz, grass_noise(xz * 3.0), streak, grass_ground_params.x);
 	c *= 0.7 + 0.6 * streak;
 	// Dead thatch where the grass is dry, in matted patches.
-	float thatch = grass_noise(q * vec2(5.0, 40.0) + 13.0) * 0.5 + grass_noise(xz * 1.3) * 0.5;
+	float thatch = grass_streaks(xz, 0.6, 0.0, vec2(5.0, 40.0), vec2(5.0, 40.0), 13.0) * 0.5 + grass_noise(xz * 1.3) * 0.5;
 	// Shaded at the base of the sward, so darker than the dry tips above it.
 	c = mix(c, grass_ground_dry.rgb * (0.25 + 0.2 * streak), 0.8 * smoothstep(0.8 - grass_ground_dry.a * 0.5, 0.95 - grass_ground_dry.a * 0.5, thatch));
 	return c;
@@ -5279,10 +5428,7 @@ vec3 grass_ground_undergrowth(vec3 world_pos, vec3 albedo) {
 	}
 	vec3 c = l.rgb * l.rgb / l.a;
 	vec2 xz = world_pos.xz;
-	float ang = grass_noise(xz * 0.9 + 3.7) * 6.2832;
-	vec2 dir = vec2(cos(ang), sin(ang));
-	vec2 q = vec2(dot(xz, dir), dot(xz, vec2(-dir.y, dir.x)));
-	float strands = grass_noise(q * vec2(6.0, 38.0)) * 0.6 + grass_noise(q * vec2(2.5, 15.0) + 5.3) * 0.4;
+	float strands = grass_streaks(xz, 0.9, 3.7, vec2(6.0, 38.0), vec2(2.5, 15.0), 5.3);
 	c *= 0.7 + 0.55 * strands + 0.15 * (grass_noise(xz * 0.8) - 0.5);
 	return mix(albedo, c, l.a);
 }
@@ -6076,9 +6222,26 @@ float GrassField3D::_trample_scale(float p_passes) const {
 	return Math::lerp(1.0f, 0.45f, p_passes / (p_passes + trample_resistance));
 }
 
+// Game trails (WorldStand.set_trails, from VegetationField3D.make_game_trails): worn like the field's own paths.
+// True when they changed.
+bool GrassField3D::_read_world_trails() {
+	const WorldStand *stand = WorldContracts::stand();
+	if (!stand) {
+		return false;
+	}
+	trails_seen = stand->get_stand_generation();
+	const Array now = stand->get_trails();
+	if (now == world_trails) {
+		return false;
+	}
+	world_trails = now.duplicate(true);
+	path_grid.build(VegetationPaths::merged(paths, world_trails));
+	return true;
+}
+
 void GrassField3D::set_paths(const Array &p_paths) {
 	paths = p_paths;
-	path_grid.build(paths);
+	path_grid.build(VegetationPaths::merged(paths, world_trails));
 	ground_baked = false; // The ground tint opens on the paths too.
 	rebuild();
 }
@@ -6397,6 +6560,8 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_far_shell_range", "range"), &GrassField3D::set_far_shell_range);
 	ClassDB::bind_method(D_METHOD("get_far_shell_range"), &GrassField3D::get_far_shell_range);
 	ClassDB::bind_method(D_METHOD("set_burn_recovery", "years"), &GrassField3D::set_burn_recovery);
+	ClassDB::bind_method(D_METHOD("set_graze_height", "height"), &GrassField3D::set_graze_height);
+	ClassDB::bind_method(D_METHOD("get_graze_height"), &GrassField3D::get_graze_height);
 	ClassDB::bind_method(D_METHOD("get_burn_recovery"), &GrassField3D::get_burn_recovery);
 	ClassDB::bind_method(D_METHOD("get_burn_cover_at", "global_position"), &GrassField3D::get_burn_cover_at);
 	ClassDB::bind_method(D_METHOD("get_shell_column_count"), &GrassField3D::get_shell_column_count);
@@ -6453,6 +6618,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_shell"), "set_far_shell", "is_far_shell");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_shell_range", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_far_shell_range", "get_far_shell_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "burn_recovery", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater,suffix:yr"), "set_burn_recovery", "get_burn_recovery");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "graze_height", PROPERTY_HINT_RANGE, "0,0.2,0.005,suffix:m"), "set_graze_height", "get_graze_height");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_match_view"), "set_far_match_view", "is_far_match_view");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,64,0.5,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_GROUP("Wind", "");

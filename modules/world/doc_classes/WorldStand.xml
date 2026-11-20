@@ -9,6 +9,20 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="_browse_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override to answer [method browse_at] from a script (a test stub).
+			</description>
+		</method>
+		<method name="_browse_reach_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override to answer [method browse_reach_at] from a script (a test stub).
+			</description>
+		</method>
 		<method name="_disturbance_at" qualifiers="virtual const">
 			<return type="int" />
 			<param index="0" name="position" type="Vector3" />
@@ -16,11 +30,42 @@
 				Override in a stub to replace [method disturbance_at].
 			</description>
 		</method>
+		<method name="_rooting_age_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override to answer [method rooting_age_at] from a script (a test stub).
+			</description>
+		</method>
 		<method name="_stand_age_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Override in a stub to replace [method stand_age_at].
+			</description>
+		</method>
+		<method name="_strike_age_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override to answer [method strike_age_at] from a script (a test stub).
+			</description>
+		</method>
+		<method name="_trail_at" qualifiers="virtual const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override to answer [method trail_at] from a script (a test stub).
+			</description>
+		</method>
+		<method name="add_browse">
+			<return type="int" />
+			<param index="0" name="center" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="pressure" type="float" />
+			<param index="3" name="reach_m" type="float" default="1.8" />
+			<description>
+				Deer browse a disc (xz) at [param pressure] (0 to 1) up to [param reach_m] metres (red deer 1.8, fallow 1.6, roe 1.1). Returns its id. Reports its area through [signal stand_changed].
 			</description>
 		</method>
 		<method name="add_disturbance">
@@ -33,6 +78,14 @@
 				A stand-replacing disturbance over a disc around [param center] (world XZ) of [param radius] metres, [param age_years] years ago, of [param kind] ([enum Disturbance]; windthrow and beetle kills, which the trees report; fire comes from [WorldFire]). Returns its id. Reports its area through [signal stand_changed].
 			</description>
 		</method>
+		<method name="add_strike">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="age_years" type="float" />
+			<description>
+				Records a lightning strike into a tree crown at [param position] (the attachment point), [param age_years] ago. [WeatherLightning3D] records its canopy strikes here when [member WeatherLightning3D.record_tree_strikes] is on. At most 4096 are kept; the oldest go first. Reports its area through [signal stand_changed].
+			</description>
+		</method>
 		<method name="advance_years">
 			<return type="void" />
 			<param index="0" name="years" type="float" />
@@ -40,10 +93,36 @@
 				The world's years pass: every disturbance added here ages by [param years] and its area is reported. Fire ages through its own producers.
 			</description>
 		</method>
+		<method name="browse_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The browsing pressure at [param position] (0 to 1): the strongest disc's, eased out over each disc's outer 20 %, [code]0[/code] where none.
+			</description>
+		</method>
+		<method name="browse_reach_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How high the browsing reaches at [param position] (m): the reach of the disc that gives [method browse_at], [code]0[/code] where none.
+			</description>
+		</method>
+		<method name="clear_browse">
+			<return type="void" />
+			<description>
+				Removes every browse disc.
+			</description>
+		</method>
 		<method name="clear_disturbances">
 			<return type="void" />
 			<description>
 				Removes every disturbance added with [method add_disturbance] and reports their area.
+			</description>
+		</method>
+		<method name="clear_strikes">
+			<return type="void" />
+			<description>
+				Removes every recorded strike.
 			</description>
 		</method>
 		<method name="disturbance_at" qualifiers="const">
@@ -66,11 +145,45 @@
 				Increases with every reported change. Readers keep the generation they last read and ask [method get_stand_changes_since].
 			</description>
 		</method>
+		<method name="get_strike_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of recorded strikes.
+			</description>
+		</method>
+		<method name="get_trails" qualifiers="const">
+			<return type="Array" />
+			<description>
+				The worn-path network last given to [method set_trails].
+			</description>
+		</method>
+		<method name="remove_browse">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Removes the browse disc [param id].
+			</description>
+		</method>
 		<method name="remove_disturbance">
 			<return type="void" />
 			<param index="0" name="id" type="int" />
 			<description>
 				Removes the disturbance [param id] and reports its area.
+			</description>
+		</method>
+		<method name="rooting_age_at">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Years (fractional) since the youngest boar rooting ([constant DISTURBANCE_ROOTING] disc) over [param position], [code]-1[/code] where none. Rooting turns the field layer, not the stand: [method stand_age_at] and [method disturbance_at] leave it out.
+			</description>
+		</method>
+		<method name="set_browse">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="pressure" type="float" />
+			<description>
+				Sets the browse disc [param id]'s pressure (0 to 1).
 			</description>
 		</method>
 		<method name="set_disturbance_age">
@@ -79,6 +192,13 @@
 			<param index="1" name="age_years" type="float" />
 			<description>
 				Sets how many years ago the disturbance [param id] happened and reports its area.
+			</description>
+		</method>
+		<method name="set_trails">
+			<return type="void" />
+			<param index="0" name="trails" type="Array" />
+			<description>
+				Publishes the worn-path network (game trails): Dictionaries with [code]"points"[/code] ([PackedVector3Array] or [PackedVector2Array], world x, z), [code]"width"[/code] (m), [code]"passes"[/code] (per year; or [code]"passes_per_year"[/code]) and [code]"kind"[/code]. Replaces the last network and reports the old and new areas through [signal stand_changed].
 			</description>
 		</method>
 		<method name="stand_age_at" qualifiers="const">
@@ -93,6 +213,20 @@
 			<param index="0" name="area" type="Rect2" />
 			<description>
 				Reports that [method stand_age_at] changed over [param area] (world XZ): bumps the generation, logs the area and emits [signal stand_changed]. Fire's burn changes are forwarded here.
+			</description>
+		</method>
+		<method name="strike_age_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Years since the youngest strike within 3 m (xz) of a tree trunk at [param position], or [code]-1[/code] where none. Fields pick a struck tree's variant by it (as [method stand_age_at] picks succession stages).
+			</description>
+		</method>
+		<method name="trail_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The busiest trail over [param position]: x its passes per year, y its tread share (1 over the middle half of its width, easing to 0 at the edge); [code]Vector2(0, 0)[/code] off every trail. Ground detail, mud, snow and grass read the same lines.
 			</description>
 		</method>
 	</methods>
@@ -116,6 +250,12 @@
 		</constant>
 		<constant name="DISTURBANCE_BEETLE" value="3" enum="Disturbance">
 			A bark beetle kill. New kinds are only appended.
+		</constant>
+		<constant name="DISTURBANCE_BEAVER" value="4" enum="Disturbance">
+			A beaver pond drained: the age is the years since it drained (a beaver meadow).
+		</constant>
+		<constant name="DISTURBANCE_ROOTING" value="5" enum="Disturbance">
+			Boar rooting turned the soil: the age is the fractional years since. A field-layer disturbance, read by [method rooting_age_at]; [method stand_age_at] and [method disturbance_at] leave it out.
 		</constant>
 	</constants>
 </class>

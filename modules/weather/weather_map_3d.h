@@ -34,6 +34,7 @@
 #include "modules/world/world_contracts.h"
 #include "weather_clouds.h"
 #include "weather_contact_wetness.h"
+#include "weather_mountain_waves.h"
 #include "weather_season.h"
 #include "weather_shelter.h"
 #include "weather_terrain_wind.h"
@@ -185,6 +186,11 @@ private:
 	float cur_air_temperature = 15.0f;
 	float cur_air_humidity = 0.7f;
 	float cur_sun_sine = 0.0f; // sine of the sun's elevation (0 below the horizon or without a sun)
+	// The ground's convective heating, 0 (a still night) to 1 (a clear afternoon); 1 without a clock (_update_air).
+	float cur_heating = 1.0f;
+	// Low cloud from the weather (docs/ideas/clouds.md round 6): the type eases between stratus or stratocumulus
+	// (stable air) and cloud_type (convection), and the base follows the condensation level.
+	bool cloud_regime_from_weather = true;
 	bool sun_known = false; // a sun light or a sky clock says where the sun is
 	float diurnal_cache_day_length = -1.0f;
 	float diurnal_cache_mean = 0.5f;
@@ -250,6 +256,7 @@ private:
 		Vector2 shadow_corner;
 		float air_temperature = 15.0f;
 		float air_humidity = 0.7f;
+		WeatherClouds::CoverNoiseFrame cover_noise; // the cover noise's constants for this pass
 	};
 	CellPass cell_pass;
 
@@ -362,6 +369,12 @@ private:
 	// get_height(position) or Terrain3D's get_data()), else the first TerrainDeformer3D, Landscape3D,
 	// TerrainGenerator3D or Terrain3D in the scene, else rays on terrain_collision_mask.
 	WeatherTerrainWind terrain_wind;
+	// Mountain waves and their wave clouds (lenticulars; docs/ideas/clouds.md): a 51 km square of the same terrain.
+	WeatherMountainWaves mountain_waves;
+	bool wave_clouds = true;
+	Vector4 wave_slab_now; // m, where wave cloud can form (wave_slab(); each pair empty when y <= x)
+	float wave_slab_timer = 0.0f;
+	Ref<ImageTexture> wave_texture;
 	float boundary_layer_height = 1000.0f; // m
 	float wind_shear_aloft = 1.5f; // m/s per km above the boundary layer
 	bool terrain_wind_enabled = true;
@@ -397,6 +410,10 @@ private:
 		float drip_timer = 0.0f;
 		bool left = false; // the next print's side
 		bool seen = false;
+		// Whether the body lays its own mud (a vehicle, GroundLegMud3D feet), kept per child count: the class checks
+		// walk the class tree by name, every body every frame.
+		int own_mud_children = -1;
+		bool own_mud = false;
 	};
 	HashMap<ObjectID, TrackBody> track_bodies;
 	struct CloudLight {
@@ -486,6 +503,7 @@ private:
 	void _publish_globals();
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
 	Vector3 _follow_position() const;
+	Vector3 _contact_center() const; // the contact square's centre: the active camera, else the follow position
 
 	float _cell_size() const { return extent / resolution; }
 	float _sample(const Vector<float> &p_field, Vector2 p_xz, int p_stride = 1, int p_offset = 0) const;
@@ -511,6 +529,9 @@ private:
 	float shelter_mover_timer = 0.0f;
 	int shelter_box_count = 0;
 	void _update_terrain_wind();
+	void _update_mountain_waves(float p_dt);
+	void _apply_wave_field();
+	float _wave_buoyancy() const;
 	void _find_terrain_source();
 	float _terrain_height(Vector2 p_xz) const;
 	// Height above the ground: p_height when >= 0, else from the terrain under the point (or ground_height).
@@ -570,6 +591,14 @@ private:
 	void _rain_update(double p_weather_dt);
 	void _rain_upload();
 	float _runoff_wetness(int p_cell) const;
+	// The upload's half-float packing, by rows on the worker pool (the main thread waits; same values as packing in turn).
+	struct UploadPass {
+		uint16_t *wind = nullptr;
+		uint16_t *state = nullptr;
+		uint16_t *frost = nullptr;
+		float storage = 1.0f;
+	};
+	void _upload_row(uint32_t p_row, UploadPass *p_pass);
 	static void _bind_rain_methods();
 
 protected:
@@ -697,6 +726,13 @@ public:
 
 	void set_cloud_base_height(float p_height);
 	float get_cloud_base_height() const { return cloud_base_height; }
+	void set_cloud_regime_from_weather(bool p_enabled);
+	bool is_cloud_regime_from_weather() const { return cloud_regime_from_weather; }
+	float get_cloud_base_now() const;
+	float get_convective_heating() const { return cur_heating; }
+	float get_cirrocumulus_share() const;
+	float get_cloud_base_at(Vector3 p_position) const;
+	float _target_cloud_type() const;
 	void set_cloud_thickness(float p_thickness);
 	float get_cloud_thickness() const { return cloud_thickness; }
 	void set_cloud_density(float p_density);
@@ -912,6 +948,12 @@ public:
 	void remove_cloud_effector(int p_id);
 	int get_cloud_effector_count() const { return cloud_effectors.size(); }
 	float get_cloud_effector_at(Vector3 p_position) const;
+	void set_wave_clouds(bool p_enabled);
+	bool is_wave_clouds() const { return wave_clouds; }
+	float get_mountain_wave_at(Vector3 p_position) const;
+	float get_mountain_wave_velocity_at(Vector3 p_position) const;
+	float get_wave_cloud_density_at(Vector3 p_position) const;
+	Vector4 get_wave_cloud_slab() const { return wave_slab_now; }
 	float get_cloud_type_at(Vector3 p_position) const;
 	float get_wetness_at(Vector3 p_position) const; // 0..1
 	float get_puddle_at(Vector3 p_position) const; // mm
@@ -991,6 +1033,10 @@ public:
 	float contract_high_cloud_cover_at(const Vector3 &p_position) const override { return get_high_cloud_cover_at(p_position); }
 	float contract_mid_cloud_cover_at(const Vector3 &p_position) const override { return get_mid_cloud_cover_at(p_position); }
 	float contract_cloud_effector_at(const Vector3 &p_position) const override { return get_cloud_effector_at(p_position); }
+	float contract_mountain_wave_at(const Vector3 &p_position) const override { return get_mountain_wave_at(p_position); }
+	float contract_cloud_base_at(const Vector3 &p_position) const override { return WeatherClouds::base_at(_cloud_state(), Vector2(p_position.x, p_position.z)); }
+	float contract_mountain_wave_velocity_at(const Vector3 &p_position) const override { return get_mountain_wave_velocity_at(p_position); }
+	float contract_wave_cloud_density_at(const Vector3 &p_position) const override { return get_wave_cloud_density_at(p_position); }
 	float contract_water_temperature() const override { return get_water_temperature(); }
 	float contract_surface_temperature_at(const Vector3 &p_position) const override { return get_surface_temperature_at(p_position); }
 	float contract_ground_height_at(const Vector3 &p_position) const override {

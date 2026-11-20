@@ -3559,6 +3559,99 @@ young, beetle snags, old-growth poles) chosen by time since disturbance per patc
 in the scene's calendar. Needs a per-patch disturbance age contract with world-links (WorldFire already gives
 burn_age_at).
 
+### 5au. Beaver country (20 Nov; Paulo's pick)
+
+Sources: beaver sign field guides (the hourglass groove gnawed all round, limbs carried off, bark eaten; bear-tracker.com);
+Badyaev, National Wildlife 2015 (more than 70% of larger felled stems fall toward the water: the beaver starts on the water
+side; part-cut stems left for the wind); Dieter and McCabe 1989, Big Sioux River (cut stems a mean 12-14 cm across against
+26 cm uncut, cut a mean 3-8 m from the water, almost none past 10 m; 52% of damaged trees resprouted or stayed alive);
+Naiman, Johnston and Kelley 1988 and Muller-Schwarze 2011 (ponds drown the flat's trees, which stand grey for decades).
+
+- `beaver_cut` (BEAVER_NONE / GNAWED / STUMP / FELLED), `beaver_years` (since the work), `beaver_depth` (a gnawed waist's
+  depth, share of the radius). The cut stands 25-55 cm over the soil (a beaver gnaws sitting).
+- GNAWED: `_beaver_waist` pulls bark, moss shell, climbers, fungi and resin in to an hourglass (lower cone 1.1x the cut's
+  depth tall, upper 1.5x), normals tilted with the cone, the bark marked bare through the wound channel so `_peel_bark`
+  sinks it; moss held off. Bites as 3 mm scallops (rows 1.6 cm, 1.2 cm wide, slanted), below the relief tube's 2.5 cm grid
+  so mostly carried by the wood shader's grain.
+- STUMP: `_beaver_stump` cuts the main stem in the growth loop `beaver_years` before the end and drops every other stem;
+  the end keeps its girth and gets `_gnaw_face`: a cone 1-1.5 radii long to a ragged point a little off centre, tiers of
+  bite scallops at 1.2 cm, in wood_b. Broadleaves resprout from dormant buds under the cut on 55% of seeds
+  (`_beaver_resprouts`), conifers never; a dead stump runs decay classes 1-3 by its years.
+- FELLED: fallen toward +X (not uprooted), its butt the hourglass's upper cone (the log cap kept flat, no fibre tongues:
+  `tube_no_tongue`); `_beaver_strip` takes limbs up to 5 cm (stubs left) over the first season; bark eaten
+  (`_bare_amount` to 0.85 by 1.2 years). Leaves on while fresh (under 0.3 years), then decay classes 1-3.
+- Wood colour `_beaver_wood(years)`: cream, orange-brown within weeks, grey by 4 years; on the gnaw cones and as the bark
+  shader's `bark_wood_color` for gnawed and felled stems.
+- STAND_BEAVER_POND (22): drowned black alder and birch snags in 0.1-1.2 m of water; willow and birch gnawed (to 12 m from the
+  water), stumps and felled (to 10 m), variants spread over 0.03-8 years and 0.3-0.65 of the preset's age (thin stems);
+  willow scrub at the waterline; birch, alder and spruce beyond. Felled species carry meta `fall_to_water` 0.7:
+  VegetationField3D turns that share's +X down the water distance (about 30 degrees either way).
+- Bench: `stands.gd --beaver` (stump cone, resprouts, felled lying, waist), `--stand-test=22` (no work past 12 m, most
+  felled stems to the water, drowned snags); `main.gd --beaver` the vignette row.
+- Fixed on the way: near-leaf keys travelled as 32-bit ints, so the 64-bit band terms (succession, edge, wet, beaver)
+  wrapped them negative and the near cells of those stands never built ("Not a near mesh source for this key"). Folded to
+  a positive 31-bit key.
+- Not done: aspen (no preset yet; it is the beavers' first choice), the logs cut into carried sections, drag paths and the
+  dam and lodge (water and props), a beaver meadow stage for make_succession (needs a WorldStand disturbance kind).
+
+### 5av. Flood marks (20 Nov; Paulo's pick)
+
+Sources: Koenig et al. 2016, USGS Techniques and Methods 3-A24 (high-water marks: silt and seed lines, debris lines, wash
+lines; the mark sits higher on the upstream face where water piles against an obstacle); Hupp 1988 and Ballesteros-Canovas
+et al. 2015 (dendrogeomorphic flood evidence: scars, debris caught on riparian trees, silt in the bark).
+
+- `flood_height` (metres over the stem foot, 0 off) and `flood_years` (since that flood). `_silt_at(pos, normal)` gives the
+  silt weight: 1 under the line, a 2.4 cm edge, the line 6 cm higher on the upstream face (-X, against the flow) and 4 cm
+  lower in the lee, wandering 5 cm; washed down to 0.3 over 0.3-3 years.
+- The weight travels to the bark shader in UV2.x as -(0.5 + 1.5 silt) (lichen UV2 is never negative; char uses UV2.y
+  the same way). The shader lays a matte brown-grey film (linear 0.13, 0.105, 0.075, roughness 0.95) that fills the
+  furrows first and leaves the plate tops partly bare (from the relief channel), tints the bark where thin, and is a
+  little darker in the tide band just under the line. No lichen under the line.
+- Moss under the line is browned toward the silt colour.
+- `_flood_wrack` (wood_b): up to six bundles of twigs and grass draped over limbs that cross the line, lying along the
+  flow and hanging down; grass blades plastered round the stem's upstream face at the line; a heap of sticks and straw
+  against the upstream foot when the flood stood 25 cm or more. Older wrack goes (none past 4 years).
+- Floodplain willow (`wet_band` 2) variants get flood heights 0.5-1.6 m and 0.05-2.5 years; the species follows the flow
+  (`follow_flow`), so -X faces upstream in the stand.
+- Bench: `stands.gd --flood` (silt only under the line, none above 1.3 m, wrack on every willow).
+- Not done: scoured, bared roots on the cut bank; flood height from WorldWater's flood stage rather than the variant band;
+  silt on the ground and on the vegetation under the line (vegetation thread).
+
+### 5aw. Deer browse and nurse logs (20 Nov; Paulo's pick)
+
+Sources: Gill 1992, A review of damage by mammals in north temperate forests (browse lines, hedged regeneration, bark
+stripping); Forestry Commission Practice Note 6 and the Deer Initiative field signs (browse heights: roe about 1.1 m,
+fallow 1.6-1.8 m, red deer 1.8 m and up to 2 m on their hind legs); Kirby 2001 and Fuller and Gill 2001 (woods under heavy
+deer pressure lose the shrub layer and look open); Bergman 2001, Hester et al. 2006 (browsed saplings regrow hard from
+the buds behind the bite); Harmon and Franklin 1989, Tree seedlings on logs in Picea-Tsuga forests (most seedlings on
+logs, later stilted rows); Zielonka 2006 (Norway spruce comes in on logs from decay class 3).
+
+- `browse` (pressure 0-1), `browse_height` (reach, 1.8 m), `browse_years` (the last N years browsed; 0 all of them).
+- In the growth loop a shoot whose tip ends in reach is bitten with chance 1 - (1 - browse)^3, the bite falling off over
+  the 10-50 cm above the reach (deer pull leaders down). The bite keeps 15-40% of the shoot; two or three buds behind it
+  push next year (one carries the axis, the others are side buds, so the vigor pass feeds them). While the tree is in
+  reach the crown cone is off (no leader to set it), the buds get compensatory vigor (x 1 + 1.6 browse) and a light floor
+  of 0.6 (a bush is smaller than the shadow grid's cells), and the pipe model is held to 1.8 mm of ring a year. The
+  result is a hedged bush: browsed 15 years at 0.9, beech, ash, rowan and spruce top out at 1.0-1.3 m (9-12 m unbrowsed).
+- Grown past the reach, the foliage in reach is eaten to a level line wandering about 10 cm (`_browse_keep`, per leaf from
+  its position, so it holds across rebuilds); ivy on the stem too. A hedged bush keeps its leaves, thinned 30%.
+- Bark stripping on pole-stage stems of the barked species goes from 22% to 22% + 60% of browse.
+- STAND_DEER_WOOD (23): beech and oak canopy, open-grown beech and oak in the glades (low limbs clipped from below), ash
+  poles, browsed beech, ash and rowan saplings, the lead's saplings browsed; no shrub layer.
+- `nurse_seedlings` (0-1) on a fallen conifer log of class 3+: seedlings along its top within 50 degrees of it (7 a metre
+  on class 3 to 3.5 on class 5), mostly 3-12 cm, a tail to 0.5-1.6 m on old logs, needles up the leader and whorls past
+  20 cm; saplings over 30 cm run two or three roots over the log and down its flanks.
+- `nurse_stilt` (m): a tree grown on a log since rotted. The stilt build (5at) with the log's section: roots turned across
+  the log (+-Z) and lengthened to reach the soil; they lie on the round top and run down the flanks; anything inside the
+  section (the sunk collar, a trunk wider than the log) is lifted to the tunnel's roof, which wanders with the rot. The
+  drop fades up the stem, so the foot flares into its legs. Placement lifts it by `tree_base_lift`.
+- Taiga (5ap): spruce nurse logs (classes 3-5) and spruce on rotted nurse logs (0.5-1.1 m) on the moist ground.
+- Bench: `stands.gd --deer` (hedged saplings under 2.3 m on four seeds, holly browse line, seedlings on a log, no bark in
+  the tunnel); the deer wood placement check in `--stands --test`.
+- Not done: colonnades (trees in a row along one vanished log; needs a row placement in VegetationField3D); the flank of a
+  stilted tree shows the collar's coarse buried part at ground level from the side; a browsing pressure map (WorldStand
+  or vegetation) so pressure varies over the land; browsed ground flora (vegetation thread).
+
 ## Next-round options (card 20 Nov afternoon)
 
 1. **Beaver country.** Aspen, willow and birch along streams gnawed to hourglass stumps with chisel facets (beavers
@@ -3572,3 +3665,152 @@ burn_age_at).
 3. **Deer and nurse logs.** A browse line under heavily grazed woods (no foliage below about 1.8 m, saplings bitten to
    bushes, bark stripped on young spruce and ash; Gill 1992), and seedlings in rows along rotting logs that later
    stand on stilts in a line where the log was (Harmon and Franklin 1989). Reads a browsing pressure map or stand meta.
+
+### 5ax. Fresh lightning strikes (20 Nov; Paulo's pick, first of three)
+
+Sources: Taylor 1964, Lightning damage to forest trees in Montana (strip scars
+from the crown to the foot along the grain, bark and wood thrown tens of metres); Taylor 1974 (scar frequency by
+species and height); Murray 1958, Lightning damage to trees (Scottish Forestry); Alabama Extension FOR-2134, Caring for
+lightning-struck trees (2023). The current runs down the wet outer sapwood; the steam blows the bark off in a strip and
+tears a sliver of wood out of its middle.
+
+- `lightning_years` (-1 none): years since a strike. It forces one WOUND_LIGHTNING on the main stem (its own random
+  stream, so the scar keeps its place as the years change) from 75-95% of the stem's length to the foot, 7-18 cm wide,
+  following the grain's spiral. Old scars from the stand's own chance (5p) are unchanged.
+- While fresh (fading 1-6 years) a groove 1-3 cm deep runs down the strip's middle (the torn sapwood sliver), ragged
+  with the grain; the callus rolls in over the following years as for every wound.
+- The strip's wood (`bark_wood_color`, `_lightning_wood`): cream when just bared, straw within months, grey from about
+  1-4 years, the weathered wood after 3-8.
+- No moss on the fresh strip (the strike blew it off with the bark): `_moss_at` reads `_fresh_strike_at`, and the moss
+  shell is hidden there. On older strikes the moss that comes back lies on the sunk wood, not on the shell's floor
+  over the groove (which showed as floating blocks).
+- Debris for the first two years (fewer from 0.4): 60-140 pieces round the foot, half toward the scar's side, mostly
+  within a few metres, out to 0.6 of the height. Bark slabs keep part of the stem's curl, torn ragged along the grain,
+  bark side up or the reddish inner bark up; splinters are thin three-sided slivers of the pale sapwood. They follow
+  `ground_slope`. Surface "wood".
+- Bench: `stands.gd --lightning` (debris on the ground when fresh, none unstruck or three years on).
+- **Struck trees in the world.** `lightning_variants` (on): stand, open, old and grove forms of trees over 8 m carry
+  two struck variants of their first seed (0.2 and 3 years; mesh meta `tree_lightning_years`) after the fire ones;
+  `get_living_meshes` leaves them out, and near meshes build them too. VegetationField3D copies the strikes over its
+  area (`WorldStand.get_strikes_in`, recorded by WeatherLightning3D's canopy strikes) and a tree within 3 m of one
+  younger than 8 years takes the struck variant nearest its age; no tree is struck elsewhere. Strikes added or aged
+  re-place their tiles (stand_changed). Bench: `stands.gd --lightning --strikes` (beech stand: two struck variants,
+  none placed without a strike, one strike swaps that tree only). The trees and vegetation benches keep them off.
+- Not done: a hard strike that splits the stem or shatters the top; crown scorch.
+
+### 5ay. Mistletoe on conifers, old balls, fir brooms (20 Nov; Paulo's pick, second of three)
+
+Mistletoe and birch brooms were in since 5n; this round adds what they lacked. Sources: Zuber 2004, Biology and control
+of Viscum album (Flora 199; a ball forks once a year, leaves last about two years, dioecious); Barney, Hawksworth and
+Geils 1998, Hosts of Viscum album (Eur. J. For. Path. 28; the subspecies' hosts); Peterson 1964 and Solla et al. 2006 on
+fir broom rust (Melampsorella caryophyllacearum).
+
+- **Conifer races.** Subsp. abietis on silver fir (host chance 0.25), subsp. austriacum on Scots pine (0.2): yellower
+  stems and leaves, narrower and shorter leaves (3 cm, a fifth as wide), yellowish berries.
+- **Old balls.** A ball's age is 3-30 years. It forks every shoot for four years, then a little under half the time,
+  the other shoots running on and arching outward so the ball stays round; the first stems go every way round the limb,
+  so it hangs below as well as above. The base stems thicken with age. Breadth first under a stem budget (150 + 28 a
+  year, at most 900; half on a heavily infected tree), so the whole shell is trimmed evenly. Old balls reach 0.7-0.8 m.
+- **Leaves on the shell.** A leaf pair at every shoot end in the outer part of the ball (beyond 0.72 of its reach) and
+  at every tip: the last two years' shoots, leafy outside and bare stems inside. Berries on half the balls (female
+  plants), in the shell's forks, late October to February.
+- **Host swelling.** A smooth spindle round the limb under each ball (the sinkers), larger under old balls.
+- **Heavy loads.** One infected tree in five (by `mistletoe`) carries 10-31 balls.
+- **Fir brooms** (`witches_brooms`, silver fir, 30% at 1): on a near-level limb in the live crown, a canker spindle up
+  to 1.7 times the limb and 30 cm long, and a broom 0.3-1.5 m of upright shoots that branch three times, needles all
+  round the shoot, 1.6-2.6 cm, yellow-green from late May to mid October, bare in winter.
+- Cost (LOD 0 crown parts, all of them): Scots pine seed 2 at the default mistletoe 94k triangles (two old balls);
+  silver fir seed 2 with mistletoe and brooms 3, 42k. The coarser LODs keep balls and brooms.
+- Raster against path traced at 100% crop (a pine's ball): the stems and leaves hold; the ball's inside is darker
+  under the path tracer, as shade should be.
+- Not done: poplar, apple and cherry hosts (no such species yet); cherry and hornbeam brooms; dieback of the limb past
+  an old ball.
+
+### 5az. Browsed trees from the deer pressure map (20 Nov; Paulo's pick, third of three, first half)
+
+The browse line and hedged saplings of 5aw were whole stands (the deer wood); now they follow the land. Deer pressure is
+patchy: heaviest near cover by meadows, wintering yards and feeding sites, light far from them (Gill 1992, A review of
+damage by mammals in north temperate forests: 1. Deer, Forestry 65; Reimoser and Gossow 1996, Impact of ungulates on
+forest vegetation and its dependence on the silvicultural system, For. Ecol. Manage. 88). The world records it as
+WorldStand browse discs (pressure 0..1, reach in metres; world-contracts.md).
+
+- **Browsed variants** (`browse_variants`, on): an open-grown tree, a sapling and an understory plant each carry one more
+  mesh, the first living seed grown under pressure 0.85 at 1.8 m (red deer). The open tree has been browsed its last 20
+  years (a browse line under a crown that grew up before); the sapling and understory plant all their years (hedged).
+  Mesh meta `tree_browse` holds the pressure; `get_living_meshes` leaves them out. Not for a stand already grown browsed.
+- **Picked by the map.** VegetationField3D samples `browse_at` into a grid over its area on the main thread (at most
+  256 x 256, cells of 4 m or more) when a species carries a browsed variant. A living tree there is the browsed variant
+  with the chance smoothstep(0.3, 0.8, pressure), by its own number; elsewhere never. Burnt and struck picks stay first.
+  A changed disc re-places the tiles it covers (stand_changed).
+- Check: `stands.gd --stands --browse`: six beech-stand species carry one browsed variant; no deer, none placed of
+  4167; a full-pressure disc of 32 m browses the trees under it and none outside.
+- Not done: the browse line on grown stand trees (their crowns stand above reach under canopy), roe and fallow reach
+  per disc on the variants (the variant is grown at 1.8 m).
+
+### 5ba. Colonnades (20 Nov; Paulo's pick, third of three, second half)
+
+Seedlings that come up in a row along a nurse log stand on stilts in that same row once the log has rotted away: a
+colonnade (Franklin et al. 1981, Ecological characteristics of old-growth Douglas-fir forests, USDA PNW-118; Harmon and
+Franklin 1989, Ecology 70). 5aw grew the stilted tree; now the field lines them up.
+
+- **Row placement** (VegetationField3D, species meta `colonnade` = slot spacing, longest log; m). One candidate log a
+  16 m cell: centre and bearing by the cell's hash, 45-100% of the longest log; slots every spacing along it with a
+  little jitter, a fifth empty where a seedling died. The whole row is kept or dropped together by density, every tree
+  in it is the same living variant (one log girth, so one stilt height), and each turns its tunnel along the log.
+- **Taiga**: the stilted spruce are colonnades (1.5 m, logs up to 10 m, a quarter of the cells), placed before the other
+  spruce, which keep out of the rows.
+- Check: `stands.gd --stands --colonnade`: 34 stilted spruce on the bench valley, 29 with a row mate 0.9-2.5 m off, 15
+  of 19 with their two nearest mates in line (a neighbouring log's row can come nearer). `main.gd --colonnade` shows
+  five in a row.
+- Not done: the rotted log's last remains (a mossy hump or a line of soft wood) under the row.
+
+### 5bb. The beaver meadow (20 Nov; world-links' DISTURBANCE_BEAVER)
+
+When a dam fails the pond drains to a beaver meadow. The drowned trees stand on in it, grey and losing their tops,
+and fall over the next decades (Naiman, Johnston and Kelley 1988). Trees come back slowly and from the edges, willow and
+alder first: the drowned bed has lost its mycorrhizal fungi and the meadow's voles eat the seedlings (Terwilliger and
+Pastor 1999, Oikos 85; Wright, Jones and Flecker 2002, Oecologia 132), so meadows stay open for decades.
+
+- STAND_BEAVER_POND reads WorldStand disturbance kind 4 (`SUCCESSION_BEAVER`, years since the drain) by RULE_DISTURBANCE
+  and RULE_STAND_AGE: alder and birch snags (0-30 years, fading over 10), their fallen stems (5-60), willow saplings
+  from 6 years and alder from 10, sparse. The pond's own drowned snags (in the water) are kept off a drained bed.
+- The disc comes from whoever owns the dam and its water: `WorldStand.add_disturbance(centre, radius,
+  DISTURBANCE_BEAVER, years)`; the trees and PlantGenerator's meadow follow it through stand_changed.
+- Check: `stands.gd --stands --beaver-meadow`: six meadow species, none placed without a drain; a 40 m disc 12 years
+  on places them inside it and none outside.
+
+### 5bc. Deferred variants (20 Nov; all variant sets on by default)
+
+With fire, struck and browsed variants all grown with the stands, the European woodland (one living variant) went
+from 70 meshes and 3.0 GB peak to 317 meshes and 9.0 GB, and the build from 52 s to 4 min; scene's 80 m taiga scout ran
+out of the cloud's 15 GB. The variants are only ever drawn where a burn, a strike or a browse disc lies, so they are now
+grown on demand (lazy generation, as the near leaves of 8c).
+
+- `defer_variants` (on): _stand_species records what each species key can grow (VARIANT_FIRE, _STRIKE, _BROWSE) on a
+  copy of the generator as set up for it (species meta `_tree_variant_source`, `tree_variants_deferred`,
+  `tree_variant_living`) instead of growing it. `request_variants(species, kinds)` grows those kinds and appends them in
+  the stand's order (living, fire, struck, browsed), and updates the near source's lists, so the meshes match the eager
+  build exactly.
+- VegetationField3D asks in setup for the kinds its area needs (any burn, strike or browse over it). A later burn, strike
+  or disc asks from process, and the field streams again with the new meshes.
+- Woodland with all three on: 70 meshes, 3.08 GB peak (3.05 GB with none).
+- Grown on the main thread: the first strike, burn or disc of a kind over a streamed field holds that frame about a
+  second a species. On a worker it stalled the field (generate() runs its own group tasks while the field clears its
+  tiles); moving it to a worker is a PC follow-up with a debugger.
+- Checks: `stands.gd --stands --lightning --strikes` and `--browse` (nothing grown before; the field grows them under a
+  strike or disc, same placements as the eager build); `--strikes --stream` (a strike after streaming brings the struck
+  tree in).
+
+## Next-round options (card 20 Nov evening)
+
+1. **Lightning-struck trees.** Old healed strike strips are in since 5p (WOUND_LIGHTNING, random on tall trees). Missing:
+   the fresh strike and the world's strikes reaching trees. A fresh scar is pale wood with the blown-off bark strips
+   lying round the foot; a hard strike splits the stem along the strip or shatters the top into splinters, and scorches
+   the crown (Taylor 1964 and 1969, lightning damage in Montana forests; Alabama Extension FOR-2134, 2023). Reads
+   WeatherLightning3D ground strikes with `canopy` (world-links: lightning to tree): VegetationField3D swaps the struck
+   instance for a fresh-strike variant, as burn ages pick fire variants.
+2. **Mistletoe and witches' brooms.** Mistletoe balls (Viscum album) in lime, poplar, apple, hawthorn and pine crowns,
+   evergreen and plain in winter; witches' brooms (dense twig clusters from a fungus or mite) on birch, fir and cherry.
+3. **Colonnades and a browsing pressure map.** Rows of stilted spruce along one vanished log (a row placement in
+   VegetationField3D), and a pressure map (WorldStand or vegetation) so the browse line and hedged saplings vary over
+   the land, heavier by meadows and wintering ground.

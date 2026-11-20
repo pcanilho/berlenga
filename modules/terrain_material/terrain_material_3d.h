@@ -49,11 +49,22 @@ class TerrainMaterialLayer : public Resource {
 	float normal_strength = 1.0f;
 	float tile_size = 4.0f;
 	float porosity = 0.7f;
+	bool detail_only = true;
+	mutable Color albedo_mean;
+	mutable bool albedo_mean_valid = false;
+	mutable float roughness_mean = 1.0f;
+	mutable bool roughness_mean_valid = false;
 
 protected:
 	static void _bind_methods();
 
 public:
+	void set_detail_only(bool p_enable);
+	bool is_detail_only() const { return detail_only; }
+	// The albedo texture's mean (linear) and the roughness texture's (green), what the shader divides them by in
+	// detail_only mode.
+	Color get_albedo_mean() const;
+	float get_roughness_mean() const;
 	void set_albedo_texture(const Ref<Texture2D> &p_texture);
 	Ref<Texture2D> get_albedo_texture() const { return albedo_texture; }
 	void set_normal_texture(const Ref<Texture2D> &p_texture);
@@ -93,6 +104,8 @@ public:
 private:
 	Ref<TerrainMaterialLayer> layers[LAYER_MAX];
 	bool geology_enabled = true;
+	bool sand_granule_ripples = true; // granule ripples on the interdune lag
+	bool sand_dune_tone = true; // the sand's dune-scale colour (redder old sand, dark interdune flats, pale slip faces)
 	float sea_level = 0.0f;
 	float beach_height = 2.5f;
 	float rock_slope = 40.0f;
@@ -141,6 +154,10 @@ public:
 
 	void set_geology_enabled(bool p_enabled);
 	bool is_geology_enabled() const { return geology_enabled; }
+	void set_sand_dune_tone(bool p_enabled);
+	bool is_sand_dune_tone() const { return sand_dune_tone; }
+	void set_sand_granule_ripples(bool p_enabled);
+	bool is_sand_granule_ripples() const { return sand_granule_ripples; }
 	void set_sea_level(float p_height);
 	float get_sea_level() const { return sea_level; }
 	void set_beach_height(float p_height);

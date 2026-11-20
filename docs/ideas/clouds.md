@@ -343,3 +343,270 @@ Round 3 follow-ups (docs review of 118c13bc):
    - Bench: weather `--cloud-light=x,y,z,E,R[,r,g,b]`, `--cloud-effector=x,y,z,R,S`, `--sun-energy=0`; checks in
      `--test=clouds` (hole clears the thickest cloud to 0, an adding effector makes cloud in clear air, slots full
      at eight). Raster and PT match.
+
+## Round 5: lenticulars, wave clouds (20 Nov 2026; Paulo: all extra kinds, every one driven by the weather)
+
+Research. Lenticulars (altocumulus standing lenticularis, and their stratocumulus and cirrocumulus kin) are the
+condensed crests of mountain waves: stable air crossing a ridge oscillates at the buoyancy frequency, the waves
+stand still over the ground, and where a moist layer is lifted past saturation it condenses into a smooth lens
+that air flows through. No published game technique models them physically (Vimont et al. 2020 simulate
+orographic cloud on a coarse grid offline; flight simulators place them from weather data), so we build from the
+meteorology:
+- Linear mountain wave theory (Smith 1980, Tellus 32): the terrain's 2D FFT times exp(i m z), non-hydrostatic
+  m^2 = (k^2 + l^2)(N^2 - s^2) / s^2 with s = U k + V l; m takes the sign of s (energy upward), imaginary where
+  waves cannot propagate (they decay). Checked against Queney's analytic ridge (1948): lift +236 m upwind,
+  -270 m downwind at a quarter vertical wavelength for 250 m expected.
+- Flow blocking: only the top U / N of the terrain lifts the air (dividing streamline, Sheppard 1956; Smith 1989).
+- Saturation: lifted air cools 9.8 K/km and its dew point 1.8 K/km, so it saturates after 125 m per kelvin of
+  dew point depression; past that the moist adiabat condenses about 2 g/kg per km near 0 C (6% less per kelvin
+  colder); extinction 1.5 LWC / (rho r_e), droplets 10 um, ice 30 um below -25 C (Stephens 1978).
+- Humidity aloft: Manabe and Wetherald's (1967) RH profile from the ground humidity, moistened within the mid and
+  high layers: saturated in their clouds, 0.93 at their edges, drier further out, with thin sheets 350 m apart in
+  the mid layer (the stepped humidity that stacks plates).
+
+As built:
+- `WeatherMountainWaves` (weather_mountain_waves.cpp): a 51 km square at 400 m round the camera, its heights
+  sampled through the terrain-wind terrain source over two ticks, derived again when the wind aloft turns 5
+  degrees or changes a tenth (a few ms, main thread). Displacement at 2, 3.5, 5 and 7 km, one RGBA float texture.
+- The sky marches two thin slabs (round the mid layer and round the high layer) only where the field's largest
+  lift can reach saturation (`get_wave_cloud_slab`, refreshed twice a second); none when the air is dry or calm,
+  so it costs nothing then. 16 coarse steps over at most 8 km of path; where the lift comes within 150 m of
+  saturation, four fine samples (the moisture read once a step). Lit as the mid layer. Not jittered: a jittered
+  thin edge broke into dots.
+- CPU: `get_wave_cloud_density_at`; the cloud shadow bake marches both slabs (8 steps each), so lenses shade
+  the ground.
+- Wind: `get_mountain_wave_velocity_at` (w = U . grad eta) joins `get_wind_at` above the boundary layer, blended
+  over 300 m (Valence's rule); linear theory has no rotors, so no lee turbulence.
+- Connected: terrain (heights), wind aloft (U), temperature (N, condensate, ice), humidity and the mid/high
+  layers' moisture (driven by humidity, rain and storms), time of day through all of these.
+- Contract: `WorldWeather.mountain_wave_at`, `mountain_wave_velocity_at`, `wave_cloud_density_at`;
+  `WeatherMap3D.wave_clouds` (on).
+- Cost (lavapipe raster, lenticular view): 566 to 595 ms against 529 ms with wave clouds off, about 10% while
+  lenses are on screen; zero with empty slabs. Raster and PT match.
+- Bench: weather `--view=lenticular` (a Witch of Agnesi ridge 2 km high; a test stand-in, not for docs frames),
+  `--no-wave-clouds`. It prints the slabs, a top-down map, the wave wind aloft against the ground, and a dry run.
+- Shading (later 20 Nov): the sun read through the whole lens (to 700 m) and the sky light shaded by the cloud
+  above the point, so crowns are lit and bellies darker. Next: stacked plates showing more clearly, iridescence near the
+  sun; then a docs frame over real terrain from the showcase scene.
+
+## Round 6: stratus and stratocumulus from the weather (20 Nov 2026)
+
+Research: the boundary layer's cloud is layered while the air is stable and convective once the ground heats
+(Stull 1988, 11.2): morning stratus burns off into cumulus, evening cumulus spreads into stratocumulus. Wind or
+drier air mixes a stratus layer into stratocumulus (Wood 2012, Mon. Wea. Rev. 140). Stratocumulus is closed cells
+1.5 to 3 km across a 300 to 500 m deep layer, thick in the middle and thin at the sinking rim, lined into rolls
+along a mixing wind (Atkinson and Zhang 1996). The base sits at the lifting condensation level, 125 m per kelvin
+of dew point depression (Espy), so it rises through the day as the air dries.
+
+- Type from the weather (`WeatherMap3D.cloud_regime_from_weather`, on): heating H = the day's warming curve times
+  (1 - 0.7 cover), 1 with no clock. Stable type = 0.05 (stratus) in calm humid air, 0.22 (stratocumulus) once the
+  wind passes about 6 m/s or the air dries below 0.9. Convection (H, cut by rain) blends to `cloud_type`, the
+  afternoon's own type. While it rains the layer stays nimbostratus. `get_convective_heating`.
+- Base: `cloud_base_height` plus the condensation level now minus that of the default air (15 C, 0.7), never under
+  the ground below the camera plus 30 m (a base on the ground is fog, the mist's job). `get_cloud_base_now`;
+  contract `WorldWeather.cloud_base_at` (default 1500).
+- Shape: below type 0.36 the single clouds give way to one sheet (`layered_share`), whose noise is lifted so an
+  overcast layer closes; it reaches down to a broken sky (cover 0.15 to 0.45). Stratocumulus modulates the sheet
+  by Worley cells (F2 - F1) in the wind frame, 1800 m, stretched up to 3x into rolls by the wind. Cumulus
+  (type above 0.36) is unchanged.
+- Bench: weather `--test=clouds` prints the type, heating and base over a day for calm, windy, dry and rainy air;
+  `--view=clouds --type=0.05|0.2 --wind=8`. Raster and PT match (640 px).
+- Cells as heaps (later 20 Nov; docs declined straight extruded rolls): each cell's top highest in its middle and
+  lower toward the rim (top at 0.25 to 1 of the layer by the cell value, roughened by the shape noise), so a roll is
+  a row of rounded lumps with thin darker gaps; rolls stretched at most 2x.
+- Air under a deck: the light the deck transmits diffusely (two-stream, minus the direct beam) now lights the air
+  below it as a source (F / 2 pi, isotropic). Before, only the air's own multiple scattering lit it, so the
+  horizon under an overcast was a dark band below both the deck and the ground.
+- Cell shading (docs: even grey discs): cell middles dense (the remap tripled, liquid water 0.2 to 0.5 g/m3) with a
+  soft thin rim, and the base sags under each middle (rims up to 15% of the layer higher), so cells show darker
+  bases and centres, bright rims and lumps along the underside.
+- Next: cumulus base detail (per cloud sag, scud under humid bases).
+
+## Round 7: cirrocumulus and cirrostratus (20 Nov 2026)
+
+Research: cirrocumulus is the cirrus layer broken into grains and ripples under one degree across, by shallow
+instability or Kelvin-Helmholtz billows where the shear across the layer overcomes its stability (Ludlam 1967;
+WMO International Cloud Atlas, Cc stratiformis/undulatus); the ripples lie across the shear. Cirrostratus is the
+extensive, nearly featureless veil of a warm front's shield or an anvil, and the cloud of halos (Atlas, Cs
+nebulosus/fibratus; Tape 1994).
+
+- Cirrocumulus share (`WeatherMap3D.get_cirrocumulus_share`): gradient Richardson number Ri = N^2 / S^2 between
+  the mid and high layers, N from the 6.5 K/km lapse at the layer's temperature, S from `get_wind_aloft` (so from
+  `wind_shear_aloft`); ramp 1 - smoothstep(2, 20, Ri). Default shear 1.5 m/s/km gives none; 5 and up most.
+- Sky (march_cirrus): in patches (14 km noise) of the sheet where it is not a veil, the fibres give way by that
+  share to grains, the detail noise's billows broken by its finer octave, 1.8 by 2.7 km per 128 texels (cells
+  about 200 m, ripples across the wind), soft edges.
+- Cirrostratus: where the sheet's cover passes 0.55 to 0.9 the fibres merge into a veil (0.7 + 0.3 of the fibre),
+  and halos there run 1.4x (0.7x on bare cirrus).
+- Connected: humidity and coming rain (the high cover's driver) make the veil; the jet's shear makes the grains.
+- Raster and PT match (640). Raster shows the half-res reconstruction's stepped edge on fine grains (the known
+  dotted rim issue, on the improvements card); PT is smooth.
+- Bench: weather `--view=clouds_up` (50 degrees up), `--shear-aloft=S`, `--high-cover=C`.
+- No lattice (docs: one regular diamond lattice, the texture tiling every 1.8 km): two reads 1.37x apart in scale
+  and 23 degrees apart, blended by a 6 km noise; both domain-warped by the texture's coarse octave (rows bend, part,
+  merge); the grain threshold wanders on 2.5 km, so ripples break into gaps and run together.
+- Halo check: the 22 and 46 degree rings show through the veil toward the sun (raster and PT). Sun-facing frame:
+  weather `--view=shafts --cover=0.05 --high-cover=1.0` (sun 20 degrees up, 13 left of the view).
+
+## Round 8: storm details, rain shafts and shelf clouds (20 Nov 2026)
+
+Research: rain's visible extinction from its rate, sigma = 0.31 R^0.67 per km (Atlas 1953, visibility in rain);
+heavy rain falls in shafts a few km across that slant downwind as the drops fall at about 7 m/s. A shelf cloud
+(arcus) forms on a storm's gust front where its cold outflow lifts the warm moist inflow ahead of it to
+saturation below the storm's base: a smooth, low wedge along the leading edge (Doswell 1985; WMO International
+Cloud Atlas, arcus). Mammatus (next): pouches under an anvil from sublimation and evaporation into drier air
+below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
+
+- Rain shafts (sky, `march_rain_shafts`): under each storm's base, the storm's rain (its peak rate times growth,
+  `State.storm_rain`) over a core with an edge, exp(-(r/R)^4), broken into curtains by two octaves of noise (900
+  and 260 m), slanted by the low wind over 7 m/s (`rain_slant`). Lit by the sky's light under the clouds (a third
+  under the storm's shield) and the sun where the cover toward it is thin (HG 0.6). 14 steps over the chord,
+  composited with the cloud layers by distance. Cost on lavapipe within noise (558 to 601 ms a frame).
+- Shelf cloud (`shelf_drop`, CPU and GLSL): the base drops up to 450 m (`SHELF_DROP`, scaled by outflow / 15 m/s and
+  growth) along the gust front, which runs ahead of the core by 1.1 radii plus 0.04 per m/s of outflow on the side
+  the storm moves (`State.storm_dir`, the wind that steers storms); sharp at the front, rising back over 1.2 x 0.6
+  radii; there the cover is raised to one continuous sheet and the type taken to stratus, so it reads as a smooth
+  wedge. `WeatherMap3D.get_cloud_base_at` (and `WorldWeather.cloud_base_at`) include it.
+- Connected: storm rain rate, outflow, the steering wind, the low wind, the sun.
+- Raster and PT match (640). Near the camera the rain is the haze's and RainFall3D's; distant shafts draw against
+  the sky only (terrain in front of a shaft hides it, as it should; a shaft in front of far terrain is not drawn yet).
+- Bench: weather `--storm=x,z,R,mm,outflow` (grown 15 min, the storm moving about 9 km), `--wind-dir=x,z`.
+- Review fixes (later 20 Nov; docs: a doughnut shelf, no storm above it, even shafts):
+  - Cumulonimbus body (`storm_body_at` / `wc_storm_body`): one tower about 1.5 core radii across from the base to
+    the storm's height (top_height at type 1 times growth, 7.5 km over the base by default), leaning downwind,
+    spreading from 78% of its height into an anvil about 3 core radii across centred 1.6 radii downwind, flat under
+    the tropopause (Houze 1993, 8). Solid through (the lifted noise times the envelope), outline the noise's. Single
+    cells fade out within 1.8 body radii (the updraft's subsidence keeps other towers away). Under the anvil's
+    footprint the column's type is the storm's, so its height is not cut.
+  - Shelf as a solid wedge: from the lowered base to 400 m above the storm's base, smooth underneath, its upper face
+    the noise's; single cells give way there. Arc narrowed to about +-55 degrees of the storm's motion.
+  - Shafts: three curtain octaves (1.2 km, 400 m, 130 m) thresholded so lighter gaps open between heavier sheets;
+    24 steps.
+  - Mammatus (`march_mammatus`): lobes hang up to 500 m under the body's anvil (from 78% of the storm's height) on a
+    jittered 1.6 km grid, where the anvil overhangs (away from the tower) and the more the drier the air (the
+    ground humidity, as the sub-anvil air's proxy); 16 steps over a 700 m slab; lit by the light under the anvil and
+    the sun through their skin. Composited with the low march by distance. Subtle under a high sun; they show best
+    with a low sun (a sunset frame).
+  - Cost unchanged on lavapipe (538 ms a frame with a storm in view). Raster and PT match. The raster speckle on a
+    distant sunlit tower face is the half-res reconstruction (improvements card).
+- Second review (docs, 20 Nov evening: a heap of loose puffs, a jellyfish anvil, no mammatus, cirrus like motion
+  blur). Research: Schneider, "Nubis: Authoring Real-Time Volumetric Cloudscapes" (Advances 2015) and "Real-Time
+  Volumetric Superstorms" (GDC 2022) model a storm as one envelope with its own density and only the edge eroded;
+  photos and the Atlas: an anvil is a thin ice sheet with a flat ceiling, a sharp upwind edge, spreading far
+  downwind; ice anvils are optically about 10 deep near the core and 1 or 2 downstream (Lilly 1988; Garrett 2005).
+  - Tower: narrower at the base (0.75 core radii) widening to 1.1 by 60% of its height, a hard outline (the last
+    tenth of the radius), shaped by the shape noise for its bulges plus a read 1.6 times finer for kilometre
+    cauliflower lobes; the cumulus erosion at a fifth of its strength there. A soft rim let the erosion bore through
+    the whole tower into foam.
+  - Anvil: a fan from a sharp upwind edge, widening 0.35 core radii per radius downwind to about 7.5 radii, a flat
+    top under the tropopause and a flat ceiling below, at a tenth of the tower's density and thinning downwind
+    (`r_thin`). Mammatus sag into its underside (a 1.6 km jittered grid, up to 500 m, where it overhangs and the
+    drier the air); the separate mammatus march is gone.
+  - The crowd: raising the type under the anvil made every single cell there a congestus as tall as the tower. Now
+    the storm's column height is a separate bound (`storm_column_type`, also in `get_cloud_top_at`) and the cells
+    keep their own type's height; cells fade out within 1.8 to 3 core radii of the tower.
+  - The storm body has its own density (0.1 per metre in the tower), not the surrounding cover's and type's.
+  - Cirrus: fibres warped by a 20 km noise (they hook and bend instead of all converging) and a fibril read 3.3 times
+    finer inside each streak.
+  - Raster and PT match (640). 1.1 s a frame on lavapipe with the storm in view at 960x540 (the stills used to read
+    as foam because 3 frames are not enough for the reprojection: review stills use 24).
+
+## Light grid contrast (20 Nov 2026; scene: grid on dulled sunlit rims at dawn)
+
+- Reproduced in the weather bench (`--view=shafts --sun-up=8 --cover=0.45 --type=0.9`, A/B with
+  `--sky-params=cloud_light_grid_enabled:0`): with the grid the brightest 1% of the sky fell from 136 to 92.
+- Cause 1, a leak at the read: the sky reads the grid's depth 512 m along the sun path, trilinearly. Between levels
+  that mixed paths a level apart, which against a low sun start hundreds of metres apart along it, and texels whose
+  centres lie inside a cloud, so clear paths took on their neighbours' clouds. Fixes: the read lands on a level's
+  centre (the march runs on to where the path crosses one), the stored depth is the least over each texel's
+  3x3x3 neighbours, and the bake chains levels by the nearest voxel instead of bilinearly (the bilinear chain blurred
+  again at every level). Rims back to 106.
+- The rest is not a fault of the grid: the bake agrees with a 32 m CPU march to 24 km (mean depth 50.27 against
+  50.33 over 1,176 sampled voxels, and of the 489 whose fine march is clear only 3 read over 3 in the grid). Without
+  the grid the shader's doubling steps (several km long far out, read at a coarse mip that the coverage remap turns
+  to zero) miss the clouds 8 to 24 km toward a low sun, so clouds stood sunlit that the clouds between them and the
+  sun shade. The bounce term adds about 3 levels to the darkest tenth (interreflection, as designed).
+- Raster and PT match (640).
+
+## Storm review 3 (20 Nov 2026; docs: mottled cylinder, decal mammatus, no shelf or shaft at 30 km)
+
+- Tower (`storm_tower` / `wc_storm_tower`): a core column (0.5 to 0.7 core radii) and eight rising bubbles, each
+  a thermal 0.7 to 1.4 radii across, at its own height (14% to 88%) and bearing round the axis, larger higher up,
+  plus a crown over the axis; outlines hard over their last fifth, jittered a little by the shape noise. A Cb reads
+  as a few huge rounded towers, each lit on its sun side and grey in shadow, which the bubbles' own shape gives the
+  light march; the finer lobe noise (an even mottle over a cylinder) is gone, and with it one texture read.
+- Mammatus: packed (cells 0.6 to 0.8 of the 1.6 km grid, neighbours overlap), up to 700 m deep, not at the anvil's
+  thin side edges; the sheet over them is denser (0.45 of the tower's) so the underside is one surface, and the
+  pouches denser still (0.7), so each shades its lower half (Schultz et al. 2006: they carry the anvil's falling,
+  evaporating ice).
+- Rain shaft: the heavy core 1.5 radii across under the tower (it filled the whole base as a grey wall), curtains
+  thresholded more sharply, lit at two thirds of the open sky's light under the shield (rain is lighter than the
+  base above it).
+- Shelf: its top a smooth slope rippled by the noise at large scale, its face lightly eroded (laminar), not a
+  frilled grainy rim.
+- Raster and PT match (640). Review stills: storm 15 km (`--storm=0,-24000,...`) and 20 km (`0,-30000`), 24 frames.
+
+## Storm review 4 (20 Nov 2026; docs: figurine tower, UFO shelf, repeating mammatus, faint shaft)
+
+- Proportions: the tower 1.5 core radii across at its base (about 7.5 km for R 2.5 km), widening to 2.4 by 85% of
+  its height into an anvil that starts 1.6 radii wide and widens 0.4 per radius downwind; twelve bubbles (0.6 to 1.9
+  radii across) set 0.45 to 1.0 radii off the axis, and the cumulus erosion back at 45% for a cauliflower skin.
+  Cells fade 2.6 to 3.8 radii out.
+- The "brim" round the base was not the shelf: the storm's raised cover made a flat-topped deck there. The deck now
+  gives way round the tower as the single cells do.
+- Shelf: only along the leading front (cos 0.65 to 0.92 of the storm's motion, about 40 degrees each side), just
+  outside the tower (1.5 radii plus 0.04 per m/s of outflow), a wedge whose top is lowest at the leading edge and
+  rises about 1.5 km back toward the storm.
+- Mammatus: a fifth of the grid cells hold none, sizes 0.45 to 0.85 of the cell and depths 0.25 to 1 vary, in
+  patches about 6 km across.
+- Rain shaft: lit at two fifths of the open sky's light under the shield, so it stands as a dark curtain.
+- Raster and PT match (640).
+
+## Storm review 5 and snow shafts (20 Nov 2026)
+
+- Shelf: tapers in height toward both ends of its arc (the leading front, about 30 degrees each side) and rises
+  from a low leading edge back to the tower's base; its face in tiers (bands a quarter of its height, lighter and
+  denser) over a smooth underside, lightly eroded (laminar). The flat slab across the whole base is gone.
+- Mammatus: bell-shaped pouches ((1 - r^2)^1.5) that curve out of the sheet, at the sheet's density, instead of
+  hemispheres with a hard rim at a higher density (read as dark craters from the side).
+- Snow shafts: each storm's snow share is the weather's own rain/snow split (`get_rain_share_at` under it,
+  `State.storm_snow`, `cloud_storm_snow`). Snow's extinction follows SnowFall3D.snowfall_extinction (about 2 km of
+  visibility at 1 mm/h of water, 200 m at 3 mm/h; fitted 0.00196 r^2.1, capped at 5 mm/h); flakes fall at about
+  1 m/s, so the shaft trails seven times further downwind than rain; its veils are softer. Nimbostratus while it
+  snows was already the case (the regime reads the total precipitation). Bench `--temp=C`.
+- Raster and PT match (640).
+
+## Storm review 6 and winter convection (20 Nov 2026; docs: dome shelf, slab snow shaft, smudged winter tower)
+
+- Shelf: a long, low arc wider than the tower (centred 1.9 radii out plus 0.04 per m/s of outflow, along the
+  leading front over a wider angle, smoothstep 0.15 to 0.6 of the alignment), its top low at the leading edge and
+  tapered toward the ends of the arc, sharp underside, tiered lighter face. The anvil's downwind overhang keeps a
+  thin sheet (density 0.25) so it reads as one surface.
+- Snow shafts: flakes fall about 1 m/s against 6 to 9 m/s for rain, so the shaft slants 3.5 times further downwind;
+  a soft core (exp(-r) in place of exp(-r^2)), wider curtain thresholds and a 500 m fade below the base, so it is a
+  veil trailing downwind and not a slab with a hard edge.
+- Winter convection is shallow: snow thunderstorms and lake-effect cells top out at 3 to 6 km against 10 to 15 km
+  in summer (Market et al. 2002, thundersnow climatology; Niziol et al. 1995, lake-effect snow). The storm's height
+  scales by a cold factor from 0.45 at -10 C to 1 at 20 C (the air temperature at the ground from the weather), and
+  the anvil's downwind length scales with it, so a winter storm is a low, lit tower with a short anvil.
+- Grain (the half-resolution reconstruction): each pixel is drawn every 16th frame, and its exponential mean over
+  4 samples stopped reducing noise there, so thin hard-edged cloud (the shelf, about 500 m thick seen at a few
+  degrees through 600 m march steps) kept a grain however long a still ran (256 frames as grainy as 96). Two fixes in
+  the engine: the sky shader reads REPROJECTION_FRAME (the frame number whose low four bits pick the pixel each 4x4
+  block draws; the Bayer order now follows it), so each pixel's march starts form a golden-ratio (R1) sequence over
+  its revisits instead of unrelated noise; and the mean runs over 12 revisits, the min/max history clamp still
+  following moving cloud. Tripling the march steps was tried and only thinned the holes, at three times the cost.
+  Review stills are 192 frames (about 1.1 s at 174 Hz).
+- Raster and PT match (640).
+
+## Next: lake-effect snow bands (plan)
+
+- When cold air crosses open water: the lake at least 13 K warmer than the air at 850 hPa (Niziol et al. 1995,
+  Wea. Forecasting 10), a fetch of about 80 to 100 km or more, little turning of the wind with height.
+- Form from Laird, Kristovich and Walsh 2003 (Mon. Wea. Rev. 131), by U^2/L (wind squared over fetch): mesoscale
+  vortices below 0.02, a shore-parallel band 0.02 to 0.09, wind-parallel bands (horizontal rolls) above 0.09.
+  Roll spacing about 2.5 to 3 times the boundary layer's depth (Kristovich 1993), cloud tops 1.5 to 4 km.
+- Clouds read where each point lies downwind of water, so the sky needs a fetch field, not one value: a coarse
+  grid (64 x 64 over about 100 km round the camera, each cell the distance of open water upwind from
+  WorldWater.height_at along the wind, rebuilt when the wind turns), uploaded with the cover. Cover, type and the
+  roll stretch rise with it downwind of the shore; the weather's snowfall takes the same field (Valence's map).

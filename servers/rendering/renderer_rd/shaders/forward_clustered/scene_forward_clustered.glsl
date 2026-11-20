@@ -1398,7 +1398,13 @@ float directional_volume_shadow(uint p_index, vec3 p_vertex) {
 	}
 	// Past the box, all of the medium: its last slice.
 	float optical_depth = textureLod(sampler3D(volume_shadow_texture, SAMPLER_LINEAR_CLAMP), vec3(uvw.xy, min(uvw.z, 1.0)), 0.0).r;
-	return exp(-optical_depth);
+	// A forward-scattering medium passes on more than its direct beam: the light it scatters within the
+	// forward peak goes on toward the ground as if unscattered. The delta-Eddington scaling (Joseph, Wiscombe
+	// and Weinman 1976): the peak's share f = g^2 of each scatter, w f of the extinction, is taken out of the
+	// optical depth. A dark or isotropic medium keeps Beer's law.
+	float w = uintBitsToFloat(directional_lights.data[p_index].pad.x);
+	float g = uintBitsToFloat(directional_lights.data[p_index].pad.y);
+	return exp(-optical_depth * (1.0 - w * g * g));
 }
 
 void fragment_shader(in SceneData scene_data) {

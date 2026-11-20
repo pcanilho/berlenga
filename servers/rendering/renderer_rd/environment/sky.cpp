@@ -809,6 +809,7 @@ void SkyRD::init() {
 		actions.renames["LIGHT3_SIZE"] = "directional_lights.data[3].color_size.w";
 		actions.renames["AT_CUBEMAP_PASS"] = "AT_CUBEMAP_PASS";
 		actions.renames["AT_HALF_RES_PASS"] = "AT_HALF_RES_PASS";
+		actions.renames["REPROJECTION_FRAME"] = "sky_scene_data.frame_number";
 		actions.renames["AT_QUARTER_RES_PASS"] = "AT_QUARTER_RES_PASS";
 		actions.custom_samplers["RADIANCE"] = "SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP";
 		actions.usage_defines["HALF_RES_COLOR"] = "\n#define USES_HALF_RES_COLOR\n";
@@ -1440,7 +1441,9 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 	RID out_tex = p_render_buffers->create_texture(RB_SCOPE_SKY, RB_REPROJECT_OUT, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT, RD::TEXTURE_SAMPLES_1, size);
 	RID history_tex = p_render_buffers->create_texture(RB_SCOPE_SKY, RB_REPROJECT_HISTORY, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, size);
 
-	const uint32_t step = bayer[state->frame & 15];
+	// The frame number the sky shader reads as REPROJECTION_FRAME, so a shader knows which of its pixels it draws
+	// (the low four bits) and how many times it has drawn it (the rest): its samples per pixel can be stratified.
+	const uint32_t step = bayer[sky_scene_state.ubo.frame_number & 15];
 	state->frame++;
 	if (!state->valid) {
 		state->since_reset = 0;

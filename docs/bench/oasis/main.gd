@@ -4,7 +4,9 @@ extends Node3D
 #   --view=pool     the whole pool from 8 m up on the shore (default)
 #   --view=vent     2 m above the water, steeply down onto the vents through the clear water
 #   --view=top      straight down from 40 m (the outline)
+#   --view=lag      the interdune lag's granule ripples close up (--lag-at=x,z --lag-yaw --lag-h --lag-look --sun-alt --sun-side --fov)
 #   --raster        raster instead of path tracing
+#   --taa           temporal AA (raster stills for docs or PT comparison)
 #   --spp=N         path traced samples per pixel (64)
 #   --bounces=N     path traced bounces (the Environment's, 3 by default)
 #   --frames=N      frames before saving (180; path tracing waits for its surfaces too)
@@ -90,6 +92,8 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--debug="):
 			env.pathtracing_debug_mode = int(a.substr(8))
+	if "--taa" in OS.get_cmdline_user_args():
+		get_viewport().use_taa = true # --taa: temporal AA for raster stills (resolves shadow and dither noise)
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -157,9 +161,75 @@ func _ready() -> void:
 			cam.fov = 50
 			cam.look_at_from_position(eye, origin + best_dir * (r * 0.8) + Vector3(0.0, 1.5, 0.0))
 			print("hero: ridge %.1f m above the pool toward %s" % [best_h, str(best_dir)])
+		"lag":
+			# Down onto the interdune lag (granule ripples): eye --lag-h (1.5) m over --lag-at=x,z (-120,44), looking
+			# --lag-yaw degrees (0 = -Z) at the ground --lag-look (4) m ahead; the sun --sun-alt (12) degrees high from
+			# --sun-side (90) degrees round from the view, so it rakes across the crests.
+			var la := _arg("--lag-at=", "-120,44").split(",")
+			var lx := float(la[0])
+			var lz := float(la[1])
+			# --lag-eye=x,y,z --lag-target=x,y,z: an exact framing (y above the ground there) instead of the search.
+			var yaw := deg_to_rad(float(_arg("--lag-yaw=", "0")))
+			var fwd := Vector3(-sin(yaw), 0.0, -cos(yaw))
+			var ground := func(x: float, z: float) -> float: return float(gen.get_height(Vector3(x, 0.0, z))) if gen != null else origin.y
+			var sr := float(_arg("--lag-search=", "0"))
+			if sr > 0.0:
+				# The lag lies on flat, low interdune floors (thin sand, ground within ~10 degrees of level): the flattest
+				# low spot within sr m of --lag-at, flat over the 6 m ahead too.
+				var best := INF
+				var bx := lx
+				var bz := lz
+				var s0 := 3.0
+				var gx := -sr
+				while gx <= sr:
+					var gz := -sr
+					while gz <= sr:
+						var x := lx + gx
+						var z := lz + gz
+						var h0: float = ground.call(x, z)
+						var worst := 0.0
+						for k in 4:
+							var t := float(k + 1) * 1.6
+							var px := x + fwd.x * t
+							var pz := z + fwd.z * t
+							var hx: float = float(ground.call(px + s0, pz)) - float(ground.call(px - s0, pz))
+							var hz: float = float(ground.call(px, pz + s0)) - float(ground.call(px, pz - s0))
+							worst = maxf(worst, Vector2(hx, hz).length() / (2.0 * s0))
+						var score: float = worst * 10.0 + (h0 - float(ground.call(lx, lz))) * 0.02
+						if score < best:
+							best = score
+							bx = x
+							bz = z
+						gz += 4.0
+					gx += 4.0
+				print("lag search: (%.0f, %.0f) slope score %.3f" % [bx, bz, best])
+				lx = bx
+				lz = bz
+			var eye := Vector3(lx, ground.call(lx, lz) + float(_arg("--lag-h=", "1.5")), lz)
+			var tgt := eye + fwd * float(_arg("--lag-look=", "4"))
+			tgt.y = ground.call(tgt.x, tgt.z)
+			if _arg("--lag-eye=", "") != "":
+				var ea := _arg("--lag-eye=", "").split(",")
+				var ta := _arg("--lag-target=", "0,0,0").split(",")
+				eye = Vector3(float(ea[0]), float(ground.call(float(ea[0]), float(ea[2]))) + float(ea[1]), float(ea[2]))
+				tgt = Vector3(float(ta[0]), float(ground.call(float(ta[0]), float(ta[2]))) + float(ta[1]), float(ta[2]))
+				yaw = atan2(-(tgt - eye).x, -(tgt - eye).z)
+			cam.fov = float(_arg("--fov=", "50"))
+			cam.look_at_from_position(eye, tgt)
+			for n in get_children():
+				if n is DirectionalLight3D:
+					n.rotation_degrees = Vector3(-float(_arg("--sun-alt=", "12")), rad_to_deg(yaw) + float(_arg("--sun-side=", "90")), 0.0)
+			print("lag view: eye %s looking %s" % [str(eye), str(tgt)])
 		_:
 			cam.look_at_from_position(origin + Vector3(-r * 1.05, 8.0, r * 1.25), origin + Vector3(0.0, -1.0, -r * 0.1))
 	cam.current = true
+
+
+func _arg(prefix: String, fallback: String) -> String:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with(prefix):
+			return a.substr(prefix.length())
+	return fallback
 
 
 # A hollow in dune sand carved to the pool's outline (as terrain would: the shore just inside it), 2.4 m deep

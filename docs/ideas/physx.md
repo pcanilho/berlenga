@@ -1766,6 +1766,18 @@ smoke's grey part so plumes shade the ground in patches (weather
 owners); the haze is one value over the map's centre, not a field; the
 lofted plume is treated as mixed through 2 km.
 
+The sky's sun (20 Nov). The sun light already took the smoke by colour, but the sky's disc and the light its air
+scatters only saw the smoke as part of the grey aerosol haze, so under a thick plume the disc stayed white and the
+sky grey. Now the sky gets the same per-colour transmittance as the light (`WeatherSkyMaterial.set_sun_smoke`, set by
+`SkyClock`) and the smoke's share of the aerosol (`set_aerosol`'s smoke_share). The sunlight reaching each height
+takes the smoke column above it by colour, which reddens the forward-scattering aureole (g 0.6) and browns the sky.
+Multiple scattering uses the transport approximation's forward share, exp(-(1 - w (1 + g) / 2) tau), about 0.28 tau
+with w 0.9 and g 0.6, so the sky under thick smoke stays a dim orange-brown instead of going black. The disc is
+drawn at the sun's irradiance, about 1/15000 of its radiance, so the smoke's transmittance on it is scaled by
+1 / solid angle and clipped at the clean disc. Like the real sun, it stays a white disc in an orange glow until a
+slant optical depth of about 8, then turns a dim yellow-orange and red (Angstrom exponent 1.8, Eck et al. 1999;
+Reid et al. 2005).
+
 ### Post-fire mudflows (picked 19 Nov morning, second of three)
 
 Split agreed by the three owners. Valence (WeatherRunoff3D) fires the
@@ -2198,6 +2210,123 @@ side-lit +1.4% (0.9) and +3.2% (0.99). Snow's powder: mean grey 155 ->
 term (similarity-theory albedo and decay, light going deep and coming
 back out of the lit face) was tried: at a strength that would close the
 rest it puts the test puffs 8-18% over PT, so it is not in.
+
+### Raster gas: the gas colour compounds over the scattering orders (20 Nov)
+
+Research: Wrenninge et al. 2013 (Oz) octaves with attenuation a, b and
+eccentricity c; Hillaire 2016 (Frostbite clouds) the same with an
+energy-conserving step; Hillaire 2020 (scalable sky) the orders past the
+second as a geometric series 1 / (1 - f_ms); Kallweit et al. 2017
+(Disney) a network trained on path-traced clouds, not usable here
+without its training data. A per-point f_ms (Hillaire 2020) from the gas
+around each point (up, down, toward and away from the sun, back to the
+camera) was built and tried first: it darkens thin gas against dense,
+the wrong way for the powder, so it is not in.
+
+What was really wrong: the path tracer's albedo at each scatter is the
+gas colour times its scattering albedo (raygen.glsl), so the colour
+compounds: the n-th order carries its n-th power. Raster weighed the
+octaves by the scattering albedo alone and tinted once at the end. The
+test puffs are grey-blue (0.92, 0.94, 0.97, linear 0.83 to 0.93), so
+under path tracing their deep light is much darker and bluer than
+raster's, and raster's octave gains had been fitted down to it; the
+powder is near white (0.98, 0.99, 1.0), keeps nearly all of its deep
+light under path tracing, and came out grey in raster. Black gas in
+both renderers on snow's bench gives the same silhouette, so the
+cloud's opacity already matched and its "see-through" look under path
+tracing is only its brightness against the snow behind.
+
+Built: each octave takes the per-channel albedo (colour times scattering
+albedo) to its order's power, the orders past the third a geometric
+series in 0.68 times it, single scattering the albedo once; the final
+colour multiply is gone. Refit on the 32-spp puffs: SUN_MS_GAIN 0.7,
+SKY_MS_SHARE 0.21 (was 0.19), series 0.68 (was 0.6). Puffs: side-lit
++1.8% (0.9) and +3.1% (0.99), front-lit +2.2%, powder-density -1.2%,
+sky-only -3.8% (was -7%); B/R 1.10 to 1.17 against PT's 1.13 to 1.26
+(was 1.07 to 1.11). A dense powder block on bright ground: B/R 1.18
+against PT 1.28 (was 1.08). Snow's powder (one-run pair, same gas): mean grey 166 -> 174 against PT
+189, B/R 1.051 -> 1.075 against 1.087; the cloud now reads pale
+blue-white over the snow. PT's plain snow is 4% brighter than raster's,
+so about half of the rest is the scene, not the gas.
+
+### Raster powder: no dark seam where the gas meets the snow (20 Nov)
+
+Docs saw a faint dark seam along the powder's lower edge. Two causes:
+- The ground light under the gas (the snow lit by the sun, in the gas's
+  shadow) was taken at the Flow box's floor. On a slope that floor lies
+  under the snow, where the line to the sun crosses the whole cloud, so
+  the gas darkened toward its base (170 -> 147 over its last rows). It
+  is now also taken at the bottom of the gas column under the point,
+  found by bisection in the sky's shadow map, and the better lit of the
+  two is used (the ground lies at or below both; for gas floating over
+  flat ground the box floor is right, for gas lying on a slope the gas
+  bottom). Test puffs unchanged to the pixel.
+- A 1-2 pixel line where Flow's own march drew gas but the scatter march,
+  ending at the snow a step earlier, found none, so the sliver showed
+  Flow's unlit colour. The upsample now fills such pixels with their
+  neighbours' light (a hole fill, 5x5 texels).
+
+Follow-up (docs: a dotted line still showed at the contact). A render
+with the gas hidden keeps the upper line along the release outline, so
+that one is the snow's crown wall. The lower one is the gas's own: drawn
+alone, its light falls from about 172 to 70-120 over the last few pixels
+of thin gas against the slope (Flow's coverage is partial there, so the
+snow behind shows through a darker veil). Under path tracing that base
+dims only slightly (180 -> 173): light diffusing down through the cloud
+to its foot, which the octaves' falloff under-gives. Not fixed yet. Two
+robustness changes found on the way, neither of which moves the line:
+the march's step budget counts only samples in gas (a ray grazing the
+ground could spend it on empty blocks), and the bilateral upsample skips
+texels whose march found no gas instead of blending them in as black.
+
+### Raster powder: the cloud's foot, sky aperture and forward-scattered shadow (20 Nov)
+
+Docs and snow asked to chase the darker foot. Split into sun, sky and
+ground light on snow's bench, the sun held to the foot while the sky
+(79 -> 32) and ground (134 -> 30) parts collapsed: raster judged both by
+the gas straight above and straight below the point only. Unreal's cloud
+ambient occlusion has an aperture (straight up to a whole hemisphere)
+for the same reason. Built: the share of a point's sky and ground that
+lies toward the camera (SKY_OPENING, 0.5) is open as far as the gas the
+view ray crossed lets through. Test puffs: within 3.6%; sky-only -3.8%
+-> -1.3%. The broad darkening of the foot is gone.
+
+The last pixel-thin line was the snow under the foot, in the gas's own
+cast shadow, seen through the thin edge (gone with the gas's shadows
+off). Raster's gas shadow on the scene was Beer's law on the optical
+depth: the direct beam only, where a bright, forward-scattering gas
+passes much of its scattered light on toward the ground as well. Built:
+the delta-Eddington scaling (Joseph, Wiscombe and Weinman 1976), the
+forward peak's share g^2 of each scatter taken out of the extinction,
+exp(-tau (1 - w g^2)), with w the gas's scattering albedo times its
+colour's luminance and g its anisotropy, passed to the scene shader in
+the directional light's spare words. Dark or isotropic gas keeps Beer.
+A near-white powder block's ground shadow against PT: 118 (Beer) -> 127,
+PT 125; the two-stream slab total (Meador and Weaver 1980) was tried
+first and gave 134, too bright for a finite cloud. The grey-blue test
+gas already matched PT and barely moves.
+On snow's bench, the darkest point along the cloud's lower edge
+(averaged over the edge): 161 -> 167 against a body of 175, a dip of 8,
+as under PT (180 against 188).
+
+### Raster powder: the slab edge, the lower rim with TAA, and the body gap (20 Nov)
+
+Docs' notes on v18. The ruler-straight left edge and flat top are the
+release slab's flank and crown walls in front of the gas: they show at
+the same place in the gas-hidden render and under PT. Not clipping at the
+grid box. Fixed on the way: a ground sample off the sun's map (fitted to
+the gas, not the box) counted as lit; now skipped.
+
+Lower rim, with TAA on (rocks' tip; snow's bench --taa): the dotted
+look is per-pixel shadow and dither noise and smooths out. The darkest
+point along the lower edge sits 8 below the body (174 -> 166), PT 6
+(190.6 -> 184.5).
+
+Body gap (raster 175 vs PT 188): about 4% is the scene (the plain snow
+next to the cloud: raster 187, PT 194). About 3% is the gas model (a
+white, front-lit block of powder: raster 177, PT 182). Raising the
+octave falloff q from 0.68 to 0.70 closes the gas part on the bench but
+puts the dense test puff 4.9% over PT; kept at 0.68 pending a pick.
 
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 

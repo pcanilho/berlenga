@@ -33,6 +33,7 @@
 
 #include "core/math/vector2.h"
 #include "core/math/vector3.h"
+#include "core/math/vector4.h"
 #include "core/string/ustring.h"
 #include "core/templates/vector.h"
 #include "scene/resources/texture.h"
@@ -44,6 +45,7 @@
 namespace WeatherClouds {
 
 constexpr int MAX_STORMS = 8;
+constexpr float SHELF_DROP = 450.0f; // m, a shelf cloud's greatest drop below its storm's base
 constexpr int MAX_CLOUD_LIGHTS = 8;
 constexpr int MAX_CLOUD_EFFECTORS = 8;
 constexpr int SHAPE_SIZE = 128; // texels across the base shape noise (tiles)
@@ -76,6 +78,14 @@ struct State {
 	// Each storm's own cloud base (m above y = 0; <= 0: base_height), as a fire cloud's at its plume's
 	// condensation level. Columns round a storm blend to it as they join its cloud shield (base_at()).
 	float storm_base[MAX_STORMS] = {};
+	// Round 8: each storm's peak rain (mm/h, times its growth) and downburst outflow (m/s). The outflow's gust
+	// front lifts a shelf cloud ahead of the storm, along storm_dir (the way it moves); the sky draws the rain as
+	// shafts under the base.
+	float storm_rain[MAX_STORMS] = {};
+	float storm_outflow[MAX_STORMS] = {};
+	float storm_snow[MAX_STORMS] = {}; // share of the storm's precipitation falling as snow at the ground (rain_fraction)
+	Vector2 storm_dir = Vector2(1, 0); // unit, the way the storms move (the steering wind)
+	Vector2 rain_slant; // horizontal m per m of fall: the low wind over the drops' fall speed (about 7 m/s)
 	// The high cloud layer (cirrus, cirrostratus; docs/ideas/clouds.md): a thin sheet at high_height, its cover
 	// eased by the weather map (get_high_cloud_cover_at), its optical depth at full cover high_tau (ice clouds
 	// are 0.03 to 3), drifting with the faster wind aloft and streaked along high_dir. Storm cells spread an
@@ -86,6 +96,9 @@ struct State {
 	float high_scale = 24000.0f; // m, its patches
 	Vector2 high_drift; // m
 	Vector2 high_dir = Vector2(1, 0); // unit, the wind aloft
+	// Cirrocumulus share (round 7): how unstable the shear at the high layer leaves it, 0 (smooth cirrus) to 1
+	// (rippled cirrocumulus in patches); from the gradient Richardson number (WeatherMap3D).
+	float high_cc = 0.0f;
 	// The mid layer (altocumulus, altostratus; docs/ideas/clouds.md): a slab mid_thickness deep centred on
 	// mid_height, its cover eased by the weather map (get_mid_cloud_cover_at), its vertical optical depth at full
 	// cover mid_tau, drifting with the wind aloft at its height; the sky breaks it into cloudlets in rows across
@@ -97,6 +110,11 @@ struct State {
 	float mid_scale = 12000.0f; // m, its patches
 	Vector2 mid_drift; // m
 	Vector2 mid_dir = Vector2(1, 0); // unit, the wind at its height
+	// Stratocumulus (round 6): closed cells about sc_cell metres across, stretched sc_roll times along sc_dir (the
+	// boundary layer's wind) into rolls when it blows.
+	Vector2 sc_dir = Vector2(1, 0);
+	float sc_roll = 1.0f;
+	float sc_cell = 1800.0f;
 	float cell_size = 1200.0f; // m, the cumulus cells (cells_at), each holding at most one cloud
 	// Density effectors (WeatherMap3D.add_cloud_effector): spheres (world x, y, z, radius m) whose strength adds
 	// cloud (> 0: a plume feeding a cumulus) or clears it (< 0: a blast's hole), falling off linearly to the edge.
@@ -106,6 +124,22 @@ struct State {
 	// energy. Only the sky reads them.
 	int light_count = 0;
 	float lights[MAX_CLOUD_LIGHTS][7] = {}; // x, y, z, reach, r, g, b
+	// Wave clouds (lenticulars; WeatherMountainWaves, docs/ideas/clouds.md): the mountain waves' vertical
+	// displacement (m) at four world heights over a square fixed to the ground, and the slab (m) where the lift
+	// can reach saturation (empty when wave_y1 <= wave_y0). The air's temperature (C) and relative humidity
+	// at air_y0 (m) give the humidity aloft, with the mid and high layers' moist air.
+	Vector<float> wave_eta; // wave_n * wave_n * 4
+	int wave_n = 0;
+	Vector2 wave_corner;
+	float wave_size = 0.0f;
+	float wave_levels[4] = { 2000.0f, 3500.0f, 5000.0f, 7000.0f };
+	float wave_y0 = 0.0f; // the slab round the mid layer's moist air
+	float wave_y1 = 0.0f;
+	float wave_y2 = 0.0f; // the slab round the high layer's (lenses of ice: cirrocumulus lenticularis)
+	float wave_y3 = 0.0f;
+	float air_t0 = 15.0f;
+	float air_rh0 = 0.6f;
+	float air_y0 = 0.0f;
 	float top_max = 0.0f; // highest top any column reaches now (m), set by update_top_max()
 	float base_min = 1500.0f; // lowest base any column has now (m), set by update_top_max()
 
@@ -122,8 +156,23 @@ Vector2 shear_offset(const State &p_state, float p_y, float p_base);
 // The weather map's cover noise: four octaves of hashed value noise over (p - drift) / scale, 0..1. With
 // p_evolve >= 0 (time in lifetimes) each octave moves on through time (clouds form and clear).
 float cover_noise(Vector2 p_xz, Vector2 p_drift, float p_scale, float p_evolve = -1.0f);
+// cover_noise's per-call constants (the drift, the scale and each octave's two time slices and blend), taken once for
+// a pass over many points; cover_noise(frame, p) then gives exactly cover_noise(p, drift, scale, evolve).
+struct CoverNoiseFrame {
+	Vector2 drift;
+	float scale = 1.0f;
+	bool evolve = false;
+	Vector2 offset_a[4];
+	Vector2 offset_b[4];
+	float w[4] = {};
+	float len[4] = {};
+};
+CoverNoiseFrame cover_noise_frame(Vector2 p_drift, float p_scale, float p_evolve = -1.0f);
+float cover_noise(const CoverNoiseFrame &p_frame, Vector2 p_xz);
 // Cover and type at world x, z: the weather map's drifting noise plus storms.
 Vector2 cover_type_at(const State &p_state, Vector2 p_xz);
+// How high a storm's column reaches over p_xz, as a cloud type: under its anvil, the storm's own height.
+float storm_column_type(const State &p_state, Vector2 p_xz);
 // The cloud base (m) over world x, z: base_height, blended to each storm's own base over its cloud shield.
 float base_at(const State &p_state, Vector2 p_xz);
 // The high layer's cover (0..1) and vertical optical depth over world x, z (patches and anvil shields; the
@@ -140,6 +189,19 @@ Vector3 shape_coord(const State &p_state, const Vector3 &p_pos);
 float shape_at(const State &p_state, const Vector3 &p_pos);
 // The density effectors at a point: the added share (> 0) or the cleared share (< 0), -1..1.
 float effector_at(const State &p_state, const Vector3 &p_pos);
+// Stratocumulus closed cells at x, z: 0 on the cells' borders to 1 in their middles (Worley F2 - F1 on a jittered
+// grid, in the wind's frame); and how much of the type is stratocumulus (0..1).
+float sc_cells_at(const State &p_state, Vector2 p_xz);
+float sc_share(float p_type);
+float shelf_drop(const State &p_state, int p_storm, Vector2 p_xz);
+float layered_share(float p_type);
+// Wave clouds: the dew point depression (K) of the air at a point (the model's profile, moistened by the mid and
+// high layers' cover), the lift (m) that saturates it, and the wave cloud's extinction (1/m) there.
+float wave_dew_depression_at(const State &p_state, const Vector3 &p_pos);
+float wave_extinction_at(const State &p_state, const Vector3 &p_pos);
+// The two slabs (m: x..y round the mid layer's height, z..w above) where wave cloud can form now, from the field's
+// largest lift at each level (empty: y <= x).
+Vector4 wave_slab(const State &p_state, const float *p_eta_max);
 float extinction_at(const State &p_state, const Vector3 &p_pos);
 
 // The tiling shape noises (Perlin-Worley base; detail: Curly-Alligator wisps and Worley billows, low and

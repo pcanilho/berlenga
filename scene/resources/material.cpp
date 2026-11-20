@@ -999,7 +999,29 @@ float snow_press(vec2 p_pack, float p_stiffness) {
 	float load = p_pack.y * 9.81 * p_pack.x; // Pa
 	return smoothstep(0.0, 1.0, load / (300.0 * max(p_stiffness * p_stiffness, 0.05))) * smoothstep(0.02, 0.06, p_pack.x);
 }
+
+// Surface hoar on the pack's top at a world position (mm; SnowCover3D hoar_enabled): the catch map's alpha is
+// 1 + mm / 10 where the cover answers. None on what lies well under or above that top (a roof's underside, a
+// crown).
+float snow_hoar_at(vec3 p_world_pos) {
+	if (snow_map_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 nuv = (p_world_pos.xz - snow_map_rect.xy) / snow_map_rect.zw;
+	if (any(lessThan(nuv, vec2(0.0))) || any(greaterThan(nuv, vec2(1.0)))) {
+		return 0.0;
+	}
+	vec2 half_texel = 0.5 / vec2(textureSize(snow_map, 0));
+	vec4 c = textureLod(snow_catch_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0);
+	if (c.a <= 1.0) {
+		return 0.0;
+	}
+	float dy = p_world_pos.y - c.r;
+	return (c.a - 1.0) * 10.0 * smoothstep(-0.8, -0.4, dy) * (1.0 - smoothstep(1.0, 1.5, dy));
+}
 )";
+	} else {
+		code += "float snow_hoar_at(vec3 p_world_pos) {\n\treturn 0.0;\n}\n";
 	}
 	code += R"(
 // Snow weight on a surface from the covered share. Snow slides off past p_max_slope (its angle of repose) and
@@ -1030,9 +1052,15 @@ void snow_cover_apply(float p_snow, float p_albedo, float p_wet, inout vec3 r_al
 // Deliot and Belcour 2023, reduced to one facet per cell): a cell holding n grains has a facet with chance
 // min(share n, 1) covering share / chance of it, fading as more facets share the cell. Returns the facet's
 // normal and its weight (0: none).
-vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
-	const float grain = 0.002;
-	const float share = 0.25;
+vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint, float p_hoar) {
+	// Surface hoar (p_hoar, mm): its crystals are flat ice plates and feathers a few mm to cm across, standing
+	// on the snow (Colbeck 1988; Lang et al. 1984), each one a mirror. Over hoar, the cell is the crystal's size,
+	// most crystals show a smooth face, and a share hf of the facets are plates set every way, their normals
+	// spread evenly over the sky up to 60 degrees off the snow's (past that the coat's grazing Fresnel would only
+	// darken the snow under it): far fewer, larger and brighter glints than the grains', from any sun.
+	float hf = smoothstep(0.5, 4.0, p_hoar);
+	float grain = max(0.002, 0.0006 * p_hoar);
+	float share = mix(0.25, 0.35, hf);
 	float level = floor(max(log2(max(p_footprint, grain) / grain), 0.0));
 	if (level > 5.0) {
 		return vec4(p_n, 0.0);
@@ -1053,8 +1081,13 @@ vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
 	if (r0 >= chance) {
 		return vec4(p_n, 0.0);
 	}
-	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-3);
-	float ct = inversesqrt(1.0 + tan2);
+	float ct;
+	if (r0 < chance * hf) {
+		ct = mix(0.5, 1.0, r1);
+	} else {
+		float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-3);
+		ct = inversesqrt(1.0 + tan2);
+	}
 	float st = sqrt(max(1.0 - ct * ct, 0.0));
 	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
 	vec3 b = cross(p_n, t);
@@ -1070,7 +1103,7 @@ vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
 // NORMAL, NORMAL_MAP, NORMAL_MAP_DEPTH, CLEARCOAT and CLEARCOAT_ROUGHNESS; p_footprint is the pixel's size in
 // metres at the surface.
 void snow_glint_apply(vec3 p_world_pos, vec3 p_geo_normal, float p_footprint, float p_snow, float p_wet, mat4 p_view, vec3 p_tangent, vec3 p_binormal, inout vec3 r_normal, inout vec3 r_normal_map, inout float r_normal_map_depth, inout float r_clearcoat, inout float r_clearcoat_roughness) {
-	vec4 g = snow_glint(p_world_pos, p_geo_normal, p_footprint);
+	vec4 g = snow_glint(p_world_pos, p_geo_normal, p_footprint, snow_hoar_at(p_world_pos));
 	float gw = g.w * step(0.5, p_snow) * (1.0 - smoothstep(0.05, 0.3, p_wet));
 	if (gw <= 0.0) {
 		return;
@@ -1097,8 +1130,10 @@ void snow_glint_apply(vec3 p_world_pos, vec3 p_geo_normal, float p_footprint, fl
 // is an ice facet, its normal GGX-tilted (alpha 0.4); a pixel's samples land on different grains, so the path
 // tracer integrates the footprint's own facets (the reference Jakob et al. 2014 and Yan et al. 2014 measure
 // their counting models against), at any distance and on any bounce.
-vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
-	const float grain = 0.002;
+vec3 snow_grain_facet(vec3 p_pos, vec3 p_n, float p_hoar) {
+	// Over surface hoar (p_hoar, mm), crystal-sized cells, a share hf of them plates set every way (as snow_glint).
+	float hf = smoothstep(0.5, 4.0, p_hoar);
+	float grain = max(0.002, 0.0006 * p_hoar);
 	ivec3 q = ivec3(floor(p_pos / grain));
 	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u);
 	h ^= h >> 16u;
@@ -1108,8 +1143,15 @@ vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
 	h ^= h >> 16u;
 	float r1 = float(h & 0xffffu) / 65536.0;
 	float r2 = float(h >> 16u) / 65536.0;
-	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-4);
-	float ct = inversesqrt(1.0 + tan2);
+	uint h2 = h * 0x9e3779b9u;
+	h2 ^= h2 >> 15u;
+	float ct;
+	if (float(h2 & 0xffffu) / 65536.0 < hf) {
+		ct = mix(0.5, 1.0, r1);
+	} else {
+		float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-4);
+		ct = inversesqrt(1.0 + tan2);
+	}
 	float st = sqrt(max(1.0 - ct * ct, 0.0));
 	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
 	vec3 b = cross(p_n, t);
@@ -1129,7 +1171,7 @@ void snow_glint_apply_specular(vec3 p_world_pos, vec3 p_geo_normal, float p_foot
 	if (gw <= 0.0) {
 		return;
 	}
-	r_specular_normal = normalize((p_view * vec4(snow_grain_facet(p_world_pos, p_geo_normal), 0.0)).xyz);
+	r_specular_normal = normalize((p_view * vec4(snow_grain_facet(p_world_pos, p_geo_normal, snow_hoar_at(p_world_pos)), 0.0)).xyz);
 	r_roughness = mix(r_roughness, 0.22, gw);
 }
 )";
@@ -2742,7 +2784,7 @@ void fragment() {)";
 			code += "	float transmission_tex = texture(texture_transmission, base_uv).r;\n";
 		}
 		const char *transmission_uv = features[FEATURE_REFRACTION] ? "refraction_uv" : "SCREEN_UV";
-		code += "	vec3 transmission_absorption = vec3(1.0);\n	vec3 transmission_scatter = vec3(0.0);\n";
+		code += "	vec3 transmission_absorption = vec3(1.0);\n	vec3 transmission_scatter = vec3(0.0);\n	float transmission_lod = 0.0;\n";
 		if (!transmission_thin_walled) {
 			// Into a medium (glTF KHR_materials_volume, KHR_materials_ior): the view ray refracts by the IOR over
 			// the depth behind the surface, and the light it finds is absorbed over that path (Beer-Lambert).
@@ -2779,6 +2821,16 @@ void fragment() {)";
 		transmission_uv = SCREEN_UV;
 		transmission_found = transmission_back;
 	}
+	// Solids (a thickness set): filter the read by its footprint (as texture LOD from UV derivatives, or a ray
+	// cone's spread). Through a strongly curved solid (a thin rod of ice, a drop) the sphere model sends
+	// neighbouring pixels to far apart points, and a sharp read of each speckles and dashes what lies behind; a
+	// real lens averages over that spread. Flat panes map a pixel to about a pixel and stay sharp; open media
+	// (water over a floor, no thickness) are not filtered, so a pool's floor keeps its detail.
+	vec2 transmission_px = vec2(textureSize(screen_texture, 0));
+	vec2 transmission_dx = dFdx(transmission_uv) * transmission_px;
+	vec2 transmission_dy = dFdy(transmission_uv) * transmission_px;
+	float transmission_footprint = max(max(dot(transmission_dx, transmission_dx), dot(transmission_dy, transmission_dy)), 1.0);
+	transmission_lod = transmission_thickness > 0.0 ? clamp(0.5 * log2(transmission_footprint), 0.0, 6.0) : 0.0;
 	if (transmission_attenuation_distance > 0.0) {
 		float transmission_path = transmission_inside >= 0.0 ? transmission_inside : min(distance(transmission_found.xyz, VERTEX), 1.0e4);
 		transmission_absorption = pow(max(transmission_attenuation_color.rgb, vec3(1.0e-4)), vec3(transmission_path / transmission_attenuation_distance));
@@ -2792,7 +2844,7 @@ void fragment() {)";
 	float transmission_amount = clamp(transmission * transmission_tex, 0.0, 1.0) * (1.0 - METALLIC);
 	float transmission_f0 = 0.16 * SPECULAR * SPECULAR;
 	float transmission_fresnel = transmission_f0 + (1.0 - transmission_f0) * pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 5.0);
-	EMISSION += textureLod(screen_texture, %s, ROUGHNESS * 8.0).rgb * ALBEDO * transmission_absorption * (transmission_amount * (1.0 - transmission_fresnel)) * EXPOSURE;
+	EMISSION += textureLod(screen_texture, %s, max(ROUGHNESS * 8.0, transmission_lod)).rgb * ALBEDO * transmission_absorption * (transmission_amount * (1.0 - transmission_fresnel)) * EXPOSURE;
 	ALBEDO *= 1.0 - transmission_amount;
 	ALBEDO += transmission_scatter * transmission_amount;
 	// Force transparency on the material (required to read the screen behind it).
@@ -3097,11 +3149,32 @@ void fragment() {)";
 		// roughness. On a print's curved wall the sheen made a mirror-sharp spot of sun.
 		float gd_up = smoothstep(0.5, 0.85, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y);
 		ROUGHNESS = clamp(ROUGHNESS * mix(1.0, gd_tint.y, gd_up), 0.0, 1.0);
-		vec3 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, -1.0);
+		vec3 gr_sort;
+		// The dune field's colour at this scale (GroundSurface3D dune_tone), on the sand.
+		{
+			vec3 gwp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+			vec4 gsa = ground_sand_at(gwp.xz);
+			if (gsa.y > 0.0) {
+				float gny = (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y;
+				vec3 gdt = mix(ground_dune_tone(gwp.xz, gny, -1.0), ground_dune_tone(gwp.xz, gny, gsa.x), gsa.z);
+				ALBEDO *= mix(vec3(1.0), gdt, gsa.y);
+				// Granule ripples on the interdune lag (GroundSurface3D granule_ripples), across the dune-building wind.
+				vec4 gm5 = ground_sand_meta5();
+				if (gm5.z > 0.5) {
+					vec3 ggt;
+					vec2 ggs = ground_granule_ripples(gwp.xz, gsa.y * gsa.z * gsa.w * ground_dune_lag(gwp.xz, gny, gsa.x), gm5.xy, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), ggt);
+					ALBEDO *= ggt;
+					if (ggs != vec2(0.0)) {
+						NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(ggs.x, 0.0, ggs.y, 0.0)).xyz);
+					}
+				}
+			}
+		}
+		vec3 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, -1.0, gr_sort);
 		if (gr_far.xy != vec2(0.0)) {
 			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gr_far.x, 0.0, gr_far.y, 0.0)).xyz);
 		}
-		ALBEDO *= gr_far.z;
+		ALBEDO *= gr_far.z * gr_sort;
 		ground_wet = ground_wet_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 		// Loose sand shows its grains' colours (sand_glints).
 		if (ground_wet.z > 0.0) {
@@ -3116,11 +3189,32 @@ void fragment() {)";
 	ground_wet.z = 0.0;
 	// The dune field's wind ripples past the patch (GroundSurface3D far_ripples), as on the patch past its window.
 	{
-		vec3 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, -1.0);
+		vec3 gr_sort;
+		// The dune field's colour at this scale (GroundSurface3D dune_tone), on the sand.
+		{
+			vec3 gwp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+			vec4 gsa = ground_sand_at(gwp.xz);
+			if (gsa.y > 0.0) {
+				float gny = (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y;
+				vec3 gdt = mix(ground_dune_tone(gwp.xz, gny, -1.0), ground_dune_tone(gwp.xz, gny, gsa.x), gsa.z);
+				ALBEDO *= mix(vec3(1.0), gdt, gsa.y);
+				// Granule ripples on the interdune lag (GroundSurface3D granule_ripples), across the dune-building wind.
+				vec4 gm5 = ground_sand_meta5();
+				if (gm5.z > 0.5) {
+					vec3 ggt;
+					vec2 ggs = ground_granule_ripples(gwp.xz, gsa.y * gsa.z * gsa.w * ground_dune_lag(gwp.xz, gny, gsa.x), gm5.xy, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), ggt);
+					ALBEDO *= ggt;
+					if (ggs != vec2(0.0)) {
+						NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(ggs.x, 0.0, ggs.y, 0.0)).xyz);
+					}
+				}
+			}
+		}
+		vec3 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, -1.0, gr_sort);
 		if (gr_far.xy != vec2(0.0)) {
 			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gr_far.x, 0.0, gr_far.y, 0.0)).xyz);
 		}
-		ALBEDO *= gr_far.z;
+		ALBEDO *= gr_far.z * gr_sort;
 	}
 )";
 	}
@@ -4735,6 +4829,12 @@ float ground_ripple_vn(vec2 p_p, uint p_s) {
 	ivec2 c = ivec2(i);
 	return mix(mix(ground_ripple_hash(c, p_s), ground_ripple_hash(c + ivec2(1, 0), p_s), u.x), mix(ground_ripple_hash(c + ivec2(0, 1), p_s), ground_ripple_hash(c + ivec2(1, 1), p_s), u.x), u.y);
 }
+// The ripple field's patchy height (the amplitude ground_ripple_vary() returns), alone.
+float ground_ripple_amp(vec2 p) {
+	float amp = mix(0.2, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
+	amp *= smoothstep(0.36, 0.6, 0.7 * ground_ripple_vn(p / 16.0, 15u) + 0.3 * ground_ripple_vn(p / 5.0, 16u));
+	return amp;
+}
 vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 	vec2 p = p_xz;
 	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
@@ -4743,8 +4843,7 @@ vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 	// Ripple fields on a real beach are patchy over tens of metres: smooth sheets where the surface was damp or
 	// crusted when the wind blew (beach moisture patchiness, Davidson-Arnott et al. 2008; Bauer et al. 2009)
 	// between fields of low and full ripples, so no even texture runs to the horizon.
-	float amp = mix(0.2, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
-	amp *= smoothstep(0.36, 0.6, 0.7 * ground_ripple_vn(p / 16.0, 15u) + 0.3 * ground_ripple_vn(p / 5.0, 16u));
+	float amp = ground_ripple_amp(p);
 	float kk = dot(p_k, p_k);
 	if (kk > 0.0) {
 		vec2 kn = p_k / sqrt(kk);
@@ -4774,9 +4873,176 @@ vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 // p_fp: the pixel's width on the ground (m), its narrow axis. Crests closer than about three pixels fade out: drawn
 // any finer they alias into even moire bands (a stripe pattern no real field has, worst through the water's
 // refraction, which resamples the screen), so the far ripples are prefiltered to the pixel as LEAN-style filtering
-// would. Returns the slope (x, z) and an albedo factor (the unresolved crests' tone). Past the patch it carries on over
-// the dune field (far_ripples).
-vec3 ground_ripple_far_slope(vec2 p_xz, float p_fp, float p_normal_y, float p_far_share) {
+// would. Returns the slope (x, z) and an albedo factor (the unresolved crests' tone), and in p_sort the grain
+// sorting's tint on the window's ripples and the far ones. Past the patch it carries on over the dune field (far_ripples).
+// Grain sorting on wind ripples (GroundSurface3D ripple_sorting): the wind rolls the coarse grains up to the crests
+// and leaves the small dense ones (magnetite, ilmenite, garnet) in the troughs, so a ripple field shows dark lines
+// in its troughs and paler, coarser crests (Bagnold 1941; Anderson and Bunas 1993; Sharp 1963). p_t: the ripple's
+// height in standard deviations of the grown field's (troughs below 0); the dark lag patchy over metres, as the
+// heavy-mineral share is. p_resolved: 1 where the crests are resolved; finer, the pixel takes the bands' mean,
+// scaled by p_amp, the field's height there (LEAN's point again: an unresolved pattern is its statistics).
+vec3 ground_ripple_sort_tint(float p_t, vec2 p_xz, float p_resolved, float p_amp) {
+	float heavy = mix(0.35, 1.0, ground_ripple_vn(p_xz / 7.0, 31u));
+	vec3 lag = mix(vec3(1.0), vec3(0.5, 0.48, 0.47), 0.6 * heavy);
+	vec3 coarse = vec3(1.05, 1.0, 0.92);
+	vec3 rt = mix(vec3(1.0), lag, smoothstep(0.2, 0.75, -p_t)) * mix(vec3(1.0), coarse, smoothstep(0.3, 0.8, p_t));
+	// About a fifth of a ripple's length lies in each band.
+	vec3 mt = mix(vec3(1.0), mix(vec3(1.0), lag, 0.25) * mix(vec3(1.0), coarse, 0.25), clamp(p_amp, 0.0, 1.0));
+	return mix(mt, rt, p_resolved);
+}
+// The coarse lag's share on an interdune flat (the dune tone's lag term): thin sand on flat ground, patchy.
+float ground_dune_lag(vec2 p_xz, float p_normal_y, float p_depth) {
+	if (p_depth < 0.0) {
+		return 0.0;
+	}
+	float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	return thin * smoothstep(0.93, 0.98, p_normal_y) * mix(0.45, 1.0, ground_ripple_vn(p_xz / 23.0, 43u));
+}
+// Granule ripples (megaripples) on that lag: the coarse grains the wind cannot lift creep up into long, low ripples
+// 0.5 to 2 m apart and up to 5 cm high (ripple index about 25), broad crests armoured with coarse granules over
+// troughs of finer sand (Sharp 1963; Ellwood, Evans and Wilson 1975; Yizhaq 2008; Lammel et al. 2018). In plan the
+// crests are sinuous and fork in Y-junctions, and each fades out along its length over a few metres. Crests run
+// across p_wind, the dune-building wind (unit, x and z). p_weight: the lag's share; p_fp: the pixel's footprint (m),
+// crests closer than about four pixels fade to their mean tone. Returns the slope (dh/dx, dh/dz); p_tint: the albedo
+// factor (the crests' coarse grains, paler than the troughs' fines).
+// The phase (in wavelengths): the spacing wanders between about 0.5 and 2 m (a warp along the wind whose slope adds
+// to or takes from the 1.1 m mean), the crests bend over metres, and paired edge dislocations make the forks.
+float ground_granule_phase(vec2 p_xz, vec2 p_k, vec2 p_t) {
+	float along = dot(p_xz, p_k);
+	float across = dot(p_xz, p_t);
+	float s = along / 1.1 + 2.5 * ground_ripple_vn(vec2(along / 6.0, across / 5.0), 52u) + 1.2 * ground_ripple_vn(p_xz / 9.0, 51u);
+	ivec2 c0 = ivec2(floor(p_xz / 4.0));
+	float ph = 0.0;
+	for (int dz = -1; dz <= 1; dz++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			ivec2 c = c0 + ivec2(dx, dz);
+			if (ground_ripple_hash(c, 54u) >= 0.35) {
+				continue;
+			}
+			vec2 m = (vec2(c) + vec2(ground_ripple_hash(c, 55u), ground_ripple_hash(c, 56u))) * 4.0;
+			float hl = 0.4 + 0.8 * ground_ripple_hash(c, 57u);
+			vec2 da = p_xz - (m - p_t * hl);
+			vec2 db = p_xz - (m + p_t * hl);
+			float sgn = ground_ripple_hash(c, 58u) < 0.5 ? -1.0 : 1.0;
+			ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(2.0, 4.0, length(p_xz - m)));
+		}
+	}
+	return s + ph / 6.2831853;
+}
+vec2 ground_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, out vec3 p_tint) {
+	p_tint = vec3(1.0);
+	if (p_weight <= 0.0 || dot(p_wind, p_wind) < 0.5) {
+		return vec2(0.0);
+	}
+	vec2 k = p_wind;
+	vec2 t = vec2(-k.y, k.x);
+	float along = dot(p_xz, k);
+	float across = dot(p_xz, t);
+	// Crests tens of wavelengths long that taper out at their ends (or merge at a fork).
+	float amp = p_weight * smoothstep(0.15, 0.5, ground_ripple_vn(vec2(along / 3.0, across / 15.0), 53u));
+	if (amp <= 0.0) {
+		return vec2(0.0);
+	}
+	// The slope from the phase's own gradient (the warp and the forks turn the crests), by differences.
+	float e = 0.03;
+	float s = ground_granule_phase(p_xz, k, t);
+	vec2 gs = vec2(ground_granule_phase(p_xz + vec2(e, 0.0), k, t) - s, ground_granule_phase(p_xz + vec2(0.0, e), k, t) - s);
+	// Modulo one wavelength: a fork's phase jumps by a whole turn across its cut.
+	gs = (fract(gs + 0.5) - 0.5) / e;
+	float c = 0.5 + 0.5 * cos(6.2831853 * s);
+	// Resolved by the local spacing (1 / |grad s|).
+	float lam = 1.0 / max(length(gs), 0.3);
+	float resolved = 1.0 - smoothstep(0.15 * lam, 0.3 * lam, p_fp);
+	vec3 crest = vec3(1.1, 1.08, 1.04);
+	vec3 trough = vec3(0.92, 0.9, 0.89);
+	// About a third of a ripple's length is crest: the unresolved pixel takes the mean.
+	vec3 rt = mix(trough, crest, smoothstep(0.35, 0.8, c));
+	vec3 mt = mix(trough, crest, 0.4);
+	p_tint = mix(vec3(1.0), mix(mt, rt, resolved), amp);
+	// h = 0.05 amp c^1.5, so dh/dp = 0.05 amp 1.5 c^0.5 dc/ds grad s.
+	float dhds = 0.05 * amp * 1.5 * sqrt(c) * (-3.14159265 * sin(6.2831853 * s));
+	return resolved * dhds * gs;
+}
+// Dune-scale sand colour (docs/ideas/sand.md, "Dune-scale tone"): three of the changes a dune field shows from afar.
+// Rubefaction: iron-oxide coats redden grains that have lain still for millennia (Walker 1979; Pye and Tsoar 2009),
+// patchy over hundreds of metres and strongest on the stable sand of thin flanks and interdunes. Interdune flats: the
+// wind strips the fine sand and leaves a coarser, darker lag (Sharp 1963; Lancaster 1995). Slip faces: grain flows of
+// fine, well-sorted sand, paler than the windward slope (Bagnold 1941). p_depth: the loose sand's depth (m), below 0
+// off the dune fields or unknown (only the slip faces show there).
+vec3 ground_dune_tone(vec2 p_xz, float p_normal_y, float p_depth) {
+	vec3 t = vec3(1.0);
+	if (p_depth >= 0.0) {
+		float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+		float age = smoothstep(0.25, 0.7, 0.65 * ground_ripple_vn(p_xz / 420.0, 41u) + 0.35 * ground_ripple_vn(p_xz / 130.0, 42u));
+		t *= mix(vec3(1.0), vec3(1.15, 0.93, 0.78), age * (0.7 + 0.3 * thin));
+		float lag = ground_dune_lag(p_xz, p_normal_y, p_depth);
+		t *= mix(vec3(1.0), vec3(0.72, 0.7, 0.68), lag);
+	}
+	// Slopes of about 29 to 33 degrees: the slip face at the sand's repose.
+	float slip = smoothstep(0.78, 0.84, p_normal_y) * (1.0 - smoothstep(0.88, 0.93, p_normal_y));
+	t *= mix(vec3(1.0), vec3(1.08, 1.07, 1.05), slip);
+	return t;
+}
+// The dune tone's inputs (GroundSurface3D dune_tone), from the ripple map: under the patch, the loose sand's depth (m)
+// from its generator (TerrainGenerator3D.get_sand_depth_at(), below 0 off the dune fields or with none) and the
+// ground's sand share (the sand block, G and B); past it, the depth over a kilometre round the patch (the depth rows,
+// R, faded out over their outer 15%) and the ground's own share (all sand for a sand ground). Returns (depth, share,
+// the depth's weight); (-1, 0, 0) with the tone off (the meta row's fifth texel: x on, yzw the depth rows' rect).
+// The ripple map's sixth meta texel: the generator's dune-building wind (xy) and whether granule ripples are on (z).
+vec4 ground_sand_meta5() {
+	ivec2 ts = textureSize(ground_ripple_map, 0);
+	return ground_ripple_rect.z > 0.0 && ts.x >= 6 ? texelFetch(ground_ripple_map, ivec2(5, ts.y - 1), 0) : vec4(0.0);
+}
+vec4 ground_sand_at(vec2 p_xz) {
+	if (ground_ripple_rect.z <= 0.0) {
+		return vec4(-1.0, 0.0, 0.0, 0.0);
+	}
+	ivec2 ts = textureSize(ground_ripple_map, 0);
+	vec4 m4 = ts.x >= 5 ? texelFetch(ground_ripple_map, ivec2(4, ts.y - 1), 0) : vec4(0.0);
+	if (m4.x < 0.5) {
+		return vec4(-1.0, 0.0, 0.0, 0.0);
+	}
+	vec4 m1 = texelFetch(ground_ripple_map, ivec2(1, ts.y - 1), 0);
+	vec4 m2 = texelFetch(ground_ripple_map, ivec2(2, ts.y - 1), 0);
+	vec4 m3 = texelFetch(ground_ripple_map, ivec2(3, ts.y - 1), 0);
+	int n = int(m2.y + 0.5);
+	int sn = int(m2.z + 0.5);
+	vec2 su = (p_xz - m1.xy) / m1.z * float(sn) - 0.5;
+	if (sn > 0 && all(greaterThanEqual(su, vec2(-0.5))) && all(lessThanEqual(su, vec2(float(sn) - 0.5)))) {
+		ivec2 s0 = clamp(ivec2(floor(su)), ivec2(0), ivec2(sn - 1));
+		ivec2 s1 = clamp(s0 + 1, ivec2(0), ivec2(sn - 1));
+		vec2 sf = clamp(su - floor(su), 0.0, 1.0);
+		vec3 a = texelFetch(ground_ripple_map, ivec2(s0.x, n + s0.y), 0).gba;
+		vec3 b = texelFetch(ground_ripple_map, ivec2(s1.x, n + s0.y), 0).gba;
+		vec3 c = texelFetch(ground_ripple_map, ivec2(s0.x, n + s1.y), 0).gba;
+		vec3 d = texelFetch(ground_ripple_map, ivec2(s1.x, n + s1.y), 0).gba;
+		vec3 r = mix(mix(a, b, sf.x), mix(c, d, sf.x), sf.y);
+		// A corner off the dune fields: none of the depth's tone (no blend to a made-up depth).
+		// The blown share eases to the ground's past the block (all of it) over the block's outer 4 m, so nothing the
+		// share gates stops at the block's edge.
+		vec2 be = min(p_xz - m1.xy, m1.xy + m1.z - p_xz);
+		r.z = mix(1.0, r.z, smoothstep(0.0, 4.0, min(be.x, be.y)));
+		return min(min(a.x, b.x), min(c.x, d.x)) < 0.0 ? vec4(-1.0, r.y, 0.0, r.z) : vec4(r.xy, 1.0, r.z);
+	}
+	int dn = ts.y - 1 - (n + sn + n);
+	vec2 du = (p_xz - m4.yz) / max(m4.w, 1e-4) * float(dn) - 0.5;
+	if (dn <= 0 || any(lessThan(du, vec2(-0.5))) || any(greaterThan(du, vec2(float(dn) - 0.5)))) {
+		return vec4(-1.0, m3.z, 0.0, 1.0);
+	}
+	int r0 = n + sn + n;
+	ivec2 d0 = clamp(ivec2(floor(du)), ivec2(0), ivec2(dn - 1));
+	ivec2 d1 = clamp(d0 + 1, ivec2(0), ivec2(dn - 1));
+	vec2 df = clamp(du - floor(du), 0.0, 1.0);
+	vec4 q = vec4(texelFetch(ground_ripple_map, ivec2(d0.x, r0 + d0.y), 0).r, texelFetch(ground_ripple_map, ivec2(d1.x, r0 + d0.y), 0).r,
+			texelFetch(ground_ripple_map, ivec2(d0.x, r0 + d1.y), 0).r, texelFetch(ground_ripple_map, ivec2(d1.x, r0 + d1.y), 0).r);
+	if (min(min(q.x, q.y), min(q.z, q.w)) < 0.0) {
+		return vec4(-1.0, m3.z, 0.0, 1.0);
+	}
+	vec2 de = min(p_xz - m4.yz, m4.yz + m4.w - p_xz);
+	return vec4(mix(mix(q.x, q.y, df.x), mix(q.z, q.w, df.x), df.y), m3.z, smoothstep(0.0, 0.15 * m4.w, min(de.x, de.y)), 1.0);
+}
+vec3 ground_ripple_far_slope(vec2 p_xz, float p_fp, float p_normal_y, float p_far_share, out vec3 p_sort) {
+	p_sort = vec3(1.0);
 	if (ground_ripple_rect.z <= 0.0) {
 		return vec3(0.0, 0.0, 1.0);
 	}
@@ -4809,24 +5075,34 @@ vec3 ground_ripple_far_slope(vec2 p_xz, float p_fp, float p_normal_y, float p_fa
 	float live = min(e.x, e.y) > 0.0 ? smoothstep(ground_ripple_rect.w, 0.15 * ground_ripple_rect.z, min(e.x, e.y)) : 0.0;
 	// None on a slip face: past about 30 degrees the sand avalanches and the ripples are buried (Bagnold 1941).
 	float w = sand * (1.0 - live) * smoothstep(0.85, 0.91, p_normal_y);
+	float lam = dot(m3.xy, m3.xy) > 0.0 ? 6.2831853 / length(m3.xy) : 0.11;
+	float resolved = 1.0 - smoothstep(0.22 * lam, 0.4 * lam, p_fp);
+	// The window's own ripples, in the grown field's units (m3.w, its spread; 0 with the sorting off).
+	if (m3.w > 0.0 && live > 0.0) {
+		p_sort = ground_ripple_sort_tint(ground_ripple(p_xz) / m3.w, p_xz, resolved, 0.0);
+	}
 	if (w <= 0.0) {
 		return vec3(0.0, 0.0, 1.0);
 	}
 	// Cell c's centre is at c * cell, its texel (c mod n).
-	float lam = dot(m3.xy, m3.xy) > 0.0 ? 6.2831853 / length(m3.xy) : 0.11;
-	float resolved = 1.0 - smoothstep(0.22 * lam, 0.4 * lam, p_fp);
-	vec3 vr = ground_ripple_vary(p_xz, m3.xy);
+	// Shader level of detail (Olano, Kuehne and Simmons 2003): where the crests are finer than the pixel only the
+	// field's patchy height is used (the tone), so the warp and the dislocation loop are skipped there.
+	vec3 vr = resolved > 0.0 ? ground_ripple_vary(p_xz, m3.xy) : vec3(0.0, 0.0, ground_ripple_amp(p_xz));
 	// Crests finer than the pixel still shade it: each lee slope's share in the low light, the reason a ripple field
 	// reads as a patchy tone across a dune from far off (LEAN mapping's point, Olano and Baker 2010: unresolved
 	// slopes become the pixel's statistics, not its normal). Up to 15% darker at full height, by the field's
 	// patchy amplitude.
 	float tone = 1.0 - 0.15 * w * vr.z * (1.0 - resolved);
+	vec2 tuv = ((p_xz + vr.xy) / ground_ripple_rect.w + 0.5) / m1.w * ground_ripple_rect.w;
+	vec3 tf = resolved > 0.0 ? texture(ground_ripple_far, tuv).rgb : vec3(0.0);
+	if (m3.w > 0.0) {
+		p_sort *= mix(vec3(1.0), ground_ripple_sort_tint(vr.z * tf.z, p_xz, resolved, vr.z), w);
+	}
 	w *= resolved;
 	if (w <= 0.0) {
 		return vec3(0.0, 0.0, tone);
 	}
-	vec2 tuv = ((p_xz + vr.xy) / ground_ripple_rect.w + 0.5) / m1.w * ground_ripple_rect.w;
-	return vec3(w * vr.z * texture(ground_ripple_far, tuv).rg, tone);
+	return vec3(w * vr.z * tf.xy, tone);
 }
 // The ground's pore water at p_world (sand stage 4): (wetness, standing film) for Lagarde 2013's wet surfaces,
 // and the share of loose dry sand that shows its grains (sand glints); the path tracer reads the same map

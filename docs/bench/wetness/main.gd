@@ -10,6 +10,7 @@ extends Node3D
 #   --mode=half     wet where x < 0 only (the map drives it)
 #   --mode=manual   wetness_from_weather off, wetness_amount 1
 #   --mode=prints   a line of wet footprints in the contact wetness map (12.5 cm texels, as WeatherMap3D's), seen close
+#   --mode=prints-map  the same prints laid by a dry WeatherMap3D (add_contact_wetness): its upload reaches materials
 #   --weather       a WeatherMap3D raining instead of hand-set globals (checks they reach materials)
 #   --raster        raster only (default path traced)
 #   --spp=N         samples per pixel (default 32)
@@ -72,7 +73,22 @@ func _ready() -> void:
 		mi.position = Vector3((i - 2) * 1.5, 0.6, 0)
 		add_child(mi)
 
-	if weather:
+	if mode == "prints-map":
+		# A dry map, its weather held, laying the same heel and forefoot discs through its own contact square.
+		var wm := WeatherMap3D.new()
+		add_child(wm)
+		wm.rain_rate = 0.0
+		wm.set("time_scale", 0.0)
+		wm.snap_to_settings()
+		await get_tree().process_frame
+		for k in 8:
+			var z := 3.0 - k * 0.66
+			var x := 0.12 if k % 2 == 0 else -0.12
+			var lw := pow(0.85, k)
+			wm.add_contact_wetness(Vector3(x, 0, z), 0.12, lw)
+			wm.add_contact_wetness(Vector3(x, 0, z - 0.12), 0.108, lw * 0.9)
+		print("prints-map: wetness at the first heel %.2f, square %s" % [wm.get_contact_wetness_at(Vector3(0.12, 0, 3.0)), str(wm.get_contact_wetness_rect())])
+	elif weather:
 		var wm := WeatherMap3D.new()
 		add_child(wm)
 		wm.rain_rate = 8.0

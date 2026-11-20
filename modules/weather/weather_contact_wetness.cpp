@@ -45,7 +45,10 @@ void WeatherContactWetness::configure(int p_resolution, float p_size) {
 	wet.fill(0.0f);
 	origin_valid = false;
 	any_wet = false;
-	dirty = true;
+	wet_box.clear();
+	bytes.resize(resolution * resolution);
+	bytes.fill(0);
+	_all_dirty();
 	image.unref();
 	texture.unref();
 }
@@ -59,7 +62,7 @@ void WeatherContactWetness::follow(Vector3 p_center) {
 	if (!origin_valid) {
 		origin = want;
 		origin_valid = true;
-		dirty = true;
+		_all_dirty();
 		return;
 	}
 	// Recentre once the centre has moved an eighth of the square (keeps shifts rare).
@@ -73,26 +76,27 @@ void WeatherContactWetness::follow(Vector3 p_center) {
 	moved.fill(0.0f);
 	const float *src = wet.ptr();
 	float *dst = moved.ptrw();
+	// Only the wet box can hold water: it moves with the square, clipped to it.
+	Box nb;
+	if (any_wet && !wet_box.empty()) {
+		nb.add(MAX(wet_box.x0 - d.x, 0), MAX(wet_box.z0 - d.y, 0), MIN(wet_box.x1 - d.x, n - 1), MIN(wet_box.z1 - d.y, n - 1));
+	}
 	bool any = false;
-	for (int z = 0; z < n; z++) {
-		const int sz = z + d.y;
-		if (sz < 0 || sz >= n) {
-			continue;
-		}
-		for (int x = 0; x < n; x++) {
-			const int sx = x + d.x;
-			if (sx < 0 || sx >= n) {
-				continue;
+	if (!nb.empty()) {
+		for (int z = nb.z0; z <= nb.z1; z++) {
+			const int sz = z + d.y;
+			for (int x = nb.x0; x <= nb.x1; x++) {
+				const float v = src[sz * n + x + d.x];
+				dst[z * n + x] = v;
+				any = any || v > 0.0f;
 			}
-			const float v = src[sz * n + sx];
-			dst[z * n + x] = v;
-			any = any || v > 0.0f;
 		}
 	}
 	wet = moved;
 	origin = want;
 	any_wet = any;
-	dirty = true;
+	wet_box = any ? nb : Box();
+	_all_dirty();
 }
 
 Rect2 WeatherContactWetness::rect() const {
@@ -117,7 +121,11 @@ void WeatherContactWetness::add_disc(Vector3 p_position, float p_radius, float p
 	const int x1 = MIN(int(Math::ceil(cx + rt)), resolution - 1);
 	const int z0 = MAX(int(Math::floor(cz - rt)), 0);
 	const int z1 = MIN(int(Math::ceil(cz + rt)), resolution - 1);
+	if (x0 > x1 || z0 > z1) {
+		return;
+	}
 	float *w = wet.ptrw();
+	bool changed = false;
 	for (int z = z0; z <= z1; z++) {
 		for (int x = x0; x <= x1; x++) {
 			const float q = Math::sqrt((x - cx) * (x - cx) + (z - cz) * (z - cz)) / MAX(rt, 1e-3f);
@@ -128,10 +136,15 @@ void WeatherContactWetness::add_disc(Vector3 p_position, float p_radius, float p
 			float &cell = w[z * resolution + x];
 			if (v > cell) {
 				cell = v;
-				dirty = true;
-				any_wet = true;
+				changed = true;
 			}
 		}
+	}
+	if (changed) {
+		dirty = true;
+		any_wet = true;
+		wet_box.add(x0, z0, x1, z1);
+		dirty_box.add(x0, z0, x1, z1);
 	}
 }
 
@@ -146,7 +159,11 @@ void WeatherContactWetness::add_grid(const float *p_values, int p_width, int p_h
 	const int z1 = MIN(int(Math::ceil((p_rect.position.y + p_rect.size.y) / t)) - origin.y, resolution - 1);
 	// Bilinear between the grid's cell centres, so coarse cells leave soft edges, not stair steps.
 	auto at = [&](int p_x, int p_z) { return p_values[CLAMP(p_z, 0, p_height - 1) * p_width + CLAMP(p_x, 0, p_width - 1)]; };
+	if (x0 > x1 || z0 > z1) {
+		return;
+	}
 	float *w = wet.ptrw();
+	bool changed = false;
 	for (int z = z0; z <= z1; z++) {
 		const float wz = (origin.y + z + 0.5f) * t;
 		const float gz = (wz - p_rect.position.y) / p_rect.size.y * p_height - 0.5f;
@@ -167,10 +184,15 @@ void WeatherContactWetness::add_grid(const float *p_values, int p_width, int p_h
 			float &cell = w[z * resolution + x];
 			if (v > cell) {
 				cell = v;
-				dirty = true;
-				any_wet = true;
+				changed = true;
 			}
 		}
+	}
+	if (changed) {
+		dirty = true;
+		any_wet = true;
+		wet_box.add(x0, z0, x1, z1);
+		dirty_box.add(x0, z0, x1, z1);
 	}
 }
 
@@ -182,17 +204,34 @@ void WeatherContactWetness::dry(float p_seconds, float p_dry_time) {
 	if (k >= 1.0f) {
 		return;
 	}
-	float *w = wet.ptrw();
-	bool any = false;
-	for (int i = 0; i < wet.size(); i++) {
-		float v = w[i] * k;
-		if (v < 1.0f / 512.0f) {
-			v = 0.0f; // (below what R8 shows)
-		}
-		w[i] = v;
-		any = any || v > 0.0f;
+	if (wet_box.empty()) {
+		any_wet = false;
+		return;
 	}
-	any_wet = any;
+	float *w = wet.ptrw();
+	// Walk the wet box only, and shrink it to what is still wet.
+	Box still;
+	for (int z = wet_box.z0; z <= wet_box.z1; z++) {
+		float *row = w + z * resolution;
+		int rx0 = resolution, rx1 = -1;
+		for (int x = wet_box.x0; x <= wet_box.x1; x++) {
+			if (row[x] <= 0.0f) {
+				continue;
+			}
+			float v = row[x] * k;
+			if (v < 1.0f / 512.0f) {
+				v = 0.0f; // (below what R8 shows)
+			} else {
+				rx0 = MIN(rx0, x);
+				rx1 = MAX(rx1, x);
+			}
+			row[x] = v;
+		}
+		still.add(rx0, z, rx1, z);
+	}
+	dirty_box.add(wet_box.x0, wet_box.z0, wet_box.x1, wet_box.z1);
+	wet_box = still;
+	any_wet = !still.empty();
 	dirty = true;
 }
 
@@ -216,12 +255,27 @@ Ref<ImageTexture> WeatherContactWetness::upload() {
 	if (!dirty && texture.is_valid()) {
 		return texture;
 	}
-	Vector<uint8_t> bytes;
-	bytes.resize(resolution * resolution);
-	uint8_t *b = bytes.ptrw();
-	const float *w = wet.ptr();
-	for (int i = 0; i < resolution * resolution; i++) {
-		b[i] = uint8_t(CLAMP(Math::round(w[i] * 255.0f), 0.0f, 255.0f));
+	// Requantise the changed box only; skip the GPU copy when no byte changed (slow drying moves a texel's byte
+	// every few ticks, not every tick).
+	bool changed = texture.is_null();
+	if (!dirty_box.empty()) {
+		uint8_t *b = bytes.ptrw();
+		const float *w = wet.ptr();
+		for (int z = dirty_box.z0; z <= dirty_box.z1; z++) {
+			const int row = z * resolution;
+			for (int x = dirty_box.x0; x <= dirty_box.x1; x++) {
+				const uint8_t q = uint8_t(CLAMP(Math::round(w[row + x] * 255.0f), 0.0f, 255.0f));
+				if (q != b[row + x]) {
+					b[row + x] = q;
+					changed = true;
+				}
+			}
+		}
+	}
+	dirty_box.clear();
+	dirty = false;
+	if (!changed) {
+		return texture;
 	}
 	if (image.is_null()) {
 		image = Image::create_from_data(resolution, resolution, false, Image::FORMAT_R8, bytes);
@@ -233,6 +287,5 @@ Ref<ImageTexture> WeatherContactWetness::upload() {
 	} else {
 		texture->update(image);
 	}
-	dirty = false;
 	return texture;
 }

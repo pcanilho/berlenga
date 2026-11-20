@@ -600,7 +600,7 @@
     "KHR_materials_volume"
    ],
    "note": "",
-   "what": "raster refraction leaves a solid through its far side, not just the front face.",
+   "what": "raster refraction leaves a solid through its far side, not just the front face, filtered by the refracted footprint so thin curved ice and drops do not speckle.",
    "page": "materials",
    "title": "Materials",
    "topic": ""
@@ -989,7 +989,7 @@
     "sand_sea_kind"
    ],
    "note": "",
-   "what": "a desert area fills with wind-built transverse, linear, star or barchan dunes that bank against the hills, thin out at their edges and stop at rivers; each has a long gentle windward slope and a steep slip face at the angle of repose.",
+   "what": "a desert area fills with wind-built transverse, linear, star or barchan dunes that bank against the hills, thin out at their edges and stop at rivers; each has a long gentle windward slope and a steep slip face at the angle of repose. Older sand is redder, coarse interdune flats darker and slip faces paler (TerrainMaterial3D `sand_dune_tone`, GroundSurface3D `dune_tone`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Rivers, coasts and lakes"
@@ -1035,7 +1035,7 @@
     "use_generator()"
    ],
    "note": "",
-   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows.",
+   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1157,7 +1157,21 @@
     "data_map"
    ],
    "note": "",
-   "what": "wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry. It lies on a firm base of varying depth that wheels can dig down to for grip (`subsoil`), and logs and branches settled in it become corduroy that spreads wheel load and snaps when too thin (`mats`). Liquid mud a wheel shoves aside runs on as a wave and the rut closes behind it (`mud_waves`), and hidden stones and roots lift a sinking wheel and show as ruts deepen (`buried_obstacles`, `buried_density`); tyres press the mud out round a stone, and can knock an uncovered one loose (`buried_kick`).",
+   "what": "wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry. It lies on a firm base of varying depth that wheels can dig down to for grip (`subsoil`), and logs and branches settled in it become corduroy that spreads wheel load and snaps when too thin (`mats`). Liquid mud a wheel shoves aside runs on as a wave and the rut closes behind it (`mud_waves`).",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Hidden and loose stones",
+   "settings": [
+    "GroundSurface3D.buried_obstacles",
+    "buried_density",
+    "buried_kick",
+    "stream_stones"
+   ],
+   "note": "",
+   "what": "stones and roots hidden in mud lift a sinking wheel and show as ruts deepen, and liquid mud flows round them. Tyres press the mud out round a stone, knock an uncovered one loose, push a stone low in the rut into its floor or squeeze it out under the shoulder, and shove loose stones ahead with a furrow and a heap. Loose stones settle as deep as the mud bears them and become hidden again once out of sight; slurry and debris flows carry them along, and streams roll them on once the current beats their weight, dropping them in slack water, with stones sunk in mud holding harder.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1295,7 +1309,7 @@
     "GroundSurface3D.tracked_mud"
    ],
    "note": "",
-   "what": "tyres, boots and other bodies leaving clay lay a film of mud on firm ground, printed with the tyre's chevron lugs or the boot's heel and forefoot, that fades as they clean and dries pale in place; thrown clods land as cakes of wet clay that dry where they lie.",
+   "what": "tyres, boots and other bodies leaving clay lay a film of mud on firm ground, printed with the tyre's chevron lugs or the boot's heel and forefoot, that fades as they clean and dries pale in place, then lifts as dust under tyres and in the wind, also after a reload, until the trail fades in patches; thrown clods land as cakes of wet clay that dry where they lie.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1309,7 +1323,7 @@
     "ruts_regrowth_time"
    ],
    "note": "",
-   "what": "prints, ruts, worn tracks and puddles are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate; grass grows back over them with the growing season, stalling in winter and drought; kept puddles keep the clay in their water and the cracks a dried pool left.",
+   "what": "prints, ruts, worn tracks, puddles, flood silt, debris fans and loose stones (where they lie, how deep and how turned) are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate; grass grows back over them with the growing season, stalling in winter and drought; kept puddles keep the clay in their water and the cracks a dried pool left.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1320,7 +1334,7 @@
     "GroundSurface3D.flood_silt"
    ],
    "note": "",
-   "what": "rivers over their banks and other floodwater soak the ground and leave their silt behind as fresh mud: a thin skin, slick while wet, that dries pale and cracks.",
+   "what": "rivers over their banks and other floodwater soak the ground and leave their silt behind as fresh mud: a thin skin, slick while wet, that dries pale and cracks, and once its crust is broken gives dust under tyres and in the wind.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1404,7 +1418,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); on dry interdune flats, long low granule ripples with coarse crests run across the dune-building wind (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1580,10 +1594,11 @@
     "layer_enabled",
     "far_thinning",
     "far_radius",
-    "far_min_size"
+    "far_min_size",
+    "far_widen"
    ],
    "note": "",
-   "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it; past the near field, only the larger rocks carry on out to the horizon.",
+   "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it; past the near field, only the larger rocks carry on out to the horizon, grown so the slope keeps its stone cover.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1917,6 +1932,17 @@
    ],
    "note": "",
    "what": "still spring pools in the desert, each sized by its spring's water balance and with its own outline, with sand boils heaving at the vents, in clear spring water, and only where the ground is hollowed.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Sea caves",
+   "settings": [
+    "PhysXSeaCaveWater3D"
+   ],
+   "note": "",
+   "what": "the sea's own water runs inside sea caves, handed over softly at the arch, with waves reflecting off the walls.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -2520,6 +2546,31 @@
    "topic": "Plants"
   },
   {
+   "name": "Deer browsing",
+   "settings": [
+    "WorldStand.add_browse()",
+    "PlantSpecies.RULE_BROWSE",
+    "PRESET_GRAZED_LAWN",
+    "GrassField3D.graze_height"
+   ],
+   "note": "",
+   "what": "where deer feed, bramble and raspberry are bitten low, palatable herbs thin, the floor turns grassy, the grass is grazed short and clearings become close-cropped deer lawns.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Game trails",
+   "settings": [
+    "VegetationField3D.make_game_trails()"
+   ],
+   "note": "",
+   "what": "animals wear a branching network of trails between cover, feeding lawns and water, routed by least cost over slope and water and merging where traffic runs, and grass wears along them.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Stand margins",
    "settings": [
     "PlantSpecies.margin_width",
@@ -2711,6 +2762,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Beaver ponds and meadows",
+   "settings": [
+    "PlantGenerator.make_beaver()"
+   ],
+   "note": "",
+   "what": "pond plants by water depth, and after the dam fails a meadow that runs from rush and sedge through tall grass, buttercup, meadowsweet and marsh marigold over the decades.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Leaf wear",
    "settings": [
     "PlantGenerator.leaf_wear"
@@ -2888,7 +2950,7 @@
     "make_woodland"
    ],
    "note": "",
-   "what": "twenty-one stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), date palm oases (`STAND_DATE_OASIS`) beetle-killed spruce (`STAND_BEETLE_SPRUCE`), alder carr on stilt roots over moss tussocks (`STAND_ALDER_CARR`, `stilt_height`), old broken and leaning floodplain willows (`STAND_FLOODPLAIN_WILLOW`), old-growth beech (`STAND_OLD_GROWTH_BEECH`), with veteran giants over a pole layer, gaps where single giants fell and five times more deadwood lying than standing, and boreal taiga (`STAND_BOREAL_TAIGA`) with fire-scarred survivor pines, charred and cracked into blocks at their foot (`fire_scars`), and silver kelo snags and logs, bare to the soil with spiral grain (`kelo`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
+   "what": "twenty-three stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), date palm oases (`STAND_DATE_OASIS`) beetle-killed spruce (`STAND_BEETLE_SPRUCE`), alder carr on stilt roots over moss tussocks (`STAND_ALDER_CARR`, `stilt_height`), old broken and leaning floodplain willows (`STAND_FLOODPLAIN_WILLOW`), beaver ponds with drowned snags that drain into meadows of standing dead trees (`STAND_BEAVER_POND`), deer-browsed wood (`STAND_DEER_WOOD`), old-growth beech (`STAND_OLD_GROWTH_BEECH`), with veteran giants over a pole layer, gaps where single giants fell and five times more deadwood lying than standing, and boreal taiga (`STAND_BOREAL_TAIGA`) with fire-scarred survivor pines, charred and cracked into blocks at their foot (`fire_scars`), and silver kelo snags and logs, bare to the soil with spiral grain (`kelo`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3113,7 +3175,7 @@
     "witches_brooms"
    ],
    "note": "",
-   "what": "cones, catkins with bract scales, ash keys in bunches, and rowan and elder berries in dense corymbs on branching stalks in season; winter buds on shoot tips; mistletoe on its hosts and witches' brooms as twig nests on birches.",
+   "what": "cones, catkins with bract scales, ash keys in bunches, and rowan and elder berries in dense corymbs on branching stalks in season; winter buds on shoot tips; mistletoe balls up to 0.8 m across on broadleaves, fir and pine, and witches' brooms as twig nests on birches and broom rust on silver fir.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
@@ -3266,6 +3328,66 @@
    ],
    "note": "",
    "what": "a shrub mantle in front of the trees, and edge trees with low branches and crowns reaching toward the open, turned to face it.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
+   "name": "Beaver work",
+   "settings": [
+    "beaver_cut",
+    "beaver_years"
+   ],
+   "note": "",
+   "what": "stems gnawed to an hourglass, pencil-point stumps that resprout, and felled stems lying toward the water.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
+   "name": "Flood marks",
+   "settings": [
+    "flood_height",
+    "flood_years"
+   ],
+   "note": "",
+   "what": "floodplain trees carry a silt film up to the last high-water line, higher on the upstream face, with flood debris caught at the line.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
+   "name": "Deer browse",
+   "settings": [
+    "browse",
+    "browse_height",
+    "browse_variants"
+   ],
+   "note": "",
+   "what": "browsed saplings grow as low hedged bushes, and grown trees show a level browse line, following the deer pressure map.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
+   "name": "Nurse logs",
+   "settings": [
+    "nurse_seedlings",
+    "nurse_stilt"
+   ],
+   "note": "",
+   "what": "conifer seedlings root on rotting logs, and trees stand on stilt roots where their log rotted away, in spruce colonnades along a vanished log.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
+   "name": "Lightning strikes",
+   "settings": [
+    "lightning_years"
+   ],
+   "note": "",
+   "what": "a torn pale strip down the stem with bark and splinters thrown round the foot, greying and healing over the years; trees the weather's lightning strikes turn fresh-struck, then heal (`lightning_variants`).",
    "page": "trees",
    "title": "Trees",
    "topic": "Old trees and deadwood"
@@ -3447,10 +3569,11 @@
   {
    "name": "Melt-freeze crusts",
    "settings": [
-    "SnowCover3D.crust_enabled"
+    "SnowCover3D.crust_enabled",
+    "SnowSurface3D.crust_plates"
    ],
    "note": "",
-   "what": "a thawed surface refreezes into a crust that hardens each cycle; boots break thin ones into tipped pieces and stand on hard ones.",
+   "what": "a thawed surface refreezes into a crust that hardens each cycle; boots stand on hard ones and break thin ones into flat, sharp-edged plates tipped into the hole, with steps between them.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3606,10 +3729,12 @@
    "name": "Icicles",
    "settings": [
     "SnowIcicles3D",
-    "hazy_core"
+    "hazy_core",
+    "curtains",
+    "wind_direction"
    ],
    "note": "",
-   "what": "grown from roof melt water below freezing; clear ice with a hazy core.",
+   "what": "grown from roof melt water below freezing; clear ice with a hazy core, tapering like real dripping icicles, leaning with the wind they grew in, with drops at dripping tips and curtains where neighbours fuse; they hang in clusters under drip points that wet and dry over the days, with stubs and bare gaps between.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
@@ -3799,7 +3924,7 @@
     "PhysXFlow3D.rain_washout"
    ],
    "note": "",
-   "what": "smoke from fires drifts on the wind as a haze layer that dims and reddens the sun and cools the day; rain and snow wash smoke and dust out of the air.",
+   "what": "smoke from fires drifts on the wind as a haze layer that dims and reddens the sun's disc and glow, turns the sky brown under a plume and cools the day; rain and snow wash smoke and dust out of the air.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -4001,7 +4126,7 @@
     "cloud_density"
    ],
    "note": "",
-   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
+   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); low stratus and stratocumulus follow the day's heating, wind, humidity and rain, with their base at the condensation level (`WeatherMap3D.cloud_regime_from_weather`); storms tower into a leaning cumulonimbus with a flat anvil downwind and mammatus beneath, and hang rain shafts under their base, slanted by the low wind and as dense as the rain is heavy, or in cold storms snow shafts that trail long soft veils downwind, and a moving storm drops a shelf cloud along its gust front; high up, shear aloft breaks the cirrus into cirrocumulus grains and a spreading high sheet merges into a cirrostratus veil that carries halos; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""

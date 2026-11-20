@@ -41,6 +41,13 @@
 				The length of icicle [param index], in metres (0: none).
 			</description>
 		</method>
+		<method name="get_icicle_position" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="index" type="int" />
+			<description>
+				Where icicle [param index] hangs from the edge, local to this node.
+			</description>
+		</method>
 		<method name="get_icicle_radius" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="index" type="int" />

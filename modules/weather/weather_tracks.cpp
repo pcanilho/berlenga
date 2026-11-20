@@ -99,10 +99,14 @@ void WeatherMap3D::_tracks_step(float p_real_dt) {
 			t->last_print = b.center;
 			continue;
 		}
-		bool own_mud = n3->is_class("PhysXVehicle3D") || n3->is_class("PhysXVehicleWheel3D");
-		for (int c = 0; c < n3->get_child_count() && !own_mud; c++) {
-			own_mud = n3->get_child(c)->is_class("GroundLegMud3D");
+		if (t->own_mud_children != n3->get_child_count()) {
+			t->own_mud_children = n3->get_child_count();
+			t->own_mud = n3->is_class("PhysXVehicle3D") || n3->is_class("PhysXVehicleWheel3D");
+			for (int c = 0; c < t->own_mud_children && !t->own_mud; c++) {
+				t->own_mud = n3->get_child(c)->is_class("GroundLegMud3D");
+			}
 		}
+		const bool own_mud = t->own_mud;
 		// On the ground (or near it, without one).
 		float ground = (wg->has_provider() || wg->get_script_instance()) ? wg->height_at(Vector3(b.center.x, b.center.y + 1.0f, b.center.z)) : -Math::INF;
 		const bool grounded = !Math::is_finite(ground) || bottom - ground < 0.3f;

@@ -65,7 +65,8 @@ class BodySnowStub extends WorldSnow:
 #                     loaded face before it goes); --test=avalanche for the checks
 #                     --powder [--at=S]: the run in real time, shot S s after release (default 9) with its
 #                     powder cloud (PhysX Flow; traced, it also saves the raster frame of the same cloud as
-#                     <out>_raster.png); --wet: a thaw first, then a wet slide (--triggered: the
+#                     <out>_raster.png; --no-gas: without the cloud, quick); --crown: the crown wall from
+#                     14 m down the bed (--crown-far: from 40 m); --wet: a thaw first, then a wet slide (--triggered: the
 #                     same release, dry); --test=triggers, --test=powder, --test=forest, --test=wet for
 #                     triggers, the cloud, forests (holding, braking, pressure on trees) and wet snow;
 #                     --test=waves: avalanches into a lake (impulse waves, lake ice)
@@ -75,7 +76,8 @@ class BodySnowStub extends WorldSnow:
 #   --view=lake       a frozen lake from its shore after two weeks of frost and a light snow (--snow=H)
 #   --view=sparkle    dry new snow at the feet against a low sun ahead: glinting grains; --melt=H hours of thaw
 #                     first wets it (the glints go); --glints=exact (default) / grid: every grain a facet under the path tracer, or the raster's grid
-#                     (sparkle) prints the share of glinting pixels and the mean luminance
+#                     (sparkle) prints the share of glinting pixels and the mean luminance; --hoar=MM: surface hoar
+#                     of MM mm over the field (its upright plates flash in the low sun)
 #   --view=shelter    a shed and young spruces after a snowfall: bare ground under the roof, snow in the
 #                     crowns and less under them (--test=shelter for the checks)
 #   --test=background updates on worker threads (follow-up 14): the same pack as updates run in the frame,
@@ -95,13 +97,19 @@ class BodySnowStub extends WorldSnow:
 #                     falling in a thaw with its debris at the foot of the face, none with failure off
 #   --test=icicles    icicles: tip and wall rates (Makkonen 1988), the ratio of the two against Maeno et al.
 #                     (1994), an eave in a day of thaw over frost, water kept, thickening once the wall
-#                     freezes all of it, melting back
+#                     freezes all of it, melting back; the shape: plumb in still air, leaning in wind, tips dripping
 #   --view=cornice --crack=D  D days of thaw after the bake (the tension crack opening); --fall: on until the
 #                     first cornice falls, a moment later (the blocks tumbling)
 #   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
+#                     [--wind=S: a steady wind along the eave by day, the tips lean; --dense: a week of melt with
+#                     sites 5 cm apart, rippled icicles bridged into curtains] [--no-core: clear ice only]
+#                     [--hero (implies --dense): 1.7 m out from the eave, a little above, a fused pair centred, root to
+#                     tip (--under: from under the roof, raster only for now; --wall: head on against a boarded front); pass --resolution 1920x1080]
+#                     [--black-core: a black core, to see where raster and the trace see it]
 #   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
 #   --settled         (trail view) 0.4 m of settled snow (300 kg/m3) instead of fresh: prints break clumps
 #   --no-clumps       (trail view) no snow clumps beside the prints
+#   --no-plates       (trail view) a broken crust without its plates (the field's ramps alone)
 #   --prints-close    (trail view) 1.5 m over two boot prints (with --crust=1: the broken crust's pieces)
 #   --clumps-close    (trail view) the camera low beside the small ball's furrow
 #   --away            (trail view) the field leaves for 300 m and comes back: are the clumps kept?
@@ -115,6 +123,7 @@ class BodySnowStub extends WorldSnow:
 #   --steps=N         save N frames as the snow builds (time-lapse) to --out with _NNN before .png
 #   --probe           print the snowpack along the axes (mountain view)
 #   --raster          raster only (default path traced)
+#   --taa             raster with TAA (stills set against path traced ones: no per-pixel shadow or dither dots)
 #   --out=path.png    save the last frame and quit
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 
@@ -147,6 +156,7 @@ var only := ""
 var melt_hours := 0.0
 var crust_cycles := 0.0
 var transport := true
+var hoar_mm := 0.0 # --hoar=MM: the sparkle view's surface hoar
 var air := INF # --air=C: the snowfall view's air temperature (sleet near and above 0 C)
 
 
@@ -159,6 +169,10 @@ func _ready() -> void:
 			# Every grain a facet under the path tracer (follow-up 5, the default), or stage 5's footprint grid.
 			RenderingServer.global_shader_parameter_set("snow_exact_glints", a == "--glints=exact")
 		elif a == "--raster": raster = true
+		elif a == "--taa":
+			# Raster stills set against path traced ones: TAA resolves the per-pixel shadow and dither dots
+			# (the bench holds still a few frames before saving, so it converges).
+			get_viewport().use_taa = true
 		elif a.begins_with("--test"):
 			test = true
 			only = a.substr(7)
@@ -166,6 +180,7 @@ func _ready() -> void:
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a.begins_with("--snow="): snow_hours = float(a.substr(7))
+		elif a.begins_with("--hoar="): hoar_mm = float(a.substr(7))
 		elif a.begins_with("--sun="): sun_hours = float(a.substr(6))
 		elif a.begins_with("--steps="): steps = int(a.substr(8))
 		elif a.begins_with("--wind="): wind = float(a.substr(7))
@@ -182,6 +197,8 @@ func _ready() -> void:
 			await _run_shelter_tests()
 		elif only == "crust":
 			await _run_crust_tests()
+		elif only == "hoar":
+			await _run_hoar_tests()
 		elif only == "transport":
 			await _run_transport_tests()
 		elif only == "failure":
@@ -393,6 +410,7 @@ func _run_tests() -> void:
 	await _run_transport_tests()
 	await _run_surface_tests()
 	await _run_crust_tests()
+	await _run_hoar_tests()
 	await _run_fall_tests()
 	await _run_shelter_tests()
 	await _run_climate_tests()
@@ -577,6 +595,10 @@ func _run_crust_tests() -> void:
 	var vol := surface.get_moved_volume() - v0
 	_check("a boot (%.0f kPa) breaks a first-cycle crust" % boot, st1 < boot and broken.dent > 0.05, "%.3f m deep" % broken.dent)
 	_check("the crust cracks around the hole and the pieces tip in", broken.edge > 0.01 and broken.cv > 0.3 and vol.y <= 0.3 * vol.x + 1e-4, "%.3f m down 25 cm from the middle, varying %.0f%% along it (jagged); rim %.4f of %.4f m3 pressed" % [broken.edge, broken.cv * 100.0, vol.y, vol.x])
+	for i in 30:
+		await get_tree().physics_frame
+	var plates := surface.get_crust_plate_count()
+	_check("a broken crust lies in plates (follow-up 38; the dragged boot makes one hole)", plates >= 1, "%d holes with plates" % plates)
 	await _weather_to(8.0, 10.0)
 	await _weather_to(-8.0, 14.0)
 	var c2 := snow.get_crust_cycles_at(p)
@@ -601,6 +623,65 @@ func _run_crust_tests() -> void:
 	var none := _trail_stats(-9.0)
 	print("  beside an unbroken trail (crusts off): %.3f m" % none.edge)
 	_check("crust_enabled off: the boot sinks as before", snow.get_crust_strength_at(p) == 0.0 and none.dent > buried.dent + 0.02, "%.3f m deep" % none.dent)
+
+
+func _run_hoar_tests() -> void:
+	print("Surface hoar (round 5):")
+	var r := [0.0]
+	var e_clear := SnowCover3D.hoar_deposition(-10.0, 0.9, 1.5, 0.0, 0.0)
+	var e_cloud := SnowCover3D.hoar_deposition(-10.0, 0.9, 1.5, 1.0, 0.0)
+	var e_dry := SnowCover3D.hoar_deposition(-10.0, 0.3, 1.5, 0.0, 0.0)
+	var e_sun := SnowCover3D.hoar_deposition(-10.0, 0.9, 1.5, 0.0, 250.0)
+	_check("a clear humid night deposits frost; cloud, dry air or sun stop it (bulk transfer)", e_clear > 0.003 and e_clear < 0.02 and e_cloud < 0.3 * e_clear and e_dry < 0.0 and e_sun < e_clear * 0.3, "clear %.4f, overcast %.4f, 30%% humidity %.4f, sunny %.4f kg/m2/h" % [e_clear, e_cloud, e_dry, e_sun])
+	var s5 := SnowCover3D.buried_hoar_strength(5.0, 0.0)
+	var s15 := SnowCover3D.buried_hoar_strength(15.0, 0.0)
+	var s5_old := SnowCover3D.buried_hoar_strength(5.0, 24.0 * 21.0)
+	_check("buried hoar is weak, weaker with larger crystals, gains slowly (Jamieson and Schweizer 2000)", s5 > 300.0 and s5 < 800.0 and s15 < s5 and s5_old > s5 * 1.5 and s5_old < 3.0 * s5, "5 mm %.0f Pa, 15 mm %.0f Pa, 5 mm after three weeks %.0f Pa" % [s5, s15, s5_old])
+	await _surface_setup(80.0, 200.0)
+	var p := Vector3(0.5, 0, 0.5)
+	weather.cloud_cover = 0.0
+	weather.humidity = 0.9
+	weather.wind_speed = 1.5
+	await _weather_to(-10.0, 12.0)
+	var night := snow.get_hoar_at(p)
+	_check("a clear calm night at -10 C grows surface hoar", night > 2.0 and night < 15.0, "%.1f mm" % night)
+	await _weather_to(-10.0, 24.0)
+	var nights := snow.get_hoar_at(p)
+	_check("more clear calm nights grow it on", nights > night * 1.5, "%.1f mm after three nights" % nights)
+	weather.wind_speed = 6.0
+	await _weather_to(-10.0, 2.0)
+	var blown := snow.get_hoar_at(p)
+	_check("a 6 m/s wind breaks it", blown < 0.1 * nights, "%.2f mm" % blown)
+	weather.wind_speed = 1.5
+	weather.cloud_cover = 1.0
+	await _weather_to(-10.0, 12.0)
+	var overcast := snow.get_hoar_at(p)
+	weather.cloud_cover = 0.0
+	await _weather_to(-10.0, 12.0)
+	var regrown := snow.get_hoar_at(p)
+	_check("none under overcast, it grows again under a clear sky", overcast < 1.0 and regrown > 2.0, "%.2f mm overcast, %.1f mm clear" % [overcast, regrown])
+	snow.add_snow(30.0, 100.0)
+	await get_tree().physics_frame
+	var layer := snow.get_buried_hoar_at(p)
+	var depth := snow.get_buried_hoar_depth_at(p)
+	_check("new snow buries it as a weak layer", absf(layer - regrown) < 0.01 and absf(depth - 0.3) < 0.03 and snow.get_hoar_at(p) == 0.0, "%.1f mm crystals under %.2f m" % [layer, depth])
+	var slope := deg_to_rad(38.0)
+	var tau := 100.0 * 9.81 * depth * sin(slope) * cos(slope)
+	var stab := SnowCover3D.buried_hoar_strength(layer, 0.0) / tau
+	var stab_new := SnowAvalanche3D.stability_index(depth, 100.0, 100.0, 48.0, slope)
+	# A skier (Foehn 1987's line load, 1 kN/m) on it.
+	var ski := tau + SnowAvalanche3D.added_shear(1000.0, depth * cos(slope), slope)
+	var sk := SnowCover3D.buried_hoar_strength(layer, 0.0) / ski
+	var sk_new := SnowAvalanche3D.weak_layer_strength(100.0, 48.0) / ski
+	_check("on a 38 degree slope it is weaker than two-day-old new snow, and a skier fails it", stab < stab_new and sk < 1.0 and sk_new > sk * 1.5, "S %.2f over buried hoar (%.2f in the new snow), with a skier %.2f (%.2f)" % [stab, stab_new, sk, sk_new])
+	await _weather_to(-10.0, 48.0)
+	_check("it stays buried and ages", snow.get_buried_hoar_at(p) > 0.0 and snow.get_buried_hoar_age_at(p) > 1.9, "%.1f mm, %.1f days" % [snow.get_buried_hoar_at(p), snow.get_buried_hoar_age_at(p)])
+	await _weather_to(4.0, 1.0)
+	_check("a thaw wets the surface crystals away", snow.get_hoar_at(p) == 0.0, "%.2f mm" % snow.get_hoar_at(p))
+	snow.hoar_enabled = false
+	await _weather_to(-10.0, 12.0)
+	_check("hoar_enabled off: none grows", snow.get_hoar_at(p) == 0.0, "%.2f mm" % snow.get_hoar_at(p))
+	snow.hoar_enabled = true
 
 
 func _surface_setup(swe: float, density: float) -> void:
@@ -2190,6 +2271,38 @@ func _run_icicle_tests() -> void:
 	var m0 := ice.get_ice_mass()
 	ice.grow(24.0, -8.0, 0.5, 0.004)
 	_check("a trickle the wall freezes: thicker, no longer (Szilder and Lozowski 1994)", ice.get_longest() < l0 + 0.002 and ice.get_ice_mass() > m0, "longest %.3f to %.3f m, %.3f to %.3f kg" % [l0, ice.get_longest(), m0, ice.get_ice_mass()])
+	# Shape (follow-up 37): the film's own lean stays gentle; a steady wind leans the tips downwind.
+	var lean_still := 0.0
+	var k_long := 0
+	for k in ice.get_icicle_count():
+		if ice.get_icicle_length(k) > ice.get_icicle_length(k_long):
+			k_long = k
+		var len_k := ice.get_icicle_length(k)
+		if len_k > 0.05:
+			lean_still = maxf(lean_still, ice.get_icicle_offset(k, len_k).length() / len_k)
+	_check("in still air an icicle hangs near plumb (its film's side bends it a little)", lean_still < 0.1, "steepest lean %.3f" % lean_still)
+	var windy := SnowIcicles3D.new()
+	windy.edge = PackedVector3Array([Vector3(-1, 0, 0), Vector3(1, 0, 0)])
+	windy.wind_direction = Vector3(1, 0, 0)
+	for day in 3:
+		windy.grow(6.0, -4.0, 5.0, 0.9)
+		windy.grow(18.0, -8.0, 0.5, 0.0)
+	var lean_x := 0.0
+	var n_long := 0
+	for k in windy.get_icicle_count():
+		var len_k := windy.get_icicle_length(k)
+		if len_k > 0.05:
+			lean_x += windy.get_icicle_offset(k, len_k).x / len_k
+			n_long += 1
+	lean_x /= maxf(n_long, 1)
+	_check("a 5 m/s wind leans the tips downwind (the drop's drag; Maeno et al. 1994)", lean_x > 0.3 and lean_x < 0.8, "mean lean %.2f (%.0f degrees) over %d icicles" % [lean_x, rad_to_deg(atan(lean_x)), n_long])
+	windy.grow(0.5, -4.0, 0.5, 0.9)
+	var drips := 0
+	for k in windy.get_icicle_count():
+		if windy.is_icicle_dripping(k):
+			drips += 1
+	_check("water left at the tips hangs as drops while they grow", drips > 0, "%d of %d tips dripping" % [drips, windy.get_icicle_count()])
+	windy.free()
 	ice.grow(12.0, 4.0, 2.0, 0.0)
 	_check("a thaw melts them back", ice.get_longest() < l0 * 0.8, "%.3f m after 12 h at +4 C" % ice.get_longest())
 	ice.free()
@@ -2233,6 +2346,9 @@ func _build_view() -> void:
 			await _setup("avalanche", 256.0, 128, -8.0)
 	elif view == "windblown":
 		await _setup("ridge", 512.0, 256, -8.0)
+	elif view == "icicles" and OS.get_cmdline_user_args().has("--hero") and not OS.get_cmdline_user_args().has("--wall"):
+		# --hero looks out from under the roof: snow out to 64 m, past where the view meets the horizon haze.
+		await _setup("flat", 128.0, 256, -6.0)
 	elif view == "shelter" or view == "icicles":
 		await _setup("flat", 32.0, 128, -6.0)
 	else:
@@ -2259,6 +2375,9 @@ func _build_view() -> void:
 	env.pathtracing_enabled = not raster
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = bounces
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--pt-debug="):
+			env.pathtracing_debug_mode = int(a.substr(11)) # Environment.PathtracingDebugMode
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -2396,6 +2515,7 @@ func _build_trail(cam: Camera3D) -> void:
 		# A 2 cm melt-freeze crust on top: one cycle breaks under a boot, two hold it.
 		snow.add_crust(0.02, crust_cycles)
 	surface = SnowSurface3D.new()
+	surface.crust_plates = not OS.get_cmdline_user_args().has("--no-plates") # --no-plates: the field's ramps alone
 	surface.snow_cover = NodePath("../SnowCover3D")
 	surface.follow_target = NodePath("../Probe")
 	if OS.get_cmdline_user_args().has("--close") or OS.get_cmdline_user_args().has("--prints-close"):
@@ -2684,14 +2804,41 @@ func _build_icicles(cam: Camera3D) -> void:
 	floor_body.add_child(floor_shape)
 	add_child(floor_body)
 	var wood := _ground_material(Color(0.42, 0.28, 0.16), 1.0)
-	_prop(BoxMesh.new(), Vector3(5.0, 0.12, 3.4), Vector3(-2.5, 2.6, -1.5), Vector3(10, 0, 0), wood)
-	for p in [Vector3(-4.8, 1.25, -0.1), Vector3(-0.2, 1.25, -0.1), Vector3(-4.8, 1.25, -2.9), Vector3(-0.2, 1.25, -2.9)]:
+	var shed := not OS.get_cmdline_user_args().has("--no-shed") # --no-shed: the icicles alone in the air
+	if shed:
+		_prop(BoxMesh.new(), Vector3(5.0, 0.12, 3.4), Vector3(-2.5, 2.6, -1.5), Vector3(10, 0, 0), wood)
+	for p in ([Vector3(-4.8, 1.25, -0.1), Vector3(-0.2, 1.25, -0.1), Vector3(-4.8, 1.25, -2.9), Vector3(-0.2, 1.25, -2.9)] if shed else []):
 		var post := MeshInstance3D.new()
 		post.mesh = BoxMesh.new()
 		post.scale = Vector3(0.15, 2.5, 0.15)
 		post.position = p
 		post.material_override = wood
 		add_child(post)
+	var hero := OS.get_cmdline_user_args().has("--hero")
+	if hero and OS.get_cmdline_user_args().has("--wall"):
+		# --hero --wall: the shed's front wall, set back under the eave as a house wall is: vertical boards 14 cm wide
+		# with 1 cm gaps, each its own weathered tone, so the ice has a lit, lined ground to refract.
+		var backing := MeshInstance3D.new()
+		backing.mesh = BoxMesh.new()
+		backing.scale = Vector3(4.6, 2.37, 0.02)
+		backing.position = Vector3(-2.5, 1.185, -0.56)
+		backing.material_override = _ground_material(Color(0.12, 0.09, 0.07), 1.0)
+		add_child(backing)
+		var tones: Array[StandardMaterial3D] = []
+		for k in 5:
+			var v := 0.85 + 0.07 * k
+			tones.append(_ground_material(Color(0.5 * v, 0.41 * v, 0.31 * v), 1.0))
+		var bx := -4.75
+		var nb := 0
+		while bx < -0.25:
+			var board := MeshInstance3D.new()
+			board.mesh = BoxMesh.new()
+			board.scale = Vector3(0.14, 2.37, 0.022)
+			board.position = Vector3(bx + 0.07, 1.185, -0.5)
+			board.material_override = tones[(nb * 7 + nb / 3) % tones.size()]
+			add_child(board)
+			bx += 0.15
+			nb += 1
 	weather.rebake_shelter()
 	await get_tree().physics_frame
 	await get_tree().physics_frame
@@ -2703,18 +2850,112 @@ func _build_icicles(cam: Camera3D) -> void:
 	var ice := SnowIcicles3D.new()
 	ice.name = "Icicles"
 	ice.spacing = 0.12
+	# --hero implies --dense: a week of melt at 5 cm sites, so there are long icicles and fused pairs to frame.
+	var dense: bool = OS.get_cmdline_user_args().has("--dense") or OS.get_cmdline_user_args().has("--hero")
+	if dense:
+		ice.spacing = 0.05 # --dense: a dripping stretch, sites close enough that neighbours bridge into curtains
+	if OS.get_cmdline_user_args().has("--no-surface") and surface != null:
+		surface.visible = false # --no-surface: the deep-snow surface hidden (what the ice shows without it)
+	if OS.get_cmdline_user_args().has("--plain-ice"):
+		# --plain-ice: the ice's settings without its ripple normal map (what the map does to the trace)
+		var pim := StandardMaterial3D.new()
+		pim.albedo_color = Color(0.97, 0.99, 1.0)
+		pim.roughness = 0.06
+		pim.metallic_specular = 0.335
+		pim.transmission_enabled = true
+		pim.transmission_amount = 1.0
+		pim.transmission_ior = 1.31
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with("--ice-ior="):
+				pim.transmission_ior = float(a.substr(10))
+		pim.transmission_thickness = 0.04
+		ice.material = pim
+	if OS.get_cmdline_user_args().has("--hidden-ice"):
+		# --hidden-ice: the clear ice fully transparent, the core alone (is the core there for the trace?)
+		var hm := StandardMaterial3D.new()
+		hm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+		hm.alpha_scissor_threshold = 0.5
+		hm.albedo_color = Color(1, 1, 1, 0)
+		ice.material = hm
+	if OS.get_cmdline_user_args().has("--no-curtains"):
+		ice.curtains = false # --no-curtains: no webs between fused neighbours
+	if OS.get_cmdline_user_args().has("--no-core"):
+		ice.hazy_core = false # --no-core: clear ice only (checks what the core adds)
+	if OS.get_cmdline_user_args().has("--black-core"):
+		var black := StandardMaterial3D.new() # --black-core: shows where the trace and raster see the core
+		black.albedo_color = Color(0, 0, 0)
+		ice.core_material = black
 	ice.edge = PackedVector3Array([Vector3(-4.95, eave_y, 0.12), Vector3(-0.05, eave_y, 0.12)])
 	add_child(ice)
 	# Three days: six hours of melt off the sunny roof (0.3 mm/h over its 3.4 m) at -4 C, then a night at -8 C.
-	for day in 3:
-		ice.grow(6.0, -4.0, 0.5, 0.3 * 3.4)
+	# --wind=S: a steady wind along the eave by day (it leans the tips; follow-up 37).
+	var day_wind := 0.5
+	if Array(OS.get_cmdline_user_args()).any(func(a): return a.begins_with("--wind=")):
+		day_wind = wind
+		ice.wind_direction = Vector3(-1, 0, 0)
+	# --dense: a week of it (long, thick icicles, rippled).
+	for day in (7 if dense else 3):
+		ice.grow(6.0, -4.0, day_wind, 0.3 * 3.4)
 		ice.grow(18.0, -8.0, 0.5, 0.0)
-	print("icicles: %d sites, longest %.2f m, %.2f kg of ice" % [ice.get_icicle_count(), ice.get_longest(), ice.get_ice_mass()])
+	# The last afternoon's melt still running: the tips drip.
+	ice.grow(0.25, -4.0, day_wind, 0.3 * 3.4)
+	var rmax := 0.0
+	for k in ice.get_icicle_count():
+		rmax = maxf(rmax, ice.get_icicle_radius(k))
+	print("icicles: %d sites, longest %.2f m, thickest %.1f cm across, %.2f kg of ice" % [ice.get_icicle_count(), ice.get_longest(), rmax * 200.0, ice.get_ice_mass()])
+	var n_long := 0
+	var n_stub := 0
+	var n_bare := 0
+	for k in ice.get_icicle_count():
+		var l := ice.get_icicle_length(k)
+		if l >= 0.25:
+			n_long += 1
+		elif l <= 0.0:
+			n_bare += 1
+		elif l < 0.08:
+			n_stub += 1
+	print("icicles: %d long (25 cm or more), %d stubs (under 8 cm), %d bare" % [n_long, n_stub, n_bare])
 	# At the icicles' height along the eave, the sky and the field behind them.
 	cam.position = Vector3(-0.2, 2.05, 1.1)
 	cam.look_at(Vector3(-2.2, 2.1, 0.17))
 	cam.fov = 50.0
-	if OS.get_cmdline_user_args().has("--close"):
+	if hero:
+		# From under the roof, 1.7 m back from the eave and a little above the icicles' middle, looking out
+		# at the snow: a run of them root to tip, backlit by the low sun, the longest fused pair (neighbours
+		# bridged at the root) in the middle. Shoot with --resolution 1920x1080. (--wall: from outside, head on,
+		# against the shed's boarded front.)
+		var best := -1
+		var best_len := 0.0
+		for k in ice.get_icicle_count() - 1:
+			var a := ice.get_icicle_position(k)
+			var b := ice.get_icicle_position(k + 1)
+			var ra := ice.get_icicle_radius(k)
+			var rb := ice.get_icicle_radius(k + 1)
+			var l := minf(ice.get_icicle_length(k), ice.get_icicle_length(k + 1))
+			var gap := Vector2(a.x - b.x, a.z - b.z).length() - ra - rb
+			if gap > 0.0 and gap < minf(ra, rb) and a.x > -3.6 and a.x < -1.4 and l > best_len:
+				best = k
+				best_len = l
+		var mid := Vector3(-2.5, eave_y - 0.25, 0.12)
+		if best >= 0:
+			mid = (ice.get_icicle_position(best) + ice.get_icicle_position(best + 1)) * 0.5
+			mid.y -= 0.5 * maxf(ice.get_icicle_length(best), ice.get_icicle_length(best + 1))
+			print("hero pair %d/%d at x %.2f, %.2f m" % [best, best + 1, mid.x, best_len])
+		if OS.get_cmdline_user_args().has("--wall"):
+			cam.position = mid + Vector3(0.45, -0.08, 1.62)
+		else:
+			# From outside the eave by default; --under: from under the roof (the path tracer misreads a camera
+			# under a thin roof as inside a medium until rt_camera_medium is fixed, so raster only for now).
+			cam.position = mid + Vector3(-0.4, 0.4, 1.55)
+			if OS.get_cmdline_user_args().has("--under"):
+				cam.position = mid + Vector3(-0.4, 0.4, -1.55) # under the roof, 2.45 m up
+			for a in OS.get_cmdline_user_args():
+				if a.begins_with("--cam-offset="): # --cam-offset=x,y,z: the camera from the hero pair (tests)
+					var c := a.substr(13).split_floats(",")
+					cam.position = mid + Vector3(c[0], c[1], c[2])
+		cam.look_at(mid)
+		cam.fov = 26.0
+	elif OS.get_cmdline_user_args().has("--close"):
 		# The longest icicles at 100%: the ripples, the clear sheath and the hazy core.
 		cam.position = Vector3(-0.1, 2.1, 0.75)
 		cam.look_at(Vector3(-0.6, 2.12, 0.17))
@@ -2876,6 +3117,10 @@ func _build_avalanche(cam: Camera3D) -> void:
 		# One physics tick a frame: Flow steps once a frame, so on a slow renderer the gas keeps pace with the slide
 		# (with several ticks a frame it falls behind and the cloud is only the emitters' trail).
 		Engine.max_physics_steps_per_frame = 1
+		if OS.get_cmdline_user_args().has("--no-gas"):
+			# --no-gas: the snow alone (the slide, its bed and crown), quick: no Flow to keep pace with.
+			av.get_powder_cloud().enabled = false
+			Engine.max_physics_steps_per_frame = 32
 		var pflow: Node = av.get_powder_cloud().get_flow()
 		if pflow:
 			pflow.set("scattering_resolution", 0) # full: quarter averages away the billows at still sizes
@@ -2916,6 +3161,8 @@ func _build_avalanche(cam: Camera3D) -> void:
 		# behind the face, the bowl's rim past the edge of the bench terrain shades the run-out in one renderer and
 		# not the other. Light on the camera's side keeps every shadow inside the scene.
 		sun.rotation_degrees = Vector3(-40.0, 40.0, 0.0)
+		if OS.get_cmdline_user_args().has("--crown"):
+			_crown_camera(cam)
 		if traced:
 			# The raster frame of the same cloud first (_raster.png beside --out): Flow is not bit-for-bit the
 			# same from run to run, so a raster run and a traced run do not show one cloud.
@@ -2941,6 +3188,8 @@ func _build_avalanche(cam: Camera3D) -> void:
 		# --close: the debris at the toe from 20 m.
 		cam.position = Vector3(22.0, snow.get_ground_height_at(Vector3(22, 0, 14)) + snow.get_depth_at(Vector3(22, 0, 14)) + 3.0, 14.0)
 		cam.look_at(Vector3(2.0, 1.0, 0.0))
+	if OS.get_cmdline_user_args().has("--crown"):
+		_crown_camera(cam)
 	if OS.get_cmdline_user_args().has("--toe"):
 		# --toe: the deposit's tongue from above and in front, to see its outline.
 		cam.position = Vector3(45.0, 22.0, 30.0)
@@ -2948,6 +3197,25 @@ func _build_avalanche(cam: Camera3D) -> void:
 		cam.fov = 50.0
 	cam.far = 1000.0
 	await _save_frame("")
+
+
+func _crown_camera(cam: Camera3D) -> void:
+	# --crown: the crown wall from 14 m down the bed (found along z = 0 as the biggest drop in depth).
+	var best := 0.0
+	var cx := -60.0
+	for i in 120:
+		var x := -100.0 + i * 0.5
+		var drop := snow.get_depth_at(Vector3(x, 0, 0)) - snow.get_depth_at(Vector3(x + 0.5, 0, 0))
+		if drop > best:
+			best = drop
+			cx = x
+	# --crown-far: from 40 m off, three-quarters from the side and above, as the wide shots see it.
+	var far := OS.get_cmdline_user_args().has("--crown-far")
+	var gx := cx + (30.0 if far else 14.0)
+	var gz := 28.0 if far else 6.0
+	cam.position = Vector3(gx, snow.get_ground_height_at(Vector3(gx, 0, gz)) + snow.get_depth_at(Vector3(gx, 0, gz)) + (10.0 if far else 3.0), gz)
+	cam.look_at(Vector3(cx, snow.get_ground_height_at(Vector3(cx, 0, 0)) + 0.5, -2.0))
+	print("crown at x %.1f, %.2f m step" % [cx, best])
 
 
 func _build_bodies(cam: Camera3D) -> void:
@@ -3033,7 +3301,13 @@ func _build_sparkle(cam: Camera3D) -> void:
 		weather.snap_to_settings()
 		weather.advance(1.0)
 		snow.advance(melt_hours * 3600.0)
+	if hoar_mm > 0.0:
+		# A clear calm night's surface hoar over the field (SnowCover3D.hoar_enabled grows it; set here so the
+		# look is tested alone): the crystals' upright plates flash in the low sun.
+		snow.add_hoar(hoar_mm)
+		snow.advance(1.0)
 	var p := Vector3(0, 0, 0)
+	print("sparkle: hoar %.1f mm" % snow.get_hoar_at(p))
 	print("sparkle: depth %.2f m, density %.0f, albedo %.2f" % [snow.get_depth_at(p), snow.get_density_at(p), snow.get_albedo_at(p)])
 	await _save_frame("")
 	# The share of glinting pixels: over the snow below the horizon, those a fifth brighter than the ring of
@@ -3206,7 +3480,48 @@ func _physics_process(delta: float) -> void:
 
 
 func _save_frame(suffix: String) -> void:
-	for i in 12:
+	# Light probes for raster and path traced comparisons: --no-sun-shadow, --no-sun (the sky alone), --no-sun-specular,
+	# --sun-pitch=D (the sun's elevation), --plain-ground [--white-lambert], --sun-only.
+	if sun != null and OS.get_cmdline_user_args().has("--no-sun-shadow"):
+		sun.shadow_enabled = false
+	if sun != null and OS.get_cmdline_user_args().has("--no-sun"):
+		sun.visible = false
+	if sun != null and OS.get_cmdline_user_args().has("--no-sun-specular"):
+		sun.light_specular = 0.0
+	if OS.get_cmdline_user_args().has("--sun-only"):
+		# The sun alone, untonemapped: a black sky with no ambient (linear values to compare).
+		var wenv: Environment = get_viewport().find_world_3d().environment
+		wenv.background_mode = Environment.BG_COLOR
+		wenv.background_color = Color(0, 0, 0)
+		wenv.ambient_light_source = Environment.AMBIENT_SOURCE_DISABLED
+		wenv.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
+		wenv.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+		wenv.set("pathtracing_sky_shader_enabled", false)
+		wenv.sky = null
+	if OS.get_cmdline_user_args().has("--plain-ground"):
+		# A plain StandardMaterial3D plane with the snow's albedo, roughness and specular over the view: is a gap
+		# the snow material's or the renderer's?
+		var plane := MeshInstance3D.new()
+		var pm := PlaneMesh.new()
+		pm.size = Vector2(400.0, 400.0)
+		plane.mesh = pm
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.83, 0.83, 0.83)
+		mat.roughness = 0.7
+		mat.metallic_specular = 0.335
+		if OS.get_cmdline_user_args().has("--white-lambert"):
+			mat.albedo_color = Color(1, 1, 1)
+			mat.diffuse_mode = BaseMaterial3D.DIFFUSE_LAMBERT
+			mat.metallic_specular = 0.0
+		plane.material_override = mat
+		plane.position.y = 0.5
+		add_child(plane)
+		for i in 4:
+			await get_tree().process_frame
+	for a in OS.get_cmdline_user_args():
+		if sun != null and a.begins_with("--sun-pitch="):
+			sun.rotation_degrees.x = -float(a.substr(12)) # the sun's elevation in degrees
+	for i in (40 if get_viewport().use_taa else 12): # TAA converges over some frames
 		await get_tree().process_frame
 	# Path traced: wait until every displaced surface has been captured for the trace (a big deep-snow mesh
 	# takes several frames), or the still shows it flat.
@@ -3216,6 +3531,19 @@ func _save_frame(suffix: String) -> void:
 		waited += 1
 	if waited > 0:
 		print("waited %d frames for the trace's surfaces" % waited)
+	# --time=N: the viewport's mean GPU time over N frames (timestamp queries), for cost comparisons.
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--time="):
+			var vp := get_viewport().get_viewport_rid()
+			RenderingServer.viewport_set_measure_render_time(vp, true)
+			for i in 3:
+				await RenderingServer.frame_post_draw
+			var gpu := 0.0
+			var n := int(a.substr(7))
+			for i in n:
+				await RenderingServer.frame_post_draw
+				gpu += RenderingServer.viewport_get_measured_render_time_gpu(vp)
+			print("gpu time: %.2f ms a frame over %d frames" % [gpu / maxf(n, 1), n])
 	await RenderingServer.frame_post_draw
 	if not out.is_empty():
 		var path := out.replace(".png", suffix + ".png")

@@ -1148,6 +1148,8 @@ void GroundDebrisFlow3D::_notification(int p_what) {
 			set_physics_process_internal(true);
 		} break;
 		case NOTIFICATION_ENTER_TREE: {
+			// Found by the ground's loose stones, which the flow carries (mud round 18.1).
+			add_to_group(SNAME("ground_debris_flows"));
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				_connect();
 			}

@@ -94,6 +94,9 @@ uniform float water_time = 0.0;
 // Two-phase flow (Vlachos 2010): each copy of the ripples rides the current for
 // one flow_period, then restarts while the other one is showing.
 uniform float flow_period = 1.5;
+// A cross-fade in from another surface over this many metres of arc length from UV.x = 0 (0: none): a dither
+// complementary to the one PhysXWaterSurface3D cuts itself out with (PhysXSeaCaveWater3D, at a sea cave's arch).
+uniform float fade_in_length = 0.0;
 uniform vec4 water_color : source_color = vec4(0.10, 0.25, 0.24, 0.72);
 uniform vec4 shallow_color : source_color = vec4(0.32, 0.42, 0.34, 0.35);
 uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
@@ -379,6 +382,14 @@ void vertex() {
 }
 
 void fragment() {
+	// The cross-fade in (fade_in_length): raster blends by alpha, the path tracer picks per sample.
+	float fade_w = fade_in_length > 0.0 ? smoothstep(0.0, fade_in_length, v_s) : 1.0;
+	bool faded = water_fade_noise(v_world.xz) >= fade_w;
+#if !defined(RT)
+	if (fade_w <= 0.0) {
+		discard;
+	}
+#endif
 	vec2 flow = v_flow;
 	float live_foam = 0.0;
 	vec2 live_slope = vec2(0.0);
@@ -603,7 +614,7 @@ void fragment() {
 	SCATTERING = med_sca * film;
 	SCATTERING_ANISOTROPY = med_g;
 	// Gone past the waterline and the banks' fade, as in raster.
-	ALPHA = smoothstep(0.0, max(edge_softness, 1e-3), depth) * bank_fade;
+	ALPHA = faded ? 0.0 : smoothstep(0.0, max(edge_softness, 1e-3), depth) * bank_fade;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #else
 	// Open water keeps PhysXWaterSurface3D's raster look: its own colour with a
@@ -698,7 +709,7 @@ void fragment() {
 	ROUGHNESS = 0.85;
 	SPECULAR = 0.25 * foam;
 	METALLIC = 0.0;
-	ALPHA = refl.a;
+	ALPHA = refl.a * fade_w;
 	if (froude_overlay) {
 		float fr = v_info.a * 4.0;
 		vec3 c = fr < 1.0 ? mix(vec3(0.05, 0.15, 0.9), vec3(0.1, 0.85, 0.2), smoothstep(0.3, 1.0, fr)) : mix(vec3(0.1, 0.85, 0.2), vec3(0.95, 0.1, 0.05), smoothstep(1.0, 2.5, fr));

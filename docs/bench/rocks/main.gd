@@ -12,6 +12,9 @@ extends Node3D
 #   --clouds[=C]          the weather sky (clouds of cover C, atmosphere) instead of the plain gradient
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
+#   --exposure=x          the tonemapper's exposure (1): more for a dark cave seen from inside
+#   --taa                 temporal antialiasing as in play (24 frames settle before a sea-cave still)
+#   --world-size=m        with --world: its side (2048); smaller for path traced stills in less memory
 #   --world               a generated 2 km world (range, strata, glaciers, scree, rivers, a lake, the sea) with a
 #                         RockField3D over it; --view=rockfall|scree|glacial|river|shore|cliff|tor|coast|landform puts the camera at the
 #                         densest place of that layer (default scree)
@@ -30,6 +33,11 @@ extends Node3D
 #                         (--dist m upstream, 2.5); --no-streams turns cave_streams off
 #   --cave-view=rimstone  with --caves --cave-mesh: the busiest rimstone cascade from about --dist m (1.6), a lamp;
 #                         --pool-water=n live water on the n nearest pools (12), --no-pool-water none
+#   --sea-cave-pick=first with --sea-caves: the finder's best site, not the one facing the sun most (frames only)
+#   --no-refine           with --cave-mesh and --cam: the chunks round the camera stay on the coarse grid
+#   --no-sea-water        with --sea-caves --cave-mesh: the sea not drawn inside the caves (a before frame);
+#                         --cave-waves=m the short waves' rms coming in at the mouth (default: from the sea),
+#                         --no-cave-waves the cave's water without them (the surge's level alone)
 #   --no-sea-mist         with --sea-caves --cave-mesh: no mist breathed out of the mouths; --mist-period=s its swell
 #                         period (run with --fixed-fps 60 and --settle=N for N frames of mist)
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
@@ -66,6 +74,8 @@ extends Node3D
 #   --roll[=m/s]          with --world: a ball rolled across the spot before the still (stones_react; --no-react off)
 #   --no-river-detail     with --world: RockField3D.ground_detail_rivers off (river beds keep only the river layer's stones)
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
+#   --detail-octaves=N    with --world: the material's erosion detail octaves (4; 0 for none, a before frame);
+#                         --sun-shadow=0 drops the raster sun shadow map (A/B)
 #   --gravel-reach[=d]    with --view=river: a gravel-bed reach whose median is nearest d m (0.03)
 #   --no-ground-cover     with --world: RockField3D.ground_detail_cover off (no grain aggregate on the ground past
 #                         each class's reach; a before frame); --save-cover writes the near cover map, --cover-check
@@ -90,7 +100,7 @@ class SwellStub extends WorldWater:
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
 const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth"]
 const LAYERS := ["rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast", "landform"]
-const WORLD := 2048.0
+var WORLD := 2048.0 # --world-size=m (a smaller world for path traced stills that would not fit the memory)
 
 var args := {}
 var raster := false
@@ -113,6 +123,7 @@ func _ready() -> void:
 			var kv := a.substr(2).split("=", true, 1)
 			args[kv[0]] = kv[1] if kv.size() > 1 else "1"
 	raster = args.has("raster")
+	WORLD = float(args.get("world-size", "2048"))
 	spp = int(args.get("spp", "16"))
 	out = args.get("out", "")
 	if args.has("no-lod"):
@@ -155,8 +166,50 @@ func _ready() -> void:
 		var q := int(args.get("shadow-filter", str(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)))
 		RenderingServer.directional_soft_shadow_filter_set_quality(q)
 		RenderingServer.positional_soft_shadow_filter_set_quality(q)
+		# --taa: temporal antialiasing, as in play (the water's jittered screen reflections resolve over frames);
+		# the still waits 24 frames for it to settle.
+		if args.has("taa"):
+			get_viewport().use_taa = true
 		_render_later()
 
+
+# Real ground scans (Poly Haven CC0, art repository terrain/layers, fetched by docs/bench/landscape/fetch_art.sh into
+# docs/bench/landscape/art/terrain_layers). Each layer keeps the geology's colour (detail_only: the scan adds detail
+# only, to colour and roughness) and tiles at the scan's real size. Loaded from the files directly (the folder is .gdignore'd, no import step).
+const GROUND_SCANS := {"rock": ["dark_rock_02", 2.0], "scree": ["rocks_ground_02", 2.0], "soil": ["forest_ground_06", 2.11], "alluvium": ["gravelly_sand", 2.48], "sand": ["sand_03", 2.0]}
+
+func _ground_scan_tex(path: String, normal := false) -> Texture2D:
+	var img := Image.load_from_file(path)
+	if img == null or img.is_empty():
+		return null
+	img.generate_mipmaps(normal)
+	return ImageTexture.create_from_image(img)
+
+func _apply_ground_scans(tm: TerrainMaterial3D, dir: String, only := "1") -> int:
+	var n := 0
+	for layer_name in GROUND_SCANS:
+		if only != "1" and not (layer_name in only.split(",")):
+			continue # --ground-scans=rock,scree: those layers only
+		var scan: String = GROUND_SCANS[layer_name][0]
+		var base := dir.path_join(scan).path_join(scan)
+		if not FileAccess.file_exists(base + "_albedo.jpg"):
+			continue
+		var l := TerrainMaterialLayer.new()
+		var maps: String = args.get("scan-maps", "anrh") # --scan-maps=an: only the albedo and normal maps (A/B)
+		if "a" in maps:
+			l.albedo_texture = _ground_scan_tex(base + "_albedo.jpg")
+		if "n" in maps:
+			l.normal_texture = _ground_scan_tex(base + "_normal.jpg", true)
+		if "r" in maps:
+			l.roughness_texture = _ground_scan_tex(base + "_roughness.jpg")
+		if "h" in maps:
+			l.height_texture = _ground_scan_tex(base + "_height.jpg")
+		l.tile_size = GROUND_SCANS[layer_name][1]
+		var c: Color = tm.get_shader_parameter("tm_%s_color" % layer_name) if tm.get_shader_parameter("tm_%s_color" % layer_name) is Color else Color.WHITE
+		l.color = c # the geology's colour: the scan's mean is divided out (detail_only)
+		tm.set("%s_layer" % layer_name, l)
+		n += 1
+	return n
 
 func check(ok: bool, what: String) -> void:
 	print("%s  %s" % ["PASS" if ok else "FAIL", what])
@@ -193,6 +246,9 @@ func _environment() -> void:
 			# (Looking out through a mouth the sky is in the frame: the path tracer draws its misses from it.)
 			env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	# --exposure=x: the tonemapper's exposure (1), for a dark scene such as a cave seen from inside.
+	if args.has("exposure"):
+		env.tonemap_exposure = float(args["exposure"])
 	env.pathtracing_sky_shader_enabled = args.has("clouds")
 	env.pathtracing_enabled = not raster
 	env.pathtracing_samples_per_pixel = spp
@@ -203,7 +259,7 @@ func _environment() -> void:
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-32, -50, 0)
 	sun.light_energy = 2.2
-	sun.shadow_enabled = true
+	sun.shadow_enabled = args.get("sun-shadow", "1") != "0" # --sun-shadow=0: no raster sun shadow map (A/B)
 	sun.directional_shadow_max_distance = 120.0
 	add_child(sun)
 
@@ -374,7 +430,7 @@ func _world() -> void:
 	for y in 64:
 		var z := -WORLD * 0.5 + (y + 0.5) / 64.0 * WORLD
 		for x in 64:
-			up.set_pixel(x, y, Color(0.12 + 0.88 * (1.0 - smoothstep(-500.0, 500.0, z)), 0, 0))
+			up.set_pixel(x, y, Color(0.12 + 0.88 * (1.0 - smoothstep(-500.0 * WORLD / 2048.0, 500.0 * WORLD / 2048.0, z)), 0, 0))
 	gen.uplift_map = ImageTexture.create_from_image(up)
 	gen.outlet_edges = 0
 	gen.ocean_edges = TerrainGenerator3D.OUTLET_POSITIVE_Z
@@ -406,7 +462,15 @@ func _world() -> void:
 	var tm := TerrainMaterial3D.new()
 	tm.use_generator(gen)
 	tm.rock_detail_enabled = args.get("rock-detail", "1") != "0" # --rock-detail=0: the ground without its joints and stones
+	tm.cliff_self_shadow = args.get("ledge-shadow", "1") != "0" # --ledge-shadow=0: cliff relief ledges without their per-pixel shadows
+	if args.has("detail-octaves"):
+		tm.detail_octaves = int(args["detail-octaves"]) # --detail-octaves=N: erosion detail octaves in the normal (0: none, A/B)
+	if args.get("far-shadows", "1") == "0":
+		tm.far_shadow_start = 0.0 # --far-shadows=0: no far sun shadows from the ground's horizon
 	tm.update_shader()
+	if args.get("ground-scans", "1") != "0" and not args.has("test"): # --ground-scans=0: plain ground layers
+		if _apply_ground_scans(tm, ProjectSettings.globalize_path("res://").path_join("../landscape/art/terrain_layers"), args.get("ground-scans", "1")) > 0:
+			tm.update_shader()
 	var land := Landscape3D.new()
 	# Cliff relief is on by default (frames show the ground as the game draws it: without it a backlit cliff reads as
 	# smooth white spur flanks); the checks measure the bare heightfield, and --no-cliff-relief gives a before frame.
@@ -504,6 +568,29 @@ func _world() -> void:
 							wm.set_shader_parameter(kv[0], str_to_var(kv[1]))
 	var view: String = args.get("view", "scree")
 	var spot := _densest(LAYERS.find(view)) if rocks else Vector3(0, 0, 0)
+	if args.has("bare-spot"):
+		# --bare-spot: the nearest open soil to the spot (no rock or scree near, no alluvium, a gentle 6 to 20 degree
+		# slope well above the sea), for close frames of the ground layers alone.
+		var best := INF
+		var found := spot
+		for zz in range(-600, 601, 8):
+			for xx in range(-600, 601, 8):
+				var p := Vector3(xx, 0, zz)
+				var g := gen.get_geology_at(p)
+				if g.r > 0.1 or gen.get_talus(p) > 0.05:
+					continue
+				var h := gen.get_height(p)
+				if h < gen.sea_level + 15.0:
+					continue
+				var sl := rad_to_deg(atan(Vector2(gen.get_height(p + Vector3(2, 0, 0)) - gen.get_height(p - Vector3(2, 0, 0)), gen.get_height(p + Vector3(0, 0, 2)) - gen.get_height(p - Vector3(0, 0, 2))).length() / 4.0))
+				if sl < 3.0 or sl > 12.0 or h > gen.sea_level + 150.0:
+					continue
+				var dd := Vector2(xx, zz).length()
+				if dd < best:
+					best = dd
+					found = p
+		spot = found
+		print("bare spot ", spot, " geology ", gen.get_geology_at(spot))
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
 	spot_pos = spot
@@ -682,6 +769,23 @@ func _caves(cam: Camera3D) -> void:
 	var t0 := Time.get_ticks_msec()
 	var sea_caves := args.has("sea-caves")
 	var found: Array = net.find_sea_entrances(r, int(args.get("caves", "1")) if str(args["caves"]).is_valid_int() else 1) if sea_caves else net.find_entrances(r, int(args.get("caves", "1")) if str(args["caves"]).is_valid_int() else 1)
+	if sea_caves and not args.has("test") and found.size() == 1 and args.get("sea-cave-pick", "lit") == "lit":
+		# One sea cave for a frame: of the best dozen sites, the one whose mouth faces the sun most (its mouth and
+		# the sea in front lit, not a cleft in its own cliff's shadow); --sea-cave-pick=first keeps the finder's own.
+		var to_sun := Vector3(0, 0, 1)
+		for n in get_children():
+			if n is DirectionalLight3D:
+				to_sun = (n as DirectionalLight3D).global_transform.basis.z
+		var flat_sun := Vector3(to_sun.x, 0, to_sun.z).normalized()
+		var many: Array = net.find_sea_entrances(r, 12)
+		var best := -2.0
+		for e in many:
+			var o: Vector3 = e["out"]
+			var lit := Vector3(o.x, 0, o.z).normalized().dot(flat_sun)
+			if lit > best:
+				best = lit
+				found = [e]
+		print("  sea cave picked by facing: %d sites, mouth at %s facing the sun %.2f" % [many.size(), found[0]["position"], best])
 	print("caves: %d entrances found in %d ms" % [found.size(), Time.get_ticks_msec() - t0])
 	var colours := [Color(1, 1, 1), Color(0.2, 0.5, 1), Color(0.1, 0.9, 0.9), Color(1, 0.8, 0.1), Color(1, 0.3, 0.1), Color(0.9, 0.2, 0.9), Color(0.2, 0.9, 0.3)]
 	var names := ["entrance", "tube", "bed", "keyhole", "canyon", "shaft", "sea"]
@@ -773,6 +877,10 @@ func _caves(cam: Camera3D) -> void:
 			var pos: Vector3 = e["position"]
 			net.rimstone_water = not args.has("no-pool-water")
 			net.sea_mist = not args.has("no-sea-mist")
+			net.sea_water = not args.has("no-sea-water")
+			if args.has("no-sea-clip"):
+				# The sea not cut along the passages (a diagnostic: the cave's surface over the sea's own).
+				net.ready.connect(func(): net.remove_from_group("water_clippers"))
 			net.cave_streams = not args.has("no-streams")
 			if args.has("mist-period"):
 				# The mist node is made on the network's first frames: set its swell period once it is there.
@@ -787,6 +895,11 @@ func _caves(cam: Camera3D) -> void:
 				net.rimstone_water_max = int(args["pool-water"])
 			var made := net.build_meshes(AABB(pos - Vector3(mr, mr, mr), Vector3(2 * mr, 2 * mr, 2 * mr)))
 			print("  meshes: %d chunks, %d triangles in %.0f ms (cell %.2f m)" % [made, net.get_mesh_triangle_count(), net.get_last_mesh_msec(), net.mesh_cell])
+			if args.has("cam") and not args.has("no-refine"):
+				# A fixed --cam shot: the chunks round the lens on the near grid, as round a player in play (the coarse
+				# grid alone showed walls smoother than anyone sees them); --no-refine keeps the coarse one.
+				var n_cam := net.refine_meshes(cam.position)
+				print("  refined %d chunks round the camera (cell %.2f m)" % [n_cam, net.near_mesh_cell])
 			land_m.load_all_heights()
 			var tri := {"walls": 0, "ground": 0}
 			for ch in net.get_children():
@@ -2461,6 +2574,29 @@ func _render_later() -> void:
 					cov_sum += cv.x + cv.y
 					cov_n += 1
 			print("%s cover contract: WorldGround.coarse_cover_at matches the near map within %.4f (pebble + gravel mean %.3f)" % ["PASS" if worst < 0.005 else "FAIL", worst, cov_sum / max(cov_n, 1)])
+	for c in get_children():
+		if c is CaveNetwork3D and (c as CaveNetwork3D).get_cave_count() > 0 and (c as CaveNetwork3D).is_sea_cave(0):
+			var sw: Node = (c as CaveNetwork3D).get_sea_water_node()
+			var w: Dictionary = (c as CaveNetwork3D).get_sea_cave_water(0)
+			var pts: PackedVector3Array = w.get("points", PackedVector3Array())
+			var al: PackedFloat32Array = w.get("along", PackedFloat32Array())
+			if sw and args.has("hide-cave-surface"):
+				(sw as Node3D).visible = false
+			if sw:
+				# The short waves take about a minute to run the passage and back: warm them up before the still.
+				if args.has("cave-waves"):
+					sw.set("wave_inflow", float(args["cave-waves"]))
+				if args.has("no-cave-waves"):
+					sw.set("wavelets", false)
+				sw.warm_up(60.0)
+				# The frame on screen is from before the warm-up: draw the warmed surface before saving.
+				for f in (24 if args.has("taa") else 3):
+					await RenderingServer.frame_post_draw
+				print("sea cave waves: sea rms at the mouth %.3f m, short waves rms %.3f m over the cave" % [w.get("wave_rms", 0.0), sw.get_wave_rms(0)])
+				var hws: PackedFloat32Array = w.get("half_widths", PackedFloat32Array())
+				for k in range(0, pts.size(), 4):
+					print("  station %d at %.1f m: %s, half width %.2f" % [k, al[k] if k < al.size() else 0.0, str(pts[k]), hws[k] if k < hws.size() else 0.0])
+			print("sea cave water: %d stations over %.1f m, arch from %.1f m, level at the mouth %s, %d drawn, %d sea clip capsules" % [pts.size(), al[al.size() - 1] if al.size() > 0 else 0.0, w.get("covered_from", 0.0), str(pts[0]) if pts.size() > 0 else "-", sw.get_ribbon_count() if sw else -1, (c as CaveNetwork3D).get_water_clip_capsules().size() / 8])
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)

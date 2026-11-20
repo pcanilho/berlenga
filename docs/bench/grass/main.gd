@@ -58,6 +58,14 @@ extends Node3D
 #   --grazed         the tall grass grazed short (5 to 14 cm), as on upland pasture
 #   --path[=P]       a worn path winding away from the camera, P passes a year (default 3000, a busy footpath; GrassField3D.paths,
 #                    VegetationField3D.paths): the sward and plants thin and shorten towards its line
+#   --deer-wood=P    a woodland clearing ringed by TreeGenerator's real trees, from 1.6 m inside it across to the far
+#                    edge, under deer browsing pressure P over the clearing and the wood (WorldStand.add_browse): P > 0
+#                    the deer wood (STAND_DEER_WOOD: the browse line under the crowns) with make_floor's browse set, the
+#                    sward cropped; P = 0 the beech stand unbrowsed (the before shot)
+#   --trails         game trails (VegetationField3D.make_game_trails between five places over the meadow, published on
+#                    WorldStand.set_trails): the sward and plants worn along them, from 1.6 m on the busiest stretch
+#   --graze=P        a deer browse disc of pressure P (WorldStand.add_browse, 6.5 m) 6 m ahead, framed from 1.6 m: a
+#                    grazed lawn edged by the standing sward
 #   --burn=A         a burn scar A years old (WorldBurnScar3D, 20 x 12 m) in the view: the sward grows back over
 #                    GrassField3D.burn_recovery (0.7 years), short and sparse first; GRASS_NO_FLUSH=1 without the
 #                    regrowth flush (the before frame)
@@ -135,6 +143,10 @@ var undergrowth := ""
 var grazed := false # --grazed: the tall grass grazed short (upland pasture).
 var path_passes := 0.0 # --path: a worn path across the meadow, passes a year.
 var burn_age := -1.0 # --burn=A: a burn scar A years old in the view.
+var graze := -1.0 # --graze=P: a browse disc of pressure P in the view.
+var deer_wood := -1.0 # --deer-wood=P: a clearing in real trees under browsing pressure P.
+var trails_view := false # --trails
+var deer_trees: Array = [] # Its TreeGenerator species (logs, stumps and saplings too): all kept out of the clearing.
 var ug_dir := Vector3(0, 0, 1)
 var mushroom_view := "" # --mushrooms[=name]: in the wood, close on a group of mushrooms (make_floor's).
 var ug_edge := false # --undergrowth-edge: the stand's edge seen along it from 1 m up.
@@ -242,6 +254,7 @@ func _ready() -> void:
 		elif a == "--path": path_passes = 3000.0
 		elif a.begins_with("--path="): path_passes = float(a.get_slice("=", 1))
 		elif a.begins_with("--burn="): burn_age = float(a.get_slice("=", 1))
+		elif a.begins_with("--graze="): graze = float(a.get_slice("=", 1))
 		elif a == "--no-rock-foot": no_rock_foot = true
 		elif a == "--far=0": no_far = true
 		elif a == "--far": far_view = true
@@ -254,6 +267,15 @@ func _ready() -> void:
 		elif a == "--lone":
 			forest = true
 			clearing = 2
+		elif a == "--trails": trails_view = true
+		elif a.begins_with("--deer-wood="):
+			deer_wood = float(a.get_slice("=", 1))
+			graze = deer_wood
+			forest = true
+			stand = "beech"
+			stand_set = true
+			clearing = 1
+			SIZE = 144.0 # The wood all round to the eye's horizon.
 		elif a == "--clearing" or a == "--clearing=0":
 			forest = true
 			clearing = 0 if a.ends_with("=0") else 1
@@ -468,6 +490,15 @@ func _ready() -> void:
 				g.rules = r
 				g.canopy_field = g.get_path_to(cover)
 				g.undergrowth_field = g.get_path_to(cover) # Thinned under the bracken and bramble stands.
+		if graze >= 0.0:
+			var st: WorldStand = WorldContracts.get_stand()
+			st.clear_browse()
+			if deer_wood >= 0.0:
+				st.add_browse(Vector3(CLEARING_C.x, 0.0, CLEARING_C.y), 60.0, deer_wood, 1.8) # The clearing and the wood round it.
+			else:
+				st.add_browse(Vector3(24.0, 0.0, 22.0) if far_view else Vector3(5.0, 0.0, 14.0), 6.5, graze, 1.8)
+		if trails_view:
+			_set_trails.call_deferred()
 		if burn_age >= 0.0:
 			var scar := WorldBurnScar3D.new()
 			scar.age_years = burn_age
@@ -585,12 +616,17 @@ void fragment() {
 	wp.material = wmat
 	water.mesh = wp
 	water.position.y = -0.6
-	add_child(water)
+	if deer_wood < 0.0: # The deer wood's view looks away from the pond: no lake plane to the horizon.
+		add_child(water)
 	var env := Environment.new()
 	# A sky, not a flat colour: raster ambient and path traced sky light then come from the same place.
 	var sky := Sky.new()
 	var psm := ProceduralSkyMaterial.new()
 	sky.sky_material = psm
+	if deer_wood >= 0.0:
+		# Below the horizon the wood goes on: a dark wood floor, not a grey void.
+		psm.ground_horizon_color = Color(0.1, 0.12, 0.07)
+		psm.ground_bottom_color = Color(0.06, 0.05, 0.03)
 	if farmland:
 		# The sky's ground half as the land round the farm, not a dark void below the map's edge.
 		psm.ground_horizon_color = psm.sky_horizon_color
@@ -675,6 +711,9 @@ void fragment() {
 	cam.position = Vector3(6, height(6, 20) + eye_h, 20)
 	add_child(cam)
 	cam.look_at(Vector3(0, -0.5 - 0.6 * (eye_h - 1.7), -8))
+	if graze >= 0.0 and not far_view:
+		cam.position = Vector3(6, height(6, 20) + 1.6, 20)
+		cam.look_at(Vector3(4.5, height(4.5, 11.0), 11.0))
 	if crop_fields:
 		cam.position = Vector3(0, height(0, 14) + 16.0, 14)
 		cam.look_at(Vector3(0, height(0, -30), -30))
@@ -740,7 +779,7 @@ void fragment() {
 func _set_clearing() -> void:
 	for sp in cover.biome.species:
 		var ps := sp as PlantSpecies
-		if ps.canopy_radius > 0.0:
+		if ps.canopy_radius > 0.0 or deer_trees.has(ps):
 			ps.patch_scale = 0.0
 			ps.mask_channel = 0 if clearing == 1 else -1
 			if clearing == 2:
@@ -753,14 +792,49 @@ func _set_clearing() -> void:
 		for x in res:
 			var w := Vector2((x + 0.5) / res * SIZE - SIZE * 0.5, (y + 0.5) / res * SIZE - SIZE * 0.5) - CLEARING_C
 			var a := atan2(w.y, w.x)
-			var r := 11.0 + 2.5 * sin(3.0 * a) + 1.5 * sin(5.0 * a + 1.0)
+			var r := (20.0 if deer_wood >= 0.0 else 11.0) + 2.5 * sin(3.0 * a) + 1.5 * sin(5.0 * a + 1.0)
 			var v := smoothstep(r - 1.5, r + 1.5, w.length())
 			img.set_pixel(x, y, Color(v, v, v, 1.0))
 	cover.density_mask = ImageTexture.create_from_image(img)
 	cover.density_mask_rect = Rect2(-SIZE * 0.5, -SIZE * 0.5, SIZE, SIZE)
 
+# Game trails between five places round the meadow (clear of the pond), published for every field; the eye on the
+# busiest stretch, 1.6 m up, looking 12 m along it.
+func _set_trails() -> void:
+	var goals := PackedVector3Array([Vector3(-30, 0, 30), Vector3(25, 0, 32), Vector3(30, 0, -5), Vector3(-28, 0, -2), Vector3(4, 0, 40)])
+	var trails: Array = VegetationField3D.make_game_trails(dm, Rect2(-SIZE * 0.5, -SIZE * 0.5, SIZE, SIZE), goals, {"seed": 2})
+	var st: WorldStand = WorldContracts.get_stand()
+	st.set_trails(trails)
+	var best: Dictionary = {}
+	var best_score := -1.0
+	for t in trails:
+		var pts: PackedVector3Array = t["points"]
+		var score: float = t["passes"] * minf(pts.size(), 40)
+		if pts.size() > 12 and score > best_score:
+			best_score = score
+			best = t
+	print("GRASS_TRAILS %d pieces, busiest %.0f passes" % [trails.size(), best.get("passes", 0.0)])
+	if best.is_empty():
+		return
+	var bp: PackedVector3Array = best["points"]
+	var e := bp[2]
+	var k := 2
+	while k < bp.size() - 1 and Vector2(bp[k].x - e.x, bp[k].z - e.z).length() < 12.0:
+		k += 1
+	cam.position = Vector3(e.x, height(e.x, e.z) + 1.6, e.z)
+	cam.look_at(Vector3(bp[k].x, height(bp[k].x, bp[k].z) + 0.2, bp[k].z))
+
 # 40 m up beside the clearing, looking down across it to its far edge and the wood beyond.
 func _frame_clearing() -> void:
+	if deer_wood >= 0.0:
+		# At eye height (1.6 m) in the clearing's near half, looking across it to the far edge: the trees' browse line
+		# and the cropped sward between.
+		var e2 := CLEARING_C + Vector2(1.0, -5.0)
+		var t2 := CLEARING_C + Vector2(-1.0, 20.0)
+		cam.fov = 70.0
+		cam.position = Vector3(e2.x, height(e2.x, e2.y) + 1.6, e2.y)
+		cam.look_at(Vector3(t2.x, height(t2.x, t2.y) + 6.5, t2.y))
+		return
 	# From above the pond side, steep and narrow, so the wood frames the clearing and neither
 	# the pond nor the map's edge is in view.
 	var eye := CLEARING_C + Vector2(0.0, -13.0)
@@ -1247,6 +1321,12 @@ func _cover_biome() -> Biome:
 	b.species = [flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry, tall, tall_dry]
 	if OS.get_environment("GRASS_DIAG").contains("notall"):
 		b.species = b.species.slice(0, 10)
+	if graze >= 0.0:
+		# Deer grazing (PlantSpecies.RULE_BROWSE, as make_floor's sets): the tall grasses and palatable herbs go where
+		# the pressure is high; rosettes (plantain, clover, sedge) and the unpalatable nettle, dock and thistle stay.
+		for sp in [flowers, tussock, yarrow, dry, tall, tall_dry]:
+			(sp as PlantSpecies).set_rule_range(PlantSpecies.RULE_BROWSE, Vector2(0.0, 0.45))
+			(sp as PlantSpecies).set_rule_fade(PlantSpecies.RULE_BROWSE, 0.25)
 	if forest:
 		for sp in b.species:
 			(sp as PlantSpecies).set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 0.4))
@@ -1375,6 +1455,20 @@ func _stand_floor() -> Array:
 
 # The wood's stand-in trees by --stand. Conifers set canopy_conifer, which the floor reads.
 func _stand_trees() -> Array:
+	if deer_wood >= 0.0:
+		# Real trees (TreeGenerator.make_stand), one mesh a species, no near leaf cards (memory).
+		var tg := TreeGenerator.new()
+		tg.near_leaf_range = 0.0
+		tg.near_needle_range = 0.0
+		tg.fire_variants = false
+		tg.lightning_variants = false
+		var which := TreeGenerator.STAND_DEER_WOOD if deer_wood > 0.0 else TreeGenerator.STAND_BEECH
+		var tb: Biome = tg.make_stand(which, 2)
+		deer_trees = Array(tb.species)
+		# The clearing's edge (make_edge, by the canopy's edge distance): unbrowsed, a mantle of shrubs and low-limbed
+		# edge trees; under the deer, edge trees clipped to the browse line and no mantle.
+		var eb: Biome = tg.make_edge(which, 2)
+		return deer_trees + Array(eb.species)
 	match stand:
 		"spruce", "larch": return [_conifer_species(false)]
 		"pine": return [_conifer_species(true)]
@@ -2539,6 +2633,8 @@ func _process(dt: float) -> void:
 		print("GRASS_STILL frozen grass=%s cover=%s memory %.0f MB" % [grass.is_still_frozen(), cover.is_still_frozen() if cover else "-", OS.get_static_memory_usage() / 1048576.0])
 	if prims:
 		await _print_prims()
+	# CPU and GPU memory at the capture (the path tracer's CPU copies of MultiMesh records count in static memory).
+	print("GRASS_MEM static_mb=%.1f video_mb=%.1f" % [Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0, Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0])
 	if not out.is_empty():
 		if burn_age >= 0.0 and OS.get_environment("GRASS_NO_FLUSH") != "":
 			# The before frame: the regrowth flush off (its colour alone).

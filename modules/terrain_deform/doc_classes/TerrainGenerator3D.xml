@@ -409,11 +409,24 @@
 				Water leaving the ground at a position for the rivers, in mm: in [param month] (0 January to 11 December), or a year with -1. A monthly water balance (McCabe and Markstrom 2007) of the [member climate_recipe]'s climate: rain and snow split by temperature, the snowpack melting by degree days and sunshine (Hock 1999), a soil water store losing Thornthwaite evapotranspiration (Thornthwaite and Mather 1957), a share of the rain running off at once and the rest of the surplus through a groundwater store. Without a recipe, [member river_runoff].
 			</description>
 		</method>
+		<method name="get_sand_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Loose sand depth (m) at [param global_position] (x and z) on the dune belts and sand seas: the dunes' and the sea's sand over the ground they were grown on, 0 on bare interdune floors; -1 off the dune fields. Published to shaders as [code]terrain_sand_depth_map[/code] (see [method get_sand_shader_code]); materials use it for the dunes' colour (coarse dark interdune flats).
+			</description>
+		</method>
 		<method name="get_sand_sea_height" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
 			<description>
 				Sand (m) the sand sea added to the ground at [param global_position] (x and z); 0 outside [member sand_sea_rect].
+			</description>
+		</method>
+		<method name="get_sand_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				Shader code declaring the [code]terrain_sand_depth_map[/code] and [code]terrain_sand_depth_rect[/code] shader globals and a function [code]float terrain_sand_depth(vec3 world_pos)[/code] returning what [method get_sand_depth_at] returns (-1 with no generator).
 			</description>
 		</method>
 		<method name="get_scree_sorting" qualifiers="const">

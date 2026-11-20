@@ -168,9 +168,13 @@ void PlantGenerator::_add_leaf(Surface p_surface, const Transform3D &p_base, con
 	const int first = b.verts.size();
 	Basis f = p_base.basis.orthonormalized();
 	Vector3 p = p_base.origin;
-	const float step = p_leaf.length / n;
+	// A grazed or bitten leaf ends short of its tip: the rows stop at span, the outline (and the texture's) unchanged.
+	const float span = 1.0f - CLAMP(p_leaf.cut, 0.0f, 0.9f);
+	const float step = p_leaf.length * span / n;
+	// The torn edge runs slantwise: one side a little shorter.
+	const float tear = span < 1.0f ? (wr() - 0.5f) * 0.6f : 0.0f;
 	for (int i = 0; i <= n; i++) {
-		const float t = float(i) / n;
+		const float t = span * float(i) / n;
 		const float lw = _leaf_width(p_leaf, t);
 		const float hw = 0.5f * p_leaf.width * lw;
 		float side_hw[2] = { hw * (1.0f - asym), hw * (1.0f + asym) }; // Left (c = 0), right (c = 2).
@@ -192,8 +196,16 @@ void PlantGenerator::_add_leaf(Surface p_surface, const Transform3D &p_base, con
 		const Vector3 y = f.get_column(1);
 		const float wind = MIN(1.0f, p_wind_base + (1.0f - p_wind_base) * t);
 		const float ao = p_ao * (0.75f + 0.25f * t);
-		const Vector3 row[3] = { p - x * side_hw[0] + y * (p_leaf.fold * side_hw[0]), p, p + x * side_hw[1] + y * (p_leaf.fold * side_hw[1]) };
-		const float dead_tip = dieback > 0.0f ? Math::smoothstep(1.0f - dieback, 1.0f - dieback * 0.6f, t) : 0.0f;
+		Vector3 row[3] = { p - x * side_hw[0] + y * (p_leaf.fold * side_hw[0]), p, p + x * side_hw[1] + y * (p_leaf.fold * side_hw[1]) };
+		float dead_tip = dieback > 0.0f ? Math::smoothstep(1.0f - dieback, 1.0f - dieback * 0.6f, t) : 0.0f;
+		if (span < 1.0f && i == n) {
+			// The torn end: slanted, and the bruised rim dries pale brown within days.
+			row[0] -= f.get_column(2) * (step * MAX(tear, 0.0f));
+			row[2] -= f.get_column(2) * (step * MAX(-tear, 0.0f));
+			dead_tip = MAX(dead_tip, 0.55f);
+		} else if (span < 1.0f && i == n - 1) {
+			dead_tip = MAX(dead_tip, 0.15f);
+		}
 		for (int c = 0; c < 3; c++) {
 			b.verts.push_back(row[c]);
 			// Planar across the blade (u = 0.5 at the midrib, 0 and 1 at the widest point), so the
@@ -210,7 +222,7 @@ void PlantGenerator::_add_leaf(Surface p_surface, const Transform3D &p_base, con
 		}
 		if (i < n) {
 			// Curl down along the length, twist about the midrib (parallel transport otherwise).
-			f = Basis(f.get_column(2), p_leaf.twist / n) * Basis(x, p_leaf.bend / n) * f;
+			f = Basis(f.get_column(2), p_leaf.twist * span / n) * Basis(x, p_leaf.bend * span / n) * f;
 			f.orthonormalize();
 			p += f.get_column(2) * step;
 		}
@@ -736,6 +748,7 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 			return 600.0f;
 		case PRESET_GROUND_IVY: // Creeping runners rooting at the nodes, as clover.
 		case PRESET_CLOVER:
+		case PRESET_GRAZED_LAWN: // Bent and red fescue lawns take treading as they take grazing.
 			return 500.0f;
 		case PRESET_SEDGE:
 		case PRESET_COCKSFOOT:
@@ -801,6 +814,7 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 		case PRESET_WOOD_SORREL:
 		case PRESET_MARSH_MARIGOLD:
 		case PRESET_BRAMBLE:
+		case PRESET_RASPBERRY:
 		case PRESET_DWARF_WILLOW:
 		case PRESET_MOSS_CAMPION:
 		case PRESET_SAXIFRAGE:
@@ -871,6 +885,7 @@ float PlantGenerator::get_burn_recovery(Preset p_preset) {
 			return 0.0f;
 		case PRESET_SEDGE:
 		case PRESET_COCKSFOOT:
+		case PRESET_GRAZED_LAWN:
 		case PRESET_TIMOTHY:
 		case PRESET_DRY_GRASS:
 		case PRESET_REED:
@@ -887,6 +902,7 @@ float PlantGenerator::get_burn_recovery(Preset p_preset) {
 		case PRESET_BRACKEN:
 		case PRESET_NETTLE:
 		case PRESET_BRAMBLE:
+		case PRESET_RASPBERRY:
 			return 1.2f;
 		case PRESET_HEATHER:
 		case PRESET_BELL_HEATHER:
@@ -1813,15 +1829,21 @@ void PlantGenerator::_build_dock() {
 	seed.bend = 0.0f;
 	seed.segments = 2;
 	auto whorls = [&](const LocalVector<Transform3D> &p_fr, float p_from, float p_to, float p_wind) {
-		const int n = int((p_to - p_from) * 26.0f) + 2;
+		// Dense, uneven whorls of hanging fruits on short stalks (not even rungs of four; see sorrel).
+		const int n = int((p_to - p_from) * 30.0f) + 2;
 		for (int k = 0; k < n; k++) {
-			const float s = Math::lerp(p_from, p_to, float(k) / (n - 1));
+			const float s = CLAMP(Math::lerp(p_from, p_to, (float(k) + _rand(-0.4f, 0.4f)) / (n - 1)), p_from, p_to);
 			const Transform3D at = _frame_at(p_fr, s);
 			const float a0 = _rand(0.0f, Math::TAU);
-			for (int j = 0; j < 4; j++) {
-				const float a = a0 + j * Math::TAU / 4.0f;
+			const int m = int(_rand(3.0f, 7.99f));
+			for (int j = 0; j < m; j++) {
+				const float a = a0 + j * Math::TAU / m + _rand(-0.5f, 0.5f);
 				const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame((radial - at.basis.get_column(2) * 0.6f).normalized(), at.basis.get_column(2)), at.origin + radial * 0.002f), seed, p_wind);
+				const Vector3 droop = (radial * _rand(0.4f, 1.0f) - at.basis.get_column(2) * _rand(0.3f, 1.2f)).normalized();
+				Leaf f = seed;
+				f.length = f.width = _rand(0.003f, 0.0045f);
+				const Color tint = Color(1, 1, 1).lerp(Color(0.75f, 0.62f, 0.48f), _rand(0.0f, 0.7f));
+				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(droop, at.basis.get_column(2)), at.origin + radial * 0.0015f + droop * _rand(0.001f, 0.005f)), f, p_wind, 1.0f, tint);
 			}
 		}
 	};
@@ -2456,14 +2478,30 @@ void PlantGenerator::_build_bracken() {
 // alternate leaves of three or five toothed leaflets on a stalk, and clusters of berries near the
 // tips, red ripening to black.
 void PlantGenerator::_build_bramble() {
-	const int canes = int(_rand(5.0f, 9.0f));
+	// Deer browsing (_browse; Kirby 2001, Gill and Fuller 2007: bramble is the winter staple of woodland deer): fewer,
+	// shorter canes in a low hummock, leaves eaten whole or in part, cane tips bitten blunt, little flower or fruit.
+	const float browse = _browse();
+	const int canes = int(_rand(5.0f, 9.0f) * (1.0f - 0.4f * browse));
 	auto compound = [&](const Transform3D &p_at, const Vector3 &p_radial, float p_s, float p_size) -> void {
 		// Leaf stalk, held out and up; leaflets fan from its tip, facing the light.
 		const Vector3 out = (p_radial + Vector3(0, 0.7f, 0) + p_at.basis.get_column(2) * 0.3f).normalized();
 		Transform3D pb(organ_frame(out, Vector3(0, 1, 0)), p_at.origin);
+		if (browse > 0.0f && rng.randf() < 0.25f * browse) {
+			// Eaten whole: a stalk stub, torn.
+			_add_stem(pb, _rand(0.01f, 0.03f), 0.0015f, 0.0013f, 0.1f, 1, p_s * 0.6f);
+			return;
+		}
 		const Transform3D tip = _add_stem(pb, _rand(0.035f, 0.07f), 0.0015f, 0.0012f, 0.3f, 2, p_s * 0.6f);
 		const int leaflets = rng.randf() < 0.4f ? 5 : 3;
 		for (int q = 0; q < leaflets; q++) {
+			float cut = 0.0f;
+			if (browse > 0.0f) {
+				const float r = rng.randf();
+				if (r < 0.18f * browse) {
+					continue; // A leaflet bitten off.
+				}
+				cut = r < 0.75f * browse ? _rand(0.25f, 0.65f) : 0.0f;
+			}
 			const float spread = (float(q) - (leaflets - 1) * 0.5f) * (leaflets == 5 ? 0.75f : 1.0f);
 			const Vector3 f = (Basis(Vector3(0, 1, 0), spread).xform(tip.basis.get_column(2) * Vector3(1, 0, 1)) + Vector3(0, 0.15f, 0)).normalized();
 			Leaf l;
@@ -2476,11 +2514,16 @@ void PlantGenerator::_build_bramble() {
 			l.fold = 0.25f;
 			l.bend = _rand(0.4f, 0.8f);
 			l.segments = 7;
+			l.cut = cut;
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(f, Vector3(0, 1, 0)), tip.origin), l, Math::lerp(0.3f, 1.0f, p_s), Math::lerp(0.75f, 1.0f, p_s));
 		}
 	};
 	for (int c = 0; c < canes; c++) {
-		Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.25f, 1.48f));
+		// (Drawn in this order to keep the unbrowsed canes as they were.)
+		const float cane_el = _rand(1.25f, 1.48f);
+		const float cane_az = _rand(0.0f, Math::TAU);
+		// Browsed canes spread low from the stool instead of arching up.
+		Transform3D base = stem_base(cane_az, browse > 0.0f ? Math::lerp(cane_el, cane_el * 0.55f, browse) : cane_el);
 		base.origin = Vector3(_rand(-0.1f, 0.1f), 0.0f, _rand(-0.1f, 0.1f));
 		float len = _rand(0.9f, 1.9f);
 		float arch = _rand(1.7f, 2.3f);
@@ -2496,8 +2539,32 @@ void PlantGenerator::_build_bramble() {
 				}
 			}
 		}
+		bool bitten = false;
+		if (browse > 0.0f) {
+			// Kept low: the cane is bitten back each winter to the hummock (about 0.3-0.6 m).
+			const float keep = Math::lerp(1.0f, _rand(0.35f, 0.6f), browse);
+			len *= keep;
+			arch *= keep;
+			bitten = rng.randf() < browse;
+		}
 		const LocalVector<Transform3D> fr = _stem_frames(base, len, arch, 14);
-		_add_stem(base, len, 0.0045f, 0.002f, arch, 14, 0.0f);
+		const Transform3D cane_tip = _add_stem(base, len, 0.0045f, 0.002f, arch, 14, 0.0f);
+		if (bitten) {
+			// The bite leaves a blunt end; two side buds behind it push short shoots with small leaves.
+			const int shoots = int(_rand(2.0f, 5.0f));
+			for (int q = 0; q < shoots; q++) {
+				const Transform3D at = _frame_at(fr, _rand(0.55f, 0.95f));
+				const float b = _rand(0.0f, Math::TAU);
+				const Vector3 d = (at.basis.get_column(0) * Math::cos(b) + at.basis.get_column(1) * Math::sin(b) + Vector3(0, 0.8f, 0)).normalized();
+				Transform3D sb(organ_frame(d, Vector3(0, 1, 0)), at.origin);
+				const float slen = _rand(0.05f, 0.14f);
+				const LocalVector<Transform3D> sf = _stem_frames(sb, slen, 0.3f, 3);
+				_add_stem(sb, slen, 0.0022f, 0.0012f, 0.3f, 3, 0.8f);
+				const Transform3D st = _frame_at(sf, 1.0f);
+				compound(st, st.basis.get_column(0), 0.95f, 0.55f);
+			}
+		}
+		(void)cane_tip;
 		const int nodes = int(len / 0.075f);
 		float a = _rand(0.0f, Math::TAU);
 		for (int k = 0; k < nodes; k++) {
@@ -2510,7 +2577,7 @@ void PlantGenerator::_build_bramble() {
 			const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
 			compound(at, radial, s, Math::lerp(1.0f, 0.65f, s));
 			// Flowering laterals from the arch: short shoots with their own leaves.
-			if (s > 0.25f && s < 0.85f && rng.randf() < 0.4f) {
+			if (s > 0.25f && s < 0.85f && rng.randf() < 0.4f * (1.0f - browse)) {
 				Transform3D lb(organ_frame((radial + Vector3(0, 0.9f, 0)).normalized(), Vector3(0, 1, 0)), at.origin);
 				const float llen = _rand(0.12f, 0.3f);
 				const LocalVector<Transform3D> lf = _stem_frames(lb, llen, 0.4f, 4);
@@ -2524,12 +2591,128 @@ void PlantGenerator::_build_bramble() {
 				}
 			}
 			// Berry clusters on the upper side of the arch.
-			if (s > 0.35f && s < 0.75f && rng.randf() < 0.35f) {
+			if (s > 0.35f && s < 0.75f && rng.randf() < 0.35f * (1.0f - browse)) {
 				const int berries = int(_rand(3.0f, 8.0f));
 				for (int q = 0; q < berries; q++) {
 					const Vector3 o = at.origin + radial * 0.02f + Vector3(_rand(-0.02f, 0.02f), _rand(-0.03f, 0.0f), _rand(-0.02f, 0.02f));
 					// A drupelet cluster: a small dome (berry colour on the petal surface).
 					_add_head(SURFACE_PETAL, Transform3D(organ_frame(Vector3(0, -1, 0), Vector3(1, 0, 0)), o), _rand(0.006f, 0.009f), _rand(0.009f, 0.013f));
+				}
+			}
+		}
+	}
+}
+
+// Raspberry (Rubus idaeus), the clearing bramble (Grime et al. 2007; Ellenberg light 7): canes suckering up from
+// spreading roots in a loose clump, upright to 1-1.8 m and nodding at the tip, with pinnate leaves of three to five
+// toothed leaflets, and on the second-year canes short flowering laterals with red fruit.
+void PlantGenerator::_build_raspberry() {
+	// Deer browsing (_browse): canes bitten at the leader and bushy from the buds below it, leaves eaten, little fruit.
+	const float browse = _browse();
+	const int canes = int(_rand(6.0f, 12.0f));
+	auto compound = [&](const Transform3D &p_at, const Vector3 &p_radial, float p_s, float p_size) -> void {
+		const Vector3 out = (p_radial + Vector3(0, 0.45f, 0)).normalized();
+		Transform3D pb(organ_frame(out, Vector3(0, 1, 0)), p_at.origin);
+		const float rachis = _rand(0.06f, 0.1f) * p_size;
+		const LocalVector<Transform3D> rf = _stem_frames(pb, rachis, 0.5f, 3);
+		const Transform3D tip = _add_stem(pb, rachis, 0.0016f, 0.0011f, 0.5f, 3, p_s * 0.6f);
+		const int pairs = rng.randf() < 0.45f ? 2 : 1; // Three or five leaflets.
+		auto leaflet = [&](const Transform3D &p_from, const Vector3 &p_dir, float p_len) {
+			float cut = 0.0f;
+			if (browse > 0.0f) {
+				const float r = rng.randf();
+				if (r < 0.3f * browse) {
+					return; // Bitten off.
+				}
+				cut = r < 0.7f * browse ? _rand(0.25f, 0.6f) : 0.0f;
+			}
+			Leaf l;
+			l.cut = cut;
+			l.shape = LEAF_OVATE;
+			l.length = p_len;
+			l.width = l.length * 0.55f;
+			l.petiole = 0.05f;
+			l.lobes = 12;
+			l.lobe_depth = 0.08f; // Doubly serrate.
+			l.fold = 0.3f;
+			l.bend = _rand(0.3f, 0.6f);
+			l.segments = 7;
+			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((p_dir + Vector3(0, 0.1f, 0)).normalized(), Vector3(0, 1, 0)), p_from.origin), l, Math::lerp(0.3f, 1.0f, p_s), Math::lerp(0.75f, 1.0f, p_s));
+		};
+		// The terminal leaflet, the biggest, on its own stalk; lateral pairs sessile along the rachis.
+		leaflet(tip, tip.basis.get_column(2), _rand(0.1f, 0.14f) * p_size);
+		for (int q = 0; q < pairs; q++) {
+			const Transform3D at = _frame_at(rf, q == 0 ? 0.55f : 0.25f);
+			const Vector3 side = at.basis.get_column(0);
+			const Vector3 fw = at.basis.get_column(2);
+			const float len = _rand(0.08f, 0.11f) * p_size * (q == 0 ? 1.0f : 0.85f);
+			leaflet(at, (side + fw * 0.5f).normalized(), len);
+			leaflet(at, (-side + fw * 0.5f).normalized(), len);
+		}
+	};
+	for (int c = 0; c < canes; c++) {
+		// Suckers: canes come up apart over the clump, upright with a slight outward lean.
+		const float ca = _rand(0.0f, Math::TAU);
+		const float cr = _rand(0.0f, 0.35f);
+		Transform3D base = stem_base(ca, Math::PI * 0.5f - _rand(0.06f, 0.2f)); // Elevation: nearly upright.
+		base.origin = Vector3(Math::cos(ca) * cr, 0.0f, Math::sin(ca) * cr);
+		const bool second_year = rng.randf() < 0.5f; // Floricanes fruit, then die.
+		float len = _rand(0.8f, 1.7f) * (second_year ? 1.0f : 0.85f);
+		float nod = _rand(0.25f, 0.5f); // The tip nods over.
+		const bool bitten = browse > 0.0f && rng.randf() < 0.3f + 0.7f * browse;
+		if (bitten) {
+			len *= Math::lerp(1.0f, _rand(0.3f, 0.55f), browse);
+			nod *= 0.3f; // No soft tip left to nod.
+		}
+		const LocalVector<Transform3D> fr = _stem_frames(base, len, nod, 12);
+		_add_stem(base, len, 0.0055f, 0.0025f, nod, 12, 0.0f);
+		if (bitten) {
+			// Two or three buds below the bite push side shoots: a bushy, flat-topped cane.
+			const int shoots = int(_rand(2.0f, 4.0f));
+			for (int q = 0; q < shoots; q++) {
+				const Transform3D at = _frame_at(fr, _rand(0.7f, 0.95f));
+				const float b = _rand(0.0f, Math::TAU);
+				const Vector3 d = (at.basis.get_column(0) * Math::cos(b) + at.basis.get_column(1) * Math::sin(b) + Vector3(0, 0.9f, 0)).normalized();
+				Transform3D sb(organ_frame(d, Vector3(0, 1, 0)), at.origin);
+				const float slen = _rand(0.08f, 0.22f) * (1.0f - 0.4f * browse);
+				const LocalVector<Transform3D> sf = _stem_frames(sb, slen, 0.4f, 4);
+				_add_stem(sb, slen, 0.0025f, 0.0013f, 0.4f, 4, 0.8f);
+				for (int w = 0; w < 2; w++) {
+					const Transform3D sa = _frame_at(sf, w == 0 ? 0.55f : 1.0f);
+					const float c = b + w * GOLDEN_ANGLE;
+					compound(sa, sa.basis.get_column(0) * Math::cos(c) + sa.basis.get_column(1) * Math::sin(c), 0.9f, 0.7f);
+				}
+			}
+		}
+		const int nodes = int(len / 0.07f);
+		float a = _rand(0.0f, Math::TAU);
+		for (int k = 0; k < nodes; k++) {
+			const float s = (k + 0.7f) / nodes;
+			if (s < 0.18f) {
+				continue; // Bare at the foot, shaded by its neighbours.
+			}
+			const Transform3D at = _frame_at(fr, s);
+			a += GOLDEN_ANGLE;
+			const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
+			compound(at, radial, s, Math::lerp(1.15f, 0.7f, s));
+			if (second_year && s > 0.35f && rng.randf() < 0.45f * (1.0f - browse)) {
+				// A flowering lateral: a short shoot with a few smaller leaves and fruit hanging under it.
+				Transform3D lb(organ_frame((radial + Vector3(0, 0.6f, 0)).normalized(), Vector3(0, 1, 0)), at.origin);
+				const float llen = _rand(0.1f, 0.22f);
+				const LocalVector<Transform3D> lf = _stem_frames(lb, llen, 0.6f, 4);
+				_add_stem(lb, llen, 0.0018f, 0.001f, 0.6f, 4, s);
+				const int ln = int(_rand(2.0f, 4.0f));
+				for (int q = 0; q < ln; q++) {
+					const float u = (q + 0.8f) / ln;
+					const Transform3D la = _frame_at(lf, u);
+					const float b = a + q * GOLDEN_ANGLE;
+					compound(la, la.basis.get_column(0) * Math::cos(b) + la.basis.get_column(1) * Math::sin(b), Math::lerp(s, 1.0f, u), 0.6f);
+				}
+				const Transform3D end = _frame_at(lf, 1.0f);
+				const int fruit = int(_rand(1.0f, 3.0f));
+				for (int q = 0; q < fruit; q++) {
+					const Vector3 o = end.origin + Vector3(_rand(-0.02f, 0.02f), _rand(-0.04f, -0.01f), _rand(-0.02f, 0.02f));
+					_add_head(SURFACE_PETAL, Transform3D(organ_frame(Vector3(0, -1, 0), Vector3(1, 0, 0)), o), _rand(0.007f, 0.009f), _rand(0.009f, 0.012f));
 				}
 			}
 		}
@@ -3635,17 +3818,29 @@ void PlantGenerator::_build_sorrel() {
 	fl.fold = 0.3f;
 	fl.bend = 0.0f;
 	fl.segments = 2;
+	// Loose whorls of drooping flowers on short stalks (Rumex acetosa: whorls of 2 to 8, tepals green
+	// flushed red, the fruiting valves rusty), not even rungs: spacing, count, size, droop and colour
+	// all vary, so a spike reads as a soft rusty haze from a few metres (a regular ladder of flat
+	// petals read as red barcode bars, docs 20 Nov).
 	auto whorls = [&](const LocalVector<Transform3D> &p_fr, float p_from, float p_to, float p_wind) {
-		const Color tint = in_seed ? Color(0.62f, 0.5f, 0.42f) : Color(1, 1, 1);
-		const int n = int((p_to - p_from) * 22.0f) + 2;
+		const int n = int((p_to - p_from) * 26.0f) + 2;
 		for (int k = 0; k < n; k++) {
-			const float s = Math::lerp(p_from, p_to, float(k) / (n - 1));
+			const float s = CLAMP(Math::lerp(p_from, p_to, (float(k) + _rand(-0.4f, 0.4f)) / (n - 1)), p_from, p_to);
 			const Transform3D at = _frame_at(p_fr, s);
 			const float a0 = _rand(0.0f, Math::TAU);
-			for (int j = 0; j < 4; j++) {
-				const float a = a0 + j * Math::TAU / 4.0f;
+			const int m = int(_rand(2.0f, 6.99f) * Math::lerp(1.0f, 0.6f, (s - p_from) / MAX(p_to - p_from, 0.01f)));
+			for (int j = 0; j < MAX(m, 2); j++) {
+				const float a = a0 + j * Math::TAU / MAX(m, 2) + _rand(-0.5f, 0.5f);
 				const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame((radial - at.basis.get_column(2) * 0.5f).normalized(), at.basis.get_column(2)), at.origin + radial * 0.0016f), fl, p_wind, 1.0f, tint);
+				const Vector3 droop = (radial * _rand(0.4f, 1.0f) - at.basis.get_column(2) * _rand(0.3f, 1.2f)).normalized();
+				const float stalk = _rand(0.001f, 0.004f);
+				Leaf f = fl;
+				f.length = f.width = _rand(0.0022f, 0.0036f);
+				// Green flushed red in flower, rust to brown in seed; a little of each on most spikes.
+				const float r = _rand(0.0f, 1.0f);
+				Color tint = in_seed ? Color(0.62f, 0.5f, 0.42f).lerp(Color(0.55f, 0.42f, 0.3f), r) : Color(1, 1, 1).lerp(Color(0.7f, 0.85f, 0.55f), r * r * 0.8f);
+				const Vector3 at_o = at.origin + radial * 0.0012f + droop * stalk;
+				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(droop, at.basis.get_column(2)), at_o), f, p_wind, 1.0f, tint);
 			}
 		}
 	};
@@ -4352,6 +4547,14 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			l.shape = LEAF_ROUND;
 			t.aspect = 0.95f;
 			t.base_tint = Color(0.92f, 0.6f, 0.02f, 0.35f); // Glossy gold, deeper at the base.
+		} else if (preset == PRESET_GRAZED_LAWN) {
+			// The lawn's petal surface carries its white clover leaflets: round, pinnate veins, the pale chevron.
+			l.shape = LEAF_ROUND;
+			t.aspect = 0.9f;
+			t.venation = VENATION_PINNATE;
+			t.vein = petal_color.lerp(Color(0.75f, 0.85f, 0.6f), 0.35f);
+			t.chevron = 0.6f;
+			t.spots = 0.15f;
 		} else if (preset == PRESET_MEADOWSWEET) {
 			t.base_tint = Color(0.9f, 0.88f, 0.62f, 0.3f);
 		} else if (preset == PRESET_BUTTERBUR) {
@@ -4531,6 +4734,7 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			break;
 		case PRESET_COCKSFOOT:
 		case PRESET_TIMOTHY:
+		case PRESET_GRAZED_LAWN:
 			l.shape = LEAF_LINEAR;
 			t.aspect = 0.03f;
 			t.venation = VENATION_PARALLEL;
@@ -4579,6 +4783,7 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.spots = 0.25f;
 			break;
 		case PRESET_BRAMBLE:
+		case PRESET_RASPBERRY:
 			l.shape = LEAF_OVATE;
 			l.lobes = 10;
 			l.lobe_depth = 0.07f;
@@ -6176,6 +6381,11 @@ void PlantGenerator::apply_preset_colors() {
 			centre_color = Color(0.36f, 0.16f, 0.08f); // Ripening stem and branches.
 			petal_color = Color(0.45f, 0.2f, 0.08f); // Winged seeds.
 			break;
+		case PRESET_GRAZED_LAWN:
+			leaf_color = Color(0.12f, 0.27f, 0.08f); // Fresh regrowth after each bite: a bright, even green.
+			stem_color = Color(0.25f, 0.3f, 0.12f);
+			petal_color = Color(0.1f, 0.25f, 0.07f); // White clover leaflets.
+			break;
 		case PRESET_COCKSFOOT:
 			leaf_color = Color(0.14f, 0.27f, 0.12f); // Bluish green.
 			stem_color = Color(0.3f, 0.36f, 0.16f);
@@ -6221,6 +6431,11 @@ void PlantGenerator::apply_preset_colors() {
 			leaf_color = Color(0.09f, 0.22f, 0.05f); // Dark, glossy above.
 			stem_color = Color(0.3f, 0.12f, 0.1f); // Red-purple canes.
 			petal_color = Color(0.06f, 0.03f, 0.05f); // Ripe berries.
+			break;
+		case PRESET_RASPBERRY:
+			leaf_color = Color(0.17f, 0.31f, 0.08f); // Matt, paler than bramble; the downy underside whitish.
+			stem_color = Color(0.36f, 0.32f, 0.22f); // First-year canes glaucous green-brown, bristly.
+			petal_color = Color(0.62f, 0.06f, 0.08f); // Ripe red fruit.
 			break;
 		case PRESET_FOXGLOVE:
 			leaf_color = Color(0.16f, 0.3f, 0.1f);
@@ -6710,6 +6925,12 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_BRAMBLE:
 			_build_bramble();
 			break;
+		case PRESET_RASPBERRY:
+			_build_raspberry();
+			break;
+		case PRESET_GRAZED_LAWN:
+			_build_grazed_lawn();
+			break;
 		case PRESET_FOXGLOVE:
 			_build_foxglove();
 			break;
@@ -7071,7 +7292,9 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		// Also the many-island accents of the burn presets, which meshoptimizer cannot thin either (stochastic
 		// simplification of aggregate detail, Cook et al. 2007): fire moss's capsules, the ash on charred stems and
 		// burnt tussock stubs; their colour holds as the survivors grow to keep the area.
-		const bool island_accents = (preset == PRESET_FIRE_MOSS && s == SURFACE_PETAL) || ((preset == PRESET_CHARRED_STEMS || preset == PRESET_BURNT_TUSSOCK) && s == SURFACE_CENTRE);
+		// And the flower spikes of sorrel and dock: hundreds of tepals a few mm across, which meshoptimizer's
+		// sloppy fallback welded into flat red bars (docs 20 Nov).
+		const bool island_accents = ((preset == PRESET_FIRE_MOSS || preset == PRESET_SORREL || preset == PRESET_DOCK) && s == SURFACE_PETAL) || ((preset == PRESET_CHARRED_STEMS || preset == PRESET_BURNT_TUSSOCK) && s == SURFACE_CENTRE);
 		if (lods && (s == SURFACE_LEAF || island_accents)) {
 			CardSurface cs;
 			if (_card_lods(b, cs)) {
@@ -7111,7 +7334,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		// Sun and shade leaves: leaves and stems change colour with their light, petals and litter do not.
 		mat->set_shader_parameter("light_response", s >= SURFACE_PETAL || is_mushroom(preset) || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS ? 0.0f : 1.0f);
 		// Stiffer the bigger and woodier: bramble canes and bracken stipes barely lean in the wind.
-		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL || preset == PRESET_MARRAM || preset == PRESET_SEA_HOLLY || preset == PRESET_CORD_GRASS || preset == PRESET_GLASSWORT ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_PINCUSHION_MOSS || preset == PRESET_SOIL_CRUST || preset == PRESET_FIRE_MOSS || preset == PRESET_CHARRED_STEMS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f)));
+		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_RASPBERRY ? 3.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL || preset == PRESET_MARRAM || preset == PRESET_SEA_HOLLY || preset == PRESET_CORD_GRASS || preset == PRESET_GLASSWORT ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_PINCUSHION_MOSS || preset == PRESET_SOIL_CRUST || preset == PRESET_FIRE_MOSS || preset == PRESET_CHARRED_STEMS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f))));
 		im->add_surface(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), Dictionary(), mat, names[s]);
 	}
 	// Distance LODs (meshoptimizer simplification, as the scene importer does): a meadow holds
@@ -7181,6 +7404,15 @@ struct FloorSpec {
 	PlantSpecies::DeadwoodRule deadwood = PlantSpecies::DEADWOOD_AVOID;
 	float deadwood_size = 0.0f; // DEADWOOD_ON: the thinnest log (radius, m); DEADWOOD_BESIDE: the band (m).
 	bool uphill = false; // DEADWOOD_BESIDE: the uphill side only.
+	// Stand age (PlantSpecies.RULE_STAND_AGE, years since a stand-replacing disturbance) and its kinds; defaults: any.
+	float stand_from = -1.0f, stand_to = 100000.0f, stand_fade = 0.0f;
+	float kind_min = 0.0f, kind_max = 100.0f;
+	// Forest edge (PlantSpecies.RULE_FOREST_EDGE, metres inside the canopy's edge); defaults: any.
+	float edge_from = -100000.0f, edge_to = 100000.0f, edge_fade = 0.0f;
+	// Deer browsing pressure (PlantSpecies.RULE_BROWSE, 0..1); defaults: any. browse_mesh > 0: the meshes are built
+	// browsed at that pressure (the season's "browse").
+	float browse_from = 0.0f, browse_to = 1.0f, browse_fade = 0.0f;
+	float browse_mesh = 0.0f;
 };
 } // namespace
 
@@ -7541,6 +7773,48 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		if (broadleaf) {
 			set.push_back(log_leaves);
 		}
+		// Clearings (docs/ideas/vegetation.md, "Floors that follow forest age"; Wohlgemuth et al. 2002 on Swiss
+		// windthrows): where a storm or beetles killed the stand (WorldStand.stand_age_at, kinds wind and beetle; fire
+		// has make_burn), light-demanding ruderals take the opened ground in the first years (fireweed, foxglove,
+		// nettle on the nutrient flush), raspberry and tall clearing grass (wood small-reed) peak at three to ten
+		// years and hold for a decade or two, and all of it thins out as the young stand closes over it (shade).
+		if (p_stand != FLOOR_HEDGEROW && p_stand != FLOOR_MEDITERRANEAN) {
+			auto clearing = [&](P::Preset p_preset, float p_spacing, float p_footprint, float p_density, float p_smin, float p_smax, float p_patch, float p_cover, float p_vis, float p_from, float p_to, float p_fade) {
+				FloorSpec f = { p_preset, p_spacing, p_footprint, p_density, p_smin, p_smax, p_patch, p_cover, 0.0f, 0.5f, 0.15f, 0.0f, 1.0f, p_vis };
+				f.stand_from = p_from;
+				f.stand_to = p_to;
+				f.stand_fade = p_fade;
+				f.kind_min = 2.0f; // Wind and beetle.
+				f.kind_max = 3.0f;
+				set.push_back(f);
+			};
+			clearing(P::PRESET_FIREWEED, 0.8f, 0.15f, 0.5f, 0.9f, 1.3f, 12.0f, 0.5f, 90.0f, 0.5f, 10.0f, 3.0f);
+			clearing(P::PRESET_RASPBERRY, 0.9f, 0.35f, 0.75f, 0.8f, 1.2f, 10.0f, 0.5f, 70.0f, 2.0f, 18.0f, 5.0f);
+			clearing(P::PRESET_COCKSFOOT, 0.4f, 0.1f, 0.7f, 1.3f, 1.8f, 14.0f, 0.55f, 60.0f, 1.0f, 20.0f, 5.0f);
+			if (p_stand != FLOOR_BOREAL_TAIGA && p_stand != FLOOR_SUBALPINE) {
+				clearing(P::PRESET_FOXGLOVE, 1.2f, 0.25f, 0.3f, 0.9f, 1.2f, 9.0f, 0.35f, 60.0f, 1.0f, 6.0f, 2.0f);
+				clearing(P::PRESET_NETTLE, 0.5f, 0.15f, 0.5f, 0.9f, 1.3f, 6.0f, 0.3f, 35.0f, 1.0f, 10.0f, 3.0f);
+			}
+			// Forest edges (Harper et al. 2005; Wicklein et al. 2020 on edge herb layers): side light reaches 10-30 m
+			// under the canopy, so light-demanding grasses, bramble and nettle (nutrients drifting in from the open)
+			// grow on under crowns near the edge that would shade them out deeper in. They read the edge from the
+			// field's (or its canopy field's) forest; without one they are not placed.
+			const bool broad = p_stand != FLOOR_PINE_HEATH && p_stand != FLOOR_SUBALPINE && p_stand != FLOOR_PINE_HEMLOCK && p_stand != FLOOR_MONTANE_CONIFER && p_stand != FLOOR_BOREAL_TAIGA;
+			auto edge = [&](P::Preset p_preset, float p_spacing, float p_footprint, float p_density, float p_smin, float p_smax, float p_patch, float p_cover, float p_vis, float p_from, float p_to, float p_fade) {
+				FloorSpec f = { p_preset, p_spacing, p_footprint, p_density, p_smin, p_smax, p_patch, p_cover, 0.0f, 0.85f, 0.15f, 0.0f, 1.0f, p_vis };
+				f.edge_from = p_from;
+				f.edge_to = p_to;
+				f.edge_fade = p_fade;
+				set.push_back(f);
+			};
+			edge(broad ? P::PRESET_COCKSFOOT : P::PRESET_DRY_GRASS, 0.3f, 0.08f, 0.75f, 0.9f, 1.4f, 8.0f, 0.6f, 40.0f, -8.0f, 12.0f, 10.0f);
+			if (broad) {
+				edge(P::PRESET_BRAMBLE, 1.4f, 0.6f, 0.7f, 0.8f, 1.2f, 8.0f, 0.45f, 45.0f, -6.0f, 10.0f, 8.0f);
+				edge(P::PRESET_NETTLE, 0.5f, 0.15f, 0.5f, 0.9f, 1.3f, 6.0f, 0.35f, 35.0f, -4.0f, 6.0f, 6.0f);
+			} else {
+				edge(P::PRESET_RASPBERRY, 0.9f, 0.35f, 0.4f, 0.7f, 1.0f, 8.0f, 0.4f, 70.0f, -5.0f, 8.0f, 6.0f);
+			}
+		}
 		// Soil mushrooms last, after everything else (docs/ideas/mushrooms.md): few, so they claim
 		// no ground from the herbs. Mycorrhizal ones under their hosts' crowns (shade) by stand
 		// type (conifer share: fly agaric with spruce, pine and birch, cep, chanterelle and
@@ -7600,6 +7874,65 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 				break;
 		}
 	}
+	// Deer browsing (docs/ideas/vegetation.md, "Deer browsing"; WorldStand.browse_at): appended after the rest so every
+	// other species keeps its seed. Under heavy pressure woods lose bramble and the palatable herbs and turn grassy
+	// and ferny (Gill and Fuller 2007, Kirby 2001, Morecroft et al. 2001 Wytham exclosures, Boulanger et al. 2018);
+	// in clearings and rides deer keep short grazed lawns (Putman 1986; Kuijper et al. 2009).
+	if (p_stand != FLOOR_HEDGEROW && p_stand != FLOOR_MEDITERRANEAN) {
+		const uint32_t base_count = set.size();
+		for (uint32_t i = 0; i < base_count; i++) {
+			FloorSpec &f = set[i];
+			switch (f.preset) {
+				case P::PRESET_BRAMBLE:
+				case P::PRESET_RASPBERRY: {
+					// Full canes where deer are few; past about a third, the bitten low hummocks instead.
+					f.browse_to = 0.35f;
+					f.browse_fade = 0.15f;
+					FloorSpec b = f;
+					b.browse_from = 0.35f;
+					b.browse_to = 1.0f;
+					b.browse_mesh = 0.85f;
+					b.density *= 0.8f;
+					b.scale_min *= 0.9f;
+					b.scale_max *= 0.9f;
+					set.push_back(b);
+				} break;
+				case P::PRESET_WOODRUFF:
+				case P::PRESET_WOOD_ANEMONE:
+				case P::PRESET_VIOLET:
+				case P::PRESET_BILBERRY:
+				case P::PRESET_IVY:
+				case P::PRESET_FIREWEED:
+				case P::PRESET_HERB_ROBERT:
+				case P::PRESET_WOOD_SORREL:
+					// Palatable herbs and dwarf shrubs thin steadily with pressure: about a fifth left at the heaviest.
+					f.browse_to = 0.3f;
+					f.browse_fade = 1.0f;
+					break;
+				case P::PRESET_COCKSFOOT:
+					if (f.stand_from > -1.0f) {
+						f.browse_to = 0.5f; // The tall clearing grass gives way to the deer lawn.
+						f.browse_fade = 0.3f;
+					}
+					break;
+				default:
+					break;
+			}
+		}
+		const bool broad = p_stand != FLOOR_PINE_HEATH && p_stand != FLOOR_SUBALPINE && p_stand != FLOOR_PINE_HEMLOCK && p_stand != FLOOR_MONTANE_CONIFER && p_stand != FLOOR_BOREAL_TAIGA;
+		auto browsed = [&](P::Preset p_preset, float p_spacing, float p_footprint, float p_density, float p_smin, float p_smax, float p_patch, float p_cover, float p_shade_max, float p_vis, float p_from, float p_fade) {
+			FloorSpec f = { p_preset, p_spacing, p_footprint, p_density, p_smin, p_smax, p_patch, p_cover, 0.0f, p_shade_max, 0.15f, 0.0f, 1.0f, p_vis };
+			f.browse_from = p_from;
+			f.browse_fade = p_fade;
+			set.push_back(f);
+		};
+		// Grazed lawns in the light (clearings, rides, open glades), with white clover in them.
+		browsed(P::PRESET_GRAZED_LAWN, 0.2f, 0.06f, 0.95f, 0.9f, 1.15f, 12.0f, 0.8f, 0.45f, 18.0f, 0.45f, 0.2f);
+		browsed(P::PRESET_CLOVER, 0.5f, 0.1f, 0.35f, 0.7f, 1.0f, 6.0f, 0.35f, 0.45f, 25.0f, 0.5f, 0.2f);
+		// Under the crowns the floor goes grassy (unpalatable or grazing-tolerant grasses) and ferny (Dryopteris).
+		browsed(broad ? P::PRESET_COCKSFOOT : P::PRESET_DRY_GRASS, 0.35f, 0.08f, 0.55f, 0.6f, 0.9f, 9.0f, 0.55f, 0.8f, 40.0f, 0.4f, 0.3f);
+		browsed(P::PRESET_FERN, 1.1f, 0.35f, 0.35f, 1.1f, 1.7f, 10.0f, 0.4f, 0.95f, 35.0f, 0.5f, 0.3f);
+	}
 	TypedArray<Resource> out;
 	int seed_base = 1000 + int(p_stand) * 100;
 	for (FloorSpec f : set) {
@@ -7613,7 +7946,13 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		gen->set_preset(f.preset);
 		gen->apply_preset_colors();
 		gen->set_seed(seed_base);
-		gen->set_season(p_season);
+		if (f.browse_mesh > 0.0f) {
+			Dictionary season = p_season.duplicate();
+			season["browse"] = f.browse_mesh;
+			gen->set_season(season);
+		} else {
+			gen->set_season(p_season);
+		}
 		if (f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_SEEDLING) {
 			gen->set_litter_leaves(stand_litter_leaves(p_stand, p_season));
 		}
@@ -7657,8 +7996,8 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			sp->set_margin_width(3.0f);
 			sp->set_margin_scale(0.55f);
 			sp->set_margin_lean(20.0f);
-		} else if (f.preset == P::PRESET_BRAMBLE) {
-			sp->set_sward_shade(0.7f);
+		} else if (f.preset == P::PRESET_BRAMBLE || f.preset == P::PRESET_RASPBERRY) {
+			sp->set_sward_shade(f.preset == P::PRESET_RASPBERRY ? 0.5f : 0.7f);
 			sp->set_litter_color(PlantSpecies::BRAMBLE_LITTER);
 			sp->set_margin_width(2.0f);
 			sp->set_margin_scale(0.7f);
@@ -7682,6 +8021,35 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			sp->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, f.water_max * 0.3f);
 		}
 		sp->set_visibility_range(f.visibility);
+		if (f.stand_from > -1.0f || f.stand_to < 100000.0f) {
+			sp->set_rule_range(PlantSpecies::RULE_STAND_AGE, Vector2(f.stand_from, f.stand_to));
+			sp->set_rule_fade(PlantSpecies::RULE_STAND_AGE, f.stand_fade);
+		}
+		if (f.kind_min > 0.0f || f.kind_max < 100.0f) {
+			sp->set_rule_range(PlantSpecies::RULE_DISTURBANCE, Vector2(f.kind_min, f.kind_max));
+		}
+		if (f.browse_from > 0.0f || f.browse_to < 1.0f) {
+			sp->set_rule_range(PlantSpecies::RULE_BROWSE, Vector2(f.browse_from, f.browse_to));
+			sp->set_rule_fade(PlantSpecies::RULE_BROWSE, f.browse_fade);
+		}
+		if (f.browse_mesh > 0.0f) {
+			sp->set_meta("browsed", f.browse_mesh);
+		}
+		if (f.edge_from > -100000.0f || f.edge_to < 100000.0f) {
+			sp->set_rule_range(PlantSpecies::RULE_FOREST_EDGE, Vector2(f.edge_from, f.edge_to));
+			sp->set_rule_fade(PlantSpecies::RULE_FOREST_EDGE, f.edge_fade);
+		} else if (f.deadwood == PlantSpecies::DEADWOOD_AVOID && (f.preset == P::PRESET_WOOD_SORREL || f.preset == P::PRESET_WOODRUFF || f.preset == P::PRESET_WOOD_ANEMONE || f.preset == P::PRESET_MOSS || f.preset == P::PRESET_FEATHER_MOSS || f.preset == P::PRESET_VIOLET)) {
+			// Shade herbs and forest mosses of the interior thin out over the edge's first 10-20 m, where the side
+			// light dries and warms the floor (Harper et al. 2005); with no forest edge known the rule does nothing.
+			sp->set_rule_range(PlantSpecies::RULE_FOREST_EDGE, Vector2(12.0f, 100000.0f));
+			sp->set_rule_fade(PlantSpecies::RULE_FOREST_EDGE, 18.0f);
+		}
+		if ((f.preset == P::PRESET_MOSS || f.preset == P::PRESET_FEATHER_MOSS) && f.deadwood == PlantSpecies::DEADWOOD_AVOID) {
+			// Forest mosses dry out and die back on an opened floor and build up again over decades as the stand closes
+			// (Hylocomium and Pleurozium; Jonsson and Esseen 1998): thin for the first years after a disturbance.
+			sp->set_rule_range(PlantSpecies::RULE_STAND_AGE, Vector2(6.0f, 100000.0f));
+			sp->set_rule_fade(PlantSpecies::RULE_STAND_AGE, 10.0f);
+		}
 		if ((f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_TWIGS) && f.deadwood == PlantSpecies::DEADWOOD_AVOID) {
 			// Litter lies where the crowns drop it, drifting past their edges into the light
 			// (PlantSpecies.RULE_LITTER), not only in their shade. Twigs fall nearer the trunk.
@@ -7711,7 +8079,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		}
 		// The larger shrubs, dense with thousands of triangles each, turn into impostors past the
 		// range (raster only; docs/ideas/vegetation-lod-streaming.md).
-		if (p_impostor_range > 0.0f && (f.preset == P::PRESET_BRAMBLE || f.preset == P::PRESET_BRACKEN)) {
+		if (p_impostor_range > 0.0f && (f.preset == P::PRESET_BRAMBLE || f.preset == P::PRESET_RASPBERRY || f.preset == P::PRESET_BRACKEN)) {
 			add_impostors(sp, p_impostor_range);
 		}
 		// Ferns, mosses, wood sorrel and seedlings gather at the foot of rocks (nurse objects:
@@ -8018,12 +8386,15 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_CHARRED_STEMS);
 	BIND_ENUM_CONSTANT(PRESET_BURNT_TUSSOCK);
 	BIND_ENUM_CONSTANT(PRESET_REINDEER_LICHEN);
+	BIND_ENUM_CONSTANT(PRESET_RASPBERRY);
+	BIND_ENUM_CONSTANT(PRESET_GRAZED_LAWN);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dunes", "stand", "variants", "textures", "season"), &PlantGenerator::make_dunes, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_desert", "stand", "variants", "textures", "season", "shrubs"), &PlantGenerator::make_desert, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()), DEFVAL(true));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_burn", "stand", "variants", "textures", "season"), &PlantGenerator::make_burn, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_beaver", "stand", "variants", "textures", "season"), &PlantGenerator::make_beaver, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_margin", "stand", "variants", "textures", "season"), &PlantGenerator::make_margin, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
@@ -8078,6 +8449,10 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(BURN_GRASS);
 	BIND_ENUM_CONSTANT(BURN_SCRUB);
 	BIND_ENUM_CONSTANT(BURN_MAX);
+	BIND_ENUM_CONSTANT(BEAVER_POND);
+	BIND_ENUM_CONSTANT(BEAVER_MEADOW);
+	BIND_ENUM_CONSTANT(BEAVER_MAX);
+	BIND_CONSTANT(DISTURBANCE_BEAVER_KIND);
 	BIND_ENUM_CONSTANT(ALPINE_FELLFIELD);
 	BIND_ENUM_CONSTANT(ALPINE_GRASSLAND);
 	BIND_ENUM_CONSTANT(ALPINE_SNOWBED);

@@ -219,6 +219,16 @@
 				Returns the walkers a year that halve a preset's cover on a worn path, from trampling studies (Cole 1995). Plantain 1000, grasses 300, heaths and scrub 40, ferns 30; 0 for presets that are not ground plants.
 			</description>
 		</method>
+		<method name="make_beaver" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.BeaverStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				The plants of a beaver pond or of the meadow it leaves as [PlantSpecies] for a [Biome]. [constant BEAVER_POND] zones by water depth and distance from the shore: floating water lilies over 0.4 to 2 m, bulrush in the shallows, tussock sedge along the flooded margin, then soft rush, marsh marigold and meadowsweet up the shore. [constant BEAVER_MEADOW] grows on a drained pond bed, placed by [constant PlantSpecies.RULE_STAND_AGE] and [constant PlantSpecies.RULE_DISTURBANCE] on ground [method WorldStand.add_disturbance] marks with kind [constant DISTURBANCE_BEAVER_KIND] and an age of years since the pond drained: rush and small sedge on the mud for the first four years, then a dense sedge and tall-grass meadow with meadowsweet, marsh marigold and buttercup. Neither set takes shade over 0.4 to 0.6; the willow and alder that close an old meadow come from the trees.
+			</description>
+		</method>
 		<method name="make_burn" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.BurnStand" />
@@ -282,7 +292,7 @@
 			The kind of plant.
 		</member>
 		<member name="season" type="Dictionary" setter="set_season" getter="get_season" default="{}">
-			The season state as [code]WeatherMap3D.get_season()[/code] returns it; its [code]forcing[/code] (degree days above 5 C since 1 January) and [code]day_of_year[/code] set the flowering of the flowering presets. Each has a window in degree days from the British flowering records: wood anemone, violet and dandelion in early spring, wood sorrel and woodruff in spring, buttercup and sorrel in early summer, foxglove, clover, yarrow, knapweed, wild carrot, scabious and thistle through summer, heather late; daisy, clover, yarrow and herb Robert flower on and off through theirs. Before the window a plant is leaves only (tall flowers are rosettes); each stem then opens in its turn, goes to seed (dandelion clocks, thistledown, buttercup and anemone achenes, foxglove capsules filling the spike from the bottom, wild carrot nests) and, for the tall flowers, dies back to a brown stalk that stands through winter, a share of them into the next spring. Bracken and the woodland fern follow it too: croziers rise and unroll in spring, the fronds stand green through summer, yellow and die with the season's [code]senescence[/code] sum (or a hard frost), lodge under autumn storms and snow, and last year's dead fronds lie flat until the new ones have unrolled. Empty: every stem in flower or, for the tall meadow flowers, a quarter in seed; ferns full and green.
+			The season state as [code]WeatherMap3D.get_season()[/code] returns it; its [code]forcing[/code] (degree days above 5 C since 1 January) and [code]day_of_year[/code] set the flowering of the flowering presets. Each has a window in degree days from the British flowering records: wood anemone, violet and dandelion in early spring, wood sorrel and woodruff in spring, buttercup and sorrel in early summer, foxglove, clover, yarrow, knapweed, wild carrot, scabious and thistle through summer, heather late; daisy, clover, yarrow and herb Robert flower on and off through theirs. Before the window a plant is leaves only (tall flowers are rosettes); each stem then opens in its turn, goes to seed (dandelion clocks, thistledown, buttercup and anemone achenes, foxglove capsules filling the spike from the bottom, wild carrot nests) and, for the tall flowers, dies back to a brown stalk that stands through winter, a share of them into the next spring. Bracken and the woodland fern follow it too: croziers rise and unroll in spring, the fronds stand green through summer, yellow and die with the season's [code]senescence[/code] sum (or a hard frost), lodge under autumn storms and snow, and last year's dead fronds lie flat until the new ones have unrolled. Empty: every stem in flower or, for the tall meadow flowers, a quarter in seed; ferns full and green. A [code]browse[/code] entry (0 to 1) is deer browsing pressure: bramble keeps low spreading canes bitten back with blunt ends and short side shoots, raspberry canes are bitten at the leader and bush out below the bite, leaves are eaten whole or torn, and flowers and fruit grow scarce.
 		</member>
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			Seed of the random variation: each seed gives another plant of the same kind.
@@ -604,7 +614,13 @@
 		<constant name="PRESET_REINDEER_LICHEN" value="96" enum="Preset">
 			Reindeer lichen ([i]Cladonia rangiferina[/i], [i]C. stellaris[/i]): lumpy, cauliflower-like cushions 5 to 10 cm high of densely forked branches, pale ashy grey-green, the tips nodding one way. Carpets the dry boreal pine floor ([constant FLOOR_BOREAL_TAIGA]); crushed underfoot and some 40 years back after a fire.
 		</constant>
-		<constant name="PRESET_MAX" value="97" enum="Preset">
+		<constant name="PRESET_RASPBERRY" value="97" enum="Preset">
+			Raspberry (Rubus idaeus): upright suckering canes of clearings and windthrows, pinnate leaves, red fruit on the second-year canes.
+		</constant>
+		<constant name="PRESET_GRAZED_LAWN" value="98" enum="Preset">
+			A deer lawn: a dense mat of fine bents and fescues grazed to 2 to 8 cm, most blade ends torn and drying pale over bright regrowth. [method PlantGenerator.make_floor] places it in the light where deer browsing is heavy ([constant PlantSpecies.RULE_BROWSE]).
+		</constant>
+		<constant name="PRESET_MAX" value="99" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -714,6 +730,18 @@
 		</constant>
 		<constant name="BURN_MAX" value="3" enum="BurnStand">
 			Number of burn stands.
+		</constant>
+		<constant name="BEAVER_POND" value="0" enum="BeaverStand">
+			An active beaver pond and its shore.
+		</constant>
+		<constant name="BEAVER_MEADOW" value="1" enum="BeaverStand">
+			A drained beaver pond bed, by years since draining.
+		</constant>
+		<constant name="BEAVER_MAX" value="2" enum="BeaverStand">
+			Number of beaver stands.
+		</constant>
+		<constant name="DISTURBANCE_BEAVER_KIND" value="4">
+			The [WorldStand] disturbance kind of a drained beaver pond, which [constant BEAVER_MEADOW] grows on.
 		</constant>
 		<constant name="ALPINE_FELLFIELD" value="0" enum="AlpineStand">
 			Fellfield on exposed ridges blown free of snow: moss campion cushions, purple saxifrage and mountain avens mats far apart on gravel, curved sedge in the lee.

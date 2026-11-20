@@ -140,6 +140,8 @@ public:
 		STAND_BOREAL_TAIGA, // Taiga: narrow spruce and fire-scarred pine in a mosaic, birch in old burns, silver kelo (trees.md 5ap).
 		STAND_ALDER_CARR, // Swamp: stilt-rooted black alder on tussocks over a flooded peat floor, birch on the hummocks (trees.md 5at).
 		STAND_FLOODPLAIN_WILLOW, // Softwood floodplain: old split white willows standing in the floods, willow thickets on the bars (trees.md 5at).
+		STAND_BEAVER_POND, // A beaver pond: drowned snags in the water, gnawed stumps, felled and half-gnawed willow and birch on the shore (trees.md 5au).
+		STAND_DEER_WOOD, // A wood under heavy deer browsing: a browse line under the low crowns, saplings hedged into bushes, poles stripped, no shrub layer (trees.md 5aw).
 		STAND_MAX,
 	};
 	// The disturbance whose legacy a make_succession() species is (meta "succession_kind"; -1 any). Fire's legacies are
@@ -150,6 +152,13 @@ public:
 		SUCCESSION_FIRE = 1,
 		SUCCESSION_WIND = 2,
 		SUCCESSION_BEETLE = 3,
+		SUCCESSION_BEAVER = 4, // A beaver pond drained (the dam failed): the beaver meadow (trees.md 5bb).
+	};
+	enum BeaverCut {
+		BEAVER_NONE = 0,
+		BEAVER_GNAWED = 1,
+		BEAVER_STUMP = 2,
+		BEAVER_FELLED = 3,
 	};
 
 	// Leaf architecture (Ellis et al., Manual of Leaf Architecture, 2009).
@@ -323,21 +332,38 @@ private:
 		void end(Vector4i &r_part, float p_size) {
 			r_part.y = indices.size() - r_part.x;
 			r_part.w = verts.size() - r_part.z;
-			while (use_tangents && tangents.size() < verts.size() * 4) {
-				tangents.push_back(1.0f);
-				tangents.push_back(0.0f);
-				tangents.push_back(0.0f);
-				tangents.push_back(1.0f);
+			// Padding grown in one resize each (it was twelve push_backs a vertex, each a copy-on-write check and a
+			// resize): the same values in the same places.
+			if (use_tangents && tangents.size() < verts.size() * 4) {
+				const int old = tangents.size();
+				const int groups = (verts.size() * 4 - old + 3) / 4;
+				tangents.resize(old + groups * 4);
+				float *t = tangents.ptrw() + old;
+				for (int g = 0; g < groups; g++) {
+					t[g * 4 + 0] = 1.0f;
+					t[g * 4 + 1] = 0.0f;
+					t[g * 4 + 2] = 0.0f;
+					t[g * 4 + 3] = 1.0f;
+				}
 			}
-			for (int v = bones.size() / 4; v < verts.size(); v++) {
-				bones.push_back(bone);
-				bones.push_back(0);
-				bones.push_back(0);
-				bones.push_back(0);
-				weights.push_back(1.0f);
-				weights.push_back(0.0f);
-				weights.push_back(0.0f);
-				weights.push_back(0.0f);
+			const int missing = verts.size() - bones.size() / 4;
+			if (missing > 0) {
+				const int ob = bones.size();
+				const int ow = weights.size();
+				bones.resize(ob + missing * 4);
+				weights.resize(ow + missing * 4);
+				int32_t *bp = bones.ptrw() + ob;
+				float *wp = weights.ptrw() + ow;
+				for (int v = 0; v < missing; v++) {
+					bp[v * 4 + 0] = bone;
+					bp[v * 4 + 1] = 0;
+					bp[v * 4 + 2] = 0;
+					bp[v * 4 + 3] = 0;
+					wp[v * 4 + 0] = 1.0f;
+					wp[v * 4 + 1] = 0.0f;
+					wp[v * 4 + 2] = 0.0f;
+					wp[v * 4 + 3] = 0.0f;
+				}
 			}
 			if (r_part.y > 0) {
 				parts.push_back(r_part);
@@ -437,6 +463,11 @@ private:
 	Ref<Texture2D> _wood_texture(bool p_normal);
 	Builder wood_b; // Broken wood: fracture faces, splinters, torn bark (surface "wood").
 	void _fracture(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_old, uint32_t p_seed, const Vector3 &p_tension = Vector3());
+	void _gnaw_face(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_old, uint32_t p_seed);
+	void _beaver_stump(int p_year);
+	void _beaver_strip();
+	float _beaver_waist_at(const Vector3 &p_pos, float *r_axis_r = nullptr) const;
+	void _beaver_waist(Builder &r_b, bool p_bark);
 	PackedFloat32Array fungi_points; // Mesh meta tree_fungi: 8 floats per cluster.
 	int64_t fungi_index_end = 0; // Fungi surface indices before the lichen strands (LOD 1 keeps these).
 	Ref<Texture2D> _fungus_texture();
@@ -707,6 +738,19 @@ public:
 	// and 15) after their living ones, mesh meta tree_fire_years and tree_fire_band; VegetationField3D picks by
 	// WorldFire.burn_age_at (world-links.md). Off for scouts and tests that do not burn.
 	bool fire_variants = true;
+	// Struck tree variants (trees.md 5ax): tall stand and open forms also grow two struck variants (a fresh strike, 0.2
+	// years, and one healing, 3 years) after the fire ones, mesh meta tree_lightning_years; VegetationField3D picks one
+	// where WorldStand.strike_age_at has a strike (world-links.md). Off for scouts and tests that do not strike.
+	bool lightning_variants = true;
+	// Browsed variants (trees.md 5aw, 5az): open, sapling and understory forms also grow one browsed variant of their first
+	// seed (a browse line on a grown tree, a hedged bush for a sapling), mesh meta tree_browse (the pressure it was grown
+	// at); VegetationField3D picks it by WorldStand.browse_at. Off for scouts and tests that do not browse.
+	bool browse_variants = true;
+	// Deferred variants (trees.md 5bc): the fire, struck and browsed variants are not grown with the stand but when a
+	// field first needs them (a burn, strike or browse disc over its area): a copy of this generator as set up for the
+	// species (species meta _tree_variant_source) grows them on request_variants(), and the species' meshes grow by
+	// them. Species meta tree_variants_deferred holds the kinds still to grow (VARIANT_FIRE | _STRIKE | _BROWSE).
+	bool defer_variants = true;
 	// Years since bark beetles killed the tree (trees.md 5aj), -1 none; conifers only. Under 0.6 green attack (resin
 	// beads, boring dust), then the needles fade yellow to red and drop (to 2.5), grey snag with the bark falling in
 	// sheets (to 6), top broken (to 12), then a stub.
@@ -726,6 +770,54 @@ public:
 	int succession_band = 0; // While make_succession grows a stage: 1 the pole stage, 2 old growth's veterans, 3 stand initiation (trees.md 5aq).
 	Preset last_stand_lead = PRESET_MAX; // The lead of the last make_stand().
 	int wet_band = 0; // While a wet stand grows its species: 1 stilt-rooted alder, 2 old floodplain willow (trees.md 5at).
+	// Beaver work (trees.md 5au): BEAVER_GNAWED a living stem gnawed round into an hourglass waist beaver_depth of its
+	// radius deep; BEAVER_STUMP the stump of a felled stem, its top a gnawed cone, resprouting if a broadleaf and the
+	// seed says so; BEAVER_FELLED the felled stem lying (fallen), its butt the hourglass's other cone, limbs and bark
+	// taken over the years. beaver_years: since the work.
+	int beaver_cut = 0;
+	float beaver_years = 0.5f;
+	float beaver_depth = 0.6f;
+	int beaver_band = 0; // While a beaver stand grows its species: 1 gnawed, 2 stumps, 3 felled, 4 drowned snags.
+	int beaver_tip = -1; // The stump's cut node (its end gets _gnaw_face).
+	int beaver_now = 0; // This generate()'s beaver work (beaver_cut where it applies, else BEAVER_NONE).
+	LocalVector<Vector3> beaver_axis; // The stem's axis through the gnawed waist (_beaver_waist).
+	float beaver_r = 0.1f; // The stem's radius at the waist.
+	bool _beaver_resprouts() const;
+	static Color _beaver_wood(float p_years);
+	float beaver_cut_h = 0.0f; // Height of the waist / the stump's cut over the soil.
+	// Flood marks (trees.md 5av): the last flood stood flood_height (m) over the stem's foot, flood_years ago; 0 none.
+	// Silt on the bark and moss below the waterline (the bark shader's silt term), wrack caught on the low limbs and
+	// piled on the upstream face of the stem. The flow runs toward +X (placement turns +X downstream).
+	float flood_height = 0.0f;
+	float flood_years = 0.3f;
+	float _silt_at(const Vector3 &p_pos, const Vector3 &p_normal) const;
+	void _flood_wrack();
+	// Deer browse (trees.md 5aw): browse 0..1 is the browsing pressure, browse_height the reach (red deer about 1.8 m,
+	// fallow 1.6, roe 1.1), browse_years how many of the last years were browsed (0: all of them). A shoot whose tip
+	// ends in reach is bitten back and pushes again from the buds behind the bite (saplings hedged into bushes), and
+	// the foliage in reach is eaten (the browse line); poles of the barked species are stripped more often.
+	float browse = 0.0f;
+	float browse_height = 1.8f;
+	int browse_years = 0;
+	int browse_band = 0; // While a deer wood grows its species: 1 the canopy, 2 hedged saplings.
+	float _browse_keep(const Vector3 &p_pos) const; // 0 eaten .. 1 kept, for foliage at a point.
+	bool browse_now = false; // This growth year is browsed.
+	float browse_top = 1e6f; // The stem's top over its foot after the last browsed year (a hedged bush while in reach).
+	// Nurse logs (trees.md 5aw): nurse_seedlings 0..1 brings conifer seedlings up along a rotting conifer log's top
+	// (decay class 3 and on; Harmon and Franklin 1989); nurse_stilt (m) is the girth of the log a standing tree grew
+	// on, now rotted away: its roots straddle the gap, which runs along X (a colonnade's tree).
+	float nurse_seedlings = 0.0f;
+	float nurse_stilt = 0.0f;
+	int nurse_band = 0; // While a stand grows its species: 1 nurse logs, 2 trees on a rotted log.
+	void _nurse_seedlings(Builder &r_bark, Builder &r_leaves);
+	// A fresh lightning strike (trees.md 5ax): lightning_years since a strike that ran down the stem, -1 none (the
+	// stand's own scars, section 5p, stay as they were). The strip's wood is pale when fresh and greys over a few years;
+	// bark slabs and splinters lie thrown round the foot for the first two.
+	float lightning_years = -1.0f;
+	static Color _lightning_wood(float p_years);
+	void _browse_variant_setup(int p_form);
+	void _lightning_debris();
+	float _fresh_strike_at(const Vector3 &p_pos, bool p_any_age = false) const; // 0..1: on a fresh strike's bare strip (no moss there); p_any_age: on a given strike's strip at any age.
 	int edge_band = 0; // While make_edge grows its edge trees: 1 (trees.md 5as).
 	int boreal_band = 0; // While a taiga stand grows its species: 1 narrow spruce, 2 fire-survivor pine, 3 kelo, 4 burn birch (trees.md 5ap).
 	int old_growth_band = 0; // While an old-growth stand grows its species: 1 veteran giants, 2 poles, 3 giant deadwood, 4 canopy (trees.md 5an).
@@ -986,8 +1078,24 @@ private:
 	Ref<ArrayMesh> near_result;
 	TypedArray<Mesh> near_far_meshes; // The species' far meshes, whose materials a near mesh shares.
 	TypedArray<Mesh> near_fire_meshes; // Its fire band variants, after near_living living ones in the species.
+	TypedArray<Mesh> near_strike_meshes; // Its struck variants, after the fire ones (near_fire_count of them).
+	TypedArray<Mesh> near_browse_meshes; // Its browsed variants, after the struck ones (near_strike_count of them).
+	int near_strike_count = 0;
 	int near_living = 0;
+	int near_fire_count = 0;
 	HashMap<int, TypedArray<Mesh>> fire_cache;
+	HashMap<int, TypedArray<Mesh>> strike_cache;
+	HashMap<int, TypedArray<Mesh>> browse_cache;
+	// Deferred variants: the grown kinds of one species key (on its variant source copy).
+	TypedArray<Mesh> _variant_kind_meshes(int p_kind, Preset p_preset, Form p_form, int p_base_seed, float p_base_cover, const Vector3 &p_first_crown);
+	HashMap<int64_t, Ref<TreeGenerator>> variant_sources;
+	Vector3 variant_first_crown;
+	bool variant_far_leaves = false;
+	int variant_kinds = 0; // What this species key can grow.
+	int variant_built = 0;
+	int variant_task_kinds = 0;
+	TypedArray<Mesh> variant_meshes[3]; // Fire, struck, browsed.
+	static void _variant_task(void *p_self);
 	Ref<ArrayMesh> material_source;
 	static void _near_task(void *p_self);
 	// Near meshes building at once, over every generator (a beech's peaks near 2 GB while it builds): the field
@@ -1032,6 +1140,14 @@ public:
 	// For PlantSpecies.near_mesh_source: the full-leaf mesh of one variant (index into the
 	// species' meshes), or null while it is being built on a worker thread.
 	Ref<Mesh> request_near_mesh(int p_key, int p_variant);
+	// Deferred variants (on a species' _tree_variant_source): grows the kinds asked for and appends them to the species
+	// (and to its near source's lists) in the stand's order. Returns the kinds it still lacks; main thread only.
+	int request_variants(const Ref<PlantSpecies> &p_species, int p_kinds);
+	enum VariantKind {
+		VARIANT_FIRE = 1,
+		VARIANT_STRIKE = 2,
+		VARIANT_BROWSE = 4,
+	};
 	int get_near_mesh_count() const;
 	float get_near_needle_range() const { return near_needle_range; }
 	void set_bark_relief(float p_relief) { bark_relief = MAX(p_relief, 0.0f); }
@@ -1070,6 +1186,12 @@ public:
 	void set_bark_peel(float p_peel) { bark_peel = MAX(p_peel, 0.0f); }
 	void set_fire_years(float p_years) { fire_years = p_years < 0.0f ? -1.0f : p_years; }
 	void set_fire_variants(bool p_on) { fire_variants = p_on; }
+	void set_lightning_variants(bool p_on) { lightning_variants = p_on; }
+	bool get_lightning_variants() const { return lightning_variants; }
+	void set_browse_variants(bool p_on) { browse_variants = p_on; }
+	void set_defer_variants(bool p_on) { defer_variants = p_on; }
+	bool get_defer_variants() const { return defer_variants; }
+	bool get_browse_variants() const { return browse_variants; }
 	void set_beetle_years(float p_years) { beetle_years = p_years < 0.0f ? -1.0f : p_years; }
 	float get_beetle_years() const { return beetle_years; }
 	void set_beetle_outbreak(float p_years) { beetle_outbreak = MAX(p_years, 0.0f); }
@@ -1091,6 +1213,28 @@ public:
 	float get_ground_slope() const { return ground_slope; }
 	void set_bank_erosion(float p_v) { bank_erosion = CLAMP(p_v, 0.0f, 1.0f); }
 	void set_stilt_height(float p_v) { stilt_height = CLAMP(p_v, 0.0f, 1.5f); }
+	void set_flood_height(float p_v) { flood_height = CLAMP(p_v, 0.0f, 6.0f); }
+	float get_flood_height() const { return flood_height; }
+	void set_flood_years(float p_v) { flood_years = CLAMP(p_v, 0.0f, 30.0f); }
+	float get_flood_years() const { return flood_years; }
+	void set_browse(float p_v) { browse = CLAMP(p_v, 0.0f, 1.0f); }
+	float get_browse() const { return browse; }
+	void set_browse_height(float p_v) { browse_height = CLAMP(p_v, 0.3f, 3.0f); }
+	float get_browse_height() const { return browse_height; }
+	void set_browse_years(int p_v) { browse_years = CLAMP(p_v, 0, 300); }
+	int get_browse_years() const { return browse_years; }
+	void set_nurse_seedlings(float p_v) { nurse_seedlings = CLAMP(p_v, 0.0f, 1.0f); }
+	float get_nurse_seedlings() const { return nurse_seedlings; }
+	void set_nurse_stilt(float p_v) { nurse_stilt = CLAMP(p_v, 0.0f, 1.5f); }
+	void set_lightning_years(float p_v) { lightning_years = p_v < 0.0f ? -1.0f : MIN(p_v, 60.0f); }
+	float get_lightning_years() const { return lightning_years; }
+	float get_nurse_stilt() const { return nurse_stilt; }
+	void set_beaver_cut(int p_v) { beaver_cut = CLAMP(p_v, 0, 3); }
+	int get_beaver_cut() const { return beaver_cut; }
+	void set_beaver_years(float p_v) { beaver_years = CLAMP(p_v, 0.0f, 60.0f); }
+	float get_beaver_years() const { return beaver_years; }
+	void set_beaver_depth(float p_v) { beaver_depth = CLAMP(p_v, 0.05f, 0.95f); }
+	float get_beaver_depth() const { return beaver_depth; }
 	float get_stilt_height() const { return stilt_height; }
 	float get_bank_erosion() const { return bank_erosion; }
 	void set_wind_exposure(float p_v) { wind_exposure = CLAMP(p_v, 0.0f, 1.0f); }
@@ -1251,3 +1395,5 @@ VARIANT_ENUM_CAST(TreeGenerator::RigField);
 VARIANT_ENUM_CAST(TreeGenerator::ShrubForm);
 VARIANT_ENUM_CAST(TreeGenerator::FireResponse);
 VARIANT_ENUM_CAST(TreeGenerator::SuccessionKind);
+VARIANT_ENUM_CAST(TreeGenerator::BeaverCut);
+VARIANT_ENUM_CAST(TreeGenerator::VariantKind);

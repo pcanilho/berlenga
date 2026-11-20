@@ -1329,3 +1329,148 @@ Design (to build after Paulo's pick):
   30 m; shade herbs and moss carpets fade in from 10 to 30 m. Uses the same edge grid as trees' make_edge.
 - Far rings: on RT devices the multimesh buffers get a CPU copy for the path tracer; far ring tiles are past the PT
   vertex-capture reach, so mark them raster-only (no CPU copy) where the renderer allows. Measure memory before/after.
+- Built 20 Nov (floors that follow forest age): PRESET_RASPBERRY (97; upright suckering canes 0.8-1.7 m, pinnate
+  leaves of 3-5 leaflets, red fruit on second-year canes; ~36k tris, impostors past range like bramble). Every
+  forest floor but hedgerow and montado appends a clearing set on RULE_STAND_AGE with RULE_DISTURBANCE (2, 3):
+  fireweed 0.5-10 y, raspberry 2-18 y, tall clearing grass (cocksfoot form, 1.3-1.8x) 1-20 y, and in broadleaf
+  stands foxglove 1-6 y and nettle 1-10 y; all with shade 0-0.5 so the closing young stand shades them out. Forest
+  mosses take stand age (6 y on, fade 10): thin on a fresh opening, full again in old growth (-1). Vegetation bench
+  "clearings" check.
+- Built 20 Nov (edge light on the floor): every forest floor but hedgerow and montado adds edge species on
+  RULE_FOREST_EDGE that tolerate crowns (shade to 0.85) near the edge: tall grass (cocksfoot form; wavy hair grass
+  under conifers) -8 to 12 m fade 10, bramble -6 to 10 m and nettle -4 to 6 m under broadleaves, raspberry -5 to 8 m
+  under conifers. Interior shade herbs and forest mosses (sorrel, woodruff, anemone, violet, moss, feather moss) take
+  12 m on, fade 18 (half at the edge line). A floor field reads the edge of its canopy_field's forest too. With no
+  forest known, open-ended interior rules do nothing and edge rules place nothing.
+- Maps built from rules alone (far shell, cover map, sward shade) leave out context-only species (burn presets,
+  stand stages that skip old growth, edge-only species) instead of spreading them over all their ground.
+- Built 20 Nov (far rings without CPU copies): the path tracer kept a CPU mirror of every MultiMesh's records on
+  RT devices (a readback after each GPU write, and a warm-up in the TLAS gather), though only expanded surfaces
+  (and merges that fall back to expanding) read it; captured surfaces (grass, plants in wind) read the GPU buffer.
+  Now the gather fills the mirror only when a non-captured surface may expand, and a GPU write reads back only
+  for an existing mirror, a missing custom AABB or rt_instanced. Grass bench --far-grass=rings PT (320x180, 1 spp):
+  static memory 603 -> 515 MB, video 6619 -> 6554 MB; images equal within 1-spp noise (block means 85.35 / 85.09).
+  gpu_multimesh --test PASS in gpu, cpu and gpu+taa modes, gpu and cpu PT frames identical.
+- Fixed 20 Nov: the sward (GrassField3D.undergrowth_field) thins under context-only plants again, weighed by the
+  last setup's burn, stand and edge grids (VegetationField3D._context_weight; the field keeps a copy, refreshed when
+  burns or the stand change). A floor field reading its canopy field's edge now also reads the stand for those
+  trees' stages (the edge moved round a windthrow only for the trees' own field before).
+
+## Beaver ponds and meadows (card 20 Nov evening; built 20 Nov)
+Research:
+- Beaver ponds raise patch diversity along a valley; drained ponds become "beaver meadows" of sedges and grasses that
+  hold for decades before woody plants return (Naiman, Johnston and Kelley 1988, BioScience 38; Wright, Jones and
+  Flecker 2003, Ecology 84: herbaceous species richness rises about a third at landscape scale where ponds and
+  meadows mix with forest; Cunningham et al. 2006; Ecoscience 19(3) 2012 on meadow succession).
+- Drained bed sequence: bare mud seeds in at once with rushes (Juncus) and small sedges; within a few years a dense
+  sward of tussock sedges (Carex stricta / C. elata in Europe) and tall grasses (Calamagrostis canadensis in North
+  America; tall cocksfoot form as our stand-in), with meadowsweet, marsh marigold in the wet hollows and buttercups
+  on drier ground. Willow and alder close it after 20-60 years where browsing and wet soil allow.
+- Active pond zoning follows still-water hydrosere bands (Spence 1982; Keddy 2010): floating-leaved lilies in
+  0.5-2 m, bulrush in the shallows, tussock sedge along the flooded margin, rush and meadowsweet up the wet shore.
+Built:
+- PlantGenerator.make_beaver(BEAVER_POND / BEAVER_MEADOW). The pond set is placed by water depth and distance only
+  (lily 0.4-2 m floating; bulrush 0.05-0.6 m; tussock sedge 0-0.25 m and up to 4 m ashore; rush 0-6 m, marsh
+  marigold 0-4 m, meadowsweet 1-10 m from the shore). The meadow set takes RULE_STAND_AGE with RULE_DISTURBANCE
+  (4, 4), WorldStand.DISTURBANCE_BEAVER (world-links 05df7a23, age = years since the pond drained): rush and small
+  sedge 0-4 y, then dense sedge, tall grass, buttercup 3-38 y, meadowsweet 4-38 y, marsh marigold 2-28 y (fade 3) within
+  8 m of the remaining stream. All shade 0-0.4 to 0.6; the trees' STAND_BEAVER_POND supplies the dead pond trees
+  and the closing willow and alder. Vegetation bench "beaver" checks.
+
+## Deer browsing (card 20 Nov evening; built 20 Nov)
+Research:
+- Browse heights: roe about 1.1 m, fallow 1.6-1.8 m, red deer 1.8 m (Forestry Commission Practice Note 6; Deer
+  Initiative field signs). The ground flora is all in reach.
+- Under heavy pressure British and European woods lose bramble (the winter staple), honeysuckle, ivy on the floor and
+  palatable forbs (wood anemone, violets, woodruff, bilberry, fireweed); grasses, sedges and unpalatable plants
+  (bracken, Dryopteris ferns, foxglove, nettle) gain: "grassy woods" (Kirby 2001; Gill and Fuller 2007, Ibis 149;
+  Morecroft et al. 2001, Wytham exclosures; Boulanger et al. 2018, Global Change Biology, deer and forest understories).
+- Browsed bramble stays a low hummock of short canes bitten back each winter, many leaves eaten whole or torn, few
+  flowers; browsed raspberry and saplings lose the leader and bush out from the buds below the bite (Bergman 2001).
+- Deer graze clearings and rides into lawns of fine bents and fescues 2-8 cm high with clover and other creeping herbs,
+  kept short year round (Putman 1986; Kuijper et al. 2009, Bialowieza). Deer tear rather than cut (no upper incisors),
+  so blade ends are ragged and dry pale.
+Built:
+- WorldStand browse discs (world-links cef8dbd7): browse_at 0..1, browse_reach_at. PlantSpecies.RULE_BROWSE (31) reads
+  it on the field's stand grid (0 where none); changes re-place only tiles where a browse rule's weight moves. Species
+  that need browsing to grow are context-only (left out of far shell, cover map and sward shade by rules alone).
+- PlantGenerator season "browse" (0..1): bramble canes low and spreading, bitten back with blunt ends and side shoots,
+  leaves eaten or torn; raspberry canes bitten at the leader and bushy below; flowers and fruit scarce. Leaf.cut (the
+  torn end, slanted, drying pale) does the torn blades and leaflets. Unbrowsed meshes are unchanged (same draws).
+- PRESET_GRAZED_LAWN (98), reworked after review (the first version read as a sparse tuft of long blades): a 24 cm
+  cell of 300-380 fine blades cropped to one height (2.5-4 cm, 82% torn at it, new leaves a little over), a flat
+  darker thatch and a few white clover leaves (the petal surface, round leaflets with the chevron); ~3.7k vertices.
+  Floors place it 0.2 m apart to 18 m.
+- GrassField3D.graze_height (0.04 m): the sward itself is grazed where deer browse hard, in the shader from a pressure
+  grid (graze_map, smoothstep 0.3-0.8 of browse_at), so near tiles, rings, GPU fill and the path tracer agree with no
+  rebuild; torn pale ends, fewer dry tips, a fresher green, blades 30% narrower (fine regrowth; the turf ground under
+  the sward closes the gaps). Followed on stand changes. Meadow species sets need browse rules of their own for the
+  tall grasses and palatable herbs (the grass bench's do: RULE_BROWSE 0-0.45 fade 0.25; rosettes and nettle, dock,
+  thistle keep). Grass bench --graze=P: a 6.5 m disc 6 m ahead framed from 1.6 m (docs pair: --sun-elev=50
+  --sun-yaw=-30 --sun-energy=1.3, --graze=0 for the before).
+- make_floor (all but hedgerow and montado), appended so every other species keeps its seed: bramble and raspberry
+  whole to 0.35 (fade 0.15) and bitten (meshes at 0.85) past it; palatable herbs (woodruff, anemone, violet, bilberry,
+  ivy, fireweed, herb Robert, wood sorrel) thin to about a fifth at 1; the tall clearing grass gives way past 0.5; deer
+  lawn and clover in the light (shade to 0.45) from 0.45; grass (wavy hair grass under conifers) under crowns from 0.4;
+  fern from 0.5. Vegetation bench "deer browsing" checks.
+- Not done: honeysuckle and ivy-on-ground variants by browse (ivy on stems is trees'); browse reach is not used by the
+  ground flora (all of it is in reach).
+
+## Next round options (card 20 Nov evening): game trails, boar rooting, anthills and molehills
+Research so far (to confirm before building):
+- Game trails: deer follow the same lines between cover, feeding lawns and water, wearing 20-40 cm paths of bare or
+  short-turfed ground; trampling shifts the plants by tolerance (Cole 1995 trampling resistance, already in
+  get_trample_resistance; Liddle 1997 on paths). Build idea: trail polylines from a least-cost path over slope and
+  cover between browse discs, lawns and water (a shared contract so ground detail and mud can wear the same lines),
+  read by a PlantSpecies rule as metres from the trail; species thin by their trample resistance, plantain and
+  grazed lawn take the verges.
+- Boar rooting: wild boar turn the topsoil 5-15 cm deep in patches of a few to hundreds of square metres, mostly in
+  moist, rich woodland and meadow edges; vegetation cover drops and regrows over one to two years, with ruderals first
+  (Bueno et al. 2013; Barrios-Garcia and Ballari 2012, Biological Invasions review; Welander 2000). Build idea: a
+  rooting disturbance with an age in months (WorldStand-style discs, owned by world-links), turned soil as ground
+  detail (ground thread), uprooted herb meshes and a regrowth band by age here.
+- Anthills and molehills: yellow meadow ant (Lasius flavus) mounds 20-50 cm high and up to 1 m wide on old unploughed
+  grassland, built over decades, sunnier south faces, wild thyme and other small herbs on top (King 1977, J. Ecol.;
+  Dean et al. 1997); molehills are fresh soil heaps 10-20 cm, bare then colonised within a season. Build idea: mounds as
+  real ground geometry (ground thread or here as soil meshes with grass), with a mound top species set (thyme, sheep's
+  fescue, rockrose) placed by a new mound rule; molehills by soil wetness and earthworm-rich ground.
+
+## Fixes from the lawn reshoot (20 Nov evening)
+- Sorrel and dock flower spikes drew as flat red bars from a few metres. Two causes: even rungs of four flat tepals
+  (a ladder) and meshoptimizer's chain on hundreds of tiny petal islands, whose sloppy fallback welds them into strips.
+  Now loose whorls of 2-8 (sorrel) and 3-8 (dock) drooping tepals on short stalks, spacing, size and colour varied
+  (Rumex acetosa: green flushed red in flower, rusty in fruit), and their petal surfaces take the card LOD chain
+  (rank-ordered shrink, area kept) like fire moss's capsules.
+- Swirl stripes in the near turf: the ground's streaks and thatch turned world xz by a noise angle, which swings far
+  points along arcs round the origin (concentric rings). Now a 2 m grid of rotated streak cells blended bilinearly
+  (grass_streaks). The honami's fronts were also straight lines a sward wide; coherent canopy structures are a few
+  heights across (Finnigan 2000; Py et al. 2006), so the fronts now bend with a slow crosswind warp and the wave's
+  strength comes and goes in patches, with twice the per-clump phase jitter (the fallback wind's gusts the same).
+- Grass bench --deer-wood=P: a clearing in TreeGenerator's real trees (P > 0 STAND_DEER_WOOD and its make_edge, the
+  browse line; P = 0 the beech stand and its mantle), make_floor's beech floor with its browse set, the sward cropped
+  by WorldStand browse P over the clearing and wood, from 1.6 m. About 12.5 GB and 30 min a 1920x1080 raster frame in
+  the cloud: one at a time.
+
+## Game trails (round 3, first pick)
+Deer, boar and other large animals wear narrow, lasting paths between the places they use: cover, feeding lawns,
+water, and the fords and saddles between them (Liddle 1997, ch. 3; Cole 1995 for the plants' tolerance). Trails form
+because each animal prefers ground already trodden: the active walker model (Helbing, Keltsch and Molnar 1997, "Modelling the
+evolution of human trail systems", Nature 388, 47; Helbing, Schweitzer, Keltsch and Molnar 1997, "Active walker model
+for the formation of human and animal trail systems", Phys. Rev. E 56, 2527) gives
+branching networks, not a straight line per pair of places. Least-cost routing over terrain is the usual way to lay
+wildlife corridors and trails in GIS (Adriaensen et al. 2003, least-cost modelling), and games use the same A* over a
+cost field for roads and paths (e.g. Galin et al. 2010, "Procedural generation of roads", Eurographics).
+- `VegetationField3D.make_game_trails(data_map, area, goals, options)` (static, vegetation_trails.cpp): A* on a grid
+  (options.cell, 2 m) for every pair of goals within options.reach (250 m), nearest pairs first; a cell's cost is
+  raised by slope (cheap to about 10 degrees, then steeply; none over max_slope_deg 40), by water (fords only up to
+  ford_depth 0.4 m) and by a seeded two-scale roughness (logs, tussocks, soft ground the map does not hold), and
+  lowered by the traffic already routed over it (attraction 0.6: a worn trail costs down to 40% of fresh ground), so
+  later routes join earlier ones. Out as worn paths (the fields' `paths` Dictionaries plus "kind": "game_trail"): one
+  piece per stretch of equal traffic, a shared stretch carrying the summed passes and widening about 0.1 m each
+  tenfold; corners cut by Chaikin's scheme twice. Default 500 passes a year a link, 0.35 m tread.
+- The fields wear them as any path: GrassField3D.paths and VegetationField3D.paths (VegetationPaths), each plant by
+  its trample resistance.
+- Contract asked of world-links: the network published on WorldStand (or its own provider) so ground detail, mud and
+  snow wear the same lines and the fields read them without the scene copying them.
+- Vegetation bench `--trails` (also in --test): none through deep water or up steep ground, merged, shared stretches
+  busier, repeatable.
