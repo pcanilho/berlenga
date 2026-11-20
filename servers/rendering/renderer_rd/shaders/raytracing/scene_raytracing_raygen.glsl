@@ -2480,14 +2480,45 @@ vec2 ground_salt_cells(vec2 p_p) {
 	h = (h ^ (h >> 15u)) * 2654435761u;
 	return vec2(0.5 * (sqrt(d2) - sqrt(d1)), float(h >> 8u) / 16777215.0);
 }
+// Grain sorting on wind ripples: dark heavy minerals in the troughs, coarse paler crests (material.cpp
+// ground_ripple_sort_tint(), the same lines).
+vec3 ground_ripple_sort_tint(float p_t, vec2 p_xz, float p_resolved, float p_amp) {
+	float heavy = mix(0.35, 1.0, ground_ripple_vn(p_xz / 7.0, 31u));
+	vec3 lag = mix(vec3(1.0), vec3(0.5, 0.48, 0.47), 0.6 * heavy);
+	vec3 coarse = vec3(1.05, 1.0, 0.92);
+	vec3 rt = mix(vec3(1.0), lag, smoothstep(0.2, 0.75, -p_t)) * mix(vec3(1.0), coarse, smoothstep(0.3, 0.8, p_t));
+	vec3 mt = mix(vec3(1.0), mix(vec3(1.0), lag, 0.25) * mix(vec3(1.0), coarse, 0.25), clamp(p_amp, 0.0, 1.0));
+	return mix(mt, rt, p_resolved);
+}
+// Dune-scale sand colour: rubefaction, coarse interdune flats, pale slip faces (material.cpp ground_dune_tone(),
+// the same lines).
+vec3 ground_dune_tone(vec2 p_xz, float p_normal_y, float p_depth) {
+	vec3 t = vec3(1.0);
+	if (p_depth >= 0.0) {
+		float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+		float age = smoothstep(0.25, 0.7, 0.65 * ground_ripple_vn(p_xz / 420.0, 41u) + 0.35 * ground_ripple_vn(p_xz / 130.0, 42u));
+		t *= mix(vec3(1.0), vec3(1.15, 0.93, 0.78), age * (0.7 + 0.3 * thin));
+		float lag = thin * smoothstep(0.95, 0.985, p_normal_y) * mix(0.45, 1.0, ground_ripple_vn(p_xz / 23.0, 43u));
+		t *= mix(vec3(1.0), vec3(0.72, 0.7, 0.68), lag);
+	}
+	// Slopes of about 29 to 33 degrees: the slip face at the sand's repose.
+	float slip = smoothstep(0.78, 0.84, p_normal_y) * (1.0 - smoothstep(0.88, 0.93, p_normal_y));
+	t *= mix(vec3(1.0), vec3(1.08, 1.07, 1.05), slip);
+	return t;
+}
+// The ripple field's patchy height (the amplitude ground_ripple_vary() returns), alone.
+float ground_ripple_amp(vec2 p) {
+	float amp = mix(0.2, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
+	amp *= smoothstep(0.36, 0.6, 0.7 * ground_ripple_vn(p / 16.0, 15u) + 0.3 * ground_ripple_vn(p / 5.0, 16u));
+	return amp;
+}
 vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 	vec2 p = p_xz;
 	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
 	o += 1.2 * (vec2(ground_ripple_vn(p / 6.0, 3u), ground_ripple_vn(p / 6.0, 4u)) - 0.5);
 	o += 0.06 * (vec2(ground_ripple_vn(p / 1.7, 5u), ground_ripple_vn(p / 1.7, 6u)) - 0.5);
 	// Patchy over tens of metres: smooth sheets between ripple fields (material.cpp ground_ripple_vary()).
-	float amp = mix(0.2, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
-	amp *= smoothstep(0.36, 0.6, 0.7 * ground_ripple_vn(p / 16.0, 15u) + 0.3 * ground_ripple_vn(p / 5.0, 16u));
+	float amp = ground_ripple_amp(p);
 	float kk = dot(p_k, p_k);
 	if (kk > 0.0) {
 		vec2 kn = p_k / sqrt(kk);
@@ -3321,6 +3352,45 @@ void main() {
 			vec2 p = (h.hit_pos + rt_origin.xyz).xz;
 			int rn = int(m2.y + 0.5);
 			int sn = int(m2.z + 0.5);
+			// The dune field's colour at this scale (GroundSurface3D dune_tone; material.cpp ground_sand_at(), the same
+			// lines): the generator's sand depth and the sand share from the sand block (G, B); past it, the depth rows
+			// round the patch (R, faded over their outer 15%) and the ground's share.
+			vec4 m4 = ts.x >= 5 ? texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(4, ts.y - 1), 0) : vec4(0.0);
+			if (m0.z > 0.0 && m4.x > 0.5) {
+				vec3 gsa = vec3(-1.0, m3.z, 0.0);
+				vec2 su = (p - m1.xy) / max(m1.z, 1e-4) * float(sn) - 0.5;
+				int dn = ts.y - 1 - (rn + sn + rn);
+				vec2 du = (p - m4.yz) / max(m4.w, 1e-4) * float(dn) - 0.5;
+				if (sn > 0 && all(greaterThanEqual(su, vec2(-0.5))) && all(lessThanEqual(su, vec2(float(sn) - 0.5)))) {
+					ivec2 s0 = clamp(ivec2(floor(su)), ivec2(0), ivec2(sn - 1));
+					ivec2 s1 = clamp(s0 + 1, ivec2(0), ivec2(sn - 1));
+					vec2 sf = clamp(su - floor(su), 0.0, 1.0);
+					vec2 ga = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s0.x, rn + s0.y), 0).gb;
+					vec2 gb = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s1.x, rn + s0.y), 0).gb;
+					vec2 gc = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s0.x, rn + s1.y), 0).gb;
+					vec2 gd = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(s1.x, rn + s1.y), 0).gb;
+					vec2 r = mix(mix(ga, gb, sf.x), mix(gc, gd, sf.x), sf.y);
+					gsa = min(min(ga.x, gb.x), min(gc.x, gd.x)) < 0.0 ? vec3(-1.0, r.y, 0.0) : vec3(r, 1.0);
+				} else if (dn > 0 && all(greaterThanEqual(du, vec2(-0.5))) && all(lessThanEqual(du, vec2(float(dn) - 0.5)))) {
+					int r0 = rn + sn + rn;
+					ivec2 d0 = clamp(ivec2(floor(du)), ivec2(0), ivec2(dn - 1));
+					ivec2 d1 = clamp(d0 + 1, ivec2(0), ivec2(dn - 1));
+					vec2 df = clamp(du - floor(du), 0.0, 1.0);
+					vec4 q = vec4(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(d0.x, r0 + d0.y), 0).r,
+							texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(d1.x, r0 + d0.y), 0).r,
+							texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(d0.x, r0 + d1.y), 0).r,
+							texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(d1.x, r0 + d1.y), 0).r);
+					if (min(min(q.x, q.y), min(q.z, q.w)) >= 0.0) {
+						vec2 de = min(p - m4.yz, m4.yz + m4.w - p);
+						gsa = vec3(mix(mix(q.x, q.y, df.x), mix(q.z, q.w, df.x), df.y), m3.z, smoothstep(0.0, 0.15 * m4.w, min(de.x, de.y)));
+					}
+				}
+				if (gsa.y > 0.0) {
+					float gny = h.geometry_normal.y;
+					vec3 gdt = mix(ground_dune_tone(p, gny, -1.0), ground_dune_tone(p, gny, gsa.x), gsa.z);
+					m.albedo *= mix(vec3(1.0), gdt, gsa.y);
+				}
+			}
 			if (m2.x > 0.5 && rn > 0) {
 				float far = m2.w > 0.5 ? m3.z : 0.0;
 				float sand = far;
@@ -3345,12 +3415,43 @@ void main() {
 				float rfp = rt_cone_width;
 				float w = sand * (1.0 - live) * smoothstep(0.85, 0.91, h.geometry_normal.y);
 				float resolved = 1.0 - smoothstep(0.22 * lam, 0.4 * lam, rfp);
-				vec3 vr = w > 0.0 ? ground_ripple_vary(p, m3.xy) : vec3(0.0);
+				vec3 vr = w > 0.0 ? (resolved > 0.0 ? ground_ripple_vary(p, m3.xy) : vec3(0.0, 0.0, ground_ripple_amp(p))) : vec3(0.0);
 				// Crests finer than the pixel shade it as a patchy tone (material.cpp ground_ripple_far_slope()).
 				m.albedo *= 1.0 - 0.15 * w * vr.z * (1.0 - resolved);
-				w *= resolved;
+				// Grain sorting (GroundSurface3D ripple_sorting; m3.w the grown field's height spread, 0 when off):
+				// the window's ripples (rows 0..n-1, height times share, faded as the raster's) and the far ones (rows
+				// n+S..n+S+n-1, the grown field's height in spreads).
+				if (m3.w > 0.0 && live > 0.0) {
+					vec2 wt = wuv * float(rn) - 0.5;
+					ivec2 w0 = clamp(ivec2(floor(wt)), ivec2(0), ivec2(rn - 1));
+					ivec2 w1 = clamp(w0 + 1, ivec2(0), ivec2(rn - 1));
+					vec2 wf = clamp(wt - floor(wt), 0.0, 1.0);
+					vec2 r00 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), w0, 0).rg;
+					vec2 r10 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(w1.x, w0.y), 0).rg;
+					vec2 r01 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(w0.x, w1.y), 0).rg;
+					vec2 r11 = texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), w1, 0).rg;
+					float wh = mix(mix(r00.x * r00.y, r10.x * r10.y, wf.x), mix(r01.x * r01.y, r11.x * r11.y, wf.x), wf.y) * live;
+					m.albedo *= ground_ripple_sort_tint(wh / m3.w, p, resolved, 0.0);
+				}
 				if (w > 0.0) {
 					// The tile: cell c's centre at c * cell, its texel (c mod n), bilinear with wrap.
+					vec2 tc = (p + vr.xy) / m0.w;
+					ivec2 c0 = ivec2(floor(tc));
+					vec2 cf = tc - vec2(c0);
+					ivec2 a = ((c0 % rn) + rn) % rn;
+					ivec2 b = (a + 1) % rn;
+					if (m3.w > 0.0) {
+						int hr = rn + sn;
+						float th = mix(mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(a.x, hr + a.y), 0).r,
+												 texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(b.x, hr + a.y), 0).r, cf.x),
+								mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(a.x, hr + b.y), 0).r,
+										texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(b.x, hr + b.y), 0).r, cf.x),
+								cf.y);
+						m.albedo *= mix(vec3(1.0), ground_ripple_sort_tint(vr.z * th, p, resolved, vr.z), w);
+					}
+				}
+				w *= resolved;
+				if (w > 0.0) {
 					vec2 tc = (p + vr.xy) / m0.w;
 					ivec2 c0 = ivec2(floor(tc));
 					vec2 cf = tc - vec2(c0);

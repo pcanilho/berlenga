@@ -93,6 +93,7 @@ summary: "Trees and woody shrubs grown by light competition, 50 species in twent
 - **Flood marks** (`flood_height`, `flood_years`): floodplain trees carry a silt film up to the last high-water line, higher on the upstream face, with flood debris caught at the line.
 - **Deer browse** (`browse`, `browse_height`): browsed saplings grow as low hedged bushes, and grown trees show a level browse line.
 - **Nurse logs** (`nurse_seedlings`, `nurse_stilt`): conifer seedlings root on rotting logs, and trees stand on stilt roots where their log rotted away.
+- **Lightning strikes** (`lightning_years`): a torn pale strip down the stem with bark and splinters thrown round the foot, greying and healing over the years.
 - **Broken limbs** (`limb_breakage`): snapped ends get a splintered fracture face and torn bark; storms break limbs on living trees, leaving some hanging.
 
   ![A winter oak limb, whole and snapped, raster](media/trees-broken-limb.jpg)

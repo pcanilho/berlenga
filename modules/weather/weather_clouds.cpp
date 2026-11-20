@@ -420,8 +420,34 @@ void State::update_top_max() {
 			base_min = MIN(base_min, storm_base[i]);
 			top_max = MAX(top_max, storm_base[i] + top_height(*this, MAX(type, 0.9f * storms[i][3])));
 		}
+		if (storm_outflow[i] > 0.0f) {
+			base_min = MIN(base_min, (storm_base[i] > 0.0f ? storm_base[i] : base_height) - SHELF_DROP);
+		}
 	}
 	top_max = MAX(top_max, base_height + top_height(*this, t));
+}
+
+// A shelf cloud (arcus) on a storm's gust front: the outflow's cold air undercuts the warm moist inflow ahead
+// of the storm and lifts it to saturation below the storm's base, so a wedge of cloud hangs lower along the
+// front's leading edge, sharp at the front and rising back into the storm's base (Doswell 1985; WMO
+// International Cloud Atlas, arcus). The front runs out ahead of the rain core by the outflow (1.1 core radii
+// plus 0.04 per m/s), on the side the storm moves toward (WeatherMap3D steers storms with the wind at about 1 km).
+float shelf_drop(const State &p_state, int p_storm, Vector2 p_xz) {
+	const float out = p_state.storm_outflow[p_storm];
+	if (out <= 0.0f) {
+		return 0.0f;
+	}
+	const float *s = p_state.storms[p_storm];
+	const Vector2 d(p_xz.x - s[0], p_xz.y - s[1]);
+	const float rr = d.length();
+	if (rr < 1.0f) {
+		return 0.0f;
+	}
+	const float r_gf = s[2] * (1.1f + 0.04f * out);
+	const float u = (rr - r_gf) / (0.6f * s[2]);
+	const float arc = smoothstep(0.1f, 0.7f, d.dot(p_state.storm_dir) / rr);
+	const float wedge = smoothstep(-1.2f, -0.1f, u) * (1.0f - smoothstep(-0.1f, 0.05f, u));
+	return SHELF_DROP * MIN(out / 15.0f, 1.0f) * s[3] * arc * wedge;
 }
 
 float base_at(const State &p_state, Vector2 p_xz) {
@@ -438,6 +464,9 @@ float base_at(const State &p_state, Vector2 p_xz) {
 		// sloped the cap's edges down to the map's base. Beyond, the step is under clouds too thin to show it.
 		const float g = Math::exp(-(dx * dx + dz * dz) / (s[2] * s[2]) / (1.6f * 1.6f));
 		b = Math::lerp(b, p_state.storm_base[i], smoothstep(0.005f, 0.1f, g));
+	}
+	for (int i = 0; i < p_state.storm_count; i++) {
+		b -= shelf_drop(p_state, i, p_xz);
 	}
 	return b;
 }
@@ -461,6 +490,10 @@ Vector2 cover_type_at(const State &p_state, Vector2 p_xz) {
 		const float wide = Math::exp(-x2 / (1.6f * 1.6f)) * s[3];
 		cover = 1.0f - (1.0f - cover) * (1.0f - wide);
 		t = MAX(t, 0.9f * wide);
+		// The shelf: one continuous wedge, smooth and layered (the lifted inflow condenses as a sheet, not cells).
+		const float sh = shelf_drop(p_state, i, p_xz) / SHELF_DROP;
+		cover = MAX(cover, 0.95f * sh);
+		t = Math::lerp(t, 0.05f, sh);
 	}
 	return Vector2(cover, t);
 }
@@ -816,6 +849,44 @@ Vector4 wave_slab(const State &p_state, const float *p_eta_max) {
 	return Vector4(y0, MIN(y1, split), MAX(y2, split), y3);
 }
 
+// Stratocumulus: a deck broken into closed cells, each a slow overturning under the inversion whose middle rises
+// thick and whose rim sinks thin, 1.5 to 3 km across for a 300 to 500 m deep layer (aspect about 30:1; Wood 2012,
+// Mon. Wea. Rev. 140), lined up into rolls along the wind when it mixes the layer (Atkinson and Zhang 1996).
+float sc_share(float p_type) {
+	return smoothstep(0.06f, 0.14f, p_type) * (1.0f - smoothstep(0.3f, 0.42f, p_type));
+}
+
+// Layered cloud (stratus, stratocumulus) is one sheet from the deck's noise, not single clouds: broken stratocumulus
+// at half cover is flat patches of the sheet, not puffs (WMO International Cloud Atlas: Sc "in patches, sheet or
+// layer", St "a generally grey cloud layer with a fairly uniform base"). So the single clouds give way to the sheet
+// below type 0.36, and the sheet reaches down to a broken sky.
+float layered_share(float p_type) {
+	return 1.0f - smoothstep(0.22f, 0.36f, p_type);
+}
+
+float sc_cells_at(const State &p_state, Vector2 p_xz) {
+	const Vector2 q0 = p_xz - p_state.drift;
+	const Vector2 d = p_state.sc_dir;
+	const Vector2 q(q0.dot(d) / (p_state.sc_cell * p_state.sc_roll), (q0.x * -d.y + q0.y * d.x) / p_state.sc_cell);
+	const int gx = int(Math::floor(q.x));
+	const int gz = int(Math::floor(q.y));
+	float f1 = 9.0f;
+	float f2 = 9.0f;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			const Vector2 c(float(gx + i) + hash2(gx + i + 4057, gz + j - 911), float(gz + j) + hash2(gx + i - 6311, gz + j + 2207));
+			const float dist = (q - c).length();
+			if (dist < f1) {
+				f2 = f1;
+				f1 = dist;
+			} else if (dist < f2) {
+				f2 = dist;
+			}
+		}
+	}
+	return smoothstep(0.0f, 0.7f, f2 - f1);
+}
+
 float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	if (p_pos.y < p_state.base_min || p_pos.y > p_state.top_max) {
 		return 0.0f;
@@ -852,9 +923,28 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	// The shape noise warps each cloud's outline (its distances stretched by up to half where the noise is low)
 	// and carves its shell.
 	const float env = CLAMP(cells_at(p_state, Vector3(p_pos.x - so.x, p_pos.y, p_pos.z - so.y), b, ct, 1.0f) + 1.5f * MAX(eff, 0.0f), 0.0f, 1.0f);
-	const float cells = MAX(n - (1.0f - env), 0.0f) / MAX(env, 0.001f) * base;
-	const float deck = MAX(n * dome - (1.0f - ct.x), 0.0f) / MAX(ct.x, 0.001f) * base * smoothstep(0.55f, 0.85f, ct.x);
-	const float shape = MAX(cells, deck) * (1.0f + MIN(eff, 0.0f));
+	const float lay = layered_share(ct.y);
+	const float cells = MAX(n - (1.0f - env), 0.0f) / MAX(env, 0.001f) * base * (1.0f - lay);
+	const float sc = sc_share(ct.y);
+	// A sheet: its noise lifted so an overcast layer closes (the shape noise alone left gaps at any cover); a
+	// stratocumulus deck is then mostly its cells, thick in the middle and thin at the rims.
+	// Each cell a rounded heap: its top highest in the middle and lower toward the rim, the outline roughened by
+	// the shape noise, so a roll reads as a row of lumpy cells with darker thin gaps between, not one extruded slab.
+	float cell = 1.0f;
+	if (sc > 0.0f) {
+		const float cv = CLAMP(sc_cells_at(p_state, Vector2(p_pos.x, p_pos.z)) + 0.5f * (n - 0.5f), 0.0f, 1.0f);
+		const float ht = 0.25f + 0.75f * cv;
+		// The base sags under each cell's middle and rises toward its rim (the thick middle reaches lower), so the
+		// underside is a row of lumps.
+		const float lift = 0.15f * (1.0f - cv);
+		cell = Math::lerp(1.0f, (1.0f - smoothstep(0.5f * ht, ht, h)) * smoothstep(lift, lift + 0.08f, h) * (0.5f + 0.7f * cv), sc);
+	}
+	const float nd = lay > 0.0f ? Math::lerp(n, (0.5f + 0.5f * n) * cell, lay) : n;
+	const float deck = MAX(nd * dome - (1.0f - ct.x), 0.0f) / MAX(ct.x, 0.001f) * base * smoothstep(Math::lerp(0.55f, 0.15f, lay), Math::lerp(0.85f, 0.45f, lay), ct.x);
+	// Stratocumulus cells dense through their middles (liquid water 0.2 to 0.5 g/m3, extinction about 0.03 to 0.06
+	// per metre; Wood 2012) with a soft thin rim: the linear remap left each cell an even, faint disc.
+	const float deck_sc = sc > 0.0f ? Math::lerp(deck, MIN(deck * 3.0f, 1.0f), sc) : deck;
+	const float shape = MAX(cells, deck_sc) * (1.0f + MIN(eff, 0.0f));
 	// Frostbite's measured extinction: stratus about 0.04, cumulus up to 0.1 per metre; a fair sky's clouds a
 	// little lighter than a deck's.
 	return shape * Math::lerp(0.4f, 1.0f, ct.x) * Math::lerp(0.04f, 0.1f, ct.y) * p_state.density;
@@ -924,6 +1014,10 @@ uniform int cloud_storm_count = 0;
 uniform vec4 cloud_storms[8];
 // Each storm's own cloud base (m; <= 0: cloud_base_height), and the lowest base of all (the march's bounds).
 uniform float cloud_storm_base[8];
+uniform float cloud_storm_rain[8]; // peak mm/h times growth (round 8)
+uniform float cloud_storm_outflow[8]; // m/s
+uniform vec2 cloud_storm_dir = vec2(1.0, 0.0); // the way the storms move
+uniform vec2 cloud_rain_slant = vec2(0.0); // horizontal metres per metre of fall (the low wind over the drops' 7 m/s)
 uniform float cloud_base_min = 1500.0;
 // Density effectors (WeatherMap3D.add_cloud_effector): world centre and radius (m), strength (> 0 adds cloud).
 uniform int cloud_effector_count = 0;
@@ -942,6 +1036,8 @@ uniform float cloud_detail_strength = 1.5;
 uniform float cloud_turret_strength = 0.9;
 // The cumulus cells' size (m): each holds at most one cloud (State::cell_size).
 uniform float cloud_cell_size = 1200.0;
+// Stratocumulus cells (State::sc_*): the wind's direction, the roll stretch along it, the cell size (m).
+uniform vec4 cloud_sc = vec4(1.0, 0.0, 1.0, 1800.0);
 // The high layer (State::high_*).
 uniform float cloud_high_cover = 0.0;
 uniform float cloud_high_height = 8000.0;
@@ -949,6 +1045,7 @@ uniform float cloud_high_tau = 1.0;
 uniform float cloud_high_scale = 24000.0;
 uniform vec2 cloud_high_drift = vec2(0.0);
 uniform vec2 cloud_high_dir = vec2(1.0, 0.0);
+uniform float cloud_high_cc = 0.0;
 // The mid layer (State::mid_*).
 uniform float cloud_mid_cover = 0.0;
 uniform float cloud_mid_height = 4500.0;
@@ -1066,6 +1163,24 @@ float wc_top_height(float t) {
 	return cloud_thickness * mix(0.25, 1.0, smoothstep(0.0, 0.7, t)) * (1.0 + 4.0 * smoothstep(0.8, 1.0, t));
 }
 
+// A storm's shelf cloud: how far its gust front lowers the base at xz (shelf_drop() on the CPU).
+float wc_shelf_drop(int i, vec2 xz) {
+	float o = cloud_storm_outflow[i];
+	if (o <= 0.0) {
+		return 0.0;
+	}
+	vec4 s = cloud_storms[i];
+	vec2 d = xz - s.xy;
+	float rr = length(d);
+	if (rr < 1.0) {
+		return 0.0;
+	}
+	float u = (rr - s.z * (1.1 + 0.04 * o)) / (0.6 * s.z);
+	float arc = smoothstep(0.1, 0.7, dot(d, cloud_storm_dir) / rr);
+	float wedge = smoothstep(-1.2, -0.1, u) * (1.0 - smoothstep(-0.1, 0.05, u));
+	return 450.0 * min(o / 15.0, 1.0) * s.w * arc * wedge;
+}
+
 vec2 wc_cover_type(vec2 xz) {
 	float cover = cloud_cover;
 	float t = cloud_type;
@@ -1086,6 +1201,10 @@ vec2 wc_cover_type(vec2 xz) {
 		float wide = exp(-x2 / (1.6 * 1.6)) * s.w;
 		cover = 1.0 - (1.0 - cover) * (1.0 - wide);
 		t = max(t, 0.9 * wide);
+		// The shelf: one continuous, layered wedge (cover_type_at() on the CPU).
+		float sh = wc_shelf_drop(i, xz) / 450.0;
+		cover = max(cover, 0.95 * sh);
+		t = mix(t, 0.05, sh);
 	}
 	return vec2(cover, t);
 }
@@ -1103,6 +1222,12 @@ float wc_base_at(vec2 xz) {
 		vec4 s = cloud_storms[i];
 		vec2 d = xz - s.xy;
 		b = mix(b, cloud_storm_base[i], smoothstep(0.005, 0.1, exp(-dot(d, d) / (s.z * s.z) / (1.6 * 1.6))));
+	}
+	for (int i = 0; i < 8; i++) {
+		if (i >= cloud_storm_count) {
+			break;
+		}
+		b -= wc_shelf_drop(i, xz);
 	}
 	return b;
 }
@@ -1137,6 +1262,34 @@ float wc_mid_cover(vec2 xz) {
 		c = 1.0 - (1.0 - c) * (1.0 - 0.6 * exp(-dot(d, d) / (4.0 * s.z * s.z)) * s.w);
 	}
 	return c;
+}
+
+// Stratocumulus (sc_share(), sc_cells_at() on the CPU, which explain them).
+float wc_sc_share(float t) {
+	return smoothstep(0.06, 0.14, t) * (1.0 - smoothstep(0.3, 0.42, t));
+}
+
+float wc_sc_cells(vec2 xz) {
+	vec2 q0 = xz - cloud_drift;
+	vec2 d = cloud_sc.xy;
+	vec2 q = vec2(dot(q0, d) / (cloud_sc.w * cloud_sc.z), dot(q0, vec2(-d.y, d.x)) / cloud_sc.w);
+	int gx = int(floor(q.x));
+	int gz = int(floor(q.y));
+	float f1 = 9.0;
+	float f2 = 9.0;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec2 c = vec2(float(gx + i) + wc_hash2(gx + i + 4057, gz + j - 911), float(gz + j) + wc_hash2(gx + i - 6311, gz + j + 2207));
+			float dist = length(q - c);
+			if (dist < f1) {
+				f2 = f1;
+				f1 = dist;
+			} else if (dist < f2) {
+				f2 = dist;
+			}
+		}
+	}
+	return smoothstep(0.0, 0.7, f2 - f1);
 }
 
 // Density effectors (effector_at() on the CPU, which explains them).
@@ -1395,8 +1548,19 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 		float lobes = textureLod(cloud_detail, loc.xyz * 0.4, max(log2(p_step / loc.w * 0.4 * 128.0), 0.0)).b;
 		env = max(env - cloud_turret_strength * (1.0 - lobes) * mix(0.4, 1.0, smoothstep(0.15, 0.6, hc)) * smoothstep(0.0, 0.25, hc), 0.0);
 	}
-	float cells = max(n - (1.0 - env), 0.0) / max(env, 0.001) * base;
-	float deck = max(n * dome - (1.0 - ct.x), 0.0) / max(ct.x, 0.001) * base * smoothstep(0.55, 0.85, ct.x);
+	float lay = 1.0 - smoothstep(0.22, 0.36, ct.y); // layered_share() on the CPU
+	float cells = max(n - (1.0 - env), 0.0) / max(env, 0.001) * base * (1.0 - lay);
+	float sc = wc_sc_share(ct.y);
+	float cell = 1.0; // rounded heaps, as on the CPU
+	if (sc > 0.0) {
+		float cv = clamp(wc_sc_cells(p.xz) + 0.5 * (n - 0.5), 0.0, 1.0);
+		float ht = 0.25 + 0.75 * cv;
+		float lift = 0.15 * (1.0 - cv);
+		cell = mix(1.0, (1.0 - smoothstep(0.5 * ht, ht, h)) * smoothstep(lift, lift + 0.08, h) * (0.5 + 0.7 * cv), sc);
+	}
+	float nd = lay > 0.0 ? mix(n, (0.5 + 0.5 * n) * cell, lay) : n;
+	float deck = max(nd * dome - (1.0 - ct.x), 0.0) / max(ct.x, 0.001) * base * smoothstep(mix(0.55, 0.15, lay), mix(0.85, 0.45, lay), ct.x);
+	deck = sc > 0.0 ? mix(deck, min(deck * 3.0, 1.0), sc) : deck; // dense cell middles, as on the CPU
 	float shape = max(cells, deck) * (1.0 + min(eff, 0.0));
 	r_profile = clamp(shape, 0.0, 1.0);
 	if (p_detail && shape > 0.0) {

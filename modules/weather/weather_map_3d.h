@@ -186,6 +186,11 @@ private:
 	float cur_air_temperature = 15.0f;
 	float cur_air_humidity = 0.7f;
 	float cur_sun_sine = 0.0f; // sine of the sun's elevation (0 below the horizon or without a sun)
+	// The ground's convective heating, 0 (a still night) to 1 (a clear afternoon); 1 without a clock (_update_air).
+	float cur_heating = 1.0f;
+	// Low cloud from the weather (docs/ideas/clouds.md round 6): the type eases between stratus or stratocumulus
+	// (stable air) and cloud_type (convection), and the base follows the condensation level.
+	bool cloud_regime_from_weather = true;
 	bool sun_known = false; // a sun light or a sky clock says where the sun is
 	float diurnal_cache_day_length = -1.0f;
 	float diurnal_cache_mean = 0.5f;
@@ -404,6 +409,10 @@ private:
 		float drip_timer = 0.0f;
 		bool left = false; // the next print's side
 		bool seen = false;
+		// Whether the body lays its own mud (a vehicle, GroundLegMud3D feet), kept per child count: the class checks
+		// walk the class tree by name, every body every frame.
+		int own_mud_children = -1;
+		bool own_mud = false;
 	};
 	HashMap<ObjectID, TrackBody> track_bodies;
 	struct CloudLight {
@@ -708,6 +717,13 @@ public:
 
 	void set_cloud_base_height(float p_height);
 	float get_cloud_base_height() const { return cloud_base_height; }
+	void set_cloud_regime_from_weather(bool p_enabled);
+	bool is_cloud_regime_from_weather() const { return cloud_regime_from_weather; }
+	float get_cloud_base_now() const;
+	float get_convective_heating() const { return cur_heating; }
+	float get_cirrocumulus_share() const;
+	float get_cloud_base_at(Vector3 p_position) const;
+	float _target_cloud_type() const;
 	void set_cloud_thickness(float p_thickness);
 	float get_cloud_thickness() const { return cloud_thickness; }
 	void set_cloud_density(float p_density);
@@ -1009,6 +1025,7 @@ public:
 	float contract_mid_cloud_cover_at(const Vector3 &p_position) const override { return get_mid_cloud_cover_at(p_position); }
 	float contract_cloud_effector_at(const Vector3 &p_position) const override { return get_cloud_effector_at(p_position); }
 	float contract_mountain_wave_at(const Vector3 &p_position) const override { return get_mountain_wave_at(p_position); }
+	float contract_cloud_base_at(const Vector3 &p_position) const override { return WeatherClouds::base_at(_cloud_state(), Vector2(p_position.x, p_position.z)); }
 	float contract_mountain_wave_velocity_at(const Vector3 &p_position) const override { return get_mountain_wave_velocity_at(p_position); }
 	float contract_wave_cloud_density_at(const Vector3 &p_position) const override { return get_wave_cloud_density_at(p_position); }
 	float contract_water_temperature() const override { return get_water_temperature(); }

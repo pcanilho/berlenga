@@ -86,6 +86,13 @@ float VegetationMist3D::_ground_height(const Vector3 &p_at) const {
 			}
 		}
 	}
+	// The world's ground answers directly (a heightfield read) where a ground system is in the scene.
+	if (WorldContracts::ground()->has_provider()) {
+		const float h = WorldContracts::ground()->height_at(Vector3(p_at.x, p_at.y + 500.0f, p_at.z));
+		if (Math::is_finite(h)) {
+			return h;
+		}
+	}
 	if (!is_inside_tree() || get_world_3d().is_null()) {
 		return p_at.y;
 	}
@@ -168,7 +175,18 @@ float VegetationMist3D::weather_mist_level() const {
 		const float elevation = Math::rad_to_deg(Math::asin(CLAMP(sun->get_global_basis().get_column(2).normalized().y, -1.0f, 1.0f)));
 		dark = 1.0f - Math::smoothstep(4.0f, 18.0f, elevation); // Burns off as the sun climbs.
 	}
-	return humid * calm * clear * dark;
+	// Hill fog: where the low cloud's base sits on the ground (WorldWeather.cloud_base_at, the day's condensation
+	// level) the ground stands in the cloud. It is cloud, not a radiation layer: wind, a cloudy sky and the sun do not
+	// clear it (Gultepe et al. 2007, orographic and cloud-base-lowering fog).
+	float hill = 0.0f;
+	const float cover = CLAMP(wm->cloud_cover_at(at), 0.0f, 1.0f);
+	if (cover > 0.3f) {
+		const float g = WorldContracts::ground()->has_provider() ? WorldContracts::ground()->height_at(at) : at.y;
+		if (Math::is_finite(g)) {
+			hill = Math::smoothstep(wm->cloud_base_at(at) - 40.0f, wm->cloud_base_at(at), g) * Math::smoothstep(0.3f, 0.7f, cover);
+		}
+	}
+	return MAX(humid * calm * clear * dark, hill);
 }
 
 void VegetationMist3D::_apply_flow_settings() {
@@ -253,14 +271,16 @@ void VegetationMist3D::_step(float p_delta) {
 		return;
 	}
 	level_timer -= p_delta;
+	bool reread = false;
 	if (level_timer <= 0.0f) {
 		level_timer = MIST_LEVEL_PERIOD;
+		reread = true;
 		level = mist_amount >= 0.0f ? MIN(mist_amount, 2.0f) : weather_mist_level();
 	}
 	const Node3D *t = _target();
 	if (!enabled || !t) {
 		for (Cell &c : cells) {
-			c.emitter->set("enabled", false);
+			_cell_off(c);
 		}
 		active_cells = 0;
 		return;
@@ -286,7 +306,7 @@ void VegetationMist3D::_step(float p_delta) {
 			// A round patch: corner cells past the range stay off.
 			const Vector2 off = Vector2((key.x + 0.5f) * mist_cell - centre.x, (key.y + 0.5f) * mist_cell - centre.z);
 			if (off.length() > mist_range + mist_cell * 0.5f) {
-				c.emitter->set("enabled", false);
+				_cell_off(c);
 				continue;
 			}
 			Vector2 g = _ground_cell(key);
@@ -294,34 +314,66 @@ void VegetationMist3D::_step(float p_delta) {
 			// beyond instead of ending at a line.
 			const float edge = 1.0f - Math::smoothstep(mist_range * 0.6f, mist_range + mist_cell * 0.5f, off.length());
 			const Vector3 cell_at((key.x + 0.5f) * mist_cell, g.x, (key.y + 0.5f) * mist_cell);
-			float local = 1.0f;
-			if (wm) {
-				local += 0.5f * CLAMP(wm->surface_wetness_at(cell_at), 0.0f, 1.0f); // wet ground mists more
+			if (reread || c.read_key != key) {
+				c.read_key = key;
+				c.wet = 0.0f;
+				c.water = -Math::INF;
+				c.steam = 0.0f;
+				if (wm) {
+					c.wet = CLAMP(wm->surface_wetness_at(cell_at), 0.0f, 1.0f);
+					c.water = WorldContracts::water()->height_at(cell_at + Vector3(0, 2.0f, 0));
+					if (Math::is_finite(c.water) && c.water > g.x - 0.5f) {
+						const float excess = wm->water_temperature() - wm->air_temperature_at(Vector3(cell_at.x, c.water, cell_at.z));
+						c.steam = Math::smoothstep(3.0f, 10.0f, excess) * Math::smoothstep(0.5f, 0.8f, wm->air_humidity_at(cell_at));
+					}
+				}
 			}
+			const float local = 1.0f + 0.5f * c.wet; // wet ground mists more
 			float smoke = level * g.y * local * edge;
 			// Steam fog over open water (sea smoke): air much colder than the water takes up its vapour and
 			// condenses it at once, in any light, while a breeze leaves it lying (Saunders 1964; ten or more
 			// degrees for thick steam). The water lags the season (get_water_temperature).
-			const float water = wm ? WorldContracts::water()->height_at(cell_at + Vector3(0, 2.0f, 0)) : -Math::INF;
-			if (Math::is_finite(water) && water > g.x - 0.5f) {
-				const float excess = wm->water_temperature() - wm->air_temperature_at(Vector3(cell_at.x, water, cell_at.z));
-				const float steam = Math::smoothstep(3.0f, 10.0f, excess) * (1.0f - Math::smoothstep(6.0f, 12.0f, wind.length())) * Math::smoothstep(0.5f, 0.8f, wm->air_humidity_at(cell_at));
-				g.x = water;
-				smoke = MAX(smoke, steam * edge);
+			if (Math::is_finite(c.water) && c.water > g.x - 0.5f) {
+				g.x = c.water;
+				smoke = MAX(smoke, c.steam * (1.0f - Math::smoothstep(6.0f, 12.0f, wind.length())) * edge);
 			}
 			// The emitter couples the layer towards its level, so it holds the mist where the weather
 			// wants it and refills what a walker stirred away. A tiny level keeps it coupled, so the
 			// mist clears when the level drops instead of lingering.
 			c.key = key;
-			c.emitter->set("enabled", true);
-			c.emitter->set_global_position(Vector3((key.x + 0.5f) * mist_cell, g.x + mist_depth * 0.3f, (key.y + 0.5f) * mist_cell));
-			c.emitter->set("size", Vector3(mist_cell, mist_depth * 0.6f, mist_cell));
-			c.emitter->set("smoke", MAX(smoke, 0.0005f));
-			c.emitter->set("temperature", 0.0f);
-			c.emitter->set("velocity", wind);
-			c.emitter->set("couple_rate", 0.5f);
+			if (!c.on) {
+				c.emitter->set(SNAME("enabled"), true);
+				c.on = true;
+			}
+			const Vector3 pos((key.x + 0.5f) * mist_cell, g.x + mist_depth * 0.3f, (key.y + 0.5f) * mist_cell);
+			if (pos != c.position) {
+				c.emitter->set_global_position(pos);
+				c.position = pos;
+			}
+			if (!c.shaped) {
+				c.emitter->set(SNAME("size"), Vector3(mist_cell, mist_depth * 0.6f, mist_cell));
+				c.emitter->set(SNAME("temperature"), 0.0f);
+				c.emitter->set(SNAME("couple_rate"), 0.5f);
+				c.shaped = true;
+			}
+			const float sm = MAX(smoke, 0.0005f);
+			if (sm != c.smoke) {
+				c.emitter->set(SNAME("smoke"), sm);
+				c.smoke = sm;
+			}
+			if (wind != c.velocity) {
+				c.emitter->set(SNAME("velocity"), wind);
+				c.velocity = wind;
+			}
 			active_cells += smoke > 0.01f ? 1 : 0;
 		}
+	}
+}
+
+void VegetationMist3D::_cell_off(Cell &p_cell) {
+	if (p_cell.on) {
+		p_cell.emitter->set(SNAME("enabled"), false);
+		p_cell.on = false;
 	}
 }
 
@@ -344,6 +396,9 @@ void VegetationMist3D::set_mist_range(float p_v) {
 void VegetationMist3D::set_mist_cell(float p_v) {
 	mist_cell = CLAMP(p_v, 1.0f, 64.0f);
 	ground_cache.clear();
+	for (Cell &c : cells) {
+		c.shaped = false;
+	}
 	_apply_flow_settings();
 	_resize_pool();
 }

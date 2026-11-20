@@ -20,6 +20,15 @@
 				Dust lifted at [param position] by a tyre or a body moving over the ground, with the plume's starting [param velocity]; [param strength] is the swept rate, tyre width times speed (m2/s). Only dry, bare sand and dry silt skins give dust ([member dust_emission] per square metre swept); a [GroundDust3D] carries it off. A dry silt skin thins by what it gives and its crust is broken, so the wind lifts it too.
 			</description>
 		</method>
+		<method name="add_loose_stone">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="velocity" type="Vector3" default="Vector3(0, 0, 0)" />
+			<description>
+				Adds a loose stone of [param radius] (3 cm to 1 m) at [param position] as a [RigidBody3D] in the [code]ground_loose[/code] group, moving at [param velocity], as a stone knocked loose by a wheel ([member buried_kick]) is. Returns its id.
+			</description>
+		</method>
 		<method name="add_mat_load">
 			<return type="void" />
 			<param index="0" name="mat" type="int" />
@@ -249,6 +258,18 @@
 			<return type="int" />
 			<description>
 				How many loose stones have sunk out of sight in soft mud, or been buried by mud laid over them, and lie hidden again. They are kept with the deposits ([method save_ruts]) and forgotten by [method clear_mud_deposits].
+			</description>
+		</method>
+		<method name="get_squeezed_stone_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many steps a tyre rolling onto a loose stone squeezed it out sideways.
+			</description>
+		</method>
+		<method name="get_tracked_dust_lifted" qualifiers="const">
+			<return type="float" />
+			<description>
+				Kilograms of dried tracked mud ([member tracked_mud]) lifted as dust since start, by tyres and by wind.
 			</description>
 		</method>
 		<method name="get_silt_dust_lifted" qualifiers="const">
@@ -822,6 +843,9 @@
 		<member name="drying_time" type="float" setter="set_drying_time" getter="get_drying_time" default="900.0">
 			How long freshly turned ground takes to dry to a third of its darkening, in seconds.
 		</member>
+		<member name="dune_tone" type="bool" setter="set_dune_tone" getter="is_dune_tone" default="true">
+			If [code]true[/code], the patch's sand (and a sand [member ground_type]'s ground past it) varies in colour at the dune field's scale as [member TerrainMaterial3D.sand_dune_tone] draws it: redder old sand, a coarse darker lag on interdune flats and pale slip faces, from the height source's [method TerrainGenerator3D.get_sand_depth_at], in raster and path tracing. Needs [member wind_ripples] (it rides on the ripple map).
+		</member>
 		<member name="dust_emission" type="float" setter="set_dust_emission" getter="get_dust_emission" default="0.06">
 			The dust a tyre lifts from fully dry, bare sand, in kilograms per second per metre of tyre width per metre per second of speed (sliding counts twice). Scaled by how much of the ground the wind could move there; damp sand gives none. Carried by a [GroundDust3D].
 		</member>
@@ -886,7 +910,7 @@
 			Hidden stones and roots per square metre of deep mud ([member buried_obstacles]).
 		</member>
 		<member name="buried_kick" type="bool" setter="set_buried_kick" getter="is_buried_kick" default="true">
-			A hidden stone a rut has uncovered past its middle, met by a rolling tyre, is knocked loose: it becomes a [RigidBody3D] in the [code]ground_loose[/code] group, moving off with part of the tyre's speed, and the mud closes into its socket. It is gone from the hidden stones for good. A loose stone in front of a rolling tyre is shoved on and out to the side. On a mud layer a loose stone lies in the deformed mud, not on the terrain's collider: it settles to the depth the mud bears it at, ploughs a furrow with a heap ahead as it moves, sinks deep in slurry, and once out of sight (sunk, or buried by mud laid over it) is a hidden stone again. Roots stay.
+			A hidden stone a rut has uncovered past its middle, met by a rolling tyre, is knocked loose: it becomes a [RigidBody3D] in the [code]ground_loose[/code] group, moving off with part of the tyre's speed, and the mud closes into its socket. It is gone from the hidden stones for good. A loose stone in front of a rolling tyre is shoved on and out to the side. On a mud layer a loose stone lies in the deformed mud, not on the terrain's collider: it settles to the depth the mud bears it at, ploughs a furrow with a heap ahead as it moves, sinks deep in slurry, and once out of sight (sunk, or buried by mud laid over it) is a hidden stone again. Liquid mud running downhill and [GroundDebrisFlow3D] flows carry it along and leave it where they stop. A tyre meeting one low in its rut rolls onto it: pressed into the rut floor under the tread's middle, squeezed out sideways under its shoulder. Roots stay.
 		</member>
 		<member name="buried_obstacles" type="bool" setter="set_buried_obstacles" getter="is_buried_obstacles" default="true">
 			Stones and tree roots lie hidden in the [member mud_layer] (roots where trees shade the ground): a wheel sinking into the mud stops on one under its middle and rides up ([method get_buried_depth_at]); one under the rest of its print it wraps round, the mud pressed out round the stone's top. Slumping and liquid mud flow round a stone's top, not off it. Near the followed point each is a [StaticBody3D] in the [code]ground_buried[/code] group with its mesh, so once ruts or water uncover one it is solid for wheels and bodies. The same stones are there every time.
@@ -957,6 +981,9 @@
 		<member name="ripple_extent" type="float" setter="set_ripple_extent" getter="get_ripple_extent" default="4.0">
 			Width of the square of real ripple geometry round the follow point, m. The patch's middle is meshed at the ripple cell over it, so its vertex count grows as its square (4 m: about 100,000 vertices). The ripples fade out over its outer 15%, into the same field drawn as surface detail (a normal, no shadows of their own) over the rest of the patch.
 		</member>
+		<member name="ripple_sorting" type="bool" setter="set_ripple_sorting" getter="is_ripple_sorting" default="true">
+			If [code]true[/code], wind ripples sort their grains as real ones do: dark lines of heavy minerals in the troughs (patchy over metres) and paler, coarser crests, on the window's ripples and the far ones, in raster and path tracing. Where the crests are finer than a pixel the ground takes the bands' mean tone. Needs [member wind_ripples].
+		</member>
 		<member name="ripple_time_scale" type="float" setter="set_ripple_time_scale" getter="get_ripple_time_scale" default="1.0">
 			Speeds up the ripples' growth over real time; [code]1.0[/code] is real time, when ripples take minutes to re-form. For scenes and time-lapses.
 		</member>
@@ -1024,7 +1051,7 @@
 			World seconds per real second while away from kept ruts (see [member keep_ruts]): a tile read back is aged by the time since it was written times this, its turned tint and mud film dried ([member drying_time]), its relief softened and its water evaporated, as if the field had stayed over it. 0 keeps tiles exactly as left. A tile the field left more than ten world minutes ago comes back from disk, aged, rather than from the cache.
 		</member>
 		<member name="tracked_mud" type="bool" setter="set_tracked_mud" getter="is_tracked_mud" default="true">
-			If [code]true[/code], mud carried out onto firm ground is left on it ([method track_mud]): a vehicle's clogged tread presses part of its clay down as it rolls (most at a crawl, little at a spin, where it flies instead), and boots leave heel and forefoot prints that fade over a dozen steps as the soles come clean. The film darkens the ground while wet, dries in place to the clay's pale tone, is kept by later tyre and foot presses, and is washed off by standing water or dug away. Both renderers draw it.
+			If [code]true[/code], mud carried out onto firm ground is left on it ([method track_mud]): a vehicle's clogged tread presses part of its clay down as it rolls (most at a crawl, little at a spin, where it flies instead), and boots leave heel and forefoot prints that fade over a dozen steps as the soles come clean. The film darkens the ground while wet, dries in place to the clay's pale tone, is kept by later tyre and foot presses, and is washed off by standing water or dug away. Dried, it is dust: tyres grind it up and lift it ([method add_dust]) and the wind lifts it from about 7 m/s, and the trail fades in patches as it goes. Both renderers draw it.
 		</member>
 		<member name="type_map" type="Image" setter="set_type_map" getter="get_type_map">
 			A map of the ground over [member type_map_rect]: red is the share of sand, green over one half is bare rock.

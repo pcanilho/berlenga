@@ -45,9 +45,71 @@
 		emit_changed(); \
 	}
 
-LAYER_SETTER(const Ref<Texture2D> &, albedo_texture)
+void TerrainMaterialLayer::set_albedo_texture(const Ref<Texture2D> &p_value) {
+	albedo_texture = p_value;
+	albedo_mean_valid = false;
+	emit_changed();
+}
+
+void TerrainMaterialLayer::set_roughness_texture(const Ref<Texture2D> &p_value) {
+	roughness_texture = p_value;
+	roughness_mean_valid = false;
+	emit_changed();
+}
+
+void TerrainMaterialLayer::set_detail_only(bool p_enable) {
+	detail_only = p_enable;
+	emit_changed();
+}
+
+// Mean of a texture over a 64x64 reduction (linear: sRGB decoded for colour), white without a readable image.
+static Color _texture_mean(const Ref<Texture2D> &p_texture, bool p_srgb) {
+	Color mean(1, 1, 1);
+	if (p_texture.is_null()) {
+		return mean;
+	}
+	Ref<Image> img = p_texture->get_image();
+	if (img.is_null() || img->is_empty()) {
+		return mean;
+	}
+	img = img->duplicate();
+	if (img->is_compressed()) {
+		img->decompress();
+	}
+	img->clear_mipmaps();
+	img->convert(Image::FORMAT_RGBA8);
+	img->resize(64, 64, Image::INTERPOLATE_BILINEAR);
+	double sum[3] = { 0.0, 0.0, 0.0 };
+	for (int y = 0; y < 64; y++) {
+		for (int x = 0; x < 64; x++) {
+			const Color c = p_srgb ? img->get_pixel(x, y).srgb_to_linear() : img->get_pixel(x, y);
+			sum[0] += c.r;
+			sum[1] += c.g;
+			sum[2] += c.b;
+		}
+	}
+	for (int k = 0; k < 3; k++) {
+		mean[k] = float(MAX(sum[k] / 4096.0, 1e-3));
+	}
+	return mean;
+}
+
+float TerrainMaterialLayer::get_roughness_mean() const {
+	if (!roughness_mean_valid) {
+		roughness_mean = _texture_mean(roughness_texture, false).g;
+		roughness_mean_valid = true;
+	}
+	return roughness_mean;
+}
+
+Color TerrainMaterialLayer::get_albedo_mean() const {
+	if (!albedo_mean_valid) {
+		albedo_mean = _texture_mean(albedo_texture, true);
+		albedo_mean_valid = true;
+	}
+	return albedo_mean;
+}
 LAYER_SETTER(const Ref<Texture2D> &, normal_texture)
-LAYER_SETTER(const Ref<Texture2D> &, roughness_texture)
 LAYER_SETTER(const Ref<Texture2D> &, height_texture)
 LAYER_SETTER(const Color &, color)
 
@@ -89,6 +151,10 @@ void TerrainMaterialLayer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_tile_size", "metres"), &TerrainMaterialLayer::set_tile_size);
 	ClassDB::bind_method(D_METHOD("get_tile_size"), &TerrainMaterialLayer::get_tile_size);
 	ClassDB::bind_method(D_METHOD("set_porosity", "porosity"), &TerrainMaterialLayer::set_porosity);
+	ClassDB::bind_method(D_METHOD("set_detail_only", "enable"), &TerrainMaterialLayer::set_detail_only);
+	ClassDB::bind_method(D_METHOD("is_detail_only"), &TerrainMaterialLayer::is_detail_only);
+	ClassDB::bind_method(D_METHOD("get_roughness_mean"), &TerrainMaterialLayer::get_roughness_mean);
+	ClassDB::bind_method(D_METHOD("get_albedo_mean"), &TerrainMaterialLayer::get_albedo_mean);
 	ClassDB::bind_method(D_METHOD("get_porosity"), &TerrainMaterialLayer::get_porosity);
 
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "albedo_texture", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_albedo_texture", "get_albedo_texture");
@@ -100,6 +166,7 @@ void TerrainMaterialLayer::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "normal_strength", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_normal_strength", "get_normal_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "0.01,100,0.01,or_greater,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "porosity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_porosity", "get_porosity");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "detail_only"), "set_detail_only", "is_detail_only");
 }
 
 // --- TerrainMaterial3D --------------------------------------------------------------------------------------------
@@ -114,6 +181,45 @@ String TerrainMaterial3D::get_shader_code() const {
 	c += "// TerrainMaterial3D (docs/ideas/terrain-material.md). Generated: edit the material, not this code.\n";
 	c += "shader_type spatial;\nrender_mode cull_back;\n\n";
 	c += TerrainGenerator3D::get_geology_shader_code();
+	c += TerrainGenerator3D::get_sand_shader_code();
+	c += R"(
+// The dune tone's noise: the same hash and value noise as the ground's (material.cpp ground_ripple_hash and
+// ground_ripple_vn), so the tone meets the GroundSurface3D patch's without a seam.
+float tm_dune_hash(ivec2 p_c, uint p_s) {
+	uint h = (uint(p_c.x) * 0x8da6b343u) ^ (uint(p_c.y) * 0xd8163841u) ^ (p_s * 0xcb1ab31fu);
+	h = (h ^ (h >> 16u)) * 0x7feb352du;
+	h = (h ^ (h >> 15u)) * 0x846ca68bu;
+	h ^= h >> 16u;
+	return float(h >> 8u) * (1.0 / 16777216.0);
+}
+float tm_dune_vn(vec2 p_p, uint p_s) {
+	vec2 i = floor(p_p);
+	vec2 f = p_p - i;
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	ivec2 c = ivec2(i);
+	return mix(mix(tm_dune_hash(c, p_s), tm_dune_hash(c + ivec2(1, 0), p_s), u.x), mix(tm_dune_hash(c + ivec2(0, 1), p_s), tm_dune_hash(c + ivec2(1, 1), p_s), u.x), u.y);
+}
+// Dune-scale sand colour (docs/ideas/sand.md, "Dune-scale tone"): three of the changes a dune field shows from afar.
+// Rubefaction: iron-oxide coats redden grains that have lain still for millennia (Walker 1979; Pye and Tsoar 2009),
+// patchy over hundreds of metres and strongest on the stable sand of thin flanks and interdunes. Interdune flats: the
+// wind strips the fine sand and leaves a coarser, darker lag (Sharp 1963; Lancaster 1995). Slip faces: grain flows of
+// fine, well-sorted sand, paler than the windward slope (Bagnold 1941). p_depth: the loose sand's depth (m), below 0
+// off the dune fields or unknown (only the slip faces show there).
+vec3 tm_dune_tone(vec2 p_xz, float p_normal_y, float p_depth) {
+	vec3 t = vec3(1.0);
+	if (p_depth >= 0.0) {
+		float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+		float age = smoothstep(0.25, 0.7, 0.65 * tm_dune_vn(p_xz / 420.0, 41u) + 0.35 * tm_dune_vn(p_xz / 130.0, 42u));
+		t *= mix(vec3(1.0), vec3(1.15, 0.93, 0.78), age * (0.7 + 0.3 * thin));
+		float lag = thin * smoothstep(0.95, 0.985, p_normal_y) * mix(0.45, 1.0, tm_dune_vn(p_xz / 23.0, 43u));
+		t *= mix(vec3(1.0), vec3(0.72, 0.7, 0.68), lag);
+	}
+	// Slopes of about 29 to 33 degrees: the slip face at the sand's repose.
+	float slip = smoothstep(0.78, 0.84, p_normal_y) * (1.0 - smoothstep(0.88, 0.93, p_normal_y));
+	t *= mix(vec3(1.0), vec3(1.08, 1.07, 1.05), slip);
+	return t;
+}
+)";
 	if (grass_tint_enabled) {
 		c += GrassField3D::get_ground_shader_code();
 	}
@@ -175,6 +281,7 @@ float tm_sky_irradiance(vec4 a, vec4 b, float c, vec3 n) {
 	}
 	c += R"(
 uniform bool tm_geology = true;
+uniform bool tm_dune_tone_on = true;
 uniform float tm_sea_level = 0.0;
 uniform float tm_beach_height = 2.5;
 uniform float tm_rock_cos = 0.766;
@@ -270,12 +377,14 @@ float tm_gc_grain(vec2 p_world, float s, float cover, out float tone, out vec3 g
 		c += vformat("uniform float tm_%s_roughness = 0.9;\nuniform float tm_%s_normal = 1.0;\nuniform float tm_%s_scale = 0.25;\nuniform float tm_%s_porosity = 0.7;\n", LAYER_NAMES[i], LAYER_NAMES[i], LAYER_NAMES[i], LAYER_NAMES[i]);
 		if (l.is_valid() && l->get_albedo_texture().is_valid()) {
 			c += vformat("uniform sampler2D tm_%s_albedo_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;\n", LAYER_NAMES[i]);
+			c += vformat("uniform vec3 tm_%s_albedo_mean = vec3(1.0);\n", LAYER_NAMES[i]);
 		}
 		if (l.is_valid() && l->get_normal_texture().is_valid()) {
 			c += vformat("uniform sampler2D tm_%s_normal_tex : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;\n", LAYER_NAMES[i]);
 		}
 		if (l.is_valid() && l->get_roughness_texture().is_valid()) {
 			c += vformat("uniform sampler2D tm_%s_roughness_tex : hint_default_white, filter_linear_mipmap_anisotropic, repeat_enable;\n", LAYER_NAMES[i]);
+			c += vformat("uniform float tm_%s_roughness_mean = 1.0;\n", LAYER_NAMES[i]);
 		}
 		if (l.is_valid() && l->get_height_texture().is_valid()) {
 			c += vformat("uniform sampler2D tm_%s_height_tex : hint_default_black, filter_linear_mipmap, repeat_enable;\n", LAYER_NAMES[i]);
@@ -427,7 +536,15 @@ vec2 tm_hex_hash(ivec2 v) {
 	h ^= h >> 15u;
 	return vec2(float(h & 0xFFFFu), float(h >> 16u)) / 65535.0;
 }
-vec4 tm_hex(sampler2D t, vec2 uv, vec2 dx, vec2 dy, bool nmap) {
+)";
+	// Godot passes a sampler to a function only with one filter/repeat/hint setting per function, so the hex sampler
+	// is written once per kind of map: albedo (source_color), normal, roughness and height.
+	{
+		const String hex = R"(vec4 tm_hex(sampler2D t, vec2 uv, vec2 dx, vec2 dy, bool nmap) {
+	// Footprints past half a tile all take the last mips anyway; unbounded ones (a face seen edge on: the cone
+	// stretches by 1 / cos up to 20 times) sent anisotropic filtering out of range, black patches over the cliffs.
+	dx *= min(1.0, 0.5 / max(length(dx), 1e-8));
+	dy *= min(1.0, 0.5 / max(length(dy), 1e-8));
 	vec2 st = uv * 1.7320508; // triangles some two thirds of a texture tile on a side: smaller cut features apart
 	vec2 sk = vec2(st.x - 0.57735027 * st.y, 1.15470054 * st.y);
 	ivec2 b = ivec2(floor(sk));
@@ -455,6 +572,11 @@ vec4 tm_hex(sampler2D t, vec2 uv, vec2 dx, vec2 dy, bool nmap) {
 	return acc;
 }
 )";
+		const char *kinds[4] = { "a", "n", "r", "h" };
+		for (int k = 0; k < 4; k++) {
+			c += hex.replace("vec4 tm_hex(", String("vec4 tm_hex_") + kinds[k] + "(");
+		}
+	}
 	// Per layer: albedo, roughness, normal perturbation and height at this point.
 	for (int i = 0; i < LAYER_MAX; i++) {
 		const Ref<TerrainMaterialLayer> &l = layers[i];
@@ -472,18 +594,28 @@ vec4 tm_hex(sampler2D t, vec2 uv, vec2 dx, vec2 dy, bool nmap) {
 		}
 		c += vformat("\talbedo = tm_%s_color.rgb;\n\trough = tm_%s_roughness;\n\tdn = vec3(0.0);\n\th = 0.5;\n", n, n);
 		if (has_a) {
-			c += vformat("\talbedo *= tm_hex(tm_%s_albedo_tex, pr.uv0, dx0, dy0, false).rgb * pr.w0 + (pr.w1 > 0.0 ? tm_hex(tm_%s_albedo_tex, pr.uv1, dx1, dy1, false).rgb * pr.w1 : vec3(0.0));\n", n, n);
+			// detail_only: the scan gives the detail around the layer's colour (divided by its own mean), so any scan
+			// keeps the colour the geology and the layer set.
+			c += vformat("\talbedo *= (tm_hex_a(tm_%s_albedo_tex, pr.uv0, dx0, dy0, false).rgb * pr.w0 + (pr.w1 > 0.0 ? tm_hex_a(tm_%s_albedo_tex, pr.uv1, dx1, dy1, false).rgb * pr.w1 : vec3(0.0))) / tm_%s_albedo_mean;\n", n, n, n);
 		}
 		if (has_r) {
-			c += vformat("\trough *= tm_hex(tm_%s_roughness_tex, pr.uv0, dx0, dy0, false).g * pr.w0 + (pr.w1 > 0.0 ? tm_hex(tm_%s_roughness_tex, pr.uv1, dx1, dy1, false).g * pr.w1 : 0.0);\n", n, n);
+			// detail_only: around the layer's roughness too (scans' roughness maps follow no common scale: some wet mud
+			// at 0.5, some dry rock at 0.95), so a dry layer is not glossy because its scan's map is.
+			c += vformat("\trough = min(rough * (tm_hex_r(tm_%s_roughness_tex, pr.uv0, dx0, dy0, false).g * pr.w0 + (pr.w1 > 0.0 ? tm_hex_r(tm_%s_roughness_tex, pr.uv1, dx1, dy1, false).g * pr.w1 : 0.0)) / tm_%s_roughness_mean, 1.0);\n", n, n, n);
 		}
 		if (has_n) {
-			c += vformat("\tvec3 n0 = tm_hex(tm_%s_normal_tex, pr.uv0, dx0, dy0, true).xyz * 2.0 - 1.0;\n", n);
+			c += vformat("\tvec3 n0 = tm_hex_n(tm_%s_normal_tex, pr.uv0, dx0, dy0, true).xyz * 2.0 - 1.0;\n", n);
 			c += vformat("\tdn = tm_perturb(n0.xy * tm_%s_normal, pr.axes0) * pr.w0;\n", n);
-			c += vformat("\tif (pr.w1 > 0.0) {\n\t\tvec3 n1 = tm_hex(tm_%s_normal_tex, pr.uv1, dx1, dy1, true).xyz * 2.0 - 1.0;\n\t\tdn += tm_perturb(n1.xy * tm_%s_normal, pr.axes1) * pr.w1;\n\t}\n", n, n);
+			c += vformat("\tif (pr.w1 > 0.0) {\n\t\tvec3 n1 = tm_hex_n(tm_%s_normal_tex, pr.uv1, dx1, dy1, true).xyz * 2.0 - 1.0;\n\t\tdn += tm_perturb(n1.xy * tm_%s_normal, pr.axes1) * pr.w1;\n\t}\n", n, n);
 		}
 		if (has_h) {
-			c += vformat("\th = tm_hex(tm_%s_height_tex, pr.uv0, dx0, dy0, false).r * pr.w0 + (pr.w1 > 0.0 ? tm_hex(tm_%s_height_tex, pr.uv1, dx1, dy1, false).r * pr.w1 : 0.0);\n", n, n);
+			c += vformat("\th = tm_hex_h(tm_%s_height_tex, pr.uv0, dx0, dy0, false).r * pr.w0 + (pr.w1 > 0.0 ? tm_hex_h(tm_%s_height_tex, pr.uv1, dx1, dy1, false).r * pr.w1 : 0.0);\n", n, n);
+		}
+		if (has_a || i == LAYER_SAND) {
+			// A scan repeats every tile_size (hex tiling hides the seams, not the sameness over tens of metres): the same
+			// 9 m and 2.2 m tone patches as the untextured layers below break it up. Sand takes them with or without a
+			// scan: a beach berm or dune face of one even tone read as a flat slab.
+			c += "\talbedo *= (0.84 + 0.32 * tm_vn(p / 9.0 + 31.0)) * (0.88 + 0.24 * tm_vn(p / 2.2 + 47.0));\n";
 		}
 		if (!has_a && i != LAYER_SAND) {
 			// A layer without textures is one flat colour (a meadow, bank or hillside read as a painted plane): give it
@@ -939,8 +1071,12 @@ vec2 tm_rd_height(vec3 p, float face, float scree, float blocks, vec3 dx, vec3 d
 		// Tone meets halfway inside an open crack.
 		float tone = mix(tight.y, mix(0.5 * (b1.y + b2.y), b1.y, edge), open);
 		float rough = tm_rd_clamp(wmax, 0.77) * (tm_rd_noise(q * 1.3) - 0.5) * 0.08 + tm_rd_clamp(wmax, 0.24) * (tm_rd_noise(q * 4.1) - 0.5) * 0.025;
-		// Crack relief: the block's edge rounds down into the crack.
-		float crel = kc * open * (smoothstep(0.0, 0.06, d) - 1.0) * 0.06;
+		// Crack relief: the block's edge rounds down into the crack, at most some 34 degrees (depth 0.45 of the lip's
+		// width; smoothstep's steepest slope is 1.5 / width). A 6 cm drop over 6 cm tilted the lips to some 56 degrees
+		// and, under the near-field slope clamp, up to 76: on a sunlit sea cliff every lip turned from the sun and the
+		// open joints drew as black lines. The lip widens with the pixel (2 pixels) so it never aliases.
+		float lip = max(0.06, 2.0 * pw);
+		float crel = kc * open * (smoothstep(0.0, lip, d) - 1.0) * min(0.06, 0.45 * lip);
 		hgt += face * (crel + blk + rough);
 		shade = mix(shade, crack_shade * (1.0 + kb * 0.14 * (tone - 0.5)), face);
 	}
@@ -1299,6 +1435,10 @@ void fragment() {
 		float h;
 		tm_sand(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		d += tm_sand_grain(wp, tm_fp0, a);
+		// The dune field's colour at this scale: redder old sand, coarse dark interdune flats, pale slip faces.
+		if (tm_dune_tone_on) {
+			a *= tm_dune_tone(wp.xz, wn.y, terrain_sand_depth(wp));
+		}
 		alb[4] = a;
 		rgh[4] = r;
 		dns[4] = d;
@@ -1623,7 +1763,7 @@ void fragment() {
 		// Wind ripples past their real geometry (GroundSurface3D's 4 m window): the grown field's slope as a normal
 		// over the sand of the patch, as BaseMaterial3D draws it, and past the patch over the dune field's sand
 		// (far_ripples), by this material's sand share.
-		c += "\tvec3 gr_far = ground_ripple_far_slope(wp.xz, length(tm_dpx), wn.y, tm_sand_b);\n\tsn = normalize(sn - vec3(gr_far.x, 0.0, gr_far.y));\n\talbedo *= gr_far.z;\n";
+		c += "\tvec3 gr_sort;\n\tvec3 gr_far = ground_ripple_far_slope(wp.xz, length(tm_dpx), wn.y, tm_sand_b, gr_sort);\n\tsn = normalize(sn - vec3(gr_far.x, 0.0, gr_far.y));\n\talbedo *= gr_far.z * gr_sort;\n";
 	}
 	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5 * tm_gc_spec;\n";
 	if (grass_tint_enabled) {
@@ -1826,6 +1966,7 @@ void fragment() {
 
 void TerrainMaterial3D::_update_params() {
 	set_shader_parameter("tm_geology", geology_enabled);
+	set_shader_parameter("tm_dune_tone_on", sand_dune_tone);
 	set_shader_parameter("tm_sea_level", sea_level);
 	set_shader_parameter("tm_beach_height", beach_height);
 	set_shader_parameter("tm_rock_cos", Math::cos(Math::deg_to_rad(rock_slope)));
@@ -1872,12 +2013,15 @@ void TerrainMaterial3D::_update_params() {
 		if (l.is_valid()) {
 			if (l->get_albedo_texture().is_valid()) {
 				set_shader_parameter("tm_" + n + "_albedo_tex", l->get_albedo_texture());
+				const Color m = l->is_detail_only() ? l->get_albedo_mean() : Color(1, 1, 1);
+				set_shader_parameter("tm_" + n + "_albedo_mean", Vector3(m.r, m.g, m.b));
 			}
 			if (l->get_normal_texture().is_valid()) {
 				set_shader_parameter("tm_" + n + "_normal_tex", l->get_normal_texture());
 			}
 			if (l->get_roughness_texture().is_valid()) {
 				set_shader_parameter("tm_" + n + "_roughness_tex", l->get_roughness_texture());
+				set_shader_parameter("tm_" + n + "_roughness_mean", l->is_detail_only() ? l->get_roughness_mean() : 1.0f);
 			}
 			if (l->get_height_texture().is_valid()) {
 				set_shader_parameter("tm_" + n + "_height_tex", l->get_height_texture());
@@ -1936,6 +2080,7 @@ Ref<TerrainMaterialLayer> TerrainMaterial3D::get_layer(Layer p_layer) const {
 	}
 
 MAT_SETTER(bool, geology_enabled, p_value)
+MAT_SETTER(bool, sand_dune_tone, p_value)
 MAT_SETTER(float, sea_level, p_value)
 MAT_SETTER(float, beach_height, MAX(p_value, 0.0f))
 MAT_SETTER(float, rock_slope, CLAMP(p_value, 0.0f, 90.0f))
@@ -2008,6 +2153,7 @@ void TerrainMaterial3D::_bind_methods() {
 		ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, String(LAYER_NAMES[i]) + "_layer", PROPERTY_HINT_RESOURCE_TYPE, "TerrainMaterialLayer"), "set_layer", "get_layer", i);
 	}
 	BIND_PROP(Variant::BOOL, geology_enabled, is_geology_enabled, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::BOOL, sand_dune_tone, is_sand_dune_tone, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, sea_level, get_sea_level, PROPERTY_HINT_NONE, "suffix:m")
 	BIND_PROP(Variant::FLOAT, beach_height, get_beach_height, PROPERTY_HINT_RANGE, "0,20,0.01,suffix:m")
 	BIND_PROP(Variant::FLOAT, rock_slope, get_rock_slope, PROPERTY_HINT_RANGE, "0,90,0.1,degrees")

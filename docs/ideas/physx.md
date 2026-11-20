@@ -1766,6 +1766,18 @@ smoke's grey part so plumes shade the ground in patches (weather
 owners); the haze is one value over the map's centre, not a field; the
 lofted plume is treated as mixed through 2 km.
 
+The sky's sun (20 Nov). The sun light already took the smoke by colour, but the sky's disc and the light its air
+scatters only saw the smoke as part of the grey aerosol haze, so under a thick plume the disc stayed white and the
+sky grey. Now the sky gets the same per-colour transmittance as the light (`WeatherSkyMaterial.set_sun_smoke`, set by
+`SkyClock`) and the smoke's share of the aerosol (`set_aerosol`'s smoke_share). The sunlight reaching each height
+takes the smoke column above it by colour, which reddens the forward-scattering aureole (g 0.6) and browns the sky.
+Multiple scattering uses the transport approximation's forward share, exp(-(1 - w (1 + g) / 2) tau), about 0.28 tau
+with w 0.9 and g 0.6, so the sky under thick smoke stays a dim orange-brown instead of going black. The disc is
+drawn at the sun's irradiance, about 1/15000 of its radiance, so the smoke's transmittance on it is scaled by
+1 / solid angle and clipped at the clean disc. Like the real sun, it stays a white disc in an orange glow until a
+slant optical depth of about 8, then turns a dim yellow-orange and red (Angstrom exponent 1.8, Eck et al. 1999;
+Reid et al. 2005).
+
 ### Post-fire mudflows (picked 19 Nov morning, second of three)
 
 Split agreed by the three owners. Valence (WeatherRunoff3D) fires the
@@ -2236,6 +2248,36 @@ against PT 1.28 (was 1.08). Snow's powder (one-run pair, same gas): mean grey 16
 189, B/R 1.051 -> 1.075 against 1.087; the cloud now reads pale
 blue-white over the snow. PT's plain snow is 4% brighter than raster's,
 so about half of the rest is the scene, not the gas.
+
+### Raster powder: no dark seam where the gas meets the snow (20 Nov)
+
+Docs saw a faint dark seam along the powder's lower edge. Two causes:
+- The ground light under the gas (the snow lit by the sun, in the gas's
+  shadow) was taken at the Flow box's floor. On a slope that floor lies
+  under the snow, where the line to the sun crosses the whole cloud, so
+  the gas darkened toward its base (170 -> 147 over its last rows). It
+  is now also taken at the bottom of the gas column under the point,
+  found by bisection in the sky's shadow map, and the better lit of the
+  two is used (the ground lies at or below both; for gas floating over
+  flat ground the box floor is right, for gas lying on a slope the gas
+  bottom). Test puffs unchanged to the pixel.
+- A 1-2 pixel line where Flow's own march drew gas but the scatter march,
+  ending at the snow a step earlier, found none, so the sliver showed
+  Flow's unlit colour. The upsample now fills such pixels with their
+  neighbours' light (a hole fill, 5x5 texels).
+
+Follow-up (docs: a dotted line still showed at the contact). A render
+with the gas hidden keeps the upper line along the release outline, so
+that one is the snow's crown wall. The lower one is the gas's own: drawn
+alone, its light falls from about 172 to 70-120 over the last few pixels
+of thin gas against the slope (Flow's coverage is partial there, so the
+snow behind shows through a darker veil). Under path tracing that base
+dims only slightly (180 -> 173): light diffusing down through the cloud
+to its foot, which the octaves' falloff under-gives. Not fixed yet. Two
+robustness changes found on the way, neither of which moves the line:
+the march's step budget counts only samples in gas (a ray grazing the
+ground could spend it on empty blocks), and the bilateral upsample skips
+texels whose march found no gas instead of blending them in as black.
 
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 

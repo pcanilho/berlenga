@@ -1024,6 +1024,60 @@ func _stand_check() -> void:
 	# A 5-year windthrow: pioneers and the wind legacy, no fire stage, no old stand; round it the old stand alone.
 	_check("stand age: a 5-year windthrow holds the pioneers and its own legacy, the old stand round it", on[0] > 10 and on[1] > 2 and on[2] == 0 and on[3] == 0 and off[3] > 10 and off[0] == 0 and off[1] == 0 and off[2] == 0, [on, off])
 
+# Beaver meadows (make_beaver): a drained pond bed reported as WorldStand kind 4, 6 years old, holds the meadow;
+# the ground round it and a windthrow of the same age hold none of it. The pond set zones by water: lilies float
+# only in deep water, rush only on the shore.
+func _beaver_check() -> void:
+	var st: WorldStand = WorldContracts.get_stand()
+	var c := Vector2(30, 30)
+	var meadow := PlantGenerator.make_beaver(PlantGenerator.BEAVER_MEADOW, 1, false)
+	var counts := []
+	for kind in [PlantGenerator.DISTURBANCE_BEAVER_KIND, WorldStand.DISTURBANCE_WIND]:
+		st.clear_disturbances()
+		st.add_disturbance(Vector3(c.x, 0, c.y), 10.0, kind, 6.0)
+		var f := VegetationField3D.new()
+		f.populate_on_ready = false
+		f.bark_detail = false
+		f.biome = Biome.new()
+		f.biome.species.assign(meadow)
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+		f.populate()
+		var on := 0
+		var off := 0
+		for ch in f.get_children(true):
+			if ch is MultiMeshInstance3D and ch.multimesh:
+				var mm: MultiMesh = ch.multimesh
+				for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+					var q: Vector3 = (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+					var d := Vector2(q.x, q.z).distance_to(c)
+					if d < 7.0:
+						on += 1
+					elif d > 13.0 and d < 30.0:
+						off += 1
+		counts.append([on, off])
+		f.free()
+	st.clear_disturbances()
+	var stages := []
+	for sp in meadow:
+		stages.append([sp.get_meta("plant_preset", -1), snappedf(sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 1.0), 0.01), snappedf(sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 20.0), 0.01)])
+	var young := 0
+	var old := 0
+	for s in stages:
+		if s[1] > 0.5: young += 1
+		if s[2] > 0.5: old += 1
+	_check("beaver meadow: a 6-year drained pond bed (kind 4) holds the meadow, none round it or on a windthrow", counts[0][0] > 30 and counts[0][1] == 0 and counts[1][0] == 0 and counts[1][1] == 0 and young >= 2 and old >= 4, [counts, stages])
+	var pond_bad := []
+	for sp in PlantGenerator.make_beaver(PlantGenerator.BEAVER_POND, 1, false):
+		var p: int = sp.get_meta("plant_preset", -1)
+		var land: float = sp.rule_weight(PlantSpecies.RULE_WATER_DEPTH, 0.0)
+		var deep: float = sp.rule_weight(PlantSpecies.RULE_WATER_DEPTH, 1.0)
+		if p == PlantGenerator.PRESET_WATER_LILY and (not sp.floating or land > 0.0 or deep < 0.9):
+			pond_bad.append(["lily", land, deep])
+		if p == PlantGenerator.PRESET_RUSH and (deep > 0.0 or sp.rule_weight(PlantSpecies.RULE_WATER_DISTANCE, 3.0) < 0.9 or sp.rule_weight(PlantSpecies.RULE_WATER_DISTANCE, 12.0) > 0.0):
+			pond_bad.append(["rush", deep])
+	_check("beaver pond: lilies float in deep water only, rush on the shore only", pond_bad.is_empty(), pond_bad)
+
 # Forest edges (RULE_FOREST_EDGE, trees' make_edge meta): a forest of an old stand round a 25 m windthrow clearing.
 # The mantle (meta edge_distance -8 to 3 m) rings the clearing's edge; edge trees (0 to 10 m in, mesh meta
 # tree_open_side +X) stand just inside the forest with +X towards the clearing.
@@ -1109,12 +1163,21 @@ func _edge_check() -> void:
 				var rr := Vector2(p.x, p.z).distance_to(c)
 				if rr > 36.0:
 					continue
-				if rr > 9.0:
+				if rr > 6.0:
 					g_band += 1
 				else:
 					g_off += 1
+	# The sward under them (GrassField3D.undergrowth_field reads sward_at): thinned under the edge brambles, not out in
+	# the clearing where they do not grow.
+	var sw_edge := 0.0
+	var sw_clear := 0.0
+	for k in 72:
+		var a := k * TAU / 72.0
+		sw_edge = maxf(sw_edge, fl.get_sward_shade_at(Vector3(c.x + cos(a) * 25.0, 0, c.y + sin(a) * 25.0)))
+		sw_clear = maxf(sw_clear, fl.get_sward_shade_at(Vector3(c.x + cos(a) * 5.0, 0, c.y + sin(a) * 5.0)))
+	_check("forest edge: the sward thins under edge brambles, not in the open clearing", sw_edge > 0.2 and sw_clear == 0.0, [snappedf(sw_edge, 0.01), sw_clear])
 	fl.queue_free()
-	_check("forest edge: a floor field's edge plants follow its canopy field's edge (none deep in the clearing)", fsp.size() >= 3 and g_band > 50 and g_off == 0, [fsp.size(), g_band, g_off])
+	_check("forest edge: a floor field's edge plants follow its canopy field's edge (none deep in the clearing, past their fade)", fsp.size() >= 3 and g_band > 50 and g_off == 0, [fsp.size(), g_band, g_off])
 	st.clear_disturbances()
 	f.queue_free()
 	var r := [m_in, m_out, e_in, e_out, e_facing, forest_in]
@@ -1774,6 +1837,7 @@ func _checks() -> void:
 	_fire_variant_check()
 	_stand_check()
 	_edge_check()
+	_beaver_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []
@@ -3065,6 +3129,7 @@ func _deadwood_view() -> void:
 	var t0 := Time.get_ticks_msec()
 	var tg := TreeGenerator.new()
 	tg.fire_variants = false # No burn in this view: skip the five fire-band meshes (halves the stand build).
+	tg.lightning_variants = false # Nor strikes: skip the two struck meshes.
 	var wood := VegetationField3D.new()
 	wood.far_volume = false # Not under test here.
 	wood.name = "Wood"

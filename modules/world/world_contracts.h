@@ -89,6 +89,7 @@ public:
 	virtual float contract_high_cloud_cover_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, the high (cirrus) sheet
 	virtual float contract_mid_cloud_cover_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, the mid (altocumulus) sheet
 	virtual float contract_cloud_effector_at(const Vector3 &p_position) const { return 0.0f; } // -1..1, cloud added (> 0) or cleared by effectors
+	virtual float contract_cloud_base_at(const Vector3 &p_position) const { return 1500.0f; } // m above y = 0, the low cloud's base
 	virtual float contract_mountain_wave_at(const Vector3 &p_position) const { return 0.0f; } // m, the air's vertical displacement in mountain waves
 	virtual float contract_mountain_wave_velocity_at(const Vector3 &p_position) const { return 0.0f; } // m/s, their vertical wind
 	virtual float contract_wave_cloud_density_at(const Vector3 &p_position) const { return 0.0f; } // 1/m, wave cloud (lenticular) extinction
@@ -142,6 +143,7 @@ protected:
 	GDVIRTUAL1RC(float, _high_cloud_cover_at, Vector3)
 	GDVIRTUAL1RC(float, _mid_cloud_cover_at, Vector3)
 	GDVIRTUAL1RC(float, _cloud_effector_at, Vector3)
+	GDVIRTUAL1RC(float, _cloud_base_at, Vector3)
 	GDVIRTUAL1RC(float, _mountain_wave_at, Vector3)
 	GDVIRTUAL1RC(float, _mountain_wave_velocity_at, Vector3)
 	GDVIRTUAL1RC(float, _wave_cloud_density_at, Vector3)
@@ -201,6 +203,7 @@ public:
 	float high_cloud_cover_at(const Vector3 &p_position) const;
 	float mid_cloud_cover_at(const Vector3 &p_position) const;
 	float cloud_effector_at(const Vector3 &p_position) const;
+	float cloud_base_at(const Vector3 &p_position) const;
 	float mountain_wave_at(const Vector3 &p_position) const;
 	float mountain_wave_velocity_at(const Vector3 &p_position) const;
 	float wave_cloud_density_at(const Vector3 &p_position) const;
@@ -394,7 +397,8 @@ public:
 		DISTURBANCE_NONE = 0,
 		DISTURBANCE_FIRE = 1,
 		DISTURBANCE_WIND = 2,
-		DISTURBANCE_BEETLE = 3, // new kinds are appended only
+		DISTURBANCE_BEETLE = 3,
+		DISTURBANCE_BEAVER = 4, // a beaver pond drained (age: years since); new kinds are appended only
 	};
 	// A surface fire that scorched crowns only this low (m) leaves the stand standing.
 	static constexpr float SURFACE_FIRE_SCORCH = 5.0f;
@@ -416,6 +420,31 @@ private:
 	HashMap<Vector2i, LocalVector<uint32_t>> grid;
 	LocalVector<uint32_t> wide;
 	void _rebuild_grid();
+	// Lightning strikes on trees (struck_tree, strike_age_at): points with ages, in a 16 m grid, at most MAX_STRIKES
+	// (the oldest go first).
+	struct Strike {
+		Vector2 position;
+		float age = 0.0f; // years
+	};
+	static constexpr float STRIKE_CELL = 16.0f;
+	static constexpr int MAX_STRIKES = 4096;
+	LocalVector<Strike> strikes;
+	HashMap<Vector2i, LocalVector<uint32_t>> strike_grid;
+	void _rebuild_strike_grid();
+	// Browsing (deer): discs with a pressure (0..1) and the height the animals reach (m), in the same 64 m grid
+	// scheme as the events.
+	struct Browse {
+		int id = 0;
+		Vector2 center;
+		float radius = 0.0f;
+		float pressure = 0.0f;
+		float reach = 1.8f;
+	};
+	LocalVector<Browse> browse;
+	HashMap<Vector2i, LocalVector<uint32_t>> browse_grid;
+	LocalVector<uint32_t> browse_wide;
+	void _rebuild_browse_grid();
+	void _browse_query(const Vector3 &p_position, float &r_pressure, float &r_reach) const;
 	struct Change {
 		uint64_t generation = 0;
 		Rect2 area;
@@ -431,6 +460,9 @@ protected:
 
 	GDVIRTUAL1RC(float, _stand_age_at, Vector3)
 	GDVIRTUAL1RC(int, _disturbance_at, Vector3)
+	GDVIRTUAL1RC(float, _strike_age_at, Vector3)
+	GDVIRTUAL1RC(float, _browse_at, Vector3)
+	GDVIRTUAL1RC(float, _browse_reach_at, Vector3)
 
 public:
 	// Years since the last stand-replacing disturbance at the point (the youngest of fire, wind and beetle kills); -1
@@ -444,7 +476,27 @@ public:
 	void set_disturbance_age(int p_id, float p_age_years);
 	void remove_disturbance(int p_id);
 	void clear_disturbances();
-	// The world's years pass: every event ages (fire ages through its own producers).
+	// A tree struck by lightning: the strike's attachment point (the crown top; WeatherLightning3D records its canopy
+	// strikes) and how long ago (years). strike_age_at() answers for a tree whose trunk stands within STRIKE_RADIUS (m)
+	// of it: the youngest strike there in years, -1 none. Each strike reports its area.
+	static constexpr float STRIKE_RADIUS = 3.0f;
+	void add_strike(const Vector3 &p_position, float p_age_years);
+	float strike_age_at(const Vector3 &p_position) const;
+	// The recorded strikes whose reach (STRIKE_RADIUS) touches p_rect, as (x, z, age years): a copy for readers that
+	// place trees off the main thread (VegetationField3D). A script stub's _strike_age_at has no list to copy.
+	void get_strikes_in(const Rect2 &p_rect, LocalVector<Vector3> &r_out) const;
+	int get_strike_count() const { return int(strikes.size()); }
+	void clear_strikes();
+	// Browsing pressure (deer, docs/ideas/world-contracts.md): a disc over xz with a pressure 0..1 and the browse line
+	// (m; red deer 1.8, fallow 1.6, roe 1.1). browse_at() is the strongest disc's pressure there, eased out over each
+	// disc's outer 20 %, 0 where none; browse_reach_at() that disc's reach (0 where none). Changes report their area.
+	int add_browse(const Vector3 &p_center, float p_radius, float p_pressure, float p_reach_m = 1.8f);
+	void set_browse(int p_id, float p_pressure);
+	void remove_browse(int p_id);
+	void clear_browse();
+	float browse_at(const Vector3 &p_position) const;
+	float browse_reach_at(const Vector3 &p_position) const;
+	// The world's years pass: every event and strike ages (fire ages through its own producers).
 	void advance_years(float p_years);
 	// Changes, as WorldFire's burn changes (fire's are forwarded here too): signal stand_changed(area), a generation, and
 	// the union of the areas reported after a generation (false when the log no longer reaches back that far).

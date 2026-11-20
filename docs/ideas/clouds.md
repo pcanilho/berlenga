@@ -388,3 +388,86 @@ As built:
 - Shading (later 20 Nov): the sun read through the whole lens (to 700 m) and the sky light shaded by the cloud
   above the point, so crowns are lit and bellies darker. Next: stacked plates showing more clearly, iridescence near the
   sun; then a docs frame over real terrain from the showcase scene.
+
+## Round 6: stratus and stratocumulus from the weather (20 Nov 2026)
+
+Research: the boundary layer's cloud is layered while the air is stable and convective once the ground heats
+(Stull 1988, 11.2): morning stratus burns off into cumulus, evening cumulus spreads into stratocumulus. Wind or
+drier air mixes a stratus layer into stratocumulus (Wood 2012, Mon. Wea. Rev. 140). Stratocumulus is closed cells
+1.5 to 3 km across a 300 to 500 m deep layer, thick in the middle and thin at the sinking rim, lined into rolls
+along a mixing wind (Atkinson and Zhang 1996). The base sits at the lifting condensation level, 125 m per kelvin
+of dew point depression (Espy), so it rises through the day as the air dries.
+
+- Type from the weather (`WeatherMap3D.cloud_regime_from_weather`, on): heating H = the day's warming curve times
+  (1 - 0.7 cover), 1 with no clock. Stable type = 0.05 (stratus) in calm humid air, 0.22 (stratocumulus) once the
+  wind passes about 6 m/s or the air dries below 0.9. Convection (H, cut by rain) blends to `cloud_type`, the
+  afternoon's own type. While it rains the layer stays nimbostratus. `get_convective_heating`.
+- Base: `cloud_base_height` plus the condensation level now minus that of the default air (15 C, 0.7), never under
+  the ground below the camera plus 30 m (a base on the ground is fog, the mist's job). `get_cloud_base_now`;
+  contract `WorldWeather.cloud_base_at` (default 1500).
+- Shape: below type 0.36 the single clouds give way to one sheet (`layered_share`), whose noise is lifted so an
+  overcast layer closes; it reaches down to a broken sky (cover 0.15 to 0.45). Stratocumulus modulates the sheet
+  by Worley cells (F2 - F1) in the wind frame, 1800 m, stretched up to 3x into rolls by the wind. Cumulus
+  (type above 0.36) is unchanged.
+- Bench: weather `--test=clouds` prints the type, heating and base over a day for calm, windy, dry and rainy air;
+  `--view=clouds --type=0.05|0.2 --wind=8`. Raster and PT match (640 px).
+- Cells as heaps (later 20 Nov; docs declined straight extruded rolls): each cell's top highest in its middle and
+  lower toward the rim (top at 0.25 to 1 of the layer by the cell value, roughened by the shape noise), so a roll is
+  a row of rounded lumps with thin darker gaps; rolls stretched at most 2x.
+- Air under a deck: the light the deck transmits diffusely (two-stream, minus the direct beam) now lights the air
+  below it as a source (F / 2 pi, isotropic). Before, only the air's own multiple scattering lit it, so the
+  horizon under an overcast was a dark band below both the deck and the ground.
+- Cell shading (docs: even grey discs): cell middles dense (the remap tripled, liquid water 0.2 to 0.5 g/m3) with a
+  soft thin rim, and the base sags under each middle (rims up to 15% of the layer higher), so cells show darker
+  bases and centres, bright rims and lumps along the underside.
+- Next: cumulus base detail (per cloud sag, scud under humid bases).
+
+## Round 7: cirrocumulus and cirrostratus (20 Nov 2026)
+
+Research: cirrocumulus is the cirrus layer broken into grains and ripples under one degree across, by shallow
+instability or Kelvin-Helmholtz billows where the shear across the layer overcomes its stability (Ludlam 1967;
+WMO International Cloud Atlas, Cc stratiformis/undulatus); the ripples lie across the shear. Cirrostratus is the
+extensive, nearly featureless veil of a warm front's shield or an anvil, and the cloud of halos (Atlas, Cs
+nebulosus/fibratus; Tape 1994).
+
+- Cirrocumulus share (`WeatherMap3D.get_cirrocumulus_share`): gradient Richardson number Ri = N^2 / S^2 between
+  the mid and high layers, N from the 6.5 K/km lapse at the layer's temperature, S from `get_wind_aloft` (so from
+  `wind_shear_aloft`); ramp 1 - smoothstep(2, 20, Ri). Default shear 1.5 m/s/km gives none; 5 and up most.
+- Sky (march_cirrus): in patches (14 km noise) of the sheet where it is not a veil, the fibres give way by that
+  share to grains, the detail noise's billows broken by its finer octave, 1.8 by 2.7 km per 128 texels (cells
+  about 200 m, ripples across the wind), soft edges.
+- Cirrostratus: where the sheet's cover passes 0.55 to 0.9 the fibres merge into a veil (0.7 + 0.3 of the fibre),
+  and halos there run 1.4x (0.7x on bare cirrus).
+- Connected: humidity and coming rain (the high cover's driver) make the veil; the jet's shear makes the grains.
+- Raster and PT match (640). Raster shows the half-res reconstruction's stepped edge on fine grains (the known
+  dotted rim issue, on the improvements card); PT is smooth.
+- Bench: weather `--view=clouds_up` (50 degrees up), `--shear-aloft=S`, `--high-cover=C`.
+- No lattice (docs: one regular diamond lattice, the texture tiling every 1.8 km): two reads 1.37x apart in scale
+  and 23 degrees apart, blended by a 6 km noise; both domain-warped by the texture's coarse octave (rows bend, part,
+  merge); the grain threshold wanders on 2.5 km, so ripples break into gaps and run together.
+- Halo check: the 22 and 46 degree rings show through the veil toward the sun (raster and PT). Sun-facing frame:
+  weather `--view=shafts --cover=0.05 --high-cover=1.0` (sun 20 degrees up, 13 left of the view).
+
+## Round 8: storm details, rain shafts and shelf clouds (20 Nov 2026)
+
+Research: rain's visible extinction from its rate, sigma = 0.31 R^0.67 per km (Atlas 1953, visibility in rain);
+heavy rain falls in shafts a few km across that slant downwind as the drops fall at about 7 m/s. A shelf cloud
+(arcus) forms on a storm's gust front where its cold outflow lifts the warm moist inflow ahead of it to
+saturation below the storm's base: a smooth, low wedge along the leading edge (Doswell 1985; WMO International
+Cloud Atlas, arcus). Mammatus (next): pouches under an anvil from sublimation and evaporation into drier air
+below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
+
+- Rain shafts (sky, `march_rain_shafts`): under each storm's base, the storm's rain (its peak rate times growth,
+  `State.storm_rain`) over a core with an edge, exp(-(r/R)^4), broken into curtains by two octaves of noise (900
+  and 260 m), slanted by the low wind over 7 m/s (`rain_slant`). Lit by the sky's light under the clouds (a third
+  under the storm's shield) and the sun where the cover toward it is thin (HG 0.6). 14 steps over the chord,
+  composited with the cloud layers by distance. Cost on lavapipe within noise (558 to 601 ms a frame).
+- Shelf cloud (`shelf_drop`, CPU and GLSL): the base drops up to 450 m (`SHELF_DROP`, scaled by outflow / 15 m/s and
+  growth) along the gust front, which runs ahead of the core by 1.1 radii plus 0.04 per m/s of outflow on the side
+  the storm moves (`State.storm_dir`, the wind that steers storms); sharp at the front, rising back over 1.2 x 0.6
+  radii; there the cover is raised to one continuous sheet and the type taken to stratus, so it reads as a smooth
+  wedge. `WeatherMap3D.get_cloud_base_at` (and `WorldWeather.cloud_base_at`) include it.
+- Connected: storm rain rate, outflow, the steering wind, the low wind, the sun.
+- Raster and PT match (640). Near the camera the rain is the haze's and RainFall3D's; distant shafts draw against
+  the sky only (terrain in front of a shaft hides it, as it should; a shaft in front of far terrain is not drawn yet).
+- Bench: weather `--storm=x,z,R,mm,outflow` (grown 15 min, the storm moving about 9 km), `--wind-dir=x,z`.

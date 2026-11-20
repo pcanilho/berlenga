@@ -489,7 +489,12 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 	// before its first sample nor runs a whole step past the scene.
 	float jitter = ign(vec2(px) + (p.res.z != 0 ? 5.588238 * float(p.res.y & 63) : 0.0));
 	float seg = t0;
-	for (int i = 0; i < p.counts.w && seg < t1; i++) {
+	// The step budget counts the samples in gas only: a ray grazing the ground crosses long stretches of allocated
+	// but empty blocks (the terrain floor's tiles, the air around the cloud) one cheap fetch a step, and with every
+	// step counted it ran out there before reaching the gas, which then drew unlit, a dark band along its base
+	// stepped by blocks. A hard cap of four times the budget bounds the empty stretches.
+	int lit_steps = 0;
+	for (int i = 0; lit_steps < p.counts.w && i < 4 * p.counts.w && seg < t1; i++) {
 		float dt = min(step_len, t1 - seg);
 		float t = seg + jitter * dt;
 		vec3 pos = cam + dir * t;
@@ -504,6 +509,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 			continue;
 		}
 		if (smoke > 0.001) {
+			lit_steps++;
 			float alpha = 1.0 - exp(-min(smoke, SMOKE_MAX) * sigma * dt);
 			vec3 in_light = vec3(0.0);
 			vec3 pos_m = pos / upm;
@@ -512,6 +518,35 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 			// With a ground albedo the ground is lit by the sky above (its own lower half is a stand-in ground,
 			// often a dull brown, where a real snowfield under a blue sky is blue-white).
 			vec3 ground_light = p.sky_map.y > 0.0 ? ambient * p.sky_map.y : ambient_down;
+			// The gas above and below the point, from the sky's map (-1: not known).
+			float od_above = -1.0;
+			float od_below = -1.0;
+			float gas_floor_y = p.world_min.y / upm; // the ground under the point: the box's floor unless the sky's map knows better
+#ifndef SHADOW_PASS
+			if (ambient_on && p.sky_map.w > 0.5) {
+				vec4 pm = vec4(pos_m, 1.0);
+				vec3 sky_uvw = vec3(dot(p.sky_map_xform[0], pm), dot(p.sky_map_xform[1], pm), dot(p.sky_map_xform[2], pm));
+				if (all(greaterThanEqual(sky_uvw, vec3(0.0))) && all(lessThanEqual(sky_uvw, vec3(1.0)))) {
+					// All the gas above in one fetch; below, the whole column's depth less what lies above.
+					od_above = textureLod(sky_map_tex, sky_uvw, 0.0).r;
+					float od_column = textureLod(sky_map_tex, vec3(sky_uvw.xy, 1.0), 0.0).r;
+					od_below = max(od_column - od_above, 0.0);
+					// The bottom of the gas under the point (where the column stops gaining depth), found by bisection:
+					// gas lying on the ground ends at the ground, so that is where the ground below it is lit.
+					float lo = sky_uvw.z;
+					float hi = 1.0;
+					for (int k = 0; k < 6; k++) {
+						float mid = 0.5 * (lo + hi);
+						if (textureLod(sky_map_tex, vec3(sky_uvw.xy, mid), 0.0).r < od_column - 0.01) {
+							lo = mid;
+						} else {
+							hi = mid;
+						}
+					}
+					gas_floor_y = pos_m.y + (hi - sky_uvw.z) / p.sky_map_xform[2].y;
+				}
+			}
+#endif
 			for (int l = 0; l < light_count; l++) {
 				Light L = lights[l];
 				vec3 to_light = L.position_range.xyz - pos_m;
@@ -568,13 +603,18 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					vec3 ldir = normalize(mat3(p.view_to_world) * directional_lights.data[i].direction);
 #ifndef SHADOW_PASS
 					if (ambient_on && p.sky_map.y > 0.0 && ldir.y > 0.0) {
-						// The sunlit ground below the point (the box's floor), in the gas's own shadow.
+						// The sunlit ground below the point, in the gas's own shadow. On a slope the box's floor lies under
+						// the snow, deep in the cloud's shadow, which darkened the gas toward its base.
+						// The ground lies somewhere at or below both, and is not known here: of the box's floor (right
+						// under gas floating above flat ground) and the gas's bottom (right for gas lying on a slope), the
+						// better lit.
 						float ground_sun_t = 1.0;
 						if (p.sun_map.w > 0.5 && dot(ldir, p.sun_map.xyz) > 0.9999) {
-							vec4 gm = vec4(pos_m.x, p.world_min.y / upm, pos_m.z, 1.0);
-							vec3 g_uvw = vec3(dot(p.sun_map_xform[0], gm), dot(p.sun_map_xform[1], gm), dot(p.sun_map_xform[2], gm));
-							if (all(greaterThanEqual(g_uvw, vec3(0.0))) && all(lessThanEqual(g_uvw, vec3(1.0)))) {
-								ground_sun_t = exp(-textureLod(sun_map_tex, g_uvw, 0.0).r);
+							ground_sun_t = 0.0;
+							for (int k = 0; k < 2; k++) {
+								vec4 gm = vec4(pos_m.x, k == 0 ? p.world_min.y / upm : max(gas_floor_y, p.world_min.y / upm), pos_m.z, 1.0);
+								vec3 g_uvw = vec3(dot(p.sun_map_xform[0], gm), dot(p.sun_map_xform[1], gm), dot(p.sun_map_xform[2], gm));
+								ground_sun_t = max(ground_sun_t, (all(greaterThanEqual(g_uvw, vec3(0.0))) && all(lessThanEqual(g_uvw, vec3(1.0)))) ? exp(-textureLod(sun_map_tex, g_uvw, 0.0).r) : 1.0);
 							}
 						}
 						ground_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * ldir.y * ground_sun_t * p.sky_map.y);
@@ -617,21 +657,10 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 				// How much of the sky the point sees: the gas straight above it (a short march up).
 				vec3 sky_t = ms_ambient(0.0);
 				vec3 ground_t = sky_t;
-				vec3 sky_uvw = vec3(-1.0);
-#ifndef SHADOW_PASS
-				if (p.sky_map.w > 0.5) {
-					vec4 pm = vec4(pos_m, 1.0);
-					sky_uvw = vec3(dot(p.sky_map_xform[0], pm), dot(p.sky_map_xform[1], pm), dot(p.sky_map_xform[2], pm));
-				}
-				if (all(greaterThanEqual(sky_uvw, vec3(0.0))) && all(lessThanEqual(sky_uvw, vec3(1.0)))) {
-					// All the gas above in one fetch.
-					float od_above = textureLod(sky_map_tex, sky_uvw, 0.0).r;
+				if (od_above >= 0.0) {
 					sky_t = ms_ambient(od_above * SKY_OCCLUSION);
-					// The gas below: the whole column's depth less what lies above.
-					float od_column = textureLod(sky_map_tex, vec3(sky_uvw.xy, 1.0), 0.0).r;
-					ground_t = ms_ambient(max(od_column - od_above, 0.0) * SKY_OCCLUSION);
+					ground_t = ms_ambient(od_below * SKY_OCCLUSION);
 				} else
-#endif
 				if (shadow_steps > 0) {
 					float ds = p.misc.z * upm / float(shadow_steps);
 					float od = 0.0;
@@ -837,6 +866,11 @@ void main() {
 		for (int j = -1; j < 3; j++) {
 			for (int i = -1; i < 3; i++) {
 				vec4 t = imageLoad(scatter_img, clamp(base + ivec2(i, j), ivec2(0), hi));
+				if (all(equal(t.rgb, vec3(0.0)))) {
+					// A texel whose march found no gas (its ray met the scene first) has no light to give, rather
+					// than a dark one: blended in, it darkened the gas along where it meets the ground.
+					continue;
+				}
 				vec2 offset = vec2(base + ivec2(i, j)) - f;
 				float spatial = exp(-dot(offset, offset) * (1.0 / (2.0 * 0.7 * 0.7)));
 				float gap = abs(t.a - d) / max(d, 0.01);
@@ -853,14 +887,33 @@ void main() {
 		}
 		light = total > 1e-4 ? sum / total : nearest;
 	}
-	if (all(equal(light, vec3(0.0)))) {
-		return;
-	}
 	// The light is the gas's own per unit of opacity; the opacity is Flow's, from the ray march that drew the
 	// gas (its transmittance in alpha), so light and coverage come from the same samples: two marches with
 	// their own jitter disagree at thin edges, where the light then fell short of the drawn gas as a dark,
 	// dotted rim.
 	float coverage = 1.0 - clamp(texelFetch(coverage_tex, px, 0).a, 0.0, 1.0);
+	if (all(equal(light, vec3(0.0))) && coverage > 0.004) {
+		// Gas Flow drew where this march found none: a sliver cut by the scene (gas lying on the ground, where
+		// the two marches end at the surface a step apart). Its light is its neighbours' (a hole fill), or the
+		// sliver shows Flow's own unlit colour as a dark seam along the ground.
+		ivec2 c0 = px / max(r, 1);
+		ivec2 hi = p.size.zw - 1;
+		vec3 fill = vec3(0.0);
+		float n = 0.0;
+		for (int j = -2; j <= 2; j++) {
+			for (int i = -2; i <= 2; i++) {
+				vec3 t = imageLoad(scatter_img, clamp(c0 + ivec2(i, j), ivec2(0), hi)).rgb;
+				if (any(greaterThan(t, vec3(0.0)))) {
+					fill += t;
+					n += 1.0;
+				}
+			}
+		}
+		light = n > 0.0 ? fill / n : light;
+	}
+	if (all(equal(light, vec3(0.0)))) {
+		return;
+	}
 	vec4 c = imageLoad(color_img, px);
 	c.rgb += light * coverage;
 	imageStore(color_img, px, c);

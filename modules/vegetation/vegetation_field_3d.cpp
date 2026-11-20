@@ -637,8 +637,25 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 	if (stand) {
 		stand_seen = stand->get_stand_generation();
 	}
+	// The field's species, and the canopy field's trees when a species here reads the forest edge (the edge follows
+	// their stand stages).
+	LocalVector<Ref<Biome>> biomes;
 	if (biome.is_valid()) {
-		const TypedArray<PlantSpecies> list = biome->get_species();
+		biomes.push_back(biome);
+		const VegetationField3D *other = canopy_field.is_empty() ? nullptr : Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field));
+		if (other && other != this && other->biome.is_valid()) {
+			const TypedArray<PlantSpecies> own = biome->get_species();
+			for (int i = 0; i < own.size(); i++) {
+				const Ref<PlantSpecies> sp = own[i];
+				if (sp.is_valid() && sp->uses_forest_edge()) {
+					biomes.push_back(other->biome);
+					break;
+				}
+			}
+		}
+	}
+	for (const Ref<Biome> &b : biomes) {
+		const TypedArray<PlantSpecies> list = b->get_species();
 		for (int i = 0; i < list.size(); i++) {
 			const Ref<PlantSpecies> sp = list[i];
 			if (sp.is_null() || !sp->uses_stand()) {
@@ -651,8 +668,9 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 			}
 		}
 	}
-	stand_follow = !r_setup.stand_rules.is_empty();
-	if (!stand_follow || !stand || !r_setup.rect.has_area()) {
+	_read_strikes(r_setup);
+	stand_follow = !r_setup.stand_rules.is_empty() || strike_follow;
+	if (r_setup.stand_rules.is_empty() || !stand || !r_setup.rect.has_area()) {
 		return;
 	}
 	const Rect2 rect = r_setup.rect;
@@ -674,13 +692,73 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 	r_setup.stand_rect = rect;
 }
 
+// Struck trees (trees.md 5ax; WorldStand strikes in world-links.md): wanted when a species carries struck variants (mesh
+// meta tree_lightning_years). The strikes over the setup's area are copied, so the placing threads read a fixed list.
+void VegetationField3D::_read_strikes(PlaceSetup &r_setup) const {
+	r_setup.strikes.clear();
+	r_setup.strike_cells.clear();
+	bool wanted = false;
+	if (biome.is_valid()) {
+		const TypedArray<PlantSpecies> list = biome->get_species();
+		for (int i = 0; i < list.size() && !wanted; i++) {
+			const Ref<PlantSpecies> sp = list[i];
+			const TypedArray<Mesh> ms = sp.is_valid() ? sp->get_meshes() : TypedArray<Mesh>();
+			for (int m = 0; m < ms.size() && !wanted; m++) {
+				const Ref<Mesh> mesh = ms[m];
+				wanted = mesh.is_valid() && mesh->has_meta(SNAME("tree_lightning_years"));
+			}
+		}
+	}
+	strike_follow = wanted;
+	const WorldStand *stand = WorldContracts::stand();
+	if (!wanted || !stand || !r_setup.rect.has_area()) {
+		return;
+	}
+	stand->get_strikes_in(r_setup.rect, r_setup.strikes);
+	const float R = WorldStand::STRIKE_RADIUS;
+	for (uint32_t i = 0; i < r_setup.strikes.size(); i++) {
+		const Vector3 &s = r_setup.strikes[i];
+		for (int z = int(Math::floor((s.y - R) / 16.0f)); z <= int(Math::floor((s.y + R) / 16.0f)); z++) {
+			for (int x = int(Math::floor((s.x - R) / 16.0f)); x <= int(Math::floor((s.x + R) / 16.0f)); x++) {
+				r_setup.strike_cells[Vector2i(x, z)].push_back(i);
+			}
+		}
+	}
+}
+
+// Years since the youngest strike whose reach holds the trunk at p_xz, -1 none (as WorldStand.strike_age_at).
+float VegetationField3D::PlaceSetup::strike_at(const Vector2 &p_xz) const {
+	if (strikes.is_empty()) {
+		return -1.0f;
+	}
+	const LocalVector<uint32_t> *in = strike_cells.getptr(Vector2i(int(Math::floor(p_xz.x / 16.0f)), int(Math::floor(p_xz.y / 16.0f))));
+	float r = -1.0f;
+	if (in) {
+		const float R = WorldStand::STRIKE_RADIUS;
+		for (uint32_t i : *in) {
+			const Vector3 &s = strikes[i];
+			if (p_xz.distance_squared_to(Vector2(s.x, s.y)) <= R * R && (r < 0.0f || s.z < r)) {
+				r = s.z;
+			}
+		}
+	}
+	return r;
+}
+
 // The stand changed over p_area: its grid cells are read again, and the area where a species' stand weight changed is
 // returned (empty when every change stayed inside every species' stage, as a year passing mostly does).
 Rect2 VegetationField3D::_update_stand(PlaceSetup &r_setup, const Rect2 &p_area) const {
 	const WorldStand *stand = WorldContracts::stand();
 	if (!stand || r_setup.stand_age.is_empty()) {
 		_read_stand(r_setup);
+		if (strike_follow) {
+			// Struck trees: the strikes added or aged there re-place it.
+			return r_setup.stand_age.is_empty() ? p_area : r_setup.rect;
+		}
 		return r_setup.stand_age.is_empty() ? Rect2() : r_setup.rect;
+	}
+	if (strike_follow) {
+		_read_strikes(r_setup);
 	}
 	stand_seen = stand->get_stand_generation();
 	const Rect2 &sr = r_setup.stand_rect;
@@ -706,6 +784,9 @@ Rect2 VegetationField3D::_update_stand(PlaceSetup &r_setup, const Rect2 &p_area)
 			r_setup.stand_age[i] = age;
 			r_setup.stand_kind[i] = uint8_t(kind);
 		}
+	}
+	if (strike_follow) {
+		changed = changed.has_area() ? changed.merge(p_area) : p_area;
 	}
 	return changed;
 }
@@ -967,6 +1048,59 @@ bool VegetationField3D::_context_only(const PlantSpecies *p_sp) {
 		}
 	}
 	return false;
+}
+
+template <typename T>
+static void _copy_vector(LocalVector<T> &r_to, const LocalVector<T> &p_from) {
+	r_to.resize(p_from.size());
+	for (uint32_t i = 0; i < p_from.size(); i++) {
+		r_to[i] = p_from[i];
+	}
+}
+
+void VegetationField3D::_copy_context(const PlaceSetup &p_setup) {
+	_copy_vector(context.burn, p_setup.burn);
+	context.burn_nx = p_setup.burn_nx;
+	context.burn_ny = p_setup.burn_ny;
+	context.burn_rect = p_setup.burn_rect;
+	_copy_vector(context.stand_rules, p_setup.stand_rules);
+	_copy_vector(context.stand_age, p_setup.stand_age);
+	_copy_vector(context.stand_kind, p_setup.stand_kind);
+	context.stand_nx = p_setup.stand_nx;
+	context.stand_ny = p_setup.stand_ny;
+	context.stand_rect = p_setup.stand_rect;
+	_copy_vector(context.edge, p_setup.edge);
+	context.edge_nx = p_setup.edge_nx;
+	context.edge_ny = p_setup.edge_ny;
+	context.edge_rect = p_setup.edge_rect;
+	context_valid = true;
+}
+
+// How much a context-only species (_context_only) grows at a point by the last setup's grids, as placement weighs it:
+// burn age, stand age and kind, forest edge. 0 without a setup.
+float VegetationField3D::_context_weight(const PlantSpecies *p_sp, const Vector2 &p_xz) const {
+	if (!context_valid) {
+		return 0.0f;
+	}
+	float w = 1.0f;
+	if (p_sp->uses_burn_age()) {
+		w *= p_sp->rule_weight(PlantSpecies::RULE_BURN_AGE, context.burn_at(p_xz));
+	}
+	if (w > 0.0f && p_sp->uses_stand()) {
+		Vector2 a, k;
+		float af, kf;
+		p_sp->get_stand_rules(a, af, k, kf);
+		const int sc = context.stand_cell(p_xz);
+		w *= PlantSpecies::stand_weight(a, af, k, kf, sc < 0 ? -1.0f : context.stand_age[sc], sc < 0 ? 0 : int(context.stand_kind[sc]));
+	}
+	if (w > 0.0f && p_sp->uses_forest_edge()) {
+		Vector2 r;
+		float f;
+		p_sp->get_forest_edge_rule(r, f);
+		const float e = context.edge.is_empty() && r.y >= 10000.0f ? r.y : context.edge_at(p_xz);
+		w *= f <= 0.0f ? ((e >= r.x && e <= r.y) ? 1.0f : 0.0f) : Math::smoothstep(r.x - f, r.x, e) * (1.0f - Math::smoothstep(r.y, r.y + f, e));
+	}
+	return w;
 }
 
 float VegetationField3D::PlaceSetup::burn_at(const Vector2 &p_xz) const {
@@ -1247,6 +1381,22 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 					for (const Ref<Mesh> &m : ps.meshes) {
 						ps.fire_bands.push_back((m.is_valid() && m->has_meta(SNAME("tree_fire_band"))) ? Vector2(m->get_meta(SNAME("tree_fire_band"))) : Vector2(-1.0f, -1.0f));
 					}
+				}
+			}
+		}
+		{
+			// Struck variants (trees.md 5ax): their years since the strike, -1 for the others.
+			bool any_strike = false;
+			for (const Ref<Mesh> &m : ps.meshes) {
+				any_strike = any_strike || (m.is_valid() && m->has_meta(SNAME("tree_lightning_years")));
+			}
+			ps.strike_years.clear();
+			ps.strike_years_max = 0.0f;
+			if (any_strike) {
+				for (const Ref<Mesh> &m : ps.meshes) {
+					const float sy = (m.is_valid() && m->has_meta(SNAME("tree_lightning_years"))) ? float(m->get_meta(SNAME("tree_lightning_years"))) : -1.0f;
+					ps.strike_years.push_back(sy);
+					ps.strike_years_max = MAX(ps.strike_years_max, sy);
 				}
 			}
 		}
@@ -2390,6 +2540,32 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 								best = d;
 								fire_variant = vi;
 							}
+						}
+					}
+					if (!ps.strike_years.is_empty() && !(fire_variant >= 0 && ps.fire_years[fire_variant] >= 0.0f)) {
+						// Struck trees (TreeGenerator.lightning_years, trees.md 5ax): under a recorded strike
+						// (WorldStand.strike_age_at, copied in the setup) the struck variant nearest the strike's age, until
+						// STRIKE_SHOWN years (8; then its scar has healed into the tree's own); otherwise never a struck one.
+						const float sa = p_setup.strike_at(xz);
+						const bool struck = sa >= 0.0f && sa <= 8.0f;
+						const int nv = ps.strike_years.size();
+						const int start = MIN(int(r * nv), nv - 1);
+						float best = 1e9f;
+						int pick = -1;
+						for (int k = 0; k < nv; k++) {
+							const int vi = (start + k) % nv;
+							const float sy = ps.strike_years[vi];
+							if ((sy >= 0.0f) != struck || (!ps.fire_years.is_empty() && vi < int(ps.fire_years.size()) && ps.fire_years[vi] >= 0.0f)) {
+								continue;
+							}
+							const float d = struck ? Math::abs(sy - sa) : 0.0f;
+							if (d < best - 1e-4f) {
+								best = d;
+								pick = vi;
+							}
+						}
+						if (pick >= 0 && (struck || fire_variant < 0 || ps.strike_years[fire_variant] >= 0.0f)) {
+							fire_variant = pick;
 						}
 					}
 					const int variant = fire_variant >= 0 ? fire_variant : (bank_variant >= 0 ? bank_variant : MIN(int(r * variants), variants - 1));
@@ -4253,6 +4429,7 @@ Error VegetationField3D::populate() {
 	if (!_make_setup(setup)) {
 		return ERR_UNCONFIGURED;
 	}
+	_copy_context(setup);
 	_build_cover(setup);
 	const Rect2 rect = setup.rect;
 	const Rect2i tiles(Vector2i(int(Math::floor(rect.position.x / tile_size)), int(Math::floor(rect.position.y / tile_size))),
@@ -4543,10 +4720,14 @@ float VegetationField3D::sward_at(const Vector3 &p_global_position, Color *r_lit
 			continue;
 		}
 		const float lit = r_litter ? sp->get_litter_color().a : 0.0f;
-		if ((sp->get_sward_shade() <= 0.0f && lit <= 0.0f) || _context_only(sp.ptr())) {
+		if (sp->get_sward_shade() <= 0.0f && lit <= 0.0f) {
 			continue;
 		}
 		float v = sp->get_density() * sp->get_suitability(map, p_global_position);
+		if (v > 0.0f && _context_only(sp.ptr())) {
+			// Edge brambles, clearing raspberry, burn regrowth: only where their context holds (the last setup's grids).
+			v *= _context_weight(sp.ptr(), Vector2(p_global_position.x, p_global_position.z));
+		}
 		if (v > 0.0f && sp->uses_shade()) {
 			if (shade < 0.0f) {
 				const Vector2 xz(p_global_position.x, p_global_position.z);
@@ -5119,6 +5300,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 		}
 		stream_setup_valid = true;
 		impostors_traced = _path_traced();
+		_copy_context(stream_setup);
 		_build_cover(stream_setup);
 	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
@@ -5231,6 +5413,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 			}
 		}
 		burn_dirty = Rect2();
+		_copy_context(su);
 	}
 	// The stand changed: only where a species crossed its stand range are the tiles placed again.
 	if (stand_dirty.has_area() && stream_jobs.is_empty()) {
@@ -5266,6 +5449,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 			}
 		}
 		stand_dirty = Rect2();
+		_copy_context(su);
 	}
 	struct Pending {
 		float d;

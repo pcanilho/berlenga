@@ -8187,6 +8187,7 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dunes", "stand", "variants", "textures", "season"), &PlantGenerator::make_dunes, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_desert", "stand", "variants", "textures", "season", "shrubs"), &PlantGenerator::make_desert, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()), DEFVAL(true));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_burn", "stand", "variants", "textures", "season"), &PlantGenerator::make_burn, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_beaver", "stand", "variants", "textures", "season"), &PlantGenerator::make_beaver, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_margin", "stand", "variants", "textures", "season"), &PlantGenerator::make_margin, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
@@ -8241,6 +8242,10 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(BURN_GRASS);
 	BIND_ENUM_CONSTANT(BURN_SCRUB);
 	BIND_ENUM_CONSTANT(BURN_MAX);
+	BIND_ENUM_CONSTANT(BEAVER_POND);
+	BIND_ENUM_CONSTANT(BEAVER_MEADOW);
+	BIND_ENUM_CONSTANT(BEAVER_MAX);
+	BIND_CONSTANT(DISTURBANCE_BEAVER_KIND);
 	BIND_ENUM_CONSTANT(ALPINE_FELLFIELD);
 	BIND_ENUM_CONSTANT(ALPINE_GRASSLAND);
 	BIND_ENUM_CONSTANT(ALPINE_SNOWBED);

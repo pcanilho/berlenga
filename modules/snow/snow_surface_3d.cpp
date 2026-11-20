@@ -135,10 +135,15 @@ vec2 snow_deform_vertex(vec2 p) {
 // The pack's depth between cell centres: Catmull-Rom over the 4 x 4 cells around (C1, so the surface has no
 // creases along the cell edges as bilinear leaves; Keys 1981), held within the four nearest cells' range so it
 // never overshoots into ripples. SnowCover3D.get_surface_depth_at is the same on the CPU.
-float snow_depth_smooth(vec2 p) {
+// With its gradient (per metre) from the same pass over the 16 cells: the Catmull-Rom weights' derivatives
+// (zero where the clamp holds it). A normal from central differences took four such passes.
+vec3 snow_depth_smooth_grad(vec2 p) {
 	vec2 uv = (p - snow_rect.xy) / max(snow_rect.zw, vec2(1e-4));
 	if (!snow_inside(uv)) {
-		return 0.0;
+		return vec3(0.0);
+	}
+	if (has_catch && textureLod(catch_tex, uv, 0.0).r > snow_ground(p) + 0.5) {
+		return vec3(0.0);
 	}
 	ivec2 size = textureSize(snow_tex, 0);
 	vec2 f = uv * vec2(size) - 0.5;
@@ -146,7 +151,10 @@ float snow_depth_smooth(vec2 p) {
 	vec2 t = f - b;
 	vec4 wx = vec4(t.x * (-0.5 + t.x * (1.0 - 0.5 * t.x)), 1.0 + t.x * t.x * (-2.5 + 1.5 * t.x), t.x * (0.5 + t.x * (2.0 - 1.5 * t.x)), t.x * t.x * (-0.5 + 0.5 * t.x));
 	vec4 wz = vec4(t.y * (-0.5 + t.y * (1.0 - 0.5 * t.y)), 1.0 + t.y * t.y * (-2.5 + 1.5 * t.y), t.y * (0.5 + t.y * (2.0 - 1.5 * t.y)), t.y * t.y * (-0.5 + 0.5 * t.y));
+	vec4 dx = vec4(-0.5 + t.x * (2.0 - 1.5 * t.x), t.x * (-5.0 + 4.5 * t.x), 0.5 + t.x * (4.0 - 4.5 * t.x), t.x * (-1.0 + 1.5 * t.x));
+	vec4 dz = vec4(-0.5 + t.y * (2.0 - 1.5 * t.y), t.y * (-5.0 + 4.5 * t.y), 0.5 + t.y * (4.0 - 4.5 * t.y), t.y * (-1.0 + 1.5 * t.y));
 	float sum = 0.0;
+	vec2 g = vec2(0.0);
 	float lo = 1e9;
 	float hi = -1e9;
 	for (int j = 0; j < 4; j++) {
@@ -154,29 +162,40 @@ float snow_depth_smooth(vec2 p) {
 			ivec2 c = clamp(ivec2(b) + ivec2(i - 1, j - 1), ivec2(0), size - 1);
 			float v = texelFetch(snow_tex, c, 0).r;
 			sum += v * wx[i] * wz[j];
+			g += v * vec2(dx[i] * wz[j], wx[i] * dz[j]);
 			if (i >= 1 && i <= 2 && j >= 1 && j <= 2) {
 				lo = min(lo, v);
 				hi = max(hi, v);
 			}
 		}
 	}
-	float d = clamp(sum, lo, hi);
-	if (has_catch && textureLod(catch_tex, uv, 0.0).r > snow_ground(p) + 0.5) {
-		d = 0.0;
+	if (sum < lo || sum > hi) {
+		return vec3(clamp(sum, lo, hi), 0.0, 0.0);
 	}
-	return d;
+	return vec3(sum, g * vec2(size) / max(snow_rect.zw, vec2(1e-4)));
 }
-float snow_height_with(vec2 p, vec2 dr) {
-	float d = snow_depth_smooth(p) * snow_fade(p) - dr.x + dr.y;
+// The surface's height and its central differences over 2e (as the differences of snow_height at p +- e
+// took them, from 2 x 4 passes over the depth's cells): the depth's part from its exact gradient, the
+// fine deformation's, the ground's and the fade's from their own cheap differences.
+vec3 snow_height_diff(vec2 p, float e, bool p_vertex) {
+	vec3 dg = snow_depth_smooth_grad(p);
+	vec2 ex = vec2(e, 0.0);
+	vec2 ez = vec2(0.0, e);
+	float fade = snow_fade(p);
+	vec2 dfade = vec2(snow_fade(p + ex) - snow_fade(p - ex), snow_fade(p + ez) - snow_fade(p - ez));
+	vec2 dr = p_vertex ? snow_deform_vertex(p) : snow_deform(p);
+	vec2 rx0 = p_vertex ? snow_deform_vertex(p - ex) : snow_deform(p - ex);
+	vec2 rx1 = p_vertex ? snow_deform_vertex(p + ex) : snow_deform(p + ex);
+	vec2 rz0 = p_vertex ? snow_deform_vertex(p - ez) : snow_deform(p - ez);
+	vec2 rz1 = p_vertex ? snow_deform_vertex(p + ez) : snow_deform(p + ez);
+	vec2 ddr = vec2((rx1.y - rx1.x) - (rx0.y - rx0.x), (rz1.y - rz1.x) - (rz0.y - rz0.x));
+	float d = dg.x * fade - dr.x + dr.y;
+	vec2 dd = dg.yz * fade * 2.0 * e + dg.x * dfade + ddr;
 	// Under min_depth the snow is the ground material's; the surface tucks 5 cm under the ground.
 	float lift = d >= min_depth ? d : mix(-0.05, min_depth, max(d, 0.0) / min_depth);
-	return snow_ground(p) + lift;
-}
-float snow_height(vec2 p) {
-	return snow_height_with(p, snow_deform(p));
-}
-float snow_height_vertex(vec2 p) {
-	return snow_height_with(p, snow_deform_vertex(p));
+	vec2 dlift = d >= min_depth ? dd : (d > 0.0 ? dd * (min_depth + 0.05) / max(min_depth, 1e-4) : vec2(0.0));
+	vec2 dground = vec2(snow_ground(p + ex) - snow_ground(p - ex), snow_ground(p + ez) - snow_ground(p - ez));
+	return vec3(snow_ground(p) + lift, dground + dlift);
 }
 // Integer lattice hash (pcg2d, Jarzynski and Olano 2020): no sine, so it holds kilometres from the origin
 // with no banding or repeats.
@@ -195,6 +214,20 @@ float snow_noise(vec2 p) {
 	vec2 f = fract(p);
 	f = f * f * (3.0 - 2.0 * f);
 	return mix(mix(snow_hash(i), snow_hash(i + vec2(1.0, 0.0)), f.x), mix(snow_hash(i + vec2(0.0, 1.0)), snow_hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+// The same noise with its gradient (x: value, yz: d/dx, d/dy), from the same four corners (Quilez, value
+// noise derivatives).
+vec3 snow_noise_grad(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	vec2 du = 6.0 * f * (1.0 - f);
+	float a = snow_hash(i);
+	float b = snow_hash(i + vec2(1.0, 0.0));
+	float c = snow_hash(i + vec2(0.0, 1.0));
+	float d = snow_hash(i + vec2(1.0, 1.0));
+	float k = a - b - c + d;
+	return vec3(mix(mix(a, b, u.x), mix(c, d, u.x), u.y), du * vec2(b - a + k * u.y, c - a + k * u.x));
 }
 // Snow sparkle (docs/ideas/snow.md, stage 5): the same function as BaseMaterial3D's snow pass, there with
 // its comments. A facet normal and its weight (0: none) for a footprint in metres.
@@ -253,23 +286,32 @@ vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
 	return normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
 }
 
-float snow_ripple(vec2 p) {
-	// Wind ripples and grain clumps: 4 mm at 35 cm, 1.5 mm at 9 cm. Each octave turns by an irrational angle
-	// so no lattice axis lines up, and a 1.7 m field varies their strength from patch to patch (smoother and
-	// rougher snow), so the pattern never reads as a repeat.
+// Wind ripples and grain clumps: 4 mm at 35 cm, 1.5 mm at 9 cm. Each octave turns by an irrational angle
+// so no lattice axis lines up, and a 1.7 m field varies their strength from patch to patch (smoother and
+// rougher snow), so the pattern never reads as a repeat.
+// The ripples' gradient (per metre) in one evaluation: the octaves' analytic gradients through their turns
+// (v * M is transpose(M) * v). Central differences took four evaluations.
+vec2 snow_ripple_grad(vec2 p) {
 	const mat2 r1 = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8));
 	const mat2 r2 = mat2(vec2(0.28, -0.96), vec2(0.96, 0.28));
-	float strength = 0.55 + 0.9 * snow_noise(r2 * p / 1.7 + 41.0);
-	return micro_relief * strength * (0.004 * snow_noise(r1 * p / 0.35) + 0.0015 * snow_noise(r2 * p / 0.09 + 17.0));
+	vec3 s = snow_noise_grad(r2 * p / 1.7 + 41.0);
+	vec3 a = snow_noise_grad(r1 * p / 0.35);
+	vec3 b = snow_noise_grad(r2 * p / 0.09 + 17.0);
+	float strength = 0.55 + 0.9 * s.x;
+	vec2 g_strength = 0.9 * (s.yz * r2) / 1.7;
+	float o = 0.004 * a.x + 0.0015 * b.x;
+	vec2 g_o = 0.004 * (a.yz * r1) / 0.35 + 0.0015 * (b.yz * r2) / 0.09;
+	return micro_relief * (g_strength * o + strength * g_o);
 }
 
 void vertex() {
 	vec2 p = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
 	vec2 duv = (p - deform_rect.xy) / max(deform_rect.zw, vec2(1e-4));
 	float e = (deform_rect.z > 0.0 && snow_inside(duv)) ? max(detail_step * 2.0, vertex_step) : coarse_step;
-	float h = snow_height_vertex(p);
-	float hx = snow_height_vertex(p + vec2(e, 0.0)) - snow_height_vertex(p - vec2(e, 0.0));
-	float hz = snow_height_vertex(p + vec2(0.0, e)) - snow_height_vertex(p - vec2(0.0, e));
+	vec3 hd = snow_height_diff(p, e, true);
+	float h = hd.x;
+	float hx = hd.y;
+	float hz = hd.z;
 	vec3 n = normalize(vec3(-hx, 2.0 * e, -hz));
 	vec3 t = normalize(vec3(2.0 * e, hx, 0.0));
 	vec3 b = normalize(cross(n, t));
@@ -289,11 +331,12 @@ void fragment() {
 	vec2 dr = snow_deform(p);
 	float compact = clamp(dr.x / max(pack.r, 0.01), 0.0, 1.0);
 	float e = detail_step;
-	float hx = snow_height(p + vec2(e, 0.0)) - snow_height(p - vec2(e, 0.0));
-	float hz = snow_height(p + vec2(0.0, e)) - snow_height(p - vec2(0.0, e));
-	float em = 0.02;
-	hx += (snow_ripple(p + vec2(em, 0.0)) - snow_ripple(p - vec2(em, 0.0))) * e / em;
-	hz += (snow_ripple(p + vec2(0.0, em)) - snow_ripple(p - vec2(0.0, em))) * e / em;
+	vec3 hd = snow_height_diff(p, e, false);
+	float hx = hd.y;
+	float hz = hd.z;
+	vec2 rg = snow_ripple_grad(p) * 2.0 * e;
+	hx += rg.x;
+	hz += rg.y;
 	vec3 nf = normalize(vec3(-hx, 2.0 * e, -hz));
 	vec3 tn = vec3(dot(nf, normalize(w_t)), dot(nf, normalize(w_b)), dot(nf, normalize(w_n)));
 	ALBEDO = tint * pack.g * (1.0 - 0.08 * compact);

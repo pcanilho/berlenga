@@ -151,6 +151,8 @@ var mudwave_test := false
 var wear_test := false
 var buried_test := false
 var silt_test := false
+var carry_test := false
+var trackdust_test := false
 var offpatch_test := false
 var tread_arg := -1 # --view=ruts: the car's PhysXVehicleWheel3D.Tread (mud round 10)
 var puddle_test := false
@@ -225,6 +227,8 @@ func _ready() -> void:
 		elif a == "--test=wear": wear_test = true
 		elif a == "--test=buried": buried_test = true
 		elif a == "--test=silt": silt_test = true
+		elif a == "--test=carry": carry_test = true
+		elif a == "--test=trackdust": trackdust_test = true
 		elif a == "--test=offpatch": offpatch_test = true
 		elif a == "--test=puddles": puddle_test = true
 		elif a == "--test=cracks": crack_test = true
@@ -301,7 +305,7 @@ func _ready() -> void:
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or silt_test or offpatch_test:
+	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or silt_test or offpatch_test or carry_test or trackdust_test:
 		if clog_test:
 			await _run_clog_tests()
 		if treads_test:
@@ -336,6 +340,10 @@ func _ready() -> void:
 			await _run_buried_tests()
 		if silt_test:
 			await _run_silt_tests()
+		if carry_test:
+			await _run_carry_tests()
+		if trackdust_test:
+			await _run_trackdust_tests()
 		if offpatch_test:
 			await _run_offpatch_tests()
 		print("RESULT: %d failed" % fails)
@@ -6609,6 +6617,137 @@ func _loose_mud_tests(rb: RigidBody3D) -> void:
 	_check("stones hidden again are kept with the deposits", cleared == 0 and kept == hidden and hidden == 1, "%d cleared, %d read back" % [cleared, kept])
 	floor_body.queue_free()
 	await _paint_mud(0.8, STIFF_MUD)
+
+
+# Carried (mud round 18.1): soaked mud running down a bank takes a loose stone with it, stiff mud leaves it; a debris
+# flow sweeps one along its channel and leaves it where the flow stops.
+func _run_carry_tests() -> void:
+	var moved := {}
+	for k in ["stiff", "soaked"]:
+		near_on = false
+		await _setup("bank", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+		await _paint_mud(0.4, STIFF_MUD if k == "stiff" else 1.0)
+		var p0 := Vector3(1.0, 0, 0.5)
+		surface.add_loose_stone(Vector3(p0.x, surface.get_surface_height_at(p0) + 0.11, p0.z), 0.13)
+		var rb := get_tree().get_nodes_in_group("ground_loose")[0] as Node3D
+		await get_tree().physics_frame
+		var a := rb.global_position
+		var b := a
+		for i in 600:
+			await get_tree().physics_frame
+			if is_instance_valid(rb):
+				b = rb.global_position
+		moved[k] = b - a
+		print("  %s bank: stone moved %s, %s" % [k, moved[k], "then buried where the mud piled" if surface.get_reburied_stone_count() > 0 else "still in sight"])
+	_check("soaked mud running down a bank carries a loose stone; stiff mud holds it", moved["soaked"].x < -0.3 and absf(moved["stiff"].x) < 0.05, "%.2f m down the bank soaked, %.2f m stiff" % [-moved["soaked"].x, -moved["stiff"].x])
+	# Rolled onto (round 18.2): a tyre whose floor passes a few centimetres under the top of a stone lying in a rut
+	# presses it in under its tread's middle, and squeezes it out sideways under its shoulder.
+	var res := {}
+	for k in ["middle", "shoulder"]:
+		await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+		await _paint_mud(0.8, 0.7)
+		var off := 0.0 if k == "middle" else 0.2
+		var p1 := Vector3(off, 0, 0)
+		# A rut first, the stone lying in its floor (soft mud: it holds the rut).
+		for i in 40:
+			surface.press_wheel(Vector3(0, 0, -0.6 + 0.03 * i), Vector2(0.6, 0.3), 0.0, 0.3, Vector2(0, 2.0))
+			await get_tree().physics_frame
+		surface.sync_deformation()
+		surface.add_loose_stone(Vector3(off, surface.get_surface_height_at(p1) + 0.12, 0.0), 0.13)
+		var st := get_tree().get_nodes_in_group("ground_loose")[0] as RigidBody3D
+		for i in 150:
+			await get_tree().physics_frame
+		var a := st.global_position
+		var top := a.y + 0.13
+		var floor_y := top - 0.04
+		var sink: float = float(height.get_height(a)) - floor_y
+		var zz := -0.6
+		while zz < 0.6:
+			surface.press_wheel(Vector3(0, 0, zz), Vector2(0.5, 0.3), 0.0, sink, Vector2(0, 2.0))
+			zz += 2.0 / 60.0
+			await get_tree().physics_frame
+		for i in 30:
+			await get_tree().physics_frame
+		var b := st.global_position
+		res[k] = [b.y + 0.13 - floor_y, b.x - a.x, b.z - a.z]
+		print("  tyre over a stone at its %s: top %.1f cm over the floor after (4 before), %.2f m aside, %.2f m along" % [k, res[k][0] * 100.0, res[k][1], res[k][2]])
+	_check("a tyre rolling onto a sunk stone presses it in under its middle", res["middle"][0] < 0.015 and absf(res["middle"][1]) < 0.05 and absf(res["middle"][2]) < 0.1, "top %.1f cm over the floor, %.2f m aside" % [res["middle"][0] * 100.0, res["middle"][1]])
+	_check("and squeezes it out sideways under its shoulder", res["shoulder"][1] > 0.1 and surface.get_squeezed_stone_count() > 0, "%.2f m out" % res["shoulder"][1])
+	near_on = true
+	await _soil_scene("soil")
+	var stub := DebrisValley.new()
+	WorldContracts.set_ground(stub)
+	var flow = ClassDB.instantiate("GroundDebrisFlow3D")
+	flow.listen = false
+	flow.show_flow = false
+	add_child(flow)
+	var start := Vector3(0.0, 0.12, 10.0)
+	surface.add_loose_stone(start, 0.14)
+	var stone := get_tree().get_nodes_in_group("ground_loose")[0] as RigidBody3D
+	flow.start(_debris_event(1, 0.0, 2000.0))
+	var top := 0.0
+	var frames := 0
+	while frames < 900 and flow.get_active_bodies() > 0:
+		flow.advance(0.1, 0.05)
+		await get_tree().physics_frame
+		frames += 1
+		top = maxf(top, stone.linear_velocity.length())
+	for i in 60:
+		await get_tree().physics_frame
+	var end := stone.global_position
+	print("  debris flow: stone from z %.1f to %.1f m, top speed %.1f m/s, at rest %.2f m/s after %d frames" % [start.z, end.z, top, stone.linear_velocity.length(), frames])
+	_check("a debris flow sweeps a loose stone down its channel and leaves it", end.z - start.z > 3.0 and top > 1.0 and stone.linear_velocity.length() < 0.2, "%.1f m down, %.1f m/s at most" % [end.z - start.z, top])
+	WorldContracts.set_ground(null)
+	flow.queue_free()
+
+
+# Tracked-out mud as dust (mud round 18.3): a muddy tyre's trail on dry ground gives no dust while wet; dried, a tyre
+# over it lifts it and the trail thins, and the wind lifts it too.
+func _run_trackdust_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.1, 0.0)
+	surface.drying_time = 1.0
+	var x := -2.0
+	while x <= 2.0:
+		surface.track_mud(Vector3(x, 0, 2.0), 0.15, 0.001, 1.0)
+		x += 0.1
+	for i in 5:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var p := Vector3(0.0, 0, 2.0)
+	var wet: Vector2 = surface.get_tracked_mud_at(p)
+	var kg0 := surface.get_tracked_dust_lifted()
+	for i in 10:
+		surface.add_dust(p, Vector3(0, 1, 0), 3.0)
+		await get_tree().physics_frame
+	var kg_wet := surface.get_tracked_dust_lifted() - kg0
+	for i in 240:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var dry: Vector2 = surface.get_tracked_mud_at(p)
+	var kg1 := surface.get_tracked_dust_lifted()
+	for i in 60:
+		surface.add_dust(p, Vector3(0, 1, 0), 3.0)
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var after: Vector2 = surface.get_tracked_mud_at(p)
+	var kg2 := surface.get_tracked_dust_lifted()
+	print("  trail: share %.2f wet %.2f; dried %.2f / %.2f; after a tyre %.2f; lifted %.3f kg wet, %.3f kg dry" % [wet.x, wet.y, dry.x, dry.y, after.x, kg_wet, kg2 - kg1])
+	_check("a wet mud trail gives no dust; dried, a tyre lifts it and the trail thins", wet.x > 0.5 and kg_wet == 0.0 and dry.y < 0.1 and kg2 - kg1 > 0.05 and after.x < dry.x - 0.1, "%.3f kg wet, %.3f kg dry; share %.2f to %.2f" % [kg_wet, kg2 - kg1, dry.x, after.x])
+	var q := Vector3(1.6, 0, 2.0)
+	var w0: Vector2 = surface.get_tracked_mud_at(q)
+	surface.wind_override = Vector2(12.0, 0.0)
+	surface.runoff_time_scale = 2000.0
+	for i in 120:
+		await get_tree().physics_frame
+	surface.runoff_time_scale = 1.0
+	surface.wind_override = Vector2.ZERO
+	surface.sync_deformation()
+	var w1: Vector2 = surface.get_tracked_mud_at(q)
+	var kg3 := surface.get_tracked_dust_lifted()
+	print("  wind 12 m/s on the dried trail: share %.2f -> %.2f, %.3f kg lifted" % [w0.x, w1.x, kg3 - kg2])
+	_check("the wind lifts a dried trail too", kg3 - kg2 > 0.0 and w1.x < w0.x, "share %.2f to %.2f" % [w0.x, w1.x])
+	near_on = true
 
 
 # Water for the silt tests: a river over -8 < x < -4 whose bed record (kg/m2, mineral and ash) the test sets, and

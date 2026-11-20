@@ -133,6 +133,7 @@ private:
 	bool raster_light_shadows = true;
 	float raster_shadow_distance = 400.0f;
 	bool thunder_enabled = true;
+	bool record_tree_strikes = true; // canopy strikes go to WorldStand (strike_age_at) for struck-tree variants
 	float thunder_volume_db = 0.0f;
 	StringName thunder_bus = SNAME("Master");
 	uint32_t seed = 1;
@@ -197,6 +198,8 @@ public:
 	float get_raster_shadow_distance() const { return raster_shadow_distance; }
 	void set_thunder_enabled(bool p_enabled);
 	bool is_thunder_enabled() const { return thunder_enabled; }
+	void set_record_tree_strikes(bool p_enabled) { record_tree_strikes = p_enabled; }
+	bool is_recording_tree_strikes() const { return record_tree_strikes; }
 	void set_thunder_volume_db(float p_db);
 	float get_thunder_volume_db() const { return thunder_volume_db; }
 	void set_thunder_bus(const StringName &p_bus);

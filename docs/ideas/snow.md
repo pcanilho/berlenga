@@ -1482,6 +1482,37 @@ Research: a slab avalanche leaves a crown (a tensile fracture standing the slab'
   ripples in the geometry (Ueno's ripple instability; today only a normal map), a slight bend toward the wind or the
   drip line, a pendant drop at the tip, and neighbours fusing into curtains near the eave.
 
+## Follow-up 35: crown walls without slits (20 Nov 2026)
+
+- From afar the crown read as a dotted line, also with the powder cloud hidden. Close up, the wall had slits
+  through to the sky: the outline is chained into lines, and the walk breaks a line wherever three or four edges
+  meet at a corner. Each line set its end point off the corner along its own edge's normal, so two lines meeting
+  there stood their ends up to half a cell apart. Every corner's point is now the mean of all edges meeting
+  there (normal, height, albedo), so lines meet end to end. What is left at the crown's steps is the step's own
+  face in shade. Bench: `--no-gas` hides the powder cloud and lifts the one-tick lockstep (the slide and its
+  crown in about a minute); `--crown` frames the crown from 14 m down the bed, `--crown-far` from 40 m.
+
+## Follow-up 36: the deep-snow surface's normal in one pass (20 Nov 2026)
+
+- Speed pass, step 1. The surface took its normal from central differences of its height, so each pixel ran
+  the 16-cell Catmull-Rom depth four times (64 reads) and each vertex five times (80), plus the ground, catch
+  and deformation reads at every tap. The depth's gradient now comes from the same single pass, from the
+  derivatives of the Catmull-Rom weights (the analytic derivative of a cubic filter, as in Sigg and Hadwiger,
+  GPU Gems 2 ch. 20); the fine deformation, ground and edge fade keep their cheap central differences. Deforming
+  snow in shipped games reads one height per tap the same way (Michels and Sikachev, deferred snow deformation
+  in Rise of the Tomb Raider, GPU Pro 7; Barre-Brisebois, Batman: Arkham Origins, GDC 2014).
+- Same image: against the old shader, the trail close-up differs by a mean 0.0 levels and the crown view by
+  0.04. Bench whole-frame GPU time (lavapipe, `--time=10`): trail close-up 1484 -> 898 ms, avalanche crown view
+  2757 -> 1407 ms. The bench's `--time=N` prints the mean GPU time over N frames.
+- Step 2: the wind ripples' share of the pixel normal comes from the noise octaves' analytic gradients (value
+  noise derivatives, Quilez) in one evaluation instead of four (12 noise lookups to 3). Image within 0.07
+  levels; trail close-up 898 -> 826 ms, crown view 1407 -> 1345 ms.
+- CPU side, from `--test` on lavapipe's host: a 256 x 256 cover update runs on a worker (6.7 ms there) and costs
+  the frame 1.3 ms mean, 3.2 ms worst, twice a second; a deep-snow surface step with four rolling bodies 0.08 ms.
+  Nothing there worth trading detail for. Next candidates if a GPU bench on the PC shows the surface still
+  high: a mip of the deformation map for the vertex prefilter (one fetch for four) and the 9-tap bilinear form
+  of the Catmull-Rom depth for the vertex height (Sigg and Hadwiger; TheRealMJP's 9-tap filter).
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

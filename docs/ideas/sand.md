@@ -899,3 +899,32 @@ are prefiltered to the pixel as before (faded under three pixels a crest); crest
 as a patchy tone, up to 15% darker by the field's amplitude (LEAN mapping's point, Olano and Baker 2010: unresolved
 slopes become the pixel's statistics). The path tracer the same in raygen, with the cone's width as the footprint
 (rt_cone_width).
+
+## Ripple grain sorting (GroundSurface3D ripple_sorting, on by default)
+
+Wind sorts a ripple's grains: the coarse ones creep up onto the crests, the small dense ones (magnetite, ilmenite,
+garnet) settle in the troughs as a lag, so a ripple field shows dark lines in its troughs and paler, coarser crests
+(Bagnold 1941; Sharp 1963; Anderson and Bunas 1993). Drawn as an albedo tint keyed to the ripple's height in
+standard deviations of the grown field's (map meta m3.w carries that spread, 0 when off; the far texture's B and the
+map rows n+S..n+S+n-1 its normalised height). The trough lag is patchy over some 7 m, as the heavy-mineral share is.
+Where the crests are finer than a pixel the ground takes the bands' mean tone, scaled by the field's height there
+(the LEAN point again). Same lines in BaseMaterial3D, TerrainMaterial3D and the path tracer
+(ground_ripple_sort_tint).
+
+## Dune-scale tone (TerrainMaterial3D `sand_dune_tone`, GroundSurface3D `dune_tone`, on by default)
+
+Three colour changes a dune field shows from afar, after the grain-scale speckle and the ripple sorting:
+
+- Rubefaction: iron-oxide coats redden grains that have lain still for millennia (Walker 1979; Pye and Tsoar 2009),
+  so older, stabilised sand is redder than freshly worked sand. Drawn as a patchy low-frequency field (420 m and
+  130 m value noise), strongest where the sand is thin and stable.
+- Interdune flats: deflation strips the fine sand and leaves a coarser, darker lag (Sharp 1963; Lancaster 1995). Keyed
+  to the loose sand depth the generator grew (TerrainGenerator3D.get_sand_depth_at(), published as
+  `terrain_sand_depth_map`): thin sand on flat ground darkens and greys.
+- Slip faces: grain flows of fine, well-sorted sand at the angle of repose, paler than the stoss (Bagnold 1941). Keyed
+  to slope (about 29 to 33 degrees), so it shows on any sand.
+
+One function (ground_dune_tone in material.cpp and the raygen, tm_dune_tone in TerrainMaterial3D, same hash and
+noise) so the patch meets the terrain without a seam. The patch reads the generator's depth and its own sand share
+from the ripple map's sand block (G, B; meta texel 4 x = on), so the path tracer needs no new parameter.
+TerrainMaterial3D runs as a custom hit shader under path tracing, so it needs no copy.

@@ -1,0 +1,1 @@
+- Snow: a slab's crown and flank walls meet end to end at every corner, so the outline no longer reads as a dotted line from afar.

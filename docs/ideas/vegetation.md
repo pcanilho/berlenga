@@ -1344,3 +1344,35 @@ Design (to build after Paulo's pick):
   forest known, open-ended interior rules do nothing and edge rules place nothing.
 - Maps built from rules alone (far shell, cover map, sward shade) leave out context-only species (burn presets,
   stand stages that skip old growth, edge-only species) instead of spreading them over all their ground.
+- Built 20 Nov (far rings without CPU copies): the path tracer kept a CPU mirror of every MultiMesh's records on
+  RT devices (a readback after each GPU write, and a warm-up in the TLAS gather), though only expanded surfaces
+  (and merges that fall back to expanding) read it; captured surfaces (grass, plants in wind) read the GPU buffer.
+  Now the gather fills the mirror only when a non-captured surface may expand, and a GPU write reads back only
+  for an existing mirror, a missing custom AABB or rt_instanced. Grass bench --far-grass=rings PT (320x180, 1 spp):
+  static memory 603 -> 515 MB, video 6619 -> 6554 MB; images equal within 1-spp noise (block means 85.35 / 85.09).
+  gpu_multimesh --test PASS in gpu, cpu and gpu+taa modes, gpu and cpu PT frames identical.
+- Fixed 20 Nov: the sward (GrassField3D.undergrowth_field) thins under context-only plants again, weighed by the
+  last setup's burn, stand and edge grids (VegetationField3D._context_weight; the field keeps a copy, refreshed when
+  burns or the stand change). A floor field reading its canopy field's edge now also reads the stand for those
+  trees' stages (the edge moved round a windthrow only for the trees' own field before).
+
+## Beaver ponds and meadows (card 20 Nov evening; built 20 Nov)
+Research:
+- Beaver ponds raise patch diversity along a valley; drained ponds become "beaver meadows" of sedges and grasses that
+  hold for decades before woody plants return (Naiman, Johnston and Kelley 1988, BioScience 38; Wright, Jones and
+  Flecker 2003, Ecology 84: herbaceous species richness rises about a third at landscape scale where ponds and
+  meadows mix with forest; Cunningham et al. 2006; Ecoscience 19(3) 2012 on meadow succession).
+- Drained bed sequence: bare mud seeds in at once with rushes (Juncus) and small sedges; within a few years a dense
+  sward of tussock sedges (Carex stricta / C. elata in Europe) and tall grasses (Calamagrostis canadensis in North
+  America; tall cocksfoot form as our stand-in), with meadowsweet, marsh marigold in the wet hollows and buttercups
+  on drier ground. Willow and alder close it after 20-60 years where browsing and wet soil allow.
+- Active pond zoning follows still-water hydrosere bands (Spence 1982; Keddy 2010): floating-leaved lilies in
+  0.5-2 m, bulrush in the shallows, tussock sedge along the flooded margin, rush and meadowsweet up the wet shore.
+Built:
+- PlantGenerator.make_beaver(BEAVER_POND / BEAVER_MEADOW). The pond set is placed by water depth and distance only
+  (lily 0.4-2 m floating; bulrush 0.05-0.6 m; tussock sedge 0-0.25 m and up to 4 m ashore; rush 0-6 m, marsh
+  marigold 0-4 m, meadowsweet 1-10 m from the shore). The meadow set takes RULE_STAND_AGE with RULE_DISTURBANCE
+  (4, 4), WorldStand.DISTURBANCE_BEAVER (world-links 05df7a23, age = years since the pond drained): rush and small
+  sedge 0-4 y, then dense sedge, tall grass, buttercup 3-38 y, meadowsweet 4-38 y, marsh marigold 2-28 y (fade 3) within
+  8 m of the remaining stream. All shade 0-0.4 to 0.6; the trees' STAND_BEAVER_POND supplies the dead pond trees
+  and the closing willow and alder. Vegetation bench "beaver" checks.

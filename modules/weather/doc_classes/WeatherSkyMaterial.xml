@@ -37,8 +37,16 @@
 			<param index="1" name="albedo" type="float" />
 			<param index="2" name="height" type="float" />
 			<param index="3" name="from" type="float" />
+			<param index="4" name="smoke_share" type="float" default="0.0" />
 			<description>
-				The weather's aerosol haze in the sky's air: [param extinction] at the ground (1/m; 0 for none), its single-scatter [param albedo], its scale [param height] (m), and the distance [param from] the camera along each view ray where it starts (the volumetric fog's reach, which draws the nearer part). It scatters with the sun's light through the clouds' shadow, so the shafts carry on past the volumetric fog, and dims the sun's disc and the stars. [WeatherMap3D] calls this from [member WeatherMap3D.aerosol_haze]. Until it is called, the sky has [WeatherMap3D]'s default haze (40 km dry visibility).
+				The weather's aerosol haze in the sky's air: [param extinction] at the ground (1/m; 0 for none), its single-scatter [param albedo], its scale [param height] (m), and the distance [param from] the camera along each view ray where it starts (the volumetric fog's reach, which draws the nearer part). It scatters with the sun's light through the clouds' shadow, so the shafts carry on past the volumetric fog, and dims the sun's disc and the stars. [WeatherMap3D] calls this from [member WeatherMap3D.aerosol_haze]. Until it is called, the sky has [WeatherMap3D]'s default haze (40 km dry visibility). [param smoke_share] is the fires' smoke's share of [param extinction]: that share takes the sun's light by colour, as [method set_sun_smoke] gives it, instead of grey.
+			</description>
+		</method>
+		<method name="set_sun_smoke">
+			<return type="void" />
+			<param index="0" name="transmittance" type="Vector3" />
+			<description>
+				What the fires' smoke column lets through of the sun's light, per colour (red, green, blue; 1 for none). The sun's disc is dimmed and reddened by it, and so is the sun's light the sky's air scatters: the aureole round the sun and the brown of the sky under thick smoke. [SkyClock] sets it from [method WeatherMap3D.get_smoke_transmittance], the same transmittance it puts on the sun light.
 			</description>
 		</method>
 		<method name="set_cloud_light_grid">

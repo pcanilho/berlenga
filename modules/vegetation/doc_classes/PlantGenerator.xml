@@ -219,6 +219,16 @@
 				Returns the walkers a year that halve a preset's cover on a worn path, from trampling studies (Cole 1995). Plantain 1000, grasses 300, heaths and scrub 40, ferns 30; 0 for presets that are not ground plants.
 			</description>
 		</method>
+		<method name="make_beaver" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.BeaverStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				The plants of a beaver pond or of the meadow it leaves as [PlantSpecies] for a [Biome]. [constant BEAVER_POND] zones by water depth and distance from the shore: floating water lilies over 0.4 to 2 m, bulrush in the shallows, tussock sedge along the flooded margin, then soft rush, marsh marigold and meadowsweet up the shore. [constant BEAVER_MEADOW] grows on a drained pond bed, placed by [constant PlantSpecies.RULE_STAND_AGE] and [constant PlantSpecies.RULE_DISTURBANCE] on ground [method WorldStand.add_disturbance] marks with kind [constant DISTURBANCE_BEAVER_KIND] and an age of years since the pond drained: rush and small sedge on the mud for the first four years, then a dense sedge and tall-grass meadow with meadowsweet, marsh marigold and buttercup. Neither set takes shade over 0.4 to 0.6; the willow and alder that close an old meadow come from the trees.
+			</description>
+		</method>
 		<method name="make_burn" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.BurnStand" />
@@ -717,6 +727,18 @@
 		</constant>
 		<constant name="BURN_MAX" value="3" enum="BurnStand">
 			Number of burn stands.
+		</constant>
+		<constant name="BEAVER_POND" value="0" enum="BeaverStand">
+			An active beaver pond and its shore.
+		</constant>
+		<constant name="BEAVER_MEADOW" value="1" enum="BeaverStand">
+			A drained beaver pond bed, by years since draining.
+		</constant>
+		<constant name="BEAVER_MAX" value="2" enum="BeaverStand">
+			Number of beaver stands.
+		</constant>
+		<constant name="DISTURBANCE_BEAVER_KIND" value="4">
+			The [WorldStand] disturbance kind of a drained beaver pond, which [constant BEAVER_MEADOW] grows on.
 		</constant>
 		<constant name="ALPINE_FELLFIELD" value="0" enum="AlpineStand">
 			Fellfield on exposed ridges blown free of snow: moss campion cushions, purple saxifrage and mountain avens mats far apart on gravel, curved sedge in the lee.

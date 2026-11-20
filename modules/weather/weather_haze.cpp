@@ -177,7 +177,8 @@ void WeatherMap3D::_apply_sky_aerosol(float p_extinction, float p_from) {
 	if (sky_material.is_null()) {
 		return;
 	}
-	sky_material->set_aerosol(p_extinction, 0.9f, haze_height, p_from);
+	// The fires' smoke share of it: the sky takes the sun through the smoke by colour (SkyClock), not grey.
+	sky_material->set_aerosol(p_extinction, 0.9f, haze_height, p_from, p_extinction > 0.0f ? MIN(_smoke_sigma() / p_extinction, 1.0f) : 0.0f);
 	applied_sky_aerosol = state;
 }
 

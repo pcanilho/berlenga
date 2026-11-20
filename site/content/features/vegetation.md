@@ -128,6 +128,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Salt marsh and shingle plants** (`PlantGenerator.make_saltmarsh()`): glasswort, cord-grass, sea purslane, sea aster and sea lavender zoned by height above the tide on sheltered marsh; sea kale, sea campion and horned-poppy on shingle backshores.
 - **Alpine and scree plants** (`PlantGenerator.make_alpine()`): fellfield, alpine grassland, snowbed and scree sets above the treeline, placed by climate, curvature, sunlight, soil depth and talus.
 - **Desert plants** (`PlantGenerator.make_desert()`, `DESERT_OASIS`; `PlantSpecies.RULE_SPRING`, `RULE_POOL_DISTANCE`; `VegetationField3D.spring_pools`): oases grow at the terrain's springs with date palms, olives and a ring of shrubs, reeds and rushes edge the spring pools, and each nebkha mound holds a shrub.
+- **Beaver ponds and meadows** (`PlantGenerator.make_beaver()`): pond plants by water depth, and after the dam fails a meadow that runs from rush and sedge through tall grass, buttercup, meadowsweet and marsh marigold over the decades.
 
 - **Leaf wear** (`PlantGenerator.leaf_wear`): insect bites, uneven halves, dead tips and older leaves yellowing and browning, per leaf.
 

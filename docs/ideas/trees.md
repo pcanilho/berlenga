@@ -3689,9 +3689,42 @@ tears a sliver of wood out of its middle.
   bark side up or the reddish inner bark up; splinters are thin three-sided slivers of the pale sapwood. They follow
   `ground_slope`. Surface "wood".
 - Bench: `stands.gd --lightning` (debris on the ground when fresh, none unstruck or three years on).
-- Not done: a hard strike that splits the stem or shatters the top; crown scorch; the world's strikes reaching trees
-  (WeatherLightning3D keeps only its last 32 strikes, no ages: VegetationField3D needs a strike record with ages to
-  pick a struck variant, as burn ages pick fire variants; a world-links contract).
+- **Struck trees in the world.** `lightning_variants` (on): stand, open, old and grove forms of trees over 8 m carry
+  two struck variants of their first seed (0.2 and 3 years; mesh meta `tree_lightning_years`) after the fire ones;
+  `get_living_meshes` leaves them out, and near meshes build them too. VegetationField3D copies the strikes over its
+  area (`WorldStand.get_strikes_in`, recorded by WeatherLightning3D's canopy strikes) and a tree within 3 m of one
+  younger than 8 years takes the struck variant nearest its age; no tree is struck elsewhere. Strikes added or aged
+  re-place their tiles (stand_changed). Bench: `stands.gd --lightning --strikes` (beech stand: two struck variants,
+  none placed without a strike, one strike swaps that tree only). The trees and vegetation benches keep them off.
+- Not done: a hard strike that splits the stem or shatters the top; crown scorch.
+
+### 5ay. Mistletoe on conifers, old balls, fir brooms (20 Nov; Paulo's pick, second of three)
+
+Mistletoe and birch brooms were in since 5n; this round adds what they lacked. Sources: Zuber 2004, Biology and control
+of Viscum album (Flora 199; a ball forks once a year, leaves last about two years, dioecious); Barney, Hawksworth and
+Geils 1998, Hosts of Viscum album (Eur. J. For. Path. 28; the subspecies' hosts); Peterson 1964 and Solla et al. 2006 on
+fir broom rust (Melampsorella caryophyllacearum).
+
+- **Conifer races.** Subsp. abietis on silver fir (host chance 0.25), subsp. austriacum on Scots pine (0.2): yellower
+  stems and leaves, narrower and shorter leaves (3 cm, a fifth as wide), yellowish berries.
+- **Old balls.** A ball's age is 3-30 years. It forks every shoot for four years, then a little under half the time,
+  the other shoots running on and arching outward so the ball stays round; the first stems go every way round the limb,
+  so it hangs below as well as above. The base stems thicken with age. Breadth first under a stem budget (150 + 28 a
+  year, at most 900; half on a heavily infected tree), so the whole shell is trimmed evenly. Old balls reach 0.7-0.8 m.
+- **Leaves on the shell.** A leaf pair at every shoot end in the outer part of the ball (beyond 0.72 of its reach) and
+  at every tip: the last two years' shoots, leafy outside and bare stems inside. Berries on half the balls (female
+  plants), in the shell's forks, late October to February.
+- **Host swelling.** A smooth spindle round the limb under each ball (the sinkers), larger under old balls.
+- **Heavy loads.** One infected tree in five (by `mistletoe`) carries 10-31 balls.
+- **Fir brooms** (`witches_brooms`, silver fir, 30% at 1): on a near-level limb in the live crown, a canker spindle up
+  to 1.7 times the limb and 30 cm long, and a broom 0.3-1.5 m of upright shoots that branch three times, needles all
+  round the shoot, 1.6-2.6 cm, yellow-green from late May to mid October, bare in winter.
+- Cost (LOD 0 crown parts, all of them): Scots pine seed 2 at the default mistletoe 94k triangles (two old balls);
+  silver fir seed 2 with mistletoe and brooms 3, 42k. The coarser LODs keep balls and brooms.
+- Raster against path traced at 100% crop (a pine's ball): the stems and leaves hold; the ball's inside is darker
+  under the path tracer, as shade should be.
+- Not done: poplar, apple and cherry hosts (no such species yet); cherry and hornbeam brooms; dieback of the limb past
+  an old ball.
 
 ## Next-round options (card 20 Nov evening)
 

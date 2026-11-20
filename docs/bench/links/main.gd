@@ -448,6 +448,24 @@ func _lightning_tests() -> void:
 	_check("lightning: the mast takes the strike", absf(hit.x - 30.0) < 8.0 and hit.y > 35.0, "landed at %s" % hit)
 	var far: Vector3 = l.find_strike_point(Vector3(-300, 0, 0), 30.0)
 	_check("lightning: open ground far from the mast", far.y < 2.0 and far.x < -150.0, "landed at %s" % far)
+	# A strike into a forest crown is kept by the stand for the struck tree's variant; one on open ground is not.
+	var stn: WorldStand = WorldContracts.get_stand()
+	stn.clear_strikes()
+	m.add_canopy(Vector2(200, 200), 20.0, 20.0, 4.0)
+	await get_tree().physics_frame
+	m.rebake_shelter()
+	l.thunder_enabled = false
+	l.strike(Vector3(200, 0, 200), true)
+	l.strike(Vector3(-300, 0, -300), true)
+	var sa0 := stn.strike_age_at(Vector3(201.5, 0, 200))
+	var sa_near := stn.strike_age_at(Vector3(205, 0, 200))
+	var sa_open := stn.strike_age_at(Vector3(-300, 0, -300))
+	var sg := stn.get_stand_generation()
+	stn.advance_years(6.0)
+	var sa6 := stn.strike_age_at(Vector3(201.5, 0, 200))
+	var sch: Dictionary = stn.get_stand_changes_since(sg)
+	stn.clear_strikes()
+	_check("lightning: a crown strike is kept as the struck tree's age (trunks within 3 m), not the neighbours' or open ground's; it ages with the years", sa0 == 0.0 and sa_near < 0.0 and sa_open < 0.0 and sa6 == 6.0 and Rect2(sch["area"]).has_point(Vector2(200, 200)), "at the tree %.0f y, 5 m off %.0f, open ground %.0f, 6 y on %.0f; change %s" % [sa0, sa_near, sa_open, sa6, str(sch)])
 	l.queue_free()
 	mast.queue_free()
 	ground.queue_free()
@@ -621,6 +639,20 @@ func _tyre_snow_tests() -> void:
 
 # Rain washes smoke and dust out of the air (below-cloud scavenging): the weather contract's rate, coarse dust far
 # faster than fine smoke and snow faster than rain; the weather map's smoke haze thins under hours of rain.
+# Low cloud on a hill: base 100 m, overcast, dry air and a fresh wind (no radiation fog).
+class HillCloudStub extends WorldWeather:
+	func _cloud_base_at(_p: Vector3) -> float:
+		return 100.0
+	func _cloud_cover_at(_p: Vector3) -> float:
+		return 1.0
+	func _air_humidity_at(_p: Vector3) -> float:
+		return 0.7
+	func _mean_wind_at(_p: Vector3) -> Vector3:
+		return Vector3(6, 0, 0)
+	func _air_temperature_at(_p: Vector3) -> float:
+		return 8.0
+
+
 class WashStub extends WorldWeather:
 	func _rainfall_at(p: Vector3) -> float:
 		return 10.0 if p.x < 0.0 else 0.0
@@ -1053,10 +1085,31 @@ func _stand_tests() -> void:
 	var beetle := st.add_disturbance(Vector3(128, 0, 128), 30.0, WorldStand.DISTURBANCE_BEETLE, 2.0)
 	var storm := st.add_disturbance(Vector3(5000, 0, 0), 1500.0, WorldStand.DISTURBANCE_WIND, 7.0)
 	var grid_ok := st.stand_age_at(Vector3(110, 0, 140)) == 2.0 and st.stand_age_at(Vector3(150, 0, 110)) == 2.0 and st.stand_age_at(Vector3(170, 0, 170)) < 0.0 and st.stand_age_at(Vector3(4000, 0, 900)) == 7.0 and st.disturbance_at(Vector3(4000, 0, 900)) == WorldStand.DISTURBANCE_WIND
+	var beaver := st.add_disturbance(Vector3(-300, 0, 0), 40.0, WorldStand.DISTURBANCE_BEAVER, 6.0)
+	grid_ok = grid_ok and st.disturbance_at(Vector3(-300, 0, 10)) == WorldStand.DISTURBANCE_BEAVER and st.stand_age_at(Vector3(-300, 0, 10)) == 6.0
+	st.remove_disturbance(beaver)
+	# Browsing: a red deer wood and a roe patch inside it; soft rim; pressure changes reported.
+	var red := st.add_browse(Vector3(1000, 0, 1000), 50.0, 0.6)
+	var roe := st.add_browse(Vector3(1010, 0, 1000), 10.0, 0.9, 1.1)
+	var bg := st.get_stand_generation()
+	var b_red := st.browse_at(Vector3(970, 0, 1000))
+	var b_roe := st.browse_at(Vector3(1010, 0, 1000))
+	var r_red := st.browse_reach_at(Vector3(970, 0, 1000))
+	var r_roe := st.browse_reach_at(Vector3(1010, 0, 1000))
+	var b_rim := st.browse_at(Vector3(1047, 0, 1000))
+	var b_out := st.browse_at(Vector3(1060, 0, 1000))
+	st.set_browse(red, 0.2)
+	var b_set := st.browse_at(Vector3(970, 0, 1000))
+	var bch: Dictionary = st.get_stand_changes_since(bg)
+	st.remove_browse(roe)
+	var b_gone := st.browse_at(Vector3(1010, 0, 1000))
+	st.clear_browse()
+	var b_clear := st.browse_at(Vector3(970, 0, 1000))
+	_check("stand: browse pressure is the strongest disc's, with its reach (red deer 1.8 m, roe 1.1 m), soft over the rim, 0 outside; changes reported", is_equal_approx(b_red, 0.6) and is_equal_approx(b_roe, 0.9) and is_equal_approx(r_red, 1.8) and is_equal_approx(r_roe, 1.1) and b_rim > 0.0 and b_rim < 0.6 and b_out == 0.0 and is_equal_approx(b_set, 0.2) and is_equal_approx(b_gone, 0.2) and b_clear == 0.0 and Rect2(bch["area"]).has_point(Vector2(1000, 1000)), "red %.2f reach %.1f, roe %.2f reach %.1f, rim %.2f, outside %.2f, set %.2f, roe removed %.2f, cleared %.2f" % [b_red, r_red, b_roe, r_roe, b_rim, b_out, b_set, b_gone, b_clear])
 	st.remove_disturbance(beetle)
 	st.remove_disturbance(storm)
 	grid_ok = grid_ok and st.stand_age_at(Vector3(128, 0, 128)) < 0.0
-	_check("stand: disturbances found across grid cells and wide storm tracks, gone once removed", grid_ok, str(grid_ok))
+	_check("stand: disturbances found across grid cells and wide storm tracks (a drained beaver pond too), gone once removed", grid_ok, str(grid_ok))
 	WorldContracts.set_fire(null)
 	print("  stand: crown fire %.0f y (kind %d), surface fire %.0f, untouched %.0f; windthrow %.0f y (kind %d), 40 y on %.0f (kind %d); change %s" % [a_fire, k_fire, a_surface, a_old, a_wind, k_wind, a_aged, k_aged, str(ch)])
 	_check("stand: the youngest stand-replacing disturbance gives the age (crown fire 30 y, windthrow 3 y over it, then the fire again once the windthrow is older); a surface fire and untouched ground stay old growth (-1)", a_fire == 30.0 and k_fire == WorldStand.DISTURBANCE_FIRE and a_surface < 0.0 and a_old < 0.0 and a_wind == 3.0 and k_wind == WorldStand.DISTURBANCE_WIND and a_aged == 30.0 and k_aged == WorldStand.DISTURBANCE_FIRE, "fire %.0f, surface %.0f, wind %.0f, aged %.0f" % [a_fire, a_surface, a_wind, a_aged])
@@ -1399,6 +1452,18 @@ func _dew_tests() -> void:
 		m3.advance(600.0)
 		var wet_level: float = mist.weather_mist_level()
 		_check("mist: a clear night over wet ground mists sooner than over dry", wet_level > dry_level + 0.1, "level %.2f wet, %.2f dry" % [wet_level, dry_level])
+		# Hill fog: ground at the cloud base stands in the cloud, in wind and under overcast; the valley below does not.
+		WorldContracts.set_weather(HillCloudStub.new())
+		var walker := Node3D.new()
+		add_child(walker)
+		mist.follow_target = mist.get_path_to(walker)
+		walker.global_position = Vector3(0, 110, 0)
+		var hill_level: float = mist.weather_mist_level()
+		walker.global_position = Vector3(0, 20, 0)
+		var valley_level: float = mist.weather_mist_level()
+		WorldContracts.set_weather(null)
+		walker.queue_free()
+		_check("mist: ground at the cloud base (cloud_base_at) stands in hill fog, wind or not; the valley below stays clear", hill_level > 0.9 and valley_level < 0.05, "level %.2f at 110 m under a 100 m base, %.2f at 20 m" % [hill_level, valley_level])
 		mist.queue_free()
 		m3.queue_free()
 	else:
