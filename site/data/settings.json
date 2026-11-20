@@ -4037,10 +4037,11 @@
     "ambient_scattering",
     "sun_scattering",
     "cast_shadows",
-    "scattering_temporal"
+    "scattering_temporal",
+    "ground_albedo"
    ],
    "note": "",
-   "what": "smoke takes sky and ambient light and the sun through scene shadows, and shadows the scene; `scattering_temporal` removes step banding at its edges.",
+   "what": "smoke takes sky and ambient light, the sun through scene shadows and light bounced up from sunlit ground, and shadows the scene; `scattering_temporal` removes step banding at its edges.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
