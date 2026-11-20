@@ -1076,6 +1076,7 @@ struct RTInstanceSource {
 	bool particles = false; // Particle systems have no triangle cap and no CPU fallback.
 	bool world_space = false; // Records are already in world space; the TLAS instance uses identity.
 	bool instanced = false; // multimesh_set_rt_instanced(): one TLAS entry per record, never a merged BLAS.
+	float offscreen_cull = 0.0f; // multimesh_set_rt_offscreen_cull(): degrees; records this small and off screen stay out.
 };
 
 // One billboard entry of multimesh_merge.glsl (std430 layout). Bases are columns in MultiMesh node space.
@@ -1475,6 +1476,13 @@ struct RTViewportState {
 	Vector3 rt_origin;
 	bool rt_origin_valid = false;
 
+	// Off-screen cull band of MultiMeshes with multimesh_set_rt_offscreen_cull(): the camera frustum's side planes
+	// widened by RT_CULL_BAND_GUARD degrees a side. Redone only when the camera turns or moves past the limits below,
+	// so instances keep their persistent slots between; invalid for orthographic cameras.
+	bool cull_band_valid = false;
+	Transform3D cull_band_camera;
+	Plane cull_band_planes[4];
+
 	// Set per frame: the screen-space sky texture was drawn and primary-ray
 	// misses should read it instead of the prefiltered radiance octmap.
 	bool sky_screen_enabled = false;
@@ -1655,6 +1663,7 @@ class RenderRaytracing {
 	RTPlanContext _make_plan_context(const RenderDataRD *p_render_data, uint32_t p_rt_flags, const LocalVector<RTCaptureRequest> *p_captures) const;
 	RTPlanArena &_open_plan_arena(RTViewportState *p_state, const RenderDataRD *p_render_data, const RTPlanContext &p_ctx);
 	void _update_trace_origin(RTViewportState *p_state, const RenderDataRD *p_render_data);
+	void _update_cull_band(RTViewportState *p_state, const RenderDataRD *p_render_data);
 
 	// Persistent instance slots (render_raytracing_persistent.h).
 	bool _persistent_wanted(const RenderDataRD *p_render_data) const;

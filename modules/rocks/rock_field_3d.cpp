@@ -119,6 +119,8 @@ constexpr int RF_MARK_BINS = 9;
 // Ground detail libraries (docs/ideas/ground-detail.md): the same shapes, drawn from one of their own LODs, at bins
 // RF_DETAIL_BIN + 0, 1, 2 for the pebble, gravel and fine classes.
 constexpr int RF_DETAIL_BIN = 8;
+// Detail grains off screen that look smaller than this many degrees stay out of the path tracer (multimesh_set_rt_offscreen_cull).
+constexpr float RF_DETAIL_RT_CULL_DEG = 0.5f;
 // Triangles a ground detail stone is drawn with per class: a 1 cm grain a few pixels tall needs no more. (A MultiMesh
 // takes one LOD for all its instances, chosen from its whole cell's bounds, so the grains carry their own.)
 const int detail_triangles[3] = { 320, 140, 64 };
@@ -2495,6 +2497,7 @@ void RockField3D::_split_tile(Cell &r_cell, uint32_t p_index, bool p_force, real
 		mm->set_mesh(lib->meshes[grp.variant]);
 		mm->set_instance_count(n);
 		RS::get_singleton()->multimesh_set_rt_instanced(mm->get_rid(), true); // first: it keeps a CPU copy of the buffer
+		RS::get_singleton()->multimesh_set_rt_offscreen_cull(mm->get_rid(), RF_DETAIL_RT_CULL_DEG);
 		RS::get_singleton()->multimesh_set_buffer(mm->get_rid(), buf);
 		grp.multimesh = mm;
 		r_cell.groups.push_back(grp);
@@ -3397,6 +3400,8 @@ void RockField3D::_detail_commit(DetailJob &r_job) {
 		// Hundreds of grains of one shape sit under the merged BLAS cap, which would bake a copy of every grain's
 		// triangles: give each its own TLAS entry over the shared shape instead (set first: it keeps a CPU copy).
 		RS::get_singleton()->multimesh_set_rt_instanced(mm->get_rid(), true);
+		// Grains off screen that look smaller than this leave the path tracer's set (their shadows and bounces are below a pixel).
+		RS::get_singleton()->multimesh_set_rt_offscreen_cull(mm->get_rid(), RF_DETAIL_RT_CULL_DEG);
 		RS::get_singleton()->multimesh_set_buffer(mm->get_rid(), dg.buffer);
 		Group grp;
 		grp.library = dg.library;
