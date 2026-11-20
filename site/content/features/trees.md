@@ -69,7 +69,7 @@ summary: "Trees and woody shrubs grown by light competition, 50 species in seven
 
   *Seasons: by November the beech has turned, the maple and birch are bare and the larch is gold.*
 
-- **Tree LODs** (`far_lod1`, `far_thinning`): far levels drop thin wood and thin out leaves, enlarging the rest so leaf area holds; leaves stay geometry at every level. Far broadleaf meshes use the lighter leaf level, with about 60% fewer leaf vertices and the same path traced look at 60 m. Past a species' range, distant trees swap to light crown hulls of lobes that keep the crown's cover and colour.
+- **Tree LODs** (`far_lod1`, `far_thinning`): far levels drop thin wood and thin out leaves, enlarging the rest so leaf area holds; leaves stay geometry at every level. Far broadleaf meshes use the lighter leaf level, with about 60% fewer leaf vertices and the same path traced look at 60 m. Past a species' range, distant trees swap to light crown hulls of lobes that keep the crown's cover and colour; trees whose crowns break the skyline are never thinned, so ridgelines keep their silhouette (species meta `far_skyline`).
 
 ## Old trees and deadwood
 

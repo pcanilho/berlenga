@@ -3179,7 +3179,7 @@
     "far_thinning"
    ],
    "note": "",
-   "what": "far levels drop thin wood and thin out leaves, enlarging the rest so leaf area holds; leaves stay geometry at every level. Far broadleaf meshes use the lighter leaf level, with about 60% fewer leaf vertices and the same path traced look at 60 m. Past a species' range, distant trees swap to light crown hulls of lobes that keep the crown's cover and colour.",
+   "what": "far levels drop thin wood and thin out leaves, enlarging the rest so leaf area holds; leaves stay geometry at every level. Far broadleaf meshes use the lighter leaf level, with about 60% fewer leaf vertices and the same path traced look at 60 m. Past a species' range, distant trees swap to light crown hulls of lobes that keep the crown's cover and colour; trees whose crowns break the skyline are never thinned, so ridgelines keep their silhouette (species meta `far_skyline`).",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"
