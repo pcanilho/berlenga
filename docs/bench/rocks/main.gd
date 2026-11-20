@@ -12,6 +12,7 @@ extends Node3D
 #   --clouds[=C]          the weather sky (clouds of cover C, atmosphere) instead of the plain gradient
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
+#   --taa                 temporal antialiasing as in play (24 frames settle before a sea-cave still)
 #   --world-size=m        with --world: its side (2048); smaller for path traced stills in less memory
 #   --world               a generated 2 km world (range, strata, glaciers, scree, rivers, a lake, the sea) with a
 #                         RockField3D over it; --view=rockfall|scree|glacial|river|shore|cliff|tor|coast|landform puts the camera at the
@@ -160,6 +161,10 @@ func _ready() -> void:
 		var q := int(args.get("shadow-filter", str(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)))
 		RenderingServer.directional_soft_shadow_filter_set_quality(q)
 		RenderingServer.positional_soft_shadow_filter_set_quality(q)
+		# --taa: temporal antialiasing, as in play (the water's jittered screen reflections resolve over frames);
+		# the still waits 24 frames for it to settle.
+		if args.has("taa"):
+			get_viewport().use_taa = true
 		_render_later()
 
 
@@ -2485,6 +2490,9 @@ func _render_later() -> void:
 				if args.has("no-cave-waves"):
 					sw.set("wavelets", false)
 				sw.warm_up(60.0)
+				# The frame on screen is from before the warm-up: draw the warmed surface before saving.
+				for f in (24 if args.has("taa") else 3):
+					await RenderingServer.frame_post_draw
 				print("sea cave waves: sea rms at the mouth %.3f m, short waves rms %.3f m over the cave" % [w.get("wave_rms", 0.0), sw.get_wave_rms(0)])
 				var hws: PackedFloat32Array = w.get("half_widths", PackedFloat32Array())
 				for k in range(0, pts.size(), 4):
