@@ -6,11 +6,13 @@ extends Node3D
 # godot --path docs/bench/trees --rendering-driver vulkan -- --stands [options]
 #   --test            place every stand, print the counts and PASS/FAIL, quit
 #   --stand-test=N    the placement checks of stand N only (TreeGenerator.Stand)
+#   --succession=N    make_succession(N): every stage present, age ranges and kinds sane, sizes by stage (trees.md 5aq)
 #   --map=path.png    the placement maps of every stand in one image
 #   --edge [--standard]  with --plot: from a fresh coupe across its edge (or at a standard 8 m off)
 #   --plot=N          render stand N (TreeGenerator.Stand) on the valley (--out=path.png, --raster, --spp=N)
 #   --wind=U          with --plot: rigged trees posed by a U m/s wind (TreeWind3D) at --time=T s
 #   --far=R           with --plot: every species ranged R m and streamed (the far tail thins and widens past R/2)
+#   AGE=y [KIND=k]    env, with --plot: the make_succession() stage at y years after disturbance kind k
 #   --inside          with --plot: the view from inside the stand, 70 m deep
 #   --deep            with --inside: from among the canopy trees, away from the stream
 #   --variants=N      meshes per species (default 1)
@@ -71,6 +73,10 @@ func run(args: Dictionary) -> void:
 	# Fire band variants (five more meshes a species, trees.md 5ah) serve no placement check: off unless --fire.
 	gen.fire_variants = args.has("fire")
 	gen.far_thinning = OS.get_environment("NO_FAR_SCALE") == ""
+	if args.has("succession"):
+		_succession_check(int(args["succession"]))
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if args.has("region"):
 		use_generator = args.has("generated")
 		north_america = args.has("na")
@@ -105,6 +111,61 @@ func run(args: Dictionary) -> void:
 		get_tree().quit(1 if fails > 0 else 0)
 	elif args.has("plot"):
 		await _render_plot(int(args["plot"]), args)
+
+# Forests that age (trees.md 5aq): the four structural stages (Oliver and Larson 1996) all present, each species'
+# age range forward and its kind a RULE_DISTURBANCE number or -1, the pole stage shorter than the mature lead and
+# the veterans no shorter, and some young stage covering every year from 0 to old growth.
+func _succession_check(i: int) -> void:
+	var biome := gen.make_succession(i, variants)
+	var sps: Array = biome.get_species()
+	var stage := {"legacy": 0, "initiation": 0, "poles": 0, "mature": 0, "old": 0}
+	var bad := 0
+	var covered := PackedFloat32Array()
+	var pole_h := 0.0
+	var mature_h := 0.0
+	var vet_h := 0.0
+	var old_from := 1e9
+	for sp in sps:
+		var nm: String = sp.resource_name
+		var r: Vector2 = sp.get_meta("succession_age", Vector2(-1, -1))
+		var kind: int = sp.get_meta("succession_kind", -9)
+		if r.x < 0.0 or r.y <= r.x or kind < -1 or kind > 3:
+			bad += 1
+			print("  bad range or kind: %s %s %d" % [nm, r, kind])
+		var h := 0.0
+		for m in sp.meshes:
+			h = max(h, m.get_aabb().size.y)
+		if nm.contains("legacy"):
+			stage.legacy += 1
+		elif r.x == 0.0 or nm.contains("seedlings"):
+			stage.initiation += 1
+		elif nm.contains("pole stage") or nm.contains("self-thinned"):
+			stage.poles += 1
+			if nm.contains("pole stage") and not nm.begins_with("Birch"):
+				pole_h = max(pole_h, h)
+		elif r.y < 9999.0:
+			stage.mature += 1
+			mature_h = max(mature_h, h)
+		else:
+			stage.old += 1
+			old_from = min(old_from, r.x)
+			if nm.contains("veteran") or nm.contains("giant"):
+				vet_h = max(vet_h, h)
+		print("  %s: %.0f-%.0f y, kind %d, %.1f m" % [nm, r.x, min(r.y, 9999.0), kind, h])
+	# Every year 0..old growth has a living stage.
+	var gaps := 0
+	for y in range(0, int(old_from), 1):
+		var any := false
+		for sp in sps:
+			var r2: Vector2 = sp.get_meta("succession_age", Vector2(-1, -1))
+			if not sp.resource_name.contains("legacy") and y >= r2.x and y < r2.y:
+				any = true
+				break
+		if not any:
+			gaps += 1
+	var name_i: String = STAND_NAMES[i] if i < STAND_NAMES.size() else str(i)
+	_check(bad == 0 and gaps == 0 and stage.initiation > 0 and stage.poles > 0 and stage.mature > 0 and stage.old > 0, "succession of %s: %d legacies, %d initiation, %d pole stage, %d mature, %d old growth from %.0f y; %d bad, %d years uncovered" % [name_i, stage.legacy, stage.initiation, stage.poles, stage.mature, stage.old, old_from, bad, gaps])
+	_check(pole_h > 0.0 and pole_h < mature_h and (vet_h == 0.0 or vet_h >= mature_h * 0.9), "succession of %s: poles %.1f m under mature %.1f m, veterans %.1f m" % [name_i, pole_h, mature_h, vet_h])
 
 func _check(ok: bool, what: String) -> void:
 	if not ok:
@@ -142,6 +203,20 @@ func _biome(i: int) -> Biome:
 		return gen.make_woodland(variants)
 	if i == TreeGenerator.STAND_MAX + 1:
 		return gen.make_woodland(variants, TreeGenerator.REGION_NORTH_AMERICA)
+	if OS.get_environment("AGE") != "":
+		# AGE=years [KIND=n]: make_succession(i) as the stand-age rules would place it at one age (trees.md 5aq),
+		# the legacies of disturbance KIND (default 2, wind) only.
+		var age := float(OS.get_environment("AGE"))
+		var kind := int(OS.get_environment("KIND")) if OS.get_environment("KIND") != "" else 2
+		var all := gen.make_succession(i, variants)
+		var keep: Array[PlantSpecies] = []
+		for sp in all.species:
+			var r: Vector2 = sp.get_meta("succession_age")
+			var k: int = sp.get_meta("succession_kind")
+			if age >= r.x and age < r.y and (k == -1 or k == kind):
+				keep.append(sp)
+		all.species = keep
+		return all
 	return gen.make_stand(i, variants)
 
 func _habitat_checks() -> void:

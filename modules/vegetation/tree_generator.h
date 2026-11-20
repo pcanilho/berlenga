@@ -140,6 +140,15 @@ public:
 		STAND_BOREAL_TAIGA, // Taiga: narrow spruce and fire-scarred pine in a mosaic, birch in old burns, silver kelo (trees.md 5ap).
 		STAND_MAX,
 	};
+	// The disturbance whose legacy a make_succession() species is (meta "succession_kind"; -1 any). Fire's legacies are
+	// the fire bands (RULE_BURN_AGE).
+	// Same numbers as vegetation's RULE_DISTURBANCE and WorldStand.disturbance_at (append only).
+	enum SuccessionKind {
+		SUCCESSION_NONE = 0,
+		SUCCESSION_FIRE = 1,
+		SUCCESSION_WIND = 2,
+		SUCCESSION_BEETLE = 3,
+	};
 
 	// Leaf architecture (Ellis et al., Manual of Leaf Architecture, 2009).
 	enum LeafKind {
@@ -638,7 +647,7 @@ private:
 	Color leaf_color = Color(0.16f, 0.3f, 0.08f);
 
 	// Generated meshes per preset and form, reused by make_species() and make_stand().
-	HashMap<int, TypedArray<Mesh>> mesh_cache;
+	HashMap<int64_t, TypedArray<Mesh>> mesh_cache;
 	bool junction_weld = true; // Limbs welded onto their parent's bark (trees.md 2d).
 	Dictionary season; // Empty: midsummer, full green leaves.
 	struct LeafSeason {
@@ -650,8 +659,8 @@ private:
 		float season_blend() const { return fallen >= 1.0f ? 0.0f : CLAMP((autumn - fallen) / (1.0f - fallen), 0.0f, 1.0f); }
 	};
 	static LeafSeason _leaf_season(Preset p_preset, const Dictionary &p_season);
-	HashMap<int, float> crown_cache;
-	HashMap<int, TypedArray<Mesh>> near_cache;
+	HashMap<int64_t, float> crown_cache;
+	HashMap<int64_t, TypedArray<Mesh>> near_cache;
 
 	LocalVector<Node> nodes;
 	LocalVector<uint8_t> spurs; // Per node: carries short-shoot leaves in the mesh (not in growth).
@@ -706,6 +715,8 @@ public:
 	float windthrow_storm = 1.0f;
 	Vector2 windthrow_direction = Vector2(0.92f, -0.38f);
 	int windthrow_band = 0; // While a windthrow stand grows its species: 1 thrown, 2 snapped, 3 leaning survivors.
+	int succession_band = 0; // While make_succession grows a stage: 1 the pole stage, 2 old growth's veterans (trees.md 5aq).
+	Preset last_stand_lead = PRESET_MAX; // The lead of the last make_stand().
 	int boreal_band = 0; // While a taiga stand grows its species: 1 narrow spruce, 2 fire-survivor pine, 3 kelo, 4 burn birch (trees.md 5ap).
 	int old_growth_band = 0; // While an old-growth stand grows its species: 1 veteran giants, 2 poles, 3 giant deadwood, 4 canopy (trees.md 5an).
 	static int _windthrow_class(float p_years);
@@ -1187,6 +1198,7 @@ public:
 	static float get_bloom(Preset p_preset, float p_day_of_year);
 	Ref<Biome> make_stand(Stand p_stand, int p_variants);
 	Ref<Biome> make_woodland(int p_variants, Region p_region = REGION_EUROPE);
+	Ref<Biome> make_succession(Stand p_stand, int p_variants);
 	void clear_cache();
 
 	float get_height() const { return height; }
@@ -1217,3 +1229,4 @@ VARIANT_ENUM_CAST(TreeGenerator::LeafKind);
 VARIANT_ENUM_CAST(TreeGenerator::RigField);
 VARIANT_ENUM_CAST(TreeGenerator::ShrubForm);
 VARIANT_ENUM_CAST(TreeGenerator::FireResponse);
+VARIANT_ENUM_CAST(TreeGenerator::SuccessionKind);

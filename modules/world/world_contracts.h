@@ -369,6 +369,74 @@ public:
 	Dictionary get_burn_changes_since(uint64_t p_since) const;
 };
 
+// Stand age: years since the last stand-replacing disturbance over the ground (docs/ideas/world-contracts.md, Stand).
+// The contract itself keeps it: fire comes from WorldFire (burn_age_at, unless crown_scorch_at says only a surface
+// fire passed), wind and beetle kills from events the trees report (add_disturbance). Readers: vegetation (stand age
+// and disturbance rules), trees (succession).
+class WorldStand : public RefCounted {
+	GDCLASS(WorldStand, RefCounted);
+
+public:
+	enum Disturbance {
+		DISTURBANCE_NONE = 0,
+		DISTURBANCE_FIRE = 1,
+		DISTURBANCE_WIND = 2,
+		DISTURBANCE_BEETLE = 3, // new kinds are appended only
+	};
+	// A surface fire that scorched crowns only this low (m) leaves the stand standing.
+	static constexpr float SURFACE_FIRE_SCORCH = 5.0f;
+
+private:
+	friend class WorldContracts;
+	struct Event {
+		int id = 0;
+		Vector2 center;
+		float radius = 0.0f;
+		int kind = DISTURBANCE_NONE;
+		float age = 0.0f; // years
+	};
+	LocalVector<Event> events;
+	int next_id = 1;
+	struct Change {
+		uint64_t generation = 0;
+		Rect2 area;
+	};
+	static constexpr int CHANGE_LOG = 64;
+	uint64_t generation = 0;
+	LocalVector<Change> change_log;
+	void _report(const Rect2 &p_area);
+	void _age_and_kind(const Vector3 &p_position, float &r_age, int &r_kind) const;
+
+protected:
+	static void _bind_methods();
+
+	GDVIRTUAL1RC(float, _stand_age_at, Vector3)
+	GDVIRTUAL1RC(int, _disturbance_at, Vector3)
+
+public:
+	// Years since the last stand-replacing disturbance at the point (the youngest of fire, wind and beetle kills); -1
+	// where none is known (old growth).
+	float stand_age_at(const Vector3 &p_position) const;
+	// The kind behind stand_age_at() there (Disturbance), DISTURBANCE_NONE where none.
+	int disturbance_at(const Vector3 &p_position) const;
+	// A stand-replacing disturbance over a disc (xz) that happened p_age_years ago (windthrow, a beetle outbreak; fire
+	// comes from WorldFire). Returns its id. Each change reports its area.
+	int add_disturbance(const Vector3 &p_center, float p_radius, int p_kind, float p_age_years);
+	void set_disturbance_age(int p_id, float p_age_years);
+	void remove_disturbance(int p_id);
+	void clear_disturbances();
+	// The world's years pass: every event ages (fire ages through its own producers).
+	void advance_years(float p_years);
+	// Changes, as WorldFire's burn changes (fire's are forwarded here too): signal stand_changed(area), a generation, and
+	// the union of the areas reported after a generation (false when the log no longer reaches back that far).
+	void stand_changed(const Rect2 &p_area);
+	uint64_t get_stand_generation() const { return generation; }
+	bool stand_changes_since(uint64_t p_since, Rect2 &r_area) const;
+	Dictionary get_stand_changes_since(uint64_t p_since) const;
+};
+
+VARIANT_ENUM_CAST(WorldStand::Disturbance);
+
 // Ground: the deformable ground's surface, soil and what lies on it (docs/ideas/world-contracts.md, Ground).
 struct WorldGroundSoil {
 	bool soft = false; // false: firm ground, rock, no soil
@@ -593,6 +661,8 @@ class WorldContracts : public Object {
 	Ref<WorldFire> builtin_fire;
 	Ref<WorldFire> fire_override;
 	Ref<WorldSnow> builtin_snow;
+	Ref<WorldStand> builtin_stand;
+	Ref<WorldStand> stand_override;
 	Ref<WorldSnow> snow_override;
 	WorldSnowProvider *snow_provider = nullptr;
 	LocalVector<WorldWaterProvider *> water_stubs;
@@ -611,6 +681,7 @@ public:
 	static WorldWater *water();
 	static WorldGround *ground();
 	static WorldFire *fire();
+	static WorldStand *stand();
 	static WorldSnow *snow();
 
 	// Producers register on entering the tree and unregister on leaving; the last to register is current.
@@ -640,6 +711,8 @@ public:
 	Ref<WorldWater> get_water() const;
 	void set_fire(const Ref<WorldFire> &p_stub);
 	Ref<WorldFire> get_fire() const;
+	void set_stand(const Ref<WorldStand> &p_stub);
+	Ref<WorldStand> get_stand() const;
 	void set_snow(const Ref<WorldSnow> &p_stub);
 	Ref<WorldSnow> get_snow() const;
 	// A script stub (extending WorldWater) as one more water producer beside the real ones: a pool or sea for a

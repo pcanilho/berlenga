@@ -2629,6 +2629,47 @@ As built:
 - Not yet: char on the catface's foot (the wood branch of the bark shader ignores vertex colour; needs a channel),
   spiral grain on kelo.
 
+### 5aq. Forests that age (20 Nov; Paulo's pick)
+
+Research. After a stand-replacing disturbance a forest passes through four structural stages (Oliver and Larson 1996,
+Forest Stand Dynamics; Franklin et al. 2002, the eight stages of Douglas-fir, for the legacies): stand initiation
+(pioneers and the lead species' seedlings among the dead wood the disturbance left, years 0-15 in temperate Europe),
+stem exclusion (a dense even-aged pole stage, self-thinning, the floor dark and bare, 15-50), understory reinitiation
+(the canopy opens as trees die singly, shade-tolerant saplings come up, 50-120) and old growth (several layers, giants,
+gaps, deadwood of every class, 120+). The disturbance's legacies (Franklin et al. 2000, biological legacies) carry
+over for decades: charred snags after fire, root plates and logs after wind, grey snags after beetles; they decay
+on their own clock (Harmon et al. 1986: logs to class 5 in 40-80 years).
+
+Contract (agreed 20 Nov with vegetation and world-links):
+- Provider (world-links): `WorldContracts.get_stand()` returns `WorldStand`: `stand_age_at(pos)` (years since the
+  last stand-replacing disturbance; -1 = never disturbed, old growth) and `disturbance_at(pos)` (int: 0 none, 1 fire,
+  2 wind, 3 beetle; append only). Fire comes from WorldFire on its own; windthrow and beetle stands report with
+  `add_disturbance(center, radius, kind, age_years)` -> id, `set_disturbance_age(id, years)`,
+  `remove_disturbance(id)`; `advance_years(years)` ages them; the youngest disturbance at a point wins.
+- Placement (vegetation): RULE_STAND_AGE = 28 (years, -1 never) and RULE_DISTURBANCE = 29 (the kind above). No
+  edges are fixed in the field: each species carries its own range, so boreal timing lives in the species. Until
+  the rules are on a species the field reads its meta `succession_age` (Vector2 years from-to) and
+  `succession_kind` (-1 any, else the kind) as defaults. Vegetation also places the taiga floor.
+- Trees: nothing at runtime; the species and their meta.
+
+As built:
+- `TreeGenerator.make_succession(stand, variants)` returns a Biome "<stand> (aging)" with the stand's species once
+  per stage, each tagged with the meta above. Stage edges e1, e2, e3 = 15, 50, 120 years; x1.5 for boreal stands
+  (taiga, subalpine, pine heath). `SuccessionKind` enum: SUCCESSION_NONE 0, FIRE 1, WIND 2, BEETLE 3 (same numbers
+  as RULE_DISTURBANCE).
+- Legacies: the lead's windthrow logs (kind wind, 0-e1 at full density, e1-e2 at 0.6 as they rot) and, for a
+  conifer lead, the grey beetle snags (kind beetle, 0-e1). Fire's legacies stay the fire bands (RULE_BURN_AGE, 5ah).
+- Initiation (0-e1): birch and rowan saplings, the lead's seedlings 2 to e1+5 years.
+- Stem exclusion (e1-e2, `succession_band` 1): the lead's poles at 0.3-0.5 of its years, spacing x0.55 and shade
+  x1.2 (dark, short crowns), birch poles, small self-thinned snags.
+- Understory reinitiation (e2-e3): the stand as `make_stand()` builds it.
+- Old growth (e3 on, and -1): where beech leads, the old-growth beech stand (5an); else veterans (`succession_band`
+  2: years x1.3-1.6, veteran 0.6-1.0, limb breakage x1.5-2.2, spacing 22 m) over the mature stand.
+- The mesh cache key is 64-bit now: band terms stack (the taiga's boreal band plus a succession band overflowed int).
+- Check: stands bench `--succession=N` (every stage present, ranges forward, kinds in range, every year covered by a
+  living stage, poles shorter than the mature stand, veterans no shorter). Taiga: poles 15 m, mature 35 m, veterans
+  43 m; montane conifer 13/35/41 m; beech 11/30/38 m.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
