@@ -3613,6 +3613,10 @@ func _generated_forest(clearing: bool) -> Biome:
 		# --strike-variants=1: tall species also carry their two struck variants (vegetation picks them under
 		# WorldStand strikes, trees.md 5ax). Off here unless asked, as the fire ones.
 		tg.lightning_variants = args.get("strike-variants", "0") != "0"
+	if "browse_variants" in tg:
+		# --browse-variants=1: open trees, saplings and understory also carry a browsed variant (vegetation picks it
+		# under WorldStand browse discs, trees.md 5az). Off here unless asked, as the struck ones.
+		tg.browse_variants = args.get("browse-variants", "0") != "0"
 	if "flood_height" in tg:
 		# --flood-height=M (--flood-years=Y): flood marks on the trees, a silt line and caught debris at M m (trees
 		# 591d3247); the floodplain willow stand takes 1.2 m by default.
