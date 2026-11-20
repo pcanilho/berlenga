@@ -13,6 +13,7 @@ extends Node3D
 #   --plot=N          render stand N (TreeGenerator.Stand) on the valley (--out=path.png, --raster, --spp=N)
 #   --wind=U          with --plot: rigged trees posed by a U m/s wind (TreeWind3D) at --time=T s
 #   --far=R           with --plot: every species ranged R m and streamed (the far tail thins and widens past R/2)
+#   EDGE=1            env, with --plot: the stand with make_edge()'s mantle and edge trees
 #   AGE=y [KIND=k]    env, with --plot: the make_succession() stage at y years after disturbance kind k
 #   --inside          with --plot: the view from inside the stand, 70 m deep
 #   --deep            with --inside: from among the canopy trees, away from the stream
@@ -244,6 +245,16 @@ func _biome(i: int) -> Biome:
 		return gen.make_woodland(variants)
 	if i == TreeGenerator.STAND_MAX + 1:
 		return gen.make_woodland(variants, TreeGenerator.REGION_NORTH_AMERICA)
+	if OS.get_environment("EDGE") != "":
+		# EDGE=1: the stand with its forest edge (make_edge: mantle and one-sided edge trees, RULE_FOREST_EDGE).
+		var b := gen.make_stand(i, variants)
+		var both: Array[PlantSpecies] = []
+		for sp in gen.make_edge(i, variants).species:
+			both.append(sp)
+		for sp in b.species:
+			both.append(sp)
+		b.species = both
+		return b
 	if OS.get_environment("AGE") != "":
 		# AGE=years [KIND=n]: make_succession(i) as the stand-age rules would place it at one age (trees.md 5aq),
 		# the legacies of disturbance KIND (default 2, wind) only.
