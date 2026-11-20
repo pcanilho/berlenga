@@ -732,3 +732,64 @@ split is taken out; what stays from this step:
 - The square bookkeeping keeps each square's rectangle and level, and neighbours are any squares that touch.
 Bumpy ground stays single grains, instanced per grain over the shared shape BLAS, which is already the cheapest way
 to trace stones that do not repeat.
+
+## Sub-pixel stones in ray tracing (round 4, 20 Nov)
+
+**Where the small stones in the TLAS are.** Inside the view nothing is sub-pixel by design: each detail class stops
+where its mean stone is 3 px (the far-edge aggregate takes over past it), and the shader already fades a grain under
+3 px to its mean colour. What the TLAS holds besides is everything else round the camera: the path tracer takes every
+instance in the camera's ray-tracing box that passes its visibility range (renderer_scene_cull.cpp, "RT: collect ALL
+instances inside the camera AABB"), so the grains beside and behind the camera are there too, for shadows and bounce.
+A detail cell's instance is its whole MultiMesh (2 to 8 m), so the existing off-frustum solid-angle cull
+(rendering/pathtracing/cull_min_size, off by default; the Assassin's Creed Shadows approach) can never drop a grain:
+the cell's box is never small.
+
+**How others do it.**
+- Moana on the GPU (Kim 2025): instance groups below a screen-size threshold leave the acceleration structure; the
+  film camera is fixed, so the set is chosen once.
+- Assassin's Creed Shadows (Ubisoft, GDC 2025) and UE's ray tracing culling (r.RayTracing.Culling, by projected
+  angle and distance behind the camera): small objects outside the view leave the ray tracing scene, kept when big or
+  near enough to shadow what is seen.
+- DXR partitioned TLAS (Oct 2026 preview) and NVIDIA's vk_partitioned_tlas: rebuild only the partitions that change,
+  so a culled set that changes with the camera stays cheap.
+
+**Design.**
+- Per record, not per MultiMesh: when a ground detail MultiMesh (rt_instanced) is expanded into TLAS entries, a grain
+  outside the view (outside the frustum widened by a guard band) is left out when its angular size is under a
+  threshold, unless it is close enough to the frustum to throw a shadow into it (within about ten of its own sizes:
+  a 2 cm grain's shadow at 20 degrees of sun is under 6 cm).
+- Hysteresis so the persistent TLAS slots stay put: the guard band is wide (15 degrees), and a MultiMesh's culled set
+  is only redone when the camera has turned or moved past half the band since it was last done.
+- Inside the view nothing changes, so the camera's own image is the same; shadows cast into the view keep their
+  casters. Raster is untouched.
+- Off by default in the engine (a project setting, rendering/pathtracing/cull_offscreen_records_size), switched on by
+  RockField3D for its detail MultiMeshes only, through a per-MultiMesh flag next to multimesh_set_rt_instanced.
+- Check: TLAS count and PT frame (eye level and top) before and after, 100% crops; then the PC GPU frame time.
+
+## Stones at distance vs the vegetation far reach (assessment, 20 Nov)
+
+Paulo asked (vegetation thread, 19 Nov) whether vegetation's far approach applies to rocks and other ground stuff:
+full density over the inner half of the range, then gentle thinning by (r/2 / d)^2 with the survivors widened up to
+1.6x (Ghost of Tsushima's grass, Sucker Punch GDC 2021), and a draped canopy surface coloured like the drawn plants out
+to 4 km.
+
+**Today.**
+- Ground detail (pebble, gravel, fine): each class drawn to where its mean stone is 3 px (32, 12 and 6 m at the
+  bench), then the far-edge aggregate (two cover maps, 1 m and 8 m texels, 2 km across; Meng 2015) shades the ground
+  with each class's colour and roughness. No bald line, no thinning band: the class stops where it is about to alias.
+- Coarse stone layers stop at a fixed visibility range: scree 60 m, shore 100 m, river beds 120 m, glacial 300 m,
+  rockfall 600 m, cliffs 500 m, tors, coast forms and landforms 900 m. Past their range nothing stands in for them:
+  the cover maps carry only the three detail classes. On a talus slope the scree stones stop at 60 m on a line.
+- Tiles and the far edge are independent of this.
+
+**Where the vegetation approach fits.**
+1. Coarse layers' far thinning (scree, shore, river, glacial): hold full density over the inner half of the range,
+   then keep a hashed share (r/2 / d)^2 of the stones, the survivors scaled up to keep the covered area (capped at
+   1.6x and never past the class's largest stone), and reach two to four times further for about the same instances.
+   The stones themselves stay real geometry; only how many are drawn changes with distance.
+2. Coarse cover in the far aggregate: a fourth class in the cover maps for the scree and shore stones (their cover
+   and rock colour), so the ground past their range takes their tone as it does for the detail classes, and a third
+   cover level (32 m texels) so it reaches 4 km like the canopy surface.
+3. Detail classes: they already hand over without a bald band. A thinning band before the 3 px stop would only add
+   aliasing (stones under 3 px shimmer in raster), so not recommended there.
+- Trees are the trees thread's; big landforms (cliffs, tors, coast) already reach 500 to 900 m.
