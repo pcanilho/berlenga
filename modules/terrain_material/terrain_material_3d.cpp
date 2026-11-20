@@ -199,6 +199,42 @@ float tm_dune_vn(vec2 p_p, uint p_s) {
 	ivec2 c = ivec2(i);
 	return mix(mix(tm_dune_hash(c, p_s), tm_dune_hash(c + ivec2(1, 0), p_s), u.x), mix(tm_dune_hash(c + ivec2(0, 1), p_s), tm_dune_hash(c + ivec2(1, 1), p_s), u.x), u.y);
 }
+// The coarse lag's share on an interdune flat (the dune tone's lag term): thin sand on flat ground, patchy.
+float tm_dune_lag(vec2 p_xz, float p_normal_y, float p_depth) {
+	if (p_depth < 0.0) {
+		return 0.0;
+	}
+	float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	return thin * smoothstep(0.95, 0.985, p_normal_y) * mix(0.45, 1.0, tm_dune_vn(p_xz / 23.0, 43u));
+}
+// Granule ripples (megaripples) on that lag: the coarse grains the wind cannot lift creep up into long, low ripples
+// about 1.2 m apart and up to 5 cm high (ripple index about 25), broad rounded crests armoured with granules over flat
+// troughs of finer sand (Sharp 1963; Ellwood, Evans and Wilson 1975; Yizhaq 2008; Lammel et al. 2018). Crests run
+// across p_wind, the dune-building wind (unit, x and z). p_weight: the lag's share; p_fp: the pixel's footprint (m),
+// crests closer than about four pixels fade to their mean tone. Returns the slope (dh/dx, dh/dz); p_tint: the albedo
+// factor (the crests' coarse, darker granules).
+vec2 tm_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, out vec3 p_tint) {
+	p_tint = vec3(1.0);
+	if (p_weight <= 0.0 || dot(p_wind, p_wind) < 0.5) {
+		return vec2(0.0);
+	}
+	vec2 k = p_wind;
+	vec2 t = vec2(-k.y, k.x);
+	float lam = 1.2;
+	float along = dot(p_xz, k);
+	float across = dot(p_xz, t);
+	// Crests wander, crowd and open over metres (a warp along the wind), and each one's height varies along it.
+	float s = along / lam + 1.6 * tm_dune_vn(p_xz / 9.0, 51u) + 0.5 * tm_dune_vn(vec2(along / 3.0, across / 7.0), 52u);
+	float amp = p_weight * smoothstep(0.1, 0.55, tm_dune_vn(vec2(along / 2.0, across / 6.0), 53u));
+	float c = 0.5 + 0.5 * cos(6.2831853 * s);
+	float resolved = 1.0 - smoothstep(0.15 * lam, 0.3 * lam, p_fp);
+	vec3 coarse = vec3(0.78, 0.74, 0.7);
+	// About a third of a ripple's length is crest: the unresolved pixel takes that mean.
+	p_tint = mix(vec3(1.0), mix(mix(vec3(1.0), coarse, 0.25), mix(vec3(1.0), coarse, smoothstep(0.65, 0.9, c)), resolved), amp);
+	// h = 0.05 amp c^1.5; dh/ds by the chain rule, ds along k (the warp's own slope left out: it is gentle).
+	float dhds = 0.05 * amp * 1.5 * sqrt(c) * (-3.14159265 * sin(6.2831853 * s));
+	return resolved * dhds * k / lam;
+}
 // Dune-scale sand colour (docs/ideas/sand.md, "Dune-scale tone"): three of the changes a dune field shows from afar.
 // Rubefaction: iron-oxide coats redden grains that have lain still for millennia (Walker 1979; Pye and Tsoar 2009),
 // patchy over hundreds of metres and strongest on the stable sand of thin flanks and interdunes. Interdune flats: the
@@ -211,7 +247,7 @@ vec3 tm_dune_tone(vec2 p_xz, float p_normal_y, float p_depth) {
 		float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
 		float age = smoothstep(0.25, 0.7, 0.65 * tm_dune_vn(p_xz / 420.0, 41u) + 0.35 * tm_dune_vn(p_xz / 130.0, 42u));
 		t *= mix(vec3(1.0), vec3(1.15, 0.93, 0.78), age * (0.7 + 0.3 * thin));
-		float lag = thin * smoothstep(0.95, 0.985, p_normal_y) * mix(0.45, 1.0, tm_dune_vn(p_xz / 23.0, 43u));
+		float lag = tm_dune_lag(p_xz, p_normal_y, p_depth);
 		t *= mix(vec3(1.0), vec3(0.72, 0.7, 0.68), lag);
 	}
 	// Slopes of about 29 to 33 degrees: the slip face at the sand's repose.
@@ -282,6 +318,7 @@ float tm_sky_irradiance(vec4 a, vec4 b, float c, vec3 n) {
 	c += R"(
 uniform bool tm_geology = true;
 uniform bool tm_dune_tone_on = true;
+uniform bool tm_granule_on = true;
 uniform float tm_sea_level = 0.0;
 uniform float tm_beach_height = 2.5;
 uniform float tm_rock_cos = 0.766;
@@ -1439,8 +1476,16 @@ void fragment() {
 		tm_sand(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		d += tm_sand_grain(wp, tm_fp0, a);
 		// The dune field's colour at this scale: redder old sand, coarse dark interdune flats, pale slip faces.
+		float tm_sdepth = terrain_sand_depth(wp);
 		if (tm_dune_tone_on) {
-			a *= tm_dune_tone(wp.xz, wn.y, terrain_sand_depth(wp));
+			a *= tm_dune_tone(wp.xz, wn.y, tm_sdepth);
+		}
+		// Granule ripples on the interdune lag, across the dune-building wind.
+		if (tm_granule_on) {
+			vec3 gt;
+			vec2 gs = tm_granule_ripples(wp.xz, tm_dune_lag(wp.xz, wn.y, tm_sdepth), terrain_sand_wind.xy, tm_fp0, gt);
+			a *= gt;
+			d -= vec3(gs.x, 0.0, gs.y);
 		}
 		alb[4] = a;
 		rgh[4] = r;
@@ -1970,6 +2015,7 @@ void fragment() {
 void TerrainMaterial3D::_update_params() {
 	set_shader_parameter("tm_geology", geology_enabled);
 	set_shader_parameter("tm_dune_tone_on", sand_dune_tone);
+	set_shader_parameter("tm_granule_on", sand_granule_ripples);
 	set_shader_parameter("tm_sea_level", sea_level);
 	set_shader_parameter("tm_beach_height", beach_height);
 	set_shader_parameter("tm_rock_cos", Math::cos(Math::deg_to_rad(rock_slope)));
@@ -2084,6 +2130,7 @@ Ref<TerrainMaterialLayer> TerrainMaterial3D::get_layer(Layer p_layer) const {
 
 MAT_SETTER(bool, geology_enabled, p_value)
 MAT_SETTER(bool, sand_dune_tone, p_value)
+MAT_SETTER(bool, sand_granule_ripples, p_value)
 MAT_SETTER(float, sea_level, p_value)
 MAT_SETTER(float, beach_height, MAX(p_value, 0.0f))
 MAT_SETTER(float, rock_slope, CLAMP(p_value, 0.0f, 90.0f))
@@ -2157,6 +2204,7 @@ void TerrainMaterial3D::_bind_methods() {
 	}
 	BIND_PROP(Variant::BOOL, geology_enabled, is_geology_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, sand_dune_tone, is_sand_dune_tone, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::BOOL, sand_granule_ripples, is_sand_granule_ripples, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, sea_level, get_sea_level, PROPERTY_HINT_NONE, "suffix:m")
 	BIND_PROP(Variant::FLOAT, beach_height, get_beach_height, PROPERTY_HINT_RANGE, "0,20,0.01,suffix:m")
 	BIND_PROP(Variant::FLOAT, rock_slope, get_rock_slope, PROPERTY_HINT_RANGE, "0,90,0.1,degrees")

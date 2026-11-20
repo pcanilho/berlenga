@@ -3101,11 +3101,21 @@ void fragment() {)";
 		// The dune field's colour at this scale (GroundSurface3D dune_tone), on the sand.
 		{
 			vec3 gwp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-			vec3 gsa = ground_sand_at(gwp.xz);
+			vec4 gsa = ground_sand_at(gwp.xz);
 			if (gsa.y > 0.0) {
 				float gny = (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y;
 				vec3 gdt = mix(ground_dune_tone(gwp.xz, gny, -1.0), ground_dune_tone(gwp.xz, gny, gsa.x), gsa.z);
 				ALBEDO *= mix(vec3(1.0), gdt, gsa.y);
+				// Granule ripples on the interdune lag (GroundSurface3D granule_ripples), across the dune-building wind.
+				vec4 gm5 = ground_sand_meta5();
+				if (gm5.z > 0.5) {
+					vec3 ggt;
+					vec2 ggs = ground_granule_ripples(gwp.xz, gsa.y * gsa.z * gsa.w * ground_dune_lag(gwp.xz, gny, gsa.x), gm5.xy, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), ggt);
+					ALBEDO *= ggt;
+					if (ggs != vec2(0.0)) {
+						NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(ggs.x, 0.0, ggs.y, 0.0)).xyz);
+					}
+				}
 			}
 		}
 		vec3 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, -1.0, gr_sort);
@@ -3131,11 +3141,21 @@ void fragment() {)";
 		// The dune field's colour at this scale (GroundSurface3D dune_tone), on the sand.
 		{
 			vec3 gwp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-			vec3 gsa = ground_sand_at(gwp.xz);
+			vec4 gsa = ground_sand_at(gwp.xz);
 			if (gsa.y > 0.0) {
 				float gny = (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y;
 				vec3 gdt = mix(ground_dune_tone(gwp.xz, gny, -1.0), ground_dune_tone(gwp.xz, gny, gsa.x), gsa.z);
 				ALBEDO *= mix(vec3(1.0), gdt, gsa.y);
+				// Granule ripples on the interdune lag (GroundSurface3D granule_ripples), across the dune-building wind.
+				vec4 gm5 = ground_sand_meta5();
+				if (gm5.z > 0.5) {
+					vec3 ggt;
+					vec2 ggs = ground_granule_ripples(gwp.xz, gsa.y * gsa.z * gsa.w * ground_dune_lag(gwp.xz, gny, gsa.x), gm5.xy, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), ggt);
+					ALBEDO *= ggt;
+					if (ggs != vec2(0.0)) {
+						NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(ggs.x, 0.0, ggs.y, 0.0)).xyz);
+					}
+				}
 			}
 		}
 		vec3 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, -1.0, gr_sort);
@@ -4818,6 +4838,42 @@ vec3 ground_ripple_sort_tint(float p_t, vec2 p_xz, float p_resolved, float p_amp
 	vec3 mt = mix(vec3(1.0), mix(vec3(1.0), lag, 0.25) * mix(vec3(1.0), coarse, 0.25), clamp(p_amp, 0.0, 1.0));
 	return mix(mt, rt, p_resolved);
 }
+// The coarse lag's share on an interdune flat (the dune tone's lag term): thin sand on flat ground, patchy.
+float ground_dune_lag(vec2 p_xz, float p_normal_y, float p_depth) {
+	if (p_depth < 0.0) {
+		return 0.0;
+	}
+	float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	return thin * smoothstep(0.95, 0.985, p_normal_y) * mix(0.45, 1.0, ground_ripple_vn(p_xz / 23.0, 43u));
+}
+// Granule ripples (megaripples) on that lag: the coarse grains the wind cannot lift creep up into long, low ripples
+// about 1.2 m apart and up to 5 cm high (ripple index about 25), broad rounded crests armoured with granules over flat
+// troughs of finer sand (Sharp 1963; Ellwood, Evans and Wilson 1975; Yizhaq 2008; Lammel et al. 2018). Crests run
+// across p_wind, the dune-building wind (unit, x and z). p_weight: the lag's share; p_fp: the pixel's footprint (m),
+// crests closer than about four pixels fade to their mean tone. Returns the slope (dh/dx, dh/dz); p_tint: the albedo
+// factor (the crests' coarse, darker granules).
+vec2 ground_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, out vec3 p_tint) {
+	p_tint = vec3(1.0);
+	if (p_weight <= 0.0 || dot(p_wind, p_wind) < 0.5) {
+		return vec2(0.0);
+	}
+	vec2 k = p_wind;
+	vec2 t = vec2(-k.y, k.x);
+	float lam = 1.2;
+	float along = dot(p_xz, k);
+	float across = dot(p_xz, t);
+	// Crests wander, crowd and open over metres (a warp along the wind), and each one's height varies along it.
+	float s = along / lam + 1.6 * ground_ripple_vn(p_xz / 9.0, 51u) + 0.5 * ground_ripple_vn(vec2(along / 3.0, across / 7.0), 52u);
+	float amp = p_weight * smoothstep(0.1, 0.55, ground_ripple_vn(vec2(along / 2.0, across / 6.0), 53u));
+	float c = 0.5 + 0.5 * cos(6.2831853 * s);
+	float resolved = 1.0 - smoothstep(0.15 * lam, 0.3 * lam, p_fp);
+	vec3 coarse = vec3(0.78, 0.74, 0.7);
+	// About a third of a ripple's length is crest: the unresolved pixel takes that mean.
+	p_tint = mix(vec3(1.0), mix(mix(vec3(1.0), coarse, 0.25), mix(vec3(1.0), coarse, smoothstep(0.65, 0.9, c)), resolved), amp);
+	// h = 0.05 amp c^1.5; dh/ds by the chain rule, ds along k (the warp's own slope left out: it is gentle).
+	float dhds = 0.05 * amp * 1.5 * sqrt(c) * (-3.14159265 * sin(6.2831853 * s));
+	return resolved * dhds * k / lam;
+}
 // Dune-scale sand colour (docs/ideas/sand.md, "Dune-scale tone"): three of the changes a dune field shows from afar.
 // Rubefaction: iron-oxide coats redden grains that have lain still for millennia (Walker 1979; Pye and Tsoar 2009),
 // patchy over hundreds of metres and strongest on the stable sand of thin flanks and interdunes. Interdune flats: the
@@ -4830,7 +4886,7 @@ vec3 ground_dune_tone(vec2 p_xz, float p_normal_y, float p_depth) {
 		float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
 		float age = smoothstep(0.25, 0.7, 0.65 * ground_ripple_vn(p_xz / 420.0, 41u) + 0.35 * ground_ripple_vn(p_xz / 130.0, 42u));
 		t *= mix(vec3(1.0), vec3(1.15, 0.93, 0.78), age * (0.7 + 0.3 * thin));
-		float lag = thin * smoothstep(0.95, 0.985, p_normal_y) * mix(0.45, 1.0, ground_ripple_vn(p_xz / 23.0, 43u));
+		float lag = ground_dune_lag(p_xz, p_normal_y, p_depth);
 		t *= mix(vec3(1.0), vec3(0.72, 0.7, 0.68), lag);
 	}
 	// Slopes of about 29 to 33 degrees: the slip face at the sand's repose.
@@ -4843,14 +4899,19 @@ vec3 ground_dune_tone(vec2 p_xz, float p_normal_y, float p_depth) {
 // ground's sand share (the sand block, G and B); past it, the depth over a kilometre round the patch (the depth rows,
 // R, faded out over their outer 15%) and the ground's own share (all sand for a sand ground). Returns (depth, share,
 // the depth's weight); (-1, 0, 0) with the tone off (the meta row's fifth texel: x on, yzw the depth rows' rect).
-vec3 ground_sand_at(vec2 p_xz) {
+// The ripple map's sixth meta texel: the generator's dune-building wind (xy) and whether granule ripples are on (z).
+vec4 ground_sand_meta5() {
+	ivec2 ts = textureSize(ground_ripple_map, 0);
+	return ground_ripple_rect.z > 0.0 && ts.x >= 6 ? texelFetch(ground_ripple_map, ivec2(5, ts.y - 1), 0) : vec4(0.0);
+}
+vec4 ground_sand_at(vec2 p_xz) {
 	if (ground_ripple_rect.z <= 0.0) {
-		return vec3(-1.0, 0.0, 0.0);
+		return vec4(-1.0, 0.0, 0.0, 0.0);
 	}
 	ivec2 ts = textureSize(ground_ripple_map, 0);
 	vec4 m4 = ts.x >= 5 ? texelFetch(ground_ripple_map, ivec2(4, ts.y - 1), 0) : vec4(0.0);
 	if (m4.x < 0.5) {
-		return vec3(-1.0, 0.0, 0.0);
+		return vec4(-1.0, 0.0, 0.0, 0.0);
 	}
 	vec4 m1 = texelFetch(ground_ripple_map, ivec2(1, ts.y - 1), 0);
 	vec4 m2 = texelFetch(ground_ripple_map, ivec2(2, ts.y - 1), 0);
@@ -4862,18 +4923,18 @@ vec3 ground_sand_at(vec2 p_xz) {
 		ivec2 s0 = clamp(ivec2(floor(su)), ivec2(0), ivec2(sn - 1));
 		ivec2 s1 = clamp(s0 + 1, ivec2(0), ivec2(sn - 1));
 		vec2 sf = clamp(su - floor(su), 0.0, 1.0);
-		vec2 a = texelFetch(ground_ripple_map, ivec2(s0.x, n + s0.y), 0).gb;
-		vec2 b = texelFetch(ground_ripple_map, ivec2(s1.x, n + s0.y), 0).gb;
-		vec2 c = texelFetch(ground_ripple_map, ivec2(s0.x, n + s1.y), 0).gb;
-		vec2 d = texelFetch(ground_ripple_map, ivec2(s1.x, n + s1.y), 0).gb;
-		vec2 r = mix(mix(a, b, sf.x), mix(c, d, sf.x), sf.y);
+		vec3 a = texelFetch(ground_ripple_map, ivec2(s0.x, n + s0.y), 0).gba;
+		vec3 b = texelFetch(ground_ripple_map, ivec2(s1.x, n + s0.y), 0).gba;
+		vec3 c = texelFetch(ground_ripple_map, ivec2(s0.x, n + s1.y), 0).gba;
+		vec3 d = texelFetch(ground_ripple_map, ivec2(s1.x, n + s1.y), 0).gba;
+		vec3 r = mix(mix(a, b, sf.x), mix(c, d, sf.x), sf.y);
 		// A corner off the dune fields: none of the depth's tone (no blend to a made-up depth).
-		return min(min(a.x, b.x), min(c.x, d.x)) < 0.0 ? vec3(-1.0, r.y, 0.0) : vec3(r, 1.0);
+		return min(min(a.x, b.x), min(c.x, d.x)) < 0.0 ? vec4(-1.0, r.y, 0.0, r.z) : vec4(r.xy, 1.0, r.z);
 	}
 	int dn = ts.y - 1 - (n + sn + n);
 	vec2 du = (p_xz - m4.yz) / max(m4.w, 1e-4) * float(dn) - 0.5;
 	if (dn <= 0 || any(lessThan(du, vec2(-0.5))) || any(greaterThan(du, vec2(float(dn) - 0.5)))) {
-		return vec3(-1.0, m3.z, 0.0);
+		return vec4(-1.0, m3.z, 0.0, 1.0);
 	}
 	int r0 = n + sn + n;
 	ivec2 d0 = clamp(ivec2(floor(du)), ivec2(0), ivec2(dn - 1));
@@ -4882,10 +4943,10 @@ vec3 ground_sand_at(vec2 p_xz) {
 	vec4 q = vec4(texelFetch(ground_ripple_map, ivec2(d0.x, r0 + d0.y), 0).r, texelFetch(ground_ripple_map, ivec2(d1.x, r0 + d0.y), 0).r,
 			texelFetch(ground_ripple_map, ivec2(d0.x, r0 + d1.y), 0).r, texelFetch(ground_ripple_map, ivec2(d1.x, r0 + d1.y), 0).r);
 	if (min(min(q.x, q.y), min(q.z, q.w)) < 0.0) {
-		return vec3(-1.0, m3.z, 0.0);
+		return vec4(-1.0, m3.z, 0.0, 1.0);
 	}
 	vec2 de = min(p_xz - m4.yz, m4.yz + m4.w - p_xz);
-	return vec3(mix(mix(q.x, q.y, df.x), mix(q.z, q.w, df.x), df.y), m3.z, smoothstep(0.0, 0.15 * m4.w, min(de.x, de.y)));
+	return vec4(mix(mix(q.x, q.y, df.x), mix(q.z, q.w, df.x), df.y), m3.z, smoothstep(0.0, 0.15 * m4.w, min(de.x, de.y)), 1.0);
 }
 vec3 ground_ripple_far_slope(vec2 p_xz, float p_fp, float p_normal_y, float p_far_share, out vec3 p_sort) {
 	p_sort = vec3(1.0);
