@@ -364,6 +364,11 @@ float SnowIcicles3D::get_icicle_radius(int p_index) const {
 	return icicles[p_index].radius;
 }
 
+Vector3 SnowIcicles3D::get_icicle_position(int p_index) const {
+	ERR_FAIL_INDEX_V(p_index, icicles.size(), Vector3());
+	return icicles[p_index].position;
+}
+
 float SnowIcicles3D::get_longest() const {
 	float m = 0.0f;
 	for (const Icicle &ic : icicles) {
@@ -815,6 +820,7 @@ void SnowIcicles3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_icicle_count"), &SnowIcicles3D::get_icicle_count);
 	ClassDB::bind_method(D_METHOD("get_icicle_length", "index"), &SnowIcicles3D::get_icicle_length);
 	ClassDB::bind_method(D_METHOD("get_icicle_radius", "index"), &SnowIcicles3D::get_icicle_radius);
+	ClassDB::bind_method(D_METHOD("get_icicle_position", "index"), &SnowIcicles3D::get_icicle_position);
 	ClassDB::bind_method(D_METHOD("get_longest"), &SnowIcicles3D::get_longest);
 	ClassDB::bind_method(D_METHOD("get_ice_mass"), &SnowIcicles3D::get_ice_mass);
 	ClassDB::bind_method(D_METHOD("get_last_supply"), &SnowIcicles3D::get_last_supply);
