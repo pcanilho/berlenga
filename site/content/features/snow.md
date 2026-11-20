@@ -46,6 +46,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Melt-freeze crust: soft prints without plates, then the crust broken into flat plates tipped into each print.*
 
+- **Surface hoar** (`SnowCover3D.hoar_enabled`): frost feathers grow on the snow on clear calm nights and, once snowed over, stay buried as a weak layer.
+
 - **Lake ice** (`SnowCover3D.lake_ice_enabled`): lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm; heavier bodies and vehicles break through ice too thin for their weight, and the hole freezes over again.
 
 - **Snow on bodies** (`SnowBodies3D`: `weight_enabled`, `slide_enabled`, `clumps_enabled`): snow lying on a body weighs on it, slides off tilted tops as slabs and drops off in clumps.
@@ -124,6 +126,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
   ![Icicles under an eave, path traced at the default 3 bounces with transmission_bounces](media/icicles-transmission.jpg)
 
   *Transmission bounces: at the default 3 bounces the icicles stay clear instead of going dark.*
+
+- **Rime** (`SnowRime3D`, `fog_water`, `droplet_diameter`): in freezing fog, rime grows on props and twigs as feathers pointing into the wind.
 
 ## Sparkle
 
