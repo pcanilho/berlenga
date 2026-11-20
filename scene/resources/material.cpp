@@ -4757,6 +4757,12 @@ float ground_ripple_vn(vec2 p_p, uint p_s) {
 	ivec2 c = ivec2(i);
 	return mix(mix(ground_ripple_hash(c, p_s), ground_ripple_hash(c + ivec2(1, 0), p_s), u.x), mix(ground_ripple_hash(c + ivec2(0, 1), p_s), ground_ripple_hash(c + ivec2(1, 1), p_s), u.x), u.y);
 }
+// The ripple field's patchy height (the amplitude ground_ripple_vary() returns), alone.
+float ground_ripple_amp(vec2 p) {
+	float amp = mix(0.2, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
+	amp *= smoothstep(0.36, 0.6, 0.7 * ground_ripple_vn(p / 16.0, 15u) + 0.3 * ground_ripple_vn(p / 5.0, 16u));
+	return amp;
+}
 vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 	vec2 p = p_xz;
 	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
@@ -4765,8 +4771,7 @@ vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
 	// Ripple fields on a real beach are patchy over tens of metres: smooth sheets where the surface was damp or
 	// crusted when the wind blew (beach moisture patchiness, Davidson-Arnott et al. 2008; Bauer et al. 2009)
 	// between fields of low and full ripples, so no even texture runs to the horizon.
-	float amp = mix(0.2, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
-	amp *= smoothstep(0.36, 0.6, 0.7 * ground_ripple_vn(p / 16.0, 15u) + 0.3 * ground_ripple_vn(p / 5.0, 16u));
+	float amp = ground_ripple_amp(p);
 	float kk = dot(p_k, p_k);
 	if (kk > 0.0) {
 		vec2 kn = p_k / sqrt(kk);
@@ -4926,7 +4931,9 @@ vec3 ground_ripple_far_slope(vec2 p_xz, float p_fp, float p_normal_y, float p_fa
 		return vec3(0.0, 0.0, 1.0);
 	}
 	// Cell c's centre is at c * cell, its texel (c mod n).
-	vec3 vr = ground_ripple_vary(p_xz, m3.xy);
+	// Shader level of detail (Olano, Kuehne and Simmons 2003): where the crests are finer than the pixel only the
+	// field's patchy height is used (the tone), so the warp and the dislocation loop are skipped there.
+	vec3 vr = resolved > 0.0 ? ground_ripple_vary(p_xz, m3.xy) : vec3(0.0, 0.0, ground_ripple_amp(p_xz));
 	// Crests finer than the pixel still shade it: each lee slope's share in the low light, the reason a ripple field
 	// reads as a patchy tone across a dune from far off (LEAN mapping's point, Olano and Baker 2010: unresolved
 	// slopes become the pixel's statistics, not its normal). Up to 15% darker at full height, by the field's
