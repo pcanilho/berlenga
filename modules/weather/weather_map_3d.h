@@ -256,6 +256,7 @@ private:
 		Vector2 shadow_corner;
 		float air_temperature = 15.0f;
 		float air_humidity = 0.7f;
+		WeatherClouds::CoverNoiseFrame cover_noise; // the cover noise's constants for this pass
 	};
 	CellPass cell_pass;
 
@@ -590,6 +591,14 @@ private:
 	void _rain_update(double p_weather_dt);
 	void _rain_upload();
 	float _runoff_wetness(int p_cell) const;
+	// The upload's half-float packing, by rows on the worker pool (the main thread waits; same values as packing in turn).
+	struct UploadPass {
+		uint16_t *wind = nullptr;
+		uint16_t *state = nullptr;
+		uint16_t *frost = nullptr;
+		float storage = 1.0f;
+	};
+	void _upload_row(uint32_t p_row, UploadPass *p_pass);
 	static void _bind_rain_methods();
 
 protected:

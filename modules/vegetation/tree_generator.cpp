@@ -8634,6 +8634,118 @@ Color TreeGenerator::_beaver_wood(float p_years) {
 // Wood a lightning strike bared (trees.md 5ax): the outer sapwood is cream-white when the bark has just blown off,
 // yellows to straw in the first months as it dries and oxidises, and greys in the weather over two to five years
 // (sRGB).
+// One kind of a species' variants, grown with this generator as _stand_species set it up (the caller restores its
+// state): the five fire bands on the first five seeds (trees.md 5ah), the first seed struck fresh and healing (5ax),
+// the first seed browsed (5az).
+TypedArray<Mesh> TreeGenerator::_variant_kind_meshes(int p_kind, Preset p_preset, Form p_form, int p_base_seed, float p_base_cover, const Vector3 &p_first_crown) {
+	TypedArray<Mesh> out;
+	if (p_kind == VARIANT_FIRE) {
+		for (int b = 0; b < 5; b++) {
+			_setup_variant(p_preset, p_form, b, p_base_seed, p_base_cover);
+			lightning_years = -1.0f;
+			fire_years = FIRE_BAND_YEARS[b];
+			Ref<ArrayMesh> mesh = generate();
+			if (mesh.is_valid()) {
+				mesh->set_meta("crown", Vector3(height, crown_base, crown_radius));
+				out.push_back(mesh);
+			}
+		}
+	} else if (p_kind == VARIANT_STRIKE) {
+		if (p_first_crown.x <= 8.0f) {
+			return out;
+		}
+		for (int b = 0; b < 2; b++) {
+			_setup_variant(p_preset, p_form, 0, p_base_seed, p_base_cover);
+			fire_years = -1.0f;
+			lightning_years = STRIKE_BAND_YEARS[b];
+			Ref<ArrayMesh> mesh = generate();
+			if (mesh.is_valid() && mesh->has_meta(SNAME("tree_lightning_years"))) {
+				mesh->set_meta("crown", Vector3(height, crown_base, crown_radius));
+				out.push_back(mesh);
+			}
+		}
+		lightning_years = -1.0f;
+	} else if (p_kind == VARIANT_BROWSE) {
+		_setup_variant(p_preset, p_form, 0, p_base_seed, p_base_cover);
+		fire_years = -1.0f;
+		lightning_years = -1.0f;
+		_browse_variant_setup(p_form);
+		Ref<ArrayMesh> mesh = generate();
+		if (mesh.is_valid()) {
+			mesh->set_meta("crown", Vector3(height, crown_base, crown_radius));
+			mesh->set_meta(SNAME("tree_browse"), browse);
+			out.push_back(mesh);
+		}
+	}
+	return out;
+}
+
+// Deferred variants: the kinds asked for (variant_task_kinds), in the stand's order.
+void TreeGenerator::_variant_task(void *p_self) {
+	TreeGenerator *self = static_cast<TreeGenerator *>(p_self);
+	self->far_leaves = self->variant_far_leaves;
+	static const int order[3] = { VARIANT_FIRE, VARIANT_STRIKE, VARIANT_BROWSE };
+	for (int k = 0; k < 3; k++) {
+		if (self->variant_task_kinds & order[k]) {
+			self->variant_meshes[k] = self->_variant_kind_meshes(order[k], self->preset, self->near_form, self->near_base_seed, self->near_base_cover, self->variant_first_crown);
+		}
+	}
+	self->far_leaves = false;
+	self->nodes.reset(); // Keep the copy small between requests.
+}
+
+int TreeGenerator::request_variants(const Ref<PlantSpecies> &p_species, int p_kinds) {
+	ERR_FAIL_COND_V(p_species.is_null(), 0);
+	// Grown here, on the calling (main) thread. On a worker it stalled a streamed field: generate() runs its own group
+	// tasks and a field clearing its tiles at the same time never got them back (trees.md 5bc; to retry on the PC).
+	const int want = p_kinds & variant_kinds & ~variant_built;
+	if (want) {
+		variant_task_kinds = want;
+		_variant_task(this);
+		variant_built |= want;
+		variant_task_kinds = 0;
+	}
+	// Append what is grown and the species still lacks, in the stand's order (living, fire, struck, browsed).
+	const int deferred = int(p_species->get_meta(SNAME("tree_variants_deferred"), 0));
+	if (deferred & variant_built) {
+		const int living = int(p_species->get_meta(SNAME("tree_variant_living"), 0));
+		const int has = (variant_kinds & ~deferred) | (deferred & variant_built);
+		const TypedArray<Mesh> old = p_species->get_meshes();
+		TypedArray<Mesh> meshes;
+		for (int i = 0; i < MIN(living, old.size()); i++) {
+			meshes.push_back(old[i]);
+		}
+		static const int order[3] = { VARIANT_FIRE, VARIANT_STRIKE, VARIANT_BROWSE };
+		int counts[3] = { 0, 0, 0 };
+		for (int k = 0; k < 3; k++) {
+			if (has & order[k]) {
+				meshes.append_array(variant_meshes[k]);
+				counts[k] = variant_meshes[k].size();
+			}
+		}
+		p_species->set_meshes(meshes);
+		p_species->set_meta(SNAME("tree_variants_deferred"), deferred & ~variant_built);
+		const Ref<TreeGenerator> ns = p_species->get_meta(SNAME("_near_mesh_source"), Ref<TreeGenerator>());
+		if (ns.is_valid()) {
+			ns->near_living = living;
+			ns->near_fire_count = counts[0];
+			ns->near_strike_count = counts[1];
+			ns->near_fire_meshes = (has & VARIANT_FIRE) ? variant_meshes[0] : TypedArray<Mesh>();
+			ns->near_strike_meshes = (has & VARIANT_STRIKE) ? variant_meshes[1] : TypedArray<Mesh>();
+			ns->near_browse_meshes = (has & VARIANT_BROWSE) ? variant_meshes[2] : TypedArray<Mesh>();
+		}
+	}
+	return int(p_species->get_meta(SNAME("tree_variants_deferred"), 0)) & p_kinds;
+}
+
+// A browsed variant's deer (trees.md 5az): heavy pressure at red deer's reach; a grown open tree browsed its last 20
+// years (a browse line under a crown that grew up before), a sapling or understory plant all its years (hedged).
+void TreeGenerator::_browse_variant_setup(int p_form) {
+	browse = 0.85f;
+	browse_height = 1.8f;
+	browse_years = p_form == FORM_OPEN ? 20 : 0;
+}
+
 Color TreeGenerator::_lightning_wood(float p_years) {
 	const Color cream = Color(0.86f, 0.8f, 0.64f);
 	const Color straw = Color(0.76f, 0.64f, 0.45f);
@@ -23166,6 +23278,8 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	fire_years = p_from.fire_years;
 	fire_variants = p_from.fire_variants;
 	lightning_variants = p_from.lightning_variants;
+	browse_variants = p_from.browse_variants;
+	defer_variants = p_from.defer_variants;
 	beetle_years = p_from.beetle_years;
 	beetle_outbreak = p_from.beetle_outbreak;
 	beetle_band = p_from.beetle_band;
@@ -23232,7 +23346,15 @@ void TreeGenerator::_near_task(void *p_self) {
 	TreeGenerator *self = static_cast<TreeGenerator *>(p_self);
 	int fb = self->near_living > 0 && self->near_task_variant >= self->near_living ? self->near_task_variant - self->near_living : -1;
 	self->lightning_years = -1.0f;
-	if (fb >= self->near_fire_count) {
+	if (fb >= self->near_fire_count + self->near_strike_count) {
+		// A browsed variant: the first living seed, browsed (as _stand_species grew it).
+		const int bb = fb - self->near_fire_count - self->near_strike_count;
+		self->_setup_variant(self->preset, self->near_form, 0, self->near_base_seed, self->near_base_cover);
+		self->fire_years = -1.0f;
+		self->_browse_variant_setup(self->near_form);
+		self->material_source = self->near_browse_meshes.size() > bb ? Ref<ArrayMesh>(self->near_browse_meshes[bb]) : Ref<ArrayMesh>();
+		fb = -2;
+	} else if (fb >= self->near_fire_count) {
 		// A struck variant: the first living seed, struck.
 		const int sb = fb - self->near_fire_count;
 		self->_setup_variant(self->preset, self->near_form, 0, self->near_base_seed, self->near_base_cover);
@@ -23485,50 +23607,69 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 				meshes.push_back(mesh);
 			}
 		}
-		// The fire band variants (trees.md 5ah): the same seeds as the first living ones, grown burnt.
-		TypedArray<Mesh> fire_meshes;
+		// The fire band (trees.md 5ah), struck (5ax) and browsed (5az) variants: grown here, or deferred (5bc) to a copy
+		// of this generator that grows them when a field first needs them.
 		const bool fire_form = p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_OLD || p_form == FORM_GROVE;
-		if (fire_variants && p_variants > 0 && fire_form && beetle_band == 0 && windthrow_band == 0) {
+		const bool strike_form = p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_OLD || p_form == FORM_GROVE;
+		const bool browse_form = p_form == FORM_OPEN || p_form == FORM_SAPLING || p_form == FORM_UNDERSTORY;
+		const bool undamaged = beetle_band == 0 && windthrow_band == 0;
+		Vector3 first_crown;
+		if (!meshes.is_empty()) {
+			const Ref<Mesh> first = meshes[0];
+			first_crown = first.is_valid() ? Vector3(first->get_meta("crown", Vector3())) : Vector3();
+		}
+		int kinds = 0;
+		if (fire_variants && p_variants > 0 && fire_form && undamaged) {
+			kinds |= VARIANT_FIRE;
+		}
+		// Only trees tall enough to carry a strike (generate() keeps the meta only where the strike was drawn).
+		if (lightning_variants && p_variants > 0 && strike_form && undamaged && !meshes.is_empty() && first_crown.x > 8.0f) {
+			kinds |= VARIANT_STRIKE;
+		}
+		// Not for a stand already grown browsed (the deer wood).
+		if (browse_variants && p_variants > 0 && browse_form && browse_band == 0 && undamaged && !meshes.is_empty()) {
+			kinds |= VARIANT_BROWSE;
+		}
+		TypedArray<Mesh> fire_meshes;
+		TypedArray<Mesh> strike_meshes;
+		TypedArray<Mesh> browse_meshes;
+		if (defer_variants && kinds) {
+			Ref<TreeGenerator> vs;
+			vs.instantiate();
+			vs->_copy_generation_state(*this);
+			vs->preset = p_preset;
+			vs->near_form = p_form;
+			vs->near_base_seed = saved_seed;
+			vs->near_base_cover = saved_climber_cover;
+			vs->variant_first_crown = first_crown;
+			vs->variant_far_leaves = near_split;
+			vs->variant_kinds = kinds;
+			variant_sources[key] = vs;
+		} else {
+			variant_sources.erase(key);
 			const float saved_fire = fire_years;
-			for (int b = 0; b < 5; b++) {
-				_setup_variant(p_preset, p_form, b, saved_seed, saved_climber_cover);
-				fire_years = FIRE_BAND_YEARS[b];
-				Ref<ArrayMesh> mesh = generate();
-				if (mesh.is_valid()) {
-					mesh->set_meta("crown", Vector3(height, crown_base, crown_radius));
-					fire_meshes.push_back(mesh);
-				}
+			const float saved_lightning = lightning_years;
+			if (kinds & VARIANT_FIRE) {
+				fire_meshes = _variant_kind_meshes(VARIANT_FIRE, p_preset, p_form, saved_seed, saved_climber_cover, first_crown);
+			}
+			if (kinds & VARIANT_STRIKE) {
+				strike_meshes = _variant_kind_meshes(VARIANT_STRIKE, p_preset, p_form, saved_seed, saved_climber_cover, first_crown);
+			}
+			if (kinds & VARIANT_BROWSE) {
+				browse_meshes = _variant_kind_meshes(VARIANT_BROWSE, p_preset, p_form, saved_seed, saved_climber_cover, first_crown);
 			}
 			fire_years = saved_fire;
+			lightning_years = saved_lightning;
 		}
 		fire_cache[key] = fire_meshes;
-		// The struck variants (trees.md 5ax): the first living seed, struck fresh and healing. Only trees tall enough to
-		// carry a strike (generate() keeps the meta only where the strike was drawn).
-		TypedArray<Mesh> strike_meshes;
-		const bool strike_form = p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_OLD || p_form == FORM_GROVE;
-		if (lightning_variants && p_variants > 0 && strike_form && beetle_band == 0 && windthrow_band == 0 && !meshes.is_empty()) {
-			const Ref<Mesh> first = meshes[0];
-			const Vector3 cr0 = first.is_valid() ? Vector3(first->get_meta("crown", Vector3())) : Vector3();
-			if (cr0.x > 8.0f) {
-				const float saved_lightning = lightning_years;
-				for (int b = 0; b < 2; b++) {
-					_setup_variant(p_preset, p_form, 0, saved_seed, saved_climber_cover);
-					lightning_years = STRIKE_BAND_YEARS[b];
-					Ref<ArrayMesh> mesh = generate();
-					if (mesh.is_valid() && mesh->has_meta(SNAME("tree_lightning_years"))) {
-						mesh->set_meta("crown", Vector3(height, crown_base, crown_radius));
-						strike_meshes.push_back(mesh);
-					}
-				}
-				lightning_years = saved_lightning;
-			}
-		}
 		strike_cache[key] = strike_meshes;
+		browse_cache[key] = browse_meshes;
 		far_leaves = false;
 		if (near_split) {
 			near_sources[key]->near_far_meshes = meshes;
 			near_sources[key]->near_fire_meshes = fire_meshes;
 			near_sources[key]->near_strike_meshes = strike_meshes;
+			near_sources[key]->near_browse_meshes = browse_meshes;
 		}
 		decay_class = saved_decay;
 		fallen = saved_fallen;
@@ -23628,14 +23769,27 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		fire_n = fire_cache[key].size();
 		meshes.append_array(fire_cache[key]);
 	}
+	int strike_n = 0;
 	if (lightning_variants && strike_cache.has(key)) {
+		strike_n = strike_cache[key].size();
 		meshes.append_array(strike_cache[key]);
+	}
+	if (browse_variants && browse_cache.has(key)) {
+		meshes.append_array(browse_cache[key]);
 	}
 	if (near_sources.has(key)) {
 		near_sources[key]->near_living = living;
 		near_sources[key]->near_fire_count = fire_n;
+		near_sources[key]->near_strike_count = strike_n;
 	}
 	sp->set_meshes(meshes);
+	if (variant_sources.has(key)) {
+		// Deferred variants (trees.md 5bc): grown by this copy when a field asks (request_variants).
+		const Ref<TreeGenerator> &vs = variant_sources[key];
+		sp->set_meta(SNAME("_tree_variant_source"), vs);
+		sp->set_meta(SNAME("tree_variant_living"), living);
+		sp->set_meta(SNAME("tree_variants_deferred"), vs->variant_kinds);
+	}
 	if (near_leaf_range > 0.0f && near_sources.has(key)) {
 		// VegetationField3D builds the near cells from it as trees come close; the species
 		// holds the source (the field keeps only its id).
@@ -23868,7 +24022,7 @@ TypedArray<Mesh> TreeGenerator::get_living_meshes(const Ref<PlantSpecies> &p_spe
 	const TypedArray<Mesh> all = p_species->get_meshes();
 	for (int i = 0; i < all.size(); i++) {
 		const Ref<Mesh> m = all[i];
-		if (m.is_valid() && !m->has_meta(SNAME("tree_fire_band")) && !m->has_meta(SNAME("tree_lightning_years"))) {
+		if (m.is_valid() && !m->has_meta(SNAME("tree_fire_band")) && !m->has_meta(SNAME("tree_lightning_years")) && !m->has_meta(SNAME("tree_browse"))) {
 			out.push_back(m);
 		}
 	}
@@ -23879,6 +24033,8 @@ void TreeGenerator::clear_cache() {
 	mesh_cache.clear();
 	fire_cache.clear();
 	strike_cache.clear();
+	browse_cache.clear();
+	variant_sources.clear();
 	crown_cache.clear();
 	near_cache.clear();
 	near_sources.clear();
@@ -24605,23 +24761,27 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			pine->set_name("Scots pine (taiga)");
 			// The moister ground: narrow northern spruce of every age, a little birch among it.
 			boreal_band = 1;
+			// Spruce that grew on a nurse log that has since rotted stands on stilts over the gap (trees.md 5aw), in rows
+			// (5az): a colonnade along each vanished log, trees 1.5 m apart on logs up to 10 m; the density is then the
+			// share of 16 m cells that hold one. Placed before the other spruce, which keep out of the rows.
+			nurse_band = 2;
+			Ref<PlantSpecies> stilted = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_STAND);
+			stilted->set_name("Norway spruce (on a rotted nurse log)");
+			stilted->set_density(0.25f);
+			stilted->set_meta("colonnade", Vector2(1.5f, 10.0f));
+			patched(stilted, mosaic, dry, patch_seed, true);
+			nurse_band = 0;
 			Ref<PlantSpecies> spruce = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_STAND);
 			spruce->set_name("Norway spruce (taiga)");
 			spruce->set_density(1.0f);
 			patched(spruce, mosaic, dry, patch_seed, true);
-			// Nurse logs (trees.md 5aw): on the moist spruce ground the seedlings come up on old, mossed spruce logs, and
-			// spruce that grew on one that has since rotted stands on stilts over the gap.
+			// Nurse logs (trees.md 5aw): on the moist spruce ground the seedlings come up on old, mossed spruce logs.
 			nurse_band = 1;
 			Ref<PlantSpecies> nurse = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_LOG);
 			nurse->set_name("Norway spruce (nurse log)");
 			nurse->set_density(0.3f);
 			nurse->set_spacing(HABITATS[PRESET_NORWAY_SPRUCE].stand_spacing * 2.0f);
 			patched(nurse, mosaic, dry, patch_seed, true);
-			nurse_band = 2;
-			Ref<PlantSpecies> stilted = _stand_species(PRESET_NORWAY_SPRUCE, true, p_variants, FORM_STAND);
-			stilted->set_name("Norway spruce (on a rotted nurse log)");
-			stilted->set_density(0.12f);
-			patched(stilted, mosaic, dry, patch_seed, true);
 			nurse_band = 0;
 			boreal_band = 0;
 			canopy(PRESET_BIRCH, 0.12f, mosaic, dry, true, false);
@@ -24714,7 +24874,45 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 				drowned->set_canopy_opacity(0.0f);
 				drowned->set_rule_range(PlantSpecies::RULE_WATER_DEPTH, Vector2(0.1f, 1.2f));
 				drowned->set_rule_fade(PlantSpecies::RULE_WATER_DEPTH, 0.1f);
+				// Not on a drained bed (WorldStand DISTURBANCE_BEAVER): the meadow's own snags stand there instead.
+				drowned->set_rule_range(PlantSpecies::RULE_DISTURBANCE, Vector2(0.0f, 3.0f));
 				list.push_back(drowned);
+			}
+			// The beaver meadow (trees.md 5bb): when the dam fails and the pond drains (WorldStand disturbance kind 4,
+			// DISTURBANCE_BEAVER, its years since), the bed dries to sedge and grass meadow (PlantGenerator's beaver
+			// meadow). The drowned snags stand on in it, grey and losing their tops, and fall over the next decades
+			// (Naiman, Johnston and Kelley 1988); trees come back only slowly and from the edge, willow and alder first,
+			// because the drowned bed has lost its mycorrhizal fungi and the meadow's voles eat the seedlings (Terwilliger
+			// and Pastor 1999, Oikos 85; Wright, Jones and Flecker 2002), so meadows stay open for decades.
+			auto meadow = [&](const Ref<PlantSpecies> &p_sp, float p_from, float p_to, float p_fade) {
+				p_sp->set_rule_range(PlantSpecies::RULE_DISTURBANCE, Vector2(SUCCESSION_BEAVER, SUCCESSION_BEAVER));
+				p_sp->set_rule_range(PlantSpecies::RULE_STAND_AGE, Vector2(p_from, p_to));
+				p_sp->set_rule_fade(PlantSpecies::RULE_STAND_AGE, p_fade);
+				list.push_back(p_sp);
+			};
+			for (const Preset p : { PRESET_BLACK_ALDER, PRESET_BIRCH }) {
+				Ref<PlantSpecies> snag = _stand_species(p, true, p_variants, FORM_SNAG);
+				snag->set_name(String(preset_names[p]) + " (drowned, beaver meadow)");
+				snag->set_density(p == PRESET_BLACK_ALDER ? 0.4f : 0.25f);
+				snag->set_canopy_opacity(0.0f);
+				meadow(snag, 0.0f, 30.0f, 10.0f);
+				const int saved_decay = decay_class;
+				Ref<PlantSpecies> fallen_snag = _stand_species(p, true, p_variants, FORM_LOG);
+				decay_class = saved_decay;
+				fallen_snag->set_name(String(preset_names[p]) + " (fallen snag, beaver meadow)");
+				fallen_snag->set_density(0.3f);
+				meadow(fallen_snag, 5.0f, 60.0f, 5.0f);
+			}
+			{
+				// Willow and alder creeping back in, sparse, from about six years after the drain.
+				Ref<PlantSpecies> willow = _stand_species(PRESET_WHITE_WILLOW, false, p_variants, FORM_SAPLING);
+				willow->set_name("White Willow (beaver meadow)");
+				willow->set_density(0.2f);
+				meadow(willow, 6.0f, 1000.0f, 4.0f);
+				Ref<PlantSpecies> alder_in = _stand_species(PRESET_BLACK_ALDER, true, p_variants, FORM_SAPLING);
+				alder_in->set_name("Black Alder (beaver meadow)");
+				alder_in->set_density(0.12f);
+				meadow(alder_in, 10.0f, 1000.0f, 5.0f);
 			}
 			static const char *work_names[4] = { "", " (beaver gnawed)", " (beaver stump)", " (beaver felled)" };
 			for (const Preset p : { PRESET_WHITE_WILLOW, PRESET_BIRCH }) {
@@ -25933,6 +26131,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_fire_variants", "enabled"), &TreeGenerator::set_fire_variants);
 	ClassDB::bind_method(D_METHOD("set_lightning_variants", "enabled"), &TreeGenerator::set_lightning_variants);
 	ClassDB::bind_method(D_METHOD("get_lightning_variants"), &TreeGenerator::get_lightning_variants);
+	ClassDB::bind_method(D_METHOD("set_browse_variants", "enabled"), &TreeGenerator::set_browse_variants);
+	ClassDB::bind_method(D_METHOD("get_browse_variants"), &TreeGenerator::get_browse_variants);
 	ClassDB::bind_method(D_METHOD("get_fire_variants"), &TreeGenerator::get_fire_variants);
 	ClassDB::bind_method(D_METHOD("get_fire_years"), &TreeGenerator::get_fire_years);
 	ClassDB::bind_method(D_METHOD("set_beetle_years", "years"), &TreeGenerator::set_beetle_years);
@@ -26057,6 +26257,9 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_far_lod1", "enabled"), &TreeGenerator::set_far_lod1);
 	ClassDB::bind_method(D_METHOD("get_far_lod1"), &TreeGenerator::get_far_lod1);
 	ClassDB::bind_method(D_METHOD("request_near_mesh", "key", "variant"), &TreeGenerator::request_near_mesh);
+	ClassDB::bind_method(D_METHOD("request_variants", "species", "kinds"), &TreeGenerator::request_variants);
+	ClassDB::bind_method(D_METHOD("set_defer_variants", "enabled"), &TreeGenerator::set_defer_variants);
+	ClassDB::bind_method(D_METHOD("get_defer_variants"), &TreeGenerator::get_defer_variants);
 	ClassDB::bind_method(D_METHOD("get_near_mesh_count"), &TreeGenerator::get_near_mesh_count);
 	ClassDB::bind_method(D_METHOD("set_bark_color", "color"), &TreeGenerator::set_bark_color);
 	ClassDB::bind_method(D_METHOD("get_bark_color"), &TreeGenerator::get_bark_color);
@@ -26113,6 +26316,8 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fire_years", PROPERTY_HINT_RANGE, "-1,30,0.05,suffix:yr"), "set_fire_years", "get_fire_years");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_variants"), "set_fire_variants", "get_fire_variants");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lightning_variants"), "set_lightning_variants", "get_lightning_variants");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "browse_variants"), "set_browse_variants", "get_browse_variants");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "defer_variants"), "set_defer_variants", "get_defer_variants");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beetle_years", PROPERTY_HINT_RANGE, "-1,30,0.05,suffix:yr"), "set_beetle_years", "get_beetle_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "beetle_outbreak", PROPERTY_HINT_RANGE, "0,30,0.5,suffix:yr"), "set_beetle_outbreak", "get_beetle_outbreak");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_thinning"), "set_far_thinning", "get_far_thinning");
@@ -26274,6 +26479,10 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(SUCCESSION_FIRE);
 	BIND_ENUM_CONSTANT(SUCCESSION_WIND);
 	BIND_ENUM_CONSTANT(SUCCESSION_BEETLE);
+	BIND_ENUM_CONSTANT(SUCCESSION_BEAVER);
+	BIND_ENUM_CONSTANT(VARIANT_FIRE);
+	BIND_ENUM_CONSTANT(VARIANT_STRIKE);
+	BIND_ENUM_CONSTANT(VARIANT_BROWSE);
 	BIND_ENUM_CONSTANT(BEAVER_NONE);
 	BIND_ENUM_CONSTANT(BEAVER_GNAWED);
 	BIND_ENUM_CONSTANT(BEAVER_STUMP);

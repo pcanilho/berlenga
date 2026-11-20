@@ -493,7 +493,10 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 		p_effect->get_scatter().run(p_rd, source, params, lights.ptr(), (int)lights.size(), p_depth, p_color, RID::from_uint64(out), atlas, p_size, &shadow);
 		if (shadow_casts && shadow.texture.is_valid()) {
 			// The opaque pass reads it from the next frame on (Forward+ only).
-			RendererRD::LightStorage::get_singleton()->directional_volume_shadow_set(shadow_rid, shadow.texture, shadow.world_to_shadow);
+			// The gas's single-scattering albedo for the ground's light through it: its scattering albedo times its
+			// colour's luminance (the path tracer tints each scatter by the colour).
+			const float shadow_albedo = scattering_albedo * smoke_color.srgb_to_linear().get_luminance();
+			RendererRD::LightStorage::get_singleton()->directional_volume_shadow_set(shadow_rid, shadow.texture, shadow.world_to_shadow, shadow_albedo, scattering_anisotropy);
 		}
 	}
 	if (out != 0 && source.valid && shimmer_on) {

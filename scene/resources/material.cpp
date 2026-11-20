@@ -2742,7 +2742,7 @@ void fragment() {)";
 			code += "	float transmission_tex = texture(texture_transmission, base_uv).r;\n";
 		}
 		const char *transmission_uv = features[FEATURE_REFRACTION] ? "refraction_uv" : "SCREEN_UV";
-		code += "	vec3 transmission_absorption = vec3(1.0);\n	vec3 transmission_scatter = vec3(0.0);\n";
+		code += "	vec3 transmission_absorption = vec3(1.0);\n	vec3 transmission_scatter = vec3(0.0);\n	float transmission_lod = 0.0;\n";
 		if (!transmission_thin_walled) {
 			// Into a medium (glTF KHR_materials_volume, KHR_materials_ior): the view ray refracts by the IOR over
 			// the depth behind the surface, and the light it finds is absorbed over that path (Beer-Lambert).
@@ -2779,6 +2779,16 @@ void fragment() {)";
 		transmission_uv = SCREEN_UV;
 		transmission_found = transmission_back;
 	}
+	// Solids (a thickness set): filter the read by its footprint (as texture LOD from UV derivatives, or a ray
+	// cone's spread). Through a strongly curved solid (a thin rod of ice, a drop) the sphere model sends
+	// neighbouring pixels to far apart points, and a sharp read of each speckles and dashes what lies behind; a
+	// real lens averages over that spread. Flat panes map a pixel to about a pixel and stay sharp; open media
+	// (water over a floor, no thickness) are not filtered, so a pool's floor keeps its detail.
+	vec2 transmission_px = vec2(textureSize(screen_texture, 0));
+	vec2 transmission_dx = dFdx(transmission_uv) * transmission_px;
+	vec2 transmission_dy = dFdy(transmission_uv) * transmission_px;
+	float transmission_footprint = max(max(dot(transmission_dx, transmission_dx), dot(transmission_dy, transmission_dy)), 1.0);
+	transmission_lod = transmission_thickness > 0.0 ? clamp(0.5 * log2(transmission_footprint), 0.0, 6.0) : 0.0;
 	if (transmission_attenuation_distance > 0.0) {
 		float transmission_path = transmission_inside >= 0.0 ? transmission_inside : min(distance(transmission_found.xyz, VERTEX), 1.0e4);
 		transmission_absorption = pow(max(transmission_attenuation_color.rgb, vec3(1.0e-4)), vec3(transmission_path / transmission_attenuation_distance));
@@ -2792,7 +2802,7 @@ void fragment() {)";
 	float transmission_amount = clamp(transmission * transmission_tex, 0.0, 1.0) * (1.0 - METALLIC);
 	float transmission_f0 = 0.16 * SPECULAR * SPECULAR;
 	float transmission_fresnel = transmission_f0 + (1.0 - transmission_f0) * pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 5.0);
-	EMISSION += textureLod(screen_texture, %s, ROUGHNESS * 8.0).rgb * ALBEDO * transmission_absorption * (transmission_amount * (1.0 - transmission_fresnel)) * EXPOSURE;
+	EMISSION += textureLod(screen_texture, %s, max(ROUGHNESS * 8.0, transmission_lod)).rgb * ALBEDO * transmission_absorption * (transmission_amount * (1.0 - transmission_fresnel)) * EXPOSURE;
 	ALBEDO *= 1.0 - transmission_amount;
 	ALBEDO += transmission_scatter * transmission_amount;
 	// Force transparency on the material (required to read the screen behind it).
@@ -4844,14 +4854,39 @@ float ground_dune_lag(vec2 p_xz, float p_normal_y, float p_depth) {
 		return 0.0;
 	}
 	float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
-	return thin * smoothstep(0.95, 0.985, p_normal_y) * mix(0.45, 1.0, ground_ripple_vn(p_xz / 23.0, 43u));
+	return thin * smoothstep(0.93, 0.98, p_normal_y) * mix(0.45, 1.0, ground_ripple_vn(p_xz / 23.0, 43u));
 }
 // Granule ripples (megaripples) on that lag: the coarse grains the wind cannot lift creep up into long, low ripples
-// about 1.2 m apart and up to 5 cm high (ripple index about 25), broad rounded crests armoured with granules over flat
-// troughs of finer sand (Sharp 1963; Ellwood, Evans and Wilson 1975; Yizhaq 2008; Lammel et al. 2018). Crests run
+// 0.5 to 2 m apart and up to 5 cm high (ripple index about 25), broad crests armoured with coarse granules over
+// troughs of finer sand (Sharp 1963; Ellwood, Evans and Wilson 1975; Yizhaq 2008; Lammel et al. 2018). In plan the
+// crests are sinuous and fork in Y-junctions, and each fades out along its length over a few metres. Crests run
 // across p_wind, the dune-building wind (unit, x and z). p_weight: the lag's share; p_fp: the pixel's footprint (m),
 // crests closer than about four pixels fade to their mean tone. Returns the slope (dh/dx, dh/dz); p_tint: the albedo
-// factor (the crests' coarse, darker granules).
+// factor (the crests' coarse grains, paler than the troughs' fines).
+// The phase (in wavelengths): the spacing wanders between about 0.5 and 2 m (a warp along the wind whose slope adds
+// to or takes from the 1.1 m mean), the crests bend over metres, and paired edge dislocations make the forks.
+float ground_granule_phase(vec2 p_xz, vec2 p_k, vec2 p_t) {
+	float along = dot(p_xz, p_k);
+	float across = dot(p_xz, p_t);
+	float s = along / 1.1 + 2.5 * ground_ripple_vn(vec2(along / 6.0, across / 5.0), 52u) + 1.2 * ground_ripple_vn(p_xz / 9.0, 51u);
+	ivec2 c0 = ivec2(floor(p_xz / 4.0));
+	float ph = 0.0;
+	for (int dz = -1; dz <= 1; dz++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			ivec2 c = c0 + ivec2(dx, dz);
+			if (ground_ripple_hash(c, 54u) >= 0.35) {
+				continue;
+			}
+			vec2 m = (vec2(c) + vec2(ground_ripple_hash(c, 55u), ground_ripple_hash(c, 56u))) * 4.0;
+			float hl = 0.4 + 0.8 * ground_ripple_hash(c, 57u);
+			vec2 da = p_xz - (m - p_t * hl);
+			vec2 db = p_xz - (m + p_t * hl);
+			float sgn = ground_ripple_hash(c, 58u) < 0.5 ? -1.0 : 1.0;
+			ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(2.0, 4.0, length(p_xz - m)));
+		}
+	}
+	return s + ph / 6.2831853;
+}
 vec2 ground_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, out vec3 p_tint) {
 	p_tint = vec3(1.0);
 	if (p_weight <= 0.0 || dot(p_wind, p_wind) < 0.5) {
@@ -4859,20 +4894,32 @@ vec2 ground_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, 
 	}
 	vec2 k = p_wind;
 	vec2 t = vec2(-k.y, k.x);
-	float lam = 1.2;
 	float along = dot(p_xz, k);
 	float across = dot(p_xz, t);
-	// Crests wander, crowd and open over metres (a warp along the wind), and each one's height varies along it.
-	float s = along / lam + 1.6 * ground_ripple_vn(p_xz / 9.0, 51u) + 0.5 * ground_ripple_vn(vec2(along / 3.0, across / 7.0), 52u);
-	float amp = p_weight * smoothstep(0.1, 0.55, ground_ripple_vn(vec2(along / 2.0, across / 6.0), 53u));
+	// Crests tens of wavelengths long that taper out at their ends (or merge at a fork).
+	float amp = p_weight * smoothstep(0.15, 0.5, ground_ripple_vn(vec2(along / 3.0, across / 15.0), 53u));
+	if (amp <= 0.0) {
+		return vec2(0.0);
+	}
+	// The slope from the phase's own gradient (the warp and the forks turn the crests), by differences.
+	float e = 0.03;
+	float s = ground_granule_phase(p_xz, k, t);
+	vec2 gs = vec2(ground_granule_phase(p_xz + vec2(e, 0.0), k, t) - s, ground_granule_phase(p_xz + vec2(0.0, e), k, t) - s);
+	// Modulo one wavelength: a fork's phase jumps by a whole turn across its cut.
+	gs = (fract(gs + 0.5) - 0.5) / e;
 	float c = 0.5 + 0.5 * cos(6.2831853 * s);
+	// Resolved by the local spacing (1 / |grad s|).
+	float lam = 1.0 / max(length(gs), 0.3);
 	float resolved = 1.0 - smoothstep(0.15 * lam, 0.3 * lam, p_fp);
-	vec3 coarse = vec3(0.78, 0.74, 0.7);
-	// About a third of a ripple's length is crest: the unresolved pixel takes that mean.
-	p_tint = mix(vec3(1.0), mix(mix(vec3(1.0), coarse, 0.25), mix(vec3(1.0), coarse, smoothstep(0.65, 0.9, c)), resolved), amp);
-	// h = 0.05 amp c^1.5; dh/ds by the chain rule, ds along k (the warp's own slope left out: it is gentle).
+	vec3 crest = vec3(1.1, 1.08, 1.04);
+	vec3 trough = vec3(0.92, 0.9, 0.89);
+	// About a third of a ripple's length is crest: the unresolved pixel takes the mean.
+	vec3 rt = mix(trough, crest, smoothstep(0.35, 0.8, c));
+	vec3 mt = mix(trough, crest, 0.4);
+	p_tint = mix(vec3(1.0), mix(mt, rt, resolved), amp);
+	// h = 0.05 amp c^1.5, so dh/dp = 0.05 amp 1.5 c^0.5 dc/ds grad s.
 	float dhds = 0.05 * amp * 1.5 * sqrt(c) * (-3.14159265 * sin(6.2831853 * s));
-	return resolved * dhds * k / lam;
+	return resolved * dhds * gs;
 }
 // Dune-scale sand colour (docs/ideas/sand.md, "Dune-scale tone"): three of the changes a dune field shows from afar.
 // Rubefaction: iron-oxide coats redden grains that have lain still for millennia (Walker 1979; Pye and Tsoar 2009),
@@ -4929,6 +4976,10 @@ vec4 ground_sand_at(vec2 p_xz) {
 		vec3 d = texelFetch(ground_ripple_map, ivec2(s1.x, n + s1.y), 0).gba;
 		vec3 r = mix(mix(a, b, sf.x), mix(c, d, sf.x), sf.y);
 		// A corner off the dune fields: none of the depth's tone (no blend to a made-up depth).
+		// The blown share eases to the ground's past the block (all of it) over the block's outer 4 m, so nothing the
+		// share gates stops at the block's edge.
+		vec2 be = min(p_xz - m1.xy, m1.xy + m1.z - p_xz);
+		r.z = mix(1.0, r.z, smoothstep(0.0, 4.0, min(be.x, be.y)));
 		return min(min(a.x, b.x), min(c.x, d.x)) < 0.0 ? vec4(-1.0, r.y, 0.0, r.z) : vec4(r.xy, 1.0, r.z);
 	}
 	int dn = ts.y - 1 - (n + sn + n);

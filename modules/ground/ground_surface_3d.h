@@ -201,8 +201,19 @@ private:
 		float push_down = 0.0f; // N, from a tyre driving it this step
 		float cap = 0.0f; // a tyre's floor over it (round 18.2)
 		uint64_t cap_frame = 0;
+		Transform3D xf; // as it lay at the last step, for a save made as the node leaves the tree (round 19.2)
+		float r = 0.0f; // its mesh's radius
 	};
 	HashMap<uint32_t, LooseState> loose_state;
+	struct LoosePending {
+		uint32_t id = 0;
+		Vector3 at;
+		Quaternion rot;
+		float r = 0.0f; // the mesh's radius
+		float z = 0.0f; // its depth in the mud
+		float ref = NAN; // the mud's height it rides
+	};
+	LocalVector<LoosePending> loose_pending; // read back from the deposits, placed at the next step (round 19.2)
 	HashMap<Vector2i, LocalVector<Buried>> buried_extra; // stones hidden again, kept with the deposits
 	int loose_reburied = 0;
 	void _loose_update(float p_delta);
@@ -210,6 +221,14 @@ private:
 	void _loose_rebury(uint32_t p_id, RigidBody3D *p_body, float p_r);
 	RigidBody3D *_make_loose(const Buried &p_b, const Vector3 &p_at, const Vector3 &p_velocity);
 	static Vector2 _loose_carry(const Vector2 &p_rel, float p_wet, float p_rc, float p_rho, float p_tau, float p_mass, float p_dt);
+	struct StreamPush {
+		Vector2 drag; // N, horizontal
+		Vector2 near_bed; // m/s, the water's speed at the stone's face
+		float up = 0.0f; // N, buoyancy and lift
+		bool wet = false;
+	};
+	StreamPush _loose_stream(const WorldWater *p_water, const Vector3 &p_at, float p_rc, float p_mass, const Vector3 &p_velocity, float p_bed) const;
+	void _loose_stream_firm(RigidBody3D *p_body, float p_rc, const StreamPush &p_push, float p_dt);
 	uint32_t loose_added = 0;
 	int loose_squeezed = 0; // steps a tyre squeezed a stone out sideways
 	static bool _loose_rolled_onto(float p_proud, const Vector2 &p_half);
@@ -289,6 +308,7 @@ private:
 	bool muddy_water = true;
 	// Mud tracked onto firm ground (round 3): tyres and boots leave the clay they carry as a film (track_mud).
 	bool tracked_mud = true;
+	bool stream_stones = true; // round 19.1: streams and fords roll loose stones on
 	bool mud_sliding = false; // round 10: some cell's mud layer is on ground steeper than it holds
 	bool water_seep = false; // some lattice cell's water table lies within a print's reach: seepage can fill one
 	float water_seen = 0.0f; // the deepest standing water at the last read back, m
@@ -953,6 +973,8 @@ public:
 	// The tracked mud film at a place (the texel under it): (its share 0..1, its wetness 0..1), (0, 0) for none.
 	Vector2 get_tracked_mud_at(Vector3 p_position) const;
 	void set_tracked_mud(bool p_enabled) { tracked_mud = p_enabled; }
+	void set_stream_stones(bool p_enabled) { stream_stones = p_enabled; }
+	bool is_stream_stones() const { return stream_stones; }
 	bool is_tracked_mud() const { return tracked_mud; }
 	void set_keep_ruts(bool p_enabled);
 	bool is_keeping_ruts() const { return keep_ruts; }

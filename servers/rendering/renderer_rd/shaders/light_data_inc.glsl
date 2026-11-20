@@ -72,7 +72,7 @@ struct DirectionalLightData {
 	float shadow_opacity;
 	float fade_from;
 	float fade_to;
-	uvec2 pad;
+	uvec2 pad; // the volume shadow's medium: x albedo, y anisotropy (float bits)
 	uint bake_mode;
 	float volumetric_fog_energy;
 	vec4 shadow_bias;

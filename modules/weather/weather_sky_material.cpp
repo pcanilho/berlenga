@@ -160,6 +160,7 @@ const vec3 UP = vec3(0.0, 1.0, 0.0);
 const float rayleigh_zenith_size = 8.4e3;
 const float mie_zenith_size = 1.25e3;
 const float PLANET_RADIUS = 6371000.0;
+const float GRID_READ = 512.0; // m along the sun path to the light grid's read
 
 float henyey_greenstein(float cos_theta, float g) {
 	const float k = 0.0795774715459;
@@ -361,10 +362,16 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 		}
 		bool near_detailed = coarse < light_steps;
 		float tau = tau_near;
-		// Past 512 m the baked grid stands in for the rest of the coarse march: one read 512 m along the path, of
+		// Past 512 m (GRID_READ) the baked grid stands in for the rest of the coarse march: one read there, of
 		// the optical depth from there out of the layer. Nearer, its 256 m texels would blur a small cloud's shading
 		// of itself. Above the box the path has left the clouds.
-		vec3 gp = p + sun_dir * 512.0;
+		// Read on a level's centre: between levels the trilinear filter mixed the depths of paths a level apart, which
+		// against a low sun start hundreds of metres apart along it, so a clear path took on its neighbours' clouds and
+		// sunlit rims went dull. Reading where the path crosses a level's height leaves only the 256 m across.
+		float grid_dy = (cloud_light_grid_y.y - cloud_light_grid_y.x) / float(textureSize(cloud_light_grid, 0).z);
+		float grid_f = (p.y + sun_dir.y * GRID_READ - cloud_light_grid_y.x) / grid_dy - 0.5;
+		float grid_d = GRID_READ + (ceil(grid_f) - grid_f) * grid_dy / max(sun_dir.y, 0.02);
+		vec3 gp = p + sun_dir * grid_d;
 		vec3 grid_uvw = vec3((gp.x - cloud_light_grid_box.x) / cloud_light_grid_box.z, (gp.z - cloud_light_grid_box.y) / cloud_light_grid_box.z, (gp.y - cloud_light_grid_y.x) / (cloud_light_grid_y.y - cloud_light_grid_y.x));
 		bool grid = cloud_light_grid_enabled && cloud_light_grid_box.w > 0.5 && all(greaterThanEqual(grid_uvw, vec3(0.0))) && all(lessThanEqual(grid_uvw.xy, vec2(1.0)));
 		if (grid) {
@@ -375,10 +382,10 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 		}
 		for (int j = 0; j < coarse; j++) {
 			if (grid) {
-				if (d >= 511.0) {
+				if (d >= grid_d - 1.0) {
 					break;
 				}
-				step_l = min(step_l, 512.0 - d);
+				step_l = min(step_l, grid_d - d);
 			}
 			vec3 lp = p + sun_dir * (d + 0.5 * step_l);
 			float dt = wc_extinction(lp, wc_cover_type(lp.xz), false, step_l) * step_l;
@@ -391,8 +398,9 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 			d += step_l;
 			step_l *= 2.0;
 		}
-		if (grid && grid_uvw.z < 1.0) {
-			tau += textureLod(cloud_light_grid, grid_uvw, 0.0).r;
+		float grid_z = (ceil(grid_f) + 0.5) * grid_dy / (cloud_light_grid_y.y - cloud_light_grid_y.x);
+		if (grid && grid_z < 1.0) {
+			tau += textureLod(cloud_light_grid, vec3(grid_uvw.xy, grid_z), 0.0).r;
 		}
 		// Multiple scattering by Wrenninge's octaves: scattering, extinction and phase eccentricity
 		// each halved per octave.
@@ -530,15 +538,22 @@ vec4 march_cirrus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	if (c <= 0.001) {
 		return vec4(0.0, 0.0, 0.0, 1.0);
 	}
-	// Fibres: the detail noise's wisps, 8 times longer along the wind than across it, read at the pixel's
+	// Fibres: the detail noise's wisps, 3.5 times longer along the wind than across it, read at the pixel's
 	// footprint so the far sheet does not shimmer.
 	vec2 q = xz - cloud_high_drift;
 	vec2 dir = cloud_high_dir;
 	vec2 aw = vec2(dot(q, dir), dot(q, vec2(-dir.y, dir.x)));
-	vec3 fq = vec3(aw.x / 16000.0, aw.y / 2000.0, 0.37 + cloud_churn.z * 0.25);
+	// Fibres bend and hook (cirrus fibratus and uncinus): the read warped by a 20 km noise, so the streaks do not
+	// all run parallel and converge on one vanishing point (which read as motion blur), at 3.5 to 1 rather than 8.
+	aw += (vec2(wc_value_noise(q / 20000.0 + vec2(5.3, 1.7)), wc_value_noise(q / 20000.0 + vec2(11.9, 7.1))) - 0.5) * vec2(9000.0, 6000.0);
+	vec3 fq = vec3(aw.x / 7000.0, aw.y / 2000.0, 0.37 + cloud_churn.z * 0.25);
 	float lod = max(log2(t * p_pixel / (2000.0 / 128.0)), 0.0);
 	vec4 dn = textureLod(cloud_detail, fq, lod);
 	float fib = smoothstep(0.25, 0.85, mix(dn.r, dn.g, 0.4));
+	// Fine fibrils inside each streak (a read 3.3 times finer, along the warped streak), so a streak has the
+	// thread-like texture of hair-like ice trails and a crisp edge, not the smooth smear of one soft octave.
+	float fine = textureLod(cloud_detail, vec3(fq.x * 3.3 + 0.41, fq.y * 3.3 + 0.13, fq.z + 0.19), lod + log2(3.3)).r;
+	fib = clamp(fib * mix(0.45, 1.35, smoothstep(0.2, 0.8, fine)), 0.0, 1.0);
 	// Cirrostratus: where the sheet is extensive (a warm front's shield, an anvil) the fibres merge into a veil,
 	// still faintly fibrous (WMO Atlas Cs fibratus/nebulosus), and the halos are its own.
 	float cs = smoothstep(0.55, 0.9, c);
@@ -881,7 +896,7 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			}
 			// Where the drops at p left the base: upwind by the slant times their fall.
 			vec2 q = p.xz - cloud_rain_slant * (base - p.y);
-			vec2 dq = (q - s.xy) / s.z;
+			vec2 dq = (q - s.xy) / (0.9 * s.z); // the heavy core about 1.8 radii across, under the tower
 			float r2 = dot(dq, dq);
 			// A core with an edge (heavy rain falls in shafts a few km across, not a smooth bell).
 			float r = rain * exp(-r2 * r2);
@@ -892,7 +907,7 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			// Curtains: three octaves (1.2 km, 400 m, 130 m), thresholded so lighter gaps open between the
 			// heavier sheets; the finest stretched across the view so its streaks stand upright.
 			float curt = 0.5 * wc_value_noise(qn / 1200.0 + vec2(float(i) * 13.7, 3.1)) + 0.3 * wc_value_noise(qn / 400.0 + vec2(7.3, float(i) * 5.9)) + 0.2 * wc_value_noise(qn / 130.0 + vec2(1.9, 8.3));
-			r *= mix(0.0, 2.6, smoothstep(0.42, 0.72, curt)) * smoothstep(0.0, 120.0, base - p.y);
+			r *= mix(0.0, 2.6, smoothstep(0.45, 0.62, curt)) * smoothstep(0.0, 120.0, base - p.y);
 			float sigma = 0.31e-3 * pow(r, 0.67);
 			// The light: under the storm's shield the sky's light is cut to about a third; the sun where the cover
 			// toward it over the base is thin.
@@ -902,7 +917,9 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			float g = 0.6;
 			float mu = dot(rd, sun_dir);
 			float hg = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
-			vec3 light = ambient_bottom * mix(1.0, 0.35, shield) + sun_radiance * sun_vis * hg;
+			// Under the shield the sky's light is cut to about two fifths: a heavy shaft stands as a dark grey curtain
+			// against the brighter sky behind it.
+			vec3 light = ambient_bottom * mix(1.0, 0.4, shield) + sun_radiance * sun_vis * hg;
 			float st = exp(-sigma * dt);
 			float w = tr * (1.0 - st);
 			col += light * w;
@@ -912,102 +929,6 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 		}
 	}
 	r_t = wsum > 0.0 ? dsum / wsum : 0.0;
-	return vec4(col, tr);
-}
-
-// Mammatus: pouches hanging under a storm's anvil where its ice and drops fall into drier air below it and
-// sublimate, cooling it into negatively buoyant lobes (Schultz et al. 2006, Mon. Wea. Rev. 134: lobes 1 to 3 km
-// across, about 0.5 km deep, in clusters under the anvil's overhang). The anvil's base where the storm's body
-// spreads (78% of its height); under it each lobe a dome hanging from a jittered grid (1.6 km), its depth by the share: the overhang
-// (the anvil away from the storm's tower) times the drier the air (they need the sub-anvil air dry). Marched in
-// 16 steps across the 700 m slab; lit by the light under the anvil and by the sun through the lobe's skin, so
-// low sun catches their rims (the sunset look).
-float wc_mammatus_share(vec2 xz) {
-	float m = 0.0;
-	for (int i = 0; i < 8; i++) {
-		if (i >= cloud_storm_count) {
-			break;
-		}
-		vec4 s = cloud_storms[i];
-		// Under the body's anvil (wc_storm_body: 3.1 core radii across its top, 1.6 radii downwind).
-		float anvil = (1.0 - smoothstep(0.6, 0.9, length(xz - s.xy - cloud_high_dir * (1.6 * s.z)) / (3.1 * s.z))) * s.w;
-		vec2 dc = xz - s.xy;
-		float tower = exp(-dot(dc, dc) / (s.z * s.z) / (1.6 * 1.6));
-		m = max(m, smoothstep(0.3, 0.7, anvil) * (1.0 - smoothstep(0.2, 0.6, tower)));
-	}
-	return m * (1.0 - 0.7 * smoothstep(0.6, 0.95, cloud_air.y));
-}
-
-// The depth (m) the lobes hang below the anvil's base at xz.
-float wc_mammatus_depth(vec2 xz, float share) {
-	vec2 q = (xz - cloud_high_drift) / 1600.0;
-	ivec2 g = ivec2(floor(q));
-	float dep = 0.0;
-	for (int j = -1; j <= 1; j++) {
-		for (int i = -1; i <= 1; i++) {
-			ivec2 c = g + ivec2(i, j);
-			vec2 cp = vec2(c) + vec2(wc_hash2(c.x + 811, c.y - 3373), wc_hash2(c.x - 2939, c.y + 617));
-			float h = wc_hash2(c.x + 4127, c.y + 9133);
-			float rad = 0.45 + 0.25 * h;
-			float r = length(q - cp) / rad;
-			dep = max(dep, (0.6 + 0.4 * h) * sqrt(max(1.0 - r * r, 0.0)));
-		}
-	}
-	return 500.0 * share * dep;
-}
-
-vec4 march_mammatus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_bottom, float jitter, out float r_t) {
-	r_t = 0.0;
-	// Under the anvil of the storm's body (wc_storm_body: it spreads from 78% of the storm's height).
-	float top = cloud_base_height + 0.78 * wc_top_height(1.0);
-	float bot = top - 700.0;
-	if (cloud_storm_count == 0 || abs(rd.y) < 0.02) {
-		return vec4(0.0, 0.0, 0.0, 1.0);
-	}
-	float ta = (bot - cam.y) / rd.y;
-	float tb = (top - cam.y) / rd.y;
-	float t0 = max(min(ta, tb), 0.0);
-	float t1 = min(max(ta, tb), 60000.0);
-	if (t1 <= t0) {
-		return vec4(0.0, 0.0, 0.0, 1.0);
-	}
-	vec2 mid = cam.xz + rd.xz * (0.5 * (t0 + t1));
-	if (wc_mammatus_share(mid) < 0.01 && wc_mammatus_share(cam.xz + rd.xz * t0) < 0.01 && wc_mammatus_share(cam.xz + rd.xz * t1) < 0.01) {
-		return vec4(0.0, 0.0, 0.0, 1.0);
-	}
-	const int n = 16;
-	float dt = (t1 - t0) / float(n);
-	vec3 col = vec3(0.0);
-	float tr = 1.0;
-	float wsum = 0.0;
-	float dsum = 0.0;
-	float g = 0.6;
-	float mu = dot(rd, sun_dir);
-	float hg = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
-	for (int k = 0; k < n; k++) {
-		float t = t0 + (float(k) + jitter) * dt;
-		vec3 p = cam + rd * t;
-		float share = wc_mammatus_share(p.xz);
-		if (share < 0.01) {
-			continue;
-		}
-		float hang = top - wc_mammatus_depth(p.xz, share);
-		float inside = p.y - hang; // m above the lobe's skin
-		if (inside <= 0.0) {
-			continue;
-		}
-		float sigma = 0.012 * smoothstep(0.0, 40.0, inside);
-		// The sun through the skin (lit within some tens of metres of it), a low sun more so.
-		float sun_vis = exp(-0.012 * min(inside / max(abs(sun_dir.y), 0.15), 2000.0)) * step(0.0, sun_dir.y);
-		vec3 light = ambient_bottom * 0.8 + sun_radiance * sun_vis * hg;
-		float st = exp(-sigma * dt);
-		float w = tr * (1.0 - st);
-		col += light * w;
-		dsum += t * w;
-		wsum += w;
-		tr *= st;
-	}
-	r_t = wsum > 0.0 ? dsum / wsum : t0;
 	return vec4(col, tr);
 }
 
@@ -1033,14 +954,6 @@ vec4 march_cloud_layers(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3
 	vec4 mid = march_altocumulus(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_mid);
 	float d_high;
 	vec4 high = march_cirrus(cam, rd, sun_dir, sun_radiance, ambient_top, p_pixel, d_high);
-	if (cloud_storm_count > 0) {
-		// The mammatus hang under the storm body's anvil (part of the low march): the nearer first.
-		float d_mam;
-		vec4 mam = march_mammatus(cam, rd, sun_dir, sun_radiance, ambient_bottom, jitter, d_mam);
-		if (mam.a < 0.999) {
-			low = (d_mam < d_low || low.a >= 0.999) ? cloud_over(mam, d_mam, low, d_low, d_low) : cloud_over(low, d_low, mam, d_mam, d_low);
-		}
-	}
 	// The two wave slabs, nearer first (the camera is under both but on a mountain top).
 	float d_wa;
 	vec4 wa = march_wave(cloud_wave_slab.xy, cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_wa);

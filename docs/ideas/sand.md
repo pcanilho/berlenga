@@ -932,9 +932,14 @@ TerrainMaterial3D runs as a custom hit shader under path tracing, so it needs no
 ## Granule ripples on the interdune lag (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`, on)
 
 Where deflation leaves a coarse lag (the dune tone's dark interdune flats), the grains too heavy to saltate creep
-under impacts into granule ripples (megaripples): about 1 to 2 m apart, a few centimetres high (ripple index 15 to
-30), broad rounded crests armoured with granules over flat troughs of finer sand, more symmetric than impact ripples
-and slow to move (Sharp 1963; Ellwood, Evans and Wilson 1975; Yizhaq 2008; Lammel et al. 2018). Drawn as a normal
-and tint, h = 0.05 amp c^1.5 with c a raised cosine at 1.2 m, crests across the generator's dune-building wind
-(terrain_sand_wind; ripple map meta texel 5 for the patch and the path tracer), warped over 3 to 9 m and with each
-crest's height varying along it, faded to the crests' mean tone where a pixel spans more than a quarter wavelength.
+under impacts into granule ripples (megaripples): 0.3 m to several metres apart, a few centimetres high (ripple index
+10 to 20), coarse grains armouring the crests and windward slopes over troughs of fines, crest lines less regular
+than impact ripples (Sharp 1963; Ellwood, Evans and Wilson 1975; Yizhaq et al. 2012; Lammel et al. 2018; arXiv
+2208.00888). Drawn as a normal and tint, h = 0.05 amp c^1.5 with c a raised cosine of a phase that carries: a 1.1 m
+mean spacing, a warp along the wind whose slope moves the local spacing between about 0.5 and 2 m, crest bending over
+metres, and sparse paired edge dislocations (Y-forks, about one per 4 m cell in three). Crests run tens of
+wavelengths and taper out at their ends. The slope comes from the phase's own gradient (differences, modulo a turn
+across a fork's cut). Crest colour follows the granules: paler for quartz (the default here), darker for lithic or
+basaltic granules. Gated by the dry, wind-blown share (none under water or on wet sand), eased to the ground's own
+past the patch's block so nothing stops at its edge. A first version (straight, even, dark painted stripes with hard
+ends) was rejected by docs, 20 Nov.

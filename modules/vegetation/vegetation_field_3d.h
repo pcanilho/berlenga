@@ -162,6 +162,7 @@ private:
 	Ref<Texture2D> far_texture;
 	static constexpr float CROWN_CELL = 8.0f;
 	static constexpr float NEBKHA_CELL = 16.0f;
+	static constexpr float COLONNADE_CELL = 16.0f; // One candidate log a cell for colonnade species (trees.md 5az).
 	static constexpr float NEBKHA_CLEAR = 2.0f; // Desert shrubs placed by density keep this far from a mound's foot.
 	static constexpr float NEBKHA_RADIUS = 2.7f; // A mound's radius over its height (terrain-gen: 2.4 to 3).
 	static constexpr float NEBKHA_CROWN = 0.4f; // Its shrub's crown radius over the mound's radius.
@@ -210,6 +211,7 @@ private:
 		float crown_max = 0.0f; // The largest crown radius it can place.
 		float halo = 0.0f; // How far around a tile it must be placed for later species.
 		int nebkha_slot = -1; // A nebkha shrub (meta "nebkha"): which of the mounds (hash modulo nebkha_count) it crowns.
+		Vector2 colonnade; // A colonnade (meta "colonnade": slot spacing, longest log, m): placed in rows along vanished logs.
 		bool desert_shrub = false; // A desert woody shrub placed by density: keeps off the nebkhas.
 		Color far_color; // Linear; alpha: how much ground it hides far away.
 		Color far_albedo; // Linear: its leaves' mean albedo as the plant shader draws them (far_shell); alpha 0: unknown.
@@ -237,6 +239,7 @@ private:
 		// none. A tree under a recorded strike (WorldStand.strike_age_at) takes the struck variant nearest its age.
 		LocalVector<float> strike_years;
 		float strike_years_max = 0.0f;
+		LocalVector<uint8_t> browsed; // Per variant: 1 for a browsed one (mesh meta tree_browse), empty when none is.
 		LocalVector<float> base_lifts; // Per variant, mesh meta "tree_base_lift" (m in mesh space: stilt roots, the origin that far above the ground); empty: none.
 		Vector2 open_side; // Mesh meta "tree_open_side" (xz, unit) of its first mesh carrying it: turned to face the open (forest edges); zero none.
 	};
@@ -321,6 +324,13 @@ private:
 		LocalVector<Vector3> strikes;
 		HashMap<Vector2i, LocalVector<uint32_t>> strike_cells;
 		float strike_at(const Vector2 &p_xz) const;
+		// Deer browsing pressure (WorldStand.browse_at, 0..1), sampled for the placing threads over rect; read when a
+		// species carries browsed variants.
+		LocalVector<float> browse;
+		Rect2 browse_rect;
+		int browse_nx = 0;
+		int browse_ny = 0;
+		float browse_at(const Vector2 &p_xz) const;
 		LocalVector<StandRule> stand_rules;
 		LocalVector<float> stand_age;
 		LocalVector<uint8_t> stand_kind;
@@ -586,6 +596,14 @@ private:
 	mutable uint64_t stand_seen = 0;
 	mutable bool stand_follow = false;
 	mutable bool strike_follow = false; // A species carries struck variants: strikes re-place their tiles.
+	mutable bool browse_follow = false; // A species carries browsed variants: browse changes re-place their tiles.
+	// Deferred tree variants (TreeGenerator.defer_variants, trees.md 5bc): grown when a burn, strike or browse disc first
+	// lies over the field, in setup or (a new burn, strike or disc) from process, the stream starting again with them.
+	bool _realize_variants(const PlaceSetup &p_setup);
+	bool variants_waiting = false;
+	double variants_check = 0.0;
+	static int _deferred_kinds(const Ref<PlantSpecies> &p_sp) { return p_sp.is_valid() ? int(p_sp->get_meta(SNAME("tree_variants_deferred"), 0)) : 0; }
+	void _read_browse(PlaceSetup &r_setup) const;
 	double stand_check = 0.0;
 	Rect2 stand_dirty;
 	void _follow_stand(double p_delta);

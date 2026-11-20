@@ -1088,6 +1088,41 @@ func _stand_tests() -> void:
 	var beaver := st.add_disturbance(Vector3(-300, 0, 0), 40.0, WorldStand.DISTURBANCE_BEAVER, 6.0)
 	grid_ok = grid_ok and st.disturbance_at(Vector3(-300, 0, 10)) == WorldStand.DISTURBANCE_BEAVER and st.stand_age_at(Vector3(-300, 0, 10)) == 6.0
 	st.remove_disturbance(beaver)
+	# A beaver dam: no meadow while it holds; breached, the drained pond is a beaver meadow aging with the years; gone with the dam.
+	var dam: Node3D = ClassDB.instantiate("WorldBeaverDam3D")
+	dam.pond_radius = 30.0
+	dam.position = Vector3(2000, 0, 2000)
+	add_child(dam)
+	var k_held := st.disturbance_at(Vector3(2000, 0, 2005))
+	dam.breach()
+	var k_breach := st.disturbance_at(Vector3(2000, 0, 2005))
+	var a_breach := st.stand_age_at(Vector3(2000, 0, 2005))
+	dam.years_drained = 12.0
+	var a_set := st.stand_age_at(Vector3(2000, 0, 2005))
+	var k_off := st.disturbance_at(Vector3(2000, 0, 2040))
+	remove_child(dam)
+	var k_gone := st.disturbance_at(Vector3(2000, 0, 2005))
+	dam.free()
+	_check("stand: a beaver dam that fails drains its pond into a beaver meadow (DISTURBANCE_BEAVER), aged by years_drained, only over the pond, gone with the dam", k_held == WorldStand.DISTURBANCE_NONE and k_breach == WorldStand.DISTURBANCE_BEAVER and a_breach == 0.0 and a_set == 12.0 and k_off == WorldStand.DISTURBANCE_NONE and k_gone == WorldStand.DISTURBANCE_NONE, "held %d, breached %d at %.0f y, set %.0f y, off the pond %d, dam removed %d" % [k_held, k_breach, a_breach, a_set, k_off, k_gone])
+	# Boar rooting turns the field layer, not the stand: stand age and kind stay; rooting_age_at reads it.
+	var wood := st.add_disturbance(Vector3(3000, 0, 3000), 60.0, WorldStand.DISTURBANCE_WIND, 40.0)
+	var rooted := st.add_disturbance(Vector3(3000, 0, 3000), 8.0, WorldStand.DISTURBANCE_ROOTING, 0.25)
+	var root_ok := is_equal_approx(st.rooting_age_at(Vector3(3002, 0, 3000)), 0.25) and st.rooting_age_at(Vector3(3020, 0, 3000)) < 0.0 and st.stand_age_at(Vector3(3002, 0, 3000)) == 40.0 and st.disturbance_at(Vector3(3002, 0, 3000)) == WorldStand.DISTURBANCE_WIND
+	st.remove_disturbance(rooted)
+	st.remove_disturbance(wood)
+	_check("stand: boar rooting (DISTURBANCE_ROOTING) is read by rooting_age_at and leaves the stand's age and kind alone", root_ok, str(root_ok))
+	# Game trails: published by their maker, read along their tread.
+	var tg := st.get_stand_generation()
+	st.set_trails([{"points": PackedVector3Array([Vector3(4000, 0, 4000), Vector3(4100, 0, 4000), Vector3(4100, 0, 4100)]), "width": 0.6, "passes": 900.0, "kind": "game_trail"}, {"points": PackedVector2Array([Vector2(4050, 3950), Vector2(4050, 4050)]), "width": 1.0, "passes_per_year": 200.0, "kind": "game_trail"}])
+	var t_mid: Vector2 = st.trail_at(Vector3(4050, 0, 4000))
+	var t_edge: Vector2 = st.trail_at(Vector3(4070, 0, 4000.25))
+	var t_side: Vector2 = st.trail_at(Vector3(4050, 0, 4030))
+	var t_off: Vector2 = st.trail_at(Vector3(4070, 0, 4005))
+	var tch: Dictionary = st.get_stand_changes_since(tg)
+	var t_count := st.get_trails().size()
+	st.set_trails([])
+	var t_gone: Vector2 = st.trail_at(Vector3(4050, 0, 4000))
+	_check("stand: game trails published once, read by every system: the busiest trail's passes and tread share, eased at the edge, none off them; changes reported", t_count == 2 and t_mid == Vector2(900, 1) and t_edge.x == 900.0 and t_edge.y > 0.0 and t_edge.y < 1.0 and t_side == Vector2(200, 1) and t_off == Vector2.ZERO and t_gone == Vector2.ZERO and Rect2(tch["area"]).has_point(Vector2(4050, 4000)), "crossing %s, edge %s, side trail %s, off %s, cleared %s" % [t_mid, t_edge, t_side, t_off, t_gone])
 	# Browsing: a red deer wood and a roe patch inside it; soft rim; pressure changes reported.
 	var red := st.add_browse(Vector3(1000, 0, 1000), 50.0, 0.6)
 	var roe := st.add_browse(Vector3(1010, 0, 1000), 10.0, 0.9, 1.1)

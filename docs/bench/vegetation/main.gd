@@ -3245,6 +3245,7 @@ func _deadwood_view() -> void:
 	var tg := TreeGenerator.new()
 	tg.fire_variants = false # No burn in this view: skip the five fire-band meshes (halves the stand build).
 	tg.lightning_variants = false # Nor strikes: skip the two struck meshes.
+	tg.browse_variants = false # Nor deer: skip the browsed meshes.
 	var wood := VegetationField3D.new()
 	wood.far_volume = false # Not under test here.
 	wood.name = "Wood"

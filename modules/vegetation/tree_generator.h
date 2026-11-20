@@ -152,6 +152,7 @@ public:
 		SUCCESSION_FIRE = 1,
 		SUCCESSION_WIND = 2,
 		SUCCESSION_BEETLE = 3,
+		SUCCESSION_BEAVER = 4, // A beaver pond drained (the dam failed): the beaver meadow (trees.md 5bb).
 	};
 	enum BeaverCut {
 		BEAVER_NONE = 0,
@@ -724,6 +725,15 @@ public:
 	// years, and one healing, 3 years) after the fire ones, mesh meta tree_lightning_years; VegetationField3D picks one
 	// where WorldStand.strike_age_at has a strike (world-links.md). Off for scouts and tests that do not strike.
 	bool lightning_variants = true;
+	// Browsed variants (trees.md 5aw, 5az): open, sapling and understory forms also grow one browsed variant of their first
+	// seed (a browse line on a grown tree, a hedged bush for a sapling), mesh meta tree_browse (the pressure it was grown
+	// at); VegetationField3D picks it by WorldStand.browse_at. Off for scouts and tests that do not browse.
+	bool browse_variants = true;
+	// Deferred variants (trees.md 5bc): the fire, struck and browsed variants are not grown with the stand but when a
+	// field first needs them (a burn, strike or browse disc over its area): a copy of this generator as set up for the
+	// species (species meta _tree_variant_source) grows them on request_variants(), and the species' meshes grow by
+	// them. Species meta tree_variants_deferred holds the kinds still to grow (VARIANT_FIRE | _STRIKE | _BROWSE).
+	bool defer_variants = true;
 	// Years since bark beetles killed the tree (trees.md 5aj), -1 none; conifers only. Under 0.6 green attack (resin
 	// beads, boring dust), then the needles fade yellow to red and drop (to 2.5), grey snag with the bark falling in
 	// sheets (to 6), top broken (to 12), then a stub.
@@ -788,6 +798,7 @@ public:
 	// bark slabs and splinters lie thrown round the foot for the first two.
 	float lightning_years = -1.0f;
 	static Color _lightning_wood(float p_years);
+	void _browse_variant_setup(int p_form);
 	void _lightning_debris();
 	float _fresh_strike_at(const Vector3 &p_pos, bool p_any_age = false) const; // 0..1: on a fresh strike's bare strip (no moss there); p_any_age: on a given strike's strip at any age.
 	int edge_band = 0; // While make_edge grows its edge trees: 1 (trees.md 5as).
@@ -1051,10 +1062,23 @@ private:
 	TypedArray<Mesh> near_far_meshes; // The species' far meshes, whose materials a near mesh shares.
 	TypedArray<Mesh> near_fire_meshes; // Its fire band variants, after near_living living ones in the species.
 	TypedArray<Mesh> near_strike_meshes; // Its struck variants, after the fire ones (near_fire_count of them).
+	TypedArray<Mesh> near_browse_meshes; // Its browsed variants, after the struck ones (near_strike_count of them).
+	int near_strike_count = 0;
 	int near_living = 0;
 	int near_fire_count = 0;
 	HashMap<int, TypedArray<Mesh>> fire_cache;
 	HashMap<int, TypedArray<Mesh>> strike_cache;
+	HashMap<int, TypedArray<Mesh>> browse_cache;
+	// Deferred variants: the grown kinds of one species key (on its variant source copy).
+	TypedArray<Mesh> _variant_kind_meshes(int p_kind, Preset p_preset, Form p_form, int p_base_seed, float p_base_cover, const Vector3 &p_first_crown);
+	HashMap<int64_t, Ref<TreeGenerator>> variant_sources;
+	Vector3 variant_first_crown;
+	bool variant_far_leaves = false;
+	int variant_kinds = 0; // What this species key can grow.
+	int variant_built = 0;
+	int variant_task_kinds = 0;
+	TypedArray<Mesh> variant_meshes[3]; // Fire, struck, browsed.
+	static void _variant_task(void *p_self);
 	Ref<ArrayMesh> material_source;
 	static void _near_task(void *p_self);
 	// Near meshes building at once, over every generator (a beech's peaks near 2 GB while it builds): the field
@@ -1099,6 +1123,14 @@ public:
 	// For PlantSpecies.near_mesh_source: the full-leaf mesh of one variant (index into the
 	// species' meshes), or null while it is being built on a worker thread.
 	Ref<Mesh> request_near_mesh(int p_key, int p_variant);
+	// Deferred variants (on a species' _tree_variant_source): grows the kinds asked for and appends them to the species
+	// (and to its near source's lists) in the stand's order. Returns the kinds it still lacks; main thread only.
+	int request_variants(const Ref<PlantSpecies> &p_species, int p_kinds);
+	enum VariantKind {
+		VARIANT_FIRE = 1,
+		VARIANT_STRIKE = 2,
+		VARIANT_BROWSE = 4,
+	};
 	int get_near_mesh_count() const;
 	float get_near_needle_range() const { return near_needle_range; }
 	void set_bark_relief(float p_relief) { bark_relief = MAX(p_relief, 0.0f); }
@@ -1139,6 +1171,10 @@ public:
 	void set_fire_variants(bool p_on) { fire_variants = p_on; }
 	void set_lightning_variants(bool p_on) { lightning_variants = p_on; }
 	bool get_lightning_variants() const { return lightning_variants; }
+	void set_browse_variants(bool p_on) { browse_variants = p_on; }
+	void set_defer_variants(bool p_on) { defer_variants = p_on; }
+	bool get_defer_variants() const { return defer_variants; }
+	bool get_browse_variants() const { return browse_variants; }
 	void set_beetle_years(float p_years) { beetle_years = p_years < 0.0f ? -1.0f : p_years; }
 	float get_beetle_years() const { return beetle_years; }
 	void set_beetle_outbreak(float p_years) { beetle_outbreak = MAX(p_years, 0.0f); }
@@ -1343,3 +1379,4 @@ VARIANT_ENUM_CAST(TreeGenerator::ShrubForm);
 VARIANT_ENUM_CAST(TreeGenerator::FireResponse);
 VARIANT_ENUM_CAST(TreeGenerator::SuccessionKind);
 VARIANT_ENUM_CAST(TreeGenerator::BeaverCut);
+VARIANT_ENUM_CAST(TreeGenerator::VariantKind);

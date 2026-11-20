@@ -30,6 +30,13 @@
 				Override in a stub to replace [method disturbance_at].
 			</description>
 		</method>
+		<method name="_rooting_age_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override to answer [method rooting_age_at] from a script (a test stub).
+			</description>
+		</method>
 		<method name="_stand_age_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -42,6 +49,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Override to answer [method strike_age_at] from a script (a test stub).
+			</description>
+		</method>
+		<method name="_trail_at" qualifiers="virtual const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override to answer [method trail_at] from a script (a test stub).
 			</description>
 		</method>
 		<method name="add_browse">
@@ -137,6 +151,12 @@
 				The number of recorded strikes.
 			</description>
 		</method>
+		<method name="get_trails" qualifiers="const">
+			<return type="Array" />
+			<description>
+				The worn-path network last given to [method set_trails].
+			</description>
+		</method>
 		<method name="remove_browse">
 			<return type="void" />
 			<param index="0" name="id" type="int" />
@@ -149,6 +169,13 @@
 			<param index="0" name="id" type="int" />
 			<description>
 				Removes the disturbance [param id] and reports its area.
+			</description>
+		</method>
+		<method name="rooting_age_at">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Years (fractional) since the youngest boar rooting ([constant DISTURBANCE_ROOTING] disc) over [param position], [code]-1[/code] where none. Rooting turns the field layer, not the stand: [method stand_age_at] and [method disturbance_at] leave it out.
 			</description>
 		</method>
 		<method name="set_browse">
@@ -165,6 +192,13 @@
 			<param index="1" name="age_years" type="float" />
 			<description>
 				Sets how many years ago the disturbance [param id] happened and reports its area.
+			</description>
+		</method>
+		<method name="set_trails">
+			<return type="void" />
+			<param index="0" name="trails" type="Array" />
+			<description>
+				Publishes the worn-path network (game trails): Dictionaries with [code]"points"[/code] ([PackedVector3Array] or [PackedVector2Array], world x, z), [code]"width"[/code] (m), [code]"passes"[/code] (per year; or [code]"passes_per_year"[/code]) and [code]"kind"[/code]. Replaces the last network and reports the old and new areas through [signal stand_changed].
 			</description>
 		</method>
 		<method name="stand_age_at" qualifiers="const">
@@ -186,6 +220,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Years since the youngest strike within 3 m (xz) of a tree trunk at [param position], or [code]-1[/code] where none. Fields pick a struck tree's variant by it (as [method stand_age_at] picks succession stages).
+			</description>
+		</method>
+		<method name="trail_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The busiest trail over [param position]: x its passes per year, y its tread share (1 over the middle half of its width, easing to 0 at the edge); [code]Vector2(0, 0)[/code] off every trail. Ground detail, mud, snow and grass read the same lines.
 			</description>
 		</method>
 	</methods>
@@ -212,6 +253,9 @@
 		</constant>
 		<constant name="DISTURBANCE_BEAVER" value="4" enum="Disturbance">
 			A beaver pond drained: the age is the years since it drained (a beaver meadow).
+		</constant>
+		<constant name="DISTURBANCE_ROOTING" value="5" enum="Disturbance">
+			Boar rooting turned the soil: the age is the fractional years since. A field-layer disturbance, read by [method rooting_age_at]; [method stand_age_at] and [method disturbance_at] leave it out.
 		</constant>
 	</constants>
 </class>
