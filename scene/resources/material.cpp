@@ -4994,7 +4994,8 @@ GroundCracks ground_cracks(vec2 p_xz, vec4 p_c) {
 	vec2 h3s = side > 0.5 ? h3 : ground_crack_hash(id, 4u);
 	float t3 = dot(x, u2) - (h3s.x - 0.5) * 0.5;
 	float len3 = mix(0.25, 0.9, h3s.y);
-	bool split3 = split2 && h3s.x * 0.5 + h3s.y * 0.5 < 0.75 - 0.65 * reg;
+	// A silt skin's plates are small and thin: they split across, rim to rim, and do not grow the short spurs.
+	bool split3 = split2 && skin < 0.5 && h3s.x * 0.5 + h3s.y * 0.5 < 0.75 - 0.65 * reg;
 	// Widths: the layer's shrinkage (8%, Peron et al. 2009 for clays) shared out over the generations, which open
 	// in turn as the layer dries; each wanders along its length.
 	float strain = mix(0.08, 0.12, skin) * s1;
