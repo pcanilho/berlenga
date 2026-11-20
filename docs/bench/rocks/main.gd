@@ -33,6 +33,7 @@ extends Node3D
 #                         (--dist m upstream, 2.5); --no-streams turns cave_streams off
 #   --cave-view=rimstone  with --caves --cave-mesh: the busiest rimstone cascade from about --dist m (1.6), a lamp;
 #                         --pool-water=n live water on the n nearest pools (12), --no-pool-water none
+#   --sea-cave-pick=first with --sea-caves: the finder's best site, not the one facing the sun most (frames only)
 #   --no-refine           with --cave-mesh and --cam: the chunks round the camera stay on the coarse grid
 #   --no-sea-water        with --sea-caves --cave-mesh: the sea not drawn inside the caves (a before frame);
 #                         --cave-waves=m the short waves' rms coming in at the mouth (default: from the sea),
@@ -764,6 +765,23 @@ func _caves(cam: Camera3D) -> void:
 	var t0 := Time.get_ticks_msec()
 	var sea_caves := args.has("sea-caves")
 	var found: Array = net.find_sea_entrances(r, int(args.get("caves", "1")) if str(args["caves"]).is_valid_int() else 1) if sea_caves else net.find_entrances(r, int(args.get("caves", "1")) if str(args["caves"]).is_valid_int() else 1)
+	if sea_caves and not args.has("test") and found.size() == 1 and args.get("sea-cave-pick", "lit") == "lit":
+		# One sea cave for a frame: of the best dozen sites, the one whose mouth faces the sun most (its mouth and
+		# the sea in front lit, not a cleft in its own cliff's shadow); --sea-cave-pick=first keeps the finder's own.
+		var to_sun := Vector3(0, 0, 1)
+		for n in get_children():
+			if n is DirectionalLight3D:
+				to_sun = (n as DirectionalLight3D).global_transform.basis.z
+		var flat_sun := Vector3(to_sun.x, 0, to_sun.z).normalized()
+		var many: Array = net.find_sea_entrances(r, 12)
+		var best := -2.0
+		for e in many:
+			var o: Vector3 = e["out"]
+			var lit := Vector3(o.x, 0, o.z).normalized().dot(flat_sun)
+			if lit > best:
+				best = lit
+				found = [e]
+		print("  sea cave picked by facing: %d sites, mouth at %s facing the sun %.2f" % [many.size(), found[0]["position"], best])
 	print("caves: %d entrances found in %d ms" % [found.size(), Time.get_ticks_msec() - t0])
 	var colours := [Color(1, 1, 1), Color(0.2, 0.5, 1), Color(0.1, 0.9, 0.9), Color(1, 0.8, 0.1), Color(1, 0.3, 0.1), Color(0.9, 0.2, 0.9), Color(0.2, 0.9, 0.3)]
 	var names := ["entrance", "tube", "bed", "keyhole", "canyon", "shaft", "sea"]
