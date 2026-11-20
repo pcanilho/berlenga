@@ -115,7 +115,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Cornice fall: a crack opens behind the lip, then the lip breaks into tumbling blocks.*
 
-- **Icicles** (`SnowIcicles3D`, `hazy_core`, `curtains`, `wind_direction`): grown from roof melt water below freezing; clear ice with a hazy core, tapering like real dripping icicles, leaning with the wind they grew in, with drops at dripping tips and curtains where neighbours fuse.
+- **Icicles** (`SnowIcicles3D`, `hazy_core`, `curtains`, `wind_direction`): grown from roof melt water below freezing; clear ice with a hazy core, tapering like real dripping icicles, leaning with the wind they grew in, with drops at dripping tips and curtains where neighbours fuse; they hang in clusters under drip points that wet and dry over the days, with stubs and bare gaps between.
 
   ![Backlit icicles under an eave, raster and path traced](media/snow-icicles.jpg)
 
