@@ -4239,10 +4239,11 @@ namespace {
 // leading edge 0 to the root 1); COLOR = (age / life, seed, span / 8 m, 1).
 const char *CREST_SHEET_SHADER_SRC = R"(
 shader_type spatial;
+// It casts no shadow (the instance's setting) but takes the sun's: a sheet under a cloud or in a cliff's shadow is dark.
 #if defined(RT)
-render_mode cull_disabled, shadows_disabled;
+render_mode cull_disabled;
 #else
-render_mode blend_mix, cull_disabled, depth_draw_never, shadows_disabled;
+render_mode blend_mix, cull_disabled, depth_draw_never;
 #endif
 uniform vec3 sheet_color : source_color = vec3(0.9, 0.93, 0.95);
 uniform vec3 water_tint : source_color = vec3(0.55, 0.72, 0.74);
