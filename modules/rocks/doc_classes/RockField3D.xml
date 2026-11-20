@@ -63,6 +63,12 @@
 				This field's answer to [method WorldGround.coarse_cover_at]: pebble, gravel and fine shares of the ground (0..1) from the cover maps, bilinear; the near map where it reaches, else the far one; 0 outside both or with [member ground_detail_cover] off.
 			</description>
 		</method>
+		<method name="get_far_cover_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The far cover map the terrain reads as [code]rock_far_cover_map[/code]: 256 x 256 texels of 32 m centred on the target, rgb the stones' weathered colour, alpha their plan cover (rockfall blocks, glacial boulders on till and coarse river beds). Null while [member far_radius] is 0.
+			</description>
+		</method>
 		<method name="get_ground_detail_count" qualifiers="const">
 			<return type="int" />
 			<param index="0" name="layer" type="int" default="-1" />
@@ -99,7 +105,7 @@
 		<method name="get_ground_detail_tile_stats" qualifiers="const">
 			<return type="Dictionary" />
 			<description>
-				[member ground_detail_tiles] so far: [code]tiles[/code] cut, [code]placements[/code] and the [code]grains[/code] they draw (since the field was made); [code]live_placements[/code], [code]live_grains[/code], [code]instances[/code] (rendering instances, one per shape of a placement) and [code]tile_triangles[/code] now; the shared sets now ([code]shared_sets[/code], their [code]shared_candidates[/code], the [code]shared_tiles[/code] some placement took and their [code]shared_triangles[/code], and [code]shared_by_class[/code]: sets, candidates, taken and triangles for pebble, gravel and fine); and the squares looked at and why some were left as single grains ([code]skip_sparse[/code], [code]skip_coarse[/code], [code]skip_bent[/code], [code]skip_unmatched[/code]).
+				[member ground_detail_tiles] so far: [code]tiles[/code] cut, [code]placements[/code] and the [code]grains[/code] they draw (since the field was made); [code]live_placements[/code], [code]live_grains[/code], [code]instances[/code] (rendering instances, one per shape of a placement) and [code]tile_triangles[/code] now; the shared sets now ([code]shared_sets[/code], their [code]shared_candidates[/code], the [code]shared_tiles[/code] some placement took and their [code]shared_triangles[/code], and [code]shared_by_class[/code]: sets, candidates, taken and triangles for pebble, gravel and fine); and the squares looked at and why some were left as single grains ([code]skip_sparse[/code], [code]skip_coarse[/code], [code]skip_bent[/code], [code]skip_unmatched[/code]). Also the far thinning now: [code]far_thinned_groups[/code], [code]far_widened_groups[/code] and their [code]far_widen_mean[/code] ([member far_widen]).
 			</description>
 		</method>
 		<method name="get_last_build_msec" qualifiers="const">
@@ -401,6 +407,9 @@
 		</member>
 		<member name="erratic_rock_type" type="int" setter="set_erratic_rock_type" getter="get_erratic_rock_type" enum="RockGenerator.RockType" default="0">
 			Rock type of glacial erratics, carried from elsewhere.
+		</member>
+		<member name="far_widen" type="bool" setter="set_far_widen" getter="is_far_widen" default="true">
+			While [member far_thinning] thins a cell, the stones it still draws grow (up to 1.6 times) so the field keeps the stone cover of the records it dropped, as the ground's far stones take over. The far tier's big stones are never widened, so they meet their far copies.
 		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
 			Node the layers stream round. Empty uses the current camera.

@@ -875,3 +875,27 @@ GroundDeformField::press_bodies (shared by sand, mud and snow) never presses a w
 A walker with meta `world_contact_feet` has feet that are contact bodies of their own and is skipped; any other walker
 presses WorldWalkerSteps soles, 0.27 x 0.10 m boot outlines (the press_box sole shape), a step 0.41 of stature and the
 feet 18 cm apart. Ground bench `--test=steps`; the snow bench's crust checks drag a boot (`world_contact_walker` false).
+
+## Fine relief under path tracing, and wet tracks in their prints
+
+The field's millimetre relief (the bed's runoff roughness, a swash mark's lip) is finer than the patch's vertices, so
+raster draws it as an unsharp mask on the field's heights (Luft, Colditz and Deussen 2006). The path tracer now applies
+the same term from the same map (raygen rt_ground_relief): before, grazing sand read flat traced beside raster (oasis
+bench, about a third of the fine detail). The term fades out over the field's outer fifth, so the field's square has no
+edge on the ground past it.
+
+WeatherMap3D's contact wetness (wet tracks, 12.5 cm texels) is shaped on printed ground by the field's own dents
+(ground_contact_shape(), raygen the same): the water lies in the sole's and tread's outline, and the contact map sets
+only how wet it is.
+
+## Far ripples over the dune field (GroundSurface3D `far_ripples`, on)
+
+Paulo's pick (20 Nov): wind ripples past the 32 m field. The grown field's periodic slope tile (the near ripples'
+own, wind-aligned, varied by ground_ripple_vary so no repeat shows) is drawn as a normal over all sand terrain past the
+patch: BaseMaterial3D's terrain branch takes the ground's share (all sand for a sand ground_type with no type_map,
+meta[14]); TerrainMaterial3D takes its own sand share (tm_sand_b). It eases in over the sand block's outer 4 m, so the
+block has no edge. None on slip faces past about 30 degrees (Bagnold 1941: the face avalanches and buries them). Crests
+are prefiltered to the pixel as before (faded under three pixels a crest); crests finer than that still shade the pixel
+as a patchy tone, up to 15% darker by the field's amplitude (LEAN mapping's point, Olano and Baker 2010: unresolved
+slopes become the pixel's statistics). The path tracer the same in raygen, with the cone's width as the footprint
+(rt_cone_width).

@@ -160,3 +160,186 @@ Open: the march's uniform steps (tens of metres through a cloud) leave the near 
 occlusion is strong; Schneider 2015's adaptive refinement (step back and take short steps once inside cloud)
 is the next step for crisper edges and would let `cloud_surface_occlusion` go back up to about 1.2, which
 looked best in close views. The horizontal banding under the far cloud bases predates this work.
+
+## Round 2 (20 Nov 2026; Paulo picked everything listed)
+
+1. **Adaptive refinement** (Schneider 2015; Hillaire 2016): long steps through clear air; on reaching cloud,
+   one step back and steps of `cloud_refine` (0.33) of a long one while inside, long again after four empty
+   short steps (iteration cap three times the step count). The grain on far faces went with it, so
+   `cloud_surface_occlusion` is back up to 1.0.
+2. **Sky light shaded from above**: one coarse read 100 m over the sample, ambient times
+   `mix(0.4, 1, exp(-tau_up))` (Nubis Cubed scales ambient by the summed density toward the sky;
+   SunshineClouds2 reads the density one step up). Undersides and the lee of towers darken.
+
+SunshineClouds2 (MIT, code read 20 Nov): its punch comes from art terms on top of the same Schneider model:
+transmittance raised to a "lighting sharpness" power, HG raised to a power, a powder term `pow(density, k)`,
+a density-weighted adaptive step `mix(max, min, pow(density, 0.1))`, light steps spaced quadratically, a
+painted coverage and tint mask. We take the ambient-from-above read; the sharpening powers are not
+energy-conserving and would split raster from path traced bounces, so they stay out.
+
+Cost (lavapipe, crest view, 40 reprojected frames): 800 ms a frame before round 1, 1084 after refinement: the
+short steps inside cloud are the cost the next two items (sun shadow grid, empty-space skipping) pay back.
+
+3. **Sun shadow grid** (Nubis Cubed's light voxel grid, Schneider 2023): `WeatherMap3D` bakes the optical
+   depth toward the sun out of the layer for a 128 x 128 x 32 box (32 km across, cloud base to top) round the
+   camera, from the top level down, one level a frame on worker threads: each voxel marches only to the next
+   level's height (steps of at most 128 m) and adds that level's value where its path meets it (bilinear); off
+   the box's side it marches the rest. Rebaked every four shadow intervals, sliding with the drift between.
+   The sky's light march keeps its first 512 m (detail to 64 m, then 64/128/256 m shape steps) and reads the
+   grid once 512 m along the path for the rest: a small cloud keeps its own shading (a first try that read the
+   grid at the sample itself blurred it, 256 m texels), and shadows now reach right out of the layer, so
+   at a low sun towers shade the clouds behind them over kilometres. `cloud_light_grid_enabled` switches it
+   for A/B checks; outside the box the march is as before.
+   Cost (lavapipe, `--view=clouds`, raster, frames 30 to 60): 836 ms a frame without, 750 to 773 with (the
+   bake shares the same CPU there). Bake about 0.37 s of CPU in all, spread over 32 frames. PT parity: sky
+   mean difference 4/255 on `clouds_wide`.
+
+4. **Empty-space skipping: tried, not kept.** A 2D map over the grid's box of the distance from each 256 m
+   column to the nearest column holding any cloud (16 points x 8 heights per column, grown by one, chamfer
+   distance), leaped by the march in clear sky. No visible change, but at fair-weather cover (0.3) 54% of
+   columns hold some cloud and only 7% stay clear after the safety margin (2% at the crest view's cover), so
+   it saved 3 to 4%, within the bench's noise. The clear-sky steps were already cheap (the cover read and one
+   shape read, then out); the frame's cloud cost is inside the clouds (short steps, each with its light
+   samples). A 3D occupancy grid fares no better at these sizes. Not worth its code; the light grid stays the
+   saving.
+
+5. **Banding under the far cloud bases: fixed.** It was not the clouds (a prefiltered far-cloud density, tried
+   first, left it unchanged and smeared the mid-distance clouds, so it was dropped). It was the sky's own far
+   ground, past the scene, lit through the cloud shadow map from one texel per pixel: there neighbouring
+   pixel rows meet the ground kilometres apart, so single 160 m texels of cloud shadow showed as dark
+   horizontal streaks. The sky shadow map now has mipmaps and the ground read takes the mip of the pixel's
+   footprint (t times the pixel's angle over the sine the ray meets the ground at). The air's shafts read as
+   before. PT parity: sky mean difference 5/255 on `clouds_wide`.
+
+6. **Altocumulus mid layer** (names and driver agreed with the weather owner): `WeatherMap3D.mid_cloud_cover`
+   (0.15), `mid_cloud_height` (4500 m, slab middle), `mid_cloud_thickness` (400 m), `mid_cloud_optical_depth`
+   (4, vertical at full cover), `mid_cloud_drift` (wind aloft at its height), `get_mid_cloud_cover_at`,
+   `get_mid_cloud_optical_depth_at`; contract `WorldWeather.mid_cloud_cover_at`. Out of `cloud_cover`. Humid air
+   thickens it, dry air thins it to 0.2, rain dialled in thickens it into an altostratus sheet (eases 2x faster
+   than the rain, after the cirrus at 4x); it never starts rain. Storms add a band round their anvils. Shades the
+   ground by its own optical depth in the shadow bake. Drawn as its own thin volume (as layered volumetric
+   clouds in Flight Simulator and Unreal): 8 steps across the slab, cloudlets from the detail texture's billows
+   (300 by 450 m cells, rows across the wind: Ludlam's cellular convection), rounded top and bottom, lit like
+   the cumulus (octaves, two-stream diffuse, sky light) with two sun samples through the slab. Not yet: the mid
+   sheet dimming the cumulus' sun beneath it.
+
+## Round 3: single clouds, groups and cauliflower crests (20 Nov 2026)
+
+Review of round 2's frames: puffs with flat, sheared sides; far rows of the same flat-bottomed pancake; little
+grouping; crests read as soft lumps. Causes found, each fixed:
+
+1. **One noise threshold over the whole sky** made every cloud the same kind of blob, packed evenly. Cumulus are
+   placed as single clouds instead (`cells_at()` on the CPU, `wc_cells` on the GPU): a grid of
+   `WeatherMap3D` cells (1200 m), at most one cloud a cell, jittered centre, kept where the local cover beats the
+   cell's draw (the cover and its cluster noise vary, so some stretches hold many clouds and others few). Sizes
+   skew small (Plank 1969's exponential spread); height follows width by type (humilis about half as tall as
+   wide, congestus taller). Each cloud is an envelope: straight-sided body, domed top, plus three thermal bubbles
+   off its axis (Neyret 1997's rising thermals). The envelope remaps the shape noise as Nubis's coverage does, so
+   the noise still carves the edge. Decks (cover above about 0.7) keep the continuous noise.
+2. **Presence tested against the cover at the sample** cut a cloud by a vertical wall wherever it crossed a change
+   in cover (the far "blocks"). The test now fades over a margin and shrinks the cloud toward thinner cover.
+3. **Crests as an erosion after the remap** only roughened the skin of one round dome. Turrets now cut into the
+   envelope itself, from billows in the cloud's own frame (about four across it, finer octaves inside), fully over
+   its top half and less down the sides, so the outline becomes a cluster of rounded crests and the walls bulge.
+   `cloud_turret_strength` (0.9). The world-scale billows add smaller lobes on top.
+4. **The fine billow erosion bored pits**: it eroded by the inverted Worley (1 at the feature points), which
+   removes each billow's centre and leaves a cracked cotton surface. It now erodes by one minus that, so the
+   feature points stay as bulges (as Schneider 2015 flips the noise with height).
+5. **Shear** default 0.4 (was 1): towers lean a little instead of smearing sideways.
+
+Cost on lavapipe the same or lower (clouds view 1078 to 1058 ms, towers 1170 to 1006, fair weather 976 to
+785): fewer, more compact clouds. Turrets are detail level, left out of the CPU shadow bake like the other
+erosion (bake against a 10 m march still 0.002). Shadow share of the ground by cover 0.2/0.4/0.6/0.8/1.0:
+4/9/26/72/94% (was 0/10/29/71/94).
+
+PhysX Flow was considered for the shapes: it simulates a grid tens of metres across, so a sky of clouds
+kilometres wide would need either a coarse grid with no crests or far more memory than a frame has; the
+procedural model above is what every shipped sky uses. Not yet: the mid sheet dimming the cumulus' sun.
+
+Round 3 follow-ups (docs review of 118c13bc):
+
+6. **Flat bases**: the lowest 120 m of a cumulus read the shape noise (and its turrets) at that height, so the
+   outline drops straight to the condensation level instead of rounding up underneath; no side turrets in the
+   lowest quarter. Clouds high in a frame from the ground are near ones, seen from below: their bases are on
+   the same level, higher in the frame by perspective.
+7. **Sky light: the hemisphere, not the zenith.** The cloud's sky light was the zenith radiance, the darkest
+   part of the sky; a cumulus in another's shadow at a low sun came out near black, darker than the sky behind
+   it. Now the zenith (0.4) plus two reads 30 degrees up (0.3 each), one 30 degrees round from the sun's
+   azimuth (its glow, not its aureole) and one opposite, in both atmosphere models. Shadowed clouds read grey,
+   about the sky's brightness.
+8. **Bench**: the weather bench's ground was 12 km across, so the wide view from 520 m saw past its edge (a grey
+   band under the horizon). Now 60 km.
+
+## Round 2 leftovers (20 Nov 2026)
+
+1. **22 and 46 degree ice halos** (Tape 1994, "Atmospheric Halos"; Greenler): randomly oriented hexagonal
+   columns refract through 60 degree faces with a minimum deviation near 22 degrees (21.7 red to 22.4 blue) and
+   through 90 degree faces near 46. The cirrus phase gets one lobe a ring, per channel: nothing inside the
+   minimum (a sharp red inner rim), an exponential tail outward, normalised over the sphere. The colours overlap
+   through the tail, so the ring is pale, not a rainbow. `cloud_halo_strength` (0.08) is the 22 degree ring's
+   share of the single scattering, the 46 degree ring a fifth of it. Shown only where a slow noise (25 km
+   patches) says the sheet's ice is columns, so rings show as arcs over some of the sky. Raster and PT match.
+   Bench: weather `--view=shafts --cover=0.05 --high-cover=0.7 --sun-yaw=0`.
+2. **The mid sheet dims the cumulus' sun**: read once a pixel where the view ray crosses the middle of the
+   cumulus layer, followed up the sun to the sheet, two-stream transmission as in the ground's shadow bake. Under
+   a full altocumulus sheet far cumulus lose about 6% of their brightness (the sheet is thin, optical depth 4 at
+   full cover, and most light comes through scattered).
+
+## Round 4 (20 Nov 2026; Paulo: all three)
+
+1. **Light bounced between clouds** (cloud-to-cloud interreflection). The sun light grid's bake also stores how
+   much of each 256 m texel is sunlit cloud (its opacity across a texel times the two-stream sun reaching it).
+   Building the texture blurs that at two reaches, 1.3 and 3.3 km (a cone's footprint widening with distance, as
+   voxel cone tracing reads coarser mips further out; Crassin et al. 2011), leaving out the texel itself, and
+   stores it as the grid's green channel. The march adds sun x 0.7 x that share as diffuse light, entering the
+   shell as the sky's light does: the shaded side of a tower facing a sunlit neighbour warms. `cloud_bounce`
+   (1.0). Frame cost unchanged within noise (one more read of a texture already bound); the bake adds one
+   extinction read a texel and two box blurs. Raster and PT match.
+
+2. **Cumulus that grow and dissolve.** Each cell keeps its own clock (a cycle per cloud lifetime, give or take a
+   fifth, offset per cell); each cycle draws a new cloud from the cell (position, size, presence). A cloud is
+   born thin, widens over the first fifth of its life and rises over the first third as its thermals climb,
+   lives, then over its last quarter dissolves from the edges in, its billows turning to wisps as it mixes with
+   dry air (fair-weather cumulus last some 10 to 40 minutes; Plank 1969). CPU (shadows) and GPU agree; frozen
+   clouds sit in mid life as before. While evolving, more cells hold a cloud (2.9 times the cover, 2.2 frozen) so
+   the cover's share of sky holds (shadow share by cover 0.2 to 1.0: 4/9/25/71/94%). Raster and PT match.
+   Bench: weather `--cloud-time=S` strips.
+
+3. **Sunshine Clouds 2 compared** (Bonkahe, MIT, v2.7, a Godot compositor compute effect; source read). What it
+   does and what we take:
+   - Shape: Perlin-Worley coverage remap with a painted height gradient, curl-noise domain advection iterated
+     three times (stronger low in the cloud), and a wind sweep that drags the lowest part downwind. We already
+     warp by the detail's own billows and curl; the base sweep runs against the shear (bases lag upwind in
+     reality), so not taken.
+   - Lighting: Beer's law with an exponentiated HG, a powder term pow(density, k) and a "sun up" weight that
+     treats the air above a height as cloud when the sun is low. Stylisation; Nubis Cubed's multiple-scattering
+     probability field (which we use) replaced powder for the same dark edges. Not taken.
+   - Ambient: one density read above the sample (as ours since round 2, credited there).
+   - Worth taking, both new capabilities, not look tweaks: **point lights in the clouds** (each point light marched
+     three steps through the cloud toward it, HG phase, falloff to a radius) for fires, city glow and flares
+     under a deck at night; and **density effectors** (spheres that add or remove density with a falloff) for
+     smoke plumes feeding a cloud or a blast punching a hole. Both cross systems (fire, lightning, the weather
+     map's contract), so they go to Paulo as a choice first.
+
+4. **Point lights and density effectors in the clouds** (Paulo picked both; names agreed with the weather owner;
+   both after Sunshine Clouds 2, Bonkahe 2025, MIT).
+   - `WeatherMap3D.add_cloud_light(position, color, energy, reach)` (and `set_`/`remove_`, `get_cloud_lights()`),
+     at most eight, -1 when full. The march adds, per light in reach, three extinction reads toward it over at
+     most 600 m, inverse-square falloff times a smooth window to the reach (Karis 2013), HG 0.6 through the thin
+     part plus the two-stream diffuse rest, as the sun. Energy is in the sun's units times square metres. Lights
+     the clouds only: a scene adds its own OmniLight3D for the ground. The sky now marches clouds at night when
+     any cloud light is present (it skipped the clouds with no sun before).
+   - Fires light their clouds by themselves: each WorldFire plume registers a light 30 m above its base, colour
+     of a flame (1, 0.62, 0.32), energy a third of its heat release as light spread over the sphere. Fires and a
+     scene's lights share the eight slots by brightness.
+   - Lightning stays on its own full-resolution glow: a flash lasts a few frames and the half-resolution,
+     reprojected march would smear it. Flashes are listed in `get_cloud_lights()` (`lightning` true) so readers
+     see every light in the clouds in one place.
+   - `add_cloud_effector(position, radius, strength)` (and `set_`/`remove_`, `get_cloud_effector_at`, contract
+     `WorldWeather.cloud_effector_at`), at most eight. Strength -1..1, linear falloff to the radius: positive adds
+     to the cloud's envelope, negative scales the density down. Effectors ride the cumulus drift. CPU (shadow bake,
+     `get_cloud_density_at`) and GPU agree. Fires do not add effectors: their clouds already grow from the plume
+     (fire clouds, 19 Nov).
+   - Bench: weather `--cloud-light=x,y,z,E,R[,r,g,b]`, `--cloud-effector=x,y,z,R,S`, `--sun-energy=0`; checks in
+     `--test=clouds` (hole clears the thickest cloud to 0, an adding effector makes cloud in clear air, slots full
+     at eight). Raster and PT match.

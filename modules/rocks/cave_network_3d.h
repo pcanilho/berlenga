@@ -230,6 +230,9 @@ private:
 	int64_t stream_group = -1;
 	Vector3 stream_from;
 	bool streamed = false;
+	// build_meshes() was called: the caller owns the meshes, so an empty follow_target does not stream round the camera.
+	bool built_by_call = false;
+	const Node3D *_stream_target() const;
 
 	NodePath generator_path;
 	NodePath rock_field_path;

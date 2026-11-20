@@ -713,6 +713,26 @@ water systems own):
   rushes 0.6 to 4.5 m behind (Phragmites australis and Juncus rigidus / maritimus fringe Egypt's oasis pools and
   springs: Zahran and Willis 2009, "The Vegetation of Egypt"; Ozenda 1977 for the Sahara).
 
+## Boreal taiga floor (trees' STAND_BOREAL_TAIGA, 20 Nov)
+
+The Fennoscandian and Russian boreal forest is classed by its floor (Cajander's forest site types; Kuusipalo 1985,
+Oksanen and Ahti 1982): the floor is the stand's signature, and the tree species follow the soil.
+- Dry pine on sand and gravel (Cladonia type, CT; Calluna type): a near-continuous carpet of reindeer lichens
+  (Cladonia rangiferina, ashy grey, C. stellaris, yellowish domes 5 to 10 cm high), lingonberry and crowberry,
+  heather in the open, sparse feather moss in the crowns' shade (Kumpula et al. 2000; Kershaw 1977).
+- Mesic spruce (Myrtillus type, MT): a closed mat of feather mosses (Pleurozium schreberi, Hylocomium splendens) with
+  bilberry, a little wood sorrel, needle litter, few lichens: shade and the moss's water hold them back.
+- Birch in burn patches: the post-fire pioneers (birch, aspen, fireweed, wavy hair-grass) on bare mineral soil and
+  birch leaf litter; lichens take 30 to 60 years to return after fire, feather mosses 20 to 40 (Schulten 1985,
+  Kumpula 2000s; Nilsson and Wardle 2005).
+Pine and spruce read apart by the crowns' shade: pine stands are open (light through the crowns), spruce dense.
+
+Build: a reindeer lichen preset (PRESET_REINDEER_LICHEN): a lumpy, cauliflower-like dome of packed branch tips,
+pale ashy grey-green, a few branched podetia standing proud at its rim; slow to recover from fire (40 years), crushed
+underfoot. FLOOR_BOREAL_TAIGA: lichen under open conifer crowns (shade under 0.5, conifer over half), feather moss
+and bilberry under dense ones, crowberry and heather in the open, wavy hair-grass and fireweed where the crowns are
+broadleaf (the birch patches), birch litter there, needles and twigs under the conifers; fly agaric, brittlegill.
+
 ## Far vegetation without bald ground (Paulo 19 Nov: "at a distance it's bald")
 
 What the showcase stills show: past 30 to 45 m (each plant layer's visibility range) the meadow, heath and scrub read
@@ -767,6 +787,50 @@ the ground from 0.6 of where the plants stream. Shade-needing, sand, coast and p
 What it does not replace: a sward's blades. Paulo's montado frame (19 Nov) was bald past 60 m because the floor set
 alone has no GrassField3D; with the summer sward (rings to 250 m, columns to 500 m) blades show to the horizon. The
 scene wires the sward under the cork and pine stands.
+
+Step 3, Ghost of Tsushima's density curve on the sward (19 Nov, Paulo: "why aren't we just applying those
+strategies?"): GrassField3D keeps full density to half its radius, then halves at 0.5 and 0.75 (_lod_for), and the
+far rings start at a quarter of the near density (RING_BASE_SHARE 4, was 8). Meadow bench: primitives 7.6 M to 10.9 M
+(+43%), +165 MB. The far shell's height and colour were tuned against it (specular 0.1, roughness 1: at grazing angles
+the sky's reflection read grey; textured cards take their texture's mean colour). GPU timing is on the PC queue.
+
+### Next round (card 19 Nov late)
+
+1. GPU-built far blades. Ghost of Tsushima (Wohllaib, GDC 2021) and Horizon Zero Dawn (van Muijden, GDC 2017) build
+   grass per frame in compute from tile masks, so far blades cost no stored mesh: a tile writes its visible blades into
+   an indirect draw, and the count follows distance. Our far rings are CPU-built and cost 69 MB plus the GoT share. The
+   step: a compute pass over the ring tiles reading the same rules texture the CPU bake reads (GPU fill is already
+   matched to the CPU check, quantised in 1/16), writing an instance buffer for multimesh_set_rt_instanced. PT needs
+   the blades in a BLAS, so the RT side keeps a coarse CPU-built set or rebuilds the BLAS per tile on change only
+   (camera moves of a tile). Measure memory and lavapipe frame time against the rings.
+2. Far blades blend into the ground. Pesce ("Making a greener grass", 2024) and GoT both bend far blade normals
+   towards the terrain's and add a sheen term, so a far field shades like a soft surface and does not shimmer. Ours:
+   far blades keep their own normals (the sparkle prefilter only widens roughness). The step: ease normals to the
+   terrain normal by a distance factor in the grass shader (both raster and the PT translation, fwidth only), cut far
+   blades to 3 vertices (GoT's far LOD), and match the far shell's sheen so rings and shell meet with no seam.
+3. Heath and scrub far silhouettes. The far shell is a smooth draped surface; gorse, heather and broom stands keep
+   a lumpy outline to the horizon in photos and in UE 5.7's voxelised Nanite foliage. The step: for shrubs between
+   0.5 and 2 m, displace the shell's cells by a clump field from their own spacing (as the hedges' far bricks), with
+   AO in the gaps, so hills past 1 km keep their texture. Shell only, no new instances.
+
+Built 20 Nov (Paulo picked all three):
+1. Far ring tiles fill on the GPU (grass_fill.glsl's ring mode): the CPU walks the nested cells and keeps the rank and
+   obstacle survivors, tested against the rules baked on a 33 x 33 grid per tile (0.5 m at level 0), and the shader
+   places them straight into the MultiMesh buffer. Meadow bench: ring build 277 ms to 100 ms, 547k blades (556k
+   before), memory unchanged: on a device with ray tracing the renderer reads every MultiMesh's records back for the
+   TLAS, so a GPU-written buffer keeps its CPU copy, and the CPU drops grid-rejected blades so the buffer holds no
+   zero records. A full GoT per-frame indirect draw would skip that copy only with GPU-built TLAS instances: an
+   engine change, not done. Worn tiles stay on the CPU (the wear grid is 0.25 m).
+2. Blades past 6 m ease to the ground's own normal (finite differences of the data map's height texture, a material
+   uniform, so nothing depends on shader globals) instead of straight up, 0.55 near and 0.85 by the rings' middle.
+3. VegetationField3D.far_shell_clumps: three value-noise octaves (7, 19, 53 m) made uniform by their sampled quantile,
+   thresholded at 1 - cover, so each stand's mass stands on its cover's share of the ground and opens elsewhere; an
+   octave fades as cells pass a third of its size. Found on the way: unranged species (a heath's gorse) left the
+   ground bare past the stream radius (now in the shell), and the shell's darkening for "shade between tops" read at
+   half the near plants' brightness (dry heath bench: shell 0.0075 linear, a near gorse 0.016), as black blotches; the
+   far colour already holds the plants' self-shade, so that factor is gone. Species meta "far_shell" false keeps a
+   species out (the trees' own far forms).
+   Next: measure the shell against the plants on screen as the far match does for the ground (vegetation_far_match.cpp).
 
 ## Mediterranean woodland ground layer (audit 19 Nov; card to Paulo)
 
@@ -1216,3 +1280,52 @@ Docs declined the first fields frame (18 Nov). Fixes:
   the ears' grain at the pixel's narrow width, band-limited octaves (14, 7, 3.5 per metre) kept
   under their Nyquist limit (Lagae et al. 2010), never coarser (coarser octaves made blotches).
 - Tramline lanes show their soil, part shaded, not black lines.
+
+## Stand age (built 20 Nov, WorldStand contract 399d29a6)
+- RULE_STAND_AGE (28): years since the last stand-replacing disturbance, -1 old growth (inside ranges starting at -1
+  or reaching 10000 y). RULE_DISTURBANCE (29): 0 none, 1 fire, 2 wind, 3 beetle; pick one kind with (k, k).
+- Left at their defaults, a species takes TreeGenerator.make_succession's meta succession_age / succession_kind
+  (-1 any), so stage edges are each species' own.
+- The field samples WorldStand on the burn grid's spacing. On stand_changed it reads the changed cells again and
+  re-places only streamed tiles where some species' stand weight changed (advance_years inside every stage costs
+  nothing). Populated fields populate again; a field's own disturbance reports (trees' stand_disturbance meta) are
+  not followed, so it does not repopulate itself for ever.
+- Known gap: two populated fields that both report disturbances and both use stand rules would wake each other on
+  every populate (each report removes and re-adds its discs). Trees' report could skip unchanged discs.
+
+## Forest edges (built 20 Nov, for trees' make_edge)
+- Research: edge influence reaches 20-60 m into a forest (Harper et al. 2005); a shrub mantle of blackthorn,
+  hawthorn, hazel and dog rose grows from about 8 m out to 3 m in; edge trees keep their low branches on the lit side.
+- RULE_FOREST_EDGE (30): signed metres from the edge of the field's forest, positive inside, -1000 with no canopy.
+  Species left at the default take meta "edge_distance" (Vector2), as succession_age.
+- The forest is where the field's canopy species (canopy radius over 0, no shade rule, not edge users) would close
+  it: their rules, patches, masks, stand stages and density summed past 0.35, on a grid of 2 m or more. Not the
+  placed crowns, which stream round the camera; every tile sees the same edge. Signed distance by an exact Euclidean
+  distance transform both ways (Felzenszwalb and Huttenlocher 2012), read bilinear.
+- Variants with mesh meta "tree_open_side" (Vector3) are turned so that side faces down the edge distance
+  (towards the open), +-15 degrees.
+- Stand changes that move a canopy stage (a windthrow opening a clearing) rebuild the edge grid and re-place the
+  streamed tiles where it moved.
+- Check: vegetation --test "forest edge" (a 25 m windthrow clearing: mantle ring 16-28 m, edge trees facing in).
+
+## Next round (card 20 Nov afternoon): floors that follow forest age, edge light, far rings without CPU copies
+Research so far:
+- Clearing succession on the floor (Wohlgemuth et al. 2002, Swiss windthrow plots after Vivian, slf.ch
+  wo_2002fosnola; Estonian Myrtillus spruce windthrows; Forests 7(11) 287 on post-windthrow ground vegetation):
+  in the first 1-3 years ruderals and light-demanding herbs take the opened ground (fireweed Chamerion
+  angustifolium, foxglove, groundsels), raspberry Rubus idaeus and grasses (Calamagrostis epigejos / villosa,
+  Deschampsia flexuosa) peak at about 3-10 years and can hold the ground for a decade; shade-tolerant forest herbs
+  and dwarf shrubs (bilberry) mostly survive under the debris and recover as the canopy closes; mosses (Hylocomium,
+  Pleurozium) drop after opening and build back over decades. Fire differs: fire moss and fireweed first (our burn
+  presets already do this through RULE_BURN_AGE).
+- Edge light (Harper et al. 2005; Dendrobiology 71 edge study; Can. J. For. Res. 34 289): light, temperature and
+  ground flora change up to 20-60 m in; edge-loving grasses, brambles and nitrophilous herbs thin within the first
+  10-30 m, shade herbs and mosses take over deeper in.
+Design (to build after Paulo's pick):
+- Floor species take RULE_STAND_AGE ranges per role: clearing ruderals (0, 4) fade 2, raspberry and clearing grass
+  (1, 15) fade 5, forest herbs and mosses (-1 old growth or 15+) with a slow fade in, so a clearing flips through
+  stages as WorldStand ages it. Wind and beetle kinds share the ruderal stage; fire keeps the burn presets.
+- Edge: floor species get RULE_FOREST_EDGE weights: grass, bramble, nettle strongest from -5 to 15 m in, fading by
+  30 m; shade herbs and moss carpets fade in from 10 to 30 m. Uses the same edge grid as trees' make_edge.
+- Far rings: on RT devices the multimesh buffers get a CPU copy for the path tracer; far ring tiles are past the PT
+  vertex-capture reach, so mark them raster-only (no CPU copy) where the renderer allows. Measure memory before/after.

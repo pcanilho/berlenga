@@ -137,6 +137,8 @@ String TerrainMaterial3D::get_shader_code() const {
 global uniform sampler2D terrain_cover_map : hint_default_black, filter_linear; // rgb sRGB cover colour, a cover share
 global uniform vec4 terrain_cover_rect;
 global uniform sampler2D rock_contact_map : hint_default_black, filter_linear; // RockField3D: r damp ring, g banked fines
+global uniform sampler2D rock_far_cover_map : hint_default_black, filter_linear; // RockField3D far tier: rgb stone colour, a cover
+global uniform vec4 rock_far_cover_rect;
 global uniform vec4 rock_contact_rect;
 uniform float tm_far_start = 300.0;
 uniform float tm_far_fade = 150.0;
@@ -335,7 +337,7 @@ float tm_vn(vec3 p) {
 
 // Sand glitter (docs/ideas/terrain-material.md, "Sand glitter"): a few of the quartz grains (clean cleavage and
 // crystal faces, mica flakes) are near-mirror facets that flash where they reflect the sun, the glitter Journey's
-// sand drew from a random grain normal per pixel (Edwards, GDC 2013). Here physically counted: 0.5 mm grains, 10% of
+// sand drew from a random grain normal per pixel (Edwards, GDC 2013). Here physically counted: 0.5 mm grains, a quarter of
 // them facets with GGX alpha 0.4 normals, so the flashes stay on their grains as the sun and camera hold still and
 // thin out with distance (a pixel's facets are a smaller share of it) instead of turning to noise.
 uint tm_sg_hash(ivec3 q, uint p_salt) {
@@ -356,14 +358,53 @@ vec3 tm_sg_tilt(vec3 p_n, float p_r1, float p_r2) {
 	float phi = 6.2831853 * p_r2;
 	return normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
 }
-// Under the path tracer every sample lands on one grain: 10% of them are the facets (their own normal, smooth),
-// the rest keep the sand's rough specular, so the tracer integrates the footprint's own glints at any distance.
-vec4 tm_sand_grain_facet(vec3 p_pos, vec3 p_n) {
-	uint h = tm_sg_hash(ivec3(floor(p_pos / 0.0005)), 3u);
-	if (float(h & 0x3ffu) / 1023.0 >= 0.1) {
-		return vec4(p_n, 0.0);
+// How many of the facets in a pixel's footprint mirror the sun, as the share of a sharp coat lobe (alpha 0.011) on the
+// half vector that draws them: count = facets in the footprint x the chance one's normal lies within the sun's disc of
+// the half vector (GGX alpha 0.4 facets), Poisson drawn per footprint cell (the counting of Zirr and Kaplanyan 2016 /
+// Deliot and Belcour 2023 with the sun as the one light). Each such facet adds its share of the pixel times the sun's
+// radiance. The draw is fixed per cell, so raster and the path tracer (whose samples share the pixel's cell) show the
+// same flashes, and the tracer's image converges to them instead of to per-sample speckle. Zero: no flash.
+float tm_sg_coat(vec3 p_wp, vec3 p_n, vec3 p_l, vec3 p_v, float p_fp, float p_share) {
+	vec3 h = normalize(p_l + p_v);
+	float noh = dot(p_n, h);
+	float voh = max(dot(p_v, h), 0.05);
+	if (noh <= 0.0 || dot(p_n, p_l) <= 0.0) {
+		return 0.0;
 	}
-	return vec4(tm_sg_tilt(p_n, float((h >> 10u) & 0x3ffu) / 1024.0, float((h >> 20u) & 0x3ffu) / 1023.0), 1.0);
+	const float grain = 0.0005;
+	float fp = max(p_fp, grain);
+	// sr a facet catches the sun over: the sun's disc (0.53 degree) blurred by the facets' own curvature to some 1.6
+	// degrees across. Wider (it was 3 degrees) dims every flash in proportion, below what a near-flat quartz face
+	// mirroring the sun gives: they vanished at 640 wide.
+	const float omega_acc = 6.0e-4;
+	float dd = noh * noh * (0.16 - 1.0) + 1.0;
+	float df = 0.16 / (3.14159265 * dd * dd);
+	// Facets: a quarter of the grains' area (cleavage and crystal faces, several to a grain).
+	float lam = 0.25 * (fp / grain) * (fp / grain) * df * noh * omega_acc / (4.0 * voh);
+	float level = floor(log2(fp / grain));
+	uint hh = tm_sg_hash(ivec3(floor(p_wp / (grain * exp2(level)))), uint(level) + 11u);
+	float r0 = float(hh & 0xffffu) / 65536.0;
+	float r1 = (float(hh >> 16u) + 0.5) / 65536.0;
+	// Poisson draw without a loop (the path tracer's hit shader stays small): the CDF up to three facets below a
+	// mean of 1.5, the normal approximation above it.
+	float k = 0.0;
+	if (lam < 1.5) {
+		float e = exp(-lam);
+		k = r0 > e ? 1.0 : 0.0;
+		k += r0 > e * (1.0 + lam) ? 1.0 : 0.0;
+		k += r0 > e * (1.0 + lam + 0.5 * lam * lam) ? 1.0 : 0.0;
+	} else {
+		k = max(round(lam + sqrt(lam) * sqrt(-2.0 * log(r1)) * cos(6.2831853 * r0)), 0.0);
+	}
+	if (k <= 0.0) {
+		return 0.0;
+	}
+	// Pixel radiance over the coat's peak response: k facets of (grain / footprint)^2 of the pixel, each the sun's
+	// irradiance spread over the facet's catch (1 / omega_acc) against D_GGX(alpha 0.011) at its peak times the coat's
+	// visibility (0.25 / LoH^2).
+	float loh = max(dot(p_l, h), 0.1);
+	float area = (grain / fp) * (grain / fp);
+	return clamp(k * area * p_share / omega_acc / (1.0 / (3.14159265 * 0.011 * 0.011) * 0.25 / (loh * loh)), 0.0, 1.0);
 }
 
 // A tangent-space normal from a projection plane as a world-space perturbation (whiteout-style: added to the
@@ -444,6 +485,30 @@ vec4 tm_hex(sampler2D t, vec2 uv, vec2 dx, vec2 dy, bool nmap) {
 		if (has_h) {
 			c += vformat("\th = tm_hex(tm_%s_height_tex, pr.uv0, dx0, dy0, false).r * pr.w0 + (pr.w1 > 0.0 ? tm_hex(tm_%s_height_tex, pr.uv1, dx1, dy1, false).r * pr.w1 : 0.0);\n", n, n);
 		}
+		if (!has_a && i != LAYER_SAND) {
+			// A layer without textures is one flat colour (a meadow, bank or hillside read as a painted plane): give it
+			// procedural tone over 9 m and 2.2 m (patches of damper, stonier or more organic ground) and, while the
+			// pixel is finer than them, 0.25 m and 0.06 m clods and grit as tone and a light bump (value noise, the
+			// bump by forward differences, each octave faded out as the footprint nears it so nothing shimmers).
+			c += R"(	{
+		float fp = max(length(dpx), length(dpy));
+		albedo *= (0.84 + 0.32 * tm_vn(p / 9.0 + 31.0)) * (0.88 + 0.24 * tm_vn(p / 2.2 + 47.0));
+		const float L[2] = float[2](0.25, 0.06);
+		for (int k = 0; k < 2; k++) {
+			float f = 1.0 - smoothstep(0.25 * L[k], 0.6 * L[k], fp);
+			if (f <= 0.0) {
+				break;
+			}
+			vec3 q = p / L[k] + vec3(13.0 * float(k));
+			float v0 = tm_vn(q);
+			vec3 g = vec3(tm_vn(q + vec3(0.35, 0.0, 0.0)), tm_vn(q + vec3(0.0, 0.35, 0.0)), tm_vn(q + vec3(0.0, 0.0, 0.35))) - v0;
+			g -= n * dot(g, n);
+			dn -= g * 0.6 * f;
+			albedo *= 1.0 + 0.16 * (v0 - 0.5) * f;
+		}
+	}
+)";
+		}
 		c += "}\n";
 	}
 	// Sand with no normal texture of its own: the surface's grain-scale relief (sorted grains, impact pits, a few
@@ -520,15 +585,54 @@ float tm_cl_noise(vec3 p) {
 	float b = mix(mix(tm_cl_hash(q.x, q.y, q.z + 7920), tm_cl_hash(q.x + 1, q.y, q.z + 7920), f.x), mix(tm_cl_hash(q.x, q.y + 1, q.z + 7920), tm_cl_hash(q.x + 1, q.y + 1, q.z + 7920), f.x), f.y);
 	return mix(a, b, f.z);
 }
+// The beds (Landscape3D::_cliff_offset): 12 m units of 1 to 5 beds of log-normal thickness, about one in four hard
+// and proud, each bed's ledge swelling and breaking along the face. Returns the beds' offset; r_bed the bed's index.
+float tm_cl_proud(vec3 p, int b) {
+	float hard = tm_cl_hash(b, 11, 3);
+	float base = hard > 0.75 ? 0.6 + 1.4 * (hard - 0.75) * 4.0 : (hard - 0.4) * 0.9;
+	float run = tm_cl_noise(vec3(p.x * 0.06, float(b) * 1.37, p.z * 0.06));
+	return base * smoothstep(0.4, 0.7, run) * (0.6 + 0.8 * run);
+}
+float tm_cl_beds(vec3 p, out int r_bed) {
+	const float U = 12.0;
+	float yb = p.y + (tm_cl_noise(p * 0.05) - 0.5) * 4.0 + (tm_cl_noise(p * 0.013 + vec3(5.0, 0.0, 2.0)) - 0.5) * 10.0;
+	int unit = int(floor(yb / U));
+	float fu0 = yb - float(unit) * U;
+	int nb = 1 + int(tm_cl_hash(unit, 21, 4) * 4.999);
+	float wb[5];
+	float wsum = 0.0;
+	for (int i = 0; i < 5; i++) {
+		wb[i] = i < nb ? exp(1.1 * (tm_cl_hash(unit, i, 17) + tm_cl_hash(unit, i, 19) - 1.0) * 1.7) : 0.0;
+		wsum += wb[i];
+	}
+	int bi = nb - 1;
+	float lo = 0.0;
+	float T = U;
+	float acc = 0.0;
+	bool found = false;
+	for (int i = 0; i < 5; i++) {
+		if (i < nb && !found) {
+			float th = U * wb[i] / wsum;
+			if (fu0 < acc + th || i == nb - 1) {
+				bi = i;
+				T = th;
+				lo = acc;
+				found = true;
+			}
+			acc += th;
+		}
+	}
+	int bed = unit * 8 + bi;
+	int bed_up = bi + 1 < nb ? bed + 1 : (unit + 1) * 8;
+	float fy = fu0 - lo;
+	float lip = min(1.5, max(0.6, T * 0.5));
+	float ty = clamp((fy - (T - lip)) / lip, 0.0, 1.0);
+	r_bed = bed;
+	return mix(tm_cl_proud(p, bed), tm_cl_proud(p, bed_up), ty * ty * (3.0 - 2.0 * ty));
+}
 float tm_cl_offset(vec3 p) {
-	const float T = 3.0;
-	float yb = p.y + (tm_cl_noise(p * 0.05) - 0.5) * 4.0;
-	int bed = int(floor(yb / T));
-	float fy = yb - float(bed) * T;
-	float o0 = tm_cl_hash(bed, 11, 3) * 2.0 - 1.0;
-	float o1 = tm_cl_hash(bed + 1, 11, 3) * 2.0 - 1.0;
-	float ty = clamp((fy - (T - 1.5)) / 1.5, 0.0, 1.0);
-	float o = mix(o0, o1, ty * ty * (3.0 - 2.0 * ty));
+	int bed;
+	float o = tm_cl_beds(p, bed);
 	float u = p.x * 0.8 + p.z * 0.6 + tm_cl_hash(bed, 5, 1) * 4.5;
 	int jb = int(floor(u / 4.5));
 	float fu = u - float(jb) * 4.5;
@@ -562,14 +666,8 @@ vec3 tm_cl_normal(vec3 p, vec3 nb, float k, float e) {
 		// foot. The finest noise term is left out of the march: its shadows are smaller than the steps.
 		c += R"(
 float tm_cl_offset_coarse(vec3 p) {
-	const float T = 3.0;
-	float yb = p.y + (tm_cl_noise(p * 0.05) - 0.5) * 4.0;
-	int bed = int(floor(yb / T));
-	float fy = yb - float(bed) * T;
-	float o0 = tm_cl_hash(bed, 11, 3) * 2.0 - 1.0;
-	float o1 = tm_cl_hash(bed + 1, 11, 3) * 2.0 - 1.0;
-	float ty = clamp((fy - (T - 1.5)) / 1.5, 0.0, 1.0);
-	float o = mix(o0, o1, ty * ty * (3.0 - 2.0 * ty));
+	int bed;
+	float o = tm_cl_beds(p, bed);
 	float u = p.x * 0.8 + p.z * 0.6 + tm_cl_hash(bed, 5, 1) * 4.5;
 	int jb = int(floor(u / 4.5));
 	float fu = u - float(jb) * 4.5;
@@ -1442,8 +1540,17 @@ void fragment() {
 			cover_lin *= grass_ground_far_scale.rgb;
 )";
 		}
+		// The cover map is 4 m texels blurred over 12 m: one flat colour per field. A canopy seen from afar is
+		// clumps and gaps: tone varies over 12 m and 2 m (and 0.4 m while a pixel is finer than that), and where the
+		// clumps thin the bare ground's own texture shows through, so far meadows and banks are not painted planes.
 		c += R"(
-			albedo = mix(albedo, mix(tm_bare, cover_lin, cover.a), far_t);
+			float tm_cv1 = tm_vn(wp * 0.083 + 5.0);
+			float tm_cv2 = tm_vn(wp * 0.5 + 9.0);
+			float tm_cv3 = mix(tm_vn(wp * 2.5 + 13.0), 0.5, smoothstep(0.1, 0.4, tm_hb_fp));
+			cover_lin *= (0.8 + 0.4 * tm_cv1) * (0.86 + 0.28 * tm_cv2) * (0.9 + 0.2 * tm_cv3);
+			cover_lin *= mix(vec3(1.06, 1.0, 0.86), vec3(0.95, 1.0, 1.08), tm_cv1);
+			float tm_ca = cover.a * smoothstep(0.2, 0.5, 0.4 * tm_cv1 + 0.6 * tm_cv2);
+			albedo = mix(albedo, mix(tm_bare, cover_lin, mix(cover.a, tm_ca, 0.6)), far_t);
 			tm_far_t = far_t;
 			tm_far_cover = cover.a;
 		}
@@ -1481,6 +1588,22 @@ void fragment() {
 		}
 	}
 )";
+	// Far stones (RockField3D's far tier): past where the rockfall blocks and boulders thin out (whole to 300 m, thinned
+	// to 600 m), their colour and plan cover from the rocks' 32 m map carries them out to 4 km, so a boulder field
+	// stays a stony slope at range instead of fading to the bare layers. Fades at the map's edge.
+	c += R"(	if (rock_far_cover_rect.z > 0.0) {
+		vec2 fuv = (wp.xz - rock_far_cover_rect.xy) / rock_far_cover_rect.zw;
+		if (all(greaterThanEqual(fuv, vec2(0.0))) && all(lessThanEqual(fuv, vec2(1.0)))) {
+			vec4 fc = textureLod(rock_far_cover_map, fuv, 0.0);
+			float far_k = smoothstep(250.0, 700.0, length(wp - CAMERA_POSITION_WORLD));
+			vec2 edge = min(fuv, 1.0 - fuv);
+			far_k *= smoothstep(0.0, 0.05, min(edge.x, edge.y));
+			float k = fc.a * far_k * 0.8 * (0.8 + 0.4 * tm_vn(wp * 0.03 + 41.0));
+			albedo = mix(albedo, fc.rgb, k);
+			rough = mix(rough, max(rough, 0.85), k);
+		}
+	}
+)";
 	// Saturated sand: below the swash's reach (some 0.4 to 0.9 m over the still sea, wandering with the waves' runup)
 	// and under the sea, beach and bar sand is wet through: darker and glossier (porous darkening, Lagarde 2013), so a
 	// bar just awash reads as the sea's wet floor and not a pale dry plate laid on the water.
@@ -1498,8 +1621,9 @@ void fragment() {
 		// Freshly turned ground is darker until it dries.
 		c += "\tvec2 gd = ground_deform_tint(wp);\n\talbedo *= gd.x;\n\trough = clamp(rough * gd.y, 0.0, 1.0);\n";
 		// Wind ripples past their real geometry (GroundSurface3D's 4 m window): the grown field's slope as a normal
-		// over the sand of the patch, as BaseMaterial3D draws it.
-		c += "\tvec2 gr_far = ground_ripple_far_slope(wp.xz, length(tm_dpx));\n\tsn = normalize(sn - vec3(gr_far.x, 0.0, gr_far.y));\n";
+		// over the sand of the patch, as BaseMaterial3D draws it, and past the patch over the dune field's sand
+		// (far_ripples), by this material's sand share.
+		c += "\tvec3 gr_far = ground_ripple_far_slope(wp.xz, length(tm_dpx), wn.y, tm_sand_b);\n\tsn = normalize(sn - vec3(gr_far.x, 0.0, gr_far.y));\n\talbedo *= gr_far.z;\n";
 	}
 	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5 * tm_gc_spec;\n";
 	if (grass_tint_enabled) {
@@ -1535,9 +1659,11 @@ void fragment() {
 	}
 	if (wetness_enabled) {
 		// Rain soaks the ground by each layer's porosity (Lagarde 2013), before snow lies on it.
-		c += "\tweather_wetness_apply(max(tm_wetness * weather_wetness_at(wp), tm_gwet), wn.y, metallic, porosity, albedo, rough);\n";
+		// On printed ground a wet track's water lies in its prints (ground_contact_shape()).
+		c += ground_deform_enabled ? "\tfloat tm_wwet = weather_wetness_at(wp, ground_contact_shape(wp.xz));\n" : "\tfloat tm_wwet = weather_wetness_at(wp);\n";
+		c += "\tweather_wetness_apply(max(tm_wetness * tm_wwet, tm_gwet), wn.y, metallic, porosity, albedo, rough);\n";
 		// A film of rain water drowns the grains' facets.
-		c += "\ttm_sand_dry *= 1.0 - smoothstep(0.05, 0.3, tm_wetness * weather_wetness_at(wp));\n";
+		c += "\ttm_sand_dry *= 1.0 - smoothstep(0.05, 0.3, tm_wetness * tm_wwet);\n";
 		// Hoarfrost on clear cold nights (WeatherMap3D dew_and_frost).
 		c += "\tweather_frost_apply(weather_frost_at(wp), wn.y, albedo, rough);\n";
 	} else if (ground_deform_enabled) {
@@ -1587,7 +1713,9 @@ void fragment() {
 			vec2 fs_uv = fs_st / terrain_sun_horizon_size.xy;
 			if (all(greaterThanEqual(fs_uv, vec2(0.0))) && all(lessThanEqual(fs_uv, vec2(1.0)))) {
 				vec2 fs_size = vec2(textureSize(terrain_sun_horizon_map, 0));
-				float fs_hz = textureLod(terrain_sun_horizon_map, (fs_uv * (fs_size - 1.0) + 0.5) / fs_size, 0.0).r;
+				// The tangent moved to the pixel's own height (the grid is 8 m: crests stand above it, hollows under it).
+				vec3 fs_m = textureLod(terrain_sun_horizon_map, (fs_uv * (fs_size - 1.0) + 0.5) / fs_size, 0.0).rgb;
+				float fs_hz = fs_m.r + (fs_m.b - wp.y) * fs_m.g;
 				float fs_tan = fs_l.y / fs_run;
 				// The sun's disc (0.53 degrees) and the grid's own smoothing widen the edge; a small bias keeps the
 				// ground from shading itself on its own slope.
@@ -1627,56 +1755,32 @@ void fragment() {
 		float sg = tm_sand_b * tm_gc_spec * tm_sand_dry)") + (snow_enabled ? " * (1.0 - step(0.5, snow))" : "") + R"(;
 		if (sg > 0.01) {
 			if (IN_PATH_TRACER) {
-				vec4 gf = tm_sand_grain_facet(wp, wn);
-				if (gf.w > 0.5) {
-					SPECULAR_NORMAL = normalize((VIEW_MATRIX * vec4(gf.xyz, 0.0)).xyz);
-					ROUGHNESS = mix(ROUGHNESS, 0.12, sg);
+				// The pixel's flashes as in raster (the ray cone's footprint, back to the pixel's own width), each
+				// sample taking the facet's mirror lobe with the chance of its share: the samples land on grains all
+				// over the pixel, so a grain-scale hash is their uniform draw.
+				vec3 sg_l = relief_sun_direction();
+				float sg_fp = RAY_FOOTPRINT;
+				if (dot(sg_l, sg_l) > 0.5 && sg_fp > 0.0) {
+					vec3 sg_v = normalize((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).xyz);
+					sg_fp *= max(abs(dot(wn, sg_v)), 0.05);
+					float coat = tm_sg_coat(wp, sn, sg_l, sg_v, sg_fp, sg);
+					if (coat > 0.0 && float(tm_sg_hash(ivec3(floor(wp / 0.0005)), 3u) & 0xffffu) / 65536.0 < coat) {
+						SPECULAR_NORMAL = normalize((VIEW_MATRIX * vec4(normalize(sg_l + sg_v), 0.0)).xyz);
+						ROUGHNESS = 0.1;
+					}
 				}
 			} else {
-				// Raster: how many of the facets in the pixel mirror the sun (count = facets in the footprint x the
-				// chance one's normal lies within the sun's disc of the half vector, GGX alpha 0.4 facets, Poisson
-				// drawn per footprint cell: the counting of Zirr and Kaplanyan 2016 / Deliot and Belcour 2023 with
-				// the sun as the one light). Each such facet adds its share of the pixel times the sun's radiance,
-				// drawn as the coat's lobe turned onto the half vector, so it is shadowed and lit as the sun is.
+				// Raster: the flashes drawn as the coat's lobe turned onto the half vector, so they are shadowed and
+				// lit as the sun is.
 				vec3 sg_l = sun_direction();
 				if (dot(sg_l, sg_l) > 0.5) {
 					vec3 sg_v = normalize(CAMERA_POSITION_WORLD - wp);
 					vec3 sg_h = normalize(sg_l + sg_v);
-					float noh = dot(sn, sg_h);
-					float voh = max(dot(sg_v, sg_h), 0.05);
-					if (noh > 0.0 && dot(sn, sg_l) > 0.0) {
-						float sg_pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
-						float sg_fp = max(PROJECTION_MATRIX[3][3] != 0.0 ? sg_pix : length(VERTEX) * sg_pix, 0.0005);
-						const float grain = 0.0005;
-						// sr a facet catches the sun over: the sun's disc (0.53 degree) blurred by the facets' own
-						// curvature and pitting to some 1.5 degrees across each way.
-						const float omega_acc = 2.1e-3;
-						float dd = noh * noh * (0.16 - 1.0) + 1.0;
-						float df = 0.16 / (3.14159265 * dd * dd);
-						float lam = 0.1 * (sg_fp / grain) * (sg_fp / grain) * df * noh * omega_acc / (4.0 * voh);
-						float level = floor(log2(sg_fp / grain));
-						uint h = tm_sg_hash(ivec3(floor(wp / (grain * exp2(level)))), uint(level) + 11u);
-						float r0 = float(h & 0xffffu) / 65536.0;
-						float r1 = (float(h >> 16u) + 0.5) / 65536.0;
-						float k = 0.0;
-						if (lam < 6.0) {
-							float pk = exp(-lam);
-							float cdf = pk;
-							for (int i = 1; i < 12 && r0 > cdf; i++) {
-								pk *= lam / float(i);
-								cdf += pk;
-								k = float(i);
-							}
-						} else {
-							k = max(round(lam + sqrt(lam) * sqrt(-2.0 * log(r1)) * cos(6.2831853 * r0)), 0.0);
-						}
-						if (k > 0.0) {
-							// Pixel radiance over the coat's peak response: k facets of (grain / footprint)^2 of the
-							// pixel, each the sun's irradiance spread over the facet's catch (1 / omega_acc) against
-							// D_GGX(alpha 0.011) at its peak times the coat's visibility (0.25 / LoH^2).
-							float loh = max(dot(sg_l, sg_h), 0.1);
-							float area = (grain / sg_fp) * (grain / sg_fp);
-							float coat = k * area * sg / omega_acc / (1.0 / (3.14159265 * 0.011 * 0.011) * 0.25 / (loh * loh));
+					float sg_pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+					float sg_fp = PROJECTION_MATRIX[3][3] != 0.0 ? sg_pix : length(VERTEX) * sg_pix;
+					float coat = tm_sg_coat(wp, sn, sg_l, sg_v, sg_fp, sg);
+					{
+						if (coat > 0.0) {
 							vec3 sg_t = normalize(cross(abs(sn.z) < 0.99 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), sn));
 							vec3 vt = normalize((VIEW_MATRIX * vec4(sg_t, 0.0)).xyz);
 							vec3 vb = normalize((VIEW_MATRIX * vec4(cross(sn, sg_t), 0.0)).xyz);

@@ -169,6 +169,7 @@ public:
 		PRESET_FIRE_MOSS,
 		PRESET_CHARRED_STEMS,
 		PRESET_BURNT_TUSSOCK,
+		PRESET_REINDEER_LICHEN, // Cladonia rangiferina / stellaris: pale branched cushions on dry boreal pine floors.
 		PRESET_MAX,
 	};
 
@@ -306,6 +307,7 @@ private:
 	void _tint_since(Surface p_surface, int p_from, const Color &p_tint);
 	void _build_fireweed();
 	void _build_fire_moss();
+	void _build_reindeer_lichen();
 	void _build_charred_stems();
 	void _build_burnt_tussock();
 	void _build_moss();
@@ -547,6 +549,7 @@ public:
 		FLOOR_EASTERN_OAK,
 		FLOOR_PINE_HEMLOCK,
 		FLOOR_MEDITERRANEAN, // Cork and holm oak, stone pine (montado, dehesa): dry grass and herbs, rockrose and lavender patches.
+		FLOOR_BOREAL_TAIGA, // Pine and spruce with birch burn patches: reindeer lichen under open pine, feather moss under spruce.
 		FLOOR_MAX,
 	};
 	static Array stand_litter_leaves(FloorStand p_stand, const Dictionary &p_season = Dictionary());

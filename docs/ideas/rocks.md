@@ -1004,6 +1004,14 @@ stem). Now:
   blocks, so it reads as a fallen face. Toppling stability: Hoek and Bray, Rock Slope Engineering (1981), ch. 9.
 - Hoodoo caps: chips off the cap edge, a tilt of 3 to 6 degrees, and tafoni down to a few (paired pits read as eyes).
 
+Round 9 (20 Nov). Checked against the foot only, the column still overhung its lower third at the notch's roof (a
+shelf), with big smooth faces above. Now every level must lie inside the plan of the levels just below it (their
+union over about a bed, 0.3c, so a soft bed's groove does not count as a neck), grown by a lip of 0.1c (about 0.3 m
+on a 25 m stack), and inside every such plan further down, from the foot to the top; each bed's cut sits back by its
+own amount, in blocks. The notch is shallow (0.07c, no caves under it), bed setbacks 0.04 to 0.1c, the block offsets
+and fallen blocks all the way up, face swells 0.1c. Hoodoo caps: a slab about a quarter as thick as it is wide, flat
+topped, tilted 2 to 4 degrees, standing out all round (a little more on one side).
+
 ## Far rocks (19 Nov, Paulo picked all three)
 
 Before: each layer ended at a fixed radius with a hard cut (scree 60 m, river 120 m, glacial 300 m, rockfall 600 m,
@@ -1017,9 +1025,25 @@ reach (docs/ideas/vegetation.md, "Far vegetation without bald ground").
    ones last); past half a scatter layer's radius a cell draws only the first (r/2 / d)^2 of them, in eighths, and
    none by the radius. Landmark layers (tors, coast, landforms) stay whole.
 2. Big stones to the horizon: stones over about 2 m, tors, stacks and hoodoos to 4 km on their coarsest LOD; cells
-   past the near radius keep only those, rebuilt in full as the camera nears.
+   past the near radius keep only those, rebuilt in full as the camera nears. Built (`far_radius` 4000 m,
+   `far_min_size` 2 m): blocks of 8 x 8 cells, each cell placed and packed exactly as its near cell (same seed),
+   keeping the records of its big stones, which lead each group's records, so a thinning near cell keeps them to the
+   end and the swap is the same stone. A block holds only the cells no near cell covers and is placed again on a
+   worker when that set changes. Cave mouths (which open the terrain as they are placed) are not drawn far.
 3. Far ground takes the rocks' colour: a rock cover map to 4 km (32 m texels) from the same placement rules, read
    by the terrain material as a tint and roughness where each field is.
+
+Added 20 Nov (ground detail thread, Paulo's pick "thinning plus 4 km rock colour"):
+- `far_widen` (on): a thinned cell's survivors past the far tier's big stones grow so their plan cover (reach
+  squared) matches the whole group's, capped at 1.6x, as Ghost of Tsushima widens its thinned grass. The cover holds
+  to about 0.8 of the radius, where the terrain's own scree blocks come in. Drawn buffer only: xforms, colliders,
+  breakables and the far blocks' records stay at true size. Scree bench, eye level round the camera: 226 of 715
+  thinned groups widened, 1.36x on average; raster and PT keep the edge's stone cover.
+- build_area applies the thinning round the target, so stills show what play shows (it drew every cell whole).
+- The far cover map takes coarse river beds (45% stone over the bed where the median is drawn near). In the bench
+  world only narrow boulder streams qualify, so it adds 67 faint texels; it matters where big rivers carry boulders.
+  Shore stones are left out: the shingle band is a few metres wide, under a tenth of a 32 m texel.
+- Bench: --focus=camera, --no-far-widen, --save-far-cover=path; get_far_cover_texture().
 
 ## Next options (17 Nov research, nothing built before Paulo picks)
 

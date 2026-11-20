@@ -1642,6 +1642,7 @@ void TextureStorage::_texture_2d_update(RID p_texture, const Ref<Image> &p_image
 	Ref<Image> validated = _validate_texture_format(p_image, f);
 
 	RD::get_singleton()->texture_update(tex->rd_texture, p_layer, validated->get_data());
+	tex->content_version = ++content_serial;
 
 	// The decal and area light atlases hold copies: refresh them, or projectors and decals keep the old image.
 	decal_atlas_mark_dirty_on_texture(p_texture);
@@ -1688,6 +1689,7 @@ void TextureStorage::texture_3d_update(RID p_texture, const Vector<Ref<Image>> &
 	}
 
 	RD::get_singleton()->texture_update(tex->rd_texture, 0, all_data);
+	tex->content_version = ++content_serial;
 }
 
 void TextureStorage::texture_external_update(RID p_texture, int p_width, int p_height, uint64_t p_external_buffer) {
@@ -1724,6 +1726,7 @@ void TextureStorage::texture_proxy_update(RID p_texture, RID p_proxy_to) {
 	tex->proxy_to = p_proxy_to;
 	tex->is_render_target = false;
 	tex->is_proxy = true;
+	tex->content_version = ++content_serial;
 	tex->proxies.clear();
 	proxy_to->proxies.push_back(p_texture);
 	tex->canvas_texture = canvas_texture;
@@ -2060,6 +2063,7 @@ void TextureStorage::texture_replace(RID p_texture, RID p_by_texture) {
 	*tex = *by_tex;
 
 	tex->proxies = proxies_to_update; //restore proxies, so they can be updated
+	tex->content_version = ++content_serial;
 
 	if (tex->canvas_texture) {
 		tex->canvas_texture->diffuse = p_texture; //update
@@ -2254,6 +2258,18 @@ void TextureStorage::texture_rd_initialize(RID p_texture, const RID &p_rd_textur
 	texture.is_proxy = false;
 
 	texture_owner.initialize_rid(p_texture, texture);
+}
+
+uint64_t TextureStorage::texture_get_content_version(RID p_texture) const {
+	const Texture *tex = texture_owner.get_or_null(p_texture);
+	if (tex == nullptr) {
+		return 0;
+	}
+	if (tex->proxy_to.is_valid()) {
+		const Texture *to = texture_owner.get_or_null(tex->proxy_to);
+		return to != nullptr ? MAX(to->content_version, tex->content_version) : tex->content_version;
+	}
+	return tex->content_version;
 }
 
 RID TextureStorage::texture_get_rd_texture(RID p_texture, bool p_srgb) const {

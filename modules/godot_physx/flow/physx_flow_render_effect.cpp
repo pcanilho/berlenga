@@ -68,12 +68,12 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 // The source is sampled, not loaded as an image: the Mobile renderer's color
 // buffer can't be a storage image.
 layout(set = 0, binding = 0) uniform sampler2D src;
-layout(set = 0, binding = 1, rgba16f) uniform restrict writeonly image2D dst;
+layout(set = 0, binding = 1, rgba16f) uniform restrict image2D dst;
 
 layout(push_constant, std430) uniform Params {
 	ivec2 size;
 	float scale; // on rgb
-	float pad;
+	float keep_alpha; // 1: the destination keeps its own alpha
 } params;
 
 void main() {
@@ -82,7 +82,7 @@ void main() {
 		return;
 	}
 	vec4 c = texelFetch(src, p, 0);
-	imageStore(dst, p, vec4(c.rgb * params.scale, c.a));
+	imageStore(dst, p, vec4(c.rgb * params.scale, params.keep_alpha > 0.5 ? imageLoad(dst, p).a : c.a));
 }
 )";
 
@@ -284,7 +284,7 @@ bool PhysXFlowRenderEffect::_ensure_copy_pipeline(RenderingDevice *p_rd) {
 	return true;
 }
 
-void PhysXFlowRenderEffect::copy_texture(RenderingDevice *p_rd, const RID &p_src, const RID &p_dst, const Size2i &p_size, float p_scale) {
+void PhysXFlowRenderEffect::copy_texture(RenderingDevice *p_rd, const RID &p_src, const RID &p_dst, const Size2i &p_size, float p_scale, bool p_keep_alpha) {
 	if (!_ensure_copy_pipeline(p_rd)) {
 		return;
 	}
@@ -299,7 +299,7 @@ void PhysXFlowRenderEffect::copy_texture(RenderingDevice *p_rd, const RID &p_src
 		int32_t size[2];
 		float scale;
 		float pad;
-	} push = { { p_size.x, p_size.y }, p_scale, 0.0f };
+	} push = { { p_size.x, p_size.y }, p_scale, p_keep_alpha ? 1.0f : 0.0f };
 	const RD::ComputeListID list = p_rd->compute_list_begin();
 	p_rd->compute_list_bind_compute_pipeline(list, copy_pipeline);
 	p_rd->compute_list_bind_uniform_set(list, set, 0);

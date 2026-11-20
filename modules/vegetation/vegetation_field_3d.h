@@ -182,6 +182,11 @@ private:
 	float _shade_at(const Vector2 &p_xz, float *r_conifer = nullptr) const; // No lock: main thread, or under crown_lock.
 
 	Ref<Biome> biome;
+	LocalVector<int> stand_disturbances; // WorldStand event ids this field reported (_report_stand_disturbances).
+	LocalVector<Vector4> stand_disturbance_discs; // Their (x, z, radius, kind), to skip unchanged re-reports.
+	LocalVector<float> stand_disturbance_years;
+	void _report_stand_disturbances(bool p_clear_only);
+	void _stand_discs(LocalVector<Vector4> &r_discs, LocalVector<float> &r_years) const;
 	NodePath data_map;
 	float tile_size = 32.0f;
 	int seed = 0;
@@ -218,6 +223,8 @@ private:
 		bool wind_flag = false; // Meta "wind_flag": +X turned down the prevailing wind (flagged trees, krummholz).
 		Vector2 fall_dir; // Meta "fall_dir" (world xz, unit): +X turned along it, +-fall_scatter (storm-thrown trees, trees.md 5am); zero none.
 		float fall_scatter = 0.0f;
+		float far_hull_range = 0.0f; // Meta "far_hull_range" (trees, trees.md 9b): past it each variant's mesh meta tree_far_hull is drawn instead.
+		float far_top = 0.0f; // Trees (far_widen): the first mesh's top, for the skyline test (trees.md 9c).
 		bool far_widen = false; // Meta "far_widen" (trees, trees.md 9a): the far tail's survivors widened in their transforms per tile.
 		LocalVector<float> bank_slopes; // Per variant, mesh meta "tree_ground_slope".x (radians); empty: no bank forms.
 		// Per variant, mesh meta "tree_fire_years" (years since the fire the tree was grown for, -1 unburnt); empty: none.
@@ -225,6 +232,8 @@ private:
 		LocalVector<float> fire_years;
 		LocalVector<Vector2> fire_bands; // Per variant, mesh meta "tree_fire_band" (years from, to); empty: nearest years.
 		float fire_years_max = 0.0f;
+		LocalVector<float> base_lifts; // Per variant, mesh meta "tree_base_lift" (m in mesh space: stilt roots, the origin that far above the ground); empty: none.
+		Vector2 open_side; // Mesh meta "tree_open_side" (xz, unit) of its first mesh carrying it: turned to face the open (forest edges); zero none.
 	};
 	struct PlaceSetup {
 		LocalVector<PlaceSpecies> species;
@@ -292,6 +301,32 @@ private:
 		int burn_ny = 0;
 		Rect2 burn_rect;
 		float burn_at(const Vector2 &p_xz) const;
+		// Stand age and disturbance (WorldStand), read when a species uses the stand rules: years (-1 old growth) and
+		// kind on the same kind of grid, nearest cell, and the distinct stand rules of the species (age range, age
+		// fade, kind range, kind fade) to tell which changes move a species across its range.
+		struct StandRule {
+			Vector2 age;
+			float age_fade = 0.0f;
+			Vector2 kind;
+			float kind_fade = 0.0f;
+			bool operator==(const StandRule &p_o) const { return age == p_o.age && age_fade == p_o.age_fade && kind == p_o.kind && kind_fade == p_o.kind_fade; }
+		};
+		LocalVector<StandRule> stand_rules;
+		LocalVector<float> stand_age;
+		LocalVector<uint8_t> stand_kind;
+		int stand_nx = 0;
+		int stand_ny = 0;
+		Rect2 stand_rect;
+		int stand_cell(const Vector2 &p_xz) const;
+		bool stand_differs(float p_age0, int p_kind0, float p_age1, int p_kind1) const;
+		// Signed metres from the forest canopy's edge (RULE_FOREST_EDGE), positive inside, on a grid of 2 m or more over
+		// the map, bilinear; read when a species uses the rule. Empty: no canopy (-1000 everywhere).
+		LocalVector<float> edge;
+		int edge_nx = 0;
+		int edge_ny = 0;
+		Rect2 edge_rect;
+		float edge_at(const Vector2 &p_xz) const;
+		Vector2 edge_open(const Vector2 &p_xz) const; // Unit xz down the edge distance (towards the open); zero where flat.
 	};
 	struct FarAdd {
 		Vector2 xz;
@@ -320,8 +355,16 @@ private:
 	static void _read_sand(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
 	static void _read_sand_mobility(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
 	void _read_burn_age(PlaceSetup &r_setup) const;
+	void _read_stand(PlaceSetup &r_setup) const;
+	void _read_forest_edge(PlaceSetup &r_setup) const;
+	static void _edge_row(void *p_job, uint32_t p_row);
+	static constexpr float EDGE_CLOSED = 0.35f; // Canopy species' summed density times suitability that counts as forest.
+	Rect2 _update_stand(PlaceSetup &r_setup, const Rect2 &p_area) const;
 	void _place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles) const;
 	void _commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes, float p_max_rank = 1.0f);
+	Vector3 stream_eye; // The stream centre when tiles were last committed (skyline trees, trees.md 9c).
+	bool stream_eye_valid = false;
+	static bool _on_skyline(const TerrainDataMap3D *p_map, const Vector3 &p_eye, const Vector3 &p_top);
 	// The maps from the placed crowns and far colour: computed anywhere, applied on the main thread.
 	struct Maps {
 		Rect2 maps_rect; // Canopy, stand shade, forest floor.
@@ -374,6 +417,7 @@ private:
 	// Streaming fields only. Tiles of two sizes (finer near), keyed x, z, level.
 	bool far_shell = true;
 	float far_shell_range = 4000.0f;
+	bool far_shell_clumps = true; // The shell opens into clumps and gaps where its cells are fine enough.
 	struct FarShellTile {
 		MeshInstance3D *mi = nullptr;
 		Vector2 built_at; // The centre its inner and outer edges were cut for.
@@ -433,6 +477,7 @@ private:
 		LocalVector<LocalVector<MultiMeshInstance3D *>> nodes; // Per species.
 		LocalVector<bool> committed;
 		LocalVector<float> committed_keep; // Per species: the share of its plants (by rank) the tile's cells hold.
+		LocalVector<Vector3> committed_eye; // Per species: the stream centre its skyline trees were judged from (trees.md 9c).
 		bool stale = false; // Placed before the ground (holes) or burn ages changed: its replacement is on the way.
 	};
 	struct StreamJob {
@@ -513,6 +558,13 @@ private:
 	double burn_check = 0.0;
 	Rect2 burn_dirty;
 	void _follow_burns(double p_delta);
+	// Stand ages and disturbances (WorldStand.stand_changed): checked twice a second like burns; only tiles where a
+	// species crosses its stand range are placed again (advance_years ages every stand without replacing them all).
+	mutable uint64_t stand_seen = 0;
+	mutable bool stand_follow = false;
+	double stand_check = 0.0;
+	Rect2 stand_dirty;
+	void _follow_stand(double p_delta);
 	bool _path_traced() const;
 	void _update_impostors(bool p_traced);
 	LocalVector<LocalVector<Vector3>> placements; // Per species, world positions.
@@ -655,6 +707,8 @@ public:
 	bool is_far_shell() const { return far_shell; }
 	void set_far_shell_range(float p_range) { far_shell_range = MAX(p_range, 0.0f); }
 	float get_far_shell_range() const { return far_shell_range; }
+	void set_far_shell_clumps(bool p_enabled);
+	bool is_far_shell_clumps() const { return far_shell_clumps; }
 	int get_far_shell_column_count() const { return far_shell_columns; }
 	void set_far_reach(float p_reach) { far_reach = CLAMP(p_reach, 1.0f, 8.0f); }
 	float get_far_reach() const { return far_reach; }

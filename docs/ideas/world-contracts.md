@@ -59,6 +59,8 @@ contract returns with no provider.
 | `season_climate(climate)` (C++) | `WeatherSeason::Climate` | false | The place's climate, for consumers that integrate over days (ground regrowth, frost seed); the math is `modules/world/world_season.h` |
 | `cloud_cover_at(pos)` | 0..1 | 0 | |
 | `high_cloud_cover_at(pos)` | 0..1 | 0 | The high (cirrus) sheet, `WeatherMap3D.get_high_cloud_cover_at`. Kept out of `cloud_cover_at`: optically thin, it shades only through the sun visibility and cloud shadow bake by its own optical depth |
+| `mid_cloud_cover_at(pos)` | 0..1 | 0 | The mid (altocumulus) layer, `WeatherMap3D.get_mid_cloud_cover_at`; its optical depth `get_mid_cloud_optical_depth_at`. Kept out of `cloud_cover_at`: it shades only by its own optical depth through the sun visibility. Follows the rain state, never makes rain. |
+| `cloud_effector_at(pos)` | -1..1 | 0 | Summed strength of the cloud density effectors at a point (`WeatherMap3D.add_cloud_effector`): negative clears cloud, positive adds. Effectors ride the cumulus drift. |
 | `surface_temperature_at(pos)` | C | the air | Exposed ground under a clear night sky runs below the air (`dew_and_frost`) |
 | `water_temperature()` | C | 15 | Open water, lagging the air by about a month |
 | `ground_height_at(pos)` | m | 0 | The terrain the weather sees under the point (its wind terrain), else the map's ground height |
@@ -210,6 +212,25 @@ Tests: `WorldContracts.set_fire(stub)` (`_burn_age_at` in a stub), or WorldBurnS
 
 Consumers: weather (the surface film boils off under a fire), plants (char; grass leans into `fire_wind_map`), cloth
 (`wind_at` adds to its wind), trees (TreeWind3D weakens stem feet by `stem_char_at`; trees killed by `crown_scorch_at` stand as snags that weaken by `burn_age_at`), snow (melt), water (steam), vegetation (VegetationField3D and GrassField3D regrowth by `burn_age_at`, refreshed through the change log).
+
+### Stand age (`WorldStand`; kept by the contract)
+
+Built 20 Nov for forests that age (trees.md 5aq). `WorldContracts::stand()` in C++, `WorldContracts.get_stand()` in
+scripts; `set_stand(stub)` for a test.
+
+| Member | Unit | Default |
+| --- | --- | --- |
+| `stand_age_at(pos)` | years since the last stand-replacing disturbance (world xz) | -1 (old growth) |
+| `disturbance_at(pos)` | int: 0 none, 1 fire, 2 wind, 3 beetle (new kinds appended only) | 0 |
+| `add_disturbance(center, radius, kind, age_years)`, `set_disturbance_age(id, years)`, `remove_disturbance(id)`, `clear_disturbances()` | a disc, years ago; returns an id | |
+| `advance_years(years)` | ages every event added here (fire ages through its producers) | |
+| signal `stand_changed(area)`, `get_stand_generation()`, `stand_changes_since(gen, area)` / `get_stand_changes_since(gen)` | world xz Rect2; as WorldFire's burn changes, which are forwarded here | |
+
+The youngest disturbance at a point wins. Fire comes from `WorldFire.burn_age_at`, stand-replacing unless
+`crown_scorch_at` is between 0 and 5 m (a surface fire); an authored burn scar (no scorch on record) counts. Wind and
+beetle kills are events the trees report: TreeWind3D for a storm's stand-replacing throws, VegetationField3D for
+a placed windthrow or beetle stand (species meta `stand_disturbance`; trees.md 5aq). No stage edges here: each species' own age ranges set them. Readers:
+vegetation (stand age and disturbance rules), trees (succession).
 
 ## Testing
 

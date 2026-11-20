@@ -588,7 +588,7 @@ TypedArray<Resource> PlantGenerator::make_desert(DesertStand p_stand, int p_vari
 			}
 		}
 		// Round the spring pools (OasisSprings3D through VegetationField3D.spring_pools): common reed standing in the
-		// shallows and on the wet shore, rushes on the damp sand behind (Phragmites australis and Juncus rigidus /
+		// shallows and on the wet shore in gappy clonal clumps, rushes on the damp sand behind (Phragmites australis and Juncus rigidus /
 		// maritimus, the oasis pools' and sabkha springs' fringe: Zahran and Willis 2009, "The Vegetation of Egypt";
 		// Ozenda 1977 for the Sahara). Without pools they are not placed.
 		struct PoolSpec {
@@ -597,7 +597,7 @@ TypedArray<Resource> PlantGenerator::make_desert(DesertStand p_stand, int p_vari
 			Vector2 shore; // Metres from the pool's shore, negative in the water.
 			float fade, patch_scale, patch_cover, visibility;
 		};
-		const PoolSpec pool_set[2] = { { P::PRESET_REED, 0.45f, 0.12f, 0.95f, 0.9f, 1.3f, Vector2(-2.0f, 1.2f), 0.6f, 6.0f, 0.75f, 70.0f },
+		const PoolSpec pool_set[2] = { { P::PRESET_REED, 0.4f, 0.15f, 1.0f, 0.85f, 1.35f, Vector2(-2.4f, 0.8f), 0.7f, 4.0f, 0.5f, 70.0f },
 			{ P::PRESET_RUSH, 0.6f, 0.2f, 0.65f, 0.8f, 1.2f, Vector2(0.6f, 4.5f), 1.2f, 5.0f, 0.5f, 30.0f } };
 		for (const PoolSpec &f : pool_set) {
 			Ref<PlantGenerator> gen;
@@ -622,6 +622,12 @@ TypedArray<Resource> PlantGenerator::make_desert(DesertStand p_stand, int p_vari
 			sp->set_align_to_ground(0.2f);
 			sp->set_rule_range(PlantSpecies::RULE_POOL_DISTANCE, f.shore);
 			sp->set_rule_fade(PlantSpecies::RULE_POOL_DISTANCE, f.fade);
+			if (f.shore.x < 0.0f) {
+				// Reed stands in the shallows, thickest there (to about a metre of water; Haslam 1972): the default
+				// keeps every plant out of standing water, which left only a thin fence of reeds on the dry rim.
+				sp->set_rule_range(PlantSpecies::RULE_WATER_DEPTH, Vector2(0.0f, 1.0f));
+				sp->set_rule_fade(PlantSpecies::RULE_WATER_DEPTH, 0.3f);
+			}
 			sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 25.0f));
 			sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 4.0f);
 			sp->set_patch_scale(f.patch_scale);

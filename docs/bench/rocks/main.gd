@@ -51,6 +51,11 @@ extends Node3D
 #                         river or shore; VegetationField3D.obstacles from the field); =off places them hidden (before
 #                         shots, same camera); --dist=m sets the camera's distance from the spot
 #   --only-layer          with --world: only the view's layer is placed
+#   --no-far-thinning     with --world: RockField3D.far_thinning off (each layer whole to its radius, then a cut)
+#   --save-far-cover=p    with --world: save the far cover map (32 m texels to 4 km) and count its stony texels
+#   --focus=camera        with --world: RockField3D follows the camera instead of the spot (far thinning as a player sees it)
+#   --no-far-widen        with --world: thinned cells draw their survivors at their own size (RockField3D.far_widen off)
+#   --no-far              with --world: RockField3D.far_radius 0 (no big stones or landmarks past each layer's radius)
 #   --stone-density=k     with --world: the view's layer density times k (RockField3D.set_layer_density), e.g. a dense block field
 #   --no-ground-detail    with --world: RockField3D.ground_detail off (on by default: stones of 1 to 8 cm round the
 #                         camera as geometry; off for --test); --detail-ref=px image height the reach is set for (1080),
@@ -578,6 +583,8 @@ func _world() -> void:
 		var l: PackedStringArray = args.get("look", "0,0,0").split(",")
 		cam.position = Vector3(float(c[0]), float(c[1]), float(c[2]))
 		cam.look_at(Vector3(float(l[0]), float(l[1]), float(l[2])))
+	if args.get("focus", "") == "camera":
+		focus.global_position = cam.position # --focus=camera: the field streams and thins round the camera, not the spot
 	print("spot %s, camera %s" % [spot, cam.position])
 	print("ground at the spot: generator %.2f, landscape %.2f; camera %s" % [gen.get_height(spot), land.get_height(spot), cam.position])
 	if rocks:
@@ -594,6 +601,11 @@ func _world() -> void:
 		# Ground detail: the stones under min_size near the camera as real geometry (docs/ideas/ground-detail.md);
 		# --detail-ref=px the image height the reach is set for (0: the window's), --detail-pixels=n the smallest drawn.
 		rocks.ground_detail = not (args.has("no-ground-detail") or args.has("test"))
+		rocks.far_thinning = not args.has("no-far-thinning") # --no-far-thinning: every layer drawn whole to its radius (a before frame)
+		rocks.far_widen = not args.has("no-far-widen") # --no-far-widen: thinning without widened survivors
+		# --no-far: no far tier (big stones and landmarks past each layer's radius, to 4 km); off in --test (time).
+		if args.has("no-far") or args.has("test"):
+			rocks.far_radius = 0.0
 		rocks.ground_detail_cover = not args.has("no-ground-cover")
 		rocks.ground_detail_rivers = not args.has("no-river-detail")
 		# --tiles / --no-tiles: tiles of piles on or off (else the default), the A/B of the tiles.
@@ -608,6 +620,22 @@ func _world() -> void:
 		var tb := Time.get_ticks_msec()
 		var built := rocks.build_area(Rect2(spot.x - 160, spot.z - 160, 320, 320))
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
+		if rocks.far_radius > 0.0:
+			# The far tier: big stones and landmarks past each layer's radius, to far_radius (streaming is off here).
+			var tfar := Time.get_ticks_msec()
+			rocks.build_far()
+			print("far tier: %d stones to %.0f m in %d ms" % [rocks.get_far_stone_count(), rocks.far_radius, Time.get_ticks_msec() - tfar])
+			if args.has("save-far-cover"):
+				# --save-far-cover=path.png: the far cover map (rgb stone colour, a cover) as the terrain reads it
+				var fct: Texture2D = rocks.get_far_cover_texture()
+				var fimg: Image = fct.get_image() if fct else null
+				if fimg:
+					fimg.save_png(str(args["save-far-cover"]))
+					var nz := 0
+					for fy in fimg.get_height():
+						for fx in fimg.get_width():
+							nz += 1 if fimg.get_pixel(fx, fy).a > 0.0 else 0
+					print("far cover: %d of %d texels with stone" % [nz, fimg.get_width() * fimg.get_height()])
 		if rocks.ground_detail:
 			print("ground detail: pebbles %d within %.1f m, gravel %d within %.1f m, fine gravel %d within %.1f m" % [
 				rocks.get_ground_detail_count(RockField3D.LAYER_DETAIL_PEBBLE), rocks.get_layer_radius(RockField3D.LAYER_DETAIL_PEBBLE),
@@ -1615,7 +1643,7 @@ func _volume(m: ArrayMesh) -> float:
 	return absf(vol) / 6.0
 
 
-func _test() -> void:
+func _test_parts() -> void:
 	# 1. Every rock type and family.
 	var worst := 0
 	for ti in TYPES.size():
@@ -1684,6 +1712,11 @@ func _test() -> void:
 				tris += (c[Mesh.ARRAY_INDEX] as PackedInt32Array).size() / 3
 		var whole := _volume(m)
 		check(good >= 6 and bonds.size() >= good - 1 and absf(sum / whole - 1.0) < 0.12, "%s fracture: %d pieces, %d bonds, pieces fill %.2f of the stone (field volume %.3f, mesh %.3f), %d triangles, %d ms" % [TYPES[ti], good, bonds.size(), sum / whole, vol, whole, tris, Time.get_ticks_msec() - tf])
+
+
+func _test() -> void:
+	if not args.has("test-world"): # --test-world: only part 3 (the field on a generated world)
+		_test_parts()
 	# 3. The field on a generated world.
 	_world()
 	var wr := Rect2(-1000, -1000, 2000, 2000)
@@ -1701,6 +1734,7 @@ func _test() -> void:
 				floating += 1
 			if l < RockField3D.LAYER_CLIFF and p.y - float(s["ground"]) < -sc * 1.2:
 				buried += 1
+				print("  buried: %s family %d scale %.2f at %s, %.2f under its ground" % [LAYERS[l], int(s["family"]), sc, p, float(s["ground"]) - p.y])
 			# A cliff block's centre lies inside the wall: under the terrain at its own plan position.
 			if l == RockField3D.LAYER_CLIFF and p.y > gen.get_height(p) + 0.1:
 				floating += 1
@@ -2354,6 +2388,9 @@ func _render_later() -> void:
 		if OS.is_stdout_verbose() or args.has("frame-log"):
 			print("frame %d at %d ms" % [i, Time.get_ticks_msec() - tf])
 	print("frame %.1f ms" % ((Time.get_ticks_usec() - t0) / 4000.0))
+	if rocks:
+		var fs: Dictionary = rocks.get_ground_detail_tile_stats()
+		print("far thinning: %d groups thinned, %d widened (mean %.2fx)" % [fs.get("far_thinned_groups", 0), fs.get("far_widened_groups", 0), fs.get("far_widen_mean", 1.0)])
 	if not raster:
 		# The ray-tracing cost of the ground detail (the PC cost bench for "more stones for the same cost": run with and
 		# without --no-ground-detail, path traced, and compare these and the frame time).

@@ -6,11 +6,15 @@ extends Node3D
 # godot --path docs/bench/trees --rendering-driver vulkan -- --stands [options]
 #   --test            place every stand, print the counts and PASS/FAIL, quit
 #   --stand-test=N    the placement checks of stand N only (TreeGenerator.Stand)
+#   --forest-edge=N   make_edge(N): mantle shrubs out in the open, edge trees one-sided toward +X (trees.md 5as)
+#   --succession=N    make_succession(N): every stage present, age ranges and kinds sane, sizes by stage (trees.md 5aq)
 #   --map=path.png    the placement maps of every stand in one image
 #   --edge [--standard]  with --plot: from a fresh coupe across its edge (or at a standard 8 m off)
 #   --plot=N          render stand N (TreeGenerator.Stand) on the valley (--out=path.png, --raster, --spp=N)
 #   --wind=U          with --plot: rigged trees posed by a U m/s wind (TreeWind3D) at --time=T s
 #   --far=R           with --plot: every species ranged R m and streamed (the far tail thins and widens past R/2)
+#   EDGE=1            env, with --plot: the stand with make_edge()'s mantle and edge trees
+#   AGE=y [KIND=k]    env, with --plot: the make_succession() stage at y years after disturbance kind k
 #   --inside          with --plot: the view from inside the stand, 70 m deep
 #   --deep            with --inside: from among the canopy trees, away from the stream
 #   --variants=N      meshes per species (default 1)
@@ -28,7 +32,11 @@ class Valley extends Node3D:
 		# A stream along z at x = 0 in a shallow valley, with low swells.
 		var ax: float = abs(p.x)
 		var bank: float = -0.8 + 0.1 * max(ax - STREAM_HALF, 0.0) if ax > STREAM_HALF else -0.8
-		return bank + 0.8 * min(ax / 20.0, 1.0) * sin(p.z * 0.05) * cos(p.x * 0.04)
+		var h: float = bank + 0.8 * min(ax / 20.0, 1.0) * sin(p.z * 0.05) * cos(p.x * 0.04)
+		if OS.get_environment("RIDGE") != "":
+			# RIDGE=1: the ground rises to a crest 25 m up at the plot's -z edge (skyline trees, trees.md 9c).
+			h += 25.0 * pow(clampf((-p.z + 10.0) / 90.0, 0.0, 1.0), 1.5)
+		return h
 
 class Stream extends Node3D:
 	func get_water_level() -> float:
@@ -41,7 +49,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"olive grove", "date oasis", "beetle spruce", "windthrow", "woodland", "NA woodland"]
+		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "alder carr", "floodplain willow", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -67,6 +75,14 @@ func run(args: Dictionary) -> void:
 	# Fire band variants (five more meshes a species, trees.md 5ah) serve no placement check: off unless --fire.
 	gen.fire_variants = args.has("fire")
 	gen.far_thinning = OS.get_environment("NO_FAR_SCALE") == ""
+	if args.has("forest-edge"):
+		_forest_edge_check(int(args["forest-edge"]))
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("succession"):
+		_succession_check(int(args["succession"]))
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if args.has("region"):
 		use_generator = args.has("generated")
 		north_america = args.has("na")
@@ -101,6 +117,97 @@ func run(args: Dictionary) -> void:
 		get_tree().quit(1 if fails > 0 else 0)
 	elif args.has("plot"):
 		await _render_plot(int(args["plot"]), args)
+
+# Forest edges (trees.md 5as): edge trees carry tree_open_side on species and meshes and lean their crowns to the
+# open (+X: the crown's centre off the stem that way), the mantle shrubs sit mostly out in the open.
+func _forest_edge_check(i: int) -> void:
+	var biome := gen.make_edge(i, variants)
+	var trees := 0
+	var one_sided := 0
+	var mantle := 0
+	var mantle_out := 0
+	var bad := 0
+	for sp in biome.species:
+		var r: Vector2 = sp.get_meta("edge_distance", Vector2(1e9, -1e9))
+		if r.y <= r.x:
+			bad += 1
+		var nm: String = sp.resource_name
+		if nm.contains("(forest edge)"):
+			trees += 1
+			var ok: bool = sp.has_meta("tree_open_side")
+			var shift := 0.0
+			for m in sp.meshes:
+				ok = ok and m.has_meta("tree_open_side")
+				var ab: AABB = m.get_aabb()
+				shift += (ab.position.x + 0.5 * ab.size.x) / maxf(ab.size.x, 0.1)
+			shift /= maxf(sp.meshes.size(), 1)
+			if ok and shift > 0.05:
+				one_sided += 1
+			print("  %s: %.0f..%.0f m, crown centre %.2f of its width toward the open" % [nm, r.x, r.y, shift])
+		elif nm.contains("(edge mantle)"):
+			mantle += 1
+			if r.x + r.y < 0.0:
+				mantle_out += 1
+			print("  %s: %.0f..%.0f m" % [nm, r.x, r.y])
+	var name_i: String = STAND_NAMES[i] if i < STAND_NAMES.size() else str(i)
+	# Groves, oases and parkland have no leading forest tree: a mantle only.
+	var no_lead := i in [TreeGenerator.STAND_STONE_PINE, TreeGenerator.STAND_OLIVE_GROVE, TreeGenerator.STAND_DATE_OASIS]
+	_check(bad == 0 and (trees > 0 or no_lead) and one_sided == trees and mantle >= 3 and mantle_out * 2 >= mantle, "forest edge of %s: %d edge trees (%d one-sided to the open), %d mantle shrubs (%d mostly outside), %d bad ranges" % [name_i, trees, one_sided, mantle, mantle_out, bad])
+
+# Forests that age (trees.md 5aq): the four structural stages (Oliver and Larson 1996) all present, each species'
+# age range forward and its kind a RULE_DISTURBANCE number or -1, the pole stage shorter than the mature lead and
+# the veterans no shorter, and some young stage covering every year from 0 to old growth.
+func _succession_check(i: int) -> void:
+	var biome := gen.make_succession(i, variants)
+	var sps: Array = biome.get_species()
+	var stage := {"legacy": 0, "initiation": 0, "poles": 0, "mature": 0, "old": 0}
+	var bad := 0
+	var covered := PackedFloat32Array()
+	var pole_h := 0.0
+	var mature_h := 0.0
+	var vet_h := 0.0
+	var old_from := 1e9
+	for sp in sps:
+		var nm: String = sp.resource_name
+		var r: Vector2 = sp.get_meta("succession_age", Vector2(-1, -1))
+		var kind: int = sp.get_meta("succession_kind", -9)
+		if r.x < 0.0 or r.y <= r.x or kind < -1 or kind > 3:
+			bad += 1
+			print("  bad range or kind: %s %s %d" % [nm, r, kind])
+		var h := 0.0
+		for m in sp.meshes:
+			h = max(h, m.get_aabb().size.y)
+		if nm.contains("legacy"):
+			stage.legacy += 1
+		elif r.x == 0.0 or nm.contains("seedlings"):
+			stage.initiation += 1
+		elif nm.contains("pole stage") or nm.contains("self-thinned"):
+			stage.poles += 1
+			if nm.contains("pole stage") and not nm.begins_with("Birch"):
+				pole_h = max(pole_h, h)
+		elif r.y < 9999.0:
+			stage.mature += 1
+			mature_h = max(mature_h, h)
+		else:
+			stage.old += 1
+			old_from = min(old_from, r.x)
+			if nm.contains("veteran") or nm.contains("giant"):
+				vet_h = max(vet_h, h)
+		print("  %s: %.0f-%.0f y, kind %d, %.1f m" % [nm, r.x, min(r.y, 9999.0), kind, h])
+	# Every year 0..old growth has a living stage.
+	var gaps := 0
+	for y in range(0, int(old_from), 1):
+		var any := false
+		for sp in sps:
+			var r2: Vector2 = sp.get_meta("succession_age", Vector2(-1, -1))
+			if not sp.resource_name.contains("legacy") and y >= r2.x and y < r2.y:
+				any = true
+				break
+		if not any:
+			gaps += 1
+	var name_i: String = STAND_NAMES[i] if i < STAND_NAMES.size() else str(i)
+	_check(bad == 0 and gaps == 0 and stage.initiation > 0 and stage.poles > 0 and stage.mature > 0 and stage.old > 0, "succession of %s: %d legacies, %d initiation, %d pole stage, %d mature, %d old growth from %.0f y; %d bad, %d years uncovered" % [name_i, stage.legacy, stage.initiation, stage.poles, stage.mature, stage.old, old_from, bad, gaps])
+	_check(pole_h > 0.0 and pole_h < mature_h and (vet_h == 0.0 or vet_h >= mature_h * 0.9), "succession of %s: poles %.1f m under mature %.1f m, veterans %.1f m" % [name_i, pole_h, mature_h, vet_h])
 
 func _check(ok: bool, what: String) -> void:
 	if not ok:
@@ -138,6 +245,30 @@ func _biome(i: int) -> Biome:
 		return gen.make_woodland(variants)
 	if i == TreeGenerator.STAND_MAX + 1:
 		return gen.make_woodland(variants, TreeGenerator.REGION_NORTH_AMERICA)
+	if OS.get_environment("EDGE") != "":
+		# EDGE=1: the stand with its forest edge (make_edge: mantle and one-sided edge trees, RULE_FOREST_EDGE).
+		var b := gen.make_stand(i, variants)
+		var both: Array[PlantSpecies] = []
+		for sp in gen.make_edge(i, variants).species:
+			both.append(sp)
+		for sp in b.species:
+			both.append(sp)
+		b.species = both
+		return b
+	if OS.get_environment("AGE") != "":
+		# AGE=years [KIND=n]: make_succession(i) as the stand-age rules would place it at one age (trees.md 5aq),
+		# the legacies of disturbance KIND (default 2, wind) only.
+		var age := float(OS.get_environment("AGE"))
+		var kind := int(OS.get_environment("KIND")) if OS.get_environment("KIND") != "" else 2
+		var all := gen.make_succession(i, variants)
+		var keep: Array[PlantSpecies] = []
+		for sp in all.species:
+			var r: Vector2 = sp.get_meta("succession_age")
+			var k: int = sp.get_meta("succession_kind")
+			if age >= r.x and age < r.y and (k == -1 or k == kind):
+				keep.append(sp)
+		all.species = keep
+		return all
 	return gen.make_stand(i, variants)
 
 func _habitat_checks() -> void:
@@ -177,6 +308,29 @@ func _stand_checks(only := -1) -> void:
 		var biome := _biome(i)
 		var f := _field(biome)
 		var sps: Array = biome.species
+		# Disturbed stands report their patches to the stand-age map (WorldStand; trees.md 5aq): at a legacy
+		# plant's spot the map gives its kind and, the youngest event winning, an age no older than its years.
+		var reported := 0
+		var wrong_kind := 0
+		var ws = WorldContracts.get_stand()
+		for s in sps.size():
+			if sps[s].has_meta("stand_disturbance") and ws:
+				var kd: Vector2 = sps[s].get_meta("stand_disturbance")
+				var pl: PackedVector3Array = f.get_placements(s)
+				for j in range(0, pl.size(), max(1, pl.size() / 8)):
+					reported += 1
+					var k: int = ws.disturbance_at(pl[j])
+					var age: float = ws.stand_age_at(pl[j])
+					if k == 0 or age < 0.0 or age > kd.y + 0.01:
+						wrong_kind += 1
+		if reported > 0:
+			_check(wrong_kind * 4 < reported, "%s: stand-age map has the disturbance at %d of %d legacy plants" % [STAND_NAMES[i], reported - wrong_kind, reported])
+			# A populate that places the same stand reports nothing new (fields reading the stand rules would wake).
+			var gen0: int = ws.get_stand_generation()
+			f.populate()
+			_check(ws.get_stand_generation() == gen0, "%s: populating again leaves the stand-age map unchanged" % STAND_NAMES[i])
+		if ws:
+			ws.clear_disturbances()
 		var stand_count := 0
 		var open_count := 0
 		var canopy_total := 0
@@ -185,7 +339,8 @@ func _stand_checks(only := -1) -> void:
 			var n: int = f.get_placements(s).size()
 			var nm: String = sps[s].resource_name
 			print("%-18s %-27s %6d  %6.0f" % [STAND_NAMES[i], nm, n, n / area_ha])
-			if nm.ends_with("(stand)"):
+			# The wet stands name their stand-grown canopy by its site (trees.md 5at).
+			if nm.ends_with("(stand)") or nm.contains("stilt-rooted") or nm.contains("(old, floodplain)"):
 				stand_count += n
 				canopy_total += n
 			elif nm.ends_with("(open)"):
@@ -291,6 +446,55 @@ func _stand_checks(only := -1) -> void:
 						if Vector2(x.x, x.z).normalized().dot(dir) < cos(0.5):
 							off += 1
 			_check(thrown > 0 and snapped > 0 and leaning > 0 and stand_count > 0 and off == 0 and plates > 0, "windthrow: %d thrown (%d variants with root plates), %d snapped, %d leaning, %d standing; %d of %d drawn turned off the storm's track" % [thrown, plates, snapped, leaning, stand_count, off, checked])
+		elif i == TreeGenerator.STAND_OLD_GROWTH_BEECH:
+			# Old-growth beech (trees.md 5an): veteran giants among the canopy (about ten a hectare), a fallen giant in
+			# the gaps, poles and seedlings under them, lying deadwood well over standing.
+			var giants := 0
+			var gap_logs := 0
+			var poles := 0
+			var lying := 0
+			var standing_dead := 0
+			var vet_ok := true
+			for s in sps.size():
+				var nm5: String = sps[s].resource_name
+				var n5: int = f.get_placements(s).size()
+				if nm5.contains("old-growth") or nm5.ends_with("(log)"):
+					var hs := []
+					for m in sps[s].meshes:
+						var ab: AABB = m.get_aabb()
+						hs.append("%.0fx%.0f %s" % [ab.size.y, max(ab.size.x, ab.size.z), str(m.get_meta("crown", Vector3()))])
+					print("  %s: %s" % [nm5, ", ".join(hs)])
+				if nm5.contains("old-growth veteran"):
+					giants += n5
+				elif nm5.contains("fallen giant"):
+					gap_logs += n5
+					lying += n5
+				elif nm5.contains("broken giant"):
+					standing_dead += n5
+				elif nm5.contains("pole"):
+					poles += n5
+				elif nm5.contains("(log)"):
+					lying += n5
+				elif nm5.contains("(snag)"):
+					standing_dead += n5
+			var ha: float = SIZE * SIZE / 10000.0
+			_check(giants / ha >= 4.0 and giants / ha <= 25.0 and gap_logs > 0 and poles > 0 and lying > 2 * standing_dead, "old-growth beech: %.1f veteran giants a hectare, %d fallen giants in gaps, %d poles, %d lying to %d standing dead" % [giants / ha, gap_logs, poles, lying, standing_dead])
+		elif i == TreeGenerator.STAND_BOREAL_TAIGA:
+			# Taiga (trees.md 5ap): spruce and pine in a mosaic, fire-survivor pines, kelo standing and down, birch in burns.
+			var tg := {"survivor": 0, "kelo": 0, "burn": 0, "spruce": 0, "pine": 0}
+			for s in sps.size():
+				var nm6: String = sps[s].resource_name
+				var n6: int = f.get_placements(s).size()
+				for k in tg.keys():
+					if nm6.contains("taiga" if k == "pine" else k) and (k != "pine" or nm6.begins_with("Scots pine (taiga)")):
+						tg[k] += n6
+				if nm6.contains("taiga") or nm6.contains("kelo"):
+					var hs6 := []
+					for m in sps[s].meshes:
+						var ab6: AABB = m.get_aabb()
+						hs6.append("%.0fx%.0f" % [ab6.size.y, max(ab6.size.x, ab6.size.z)])
+					print("  %s: %d, %s" % [nm6, n6, ", ".join(hs6)])
+			_check(tg.survivor > 0 and tg.kelo > 0 and tg.burn > 0 and tg.spruce > 0 and tg.pine > 0, "boreal taiga: %d fire survivors, %d kelo, %d burn birch, %d spruce, %d pine" % [tg.survivor, tg.kelo, tg.burn, tg.spruce, tg.pine])
 		elif i == TreeGenerator.STAND_POLLARD_ROW:
 			_check(cut.pollard > 0 and cut.pollard >= open_count, "pollard row: %d willow pollards, %d alders" % [cut.pollard, open_count])
 		elif i == TreeGenerator.STAND_COPPICE_STANDARDS:
@@ -647,11 +851,16 @@ func _render_plot(i: int, args: Dictionary) -> void:
 		# to 3 R (VegetationField3D.far_reach), so the survivors past R / 2 thin and widen within the valley.
 		for sp in biome.species:
 			sp.visibility_range = float(args["far"])
+			if OS.get_environment("NO_SKYLINE") != "":
+				sp.set_meta("far_skyline", false) # Skyline trees thinned too (trees.md 9c).
+			if sp.has_meta("far_hull_range"):
+				# Crown hulls (trees.md 9b) past the same range; env HULL_AT overrides.
+				sp.set_meta("far_hull_range", float(OS.get_environment("HULL_AT")) if OS.get_environment("HULL_AT") != "" else float(args["far"]))
 		f = VegetationField3D.new()
 		f.populate_on_ready = false
 		f.tile_size = 20.0
 		f.streaming = true
-		f.stream_radius = SIZE * 1.5
+		f.stream_radius = SIZE * 1.5 if OS.get_environment("CAM") == "" else 3000.0
 		f.far_reach = 3.0
 		# Vegetation's draped far shell takes over past 0.6 of the reach; at a bench's ranges it would cover the valley.
 		f.far_shell = OS.get_environment("FAR_SHELL") != ""
@@ -819,11 +1028,12 @@ func _render_plot(i: int, args: Dictionary) -> void:
 				if o.length() < 25.0 and not nm.begins_with("Hazel") and not nm.contains("sticks") and o.normalized().dot(-cam.global_transform.basis.z * Vector3(1, 0, 1)) > 0.6:
 					print("in view %.1f m: %s" % [o.length(), biome.species[si].resource_name])
 	if args.has("near"):
-		# --near=D: the first species' plant nearest the plot's centre, from D metres (default 7),
+		# --near=D: the first species' (env NEAR_SPECIES) plant nearest the plot's centre, from D metres (default 7),
 		# eye at 1.7 m, aimed at 1.6 m on it (env SH sets the aim height).
 		var best_p := Vector3()
 		var best_d := 1e9
-		for pp in f.get_placements(0):
+		# env NEAR_SPECIES=k: the k-th species instead of the first.
+		for pp in f.get_placements(int(OS.get_environment("NEAR_SPECIES")) if OS.get_environment("NEAR_SPECIES") != "" else 0):
 			var dd := Vector2(pp.x, pp.z).length()
 			if dd < best_d:
 				best_d = dd
@@ -843,6 +1053,10 @@ func _render_plot(i: int, args: Dictionary) -> void:
 		cam.look_at(Vector3(float(cv[3]), float(cv[4]), float(cv[5])))
 		if cv.size() >= 7:
 			cam.fov = float(cv[6])
+		# Far views keep sun shadows over the whole stand.
+		var dist := cam.position.distance_to(Vector3(float(cv[3]), float(cv[4]), float(cv[5])))
+		sun.directional_shadow_max_distance = maxf(sun.directional_shadow_max_distance, dist + SIZE)
+		cam.far = maxf(cam.far, dist + SIZE * 2.0)
 	if args.has("far"):
 		f.stream_target = f.get_path_to(cam)
 		var waited := 0
@@ -854,10 +1068,20 @@ func _render_plot(i: int, args: Dictionary) -> void:
 				print("far: frame %d, %d plants, idle %s" % [waited, f.get_plant_count(), str(f.is_stream_idle())])
 		get_viewport().disable_3d = false
 		var drawn := 0
+		var hulls := 0
+		var hull_quads := 0
 		for mmi in f.find_children("*", "MultiMeshInstance3D", true, false):
 			if mmi.multimesh != null:
-				drawn += mmi.multimesh.visible_instance_count if mmi.multimesh.visible_instance_count >= 0 else mmi.multimesh.instance_count
-		print("far: %d plants placed, %d drawn instances after %d frames" % [f.get_plant_count(), drawn, waited])
+				var n: int = mmi.multimesh.visible_instance_count if mmi.multimesh.visible_instance_count >= 0 else mmi.multimesh.instance_count
+				if String(mmi.name).begins_with("PlantsHull"):
+					hulls += n
+					hull_quads = mmi.multimesh.mesh.surface_get_array_index_len(0) / 3
+					if OS.get_environment("HULL_LOG") != "":
+						var hc: PackedColorArray = mmi.multimesh.mesh.surface_get_arrays(0)[Mesh.ARRAY_COLOR]
+						print("hull %s: %d, %d triangles, cover %.2f, first lobe %s" % [mmi.name, n, hull_quads, float(mmi.multimesh.mesh.get_meta("hull_cover", -1.0)), str(hc[0].linear_to_srgb()) if hc.size() > 0 else "-"])
+				else:
+					drawn += n
+		print("far: %d plants placed, %d drawn instances, %d hull instances (%d triangles in the last), after %d frames" % [f.get_plant_count(), drawn, hulls, hull_quads, waited])
 	for k in (8 if raster else 12):
 		await RenderingServer.frame_post_draw
 	if not raster:

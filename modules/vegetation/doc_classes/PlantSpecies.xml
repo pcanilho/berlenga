@@ -172,6 +172,12 @@
 		<member name="detail_size" type="float" setter="set_detail_size" getter="get_detail_size" default="0.0">
 			The size in metres of what shows of one plant or item (a fallen leaf, a twig, a cushion of moss, a seedling's height). When above 0, [VegetationField3D] draws the species out to where that size is still [member VegetationField3D.detail_pixels] tall on screen (never less than [member visibility_range], never more than [member VegetationField3D.detail_max_range]), instead of the hand-set range. The preset sets ([method PlantGenerator.make_floor] and the others) set it for their small presets: litter, twigs, mosses, small rosettes and seedlings.
 		</member>
+		<member name="disturbance_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			The soft edge of [member disturbance_range].
+		</member>
+		<member name="disturbance_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 100)">
+			The kind of stand-replacing disturbance behind the stand age ([constant RULE_DISTURBANCE], [method WorldStand.disturbance_at]): 0 none, 1 fire, 2 wind, 3 beetle. Pick one kind with [code]Vector2(k, k)[/code]. Left at the default, a [method TreeGenerator.make_succession] species takes its meta [code]succession_kind[/code] (-1 any).
+		</member>
 		<member name="dune_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member dune_range].
 		</member>
@@ -195,6 +201,12 @@
 		</member>
 		<member name="footprint" type="float" setter="set_footprint" getter="get_footprint" default="0.5">
 			Radius in metres that later species in the [Biome] keep clear of (a trunk and its shade). 0 leaves room for anything.
+		</member>
+		<member name="forest_edge_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			The soft edge of [member forest_edge_range], metres.
+		</member>
+		<member name="forest_edge_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100000, 100000)">
+			Metres from the edge of the field's forest canopy ([constant RULE_FOREST_EDGE]): positive inside the forest, negative out in the open, -1000 where the field has no canopy. The forest is where the field's canopy species (canopy radius over 0, without a shade or forest edge rule) would close it, from their rules, patches and density, on a grid of 2 m or more. A shrub mantle is about [code]Vector2(-8, 3)[/code]. Left at the default, a species takes its meta [code]edge_distance[/code] ([method TreeGenerator.make_edge]). A variant with mesh meta [code]tree_open_side[/code] (Vector3) is turned so that side faces the open.
 		</member>
 		<member name="height_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member height_range].
@@ -318,6 +330,12 @@
 		</member>
 		<member name="spring_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1, 1)">
 			Where round a desert spring the species grows (see [constant RULE_SPRING]): 1 at the oasis's water, 0 out of a palm's root reach of it, -1 off the sand seas. Narrowing it from the default [code](-1, 1)[/code] makes the species an oasis plant, which also grows on the sand seas' sand.
+		</member>
+		<member name="stand_age_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			The soft edge of [member stand_age_range], years.
+		</member>
+		<member name="stand_age_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1, 100000)">
+			Years since the last stand-replacing disturbance ([constant RULE_STAND_AGE], [method WorldStand.stand_age_at]). Old growth (-1, no disturbance known) counts as inside a range starting at -1 or reaching 10000 years. Left at the default, a [method TreeGenerator.make_succession] species takes its meta [code]succession_age[/code]. [VegetationField3D] samples the stand on a grid and places a streamed tile again when a change there moves a species across its range.
 		</member>
 		<member name="sunlight_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member sunlight_range].
@@ -486,7 +504,16 @@
 		<constant name="RULE_POOL_DISTANCE" value="27" enum="Rule">
 			Metres from the nearest oasis spring pool's shore ([member VegetationField3D.spring_pools]), negative in the pool. A species using it grows only round those pools, on their sand too.
 		</constant>
-		<constant name="RULE_MAX" value="28" enum="Rule">
+		<constant name="RULE_STAND_AGE" value="28" enum="Rule">
+			Years since the last stand-replacing disturbance (stand_age_range).
+		</constant>
+		<constant name="RULE_DISTURBANCE" value="29" enum="Rule">
+			The kind of that disturbance (disturbance_range).
+		</constant>
+		<constant name="RULE_FOREST_EDGE" value="30" enum="Rule">
+			Metres from the forest canopy's edge, positive inside (forest_edge_range).
+		</constant>
+		<constant name="RULE_MAX" value="31" enum="Rule">
 			Number of rules.
 		</constant>
 		<constant name="DEADWOOD_AVOID" value="0" enum="DeadwoodRule">

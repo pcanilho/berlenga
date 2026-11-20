@@ -531,6 +531,9 @@ void WeatherMap3D::_ease_base(double p_dt) {
 	// The high sheet leads: it eases four times faster than the rain it heralds, so a change toward rain
 	// thickens the cirrus well before the rain arrives (cirrus runs 12 to 24 h ahead of a warm front's rain).
 	cur_high_cloud_cover = Math::lerp(cur_high_cloud_cover, _target_high_cloud_cover(), 1.0f - Math::exp(-float(p_dt) / (0.25f * transition_time)));
+	// The mid sheet follows: twice as fast as the rain (altostratus thickens a few hours ahead of a warm front's
+	// rain, after the cirrus). It follows the rain state; precipitation stays the main layer's.
+	cur_mid_cloud_cover = Math::lerp(cur_mid_cloud_cover, _target_mid_cloud_cover(), 1.0f - Math::exp(-float(p_dt) / (0.5f * transition_time)));
 	cur_rain_rate = Math::lerp(cur_rain_rate, rain_rate, a);
 	cur_temperature = Math::lerp(cur_temperature, _target_temperature(), a);
 	cur_humidity = Math::lerp(cur_humidity, humidity, a);
@@ -565,6 +568,7 @@ void WeatherMap3D::_set_base_to_settings() {
 	cur_cloud_cover = cloud_cover;
 	cur_cloud_type = cloud_type;
 	cur_high_cloud_cover = _target_high_cloud_cover();
+	cur_mid_cloud_cover = _target_mid_cloud_cover();
 	cur_rain_rate = rain_rate;
 	cur_temperature = _target_temperature();
 	cur_humidity = humidity;
@@ -1085,6 +1089,7 @@ void WeatherMap3D::_advance(double p_weather_dt, double p_real_dt) {
 	cloud_drift += steer * float(p_weather_dt);
 	// The high sheet rides the wind at its own height (get_wind_aloft: shear above the boundary layer).
 	high_cloud_drift += get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), high_cloud_height) * float(p_weather_dt);
+	mid_cloud_drift += get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), mid_cloud_height) * float(p_weather_dt);
 	cloud_time += p_weather_dt;
 	for (int i = storms.size() - 1; i >= 0; i--) {
 		Storm &s = storms.write[i];
@@ -1381,6 +1386,7 @@ void WeatherMap3D::_notification(int p_what) {
 			set_physics_process_internal(false);
 			_finish_shadow_bake(true);
 			_finish_sky_shadow_bake(true);
+			_finish_light_grid_bake(true);
 			_release_shadow_light();
 			_restore_fog();
 		} break;
@@ -1424,6 +1430,13 @@ void WeatherMap3D::_notification(int p_what) {
 				_start_sky_shadow_bake();
 			}
 			_apply_sky_shadow();
+			light_grid_timer += dt;
+			if (light_grid_task != WorkerThreadPool::INVALID_TASK_ID) {
+				_step_light_grid_bake();
+			} else if (light_grid_timer >= 4.0 * cloud_shadow_interval) {
+				_start_light_grid_bake();
+			}
+			_apply_light_grid();
 			_apply_haze();
 			_update_contact(wdt);
 			_tracks_step(float(dt));
@@ -1638,6 +1651,122 @@ float WeatherMap3D::get_high_cloud_cover_at(Vector3 p_position) const {
 	return WeatherClouds::high_cover_at(_cloud_state(), Vector2(p_position.x, p_position.z));
 }
 
+float WeatherMap3D::get_mid_cloud_cover_at(Vector3 p_position) const {
+	return WeatherClouds::mid_cover_at(_cloud_state(), Vector2(p_position.x, p_position.z));
+}
+
+float WeatherMap3D::get_mid_cloud_optical_depth_at(Vector3 p_position) const {
+	return WeatherClouds::mid_tau_at(_cloud_state(), Vector2(p_position.x, p_position.z));
+}
+
+int WeatherMap3D::add_cloud_light(Vector3 p_position, Color p_color, float p_energy, float p_reach) {
+	if (cloud_lights.size() >= WeatherClouds::MAX_CLOUD_LIGHTS) {
+		return -1;
+	}
+	const int id = cloud_light_next++;
+	cloud_lights.insert(id, CloudLight());
+	set_cloud_light(id, p_position, p_color, p_energy, p_reach);
+	return id;
+}
+
+void WeatherMap3D::set_cloud_light(int p_id, Vector3 p_position, Color p_color, float p_energy, float p_reach) {
+	CloudLight *lp = cloud_lights.getptr(p_id);
+	if (!lp) {
+		return;
+	}
+	CloudLight &l = *lp;
+	l.position = p_position;
+	l.color = p_color;
+	l.energy = MAX(p_energy, 0.0f);
+	l.reach = MAX(p_reach, 1.0f);
+	_push_sky();
+}
+
+Array WeatherMap3D::get_cloud_lights() const {
+	Array a;
+	for (const KeyValue<int, CloudLight> &kv : cloud_lights) {
+		Dictionary d;
+		d["id"] = kv.key;
+		d["position"] = kv.value.position;
+		d["color"] = kv.value.color;
+		d["energy"] = kv.value.energy;
+		d["radius"] = kv.value.reach;
+		d["fire"] = false;
+		d["lightning"] = false;
+		a.push_back(d);
+	}
+	for (const CloudLight &l : fire_cloud_lights) {
+		Dictionary d;
+		d["id"] = -1;
+		d["position"] = l.position;
+		d["color"] = l.color;
+		d["energy"] = l.energy;
+		d["radius"] = l.reach;
+		d["fire"] = true;
+		d["lightning"] = false;
+		a.push_back(d);
+	}
+	for (const CloudLight &l : flash_cloud_lights) {
+		Dictionary d;
+		d["id"] = -1;
+		d["position"] = l.position;
+		d["color"] = l.color;
+		d["energy"] = l.energy;
+		d["radius"] = l.reach;
+		d["lightning"] = true;
+		a.push_back(d);
+	}
+	return a;
+}
+
+void WeatherMap3D::set_flash_cloud_lights(const Vector4 *p_flashes, int p_count, const Color &p_color, float p_reach) {
+	flash_cloud_lights.clear();
+	for (int i = 0; i < p_count; i++) {
+		CloudLight l;
+		l.position = Vector3(p_flashes[i].x, p_flashes[i].y, p_flashes[i].z);
+		l.color = p_color;
+		l.energy = p_flashes[i].w;
+		l.reach = p_reach;
+		flash_cloud_lights.push_back(l);
+	}
+}
+
+void WeatherMap3D::remove_cloud_light(int p_id) {
+	cloud_lights.erase(p_id);
+	_push_sky();
+}
+
+int WeatherMap3D::add_cloud_effector(Vector3 p_position, float p_radius, float p_strength) {
+	if (cloud_effectors.size() >= WeatherClouds::MAX_CLOUD_EFFECTORS) {
+		return -1;
+	}
+	const int id = cloud_effector_next++;
+	cloud_effectors.insert(id, CloudEffector());
+	set_cloud_effector(id, p_position, p_radius, p_strength);
+	return id;
+}
+
+void WeatherMap3D::set_cloud_effector(int p_id, Vector3 p_position, float p_radius, float p_strength) {
+	CloudEffector *ep = cloud_effectors.getptr(p_id);
+	if (!ep) {
+		return;
+	}
+	CloudEffector &e = *ep;
+	e.position = p_position - Vector3(cloud_drift.x, 0.0f, cloud_drift.y);
+	e.radius = MAX(p_radius, 1.0f);
+	e.strength = CLAMP(p_strength, -1.0f, 1.0f);
+	_push_sky();
+}
+
+void WeatherMap3D::remove_cloud_effector(int p_id) {
+	cloud_effectors.erase(p_id);
+	_push_sky();
+}
+
+float WeatherMap3D::get_cloud_effector_at(Vector3 p_position) const {
+	return WeatherClouds::effector_at(_cloud_state(), p_position);
+}
+
 float WeatherMap3D::get_cloud_type_at(Vector3 p_position) const {
 	return CLAMP(_sample(cell_type, Vector2(p_position.x, p_position.z)), 0.0f, 1.0f);
 }
@@ -1725,6 +1854,24 @@ void WeatherMap3D::_update_fire_clouds(double p_weather_dt) {
 	PackedVector4Array plumes;
 	if (any) {
 		plumes = wf->plumes();
+	}
+	// The fires light the clouds over them (cloud lights tagged as fire): a flame radiates about a third of its
+	// heat (Drysdale, "An Introduction to Fire Dynamics"), here as an orange point a little above the plume's base,
+	// its intensity Q_r / 4 pi in W/sr scaled to the sun's 1000 W/m2 at light_energy 1, reaching where it falls
+	// under a ten-thousandth of that (beyond, under moonlight).
+	fire_cloud_lights.clear();
+	if (WorldContracts::fire()->has_provider() || WorldContracts::fire()->get_script_instance()) {
+		for (const Vector4 &p : plumes) {
+			if (p.w <= 0.0f) {
+				continue;
+			}
+			CloudLight l;
+			l.position = Vector3(p.x, p.y + 30.0f, p.z);
+			l.color = Color(1.0f, 0.62f, 0.32f); // sRGB, a flame about 1300 K seen through its smoke
+			l.energy = 0.33f * p.w / (4.0f * float(Math::PI)) / 1000.0f;
+			l.reach = CLAMP(Math::sqrt(l.energy / 1e-4f), 200.0f, 20000.0f);
+			fire_cloud_lights.push_back(l);
+		}
 	}
 	for (int i = 0; i < storms.size(); i++) {
 		if (storms[i].fire) {
@@ -2187,6 +2334,29 @@ void WeatherMap3D::set_high_cloud_optical_depth(float p_tau) {
 	high_cloud_optical_depth = CLAMP(p_tau, 0.0f, 5.0f);
 }
 
+void WeatherMap3D::set_mid_cloud_cover(float p_cover) {
+	mid_cloud_cover = CLAMP(p_cover, 0.0f, 1.0f);
+}
+
+void WeatherMap3D::set_mid_cloud_height(float p_height) {
+	mid_cloud_height = MAX(p_height, 1000.0f);
+}
+
+void WeatherMap3D::set_mid_cloud_thickness(float p_thickness) {
+	mid_cloud_thickness = CLAMP(p_thickness, 50.0f, 3000.0f);
+}
+
+void WeatherMap3D::set_mid_cloud_optical_depth(float p_tau) {
+	mid_cloud_optical_depth = CLAMP(p_tau, 0.0f, 30.0f);
+}
+
+// What the mid sheet eases toward: the base, thinned in dry air and thickened by rain on its way into an
+// altostratus sheet (the rain setting the map is easing toward). It never makes rain itself.
+float WeatherMap3D::_target_mid_cloud_cover() const {
+	const float humid = Math::lerp(0.2f, 1.0f, Math::smoothstep(0.45f, 0.85f, humidity));
+	return CLAMP(mid_cloud_cover * humid + 0.5f * Math::smoothstep(0.0f, 4.0f, rain_rate), 0.0f, 1.0f);
+}
+
 // What the high sheet eases toward: the base, thinned in dry air (subsiding, clear) and thickened by rain on its
 // way (the rain setting the map is easing toward), as cirrus and cirrostratus thicken ahead of a front's rain.
 float WeatherMap3D::_target_high_cloud_cover() const {
@@ -2257,9 +2427,56 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 	st.high_height = high_cloud_height;
 	st.high_tau = high_cloud_optical_depth;
 	st.high_drift = high_cloud_drift;
+	st.mid_cover = cur_mid_cloud_cover;
+	st.mid_height = mid_cloud_height;
+	st.mid_thickness = mid_cloud_thickness;
+	st.mid_tau = mid_cloud_optical_depth;
+	st.mid_drift = mid_cloud_drift;
+	{
+		const Vector2 w = get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), mid_cloud_height);
+		st.mid_dir = w.length_squared() > 1e-6f ? w.normalized() : Vector2(1, 0);
+	}
 	{
 		const Vector2 w = get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), high_cloud_height);
 		st.high_dir = w.length_squared() > 1e-6f ? w.normalized() : Vector2(1, 0);
+	}
+	{
+		// The strongest effectors and the brightest lights, at most eight of each.
+		LocalVector<Pair<float, const CloudEffector *>> ef;
+		for (const KeyValue<int, CloudEffector> &kv : cloud_effectors) {
+			ef.push_back(Pair<float, const CloudEffector *>(-Math::abs(kv.value.strength) * kv.value.radius, &kv.value));
+		}
+		ef.sort_custom<PairSort<float, const CloudEffector *>>();
+		for (uint32_t i = 0; i < ef.size() && st.effector_count < WeatherClouds::MAX_CLOUD_EFFECTORS; i++) {
+			const CloudEffector &e = *ef[i].second;
+			float *o = st.effectors[st.effector_count++];
+			o[0] = e.position.x + cloud_drift.x;
+			o[1] = e.position.y;
+			o[2] = e.position.z + cloud_drift.y;
+			o[3] = e.radius;
+			o[4] = e.strength;
+		}
+		// The fires' lights share the budget by brightness: a scene's own light is dropped only for a brighter fire.
+		LocalVector<Pair<float, const CloudLight *>> li;
+		for (const KeyValue<int, CloudLight> &kv : cloud_lights) {
+			li.push_back(Pair<float, const CloudLight *>(-kv.value.energy, &kv.value));
+		}
+		for (const CloudLight &l : fire_cloud_lights) {
+			li.push_back(Pair<float, const CloudLight *>(-l.energy, &l));
+		}
+		li.sort_custom<PairSort<float, const CloudLight *>>();
+		for (uint32_t i = 0; i < li.size() && st.light_count < WeatherClouds::MAX_CLOUD_LIGHTS; i++) {
+			const CloudLight &l = *li[i].second;
+			const Color c = l.color.srgb_to_linear();
+			float *o = st.lights[st.light_count++];
+			o[0] = l.position.x;
+			o[1] = l.position.y;
+			o[2] = l.position.z;
+			o[3] = l.reach;
+			o[4] = c.r * l.energy;
+			o[5] = c.g * l.energy;
+			o[6] = c.b * l.energy;
+		}
 	}
 	st.evolve = _cloud_evolve();
 	if (cloud_evolution) {
@@ -2320,6 +2537,13 @@ void WeatherMap3D::ShadowBake::row(uint32_t p_row, void *) {
 			const Vector3 ph = p0 + to_sun * ((state.high_height - p0.y) / to_sun.y);
 			tau_h = WeatherClouds::high_tau_at(state, Vector2(ph.x, ph.z)) / MAX(to_sun.y, 0.05f);
 		}
+		// The mid sheet likewise by its own optical depth (water droplets, g about 0.85, as the low clouds).
+		float tau_m = 0.0f;
+		if (state.mid_cover > 0.001f || state.storm_count > 0) {
+			const Vector3 pm = p0 + to_sun * ((state.mid_height - p0.y) / to_sun.y);
+			tau_m = WeatherClouds::mid_tau_at(state, Vector2(pm.x, pm.z)) / MAX(to_sun.y, 0.05f);
+		}
+		tau += tau_m;
 		const float t = 1.0f / (1.0f + 0.75f * (1.0f - 0.85f) * tau + 0.75f * (1.0f - 0.75f) * tau_h);
 		const int k = int(p_row) * n + x;
 		transmittance_w[k] = t;
@@ -2409,6 +2633,9 @@ void WeatherMap3D::update_cloud_shadow() {
 	_finish_sky_shadow_bake(true);
 	_start_sky_shadow_bake();
 	_finish_sky_shadow_bake(false);
+	_finish_light_grid_bake(true);
+	_start_light_grid_bake();
+	_finish_light_grid_bake(false);
 }
 
 void WeatherMap3D::_start_sky_shadow_bake() {
@@ -2460,6 +2687,7 @@ void WeatherMap3D::_finish_sky_shadow_bake(bool p_discard) {
 	sky_shadow_corner = sb.corner;
 	sky_shadow_drift = sb.state.drift;
 	Ref<Image> img = Image::create_from_data(sb.resolution, sb.resolution, false, Image::FORMAT_RGBA8, sb.bytes);
+	img->generate_mipmaps(); // the sky averages the far ground's shadow over a pixel's footprint
 	if (sky_shadow_texture.is_null()) {
 		sky_shadow_texture = ImageTexture::create_from_image(img);
 	} else {
@@ -2480,6 +2708,235 @@ void WeatherMap3D::_apply_sky_shadow() {
 	const Vector3 d3(d.x, 0.0f, d.y);
 	const Vector2 corner = sky_shadow_corner + Vector2(d3.dot(sky_shadow_axis_u), d3.dot(sky_shadow_axis_v));
 	sky_material->set_cloud_shadow_map(sky_shadow_texture, sky_shadow_axis_u, sky_shadow_axis_v, corner, kSkyShadowExtent);
+}
+
+// The light grid's value at a point of a level, bilinear between voxel centres; negative off the box.
+float WeatherMap3D::LightGridBake::above(int p_level, float p_x, float p_z) const {
+	const int n = kLightGridResolution;
+	const float fx = (p_x - corner.x) / texel - 0.5f;
+	const float fz = (p_z - corner.y) / texel - 0.5f;
+	if (fx < 0.0f || fz < 0.0f || fx > n - 1 || fz > n - 1) {
+		return -1.0f;
+	}
+	const int x0 = MIN(int(fx), n - 2);
+	const int z0 = MIN(int(fz), n - 2);
+	const float tx = fx - x0;
+	const float tz = fz - z0;
+	const float *t = tau.ptr() + (p_level * n + z0) * n + x0;
+	return Math::lerp(Math::lerp(t[0], t[1], tx), Math::lerp(t[n], t[n + 1], tx), tz);
+}
+
+// One row of the level being baked. Each voxel's optical depth toward the sun out of the layer: its path up to
+// the next level's height, marched, plus the next level's (already baked) value where the path meets it. Off
+// the box's side, or from the top level, the path is marched the rest of the way (to 24 km).
+void WeatherMap3D::LightGridBake::row(uint32_t p_row, void *) {
+	const int n = kLightGridResolution;
+	const float dy = (y1 - y0) / kLightGridLevels;
+	const float y = y0 + (level + 0.5f) * dy;
+	const float reach = dy / to_sun.y; // along the path, to the next level
+	const int steps = CLAMP(int(Math::ceil(reach / 128.0f)), 1, 16);
+	const float step = reach / steps;
+	for (int xi = 0; xi < n; xi++) {
+		const Vector3 p(corner.x + (xi + 0.5f) * texel, y, corner.y + (p_row + 0.5f) * texel);
+		float t = 0.0f;
+		float rest = -1.0f;
+		if (level + 1 < kLightGridLevels) {
+			const Vector3 q = p + to_sun * reach;
+			rest = above(level + 1, q.x, q.z);
+		}
+		if (rest >= 0.0f) {
+			for (int k = 0; k < steps; k++) {
+				t += WeatherClouds::extinction_at(state, p + to_sun * ((k + 0.5f) * step)) * step;
+			}
+			t += rest;
+		} else {
+			float d = 0.0f;
+			float s = 64.0f;
+			while (d < 24000.0f) {
+				const Vector3 q = p + to_sun * (d + 0.5f * s);
+				if (q.y > state.top_max) {
+					break;
+				}
+				t += WeatherClouds::extinction_at(state, q) * s;
+				d += s;
+				s = MIN(s * 2.0f, 512.0f);
+			}
+		}
+		tau_w[(level * n + int(p_row)) * n + xi] = t;
+		const float sigma = WeatherClouds::extinction_at(state, p);
+		lit_w[(level * n + int(p_row)) * n + xi] = (1.0f - Math::exp(-sigma * texel)) / (1.0f + 0.75f * (1.0f - 0.85f) * t);
+	}
+}
+
+void WeatherMap3D::_start_light_grid_bake() {
+	light_grid_timer = 0.0;
+	DirectionalLight3D *light = Object::cast_to<DirectionalLight3D>(get_node_or_null(sun_light));
+	if (!light || !is_inside_tree() || WeatherSkyMaterial::find_for(this).is_null()) {
+		return;
+	}
+	const Vector3 to_sun = light->get_global_basis().orthonormalized().get_column(2);
+	if (to_sun.y < 0.02f) {
+		return;
+	}
+	WeatherClouds::shape_noise();
+	if (!light_grid_bake) {
+		light_grid_bake = memnew(LightGridBake);
+	}
+	LightGridBake &lb = *light_grid_bake;
+	lb.state = _cloud_state();
+	lb.to_sun = to_sun;
+	lb.texel = kLightGridExtent / kLightGridResolution;
+	const Vector3 c = _follow_position();
+	lb.corner = (Vector2(Math::floor(c.x / lb.texel), Math::floor(c.z / lb.texel)) - Vector2(kLightGridResolution / 2, kLightGridResolution / 2)) * lb.texel;
+	lb.y0 = lb.state.base_min;
+	lb.y1 = MAX(lb.state.top_max, lb.y0 + 100.0f);
+	lb.tau.resize(kLightGridResolution * kLightGridResolution * kLightGridLevels);
+	lb.tau_w = lb.tau.ptrw();
+	lb.lit.resize(kLightGridResolution * kLightGridResolution * kLightGridLevels);
+	lb.lit_w = lb.lit.ptrw();
+	lb.level = kLightGridLevels - 1;
+	_launch_light_grid_level();
+}
+
+void WeatherMap3D::_launch_light_grid_level() {
+	light_grid_task = WorkerThreadPool::get_singleton()->add_template_group_task(light_grid_bake, &LightGridBake::row, (void *)nullptr, kLightGridResolution, -1, false, String("Cloud light grid"));
+}
+
+// A level a frame (Nubis amortises its grid over frames too): each level needs the one above it done.
+void WeatherMap3D::_step_light_grid_bake() {
+	if (light_grid_task == WorkerThreadPool::INVALID_TASK_ID || !WorkerThreadPool::get_singleton()->is_group_task_completed(light_grid_task)) {
+		return;
+	}
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(light_grid_task);
+	light_grid_task = WorkerThreadPool::INVALID_TASK_ID;
+	LightGridBake &lb = *light_grid_bake;
+	if (lb.level > 0) {
+		lb.level--;
+		_launch_light_grid_level();
+		return;
+	}
+	lb.level = -1;
+	_build_light_grid_texture();
+}
+
+void WeatherMap3D::_finish_light_grid_bake(bool p_discard) {
+	if (light_grid_task == WorkerThreadPool::INVALID_TASK_ID) {
+		return;
+	}
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(light_grid_task);
+	light_grid_task = WorkerThreadPool::INVALID_TASK_ID;
+	LightGridBake &lb = *light_grid_bake;
+	if (p_discard) {
+		lb.level = -1;
+		return;
+	}
+	while (lb.level > 0) {
+		lb.level--;
+		_launch_light_grid_level();
+		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(light_grid_task);
+		light_grid_task = WorkerThreadPool::INVALID_TASK_ID;
+	}
+	lb.level = -1;
+	_build_light_grid_texture();
+}
+
+void WeatherMap3D::_build_light_grid_texture() {
+	const LightGridBake &lb = *light_grid_bake;
+	const int n = kLightGridResolution;
+	// Green: the bounce light, the sunlit share of the cloud round each texel, at two reaches averaged (a cone's
+	// footprint widening with distance, as voxel cone tracing reads coarser mips further out; Crassin 2011): 5 by 5
+	// texels and 3 levels (1.3 km), and 13 by 13 texels and 5 levels (3.3 km), each leaving out the texel itself,
+	// whose own light the two-stream term already carries. Separable box sums.
+	const int nl = kLightGridLevels;
+	const float *lit = lb.lit.ptr();
+	auto box = [&](int p_rh, int p_rv) {
+		Vector<float> a;
+		a.resize(n * n * nl);
+		Vector<float> b;
+		b.resize(n * n * nl);
+		float *aw = a.ptrw();
+		float *bw = b.ptrw();
+		for (int l = 0; l < nl; l++) {
+			for (int z = 0; z < n; z++) {
+				float acc = 0.0f;
+				for (int k = 0; k <= MIN(p_rh, n - 1); k++) {
+					acc += lit[(l * n + z) * n + k];
+				}
+				for (int x = 0; x < n; x++) {
+					aw[(l * n + z) * n + x] = acc;
+					if (x + p_rh + 1 < n) {
+						acc += lit[(l * n + z) * n + x + p_rh + 1];
+					}
+					if (x - p_rh >= 0) {
+						acc -= lit[(l * n + z) * n + x - p_rh];
+					}
+				}
+			}
+			for (int x = 0; x < n; x++) {
+				float acc = 0.0f;
+				for (int k = 0; k <= MIN(p_rh, n - 1); k++) {
+					acc += aw[(l * n + k) * n + x];
+				}
+				for (int z = 0; z < n; z++) {
+					bw[(l * n + z) * n + x] = acc;
+					if (z + p_rh + 1 < n) {
+						acc += aw[(l * n + z + p_rh + 1) * n + x];
+					}
+					if (z - p_rh >= 0) {
+						acc -= aw[(l * n + z - p_rh) * n + x];
+					}
+				}
+			}
+		}
+		const float count = float((2 * p_rh + 1) * (2 * p_rh + 1) * (2 * p_rv + 1) - 1);
+		for (int l = 0; l < nl; l++) {
+			for (int i = 0; i < n * n; i++) {
+				float acc = 0.0f;
+				for (int k = MAX(l - p_rv, 0); k <= MIN(l + p_rv, nl - 1); k++) {
+					acc += bw[k * n * n + i];
+				}
+				aw[l * n * n + i] = (acc - lit[l * n * n + i]) / count;
+			}
+		}
+		return a;
+	};
+	const Vector<float> near = box(2, 1);
+	const Vector<float> far = box(6, 2);
+	Vector<Ref<Image>> levels;
+	for (int l = 0; l < nl; l++) {
+		Vector<uint8_t> bytes;
+		bytes.resize(n * n * 8);
+		float *o = reinterpret_cast<float *>(bytes.ptrw());
+		for (int i = 0; i < n * n; i++) {
+			o[i * 2 + 0] = lb.tau[l * n * n + i];
+			o[i * 2 + 1] = 0.5f * (near[l * n * n + i] + far[l * n * n + i]);
+		}
+		levels.push_back(Image::create_from_data(n, n, false, Image::FORMAT_RGF, bytes));
+	}
+	if (light_grid_texture.is_null() || light_grid_y0 != lb.y0 || light_grid_y1 != lb.y1) {
+		// A new texture whenever the box's height changes too, so the sky never reads one level against another's.
+		light_grid_texture.instantiate();
+		light_grid_texture->create(Image::FORMAT_RGF, n, n, kLightGridLevels, false, levels);
+	} else {
+		light_grid_texture->update(levels);
+	}
+	light_grid_corner = lb.corner;
+	light_grid_drift = lb.state.drift;
+	light_grid_y0 = lb.y0;
+	light_grid_y1 = lb.y1;
+	_apply_light_grid();
+}
+
+void WeatherMap3D::_apply_light_grid() {
+	if (light_grid_texture.is_null() || active != this) {
+		return;
+	}
+	Ref<WeatherSkyMaterial> sky_material = WeatherSkyMaterial::find_for(this);
+	if (sky_material.is_null()) {
+		return;
+	}
+	// Between bakes the grid slides with the clouds.
+	sky_material->set_cloud_light_grid(light_grid_texture, light_grid_corner + (cloud_drift - light_grid_drift), kLightGridExtent, light_grid_y0, light_grid_y1);
 }
 
 void WeatherMap3D::_apply_shadow() {
@@ -2905,6 +3362,18 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_rain_at", "position"), &WeatherMap3D::get_rain_at);
 	ClassDB::bind_method(D_METHOD("get_cloud_cover_at", "position"), &WeatherMap3D::get_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("get_high_cloud_cover_at", "position"), &WeatherMap3D::get_high_cloud_cover_at);
+	ClassDB::bind_method(D_METHOD("get_mid_cloud_cover_at", "position"), &WeatherMap3D::get_mid_cloud_cover_at);
+	ClassDB::bind_method(D_METHOD("get_mid_cloud_optical_depth_at", "position"), &WeatherMap3D::get_mid_cloud_optical_depth_at);
+	ClassDB::bind_method(D_METHOD("add_cloud_light", "position", "color", "energy", "reach"), &WeatherMap3D::add_cloud_light);
+	ClassDB::bind_method(D_METHOD("set_cloud_light", "id", "position", "color", "energy", "reach"), &WeatherMap3D::set_cloud_light);
+	ClassDB::bind_method(D_METHOD("remove_cloud_light", "id"), &WeatherMap3D::remove_cloud_light);
+	ClassDB::bind_method(D_METHOD("get_cloud_light_count"), &WeatherMap3D::get_cloud_light_count);
+	ClassDB::bind_method(D_METHOD("get_cloud_lights"), &WeatherMap3D::get_cloud_lights);
+	ClassDB::bind_method(D_METHOD("add_cloud_effector", "position", "radius", "strength"), &WeatherMap3D::add_cloud_effector);
+	ClassDB::bind_method(D_METHOD("set_cloud_effector", "id", "position", "radius", "strength"), &WeatherMap3D::set_cloud_effector);
+	ClassDB::bind_method(D_METHOD("remove_cloud_effector", "id"), &WeatherMap3D::remove_cloud_effector);
+	ClassDB::bind_method(D_METHOD("get_cloud_effector_count"), &WeatherMap3D::get_cloud_effector_count);
+	ClassDB::bind_method(D_METHOD("get_cloud_effector_at", "position"), &WeatherMap3D::get_cloud_effector_at);
 	ClassDB::bind_method(D_METHOD("get_cloud_type_at", "position"), &WeatherMap3D::get_cloud_type_at);
 	ClassDB::bind_method(D_METHOD("get_wetness_at", "position"), &WeatherMap3D::get_wetness_at);
 	ClassDB::bind_method(D_METHOD("get_puddle_at", "position"), &WeatherMap3D::get_puddle_at);
@@ -2935,6 +3404,14 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_high_cloud_height"), &WeatherMap3D::get_high_cloud_height);
 	ClassDB::bind_method(D_METHOD("set_high_cloud_optical_depth", "tau"), &WeatherMap3D::set_high_cloud_optical_depth);
 	ClassDB::bind_method(D_METHOD("get_high_cloud_optical_depth"), &WeatherMap3D::get_high_cloud_optical_depth);
+	ClassDB::bind_method(D_METHOD("set_mid_cloud_cover", "cover"), &WeatherMap3D::set_mid_cloud_cover);
+	ClassDB::bind_method(D_METHOD("get_mid_cloud_cover"), &WeatherMap3D::get_mid_cloud_cover);
+	ClassDB::bind_method(D_METHOD("set_mid_cloud_height", "height"), &WeatherMap3D::set_mid_cloud_height);
+	ClassDB::bind_method(D_METHOD("get_mid_cloud_height"), &WeatherMap3D::get_mid_cloud_height);
+	ClassDB::bind_method(D_METHOD("set_mid_cloud_thickness", "thickness"), &WeatherMap3D::set_mid_cloud_thickness);
+	ClassDB::bind_method(D_METHOD("get_mid_cloud_thickness"), &WeatherMap3D::get_mid_cloud_thickness);
+	ClassDB::bind_method(D_METHOD("set_mid_cloud_optical_depth", "tau"), &WeatherMap3D::set_mid_cloud_optical_depth);
+	ClassDB::bind_method(D_METHOD("get_mid_cloud_optical_depth"), &WeatherMap3D::get_mid_cloud_optical_depth);
 	ClassDB::bind_method(D_METHOD("set_cloud_churn", "speed"), &WeatherMap3D::set_cloud_churn);
 	ClassDB::bind_method(D_METHOD("get_cloud_churn"), &WeatherMap3D::get_cloud_churn);
 	ClassDB::bind_method(D_METHOD("set_cloud_time", "seconds"), &WeatherMap3D::set_cloud_time);
@@ -3030,6 +3507,10 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "high_cloud_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_high_cloud_cover", "get_high_cloud_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "high_cloud_height", PROPERTY_HINT_RANGE, "1000,15000,10,suffix:m"), "set_high_cloud_height", "get_high_cloud_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "high_cloud_optical_depth", PROPERTY_HINT_RANGE, "0,5,0.01"), "set_high_cloud_optical_depth", "get_high_cloud_optical_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mid_cloud_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_mid_cloud_cover", "get_mid_cloud_cover");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mid_cloud_height", PROPERTY_HINT_RANGE, "1000,10000,10,suffix:m"), "set_mid_cloud_height", "get_mid_cloud_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mid_cloud_thickness", PROPERTY_HINT_RANGE, "50,3000,10,suffix:m"), "set_mid_cloud_thickness", "get_mid_cloud_thickness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mid_cloud_optical_depth", PROPERTY_HINT_RANGE, "0,30,0.1"), "set_mid_cloud_optical_depth", "get_mid_cloud_optical_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_shadow_extent", PROPERTY_HINT_RANGE, "16,100000,1,or_greater,suffix:m"), "set_cloud_shadow_extent", "get_cloud_shadow_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "cloud_shadow_resolution", PROPERTY_HINT_RANGE, "16,2048,1"), "set_cloud_shadow_resolution", "get_cloud_shadow_resolution");
@@ -3086,4 +3567,8 @@ WeatherMap3D::~WeatherMap3D() {
 		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(sky_shadow_task);
 	}
 	memdelete_notnull(sky_shadow_bake);
+	if (light_grid_task != WorkerThreadPool::INVALID_TASK_ID) {
+		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(light_grid_task);
+	}
+	memdelete_notnull(light_grid_bake);
 }

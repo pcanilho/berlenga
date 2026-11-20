@@ -437,7 +437,9 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 	stat_render_calls++;
 	stat_render_outputs += out != 0 ? 1 : 0;
 	if (out != 0 && out != p_color.get_id()) {
-		p_effect->copy_texture(p_rd, RID::from_uint64(out), p_color, p_size);
+		// Flow's output carries its transmittance in alpha (misc/physx_patches 0011), which the scattering pass
+		// reads; the frame keeps its own alpha.
+		p_effect->copy_texture(p_rd, RID::from_uint64(out), p_color, p_size, 1.0f, true);
 	}
 	if ((!lights.is_empty() || ambient_scattering || sun_scattering || cast_shadows) && !source.valid) {
 		stat_scatter_no_source++;
@@ -488,7 +490,7 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 			shadow.to_light = shadow_to_light;
 		}
 		shadow.enabled = shadow_rid.is_valid();
-		p_effect->get_scatter().run(p_rd, source, params, lights.ptr(), (int)lights.size(), p_depth, p_color, atlas, p_size, &shadow);
+		p_effect->get_scatter().run(p_rd, source, params, lights.ptr(), (int)lights.size(), p_depth, p_color, RID::from_uint64(out), atlas, p_size, &shadow);
 		if (shadow_casts && shadow.texture.is_valid()) {
 			// The opaque pass reads it from the next frame on (Forward+ only).
 			RendererRD::LightStorage::get_singleton()->directional_volume_shadow_set(shadow_rid, shadow.texture, shadow.world_to_shadow);

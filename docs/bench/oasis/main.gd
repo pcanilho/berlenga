@@ -6,7 +6,9 @@ extends Node3D
 #   --view=top      straight down from 40 m (the outline)
 #   --raster        raster instead of path tracing
 #   --spp=N         path traced samples per pixel (64)
+#   --bounces=N     path traced bounces (the Environment's, 3 by default)
 #   --frames=N      frames before saving (180; path tracing waits for its surfaces too)
+#   --plant-variants=N  meshes per oasis plant species (3; 1 keeps a path traced still within 15 GB)
 #   --discharge=Q   the spring's discharge, L/s (0.05)
 #   --seed=N        OasisSprings3D.seed
 #   --wind=W        wind over the pool, m/s (2)
@@ -21,11 +23,14 @@ extends Node3D
 #   --water-param=P:V  set a uniform of its water material
 #   --out=PATH      save the frame and quit
 #   --test          checks only (no image)
+#   --no-palms      terrain mode without the date palm stand and desert shrubs round the pool (TreeGenerator's
+#                   STAND_DATE_OASIS on a VegetationField3D, wild clumps kept to the water)
 
 var view := "pool"
 var raster := false
 var spp := 64
 var frames := 180
+var plant_variants := 3
 var discharge := 0.05
 var seed := 0
 var wind := 2.0
@@ -52,6 +57,7 @@ func _ready() -> void:
 		elif a == "--test": test = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
+		elif a.begins_with("--plant-variants="): plant_variants = maxi(int(a.substr(17)), 1)
 		elif a.begins_with("--discharge="): discharge = float(a.substr(12))
 		elif a.begins_with("--seed="): seed = int(a.substr(7))
 		elif a.begins_with("--wind="): wind = float(a.substr(7))
@@ -66,6 +72,8 @@ func _ready() -> void:
 	sky_mat.sky_top_color = Color(0.2, 0.42, 0.78)
 	sky_mat.sky_horizon_color = Color(0.72, 0.76, 0.8)
 	sky_mat.ground_horizon_color = Color(0.72, 0.76, 0.8)
+	# Below the horizon past the generated ground: the far sand seen through the desert's haze, not a dark void.
+	sky_mat.ground_bottom_color = Color(0.62, 0.58, 0.52)
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	var env := Environment.new()
@@ -77,6 +85,9 @@ func _ready() -> void:
 	world_env = env
 	env.pathtracing_samples_per_pixel = spp
 	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--bounces="):
+			env.pathtracing_max_bounces = int(a.substr(10))
+	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--debug="):
 			env.pathtracing_debug_mode = int(a.substr(8))
 	var we := WorldEnvironment.new()
@@ -84,7 +95,7 @@ func _ready() -> void:
 	add_child(we)
 
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-55, -150, 0)
+	sun.rotation_degrees = Vector3(-45 if view == "hero" else -55, -150, 0)
 	sun.shadow_enabled = true
 	sun.light_energy = 1.4
 	add_child(sun)
@@ -125,6 +136,27 @@ func _ready() -> void:
 			cam.look_at_from_position(origin + Vector3(-1.2, 2.0, 1.6), origin + Vector3(0.0, -1.8, 0.0))
 		"top":
 			cam.look_at_from_position(origin + Vector3(0.0, 40.0, 0.01), origin)
+		"hero":
+			# Three-quarters from 12 m up, outside the palm grove, looking across the pool and its palms at the highest dune ridge round it,
+			# so the ridge and the sky close the frame (no edge of the generated ground in view).
+			var best_dir := Vector3(0, 0, -1)
+			var best_h := -INF
+			if gen != null:
+				for k in 24:
+					var a := TAU * k / 24.0
+					var d := Vector3(cos(a), 0.0, sin(a))
+					var h := -INF
+					for dist in [40.0, 60.0, 80.0, 110.0]:
+						h = maxf(h, float(gen.get_height(origin + d * dist)) - origin.y)
+					if h > best_h:
+						best_h = h
+						best_dir = d
+			var side := best_dir.cross(Vector3.UP).normalized()
+			var eye := origin - best_dir * (r * 3.0) + side * (r * 1.2)
+			eye.y = (float(gen.get_height(eye)) if gen != null else origin.y) + 12.0
+			cam.fov = 50
+			cam.look_at_from_position(eye, origin + best_dir * (r * 0.8) + Vector3(0.0, 1.5, 0.0))
+			print("hero: ridge %.1f m above the pool toward %s" % [best_h, str(best_dir)])
 		_:
 			cam.look_at_from_position(origin + Vector3(-r * 1.05, 8.0, r * 1.25), origin + Vector3(0.0, -1.0, -r * 0.1))
 	cam.current = true
@@ -299,7 +331,73 @@ func _terrain() -> bool:
 	surface.height_source = surface.get_path_to(gen)
 	surface.follow_target = surface.get_path_to(probe)
 	surface.water_sources = [surface.get_path_to(oasis.get_pool(0))]
+	if not test and not ("--no-palms" in OS.get_cmdline_user_args()) and ClassDB.class_exists("TreeGenerator"):
+		_palms()
 	return true
+
+
+# Date palms round the spring and desert shrubs on the sand beyond: TreeGenerator's date oasis stand placed by a
+# VegetationField3D over a data map of the bench's ground, the pool its water (wild clumps keep to water).
+func _palms() -> void:
+	var dm := TerrainDataMap3D.new()
+	dm.name = "Map"
+	dm.size = 96.0
+	dm.resolution = 96
+	dm.bake_on_ready = false
+	add_child(dm)
+	dm.global_position = Vector3(origin.x, 0.0, origin.z)
+	dm.height_source = dm.get_path_to(gen)
+	dm.water_sources = [dm.get_path_to(oasis.get_pool(0))]
+	# The habitat rules read the map's climate: the bench's hot desert (desert_climate.gd), so the palms, which drink
+	# the groundwater not the rain, take the spring and the shrubs the sand.
+	var recipe := ClimateRecipe.new()
+	recipe.temperature_january = 15.0
+	recipe.temperature_july = 34.0
+	recipe.reference_height = 0.0
+	recipe.precipitation = 60.0
+	dm.climate_recipe = recipe
+	# The oasis stand (PlantGenerator.make_desert DESERT_OASIS): trees' date palm stand (tended palms, wild clumps by
+	# the water, olives beneath) on the spring's wet ground, a ring of desert shrubs where the water lies deeper, and
+	# reed and rush round the pool's shore (spring_pools).
+	var biome := Biome.new()
+	var species: Array = []
+	for r in PlantGenerator.make_desert(PlantGenerator.DESERT_OASIS, plant_variants):
+		if r is PlantSpecies:
+			species.append(r)
+	biome.species = species
+	var f := VegetationField3D.new()
+	f.name = "Palms"
+	f.populate_on_ready = false
+	f.tile_size = 32.0
+	f.biome = biome
+	add_child(f)
+	f.global_position = Vector3(origin.x, 0.0, origin.z)
+	f.data_map = f.get_path_to(dm)
+	f.spring_pools = f.get_path_to(oasis)
+	var err := dm.bake()
+	if err != OK:
+		push_error("oasis: palm data map did not bake (%d)" % err)
+		return
+	if dm.bake_climate() != OK:
+		push_error("oasis: palm climate did not bake")
+		return
+	var perr := f.populate()
+	print("palms: %d species, %d plants (populate %d)" % [species.size(), f.get_plant_count(), perr])
+	if f.get_plant_count() == 0 or "--palm-debug" in OS.get_cmdline_user_args():
+		for d in [6.0, 12.0, 20.0, 30.0]:
+			var q := Vector3(origin.x + d, 0.0, origin.z)
+			q.y = dm.get_height_at(q)
+			print("palm site +%.0f m: water %.1f m depth %.2f slope %.1f T %.1f P %.0f aridity %.3f soil %.2f" % [d,
+					dm.get_water_distance_at(q), dm.get_water_depth_at(q), dm.get_slope_at(q), dm.get_temperature_at(q),
+					dm.get_precipitation_at(q), dm.get_aridity_at(q), dm.get_soil_depth_at(q)])
+			print("    wetness %.2f curvature %.3f height %.1f" % [dm.get_wetness_at(q), dm.get_curvature_at(q), q.y])
+			for sp in species:
+				print("    ", sp.resource_name, " ", sp.get_suitability_at(dm, q))
+		var sp0: PlantSpecies = species[0]
+		for r in PlantSpecies.RULE_MAX:
+			var rr: Vector2 = sp0.get_rule_range(r)
+			if rr != Vector2.ZERO:
+				print("  palm rule %d: %s" % [r, str(rr)])
 
 
 # Wet sand at the waterline, and a film of algae on the bed below (greener with depth, patchy).

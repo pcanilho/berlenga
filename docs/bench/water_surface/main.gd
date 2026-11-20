@@ -28,6 +28,7 @@ extends Node3D
 #   --view=storm_glitter  8 m/s deep sea from 2 m up into the sun's glitter path (--sun-pitch=20)
 #   --view=sea_top  straight down on the open sea from 90 m (crest lengths and crossing seas)
 #   --view=wake     straight down on the rock and the water downstream of it
+#   --shadow-bar=Y  a board hung over the view's centre at height Y (the water) toward the sun: its shadow across the water
 #   --raster        raster only, for comparison
 #   --contact       a WeatherMap3D (dry weather) whose contact wetness the sea writes; the sand reads it (wetness on),
 #                   and the wetness up the beach is printed every 60 frames
@@ -186,6 +187,7 @@ func _ready() -> void:
 		elif a == "--taa": get_viewport().use_taa = true # resolves the jittered ray marches (wave shadows), as in a game
 		elif a == "--wader": wader_on = true
 		elif a == "--lamps": lamps = true
+		elif a.begins_with("--shadow-bar="): _add_shadow_bar.call_deferred(float(a.substr(13)))
 		elif a == "--contact": contact = true
 		elif a == "--wader-nopush": wader_on = true; wader_push = false
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
@@ -954,3 +956,36 @@ func _whitecap_step() -> void:
 	if k == whitecap_hold - 1:
 		var m := whitecap_sum / maxi(whitecap_count, 1)
 		print("WHITECAPS U=%.1f m/s target %.3f%% cover %.3f%% threshold %.3f (auto %s)" % [whitecap_winds[i], 100.0 * m.x, 100.0 * m.y, m.z, str(water.get("whitecap_auto"))])
+
+# --shadow-bar=Y: a 10 m x 1 m board hung 5 m up toward the sun over the point where the view's centre meets the height
+# Y (the water), so its shadow falls across the water in the middle of the frame (the water shadow check).
+func _add_shadow_bar(y: float) -> void:
+	# The scene is built over a few frames: wait for the view's camera.
+	for i in 600:
+		if get_viewport().get_camera_3d() != null:
+			break
+		await get_tree().process_frame
+	await get_tree().process_frame
+	var cam := get_viewport().get_camera_3d()
+	var sun: DirectionalLight3D = null
+	for c in find_children("*", "DirectionalLight3D", true, false):
+		sun = c
+		break
+	if cam == null or sun == null:
+		return
+	var o := cam.global_position
+	var f := -cam.global_basis.z
+	if absf(f.y) < 1e-3 or (y - o.y) / f.y <= 0.0:
+		return
+	var hit := o + f * ((y - o.y) / f.y)
+	var to_sun := sun.global_basis.z.normalized() # a directional light shines along its -Z
+	var flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
+	var long := Vector3(-flat.z, 0.0, flat.x)
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(10.0, 0.15, 1.0)
+	mi.mesh = bm
+	add_child(mi)
+	mi.global_basis = Basis(long, Vector3.UP, long.cross(Vector3.UP))
+	mi.global_position = hit + to_sun * (5.0 / maxf(to_sun.y, 0.2))
+	print("shadow bar over %s, its shadow on the water at %s" % [str(mi.global_position), str(hit)])

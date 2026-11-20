@@ -26,6 +26,8 @@ extends Node3D
 #                    same costs as --floor and with --out saves the view.
 #   --burn=live      quick check: a streamed field of one species recovering over a year; a scar placed after the
 #                    tiles stand, aged, then removed (WorldFire.burn_changed, no rebuild): gone, half back, whole.
+#   --stand=live     quick check: a streamed field of succession stages (meta succession_age / succession_kind); a
+#                    windthrow added after the tiles stand, aged a year (no re-place), then past the pioneer stage.
 
 const SIZE := 256.0
 var size := SIZE
@@ -43,6 +45,7 @@ var far_volume_view := 0 # --far-volume: 1 with the far plants as volume, 2 with
 var far_match := 0 # --far-match: the far-volume view without volume, 4 m up, on a ground drawing the far colour, waiting for the far shade match; 2 = match off (=off), 3 = shade forced to 0.3 (=dark).
 var floor_view := 0 # --floor: 1 with the small species' pixel reach, 2 without (--floor=off).
 var desert_view := 0 # --desert: 1 with make_desert's plants on a sand sea, 2 the same view without (--desert=off).
+var stand_live := false # --stand=live
 var burn_view := 0 # --burn: 1 with burn scars and make_burn's heath set, 2 the same heath unburnt (--burn=off).
 const BURN_SCARS := [[0.05, -60.0], [0.6, -25.0], [2.5, 10.0], [5.0, 45.0]] # Years since, and the scar's centre z (x 60, 60 x 30 m).
 var mushroom_view := 0 # --mushrooms: 1 with the mushrooms, 2 the same view without them (--mushrooms=off).
@@ -97,6 +100,8 @@ func _ready() -> void:
 		elif a.begins_with("--floor"):
 			floor_view = 2 if a == "--floor=off" else 1
 			size = 128.0
+		elif a == "--stand=live":
+			stand_live = true
 		elif a.begins_with("--burn"):
 			burn_view = 2 if a == "--burn=off" else (3 if a == "--burn=live" else 1)
 		elif a.begins_with("--desert"):
@@ -268,6 +273,9 @@ func _physics_process(_d: float) -> void:
 	if burn_view == 3:
 		await _burn_live()
 		return
+	if stand_live:
+		await _stand_live()
+		return
 	if burn_view > 0:
 		await _burn_view()
 		return
@@ -339,7 +347,8 @@ func _floor_view() -> void:
 	ground.detail_reference_height = 1080 # The reach of a 1080p screen, not of the bench's small window.
 	var gb := Biome.new()
 	var floor_set: Array[PlantSpecies] = []
-	floor_set.assign(PlantGenerator.make_floor(PlantGenerator.FLOOR_MEDITERRANEAN if OS.get_environment("VEG_FLOOR_STAND") == "mediterranean" else PlantGenerator.FLOOR_OAK_MIXED, 3, false)) # VEG_FLOOR_STAND=mediterranean: the montado set
+	var stand_env := OS.get_environment("VEG_FLOOR_STAND")
+	floor_set.assign(PlantGenerator.make_floor(PlantGenerator.FLOOR_MEDITERRANEAN if stand_env == "mediterranean" else (PlantGenerator.FLOOR_BOREAL_TAIGA if stand_env == "taiga" else PlantGenerator.FLOOR_OAK_MIXED), 3, false)) # VEG_FLOOR_STAND=mediterranean: the montado set; =taiga: the boreal set
 	if OS.get_environment("VEG_FLOOR_NEAR") == "0":
 		# The litter without its leaf-on-leaf near cards (PlantGenerator.litter_deposit).
 		for sp in floor_set:
@@ -354,6 +363,7 @@ func _floor_view() -> void:
 	ground.stream_target = ground.get_path_to(cam)
 	ground.data_map = ground.get_path_to(dm)
 	ground.canopy_field = ground.get_path_to(wood)
+	ground.far_shell_clumps = OS.get_environment("VEG_FAR_CLUMPS") != "0" # VEG_FAR_CLUMPS=0: the far shell as an even mass
 	if OS.get_environment("VEG_FLOOR_STAND") == "mediterranean" and OS.get_environment("VEG_FLOOR_SWARD") != "0":
 		# The montado's summer sward as real blades (GrassField3D): near tiles, far rings to 250 m, blade columns to
 		# 500 m (VEG_FLOOR_SWARD=0: the floor set alone).
@@ -962,6 +972,208 @@ func _fire_variant_check() -> void:
 	var r := [on[plain], on[young], on[old], off[plain], off[young], off[old]]
 	_check("fire variants: trees on a burn take the variant nearest its age, unburnt ones off it", r[1] > 10 and r[0] == 0 and r[2] == 0 and r[3] > 10 and r[4] == 0 and r[5] == 0, r)
 
+# Succession stages (TreeGenerator.make_succession meta, WorldStand): a pioneer stage (0-15 y, any kind), a windthrow
+# legacy (0-15 y, wind only), a fire-only stage and the old stand (50 y on, old growth too).
+func _stand_species() -> Array:
+	var out := []
+	for st in [[Vector2(0, 15), -1], [Vector2(0, 15), 2], [Vector2(0, 15), 1], [Vector2(50, 10000), -1]]:
+		var sp := PlantSpecies.new()
+		sp.meshes = [BoxMesh.new()]
+		sp.spacing = 1.5
+		sp.set_meta("succession_age", st[0])
+		sp.set_meta("succession_kind", st[1])
+		out.append(sp)
+	return out
+
+func _stand_count(f: VegetationField3D, sps: Array, inside: bool, c := Vector2.ZERO) -> Array:
+	var n := [0, 0, 0, 0]
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh:
+			var mm: MultiMesh = ch.multimesh
+			var k := -1
+			for j in sps.size():
+				if sps[j].meshes[0] == mm.mesh:
+					k = j
+			if k < 0:
+				continue
+			for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+				var p: Vector3 = (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+				var d := Vector2(p.x, p.z).distance_to(c)
+				if (d < 7.0) if inside else (d > 13.0 and d < 30.0):
+					n[k] += 1
+	return n
+
+func _stand_check() -> void:
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_disturbances()
+	var c := Vector2(30, 30)
+	st.add_disturbance(Vector3(c.x, 0, c.y), 10.0, WorldStand.DISTURBANCE_WIND, 5.0)
+	var sps := _stand_species()
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species = sps
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var on := _stand_count(f, sps, true, c)
+	var off := _stand_count(f, sps, false, c)
+	st.clear_disturbances()
+	f.queue_free()
+	# A 5-year windthrow: pioneers and the wind legacy, no fire stage, no old stand; round it the old stand alone.
+	_check("stand age: a 5-year windthrow holds the pioneers and its own legacy, the old stand round it", on[0] > 10 and on[1] > 2 and on[2] == 0 and on[3] == 0 and off[3] > 10 and off[0] == 0 and off[1] == 0 and off[2] == 0, [on, off])
+
+# Forest edges (RULE_FOREST_EDGE, trees' make_edge meta): a forest of an old stand round a 25 m windthrow clearing.
+# The mantle (meta edge_distance -8 to 3 m) rings the clearing's edge; edge trees (0 to 10 m in, mesh meta
+# tree_open_side +X) stand just inside the forest with +X towards the clearing.
+func _edge_check() -> void:
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_disturbances()
+	var c := Vector2(40, 40)
+	st.add_disturbance(Vector3(c.x, 0, c.y), 25.0, WorldStand.DISTURBANCE_WIND, 5.0)
+	var forest := PlantSpecies.new()
+	forest.meshes = [BoxMesh.new()]
+	forest.spacing = 4.0
+	forest.canopy_radius = 2.0
+	forest.set_meta("succession_age", Vector2(50, 10000))
+	var mantle := PlantSpecies.new()
+	mantle.meshes = [BoxMesh.new()]
+	mantle.spacing = 1.5
+	mantle.set_meta("edge_distance", Vector2(-8, 3))
+	var edge_mesh := BoxMesh.new()
+	edge_mesh.set_meta("tree_open_side", Vector3(1, 0, 0))
+	var edge := PlantSpecies.new()
+	edge.meshes = [edge_mesh]
+	edge.spacing = 3.0
+	edge.set_meta("edge_distance", Vector2(0, 10))
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species = [forest, mantle, edge]
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var m_in := 0
+	var m_out := 0
+	var e_in := 0
+	var e_out := 0
+	var e_facing := 0
+	var forest_in := 0
+	for ch in f.get_children(true):
+		if not (ch is MultiMeshInstance3D and ch.multimesh):
+			continue
+		var mm: MultiMesh = ch.multimesh
+		for i in mm.instance_count:
+			var t: Transform3D = (ch as Node3D).global_transform * mm.get_instance_transform(i)
+			var r := Vector2(t.origin.x, t.origin.z).distance_to(c)
+			if r > 36.0:
+				continue # Past it the bench's ground has gaps of its own (more edges).
+			if mm.mesh == mantle.meshes[0]:
+				if r > 15.0 and r < 31.0:
+					m_in += 1
+				else:
+					m_out += 1
+			elif mm.mesh == edge_mesh:
+				if r > 23.0:
+					e_in += 1
+					var to_c := (c - Vector2(t.origin.x, t.origin.z)).normalized()
+					if Vector2(t.basis.x.x, t.basis.x.z).normalized().dot(to_c) > 0.85:
+						e_facing += 1
+				else:
+					e_out += 1
+			elif mm.mesh == forest.meshes[0] and r < 24.0:
+				forest_in += 1
+	st.clear_disturbances()
+	f.queue_free()
+	var r := [m_in, m_out, e_in, e_out, e_facing, forest_in]
+	_check("forest edge: the mantle rings the clearing's edge, edge trees stand just inside facing the open", m_in > 20 and m_out == 0 and e_in > 10 and e_out == 0 and e_facing >= e_in * 0.9 and forest_in == 0, r)
+
+# Stilt-rooted trees (mesh meta tree_base_lift, trees' alder carr): the origin raised that far above the ground.
+func _base_lift_check() -> void:
+	var sps := []
+	for lift in [0.0, 0.6]:
+		var m := BoxMesh.new()
+		if lift > 0.0:
+			m.set_meta("tree_base_lift", lift)
+		var sp := PlantSpecies.new()
+		sp.meshes = [m]
+		sp.spacing = 3.0
+		sp.align_to_ground = 0.0
+		sp.scale_range = Vector2(1, 1)
+		sps.append(sp)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species = sps
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var dy := [[], []]
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh:
+			var mm: MultiMesh = ch.multimesh
+			var k := 0 if mm.mesh == sps[0].meshes[0] else (1 if mm.mesh == sps[1].meshes[0] else -1)
+			if k < 0:
+				continue
+			for i in mini(mm.instance_count, 200):
+				var p: Vector3 = (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+				dy[k].append(p.y - dm.get_height_at(p))
+	f.queue_free()
+	var mean := [0.0, 0.0]
+	for k in 2:
+		for v in dy[k]:
+			mean[k] += v / maxf(dy[k].size(), 1)
+	_check("stilt roots: tree_base_lift raises the trunk's foot that far over the ground", dy[0].size() > 20 and dy[1].size() > 20 and absf(mean[1] - mean[0] - 0.6) < 0.03, [dy[0].size(), dy[1].size(), snappedf(mean[0], 0.001), snappedf(mean[1], 0.001)])
+
+# --stand=live: a disturbance reported after the field streamed in (WorldStand.stand_changed) re-places the tiles over
+# it; a year passing inside every stage changes nothing; past the pioneer stage they go.
+func _stand_live() -> void:
+	field.queue_free()
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_disturbances()
+	var sps := _stand_species()
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.biome = Biome.new()
+	f.biome.species = sps
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.stream_radius = 40.0
+	f.stream_target = f.get_path_to(self)
+	f.streaming = true
+	var counts := []
+	await _burn_live_wait(3.0)
+	counts.append(_stand_count(f, sps, true))
+	st.add_disturbance(Vector3.ZERO, 10.0, WorldStand.DISTURBANCE_WIND, 2.0)
+	await _burn_live_wait(3.0)
+	counts.append(_stand_count(f, sps, true))
+	var mmis := []
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D:
+			mmis.append(ch)
+	st.advance_years(1.0)
+	await _burn_live_wait(3.0)
+	var same := true
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D and not mmis.has(ch):
+			same = false
+	counts.append(_stand_count(f, sps, true))
+	st.advance_years(60.0)
+	await _burn_live_wait(3.0)
+	counts.append(_stand_count(f, sps, true))
+	st.clear_disturbances()
+	var c0: Array = counts[0]
+	var c1: Array = counts[1]
+	var c3: Array = counts[3]
+	_check("stand: a live windthrow re-places the streamed tiles over it (old stand out, pioneers and legacy in)", c0[3] > 3 and c0[0] == 0 and c1[3] == 0 and c1[0] > 3 and c1[1] > 1 and c1[2] == 0, counts)
+	_check("stand: a year passing inside every stage places nothing again", same and counts[2] == counts[1], [same, counts[2]])
+	_check("stand: 63 years on the old stand is back, the pioneers gone", c3[3] > 3 and c3[0] == 0 and c3[1] == 0, c3)
+	print("VEG_STAND_LIVE_RESULT ", "PASS" if fails == 0 else "FAIL")
+	get_tree().quit(1 if fails > 0 else 0)
+
 # Close-up bark on by default: a field whose species have trunks (tree_colliders) makes and links a BarkDetail3D
 # as an internal child; none for a field without trunks, none with bark_detail off, gone when switched off.
 func _bark_detail_check() -> void:
@@ -1530,9 +1742,12 @@ func _place_form_checks() -> void:
 func _checks() -> void:
 	_bark_detail_check()
 	_fire_variant_check()
+	_stand_check()
+	_edge_check()
+	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []
-	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH, PlantGenerator.FLOOR_MEDITERRANEAN]:
+	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH, PlantGenerator.FLOOR_MEDITERRANEAN, PlantGenerator.FLOOR_BOREAL_TAIGA]:
 		for sp in PlantGenerator.make_floor(fs, 1, false):
 			var lr: Vector2 = sp.get_rule_range(PlantSpecies.RULE_LITTER)
 			if lr.x > 0.0 and not (lr.x - sp.get_rule_fade(PlantSpecies.RULE_LITTER) > 0.0):
@@ -1545,6 +1760,11 @@ func _checks() -> void:
 		if sp.get_meta("plant_preset", -1) == PlantGenerator.PRESET_DRY_GRASS:
 			med_grass = sp
 	_check("montado: dry grass in the open and under the crowns", med_grass != null and med_grass.get_density() > 0.5 and med_grass.rule_weight(PlantSpecies.RULE_SHADE, 0.0) > 0.9 and med_grass.rule_weight(PlantSpecies.RULE_SHADE, 0.7) > 0.9, [med.size(), med_grass.get_density() if med_grass else 0.0])
+	# Boreal taiga (FLOOR_BOREAL_TAIGA): reindeer lichen, feather moss and bilberry carpet the floor.
+	var taiga_presets := []
+	for sp in PlantGenerator.make_floor(PlantGenerator.FLOOR_BOREAL_TAIGA, 1, false):
+		taiga_presets.append(sp.get_meta("plant_preset", -1))
+	_check("taiga: reindeer lichen, feather moss and bilberry on the floor", PlantGenerator.PRESET_REINDEER_LICHEN in taiga_presets and PlantGenerator.PRESET_FEATHER_MOSS in taiga_presets and PlantGenerator.PRESET_BILBERRY in taiga_presets, taiga_presets)
 	# Dunes on a generator's dunes (RULE_DUNE): embryo and mobile sets on moving sand, fixed on held
 	# sand, none off the dune sand (-1).
 	var dune_bad := []

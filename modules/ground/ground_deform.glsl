@@ -98,6 +98,8 @@ struct Stamp {
 	vec4 c; // sink, contact tolerance, velocity x, velocity z
 	vec4 d; // crack length, flags, seed (bits), unused
 	ivec4 e; // x0, x1, z0, z1
+	vec4 f; // a hard body under a press (mud round 15.2): capsule end a xyz, radius (0: none)
+	vec4 g; // its other end b xyz, unused
 };
 layout(set = 0, binding = 6, std430) restrict readonly buffer Stamps {
 	Stamp stamps[];
@@ -553,6 +555,19 @@ float mud_print_mask(vec4 p_b, vec2 p_wp, vec2 p_pos) {
 	return inside * (1.0 - smoothstep(0.002, 0.005, sole_relief(lp, p_b.zw)));
 }
 
+// A capsule's top over a point (GroundDeformField::floor_top()), or -1e9 off it.
+float floor_top(vec4 a, vec3 b, vec2 p) {
+	if (a.w <= 0.0) {
+		return -1e9;
+	}
+	vec2 ab = b.xz - a.xz;
+	float l2 = dot(ab, ab);
+	float t = l2 > 1e-8 ? clamp(dot(p - a.xz, ab) / l2, 0.0, 1.0) : 0.0;
+	vec2 q = a.xz + ab * t - p;
+	float d2 = dot(q, q);
+	return d2 < a.w * a.w ? mix(a.y, b.y, t) + sqrt(a.w * a.w - d2) : -1e9;
+}
+
 void run_stamp(Stamp s) {
 	if ((uint(s.d.y) & STAMP_AMOUNT) != 0u) {
 		run_amount_stamp(s);
@@ -688,6 +703,7 @@ void run_stamp(Stamp s) {
 			target = min(target, c.surface - sink * wgt + relief);
 		}
 		target = max(target, c.surface - c.max_dent);
+		target = max(target, floor_top(s.f, s.g.xyz, wp)); // a stone under it (round 15.2)
 		if (target >= sfc) {
 			continue;
 		}

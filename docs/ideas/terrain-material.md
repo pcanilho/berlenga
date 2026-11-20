@@ -155,8 +155,13 @@ reflect the sun as points far brighter than the sand. Journey drew it with a ran
 threshold (Edwards, GDC 2013, "Sand Rendering in Journey"; Zucconi's 2019 breakdown); our snow already counts facets
 per pixel (snow_glint: Zirr and Kaplanyan 2016; Deliot and Belcour 2023).
 
-- Grains 0.5 mm, 10% of them facets with GGX alpha 0.4 normals. Each facet catches the sun over about 1.5 degrees
-  (the sun's 0.53 degree disc blurred by the facets' curvature and pits), 2.1e-3 sr.
+- Grains 0.5 mm, a quarter of their area facets (cleavage and crystal faces, several to a grain) with GGX alpha 0.4
+  normals. Each facet catches the sun over about 1.6 degrees (the sun's 0.53 degree disc and slight curvature),
+  6e-4 sr. (First 10% and 3 degrees, 2.1e-3 sr: each flash came out 30 times dimmer than a flat face mirroring the
+  sun and docs saw almost none into the mirror direction at 640 wide.) A flash's pixel brightness still scales with
+  (grain / footprint)^2: glitter is a close-up and high-resolution effect, as in life.
+- Path tracer: the same per-footprint count from the ray cone (RAY_FOOTPRINT, back to the pixel's width), each
+  sample taking the facet lobe with its share; a per-grain draw per sample had converged to speckle.
 - Raster: the count of facets in the pixel mirroring the sun is Poisson with mean facets x D(h) cos x
   omega / (4 VoH), drawn per footprint cell so a glint stays on its grains while sun and camera hold still. Each
   adds (grain / footprint)^2 of the pixel at the sun's irradiance over omega, drawn as the coat lobe turned onto
@@ -180,4 +185,35 @@ terrain shadows at any range from the ground's horizon toward the sun.
   smoothstep(tangent - 0.006, tangent + 0.014, tan(sun elevation)), fading in from far_shadow_start (150 m) to
   twice it, so the cascades keep the near ground. Raster only; the path tracer traces the hills.
 - The sun is sun_light, or the first visible DirectionalLight3D (polled five times a second).
+- Each node also keeps one over the run to its hull point and its own grid height, so the material moves the
+  tangent to the pixel's own height: slope + (grid height - pixel height) / run. Crests standing above the 8 m
+  grid stay lit and hollows under it shade, as the cascades show them.
+- Check (19 Nov, docs asked whether it darkens the ambient): it scales SUN_SHADOW only, the sun's direct light. With
+  the default 6 km cascades the frame with far shadows on matches the frame with them off to within 0.3 of a level
+  in mean brightness; the dark range in the first after frame was right for a sun 2 degrees up (the before frame,
+  cascades cut at 300 m, lit what the ridges shade).
 
+
+## Flat layers (20 Nov)
+
+Docs found a flat olive river bank (scene) and a flat green hill (rocks). Both were ground layers with no textures
+(the benches set none: alluvium's default is olive, soil's a dark olive green), drawn as one colour. A layer without
+an albedo texture now gets value-noise tone over 9 m and 2.2 m and, while the pixel is finer than them, 0.25 m clods
+and 0.06 m grit as tone and a light bump (forward differences), each faded out as the footprint nears it. The far
+ground blend also stopped painting the plant cover map's one blurred colour: clumps and tone over 12 m and 2 m, and
+gaps where the ground's own texture shows. Real textures (CC0, via LFS) remain the better answer where a layer gets
+them; this is the floor for any layer that has none.
+
+## Next: real layer textures (research, 20 Nov; card pending)
+
+Every bench and the showcase still draw the five ground layers untextured (procedural floor above). Scanned CC0
+sets that fit the layers, all from Poly Haven (CC0, credited one line each in the README References):
+- rock: rock_face_01, cliff_side (bedded faces read with the cliff relief beds), marble_cliff_02 for limestone.
+- scree: rocks_ground_02 (angular clasts), coast_sand_rocks_02 near shores.
+- soil: forest_ground_04 under trees, dirt_floor for bare tracks.
+- alluvium: aerial_mud_1 (silt and drying mud seen from above, scales to a floodplain).
+- sand keeps its procedural grain (its own relief comes from GroundSurface3D ripples).
+ambientCG (also CC0) has Ground0xx soil and gravel sets as a second source. Plan: 2K albedo, normal, roughness and
+height per layer into art-src (Gitea LFS, never GitHub), linked into the benches; hex tiling (already in
+tm_hex) hides repeats, the 9 m / 2.2 m tone stays on top so no two tiles match, and the height maps drive the
+existing height blend. Check: raster against PT at 100% crop, no detail lost.

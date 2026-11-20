@@ -1,0 +1,11 @@
+--- a/flow/source/nvflowext/shaders/RayMarchBlockCS.hlsl
++++ b/flow/source/nvflowext/shaders/RayMarchBlockCS.hlsl
+@@ -213,6 +213,8 @@
+     sum.rgb *= globalParamsIn.compositeColorScale;
+ 
+     color.rgb = sum.rgb + sum.a * color.rgb;
++    // The gas's transmittance in alpha, for a lighting pass to weigh its light by this march's own coverage.
++    color.a = sum.a;
+ 
+     //color.rgb = float3(0.f, 0.f, 0.f);
+     //if (sum.a < 1.f)
