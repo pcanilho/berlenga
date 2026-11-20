@@ -222,3 +222,36 @@ short steps inside cloud are the cost the next two items (sun shadow grid, empty
    (300 by 450 m cells, rows across the wind: Ludlam's cellular convection), rounded top and bottom, lit like
    the cumulus (octaves, two-stream diffuse, sky light) with two sun samples through the slab. Not yet: the mid
    sheet dimming the cumulus' sun beneath it.
+
+## Round 3: single clouds, groups and cauliflower crests (20 Nov 2026)
+
+Review of round 2's frames: puffs with flat, sheared sides; far rows of the same flat-bottomed pancake; little
+grouping; crests read as soft lumps. Causes found, each fixed:
+
+1. **One noise threshold over the whole sky** made every cloud the same kind of blob, packed evenly. Cumulus are
+   placed as single clouds instead (`cells_at()` on the CPU, `wc_cells` on the GPU): a grid of
+   `WeatherMap3D` cells (1200 m), at most one cloud a cell, jittered centre, kept where the local cover beats the
+   cell's draw (the cover and its cluster noise vary, so some stretches hold many clouds and others few). Sizes
+   skew small (Plank 1969's exponential spread); height follows width by type (humilis about half as tall as
+   wide, congestus taller). Each cloud is an envelope: straight-sided body, domed top, plus three thermal bubbles
+   off its axis (Neyret 1997's rising thermals). The envelope remaps the shape noise as Nubis's coverage does, so
+   the noise still carves the edge. Decks (cover above about 0.7) keep the continuous noise.
+2. **Presence tested against the cover at the sample** cut a cloud by a vertical wall wherever it crossed a change
+   in cover (the far "blocks"). The test now fades over a margin and shrinks the cloud toward thinner cover.
+3. **Crests as an erosion after the remap** only roughened the skin of one round dome. Turrets now cut into the
+   envelope itself, from billows in the cloud's own frame (about four across it, finer octaves inside), fully over
+   its top half and less down the sides, so the outline becomes a cluster of rounded crests and the walls bulge.
+   `cloud_turret_strength` (0.9). The world-scale billows add smaller lobes on top.
+4. **The fine billow erosion bored pits**: it eroded by the inverted Worley (1 at the feature points), which
+   removes each billow's centre and leaves a cracked cotton surface. It now erodes by one minus that, so the
+   feature points stay as bulges (as Schneider 2015 flips the noise with height).
+5. **Shear** default 0.4 (was 1): towers lean a little instead of smearing sideways.
+
+Cost on lavapipe the same or lower (clouds view 1078 to 1058 ms, towers 1170 to 1006, fair weather 976 to
+785): fewer, more compact clouds. Turrets are detail level, left out of the CPU shadow bake like the other
+erosion (bake against a 10 m march still 0.002). Shadow share of the ground by cover 0.2/0.4/0.6/0.8/1.0:
+4/9/26/72/94% (was 0/10/29/71/94).
+
+PhysX Flow was considered for the shapes: it simulates a grid tens of metres across, so a sky of clouds
+kilometres wide would need either a coarse grid with no crests or far more memory than a frame has; the
+procedural model above is what every shipped sky uses. Not yet: the mid sheet dimming the cumulus' sun.
