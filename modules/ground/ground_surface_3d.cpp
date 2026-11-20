@@ -2058,7 +2058,7 @@ void GroundSurface3D::_crack_update(double p_delta) {
 		if (st <= 0.0f || (in.moisture >= mud_wet_start && silt <= 0.0f)) {
 			continue; // never soaked, or the ground round it is still wet
 		}
-		const float thick = _crack_at_cell(i).y * 0.25f;
+		const float thick = _crack_layer(i);
 		st = MAX(st - evap * float(p_delta) / (0.4f * MAX(thick, 0.002f)), 1.0f);
 	}
 	// The new silt's soaking is taken (the drying runs on from here).
@@ -2464,6 +2464,16 @@ Vector4 GroundSurface3D::_crack_at_cell(int p_i, float *r_damp) const {
 	// Ground only saturated (a layer of about 6 mm) cracks too finely to show; a pool's bed does, its cracks finer
 	// and fading out towards its rim as the water there stood shallower.
 	const float shows = MAX(Math::smoothstep(0.006f, 0.012f, thick), skin_shows);
+	// A silt skin's plates (docs/ideas/mud.md, round 15.1 look): a thin layer drying on a substrate that does not
+	// shrink cracks into polygons some ten times its thickness across (Groisman and Kaplan 1994; Weinberger 1999 on
+	// spacing to thickness), their sizes varying from place to place, and each plate curls up at its edges as its top
+	// dries and shrinks first (mud curls: Allen 1986; Minter et al. 2007). The shaders take the skin's share as a
+	// negative regularity (ground_cracks()): wider gaps, deeper curl reaching further into the plate.
+	if (skin_shows > 0.0f) {
+		const float vary = 0.6f + 0.9f * _value_noise(skin_x * ground_spacing / 2.3f + 11.0f, skin_z * ground_spacing / 2.3f + 5.0f);
+		const float plate = Math::lerp(4.0f * thick, 10.0f * MIN(skin, 0.02f) * vary, skin_shows);
+		return Vector4(Math::smoothstep(0.67f, 0.2f, water) * shows, plate, -skin_shows, MAX(tone, 0.0f));
+	}
 	return Vector4(Math::smoothstep(0.67f, 0.2f, water) * shows, 4.0f * thick, MIN(crack_state[p_i * CRACK_FLOATS + 1] / 5.0f, 1.0f), MAX(tone, 0.0f));
 }
 

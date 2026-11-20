@@ -334,6 +334,10 @@ private:
 		int level = -1; // the level being baked, from the top down; -1 when none
 		Vector<float> tau; // x fastest, then z, then level
 		float *tau_w = nullptr;
+		// How much of each texel is sunlit cloud (its opacity across a texel times the sun reaching it), which the
+		// texture blurs into the light the clouds round a point bounce onto it.
+		Vector<float> lit;
+		float *lit_w = nullptr;
 		float above(int p_level, float p_x, float p_z) const;
 		void row(uint32_t p_row, void *);
 	};

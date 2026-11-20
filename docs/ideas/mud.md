@@ -1167,6 +1167,15 @@ top whatever the ground under it, pales into a crust and cracks into plates abou
 1.5 s; dried, water 0 and cracks open at 2 cm plates; off, nothing is laid. --view=silt [--dry]: an older lobe dried
 and cracked, a fresh band dark over its far end.
 
+Look fix (20 Nov, docs declined the first cracks as a decal): a thin layer drying on a substrate that does not
+shrink cracks into polygons some ten times its thickness (Groisman and Kaplan 1994; Weinberger 1999), and its plates
+curl up at their edges as the top dries first (mud curls: Allen 1986; Minter et al. 2007). The skin's crack state now
+carries plates of 10 x its depth, varied 0.6 to 1.5 by a 2.3 m value noise, and its share as a negative regularity;
+ground_cracks() (material.cpp and the path tracer alike) then opens wider gaps (12% shrinkage), cracks only through the
+layer, and curls each plate's rim up to half its "thick" over 0.18 of the domain. The curl now survives footprints up
+to three reaches wide, so the ground mesh carries the dished plates where it cannot carry the slots (pond cracks gain
+a little curl at distance too).
+
 **15.2 Stones dug round and kicked loose.** A wheel is held up only by a stone or root under its middle (a quarter of
 the print's short side for press_wheel; half the tyre's half-width in PhysXVehicle3D). Under the rest of the print the
 tyre wraps round it: the stamp carries the highest body under the print as a floor (GroundDeformField press_floor,

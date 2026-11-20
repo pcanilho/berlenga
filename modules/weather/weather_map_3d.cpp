@@ -2599,6 +2599,8 @@ void WeatherMap3D::LightGridBake::row(uint32_t p_row, void *) {
 			}
 		}
 		tau_w[(level * n + int(p_row)) * n + xi] = t;
+		const float sigma = WeatherClouds::extinction_at(state, p);
+		lit_w[(level * n + int(p_row)) * n + xi] = (1.0f - Math::exp(-sigma * texel)) / (1.0f + 0.75f * (1.0f - 0.85f) * t);
 	}
 }
 
@@ -2626,6 +2628,8 @@ void WeatherMap3D::_start_light_grid_bake() {
 	lb.y1 = MAX(lb.state.top_max, lb.y0 + 100.0f);
 	lb.tau.resize(kLightGridResolution * kLightGridResolution * kLightGridLevels);
 	lb.tau_w = lb.tau.ptrw();
+	lb.lit.resize(kLightGridResolution * kLightGridResolution * kLightGridLevels);
+	lb.lit_w = lb.lit.ptrw();
 	lb.level = kLightGridLevels - 1;
 	_launch_light_grid_level();
 }
@@ -2675,17 +2679,80 @@ void WeatherMap3D::_finish_light_grid_bake(bool p_discard) {
 void WeatherMap3D::_build_light_grid_texture() {
 	const LightGridBake &lb = *light_grid_bake;
 	const int n = kLightGridResolution;
+	// Green: the bounce light, the sunlit share of the cloud round each texel, at two reaches averaged (a cone's
+	// footprint widening with distance, as voxel cone tracing reads coarser mips further out; Crassin 2011): 5 by 5
+	// texels and 3 levels (1.3 km), and 13 by 13 texels and 5 levels (3.3 km), each leaving out the texel itself,
+	// whose own light the two-stream term already carries. Separable box sums.
+	const int nl = kLightGridLevels;
+	const float *lit = lb.lit.ptr();
+	auto box = [&](int p_rh, int p_rv) {
+		Vector<float> a;
+		a.resize(n * n * nl);
+		Vector<float> b;
+		b.resize(n * n * nl);
+		float *aw = a.ptrw();
+		float *bw = b.ptrw();
+		for (int l = 0; l < nl; l++) {
+			for (int z = 0; z < n; z++) {
+				float acc = 0.0f;
+				for (int k = 0; k <= MIN(p_rh, n - 1); k++) {
+					acc += lit[(l * n + z) * n + k];
+				}
+				for (int x = 0; x < n; x++) {
+					aw[(l * n + z) * n + x] = acc;
+					if (x + p_rh + 1 < n) {
+						acc += lit[(l * n + z) * n + x + p_rh + 1];
+					}
+					if (x - p_rh >= 0) {
+						acc -= lit[(l * n + z) * n + x - p_rh];
+					}
+				}
+			}
+			for (int x = 0; x < n; x++) {
+				float acc = 0.0f;
+				for (int k = 0; k <= MIN(p_rh, n - 1); k++) {
+					acc += aw[(l * n + k) * n + x];
+				}
+				for (int z = 0; z < n; z++) {
+					bw[(l * n + z) * n + x] = acc;
+					if (z + p_rh + 1 < n) {
+						acc += aw[(l * n + z + p_rh + 1) * n + x];
+					}
+					if (z - p_rh >= 0) {
+						acc -= aw[(l * n + z - p_rh) * n + x];
+					}
+				}
+			}
+		}
+		const float count = float((2 * p_rh + 1) * (2 * p_rh + 1) * (2 * p_rv + 1) - 1);
+		for (int l = 0; l < nl; l++) {
+			for (int i = 0; i < n * n; i++) {
+				float acc = 0.0f;
+				for (int k = MAX(l - p_rv, 0); k <= MIN(l + p_rv, nl - 1); k++) {
+					acc += bw[k * n * n + i];
+				}
+				aw[l * n * n + i] = (acc - lit[l * n * n + i]) / count;
+			}
+		}
+		return a;
+	};
+	const Vector<float> near = box(2, 1);
+	const Vector<float> far = box(6, 2);
 	Vector<Ref<Image>> levels;
-	for (int l = 0; l < kLightGridLevels; l++) {
+	for (int l = 0; l < nl; l++) {
 		Vector<uint8_t> bytes;
-		bytes.resize(n * n * 4);
-		memcpy(bytes.ptrw(), lb.tau.ptr() + l * n * n, n * n * 4);
-		levels.push_back(Image::create_from_data(n, n, false, Image::FORMAT_RF, bytes));
+		bytes.resize(n * n * 8);
+		float *o = reinterpret_cast<float *>(bytes.ptrw());
+		for (int i = 0; i < n * n; i++) {
+			o[i * 2 + 0] = lb.tau[l * n * n + i];
+			o[i * 2 + 1] = 0.5f * (near[l * n * n + i] + far[l * n * n + i]);
+		}
+		levels.push_back(Image::create_from_data(n, n, false, Image::FORMAT_RGF, bytes));
 	}
 	if (light_grid_texture.is_null() || light_grid_y0 != lb.y0 || light_grid_y1 != lb.y1) {
 		// A new texture whenever the box's height changes too, so the sky never reads one level against another's.
 		light_grid_texture.instantiate();
-		light_grid_texture->create(Image::FORMAT_RF, n, n, kLightGridLevels, false, levels);
+		light_grid_texture->create(Image::FORMAT_RGF, n, n, kLightGridLevels, false, levels);
 	} else {
 		light_grid_texture->update(levels);
 	}
