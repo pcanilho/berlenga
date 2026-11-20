@@ -1623,7 +1623,7 @@ void fragment() {
 		// Wind ripples past their real geometry (GroundSurface3D's 4 m window): the grown field's slope as a normal
 		// over the sand of the patch, as BaseMaterial3D draws it, and past the patch over the dune field's sand
 		// (far_ripples), by this material's sand share.
-		c += "\tvec3 gr_far = ground_ripple_far_slope(wp.xz, length(tm_dpx), wn.y, tm_sand_b);\n\tsn = normalize(sn - vec3(gr_far.x, 0.0, gr_far.y));\n\talbedo *= gr_far.z;\n";
+		c += "\tvec3 gr_sort;\n\tvec3 gr_far = ground_ripple_far_slope(wp.xz, length(tm_dpx), wn.y, tm_sand_b, gr_sort);\n\tsn = normalize(sn - vec3(gr_far.x, 0.0, gr_far.y));\n\talbedo *= gr_far.z * gr_sort;\n";
 	}
 	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5 * tm_gc_spec;\n";
 	if (grass_tint_enabled) {

@@ -957,6 +957,9 @@
 		<member name="ripple_extent" type="float" setter="set_ripple_extent" getter="get_ripple_extent" default="4.0">
 			Width of the square of real ripple geometry round the follow point, m. The patch's middle is meshed at the ripple cell over it, so its vertex count grows as its square (4 m: about 100,000 vertices). The ripples fade out over its outer 15%, into the same field drawn as surface detail (a normal, no shadows of their own) over the rest of the patch.
 		</member>
+		<member name="ripple_sorting" type="bool" setter="set_ripple_sorting" getter="is_ripple_sorting" default="true">
+			If [code]true[/code], wind ripples sort their grains as real ones do: dark lines of heavy minerals in the troughs (patchy over metres) and paler, coarser crests, on the window's ripples and the far ones, in raster and path tracing. Where the crests are finer than a pixel the ground takes the bands' mean tone. Needs [member wind_ripples].
+		</member>
 		<member name="ripple_time_scale" type="float" setter="set_ripple_time_scale" getter="get_ripple_time_scale" default="1.0">
 			Speeds up the ripples' growth over real time; [code]1.0[/code] is real time, when ripples take minutes to re-form. For scenes and time-lapses.
 		</member>
