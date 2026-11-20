@@ -357,13 +357,34 @@ func _ready() -> void:
 				bs = cv.get_closest_offset(cv.get_point_position(j))
 		var dq: float = rv.get_discharge_at(bs)
 		var rate := float(args["silt"]) * 1e-3 * dq
-		rv.add_sediment(best, rate, 0.0)
+		# Fed across the section (--silt-spread points, 5) so the river carries the load bank to bank at once: a
+		# single cell only mixes across over hundreds of metres (Valence). The section: across the flow at best,
+		# out to where the water ends.
+		var flow: Vector3 = rv.sample_flow(best)
+		var across := Vector3(-flow.z, 0, flow.x).normalized() if flow.length() > 1e-4 else Vector3.RIGHT
+		var half := [0.0, 0.0]
+		for sgn in 2:
+			for k in 60:
+				var q := best + across * (0.5 * k) * (1.0 if sgn == 0 else -1.0)
+				if rv.sample_depth(Vector3(q.x, height_at(q.x, q.z), q.z)) <= 0.0:
+					break
+				half[sgn] = 0.5 * k
+		var npts := maxi(int(args.get("silt-spread", "5")), 1)
+		var pts: Array[Vector3] = []
+		for k in npts:
+			var f := (k + 0.5) / npts
+			pts.append(best + across * lerpf(-half[1], half[0], f) * 0.9)
+		_log("silt: flow %.2f m/s at the feed, section %.1f m wide, %d feed points" % [flow.length(), half[0] + half[1], npts])
+		for q in pts:
+			rv.add_sediment(q, rate / npts, 0.0)
 		# A rate, held 2 s: fed again every second for the rest of the run, so the reach below settles at the load.
 		var feed := Timer.new()
 		feed.wait_time = 1.0
 		feed.process_callback = Timer.TIMER_PROCESS_PHYSICS
 		add_child(feed)
-		feed.timeout.connect(func(): rv.add_sediment(best, rate, 0.0))
+		feed.timeout.connect(func():
+			for q in pts:
+				rv.add_sediment(q, rate / npts, 0.0))
 		feed.start()
 		for _i in int(float(args.get("silt-wait", "20")) * Engine.physics_ticks_per_second):
 			await get_tree().physics_frame
@@ -404,6 +425,8 @@ func _ready() -> void:
 	if args.get("prints", "1") != "0":
 		_build_prints()
 	_build_camera()
+	if args.has("wet-follow-cam") and weather != null:
+		weather.follow_target = weather.get_path_to(cam) # contact wetness (64 m square) round the camera, not the origin
 	if clock != null:
 		_log("sun altitude %.1f deg, azimuth %.1f deg" % [clock.get_sun_altitude(), clock.get_sun_azimuth()])
 	if args.has("worn-path"):
@@ -3416,7 +3439,7 @@ func _generated_forest(clearing: bool) -> Biome:
 	var variants := int(args.get("tree-variants", "1"))
 	var stands := {"beech": TreeGenerator.STAND_BEECH, "oak": TreeGenerator.STAND_OAK_MIXED,
 			"montane": TreeGenerator.STAND_MONTANE_CONIFER, "hedgerow": TreeGenerator.STAND_HEDGEROW,
-			"stonepine": 13} # STAND_STONE_PINE (by value: older binaries parse it too)
+			"stonepine": 13, "windthrow": 17} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
 	var b: Biome
 	if args.has("montado"):
 		# --montado: the Iberian wood pasture, open-grown cork oaks with stone pines among them over a summer-dry
@@ -6268,6 +6291,9 @@ func _slip_walk() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(args.get("slip-seed", "5"))
 	var plant := int(args.get("slip-plant", "20"))
+	var peak := 0
+	var midp := a0.lerp(b0, 0.5)
+	_log("slipface ground at the walk: %s, slope %.1f deg" % [str(prints.get_material_at(midp)), rad_to_deg(atan(_slip_grad(midp).length()))])
 	var tongues0: int = prints.call("get_avalanche_count") if prints.has_method("get_avalanche_count") else -1
 	for k in n:
 		var foot := feet[k % 2]
@@ -6281,18 +6307,22 @@ func _slip_walk() -> void:
 		foot.visible = true
 		for i in plant:
 			await get_tree().physics_frame
+			if prints.has_method("get_avalanche_count"):
+				peak = maxi(peak, int(prints.call("get_avalanche_count")))
 		foot.visible = false
 		for i in 6:
 			await get_tree().physics_frame
 	for i in int(float(args.get("slip-run", "12")) * 60.0):
 		await get_tree().physics_frame
+		if prints.has_method("get_avalanche_count"):
+			peak = maxi(peak, int(prints.call("get_avalanche_count")))
 	prints.sync_deformation()
 	for i in 3:
 		await get_tree().physics_frame
 	if drawn_off:
 		RenderingServer.render_loop_enabled = true
 	var tongues1: int = prints.call("get_avalanche_count") if prints.has_method("get_avalanche_count") else -1
-	_log("slipface walk: %d steps, avalanches %d -> %d, dent at the walk's middle %.3f m" % [n, tongues0, tongues1, prints.get_dent_at(a0.lerp(b0, 0.5))])
+	_log("slipface walk: %d steps, avalanches %d -> %d (at most %d running), dent at the walk's middle %.3f m" % [n, tongues0, tongues1, peak, prints.get_dent_at(a0.lerp(b0, 0.5))])
 
 
 # --farm-track: an old farm track worn in by wheels (GroundSurface3D.worn_tracks, add_wear): two wheel ruts 1.6 m apart
