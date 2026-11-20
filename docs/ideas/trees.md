@@ -2685,6 +2685,23 @@ As built:
   living stage, poles shorter than the mature stand, veterans no shorter). Taiga: poles 15 m, mature 35 m, veterans
   43 m; montane conifer 13/35/41 m; beech 11/30/38 m.
 
+### Next-round options (card 20 Nov midday)
+
+- Taiga details. Char on catfaces: the bark shader's wood branch ignores vertex COLOR, so the scar needs its own
+  channel (a char amount in the wound channel's spare bits, read in the wood branch: black, rough, cracked into
+  blocks as charred wood checks; Arno and Allison-Bunnell 2002 on catface char rings). Kelo spiral grain: Scots pine
+  grows with spiral grain, mostly left-handed in young trees and turning right in old ones (Harris 1989, Spiral Grain
+  and Wave Phenomena in Wood Formation), and weathering opens checks along it: twist the wood UVs and the check
+  pattern by a per-tree angle of 2-8 degrees.
+- Forest edges. An edge has a mantle of shrubs (blackthorn, hawthorn, hazel, rose) and a fringe of herbs in front of
+  it, and its trees keep green branches to the ground on the lit side (the Waldmantel of the German silvicultural
+  literature; Harper et al. 2005 on edge influence reaching 20-60 m in). Build: an edge distance rule from the stand
+  mask, edge-tree variants with one-sided crowns, and a mantle species list.
+- Wet forests. Alder carr (Alnus glutinosa on peat, stilt-rooted on tussocks; Rodwell, British Plant Communities W5)
+  and riverside softwood stands (Salix alba and fragilis, leaning, often split and resprouting; floodplain forests of
+  the Danube and Rhine). Build: a stilt-root and tussock base, water-level trunks with algae and silt lines (flood
+  marks at the high-water height from the water map), leaning willow variants.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
