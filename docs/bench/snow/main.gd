@@ -103,7 +103,8 @@ class BodySnowStub extends WorldSnow:
 #                     [--wind=S: a steady wind along the eave by day, the tips lean; --dense: a week of melt with
 #                     sites 5 cm apart, rippled icicles bridged into curtains] [--no-core: clear ice only]
 #                     [--hero: from under the roof 1.7 m back, looking out at the snow past a fused pair, root to
-#                     tip (--wall: from outside against a boarded front); pass --resolution 1920x1080]
+#                     tip (--wall: from outside against a boarded front; --outside: mirrored); pass --resolution 1920x1080]
+#                     [--black-core: a black core, to see where raster and the trace see it]
 #   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
 #   --settled         (trail view) 0.4 m of settled snow (300 kg/m3) instead of fresh: prints break clumps
 #   --no-clumps       (trail view) no snow clumps beside the prints
@@ -2778,6 +2779,10 @@ func _build_icicles(cam: Camera3D) -> void:
 		ice.spacing = 0.05 # --dense: a dripping stretch, sites close enough that neighbours bridge into curtains
 	if OS.get_cmdline_user_args().has("--no-core"):
 		ice.hazy_core = false # --no-core: clear ice only (checks what the core adds)
+	if OS.get_cmdline_user_args().has("--black-core"):
+		var black := StandardMaterial3D.new() # --black-core: shows where the trace and raster see the core
+		black.albedo_color = Color(0, 0, 0)
+		ice.core_material = black
 	ice.edge = PackedVector3Array([Vector3(-4.95, eave_y, 0.12), Vector3(-0.05, eave_y, 0.12)])
 	add_child(ice)
 	# Three days: six hours of melt off the sunny roof (0.3 mm/h over its 3.4 m) at -4 C, then a night at -8 C.
@@ -2838,6 +2843,8 @@ func _build_icicles(cam: Camera3D) -> void:
 			cam.position = mid + Vector3(0.45, -0.08, 1.62)
 		else:
 			cam.position = mid + Vector3(-0.4, 0.4, -1.55) # under the roof, 2.45 m up
+			if OS.get_cmdline_user_args().has("--outside"): # the same view mirrored, from outside the shed
+				cam.position = mid + Vector3(-0.4, 0.4, 1.55)
 		cam.look_at(mid)
 		cam.fov = 26.0
 	elif OS.get_cmdline_user_args().has("--close"):
