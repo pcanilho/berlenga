@@ -54,6 +54,9 @@ class SnowIcicles3D : public Node3D {
 	struct Icicle {
 		Vector3 position; // local, the root
 		float share = 1.0f; // of the water along the edge
+		float power = 0.75f; // the taper: radius as the distance from the tip to this power
+		float film = 0.0f; // the share the thin film between drip points brings
+		float along = 0.0f; // m along the edge
 		float length = 0.0f; // m
 		float radius = 0.0f; // m, at the root
 		Vector2 own_lean; // the axis's own slope (x, z per metre down), from the film's path down one side
@@ -61,10 +64,13 @@ class SnowIcicles3D : public Node3D {
 		bool dripping = false; // water left over at the tip in the last step: a pendant drop hangs there
 	};
 	Vector<Icicle> icicles;
+	LocalVector<Vector3> drips; // drip points: m along the edge, mean flow, phase of its wet and dry spells
+	float melt_hours = 0.0f; // hours of melt since the sites were placed (the drip points' clock)
+	void _update_shares();
 	bool sites_dirty = true;
 	MeshInstance3D *mesh_instance = nullptr;
 	Ref<StandardMaterial3D> default_material;
-	Ref<StandardMaterial3D> default_core_material;
+	Ref<ShaderMaterial> default_core_material;
 	Ref<Material> core_material;
 	bool hazy_core = true;
 	Vector3 wind_direction; // local, horizontal: the way the wind blows the tip's drop (zero: none)

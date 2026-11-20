@@ -510,3 +510,38 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
     finer inside each streak.
   - Raster and PT match (640). 1.1 s a frame on lavapipe with the storm in view at 960x540 (the stills used to read
     as foam because 3 frames are not enough for the reprojection: review stills use 24).
+
+## Light grid contrast (20 Nov 2026; scene: grid on dulled sunlit rims at dawn)
+
+- Reproduced in the weather bench (`--view=shafts --sun-up=8 --cover=0.45 --type=0.9`, A/B with
+  `--sky-params=cloud_light_grid_enabled:0`): with the grid the brightest 1% of the sky fell from 136 to 92.
+- Cause 1, a leak at the read: the sky reads the grid's depth 512 m along the sun path, trilinearly. Between levels
+  that mixed paths a level apart, which against a low sun start hundreds of metres apart along it, and texels whose
+  centres lie inside a cloud, so clear paths took on their neighbours' clouds. Fixes: the read lands on a level's
+  centre (the march runs on to where the path crosses one), the stored depth is the least over each texel's
+  3x3x3 neighbours, and the bake chains levels by the nearest voxel instead of bilinearly (the bilinear chain blurred
+  again at every level). Rims back to 106.
+- The rest is not a fault of the grid: the bake agrees with a 32 m CPU march to 24 km (mean depth 50.27 against
+  50.33 over 1,176 sampled voxels, and of the 489 whose fine march is clear only 3 read over 3 in the grid). Without
+  the grid the shader's doubling steps (several km long far out, read at a coarse mip that the coverage remap turns
+  to zero) miss the clouds 8 to 24 km toward a low sun, so clouds stood sunlit that the clouds between them and the
+  sun shade. The bounce term adds about 3 levels to the darkest tenth (interreflection, as designed).
+- Raster and PT match (640).
+
+## Storm review 3 (20 Nov 2026; docs: mottled cylinder, decal mammatus, no shelf or shaft at 30 km)
+
+- Tower (`storm_tower` / `wc_storm_tower`): a core column (0.5 to 0.7 core radii) and eight rising bubbles, each
+  a thermal 0.7 to 1.4 radii across, at its own height (14% to 88%) and bearing round the axis, larger higher up,
+  plus a crown over the axis; outlines hard over their last fifth, jittered a little by the shape noise. A Cb reads
+  as a few huge rounded towers, each lit on its sun side and grey in shadow, which the bubbles' own shape gives the
+  light march; the finer lobe noise (an even mottle over a cylinder) is gone, and with it one texture read.
+- Mammatus: packed (cells 0.6 to 0.8 of the 1.6 km grid, neighbours overlap), up to 700 m deep, not at the anvil's
+  thin side edges; the sheet over them is denser (0.45 of the tower's) so the underside is one surface, and the
+  pouches denser still (0.7), so each shades its lower half (Schultz et al. 2006: they carry the anvil's falling,
+  evaporating ice).
+- Rain shaft: the heavy core 1.5 radii across under the tower (it filled the whole base as a grey wall), curtains
+  thresholded more sharply, lit at two thirds of the open sky's light under the shield (rain is lighter than the
+  base above it).
+- Shelf: its top a smooth slope rippled by the noise at large scale, its face lightly eroded (laminar), not a
+  frilled grainy rim.
+- Raster and PT match (640). Review stills: storm 15 km (`--storm=0,-24000,...`) and 20 km (`0,-30000`), 24 frames.

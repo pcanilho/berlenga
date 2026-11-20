@@ -33,6 +33,7 @@ extends Node3D
 #                         (--dist m upstream, 2.5); --no-streams turns cave_streams off
 #   --cave-view=rimstone  with --caves --cave-mesh: the busiest rimstone cascade from about --dist m (1.6), a lamp;
 #                         --pool-water=n live water on the n nearest pools (12), --no-pool-water none
+#   --sea-cave-pick=first with --sea-caves: the finder's best site, not the one facing the sun most (frames only)
 #   --no-refine           with --cave-mesh and --cam: the chunks round the camera stay on the coarse grid
 #   --no-sea-water        with --sea-caves --cave-mesh: the sea not drawn inside the caves (a before frame);
 #                         --cave-waves=m the short waves' rms coming in at the mouth (default: from the sea),
@@ -73,6 +74,8 @@ extends Node3D
 #   --roll[=m/s]          with --world: a ball rolled across the spot before the still (stones_react; --no-react off)
 #   --no-river-detail     with --world: RockField3D.ground_detail_rivers off (river beds keep only the river layer's stones)
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
+#   --detail-octaves=N    with --world: the material's erosion detail octaves (4; 0 for none, a before frame);
+#                         --sun-shadow=0 drops the raster sun shadow map (A/B)
 #   --gravel-reach[=d]    with --view=river: a gravel-bed reach whose median is nearest d m (0.03)
 #   --no-ground-cover     with --world: RockField3D.ground_detail_cover off (no grain aggregate on the ground past
 #                         each class's reach; a before frame); --save-cover writes the near cover map, --cover-check
@@ -256,7 +259,7 @@ func _environment() -> void:
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-32, -50, 0)
 	sun.light_energy = 2.2
-	sun.shadow_enabled = true
+	sun.shadow_enabled = args.get("sun-shadow", "1") != "0" # --sun-shadow=0: no raster sun shadow map (A/B)
 	sun.directional_shadow_max_distance = 120.0
 	add_child(sun)
 
@@ -460,6 +463,8 @@ func _world() -> void:
 	tm.use_generator(gen)
 	tm.rock_detail_enabled = args.get("rock-detail", "1") != "0" # --rock-detail=0: the ground without its joints and stones
 	tm.cliff_self_shadow = args.get("ledge-shadow", "1") != "0" # --ledge-shadow=0: cliff relief ledges without their per-pixel shadows
+	if args.has("detail-octaves"):
+		tm.detail_octaves = int(args["detail-octaves"]) # --detail-octaves=N: erosion detail octaves in the normal (0: none, A/B)
 	if args.get("far-shadows", "1") == "0":
 		tm.far_shadow_start = 0.0 # --far-shadows=0: no far sun shadows from the ground's horizon
 	tm.update_shader()
@@ -764,6 +769,23 @@ func _caves(cam: Camera3D) -> void:
 	var t0 := Time.get_ticks_msec()
 	var sea_caves := args.has("sea-caves")
 	var found: Array = net.find_sea_entrances(r, int(args.get("caves", "1")) if str(args["caves"]).is_valid_int() else 1) if sea_caves else net.find_entrances(r, int(args.get("caves", "1")) if str(args["caves"]).is_valid_int() else 1)
+	if sea_caves and not args.has("test") and found.size() == 1 and args.get("sea-cave-pick", "lit") == "lit":
+		# One sea cave for a frame: of the best dozen sites, the one whose mouth faces the sun most (its mouth and
+		# the sea in front lit, not a cleft in its own cliff's shadow); --sea-cave-pick=first keeps the finder's own.
+		var to_sun := Vector3(0, 0, 1)
+		for n in get_children():
+			if n is DirectionalLight3D:
+				to_sun = (n as DirectionalLight3D).global_transform.basis.z
+		var flat_sun := Vector3(to_sun.x, 0, to_sun.z).normalized()
+		var many: Array = net.find_sea_entrances(r, 12)
+		var best := -2.0
+		for e in many:
+			var o: Vector3 = e["out"]
+			var lit := Vector3(o.x, 0, o.z).normalized().dot(flat_sun)
+			if lit > best:
+				best = lit
+				found = [e]
+		print("  sea cave picked by facing: %d sites, mouth at %s facing the sun %.2f" % [many.size(), found[0]["position"], best])
 	print("caves: %d entrances found in %d ms" % [found.size(), Time.get_ticks_msec() - t0])
 	var colours := [Color(1, 1, 1), Color(0.2, 0.5, 1), Color(0.1, 0.9, 0.9), Color(1, 0.8, 0.1), Color(1, 0.3, 0.1), Color(0.9, 0.2, 0.9), Color(0.2, 0.9, 0.3)]
 	var names := ["entrance", "tube", "bed", "keyhole", "canyon", "shaft", "sea"]

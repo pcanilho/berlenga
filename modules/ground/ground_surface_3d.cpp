@@ -1983,7 +1983,87 @@ Vector2 GroundSurface3D::_loose_carry(const Vector2 &p_rel, float p_wet, float p
 	return p_rel / s * MIN(f * p_dt / p_mass, s);
 }
 
+// A stream's push on a loose stone in it (docs/ideas/mud.md, round 19.1): the force balance on a lone grain
+// (Wiberg and Smith 1987; Komar and Li 1986), drag 0.5 rho Cd A u^2 with Cd 0.76 (Schmeeckle et al. 2007, a grain on
+// a bed) and lift 0.5 rho Cl A u^2 with Cl 0.2, on the face standing above the bed and under the water, at the
+// speed a logarithmic profile over a fine bed (ks 1 cm) gives at that face's middle from the water's depth-averaged
+// speed (U ln(z/z0) / (ln(h/z0) - 1)); buoyancy on what is under the surface. A lone stone standing proud of a fine
+// bed moves at a Shields number far under the 0.045 of a bed of its own size, as Komar and Li's exposure gives.
+GroundSurface3D::StreamPush GroundSurface3D::_loose_stream(const WorldWater *p_water, const Vector3 &p_at, float p_rc, float p_mass, const Vector3 &p_velocity, float p_bed) const {
+	StreamPush out;
+	const float ws = p_water->height_at(p_at);
+	const float h = ws - p_bed;
+	if (!(h > 0.02f) || p_mass <= 0.0f) {
+		return out;
+	}
+	const float pw = MIN(CLAMP(p_at.y + p_rc - p_bed, 0.0f, 2.0f * p_rc), h); // its face above the bed, under water
+	const float z0 = 0.01f / 30.0f;
+	const Vector3 u3 = p_water->flow_at(p_at);
+	const float scale = pw > 0.002f ? CLAMP(Math::log(MAX(0.5f * pw, 2.0f * z0) / z0) / MAX(Math::log(h / z0) - 1.0f, 1.0f), 0.0f, 1.3f) : 0.0f;
+	out.near_bed = Vector2(u3.x, u3.z) * scale;
+	const Vector2 rel = out.near_bed - Vector2(p_velocity.x, p_velocity.z);
+	const float s = rel.length();
+	const float area = 2.0f * p_rc * pw;
+	out.drag = rel * (0.5f * 1000.0f * 0.76f * area * s);
+	const float sub = CLAMP((ws - (p_at.y - p_rc)) / (2.0f * p_rc), 0.0f, 1.0f);
+	out.up = 1000.0f * 9.81f * 4.18879f * p_rc * p_rc * p_rc * sub + 0.5f * 1000.0f * 0.2f * area * s * s;
+	out.wet = true;
+	return out;
+}
+
+// On firm ground (a gravel bed, rock) the colliders hold it: it starts once the drag beats its submerged weight less
+// the lift times the tangent of its pivot angle (40 degrees, an angular stone alone on a finer bed), and rolls on
+// against a rolling friction of 0.6 of that (Bagnold's dynamic friction for bedload), so it stops in slack water.
+void GroundSurface3D::_loose_stream_firm(RigidBody3D *p_body, float p_rc, const StreamPush &p_push, float p_dt) {
+	const float m = p_body->get_mass();
+	const Vector3 v = p_body->get_linear_velocity();
+	Vector2 vh(v.x, v.z);
+	const float up = MIN(p_push.up, 0.95f * m * 9.81f);
+	const float normal = m * 9.81f - up;
+	const float fd = p_push.drag.length();
+	const float sp = vh.length();
+	float vy = v.y;
+	if (Math::abs(v.y) > 0.5f) {
+		// Falling through the water, not yet on the bed: buoyed and swept.
+		vh += p_push.drag * (p_dt / m);
+		vy += up * p_dt / m;
+	} else if (sp < 0.05f) {
+		if (fd <= 0.84f * normal) {
+			// Held where it lies: its pivot holds it.
+			p_body->set_linear_velocity(Vector3(0.0f, v.y, 0.0f));
+			p_body->set_angular_velocity(Vector3());
+			return;
+		}
+		vh += p_push.drag / fd * ((fd - 0.6f * normal) * p_dt / m);
+	} else {
+		vh += p_push.drag * (p_dt / m);
+		const float s2 = vh.length();
+		if (s2 > 1e-4f) {
+			vh -= vh / s2 * MIN(0.6f * normal * p_dt / m, s2);
+		}
+	}
+	p_body->set_linear_velocity(Vector3(vh.x, vy, vh.y));
+	p_body->set_angular_velocity(vh.length() > 0.02f ? Vector3(vh.y, 0.0f, -vh.x) / p_rc : Vector3());
+}
+
 void GroundSurface3D::_loose_update(float p_delta) {
+	// Stones read back from the deposits (round 19.2), placed once the field is up: as they lay, at their depth.
+	if (!loose_pending.is_empty() && field.valid && ground_valid && is_inside_tree()) {
+		for (const LoosePending &lp : loose_pending) {
+			Buried b;
+			b.id = lp.id;
+			b.r = lp.r;
+			b.a = lp.at;
+			b.b = lp.at;
+			buried_loose.insert(lp.id); // out of the hidden stones for good
+			RigidBody3D *rb = _make_loose(b, lp.at, Vector3());
+			rb->set_global_transform(Transform3D(Basis(lp.rot), lp.at));
+			LooseState &ls = loose_state[lp.id];
+			ls.z = lp.z;
+			ls.ref = lp.ref;
+		}
+		loose_pending.clear();
+	}
 	if (buried_loose_bodies.is_empty() || !field.valid) {
 		loose_state.clear();
 		return;
@@ -1998,6 +2078,8 @@ void GroundSurface3D::_loose_update(float p_delta) {
 			}
 		}
 	}
+	const WorldWater *ww = WorldContracts::water();
+	const bool streams = stream_stones && ww && ww->has_provider();
 	for (const KeyValue<uint32_t, ObjectID> &kv : buried_loose_bodies) {
 		RigidBody3D *rb = Object::cast_to<RigidBody3D>(ObjectDB::get_instance(kv.value));
 		if (!rb || !rb->is_inside_tree()) {
@@ -2013,7 +2095,9 @@ void GroundSurface3D::_loose_update(float p_delta) {
 		}
 		const float r = rc / 0.85f; // the mesh's radius
 		LooseState &ls = loose_state[kv.key];
-		Vector3 at = rb->get_global_position();
+		ls.xf = rb->get_global_transform();
+		ls.r = r;
+		Vector3 at = ls.xf.origin;
 		const Cell &c = _cell_at(at.x, at.z);
 		const float g0 = _ground_at(at.x, at.z);
 		const bool on_mud = c.deformable && c.mud >= 0.02f && _on_lattice(at.x, at.z);
@@ -2027,10 +2111,15 @@ void GroundSurface3D::_loose_update(float p_delta) {
 				carry += _loose_carry(Vector2(u.x, u.z) - Vector2(lv.x, lv.z), MIN(depth, 2.0f * rc), rc, f->get_density(), f->get_yield_stress(), rb->get_mass(), dt);
 			}
 		}
+		// A stream or ford over it (round 19.1).
+		const StreamPush sp = streams ? _loose_stream(ww, at, rc, rb->get_mass(), rb->get_linear_velocity(), on_mud ? get_surface_height_at(at) : at.y - rc) : StreamPush();
 		// Off the mud, or well over it (thrown, on a rock): the colliders hold it as any body.
 		if (!on_mud || at.y - rc > g0 + 0.3f) {
 			if (carry != Vector2()) {
 				rb->apply_central_impulse(Vector3(carry.x, 0.0f, carry.y) * rb->get_mass());
+			}
+			if (sp.wet) {
+				_loose_stream_firm(rb, rc, sp, dt);
 			}
 			if (ls.ground.is_valid()) {
 				PhysicsServer3D::get_singleton()->body_remove_collision_exception(rb->get_rid(), ls.ground);
@@ -2075,12 +2164,21 @@ void GroundSurface3D::_loose_update(float p_delta) {
 				carry += _loose_carry(-sl / s_len * u - vh, wet, rc, rho_l, c.wave_tau * rho_l, rb->get_mass(), dt);
 			}
 		}
+		if (sp.wet) {
+			// The water's drag on its face above the mud, never more than brings it to the water's speed there.
+			const float fl = sp.drag.length();
+			const Vector2 rel = sp.near_bed - vh;
+			if (fl > 0.0f) {
+				carry += sp.drag / fl * MIN(fl * dt / rb->get_mass(), rel.length());
+			}
+		}
 		vh += carry;
 		const float speed = vh.length();
 		const float rho_mud = c.unit_weight * 1000.0f / 9.81f;
 		const float tau = c.wave_tau > 0.0f ? c.wave_tau * rho_mud : c.cohesion * 1000.0f;
 		bool held = true;
-		const float load = rb->get_mass() + ls.push_down / 9.81f; // its weight, and a tyre driving it down
+		// Its weight less the water's buoyancy and lift on it, and a tyre driving it down.
+		const float load = MAX(rb->get_mass() - sp.up / 9.81f, 0.1f * rb->get_mass()) + ls.push_down / 9.81f;
 		ls.push_down = 0.0f;
 		const float z_eq = _loose_settled_depth(rc, load, MAX(tau, 1.0f), rho_mud, held);
 		const bool moving = speed > 0.15f;
@@ -7505,7 +7603,7 @@ void GroundSurface3D::_deposits_save() {
 	for (const KeyValue<Vector2i, Vector2> &kv : silt_river_taken) {
 		keys.insert(kv.key);
 	}
-	if (keys.is_empty() && buried_loose.is_empty() && buried_extra.is_empty() && film_cells.is_empty()) {
+	if (keys.is_empty() && buried_loose.is_empty() && buried_extra.is_empty() && film_cells.is_empty() && loose_pending.is_empty() && buried_loose_bodies.is_empty()) {
 		if (FileAccess::exists(path)) {
 			DirAccess::remove_absolute(path);
 		}
@@ -7565,6 +7663,43 @@ void GroundSurface3D::_deposits_save() {
 		f->store_32(uint32_t(k.x));
 		f->store_32(uint32_t(k.y));
 		f->store_float(owed ? *owed : 0.0f);
+	}
+	// The loose stones as they lie (round 19.2): where, how turned, how big and how deep in the mud; and those read
+	// back but not yet placed.
+	LocalVector<LoosePending> lying;
+	for (const LoosePending &lp : loose_pending) {
+		lying.push_back(lp);
+	}
+	for (const KeyValue<uint32_t, ObjectID> &kv : buried_loose_bodies) {
+		// Live, or as it lay at the last step (saved as this node leaves the tree, its stones have left it already).
+		RigidBody3D *rb = Object::cast_to<RigidBody3D>(ObjectDB::get_instance(kv.value));
+		const LooseState *ls = loose_state.getptr(kv.key);
+		if (!rb || !ls || !(ls->r > 0.0f)) {
+			continue;
+		}
+		LoosePending lp;
+		lp.id = kv.key;
+		const Transform3D xf = rb->is_inside_tree() ? rb->get_global_transform() : ls->xf;
+		lp.at = xf.origin;
+		lp.rot = xf.basis.get_rotation_quaternion();
+		lp.r = ls->r;
+		lp.z = ls->z;
+		lp.ref = ls->ref;
+		lying.push_back(lp);
+	}
+	f->store_32(lying.size());
+	for (const LoosePending &lp : lying) {
+		f->store_32(lp.id);
+		f->store_float(lp.at.x);
+		f->store_float(lp.at.y);
+		f->store_float(lp.at.z);
+		f->store_float(lp.rot.x);
+		f->store_float(lp.rot.y);
+		f->store_float(lp.rot.z);
+		f->store_float(lp.rot.w);
+		f->store_float(lp.r);
+		f->store_float(lp.z);
+		f->store_float(lp.ref);
 	}
 }
 
@@ -7643,6 +7778,33 @@ void GroundSurface3D::_deposits_load() {
 		}
 		if (owed > 0.0f) {
 			film_owed[k] = owed;
+		}
+	}
+	const uint32_t lying = f->eof_reached() ? 0 : f->get_32();
+	for (uint32_t i = 0; i < lying && !f->eof_reached(); i++) {
+		LoosePending lp;
+		lp.id = f->get_32();
+		const float x = f->get_float();
+		const float y = f->get_float();
+		const float z = f->get_float();
+		lp.at = Vector3(x, y, z);
+		const float qx = f->get_float();
+		const float qy = f->get_float();
+		const float qz = f->get_float();
+		const float qw = f->get_float();
+		lp.rot = Quaternion(qx, qy, qz, qw);
+		lp.r = f->get_float();
+		lp.z = f->get_float();
+		lp.ref = f->get_float();
+		if (!buried_loose_bodies.has(lp.id) || !ObjectDB::get_instance(buried_loose_bodies[lp.id])) {
+			bool have = false;
+			for (const LoosePending &e : loose_pending) {
+				have = have || e.id == lp.id;
+			}
+			if (!have && lp.r > 0.0f && lp.rot.is_normalized()) {
+				buried_loose.insert(lp.id);
+				loose_pending.push_back(lp);
+			}
 		}
 	}
 	buried_cache.clear();
@@ -9405,6 +9567,8 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_tracked_mud_at", "position"), &GroundSurface3D::get_tracked_mud_at);
 	ClassDB::bind_method(D_METHOD("set_tracked_mud", "enabled"), &GroundSurface3D::set_tracked_mud);
 	ClassDB::bind_method(D_METHOD("is_tracked_mud"), &GroundSurface3D::is_tracked_mud);
+	ClassDB::bind_method(D_METHOD("set_stream_stones", "enabled"), &GroundSurface3D::set_stream_stones);
+	ClassDB::bind_method(D_METHOD("is_stream_stones"), &GroundSurface3D::is_stream_stones);
 	ClassDB::bind_method(D_METHOD("set_keep_ruts", "enabled"), &GroundSurface3D::set_keep_ruts);
 	ClassDB::bind_method(D_METHOD("is_keeping_ruts"), &GroundSurface3D::is_keeping_ruts);
 	ClassDB::bind_method(D_METHOD("set_ruts_path", "path"), &GroundSurface3D::set_ruts_path);
@@ -9621,6 +9785,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "standing_water"), "set_standing_water", "is_standing_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "muddy_water"), "set_muddy_water", "is_muddy_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "tracked_mud"), "set_tracked_mud", "is_tracked_mud");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stream_stones"), "set_stream_stones", "is_stream_stones");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clods"), "set_clods", "is_clods");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "keep_ruts"), "set_keep_ruts", "is_keeping_ruts");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "ruts_path"), "set_ruts_path", "get_ruts_path");

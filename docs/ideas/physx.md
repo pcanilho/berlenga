@@ -2279,6 +2279,36 @@ the march's step budget counts only samples in gas (a ray grazing the
 ground could spend it on empty blocks), and the bilateral upsample skips
 texels whose march found no gas instead of blending them in as black.
 
+### Raster powder: the cloud's foot, sky aperture and forward-scattered shadow (20 Nov)
+
+Docs and snow asked to chase the darker foot. Split into sun, sky and
+ground light on snow's bench, the sun held to the foot while the sky
+(79 -> 32) and ground (134 -> 30) parts collapsed: raster judged both by
+the gas straight above and straight below the point only. Unreal's cloud
+ambient occlusion has an aperture (straight up to a whole hemisphere)
+for the same reason. Built: the share of a point's sky and ground that
+lies toward the camera (SKY_OPENING, 0.5) is open as far as the gas the
+view ray crossed lets through. Test puffs: within 3.6%; sky-only -3.8%
+-> -1.3%. The broad darkening of the foot is gone.
+
+The last pixel-thin line was the snow under the foot, in the gas's own
+cast shadow, seen through the thin edge (gone with the gas's shadows
+off). Raster's gas shadow on the scene was Beer's law on the optical
+depth: the direct beam only, where a bright, forward-scattering gas
+passes much of its scattered light on toward the ground as well. Built:
+the delta-Eddington scaling (Joseph, Wiscombe and Weinman 1976), the
+forward peak's share g^2 of each scatter taken out of the extinction,
+exp(-tau (1 - w g^2)), with w the gas's scattering albedo times its
+colour's luminance and g its anisotropy, passed to the scene shader in
+the directional light's spare words. Dark or isotropic gas keeps Beer.
+A near-white powder block's ground shadow against PT: 118 (Beer) -> 127,
+PT 125; the two-stream slab total (Meador and Weaver 1980) was tried
+first and gave 134, too bright for a finite cloud. The grey-blue test
+gas already matched PT and barely moves.
+On snow's bench, the darkest point along the cloud's lower edge
+(averaged over the edge): 161 -> 167 against a body of 175, a dip of 8,
+as under PT (180 against 188).
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

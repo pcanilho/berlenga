@@ -374,6 +374,10 @@ const float SKY_GAIN = 3.0;
 // Fitted on test puffs lit from the side and from behind the camera: 0, the octaves scatter evenly.
 const float MS_ECCENTRICITY = 0.0;
 const float SKY_OCCLUSION = 0.15;
+// The share of a point's sky and ground that lies toward the camera, past the gas the view ray crossed (a point
+// at the foot of a cloud sees open sky and sunlit ground in front of it, not only the cloud above and its shadow
+// below; as Unreal's cloud ambient occlusion widens its aperture from straight up to a hemisphere).
+const float SKY_OPENING = 0.5;
 
 // A light's in-scattering through optical depth tau, cos(view, light) c: single scattering and the octaves,
 // each with its own phase. The orders past the first need gas around the point to scatter in: tau_around is
@@ -402,10 +406,10 @@ vec3 ms_light(float tau, float tau_around, float c, float g) {
 }
 
 // The light from all around (sky above, ground below) through optical depth tau.
-vec3 ms_ambient(float tau) {
+vec3 ms_ambient(float tau, float tau_around) {
 	vec3 alb = ss_albedo();
 	vec3 a = alb * (1.0 / 0.9);
-	float thick = 1.0 - exp(-2.0 * tau);
+	float thick = 1.0 - exp(-2.0 * tau_around);
 	return SKY_MS_SHARE * (exp(-tau) + thick * (0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + octave_tail(alb) * exp(-0.125 * tau))) * alb;
 }
 
@@ -617,7 +621,8 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 								ground_sun_t = max(ground_sun_t, (all(greaterThanEqual(g_uvw, vec3(0.0))) && all(lessThanEqual(g_uvw, vec3(1.0)))) ? exp(-textureLod(sun_map_tex, g_uvw, 0.0).r) : 1.0);
 							}
 						}
-						ground_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * ldir.y * ground_sun_t * p.sky_map.y);
+						// Part of the ground the point sees lies toward the camera, out of the gas's shadow (SKY_OPENING).
+						ground_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * ldir.y * mix(ground_sun_t, 1.0, SKY_OPENING * transmittance) * p.sky_map.y);
 					}
 #endif
 					float atten = sun_shadow(uint(i), vpos);
@@ -655,11 +660,13 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 			}
 			if (ambient_on) {
 				// How much of the sky the point sees: the gas straight above it (a short march up).
-				vec3 sky_t = ms_ambient(0.0);
+				vec3 sky_t = ms_ambient(0.0, 0.0);
 				vec3 ground_t = sky_t;
 				if (od_above >= 0.0) {
-					sky_t = ms_ambient(od_above * SKY_OCCLUSION);
-					ground_t = ms_ambient(od_below * SKY_OCCLUSION);
+					// Straight up is not the only way out: a point near the face toward the camera also sees the sky past
+					// it, over about half its hemisphere, as far as the gas between it and the camera lets through.
+					sky_t = ms_ambient(od_above * SKY_OCCLUSION * (1.0 - SKY_OPENING * transmittance), od_above * SKY_OCCLUSION);
+					ground_t = ms_ambient(od_below * SKY_OCCLUSION, od_below * SKY_OCCLUSION);
 				} else
 				if (shadow_steps > 0) {
 					float ds = p.misc.z * upm / float(shadow_steps);
@@ -673,7 +680,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					// volumetric") and Hillaire 2016 (Frostbite sky and clouds): octaves of ever weaker,
 					// ever less attenuated light, so dense smoke isn't black inside as single scattering
 					// makes it.
-					sky_t = ms_ambient(od * sigma * ds);
+					sky_t = ms_ambient(od * sigma * ds, od * sigma * ds);
 				}
 				// Each half of the sphere around the point: the sky above, the ground below.
 				in_light += (ambient * (sky_t * SKY_GAIN) + ground_light * ground_t) * 0.5;

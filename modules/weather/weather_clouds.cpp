@@ -957,11 +957,35 @@ float mammatus_depth(Vector2 p_xz, Vector2 p_drift) {
 			const int cz = gz + j;
 			const Vector2 cp(float(cx) + hash2(cx + 811, cz - 3373), float(cz) + hash2(cx - 2939, cz + 617));
 			const float h = hash2(cx + 4127, cz + 9133);
-			const float r = (q - cp).length() / (0.45f + 0.25f * h);
+			const float r = (q - cp).length() / (0.6f + 0.2f * h); // packed: neighbours touch and overlap
 			dep = MAX(dep, (0.6f + 0.4f * h) * Math::sqrt(MAX(1.0f - r * r, 0.0f)));
 		}
 	}
-	return 500.0f * dep;
+	return 700.0f * dep;
+}
+
+// A storm's tower (wc_storm_tower in the shader): a core column and eight rising bubbles, each a thermal 0.7 to 1.4
+// core radii across set round the axis at its own height and bearing, larger higher up, and a crown. A cumulonimbus
+// is a few huge rounded towers, each lit on its sun side and grey on its shadow side (the shading comes from the
+// bubbles' own shape); outlines from noise alone came out as an even mottle over a cylinder. Offsets in metres from
+// the leaned axis; returns 0 to 1.
+static float storm_tower(const Vector2 &p_d, float p_y, float p_r, float p_h, float p_noise, int p_seed) {
+	const float hh = p_y / p_h;
+	const float jitter = 0.15f * (p_noise - 0.45f);
+	const float rc = 0.5f + 0.2f * smoothstep(0.0f, 0.7f, hh);
+	float e = 1.0f - smoothstep(0.85f, 1.0f, p_d.length() / (p_r * rc) - jitter);
+	for (int k = 0; k < 9; k++) {
+		const int hk_seed = p_seed * 13 + k;
+		// The ninth is the crown, over the axis.
+		const float hk = k < 8 ? 0.14f + 0.105f * k : 0.8f;
+		const float th = Math::TAU * hash2(hk_seed, 7919);
+		const float o = k < 8 ? 0.3f + 0.25f * hash2(hk_seed, 104729) : 0.1f;
+		float rk = k < 8 ? (0.42f + 0.14f * hash2(hk_seed, 3301)) * (0.85f + 0.5f * hk) : 0.5f;
+		rk = MIN(rk, (0.99f - hk) * p_h / p_r); // under the column's top
+		const Vector3 q(p_d.x / p_r - o * Math::cos(th), (p_y - hk * p_h) / p_r, p_d.y / p_r - o * Math::sin(th));
+		e = MAX(e, 1.0f - smoothstep(0.82f, 1.0f, q.length() / rk - jitter));
+	}
+	return e;
 }
 
 float storm_body_at(const State &p_state, const Vector3 &p_pos, float p_base, float p_noise, float *r_near, float *r_thin) {
@@ -988,31 +1012,22 @@ float storm_body_at(const State &p_state, const Vector3 &p_pos, float p_base, fl
 		float e = 0.0f;
 		float k = 1.0f;
 		if (hh > 0.0f && hh < 1.0f && ax < 1.6f) {
-			// Narrower at the base, the updraft spreading as it rises.
-			float rt = 0.75f + 0.35f * smoothstep(0.0f, 0.6f, hh);
-			// The overshooting top: a narrower dome through the anvil.
-			rt *= Math::lerp(1.0f, 0.6f * Math::sqrt(MAX(1.0f - Math::pow(MAX(hh - 0.88f, 0.0f) / 0.12f, 2.0f), 0.0f)), smoothstep(0.84f, 0.9f, hh));
-			// Its outline: the shape noise for the large bulges plus a read 1.6 times finer for the cauliflower lobes
-			// (each about a kilometre, rising thermals; Neyret 1997), wide enough that from 20 km the tower reads as
-			// a few big turrets, not the fine billows of a cumulus.
-			const float lobes = shape_at(p_state, p_pos * 1.6f + Vector3(1733.0f, 0.0f, 911.0f));
-			const float dt = ax / MAX(rt, 1e-3f) - 0.3f * (p_noise - 0.45f) - 0.6f * (lobes - 0.5f) * smoothstep(0.05f, 0.3f, hh);
-			// A hard outline (a tenth of the radius, about 250 m): a wider soft rim let the erosion bore through all
-			// of it, a porous foam of small puffs instead of a solid tower with a textured skin.
-			e = 1.0f - smoothstep(0.9f, 1.0f, dt);
+			// Hard outlines (the last fifth of each bubble): a wide soft rim let the erosion bore through into foam.
+			e = storm_tower(d - dir * (s[2] * 0.3f * hh * hh), p_pos.y - p_base, s[2], hgt, p_noise, i);
 		}
 		// The anvil.
 		if (a > -1.0f && a < 7.5f) {
 			const float frac = 0.97f - (0.17f - 0.1f * smoothstep(0.0f, 6.0f, a));
 			float sag = 0.0f;
-			const float overhang = smoothstep(1.4f, 2.4f, ax) * (1.0f - 0.7f * smoothstep(0.6f, 0.95f, p_state.air_rh0));
+			const float w = 1.0f + 0.35f * MAX(a + 0.8f, 0.0f);
+			// Pouches under the sheet only, not at its thin side edges, where they hung as loose lumps.
+			const float overhang = smoothstep(1.4f, 2.4f, ax) * (1.0f - 0.7f * smoothstep(0.6f, 0.95f, p_state.air_rh0)) * (1.0f - smoothstep(0.5f, 0.75f, Math::abs(c) / w));
 			if (overhang > 0.0f) {
 				sag = mammatus_depth(xz, p_state.high_drift) * overhang * smoothstep(-0.5f, 1.0f, a) * (1.0f - smoothstep(4.0f, 6.0f, a));
 			}
 			const float hb = p_base + frac * hgt - sag;
 			const float ht = p_base + 0.97f * hgt;
 			if (p_pos.y > hb && p_pos.y < ht) {
-				const float w = 1.0f + 0.35f * MAX(a + 0.8f, 0.0f);
 				const float horiz = (1.0f - smoothstep(0.85f, 1.0f, Math::abs(c) / w + 0.3f * (p_noise - 0.5f))) * smoothstep(-0.95f, -0.8f, a) * (1.0f - smoothstep(5.0f, 7.0f, a + 2.0f * (p_noise - 0.5f)));
 				const float vert = smoothstep(hb, hb + 30.0f, p_pos.y) * (1.0f - smoothstep(ht - 60.0f, ht, p_pos.y));
 				// The anvil is ice: optically about 10 deep over its kilometre or two near the core (extinction near
@@ -1022,6 +1037,14 @@ float storm_body_at(const State &p_state, const Vector3 &p_pos, float p_base, fl
 				if (ea > e) {
 					e = ea;
 					k = 0.15f * (1.0f - 0.7f * smoothstep(1.0f, 6.0f, a));
+					// The pouches carry the anvil's falling, evaporating precipitation (Schultz et al. 2006): denser than
+					// the sheet, so each shades its own lower half and its neighbours, rather than a faint decal.
+					// The sheet over them as dense, so seen from afar the underside is one surface with pouches, not
+					// separate lumps floating under a faint veil.
+					k = MAX(k, 0.45f * overhang * smoothstep(-0.5f, 1.0f, a) * (1.0f - smoothstep(4.0f, 6.0f, a)));
+					// The pouches themselves denser still (they carry the anvil's falling, evaporating precipitation;
+					// Schultz et al. 2006), so each shades its own lower half.
+					k = MAX(k, 0.7f * MIN(sag / 200.0f, 1.0f) * (1.0f - smoothstep(hb, hb + 900.0f, p_pos.y)));
 				}
 			}
 		}
@@ -1116,7 +1139,9 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 			shelf = dr / SHELF_DROP;
 		}
 	}
-	const float wedge = shelf > 0.0f ? smoothstep(0.3f, 0.6f, (0.5f + 0.5f * n) * shelf) * (1.0f - smoothstep(0.7f, 1.0f, (p_pos.y - b) / (shelf_top + 400.0f))) : 0.0f;
+	// Its top a smooth slope rippled by the shape noise at large scale only: the noise thresholding the whole wedge
+	// left a frilled, grainy rim.
+	const float wedge = shelf > 0.0f ? smoothstep(0.3f, 0.6f, shelf) * (1.0f - smoothstep(0.7f, 1.0f, (p_pos.y - b) / (shelf_top + 400.0f) + 0.25f * (n - 0.5f))) : 0.0f;
 	const float other = MAX(MAX(cells * (1.0f - MAX(near_body, shelf)), deck_sc), wedge);
 	const float shape = MAX(other, body) * (1.0f + MIN(eff, 0.0f));
 	// The storm's body its own density whatever the cover and type around it: the tower a cumulus' (0.1 per metre),
@@ -1353,11 +1378,30 @@ float wc_mammatus_depth(vec2 xz) {
 			ivec2 c = g + ivec2(i, j);
 			vec2 cp = vec2(c) + vec2(wc_hash2(c.x + 811, c.y - 3373), wc_hash2(c.x - 2939, c.y + 617));
 			float h = wc_hash2(c.x + 4127, c.y + 9133);
-			float r = length(q - cp) / (0.45 + 0.25 * h);
+			float r = length(q - cp) / (0.6 + 0.2 * h);
 			dep = max(dep, (0.6 + 0.4 * h) * sqrt(max(1.0 - r * r, 0.0)));
 		}
 	}
-	return 500.0 * dep;
+	return 700.0 * dep;
+}
+
+// A storm's tower (storm_tower() on the CPU, which explains it).
+float wc_storm_tower(vec2 d, float y, float r, float h, float n, int seed) {
+	float hh = y / h;
+	float jitter = 0.15 * (n - 0.45);
+	float rc = 0.5 + 0.2 * smoothstep(0.0, 0.7, hh);
+	float e = 1.0 - smoothstep(0.85, 1.0, length(d) / (r * rc) - jitter);
+	for (int k = 0; k < 9; k++) {
+		int ks = seed * 13 + k;
+		float hk = k < 8 ? 0.14 + 0.105 * float(k) : 0.8;
+		float th = 6.28318531 * wc_hash2(ks, 7919);
+		float o = k < 8 ? 0.3 + 0.25 * wc_hash2(ks, 104729) : 0.1;
+		float rk = k < 8 ? (0.42 + 0.14 * wc_hash2(ks, 3301)) * (0.85 + 0.5 * hk) : 0.5;
+		rk = min(rk, (0.99 - hk) * h / r);
+		vec3 q = vec3(d.x / r - o * cos(th), (y - hk * h) / r, d.y / r - o * sin(th));
+		e = max(e, 1.0 - smoothstep(0.82, 1.0, length(q) / rk - jitter));
+	}
+	return e;
 }
 
 float wc_storm_body(vec3 p, float b, float n, float p_step, out float r_near, out float r_thin) {
@@ -1383,25 +1427,24 @@ float wc_storm_body(vec3 p, float b, float n, float p_step, out float r_near, ou
 		float e = 0.0;
 		float k = 1.0;
 		if (hh > 0.0 && hh < 1.0 && ax < 1.6) {
-			float rt = 0.75 + 0.35 * smoothstep(0.0, 0.6, hh);
-			rt *= mix(1.0, 0.6 * sqrt(max(1.0 - pow(max(hh - 0.88, 0.0) / 0.12, 2.0), 0.0)), smoothstep(0.84, 0.9, hh));
-			float lobes = wc_shape(p * 1.6 + vec3(1733.0, 0.0, 911.0), p_step * 1.6);
-			e = 1.0 - smoothstep(0.9, 1.0, ax / max(rt, 1e-3) - 0.3 * (n - 0.45) - 0.6 * (lobes - 0.5) * smoothstep(0.05, 0.3, hh));
+			e = wc_storm_tower(d - dir * (s.z * 0.3 * hh * hh), p.y - b, s.z, hgt, n, i);
 		}
 		if (a > -1.0 && a < 7.5) {
 			float frac = 0.97 - (0.17 - 0.1 * smoothstep(0.0, 6.0, a));
-			float overhang = smoothstep(1.4, 2.4, ax) * (1.0 - 0.7 * smoothstep(0.6, 0.95, cloud_air.y));
+			float w = 1.0 + 0.35 * max(a + 0.8, 0.0);
+			float overhang = smoothstep(1.4, 2.4, ax) * (1.0 - 0.7 * smoothstep(0.6, 0.95, cloud_air.y)) * (1.0 - smoothstep(0.5, 0.75, abs(c) / w));
 			float sag = overhang > 0.0 ? wc_mammatus_depth(p.xz) * overhang * smoothstep(-0.5, 1.0, a) * (1.0 - smoothstep(4.0, 6.0, a)) : 0.0;
 			float hb = b + frac * hgt - sag;
 			float ht = b + 0.97 * hgt;
 			if (p.y > hb && p.y < ht) {
-				float w = 1.0 + 0.35 * max(a + 0.8, 0.0);
 				float horiz = (1.0 - smoothstep(0.85, 1.0, abs(c) / w + 0.3 * (n - 0.5))) * smoothstep(-0.95, -0.8, a) * (1.0 - smoothstep(5.0, 7.0, a + 2.0 * (n - 0.5)));
 				float vert = smoothstep(hb, hb + 30.0, p.y) * (1.0 - smoothstep(ht - 60.0, ht, p.y));
 				float ea = 0.55 * horiz * vert; // ice: thin by the density (storm_body_at() on the CPU)
 				if (ea > e) {
 					e = ea;
 					k = 0.15 * (1.0 - 0.7 * smoothstep(1.0, 6.0, a));
+					k = max(k, 0.45 * overhang * smoothstep(-0.5, 1.0, a) * (1.0 - smoothstep(4.0, 6.0, a)));
+					k = max(k, 0.7 * min(sag / 200.0, 1.0) * (1.0 - smoothstep(hb, hb + 900.0, p.y)));
 				}
 			}
 		}
@@ -1842,7 +1885,7 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 			shelf = dr / 450.0;
 		}
 	}
-	float wedge = shelf > 0.0 ? smoothstep(0.3, 0.6, (0.5 + 0.5 * n) * shelf) * (1.0 - smoothstep(0.7, 1.0, (p.y - b0) / (shelf_top + 400.0))) : 0.0;
+	float wedge = shelf > 0.0 ? smoothstep(0.3, 0.6, shelf) * (1.0 - smoothstep(0.7, 1.0, (p.y - b0) / (shelf_top + 400.0) + 0.25 * (n - 0.5))) : 0.0;
 	// Inside the storm's body (and its shelf) their own outlines rule: single cells there would stand out of
 	// them as loose puffs.
 	float other = max(max(cells * (1.0 - max(near_body, shelf)), deck), wedge);
@@ -1850,7 +1893,8 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 	bool storm_body = body > other; // its own density (extinction_at() on the CPU)
 	// The tower keeps more of its envelope: its lobes are kilometre turrets, and the cumulus erosion at full strength
 	// broke it into a heap of small puffs.
-	float ero = storm_body && thin >= 1.0 ? 0.2 : 1.0;
+	// The shelf is laminar (lifted smoothly along the gust front): its face smooth, only lightly textured.
+	float ero = storm_body && thin >= 1.0 ? 0.2 : (wedge > 0.0 && wedge >= other ? 0.3 : 1.0);
 	r_profile = clamp(shape, 0.0, 1.0);
 	if (p_detail && shape > 0.0) {
 		// Nubis Cubed's up-rez (Schneider, Advances 2023): wisps (Curly-Alligator) low frequency inside and high

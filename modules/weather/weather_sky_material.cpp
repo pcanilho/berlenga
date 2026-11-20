@@ -160,6 +160,7 @@ const vec3 UP = vec3(0.0, 1.0, 0.0);
 const float rayleigh_zenith_size = 8.4e3;
 const float mie_zenith_size = 1.25e3;
 const float PLANET_RADIUS = 6371000.0;
+const float GRID_READ = 512.0; // m along the sun path to the light grid's read
 
 float henyey_greenstein(float cos_theta, float g) {
 	const float k = 0.0795774715459;
@@ -361,10 +362,16 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 		}
 		bool near_detailed = coarse < light_steps;
 		float tau = tau_near;
-		// Past 512 m the baked grid stands in for the rest of the coarse march: one read 512 m along the path, of
+		// Past 512 m (GRID_READ) the baked grid stands in for the rest of the coarse march: one read there, of
 		// the optical depth from there out of the layer. Nearer, its 256 m texels would blur a small cloud's shading
 		// of itself. Above the box the path has left the clouds.
-		vec3 gp = p + sun_dir * 512.0;
+		// Read on a level's centre: between levels the trilinear filter mixed the depths of paths a level apart, which
+		// against a low sun start hundreds of metres apart along it, so a clear path took on its neighbours' clouds and
+		// sunlit rims went dull. Reading where the path crosses a level's height leaves only the 256 m across.
+		float grid_dy = (cloud_light_grid_y.y - cloud_light_grid_y.x) / float(textureSize(cloud_light_grid, 0).z);
+		float grid_f = (p.y + sun_dir.y * GRID_READ - cloud_light_grid_y.x) / grid_dy - 0.5;
+		float grid_d = GRID_READ + (ceil(grid_f) - grid_f) * grid_dy / max(sun_dir.y, 0.02);
+		vec3 gp = p + sun_dir * grid_d;
 		vec3 grid_uvw = vec3((gp.x - cloud_light_grid_box.x) / cloud_light_grid_box.z, (gp.z - cloud_light_grid_box.y) / cloud_light_grid_box.z, (gp.y - cloud_light_grid_y.x) / (cloud_light_grid_y.y - cloud_light_grid_y.x));
 		bool grid = cloud_light_grid_enabled && cloud_light_grid_box.w > 0.5 && all(greaterThanEqual(grid_uvw, vec3(0.0))) && all(lessThanEqual(grid_uvw.xy, vec2(1.0)));
 		if (grid) {
@@ -375,10 +382,10 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 		}
 		for (int j = 0; j < coarse; j++) {
 			if (grid) {
-				if (d >= 511.0) {
+				if (d >= grid_d - 1.0) {
 					break;
 				}
-				step_l = min(step_l, 512.0 - d);
+				step_l = min(step_l, grid_d - d);
 			}
 			vec3 lp = p + sun_dir * (d + 0.5 * step_l);
 			float dt = wc_extinction(lp, wc_cover_type(lp.xz), false, step_l) * step_l;
@@ -391,8 +398,9 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 			d += step_l;
 			step_l *= 2.0;
 		}
-		if (grid && grid_uvw.z < 1.0) {
-			tau += textureLod(cloud_light_grid, grid_uvw, 0.0).r;
+		float grid_z = (ceil(grid_f) + 0.5) * grid_dy / (cloud_light_grid_y.y - cloud_light_grid_y.x);
+		if (grid && grid_z < 1.0) {
+			tau += textureLod(cloud_light_grid, vec3(grid_uvw.xy, grid_z), 0.0).r;
 		}
 		// Multiple scattering by Wrenninge's octaves: scattering, extinction and phase eccentricity
 		// each halved per octave.
@@ -888,7 +896,7 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			}
 			// Where the drops at p left the base: upwind by the slant times their fall.
 			vec2 q = p.xz - cloud_rain_slant * (base - p.y);
-			vec2 dq = (q - s.xy) / s.z;
+			vec2 dq = (q - s.xy) / (0.75 * s.z); // the heavy core about 1.5 radii across, under the tower
 			float r2 = dot(dq, dq);
 			// A core with an edge (heavy rain falls in shafts a few km across, not a smooth bell).
 			float r = rain * exp(-r2 * r2);
@@ -899,7 +907,7 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			// Curtains: three octaves (1.2 km, 400 m, 130 m), thresholded so lighter gaps open between the
 			// heavier sheets; the finest stretched across the view so its streaks stand upright.
 			float curt = 0.5 * wc_value_noise(qn / 1200.0 + vec2(float(i) * 13.7, 3.1)) + 0.3 * wc_value_noise(qn / 400.0 + vec2(7.3, float(i) * 5.9)) + 0.2 * wc_value_noise(qn / 130.0 + vec2(1.9, 8.3));
-			r *= mix(0.0, 2.6, smoothstep(0.42, 0.72, curt)) * smoothstep(0.0, 120.0, base - p.y);
+			r *= mix(0.0, 2.6, smoothstep(0.45, 0.62, curt)) * smoothstep(0.0, 120.0, base - p.y);
 			float sigma = 0.31e-3 * pow(r, 0.67);
 			// The light: under the storm's shield the sky's light is cut to about a third; the sun where the cover
 			// toward it over the base is thin.
@@ -909,7 +917,9 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			float g = 0.6;
 			float mu = dot(rd, sun_dir);
 			float hg = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
-			vec3 light = ambient_bottom * mix(1.0, 0.35, shield) + sun_radiance * sun_vis * hg;
+			// Rain is lighter than the base above it (drops scatter the light coming in under the base from the
+			// sides, where the sky is open): two thirds of the open sky's light, not the third over the shield.
+			vec3 light = ambient_bottom * mix(1.0, 0.65, shield) + sun_radiance * sun_vis * hg;
 			float st = exp(-sigma * dt);
 			float w = tr * (1.0 - st);
 			col += light * w;

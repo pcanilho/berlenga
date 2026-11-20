@@ -205,14 +205,39 @@ float tm_dune_lag(vec2 p_xz, float p_normal_y, float p_depth) {
 		return 0.0;
 	}
 	float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
-	return thin * smoothstep(0.95, 0.985, p_normal_y) * mix(0.45, 1.0, tm_dune_vn(p_xz / 23.0, 43u));
+	return thin * smoothstep(0.93, 0.98, p_normal_y) * mix(0.45, 1.0, tm_dune_vn(p_xz / 23.0, 43u));
 }
 // Granule ripples (megaripples) on that lag: the coarse grains the wind cannot lift creep up into long, low ripples
-// about 1.2 m apart and up to 5 cm high (ripple index about 25), broad rounded crests armoured with granules over flat
-// troughs of finer sand (Sharp 1963; Ellwood, Evans and Wilson 1975; Yizhaq 2008; Lammel et al. 2018). Crests run
+// 0.5 to 2 m apart and up to 5 cm high (ripple index about 25), broad crests armoured with coarse granules over
+// troughs of finer sand (Sharp 1963; Ellwood, Evans and Wilson 1975; Yizhaq 2008; Lammel et al. 2018). In plan the
+// crests are sinuous and fork in Y-junctions, and each fades out along its length over a few metres. Crests run
 // across p_wind, the dune-building wind (unit, x and z). p_weight: the lag's share; p_fp: the pixel's footprint (m),
 // crests closer than about four pixels fade to their mean tone. Returns the slope (dh/dx, dh/dz); p_tint: the albedo
-// factor (the crests' coarse, darker granules).
+// factor (the crests' coarse grains, paler than the troughs' fines).
+// The phase (in wavelengths): the spacing wanders between about 0.5 and 2 m (a warp along the wind whose slope adds
+// to or takes from the 1.1 m mean), the crests bend over metres, and paired edge dislocations make the forks.
+float tm_granule_phase(vec2 p_xz, vec2 p_k, vec2 p_t) {
+	float along = dot(p_xz, p_k);
+	float across = dot(p_xz, p_t);
+	float s = along / 1.1 + 2.5 * tm_dune_vn(vec2(along / 6.0, across / 5.0), 52u) + 1.2 * tm_dune_vn(p_xz / 9.0, 51u);
+	ivec2 c0 = ivec2(floor(p_xz / 4.0));
+	float ph = 0.0;
+	for (int dz = -1; dz <= 1; dz++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			ivec2 c = c0 + ivec2(dx, dz);
+			if (tm_dune_hash(c, 54u) >= 0.35) {
+				continue;
+			}
+			vec2 m = (vec2(c) + vec2(tm_dune_hash(c, 55u), tm_dune_hash(c, 56u))) * 4.0;
+			float hl = 0.4 + 0.8 * tm_dune_hash(c, 57u);
+			vec2 da = p_xz - (m - p_t * hl);
+			vec2 db = p_xz - (m + p_t * hl);
+			float sgn = tm_dune_hash(c, 58u) < 0.5 ? -1.0 : 1.0;
+			ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(2.0, 4.0, length(p_xz - m)));
+		}
+	}
+	return s + ph / 6.2831853;
+}
 vec2 tm_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, out vec3 p_tint) {
 	p_tint = vec3(1.0);
 	if (p_weight <= 0.0 || dot(p_wind, p_wind) < 0.5) {
@@ -220,20 +245,32 @@ vec2 tm_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, out 
 	}
 	vec2 k = p_wind;
 	vec2 t = vec2(-k.y, k.x);
-	float lam = 1.2;
 	float along = dot(p_xz, k);
 	float across = dot(p_xz, t);
-	// Crests wander, crowd and open over metres (a warp along the wind), and each one's height varies along it.
-	float s = along / lam + 1.6 * tm_dune_vn(p_xz / 9.0, 51u) + 0.5 * tm_dune_vn(vec2(along / 3.0, across / 7.0), 52u);
-	float amp = p_weight * smoothstep(0.1, 0.55, tm_dune_vn(vec2(along / 2.0, across / 6.0), 53u));
+	// Crests tens of wavelengths long that taper out at their ends (or merge at a fork).
+	float amp = p_weight * smoothstep(0.15, 0.5, tm_dune_vn(vec2(along / 3.0, across / 15.0), 53u));
+	if (amp <= 0.0) {
+		return vec2(0.0);
+	}
+	// The slope from the phase's own gradient (the warp and the forks turn the crests), by differences.
+	float e = 0.03;
+	float s = tm_granule_phase(p_xz, k, t);
+	vec2 gs = vec2(tm_granule_phase(p_xz + vec2(e, 0.0), k, t) - s, tm_granule_phase(p_xz + vec2(0.0, e), k, t) - s);
+	// Modulo one wavelength: a fork's phase jumps by a whole turn across its cut.
+	gs = (fract(gs + 0.5) - 0.5) / e;
 	float c = 0.5 + 0.5 * cos(6.2831853 * s);
+	// Resolved by the local spacing (1 / |grad s|).
+	float lam = 1.0 / max(length(gs), 0.3);
 	float resolved = 1.0 - smoothstep(0.15 * lam, 0.3 * lam, p_fp);
-	vec3 coarse = vec3(0.78, 0.74, 0.7);
-	// About a third of a ripple's length is crest: the unresolved pixel takes that mean.
-	p_tint = mix(vec3(1.0), mix(mix(vec3(1.0), coarse, 0.25), mix(vec3(1.0), coarse, smoothstep(0.65, 0.9, c)), resolved), amp);
-	// h = 0.05 amp c^1.5; dh/ds by the chain rule, ds along k (the warp's own slope left out: it is gentle).
+	vec3 crest = vec3(1.1, 1.08, 1.04);
+	vec3 trough = vec3(0.92, 0.9, 0.89);
+	// About a third of a ripple's length is crest: the unresolved pixel takes the mean.
+	vec3 rt = mix(trough, crest, smoothstep(0.35, 0.8, c));
+	vec3 mt = mix(trough, crest, 0.4);
+	p_tint = mix(vec3(1.0), mix(mt, rt, resolved), amp);
+	// h = 0.05 amp c^1.5, so dh/dp = 0.05 amp 1.5 c^0.5 dc/ds grad s.
 	float dhds = 0.05 * amp * 1.5 * sqrt(c) * (-3.14159265 * sin(6.2831853 * s));
-	return resolved * dhds * k / lam;
+	return resolved * dhds * gs;
 }
 // Dune-scale sand colour (docs/ideas/sand.md, "Dune-scale tone"): three of the changes a dune field shows from afar.
 // Rubefaction: iron-oxide coats redden grains that have lain still for millennia (Walker 1979; Pye and Tsoar 2009),

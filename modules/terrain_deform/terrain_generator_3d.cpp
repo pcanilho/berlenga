@@ -6425,6 +6425,10 @@ vec3 terrain_detail_normal(vec3 world_pos, vec3 world_normal, int octaves, float
 		return world_normal;
 	}
 	vec2 d = face * keep * terrain_detail_gradient(world_pos.xz, world_pos.y, g, octaves, footprint);
+	// The octaves below the vertex spacing keep the geometry's depth ratio, so their slopes add up (0.5 an octave):
+	// 30 to 50 degrees of tilt on gentle ground, faces turned from a 30 degree sun as dark blotches. Rills and
+	// gullies that small hold walls of about 20 degrees in soil (the slope saturates softly there, never clipped).
+	d *= inversesqrt(1.0 + dot(d, d) / 0.1225);
 	if (terrain_ice_flow_rect.z > 0.0) {
 		// Ice-worn rock (roches moutonnees; Glasser and Bennett 2004, Hallet 1996): the ice abrades the faces
 		// that meet it smooth and quarries the faces it leaves, so along the flow the up-flow slopes of the

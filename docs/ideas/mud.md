@@ -1278,7 +1278,31 @@ by its 1 m cell and taken off in texel-sized discs scattered round the spot (the
 trail fades in patches, mass kept at 1.5 kg/m2 for a full film. The wind lifts it from u* 0.3 m/s as a broken silt
 skin (17.3), over the 1 m cells films were laid in near the followed point. Bench --test=trackdust: a wet trail gives
 none; dried, 60 tyre steps lift 0.1 kg and clear it at the spot; a 12 m/s wind lifts 0.22 kg and thins another spot
-from full to 0.62. Film cells are kept in deposits.dep (d35dbf2e), so a reloaded trail lifts in the wind too.
+from full to 0.62 (the check now averages the whole trail, since the wind thins it in patches). Film cells are kept in deposits.dep (d35dbf2e), so a reloaded trail lifts in the wind too.
+
+#### Round 19 built (20 Nov)
+
+Picked 20 Nov: all three, in order. 19.3 (reloaded trails lift dust) went first as a bug fix (d35dbf2e).
+
+**19.1 Streams carry loose stones.** Research: the onset of motion of a lone grain is a force balance, drag and lift
+against submerged weight past the grain's pivot angle (Wiberg and Smith 1987; Komar and Li 1986). A stone standing
+proud of a bed finer than itself moves at a Shields number far under the 0.045 of a bed of its own size (Komar and
+Li's exposure, theta_c about 0.045 (D/K)^-0.7; Carling 1983 for lone boulders on fine beds). The water contract's
+height and depth-averaged flow give the speed at the stone's face by a log profile over a fine bed (ks 1 cm):
+u = U ln(z/z0) / (ln(h/z0) - 1), z0 = ks/30, z half the face standing above the bed. Drag 0.5 rho Cd A u^2 with Cd 0.76
+(Schmeeckle et al. 2007, a grain on a bed), lift with Cl 0.2, buoyancy on its part under the surface. On firm ground
+(rock, a gravel bed held by the colliders) it starts once drag beats tan 40 deg of its submerged weight less lift and
+rolls on against 0.6 of it (Bagnold's dynamic friction for bedload), so it drops where the water slackens. On mud the
+drag joins the round 17 hold (bearing depth, ploughing and rolling resistance), with the load less buoyancy and lift.
+Bench --test=stream (12 cm stone, 0.5 m deep): still at 1.75 m/s, off at 2.25 m/s (u* 0.14 m/s, Shields 0.006), at
+3 m/s rolled 6 m and stopped 15 cm into the still pool; sunk 5 cm in stiff mud it moved 1.7 m at 2.5 m/s, against 6 m
+on rock. `stream_stones` (on).
+
+**19.2 Loose stones kept.** deposits.dep now ends with each loose stone as it lies: id, position, rotation, mesh
+radius, depth in the mud and the mud height it rides. Read back, they are placed at the first step with the ground up,
+taken out of the hidden stones for good. A save made as the node leaves the tree (its stones have left it first)
+uses each stone's transform from the last step. Bench --test=stream: a stone saved in stiff mud is read back by a new
+node where it lay, at the same depth and turn (under 1 mm off).
 
 ### Look (any stage)
 

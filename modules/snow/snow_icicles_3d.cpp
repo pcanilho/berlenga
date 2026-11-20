@@ -39,6 +39,7 @@
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/resources/image_texture.h"
 #include "scene/resources/mesh.h"
+#include "scene/resources/shader.h"
 
 namespace {
 // Ice and air near 0 C.
@@ -102,6 +103,14 @@ constexpr float CORE_MAX_RADIUS = 0.0015f;
 // cone's R^2 L / 3, so its root is 0.913 of the cone's.
 constexpr float PROFILE_POWER = 0.75f;
 constexpr float PROFILE_ROOT = 0.913f;
+constexpr float PROFILE_SCATTER = 0.08f; // each icicle's taper power within 3/4 +- this
+// Drip points along an eave (see _place): mean spacing, the width each one wets (standard deviation along the
+// edge) and the thin film that reaches the sites between them, as a share of a drip point's mean flow.
+constexpr float DRIP_SPACING = 0.4f;
+constexpr float DRIP_WIDTH = 0.03f;
+constexpr float DRIP_FILM = 0.005f;
+constexpr float DRIP_DRY = 0.6f; // the share of sites between drip points the film misses
+constexpr float DRIP_HOURS = 8.0f; // hours of melt between a drip point's spell knots
 // The axis is kept every 2 cm down from the root, as the tip lays it down.
 constexpr float AXIS_STEP = 0.02f;
 // The wind leans the pendant drop, and the tip grows under it (Maeno, Makkonen and Takahashi 1994, bent icicles):
@@ -190,8 +199,13 @@ float SnowIcicles3D::wall_growth_rate(float p_celsius, float p_wind, float p_rad
 }
 
 void SnowIcicles3D::_place() {
-	// One site every spacing along the edge, jittered; water gathers into a few runnels along an edge, so a
-	// site's share of it varies (3 r^2, mean 1): some sites grow long icicles, many stay short or bare.
+	// One site every spacing along the edge, jittered. Melt does not leave a roof as an even film: it drains
+	// through the snowpack in flow fingers and runs down the roof in rivulets (Waldner, Schneebeli et al. 2004;
+	// Marsh and Woo 1984), which reach the eave at drip points, and icicles hang where they do (Makkonen 1988
+	// grows each icicle from its own water flux). So the drip points are scattered along the edge (on average
+	// DRIP_SPACING apart, each with its own flow, lognormal), each wetting a few sites round it; a thin film
+	// reaches the rest. A few sites grow long icicles in clusters (neighbours often fused), many only stubs, and
+	// there are bare gaps between. Each icicle's taper scatters round the ideal 3/4 power too (Chen and Morris 2013).
 	icicles.clear();
 	sites_dirty = false;
 	if (edge.size() < 2) {
@@ -202,6 +216,8 @@ void SnowIcicles3D::_place() {
 		h = hash_u32(h + 0x9e3779b9u);
 		return float(h & 0xffffffu) / float(0xffffff);
 	};
+	LocalVector<float> along; // each site's distance along the edge
+	float total = 0.0f;
 	for (int s = 0; s + 1 < edge.size(); s++) {
 		const Vector3 a = edge[s];
 		const Vector3 b = edge[s + 1];
@@ -211,12 +227,62 @@ void SnowIcicles3D::_place() {
 			const float t = CLAMP((k + 0.5f + 0.6f * (rnd() - 0.5f)) / count, 0.0f, 1.0f);
 			Icicle ic;
 			ic.position = a.lerp(b, t);
-			const float r = rnd();
-			ic.share = 3.0f * r * r;
 			const float a = float(Math::TAU) * rnd();
 			ic.own_lean = Vector2(Math::cos(a), Math::sin(a)) * OWN_LEAN * rnd();
+			ic.power = PROFILE_POWER + PROFILE_SCATTER * (2.0f * rnd() - 1.0f);
 			icicles.push_back(ic);
+			along.push_back(total + len * t);
 		}
+		total += len;
+	}
+	// The drip points: a Poisson scatter along the edge, each flow exp(N(0,1)) (lognormal), each with its own
+	// wet and dry spells: rivulets wander as the snowpack above them changes, so a drip point runs for a day or
+	// two of melt, dries, and another starts. Sites under one that ran all week grow long, others part way.
+	drips.clear();
+	melt_hours = 0.0f;
+	for (float d = -DRIP_SPACING * Math::log(MAX(rnd(), 1e-6f)); d < total; d -= DRIP_SPACING * Math::log(MAX(rnd(), 1e-6f))) {
+		const float g = Math::sqrt(-2.0f * Math::log(MAX(rnd(), 1e-6f))) * Math::cos(float(Math::TAU) * rnd());
+		drips.push_back(Vector3(d, Math::exp(g), 100.0f * rnd()));
+	}
+	for (uint32_t i = 0; i < icicles.size(); i++) {
+		// Between drip points most of the edge stays dry; where a little film does come over, a stub grows to
+		// the length whose wall freezes all of it.
+		const float r = rnd();
+		icicles.write[i].film = r < DRIP_DRY ? 0.0f : DRIP_FILM * Math::pow((r - DRIP_DRY) / (1.0f - DRIP_DRY), 2.0f);
+		icicles.write[i].along = along[i];
+	}
+	_update_shares();
+}
+
+void SnowIcicles3D::_update_shares() {
+	// Each drip point's flow now: its spell noise (smooth, one knot every DRIP_HOURS of melt) above 0.35 runs.
+	LocalVector<float> flow;
+	flow.resize(drips.size());
+	for (uint32_t d = 0; d < drips.size(); d++) {
+		const float x = melt_hours / DRIP_HOURS + drips[d].z;
+		const int i0 = int(Math::floor(x));
+		const float t = x - i0;
+		const float st = t * t * (3.0f - 2.0f * t);
+		auto knot = [&](int p_i) { return float(hash_murmur3_one_32(uint32_t(p_i), uint32_t(d) * 7919u + uint32_t(seed)) & 0xffffu) / 65535.0f; };
+		const float v = Math::lerp(knot(i0), knot(i0 + 1), st);
+		flow[d] = drips[d].y * CLAMP((v - 0.35f) / 0.4f, 0.0f, 1.0f);
+	}
+	float sum = 0.0f;
+	for (Icicle &ic : icicles) {
+		float share = ic.film;
+		for (uint32_t d = 0; d < drips.size(); d++) {
+			const float x = (ic.along - drips[d].x) / DRIP_WIDTH;
+			if (x * x < 18.0f) {
+				share += flow[d] * Math::exp(-0.5f * x * x);
+			}
+		}
+		ic.share = share;
+		sum += share;
+	}
+	// Mean 1, so the edge's supply is shared out whole.
+	const float scale = sum > 0.0f ? float(icicles.size()) / sum : 1.0f;
+	for (Icicle &ic : icicles) {
+		ic.share *= scale;
 	}
 }
 
@@ -228,6 +294,10 @@ void SnowIcicles3D::grow(float p_hours, float p_celsius, float p_wind, float p_s
 		return;
 	}
 	const float delta = -p_celsius;
+	if (p_supply > 0.0f) {
+		_update_shares();
+		melt_hours += p_hours;
+	}
 	float supply_total = 0.0f;
 	float dripped = 0.0f;
 	float change = 0.0f;
@@ -452,12 +522,45 @@ void SnowIcicles3D::_ensure_children() {
 	if (default_core_material.is_null()) {
 		// Cloudy ice: the inclusions scatter, so it is white and rough, and lets light through to its back
 		// (backlight) as a frosted pane does. Opaque, so the clear ice around it refracts it in raster too.
+		// The clear ice is a cylindrical lens round it: a ray entering at b from the axis passes it at
+		// R sin(asin(b/R) - asin(b/(nR))), so a core of radius c shows as wide as the b where that is c (about
+		// n/(n-1) = 4.2 times c when thin; the path tracer traces this). Raster's transmission reads the screen
+		// almost straight through the middle, so there the core is drawn at that apparent width (UV: the
+		// clear ice's radius there, and the core's); the path tracer and shadow maps keep the real column.
+		Ref<Shader> sh;
+		sh.instantiate();
+		sh->set_code(R"(shader_type spatial;
+uniform vec3 albedo : source_color = vec3(0.72, 0.77, 0.82);
+uniform vec3 backlight : source_color = vec3(0.6, 0.66, 0.72);
+uniform float ior = 1.31;
+void vertex() {
+	float big_r = UV.x;
+	float c = UV.y;
+	vec2 o = NORMAL.xz;
+	if (!IN_PATH_TRACER && !IN_SHADOW_PASS && c > 0.0 && big_r > c && dot(o, o) > 1.0e-8) {
+		float lo = c;
+		float hi = 0.95 * big_r;
+		for (int i = 0; i < 12; i++) {
+			float b = 0.5 * (lo + hi);
+			float d = big_r * sin(asin(b / big_r) - asin(b / (ior * big_r)));
+			if (d < c) {
+				lo = b;
+			} else {
+				hi = b;
+			}
+		}
+		VERTEX.xz += normalize(o) * (0.5 * (lo + hi) - c);
+	}
+}
+void fragment() {
+	ALBEDO = albedo;
+	ROUGHNESS = 0.5;
+	SPECULAR = 0.335;
+	BACKLIGHT = backlight;
+}
+)");
 		default_core_material.instantiate();
-		default_core_material->set_albedo(Color(0.72f, 0.77f, 0.82f));
-		default_core_material->set_roughness(0.5f);
-		default_core_material->set_specular(0.335f);
-		default_core_material->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
-		default_core_material->set_backlight(Color(0.6f, 0.66f, 0.72f));
+		default_core_material->set_shader(sh);
 	}
 }
 
@@ -493,11 +596,11 @@ void SnowIcicles3D::_build_mesh() {
 			const float z = ripples ? length * q : length * (1.0f - (1.0f - q) * (1.0f - q) * 0.5f - (1.0f - q) * 0.5f);
 			// Its radius by the distance from the full icicle's tip (the core stops short, as before).
 			const float u = MAX(p_ic.length - z, 0.0f) / MAX(p_ic.length, 1e-4f);
-			float rad = MAX(root * Math::pow(u, PROFILE_POWER), tip);
+			float rad = MAX(root * Math::pow(u, p_ic.power), tip);
 			if (!p_ripples && p_scale < 1.0f) {
 				rad = MIN(rad, CORE_MAX_RADIUS); // the hazy core: a thin column
 			}
-			float slope = MIN(root * PROFILE_POWER * Math::pow(MAX(u, 1e-3f), PROFILE_POWER - 1.0f) / MAX(p_ic.length, 1e-4f), 3.0f);
+			float slope = MIN(root * p_ic.power * Math::pow(MAX(u, 1e-3f), p_ic.power - 1.0f) / MAX(p_ic.length, 1e-4f), 3.0f);
 			if (!p_ripples && p_scale < 1.0f && rad >= CORE_MAX_RADIUS) {
 				slope = 0.0f; // where the cap holds, the core is a straight column: its sides face out, not down
 			}
@@ -540,7 +643,12 @@ void SnowIcicles3D::_build_mesh() {
 				p_out.tangents.push_back(1.0f);
 				// The ripples are round the icicle, so UV.x picks their strength instead of going round.
 				const float grown = ripples ? 0.0f : ripple_grown * CLAMP((p_ic.length - z) / RIPPLE_TIP_FADE, 0.0f, 1.0f);
-				p_out.uvs.push_back(Vector2((grown * (RIPPLE_COLUMNS - 1) + 0.5f) / RIPPLE_COLUMNS, y / RIPPLE_WAVELENGTH + p_phase));
+				if (!p_ripples && p_scale < 1.0f) {
+					// The core: the clear ice's radius here and its own, for raster's apparent width.
+					p_out.uvs.push_back(Vector2(MAX(p_ic.radius * PROFILE_ROOT * Math::pow(u, p_ic.power), TIP_RADIUS), rad));
+				} else {
+					p_out.uvs.push_back(Vector2((grown * (RIPPLE_COLUMNS - 1) + 0.5f) / RIPPLE_COLUMNS, y / RIPPLE_WAVELENGTH + p_phase));
+				}
 			}
 		}
 		for (int r = 0; r < rings; r++) {
@@ -623,7 +731,7 @@ void SnowIcicles3D::_build_mesh() {
 			if (p_z >= p_ic.length) {
 				return 0.0f;
 			}
-			return MAX(p_ic.radius * PROFILE_ROOT * Math::pow((p_ic.length - p_z) / p_ic.length, PROFILE_POWER), TIP_RADIUS);
+			return MAX(p_ic.radius * PROFILE_ROOT * Math::pow((p_ic.length - p_z) / p_ic.length, p_ic.power), TIP_RADIUS);
 		};
 		auto axis_at = [](const Icicle &p_ic, float p_z) {
 			const Vector2 off = _axis_offset(p_ic.bend, p_z);
