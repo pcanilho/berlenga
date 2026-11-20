@@ -169,6 +169,6 @@ public:
 	// scene depth it was drawn against.
 	// p_shadow_atlas: the frame's shadow atlas (RID() if there is none; lights
 	// then glow unshadowed).
-	void run(RenderingDevice *p_rd, const FlowBackend::ScatterSource &p_source, const Params &p_params, const Light *p_lights, int p_light_count, const RID &p_depth, const RID &p_color, const RID &p_shadow_atlas, const Size2i &p_size, ShadowMap *r_shadow = nullptr);
+	void run(RenderingDevice *p_rd, const FlowBackend::ScatterSource &p_source, const Params &p_params, const Light *p_lights, int p_light_count, const RID &p_depth, const RID &p_color, const RID &p_coverage, const RID &p_shadow_atlas, const Size2i &p_size, ShadowMap *r_shadow = nullptr);
 	void free(RenderingDevice *p_rd);
 };

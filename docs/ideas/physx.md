@@ -2148,6 +2148,57 @@ about 13% is left, in large dense powder only (a deep cloud of albedo
 0.99 reflects nearly like snow, through orders the octaves still cut
 short). Raising the tail further brightens the puffs 6-11% past PT.
 
+### Raster powder: rim, sky colour, sky against sun (20 Nov)
+
+Docs' second read of snow's front-lit powder (v8 on 9d213a78): still grey,
+a dark dotted rim, no blue cast, billows smoothed.
+- Rim: the light pass and Flow's own opacity march sampled the gas with
+  different jitter, so at thin edges Flow drew gas the light pass had not
+  lit (and the reverse). Flow's ray march now hands over its
+  transmittance in alpha (misc/physx_patches 0011); the light pass returns
+  light per unit of opacity and the upsample weighs it by Flow's own
+  coverage, so light and coverage come from the same samples. The frame
+  keeps its own alpha (the copy back keeps the destination's).
+- Blue cast: on the test puffs raster matched PT's brightness but was
+  neutral (blue/red 1.05 against PT's 1.23). Sky-only puffs: raster half
+  as bright and greyer (1.36 against 1.69). Three causes: the ground-light
+  change had halved the sky (neutral, sunlit ground made up the
+  brightness); without a sun the ground was lit from the sky's own
+  stand-in lower half (a dull brown) rather than the blue sky; the sky
+  taps were the radiance map's last mip, which averages the whole sphere,
+  plus a tap along the view toward the pale horizon. The sky is now five
+  taps over each half four mips above the last, the ground is lit by the
+  sky above it, and SKY_GAIN 3.0 against SUN_MS_GAIN 0.7 is fitted to a
+  new sky-only PT puff with the sun-and-sky ones.
+Test puffs against PT: front-lit -1.4%, side-lit +1.0% (0.9) and +2.7%
+(0.99), sky-only -6.8%; blue/red 1.09-1.11 against 1.21-1.26 (sky-only
+1.56 against 1.69). Fine billow detail under front light (docs' point 2)
+is not addressed: evenly scattered light carries no self-shadow, and the
+PT's fine structure is mostly its 16-spp grain over a sparser cloud.
+Snow's front-lit powder (640x360): mean grey 155 against PT 189 (156
+before), blue/red 1.067 against 1.087 (1.035 before), the dotted rim
+gone. The brightness gap in this large, dense albedo-0.99 cloud is
+unchanged: light that goes deep and diffuses back out of the lit face is
+beyond the octaves (a diffusion term, as in subsurface scattering, is
+the next step).
+
+### Raster powder: the thin-gas ramp looks along the sun's whole line (20 Nov)
+
+The powder cloud is three times thinner per metre than the test puffs
+(smoke_density 1.2 against 4), and the ramp that keeps wisps single
+scattering judged "thin" by the gas between the point and the sun alone.
+Lit from the camera's side, the visible face of a big cloud has almost
+no gas toward the sun, so it got single scattering only, though deep gas
+lay behind it to scatter light back. The ramp now takes the gas along
+the sun's whole line through the point (the sun map's column: toward the
+sun plus beyond). A new 32-spp PT puff at the powder's density lit from
+the camera's side: raster -5.0% -> -1.1%. Dense puffs: front-lit +2.8%,
+side-lit +1.4% (0.9) and +3.2% (0.99). Snow's powder: mean grey 155 ->
+164 against PT 189 (PT's plain snow is 4% brighter too). A diffusion
+term (similarity-theory albedo and decay, light going deep and coming
+back out of the lit face) was tried: at a strength that would close the
+rest it puts the test puffs 8-18% over PT, so it is not in.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

@@ -861,11 +861,12 @@ func _render_plot(i: int, args: Dictionary) -> void:
 				if o.length() < 25.0 and not nm.begins_with("Hazel") and not nm.contains("sticks") and o.normalized().dot(-cam.global_transform.basis.z * Vector3(1, 0, 1)) > 0.6:
 					print("in view %.1f m: %s" % [o.length(), biome.species[si].resource_name])
 	if args.has("near"):
-		# --near=D: the first species' plant nearest the plot's centre, from D metres (default 7),
+		# --near=D: the first species' (env NEAR_SPECIES) plant nearest the plot's centre, from D metres (default 7),
 		# eye at 1.7 m, aimed at 1.6 m on it (env SH sets the aim height).
 		var best_p := Vector3()
 		var best_d := 1e9
-		for pp in f.get_placements(0):
+		# env NEAR_SPECIES=k: the k-th species instead of the first.
+		for pp in f.get_placements(int(OS.get_environment("NEAR_SPECIES")) if OS.get_environment("NEAR_SPECIES") != "" else 0):
 			var dd := Vector2(pp.x, pp.z).length()
 			if dd < best_d:
 				best_d = dd

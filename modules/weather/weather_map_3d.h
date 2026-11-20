@@ -308,6 +308,41 @@ private:
 	void _start_sky_shadow_bake();
 	void _finish_sky_shadow_bake(bool p_discard);
 	void _apply_sky_shadow();
+	// The clouds' light grid (Nubis Cubed, Schneider 2023): the optical depth toward the sun from every voxel
+	// of a box round the camera, baked in the background like the shadows. The sky's light march reads it
+	// 512 m along its path in place of its coarse steps from there, and it reaches the whole way out of the
+	// layer, so clouds shade each other over kilometres at a low sun. Baked a level a frame from the top down:
+	// each voxel marches only to the level above and adds that level's value where its path meets it.
+	static constexpr float kLightGridExtent = 32768.0f; // m across
+	static constexpr int kLightGridResolution = 128; // texels across
+	static constexpr int kLightGridLevels = 32; // texels up, base_min to top_max
+	struct LightGridBake {
+		WeatherClouds::State state;
+		Vector3 to_sun;
+		Vector2 corner; // m, world x, z
+		float texel = 256.0f;
+		float y0 = 0.0f;
+		float y1 = 1.0f;
+		int level = -1; // the level being baked, from the top down; -1 when none
+		Vector<float> tau; // x fastest, then z, then level
+		float *tau_w = nullptr;
+		float above(int p_level, float p_x, float p_z) const;
+		void row(uint32_t p_row, void *);
+	};
+	LightGridBake *light_grid_bake = nullptr;
+	WorkerThreadPool::GroupID light_grid_task = WorkerThreadPool::INVALID_TASK_ID;
+	double light_grid_timer = 0.0;
+	Vector2 light_grid_corner;
+	Vector2 light_grid_drift;
+	float light_grid_y0 = 0.0f;
+	float light_grid_y1 = 1.0f;
+	Ref<ImageTexture3D> light_grid_texture;
+	void _start_light_grid_bake();
+	void _launch_light_grid_level();
+	void _step_light_grid_bake();
+	void _finish_light_grid_bake(bool p_discard);
+	void _build_light_grid_texture();
+	void _apply_light_grid();
 
 	// Wind near the ground: canopy and obstacle shelter on a fine square, and gust patches.
 	WeatherShelter shelter;

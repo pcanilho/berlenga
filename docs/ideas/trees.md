@@ -2564,6 +2564,28 @@ canopy tree's crown. Hobi et al. 2015, gaps from satellite: 98% under 200 m2, fe
   The stand-grown beech stops changing shape past about 60 years (canopy and giants at the stand's shade came out
   identical), hence the light and the scale.
 
+### 5ao. Old trunks up close (20 Nov; Paulo's pick)
+
+Close on a veteran beech's foot (`--preset=1 --stand=forest --set=veteran:1 --set=years:160 --view=base`, seeds 2-4)
+the moss sleeve ended in a flat-topped block and the basal hollow was a lens with upright sides.
+- The shell measured the bark under it from the height map alone (`bark_disp`). It missed the macro relief, the root
+  collar's re-laid relief and the flare's pushes, so up to a centimetre of bark stood over a thin sleeve. Below the
+  root sweep the sleeve showed, above it it did not: a level cut at `root_top`. Bark and shell share one grid under a
+  shell, so the shell now reads the bark's own vertex (`under = n . (bark - shell base)`), falling back to the height
+  map when the grids differ.
+- The sleeve's top (Studlar 1982) hardly left 35 cm: value noise averages to its middle. Two octaves (3 and 6 per
+  metre round the stem), stretched back to their full range, plus stemflow streaks that carry the moss up a metre and
+  more in narrow channels (beech sends a fifth of a stand's rain down its stem, Neal et al. 1993). No feature narrower
+  than about four shell vertices (finer ones drew stairs).
+- The forced cover at the soil (roots' flanks) eases out over 6-28 cm with a ragged reach instead of stopping at 25 cm.
+  A root's bare back fades out up the flare and its flanks wander, so it no longer cuts a straight-sided band.
+- Rings every 2.5 cm over the lowest 1.6 m of standing stems of 20 cm and more that carry a shell (5 cm before): about
+  8k more vertices per giant at LOD0 only.
+- Basal hollow: a Gothic arch widest at the soil (Mattheck and Breloer 1994, basal cavity), its height counted only
+  over the centre, flanks tapering from the soil (`1 - 0.72 rise^1.5`); woundwood rolls thickest on the flanks, thin
+  over the crown and at the foot (Shigo 1985).
+- Frames: fork/trees/old-trunks/ (moss sleeve before/after, seeds 2-4; hollow before/after; raster vs PT crop).
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
@@ -3330,3 +3352,23 @@ thinned tail shows gaps first.
 **Snow-laden crowns.** Conifer crowns catch snow (up to 30-60% of a storm's snowfall in a closed spruce stand; Hedstrom and Pomeroy 1998, Pomeroy et al. 1998 interception model): the load bends branch tips down (spruce and fir laterals droop 10-30 degrees under a few kg; Schmidt and Pomeroy 1990 branch bending), white caps sit on the upper side of each spray as real geometry, and it unloads in gusts, sun and thaw as falling clumps (Storck et al. 2002; Roesch et al. 2012 unloading rates). Heavy wet snow breaks tops and stems (snow breakage, Nykanen et al. 1997; Peltola et al. 1999 critical loads), through the TreeWind3D storm path. Reads the snow/weather contracts (snowfall, air temperature, wind); load per tree kept in TreeWind3D, released as Flow/particle clumps. Needs a WorldSnow line agreed with the snow thread (who owns snow on crowns).
 **Windthrow fields.** What a winter storm leaves (Lothar 1999, Kyrill 2007): gaps of thrown trees lying in drifts along the storm's track, root plates standing up with their pits beside them, snapped stems, leaning survivors, and over the years the plates crumbling into pit-and-mound ground while pioneers fill the gap (Schelhaas et al. 2003; Ulanova 2000; Peterson 2007 pit-mound microtopography). A `STAND_WINDTHROW` with a storm direction and age: stems baked fallen (not run through physics, for open-world scale) from the storm kit's plates and breaks, pits handed to the ground contract (tree_root_pit, as storm_damage does).
 **Old-growth beech.** A primeval beech forest's mosaic (Uholka, Commarmot et al. 2013; Feldmann et al. 2018): small canopy gaps of one to a few fallen giants, every age class under them, veteran beeches with cavities, broken tops and tinder fungus, standing and lying deadwood of 100-200 m3/ha at all decay classes. Builds on the veteran, fungi and deadwood code: a `STAND_OLD_GROWTH_BEECH` with a gap mask and age structure per gap.
+
+## Next-round options (card 20 Nov)
+
+**Old trunks up close.** Veteran giants read old from their microhabitats (Larrieu et al. 2018, the tree-related
+microhabitat typology: cavities, injuries, bark features, deadwood in the crown, growth forms, epiphytes, exudates),
+not from size alone: moss cushions and leafy lichens on the boles' wetter, north and lower sides, and on logs by decay
+class (bryophyte cover rising with decay; the forest floor taking the log over in class 4-5), as real geometry tufts
+placed by the existing bark detail and lichen masks; open rot-holes and woodpecker cavities cut into the trunk mesh
+with a dark interior; root buttresses and flare on the giants. Builds on BarkDetail3D, the lichen UV2 and veteran code.
+
+**Boreal taiga stand.** Norway spruce, Scots pine and birch on poor podzol, shaped by fire (Kuuluvainen and Aakala
+2011: boreal Fennoscandian forests mostly multi-cohort, with small-scale gap dynamics as well as fire), lichen floors
+under pine on dry sand (vegetation's floor), bog edges. A STAND_BOREAL using the fire bands and the beetle/windthrow
+machinery for its disturbances.
+
+**Forests that age.** One stand stepping through its stages over in-game years (stand initiation, stem exclusion,
+understory reinitiation, old growth: Oliver and Larson 1996): the bands already built (fire regrowth, windthrow gap
+young, beetle snags, old-growth poles) chosen by time since disturbance per patch, so a burnt or thrown patch regrows
+in the scene's calendar. Needs a per-patch disturbance age contract with world-links (WorldFire already gives
+burn_age_at).
