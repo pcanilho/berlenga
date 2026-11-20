@@ -169,6 +169,14 @@
    "title": "Open worlds"
   },
   {
+   "name": "rendering/pathtracing/offscreen_record_cull",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, MultiMeshes that set `RenderingServer.multimesh_set_rt_offscreen_cull` leave out of path tracing their instances outside the camera's view that look smaller than their set angle, as film renderers do with sub-pixel detail.",
+   "page": "rocks",
+   "title": "Rocks"
+  },
+  {
    "name": "rendering/pathtracing/persistent_instances",
    "type": "bool",
    "default": "false",
@@ -1589,7 +1597,7 @@
     "stones_react"
    ],
    "note": "",
-   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one, grouped into shared tiles of piles so it handles far fewer instances. Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
+   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one, grouped into tiles of piles shared across cells so it handles far fewer instances, and small stones off screen leave its scene with no change to the image (`rendering/pathtracing/offscreen_record_cull`). Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
