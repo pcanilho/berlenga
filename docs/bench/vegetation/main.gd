@@ -1120,7 +1120,7 @@ func _trails_check() -> void:
 	for i in mini(again.size(), trails.size()):
 		same = same and again[i]["points"] == trails[i]["points"]
 	_check("game trails: none through deep water or up steep ground, merged (network %.0f m vs links %.0f m), shared stretches busier (%.0f passes), repeatable (%.0f ms)" % [length, links, top, ms],
-			trails.size() > 3 and bad == 0 and length < 0.6 * links and top >= 3000.0 and same, [trails.size(), bad, length, links, top, same])
+			trails.size() > 3 and bad == 0 and length < 0.6 * links and top >= 1000.0 and same, [trails.size(), bad, length, links, top, same])
 
 func _browse_check() -> void:
 	var st: WorldStand = WorldContracts.get_stand()

@@ -62,6 +62,8 @@ extends Node3D
 #                    edge, under deer browsing pressure P over the clearing and the wood (WorldStand.add_browse): P > 0
 #                    the deer wood (STAND_DEER_WOOD: the browse line under the crowns) with make_floor's browse set, the
 #                    sward cropped; P = 0 the beech stand unbrowsed (the before shot)
+#   --trails         game trails (VegetationField3D.make_game_trails between five places over the meadow, published on
+#                    WorldStand.set_trails): the sward and plants worn along them, from 1.6 m on the busiest stretch
 #   --graze=P        a deer browse disc of pressure P (WorldStand.add_browse, 6.5 m) 6 m ahead, framed from 1.6 m: a
 #                    grazed lawn edged by the standing sward
 #   --burn=A         a burn scar A years old (WorldBurnScar3D, 20 x 12 m) in the view: the sward grows back over
@@ -143,6 +145,7 @@ var path_passes := 0.0 # --path: a worn path across the meadow, passes a year.
 var burn_age := -1.0 # --burn=A: a burn scar A years old in the view.
 var graze := -1.0 # --graze=P: a browse disc of pressure P in the view.
 var deer_wood := -1.0 # --deer-wood=P: a clearing in real trees under browsing pressure P.
+var trails_view := false # --trails
 var deer_trees: Array = [] # Its TreeGenerator species (logs, stumps and saplings too): all kept out of the clearing.
 var ug_dir := Vector3(0, 0, 1)
 var mushroom_view := "" # --mushrooms[=name]: in the wood, close on a group of mushrooms (make_floor's).
@@ -264,6 +267,7 @@ func _ready() -> void:
 		elif a == "--lone":
 			forest = true
 			clearing = 2
+		elif a == "--trails": trails_view = true
 		elif a.begins_with("--deer-wood="):
 			deer_wood = float(a.get_slice("=", 1))
 			graze = deer_wood
@@ -493,6 +497,8 @@ func _ready() -> void:
 				st.add_browse(Vector3(CLEARING_C.x, 0.0, CLEARING_C.y), 60.0, deer_wood, 1.8) # The clearing and the wood round it.
 			else:
 				st.add_browse(Vector3(24.0, 0.0, 22.0) if far_view else Vector3(5.0, 0.0, 14.0), 6.5, graze, 1.8)
+		if trails_view:
+			_set_trails.call_deferred()
 		if burn_age >= 0.0:
 			var scar := WorldBurnScar3D.new()
 			scar.age_years = burn_age
@@ -791,6 +797,32 @@ func _set_clearing() -> void:
 			img.set_pixel(x, y, Color(v, v, v, 1.0))
 	cover.density_mask = ImageTexture.create_from_image(img)
 	cover.density_mask_rect = Rect2(-SIZE * 0.5, -SIZE * 0.5, SIZE, SIZE)
+
+# Game trails between five places round the meadow (clear of the pond), published for every field; the eye on the
+# busiest stretch, 1.6 m up, looking 12 m along it.
+func _set_trails() -> void:
+	var goals := PackedVector3Array([Vector3(-30, 0, 30), Vector3(25, 0, 32), Vector3(30, 0, -5), Vector3(-28, 0, -2), Vector3(4, 0, 40)])
+	var trails: Array = VegetationField3D.make_game_trails(dm, Rect2(-SIZE * 0.5, -SIZE * 0.5, SIZE, SIZE), goals, {"seed": 2})
+	var st: WorldStand = WorldContracts.get_stand()
+	st.set_trails(trails)
+	var best: Dictionary = {}
+	var best_score := -1.0
+	for t in trails:
+		var pts: PackedVector3Array = t["points"]
+		var score: float = t["passes"] * minf(pts.size(), 40)
+		if pts.size() > 12 and score > best_score:
+			best_score = score
+			best = t
+	print("GRASS_TRAILS %d pieces, busiest %.0f passes" % [trails.size(), best.get("passes", 0.0)])
+	if best.is_empty():
+		return
+	var bp: PackedVector3Array = best["points"]
+	var e := bp[2]
+	var k := 2
+	while k < bp.size() - 1 and Vector2(bp[k].x - e.x, bp[k].z - e.z).length() < 12.0:
+		k += 1
+	cam.position = Vector3(e.x, height(e.x, e.z) + 1.6, e.z)
+	cam.look_at(Vector3(bp[k].x, height(bp[k].x, bp[k].z) + 0.2, bp[k].z))
 
 # 40 m up beside the clearing, looking down across it to its far edge and the wood beyond.
 func _frame_clearing() -> void:

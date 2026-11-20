@@ -183,7 +183,7 @@ Array VegetationField3D::make_game_trails(Node *p_data_map, const Rect2 &p_area,
 	ERR_FAIL_COND_V(p_area.size.x <= 0.0f || p_area.size.y <= 0.0f, out);
 	const float cell = MAX(float(p_options.get("cell", 2.0f)), 0.5f);
 	const float reach = float(p_options.get("reach", 250.0f)); // Goals further apart are not linked directly.
-	const float passes = float(p_options.get("passes", 1500.0f)); // A year, along one link (a small herd's daily round).
+	const float passes = float(p_options.get("passes", 500.0f)); // A year, along one link: a few deer most days (Liddle 1997: a few hundred passes a year keep a line open in grassland).
 	const float width = float(p_options.get("width", 0.35f)); // The tread of a single-file trail.
 	const float attract = CLAMP(float(p_options.get("attraction", 0.6f)), 0.0f, 0.9f);
 	const float max_slope = Math::deg_to_rad(float(p_options.get("max_slope_deg", 40.0f)));

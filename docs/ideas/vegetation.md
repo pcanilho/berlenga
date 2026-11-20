@@ -1467,7 +1467,7 @@ cost field for roads and paths (e.g. Galin et al. 2010, "Procedural generation o
   lowered by the traffic already routed over it (attraction 0.6: a worn trail costs down to 40% of fresh ground), so
   later routes join earlier ones. Out as worn paths (the fields' `paths` Dictionaries plus "kind": "game_trail"): one
   piece per stretch of equal traffic, a shared stretch carrying the summed passes and widening about 0.1 m each
-  tenfold; corners cut by Chaikin's scheme twice. Default 1500 passes a year a link, 0.35 m tread.
+  tenfold; corners cut by Chaikin's scheme twice. Default 500 passes a year a link, 0.35 m tread.
 - The fields wear them as any path: GrassField3D.paths and VegetationField3D.paths (VegetationPaths), each plant by
   its trample resistance.
 - Contract asked of world-links: the network published on WorldStand (or its own provider) so ground detail, mud and

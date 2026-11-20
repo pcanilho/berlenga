@@ -5007,8 +5007,8 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 		if (stand && stand->get_stand_generation() != trails_seen && now - trails_follow_usec >= uint64_t(BURN_FOLLOW_MSEC) * 1000) {
 			trails_follow_usec = now;
 			if (_read_world_trails()) {
-				ground_baked = false;
-				rebuild();
+				// Between frames, as a setter would: the rings and tiles below still use this frame's resources.
+				callable_mp(this, &GrassField3D::rebuild).call_deferred();
 			}
 		}
 	}
