@@ -74,6 +74,8 @@ extends Node3D
 #   --roll[=m/s]          with --world: a ball rolled across the spot before the still (stones_react; --no-react off)
 #   --no-river-detail     with --world: RockField3D.ground_detail_rivers off (river beds keep only the river layer's stones)
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
+#   --detail-octaves=N    with --world: the material's erosion detail octaves (4; 0 for none, a before frame);
+#                         --sun-shadow=0 drops the raster sun shadow map (A/B)
 #   --gravel-reach[=d]    with --view=river: a gravel-bed reach whose median is nearest d m (0.03)
 #   --no-ground-cover     with --world: RockField3D.ground_detail_cover off (no grain aggregate on the ground past
 #                         each class's reach; a before frame); --save-cover writes the near cover map, --cover-check
@@ -257,7 +259,7 @@ func _environment() -> void:
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-32, -50, 0)
 	sun.light_energy = 2.2
-	sun.shadow_enabled = true
+	sun.shadow_enabled = args.get("sun-shadow", "1") != "0" # --sun-shadow=0: no raster sun shadow map (A/B)
 	sun.directional_shadow_max_distance = 120.0
 	add_child(sun)
 
@@ -461,6 +463,8 @@ func _world() -> void:
 	tm.use_generator(gen)
 	tm.rock_detail_enabled = args.get("rock-detail", "1") != "0" # --rock-detail=0: the ground without its joints and stones
 	tm.cliff_self_shadow = args.get("ledge-shadow", "1") != "0" # --ledge-shadow=0: cliff relief ledges without their per-pixel shadows
+	if args.has("detail-octaves"):
+		tm.detail_octaves = int(args["detail-octaves"]) # --detail-octaves=N: erosion detail octaves in the normal (0: none, A/B)
 	if args.get("far-shadows", "1") == "0":
 		tm.far_shadow_start = 0.0 # --far-shadows=0: no far sun shadows from the ground's horizon
 	tm.update_shader()
