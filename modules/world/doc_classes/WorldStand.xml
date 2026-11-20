@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WorldStand" inherits="RefCounted" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		The stand-age contract: years since the last stand-replacing disturbance over the ground.
+	</brief_description>
+	<description>
+		Kept by the contract itself ([method WorldContracts.get_stand]): fire from [WorldFire], windthrow and beetle kills from the disturbances the trees add. Vegetation and trees read it for succession. Readers that cache it follow [signal stand_changed] or [method get_stand_changes_since]. See docs/ideas/world-contracts.md, Stand.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="_disturbance_at" qualifiers="virtual const">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method disturbance_at].
+			</description>
+		</method>
+		<method name="_stand_age_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method stand_age_at].
+			</description>
+		</method>
+		<method name="add_disturbance">
+			<return type="int" />
+			<param index="0" name="center" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="kind" type="int" />
+			<param index="3" name="age_years" type="float" />
+			<description>
+				A stand-replacing disturbance over a disc around [param center] (world XZ) of [param radius] metres, [param age_years] years ago, of [param kind] ([enum Disturbance]; windthrow and beetle kills, which the trees report; fire comes from [WorldFire]). Returns its id. Reports its area through [signal stand_changed].
+			</description>
+		</method>
+		<method name="advance_years">
+			<return type="void" />
+			<param index="0" name="years" type="float" />
+			<description>
+				The world's years pass: every disturbance added here ages by [param years] and its area is reported. Fire ages through its own producers.
+			</description>
+		</method>
+		<method name="clear_disturbances">
+			<return type="void" />
+			<description>
+				Removes every disturbance added with [method add_disturbance] and reports their area.
+			</description>
+		</method>
+		<method name="disturbance_at" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The kind of disturbance behind [method stand_age_at] at [param position] ([enum Disturbance]); [constant DISTURBANCE_NONE] where none.
+			</description>
+		</method>
+		<method name="get_stand_changes_since" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="generation" type="int" />
+			<description>
+				The areas reported after [param generation], for scripts and tests: [code]{"complete": bool, "area": Rect2}[/code]. [code]complete[/code] is [code]false[/code] when the log no longer reaches back that far (read everything again).
+			</description>
+		</method>
+		<method name="get_stand_generation" qualifiers="const">
+			<return type="int" />
+			<description>
+				Increases with every reported change. Readers keep the generation they last read and ask [method get_stand_changes_since].
+			</description>
+		</method>
+		<method name="remove_disturbance">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Removes the disturbance [param id] and reports its area.
+			</description>
+		</method>
+		<method name="set_disturbance_age">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="age_years" type="float" />
+			<description>
+				Sets how many years ago the disturbance [param id] happened and reports its area.
+			</description>
+		</method>
+		<method name="stand_age_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Years since the last stand-replacing disturbance at [param position]: the youngest of a fire from [method WorldFire.burn_age_at] (unless [method WorldFire.crown_scorch_at] says only a surface fire passed, under 5 m) and the wind and beetle kills added here. -1 where none is known (old growth).
+			</description>
+		</method>
+		<method name="stand_changed">
+			<return type="void" />
+			<param index="0" name="area" type="Rect2" />
+			<description>
+				Reports that [method stand_age_at] changed over [param area] (world XZ): bumps the generation, logs the area and emits [signal stand_changed]. Fire's burn changes are forwarded here.
+			</description>
+		</method>
+	</methods>
+	<signals>
+		<signal name="stand_changed">
+			<param index="0" name="area" type="Rect2" />
+			<description>
+				The stand age changed over [param area] (world XZ).
+			</description>
+		</signal>
+	</signals>
+	<constants>
+		<constant name="DISTURBANCE_NONE" value="0" enum="Disturbance">
+			No disturbance known: old growth.
+		</constant>
+		<constant name="DISTURBANCE_FIRE" value="1" enum="Disturbance">
+			A stand-replacing fire.
+		</constant>
+		<constant name="DISTURBANCE_WIND" value="2" enum="Disturbance">
+			Windthrow.
+		</constant>
+		<constant name="DISTURBANCE_BEETLE" value="3" enum="Disturbance">
+			A bark beetle kill. New kinds are only appended.
+		</constant>
+	</constants>
+</class>
