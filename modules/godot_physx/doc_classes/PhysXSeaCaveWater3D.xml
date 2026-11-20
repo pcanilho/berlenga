@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXSeaCaveWater3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Draws the sea inside sea caves with the river's water surface.
+	</brief_description>
+	<description>
+		[code]CaveNetwork3D[/code] carries the sea into each sea cave as a long wave along the passage (its surge, which answers the water contract there). This node draws that water: one ribbon per sea cave along the passage's line, each station at the water's level and half width with its current, from [code]CaveNetwork3D.get_sea_cave_water()[/code], rebuilt every frame. The surface is [PhysXRiver3D]'s (clear water, sky and sun reflections, white water where the current runs fast, and the path tracer's refracting medium). It keeps no water state of its own. A [code]CaveNetwork3D[/code] with sea caves makes one for itself while [code]sea_surge[/code] is on.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_ribbon_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of sea caves drawn.
+			</description>
+		</method>
+		<method name="get_water_material" qualifiers="const">
+			<return type="ShaderMaterial" />
+			<description>
+				The surface's material (the river's shader), shared by every ribbon.
+			</description>
+		</method>
+		<method name="update_now">
+			<return type="void" />
+			<description>
+				Rebuilds the surfaces from the network now. It does so every frame; this is for tests and stills.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="cave_network" type="NodePath" setter="set_cave_network" getter="get_cave_network" default="NodePath(&quot;&quot;)">
+			The [code]CaveNetwork3D[/code] whose sea caves are drawn.
+		</member>
+		<member name="lanes" type="int" setter="set_lanes" getter="get_lanes" default="9">
+			Vertices across the passage.
+		</member>
+		<member name="wall_margin" type="float" setter="set_wall_margin" getter="get_wall_margin" default="0.25">
+			How far the surface runs past the passage's half width into the walls, in metres, so no gap shows at the rock.
+		</member>
+		<member name="white_water_speed" type="float" setter="set_white_water_speed" getter="get_white_water_speed" default="1.5">
+			The current, in m/s, where white water starts. It is full at twice this speed.
+		</member>
+	</members>
+</class>

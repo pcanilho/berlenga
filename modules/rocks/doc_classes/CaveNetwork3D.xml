@@ -174,6 +174,12 @@
 				How many pools have live water now (the ones nearest the camera, see [member rimstone_water_max]).
 			</description>
 		</method>
+		<method name="get_sea_water_node" qualifiers="const">
+			<return type="Node" />
+			<description>
+				The network's own sea-cave water node (see [member sea_water]), or [code]null[/code].
+			</description>
+		</method>
 		<method name="get_sea_mist_node" qualifiers="const">
 			<return type="Node" />
 			<description>
@@ -271,8 +277,11 @@
 		<member name="sea_mist" type="bool" setter="set_sea_mist" getter="get_sea_mist" default="true">
 			When the network has sea caves, it makes its own [code]PhysXCaveMist3D[/code] (with the PhysX module built with Flow), which breathes cold mist out of their mouths with the swell.
 		</member>
+		<member name="sea_water" type="bool" setter="set_sea_water" getter="get_sea_water" default="true">
+			When the network has sea caves and [member sea_surge] is on, it makes a [code]PhysXSeaCaveWater3D[/code] (with the PhysX module) that draws the sea inside them.
+		</member>
 		<member name="sea_surge" type="bool" setter="set_sea_surge" getter="get_sea_surge" default="true">
-			The sea runs into sea caves: the network answers the water contract (WorldWater) inside each sea cave passage, so bodies wade and swim there, the ground and plants get wet, and water surfaces can draw it. The level is the sea's just outside the mouth (any other water producer, such as the ocean; the still sea when none answers), carried in as a long wave: delayed by the shallow-water speed [code]sqrt(g h)[/code], grown by Green's law as the passage narrows and shoals (amplitude as width^-1/2 depth^-1/4), and damped over [member surge_damping]. Currents follow linear long-wave theory, [code]u = eta sqrt(g / h)[/code]. See [method get_sea_cave_water], [method get_blowhole_spout] and [signal blowhole_spout].
+			The sea runs into sea caves: the network answers the water contract (WorldWater) inside each sea cave passage, so bodies wade and swim there, the ground and plants get wet, and water surfaces can draw it. The level is the sea's just outside the mouth (any other water producer, such as the ocean; the still sea when none answers), carried in as a long wave: delayed by the shallow-water speed [code]sqrt(g h)[/code], grown by Green's law as the passage narrows and shoals (amplitude as width^-1/2 depth^-1/4), and damped over [member surge_damping]. Currents follow linear long-wave theory, [code]u = eta sqrt(g / h)[/code]. With the PhysX module, the network makes a [code]PhysXSeaCaveWater3D[/code] child that draws this water. See [method get_sea_cave_water], [method get_blowhole_spout] and [signal blowhole_spout].
 		</member>
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			The seed. Each cave also takes its entrance's position into its own seed.

@@ -3490,6 +3490,34 @@ void CaveNetwork3D::_pool_water_update() {
 
 // The network's own PhysXCaveMist3D (godot_physx, built with Flow) when it has sea caves, called by name so the
 // module builds without it.
+// The sea drawn inside the sea caves (PhysXSeaCaveWater3D, with the PhysX module): the surge's water as the river's
+// surface along each passage. Made while the network has sea caves and sea_surge is on.
+void CaveNetwork3D::_update_sea_water_node() {
+	Node *n = get_sea_water_node();
+	bool any_sea = false;
+	for (const Cave &cv : caves) {
+		any_sea = any_sea || cv.sea;
+	}
+	if (!sea_water || !sea_surge || !any_sea) {
+		if (n) {
+			n->queue_free();
+		}
+		sea_water_node = ObjectID();
+		return;
+	}
+	if (n || !ClassDB::class_exists("PhysXSeaCaveWater3D")) {
+		return;
+	}
+	Node3D *node = Object::cast_to<Node3D>(ClassDB::instantiate("PhysXSeaCaveWater3D"));
+	if (!node) {
+		return;
+	}
+	node->set_name("SeaWater");
+	add_child(node, false, INTERNAL_MODE_BACK);
+	node->set("cave_network", node->get_path_to(this));
+	sea_water_node = node->get_instance_id();
+}
+
 void CaveNetwork3D::_update_mist_node() {
 	Node *n = get_sea_mist_node();
 	bool any_sea = false;
@@ -4265,6 +4293,7 @@ void CaveNetwork3D::_notification(int p_what) {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				_pool_water_update();
 				_update_mist_node();
+				_update_sea_water_node();
 				_update_stream_nodes();
 				_surge_update(get_process_delta_time());
 			}
@@ -4359,6 +4388,9 @@ void CaveNetwork3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_stream_count"), &CaveNetwork3D::get_stream_count);
 	ClassDB::bind_method(D_METHOD("set_sea_mist", "enable"), &CaveNetwork3D::set_sea_mist);
 	ClassDB::bind_method(D_METHOD("get_sea_mist"), &CaveNetwork3D::get_sea_mist);
+	ClassDB::bind_method(D_METHOD("set_sea_water", "enable"), &CaveNetwork3D::set_sea_water);
+	ClassDB::bind_method(D_METHOD("get_sea_water"), &CaveNetwork3D::get_sea_water);
+	ClassDB::bind_method(D_METHOD("get_sea_water_node"), &CaveNetwork3D::get_sea_water_node);
 	ClassDB::bind_method(D_METHOD("get_sea_mist_node"), &CaveNetwork3D::get_sea_mist_node);
 	ClassDB::bind_method(D_METHOD("set_scallops", "amount"), &CaveNetwork3D::set_scallops);
 	ClassDB::bind_method(D_METHOD("get_scallops"), &CaveNetwork3D::get_scallops);
@@ -4442,6 +4474,7 @@ void CaveNetwork3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "rimstone_water_max", PROPERTY_HINT_RANGE, "0,64,1"), "set_rimstone_water_max", "get_rimstone_water_max");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cave_streams"), "set_cave_streams", "get_cave_streams");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_mist"), "set_sea_mist", "get_sea_mist");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_water"), "set_sea_water", "get_sea_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_surge"), "set_sea_surge", "get_sea_surge");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "surge_damping", PROPERTY_HINT_RANGE, "1,500,1,suffix:m"), "set_surge_damping", "get_surge_damping");
 	ADD_SIGNAL(MethodInfo("blowhole_spout", PropertyInfo(Variant::INT, "cave"), PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "speed")));

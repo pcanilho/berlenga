@@ -30,6 +30,7 @@ extends Node3D
 #                         (--dist m upstream, 2.5); --no-streams turns cave_streams off
 #   --cave-view=rimstone  with --caves --cave-mesh: the busiest rimstone cascade from about --dist m (1.6), a lamp;
 #                         --pool-water=n live water on the n nearest pools (12), --no-pool-water none
+#   --no-sea-water        with --sea-caves --cave-mesh: the sea not drawn inside the caves (a before frame)
 #   --no-sea-mist         with --sea-caves --cave-mesh: no mist breathed out of the mouths; --mist-period=s its swell
 #                         period (run with --fixed-fps 60 and --settle=N for N frames of mist)
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
@@ -756,6 +757,7 @@ func _caves(cam: Camera3D) -> void:
 			var pos: Vector3 = e["position"]
 			net.rimstone_water = not args.has("no-pool-water")
 			net.sea_mist = not args.has("no-sea-mist")
+			net.sea_water = not args.has("no-sea-water")
 			net.cave_streams = not args.has("no-streams")
 			if args.has("mist-period"):
 				# The mist node is made on the network's first frames: set its swell period once it is there.
@@ -2441,6 +2443,12 @@ func _render_later() -> void:
 					cov_sum += cv.x + cv.y
 					cov_n += 1
 			print("%s cover contract: WorldGround.coarse_cover_at matches the near map within %.4f (pebble + gravel mean %.3f)" % ["PASS" if worst < 0.005 else "FAIL", worst, cov_sum / max(cov_n, 1)])
+	for c in get_children():
+		if c is CaveNetwork3D and (c as CaveNetwork3D).get_cave_count() > 0 and (c as CaveNetwork3D).is_sea_cave(0):
+			var sw: Node = (c as CaveNetwork3D).get_sea_water_node()
+			var w: Dictionary = (c as CaveNetwork3D).get_sea_cave_water(0)
+			var pts: PackedVector3Array = w.get("points", PackedVector3Array())
+			print("sea cave water: %d stations, level at the mouth %s, %d drawn" % [pts.size(), str(pts[0]) if pts.size() > 0 else "-", sw.get_ribbon_count() if sw else -1])
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)
