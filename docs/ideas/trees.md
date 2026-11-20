@@ -2730,6 +2730,29 @@ As built:
 - Check: stands `--forest-edge=N`: edge trees' crowns sit 0.2-0.3 of their width toward the open (birch 0.09), the
   mantle mostly outside.
 
+### 5at. Wet forests: alder carr and floodplain willows (20 Nov; Paulo's pick)
+
+Research. Alder carr (Rodwell 1991, W5 Alnus glutinosa-Carex paniculata; the Erlenbruch, Doring-Mederake 1990):
+black alder on peat flooded through the winter, each tree on a tussock of its own roots and peat, the floor between
+sunk and under water; the roots stand exposed as stilts. Softwood floodplain forest (Salicion albae; Ellenberg 1988;
+the Weichholzaue of the Rhine, Elbe and Danube): white willow on ground flooded for weeks most years, many standing
+in the water at high flow; old trees split, hollow and leaning, torn limbs resprouting (Karrenberg et al. 2002);
+willow thickets on the bars.
+
+As built:
+- `stilt_height` (m, a property): the surface roots run level from the foot and arch down ever more steeply to their
+  tips stilt_height below (-H a^2 over the roots' reach); between the roots the collar sinks just under a peat tussock
+  (`_build_tussock`, surface "soil": a core dome to about half the roots' reach, dark peat, a moss and leaf mat on
+  top), so the roots stand free over the sunken floor. The moss sleeve starts above the stilts. Mesh meta
+  `tree_base_lift` = stilt_height; VegetationField3D raises the instance by it (vegetation f1cceef5).
+- STAND_ALDER_CARR (20): stilt-rooted alder (`wet_band` 1: stilt 0.3-0.9 m a variant) allowed in 0.5 m of water on
+  wet ground (wetness 6 and up), birch on the hummocks, white willow saplings at the open edges, the lead's deadwood.
+- STAND_FLOODPLAIN_WILLOW (21): stand-grown old white willows (`wet_band` 2: years x1.0-1.3, veteran 0.35-0.8, limb
+  breakage 1.4-2.0) in up to 0.7 m of water from 6 m into the channel to 60 m out, dense willow thickets on the bars
+  (shade under 0.35), black alder where the ground rises.
+- Not done: flood marks (a silt line on the trunks at the high-water height); the bark's vertex colour can only darken,
+  so a silt crust needs its own shader term.
+
 ### Next-round options (card 20 Nov midday)
 
 - Taiga details. Char on catfaces: the bark shader's wood branch ignores vertex COLOR, so the scar needs its own

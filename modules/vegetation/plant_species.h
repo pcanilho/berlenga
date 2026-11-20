@@ -75,6 +75,7 @@ public:
 		RULE_POOL_DISTANCE, // Metres from the nearest oasis spring pool's shore (VegetationField3D.spring_pools), negative in the pool. A species using it grows only round those pools, on their sand too.
 		RULE_STAND_AGE, // Years since the last stand-replacing disturbance (WorldStand.stand_age_at); -1 old growth, which only ranges reaching -1 or 10000 years take.
 		RULE_DISTURBANCE, // The kind behind the stand age (WorldStand.disturbance_at): 0 none, 1 fire, 2 wind, 3 beetle. Pick one kind with (k, k).
+		RULE_FOREST_EDGE, // Metres from the edge of the field's forest canopy, positive inside, negative in the open; -1000 with no canopy (VegetationField3D).
 		RULE_MAX,
 	};
 	// How the species meets fallen wood placed in the field (meshes with tree_deadwood_axis).
@@ -261,6 +262,9 @@ public:
 	void get_stand_rules(Vector2 &r_age, float &r_age_fade, Vector2 &r_kind, float &r_kind_fade) const;
 	// Weight of a stand (years, -1 old growth; disturbance kind) under those rules.
 	static float stand_weight(const Vector2 &p_age, float p_age_fade, const Vector2 &p_kinds, float p_kind_fade, float p_years, int p_kind);
+	// The forest edge rule, or meta "edge_distance" (Vector2 m; TreeGenerator.make_edge) where it is left at its default.
+	bool uses_forest_edge() const;
+	void get_forest_edge_rule(Vector2 &r_range, float &r_fade) const;
 	bool uses_pool() const { return ranges[RULE_POOL_DISTANCE].x > -100000.0f || ranges[RULE_POOL_DISTANCE].y < 100000.0f; }
 	bool uses_spring() const { return ranges[RULE_SPRING].x > -1.0f || ranges[RULE_SPRING].y < 1.0f; }
 	bool uses_sand_mobility() const { return ranges[RULE_SAND_MOBILITY].x > -1.0f || ranges[RULE_SAND_MOBILITY].y < 1.0f; }

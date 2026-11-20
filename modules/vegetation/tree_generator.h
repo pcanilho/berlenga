@@ -138,6 +138,8 @@ public:
 		STAND_WINDTHROW, // Spruce after a winter storm: gaps of thrown and snapped trees lying down the storm's track, pioneers coming up (trees.md 5am).
 		STAND_OLD_GROWTH_BEECH, // Primeval beech: a closed, three-layered canopy with veteran giants, gaps of one fallen giant each, every age under them, deadwood at all decay stages (trees.md 5an).
 		STAND_BOREAL_TAIGA, // Taiga: narrow spruce and fire-scarred pine in a mosaic, birch in old burns, silver kelo (trees.md 5ap).
+		STAND_ALDER_CARR, // Swamp: stilt-rooted black alder on tussocks over a flooded peat floor, birch on the hummocks (trees.md 5at).
+		STAND_FLOODPLAIN_WILLOW, // Softwood floodplain: old split white willows standing in the floods, willow thickets on the bars (trees.md 5at).
 		STAND_MAX,
 	};
 	// The disturbance whose legacy a make_succession() species is (meta "succession_kind"; -1 any). Fire's legacies are
@@ -723,6 +725,7 @@ public:
 	int windthrow_band = 0; // While a windthrow stand grows its species: 1 thrown, 2 snapped, 3 leaning survivors.
 	int succession_band = 0; // While make_succession grows a stage: 1 the pole stage, 2 old growth's veterans, 3 stand initiation (trees.md 5aq).
 	Preset last_stand_lead = PRESET_MAX; // The lead of the last make_stand().
+	int wet_band = 0; // While a wet stand grows its species: 1 stilt-rooted alder, 2 old floodplain willow (trees.md 5at).
 	int edge_band = 0; // While make_edge grows its edge trees: 1 (trees.md 5as).
 	int boreal_band = 0; // While a taiga stand grows its species: 1 narrow spruce, 2 fire-survivor pine, 3 kelo, 4 burn birch (trees.md 5ap).
 	int old_growth_band = 0; // While an old-growth stand grows its species: 1 veteran giants, 2 poles, 3 giant deadwood, 4 canopy (trees.md 5an).
@@ -751,6 +754,10 @@ public:
 	// face. Placement turns +Z downhill (meta tree_ground_slope).
 	float ground_slope = 0.0f;
 	float bank_erosion = 0.0f;
+	// Stilt roots (trees.md 5at): an alder on a tussock in a carr whose peat sank round it stands on its roots, which
+	// arch down this far (m) from the foot to the ground. The mesh's ground is at -stilt_height under the root tips;
+	// placement raises the instance by it (mesh meta tree_base_lift).
+	float stilt_height = 0.0f;
 	// A stone the roots drape over (trees.md 5q): radius in metres (0: none), beside the stem on
 	// its +Z side, half in the soil; the generator builds it (surface "soil").
 	float root_stone = 0.0f;
@@ -788,6 +795,8 @@ public:
 		LocalVector<float> az, len, bend;
 	} foot_roots;
 	float _moss_at(const Vector3 &p_pos, const Vector3 &p_normal, float p_ground, float p_amount, bool p_clamp = true) const;
+	float _tussock_y(float p_d) const;
+	void _build_tussock(Builder &r_b) const;
 	static constexpr float MOSS_SHELL_MIN_RADIUS = 0.05f;
 	static constexpr float BARK_TILE = 0.4f; // Metres of bark one texture tile covers.
 	static constexpr float LICHEN_TILE = 0.6f; // Metres of bark the lichen layer's tile covers.
@@ -1081,6 +1090,8 @@ public:
 	void set_ground_slope(float p_v) { ground_slope = CLAMP(p_v, 0.0f, 1.2f); }
 	float get_ground_slope() const { return ground_slope; }
 	void set_bank_erosion(float p_v) { bank_erosion = CLAMP(p_v, 0.0f, 1.0f); }
+	void set_stilt_height(float p_v) { stilt_height = CLAMP(p_v, 0.0f, 1.5f); }
+	float get_stilt_height() const { return stilt_height; }
 	float get_bank_erosion() const { return bank_erosion; }
 	void set_wind_exposure(float p_v) { wind_exposure = CLAMP(p_v, 0.0f, 1.0f); }
 	float get_wind_exposure() const { return wind_exposure; }

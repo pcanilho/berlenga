@@ -202,6 +202,12 @@
 		<member name="footprint" type="float" setter="set_footprint" getter="get_footprint" default="0.5">
 			Radius in metres that later species in the [Biome] keep clear of (a trunk and its shade). 0 leaves room for anything.
 		</member>
+		<member name="forest_edge_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			The soft edge of [member forest_edge_range], metres.
+		</member>
+		<member name="forest_edge_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100000, 100000)">
+			Metres from the edge of the field's forest canopy ([constant RULE_FOREST_EDGE]): positive inside the forest, negative out in the open, -1000 where the field has no canopy. The forest is where the field's canopy species (canopy radius over 0, without a shade or forest edge rule) would close it, from their rules, patches and density, on a grid of 2 m or more. A shrub mantle is about [code]Vector2(-8, 3)[/code]. Left at the default, a species takes its meta [code]edge_distance[/code] ([method TreeGenerator.make_edge]). A variant with mesh meta [code]tree_open_side[/code] (Vector3) is turned so that side faces the open.
+		</member>
 		<member name="height_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member height_range].
 		</member>
@@ -504,7 +510,10 @@
 		<constant name="RULE_DISTURBANCE" value="29" enum="Rule">
 			The kind of that disturbance (disturbance_range).
 		</constant>
-		<constant name="RULE_MAX" value="30" enum="Rule">
+		<constant name="RULE_FOREST_EDGE" value="30" enum="Rule">
+			Metres from the forest canopy's edge, positive inside (forest_edge_range).
+		</constant>
+		<constant name="RULE_MAX" value="31" enum="Rule">
 			Number of rules.
 		</constant>
 		<constant name="DEADWOOD_AVOID" value="0" enum="DeadwoodRule">

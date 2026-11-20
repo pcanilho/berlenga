@@ -232,6 +232,8 @@ private:
 		LocalVector<float> fire_years;
 		LocalVector<Vector2> fire_bands; // Per variant, mesh meta "tree_fire_band" (years from, to); empty: nearest years.
 		float fire_years_max = 0.0f;
+		LocalVector<float> base_lifts; // Per variant, mesh meta "tree_base_lift" (m in mesh space: stilt roots, the origin that far above the ground); empty: none.
+		Vector2 open_side; // Mesh meta "tree_open_side" (xz, unit) of its first mesh carrying it: turned to face the open (forest edges); zero none.
 	};
 	struct PlaceSetup {
 		LocalVector<PlaceSpecies> species;
@@ -317,6 +319,14 @@ private:
 		Rect2 stand_rect;
 		int stand_cell(const Vector2 &p_xz) const;
 		bool stand_differs(float p_age0, int p_kind0, float p_age1, int p_kind1) const;
+		// Signed metres from the forest canopy's edge (RULE_FOREST_EDGE), positive inside, on a grid of 2 m or more over
+		// the map, bilinear; read when a species uses the rule. Empty: no canopy (-1000 everywhere).
+		LocalVector<float> edge;
+		int edge_nx = 0;
+		int edge_ny = 0;
+		Rect2 edge_rect;
+		float edge_at(const Vector2 &p_xz) const;
+		Vector2 edge_open(const Vector2 &p_xz) const; // Unit xz down the edge distance (towards the open); zero where flat.
 	};
 	struct FarAdd {
 		Vector2 xz;
@@ -346,6 +356,9 @@ private:
 	static void _read_sand_mobility(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
 	void _read_burn_age(PlaceSetup &r_setup) const;
 	void _read_stand(PlaceSetup &r_setup) const;
+	void _read_forest_edge(PlaceSetup &r_setup) const;
+	static void _edge_row(void *p_job, uint32_t p_row);
+	static constexpr float EDGE_CLOSED = 0.35f; // Canopy species' summed density times suitability that counts as forest.
 	Rect2 _update_stand(PlaceSetup &r_setup, const Rect2 &p_area) const;
 	void _place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles) const;
 	void _commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes, float p_max_rank = 1.0f);

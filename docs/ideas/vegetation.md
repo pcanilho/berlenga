@@ -1292,3 +1292,18 @@ Docs declined the first fields frame (18 Nov). Fixes:
   not followed, so it does not repopulate itself for ever.
 - Known gap: two populated fields that both report disturbances and both use stand rules would wake each other on
   every populate (each report removes and re-adds its discs). Trees' report could skip unchanged discs.
+
+## Forest edges (built 20 Nov, for trees' make_edge)
+- Research: edge influence reaches 20-60 m into a forest (Harper et al. 2005); a shrub mantle of blackthorn,
+  hawthorn, hazel and dog rose grows from about 8 m out to 3 m in; edge trees keep their low branches on the lit side.
+- RULE_FOREST_EDGE (30): signed metres from the edge of the field's forest, positive inside, -1000 with no canopy.
+  Species left at the default take meta "edge_distance" (Vector2), as succession_age.
+- The forest is where the field's canopy species (canopy radius over 0, no shade rule, not edge users) would close
+  it: their rules, patches, masks, stand stages and density summed past 0.35, on a grid of 2 m or more. Not the
+  placed crowns, which stream round the camera; every tile sees the same edge. Signed distance by an exact Euclidean
+  distance transform both ways (Felzenszwalb and Huttenlocher 2012), read bilinear.
+- Variants with mesh meta "tree_open_side" (Vector3) are turned so that side faces down the edge distance
+  (towards the open), +-15 degrees.
+- Stand changes that move a canopy stage (a windthrow opening a clearing) rebuild the edge grid and re-place the
+  streamed tiles where it moved.
+- Check: vegetation --test "forest edge" (a 25 m windthrow clearing: mantle ring 16-28 m, edge trees facing in).

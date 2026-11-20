@@ -3007,6 +3007,12 @@ func _link_shot(kind: String, off: bool) -> void:
 			# walk is far from it, so the square follows the framed camera for the shot.
 			if not movers.is_empty():
 				weather.follow_target = weather.get_path_to(cam7)
+				if prints != null:
+					# The ground's deform window too, so the stamped prints land inside it.
+					prints.follow_target = prints.get_path_to(cam7)
+					for _f in 10:
+						await get_tree().physics_frame
+					_log("tracks: ground deform rect %s" % str(prints.get_deform_rect()))
 			get_viewport().disable_3d = true
 			for mv in movers:
 				var a: Vector2 = mv[1]
@@ -3043,6 +3049,9 @@ func _link_shot(kind: String, off: bool) -> void:
 						weather.step_contact(1.0 / 60.0)
 					else:
 						await get_tree().physics_frame
+				if prints != null:
+					var mq := a.lerp(b, 0.5)
+					_log("tracks: dent %.3f m mid-walk at %s" % [float(prints.get_dent_at(Vector3(mq.x, height_at(mq.x, mq.y), mq.y))), str(mq)])
 				for bd in mv[0]:
 					_log("tracks: %s water %s at the end" % [bd.name, str(weather.get_body_water(bd))])
 					bd.queue_free()
@@ -3481,7 +3490,7 @@ func _generated_forest(clearing: bool) -> Biome:
 	var variants := int(args.get("tree-variants", "1"))
 	var stands := {"beech": TreeGenerator.STAND_BEECH, "oak": TreeGenerator.STAND_OAK_MIXED,
 			"montane": TreeGenerator.STAND_MONTANE_CONIFER, "hedgerow": TreeGenerator.STAND_HEDGEROW,
-			"stonepine": 13, "windthrow": 17, "old_growth": 18, "taiga": 19} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
+			"stonepine": 13, "windthrow": 17, "old_growth": 18, "taiga": 19, "alder_carr": 20, "floodplain_willow": 21} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
 	var b: Biome
 	if args.has("montado"):
 		# --montado: the Iberian wood pasture, open-grown cork oaks with stone pines among them over a summer-dry
@@ -3495,10 +3504,21 @@ func _generated_forest(clearing: bool) -> Biome:
 		all.append_array(b.species)
 		b.species = all
 	elif args.has("tree-stand"):
-		# --tree-stand=beech|oak|montane|hedgerow|stonepine|windthrow|old_growth|taiga: one stand only (its trees, sapling, snag and log).
+		# --tree-stand=beech|oak|montane|hedgerow|stonepine|windthrow|old_growth|taiga|alder_carr|floodplain_willow: one stand only (its trees, sapling, snag and log).
 		b = tg.make_stand(stands.get(args["tree-stand"], TreeGenerator.STAND_BEECH), variants)
 	else:
 		b = tg.make_woodland(variants, TreeGenerator.REGION_EUROPE)
+	if args.has("forest-edge") and tg.has_method("make_edge"):
+		# --forest-edge[=stand]: the edge species (trees.md 5as: the shrub mantle out in the open, edge trees one-sided
+		# toward it) with the stand's own; vegetation places them by RULE_FOREST_EDGE off the canopy's edge.
+		var en := String(args["forest-edge"])
+		var es: int = stands.get(en, stands.get(args.get("tree-stand", "beech"), TreeGenerator.STAND_BEECH))
+		var eb: Biome = tg.make_edge(es, variants)
+		var all2: Array[PlantSpecies] = []
+		all2.append_array(b.species)
+		all2.append_array(eb.species)
+		b.species = all2
+		_log("forest edge: %d edge species" % eb.species.size())
 	_log("generated woodland: %d species" % b.species.size())
 	return b
 

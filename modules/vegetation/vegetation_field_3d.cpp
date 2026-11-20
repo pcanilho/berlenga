@@ -734,6 +734,193 @@ bool VegetationField3D::PlaceSetup::stand_differs(float p_age0, int p_kind0, flo
 	return false;
 }
 
+namespace {
+float cover_mask_at(const Image *p_mask, const Rect2 &p_rect, const Vector2 &p_xz, int p_channel);
+
+// Squared Euclidean distance transform of one line (Felzenszwalb and Huttenlocher 2012), in place.
+void edt_1d(float *p_f, int p_n, int p_stride, LocalVector<float> &r_d, LocalVector<int> &r_v, LocalVector<float> &r_z) {
+	const float inf = 1e20f;
+	r_d.resize(p_n);
+	r_v.resize(p_n);
+	r_z.resize(p_n + 1);
+	int k = 0;
+	r_v[0] = 0;
+	r_z[0] = -inf;
+	r_z[1] = inf;
+	for (int q = 1; q < p_n; q++) {
+		const float fq = p_f[q * p_stride];
+		float sq = 0.0f;
+		while (true) {
+			const int v = r_v[k];
+			sq = ((fq + float(q) * q) - (p_f[v * p_stride] + float(v) * v)) / (2.0f * (q - v));
+			if (sq <= r_z[k] && k > 0) {
+				k--;
+				continue;
+			}
+			break;
+		}
+		k++;
+		r_v[k] = q;
+		r_z[k] = sq;
+		r_z[k + 1] = inf;
+	}
+	k = 0;
+	for (int q = 0; q < p_n; q++) {
+		while (r_z[k + 1] < q) {
+			k++;
+		}
+		const int v = r_v[k];
+		r_d[q] = float(q - v) * (q - v) + p_f[v * p_stride];
+	}
+	for (int q = 0; q < p_n; q++) {
+		p_f[q * p_stride] = r_d[q];
+	}
+}
+
+void edt_2d(LocalVector<float> &r_f, int p_nx, int p_ny) {
+	LocalVector<float> d, z;
+	LocalVector<int> v;
+	for (int x = 0; x < p_nx; x++) {
+		edt_1d(r_f.ptr() + x, p_ny, p_nx, d, v, z);
+	}
+	for (int y = 0; y < p_ny; y++) {
+		edt_1d(r_f.ptr() + y * p_nx, p_nx, 1, d, v, z);
+	}
+}
+
+struct EdgeJob {
+	const void *setup = nullptr; // VegetationField3D::PlaceSetup
+	LocalVector<int> canopy;
+	Rect2 rect;
+	int nx = 0;
+	int ny = 0;
+	uint8_t *in = nullptr;
+};
+} // namespace
+
+void VegetationField3D::_edge_row(void *p_job, uint32_t p_row) {
+	EdgeJob &job = *static_cast<EdgeJob *>(p_job);
+	const PlaceSetup &su = *static_cast<const PlaceSetup *>(job.setup);
+	const Image *mask = su.mask_img.ptr();
+	for (int x = 0; x < job.nx; x++) {
+		const Vector2 xz = job.rect.position + job.rect.size * Vector2(float(x) / (job.nx - 1), float(p_row) / (job.ny - 1));
+		const Vector3 p(xz.x, 0.0f, xz.y);
+		float sum = 0.0f;
+		for (int s : job.canopy) {
+			const PlantSpecies *sp = su.species[s].sp.ptr();
+			float suit = sp->get_suitability(su.map, p);
+			if (suit > 0.0f && sp->get_mask_channel() >= 0) {
+				const float m = CLAMP(cover_mask_at(mask, su.mask_rect, xz, sp->get_mask_channel()), 0.0f, 1.0f);
+				suit *= sp->is_mask_invert() ? 1.0f - m : m;
+			}
+			if (suit > 0.0f && !su.stand_rules.is_empty() && sp->uses_stand()) {
+				Vector2 a, k;
+				float af, kf;
+				sp->get_stand_rules(a, af, k, kf);
+				const int sc = su.stand_cell(xz);
+				suit *= PlantSpecies::stand_weight(a, af, k, kf, sc < 0 ? -1.0f : su.stand_age[sc], sc < 0 ? 0 : int(su.stand_kind[sc]));
+			}
+			sum += suit * sp->get_density();
+			if (sum >= EDGE_CLOSED) {
+				break;
+			}
+		}
+		job.in[p_row * job.nx + x] = sum >= EDGE_CLOSED ? 1 : 0;
+	}
+}
+
+// Forest edges (docs/ideas/vegetation.md, "Forest edges"): where the field's canopy species would close the canopy,
+// from their rules, patches, masks, stand stages and density (not from the placed crowns, which stream round the
+// camera: every tile must see the same edge), then the signed distance to that forest's edge by an exact Euclidean
+// distance transform both ways (Felzenszwalb and Huttenlocher 2012). Edge species, understory trees (a shade rule)
+// and the field's own forest-edge users are not counted as canopy.
+void VegetationField3D::_read_forest_edge(PlaceSetup &r_setup) const {
+	r_setup.edge.clear();
+	r_setup.edge_nx = 0;
+	r_setup.edge_ny = 0;
+	EdgeJob job;
+	bool wanted = false;
+	for (uint32_t s = 0; s < r_setup.species.size(); s++) {
+		const Ref<PlantSpecies> &sp = r_setup.species[s].sp;
+		if (sp.is_null()) {
+			continue;
+		}
+		if (sp->uses_forest_edge()) {
+			wanted = true;
+		} else if (sp->get_canopy_radius() > 0.0f && !sp->uses_shade() && sp->get_density() > 0.0f) {
+			job.canopy.push_back(int(s));
+		}
+	}
+	if (!wanted || job.canopy.is_empty() || !r_setup.map || !r_setup.rect.has_area()) {
+		return;
+	}
+	const Rect2 rect = r_setup.rect;
+	const float cell = MAX(2.0f, MAX(rect.size.x, rect.size.y) / 511.0f);
+	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 512);
+	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 512);
+	LocalVector<uint8_t> in;
+	in.resize(nx * ny);
+	job.setup = &r_setup;
+	job.rect = rect;
+	job.nx = nx;
+	job.ny = ny;
+	job.in = in.ptr();
+	WorkerThreadPool *wtp = WorkerThreadPool::get_singleton();
+	wtp->wait_for_group_task_completion(wtp->add_native_group_task(&VegetationField3D::_edge_row, &job, ny, -1, true, "VegetationField3D forest edge"));
+	bool any_in = false;
+	bool any_out = false;
+	for (uint8_t v : in) {
+		any_in = any_in || v;
+		any_out = any_out || !v;
+	}
+	if (!any_in) {
+		return;
+	}
+	const float inf = 1e20f;
+	LocalVector<float> to_out, to_in;
+	to_out.resize(nx * ny);
+	to_in.resize(nx * ny);
+	for (int i = 0; i < nx * ny; i++) {
+		to_out[i] = in[i] ? inf : 0.0f;
+		to_in[i] = in[i] ? 0.0f : inf;
+	}
+	if (any_out) {
+		edt_2d(to_out, nx, ny);
+	}
+	edt_2d(to_in, nx, ny);
+	const float cx = rect.size.x / (nx - 1);
+	r_setup.edge.resize(nx * ny);
+	for (int i = 0; i < nx * ny; i++) {
+		// The edge lies half a cell past the last forest node.
+		r_setup.edge[i] = in[i] ? (any_out ? MIN((Math::sqrt(to_out[i]) - 0.5f) * cx, 1000.0f) : 1000.0f) : -MIN((Math::sqrt(to_in[i]) - 0.5f) * cx, 1000.0f);
+	}
+	r_setup.edge_nx = nx;
+	r_setup.edge_ny = ny;
+	r_setup.edge_rect = rect;
+}
+
+float VegetationField3D::PlaceSetup::edge_at(const Vector2 &p_xz) const {
+	if (edge.is_empty()) {
+		return -1000.0f;
+	}
+	const float gx = CLAMP((p_xz.x - edge_rect.position.x) / edge_rect.size.x * (edge_nx - 1), 0.0f, float(edge_nx - 1));
+	const float gz = CLAMP((p_xz.y - edge_rect.position.y) / edge_rect.size.y * (edge_ny - 1), 0.0f, float(edge_ny - 1));
+	const int ix = MIN(int(gx), edge_nx - 2), iz = MIN(int(gz), edge_ny - 2);
+	const float fx = gx - ix, fz = gz - iz;
+	const float *r0 = &edge[iz * edge_nx + ix];
+	const float *r1 = r0 + edge_nx;
+	return Math::lerp(Math::lerp(r0[0], r0[1], fx), Math::lerp(r1[0], r1[1], fx), fz);
+}
+
+Vector2 VegetationField3D::PlaceSetup::edge_open(const Vector2 &p_xz) const {
+	if (edge.is_empty()) {
+		return Vector2();
+	}
+	const float h = edge_rect.size.x / (edge_nx - 1);
+	const Vector2 g(edge_at(p_xz + Vector2(h, 0.0f)) - edge_at(p_xz - Vector2(h, 0.0f)), edge_at(p_xz + Vector2(0.0f, h)) - edge_at(p_xz - Vector2(0.0f, h)));
+	return g.length_squared() > 1e-8f ? -g.normalized() : Vector2();
+}
+
 float VegetationField3D::PlaceSetup::burn_at(const Vector2 &p_xz) const {
 	if (burn.is_empty()) {
 		return -1.0f;
@@ -953,6 +1140,16 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			ps.fall_dir = fd.length_squared() > 1e-8f ? fd.normalized() : Vector2();
 			ps.fall_scatter = float(ps.sp->get_meta(SNAME("fall_scatter"), 0.0f));
 		}
+		// Forest edge trees (trees' make_edge): low branches on one side, turned to face the open.
+		ps.open_side = Vector2();
+		for (const Ref<Mesh> &m : ps.meshes) {
+			if (m.is_valid() && m->has_meta(SNAME("tree_open_side"))) {
+				const Vector3 o = m->get_meta(SNAME("tree_open_side"));
+				const Vector2 o2(o.x, o.z);
+				ps.open_side = o2.length_squared() > 1e-8f ? o2.normalized() : Vector2();
+				break;
+			}
+		}
 		ps.far_widen = bool(ps.sp->get_meta(SNAME("far_widen"), false));
 		ps.far_hull_range = float(ps.sp->get_meta(SNAME("far_hull_range"), 0.0f));
 		if (ps.far_widen && bool(ps.sp->get_meta(SNAME("far_skyline"), true)) && !ps.meshes.is_empty() && ps.meshes[0].is_valid()) {
@@ -968,6 +1165,19 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 				for (const Ref<Mesh> &m : ps.meshes) {
 					const Vector2 gs = m.is_valid() ? Vector2(m->get_meta(SNAME("tree_ground_slope"), Vector2())) : Vector2();
 					ps.bank_slopes.push_back(gs.x);
+				}
+			}
+		}
+		{
+			// Stilt-rooted trees (trees' wet forests): the mesh origin is the stem's foot on its tussock, the ground at
+			// the root tips lies tree_base_lift below it.
+			bool any_lift = false;
+			for (const Ref<Mesh> &m : ps.meshes) {
+				any_lift = any_lift || (m.is_valid() && m->has_meta(SNAME("tree_base_lift")));
+			}
+			if (any_lift) {
+				for (const Ref<Mesh> &m : ps.meshes) {
+					ps.base_lifts.push_back(m.is_valid() ? float(m->get_meta(SNAME("tree_base_lift"), 0.0f)) : 0.0f);
 				}
 			}
 		}
@@ -1091,6 +1301,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			ps.desert_shrub = true;
 		}
 	}
+	_read_forest_edge(r_setup);
 	return true;
 }
 
@@ -1478,6 +1689,12 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool mobility_rule = sp->uses_sand_mobility();
 		const bool burn_rule = sp->uses_burn_age();
 		// Succession (WorldStand): the species' stage years and legacy kind; off the grid, old growth.
+		const bool edge_rule = sp->uses_forest_edge();
+		Vector2 edge_r;
+		float edge_f = 0.0f;
+		if (edge_rule) {
+			sp->get_forest_edge_rule(edge_r, edge_f);
+		}
 		const bool stand_rule = !p_setup.stand_rules.is_empty() && sp->uses_stand();
 		Vector2 stand_age_r, stand_kind_r;
 		float stand_age_f = 0.0f, stand_kind_f = 0.0f;
@@ -1648,6 +1865,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					} else if (burn_recovery && suit > 0.0f) {
 						// Everything else thins on a fresh burn and closes in again over its own years.
 						suit *= sp->burn_cover(p_setup.burn_at(xz));
+					}
+					if (edge_rule && suit > 0.0f) {
+						// Forest edges: metres from the canopy's edge, positive inside (the shrub mantle, edge trees).
+						const float e = p_setup.edge_at(xz);
+						suit *= edge_f <= 0.0f ? ((e >= edge_r.x && e <= edge_r.y) ? 1.0f : 0.0f) : Math::smoothstep(edge_r.x - edge_f, edge_r.x, e) * (1.0f - Math::smoothstep(edge_r.y, edge_r.y + edge_f, e));
 					}
 					if (stand_rule && suit > 0.0f) {
 						const int sc = p_setup.stand_cell(xz);
@@ -2044,6 +2266,14 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						const Vector2 down(Math::sin(aspect), Math::cos(aspect));
 						yaw = Math::atan2(-down.y, down.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.5f;
 					}
+					if (ps.open_side != Vector2() && wood_out == Vector2() && !p_setup.edge.is_empty()) {
+						// An edge tree (mesh meta tree_open_side): that side turned down the edge distance, towards the
+						// open, within about 15 degrees.
+						const Vector2 open = p_setup.edge_open(xz);
+						if (open != Vector2()) {
+							yaw = Math::atan2(-open.y, open.x) - Math::atan2(-ps.open_side.y, ps.open_side.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.52f;
+						}
+					}
 					b = b * Basis(Vector3(0, 1, 0), yaw);
 					if (wood_out != Vector2()) {
 						// Out of the bark: the clump's foot tips away from the wood, as it bursts
@@ -2102,7 +2332,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						}
 					}
 					const int variant = fire_variant >= 0 ? fire_variant : (bank_variant >= 0 ? bank_variant : MIN(int(r * variants), variants - 1));
-					const Transform3D world(b, Vector3(xz.x, y, xz.y));
+					// Stilt roots: raised by the variant's lift along its own up (scaled and tilted with it).
+					const Vector3 lift = variant < int(ps.base_lifts.size()) ? b.xform(Vector3(0.0f, ps.base_lifts[variant], 0.0f)) : Vector3();
+					const Transform3D world(b, Vector3(xz.x, y, xz.y) + lift);
 					if (is_log && variant < int(ps.deadwood_axes.size()) && ps.deadwood_axes[variant].size() >= 7) {
 						const PackedFloat32Array &ax = ps.deadwood_axes[variant];
 						const Vector3 la = world.xform(Vector3(ax[0], ax[1], ax[2]));
@@ -4942,7 +5174,28 @@ void VegetationField3D::_stream_update(double p_delta) {
 	// The stand changed: only where a species crossed its stand range are the tiles placed again.
 	if (stand_dirty.has_area() && stream_jobs.is_empty()) {
 		PlaceSetup &su = stream_setup;
-		const Rect2 changed = _update_stand(su, stand_dirty);
+		Rect2 changed = _update_stand(su, stand_dirty);
+		if (changed.has_area() && !su.edge.is_empty()) {
+			// The canopy's stages moved: the forest edge moves with them (a windthrow opens a new edge).
+			LocalVector<float> old_edge;
+			old_edge.resize(su.edge.size());
+			for (uint32_t i = 0; i < su.edge.size(); i++) {
+				old_edge[i] = su.edge[i];
+			}
+			_read_forest_edge(su);
+			if (su.edge.size() != old_edge.size()) {
+				changed = su.rect;
+			} else {
+				const float cx = su.edge_rect.size.x / (su.edge_nx - 1);
+				const float cz = su.edge_rect.size.y / (su.edge_ny - 1);
+				for (int i = 0; i < int(old_edge.size()); i++) {
+					if (Math::abs(old_edge[i] - su.edge[i]) > 0.25f) {
+						const Vector2 xz = su.edge_rect.position + Vector2((i % su.edge_nx) * cx, (i / su.edge_nx) * cz);
+						changed = changed.merge(Rect2(xz - Vector2(cx, cz) * 0.5f, Vector2(cx, cz)));
+					}
+				}
+			}
+		}
 		if (changed.has_area()) {
 			const Rect2 near = changed.grow(su.max_footprint);
 			for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {

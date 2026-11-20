@@ -1135,7 +1135,8 @@ a StaticBody3D (group ground_buried; sphere or capsule shape) with a lumpy stone
 uncovered by ruts or water they collide as any rock. `get_buried_near`. Bench --test=buried (density 0.5): 25 within
 4 m, same every query; depth to a stone is its top's; a 70 cm press stops on a stone 10.5 cm down while clear ground
 takes 36 cm; bodies near the probe; none when off or without mud. Ground bench _setup turns it off for other checks.
-Limits: the cap applies across a whole wheel print (the stone stops the print, it does not dig round it).
+Limits: the cap applies across a whole wheel print (the stone stops the print, it does not dig round it); round 15.2
+lifts this.
 
 #### Round 15 candidates (card 19 Nov)
 
@@ -1149,6 +1150,40 @@ Limits: the cap applies across a whole wheel print (the stone stops the print, i
   bulldozing force) turns into a PhysX rigid body and is pushed out.
 - **Worn tracks kept between sessions.** Save wear_cells with keep_ruts (same file, same time scaling as ruts' ageing),
   so a used route is still packed and bare on return.
+
+#### Round 15 built (20 Nov)
+
+**15.1 Flood silt skin.** What a river records as settled on its bed (WorldWater.sediment_deposit_at, kg/m2) is
+laid once, as the increase over what the ground already took per 1 m cell (silt_river_taken), at a dry bulk density
+of 1300 kg/m3 (Asselman and Middelkoop 1995); still floodwater over ground with no river record still lays its own
+(_flood_silt, Pizzuto 1987). Both go to one store (_lay_silt: mud_deposits for the height and colour, silt_depth for
+the skin). The skin is grey-brown silt darkened by its ash share. Fresh, it is soaked (desiccation crack state 2):
+the wet map reads it dark and glossy from 0.5 mm, its cell's moisture is raised by the water left in it and the
+litter under it is buried. PhysXVehicle3D takes the firm grip down to 0.85 to 0.5 (wet) over 0.3 to 2 mm of skin
+(fine earth on a hard surface roughly halves tyre friction; SAE 2007-01-0736, TRL PPR073). It then dries from its own
+top whatever the ground under it, pales into a crust and cracks into plates about four times its thickness
+(Groisman and Kaplan 1994), its cracks shown from 1 to 3 mm of skin. It is soft mud only while wet. `get_silt_at`
+(depth, water). Bench --test=silt: 2 then 4 mm laid for records of 2 and 4 mm (never twice); flood water lays 3 um in
+1.5 s; dried, water 0 and cracks open at 2 cm plates; off, nothing is laid. --view=silt [--dry]: an older lobe dried
+and cracked, a fresh band dark over its far end.
+
+**15.2 Stones dug round and kicked loose.** A wheel is held up only by a stone or root under its middle (a quarter of
+the print's short side for press_wheel; half the tyre's half-width in PhysXVehicle3D). Under the rest of the print the
+tyre wraps round it: the stamp carries the highest body under the print as a floor (GroundDeformField press_floor,
+Stamp.f/g on the GPU, STAMP_BYTES 112), so each texel stops on that body's top and the mud is pressed out round it.
+A stone whose rut floor has gone below its centre, met ahead of a wheel's middle at over 0.3 m/s, is knocked loose:
+a RigidBody3D (group ground_loose, 2650 kg/m3 over its collider) leaving with 0.6 of the tyre's speed and a little
+lift, its socket closing (a dig over 0.8 of its radius). Loose stones leave the hidden list for good (buried_loose)
+and their bodies go past twice buried_body_range. `buried_kick`, `get_loose_stone_count`. Bench --test=buried adds:
+a 0.8 x 0.5 m print with a stone under its edge goes 40 cm deep beside it and 26 cm over its top 25 cm down (stiff
+mud: a slurry's own flow carries the mud off its crown, where its body shows); a rolling tyre past a stone's middle
+knocks it loose and it moves off. Limits: one body per print (prints are small, stones sparse); slumping and waves
+do not see the stones.
+
+**15.3 Worn tracks kept between sessions.** wear_cells go to one zstd file (worn_tracks.wear) in ruts_path with the
+ruts (save_ruts, on leaving the tree), read back the first time the folder is used, aged by the time away at
+ruts_time_scale with wear_regrowth_days' half-life. clear_saved_ruts removes it. Bench --test=wear adds: 8 passes
+saved, 8 read back, none after years away.
 
 ### Look (any stage)
 
