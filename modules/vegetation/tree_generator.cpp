@@ -97,7 +97,7 @@ static bool hedge_shrub(TreeGenerator::Preset p_preset) {
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
 	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow",
 	"Northern Hardwood Forest", "Eastern Oak Forest", "Pine-Hemlock Forest", "Coppice with Standards", "Wood Pasture", "Pollard Row",
-	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow", "Old-growth Beech"
+	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow", "Old-growth Beech", "Boreal Taiga"
 };
 
 TreeGenerator::TreeGenerator() {
@@ -21183,6 +21183,26 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 			limb_breakage = 1.3f;
 		}
 	}
+	if (succession_band > 0) {
+		// Forests that age (trees.md 5aq).
+		const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.29f, 1.0f);
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		const float y0 = look.params[PARAM_YEARS];
+		if (succession_band == 1) {
+			// The pole stage: one cohort, a third to a half of the stand's years, crowns high and narrow in the crush
+			// (snags of the same cohort are the thinned ones).
+			params[PARAM_YEARS] = Math::round(y0 * Math::lerp(0.3f, 0.5f, tv));
+			forest_shade = MIN(forest_shade * 1.2f, 0.9f);
+		} else {
+			// Old growth's veterans: older, broken, cavities, and their crowns spread over the canopy.
+			params[PARAM_YEARS] = Math::round(y0 * Math::lerp(1.3f, 1.6f, tv));
+			veteran = Math::lerp(0.6f, 1.0f, tv);
+			limb_breakage = Math::lerp(1.5f, 2.2f, tv);
+			forest_spacing *= 1.8f;
+			forest_shade *= 0.75f;
+		}
+	}
 	if (boreal_band > 0) {
 		// A taiga stand's variants (trees.md 5ap).
 		const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.71f, 1.0f);
@@ -21540,6 +21560,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	fire_scars = p_from.fire_scars;
 	kelo = p_from.kelo;
 	boreal_band = p_from.boreal_band;
+	succession_band = p_from.succession_band;
 	bark_color = p_from.bark_color;
 	leaf_color = p_from.leaf_color;
 	junction_weld = p_from.junction_weld;
@@ -21709,11 +21730,12 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	if (p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
 		rigged = false;
 	}
-	const int key = (int(p_preset) * int(FORM_MAX) + int(p_form)) * 2 + (rigged ? 1 : 0) + ((p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG) && coppice_ages.x >= 0 ? 100000 * (1 + coppice_ages.x + 64 * coppice_ages.y) : 0) +
+	const int64_t key = (int64_t(p_preset) * int(FORM_MAX) + int(p_form)) * 2 + (rigged ? 1 : 0) + ((p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG) && coppice_ages.x >= 0 ? 100000 * (1 + coppice_ages.x + 64 * coppice_ages.y) : 0) +
 			(beetle_band > 0 ? 40000000 * beetle_band + 1000000 * MIN(int(beetle_outbreak * 2.0f), 30) : 0) +
 			(windthrow_band > 0 ? 200000000 * windthrow_band + 2000000 * MIN(int(windthrow_storm * 2.0f), 60) : 0) +
 			(old_growth_band > 0 ? 1000000000 + 50000000 * old_growth_band : 0) +
-			(boreal_band > 0 ? 1500000000 + 50000000 * boreal_band : 0);
+			(boreal_band > 0 ? 1500000000 + 50000000 * boreal_band : 0) +
+			(succession_band > 0 ? int64_t(4000000000LL) * succession_band : 0); // 64-bit: band terms stack (taiga ages, trees.md 5aq).
 	// Placed trees are alive unless a beetle stand grows its kill (single trees keep beetle_years).
 	struct BeetleYearsRestore {
 		float &value;
@@ -22982,9 +23004,119 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 		Ref<PlantSpecies> sp = list[i];
 		sp->set_meta("stand", int(p_stand)); // Which stand a species of make_woodland() came from.
 	}
+	last_stand_lead = lead;
 	Ref<Biome> biome;
 	biome.instantiate();
 	biome->set_name(stand_names[p_stand]);
+	biome->set_species(list);
+	return biome;
+}
+
+// Forests that age (trees.md 5aq; Oliver and Larson 1996; Franklin et al. 2002): one stand's species once per
+// structural stage after a stand-replacing disturbance, each carrying the years since it that it grows in (meta
+// "succession_age", Vector2 from-to) and the disturbance whose legacy it is (meta "succession_kind": -1 any, else
+// the RULE_DISTURBANCE / WorldStand.disturbance_at number; fire's legacies are the fire bands, RULE_BURN_AGE). The
+// placing side picks by WorldStand.stand_age_at (-1 = old growth, the last stage; contract in trees.md 5aq). Stages: initiation (pioneers and seedlings among the legacies),
+// stem exclusion (dense even-aged poles, small self-thinning snags), understory reinitiation (the mature stand as
+// make_stand() builds it) and old growth (veterans over the mature stand, more deadwood). Boreal stands age half
+// again as slowly.
+Ref<Biome> TreeGenerator::make_succession(Stand p_stand, int p_variants) {
+	ERR_FAIL_INDEX_V(int(p_stand), int(STAND_MAX), Ref<Biome>());
+	const bool boreal = p_stand == STAND_BOREAL_TAIGA || p_stand == STAND_SUBALPINE || p_stand == STAND_PINE_HEATH;
+	const float k = boreal ? 1.5f : 1.0f;
+	const float e1 = 15.0f * k, e2 = 50.0f * k, e3 = 120.0f * k;
+	TypedArray<PlantSpecies> list;
+	auto tag = [&](const Ref<PlantSpecies> &p_sp, float p_from, float p_to, int p_kind) {
+		p_sp->set_meta("succession_age", Vector2(p_from, p_to));
+		p_sp->set_meta("succession_kind", p_kind);
+		list.push_back(p_sp);
+	};
+	// The mature stand (understory reinitiation), which also names the lead.
+	const Ref<Biome> mature = make_stand(p_stand == STAND_OLD_GROWTH_BEECH ? STAND_BEECH : p_stand, p_variants);
+	const Preset lead = last_stand_lead == PRESET_MAX ? PRESET_BEECH : last_stand_lead;
+	const bool conifer_lead = lead == PRESET_NORWAY_SPRUCE || lead == PRESET_SCOTS_PINE || lead == PRESET_SILVER_FIR || lead == PRESET_LARCH;
+	// Legacies of the disturbance, decaying through the first stages (Harmon et al. 1986: logs to class 5 in 40-80 years).
+	for (int stage = 0; stage < 2; stage++) {
+		const float from = stage == 0 ? 0.0f : e1, to = stage == 0 ? e1 : e2;
+		const int saved_decay = decay_class;
+		uprooted = false;
+		Ref<PlantSpecies> wind_log = _stand_species(lead, true, p_variants, FORM_LOG);
+		wind_log->set_name(vformat("%s (windthrow legacy, %d-%d y)", wind_log->get_name(), int(from), int(to)));
+		wind_log->set_density(stage == 0 ? 1.0f : 0.6f);
+		tag(wind_log, from, to, SUCCESSION_WIND);
+		decay_class = saved_decay;
+		if (conifer_lead && stage == 0) {
+			beetle_band = 2;
+			beetle_outbreak = 6.0f;
+			Ref<PlantSpecies> grey = _stand_species(lead, true, p_variants, FORM_STAND);
+			beetle_band = 0;
+			beetle_outbreak = -1.0f;
+			grey->set_name(vformat("%s (beetle legacy)", grey->get_name()));
+			grey->set_density(0.5f);
+			grey->set_canopy_opacity(0.15f);
+			tag(grey, from, to, SUCCESSION_BEETLE);
+		}
+	}
+	// Stand initiation: pioneers and the lead's seedlings.
+	{
+		Ref<PlantSpecies> birch = _stand_species(PRESET_BIRCH, true, p_variants, FORM_SAPLING);
+		birch->set_name("Birch (pioneer)");
+		birch->set_density(1.0f);
+		tag(birch, 0.0f, e1, -1);
+		Ref<PlantSpecies> rowan = _stand_species(PRESET_ROWAN, false, p_variants, FORM_SAPLING);
+		rowan->set_name("Rowan (pioneer)");
+		rowan->set_density(0.4f);
+		tag(rowan, 0.0f, e1, -1);
+		Ref<PlantSpecies> seedling = _stand_species(lead, true, p_variants, FORM_SAPLING);
+		seedling->set_name(vformat("%s (seedlings)", seedling->get_name()));
+		seedling->set_density(0.8f);
+		tag(seedling, 2.0f, e1 + 5.0f, -1);
+	}
+	// Stem exclusion: one cohort of poles, dense, self-thinning.
+	{
+		succession_band = 1;
+		Ref<PlantSpecies> poles = _stand_species(lead, true, p_variants, FORM_STAND);
+		poles->set_name(vformat("%s (pole stage)", poles->get_name()));
+		poles->set_density(1.0f);
+		poles->set_spacing(HABITATS[lead].stand_spacing * 0.55f);
+		tag(poles, e1, e2, -1);
+		Ref<PlantSpecies> pioneer_poles = _stand_species(PRESET_BIRCH, true, p_variants, FORM_STAND);
+		pioneer_poles->set_name("Birch (pole stage)");
+		pioneer_poles->set_density(0.2f);
+		tag(pioneer_poles, e1, e2, -1);
+		Ref<PlantSpecies> thinned = _stand_species(lead, true, p_variants, FORM_SNAG);
+		thinned->set_name(vformat("%s (self-thinned)", thinned->get_name()));
+		thinned->set_density(0.3f);
+		tag(thinned, e1, e2, -1);
+		succession_band = 0;
+	}
+	// Understory reinitiation: the mature stand.
+	const TypedArray<PlantSpecies> mature_list = mature->get_species();
+	for (int i = 0; i < mature_list.size(); i++) {
+		tag(mature_list[i], e2, e3, -1);
+	}
+	// Old growth: the primeval beech stand where beech leads, else veterans over the mature stand.
+	if (lead == PRESET_BEECH) {
+		const TypedArray<PlantSpecies> og = make_stand(STAND_OLD_GROWTH_BEECH, p_variants)->get_species();
+		for (int i = 0; i < og.size(); i++) {
+			tag(og[i], e3, 10000.0f, -1);
+		}
+	} else {
+		const TypedArray<PlantSpecies> old = make_stand(p_stand, p_variants)->get_species();
+		succession_band = 2;
+		Ref<PlantSpecies> vet = _stand_species(lead, true, p_variants, FORM_STAND);
+		succession_band = 0;
+		vet->set_name(vformat("%s (veteran)", vet->get_name()));
+		vet->set_density(1.0f);
+		vet->set_spacing(22.0f);
+		tag(vet, e3, 10000.0f, -1);
+		for (int i = 0; i < old.size(); i++) {
+			tag(old[i], e3, 10000.0f, -1);
+		}
+	}
+	Ref<Biome> biome;
+	biome.instantiate();
+	biome->set_name(vformat("%s (aging)", stand_names[p_stand]));
 	biome->set_species(list);
 	return biome;
 }
@@ -23831,6 +23963,7 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("apply_habitat", "species"), &TreeGenerator::apply_habitat);
 	ClassDB::bind_method(D_METHOD("make_species", "stand_grown", "variants"), &TreeGenerator::make_species, DEFVAL(3));
 	ClassDB::bind_method(D_METHOD("make_stand", "stand", "variants"), &TreeGenerator::make_stand, DEFVAL(3));
+	ClassDB::bind_method(D_METHOD("make_succession", "stand", "variants"), &TreeGenerator::make_succession);
 	ClassDB::bind_method(D_METHOD("make_woodland", "variants", "region"), &TreeGenerator::make_woodland, DEFVAL(3), DEFVAL(REGION_EUROPE));
 	ClassDB::bind_method(D_METHOD("clear_cache"), &TreeGenerator::clear_cache);
 	ClassDB::bind_method(D_METHOD("get_height"), &TreeGenerator::get_height);
@@ -24015,6 +24148,10 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_WINDTHROW);
 	BIND_ENUM_CONSTANT(STAND_OLD_GROWTH_BEECH);
 	BIND_ENUM_CONSTANT(STAND_BOREAL_TAIGA);
+	BIND_ENUM_CONSTANT(SUCCESSION_NONE);
+	BIND_ENUM_CONSTANT(SUCCESSION_FIRE);
+	BIND_ENUM_CONSTANT(SUCCESSION_WIND);
+	BIND_ENUM_CONSTANT(SUCCESSION_BEETLE);
 	BIND_ENUM_CONSTANT(STAND_MAX);
 	BIND_ENUM_CONSTANT(REGION_EUROPE);
 	BIND_ENUM_CONSTANT(REGION_NORTH_AMERICA);

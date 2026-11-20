@@ -35,6 +35,7 @@ extends Node3D
 #   tracks    a body wading out of a stream leaves wet prints fading over a dozen strides, drips where it
 #             stands, and the prints dry with the weather
 #   mud       a body out of mud prints its clay on firm ground, less each step
+#   stand     stand age: youngest stand-replacing disturbance (fire, wind, beetle), change hook
 #   walker    every CharacterBody3D is a walker: deformers press its soles, not its capsule
 #   salt      a storm's sea salt melts a thin snowpack at -2 C, the unsalted snow beside stays
 #   contracts the water contract picks the right water where several overlap (a pool in a hollow below the sea's
@@ -177,6 +178,14 @@ class BurntStub extends WorldFire:
 
 
 # A fire stub: 50 kW/m2 burning over x > 0.
+# Stand age: an old crown fire for x < 0, a surface fire (low scorch) for x > 20.
+class StandFireStub extends WorldFire:
+	func _burn_age_at(p: Vector3) -> float:
+		return 30.0 if p.x < 0.0 or p.x > 20.0 else -1.0
+	func _crown_scorch_at(p: Vector3) -> float:
+		return 2.0 if p.x > 20.0 else 0.0
+
+
 class FireStub extends WorldFire:
 	func _heat_at(p: Vector3) -> float:
 		return 50000.0 if p.x > 0.0 else 0.0
@@ -242,6 +251,7 @@ func _ready() -> void:
 	await _wet_track_tests()
 	await _mud_track_tests()
 	_walker_tests()
+	_stand_tests()
 	await _salt_snow_tests()
 	await _leaf_kick_tests()
 	await _leaf_surface_tests()
@@ -1020,6 +1030,31 @@ func _wet_track_tests() -> void:
 # each time; none while still in the mud.
 # Characters print with their feet: every CharacterBody3D is a walker (deformers press its soles step by step, not
 # its capsule), a meta turns that off or says its feet are contact bodies of their own.
+# Stand age: the youngest stand-replacing disturbance (a crown fire from WorldFire, wind and beetle events), a surface
+# fire leaving the stand, events ageing with the years, and the change hook readers re-place by.
+func _stand_tests() -> void:
+	WorldContracts.set_fire(StandFireStub.new())
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_disturbances()
+	var g0: int = st.get_stand_generation()
+	var a_fire := st.stand_age_at(Vector3(-5, 0, 0))
+	var k_fire := st.disturbance_at(Vector3(-5, 0, 0))
+	var a_surface := st.stand_age_at(Vector3(25, 0, 0))
+	var a_old := st.stand_age_at(Vector3(10, 0, 0))
+	var wind := st.add_disturbance(Vector3(-5, 0, 0), 4.0, WorldStand.DISTURBANCE_WIND, 3.0)
+	var a_wind := st.stand_age_at(Vector3(-5, 0, 1))
+	var k_wind := st.disturbance_at(Vector3(-5, 0, 1))
+	var ch: Dictionary = st.get_stand_changes_since(g0)
+	st.advance_years(40.0)
+	var a_aged := st.stand_age_at(Vector3(-5, 0, 1))
+	var k_aged := st.disturbance_at(Vector3(-5, 0, 1))
+	st.remove_disturbance(wind)
+	WorldContracts.set_fire(null)
+	print("  stand: crown fire %.0f y (kind %d), surface fire %.0f, untouched %.0f; windthrow %.0f y (kind %d), 40 y on %.0f (kind %d); change %s" % [a_fire, k_fire, a_surface, a_old, a_wind, k_wind, a_aged, k_aged, str(ch)])
+	_check("stand: the youngest stand-replacing disturbance gives the age (crown fire 30 y, windthrow 3 y over it, then the fire again once the windthrow is older); a surface fire and untouched ground stay old growth (-1)", a_fire == 30.0 and k_fire == WorldStand.DISTURBANCE_FIRE and a_surface < 0.0 and a_old < 0.0 and a_wind == 3.0 and k_wind == WorldStand.DISTURBANCE_WIND and a_aged == 30.0 and k_aged == WorldStand.DISTURBANCE_FIRE, "fire %.0f, surface %.0f, wind %.0f, aged %.0f" % [a_fire, a_surface, a_wind, a_aged])
+	_check("stand: a new disturbance reports its area since the reader's generation", ch["complete"] and Rect2(ch["area"]).has_point(Vector2(-5, 0)), str(ch))
+
+
 func _walker_tests() -> void:
 	var wc: Object = Engine.get_singleton("WorldContracts")
 	var ch := CharacterBody3D.new()

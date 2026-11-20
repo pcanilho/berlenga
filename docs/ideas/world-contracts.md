@@ -212,6 +212,24 @@ Tests: `WorldContracts.set_fire(stub)` (`_burn_age_at` in a stub), or WorldBurnS
 Consumers: weather (the surface film boils off under a fire), plants (char; grass leans into `fire_wind_map`), cloth
 (`wind_at` adds to its wind), trees (TreeWind3D weakens stem feet by `stem_char_at`; trees killed by `crown_scorch_at` stand as snags that weaken by `burn_age_at`), snow (melt), water (steam), vegetation (VegetationField3D and GrassField3D regrowth by `burn_age_at`, refreshed through the change log).
 
+### Stand age (`WorldStand`; kept by the contract)
+
+Built 20 Nov for forests that age (trees.md 5aq). `WorldContracts::stand()` in C++, `WorldContracts.get_stand()` in
+scripts; `set_stand(stub)` for a test.
+
+| Member | Unit | Default |
+| --- | --- | --- |
+| `stand_age_at(pos)` | years since the last stand-replacing disturbance (world xz) | -1 (old growth) |
+| `disturbance_at(pos)` | int: 0 none, 1 fire, 2 wind, 3 beetle (new kinds appended only) | 0 |
+| `add_disturbance(center, radius, kind, age_years)`, `set_disturbance_age(id, years)`, `remove_disturbance(id)`, `clear_disturbances()` | a disc, years ago; returns an id | |
+| `advance_years(years)` | ages every event added here (fire ages through its producers) | |
+| signal `stand_changed(area)`, `get_stand_generation()`, `stand_changes_since(gen, area)` / `get_stand_changes_since(gen)` | world xz Rect2; as WorldFire's burn changes, which are forwarded here | |
+
+The youngest disturbance at a point wins. Fire comes from `WorldFire.burn_age_at`, stand-replacing unless
+`crown_scorch_at` is between 0 and 5 m (a surface fire); an authored burn scar (no scorch on record) counts. Wind and
+beetle kills are events the trees report. No stage edges here: each species' own age ranges set them. Readers:
+vegetation (stand age and disturbance rules), trees (succession).
+
 ## Testing
 
 - Each system's bench runs alone against stubs: `docs/bench/<system>` sets a GDScript stub for each contract it

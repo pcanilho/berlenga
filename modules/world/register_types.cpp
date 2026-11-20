@@ -53,6 +53,7 @@ void initialize_world_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(WorldGround);
 	GDREGISTER_CLASS(WorldFire);
 	GDREGISTER_CLASS(WorldSnow);
+	GDREGISTER_CLASS(WorldStand);
 	GDREGISTER_CLASS(WorldContracts);
 	world_contracts = memnew(WorldContracts);
 	Engine::get_singleton()->add_singleton(Engine::Singleton("WorldContracts", WorldContracts::get_singleton()));
