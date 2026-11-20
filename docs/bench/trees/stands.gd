@@ -9,6 +9,7 @@ extends Node3D
 #   --forest-edge=N   make_edge(N): mantle shrubs out in the open, edge trees one-sided toward +X (trees.md 5as)
 #   --beaver          beaver work on single trees: stump cone, felled stem lying, gnawed waist, resprouts (trees.md 5au)
 #   --flood           flood marks on a willow: silt under the waterline only, wrack at it (trees.md 5av)
+#   --deer            deer browse and nurse logs: hedged saplings, the browse line, seedlings on logs, stilts (trees.md 5aw)
 #   --succession=N    make_succession(N): every stage present, age ranges and kinds sane, sizes by stage (trees.md 5aq)
 #   --map=path.png    the placement maps of every stand in one image
 #   --edge [--standard]  with --plot: from a fresh coupe across its edge (or at a standard 8 m off)
@@ -51,7 +52,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "alder carr", "floodplain willow", "beaver pond", "woodland", "NA woodland"]
+		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "alder carr", "floodplain willow", "beaver pond", "deer wood", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -83,6 +84,10 @@ func run(args: Dictionary) -> void:
 		return
 	if args.has("flood"):
 		_flood_check()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("deer"):
+		_deer_check()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	if args.has("beaver"):
@@ -235,6 +240,81 @@ func _flood_check() -> void:
 		_check(under > 0.8 * under_n and over == 0, "willow seed %d: silt on %d of %d bark vertices under 0.9 m, %d over 1.3 m" % [sd, under, under_n, over])
 	_check(found_wrack >= 2, "flood wrack on %d of 4 willows" % found_wrack)
 	g.flood_height = 0.0
+
+func _deer_check() -> void:
+	# Hedged saplings (trees.md 5aw): fifteen years browsed stay under the reach on every seed; unbrowsed they grow away.
+	for pr in [TreeGenerator.PRESET_BEECH, TreeGenerator.PRESET_ASH, TreeGenerator.PRESET_ROWAN, TreeGenerator.PRESET_NORWAY_SPRUCE]:
+		var g := TreeGenerator.new()
+		g.preset = pr
+		g.near_leaf_range = 0.0
+		g.set_param(TreeGenerator.PARAM_YEARS, 15.0)
+		var tallest := 0.0
+		var free := 0.0
+		var leaves_min := 1 << 30
+		for sd in range(1, 5):
+			g.seed = sd
+			g.browse = 0.9
+			var m := g.generate()
+			tallest = maxf(tallest, m.get_aabb().end.y)
+			leaves_min = mini(leaves_min, g.get_leaf_count())
+			g.browse = 0.0
+			free = maxf(free, g.generate().get_aabb().end.y)
+		_check(tallest < 2.3 and free > tallest + 0.5 and leaves_min > 0, "%s browsed 15 years: top %.2f m (unbrowsed %.2f m), in leaf (%d leaves at least)" % [{TreeGenerator.PRESET_BEECH: "beech", TreeGenerator.PRESET_ASH: "ash", TreeGenerator.PRESET_ROWAN: "rowan", TreeGenerator.PRESET_NORWAY_SPRUCE: "spruce"}[pr], tallest, free, leaves_min])
+	# The browse line: an open-grown holly (leafy to the ground unbrowsed) browsed its last 20 years keeps no leaves
+	# under the line, and its crown above.
+	var t := TreeGenerator.new()
+	t.preset = TreeGenerator.PRESET_HOLLY
+	t.seed = 3
+	t.near_leaf_range = 0.0
+	t.browse = 0.0
+	var before := t.generate()
+	t.browse = 1.0
+	t.browse_years = 20
+	var after := t.generate()
+	var low := [0, 0]
+	var meshes := [before, after]
+	for k in 2:
+		var m: ArrayMesh = meshes[k]
+		var si := _surface(m, "leaves")
+		if si < 0:
+			continue
+		var v: PackedVector3Array = m.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]
+		for q in v:
+			if q.y < 1.6:
+				low[k] += 1
+	_check(low[0] > 1000 and low[1] * 10 < low[0] and after.get_aabb().size.y > 0.8 * before.get_aabb().size.y, "holly browse line: %d leaf vertices under 1.6 m before, %d after; crown kept" % [low[0], low[1]])
+	# Nurse logs: seedlings on a class 4 spruce log, on its top.
+	var lg := TreeGenerator.new()
+	lg.preset = TreeGenerator.PRESET_NORWAY_SPRUCE
+	lg.seed = 2
+	lg.fallen = true
+	lg.decay_class = 4
+	lg.near_leaf_range = 0.0
+	var bare := lg.generate()
+	lg.nurse_seedlings = 1.0
+	var nursed := lg.generate()
+	var nb := _surface(bare, "needles")
+	var nn := _surface(nursed, "needles")
+	var vb: int = bare.surface_get_array_len(nb) if nb >= 0 else 0
+	var vn: int = nursed.surface_get_array_len(nn) if nn >= 0 else 0
+	_check(vn > vb + 3000, "nurse log: %d needle vertices of seedlings (bare log %d)" % [vn - vb, vb])
+	# A tree on a rotted nurse log stands lifted by the log's girth, a tunnel under its foot along X.
+	var st := TreeGenerator.new()
+	st.preset = TreeGenerator.PRESET_NORWAY_SPRUCE
+	st.seed = 2
+	st.near_leaf_range = 0.0
+	st.nurse_stilt = 0.8
+	var sm := st.generate()
+	var lift: float = sm.get_meta("tree_base_lift", 0.0)
+	var bi := _surface(sm, "bark")
+	var in_tunnel := 0
+	if bi >= 0:
+		var bv: PackedVector3Array = sm.surface_get_arrays(bi)[Mesh.ARRAY_VERTEX]
+		for q in bv:
+			# Inside the old log's section, near the stem's foot: none of the bark may hang there.
+			if absf(q.z) < 0.15 and absf(q.x) < 0.3 and q.y < -0.25 and q.y > -0.75:
+				in_tunnel += 1
+	_check(absf(lift - 0.8) < 0.01 and in_tunnel == 0, "tree on a rotted nurse log: lifted %.2f m, %d bark vertices in the tunnel" % [lift, in_tunnel])
 
 func _beaver_check() -> void:
 	for pr in [TreeGenerator.PRESET_WHITE_WILLOW, TreeGenerator.PRESET_BIRCH]:
@@ -573,6 +653,18 @@ func _stand_checks(only := -1) -> void:
 						if Vector2(x.x, x.z).normalized().dot(dir) < cos(0.5):
 							off += 1
 			_check(thrown > 0 and snapped > 0 and leaning > 0 and stand_count > 0 and off == 0 and plates > 0, "windthrow: %d thrown (%d variants with root plates), %d snapped, %d leaning, %d standing; %d of %d drawn turned off the storm's track" % [thrown, plates, snapped, leaning, stand_count, off, checked])
+		elif i == TreeGenerator.STAND_DEER_WOOD:
+			# A deer wood (trees.md 5aw): browsed saplings placed, every species browsed (none unbrowsed), no shrub layer.
+			var hedged := 0
+			var unbrowsed := 0
+			for s in sps.size():
+				var nm6: String = sps[s].resource_name
+				var pl: PackedVector3Array = f.get_placements(s)
+				if nm6.contains("browsed sapling"):
+					hedged += pl.size()
+				if sps[s].has_meta("preset") and int(sps[s].get_meta("preset")) in [TreeGenerator.PRESET_HAZEL, TreeGenerator.PRESET_HAWTHORN, TreeGenerator.PRESET_HOLLY, TreeGenerator.PRESET_ELDER]:
+					unbrowsed += pl.size()
+			_check(hedged > 0 and unbrowsed == 0, "deer wood: %d hedged saplings, %d shrub-layer plants" % [hedged, unbrowsed])
 		elif i == TreeGenerator.STAND_BEAVER_POND:
 			# A beaver pond (trees.md 5au): the colony's work in a band by the water (none past 12 m), the felled stems
 			# mostly turned toward the water (mesh +X down the water distance), and drowned snags standing in it.
