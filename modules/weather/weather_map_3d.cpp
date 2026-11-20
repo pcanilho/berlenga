@@ -2677,7 +2677,7 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 	st.air_rh0 = CLAMP(cur_air_humidity, 0.01f, 1.0f);
 	// Stratocumulus cells line up along the boundary layer's wind into rolls once it mixes the layer.
 	st.sc_dir = cur_wind_direction.length_squared() > 1e-8f ? cur_wind_direction.normalized() : Vector2(1, 0);
-	st.sc_roll = 1.0f + 2.0f * Math::smoothstep(4.0f, 9.0f, cur_wind_speed);
+	st.sc_roll = 1.0f + 1.0f * Math::smoothstep(4.0f, 9.0f, cur_wind_speed);
 	st.air_y0 = ground_height;
 	st.evolve = _cloud_evolve();
 	if (cloud_evolution) {

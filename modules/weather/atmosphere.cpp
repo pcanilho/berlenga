@@ -416,6 +416,13 @@ void atmo_march(vec3 origin, vec3 rd, float t_a, float t_b, int steps, float jit
 		vec3 s = vec3(0.0);
 		s += e0 * (tl0 * c0.x * (rs * phases.x + ms * phases.y + as * pa0) + atmo_multiscatter(r, mu0) * a0 * c0.y * (rs + ms + as));
 		s += e1 * (tl1 * c1.x * (rs * phases.z + ms * phases.w + as * pa1) + atmo_multiscatter(r, mu1) * a1 * c1.y * (rs + ms + as));
+		// The light the deck lets through diffusely, a source of its own for the air under it: the flux mu E Td
+		// leaves the cloud base as a uniform downward radiance F / pi, and the air scatters F / (2 pi) of it toward
+		// the eye (isotropic phase, the upper hemisphere). Without it the air under an overcast was lit only by
+		// its own multiple scattering, and the horizon below a deck went darker than the deck and the ground.
+		if (shadow) {
+			s += (e0 * tl0 * max(mu0, 0.0) * max(c0.y - c0.x, 0.0) + e1 * tl1 * max(mu1, 0.0) * max(c1.y - c1.x, 0.0)) * (rs + ms + as) / (2.0 * PI);
+		}
 		vec3 step_t = exp(-ext * dt);
 		lum += thr * s * (1.0 - step_t) / max(ext, vec3(1e-12));
 		thr *= step_t;
