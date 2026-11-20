@@ -110,7 +110,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 - **Oasis springs** (`OasisSprings3D`): still spring pools in the desert, each sized by its spring's water balance and with its own outline, with sand boils heaving at the vents, in clear spring water, and only where the ground is hollowed.
 - **Cave pools** (`seabed_probe_height`): pool water under a cave roof measures the real floor beneath it, so a shallow pool thins out to its rim.
 - **Underground reflections** (`screen_reflections`): with `raster_reflections` off, still water and streams mirror the cave around them in raster; rivers keep clear water.
-- **Raster reflections** (`raster_reflections` on PhysXWaterSurface3D and PhysXRiver3D): raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer, and omni and spot lights glint on all raster water; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows; the water's own colour is lit by sun and sky, so the sea darkens at dusk.
+- **Raster reflections** (`raster_reflections` on PhysXWaterSurface3D and PhysXRiver3D): raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer, and omni and spot lights glint on all raster water; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows; the water's own colour is lit by sun and sky, so the sea darkens at dusk, and the bed is lit through the surface's Fresnel transmission, as under path tracing.
 
   ![Raster sea toward the sun, before and with raster_reflections](media/water-reflections.jpg)
 
@@ -195,7 +195,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
   - A river leaving a lake carries what the lake passes over its sill, drowned or free, and the lake settles at the level where its outlets pass its inflow (`source_lake`, `level_from_flows`).
   - Cascades into white water; `carve` emits channel brushes for a terrain deformer.
   - River surface (`foam_crisp`, `ripple_detail`, `caustics_strength`): crisp foam that drains into lace, capillary ripples, and sun caustics on the bed from the river's own ripples.
-  - Sediment (`add_sediment()`, `add_sediment_mass()` on rivers and lakes): rivers carry silt and ash downstream and lakes settle it out, and debris flows dump their fines in at once, up to hyperconcentrated flow; silt browns the water and ash greys it, raster and path traced alike. Silt entering by one bank runs down that bank as a plume and spreads across over tens of widths, and slack water by the banks and in pools silts up.
+  - Sediment (`add_sediment()`, `add_sediment_mass()` on rivers and lakes): rivers carry silt and ash downstream and lakes settle it out, and debris flows dump their fines in at once, up to hyperconcentrated flow; silt turns the water khaki to brown, after measured silt optics, and ash greys it, raster and path traced alike. Silt entering by one bank runs down that bank as a plume and spreads across over tens of widths, and slack water by the banks and in pools silts up.
   - Live ripples (`live_surface_waves`, `live_near_mesh_spacing`): ripples travel at their own speed, wrap round stones and reflect off the banks, and near the camera they are real geometry.
   - Rocks part the current and trail foam (`obstacle_collision_mask`); near the camera they shed eddies and a swinging wake (`live_flow`).
 

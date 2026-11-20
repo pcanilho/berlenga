@@ -2354,7 +2354,10 @@ void TreeGenerator::_grow_date_palm() {
 	const int alive = int(Math::lerp(22.0f, 70.0f, grown) * _rand(0.9f, 1.1f));
 	// A wild or neglected palm keeps its dead fronds as a skirt; a tended one has them cut each year.
 	const int dead = tended ? 0 : (trunk_h > 1.5f ? int(_rand(18.0f, 40.0f) * grown) : 0);
-	const Vector3 lean0 = (up + Vector3(_rand(-1.0f, 1.0f), 0.0f, _rand(-1.0f, 1.0f)) * (tended ? 0.09f : 0.28f)).normalized();
+	// A clump's parent stands near upright, its side trunks leaning out only a little and curving up: steep opposed
+	// leans from one foot read as two palms placed into each other (docs, oasis hero 20 Nov).
+	const bool clump = !tended && int(params[PARAM_STEMS]) > 1;
+	const Vector3 lean0 = (up + Vector3(_rand(-1.0f, 1.0f), 0.0f, _rand(-1.0f, 1.0f)) * (tended ? 0.09f : (clump ? 0.12f : 0.28f))).normalized();
 	palm(root, lean0, trunk_h, trunk_r, alive, dead, frond_len);
 	// A wild clump: more trunks from old offshoots, leaning out; and young offshoots round the foot, each its own
 	// small crown (the grower's cut leaves only the stumps, not modelled).
@@ -2369,7 +2372,10 @@ void TreeGenerator::_grow_date_palm() {
 			const float a = away + (float(s2) - 0.5f * float(extra - 1)) * (float(Math::TAU) / float(MAX(extra + 1, 3))) + _rand(-0.35f, 0.35f);
 			const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
 			const float th = trunk_h * _rand(0.35f, 0.75f);
-			palm(root + out * (trunk_r * 2.4f), (up + out * _rand(0.5f, 0.85f)).normalized(), th, trunk_r * 0.85f, int(alive * 0.8f), dead / 2, frond_len * 0.9f);
+			// Each its own rooted foot a stride off the parent's, not one shared point: offshoots root round the mother
+			// 0.5-1.5 m out (Zaid and de Wet 2002), so a clump stands as separate trunks, not a sharp V from a single
+			// base (docs, oasis hero 20 Nov: read as two palms placed into each other).
+			palm(root + out * (trunk_r * _rand(3.5f, 5.0f)), (up + out * _rand(0.2f, 0.4f)).normalized(), th, trunk_r * 0.85f, int(alive * 0.8f), dead / 2, frond_len * 0.9f);
 		}
 		const int offs = years > 8.0f ? int(params[PARAM_BASAL_SPROUTS] * _rand(2.0f, 9.0f)) : 0;
 		const float off0 = _rand(0.0f, float(Math::TAU));

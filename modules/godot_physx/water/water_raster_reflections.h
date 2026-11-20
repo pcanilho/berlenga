@@ -435,7 +435,19 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 	float w_sky = dot(p_sky, vec3(1.0 / 3.0));
 	vec3 down = w_sun + w_sky > 0.0 ? (w_sun * exp(-st * z_b / mu) + w_sky * exp(-st * 1.2 * z_b)) / (w_sun + w_sky) : exp(-st * z_b);
 	vec3 scr = texture(p_screen, uv_r).rgb;
-	vec3 seen = scr * down * exp(-st * len);
+	// The screen shows the bed lit as if in air. Under the water its light came in through the surface: the sun's
+	// beam less its Fresnel reflection, the sky's diffuse light less the mean Fresnel reflection of a uniform sky
+	// (6.6%: transmittance 0.934 into water of 1.33; Kirk, Light and Photosynthesis in Aquatic Ecosystems, ch. 2),
+	// per channel by each one's share of the light, so the bluer sky loses the most. The path tracer refracts it.
+	vec3 into = vec3(1.0);
+	if (water_raster_lit()) {
+		float cos_air = max(-normalize(raster_sun_travel).y, 0.0);
+		vec3 e_sun = raster_sun_irradiance * cos_air;
+		vec3 e_sky = raster_sky_irradiance * raster_sky_energy;
+		vec3 total = e_sun + e_sky;
+		into = mix(vec3(1.0), (p_sun_irr * cos_air + 0.934 * e_sky) / max(total, vec3(1e-6)), step(vec3(1e-6), total));
+	}
+	vec3 seen = scr * into * down * exp(-st * len);
 	r_seen = seen;
 	r_bed = p_s + t * min(len, 1e3);
 	{

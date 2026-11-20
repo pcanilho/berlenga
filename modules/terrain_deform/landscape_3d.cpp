@@ -238,15 +238,47 @@ Vector3 Landscape3D::_normal_at(real_t p_x, real_t p_z) const {
 
 // Metres out of the face (negative: back into it) at a point of the landscape's own space, before cliff_relief.
 float Landscape3D::_cliff_offset(const Vector3 &p) const {
-	// Beds: warped, 3 m thick, each proud or recessed by its own amount; the step to the next bed rounded over its top
-	// metre and a half (a ledge's lip, not a saw cut; and at least two vertex rows, so the step does not alias).
-	const real_t T = 3.0;
-	const real_t yb = p.y + (_lc_noise(p * 0.05f) - 0.5f) * 4.0f;
-	const int32_t bed = int32_t(Math::floor(yb / T));
-	const real_t fy = yb - bed * T;
-	const float o0 = _lc_hash(bed, 11, 3) * 2.0f - 1.0f;
-	const float o1 = _lc_hash(bed + 1, 11, 3) * 2.0f - 1.0f;
-	const real_t ty = CLAMP((fy - (T - 1.5f)) / 1.5f, real_t(0.0), real_t(1.0));
+	// Beds as a real sequence draws them (bed thickness in stratified rock is near log-normal; resistant beds stand out
+	// as ledges, weak ones weather back: differential erosion). Each 12 m unit holds 1 to 5 beds of uneven
+	// thickness; most beds sit near flush, about one in four is a hard one standing proud, and each bed's ledge fades
+	// and breaks along the face (every 10-30 m) so no stripe runs on unbroken. The step to the next bed is rounded over the
+	// top of the lower bed (a lit lip, not a saw cut; at least two vertex rows so it does not alias).
+	const real_t U = 12.0;
+	const real_t yb = p.y + (_lc_noise(p * 0.05f) - 0.5f) * 4.0f + (_lc_noise(p * 0.013f + Vector3(5, 0, 2)) - 0.5f) * 10.0f;
+	const int32_t unit = int32_t(Math::floor(yb / U));
+	const real_t fu0 = yb - unit * U;
+	const int nb = 1 + int(_lc_hash(unit, 21, 4) * 4.999f);
+	float wsum = 0.0f, wb[5];
+	for (int i = 0; i < nb; i++) {
+		// Log-normal weights: a few thick beds and several thin ones.
+		wb[i] = Math::exp(1.1f * (_lc_hash(unit, i, 17) + _lc_hash(unit, i, 19) - 1.0f) * 1.7f);
+		wsum += wb[i];
+	}
+	int bi = 0;
+	real_t lo = 0.0, T = U;
+	for (int i = 0; i < nb; i++) {
+		const real_t th = U * wb[i] / wsum;
+		if (fu0 < lo + th || i == nb - 1) {
+			bi = i;
+			T = th;
+			break;
+		}
+		lo += th;
+	}
+	const int32_t bed = unit * 8 + bi;
+	const int32_t bed_up = bi + 1 < nb ? bed + 1 : (unit + 1) * 8;
+	const real_t fy = fu0 - lo;
+	const auto proud = [&](int32_t p_bed) {
+		const float hard = _lc_hash(p_bed, 11, 3);
+		const float base = hard > 0.75f ? 0.6f + 1.4f * (hard - 0.75f) * 4.0f : (hard - 0.4f) * 0.9f;
+		// Along the face the ledge swells, thins and breaks off.
+		const float run = _lc_noise(Vector3(p.x * 0.06f, float(p_bed) * 1.37f, p.z * 0.06f));
+		return base * Math::smoothstep(0.4f, 0.7f, run) * (0.6f + 0.8f * run);
+	};
+	const float o0 = proud(bed);
+	const float o1 = proud(bed_up);
+	const real_t lip = MIN(real_t(1.5), MAX(real_t(0.6), T * 0.5f));
+	const real_t ty = CLAMP((fy - (T - lip)) / lip, real_t(0.0), real_t(1.0));
 	float o = Math::lerp(o0, o1, float(ty * ty * (3.0f - 2.0f * ty)));
 	// Joints across the beds, 4.5 m apart and staggered bed to bed, each block a little forward or back.
 	const real_t u = p.x * 0.8f + p.z * 0.6f + _lc_hash(bed, 5, 1) * 4.5f;

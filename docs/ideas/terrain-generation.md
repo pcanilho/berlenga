@@ -1298,6 +1298,15 @@ path traced frames at the bar face match (the BLAS holds the ledges). Cost on th
 338 m wall goes from 2.6 to 5.5 M triangles; a wide view of it is unchanged (relief beyond the radius is subpixel and
 left to the shader). Next: the far strata in the shader, matched to these beds.
 
+Beds as a sequence (20 Nov): at sun 45 the even 3 m beds drew evenly spaced black stripes the whole width of a coast
+cliff (each proud bed's shadowed underside). Bed thickness in stratified rock is near log-normal (many thin beds,
+few thick ones), and ledges stand only where a resistant bed meets weaker ones round it (differential erosion), and
+weather back unevenly along the face. Now each 12 m unit (warped by 4 m and 10 m of low noise) holds 1 to 5 beds with
+log-normal weights; about one bed in four is hard and stands 0.6 to 2 m proud, the rest sit within half a metre of
+flush; each bed's protrusion swells, thins and breaks off along the face every 10 to 30 m (proud for about a third of its length). The shader's ledge normals and
+self-shadow march use the same beds (tm_cl_beds), so lighting matches the geometry. Lips round over half the
+bed's thickness (0.6 to 1.5 m), so a proud bed's top catches the light.
+
 Fix (15 Nov, the docs cliff pair): under a raking sun the ledges' shadow edges were saw-toothed. The steps cross the
 heightfield's diagonal triangles, and per-vertex normals cannot follow a 1.5 m rounding at 1 m vertex rows; twice the
 rows (2.7x the triangles) did not cure it and smoother vertex normals blurred the ledges. Now the cliff meshes carry
