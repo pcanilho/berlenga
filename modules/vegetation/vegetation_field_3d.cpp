@@ -536,6 +536,116 @@ void VegetationField3D::_read_burn_age(PlaceSetup &r_setup) const {
 	r_setup.burn_rect = rect;
 }
 
+// Stand age and disturbance (docs/ideas/vegetation.md, "Stand age"; WorldStand in world-contracts.md, Stand): the
+// years since the last stand-replacing disturbance and its kind, on the burn grid's spacing over the map. Read when a
+// species uses the stand rules or is a succession stage (TreeGenerator.make_succession).
+void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
+	r_setup.stand_rules.clear();
+	r_setup.stand_age.clear();
+	r_setup.stand_kind.clear();
+	r_setup.stand_nx = 0;
+	r_setup.stand_ny = 0;
+	const WorldStand *stand = WorldContracts::stand();
+	if (stand) {
+		stand_seen = stand->get_stand_generation();
+	}
+	if (biome.is_valid()) {
+		const TypedArray<PlantSpecies> list = biome->get_species();
+		for (int i = 0; i < list.size(); i++) {
+			const Ref<PlantSpecies> sp = list[i];
+			if (sp.is_null() || !sp->uses_stand()) {
+				continue;
+			}
+			PlaceSetup::StandRule rule;
+			sp->get_stand_rules(rule.age, rule.age_fade, rule.kind, rule.kind_fade);
+			if (r_setup.stand_rules.find(rule) < 0) {
+				r_setup.stand_rules.push_back(rule);
+			}
+		}
+	}
+	stand_follow = !r_setup.stand_rules.is_empty();
+	if (!stand_follow || !stand || !r_setup.rect.has_area()) {
+		return;
+	}
+	const Rect2 rect = r_setup.rect;
+	const float cell = MAX(2.0f, MAX(rect.size.x, rect.size.y) / 511.0f);
+	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 512);
+	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 512);
+	r_setup.stand_age.resize(nx * ny);
+	r_setup.stand_kind.resize(nx * ny);
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const Vector2 xz = rect.position + rect.size * Vector2(float(x) / (nx - 1), float(z) / (ny - 1));
+			const Vector3 p(xz.x, 0.0f, xz.y);
+			r_setup.stand_age[z * nx + x] = stand->stand_age_at(p);
+			r_setup.stand_kind[z * nx + x] = uint8_t(CLAMP(stand->disturbance_at(p), 0, 255));
+		}
+	}
+	r_setup.stand_nx = nx;
+	r_setup.stand_ny = ny;
+	r_setup.stand_rect = rect;
+}
+
+// The stand changed over p_area: its grid cells are read again, and the area where a species' stand weight changed is
+// returned (empty when every change stayed inside every species' stage, as a year passing mostly does).
+Rect2 VegetationField3D::_update_stand(PlaceSetup &r_setup, const Rect2 &p_area) const {
+	const WorldStand *stand = WorldContracts::stand();
+	if (!stand || r_setup.stand_age.is_empty()) {
+		_read_stand(r_setup);
+		return r_setup.stand_age.is_empty() ? Rect2() : r_setup.rect;
+	}
+	stand_seen = stand->get_stand_generation();
+	const Rect2 &sr = r_setup.stand_rect;
+	const int nx = r_setup.stand_nx, ny = r_setup.stand_ny;
+	const float cx = sr.size.x / (nx - 1);
+	const float cz = sr.size.y / (ny - 1);
+	const int x0 = CLAMP(int(Math::floor((p_area.position.x - sr.position.x) / cx)) - 1, 0, nx - 1);
+	const int x1 = CLAMP(int(Math::ceil((p_area.get_end().x - sr.position.x) / cx)) + 1, 0, nx - 1);
+	const int z0 = CLAMP(int(Math::floor((p_area.position.y - sr.position.y) / cz)) - 1, 0, ny - 1);
+	const int z1 = CLAMP(int(Math::ceil((p_area.get_end().y - sr.position.y) / cz)) + 1, 0, ny - 1);
+	Rect2 changed;
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			const Vector2 xz = sr.position + Vector2(x * cx, z * cz);
+			const Vector3 p(xz.x, 0.0f, xz.y);
+			const int i = z * nx + x;
+			const float age = stand->stand_age_at(p);
+			const int kind = CLAMP(stand->disturbance_at(p), 0, 255);
+			if (r_setup.stand_differs(r_setup.stand_age[i], r_setup.stand_kind[i], age, kind)) {
+				const Rect2 c(xz - Vector2(cx, cz) * 0.5f, Vector2(cx, cz));
+				changed = changed.has_area() ? changed.merge(c) : c;
+			}
+			r_setup.stand_age[i] = age;
+			r_setup.stand_kind[i] = uint8_t(kind);
+		}
+	}
+	return changed;
+}
+
+int VegetationField3D::PlaceSetup::stand_cell(const Vector2 &p_xz) const {
+	if (stand_age.is_empty()) {
+		return -1;
+	}
+	const int x = int(Math::round((p_xz.x - stand_rect.position.x) / stand_rect.size.x * (stand_nx - 1)));
+	const int z = int(Math::round((p_xz.y - stand_rect.position.y) / stand_rect.size.y * (stand_ny - 1)));
+	if (x < 0 || z < 0 || x >= stand_nx || z >= stand_ny) {
+		return -1;
+	}
+	return z * stand_nx + x;
+}
+
+bool VegetationField3D::PlaceSetup::stand_differs(float p_age0, int p_kind0, float p_age1, int p_kind1) const {
+	if (p_age0 == p_age1 && p_kind0 == p_kind1) {
+		return false;
+	}
+	for (const StandRule &r : stand_rules) {
+		if (PlantSpecies::stand_weight(r.age, r.age_fade, r.kind, r.kind_fade, p_age0, p_kind0) != PlantSpecies::stand_weight(r.age, r.age_fade, r.kind, r.kind_fade, p_age1, p_kind1)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 float VegetationField3D::PlaceSetup::burn_at(const Vector2 &p_xz) const {
 	if (burn.is_empty()) {
 		return -1.0f;
@@ -682,6 +792,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		}
 	}
 	_read_burn_age(r_setup);
+	_read_stand(r_setup);
 	r_setup.stone_tops = stone_top_grid;
 	r_setup.stone_top_normals = stone_top_grid_normals;
 	// Another field's crowns (canopy_field): a camera-local herb layer under a world forest.
@@ -1278,6 +1389,13 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool field_rule = sp->uses_field_edge();
 		const bool mobility_rule = sp->uses_sand_mobility();
 		const bool burn_rule = sp->uses_burn_age();
+		// Succession (WorldStand): the species' stage years and legacy kind; off the grid, old growth.
+		const bool stand_rule = !p_setup.stand_rules.is_empty() && sp->uses_stand();
+		Vector2 stand_age_r, stand_kind_r;
+		float stand_age_f = 0.0f, stand_kind_f = 0.0f;
+		if (stand_rule) {
+			sp->get_stand_rules(stand_age_r, stand_age_f, stand_kind_r, stand_kind_f);
+		}
 		const bool burn_recovery = !burn_rule && sp->get_burn_recovery() > 0.0f && !p_setup.burn.is_empty();
 		const bool spring_rule = sp->uses_spring();
 		const bool pool_rule = sp->uses_pool();
@@ -1442,6 +1560,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					} else if (burn_recovery && suit > 0.0f) {
 						// Everything else thins on a fresh burn and closes in again over its own years.
 						suit *= sp->burn_cover(p_setup.burn_at(xz));
+					}
+					if (stand_rule && suit > 0.0f) {
+						const int sc = p_setup.stand_cell(xz);
+						suit *= PlantSpecies::stand_weight(stand_age_r, stand_age_f, stand_kind_r, stand_kind_f, sc < 0 ? -1.0f : p_setup.stand_age[sc], sc < 0 ? 0 : int(p_setup.stand_kind[sc]));
 					}
 					if (!sand_plant && suit > 0.0f && !p_setup.sea_depth.is_empty()) {
 						// Desert sand seas: only sand plants (RULE_SAND_MOBILITY) root in their loose sand; the rest
@@ -4724,6 +4846,20 @@ void VegetationField3D::_stream_update(double p_delta) {
 		}
 		burn_dirty = Rect2();
 	}
+	// The stand changed: only where a species crossed its stand range are the tiles placed again.
+	if (stand_dirty.has_area() && stream_jobs.is_empty()) {
+		PlaceSetup &su = stream_setup;
+		const Rect2 changed = _update_stand(su, stand_dirty);
+		if (changed.has_area()) {
+			const Rect2 near = changed.grow(su.max_footprint);
+			for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+				if (Rect2(Vector2(kv.key) * ts, Vector2(ts, ts)).intersects(near)) {
+					kv.value->stale = true;
+				}
+			}
+		}
+		stand_dirty = Rect2();
+	}
 	struct Pending {
 		float d;
 		Vector2i tile;
@@ -4808,7 +4944,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 
 	// Missing tiles within the radius, nearest first, as many at once as there are workers.
 	const int max_jobs = MAX(1, WorkerThreadPool::get_singleton()->get_thread_count());
-	if (int(stream_jobs.size()) < max_jobs && !holes_dirty.has_area() && !burn_dirty.has_area()) {
+	if (int(stream_jobs.size()) < max_jobs && !holes_dirty.has_area() && !burn_dirty.has_area() && !stand_dirty.has_area()) {
 		const int r = int(Math::ceil(stream_radius / ts)) + 2;
 		const Vector2i ct(int(Math::floor(centre.x / ts)), int(Math::floor(centre.y / ts)));
 		const Rect2i map_tiles(Vector2i(int(Math::floor(rect.position.x / ts)), int(Math::floor(rect.position.y / ts))),
@@ -5056,6 +5192,36 @@ void VegetationField3D::_follow_burns(double p_delta) {
 	}
 }
 
+// Stand ages or disturbances changed (WorldStand.stand_changed: a disturbance added, aged or removed, years passing,
+// fire's burns): streamed tiles are placed again where a species crossed its stand range (_stream_update); a
+// populated field populates again.
+void VegetationField3D::_follow_stand(double p_delta) {
+	stand_check -= p_delta;
+	if (!stand_follow || stand_check > 0.0) {
+		return;
+	}
+	stand_check = 0.5;
+	const WorldStand *stand = WorldContracts::stand();
+	if (!stand || stand->get_stand_generation() == stand_seen) {
+		return;
+	}
+	Rect2 area;
+	if (!stand->stand_changes_since(stand_seen, area)) {
+		area = Rect2(-1e6f, -1e6f, 2e6f, 2e6f);
+	}
+	stand_seen = stand->get_stand_generation();
+	if (!area.has_area()) {
+		return;
+	}
+	if (streaming) {
+		if (stream_setup_valid && area.intersects(stream_setup.rect)) {
+			stand_dirty = stand_dirty.has_area() ? stand_dirty.merge(area) : area;
+		}
+	} else if (plant_count > 0) {
+		queue_populate();
+	}
+}
+
 // Crop fields came, went or moved (GrassField3D.fields): rebuild clear of them.
 void VegetationField3D::_on_crop_fields_changed() {
 	_on_holes_changed(Rect2(-1e6f, -1e6f, 2e6f, 2e6f));
@@ -5112,6 +5278,7 @@ void VegetationField3D::_notification(int p_what) {
 				}
 			}
 			_follow_burns(get_process_delta_time());
+			_follow_stand(get_process_delta_time());
 			if (streaming) {
 				if (still_shot && still_frozen && _stream_centre().distance_to(still_at) >= 0.5f) {
 					still_frozen = false;

@@ -26,6 +26,8 @@ extends Node3D
 #                    same costs as --floor and with --out saves the view.
 #   --burn=live      quick check: a streamed field of one species recovering over a year; a scar placed after the
 #                    tiles stand, aged, then removed (WorldFire.burn_changed, no rebuild): gone, half back, whole.
+#   --stand=live     quick check: a streamed field of succession stages (meta succession_age / succession_kind); a
+#                    windthrow added after the tiles stand, aged a year (no re-place), then past the pioneer stage.
 
 const SIZE := 256.0
 var size := SIZE
@@ -43,6 +45,7 @@ var far_volume_view := 0 # --far-volume: 1 with the far plants as volume, 2 with
 var far_match := 0 # --far-match: the far-volume view without volume, 4 m up, on a ground drawing the far colour, waiting for the far shade match; 2 = match off (=off), 3 = shade forced to 0.3 (=dark).
 var floor_view := 0 # --floor: 1 with the small species' pixel reach, 2 without (--floor=off).
 var desert_view := 0 # --desert: 1 with make_desert's plants on a sand sea, 2 the same view without (--desert=off).
+var stand_live := false # --stand=live
 var burn_view := 0 # --burn: 1 with burn scars and make_burn's heath set, 2 the same heath unburnt (--burn=off).
 const BURN_SCARS := [[0.05, -60.0], [0.6, -25.0], [2.5, 10.0], [5.0, 45.0]] # Years since, and the scar's centre z (x 60, 60 x 30 m).
 var mushroom_view := 0 # --mushrooms: 1 with the mushrooms, 2 the same view without them (--mushrooms=off).
@@ -97,6 +100,8 @@ func _ready() -> void:
 		elif a.begins_with("--floor"):
 			floor_view = 2 if a == "--floor=off" else 1
 			size = 128.0
+		elif a == "--stand=live":
+			stand_live = true
 		elif a.begins_with("--burn"):
 			burn_view = 2 if a == "--burn=off" else (3 if a == "--burn=live" else 1)
 		elif a.begins_with("--desert"):
@@ -267,6 +272,9 @@ func _physics_process(_d: float) -> void:
 		return
 	if burn_view == 3:
 		await _burn_live()
+		return
+	if stand_live:
+		await _stand_live()
 		return
 	if burn_view > 0:
 		await _burn_view()
@@ -964,6 +972,104 @@ func _fire_variant_check() -> void:
 	var r := [on[plain], on[young], on[old], off[plain], off[young], off[old]]
 	_check("fire variants: trees on a burn take the variant nearest its age, unburnt ones off it", r[1] > 10 and r[0] == 0 and r[2] == 0 and r[3] > 10 and r[4] == 0 and r[5] == 0, r)
 
+# Succession stages (TreeGenerator.make_succession meta, WorldStand): a pioneer stage (0-15 y, any kind), a windthrow
+# legacy (0-15 y, wind only), a fire-only stage and the old stand (50 y on, old growth too).
+func _stand_species() -> Array:
+	var out := []
+	for st in [[Vector2(0, 15), -1], [Vector2(0, 15), 2], [Vector2(0, 15), 1], [Vector2(50, 10000), -1]]:
+		var sp := PlantSpecies.new()
+		sp.meshes = [BoxMesh.new()]
+		sp.spacing = 1.5
+		sp.set_meta("succession_age", st[0])
+		sp.set_meta("succession_kind", st[1])
+		out.append(sp)
+	return out
+
+func _stand_count(f: VegetationField3D, sps: Array, inside: bool, c := Vector2.ZERO) -> Array:
+	var n := [0, 0, 0, 0]
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh:
+			var mm: MultiMesh = ch.multimesh
+			var k := -1
+			for j in sps.size():
+				if sps[j].meshes[0] == mm.mesh:
+					k = j
+			if k < 0:
+				continue
+			for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+				var p: Vector3 = (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+				var d := Vector2(p.x, p.z).distance_to(c)
+				if (d < 7.0) if inside else (d > 13.0 and d < 30.0):
+					n[k] += 1
+	return n
+
+func _stand_check() -> void:
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_disturbances()
+	var c := Vector2(30, 30)
+	st.add_disturbance(Vector3(c.x, 0, c.y), 10.0, WorldStand.DISTURBANCE_WIND, 5.0)
+	var sps := _stand_species()
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species = sps
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var on := _stand_count(f, sps, true, c)
+	var off := _stand_count(f, sps, false, c)
+	st.clear_disturbances()
+	f.queue_free()
+	# A 5-year windthrow: pioneers and the wind legacy, no fire stage, no old stand; round it the old stand alone.
+	_check("stand age: a 5-year windthrow holds the pioneers and its own legacy, the old stand round it", on[0] > 10 and on[1] > 2 and on[2] == 0 and on[3] == 0 and off[3] > 10 and off[0] == 0 and off[1] == 0 and off[2] == 0, [on, off])
+
+# --stand=live: a disturbance reported after the field streamed in (WorldStand.stand_changed) re-places the tiles over
+# it; a year passing inside every stage changes nothing; past the pioneer stage they go.
+func _stand_live() -> void:
+	field.queue_free()
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_disturbances()
+	var sps := _stand_species()
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.biome = Biome.new()
+	f.biome.species = sps
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.stream_radius = 40.0
+	f.stream_target = f.get_path_to(self)
+	f.streaming = true
+	var counts := []
+	await _burn_live_wait(3.0)
+	counts.append(_stand_count(f, sps, true))
+	st.add_disturbance(Vector3.ZERO, 10.0, WorldStand.DISTURBANCE_WIND, 2.0)
+	await _burn_live_wait(3.0)
+	counts.append(_stand_count(f, sps, true))
+	var mmis := []
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D:
+			mmis.append(ch)
+	st.advance_years(1.0)
+	await _burn_live_wait(3.0)
+	var same := true
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D and not mmis.has(ch):
+			same = false
+	counts.append(_stand_count(f, sps, true))
+	st.advance_years(60.0)
+	await _burn_live_wait(3.0)
+	counts.append(_stand_count(f, sps, true))
+	st.clear_disturbances()
+	var c0: Array = counts[0]
+	var c1: Array = counts[1]
+	var c3: Array = counts[3]
+	_check("stand: a live windthrow re-places the streamed tiles over it (old stand out, pioneers and legacy in)", c0[3] > 3 and c0[0] == 0 and c1[3] == 0 and c1[0] > 3 and c1[1] > 1 and c1[2] == 0, counts)
+	_check("stand: a year passing inside every stage places nothing again", same and counts[2] == counts[1], [same, counts[2]])
+	_check("stand: 63 years on the old stand is back, the pioneers gone", c3[3] > 3 and c3[0] == 0 and c3[1] == 0, c3)
+	print("VEG_STAND_LIVE_RESULT ", "PASS" if fails == 0 else "FAIL")
+	get_tree().quit(1 if fails > 0 else 0)
+
 # Close-up bark on by default: a field whose species have trunks (tree_colliders) makes and links a BarkDetail3D
 # as an internal child; none for a field without trunks, none with bark_detail off, gone when switched off.
 func _bark_detail_check() -> void:
@@ -1532,6 +1638,7 @@ func _place_form_checks() -> void:
 func _checks() -> void:
 	_bark_detail_check()
 	_fire_variant_check()
+	_stand_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []
 	for fs in [PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_BEECH, PlantGenerator.FLOOR_MEDITERRANEAN, PlantGenerator.FLOOR_BOREAL_TAIGA]:

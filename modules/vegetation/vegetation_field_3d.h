@@ -294,6 +294,24 @@ private:
 		int burn_ny = 0;
 		Rect2 burn_rect;
 		float burn_at(const Vector2 &p_xz) const;
+		// Stand age and disturbance (WorldStand), read when a species uses the stand rules: years (-1 old growth) and
+		// kind on the same kind of grid, nearest cell, and the distinct stand rules of the species (age range, age
+		// fade, kind range, kind fade) to tell which changes move a species across its range.
+		struct StandRule {
+			Vector2 age;
+			float age_fade = 0.0f;
+			Vector2 kind;
+			float kind_fade = 0.0f;
+			bool operator==(const StandRule &p_o) const { return age == p_o.age && age_fade == p_o.age_fade && kind == p_o.kind && kind_fade == p_o.kind_fade; }
+		};
+		LocalVector<StandRule> stand_rules;
+		LocalVector<float> stand_age;
+		LocalVector<uint8_t> stand_kind;
+		int stand_nx = 0;
+		int stand_ny = 0;
+		Rect2 stand_rect;
+		int stand_cell(const Vector2 &p_xz) const;
+		bool stand_differs(float p_age0, int p_kind0, float p_age1, int p_kind1) const;
 	};
 	struct FarAdd {
 		Vector2 xz;
@@ -322,6 +340,8 @@ private:
 	static void _read_sand(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
 	static void _read_sand_mobility(const TerrainGenerator3D *p_gen, PlaceSetup &r_setup);
 	void _read_burn_age(PlaceSetup &r_setup) const;
+	void _read_stand(PlaceSetup &r_setup) const;
+	Rect2 _update_stand(PlaceSetup &r_setup, const Rect2 &p_area) const;
 	void _place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles) const;
 	void _commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes, float p_max_rank = 1.0f);
 	Vector3 stream_eye; // The stream centre when tiles were last committed (skyline trees, trees.md 9c).
@@ -520,6 +540,13 @@ private:
 	double burn_check = 0.0;
 	Rect2 burn_dirty;
 	void _follow_burns(double p_delta);
+	// Stand ages and disturbances (WorldStand.stand_changed): checked twice a second like burns; only tiles where a
+	// species crosses its stand range are placed again (advance_years ages every stand without replacing them all).
+	mutable uint64_t stand_seen = 0;
+	mutable bool stand_follow = false;
+	double stand_check = 0.0;
+	Rect2 stand_dirty;
+	void _follow_stand(double p_delta);
 	bool _path_traced() const;
 	void _update_impostors(bool p_traced);
 	LocalVector<LocalVector<Vector3>> placements; // Per species, world positions.
