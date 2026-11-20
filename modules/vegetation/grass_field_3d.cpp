@@ -599,8 +599,16 @@ vec3 grass_weather_wind(vec3 wp, float height, float omega0, float zeta, float j
 	float uc = max(1.8 * profile * f * speed, 0.3);
 	float wa = omega0 * (1.0 - zeta);
 	float wb = omega0 * (1.0 + zeta);
+	// The fronts are not straight lines a sward wide: coherent structures in a canopy are a few
+	// heights across and break up (Finnigan 2000; Py et al. 2006 measured honami patches of a few
+	// metres), so the front is bent by a slow crosswind warp and the wave's strength comes and goes
+	// in patches. Straight, even fronts read as stripes, and in perspective as concentric arcs
+	// (docs 20 Nov).
+	float across_pos = dot(wp.xz, across);
 	float along_pos = dot(wp.xz, along);
-	float res = amp * (cos(wa * (time - along_pos / uc) + jitter * 1.2) + cos(wb * (time - along_pos / uc) + 2.1 + jitter * 1.2));
+	along_pos += 1.6 * sin(across_pos * 0.43 + 1.3 * sin(along_pos * 0.21)) + 0.9 * sin(across_pos * 1.07 - along_pos * 0.37 + 2.0);
+	float patchy = 0.55 + 0.45 * sin(across_pos * 0.29 + along_pos * 0.17 - time * 0.13) * sin(across_pos * 0.61 - along_pos * 0.23 + 1.7);
+	float res = amp * patchy * (cos(wa * (time - along_pos / uc) + jitter * 2.0) + cos(wb * (time - along_pos / uc) + 2.1 + jitter * 2.0));
 	vec2 hz = (along * g.x + across * g.y) * sigma + along * res;
 	return v + vec3(hz.x, g.z * sigma, hz.y);
 }
@@ -615,8 +623,12 @@ vec3 grass_wind_ambient(vec3 wp, float h, float time, float omega0, float jitter
 		return vec3(0.0);
 	}
 	vec2 d = fallback_wind / s;
-	float phase = dot(wp.xz, d) * 0.12 - time * s * 0.12;
-	float g = 1.0 + 0.45 * sin(phase) + 0.2 * sin(phase * 2.7 + dot(wp.xz, vec2(-d.y, d.x)) * 0.2);
+	// Gusts as bent, patchy fronts, not straight bands (see grass_weather_wind()).
+	float al = dot(wp.xz, d);
+	float cr = dot(wp.xz, vec2(-d.y, d.x));
+	al += 1.6 * sin(cr * 0.43 + 1.3 * sin(al * 0.21)) + 0.9 * sin(cr * 1.07 - al * 0.37 + 2.0);
+	float phase = al * 0.12 - time * s * 0.12;
+	float g = 1.0 + 0.45 * sin(phase) * (0.6 + 0.4 * sin(cr * 0.23 + al * 0.11 - time * 0.07)) + 0.2 * sin(phase * 2.7 + cr * 0.2) + 0.12 * (jitter - 0.5);
 	return vec3(fallback_wind.x, 0.0, fallback_wind.y) * g;
 }
 vec3 grass_wind(vec3 wp, float h, float time, float omega0, float jitter) {
@@ -5314,18 +5326,39 @@ float grass_ground_tread(vec3 world_pos) {
 	return textureLod(grass_ground_map, uv, 0.0).g;
 }
 
+// Noise streaked along a direction that turns slowly over the ground (matted blades, litter). Turning world xz itself
+// by a varying angle draws arcs round the world's origin (a small turn swings far points a long way: concentric swirl
+// stripes, 20 Nov), so each 2 m cell turns the offsets from its own centre and the four nearest cells blend (texture
+// bombing, Glanville 2004, GPU Gems ch. 20).
+float grass_streaks(vec2 xz, float p_turn_scale, float p_turn_offset, vec2 p_s1, vec2 p_s2, float p_o2) {
+	vec2 g = xz * 0.5;
+	vec2 i = floor(g);
+	vec2 f = smoothstep(vec2(0.0), vec2(1.0), fract(g));
+	float s = 0.0;
+	for (int k = 0; k < 4; k++) {
+		vec2 o = vec2(float(k % 2), float(k / 2));
+		vec2 c = (i + o) * 2.0;
+		float ang = grass_noise(c * p_turn_scale + p_turn_offset) * 6.2832;
+		vec2 dir = vec2(cos(ang), sin(ang));
+		vec2 d = xz - c;
+		vec2 q = vec2(dot(d, dir), dot(d, vec2(-dir.y, dir.x))) + c * 1.618;
+		float v = grass_noise(q * p_s1) * 0.6 + grass_noise(q * p_s2 + p_o2) * 0.4;
+		vec2 wv = mix(1.0 - f, f, o);
+		s += v * wv.x * wv.y;
+	}
+	// Blending four lowers the contrast mid-cell; most of it back.
+	return clamp(0.5 + (s - 0.5) * 1.3, 0.0, 1.0);
+}
+
 // The turf colour at a point: blades' root colour, patch tint, streaks, thatch.
 vec3 grass_turf(vec3 world_pos) {
 	vec2 xz = world_pos.xz;
 	// Streaks: fine noise stretched along a direction that turns slowly, like matted blades.
-	float ang = grass_noise(xz * 0.6) * 6.2832;
-	vec2 dir = vec2(cos(ang), sin(ang));
-	vec2 q = vec2(dot(xz, dir), dot(xz, vec2(-dir.y, dir.x)));
-	float streak = grass_noise(q * vec2(9.0, 70.0)) * 0.6 + grass_noise(q * vec2(4.0, 31.0) + 7.1) * 0.4;
+	float streak = grass_streaks(xz, 0.6, 0.0, vec2(9.0, 70.0), vec2(4.0, 31.0), 7.1);
 	vec3 c = grass_ground_color.rgb * grass_patch_tint(xz, grass_noise(xz * 3.0), streak, grass_ground_params.x);
 	c *= 0.7 + 0.6 * streak;
 	// Dead thatch where the grass is dry, in matted patches.
-	float thatch = grass_noise(q * vec2(5.0, 40.0) + 13.0) * 0.5 + grass_noise(xz * 1.3) * 0.5;
+	float thatch = grass_streaks(xz, 0.6, 0.0, vec2(5.0, 40.0), vec2(5.0, 40.0), 13.0) * 0.5 + grass_noise(xz * 1.3) * 0.5;
 	// Shaded at the base of the sward, so darker than the dry tips above it.
 	c = mix(c, grass_ground_dry.rgb * (0.25 + 0.2 * streak), 0.8 * smoothstep(0.8 - grass_ground_dry.a * 0.5, 0.95 - grass_ground_dry.a * 0.5, thatch));
 	return c;
@@ -5383,10 +5416,7 @@ vec3 grass_ground_undergrowth(vec3 world_pos, vec3 albedo) {
 	}
 	vec3 c = l.rgb * l.rgb / l.a;
 	vec2 xz = world_pos.xz;
-	float ang = grass_noise(xz * 0.9 + 3.7) * 6.2832;
-	vec2 dir = vec2(cos(ang), sin(ang));
-	vec2 q = vec2(dot(xz, dir), dot(xz, vec2(-dir.y, dir.x)));
-	float strands = grass_noise(q * vec2(6.0, 38.0)) * 0.6 + grass_noise(q * vec2(2.5, 15.0) + 5.3) * 0.4;
+	float strands = grass_streaks(xz, 0.9, 3.7, vec2(6.0, 38.0), vec2(2.5, 15.0), 5.3);
 	c *= 0.7 + 0.55 * strands + 0.15 * (grass_noise(xz * 0.8) - 0.5);
 	return mix(albedo, c, l.a);
 }
