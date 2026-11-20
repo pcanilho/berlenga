@@ -4,6 +4,7 @@ extends Node3D
 # per species), or rendered.
 #
 # godot --path docs/bench/trees --rendering-driver vulkan -- --stands [options]
+#   --lightning --strikes  struck trees in a placed beech stand: a WorldStand strike swaps that tree only (trees.md 5ax)
 #   --lightning       a fresh strike's debris round a spruce, none unstruck or three years on (trees.md 5ax)
 #   --test            place every stand, print the counts and PASS/FAIL, quit
 #   --stand-test=N    the placement checks of stand N only (TreeGenerator.Stand)
@@ -78,6 +79,7 @@ func run(args: Dictionary) -> void:
 		gen.near_leaf_range = 0.0
 	# Fire band variants (five more meshes a species, trees.md 5ah) serve no placement check: off unless --fire.
 	gen.fire_variants = args.has("fire")
+	gen.lightning_variants = args.has("strikes")
 	gen.far_thinning = OS.get_environment("NO_FAR_SCALE") == ""
 	if args.has("forest-edge"):
 		_forest_edge_check(int(args["forest-edge"]))
@@ -91,7 +93,7 @@ func run(args: Dictionary) -> void:
 		_deer_check()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if args.has("lightning"):
+	if args.has("lightning") and not args.has("strikes"):
 		_lightning_check()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -114,6 +116,10 @@ func run(args: Dictionary) -> void:
 	await get_tree().physics_frame
 	var err := dm.bake()
 	_check(err == OK, "valley data map bakes")
+	if args.has("strikes") and args.has("lightning"):
+		await _strike_field_check()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if args.has("test"):
 		_habitat_checks()
 		_stand_checks()
@@ -245,6 +251,64 @@ func _flood_check() -> void:
 		_check(under > 0.8 * under_n and over == 0, "willow seed %d: silt on %d of %d bark vertices under 0.9 m, %d over 1.3 m" % [sd, under, under_n, over])
 	_check(found_wrack >= 2, "flood wrack on %d of 4 willows" % found_wrack)
 	g.flood_height = 0.0
+
+func _strike_field_check() -> void:
+	# Struck variants in the world (trees.md 5ax): the beech stand's tall species carry two struck variants (fresh and
+	# healing) that are not living ones; with no strike none is placed; a WorldStand strike at one canopy tree swaps that
+	# tree for the fresh variant and no other.
+	var ws = WorldContracts.get_stand()
+	if ws == null:
+		_check(false, "struck trees: no WorldStand")
+		return
+	ws.clear_strikes()
+	var biome := gen.make_stand(TreeGenerator.STAND_BEECH, variants)
+	var sps: Array = biome.species
+	var with := -1
+	var struck := 0
+	for s in sps.size():
+		var n := 0
+		for m in sps[s].meshes:
+			if m != null and m.has_meta("tree_lightning_years"):
+				n += 1
+		if n > 0 and with < 0:
+			with = s
+			struck = n
+	_check(with >= 0 and struck == 2 and TreeGenerator.get_living_meshes(sps[with]).size() < sps[with].meshes.size(), "beech stand: %s carries %d struck variants, not counted living" % [sps[with].resource_name if with >= 0 else "none", struck])
+	if with < 0:
+		return
+	var f := _field(biome)
+	for k in 3:
+		await get_tree().process_frame
+	var count_struck := func(center: Vector3, radius: float) -> Array:
+		# The field's drawn instances (each multimesh draws one species mesh), struck ones by their mesh's meta.
+		var n_struck := 0
+		var n_all := 0
+		for c in f.find_children("*", "MultiMeshInstance3D", true, false):
+			if not (c is MultiMeshInstance3D) or c.multimesh == null or c.multimesh.mesh == null:
+				continue
+			var mm: MultiMesh = c.multimesh
+			var is_struck: bool = mm.mesh.has_meta("tree_lightning_years")
+			for k in mm.instance_count:
+				var o: Vector3 = (c.global_transform * mm.get_instance_transform(k)).origin
+				if Vector2(o.x - center.x, o.z - center.z).length() <= radius:
+					n_all += 1
+					if is_struck:
+						n_struck += 1
+		return [n_struck, n_all]
+	var before: Array = count_struck.call(Vector3(SIZE * 0.5, 0, SIZE * 0.5), SIZE)
+	var pl: PackedVector3Array = f.get_placements(with)
+	_check(before[1] > 0 and before[0] == 0 and pl.size() > 0, "no strike: %d trunks, %d struck" % [before[1], before[0]])
+	if pl.is_empty():
+		return
+	var at: Vector3 = pl[pl.size() / 2]
+	ws.add_strike(at + Vector3(0, 25, 0), 0.1)
+	f.populate()
+	for k in 3:
+		await get_tree().process_frame
+	var near: Array = count_struck.call(at, 0.5)
+	var all: Array = count_struck.call(Vector3(SIZE * 0.5, 0, SIZE * 0.5), SIZE)
+	_check(near[0] == 1 and all[0] >= 1 and all[0] <= 4, "a strike at %s: the tree there struck (%d), %d struck in the stand (neighbours within 3 m may share it)" % [str(at), near[0], all[0]])
+	ws.clear_strikes()
 
 func _lightning_check() -> void:
 	# A fresh strike (trees.md 5ax): bark slabs and splinters round a forest spruce's foot, none two years on; the

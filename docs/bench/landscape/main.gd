@@ -3595,6 +3595,10 @@ func _generated_forest(clearing: bool) -> Biome:
 		# WorldFire burn age). Off here unless asked: each is about the woodland's memory again, and an unburnt stand
 		# never shows them.
 		tg.fire_variants = args.get("fire-variants", "0") != "0"
+	if "lightning_variants" in tg:
+		# --strike-variants=1: tall species also carry their two struck variants (vegetation picks them under
+		# WorldStand strikes, trees.md 5ax). Off here unless asked, as the fire ones.
+		tg.lightning_variants = args.get("strike-variants", "0") != "0"
 	if "flood_height" in tg:
 		# --flood-height=M (--flood-years=Y): flood marks on the trees, a silt line and caught debris at M m (trees
 		# 591d3247); the floodplain willow stand takes 1.2 m by default.

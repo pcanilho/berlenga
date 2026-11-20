@@ -482,6 +482,9 @@ public:
 	static constexpr float STRIKE_RADIUS = 3.0f;
 	void add_strike(const Vector3 &p_position, float p_age_years);
 	float strike_age_at(const Vector3 &p_position) const;
+	// The recorded strikes whose reach (STRIKE_RADIUS) touches p_rect, as (x, z, age years): a copy for readers that
+	// place trees off the main thread (VegetationField3D). A script stub's _strike_age_at has no list to copy.
+	void get_strikes_in(const Rect2 &p_rect, LocalVector<Vector3> &r_out) const;
 	int get_strike_count() const { return int(strikes.size()); }
 	void clear_strikes();
 	// Browsing pressure (deer, docs/ideas/world-contracts.md): a disc over xz with a pressure 0..1 and the browse line
