@@ -2564,6 +2564,28 @@ canopy tree's crown. Hobi et al. 2015, gaps from satellite: 98% under 200 m2, fe
   The stand-grown beech stops changing shape past about 60 years (canopy and giants at the stand's shade came out
   identical), hence the light and the scale.
 
+### 5ao. Old trunks up close (20 Nov; Paulo's pick)
+
+Close on a veteran beech's foot (`--preset=1 --stand=forest --set=veteran:1 --set=years:160 --view=base`, seeds 2-4)
+the moss sleeve ended in a flat-topped block and the basal hollow was a lens with upright sides.
+- The shell measured the bark under it from the height map alone (`bark_disp`). It missed the macro relief, the root
+  collar's re-laid relief and the flare's pushes, so up to a centimetre of bark stood over a thin sleeve. Below the
+  root sweep the sleeve showed, above it it did not: a level cut at `root_top`. Bark and shell share one grid under a
+  shell, so the shell now reads the bark's own vertex (`under = n . (bark - shell base)`), falling back to the height
+  map when the grids differ.
+- The sleeve's top (Studlar 1982) hardly left 35 cm: value noise averages to its middle. Two octaves (3 and 6 per
+  metre round the stem), stretched back to their full range, plus stemflow streaks that carry the moss up a metre and
+  more in narrow channels (beech sends a fifth of a stand's rain down its stem, Neal et al. 1993). No feature narrower
+  than about four shell vertices (finer ones drew stairs).
+- The forced cover at the soil (roots' flanks) eases out over 6-28 cm with a ragged reach instead of stopping at 25 cm.
+  A root's bare back fades out up the flare and its flanks wander, so it no longer cuts a straight-sided band.
+- Rings every 2.5 cm over the lowest 1.6 m of standing stems of 20 cm and more that carry a shell (5 cm before): about
+  8k more vertices per giant at LOD0 only.
+- Basal hollow: a Gothic arch widest at the soil (Mattheck and Breloer 1994, basal cavity), its height counted only
+  over the centre, flanks tapering from the soil (`1 - 0.72 rise^1.5`); woundwood rolls thickest on the flanks, thin
+  over the crown and at the foot (Shigo 1985).
+- Frames: fork/trees/old-trunks/ (moss sleeve before/after, seeds 2-4; hollow before/after; raster vs PT crop).
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

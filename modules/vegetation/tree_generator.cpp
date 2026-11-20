@@ -6308,11 +6308,18 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 				// to the flare's edge plus its length).
 				const float t = CLAMP((r - foot_roots.trunk_r * 1.1f - foot_roots.width) / foot_roots.len[k], 0.0f, 1.0f);
 				const float lat = Math::abs(Math::angle_difference(az, foot_roots.az[k] + foot_roots.bend[k] * t * t)) * r;
-				const float on_root = 1.0f - Math::smoothstep(1.0f, 2.0f, lat / foot_roots.width);
+				// The root's flank is no ruled line: the moss's reach wanders in and out along it
+				// (a root's bare back drawn as a band with straight sides on a giant's flare read as
+				// a cut, trees.md 5ao).
+				const float wander = 0.6f * (moss_noise(p_pos * 6.0f, 0x6261726bu) - 0.5f);
+				const float on_root = 1.0f - Math::smoothstep(1.0f, 2.0f, lat / foot_roots.width + wander);
 				bare = MAX(bare, on_root * Math::smoothstep(0.0f, 0.2f, out / foot_roots.len[k]) * Math::smoothstep(-0.4f, 0.3f, p_normal.y));
 			}
 			// Patchy, not a clean line: moss creeps up the roots' sides in tongues.
 			bare *= Math::smoothstep(0.0f, 0.4f, patch + 0.3f * bare);
+			// A root's back runs into the stem's flare and its bareness with it: the band stopped
+			// level where the flare's reach ended.
+			bare *= 1.0f - Math::smoothstep(0.08f, 0.4f, h + 0.25f * (moss_noise(p_pos * 3.5f, 0x62617263u) - 0.5f));
 		}
 	}
 	if (!fallen && !fallen_branch) {
@@ -6320,7 +6327,17 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 		// bark wet all round, so the moss there is a near-continuous sleeve rather than patches,
 		// its upper edge wandering between about 15 and 60 cm and frayed into tongues; the
 		// patches only take over above it.
-		float edge = (0.15f + 0.45f * moss_noise(p_pos * Vector3(2.6f, 0.4f, 2.6f), 0x636f6c6cu + uint32_t(seed))) * CLAMP(p_amount * 1.5f, 0.35f, 1.0f);
+		// Value noise averages towards its middle: the edge hardly left 35 cm and ran level round
+		// a giant's foot. Stretched back over its full range, and stemflow tongues on top: the water
+		// running down a smooth bole gathers in channels (beech carries a fifth of a stand's rain
+		// down its stem, Neal et al. 1993), and the moss follows them up a metre and more in
+		// narrow streaks (Studlar 1982).
+		// (Features no narrower than about four of the shell's 2.5 cm vertices: finer, the edge
+		// jumped from one vertex to the next and ran in stairs.)
+		const float en0 = 0.65f * moss_noise(p_pos * Vector3(3.0f, 0.3f, 3.0f), 0x636f6c6cu + uint32_t(seed)) + 0.35f * moss_noise(p_pos * Vector3(6.0f, 0.6f, 6.0f), 0x636f6c6du + uint32_t(seed));
+		const float en = CLAMP((en0 - 0.5f) * 2.2f + 0.5f, 0.0f, 1.0f);
+		const float flow = Math::smoothstep(0.5f, 0.85f, moss_noise(p_pos * Vector3(7.0f, 0.5f, 7.0f), 0x666c6f77u + uint32_t(seed)));
+		float edge = (0.1f + 0.6f * en + 1.0f * flow * flow) * CLAMP(p_amount * 1.5f, 0.35f, 1.0f);
 		if (cut_height > 0.0f && cut_height <= 0.5f) {
 			// A coppice stool is cut every few years and stands in the open after each cut: the
 			// sleeve keeps to its foot, under the stubs and knuckles.
@@ -16765,12 +16782,19 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					continue;
 				}
 				float da = Math::angle_difference(f.azimuth, az) * r / f.half_w;
+				float ev = dh;
 				if (f.kind == VET_BASAL_HOLLOW) {
 					// A basal hollow opens as a pointed arch, widest at the soil, where the rot
-					// came up through the root collar.
-					da /= 1.0f - 0.45f * CLAMP(dh, 0.0f, 1.0f);
+					// came up through the root collar (Mattheck & Breloer 1994, the field guide's
+					// "basal cavity": a Gothic arch, flanks leaning in, its woundwood lips thickest
+					// at the sides). It narrowed below its centre too, a lens with upright sides
+					// (trees.md 5ao): now its height counts only over the centre, and it tapers all
+					// the way from the soil.
+					const float rise = CLAMP((h + 0.05f) / MAX(f.h + f.half_h, 0.05f), 0.0f, 1.0f);
+					da /= 1.0f - 0.72f * rise * Math::sqrt(rise);
+					ev = MAX(dh, 0.0f);
 				}
-				const float e = Math::sqrt(dh * dh + da * da);
+				const float e = Math::sqrt(ev * ev + da * da);
 				if (e > 1.4f) {
 					continue;
 				}
@@ -16812,7 +16836,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// The callus roll stands on the rim and curls in over it: centred just inside
 					// the opening, broad enough to read as a rounded lip, not a ridge line.
 					const float lip = (e - 0.97f) / 0.2f;
-					off += 0.16f * MIN(r, vet_r_stem) * Math::exp(-lip * lip);
+					// Woundwood rolls in from the flanks, where the cambium beside the wound keeps
+					// growing; over the arch's crown and at its foot it stays thin (Mattheck &
+					// Breloer 1994; Shigo 1985).
+					const float flank = f.kind == VET_BASAL_HOLLOW ? Math::abs(da) / MAX(e, 1e-3f) : 0.75f;
+					off += 0.16f * (0.55f + 0.6f * flank) * MIN(r, vet_r_stem) * Math::exp(-lip * lip);
 					w_any = 1.0f;
 				}
 			}
@@ -17680,9 +17708,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// LOD 0 and the path tracer: the same tube at about 2.5 cm around and 5 cm along,
 			// displaced by the bark's relief. Bark thickens with girth, so thin limbs carry a
 			// quarter of a mature trunk's furrow depth (Kratt et al. 2015, cambial growth).
+			// A big standing stem's moss sleeve: its ragged top and stemflow streaks run between
+			// rings, and 5 cm apart they came out as stairs (trees.md 5ao). Rings every 2.5 cm, as
+			// the sides, over the lowest 1.6 m.
+			const bool foot_fine = moss_shell && collar && r0 >= 0.2f;
 			auto make_rings = [&](float p_step, LocalVector<Vector3> &r_p, LocalVector<float> &r_r) {
 				for (int i = 0; i + 1 < int(pts.size()); i++) {
-					const int steps = MAX(1, int(Math::ceil(pts[i].distance_to(pts[i + 1]) / p_step)));
+					const float st = foot_fine && MIN(pts[i].y, pts[i + 1].y) - nodes[0].start.y < 1.6f ? MIN(p_step, 0.025f) : p_step;
+					const int steps = MAX(1, int(Math::ceil(pts[i].distance_to(pts[i + 1]) / st)));
 					for (int k = 0; k < steps; k++) {
 						const float t = float(k) / steps;
 						r_p.push_back(pts[i].lerp(pts[i + 1], t));
@@ -17824,6 +17857,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					}
 					rsides = piece == 1 ? CLAMP(int(Math::ceil(Math::TAU * rr[1] / 0.01f)), 12, 32) : CLAMP(int(Math::ceil(Math::TAU * rmax * (s == veteran_stem ? 1.3f / 0.013f : (head_chain ? 1.2f / 0.016f : 1.15f / 0.018f)))), 24, s == veteran_stem ? 256 : 128);
 				}
+				int shell_bark_z = -1, shell_bark_w = -1; // The bark part under the moss shell (same grid).
 				if (near_tube) {
 					// The bark's own grid. The moss shell reads the bark's displacement at its vertices,
 					// so under a shell the two share one grid; elsewhere a displaced tube takes rings as
@@ -17886,6 +17920,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					if (s == wound_stem) {
 						wound_apply(bark, part, true);
 					}
+					shell_bark_z = part.z;
+					shell_bark_w = part.w;
 				}
 				if (moss_shell) {
 					// The moss shell (section 5c): the same displaced tube, lifted by the moss's depth
@@ -17981,15 +18017,26 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						const float thick = Math::lerp(0.15f, 1.0f, Math::smoothstep(0.5f, 0.85f, raw[i]));
 						float fill = Math::lerp(floor_d, depth * thick * (0.6f + 0.8f * hummock), ramp * ramp * (3.0f - 2.0f * ramp));
 						// As the relief tube has it: faded out at a standing stem's soil line.
-						const float under = bark_disp(moss.uvs[v]) * ((fallen || fallen_branch) ? 1.0f : Math::smoothstep(-0.02f, 0.2f, moss.verts[v].y));
+						// Where the bark was built on this same grid (a shell always asks for it), the
+						// bark's own vertex says how far it stands out: the height map alone missed the
+						// macro relief, the root collar's re-laid relief and the flare's pushes, and on a
+						// giant's foot the bark stood up to a centimetre over a thin sleeve, which showed
+						// only below the root sweep, cut off level along it (trees.md 5ao).
+						float under = bark_disp(moss.uvs[v]) * ((fallen || fallen_branch) ? 1.0f : Math::smoothstep(-0.02f, 0.2f, moss.verts[v].y));
+						if (shell_bark_w == part.w && shell_bark_z >= 0) {
+							under = n.dot(bark.verts[shell_bark_z + i] - moss.verts[v]);
+						}
 						// Shown where the fill stands above the bark; wv carries the margin.
 						if (collar && raw[i] > 0.3f) {
 							// The foot sleeve covers the bark down to the soil: on the roots' flanks it
 							// broke into tongues with the bark between them standing in a crevice under
 							// the shell's free edge, black under the path tracer.
+							// Eased out with height, its reach ragged: a fixed 25 cm cut drew the sleeve's
+							// top as a level line on a giant's foot (trees.md 5ao).
 							const float hh = moss.verts[v].y - ground_y;
-							if (hh > -0.04f && hh < 0.25f) {
-								fill = MAX(fill, under + 0.004f);
+							const float k_low = 1.0f - Math::smoothstep(0.06f, 0.28f, hh + 0.12f * (moss_noise(moss.verts[v] * 11.0f, 0x6c6f7766u) - 0.5f));
+							if (hh > -0.04f && k_low > 0.0f) {
+								fill = MAX(fill, Math::lerp(fill, under + 0.004f, k_low));
 							}
 						}
 						wv[i] = fill - under;
