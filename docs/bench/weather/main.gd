@@ -48,6 +48,7 @@ extends Node3D
 #   --cloud-effector=x,y,z,R,S  clouds views: a density effector (S > 0 adds cloud, < 0 clears); repeatable
 #   --type=T          clouds views: cloud_type (0.05 stratus, 0.2 stratocumulus, 0.6 cumulus)
 #   --wind=W          clouds views: wind_speed at 10 m (m/s)
+#   --temp=C          clouds views: the air temperature (below about 1 C a storm's precipitation falls as snow)
 #   --storm=x,z,R,mm,out  clouds views: a storm (WeatherMap3D.add_storm, held), grown 15 min: its rain shafts under the
 #                     base and the shelf cloud on its gust front ahead of it (it moves with the wind, about 9 km in the 15 min); repeatable
 #   --wind-dir=x,z    clouds views: wind_direction (default 0.6,-0.8; 0,1 blows toward the camera)
@@ -94,6 +95,7 @@ var cloud_effectors_arg: Array = []
 var sun_energy := -1.0
 var type_arg := -1.0
 var wind_arg := -1.0
+var temp_arg := -999.0
 var shear_arg := -1.0
 var wave_clouds_off := false
 var half_usec := 0
@@ -168,6 +170,7 @@ func _ready() -> void:
 		elif a == "--no-wave-clouds": wave_clouds_off = true
 		elif a.begins_with("--type="): type_arg = float(a.substr(7))
 		elif a.begins_with("--wind="): wind_arg = float(a.substr(7))
+		elif a.begins_with("--temp="): temp_arg = float(a.substr(7))
 		elif a.begins_with("--shear-aloft="): shear_arg = float(a.substr(14))
 		elif a.begins_with("--haze-km="): haze_km = float(a.substr(10))
 		elif a == "--test": test = true
@@ -1254,6 +1257,8 @@ func _build_clouds() -> void:
 	weather.cloud_variation = 0.3
 	if type_arg >= 0.0:
 		weather.cloud_type = type_arg
+	if temp_arg > -999.0:
+		weather.temperature = temp_arg
 	if wind_arg >= 0.0:
 		weather.wind_speed = wind_arg
 	if shear_arg >= 0.0:

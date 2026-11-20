@@ -561,3 +561,17 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
   patches about 6 km across.
 - Rain shaft: lit at two fifths of the open sky's light under the shield, so it stands as a dark curtain.
 - Raster and PT match (640).
+
+## Storm review 5 and snow shafts (20 Nov 2026)
+
+- Shelf: tapers in height toward both ends of its arc (the leading front, about 30 degrees each side) and rises
+  from a low leading edge back to the tower's base; its face in tiers (bands a quarter of its height, lighter and
+  denser) over a smooth underside, lightly eroded (laminar). The flat slab across the whole base is gone.
+- Mammatus: bell-shaped pouches ((1 - r^2)^1.5) that curve out of the sheet, at the sheet's density, instead of
+  hemispheres with a hard rim at a higher density (read as dark craters from the side).
+- Snow shafts: each storm's snow share is the weather's own rain/snow split (`get_rain_share_at` under it,
+  `State.storm_snow`, `cloud_storm_snow`). Snow's extinction follows SnowFall3D.snowfall_extinction (about 2 km of
+  visibility at 1 mm/h of water, 200 m at 3 mm/h; fitted 0.00196 r^2.1, capped at 5 mm/h); flakes fall at about
+  1 m/s, so the shaft trails seven times further downwind than rain; its veils are softer. Nimbostratus while it
+  snows was already the case (the regime reads the total precipitation). Bench `--temp=C`.
+- Raster and PT match (640).
