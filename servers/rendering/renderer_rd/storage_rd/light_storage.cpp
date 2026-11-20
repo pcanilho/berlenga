@@ -432,10 +432,12 @@ void LightStorage::light_directional_set_sky_mode(RID p_light, RSE::LightDirecti
 	light->directional_sky_mode = p_mode;
 }
 
-void LightStorage::directional_volume_shadow_set(RID p_light, RID p_texture, const Transform3D &p_world_to_shadow) {
+void LightStorage::directional_volume_shadow_set(RID p_light, RID p_texture, const Transform3D &p_world_to_shadow, float p_albedo, float p_anisotropy) {
 	volume_shadow.light = p_light;
 	volume_shadow.texture = p_texture;
 	volume_shadow.world_to_shadow = p_world_to_shadow;
+	volume_shadow.albedo = CLAMP(p_albedo, 0.0f, 1.0f);
+	volume_shadow.anisotropy = CLAMP(p_anisotropy, -0.95f, 0.95f);
 	volume_shadow.frame = RSG::rasterizer->get_frame_number();
 }
 
@@ -932,6 +934,9 @@ void LightStorage::update_light_buffers(RenderDataRD *p_render_data, const Paged
 					light_data.volume_shadow_v[k] = 0.0;
 					light_data.volume_shadow_w[k] = 0.0;
 				}
+				// pad: the volume shadow's medium albedo and anisotropy (float bits).
+				light_data.pad[0] = 0;
+				light_data.pad[1] = 0;
 				if (volume_shadow.texture.is_valid() && volume_shadow.light == light_instance->light && RSG::rasterizer->get_frame_number() - volume_shadow.frame <= 2) {
 					const Transform3D view_to_shadow = volume_shadow.world_to_shadow * p_camera_transform;
 					float *rows[3] = { light_data.volume_shadow_u, light_data.volume_shadow_v, light_data.volume_shadow_w };
@@ -941,6 +946,8 @@ void LightStorage::update_light_buffers(RenderDataRD *p_render_data, const Paged
 						rows[r][2] = view_to_shadow.basis.rows[r].z;
 						rows[r][3] = view_to_shadow.origin[r];
 					}
+					memcpy(&light_data.pad[0], &volume_shadow.albedo, sizeof(float));
+					memcpy(&light_data.pad[1], &volume_shadow.anisotropy, sizeof(float));
 				}
 
 				if (light_data.shadow_opacity > 0.001) {
