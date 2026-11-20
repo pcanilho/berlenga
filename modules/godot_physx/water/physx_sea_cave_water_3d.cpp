@@ -38,6 +38,7 @@
 #include "core/object/class_db.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/resources/material.h"
+#include "servers/rendering/rendering_server.h"
 
 void PhysXSeaCaveWater3D::set_cave_network(const NodePath &p_path) {
 	cave_network = p_path;
@@ -184,10 +185,15 @@ void PhysXSeaCaveWater3D::_update(double p_delta, bool p_mesh) {
 		PackedFloat32Array dp = w.get("depths", PackedFloat32Array());
 		PackedFloat32Array al = w.get("along", PackedFloat32Array());
 		const float covered = w.get("covered_from", 0.0f);
-		if (p_mesh) {
+		auto drop_surface = [&r]() {
 			r.mesh->clear_surfaces();
-		}
+			r.vertex_count = -1;
+			r.index_count = -1;
+		};
 		if (pts.size() < 2 || hw.size() != pts.size() || fl.size() != pts.size() || dp.size() != pts.size()) {
+			if (p_mesh) {
+				drop_surface();
+			}
 			continue;
 		}
 		if (al.size() != pts.size()) {
@@ -203,6 +209,9 @@ void PhysXSeaCaveWater3D::_update(double p_delta, bool p_mesh) {
 		const float end = al[al.size() - 1];
 		const float length = end - start;
 		if (length < 0.5f) {
+			if (p_mesh) {
+				drop_surface();
+			}
 			continue;
 		}
 		// The stations' values at an arc length (linear between them).
@@ -425,10 +434,10 @@ void PhysXSeaCaveWater3D::_update(double p_delta, bool p_mesh) {
 				}
 			}
 		}
+		// Every quad, wet or dry (dry rows sit under the floor): the layout then holds from frame to frame, and the
+		// surface is updated in place rather than made anew (a new surface each frame also made the path tracer a
+		// new acceleration structure each frame, which its memory did not keep up with).
 		for (int a = 0; a < rows_n - 1; a++) {
-			if (row_at[a].depth <= 0.01f && row_at[a + 1].depth <= 0.01f) {
-				continue;
-			}
 			for (int l = 0; l < nl - 1; l++) {
 				const int i0 = a * nl + l;
 				const int i1 = i0 + 1;
@@ -444,9 +453,6 @@ void PhysXSeaCaveWater3D::_update(double p_delta, bool p_mesh) {
 				idx.push_back(i3);
 			}
 		}
-		if (idx.is_empty()) {
-			continue;
-		}
 		Array arrays;
 		arrays.resize(Mesh::ARRAY_MAX);
 		arrays[Mesh::ARRAY_VERTEX] = verts;
@@ -455,9 +461,23 @@ void PhysXSeaCaveWater3D::_update(double p_delta, bool p_mesh) {
 		arrays[Mesh::ARRAY_TEX_UV] = uv;
 		arrays[Mesh::ARRAY_TEX_UV2] = uv2;
 		arrays[Mesh::ARRAY_INDEX] = idx;
-		r.mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
-		r.mesh->surface_set_material(0, material);
-		r.instance->set_custom_aabb(box.grow(1.0f));
+		bool updated = false;
+		if (r.mesh->get_surface_count() == 1 && r.vertex_count == verts.size() && r.index_count == idx.size()) {
+			RenderingServerTypes::SurfaceData sd;
+			if (RS::get_singleton()->mesh_create_surface_data_from_arrays(&sd, RSE::PRIMITIVE_TRIANGLES, arrays) == OK) {
+				RS::get_singleton()->mesh_surface_update_vertex_region(r.mesh->get_rid(), 0, 0, sd.vertex_data);
+				RS::get_singleton()->mesh_surface_update_attribute_region(r.mesh->get_rid(), 0, 0, sd.attribute_data);
+				updated = true;
+			}
+		}
+		if (!updated) {
+			drop_surface();
+			r.mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+			r.mesh->surface_set_material(0, material);
+			r.vertex_count = verts.size();
+			r.index_count = idx.size();
+		}
+		r.instance->set_custom_aabb(box.grow(1.5f));
 	}
 }
 

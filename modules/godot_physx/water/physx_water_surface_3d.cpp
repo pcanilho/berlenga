@@ -341,9 +341,10 @@ uniform float shore_wave_activity : hint_range(0.0, 1.0) = 1.0;
 // flat there instead of round: the arch, where the open sea goes on) and the other surface's weight at a and at
 // b, over which the two cross-fade by a dither (water_fade_noise). Filled from the "water_clippers" group by
 // PhysXWaterSurface3D.
+// The capsules are a 32 x 2 texture (row 0 the axes, row 1 the radii and weights): the path tracer's materials take
+// textures but not uniform arrays.
 uniform int water_clip_count = 0;
-uniform vec4 water_clip_seg[32];
-uniform vec4 water_clip_radius[32];
+uniform sampler2D water_clip_tex : filter_nearest, repeat_disable;
 
 varying vec3 v_world_normal;
 varying float v_foam;
@@ -1735,10 +1736,11 @@ void vertex() {
 float water_clip_weight(vec2 p) {
 	float w = 0.0;
 	for (int i = 0; i < water_clip_count; i++) {
-		vec4 sg = water_clip_seg[i];
+		float cu = (float(i) + 0.5) / 32.0;
+		vec4 sg = texture(water_clip_tex, vec2(cu, 0.25));
 		vec2 ab = sg.zw - sg.xy;
 		float t = dot(p - sg.xy, ab) / max(dot(ab, ab), 1e-6);
-		vec4 r = water_clip_radius[i];
+		vec4 r = texture(water_clip_tex, vec2(cu, 0.75));
 		if (r.x < 0.0 && t < 0.0) {
 			continue;
 		}
@@ -2550,6 +2552,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_caustics_sun_direction"), &PhysXWaterSurface3D::get_caustics_sun_direction);
 	ClassDB::bind_method(D_METHOD("set_caustics_reference_depth", "depth"), &PhysXWaterSurface3D::set_caustics_reference_depth);
 	ClassDB::bind_method(D_METHOD("get_caustics_reference_depth"), &PhysXWaterSurface3D::get_caustics_reference_depth);
+	ClassDB::bind_method(D_METHOD("set_foam_shade", "shade"), &PhysXWaterSurface3D::set_foam_shade);
+	ClassDB::bind_method(D_METHOD("get_foam_shade"), &PhysXWaterSurface3D::get_foam_shade);
 	ClassDB::bind_method(D_METHOD("get_caustics_texture"), &PhysXWaterSurface3D::get_caustics_texture);
 	ClassDB::bind_method(D_METHOD("get_caustics_light_right"), &PhysXWaterSurface3D::get_caustics_light_right);
 	ClassDB::bind_method(D_METHOD("get_caustics_light_up"), &PhysXWaterSurface3D::get_caustics_light_up);
@@ -2690,6 +2694,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "caustics_enabled"), "set_caustics_enabled", "get_caustics_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "caustics_sun_direction"), "set_caustics_sun_direction", "get_caustics_sun_direction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "caustics_reference_depth", PROPERTY_HINT_RANGE, "0.1,50,0.1,or_greater"), "set_caustics_reference_depth", "get_caustics_reference_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_shade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_foam_shade", "get_foam_shade");
 }
 
 void PhysXWaterSurface3D::set_step_mode(StepMode p_mode) {
@@ -4280,10 +4285,11 @@ namespace {
 // leading edge 0 to the root 1); COLOR = (age / life, seed, span / 8 m, 1).
 const char *CREST_SHEET_SHADER_SRC = R"(
 shader_type spatial;
+// It casts no shadow (the instance's setting) but takes the sun's: a sheet under a cloud or in a cliff's shadow is dark.
 #if defined(RT)
-render_mode cull_disabled, shadows_disabled;
+render_mode cull_disabled;
 #else
-render_mode blend_mix, cull_disabled, depth_draw_never, shadows_disabled;
+render_mode blend_mix, cull_disabled, depth_draw_never;
 #endif
 uniform vec3 sheet_color : source_color = vec3(0.9, 0.93, 0.95);
 uniform vec3 water_tint : source_color = vec3(0.55, 0.72, 0.74);
@@ -6783,17 +6789,20 @@ void PhysXWaterSurface3D::_update_water_clips(double p_delta) {
 	};
 	clips.sort_custom<ClipNearer>();
 	const int shown = MIN(int(clips.size()), 32);
-	PackedVector4Array segs;
-	PackedVector4Array radii;
-	segs.resize(32);
-	radii.resize(32);
+	Ref<Image> img = Image::create_empty(32, 2, false, Image::FORMAT_RGBAF);
 	for (int i = 0; i < shown; i++) {
-		segs.write[i] = clips[i].seg;
-		radii.write[i] = clips[i].radius;
+		const Vector4 &a = clips[i].seg;
+		const Vector4 &b = clips[i].radius;
+		img->set_pixel(i, 0, Color(a.x, a.y, a.z, a.w));
+		img->set_pixel(i, 1, Color(b.x, b.y, b.z, b.w));
+	}
+	if (water_clip_texture.is_null()) {
+		water_clip_texture = ImageTexture::create_from_image(img);
+	} else {
+		water_clip_texture->update(img);
 	}
 	water_material->set_shader_parameter(SNAME("water_clip_count"), shown);
-	water_material->set_shader_parameter(SNAME("water_clip_seg"), segs);
-	water_material->set_shader_parameter(SNAME("water_clip_radius"), radii);
+	water_material->set_shader_parameter(SNAME("water_clip_tex"), water_clip_texture);
 }
 
 void PhysXWaterSurface3D::_rebuild() {
@@ -7212,6 +7221,7 @@ void PhysXWaterSurface3D::_after_step() {
 		// The scene's sun when there is one up (the light the water is drawn with), else caustics_sun_direction.
 		const Vector3 sun_travel = water_light_sun_travel.is_zero_approx() ? caustics_sun_direction : water_light_sun_travel;
 		const Vector3 origin(grid_center.x, get_global_position().y, grid_center.y);
+		solver.set_caustics_foam_shade(foam_shade);
 		solver.render_caustics(origin, sun_travel, caustics_reference_depth, 1.333f, _open_beyond());
 		if (water_material.is_valid() && caustics_texture.is_valid()) {
 			water_material->set_shader_parameter("caustics_on", true);

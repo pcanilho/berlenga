@@ -409,6 +409,8 @@ public:
 	Vector3 get_caustics_sun_direction() const { return caustics_sun_direction; }
 	void set_caustics_reference_depth(float p_depth);
 	float get_caustics_reference_depth() const { return caustics_reference_depth; }
+	void set_foam_shade(float p_shade) { foam_shade = CLAMP(p_shade, 0.0f, 1.0f); }
+	float get_foam_shade() const { return foam_shade; }
 	// The resulting texture -- assign it to a floor material's albedo/
 	// emission using get_caustics_light_right(), get_caustics_light_up(),
 	// get_caustics_origin(), and get_caustics_half_extent() as projection
@@ -908,10 +910,12 @@ private:
 	// Water clip capsules from the "water_clippers" group (each has get_water_clip_capsules()), polled.
 	double water_clip_poll = 0.0;
 	PackedFloat32Array water_clip_last;
+	Ref<ImageTexture> water_clip_texture; // 32 x 2 RGBA float: the capsules (see the shader's water_clip_tex)
 	void _update_water_clips(double p_delta);
 	bool caustics_enabled = true; // a draw pass every frame (the desktop measures and trims it)
 	Vector3 caustics_sun_direction = Vector3(-0.35f, -1.0f, -0.25f);
 	float caustics_reference_depth = 2.5f;
+	float foam_shade = 0.8f; // of the sun a full foam cover stops on its way to the bed (the caustics map)
 
 	Vector<float> cached_ripple_height;
 	int cached_ripple_n = 0;

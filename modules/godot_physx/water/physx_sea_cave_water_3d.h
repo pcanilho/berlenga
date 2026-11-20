@@ -72,6 +72,7 @@ class PhysXSeaCaveWater3D : public Node3D {
 		MeshInstance3D *instance = nullptr;
 		Ref<ArrayMesh> mesh;
 		int cells = 0; // along; WAVELET_ACROSS across, WAVELET_DIRS directions each
+		int vertex_count = -1, index_count = -1; // the surface's, while its layout holds (updated in place)
 		LocalVector<float> amp, amp_next;
 	};
 	LocalVector<Ribbon> ribbons;

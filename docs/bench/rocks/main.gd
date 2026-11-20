@@ -12,6 +12,7 @@ extends Node3D
 #   --clouds[=C]          the weather sky (clouds of cover C, atmosphere) instead of the plain gradient
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
+#   --world-size=m        with --world: its side (2048); smaller for path traced stills in less memory
 #   --world               a generated 2 km world (range, strata, glaciers, scree, rivers, a lake, the sea) with a
 #                         RockField3D over it; --view=rockfall|scree|glacial|river|shore|cliff|tor|coast|landform puts the camera at the
 #                         densest place of that layer (default scree)
@@ -90,7 +91,7 @@ class SwellStub extends WorldWater:
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
 const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth"]
 const LAYERS := ["rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast", "landform"]
-const WORLD := 2048.0
+var WORLD := 2048.0 # --world-size=m (a smaller world for path traced stills that would not fit the memory)
 
 var args := {}
 var raster := false
@@ -113,6 +114,7 @@ func _ready() -> void:
 			var kv := a.substr(2).split("=", true, 1)
 			args[kv[0]] = kv[1] if kv.size() > 1 else "1"
 	raster = args.has("raster")
+	WORLD = float(args.get("world-size", "2048"))
 	spp = int(args.get("spp", "16"))
 	out = args.get("out", "")
 	if args.has("no-lod"):
@@ -374,7 +376,7 @@ func _world() -> void:
 	for y in 64:
 		var z := -WORLD * 0.5 + (y + 0.5) / 64.0 * WORLD
 		for x in 64:
-			up.set_pixel(x, y, Color(0.12 + 0.88 * (1.0 - smoothstep(-500.0, 500.0, z)), 0, 0))
+			up.set_pixel(x, y, Color(0.12 + 0.88 * (1.0 - smoothstep(-500.0 * WORLD / 2048.0, 500.0 * WORLD / 2048.0, z)), 0, 0))
 	gen.uplift_map = ImageTexture.create_from_image(up)
 	gen.outlet_edges = 0
 	gen.ocean_edges = TerrainGenerator3D.OUTLET_POSITIVE_Z
