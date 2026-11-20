@@ -102,7 +102,8 @@ class BodySnowStub extends WorldSnow:
 #   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
 #                     [--wind=S: a steady wind along the eave by day, the tips lean; --dense: a week of melt with
 #                     sites 5 cm apart, rippled icicles bridged into curtains] [--no-core: clear ice only]
-#                     [--hero: a boarded wall behind, 1.7 m off a fused pair, root to tip; pass --resolution 1920x1080]
+#                     [--hero: from under the roof 1.7 m back, looking out at the snow past a fused pair, root to
+#                     tip (--wall: from outside against a boarded front); pass --resolution 1920x1080]
 #   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
 #   --settled         (trail view) 0.4 m of settled snow (300 kg/m3) instead of fresh: prints break clumps
 #   --no-clumps       (trail view) no snow clumps beside the prints
@@ -2274,6 +2275,9 @@ func _build_view() -> void:
 			await _setup("avalanche", 256.0, 128, -8.0)
 	elif view == "windblown":
 		await _setup("ridge", 512.0, 256, -8.0)
+	elif view == "icicles" and OS.get_cmdline_user_args().has("--hero") and not OS.get_cmdline_user_args().has("--wall"):
+		# --hero looks out from under the roof: snow out to 64 m, past where the view meets the horizon haze.
+		await _setup("flat", 128.0, 256, -6.0)
 	elif view == "shelter" or view == "icicles":
 		await _setup("flat", 32.0, 128, -6.0)
 	else:
@@ -2735,8 +2739,8 @@ func _build_icicles(cam: Camera3D) -> void:
 		post.material_override = wood
 		add_child(post)
 	var hero := OS.get_cmdline_user_args().has("--hero")
-	if hero:
-		# --hero: the shed's front wall, set back under the eave as a house wall is: vertical boards 14 cm wide
+	if hero and OS.get_cmdline_user_args().has("--wall"):
+		# --hero --wall: the shed's front wall, set back under the eave as a house wall is: vertical boards 14 cm wide
 		# with 1 cm gaps, each its own weathered tone, so the ice has a lit, lined ground to refract.
 		var backing := MeshInstance3D.new()
 		backing.mesh = BoxMesh.new()
@@ -2792,14 +2796,27 @@ func _build_icicles(cam: Camera3D) -> void:
 	for k in ice.get_icicle_count():
 		rmax = maxf(rmax, ice.get_icicle_radius(k))
 	print("icicles: %d sites, longest %.2f m, thickest %.1f cm across, %.2f kg of ice" % [ice.get_icicle_count(), ice.get_longest(), rmax * 200.0, ice.get_ice_mass()])
+	var n_long := 0
+	var n_stub := 0
+	var n_bare := 0
+	for k in ice.get_icicle_count():
+		var l := ice.get_icicle_length(k)
+		if l >= 0.25:
+			n_long += 1
+		elif l <= 0.0:
+			n_bare += 1
+		elif l < 0.08:
+			n_stub += 1
+	print("icicles: %d long (25 cm or more), %d stubs (under 8 cm), %d bare" % [n_long, n_stub, n_bare])
 	# At the icicles' height along the eave, the sky and the field behind them.
 	cam.position = Vector3(-0.2, 2.05, 1.1)
 	cam.look_at(Vector3(-2.2, 2.1, 0.17))
 	cam.fov = 50.0
 	if hero:
-		# Head on from 1.7 m, a little below their middle so the roots show under the eave: a run of icicles
-		# root to tip against the boards,
-		# the longest fused pair (neighbours bridged at the root) in the middle. Shoot with --resolution 1920x1080.
+		# From under the roof, 1.7 m back from the eave and a little above the icicles' middle, looking out
+		# at the snow: a run of them root to tip, backlit by the low sun, the longest fused pair (neighbours
+		# bridged at the root) in the middle. Shoot with --resolution 1920x1080. (--wall: from outside, head on,
+		# against the shed's boarded front.)
 		var best := -1
 		var best_len := 0.0
 		for k in ice.get_icicle_count() - 1:
@@ -2817,7 +2834,10 @@ func _build_icicles(cam: Camera3D) -> void:
 			mid = (ice.get_icicle_position(best) + ice.get_icicle_position(best + 1)) * 0.5
 			mid.y -= 0.5 * maxf(ice.get_icicle_length(best), ice.get_icicle_length(best + 1))
 			print("hero pair %d/%d at x %.2f, %.2f m" % [best, best + 1, mid.x, best_len])
-		cam.position = mid + Vector3(0.45, -0.08, 1.62)
+		if OS.get_cmdline_user_args().has("--wall"):
+			cam.position = mid + Vector3(0.45, -0.08, 1.62)
+		else:
+			cam.position = mid + Vector3(-0.4, 0.4, -1.55) # under the roof, 2.45 m up
 		cam.look_at(mid)
 		cam.fov = 26.0
 	elif OS.get_cmdline_user_args().has("--close"):
