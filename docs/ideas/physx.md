@@ -2237,6 +2237,23 @@ against PT 1.28 (was 1.08). Snow's powder (one-run pair, same gas): mean grey 16
 blue-white over the snow. PT's plain snow is 4% brighter than raster's,
 so about half of the rest is the scene, not the gas.
 
+### Raster powder: no dark seam where the gas meets the snow (20 Nov)
+
+Docs saw a faint dark seam along the powder's lower edge. Two causes:
+- The ground light under the gas (the snow lit by the sun, in the gas's
+  shadow) was taken at the Flow box's floor. On a slope that floor lies
+  under the snow, where the line to the sun crosses the whole cloud, so
+  the gas darkened toward its base (170 -> 147 over its last rows). It
+  is now also taken at the bottom of the gas column under the point,
+  found by bisection in the sky's shadow map, and the better lit of the
+  two is used (the ground lies at or below both; for gas floating over
+  flat ground the box floor is right, for gas lying on a slope the gas
+  bottom). Test puffs unchanged to the pixel.
+- A 1-2 pixel line where Flow's own march drew gas but the scatter march,
+  ending at the snow a step earlier, found none, so the sliver showed
+  Flow's unlit colour. The upsample now fills such pixels with their
+  neighbours' light (a hole fill, 5x5 texels).
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
