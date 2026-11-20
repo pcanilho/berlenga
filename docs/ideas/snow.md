@@ -1545,6 +1545,20 @@ weight gives tan(lean) = 3 rho_air Cd U^2 / (8 rho_w r g), about 0.01 U^2, and t
   3 mm across (scaled with the profile it widened into a white wedge at thick roots).
 - Bench: `--test=icicles` adds plumb in still air (steepest 0.078), 27 degrees in a 5 m/s wind, tips dripping
   while they grow; `--view=icicles --wind=4` leans them, `--dense` (a week of melt, 5 cm sites) shows ripples and curtains.
+- **Drip points** (docs: evenly spaced, same shape, same length read as repetition): melt drains through the
+  pack in flow fingers and down the roof in rivulets (Waldner, Schneebeli et al. 2004; Marsh and Woo 1984) that
+  reach the eave at drip points; icicles grow from each one's water flux (Makkonen 1988). Drip points are now a
+  Poisson scatter (mean 0.4 m), each with a lognormal flow wetting about 3 cm either side, and wet and dry spells
+  (smooth noise, a knot every 8 h of melt): rivulets wander as the pack changes. 60% of sites between them stay
+  dry, the rest get a thin film and grow stubs whose wall freezes it all. Dense week: 30 long, 25 stubs, 21 bare
+  of 97 sites, in clusters. Each taper scatters within 3/4 +- 0.08 (Chen and Morris 2013).
+- **Core in raster**: the PT's wide bright streaks are right. The clear ice is a cylindrical lens: a ray entering
+  at b passes the axis at R sin(asin(b/R) - asin(b/(nR))), so a thin core shows n/(n-1) = 4.2 times its width.
+  Raster's transmission reads almost straight through the middle, so the core's vertex() widens it to that
+  apparent width outside the path tracer and shadow maps (the hair strands' IN_PATH_TRACER pattern).
+- **Raster transmission on solids**: the read takes the mip of the refracted footprint (UV derivatives), so thin
+  curved ice no longer speckles or dashes; panes and open water identical (materials bench).
+- `--hero`: from under the roof 1.7 m back looking out (snow to 64 m); `--hero --wall` head on against boards.
 
 ## Follow-up 38: a broken crust as plates (20 Nov 2026)
 
