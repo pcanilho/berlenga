@@ -48,8 +48,9 @@ void initialize_rocks_module(ModuleInitializationLevel p_level) {
 	// The rock shader's ground blend reads the generator's geology map: declared so it compiles before a
 	// TerrainGenerator3D publishes it (rect width 0 = none), whichever module registers first.
 	// The contact map the terrain material reads (ground_contact), likewise.
-	const char *globals[4][2] = { { "terrain_geology_map", "sampler2D" }, { "terrain_geology_rect", "vec4" }, { "rock_contact_map", "sampler2D" }, { "rock_contact_rect", "vec4" } };
-	for (int i = 0; i < 4; i++) {
+	// And the far cover map (RockField3D far tier: the stones' plan cover and colour to 4 km).
+	const char *globals[6][2] = { { "terrain_geology_map", "sampler2D" }, { "terrain_geology_rect", "vec4" }, { "rock_contact_map", "sampler2D" }, { "rock_contact_rect", "vec4" }, { "rock_far_cover_map", "sampler2D" }, { "rock_far_cover_rect", "vec4" } };
+	for (int i = 0; i < 6; i++) {
 		const String setting = String("shader_globals/") + globals[i][0];
 		if (ProjectSettings::get_singleton()->has_setting(setting)) {
 			continue;

@@ -1577,10 +1577,13 @@
     "river_",
     "shore_",
     "cliff_",
-    "layer_enabled"
+    "layer_enabled",
+    "far_thinning",
+    "far_radius",
+    "far_min_size"
    ],
    "note": "",
-   "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it.",
+   "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it; past the near field, only the larger rocks carry on out to the horizon.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"

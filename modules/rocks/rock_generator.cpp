@@ -1450,7 +1450,10 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						// slot a few metres deep at the face, running down a few beds and dying out, each joint its own.
 						{
 							const float vb = v;
-							const float jc[2] = { jt_dir1.dot(p) / jt_s1 + 0.08f * (rk_noise(p * 0.7f, nseed + 105u) - 0.5f), jt_dir2.dot(p) / jt_s2 + 0.08f * (rk_noise(p * 0.7f, nseed + 106u) - 0.5f) };
+							// (Joint spacing is not even: the line's own coordinate is warped, so the slots stand at uneven spacings
+							// instead of organ pipes; the warp is gentle enough to keep the order.)
+							const float ju1 = jt_dir1.dot(p) / jt_s1, ju2 = jt_dir2.dot(p) / jt_s2;
+							const float jc[2] = { ju1 + 0.6f * (rk_noise(Vector3(ju1 * 0.45f, 3.1f, 0.0f), nseed + 135u) - 0.5f) + 0.08f * (rk_noise(p * 0.7f, nseed + 105u) - 0.5f), ju2 + 0.6f * (rk_noise(Vector3(ju2 * 0.45f, 8.7f, 0.0f), nseed + 136u) - 0.5f) + 0.08f * (rk_noise(p * 0.7f, nseed + 106u) - 0.5f) };
 							const float js[2] = { jt_s1, jt_s2 };
 							for (int s = 0; s < 2; s++) {
 								const float line = Math::round(jc[s]);
@@ -3271,7 +3274,7 @@ void fragment() {
 	// slivers on a grey cliff. Only the stone's own light and dark is kept.
 	if (cliff_match) {
 		const vec3 lw = vec3(0.2126, 0.7152, 0.0722);
-		col = ground_rock * clamp(dot(col, lw) / max(dot(base_color, lw), 1e-3), 0.6, 1.3);
+		col = ground_rock * clamp(dot(col, lw) / max(dot(base_color, lw), 1e-3), 0.6, instance_tint > 0.0 ? 1.0 : 1.3); // (a hoodoo never paler than its slope)
 	}
 	// Cleavage faces (a third of the feldspars) and glassy quartz are near mirrors, each at its own facet tilt: under a
 	// low sun a few of them flash (cleavage glints, the crystal-scale case of a discrete microfacet glint model).

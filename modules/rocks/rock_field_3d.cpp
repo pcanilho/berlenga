@@ -43,6 +43,7 @@
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
+#include "core/templates/hash_set.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/multimesh_instance_3d.h"
@@ -345,6 +346,7 @@ struct Deposit {
 static thread_local TerrainGenerator3D *rf_job_generator = nullptr;
 // The coarse cell a worker is placing: shape libraries are looked up under library_lock, missing ones noted.
 static thread_local void *rf_coarse_job = nullptr;
+static thread_local bool rf_far = false; // _far_place: only the stones the far tier keeps need placing
 
 TerrainGenerator3D *RockField3D::_get_generator() const {
 	if (rf_job_generator) {
@@ -433,6 +435,7 @@ RockField3D::LibraryBuild *RockField3D::_start_libraries(const LocalVector<uint3
 			j.detail = float(detail);
 			if (j.family == RockGenerator::FAMILY_COBBLE) {
 				j.transport = RockGenerator::get_lithology(j.type).abrasion_length * cobble_bins[CLAMP(key_bin(k), 0, 2)];
+				j.seed += 131 * key_bin(k); // each bin its own shapes, not the same stones worn more
 			} else if (j.family == RockGenerator::FAMILY_PEBBLE && key_bin(k) < RF_DETAIL_BIN) {
 				// Shingle bins: from little-worn to long-worn (1.5 to 6 abrasion lengths), each with its own shapes.
 				static const float pebble_bins[4] = { 1.5f, 2.5f, 4.0f, 6.0f };
@@ -805,9 +808,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 	// chips of 4 to 15% of its size, a power law, in a ring just outside its footprint.
 	auto skirt = [&](const Stone &p_big, RockGenerator::RockType p_type, float p_share) {
 		const float b = 2.0f * p_big.scale;
-		if (b < 0.8f) {
+		if (b < 0.8f || rf_far) {
 			return;
 		}
+		// Its own randoms (from the block's place), so the stones after it come out the same with or without it.
+		const Vector3i bq = Vector3i((p_big.position * 10.0f).floor());
+		RandomPCG rng(rf_hash3(bq.x, bq.y, bq.z, p_seed ^ 0x5c1u));
+		auto pick_variant = [&](const Library *p_lib) { return uint16_t(rng.rand() % p_lib->meshes.size()); };
 		const uint32_t key = _library_key(p_type, RockGenerator::FAMILY_SCREE, 0);
 		Library *lib = _ensure_library(key);
 		if (!lib) {
@@ -832,7 +839,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			st.library = key;
 			st.variant = pick_variant(lib);
 			st.scale = d * 0.5f;
-			_rest(gen, st, *lib, p, rng.randf() * Math::TAU, 0.2 + 0.2 * rng.randf(), Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f), Math::deg_to_rad(25.0f) * rng.randf(), 0.8);
+			_rest(gen, st, *lib, p, rng.randf() * Math::TAU, 0.15 + 0.15 * rng.randf(), Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f), Math::deg_to_rad(25.0f) * rng.randf(), 0.8);
 			r_stones.push_back(st);
 		}
 	};
@@ -851,10 +858,15 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				st.library = _library_key(rock_type, RockGenerator::FAMILY_ROCKFALL, 0);
 				st.variant = pick_variant(lib);
 				st.scale = float(b.w) * 0.9f;
-				if (2.0f * st.scale < min_size) {
+				// (Drawn before the size test, so a far block's big stones lie as their cell's do.)
+				const real_t yaw = rng.randf() * Math::TAU, sink = 0.15 + 0.15 * rng.randf();
+				const float tx = rng.randf() - 0.5f, tz = rng.randf() - 0.5f;
+				const real_t tilt = Math::deg_to_rad(12.0f) * rng.randf();
+				if (2.0f * st.scale < (rf_far ? MAX(min_size, 0.6 * far_min_size) : min_size)) {
 					continue;
 				}
-				_rest(gen, st, *lib, Vector3(b.x, 0, b.z), rng.randf() * Math::TAU, 0.15 + 0.15 * rng.randf(), Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f), Math::deg_to_rad(12.0f) * rng.randf(), 0.5);
+				// (A small fragment lies on the talus more than in it.)
+				_rest(gen, st, *lib, Vector3(b.x, 0, b.z), yaw, sink * MIN(real_t(1.0), real_t(0.4) + real_t(st.scale)), Vector3(tx, 0, tz), tilt, 0.5);
 				r_stones.push_back(st);
 				skirt(st, rock_type, 1.0f);
 			}
@@ -898,10 +910,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						st.variant = pick_variant(lib);
 						const float d = MIN(0.5f * Math::pow(1.0f - rng.randf() * 0.999f, -1.0f / 2.2f), 3.0f) * (erratic ? 1.6f : 1.0f);
 						st.scale = d * 0.5f;
-						if (d < min_size) {
+						const real_t yaw = rng.randf() * Math::TAU, sink = 0.25 + 0.25 * rng.randf();
+						const float tx = rng.randf() - 0.5f, tz = rng.randf() - 0.5f;
+						const real_t tilt = Math::deg_to_rad(15.0f) * rng.randf();
+						if (d < (rf_far ? MAX(min_size, 0.6 * far_min_size) : min_size)) {
 							continue;
 						}
-						_rest(gen, st, *lib, p, rng.randf() * Math::TAU, 0.25 + 0.25 * rng.randf(), Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f), Math::deg_to_rad(15.0f) * rng.randf(), 0.6);
+						_rest(gen, st, *lib, p, yaw, sink, Vector3(tx, 0, tz), tilt, 0.6);
 						r_stones.push_back(st);
 						skirt(st, t, 0.5f); // a boulder long in the till has shed less, and grus has washed away
 
@@ -1209,18 +1224,22 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						// A size from the log-normal above min_size (the smaller ones are left to the terrain's own detail).
 						pd.size = 0.0f;
 						for (int tries = 0; tries < 8 && pd.size < min_size; tries++) {
-							pd.size = d50 * Math::exp(rng.randfn(0.0f, 0.35f));
+							pd.size = d50 * Math::exp(rng.randfn(0.0f, d50 > 0.3f ? 0.5f : 0.35f)); // (boulder beaches sort less)
 						}
 						pd.size = CLAMP(pd.size, float(min_size), 1.5f);
 						// Four shape bins of pebbles (the swash's sorting by shape: discs and blades up the beach, spheres and
 						// rods rolled down; Bluck 1967), each its own variants, so neighbours are rarely twins.
 						// The bigger ones from the two most-worn cobble bins: rounder and less round, so no two read alike.
-						pd.key = pd.size < 0.25f ? _library_key(type, RockGenerator::FAMILY_PEBBLE, int(rng.rand() % 4)) : _library_key(type, RockGenerator::FAMILY_COBBLE, 1 + int(rng.rand() % 2));
+						// Boulders: the biggest moved least, so less worn (blocky, the joints' faces still there; Oak 1984);
+						// all three cobble bins, each its own shapes.
+						const int cbin = pd.size > 0.6f ? int(rng.rand() % 2) : 1 + int(rng.rand() % 2);
+						pd.key = pd.size < 0.25f ? _library_key(type, RockGenerator::FAMILY_PEBBLE, int(rng.rand() % 4)) : _library_key(type, RockGenerator::FAMILY_COBBLE, cbin);
 						pd.yaw = rng.randf() * Math::TAU;
 						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
-						pd.tilt = Math::deg_to_rad(10.0f) * rng.randf();
-						// Set into the shingle, a quarter to two fifths deep (the swash packs the gaps round them).
-						pd.sink = 0.25f + 0.15f * rng.randf();
+						pd.tilt = Math::deg_to_rad(pd.size > 0.4f ? 25.0f : 10.0f) * rng.randf();
+						// Set into the shingle, a quarter to two fifths deep (the swash packs the gaps round them); a
+						// boulder anything from perched to half buried.
+						pd.sink = pd.size > 0.4f ? 0.12f + 0.4f * rng.randf() : 0.25f + 0.15f * rng.randf();
 						pd.follow = 0.85f;
 						pd.film = e < 0.8f ? 1.0f : CLAMP((2.5f - e) / 1.7f, 0.0f, 1.0f) * 0.5f;
 						shore_tries.push_back(pd);
@@ -2076,7 +2095,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					}
 					const real_t yaw = rng.randf() * Math::TAU;
 					const Vector3 along(Math::cos(yaw), 0, Math::sin(yaw));
-					const int count = 3 + int(rng.randf() * 6.99f);
+					// (A cluster: the soft bed the row stands on runs on, and often a second row on the bed above or
+					// below, a few metres across, so they stand in groups rather than as lone posts.)
+					const int count = 5 + int(rng.randf() * 9.99f);
 					const Vector3 across(-along.z, 0, along.x);
 					// No two alike in a row (Bryce, Goreme): the row's own height, each column well off it, a lean of a
 					// few degrees, spacing from 2 to 10 m with gaps where one fell, and the line wandering across.
@@ -2085,8 +2106,11 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					real_t drift = 0.0;
 					for (int k = 0; k < count; k++) {
 						const real_t u = rng.randf();
-						at += along * real_t(2.0 + 8.0 * u * u);
+						at += along * real_t(2.0 + 6.0 * u * u);
 						drift = CLAMP(drift + (rng.randf() - 0.5f) * 3.0f, real_t(-3.5), real_t(3.5));
+						if (k % 2 == 1 && rng.randf() < 0.6f) {
+							drift += (rng.randf() < 0.5f ? -1.0f : 1.0f) * (4.0f + 3.0f * rng.randf()); // the second row
+						}
 						const Vector3 p_at = at + across * drift + along * (rng.randf() - 0.5f) * 1.5f;
 						const float hu = rng.randf(), tilt = rng.randf(), tilt_az = rng.randf() * float(Math::TAU), spin = rng.randf();
 						if (gen->get_water_depth(p_at) > 0.0 || rng.randf() < 0.15f) {
@@ -3575,6 +3599,7 @@ void RockField3D::_coarse_pack(const Vector3i &p_key, const LocalVector<Stone> &
 		by_shape[(uint64_t(p_stones[i].library) << 16) | p_stones[i].variant].push_back(i);
 	}
 	RandomPCG rng(rf_hash3(p_key.y, p_key.z, p_key.x, 991u));
+	const bool far_big = _far_on() && _far_layer(p_key.x);
 	for (const KeyValue<uint64_t, LocalVector<uint32_t>> &g : by_shape) {
 		const uint32_t lk = uint32_t(g.key >> 16);
 		const int v = int(g.key & 0xFFFF);
@@ -3587,14 +3612,40 @@ void RockField3D::_coarse_pack(const Vector3i &p_key, const LocalVector<Stone> &
 		cg.library = lk;
 		cg.variant = v;
 		const uint32_t n = g.value.size();
-		cg.members = g.value;
+		// In rank order (far_thinning): a far cell draws only its first records, so the order is the order stones
+		// leave as the camera goes away; a hash per stone, the big ones last to go.
+		{
+			struct Ranked {
+				float r;
+				uint32_t i;
+				bool operator<(const Ranked &p_o) const { return r < p_o.r; }
+			};
+			LocalVector<Ranked> rk;
+			rk.resize(n);
+			for (uint32_t k = 0; k < n; k++) {
+				const Stone &st = p_stones[g.value[k]];
+				const Vector3i q = Vector3i((st.position * 10.0f).floor());
+				const float u = float(rf_hash3(q.x, q.y, q.z, 0x7a11u) & 0xFFFFFFu) / 16777216.0f;
+				const float size = 2.0f * float(st.scale) * MAX(ax.x, MAX(ax.y, ax.z));
+				// (The far tier's stones lead: past the radius they are drawn from the far blocks, so a thinning
+				// cell keeps them to the end and the two meet without a gap.)
+				const bool big = far_big && size >= float(far_min_size);
+				rk[k] = { u / (1.0f + 0.6f * size) - (big ? 2.0f : 0.0f), g.value[k] };
+				cg.big += big ? 1 : 0;
+			}
+			rk.sort();
+			cg.members.resize(n);
+			for (uint32_t k = 0; k < n; k++) {
+				cg.members[k] = rk[k].i;
+			}
+		}
 		cg.buffer.resize(n * 16);
 		float *w = cg.buffer.ptrw();
 		cg.xforms.resize(n);
 		cg.custom.resize(n);
 		cg.reach.resize(n);
 		for (uint32_t k = 0; k < n; k++) {
-			const Stone &st = p_stones[g.value[k]];
+			const Stone &st = p_stones[cg.members[k]];
 			const Transform3D xf(st.basis, st.position);
 			const Color cd = _stone_custom(gen, st, ax, rng);
 			float *rec = w + k * 16;
@@ -3702,6 +3753,7 @@ void RockField3D::_coarse_commit(const Vector3i &p_key, LocalVector<Stone> &ston
 		grp.xforms = std::move(cg.xforms);
 		grp.custom = std::move(cg.custom);
 		grp.reach = std::move(cg.reach);
+		grp.keep_min = cg.big;
 		grp.near.resize(n);
 		grp.broken.resize(n);
 		grp.shapes.resize(n);
@@ -3827,6 +3879,412 @@ void RockField3D::_coarse_commit(const Vector3i &p_key, LocalVector<Stone> &ston
 	}
 }
 
+// Far thinning (docs/ideas/rocks.md, "Far rocks"; Ghost of Tsushima's distance density): a scatter layer keeps its
+// full count over the inner half of its radius, then each cell draws only its first records (rank order, the big
+// stones last), (r/2 / d)^2 of them, in eighths so the shapes and the path tracer's structures change seldom, and
+// none by the radius, so a field thins out instead of ending at a line. Landmarks (tors, coast forms, landforms) are
+// few and each one counts: they stay whole.
+void RockField3D::_update_thinning(const Vector3 &p_target) {
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		const Layer layer = Layer(kv.key.x);
+		if (_is_detail(layer)) {
+			continue;
+		}
+		real_t keep = 1.0;
+		if (far_thinning && layer != LAYER_TOR && layer != LAYER_COAST && layer != LAYER_LANDFORM) {
+			const real_t cs = _cell_size(layer);
+			const real_t r = layer_radius[layer];
+			const real_t d = Vector2((kv.key.y + 0.5f) * cs, (kv.key.z + 0.5f) * cs).distance_to(Vector2(p_target.x, p_target.z));
+			if (d > 0.5 * r) {
+				keep = (0.5 * r / d) * (0.5 * r / d) * (1.0 - Math::smoothstep(0.8 * r, r + cs, d));
+				keep = Math::ceil(keep * 8.0) / 8.0;
+			}
+		}
+		for (Group &g : kv.value.groups) {
+			if (g.multimesh.is_null()) {
+				continue;
+			}
+			const int n = g.multimesh->get_instance_count();
+			const int want = (keep >= 1.0 || g.keep_min >= n) ? -1 : MAX(int(Math::ceil(n * keep)), g.keep_min);
+			if (g.multimesh->get_visible_instance_count() != want) {
+				g.multimesh->set_visible_instance_count(want);
+			}
+		}
+	}
+}
+
+void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	TerrainGenerator3D *gen = _get_generator();
+	if (!_far_on() || !gen) {
+		if (far_cover_texture.is_valid()) {
+			rs->global_shader_parameter_set("rock_far_cover_rect", Vector4());
+			far_cover_texture.unref();
+			far_cover_origin = Vector2(1e20, 1e20);
+		}
+		return;
+	}
+	const int R = FAR_COVER_RES;
+	const real_t size = R * FAR_COVER_TEXEL;
+	// Centred on the target, moved in 1 km steps.
+	const Vector2 o = (Vector2(p_target.x, p_target.z) / 1024.0).floor() * 1024.0 + Vector2(512.0 - size * 0.5, 512.0 - size * 0.5);
+	if (!p_force && o == far_cover_origin) {
+		return;
+	}
+	far_cover_origin = o;
+	LocalVector<float> area;
+	area.resize(R * R);
+	for (float &a : area) {
+		a = 0.0f;
+	}
+	// Rockfall blocks under the faces (the generator's own list, as the layer places them; their debris skirts add
+	// about a third), and the glacial boulders' mean cover on till.
+	if (_layer_on(LAYER_ROCKFALL) && layer_density[LAYER_ROCKFALL] > 0.0) {
+		const PackedVector4Array bl = gen->get_boulders(Rect2(o, Vector2(size, size)), layer_density[LAYER_ROCKFALL]);
+		for (int i = 0; i < bl.size(); i++) {
+			const Vector4 b = bl[i];
+			const int ix = int(Math::floor((b.x - o.x) / FAR_COVER_TEXEL)), iz = int(Math::floor((b.z - o.y) / FAR_COVER_TEXEL));
+			if (ix < 0 || iz < 0 || ix >= R || iz >= R) {
+				continue;
+			}
+			const float r = 0.9f * float(b.w);
+			area[iz * R + ix] += 1.3f * float(Math::PI) * r * r;
+		}
+	}
+	const bool glacial = _layer_on(LAYER_GLACIAL) && layer_density[LAYER_GLACIAL] > 0.0;
+	Vector<uint8_t> data;
+	data.resize(R * R * 4);
+	uint8_t *w = data.ptrw();
+	for (int z = 0; z < R; z++) {
+		for (int x = 0; x < R; x++) {
+			const Vector3 c(o.x + (x + 0.5) * FAR_COVER_TEXEL, 0, o.y + (z + 0.5) * FAR_COVER_TEXEL);
+			float cover = area[z * R + x] / float(FAR_COVER_TEXEL * FAR_COVER_TEXEL);
+			if (glacial) {
+				const Color geo = gen->get_geology_at(c);
+				const float till = geo.b < 0.0f ? -geo.b : 0.0f;
+				cover += 0.004f * till * float(layer_density[LAYER_GLACIAL]); // one boulder per 250 m2, about 1 m2 each
+			}
+			const float a = CLAMP(cover / 0.6f, 0.0f, 1.0f); // 60% plan cover: all stone
+			uint8_t *px = w + (z * R + x) * 4;
+			if (a <= 0.0f) {
+				px[0] = px[1] = px[2] = px[3] = 0;
+				continue;
+			}
+			const Color rind = RockGenerator::get_lithology(_type_at(gen, c)).rind;
+			px[0] = uint8_t(CLAMP(rind.r * 255.0f, 0.0f, 255.0f));
+			px[1] = uint8_t(CLAMP(rind.g * 255.0f, 0.0f, 255.0f));
+			px[2] = uint8_t(CLAMP(rind.b * 255.0f, 0.0f, 255.0f));
+			px[3] = uint8_t(a * 255.0f);
+		}
+	}
+	Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_RGBA8, data);
+	if (far_cover_texture.is_valid()) {
+		far_cover_texture->update(img);
+	} else {
+		far_cover_texture = ImageTexture::create_from_image(img);
+	}
+	rs->global_shader_parameter_set("rock_far_cover_map", far_cover_texture->get_rid());
+	rs->global_shader_parameter_set("rock_far_cover_rect", Vector4(o.x, o.y, size, size));
+}
+
+bool RockField3D::_far_layer(int p_layer) const {
+	if (p_layer < 0 || p_layer >= LAYER_MAX || !_layer_on(p_layer) || layer_radius[p_layer] >= far_radius) {
+		return false;
+	}
+	switch (p_layer) {
+		case LAYER_ROCKFALL:
+		case LAYER_GLACIAL:
+		case LAYER_TOR:
+		case LAYER_COAST:
+			return true;
+		case LAYER_LANDFORM:
+			return !cave_mouths; // (a cave mouth opens the terrain as it is placed: not from a far block)
+		default:
+			return false;
+	}
+}
+
+// Any thread: each of the block's cells placed and packed exactly as its near cell would be, keeping the records of
+// the stones that lead (at least far_min_size), so a stone looks the same from the far block and from its cell.
+void RockField3D::_far_place(FarJob &r_job) {
+	CoarseJob probe; // collects the shape libraries asked for that are not built
+	const bool worker = rf_job_generator != nullptr; // (set by _far_job)
+	if (worker) {
+		rf_job_generator = r_job.gen;
+		rf_coarse_job = &probe;
+	}
+	rf_far = true;
+	for (const Vector3i &key : r_job.cells) {
+		const real_t cs = _cell_size(Layer(key.x));
+		LocalVector<Stone> stones;
+		_place(Layer(key.x), Rect2(key.y * cs, key.z * cs, cs, cs), rf_hash3(key.x, key.y, key.z, uint32_t(seed) * 2654435761u), stones);
+		if (!probe.missing.is_empty()) {
+			break;
+		}
+		LocalVector<CoarseGroup> groups;
+		_coarse_pack(key, stones, groups);
+		for (const CoarseGroup &cg : groups) {
+			if (cg.big <= 0) {
+				continue;
+			}
+			Vector<float> &rec = r_job.records[(uint64_t(cg.library) << 16) | uint64_t(cg.variant)];
+			const int at = rec.size();
+			rec.resize(at + cg.big * 16);
+			memcpy(rec.ptrw() + at, cg.buffer.ptr(), sizeof(float) * cg.big * 16);
+		}
+	}
+	rf_far = false;
+	r_job.missing = probe.missing;
+	if (worker) {
+		rf_coarse_job = nullptr;
+		rf_job_generator = nullptr;
+	}
+}
+
+void RockField3D::_far_job(void *p_job) {
+	FarJob *job = static_cast<FarJob *>(p_job);
+	rf_job_generator = job->gen; // (marks the thread a worker for _far_place)
+	job->field->_far_place(*job);
+	rf_job_generator = nullptr;
+}
+
+void RockField3D::_free_far(FarBlock &r_block) {
+	for (MultiMeshInstance3D *mmi : r_block.instances) {
+		if (mmi) {
+			mmi->queue_free();
+		}
+	}
+	r_block.instances.clear();
+}
+
+void RockField3D::_far_commit(FarJob &r_job) {
+	if (FarBlock *old = far_blocks.getptr(r_job.key)) {
+		_free_far(*old);
+		far_blocks.erase(r_job.key);
+	}
+	FarBlock fb;
+	fb.sig = r_job.sig;
+	const real_t cs = _cell_size(Layer(r_job.key.x));
+	for (const KeyValue<uint64_t, Vector<float>> &kv : r_job.records) {
+		const uint32_t lk = uint32_t(kv.key >> 16);
+		const int v = int(kv.key & 0xFFFF);
+		const Library *lib = libraries.getptr(lk);
+		const int n = kv.value.size() / 16;
+		if (!lib || v >= int(lib->meshes.size()) || n <= 0) {
+			continue;
+		}
+		Ref<MultiMesh> mm;
+		mm.instantiate();
+		mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+		mm->set_use_custom_data(true);
+		mm->set_mesh(lib->meshes[v]);
+		mm->set_instance_count(n);
+		RS::get_singleton()->multimesh_set_buffer(mm->get_rid(), kv.value);
+		fb.instances.push_back(_add_group_instance(mm, lk, far_radius + cs * FAR_BLOCK * 0.75, cs));
+	}
+	far_blocks.insert(r_job.key, fb);
+	far_last_cells = -1; // look again: the cells may have moved on while it was placed
+}
+
+void RockField3D::_far_cancel() {
+	for (KeyValue<Vector3i, FarJob *> &kv : far_jobs) {
+		WorkerThreadPool::get_singleton()->wait_for_task_completion(kv.value->task);
+		memdelete(kv.value);
+	}
+	far_jobs.clear();
+	for (KeyValue<Vector3i, FarBlock> &kv : far_blocks) {
+		_free_far(kv.value);
+	}
+	far_blocks.clear();
+	far_last_cells = -1;
+	if (far_cover_texture.is_valid()) {
+		RenderingServer::get_singleton()->global_shader_parameter_set("rock_far_cover_rect", Vector4());
+		far_cover_texture.unref();
+	}
+	far_cover_origin = Vector2(1e20, 1e20);
+}
+
+void RockField3D::build_far() {
+	far_last_cells = -1;
+	_update_far_cover(_target_position(), true);
+	far_fill = true; // (no streaming: the cells inside the radius that are not built get their big stones too)
+	_update_far(_target_position(), true);
+	far_fill = false;
+}
+
+int RockField3D::get_far_stone_count() const {
+	int n = 0;
+	for (const KeyValue<Vector3i, FarBlock> &kv : far_blocks) {
+		for (const MultiMeshInstance3D *mmi : kv.value.instances) {
+			if (mmi && mmi->get_multimesh().is_valid()) {
+				n += mmi->get_multimesh()->get_instance_count();
+			}
+		}
+	}
+	return n;
+}
+
+void RockField3D::set_far_radius(real_t p_radius) {
+	far_radius = MAX(p_radius, real_t(0.0));
+	far_last_cells = -1;
+}
+
+void RockField3D::set_far_min_size(real_t p_size) {
+	far_min_size = MAX(p_size, real_t(0.1));
+	far_last_cells = -1;
+}
+
+// The far tier (docs/ideas/rocks.md, "Far rocks"; Unreal's HLOD, Horizon Zero Dawn's far placement): past each
+// landmark and boulder layer's radius, to far_radius, blocks of FAR_BLOCK x FAR_BLOCK cells draw the stones of at
+// least far_min_size (big boulders, erratics, cliff blocks, tors, stacks, hoodoos) with their shapes' own LODs. A block
+// holds only the cells no near cell covers; it is placed again on a worker when that set changes, the old one drawn
+// meanwhile.
+void RockField3D::_update_far(const Vector3 &p_target, bool p_all) {
+	LocalVector<Vector3i> done;
+	LocalVector<uint32_t> start;
+	for (KeyValue<Vector3i, FarJob *> &kv : far_jobs) {
+		FarJob *job = kv.value;
+		if (!p_all && !WorkerThreadPool::get_singleton()->is_task_completed(job->task)) {
+			continue;
+		}
+		WorkerThreadPool::get_singleton()->wait_for_task_completion(job->task);
+		if (!job->missing.is_empty()) {
+			for (uint32_t k : job->missing) {
+				if (!libraries.has(k) && !library_builds.has(k) && start.find(k) < 0) {
+					start.push_back(k);
+				}
+			}
+			far_last_cells = -1;
+		} else if (_far_on() && _far_layer(kv.key.x)) {
+			_far_commit(*job);
+		}
+		memdelete(job);
+		done.push_back(kv.key);
+	}
+	for (const Vector3i &k : done) {
+		far_jobs.erase(k);
+	}
+	if (!start.is_empty()) {
+		LibraryBuild *b = _start_libraries(start);
+		for (uint32_t k : start) {
+			library_builds.insert(k, b);
+		}
+	}
+	_update_far_cover(p_target, false);
+	if (!_far_on()) {
+		if (!far_blocks.is_empty()) {
+			for (KeyValue<Vector3i, FarBlock> &kv : far_blocks) {
+				_free_far(kv.value);
+			}
+			far_blocks.clear();
+		}
+		return;
+	}
+	if (!p_all && int(cells.size()) == far_last_cells && Vector2(p_target.x, p_target.z).distance_to(Vector2(far_last_target.x, far_last_target.z)) < 8.0) {
+		return;
+	}
+	far_last_target = p_target;
+	far_last_cells = int(cells.size());
+	struct Want {
+		Vector3i key;
+		real_t dist;
+		uint64_t sig;
+		LocalVector<Vector3i> in;
+	};
+	LocalVector<Want> want;
+	HashSet<Vector3i> keep;
+	const Vector2 t2(p_target.x, p_target.z);
+	auto nearest_to = [&](const Rect2 &p_r) {
+		return Vector2(CLAMP(t2.x, p_r.position.x, p_r.get_end().x), CLAMP(t2.y, p_r.position.y, p_r.get_end().y)).distance_to(t2);
+	};
+	for (int l = 0; l < LAYER_MAX; l++) {
+		if (!_far_layer(l)) {
+			continue;
+		}
+		const real_t cs = _cell_size(Layer(l));
+		const real_t bs = cs * FAR_BLOCK;
+		const real_t r = layer_radius[l];
+		const int bx0 = int(Math::floor((t2.x - far_radius) / bs)), bx1 = int(Math::floor((t2.x + far_radius) / bs));
+		const int bz0 = int(Math::floor((t2.y - far_radius) / bs)), bz1 = int(Math::floor((t2.y + far_radius) / bs));
+		for (int bz = bz0; bz <= bz1; bz++) {
+			for (int bx = bx0; bx <= bx1; bx++) {
+				const Rect2 br(bx * bs, bz * bs, bs, bs);
+				const real_t bd = nearest_to(br);
+				if (bd > far_radius) {
+					continue;
+				}
+				Want w;
+				w.key = Vector3i(l, bx, bz);
+				w.dist = bd;
+				w.sig = 0xcbf29ce484222325ull;
+				for (int cz = bz * FAR_BLOCK; cz < (bz + 1) * FAR_BLOCK; cz++) {
+					for (int cx = bx * FAR_BLOCK; cx < (bx + 1) * FAR_BLOCK; cx++) {
+						const real_t d = nearest_to(Rect2(cx * cs, cz * cs, cs, cs));
+						const Vector3i ck(l, cx, cz);
+						if (d > far_radius || (d <= r && !far_fill) || cells.has(ck) || coarse_jobs.has(ck)) {
+							continue; // out of reach, or a near cell's
+						}
+						w.in.push_back(ck);
+						w.sig = (w.sig ^ uint64_t(rf_hash3(cx, cz, l, 0xfa4u))) * 1099511628211ull;
+					}
+				}
+				if (w.in.is_empty()) {
+					continue;
+				}
+				keep.insert(w.key);
+				const FarBlock *fb = far_blocks.getptr(w.key);
+				if ((fb && fb->sig == w.sig) || far_jobs.has(w.key)) {
+					continue; // up to date, or being placed (looked at again once it lands)
+				}
+				want.push_back(std::move(w));
+			}
+		}
+	}
+	LocalVector<Vector3i> gone;
+	for (KeyValue<Vector3i, FarBlock> &kv : far_blocks) {
+		if (!keep.has(kv.key)) {
+			_free_far(kv.value);
+			gone.push_back(kv.key);
+		}
+	}
+	for (const Vector3i &k : gone) {
+		far_blocks.erase(k);
+	}
+	if (want.is_empty()) {
+		return;
+	}
+	struct ByDist {
+		_FORCE_INLINE_ bool operator()(const Want &p_a, const Want &p_b) const { return p_a.dist < p_b.dist; }
+	};
+	want.sort_custom<ByDist>();
+	_prepare_rivers(); // read by the placement
+	TerrainGenerator3D *gen = _get_generator();
+	const int max_jobs = MAX(1, WorkerThreadPool::get_singleton()->get_thread_count() - 1);
+	for (Want &w : want) {
+		FarJob *job = memnew(FarJob);
+		job->field = this;
+		job->key = w.key;
+		job->sig = w.sig;
+		job->cells = std::move(w.in);
+		job->gen = gen;
+		if (!cell_threads || p_all) {
+			_far_place(*job);
+			if (job->missing.is_empty()) {
+				_far_commit(*job);
+			}
+			memdelete(job);
+			continue;
+		}
+		if (int(far_jobs.size()) >= max_jobs) {
+			memdelete(job);
+			far_last_cells = -1; // the rest next time
+			break;
+		}
+		job->task = WorkerThreadPool::get_singleton()->add_native_task(&RockField3D::_far_job, job, false, "RockField3D far blocks");
+		far_jobs.insert(w.key, job);
+	}
+}
+
 void RockField3D::_update_streaming(bool p_all) {
 	_watch_holes();
 	TerrainGenerator3D *gen = _get_generator();
@@ -3853,6 +4311,8 @@ void RockField3D::_update_streaming(bool p_all) {
 	for (const Vector3i &k : drop) {
 		cells.erase(k);
 	}
+	_update_thinning(tp);
+	_update_far(tp, p_all);
 	_collect_libraries(p_all);
 	// Coarse cells placed on workers since the last frame.
 	_coarse_finish(p_all, MAX(build_budget_msec * 0.5, real_t(1.0)));
@@ -5513,6 +5973,7 @@ void RockField3D::rebuild() {
 void RockField3D::clear() {
 	_detail_cancel();
 	_coarse_cancel();
+	_far_cancel();
 	_collect_libraries(true);
 	for (KeyValue<uint64_t, Fracture> &kv : fractures) {
 		if (kv.value.state == 1) {
@@ -6901,6 +7362,14 @@ void RockField3D::_notification(int p_what) {
 
 void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_coarse_cover_at", "position"), &RockField3D::get_coarse_cover_at);
+	ClassDB::bind_method(D_METHOD("set_far_thinning", "enabled"), &RockField3D::set_far_thinning);
+	ClassDB::bind_method(D_METHOD("set_far_radius", "radius"), &RockField3D::set_far_radius);
+	ClassDB::bind_method(D_METHOD("get_far_radius"), &RockField3D::get_far_radius);
+	ClassDB::bind_method(D_METHOD("set_far_min_size", "size"), &RockField3D::set_far_min_size);
+	ClassDB::bind_method(D_METHOD("get_far_min_size"), &RockField3D::get_far_min_size);
+	ClassDB::bind_method(D_METHOD("get_far_stone_count"), &RockField3D::get_far_stone_count);
+	ClassDB::bind_method(D_METHOD("build_far"), &RockField3D::build_far);
+	ClassDB::bind_method(D_METHOD("is_far_thinning"), &RockField3D::is_far_thinning);
 	ClassDB::bind_method(D_METHOD("set_generator", "path"), &RockField3D::set_generator);
 	ClassDB::bind_method(D_METHOD("get_generator"), &RockField3D::get_generator);
 	ClassDB::bind_method(D_METHOD("set_terrain3d", "path"), &RockField3D::set_terrain3d);
@@ -7085,6 +7554,10 @@ void RockField3D::_bind_methods() {
 		ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, String(layer_names[l]) + "_density", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_layer_density", "get_layer_density", l);
 		ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, String(layer_names[l]) + "_radius", PROPERTY_HINT_RANGE, "0,4000,1,suffix:m"), "set_layer_radius", "get_layer_radius", l);
 	}
+
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_thinning"), "set_far_thinning", "is_far_thinning");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_radius", PROPERTY_HINT_RANGE, "0,8000,10,suffix:m"), "set_far_radius", "get_far_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_min_size", PROPERTY_HINT_RANGE, "0.5,10,0.1,suffix:m"), "set_far_min_size", "get_far_min_size");
 	ADD_GROUP("Ground Detail", "ground_detail_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail"), "set_ground_detail", "is_ground_detail");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_detail_pixels", PROPERTY_HINT_RANGE, "0.5,16,0.1,suffix:px"), "set_ground_detail_pixels", "get_ground_detail_pixels");

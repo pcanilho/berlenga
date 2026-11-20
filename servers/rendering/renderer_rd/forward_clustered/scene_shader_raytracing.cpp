@@ -854,6 +854,10 @@ class VertexDependencyCollector {
 			if (uniform->value.scope == SL::ShaderNode::Uniform::SCOPE_GLOBAL && !dependencies.global_uniforms.has(p_name)) {
 				dependencies.global_uniforms.push_back(p_name);
 			}
+			if (uniform->value.scope != SL::ShaderNode::Uniform::SCOPE_GLOBAL && uniform->value.scope != SL::ShaderNode::Uniform::SCOPE_INSTANCE &&
+					SL::is_sampler_type(uniform->value.type) && !dependencies.material_textures.has(p_name)) {
+				dependencies.material_textures.push_back(p_name);
+			}
 			return;
 		}
 		const String name = p_name;
