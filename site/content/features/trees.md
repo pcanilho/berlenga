@@ -90,6 +90,7 @@ summary: "Trees and woody shrubs grown by light competition, 50 species in twent
 - **Forests that age** (`make_succession()`; TreeWind3D `report_windthrow`): after fire, windthrow or beetles, a stand regrows by stage from seedlings and pioneers through crowded poles to the mature stand and old growth with veterans, placed by the years since; storm and beetle kills mark where it starts again.
 - **Forest edges** (`make_edge()`, `edge_open`; PlantSpecies `RULE_FOREST_EDGE`): a shrub mantle in front of the trees, and edge trees with low branches and crowns reaching toward the open, turned to face it.
 - **Beaver work** (`beaver_cut`, `beaver_years`): stems gnawed to an hourglass, pencil-point stumps that resprout, and felled stems lying toward the water.
+- **Flood marks** (`flood_height`, `flood_years`): floodplain trees carry a silt film up to the last high-water line, higher on the upstream face, with flood debris caught at the line.
 - **Broken limbs** (`limb_breakage`): snapped ends get a splintered fracture face and torn bark; storms break limbs on living trees, leaving some hanging.
 
   ![A winter oak limb, whole and snapped, raster](media/trees-broken-limb.jpg)
