@@ -490,23 +490,146 @@ vec4 march_cirrus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	return vec4(light * (1.0 - tr) * fade, mix(1.0, tr, fade));
 }
 
-// The low clouds in front of the high sheet: radiance adds through the low clouds' transmittance.
+// The mid layer's density (1/m) at p in its slab: cloudlets from the detail noise's billows (inverted Worley,
+// cells of a few hundred metres) in rows across the wind (altocumulus forms in rolls across the shear, Ludlam's
+// cellular convection), thresholded by the cover so a thin cover is scattered cloudlets and a full cover a
+// sheet (altostratus); each cloudlet rounded top and bottom. At full cover the slab's vertical optical depth
+// is about cloud_mid_tau.
+float wc_mid_density(vec3 p, float c, float p_foot, out float r_profile) {
+	r_profile = 0.0;
+	float h = (p.y - (cloud_mid_height - 0.5 * cloud_mid_thickness)) / cloud_mid_thickness;
+	if (h <= 0.0 || h >= 1.0 || c <= 0.001) {
+		return 0.0;
+	}
+	vec2 q = p.xz - cloud_mid_drift;
+	vec2 dir = cloud_mid_dir;
+	vec2 aw = vec2(dot(q, dir), dot(q, vec2(-dir.y, dir.x)));
+	// 128 texels over 2.4 km along the wind, 3.6 km across: the billows' 8-cell octave gives cloudlets about
+	// 300 by 450 m, the rolls lying across the wind.
+	vec3 fq = vec3(aw.x / 2400.0, aw.y / 3600.0, 0.61 + 0.17 * h + cloud_churn.z * 0.2);
+	float lod = max(log2(p_foot / (2400.0 / 128.0)), 0.0);
+	vec4 dn = textureLod(cloud_detail, fq, lod);
+	float n = mix(dn.b, dn.a, 0.3);
+	float prof = 4.0 * h * (1.0 - h);
+	float d = clamp((n * mix(0.6, 1.0, prof) - (1.0 - c)) / max(c, 0.05), 0.0, 1.0) * smoothstep(0.0, 0.35, prof);
+	r_profile = d;
+	return d * cloud_mid_tau / (0.45 * cloud_mid_thickness);
+}
+
+// The mid layer: a slab cloud_mid_thickness deep, marched in a few steps across it (Microsoft Flight Simulator
+// and Unreal's layered volumetric clouds draw such layers as their own thin volumes), lit as the cumulus are:
+// Wrenninge's octaves under the droplets' phase, the two-stream diffuse field and the sky's light, with the
+// sun's optical depth from two samples toward it through the slab.
+vec4 march_altocumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, float jitter, float p_pixel, out float r_t) {
+	r_t = 0.0;
+	if (cloud_mid_cover <= 0.001 && cloud_storm_count == 0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	vec3 ro = vec3(0.0, PLANET_RADIUS + cam.y, 0.0);
+	float y0 = cloud_mid_height - 0.5 * cloud_mid_thickness;
+	float y1 = cloud_mid_height + 0.5 * cloud_mid_thickness;
+	vec2 hb = sphere_hits(ro, rd, PLANET_RADIUS + y0);
+	vec2 ht = sphere_hits(ro, rd, PLANET_RADIUS + y1);
+	float t0;
+	float t1;
+	if (cam.y < y0) {
+		if (sphere_hits(ro, rd, PLANET_RADIUS).x > 0.0) {
+			return vec4(0.0, 0.0, 0.0, 1.0);
+		}
+		t0 = hb.y;
+		t1 = ht.y;
+	} else if (cam.y < y1) {
+		t0 = 0.0;
+		t1 = hb.x > 0.0 ? hb.x : ht.y;
+	} else {
+		if (ht.x < 0.0) {
+			return vec4(0.0, 0.0, 0.0, 1.0);
+		}
+		t0 = ht.x;
+		t1 = hb.x > 0.0 ? hb.x : ht.y;
+	}
+#ifdef ATMO_SCATTERING
+	float far = 200000.0;
+#else
+	float far = cloud_far * 2.0;
+#endif
+	if (t0 > far || t1 <= t0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	// Grazing paths run kilometres through the slab: at most 8 km of it, which hides all behind anyway.
+	t1 = min(t1, t0 + 8000.0);
+	const int n = 8;
+	float ds = (t1 - t0) / float(n);
+	float cos_theta = dot(rd, sun_dir);
+	float phase0 = cloud_phase(cos_theta, 1.0);
+	float phase1 = cloud_phase(cos_theta, 0.5);
+	float phase2 = cloud_phase(cos_theta, 0.25);
+	float sun_up = max(sun_dir.y, 0.05);
+	vec3 radiance = vec3(0.0);
+	float transmittance = 1.0;
+	float depth_sum = 0.0;
+	for (int i = 0; i < n; i++) {
+		float t = t0 + (float(i) + jitter) * ds;
+		vec3 pl = ro + rd * t;
+		vec3 p = vec3(cam.x + rd.x * t, length(pl) - PLANET_RADIUS, cam.z + rd.z * t);
+		float c = wc_mid_cover(p.xz);
+		float foot = max(t * p_pixel, 0.25 * ds);
+		float profile;
+		float sigma = wc_mid_density(p, c, foot, profile);
+		if (sigma <= 1e-6) {
+			continue;
+		}
+		float pr;
+		float tau = wc_mid_density(p + sun_dir * 30.0, c, foot, pr) * 60.0 + wc_mid_density(p + sun_dir * 110.0, c, foot, pr) * 100.0;
+		// The rest of the way out of the slab toward the sun, at the cloudlets' mean density.
+		float rest = max((y1 - p.y) / sun_up - 160.0, 0.0);
+		tau += rest * 0.5 * c * cloud_mid_tau / (0.45 * cloud_mid_thickness);
+		vec3 light = sun_radiance * (exp(-tau) * phase0 + 0.5 * exp(-0.5 * tau) * phase1 + 0.25 * exp(-0.25 * tau) * phase2);
+		float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * 2.0);
+		light += sun_radiance * diffuse * mix(0.25, 1.0, smoothstep(0.0, 0.6, profile)) * exp(-cloud_surface_occlusion * min(tau, 4.0)) * (2.0 / (4.0 * PI));
+		float hf = clamp((p.y - y0) / cloud_mid_thickness, 0.0, 1.0);
+		light += mix(ambient_bottom, ambient_top, hf) * mix(0.35, 1.0, sqrt(1.0 - profile)) * 1.4;
+		float tr = exp(-sigma * ds);
+		radiance += transmittance * light * (1.0 - tr);
+		depth_sum += transmittance * (1.0 - tr) * t;
+		transmittance *= tr;
+		if (transmittance < 0.01) {
+			break;
+		}
+	}
+	r_t = transmittance < 1.0 ? depth_sum / (1.0 - transmittance) : t0;
+	float fade = 1.0 - smoothstep(0.5 * far, far, t0);
+	return vec4(radiance * fade, mix(1.0, transmittance, fade));
+}
+
+// Over: a layer b behind a (radiance adds through a's transmittance), and the depth the air in front is taken
+// to, weighted by what each hides.
+vec4 cloud_over(vec4 a, float da, vec4 b, float db, out float r_depth) {
+	vec4 o = vec4(a.rgb + a.a * b.rgb, a.a * b.a);
+	r_depth = ((1.0 - a.a) * da + a.a * (1.0 - b.a) * db) / max(1.0 - o.a, 1e-4);
+	return o;
+}
+
+// The three layers in the order the camera meets them: low cumulus, the mid slab, the high sheet.
 vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, int steps, float jitter, float p_pixel, out float r_depth) {
-	vec4 low = march_cumulus(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, steps, jitter, p_pixel, r_depth);
-	float t_high;
-	vec4 high = march_cirrus(cam, rd, sun_dir, sun_radiance, ambient_top, p_pixel, t_high);
-	if (high.a >= 1.0) {
-		return low;
+	float d_low;
+	vec4 low = march_cumulus(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, steps, jitter, p_pixel, d_low);
+	float d_mid;
+	vec4 mid = march_altocumulus(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_mid);
+	float d_high;
+	vec4 high = march_cirrus(cam, rd, sun_dir, sun_radiance, ambient_top, p_pixel, d_high);
+	float d;
+	vec4 o;
+	if (cam.y < cloud_mid_height) {
+		o = cloud_over(low, d_low, mid, d_mid, d);
+		o = cloud_over(o, d, high, d_high, r_depth);
+	} else if (cam.y < cloud_high_height) {
+		o = cloud_over(mid, d_mid, low, d_low, d);
+		o = cloud_over(o, d, high, d_high, r_depth);
+	} else {
+		o = cloud_over(high, d_high, mid, d_mid, d);
+		o = cloud_over(o, d, low, d_low, r_depth);
 	}
-	if (cam.y > cloud_high_height) {
-		// Above the sheet (looking down at it): it is in front.
-		vec4 o = vec4(high.rgb + high.a * low.rgb, high.a * low.a);
-		r_depth = ((1.0 - high.a) * t_high + high.a * (1.0 - low.a) * r_depth) / max(1.0 - o.a, 1e-4);
-		return o;
-	}
-	vec4 o = vec4(low.rgb + low.a * high.rgb, low.a * high.a);
-	// The depth the air in front is taken to: weighted by what each layer hides.
-	r_depth = ((1.0 - low.a) * r_depth + low.a * (1.0 - high.a) * t_high) / max(1.0 - o.a, 1e-4);
 	return o;
 }
 
@@ -824,6 +947,13 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	rs->material_set_param(m, "cloud_high_scale", p_state.high_scale);
 	rs->material_set_param(m, "cloud_high_drift", p_state.high_drift);
 	rs->material_set_param(m, "cloud_high_dir", p_state.high_dir);
+	rs->material_set_param(m, "cloud_mid_cover", p_state.mid_cover);
+	rs->material_set_param(m, "cloud_mid_height", p_state.mid_height);
+	rs->material_set_param(m, "cloud_mid_thickness", p_state.mid_thickness);
+	rs->material_set_param(m, "cloud_mid_tau", p_state.mid_tau);
+	rs->material_set_param(m, "cloud_mid_scale", p_state.mid_scale);
+	rs->material_set_param(m, "cloud_mid_drift", p_state.mid_drift);
+	rs->material_set_param(m, "cloud_mid_dir", p_state.mid_dir);
 }
 
 void WeatherSkyMaterial::set_lightning(const Vector4 *p_flashes, int p_count, const Color &p_color) {

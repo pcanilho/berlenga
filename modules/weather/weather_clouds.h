@@ -84,6 +84,17 @@ struct State {
 	float high_scale = 24000.0f; // m, its patches
 	Vector2 high_drift; // m
 	Vector2 high_dir = Vector2(1, 0); // unit, the wind aloft
+	// The mid layer (altocumulus, altostratus; docs/ideas/clouds.md): a slab mid_thickness deep centred on
+	// mid_height, its cover eased by the weather map (get_mid_cloud_cover_at), its vertical optical depth at full
+	// cover mid_tau, drifting with the wind aloft at its height; the sky breaks it into cloudlets in rows across
+	// mid_dir. Storms add a band round their anvils.
+	float mid_cover = 0.0f;
+	float mid_height = 4500.0f;
+	float mid_thickness = 400.0f;
+	float mid_tau = 4.0f;
+	float mid_scale = 12000.0f; // m, its patches
+	Vector2 mid_drift; // m
+	Vector2 mid_dir = Vector2(1, 0); // unit, the wind at its height
 	float top_max = 0.0f; // highest top any column reaches now (m), set by update_top_max()
 	float base_min = 1500.0f; // lowest base any column has now (m), set by update_top_max()
 
@@ -108,6 +119,9 @@ float base_at(const State &p_state, Vector2 p_xz);
 // sky adds the fibres).
 float high_cover_at(const State &p_state, Vector2 p_xz);
 float high_tau_at(const State &p_state, Vector2 p_xz);
+// The mid layer's cover (0..1) and vertical optical depth over world x, z.
+float mid_cover_at(const State &p_state, Vector2 p_xz);
+float mid_tau_at(const State &p_state, Vector2 p_xz);
 // Extinction (1/m) at a world point, base shape only (the sky adds detail erosion at the edges).
 // Where a world point reads the shape noise first (turned, stretched twice vertically), and the
 // shape there: two reads of the tile at an irrational ratio of scales, evened out (0..1).

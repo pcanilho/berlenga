@@ -226,6 +226,20 @@
 				The high cloud sheet's cover over [param position], 0 to 1: its drifting patches plus the anvil shields storms spread downwind of themselves. Not part of [method get_cloud_cover_at]: the sheet is optically thin and shades the ground only through [method get_sun_visibility_at], by its own optical depth.
 			</description>
 		</method>
+		<method name="get_mid_cloud_cover_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The mid cloud layer's cover (altocumulus, altostratus) over [param position], 0 to 1: its drifting patches plus a band round each storm's anvil. Not part of [method get_cloud_cover_at]: the layer shades the ground only by its own optical depth ([method get_mid_cloud_optical_depth_at]) through [method get_sun_visibility_at].
+			</description>
+		</method>
+		<method name="get_mid_cloud_optical_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The mid cloud layer's vertical optical depth over [param position]: its cover there times [member mid_cloud_optical_depth]. The cloud shadow bake and anything else that shades by the layer read this one number.
+			</description>
+		</method>
 		<method name="get_obstacle_height_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -786,6 +800,18 @@
 		</member>
 		<member name="high_cloud_optical_depth" type="float" setter="set_high_cloud_optical_depth" getter="get_high_cloud_optical_depth" default="1.0">
 			Vertical optical depth of the high sheet at full cover (ice clouds measure 0.03 to 3). Sets how much it veils the sky and dims the sun.
+		</member>
+		<member name="mid_cloud_cover" type="float" setter="set_mid_cloud_cover" getter="get_mid_cloud_cover" default="0.15">
+			The base cover of the mid cloud layer (altocumulus; a full cover is an altostratus sheet) at [member mid_cloud_height]. The weather drives what is drawn: dry air thins it to 0.2 of this, rain set in [member rain_rate] thickens it into a sheet, easing twice as fast as the rain (after the cirrus, before the rain). It follows the rain and never makes it: precipitation stays the main layer's. It stays out of [member cloud_cover] and [method get_cloud_cover_at]. It drifts with [method get_wind_aloft] at its height. See docs/ideas/clouds.md.
+		</member>
+		<member name="mid_cloud_height" type="float" setter="set_mid_cloud_height" getter="get_mid_cloud_height" default="4500.0">
+			Height of the middle of the mid cloud layer's slab (m above y = 0). Its cloudlets lie in rows across the wind at this height.
+		</member>
+		<member name="mid_cloud_optical_depth" type="float" setter="set_mid_cloud_optical_depth" getter="get_mid_cloud_optical_depth" default="4.0">
+			Vertical optical depth of the mid cloud layer at full cover (altocumulus measure about 2 to 10). Sets how much it shades the ground and how grey its sheet looks from below.
+		</member>
+		<member name="mid_cloud_thickness" type="float" setter="set_mid_cloud_thickness" getter="get_mid_cloud_thickness" default="400.0">
+			Depth of the mid cloud layer's slab (m).
 		</member>
 		<member name="sea_spray" type="bool" setter="set_sea_spray" getter="is_sea_spray_enabled" default="true">
 			Sea spray on the shore: breaking waves ([method WorldWater.breaking_at]) make spray in proportion to the breaker height and the square of the wind past 2 m/s; the wind carries it inland over a square round the follow point. Coarse drops settle within tens of metres ([code]u (1 + H) / 1 m/s[/code]) and wet surfaces and the soil; rising ground catches them, so a cliff face takes the spray and its top stays drier. Fine salt aerosol reaches hundreds of metres ([code]50 s x u[/code]). The salt stays on surfaces until rain washes it off (all but a third by 5 mm) and is published with the spray's wetness as the [code]weather_spray_map[/code] global (R wetness, G [code]1 - exp(-salt / 10 g/m2)[/code]); grass browns at the tips from salt burn.

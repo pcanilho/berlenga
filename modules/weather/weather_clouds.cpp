@@ -485,6 +485,28 @@ float high_tau_at(const State &p_state, Vector2 p_xz) {
 	return high_cover_at(p_state, p_xz) * p_state.high_tau;
 }
 
+// Altocumulus patches: the cover noise at the mid layer's own scale and drift, thresholded as the low cover is;
+// plus a band round each storm's anvil (mid-level cloud spreads from a storm's outflow too). wc_mid_cover in the
+// sky.
+float mid_cover_at(const State &p_state, Vector2 p_xz) {
+	float c = 0.0f;
+	if (p_state.mid_cover > 0.001f) {
+		const float n = cover_noise(p_xz + Vector2(4721.0f, 8363.0f), p_state.mid_drift, p_state.mid_scale, p_state.evolve);
+		c = CLAMP((n - (1.0f - p_state.mid_cover)) / MAX(p_state.mid_cover, 0.001f) * 1.5f, 0.0f, 1.0f) * MIN(1.0f, 2.0f * p_state.mid_cover);
+	}
+	for (int i = 0; i < p_state.storm_count; i++) {
+		const float *s = p_state.storms[i];
+		const Vector2 centre = Vector2(s[0], s[1]) + p_state.high_dir * (1.2f * s[2]);
+		const float x2 = (p_xz - centre).length_squared() / (4.0f * s[2] * s[2]);
+		c = 1.0f - (1.0f - c) * (1.0f - 0.6f * Math::exp(-x2) * s[3]);
+	}
+	return c;
+}
+
+float mid_tau_at(const State &p_state, Vector2 p_xz) {
+	return mid_cover_at(p_state, p_xz) * p_state.mid_tau;
+}
+
 // The shape noise is stretched twice vertically, so a column through the layer sees about one
 // value of it: the share of sky the clouds cover then follows the cover setting, and the height
 // profile, not the noise, shapes bases and tops.
@@ -673,6 +695,14 @@ uniform float cloud_high_tau = 1.0;
 uniform float cloud_high_scale = 24000.0;
 uniform vec2 cloud_high_drift = vec2(0.0);
 uniform vec2 cloud_high_dir = vec2(1.0, 0.0);
+// The mid layer (State::mid_*).
+uniform float cloud_mid_cover = 0.0;
+uniform float cloud_mid_height = 4500.0;
+uniform float cloud_mid_thickness = 400.0;
+uniform float cloud_mid_tau = 4.0;
+uniform float cloud_mid_scale = 12000.0;
+uniform vec2 cloud_mid_drift = vec2(0.0);
+uniform vec2 cloud_mid_dir = vec2(1.0, 0.0);
 
 float wc_hash2(int x, int y) {
 	uint h = uint(x) * 2376512323u ^ uint(y) * 3625334849u;
@@ -835,6 +865,22 @@ float wc_high_cover(vec2 xz) {
 		vec2 centre = s.xy + cloud_high_dir * (2.5 * s.z);
 		vec2 d = xz - centre;
 		c = 1.0 - (1.0 - c) * (1.0 - exp(-dot(d, d) / (9.0 * s.z * s.z)) * s.w);
+	}
+	return c;
+}
+
+// The mid layer's cover (mid_cover_at() on the CPU).
+float wc_mid_cover(vec2 xz) {
+	float c = 0.0;
+	if (cloud_mid_cover > 0.001) {
+		float n = wc_cover_noise_at(xz + vec2(4721.0, 8363.0) - (cloud_mid_drift - cloud_drift), cloud_mid_scale);
+		c = clamp((n - (1.0 - cloud_mid_cover)) / max(cloud_mid_cover, 0.001) * 1.5, 0.0, 1.0) * min(1.0, 2.0 * cloud_mid_cover);
+	}
+	for (int i = 0; i < cloud_storm_count; i++) {
+		vec4 s = cloud_storms[i];
+		vec2 centre = s.xy + cloud_high_dir * (1.2 * s.z);
+		vec2 d = xz - centre;
+		c = 1.0 - (1.0 - c) * (1.0 - 0.6 * exp(-dot(d, d) / (4.0 * s.z * s.z)) * s.w);
 	}
 	return c;
 }
