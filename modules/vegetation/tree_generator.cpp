@@ -5476,9 +5476,28 @@ float TreeGenerator::bark_height(BarkKind p_kind, float p_around, float p_along,
 	return raw * scale;
 }
 
+TreeGenerator::BarkSet TreeGenerator::shared_bark_sets[BARK_MAX + 1];
+Mutex TreeGenerator::shared_bark_mutex;
+
+bool TreeGenerator::_shared_bark_get(int p_slot, BarkSet &r_set) {
+	MutexLock lock(shared_bark_mutex);
+	if (shared_bark_sets[p_slot].albedo.is_null()) {
+		return false;
+	}
+	r_set = shared_bark_sets[p_slot];
+	return true;
+}
+
+void TreeGenerator::_shared_bark_put(int p_slot, const BarkSet &p_set) {
+	MutexLock lock(shared_bark_mutex);
+	if (shared_bark_sets[p_slot].albedo.is_null()) {
+		shared_bark_sets[p_slot] = p_set;
+	}
+}
+
 const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 	BarkSet &set = bark_sets[p_kind];
-	if (set.albedo.is_valid()) {
+	if (set.albedo.is_valid() || _shared_bark_get(p_kind, set)) {
 		return set;
 	}
 	// Cork's ridges are several centimetres wide: on the common 0.4 m tile a few dozen of them
@@ -6269,6 +6288,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 			print_line(vformat("bark kind %d: relief p90 %.1f mm, grid error %.1f mm, gain %.1f mm, rings every %.1f cm", p_kind, flat * 1000.0f, grid * 1000.0f, set.relief_gain * 1000.0f, set.relief_along * 100.0f));
 		}
 	}
+	_shared_bark_put(p_kind, set);
 	return set;
 }
 
@@ -14256,7 +14276,7 @@ Ref<Texture2D> TreeGenerator::_lichen_texture() {
 // centimetres across, dark in the gaps. Albedo multiplies the vertex colour, which carries the
 // green; the height also lifts the shell into cushions.
 const TreeGenerator::BarkSet &TreeGenerator::_moss_set() {
-	if (moss_set.albedo.is_valid()) {
+	if (moss_set.albedo.is_valid() || _shared_bark_get(BARK_MAX, moss_set)) {
 		return moss_set;
 	}
 	const int N = 512;
@@ -14336,6 +14356,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_moss_set() {
 	moss_set.normal = ImageTexture::create_from_image(ni);
 	moss_set.roughness = ImageTexture::create_from_image(ri);
 	moss_set.height = Image::create_from_data(N, N, false, Image::FORMAT_RF, hbytes);
+	_shared_bark_put(BARK_MAX, moss_set);
 	return moss_set;
 }
 

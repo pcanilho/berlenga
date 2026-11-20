@@ -510,8 +510,17 @@ TmProj tm_projection(vec3 p, vec3 n, float scale, bool cliff) {
 }
 
 // Value noise for the layers' large-scale breakup (no textures needed).
+// An integer hash of the lattice point: the sin() hash loses its precision once its argument reaches the
+// thousands (fine octaves a few hundred metres from the origin), and its value lattice turned into diagonal ripples.
 float tm_vn_hash(vec3 p) {
-	return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453123);
+	uvec3 q = uvec3(ivec3(p));
+	uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u) ^ (q.z * 2741598763u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	return float(h >> 8u) * (1.0 / 16777216.0);
 }
 float tm_vn(vec3 p) {
 	vec3 i = floor(p);
@@ -702,18 +711,25 @@ vec2 tm_hex_hash(ivec2 v) {
 			c += R"(	{
 		float fp = max(length(dpx), length(dpy));
 		albedo *= (0.84 + 0.32 * tm_vn(p / 9.0 + 31.0)) * (0.88 + 0.24 * tm_vn(p / 2.2 + 47.0));
-		const float L[2] = float[2](0.25, 0.06);
-		for (int k = 0; k < 2; k++) {
+		// Five octaves from 0.6 m to 1 cm, each turned against the last (a lattice kept square drew diagonal
+		// ripples), so the ground holds detail down to the pixel close up instead of reading as smeared clouds.
+		const float L[5] = float[5](0.6, 0.22, 0.08, 0.03, 0.011);
+		const float A[5] = float[5](0.45, 0.4, 0.35, 0.3, 0.25);
+		const mat3 R = mat3(vec3(0.00, 0.80, 0.60), vec3(-0.80, 0.36, -0.48), vec3(-0.60, -0.48, 0.64));
+		mat3 rk = mat3(1.0);
+		for (int k = 0; k < 5; k++) {
 			float f = 1.0 - smoothstep(0.25 * L[k], 0.6 * L[k], fp);
 			if (f <= 0.0) {
 				break;
 			}
-			vec3 q = p / L[k] + vec3(13.0 * float(k));
+			vec3 q = rk * p / L[k] + vec3(13.0 * float(k));
 			float v0 = tm_vn(q);
 			vec3 g = vec3(tm_vn(q + vec3(0.35, 0.0, 0.0)), tm_vn(q + vec3(0.0, 0.35, 0.0)), tm_vn(q + vec3(0.0, 0.0, 0.35))) - v0;
+			g = transpose(rk) * g;
 			g -= n * dot(g, n);
-			dn -= g * 0.6 * f;
-			albedo *= 1.0 + 0.16 * (v0 - 0.5) * f;
+			dn -= g * A[k] * f;
+			albedo *= 1.0 + 0.14 * (v0 - 0.5) * f;
+			rk = R * rk;
 		}
 	}
 )";

@@ -154,6 +154,8 @@ var silt_test := false
 var carry_test := false
 var trackdust_test := false
 var stream_test := false
+var fordcar_test := false
+var trails_test := false
 var setup_mud := Vector2.ZERO # mud depth and moisture _setup lays before the node enters the tree
 var offpatch_test := false
 var tread_arg := -1 # --view=ruts: the car's PhysXVehicleWheel3D.Tread (mud round 10)
@@ -232,6 +234,8 @@ func _ready() -> void:
 		elif a == "--test=carry": carry_test = true
 		elif a == "--test=trackdust": trackdust_test = true
 		elif a == "--test=stream": stream_test = true
+		elif a == "--test=fordcar": fordcar_test = true
+		elif a == "--test=trails": trails_test = true
 		elif a == "--test=offpatch": offpatch_test = true
 		elif a == "--test=puddles": puddle_test = true
 		elif a == "--test=cracks": crack_test = true
@@ -308,7 +312,7 @@ func _ready() -> void:
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or silt_test or offpatch_test or carry_test or trackdust_test or stream_test:
+	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or silt_test or offpatch_test or carry_test or trackdust_test or stream_test or fordcar_test or trails_test:
 		if clog_test:
 			await _run_clog_tests()
 		if treads_test:
@@ -349,6 +353,10 @@ func _ready() -> void:
 			await _run_trackdust_tests()
 		if stream_test:
 			await _run_stream_stone_tests()
+		if fordcar_test:
+			await _run_ford_car_tests()
+		if trails_test:
+			await _run_trail_wear_tests()
 		if offpatch_test:
 			await _run_offpatch_tests()
 		print("RESULT: %d failed" % fails)
@@ -6806,6 +6814,136 @@ func _trail_share() -> Vector2:
 		x += 0.05
 	return Vector2(sum / n, 0.0)
 
+# A game trail along z = 0 for |x| < 6, 1 m wide, walked 365 times a year.
+class TrailStandStub extends WorldStand:
+	func _trail_at(p: Vector3) -> Vector2:
+		if absf(p.x) > 6.0 or absf(p.z) > 0.5:
+			return Vector2.ZERO
+		return Vector2(365.0, 1.0 - smoothstep(0.25, 0.5, absf(p.z)))
+
+
+# Game trails (mud round 20): the stand contract's worn paths wear the ground as wheels do: a trail walked every
+# day holds P T / (365 ln 2) passes over its tread (T the regrowth half-life), packed, bearing better, and slower to
+# drain, so rain stands on it first.
+func _run_trail_wear_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.3, 0.0)
+	surface.worn_tracks = true
+	surface.standing_water = true
+	WorldContracts.set_stand(TrailStandStub.new())
+	surface.refresh_ground()
+	for i in 5:
+		await get_tree().physics_frame
+	var on := Vector3(1.0, 0, 0.0)
+	var off := Vector3(1.0, 0, 2.0)
+	var want := 365.0 * surface.wear_regrowth_days / (365.0 * log(2.0))
+	var w_on := surface.get_wear_at(on)
+	var w_off := surface.get_wear_at(off)
+	print("  trail: %.1f passes on the tread (%.1f expected), %.1f off it" % [w_on, want, w_off])
+	_check("a trail walked daily holds its steady passes over its tread", absf(w_on - want) < 0.5 and w_off == 0.0, "%.1f on, %.1f off" % [w_on, w_off])
+	var s_on: float = surface.get_wheel_soil(on, 3000.0, 0.35, 0.25, 200.0, 0.0, 0.0)["sinkage"]
+	var s_off: float = surface.get_wheel_soil(off, 3000.0, 0.35, 0.25, 200.0, 0.0, 0.0)["sinkage"]
+	_check("the trail is packed: it bears a wheel better", s_on < 0.7 * s_off and s_on > 0.0, "%.1f mm on it, %.1f mm off" % [s_on * 1000.0, s_off * 1000.0])
+	# Rain: the packed tread drains slower, so water stands on it first.
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 1.0
+	wm.rain_rate = 20.0
+	wm.humidity = 0.9
+	wm.temperature = 12.0
+	add_child(wm)
+	wm.snap_to_settings()
+	surface.runoff_time_scale = 100.0
+	var first_on := -1
+	var first_off := -1
+	for i in 600:
+		await get_tree().physics_frame
+		if first_on < 0 and surface.get_standing_water_at(on) > 0.0005:
+			first_on = i
+		if first_off < 0 and surface.get_standing_water_at(off) > 0.0005:
+			first_off = i
+	surface.runoff_time_scale = 1.0
+	print("  rain 20 mm/h: water stands on the trail after %d frames, off it after %d (-1 never)" % [first_on, first_off])
+	_check("rain stands on the trail before the ground beside it", first_on >= 0 and (first_off < 0 or first_on < first_off), "%d frames on, %d off" % [first_on, first_off])
+	wm.queue_free()
+	WorldContracts.clear_overrides()
+	near_on = true
+
+
+# Water for the fording car: `depth` m deep over the floor everywhere, flowing along +x at `speed`.
+class FordStub extends WorldWater:
+	var depth := 0.0
+	var speed := 0.0
+
+	func _height_at(_p: Vector3) -> float:
+		return depth if depth > 0.0 else -INF
+
+	func _flow_at(_p: Vector3) -> Vector3:
+		return Vector3(speed, 0, 0)
+
+
+# A car in a ford (mud round 20.1): buoyed by the water it keeps out and pushed by the current across its side, it
+# holds in a shallow slow ford, is carried off in a deep fast one, and floats in deep still water. The bed is the
+# soil soaked by the water: the tyres sink into it as into any ford's mud.
+func _run_ford_car_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.0, 0.0)
+	var floor_body := StaticBody3D.new()
+	var fc := CollisionShape3D.new()
+	fc.shape = BoxShape3D.new()
+	(fc.shape as BoxShape3D).size = Vector3(400, 2, 400)
+	fc.position = Vector3(0, -1, 0)
+	floor_body.add_child(fc)
+	add_child(floor_body)
+	WorldContracts.clear_overrides()
+	var stub := FordStub.new()
+	WorldContracts.add_water_stub(stub)
+	var res := {}
+	for leg in [[0.0, 0.0], [0.5, 0.0], [0.5, 0.3], [0.3, 1.0], [0.5, 1.0], [0.5, 2.0], [0.7, 1.5], [0.7, 3.0]]:
+		stub.depth = 0.0
+		stub.speed = 0.0
+		var car := _make_car(1500.0, 800.0, Vector3(0, 0.5, 0))
+		for i in 60:
+			await get_tree().physics_frame
+		car.brake = 1.0
+		# The water rises over a second, then 4 s more: how far the current carries it once it has settled in.
+		for i in 60:
+			stub.depth = leg[0] * (i + 1) / 60.0
+			stub.speed = leg[1] * (i + 1) / 60.0
+			await get_tree().physics_frame
+		for i in 60:
+			await get_tree().physics_frame
+		var a := car.global_position
+		for i in 240:
+			await get_tree().physics_frame
+		var moved := car.global_position.x - a.x
+		var lift := car.get_water_buoyancy()
+		var drag := car.get_water_drag().x
+		res[leg] = moved
+		print("  %.1f m deep at %.1f m/s: carried %.2f m in 4 s; buoyancy %.1f kN, drag %.2f kN (weight 14.7 kN)" % [leg[0], leg[1], moved, lift / 1000.0, drag / 1000.0])
+		car.queue_free()
+		await get_tree().physics_frame
+	_check("a shallow, slow ford leaves a braked car where it stands", absf(res[[0.3, 1.0]]) < 0.2 and absf(res[[0.5, 1.0]]) < 0.2, "%.2f m at 0.3 m, %.2f m at 0.5 m (1 m/s)" % [res[[0.3, 1.0]], res[[0.5, 1.0]]])
+	_check("a deep, fast one carries it off, rutted bed and all", res[[0.7, 3.0]] > 1.0, "%.2f m at 0.7 m and 3 m/s" % res[[0.7, 3.0]])
+	# Deep still water: it floats once the water it keeps out outweighs it.
+	stub.depth = 0.0
+	stub.speed = 0.0
+	var boat := _make_car(1500.0, 800.0, Vector3(0, 0.5, 0))
+	boat.soft_soil = false
+	for i in 60:
+		await get_tree().physics_frame
+	var y0 := boat.global_position.y
+	stub.depth = 1.4
+	for i in 300:
+		await get_tree().physics_frame
+	var rise := boat.global_position.y - y0
+	print("  1.4 m of still water: lifted %.2f m, buoyancy %.1f kN" % [rise, boat.get_water_buoyancy() / 1000.0])
+	_check("in deep still water it floats", rise > 0.2, "lifted %.2f m" % rise)
+	boat.queue_free()
+	WorldContracts.clear_overrides()
+	floor_body.queue_free()
+	near_on = true
+
+
 # A stream for the stone tests: 0.5 m deep over |z| < 3, flowing along +x at `speed` for x < 2 and still beyond
 # (a pool), out to x = 10.
 class StreamStoneStub extends WorldWater:
@@ -6817,6 +6955,11 @@ class StreamStoneStub extends WorldWater:
 
 	func _flow_at(p: Vector3) -> Vector3:
 		return Vector3(speed, 0, 0) if absf(p.z) < 3.0 and p.x > -10.0 and p.x < 2.0 else Vector3.ZERO
+
+	var silt_kg := 0.0
+
+	func _add_sediment_mass(_p: Vector3, mineral: float, _ash: float) -> void:
+		silt_kg += mineral
 
 
 # Stones in a stream (mud round 19.1): on a firm bed a lone stone stays put in a slow stream, rolls off once the
@@ -6881,12 +7024,20 @@ func _run_stream_stone_tests() -> void:
 		await get_tree().physics_frame
 	var am := rm.global_position
 	stub.speed = 2.5
+	var silt0 := surface.get_stone_silt_lifted()
+	var max_v := 0.0
+	var got0 := stub.silt_kg
 	for i in 600:
 		await get_tree().physics_frame
+		if is_instance_valid(rm):
+			max_v = maxf(max_v, rm.linear_velocity.length())
 	var mm := rm.global_position.x - am.x if is_instance_valid(rm) else 0.0
+	print("  top speed in the mud %.2f m/s" % max_v)
+	var rolled_kg := surface.get_stone_silt_lifted() - silt0
+	print("  rolled through the mud under water: %.2f kg of silt stirred up, %.2f kg reached the water" % [rolled_kg, stub.silt_kg - got0])
+	_check("a stone rolled along a muddy bed clouds the water with silt", rolled_kg > 0.05 and absf(stub.silt_kg - got0 - rolled_kg) < 1e-3, "%.2f kg" % rolled_kg)
 	print("  in stiff mud, sunk %.1f cm: moved %.2f m at 2.5 m/s (%.2f m on the firm bed)" % [(gm + rc - am.y) * 100.0, mm, runs[2.5][0]])
 	_check("a stone lying in mud is held harder than on a firm bed", mm < 0.5 * runs[2.5][0], "%.2f m in mud, %.2f m firm" % [mm, runs[2.5][0]])
-	stub.speed = 0.0
 	WorldContracts.clear_overrides()
 	# Kept with the deposits (round 19.2): saved, read back by a new node where and as deep as it lay.
 	for i in 60:
@@ -6912,8 +7063,60 @@ func _run_stream_stone_tests() -> void:
 	_check("a loose stone is kept with the deposits, where and as deep as it lay", back.size() == 1 and off < 0.01 and turned < 0.05, "%d stones, %.1f cm off" % [back.size(), off * 100.0])
 	surface.clear_saved_ruts()
 	ruts_on = false
+	# Scour (round 20.2): a slower current over a stone at rest in the mud digs a horseshoe hole at its upstream face
+	# and lays a tail in its lee (sped up 20000 times: 10 s is two days and a half;
+# a cohesive bed erodes at a few millimetres an hour).
+	# The soil the river soaks (no mud laid over it): a bed firm enough to hold a hole, where the stiff mud's
+	# liquid top fills one back at once.
+	for n in get_tree().get_nodes_in_group("ground_loose"):
+		n.free()
+	stub.speed = 0.0
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.3, 0.0)
+	var sp := Vector3(-6.0, 0, 0.3)
+	var gs := surface.get_surface_height_at(sp)
+	floor_body = StaticBody3D.new()
+	var fc2 := CollisionShape3D.new()
+	fc2.shape = WorldBoundaryShape3D.new()
+	floor_body.add_child(fc2)
+	add_child(floor_body)
+	floor_body.global_position = Vector3(0, gs, 0)
+	for i in 120: # soaked by the river
+		await get_tree().physics_frame
+	gs = surface.get_surface_height_at(sp)
+	WorldContracts.clear_overrides()
+	WorldContracts.add_water_stub(stub)
+	surface.add_loose_stone(Vector3(sp.x, gs + rc + 0.01, sp.z), r)
+	var rs := get_tree().get_nodes_in_group("ground_loose")[0] as RigidBody3D
+	for i in 150:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	var y_before := rs.global_position.y
+	var nose := sp - Vector3(1.1 * rc, 0, 0)
+	var tail := sp + Vector3(4.0 * rc, 0, 0)
+	# Against the same spots mirrored across the stone (its own print slumps round it alike on both sides).
+	var lee := sp + Vector3(1.1 * rc, 0, 0)
+	var head := sp - Vector3(4.0 * rc, 0, 0)
+	var nose_lee0 := surface.get_surface_height_at(lee) - surface.get_surface_height_at(nose)
+	var tail_head0 := surface.get_surface_height_at(tail) - surface.get_surface_height_at(head)
+	var scour0 := surface.get_stone_scour_volume()
+	var silt1 := surface.get_stone_silt_lifted()
+	stub.speed = 1.2
+	surface.runoff_time_scale = 20000.0
+	for i in 600:
+		await get_tree().physics_frame
+	surface.runoff_time_scale = 1.0
+	stub.speed = 0.0
+	surface.sync_deformation()
+	var hole := surface.get_surface_height_at(lee) - surface.get_surface_height_at(nose) - nose_lee0
+	var ridge := surface.get_surface_height_at(tail) - surface.get_surface_height_at(head) - tail_head0
+	var settled := y_before - rs.global_position.y
+	var scoured := surface.get_stone_scour_volume() - scour0
+	var drift := rs.global_position.x - sp.x
+	print("  scour at 1.2 m/s: hole %.1f cm deeper at its nose than its lee, tail %.1f cm over the bed upstream, %.2f L dug, stone settled %.1f cm, drifted %.2f m, %.2f kg to the water" % [hole * 100.0, ridge * 100.0, scoured * 1000.0, settled * 100.0, drift, surface.get_stone_silt_lifted() - silt1])
+	_check("a current scours a hole round a stone on its bed and lays a tail behind it", hole > 0.005 and ridge > 0.0 and absf(drift) < 0.1 and surface.get_stone_silt_lifted() > silt1, "hole %.1f cm, tail %.1f cm" % [hole * 100.0, ridge * 100.0])
 	if is_instance_valid(floor_body):
 		floor_body.queue_free()
+	WorldContracts.clear_overrides()
 	near_on = true
 
 

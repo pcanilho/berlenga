@@ -1171,7 +1171,7 @@
     "stream_stones"
    ],
    "note": "",
-   "what": "stones and roots hidden in mud lift a sinking wheel and show as ruts deepen, and liquid mud flows round them. Tyres press the mud out round a stone, knock an uncovered one loose, push a stone low in the rut into its floor or squeeze it out under the shoulder, and shove loose stones ahead with a furrow and a heap. Loose stones settle as deep as the mud bears them and become hidden again once out of sight; slurry and debris flows carry them along, and streams roll them on once the current beats their weight, dropping them in slack water, with stones sunk in mud holding harder.",
+   "what": "stones and roots hidden in mud lift a sinking wheel and show as ruts deepen, and liquid mud flows round them. Tyres press the mud out round a stone, knock an uncovered one loose, push a stone low in the rut into its floor or squeeze it out under the shoulder, and shove loose stones ahead with a furrow and a heap. Loose stones settle as deep as the mud bears them and become hidden again once out of sight; slurry and debris flows carry them along, and streams roll them on once the current beats their weight, dropping them in slack water, with stones sunk in mud holding harder. The current scours a hole round a stone on a stream bed and leaves a tail of sediment behind it, and stones rolled over a muddy bed stir up silt that drifts downstream.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1242,6 +1242,18 @@
    ],
    "note": "",
    "what": "wheels crossing a stream scour its bed and its soft banks give way under them.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Vehicles in water",
+   "settings": [
+    "PhysXVehicle3D.river_forces",
+    "hull_seal"
+   ],
+   "note": "",
+   "what": "rivers, fords and floods buoy a vehicle by how much of its body keeps water out and push it with the current, carrying it off when the water is deep and fast.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2565,7 +2577,7 @@
     "VegetationField3D.make_game_trails()"
    ],
    "note": "",
-   "what": "animals wear a branching network of trails between cover, feeding lawns and water, routed by least cost over slope and water and merging where traffic runs, and grass wears along them.",
+   "what": "animals wear a branching network of trails between cover, feeding lawns and water, routed by least cost over slope and water and merging where traffic runs; grass wears along them and the packed ground pools rain first.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

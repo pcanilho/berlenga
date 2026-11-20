@@ -217,6 +217,7 @@ public:
 	float base_slip_denominator = -1.0f;
 	float base_passive_denominator = -1.0f;
 	float base_sticky_speed = -1.0f;
+	float base_lat_sticky_speed = -1.0f;
 	bool clogging = true;
 
 	virtual bool update(const PxReal p_dt, const PxVehicleSimulationContext &p_context) override {
@@ -226,6 +227,7 @@ public:
 			base_slip_denominator = context->tireSlipParams.minActiveLongSlipDenominator;
 			base_passive_denominator = context->tireSlipParams.minPassiveLongSlipDenominator;
 			base_sticky_speed = context->tireStickyParams.stickyParams[PxVehicleTireDirectionModes::eLONGITUDINAL].thresholdSpeed;
+			base_lat_sticky_speed = context->tireStickyParams.stickyParams[PxVehicleTireDirectionModes::eLATERAL].thresholdSpeed;
 		}
 		// The tyre model's slip divides by the forward speed, floored at 0.1 m/s while driven: at walking pace its
 		// force swings hard with the wheel's speed, and the wheel's explicit integration rings between full
@@ -464,6 +466,9 @@ public:
 		context->tireSlipParams.minActiveLongSlipDenominator = held ? 0.5f : (any_soft ? MAX(base_slip_denominator, SOIL_SLIP_SPEED) : base_slip_denominator);
 		context->tireSlipParams.minPassiveLongSlipDenominator = held ? MIN(base_passive_denominator, 0.5f) : base_passive_denominator;
 		context->tireStickyParams.stickyParams[PxVehicleTireDirectionModes::eLONGITUDINAL].thresholdSpeed = held ? MIN(base_sticky_speed, 0.02f) : base_sticky_speed;
+		// Sideways too (mud round 20.1): a parked car with a current against its side crept off at 10 cm/s under
+		// 40 N, the sticky damper again; held, the tyre's own lateral force holds it to its friction.
+		context->tireStickyParams.stickyParams[PxVehicleTireDirectionModes::eLATERAL].thresholdSpeed = held ? MIN(base_lat_sticky_speed, 0.02f) : base_lat_sticky_speed;
 		return true;
 	}
 };
@@ -583,6 +588,8 @@ struct PhysXVehicle3D::Impl {
 	float belly_drag = 0.0f;
 	float belly_support = 0.0f;
 	float belly_deepest = 0.0f; // m under the undisturbed surface, the last step
+	float water_buoyancy = 0.0f; // N (round 20.1)
+	Vector3 water_drag; // N
 	// Mud on the body (stage 3b): per wheel the spray level and the shed kg already counted; the belly's mud line,
 	// the mud's wetness; the meshes painted (their materials copied with Mud on).
 	float mud_spray[4] = {};
@@ -754,6 +761,7 @@ bool PhysXVehicle3D::_build() {
 	impl->soil_road.base_slip_denominator = -1.0f;
 	impl->soil_road.base_passive_denominator = -1.0f;
 	impl->soil_road.base_sticky_speed = -1.0f;
+	impl->soil_road.base_lat_sticky_speed = -1.0f;
 	impl->soil_tire.vehicle = &impl->vehicle;
 	impl->soil_tire.wheels = impl->soil_wheels;
 	impl->soil_road.clogging = tyre_clogging;
@@ -866,6 +874,7 @@ void PhysXVehicle3D::_notification(int p_what) {
 			if (get_physics_process_delta_time() > 0.0) {
 				v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
 				_belly_step((float)get_physics_process_delta_time());
+				_water_step((float)get_physics_process_delta_time());
 			}
 			// v.rigidBodyState.pose is CoM-relative, not the actor's real
 			// origin (confirmed directly by comparing it against a raw
@@ -990,6 +999,135 @@ real_t PhysXVehicle3D::get_belly_drag() const {
 
 real_t PhysXVehicle3D::get_belly_support() const {
 	return impl->belly_support;
+}
+
+void PhysXVehicle3D::set_river_forces(bool p_enabled) {
+	river_forces = p_enabled;
+}
+
+void PhysXVehicle3D::set_hull_seal(real_t p_share) {
+	hull_seal = CLAMP(p_share, 0.0f, 1.0f);
+}
+
+real_t PhysXVehicle3D::get_water_buoyancy() const {
+	return impl->water_buoyancy;
+}
+
+Vector3 PhysXVehicle3D::get_water_drag() const {
+	return impl->water_drag;
+}
+
+// A vehicle in water (docs/ideas/mud.md, round 20.1). Flood studies of vehicles (Shu et al. 2011; Xia et al. 2014;
+// Martinez-Gomariz et al. 2017, full-size cars at UNSW's Water Research Laboratory, 2017) take it as a body on its tyres:
+// buoyancy from the water it keeps out lightens it, the current's drag 0.5 rho Cd A |u - v| (u - v) (Cd about 1.1 on the
+// wet side or front) pushes it, and it is carried off once the drag beats the tyres' friction on what weight is left;
+// cars float near 0.5 to 0.6 m of still water as their body keeps out about half its box (hull_seal). PhysX's tyres
+// give the friction from the lighter load. The chassis box in 3 x 5 columns, each buoyed by its wet part and dragged by
+// the current at its own speed through the box's wet face across the flow; each tyre by its wet segment.
+void PhysXVehicle3D::_water_step(float p_delta) {
+	impl->water_buoyancy = 0.0f;
+	impl->water_drag = Vector3();
+	PxRigidDynamic *dyn = impl->vehicle.physxActor.rigidBody ? impl->vehicle.physxActor.rigidBody->is<PxRigidDynamic>() : nullptr;
+	WorldWater *ww = WorldContracts::water();
+	if (!river_forces || !dyn || !ww || !ww->has_provider() || impl->chassis_half == Vector3()) {
+		return;
+	}
+	for (int i = 0; i < get_child_count(); i++) {
+		if (get_child(i)->is_class("PhysXBuoyancy3D")) {
+			return; // floated by its own buoyancy node
+		}
+	}
+	const float rho = 1000.0f;
+	const float cd = 1.1f;
+	const Transform3D box = get_global_transform() * impl->chassis_local;
+	const Vector3 h = impl->chassis_half;
+	const PxTransform com_pose = dyn->getGlobalPose() * dyn->getCMassLocalPose();
+	const Vector3 com(com_pose.p.x, com_pose.p.y, com_pose.p.z);
+	const PxVec3 lin_px = dyn->getLinearVelocity();
+	const PxVec3 ang_px = dyn->getAngularVelocity();
+	const Vector3 lin(lin_px.x, lin_px.y, lin_px.z);
+	const Vector3 ang(ang_px.x, ang_px.y, ang_px.z);
+	const Vector3 ax = box.basis.get_column(0).normalized();
+	const Vector3 az = box.basis.get_column(2).normalized();
+	const Vector3 up = box.basis.get_column(1);
+	const float tall = 2.0f * h.y * MAX(up.normalized().y, 0.1f); // the box's height on the vertical
+	const int NX = 3;
+	const int NZ = 5;
+	const float col_area = 4.0f * h.x * h.z / float(NX * NZ);
+	Vector3 force;
+	Vector3 torque;
+	float lift = 0.0f;
+	auto push = [&](const Vector3 &p_at, const Vector3 &p_f) {
+		force += p_f;
+		torque += (p_at - com).cross(p_f);
+	};
+	for (int iz = 0; iz < NZ; iz++) {
+		for (int ix = 0; ix < NX; ix++) {
+			const Vector3 local((float(ix) + 0.5f) / NX * 2.0f * h.x - h.x, -h.y, (float(iz) + 0.5f) / NZ * 2.0f * h.z - h.z);
+			const Vector3 base = box.xform(local);
+			const float ws = ww->height_at(base + Vector3(0.0f, tall, 0.0f));
+			const float wet = CLAMP(ws - base.y, 0.0f, tall);
+			if (!(wet > 0.0f)) {
+				continue;
+			}
+			const Vector3 mid = base + Vector3(0.0f, 0.5f * wet, 0.0f);
+			const float b = rho * 9.81f * col_area * wet * float(hull_seal);
+			lift += b;
+			Vector3 f(0.0f, b, 0.0f);
+			const Vector3 u = ww->flow_at(mid);
+			Vector3 rel = u - (lin + ang.cross(mid - com));
+			rel.y = 0.0f;
+			const float s = rel.length();
+			if (s > 1e-3f) {
+				const Vector3 d = rel / s;
+				// The box's width across the flow, shared by its columns.
+				const float across = 2.0f * h.x * Math::abs(d.dot(az)) + 2.0f * h.z * Math::abs(d.dot(ax));
+				f += rel * (0.5f * rho * cd * wet * across / float(NX * NZ) * s);
+			}
+			push(mid, f);
+		}
+	}
+	for (const PhysXVehicleWheel3D *w : wheels) {
+		if (!w || !w->is_inside_tree()) {
+			continue;
+		}
+		const Vector3 c = w->get_global_position();
+		const float r = (float)w->get_radius();
+		const float width = 2.0f * (float)w->get_half_width();
+		const float ws = ww->height_at(c + Vector3(0.0f, r, 0.0f));
+		const float wet = CLAMP(ws - (c.y - r), 0.0f, 2.0f * r);
+		if (!(wet > 0.0f)) {
+			continue;
+		}
+		// The circle's wet segment: area r^2 (t - sin t cos t), t = acos(1 - wet / r).
+		const float th = Math::acos(CLAMP(1.0f - wet / r, -1.0f, 1.0f));
+		const float seg = r * r * (th - Math::sin(th) * Math::cos(th));
+		const float b = rho * 9.81f * seg * width;
+		lift += b;
+		const Vector3 at(c.x, c.y - r + 0.5f * wet, c.z);
+		Vector3 f(0.0f, b, 0.0f);
+		Vector3 rel = ww->flow_at(at) - (lin + ang.cross(at - com));
+		rel.y = 0.0f;
+		const float s = rel.length();
+		if (s > 1e-3f) {
+			const Vector3 d = rel / s;
+			const float across = width * Math::abs(d.dot(az)) + 2.0f * r * Math::abs(d.dot(ax));
+			f += rel * (0.5f * rho * cd * wet / (2.0f * r) * across * s);
+		}
+		push(at, f);
+	}
+	if (force == Vector3()) {
+		return;
+	}
+	impl->water_buoyancy = lift;
+	impl->water_drag = Vector3(force.x, 0.0f, force.z);
+	const PxVec3 pf(force.x, force.y, force.z);
+	const PxVec3 pt(torque.x, torque.y, torque.z);
+	GodotPhysXServer3D::run_on_physics_thread([=]() {
+		dyn->addForce(pf, PxForceMode::eFORCE);
+		dyn->addTorque(pt, PxForceMode::eFORCE);
+	});
+	(void)p_delta;
 }
 
 // The belly in the mud (docs/ideas/mud.md, stage 3). Off-road games and NRMM count "belly drag" once the sinkage
@@ -2058,6 +2196,14 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_belly_drag", "enabled"), &PhysXVehicle3D::set_belly_drag);
 	ClassDB::bind_method(D_METHOD("is_belly_drag"), &PhysXVehicle3D::is_belly_drag);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "belly_drag"), "set_belly_drag", "is_belly_drag");
+	ClassDB::bind_method(D_METHOD("set_river_forces", "enabled"), &PhysXVehicle3D::set_river_forces);
+	ClassDB::bind_method(D_METHOD("is_river_forces"), &PhysXVehicle3D::is_river_forces);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "river_forces"), "set_river_forces", "is_river_forces");
+	ClassDB::bind_method(D_METHOD("set_hull_seal", "share"), &PhysXVehicle3D::set_hull_seal);
+	ClassDB::bind_method(D_METHOD("get_hull_seal"), &PhysXVehicle3D::get_hull_seal);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hull_seal", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_hull_seal", "get_hull_seal");
+	ClassDB::bind_method(D_METHOD("get_water_buoyancy"), &PhysXVehicle3D::get_water_buoyancy);
+	ClassDB::bind_method(D_METHOD("get_water_drag"), &PhysXVehicle3D::get_water_drag);
 	ClassDB::bind_method(D_METHOD("get_wheel_mud", "wheel"), &PhysXVehicle3D::get_wheel_mud);
 	ClassDB::bind_method(D_METHOD("get_wheel_mud_shed", "wheel"), &PhysXVehicle3D::get_wheel_mud_shed);
 	ClassDB::bind_method(D_METHOD("get_belly_drag"), &PhysXVehicle3D::get_belly_drag);

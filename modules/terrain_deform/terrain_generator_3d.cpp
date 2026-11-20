@@ -6391,6 +6391,9 @@ vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footpri
 		fd = fd * (1.0 - mask) + mask * TD_GULLY * dc + (raw - fade) * md;
 		// Octaves fade out between eight and four pixels a wavelength (no shimmer).
 		float aa = footprint > 0.0 ? clamp(2.0 - 8.0 * footprint / lambda, 0.0, 1.0) : 1.0;
+		// Gullies under a few metres are not the eroded ground's own shape (its clods and stones are the layers'):
+		// drawn as light alone they were parallel ripples and pale islands with dark rims.
+		aa *= smoothstep(1.5, 4.0, lambda);
 		r += aa * fd * TD_DEPTH / TD_GULLY * lambda;
 		fade = faded;
 		float m0 = clamp(mask, 0.0, 1.0);

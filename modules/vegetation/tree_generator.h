@@ -540,6 +540,9 @@ public:
 		for (LocalVector<ClimberLeafShape> &a : plant_climber_shapes) {
 			a.clear();
 		}
+		for (BarkSet &b : shared_bark_sets) {
+			b = BarkSet();
+		}
 	}
 
 private:
@@ -1008,6 +1011,12 @@ private:
 	};
 	BarkSet bark_sets[BARK_MAX];
 	BarkSet moss_set;
+	// The bark and moss sets depend on the bark kind alone: built once in the process and shared by
+	// every generator (each new generator rebuilt them, about half a second a kind).
+	static BarkSet shared_bark_sets[BARK_MAX + 1]; // BARK_MAX: the moss set.
+	static Mutex shared_bark_mutex;
+	static bool _shared_bark_get(int p_slot, BarkSet &r_set);
+	static void _shared_bark_put(int p_slot, const BarkSet &p_set);
 	const BarkSet &_moss_set();
 	static BarkKind _bark_kind(Preset p_preset);
 	static float _bark_tile_of(BarkKind p_kind) { return p_kind == BARK_CORK ? 1.2f : (p_kind == BARK_PINASTER ? 1.8f : BARK_TILE); } // Metres one tile of this family covers.
