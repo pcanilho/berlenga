@@ -1580,10 +1580,11 @@
     "layer_enabled",
     "far_thinning",
     "far_radius",
-    "far_min_size"
+    "far_min_size",
+    "far_widen"
    ],
    "note": "",
-   "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it; past the near field, only the larger rocks carry on out to the horizon.",
+   "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it; past the near field, only the larger rocks carry on out to the horizon, grown so the slope keeps its stone cover.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
