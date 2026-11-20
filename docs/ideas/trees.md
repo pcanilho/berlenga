@@ -3204,6 +3204,19 @@ Still recipe: `rigged` false, `fire_variants` false, `near_needle_range` 0, `lig
 set before `make_stand`/`make_woodland`, `near_leaf_range` ~25, `set_near_build_limit(1)`, one tree
 variant, a frame between stands, wait for `get_near_builds() == 0`.
 
+## 8f. Build cost profile (20 Nov)
+
+Sampled with gdb (one session interrupting every 0.3 s, all thread stacks, about 190 samples) over 14 builds: oak, beech,
+Scots pine, Norway spruce, birch, lime and silver fir, open and forest-grown, seed 1. Share of the busy samples:
+- `ArrayMesh::add_surface_from_arrays` about 40%: the renderer's attribute packing (`_get_axis_angle` per vertex for the
+  compressed normal and tangent, then the copy). Engine code; its output is the GPU format, so a faster version must
+  give the same bits.
+- Leaf LODs 14%, `Builder::end` 10%, needles 8%.
+- Bark textures (`_bark_set`, bark_fbm and bark_voronoi inlined) about 9%, moss noise under 4%.
+The bark and moss sets depend on the bark kind alone but were built again by every new generator (a forest-grown
+tree spent half its time on them). They are now built once per process and shared (`shared_bark_sets`, freed with the
+module). Forest-grown builds of the seven species: 6.6 s to 4.4 s; mesh arrays and bark images hash the same.
+
 ## 8a. Species, habitats and stands (as built)
 
 Seventeen presets: oak, beech, birch, Scots pine, Norway spruce, hazel, hawthorn, small-leaved
@@ -3822,3 +3835,20 @@ grown on demand (lazy generation, as the near leaves of 8c).
 3. **Colonnades and a browsing pressure map.** Rows of stilted spruce along one vanished log (a row placement in
    VegetationField3D), and a pressure map (WorldStand or vegetation) so the browse line and hedged saplings vary over
    the land, heavier by meadows and wintering ground.
+
+## Next-round options (card 20 Nov night)
+
+1. **Ice storms.** Freezing rain glazes every twig: radial ice of 10-25 mm on the 1998 Quebec storm's worst ground,
+   many times the twigs' own weight. Birches arch over to the ground and stay bent for years, crowns lose their tops
+   and limbs, conifers with stiff limbs shed less (Irland 2000, ice storms and forest impacts; Proulx and Greene 2001;
+   Lemon 1961, species susceptibility). Built as the snow crowns were: a glaze load from the weather's freezing rain,
+   droop and breaks in TreeWind3D, clear ice on the bark and needles (Transmission on under PT), broken tops and
+   arched birch as stand variants afterwards.
+2. **Missing broadleaves.** Aspen and poplar (aspen groves are one clone from root suckers, so a whole patch shares
+   its bark, form and autumn colour; Mitton and Grant 1996), wild cherry (banded, peeling, shiny red-brown bark),
+   hornbeam (fluted grey stems, often coppiced or hedged) and sweet chestnut (spiral-furrowed bark, old coppice
+   stools). They are also the hosts mistletoe and brooms still lack (5ay).
+3. **Trees on cliffs and rock.** Stunted, centuries-old trees on ledges and in crevices, roots fed along cracks and
+   draped over the faces, crowns thin and half dead (Larson, Matthes and Kelly 2000, Cliff Ecology: the Niagara
+   Escarpment's 1,000-year-old white cedars). Builds on root_stone's rock link: roots that follow a rock's cracks, and
+   placement on steep, rocky ground from the terrain map.
