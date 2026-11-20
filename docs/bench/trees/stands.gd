@@ -8,6 +8,7 @@ extends Node3D
 #   --stand-test=N    the placement checks of stand N only (TreeGenerator.Stand)
 #   --forest-edge=N   make_edge(N): mantle shrubs out in the open, edge trees one-sided toward +X (trees.md 5as)
 #   --beaver          beaver work on single trees: stump cone, felled stem lying, gnawed waist, resprouts (trees.md 5au)
+#   --flood           flood marks on a willow: silt under the waterline only, wrack at it (trees.md 5av)
 #   --succession=N    make_succession(N): every stage present, age ranges and kinds sane, sizes by stage (trees.md 5aq)
 #   --map=path.png    the placement maps of every stand in one image
 #   --edge [--standard]  with --plot: from a fresh coupe across its edge (or at a standard 8 m off)
@@ -78,6 +79,10 @@ func run(args: Dictionary) -> void:
 	gen.far_thinning = OS.get_environment("NO_FAR_SCALE") == ""
 	if args.has("forest-edge"):
 		_forest_edge_check(int(args["forest-edge"]))
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("flood"):
+		_flood_check()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	if args.has("beaver"):
@@ -189,6 +194,47 @@ func _band_min_r(m: Mesh, y0: float, y1: float) -> float:
 		rs.sort()
 		lo = minf(lo, rs[int(rs.size() * 0.5)])
 	return lo if lo < 1e8 else -1.0
+
+# Flood marks (trees.md 5av): silt coded on the bark's UV2 (u below -0.5) under the waterline and nowhere above it,
+# and wrack (more wood-surface geometry) at the line; nothing without a flood.
+func _flood_check() -> void:
+	var g := TreeGenerator.new()
+	g.preset = TreeGenerator.PRESET_WHITE_WILLOW
+	g.near_leaf_range = 0.0
+	g.set_param(TreeGenerator.PARAM_YEARS, 35.0)
+	var found_wrack := 0
+	for sd in range(1, 5):
+		g.seed = sd
+		g.flood_height = 0.0
+		var dry := g.generate()
+		g.flood_height = 1.1
+		g.flood_years = 0.2
+		var wet := g.generate()
+		var bi := _surface(wet, "bark")
+		var arr: Array = wet.surface_get_arrays(bi)
+		var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var u2: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV2]
+		var under := 0
+		var under_n := 0
+		var over := 0
+		for k in v.size():
+			var silty := u2.size() == v.size() and u2[k].x < -0.5
+			if v[k].y < 0.9:
+				under_n += 1
+				if silty:
+					under += 1
+			elif v[k].y > 1.3 and silty:
+				over += 1
+		var wd := _surface(dry, "wood")
+		var ww := _surface(wet, "wood")
+		var nd: int = dry.surface_get_array_len(wd) if wd >= 0 else 0
+		var nw: int = wet.surface_get_array_len(ww) if ww >= 0 else 0
+		if nw > nd:
+			found_wrack += 1
+		print("  seed %d: wood vertices %d dry, %d flooded" % [sd, nd, nw])
+		_check(under > 0.8 * under_n and over == 0, "willow seed %d: silt on %d of %d bark vertices under 0.9 m, %d over 1.3 m" % [sd, under, under_n, over])
+	_check(found_wrack >= 2, "flood wrack on %d of 4 willows" % found_wrack)
+	g.flood_height = 0.0
 
 func _beaver_check() -> void:
 	for pr in [TreeGenerator.PRESET_WHITE_WILLOW, TreeGenerator.PRESET_BIRCH]:
