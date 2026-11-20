@@ -489,7 +489,12 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 	// before its first sample nor runs a whole step past the scene.
 	float jitter = ign(vec2(px) + (p.res.z != 0 ? 5.588238 * float(p.res.y & 63) : 0.0));
 	float seg = t0;
-	for (int i = 0; i < p.counts.w && seg < t1; i++) {
+	// The step budget counts the samples in gas only: a ray grazing the ground crosses long stretches of allocated
+	// but empty blocks (the terrain floor's tiles, the air around the cloud) one cheap fetch a step, and with every
+	// step counted it ran out there before reaching the gas, which then drew unlit, a dark band along its base
+	// stepped by blocks. A hard cap of four times the budget bounds the empty stretches.
+	int lit_steps = 0;
+	for (int i = 0; lit_steps < p.counts.w && i < 4 * p.counts.w && seg < t1; i++) {
 		float dt = min(step_len, t1 - seg);
 		float t = seg + jitter * dt;
 		vec3 pos = cam + dir * t;
@@ -504,6 +509,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 			continue;
 		}
 		if (smoke > 0.001) {
+			lit_steps++;
 			float alpha = 1.0 - exp(-min(smoke, SMOKE_MAX) * sigma * dt);
 			vec3 in_light = vec3(0.0);
 			vec3 pos_m = pos / upm;
@@ -860,6 +866,11 @@ void main() {
 		for (int j = -1; j < 3; j++) {
 			for (int i = -1; i < 3; i++) {
 				vec4 t = imageLoad(scatter_img, clamp(base + ivec2(i, j), ivec2(0), hi));
+				if (all(equal(t.rgb, vec3(0.0)))) {
+					// A texel whose march found no gas (its ray met the scene first) has no light to give, rather
+					// than a dark one: blended in, it darkened the gas along where it meets the ground.
+					continue;
+				}
 				vec2 offset = vec2(base + ivec2(i, j)) - f;
 				float spatial = exp(-dot(offset, offset) * (1.0 / (2.0 * 0.7 * 0.7)));
 				float gap = abs(t.a - d) / max(d, 0.01);
