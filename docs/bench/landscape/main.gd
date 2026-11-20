@@ -528,6 +528,8 @@ func _ready() -> void:
 				_log("%s near radius %.1f m (stream radius %.0f)" % [f.name, f.get_near_radius(), f.stream_radius])
 	if args.has("bracken"):
 		await _frame_bracken()
+	if args.has("lightning-cam"):
+		await _frame_struck()
 	if args.has("log"):
 		await _frame_log()
 	if args.has("mushrooms"):
@@ -3545,6 +3547,21 @@ func _generated_forest(clearing: bool) -> Biome:
 		b = tg.make_stand(stands.get(args["tree-stand"], TreeGenerator.STAND_BEECH), variants)
 	else:
 		b = tg.make_woodland(variants, TreeGenerator.REGION_EUROPE)
+	if args.has("lightning") and "lightning_years" in tg:
+		# --lightning[=Y]: a few Norway spruces struck Y years ago (0.3; trees a9e426e0: the pale strip down the stem,
+		# bark and splinters at the foot for two years, greying over 1-4) among the stand, --lightning-spacing m apart
+		# (60); --view framing with --lightning-cam (side-lit, --lightning-dist 6 m).
+		var keep_preset = tg.preset
+		tg.preset = TreeGenerator.PRESET_NORWAY_SPRUCE
+		tg.lightning_years = float(args.get("lightning", "0.3")) if String(args["lightning"]) != "" else 0.3
+		var struck: PlantSpecies = tg.make_species(false, 1)
+		tg.lightning_years = -1.0
+		tg.preset = keep_preset
+		struck.resource_name = "Norway spruce (lightning struck)"
+		struck.spacing = float(args.get("lightning-spacing", "60"))
+		var all3: Array[PlantSpecies] = [struck]
+		all3.append_array(b.species)
+		b.species = all3
 	if args.has("forest-edge") and tg.has_method("make_edge"):
 		# --forest-edge[=stand]: the edge species (trees.md 5as: the shrub mantle out in the open, edge trees one-sided
 		# toward it) with the stand's own; vegetation places them by RULE_FOREST_EDGE off the canopy's edge.
@@ -6532,3 +6549,38 @@ func _powder_avalanche() -> void:
 		await get_tree().physics_frame
 		frames += 1
 	_log("powder avalanche: trigger %s, %.1f t up, %.1f t in the air, front %.1f m/s, after %d frames" % [str(ok), av.get_powder_taken() / 1000.0, av.get_suspended_mass() / 1000.0, av.get_max_speed(), frames])
+
+
+# --lightning-cam (with --lightning): the struck spruce nearest the first view, the camera --lightning-dist m (6) from
+# it square to the sun (side-lit, so the pale strip and the splinters read against the dark bark), eye 1.7 m, looking
+# at the stem --lightning-look m up (2).
+func _frame_struck() -> void:
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var to_sun := sun.global_basis.z
+	var sun_flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
+	var best := Vector3.INF
+	for i in veg.biome.species.size():
+		var sp := veg.biome.species[i] as Resource
+		if sp == null or not String(sp.resource_name).contains("lightning"):
+			continue
+		for tp in veg.get_placements(i):
+			if best == Vector3.INF or tp.distance_to(c3.global_position) < best.distance_to(c3.global_position):
+				best = tp
+	if best == Vector3.INF:
+		_log("lightning: no struck spruce placed")
+		return
+	var side := sun_flat.cross(Vector3.UP).normalized()
+	var cp := best + side * float(args.get("lightning-dist", "6"))
+	cp.y = height_at(cp.x, cp.z) + 1.7
+	c3.global_position = cp
+	c3.look_at(Vector3(best.x, height_at(best.x, best.z) + float(args.get("lightning-look", "2")), best.z))
+	var n := 0
+	await get_tree().process_frame
+	get_viewport().disable_3d = true
+	while not cover.is_stream_idle() and n < 600:
+		await get_tree().process_frame
+		n += 1
+	get_viewport().disable_3d = false
+	if veg.streaming:
+		await _forest_settle()
+	_log("lightning cam %.1f,%.1f,%.1f at the struck spruce %s" % [cp.x, cp.y, cp.z, str(best.round())])
