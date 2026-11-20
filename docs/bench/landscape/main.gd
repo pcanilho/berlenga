@@ -12,6 +12,7 @@ extends Node3D
 #   --raster          raster only (TAA + SMAA; --aa=0 without)
 #   --spp=N           path tracing samples (default 16)
 #   --boulders=D     rockfall blocks below cliffs at density D (default 1, 0 none), grey stand-ins
+#   --no-far         no rock far tier (big stones and landmarks to 4 km), the before frame
 #   --rocks=off      grey stand-ins instead of RockField3D stones; --rocks-area=M builds the stones in M m round the camera (1200)
 #   --stone-plants=0 no crevice plants (PlantGenerator.make_stones) between the stones
 #   --far-blend [--far-start=M]   TerrainMaterial3D's far blend over a test plant cover map
@@ -386,8 +387,10 @@ func _ready() -> void:
 			for q in pts:
 				rv.add_sediment(q, rate / npts, 0.0))
 		feed.start()
+		get_viewport().disable_3d = true # the river runs undrawn (a drawn frame takes seconds here)
 		for _i in int(float(args.get("silt-wait", "20")) * Engine.physics_ticks_per_second):
 			await get_tree().physics_frame
+		get_viewport().disable_3d = false
 		var probe := best + (best - Vector3(want.x, best.y, want.z)).normalized() * 0.0
 		_log("silt: %.0f mg/L into river at %s (discharge %.2f m3/s); load there %s kg/m3" % [float(args["silt"]), str(best.round()), dq, str(rv.get_sediment_at(probe))])
 	if args.has("river-pick"):
@@ -425,8 +428,10 @@ func _ready() -> void:
 	if args.get("prints", "1") != "0":
 		_build_prints()
 	_build_camera()
-	if args.has("wet-follow-cam") and weather != null:
-		weather.follow_target = weather.get_path_to(cam) # contact wetness (64 m square) round the camera, not the origin
+	if args.get("wet-follow-cam", "1") != "0" and weather != null:
+		# WeatherMap3D's local reads (smoke haze, cloud shadow, contact wetness) round the camera for the picture;
+		# the setup above ran on the world anchor. --wet-follow-cam=0 keeps the origin anchor.
+		weather.follow_target = weather.get_path_to(cam)
 	if clock != null:
 		_log("sun altitude %.1f deg, azimuth %.1f deg" % [clock.get_sun_altitude(), clock.get_sun_azimuth()])
 	if args.has("worn-path"):
@@ -613,6 +618,16 @@ func _ready() -> void:
 			return
 		var built := rocks.build_area(Rect2(rc.x - ra * 0.5, rc.z - ra * 0.5, ra, ra))
 		_log("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - rb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
+		# The far tier (modules/rocks): stones over 2 m and landmarks past each layer's radius, to far_radius (4 km).
+		# --no-far: off (the before frame); --far-thin=0: far_thinning off.
+		if args.has("no-far"):
+			rocks.far_radius = 0.0
+		if args.get("far-thin", "1") == "0":
+			rocks.far_thinning = false
+		if rocks.far_radius > 0.0 and rocks.has_method("build_far"):
+			var tfar := Time.get_ticks_msec()
+			rocks.build_far()
+			_log("rocks far tier: %d stones to %.0f m in %d ms" % [rocks.get_far_stone_count(), rocks.far_radius, Time.get_ticks_msec() - tfar])
 		if args.has("stack-view"):
 			# --stack-view[=N]: the N-th biggest coast stone (sea stack, LAYER_COAST = 7) in the built area, framed from
 			# the land side at --stack-dist (3) times its size, --stack-cam-h (1.2) m up, the sun across the view.
@@ -751,6 +766,8 @@ func _ready() -> void:
 		var flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
 		if not args.has("face-sun"):
 			flat = -flat # --face-away=PITCH: the same, looking down-sun (far grass colour pairs)
+		# --face-yaw=DEG: turn that many degrees off the sun's azimuth (left positive), to frame round a landform.
+		flat = flat.rotated(Vector3.UP, deg_to_rad(float(args.get("face-yaw", "0"))))
 		var pitch := deg_to_rad(float(args.get("face-sun", args.get("face-away", "0"))))
 		cam5.look_at(cam5.global_position + flat * cos(pitch) - Vector3.UP * sin(pitch))
 		_log("facing the sun: azimuth dir %s, sun elevation %.1f deg" % [str(flat), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
@@ -1087,6 +1104,9 @@ func _frame_log() -> void:
 	for i in veg.biome.species.size():
 		var sp := veg.biome.species[i] as Resource
 		if sp == null or not String(sp.resource_name).contains("(log)"):
+			continue
+		# --log-match=TEXT: only logs whose species name holds TEXT ("fallen giant": the old-growth gap logs).
+		if args.has("log-match") and not String(sp.resource_name).contains(String(args["log-match"])):
 			continue
 		for tp in veg.get_placements(i):
 			if tp.distance_to(c3.global_position) > float(args.get("log-radius", "70")):
@@ -3439,7 +3459,7 @@ func _generated_forest(clearing: bool) -> Biome:
 	var variants := int(args.get("tree-variants", "1"))
 	var stands := {"beech": TreeGenerator.STAND_BEECH, "oak": TreeGenerator.STAND_OAK_MIXED,
 			"montane": TreeGenerator.STAND_MONTANE_CONIFER, "hedgerow": TreeGenerator.STAND_HEDGEROW,
-			"stonepine": 13, "windthrow": 17} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
+			"stonepine": 13, "windthrow": 17, "old_growth": 18} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
 	var b: Biome
 	if args.has("montado"):
 		# --montado: the Iberian wood pasture, open-grown cork oaks with stone pines among them over a summer-dry
@@ -3453,7 +3473,7 @@ func _generated_forest(clearing: bool) -> Biome:
 		all.append_array(b.species)
 		b.species = all
 	elif args.has("tree-stand"):
-		# --tree-stand=beech|oak|montane|hedgerow|stonepine: one stand only (its trees, sapling, snag and log).
+		# --tree-stand=beech|oak|montane|hedgerow|stonepine|windthrow|old_growth: one stand only (its trees, sapling, snag and log).
 		b = tg.make_stand(stands.get(args["tree-stand"], TreeGenerator.STAND_BEECH), variants)
 	else:
 		b = tg.make_woodland(variants, TreeGenerator.REGION_EUROPE)
