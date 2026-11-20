@@ -3299,8 +3299,10 @@ thinned tail shows gaps first.
   that line (data map sampled at 10, 20, 40 ... 2560 m), and no canopy as tall as the tree, on the ground between at
   0.5, 0.7, 0.85 and 0.95 of the way, hides it. The canopy test makes it conservative: from inside or below a forest
   on level ground nothing extra is kept; over open ground it keeps fewer than it could, never more.
-- Per commit (tiles recommit as the camera comes closer), so a skyline seen from a far other place stays as it was
-  committed until the tile recommits. Species meta `far_skyline = false` thins them too.
+- Per commit: a tile recommits when the camera comes closer, or when the eye has moved a tenth of its distance since
+  (vegetation's review: a sideways move sees another skyline). Kept trees are not widened (they are not part of the
+  thinned tail). The test runs behind first, from far to near, so a view from above leaves after one sample; from low
+  on level ground the front test leaves after one. Species meta `far_skyline = false` thins them too.
 - Bench: RIDGE=1 raises the plot to a 25 m crest at its -z edge; NO_SKYLINE=1 turns the keep off. From 650 m at eye
   height 4 m, --far=400: 717 trees drawn without, 907 with, the extras along the crest against the sky.
 

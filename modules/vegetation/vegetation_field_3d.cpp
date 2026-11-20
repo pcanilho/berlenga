@@ -2181,6 +2181,7 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 		LocalVector<LocalVector<uint32_t>> buckets;
 		buckets.resize(cells * cells);
 		for (uint32_t i = 0; i < so.xforms[v].size(); i++) {
+			bool extra = false;
 			if (p_max_rank < 1.0f && Math::fmod(so.customs[v][i].r, 1.0f) >= p_max_rank) {
 				// Thinned out at the tile's distance (the far tail), unless a tree's crown breaks the skyline from the
 				// camera (trees.md 9c): ridgeline silhouettes against the sky are what reads of a far forest, and a
@@ -2188,11 +2189,13 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 				if (!(ps.far_top > 0.0f && stream_eye_valid && p_setup.map && _on_skyline(p_setup.map, stream_eye, p_setup.global_xf.xform(so.xforms[v][i].xform(Vector3(0.0f, ps.far_top, 0.0f)))))) {
 					continue;
 				}
+				extra = true;
 			}
 			const Vector3 o = p_setup.global_xf.xform(so.xforms[v][i].origin);
 			const int cx = CLAMP(int((o.x - tile_origin.x) / ts * cells), 0, cells - 1);
 			const int cz = CLAMP(int((o.z - tile_origin.y) / ts * cells), 0, cells - 1);
-			buckets[cz * cells + cx].push_back(i);
+			// A kept skyline tree is marked (top bit): it stands as it is, not widened for the tail it is not part of.
+			buckets[cz * cells + cx].push_back(extra ? (i | 0x80000000u) : i);
 		}
 		for (int b = 0; b < cells * cells; b++) {
 			if (buckets[b].is_empty()) {
@@ -2215,9 +2218,12 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 				mm->set_mesh(draw_mesh);
 				LocalVector<Transform3D> bx;
 				LocalVector<Color> bc;
-				for (uint32_t i : buckets[b]) {
+				for (uint32_t bi : buckets[b]) {
+					const uint32_t i = bi & 0x7fffffffu;
 					Transform3D x = so.xforms[v][i];
-					x.basis = x.basis * widen;
+					if (!(bi & 0x80000000u)) {
+						x.basis = x.basis * widen;
+					}
 					bx.push_back(x);
 					bc.push_back(so.customs[v][i]);
 				}
@@ -4414,6 +4420,14 @@ bool VegetationField3D::_on_skyline(const TerrainDataMap3D *p_map, const Vector3
 	}
 	const Vector2 dir = dh / dist;
 	const float slope = (p_top.y - p_eye.y) / dist;
+	// Behind first and from far to near: seen from above (the common case) the falling line meets the ground first
+	// far out, so most trees leave after one sample; from low on level ground the front test leaves after one.
+	for (float s = 2560.0f; s >= 10.0f; s *= 0.5f) {
+		const Vector3 q(p_top.x + dir.x * s, 0.0f, p_top.z + dir.y * s);
+		if (p_map->get_height_at(q) > p_top.y + slope * s) {
+			return false;
+		}
+	}
 	// In front, a canopy as tall as this tree on the ground between hides it (the nearer crowns are the skyline
 	// then): from inside or below a forest on level ground no far tree is kept, so the tail still thins there.
 	// Where the ground between is open this keeps fewer than it could, never more.
@@ -4421,12 +4435,6 @@ bool VegetationField3D::_on_skyline(const TerrainDataMap3D *p_map, const Vector3
 	for (float t : { 0.5f, 0.7f, 0.85f, 0.95f }) {
 		const Vector3 q(p_eye.x + dh.x * t, 0.0f, p_eye.z + dh.y * t);
 		if (p_map->get_height_at(q) + tall > p_eye.y + (p_top.y - p_eye.y) * t + 0.5f) {
-			return false;
-		}
-	}
-	for (float s = 10.0f; s <= 2560.0f; s *= 2.0f) {
-		const Vector3 q(p_top.x + dir.x * s, 0.0f, p_top.z + dir.y * s);
-		if (p_map->get_height_at(q) > p_top.y + slope * s) {
 			return false;
 		}
 	}
@@ -4543,9 +4551,11 @@ void VegetationField3D::_stream_update(double p_delta) {
 			t->nodes.resize(species_count);
 			t->committed.resize(species_count);
 			t->committed_keep.resize(species_count);
+			t->committed_eye.resize(species_count);
 			for (int s = 0; s < species_count; s++) {
 				t->committed[s] = false;
 				t->committed_keep[s] = 1.0f;
+				t->committed_eye[s] = c3;
 			}
 			if (old_tile) {
 				// A replacement (holes or burn ages changed): what the old tile shows is committed at once and
@@ -4651,6 +4661,8 @@ void VegetationField3D::_stream_update(double p_delta) {
 				pending.push_back({ d, kv.key });
 			} else if (kv.value->committed[s] && reach > range && kv.value->committed_keep[s] < 1.0f && _stream_rank(range, reach, d, ts) > kv.value->committed_keep[s] * 1.3f) {
 				pending.push_back({ d, kv.key }); // Closer: its cells need more of the tail's plants.
+			} else if (kv.value->committed[s] && ps.far_top > 0.0f && kv.value->committed_keep[s] < 1.0f && c3.distance_to(kv.value->committed_eye[s]) > 0.1f * d) {
+				pending.push_back({ d, kv.key }); // The eye moved a tenth of the way: the skyline from it is another.
 			}
 		}
 	}
@@ -4680,7 +4692,8 @@ void VegetationField3D::_stream_update(double p_delta) {
 			}
 			const float rank = reach > range ? _stream_rank(range, reach, p.d, ts) : 1.0f;
 			if (t->committed[s]) {
-				if (rank <= t->committed_keep[s] * 1.3f || t->committed_keep[s] >= 1.0f) {
+				const bool skyline_moved = stream_setup.species[s].far_top > 0.0f && t->committed_keep[s] < 1.0f && c3.distance_to(t->committed_eye[s]) > 0.1f * p.d;
+				if (!skyline_moved && (rank <= t->committed_keep[s] * 1.3f || t->committed_keep[s] >= 1.0f)) {
 					continue;
 				}
 				// The tail's plants for the nearer distance: the new cells first, then the old go, in one frame.
@@ -4693,6 +4706,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 			}
 			t->committed[s] = true;
 			t->committed_keep[s] = rank;
+			t->committed_eye[s] = c3;
 		}
 		if (OS::get_singleton()->get_ticks_usec() - t0 > budget) {
 			busy = true;
