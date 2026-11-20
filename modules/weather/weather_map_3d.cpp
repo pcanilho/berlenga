@@ -857,6 +857,7 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	c.inflow = cell_inflow.ptr();
 	c.fog_drip = fog_drip && cell_fog_drip.size() == resolution * resolution ? cell_fog_drip.ptr() : nullptr;
 	c.spray = sea_spray && cell_spray.size() == resolution * resolution ? cell_spray.ptr() : nullptr;
+	c.cover_noise = WeatherClouds::cover_noise_frame(cloud_drift, cloud_scale, _cloud_evolve());
 	// Rows in parallel: each cell depends only on the weather and its own history.
 	WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &WeatherMap3D::_update_row, &cell_pass, resolution, -1, true, String("WeatherMap3D cells"));
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
@@ -975,7 +976,7 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 		// Broken cloud: the cover is the coverage threshold of a drifting noise field (as Nubis's
 		// coverage remaps its noise), so a 0.4 sky is 40% clouds in patches, not a 40% grey.
 		if (cloud_variation > 0.0f) {
-			cover = CLAMP(cover + (_cloud_noise(p) - 0.5f) * 2.0f * cloud_variation * MIN(1.0f, 2.5f * cover), 0.0f, 1.0f);
+			cover = CLAMP(cover + (WeatherClouds::cover_noise(c.cover_noise, p) - 0.5f) * 2.0f * cloud_variation * MIN(1.0f, 2.5f * cover), 0.0f, 1.0f);
 		}
 		// Rain falls from the thicker cloud: the base rate, spread where the cover is.
 		float r = cur_rain_rate * rain_scale * CLAMP(Math::smoothstep(0.3f, 0.7f, cover) / c.cover_gate, 0.0f, 2.5f);
@@ -1185,6 +1186,27 @@ void WeatherMap3D::_fill_gust_image() {
 	gust_image->set_data(GUST_COUNT, 1, false, Image::FORMAT_RGBAF, gd);
 }
 
+void WeatherMap3D::_upload_row(uint32_t p_row, UploadPass *p_pass) {
+	const int n = resolution;
+	uint16_t *w = p_pass->wind;
+	uint16_t *s = p_pass->state;
+	uint16_t *fp = p_pass->frost;
+	for (int i = int(p_row) * n; i < int(p_row + 1) * n; i++) {
+		w[i * 4 + 0] = Math::make_half_float(cell_wind[i * 2 + 0]);
+		w[i * 4 + 1] = Math::make_half_float(cell_wind[i * 2 + 1]);
+		w[i * 4 + 2] = Math::make_half_float(cell_cover[i]);
+		w[i * 4 + 3] = Math::make_half_float(cell_type[i]);
+		// Ground the world's runoff (WeatherRunoff3D) is flowing over is wet too, where the rain did not fall.
+		const float wet = cell_puddle[i] > 0.0f ? 1.0f : MAX(MIN(cell_film[i] / p_pass->storage, 1.0f), _runoff_wetness(i));
+		s[i * 4 + 0] = Math::make_half_float(cell_rain[i]);
+		s[i * 4 + 1] = Math::make_half_float(wet);
+		s[i * 4 + 2] = Math::make_half_float(cell_puddle[i]);
+		s[i * 4 + 3] = Math::make_half_float(cell_film[i]);
+		fp[i * 2 + 0] = Math::make_half_float(cell_frost[i]);
+		fp[i * 2 + 1] = Math::make_half_float(cell_cooling[i]);
+	}
+}
+
 void WeatherMap3D::_upload() {
 	const int n = resolution;
 	if (wind_image.is_null() || wind_image->get_width() != n) {
@@ -1195,30 +1217,18 @@ void WeatherMap3D::_upload() {
 		wd.resize(n * n * 8);
 		Vector<uint8_t> sd;
 		sd.resize(n * n * 8);
-		uint16_t *w = reinterpret_cast<uint16_t *>(wd.ptrw());
-		uint16_t *s = reinterpret_cast<uint16_t *>(sd.ptrw());
-		const float storage = MAX(surface_storage, 1e-3f);
-		for (int i = 0; i < n * n; i++) {
-			w[i * 4 + 0] = Math::make_half_float(cell_wind[i * 2 + 0]);
-			w[i * 4 + 1] = Math::make_half_float(cell_wind[i * 2 + 1]);
-			w[i * 4 + 2] = Math::make_half_float(cell_cover[i]);
-			w[i * 4 + 3] = Math::make_half_float(cell_type[i]);
-			// Ground the world's runoff (WeatherRunoff3D) is flowing over is wet too, where the rain did not fall.
-			const float wet = cell_puddle[i] > 0.0f ? 1.0f : MAX(MIN(cell_film[i] / storage, 1.0f), _runoff_wetness(i));
-			s[i * 4 + 0] = Math::make_half_float(cell_rain[i]);
-			s[i * 4 + 1] = Math::make_half_float(wet);
-			s[i * 4 + 2] = Math::make_half_float(cell_puddle[i]);
-			s[i * 4 + 3] = Math::make_half_float(cell_film[i]);
-		}
-		wind_image->set_data(n, n, false, Image::FORMAT_RGBAH, wd);
-		state_image->set_data(n, n, false, Image::FORMAT_RGBAH, sd);
 		Vector<uint8_t> fd;
 		fd.resize(n * n * 4);
-		uint16_t *fp = reinterpret_cast<uint16_t *>(fd.ptrw());
-		for (int i = 0; i < n * n; i++) {
-			fp[i * 2 + 0] = Math::make_half_float(cell_frost[i]);
-			fp[i * 2 + 1] = Math::make_half_float(cell_cooling[i]);
-		}
+		UploadPass up;
+		up.wind = reinterpret_cast<uint16_t *>(wd.ptrw());
+		up.state = reinterpret_cast<uint16_t *>(sd.ptrw());
+		up.frost = reinterpret_cast<uint16_t *>(fd.ptrw());
+		up.storage = MAX(surface_storage, 1e-3f);
+		// About 2 ms of half-float packing a weather update on the main thread before: rows on the worker pool.
+		WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &WeatherMap3D::_upload_row, &up, n, -1, true, String("WeatherMap3D upload"));
+		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
+		wind_image->set_data(n, n, false, Image::FORMAT_RGBAH, wd);
+		state_image->set_data(n, n, false, Image::FORMAT_RGBAH, sd);
 		frost_image->set_data(n, n, false, Image::FORMAT_RGH, fd);
 	}
 	_fill_gust_image();

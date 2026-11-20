@@ -386,22 +386,55 @@ float evolving_value_noise(Vector2 p_q, float p_time, int p_octave) {
 	return CLAMP(0.5f + (a * (1.0f - w) + b * w) / len, 0.0f, 1.0f);
 }
 
-float cover_noise(Vector2 p_xz, Vector2 p_drift, float p_scale, float p_evolve) {
-	const Vector2 p = (p_xz - p_drift) / MAX(p_scale, 1.0f);
+CoverNoiseFrame cover_noise_frame(Vector2 p_drift, float p_scale, float p_evolve) {
+	CoverNoiseFrame f;
+	f.drift = p_drift;
+	f.scale = MAX(p_scale, 1.0f);
+	f.evolve = p_evolve >= 0.0f;
+	float rate = 1.0f;
+	for (int o = 0; o < 4; o++) {
+		if (f.evolve) {
+			// As evolving_value_noise: the two slices either side of the octave's time and the blend between them.
+			const float t = p_evolve * rate + 0.37f * o;
+			const float k = Math::floor(t);
+			const int ki = int(k);
+			f.w[o] = smoothstep(0.0f, 1.0f, t - k);
+			f.offset_a[o] = evolve_slice_offset(ki, o);
+			f.offset_b[o] = evolve_slice_offset(ki + 1, o);
+			f.len[o] = Math::sqrt((1.0f - f.w[o]) * (1.0f - f.w[o]) + f.w[o] * f.w[o]);
+		}
+		rate *= EVOLVE_OCTAVE_RATE;
+	}
+	return f;
+}
+
+float cover_noise(const CoverNoiseFrame &p_frame, Vector2 p_xz) {
+	const Vector2 p = (p_xz - p_frame.drift) / p_frame.scale;
 	float v = 0.0f;
 	float amp = 0.5f;
 	float norm = 0.0f;
-	float rate = 1.0f;
 	Vector2 q = rotate_lattice(p);
 	for (int o = 0; o < 4; o++) {
 		const Vector2 qo = q + Vector2(17.1f * o, 31.7f * o);
-		v += amp * (p_evolve < 0.0f ? value_noise(qo) : evolving_value_noise(qo, p_evolve * rate + 0.37f * o, o));
+		float n;
+		if (p_frame.evolve) {
+			const float w = p_frame.w[o];
+			const float a = value_noise(qo + p_frame.offset_a[o]) - 0.5f;
+			const float b = value_noise(qo + p_frame.offset_b[o]) - 0.5f;
+			n = CLAMP(0.5f + (a * (1.0f - w) + b * w) / p_frame.len[o], 0.0f, 1.0f);
+		} else {
+			n = value_noise(qo);
+		}
+		v += amp * n;
 		norm += amp;
 		amp *= 0.5f;
-		rate *= EVOLVE_OCTAVE_RATE;
 		q = rotate_lattice(q) * 2.03f;
 	}
 	return v / norm;
+}
+
+float cover_noise(Vector2 p_xz, Vector2 p_drift, float p_scale, float p_evolve) {
+	return cover_noise(cover_noise_frame(p_drift, p_scale, p_evolve), p_xz);
 }
 
 // --- The density. ---------------------------------------------------------------------------------
