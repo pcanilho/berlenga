@@ -50,6 +50,32 @@ class WeatherContactWetness {
 	Vector<float> wet;
 	bool dirty = false; // changed since the last upload
 	bool any_wet = false; // some texel above 0 (drying has work to do)
+	// Texel boxes (x0, z0, x1, z1 inclusive; empty when x0 > x1): where texels may be above 0 (drying walks only
+	// this), and where they changed since the last upload (only this is requantised; the GPU copy is skipped when no
+	// byte changed). Wetness is local (prints, splashes), so both stay small next to the 512 x 512 square.
+	struct Box {
+		int x0 = 1, z0 = 1, x1 = 0, z1 = 0;
+		bool empty() const { return x0 > x1 || z0 > z1; }
+		void add(int p_x0, int p_z0, int p_x1, int p_z1) {
+			if (p_x0 > p_x1 || p_z0 > p_z1) {
+				return;
+			}
+			if (empty()) {
+				x0 = p_x0, z0 = p_z0, x1 = p_x1, z1 = p_z1;
+			} else {
+				x0 = MIN(x0, p_x0), z0 = MIN(z0, p_z0), x1 = MAX(x1, p_x1), z1 = MAX(z1, p_z1);
+			}
+		}
+		void clear() { *this = Box(); }
+	};
+	Box wet_box;
+	Box dirty_box;
+	Vector<uint8_t> bytes; // the uploaded R8 texels
+	void _all_dirty() {
+		dirty = true;
+		dirty_box.clear();
+		dirty_box.add(0, 0, resolution - 1, resolution - 1);
+	}
 	Ref<Image> image;
 	Ref<ImageTexture> texture;
 
