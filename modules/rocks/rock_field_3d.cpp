@@ -2494,8 +2494,8 @@ void RockField3D::_split_tile(Cell &r_cell, uint32_t p_index, bool p_force, real
 		mm->set_use_custom_data(true);
 		mm->set_mesh(lib->meshes[grp.variant]);
 		mm->set_instance_count(n);
+		RS::get_singleton()->multimesh_set_rt_instanced(mm->get_rid(), true); // first: it keeps a CPU copy of the buffer
 		RS::get_singleton()->multimesh_set_buffer(mm->get_rid(), buf);
-		RS::get_singleton()->multimesh_set_rt_instanced(mm->get_rid(), true);
 		grp.multimesh = mm;
 		r_cell.groups.push_back(grp);
 		r_cell.instances.push_back(_add_group_instance(mm, grp.library, vis, margin, true));
@@ -3394,10 +3394,10 @@ void RockField3D::_detail_commit(DetailJob &r_job) {
 		mm->set_use_custom_data(true);
 		mm->set_mesh(lib->meshes[dg.variant]);
 		mm->set_instance_count(n);
-		RS::get_singleton()->multimesh_set_buffer(mm->get_rid(), dg.buffer);
 		// Hundreds of grains of one shape sit under the merged BLAS cap, which would bake a copy of every grain's
-		// triangles: give each its own TLAS entry over the shared shape instead.
+		// triangles: give each its own TLAS entry over the shared shape instead (set first: it keeps a CPU copy).
 		RS::get_singleton()->multimesh_set_rt_instanced(mm->get_rid(), true);
+		RS::get_singleton()->multimesh_set_buffer(mm->get_rid(), dg.buffer);
 		Group grp;
 		grp.library = dg.library;
 		grp.variant = dg.variant;
