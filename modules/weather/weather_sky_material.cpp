@@ -896,7 +896,7 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			}
 			// Where the drops at p left the base: upwind by the slant times their fall.
 			vec2 q = p.xz - cloud_rain_slant * (base - p.y);
-			vec2 dq = (q - s.xy) / s.z;
+			vec2 dq = (q - s.xy) / (0.75 * s.z); // the heavy core about 1.5 radii across, under the tower
 			float r2 = dot(dq, dq);
 			// A core with an edge (heavy rain falls in shafts a few km across, not a smooth bell).
 			float r = rain * exp(-r2 * r2);
@@ -907,7 +907,7 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			// Curtains: three octaves (1.2 km, 400 m, 130 m), thresholded so lighter gaps open between the
 			// heavier sheets; the finest stretched across the view so its streaks stand upright.
 			float curt = 0.5 * wc_value_noise(qn / 1200.0 + vec2(float(i) * 13.7, 3.1)) + 0.3 * wc_value_noise(qn / 400.0 + vec2(7.3, float(i) * 5.9)) + 0.2 * wc_value_noise(qn / 130.0 + vec2(1.9, 8.3));
-			r *= mix(0.0, 2.6, smoothstep(0.42, 0.72, curt)) * smoothstep(0.0, 120.0, base - p.y);
+			r *= mix(0.0, 2.6, smoothstep(0.45, 0.62, curt)) * smoothstep(0.0, 120.0, base - p.y);
 			float sigma = 0.31e-3 * pow(r, 0.67);
 			// The light: under the storm's shield the sky's light is cut to about a third; the sun where the cover
 			// toward it over the base is thin.
@@ -917,7 +917,9 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			float g = 0.6;
 			float mu = dot(rd, sun_dir);
 			float hg = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
-			vec3 light = ambient_bottom * mix(1.0, 0.35, shield) + sun_radiance * sun_vis * hg;
+			// Rain is lighter than the base above it (drops scatter the light coming in under the base from the
+			// sides, where the sky is open): two thirds of the open sky's light, not the third over the shield.
+			vec3 light = ambient_bottom * mix(1.0, 0.65, shield) + sun_radiance * sun_vis * hg;
 			float st = exp(-sigma * dt);
 			float w = tr * (1.0 - st);
 			col += light * w;

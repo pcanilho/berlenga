@@ -527,3 +527,21 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
   to zero) miss the clouds 8 to 24 km toward a low sun, so clouds stood sunlit that the clouds between them and the
   sun shade. The bounce term adds about 3 levels to the darkest tenth (interreflection, as designed).
 - Raster and PT match (640).
+
+## Storm review 3 (20 Nov 2026; docs: mottled cylinder, decal mammatus, no shelf or shaft at 30 km)
+
+- Tower (`storm_tower` / `wc_storm_tower`): a core column (0.5 to 0.7 core radii) and eight rising bubbles, each
+  a thermal 0.7 to 1.4 radii across, at its own height (14% to 88%) and bearing round the axis, larger higher up,
+  plus a crown over the axis; outlines hard over their last fifth, jittered a little by the shape noise. A Cb reads
+  as a few huge rounded towers, each lit on its sun side and grey in shadow, which the bubbles' own shape gives the
+  light march; the finer lobe noise (an even mottle over a cylinder) is gone, and with it one texture read.
+- Mammatus: packed (cells 0.6 to 0.8 of the 1.6 km grid, neighbours overlap), up to 700 m deep, not at the anvil's
+  thin side edges; the sheet over them is denser (0.45 of the tower's) so the underside is one surface, and the
+  pouches denser still (0.7), so each shades its lower half (Schultz et al. 2006: they carry the anvil's falling,
+  evaporating ice).
+- Rain shaft: the heavy core 1.5 radii across under the tower (it filled the whole base as a grey wall), curtains
+  thresholded more sharply, lit at two thirds of the open sky's light under the shield (rain is lighter than the
+  base above it).
+- Shelf: its top a smooth slope rippled by the noise at large scale, its face lightly eroded (laminar), not a
+  frilled grainy rim.
+- Raster and PT match (640). Review stills: storm 15 km (`--storm=0,-24000,...`) and 20 km (`0,-30000`), 24 frames.
