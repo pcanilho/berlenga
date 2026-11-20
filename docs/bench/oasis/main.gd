@@ -6,6 +6,7 @@ extends Node3D
 #   --view=top      straight down from 40 m (the outline)
 #   --view=lag      the interdune lag's granule ripples close up (--lag-at=x,z --lag-yaw --lag-h --lag-look --sun-alt --sun-side --fov)
 #   --raster        raster instead of path tracing
+#   --taa           temporal AA (raster stills for docs or PT comparison)
 #   --spp=N         path traced samples per pixel (64)
 #   --bounces=N     path traced bounces (the Environment's, 3 by default)
 #   --frames=N      frames before saving (180; path tracing waits for its surfaces too)
@@ -91,6 +92,8 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--debug="):
 			env.pathtracing_debug_mode = int(a.substr(8))
+	if "--taa" in OS.get_cmdline_user_args():
+		get_viewport().use_taa = true # --taa: temporal AA for raster stills (resolves shadow and dither noise)
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)

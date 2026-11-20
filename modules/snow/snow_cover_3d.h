@@ -89,6 +89,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	float melt_shortwave_factor = 0.0094f; // mm m2 / (h W)
 	float liquid_capacity = 0.05f; // share of the pack's water it holds as liquid
 	bool crust_enabled = true;
+	bool hoar_enabled = true; // surface hoar on clear calm nights, buried as a weak layer (round 5)
 	bool slide_enabled = true;
 	float slide_interval = 600.0f; // weather seconds between slide passes
 	float slide_angle = 25.0f; // degrees
@@ -162,6 +163,12 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	Vector<float> cell_crust_cycles;
 	Vector<float> cell_crust_burial;
 	Vector<float> cell_crust_wet;
+	// Surface hoar (docs/ideas/snow.md, round 5): the crystals on the surface (mm), and the newest buried layer
+	// of them: its crystals (mm), the snow over it (m) and the hours since it was buried.
+	Vector<float> cell_hoar;
+	Vector<float> cell_hoar_layer;
+	Vector<float> cell_hoar_burial;
+	Vector<float> cell_hoar_age;
 	Vector<uint8_t> cell_height_valid;
 	Vector2 sx_direction;
 	bool sx_valid = false;
@@ -217,6 +224,8 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	void _prepare_inputs(double p_weather_dt, bool p_blocking);
 	void _update_row(uint32_t p_row, void *p_unused);
 	void _slide();
+	void _update_hoar(int p_i, const Vector3 &p_pos, float p_air, float p_snow, float p_rain, float p_melt, float p_rho_before, float p_rho, float p_swe, const Inputs &p_in);
+	void _clear_hoar(int p_i);
 	void _update_crust(float &r_crust, float &r_cycles, float &r_burial, float &r_wet, float p_rain, float p_melt_depth, float p_refrozen, float p_liquid_before, float p_liquid) const;
 	void _update(double p_weather_dt, bool p_blocking);
 	void _upload(); // the textures and the published copies, now (main thread)
@@ -246,6 +255,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	struct Published {
 		Vector<float> swe, liquid, density, albedo, runoff, canopy_load, new_depth;
 		Vector<float> crust, crust_cycles, crust_burial, crust_wet;
+		Vector<float> hoar, hoar_layer, hoar_burial, hoar_age;
 		Vector<float> cornice_x, cornice_z, cornice_crack;
 		Vector<float> ice, white_ice;
 		Vector<float> lap; // mg/m2 BC equivalent showing at the surface
@@ -383,6 +393,8 @@ public:
 	float get_liquid_capacity() const { return liquid_capacity; }
 	void set_crust_enabled(bool p_enabled);
 	bool is_crust_enabled() const { return crust_enabled; }
+	void set_hoar_enabled(bool p_enabled);
+	bool is_hoar_enabled() const { return hoar_enabled; }
 	void set_slide_enabled(bool p_enabled);
 	bool is_slide_enabled() const { return slide_enabled; }
 	void set_slide_interval(float p_seconds);
@@ -520,6 +532,18 @@ public:
 	float get_crust_strength_at(Vector3 p_position) const; // kPa
 	static float crust_strength(float p_cycles, float p_thickness); // kPa, frozen
 	void add_crust(float p_thickness, float p_cycles);
+	// Surface hoar (round 5): the crystals on the surface, and the newest buried layer of them (its crystals, the
+	// snow over it, days since buried, and the shear strength it holds).
+	float get_hoar_at(Vector3 p_position) const; // mm
+	float get_buried_hoar_at(Vector3 p_position) const; // mm, 0 none
+	float get_buried_hoar_depth_at(Vector3 p_position) const; // m of snow over it
+	float get_buried_hoar_age_at(Vector3 p_position) const; // days
+	// The surface's frost deposition (kg/m2/h, negative: sublimation) and its temperature under the night sky.
+	static float hoar_deposition(float p_air_celsius, float p_humidity, float p_wind, float p_cloud, float p_shortwave, float &r_surface_celsius);
+	// A buried surface hoar layer's shear strength (Pa) by crystal size and age (Jamieson and Schweizer 2000).
+	static float buried_hoar_strength(float p_size_mm, float p_age_hours);
+	static float hoar_deposition_rate(float p_air_celsius, float p_humidity, float p_wind, float p_cloud, float p_shortwave); // kg/m2/h
+	void add_hoar(float p_size_mm); // lays crystals on the snow (tests)
 	// The ground straight from the height source (finer than the cells), NaN where nothing answers.
 	float sample_ground_height(Vector3 p_position) const;
 	void sample_ground_heights(Vector2 p_origin, float p_spacing, int p_width, int p_height, float *r_heights) const;

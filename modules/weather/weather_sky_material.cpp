@@ -861,15 +861,19 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 		}
 		vec4 s = cloud_storms[i];
 		float base = (cloud_storm_base[i] > 0.0 ? cloud_storm_base[i] : cloud_base_height);
+		// Snow (the weather's rain/snow split under the storm) falls at about 1 m/s against rain's 7 (SnowFall3D's
+		// fall speeds), so its shaft trails seven times further downwind: long slanting veils.
+		float snow = cloud_storm_snow[i];
+		vec2 slant = cloud_rain_slant * mix(1.0, 7.0, snow);
 		// The chord of the ray through a column 2.2 core radii wide (centred where the drops at mid-height are).
-		vec2 c = s.xy - cloud_rain_slant * (0.5 * base);
+		vec2 c = s.xy - slant * (0.5 * base);
 		vec2 o2 = cam.xz - c;
 		vec2 d2 = rd.xz;
 		float a = dot(d2, d2);
 		if (a < 1e-6) {
 			continue;
 		}
-		float rad = 2.2 * s.z + length(cloud_rain_slant) * 0.5 * base;
+		float rad = 2.2 * s.z + length(slant) * 0.5 * base;
 		float b = dot(o2, d2);
 		float disc = b * b - a * (dot(o2, o2) - rad * rad);
 		if (disc <= 0.0) {
@@ -895,7 +899,7 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 				continue;
 			}
 			// Where the drops at p left the base: upwind by the slant times their fall.
-			vec2 q = p.xz - cloud_rain_slant * (base - p.y);
+			vec2 q = p.xz - slant * (base - p.y);
 			vec2 dq = (q - s.xy) / (0.9 * s.z); // the heavy core about 1.8 radii across, under the tower
 			float r2 = dot(dq, dq);
 			// A core with an edge (heavy rain falls in shafts a few km across, not a smooth bell).
@@ -907,8 +911,12 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			// Curtains: three octaves (1.2 km, 400 m, 130 m), thresholded so lighter gaps open between the
 			// heavier sheets; the finest stretched across the view so its streaks stand upright.
 			float curt = 0.5 * wc_value_noise(qn / 1200.0 + vec2(float(i) * 13.7, 3.1)) + 0.3 * wc_value_noise(qn / 400.0 + vec2(7.3, float(i) * 5.9)) + 0.2 * wc_value_noise(qn / 130.0 + vec2(1.9, 8.3));
-			r *= mix(0.0, 2.6, smoothstep(0.45, 0.62, curt)) * smoothstep(0.0, 120.0, base - p.y);
-			float sigma = 0.31e-3 * pow(r, 0.67);
+			// Snow's veils are softer than rain's curtains (flakes drift and spread as they fall).
+			r *= mix(0.0, 2.6, smoothstep(mix(0.45, 0.3, snow), mix(0.62, 0.8, snow), curt)) * smoothstep(0.0, 120.0, base - p.y);
+			// Snow's extinction: SnowFall3D.snowfall_extinction (Gunn and Marshall flakes) gives about 2 km of
+			// visibility at 1 mm/h of water and 200 m at 3 mm/h (Rasmussen et al. 1999): fitted as 0.00196 r^2.1,
+			// capped at 5 mm/h (a snowstorm's heaviest). Snow hides far more than rain at the same rate.
+			float sigma = mix(0.31e-3 * pow(r, 0.67), 0.00196 * pow(min(r, 5.0), 2.1), snow);
 			// The light: under the storm's shield the sky's light is cut to about a third; the sun where the cover
 			// toward it over the base is thin.
 			float shield = exp(-r2 / (1.6 * 1.6)) * s.w;
@@ -1340,14 +1348,18 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	{
 		PackedFloat32Array rain;
 		PackedFloat32Array outflow;
+		PackedFloat32Array snow;
 		rain.resize(WeatherClouds::MAX_STORMS);
 		outflow.resize(WeatherClouds::MAX_STORMS);
+		snow.resize(WeatherClouds::MAX_STORMS);
 		for (int i = 0; i < WeatherClouds::MAX_STORMS; i++) {
 			rain.write[i] = i < p_state.storm_count ? p_state.storm_rain[i] : 0.0f;
 			outflow.write[i] = i < p_state.storm_count ? p_state.storm_outflow[i] : 0.0f;
+			snow.write[i] = i < p_state.storm_count ? p_state.storm_snow[i] : 0.0f;
 		}
 		rs->material_set_param(m, "cloud_storm_rain", rain);
 		rs->material_set_param(m, "cloud_storm_outflow", outflow);
+		rs->material_set_param(m, "cloud_storm_snow", snow);
 		rs->material_set_param(m, "cloud_rain_slant", p_state.rain_slant);
 		rs->material_set_param(m, "cloud_storm_dir", p_state.storm_dir);
 	}

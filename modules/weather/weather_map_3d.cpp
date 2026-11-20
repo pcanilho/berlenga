@@ -2745,6 +2745,9 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 		st.storm_base[st.storm_count - 1] = s.cloud_base;
 		st.storm_rain[st.storm_count - 1] = s.rain_rate * env;
 		st.storm_outflow[st.storm_count - 1] = s.fire ? 0.0f : s.outflow;
+		// The weather's one rain/snow split (rain_fraction of the air's temperature and humidity), at the ground under it.
+		const float share = get_rain_share_at(Vector3(s.position.x, ground_height, s.position.y));
+		st.storm_snow[st.storm_count - 1] = Math::is_finite(share) ? CLAMP(1.0f - share, 0.0f, 1.0f) : 0.0f;
 	}
 	st.update_top_max();
 	return st;

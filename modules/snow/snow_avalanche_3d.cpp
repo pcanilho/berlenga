@@ -220,7 +220,9 @@ bool SnowAvalanche3D::_check_release(SnowCover3D *p_cover) {
 	}
 	const float lo = Math::deg_to_rad(min_slope), hi = Math::deg_to_rad(max_slope);
 	const bool crusts = p_cover->pub.crust.size() == n * n && p_cover->pub.crust_burial.size() == n * n;
-	// The slab and its stability per cell (the weaker of the new snow and a buried crust's facets).
+	const bool hoars = p_cover->pub.hoar_layer.size() == n * n && p_cover->pub.hoar_burial.size() == n * n && p_cover->pub.hoar_age.size() == n * n;
+	// The slab and its stability per cell (the weakest of the new snow, a buried crust's facets and buried surface
+	// hoar).
 	Vector<float> stab, slab;
 	stab.resize(n * n);
 	slab.resize(n * n);
@@ -247,6 +249,16 @@ bool SnowAvalanche3D::_check_release(SnowCover3D *p_cover) {
 				if (s < best) {
 					best = s;
 					best_slab = p_cover->pub.crust_burial[i];
+				}
+			}
+			if (hoars && p_cover->pub.hoar_layer[i] > 0.0f && p_cover->pub.hoar_burial[i] >= min_slab) {
+				// Buried surface hoar (round 5): the persistent weak layer clear calm nights leave, weak for weeks.
+				const float b = p_cover->pub.hoar_burial[i];
+				const float load = rho * GRAVITY * b * Math::sin(slope) * Math::cos(slope);
+				const float s = load > 1.0e-3f ? SnowCover3D::buried_hoar_strength(p_cover->pub.hoar_layer[i], p_cover->pub.hoar_age[i]) / load : 1.0e6f;
+				if (s < best) {
+					best = s;
+					best_slab = b;
 				}
 			}
 			best *= _hold(p_cover, i);
@@ -1240,6 +1252,9 @@ float SnowAvalanche3D::_trigger_index(const SnowCover3D *p_cover, int p_x, int p
 	const bool crusts = p_cover->pub.crust.size() == n * n && p_cover->pub.crust_burial.size() == n * n;
 	if (crusts && p_cover->pub.crust[i] > 0.0f && p_cover->pub.crust_burial[i] >= min_slab && !(collapsed.size() == n * n && collapsed[i])) {
 		test(p_cover->pub.crust_burial[i], weak_layer_strength(BURIED_WEAK_DENSITY, 0.0f), true);
+	}
+	if (p_cover->pub.hoar_layer.size() == n * n && p_cover->pub.hoar_layer[i] > 0.0f && p_cover->pub.hoar_burial[i] >= min_slab) {
+		test(p_cover->pub.hoar_burial[i], SnowCover3D::buried_hoar_strength(p_cover->pub.hoar_layer[i], p_cover->pub.hoar_age[i]), false);
 	}
 	return best;
 }
