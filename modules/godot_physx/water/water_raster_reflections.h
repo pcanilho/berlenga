@@ -502,10 +502,12 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 	float turbid = smoothstep(0.1, 1.0, max(bb.r, max(bb.g, bb.b)));
 	if (turbid > 0.0) {
 		vec3 gam = sqrt(max(1.0 - wp, vec3(0.0)));
-		// Calibrated against the path tracer's turbid river at flood loads (its paths through the forward-scattering
-		// medium redden the light more than the isotropic two-stream does): the same brown in both.
+		// Calibrated against the path tracer's turbid river (river bench, cascade view, 1.5 and 15 kg/s of silt with the
+		// measured silt optics: the same colour within 2%): its paths through the forward-scattering medium tint the light
+		// a little more than the isotropic two-stream, far less than the earlier fit (made under silt optics twice as red)
+		// had it, which read raster warm tan over PT's grey-brown.
 		float wpm = max(max(wp.r, max(wp.g, wp.b)), 1e-4);
-		vec3 rd = (1.0 - gam) / (1.0 + gam) * pow(wp / wpm, vec3(1.2)) * (1.12 + 1.25 * max(wpm - 0.42, 0.0));
+		vec3 rd = (1.0 - gam) / (1.0 + gam) * pow(wp / wpm, vec3(0.2)) * 0.8;
 		vec3 sig = sqrt(3.0 * aa * (aa + bb));
 		vec3 held = 1.0 - exp(-2.0 * sig * max(-t.y, 0.05) * min(len, 1e3));
 		vec3 multi = rd * (p_sun_irr * mu + p_sky * PI) / PI * held * vis;
