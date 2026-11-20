@@ -7498,7 +7498,7 @@ void GroundSurface3D::_deposits_save() {
 	for (const KeyValue<Vector2i, Vector2> &kv : silt_river_taken) {
 		keys.insert(kv.key);
 	}
-	if (keys.is_empty() && buried_loose.is_empty() && buried_extra.is_empty()) {
+	if (keys.is_empty() && buried_loose.is_empty() && buried_extra.is_empty() && film_cells.is_empty()) {
 		if (FileAccess::exists(path)) {
 			DirAccess::remove_absolute(path);
 		}
@@ -7549,6 +7549,15 @@ void GroundSurface3D::_deposits_save() {
 			f->store_float(b.a.z);
 			f->store_float(b.r);
 		}
+	}
+	// The 1 m cells tracked mud lies in, and the film owed to the dust already lifted off them (round 18.3), so wind
+	// still finds a trail after a reload.
+	f->store_32(film_cells.size());
+	for (const Vector2i &k : film_cells) {
+		const float *owed = film_owed.getptr(k);
+		f->store_32(uint32_t(k.x));
+		f->store_32(uint32_t(k.y));
+		f->store_float(owed ? *owed : 0.0f);
 	}
 }
 
@@ -7614,6 +7623,19 @@ void GroundSurface3D::_deposits_load() {
 		}
 		if (!have) {
 			buried_extra[cell].push_back(b);
+		}
+	}
+	const uint32_t films = f->eof_reached() ? 0 : f->get_32();
+	for (uint32_t i = 0; i < films && !f->eof_reached(); i++) {
+		const int32_t kx = int32_t(f->get_32());
+		const int32_t kz = int32_t(f->get_32());
+		const Vector2i k(kx, kz);
+		const float owed = f->get_float();
+		if (film_cells.size() < 65536) {
+			film_cells.insert(k);
+		}
+		if (owed > 0.0f) {
+			film_owed[k] = owed;
 		}
 	}
 	buried_cache.clear();

@@ -228,7 +228,7 @@ scripts; `set_stand(stub)` for a test.
 | `disturbance_at(pos)` | int: 0 none, 1 fire, 2 wind, 3 beetle, 4 beaver (pond drained; years since) (new kinds appended only) | 0 |
 | `add_disturbance(center, radius, kind, age_years)`, `set_disturbance_age(id, years)`, `remove_disturbance(id)`, `clear_disturbances()` | a disc, years ago; returns an id | |
 | `strike_age_at(pos)` | years since the youngest lightning strike within 3 m of a trunk at pos (xz) | -1 (none) |
-| `add_strike(pos, age_years)`, `clear_strikes()`, `get_strike_count()` | the crown attachment point, years ago; up to 4096, oldest dropped | |
+| `add_strike(pos, age_years)`, `clear_strikes()`, `get_strike_count()`, `get_strikes_in(rect, out)` (C++: (x, z, age) copies touching rect, taken on the main thread for worker placement; stubs' `_strike_age_at` has no list) | the crown attachment point, years ago; up to 4096, oldest dropped | |
 | `browse_at(pos)` | deer browsing pressure 0..1: the strongest disc's, soft over its outer 20 % | 0 |
 | `browse_reach_at(pos)` | m, that disc's browse line (red deer 1.8, fallow 1.6, roe 1.1) | 0 |
 | `add_browse(center, radius, pressure, reach_m = 1.8)`, `set_browse(id, pressure)`, `remove_browse(id)`, `clear_browse()` | a disc; returns an id; changes go through `stand_changed` | |
