@@ -241,6 +241,8 @@ float march_jitter(vec2 p_pixel, float p_time) {
 	return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
 }
 
+uniform float atmo_light_units = 3.14159265; // pi without physical light units, else 1
+
 // Clouds along rd from the camera: radiance (rgb) and transmittance (a).
 // p_pixel: the angle (rad) one pixel spans. The noise is read at the pixel's footprint, t * p_pixel,
 // not at the march step: at grazing angles a step is hundreds of metres, and the shape noise read
@@ -430,6 +432,35 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 		vec3 b_uvw = vec3(bp.x / cloud_light_grid_box.z, bp.z / cloud_light_grid_box.z, bp.y / (cloud_light_grid_y.y - cloud_light_grid_y.x));
 		if (cloud_bounce > 0.0 && cloud_light_grid_enabled && cloud_light_grid_box.w > 0.5 && all(greaterThanEqual(b_uvw, vec3(0.0))) && all(lessThanEqual(b_uvw, vec3(1.0)))) {
 			light += sun_radiance * (cloud_bounce * 0.7 * textureLod(cloud_light_grid, b_uvw, 0.0).g * (2.0 / (4.0 * PI))) * mix(0.5, 1.0, sqrt(1.0 - profile));
+		}
+		// Point lights in the clouds (WeatherMap3D.add_cloud_light; Sunshine Clouds 2 lights its clouds with point
+		// lights the same way, Bonkahe 2025): fires, a town's glow, flares lighting the cloud from below. Each within
+		// its reach is marched three steps toward it over at most 600 m (lights sit under or in the cloud; the clear
+		// air beyond adds nothing), its light falling off as the inverse square times a smooth window to the reach
+		// (Karis 2013), forward-scattered through the thin part and diffused through the rest (two-stream, as the
+		// sun's).
+		for (int li = 0; li < 8; li++) {
+			if (li >= cloud_light_count) {
+				break;
+			}
+			vec3 lv = cloud_lights[li].xyz - p;
+			float ld2 = dot(lv, lv);
+			float reach = cloud_lights[li].w;
+			if (ld2 >= reach * reach) {
+				continue;
+			}
+			float ld = sqrt(ld2);
+			vec3 to_l = lv / max(ld, 0.001);
+			float seg = min(ld, 600.0) / 3.0;
+			float tl = 0.0;
+			for (int k = 0; k < 3; k++) {
+				vec3 q = p + to_l * (seg * (float(k) + 0.5));
+				tl += wc_extinction(q, wc_cover_type(q.xz), false, seg) * seg;
+			}
+			float win = clamp(1.0 - ld2 * ld2 / (reach * reach * reach * reach), 0.0, 1.0);
+			vec3 e_l = cloud_light_colors[li] * (cloud_brightness * atmo_light_units) * (win * win / (ld2 + 100.0));
+			float through = exp(-tl);
+			light += e_l * (through * henyey_greenstein(dot(rd, to_l), 0.6) + max(1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tl) - through, 0.0) * (2.0 / (4.0 * PI)));
 		}
 		// Energy-conserving step (Hillaire 2016): albedo 1, so the scattering is the extinction.
 		float tr = exp(-sigma * st);
@@ -705,7 +736,6 @@ vec3 lightning_glow(vec3 cam, vec3 rd, float opacity) {
 }
 
 #ifdef ATMO_SCATTERING
-uniform float atmo_light_units = 3.14159265; // pi without physical light units, else 1
 // The two bodies lighting the air: SkyClock's sun and moon when it drives the sky, else the first
 // directional light taken as the sun above the air.
 void atmo_lights(out vec3 l0, out vec3 e0, out vec3 l1, out vec3 e1, out float size0) {
@@ -885,7 +915,7 @@ void sky() {
 		float pixel_angle = max(length(dir_dx), length(dir_dy));
 		vec4 clouds = vec4(0.0, 0.0, 0.0, 1.0);
 		float cloud_depth = 0.0;
-		if (dot(e0, vec3(1.0)) > 0.0) {
+		if (dot(e0, vec3(1.0)) > 0.0 || cloud_light_count > 0) {
 			clouds = march_clouds(POSITION, EYEDIR, l0, sun_radiance, ambient_top, ambient_bottom, AT_CUBEMAP_PASS ? cloud_radiance_steps : cloud_steps, jitter, pixel_angle, cloud_depth);
 		}
 		if (clouds.a < 0.999) {
@@ -1010,6 +1040,34 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	}
 	rs->material_set_param(m, "cloud_storm_base", bases);
 	rs->material_set_param(m, "cloud_base_min", p_state.base_min);
+	{
+		PackedVector4Array eff;
+		eff.resize(WeatherClouds::MAX_CLOUD_EFFECTORS);
+		PackedFloat32Array strength;
+		strength.resize(WeatherClouds::MAX_CLOUD_EFFECTORS);
+		for (int i = 0; i < WeatherClouds::MAX_CLOUD_EFFECTORS; i++) {
+			const float *f = p_state.effectors[i];
+			const bool on = i < p_state.effector_count;
+			eff.write[i] = on ? Vector4(f[0], f[1], f[2], MAX(f[3], 1.0f)) : Vector4(0, 0, 0, 1);
+			strength.write[i] = on ? f[4] : 0.0f;
+		}
+		rs->material_set_param(m, "cloud_effector_count", p_state.effector_count);
+		rs->material_set_param(m, "cloud_effectors", eff);
+		rs->material_set_param(m, "cloud_effector_strength", strength);
+		PackedVector4Array lights;
+		lights.resize(WeatherClouds::MAX_CLOUD_LIGHTS);
+		PackedVector3Array colors;
+		colors.resize(WeatherClouds::MAX_CLOUD_LIGHTS);
+		for (int i = 0; i < WeatherClouds::MAX_CLOUD_LIGHTS; i++) {
+			const float *l = p_state.lights[i];
+			const bool on = i < p_state.light_count;
+			lights.write[i] = on ? Vector4(l[0], l[1], l[2], MAX(l[3], 1.0f)) : Vector4(0, 0, 0, 1);
+			colors.write[i] = on ? Vector3(l[4], l[5], l[6]) : Vector3();
+		}
+		rs->material_set_param(m, "cloud_light_count", p_state.light_count);
+		rs->material_set_param(m, "cloud_lights", lights);
+		rs->material_set_param(m, "cloud_light_colors", colors);
+	}
 	rs->material_set_param(m, "cloud_high_cover", p_state.high_cover);
 	rs->material_set_param(m, "cloud_high_height", p_state.high_height);
 	rs->material_set_param(m, "cloud_high_tau", p_state.high_tau);

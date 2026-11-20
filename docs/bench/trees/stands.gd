@@ -7,6 +7,7 @@ extends Node3D
 #   --test            place every stand, print the counts and PASS/FAIL, quit
 #   --stand-test=N    the placement checks of stand N only (TreeGenerator.Stand)
 #   --forest-edge=N   make_edge(N): mantle shrubs out in the open, edge trees one-sided toward +X (trees.md 5as)
+#   --beaver          beaver work on single trees: stump cone, felled stem lying, gnawed waist, resprouts (trees.md 5au)
 #   --succession=N    make_succession(N): every stage present, age ranges and kinds sane, sizes by stage (trees.md 5aq)
 #   --map=path.png    the placement maps of every stand in one image
 #   --edge [--standard]  with --plot: from a fresh coupe across its edge (or at a standard 8 m off)
@@ -49,7 +50,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "alder carr", "floodplain willow", "woodland", "NA woodland"]
+		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "alder carr", "floodplain willow", "beaver pond", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -77,6 +78,10 @@ func run(args: Dictionary) -> void:
 	gen.far_thinning = OS.get_environment("NO_FAR_SCALE") == ""
 	if args.has("forest-edge"):
 		_forest_edge_check(int(args["forest-edge"]))
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("beaver"):
+		_beaver_check()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	if args.has("succession"):
@@ -153,6 +158,82 @@ func _forest_edge_check(i: int) -> void:
 	# Groves, oases and parkland have no leading forest tree: a mantle only.
 	var no_lead := i in [TreeGenerator.STAND_STONE_PINE, TreeGenerator.STAND_OLIVE_GROVE, TreeGenerator.STAND_DATE_OASIS]
 	_check(bad == 0 and (trees > 0 or no_lead) and one_sided == trees and mantle >= 3 and mantle_out * 2 >= mantle, "forest edge of %s: %d edge trees (%d one-sided to the open), %d mantle shrubs (%d mostly outside), %d bad ranges" % [name_i, trees, one_sided, mantle, mantle_out, bad])
+
+# Beaver work (trees.md 5au) on willow and birch: a stump stands under a metre with its gnawed cone (wood surface
+# above the cut), a felled stem lies (longer than tall) with its butt cone, a gnawed stem's waist is pulled in
+# against the same tree ungnawed, and some stumps resprout (leaves on a stump).
+func _surface(m: Mesh, name: String) -> int:
+	for si in m.get_surface_count():
+		if m.surface_get_name(si) == name:
+			return si
+	return -1
+
+func _band_min_r(m: Mesh, y0: float, y1: float) -> float:
+	# The narrowest 2 cm slice of the stem in the band, by its median vertex radius.
+	var si := _surface(m, "bark")
+	if si < 0:
+		return -1.0
+	var v: PackedVector3Array = m.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]
+	var slices := {}
+	for p in v:
+		if p.y > y0 and p.y < y1:
+			var k := int(floor(p.y / 0.02))
+			if not slices.has(k):
+				slices[k] = []
+			slices[k].append(Vector2(p.x, p.z).length())
+	var lo := 1e9
+	for k in slices:
+		var rs: Array = slices[k]
+		if rs.size() < 8:
+			continue
+		rs.sort()
+		lo = minf(lo, rs[int(rs.size() * 0.5)])
+	return lo if lo < 1e8 else -1.0
+
+func _beaver_check() -> void:
+	for pr in [TreeGenerator.PRESET_WHITE_WILLOW, TreeGenerator.PRESET_BIRCH]:
+		var g := TreeGenerator.new()
+		g.preset = pr
+		g.near_leaf_range = 0.0
+		g.set_param(TreeGenerator.PARAM_YEARS, 18.0)
+		var nm: String = ["willow", "birch"][0 if pr == TreeGenerator.PRESET_WHITE_WILLOW else 1]
+		var stumps := 0
+		var cones := 0
+		var sprouting := 0
+		for sd in range(1, 7):
+			g.seed = sd
+			g.beaver_cut = TreeGenerator.BEAVER_STUMP
+			g.beaver_years = 3.0
+			var m := g.generate()
+			var ab: AABB = m.get_aabb()
+			var wi := _surface(m, "wood")
+			var top := 0.0
+			if wi >= 0:
+				for p in m.surface_get_arrays(wi)[Mesh.ARRAY_VERTEX]:
+					top = maxf(top, p.y)
+			var leafy := _surface(m, "leaves") >= 0
+			if leafy:
+				sprouting += 1
+			elif ab.size.y < 1.2:
+				stumps += 1
+			if top > 0.25:
+				cones += 1
+		_check(stumps + sprouting == 6 and cones == 6 and sprouting > 0 and sprouting < 6, "%s: beaver stumps: %d bare, %d resprouting, %d with a gnawed cone over the cut" % [nm, stumps, sprouting, cones])
+		g.seed = 3
+		g.beaver_cut = TreeGenerator.BEAVER_FELLED
+		g.beaver_years = 1.0
+		var f := g.generate()
+		var fb: AABB = f.get_aabb()
+		_check(maxf(fb.size.x, fb.size.z) > 1.5 * fb.size.y and _surface(f, "wood") >= 0, "%s: beaver-felled stem lies (%.1f m long, %.1f m high) with its butt cone" % [nm, maxf(fb.size.x, fb.size.z), fb.size.y])
+		g.beaver_cut = TreeGenerator.BEAVER_NONE
+		var whole := g.generate()
+		g.beaver_cut = TreeGenerator.BEAVER_GNAWED
+		g.beaver_depth = 0.7
+		var gn := g.generate()
+		var r0 := _band_min_r(whole, 0.15, 0.7)
+		var r1 := _band_min_r(gn, 0.15, 0.7)
+		_check(r0 > 0.0 and r1 > 0.0 and r1 < 0.85 * r0, "%s: gnawed waist pulls the stem in (median radius %.3f against %.3f in the narrowest slice, 0.15-0.7 m)" % [nm, r1, r0])
+		g.beaver_cut = TreeGenerator.BEAVER_NONE
 
 # Forests that age (trees.md 5aq): the four structural stages (Oliver and Larson 1996) all present, each species'
 # age range forward and its kind a RULE_DISTURBANCE number or -1, the pole stage shorter than the mature lead and
@@ -446,6 +527,45 @@ func _stand_checks(only := -1) -> void:
 						if Vector2(x.x, x.z).normalized().dot(dir) < cos(0.5):
 							off += 1
 			_check(thrown > 0 and snapped > 0 and leaning > 0 and stand_count > 0 and off == 0 and plates > 0, "windthrow: %d thrown (%d variants with root plates), %d snapped, %d leaning, %d standing; %d of %d drawn turned off the storm's track" % [thrown, plates, snapped, leaning, stand_count, off, checked])
+		elif i == TreeGenerator.STAND_BEAVER_POND:
+			# A beaver pond (trees.md 5au): the colony's work in a band by the water (none past 12 m), the felled stems
+			# mostly turned toward the water (mesh +X down the water distance), and drowned snags standing in it.
+			var work := 0
+			var far := 0
+			var drowned := 0
+			var felled := 0
+			var to_water := 0
+			for s in sps.size():
+				var nm5: String = sps[s].resource_name
+				var pl: PackedVector3Array = f.get_placements(s)
+				if nm5.contains("(drowned"):
+					drowned += pl.size()
+					continue
+				if not nm5.contains("(beaver "):
+					continue
+				work += pl.size()
+				for p in pl:
+					if dm.get_water_distance_at(f.to_global(p)) > 12.5:
+						far += 1
+				if not nm5.contains("felled"):
+					continue
+				for mmi in f.find_children("*", "MultiMeshInstance3D", true, false):
+					var mm: MultiMesh = mmi.multimesh
+					if mm == null or not sps[s].meshes.has(mm.mesh):
+						continue
+					for k in mm.instance_count:
+						var xf: Transform3D = mmi.global_transform * mm.get_instance_transform(k)
+						var o := xf.origin
+						var gx := dm.get_water_distance_at(o + Vector3(1.5, 0, 0)) - dm.get_water_distance_at(o - Vector3(1.5, 0, 0))
+						var gz := dm.get_water_distance_at(o + Vector3(0, 0, 1.5)) - dm.get_water_distance_at(o - Vector3(0, 0, 1.5))
+						var down := -Vector2(gx, gz)
+						if down.length() < 1e-4:
+							continue
+						felled += 1
+						var x := xf.basis.x
+						if Vector2(x.x, x.z).normalized().dot(down.normalized()) > cos(0.6):
+							to_water += 1
+			_check(work > 0 and far == 0 and felled > 0 and to_water * 2 > felled and drowned > 0 and stand_count > 0, "beaver pond: %d gnawed, cut and felled (%d past 12 m from the water), %d of %d felled stems turned to the water, %d drowned snags" % [work, far, to_water, felled, drowned])
 		elif i == TreeGenerator.STAND_OLD_GROWTH_BEECH:
 			# Old-growth beech (trees.md 5an): veteran giants among the canopy (about ten a hectare), a fallen giant in
 			# the gaps, poles and seedlings under them, lying deadwood well over standing.

@@ -149,6 +149,9 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Terrain wind (lee of a ridge) → fire whirls | linked (18 Nov) | WorldWeather `terrain_lee_at` (Winstral Sx) | PhysX c3c529f4: lee-slope whirls form where the wind has separated behind a crest, driven by the ridge's free wind |
 | Fire → ash on burnt grass, litter | linked (18 Nov) | fire_char_map (`VegetationFire::ASH_CODE`) | PhysX c3c529f4: white ash where it burnt out, black char where not, thinned by wind and darkened by rain |
 | Fire → fire clouds (pyrocumulus over a big fire) | linked (19 Nov) | WorldFire `plumes()` (base, convective W) | PhysX ebdad64b: WeatherMap3D builds the cloud from the plumes |
+| Fire → light in the clouds | linked (20 Nov) | WorldFire `plumes()` (base, heat release) | WeatherMap3D registers a cloud light per plume (flame colour, a third of the heat as light); lights the cloud bases at night; listed in `get_cloud_lights()` (docs/ideas/clouds.md round 4) |
+| Lightning → cloud lights list | linked (20 Nov) | WeatherLightning3D flashes | Listed in `WeatherMap3D.get_cloud_lights()` for readers; the sky keeps its own full-resolution flash glow |
+| Any system → cloud density | linked (20 Nov) | `add_cloud_effector` callers | `WorldWeather.cloud_effector_at`; shadow bake and sky both see it |
 | Fire → smoke haze downwind | linked (19 Nov) | WorldFire `smoke_sources()` (base, kg/s PM2.5) | PhysX eabdcd98: WeatherMap3D carries the smoke into its haze |
 | Rain, snow → smoke and dust washed out of the air | linked (19 Nov) | WorldWeather `washout_at` (`rainfall_at`, `snowfall_at`) | below-cloud scavenging Lambda = a R^b: the map's smoke haze thins over hours of rain; Flow gas adds it to its smoke damping (coarse when the gas is heavy dust) |
 | Fire age → trees cast dead needles | linked (19 Nov) | shader global `fire_age_map` | PhysX ebdad64b |

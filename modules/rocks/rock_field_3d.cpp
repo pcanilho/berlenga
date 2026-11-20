@@ -3909,8 +3909,56 @@ void RockField3D::_update_thinning(const Vector3 &p_target) {
 			if (g.multimesh->get_visible_instance_count() != want) {
 				g.multimesh->set_visible_instance_count(want);
 			}
+			// Widened survivors (Ghost of Tsushima's grass; trees' far_widen): the stones still drawn grow so their plan
+			// cover matches all of the cell's, up to 1.6x (the cover holds to about 0.8 of the radius, where the terrain's
+			// own far stones come in). The far tier's big stones lead and are drawn unscaled, so they meet their far copies.
+			const int widen_for = far_widen ? want : -1;
+			if (widen_for != g.widen_want) {
+				g.widen_want = widen_for;
+				float s = 1.0f;
+				if (widen_for >= 0 && widen_for < n && uint32_t(n) <= g.reach.size()) {
+					double all = 0.0, kept = 0.0;
+					for (int k = g.keep_min; k < n; k++) {
+						const double a = double(g.reach[k]) * double(g.reach[k]);
+						all += a;
+						kept += k < widen_for ? a : 0.0;
+					}
+					s = kept > 0.0 ? float(MIN(Math::sqrt(all / kept), 1.6)) : 1.0f;
+				}
+				if (Math::abs(s - g.widen) > 0.01f) {
+					g.widen = s;
+					_upload_widened(g);
+				}
+			}
 		}
 	}
+}
+
+void RockField3D::_upload_widened(Group &r_group) {
+	const uint32_t n = uint32_t(r_group.multimesh->get_instance_count());
+	if (r_group.xforms.size() < n || r_group.custom.size() < n) {
+		return;
+	}
+	PackedFloat32Array buf;
+	buf.resize(n * 16);
+	float *w = buf.ptrw();
+	for (uint32_t k = 0; k < n; k++) {
+		const bool hidden = (k < r_group.near.size() && r_group.near[k]) || (k < r_group.broken.size() && r_group.broken[k]);
+		const Transform3D xf = hidden ? Transform3D(Basis().scaled(Vector3(0, 0, 0)), r_group.xforms[k].origin) : _drawn_xform(r_group, k);
+		float *rec = w + k * 16;
+		for (int row = 0; row < 3; row++) {
+			rec[row * 4 + 0] = xf.basis.rows[row][0];
+			rec[row * 4 + 1] = xf.basis.rows[row][1];
+			rec[row * 4 + 2] = xf.basis.rows[row][2];
+			rec[row * 4 + 3] = xf.origin[row];
+		}
+		const Color &cd = r_group.custom[k];
+		rec[12] = cd.r;
+		rec[13] = cd.g;
+		rec[14] = cd.b;
+		rec[15] = cd.a;
+	}
+	RS::get_singleton()->multimesh_set_buffer(r_group.multimesh->get_rid(), buf);
 }
 
 void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
@@ -3949,6 +3997,28 @@ void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
 			}
 			const float r = 0.9f * float(b.w);
 			area[iz * R + ix] += 1.3f * float(Math::PI) * r * r;
+		}
+	}
+	// River beds of cobbles and boulders (the river layer's own Shields and Sternberg sizes): 45% of the bed in stone
+	// where the median is coarse enough to be drawn near, spread along each segment in steps under half a texel.
+	if (_layer_on(LAYER_RIVER) && layer_density[LAYER_RIVER] > 0.0) {
+		_prepare_rivers();
+		LocalVector<RiverSeg> segs;
+		_river_segments(Rect2(o, Vector2(size, size)), segs);
+		for (const RiverSeg &sg : segs) {
+			if (sg.d50 * 2.2f < float(min_size)) {
+				continue; // gravel and sand: the bed material shows it
+			}
+			const int steps = MAX(1, int(Math::ceil(sg.len / (0.5f * float(FAR_COVER_TEXEL)))));
+			const float step = sg.len / steps;
+			for (int k = 0; k < steps; k++) {
+				const Vector2 p = sg.a + sg.f * ((k + 0.5f) * step);
+				const int ix = int(Math::floor((p.x - o.x) / FAR_COVER_TEXEL)), iz = int(Math::floor((p.y - o.y) / FAR_COVER_TEXEL));
+				if (ix < 0 || iz < 0 || ix >= R || iz >= R) {
+					continue;
+				}
+				area[iz * R + ix] += 0.45f * step * sg.w * 1.2f * float(layer_density[LAYER_RIVER]);
+			}
 		}
 	}
 	const bool glacial = _layer_on(LAYER_GLACIAL) && layer_density[LAYER_GLACIAL] > 0.0;
@@ -4563,7 +4633,7 @@ void RockField3D::_update_close_up(bool p_wait) {
 				}
 				if (want != grp.near[k]) {
 					grp.near[k] = want;
-					grp.multimesh->set_instance_transform(int(k), (want || grp.broken[k]) ? Transform3D(Basis().scaled(Vector3(0, 0, 0)), grp.xforms[k].origin) : grp.xforms[k]);
+					grp.multimesh->set_instance_transform(int(k), (want || grp.broken[k]) ? Transform3D(Basis().scaled(Vector3(0, 0, 0)), grp.xforms[k].origin) : _drawn_xform(grp, k));
 					changed = true;
 				}
 				if (want) {
@@ -4861,7 +4931,7 @@ void RockField3D::set_close_up_enabled(bool p_enabled) {
 				for (uint32_t k = 0; k < grp.near.size(); k++) {
 					if (grp.near[k]) {
 						grp.near[k] = false;
-						grp.multimesh->set_instance_transform(int(k), grp.xforms[k]);
+						grp.multimesh->set_instance_transform(int(k), _drawn_xform(grp, k));
 					}
 				}
 			}
@@ -6022,6 +6092,9 @@ int RockField3D::build_area(const Rect2 &p_rect) {
 		}
 	}
 	last_build_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	// Far thinning (and its widened survivors) round the target, as streaming applies it each frame, so stills show
+	// what play shows.
+	_update_thinning(_target_position());
 	// Close-up shapes too, waiting for them (stills and benches want the finished picture): two passes, the first
 	// starts the builds, the second places them.
 	if (close_up_enabled) {
@@ -7172,6 +7245,24 @@ Dictionary RockField3D::get_ground_detail_tile_stats() const {
 	}
 	d["shared_by_class"] = by_layer;
 	d["shared_sets"] = int64_t(tile_sets.size());
+	{
+		int64_t widened = 0, thinned = 0;
+		double widen_sum = 0.0;
+		for (const KeyValue<Vector3i, Cell> &kv : cells) {
+			for (const Group &g : kv.value.groups) {
+				if (g.multimesh.is_valid() && g.multimesh->get_visible_instance_count() >= 0) {
+					thinned++;
+				}
+				if (g.widen > 1.0f) {
+					widened++;
+					widen_sum += g.widen;
+				}
+			}
+		}
+		d["far_thinned_groups"] = thinned;
+		d["far_widened_groups"] = widened;
+		d["far_widen_mean"] = widened > 0 ? widen_sum / double(widened) : 1.0;
+	}
 	d["shared_candidates"] = shared_cands;
 	d["shared_tiles"] = shared_built; // candidates some placement took (their MultiMeshes and BLAS built)
 	d["shared_triangles"] = shared_triangles;
@@ -7363,6 +7454,9 @@ void RockField3D::_notification(int p_what) {
 void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_coarse_cover_at", "position"), &RockField3D::get_coarse_cover_at);
 	ClassDB::bind_method(D_METHOD("set_far_thinning", "enabled"), &RockField3D::set_far_thinning);
+	ClassDB::bind_method(D_METHOD("set_far_widen", "enabled"), &RockField3D::set_far_widen);
+	ClassDB::bind_method(D_METHOD("is_far_widen"), &RockField3D::is_far_widen);
+	ClassDB::bind_method(D_METHOD("get_far_cover_texture"), &RockField3D::get_far_cover_texture);
 	ClassDB::bind_method(D_METHOD("set_far_radius", "radius"), &RockField3D::set_far_radius);
 	ClassDB::bind_method(D_METHOD("get_far_radius"), &RockField3D::get_far_radius);
 	ClassDB::bind_method(D_METHOD("set_far_min_size", "size"), &RockField3D::set_far_min_size);
@@ -7556,6 +7650,7 @@ void RockField3D::_bind_methods() {
 	}
 
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_thinning"), "set_far_thinning", "is_far_thinning");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_widen"), "set_far_widen", "is_far_widen");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_radius", PROPERTY_HINT_RANGE, "0,8000,10,suffix:m"), "set_far_radius", "get_far_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_min_size", PROPERTY_HINT_RANGE, "0.5,10,0.1,suffix:m"), "set_far_min_size", "get_far_min_size");
 	ADD_GROUP("Ground Detail", "ground_detail_");

@@ -223,6 +223,7 @@ private:
 		bool wind_flag = false; // Meta "wind_flag": +X turned down the prevailing wind (flagged trees, krummholz).
 		Vector2 fall_dir; // Meta "fall_dir" (world xz, unit): +X turned along it, +-fall_scatter (storm-thrown trees, trees.md 5am); zero none.
 		float fall_scatter = 0.0f;
+		float fall_water = 0.0f; // Meta "fall_to_water": that share turned +X toward the water (beaver-felled stems, trees.md 5au).
 		float far_hull_range = 0.0f; // Meta "far_hull_range" (trees, trees.md 9b): past it each variant's mesh meta tree_far_hull is drawn instead.
 		float far_top = 0.0f; // Trees (far_widen): the first mesh's top, for the skyline test (trees.md 9c).
 		bool far_widen = false; // Meta "far_widen" (trees, trees.md 9a): the far tail's survivors widened in their transforms per tile.

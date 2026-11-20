@@ -667,6 +667,22 @@ float cells_at(const State &p_state, const Vector3 &p_pos, float p_base, Vector2
 	return best;
 }
 
+// Density effectors (State::effectors; wc_effector in the shader): each a sphere whose strength falls off linearly
+// to its edge (as Sunshine Clouds 2's point effectors, Bonkahe 2025), summed. A positive one widens the cloud
+// envelope there, so the shape noise carves a cloud round it (a fire's plume feeding a cumulus, its pyrocumulus);
+// a negative one scales the density down (a blast clearing a hole). Clamped to -1..1.
+float effector_at(const State &p_state, const Vector3 &p_pos) {
+	float e = 0.0f;
+	for (int i = 0; i < p_state.effector_count; i++) {
+		const float *f = p_state.effectors[i];
+		const float d = Vector3(f[0], f[1], f[2]).distance_to(p_pos);
+		if (d < f[3]) {
+			e += f[4] * (1.0f - d / f[3]);
+		}
+	}
+	return CLAMP(e, -1.0f, 1.0f);
+}
+
 float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	if (p_pos.y < p_state.base_min || p_pos.y > p_state.top_max) {
 		return 0.0f;
@@ -676,7 +692,8 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 		return 0.0f;
 	}
 	const Vector2 ct = cover_type_at(p_state, Vector2(p_pos.x, p_pos.z));
-	if (ct.x <= 0.001f) {
+	const float eff = p_state.effector_count > 0 ? effector_at(p_state, p_pos) : 0.0f;
+	if (ct.x <= 0.001f && eff <= 0.0f) {
 		return 0.0f;
 	}
 	const float h = (p_pos.y - b) / top_height(p_state, ct.y);
@@ -701,10 +718,10 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	// A deck (high cover) is the continuous noise's, as before: overcast is one sheet, not cells.
 	// The shape noise warps each cloud's outline (its distances stretched by up to half where the noise is low)
 	// and carves its shell.
-	const float env = cells_at(p_state, Vector3(p_pos.x - so.x, p_pos.y, p_pos.z - so.y), b, ct, 1.0f);
+	const float env = CLAMP(cells_at(p_state, Vector3(p_pos.x - so.x, p_pos.y, p_pos.z - so.y), b, ct, 1.0f) + 1.5f * MAX(eff, 0.0f), 0.0f, 1.0f);
 	const float cells = MAX(n - (1.0f - env), 0.0f) / MAX(env, 0.001f) * base;
 	const float deck = MAX(n * dome - (1.0f - ct.x), 0.0f) / MAX(ct.x, 0.001f) * base * smoothstep(0.55f, 0.85f, ct.x);
-	const float shape = MAX(cells, deck);
+	const float shape = MAX(cells, deck) * (1.0f + MIN(eff, 0.0f));
 	// Frostbite's measured extinction: stratus about 0.04, cumulus up to 0.1 per metre; a fair sky's clouds a
 	// little lighter than a deck's.
 	return shape * Math::lerp(0.4f, 1.0f, ct.x) * Math::lerp(0.04f, 0.1f, ct.y) * p_state.density;
@@ -775,6 +792,14 @@ uniform vec4 cloud_storms[8];
 // Each storm's own cloud base (m; <= 0: cloud_base_height), and the lowest base of all (the march's bounds).
 uniform float cloud_storm_base[8];
 uniform float cloud_base_min = 1500.0;
+// Density effectors (WeatherMap3D.add_cloud_effector): world centre and radius (m), strength (> 0 adds cloud).
+uniform int cloud_effector_count = 0;
+uniform vec4 cloud_effectors[8];
+uniform float cloud_effector_strength[8];
+// Point lights in the clouds (WeatherMap3D.add_cloud_light): world position and reach (m), linear colour times energy.
+uniform int cloud_light_count = 0;
+uniform vec4 cloud_lights[8];
+uniform vec3 cloud_light_colors[8];
 // Nubis Cubed's sharpening exponent at a cloud's thin edge (1: none).
 uniform float cloud_edge_sharpness = 0.45;
 // How deep the detail noise erodes the shape (Nubis's erosion), on its base depth.
@@ -981,6 +1006,22 @@ float wc_mid_cover(vec2 xz) {
 	return c;
 }
 
+// Density effectors (effector_at() on the CPU, which explains them).
+float wc_effector(vec3 p) {
+	float e = 0.0;
+	for (int i = 0; i < 8; i++) {
+		if (i >= cloud_effector_count) {
+			break;
+		}
+		vec4 f = cloud_effectors[i];
+		float d = distance(f.xyz, p);
+		if (d < f.w) {
+			e += cloud_effector_strength[i] * (1.0 - d / f.w);
+		}
+	}
+	return clamp(e, -1.0, 1.0);
+}
+
 // Extinction (1/m) at p. p_detail erodes the edges with the detail noise (Nubis); the shadow bake
 // and the CPU leave it out. p_step is the march's step (m): the noise is read at that scale.
 // r_profile: the cloud's depth there before erosion, 0 at its edge to 1 at its core (Nubis Cubed's
@@ -1063,7 +1104,8 @@ float wc_cells(vec3 p, float b0, vec2 ct, float p_warp, out float r_hh, out vec4
 
 float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_profile) {
 	r_profile = 0.0;
-	if (ct.x <= 0.001) {
+	vec3 p_unsheared = p;
+	if (ct.x <= 0.001 && (cloud_effector_count == 0 || wc_effector(p) <= 0.0)) {
 		return 0.0;
 	}
 	float b0 = wc_base_at(p.xz);
@@ -1092,6 +1134,8 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 	vec4 loc;
 	float decay;
 	float env = wc_cells(p, b0, ct, 1.0, hc, loc, decay);
+	float eff = cloud_effector_count > 0 ? wc_effector(p_unsheared) : 0.0;
+	env = clamp(env + 1.5 * max(eff, 0.0), 0.0, 1.0);
 	// Flat bases on one condensation level: below a cloud's lowest stretch (120 m) the noise and the turrets are
 	// read at its top, so the outline drops straight to the base instead of rounding up into floating puffs.
 	float y_lift = max(b0 + 120.0 - p.y, 0.0);
@@ -1108,7 +1152,7 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 	}
 	float cells = max(n - (1.0 - env), 0.0) / max(env, 0.001) * base;
 	float deck = max(n * dome - (1.0 - ct.x), 0.0) / max(ct.x, 0.001) * base * smoothstep(0.55, 0.85, ct.x);
-	float shape = max(cells, deck);
+	float shape = max(cells, deck) * (1.0 + min(eff, 0.0));
 	r_profile = clamp(shape, 0.0, 1.0);
 	if (p_detail && shape > 0.0) {
 		// Nubis Cubed's up-rez (Schneider, Advances 2023): wisps (Curly-Alligator) low frequency inside and high

@@ -1307,3 +1307,25 @@ Docs declined the first fields frame (18 Nov). Fixes:
 - Stand changes that move a canopy stage (a windthrow opening a clearing) rebuild the edge grid and re-place the
   streamed tiles where it moved.
 - Check: vegetation --test "forest edge" (a 25 m windthrow clearing: mantle ring 16-28 m, edge trees facing in).
+
+## Next round (card 20 Nov afternoon): floors that follow forest age, edge light, far rings without CPU copies
+Research so far:
+- Clearing succession on the floor (Wohlgemuth et al. 2002, Swiss windthrow plots after Vivian, slf.ch
+  wo_2002fosnola; Estonian Myrtillus spruce windthrows; Forests 7(11) 287 on post-windthrow ground vegetation):
+  in the first 1-3 years ruderals and light-demanding herbs take the opened ground (fireweed Chamerion
+  angustifolium, foxglove, groundsels), raspberry Rubus idaeus and grasses (Calamagrostis epigejos / villosa,
+  Deschampsia flexuosa) peak at about 3-10 years and can hold the ground for a decade; shade-tolerant forest herbs
+  and dwarf shrubs (bilberry) mostly survive under the debris and recover as the canopy closes; mosses (Hylocomium,
+  Pleurozium) drop after opening and build back over decades. Fire differs: fire moss and fireweed first (our burn
+  presets already do this through RULE_BURN_AGE).
+- Edge light (Harper et al. 2005; Dendrobiology 71 edge study; Can. J. For. Res. 34 289): light, temperature and
+  ground flora change up to 20-60 m in; edge-loving grasses, brambles and nitrophilous herbs thin within the first
+  10-30 m, shade herbs and mosses take over deeper in.
+Design (to build after Paulo's pick):
+- Floor species take RULE_STAND_AGE ranges per role: clearing ruderals (0, 4) fade 2, raspberry and clearing grass
+  (1, 15) fade 5, forest herbs and mosses (-1 old growth or 15+) with a slow fade in, so a clearing flips through
+  stages as WorldStand ages it. Wind and beetle kinds share the ruderal stage; fire keeps the burn presets.
+- Edge: floor species get RULE_FOREST_EDGE weights: grass, bramble, nettle strongest from -5 to 15 m in, fading by
+  30 m; shade herbs and moss carpets fade in from 10 to 30 m. Uses the same edge grid as trees' make_edge.
+- Far rings: on RT devices the multimesh buffers get a CPU copy for the path tracer; far ring tiles are past the PT
+  vertex-capture reach, so mark them raster-only (no CPU copy) where the renderer allows. Measure memory before/after.

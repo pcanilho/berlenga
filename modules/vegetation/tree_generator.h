@@ -140,6 +140,7 @@ public:
 		STAND_BOREAL_TAIGA, // Taiga: narrow spruce and fire-scarred pine in a mosaic, birch in old burns, silver kelo (trees.md 5ap).
 		STAND_ALDER_CARR, // Swamp: stilt-rooted black alder on tussocks over a flooded peat floor, birch on the hummocks (trees.md 5at).
 		STAND_FLOODPLAIN_WILLOW, // Softwood floodplain: old split white willows standing in the floods, willow thickets on the bars (trees.md 5at).
+		STAND_BEAVER_POND, // A beaver pond: drowned snags in the water, gnawed stumps, felled and half-gnawed willow and birch on the shore (trees.md 5au).
 		STAND_MAX,
 	};
 	// The disturbance whose legacy a make_succession() species is (meta "succession_kind"; -1 any). Fire's legacies are
@@ -150,6 +151,12 @@ public:
 		SUCCESSION_FIRE = 1,
 		SUCCESSION_WIND = 2,
 		SUCCESSION_BEETLE = 3,
+	};
+	enum BeaverCut {
+		BEAVER_NONE = 0,
+		BEAVER_GNAWED = 1,
+		BEAVER_STUMP = 2,
+		BEAVER_FELLED = 3,
 	};
 
 	// Leaf architecture (Ellis et al., Manual of Leaf Architecture, 2009).
@@ -437,6 +444,11 @@ private:
 	Ref<Texture2D> _wood_texture(bool p_normal);
 	Builder wood_b; // Broken wood: fracture faces, splinters, torn bark (surface "wood").
 	void _fracture(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_old, uint32_t p_seed, const Vector3 &p_tension = Vector3());
+	void _gnaw_face(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_old, uint32_t p_seed);
+	void _beaver_stump(int p_year);
+	void _beaver_strip();
+	float _beaver_waist_at(const Vector3 &p_pos, float *r_axis_r = nullptr) const;
+	void _beaver_waist(Builder &r_b, bool p_bark);
 	PackedFloat32Array fungi_points; // Mesh meta tree_fungi: 8 floats per cluster.
 	int64_t fungi_index_end = 0; // Fungi surface indices before the lichen strands (LOD 1 keeps these).
 	Ref<Texture2D> _fungus_texture();
@@ -726,6 +738,21 @@ public:
 	int succession_band = 0; // While make_succession grows a stage: 1 the pole stage, 2 old growth's veterans, 3 stand initiation (trees.md 5aq).
 	Preset last_stand_lead = PRESET_MAX; // The lead of the last make_stand().
 	int wet_band = 0; // While a wet stand grows its species: 1 stilt-rooted alder, 2 old floodplain willow (trees.md 5at).
+	// Beaver work (trees.md 5au): BEAVER_GNAWED a living stem gnawed round into an hourglass waist beaver_depth of its
+	// radius deep; BEAVER_STUMP the stump of a felled stem, its top a gnawed cone, resprouting if a broadleaf and the
+	// seed says so; BEAVER_FELLED the felled stem lying (fallen), its butt the hourglass's other cone, limbs and bark
+	// taken over the years. beaver_years: since the work.
+	int beaver_cut = 0;
+	float beaver_years = 0.5f;
+	float beaver_depth = 0.6f;
+	int beaver_band = 0; // While a beaver stand grows its species: 1 gnawed, 2 stumps, 3 felled, 4 drowned snags.
+	int beaver_tip = -1; // The stump's cut node (its end gets _gnaw_face).
+	int beaver_now = 0; // This generate()'s beaver work (beaver_cut where it applies, else BEAVER_NONE).
+	LocalVector<Vector3> beaver_axis; // The stem's axis through the gnawed waist (_beaver_waist).
+	float beaver_r = 0.1f; // The stem's radius at the waist.
+	bool _beaver_resprouts() const;
+	static Color _beaver_wood(float p_years);
+	float beaver_cut_h = 0.0f; // Height of the waist / the stump's cut over the soil.
 	int edge_band = 0; // While make_edge grows its edge trees: 1 (trees.md 5as).
 	int boreal_band = 0; // While a taiga stand grows its species: 1 narrow spruce, 2 fire-survivor pine, 3 kelo, 4 burn birch (trees.md 5ap).
 	int old_growth_band = 0; // While an old-growth stand grows its species: 1 veteran giants, 2 poles, 3 giant deadwood, 4 canopy (trees.md 5an).
@@ -1091,6 +1118,12 @@ public:
 	float get_ground_slope() const { return ground_slope; }
 	void set_bank_erosion(float p_v) { bank_erosion = CLAMP(p_v, 0.0f, 1.0f); }
 	void set_stilt_height(float p_v) { stilt_height = CLAMP(p_v, 0.0f, 1.5f); }
+	void set_beaver_cut(int p_v) { beaver_cut = CLAMP(p_v, 0, 3); }
+	int get_beaver_cut() const { return beaver_cut; }
+	void set_beaver_years(float p_v) { beaver_years = CLAMP(p_v, 0.0f, 60.0f); }
+	float get_beaver_years() const { return beaver_years; }
+	void set_beaver_depth(float p_v) { beaver_depth = CLAMP(p_v, 0.05f, 0.95f); }
+	float get_beaver_depth() const { return beaver_depth; }
 	float get_stilt_height() const { return stilt_height; }
 	float get_bank_erosion() const { return bank_erosion; }
 	void set_wind_exposure(float p_v) { wind_exposure = CLAMP(p_v, 0.0f, 1.0f); }
@@ -1251,3 +1284,4 @@ VARIANT_ENUM_CAST(TreeGenerator::RigField);
 VARIANT_ENUM_CAST(TreeGenerator::ShrubForm);
 VARIANT_ENUM_CAST(TreeGenerator::FireResponse);
 VARIANT_ENUM_CAST(TreeGenerator::SuccessionKind);
+VARIANT_ENUM_CAST(TreeGenerator::BeaverCut);

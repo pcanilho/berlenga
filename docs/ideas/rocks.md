@@ -1033,6 +1033,18 @@ reach (docs/ideas/vegetation.md, "Far vegetation without bald ground").
 3. Far ground takes the rocks' colour: a rock cover map to 4 km (32 m texels) from the same placement rules, read
    by the terrain material as a tint and roughness where each field is.
 
+Added 20 Nov (ground detail thread, Paulo's pick "thinning plus 4 km rock colour"):
+- `far_widen` (on): a thinned cell's survivors past the far tier's big stones grow so their plan cover (reach
+  squared) matches the whole group's, capped at 1.6x, as Ghost of Tsushima widens its thinned grass. The cover holds
+  to about 0.8 of the radius, where the terrain's own scree blocks come in. Drawn buffer only: xforms, colliders,
+  breakables and the far blocks' records stay at true size. Scree bench, eye level round the camera: 226 of 715
+  thinned groups widened, 1.36x on average; raster and PT keep the edge's stone cover.
+- build_area applies the thinning round the target, so stills show what play shows (it drew every cell whole).
+- The far cover map takes coarse river beds (45% stone over the bed where the median is drawn near). In the bench
+  world only narrow boulder streams qualify, so it adds 67 faint texels; it matters where big rivers carry boulders.
+  Shore stones are left out: the shingle band is a few metres wide, under a tenth of a 32 m texel.
+- Bench: --focus=camera, --no-far-widen, --save-far-cover=path; get_far_cover_texture().
+
 ## Next options (17 Nov research, nothing built before Paulo picks)
 
 1. Tafoni and honeycomb weathering as real geometry. Coastal sandstone and granite boulders hollow out into
