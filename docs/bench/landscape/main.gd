@@ -3007,6 +3007,12 @@ func _link_shot(kind: String, off: bool) -> void:
 			# walk is far from it, so the square follows the framed camera for the shot.
 			if not movers.is_empty():
 				weather.follow_target = weather.get_path_to(cam7)
+				if prints != null:
+					# The ground's deform window too, so the stamped prints land inside it.
+					prints.follow_target = prints.get_path_to(cam7)
+					for _f in 10:
+						await get_tree().physics_frame
+					_log("tracks: ground deform rect %s" % str(prints.get_deform_rect()))
 			get_viewport().disable_3d = true
 			for mv in movers:
 				var a: Vector2 = mv[1]
@@ -3043,6 +3049,9 @@ func _link_shot(kind: String, off: bool) -> void:
 						weather.step_contact(1.0 / 60.0)
 					else:
 						await get_tree().physics_frame
+				if prints != null:
+					var mq := a.lerp(b, 0.5)
+					_log("tracks: dent %.3f m mid-walk at %s" % [float(prints.get_dent_at(Vector3(mq.x, height_at(mq.x, mq.y), mq.y))), str(mq)])
 				for bd in mv[0]:
 					_log("tracks: %s water %s at the end" % [bd.name, str(weather.get_body_water(bd))])
 					bd.queue_free()
