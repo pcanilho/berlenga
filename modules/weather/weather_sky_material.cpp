@@ -736,6 +736,7 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 		}
 		bool lit = false;
 		vec3 light = vec3(0.0);
+		vec3 ambient_lens = vec3(0.0);
 		for (int k = 0; k < 4; k++) {
 			// Not jittered: the field is smooth, and a jittered thin edge breaks into dots the reconstruction keeps.
 			float t = t0 + (float(i) + (float(k) + 0.5) * 0.25) * ds;
@@ -759,13 +760,19 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 				// The sun's light once a coarse step, from the first sample in cloud.
 				float lr;
 				float dr;
-				float tau = wc_wave_extinction_d(p + sun_dir * 40.0, 0.0, dep, lr, dr) * 80.0 + wc_wave_extinction_d(p + sun_dir * 160.0, 0.0, dep, lr, dr) * 160.0;
+				// Through the whole lens toward the sun (a lens is 200 to 800 m deep: three reads to 700 m), so a belly
+				// under a high sun is shaded by the cloud over it and a crown is lit.
+				float tau = wc_wave_extinction_d(p + sun_dir * 40.0, 0.0, dep, lr, dr) * 80.0 + wc_wave_extinction_d(p + sun_dir * 170.0, 0.0, dep, lr, dr) * 180.0 + wc_wave_extinction_d(p + sun_dir * 450.0, 0.0, dep, lr, dr) * 380.0;
 				light = sun_radiance * (exp(-tau) * phase0 + 0.5 * exp(-0.5 * tau) * phase1 + 0.25 * exp(-0.25 * tau) * phase2);
 				float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * 2.0);
 				light += sun_radiance * diffuse * mix(0.25, 1.0, smoothstep(0.0, 0.6, profile)) * (2.0 / (4.0 * PI));
+				// The sky's light: from above through the cloud over the point, from below off the ground (as the
+				// cumulus' hemisphere reads, Nubis's ambient through the density above).
+				float tau_up = wc_wave_extinction_d(p + vec3(0.0, 80.0, 0.0), 0.0, dep, lr, dr) * 160.0 + wc_wave_extinction_d(p + vec3(0.0, 300.0, 0.0), 0.0, dep, lr, dr) * 280.0;
+				ambient_lens = ambient_top * (1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau_up * 2.0)) + ambient_bottom * 0.5;
 				lit = true;
 			}
-			vec3 l = light + mix(ambient_bottom, ambient_top, 0.6) * mix(0.35, 1.0, sqrt(1.0 - profile)) * 1.4;
+			vec3 l = light + ambient_lens * mix(0.35, 1.0, sqrt(1.0 - profile)) * 1.4;
 			float tr = exp(-sigma * 0.25 * ds);
 			radiance += transmittance * l * (1.0 - tr);
 			depth_sum += transmittance * (1.0 - tr) * t;
