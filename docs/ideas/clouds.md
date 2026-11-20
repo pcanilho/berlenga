@@ -295,3 +295,12 @@ Round 3 follow-ups (docs review of 118c13bc):
    shell as the sky's light does: the shaded side of a tower facing a sunlit neighbour warms. `cloud_bounce`
    (1.0). Frame cost unchanged within noise (one more read of a texture already bound); the bake adds one
    extinction read a texel and two box blurs. Raster and PT match.
+
+2. **Cumulus that grow and dissolve.** Each cell keeps its own clock (a cycle per cloud lifetime, give or take a
+   fifth, offset per cell); each cycle draws a new cloud from the cell (position, size, presence). A cloud is
+   born thin, widens over the first fifth of its life and rises over the first third as its thermals climb,
+   lives, then over its last quarter dissolves from the edges in, its billows turning to wisps as it mixes with
+   dry air (fair-weather cumulus last some 10 to 40 minutes; Plank 1969). CPU (shadows) and GPU agree; frozen
+   clouds sit in mid life as before. While evolving, more cells hold a cloud (2.9 times the cover, 2.2 frozen) so
+   the cover's share of sky holds (shadow share by cover 0.2 to 1.0: 4/9/25/71/94%). Raster and PT match.
+   Bench: weather `--cloud-time=S` strips.

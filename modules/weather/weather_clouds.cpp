@@ -598,28 +598,43 @@ float cells_at(const State &p_state, const Vector3 &p_pos, float p_base, Vector2
 	const int gx = int(Math::floor(q.x));
 	const int gz = int(Math::floor(q.y));
 	const float top = top_height(p_state, p_ct.y);
-	const float present = p_ct.x * 2.2f;
+	// More cells hold a cloud while they come and go: a cloud spends about a quarter of its life growing or dissolving.
+	const float present = p_ct.x * (p_state.evolve >= 0.0f ? 2.9f : 2.2f);
 	const float grow = Math::lerp(1.0f, 1.3f, smoothstep(0.3f, 0.7f, p_ct.x));
 	float best = 0.0f;
 	for (int j = -1; j <= 1; j++) {
 		for (int i = -1; i <= 1; i++) {
 			const int cx = gx + i;
 			const int cz = gz + j;
+			// Each cloud's life: its own clock, a cycle each cloud lifetime (State::evolve counts lifetimes) give or
+			// take a fifth, offset per cell. Each cycle draws a new cloud from the cell. It grows (wider, then taller
+			// as its thermals rise), lives, then dissolves from the edges in: fair-weather cumulus last some 10 to 40
+			// minutes (Plank 1969). Frozen, every cloud is in mid life.
+			float age = 0.5f;
+			int sx = cx;
+			int sz = cz;
+			if (p_state.evolve >= 0.0f) {
+				const float ph = p_state.evolve * Math::lerp(0.8f, 1.25f, hash2(cx + 911, cz - 37)) + hash2(cx - 511, cz + 263);
+				const float kc = Math::floor(ph);
+				age = ph - kc;
+				sx = cx + 7349 * int(kc);
+				sz = cz - 3203 * int(kc);
+			}
 			// Present where the cover here beats the cell's draw, fading over a margin: the cover is read at the sample,
 			// so a hard test cut a cloud off by a wall where it crossed a change in cover; now it shrinks toward it.
-			const float keep = CLAMP((present - hash2(cx + 7919, cz - 4241)) * 4.0f, 0.0f, 1.0f);
+			const float keep = CLAMP((present - hash2(sx + 7919, sz - 4241)) * 4.0f, 0.0f, 1.0f);
 			if (keep <= 0.0f) {
 				continue;
 			}
-			const Vector2 centre = Vector2(float(cx) + 0.15f + 0.7f * hash2(cx, cz + 3571), float(cz) + 0.15f + 0.7f * hash2(cx - 2713, cz));
-			const float size = Math::pow(hash2(cx + 1237, cz + 9109), 1.8f);
-			const float r = MIN((0.2f + 0.55f * size) * grow, 0.95f) * Math::sqrt(keep);
+			const Vector2 centre = Vector2(float(cx) + 0.15f + 0.7f * hash2(sx, sz + 3571), float(cz) + 0.15f + 0.7f * hash2(sx - 2713, sz));
+			const float size = Math::pow(hash2(sx + 1237, sz + 9109), 1.8f);
+			const float r = MIN((0.2f + 0.55f * size) * grow, 0.95f) * Math::sqrt(keep) * Math::lerp(0.7f, 1.0f, smoothstep(0.0f, 0.2f, age));
 			const float u = (q - centre).length() / r;
 			if (u >= 1.0f) {
 				continue;
 			}
 			// Height from width: humilis about half as tall as wide, mediocris nearly as tall, congestus taller.
-			const float hgt = MIN(top, 2.0f * r * cell * Math::lerp(0.3f, 1.1f, smoothstep(0.2f, 0.9f, p_ct.y)) * Math::lerp(0.75f, 1.25f, hash2(cx + 5, cz + 11)));
+			const float hgt = MIN(top, Math::lerp(0.3f, 1.0f, smoothstep(0.0f, 0.3f, age)) * 2.0f * r * cell * Math::lerp(0.3f, 1.1f, smoothstep(0.2f, 0.9f, p_ct.y)) * Math::lerp(0.75f, 1.25f, hash2(sx + 5, sz + 11)));
 			const float hh = (p_pos.y - p_base) / hgt;
 			if (hh <= 0.0f || hh >= 1.0f) {
 				continue;
@@ -633,17 +648,19 @@ float cells_at(const State &p_state, const Vector3 &p_pos, float p_base, Vector2
 			// thirds the cloud's width, off its axis (all within its cell) and at their own heights, so the top rises in rounded turrets
 			// of different heights, the cauliflower crest, not one smooth cap.
 			for (int b = 0; b < 3; b++) {
-				const float a = float(Math::TAU) * hash2(cx + 31 * b, cz + 577);
-				const float off = 0.3f * hash2(cx - 97 * b, cz + 1499);
+				const float a = float(Math::TAU) * hash2(sx + 31 * b, sz + 577);
+				const float off = 0.3f * hash2(sx - 97 * b, sz + 1499);
 				const Vector2 cb = centre + Vector2(Math::cos(a), Math::sin(a)) * (off * r);
-				const float rb = r * (0.45f + 0.15f * hash2(cx + 401 * b, cz - 733));
-				const float yb = Math::lerp(0.5f, 0.75f, hash2(cx - 61 * b, cz - 3331));
+				const float rb = r * (0.45f + 0.15f * hash2(sx + 401 * b, sz - 733));
+				const float yb = Math::lerp(0.5f, 0.75f, hash2(sx - 61 * b, sz - 3331));
 				const float vb = 0.3f * rb / r + 0.1f;
 				const Vector2 dq = (q - cb) / rb;
 				const float dy = (hh - yb) / vb;
 				const float d = Math::sqrt(dq.length_squared() + dy * dy);
 				env = MAX(env, (1.0f - d * p_warp) / 0.6f);
 			}
+			// Born thin, then dissolving: the outline shrinks into the noise from the edges in.
+			env = env * smoothstep(0.0f, 0.08f, age) - 1.2f * smoothstep(0.75f, 1.0f, age);
 			best = MAX(best, CLAMP(env, 0.0f, 1.0f));
 		}
 	}
@@ -969,33 +986,46 @@ float wc_mid_cover(vec2 xz) {
 // r_profile: the cloud's depth there before erosion, 0 at its edge to 1 at its core (Nubis Cubed's
 // dimensional profile), which the lighting reads for dark edges, the inner glow and the ambient shell.
 // Cumulus as single clouds (cells_at() on the CPU, which explains it).
-float wc_cells(vec3 p, float b0, vec2 ct, float p_warp, out float r_hh, out vec4 r_local) {
+float wc_cells(vec3 p, float b0, vec2 ct, float p_warp, out float r_hh, out vec4 r_local, out float r_decay) {
 	r_hh = 0.0;
+	r_decay = 0.0;
 	r_local = vec4(0.0, 0.0, 0.0, 1.0);
 	vec2 q = (p.xz - cloud_drift) / cloud_cell_size;
 	ivec2 g = ivec2(floor(q));
 	float top = wc_top_height(ct.y);
-	float present = ct.x * 2.2;
+	float present = ct.x * (cloud_evolve >= 0.0 ? 2.9 : 2.2);
 	float grow = mix(1.0, 1.3, smoothstep(0.3, 0.7, ct.x));
 	float best = 0.0;
 	for (int j = -1; j <= 1; j++) {
 		for (int i = -1; i <= 1; i++) {
 			int cx = g.x + i;
 			int cz = g.y + j;
+			// Each cloud's life (cells_at() on the CPU): its own clock, a cycle each cloud lifetime give or take a
+			// fifth, offset per cell; each cycle draws a new cloud (position, size, presence) from the cell.
+			float age = 0.5;
+			int sx = cx;
+			int sz = cz;
+			if (cloud_evolve >= 0.0) {
+				float ph = cloud_evolve * mix(0.8, 1.25, wc_hash2(cx + 911, cz - 37)) + wc_hash2(cx - 511, cz + 263);
+				float kc = floor(ph);
+				age = ph - kc;
+				sx = cx + 7349 * int(kc);
+				sz = cz - 3203 * int(kc);
+			}
 			// Present where the cover (read here, not at the cloud's centre) beats the cell's own draw, fading over a
 			// margin: the cloud shrinks toward thinner cover instead of being cut off by a wall where it crosses it.
-			float keep = clamp((present - wc_hash2(cx + 7919, cz - 4241)) * 4.0, 0.0, 1.0);
+			float keep = clamp((present - wc_hash2(sx + 7919, sz - 4241)) * 4.0, 0.0, 1.0);
 			if (keep <= 0.0) {
 				continue;
 			}
-			vec2 centre = vec2(float(cx) + 0.15 + 0.7 * wc_hash2(cx, cz + 3571), float(cz) + 0.15 + 0.7 * wc_hash2(cx - 2713, cz));
-			float size = pow(wc_hash2(cx + 1237, cz + 9109), 1.8);
-			float r = min((0.2 + 0.55 * size) * grow, 0.95) * sqrt(keep);
+			vec2 centre = vec2(float(cx) + 0.15 + 0.7 * wc_hash2(sx, sz + 3571), float(cz) + 0.15 + 0.7 * wc_hash2(sx - 2713, sz));
+			float size = pow(wc_hash2(sx + 1237, sz + 9109), 1.8);
+			float r = min((0.2 + 0.55 * size) * grow, 0.95) * sqrt(keep) * mix(0.7, 1.0, smoothstep(0.0, 0.2, age));
 			float u = length(q - centre) / r;
 			if (u >= 1.0) {
 				continue;
 			}
-			float hgt = min(top, 2.0 * r * cloud_cell_size * mix(0.3, 1.1, smoothstep(0.2, 0.9, ct.y)) * mix(0.75, 1.25, wc_hash2(cx + 5, cz + 11)));
+			float hgt = min(top, mix(0.3, 1.0, smoothstep(0.0, 0.3, age)) * 2.0 * r * cloud_cell_size * mix(0.3, 1.1, smoothstep(0.2, 0.9, ct.y)) * mix(0.75, 1.25, wc_hash2(sx + 5, sz + 11)));
 			float hh = (p.y - b0) / hgt;
 			if (hh <= 0.0 || hh >= 1.0) {
 				continue;
@@ -1005,23 +1035,26 @@ float wc_cells(vec3 p, float b0, vec2 ct, float p_warp, out float r_hh, out vec4
 			rr *= mix(0.85, 1.0, smoothstep(0.0, 0.12, hh));
 			float env = (rr - u * p_warp) / 0.6;
 			for (int b = 0; b < 3; b++) {
-				float a = TAU * wc_hash2(cx + 31 * b, cz + 577);
-				float off = 0.3 * wc_hash2(cx - 97 * b, cz + 1499);
+				float a = TAU * wc_hash2(sx + 31 * b, sz + 577);
+				float off = 0.3 * wc_hash2(sx - 97 * b, sz + 1499);
 				vec2 cb = centre + vec2(cos(a), sin(a)) * (off * r);
-				float rb = r * (0.45 + 0.15 * wc_hash2(cx + 401 * b, cz - 733));
-				float yb = mix(0.5, 0.75, wc_hash2(cx - 61 * b, cz - 3331));
+				float rb = r * (0.45 + 0.15 * wc_hash2(sx + 401 * b, sz - 733));
+				float yb = mix(0.5, 0.75, wc_hash2(sx - 61 * b, sz - 3331));
 				float vb = 0.3 * rb / r + 0.1;
 				vec2 dq = (q - cb) / rb;
 				float dy = (hh - yb) / vb;
 				float d = sqrt(dot(dq, dq) + dy * dy);
 				env = max(env, (1.0 - d * p_warp) / 0.6);
 			}
-			env = clamp(env, 0.0, 1.0);
+			// Born thin, then dissolving: the outline shrinks into the noise from the edges in.
+			float decay = smoothstep(0.75, 1.0, age);
+			env = clamp(env * smoothstep(0.0, 0.08, age) - 1.2 * decay, 0.0, 1.0);
 			if (env > best) {
+				r_decay = decay;
 				best = env;
 				r_hh = hh;
 				// The cloud's own frame, its radius 1 across: turrets scale with the cloud. Offset by cell.
-				r_local = vec4(vec3((q - centre).x / r, (p.y - b0) / (r * cloud_cell_size), (q - centre).y / r) + vec3(wc_hash2(cx + 17, cz + 29), 0.0, wc_hash2(cx + 43, cz + 71)) * 7.0, r * cloud_cell_size);
+				r_local = vec4(vec3((q - centre).x / r, (p.y - b0) / (r * cloud_cell_size), (q - centre).y / r) + vec3(wc_hash2(sx + 17, sz + 29), 0.0, wc_hash2(sx + 43, sz + 71)) * 7.0, r * cloud_cell_size);
 			}
 		}
 	}
@@ -1057,7 +1090,8 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 	// Single clouds carved by the shape noise; a deck is the continuous noise's (extinction_at on the CPU).
 	float hc;
 	vec4 loc;
-	float env = wc_cells(p, b0, ct, 1.0, hc, loc);
+	float decay;
+	float env = wc_cells(p, b0, ct, 1.0, hc, loc, decay);
 	// Flat bases on one condensation level: below a cloud's lowest stretch (120 m) the noise and the turrets are
 	// read at its top, so the outline drops straight to the base instead of rounding up into floating puffs.
 	float y_lift = max(b0 + 120.0 - p.y, 0.0);
@@ -1100,7 +1134,9 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 		float wispy = mix(dn.g, dn.r, r_profile);
 		float billowy = 1.0 - mix(dn.b, dn.a, pow(r_profile, 0.25));
 		float billow = clamp(hc * 4.0, 0.0, 1.0) * mix(0.6, 1.0, cu);
-		float e = cloud_detail_strength * mix(0.45 * wispy, 0.4 * billowy, billow);
+		// A dissolving cloud loses its billows to wisps (evaporating at the edges into the dry air it mixes with).
+		billow *= 1.0 - 0.8 * decay;
+		float e = cloud_detail_strength * mix(0.45 * wispy, 0.4 * billowy, billow) * (1.0 + 0.6 * decay);
 		shape = clamp((shape - e) / (1.0 - e), 0.0, 1.0);
 		// Sharpening (Nubis Cubed): thin density raised so each billow ends in a defined edge instead of a
 		// long fade, more where the cloud is thin.
