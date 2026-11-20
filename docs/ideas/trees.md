@@ -2584,7 +2584,14 @@ the moss sleeve ended in a flat-topped block and the basal hollow was a lens wit
 - Basal hollow: a Gothic arch widest at the soil (Mattheck and Breloer 1994, basal cavity), its height counted only
   over the centre, flanks tapering from the soil (`1 - 0.72 rise^1.5`); woundwood rolls thickest on the flanks, thin
   over the crown and at the foot (Shigo 1985).
-- Frames: fork/trees/old-trunks/ (moss sleeve before/after, seeds 2-4; hollow before/after; raster vs PT crop).
+- The cover forced down to the soil skips where the shell was sunk on purpose (a hollow's rotten wall): read from the
+  real bark, that sink shows as a deep `under`, and the forcing had mossed the walls.
+- Logs: a fallen class-5 stem was cut to a class-5 snag's 0.4-1.5 m, a short block. It now keeps 30-50% of the bole's
+  length, a moss-grown mound (Fraver et al. 2002). Soft logs slump (`slump_log`): each ring squashed about its centre,
+  down 14% at class 4 and 32% at class 5, out sideways by half that (Harmon et al. 1986, collapse ratio); bark and
+  shell alike. From class 4 the crumbled butt face grows over too. Bench: `--decays --view=log`, env LOG_CLASS.
+- Frames: fork/trees/old-trunks/ (moss sleeve before/after, seeds 2-4; hollow before/after; hollow walls; class-5 log
+  before/after; raster vs PT crops).
 
 ## 6. What the games at Paulo's bar do
 

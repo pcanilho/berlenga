@@ -356,7 +356,7 @@ func _build_scene() -> void:
 		var infos := []
 		for forest in rows:
 			if decays:
-				overrides["decay_class"] = mini(int(forest), 5) if int(forest) < 6 else 3
+				overrides["decay_class"] = mini(int(forest), 5) if int(forest) < 6 else (int(OS.get_environment("LOG_CLASS")) if OS.has_environment("LOG_CLASS") else 3) # LOG_CLASS: the log's decay class.
 				overrides["fallen"] = int(forest) == 6
 			var d := _gen(p, (stand == "forest") if decays else forest, seed)
 			infos.append(d)
