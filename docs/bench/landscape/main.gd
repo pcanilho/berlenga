@@ -547,6 +547,8 @@ func _ready() -> void:
 		await _frame_bracken()
 	if args.has("lightning-cam"):
 		await _frame_struck()
+	if args.has("host-cam"):
+		await _frame_host()
 	if args.has("log"):
 		await _frame_log()
 	if args.has("mushrooms"):
@@ -3647,6 +3649,27 @@ func _generated_forest(clearing: bool) -> Biome:
 		var all3: Array[PlantSpecies] = [struck]
 		all3.append_array(b.species)
 		b.species = all3
+	if args.has("host-tree") and "mistletoe" in tg:
+		# --host-tree=lime|silver_fir|scots_pine: a few heavily infested hosts among the stand (trees.md 5n/5ay):
+		# --mistletoe=A (3) balls, --brooms=B (silver fir broom rust, 3), --host-spacing m apart (50); --host-cam frames
+		# one crown from below against the sky (--host-dist 14 m, --host-look 12 m up the stem).
+		var hosts := {"lime": TreeGenerator.PRESET_LIME, "silver_fir": TreeGenerator.PRESET_SILVER_FIR, "scots_pine": TreeGenerator.PRESET_SCOTS_PINE, "hawthorn": TreeGenerator.PRESET_HAWTHORN, "white_willow": TreeGenerator.PRESET_WHITE_WILLOW}
+		var hn := String(args["host-tree"]) if String(args["host-tree"]) != "" else "lime"
+		var keep_p = tg.preset
+		var keep_m: float = tg.mistletoe
+		var keep_w: float = tg.witches_brooms
+		tg.preset = hosts.get(hn, TreeGenerator.PRESET_LIME)
+		tg.mistletoe = float(args.get("mistletoe", "3"))
+		tg.witches_brooms = float(args.get("brooms", "3"))
+		var hsp: PlantSpecies = tg.make_species(false, 1)
+		tg.preset = keep_p
+		tg.mistletoe = keep_m
+		tg.witches_brooms = keep_w
+		hsp.resource_name = "%s (mistletoe host)" % hn
+		hsp.spacing = float(args.get("host-spacing", "50"))
+		var all4: Array[PlantSpecies] = [hsp]
+		all4.append_array(b.species)
+		b.species = all4
 	if args.has("forest-edge") and tg.has_method("make_edge"):
 		# --forest-edge[=stand]: the edge species (trees.md 5as: the shrub mantle out in the open, edge trees one-sided
 		# toward it) with the stand's own; vegetation places them by RULE_FOREST_EDGE off the canopy's edge.
@@ -6647,6 +6670,37 @@ func _powder_avalanche() -> void:
 # --lightning-cam (with --lightning): the struck spruce nearest the first view, the camera --lightning-dist m (6) from
 # it square to the sun (side-lit, so the pale strip and the splinters read against the dark bark), eye 1.7 m, looking
 # at the stem --lightning-look m up (2).
+func _frame_host() -> void:
+	# --host-cam: under one mistletoe host's crown, looking up into it against the sky (sun behind the camera).
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var to_sun := sun.global_basis.z
+	var sun_flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
+	var best := Vector3.INF
+	for i in veg.biome.species.size():
+		var sp := veg.biome.species[i] as Resource
+		if sp == null or not String(sp.resource_name).contains("mistletoe host"):
+			continue
+		for tp in veg.get_placements(i):
+			if best == Vector3.INF or tp.distance_to(c3.global_position) < best.distance_to(c3.global_position):
+				best = tp
+	if best == Vector3.INF:
+		_log("host cam: no mistletoe host placed")
+		return
+	var cp := best + sun_flat * float(args.get("host-dist", "14"))
+	cp.y = height_at(cp.x, cp.z) + 1.7
+	c3.global_position = cp
+	c3.look_at(Vector3(best.x, height_at(best.x, best.z) + float(args.get("host-look", "12")), best.z))
+	var n := 0
+	await get_tree().process_frame
+	get_viewport().disable_3d = true
+	while not cover.is_stream_idle() and n < 600:
+		await get_tree().process_frame
+		n += 1
+	get_viewport().disable_3d = false
+	if veg.streaming:
+		await _forest_settle()
+	_log("host cam %.1f,%.1f,%.1f at the mistletoe host %s" % [cp.x, cp.y, cp.z, str(best.round())])
+
 func _frame_struck() -> void:
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	var to_sun := sun.global_basis.z
