@@ -601,7 +601,10 @@
 		<constant name="PRESET_BURNT_TUSSOCK" value="95" enum="Preset">
 			A grass tussock after a fire: black stubble over a charred crown, a green flush from the second week, whole again by about a year (the season's [code]burn_age[/code]).
 		</constant>
-		<constant name="PRESET_MAX" value="96" enum="Preset">
+		<constant name="PRESET_REINDEER_LICHEN" value="96" enum="Preset">
+			Reindeer lichen ([i]Cladonia rangiferina[/i], [i]C. stellaris[/i]): lumpy, cauliflower-like cushions 5 to 10 cm high of densely forked branches, pale ashy grey-green, the tips nodding one way. Carpets the dry boreal pine floor ([constant FLOOR_BOREAL_TAIGA]); crushed underfoot and some 40 years back after a fire.
+		</constant>
+		<constant name="PRESET_MAX" value="97" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -637,7 +640,10 @@
 		<constant name="FLOOR_MEDITERRANEAN" value="10" enum="FloorStand">
 			Cork and holm oak, stone pine (montado, dehesa): a continuous layer of dry annual grass, thinner in the crowns' shade; thistles and French lavender in the open, sage-leaved rockrose in loose patches, thyme; thin oak litter, needles under pine.
 		</constant>
-		<constant name="FLOOR_MAX" value="11" enum="FloorStand">
+		<constant name="FLOOR_BOREAL_TAIGA" value="11" enum="FloorStand">
+			Boreal pine and spruce with birch in burn patches (the trees' boreal taiga stand): reindeer lichen carpets under open pine crowns, feather moss and bilberry under dense spruce, crowberry and heather in the open, wavy hair-grass and hair moss under the birch, birch litter there and needles under the conifers; fly agaric and brittlegills.
+		</constant>
+		<constant name="FLOOR_MAX" value="12" enum="FloorStand">
 			Number of floor stand types.
 		</constant>
 		<constant name="STONES_SCREE" value="0" enum="StoneStand">

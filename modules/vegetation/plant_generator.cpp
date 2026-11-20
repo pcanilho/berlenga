@@ -766,6 +766,8 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 			return 30.0f; // Tall erect forb.
 		case PRESET_FIRE_MOSS:
 			return 60.0f;
+		case PRESET_REINDEER_LICHEN:
+			return 5.0f; // Dry lichen crumbles underfoot and regrows a few millimetres a year (Kumpula 2001).
 		case PRESET_BURNT_TUSSOCK:
 			return 150.0f;
 		case PRESET_SOIL_CRUST:
@@ -915,6 +917,8 @@ float PlantGenerator::get_burn_recovery(Preset p_preset) {
 			return 3.0f;
 		case PRESET_SOIL_CRUST:
 			return 30.0f;
+		case PRESET_REINDEER_LICHEN:
+			return 40.0f; // 30 to 60 years back to a carpet after fire (Schulten 1985; Kumpula et al. 2000).
 		case PRESET_IVY:
 		case PRESET_FERN:
 		case PRESET_PARSLEY_FERN:
@@ -946,6 +950,7 @@ static float _preset_detail_size(PlantGenerator::Preset p_preset) {
 			return 0.06f;
 		case P::PRESET_FEATHER_MOSS:
 		case P::PRESET_PINCUSHION_MOSS:
+		case P::PRESET_REINDEER_LICHEN:
 			return 0.08f;
 		case P::PRESET_LIVERWORT:
 		case P::PRESET_STONECROP:
@@ -2217,6 +2222,87 @@ void PlantGenerator::_build_moss() {
 			const Vector3 d = (nb.get_column(2) * 1.4f + (nb.get_column(0) * Math::cos(bb) + nb.get_column(1) * Math::sin(bb))).normalized();
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, normal), at), l, 0.1f, 1.0f, Color(1.5f * k, 1.45f * k, 1.1f * k));
 		}
+	}
+}
+
+// Reindeer lichen (Cladonia rangiferina, C. stellaris; docs/ideas/vegetation.md, "Boreal taiga floor"): cushions 5 to
+// 10 cm high of densely, repeatedly forked hollow branches (podetia), packed so their tips make a lumpy, cauliflower-like
+// surface, pale ashy grey-green; the tips of C. rangiferina all bend one way (Ahti 1961; Kershaw 1977). As the moss
+// cushions, the packed tips are a dome carrying the shoot-tip texture, with real forked branches where the outline
+// shows them: round the rim and a few standing proud of the top.
+void PlantGenerator::_build_reindeer_lichen() {
+	const float radius = _rand(0.06f, 0.16f);
+	const float height = radius * _rand(0.45f, 0.7f);
+	Builder &b = builders[SURFACE_CENTRE];
+	const int rings = 8;
+	const int sectors = 28;
+	const int first = b.verts.size();
+	float ph[6];
+	for (float &p : ph) {
+		p = _rand(0.0f, Math::TAU);
+	}
+	auto rim = [&](float p_a) {
+		return radius * (1.0f + 0.14f * Math::sin(3.0f * p_a + ph[0]) + 0.08f * Math::sin(5.0f * p_a + ph[1]));
+	};
+	// Cauliflower lumps: florets a few centimetres across over the dome, smaller ones on them.
+	auto lump = [&](float p_x, float p_z) {
+		return 1.0f + 0.16f * Math::sin(p_x * 95.0f + ph[2]) * Math::sin(p_z * 88.0f + ph[3]) + 0.08f * Math::sin(p_x * 210.0f + ph[4]) * Math::sin(p_z * 190.0f + ph[5]);
+	};
+	for (int r = 0; r <= rings; r++) {
+		const float u = float(r) / rings;
+		for (int k = 0; k < sectors; k++) {
+			const float a = k * Math::TAU / sectors;
+			const float rr = rim(a) * u;
+			const float x = Math::cos(a) * rr;
+			const float z = Math::sin(a) * rr;
+			const float y = height * Math::pow(MAX(0.0f, 1.0f - u * u), 0.6f) * lump(x, z) - 0.004f;
+			b.verts.push_back(Vector3(x, y, z));
+			b.uvs.push_back(Vector2(x, z) / 0.05f);
+			b.uv2s.push_back(Vector2(0.05f, 0.0f));
+			const float ao = Math::lerp(1.0f, 0.72f, u * u);
+			b.colors.push_back(Color(ao, ao, ao));
+		}
+	}
+	for (int r = 0; r < rings; r++) {
+		for (int k = 0; k < sectors; k++) {
+			const int a = first + r * sectors + k;
+			const int c = first + r * sectors + (k + 1) % sectors;
+			b.indices.append_array(PackedInt32Array({ a, c, a + sectors, c, c + sectors, a + sectors }));
+		}
+	}
+	plant_height = MAX(plant_height, height * 1.3f);
+	// Forked podetia: each forks two or three times, the tips nodding one way (rangiferina).
+	const float nod = _rand(0.0f, Math::TAU);
+	const Vector3 nod_dir(Math::cos(nod), 0.0f, Math::sin(nod));
+	auto fork = [&](auto &&self, const Transform3D &p_base, float p_len, float p_r, int p_depth) -> void {
+		const Transform3D top = _add_stem(p_base, p_len, p_r, p_r * 0.75f, _rand(0.1f, 0.3f), 2, 0.0f);
+		if (p_depth <= 0) {
+			return;
+		}
+		const int kids = _rand(0.0f, 1.0f) < 0.3f ? 3 : 2;
+		const float spin = _rand(0.0f, Math::TAU);
+		for (int k = 0; k < kids; k++) {
+			const float a = spin + k * Math::TAU / kids;
+			const Vector3 side = top.basis.get_column(0) * Math::cos(a) + top.basis.get_column(1) * Math::sin(a);
+			Vector3 d = (top.basis.get_column(2) * 1.3f + side * 0.75f).normalized();
+			if (p_depth == 1) {
+				d = (d + nod_dir * 0.6f).normalized(); // The tips bend over, all one way.
+			}
+			self(self, Transform3D(organ_frame(d, Vector3(0, 1, 0)), top.origin), p_len * _rand(0.65f, 0.8f), p_r * 0.75f, p_depth - 1);
+		}
+	};
+	const int podetia = int(_rand(40.0f, 60.0f) * radius / 0.11f);
+	for (int p = 0; p < podetia; p++) {
+		const bool edge = p < podetia * 2 / 3;
+		const float a = _rand(0.0f, Math::TAU);
+		const float u = edge ? _rand(0.8f, 1.0f) : _rand(0.0f, 0.6f);
+		const float rr = rim(a) * u;
+		const float x = Math::cos(a) * rr;
+		const float z = Math::sin(a) * rr;
+		const float y = height * Math::pow(MAX(0.0f, 1.0f - u * u), 0.6f) * lump(x, z) - (edge ? 0.012f : 0.006f);
+		const Vector3 up = Vector3(Math::cos(a) * u * 0.9f, 1.0f, Math::sin(a) * u * 0.9f).normalized();
+		const Transform3D base(organ_frame(up, Vector3(1, 0, 0)), Vector3(x, MAX(y, 0.0f), z));
+		fork(fork, base, _rand(0.006f, 0.011f), 0.0011f, int(_rand(2.0f, 3.99f)));
 	}
 }
 
@@ -5348,6 +5434,12 @@ PlantGenerator::TextureSet PlantGenerator::_bake_moss_texture(uint32_t p_seed) c
 		// The bytes are sRGB: scaled so the cushion's mean green albedo is about 0.06 linear,
 		// inside the 0.05 to 0.1 measured for mosses (and the trees' moss shell), not 0.02.
 		c *= 1.55f;
+		if (preset == PRESET_REINDEER_LICHEN) {
+			// Cladonia: a froth of pale hollow branchlets, grey-green with darker hollows only deep down;
+			// lichen mats are among the brightest ground covers (visible albedo about 0.3 to 0.4).
+			c = base * (0.78f + 0.3f * h);
+			c = c.lerp(Color(base.r * 1.08f + 0.04f, base.g * 1.08f + 0.04f, base.b * 1.0f + 0.03f), h * t * 0.5f);
+		}
 		aw[i * 3 + 0] = uint8_t(CLAMP(c.get_r8(), 0, 255));
 		aw[i * 3 + 1] = uint8_t(CLAMP(c.get_g8(), 0, 255));
 		aw[i * 3 + 2] = uint8_t(CLAMP(c.get_b8(), 0, 255));
@@ -6394,6 +6486,11 @@ void PlantGenerator::apply_preset_colors() {
 			petal_color = Color(0.72f, 0.1f, 0.42f); // Magenta-pink.
 			centre_color = Color(0.85f, 0.83f, 0.8f); // White style and seed fluff.
 			break;
+		case PRESET_REINDEER_LICHEN:
+			leaf_color = Color(0.6f, 0.62f, 0.52f); // Ashy grey-green (C. rangiferina); C. stellaris is yellower.
+			centre_color = Color(0.56f, 0.58f, 0.48f);
+			stem_color = Color(0.62f, 0.63f, 0.54f);
+			break;
 		case PRESET_FIRE_MOSS:
 			leaf_color = Color(0.25f, 0.33f, 0.08f); // Yellow-green shoots.
 			centre_color = Color(0.17f, 0.24f, 0.05f);
@@ -6807,6 +6904,9 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_FIRE_MOSS:
 			_build_fire_moss();
 			break;
+		case PRESET_REINDEER_LICHEN:
+			_build_reindeer_lichen();
+			break;
 		case PRESET_CHARRED_STEMS:
 			_build_charred_stems();
 			break;
@@ -6982,7 +7082,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			}
 		}
 		Ref<ShaderMaterial> mat;
-		if (textures && (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_SPHAGNUM || preset == PRESET_PINCUSHION_MOSS || preset == PRESET_FIRE_MOSS) && s == SURFACE_CENTRE) {
+		if (textures && (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_SPHAGNUM || preset == PRESET_PINCUSHION_MOSS || preset == PRESET_FIRE_MOSS || preset == PRESET_REINDEER_LICHEN) && s == SURFACE_CENTRE) {
 			const uint64_t key = (uint64_t(preset) << 40) ^ (uint64_t(s) << 36) ^ (uint64_t(uint32_t(seed % 3)) << 32) ^ uint64_t(Math::abs(int(leaf_color.to_rgba32()) % 1000003)) ^ (uint64_t(texture_size) << 44);
 			TextureSet *ts = texture_cache.getptr(key);
 			if (!ts) {
@@ -7145,6 +7245,7 @@ Array PlantGenerator::stand_litter_leaves(FloorStand p_stand, const Dictionary &
 			break;
 		case FLOOR_PINE_HEATH:
 		case FLOOR_PINE_HEMLOCK:
+		case FLOOR_BOREAL_TAIGA:
 			mix = LocalVector<Share>({ { LITTER_BIRCH, 1.0f } });
 			break;
 		case FLOOR_MEDITERRANEAN:
@@ -7275,6 +7376,25 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			set[2].patch_cover = 0.7f;
 			set[2].conifer_min = 0.0f;
 			break;
+		case FLOOR_BOREAL_TAIGA: {
+			// Boreal pine and spruce with birch in burn patches (docs/ideas/vegetation.md, "Boreal taiga floor"; Cajander's
+			// site types): reindeer lichen carpets under the open pine crowns, feather moss and bilberry under the dense
+			// spruce, crowberry and heather in the open, wavy hair-grass and hair moss under the birch.
+			const FloorSpec lichen = { P::PRESET_REINDEER_LICHEN, 0.2f, 0.0f, 0.95f, 0.8f, 1.4f, 7.0f, 0.75f, 0.0f, 0.5f, 0.15f, 0.5f, 1.0f, 25.0f };
+			const FloorSpec feather = { P::PRESET_FEATHER_MOSS, 0.28f, 0.0f, 0.95f, 0.9f, 1.4f, 5.0f, 0.8f, 0.4f, 1.0f, 0.15f, 0.4f, 1.0f, 20.0f };
+			const FloorSpec crowberry = { P::PRESET_CROWBERRY, 0.4f, 0.1f, 0.6f, 0.8f, 1.2f, 6.0f, 0.45f, 0.0f, 0.6f, 0.15f, 0.3f, 1.0f, 25.0f };
+			const FloorSpec heather = { P::PRESET_HEATHER, 0.45f, 0.15f, 0.5f, 0.9f, 1.3f, 8.0f, 0.4f, 0.0f, 0.35f, 0.15f, 0.0f, 1.0f, 30.0f };
+			const FloorSpec hair_grass = { P::PRESET_DRY_GRASS, 0.3f, 0.0f, 0.8f, 0.7f, 1.1f, 6.0f, 0.55f, 0.0f, 0.9f, 0.15f, 0.0f, 0.45f, 15.0f };
+			FloorSpec hair_moss = moss;
+			hair_moss.conifer_max = 0.5f; // Polytrichum on the burnt mineral soil under the birch.
+			hair_moss.shade_min = 0.2f;
+			set = LocalVector<FloorSpec>({ seedling, bilberry, lichen, feather, crowberry, heather, hair_grass, hair_moss, twigs, leaves, needles });
+			set[0].density = 0.3f;
+			set[1].density = 0.9f;
+			set[1].shade_min = 0.35f; // Bilberry with the moss under spruce (Myrtillus type).
+			set[1].patch_cover = 0.6f;
+			break;
+		}
 		case FLOOR_RIPARIAN:
 			// Alder and willow on wet ground: nettle, sedge, rush, ferns.
 			set = LocalVector<FloorSpec>({ { P::PRESET_NETTLE, 0.5f, 0.15f, 0.9f, 0.9f, 1.3f, 6.0f, 0.55f, 0.0f, 0.9f, 0.15f, 0.0f, 1.0f, 35.0f },
@@ -7382,6 +7502,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		case FLOOR_PINE_HEATH:
 		case FLOOR_SUBALPINE:
 		case FLOOR_PINE_HEMLOCK:
+		case FLOOR_BOREAL_TAIGA:
 			twig_bark = Color(0.33f, 0.24f, 0.17f); // Pine and spruce twigs, reddish.
 			break;
 		default:
@@ -7413,7 +7534,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		log_leaves.deadwood = PlantSpecies::DEADWOOD_BESIDE;
 		log_leaves.deadwood_size = 0.35f;
 		log_leaves.uphill = true;
-		const bool broadleaf = p_stand != FLOOR_PINE_HEATH && p_stand != FLOOR_SUBALPINE && p_stand != FLOOR_PINE_HEMLOCK && p_stand != FLOOR_MONTANE_CONIFER;
+		const bool broadleaf = p_stand != FLOOR_PINE_HEATH && p_stand != FLOOR_SUBALPINE && p_stand != FLOOR_PINE_HEMLOCK && p_stand != FLOOR_MONTANE_CONIFER && p_stand != FLOOR_BOREAL_TAIGA;
 		for (const FloorSpec &f : { log_moss, log_sorrel, log_seedling, log_fern }) {
 			set.push_back(f);
 		}
@@ -7458,6 +7579,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 				set.push_back(brittlegill);
 				break;
 			case FLOOR_SUBALPINE:
+			case FLOOR_BOREAL_TAIGA:
 				set.push_back(fly_agaric);
 				set.push_back(brittlegill);
 				break;
@@ -7895,6 +8017,7 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_FIRE_MOSS);
 	BIND_ENUM_CONSTANT(PRESET_CHARRED_STEMS);
 	BIND_ENUM_CONSTANT(PRESET_BURNT_TUSSOCK);
+	BIND_ENUM_CONSTANT(PRESET_REINDEER_LICHEN);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
@@ -7930,6 +8053,7 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(FLOOR_EASTERN_OAK);
 	BIND_ENUM_CONSTANT(FLOOR_PINE_HEMLOCK);
 	BIND_ENUM_CONSTANT(FLOOR_MEDITERRANEAN);
+	BIND_ENUM_CONSTANT(FLOOR_BOREAL_TAIGA);
 	BIND_ENUM_CONSTANT(FLOOR_MAX);
 	BIND_ENUM_CONSTANT(STONES_SCREE);
 	BIND_ENUM_CONSTANT(STONES_RIVER);

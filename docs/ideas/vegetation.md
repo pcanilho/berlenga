@@ -713,6 +713,26 @@ water systems own):
   rushes 0.6 to 4.5 m behind (Phragmites australis and Juncus rigidus / maritimus fringe Egypt's oasis pools and
   springs: Zahran and Willis 2009, "The Vegetation of Egypt"; Ozenda 1977 for the Sahara).
 
+## Boreal taiga floor (trees' STAND_BOREAL_TAIGA, 20 Nov)
+
+The Fennoscandian and Russian boreal forest is classed by its floor (Cajander's forest site types; Kuusipalo 1985,
+Oksanen and Ahti 1982): the floor is the stand's signature, and the tree species follow the soil.
+- Dry pine on sand and gravel (Cladonia type, CT; Calluna type): a near-continuous carpet of reindeer lichens
+  (Cladonia rangiferina, ashy grey, C. stellaris, yellowish domes 5 to 10 cm high), lingonberry and crowberry,
+  heather in the open, sparse feather moss in the crowns' shade (Kumpula et al. 2000; Kershaw 1977).
+- Mesic spruce (Myrtillus type, MT): a closed mat of feather mosses (Pleurozium schreberi, Hylocomium splendens) with
+  bilberry, a little wood sorrel, needle litter, few lichens: shade and the moss's water hold them back.
+- Birch in burn patches: the post-fire pioneers (birch, aspen, fireweed, wavy hair-grass) on bare mineral soil and
+  birch leaf litter; lichens take 30 to 60 years to return after fire, feather mosses 20 to 40 (Schulten 1985,
+  Kumpula 2000s; Nilsson and Wardle 2005).
+Pine and spruce read apart by the crowns' shade: pine stands are open (light through the crowns), spruce dense.
+
+Build: a reindeer lichen preset (PRESET_REINDEER_LICHEN): a lumpy, cauliflower-like dome of packed branch tips,
+pale ashy grey-green, a few branched podetia standing proud at its rim; slow to recover from fire (40 years), crushed
+underfoot. FLOOR_BOREAL_TAIGA: lichen under open conifer crowns (shade under 0.5, conifer over half), feather moss
+and bilberry under dense ones, crowberry and heather in the open, wavy hair-grass and fireweed where the crowns are
+broadleaf (the birch patches), birch litter there, needles and twigs under the conifers; fly agaric, brittlegill.
+
 ## Far vegetation without bald ground (Paulo 19 Nov: "at a distance it's bald")
 
 What the showcase stills show: past 30 to 45 m (each plant layer's visibility range) the meadow, heath and scrub read
