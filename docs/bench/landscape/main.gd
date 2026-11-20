@@ -786,6 +786,8 @@ func _ready() -> void:
 		await _hut()
 	if slip_walk.size() == 4 and prints != null:
 		await _slip_walk()
+	if args.has("powder-avalanche") and snow != null:
+		await _powder_avalanche()
 	if (args.has("face-sun") or args.has("face-away")) and sun != null:
 		# --face-sun=PITCH: turn the camera to the sun's azimuth, PITCH degrees below the horizon (godray shots).
 		var cam5: Camera3D = get_viewport().get_camera_3d()
@@ -6452,3 +6454,75 @@ func _build_farm_track() -> void:
 		prints.call("settle", days * 86400.0, 3600.0 * 6.0)
 		_log("farm track: aged %.0f days" % days)
 	_log("farm track: %d segments, %.0f passes, wear under the camera %.0f, 30 m on %.0f" % [n, passes, float(prints.call("get_wear_at", start + side * 0.8 * 0 )), float(prints.call("get_wear_at", start + fwd * 30.0))])
+
+
+# --powder-avalanche (winter, --month=1): a dry slab released on a real showcase face, run in real time with its powder
+# cloud (SnowAvalanche3D, PhysX Flow) and shot --powder-at s (9) after release, three-quarters from the side so the
+# head's height and the cloud trailing back up the track both show, the release zone in view. The face: the steepest
+# 35-45 degree cell on a --av-step (40) m grid with --av-min-snow (0.3) m of snow on it, scored for side light
+# (the fall line square to the sun). --av-probe: log the pick and quit. --av-dist (260) m camera distance.
+func _powder_avalanche() -> void:
+	var av = snow.get_avalanches()
+	if av == null:
+		_log("powder avalanche: no avalanche node on the snow cover")
+		return
+	av.natural_release = false
+	var wr: Rect2 = gen.get_world_rect()
+	var stp := float(args.get("av-step", "40"))
+	var to_sun := sun.global_basis.z
+	var sun_h := Vector2(to_sun.x, to_sun.z).normalized()
+	var best := Vector3.INF
+	var best_fall := Vector2.ZERO
+	var best_score := -INF
+	var xx := wr.position.x + stp
+	while xx < wr.end.x - stp:
+		var zz := wr.position.y + stp
+		while zz < wr.end.y - stp:
+			var p := Vector3(xx, 0, zz)
+			var g := _slip_grad(p)
+			var ang := rad_to_deg(atan(g.length()))
+			if ang >= 35.0 and ang <= 45.0 and snow.get_depth_at(p) >= float(args.get("av-min-snow", "0.3")):
+				var fall := -g.normalized()
+				var score := (1.0 - absf(fall.dot(sun_h))) * 2.0 + gen.get_height(p) / 1000.0
+				if score > best_score:
+					best_score = score
+					best = Vector3(xx, gen.get_height(p), zz)
+					best_fall = fall
+			zz += stp
+		xx += stp
+	if best == Vector3.INF:
+		_log("powder avalanche: no 35-45 degree face with snow on it")
+		return
+	var f3 := Vector3(best_fall.x, 0, best_fall.y)
+	var side := f3.cross(Vector3.UP).normalized()
+	if Vector2(side.x, side.z).dot(sun_h) > 0.0:
+		side = -side # the camera on the face's shaded side looks across it into the light: the cloud side- and back-lit
+	var dist := float(args.get("av-dist", "260"))
+	var cp := best + f3 * dist * 0.55 + side * dist * 0.8
+	cp.y = gen.get_height(cp) + float(args.get("av-cam-h", "30"))
+	var look := best + f3 * 70.0 + Vector3.UP * 15.0
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.global_position = cp
+	c3.look_at(look)
+	c3.far = maxf(c3.far, 4000.0)
+	_log("powder avalanche: release at %s (%.0f deg, %.2f m snow), fall %s; cam %.0f,%.0f,%.0f look %.0f,%.0f,%.0f" % [str(best.round()), rad_to_deg(atan(_slip_grad(best).length())), snow.get_depth_at(best), str(best_fall), cp.x, cp.y, cp.z, look.x, look.y, look.z])
+	if args.has("av-probe"):
+		get_tree().quit()
+		return
+	# A storm slab on an older bonded pack (as on the snow bench): it breaks away whole.
+	snow.add_snow(90.0, 150.0)
+	snow.advance(8.0 * 24.0 * 3600.0)
+	await get_tree().physics_frame
+	snow.add_snow(90.0, 90.0)
+	await get_tree().physics_frame
+	Engine.max_physics_steps_per_frame = 1 # Flow steps once a frame: one tick a frame keeps the gas with the slide
+	var pflow: Node = av.get_powder_cloud().get_flow()
+	if pflow:
+		pflow.set("scattering_resolution", 0)
+	var ok: bool = av.trigger(best, float(args.get("av-radius", "60")))
+	var frames := 0
+	var at_s := float(args.get("powder-at", "9"))
+	while av.is_running() and frames < int(at_s * Engine.physics_ticks_per_second):
+		await get_tree().physics_frame
+		frames += 1
+	_log("powder avalanche: trigger %s, %.1f t up, %.1f t in the air, front %.1f m/s, after %d frames" % [str(ok), av.get_powder_taken() / 1000.0, av.get_suspended_mass() / 1000.0, av.get_max_speed(), frames])
