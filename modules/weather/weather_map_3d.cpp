@@ -2455,7 +2455,8 @@ float WeatherMap3D::get_cloud_base_now() const {
 	const float g0 = Math::log(0.7f) + 17.62f * 15.0f / (243.12f + 15.0f);
 	const float lcl_ref = 125.0f * (15.0f - 243.12f * g0 / (17.62f - g0));
 	const float lcl = 125.0f * MAX(cur_air_temperature - get_air_dew_point(), 0.0f);
-	// Never below the ground under the camera (30 m over it); a base at the ground is fog, the mist's.
+	// The day's air never lowers it below the ground under the camera (30 m over it; a base at the ground is fog,
+	// the mist's), but an authored base below the ground stays: a ridge or plateau in the cloud (hill fog, fog drip).
 	float ground = ground_height;
 	if (is_inside_tree()) {
 		const float g = get_terrain_ground_at(_follow_position());
@@ -2463,7 +2464,7 @@ float WeatherMap3D::get_cloud_base_now() const {
 			ground = g;
 		}
 	}
-	return MAX(cloud_base_height + lcl - lcl_ref, ground + 30.0f);
+	return MAX(cloud_base_height + lcl - lcl_ref, MIN(cloud_base_height, ground + 30.0f));
 }
 
 void WeatherMap3D::set_cloud_regime_from_weather(bool p_enabled) {

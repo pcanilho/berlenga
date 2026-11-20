@@ -214,7 +214,7 @@
 		<method name="get_cloud_base_now" qualifiers="const">
 			<return type="float" />
 			<description>
-				Returns the low cloud's base now (m above y = 0). With [member cloud_regime_from_weather], [member cloud_base_height] plus how far the condensation level of the day's air (125 m per kelvin of dew point depression, Espy) sits above that of the default air (15 C, humidity 0.7): lower in moist air and at night, rising through a dry afternoon; never under 30 m above the ground under the camera. Contract [code]WorldWeather.cloud_base_at[/code].
+				Returns the low cloud's base now (m above y = 0). With [member cloud_regime_from_weather], [member cloud_base_height] plus how far the condensation level of the day's air (125 m per kelvin of dew point depression, Espy) sits above that of the default air (15 C, humidity 0.7): lower in moist air and at night, rising through a dry afternoon; the day's air never lowers it under 30 m above the ground under the camera, but a [member cloud_base_height] set below the ground stays (a ridge in the cloud: hill fog, fog drip). Contract [code]WorldWeather.cloud_base_at[/code].
 			</description>
 		</method>
 		<method name="get_cloud_effector_at" qualifiers="const">

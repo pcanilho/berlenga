@@ -168,7 +168,18 @@ float VegetationMist3D::weather_mist_level() const {
 		const float elevation = Math::rad_to_deg(Math::asin(CLAMP(sun->get_global_basis().get_column(2).normalized().y, -1.0f, 1.0f)));
 		dark = 1.0f - Math::smoothstep(4.0f, 18.0f, elevation); // Burns off as the sun climbs.
 	}
-	return humid * calm * clear * dark;
+	// Hill fog: where the low cloud's base sits on the ground (WorldWeather.cloud_base_at, the day's condensation
+	// level) the ground stands in the cloud. It is cloud, not a radiation layer: wind, a cloudy sky and the sun do not
+	// clear it (Gultepe et al. 2007, orographic and cloud-base-lowering fog).
+	float hill = 0.0f;
+	const float cover = CLAMP(wm->cloud_cover_at(at), 0.0f, 1.0f);
+	if (cover > 0.3f) {
+		const float g = WorldContracts::ground()->has_provider() ? WorldContracts::ground()->height_at(at) : at.y;
+		if (Math::is_finite(g)) {
+			hill = Math::smoothstep(wm->cloud_base_at(at) - 40.0f, wm->cloud_base_at(at), g) * Math::smoothstep(0.3f, 0.7f, cover);
+		}
+	}
+	return MAX(humid * calm * clear * dark, hill);
 }
 
 void VegetationMist3D::_apply_flow_settings() {

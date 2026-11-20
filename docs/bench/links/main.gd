@@ -639,6 +639,20 @@ func _tyre_snow_tests() -> void:
 
 # Rain washes smoke and dust out of the air (below-cloud scavenging): the weather contract's rate, coarse dust far
 # faster than fine smoke and snow faster than rain; the weather map's smoke haze thins under hours of rain.
+# Low cloud on a hill: base 100 m, overcast, dry air and a fresh wind (no radiation fog).
+class HillCloudStub extends WorldWeather:
+	func _cloud_base_at(_p: Vector3) -> float:
+		return 100.0
+	func _cloud_cover_at(_p: Vector3) -> float:
+		return 1.0
+	func _air_humidity_at(_p: Vector3) -> float:
+		return 0.7
+	func _mean_wind_at(_p: Vector3) -> Vector3:
+		return Vector3(6, 0, 0)
+	func _air_temperature_at(_p: Vector3) -> float:
+		return 8.0
+
+
 class WashStub extends WorldWeather:
 	func _rainfall_at(p: Vector3) -> float:
 		return 10.0 if p.x < 0.0 else 0.0
@@ -1417,6 +1431,18 @@ func _dew_tests() -> void:
 		m3.advance(600.0)
 		var wet_level: float = mist.weather_mist_level()
 		_check("mist: a clear night over wet ground mists sooner than over dry", wet_level > dry_level + 0.1, "level %.2f wet, %.2f dry" % [wet_level, dry_level])
+		# Hill fog: ground at the cloud base stands in the cloud, in wind and under overcast; the valley below does not.
+		WorldContracts.set_weather(HillCloudStub.new())
+		var walker := Node3D.new()
+		add_child(walker)
+		mist.follow_target = mist.get_path_to(walker)
+		walker.global_position = Vector3(0, 110, 0)
+		var hill_level: float = mist.weather_mist_level()
+		walker.global_position = Vector3(0, 20, 0)
+		var valley_level: float = mist.weather_mist_level()
+		WorldContracts.set_weather(null)
+		walker.queue_free()
+		_check("mist: ground at the cloud base (cloud_base_at) stands in hill fog, wind or not; the valley below stays clear", hill_level > 0.9 and valley_level < 0.05, "level %.2f at 110 m under a 100 m base, %.2f at 20 m" % [hill_level, valley_level])
 		mist.queue_free()
 		m3.queue_free()
 	else:

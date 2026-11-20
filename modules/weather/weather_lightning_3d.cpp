@@ -388,7 +388,7 @@ Vector3 WeatherLightning3D::_attach_point(const Vector3 &p_below, float p_cloud_
 Vector3 WeatherLightning3D::find_strike_point(const Vector3 &p_position, float p_peak_current) {
 	WeatherMap3D *map = WeatherMap3D::get_active();
 	const float ground = map ? map->get_ground_height() : 0.0f;
-	const float base = map ? WeatherClouds::base_at(map->get_cloud_state(), Vector2(p_position.x, p_position.z)) : ground + 1500.0f;
+	const float base = WorldContracts::weather()->cloud_base_at(p_position); // the local base (WorldWeather.cloud_base_at)
 	bool canopy = false;
 	return _attach_point(Vector3(p_position.x, MAX(base, ground + 500.0f), p_position.z), MAX(base, ground + 500.0f), ground, p_peak_current, map, canopy);
 }
@@ -671,7 +671,8 @@ int WeatherLightning3D::_start_flash(const Vector3 &p_position, bool p_cloud_to_
 	}
 	const Vector2 ct = WeatherClouds::cover_type_at(state, Vector2(p_position.x, p_position.z));
 	const float top_height = WeatherClouds::top_height(state, MAX(ct.y, 0.9f));
-	const float base = WeatherClouds::base_at(state, Vector2(p_position.x, p_position.z));
+	// The local cloud base (WorldWeather.cloud_base_at: the day's condensation level, lower over a storm).
+	const float base = WorldContracts::weather()->cloud_base_at(p_position);
 
 	Flash f;
 	f.id = next_id++;
