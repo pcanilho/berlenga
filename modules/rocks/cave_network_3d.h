@@ -172,6 +172,7 @@ private:
 	int rimstone_water_max = 12; // the nearest pools with live water
 	uint64_t pool_water_usec = 0;
 	bool sea_mist = true;
+	bool sea_water = true; // a PhysXSeaCaveWater3D draws the sea in the sea caves
 	ObjectID mist_node;
 	// The sea in sea caves (docs/ideas/world-links.md, "Sea caves"): a WorldWater producer along each sea cave. The
 	// sea's level just outside the mouth (any other producer, read through the contract) runs in as a long wave:
@@ -196,6 +197,7 @@ private:
 		float chamber_area = 0.0f, shaft_area = 0.0f;
 		float spout = 0.0f; // air speed up the blowhole, m/s
 		bool sealed = false;
+		float covered = 0.0f; // along the axis (m): where rock first closes over the water (the arch)
 	};
 	static constexpr float SURGE_HISTORY_STEP = 0.05f;
 	LocalVector<SeaSurge> surges;
@@ -232,6 +234,8 @@ private:
 	bool streamed = false;
 	// build_meshes() was called: the caller owns the meshes, so an empty follow_target does not stream round the camera.
 	bool built_by_call = false;
+	ObjectID sea_water_node;
+	void _update_sea_water_node();
 	const Node3D *_stream_target() const;
 
 	NodePath generator_path;
@@ -334,12 +338,16 @@ public:
 	void set_surge_damping(real_t p_metres) { surge_damping = MAX(p_metres, real_t(1.0)); surges_dirty = true; }
 	real_t get_surge_damping() const { return surge_damping; }
 	Dictionary get_sea_cave_water(int p_cave) const;
+	PackedFloat32Array get_water_clip_capsules() const;
 	Dictionary get_blowhole_spout(int p_cave) const;
 	void step_sea_surge(double p_delta) { _surge_update(p_delta); }
 	float contract_water_height_at(const Vector3 &p_position) const override;
 	Vector3 contract_water_flow_at(const Vector3 &p_position) const override;
 	void set_sea_mist(bool p_enable);
 	bool get_sea_mist() const { return sea_mist; }
+	void set_sea_water(bool p_enable) { sea_water = p_enable; }
+	bool get_sea_water() const { return sea_water; }
+	Node *get_sea_water_node() const { return ObjectDB::get_instance<Node>(sea_water_node); }
 	Node *get_sea_mist_node() const { return ObjectDB::get_instance<Node>(mist_node); }
 	Array get_rimstone_pools() const;
 	void set_follow_target(const NodePath &p_path);

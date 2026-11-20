@@ -28,6 +28,8 @@ extends Node3D
 #   --view=storm_glitter  8 m/s deep sea from 2 m up into the sun's glitter path (--sun-pitch=20)
 #   --view=sea_top  straight down on the open sea from 90 m (crest lengths and crossing seas)
 #   --view=wake     straight down on the rock and the water downstream of it
+#   --clip-test     a water clipper (the water_clippers group) cutting the sea along a 3 m wide capsule across the view's
+#                   centre, fading out over its first 4 m (as a sea cave's arch hands over): the cut in raster and PT
 #   --shadow-bar=Y  a board hung over the view's centre at height Y (the water) toward the sun: its shadow across the water
 #   --raster        raster only, for comparison
 #   --contact       a WeatherMap3D (dry weather) whose contact wetness the sea writes; the sand reads it (wetness on),
@@ -188,6 +190,7 @@ func _ready() -> void:
 		elif a == "--wader": wader_on = true
 		elif a == "--lamps": lamps = true
 		elif a.begins_with("--shadow-bar="): _add_shadow_bar.call_deferred(float(a.substr(13)))
+		elif a == "--clip-test": _add_clip_test.call_deferred()
 		elif a == "--contact": contact = true
 		elif a == "--wader-nopush": wader_on = true; wader_push = false
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
@@ -989,3 +992,32 @@ func _add_shadow_bar(y: float) -> void:
 	mi.global_basis = Basis(long, Vector3.UP, long.cross(Vector3.UP))
 	mi.global_position = hit + to_sun * (5.0 / maxf(to_sun.y, 0.2))
 	print("shadow bar over %s, its shadow on the water at %s" % [str(mi.global_position), str(hit)])
+
+# --clip-test: a node in the water_clippers group whose capsule cuts the sea where the view's centre meets it, running
+# away from the camera, the sea fading out over its first 4 m (PhysXWaterSurface3D's clip, as at a sea cave's arch).
+func _add_clip_test() -> void:
+	for i in 600:
+		if get_viewport().get_camera_3d() != null:
+			break
+		await get_tree().process_frame
+	await get_tree().process_frame
+	var cam := get_viewport().get_camera_3d()
+	var o := cam.global_position
+	var f := -cam.global_basis.z
+	if f.y >= -1e-3:
+		return
+	var hit := o + f * (-o.y / f.y)
+	var d := Vector2(f.x, f.z).normalized()
+	var a := Vector2(hit.x, hit.z) - d * 3.0
+	var b := a + d * 12.0
+	var clipper := Node.new()
+	var sc := GDScript.new()
+	sc.source_code = "extends Node\nvar caps := PackedFloat32Array()\nfunc get_water_clip_capsules() -> PackedFloat32Array:\n\treturn caps\n"
+	sc.reload()
+	clipper.set_script(sc)
+	# Two capsules: the fade over the first 4 m, then fully cut.
+	var m := a + d * 4.0
+	clipper.set("caps", PackedFloat32Array([a.x, a.y, m.x, m.y, -1.5, 1.5, 0.0, 1.0, m.x, m.y, b.x, b.y, 1.5, 1.5, 1.0, 1.0]))
+	add_child(clipper)
+	clipper.add_to_group("water_clippers")
+	print("clip test: from %s to %s, fading over the first 4 m" % [str(a), str(b)])

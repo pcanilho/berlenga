@@ -1056,6 +1056,27 @@ void CaveNetwork3D::_surge_build() {
 		for (float &v : sg.history) {
 			v = 0.0f;
 		}
+		// Where the arch begins: the first point along the axis with the ground (the cliff) over the arch's crown. Before
+		// it the passage is open to the sky and the sea's own surface goes on there.
+		sg.covered = 0.0f;
+		if (gen) {
+			sg.covered = sg.along[n - 1];
+			bool found = false;
+			for (int i = 1; i < n && !found; i++) {
+				const float len = sg.along[i] - sg.along[i - 1];
+				const int steps = MAX(1, int(Math::ceil(len / 0.25f)));
+				for (int k = (i == 1 ? 0 : 1); k <= steps; k++) {
+					const float t = float(k) / float(steps);
+					const Vector3 p = sg.axis[i - 1].lerp(sg.axis[i], t);
+					const float crown = Math::lerp(sg.roof[i - 1], sg.roof[i], t);
+					if (gen->get_height(p) > crown + 0.3f) {
+						sg.covered = Math::lerp(sg.along[i - 1], sg.along[i], t);
+						found = true;
+						break;
+					}
+				}
+			}
+		}
 		sg.bounds = c.bounds.grow(2.0);
 		surges.push_back(sg);
 	}
@@ -1205,6 +1226,14 @@ Dictionary CaveNetwork3D::get_sea_cave_water(int p_cave) const {
 		d["depths"] = depth;
 		d["mean_level"] = sg.mean;
 		d["sealed"] = sg.sealed;
+		d["covered_from"] = sg.covered;
+		// The sea's rms height at the mouth (over its mean) through the history the surge keeps.
+		double sq = 0.0;
+		for (float v : sg.history) {
+			sq += double(v) * v;
+		}
+		d["wave_rms"] = float(Math::sqrt(sq / MAX(int(sg.history.size()), 1)));
+		d["along"] = Vector<float>(sg.along);
 	}
 	return d;
 }
@@ -1219,6 +1248,54 @@ Dictionary CaveNetwork3D::get_blowhole_spout(int p_cave) const {
 		}
 	}
 	return d;
+}
+
+// Where the sea's surface is cut: along each sea cave's passage, whose own water PhysXSeaCaveWater3D draws
+// (docs/ideas/water.md, "Sea-cave water"). Eight floats per capsule, world space: a.x, a.z, b.x, b.z, the radius at a
+// and at b (negative at a for the first of a cave: a flat cut at the arch, where the open sea goes on), and the cave
+// surface's weight at a and at b, rising from 0 at the arch over the surface's fade_length (the two cross-fade there).
+// The radius stays under the cave surface's width so the two overlap. Empty without that surface.
+PackedFloat32Array CaveNetwork3D::get_water_clip_capsules() const {
+	PackedFloat32Array out;
+	Node *sw = get_sea_water_node();
+	if (!sw || !sw->is_inside_tree()) {
+		return out;
+	}
+	const float fade = MAX(float(sw->get(SNAME("fade_length"))), 0.01f);
+	const float margin = 0.1f;
+	auto push = [&](const Vector3 &p_a, const Vector3 &p_b, float p_ra, float p_rb, float p_la, float p_lb, bool p_flat) {
+		out.push_back(p_a.x);
+		out.push_back(p_a.z);
+		out.push_back(p_b.x);
+		out.push_back(p_b.z);
+		out.push_back(p_flat ? -p_ra : p_ra);
+		out.push_back(p_rb);
+		out.push_back(CLAMP(p_la / fade, 0.0f, 1.0f));
+		out.push_back(CLAMP(p_lb / fade, 0.0f, 1.0f));
+	};
+	for (const SeaSurge &sg : surges) {
+		const int n = int(sg.axis.size());
+		bool first = true;
+		for (int i = 0; i + 1 < n; i++) {
+			if (sg.along[i + 1] <= sg.covered) {
+				continue;
+			}
+			// The first capsule starts at the arch.
+			const float t = first ? CLAMP((sg.covered - sg.along[i]) / MAX(sg.along[i + 1] - sg.along[i], 1e-4f), 0.0f, 1.0f) : 0.0f;
+			const Vector3 a = sg.axis[i].lerp(sg.axis[i + 1], t);
+			const float ra = Math::lerp(sg.half_width[i], sg.half_width[i + 1], t) + margin;
+			const float la = Math::lerp(sg.along[i], sg.along[i + 1], t) - sg.covered;
+			push(a, sg.axis[i + 1], ra, sg.half_width[i + 1] + margin, la, sg.along[i + 1] - sg.covered, first);
+			first = false;
+		}
+		if (!first) {
+			// The last sample's own round end (the chamber's).
+			const float r = sg.half_width[n - 1] + margin;
+			const float l = sg.along[n - 1] - sg.covered;
+			push(sg.axis[n - 1], sg.axis[n - 1], r, r, l, l, false);
+		}
+	}
+	return out;
 }
 
 PackedVector3Array CaveNetwork3D::get_blowholes(int p_cave) const {
@@ -3490,6 +3567,34 @@ void CaveNetwork3D::_pool_water_update() {
 
 // The network's own PhysXCaveMist3D (godot_physx, built with Flow) when it has sea caves, called by name so the
 // module builds without it.
+// The sea drawn inside the sea caves (PhysXSeaCaveWater3D, with the PhysX module): the surge's water as the river's
+// surface along each passage. Made while the network has sea caves and sea_surge is on.
+void CaveNetwork3D::_update_sea_water_node() {
+	Node *n = get_sea_water_node();
+	bool any_sea = false;
+	for (const Cave &cv : caves) {
+		any_sea = any_sea || cv.sea;
+	}
+	if (!sea_water || !sea_surge || !any_sea) {
+		if (n) {
+			n->queue_free();
+		}
+		sea_water_node = ObjectID();
+		return;
+	}
+	if (n || !ClassDB::class_exists("PhysXSeaCaveWater3D")) {
+		return;
+	}
+	Node3D *node = Object::cast_to<Node3D>(ClassDB::instantiate("PhysXSeaCaveWater3D"));
+	if (!node) {
+		return;
+	}
+	node->set_name("SeaWater");
+	add_child(node, false, INTERNAL_MODE_BACK);
+	node->set("cave_network", node->get_path_to(this));
+	sea_water_node = node->get_instance_id();
+}
+
 void CaveNetwork3D::_update_mist_node() {
 	Node *n = get_sea_mist_node();
 	bool any_sea = false;
@@ -4254,6 +4359,7 @@ void CaveNetwork3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
 			WorldContracts::register_water(this);
+			add_to_group(SNAME("water_clippers")); // the sea is cut inside the sea caves (get_water_clip_capsules)
 		} break;
 		case NOTIFICATION_READY: {
 			set_process_internal(true); // streaming round the follow target; live water on the nearest pools
@@ -4265,6 +4371,7 @@ void CaveNetwork3D::_notification(int p_what) {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				_pool_water_update();
 				_update_mist_node();
+				_update_sea_water_node();
 				_update_stream_nodes();
 				_surge_update(get_process_delta_time());
 			}
@@ -4359,6 +4466,10 @@ void CaveNetwork3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_stream_count"), &CaveNetwork3D::get_stream_count);
 	ClassDB::bind_method(D_METHOD("set_sea_mist", "enable"), &CaveNetwork3D::set_sea_mist);
 	ClassDB::bind_method(D_METHOD("get_sea_mist"), &CaveNetwork3D::get_sea_mist);
+	ClassDB::bind_method(D_METHOD("set_sea_water", "enable"), &CaveNetwork3D::set_sea_water);
+	ClassDB::bind_method(D_METHOD("get_sea_water"), &CaveNetwork3D::get_sea_water);
+	ClassDB::bind_method(D_METHOD("get_sea_water_node"), &CaveNetwork3D::get_sea_water_node);
+	ClassDB::bind_method(D_METHOD("get_water_clip_capsules"), &CaveNetwork3D::get_water_clip_capsules);
 	ClassDB::bind_method(D_METHOD("get_sea_mist_node"), &CaveNetwork3D::get_sea_mist_node);
 	ClassDB::bind_method(D_METHOD("set_scallops", "amount"), &CaveNetwork3D::set_scallops);
 	ClassDB::bind_method(D_METHOD("get_scallops"), &CaveNetwork3D::get_scallops);
@@ -4442,6 +4553,7 @@ void CaveNetwork3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "rimstone_water_max", PROPERTY_HINT_RANGE, "0,64,1"), "set_rimstone_water_max", "get_rimstone_water_max");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cave_streams"), "set_cave_streams", "get_cave_streams");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_mist"), "set_sea_mist", "get_sea_mist");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_water"), "set_sea_water", "get_sea_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_surge"), "set_sea_surge", "get_sea_surge");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "surge_damping", PROPERTY_HINT_RANGE, "1,500,1,suffix:m"), "set_surge_damping", "get_surge_damping");
 	ADD_SIGNAL(MethodInfo("blowhole_spout", PropertyInfo(Variant::INT, "cave"), PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "speed")));
