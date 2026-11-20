@@ -1404,7 +1404,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
