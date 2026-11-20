@@ -102,8 +102,8 @@ class BodySnowStub extends WorldSnow:
 #   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
 #                     [--wind=S: a steady wind along the eave by day, the tips lean; --dense: a week of melt with
 #                     sites 5 cm apart, rippled icicles bridged into curtains] [--no-core: clear ice only]
-#                     [--hero: from under the roof 1.7 m back, looking out at the snow past a fused pair, root to
-#                     tip (--wall: from outside against a boarded front; --outside: mirrored); pass --resolution 1920x1080]
+#                     [--hero (implies --dense): 1.7 m out from the eave, a little above, a fused pair centred, root to
+#                     tip (--under: from under the roof, raster only for now; --wall: head on against a boarded front); pass --resolution 1920x1080]
 #                     [--black-core: a black core, to see where raster and the trace see it]
 #   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
 #   --settled         (trail view) 0.4 m of settled snow (300 kg/m3) instead of fresh: prints break clumps
@@ -2775,7 +2775,9 @@ func _build_icicles(cam: Camera3D) -> void:
 	var ice := SnowIcicles3D.new()
 	ice.name = "Icicles"
 	ice.spacing = 0.12
-	if OS.get_cmdline_user_args().has("--dense"):
+	# --hero implies --dense: a week of melt at 5 cm sites, so there are long icicles and fused pairs to frame.
+	var dense: bool = OS.get_cmdline_user_args().has("--dense") or OS.get_cmdline_user_args().has("--hero")
+	if dense:
 		ice.spacing = 0.05 # --dense: a dripping stretch, sites close enough that neighbours bridge into curtains
 	if OS.get_cmdline_user_args().has("--no-core"):
 		ice.hazy_core = false # --no-core: clear ice only (checks what the core adds)
@@ -2792,7 +2794,7 @@ func _build_icicles(cam: Camera3D) -> void:
 		day_wind = wind
 		ice.wind_direction = Vector3(-1, 0, 0)
 	# --dense: a week of it (long, thick icicles, rippled).
-	for day in (7 if OS.get_cmdline_user_args().has("--dense") else 3):
+	for day in (7 if dense else 3):
 		ice.grow(6.0, -4.0, day_wind, 0.3 * 3.4)
 		ice.grow(18.0, -8.0, 0.5, 0.0)
 	# The last afternoon's melt still running: the tips drip.
@@ -2842,9 +2844,11 @@ func _build_icicles(cam: Camera3D) -> void:
 		if OS.get_cmdline_user_args().has("--wall"):
 			cam.position = mid + Vector3(0.45, -0.08, 1.62)
 		else:
-			cam.position = mid + Vector3(-0.4, 0.4, -1.55) # under the roof, 2.45 m up
-			if OS.get_cmdline_user_args().has("--outside"): # the same view mirrored, from outside the shed
-				cam.position = mid + Vector3(-0.4, 0.4, 1.55)
+			# From outside the eave by default; --under: from under the roof (the path tracer misreads a camera
+			# under a thin roof as inside a medium until rt_camera_medium is fixed, so raster only for now).
+			cam.position = mid + Vector3(-0.4, 0.4, 1.55)
+			if OS.get_cmdline_user_args().has("--under"):
+				cam.position = mid + Vector3(-0.4, 0.4, -1.55) # under the roof, 2.45 m up
 		cam.look_at(mid)
 		cam.fov = 26.0
 	elif OS.get_cmdline_user_args().has("--close"):
