@@ -3186,6 +3186,9 @@ func _weather_settings() -> void:
 			weather.cloud_variation = 0.0 # a clear sky: the regional variation would still raise clouds out of 0 cover
 	if args.has("cloud-type"):
 		weather.cloud_type = float(args["cloud-type"]) # --cloud-type=T: 0 stratus to 1 towering cumulus
+		# A set cloud type stays put unless --cloud-regime=1 (clouds 2dd4c468: else the type follows time of day).
+		if "cloud_regime_from_weather" in weather:
+			weather.cloud_regime_from_weather = args.get("cloud-regime", "0") != "0"
 	if args.has("cloud-variation"):
 		weather.cloud_variation = float(args["cloud-variation"]) # --cloud-variation=V: regional cover variation
 	if args.get("weather", "storm") == "afterrain":
