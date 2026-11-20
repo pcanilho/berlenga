@@ -150,6 +150,7 @@ var camber_test := false
 var mudwave_test := false
 var wear_test := false
 var buried_test := false
+var silt_test := false
 var offpatch_test := false
 var tread_arg := -1 # --view=ruts: the car's PhysXVehicleWheel3D.Tread (mud round 10)
 var puddle_test := false
@@ -223,6 +224,7 @@ func _ready() -> void:
 		elif a == "--test=mudwave": mudwave_test = true
 		elif a == "--test=wear": wear_test = true
 		elif a == "--test=buried": buried_test = true
+		elif a == "--test=silt": silt_test = true
 		elif a == "--test=offpatch": offpatch_test = true
 		elif a == "--test=puddles": puddle_test = true
 		elif a == "--test=cracks": crack_test = true
@@ -299,7 +301,7 @@ func _ready() -> void:
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or offpatch_test:
+	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or silt_test or offpatch_test:
 		if clog_test:
 			await _run_clog_tests()
 		if treads_test:
@@ -332,6 +334,8 @@ func _ready() -> void:
 			await _run_wear_tests()
 		if buried_test:
 			await _run_buried_tests()
+		if silt_test:
+			await _run_silt_tests()
 		if offpatch_test:
 			await _run_offpatch_tests()
 		print("RESULT: %d failed" % fails)
@@ -439,6 +443,9 @@ func _ready() -> void:
 		return
 	if view == "camber":
 		await _build_camber()
+		return
+	if view == "silt":
+		await _build_silt()
 		return
 	if view == "debris":
 		await _build_debris()
@@ -6055,6 +6062,97 @@ func _build_camber() -> void:
 	get_tree().quit()
 
 
+# A river's silt record for the silt view: a lobe of the flood's leavings, thickest in its middle and
+# thinning out to a wandering margin; "fresh" adds a newer band over its far end.
+class SiltViewStub extends WorldWater:
+	var fresh := false
+
+	func _height_at(p: Vector3) -> float:
+		return -INF
+
+	func _sediment_deposit_at(p: Vector3) -> Vector2:
+		# A lobe some 9 m long and 6 m wide, its margin wandering.
+		var q := Vector2(p.x + 1.0, p.z * 1.4)
+		var ang := atan2(q.y, q.x)
+		var rim := 4.2 + 0.6 * sin(ang * 3.0 + 0.7) + 0.35 * sin(ang * 7.0 + 2.1) + 0.2 * sin(ang * 13.0)
+		var t := clampf((rim - q.length()) / 3.0, 0.0, 1.0)
+		var kg := 11.0 * t # up to about 8 mm
+		if fresh:
+			var e2 := -2.6 + 0.5 * sin(p.z * 1.3 + 2.0) + 0.25 * sin(p.z * 3.7)
+			kg += 4.0 * clampf((e2 - p.x) / 1.5, 0.0, 1.0) * clampf(t * 3.0, 0.0, 1.0)
+		return Vector2(kg * 0.9, kg * 0.1) if kg > 0.0 else Vector2.ZERO
+
+
+# The silt view (mud round 15.1): an older skin dried pale and cracked, a newer one still dark and wet over it.
+func _build_silt() -> void:
+	kind = "soil"
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	surface.flood_silt = true
+	surface.desiccation_cracks = true
+	_add_terrain(96.0, 192, mat)
+	var env := Environment.new()
+	var sky := Sky.new()
+	sky.sky_material = ProceduralSkyMaterial.new()
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.set("pathtracing_sky_shader_enabled", true)
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = false
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-35.0, 140.0, 0.0) if sun_arg.size() < 2 else Vector3(sun_arg[0], sun_arg[1], 0.0)
+	sun.directional_shadow_max_distance = 30.0
+	add_child(sun)
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 0.0
+	wm.rain_rate = 0.0
+	wm.humidity = 0.5
+	wm.temperature = 20.0
+	add_child(wm)
+	wm.snap_to_settings()
+	var full := get_window().size
+	get_window().size = Vector2i(160, 90)
+	WorldContracts.clear_overrides()
+	var stub := SiltViewStub.new()
+	WorldContracts.add_water_stub(stub)
+	for i in 60:
+		await get_tree().physics_frame
+	surface.runoff_time_scale = 1e5
+	for i in 600:
+		await get_tree().physics_frame
+	surface.runoff_time_scale = 1.0
+	if not "--dry" in OS.get_cmdline_user_args():
+		stub.fresh = true
+		for i in 60:
+			await get_tree().physics_frame
+	WorldContracts.clear_overrides()
+	for i in 200: # the coloured deposits are re-baked every 5 s
+		await get_tree().physics_frame
+	print("silt: %.1f mm dry at (-3, 0), %s fresh at (-4, 0)" % [surface.get_silt_at(Vector3(-3, 0, 0)).x * 1000.0, surface.get_silt_at(Vector3(-4, 0, 0))])
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([3.2, 1.5, 2.2, -1.2, 0.0, -0.3])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 50.0
+	surface.follow_target = surface.get_path_to(cam)
+	for i in 20:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	get_window().size = full
+	await _save_view(env)
+	get_tree().quit()
+
+
 # Waves in liquid mud (mud round 14.1): a rut pressed into 80 cm of slurry, with the waves (a shallow Bingham flow)
 # and with slumping alone. The waves carry what the press shoved aside further and close the rut faster, keep the
 # volume, stop where the yield stress holds the surface, and leave stiff mud alone.
@@ -6183,6 +6281,31 @@ func _run_wear_tests() -> void:
 	surface.runoff_time_scale = 1.0
 	var w1 := surface.get_wear_at(q)
 	_check("the passes halve over the regrowth time", w1 > 0.35 * w0 and w1 < 0.65 * w0, "%.1f to %.1f passes" % [w0, w1])
+	# Kept with the ruts (round 15.3): saved, cleared, read back as left; read back after weeks away, regrown.
+	var dir := OS.get_user_data_dir().path_join("wear_keep_test")
+	var was_keeping := surface.keep_ruts
+	surface.keep_ruts = true
+	surface.ruts_path = dir
+	surface.clear_saved_ruts()
+	var k := Vector3(2.0, 0, 1.5)
+	surface.add_wear(k, Vector2(0.5, 0.5), 0.0, 8.0)
+	var kept0 := surface.get_wear_at(k)
+	surface.save_ruts()
+	surface.clear_wear()
+	surface.ruts_path = ""
+	surface.ruts_time_scale = 0.0
+	surface.ruts_path = dir
+	var back := surface.get_wear_at(k)
+	surface.clear_wear()
+	surface.ruts_path = ""
+	surface.ruts_time_scale = 1e13 # any time away (milliseconds here) is years
+	surface.ruts_path = dir
+	var aged := surface.get_wear_at(k)
+	surface.ruts_time_scale = 1.0
+	surface.clear_saved_ruts()
+	surface.ruts_path = ""
+	surface.keep_ruts = was_keeping
+	_check("worn tracks are kept with the ruts, regrown for the time away", kept0 > 7.0 and absf(back - kept0) < 0.01 and aged < 0.05, "%.1f passes saved, %.1f read back, %.2f after years" % [kept0, back, aged])
 	surface.worn_tracks = false
 	var s2: float = surface.get_wheel_soil(q, 3000.0, 0.35, 0.25, 200.0, 0.0, 0.0)["sinkage"]
 	_check("off, the track is fresh soil again", absf(s2 - s0) < 1e-4, "%.1f mm" % (s2 * 1000.0))
@@ -6199,6 +6322,7 @@ func _run_buried_tests() -> void:
 	surface.buried_density = 0.5
 	await _paint_mud(0.8, 1.0)
 	var found := surface.get_buried_near(Vector3.ZERO, 4.0)
+	var wide := surface.get_buried_near(Vector3.ZERO, 6.0)
 	var again := surface.get_buried_near(Vector3.ZERO, 4.0)
 	_check("stones lie hidden in the mud, the same every time", found.size() >= 6 and str(found) == str(again), "%d within 4 m" % found.size())
 	# The shallowest stone near the middle, and a spot 0.6 m clear of everything.
@@ -6224,6 +6348,59 @@ func _run_buried_tests() -> void:
 	var on_stone := surface.get_dent_at(Vector3(c.x, 0, c.z))
 	var off := surface.get_dent_at(clear)
 	_check("a wheel's rut stops on the stone", on_stone < top_depth + 0.02 and off > on_stone + 0.1, "%.1f cm deep on it (top %.1f cm), %.1f cm clear of it" % [on_stone * 100.0, top_depth * 100.0, off * 100.0])
+	# Dug round (round 15.2): a wide print with a stone under its edge sinks in full; the stone's crown stays in the
+	# rut floor. Then a rolling tyre deep past another's middle knocks it loose as a rigid body.
+	var picks := []
+	for dd in wide:
+		var a2: Vector3 = dd["a"]
+		var td := surface.get_surface_height_at(Vector3(a2.x, 0, a2.z)) - (a2.y + float(dd["radius"]))
+		var alone := true # nothing else under a print beside it
+		for o in surface.get_buried_near(a2, 3.0):
+			if int(o["id"]) != int(dd["id"]):
+				var oa: Vector3 = o["a"]
+				var ob: Vector3 = o["b"]
+				alone = alone and Geometry2D.get_closest_point_to_segment(Vector2(a2.x, a2.z), Vector2(oa.x, oa.z), Vector2(ob.x, ob.z)).distance_to(Vector2(a2.x, a2.z)) > float(o["radius"]) + float(dd["radius"]) + 0.7
+		if alone and not dd["root"] and float(dd["radius"]) < 0.16 and td < 0.45 and Vector2(a2.x - c.x, a2.z - c.z).length() > 1.5:
+			var apart := true
+			for q in picks:
+				apart = apart and Vector2(a2.x - (q["a"] as Vector3).x, a2.z - (q["a"] as Vector3).z).length() > 1.5
+			if apart:
+				picks.append(dd)
+	if picks.size() < 2:
+		_check("stones for the dug-round tests", false, "%d found" % picks.size())
+	else:
+		var s2: Dictionary = picks[0]
+		var a2: Vector3 = s2["a"]
+		var r2: float = s2["radius"]
+		var td2 := surface.get_surface_height_at(Vector3(a2.x, 0, a2.z)) - (a2.y + r2)
+		var mid := Vector3(a2.x - (r2 + 0.15), 0, a2.z)
+		# Stiff mud: a slurry's own flow would carry off the mud left on the crown (the stone's body shows there).
+		await _paint_mud(0.8, STIFF_MUD)
+		for i in 20:
+			surface.press_wheel(mid, Vector2(0.8, 0.5), 0.0, 0.6, Vector2())
+			await get_tree().physics_frame
+		surface.sync_deformation()
+		var crown := surface.get_dent_at(Vector3(a2.x, 0, a2.z))
+		var floor_d := surface.get_dent_at(mid)
+		_check("the mud is dug out round a stone under the print's edge", crown < td2 + 0.03 and floor_d > td2 + 0.15, "%.1f cm deep over it (top %.1f cm down), %.1f cm beside it" % [crown * 100.0, td2 * 100.0, floor_d * 100.0])
+		var s3: Dictionary = picks[1]
+		var a3: Vector3 = s3["a"]
+		var r3: float = s3["radius"]
+		var td3 := surface.get_surface_height_at(Vector3(a3.x, 0, a3.z)) - (a3.y + r3)
+		var wheel := Vector3(a3.x - 0.3, 0, a3.z)
+		var before := surface.get_loose_stone_count()
+		for i in 6:
+			surface.press_wheel(wheel, Vector2(0.8, 0.5), 0.0, td3 + r3 + 0.05, Vector2(2.0, 0.0))
+			await get_tree().physics_frame
+		var loose := get_tree().get_nodes_in_group("ground_loose")
+		var gone := true
+		for dd in surface.get_buried_near(a3, 1.0):
+			gone = gone and int(dd["id"]) != int(s3["id"])
+		var p0: Vector3 = (loose[0] as Node3D).global_position if loose.size() > 0 else Vector3.ZERO
+		for i in 20:
+			await get_tree().physics_frame
+		var p1: Vector3 = (loose[0] as Node3D).global_position if loose.size() > 0 else Vector3.ZERO
+		_check("an uncovered stone a tyre runs into is knocked loose", surface.get_loose_stone_count() == before + 1 and loose.size() == 1 and gone and p1.x - p0.x > 0.05, "%d loose, %d bodies, %s from the hidden list; moved %.2f m" % [surface.get_loose_stone_count() - before, loose.size(), "gone" if gone else "still", p1.x - p0.x])
 	for i in 40:
 		await get_tree().physics_frame
 	var bodies := get_tree().get_nodes_in_group("ground_buried").size()
@@ -6237,7 +6414,93 @@ func _run_buried_tests() -> void:
 	surface.mud_layer = false
 	var dry := surface.get_buried_near(Vector3.ZERO, 4.0).size()
 	surface.mud_layer = true
-	_check("off, or with no mud layer, there are none", none == 0 and left == 0 and dry == 0, "%d, %d bodies, %d without mud" % [none, left, dry])
+	var loose_left := get_tree().get_nodes_in_group("ground_loose").size()
+	_check("off, or with no mud layer, there are none", none == 0 and left == 0 and dry == 0 and loose_left == 0, "%d, %d bodies, %d without mud, %d loose" % [none, left, dry, loose_left])
+	near_on = true
+
+
+# Water for the silt tests: a river over -8 < x < -4 whose bed record (kg/m2, mineral and ash) the test sets, and
+# still floodwater 30 cm deep carrying 5 kg/m3 over 2 < x < 5 while flooding is on.
+class SiltWaterStub extends WorldWater:
+	var bed := Vector2.ZERO
+	var flooding := true
+
+	func _in_river(p: Vector3) -> bool:
+		return p.x > -8.0 and p.x < -4.0 and absf(p.z) < 3.0
+
+	func _in_flood(p: Vector3) -> bool:
+		return flooding and p.x > 2.0 and p.x < 5.0 and absf(p.z) < 3.0
+
+	func _height_at(p: Vector3) -> float:
+		if _in_river(p) and bed.length_squared() > 0.0:
+			return 0.05
+		return 0.3 if _in_flood(p) else -INF
+
+	func _flow_at(p: Vector3) -> Vector3:
+		return Vector3(0, 0, 0.8) if _in_river(p) else Vector3.ZERO
+
+	func _sediment_at(p: Vector3) -> Vector2:
+		return Vector2(5.0, 0.0) if _in_flood(p) or _in_river(p) else Vector2.ZERO
+
+	func _sediment_deposit_at(p: Vector3) -> Vector2:
+		return bed if _in_river(p) else Vector2.ZERO
+
+
+# Silt skins (mud round 15.1): what a river records as settled on its bed is laid once, at its dry density, as a
+# wet skin; still floodwater lays its own; the skin is soft and slick while wet, dries, cracks and bears once dry.
+func _run_silt_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	surface.flood_silt = true
+	surface.desiccation_cracks = true
+	WorldContracts.clear_overrides()
+	var stub := SiltWaterStub.new()
+	stub.bed = Vector2(2.6, 0.0) # 2 mm of silt at 1300 kg/m3
+	WorldContracts.add_water_stub(stub)
+	var r := Vector3(-6.3, 0, 0.4)
+	var f := Vector3(3.4, 0, 0.4)
+	for i in 90:
+		await get_tree().physics_frame
+	var a := surface.get_silt_at(r)
+	stub.bed = Vector2(4.0, 1.2) # 4 mm in all, an ash-dark part
+	for i in 90:
+		await get_tree().physics_frame
+	var b := surface.get_silt_at(r)
+	_check("a river's settled silt is laid once, at its dry density", absf(a.x - 0.002) < 2e-4 and absf(b.x - 0.004) < 4e-4 and a.y > 0.99, "%.2f mm, then %.2f mm (record 2, then 4 mm); wet %.2f" % [a.x * 1000.0, b.x * 1000.0, a.y])
+	var fl := surface.get_silt_at(f)
+	_check("still floodwater lays its own silt", fl.x > 1e-7 and fl.x < 1e-4 and surface.get_silt_at(Vector3(7.0, 0, 0.4)).x == 0.0, "%.1f um" % (fl.x * 1e6))
+	# The water goes; days of drying in seconds.
+	stub.flooding = false
+	stub.bed = Vector2(4.0, 1.2)
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 0.0
+	wm.rain_rate = 0.0
+	wm.humidity = 0.5
+	wm.temperature = 20.0
+	add_child(wm)
+	wm.snap_to_settings()
+	WorldContracts.clear_overrides()
+	surface.runoff_time_scale = 1e5
+	for i in 600:
+		await get_tree().physics_frame
+	surface.runoff_time_scale = 1.0
+	var d := surface.get_silt_at(r)
+	var cr: Vector4 = surface.get_crack_at(r)
+	print("  silt skin: %.2f mm, wet %.2f -> %.2f; cracks %s" % [b.x * 1000.0, b.y, d.y, cr])
+	_check("the skin dries and cracks into small plates", d.y < 0.1 and cr.x > 0.9 and cr.y < 0.08, "water %.2f, opening %.2f, plates %.1f cm" % [d.y, cr.x, cr.y * 100.0])
+	# Off, nothing more is laid.
+	surface.flood_silt = false
+	stub.bed = Vector2(8.0, 1.2)
+	stub.flooding = true
+	WorldContracts.add_water_stub(stub)
+	for i in 90:
+		await get_tree().physics_frame
+	var off := surface.get_silt_at(r).x
+	var off_f := surface.get_silt_at(f).x
+	_check("off, rivers and floods lay nothing", absf(off - d.x) < 1e-6 and absf(off_f - fl.x) < 1e-7, "%.2f mm, flood %.1f um" % [off * 1000.0, off_f * 1e6])
+	WorldContracts.clear_overrides()
+	wm.queue_free()
+	surface.flood_silt = false
 	near_on = true
 
 

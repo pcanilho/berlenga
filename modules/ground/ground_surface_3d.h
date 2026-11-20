@@ -178,6 +178,18 @@ private:
 	Ref<ArrayMesh> buried_meshes[6]; // four stones, two roots
 	Ref<Material> buried_materials[2];
 	Ref<ArrayMesh> _buried_mesh(bool p_root, uint32_t p_seed);
+	// Stones knocked loose (round 15.2): gone from the hidden list, rigid bodies until they are far off.
+	bool buried_kick = true;
+	HashSet<uint32_t> buried_loose;
+	HashMap<uint32_t, ObjectID> buried_loose_bodies;
+	struct BuriedKick {
+		Buried b;
+		Vector3 velocity;
+		float floor = 0.0f;
+	};
+	LocalVector<BuriedKick> buried_kicks;
+	bool _buried_under(const Vector3 &p_position, float p_radius, float p_bottom, Buried &r_hit) const;
+	void _buried_kicks_update();
 	bool worn_tracks = true;
 	float wear_regrowth_days = 30.0f;
 	double wear_clock = 0.0;
@@ -186,6 +198,10 @@ private:
 	Ref<ImageTexture> wear_texture;
 	void _wear_press(const Vector3 &p_position, const Vector2 &p_half, float p_yaw);
 	void _wear_update(double p_delta);
+	// Kept with the ruts (round 15.3): one file in ruts_path, read once per folder.
+	String wear_loaded_dir;
+	void _wear_save();
+	void _wear_load();
 	void _wear_publish();
 	HashMap<Vector2i, Color> mud_deposit_colors; // its linear colour where the depositor gave one (alpha: cover)
 	Color _deposit_color_at(float p_x, float p_z) const; // premultiplied by cover, bilinear between cell centres
@@ -203,6 +219,16 @@ private:
 	float silt_timer = 0.0f;
 	bool silt_dirty = false;
 	void _flood_silt(const Vector3 &p_position, float p_depth, float p_speed, const Vector2 &p_load, float p_dt);
+	// Silt skins (docs/ideas/mud.md, round 15.1): the share of mud_deposits that is settled silt (m per 1 m cell), not
+	// a flow's slurry: it dries and cracks as a thin layer instead of staying soaked. Rivers keep their own record of
+	// what settles on their beds (WorldWater.sediment_deposit_at, kg/m2); the ground lays what is new of it.
+	HashMap<Vector2i, float> silt_depth;
+	HashMap<Vector2i, Vector2> silt_river_taken;
+	HashSet<Vector2i> silt_wet_new; // cells silt was laid on since the drying last ran: soaked
+	void _lay_silt(const Vector2i &p_cell, const Vector2 &p_kg);
+	float _silt_at(float p_x, float p_z) const;
+	float _silt_smooth_at(float p_x, float p_z) const; // bilinear between the 1 m cells' centres, for the looks
+	float _silt_water(float p_x, float p_z) const;
 	// Standing water (docs/ideas/mud.md, stage 2): rain, runoff and ground water gather in ruts and prints, on the
 	// GPU field (the virtual pipe model), drawn as the surface there in both renderers.
 	bool standing_water = true;
@@ -961,6 +987,9 @@ public:
 	float get_buried_density() const { return buried_density; }
 	float get_buried_depth_at(Vector3 p_position, float p_radius = 0.1f) const;
 	Array get_buried_near(Vector3 p_position, float p_radius) const;
+	void set_buried_kick(bool p_enabled);
+	bool is_buried_kick() const { return buried_kick; }
+	int get_loose_stone_count() const { return buried_loose.size(); }
 	void set_worn_tracks(bool p_enabled);
 	bool is_worn_tracks() const { return worn_tracks; }
 	void set_wear_regrowth_days(float p_days);
@@ -990,6 +1019,7 @@ public:
 	Dictionary get_ford_stats() const;
 	bool is_flood_silt() const { return flood_silt; }
 	float get_flood_silt_total() const { return silt_total; }
+	Vector2 get_silt_at(Vector3 p_position) const;
 	void set_mats(bool p_enabled) { mats = p_enabled; }
 	bool is_mats() const { return mats; }
 	// The mat a wheel's contact p_contact lies on (within p_tolerance of the wood), or -1.

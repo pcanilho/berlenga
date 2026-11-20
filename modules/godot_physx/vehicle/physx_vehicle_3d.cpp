@@ -306,6 +306,12 @@ public:
 					_clog_update(sw, v, i, v.wheelRigidBody1dStates[i].rotationSpeed, p_dt, false, ground->get_standing_water_at(at));
 				}
 				sw.grip = _firm_grip(at, v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLONGITUDINAL], ground->get_standing_water_at(at), ground->get_ice_at(at), sw.tread, sw.inflation);
+				// A skin of silt a flood left (mud round 15.1): fine earth on a firm surface takes the friction down to
+				// about half while wet, a little when dry dust (SAE 2007-01-0736; TRL PPR073).
+				const Vector2 silt = ground->get_silt_at(at);
+				if (silt.x > 0.0f) {
+					sw.grip *= Math::lerp(1.0f, Math::lerp(0.85f, 0.5f, CLAMP(silt.y, 0.0f, 1.0f)), Math::smoothstep(0.0003f, 0.002f, silt.x));
+				}
 				road.friction *= sw.grip;
 				sw.printed = false;
 				sw.sinkage = 0.0f;
@@ -352,9 +358,10 @@ public:
 			}
 			const float tau = MAX(0.1f, probe.contact_length / MAX(Math::abs(v_lng), 0.1f));
 			sw.sinkage += (target - sw.sinkage) * MIN(p_dt / tau, 1.0f);
-			// A stone or root hidden in the mud (mud round 14.3): the wheel sinks no further than its top and rides
-			// up onto it.
-			sw.sinkage = MIN(sw.sinkage, ground->get_buried_depth_at(at, wp.halfWidth));
+			// A stone or root hidden in the mud under the tyre's middle (mud round 14.3): the wheel sinks no further
+			// than its top and rides up onto it. One under the tyre's edge it wraps round, the mud pressed out round
+			// it (round 15.2); uncovered, the stone's own body meets the tyre.
+			sw.sinkage = MIN(sw.sinkage, ground->get_buried_depth_at(at, 0.5f * wp.halfWidth));
 			road.plane.d += sw.sinkage;
 			// The grip of the soil: the tyre's peak force to its shear limit, its stiffness to Janosi-Hanamoto's.
 			if (load > 0.0f) {

@@ -70,7 +70,7 @@ public:
 		STEP_MUDWAVE = 1 << 13, // waves in liquid mud (ground): Dims::mud_passes substeps
 	};
 	static constexpr int PARAMS_BYTES = 912;
-	static constexpr int STAMP_BYTES = 80;
+	static constexpr int STAMP_BYTES = 112;
 
 	// Sizes: field texels per side, ground lattice per side, cover cells per side, cache slots, collision
 	// vertices per side.
@@ -212,7 +212,7 @@ public:
 	void clear_cache();
 	// Queues a press (GroundDeformField::press's arguments) as a stamp over p_x0..p_x1, p_z0..p_z1 (field
 	// texels); p_d is the stamp's last four floats (crack, flags, seed, extra).
-	void add_stamp(GroundDeformField &r_field, const float p_v[12], const float p_d[4], int p_x0, int p_x1, int p_z0, int p_z1);
+	void add_stamp(GroundDeformField &r_field, const float p_v[12], const float p_d[4], int p_x0, int p_x1, int p_z0, int p_z1, const float *p_floor = nullptr);
 	// The stamp's texel bounds for a footprint reaching p_span around p_position; false when outside.
 	static bool stamp_bounds(const GroundDeformField &p_field, Vector3 p_position, float p_span, int &r_x0, int &r_x1, int &r_z0, int &r_z1);
 	// The field is about to move to p_origin: tiles leaving with prints go to the cache, tiles coming in are
