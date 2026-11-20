@@ -454,6 +454,23 @@ func _ready() -> void:
 		_log("river pick: %d reaches" % n_ok)
 		get_tree().quit(0)
 		return
+	if args.has("beaver-dam") and ClassDB.class_exists("WorldBeaverDam3D"):
+		# --beaver-dam[=Y]: a WorldBeaverDam3D (world-links 1f60b5c4) at --dam-at=x,z (else the --look point), pond
+		# --pond-radius (30) m; Y > 0 breaches it Y years ago, so the stand turns the pond to a beaver meadow of
+		# standing dead trees (trees 771b46b4a2). Placed before the vegetation so the stands read it.
+		var da := String(args.get("dam-at", args.get("look", "0,0,0"))).split(",")
+		var dx := float(da[0])
+		var dz := float(da[2] if da.size() > 2 else da[1])
+		var dam: Node3D = ClassDB.instantiate("WorldBeaverDam3D")
+		dam.name = "BeaverDam"
+		dam.set("pond_radius", float(args.get("pond-radius", "30")))
+		add_child(dam)
+		dam.global_position = Vector3(dx, height_at(dx, dz), dz)
+		var dy := float(args["beaver-dam"]) if String(args["beaver-dam"]) != "" else 0.0
+		if dy > 0.0:
+			dam.set("years_drained", dy)
+			dam.call("breach")
+		_log("beaver dam at %s, pond %.0f m, %s" % [str(dam.global_position.round()), float(dam.get("pond_radius")), ("breached %.1f years" % dy) if dy > 0.0 else "active"])
 	_build_vegetation()
 	if args.get("prints", "1") != "0":
 		_build_prints()
