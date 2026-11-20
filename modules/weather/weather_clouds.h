@@ -155,8 +155,23 @@ Vector2 shear_offset(const State &p_state, float p_y, float p_base);
 // The weather map's cover noise: four octaves of hashed value noise over (p - drift) / scale, 0..1. With
 // p_evolve >= 0 (time in lifetimes) each octave moves on through time (clouds form and clear).
 float cover_noise(Vector2 p_xz, Vector2 p_drift, float p_scale, float p_evolve = -1.0f);
+// cover_noise's per-call constants (the drift, the scale and each octave's two time slices and blend), taken once for
+// a pass over many points; cover_noise(frame, p) then gives exactly cover_noise(p, drift, scale, evolve).
+struct CoverNoiseFrame {
+	Vector2 drift;
+	float scale = 1.0f;
+	bool evolve = false;
+	Vector2 offset_a[4];
+	Vector2 offset_b[4];
+	float w[4] = {};
+	float len[4] = {};
+};
+CoverNoiseFrame cover_noise_frame(Vector2 p_drift, float p_scale, float p_evolve = -1.0f);
+float cover_noise(const CoverNoiseFrame &p_frame, Vector2 p_xz);
 // Cover and type at world x, z: the weather map's drifting noise plus storms.
 Vector2 cover_type_at(const State &p_state, Vector2 p_xz);
+// How high a storm's column reaches over p_xz, as a cloud type: under its anvil, the storm's own height.
+float storm_column_type(const State &p_state, Vector2 p_xz);
 // The cloud base (m) over world x, z: base_height, blended to each storm's own base over its cloud shield.
 float base_at(const State &p_state, Vector2 p_xz);
 // The high layer's cover (0..1) and vertical optical depth over world x, z (patches and anvil shields; the

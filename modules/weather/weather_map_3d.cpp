@@ -857,6 +857,7 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	c.inflow = cell_inflow.ptr();
 	c.fog_drip = fog_drip && cell_fog_drip.size() == resolution * resolution ? cell_fog_drip.ptr() : nullptr;
 	c.spray = sea_spray && cell_spray.size() == resolution * resolution ? cell_spray.ptr() : nullptr;
+	c.cover_noise = WeatherClouds::cover_noise_frame(cloud_drift, cloud_scale, _cloud_evolve());
 	// Rows in parallel: each cell depends only on the weather and its own history.
 	WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &WeatherMap3D::_update_row, &cell_pass, resolution, -1, true, String("WeatherMap3D cells"));
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
@@ -975,7 +976,7 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 		// Broken cloud: the cover is the coverage threshold of a drifting noise field (as Nubis's
 		// coverage remaps its noise), so a 0.4 sky is 40% clouds in patches, not a 40% grey.
 		if (cloud_variation > 0.0f) {
-			cover = CLAMP(cover + (_cloud_noise(p) - 0.5f) * 2.0f * cloud_variation * MIN(1.0f, 2.5f * cover), 0.0f, 1.0f);
+			cover = CLAMP(cover + (WeatherClouds::cover_noise(c.cover_noise, p) - 0.5f) * 2.0f * cloud_variation * MIN(1.0f, 2.5f * cover), 0.0f, 1.0f);
 		}
 		// Rain falls from the thicker cloud: the base rate, spread where the cover is.
 		float r = cur_rain_rate * rain_scale * CLAMP(Math::smoothstep(0.3f, 0.7f, cover) / c.cover_gate, 0.0f, 2.5f);
@@ -1185,6 +1186,27 @@ void WeatherMap3D::_fill_gust_image() {
 	gust_image->set_data(GUST_COUNT, 1, false, Image::FORMAT_RGBAF, gd);
 }
 
+void WeatherMap3D::_upload_row(uint32_t p_row, UploadPass *p_pass) {
+	const int n = resolution;
+	uint16_t *w = p_pass->wind;
+	uint16_t *s = p_pass->state;
+	uint16_t *fp = p_pass->frost;
+	for (int i = int(p_row) * n; i < int(p_row + 1) * n; i++) {
+		w[i * 4 + 0] = Math::make_half_float(cell_wind[i * 2 + 0]);
+		w[i * 4 + 1] = Math::make_half_float(cell_wind[i * 2 + 1]);
+		w[i * 4 + 2] = Math::make_half_float(cell_cover[i]);
+		w[i * 4 + 3] = Math::make_half_float(cell_type[i]);
+		// Ground the world's runoff (WeatherRunoff3D) is flowing over is wet too, where the rain did not fall.
+		const float wet = cell_puddle[i] > 0.0f ? 1.0f : MAX(MIN(cell_film[i] / p_pass->storage, 1.0f), _runoff_wetness(i));
+		s[i * 4 + 0] = Math::make_half_float(cell_rain[i]);
+		s[i * 4 + 1] = Math::make_half_float(wet);
+		s[i * 4 + 2] = Math::make_half_float(cell_puddle[i]);
+		s[i * 4 + 3] = Math::make_half_float(cell_film[i]);
+		fp[i * 2 + 0] = Math::make_half_float(cell_frost[i]);
+		fp[i * 2 + 1] = Math::make_half_float(cell_cooling[i]);
+	}
+}
+
 void WeatherMap3D::_upload() {
 	const int n = resolution;
 	if (wind_image.is_null() || wind_image->get_width() != n) {
@@ -1195,30 +1217,18 @@ void WeatherMap3D::_upload() {
 		wd.resize(n * n * 8);
 		Vector<uint8_t> sd;
 		sd.resize(n * n * 8);
-		uint16_t *w = reinterpret_cast<uint16_t *>(wd.ptrw());
-		uint16_t *s = reinterpret_cast<uint16_t *>(sd.ptrw());
-		const float storage = MAX(surface_storage, 1e-3f);
-		for (int i = 0; i < n * n; i++) {
-			w[i * 4 + 0] = Math::make_half_float(cell_wind[i * 2 + 0]);
-			w[i * 4 + 1] = Math::make_half_float(cell_wind[i * 2 + 1]);
-			w[i * 4 + 2] = Math::make_half_float(cell_cover[i]);
-			w[i * 4 + 3] = Math::make_half_float(cell_type[i]);
-			// Ground the world's runoff (WeatherRunoff3D) is flowing over is wet too, where the rain did not fall.
-			const float wet = cell_puddle[i] > 0.0f ? 1.0f : MAX(MIN(cell_film[i] / storage, 1.0f), _runoff_wetness(i));
-			s[i * 4 + 0] = Math::make_half_float(cell_rain[i]);
-			s[i * 4 + 1] = Math::make_half_float(wet);
-			s[i * 4 + 2] = Math::make_half_float(cell_puddle[i]);
-			s[i * 4 + 3] = Math::make_half_float(cell_film[i]);
-		}
-		wind_image->set_data(n, n, false, Image::FORMAT_RGBAH, wd);
-		state_image->set_data(n, n, false, Image::FORMAT_RGBAH, sd);
 		Vector<uint8_t> fd;
 		fd.resize(n * n * 4);
-		uint16_t *fp = reinterpret_cast<uint16_t *>(fd.ptrw());
-		for (int i = 0; i < n * n; i++) {
-			fp[i * 2 + 0] = Math::make_half_float(cell_frost[i]);
-			fp[i * 2 + 1] = Math::make_half_float(cell_cooling[i]);
-		}
+		UploadPass up;
+		up.wind = reinterpret_cast<uint16_t *>(wd.ptrw());
+		up.state = reinterpret_cast<uint16_t *>(sd.ptrw());
+		up.frost = reinterpret_cast<uint16_t *>(fd.ptrw());
+		up.storage = MAX(surface_storage, 1e-3f);
+		// About 2 ms of half-float packing a weather update on the main thread before: rows on the worker pool.
+		WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &WeatherMap3D::_upload_row, &up, n, -1, true, String("WeatherMap3D upload"));
+		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
+		wind_image->set_data(n, n, false, Image::FORMAT_RGBAH, wd);
+		state_image->set_data(n, n, false, Image::FORMAT_RGBAH, sd);
 		frost_image->set_data(n, n, false, Image::FORMAT_RGH, fd);
 	}
 	_fill_gust_image();
@@ -2743,7 +2753,8 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 float WeatherMap3D::get_cloud_top_at(Vector3 p_position) const {
 	const WeatherClouds::State st = _cloud_state();
 	const Vector2 xz(p_position.x, p_position.z);
-	return WeatherClouds::base_at(st, xz) + WeatherClouds::top_height(st, WeatherClouds::cover_type_at(st, xz).y);
+	// Under a storm's anvil the column reaches the storm's height.
+	return WeatherClouds::base_at(st, xz) + WeatherClouds::top_height(st, MAX(WeatherClouds::cover_type_at(st, xz).y, WeatherClouds::storm_column_type(st, xz)));
 }
 
 float WeatherMap3D::get_cloud_base_at(Vector3 p_position) const {
@@ -2965,20 +2976,18 @@ void WeatherMap3D::_apply_sky_shadow() {
 	sky_material->set_cloud_shadow_map(sky_shadow_texture, sky_shadow_axis_u, sky_shadow_axis_v, corner, kSkyShadowExtent);
 }
 
-// The light grid's value at a point of a level, bilinear between voxel centres; negative off the box.
+// The light grid's value at a point of a level: the nearest voxel's; negative off the box. Not bilinear: each level
+// reads the one above, so a filter there blurred the optical depth again at every level (about 700 m after 32),
+// smearing the clouds' depth into the clear paths between them, and a sunlit edge against a low sun lost its bright
+// rim. The nearest voxel moves a value by at most half a texel per level instead, and keeps it sharp.
 float WeatherMap3D::LightGridBake::above(int p_level, float p_x, float p_z) const {
 	const int n = kLightGridResolution;
-	const float fx = (p_x - corner.x) / texel - 0.5f;
-	const float fz = (p_z - corner.y) / texel - 0.5f;
-	if (fx < 0.0f || fz < 0.0f || fx > n - 1 || fz > n - 1) {
+	const int x = int(Math::floor((p_x - corner.x) / texel));
+	const int z = int(Math::floor((p_z - corner.y) / texel));
+	if (x < 0 || z < 0 || x >= n || z >= n) {
 		return -1.0f;
 	}
-	const int x0 = MIN(int(fx), n - 2);
-	const int z0 = MIN(int(fz), n - 2);
-	const float tx = fx - x0;
-	const float tz = fz - z0;
-	const float *t = tau.ptr() + (p_level * n + z0) * n + x0;
-	return Math::lerp(Math::lerp(t[0], t[1], tx), Math::lerp(t[n], t[n + 1], tx), tz);
+	return tau[(p_level * n + z) * n + x];
 }
 
 // One row of the level being baked. Each voxel's optical depth toward the sun out of the layer: its path up to
@@ -3155,6 +3164,42 @@ void WeatherMap3D::_build_light_grid_texture() {
 		}
 		return a;
 	};
+	// Red: the optical depth toward the sun, as the least over each texel's 3 by 3 by 3 neighbours. The sky reads it
+	// trilinearly 512 m along the path, and a texel's value is from its centre: near a cloud's sunward face the
+	// filter mixed in texels whose centres lie inside the cloud, so a thin sunlit edge read the cloud's own depth
+	// and lost its bright rim (the silver lining against a low sun) while the march had just left the cloud. The
+	// least keeps the edge's clear path; deep inside, the 512 m marched before the read are already dark.
+	Vector<float> tau_min;
+	tau_min.resize(n * n * nl);
+	{
+		const float *t = lb.tau.ptr();
+		Vector<float> tmp;
+		tmp.resize(n * n * nl);
+		float *a = tau_min.ptrw();
+		float *b = tmp.ptrw();
+		for (int l = 0; l < nl; l++) { // along x
+			for (int z = 0; z < n; z++) {
+				const float *r = t + (l * n + z) * n;
+				for (int x = 0; x < n; x++) {
+					b[(l * n + z) * n + x] = MIN(r[x], MIN(r[MAX(x - 1, 0)], r[MIN(x + 1, n - 1)]));
+				}
+			}
+		}
+		for (int l = 0; l < nl; l++) { // along z
+			for (int z = 0; z < n; z++) {
+				for (int x = 0; x < n; x++) {
+					const int i = (l * n + z) * n + x;
+					a[i] = MIN(b[i], MIN(b[(l * n + MAX(z - 1, 0)) * n + x], b[(l * n + MIN(z + 1, n - 1)) * n + x]));
+				}
+			}
+		}
+		for (int l = 0; l < nl; l++) { // up
+			for (int i = 0; i < n * n; i++) {
+				b[l * n * n + i] = MIN(a[l * n * n + i], MIN(a[MAX(l - 1, 0) * n * n + i], a[MIN(l + 1, nl - 1) * n * n + i]));
+			}
+		}
+		tau_min = tmp;
+	}
 	const Vector<float> near = box(2, 1);
 	const Vector<float> far = box(6, 2);
 	Vector<Ref<Image>> levels;
@@ -3163,7 +3208,7 @@ void WeatherMap3D::_build_light_grid_texture() {
 		bytes.resize(n * n * 8);
 		float *o = reinterpret_cast<float *>(bytes.ptrw());
 		for (int i = 0; i < n * n; i++) {
-			o[i * 2 + 0] = lb.tau[l * n * n + i];
+			o[i * 2 + 0] = tau_min[l * n * n + i];
 			o[i * 2 + 1] = 0.5f * (near[l * n * n + i] + far[l * n * n + i]);
 		}
 		levels.push_back(Image::create_from_data(n, n, false, Image::FORMAT_RGF, bytes));

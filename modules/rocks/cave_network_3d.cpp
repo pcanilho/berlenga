@@ -720,7 +720,7 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 	RandomPCG rng(uint32_t(seed) * 2654435761u + 77u);
 	auto H = [&](real_t p_x, real_t p_z) -> real_t { return gen->get_height(Vector3(p_x, 0, p_z)); };
 	// Why candidates fail, for --find-caves benches (CAVE_SEA_DEBUG=1 prints it).
-	int rej_low = 0, rej_flat = 0, rej_dry = 0, rej_depth = 0, rej_foot = 0, rej_back = 0;
+	int rej_low = 0, rej_flat = 0, rej_dry = 0, rej_depth = 0, rej_open = 0, rej_foot = 0, rej_back = 0;
 	const bool dbg = OS::get_singleton()->get_environment("CAVE_SEA_DEBUG") == "1";
 	for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += 6.0) {
 		for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += 6.0) {
@@ -761,6 +761,23 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 			const real_t depth = sea - H(off.x, off.y);
 			if (depth < 0.3 || depth > 30.0) {
 				rej_depth++;
+				continue;
+			}
+			// Open water out from the mouth: the first wet ground can be a pool or a scour hollow at the cliff's foot
+			// with a beach standing metres high beyond it, which drew a ground slab across the mouth and kept the sea
+			// out. The seabed must stay under the sea for 25 m out (no bar or berm over it).
+			bool open = true;
+			real_t deepest = 0.0;
+			for (real_t t = 1.0; t <= 25.0 && open; t += 1.0) {
+				const Vector2 q = m + dn * t;
+				const real_t hq = H(q.x, q.y);
+				open = hq < sea - 0.1;
+				deepest = MAX(deepest, sea - hq);
+			}
+			// ... and deepen to the 0.8 m the waves need to keep their energy (a flat sheet a few decimetres deep is a
+			// sand flat or an estuary, where no sea cave is cut).
+			if (!open || deepest < 0.8) {
+				rej_open++;
 				continue;
 			}
 
@@ -820,7 +837,7 @@ Array CaveNetwork3D::find_sea_entrances(const Rect2 &p_rect, int p_max) const {
 		}
 	}
 	if (OS::get_singleton()->get_environment("CAVE_SEA_DEBUG") == "1") {
-		print_line(vformat("find_sea_entrances: %d candidates; rejected: %d under 6 m, %d flat, %d no sea within 150 m, %d depth, %d no cliff foot at the swash, %d no cliff behind", found.size(), rej_low, rej_flat, rej_dry, rej_depth, rej_foot, rej_back));
+		print_line(vformat("find_sea_entrances: %d candidates; rejected: %d under 6 m, %d flat, %d no sea within 150 m, %d depth, %d no open sea out from the foot, %d no cliff foot at the swash, %d no cliff behind", found.size(), rej_low, rej_flat, rej_dry, rej_depth, rej_open, rej_foot, rej_back));
 	}
 	struct More {
 		_FORCE_INLINE_ bool operator()(const Found &p_a, const Found &p_b) const { return p_a.score > p_b.score; }
@@ -3406,7 +3423,16 @@ void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
 	mi->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_DOUBLE_SIDED);
 	for (int sfc = 0; sfc < p_chunk.mesh->get_surface_count(); sfc++) {
 		const bool is_ground = p_chunk.mesh->surface_get_name(sfc) == "ground";
-		mi->set_surface_override_material(sfc, is_ground && ground_material.is_valid() ? ground_material : p_wall);
+		Ref<Material> gm = ground_material;
+		if (is_ground && OS::get_singleton()->has_environment("CAVE_GROUND_DEBUG")) {
+			// CAVE_GROUND_DEBUG: the network's own ground quads drawn flat red (to tell them from the landscape's).
+			Ref<StandardMaterial3D> red;
+			red.instantiate();
+			red->set_albedo(Color(1, 0, 0));
+			red->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
+			gm = red;
+		}
+		mi->set_surface_override_material(sfc, is_ground && gm.is_valid() ? gm : p_wall);
 	}
 	add_child(mi);
 	mi->set_global_transform(Transform3D());

@@ -253,6 +253,10 @@ private:
 		RID light; // the directional light (base RID)
 		RID texture; // 3D, R16F: optical depth from the light's side, over u, v and depth
 		Transform3D world_to_shadow; // world -> (u, v, depth) in 0..1
+		// The medium's single-scattering albedo and anisotropy: a bright, scattering medium lets through more
+		// than its optical depth's direct beam (light scattered on toward the ground), 0 for none.
+		float albedo = 0.0f;
+		float anisotropy = 0.0f;
 		uint64_t frame = 0;
 	} volume_shadow;
 	RID volume_shadow_empty;
@@ -1248,7 +1252,7 @@ public:
 	void update_directional_shadow_atlas();
 
 	// Sets the volume shadow of directional light p_light for this frame (p_texture RID(): clears it).
-	void directional_volume_shadow_set(RID p_light, RID p_texture, const Transform3D &p_world_to_shadow);
+	void directional_volume_shadow_set(RID p_light, RID p_texture, const Transform3D &p_world_to_shadow, float p_albedo = 0.0f, float p_anisotropy = 0.0f);
 	// The volume shadow texture the scene shaders bind (a white 1x1 without one).
 	RID directional_volume_shadow_get_texture();
 

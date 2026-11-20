@@ -1088,6 +1088,22 @@ func _stand_tests() -> void:
 	var beaver := st.add_disturbance(Vector3(-300, 0, 0), 40.0, WorldStand.DISTURBANCE_BEAVER, 6.0)
 	grid_ok = grid_ok and st.disturbance_at(Vector3(-300, 0, 10)) == WorldStand.DISTURBANCE_BEAVER and st.stand_age_at(Vector3(-300, 0, 10)) == 6.0
 	st.remove_disturbance(beaver)
+	# A beaver dam: no meadow while it holds; breached, the drained pond is a beaver meadow aging with the years; gone with the dam.
+	var dam: Node3D = ClassDB.instantiate("WorldBeaverDam3D")
+	dam.pond_radius = 30.0
+	dam.position = Vector3(2000, 0, 2000)
+	add_child(dam)
+	var k_held := st.disturbance_at(Vector3(2000, 0, 2005))
+	dam.breach()
+	var k_breach := st.disturbance_at(Vector3(2000, 0, 2005))
+	var a_breach := st.stand_age_at(Vector3(2000, 0, 2005))
+	dam.years_drained = 12.0
+	var a_set := st.stand_age_at(Vector3(2000, 0, 2005))
+	var k_off := st.disturbance_at(Vector3(2000, 0, 2040))
+	remove_child(dam)
+	var k_gone := st.disturbance_at(Vector3(2000, 0, 2005))
+	dam.free()
+	_check("stand: a beaver dam that fails drains its pond into a beaver meadow (DISTURBANCE_BEAVER), aged by years_drained, only over the pond, gone with the dam", k_held == WorldStand.DISTURBANCE_NONE and k_breach == WorldStand.DISTURBANCE_BEAVER and a_breach == 0.0 and a_set == 12.0 and k_off == WorldStand.DISTURBANCE_NONE and k_gone == WorldStand.DISTURBANCE_NONE, "held %d, breached %d at %.0f y, set %.0f y, off the pond %d, dam removed %d" % [k_held, k_breach, a_breach, a_set, k_off, k_gone])
 	# Browsing: a red deer wood and a roe patch inside it; soft rim; pressure changes reported.
 	var red := st.add_browse(Vector3(1000, 0, 1000), 50.0, 0.6)
 	var roe := st.add_browse(Vector3(1010, 0, 1000), 10.0, 0.9, 1.1)

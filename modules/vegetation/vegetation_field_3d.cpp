@@ -588,7 +588,7 @@ void VegetationField3D::_read_burn_age(PlaceSetup &r_setup) const {
 		const TypedArray<PlantSpecies> list = biome->get_species();
 		for (int i = 0; i < list.size() && !wanted; i++) {
 			const Ref<PlantSpecies> sp = list[i];
-			wanted = sp.is_valid() && (sp->uses_burn_age() || sp->get_burn_recovery() > 0.0f);
+			wanted = sp.is_valid() && (sp->uses_burn_age() || sp->get_burn_recovery() > 0.0f || (_deferred_kinds(sp) & 1));
 			const TypedArray<Mesh> ms = sp.is_valid() ? sp->get_meshes() : TypedArray<Mesh>();
 			for (int m = 0; m < ms.size() && !wanted; m++) {
 				const Ref<Mesh> mesh = ms[m];
@@ -709,6 +709,35 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 	r_setup.stand_rect = rect;
 }
 
+// Deferred tree variants (trees.md 5bc): the kinds the setup's area needs (any burn, strike or browse over it) are
+// asked of each species' variant source; true when a species' meshes grew (its placements must be set up again).
+bool VegetationField3D::_realize_variants(const PlaceSetup &p_setup) {
+	variants_waiting = false;
+	if (biome.is_null()) {
+		return false;
+	}
+	const int need = (p_setup.burn.is_empty() ? 0 : 1) | (p_setup.strikes.is_empty() ? 0 : 2) | (p_setup.browse.is_empty() ? 0 : 4);
+	if (!need) {
+		return false;
+	}
+	bool grew = false;
+	const TypedArray<PlantSpecies> list = biome->get_species();
+	for (int i = 0; i < list.size(); i++) {
+		const Ref<PlantSpecies> sp = list[i];
+		const int kinds = _deferred_kinds(sp) & need;
+		if (!kinds) {
+			continue;
+		}
+		Object *src = Object::cast_to<Object>(sp->get_meta(SNAME("_tree_variant_source"), Variant()));
+		if (!src) {
+			continue;
+		}
+		const int left = src->call(SNAME("request_variants"), sp, kinds);
+		grew = grew || left != kinds;
+	}
+	return grew;
+}
+
 // Struck trees (trees.md 5ax; WorldStand strikes in world-links.md): wanted when a species carries struck variants (mesh
 // meta tree_lightning_years). The strikes over the setup's area are copied, so the placing threads read a fixed list.
 void VegetationField3D::_read_strikes(PlaceSetup &r_setup) const {
@@ -720,6 +749,7 @@ void VegetationField3D::_read_strikes(PlaceSetup &r_setup) const {
 		const TypedArray<PlantSpecies> list = biome->get_species();
 		for (int i = 0; i < list.size() && !wanted; i++) {
 			const Ref<PlantSpecies> sp = list[i];
+			wanted = (_deferred_kinds(sp) & 2) != 0;
 			const TypedArray<Mesh> ms = sp.is_valid() ? sp->get_meshes() : TypedArray<Mesh>();
 			for (int m = 0; m < ms.size() && !wanted; m++) {
 				const Ref<Mesh> mesh = ms[m];
@@ -775,6 +805,7 @@ void VegetationField3D::_read_browse(PlaceSetup &r_setup) const {
 		const TypedArray<PlantSpecies> list = biome->get_species();
 		for (int i = 0; i < list.size() && !wanted; i++) {
 			const Ref<PlantSpecies> sp = list[i];
+			wanted = (_deferred_kinds(sp) & 4) != 0;
 			const TypedArray<Mesh> ms = sp.is_valid() ? sp->get_meshes() : TypedArray<Mesh>();
 			for (int m = 0; m < ms.size() && !wanted; m++) {
 				const Ref<Mesh> mesh = ms[m];
@@ -1361,6 +1392,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	}
 	_read_burn_age(r_setup);
 	_read_stand(r_setup);
+	_realize_variants(r_setup);
 	r_setup.stone_tops = stone_top_grid;
 	r_setup.stone_top_normals = stone_top_grid_normals;
 	// Another field's crowns (canopy_field): a camera-local herb layer under a world forest.
@@ -5644,12 +5676,14 @@ void VegetationField3D::_stream_update(double p_delta) {
 			}
 		}
 		burn_dirty = Rect2();
+		variants_waiting = true; // A new burn may need deferred fire variants.
 		_copy_context(su);
 	}
 	// The stand changed: only where a species crossed its stand range are the tiles placed again.
 	if (stand_dirty.has_area() && stream_jobs.is_empty()) {
 		PlaceSetup &su = stream_setup;
 		Rect2 changed = _update_stand(su, stand_dirty);
+		variants_waiting = true; // A new strike or browse disc may need deferred variants (checked in process).
 		if (changed.has_area() && !su.edge.is_empty()) {
 			// The canopy's stages moved: the forest edge moves with them (a windthrow opens a new edge).
 			LocalVector<float> old_edge;
@@ -6101,6 +6135,17 @@ void VegetationField3D::_notification(int p_what) {
 			}
 			_follow_burns(get_process_delta_time());
 			_follow_stand(get_process_delta_time());
+			if (variants_waiting && streaming && stream_setup_valid && stream_jobs.is_empty()) {
+				// A new burn, strike or browse disc (trees.md 5bc): deferred variants it needs are grown, and the field
+				// streams again with them.
+				variants_check -= get_process_delta_time();
+				if (variants_check <= 0.0) {
+					variants_check = 0.25;
+					if (_realize_variants(stream_setup)) {
+						_stream_clear();
+					}
+				}
+			}
 			if (streaming) {
 				if (still_shot && still_frozen && _stream_centre().distance_to(still_at) >= 0.5f) {
 					still_frozen = false;

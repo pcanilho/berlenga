@@ -454,6 +454,23 @@ func _ready() -> void:
 		_log("river pick: %d reaches" % n_ok)
 		get_tree().quit(0)
 		return
+	if args.has("beaver-dam") and ClassDB.class_exists("WorldBeaverDam3D"):
+		# --beaver-dam[=Y]: a WorldBeaverDam3D (world-links 1f60b5c4) at --dam-at=x,z (else the --look point), pond
+		# --pond-radius (30) m; Y > 0 breaches it Y years ago, so the stand turns the pond to a beaver meadow of
+		# standing dead trees (trees 771b46b4a2). Placed before the vegetation so the stands read it.
+		var da := String(args.get("dam-at", args.get("look", "0,0,0"))).split(",")
+		var dx := float(da[0])
+		var dz := float(da[2] if da.size() > 2 else da[1])
+		var dam: Node3D = ClassDB.instantiate("WorldBeaverDam3D")
+		dam.name = "BeaverDam"
+		dam.set("pond_radius", float(args.get("pond-radius", "30")))
+		add_child(dam)
+		dam.global_position = Vector3(dx, height_at(dx, dz), dz)
+		var dy := float(args["beaver-dam"]) if String(args["beaver-dam"]) != "" else 0.0
+		if dy > 0.0:
+			dam.set("years_drained", dy)
+			dam.call("breach")
+		_log("beaver dam at %s, pond %.0f m, %s" % [str(dam.global_position.round()), float(dam.get("pond_radius")), ("breached %.1f years" % dy) if dy > 0.0 else "active"])
 	_build_vegetation()
 	if args.get("prints", "1") != "0":
 		_build_prints()
@@ -561,6 +578,8 @@ func _ready() -> void:
 		await _frame_struck()
 	if args.has("host-cam"):
 		await _frame_host()
+	if args.has("colonnade-cam"):
+		await _frame_colonnade()
 	if args.has("log"):
 		await _frame_log()
 	if args.has("mushrooms"):
@@ -3605,17 +3624,17 @@ func _generated_forest(clearing: bool) -> Biome:
 	if "near_needle_range" in tg:
 		tg.near_needle_range = float(args.get("near-needle-range", "30")) # --near-needle-range=0: far needles only (memory)
 	if "fire_variants" in tg:
-		# --fire-variants=1: each species also carries its burnt-stand variants (one a fire band, vegetation picks by
-		# WorldFire burn age). Off here unless asked: each is about the woodland's memory again, and an unburnt stand
-		# never shows them.
-		tg.fire_variants = args.get("fire-variants", "0") != "0"
+		# --fire-variants (1): each species also carries its burnt-stand variants (one a fire band, vegetation picks by
+		# WorldFire burn age). On by default: they are deferred (trees.md 5bc), grown only where a burn lies over the
+		# field, so an unburnt stand costs nothing. --fire-variants=0 skips them.
+		tg.fire_variants = args.get("fire-variants", "1") != "0"
 	if "lightning_variants" in tg:
 		# --strike-variants (1): tall species also carry their two struck variants (vegetation picks them under
-		# WorldStand strikes, trees.md 5ax). On by default (all features on); --strike-variants=0 skips them.
+		# WorldStand strikes, trees.md 5ax). On by default, deferred like the fire ones; --strike-variants=0 skips them.
 		tg.lightning_variants = args.get("strike-variants", "1") != "0"
 	if "browse_variants" in tg:
 		# --browse-variants (1): open trees, saplings and understory also carry a browsed variant (vegetation picks it
-		# under WorldStand browse discs, trees.md 5az). On by default; --browse-variants=0 skips them.
+		# under WorldStand browse discs, trees.md 5az). On by default, deferred; --browse-variants=0 skips them.
 		tg.browse_variants = args.get("browse-variants", "1") != "0"
 	if "flood_height" in tg:
 		# --flood-height=M (--flood-years=Y): flood marks on the trees, a silt line and caught debris at M m (trees
@@ -6686,6 +6705,60 @@ func _powder_avalanche() -> void:
 # --lightning-cam (with --lightning): the struck spruce nearest the first view, the camera --lightning-dist m (6) from
 # it square to the sun (side-lit, so the pale strip and the splinters read against the dark bark), eye 1.7 m, looking
 # at the stem --lightning-look m up (2).
+func _frame_colonnade() -> void:
+	# --colonnade-cam: along a row of spruce on stilts over a vanished nurse log (trees 5az), eye height, a few degrees
+	# off the row's axis; picks the row nearest the camera that runs most square to the sun, so the light is from the side.
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var to_sun := sun.global_basis.z
+	var sun_flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
+	var pts: Array[Vector3] = []
+	for i in veg.biome.species.size():
+		var sp := veg.biome.species[i] as Resource
+		if sp != null and sp.has_meta("colonnade"):
+			for tp in veg.get_placements(i):
+				if tp.distance_to(c3.global_position) < 400.0:
+					pts.append(tp)
+	var best_score := -INF
+	var a := Vector3.INF
+	var b := Vector3.INF
+	for p0 in pts:
+		var far := p0
+		var n := 0
+		for q in pts:
+			var dq := Vector2(q.x - p0.x, q.z - p0.z).length()
+			if dq > 0.5 and dq < 11.0:
+				n += 1
+				if dq > Vector2(far.x - p0.x, far.z - p0.z).length():
+					far = q
+		if n < 3:
+			continue
+		var dir := Vector3(far.x - p0.x, 0.0, far.z - p0.z).normalized()
+		var score := absf(dir.cross(sun_flat).y) * 3.0 + n * 0.3 - p0.distance_to(c3.global_position) * 0.01
+		if score > best_score:
+			best_score = score
+			a = p0
+			b = far
+	if a == Vector3.INF:
+		_log("colonnade: no row of %d stilted spruce found" % pts.size())
+		return
+	var dir2 := Vector3(b.x - a.x, 0.0, b.z - a.z).normalized()
+	var side := dir2.cross(Vector3.UP).normalized()
+	var cp := a - dir2 * float(args.get("colonnade-back", "6")) + side * float(args.get("colonnade-side", "1.8"))
+	cp.y = height_at(cp.x, cp.z) + float(args.get("colonnade-h", "1.5"))
+	c3.global_position = cp
+	var mid := (a + b) * 0.5
+	c3.look_at(Vector3(mid.x, height_at(mid.x, mid.z) + 1.2, mid.z))
+	var n2 := 0
+	await get_tree().process_frame
+	get_viewport().disable_3d = true
+	while not cover.is_stream_idle() and n2 < 600:
+		await get_tree().process_frame
+		n2 += 1
+	get_viewport().disable_3d = false
+	if veg.streaming:
+		await _forest_settle()
+	_log("colonnade cam %.1f,%.1f,%.1f along the row %s to %s (sun across %.2f)" % [cp.x, cp.y, cp.z, str(a.round()), str(b.round()), absf(dir2.cross(sun_flat).y)])
+
 func _frame_host() -> void:
 	# --host-cam: under one mistletoe host's crown, looking up into it against the sky (sun behind the camera).
 	var c3: Camera3D = get_viewport().get_camera_3d()

@@ -489,3 +489,75 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
     with a low sun (a sunset frame).
   - Cost unchanged on lavapipe (538 ms a frame with a storm in view). Raster and PT match. The raster speckle on a
     distant sunlit tower face is the half-res reconstruction (improvements card).
+- Second review (docs, 20 Nov evening: a heap of loose puffs, a jellyfish anvil, no mammatus, cirrus like motion
+  blur). Research: Schneider, "Nubis: Authoring Real-Time Volumetric Cloudscapes" (Advances 2015) and "Real-Time
+  Volumetric Superstorms" (GDC 2022) model a storm as one envelope with its own density and only the edge eroded;
+  photos and the Atlas: an anvil is a thin ice sheet with a flat ceiling, a sharp upwind edge, spreading far
+  downwind; ice anvils are optically about 10 deep near the core and 1 or 2 downstream (Lilly 1988; Garrett 2005).
+  - Tower: narrower at the base (0.75 core radii) widening to 1.1 by 60% of its height, a hard outline (the last
+    tenth of the radius), shaped by the shape noise for its bulges plus a read 1.6 times finer for kilometre
+    cauliflower lobes; the cumulus erosion at a fifth of its strength there. A soft rim let the erosion bore through
+    the whole tower into foam.
+  - Anvil: a fan from a sharp upwind edge, widening 0.35 core radii per radius downwind to about 7.5 radii, a flat
+    top under the tropopause and a flat ceiling below, at a tenth of the tower's density and thinning downwind
+    (`r_thin`). Mammatus sag into its underside (a 1.6 km jittered grid, up to 500 m, where it overhangs and the
+    drier the air); the separate mammatus march is gone.
+  - The crowd: raising the type under the anvil made every single cell there a congestus as tall as the tower. Now
+    the storm's column height is a separate bound (`storm_column_type`, also in `get_cloud_top_at`) and the cells
+    keep their own type's height; cells fade out within 1.8 to 3 core radii of the tower.
+  - The storm body has its own density (0.1 per metre in the tower), not the surrounding cover's and type's.
+  - Cirrus: fibres warped by a 20 km noise (they hook and bend instead of all converging) and a fibril read 3.3 times
+    finer inside each streak.
+  - Raster and PT match (640). 1.1 s a frame on lavapipe with the storm in view at 960x540 (the stills used to read
+    as foam because 3 frames are not enough for the reprojection: review stills use 24).
+
+## Light grid contrast (20 Nov 2026; scene: grid on dulled sunlit rims at dawn)
+
+- Reproduced in the weather bench (`--view=shafts --sun-up=8 --cover=0.45 --type=0.9`, A/B with
+  `--sky-params=cloud_light_grid_enabled:0`): with the grid the brightest 1% of the sky fell from 136 to 92.
+- Cause 1, a leak at the read: the sky reads the grid's depth 512 m along the sun path, trilinearly. Between levels
+  that mixed paths a level apart, which against a low sun start hundreds of metres apart along it, and texels whose
+  centres lie inside a cloud, so clear paths took on their neighbours' clouds. Fixes: the read lands on a level's
+  centre (the march runs on to where the path crosses one), the stored depth is the least over each texel's
+  3x3x3 neighbours, and the bake chains levels by the nearest voxel instead of bilinearly (the bilinear chain blurred
+  again at every level). Rims back to 106.
+- The rest is not a fault of the grid: the bake agrees with a 32 m CPU march to 24 km (mean depth 50.27 against
+  50.33 over 1,176 sampled voxels, and of the 489 whose fine march is clear only 3 read over 3 in the grid). Without
+  the grid the shader's doubling steps (several km long far out, read at a coarse mip that the coverage remap turns
+  to zero) miss the clouds 8 to 24 km toward a low sun, so clouds stood sunlit that the clouds between them and the
+  sun shade. The bounce term adds about 3 levels to the darkest tenth (interreflection, as designed).
+- Raster and PT match (640).
+
+## Storm review 3 (20 Nov 2026; docs: mottled cylinder, decal mammatus, no shelf or shaft at 30 km)
+
+- Tower (`storm_tower` / `wc_storm_tower`): a core column (0.5 to 0.7 core radii) and eight rising bubbles, each
+  a thermal 0.7 to 1.4 radii across, at its own height (14% to 88%) and bearing round the axis, larger higher up,
+  plus a crown over the axis; outlines hard over their last fifth, jittered a little by the shape noise. A Cb reads
+  as a few huge rounded towers, each lit on its sun side and grey in shadow, which the bubbles' own shape gives the
+  light march; the finer lobe noise (an even mottle over a cylinder) is gone, and with it one texture read.
+- Mammatus: packed (cells 0.6 to 0.8 of the 1.6 km grid, neighbours overlap), up to 700 m deep, not at the anvil's
+  thin side edges; the sheet over them is denser (0.45 of the tower's) so the underside is one surface, and the
+  pouches denser still (0.7), so each shades its lower half (Schultz et al. 2006: they carry the anvil's falling,
+  evaporating ice).
+- Rain shaft: the heavy core 1.5 radii across under the tower (it filled the whole base as a grey wall), curtains
+  thresholded more sharply, lit at two thirds of the open sky's light under the shield (rain is lighter than the
+  base above it).
+- Shelf: its top a smooth slope rippled by the noise at large scale, its face lightly eroded (laminar), not a
+  frilled grainy rim.
+- Raster and PT match (640). Review stills: storm 15 km (`--storm=0,-24000,...`) and 20 km (`0,-30000`), 24 frames.
+
+## Storm review 4 (20 Nov 2026; docs: figurine tower, UFO shelf, repeating mammatus, faint shaft)
+
+- Proportions: the tower 1.5 core radii across at its base (about 7.5 km for R 2.5 km), widening to 2.4 by 85% of
+  its height into an anvil that starts 1.6 radii wide and widens 0.4 per radius downwind; twelve bubbles (0.6 to 1.9
+  radii across) set 0.45 to 1.0 radii off the axis, and the cumulus erosion back at 45% for a cauliflower skin.
+  Cells fade 2.6 to 3.8 radii out.
+- The "brim" round the base was not the shelf: the storm's raised cover made a flat-topped deck there. The deck now
+  gives way round the tower as the single cells do.
+- Shelf: only along the leading front (cos 0.65 to 0.92 of the storm's motion, about 40 degrees each side), just
+  outside the tower (1.5 radii plus 0.04 per m/s of outflow), a wedge whose top is lowest at the leading edge and
+  rises about 1.5 km back toward the storm.
+- Mammatus: a fifth of the grid cells hold none, sizes 0.45 to 0.85 of the cell and depths 0.25 to 1 vary, in
+  patches about 6 km across.
+- Rain shaft: lit at two fifths of the open sky's light under the shield, so it stands as a dark curtain.
+- Raster and PT match (640).

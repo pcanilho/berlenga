@@ -236,3 +236,8 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
 - Crack lips on rock faces capped at some 34 degrees (depth 0.45 of a lip 2 pixels or 6 cm wide): the 56 to 76
   degree lips drew open joints as black lines on sunlit sea cliffs.
 
+- Erosion detail normal (TerrainGenerator3D terrain_detail_normal): the octaves below the vertex spacing keep the
+  geometry's depth ratio (0.08), so each adds a slope near 0.5 and four of them tilted gentle ground 30 to 50
+  degrees. Under a 32 degree sun those faces turned dark: blotches that read as wet ground, raster and PT alike,
+  with or without scans (gone with --detail-octaves=0). The added slope now saturates softly near 0.35 (about 20
+  degrees, small rill walls in soil).
