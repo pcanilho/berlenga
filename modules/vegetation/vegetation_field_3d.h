@@ -315,11 +315,17 @@ private:
 		LocalVector<StandRule> stand_rules;
 		LocalVector<float> stand_age;
 		LocalVector<uint8_t> stand_kind;
+		// Deer browsing pressure (WorldStand.browse_at, RULE_BROWSE) on the same grid, read when a species uses the
+		// rule; the distinct browse rules (range x, y; fade z) tell which changes matter.
+		LocalVector<Vector3> browse_rules;
+		LocalVector<float> stand_browse;
+		float browse_cell(int p_cell) const { return p_cell < 0 || stand_browse.is_empty() ? 0.0f : stand_browse[p_cell]; }
 		int stand_nx = 0;
 		int stand_ny = 0;
 		Rect2 stand_rect;
 		int stand_cell(const Vector2 &p_xz) const;
 		bool stand_differs(float p_age0, int p_kind0, float p_age1, int p_kind1) const;
+		bool browse_differs(float p_b0, float p_b1) const;
 		// Signed metres from the forest canopy's edge (RULE_FOREST_EDGE), positive inside, on a grid of 2 m or more over
 		// the map, bilinear; read when a species uses the rule. Empty: no canopy (-1000 everywhere).
 		LocalVector<float> edge;

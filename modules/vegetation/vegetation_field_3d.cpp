@@ -631,6 +631,8 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 	r_setup.stand_rules.clear();
 	r_setup.stand_age.clear();
 	r_setup.stand_kind.clear();
+	r_setup.browse_rules.clear();
+	r_setup.stand_browse.clear();
 	r_setup.stand_nx = 0;
 	r_setup.stand_ny = 0;
 	const WorldStand *stand = WorldContracts::stand();
@@ -658,6 +660,13 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 		const TypedArray<PlantSpecies> list = b->get_species();
 		for (int i = 0; i < list.size(); i++) {
 			const Ref<PlantSpecies> sp = list[i];
+			if (sp.is_valid() && sp->uses_browse() && b == biome) {
+				const Vector2 r = sp->get_rule_range(PlantSpecies::RULE_BROWSE);
+				const Vector3 br(r.x, r.y, sp->get_rule_fade(PlantSpecies::RULE_BROWSE));
+				if (r_setup.browse_rules.find(br) < 0) {
+					r_setup.browse_rules.push_back(br);
+				}
+			}
 			if (sp.is_null() || !sp->uses_stand()) {
 				continue;
 			}
@@ -668,7 +677,7 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 			}
 		}
 	}
-	stand_follow = !r_setup.stand_rules.is_empty();
+	stand_follow = !r_setup.stand_rules.is_empty() || !r_setup.browse_rules.is_empty();
 	if (!stand_follow || !stand || !r_setup.rect.has_area()) {
 		return;
 	}
@@ -678,12 +687,19 @@ void VegetationField3D::_read_stand(PlaceSetup &r_setup) const {
 	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 512);
 	r_setup.stand_age.resize(nx * ny);
 	r_setup.stand_kind.resize(nx * ny);
+	const bool browse = !r_setup.browse_rules.is_empty();
+	if (browse) {
+		r_setup.stand_browse.resize(nx * ny);
+	}
 	for (int z = 0; z < ny; z++) {
 		for (int x = 0; x < nx; x++) {
 			const Vector2 xz = rect.position + rect.size * Vector2(float(x) / (nx - 1), float(z) / (ny - 1));
 			const Vector3 p(xz.x, 0.0f, xz.y);
 			r_setup.stand_age[z * nx + x] = stand->stand_age_at(p);
 			r_setup.stand_kind[z * nx + x] = uint8_t(CLAMP(stand->disturbance_at(p), 0, 255));
+			if (browse) {
+				r_setup.stand_browse[z * nx + x] = stand->browse_at(p);
+			}
 		}
 	}
 	r_setup.stand_nx = nx;
@@ -716,12 +732,16 @@ Rect2 VegetationField3D::_update_stand(PlaceSetup &r_setup, const Rect2 &p_area)
 			const int i = z * nx + x;
 			const float age = stand->stand_age_at(p);
 			const int kind = CLAMP(stand->disturbance_at(p), 0, 255);
-			if (r_setup.stand_differs(r_setup.stand_age[i], r_setup.stand_kind[i], age, kind)) {
+			const float br = r_setup.stand_browse.is_empty() ? 0.0f : stand->browse_at(p);
+			if (r_setup.stand_differs(r_setup.stand_age[i], r_setup.stand_kind[i], age, kind) || (!r_setup.stand_browse.is_empty() && r_setup.browse_differs(r_setup.stand_browse[i], br))) {
 				const Rect2 c(xz - Vector2(cx, cz) * 0.5f, Vector2(cx, cz));
 				changed = changed.has_area() ? changed.merge(c) : c;
 			}
 			r_setup.stand_age[i] = age;
 			r_setup.stand_kind[i] = uint8_t(kind);
+			if (!r_setup.stand_browse.is_empty()) {
+				r_setup.stand_browse[i] = br;
+			}
 		}
 	}
 	return changed;
@@ -737,6 +757,21 @@ int VegetationField3D::PlaceSetup::stand_cell(const Vector2 &p_xz) const {
 		return -1;
 	}
 	return z * stand_nx + x;
+}
+
+bool VegetationField3D::PlaceSetup::browse_differs(float p_b0, float p_b1) const {
+	if (p_b0 == p_b1) {
+		return false;
+	}
+	for (const Vector3 &r : browse_rules) {
+		auto w = [&r](float p_v) {
+			return r.z <= 0.0f ? ((p_v >= r.x && p_v <= r.y) ? 1.0f : 0.0f) : Math::smoothstep(r.x - r.z, r.x, p_v) * (1.0f - Math::smoothstep(r.y, r.y + r.z, p_v));
+		};
+		if (w(p_b0) != w(p_b1)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 bool VegetationField3D::PlaceSetup::stand_differs(float p_age0, int p_kind0, float p_age1, int p_kind1) const {
@@ -983,6 +1018,9 @@ bool VegetationField3D::_context_only(const PlantSpecies *p_sp) {
 			return true;
 		}
 	}
+	if (p_sp->uses_browse() && p_sp->rule_weight(PlantSpecies::RULE_BROWSE, 0.0f) <= 0.0f) {
+		return true; // Only where deer browse.
+	}
 	return false;
 }
 
@@ -1002,6 +1040,8 @@ void VegetationField3D::_copy_context(const PlaceSetup &p_setup) {
 	_copy_vector(context.stand_rules, p_setup.stand_rules);
 	_copy_vector(context.stand_age, p_setup.stand_age);
 	_copy_vector(context.stand_kind, p_setup.stand_kind);
+	_copy_vector(context.browse_rules, p_setup.browse_rules);
+	_copy_vector(context.stand_browse, p_setup.stand_browse);
 	context.stand_nx = p_setup.stand_nx;
 	context.stand_ny = p_setup.stand_ny;
 	context.stand_rect = p_setup.stand_rect;
@@ -1028,6 +1068,9 @@ float VegetationField3D::_context_weight(const PlantSpecies *p_sp, const Vector2
 		p_sp->get_stand_rules(a, af, k, kf);
 		const int sc = context.stand_cell(p_xz);
 		w *= PlantSpecies::stand_weight(a, af, k, kf, sc < 0 ? -1.0f : context.stand_age[sc], sc < 0 ? 0 : int(context.stand_kind[sc]));
+	}
+	if (w > 0.0f && p_sp->uses_browse()) {
+		w *= p_sp->rule_weight(PlantSpecies::RULE_BROWSE, context.browse_cell(context.stand_cell(p_xz)));
 	}
 	if (w > 0.0f && p_sp->uses_forest_edge()) {
 		Vector2 r;
@@ -1815,6 +1858,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 			sp->get_forest_edge_rule(edge_r, edge_f);
 		}
 		const bool stand_rule = !p_setup.stand_rules.is_empty() && sp->uses_stand();
+		const bool browse_rule = sp->uses_browse();
 		Vector2 stand_age_r, stand_kind_r;
 		float stand_age_f = 0.0f, stand_kind_f = 0.0f;
 		if (stand_rule) {
@@ -1995,6 +2039,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (stand_rule && suit > 0.0f) {
 						const int sc = p_setup.stand_cell(xz);
 						suit *= PlantSpecies::stand_weight(stand_age_r, stand_age_f, stand_kind_r, stand_kind_f, sc < 0 ? -1.0f : p_setup.stand_age[sc], sc < 0 ? 0 : int(p_setup.stand_kind[sc]));
+					}
+					if (browse_rule && suit > 0.0f) {
+						// Deer browsing pressure (0 where none is known).
+						suit *= sp->rule_weight(PlantSpecies::RULE_BROWSE, p_setup.browse_cell(p_setup.stand_cell(xz)));
 					}
 					if (!sand_plant && suit > 0.0f && !p_setup.sea_depth.is_empty()) {
 						// Desert sand seas: only sand plants (RULE_SAND_MOBILITY) root in their loose sand; the rest

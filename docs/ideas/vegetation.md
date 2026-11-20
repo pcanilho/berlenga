@@ -1376,3 +1376,32 @@ Built:
   sedge 0-4 y, then dense sedge, tall grass, buttercup 3-38 y, meadowsweet 4-38 y, marsh marigold 2-28 y (fade 3) within
   8 m of the remaining stream. All shade 0-0.4 to 0.6; the trees' STAND_BEAVER_POND supplies the dead pond trees
   and the closing willow and alder. Vegetation bench "beaver" checks.
+
+## Deer browsing (card 20 Nov evening; built 20 Nov)
+Research:
+- Browse heights: roe about 1.1 m, fallow 1.6-1.8 m, red deer 1.8 m (Forestry Commission Practice Note 6; Deer
+  Initiative field signs). The ground flora is all in reach.
+- Under heavy pressure British and European woods lose bramble (the winter staple), honeysuckle, ivy on the floor and
+  palatable forbs (wood anemone, violets, woodruff, bilberry, fireweed); grasses, sedges and unpalatable plants
+  (bracken, Dryopteris ferns, foxglove, nettle) gain: "grassy woods" (Kirby 2001; Gill and Fuller 2007, Ibis 149;
+  Morecroft et al. 2001, Wytham exclosures; Boulanger et al. 2018, Global Change Biology, deer and forest understories).
+- Browsed bramble stays a low hummock of short canes bitten back each winter, many leaves eaten whole or torn, few
+  flowers; browsed raspberry and saplings lose the leader and bush out from the buds below the bite (Bergman 2001).
+- Deer graze clearings and rides into lawns of fine bents and fescues 2-8 cm high with clover and other creeping herbs,
+  kept short year round (Putman 1986; Kuijper et al. 2009, Bialowieza). Deer tear rather than cut (no upper incisors),
+  so blade ends are ragged and dry pale.
+Built:
+- WorldStand browse discs (world-links cef8dbd7): browse_at 0..1, browse_reach_at. PlantSpecies.RULE_BROWSE (31) reads
+  it on the field's stand grid (0 where none); changes re-place only tiles where a browse rule's weight moves. Species
+  that need browsing to grow are context-only (left out of far shell, cover map and sward shade by rules alone).
+- PlantGenerator season "browse" (0..1): bramble canes low and spreading, bitten back with blunt ends and side shoots,
+  leaves eaten or torn; raspberry canes bitten at the leader and bushy below; flowers and fruit scarce. Leaf.cut (the
+  torn end, slanted, drying pale) does the torn blades and leaflets. Unbrowsed meshes are unchanged (same draws).
+- PRESET_GRAZED_LAWN (98): a mat of 150-220 fine blades 2-6.5 cm, two thirds torn.
+- make_floor (all but hedgerow and montado), appended so every other species keeps its seed: bramble and raspberry
+  whole to 0.35 (fade 0.15) and bitten (meshes at 0.85) past it; palatable herbs (woodruff, anemone, violet, bilberry,
+  ivy, fireweed, herb Robert, wood sorrel) thin to about a fifth at 1; the tall clearing grass gives way past 0.5; deer
+  lawn and clover in the light (shade to 0.45) from 0.45; grass (wavy hair grass under conifers) under crowns from 0.4;
+  fern from 0.5. Vegetation bench "deer browsing" checks.
+- Not done: honeysuckle and ivy-on-ground variants by browse (ivy on stems is trees'); browse reach is not used by the
+  ground flora (all of it is in reach).

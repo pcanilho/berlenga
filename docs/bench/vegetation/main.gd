@@ -1078,6 +1078,77 @@ func _beaver_check() -> void:
 			pond_bad.append(["rush", deep])
 	_check("beaver pond: lilies float in deep water only, rush on the shore only", pond_bad.is_empty(), pond_bad)
 
+# Deer browsing (RULE_BROWSE, WorldStand.browse_at): a 0.9 browse disc swaps the full bramble for the bitten one and
+# brings the deer lawn; round it the bramble is whole and no lawn grows. make_floor carries the browse response.
+func _browse_check() -> void:
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_disturbances()
+	st.clear_browse()
+	var c := Vector2(30, 30)
+	st.add_browse(Vector3(c.x, 0, c.y), 12.0, 0.9, 1.8)
+	var full := PlantSpecies.new()
+	full.meshes = [BoxMesh.new()]
+	full.spacing = 1.2
+	full.set_rule_range(PlantSpecies.RULE_BROWSE, Vector2(0.0, 0.35))
+	full.set_rule_fade(PlantSpecies.RULE_BROWSE, 0.15)
+	var bitten := PlantSpecies.new()
+	bitten.meshes = [BoxMesh.new()]
+	bitten.spacing = 1.2
+	bitten.set_rule_range(PlantSpecies.RULE_BROWSE, Vector2(0.35, 1.0))
+	bitten.set_rule_fade(PlantSpecies.RULE_BROWSE, 0.15)
+	var lawn := PlantSpecies.new()
+	lawn.meshes = [BoxMesh.new()]
+	lawn.spacing = 0.8
+	lawn.set_rule_range(PlantSpecies.RULE_BROWSE, Vector2(0.45, 1.0))
+	lawn.set_rule_fade(PlantSpecies.RULE_BROWSE, 0.2)
+	var sps := [full, bitten, lawn]
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign(sps)
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var on := [0, 0, 0]
+	var off := [0, 0, 0]
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh:
+			var mm: MultiMesh = ch.multimesh
+			var k := -1
+			for j in sps.size():
+				if sps[j].meshes[0] == mm.mesh:
+					k = j
+			if k < 0:
+				continue
+			for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+				var q: Vector3 = (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+				var d := Vector2(q.x, q.z).distance_to(c)
+				if d < 8.0:
+					on[k] += 1
+				elif d > 15.0 and d < 30.0:
+					off[k] += 1
+	f.free()
+	st.clear_browse()
+	_check("deer browsing: bitten bramble and the deer lawn inside a heavy browse disc, whole bramble and no lawn round it", on[0] == 0 and on[1] > 10 and on[2] > 3 and off[0] > 10 and off[1] == 0 and off[2] == 0, [on, off])
+	var fl := PlantGenerator.make_floor(PlantGenerator.FLOOR_OAK_MIXED, 1, false)
+	var found := {}
+	var bad := []
+	for sp in fl:
+		var p: int = sp.get_meta("plant_preset", -1)
+		var w0: float = sp.rule_weight(PlantSpecies.RULE_BROWSE, 0.0)
+		var w9: float = sp.rule_weight(PlantSpecies.RULE_BROWSE, 0.9)
+		if p == PlantGenerator.PRESET_GRAZED_LAWN:
+			found["lawn"] = w0 == 0.0 and w9 > 0.9
+		if p == PlantGenerator.PRESET_BRAMBLE:
+			if sp.has_meta("browsed"):
+				found["bitten"] = w0 == 0.0 and w9 > 0.9
+			elif w9 > 0.0:
+				bad.append(["whole bramble at 0.9", w9])
+		if p == PlantGenerator.PRESET_WOOD_ANEMONE and not (w0 == 1.0 and w9 < 0.5):
+			bad.append(["anemone", w0, w9])
+	_check("deer browsing: the oak floor swaps bramble for bitten bramble, adds the lawn, thins anemone", found.get("lawn", false) and found.get("bitten", false) and bad.is_empty(), [found, bad])
+
 # Forest edges (RULE_FOREST_EDGE, trees' make_edge meta): a forest of an old stand round a 25 m windthrow clearing.
 # The mantle (meta edge_distance -8 to 3 m) rings the clearing's edge; edge trees (0 to 10 m in, mesh meta
 # tree_open_side +X) stand just inside the forest with +X towards the clearing.
@@ -1838,6 +1909,7 @@ func _checks() -> void:
 	_stand_check()
 	_edge_check()
 	_beaver_check()
+	_browse_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []

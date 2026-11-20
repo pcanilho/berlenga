@@ -23,9 +23,10 @@ extends Node3D
 #   --season=F,D     flowering stage for degree days F (base 5 C, from 1 January) on day of year D
 #   --day=D          the season of day D from a default WeatherMap3D (flowering, fronds)
 #   --burn-age=A     years since the ground burnt, for the burn presets (season burn_age)
+#   --browse=B       deer browsing pressure 0..1 (season browse): bitten bramble and raspberry
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley", "pincushion_moss", "ground_ivy", "drinn", "desert_annuals", "soil_crust", "fireweed", "fire_moss", "charred_stems", "burnt_tussock", "reindeer_lichen", "raspberry"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley", "pincushion_moss", "ground_ivy", "drinn", "desert_annuals", "soil_crust", "fireweed", "fire_moss", "charred_stems", "burnt_tussock", "reindeer_lichen", "raspberry", "grazed_lawn"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -49,6 +50,7 @@ var seq := 0
 var wind := Vector2.ZERO
 var season := {}
 var burn_age := -1.0
+var browse := -1.0
 var n := 0
 var fails := 0
 
@@ -82,6 +84,8 @@ func _ready() -> void:
 			season = {"forcing": float(sv[0]), "day_of_year": int(sv[1]) if sv.size() > 1 else 180}
 		elif a.begins_with("--burn-age="):
 			burn_age = float(a.substr(11))
+		elif a.begins_with("--browse="):
+			browse = float(a.substr(9))
 		elif a.begins_with("--wind="):
 			var w := a.substr(7).split(",")
 			wind = Vector2(float(w[0]), float(w[1]))
@@ -97,6 +101,8 @@ func _ready() -> void:
 		gen.litter_leaves = PlantGenerator.stand_litter_leaves(stand)
 	if burn_age >= 0.0:
 		season["burn_age"] = burn_age
+	if browse >= 0.0:
+		season["browse"] = browse
 	gen.season = season
 	for p in NAMES.size():
 		if close >= 0 and p != close:
