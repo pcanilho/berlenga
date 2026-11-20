@@ -73,9 +73,6 @@ uniform sampler2D ground_tex : filter_linear, repeat_disable;
 uniform vec4 ground_rect;
 uniform sampler2D snow_tex : filter_linear, repeat_disable;
 uniform vec4 snow_rect;
-// Bumped each time the cover's texture changes: the path tracer recaptures vertex() output when a material
-// parameter changes, not when a texture it samples is rewritten in place.
-uniform float snow_serial = 0.0;
 uniform sampler2D catch_tex : filter_linear, repeat_disable;
 uniform bool has_catch = false;
 uniform sampler2D deform_tex : filter_linear, repeat_disable;
@@ -998,10 +995,6 @@ void SnowSurface3D::_notification(int p_what) {
 			}
 			if (cover && cover->get_update_count() != seen_cover_update) {
 				collision_dirty = true;
-			}
-			if (cover && material.is_valid() && cover->get_update_count() != seen_snow_serial) {
-				seen_snow_serial = cover->get_update_count();
-				material->set_shader_parameter("snow_serial", float(seen_snow_serial % 1000000));
 			}
 			step_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 		} break;

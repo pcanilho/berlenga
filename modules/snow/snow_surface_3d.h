@@ -157,7 +157,6 @@ class SnowSurface3D : public Node3D {
 	Ref<Image> deform_image;
 	Ref<ImageTexture> deform_texture;
 	uint64_t seen_cover_update = 0;
-	uint64_t seen_snow_serial = 0; // the cover update the material's snow_serial last marked
 	double collision_accum = 0.0;
 
 	MeshInstance3D *mesh_instance = nullptr;
