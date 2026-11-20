@@ -999,7 +999,29 @@ float snow_press(vec2 p_pack, float p_stiffness) {
 	float load = p_pack.y * 9.81 * p_pack.x; // Pa
 	return smoothstep(0.0, 1.0, load / (300.0 * max(p_stiffness * p_stiffness, 0.05))) * smoothstep(0.02, 0.06, p_pack.x);
 }
+
+// Surface hoar on the pack's top at a world position (mm; SnowCover3D hoar_enabled): the catch map's alpha is
+// 1 + mm / 10 where the cover answers. None on what lies well under or above that top (a roof's underside, a
+// crown).
+float snow_hoar_at(vec3 p_world_pos) {
+	if (snow_map_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 nuv = (p_world_pos.xz - snow_map_rect.xy) / snow_map_rect.zw;
+	if (any(lessThan(nuv, vec2(0.0))) || any(greaterThan(nuv, vec2(1.0)))) {
+		return 0.0;
+	}
+	vec2 half_texel = 0.5 / vec2(textureSize(snow_map, 0));
+	vec4 c = textureLod(snow_catch_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0);
+	if (c.a <= 1.0) {
+		return 0.0;
+	}
+	float dy = p_world_pos.y - c.r;
+	return (c.a - 1.0) * 10.0 * smoothstep(-0.8, -0.4, dy) * (1.0 - smoothstep(1.0, 1.5, dy));
+}
 )";
+	} else {
+		code += "float snow_hoar_at(vec3 p_world_pos) {\n\treturn 0.0;\n}\n";
 	}
 	code += R"(
 // Snow weight on a surface from the covered share. Snow slides off past p_max_slope (its angle of repose) and
@@ -1030,9 +1052,15 @@ void snow_cover_apply(float p_snow, float p_albedo, float p_wet, inout vec3 r_al
 // Deliot and Belcour 2023, reduced to one facet per cell): a cell holding n grains has a facet with chance
 // min(share n, 1) covering share / chance of it, fading as more facets share the cell. Returns the facet's
 // normal and its weight (0: none).
-vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
-	const float grain = 0.002;
-	const float share = 0.25;
+vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint, float p_hoar) {
+	// Surface hoar (p_hoar, mm): its crystals are flat ice plates and feathers a few mm to cm across, standing
+	// on the snow (Colbeck 1988; Lang et al. 1984), each one a mirror. Over hoar, the cell is the crystal's size,
+	// most crystals show a smooth face, and a share hf of the facets are plates set every way, their normals
+	// spread evenly over the sky up to 60 degrees off the snow's (past that the coat's grazing Fresnel would only
+	// darken the snow under it): far fewer, larger and brighter glints than the grains', from any sun.
+	float hf = smoothstep(0.5, 4.0, p_hoar);
+	float grain = max(0.002, 0.0006 * p_hoar);
+	float share = mix(0.25, 0.35, hf);
 	float level = floor(max(log2(max(p_footprint, grain) / grain), 0.0));
 	if (level > 5.0) {
 		return vec4(p_n, 0.0);
@@ -1053,8 +1081,13 @@ vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
 	if (r0 >= chance) {
 		return vec4(p_n, 0.0);
 	}
-	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-3);
-	float ct = inversesqrt(1.0 + tan2);
+	float ct;
+	if (r0 < chance * hf) {
+		ct = mix(0.5, 1.0, r1);
+	} else {
+		float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-3);
+		ct = inversesqrt(1.0 + tan2);
+	}
 	float st = sqrt(max(1.0 - ct * ct, 0.0));
 	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
 	vec3 b = cross(p_n, t);
@@ -1070,7 +1103,7 @@ vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
 // NORMAL, NORMAL_MAP, NORMAL_MAP_DEPTH, CLEARCOAT and CLEARCOAT_ROUGHNESS; p_footprint is the pixel's size in
 // metres at the surface.
 void snow_glint_apply(vec3 p_world_pos, vec3 p_geo_normal, float p_footprint, float p_snow, float p_wet, mat4 p_view, vec3 p_tangent, vec3 p_binormal, inout vec3 r_normal, inout vec3 r_normal_map, inout float r_normal_map_depth, inout float r_clearcoat, inout float r_clearcoat_roughness) {
-	vec4 g = snow_glint(p_world_pos, p_geo_normal, p_footprint);
+	vec4 g = snow_glint(p_world_pos, p_geo_normal, p_footprint, snow_hoar_at(p_world_pos));
 	float gw = g.w * step(0.5, p_snow) * (1.0 - smoothstep(0.05, 0.3, p_wet));
 	if (gw <= 0.0) {
 		return;
@@ -1097,8 +1130,10 @@ void snow_glint_apply(vec3 p_world_pos, vec3 p_geo_normal, float p_footprint, fl
 // is an ice facet, its normal GGX-tilted (alpha 0.4); a pixel's samples land on different grains, so the path
 // tracer integrates the footprint's own facets (the reference Jakob et al. 2014 and Yan et al. 2014 measure
 // their counting models against), at any distance and on any bounce.
-vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
-	const float grain = 0.002;
+vec3 snow_grain_facet(vec3 p_pos, vec3 p_n, float p_hoar) {
+	// Over surface hoar (p_hoar, mm), crystal-sized cells, a share hf of them plates set every way (as snow_glint).
+	float hf = smoothstep(0.5, 4.0, p_hoar);
+	float grain = max(0.002, 0.0006 * p_hoar);
 	ivec3 q = ivec3(floor(p_pos / grain));
 	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u);
 	h ^= h >> 16u;
@@ -1108,8 +1143,15 @@ vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
 	h ^= h >> 16u;
 	float r1 = float(h & 0xffffu) / 65536.0;
 	float r2 = float(h >> 16u) / 65536.0;
-	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-4);
-	float ct = inversesqrt(1.0 + tan2);
+	uint h2 = h * 0x9e3779b9u;
+	h2 ^= h2 >> 15u;
+	float ct;
+	if (float(h2 & 0xffffu) / 65536.0 < hf) {
+		ct = mix(0.5, 1.0, r1);
+	} else {
+		float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-4);
+		ct = inversesqrt(1.0 + tan2);
+	}
 	float st = sqrt(max(1.0 - ct * ct, 0.0));
 	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
 	vec3 b = cross(p_n, t);
@@ -1129,7 +1171,7 @@ void snow_glint_apply_specular(vec3 p_world_pos, vec3 p_geo_normal, float p_foot
 	if (gw <= 0.0) {
 		return;
 	}
-	r_specular_normal = normalize((p_view * vec4(snow_grain_facet(p_world_pos, p_geo_normal), 0.0)).xyz);
+	r_specular_normal = normalize((p_view * vec4(snow_grain_facet(p_world_pos, p_geo_normal, snow_hoar_at(p_world_pos)), 0.0)).xyz);
 	r_roughness = mix(r_roughness, 0.22, gw);
 }
 )";
