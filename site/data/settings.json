@@ -2874,7 +2874,7 @@
     "make_woodland"
    ],
    "note": "",
-   "what": "seventeen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), date palm oases (`STAND_DATE_OASIS`) and beetle-killed spruce (`STAND_BEETLE_SPRUCE`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
+   "what": "eighteen stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), date palm oases (`STAND_DATE_OASIS`) beetle-killed spruce (`STAND_BEETLE_SPRUCE`) and old-growth beech (`STAND_OLD_GROWTH_BEECH`), with veteran giants over a pole layer, gaps where single giants fell and five times more deadwood lying than standing. Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"

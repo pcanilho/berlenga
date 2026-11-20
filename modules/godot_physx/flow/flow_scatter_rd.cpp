@@ -193,6 +193,16 @@ vec3 sky_radiance(vec3 world_dir, float lod) {
 #endif
 }
 
+// The average light of the sky's upper (side 1) or lower (side -1) half, as the gas takes it in from all
+// around: five taps (straight up or down and four at 30 degrees from the horizon) two mips above the last.
+// The last mip alone averages the whole sphere, sky and ground together, and loses the sky's blue.
+vec3 sky_hemisphere(float side) {
+	float lod = max(p.sky.z - 4.0, 0.0);
+	const float c = 0.8660254;
+	const float e = 0.5;
+	return (sky_radiance(vec3(0.0, side, 0.0), lod) + sky_radiance(vec3(c, e * side, 0.0), lod) + sky_radiance(vec3(-c, e * side, 0.0), lod) + sky_radiance(vec3(0.0, e * side, c), lod) + sky_radiance(vec3(0.0, e * side, -c), lod)) * 0.2;
+}
+
 #define BLOCK_DIM_BITS (p.level[1].xyz)
 #define TABLE_DIM_LESS_ONE (p.level[2].xyz)
 #define TABLE_DIM_BITS_X (p.level[3].x)
@@ -347,26 +357,42 @@ float hg_phase(float c, float g) {
 // octave weighted by sky_map.z.
 // Fitted to the path tracer (docs/ideas/physx.md, "Flow raster light matches path tracing, refit"), each
 // light on its own on test puffs under a real sky:
-// - SUN_MS_GAIN: the octaves' light, over their sum (in sunlit gas the light scattered on from the rest of the
-//   cloud adds most of a second scattering's worth again).
-// - SKY_MS_SHARE: the sky's light already arrives from all around, so the octaves overcount it; this share of
-//   it is left, with the 0.9 albedo the gas loses it at every scatter, as the path tracer has it.
+// - SUN_MS_GAIN: the octaves' light, over their sum.
+// - SKY_MS_SHARE: the sky's and the ground's light already arrive from all around, so the octaves overcount it;
+//   this share of it is left.
+// - SKY_GAIN: the sky's light against the sun's (the path tracer's sky-only and sun-and-sky puffs, by colour as
+//   well as brightness: too little sky leaves the gas neutral grey where the path tracer's has the sky's blue).
 // - SKY_OCCLUSION: the sky reaches a point from the whole hemisphere, mostly along shorter paths out of the
 //   gas than the one straight up the sky map holds.
 // The densest smoke the gas is taken as: the path tracer's density majorant (RTSparseVolume::density_majorant),
 // which clamps the smoke it tracks to it, and Flow's own opacity march (patched, misc/physx_patches 0010).
 const float SMOKE_MAX = 2.0;
-const float SUN_MS_GAIN = 1.1;
-const float SKY_MS_SHARE = 0.18;
+const float SUN_MS_GAIN = 0.7;
+const float SKY_MS_SHARE = 0.19;
+const float SKY_GAIN = 3.0;
+// Fitted on test puffs lit from the side and from behind the camera: 0, the octaves scatter evenly.
+const float MS_ECCENTRICITY = 0.0;
 const float SKY_OCCLUSION = 0.15;
 
-float ms_transmittance(float tau) {
+// A light's in-scattering through optical depth tau, cos(view, light) c: single scattering and the octaves,
+// each with its own phase. The orders past the first need gas around the point to scatter in: in optically
+// thin gas the light is single scattering only (a powder-style ramp, as Schneider 2015 darkens thin cloud
+// edges), so thin edges stay see-through as under path tracing. Each scattering order spreads the light further from the light's direction, so octave i
+// takes the anisotropy g * MS_ECCENTRICITY^i (Wrenninge et al. 2013's eccentricity attenuation, as Frostbite's
+// clouds, Hillaire 2016): a cloud lit from behind the camera, where the first scattering's forward-leaning phase
+// sends little back, still glows with its many-times-scattered light, as under path tracing.
+float ms_light(float tau, float c, float g) {
 	float a = p.sky_map.x * (1.0 / 0.9);
-	// The orders past the first need gas around the point to scatter in: in optically thin gas the light is single
-	// scattering only (a powder-style ramp, as Schneider 2015 darkens thin cloud edges), so thin edges stay
-	// see-through as under path tracing.
 	float thick = 1.0 - exp(-2.0 * tau);
-	return (exp(-tau) + thick * (0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + p.sky_map.z * exp(-0.125 * tau))) * (p.sky_map.x * SUN_MS_GAIN);
+	float e = MS_ECCENTRICITY;
+	return (hg_phase(c, g) * exp(-tau) + thick * (hg_phase(c, g * e) * 0.5 * a * exp(-0.5 * tau) + hg_phase(c, g * e * e) * 0.25 * a * a * exp(-0.25 * tau) + hg_phase(c, g * e * e * e) * p.sky_map.z * exp(-0.125 * tau))) * (p.sky_map.x * SUN_MS_GAIN);
+}
+
+// The light from all around (sky above, ground below) through optical depth tau.
+float ms_ambient(float tau) {
+	float a = p.sky_map.x * (1.0 / 0.9);
+	float thick = 1.0 - exp(-2.0 * tau);
+	return SKY_MS_SHARE * (exp(-tau) + thick * (0.5 * a * exp(-0.5 * tau) + 0.25 * a * a * exp(-0.25 * tau) + p.sky_map.z * exp(-0.125 * tau))) * p.sky_map.x;
 }
 
 float ign(vec2 px) {
@@ -431,11 +457,12 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 		ambient_down = p.ambient.rgb;
 		if (p.ambient.w > 0.0) {
 			float sky_energy = p.sky.w - 1.0;
-			vec3 isotropic = sky_radiance(vec3(0.0, 1.0, 0.0), p.sky.z);
-			vec3 isotropic_down = sky_radiance(vec3(0.0, -1.0, 0.0), p.sky.z);
-			vec3 anisotropic = sky_radiance(g < 0.0 ? -dir : dir, max(p.sky.z - 1.0, 0.0));
-			ambient = mix(ambient, mix(isotropic, anisotropic, abs(g)) * sky_energy, p.ambient.w);
-			ambient_down = mix(ambient_down, mix(isotropic_down, anisotropic, abs(g)) * sky_energy, p.ambient.w);
+			vec3 isotropic = sky_hemisphere(1.0);
+			vec3 isotropic_down = sky_hemisphere(-1.0);
+			// Each half evenly (no tap along the view for the anisotropy: most of the light is scattered many
+			// times, which spreads it evenly, and a tap toward the horizon greyed the sky's blue).
+			ambient = mix(ambient, isotropic * sky_energy, p.ambient.w);
+			ambient_down = mix(ambient_down, isotropic_down * sky_energy, p.ambient.w);
 		}
 	}
 
@@ -468,7 +495,9 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 			vec3 pos_m = pos / upm;
 			// The light the ground below sends up: the sun on it (in the gas's shadow), added in the sun loop, and
 			// the sky's lower half.
-			vec3 ground_light = ambient_down;
+			// With a ground albedo the ground is lit by the sky above (its own lower half is a stand-in ground,
+			// often a dull brown, where a real snowfield under a blue sky is blue-white).
+			vec3 ground_light = p.sky_map.y > 0.0 ? ambient * p.sky_map.y : ambient_down;
 			for (int l = 0; l < light_count; l++) {
 				Light L = lights[l];
 				vec3 to_light = L.position_range.xyz - pos_m;
@@ -501,7 +530,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					}
 				}
 				// Gas between the point and the light.
-				float light_t = ms_transmittance(0.0);
+				float light_tau = 0.0;
 				if (shadow_steps > 0) {
 					float reach = min(d, p.misc.z) * upm;
 					float ds = reach / float(shadow_steps);
@@ -511,11 +540,9 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 						smoke_at(pos + ldir * (ds * (float(s) + 0.5)), cell_inv, light_acc, ls);
 						od += min(ls, SMOKE_MAX);
 					}
-					light_t = ms_transmittance(od * sigma * ds);
+					light_tau = od * sigma * ds;
 				}
-				float c = dot(dir, ldir);
-				float phase = hg_phase(c, g);
-				in_light += L.color_decay.rgb * (atten * phase * light_t);
+				in_light += L.color_decay.rgb * (atten * ms_light(light_tau, dot(dir, ldir), g));
 			}
 			if (p.sun.x > 0) {
 				vec3 vpos = (p.world_to_view * vec4(pos_m, 1.0)).xyz;
@@ -543,7 +570,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					if (atten <= 0.0) {
 						continue;
 					}
-					float light_t = ms_transmittance(0.0);
+					float light_tau = 0.0;
 					vec3 map_uvw = vec3(-1.0);
 #ifndef SHADOW_PASS
 					if (p.sun_map.w > 0.5 && dot(ldir, p.sun_map.xyz) > 0.9999) {
@@ -552,7 +579,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					}
 					if (all(greaterThanEqual(map_uvw, vec3(0.0))) && all(lessThanEqual(map_uvw, vec3(1.0)))) {
 						// All the gas toward the sun in one fetch (Frostbite's volumetric shadow maps).
-						light_t = ms_transmittance(textureLod(sun_map_tex, map_uvw, 0.0).r);
+						light_tau = textureLod(sun_map_tex, map_uvw, 0.0).r;
 					} else
 #endif
 					if (shadow_steps > 0) {
@@ -563,16 +590,14 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 							smoke_at(pos + ldir * (ds * (float(s) + 0.5)), cell_inv, light_acc, ls);
 							od += min(ls, SMOKE_MAX);
 						}
-						light_t = ms_transmittance(od * sigma * ds);
+						light_tau = od * sigma * ds;
 					}
-					float c = dot(dir, ldir);
-					float phase = hg_phase(c, g);
-					in_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * atten * phase * light_t);
+					in_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * atten * ms_light(light_tau, dot(dir, ldir), g));
 				}
 			}
 			if (ambient_on) {
 				// How much of the sky the point sees: the gas straight above it (a short march up).
-				float sky_t = ms_transmittance(0.0);
+				float sky_t = ms_ambient(0.0);
 				float ground_t = sky_t;
 				vec3 sky_uvw = vec3(-1.0);
 #ifndef SHADOW_PASS
@@ -583,10 +608,10 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 				if (all(greaterThanEqual(sky_uvw, vec3(0.0))) && all(lessThanEqual(sky_uvw, vec3(1.0)))) {
 					// All the gas above in one fetch.
 					float od_above = textureLod(sky_map_tex, sky_uvw, 0.0).r;
-					sky_t = ms_transmittance(od_above * SKY_OCCLUSION);
+					sky_t = ms_ambient(od_above * SKY_OCCLUSION);
 					// The gas below: the whole column's depth less what lies above.
 					float od_column = textureLod(sky_map_tex, vec3(sky_uvw.xy, 1.0), 0.0).r;
-					ground_t = ms_transmittance(max(od_column - od_above, 0.0) * SKY_OCCLUSION);
+					ground_t = ms_ambient(max(od_column - od_above, 0.0) * SKY_OCCLUSION);
 				} else
 #endif
 				if (shadow_steps > 0) {
@@ -601,9 +626,10 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 					// volumetric") and Hillaire 2016 (Frostbite sky and clouds): octaves of ever weaker,
 					// ever less attenuated light, so dense smoke isn't black inside as single scattering
 					// makes it.
-					sky_t = ms_transmittance(od * sigma * ds);
+					sky_t = ms_ambient(od * sigma * ds);
 				}
-				in_light += (ambient * sky_t + ground_light * ground_t) * (0.5 * SKY_MS_SHARE);
+				// Each half of the sphere around the point: the sky above, the ground below.
+				in_light += (ambient * (sky_t * SKY_GAIN) + ground_light * ground_t) * 0.5;
 			}
 			sum += transmittance * alpha * in_light;
 			transmittance *= 1.0 - alpha;
@@ -613,7 +639,9 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 		}
 		seg += dt;
 	}
-	return sum * p.albedo.rgb * p.albedo.w;
+	// Per unit of opacity (the upsample weighs it by Flow's own coverage).
+	float opacity = 1.0 - transmittance;
+	return opacity > 1e-4 ? sum * p.albedo.rgb * p.albedo.w / opacity : vec3(0.0);
 }
 
 #ifdef SHADOW_PASS
@@ -754,6 +782,7 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 layout(set = 0, binding = 2) uniform sampler2D depth_tex;
 layout(set = 0, binding = 3, rgba16f) uniform restrict readonly image2D scatter_img;
 layout(set = 0, binding = 4, rgba16f) uniform restrict image2D color_img;
+layout(set = 0, binding = 6) uniform sampler2D coverage_tex;
 
 void main() {
 	ivec2 px = ivec2(gl_GlobalInvocationID.xy);
@@ -809,8 +838,13 @@ void main() {
 	if (all(equal(light, vec3(0.0)))) {
 		return;
 	}
+	// The light is the gas's own per unit of opacity; the opacity is Flow's, from the ray march that drew the
+	// gas (its transmittance in alpha), so light and coverage come from the same samples: two marches with
+	// their own jitter disagree at thin edges, where the light then fell short of the drawn gas as a dark,
+	// dotted rim.
+	float coverage = 1.0 - clamp(texelFetch(coverage_tex, px, 0).a, 0.0, 1.0);
 	vec4 c = imageLoad(color_img, px);
-	c.rgb += light;
+	c.rgb += light * coverage;
 	imageStore(color_img, px, c);
 }
 )";
@@ -894,7 +928,7 @@ bool FlowScatterRD::_ensure(RenderingDevice *p_rd) {
 	return true;
 }
 
-void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource &p_source, const Params &p_params, const Light *p_lights, int p_light_count, const RID &p_depth, const RID &p_color, const RID &p_shadow_atlas, const Size2i &p_size, ShadowMap *r_shadow) {
+void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource &p_source, const Params &p_params, const Light *p_lights, int p_light_count, const RID &p_depth, const RID &p_color, const RID &p_coverage, const RID &p_shadow_atlas, const Size2i &p_size, ShadowMap *r_shadow) {
 	const bool scatter = p_light_count > 0 || p_params.ambient || p_params.directional_count > 0;
 	if (!p_source.valid || (!scatter && (r_shadow == nullptr || !r_shadow->enabled)) || p_size.x <= 0 || p_size.y <= 0 || !_ensure(p_rd)) {
 		return;
@@ -1065,9 +1099,9 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	f[w++] = CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
 	f[w++] = CLAMP(p_params.ground_albedo, 0.0f, 1.0f);
 	{
-		// The scattering orders past the three octaves, as a geometric series: the sum over n >= 3 of (c albedo)^n, c = 0.45
+		// The scattering orders past the three octaves, as a geometric series: the sum over n >= 3 of (c albedo)^n, c = 0.6
 		// the share of light a scatter keeps inside the gas (fitted with SUN_MS_GAIN to the path tracer on test puffs).
-		const float q = 0.45f * CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
+		const float q = 0.6f * CLAMP(p_params.scattering_albedo, 0.0f, 1.0f);
 		f[w++] = q * q * q / (1.0f - q);
 	}
 	f[w++] = sky_map ? 1.0f : 0.0f;
@@ -1133,6 +1167,7 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	up.push_back(RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 3, resolved));
 	up.push_back(RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 4, p_color));
 	up.push_back(RD::Uniform(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 5, params_buffer));
+	up.push_back(RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 6, Vector<RID>({ point_sampler, p_coverage })));
 	const RID up_set = p_rd->uniform_set_create(up, upsample_shader, 0);
 	ERR_FAIL_COND(!up_set.is_valid());
 	RD::ComputeListID list = p_rd->compute_list_begin();

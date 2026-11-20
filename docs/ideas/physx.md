@@ -2128,6 +2128,60 @@ Also: the light march now covers its stretch of the ray exactly
 (stratified steps, the last cut at the scene) instead of skipping the
 stretch before its first jittered sample.
 
+### Raster gas lit from behind the camera (20 Nov)
+
+Snow's v8 powder pair, sun on the camera's side so nothing shadows the
+cloud: PT near white (mean grey 189 down the cloud), raster mid grey with
+dark blotches (135). Raster gave every multiple-scattering octave the
+same forward-leaning phase as single scattering (HG g 0.4), so a cloud
+lit from the front got only the weak backward lobe of all its light.
+Many scatters spread light evenly, so each octave now takes the
+anisotropy g * MS_ECCENTRICITY^i (Wrenninge et al. 2013's eccentricity
+attenuation, as in Frostbite's clouds, Hillaire 2016). Fitted on a
+front-lit test puff (new 32-spp PT reference) together with the side-lit
+ones: MS_ECCENTRICITY 0 (octaves isotropic), the tail of orders past
+the octaves at c 0.6 (was 0.45), SUN_MS_GAIN 1.05 (was 1.1). Test puffs
+against PT: front-lit +0.1% (rms 2.2%), side-lit +0.1% at albedo 0.9 and
++2.7% at 0.99. Snow's powder (640x360): raster 135 -> 157 against PT 189,
+blotches gone; PT's frame is about 4% brighter on the plain snow too, so
+about 13% is left, in large dense powder only (a deep cloud of albedo
+0.99 reflects nearly like snow, through orders the octaves still cut
+short). Raising the tail further brightens the puffs 6-11% past PT.
+
+### Raster powder: rim, sky colour, sky against sun (20 Nov)
+
+Docs' second read of snow's front-lit powder (v8 on 9d213a78): still grey,
+a dark dotted rim, no blue cast, billows smoothed.
+- Rim: the light pass and Flow's own opacity march sampled the gas with
+  different jitter, so at thin edges Flow drew gas the light pass had not
+  lit (and the reverse). Flow's ray march now hands over its
+  transmittance in alpha (misc/physx_patches 0011); the light pass returns
+  light per unit of opacity and the upsample weighs it by Flow's own
+  coverage, so light and coverage come from the same samples. The frame
+  keeps its own alpha (the copy back keeps the destination's).
+- Blue cast: on the test puffs raster matched PT's brightness but was
+  neutral (blue/red 1.05 against PT's 1.23). Sky-only puffs: raster half
+  as bright and greyer (1.36 against 1.69). Three causes: the ground-light
+  change had halved the sky (neutral, sunlit ground made up the
+  brightness); without a sun the ground was lit from the sky's own
+  stand-in lower half (a dull brown) rather than the blue sky; the sky
+  taps were the radiance map's last mip, which averages the whole sphere,
+  plus a tap along the view toward the pale horizon. The sky is now five
+  taps over each half four mips above the last, the ground is lit by the
+  sky above it, and SKY_GAIN 3.0 against SUN_MS_GAIN 0.7 is fitted to a
+  new sky-only PT puff with the sun-and-sky ones.
+Test puffs against PT: front-lit -1.4%, side-lit +1.0% (0.9) and +2.7%
+(0.99), sky-only -6.8%; blue/red 1.09-1.11 against 1.21-1.26 (sky-only
+1.56 against 1.69). Fine billow detail under front light (docs' point 2)
+is not addressed: evenly scattered light carries no self-shadow, and the
+PT's fine structure is mostly its 16-spp grain over a sparser cloud.
+Snow's front-lit powder (640x360): mean grey 155 against PT 189 (156
+before), blue/red 1.067 against 1.087 (1.035 before), the dotted rim
+gone. The brightness gap in this large, dense albedo-0.99 cloud is
+unchanged: light that goes deep and diffuses back out of the lit face is
+beyond the octaves (a diffusion term, as in subsurface scattering, is
+the next step).
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

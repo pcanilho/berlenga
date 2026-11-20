@@ -2544,6 +2544,26 @@ As built:
 - Not yet: the snapped stems' tops lie as whole trees from the butt (the stump and the top are separate variants);
   plates do not settle into mounds over decades beyond the existing class 3 slump.
 
+### 5an. Old-growth beech (20 Nov; Paulo's pick)
+
+A primeval beech forest, after Uholka-Shyrokyi Luh in the Ukrainian Carpathians, the largest in Europe (WSL inventory,
+Brandli and Commarmot 2013, 314 plots: 97% beech; 435 living trees a hectare from 6 cm; 582 m3/ha living, 163 m3/ha
+dead, lying to standing about 5 to 1; about ten trees a hectare of 80 cm and more, the biggest beech 140 cm; 150 habitat
+trees a hectare, 35% of the living; beeches to nearly 500 years; mainly three-layered, most gaps no larger than one
+canopy tree's crown. Hobi et al. 2015, gaps from satellite: 98% under 200 m2, few large disturbances).
+- `STAND_OLD_GROWTH_BEECH` (18). Gaps: patches of 22 m scale, cover 0.3 (about a tenth of the ground clear; the patch
+  noise's bell makes small covers rarer than they read). In them, in order: a fallen giant (log, decay 2-4, half with
+  root plates), now and then a broken giant (snag), gap poles and the seedlings crowding in (beech, some sycamore).
+- Between the gaps: veteran giants about 24 m apart (6 a hectare on the bench plot), the canopy (a third of it habitat
+  trees with cavities, rot and tinder fungus), a little sycamore, and the pole layer under it (beech waits decades in
+  its own shade). Then the stand's usual saplings, snags and logs, logs at 1.0 against snags 0.3 (a reserve's 0.4 and
+  0.25): the bench counts 36 lying to 13 standing.
+- Ages per band (`old_growth_band`): giants 2.6-3.6x the beech's years capped at 180 (past about 200 the generator's
+  beech dieback leaves a few shoots on a bare head), veteran 0.6-1.0, limb breakage 1.5-2.5, grown at 0.75 of the
+  stand's shade so some crowns spread wide (radius to 9 m), placed 1.1-1.3x; poles 0.45-0.75x; canopy 1.2-2.0x.
+  The stand-grown beech stops changing shape past about 60 years (canopy and giants at the stand's shade came out
+  identical), hence the light and the scale.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
@@ -3299,8 +3319,10 @@ thinned tail shows gaps first.
   that line (data map sampled at 10, 20, 40 ... 2560 m), and no canopy as tall as the tree, on the ground between at
   0.5, 0.7, 0.85 and 0.95 of the way, hides it. The canopy test makes it conservative: from inside or below a forest
   on level ground nothing extra is kept; over open ground it keeps fewer than it could, never more.
-- Per commit (tiles recommit as the camera comes closer), so a skyline seen from a far other place stays as it was
-  committed until the tile recommits. Species meta `far_skyline = false` thins them too.
+- Per commit: a tile recommits when the camera comes closer, or when the eye has moved a tenth of its distance since
+  (vegetation's review: a sideways move sees another skyline). Kept trees are not widened (they are not part of the
+  thinned tail). The test runs behind first, from far to near, so a view from above leaves after one sample; from low
+  on level ground the front test leaves after one. Species meta `far_skyline = false` thins them too.
 - Bench: RIDGE=1 raises the plot to a 25 m crest at its -z edge; NO_SKYLINE=1 turns the keep off. From 650 m at eye
   height 4 m, --far=400: 717 trees drawn without, 907 with, the extras along the crest against the sky.
 
@@ -3308,3 +3330,23 @@ thinned tail shows gaps first.
 **Snow-laden crowns.** Conifer crowns catch snow (up to 30-60% of a storm's snowfall in a closed spruce stand; Hedstrom and Pomeroy 1998, Pomeroy et al. 1998 interception model): the load bends branch tips down (spruce and fir laterals droop 10-30 degrees under a few kg; Schmidt and Pomeroy 1990 branch bending), white caps sit on the upper side of each spray as real geometry, and it unloads in gusts, sun and thaw as falling clumps (Storck et al. 2002; Roesch et al. 2012 unloading rates). Heavy wet snow breaks tops and stems (snow breakage, Nykanen et al. 1997; Peltola et al. 1999 critical loads), through the TreeWind3D storm path. Reads the snow/weather contracts (snowfall, air temperature, wind); load per tree kept in TreeWind3D, released as Flow/particle clumps. Needs a WorldSnow line agreed with the snow thread (who owns snow on crowns).
 **Windthrow fields.** What a winter storm leaves (Lothar 1999, Kyrill 2007): gaps of thrown trees lying in drifts along the storm's track, root plates standing up with their pits beside them, snapped stems, leaning survivors, and over the years the plates crumbling into pit-and-mound ground while pioneers fill the gap (Schelhaas et al. 2003; Ulanova 2000; Peterson 2007 pit-mound microtopography). A `STAND_WINDTHROW` with a storm direction and age: stems baked fallen (not run through physics, for open-world scale) from the storm kit's plates and breaks, pits handed to the ground contract (tree_root_pit, as storm_damage does).
 **Old-growth beech.** A primeval beech forest's mosaic (Uholka, Commarmot et al. 2013; Feldmann et al. 2018): small canopy gaps of one to a few fallen giants, every age class under them, veteran beeches with cavities, broken tops and tinder fungus, standing and lying deadwood of 100-200 m3/ha at all decay classes. Builds on the veteran, fungi and deadwood code: a `STAND_OLD_GROWTH_BEECH` with a gap mask and age structure per gap.
+
+## Next-round options (card 20 Nov)
+
+**Old trunks up close.** Veteran giants read old from their microhabitats (Larrieu et al. 2018, the tree-related
+microhabitat typology: cavities, injuries, bark features, deadwood in the crown, growth forms, epiphytes, exudates),
+not from size alone: moss cushions and leafy lichens on the boles' wetter, north and lower sides, and on logs by decay
+class (bryophyte cover rising with decay; the forest floor taking the log over in class 4-5), as real geometry tufts
+placed by the existing bark detail and lichen masks; open rot-holes and woodpecker cavities cut into the trunk mesh
+with a dark interior; root buttresses and flare on the giants. Builds on BarkDetail3D, the lichen UV2 and veteran code.
+
+**Boreal taiga stand.** Norway spruce, Scots pine and birch on poor podzol, shaped by fire (Kuuluvainen and Aakala
+2011: boreal Fennoscandian forests mostly multi-cohort, with small-scale gap dynamics as well as fire), lichen floors
+under pine on dry sand (vegetation's floor), bog edges. A STAND_BOREAL using the fire bands and the beetle/windthrow
+machinery for its disturbances.
+
+**Forests that age.** One stand stepping through its stages over in-game years (stand initiation, stem exclusion,
+understory reinitiation, old growth: Oliver and Larson 1996): the bands already built (fire regrowth, windthrow gap
+young, beetle snags, old-growth poles) chosen by time since disturbance per patch, so a burnt or thrown patch regrows
+in the scene's calendar. Needs a per-patch disturbance age contract with world-links (WorldFire already gives
+burn_age_at).
