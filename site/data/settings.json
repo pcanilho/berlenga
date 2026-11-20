@@ -3542,10 +3542,11 @@
   {
    "name": "Melt-freeze crusts",
    "settings": [
-    "SnowCover3D.crust_enabled"
+    "SnowCover3D.crust_enabled",
+    "SnowSurface3D.crust_plates"
    ],
    "note": "",
-   "what": "a thawed surface refreezes into a crust that hardens each cycle; boots break thin ones into tipped pieces and stand on hard ones.",
+   "what": "a thawed surface refreezes into a crust that hardens each cycle; boots stand on hard ones and break thin ones into flat, sharp-edged plates tipped into the hole, with steps between them.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3701,10 +3702,12 @@
    "name": "Icicles",
    "settings": [
     "SnowIcicles3D",
-    "hazy_core"
+    "hazy_core",
+    "curtains",
+    "wind_direction"
    ],
    "note": "",
-   "what": "grown from roof melt water below freezing; clear ice with a hazy core.",
+   "what": "grown from roof melt water below freezing; clear ice with a hazy core, tapering like real dripping icicles, leaning with the wind they grew in, with drops at dripping tips and curtains where neighbours fuse.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
@@ -4096,7 +4099,7 @@
     "cloud_density"
    ],
    "note": "",
-   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); low stratus and stratocumulus follow the day's heating, wind, humidity and rain, with their base at the condensation level (`WeatherMap3D.cloud_regime_from_weather`); storms hang rain shafts under their base, slanted by the low wind and as dense as the rain is heavy, and a moving storm drops a shelf cloud along its gust front; high up, shear aloft breaks the cirrus into cirrocumulus grains and a spreading high sheet merges into a cirrostratus veil that carries halos; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
+   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); low stratus and stratocumulus follow the day's heating, wind, humidity and rain, with their base at the condensation level (`WeatherMap3D.cloud_regime_from_weather`); storms tower into a leaning cumulonimbus with a flat anvil downwind and mammatus beneath, and hang rain shafts under their base, slanted by the low wind and as dense as the rain is heavy, and a moving storm drops a shelf cloud along its gust front; high up, shear aloft breaks the cirrus into cirrocumulus grains and a spreading high sheet merges into a cirrostratus veil that carries halos; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""

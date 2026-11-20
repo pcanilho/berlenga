@@ -166,6 +166,27 @@ class SnowSurface3D : public Node3D {
 	StaticBody3D *body = nullptr;
 	bool clumps = true; // SnowClumps3D: the lumps a print breaks out of cohesive snow (ground detail)
 	SnowClumps3D *clumps_node = nullptr;
+	// Plates of a broken crust as geometry (docs/ideas/snow.md, follow-up 38): the field's 6 cm texels round
+	// each sector's ramp off, so the pieces are slabs over it with crisp edges and a lip.
+	struct CrustBreak {
+		Vector3 position;
+		float radius = 0.0f; // the footprint's, at the crust
+		float thickness = 0.0f;
+		float crack = 0.0f;
+		uint32_t seed = 0;
+		float age = 0.0f;
+		bool built = false;
+		float surface = 0.0f; // the snow surface at the middle when built, to see new snow bury it
+	};
+	mutable LocalVector<CrustBreak> crust_breaks;
+	MeshInstance3D *plates_instance = nullptr;
+	Ref<StandardMaterial3D> plates_material;
+	bool crust_plates = true;
+	bool plates_dirty = false;
+	float plates_check = 0.0f;
+	void _note_break(const Vector3 &p_center, float p_radius, float p_thickness) const;
+	void _crust_plates_step(double p_delta);
+	void _build_plates();
 	CollisionShape3D *collision_node = nullptr;
 	Ref<HeightMapShape3D> collision_shape;
 	Vector2 mesh_center;
@@ -289,6 +310,9 @@ public:
 	Rect2 get_deform_rect() const;
 	static SnowSurface3D *get_active() { return active; }
 	double get_step_time_msec() const { return step_msec; }
+	void set_crust_plates(bool p_enabled);
+	bool get_crust_plates() const { return crust_plates; }
+	int get_crust_plate_count() const; // breaks drawn as plates
 	Ref<ShaderMaterial> get_surface_material() const { return material; }
 
 	SnowSurface3D();

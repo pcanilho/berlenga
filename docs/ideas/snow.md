@@ -816,8 +816,8 @@ where melt water runs off the snow above into air below freezing.
   While water reaches the tip, the tip lengthens as a tube of spongy ice holding 26% liquid. The tube is
   as wide as the 5 mm pendant drop: `dL/dt = 2 q / (rho_i Lf 0.74)`, 1.05 cm/h at -10 C in still air
   and 4.3 cm/h at 2 m/s. The wall thickens as its wetted half freezes the running film. That share,
-  0.5, is our pick. It puts length growth at 8.2 times diameter growth, the low end of the 8 to 32
-  Maeno, Makkonen, Nishimura, Kosugi and Takahashi (1994) measured. A balance over the whole wall gives
+  0.25, is our pick (0.5 until 20 Nov). It puts length growth at 16 times diameter growth, the middle of the 8 to 32
+  Maeno, Makkonen, Nishimura, Kosugi and Takahashi (1994) measured (0.5 gave the low end, 8.2, and stubby 1:4 icicles). A balance over the whole wall gives
   4. Water the wall and tip do not freeze drips. Once the wall freezes all the water, the icicle only
   thickens. Above 0 C the same coefficients melt it back. An icicle thinned to the drop's size at its
   root falls.
@@ -1475,12 +1475,10 @@ Research: a slab avalanche leaves a crown (a tensile fracture standing the slab'
   resolution for stills. On a real GPU at frame rate the game never had this problem.
 - Trail bench: the walker's stand-in capsule joined world_contact (every PhysicsBody3D does since 9edd6953) and
   ploughed a trench through the prints; it is excluded, its boots print as before.
-- Open: a broken crust's plates read only as wider funnels with a few angular pieces from 1.5 m
+- Done in follow-up 38 (geometry plates). Was open: a broken crust's plates read only as wider funnels with a few angular pieces from 1.5 m
   (`--view=trail --prints-close --crust=1`); the pieces are linear ramps per crack sector, smoothed by the 6 cm
   field. Crisper plates (a step at each sector edge, a lip where a plate tips) are a follow-up.
-- Next-round candidate (icicles): every icicle is a smooth straight cone of one shape. Real ones carry ~1 cm growth
-  ripples in the geometry (Ueno's ripple instability; today only a normal map), a slight bend toward the wind or the
-  drip line, a pendant drop at the tip, and neighbours fusing into curtains near the eave.
+- Next-round candidate (icicles): done in follow-up 37.
 
 ## Follow-up 35: crown walls without slits (20 Nov 2026)
 
@@ -1512,6 +1510,61 @@ Research: a slab avalanche leaves a crown (a tensile fracture standing the slab'
   Nothing there worth trading detail for. Next candidates if a GPU bench on the PC shows the surface still
   high: a mip of the deformation map for the vertex prefilter (one fetch for four) and the 9-tap bilinear form
   of the Catmull-Rom depth for the vertex height (Sigg and Hadwiger; TheRealMJP's 9-tap filter).
+
+## Follow-up 37: icicles shaped as they grow (20 Nov 2026)
+
+Research: the ideal dripping icicle (Short, Baygents and Goldstein 2006, Phys. Fluids 18, 083101) is a
+parameter-free shape whose radius away from the tip goes as the distance from the tip to the power 3/4,
+r = 4/3 a^(1/4) z^(3/4); most lab icicles scatter round that exponent, tap-water ones with a bulge high up
+(Chen and Morris 2013, arXiv 1008.1922). Icicles bend when their root moves, when the film runs down one side,
+and in wind (Maeno, Makkonen and Takahashi 1994, Ann. Glaciol. 19): drag on the 2.44 mm pendant drop over its
+weight gives tan(lean) = 3 rho_air Cd U^2 / (8 rho_w r g), about 0.01 U^2, and they measured leans well past it.
+
+- **Shape**: drawn as the ideal icicle, root radius 0.913 of the growth model's cone so the drawn ice holds the
+  same mass (a 3/4 power profile holds 0.4 R^2 L against the cone's R^2 L / 3), rings closer toward the tip.
+- **Lean**: the axis is kept every 2 cm as the tip lays it down. Each new step leans downwind by twice the drop's
+  drag (at most 45 degrees) plus the site's own lean from its film's side (up to a slope of 0.08, our pick), so
+  an icicle that grew through a windy afternoon and a calm night is bent, not tilted. Melting takes the points
+  back. `wind_direction` (local, horizontal; `advance()` sets it from the weather's wind), `get_icicle_offset`.
+- **Drops**: a tip with water left over after it froze what it could hangs a pendant drop (2.5 mm water sphere,
+  the ice's clear material), and melting tips drip too. `is_icicle_dripping`.
+- **Curtains**: where neighbours hang closer than the thinner one's radius, the film bridges the gap: a web of
+  ice 0.6 of the thinner icicle thick from one wall's surface to the other's, down to where the gap opens past
+  that (`curtains`, on). First built from axis to axis, inside both icicles: the path tracer takes every front
+  face as air into ice, so ice drawn inside ice refracted twice and showed white wedges (docs caught it). Where
+  walls themselves overlap the same limit holds; the bench's dense eave keeps sites 5 cm apart (roots 4 cm).
+- **Ripples as geometry**: Chen and Morris (2013, arXiv 1301.4734) measured a 1 cm wavelength whatever the
+  conditions and amplitudes from under 0.1 mm (pure water) to a few millimetres (salty), roof melt behaving like
+  tap water; natural icicles 7-10 mm (Maeno et al. via Ueno 2011). Long icicles now carry them in the mesh, four
+  rings a wavelength. 0.25 mm (slope 0.16) read as a threaded screw and sawtoothed raster outlines (docs), where
+  photographs show faint, slightly irregular banding in refraction: now 0.03 mm full grown (our pick; slope 0.02,
+  already a visible swing in what the ice refracts), each wave 0.5-1.5 times that, spacing wandering up to 15%,
+  fading over the lower 40% toward the tip. Docs' ~1 mm figure is within the salty lab range, not roof melt.
+- **Slender**: the wall's wetted share is now 0.25 (length grows 16 times diameter, the middle of Maeno's 8-32);
+  a week's dense eave grows 0.5 m icicles 4 cm across at the root (1:12). The hazy core stays a column at most
+  3 mm across (scaled with the profile it widened into a white wedge at thick roots).
+- Bench: `--test=icicles` adds plumb in still air (steepest 0.078), 27 degrees in a 5 m/s wind, tips dripping
+  while they grow; `--view=icicles --wind=4` leans them, `--dense` (a week of melt, 5 cm sites) shows ripples and curtains.
+
+## Follow-up 38: a broken crust as plates (20 Nov 2026)
+
+Research: a crust on soft snow is a plate on an elastic foundation; under a point load it cracks radially first,
+then round at about its characteristic length, and the wedges between the cracks tip into the hole on their
+outer edge (Hetenyi 1946; the same sequence as floating ice breaking through under a load, Kerr 1976). The
+pieces are slabs as thick as the crust with sharp fracture faces; a postholed melt-freeze crust shows them as
+angular plates leaning into each hole, steps between neighbours that tipped differently.
+
+- The shared deform field already tips each of its seven sectors in as a ramp, but its 6 cm texels round the
+  ramps off (follow-up 34's open item: wider funnels, not plates). `SnowSurface3D` now lays each break's plates
+  as geometry over it: per sector (the field's own seed, so each lies on its ramp), a flat slab from the hole's
+  edge to the sector's crack reach with a jag in its outer crack, as thick as the crust, tipped by the ramp's
+  drop (read half way out and extrapolated, not from the footprint's own hole), the hinge edge lifted by up to
+  0.6 of the crust's thickness, 3 mm cracks between plates. Glazed top (roughness 0.45), the fracture faces a
+  little greyer and bluer. Laid a third of a second after the break (the body has sunk); new snow over the
+  rim buries them; up to 256 holes kept. `crust_plates` (on), `get_crust_plate_count`.
+- A body dragged through breaks at the hole's edge as it goes and keeps one set of plates (the trench's edges
+  stay the field's ramps); separate steps each get theirs.
+- `--test=crust` adds the plates' check; `--view=trail --prints-close --crust=1` shows them.
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
@@ -1564,3 +1617,46 @@ Soot from smoke haze was already built in world-links (21b20d1a, `SnowCover3D._r
 **Avalanches into water.**
 - An avalanche entering a lake or the sea pushes an impulse wave. Heller and Hager (2010) give its height from the slide's mass, speed and thickness and the water depth, from lab and field data (granular slides into reservoirs).
 - This needs Valence's water (WorldWater) to take an impulse. The snow side reports where, how much and how fast through a contract call; the water side makes the wave. It also lays debris on lake ice or breaks it.
+
+## Next round (proposed 20 Nov 2026, round 5): frost, spring snow, spindrift, packed roads
+
+Research notes for Paulo's pick; nothing below is built yet.
+
+**Rime and hoar frost.**
+- *Surface hoar:* on clear, calm nights the snow surface radiates below the air's frost point and vapour
+  deposits as feathery plates and cups, mm to cm long, that flash in low sun (Hachikubo and Akitaya 1997;
+  Colbeck 1988). Growth needs light wind (1-3 m/s) and a humid layer; strong wind breaks it. Buried by the next
+  snow it is the classic persistent weak layer: it would lower the avalanche stability index for weeks (Jamieson
+  and Schweizer 2000), a real link from night weather to avalanches.
+- *Rime:* supercooled fog droplets freeze on contact into feathers that grow into the wind on trees, fences,
+  posts and wires (Makkonen 2000, models for rime, glaze, icicles and wet snow on structures: accretion rate =
+  collision efficiency x liquid water content x wind speed x area). Needs the haze/fog contract's liquid water,
+  WeatherMap3D wind, and a surface list (trees' crowns, props) as icicles take an edge.
+- Build: a hoar layer flag on the cover (grown on clear calm nights, broken by wind or sun, buried as a weak
+  layer), its glints from the existing grain facets at larger size; rime as geometry feathers on props (a
+  shell grown along the wind's direction) and a rime tint on tree crowns via the trees thread.
+
+**Spring snow surface.**
+- Suncups: in clear sunny weather ablation hollows 20-50 cm across grow into a cellular pattern with sharp
+  ridges (Betterton 2001, Phys. Rev. E 63; Rhodes, Armstrong and Warren 1987: dirt in the snow sets whether
+  hollows or dirt cones form). At altitude in dry air they sharpen into penitentes. Dust and soot (already on the
+  cover) gather on the ridges or in the hollows by their amount.
+- Rotten spring snow: a wet isothermal pack bears little (the crust model's wet case), so walkers posthole
+  deep; slush where melt water saturates the base over frozen ground.
+- Build: an ablation-hollow height field on the cover in sunny melt (a cellular noise grown by melt hours,
+  wavelength from the published 20-50 cm), the dirt split by amount, deeper prints in rotten snow.
+
+**Spindrift plumes off ridges.**
+- Snow blown off a ridge or cornice lip streams out in a plume hundreds of metres long in strong wind, a staple
+  of mountain vistas. Stage 3's blowing-snow particles cover the near field only. Per the PhysX rule, the plume
+  is a Flow gas: emitters on lee edges where the cover's transport flux is high (the cornice code already finds
+  them), negative buoyancy for the snow's weight, Flow's wind and terrain floor carrying it.
+- Check: no plume under the threshold wind or from wet snow; plume length grows with wind.
+
+**Packed-snow roads.**
+- Traffic packs snow into a hard layer that polishes to ice where tyres spin or brake (Wallman and Astrom 2001,
+  road friction: packed snow mu 0.2-0.3, ice 0.05-0.15, wet ice lower). Ruts form where wheels run; slush where
+  traffic churns wet snow; tyres throw slush spray.
+- Build: per-cell packing and polish from the shared press bodies (wheels already press the snow), a grip value
+  in the world contract for world-links' tyre slip, ice glaze look (low roughness, clearer), slush spray via
+  PhysX particles.

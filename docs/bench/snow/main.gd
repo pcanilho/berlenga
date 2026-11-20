@@ -96,13 +96,16 @@ class BodySnowStub extends WorldSnow:
 #                     falling in a thaw with its debris at the foot of the face, none with failure off
 #   --test=icicles    icicles: tip and wall rates (Makkonen 1988), the ratio of the two against Maeno et al.
 #                     (1994), an eave in a day of thaw over frost, water kept, thickening once the wall
-#                     freezes all of it, melting back
+#                     freezes all of it, melting back; the shape: plumb in still air, leaning in wind, tips dripping
 #   --view=cornice --crack=D  D days of thaw after the bake (the tension crack opening); --fall: on until the
 #                     first cornice falls, a moment later (the blocks tumbling)
 #   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
+#                     [--wind=S: a steady wind along the eave by day, the tips lean; --dense: a week of melt with
+#                     sites 5 cm apart, rippled icicles bridged into curtains]
 #   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
 #   --settled         (trail view) 0.4 m of settled snow (300 kg/m3) instead of fresh: prints break clumps
 #   --no-clumps       (trail view) no snow clumps beside the prints
+#   --no-plates       (trail view) a broken crust without its plates (the field's ramps alone)
 #   --prints-close    (trail view) 1.5 m over two boot prints (with --crust=1: the broken crust's pieces)
 #   --clumps-close    (trail view) the camera low beside the small ball's furrow
 #   --away            (trail view) the field leaves for 300 m and comes back: are the clumps kept?
@@ -578,6 +581,10 @@ func _run_crust_tests() -> void:
 	var vol := surface.get_moved_volume() - v0
 	_check("a boot (%.0f kPa) breaks a first-cycle crust" % boot, st1 < boot and broken.dent > 0.05, "%.3f m deep" % broken.dent)
 	_check("the crust cracks around the hole and the pieces tip in", broken.edge > 0.01 and broken.cv > 0.3 and vol.y <= 0.3 * vol.x + 1e-4, "%.3f m down 25 cm from the middle, varying %.0f%% along it (jagged); rim %.4f of %.4f m3 pressed" % [broken.edge, broken.cv * 100.0, vol.y, vol.x])
+	for i in 30:
+		await get_tree().physics_frame
+	var plates := surface.get_crust_plate_count()
+	_check("a broken crust lies in plates (follow-up 38; the dragged boot makes one hole)", plates >= 1, "%d holes with plates" % plates)
 	await _weather_to(8.0, 10.0)
 	await _weather_to(-8.0, 14.0)
 	var c2 := snow.get_crust_cycles_at(p)
@@ -2191,6 +2198,38 @@ func _run_icicle_tests() -> void:
 	var m0 := ice.get_ice_mass()
 	ice.grow(24.0, -8.0, 0.5, 0.004)
 	_check("a trickle the wall freezes: thicker, no longer (Szilder and Lozowski 1994)", ice.get_longest() < l0 + 0.002 and ice.get_ice_mass() > m0, "longest %.3f to %.3f m, %.3f to %.3f kg" % [l0, ice.get_longest(), m0, ice.get_ice_mass()])
+	# Shape (follow-up 37): the film's own lean stays gentle; a steady wind leans the tips downwind.
+	var lean_still := 0.0
+	var k_long := 0
+	for k in ice.get_icicle_count():
+		if ice.get_icicle_length(k) > ice.get_icicle_length(k_long):
+			k_long = k
+		var len_k := ice.get_icicle_length(k)
+		if len_k > 0.05:
+			lean_still = maxf(lean_still, ice.get_icicle_offset(k, len_k).length() / len_k)
+	_check("in still air an icicle hangs near plumb (its film's side bends it a little)", lean_still < 0.1, "steepest lean %.3f" % lean_still)
+	var windy := SnowIcicles3D.new()
+	windy.edge = PackedVector3Array([Vector3(-1, 0, 0), Vector3(1, 0, 0)])
+	windy.wind_direction = Vector3(1, 0, 0)
+	for day in 3:
+		windy.grow(6.0, -4.0, 5.0, 0.9)
+		windy.grow(18.0, -8.0, 0.5, 0.0)
+	var lean_x := 0.0
+	var n_long := 0
+	for k in windy.get_icicle_count():
+		var len_k := windy.get_icicle_length(k)
+		if len_k > 0.05:
+			lean_x += windy.get_icicle_offset(k, len_k).x / len_k
+			n_long += 1
+	lean_x /= maxf(n_long, 1)
+	_check("a 5 m/s wind leans the tips downwind (the drop's drag; Maeno et al. 1994)", lean_x > 0.3 and lean_x < 0.8, "mean lean %.2f (%.0f degrees) over %d icicles" % [lean_x, rad_to_deg(atan(lean_x)), n_long])
+	windy.grow(0.5, -4.0, 0.5, 0.9)
+	var drips := 0
+	for k in windy.get_icicle_count():
+		if windy.is_icicle_dripping(k):
+			drips += 1
+	_check("water left at the tips hangs as drops while they grow", drips > 0, "%d of %d tips dripping" % [drips, windy.get_icicle_count()])
+	windy.free()
 	ice.grow(12.0, 4.0, 2.0, 0.0)
 	_check("a thaw melts them back", ice.get_longest() < l0 * 0.8, "%.3f m after 12 h at +4 C" % ice.get_longest())
 	ice.free()
@@ -2397,6 +2436,7 @@ func _build_trail(cam: Camera3D) -> void:
 		# A 2 cm melt-freeze crust on top: one cycle breaks under a boot, two hold it.
 		snow.add_crust(0.02, crust_cycles)
 	surface = SnowSurface3D.new()
+	surface.crust_plates = not OS.get_cmdline_user_args().has("--no-plates") # --no-plates: the field's ramps alone
 	surface.snow_cover = NodePath("../SnowCover3D")
 	surface.follow_target = NodePath("../Probe")
 	if OS.get_cmdline_user_args().has("--close") or OS.get_cmdline_user_args().has("--prints-close"):
@@ -2704,13 +2744,26 @@ func _build_icicles(cam: Camera3D) -> void:
 	var ice := SnowIcicles3D.new()
 	ice.name = "Icicles"
 	ice.spacing = 0.12
+	if OS.get_cmdline_user_args().has("--dense"):
+		ice.spacing = 0.05 # --dense: a dripping stretch, sites close enough that neighbours bridge into curtains
 	ice.edge = PackedVector3Array([Vector3(-4.95, eave_y, 0.12), Vector3(-0.05, eave_y, 0.12)])
 	add_child(ice)
 	# Three days: six hours of melt off the sunny roof (0.3 mm/h over its 3.4 m) at -4 C, then a night at -8 C.
-	for day in 3:
-		ice.grow(6.0, -4.0, 0.5, 0.3 * 3.4)
+	# --wind=S: a steady wind along the eave by day (it leans the tips; follow-up 37).
+	var day_wind := 0.5
+	if Array(OS.get_cmdline_user_args()).any(func(a): return a.begins_with("--wind=")):
+		day_wind = wind
+		ice.wind_direction = Vector3(-1, 0, 0)
+	# --dense: a week of it (long, thick icicles, rippled).
+	for day in (7 if OS.get_cmdline_user_args().has("--dense") else 3):
+		ice.grow(6.0, -4.0, day_wind, 0.3 * 3.4)
 		ice.grow(18.0, -8.0, 0.5, 0.0)
-	print("icicles: %d sites, longest %.2f m, %.2f kg of ice" % [ice.get_icicle_count(), ice.get_longest(), ice.get_ice_mass()])
+	# The last afternoon's melt still running: the tips drip.
+	ice.grow(0.25, -4.0, day_wind, 0.3 * 3.4)
+	var rmax := 0.0
+	for k in ice.get_icicle_count():
+		rmax = maxf(rmax, ice.get_icicle_radius(k))
+	print("icicles: %d sites, longest %.2f m, thickest %.1f cm across, %.2f kg of ice" % [ice.get_icicle_count(), ice.get_longest(), rmax * 200.0, ice.get_ice_mass()])
 	# At the icicles' height along the eave, the sky and the field behind them.
 	cam.position = Vector3(-0.2, 2.05, 1.1)
 	cam.look_at(Vector3(-2.2, 2.1, 0.17))

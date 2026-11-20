@@ -471,3 +471,21 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
 - Raster and PT match (640). Near the camera the rain is the haze's and RainFall3D's; distant shafts draw against
   the sky only (terrain in front of a shaft hides it, as it should; a shaft in front of far terrain is not drawn yet).
 - Bench: weather `--storm=x,z,R,mm,outflow` (grown 15 min, the storm moving about 9 km), `--wind-dir=x,z`.
+- Review fixes (later 20 Nov; docs: a doughnut shelf, no storm above it, even shafts):
+  - Cumulonimbus body (`storm_body_at` / `wc_storm_body`): one tower about 1.5 core radii across from the base to
+    the storm's height (top_height at type 1 times growth, 7.5 km over the base by default), leaning downwind,
+    spreading from 78% of its height into an anvil about 3 core radii across centred 1.6 radii downwind, flat under
+    the tropopause (Houze 1993, 8). Solid through (the lifted noise times the envelope), outline the noise's. Single
+    cells fade out within 1.8 body radii (the updraft's subsidence keeps other towers away). Under the anvil's
+    footprint the column's type is the storm's, so its height is not cut.
+  - Shelf as a solid wedge: from the lowered base to 400 m above the storm's base, smooth underneath, its upper face
+    the noise's; single cells give way there. Arc narrowed to about +-55 degrees of the storm's motion.
+  - Shafts: three curtain octaves (1.2 km, 400 m, 130 m) thresholded so lighter gaps open between heavier sheets;
+    24 steps.
+  - Mammatus (`march_mammatus`): lobes hang up to 500 m under the body's anvil (from 78% of the storm's height) on a
+    jittered 1.6 km grid, where the anvil overhangs (away from the tower) and the more the drier the air (the
+    ground humidity, as the sub-anvil air's proxy); 16 steps over a 700 m slab; lit by the light under the anvil and
+    the sun through their skin. Composited with the low march by distance. Subtle under a high sun; they show best
+    with a low sun (a sunset frame).
+  - Cost unchanged on lavapipe (538 ms a frame with a storm in view). Raster and PT match. The raster speckle on a
+    distant sunlit tower face is the half-res reconstruction (improvements card).

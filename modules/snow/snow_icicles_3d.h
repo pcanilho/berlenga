@@ -56,6 +56,9 @@ class SnowIcicles3D : public Node3D {
 		float share = 1.0f; // of the water along the edge
 		float length = 0.0f; // m
 		float radius = 0.0f; // m, at the root
+		Vector2 own_lean; // the axis's own slope (x, z per metre down), from the film's path down one side
+		Vector<Vector2> bend; // the axis's sideways offset every AXIS_STEP down from the root (local x, z)
+		bool dripping = false; // water left over at the tip in the last step: a pendant drop hangs there
 	};
 	Vector<Icicle> icicles;
 	bool sites_dirty = true;
@@ -64,6 +67,8 @@ class SnowIcicles3D : public Node3D {
 	Ref<StandardMaterial3D> default_core_material;
 	Ref<Material> core_material;
 	bool hazy_core = true;
+	Vector3 wind_direction; // local, horizontal: the way the wind blows the tip's drop (zero: none)
+	bool curtains = true;
 	uint64_t seen_update = 0;
 	float drawn_change = 0.0f;
 	float last_supply = 0.0f; // kg/h along the whole edge, last step
@@ -116,4 +121,11 @@ public:
 	Ref<Material> get_core_material() const { return core_material; }
 	void set_hazy_core(bool p_enabled);
 	bool get_hazy_core() const { return hazy_core; }
+	void set_wind_direction(const Vector3 &p_direction);
+	Vector3 get_wind_direction() const { return wind_direction; }
+	void set_curtains(bool p_enabled);
+	bool get_curtains() const { return curtains; }
+	// The axis's sideways offset (local x, z) p_depth below an icicle's root.
+	Vector2 get_icicle_offset(int p_index, float p_depth) const;
+	bool is_icicle_dripping(int p_index) const;
 };

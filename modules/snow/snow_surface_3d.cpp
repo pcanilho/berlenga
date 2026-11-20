@@ -55,6 +55,7 @@
 #include "scene/resources/3d/height_map_shape_3d.h"
 #include "scene/resources/3d/sphere_shape_3d.h"
 #include "scene/resources/mesh.h"
+#include "scene/resources/surface_tool.h"
 #include "scene/resources/material.h"
 
 // The surface shader: the same height function in vertex() (geometry, traced from the capture)
@@ -732,11 +733,20 @@ float SnowSurface3D::SnowColumns::sinkage(const GroundDeformField::Body &p_body)
 	if (strength <= 0.0f) {
 		return z;
 	}
+	const float over = cover->get_crust_depth_at(wp);
+	// A fresh break near the surface: its plates show (follow-up 38). The footprint at the crust: a box's
+	// half size, else the contact area's radius, else half the body's.
+	auto note = [&]() {
+		if (over < 0.05f) {
+			const float r = p_body.box ? 0.8f * p_body.box_half.length() : (p_body.area > 0.0f ? Math::sqrt(p_body.area / float(Math::PI)) : 0.5f * p_body.radius);
+			surface->_note_break(p_body.center, r, cover->get_crust_thickness_at(wp));
+		}
+	};
 	if (p_body.mass <= 0.0f) {
 		broke = true; // driven through at a set depth: it breaks whatever is there
+		note();
 		return z;
 	}
-	const float over = cover->get_crust_depth_at(wp);
 	const float depth = cover->get_depth_at(wp);
 	if (over >= depth) {
 		return z;
@@ -752,6 +762,7 @@ float SnowSurface3D::SnowColumns::sinkage(const GroundDeformField::Body &p_body)
 		return MIN(z, above);
 	}
 	broke = true;
+	note();
 	return z;
 }
 
@@ -1039,9 +1050,208 @@ void SnowSurface3D::_notification(int p_what) {
 			if (cover && cover->get_update_count() != seen_cover_update) {
 				collision_dirty = true;
 			}
+			_crust_plates_step(delta);
 			step_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 		} break;
 	}
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Crust plates (docs/ideas/snow.md, follow-up 38)
+
+void SnowSurface3D::_note_break(const Vector3 &p_center, float p_radius, float p_thickness) const {
+	if (!crust_plates || p_thickness <= 0.0f || p_radius <= 0.0f) {
+		return;
+	}
+	// One set of plates per hole: a body still sinking, or the next step's overlap, adds none.
+	for (const CrustBreak &b : crust_breaks) {
+		if (Vector2(b.position.x - p_center.x, b.position.z - p_center.z).length() < 0.6f * MAX(b.radius, p_radius)) {
+			return;
+		}
+	}
+	CrustBreak b;
+	b.position = p_center;
+	b.radius = p_radius;
+	b.thickness = p_thickness;
+	b.crack = GroundDeformField::CRACK_LENGTH * Math::pow(p_thickness / 0.02f, 0.75f);
+	// The field's own seed for this press, so each plate lies on its sector's ramp.
+	b.seed = hash_murmur3_one_32(uint32_t(int(Math::floor(p_center.x / 0.25f))) * 73856093u ^ uint32_t(int(Math::floor(p_center.z / 0.25f))) * 19349663u);
+	if (crust_breaks.size() >= 256) {
+		crust_breaks.remove_at(0);
+	}
+	crust_breaks.push_back(b);
+}
+
+void SnowSurface3D::_crust_plates_step(double p_delta) {
+	if (crust_breaks.is_empty()) {
+		return;
+	}
+	const SnowCover3D *cover = _cover();
+	// A break's plates are laid once the body has sunk (a third of a second on): they sample the hole it made.
+	for (CrustBreak &b : crust_breaks) {
+		b.age += float(p_delta);
+		if (!b.built && b.age >= 0.35f) {
+			b.built = true;
+			b.surface = cover ? _surface_at(b.position.x + b.radius + 0.5f * b.crack, b.position.z, cover) : 0.0f;
+			plates_dirty = true;
+		}
+	}
+	// New snow over them (the surface beside the hole risen past the plates) buries them.
+	plates_check += float(p_delta);
+	if (cover && plates_check >= 1.0f) {
+		plates_check = 0.0f;
+		for (uint32_t i = 0; i < crust_breaks.size();) {
+			const CrustBreak &b = crust_breaks[i];
+			if (b.built && _surface_at(b.position.x + b.radius + 0.5f * b.crack, b.position.z, cover) > b.surface + 0.02f + b.thickness) {
+				crust_breaks.remove_at(i);
+				plates_dirty = true;
+			} else {
+				i++;
+			}
+		}
+	}
+	if (plates_dirty) {
+		plates_dirty = false;
+		_build_plates();
+	}
+}
+
+void SnowSurface3D::_build_plates() {
+	// Each break: the field's seven radial sectors (GroundDeformField::press), each a slab from the hole's edge
+	// to its own crack reach, its corners on the hole's surface there, so it tips into the hole as the field's
+	// ramp does but stays one flat piece with a sharp fractured edge as thick as the crust. The outer edge, the
+	// hinge it rocked on, lifts a little (a lip; up to a fifth of the inner edge's drop), and a 3 mm crack
+	// parts the plates, so neighbours that tipped differently show a step between them. Pieces of a plate on
+	// an elastic foundation break radially, then round at about its characteristic length (Hetenyi 1946).
+	const SnowCover3D *cover = _cover();
+	if (!plates_instance) {
+		plates_instance = memnew(MeshInstance3D);
+		plates_instance->set_as_top_level(true);
+		add_child(plates_instance, false, INTERNAL_MODE_FRONT);
+	}
+	if (plates_material.is_null()) {
+		// A melt-freeze crust: coarse rounded grains bonded by refrozen water, glazed on top (smoother than
+		// new snow) and greyer and bluer in a fresh fracture, where light goes deeper into the bonded grains.
+		plates_material.instantiate();
+		plates_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
+		plates_material->set_albedo(Color(1, 1, 1));
+		plates_material->set_roughness(0.45f);
+		plates_material->set_specular(0.335f);
+	}
+	Ref<SurfaceTool> st;
+	st.instantiate();
+	st->begin(Mesh::PRIMITIVE_TRIANGLES);
+	int faces = 0;
+	const int sectors = GroundDeformField::CRACK_SECTORS;
+	for (const CrustBreak &b : crust_breaks) {
+		if (!b.built || !cover) {
+			continue;
+		}
+		const float albedo = CLAMP(cover->get_albedo_at(b.position), 0.4f, 0.95f);
+		const Color top_c(albedo, albedo, albedo);
+		const Color side_c(albedo * 0.84f, albedo * 0.88f, albedo * 0.93f);
+		for (int k = 0; k < sectors; k++) {
+			const uint32_t hs = hash_murmur3_one_32(uint32_t(k), b.seed);
+			const float reach = b.crack * (0.5f + 1.1f * float(hs & 0xffff) / 65535.0f);
+			// The field's sector k: a = atan2 + pi in [k, k + 1) sevenths of a turn.
+			const float gap = 0.0015f; // half the crack's width
+			const float a0 = float(Math::TAU) * k / sectors - float(Math::PI);
+			const float a1 = float(Math::TAU) * (k + 1) / sectors - float(Math::PI);
+			const float r0 = b.radius + 0.004f;
+			const float r1 = b.radius + reach;
+			const float jag = 0.15f * reach * (float((hs >> 16) & 0xff) / 255.0f - 0.5f);
+			const float lip = 0.2f * float((hs >> 24) & 0xff) / 255.0f;
+			auto at = [&](float p_r, float p_a, float p_side) {
+				// p_side: across the crack, inward from the sector's edge (its normal), by the crack's half width.
+				const Vector2 dir(Math::cos(p_a), Math::sin(p_a));
+				const Vector2 across(-dir.y * p_side, dir.x * p_side);
+				const Vector2 q = Vector2(b.position.x, b.position.z) + dir * p_r + across * gap;
+				return Vector3(q.x, 0.0f, q.y);
+			};
+			Vector3 poly[5] = {
+				at(r0, a0, 1.0f), // inner, at the sector's first edge
+				at(r1, a0, 1.0f), // outer at the first edge
+				at(r1 + jag, 0.5f * (a0 + a1), 0.0f), // the outer crack's jag
+				at(r1, a1, -1.0f), // outer at the second edge
+				at(r0, a1, -1.0f), // inner at the second edge
+			};
+			// The plate's tip from the field's ramp (linear from the footprint's edge out to the reach): its outer
+			// edge on the crust, and half way out, so the inner edge is extrapolated along the ramp rather than
+			// sampled in the footprint's own deeper hole.
+			const float mid_r = 0.5f * (r0 + r1);
+			const Vector3 m0 = at(mid_r, a0 + 0.25f * (a1 - a0), 0.0f), m1 = at(mid_r, a0 + 0.75f * (a1 - a0), 0.0f);
+			const float outer = (_surface_at(poly[1].x, poly[1].z, cover) + _surface_at(poly[2].x, poly[2].z, cover) + _surface_at(poly[3].x, poly[3].z, cover)) / 3.0f;
+			const float half_way = 0.5f * (_surface_at(m0.x, m0.z, cover) + _surface_at(m1.x, m1.z, cover));
+			const float drop = CLAMP(2.0f * (outer - half_way), 0.0f, 0.5f * b.crack);
+			if (drop < 0.003f) {
+				continue; // a sector that did not tip (beyond the field's crust): no plate
+			}
+			// The hinge edge lifts as the plate rocks on it (up to 0.6 of the crust's thickness); the slab's top
+			// stands a quarter of its thickness over the field's rounded ramp inside.
+			float h[5];
+			h[0] = h[4] = outer - drop + 0.25f * b.thickness;
+			h[1] = h[2] = h[3] = outer + 3.0f * lip * b.thickness;
+			Vector3 top[5], bot[5];
+			for (int c = 0; c < 5; c++) {
+				top[c] = Vector3(poly[c].x, h[c], poly[c].z);
+				bot[c] = top[c] - Vector3(0.0f, b.thickness, 0.0f);
+			}
+			auto tri = [&](const Vector3 &p0, const Vector3 &p1, const Vector3 &p2, const Color &p_c, const Vector3 &p_out) {
+				Vector3 n = (p1 - p0).cross(p2 - p0);
+				if (n.length_squared() < 1e-14f) {
+					return;
+				}
+				n.normalize();
+				// Clockwise front (Godot's): flip to face p_out.
+				const bool flip = n.dot(p_out) > 0.0f;
+				const Vector3 nn = flip ? n : -n;
+				const Vector3 v[3] = { p0, flip ? p2 : p1, flip ? p1 : p2 };
+				for (const Vector3 &q : v) {
+					st->set_normal(nn);
+					st->set_color(p_c);
+					st->add_vertex(q);
+				}
+				faces++;
+			};
+			const Vector3 mid_top = (top[0] + top[1] + top[2] + top[3] + top[4]) / 5.0f;
+			for (int c = 1; c + 1 < 5; c++) {
+				tri(top[0], top[c], top[c + 1], top_c, Vector3(0, 1, 0));
+				tri(bot[0], bot[c], bot[c + 1], side_c, Vector3(0, -1, 0));
+			}
+			for (int c = 0; c < 5; c++) {
+				const int d = (c + 1) % 5;
+				Vector3 out = (top[c] + top[d]) * 0.5f - mid_top;
+				out.y = 0.0f;
+				tri(top[c], top[d], bot[d], side_c, out);
+				tri(top[c], bot[d], bot[c], side_c, out);
+			}
+		}
+	}
+	if (faces == 0) {
+		plates_instance->set_mesh(Ref<Mesh>());
+		return;
+	}
+	Ref<ArrayMesh> mesh = st->commit();
+	mesh->surface_set_material(0, plates_material);
+	plates_instance->set_mesh(mesh);
+}
+
+void SnowSurface3D::set_crust_plates(bool p_enabled) {
+	crust_plates = p_enabled;
+	if (!p_enabled) {
+		crust_breaks.clear();
+		if (plates_instance) {
+			plates_instance->set_mesh(Ref<Mesh>());
+		}
+	}
+}
+
+int SnowSurface3D::get_crust_plate_count() const {
+	int n = 0;
+	for (const CrustBreak &b : crust_breaks) {
+		n += b.built ? 1 : 0;
+	}
+	return n;
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -1488,6 +1698,9 @@ void SnowSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_dent_at", "position"), &SnowSurface3D::get_dent_at);
 	ClassDB::bind_method(D_METHOD("get_rim_at", "position"), &SnowSurface3D::get_rim_at);
 	ClassDB::bind_method(D_METHOD("get_moved_volume"), &SnowSurface3D::get_moved_volume);
+	ClassDB::bind_method(D_METHOD("set_crust_plates", "enabled"), &SnowSurface3D::set_crust_plates);
+	ClassDB::bind_method(D_METHOD("get_crust_plates"), &SnowSurface3D::get_crust_plates);
+	ClassDB::bind_method(D_METHOD("get_crust_plate_count"), &SnowSurface3D::get_crust_plate_count);
 	ClassDB::bind_method(D_METHOD("set_clumps", "enabled"), &SnowSurface3D::set_clumps);
 	ClassDB::bind_method(D_METHOD("is_clumps"), &SnowSurface3D::is_clumps);
 	ClassDB::bind_method(D_METHOD("get_clumps_node"), &SnowSurface3D::get_clumps_node);
@@ -1509,6 +1722,7 @@ void SnowSurface3D::_bind_methods() {
 	ADD_GROUP("Deformation", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "deform_enabled"), "set_deform_enabled", "is_deform_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clumps"), "set_clumps", "is_clumps");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "crust_plates"), "set_crust_plates", "get_crust_plates");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "deform_extent", PROPERTY_HINT_RANGE, "4,512,1,suffix:m"), "set_deform_extent", "get_deform_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "deform_resolution", PROPERTY_HINT_RANGE, "128,4096,64"), "set_deform_resolution", "get_deform_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_STRING_ARRAY, "deform_groups"), "set_deform_groups", "get_deform_groups");

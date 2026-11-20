@@ -59,9 +59,10 @@ constexpr float TIP_RADIUS = 0.0025f;
 // The tip grows as spongy ice holding 26% liquid (Makkonen 1988).
 constexpr float SPONGY_LIQUID = 0.26f;
 // The share of the wall the running film keeps at 0 C and freezing: the rest of the ice is below 0 C and
-// grows nothing. Our pick, 0.5, puts length growth at 8 times diameter growth in still air at -10 C, the low
-// end of the 8 to 32 Maeno et al. (1994) measured; heat balance over the whole wall gives 4.
-constexpr float WALL_WETTED = 0.5f;
+// grows nothing. Our pick, 0.25, puts length growth at about 16 times diameter growth in still air at -10 C,
+// the middle of the 8 to 32 Maeno et al. (1994) measured (0.5 gave the low end, and a week's icicles came out
+// 1:4 cones where dripping icicles are slender, 1:10 and more); heat balance over the whole wall gives 4.
+constexpr float WALL_WETTED = 0.25f;
 // Ripples along icicles: about a centimetre apart whatever the icicle (Ueno 2003; Chen and Morris 2013).
 constexpr float RIPPLE_WAVELENGTH = 0.01f;
 // Ripples start flat and grow as the icicle does (Chen and Morris 2013 watched their amplitude grow over
@@ -73,12 +74,41 @@ constexpr float RIPPLE_START_LENGTH = 0.1f;
 constexpr float RIPPLE_FULL_LENGTH = 0.5f;
 constexpr float RIPPLE_TIP_FADE = 0.04f;
 constexpr int RIPPLE_COLUMNS = 64; // wide, so mipmaps (halving both ways) only blend near strengths
+// The ripples in the mesh on grown icicles: a few millimetres at most in salty lab water, under the 0.1 mm the
+// camera resolved in pure water (Chen and Morris 2013); roof melt makes ripply icicles like tap water's. In
+// photographs they read as faint, slightly irregular banding in what the ice refracts, not grooves: 0.25 mm
+// (slope 0.16) read as a threaded screw and sawtoothed the silhouette. Our pick, 0.03 mm full grown (slope 0.02,
+// already a visible swing in refraction), each wave 0.5 to 1.5 times that and its spacing wandering by up to 15%,
+// fading over the lower 40% toward the tip. The normal map stays smooth there.
+constexpr float RIPPLE_AMPLITUDE = 0.00003f;
+constexpr float RIPPLE_JITTER = 0.15f;
+constexpr float RIPPLE_FADE_SHARE = 0.4f;
 // The hazy core: pockets of impure water caught in layers as the icicle thickens (Ladan and Morris 2022) cloud
 // the ice inside the newest clear layer; the tip, the newest ice, stays clear. The cloudy part is a thin central
 // column of bubbles (a quarter of the radius): the clear ice around it is a cylindrical lens that widens it about
 // 1.3 times to the eye, and at 0.4 the path tracer showed broad white blobs where photographs show a thin streak.
 constexpr float CORE_RADIUS = 0.25f;
 constexpr float CORE_REACH = 0.8f;
+// The core stays a thin column however thick the icicle grows (the cloudy ice is the water caught along the axis,
+// not a share of the wall): at most 3 mm across. Scaled with the 3/4 power profile, a thick icicle's core
+// widened into a white wedge at the root.
+constexpr float CORE_MAX_RADIUS = 0.0015f;
+// The ideal icicle (Short, Baygents and Goldstein 2006): away from the tip its radius goes as the distance from
+// the tip to the power 3/4, r = 4/3 a^(1/4) z^(3/4) (Chen and Morris 2013 found most lab icicles scatter round
+// that exponent). Drawn so it holds the growth model's ice: a 3/4 power profile holds 0.4 R^2 L against a
+// cone's R^2 L / 3, so its root is 0.913 of the cone's.
+constexpr float PROFILE_POWER = 0.75f;
+constexpr float PROFILE_ROOT = 0.913f;
+// The axis is kept every 2 cm down from the root, as the tip lays it down.
+constexpr float AXIS_STEP = 0.02f;
+// The wind leans the pendant drop, and the tip grows under it (Maeno, Makkonen and Takahashi 1994, bent icicles):
+// drag on the 2.44 mm drop over its weight, tan(lean) = 3 rho_air Cd U^2 / (8 rho_w r g) = 0.0102 U^2 (Cd 0.5).
+// They measured leans well past that (the film runs down the lee side too): twice it here, at most 45 degrees.
+constexpr float WIND_LEAN = 2.0f * 0.0102f;
+constexpr float MAX_LEAN = 1.0f;
+// The film often runs down one side, and an icicle grows bent toward it (Maeno et al. 1994; Chen and Morris
+// 2013 saw lab icicles bend and twist): up to a slope of 0.08 per site, our pick.
+constexpr float OWN_LEAN = 0.08f;
 
 float buoyancy_rayleigh(float p_delta, float p_size) {
 	// g beta dT L^3 / (nu alpha), beta = 1 / 273 K.
@@ -180,6 +210,8 @@ void SnowIcicles3D::_place() {
 			ic.position = a.lerp(b, t);
 			const float r = rnd();
 			ic.share = 3.0f * r * r;
+			const float a = float(Math::TAU) * rnd();
+			ic.own_lean = Vector2(Math::cos(a), Math::sin(a)) * OWN_LEAN * rnd();
 			icicles.push_back(ic);
 		}
 	}
@@ -199,11 +231,14 @@ void SnowIcicles3D::grow(float p_hours, float p_celsius, float p_wind, float p_s
 	// Sub-steps of at most ten minutes: the rates change as the icicle grows.
 	const int steps = MAX(int(Math::ceil(p_hours * 6.0f)), 1);
 	const float dt = p_hours / steps; // h
+	const Vector2 wind_dir = Vector2(wind_direction.x, wind_direction.z).length_squared() > 1e-6f ? Vector2(wind_direction.x, wind_direction.z).normalized() : Vector2();
+	const float wind_lean = MIN(WIND_LEAN * p_wind * p_wind, MAX_LEAN);
 	for (Icicle &ic : icicles) {
 		const float water = MAX(p_supply, 0.0f) * spacing * ic.share; // kg/h to this icicle
 		supply_total += water;
 		const float l0 = ic.length;
 		const float r0 = ic.radius;
+		ic.dripping = false;
 		for (int k = 0; k < steps; k++) {
 			if (delta <= 0.0f) {
 				// Melting: the air's heat (at the same coefficients) melts the wall and the tip back; an icicle
@@ -217,6 +252,7 @@ void SnowIcicles3D::grow(float p_hours, float p_celsius, float p_wind, float p_s
 						ic.length = 0.0f;
 						ic.radius = 0.0f;
 					}
+					ic.dripping = ic.length > 0.0f; // the melt runs off the tip
 				}
 				continue;
 			}
@@ -244,7 +280,23 @@ void SnowIcicles3D::grow(float p_hours, float p_celsius, float p_wind, float p_s
 				const float tip_share = MIN(left / MAX(tip_mass, 1e-9f), 1.0f);
 				ic.length = MIN(ic.length + tip_rate * tip_share * dt, max_length);
 				dripped += (left - tip_mass * tip_share) * dt / p_hours;
+				ic.dripping = left > tip_mass * tip_share * 1.001f;
 			}
+		}
+		// The axis: new length goes down under the drop, leaning with the wind and the film's side; melted
+		// length takes its points with it.
+		const int need = int(Math::floor(ic.length / AXIS_STEP)) + 1;
+		if (ic.length <= 0.0f) {
+			ic.bend.clear();
+		} else if (ic.bend.size() > need) {
+			ic.bend.resize(need);
+		}
+		if (ic.length > 0.0f && ic.bend.is_empty()) {
+			ic.bend.push_back(Vector2());
+		}
+		while (ic.length > 0.0f && ic.bend.size() < need) {
+			const Vector2 slope = wind_dir * wind_lean + ic.own_lean;
+			ic.bend.push_back(ic.bend[ic.bend.size() - 1] + slope * AXIS_STEP);
 		}
 		change = MAX(change, MAX(Math::abs(ic.length - l0), 10.0f * Math::abs(ic.radius - r0)));
 	}
@@ -273,7 +325,11 @@ void SnowIcicles3D::advance(float p_hours) {
 	}
 	const Vector3 at = get_global_transform().xform(mid);
 	const float celsius = cover ? cover->get_air_temperature_at(at) : (weather ? weather->air_temperature_at(at) : 0.0f);
-	const float wind = weather ? weather->wind_at(at).length() : 0.0f;
+	const Vector3 wind_v = weather ? weather->wind_at(at) : Vector3();
+	const float wind = wind_v.length();
+	Vector3 wind_local = get_global_transform().basis.xform_inv(wind_v);
+	wind_local.y = 0.0f;
+	wind_direction = wind_local; // grow() takes its way, the speed comes as p_wind
 	const float humidity = weather ? weather->air_humidity_at(at) : 0.8f;
 	float supply = 0.0f; // kg per metre of edge per hour
 	if (cover) {
@@ -322,6 +378,31 @@ float SnowIcicles3D::get_ice_mass() const {
 		}
 	}
 	return m;
+}
+
+static Vector2 _axis_offset(const Vector<Vector2> &p_bend, float p_depth) {
+	if (p_bend.is_empty()) {
+		return Vector2();
+	}
+	const float f = MAX(p_depth, 0.0f) / AXIS_STEP;
+	const int i = int(Math::floor(f));
+	if (i + 1 >= p_bend.size()) {
+		// Past the last point (the tip's last bit, or the drop): straight on along the last step's slope.
+		const int n = p_bend.size();
+		const Vector2 slope = n >= 2 ? (p_bend[n - 1] - p_bend[n - 2]) / AXIS_STEP : Vector2();
+		return p_bend[n - 1] + slope * (p_depth - (n - 1) * AXIS_STEP);
+	}
+	return p_bend[i].lerp(p_bend[i + 1], f - i);
+}
+
+Vector2 SnowIcicles3D::get_icicle_offset(int p_index, float p_depth) const {
+	ERR_FAIL_INDEX_V(p_index, icicles.size(), Vector2());
+	return _axis_offset(icicles[p_index].bend, p_depth);
+}
+
+bool SnowIcicles3D::is_icicle_dripping(int p_index) const {
+	ERR_FAIL_INDEX_V(p_index, icicles.size(), false);
+	return icicles[p_index].dripping;
 }
 
 void SnowIcicles3D::_ensure_children() {
@@ -389,32 +470,65 @@ void SnowIcicles3D::_build_mesh() {
 	};
 	// p_scale shrinks the radius, p_reach the length: the hazy core is a thinner cone that stops short of the tip.
 	// p_phase shifts the ripples so neighbours' bands do not line up.
-	auto add_cone = [](Surface &p_out, const Icicle &p_ic, float p_scale, float p_reach, float p_phase) {
+	auto add_cone = [](Surface &p_out, const Icicle &p_ic, float p_scale, float p_reach, float p_phase, bool p_ripples) {
 		const float length = p_ic.length * p_reach;
-		const float root = p_ic.radius * p_scale;
+		const float root = p_ic.radius * PROFILE_ROOT * p_scale;
 		const float tip = TIP_RADIUS * p_scale;
-		const int rings = CLAMP(int(Math::ceil(length / 0.03f)), 2, 40);
+		const float ripple_grown = CLAMP((p_ic.length - RIPPLE_START_LENGTH) / (RIPPLE_FULL_LENGTH - RIPPLE_START_LENGTH), 0.0f, 1.0f);
+		const bool ripples = p_ripples && ripple_grown > 0.0f;
+		// Rippled: four rings a wavelength, evenly; smooth: rings closer together toward the tip, where the 3/4 power
+		// profile turns fastest.
+		const int rings = ripples ? CLAMP(int(Math::ceil(length / (0.25f * RIPPLE_WAVELENGTH))), 2, 600) : CLAMP(int(Math::ceil(length / 0.03f)), 2, 40);
 		const int base = p_out.verts.size();
-		const float slope = (root - tip) / length;
 		for (int r = 0; r <= rings; r++) {
-			const float z = length * r / rings;
-			float rad = tip + (root - tip) * (1.0f - z / length);
+			const float q = float(r) / rings;
+			const float z = ripples ? length * q : length * (1.0f - (1.0f - q) * (1.0f - q) * 0.5f - (1.0f - q) * 0.5f);
+			// Its radius by the distance from the full icicle's tip (the core stops short, as before).
+			const float u = MAX(p_ic.length - z, 0.0f) / MAX(p_ic.length, 1e-4f);
+			float rad = MAX(root * Math::pow(u, PROFILE_POWER), tip);
+			if (!p_ripples && p_scale < 1.0f) {
+				rad = MIN(rad, CORE_MAX_RADIUS); // the hazy core: a thin column
+			}
+			float slope = MIN(root * PROFILE_POWER * Math::pow(MAX(u, 1e-3f), PROFILE_POWER - 1.0f) / MAX(p_ic.length, 1e-4f), 3.0f);
+			if (ripples) {
+				// Full grown on long icicles, fading toward the tip (the newer ice), none at the root's cap. The
+				// spacing wanders (a smooth noise added to the phase) and each wave has its own depth.
+				const float tip_fade = Math::smoothstep(0.0f, RIPPLE_FADE_SHARE * p_ic.length, p_ic.length - z);
+				const float w = z / RIPPLE_WAVELENGTH;
+				const uint32_t seed_i = uint32_t(p_phase * 65536.0f);
+				auto hv = [&](int p_i) { return float(hash_murmur3_one_32(uint32_t(p_i), seed_i) & 0xffff) / 65535.0f; };
+				auto smooth = [&](float p_x, int p_salt) {
+					const int i0 = int(Math::floor(p_x));
+					const float t = p_x - i0;
+					const float st = t * t * (3.0f - 2.0f * t);
+					return Math::lerp(hv(i0 * 2 + p_salt), hv((i0 + 1) * 2 + p_salt), st);
+				};
+				const float wander = RIPPLE_JITTER * (2.0f * smooth(0.5f * w, 0) - 1.0f);
+				const float depth = 0.5f + smooth(w, 1);
+				const float amp = RIPPLE_AMPLITUDE * depth * ripple_grown * tip_fade * CLAMP(z / RIPPLE_TIP_FADE, 0.0f, 1.0f);
+				const float k = float(Math::TAU) / RIPPLE_WAVELENGTH;
+				const float ph = float(Math::TAU) * (w + wander + p_phase);
+				rad += amp * Math::sin(ph);
+				slope -= amp * k * Math::cos(ph);
+			}
 			if (r == rings) {
 				rad = 0.0f; // the rounded tip closes to a point below the drop
 			}
 			const float y = r == rings ? z + tip : z;
+			const Vector2 off = _axis_offset(p_ic.bend, y);
+			const Vector3 centre = p_ic.position + Vector3(off.x, -y, off.y);
 			for (int s = 0; s <= SIDES; s++) {
 				const float a = float(Math::TAU) * s / SIDES;
 				const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
-				p_out.verts.push_back(p_ic.position + out * rad - Vector3(0.0f, y, 0.0f));
-				p_out.normals.push_back((out + Vector3(0.0f, -slope, 0.0f)).normalized());
+				p_out.verts.push_back(centre + out * rad);
+				p_out.normals.push_back((out + Vector3(0.0f, -(rad > tip || ripples ? slope : 0.0f), 0.0f)).normalized());
 				const Vector3 t(-Math::sin(a), 0.0f, Math::cos(a));
 				p_out.tangents.push_back(t.x);
 				p_out.tangents.push_back(t.y);
 				p_out.tangents.push_back(t.z);
 				p_out.tangents.push_back(1.0f);
 				// The ripples are round the icicle, so UV.x picks their strength instead of going round.
-				const float grown = CLAMP((p_ic.length - RIPPLE_START_LENGTH) / (RIPPLE_FULL_LENGTH - RIPPLE_START_LENGTH), 0.0f, 1.0f) * CLAMP((p_ic.length - z) / RIPPLE_TIP_FADE, 0.0f, 1.0f);
+				const float grown = ripples ? 0.0f : ripple_grown * CLAMP((p_ic.length - z) / RIPPLE_TIP_FADE, 0.0f, 1.0f);
 				p_out.uvs.push_back(Vector2((grown * (RIPPLE_COLUMNS - 1) + 0.5f) / RIPPLE_COLUMNS, y / RIPPLE_WAVELENGTH + p_phase));
 			}
 		}
@@ -448,18 +562,147 @@ void SnowIcicles3D::_build_mesh() {
 			p_out.indices.push_back(base + s + 1);
 		}
 	};
+	// The pendant drop on a dripping tip (Makkonen 1988: the tip grows round it): a water sphere the drop's size,
+	// hanging just under the ice's point. Water bends light as ice does (n 1.33 against 1.31): the ice's material.
+	auto add_drop = [](Surface &p_out, const Icicle &p_ic) {
+		constexpr int LAT = 6, LON = 10;
+		const float y = p_ic.length + 0.6f * TIP_RADIUS;
+		const Vector2 off = _axis_offset(p_ic.bend, y);
+		const Vector3 centre = p_ic.position + Vector3(off.x, -y, off.y);
+		const int base = p_out.verts.size();
+		for (int la = 0; la <= LAT; la++) {
+			const float th = float(Math::PI) * la / LAT;
+			for (int lo = 0; lo <= LON; lo++) {
+				const float ph = float(Math::TAU) * lo / LON;
+				const Vector3 n(Math::sin(th) * Math::cos(ph), Math::cos(th), Math::sin(th) * Math::sin(ph));
+				p_out.verts.push_back(centre + n * TIP_RADIUS);
+				p_out.normals.push_back(n);
+				const Vector3 t(-Math::sin(ph), 0.0f, Math::cos(ph));
+				p_out.tangents.push_back(t.x);
+				p_out.tangents.push_back(t.y);
+				p_out.tangents.push_back(t.z);
+				p_out.tangents.push_back(1.0f);
+				p_out.uvs.push_back(Vector2(0.5f / RIPPLE_COLUMNS, 0.0f));
+			}
+		}
+		for (int la = 0; la < LAT; la++) {
+			for (int lo = 0; lo < LON; lo++) {
+				const int a0 = base + la * (LON + 1) + lo;
+				const int a1 = a0 + 1;
+				const int b0 = a0 + LON + 1;
+				const int b1 = b0 + 1;
+				// Clockwise seen from outside, as the cone's rings (top ring first, going round the same way).
+				p_out.indices.push_back(a0);
+				p_out.indices.push_back(b0);
+				p_out.indices.push_back(a1);
+				p_out.indices.push_back(a1);
+				p_out.indices.push_back(b0);
+				p_out.indices.push_back(b1);
+			}
+		}
+	};
+	// Curtains: where neighbours hang closer than the thinner one's radius, the film running down one wall bridges
+	// to the other and freezes across the gap, and they grow as one sheet down to where they part (fused icicle
+	// fringes along eaves; Chen and Morris 2013 saw neighbours join). A web of ice 0.6 of the thinner icicle thick,
+	// from one wall's surface to the other's: never inside either (the path tracer takes every front face it meets
+	// as air into ice, so ice drawn inside ice bends light twice and shows white), thinning to nothing where the
+	// gap opens past the bridge. Where the walls themselves touch, they are the join.
+	auto add_curtain = [](Surface &p_out, const Icicle &p_a, const Icicle &p_b) {
+		auto radius_at = [](const Icicle &p_ic, float p_z) {
+			if (p_z >= p_ic.length) {
+				return 0.0f;
+			}
+			return MAX(p_ic.radius * PROFILE_ROOT * Math::pow((p_ic.length - p_z) / p_ic.length, PROFILE_POWER), TIP_RADIUS);
+		};
+		auto axis_at = [](const Icicle &p_ic, float p_z) {
+			const Vector2 off = _axis_offset(p_ic.bend, p_z);
+			return p_ic.position + Vector3(off.x, -p_z, off.y);
+		};
+		const float reach = MIN(p_a.length, p_b.length);
+		float z_from = -1.0f, z_to = -1.0f;
+		for (float z = 0.0f; z < reach; z += 0.005f) {
+			const Vector3 a = axis_at(p_a, z), b = axis_at(p_b, z);
+			const float ra = radius_at(p_a, z), rb = radius_at(p_b, z);
+			const float free = Vector2(a.x - b.x, a.z - b.z).length() - ra - rb;
+			if (free >= MIN(ra, rb)) {
+				break;
+			}
+			if (free > 0.0f && z_from < 0.0f) {
+				z_from = z;
+			}
+			if (z_from >= 0.0f) {
+				z_to = z;
+			}
+		}
+		if (z_from < 0.0f || z_to - z_from < 0.02f) {
+			return;
+		}
+		const int steps = CLAMP(int(Math::ceil((z_to - z_from) / 0.01f)), 2, 120);
+		LocalVector<Vector3> fa, fb, ba, bb; // front and back faces' edges at a and b
+		Vector3 nrm;
+		for (int k = 0; k <= steps; k++) {
+			const float z = z_from + (z_to - z_from) * k / steps;
+			const Vector3 a = axis_at(p_a, z), b = axis_at(p_b, z);
+			const float ra = radius_at(p_a, z), rb = radius_at(p_b, z);
+			Vector3 across = Vector3(b.x - a.x, 0.0f, b.z - a.z);
+			across = across.length_squared() > 1e-8f ? across.normalized() : Vector3(1, 0, 0);
+			nrm = Vector3(-across.z, 0.0f, across.x);
+			// The web's ends on each wall, set in by the curve of the wall at its half thickness so its corners stay
+			// outside the round ice.
+			const float half = k == steps ? 0.0f : 0.3f * MIN(ra, rb);
+			const float ea = Math::sqrt(MAX(ra * ra - half * half, 0.0f));
+			const float eb = Math::sqrt(MAX(rb * rb - half * half, 0.0f));
+			fa.push_back(a + across * ea + nrm * half);
+			fb.push_back(b - across * eb + nrm * half);
+			ba.push_back(a + across * ea - nrm * half);
+			bb.push_back(b - across * eb - nrm * half);
+		}
+		auto quad = [&](const Vector3 &p0, const Vector3 &p1, const Vector3 &p2, const Vector3 &p3, const Vector3 &p_n) {
+			// Wound to face p_n (clockwise front, as Godot's).
+			const bool flip = Plane(p0, p1, p2).normal.dot(p_n) < 0.0f;
+			const Vector3 v[4] = { p0, p1, p2, p3 };
+			const int front[6] = { 0, 1, 2, 0, 2, 3 };
+			const int back[6] = { 0, 2, 1, 0, 3, 2 };
+			const int base = p_out.verts.size();
+			for (int c = 0; c < 4; c++) {
+				p_out.verts.push_back(v[c]);
+				p_out.normals.push_back(p_n);
+				p_out.tangents.push_back(0.0f);
+				p_out.tangents.push_back(-1.0f);
+				p_out.tangents.push_back(0.0f);
+				p_out.tangents.push_back(1.0f);
+				p_out.uvs.push_back(Vector2(0.5f / RIPPLE_COLUMNS, 0.0f));
+			}
+			for (int t : (flip ? back : front)) {
+				p_out.indices.push_back(base + t);
+			}
+		};
+		for (int k = 0; k < steps; k++) {
+			quad(fa[k], fb[k], fb[k + 1], fa[k + 1], nrm);
+			quad(ba[k], bb[k], bb[k + 1], ba[k + 1], -nrm);
+		}
+	};
 	Surface ice;
 	Surface core;
+	int previous = -1;
 	for (int i = 0; i < icicles.size(); i++) {
 		const Icicle &ic = icicles[i];
 		if (ic.length < 0.01f) {
+			previous = -1;
 			continue;
 		}
 		const float phase = float(hash_murmur3_one_32(uint32_t(i) + uint32_t(seed) * 7919u) & 0xffffu) / 65536.0f;
-		add_cone(ice, ic, 1.0f, 1.0f, phase);
+		add_cone(ice, ic, 1.0f, 1.0f, phase, true);
 		if (hazy_core && ic.length > 0.05f) {
-			add_cone(core, ic, CORE_RADIUS, CORE_REACH, phase);
+			add_cone(core, ic, CORE_RADIUS, CORE_REACH, phase, false);
 		}
+		if (ic.dripping) {
+			add_drop(ice, ic);
+		}
+		if (curtains && previous >= 0) {
+			add_curtain(ice, icicles[previous], ic);
+		}
+		previous = i;
 	}
 	Ref<ArrayMesh> mesh;
 	for (int i = 0; i < 2; i++) {
@@ -550,6 +793,15 @@ void SnowIcicles3D::set_hazy_core(bool p_enabled) {
 	_build_mesh();
 }
 
+void SnowIcicles3D::set_wind_direction(const Vector3 &p_direction) {
+	wind_direction = Vector3(p_direction.x, 0.0f, p_direction.z);
+}
+
+void SnowIcicles3D::set_curtains(bool p_enabled) {
+	curtains = p_enabled;
+	_build_mesh();
+}
+
 void SnowIcicles3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("grow", "hours", "celsius", "wind", "supply", "humidity"), &SnowIcicles3D::grow, DEFVAL(0.8f));
 	ClassDB::bind_method(D_METHOD("advance", "hours"), &SnowIcicles3D::advance);
@@ -581,6 +833,12 @@ void SnowIcicles3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_core_material"), &SnowIcicles3D::get_core_material);
 	ClassDB::bind_method(D_METHOD("set_hazy_core", "enabled"), &SnowIcicles3D::set_hazy_core);
 	ClassDB::bind_method(D_METHOD("get_hazy_core"), &SnowIcicles3D::get_hazy_core);
+	ClassDB::bind_method(D_METHOD("set_wind_direction", "direction"), &SnowIcicles3D::set_wind_direction);
+	ClassDB::bind_method(D_METHOD("get_wind_direction"), &SnowIcicles3D::get_wind_direction);
+	ClassDB::bind_method(D_METHOD("set_curtains", "enabled"), &SnowIcicles3D::set_curtains);
+	ClassDB::bind_method(D_METHOD("get_curtains"), &SnowIcicles3D::get_curtains);
+	ClassDB::bind_method(D_METHOD("get_icicle_offset", "index", "depth"), &SnowIcicles3D::get_icicle_offset);
+	ClassDB::bind_method(D_METHOD("is_icicle_dripping", "index"), &SnowIcicles3D::is_icicle_dripping);
 
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR3_ARRAY, "edge"), "set_edge", "get_edge");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spacing", PROPERTY_HINT_RANGE, "0.02,2,0.01,suffix:m"), "set_spacing", "get_spacing");
@@ -590,5 +848,7 @@ void SnowIcicles3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hazy_core"), "set_hazy_core", "get_hazy_core");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind_direction"), "set_wind_direction", "get_wind_direction");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "curtains"), "set_curtains", "get_curtains");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "core_material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_core_material", "get_core_material");
 }
