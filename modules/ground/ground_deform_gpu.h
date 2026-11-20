@@ -71,6 +71,7 @@ public:
 	};
 	static constexpr int PARAMS_BYTES = 912;
 	static constexpr int STAMP_BYTES = 112;
+	static constexpr int STONE_VEC4S = 1 + 2 * 64; // GroundSurface3D::GPU_STONES
 
 	// Sizes: field texels per side, ground lattice per side, cover cells per side, cache slots, collision
 	// vertices per side.
@@ -83,6 +84,8 @@ public:
 		int stride = 1; // uints per texel in the cache and the read back: 1 (dent, rim), 2 (and fresh)
 		int slump_passes = 1; // slumping passes per step (a finer field needs more to move as far in a second)
 		int cover_vec4s = 2; // vec4s per cover cell: 2 snow, 4 ground (the third: water inputs; the fourth: mud slides)
+		// The ground's cover ends with its hidden stones (GroundSurface3D::_gpu_cells(), round 16.1).
+		int cover_bytes() const { return MAX(cn * cn, 1) * 16 * cover_vec4s + (cover_vec4s == 4 ? STONE_VEC4S * 16 : 0); }
 		int water_passes = 0; // pipe-model substeps this step (STEP_WATER)
 		int morph_passes = 1; // bed substeps a pipe-model substep (STEP_RUNOFF)
 		int mud_passes = 0; // liquid mud wave substeps this step (STEP_MUDWAVE)

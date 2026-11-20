@@ -1194,6 +1194,28 @@ ruts (save_ruts, on leaving the tree), read back the first time the folder is us
 ruts_time_scale with wear_regrowth_days' half-life. clear_saved_ruts removes it. Bench --test=wear adds: 8 passes
 saved, 8 read back, none after years away.
 
+#### Round 16 built (20 Nov)
+
+**16.1 Mud flows round stones.** Slumping and the mud waves took the layer's base as the deepest dent everywhere, so
+liquid mud drained off a stone's top down to the base. Now a hidden stone's top is the base over it: the GPU's cover
+buffer ends with the 64 stones nearest the followed point (shallow ones first; GroundSurface3D::_gpu_cells(),
+GroundDeformGPU::STONE_VEC4S), and slump_params() and mud_liquid() take max_dent down to the depth of the highest stone
+top over the texel (stone_dent()); the CPU's Columns does the same with _buried_depth(). The stamp's floor (15.2), the
+slumping and the waves now agree. Bench --test=buried: in slurry a print beside a stone drains to 57 cm while the mud
+over its top (38.8 cm down) stays at 37.8 cm, then the waves close the rut. Limits: 64 stones per field.
+
+**16.2 Deposits kept with the ruts.** One zstd file (deposits.dep) in ruts_path with save_ruts: per 1 m cell the
+deposit's depth, the silt skin's share, its colour and the river record already taken, then the ids of the stones
+knocked loose. Read back the first time the folder is used, merged by the larger value; how dry a skin is comes back
+with the crack state. Deposits do not wear away while away (fresh silt and fan mud last seasons). `clear_mud_deposits`
+for a new game. Bench --test=silt: 4 mm saved, cleared, 4 mm read back dry.
+
+**16.3 Stones shoved along.** A loose stone in front of a rolling tyre's middle, within its width and low enough for
+its front to meet, is driven on toward the tyre's speed and out sideways toward the side it sits on (a bulldozing
+front's berm: Bekker 1956; Ishigami et al. 2007), the push held to the passive earth pressure on its face over the rut
+depth (Rankine, Kp 3, 20 kN/m3, 2 kPa) plus its sliding friction, at most 6 kN. Bench --test=buried: behind a tyre at
+2 m/s a stone goes 1.95 m ahead and 11 cm aside in a second.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

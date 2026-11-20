@@ -6383,6 +6383,27 @@ func _run_buried_tests() -> void:
 		var crown := surface.get_dent_at(Vector3(a2.x, 0, a2.z))
 		var floor_d := surface.get_dent_at(mid)
 		_check("the mud is dug out round a stone under the print's edge", crown < td2 + 0.03 and floor_d > td2 + 0.15, "%.1f cm deep over it (top %.1f cm down), %.1f cm beside it" % [crown * 100.0, td2 * 100.0, floor_d * 100.0])
+		# In slurry (round 16.1): slumping and the mud's waves flow round the stone's top and close the rut beside it.
+		if picks.size() >= 3:
+			await _paint_mud(0.8, 1.0)
+			var s4: Dictionary = picks[2]
+			var a4: Vector3 = s4["a"]
+			var r4: float = s4["radius"]
+			var td4 := surface.get_surface_height_at(Vector3(a4.x, 0, a4.z)) - (a4.y + r4)
+			var mid4 := Vector3(a4.x - (r4 + 0.15), 0, a4.z)
+			for i in 20:
+				surface.press_wheel(mid4, Vector2(0.8, 0.5), 0.0, 0.6, Vector2())
+				await get_tree().physics_frame
+			surface.sync_deformation()
+			var beside0 := surface.get_dent_at(mid4)
+			var crown0 := surface.get_dent_at(Vector3(a4.x, 0, a4.z))
+			for i in 180:
+				await get_tree().physics_frame
+			surface.sync_deformation()
+			var crown4 := surface.get_dent_at(Vector3(a4.x, 0, a4.z))
+			var beside1 := surface.get_dent_at(mid4)
+			_check("slurry flows round a stone's top, not off it", crown0 < td4 + 0.03 and crown4 < td4 + 0.03 and beside1 < beside0 - 0.01, "%.1f cm deep over it as pressed, %.1f cm later (top %.1f cm down); the rut beside it %.1f cm, then %.1f cm" % [crown0 * 100.0, crown4 * 100.0, td4 * 100.0, beside0 * 100.0, beside1 * 100.0])
+			await _paint_mud(0.8, STIFF_MUD)
 		var s3: Dictionary = picks[1]
 		var a3: Vector3 = s3["a"]
 		var r3: float = s3["radius"]
@@ -6400,6 +6421,16 @@ func _run_buried_tests() -> void:
 		for i in 20:
 			await get_tree().physics_frame
 		var p1: Vector3 = (loose[0] as Node3D).global_position if loose.size() > 0 else Vector3.ZERO
+		# Shoved along (round 16.3): a tyre rolling on behind it, a little to one side, drives it ahead and off its line.
+		var shove0: Vector3 = (loose[0] as Node3D).global_position if loose.size() > 0 else Vector3.ZERO
+		if loose.size() > 0:
+			for i in 60:
+				var sp: Vector3 = (loose[0] as Node3D).global_position
+				var tyre := Vector3(maxf(sp.x - 0.3, wheel.x + 2.0 * float(i) / 60.0), 0, a3.z - 0.08)
+				surface.press_wheel(tyre, Vector2(0.8, 0.5), 0.0, 0.15, Vector2(2.0, 0.0))
+				await get_tree().physics_frame
+		var shove1: Vector3 = (loose[0] as Node3D).global_position if loose.size() > 0 else Vector3.ZERO
+		_check("a loose stone ahead of a tyre is shoved on and aside", shove1.x - shove0.x > 0.8 and shove1.z - shove0.z > 0.03, "%.2f m ahead, %.2f m aside in 1 s behind a tyre at 2 m/s" % [shove1.x - shove0.x, shove1.z - shove0.z])
 		_check("an uncovered stone a tyre runs into is knocked loose", surface.get_loose_stone_count() == before + 1 and loose.size() == 1 and gone and p1.x - p0.x > 0.05, "%d loose, %d bodies, %s from the hidden list; moved %.2f m" % [surface.get_loose_stone_count() - before, loose.size(), "gone" if gone else "still", p1.x - p0.x])
 	for i in 40:
 		await get_tree().physics_frame
@@ -6488,6 +6519,23 @@ func _run_silt_tests() -> void:
 	var cr: Vector4 = surface.get_crack_at(r)
 	print("  silt skin: %.2f mm, wet %.2f -> %.2f; cracks %s" % [b.x * 1000.0, b.y, d.y, cr])
 	_check("the skin dries and cracks into small plates", d.y < 0.1 and cr.x > 0.9 and cr.y < 0.08, "water %.2f, opening %.2f, plates %.1f cm" % [d.y, cr.x, cr.y * 100.0])
+	# Kept with the ruts (round 16.2): saved, forgotten, read back as left, dry.
+	var dir := OS.get_user_data_dir().path_join("silt_keep_test")
+	var was_keeping := surface.keep_ruts
+	surface.keep_ruts = true
+	surface.ruts_path = dir
+	surface.clear_saved_ruts()
+	surface.save_ruts()
+	surface.clear_mud_deposits()
+	var gone := surface.get_silt_at(r).x
+	surface.ruts_path = ""
+	surface.ruts_path = dir
+	var kept := surface.get_silt_at(r)
+	var kept_dep := surface.get_mud_deposit_at(r)
+	surface.clear_saved_ruts()
+	surface.ruts_path = ""
+	surface.keep_ruts = was_keeping
+	_check("silt skins are kept with the ruts", gone == 0.0 and absf(kept.x - d.x) < 1e-6 and kept_dep >= kept.x and kept.y < 0.1, "%.2f mm saved, %.2f cleared, %.2f mm read back (water %.2f)" % [d.x * 1000.0, gone * 1000.0, kept.x * 1000.0, kept.y])
 	# Off, nothing more is laid.
 	surface.flood_silt = false
 	stub.bed = Vector2(8.0, 1.2)

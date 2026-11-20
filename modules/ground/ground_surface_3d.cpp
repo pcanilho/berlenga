@@ -341,6 +341,10 @@ GroundDeformField::Column GroundSurface3D::Columns::column(float p_x, float p_z)
 	col.deformable = true;
 	col.surface = surface->_ground_at(p_x, p_z);
 	col.max_dent = c.max_dent;
+	// A hidden stone's top is a floor for slumping and flow too (round 16.1).
+	if (surface->buried_obstacles && !surface->buried_bodies.is_empty()) {
+		col.max_dent = MIN(col.max_dent, surface->_buried_depth(Vector3(p_x, 0.0f, p_z), 0.0f));
+	}
 	col.rim_share = c.rim_share;
 	return col;
 }
@@ -948,6 +952,22 @@ float GroundSurface3D::_silt_water(float p_x, float p_z) const {
 	const int z = CLAMP(int(Math::round(p_z / ground_spacing - ground_origin.y)), 0, n - 1);
 	const float st = crack_state[(z * n + x) * CRACK_FLOATS];
 	return st <= 0.0f ? 0.0f : CLAMP(st - 1.0f, 0.0f, 1.0f); // never soaked: a skin's margin past its cells
+}
+
+// Forgets every deposit (fans, silt skins, the rivers' records taken), as for a new game; kept files stay until
+// clear_saved_ruts().
+void GroundSurface3D::clear_mud_deposits() {
+	mud_deposits.clear();
+	mud_deposit_colors.clear();
+	silt_depth.clear();
+	silt_river_taken.clear();
+	silt_wet_new.clear();
+	silt_dirty = false;
+	gpu_cells_dirty = true;
+	near_cells_dirty = true;
+	if (ground_valid) {
+		_update_cells();
+	}
 }
 
 Vector2 GroundSurface3D::get_silt_at(Vector3 p_position) const {
@@ -1711,6 +1731,62 @@ void GroundSurface3D::_buried_kicks_update() {
 		}
 	}
 	buried_kicks.clear();
+	gpu_cells_dirty = true;
+	near_cells_dirty = true;
+}
+
+// Shoved along (docs/ideas/mud.md, round 16.3). A loose stone in front of a rolling tyre is pushed as a bulldozing
+// blade pushes its berm (Bekker 1956; Ishigami et al. 2007 on the bulldozing force at a wheel's front): the tyre's
+// front drives it on at the tyre's speed, and the curved front sends it out sideways off the tyre's line, toward the
+// side it sits on, so stones pile at a rut's edges as in a wheel's furrow. The push is held to what the soil in front
+// of the stone resists, the passive earth pressure on its face over the rut's depth (Rankine: 0.5 gamma h^2 Kp +
+// 2 c h sqrt(Kp), Kp 3, a soft soil's 20 kN/m3 and 2 kPa) plus its sliding friction, at most a loaded tyre's 6 kN.
+void GroundSurface3D::_loose_shove(const Vector3 &p_position, const Vector2 &p_half, float p_yaw, float p_bottom, const Vector2 &p_velocity) {
+	const float speed = p_velocity.length();
+	if (buried_loose_bodies.is_empty() || speed < 0.2f) {
+		return;
+	}
+	const Vector2 heading = p_velocity / speed;
+	const Vector2 side(-heading.y, heading.x);
+	const float dt = MAX(float(get_physics_process_delta_time()), 1e-3f);
+	const float reach = p_half.length();
+	for (const KeyValue<uint32_t, ObjectID> &kv : buried_loose_bodies) {
+		RigidBody3D *rb = Object::cast_to<RigidBody3D>(ObjectDB::get_instance(kv.value));
+		if (!rb || !rb->is_inside_tree()) {
+			continue;
+		}
+		const Vector3 at = rb->get_global_position();
+		const Vector2 to(at.x - p_position.x, at.z - p_position.z);
+		const float ahead = to.dot(heading);
+		const float off = to.dot(side);
+		float r = 0.1f;
+		for (int c = 0; c < rb->get_child_count(); c++) {
+			if (CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(rb->get_child(c))) {
+				if (Ref<SphereShape3D> sp = cs->get_shape(); sp.is_valid()) {
+					r = sp->get_radius();
+				}
+			}
+		}
+		// In front of the tyre's middle, within its width, and low enough for its front to meet (below the axle's
+		// height over the rut floor, about the print's half length).
+		if (ahead < 0.0f || ahead > reach + r || Math::abs(off) > Math::abs(p_half.x) + r || at.y - r > p_bottom + reach) {
+			continue;
+		}
+		const float h = CLAMP(_ground_at(at.x, at.z) - p_bottom, 0.0f, 0.5f); // the rut's depth
+		const float width = 2.0f * r;
+		const float bulldoze = width * (0.5f * 3.0f * 20000.0f * h * h + 2.0f * 2000.0f * h * Math::sqrt(3.0f));
+		const float f_max = MIN(bulldoze + 0.5f * rb->get_mass() * 9.81f, 6000.0f);
+		const float lateral = off >= 0.0f ? 1.0f : -1.0f;
+		const Vector2 want = heading * speed + side * lateral * 0.5f * speed * (1.0f - Math::abs(off) / MAX(Math::abs(p_half.x) + r, 1e-3f));
+		const Vector3 v = rb->get_linear_velocity();
+		Vector3 dv(want.x - v.x, 0.0f, want.y - v.z);
+		const float need = dv.length() * rb->get_mass();
+		const float can = f_max * dt;
+		if (need > can) {
+			dv *= can / need;
+		}
+		rb->apply_central_impulse(dv * rb->get_mass());
+	}
 }
 
 void GroundSurface3D::set_buried_kick(bool p_enabled) {
@@ -1743,6 +1819,7 @@ void GroundSurface3D::_buried_update() {
 		}
 	}
 	const Array near = get_buried_near(c, buried_body_range);
+	bool changed = false;
 	HashSet<uint32_t> keep;
 	for (int i = 0; i < near.size(); i++) {
 		const Dictionary d = near[i];
@@ -1791,6 +1868,7 @@ void GroundSurface3D::_buried_update() {
 		add_child(body, false, INTERNAL_MODE_BACK);
 		body->set_global_transform(xf);
 		buried_bodies[id] = body->get_instance_id();
+		changed = true;
 	}
 	LocalVector<uint32_t> gone;
 	for (const KeyValue<uint32_t, ObjectID> &kv : buried_bodies) {
@@ -1803,12 +1881,20 @@ void GroundSurface3D::_buried_update() {
 			n->queue_free();
 		}
 		buried_bodies.erase(id);
+		changed = true;
+	}
+	if (changed) {
+		// The GPU's slumping and mud waves keep to the stones near the followed point (round 16.1).
+		gpu_cells_dirty = true;
+		near_cells_dirty = true;
 	}
 }
 
 void GroundSurface3D::set_buried_obstacles(bool p_enabled) {
 	buried_obstacles = p_enabled;
 	buried_cache.clear();
+	gpu_cells_dirty = true;
+	near_cells_dirty = true;
 	if (!p_enabled) {
 		for (const KeyValue<uint32_t, ObjectID> &kv : buried_loose_bodies) {
 			if (Node *n = Object::cast_to<Node>(ObjectDB::get_instance(kv.value))) {
@@ -5864,6 +5950,9 @@ float GroundSurface3D::press_wheel(Vector3 p_position, Vector2 p_size, float p_y
 	}
 	field.press_tread = 0;
 	near_fld.press_tread = 0;
+	if (buried_kick) {
+		_loose_shove(p_position, half, p_yaw, bottom, p_velocity);
+	}
 	if (floored) {
 		field.press_floor_a = Vector4();
 		near_fld.press_floor_a = Vector4();
@@ -6865,6 +6954,7 @@ void GroundSurface3D::_ruts_configure() {
 	if (dir != wear_loaded_dir) {
 		wear_loaded_dir = dir;
 		_wear_load();
+		_deposits_load();
 	}
 }
 
@@ -6901,6 +6991,119 @@ void GroundSurface3D::_wear_save() {
 		f->store_32(uint32_t(kv.key.x));
 		f->store_32(uint32_t(kv.key.y));
 		f->store_float(kv.value.passes);
+	}
+}
+
+// Deposits kept with the ruts (docs/ideas/mud.md, round 16.2): what floods, rivers and debris flows laid (depth and
+// colour per 1 m cell, the silt skin's share of it, and how much of each river record the ground has taken, so a river
+// does not lay it again), and the stones wheels knocked loose. One zstd file, written with the ruts and read back the
+// first time the folder is used. How dry a skin is comes back with the crack state (GroundCellStore); a deposit does
+// not wear away while the player is away (fresh silt and fans last seasons, Asselman and Middelkoop 1995).
+static const char *DEPOSIT_FILE = "deposits.dep";
+static constexpr uint32_t DEPOSIT_MAGIC = 0x4f504544; // "DEPO"
+
+void GroundSurface3D::_deposits_save() {
+	if (!_ruts_on()) {
+		return;
+	}
+	const String path = ruts_path.path_join(DEPOSIT_FILE);
+	HashSet<Vector2i> keys;
+	for (const KeyValue<Vector2i, float> &kv : mud_deposits) {
+		keys.insert(kv.key);
+	}
+	for (const KeyValue<Vector2i, Vector2> &kv : silt_river_taken) {
+		keys.insert(kv.key);
+	}
+	if (keys.is_empty() && buried_loose.is_empty()) {
+		if (FileAccess::exists(path)) {
+			DirAccess::remove_absolute(path);
+		}
+		return;
+	}
+	if (!DirAccess::dir_exists_absolute(ruts_path)) {
+		DirAccess::make_dir_recursive_absolute(ruts_path);
+	}
+	Ref<FileAccess> f = FileAccess::open_compressed(path, FileAccess::WRITE, FileAccess::COMPRESSION_ZSTD);
+	if (f.is_null()) {
+		return;
+	}
+	f->store_32(DEPOSIT_MAGIC);
+	f->store_32(1);
+	f->store_32(keys.size());
+	for (const Vector2i &k : keys) {
+		const float *dep = mud_deposits.getptr(k);
+		const float *silt = silt_depth.getptr(k);
+		const Color *col = mud_deposit_colors.getptr(k);
+		const Vector2 *taken = silt_river_taken.getptr(k);
+		f->store_32(uint32_t(k.x));
+		f->store_32(uint32_t(k.y));
+		f->store_float(dep ? *dep : 0.0f);
+		f->store_float(silt ? *silt : 0.0f);
+		const Color c = col ? *col : Color(0, 0, 0, 0);
+		f->store_float(c.r);
+		f->store_float(c.g);
+		f->store_float(c.b);
+		f->store_float(c.a);
+		f->store_float(taken ? taken->x : 0.0f);
+		f->store_float(taken ? taken->y : 0.0f);
+	}
+	f->store_32(buried_loose.size());
+	for (uint32_t id : buried_loose) {
+		f->store_32(id);
+	}
+}
+
+void GroundSurface3D::_deposits_load() {
+	if (!_ruts_on()) {
+		return;
+	}
+	const String path = ruts_path.path_join(DEPOSIT_FILE);
+	if (!FileAccess::exists(path)) {
+		return;
+	}
+	Ref<FileAccess> f = FileAccess::open_compressed(path, FileAccess::READ, FileAccess::COMPRESSION_ZSTD);
+	if (f.is_null() || f->get_32() != DEPOSIT_MAGIC || f->get_32() != 1) {
+		return;
+	}
+	const uint32_t count = f->get_32();
+	for (uint32_t i = 0; i < count && !f->eof_reached(); i++) {
+		const int32_t kx = int32_t(f->get_32());
+		const int32_t kz = int32_t(f->get_32());
+		const Vector2i k(kx, kz);
+		const float dep = f->get_float();
+		const float silt = f->get_float();
+		const float r = f->get_float();
+		const float g = f->get_float();
+		const float b = f->get_float();
+		const float a = f->get_float();
+		const float tx = f->get_float();
+		const float tz = f->get_float();
+		if (dep > 0.0f) {
+			float &d = mud_deposits[k];
+			d = MAX(d, dep);
+		}
+		if (silt > 0.0f) {
+			float &s = silt_depth[k];
+			s = MAX(s, silt);
+		}
+		if (a > 0.0f && !mud_deposit_colors.has(k)) {
+			mud_deposit_colors[k] = Color(r, g, b, a);
+		}
+		if (tx > 0.0f || tz > 0.0f) {
+			Vector2 &t = silt_river_taken[k];
+			t = t.max(Vector2(tx, tz));
+		}
+	}
+	const uint32_t loose = f->eof_reached() ? 0 : f->get_32();
+	for (uint32_t i = 0; i < loose && !f->eof_reached(); i++) {
+		buried_loose.insert(f->get_32());
+	}
+	buried_cache.clear();
+	silt_dirty = true;
+	gpu_cells_dirty = true;
+	near_cells_dirty = true;
+	if (ground_valid) {
+		_update_cells();
 	}
 }
 
@@ -7257,6 +7460,7 @@ void GroundSurface3D::save_ruts() {
 	}
 	_cracks_save();
 	_wear_save();
+	_deposits_save();
 }
 
 void GroundSurface3D::clear_saved_ruts() {
@@ -7267,7 +7471,7 @@ void GroundSurface3D::clear_saved_ruts() {
 			LocalVector<String> files;
 			da->list_dir_begin();
 			for (String f = da->get_next(); !f.is_empty(); f = da->get_next()) {
-				if (!da->current_is_dir() && (f.ends_with(".rut") || f.ends_with(".cel") || f.ends_with(".wear"))) {
+				if (!da->current_is_dir() && (f.ends_with(".rut") || f.ends_with(".cel") || f.ends_with(".wear") || f.ends_with(".dep"))) {
 					files.push_back(f);
 				}
 			}
@@ -7435,13 +7639,18 @@ Array GroundSurface3D::take_sprays() {
 	return out;
 }
 
+struct CompareStoneDepth {
+	_FORCE_INLINE_ bool operator()(const Vector2 &p_a, const Vector2 &p_b) const { return p_a.x < p_b.x; }
+};
+
 PackedByteArray GroundSurface3D::_gpu_cells() const {
 	PackedByteArray out;
 	const int n = ground_n;
 	if (!ground_valid || int(cells.size()) != n * n) {
 		return out;
 	}
-	out.resize(n * n * 64);
+	out.resize(n * n * 64 + GroundDeformGPU::STONE_VEC4S * 16);
+	memset(out.ptrw(), 0, out.size());
 	float *w = reinterpret_cast<float *>(out.ptrw());
 	const bool inputs = int(cell_inputs.size()) == n * n;
 	bool seep = false;
@@ -7492,6 +7701,39 @@ PackedByteArray GroundSurface3D::_gpu_cells() const {
 	const_cast<GroundSurface3D *>(this)->mud_sliding = sliding;
 	const_cast<GroundSurface3D *>(this)->runoff_seep_any = runoff_any;
 	const_cast<GroundSurface3D *>(this)->mud_liquid_any = liquid_any;
+	// The hidden stones (round 16.1): slumping and mud waves keep to their tops as the press does (ground_deform.glsl
+	// stone_dent()). Those nearest the followed point, the shallow ones first.
+	if (buried_obstacles && buried_density > 0.0f) {
+		const Array near = get_buried_near(_follow_position(), MAX(deform_extent * 0.75f, 8.0f));
+		LocalVector<Vector2> order; // (top depth, index)
+		for (int k = 0; k < near.size(); k++) {
+			const Dictionary d = near[k];
+			const Vector3 a = d["a"];
+			const Vector3 b = d["b"];
+			const float r = d["radius"];
+			const Vector3 m = (a + b) * 0.5f;
+			// Nearest the followed point first (where the wheels are), a stone's depth counting as distance.
+			const Vector3 f = _follow_position();
+			order.push_back(Vector2(Vector2(m.x - f.x, m.z - f.z).length() + 4.0f * MAX(_ground_at(m.x, m.z) - (MAX(a.y, b.y) + r), 0.0f), float(k)));
+		}
+		order.sort_custom<CompareStoneDepth>();
+		float *s = w + n * n * 16;
+		const int count = MIN((int)order.size(), GPU_STONES);
+		s[0] = float(count);
+		for (int k = 0; k < count; k++) {
+			const Dictionary d = near[int(order[k].y)];
+			const Vector3 a = d["a"];
+			const Vector3 b = d["b"];
+			float *o = s + 4 + k * 8;
+			o[0] = a.x;
+			o[1] = a.y;
+			o[2] = a.z;
+			o[3] = d["radius"];
+			o[4] = b.x;
+			o[5] = b.y;
+			o[6] = b.z;
+		}
+	}
 	return out;
 }
 
@@ -8252,6 +8494,7 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_ford_stats"), &GroundSurface3D::get_ford_stats);
 	ClassDB::bind_method(D_METHOD("set_flood_silt", "enabled"), &GroundSurface3D::set_flood_silt);
 	ClassDB::bind_method(D_METHOD("get_silt_at", "position"), &GroundSurface3D::get_silt_at);
+	ClassDB::bind_method(D_METHOD("clear_mud_deposits"), &GroundSurface3D::clear_mud_deposits);
 	ClassDB::bind_method(D_METHOD("is_flood_silt"), &GroundSurface3D::is_flood_silt);
 	ClassDB::bind_method(D_METHOD("get_flood_silt_total"), &GroundSurface3D::get_flood_silt_total);
 	ClassDB::bind_method(D_METHOD("set_mats", "enabled"), &GroundSurface3D::set_mats);
