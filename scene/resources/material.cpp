@@ -793,7 +793,26 @@ float weather_contact_wetness_at(vec3 p_world_pos) {
 	vec2 uv = (p_world_pos.xz - weather_contact_rect.xy) / weather_contact_rect.zw;
 	vec2 e = min(uv, 1.0 - uv);
 	float edge = smoothstep(0.0, 0.1, min(e.x, e.y));
-	return edge > 0.0 ? textureLod(weather_contact_map, uv, 0.0).r * edge : 0.0;
+	if (edge <= 0.0) {
+		return 0.0;
+	}
+	// Catmull-Rom from five bilinear taps (the corner taps dropped; Jimenez 2016, Filmic SMAA): prints a texel or two
+	// across keep their shape instead of a bilinear texel's square.
+	vec2 ts = vec2(textureSize(weather_contact_map, 0));
+	vec2 sp = uv * ts;
+	vec2 t1 = floor(sp - 0.5) + 0.5;
+	vec2 f = sp - t1;
+	vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+	vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+	vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+	vec2 w3 = f * f * (-0.5 + 0.5 * f);
+	vec2 w12 = w1 + w2;
+	vec2 t0 = (t1 - 1.0) / ts;
+	vec2 t3 = (t1 + 2.0) / ts;
+	vec2 t12 = (t1 + w2 / w12) / ts;
+	float a = w12.x * w0.y, b = w0.x * w12.y, c = w12.x * w12.y, d = w3.x * w12.y, g = w12.x * w3.y;
+	float r = textureLod(weather_contact_map, vec2(t12.x, t0.y), 0.0).r * a + textureLod(weather_contact_map, vec2(t0.x, t12.y), 0.0).r * b + textureLod(weather_contact_map, t12, 0.0).r * c + textureLod(weather_contact_map, vec2(t3.x, t12.y), 0.0).r * d + textureLod(weather_contact_map, vec2(t12.x, t3.y), 0.0).r * g;
+	return clamp(r / (a + b + c + d + g), 0.0, 1.0) * edge;
 }
 
 // Ground wetness from the weather map (0 dry, 1 soaked) and where water has been; 0 with no weather map.

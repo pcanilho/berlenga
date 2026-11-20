@@ -249,6 +249,7 @@ private:
 		uint64_t motion_vectors_last_change = -1;
 		uint32_t bones_per_instance = 1; // Records per drawn instance for particle_trails materials (instance bones).
 		bool rt_instanced = false; // Path tracing: one TLAS entry per record even under the merged BLAS triangle cap.
+		float rt_offscreen_cull = 0.0f; // Path tracing, rt_instanced: records outside the view under this angle (degrees) are left out; 0 off.
 		uint64_t records_version = 0; // Bumped with every DEPENDENCY_CHANGED_MULTIMESH_DATA, motion vectors or not.
 		// multimesh_mark_buffer_rd_changed(): one GPU->CPU copy of the records in flight at a time.
 		uint32_t rd_readback_ticket = 0; // Bumped by every allocation and every readback issued.
@@ -787,6 +788,8 @@ public:
 	virtual int _multimesh_get_bones_per_instance(RID p_multimesh) const override;
 	virtual void _multimesh_set_rt_instanced(RID p_multimesh, bool p_instanced) override;
 	virtual bool _multimesh_is_rt_instanced(RID p_multimesh) const override;
+	virtual void _multimesh_set_rt_offscreen_cull(RID p_multimesh, float p_min_degrees) override;
+	virtual float _multimesh_get_rt_offscreen_cull(RID p_multimesh) const override;
 	virtual Vector<float> _multimesh_get_buffer(RID p_multimesh) const override;
 
 	virtual void _multimesh_set_visible_instances(RID p_multimesh, int p_visible) override;
@@ -855,6 +858,11 @@ public:
 	_FORCE_INLINE_ uint32_t multimesh_bones_per_instance(RID p_multimesh) const {
 		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
 		return mm ? mm->bones_per_instance : 1;
+	}
+
+	_FORCE_INLINE_ float multimesh_rt_offscreen_cull(RID p_multimesh) const {
+		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
+		return mm && mm->rt_instanced ? mm->rt_offscreen_cull : 0.0f;
 	}
 
 	_FORCE_INLINE_ bool multimesh_rt_instanced(RID p_multimesh) const {

@@ -647,11 +647,14 @@ func _render_plot(i: int, args: Dictionary) -> void:
 		# to 3 R (VegetationField3D.far_reach), so the survivors past R / 2 thin and widen within the valley.
 		for sp in biome.species:
 			sp.visibility_range = float(args["far"])
+			if sp.has_meta("far_hull_range"):
+				# Crown hulls (trees.md 9b) past the same range; env HULL_AT overrides.
+				sp.set_meta("far_hull_range", float(OS.get_environment("HULL_AT")) if OS.get_environment("HULL_AT") != "" else float(args["far"]))
 		f = VegetationField3D.new()
 		f.populate_on_ready = false
 		f.tile_size = 20.0
 		f.streaming = true
-		f.stream_radius = SIZE * 1.5
+		f.stream_radius = SIZE * 1.5 if OS.get_environment("CAM") == "" else 3000.0
 		f.far_reach = 3.0
 		# Vegetation's draped far shell takes over past 0.6 of the reach; at a bench's ranges it would cover the valley.
 		f.far_shell = OS.get_environment("FAR_SHELL") != ""
@@ -854,10 +857,20 @@ func _render_plot(i: int, args: Dictionary) -> void:
 				print("far: frame %d, %d plants, idle %s" % [waited, f.get_plant_count(), str(f.is_stream_idle())])
 		get_viewport().disable_3d = false
 		var drawn := 0
+		var hulls := 0
+		var hull_quads := 0
 		for mmi in f.find_children("*", "MultiMeshInstance3D", true, false):
 			if mmi.multimesh != null:
-				drawn += mmi.multimesh.visible_instance_count if mmi.multimesh.visible_instance_count >= 0 else mmi.multimesh.instance_count
-		print("far: %d plants placed, %d drawn instances after %d frames" % [f.get_plant_count(), drawn, waited])
+				var n: int = mmi.multimesh.visible_instance_count if mmi.multimesh.visible_instance_count >= 0 else mmi.multimesh.instance_count
+				if String(mmi.name).begins_with("PlantsHull"):
+					hulls += n
+					hull_quads = mmi.multimesh.mesh.surface_get_array_index_len(0) / 3
+					if OS.get_environment("HULL_LOG") != "":
+						var hc: PackedColorArray = mmi.multimesh.mesh.surface_get_arrays(0)[Mesh.ARRAY_COLOR]
+						print("hull %s: %d, %d triangles, cover %.2f, first lobe %s" % [mmi.name, n, hull_quads, float(mmi.multimesh.mesh.get_meta("hull_cover", -1.0)), str(hc[0].linear_to_srgb()) if hc.size() > 0 else "-"])
+				else:
+					drawn += n
+		print("far: %d plants placed, %d drawn instances, %d hull instances (%d triangles in the last), after %d frames" % [f.get_plant_count(), drawn, hulls, hull_quads, waited])
 	for k in (8 if raster else 12):
 		await RenderingServer.frame_post_draw
 	if not raster:

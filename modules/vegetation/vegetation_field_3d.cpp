@@ -755,6 +755,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			ps.fall_scatter = float(ps.sp->get_meta(SNAME("fall_scatter"), 0.0f));
 		}
 		ps.far_widen = bool(ps.sp->get_meta(SNAME("far_widen"), false));
+		ps.far_hull_range = float(ps.sp->get_meta(SNAME("far_hull_range"), 0.0f));
 		{
 			bool any_bank = false;
 			for (const Ref<Mesh> &m : ps.meshes) {
@@ -2156,8 +2157,21 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 		// need no camera-dependent vertex capture in the path tracer.
 		Basis widen;
 		if (ps.far_widen && p_max_rank < 1.0f) {
+			// By the tail alone, as the shader's (vegetation review, 20 Nov): the committed keep includes the fade over
+			// the reach's last quarter, so the distance it was committed for is found from it (keep falls with
+			// distance) and the tail taken there.
 			const float k = MAX((p_max_rank - 0.02f) / 1.12f, 1e-4f);
-			const float f = MIN(1.0f / Math::sqrt(k), 1.6f);
+			float lo = 0.5f * range, hi = MAX(reach, lo);
+			for (int it = 0; it < 24; it++) {
+				const float mid = 0.5f * (lo + hi);
+				if (_far_keep(range, reach, mid) > k) {
+					lo = mid;
+				} else {
+					hi = mid;
+				}
+			}
+			const float d0 = 0.5f * range, dk = MAX(0.5f * (lo + hi), d0);
+			const float f = MIN(dk / d0, 1.6f); // min(1/sqrt(tail), 1.6), tail = (d0/d)^2.
 			widen = Basis::from_scale(Vector3(f, Math::lerp(1.0f, f, 0.33f), f));
 		}
 		LocalVector<LocalVector<uint32_t>> buckets;
@@ -2175,14 +2189,21 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 			if (buckets[b].is_empty()) {
 				continue;
 			}
-			for (int pass = 0; pass < (near_mesh.is_valid() ? 2 : 1); pass++) {
+			// Trees past far_hull_range: their crown hulls (trees.md 9b), a third pass.
+			const Ref<Mesh> hull_mesh = ps.far_hull_range > 0.0f && mesh->has_meta(SNAME("tree_far_hull")) ? Ref<Mesh>(mesh->get_meta(SNAME("tree_far_hull"))) : Ref<Mesh>();
+			const float hull_margin = impostors_traced ? 0.0f : ps.far_hull_range * 0.05f;
+			for (int pass = 0; pass < 3; pass++) {
 				const bool near_pass = pass == 1;
+				const bool hull_pass = pass == 2;
+				if ((near_pass && near_mesh.is_null()) || (hull_pass && hull_mesh.is_null())) {
+					continue;
+				}
 				Ref<MultiMesh> mm;
 				mm.instantiate();
 				mm->set_transform_format(MultiMesh::TRANSFORM_3D);
 				mm->set_use_custom_data(true);
-				mm->set_mesh(near_pass ? near_mesh : mesh);
-				const Ref<Mesh> draw_mesh = near_pass ? near_mesh : mesh;
+				const Ref<Mesh> draw_mesh = hull_pass ? hull_mesh : (near_pass ? near_mesh : mesh);
+				mm->set_mesh(draw_mesh);
 				LocalVector<Transform3D> bx;
 				LocalVector<Color> bc;
 				for (uint32_t i : buckets[b]) {
@@ -2196,9 +2217,9 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 					VegetationDetail::trace_instanced(mm);
 				}
 				MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
-				mmi->set_name(cells > 1 ? vformat("Plants%s_%d_%d_%d_%d_%d", near_pass ? "Near" : "", s, v, tx, tz, b) : vformat("Plants_%d_%d_%d_%d", s, v, tx, tz));
+				mmi->set_name(cells > 1 || hull_pass ? vformat("Plants%s_%d_%d_%d_%d_%d", near_pass ? "Near" : (hull_pass ? "Hull" : ""), s, v, tx, tz, b) : vformat("Plants_%d_%d_%d_%d", s, v, tx, tz));
 				mmi->set_multimesh(mm);
-				if (near_mesh.is_valid()) {
+				if (near_mesh.is_valid() && !hull_pass) {
 					// Crossfade: both draw over the margin, each dithered in or out
 					// (GeometryInstance3D fade mode Self), so the swap never pops.
 					// No margin under path tracing: the TLAS takes both cells inside it (no dither
@@ -2221,8 +2242,23 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 					// Godot measures to the cell's centre: a plant can be up to its half diagonal nearer.
 					mmi->set_visibility_range_end(reach * 1.05f + 0.75f * ts / cells);
 				}
+				if (hull_mesh.is_valid() && !near_pass) {
+					// The tree to far_hull_range, its hull past it (dithered over the margin; none under path tracing,
+					// where the TLAS would take both).
+					mmi->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
+					if (hull_pass) {
+						mmi->set_visibility_range_begin(ps.far_hull_range);
+						mmi->set_visibility_range_begin_margin(hull_margin);
+					} else {
+						mmi->set_visibility_range_end(ps.far_hull_range);
+						mmi->set_visibility_range_end_margin(hull_margin);
+					}
+				}
 				add_child(mmi, false, INTERNAL_MODE_BACK);
 				r_nodes.push_back(mmi);
+				if (hull_pass) {
+					continue;
+				}
 				if (near_source) {
 					has_near_swap = true;
 					LazyNear cell;

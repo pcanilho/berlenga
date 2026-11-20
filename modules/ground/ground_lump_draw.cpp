@@ -98,6 +98,8 @@ void GroundLumpDraw::commit() {
 			mm->set_instance_count(cap);
 			// One TLAS entry per lump over its shape for the path tracer, not a merged copy of every lump.
 			rs->multimesh_set_rt_instanced(mm->get_rid(), true);
+			// Lumps off screen that look smaller than half a degree leave the path tracer's set (their shadows are below a pixel).
+			rs->multimesh_set_rt_offscreen_cull(mm->get_rid(), 0.5f);
 		}
 		instances[i]->set_visible(count > 0);
 		if (count > 0) {

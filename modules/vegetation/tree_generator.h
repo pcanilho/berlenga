@@ -707,6 +707,11 @@ public:
 	// meta far_widen: the field widens the survivors (the crown across, its height less) so the canopy keeps its cover as
 	// the ranks thin. Off: no range set.
 	bool far_thinning = true;
+	mutable Ref<StandardMaterial3D> hull_material; // _crown_hull()'s: vertex colour, rough.
+	bool near_build = false; // generate() on a near-mesh worker: no hull (the far mesh carries it; no texture readback off the main thread).
+	static Mutex hull_tex_mutex; // Mean opaque colour of each foliage texture, read back once (texture RID -> colour, alpha = opaque share).
+	static HashMap<RID, Color> hull_tex_mean;
+	Ref<ArrayMesh> _crown_hull(const Ref<ArrayMesh> &p_mesh) const;
 	float stand_forest_shade = 0.6f; // _stand_species: the shade a stand-grown tree grows in (make_stand may lower it). // While a beetle stand grows its species: 1 the red front, 2 the grey core.
 	void _grow_beetle_signs(Builder &p_bark, Builder &r_parts);
 	float cork_stripped_years = -1.0f; // Cork oak: years since the last cork harvest (5aa); -1 picks by seed, 30 or more never worked.

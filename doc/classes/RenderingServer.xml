@@ -3024,6 +3024,13 @@
 				This is useful when moving all instances to new locations, to give instantaneous changes rather than interpolation from the previous locations.
 			</description>
 		</method>
+		<method name="multimesh_get_rt_offscreen_cull" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="multimesh" type="RID" />
+			<description>
+				Returns the angle under which the path tracer leaves out instances of [param multimesh] outside the view. See [method multimesh_set_rt_offscreen_cull].
+			</description>
+		</method>
 		<method name="multimesh_is_rt_instanced" qualifiers="const">
 			<return type="bool" />
 			<param index="0" name="multimesh" type="RID" />
@@ -3122,6 +3129,14 @@
 			<param index="1" name="instanced" type="bool" />
 			<description>
 				If [code]true[/code], the path tracer gives every instance of [param multimesh] its own top-level entry over the shared mesh, even when the multimesh is small enough to be merged into one baked structure (see [member ProjectSettings.rendering/pathtracing/multimesh_merged_blas_max_triangles]). Use it for many small multimeshes of a few shapes, such as ground detail, where merging would store a copy of every instance's triangles.
+			</description>
+		</method>
+		<method name="multimesh_set_rt_offscreen_cull">
+			<return type="void" />
+			<param index="0" name="multimesh" type="RID" />
+			<param index="1" name="min_degrees" type="float" />
+			<description>
+				For a multimesh with [method multimesh_set_rt_instanced]: the path tracer leaves out each instance outside the view (outside the camera's frustum widened by 15 degrees a side) that spans under [param min_degrees] as seen from the camera, unless it is within ten of its own sizes of the view, where its shadow could fall into it. The view itself always keeps every instance, so the camera's image is unchanged; small things beside and behind the camera stop costing top-level entries. The culled set is redone only when the camera has turned 7.5 degrees or moved 1 m since, so the path tracer's kept entries stay valid in between. [code]0[/code] (the default) keeps every instance.
 			</description>
 		</method>
 		<method name="multimesh_set_visible_instances">

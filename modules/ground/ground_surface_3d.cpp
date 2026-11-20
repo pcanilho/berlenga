@@ -7517,11 +7517,43 @@ void GroundSurface3D::refresh_ground() {
 	}
 }
 
+// Outside its lattice the patch knows nothing of the ground (_ground_at() clamps to the lattice's edge, so a query far
+// off read the edge's height): it asks the height source there, or the colliders under the point (GroundHeightQuery),
+// and answers NaN where nothing does, so the WorldGround contract falls back to physics.
+bool GroundSurface3D::_on_lattice(float p_x, float p_z) const {
+	if (!ground_valid || ground_n < 2) {
+		return false;
+	}
+	const float fx = p_x / ground_spacing - ground_origin.x;
+	const float fz = p_z / ground_spacing - ground_origin.y;
+	return fx >= 0.0f && fz >= 0.0f && fx <= float(ground_n - 1) && fz <= float(ground_n - 1);
+}
+
+float GroundSurface3D::_off_lattice_height(const Vector3 &p_position) const {
+	if (!is_inside_tree()) {
+		return Math::NaN;
+	}
+	return GroundHeightQuery::make(this, height_source, ground_collision_mask).height(p_position);
+}
+
 float GroundSurface3D::get_ground_height_at(Vector3 p_position) const {
+	if (!_on_lattice(p_position.x, p_position.z)) {
+		const float h = _off_lattice_height(p_position);
+		if (Math::is_finite(h) || !ground_valid) {
+			return h;
+		}
+	}
 	return _ground_at(p_position.x, p_position.z);
 }
 
 float GroundSurface3D::get_surface_height_at(Vector3 p_position) const {
+	if (!_on_lattice(p_position.x, p_position.z)) {
+		// No prints off the lattice: the field lies inside it.
+		const float h = _off_lattice_height(p_position);
+		if (Math::is_finite(h) || !ground_valid) {
+			return h;
+		}
+	}
 	return _ground_at(p_position.x, p_position.z) + get_rim_at(p_position) - get_dent_at(p_position);
 }
 

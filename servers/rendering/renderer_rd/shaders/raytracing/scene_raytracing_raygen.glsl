@@ -1017,7 +1017,11 @@ void main() {
 		// Transmission past the first bounce does not count toward max_bounces (see the transmission lobe in
 		// sample_surface_continuation()); the extra segments it may take are capped here.
 		const uint segment_limit = max_bounces + uint(get_rt_param(RT_PARAM_TRANSMISSION_BOUNCES));
-		[[dont_unroll]] for (uint bounce = 0u; bounce <= segment_limit; bounce++) {
+		// Scattering in the simulated gas has its own budget (RT_VOLUME_MAX_SCATTERS), not max_bounces: a white
+		// cloud (snow powder, steam) keeps most of its light through tens of scatters, and cutting the path after the
+		// surface budget (3 by default) darkened its inside to grey. Russian roulette still ends the paths.
+		uint volume_scatters = 0u;
+		[[dont_unroll]] for (uint bounce = 0u; bounce <= segment_limit + volume_scatters; bounce++) {
 			vec3 throughput_entry = ps.throughput;
 			vec3 radiance_pre = ps.radiance;
 			uint flags_entry = ps.packed_bounces_flags;
@@ -1057,7 +1061,14 @@ void main() {
 					ps.radiance = radiance_pre + throughput_entry * vol_emitted;
 					ps.throughput = throughput_entry * albedo;
 					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, rt_volume.medium.z, false, ps.rng_state);
-					ps.packed_bounces_flags = inc_total_bounce(flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG)) | NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
+					// Free of the surface budget while within the volume's own: the total only leaves 0 (no longer the
+					// primary ray), so the surfaces the path meets later still get their max_bounces.
+					uint vol_flags = flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG);
+					bool vol_free = volume_scatters < RT_VOLUME_MAX_SCATTERS;
+					if (vol_free) {
+						volume_scatters++;
+					}
+					ps.packed_bounces_flags = ((vol_free && get_total_bounces(vol_flags) > 0u) ? vol_flags : inc_total_bounce(vol_flags)) | NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
 					ps.hit_t = t_vol;
 					cone_width += rt_cone_spread_angle() * t_vol;
 					if (bounce == 0u) {
@@ -3296,7 +3307,21 @@ void main() {
 					vec2 ce = min(cuv, 1.0 - cuv);
 					float cedge = smoothstep(0.0, 0.1, min(ce.x, ce.y));
 					if (cedge > 0.0) {
-						weather_wet = max(weather_wet, textureLod(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), cuv, 0.0).r * cedge);
+						// Catmull-Rom from five bilinear taps, as the raster read (material.cpp weather_contact_wetness_at).
+						vec2 cts = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), 0));
+						vec2 csp = cuv * cts;
+						vec2 ct1 = floor(csp - 0.5) + 0.5;
+						vec2 cf = csp - ct1;
+						vec2 cw0 = cf * (-0.5 + cf * (1.0 - 0.5 * cf));
+						vec2 cw2 = cf * (0.5 + cf * (2.0 - 1.5 * cf));
+						vec2 cw3 = cf * cf * (-0.5 + 0.5 * cf);
+						vec2 cw12 = 1.0 + cf * cf * (-2.5 + 1.5 * cf) + cw2;
+						vec2 ct0 = (ct1 - 1.0) / cts;
+						vec2 ct3 = (ct1 + 2.0) / cts;
+						vec2 ct12 = (ct1 + cw2 / cw12) / cts;
+						float ca = cw12.x * cw0.y, cb = cw0.x * cw12.y, cc = cw12.x * cw12.y, cd = cw3.x * cw12.y, cg = cw12.x * cw3.y;
+						float cr = textureLod(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), vec2(ct12.x, ct0.y), 0.0).r * ca + textureLod(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), vec2(ct0.x, ct12.y), 0.0).r * cb + textureLod(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), ct12, 0.0).r * cc + textureLod(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), vec2(ct3.x, ct12.y), 0.0).r * cd + textureLod(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), vec2(ct12.x, ct3.y), 0.0).r * cg;
+						weather_wet = max(weather_wet, clamp(cr / (ca + cb + cc + cd + cg), 0.0, 1.0) * cedge);
 					}
 				}
 				wet *= weather_wet;

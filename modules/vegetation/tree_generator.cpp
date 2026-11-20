@@ -19311,6 +19311,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// Storm damage (trees.md 5am): years since the storm; thrown and leaning trees point along mesh +X.
 		mesh->set_meta(SNAME("tree_windthrow_years"), windthrow_years);
 	}
+	if (far_thinning && !near_build && decay_class == 0 && !fallen && !fallen_branch && height >= 5.0f) {
+		const Ref<ArrayMesh> hull = _crown_hull(mesh);
+		if (hull.is_valid()) {
+			mesh->set_meta(SNAME("tree_far_hull"), hull);
+		}
+	}
 	if (fire_crown[5] > 0.0f) {
 		// The crown's foliage profile for fire mortality (VegetationFire::tree_killed; trees.md 5ag).
 		PackedFloat32Array fc;
@@ -21000,6 +21006,297 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 	}
 }
 
+// Crown hull (trees.md 9b): the far level past a placed tree's range, as a few dozen foliage lobes (the lobes of
+// Livny et al. 2011, "Texture-lobes for tree modelling"): the leafy shoots binned on a grid of about a fifth of the
+// crown, each bin with shoots a lobe at their mean, an icosahedron as wide as the cover its leaves give (leaves at
+// random angles shade half their area, G = 0.5: a lobe of spread R with leaf area A hides 1 - e^(-0.5 A / pi R^2) of
+// its disc), so a far crown keeps the near one's gaps and grain, not a solid body (a single envelope read as smooth
+// cones from 700 m; stand plot, 20 Nov). A four-sided stem under it. Some hundreds of triangles where the tree has
+// tens of thousands; vertex colour the drawn leaves' (shaded low in the crown, patchy). Real closed geometry, so
+// path-traced shadows and sky occlusion see a crown, as they would not an impostor card.
+Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
+	const float base_y = nodes.is_empty() ? 0.0f : nodes[0].start.y;
+	AABB box;
+	bool any = false;
+	int leafy = 0;
+	for (const Node &n : nodes) {
+		if (!n.removed && n.leafy) {
+			if (!any) {
+				box = AABB(n.start, Vector3());
+				any = true;
+			}
+			box.expand_to(n.start);
+			box.expand_to(n.end());
+			leafy++;
+		}
+	}
+	if (leafy < 20 || box.size.y < 0.5f) {
+		return Ref<ArrayMesh>();
+	}
+	const float pad = 0.25f; // A shoot's leaves or needles past its axis.
+	const float cell = MAX(MAX(box.size.y, MAX(box.size.x, box.size.z)) / 5.0f, 0.8f);
+	const Vector3i dim(MAX(1, int(Math::ceil(box.size.x / cell))), MAX(1, int(Math::ceil(box.size.y / cell))), MAX(1, int(Math::ceil(box.size.z / cell))));
+	struct Lobe {
+		Vector3 sum;
+		Vector3 sq;
+		int n = 0;
+	};
+	LocalVector<Lobe> grid;
+	grid.resize(dim.x * dim.y * dim.z);
+	int points = 0;
+	for (const Node &n : nodes) {
+		if (n.removed || !n.leafy) {
+			continue;
+		}
+		for (const Vector3 &p : { n.start, (n.start + n.end()) * 0.5f, n.end() }) {
+			const Vector3 g = (p - box.position) / cell;
+			const int x = CLAMP(int(g.x), 0, dim.x - 1), y = CLAMP(int(g.y), 0, dim.y - 1), z = CLAMP(int(g.z), 0, dim.z - 1);
+			Lobe &l = grid[(z * dim.y + y) * dim.x + x];
+			l.sum += p;
+			l.sq += p * p;
+			l.n++;
+			points++;
+		}
+	}
+	const LeafSeason ls = _leaf_season(preset, season);
+	Color leaf = leaf_color.lerp(ls.color, ls.season_blend());
+	float leaf_area = 0.0f; // One-sided, opaque part only, of the foliage surface the colour came from.
+	{
+		// The drawn foliage's own colour where the mesh has it: the leaf or spray texture's mean opaque texel times the
+		// material's albedo (leaf_color alone drew the hulls much darker than the crowns; stand plot, 20 Nov).
+		int best = 0;
+		for (int sfc = 0; p_mesh.is_valid() && sfc < p_mesh->get_surface_count(); sfc++) {
+			const Ref<Material> mat = p_mesh->surface_get_material(sfc);
+			Ref<Texture2D> tex;
+			Color albedo(1, 1, 1);
+			if (const Ref<BaseMaterial3D> bm = mat; bm.is_valid()) {
+				tex = bm->get_texture(BaseMaterial3D::TEXTURE_ALBEDO);
+				albedo = bm->get_albedo();
+				if (bm->get_transparency() == BaseMaterial3D::TRANSPARENCY_DISABLED) {
+					tex = Ref<Texture2D>();
+				}
+			} else if (const Ref<ShaderMaterial> sm = mat; sm.is_valid() && sm->get_shader().is_valid() && sm->get_shader()->get_code().contains("ALPHA")) {
+				tex = sm->get_shader_parameter("texture_albedo");
+				const Variant a = sm->get_shader_parameter("albedo");
+				if (a.get_type() == Variant::COLOR) {
+					albedo = a;
+				}
+			}
+			const int n = p_mesh->surface_get_array_len(sfc);
+			if (tex.is_null() || n <= best) {
+				continue;
+			}
+			// The texture's mean read back once per texture (a GPU readback each tree was a stall).
+			Color mean;
+			{
+				MutexLock lock(hull_tex_mutex);
+				const Color *found = hull_tex_mean.getptr(tex->get_rid());
+				if (found) {
+					mean = *found;
+				} else {
+					Ref<Image> img = tex->get_image();
+					if (img.is_valid()) {
+						img = img->duplicate();
+						if (img->is_compressed()) {
+							img->decompress();
+						}
+						img->convert(Image::FORMAT_RGBA8);
+						Color sum;
+						float cnt = 0.0f;
+						for (int y = 0; y < 48; y++) {
+							for (int x = 0; x < 48; x++) {
+								const Color c = img->get_pixel(x * img->get_width() / 48, y * img->get_height() / 48);
+								if (c.a >= 0.5f) {
+									sum += c.srgb_to_linear();
+									cnt += 1.0f;
+								}
+							}
+						}
+						mean = cnt > 0.0f ? Color(sum.r / cnt, sum.g / cnt, sum.b / cnt, cnt / (48.0f * 48.0f)) : Color(0, 0, 0, 0);
+					}
+					hull_tex_mean.insert(tex->get_rid(), mean);
+				}
+			}
+			const float w = mean.a * 48.0f * 48.0f;
+			if (w > 0.0f) {
+				Color t(mean.r, mean.g, mean.b); // Linear.
+				// Leaves and sprays take their colour from the vertex colour (each leaf its own shade; the textures
+				// are near white): its mean over the surface.
+				bool vcol = false, vsrgb = false;
+				if (const Ref<BaseMaterial3D> bm = mat; bm.is_valid()) {
+					vcol = bm->get_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR);
+					vsrgb = bm->get_flag(BaseMaterial3D::FLAG_SRGB_VERTEX_COLOR);
+				} else if (const Ref<ShaderMaterial> sm = mat; sm.is_valid()) {
+					const String code = sm->get_shader()->get_code();
+					vcol = code.contains("albedo_tex *= COLOR");
+					vsrgb = code.contains("Vertex Color is sRGB: Enabled");
+				}
+				if (vcol) {
+					const Array arr = p_mesh->surface_get_arrays(sfc);
+					const PackedColorArray vc = arr[Mesh::ARRAY_COLOR];
+					if (!vc.is_empty()) {
+						Color m;
+						int cnt = 0;
+						const int step = MAX(1, vc.size() / 20000);
+						for (int i = 0; i < vc.size(); i += step) {
+							m += vsrgb ? vc[i].srgb_to_linear() : vc[i];
+							cnt++;
+						}
+						m /= float(cnt);
+						t = Color(t.r * m.r, t.g * m.g, t.b * m.b);
+					}
+				}
+				const Color al = albedo.srgb_to_linear();
+				leaf = Color(t.r * al.r, t.g * al.g, t.b * al.b).linear_to_srgb();
+				best = n;
+				{
+					const Array arr = p_mesh->surface_get_arrays(sfc);
+					const PackedVector3Array pv = arr[Mesh::ARRAY_VERTEX];
+					const PackedInt32Array pi = arr[Mesh::ARRAY_INDEX];
+					double a = 0.0;
+					const int tris = pi.is_empty() ? pv.size() / 3 : pi.size() / 3;
+					for (int tt = 0; tt < tris; tt++) {
+						const int i0 = pi.is_empty() ? tt * 3 : pi[tt * 3], i1 = pi.is_empty() ? tt * 3 + 1 : pi[tt * 3 + 1], i2 = pi.is_empty() ? tt * 3 + 2 : pi[tt * 3 + 2];
+						a += 0.5 * (pv[i1] - pv[i0]).cross(pv[i2] - pv[i0]).length();
+					}
+					leaf_area = float(a) * w / (48.0f * 48.0f);
+				}
+			}
+		}
+	}
+	leaf = leaf.lerp(bark_color.lerp(Color(0.25f, 0.23f, 0.2f), 0.3f), CLAMP(ls.fallen * 0.85f + (1.0f - ls.out) * 0.85f, 0.0f, 1.0f));
+	leaf = leaf.srgb_to_linear(); // Looks are sRGB; vertex colour is linear.
+	// Each lobe's leaf area: its share of the shoots.
+	PackedVector3Array verts;
+	PackedVector3Array norms;
+	PackedColorArray cols;
+	PackedInt32Array idx;
+	// A unit icosahedron (12 vertices, 20 faces).
+	const float t = (1.0f + Math::sqrt(5.0f)) * 0.5f;
+	Vector3 ico[12] = { Vector3(-1, t, 0), Vector3(1, t, 0), Vector3(-1, -t, 0), Vector3(1, -t, 0), Vector3(0, -1, t), Vector3(0, 1, t),
+		Vector3(0, -1, -t), Vector3(0, 1, -t), Vector3(t, 0, -1), Vector3(t, 0, 1), Vector3(-t, 0, -1), Vector3(-t, 0, 1) };
+	for (Vector3 &v : ico) {
+		v.normalize();
+	}
+	static const int ICO_F[20][3] = { { 0, 11, 5 }, { 0, 5, 1 }, { 0, 1, 7 }, { 0, 7, 10 }, { 0, 10, 11 }, { 1, 5, 9 }, { 5, 11, 4 }, { 11, 10, 2 }, { 10, 7, 6 }, { 7, 1, 8 },
+		{ 3, 9, 4 }, { 3, 4, 2 }, { 3, 2, 6 }, { 3, 6, 8 }, { 3, 8, 9 }, { 4, 9, 5 }, { 2, 4, 11 }, { 6, 2, 10 }, { 8, 6, 7 }, { 9, 8, 1 } };
+	float covered = 0.0f, discs = 0.0f;
+	int lobes = 0;
+	for (uint32_t gi = 0; gi < grid.size(); gi++) {
+		const Lobe &l = grid[gi];
+		if (l.n < 3) {
+			continue;
+		}
+		const Vector3 c = l.sum / float(l.n);
+		const Vector3 var = l.sq / float(l.n) - c * c;
+		const Vector3 spread(Math::sqrt(MAX(var.x, 0.0f)) * 1.5f + pad, Math::sqrt(MAX(var.y, 0.0f)) * 1.5f + pad, Math::sqrt(MAX(var.z, 0.0f)) * 1.5f + pad);
+		const float rr = (spread.x + spread.z) * 0.5f;
+		const float area = leaf_area > 0.0f ? leaf_area * float(l.n) / float(points) : float(l.n) * 0.05f;
+		const float disc = float(Math::PI) * rr * spread.y;
+		const float hide = 1.0f - Math::exp(-0.5f * area / MAX(disc, 1e-3f));
+		covered += hide * disc;
+		discs += disc;
+		const float k = Math::sqrt(MAX(hide, 0.05f));
+		const Vector3 r = spread * k;
+		const float h = (c.y - box.position.y) / MAX(box.size.y, 1e-3f);
+		// The leaves inside a lobe shade each other: their mean light under Beer's law, (1 - e^(-kL)) / kL with
+		// k = 0.5 (Monsi and Saeki 1953), is hide / -ln(1 - hide); a solid lobe lit as one surface drew the dense
+		// broadleaf crowns as bright yellow blobs (stand plot, 20 Nov).
+		const float self = hide > 1e-3f ? hide / -Math::log(MAX(1.0f - hide, 1e-3f)) : 1.0f;
+		// Low in the crown and deep inside it less sky reaches; leaf clusters lit and shaded at random.
+		const float inner = 1.0f - CLAMP(Vector2(c.x, c.z).distance_to(Vector2(box.get_center().x, box.get_center().z)) / MAX(0.5f * MAX(box.size.x, box.size.z), 0.5f), 0.0f, 1.0f);
+		const float patch = 0.85f + 0.3f * float(hash_murmur3_one_32(gi, uint32_t(seed) * 2654435761u + 0x68756c6cu) & 0xffff) / 65535.0f;
+		const float shade = Math::lerp(0.7f, 1.0f, h) * Math::lerp(1.0f, 0.85f, inner) * patch * self;
+		const Color col(leaf.r * shade, leaf.g * shade, leaf.b * shade);
+		const int v0 = verts.size();
+		const float spin = float(hash_murmur3_one_32(gi, uint32_t(seed) + 0x7370696eu) & 0xffff) / 65535.0f * float(Math::TAU);
+		const Basis rot(Vector3(0, 1, 0), spin);
+		for (int q = 0; q < 12; q++) {
+			const Vector3 d = rot.xform(ico[q]);
+			verts.push_back(c + Vector3(d.x * r.x, d.y * r.y, d.z * r.z));
+			// Leaves face every way, so a crown's sunlit side is far less bright than a solid's: normals bent halfway
+			// to the sky (the lobes kept round, their sun contrast that of foliage; the hard yellow tops of
+			// true normals, stand plot 20 Nov).
+			const Vector3 out = Vector3(d.x / MAX(r.x, 1e-3f), d.y / MAX(r.y, 1e-3f), d.z / MAX(r.z, 1e-3f)).normalized();
+			norms.push_back((out + Vector3(0, 0.8f, 0)).normalized());
+			cols.push_back(col);
+		}
+		for (int f = 0; f < 20; f++) {
+			// Clockwise from outside (Godot's front faces).
+			idx.push_back(v0 + ICO_F[f][0]);
+			idx.push_back(v0 + ICO_F[f][2]);
+			idx.push_back(v0 + ICO_F[f][1]);
+		}
+		lobes++;
+	}
+	if (lobes == 0) {
+		return Ref<ArrayMesh>();
+	}
+	const float cover = discs > 0.0f ? covered / discs : 1.0f;
+	// The stem from the ground into the crown: four sides, the bole's radius.
+	float trunk_r = 0.1f;
+	for (const Node &n : nodes) {
+		if (!n.removed && n.parent == 0) {
+			trunk_r = MAX(trunk_r, n.radius);
+		}
+	}
+	int stem = -1;
+	for (int i = 1; i < int(nodes.size()); i++) {
+		if (!nodes[i].removed && nodes[i].parent == 0 && (stem < 0 || nodes[i].radius > nodes[stem].radius)) {
+			stem = i;
+		}
+	}
+	Vector3 top(box.get_center().x, Math::lerp(box.position.y, box.get_end().y, 0.6f), box.get_center().z);
+	if (stem >= 0) {
+		// Up the bole to the crown's middle height (its lean kept).
+		for (int k = stem; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+			top = nodes[k].end();
+			if (top.y >= Math::lerp(box.position.y, box.get_end().y, 0.6f)) {
+				break;
+			}
+		}
+	}
+	const int s0 = verts.size();
+	const Color bark = bark_color.srgb_to_linear() * 0.8f;
+	for (int k = 0; k < 4; k++) {
+		const float a = (k + 0.5f) * float(Math::TAU) / 4.0f;
+		const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+		verts.push_back(Vector3(0, base_y, 0) + d * trunk_r);
+		norms.push_back(d);
+		cols.push_back(bark);
+		verts.push_back(top + d * trunk_r * 0.4f);
+		norms.push_back(d);
+		cols.push_back(bark);
+	}
+	for (int k = 0; k < 4; k++) {
+		const int a0 = s0 + k * 2, a1 = s0 + ((k + 1) % 4) * 2;
+		idx.push_back(a0);
+		idx.push_back(a1);
+		idx.push_back(a0 + 1);
+		idx.push_back(a1);
+		idx.push_back(a1 + 1);
+		idx.push_back(a0 + 1);
+	}
+	Array arr;
+	arr.resize(Mesh::ARRAY_MAX);
+	arr[Mesh::ARRAY_VERTEX] = verts;
+	arr[Mesh::ARRAY_NORMAL] = norms;
+	arr[Mesh::ARRAY_COLOR] = cols;
+	arr[Mesh::ARRAY_INDEX] = idx;
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arr);
+	if (hull_material.is_null()) {
+		hull_material.instantiate();
+		hull_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
+		hull_material->set_roughness(0.7f);
+		hull_material->set_specular(0.3f); // The leaves' sheen (their sky-blue tint from far off).
+	}
+	mesh->surface_set_material(0, hull_material);
+	mesh->set_meta(SNAME("hull_cover"), cover);
+	return mesh;
+}
+
 // Decay class of a tree the storm threw or broke, by the years since (trees.md 5am): a thrown spruce keeps its needles
 // for a year or two (green, then red), loses its twigs over the next years, its bark and limbs by twenty, and is a soft
 // log on the ground after that (Ulanova 2000, Picea abies log decay: needles gone by 11-20 years on the ground).
@@ -21098,7 +21395,9 @@ void TreeGenerator::_near_task(void *p_self) {
 		self->fire_years = -1.0f;
 		self->material_source = self->near_far_meshes.size() > self->near_task_variant ? Ref<ArrayMesh>(self->near_far_meshes[self->near_task_variant]) : Ref<ArrayMesh>();
 	}
+	self->near_build = true;
 	self->near_result = self->generate();
+	self->near_build = false;
 	self->material_source.unref();
 	// Keep the copy small between requests: the growth state is only needed while growing.
 	self->nodes.reset();
@@ -21114,6 +21413,8 @@ void TreeGenerator::_near_task(void *p_self) {
 }
 
 SafeNumeric<int> TreeGenerator::near_building;
+Mutex TreeGenerator::hull_tex_mutex;
+HashMap<RID, Color> TreeGenerator::hull_tex_mean;
 int TreeGenerator::near_build_limit = 0;
 
 int TreeGenerator::_near_limit() {
@@ -21443,7 +21744,18 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			// Trees and logs only: small wood and saplings keep no range (drawn to the stream radius as before), and a
 			// range of 150 m or more leaves the field's far voxel volume (to far_volume_range, 150 m) empty for them.
 			if (extent >= 5.0f) {
-				sp->set_visibility_range(CLAMP(30.0f * extent, 150.0f, 1200.0f));
+				const float range = CLAMP(30.0f * extent, 150.0f, 1200.0f);
+				sp->set_visibility_range(range);
+				// Crown hulls past the range (trees.md 9b): each living variant carries one (mesh meta tree_far_hull,
+				// _crown_hull()); VegetationField3D swaps to it at far_hull_range.
+				bool hulls = false;
+				for (int i = 0; i < meshes.size(); i++) {
+					const Ref<Mesh> m = meshes[i];
+					hulls = hulls || (m.is_valid() && m->has_meta(SNAME("tree_far_hull")));
+				}
+				if (hulls) {
+					sp->set_meta("far_hull_range", range);
+				}
 			}
 		}
 	}
