@@ -501,6 +501,8 @@ void GrassField3D::_build_material() {
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	// Regrowth flush on burnt ground (burn_recovery): 1 on a fresh burn, 0 by a year and a half; rect z 0: none.
 	code += "uniform sampler2D burn_flush_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 burn_flush_rect;\n";
+	// Deer lawns (graze_height): r = how far the sward is grazed down, 0 none to 1 to graze_height; rect z 0: none.
+	code += "uniform sampler2D graze_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 graze_rect;\nuniform float graze_height = 0.04;\n";
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\nglobal uniform sampler2D weather_spray_map;\nglobal uniform vec4 weather_spray_rect;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	// Sea salt on the blades (WeatherMap3D sea_spray, G: 1 - exp(-salt / 10 g/m2)): salt spray burns leaf tips brown
@@ -1056,6 +1058,7 @@ void fragment() {
 varying float v_t;
 varying float v_dry;
 varying float v_flush; // Regrowth on burnt ground (burn_flush_map).
+varying float v_graze; // Grazed down to a lawn (graze_map).
 varying float v_soft; // Distance softening, 0 near, 1 from 35 m.
 varying float v_wet;
 varying float v_frost;
@@ -1086,6 +1089,17 @@ void vertex() {
 	float side = VERTEX.x;
 	vec3 base_w = (MODEL_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
 	mat3 to_local = inverse(mat3(MODEL_MATRIX));
+	// Deer lawns (Putman 1986; Kuijper et al. 2009): where deer graze hard the blades are bitten down to about
+	// graze_height, a few new leaves a little over it; the blade keeps its width, so the turf reads dense and even.
+	v_graze = 0.0;
+	if (graze_rect.z > 0.0) {
+		vec2 guv = (base_w.xz - graze_rect.xy) / graze_rect.zw;
+		if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
+			v_graze = textureLod(graze_map, guv, 0.0).r;
+			float crop_h = graze_height * (0.85 + 0.3 * fract(rnd * 5.31)) * (fract(rnd * 3.17) < 0.15 ? 1.4 : 1.0);
+			h = mix(h, min(h, crop_h), v_graze);
+		}
+	}
 	// A far ring blade (negative width; GrassField3D::_build_ring_tile()): one of a set thinned with the square of
 	// the distance from the field's centre, each blade dropping at its own rank (w's integer part: -log2 of it, in
 	// 1/1024ths) and the ones left widened, so coverage holds and no ring shows (Ghost of Tsushima, Wohllaib GDC
@@ -1284,8 +1298,12 @@ void fragment() {
 	// The fire took the old growth: regrowth carries no dry tips or thatch yet (a burn reads greener than the sward
 	// around it through its first season).
 	dry_share *= 1.0 - 0.85 * v_flush;
+	// Grazed turf is mostly fresh regrowth: few dry tips survive the bites.
+	dry_share *= 1.0 - 0.7 * v_graze;
 	vec3 tipc = mix(tip_color, dry_color, step(1.0 - dry_share, v_dry) * smoothstep(0.3, 1.0, v_t));
 	vec3 c = mix(base_color, tipc, t) * v_tint;
+	// The bitten ends: torn, not cut (deer have no upper incisors), they dry pale over a few days.
+	c = mix(c, mix(dry_color, vec3(0.62, 0.6, 0.45), 0.4), v_graze * smoothstep(0.82, 1.0, v_t) * step(0.3, fract(v_dry * 17.3)) * 0.7);
 	// Some blades of the dry fraction are dead from the root (thatch), straw that greys with age.
 	float dead = step(1.0 - max(dry_share * 0.3, dormant * 0.85 * (1.0 - v_flush)), v_dry);
 	// Dead leaves bleach to a pale grey buff, not the warm straw of a dry tip (a saturated straw read
@@ -1411,6 +1429,7 @@ void fragment() {
 	material->set_shader_parameter("wind_response", wind_response);
 	material->set_shader_parameter("trample_rect", Vector4());
 	_publish_burn_flush();
+	_publish_graze();
 	material->set_shader_parameter("view_facing", view_facing);
 	material->set_shader_parameter("fibre_shading", fibre_shading);
 	material->set_shader_parameter("fade_band", fade_band);
@@ -3773,6 +3792,72 @@ void GrassField3D::_follow_burns(TerrainDataMap3D *p_map) {
 	}
 }
 
+// Deer lawns: the browse pressure over the map as how far the sward is grazed down, smoothstep(0.3, 0.8, pressure)
+// (a light pressure leaves the sward standing; Putman 1986), on a grid like the burn ages'.
+void GrassField3D::_read_graze(TerrainDataMap3D *p_map) {
+	const WorldStand *stand = WorldContracts::stand();
+	graze_any = false;
+	if (stand) {
+		graze_seen = stand->get_stand_generation();
+	}
+	if (!stand || !p_map || crop != CROP_NONE || graze_height <= 0.0f) {
+		return;
+	}
+	const Rect2 rect = p_map->get_map_rect();
+	if (!rect.has_area()) {
+		return;
+	}
+	const float cell = MAX(2.0f, MAX(rect.size.x, rect.size.y) / 511.0f);
+	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 512);
+	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 512);
+	Vector<uint8_t> data;
+	data.resize(nx * ny);
+	uint8_t *w = data.ptrw();
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const Vector2 xz = rect.position + rect.size * Vector2(float(x) / (nx - 1), float(z) / (ny - 1));
+			const float g = Math::smoothstep(0.3f, 0.8f, stand->browse_at(Vector3(xz.x, 0.0f, xz.y)));
+			w[z * nx + x] = uint8_t(CLAMP(g, 0.0f, 1.0f) * 255.0f + 0.5f);
+			graze_any = graze_any || w[z * nx + x] > 0;
+		}
+	}
+	if (!graze_any) {
+		graze_texture.unref();
+		return;
+	}
+	const Ref<Image> img = Image::create_from_data(nx, ny, false, Image::FORMAT_R8, data);
+	if (graze_texture.is_valid() && graze_nx == nx && graze_ny == ny) {
+		graze_texture->update(img);
+	} else {
+		graze_texture = ImageTexture::create_from_image(img);
+	}
+	graze_nx = nx;
+	graze_ny = ny;
+	graze_rect = rect;
+}
+
+void GrassField3D::_publish_graze() {
+	if (material.is_null()) {
+		return;
+	}
+	if (!graze_any || graze_texture.is_null() || graze_height <= 0.0f) {
+		material->set_shader_parameter("graze_rect", Vector4());
+		return;
+	}
+	const Vector2 cell(graze_rect.size.x / (graze_nx - 1), graze_rect.size.y / (graze_ny - 1));
+	material->set_shader_parameter("graze_map", graze_texture);
+	material->set_shader_parameter("graze_rect", Vector4(graze_rect.position.x - cell.x * 0.5f, graze_rect.position.y - cell.y * 0.5f, graze_rect.size.x + cell.x, graze_rect.size.y + cell.y));
+	material->set_shader_parameter("graze_height", graze_height);
+}
+
+void GrassField3D::set_graze_height(float p_m) {
+	graze_height = MAX(p_m, 0.0f);
+	if (graze_height > 0.0f && graze_texture.is_null()) {
+		graze_seen = 0; // Read it on the next process.
+	}
+	_publish_graze();
+}
+
 // The regrowth flush (shader's burn_flush_map) from the burn grid: 1 - smoothstep(0, 1.5 yr, age), 0 unburnt.
 void GrassField3D::_publish_burn_flush() {
 	if (material.is_null()) {
@@ -4898,6 +4983,18 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 		_ground_bake_rows(map, GROUND_BAKE_BUDGET_USEC);
 	}
 	_follow_burns(map);
+	if (burn_read && graze_height > 0.0f && crop == CROP_NONE) {
+		// Browse discs added, moved or cleared: the pressure grid is read again (cheap; the texture only).
+		const WorldStand *stand = WorldContracts::stand();
+		if (stand && stand->get_stand_generation() != graze_seen) {
+			const uint64_t now = OS::get_singleton()->get_ticks_usec();
+			if (now - burn_follow_usec >= uint64_t(BURN_FOLLOW_MSEC) * 1000) {
+				burn_follow_usec = now;
+				_read_graze(map);
+				_publish_graze();
+			}
+		}
+	}
 	if (crop != CROP_NONE && is_inside_tree()) {
 		_crop_ground_step();
 	}
@@ -5006,6 +5103,8 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 		_read_sand_sea(p_map);
 		burn_read = true;
 		_publish_burn_flush();
+		_read_graze(p_map);
+		_publish_graze();
 	}
 	if (crop != CROP_NONE) {
 		crop_ground_dirty = true; // The fields' own ground (crop_ground()).
@@ -6397,6 +6496,8 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_far_shell_range", "range"), &GrassField3D::set_far_shell_range);
 	ClassDB::bind_method(D_METHOD("get_far_shell_range"), &GrassField3D::get_far_shell_range);
 	ClassDB::bind_method(D_METHOD("set_burn_recovery", "years"), &GrassField3D::set_burn_recovery);
+	ClassDB::bind_method(D_METHOD("set_graze_height", "height"), &GrassField3D::set_graze_height);
+	ClassDB::bind_method(D_METHOD("get_graze_height"), &GrassField3D::get_graze_height);
 	ClassDB::bind_method(D_METHOD("get_burn_recovery"), &GrassField3D::get_burn_recovery);
 	ClassDB::bind_method(D_METHOD("get_burn_cover_at", "global_position"), &GrassField3D::get_burn_cover_at);
 	ClassDB::bind_method(D_METHOD("get_shell_column_count"), &GrassField3D::get_shell_column_count);
@@ -6453,6 +6554,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_shell"), "set_far_shell", "is_far_shell");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_shell_range", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_far_shell_range", "get_far_shell_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "burn_recovery", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater,suffix:yr"), "set_burn_recovery", "get_burn_recovery");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "graze_height", PROPERTY_HINT_RANGE, "0,0.2,0.005,suffix:m"), "set_graze_height", "get_graze_height");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_match_view"), "set_far_match_view", "is_far_match_view");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,64,0.5,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_GROUP("Wind", "");

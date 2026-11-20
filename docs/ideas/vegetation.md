@@ -1397,7 +1397,13 @@ Built:
 - PlantGenerator season "browse" (0..1): bramble canes low and spreading, bitten back with blunt ends and side shoots,
   leaves eaten or torn; raspberry canes bitten at the leader and bushy below; flowers and fruit scarce. Leaf.cut (the
   torn end, slanted, drying pale) does the torn blades and leaflets. Unbrowsed meshes are unchanged (same draws).
-- PRESET_GRAZED_LAWN (98): a mat of 150-220 fine blades 2-6.5 cm, two thirds torn.
+- PRESET_GRAZED_LAWN (98), reworked after review (the first version read as a sparse tuft of long blades): a 24 cm
+  cell of 300-380 fine blades cropped to one height (2.5-4 cm, 82% torn at it, new leaves a little over), a flat
+  darker thatch and a few white clover leaves (the petal surface, round leaflets with the chevron); ~3.7k vertices.
+  Floors place it 0.2 m apart to 18 m.
+- GrassField3D.graze_height (0.04 m): the sward itself is grazed where deer browse hard, in the shader from a pressure
+  grid (graze_map, smoothstep 0.3-0.8 of browse_at), so near tiles, rings, GPU fill and the path tracer agree with no
+  rebuild; torn pale ends, fewer dry tips. Followed on stand changes. Grass bench --graze=P (9 m disc).
 - make_floor (all but hedgerow and montado), appended so every other species keeps its seed: bramble and raspberry
   whole to 0.35 (fade 0.15) and bitten (meshes at 0.85) past it; palatable herbs (woodruff, anemone, violet, bilberry,
   ivy, fireweed, herb Robert, wood sorrel) thin to about a fifth at 1; the tall clearing grass gives way past 0.5; deer

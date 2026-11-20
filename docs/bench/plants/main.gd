@@ -14,6 +14,7 @@ extends Node3D
 #   --top            with --close: straight down on the middle plant (leaf outlines)
 #   --wide           with --close: from 2.5 m, a little above (spreading or lodged plants)
 #   --patch          with --close: a stand of the preset, 14 x 10 m on beech litter, from 8 m with the sun from the side
+#   --turf           with --close: a 2 x 1.6 m turf of the preset on a 0.2 m grid, from 1.1 m (lawns)
 #   --head           with --close: the top of the first plant from 15 cm (flower and seed heads)
 #   --wear=W         leaf wear 0..1 (default the generator's 0.5)
 #   --wind=x,z       fallback wind for the plants (default none)
@@ -34,6 +35,7 @@ var raster := false
 var spp := 16
 var close := -1
 var patch := false
+var turf := false
 var stand := -1
 var out := ""
 var macro := false
@@ -71,6 +73,7 @@ func _ready() -> void:
 		elif a == "--head": head = true
 		elif a == "--wide": wide = true
 		elif a == "--patch": patch = true
+		elif a == "--turf": turf = true
 		elif a.begins_with("--seq="): seq = int(a.substr(6))
 		elif a.begins_with("--wear="): wear = float(a.substr(7))
 		elif a.begins_with("--stand="): stand = int(a.substr(8))
@@ -125,6 +128,26 @@ func _ready() -> void:
 				continue
 			mi.position = Vector3((p % 9) * STEP, 0, (s + (p / 9) * 3.4) * STEP) if close < 0 else Vector3((s - 1) * 0.36, 0, 0)
 			add_child(mi)
+	if close >= 0 and turf:
+		# A turf: the preset close-set as a sward, every cell a different seed and turn.
+		for ch in get_children():
+			if ch is MeshInstance3D:
+				ch.free()
+		var tv: Array[Mesh] = []
+		gen.preset = close
+		gen.apply_preset_colors()
+		for s in 6:
+			gen.seed = 20 + s
+			tv.push_back(gen.generate())
+		var trng := RandomNumberGenerator.new()
+		trng.seed = 5
+		for gz in range(-9, 3):
+			for gx in range(-7, 8):
+				var tm := MeshInstance3D.new()
+				tm.mesh = tv[trng.randi() % tv.size()]
+				tm.position = Vector3(gx * 0.2 + trng.randf_range(-0.05, 0.05), 0, gz * 0.2 + trng.randf_range(-0.05, 0.05))
+				tm.rotation.y = trng.randf() * TAU
+				add_child(tm)
 	if close >= 0 and patch:
 		# A stand: eight variants on a jittered 0.45 m grid, thinning at the edges, over leaf litter.
 		for ch in get_children():
@@ -247,6 +270,9 @@ func _ready() -> void:
 			c.y = (get_child(0) as Node3D).position.y + bb.position.y + bb.size.y * 0.7
 			cam.position = Vector3(c.x, 0.025, c.z + max(0.2, max(max(bb.size.x, bb.size.z) * 1.6, bb.size.y * 1.8)))
 		cam.look_at(c)
+	elif close >= 0 and turf:
+		cam.position = Vector3(0, 0.55, 0.95)
+		cam.look_at(Vector3(0, 0.0, -0.35))
 	elif close >= 0 and patch:
 		cam.position = Vector3(0, 3.3, 7.5)
 		cam.look_at(Vector3(0, 0.2, -0.5))

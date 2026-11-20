@@ -4529,6 +4529,14 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			l.shape = LEAF_ROUND;
 			t.aspect = 0.95f;
 			t.base_tint = Color(0.92f, 0.6f, 0.02f, 0.35f); // Glossy gold, deeper at the base.
+		} else if (preset == PRESET_GRAZED_LAWN) {
+			// The lawn's petal surface carries its white clover leaflets: round, pinnate veins, the pale chevron.
+			l.shape = LEAF_ROUND;
+			t.aspect = 0.9f;
+			t.venation = VENATION_PINNATE;
+			t.vein = petal_color.lerp(Color(0.75f, 0.85f, 0.6f), 0.35f);
+			t.chevron = 0.6f;
+			t.spots = 0.15f;
 		} else if (preset == PRESET_MEADOWSWEET) {
 			t.base_tint = Color(0.9f, 0.88f, 0.62f, 0.3f);
 		} else if (preset == PRESET_BUTTERBUR) {
@@ -6358,7 +6366,7 @@ void PlantGenerator::apply_preset_colors() {
 		case PRESET_GRAZED_LAWN:
 			leaf_color = Color(0.12f, 0.27f, 0.08f); // Fresh regrowth after each bite: a bright, even green.
 			stem_color = Color(0.25f, 0.3f, 0.12f);
-			petal_color = Color(0.3f, 0.32f, 0.16f);
+			petal_color = Color(0.1f, 0.25f, 0.07f); // White clover leaflets.
 			break;
 		case PRESET_COCKSFOOT:
 			leaf_color = Color(0.14f, 0.27f, 0.12f); // Bluish green.
@@ -7899,7 +7907,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			set.push_back(f);
 		};
 		// Grazed lawns in the light (clearings, rides, open glades), with white clover in them.
-		browsed(P::PRESET_GRAZED_LAWN, 0.22f, 0.07f, 0.95f, 0.9f, 1.3f, 12.0f, 0.75f, 0.45f, 35.0f, 0.45f, 0.2f);
+		browsed(P::PRESET_GRAZED_LAWN, 0.2f, 0.06f, 0.95f, 0.9f, 1.15f, 12.0f, 0.8f, 0.45f, 18.0f, 0.45f, 0.2f);
 		browsed(P::PRESET_CLOVER, 0.5f, 0.1f, 0.35f, 0.7f, 1.0f, 6.0f, 0.35f, 0.45f, 25.0f, 0.5f, 0.2f);
 		// Under the crowns the floor goes grassy (unpalatable or grazing-tolerant grasses) and ferny (Dryopteris).
 		browsed(broad ? P::PRESET_COCKSFOOT : P::PRESET_DRY_GRASS, 0.35f, 0.08f, 0.55f, 0.6f, 0.9f, 9.0f, 0.55f, 0.8f, 40.0f, 0.4f, 0.3f);

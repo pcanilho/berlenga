@@ -58,6 +58,7 @@ extends Node3D
 #   --grazed         the tall grass grazed short (5 to 14 cm), as on upland pasture
 #   --path[=P]       a worn path winding away from the camera, P passes a year (default 3000, a busy footpath; GrassField3D.paths,
 #                    VegetationField3D.paths): the sward and plants thin and shorten towards its line
+#   --graze=P        a deer browse disc of pressure P (WorldStand.add_browse, 9 m) in the view: the sward grazed to a lawn
 #   --burn=A         a burn scar A years old (WorldBurnScar3D, 20 x 12 m) in the view: the sward grows back over
 #                    GrassField3D.burn_recovery (0.7 years), short and sparse first; GRASS_NO_FLUSH=1 without the
 #                    regrowth flush (the before frame)
@@ -135,6 +136,7 @@ var undergrowth := ""
 var grazed := false # --grazed: the tall grass grazed short (upland pasture).
 var path_passes := 0.0 # --path: a worn path across the meadow, passes a year.
 var burn_age := -1.0 # --burn=A: a burn scar A years old in the view.
+var graze := -1.0 # --graze=P: a browse disc of pressure P in the view.
 var ug_dir := Vector3(0, 0, 1)
 var mushroom_view := "" # --mushrooms[=name]: in the wood, close on a group of mushrooms (make_floor's).
 var ug_edge := false # --undergrowth-edge: the stand's edge seen along it from 1 m up.
@@ -242,6 +244,7 @@ func _ready() -> void:
 		elif a == "--path": path_passes = 3000.0
 		elif a.begins_with("--path="): path_passes = float(a.get_slice("=", 1))
 		elif a.begins_with("--burn="): burn_age = float(a.get_slice("=", 1))
+		elif a.begins_with("--graze="): graze = float(a.get_slice("=", 1))
 		elif a == "--no-rock-foot": no_rock_foot = true
 		elif a == "--far=0": no_far = true
 		elif a == "--far": far_view = true
@@ -468,6 +471,10 @@ func _ready() -> void:
 				g.rules = r
 				g.canopy_field = g.get_path_to(cover)
 				g.undergrowth_field = g.get_path_to(cover) # Thinned under the bracken and bramble stands.
+		if graze >= 0.0:
+			var st: WorldStand = WorldContracts.get_stand()
+			st.clear_browse()
+			st.add_browse(Vector3(24.0, 0.0, 22.0) if far_view else Vector3(3.0, 0.0, 9.0), 9.0, graze, 1.8)
 		if burn_age >= 0.0:
 			var scar := WorldBurnScar3D.new()
 			scar.age_years = burn_age
