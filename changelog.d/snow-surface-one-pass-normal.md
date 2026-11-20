@@ -1,0 +1,1 @@
+- Snow: the deep-snow surface computes its normal in one pass over the snow depth instead of four, about 40-50% less frame time in snow benches with an identical image.

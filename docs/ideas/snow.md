@@ -1492,6 +1492,19 @@ Research: a slab avalanche leaves a crown (a tensile fracture standing the slab'
   face in shade. Bench: `--no-gas` hides the powder cloud and lifts the one-tick lockstep (the slide and its
   crown in about a minute); `--crown` frames the crown from 14 m down the bed, `--crown-far` from 40 m.
 
+## Follow-up 36: the deep-snow surface's normal in one pass (20 Nov 2026)
+
+- Speed pass, step 1. The surface took its normal from central differences of its height, so each pixel ran
+  the 16-cell Catmull-Rom depth four times (64 reads) and each vertex five times (80), plus the ground, catch
+  and deformation reads at every tap. The depth's gradient now comes from the same single pass, from the
+  derivatives of the Catmull-Rom weights (the analytic derivative of a cubic filter, as in Sigg and Hadwiger,
+  GPU Gems 2 ch. 20); the fine deformation, ground and edge fade keep their cheap central differences. Deforming
+  snow in shipped games reads one height per tap the same way (Michels and Sikachev, deferred snow deformation
+  in Rise of the Tomb Raider, GPU Pro 7; Barre-Brisebois, Batman: Arkham Origins, GDC 2014).
+- Same image: against the old shader, the trail close-up differs by a mean 0.0 levels and the crown view by
+  0.04. Bench whole-frame GPU time (lavapipe, `--time=10`): trail close-up 1484 -> 898 ms, avalanche crown view
+  2757 -> 1407 ms. The bench's `--time=N` prints the mean GPU time over N frames.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
