@@ -3779,6 +3779,28 @@ Pastor 1999, Oikos 85; Wright, Jones and Flecker 2002, Oecologia 132), so meadow
 - Check: `stands.gd --stands --beaver-meadow`: six meadow species, none placed without a drain; a 40 m disc 12 years
   on places them inside it and none outside.
 
+### 5bc. Deferred variants (20 Nov; all variant sets on by default)
+
+With fire, struck and browsed variants all grown with the stands, the European woodland (one living variant) went
+from 70 meshes and 3.0 GB peak to 317 meshes and 9.0 GB, and the build from 52 s to 4 min; scene's 80 m taiga scout ran
+out of the cloud's 15 GB. The variants are only ever drawn where a burn, a strike or a browse disc lies, so they are now
+grown on demand (lazy generation, as the near leaves of 8c).
+
+- `defer_variants` (on): _stand_species records what each species key can grow (VARIANT_FIRE, _STRIKE, _BROWSE) on a
+  copy of the generator as set up for it (species meta `_tree_variant_source`, `tree_variants_deferred`,
+  `tree_variant_living`) instead of growing it. `request_variants(species, kinds)` grows those kinds and appends them in
+  the stand's order (living, fire, struck, browsed), and updates the near source's lists, so the meshes match the eager
+  build exactly.
+- VegetationField3D asks in setup for the kinds its area needs (any burn, strike or browse over it). A later burn, strike
+  or disc asks from process, and the field streams again with the new meshes.
+- Woodland with all three on: 70 meshes, 3.08 GB peak (3.05 GB with none).
+- Grown on the main thread: the first strike, burn or disc of a kind over a streamed field holds that frame about a
+  second a species. On a worker it stalled the field (generate() runs its own group tasks while the field clears its
+  tiles); moving it to a worker is a PC follow-up with a debugger.
+- Checks: `stands.gd --stands --lightning --strikes` and `--browse` (nothing grown before; the field grows them under a
+  strike or disc, same placements as the eager build); `--strikes --stream` (a strike after streaming brings the struck
+  tree in).
+
 ## Next-round options (card 20 Nov evening)
 
 1. **Lightning-struck trees.** Old healed strike strips are in since 5p (WOUND_LIGHTNING, random on tall trees). Missing:

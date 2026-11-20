@@ -3624,17 +3624,17 @@ func _generated_forest(clearing: bool) -> Biome:
 	if "near_needle_range" in tg:
 		tg.near_needle_range = float(args.get("near-needle-range", "30")) # --near-needle-range=0: far needles only (memory)
 	if "fire_variants" in tg:
-		# --fire-variants=1: each species also carries its burnt-stand variants (one a fire band, vegetation picks by
-		# WorldFire burn age). Off here unless asked: each is about the woodland's memory again, and an unburnt stand
-		# never shows them.
-		tg.fire_variants = args.get("fire-variants", "0") != "0"
+		# --fire-variants (1): each species also carries its burnt-stand variants (one a fire band, vegetation picks by
+		# WorldFire burn age). On by default: they are deferred (trees.md 5bc), grown only where a burn lies over the
+		# field, so an unburnt stand costs nothing. --fire-variants=0 skips them.
+		tg.fire_variants = args.get("fire-variants", "1") != "0"
 	if "lightning_variants" in tg:
 		# --strike-variants (1): tall species also carry their two struck variants (vegetation picks them under
-		# WorldStand strikes, trees.md 5ax). On by default (all features on); --strike-variants=0 skips them.
+		# WorldStand strikes, trees.md 5ax). On by default, deferred like the fire ones; --strike-variants=0 skips them.
 		tg.lightning_variants = args.get("strike-variants", "1") != "0"
 	if "browse_variants" in tg:
 		# --browse-variants (1): open trees, saplings and understory also carry a browsed variant (vegetation picks it
-		# under WorldStand browse discs, trees.md 5az). On by default; --browse-variants=0 skips them.
+		# under WorldStand browse discs, trees.md 5az). On by default, deferred; --browse-variants=0 skips them.
 		tg.browse_variants = args.get("browse-variants", "1") != "0"
 	if "flood_height" in tg:
 		# --flood-height=M (--flood-years=Y): flood marks on the trees, a silt line and caught debris at M m (trees
