@@ -143,9 +143,9 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
 
-  ![A bare rock slope up close with scanned detail over the geology's colours, raster](media/terrain-ground-scan.jpg)
+  ![The same bare rock slope at 2 m without and with scanned detail, raster](media/terrain-ground-scan.jpg)
 
-  *Scanned detail: joints, fractures and grit on a bare slope at 2 m.*
+  *A bare slope at 2 m, left without scans, right with scanned joints, fractures and grit.*
 
 - **Far sun shadows** (`TerrainMaterial3D.far_shadow_start`): past the shadow maps' reach, ridges cast the low sun's shadow across distant terrain in raster.
 
