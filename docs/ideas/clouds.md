@@ -160,3 +160,22 @@ Open: the march's uniform steps (tens of metres through a cloud) leave the near 
 occlusion is strong; Schneider 2015's adaptive refinement (step back and take short steps once inside cloud)
 is the next step for crisper edges and would let `cloud_surface_occlusion` go back up to about 1.2, which
 looked best in close views. The horizontal banding under the far cloud bases predates this work.
+
+## Round 2 (20 Nov 2026; Paulo picked everything listed)
+
+1. **Adaptive refinement** (Schneider 2015; Hillaire 2016): long steps through clear air; on reaching cloud,
+   one step back and steps of `cloud_refine` (0.33) of a long one while inside, long again after four empty
+   short steps (iteration cap three times the step count). The grain on far faces went with it, so
+   `cloud_surface_occlusion` is back up to 1.0.
+2. **Sky light shaded from above**: one coarse read 100 m over the sample, ambient times
+   `mix(0.4, 1, exp(-tau_up))` (Nubis Cubed scales ambient by the summed density toward the sky;
+   SunshineClouds2 reads the density one step up). Undersides and the lee of towers darken.
+
+SunshineClouds2 (MIT, code read 20 Nov): its punch comes from art terms on top of the same Schneider model:
+transmittance raised to a "lighting sharpness" power, HG raised to a power, a powder term `pow(density, k)`,
+a density-weighted adaptive step `mix(max, min, pow(density, 0.1))`, light steps spaced quadratically, a
+painted coverage and tint mask. We take the ambient-from-above read; the sharpening powers are not
+energy-conserving and would split raster from path traced bounces, so they stay out.
+
+Cost (lavapipe, crest view, 40 reprojected frames): 800 ms a frame before round 1, 1084 after refinement: the
+short steps inside cloud are the cost the next two items (sun shadow grid, empty-space skipping) pay back.
