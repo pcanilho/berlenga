@@ -6254,6 +6254,11 @@ float TreeGenerator::_moss_amount() const {
 	// Bryophyte succession on decaying logs, 1988): mossier with each decay class.
 	static const float DECAY[6] = { 1.0f, 0.8f, 1.1f, 1.3f, 1.3f, 1.4f };
 	float k = moss_cover * MOSS_AFFINITY[preset] * shade * DECAY[CLAMP(decay_class, 0, 5)];
+	if (kelo && decay_class > 0 && !fallen) {
+		// A standing kelo is resin-hard, sun-dried wood: lichens (its own specialists), next to no moss
+		// (Niemela et al. 2002, kelo trees in boreal Fennoscandia); it held the bark on at the foot under a sleeve.
+		k *= 0.1f;
+	}
 	if (fallen_branch && shed_radius_max <= 0.05f) {
 		// Sticks dry out between showers (all surface, little wood to hold water): a few cushions,
 		// not the coat a log carries.
@@ -11278,6 +11283,7 @@ void TreeGenerator::_split_peel_edge(Builder &r_b, const LocalVector<Vector3> &p
 	const bool tang = r_b.use_tangents && r_b.tangents.size() >= nv0 * 4;
 	const bool has_relief = int(r_b.relief_off.size()) >= nv0;
 	const bool has_wound = int(r_b.wound.size()) >= nv0;
+	const bool has_char = int(r_b.wood_char.size()) >= nv0;
 	const bool has_bones = r_b.bones.size() >= nv0 * 4 && r_b.weights.size() >= nv0 * 4;
 	// Which part each triangle and vertex is in.
 	LocalVector<int> vert_part;
@@ -11319,6 +11325,9 @@ void TreeGenerator::_split_peel_edge(Builder &r_b, const LocalVector<Vector3> &p
 		}
 		if (has_wound) {
 			r_b.wound.push_back(Math::lerp(r_b.wound[p_a], r_b.wound[p_b], p_t));
+		}
+		if (has_char) {
+			r_b.wood_char.push_back(Math::lerp(r_b.wood_char[p_a], r_b.wood_char[p_b], p_t));
 		}
 		if (p_part >= 0) {
 			r_b.extra_part.push_back(Vector2i(at, p_part));
@@ -11437,6 +11446,9 @@ void TreeGenerator::_split_peel_edge(Builder &r_b, const LocalVector<Vector3> &p
 			}
 			if (has_wound) {
 				r_b.wound.push_back(0.0f);
+			}
+			if (has_char) {
+				r_b.wood_char.push_back(0.0f);
 			}
 			if (vp >= 0) {
 				r_b.extra_part.push_back(Vector2i(at, vp));
@@ -16937,6 +16949,17 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 							}
 						}
 						r_b.wound[v] = MAX(r_b.wound[v], scar);
+						// Char on the wood itself (the shader's own char: black, cracked into blocks, trees.md 5ar).
+						if (char_k > 0.0f) {
+							if (int(r_b.wood_char.size()) < r_b.verts.size()) {
+								const int from = r_b.wood_char.size();
+								r_b.wood_char.resize(r_b.verts.size());
+								for (int k = from; k < r_b.verts.size(); k++) {
+									r_b.wood_char[k] = 0.0f;
+								}
+							}
+							r_b.wood_char[v] = MAX(r_b.wood_char[v], char_k);
+						}
 					}
 					c = c.lerp(Color(0.13f, 0.16f, 0.07f, c.a), algae);
 					c = c.lerp(Color(0.3f, 0.31f, 0.27f, c.a), pale);
@@ -18956,7 +18979,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		bool bark_custom = false;
 		if (s == 0) {
 			_peel_bark(b);
-			bark_custom = _bare_amount() > 0.0f || !b.wound.is_empty() || _cork_strip_age() >= 0.0f;
+			bark_custom = _bare_amount() > 0.0f || !b.wound.is_empty() || !b.wood_char.is_empty() || _cork_strip_age() >= 0.0f;
 		}
 		Array arrays;
 		arrays.resize(Mesh::ARRAY_MAX);
@@ -19156,7 +19179,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				lichen_uv2 = b.part_uv2[i].x > 0.0f;
 			}
 		}
-		if (lichen_uv2) {
+		bool char_uv2 = false;
+		if (s == 0) {
+			for (uint32_t v = 0; v < b.wood_char.size() && !char_uv2; v++) {
+				char_uv2 = b.wood_char[v] > 0.0f;
+			}
+		}
+		if (lichen_uv2 || char_uv2) {
 			PackedVector2Array uv2;
 			uv2.resize(b.verts.size());
 			Vector2 *u2 = uv2.ptrw();
@@ -19177,6 +19206,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				const Vector4 &m = b.part_uv2[ep.y];
 				if (m.x > 0.0f && ep.x < uv2.size()) {
 					u2[ep.x] = Vector2(b.uvs[ep.x].x * m.x + m.z, b.uvs[ep.x].y * m.y + m.w);
+				}
+			}
+			// Charred wood (trees.md 5ar): v = -(0.5 + 1.5 char); lichen UV2 is never negative, and lichen grows on
+			// bark, not on these bare vertices.
+			for (uint32_t v = 0; v < b.wood_char.size() && int(v) < uv2.size(); v++) {
+				if (b.wood_char[v] > 0.0f) {
+					u2[v] = Vector2(u2[v].x, -(0.5f + 1.5f * CLAMP(b.wood_char[v], 0.0f, 1.0f)));
 				}
 			}
 			arrays[Mesh::ARRAY_TEX_UV2] = uv2;
@@ -19576,6 +19612,7 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 		// Lichen: a colony covers the texels whose growth order is under the weight.
 		float lw = clamp(2.0 * COLOR.a - 1.0, 0.0, 1.0);
 		if (lw > 0.004) {
+			lw *= 1.0 - smoothstep(0.0, -0.5, UV2.y); // UV2 coded as char (a negative v) carries no lichen.
 			vec4 lm = texture(lichen_map, UV2);
 			// A crust is a skin a fraction of a millimetre thick: the bark's own tone shows through
 			// it (darker in the bark's cracks), as do its relief and normal map.
@@ -19602,6 +19639,9 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			ROUGHNESS = mix(ROUGHNESS, 0.9, max(crust, leafy));
 		}
 		if (bare_field > 0.0) {
+			// Spiral grain (trees.md 5ar): the fibres wind round the stem at wood_spiral (tan of the angle, the bark
+			// tile square), so the grain and the checks that open along it wind too.
+			vec2 wood_uv = base_uv + vec2(wood_spiral * base_uv.y, 0.0);
 			// Wood under lost bark: fibres along the stem (v), long drying checks, grey where it
 			// weathers in the open, browner as it rots. The bark's broken edge is darker (its
 			// thickness in shadow).
@@ -19609,14 +19649,14 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			// and blurred into a stretched photo at 40 cm (docs, 16 Nov). Lines along the grain a
 			// millimetre and a half apart (BARK_TILE 0.4 m: 266 a tile), wavering with a slow
 			// noise, and coarser growth bands; faded out as they shrink below a pixel.
-			float warp = texture(lichen_map, vec2(base_uv.x * 0.6, base_uv.y * 0.12)).r;
+			float warp = texture(lichen_map, vec2(wood_uv.x * 0.6, wood_uv.y * 0.12)).r;
 			// The grain meanders a centimetre or two either way over half a metre: straight
 			// parallel bands read as sawn planks (docs, 16 Nov).
-			float mea = (texture(lichen_map, vec2(base_uv.x * 0.35 + 0.61, base_uv.y * 0.09)).g - 0.5) * 0.06;
+			float mea = (texture(lichen_map, vec2(wood_uv.x * 0.35 + 0.61, wood_uv.y * 0.09)).g - 0.5) * 0.06;
 			// Knots: the grain parts round each overgrown branch base and closes again behind
 			// it, the knot itself a dark end-grain eye with its own rings. Cells 16 cm round
 			// and 48 cm along the stem, about half with a knot 1.5-4.5 cm across.
-			vec2 kq = base_uv * vec2(2.5, 0.83);
+			vec2 kq = wood_uv * vec2(2.5, 0.83);
 			vec2 kc = floor(kq);
 			float kx_shift = 0.0;
 			float knot = 0.0;
@@ -19626,7 +19666,7 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 				if (kh < 0.5) {
 					vec2 ctr = (cc + vec2(0.2 + 0.6 * fract(kh * 13.1), 0.2 + 0.6 * fract(kh * 7.7))) / vec2(2.5, 0.83);
 					float kr = (0.015 + 0.03 * fract(kh * 3.3)) / 0.4; // Tile units.
-					vec2 dq = base_uv - ctr;
+					vec2 dq = wood_uv - ctr;
 					dq.x = dq.x - round(dq.x * 1.0) * 1.0;
 					vec2 de = vec2(dq.x, dq.y * 0.3);
 					float f = kr * kr / (dot(de, de) + 0.3 * kr * kr);
@@ -19635,19 +19675,19 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 					knot = max(knot, (1.0 - smoothstep(0.55, 0.75, kd)) * (0.75 + 0.25 * sin(kd * 30.0)));
 				}
 			}
-			float fx = (base_uv.x - kx_shift + mea) * 266.0 + warp * 9.0;
+			float fx = (wood_uv.x - kx_shift + mea) * 266.0 + warp * 9.0;
 			float fw = fwidth(fx);
 			float fib = 0.5 + 0.5 * sin(6.2832 * fx);
 			fib = mix(fib, 0.5, smoothstep(0.25, 0.6, fw));
 			// Weathering eats the soft earlywood and leaves the latewood standing in ridges
 			// along the grain, uneven in width (no planed board's even bands).
-			float bx = base_uv.x * 38.0 + warp * 3.0;
-			float kux = base_uv.x - kx_shift + mea;
+			float bx = wood_uv.x * 38.0 + warp * 3.0;
+			float kux = wood_uv.x - kx_shift + mea;
 			// Ridges run a hand to a forearm and fade (sampled long, they ran the log's length).
-			float band = 0.6 * texture(lichen_map, vec2(kux * 9.0, base_uv.y * 0.7)).r + 0.4 * texture(lichen_map, vec2(kux * 31.0 + 0.4, base_uv.y * 1.5)).r;
+			float band = 0.6 * texture(lichen_map, vec2(kux * 9.0, wood_uv.y * 0.7)).r + 0.4 * texture(lichen_map, vec2(kux * 31.0 + 0.4, wood_uv.y * 1.5)).r;
 			// Rays: beech shows its broad rays on a split or peeled face as short dark spindles
 			// along the grain, a few millimetres long.
-			vec2 rq = vec2(base_uv.x * 140.0, base_uv.y * 26.0 + warp * 2.0);
+			vec2 rq = vec2(wood_uv.x * 140.0, wood_uv.y * 26.0 + warp * 2.0);
 			vec2 rc = floor(rq);
 			vec2 rl = fract(rq) - 0.5;
 			float rh = fract(sin(dot(rc, vec2(41.3, 289.1))) * 43758.5453);
@@ -19655,9 +19695,9 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			ray *= 1.0 - smoothstep(0.3, 0.7, fwidth(rq.x));
 			float grain = 0.55 * fib + 0.45 * band;
 			// Checks: thin dark splits along the grain, wavering with it, broken into lengths.
-			float wander = texture(lichen_map, vec2(base_uv.x * 0.7 + 0.53, base_uv.y * 0.02)).r;
+			float wander = texture(lichen_map, vec2(wood_uv.x * 0.7 + 0.53, wood_uv.y * 0.02)).r;
 			float split = abs(fract(kux * 5.0 + 1.2 * wander) - 0.5);
-			float run = smoothstep(0.5, 0.65, texture(lichen_map, vec2(base_uv.x * 0.9 + 0.21, base_uv.y * 0.03)).r);
+			float run = smoothstep(0.5, 0.65, texture(lichen_map, vec2(wood_uv.x * 0.9 + 0.21, wood_uv.y * 0.03)).r);
 			float checks = mix(1.0, smoothstep(0.01, 0.07, split), run);
 			vec3 wood = bark_wood_color * (0.8 + 0.32 * grain) * mix(0.3, 1.0, checks) * (1.0 - 0.3 * ray);
 			// Silver-grey on the weathered ridges, brown in the grooves where it stays damp.
@@ -19668,18 +19708,18 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			// sapwood under the lost bark, a mother gallery along the grain with the larvae's
 			// tunnels running off it (Rayner and Boddy 1988; Gregoire et al., bark beetles, 2015).
 			float fine = fib;
-			float stain = texture(lichen_map, vec2(base_uv.x * 1.3 + 0.37, base_uv.y * 0.6 + 0.11)).r;
+			float stain = texture(lichen_map, vec2(wood_uv.x * 1.3 + 0.37, wood_uv.y * 0.6 + 0.11)).r;
 			// Blotches of fungal and water staining a hand to a forearm long, brown to near
 			// black, and grey where the wood dried bleached.
-			float blot = texture(lichen_map, vec2(base_uv.x * 0.55 + 0.13, base_uv.y * 0.22 + 0.61)).g;
-			float bleach = texture(lichen_map, vec2(base_uv.x * 0.7 + 0.52, base_uv.y * 0.3 + 0.05)).r;
-			float zn = texture(lichen_map, vec2(base_uv.x * 0.9 + 0.71, base_uv.y * 0.45 + 0.29)).r;
+			float blot = texture(lichen_map, vec2(wood_uv.x * 0.55 + 0.13, wood_uv.y * 0.22 + 0.61)).g;
+			float bleach = texture(lichen_map, vec2(wood_uv.x * 0.7 + 0.52, wood_uv.y * 0.3 + 0.05)).r;
+			float zn = texture(lichen_map, vec2(wood_uv.x * 0.9 + 0.71, wood_uv.y * 0.45 + 0.29)).r;
 			float zone = 1.0 - smoothstep(0.004, 0.014, abs(zn - 0.5));
 			wood *= mix(1.1, 0.8, smoothstep(0.35, 0.7, stain));
 			wood = mix(wood, wood * vec3(0.5, 0.42, 0.36), 0.8 * smoothstep(0.5, 0.72, blot));
 			wood = mix(wood, vec3(dot(wood, vec3(0.33))) * 1.25, 0.5 * smoothstep(0.55, 0.8, bleach));
 			wood = mix(wood, wood * vec3(0.35, 0.28, 0.22), knot);
-			vec2 gq = base_uv * vec2(4.0, 1.6);
+			vec2 gq = wood_uv * vec2(4.0, 1.6);
 			vec2 gc = floor(gq);
 			vec2 gl = fract(gq);
 			float gh = fract(sin(dot(gc, vec2(127.1, 311.7))) * 43758.5453);
@@ -19703,13 +19743,44 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 				vec3 c = mix(vec3(0.69, 0.17, 0.02), vec3(0.17, 0.025, 0.008), smoothstep(0.0, 0.12, t));
 				c = mix(c, vec3(0.033, 0.013, 0.008), smoothstep(0.12, 1.0, t));
 				c = mix(c, vec3(0.15, 0.09, 0.055), smoothstep(1.0, 7.0, t)); // Linear: sRGB orange, red-brown, near black, cork brown.
-				float tone = texture(lichen_map, base_uv * vec2(1.7, 0.6) + vec2(0.21, 0.4)).g;
-				float crk = texture(lichen_map, base_uv * vec2(7.0, 2.2) + vec2(0.57, 0.12)).r;
+				float tone = texture(lichen_map, wood_uv * vec2(1.7, 0.6) + vec2(0.21, 0.4)).g;
+				float crk = texture(lichen_map, wood_uv * vec2(7.0, 2.2) + vec2(0.57, 0.12)).r;
 				float lines = 1.0 - smoothstep(0.015, 0.05, abs(crk - 0.5));
 				c *= mix(0.85, 1.12, tone);
 				c *= 1.0 - 0.55 * smoothstep(0.5, 5.0, t) * lines;
 				wood = c;
 				bark_wood_n = vec3(0.5, 0.5, 1.0);
+			}
+			// Char on a fire scar's face (TreeGenerator wood_char, UV2 v below -0.5; trees.md 5ar): charred wood
+			// checks into blocks, deep cracks along the grain and finer ones across it ("alligatoring"), the block faces
+			// matte black with a faint silver sheen, the cracks deeper still (Arno and Allison-Bunnell 2002 on catfaces;
+			// wood char checking, Babrauskas 2005). Its edge frays with the grain.
+			float wchar = clamp((-UV2.y - 0.5) / 1.5, 0.0, 1.0);
+			float char_w = 0.0, char_h0 = 0.0, char_h1 = 0.0;
+			if (wchar > 0.0) {
+				float wch_n = texture(lichen_map, vec2(wood_uv.x * 3.1 + 0.17, wood_uv.y * 0.8 + 0.53)).g;
+				float wch = smoothstep(0.35, 0.65, wchar + 0.4 * (wch_n - 0.5));
+				// Blocks a thumb to a palm across, longer along the grain, the cracks wandering: columns of uneven
+				// width from a warped coordinate, each column cut across at its own random heights.
+				float cw_n = texture(lichen_map, vec2(wood_uv.x * 2.3 + 0.61, wood_uv.y * 0.9 + 0.27)).r;
+				float cx = kux * 13.0 + 0.9 * cw_n;
+				float col = floor(cx);
+				float colh = fract(sin(col * 91.7 + 13.1) * 43758.5453);
+				float cy = wood_uv.y * (3.0 + 2.0 * colh) + colh * 7.0 + 0.5 * texture(lichen_map, vec2(col * 0.137, wood_uv.y * 0.7)).g;
+				float ex = abs(fract(cx) - 0.5), ey = abs(fract(cy) - 0.5);
+				float blk = smoothstep(0.015, 0.06, 0.5 - ex) * smoothstep(0.02, 0.08, 0.5 - ey);
+				blk = mix(1.0, blk, 1.0 - smoothstep(0.3, 0.7, max(fwidth(cx), fwidth(cy))));
+				// Block faces domed and dull: a little lighter at their middles, the cracks near black.
+				float dome = (1.0 - 2.0 * ex) * (1.0 - 2.0 * ey);
+				// Charcoal reflects about 4% (no darker, or the path tracer's few bounces lose the blocks in black).
+				vec3 char_c = vec3(0.045, 0.041, 0.037) * mix(0.3, 1.0, blk) * (0.8 + 0.35 * dome) * (0.85 + 0.3 * wch_n);
+				wood = mix(wood, char_c, wch);
+				// The blocks as relief too, so the light picks them out under any renderer: domed faces, sunk cracks.
+				float ex1 = abs(fract(cx + 0.004 * 13.0) - 0.5);
+				float blk1 = smoothstep(0.015, 0.06, 0.5 - ex1) * smoothstep(0.02, 0.08, 0.5 - ey);
+				char_w = wch;
+				char_h0 = 0.5 * blk + 0.3 * dome;
+				char_h1 = 0.5 * blk1 + 0.3 * (1.0 - 2.0 * ex1) * (1.0 - 2.0 * ey);
 			}
 			float rim = smoothstep(0.25, 0.47, bare_field) * (1.0 - bark_bare);
 			ALBEDO *= 1.0 - 0.45 * rim;
@@ -19721,8 +19792,10 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			float split1 = abs(fract((kux + du) * 5.0 + 1.2 * wander) - 0.5);
 			float c1 = mix(1.0, smoothstep(0.01, 0.07, split1), run);
 			float bx1 = bx + du * 38.0;
-			float band1 = 0.6 * texture(lichen_map, vec2((kux + du) * 9.0, base_uv.y * 0.7)).r + 0.4 * texture(lichen_map, vec2((kux + du) * 31.0 + 0.4, base_uv.y * 1.5)).r;
+			float band1 = 0.6 * texture(lichen_map, vec2((kux + du) * 9.0, wood_uv.y * 0.7)).r + 0.4 * texture(lichen_map, vec2((kux + du) * 31.0 + 0.4, wood_uv.y * 1.5)).r;
 			float h0 = 0.6 * band + checks - 0.6 * gallery, h1 = 0.6 * band1 + c1 - 0.6 * gallery;
+			h0 = mix(h0, 1.6 * char_h0, char_w);
+			h1 = mix(h1, 1.6 * char_h1, char_w);
 			// The fibres' own ridges from their analytic slope (they repeat faster than du).
 			float fib_n = 0.1 * cos(6.2832 * fx) * (1.0 - smoothstep(0.25, 0.6, fw));
 			bark_wood_n = vec3(clamp(0.5 - (h1 - h0) * 4.0 - fib_n, 0.0, 1.0), 0.5, 1.0);
@@ -19784,6 +19857,7 @@ uniform float lichen_leafy_share = 0.5;
 uniform float lichen_orange_share = 0.0;
 uniform vec3 bark_wood_color : source_color = vec3(0.55, 0.53, 0.49);
 uniform float bark_stripped_age = -1.0;
+uniform float wood_spiral = 0.0;
 )";
 	code = code.insert(vx, uniforms + VegetationFire::SHADER_CODE + "\n");
 	Ref<Shader> sh;
@@ -19821,6 +19895,12 @@ uniform float bark_stripped_age = -1.0;
 																																	   : Color(0.47f, 0.45f, 0.41f);
 	m->set_shader_parameter("bark_wood_color", wood);
 	m->set_shader_parameter("bark_stripped_age", _cork_strip_age());
+	// Scots pine grows with spiral grain, a few degrees, left-handed when young and turning right with age (Harris
+	// 1989); a kelo's weathered checks open along it and show it, by its seed: 5-12 degrees, the old stems at the upper end (trees.md 5ar).
+	if (kelo) {
+		const float sa = Math::deg_to_rad(Math::lerp(5.0f, 12.0f, float(uint32_t(seed) * 2654435761u >> 8) / 16777216.0f));
+		m->set_shader_parameter("wood_spiral", Math::tan(sa));
+	}
 	m->set_shader_parameter("lichen_orange_share", la.orange);
 	// Leafy lichens of acid bark are grey-green (Parmelia, Hypogymnia); of nutrient-rich bark
 	// yellower (Flavoparmelia, Physcia with Xanthoria about).

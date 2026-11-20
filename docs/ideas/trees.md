@@ -2685,6 +2685,22 @@ As built:
   living stage, poles shorter than the mature stand, veterans no shorter). Taiga: poles 15 m, mature 35 m, veterans
   43 m; montane conifer 13/35/41 m; beech 11/30/38 m.
 
+### 5ar. Taiga details: catface char and kelo spiral grain (20 Nov; Paulo's pick)
+
+- Char on a catface's wood. The bark shader's wood branch ignored vertex colour, so the char the deform wrote there
+  never showed. Now the scar writes a per-vertex `wood_char` (its char_k: the face's foot, where the fire burned
+  longest) into UV2 as a negative v (lichen UV2 is never negative; lichen is faded where it is). The wood branch draws
+  charred wood checked into blocks ("alligatoring"; Arno and Allison-Bunnell 2002 on catfaces, Babrauskas 2005 on char
+  checking): columns of uneven width from a warped coordinate along the grain, each cut across at its own heights,
+  block faces domed and dull at about 4% reflectance, the cracks near black, and the blocks in the wood's normal too
+  so a path tracer keeps them (raster vs PT crop at 100%: fork/trees/taiga/catface-char-raster-vs-pt.png).
+- Kelo spiral grain. Scots pine grows with spiral grain, left-handed when young and turning right with age (Harris
+  1989, Spiral Grain and Wave Phenomena in Wood Formation); a kelo's checks open along it. The wood branch's pattern
+  coordinate is sheared by uniform `wood_spiral` (tan of the angle); a kelo sets 5-12 degrees by its seed.
+- Bug found on the way: a standing kelo kept its bark under the foot's moss sleeve (moss holds bark on). A standing
+  kelo carries next to no moss (resin-hard, sun-dried; Niemela et al. 2002): its moss amount is x0.1, so it is bare
+  to the foot. Raster vs PT crop: fork/trees/taiga/kelo-spiral-raster-vs-pt.png.
+
 ### Next-round options (card 20 Nov midday)
 
 - Taiga details. Char on catfaces: the bark shader's wood branch ignores vertex COLOR, so the scar needs its own
