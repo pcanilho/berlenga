@@ -3668,13 +3668,12 @@ logs, later stilted rows); Zielonka 2006 (Norway spruce comes in on logs from de
 
 ## Next-round options (card 20 Nov evening)
 
-1. **Lightning-struck trees.** A struck tree carries a strip of bark blown off from the point of strike high in the crown
-   down to the ground, often spiralling with the grain, a few centimetres to a hand wide, sometimes a furrow in the
-   wood; a hard strike splits the stem or shatters the top; the strip later heals with callus lips either side (Taylor
-   1964 and 1969, lightning damage in Montana forests; Alabama Extension FOR-2134, 2023). Tall, isolated and edge
-   trees, oaks and pines most. Reads WeatherLightning3D ground strikes with `canopy` (world-links: lightning to tree):
-   VegetationField3D swaps the struck instance for a fresh-scar variant, as burn ages pick fire variants; old healed
-   scars on a share of the tall veterans.
+1. **Lightning-struck trees.** Old healed strike strips are in since 5p (WOUND_LIGHTNING, random on tall trees). Missing:
+   the fresh strike and the world's strikes reaching trees. A fresh scar is pale wood with the blown-off bark strips
+   lying round the foot; a hard strike splits the stem along the strip or shatters the top into splinters, and scorches
+   the crown (Taylor 1964 and 1969, lightning damage in Montana forests; Alabama Extension FOR-2134, 2023). Reads
+   WeatherLightning3D ground strikes with `canopy` (world-links: lightning to tree): VegetationField3D swaps the struck
+   instance for a fresh-strike variant, as burn ages pick fire variants.
 2. **Mistletoe and witches' brooms.** Mistletoe balls (Viscum album) in lime, poplar, apple, hawthorn and pine crowns,
    evergreen and plain in winter; witches' brooms (dense twig clusters from a fungus or mite) on birch, fir and cherry.
 3. **Colonnades and a browsing pressure map.** Rows of stilted spruce along one vanished log (a row placement in
