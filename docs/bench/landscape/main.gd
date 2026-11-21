@@ -7085,8 +7085,10 @@ func _slush_prints() -> void:
 	# The rain: overcast, +8 C, MM over 10 h, then it clears for the shot.
 	var cc := weather.cloud_cover
 	weather.air_follows_climate = false
-	# +8 C at the spot: the weather's temperature is at sea level, the air cooling 6.5 K/km up to the snowfield.
-	weather.temperature = 8.0 + 0.0065 * (best.y - gen.sea_level)
+	# +8 C at the spot: the weather's temperature is set where it reads 8 C at the snowfield.
+	weather.temperature = 8.0
+	weather.snap_to_settings()
+	weather.temperature = 16.0 - weather.get_air_temperature_at(best)
 	weather.rain_rate = mm / 10.0
 	weather.cloud_cover = 1.0
 	weather.snap_to_settings()
