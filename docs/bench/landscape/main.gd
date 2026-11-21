@@ -6801,6 +6801,7 @@ func _powder_avalanche() -> void:
 		_log("powder avalanche: no avalanche node on the snow cover")
 		return
 	av.natural_release = false
+	_log("powder avalanche: %d natural releases before loading" % (int(av.get_release_count()) if av.has_method("get_release_count") else -1))
 	# A storm slab on an older bonded pack (as on the snow bench): it breaks away whole.
 	snow.add_snow(90.0, 150.0)
 	snow.advance(8.0 * 24.0 * 3600.0)
@@ -6846,7 +6847,7 @@ func _powder_avalanche() -> void:
 				deepest = maxf(deepest, snow.get_depth_at(Vector3(xs, 0, zs)))
 				zs += stp * 4.0
 			xs += stp * 4.0
-		_log("powder avalanche: no steep face with snow on it (deepest snow %.2f m; %d faces in range, the most snow on one %.2f m)" % [deepest, n_steep, steep_snow])
+		_log("powder avalanche: no steep face with snow on it (deepest snow %.2f m; %d faces in range, the most snow on one %.2f m; %d releases)" % [deepest, n_steep, steep_snow, int(av.get_release_count()) if av.has_method("get_release_count") else -1])
 		return
 	var f3 := Vector3(best_fall.x, 0, best_fall.y)
 	var side := f3.cross(Vector3.UP).normalized()
