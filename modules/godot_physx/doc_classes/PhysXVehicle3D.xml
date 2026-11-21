@@ -175,6 +175,18 @@
 				The gear the gearbox is shifting to, numbered as [member gear] (the current gear when no shift is under way). A new gear is taken only once the current shift has finished ([member gear_switch_time]).
 			</description>
 		</method>
+		<method name="get_water_buoyancy" qualifiers="const">
+			<return type="float" />
+			<description>
+				The water's lift on the chassis box and the tyres at the last step, in newtons. See [member river_forces].
+			</description>
+		</method>
+		<method name="get_water_drag" qualifiers="const">
+			<return type="Vector3" />
+			<description>
+				The current's horizontal drag on the chassis box and the tyres at the last step, in newtons. See [member river_forces].
+			</description>
+		</method>
 		<method name="get_wheel_deflection" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="wheel" type="int" />
@@ -399,6 +411,9 @@
 		<member name="handbrake" type="float" setter="set_handbrake" getter="get_handbrake" default="0.0">
 			Brake input for the rear wheels only, from [code]0[/code] to [code]1[/code], on top of [member brake] (up to [member max_brake_torque]): a parking brake, or to lock the rear wheels into a slide.
 		</member>
+		<member name="hull_seal" type="float" setter="set_hull_seal" getter="get_hull_seal" default="0.5">
+			The share of the chassis box that keeps water out, for its buoyancy: a car's body keeps out about half its box and floats near 0.5 to 0.6 m of still water. See [member river_forces].
+		</member>
 		<member name="limited_slip_center_bias" type="float" setter="set_limited_slip_center_bias" getter="get_limited_slip_center_bias" default="1.3">
 			With [constant DIFFERENTIAL_LIMITED_SLIP] and both axles driven: the largest ratio between the front and rear wheels' speeds before torque moves to the slower axle. 0 leaves it open; otherwise it must be greater than [member limited_slip_center_target].
 		</member>
@@ -446,6 +461,9 @@
 		</member>
 		<member name="reverse_gear_ratio" type="float" setter="set_reverse_gear_ratio" getter="get_reverse_gear_ratio" default="4.0">
 			The reverse gear's ratio, as a positive number. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="river_forces" type="bool" setter="set_river_forces" getter="is_river_forces" default="true">
+			In any water of the water contract (a river, a ford, a flood, a lake) the chassis box and the tyres are buoyed by the water they keep out ([member hull_seal]) and dragged by the current past them (drag coefficient 1.1 on the wet face), so a fording vehicle is lightened, its tyres grip less and the current carries it off past the depth and speed vehicle flood tests find. Skipped when the vehicle has a [code]PhysXBuoyancy3D[/code] child.
 		</member>
 		<member name="soft_soil" type="bool" setter="set_soft_soil" getter="is_soft_soil" default="true">
 			On a [GroundSurface3D]'s soft material (sand, soil, mud) the wheels sink by their load and tyre pressure, print ruts, get their grip from the soil's shear strength and feel its motion resistance (Bekker and Wong terramechanics). A spinning wheel digs itself in. Off firm ground nothing changes. See [member PhysXVehicleWheel3D.tire_pressure].

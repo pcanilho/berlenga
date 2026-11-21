@@ -1101,7 +1101,13 @@ void main() {
 			// proportion to sigma T over the segment, weighted by its scattering probability 1 - T); the path's own
 			// collision, drawn independently, only decides whether it scatters there and goes on, so that light is not
 			// counted twice. Far less noise than lighting only the collisions, for the same expectation.
-			if (!in_medium && get_rt_param(RT_PARAM_HAZE_SIGMA) > 0.0) {
+			// A bounce that leaves for the sky takes no haze here: the radiance map it reads holds the aerosol along the
+			// whole ray from its start (atmo_scatter with aerosol_from 0, only the camera's own sky starts at the reach),
+			// and with the ambient light off the sky lights nothing, as in raster. Before, its first reach was counted
+			// twice under the weather sky, and lit the ground under any other sky (a sun-only scene 17% over at a 30
+			// degree sun, more as the sun sank).
+			bool haze_sky_ray = bounce > 0u && ps.hit_t <= 0.0;
+			if (!in_medium && !haze_sky_ray && get_rt_param(RT_PARAM_HAZE_SIGMA) > 0.0) {
 				float seg_len = ps.hit_t > 0.0 ? min(ps.hit_t, t_far) : min(t_far, get_rt_param(RT_PARAM_HAZE_REACH));
 				if (seg_len > 0.0) {
 					float h_a, h_k;
@@ -2508,12 +2514,12 @@ vec3 ground_ripple_sort_tint(float p_t, vec2 p_xz, float p_resolved, float p_amp
 	vec3 mt = mix(vec3(1.0), mix(vec3(1.0), lag, 0.25) * mix(vec3(1.0), coarse, 0.25), clamp(p_amp, 0.0, 1.0));
 	return mix(mt, rt, p_resolved);
 }
-// The coarse lag's share on an interdune flat (the dune tone's lag term): thin sand on flat ground, patchy.
-float ground_dune_lag(vec2 p_xz, float p_normal_y, float p_depth) {
-	if (p_depth < 0.0) {
+// The coarse lag's share on an interdune flat (the dune tone's lag term): the floors between dunes, flat, patchy.
+float ground_dune_lag(vec2 p_xz, float p_normal_y, float p_interdune) {
+	if (p_interdune < 0.0) {
 		return 0.0;
 	}
-	float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	float thin = p_interdune;
 	return thin * smoothstep(0.93, 0.98, p_normal_y) * mix(0.45, 1.0, ground_ripple_vn(p_xz / 23.0, 43u));
 }
 // Granule ripples (megaripples) on that lag: the coarse grains the wind cannot lift creep up into long, low ripples
@@ -2583,13 +2589,13 @@ vec2 ground_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, 
 }
 // Dune-scale sand colour: rubefaction, coarse interdune flats, pale slip faces (material.cpp ground_dune_tone(),
 // the same lines).
-vec3 ground_dune_tone(vec2 p_xz, float p_normal_y, float p_depth) {
+vec3 ground_dune_tone(vec2 p_xz, float p_normal_y, float p_interdune) {
 	vec3 t = vec3(1.0);
-	if (p_depth >= 0.0) {
-		float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	if (p_interdune >= 0.0) {
+		float thin = p_interdune;
 		float age = smoothstep(0.25, 0.7, 0.65 * ground_ripple_vn(p_xz / 420.0, 41u) + 0.35 * ground_ripple_vn(p_xz / 130.0, 42u));
 		t *= mix(vec3(1.0), vec3(1.15, 0.93, 0.78), age * (0.7 + 0.3 * thin));
-		float lag = ground_dune_lag(p_xz, p_normal_y, p_depth);
+		float lag = ground_dune_lag(p_xz, p_normal_y, p_interdune);
 		t *= mix(vec3(1.0), vec3(0.72, 0.7, 0.68), lag);
 	}
 	// Slopes of about 29 to 33 degrees: the slip face at the sand's repose.
@@ -3455,7 +3461,7 @@ void main() {
 			int rn = int(m2.y + 0.5);
 			int sn = int(m2.z + 0.5);
 			// The dune field's colour at this scale (GroundSurface3D dune_tone; material.cpp ground_sand_at(), the same
-			// lines): the generator's sand depth and the sand share from the sand block (G, B); past it, the depth rows
+			// lines): the generator's interdune share and the sand share from the sand block (G, B); past it, the depth rows
 			// round the patch (R, faded over their outer 15%) and the ground's share.
 			vec4 m4 = ts.x >= 5 ? texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(4, ts.y - 1), 0) : vec4(0.0);
 			if (m0.z > 0.0 && m4.x > 0.5) {

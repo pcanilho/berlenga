@@ -522,11 +522,12 @@ void SnowIcicles3D::_ensure_children() {
 	if (default_core_material.is_null()) {
 		// Cloudy ice: the inclusions scatter, so it is white and rough, and lets light through to its back
 		// (backlight) as a frosted pane does. Opaque, so the clear ice around it refracts it in raster too.
-		// The clear ice is a cylindrical lens round it: a ray entering at b from the axis passes it at
-		// R sin(asin(b/R) - asin(b/(nR))), so a core of radius c shows as wide as the b where that is c (about
-		// n/(n-1) = 4.2 times c when thin; the path tracer traces this). Raster's transmission reads the screen
-		// almost straight through the middle, so there the core is drawn at that apparent width (UV: the
-		// clear ice's radius there, and the core's); the path tracer and shadow maps keep the real column.
+		// The clear ice is a cylindrical lens round it: a ray entering at b from the axis bends to
+		// asin(b/(nR)) and so passes the axis at R sin(asin(b/(nR))) = b/n. A core of radius c is hit by
+		// every ray with b < n c, so it shows n = 1.31 times its width, whatever the clear ice's radius (the
+		// path tracer traces this). Raster's transmission reads the screen almost straight through the middle,
+		// so there the core is drawn at that apparent width (UV: the clear ice's radius there, and the core's);
+		// the path tracer and shadow maps keep the real column.
 		Ref<Shader> sh;
 		sh.instantiate();
 		sh->set_code(R"(shader_type spatial;
@@ -538,18 +539,7 @@ void vertex() {
 	float c = UV.y;
 	vec2 o = NORMAL.xz;
 	if (!IN_PATH_TRACER && !IN_SHADOW_PASS && c > 0.0 && big_r > c && dot(o, o) > 1.0e-8) {
-		float lo = c;
-		float hi = 0.95 * big_r;
-		for (int i = 0; i < 12; i++) {
-			float b = 0.5 * (lo + hi);
-			float d = big_r * sin(asin(b / big_r) - asin(b / (ior * big_r)));
-			if (d < c) {
-				lo = b;
-			} else {
-				hi = b;
-			}
-		}
-		VERTEX.xz += normalize(o) * (0.5 * (lo + hi) - c);
+		VERTEX.xz += normalize(o) * (min(ior * c, 0.95 * big_r) - c);
 	}
 }
 void fragment() {

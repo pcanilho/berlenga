@@ -1304,6 +1304,67 @@ taken out of the hidden stones for good. A save made as the node leaves the tree
 uses each stone's transform from the last step. Bench --test=stream: a stone saved in stiff mud is read back by a new
 node where it lay, at the same depth and turn (under 1 mm off).
 
+#### Round 20 built (20 Nov)
+
+Picked 20 Nov: all three, in order; plus game trails from the stand contract (asked by the world links work).
+
+**20.1 Currents push fording vehicles.** Research: vehicle flood stability is a body on its tyres, buoyed by the water
+it keeps out and pushed by the drag of the current on its wet face (Shu et al. 2011, Journal of Hydraulic Research;
+Xia et al. 2014, Natural Hazards; Martinez-Gomariz et al. 2017 and UNSW Water Research Laboratory TR2017/07, full size
+cars). Cars float near 0.5 to 0.6 m of still water: the body keeps out about half its box. PhysXVehicle3D now reads the
+water contract each step (`river_forces`, on; `hull_seal` 0.5): the chassis box in 3 x 5 columns, each buoyed by its
+wet part and dragged at 0.5 rho Cd A |u - v| (u - v), Cd 1.1, through the box's width across the flow; each tyre by its
+wet circle segment. PhysX's tyres give the friction from the lighter load. Skipped with a PhysXBuoyancy3D child. Also
+found: a braked car on soft ground crept sideways at 10 cm/s under a 40 N side push (PhysX's lateral sticky-tyre
+damper, as round 11 found lengthwise); held, the lateral sticky regime now starts at rest too. Bench --test=fordcar
+(1500 kg, braked, on the soaked bed): held at 0.3 m / 1 m/s and 0.5 m / 1 m/s; at 0.7 m and 3 m/s (drag 16.7 kN)
+carried 1.6 m in 4 s, its tyres ploughing the soaked bed; 1.4 m of still water floats it.
+
+**20.2 Scour round stones.** Obstacle marks at boulders (Euler, Herget and others 2017, laboratory and field: a crescent
+hole round the upstream face, a sediment ridge trailing in the lee); the horseshoe vortex raises the bed shear about
+fourfold at the foot (Melville and Coleman 2000). A cohesive bed erodes at Partheniades' E = M (tau / tau_c - 1),
+M 2e-4 kg/m2/s, tau_c from 0.5 Pa rising with cohesion to 5 Pa: millimetres an hour, so a stone a few days in a stream
+has its hole. Towards half the stone's width deep, slowing as it nears it; dug in three texel-sized discs (the nose
+deepest, two at the flanks), a third laid as the tail two widths back, the rest to the water as silt. In liquid mud the
+hole fills back as it is dug (the mud's own flow); only the silt shows there. Bench --test=stream (12 cm stone on a
+soaked soil bed, 1.2 m/s, 2.5 days sped up): 7.8 cm deeper at its nose than its lee, a 3.4 cm tail, 3 kg of silt.
+
+**20.3 Stones cloud the water.** A stone rolled along a muddy bed under water churns the mud it shoves aside: a
+twentieth to three tenths of its fines (rising with the bed shear, as the ford's plume) go to the water contract as
+suspended load, which carries it on as a plume. Bench --test=stream: a stone rolled 1.7 m through stiff mud at 2.5 m/s
+stirred 2.6 kg into the water.
+
+**Game trails.** WorldStand.trail_at() (passes a year, tread share) adds a trail's steady passes to the wear: walked
+P times a year against the regrowth half-life T days, P T / (365 ln 2) passes over the tread. So a trail is packed
+(Bekker values, slower to drain) and bare (the grass reads the wear map) and rain stands on it first. stand_changed
+re-reads it. Bench --test=trails: a daily trail holds 43.3 passes; a wheel sinks 22 mm on it against 52 mm beside it;
+in 20 mm/h rain water stands on it 16 frames (sped up) before the ground beside it.
+
+### Round 21: proposed (21 Nov, card posted), research notes
+
+**21.1 Engines drown, cars flood.** Hydrolock: an engine that draws water through its air intake stalls (water does
+not compress; a running engine bends rods). Makers rate a wading depth from the intake's height (typically 0.5 to
+0.9 m for off-roaders, raised by a snorkel to the roof line); off-road games model it as a stall past the intake with
+a snorkel upgrade (SnowRunner's snorkel addon). A car's body is not sealed: water comes in through door seals and
+the floor at an orifice rate Q = Cd A sqrt(2 g h) under the head outside (cars sink in one to a few minutes once
+floating: flood-safety guidance and the vehicle tests of Martinez-Gomariz et al. 2017). Plan: PhysXVehicle3D
+`air_intake_height` (with a snorkel raising it), the engine's torque cut and a stall once the water passes it;
+`hull_seal` falling as the cab fills by the orifice rate over a leak area, so a floating car settles and sinks;
+draining again on land.
+
+**21.2 Wet trails pug.** Treading damage on wet soils (pugging, poaching): hooves at 100 to 400 kPa (deer to cattle)
+punch into soil wetter than its plastic limit, leaving pocked mud that holds water and recovers over weeks to months
+(Climo and Richardson 1984; Drewry 2006, review of natural recovery from treading). Plan: on trails from
+WorldStand.trail_at(), when the soil is wet past a threshold, print hoof pocks over the tread at the trail's passes
+(as the walker steps' prints), worn and slumped, healed by the wear's regrowth; puddles fill the pocks.
+
+**21.3 Bow waves.** A vehicle wading at a walking pace pushes a bow wave that keeps the water lower round its engine
+bay (the wading technique taught for off-roaders: steady, about 5 to 8 km/h); faster, the wave climbs over the bonnet.
+A body in shallow water makes a wave by its depth Froude number Fr = v / sqrt(g h): near 1 the bow wave steepens and
+breaks. Plan: through the water contract's disturb() (owner-keyed moving disturbance) with the chassis' wet width
+and speed, the bow's height from Fr, the wake washing banks through the ford's bank path (_ford()), and the
+water level at the intake (21.1) read with the bow's trough.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

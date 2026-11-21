@@ -540,6 +540,9 @@ public:
 		for (LocalVector<ClimberLeafShape> &a : plant_climber_shapes) {
 			a.clear();
 		}
+		for (BarkSet &b : shared_bark_sets) {
+			b = BarkSet();
+		}
 	}
 
 private:
@@ -1008,6 +1011,12 @@ private:
 	};
 	BarkSet bark_sets[BARK_MAX];
 	BarkSet moss_set;
+	// The bark and moss sets depend on the bark kind alone: built once in the process and shared by
+	// every generator (each new generator rebuilt them, about half a second a kind).
+	static BarkSet shared_bark_sets[BARK_MAX + 1]; // BARK_MAX: the moss set.
+	static Mutex shared_bark_mutex;
+	static bool _shared_bark_get(int p_slot, BarkSet &r_set);
+	static void _shared_bark_put(int p_slot, const BarkSet &p_set);
 	const BarkSet &_moss_set();
 	static BarkKind _bark_kind(Preset p_preset);
 	static float _bark_tile_of(BarkKind p_kind) { return p_kind == BARK_CORK ? 1.2f : (p_kind == BARK_PINASTER ? 1.8f : BARK_TILE); } // Metres one tile of this family covers.
@@ -1095,6 +1104,8 @@ private:
 	int variant_built = 0;
 	int variant_task_kinds = 0;
 	TypedArray<Mesh> variant_meshes[3]; // Fire, struck, browsed.
+	WorkerThreadPool::TaskID variant_task = WorkerThreadPool::INVALID_TASK_ID;
+	bool variant_task_sync = false;
 	static void _variant_task(void *p_self);
 	Ref<ArrayMesh> material_source;
 	static void _near_task(void *p_self);
@@ -1140,9 +1151,10 @@ public:
 	// For PlantSpecies.near_mesh_source: the full-leaf mesh of one variant (index into the
 	// species' meshes), or null while it is being built on a worker thread.
 	Ref<Mesh> request_near_mesh(int p_key, int p_variant);
-	// Deferred variants (on a species' _tree_variant_source): grows the kinds asked for and appends them to the species
-	// (and to its near source's lists) in the stand's order. Returns the kinds it still lacks; main thread only.
-	int request_variants(const Ref<PlantSpecies> &p_species, int p_kinds);
+	// Deferred variants (on a species' _tree_variant_source): grows the kinds asked for (p_wait: here and now, else on a
+	// worker, collected by a later call) and appends what is grown to the species (and to its near source's lists) in the
+	// stand's order. Returns the kinds it still lacks; main thread only.
+	int request_variants(const Ref<PlantSpecies> &p_species, int p_kinds, bool p_wait = true);
 	enum VariantKind {
 		VARIANT_FIRE = 1,
 		VARIANT_STRIKE = 2,

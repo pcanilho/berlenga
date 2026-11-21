@@ -93,6 +93,9 @@ public:
 		bool holed = false; // the landscape has its hole over this cave's patch
 		bool sea = false;
 		real_t mouth = 0.0; // a sea cave's mouth radius (its patch is sized to it)
+		// Where the passage's air meets the ground surface (_fit_patch), in the entrance's frame: half width across the
+		// facing, and the reach behind (negative) and in front of the entrance along it. The patch covers at least this.
+		real_t fit_lat = 0.0, fit_lo = 0.0, fit_hi = 0.0;
 		LocalVector<Vector3> blowholes; // where a sea cave's roof shaft opens at the ground
 	};
 
@@ -144,7 +147,8 @@ private:
 		LocalVector<const Block *> blocks;
 		LocalVector<Vector3> patches; // entrances whose patch reaches this chunk
 		LocalVector<Vector3> patch_out;
-		LocalVector<real_t> patch_r; // each patch's half size (_patch_half)
+		LocalVector<real_t> patch_r; // each patch's half width across the facing (_patch_rect)
+		LocalVector<real_t> patch_lo, patch_hi; // and its reach along the facing, behind (negative) and in front
 		// A refined chunk's faces toward coarse neighbours (bits 0..5: -x +x -y +y -z +z) and its box: the fine
 		// relief fades out over the last metres to those faces, so both grids mesh the same surface at the seam.
 		uint8_t fine_fade = 0;
@@ -166,6 +170,17 @@ private:
 	// A cave's patch half size: patch_radius, a sea cave's no wider than its mouth needs (the beach's own sand surface
 	// is cut away over the whole patch, and the bare ground there showed its heightfield's facets).
 	real_t _patch_half(const Cave &p_cave) const { return p_cave.sea && p_cave.mouth > 0.0 ? MIN(patch_radius, p_cave.mouth * 1.3 + 3.0) : patch_radius; }
+	// The patch as drawn: that square grown to wherever the passage's air reaches the ground (an arch opening wider or
+	// further out than the square showed the landscape's cliff through it, seen from behind). A rectangle along the
+	// facing: half width, reach behind and in front of the entrance; r_bound the distance to its farthest corner.
+	void _patch_rect(const Cave &p_cave, real_t &r_lat, real_t &r_lo, real_t &r_hi, real_t &r_bound) const {
+		const real_t h = _patch_half(p_cave);
+		r_lat = MAX(h, p_cave.fit_lat);
+		r_lo = MIN(-h, p_cave.fit_lo);
+		r_hi = MAX(h, p_cave.fit_hi);
+		r_bound = Math::sqrt(r_lat * r_lat + MAX(-r_lo, r_hi) * MAX(-r_lo, r_hi));
+	}
+	void _fit_patch(Cave &r_cave) const;
 	real_t roughness = 1.0;
 	real_t scallops = 1.0; // Worley dish hollows on the walls (0 off)
 	real_t speleothems = 1.0; // drip formations: density (0 none)

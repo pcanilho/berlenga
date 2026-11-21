@@ -1188,3 +1188,16 @@ checked: the field, border vertices and normals of two neighbouring chunks match
 its fine relief out over the last 3 m to a face whose neighbour is coarse (geomorphing, as in chunked LOD terrain:
 Ulrich 2002, Lengyel 2010), and is remeshed when that neighbour's grid changes. Debug views: CAVE_WALL_DEBUG=3 chunk
 grid, 4 vertex colour, 5 mesh normal, 6 bumped normal, 7 world x/z bands.
+
+## Sea cave patch fitted to the passage (20 Nov)
+
+A pale strip showed through the right side of a sea arch: the landscape's own cliff, 20 to 35 m out, seen from behind
+through the arch. The entrance patch (where the cave mesh draws the ground and the landscape has its hole) was a
+square of the mouth's size round the entrance, and the passage's air reached the ground well past it. Outside the patch
+the landscape is drawn, so its cliff stood inside the passage.
+
+`_fit_patch` now samples the ground surface round each entrance (80 m square, 0.5 m grid) and grows the patch to every
+point the passage holds more than 0.3 m clear of the ground, plus 2.5 m (the hole is 1.5 m inside the patch). The patch
+became a rectangle along the facing: half width, reach behind and in front of the entrance. The beach in front of a
+sea cave, whose floor runs a few centimetres under the sand, stays the landscape's, so the sand is not cut wider than
+the passage needs.

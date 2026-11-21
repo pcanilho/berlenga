@@ -7,6 +7,7 @@ extends Node3D
 #   --view=lag      the interdune lag's granule ripples close up (--lag-at=x,z --lag-yaw --lag-h --lag-look --sun-alt --sun-side --fov)
 #   --raster        raster instead of path tracing
 #   --taa           temporal AA (raster stills for docs or PT comparison)
+#   --no-nmap       the bench ground without its noise normal map
 #   --spp=N         path traced samples per pixel (64)
 #   --bounces=N     path traced bounces (the Environment's, 3 by default)
 #   --frames=N      frames before saving (180; path tracing waits for its surfaces too)
@@ -371,7 +372,7 @@ func _terrain() -> bool:
 	nz.frequency = 0.03
 	nz.fractal_octaves = 5
 	nt.noise = nz
-	mat.normal_enabled = true
+	mat.normal_enabled = "--no-nmap" not in OS.get_cmdline_user_args() # --no-nmap: no bench noise normal map (it blotches under a low sun)
 	mat.normal_texture = nt
 	mat.uv1_triplanar = true
 	mat.uv1_world_triplanar = true

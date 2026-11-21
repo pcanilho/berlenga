@@ -323,12 +323,15 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 	float t = t0 + jitter * ds;
 	bool fine = false;
 	int empty = 0;
-	int max_iter = steps * 3;
+	int max_iter = steps * 4;
 	for (int i = 0; i < max_iter; i++) {
 		if (t > t1) {
 			break;
 		}
-		float st = fine ? ds_fine : ds;
+		// Inside cloud the short step also stays under 0.4% of the distance (100 m at 25 km): at a grazing view the long
+		// steps run to 600 m, a third of that still stepped through a thin hard-edged layer (a shelf, a far deck) in a
+		// handful of samples, which no amount of jitter averaging settled into anything smoother than a grain.
+		float st = fine ? min(ds_fine, max(40.0, 0.004 * t)) : ds;
 		vec3 pl = ro + rd * t;
 		vec3 p = vec3(cam.x + rd.x * t, length(pl) - PLANET_RADIUS, cam.z + rd.z * t);
 		vec2 ct = wc_cover_type(p.xz);
@@ -410,8 +413,22 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 			step_l *= 2.0;
 		}
 		float grid_z = (ceil(grid_f) + 0.5) * grid_dy / (cloud_light_grid_y.y - cloud_light_grid_y.x);
-		if (grid && grid_z < 1.0) {
-			tau += textureLod(cloud_light_grid, vec3(grid_uvw.xy, grid_z), 0.0).r;
+		if (grid) {
+			// The read level steps up by one where the read height crosses a level, a jump in the shading that drew a
+			// sloping underside (an anvil's) in contour bands. So also read the next level up, a level's climb further
+			// along the path (one march sample across the gap), and blend by where the height falls between them: at each
+			// crossing both sides then read the same level at the same distance, and the shading is continuous.
+			float k_l = grid_dy / max(sun_dir.y, 0.02);
+			vec3 mp = p + sun_dir * (grid_d + 0.5 * k_l);
+			float tau_b = tau + wc_extinction(mp, wc_cover_type(mp.xz), false, k_l) * k_l;
+			vec3 gp_b = gp + sun_dir * k_l;
+			vec2 uv_b = vec2((gp_b.x - cloud_light_grid_box.x) / cloud_light_grid_box.z, (gp_b.z - cloud_light_grid_box.y) / cloud_light_grid_box.z);
+			float z_b = grid_z + grid_dy / (cloud_light_grid_y.y - cloud_light_grid_y.x);
+			if (z_b < 1.0) {
+				tau_b += textureLod(cloud_light_grid, vec3(clamp(uv_b, vec2(0.0), vec2(1.0)), z_b), 0.0).r;
+			}
+			float tau_a = tau + (grid_z < 1.0 ? textureLod(cloud_light_grid, vec3(grid_uvw.xy, grid_z), 0.0).r : 0.0);
+			tau = mix(tau_b, tau_a, ceil(grid_f) - grid_f);
 		}
 		// Multiple scattering by Wrenninge's octaves: scattering, extinction and phase eccentricity
 		// each halved per octave.
@@ -923,7 +940,7 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			// heavier sheets; the finest stretched across the view so its streaks stand upright.
 			float curt = 0.5 * wc_value_noise(qn / 1200.0 + vec2(float(i) * 13.7, 3.1)) + 0.3 * wc_value_noise(qn / 400.0 + vec2(7.3, float(i) * 5.9)) + 0.2 * wc_value_noise(qn / 130.0 + vec2(1.9, 8.3));
 			// Snow's veils are softer than rain's curtains (flakes drift and spread as they fall).
-			r *= mix(0.0, 2.6, smoothstep(mix(0.45, 0.3, snow), mix(0.62, 0.8, snow), curt)) * smoothstep(0.0, mix(120.0, 500.0, snow), base - p.y);
+			r *= mix(0.0, 2.6, smoothstep(mix(0.45, 0.38, snow), mix(0.62, 0.72, snow), curt)) * smoothstep(0.0, mix(120.0, 500.0, snow), base - p.y);
 			// Snow's extinction: SnowFall3D.snowfall_extinction (Gunn and Marshall flakes) gives about 2 km of
 			// visibility at 1 mm/h of water and 200 m at 3 mm/h (Rasmussen et al. 1999): fitted as 0.00196 r^2.1,
 			// capped at 5 mm/h (a snowstorm's heaviest). Snow hides far more than rain at the same rate.
@@ -938,7 +955,9 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			float hg = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
 			// Under the shield the sky's light is cut to about two fifths: a heavy shaft stands as a dark grey curtain
 			// against the brighter sky behind it.
-			vec3 light = ambient_bottom * mix(1.0, 0.4, shield) + sun_radiance * sun_vis * hg;
+			// Snow is white (flakes scatter nearly all they intercept, many times over in a dense veil): it keeps about
+			// three quarters of the sky's light under the shield and stands as a pale veil, where rain is a dark curtain.
+			vec3 light = ambient_bottom * mix(1.0, mix(0.4, 0.75, snow), shield) + sun_radiance * sun_vis * hg;
 			float st = exp(-sigma * dt);
 			float w = tr * (1.0 - st);
 			col += light * w;

@@ -78,6 +78,8 @@ class BodySnowStub extends WorldSnow:
 #                     first wets it (the glints go); --glints=exact (default) / grid: every grain a facet under the path tracer, or the raster's grid
 #                     (sparkle) prints the share of glinting pixels and the mean luminance; --hoar=MM: surface hoar
 #                     of MM mm over the field (its upright plates flash in the low sun)
+#   --view=rime       a fence and a bare shrub after a day in freezing fog (8 m/s, -6 C, 0.25 g/m3): rime feathers into
+#                     the wind [--close: the rail and the wire]; --test=rime checks the accretion
 #   --view=shelter    a shed and young spruces after a snowfall: bare ground under the roof, snow in the
 #                     crowns and less under them (--test=shelter for the checks)
 #   --test=background updates on worker threads (follow-up 14): the same pack as updates run in the frame,
@@ -199,6 +201,8 @@ func _ready() -> void:
 			await _run_crust_tests()
 		elif only == "hoar":
 			await _run_hoar_tests()
+		elif only == "rime":
+			await _run_rime_tests()
 		elif only == "transport":
 			await _run_transport_tests()
 		elif only == "failure":
@@ -411,6 +415,7 @@ func _run_tests() -> void:
 	await _run_surface_tests()
 	await _run_crust_tests()
 	await _run_hoar_tests()
+	await _run_rime_tests()
 	await _run_fall_tests()
 	await _run_shelter_tests()
 	await _run_climate_tests()
@@ -623,6 +628,50 @@ func _run_crust_tests() -> void:
 	var none := _trail_stats(-9.0)
 	print("  beside an unbroken trail (crusts off): %.3f m" % none.edge)
 	_check("crust_enabled off: the boot sinks as before", snow.get_crust_strength_at(p) == 0.0 and none.dent > buried.dent + 0.02, "%.3f m deep" % none.dent)
+
+
+func _run_rime_tests() -> void:
+	print("Rime (round 5):")
+	var e_twig := SnowRime3D.collision_efficiency(8.0, 20.0, 0.005)
+	var e_rail := SnowRime3D.collision_efficiency(8.0, 20.0, 0.05)
+	var e_post := SnowRime3D.collision_efficiency(8.0, 20.0, 0.3)
+	_check("thin collectors catch more of the fog than thick ones (Finstad et al. 1988)", e_twig > 0.5 and e_rail < e_twig and e_post < e_rail, "5 mm %.2f, 5 cm %.2f, 30 cm %.2f at 8 m/s" % [e_twig, e_rail, e_post])
+	var soft := SnowRime3D.rime_density(20.0, 3.0, -15.0)
+	var hard := SnowRime3D.rime_density(20.0, 15.0, -2.0)
+	_check("rime is soft in a light cold wind, hard in a strong mild one (Macklin 1962)", soft < 250.0 and hard > 500.0, "%.0f and %.0f kg/m3" % [soft, hard])
+	var rate := SnowRime3D.accretion_rate(8.0, 0.25, -6.0, 20.0, 0.01)
+	_check("a 1 cm twig in dense fog gains millimetres an hour", rate > 0.001 and rate < 0.02, "%.1f mm/h" % (rate * 1000.0))
+	_check("none above freezing or without fog", SnowRime3D.accretion_rate(8.0, 0.25, 1.0, 20.0, 0.01) == 0.0 and SnowRime3D.accretion_rate(8.0, 0.0, -6.0, 20.0, 0.01) == 0.0, "")
+	var holder := Node3D.new()
+	add_child(holder)
+	var pole := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.01
+	cm.bottom_radius = 0.01
+	cm.height = 1.0
+	cm.rings = 8
+	pole.mesh = cm
+	pole.position = Vector3(40.0, 1.0, 40.0)
+	holder.add_child(pole)
+	var rime := SnowRime3D.new()
+	rime.target_group = ""
+	add_child(rime)
+	rime.target_paths = [rime.get_path_to(holder)]
+	rime.refresh_targets()
+	for h in 12:
+		rime.grow(1.0, -6.0, Vector3(8.0, 0.0, 0.0), 0.25)
+	var th := rime.get_target_thickness(0)
+	var g := rime.get_growth_direction(0)
+	var upwind := rime.get_thickness_at(Vector3(39.99, 1.0, 40.0))
+	var downwind := rime.get_thickness_at(Vector3(40.01, 1.0, 40.0))
+	_check("rime builds on the windward side, growing into the wind", th > 0.01 and g.x < -0.9 and upwind > 0.3 * th and downwind < 0.05 * th, "%.1f cm in 12 h (windward middle %.1f cm, lee %.1f mm), toward (%.2f, %.2f, %.2f)" % [th * 100.0, upwind * 100.0, downwind * 1000.0, g.x, g.y, g.z])
+	_check("drawn as a crust with feathers", rime.get_feather_count() > 20, "%d feathers" % rime.get_feather_count())
+	for h in 24:
+		rime.grow(1.0, 4.0, Vector3(2.0, 0.0, 0.0), 0.0)
+	_check("a thaw takes it off", rime.get_target_thickness(0) < 0.001, "%.1f mm left" % (rime.get_target_thickness(0) * 1000.0))
+	rime.queue_free()
+	holder.queue_free()
+	await get_tree().process_frame
 
 
 func _run_hoar_tests() -> void:
@@ -2335,6 +2384,8 @@ func _build_view() -> void:
 		await _setup("cornice", 512.0, 256, -6.0)
 	elif view == "sparkle":
 		await _setup("flat", 32.0, 128, -6.0)
+	elif view == "rime":
+		await _setup("flat", 32.0, 128, -6.0)
 	elif view == "lake":
 		await _setup("mountain", 512.0, 128, -12.0)
 	elif view == "avalanche":
@@ -2404,6 +2455,9 @@ func _build_view() -> void:
 		return
 	elif view == "sparkle":
 		await _build_sparkle(cam)
+		return
+	elif view == "rime":
+		await _build_rime(cam)
 		return
 	elif view == "lake":
 		await _build_lake(cam)
@@ -3247,6 +3301,94 @@ func _build_bodies(cam: Camera3D) -> void:
 	cam.look_at(Vector3(0, ground.get_height(Vector3()) + 0.6, 0))
 	cam.fov = 50.0
 	await _save_frame("")
+
+
+func _build_rime(cam: Camera3D) -> void:
+	# A fence on a hill in freezing fog: posts, rails, a wire and a bare shrub after a day of 8 m/s wind at -6 C
+	# through 0.25 g/m3 of cloud water. Rime feathers point into the wind, thickest on the wire, the twigs and the
+	# rails' windward edges.
+	snow.drift_enabled = false
+	sun.visible = true
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-25.0, 140.0, 0.0)
+	_add_terrain(32.0, 128, Color(0.36, 0.33, 0.28), 2.0)
+	var wood := _ground_material(Color(0.36, 0.27, 0.19), 1.0)
+	var metal := StandardMaterial3D.new()
+	metal.albedo_color = Color(0.3, 0.3, 0.32)
+	metal.metallic = 0.8
+	metal.roughness = 0.5
+	var fence := Node3D.new()
+	fence.name = "Fence"
+	fence.add_to_group("rime")
+	add_child(fence)
+	for k in 3:
+		var post := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.08, 1.3, 0.08)
+		bm.subdivide_height = 12
+		post.mesh = bm
+		post.position = Vector3(0.0, 0.65, -1.6 + 1.6 * k)
+		post.material_override = wood
+		fence.add_child(post)
+	for y in [0.55, 1.05]:
+		var rail := MeshInstance3D.new()
+		var rm := BoxMesh.new()
+		rm.size = Vector3(0.03, 0.08, 3.4)
+		rm.subdivide_depth = 40
+		rail.mesh = rm
+		rail.position = Vector3(-0.055, y, 0.0)
+		rail.material_override = wood
+		fence.add_child(rail)
+	var wire := MeshInstance3D.new()
+	var wm := CylinderMesh.new()
+	wm.top_radius = 0.0025
+	wm.bottom_radius = 0.0025
+	wm.height = 3.4
+	wm.rings = 60
+	wm.radial_segments = 8
+	wire.mesh = wm
+	wire.rotation_degrees = Vector3(90.0, 0.0, 0.0)
+	wire.position = Vector3(-0.045, 1.25, 0.0)
+	wire.material_override = metal
+	fence.add_child(wire)
+	# A bare shrub: twigs fanning up from a root, 4 to 8 mm thick.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	for k in 14:
+		var twig := MeshInstance3D.new()
+		var tm := CylinderMesh.new()
+		var r := rng.randf_range(0.002, 0.004)
+		tm.top_radius = r * 0.5
+		tm.bottom_radius = r
+		tm.height = rng.randf_range(0.5, 0.9)
+		tm.rings = 10
+		tm.radial_segments = 6
+		twig.mesh = tm
+		var tilt := rng.randf_range(10.0, 45.0)
+		var turn := rng.randf_range(0.0, 360.0)
+		twig.rotation_degrees = Vector3(tilt, turn, 0.0)
+		twig.position = Vector3(0.9, 0.0, 0.8) + twig.transform.basis.y * tm.height * 0.5
+		twig.material_override = wood
+		fence.add_child(twig)
+	var rime := SnowRime3D.new()
+	rime.name = "Rime"
+	add_child(rime)
+	await get_tree().physics_frame
+	rime.refresh_targets()
+	var hours := 24
+	for h in hours:
+		rime.grow(1.0, -6.0, Vector3(8.0, 0.0, 0.0), 0.25)
+	print("rime: %d parts, %d feathers, density %.0f kg/m3, wire %.1f cm, post %.1f cm, %.1f mm/h at the most" % [rime.get_target_count(), rime.get_feather_count(), rime.get_last_density(), rime.get_thickness_at(Vector3(-0.05, 1.25, 0.4)) * 100.0, rime.get_thickness_at(Vector3(-0.04, 0.3, 0.0)) * 100.0, rime.get_last_rate() * 1000.0])
+	# From upwind and to the side: the feathers stand out toward the camera, into the wind.
+	cam.position = Vector3(-1.7, 1.35, 1.5)
+	cam.look_at(Vector3(0.1, 0.85, 0.3))
+	cam.fov = 40.0
+	if OS.get_cmdline_user_args().has("--close"):
+		cam.position = Vector3(-0.55, 1.2, 0.6)
+		cam.look_at(Vector3(-0.06, 1.12, 0.05))
+		cam.fov = 30.0
+	await _save_frame("")
+	get_tree().quit()
 
 
 func _build_sparkle(cam: Camera3D) -> void:

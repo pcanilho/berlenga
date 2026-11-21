@@ -633,6 +633,7 @@ void GroundSurface3D::_update_cells() {
 	if (_apply_deposits()) {
 		_ground_changed();
 	}
+	_trails_refresh();
 	cells.resize(n * n);
 	cell_inputs.resize(n * n);
 	if ((int)pore.size() != n * n) {
@@ -691,7 +692,7 @@ void GroundSurface3D::_update_cells() {
 				in.litter *= 1.0f - CLAMP(fire->burnt_at(p), 0.0f, 1.0f);
 				in.repel = CLAMP(fire->water_repellency_at(p), 0.0f, 1.0f);
 			}
-			in.compacted = worn_tracks && !wear_cells.is_empty() ? wear_compaction(get_wear_at(p)) * (1.0f - 0.5f * sand) : 0.0f;
+			in.compacted = worn_tracks && _wear_any() ? wear_compaction(get_wear_at(p)) * (1.0f - 0.5f * sand) : 0.0f;
 			// Under more than a few centimetres of snow the snow surface takes the print.
 			in.fixed = rock || (snow && float(snow->call("get_depth_at", p)) > 0.03f);
 			// Frozen ground (round 8): a crust holds; a thaw's wet layer over the frost, or a fresh thaw not yet
@@ -1317,10 +1318,52 @@ void GroundSurface3D::clear_wear() {
 	_update_cells();
 }
 
-float GroundSurface3D::get_wear_at(Vector3 p_position) const {
-	if (wear_cells.is_empty()) {
+// Game trails (docs/ideas/mud.md, round 20): the stand contract's worn paths (WorldStand.trail_at(), passes a year
+// and the tread's share) wear the ground as the wheels' passes do (Cole 1995's trampling counts feet, the passes
+// here). A trail walked P times a year against the wear's regrowth half-life T days holds a steady P T / (365 ln 2)
+// passes over its tread, so it is packed (slower to drain: puddles stand on it after rain) and bare, and its mud is
+// the trampled mud the wheels' wear gives.
+void GroundSurface3D::_trails_refresh() {
+	WorldStand *st = WorldContracts::stand();
+	const bool on = worn_tracks && st && (st->get_script_instance() != nullptr || !st->get_trails().is_empty());
+	if (st && st->get_instance_id() != trail_stand) {
+		if (Object *old = ObjectDB::get_instance(trail_stand)) {
+			if (old->is_connected(SNAME("stand_changed"), callable_mp(this, &GroundSurface3D::_on_stand_changed))) {
+				old->disconnect(SNAME("stand_changed"), callable_mp(this, &GroundSurface3D::_on_stand_changed));
+			}
+		}
+		trail_stand = st->get_instance_id();
+		st->connect(SNAME("stand_changed"), callable_mp(this, &GroundSurface3D::_on_stand_changed));
+	}
+	if (on != trails_on) {
+		trails_on = on;
+		wear_dirty = true;
+	}
+}
+
+void GroundSurface3D::_on_stand_changed(const Rect2 &p_area) {
+	_trails_refresh();
+	wear_dirty = true;
+	_update_cells();
+}
+
+float GroundSurface3D::_trail_passes(const Vector3 &p_position) const {
+	if (!trails_on || wear_regrowth_days <= 0.0f) {
 		return 0.0f;
 	}
+	const Vector2 tr = WorldContracts::stand()->trail_at(p_position);
+	if (tr.x <= 0.0f || tr.y <= 0.0f) {
+		return 0.0f;
+	}
+	return tr.x * tr.y * wear_regrowth_days / (365.0f * 0.69314718f);
+}
+
+float GroundSurface3D::get_wear_at(Vector3 p_position) const {
+	const float trail = _trail_passes(p_position);
+	if (wear_cells.is_empty()) {
+		return trail;
+	}
+
 	const float fx = p_position.x / WEAR_CELL - 0.5f;
 	const float fz = p_position.z / WEAR_CELL - 0.5f;
 	const int x0 = int(Math::floor(fx));
@@ -1331,7 +1374,7 @@ float GroundSurface3D::get_wear_at(Vector3 p_position) const {
 		const Wear *w = wear_cells.getptr(Vector2i(x, z));
 		return w ? w->passes : 0.0f;
 	};
-	return Math::lerp(Math::lerp(at(x0, z0), at(x0 + 1, z0), tx), Math::lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), tx), tz);
+	return trail + Math::lerp(Math::lerp(at(x0, z0), at(x0 + 1, z0), tx), Math::lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), tx), tz);
 }
 
 void GroundSurface3D::_wear_update(double p_delta) {
@@ -1361,7 +1404,7 @@ void GroundSurface3D::_wear_publish() {
 	if (active != this || !ground_valid || n < 2) {
 		return;
 	}
-	if (!worn_tracks || (wear_cells.is_empty() && wear_texture.is_null())) {
+	if (!worn_tracks || (!_wear_any() && wear_texture.is_null())) {
 		return;
 	}
 	if (!wear_dirty && wear_origin == ground_origin && wear_texture.is_valid()) {
@@ -1991,14 +2034,16 @@ Vector2 GroundSurface3D::_loose_carry(const Vector2 &p_rel, float p_wet, float p
 // bed moves at a Shields number far under the 0.045 of a bed of its own size, as Komar and Li's exposure gives.
 GroundSurface3D::StreamPush GroundSurface3D::_loose_stream(const WorldWater *p_water, const Vector3 &p_at, float p_rc, float p_mass, const Vector3 &p_velocity, float p_bed) const {
 	StreamPush out;
-	const float ws = p_water->height_at(p_at);
+	Vector3 u3;
+	const float ws = p_water->height_except(p_at, this, &u3); // not the ground's own standing water
 	const float h = ws - p_bed;
 	if (!(h > 0.02f) || p_mass <= 0.0f) {
 		return out;
 	}
 	const float pw = MIN(CLAMP(p_at.y + p_rc - p_bed, 0.0f, 2.0f * p_rc), h); // its face above the bed, under water
 	const float z0 = 0.01f / 30.0f;
-	const Vector3 u3 = p_water->flow_at(p_at);
+	out.flow = Vector2(u3.x, u3.z);
+	out.depth = h;
 	const float scale = pw > 0.002f ? CLAMP(Math::log(MAX(0.5f * pw, 2.0f * z0) / z0) / MAX(Math::log(h / z0) - 1.0f, 1.0f), 0.0f, 1.3f) : 0.0f;
 	out.near_bed = Vector2(u3.x, u3.z) * scale;
 	const Vector2 rel = out.near_bed - Vector2(p_velocity.x, p_velocity.z);
@@ -2046,6 +2091,65 @@ void GroundSurface3D::_loose_stream_firm(RigidBody3D *p_body, float p_rc, const 
 	p_body->set_angular_velocity(vh.length() > 0.02f ? Vector3(vh.y, 0.0f, -vh.x) / p_rc : Vector3());
 }
 
+// Scour round a stone in a current (docs/ideas/mud.md, round 20.2): the horseshoe vortex the stone sheds at its foot
+// raises the bed shear round its front and sides about fourfold (Melville and Coleman 2000 for piers; Euler et al.
+// 2017, obstacle marks at boulders: a crescent hole round the upstream face, a ridge of sediment trailing behind). A
+// cohesive bed erodes past its critical shear at Partheniades' rate E = M (tau / tau_c - 1), M 2e-4 kg/m2/s, tau_c
+// from 0.5 Pa for a soaked mud rising with its cohesion; the hole deepens towards half the stone's width, slowing as
+// it does, a third of what it takes laid as the tail, the rest carried off as silt (round 20.3). In liquid mud the
+// hole fills back as it is dug (the mud's own flow); only its silt shows.
+void GroundSurface3D::_loose_scour(const Vector3 &p_at, float p_rc, const StreamPush &p_push, const Cell &p_cell, LooseState &r_state, float p_dt) {
+	const float u = p_push.flow.length();
+	if (u < 0.05f || !p_cell.deformable) {
+		return;
+	}
+	const float d = 2.0f * p_rc;
+	const float eq = 0.5f * d;
+	if (r_state.scour >= eq) {
+		return;
+	}
+	const float tau = 4.0f * 1000.0f * 0.003f * u * u; // Pa at its foot
+	const float tau_c = CLAMP(0.5f + 0.5f * p_cell.cohesion, 0.5f, 5.0f);
+	if (tau <= tau_c) {
+		return;
+	}
+	const float e = 2e-4f * (tau / tau_c - 1.0f); // kg/m2/s
+	const float dz = e / 1300.0f * MAX(runoff_time_scale, 0.0f) * p_dt * (1.0f - r_state.scour / eq);
+	r_state.scour += dz;
+	r_state.scour_owed += dz;
+	if (r_state.scour_owed < 0.003f) {
+		return;
+	}
+	const float owed = r_state.scour_owed;
+	r_state.scour_owed = 0.0f;
+	const Vector2 dir = p_push.flow / u;
+	const Vector2 side(-dir.y, dir.x);
+	const Vector2 c(p_at.x, p_at.z);
+	// Discs no smaller than the field's texel (a smaller one covers none), the depth spread to keep the volume.
+	const float r0 = 0.7f * p_rc;
+	const float rr = MAX(r0, (is_near_active() ? near_fld.texel() : field.texel()));
+	const float thin = (r0 * r0) / (rr * rr);
+	float vol = 0.0f;
+	const Vector2 spots[3] = { c - dir * (1.1f * p_rc), c + side * (1.0f * p_rc) - dir * (0.3f * p_rc), c - side * (1.0f * p_rc) - dir * (0.3f * p_rc) };
+	for (int k = 0; k < 3; k++) {
+		const float depth = (k == 0 ? owed : 0.7f * owed) * thin; // deepest at the nose
+		vol += dig(Vector3(spots[k].x, p_at.y, spots[k].y), rr, depth);
+	}
+	vol = MAX(vol, (float)Math::PI * rr * rr * owed * thin * 2.4f);
+	stone_scour_m3 += vol;
+	// The tail: a third laid in its lee, two stone widths back.
+	const Vector2 tail = c + dir * (2.0f * d);
+	const float tr = MAX(1.0f * p_rc, 0.05f);
+	deposit(Vector3(tail.x, p_at.y, tail.y), tr, vol / 3.0f / ((float)Math::PI * tr * tr));
+	const float kg = vol * 2.0f / 3.0f * 1300.0f * CLAMP(1.0f - p_cell.sand, 0.0f, 1.0f);
+	if (kg > 0.0f) {
+		if (WorldWater *ww = WorldContracts::water()) {
+			ww->add_sediment_mass(Vector3(p_at.x, p_at.y + MIN(0.5f * p_push.depth, d), p_at.z), kg, 0.0f);
+		}
+		stone_plume_kg += kg;
+	}
+}
+
 void GroundSurface3D::_loose_update(float p_delta) {
 	// Stones read back from the deposits (round 19.2), placed once the field is up: as they lay, at their depth.
 	if (!loose_pending.is_empty() && field.valid && ground_valid && is_inside_tree()) {
@@ -2078,7 +2182,7 @@ void GroundSurface3D::_loose_update(float p_delta) {
 			}
 		}
 	}
-	const WorldWater *ww = WorldContracts::water();
+	WorldWater *ww = WorldContracts::water();
 	const bool streams = stream_stones && ww && ww->has_provider();
 	for (const KeyValue<uint32_t, ObjectID> &kv : buried_loose_bodies) {
 		RigidBody3D *rb = Object::cast_to<RigidBody3D>(ObjectDB::get_instance(kv.value));
@@ -2120,6 +2224,10 @@ void GroundSurface3D::_loose_update(float p_delta) {
 			}
 			if (sp.wet) {
 				_loose_stream_firm(rb, rc, sp, dt);
+				// Lying still on a soil or sand bed the colliders hold: scoured round as on mud (round 20.2).
+				if (c.deformable && _on_lattice(at.x, at.z) && at.y - rc < g0 + 0.05f && rb->get_linear_velocity().length() < 0.05f) {
+					_loose_scour(Vector3(at.x, g0, at.z), rc, sp, c, ls, dt);
+				}
 			}
 			if (ls.ground.is_valid()) {
 				PhysicsServer3D::get_singleton()->body_remove_collision_exception(rb->get_rid(), ls.ground);
@@ -2242,7 +2350,26 @@ void GroundSurface3D::_loose_update(float p_delta) {
 			rb->set_angular_velocity(Vector3());
 		}
 		if (moving && bottom < ref) {
-			_press_moving(Vector3(at.x, ref, at.z), 0.9f * rc, bottom, ref - bottom, vh);
+			float ploughed = _press_moving(Vector3(at.x, ref, at.z), 0.9f * rc, bottom, ref - bottom, vh);
+			if (ploughed <= 0.0f) {
+				// The GPU presses it unread: the furrow's section (its width by its depth, about a segment's 0.6 of the
+				// rectangle) over the step's travel.
+				ploughed = 1.8f * rc * (ref - bottom) * 0.6f * vh.length() * dt;
+			}
+			// Under water the bow wave's fines go up as a cloud the current carries off (round 20.3): the mud the
+			// stone shoves aside is churned into the water at its face: of its fines, a twentieth to three tenths
+			// stays up as the bed shear rises (as the ford's plume, _ford()), the rest settling into the furrow's rims.
+			if (sp.wet && ploughed > 0.0f) {
+				const float tau_b = 1000.0f * 0.003f * sp.flow.length_squared();
+				const float share = (0.05f + 0.25f * Math::smoothstep(0.5f, 3.0f, tau_b)) * CLAMP(1.0f - c.sand, 0.0f, 1.0f);
+				const float kg = ploughed * 1300.0f * share;
+				if (kg > 0.0f) {
+					ww->add_sediment_mass(Vector3(at.x, ref + MIN(0.5f * sp.depth, 2.0f * rc), at.z), kg, 0.0f);
+					stone_plume_kg += kg;
+				}
+			}
+		} else if (sp.wet && !moving) {
+			_loose_scour(Vector3(at.x, ref, at.z), rc, sp, c, ls, dt);
 		}
 		// Out of sight: sunk, or buried under what was laid over it.
 		if (at.y + r < get_surface_height_at(at) - 0.03f) {
@@ -5660,7 +5787,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		const float st = size / sn;
 		ripple_sand_rect = Rect2(Math::snapped(center.x, st) - 0.5f * size, Math::snapped(center.y, st) - 0.5f * size, size, size);
 		ripple_sand.resize(sn * sn);
-		// And for the dune tone: the generator's loose sand depth (-1 off its dune fields or with none) and the sand share.
+		// And for the dune tone: the generator's interdune floors (0..1, -1 off its dune fields or with none) and the sand share.
 		ripple_sand_depth.resize(sn * sn);
 		ripple_sand_share.resize(sn * sn);
 		ripple_sand_blown.resize(sn * sn);
@@ -5674,10 +5801,10 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				ripple_sand[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(px, pz) : 0.0f;
 				ripple_sand_share[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
 				ripple_sand_blown[z * sn + x] = c.deformable ? c.blown : 0.0f;
-				ripple_sand_depth[z * sn + x] = sgen ? float(sgen->get_sand_depth_at(Vector3(px, 0.0f, pz))) : -1.0f;
+				ripple_sand_depth[z * sn + x] = sgen ? float(sgen->get_sand_interdune_at(Vector3(px, 0.0f, pz))) : -1.0f;
 			}
 		}
-		// The dune tone past the patch: the generator's sand depth over a kilometre round it, in 8 m texels (its own
+		// The dune tone past the patch: the generator's interdune floors over a kilometre round it, in 8 m texels (its own
 		// grid's scale), so ground past the patch with a BaseMaterial3D shows the interdune flats too.
 		{
 			const int fn = RIPPLE_DEPTH_N;
@@ -5687,7 +5814,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 			for (int z = 0; z < fn; z++) {
 				for (int x = 0; x < fn; x++) {
 					const Vector3 fp(ripple_far_depth_rect.position.x + (x + 0.5f) * fs, 0.0f, ripple_far_depth_rect.position.y + (z + 0.5f) * fs);
-					ripple_far_depth[z * fn + x] = sgen ? float(sgen->get_sand_depth_at(fp)) : -1.0f;
+					ripple_far_depth[z * fn + x] = sgen ? float(sgen->get_sand_interdune_at(fp)) : -1.0f;
 				}
 			}
 		}
@@ -5813,7 +5940,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				}
 			}
 		}
-		// Rows n+S+n..n+S+n+D-1: the generator's sand depth round the patch (R), for the dune tone past it.
+		// Rows n+S+n..n+S+n+D-1: the generator's interdune floors round the patch (R), for the dune tone past it.
 		if ((int)ripple_far_depth.size() == dn * dn) {
 			for (int z = 0; z < dn; z++) {
 				for (int x = 0; x < dn; x++) {
@@ -9569,6 +9696,8 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_tracked_mud"), &GroundSurface3D::is_tracked_mud);
 	ClassDB::bind_method(D_METHOD("set_stream_stones", "enabled"), &GroundSurface3D::set_stream_stones);
 	ClassDB::bind_method(D_METHOD("is_stream_stones"), &GroundSurface3D::is_stream_stones);
+	ClassDB::bind_method(D_METHOD("get_stone_scour_volume"), &GroundSurface3D::get_stone_scour_volume);
+	ClassDB::bind_method(D_METHOD("get_stone_silt_lifted"), &GroundSurface3D::get_stone_silt_lifted);
 	ClassDB::bind_method(D_METHOD("set_keep_ruts", "enabled"), &GroundSurface3D::set_keep_ruts);
 	ClassDB::bind_method(D_METHOD("is_keeping_ruts"), &GroundSurface3D::is_keeping_ruts);
 	ClassDB::bind_method(D_METHOD("set_ruts_path", "path"), &GroundSurface3D::set_ruts_path);

@@ -1,0 +1,1 @@
+- Icicle cores in raster now show at their true lens width (1.31 times the core), so clear ice reads clear against dark walls.
