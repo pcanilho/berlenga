@@ -947,3 +947,25 @@ ends) was rejected by docs, 20 Nov. The second (r2, with paired edge dislocation
 and the steep lee (12 degrees) went hard-edged and dark under a 12 degree sun. The forks are gone, the profile is a
 rounded cosine under 7 degrees, and the lag and trough tints are warmer (lag 0.84, 0.74, 0.62: the reddish brown of a
 desert lag, not grey).
+
+## Next sand candidates (research, 21 Nov 2026; on a card)
+
+- **Rain pits and rain crust.** Drops on dry sand leave raindrop impressions: shallow craters a few mm across
+  with low raised rims, denser and overlapping as the shower goes on, until a downpour smooths them away
+  (Reineck and Singh 1980). As the wetted skin dries it seals into a thin structural crust, its fines washed
+  into the pores (Valentin and Bresson 1992), which holds the pits and keeps the wind off until saltation or a
+  foot breaks it. Built on what exists: the rain rate from WeatherMap3D get_rain_at (the one weather source,
+  no private copy), the field's wetness and drying for the crust's age, `rain_smoothing` for the downpour end
+  and the silt skin's break and re-crust logic for its breakup. Drawn as a stochastic pit layer in the near
+  field (hashed drop positions per cell and time, so the count grows with the rain's total) and a crust share
+  that darkens and mattes the sand and stops ripples and streamers where it holds. Medium.
+- **Dust devils over hot sand.** Convective vortices form on clear, calm afternoons over a strongly heated
+  surface (lapse rate far over adiabatic near the ground), a few metres to tens of metres across, wandering
+  with the light wind for minutes (Sinclair 1969; Balme and Greeley 2006). Built with PhysX Flow (the house
+  rule): a rotating, rising emitter lifting dust where the surface is loose and dry, spawned from WeatherMap3D
+  get_surface_temperature_at, get_sun_light and get_wind_at, with GroundStreamers3D taking the grains at its
+  foot and a faint swirl left on the ripples. Medium to large; costs Flow time while one lives.
+- **Adhesion warts at damp edges.** Dry grains blown onto a damp surface stick where they land, building small
+  irregular warts and ridges that grow upwind (adhesion structures, Kocurek and Fielder 1982). For oasis margins
+  and drying swash: where the wind's sand flux crosses the wet margin, add a rough, upwind-facing wart relief and
+  a paler dry-grain tint. Small; reads only up close.
