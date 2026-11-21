@@ -3629,6 +3629,17 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Rotten snow and slush",
+   "settings": [
+    "SnowCover3D.slush_enabled"
+   ],
+   "note": "",
+   "what": "a wet spring pack bears less, so boots and wheels posthole deeper; melt water it cannot hold ponds at its base over frozen ground as grey-blue glossy slush and drains only downslope.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Surface hoar",
    "settings": [
     "SnowCover3D.hoar_enabled"
