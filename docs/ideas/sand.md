@@ -936,11 +936,14 @@ Where deflation leaves a coarse lag (the dune tone's dark interdune flats), the 
 under impacts into granule ripples (megaripples): 0.3 m to several metres apart, a few centimetres high (ripple index
 10 to 20), coarse grains armouring the crests and windward slopes over troughs of fines, crest lines less regular
 than impact ripples (Sharp 1963; Ellwood, Evans and Wilson 1975; Yizhaq et al. 2012; Lammel et al. 2018; arXiv
-2208.00888). Drawn as a normal and tint, h = 0.05 amp c^1.5 with c a raised cosine of a phase that carries: a 1.1 m
-mean spacing, a warp along the wind whose slope moves the local spacing between about 0.5 and 2 m, crest bending over
-metres, and sparse paired edge dislocations (Y-forks, about one per 4 m cell in three). Crests run tens of
-wavelengths and taper out at their ends. The slope comes from the phase's own gradient (differences, modulo a turn
-across a fork's cut). Crest colour follows the granules: paler for quartz (the default here), darker for lithic or
+2208.00888). Drawn as a normal and tint, h = 0.04 amp c with c a raised cosine of a phase that carries: a 1.1 m
+mean spacing, a warp along the wind whose slope moves the local spacing between about 0.5 and 2 m, and crest bending
+over metres. Crests run tens of wavelengths and taper out at their ends. The slope comes from the phase's own
+gradient (differences). Crest colour follows the granules: paler for quartz (the default here), darker for lithic or
 basaltic granules. Gated by the dry, wind-blown share (none under water or on wet sand), eased to the ground's own
 past the patch's block so nothing stops at its edge. A first version (straight, even, dark painted stripes with hard
-ends) was rejected by docs, 20 Nov.
+ends) was rejected by docs, 20 Nov. The second (r2, with paired edge dislocations as forks and h = 0.05 amp c^1.5) was declined
+21 Nov: each dislocation pair's closed contours read as a small oval rimmed pit (a dark speck at its core up close),
+and the steep lee (12 degrees) went hard-edged and dark under a 12 degree sun. The forks are gone, the profile is a
+rounded cosine under 7 degrees, and the lag and trough tints are warmer (lag 0.84, 0.74, 0.62: the reddish brown of a
+desert lag, not grey).
