@@ -1230,3 +1230,11 @@ On rock slopes (20 to 32 degrees and up) inside a patch, the ground now gets rel
 1.25 m over 1.6 m, and the wall's finer octaves. It fades to nothing 1 m inside the patch edge, so it meets the
 landscape. At 0.4 of that amplitude the crease stayed straight. The cave's ground also stops 0.5 m outside the
 landscape's hole, so the band beyond is drawn once, by the landscape. `CAVE_PATCH_DEBUG=1` prints each patch's fit.
+
+Follow-up (21 Nov): the lower end of the crease still showed as a thin pale streak down to the water, where the relief
+was still fading in near the patch edge. The fitted patch now reaches 4 m past the passage's air (was 2.5 m).
+
+The same shots logged about 15,000 "Vector3 cannot be normalized" warnings. The landscape cuts its collision hole with
+NaN heights, and Godot Physics' height map still built triangles over them: the sea's contact-foam rays and Flow's
+floor probe got NaN planes. Height-map triangles with a NaN corner now count as hole (ray test and shape cull), and
+the per-chunk height bounds skip NaN. Found by linking an unstripped binary and breaking on `_err_print_error` in gdb.

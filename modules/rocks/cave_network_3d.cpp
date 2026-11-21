@@ -4267,11 +4267,13 @@ void CaveNetwork3D::_fit_patch(Cave &r_cave) const {
 		}
 	}
 	if (hits > 0) {
-		// 2.5 m beyond the last such point: the hole is 1.5 m inside the patch, and a metre more covers the 0.5 m grid
-		// and the worn lip the smooth union rounds there.
-		r_cave.fit_lat = lat + 2.5;
-		r_cave.fit_lo = lo - 2.5;
-		r_cave.fit_hi = hi + 2.5;
+		// 4 m beyond the last such point: the hole is 1.5 m inside the patch, a metre more covers the 0.5 m grid and
+		// the worn lip the smooth union rounds there, and 1.5 m more lets the ground's crest relief (_rock), which
+		// fades in from 1 to 2.5 m inside the patch, reach full strength where the cave's side meets the ground. At
+		// 2.5 m the lower end of that crease stayed straight, a pale streak down to the water.
+		r_cave.fit_lat = lat + 4.0;
+		r_cave.fit_lo = lo - 4.0;
+		r_cave.fit_hi = hi + 4.0;
 	}
 	if (OS::get_singleton()->has_environment("CAVE_PATCH_DEBUG")) {
 		print_line(vformat("cave patch fit at %s out %s: %d ground points in the passage's air, half width %.1f, along %.1f..%.1f (square half %.1f)", r_cave.entrance, o, hits, r_cave.fit_lat, r_cave.fit_lo, r_cave.fit_hi, _patch_half(r_cave)));
