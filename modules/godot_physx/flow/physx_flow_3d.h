@@ -209,6 +209,7 @@ private:
 	// The gas shadows the scene from the first directional light: a volumetric shadow map over the grid
 	// (see FlowScatterRD::ShadowMap), read by the Forward+ opaque pass a frame later.
 	bool cast_shadows = true;
+	bool diffuse_transmission = true;
 	// The scattering pass blends each frame with the last ones (see FlowScatterRD::Params::temporal).
 	bool scattering_temporal = true;
 	// Light bends through the gas's hot air (docs/ideas/heat-shimmer.md): a screen-space pass in raster, bent
@@ -223,6 +224,7 @@ private:
 	float scattering_anisotropy = 0.4f;
 	float scattering_albedo = 0.9f;
 	float ground_albedo = 0.25f;
+	Color ground_color = Color(1, 1, 1);
 	int scattering_shadow_steps = 4;
 	float scattering_shadow_reach = 4.0f;
 
@@ -387,6 +389,8 @@ public:
 	float get_heat_shimmer_turbulence() const { return heat_shimmer_turbulence; }
 	void set_cast_shadows(bool p_v) { cast_shadows = p_v; }
 	bool is_cast_shadows() const { return cast_shadows; }
+	void set_diffuse_transmission(bool p_v) { diffuse_transmission = p_v; }
+	bool is_diffuse_transmission() const { return diffuse_transmission; }
 	void set_scattering_temporal(bool p_v) { scattering_temporal = p_v; }
 	bool is_scattering_temporal() const { return scattering_temporal; }
 	void set_scattering_max_lights(int p_v) { scattering_max_lights = CLAMP(p_v, 1, FlowScatterRD::MAX_LIGHTS); }
@@ -399,6 +403,8 @@ public:
 	float get_scattering_albedo() const { return scattering_albedo; }
 	void set_ground_albedo(float p_v) { ground_albedo = CLAMP(p_v, 0.0f, 1.0f); }
 	float get_ground_albedo() const { return ground_albedo; }
+	void set_ground_color(const Color &p_c) { ground_color = p_c; }
+	Color get_ground_color() const { return ground_color; }
 	void set_scattering_shadow_steps(int p_v) { scattering_shadow_steps = CLAMP(p_v, 0, 64); }
 	int get_scattering_shadow_steps() const { return scattering_shadow_steps; }
 	void set_scattering_shadow_reach(float p_v) { scattering_shadow_reach = MAX(p_v, 0.05f); }

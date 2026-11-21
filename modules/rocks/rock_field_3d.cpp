@@ -346,6 +346,7 @@ struct Deposit {
 static thread_local TerrainGenerator3D *rf_job_generator = nullptr;
 // The coarse cell a worker is placing: shape libraries are looked up under library_lock, missing ones noted.
 static thread_local void *rf_coarse_job = nullptr;
+static thread_local const void *rf_job_wear = nullptr; // the detail job's StandWear while _place runs for it
 static thread_local bool rf_far = false; // _far_place: only the stones the far tier keeps need placing
 
 TerrainGenerator3D *RockField3D::_get_generator() const {
@@ -2157,7 +2158,20 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			if (detail_rivers && layer_enabled[LAYER_RIVER] && sd2 > sd1 * 1.01f && rivers_ready) {
 				_river_segments(p_rect.grow(1.0), rsegs);
 			}
-			if (!shore_on && !scree_on && rsegs.is_empty()) {
+			// Worn ground (docs/ideas/ground-detail.md, "Game trails and boar rooting"): a trail's tread loses its fines and
+			// small gravel and keeps an armour of angular stones standing proud, the kicked grains gather on its shoulders,
+			// and boar rooting leaves stones turned up loose on the soil, settling over two years.
+			const StandWear *wear = static_cast<const StandWear *>(rf_job_wear);
+			const bool wear_on = wear && wear->any && sd2 > sd1 * 1.01f;
+			const int cls = int(p_layer - LAYER_DETAIL_PEBBLE);
+			// The share of the ground each class covers at full wear: the tread's armour (Marion and Leung: the soil goes,
+			// the coarse fraction stays), the shoulders' kicked grains, and the stones a fresh rooting turns up; as counts
+			// per m2 of the class's mean footprint, times the soil's stoniness (more where the bedrock is near).
+			static const float armour_cover[3] = { 0.15f, 0.10f, 0.05f };
+			static const float kick_cover[3] = { 0.01f, 0.08f, 0.12f };
+			static const float root_cover[3] = { 0.06f, 0.05f, 0.06f };
+			const float per_cover = 1.0f / (0.785f * sd1 * sd2);
+			if (!shore_on && !scree_on && rsegs.is_empty() && !wear_on) {
 				break;
 			}
 			// Each class's cover (count x mean footprint) is held under about half the ground: past that the
@@ -2245,12 +2259,26 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				}
 			}
 			const float pa = Math::pow(pd1, -2.5f), pb = Math::pow(pd2, -2.5f);
+			const float ka = Math::pow(sd1, -2.5f), kb = Math::pow(sd2, -2.5f);
 			for (int j = 0; j < nz; j++) {
 				for (int i = 0; i < nx; i++) {
 					const DetailCorner *cc[4] = { &corners[j * (nx + 1) + i], &corners[j * (nx + 1) + i + 1], &corners[(j + 1) * (nx + 1) + i], &corners[(j + 1) * (nx + 1) + i + 1] };
 					float rate_max = 0.0f;
 					for (const DetailCorner *k : cc) {
 						rate_max = MAX(rate_max, k->shore + k->scree + k->river);
+					}
+					// The worn ground's own stones per m2 at its most over the sub-cell (it is sampled finer than the
+					// corners: a trail's tread is narrower than a sub-cell), times the soil's stoniness (more where the
+					// bedrock is near). Each stone reads it where it falls.
+					Vector3 wmax;
+					float stony = 0.0f;
+					if (wear_on) {
+						wmax = wear->max_in(Rect2(p_rect.position.x + i * sub, p_rect.position.y + j * sub, sub, sub));
+						if (wmax != Vector3()) {
+							const Vector3 mid(p_rect.position.x + (i + 0.5f) * sub, 0, p_rect.position.y + (j + 0.5f) * sub);
+							stony = per_cover * (0.5f + 0.5f * CLAMP(2.0f * float(gen->get_rock_exposure(mid)), 0.0f, 1.0f));
+							rate_max += MIN(armour_cover[cls] * stony * float(wmax.x), cap_shore) + MIN(kick_cover[cls] * stony * float(wmax.y), cap_shore) + MIN(root_cover[cls] * stony * float(wmax.z), cap_shore);
+						}
 					}
 					if (rate_max <= 0.0f) {
 						continue;
@@ -2263,6 +2291,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						const float w[4] = { (1 - fx) * (1 - fz), fx * (1 - fz), (1 - fx) * fz, fx * fz };
 						float shore = 0.0f, scree = 0.0f, river = 0.0f, d50 = 0.0f, e = 0.0f, ws = 0.0f;
 						float rd50 = 0.0f, silt = 0.0f, wr = 0.0f;
+						float worn = 0.0f, kick = 0.0f, root = 0.0f;
 						const RiverBed *bed = nullptr;
 						for (int q = 0; q < 4; q++) {
 							shore += w[q] * cc[q]->shore;
@@ -2282,7 +2311,19 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 								ws += w[q];
 							}
 						}
-						const float total = shore + scree + river;
+						if (stony > 0.0f) {
+							const Vector3 wv = wear->at(x + fx * sub, z + fz * sub);
+							// The coarsest class stays where it lies; the gravel and the fines are kicked and washed off the tread.
+							const float thin = cls > 0 ? 1.0f - 0.8f * float(wv.x) : 1.0f;
+							shore *= thin;
+							scree *= thin;
+							river *= thin;
+							worn = MIN(armour_cover[cls] * stony * float(wv.x), cap_shore);
+							kick = MIN(kick_cover[cls] * stony * float(wv.y), cap_shore);
+							root = MIN(root_cover[cls] * stony * float(wv.z), cap_shore);
+						}
+						const float base = shore + scree + river;
+						const float total = base + worn + kick + root;
 						if (total <= 0.0f || rng.randf() * rate_max > total) {
 							continue;
 						}
@@ -2291,7 +2332,33 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						pd.xz = Vector3(x + fx * sub, 0, z + fz * sub);
 						pd.yaw = rng.randf() * Math::TAU;
 						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
-						if (bed && wr > 0.0f && pick >= shore && pick < shore + river) {
+						if (pick >= base) {
+							const float q = pick - base;
+							pd.key = _library_key(type, RockGenerator::FAMILY_SCREE, RF_DETAIL_BIN + cls);
+							pd.film = 0.0f;
+							if (q < worn) {
+								// The tread's armour: angular, the coarse end of the class, standing proud of the worn soil.
+								pd.size = sd1 * Math::pow(sd2 / sd1, Math::sqrt(rng.randf()));
+								pd.tilt = Math::deg_to_rad(25.0f) * rng.randf();
+								pd.sink = 0.05f + 0.1f * rng.randf();
+								pd.follow = 0.75f;
+								wear_stones[0].increment();
+							} else if (q < worn + kick) {
+								wear_stones[1].increment();
+								// Kicked to the shoulders: the fine end (the class's power law), loose on the surface.
+								pd.size = Math::pow(ka - rng.randf() * (ka - kb), -1.0f / 2.5f);
+								pd.tilt = Math::deg_to_rad(15.0f) * rng.randf();
+								pd.sink = 0.1f + 0.1f * rng.randf();
+								pd.follow = 0.85f;
+							} else {
+								// Turned up by rooting: any size, lying on the loosened soil at any angle.
+								pd.size = sd1 * Math::pow(sd2 / sd1, rng.randf());
+								pd.tilt = Math::deg_to_rad(60.0f) * rng.randf();
+								pd.sink = 0.08f * rng.randf();
+								pd.follow = 0.3f;
+								wear_stones[2].increment();
+							}
+						} else if (bed && wr > 0.0f && pick >= shore && pick < shore + river) {
 							rd50 /= wr;
 							silt /= wr;
 							// The bed's log-normal kept to this class, as the shore's.
@@ -2608,10 +2675,123 @@ void RockField3D::_on_holes_changed(const Rect2 &p_rect) {
 		}
 	}
 	for (const Vector3i &k : again) {
-		stone_count -= cells[k].stones;
 		_free_cell(cells[k]);
 		cells.erase(k);
 		_build_cell(k);
+	}
+}
+
+// Worn ground from WorldStand (docs/ideas/ground-detail.md, "Game trails and boar rooting").
+Vector3 RockField3D::StandWear::at(real_t p_x, real_t p_z) const {
+	if (!any) {
+		return Vector3();
+	}
+	const real_t fx = CLAMP((p_x - rect.position.x) / step, real_t(0), real_t(nx)), fz = CLAMP((p_z - rect.position.y) / step, real_t(0), real_t(nz));
+	const int i = MIN(int(fx), nx - 1), j = MIN(int(fz), nz - 1);
+	const real_t u = fx - i, t = fz - j;
+	const int w = nx + 1;
+	return v[j * w + i].lerp(v[j * w + i + 1], u).lerp(v[(j + 1) * w + i].lerp(v[(j + 1) * w + i + 1], u), t);
+}
+
+Vector3 RockField3D::StandWear::max_in(const Rect2 &p_rect) const {
+	if (!any) {
+		return Vector3();
+	}
+	const int i0 = CLAMP(int(Math::floor((p_rect.position.x - rect.position.x) / step)), 0, nx), i1 = CLAMP(int(Math::ceil((p_rect.get_end().x - rect.position.x) / step)), 0, nx);
+	const int j0 = CLAMP(int(Math::floor((p_rect.position.y - rect.position.y) / step)), 0, nz), j1 = CLAMP(int(Math::ceil((p_rect.get_end().y - rect.position.y) / step)), 0, nz);
+	Vector3 m;
+	for (int j = j0; j <= j1; j++) {
+		for (int i = i0; i <= i1; i++) {
+			m = m.max(v[j * (nx + 1) + i]);
+		}
+	}
+	return m;
+}
+
+// Main thread. A trail's wear w = tread (1 - exp(-passes / 300)): the tread is worn bare within a few hundred passes a
+// year and changes little after (Marion and Leung); its shoulders tread (1 - tread) 4 of that. A rooting is fresh at
+// up to a season and settled by two years (the terrain material's fade).
+void RockField3D::_sample_wear(const Rect2 &p_rect, StandWear &r_wear) const {
+	r_wear = StandWear();
+	r_wear.rect = p_rect;
+	if (!ground_wear) {
+		return;
+	}
+	const WorldStand *st = WorldContracts::stand();
+	if (!st) {
+		return;
+	}
+	r_wear.nx = MAX(1, int(Math::ceil(p_rect.size.x / r_wear.step)));
+	r_wear.nz = MAX(1, int(Math::ceil(p_rect.size.y / r_wear.step)));
+	r_wear.v.resize((r_wear.nx + 1) * (r_wear.nz + 1));
+	for (int j = 0; j <= r_wear.nz; j++) {
+		for (int i = 0; i <= r_wear.nx; i++) {
+			const Vector3 p(p_rect.position.x + i * r_wear.step, 0, p_rect.position.y + j * r_wear.step);
+			Vector3 c;
+			const Vector2 t = st->trail_at(p);
+			if (t.x > 0.0f && t.y > 0.0f) {
+				const float worn = 1.0f - Math::exp(-float(t.x) / 300.0f);
+				c.x = t.y * worn;
+				c.y = 4.0f * t.y * (1.0f - t.y) * worn;
+			}
+			const float age = st->rooting_age_at(p);
+			if (age >= 0.0f) {
+				c.z = 1.0f - Math::smoothstep(0.25f, 2.0f, age); // the terrain material's fade (Landscape3D's stand map)
+			}
+			r_wear.v[j * (r_wear.nx + 1) + i] = c;
+			r_wear.any = r_wear.any || c.x > 0.0f || c.y > 0.0f || c.z > 0.0f;
+		}
+	}
+	if (!r_wear.any) {
+		r_wear.v.clear();
+	}
+}
+
+void RockField3D::_watch_stand() {
+	WorldStand *st = WorldContracts::stand();
+	if (!st || st->get_instance_id() == stand_watched) {
+		return;
+	}
+	const Callable cb = callable_mp(this, &RockField3D::_on_stand_changed);
+	if (Object *old = ObjectDB::get_instance(stand_watched)) {
+		if (old->is_connected(SNAME("stand_changed"), cb)) {
+			old->disconnect(SNAME("stand_changed"), cb);
+		}
+	}
+	st->connect(SNAME("stand_changed"), cb);
+	stand_watched = st->get_instance_id();
+}
+
+// A trail laid or moved, a rooting added or aged: the detail cells over it are built again (streaming builds the
+// freed ones again as it reaches them; a job already reading the old ground is dropped).
+void RockField3D::_on_stand_changed(const Rect2 &p_rect) {
+	if (building > 0 || !ground_wear) {
+		return;
+	}
+	const Rect2 area = p_rect.grow(1.0);
+	for (const KeyValue<Vector3i, DetailJob *> &kv : detail_jobs) {
+		const real_t ks = _cell_size(Layer(kv.key.x));
+		if (Rect2(kv.key.y * ks, kv.key.z * ks, ks, ks).intersects(area)) {
+			_detail_cancel();
+			break;
+		}
+	}
+	LocalVector<Vector3i> again;
+	for (const KeyValue<Vector3i, Cell> &kv : cells) {
+		if (!_is_detail(kv.key.x)) {
+			continue;
+		}
+		const real_t ks = _cell_size(Layer(kv.key.x));
+		if (Rect2(kv.key.y * ks, kv.key.z * ks, ks, ks).intersects(area)) {
+			again.push_back(kv.key);
+		}
+	}
+	for (const Vector3i &k : again) {
+		_free_cell(cells[k]);
+		cells.erase(k);
+		if (!streaming) {
+			_build_cell(k);
+		}
 	}
 }
 
@@ -2691,6 +2871,7 @@ void RockField3D::_detail_prepare(DetailJob &r_job) {
 		}
 	}
 	_detail_seeds(layer, rect.grow(0.5), r_job.seeds);
+	_sample_wear(rect.grow(1.0), r_job.wear);
 	// The block's shared tiles: held while the job reads them, or cut by it (_detail_compute) when there are none yet.
 	r_job.block = _tile_block(r_job.key);
 	if (ground_detail_tiles) {
@@ -2769,7 +2950,9 @@ void RockField3D::_detail_compute(DetailJob &r_job) {
 	const Rect2 rect(key.y * cs, key.z * cs, cs, cs);
 	LocalVector<Stone> stones;
 	rf_job_generator = r_job.gen;
+	rf_job_wear = &r_job.wear;
 	_place(layer, rect, rf_hash3(key.x, key.y, key.z, uint32_t(seed) * 2654435761u), stones, &r_job.libs, &r_job.seeds);
+	rf_job_wear = nullptr; // (the shared tiles below are cut from unworn ground: they stand for the block's ground)
 	rf_job_generator = nullptr;
 	if (gen->has_holes_in(rect.grow(8.0))) {
 		for (int i = int(stones.size()) - 1; i >= 0; i--) {
@@ -3107,6 +3290,11 @@ void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, 
 		TileSquare top[N * N];
 		_tile_squares(gen, key.x, rect, N, r_stones, r_job.seeds, top);
 		for (int q = 0; q < N * N; q++) {
+			const Vector3 worn = r_job.wear.max_in(top[q].rect);
+			if (top[q].ok && MAX(worn.x, MAX(worn.y, worn.z)) > 0.02f) {
+				top[q].ok = false; // worn ground (a trail, a rooting) keeps its own grains: no tile is cut from it
+				top[q].fail = 4;
+			}
 			if (top[q].ok) {
 				sq.push_back(top[q]);
 			}
@@ -3871,7 +4059,6 @@ void RockField3D::_coarse_commit(const Vector3i &p_key, LocalVector<Stone> &ston
 			}
 		}
 		for (const Vector3i &k : again) {
-			stone_count -= cells[k].stones;
 			_free_cell(cells[k]);
 			cells.erase(k);
 			_build_cell(k);
@@ -3968,6 +4155,7 @@ void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
 		if (far_cover_texture.is_valid()) {
 			rs->global_shader_parameter_set("rock_far_cover_rect", Vector4());
 			far_cover_texture.unref();
+			far_reach_texture.unref();
 			far_cover_origin = Vector2(1e20, 1e20);
 		}
 		return;
@@ -3980,10 +4168,12 @@ void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
 		return;
 	}
 	far_cover_origin = o;
-	LocalVector<float> area;
+	LocalVector<float> area, river_area;
 	area.resize(R * R);
-	for (float &a : area) {
-		a = 0.0f;
+	river_area.resize(R * R);
+	for (uint32_t i = 0; i < area.size(); i++) {
+		area[i] = 0.0f;
+		river_area[i] = 0.0f;
 	}
 	// Rockfall blocks under the faces (the generator's own list, as the layer places them; their debris skirts add
 	// about a third), and the glacial boulders' mean cover on till.
@@ -4018,6 +4208,7 @@ void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
 					continue;
 				}
 				area[iz * R + ix] += 0.45f * step * sg.w * 1.2f * float(layer_density[LAYER_RIVER]);
+				river_area[iz * R + ix] += 0.45f * step * sg.w * 1.2f * float(layer_density[LAYER_RIVER]);
 			}
 		}
 	}
@@ -4025,6 +4216,18 @@ void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
 	Vector<uint8_t> data;
 	data.resize(R * R * 4);
 	uint8_t *w = data.ptrw();
+	// The hand-over (docs/ideas/ground-detail.md, "The middle-distance hand-over"): a river bed's cobbles are drawn
+	// whole to 0.8 of the layer's radius (thinned, their survivors widened), then gone by a cell past it; its tone
+	// fades in over exactly that. The rockfall blocks and boulders go on as the far tier's stones, so theirs keeps the
+	// 250 to 700 m fade it was set to.
+	const real_t rr = layer_radius[LAYER_RIVER];
+	const real_t river_start = far_thinning ? 0.8 * rr : 0.95 * rr, river_end = rr + _cell_size(LAYER_RIVER);
+	Vector<uint8_t> reach;
+	reach.resize(R * R * 2);
+	uint8_t *rw = reach.ptrw();
+	const uint8_t def_start = uint8_t(250.0 / FAR_REACH_UNIT), def_end = uint8_t(700.0 / FAR_REACH_UNIT);
+	LocalVector<uint8_t> has; // 2: river, 1: other stones, 0: none
+	has.resize(R * R);
 	for (int z = 0; z < R; z++) {
 		for (int x = 0; x < R; x++) {
 			const Vector3 c(o.x + (x + 0.5) * FAR_COVER_TEXEL, 0, o.y + (z + 0.5) * FAR_COVER_TEXEL);
@@ -4036,6 +4239,10 @@ void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
 			}
 			const float a = CLAMP(cover / 0.6f, 0.0f, 1.0f); // 60% plan cover: all stone
 			uint8_t *px = w + (z * R + x) * 4;
+			const bool river = river_area[z * R + x] > 0.5f * area[z * R + x] && river_area[z * R + x] > 0.0f;
+			has[z * R + x] = a <= 0.0f ? 0 : (river ? 2 : 1);
+			rw[(z * R + x) * 2 + 0] = river ? uint8_t(CLAMP(river_start / FAR_REACH_UNIT, 0.0, 255.0)) : def_start;
+			rw[(z * R + x) * 2 + 1] = river ? uint8_t(CLAMP(river_end / FAR_REACH_UNIT, 0.0, 255.0)) : def_end;
 			if (a <= 0.0f) {
 				px[0] = px[1] = px[2] = px[3] = 0;
 				continue;
@@ -4047,13 +4254,35 @@ void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
 			px[3] = uint8_t(a * 255.0f);
 		}
 	}
+	// Empty texels next to a bed take its reach (the nearer fade wins), so filtering does not blend it with the default.
+	for (int z = 0; z < R; z++) {
+		for (int x = 0; x < R; x++) {
+			if (has[z * R + x] != 0) {
+				continue;
+			}
+			for (int dz = -1; dz <= 1; dz++) {
+				for (int dx = -1; dx <= 1; dx++) {
+					const int nx = x + dx, nz = z + dz;
+					if (nx < 0 || nz < 0 || nx >= R || nz >= R || has[nz * R + nx] != 2) {
+						continue;
+					}
+					rw[(z * R + x) * 2 + 0] = MIN(rw[(z * R + x) * 2 + 0], rw[(nz * R + nx) * 2 + 0]);
+					rw[(z * R + x) * 2 + 1] = MIN(rw[(z * R + x) * 2 + 1], rw[(nz * R + nx) * 2 + 1]);
+				}
+			}
+		}
+	}
 	Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_RGBA8, data);
-	if (far_cover_texture.is_valid()) {
+	Ref<Image> rimg = Image::create_from_data(R, R, false, Image::FORMAT_RG8, reach);
+	if (far_cover_texture.is_valid() && far_reach_texture.is_valid()) {
 		far_cover_texture->update(img);
+		far_reach_texture->update(rimg);
 	} else {
 		far_cover_texture = ImageTexture::create_from_image(img);
+		far_reach_texture = ImageTexture::create_from_image(rimg);
 	}
 	rs->global_shader_parameter_set("rock_far_cover_map", far_cover_texture->get_rid());
+	rs->global_shader_parameter_set("rock_far_reach_map", far_reach_texture->get_rid());
 	rs->global_shader_parameter_set("rock_far_cover_rect", Vector4(o.x, o.y, size, size));
 }
 
@@ -4170,6 +4399,7 @@ void RockField3D::_far_cancel() {
 	if (far_cover_texture.is_valid()) {
 		RenderingServer::get_singleton()->global_shader_parameter_set("rock_far_cover_rect", Vector4());
 		far_cover_texture.unref();
+		far_reach_texture.unref();
 	}
 	far_cover_origin = Vector2(1e20, 1e20);
 }
@@ -4357,6 +4587,7 @@ void RockField3D::_update_far(const Vector3 &p_target, bool p_all) {
 
 void RockField3D::_update_streaming(bool p_all) {
 	_watch_holes();
+	_watch_stand();
 	TerrainGenerator3D *gen = _get_generator();
 	const Vector3 tp = _target_position();
 	if (!gen || !Math::is_finite(gen->get_height(tp))) {
@@ -6061,6 +6292,7 @@ void RockField3D::clear() {
 int RockField3D::build_area(const Rect2 &p_rect) {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	_watch_holes();
+	_watch_stand();
 	int built = 0;
 	_update_detail_radii();
 	_prepare_rivers();
@@ -7152,6 +7384,26 @@ void RockField3D::contract_cover_points(const Vector2 *p_points, int p_count, Ve
 	}
 }
 
+// Off: the ground detail ignores the game trails and the boar rooting WorldStand publishes (cells already built are
+// built again).
+void RockField3D::set_ground_wear(bool p_enabled) {
+	if (ground_wear == p_enabled) {
+		return;
+	}
+	ground_wear = p_enabled;
+	_detail_cancel();
+	LocalVector<Vector3i> drop;
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		if (_is_detail(kv.key.x)) {
+			_free_cell(kv.value);
+			drop.push_back(kv.key);
+		}
+	}
+	for (const Vector3i &k : drop) {
+		cells.erase(k);
+	}
+}
+
 // Off: the river beds keep only the river layer's stones (their grains and their far cover go; cells already built
 // are built again).
 void RockField3D::set_ground_detail_rivers(bool p_enabled) {
@@ -7164,7 +7416,6 @@ void RockField3D::set_ground_detail_rivers(bool p_enabled) {
 	LocalVector<Vector3i> drop;
 	for (KeyValue<Vector3i, Cell> &kv : cells) {
 		if (_is_detail(kv.key.x)) {
-			stone_count -= kv.value.stones;
 			_free_cell(kv.value);
 			drop.push_back(kv.key);
 		}
@@ -7292,6 +7543,9 @@ Dictionary RockField3D::get_ground_detail_tile_stats() const {
 	d["skip_coarse"] = int64_t(tile_skips[1].get());
 	d["skip_bent"] = int64_t(tile_skips[2].get());
 	d["skip_unmatched"] = int64_t(tile_skips[3].get());
+	d["wear_armour"] = int64_t(wear_stones[0].get());
+	d["wear_shoulder"] = int64_t(wear_stones[1].get());
+	d["wear_rooting"] = int64_t(wear_stones[2].get());
 	return d;
 }
 
@@ -7363,7 +7617,6 @@ void RockField3D::set_ground_detail(bool p_enabled) {
 		LocalVector<Vector3i> drop;
 		for (KeyValue<Vector3i, Cell> &kv : cells) {
 			if (_is_detail(kv.key.x)) {
-				stone_count -= kv.value.stones;
 				_free_cell(kv.value);
 				drop.push_back(kv.key);
 			}
@@ -7605,6 +7858,8 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_loose_count"), &RockField3D::get_loose_count);
 	ClassDB::bind_method(D_METHOD("get_react_stats"), &RockField3D::get_react_stats);
 	ClassDB::bind_method(D_METHOD("is_ground_detail_rivers"), &RockField3D::is_ground_detail_rivers);
+	ClassDB::bind_method(D_METHOD("set_ground_wear", "enabled"), &RockField3D::set_ground_wear);
+	ClassDB::bind_method(D_METHOD("is_ground_wear"), &RockField3D::is_ground_wear);
 	ClassDB::bind_method(D_METHOD("set_ground_detail_tiles", "enabled"), &RockField3D::set_ground_detail_tiles);
 	ClassDB::bind_method(D_METHOD("is_ground_detail_tiles"), &RockField3D::is_ground_detail_tiles);
 	ClassDB::bind_method(D_METHOD("get_ground_detail_tile_stats"), &RockField3D::get_ground_detail_tile_stats);
@@ -7679,6 +7934,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_threads"), "set_ground_detail_threads", "is_ground_detail_threads");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_cover"), "set_ground_detail_cover", "is_ground_detail_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_rivers"), "set_ground_detail_rivers", "is_ground_detail_rivers");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_wear"), "set_ground_wear", "is_ground_wear");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_tiles"), "set_ground_detail_tiles", "is_ground_detail_tiles");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stones_react"), "set_stones_react", "is_stones_react");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "react_max_bodies", PROPERTY_HINT_RANGE, "0,256,1"), "set_react_max_bodies", "get_react_max_bodies");

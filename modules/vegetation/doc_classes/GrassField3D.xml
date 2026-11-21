@@ -280,7 +280,7 @@
 			Largest lean of a blade at rest, in metres of tip offset per metre of height.
 		</member>
 		<member name="obstacles" type="PackedVector4Array" setter="set_obstacles" getter="get_obstacles" default="PackedVector4Array()">
-			Rocks on the ground that no blade grows through: each a disc (x, ground y, z, radius), the radius where the rock meets the soil, as [member VegetationField3D.obstacles]. Blades root 2 cm or more off a rock, on both fill paths. Setting it rebuilds the field.
+			Rocks on the ground that no blade grows through: each a disc (x, ground y, z, radius), the radius where the rock meets the soil, as [member VegetationField3D.obstacles]. Blades root 2 cm or more off a rock, on both fill paths. Setting it rebuilds the field. Mounds the [member undergrowth_field] or [member canopy_field] places (species with the meta [code]sward_mound[/code], [method PlantGenerator.make_mounds]) are kept out the same way, followed as they come and go.
 		</member>
 		<member name="radius" type="float" setter="set_radius" getter="get_radius" default="40.0">
 			Distance from the camera, in metres, to which tiles are grown. 0 draws no blades at all (no near tiles, far rings or shell), for a field kept only for its rules or ground tint.

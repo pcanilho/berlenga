@@ -260,3 +260,66 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
 - Pale rock slopes and faces read flat from afar, with only the fine relief (scan or procedural bump) on an even
   colour: crumpled paper. Past about 32 degrees the rock layer now takes streaks down the fall line (1.3 m by 14 m,
   4 m by 30 m), bed bands (0.9 m) and 18 m tone, and its fine relief eased by up to 0.4.
+
+## Trails and rooting (21 Nov)
+
+WorldStand's worn trails (trail_at: passes a year, tread share) and boar rooting (rooting_age_at) now mark the
+ground layers. Landscape3D rasterises both round its camera into globals terrain_stand_map (RG8, 512 texels over
+256 m) and terrain_stand_rect, rebuilt when the camera crosses a 64 m step or the stand's generation changes:
+- r: tread share times the wear the passes give, 1 - exp(-passes / 300) (trampling takes a field layer's cover off
+  roughly so: Cole 1995, Liddle 1997; a few hundred passes a year keep a line bare). The trails' segments are copied
+  and drawn per texel; a script stand is sampled per metre through trail_at.
+- g: freshness of rooted soil, 1 to a season after the boar, 0 by two years (litter and the field layer close over
+  it; Bueno 2013, Welander 2000), from rooting_age_at every 2 m, bilinear.
+The material draws trodden soil as the sward's own paths do (grass_path_soil): compacted, darker and browner, damp in
+the hollows, smoother, the bump pressed flat; the tread's edge fairly sharp and ragged at two scales. Rooting is dark
+moist humus in fist-sized clods (bump) with overturned sods among them, in patches with ragged edges, browning and
+greying toward the bare soil as it ages. Neither on rock, sand or slopes past about 40 degrees. Stones on trails come
+from ground detail, litter from vegetation. Rocks bench: --stand-test [--stand-at=x,z] [--rooting-age=y].
+Check: raster (TAA) and PT agree at the bench frame; PT keeps the clods and the tread's edge.
+Round 2 (docs review): the tread now has banks (a normal from the wear map's slope, about 8 cm deep), a darker band of
+crumbled soil under the turf's broken lip, hoof pocking about 1 cm deep and bared grit while a pixel resolves it.
+The dark ovals in that frame were not the trail: the scree's parallax stones cast their sun shadow test into soil
+where the scree weight thins to a few per cent (stones millimetres tall, but a penumbra and bias that do not shrink
+with them). tm_rd_pom_shadow now fades with the stones' height.
+
+## Next round candidates (21 Nov, card posted)
+
+### Rills and gullies as geometry (recommended)
+Bare and thinly covered slopes in the frames are smooth between the generator's 4 m vertices; real hillslopes carry
+rills (cm deep, 0.2-1 m apart, parallel down the fall line) and gullies (0.5-3 m deep) wherever overland flow
+concentrates. Established approach:
+- Channel initiation by a slope-area threshold: a channel starts where S * A^2 (Montgomery & Dietrich 1988, 1992;
+  also tan(S) * sqrt(A) forms) exceeds a threshold set by cover and soil; vegetated ground needs much larger areas
+  than bare regolith. The generator already has D8 drainage (drainage, channel_area) and geology (soil depth, cover).
+- Spacing and depth: rill spacing from the hillslope length to the first channel (Horton's belt of no erosion),
+  depth growing with stream power (k A^m S^n, the generator's area_exponent / flow_exponent), capped by soil depth on
+  soil and by joints on rock.
+- Geometry, not a texture: as cliff relief does, displace Landscape3D's finest chunks along the heightfield normal
+  by a channel profile (V in regolith, U/box in cohesive soil, after Poesen et al. 2003, gully erosion review), with
+  CUSTOM data so the material's per-pixel normal resolves the banks beyond the vertex spacing. Hydrology-based
+  procedural terrain (Genevaux et al. 2013, "Terrain generation using procedural models based on hydrology") and
+  Cordonnier et al. 2023 (interactive erosion authoring) both seed channels from drainage, as above.
+- Material: channel floors get wash (fines, gravel lag), banks expose subsoil (paler, the soil colour of depth), and
+  the wetness map runs wetter along floors. Ground detail and vegetation read a published channel mask (same global
+  pattern as terrain_stand_map) for gravel lag and riparian plants.
+- Check: raster and PT frames of a bare talus apron and a meadow slope; no visible repetition (spacing jittered per
+  catchment); cost of the extra finest-chunk vertices on the cliff-relief path.
+
+### Relief on moderate slopes
+Cliff relief starts at 50 degrees (full by 62). Banks and cave mouths at 35-50 degrees stay as flat 4 m triangles with
+long straight silhouette edges. Extend the face weight down to about 35 degrees with a smaller amplitude (a soil bank
+slumps, it does not keep joints), using the same _cliff_offset noise scaled by slope. Watch the triangle budget and
+the PT triangle split Valence is chasing (it lives on the relief chunks).
+
+### Rock faces weather by aspect
+Lichen and moss favour shaded, damp aspects (north in the northern hemisphere), and water seeps leave dark vertical
+stains below ledges and joints (desert varnish and "tintenstriche", the ink streaks of limestone walls: cyanobacteria
+in seep lines). Inputs exist: sun direction / aspect, the sky occlusion map, WeatherMap3D wetness, and the rock face
+streak block (6c23dd82a0). Stains follow the fall line below each ledge from the cliff relief offset field.
+
+### Soil colour from parent rock
+Bare soil inherits its parent material's colour (Munsell hues: red 2.5YR-5YR on iron-rich sandstone and basalt
+saprolite, grey 10YR on granite grus, pale 10YR 7/x on limestone rendzina, dark 10YR 2/x where humus builds).
+The generator's strata/geology gives rock type per cell; map it to a soil tint and mix by soil depth (thin soils
+show more parent colour).

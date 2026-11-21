@@ -67,6 +67,7 @@ private:
 	RID cloud_shadow_map; // the last one given, so a moving corner does not rebind the texture
 	RID cloud_light_grid; // likewise
 	RID cloud_wave_field; // likewise
+	RID cloud_lake_field; // likewise
 	void _update_shader();
 	void _update_atmosphere_textures();
 
@@ -107,6 +108,7 @@ public:
 	void set_cloud_light_grid(const Ref<Texture3D> &p_grid, const Vector2 &p_corner, float p_size, float p_y0, float p_y1);
 	// The mountain waves' displacement at four heights (WeatherMountainWaves), over the square at p_corner.
 	void set_cloud_wave_field(const Ref<Texture2D> &p_field, const Vector2 &p_corner, float p_size, int p_texels);
+	void set_cloud_lake_field(const Ref<Texture2D> &p_field, const Vector2 &p_corner, float p_size, int p_texels);
 
 	// Lightning glowing in the clouds: up to four flashes, each a world position and its energy now.
 	void set_lightning(const Vector4 *p_flashes, int p_count, const Color &p_color);

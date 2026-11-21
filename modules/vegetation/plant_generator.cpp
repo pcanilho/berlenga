@@ -628,6 +628,10 @@ PlantGenerator::Wither::~Wither() {
 		if (i == SURFACE_CENTRE && generator->preset == PRESET_THISTLE) {
 			continue; // Thistledown: dry pappus, white.
 		}
+		const Preset pr = generator->preset;
+		if (i == SURFACE_CENTRE && (pr == PRESET_ANTHILL || pr == PRESET_WOOD_ANT_NEST || pr == PRESET_MOLEHILL || pr == PRESET_ROOTED_SOD)) {
+			continue; // Soil and thatch: nothing to wither.
+		}
 		PackedColorArray &c = generator->builders[i].colors;
 		for (int k = from[i]; k < c.size(); k++) {
 			Color v = c[k];
@@ -783,6 +787,14 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 			return 5.0f; // Dry lichen crumbles underfoot and regrows a few millimetres a year (Kumpula 2001).
 		case PRESET_BURNT_TUSSOCK:
 			return 150.0f;
+		case PRESET_ROOTED_SOD:
+			return 40.0f; // Loose clods break up underfoot.
+		case PRESET_MOLEHILL:
+			return 25.0f; // Loose soil spreads underfoot and is trodden flat.
+		case PRESET_ANTHILL:
+			return 120.0f; // Firm and grassed; worn down only on busy paths (King 1977: none on tracks).
+		case PRESET_WOOD_ANT_NEST:
+			return 15.0f; // Thatch scatters when trodden or wallowed in.
 		case PRESET_SOIL_CRUST:
 			return 2.0f; // A few passes break it, and it takes decades to heal (Belnap and Lange 2003).
 		case PRESET_DESERT_ANNUALS:
@@ -881,6 +893,10 @@ float PlantGenerator::get_burn_recovery(Preset p_preset) {
 		case PRESET_FIRE_MOSS:
 		case PRESET_CHARRED_STEMS:
 		case PRESET_BURNT_TUSSOCK:
+		case PRESET_ROOTED_SOD:
+		case PRESET_ANTHILL:
+		case PRESET_WOOD_ANT_NEST:
+		case PRESET_MOLEHILL:
 		case PRESET_MAX:
 			return 0.0f;
 		case PRESET_SEDGE:
@@ -5078,6 +5094,10 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.spots = 0.15f;
 			break;
 		case PRESET_BURNT_TUSSOCK:
+		case PRESET_ROOTED_SOD:
+		case PRESET_ANTHILL:
+		case PRESET_WOOD_ANT_NEST:
+		case PRESET_MOLEHILL:
 		case PRESET_CHARRED_STEMS:
 		case PRESET_MARRAM:
 		case PRESET_LYME_GRASS:
@@ -6717,6 +6737,26 @@ void PlantGenerator::apply_preset_colors() {
 			centre_color = Color(0.55f, 0.54f, 0.52f); // Ash.
 			leaf_color = Color(0.13f, 0.24f, 0.06f); // Resprouting heather shoots.
 			break;
+		case PRESET_ROOTED_SOD:
+			centre_color = Color(0.085f, 0.064f, 0.045f); // Moist humus, as the terrain's turned soil (TerrainMaterial3D).
+			stem_color = Color(0.62f, 0.55f, 0.42f); // Live roots, pale buff.
+			leaf_color = Color(0.15f, 0.26f, 0.08f); // The torn turf's grass (the vertex tint dries it).
+			break;
+		case PRESET_ANTHILL:
+			centre_color = Color(0.12f, 0.18f, 0.06f); // The turf, as the sward reads from a few metres once the LOD has dropped the blades (the crumbs' tint lifts it to pale loam).
+			stem_color = Color(0.36f, 0.3f, 0.2f); // Dead fescue bases.
+			leaf_color = Color(0.17f, 0.27f, 0.1f); // Sheep's fescue and thyme, greyer than the pasture round it.
+			break;
+		case PRESET_WOOD_ANT_NEST:
+			centre_color = Color(0.25f, 0.155f, 0.08f); // Thatch under the loose needles: older needles, bud scales, resin.
+			stem_color = Color(0.33f, 0.2f, 0.1f); // Fresh needles, rusty brown.
+			leaf_color = Color(0.16f, 0.22f, 0.08f); // Moss on the old earth bank.
+			break;
+		case PRESET_MOLEHILL:
+			centre_color = Color(0.2f, 0.14f, 0.09f); // Moist subsoil, crumbly and dark when fresh.
+			stem_color = Color(0.36f, 0.3f, 0.2f);
+			leaf_color = Color(0.15f, 0.27f, 0.08f); // Grass growing back over it.
+			break;
 		case PRESET_BURNT_TUSSOCK:
 			stem_color = Color(0.04f, 0.035f, 0.03f); // Charred stubble and crown.
 			centre_color = Color(0.5f, 0.49f, 0.47f); // Ash.
@@ -6930,6 +6970,18 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			break;
 		case PRESET_GRAZED_LAWN:
 			_build_grazed_lawn();
+			break;
+		case PRESET_ROOTED_SOD:
+			_build_rooted_sod();
+			break;
+		case PRESET_ANTHILL:
+			_build_anthill();
+			break;
+		case PRESET_WOOD_ANT_NEST:
+			_build_wood_ant_nest();
+			break;
+		case PRESET_MOLEHILL:
+			_build_molehill();
 			break;
 		case PRESET_FOXGLOVE:
 			_build_foxglove();
@@ -8052,8 +8104,13 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		}
 		if ((f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_TWIGS) && f.deadwood == PlantSpecies::DEADWOOD_AVOID) {
 			// Litter lies where the crowns drop it, drifting past their edges into the light
-			// (PlantSpecies.RULE_LITTER), not only in their shade. Twigs fall nearer the trunk.
-			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 1.0f));
+			// (PlantSpecies.RULE_LITTER), not only in their shade. Twigs fall nearer the trunk. Out in full light (no
+			// crown shade at all) the sward grows through what drifts in and earthworms pull it down within months
+			// (Satchell 1967; Knollenberg et al. 1985, about 90% of an orchard sward's leaf fall gone over winter), so
+			// no mat lies there, as forest_floor() draws the ground: a clearing's middle stays turf, its rim keeps the
+			// drift (a clearing ringed by crowns sums every edge's tail to a full litter value).
+			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.06f, 1.0f));
+			sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.05f);
 			// The fade runs below the range's start: it must end above 0, or open ground with no
 			// crowns near (litter 0) still gets leaves.
 			sp->set_rule_range(PlantSpecies::RULE_LITTER, Vector2(f.preset == P::PRESET_TWIGS ? 0.4f : 0.3f, 1.0f));
@@ -8116,6 +8173,16 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 				sp->set_deadwood_from_wood(f.preset == P::PRESET_HONEY_FUNGUS);
 			}
 			sp->set_far_color(Color(0, 0, 0, 0)); // Too few to colour the far ground.
+		}
+		if (f.deadwood != PlantSpecies::DEADWOOD_ON && f.preset != P::PRESET_BRAMBLE && f.preset != P::PRESET_RASPBERRY && f.preset != P::PRESET_BRACKEN) {
+			// Boar rooting (make_rooting; RULE_ROOTING): the turned patch loses its field layer and gets it back by
+			// growth form: litter with the next leaf fall, herbs, grasses and ferns over a year or two, mosses slower
+			// (Bueno et al. 2013; Welander 2000). Bramble, raspberry and bracken stands are rarely rooted (deep
+			// rhizomes, thorny cover).
+			const bool litter = f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_NEEDLE_LITTER || f.preset == P::PRESET_TWIGS;
+			const bool mossy = f.preset == P::PRESET_MOSS || f.preset == P::PRESET_FEATHER_MOSS || f.preset == P::PRESET_PINCUSHION_MOSS || f.preset == P::PRESET_SPHAGNUM || f.preset == P::PRESET_REINDEER_LICHEN;
+			sp->set_rule_range(PlantSpecies::RULE_ROOTING, Vector2(litter ? 0.35f : (mossy ? 1.5f : 0.8f), 10000.0f));
+			sp->set_rule_fade(PlantSpecies::RULE_ROOTING, litter ? 0.3f : (mossy ? 1.2f : 0.6f));
 		}
 		sp->set_meta("floor", true);
 		tag_species(sp, f.preset);
@@ -8388,6 +8455,10 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_REINDEER_LICHEN);
 	BIND_ENUM_CONSTANT(PRESET_RASPBERRY);
 	BIND_ENUM_CONSTANT(PRESET_GRAZED_LAWN);
+	BIND_ENUM_CONSTANT(PRESET_ROOTED_SOD);
+	BIND_ENUM_CONSTANT(PRESET_ANTHILL);
+	BIND_ENUM_CONSTANT(PRESET_WOOD_ANT_NEST);
+	BIND_ENUM_CONSTANT(PRESET_MOLEHILL);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
@@ -8395,6 +8466,8 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_desert", "stand", "variants", "textures", "season", "shrubs"), &PlantGenerator::make_desert, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()), DEFVAL(true));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_burn", "stand", "variants", "textures", "season"), &PlantGenerator::make_burn, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_beaver", "stand", "variants", "textures", "season"), &PlantGenerator::make_beaver, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_rooting", "stand", "variants", "textures", "season"), &PlantGenerator::make_rooting, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_mounds", "set", "variants", "textures", "season"), &PlantGenerator::make_mounds, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_margin", "stand", "variants", "textures", "season"), &PlantGenerator::make_margin, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
@@ -8449,6 +8522,12 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(BURN_GRASS);
 	BIND_ENUM_CONSTANT(BURN_SCRUB);
 	BIND_ENUM_CONSTANT(BURN_MAX);
+	BIND_ENUM_CONSTANT(ROOTING_WOOD);
+	BIND_ENUM_CONSTANT(ROOTING_MEADOW);
+	BIND_ENUM_CONSTANT(ROOTING_MAX);
+	BIND_ENUM_CONSTANT(MOUNDS_MEADOW);
+	BIND_ENUM_CONSTANT(MOUNDS_WOOD);
+	BIND_ENUM_CONSTANT(MOUNDS_MAX);
 	BIND_ENUM_CONSTANT(BEAVER_POND);
 	BIND_ENUM_CONSTANT(BEAVER_MEADOW);
 	BIND_ENUM_CONSTANT(BEAVER_MAX);

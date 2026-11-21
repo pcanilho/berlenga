@@ -2921,12 +2921,15 @@ static void _fill_surface_geometry_data(
 		geom.uv2_byte_offset = attrib_offset;
 		attrib_offset += attributes_compressed ? sizeof(uint16_t) * 2 : sizeof(float) * 2;
 	}
+	// CUSTOM0-3 follow in order; the hit shaders read them for vertex() (CUSTOM0..CUSTOM3), as raster's vertex stage does.
+	geom.custom_layout = MIN(attrib_offset, 0xFFu);
 	for (int ci = 0; ci < RSE::ARRAY_CUSTOM_COUNT; ci++) {
 		const uint32_t fmt_shift[RSE::ARRAY_CUSTOM_COUNT] = { RSE::ARRAY_FORMAT_CUSTOM0_SHIFT, RSE::ARRAY_FORMAT_CUSTOM1_SHIFT, RSE::ARRAY_FORMAT_CUSTOM2_SHIFT, RSE::ARRAY_FORMAT_CUSTOM3_SHIFT };
 		if (surface_format & (1ULL << (RSE::ARRAY_CUSTOM0 + ci))) {
 			uint32_t fmt = (surface_format >> fmt_shift[ci]) & RSE::ARRAY_FORMAT_CUSTOM_MASK;
 			const uint32_t fmtsize[RSE::ARRAY_CUSTOM_MAX] = { 4, 4, 4, 8, 4, 8, 12, 16 };
 			attrib_offset += fmtsize[fmt];
+			geom.custom_layout |= (8u | (fmt & 7u)) << (8 + 4 * ci);
 		}
 	}
 	geom.attribute_stride = attrib_offset;
@@ -6403,11 +6406,15 @@ void RTTlasBuilder::_record_stats(const DirtyMark &p_mark, uint32_t p_instances,
 void RenderRaytracing::_update_trace_origin(RTViewportState *p_state, const RenderDataRD *p_render_data) {
 	const double grid = GLOBAL_GET_CACHED(double, "rendering/pathtracing/relative_origin_grid");
 	const Vector3 cam = p_render_data->scene_data ? p_render_data->scene_data->cam_transform.origin : Vector3();
+	// The grid point nearest the camera, kept until the camera is 3/4 of a cell from it (hysteresis): traced
+	// positions near the camera stay within about a cell of zero. Anchored on the cell's corner instead, a camera
+	// just below a grid line (z = -1.5 with a 1024 m grid) put the scene at z = +1024, where offset_ray_origin()'s
+	// 256 ulps are 3 cm: a ray refracted into a thin icicle started past its core and never met it.
 	if (grid <= 0.0) {
 		p_state->rt_origin = Vector3();
-	} else if (!p_state->rt_origin_valid || cam.x < p_state->rt_origin.x || cam.x >= p_state->rt_origin.x + grid ||
-			cam.z < p_state->rt_origin.z || cam.z >= p_state->rt_origin.z + grid) {
-		p_state->rt_origin = Vector3(Math::floor(cam.x / grid) * grid, 0.0, Math::floor(cam.z / grid) * grid);
+	} else if (!p_state->rt_origin_valid || Math::abs(cam.x - p_state->rt_origin.x) > 0.75 * grid ||
+			Math::abs(cam.z - p_state->rt_origin.z) > 0.75 * grid) {
+		p_state->rt_origin = Vector3(Math::round(cam.x / grid) * grid, 0.0, Math::round(cam.z / grid) * grid);
 	}
 	p_state->rt_origin_valid = grid > 0.0;
 	trace_origin = p_state->rt_origin;

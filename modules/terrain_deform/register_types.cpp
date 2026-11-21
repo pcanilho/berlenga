@@ -39,6 +39,7 @@
 #include "terrain_deformer_3d.h"
 #include "terrain_generator_3d.h"
 
+#include "core/config/project_settings.h"
 #include "core/object/class_db.h"
 
 void initialize_terrain_deform_module(ModuleInitializationLevel p_level) {
@@ -52,6 +53,19 @@ void initialize_terrain_deform_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(TerrainDeformer3D);
 	GDREGISTER_CLASS(TerrainDataMap3D);
 	GDREGISTER_CLASS(TerrainGenerator3D);
+	// Landscape3D's stand map (worn trails, fresh rooting), declared so the terrain material compiles before it is
+	// published (rect width 0 = none), whichever module registers first.
+	const char *globals[2][2] = { { "terrain_stand_map", "sampler2D" }, { "terrain_stand_rect", "vec4" } };
+	for (int i = 0; i < 2; i++) {
+		const String setting = String("shader_globals/") + globals[i][0];
+		if (ProjectSettings::get_singleton()->has_setting(setting)) {
+			continue;
+		}
+		Dictionary d;
+		d["type"] = globals[i][1];
+		d["value"] = String(globals[i][1]) == "vec4" ? Variant(Vector4()) : Variant("");
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, setting, PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), d);
+	}
 }
 
 void uninitialize_terrain_deform_module(ModuleInitializationLevel p_level) {

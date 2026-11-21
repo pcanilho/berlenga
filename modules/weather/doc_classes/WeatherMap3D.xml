@@ -295,6 +295,20 @@
 				The high cloud sheet's cover over [param position], 0 to 1: its drifting patches plus the anvil shields storms spread downwind of themselves. Not part of [method get_cloud_cover_at]: the sheet is optically thin and shades the ground only through [method get_sun_visibility_at], by its own optical depth.
 			</description>
 		</method>
+		<method name="get_lake_effect_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Lake-effect cloud at [param position] (0 to 1), as the sky draws it: cold air over open water at least about 13 K warmer than the air at 850 hPa (Niziol et al. 1995) builds convection that grows with the fetch (from about 10 km of open water, full from 50) and reaches some 60 km inland. With the wind over the longest fetch under about 0.06 m/s per km it forms one band along the fetch's axis, above about 0.11 wind-parallel rolls (Laird, Kristovich and Walsh 2003). Snow falls under it (about 4 mm/h of water at full strength) through the weather's cells, so [method get_snowfall_at] and the cloud cover follow it. 0 with [member lake_effect_snow] off.
+			</description>
+		</method>
+		<method name="get_lake_fetch_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The open water crossed upwind of [param position] (km), each kilometre weighted by exp(-s / 60 km) for its distance s back from the point, from the lake-effect square (128 km round the camera at 2 km, water a metre deep or more from [WorldWater]; water beyond its edge continues as the edge holds). 0 before the square is sampled.
+			</description>
+		</method>
 		<method name="get_mid_cloud_cover_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -474,6 +488,12 @@
 				Open water's surface temperature (C): with a [member climate], the air's seasonal mean a month earlier (lakes and the sea lag the air; Livingstone and Lotter 1998), never below 0 C; without one, the day's mean air. Steam fog forms where the air is much colder than this.
 			</description>
 		</method>
+		<method name="get_water_temperature_setting" qualifiers="const">
+			<return type="float" />
+			<description>
+				The [member water_temperature] override (C); below -99 open water follows the climate or the air.
+			</description>
+		</method>
 		<method name="get_wave_cloud_density_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -493,6 +513,12 @@
 			<param index="1" name="altitude" type="float" />
 			<description>
 				The mean wind at [param altitude] (m above the ground) over [param position] (x, z, m/s), for clouds: the log law up to [member boundary_layer_height], turning with height (Ekman veer, 20 degrees over the sea to 30 over land, to the right in the northern hemisphere), then growing by [member wind_shear_aloft] per km.
+			</description>
+		</method>
+		<method name="is_lake_effect_ready" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether the lake-effect field has been derived for the current wind (the water is sampled over a few physics ticks).
 			</description>
 		</method>
 		<method name="is_terrain_wind_ready" qualifiers="const">
@@ -935,6 +961,9 @@
 		<member name="high_cloud_optical_depth" type="float" setter="set_high_cloud_optical_depth" getter="get_high_cloud_optical_depth" default="1.0">
 			Vertical optical depth of the high sheet at full cover (ice clouds measure 0.03 to 3). Sets how much it veils the sky and dims the sun.
 		</member>
+		<member name="lake_effect_snow" type="bool" setter="set_lake_effect_snow" getter="is_lake_effect_snow" default="true">
+			Lake-effect snow: bands of convective cloud and snow downwind of open water when cold air crosses it (see [method get_lake_effect_at]).
+		</member>
 		<member name="mid_cloud_cover" type="float" setter="set_mid_cloud_cover" getter="get_mid_cloud_cover" default="0.15">
 			The base cover of the mid cloud layer (altocumulus; a full cover is an altostratus sheet) at [member mid_cloud_height]. The weather drives what is drawn: dry air thins it to 0.2 of this, rain set in [member rain_rate] thickens it into a sheet, easing twice as fast as the rain (after the cirrus, before the rain). It follows the rain and never makes it: precipitation stays the main layer's. It stays out of [member cloud_cover] and [method get_cloud_cover_at]. It drifts with [method get_wind_aloft] at its height. See docs/ideas/clouds.md.
 		</member>
@@ -1180,6 +1209,9 @@
 		</member>
 		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="4.0">
 			How often the cells are refreshed, per second. Gusts are evaluated every frame regardless.
+		</member>
+		<member name="water_temperature" type="float" setter="set_water_temperature" getter="get_water_temperature_setting" default="-100.0">
+			Open water's surface temperature (C) when set; below -99 [method get_water_temperature] follows the climate or the air.
 		</member>
 		<member name="wet_tracks" type="bool" setter="set_wet_tracks" getter="is_wet_tracks_enabled" default="true">
 			Wet tracks: bodies in the [code]world_contact[/code] group coming out of water ([method WorldWater.depth_at]), wet mud, standing water or puddles carry water on their feet or tread. Each footprint (a stride apart, alternating sides) presses 15% of it onto the ground, tyres a continuous line losing 3% every 15 cm, so a trail fades over a dozen or so strides; the body also drips round itself, e-folding over 40 s. Prints and drips go into the contact wetness square, which dries them by [method get_contact_drying_time] (air, wind and sun).

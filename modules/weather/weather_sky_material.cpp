@@ -114,6 +114,8 @@ uniform float cloud_halo_strength : hint_range(0, 0.5) = 0.08;
 uniform float cloud_surface_occlusion : hint_range(0, 2) = 1.0;
 // Short steps inside cloud as a share of the long ones (1: no refinement).
 uniform float cloud_refine : hint_range(0.1, 1) = 0.33;
+// Iridescence on thin, newly formed wave cloud near the sun (diffraction by small uniform droplets): its strength.
+uniform float cloud_iridescence : hint_range(0, 1) = 0.8;
 group_uniforms;
 
 group_uniforms weather_map; // Set by WeatherMap3D each update.
@@ -323,12 +325,15 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 	float t = t0 + jitter * ds;
 	bool fine = false;
 	int empty = 0;
-	int max_iter = steps * 3;
+	int max_iter = steps * 4;
 	for (int i = 0; i < max_iter; i++) {
 		if (t > t1) {
 			break;
 		}
-		float st = fine ? ds_fine : ds;
+		// Inside cloud the short step also stays under 0.4% of the distance (100 m at 25 km): at a grazing view the long
+		// steps run to 600 m, a third of that still stepped through a thin hard-edged layer (a shelf, a far deck) in a
+		// handful of samples, which no amount of jitter averaging settled into anything smoother than a grain.
+		float st = fine ? min(ds_fine, max(40.0, 0.004 * t)) : ds;
 		vec3 pl = ro + rd * t;
 		vec3 p = vec3(cam.x + rd.x * t, length(pl) - PLANET_RADIUS, cam.z + rd.z * t);
 		vec2 ct = wc_cover_type(p.xz);
@@ -410,8 +415,22 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 			step_l *= 2.0;
 		}
 		float grid_z = (ceil(grid_f) + 0.5) * grid_dy / (cloud_light_grid_y.y - cloud_light_grid_y.x);
-		if (grid && grid_z < 1.0) {
-			tau += textureLod(cloud_light_grid, vec3(grid_uvw.xy, grid_z), 0.0).r;
+		if (grid) {
+			// The read level steps up by one where the read height crosses a level, a jump in the shading that drew a
+			// sloping underside (an anvil's) in contour bands. So also read the next level up, a level's climb further
+			// along the path (one march sample across the gap), and blend by where the height falls between them: at each
+			// crossing both sides then read the same level at the same distance, and the shading is continuous.
+			float k_l = grid_dy / max(sun_dir.y, 0.02);
+			vec3 mp = p + sun_dir * (grid_d + 0.5 * k_l);
+			float tau_b = tau + wc_extinction(mp, wc_cover_type(mp.xz), false, k_l) * k_l;
+			vec3 gp_b = gp + sun_dir * k_l;
+			vec2 uv_b = vec2((gp_b.x - cloud_light_grid_box.x) / cloud_light_grid_box.z, (gp_b.z - cloud_light_grid_box.y) / cloud_light_grid_box.z);
+			float z_b = grid_z + grid_dy / (cloud_light_grid_y.y - cloud_light_grid_y.x);
+			if (z_b < 1.0) {
+				tau_b += textureLod(cloud_light_grid, vec3(clamp(uv_b, vec2(0.0), vec2(1.0)), z_b), 0.0).r;
+			}
+			float tau_a = tau + (grid_z < 1.0 ? textureLod(cloud_light_grid, vec3(grid_uvw.xy, grid_z), 0.0).r : 0.0);
+			tau = mix(tau_b, tau_a, ceil(grid_f) - grid_f);
 		}
 		// Multiple scattering by Wrenninge's octaves: scattering, extinction and phase eccentricity
 		// each halved per octave.
@@ -729,6 +748,32 @@ vec4 march_altocumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 // (the field is fixed to the ground and smooth: 16 coarse steps over at most 8 km of path, refined in cloud). The lens is laminar: its
 // edge is where the lift meets saturation, roughened only by thin striations along the wind (the moist sheets the
 // air carries through it). Lit as the mid layer: Wrenninge's octaves, two-stream diffuse, the sky's light.
+// Cloud iridescence (Gedzelman and Lock 2003, "Simulating coronas in color", Applied Optics 42; Laven's MiePlot):
+// light diffracted round droplets of radius a spreads as the Airy pattern [2 J1(v) / v]^2, v = 2 pi a sin(theta) /
+// lambda, so at a given angle from the sun each wavelength sits on a different part of its rings. Where the droplets
+// are small and alike (just condensed, at a lens' leading edge: 1 to 6 um) the colours show as pastel bands 10 to
+// 30 degrees from the sun, following the lens' outline as the droplets grow inward. Returned as the colour's ratio to
+// its own luminance, so it tints the forward-scattered sunlight without brightening it.
+float bessel_j1(float x) {
+	if (x < 3.0) {
+		float x2 = x * x;
+		return x * (0.5 - x2 * (1.0 / 16.0 - x2 * (1.0 / 384.0 - x2 / 18432.0)));
+	}
+	float ph = x - 2.35619449;
+	return sqrt(0.63661977 / x) * (cos(ph) - 0.375 / x * sin(ph));
+}
+
+vec3 iridescence_tint(float p_sin, float p_radius_um) {
+	vec3 v = 6.2831853 * p_radius_um * p_sin / vec3(0.65, 0.55, 0.45);
+	vec3 j = vec3(bessel_j1(v.r), bessel_j1(v.g), bessel_j1(v.b));
+	vec3 airy = 4.0 * j * j / max(v * v, vec3(1e-4));
+	float lum = dot(airy, vec3(0.2126, 0.7152, 0.0722));
+	// Pastel in photographs, but the lens's depth along the ray mixes droplet sizes and greys them: the
+	// difference from white is doubled back.
+	vec3 tint = airy / max(lum, 1e-6);
+	return clamp(vec3(1.0) + 2.0 * (tint - vec3(1.0)), vec3(0.0), vec3(2.5));
+}
+
 vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, float jitter, float p_pixel, out float r_t) {
 	r_t = 0.0;
 	float y0 = slab.x;
@@ -762,8 +807,10 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 	if (t0 > far || t1 <= t0) {
 		return vec4(0.0, 0.0, 0.0, 1.0);
 	}
-	t1 = min(t1, min(t0 + 8000.0, far));
-	const int n = 16;
+	// Up to 16 km through the slab (an 8 km cap hid lenses further along the ray), in a fixed number of coarse steps
+	// (a count varying from pixel to pixel stepped the plates' gaps).
+	t1 = min(t1, min(t0 + 16000.0, far));
+	const int n = 32;
 	float ds = (t1 - t0) / float(n);
 	float cos_theta = dot(rd, sun_dir);
 	float phase0 = cloud_phase(cos_theta, 1.0);
@@ -781,27 +828,33 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 		if (pc.y < y0 - 0.5 * ds || pc.y > y1 + 0.5 * ds) {
 			continue;
 		}
-		float eta_c = wc_wave_eta(pc);
-		if (eta_c <= -150.0) {
+		// The largest lift over the whole step (its middle and both ends): from the middle alone a steep plate's end,
+		// lifted past saturation at an end of the step but not at its middle, was skipped.
+		float ta = t0 + float(i) * ds;
+		float tb = ta + ds;
+		vec3 pa = vec3(cam.x + rd.x * ta, length(ro + rd * ta) - PLANET_RADIUS, cam.z + rd.z * ta);
+		vec3 pb = vec3(cam.x + rd.x * tb, length(ro + rd * tb) - PLANET_RADIUS, cam.z + rd.z * tb);
+		float eta_c = max(wc_wave_eta(pc), max(wc_wave_eta(pa), wc_wave_eta(pb)));
+		if (eta_c <= -200.0) {
 			continue;
 		}
 		float dep = wc_wave_depression(pc);
-		if (eta_c - 125.0 * dep < -150.0) {
+		if (eta_c - 125.0 * dep < -200.0) {
 			continue;
 		}
-		bool lit = false;
-		vec3 light = vec3(0.0);
+		bool ambient_done = false;
 		vec3 ambient_lens = vec3(0.0);
-		for (int k = 0; k < 4; k++) {
-			// Not jittered: the field is smooth, and a jittered thin edge breaks into dots the reconstruction keeps.
-			float t = t0 + (float(i) + (float(k) + 0.5) * 0.25) * ds;
+		// Eight fine samples, jittered per revisit (the reprojection's R1 sequence averages them over 12 revisits): four
+		// fixed ones stepped a plate's end and a pile's 100 m gaps into stairs and dots.
+		for (int k = 0; k < 8; k++) {
+			float t = t0 + (float(i) + (float(k) + jitter) * 0.125) * ds;
 			vec3 p = vec3(cam.x + rd.x * t, length(ro + rd * t) - PLANET_RADIUS, cam.z + rd.z * t);
 			if (p.y < y0 || p.y > y1) {
 				continue;
 			}
 			// Striations: the detail noise stretched along the wind, a few tens of metres on the saturation level.
 			vec2 aw = vec2(dot(p.xz, wdir), dot(p.xz, vec2(-wdir.y, wdir.x)));
-			float foot = max(t * p_pixel, 0.0625 * ds);
+			float foot = max(t * p_pixel, 0.03125 * ds);
 			float lod = max(log2(foot / (2400.0 / 128.0)), 0.0);
 			float st = textureLod(cloud_detail, vec3(aw.x / 16000.0, aw.y / 2400.0, p.y / 1200.0), lod).b;
 			float eta = wc_wave_eta(p);
@@ -810,25 +863,37 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 				continue;
 			}
 			float sigma = wc_wave_sigma(p, eta, x);
+			if (sigma <= 0.0) {
+				continue;
+			}
 			float profile = clamp(x / 150.0, 0.0, 1.0);
-			if (!lit) {
-				// The sun's light once a coarse step, from the first sample in cloud.
-				float lr;
-				float dr;
-				// Through the whole lens toward the sun (a lens is 200 to 800 m deep: three reads to 700 m), so a belly
-				// under a high sun is shaded by the cloud over it and a crown is lit.
-				float tau = wc_wave_extinction_d(p + sun_dir * 40.0, 0.0, dep, lr, dr) * 80.0 + wc_wave_extinction_d(p + sun_dir * 170.0, 0.0, dep, lr, dr) * 180.0 + wc_wave_extinction_d(p + sun_dir * 450.0, 0.0, dep, lr, dr) * 380.0;
-				light = sun_radiance * (exp(-tau) * phase0 + 0.5 * exp(-0.5 * tau) * phase1 + 0.25 * exp(-0.25 * tau) * phase2);
-				float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * 2.0);
-				light += sun_radiance * diffuse * mix(0.25, 1.0, smoothstep(0.0, 0.6, profile)) * (2.0 / (4.0 * PI));
-				// The sky's light: from above through the cloud over the point, from below off the ground (as the
-				// cumulus' hemisphere reads, Nubis's ambient through the density above).
+			float lr;
+			float dr;
+			// The sun's light at each sample (once a coarse step held a plate's end at one value for 60 m and stepped
+			// it): through the whole lens toward the sun (a lens is 200 to 800 m deep: three reads to 700 m), so a belly
+			// under a high sun is shaded by the cloud over it and a crown is lit.
+			float tau = wc_wave_extinction_d(p + sun_dir * 40.0, 0.0, dep, lr, dr) * 80.0 + wc_wave_extinction_d(p + sun_dir * 170.0, 0.0, dep, lr, dr) * 180.0 + wc_wave_extinction_d(p + sun_dir * 450.0, 0.0, dep, lr, dr) * 380.0;
+			// The forward-scattered sunlight carries the diffraction colours (the forward lobes, where single scattering
+			// by the droplets rules): droplets from 1 um where the air has just saturated to 6 um 150 m past it, on thin
+			// cloud only (many scatterings wash them out), 6 to 35 degrees from the sun.
+			vec3 irid = vec3(1.0);
+			if (cloud_iridescence > 0.0 && cos_theta > 0.82) {
+				float s_th = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
+				float w_ir = cloud_iridescence * smoothstep(0.82, 0.9, cos_theta) * (1.0 - smoothstep(0.985, 0.995, cos_theta)) * (1.0 - smoothstep(0.2, 0.9, profile));
+				irid = mix(vec3(1.0), iridescence_tint(s_th, mix(1.5, 5.0, smoothstep(0.0, 150.0, x))), w_ir);
+			}
+			vec3 light = sun_radiance * ((exp(-tau) * phase0 + 0.5 * exp(-0.5 * tau) * phase1) * irid + 0.25 * exp(-0.25 * tau) * phase2);
+			float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * 2.0);
+			light += sun_radiance * diffuse * mix(0.25, 1.0, smoothstep(0.0, 0.6, profile)) * (2.0 / (4.0 * PI));
+			if (!ambient_done) {
+				// The sky's light, once a coarse step: from above through the cloud over the point, from below off the
+				// ground (as the cumulus' hemisphere reads, Nubis's ambient through the density above).
 				float tau_up = wc_wave_extinction_d(p + vec3(0.0, 80.0, 0.0), 0.0, dep, lr, dr) * 160.0 + wc_wave_extinction_d(p + vec3(0.0, 300.0, 0.0), 0.0, dep, lr, dr) * 280.0;
 				ambient_lens = ambient_top * (1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau_up * 2.0)) + ambient_bottom * 0.5;
-				lit = true;
+				ambient_done = true;
 			}
 			vec3 l = light + ambient_lens * mix(0.35, 1.0, sqrt(1.0 - profile)) * 1.4;
-			float tr = exp(-sigma * 0.25 * ds);
+			float tr = exp(-sigma * 0.125 * ds);
 			radiance += transmittance * l * (1.0 - tr);
 			depth_sum += transmittance * (1.0 - tr) * t;
 			transmittance *= tr;
@@ -923,7 +988,7 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			// heavier sheets; the finest stretched across the view so its streaks stand upright.
 			float curt = 0.5 * wc_value_noise(qn / 1200.0 + vec2(float(i) * 13.7, 3.1)) + 0.3 * wc_value_noise(qn / 400.0 + vec2(7.3, float(i) * 5.9)) + 0.2 * wc_value_noise(qn / 130.0 + vec2(1.9, 8.3));
 			// Snow's veils are softer than rain's curtains (flakes drift and spread as they fall).
-			r *= mix(0.0, 2.6, smoothstep(mix(0.45, 0.3, snow), mix(0.62, 0.8, snow), curt)) * smoothstep(0.0, mix(120.0, 500.0, snow), base - p.y);
+			r *= mix(0.0, 2.6, smoothstep(mix(0.45, 0.38, snow), mix(0.62, 0.72, snow), curt)) * smoothstep(0.0, mix(120.0, 500.0, snow), base - p.y);
 			// Snow's extinction: SnowFall3D.snowfall_extinction (Gunn and Marshall flakes) gives about 2 km of
 			// visibility at 1 mm/h of water and 200 m at 3 mm/h (Rasmussen et al. 1999): fitted as 0.00196 r^2.1,
 			// capped at 5 mm/h (a snowstorm's heaviest). Snow hides far more than rain at the same rate.
@@ -938,13 +1003,87 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			float hg = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
 			// Under the shield the sky's light is cut to about two fifths: a heavy shaft stands as a dark grey curtain
 			// against the brighter sky behind it.
-			vec3 light = ambient_bottom * mix(1.0, 0.4, shield) + sun_radiance * sun_vis * hg;
+			// Snow is white (flakes scatter nearly all they intercept, many times over in a dense veil): it keeps about
+			// three quarters of the sky's light under the shield and stands as a pale veil, where rain is a dark curtain.
+			vec3 light = ambient_bottom * mix(1.0, mix(0.4, 0.75, snow), shield) + sun_radiance * sun_vis * hg;
 			float st = exp(-sigma * dt);
 			float w = tr * (1.0 - st);
 			col += light * w;
 			dsum += t * w;
 			wsum += w;
 			tr *= st;
+		}
+	}
+	r_t = wsum > 0.0 ? dsum / wsum : 0.0;
+	return vec4(col, tr);
+}
+
+// Lake-effect snow under its bands (wc_lake_effect), seen from afar: the weather's snowfall there (4 mm/h of water
+// at full strength, WeatherMap3D's cells), its visibility as the storms' snow (Rasmussen et al. 1999), in veils
+// trailing downwind as the flakes fall at about 1 to 2 m/s. Near the camera (under 1.5 km) the falling snow's own
+// particles draw it.
+vec4 march_lake_snow(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_bottom, float jitter, out float r_t) {
+	r_t = 0.0;
+	float base = cloud_base_height;
+	float t0 = 1500.0;
+	float t1 = 30000.0;
+	if (rd.y > 0.001) {
+		t1 = min(t1, (base - cam.y) / rd.y);
+	} else if (rd.y < -0.001) {
+		t1 = min(t1, (-50.0 - cam.y) / rd.y);
+	}
+	if (cam.y > base) {
+		if (rd.y >= -0.001) {
+			return vec4(0.0, 0.0, 0.0, 1.0);
+		}
+		t0 = max(t0, (base - cam.y) / rd.y);
+	}
+	if (t1 <= t0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	// The weather's snow share (rain_fraction(): Jennings et al. 2018).
+	float e = -10.04 + 1.41 * cloud_air.x + 9.0 * cloud_air.y;
+	float snow = 1.0 / (1.0 + exp(clamp(e, -60.0, 60.0)));
+	vec2 slant = cloud_rain_slant * mix(1.0, 3.5, snow);
+	const int n = 16;
+	// Steps spread out with distance (the near ones matter most).
+	vec3 col = vec3(0.0);
+	float tr = 1.0;
+	float wsum = 0.0;
+	float dsum = 0.0;
+	float g = 0.6;
+	float mu = dot(rd, sun_dir);
+	float hg = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
+	for (int k = 0; k < n; k++) {
+		float fa = (float(k) + jitter) / float(n);
+		float fb = (float(k) + 1.0 + jitter) / float(n);
+		float ta = t0 * pow(t1 / t0, fa);
+		float t = t0 * pow(t1 / t0, (float(k) + 0.5 + jitter) / float(n));
+		float dt = t0 * pow(t1 / t0, fb) - ta;
+		vec3 p = cam + rd * t;
+		if (p.y > base || p.y < -50.0) {
+			continue;
+		}
+		vec2 q = p.xz - slant * (base - p.y);
+		float lake = wc_lake_effect(q);
+		if (lake < 0.02) {
+			continue;
+		}
+		vec2 qn = q - cloud_drift;
+		float curt = 0.6 * wc_value_noise(qn / 1500.0 + vec2(23.1, 4.7)) + 0.4 * wc_value_noise(qn / 450.0 + vec2(3.3, 17.9));
+		float r = 4.0 * lake * mix(0.4, 1.6, smoothstep(0.3, 0.75, curt)) * smoothstep(0.0, mix(120.0, 500.0, snow), base - p.y);
+		float sigma = mix(0.31e-3 * pow(r, 0.67), 0.00196 * pow(min(r, 5.0), 2.1), snow);
+		vec2 qs = p.xz + sun_dir.xz / max(sun_dir.y, 0.05) * (base - p.y);
+		float sun_vis = exp(-6.0 * wc_cover_type(qs).x) * step(0.0, sun_dir.y);
+		vec3 light = ambient_bottom * mix(1.0, mix(0.4, 0.75, snow), lake) + sun_radiance * sun_vis * hg;
+		float st = exp(-sigma * dt);
+		float w = tr * (1.0 - st);
+		col += light * w;
+		dsum += t * w;
+		wsum += w;
+		tr *= st;
+		if (tr < 0.01) {
+			break;
 		}
 	}
 	r_t = wsum > 0.0 ? dsum / wsum : 0.0;
@@ -1013,6 +1152,15 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	float d;
 	vec4 o = march_cloud_layers(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, steps, jitter, p_pixel, d);
 	r_depth = d;
+	if (cloud_lake.x > 0.0) {
+		float d_snow;
+		vec4 ls = march_lake_snow(cam, rd, sun_dir, sun_radiance, ambient_bottom, jitter, d_snow);
+		if (ls.a < 0.999) {
+			float dd = r_depth;
+			o = (d_snow < dd || o.a >= 0.999) ? cloud_over(ls, d_snow, o, dd, r_depth) : cloud_over(o, dd, ls, d_snow, r_depth);
+			d = r_depth;
+		}
+	}
 	if (cloud_storm_count == 0) {
 		return o;
 	}
@@ -1407,6 +1555,9 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	rs->material_set_param(m, "cloud_wave_levels", Vector4(p_state.wave_levels[0], p_state.wave_levels[1], p_state.wave_levels[2], p_state.wave_levels[3]));
 	rs->material_set_param(m, "cloud_wave_slab", p_state.wave_n > 0 ? Vector4(p_state.wave_y0, p_state.wave_y1, p_state.wave_y2, p_state.wave_y3) : Vector4());
 	rs->material_set_param(m, "cloud_air", Vector3(p_state.air_t0, p_state.air_rh0, p_state.air_y0));
+	rs->material_set_param(m, "cloud_scud", p_state.scud);
+	rs->material_set_param(m, "cloud_lake", p_state.lake_n > 0 ? p_state.lake_params : Vector4());
+	rs->material_set_param(m, "cloud_lake_dir", p_state.lake_dir);
 	rs->material_set_param(m, "cloud_high_cover", p_state.high_cover);
 	rs->material_set_param(m, "cloud_high_height", p_state.high_height);
 	rs->material_set_param(m, "cloud_high_tau", p_state.high_tau);
@@ -1673,6 +1824,17 @@ void WeatherSkyMaterial::set_cloud_wave_field(const Ref<Texture2D> &p_field, con
 		cloud_wave_field = f;
 	}
 	rs->material_set_param(m, "cloud_wave_rect", Vector4(p_corner.x, p_corner.y, MAX(p_size, 1.0f), float(p_texels)));
+}
+
+void WeatherSkyMaterial::set_cloud_lake_field(const Ref<Texture2D> &p_field, const Vector2 &p_corner, float p_size, int p_texels) {
+	RenderingServer *rs = RS::get_singleton();
+	const RID m = get_rid();
+	const RID f = p_field.is_valid() ? p_field->get_rid() : RID();
+	if (f != cloud_lake_field) {
+		rs->material_set_param(m, "cloud_lake_field", f.is_valid() ? Variant(f) : Variant());
+		cloud_lake_field = f;
+	}
+	rs->material_set_param(m, "cloud_lake_rect", Vector4(p_corner.x, p_corner.y, MAX(p_size, 1.0f), float(p_texels)));
 }
 
 void WeatherSkyMaterial::set_atmosphere_model(AtmosphereModel p_model) {

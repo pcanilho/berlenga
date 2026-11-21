@@ -33,6 +33,7 @@ extends Node3D
 #   --view=cloud_map  the clouds from straight above over 24 km (column optical depth), saved with --out
 #   --view=clouds     broken cumulus over fields from a rise, WeatherSkyMaterial sky, cloud shadows on the sun
 #   --view=lenticular wind across a ridge 1.5 km high, a moist mid layer: wave clouds (lenticulars) in its lee
+#   --view=lake_effect cold air (-8 C) down a 200 km lake (6 C) past the camera, 14 km aside of its band: a lake-effect snow band
 #   --view=clouds_low the same from 220 m, looking down on the cloud shadows
 #   --view=clouds_wide fair-weather cumulus (cover 0.3, type 0.4) from 520 m, 10 degrees down, low sun behind:
 #                     the landscape bench's clear wide shot (distant clouds at grazing angles)
@@ -49,6 +50,9 @@ extends Node3D
 #   --type=T          clouds views: cloud_type (0.05 stratus, 0.2 stratocumulus, 0.6 cumulus)
 #   --wind=W          clouds views: wind_speed at 10 m (m/s)
 #   --temp=C          clouds views: the air temperature (below about 1 C a storm's precipitation falls as snow)
+#   --humidity=H      clouds views: the air's relative humidity at the ground (0 to 1; above 0.82 scud hangs under bases)
+#   --cam=x,y,z,tx,ty,tz  the camera at x,y,z looking at tx,ty,tz (after the view's own placement)
+#   --fov=D           the camera's vertical field of view (degrees), to frame a whole storm
 #   --storm=x,z,R,mm,out  clouds views: a storm (WeatherMap3D.add_storm, held), grown 15 min: its rain shafts under the
 #                     base and the shelf cloud on its gust front ahead of it (it moves with the wind, about 9 km in the 15 min); repeatable
 #   --wind-dir=x,z    clouds views: wind_direction (default 0.6,-0.8; 0,1 blows toward the camera)
@@ -96,6 +100,9 @@ var sun_energy := -1.0
 var type_arg := -1.0
 var wind_arg := -1.0
 var temp_arg := -999.0
+var fov_arg := 0.0
+var cam_arg := PackedFloat64Array()
+var humidity_arg := -1.0
 var shear_arg := -1.0
 var wave_clouds_off := false
 var half_usec := 0
@@ -131,6 +138,17 @@ var fire_w := 0.0
 
 
 # A fire's convection column 5 km ahead of the clouds views' camera (--fire=W).
+# A lake 30 km wide (x) and 200 km long (z), its downwind shore at z = -6 km, its surface 5 m over the flat ground.
+class LakeStub extends WorldWater:
+	func _height_at(p: Vector3) -> float:
+		return 5.0 if absf(p.x) < 15000.0 and p.z < -6000.0 and p.z > -206000.0 else -INF
+
+func _exit_tree() -> void:
+	# A script stub left in the contracts outlives the scene and aborts the engine's exit.
+	if view == "lake_effect":
+		WorldContracts.set_water(null)
+
+
 class PlumeStub extends WorldFire:
 	var heat := 0.0
 	func _plumes() -> PackedVector4Array:
@@ -171,6 +189,9 @@ func _ready() -> void:
 		elif a.begins_with("--type="): type_arg = float(a.substr(7))
 		elif a.begins_with("--wind="): wind_arg = float(a.substr(7))
 		elif a.begins_with("--temp="): temp_arg = float(a.substr(7))
+		elif a.begins_with("--fov="): fov_arg = float(a.substr(6))
+		elif a.begins_with("--cam="): cam_arg = a.substr(6).split_floats(",")
+		elif a.begins_with("--humidity="): humidity_arg = float(a.substr(11))
 		elif a.begins_with("--shear-aloft="): shear_arg = float(a.substr(14))
 		elif a.begins_with("--haze-km="): haze_km = float(a.substr(10))
 		elif a == "--test": test = true
@@ -212,6 +233,7 @@ func _ready() -> void:
 		elif only_clouds:
 			await _cloud_tests()
 			await _cloud_evolution_tests()
+			await _lake_effect_tests()
 		else:
 			await _run_tests()
 		get_tree().quit()
@@ -224,7 +246,7 @@ func _ready() -> void:
 		await _cloud_map()
 		get_tree().quit()
 		return
-	if view in ["clouds", "clouds_low", "clouds_up", "clouds_wide", "shafts", "towers", "lenticular"]:
+	if view in ["clouds", "clouds_low", "clouds_up", "clouds_wide", "shafts", "towers", "lenticular", "lake_effect"]:
 		await _build_clouds()
 		return
 	if view == "projector":
@@ -476,6 +498,60 @@ func _cloud_tests() -> void:
 	c.queue_free()
 	sun.queue_free()
 
+
+
+# Lake-effect snow (docs/ideas/clouds.md): cold air blowing down a long lake (toward +z), the water 6 C, the air -8 C
+# (23.75 K over the 850 hPa air): cloud and snow downwind of the shore on the lake's axis, none to the side; warm air
+# (dT under 10 K) none; the wind across the lake (30 km of fetch, U / L high) rolls.
+func _lake_effect_tests() -> void:
+	var check := func(ok: bool, what: String) -> void:
+		print(("PASS " if ok else "FAIL ") + what)
+	WorldContracts.set_water(LakeStub.new())
+	var m := _new_map()
+	m.wind_direction = Vector2(0, 1)
+	m.wind_speed = 8.0
+	m.temperature = -8.0
+	m.humidity = 0.8
+	m.cloud_cover = 0.1
+	m.water_temperature = 6.0
+	m.snap_to_settings()
+	for i in 8:
+		await get_tree().physics_frame
+	m.advance(60.0)
+	check.call(m.is_lake_effect_ready(), "lake-effect field derived")
+	var line := "lake effect down the axis (z km: fetch km, cloud):"
+	for z in [-150000.0, -60000.0, -20000.0, 0.0, 20000.0, 50000.0]:
+		var p := Vector3(0, 0, z)
+		line += " %.0f: %.0f %.2f," % [z / 1000.0, m.get_lake_fetch_at(p), m.get_lake_effect_at(p)]
+	print(line)
+	var on_axis: float = m.get_lake_effect_at(Vector3(0, 0, 2000))
+	var aside: float = m.get_lake_effect_at(Vector3(40000, 0, 2000))
+	check.call(on_axis > 0.3 and aside < 0.05, "a single band on the lake's axis downwind (%.2f) and none 40 km aside (%.2f)" % [on_axis, aside])
+	check.call(m.get_snowfall_at(Vector3(0, 0, 2000)) > 1.0, "snow falls under the band (%.2f mm/h)" % m.get_snowfall_at(Vector3(0, 0, 2000)))
+	check.call(m.get_cloud_cover_at(Vector3(0, 0, 2000)) > 0.6, "the weather's cover takes the band (%.2f)" % m.get_cloud_cover_at(Vector3(0, 0, 2000)))
+	m.temperature = 6.0
+	m.snap_to_settings()
+	for i in 40:
+		await get_tree().physics_frame
+	check.call(m.get_lake_effect_at(Vector3(0, 0, 2000)) < 0.01, "no lake effect with the water only 9.75 K over the air at 850 hPa")
+	m.temperature = -8.0
+	m.wind_direction = Vector2(1, 0)
+	m.snap_to_settings()
+	for i in 40:
+		await get_tree().physics_frame
+	var rolls := "wind across the lake: cloud along the shore at x 17 km, z -30 to -6 km:"
+	var lo := 1.0
+	var hi := 0.0
+	for k in 25:
+		var v: float = m.get_lake_effect_at(Vector3(17000, 0, -30000 + k * 1000.0))
+		lo = minf(lo, v)
+		hi = maxf(hi, v)
+		rolls += " %.2f" % v
+	print(rolls)
+	check.call(hi - lo > 0.15, "wind-parallel rolls across the wind (range %.2f to %.2f)" % [lo, hi])
+	m.queue_free()
+	WorldContracts.set_water(null)
+	await get_tree().physics_frame
 
 
 # Clouds that form and clear (step 3e): the share of the ground in cloud shadow must hold over time (no pulsing),
@@ -1235,6 +1311,11 @@ func _build_clouds() -> void:
 		# From a rise: sky and shadowed land.
 		cam.position = Vector3(0, 60, 0)
 		cam.look_at_from_position(cam.position, Vector3(0, 160, -1000), Vector3.UP)
+	if fov_arg > 0.0:
+		cam.fov = fov_arg
+	if cam_arg.size() == 6:
+		cam.position = Vector3(cam_arg[0], cam_arg[1], cam_arg[2])
+		cam.look_at_from_position(cam.position, Vector3(cam_arg[3], cam_arg[4], cam_arg[5]), Vector3.UP)
 	add_child(cam)
 	pan_cam = cam
 	cam.make_current()
@@ -1259,6 +1340,8 @@ func _build_clouds() -> void:
 		weather.cloud_type = type_arg
 	if temp_arg > -999.0:
 		weather.temperature = temp_arg
+	if humidity_arg >= 0.0:
+		weather.humidity = humidity_arg
 	if wind_arg >= 0.0:
 		weather.wind_speed = wind_arg
 	if shear_arg >= 0.0:
@@ -1321,8 +1404,39 @@ func _build_clouds() -> void:
 		weather.wave_clouds = not wave_clouds_off
 		cam.position = Vector3(14000, 300, 24000)
 		cam.look_at_from_position(cam.position, Vector3(2000, 3800, 12000), Vector3.UP)
+		if cam_arg.size() == 6:
+			cam.look_at_from_position(Vector3(cam_arg[0], cam_arg[1], cam_arg[2]), Vector3(cam_arg[3], cam_arg[4], cam_arg[5]), Vector3.UP)
 		weather.rebake_terrain_wind()
 		_wave_report()
+	if view == "lake_effect":
+		# Cold air down a long lake toward the camera on its downwind shore (LakeStub): a lake-effect band.
+		WorldContracts.set_water(LakeStub.new())
+		weather.wind_direction = Vector2(0, 1) if wind_dir_arg == Vector2.ZERO else wind_dir_arg.normalized()
+		weather.wind_speed = 8.0 if wind_arg < 0.0 else wind_arg
+		weather.temperature = -8.0 if temp_arg <= -999.0 else temp_arg
+		weather.humidity = 0.8
+		weather.water_temperature = 6.0
+		weather.cloud_cover = 0.1 if cover < 0.0 else cover
+		weather.cloud_type = 0.4
+		weather.snap_to_settings()
+		var lake := MeshInstance3D.new()
+		var lm := PlaneMesh.new()
+		lm.size = Vector2(30000, 60000)
+		lake.mesh = lm
+		lake.position = Vector3(0, 0.3, -36000)
+		var wm := StandardMaterial3D.new()
+		wm.albedo_color = Color(0.05, 0.08, 0.1)
+		wm.roughness = 0.05
+		wm.metallic_specular = 0.5
+		lake.material_override = wm
+		add_child(lake)
+		cam.look_at_from_position(Vector3(14000, 150, 22000), Vector3(0, 1100, 6000), Vector3.UP)
+		if cam_arg.size() == 6:
+			cam.look_at_from_position(Vector3(cam_arg[0], cam_arg[1], cam_arg[2]), Vector3(cam_arg[3], cam_arg[4], cam_arg[5]), Vector3.UP)
+		for i in 8:
+			await get_tree().physics_frame
+		weather.advance(60.0)
+		print("lake effect at the shore: %.2f, snowfall %.2f mm/h, fetch %.0f km" % [weather.get_lake_effect_at(Vector3(0, 0, 0)), weather.get_snowfall_at(Vector3(0, 0, 0)), weather.get_lake_fetch_at(Vector3(0, 0, 0))])
 	if view == "clouds_wide":
 		# The landscape bench's clear weather.
 		weather.extent = 8192.0

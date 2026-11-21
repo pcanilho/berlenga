@@ -202,9 +202,10 @@ inline State compute(const Climate &p_c, float p_height, int p_day, float p_temp
 		const float t = t_at(d);
 		swe += day_precipitation(p_c, d) * snow_share(p_c, t);
 		swe = MAX(swe - p_c.melt_factor * MAX(t, 0.0f), 0.0f);
-		// Snow over about 20 cm (60 mm of water) shields the ground from the air's cold.
+		// Snow over about 20 cm (60 mm of water) shields the ground from the air, its cold and its thaw alike: frost
+		// formed before the first lasting snow stays under the pack until it melts (Kane and Stein 1983).
 		const float shield = CLAMP(1.0f - swe / 60.0f, 0.0f, 1.0f);
-		frost = MAX(frost + (t < 0.0f ? -t * shield : -t), 0.0f);
+		frost = MAX(frost - t * shield, 0.0f);
 	}
 	s.snow_water = swe;
 	s.snow_depth = swe / SNOW_DENSITY;

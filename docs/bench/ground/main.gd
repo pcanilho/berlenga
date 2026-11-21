@@ -56,6 +56,8 @@ extends Node3D
 #   --view=avalanche    a walker's prints across a dune's slip face and the tongues of sand running down from them
 #   --test=drift        a car slid through a turn on dry sand: sand thrown sideways, the sidewall's push, a berm
 #                         on the outside; dust: none from damp sand, a plume from dry, Stokes settling, wind drift
+#   --view=rooting      boar rootings (WorldStand DISTURBANCE_ROOTING) fresh, a year and 1.8 years old, left to right:
+#                         the turned soil's clods (GroundClods3D.rooting); --ground=KIND as --view=trail
 #   --view=trail        a walker, a rolling ball and a wheel cross the ground; --ground=KIND picks it:
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
 #   --mud=depth,moisture paint a mud layer for --view=ruts (stage 1; the car starts in the frame and drives 12 s)
@@ -509,6 +511,9 @@ func _ready() -> void:
 		return
 	if view == "shore":
 		await _build_shore()
+		return
+	if view == "rooting":
+		await _build_rooting()
 		return
 	await _build_trail()
 
@@ -1743,6 +1748,31 @@ func _run_frost_tests() -> void:
 	var sink1: float = surface.get_wheel_soil(Vector3(0.8, 0, 2), 3000.0, 0.35, 0.25, 200.0, 0.0, 0.0)["sinkage"]
 	_check("a wheel sinks deeper in the thaw's soaked layer than before the frost", fr.x > 0.03 and fr.y > fr.x and sink1 > 1.2 * sink0, "%.1f mm (%.1f mm before the frost), %.1f cm thawed" % [sink1 * 1000.0, sink0 * 1000.0, fr.x * 100.0])
 	wm.queue_free()
+	# Under a lasting pack (Kane and Stein 1983): frost made before the snow lies on under it, so a new node on a
+	# snowy late-winter day starts with concrete frost, not none.
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.4, 0.0)
+	var cold := WeatherMap3D.new()
+	cold.climate = load("res://cold_climate.gd").new()
+	add_child(cold)
+	var day := -1
+	var st := {}
+	for d in range(1, 120):
+		st = cold.get_season_on_day(d)
+		if float(st["snow_cover"]) > 0.5 and float(st["soil_frost"]) > 50.0:
+			day = d
+			break
+	cold.season_day = maxi(day, 1)
+	cold.snap_to_settings()
+	surface.frozen_ground = false # read the season again
+	for i in 2:
+		await get_tree().physics_frame
+	surface.frozen_ground = true
+	for i in 60:
+		await get_tree().physics_frame
+	var under: Vector3 = surface.get_frost_at(Vector3(0.5, 0, 0.5))
+	print("  day %d: snow cover %.2f, %.0f K days of frost: %.1f cm of frost under the pack" % [day, float(st.get("snow_cover", 0.0)), float(st.get("soil_frost", 0.0)), under.y * 100.0])
+	_check("frost made before the snow stays under the pack", day > 0 and under.y > 0.05, "%.1f cm on day %d" % [under.y * 100.0, day])
+	cold.queue_free()
 	near_on = true
 
 
@@ -4191,6 +4221,54 @@ func _add_terrain(extent: float, cells: int, mat: Material) -> void:
 
 func _undisturbed(p: Vector3) -> float:
 	return height.get_height(p)
+
+
+func _build_rooting() -> void:
+	await _setup("meadow", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	_apply(kind)
+	var mat := _ground_material(kind)
+	surface.material = mat
+	_add_terrain(96.0, 192, mat)
+	var env := Environment.new()
+	var sky := Sky.new()
+	sky.sky_material = ProceduralSkyMaterial.new()
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.set("pathtracing_sky_shader_enabled", true)
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = false
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(sun_arg[0], sun_arg[1], 0.0) if sun_arg.size() >= 2 else Vector3(-24.0, 150.0, 0.0)
+	sun.directional_shadow_max_distance = 30.0
+	add_child(sun)
+	var cam := Camera3D.new()
+	add_child(cam)
+	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([0.0, 1.6, 3.2, 0.0, 0.0, -0.2])
+	cam.position = Vector3(c[0], _undisturbed(Vector3(c[0], 0, c[2])) + c[1], c[2])
+	cam.look_at(Vector3(c[3], _undisturbed(Vector3(c[3], 0, c[5])) + c[4], c[5]))
+	cam.fov = 55.0
+	surface.follow_target = surface.get_path_to(cam)
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_disturbances()
+	for i in 3:
+		st.add_disturbance(Vector3(-1.5 + 1.5 * i, 0, -0.3), 0.65, WorldStand.DISTURBANCE_ROOTING, [0.0, 1.0, 1.8][i])
+	for i in 30:
+		await get_tree().physics_frame
+	var clods: GroundClods3D = surface.get_clods_node()
+	if clods:
+		clods.rooting = not OS.get_cmdline_user_args().has("--no-rooting")
+		clods.update_now()
+		print("rooting: %d turned clods lying, update %.2f ms worst" % [clods.get_rooted_count(), clods.get_update_msec_worst()])
+	env.pathtracing_enabled = not raster
+	await _save_frame()
+	get_tree().quit()
 
 
 func _build_trail() -> void:

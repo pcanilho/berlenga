@@ -3822,6 +3822,22 @@ grown on demand (lazy generation, as the near leaves of 8c).
   strike or disc, same placements as the eager build); `--strikes --stream` (a strike after streaming brings the struck
   tree in).
 
+### 5bd. Deer clearing fixes (21 Nov; docs review of the grass bench's --deer-wood frames)
+
+- Cloned rim: the edge trees (make_edge) all turn their open side to the open, so a run of them with one mesh read as
+  one tree repeated. Edge trees now get at least three meshes (the second species two), and the field turns them within
+  30 degrees of the open instead of 15.
+- No browse line on the rim: make_edge built the deer wood's edge trees unbrowsed (make_stand had reset browse_band).
+  Deer-wood edge trees are browsed like its canopy (browse_band 1), and the mantle is eaten out to hedged blackthorn and
+  hawthorn. Edge trees in other stands also get a browsed variant for the deer map (browse years 20). Open: the edge
+  trees' lowest leaves sit at 4.5-7 m (`--forest-edge=0`), so there are no low limbs for the deer to clip; 5as meant
+  green limbs to the ground on the open side. The level line in the re-rendered clearing comes from the glade trees and
+  hedged saplings.
+- Nest crown: forest-grown sycamore and horse chestnut lost apical control in a stand, packing 45-52 thousand internodes
+  into a crown 2 m deep, a dark ball of bare twigs a few big leaves could not cover. In a stand their old-age apical
+  dominance is held at 0.56 (shade-grown trees stay monopodial; Oliver and Larson 1996): a leafy cap on a clean bole,
+  about 10 thousand internodes, as the stand's beech, ash and lime.
+
 ## Next-round options (card 20 Nov evening)
 
 1. **Lightning-struck trees.** Old healed strike strips are in since 5p (WOUND_LIGHTNING, random on tall trees). Missing:

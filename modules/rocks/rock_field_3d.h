@@ -225,6 +225,7 @@ private:
 	int ground_detail_max_per_cell = 40000;
 	bool ground_detail_tiles = true; // tiles of piles: squares of settled grains drawn as reused tiles
 	uint64_t tile_stats[3] = {}; // tiles cut, placements, grains drawn by placements
+	mutable SafeNumeric<uint64_t> wear_stones[3]; // ground detail placed by worn ground: trail armour, shoulders, rooting
 	mutable SafeNumeric<uint64_t> tile_skips[5]; // squares left single: few grains or a hole, coarse stones, bent ground, no match, total
 	static bool _is_detail(int p_layer) { return p_layer >= LAYER_DETAIL_PEBBLE && p_layer <= LAYER_DETAIL_FINE; }
 	bool _layer_on(int p_layer) const { return layer_enabled[p_layer] && (ground_detail || !_is_detail(p_layer)); }
@@ -253,6 +254,7 @@ private:
 	};
 	bool ground_cover = true;
 	bool detail_rivers = true; // ground detail on the river beds
+	bool ground_wear = true; // ground detail worn by game trails and turned by boar rooting (WorldStand)
 	Ref<ImageTexture> cover_tex[2];
 	Vector2 cover_origin[2];
 	bool cover_valid[2] = {};
@@ -346,8 +348,22 @@ private:
 		Transform3D xform; // tile space to world
 		Plane plane; // the ground under it
 	};
+	// Worn ground read from WorldStand (docs/ideas/ground-detail.md, "Game trails and boar rooting"): per corner of a
+	// 0.25 m grid, (trail wear, shoulder, rooting freshness), each 0..1. Sampled on the main thread (the stand's reads
+	// are not safe against its writes and may call scripts) and read by _place on the worker.
+	struct StandWear {
+		Rect2 rect;
+		real_t step = 0.25;
+		int nx = 0, nz = 0;
+		LocalVector<Vector3> v;
+		bool any = false;
+		Vector3 at(real_t p_x, real_t p_z) const;
+		Vector3 max_in(const Rect2 &p_rect) const; // each component's largest over the rect
+	};
+	void _sample_wear(const Rect2 &p_rect, StandWear &r_wear) const;
 	struct DetailJob {
 		RockField3D *field = nullptr;
+		StandWear wear;
 		Vector3i key;
 		TerrainGenerator3D *gen = nullptr;
 		HashMap<uint32_t, Library *> libs;
@@ -433,6 +449,9 @@ private:
 	int building = 0;
 	void _watch_holes();
 	void _on_holes_changed(const Rect2 &p_rect);
+	ObjectID stand_watched; // the WorldStand whose stand_changed rebuilds the detail cells (trails, rooting)
+	void _watch_stand();
+	void _on_stand_changed(const Rect2 &p_rect);
 	Vector3 last_target;
 	bool have_target = false;
 	double last_build_msec = 0.0;
@@ -657,6 +676,11 @@ private:
 	static const int FAR_COVER_RES = 256;
 	static constexpr real_t FAR_COVER_TEXEL = 32.0;
 	Ref<ImageTexture> far_cover_texture;
+	// Where each texel's tone takes over from its drawn stones (rock_far_reach_map, RG8: the fade's start and end
+	// distance from the camera, FAR_REACH_UNIT m a step): the river beds' own reach, the rest the far tier's 250 to
+	// 700 m. Texels without stones take their neighbours' (so the filtered map does not blend a narrow bed's reach away).
+	static constexpr real_t FAR_REACH_UNIT = 8.0;
+	Ref<ImageTexture> far_reach_texture;
 	Vector2 far_cover_origin = Vector2(1e20, 1e20);
 	void _update_far_cover(const Vector3 &p_target, bool p_force);
 	void _update_streaming(bool p_all);
@@ -772,6 +796,8 @@ public:
 	int get_loose_count() const { return int(loose.size()); }
 	Dictionary get_react_stats() const;
 	bool is_ground_detail_rivers() const { return detail_rivers; }
+	void set_ground_wear(bool p_enabled);
+	bool is_ground_wear() const { return ground_wear; }
 	void set_ground_detail_tiles(bool p_enabled);
 	bool is_ground_detail_tiles() const { return ground_detail_tiles; }
 	Dictionary get_ground_detail_tile_stats() const;

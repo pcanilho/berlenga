@@ -31,6 +31,7 @@
 
 #include "grass_field_3d.h"
 
+#include "core/templates/hash_set.h"
 #include "modules/world/world_contracts.h"
 #include "tree_generator.h"
 #include "vegetation_voxel_lod.h"
@@ -1107,12 +1108,26 @@ void vertex() {
 	if (graze_rect.z > 0.0) {
 		vec2 guv = (base_w.xz - graze_rect.xy) / graze_rect.zw;
 		if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
-			v_graze = textureLod(graze_map, guv, 0.0).r;
-			float crop_h = graze_height * (0.85 + 0.3 * fract(rnd * 5.31)) * (fract(rnd * 3.17) < 0.15 ? 1.4 : 1.0);
+			vec2 gr = textureLod(graze_map, guv, 0.0).rg;
+			v_graze = gr.r;
+			// Boar rooting (g: the share torn out): those blades are gone, the rest stand short and thin on the
+			// turned soil.
+			if (fract(rnd * 7.77) < gr.g) {
+				h = 0.0;
+				w = 0.0;
+			}
+			h *= 1.0 - 0.5 * gr.g;
+			// Not one even height: grazers bite patchily (patch grazing; Adler, Raff and Lauenroth 2001), keeping some
+			// patches close-cropped and leaving others, by dung or unpalatable plants, as taller roughs, a mosaic at a
+			// metre and a few metres; within it each blade stands at its own bite, a few just regrown (skewed tall).
+			float mosaic = grass_noise(base_w.xz * 1.3 + 3.1) * 0.55 + grass_noise(base_w.xz * 0.31 + 17.0) * 0.45;
+			float patch_h = mix(0.65, 1.5, smoothstep(0.3, 0.75, mosaic)) * (1.0 + 1.2 * smoothstep(0.72, 0.86, mosaic));
+			float bite = fract(rnd * 5.31);
+			float crop_h = graze_height * patch_h * (0.5 + 0.8 * bite * bite + (fract(rnd * 3.17) < 0.12 ? 0.6 : 0.0));
 			h = mix(h, min(h, crop_h), v_graze);
 			// Regrowth after a bite is fine young leaf: narrower blades keep the short turf from reading as teeth. The
 			// turf ground under the sward (get_ground_shader_code()) closes it between them.
-			w *= 1.0 - 0.3 * v_graze;
+			w *= 1.0 - 0.35 * v_graze * (0.4 + fract(rnd * 9.13));
 		}
 	}
 	// A far ring blade (negative width; GrassField3D::_build_ring_tile()): one of a set thinned with the square of
@@ -3827,22 +3842,29 @@ void GrassField3D::_read_graze(TerrainDataMap3D *p_map) {
 	const float cell = MAX(2.0f, MAX(rect.size.x, rect.size.y) / 511.0f);
 	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 512);
 	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 512);
+	// R: grazed to a lawn; G: the share of blades boar rooting tore out (all of them fresh, back over two years with the terrain's freshness 1 - smoothstep(0.25, 2, years):
+	// Bueno et al. 2013), which the sods (PlantGenerator.make_rooting) cover meanwhile.
 	Vector<uint8_t> data;
-	data.resize(nx * ny);
+	data.resize(nx * ny * 2);
 	uint8_t *w = data.ptrw();
 	for (int z = 0; z < ny; z++) {
 		for (int x = 0; x < nx; x++) {
 			const Vector2 xz = rect.position + rect.size * Vector2(float(x) / (nx - 1), float(z) / (ny - 1));
-			const float g = Math::smoothstep(0.3f, 0.8f, stand->browse_at(Vector3(xz.x, 0.0f, xz.y)));
-			w[z * nx + x] = uint8_t(CLAMP(g, 0.0f, 1.0f) * 255.0f + 0.5f);
-			graze_any = graze_any || w[z * nx + x] > 0;
+			const Vector3 p(xz.x, 0.0f, xz.y);
+			const float g = Math::smoothstep(0.3f, 0.8f, stand->browse_at(p));
+			const float ra = stand->rooting_age_at(p);
+			const float torn = ra < 0.0f ? 0.0f : 1.0f - Math::smoothstep(0.25f, 2.0f, ra); // The terrain's freshness.
+			const int i = (z * nx + x) * 2;
+			w[i] = uint8_t(CLAMP(g, 0.0f, 1.0f) * 255.0f + 0.5f);
+			w[i + 1] = uint8_t(CLAMP(torn, 0.0f, 1.0f) * 255.0f + 0.5f);
+			graze_any = graze_any || w[i] > 0 || w[i + 1] > 0;
 		}
 	}
 	if (!graze_any) {
 		graze_texture.unref();
 		return;
 	}
-	const Ref<Image> img = Image::create_from_data(nx, ny, false, Image::FORMAT_R8, data);
+	const Ref<Image> img = Image::create_from_data(nx, ny, false, Image::FORMAT_RG8, data);
 	if (graze_texture.is_valid() && graze_nx == nx && graze_ny == ny) {
 		graze_texture->update(img);
 	} else {
@@ -3857,14 +3879,28 @@ void GrassField3D::_publish_graze() {
 	if (material.is_null()) {
 		return;
 	}
+	// The field that colours the ground (ground_tint_enabled) also hands the map to grass_ground(): under a deer
+	// lawn the turf closes over the soil.
+	RenderingServer *rs = RenderingServer::get_singleton();
+	const bool ground = ground_tint_enabled && is_inside_tree();
 	if (!graze_any || graze_texture.is_null() || graze_height <= 0.0f) {
 		material->set_shader_parameter("graze_rect", Vector4());
+		if (ground && graze_published) {
+			rs->global_shader_parameter_set("grass_graze_rect", Vector4());
+			graze_published = false;
+		}
 		return;
 	}
 	const Vector2 cell(graze_rect.size.x / (graze_nx - 1), graze_rect.size.y / (graze_ny - 1));
+	const Vector4 rect(graze_rect.position.x - cell.x * 0.5f, graze_rect.position.y - cell.y * 0.5f, graze_rect.size.x + cell.x, graze_rect.size.y + cell.y);
 	material->set_shader_parameter("graze_map", graze_texture);
-	material->set_shader_parameter("graze_rect", Vector4(graze_rect.position.x - cell.x * 0.5f, graze_rect.position.y - cell.y * 0.5f, graze_rect.size.x + cell.x, graze_rect.size.y + cell.y));
+	material->set_shader_parameter("graze_rect", rect);
 	material->set_shader_parameter("graze_height", graze_height);
+	if (ground) {
+		rs->global_shader_parameter_set("grass_graze_map", graze_texture->get_rid());
+		rs->global_shader_parameter_set("grass_graze_rect", rect);
+		graze_published = true;
+	}
 }
 
 void GrassField3D::set_graze_height(float p_m) {
@@ -5012,6 +5048,13 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 			}
 		}
 	}
+	if (crop == CROP_NONE) {
+		const uint64_t now = OS::get_singleton()->get_ticks_usec();
+		if (now - mounds_follow_usec >= uint64_t(BURN_FOLLOW_MSEC) * 1000) {
+			mounds_follow_usec = now;
+			_follow_mounds();
+		}
+	}
 	if (burn_read && graze_height > 0.0f && crop == CROP_NONE) {
 		// Browse discs added, moved or cleared: the pressure grid is read again (cheap; the texture only).
 		const WorldStand *stand = WorldContracts::stand();
@@ -5281,6 +5324,8 @@ global uniform vec4 grass_ground_under_far; // rgb: the undercoat's far colour; 
 global uniform vec4 grass_ground_far_scale; // rgb: the far colour at the sun's elevation over the cover map's (30 degrees).
 global uniform vec4 grass_ground_sun; // xy: the sun light's heading (xz); z: how much the azimuth counts.
 global uniform vec4 grass_ground_view; // xyz: the camera.
+global uniform sampler2D grass_graze_map : hint_default_black, filter_linear, repeat_disable; // R: grazed to a lawn, G: torn by rooting.
+global uniform vec4 grass_graze_rect; // z 0: none.
 global uniform sampler2D crop_ground_map : filter_linear; // GrassField3D.fields: r the field's slot, g the wheelings.
 global uniform sampler2D crop_ground_plots : filter_nearest; // A texel a field (crop_ground()).
 global uniform vec4 crop_ground_rect;
@@ -5362,6 +5407,18 @@ float grass_streaks(vec2 xz, float p_turn_scale, float p_turn_offset, vec2 p_s1,
 	return clamp(0.5 + (s - 0.5) * 1.3, 0.0, 1.0);
 }
 
+// Deer lawns (GrassField3D graze_height): R how far the sward is grazed down, G the share rooting tore out.
+vec2 grass_graze_at(vec3 world_pos) {
+	if (grass_graze_rect.z <= 0.0) {
+		return vec2(0.0);
+	}
+	vec2 uv = (world_pos.xz - grass_graze_rect.xy) / grass_graze_rect.zw;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return vec2(0.0);
+	}
+	return textureLod(grass_graze_map, uv, 0.0).rg;
+}
+
 // The turf colour at a point: blades' root colour, patch tint, streaks, thatch.
 vec3 grass_turf(vec3 world_pos) {
 	vec2 xz = world_pos.xz;
@@ -5371,8 +5428,12 @@ vec3 grass_turf(vec3 world_pos) {
 	c *= 0.7 + 0.6 * streak;
 	// Dead thatch where the grass is dry, in matted patches.
 	float thatch = grass_streaks(xz, 0.6, 0.0, vec2(5.0, 40.0), vec2(5.0, 40.0), 13.0) * 0.5 + grass_noise(xz * 1.3) * 0.5;
-	// Shaded at the base of the sward, so darker than the dry tips above it.
-	c = mix(c, grass_ground_dry.rgb * (0.25 + 0.2 * streak), 0.8 * smoothstep(0.8 - grass_ground_dry.a * 0.5, 0.95 - grass_ground_dry.a * 0.5, thatch));
+	// Shaded at the base of the sward, so darker than the dry tips above it. A deer lawn has little: the deer eat
+	// the dead leaves with the green and the new leaves are fresh (the blades' own dry share drops the same way).
+	float lawn = grass_graze_at(world_pos).r;
+	c = mix(c, grass_ground_dry.rgb * (0.25 + 0.2 * streak), 0.8 * (1.0 - 0.7 * lawn) * smoothstep(0.8 - grass_ground_dry.a * 0.5, 0.95 - grass_ground_dry.a * 0.5, thatch));
+	// The lawn's young leaves, brighter and yellower than a lax sward's (the blades' tint).
+	c *= mix(vec3(1.0), vec3(1.06, 1.16, 0.88), lawn);
 	return c;
 }
 
@@ -5748,7 +5809,13 @@ vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 		}
 	}
 	gone = max(gone, gone_u);
-	return mix(albedo, turf, grass_ground_patchy(world_pos, cover, gone) * mix(grass_ground_color.a, 1.0, gone));
+	// A deer lawn is a closed carpet: bitten short, the grasses tiller densely (20,000 to 40,000 tillers per m2 under
+	// close grazing against 5,000 to 10,000 in a lax sward; Hodgson 1990, Grant et al. 1983), so between the short
+	// blades the ground is the turf's own, not soil or litter. Rooting (G) tears it back to the soil.
+	vec2 lawn = grass_graze_at(world_pos);
+	float closed = lawn.r * (1.0 - lawn.g);
+	float w = grass_ground_patchy(world_pos, cover, max(gone, closed)) * mix(grass_ground_color.a, 1.0, max(gone, closed));
+	return mix(albedo, turf, w * (1.0 - lawn.g));
 }
 )";
 	return code;
@@ -6253,8 +6320,93 @@ void GrassField3D::set_trample_resistance(float p_passes) {
 
 void GrassField3D::set_obstacles(const PackedVector4Array &p_obstacles) {
 	obstacles = p_obstacles;
-	obstacle_grid.build(obstacles);
+	PackedVector4Array all = obstacles;
+	all.append_array(mound_obstacles);
+	obstacle_grid.build(all);
 	rebuild();
+}
+
+// The mounds the fields have placed near the blades, as obstacle discs (x, y, z, radius): each species with the meta
+// "sward_mound" (its radius at scale 1) at its smallest scale, so the turf round a mound meets its foot. Polled like
+// the trails; only the tiles over mounds that came or went are built again.
+bool GrassField3D::_follow_mounds() {
+	PackedVector4Array now;
+	if (is_inside_tree()) {
+		const VegetationField3D *fields[2] = { _get_undergrowth(), canopy_field.is_empty() ? nullptr : Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field)) };
+		for (int f = 0; f < 2; f++) {
+			const VegetationField3D *field = fields[f];
+			if (!field || (f == 1 && field == fields[0]) || field->get_biome().is_null()) {
+				continue;
+			}
+			const TypedArray<PlantSpecies> list = field->get_biome()->get_species();
+			for (int i = 0; i < list.size(); i++) {
+				const Ref<PlantSpecies> sp = list[i];
+				if (sp.is_null() || !sp->has_meta("sward_mound")) {
+					continue;
+				}
+				const float r = float(sp->get_meta("sward_mound")) * sp->get_scale_range().x * 0.9f;
+				const PackedVector3Array at = field->get_placements(i);
+				for (const Vector3 &q : at) {
+					now.push_back(Vector4(q.x, q.y, q.z, r));
+				}
+			}
+		}
+	}
+	if (now == mound_obstacles) {
+		return false;
+	}
+	// The discs that came or went (a set difference by position to the centimetre and radius).
+	auto key = [](const Vector4 &p_d) { return Vector3i(int(Math::round(p_d.x * 100.0f)), int(Math::round(p_d.z * 100.0f)), int(Math::round(p_d.w * 100.0f))); };
+	HashSet<Vector3i> before;
+	for (const Vector4 &d : mound_obstacles) {
+		before.insert(key(d));
+	}
+	HashSet<Vector3i> after;
+	PackedVector4Array changed;
+	for (const Vector4 &d : now) {
+		after.insert(key(d));
+		if (!before.has(key(d))) {
+			changed.push_back(d);
+		}
+	}
+	for (const Vector4 &d : mound_obstacles) {
+		if (!after.has(key(d))) {
+			changed.push_back(d);
+		}
+	}
+	mound_obstacles = now;
+	PackedVector4Array all = obstacles;
+	all.append_array(mound_obstacles);
+	obstacle_grid.build(all);
+	_stale_tiles_over(changed);
+	return true;
+}
+
+// Marks the blade tiles and far ring tiles under the given discs as out of date: they are built again, nearest first,
+// while the old ones stay drawn.
+void GrassField3D::_stale_tiles_over(const PackedVector4Array &p_discs) {
+	if (p_discs.is_empty()) {
+		return;
+	}
+	for (KeyValue<Vector2i, Tile> &kv : tiles) {
+		const Rect2 rect(kv.key.x * tile_size, kv.key.y * tile_size, tile_size, tile_size);
+		for (const Vector4 &d : p_discs) {
+			if (rect.grow(d.w + OBSTACLE_MARGIN).has_point(Vector2(d.x, d.z))) {
+				kv.value.generation = generation - 1;
+				break;
+			}
+		}
+	}
+	for (KeyValue<Vector3i, RingTile> &kv : ring_tiles) {
+		const float size = RING_TILE * float(1 << kv.key.z);
+		const Rect2 rect(kv.key.x * size, kv.key.y * size, size, size);
+		for (const Vector4 &d : p_discs) {
+			if (rect.grow(d.w + OBSTACLE_MARGIN).has_point(Vector2(d.x, d.z))) {
+				kv.value.generation = generation - 1;
+				break;
+			}
+		}
+	}
 }
 
 VegetationField3D *GrassField3D::_get_undergrowth() const {

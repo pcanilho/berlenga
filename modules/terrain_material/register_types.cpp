@@ -64,6 +64,7 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "rock_contact_map", "sampler2D" },
 		{ "rock_far_cover_map", "sampler2D" },
 		{ "rock_far_cover_rect", "vec4" },
+		{ "rock_far_reach_map", "sampler2D" },
 		{ "rock_contact_rect", "vec4" },
 		// The last glaciers' flow and wear, for ice-worn rock in the detail normal (TerrainGenerator3D.ice_worn_detail).
 		{ "terrain_ice_flow", "sampler2D" },
@@ -74,6 +75,9 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_sky_full", "vec4" },
 		{ "terrain_sky_full2", "vec4" },
 		{ "terrain_sky_full3", "float" },
+		// The stand's worn trails and fresh rooting (Landscape3D publishes it).
+		{ "terrain_stand_map", "sampler2D" },
+		{ "terrain_stand_rect", "vec4" },
 	};
 	for (const auto &g : globals) {
 		if (ProjectSettings::get_singleton()->has_setting(String("shader_globals/") + g.name)) {

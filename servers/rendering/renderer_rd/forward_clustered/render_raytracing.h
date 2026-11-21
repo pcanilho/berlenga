@@ -117,7 +117,9 @@ struct alignas(8) RT_GeometryData {
 	// With RT_GEOM_FLAG_REST: byte offset from vertex_buffer_address of the rest block, the vertex() inputs of a
 	// capture in the same layout as the positions and TBN before it.
 	uint32_t rest_byte_offset;
-	uint32_t rest_pad;
+	// The CUSTOM0-3 vertex attributes in the attribute buffer: bits 0-7 byte offset of the first present one, then per
+	// attribute 4 bits (bit 3 present, bits 0-2 its RSE::ArrayCustomFormat). Packed by rt_pack_custom_layout().
+	uint32_t custom_layout;
 };
 static_assert(sizeof(RT_GeometryData) == 160, "RT_GeometryData must be 160 bytes for std430");
 
@@ -1471,8 +1473,8 @@ struct RTViewportState {
 	uint32_t frame_counter = 0;
 
 	// Camera-relative tracing: every position the trace sees is world minus this anchor, the
-	// camera's cell on a grid of rendering/pathtracing/relative_origin_grid metres (x and z).
-	// It moves only when the camera leaves its cell. Zero when the setting is 0.
+	// grid point nearest the camera on a grid of rendering/pathtracing/relative_origin_grid metres
+	// (x and z). It moves only when the camera is 3/4 of a cell away. Zero when the setting is 0.
 	Vector3 rt_origin;
 	bool rt_origin_valid = false;
 

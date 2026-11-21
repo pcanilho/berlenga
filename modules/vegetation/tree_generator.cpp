@@ -1246,7 +1246,16 @@ Vector3 TreeGenerator::_random_unit() {
 // Apical control fades with age in decurrent trees (oak), stays in excurrent ones (spruce).
 float TreeGenerator::_lambda(int p_year) const {
 	const float t = CLAMP(float(p_year) / MAX(1.0f, params[PARAM_MATURITY]), 0.0f, 1.0f);
-	return Math::lerp(params[PARAM_APICAL_DOMINANCE], params[PARAM_APICAL_DOMINANCE_OLD], t);
+	float old = params[PARAM_APICAL_DOMINANCE_OLD];
+	if (forest_shade > 0.0f && (preset == PRESET_SYCAMORE_MAPLE || preset == PRESET_HORSE_CHESTNUT)) {
+		// Shade-grown trees keep apical control that open-grown ones give up (Oliver and Larson 1996, Forest Stand
+		// Dynamics: a stand tree stays monopodial and self-prunes). These two lost it in a stand: 45-52 thousand
+		// internodes packed into a crown 2 m deep, a dark ball of bare twigs a few big leaves could not cover (a "nest"
+		// in the deer clearing frames, 21 Nov). Held at 0.56 they grow a leafy cap on a clean bole like the stand's other
+		// trees, about 10 thousand internodes.
+		old = Math::lerp(old, MAX(old, 0.56f), CLAMP(forest_shade / 0.3f, 0.0f, 1.0f));
+	}
+	return Math::lerp(params[PARAM_APICAL_DOMINANCE], old, t);
 }
 
 float TreeGenerator::_internode_length(int p_year) const {
@@ -8798,7 +8807,7 @@ int TreeGenerator::request_variants(const Ref<PlantSpecies> &p_species, int p_ki
 void TreeGenerator::_browse_variant_setup(int p_form) {
 	browse = 0.85f;
 	browse_height = 1.8f;
-	browse_years = p_form == FORM_OPEN ? 20 : 0;
+	browse_years = (p_form == FORM_OPEN || edge_band > 0) ? 20 : 0; // Grown trees: browsed over the last decades.
 }
 
 Color TreeGenerator::_lightning_wood(float p_years) {
@@ -23737,7 +23746,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// of this generator that grows them when a field first needs them.
 		const bool fire_form = p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_OLD || p_form == FORM_GROVE;
 		const bool strike_form = p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_OLD || p_form == FORM_GROVE;
-		const bool browse_form = p_form == FORM_OPEN || p_form == FORM_SAPLING || p_form == FORM_UNDERSTORY;
+		// Edge trees keep green limbs low on their open side (5as), which deer clip as they do an open tree's.
+		const bool browse_form = p_form == FORM_OPEN || p_form == FORM_SAPLING || p_form == FORM_UNDERSTORY || (p_form == FORM_STAND && edge_band > 0);
 		const bool undamaged = beetle_band == 0 && windthrow_band == 0;
 		Vector3 first_crown;
 		if (!meshes.is_empty()) {
@@ -25359,9 +25369,17 @@ Ref<Biome> TreeGenerator::make_edge(Stand p_stand, int p_variants) {
 	const int saved_band = edge_band;
 	const float saved_open = edge_open;
 	edge_band = 1;
-	Ref<PlantSpecies> edge_lead = lead == PRESET_MAX ? Ref<PlantSpecies>() : _stand_species(lead, true, p_variants, FORM_STAND);
+	// A deer wood's edge trees are browsed like its canopy: the low limbs the open side keeps are clipped to the browse
+	// line (trees.md 5aw).
+	const bool deer = p_stand == STAND_DEER_WOOD;
+	const int saved_browse = browse_band;
+	browse_band = deer ? 1 : 0;
+	// Edge trees all turn their open side to the open, so placement cannot vary them by turning: at least three meshes
+	// for the lead and two for the second tree, or a run of edge reads as one tree repeated.
+	Ref<PlantSpecies> edge_lead = lead == PRESET_MAX ? Ref<PlantSpecies>() : _stand_species(lead, true, MAX(p_variants, 3), FORM_STAND);
 	const Preset second = kind == EDGE_MOUNTAIN ? PRESET_BIRCH : kind == EDGE_NA ? PRESET_RED_MAPLE : kind == EDGE_MEDITERRANEAN ? PRESET_MAX : (lead == PRESET_OAK ? PRESET_BIRCH : PRESET_OAK);
-	Ref<PlantSpecies> edge_second = second == PRESET_MAX ? Ref<PlantSpecies>() : _stand_species(second, true, p_variants, FORM_STAND);
+	Ref<PlantSpecies> edge_second = second == PRESET_MAX ? Ref<PlantSpecies>() : _stand_species(second, true, MAX(p_variants, 2), FORM_STAND);
+	browse_band = saved_browse;
 	edge_band = saved_band;
 	edge_open = saved_open;
 	for (Ref<PlantSpecies> sp : { edge_lead, edge_second }) {
@@ -25386,40 +25404,49 @@ Ref<Biome> TreeGenerator::make_edge(Stand p_stand, int p_variants) {
 		float from, to, density;
 	};
 	LocalVector<Mantle> mantle;
-	switch (kind) {
-		case EDGE_TEMPERATE:
-			mantle.push_back({ PRESET_BLACKTHORN, FORM_OPEN, -6.0f, 0.0f, 1.0f });
-			mantle.push_back({ PRESET_HAWTHORN, FORM_OPEN, -5.0f, 1.0f, 0.7f });
-			mantle.push_back({ PRESET_DOG_ROSE, FORM_OPEN, -8.0f, -1.5f, 0.6f });
-			mantle.push_back({ PRESET_HAZEL, FORM_OPEN, -2.0f, 4.0f, 0.8f });
-			mantle.push_back({ PRESET_ELDER, FORM_OPEN, -1.0f, 3.0f, 0.35f });
-			mantle.push_back({ PRESET_FIELD_MAPLE, FORM_OPEN, -3.0f, 2.0f, 0.3f });
-			break;
-		case EDGE_MOUNTAIN:
-			mantle.push_back({ PRESET_ROWAN, FORM_OPEN, -4.0f, 3.0f, 0.8f });
-			mantle.push_back({ PRESET_BIRCH, FORM_SAPLING, -7.0f, 0.0f, 0.9f });
-			mantle.push_back({ PRESET_WHITE_WILLOW, FORM_SAPLING, -6.0f, -1.0f, 0.4f });
-			mantle.push_back({ lead, FORM_SAPLING, -5.0f, 1.0f, 0.7f });
-			if (p_stand == STAND_MONTANE_CONIFER) {
-				mantle.push_back({ PRESET_HAZEL, FORM_OPEN, -3.0f, 3.0f, 0.5f });
-				mantle.push_back({ PRESET_ELDER, FORM_OPEN, -1.0f, 3.0f, 0.3f });
-			}
-			break;
-		case EDGE_NA:
-			mantle.push_back({ PRESET_WITCH_HAZEL, FORM_OPEN, -4.0f, 3.0f, 0.8f });
-			mantle.push_back({ PRESET_MOUNTAIN_LAUREL, FORM_OPEN, -2.0f, 4.0f, 0.7f });
-			mantle.push_back({ PRESET_RED_MAPLE, FORM_SAPLING, -6.0f, 0.0f, 0.7f });
-			mantle.push_back({ PRESET_PAPER_BIRCH, FORM_SAPLING, -7.0f, -1.0f, 0.5f });
-			break;
-		case EDGE_MEDITERRANEAN:
-			mantle.push_back({ PRESET_KERMES_OAK, FORM_OPEN, -6.0f, 1.0f, 1.0f });
-			mantle.push_back({ PRESET_LENTISK, FORM_OPEN, -5.0f, 2.0f, 0.8f });
-			mantle.push_back({ PRESET_GUM_ROCKROSE, FORM_OPEN, -8.0f, -2.0f, 0.6f });
-			mantle.push_back({ PRESET_BROOM, FORM_OPEN, -8.0f, -3.0f, 0.4f });
-			break;
+	if (deer) {
+		// Under heavy browsing the mantle is eaten out: only the thorny shrubs hold on, hedged into low bushes, and the
+		// wood's edge stands open to its trunks (Gill 1992; Kirby 2001).
+		mantle.push_back({ PRESET_BLACKTHORN, FORM_SAPLING, -4.0f, 0.0f, 0.5f });
+		mantle.push_back({ PRESET_HAWTHORN, FORM_SAPLING, -3.0f, 1.0f, 0.35f });
+	} else {
+		switch (kind) {
+			case EDGE_TEMPERATE:
+				mantle.push_back({ PRESET_BLACKTHORN, FORM_OPEN, -6.0f, 0.0f, 1.0f });
+				mantle.push_back({ PRESET_HAWTHORN, FORM_OPEN, -5.0f, 1.0f, 0.7f });
+				mantle.push_back({ PRESET_DOG_ROSE, FORM_OPEN, -8.0f, -1.5f, 0.6f });
+				mantle.push_back({ PRESET_HAZEL, FORM_OPEN, -2.0f, 4.0f, 0.8f });
+				mantle.push_back({ PRESET_ELDER, FORM_OPEN, -1.0f, 3.0f, 0.35f });
+				mantle.push_back({ PRESET_FIELD_MAPLE, FORM_OPEN, -3.0f, 2.0f, 0.3f });
+				break;
+			case EDGE_MOUNTAIN:
+				mantle.push_back({ PRESET_ROWAN, FORM_OPEN, -4.0f, 3.0f, 0.8f });
+				mantle.push_back({ PRESET_BIRCH, FORM_SAPLING, -7.0f, 0.0f, 0.9f });
+				mantle.push_back({ PRESET_WHITE_WILLOW, FORM_SAPLING, -6.0f, -1.0f, 0.4f });
+				mantle.push_back({ lead, FORM_SAPLING, -5.0f, 1.0f, 0.7f });
+				if (p_stand == STAND_MONTANE_CONIFER) {
+					mantle.push_back({ PRESET_HAZEL, FORM_OPEN, -3.0f, 3.0f, 0.5f });
+					mantle.push_back({ PRESET_ELDER, FORM_OPEN, -1.0f, 3.0f, 0.3f });
+				}
+				break;
+			case EDGE_NA:
+				mantle.push_back({ PRESET_WITCH_HAZEL, FORM_OPEN, -4.0f, 3.0f, 0.8f });
+				mantle.push_back({ PRESET_MOUNTAIN_LAUREL, FORM_OPEN, -2.0f, 4.0f, 0.7f });
+				mantle.push_back({ PRESET_RED_MAPLE, FORM_SAPLING, -6.0f, 0.0f, 0.7f });
+				mantle.push_back({ PRESET_PAPER_BIRCH, FORM_SAPLING, -7.0f, -1.0f, 0.5f });
+				break;
+			case EDGE_MEDITERRANEAN:
+				mantle.push_back({ PRESET_KERMES_OAK, FORM_OPEN, -6.0f, 1.0f, 1.0f });
+				mantle.push_back({ PRESET_LENTISK, FORM_OPEN, -5.0f, 2.0f, 0.8f });
+				mantle.push_back({ PRESET_GUM_ROCKROSE, FORM_OPEN, -8.0f, -2.0f, 0.6f });
+				mantle.push_back({ PRESET_BROOM, FORM_OPEN, -8.0f, -3.0f, 0.4f });
+				break;
+		}
 	}
 	for (const Mantle &mt : mantle) {
+		browse_band = deer ? 2 : 0; // Hedged bushes (the deer wood's saplings).
 		Ref<PlantSpecies> sp = _stand_species(mt.preset, false, p_variants, mt.form);
+		browse_band = saved_browse;
 		if (sp.is_null()) {
 			continue;
 		}

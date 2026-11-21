@@ -2890,14 +2890,16 @@ void GroundSurface3D::set_frozen_ground(bool p_enabled) {
 // (thaw weakening: forest roads lose about half their bearing in the spring thaw and carry load limits) until the
 // frost has gone and it has drained, an e-fold of 5 days. A frost after a thaw refreezes the wet top first. Snow
 // (a cell the snow covers) insulates: no change under it. New cells start from the climate's frost index for the
-// day (WeatherSeason's soil_frost: freezing degree days, thawed back by positive ones, none under snow).
+// day (WeatherSeason's soil_frost: freezing degree days, thawed back by positive ones, both shielded by snow: frost made before the pack stays under it).
 void GroundSurface3D::_frost_seed(int p_from) {
 	const WorldWeather *wm = _weather();
 	float depth = 0.0f;
 	if (wm) {
 		const WeatherSeason::State st = WeatherSeason::compute(_weather_climate(wm), _ground_at(center.x, center.y), wm->day_of_year());
 		const float theta = 0.1f + 0.3f * CLAMP(moisture >= 0.0f ? moisture : 0.3f, 0.0f, 1.0f);
-		depth = st.snow_cover > 0.5f ? 0.0f : MIN(Math::sqrt(2.0f * 2.0f * st.soil_frost * 86400.0f / (334e6f * theta)), 1.0f);
+		// Under a pack too: the frost index already counts the snow's shield, and frost made before the snow lies
+		// on under it until spring (Kane and Stein 1983).
+		depth = MIN(Math::sqrt(2.0f * 2.0f * st.soil_frost * 86400.0f / (334e6f * theta)), 1.0f);
 	}
 	for (int i = p_from; i < (int)frost_state.size() / FROST_FLOATS; i++) {
 		float *f = &frost_state[i * FROST_FLOATS];

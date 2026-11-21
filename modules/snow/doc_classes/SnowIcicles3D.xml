@@ -28,6 +28,13 @@
 				The ice of all the icicles, in kg.
 			</description>
 		</method>
+		<method name="get_icicle_attach" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="index" type="int" />
+			<description>
+				How far (m) the icicle's root column rises to the surface above it, from the last mesh build. 0 when nothing lies within [member attach_reach].
+			</description>
+		</method>
 		<method name="get_icicle_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -106,6 +113,12 @@
 		</method>
 	</methods>
 	<members>
+		<member name="attach_path" type="NodePath" setter="set_attach_path" getter="get_attach_path" default="NodePath(&quot;&quot;)">
+			The node whose meshes the icicles hang from. Each root's column runs straight up to the first surface above it within [member attach_reach], so no icicle floats under an eave. Empty: the parent's meshes.
+		</member>
+		<member name="attach_reach" type="float" setter="set_attach_reach" getter="get_attach_reach" default="0.5">
+			How far (m) above a root to look for the surface it hangs from. 0 turns attaching off.
+		</member>
 		<member name="catchment_length" type="float" setter="set_catchment_length" getter="get_catchment_length" default="3.0">
 			How far up the roof or slope above the edge the melt water comes from, in metres.
 		</member>

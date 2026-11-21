@@ -229,6 +229,26 @@
 				The plants of a beaver pond or of the meadow it leaves as [PlantSpecies] for a [Biome]. [constant BEAVER_POND] zones by water depth and distance from the shore: floating water lilies over 0.4 to 2 m, bulrush in the shallows, tussock sedge along the flooded margin, then soft rush, marsh marigold and meadowsweet up the shore. [constant BEAVER_MEADOW] grows on a drained pond bed, placed by [constant PlantSpecies.RULE_STAND_AGE] and [constant PlantSpecies.RULE_DISTURBANCE] on ground [method WorldStand.add_disturbance] marks with kind [constant DISTURBANCE_BEAVER_KIND] and an age of years since the pond drained: rush and small sedge on the mud for the first four years, then a dense sedge and tall-grass meadow with meadowsweet, marsh marigold and buttercup. Neither set takes shade over 0.4 to 0.6; the willow and alder that close an old meadow come from the trees.
 			</description>
 		</method>
+		<method name="make_rooting" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.RootingStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				What wild boar leave where they root, as [PlantSpecies] placed by [constant PlantSpecies.RULE_ROOTING] (years since the ground was rooted, from [code]WorldStand.rooting_age_at()[/code]; patches are [code]WorldStand.add_disturbance()[/code] discs of kind [code]DISTURBANCE_ROOTING[/code]): [constant PRESET_ROOTED_SOD] in three age bands (fresh, drying, slumped and greening) for the first year, then the first herbs on the turned soil, herb Robert, nettle and dock in [constant ROOTING_WOOD], mayweed, dock, thistle and plantain in [constant ROOTING_MEADOW]. List the set after the stand's own species. [method make_floor] gives its field layer rooting rules, so it is gone from fresh rooting and back over one to two years.
+			</description>
+		</method>
+		<method name="make_mounds" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="set" type="int" enum="PlantGenerator.MoundSet" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				Anthills and molehills as [PlantSpecies]. [constant MOUNDS_MEADOW]: [constant PRESET_ANTHILL] in groups out of the shade (their crest east, so they are not turned at random), and [constant PRESET_MOLEHILL] fresh, crusted and grassing over, in lines and arcs (patch rings, a mole's runs). [constant MOUNDS_WOOD]: [constant PRESET_WOOD_ANT_NEST] at sunny gaps and edges of conifer and mixed stands ([constant PlantSpecies.RULE_FOREST_EDGE] -2 to 40 m, crown shade 0.15 to 0.7) and a few molehills under broadleaves. None on waterlogged ground or steep slopes. Each species carries the meta [code]sward_mound[/code] (its radius at scale 1, metres): a [GrassField3D] whose [member GrassField3D.undergrowth_field] or [member GrassField3D.canopy_field] places them keeps its blades from under them.
+			</description>
+		</method>
 		<method name="make_burn" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.BurnStand" />
@@ -620,7 +640,19 @@
 		<constant name="PRESET_GRAZED_LAWN" value="98" enum="Preset">
 			A deer lawn: a dense mat of fine bents and fescues grazed to 2 to 8 cm, most blade ends torn and drying pale over bright regrowth. [method PlantGenerator.make_floor] places it in the light where deer browsing is heavy ([constant PlantSpecies.RULE_BROWSE]).
 		</constant>
-		<constant name="PRESET_MAX" value="99" enum="Preset">
+		<constant name="PRESET_ROOTED_SOD" value="99" enum="Preset">
+			Boar rooting: 3 to 8 turf clods torn up and flung over, most grass side down with the pale roots up, the torn grass drying within weeks; by the season's [code]rooting_age[/code] (years) the clods slump and crumble and green shoots come up between them.
+		</constant>
+		<constant name="PRESET_ANTHILL" value="100" enum="Preset">
+			A yellow meadow ant hill: a grassed dome of fine soil about 0.7 m across, its crest east of centre (+x) and its long axis east-west, covered in fine fescue blades with thyme cushions on the south-east face and bare crumbs of fresh workings near the top (season [code]ant_workings[/code], 0 to 1).
+		</constant>
+		<constant name="PRESET_WOOD_ANT_NEST" value="101" enum="Preset">
+			A red wood ant nest: a thatch dome of needles and twig bits 1.2 m across on a mossy earth bank, with dark entrances mostly on its sunny side.
+		</constant>
+		<constant name="PRESET_MOLEHILL" value="102" enum="Preset">
+			A molehill: a lumpy heap of loose soil about 0.4 m across with crumbs spilt round it; by the season's [code]mound_age[/code] (years) it crusts paler, slumps and grasses over.
+		</constant>
+		<constant name="PRESET_MAX" value="103" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
@@ -730,6 +762,24 @@
 		</constant>
 		<constant name="BURN_MAX" value="3" enum="BurnStand">
 			Number of burn stands.
+		</constant>
+		<constant name="ROOTING_WOOD" value="0" enum="RootingStand">
+			Rooting on a woodland floor.
+		</constant>
+		<constant name="ROOTING_MEADOW" value="1" enum="RootingStand">
+			Rooting in a meadow or at a wood's edge.
+		</constant>
+		<constant name="ROOTING_MAX" value="2" enum="RootingStand">
+			Number of rooting stands.
+		</constant>
+		<constant name="MOUNDS_MEADOW" value="0" enum="MoundSet">
+			Old pasture: ant hills and molehills.
+		</constant>
+		<constant name="MOUNDS_WOOD" value="1" enum="MoundSet">
+			Woodland: wood ant nests and a few molehills.
+		</constant>
+		<constant name="MOUNDS_MAX" value="2" enum="MoundSet">
+			Number of mound sets.
 		</constant>
 		<constant name="BEAVER_POND" value="0" enum="BeaverStand">
 			An active beaver pond and its shore.

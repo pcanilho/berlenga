@@ -78,6 +78,7 @@ public:
 		float color[3] = { 0.8f, 0.8f, 0.8f }; // the smoke's albedo
 		float strength = 1.0f;
 		float ground_albedo = 0.25f; // the ground under the gas, whose sunlit glow lights the gas from below
+		Color ground_color = Color(1, 1, 1); // its colour (linear), which ground_albedo scales
 		float scattering_albedo = 0.9f; // single-scattering albedo (the path tracer's): weighs the multiple-scattering octaves
 		float anisotropy = 0.4f; // Henyey-Greenstein g
 		float step_scale = 1.0f; // view step, in cells
@@ -106,6 +107,10 @@ public:
 		// Blend each frame's scattered light with the last frames' (reprojected, clamped to this
 		// frame's neighbourhood), moving the march's start offset every frame: no step banding.
 		bool temporal = false;
+		// The scene behind the gas shows through it by multiple scattering (blurred), not only along its direct
+		// beam: background is the frame before Flow drew the gas (get_background_copy()).
+		bool diffuse_transmission = true;
+		RID background;
 	};
 
 	// The gas's volumetric shadow map from the sun (it shadows the scene, and the scattering pass lights the
@@ -140,6 +145,8 @@ private:
 	RID upsample_pipeline;
 	// The scattered light at the scattering resolution (rgb) + scene distance (a).
 	RID scatter_texture;
+	RID background_copy;
+	Size2i background_size;
 	Size2i scatter_size;
 	// Temporal blending: two history textures at the scattering resolution, used in turn.
 	RID temporal_shader;
@@ -169,6 +176,8 @@ public:
 	// scene depth it was drawn against.
 	// p_shadow_atlas: the frame's shadow atlas (RID() if there is none; lights
 	// then glow unshadowed).
+	// A texture the size of the frame for the frame behind the gas (Params::background), kept from frame to frame.
+	RID get_background_copy(RenderingDevice *p_rd, const Size2i &p_size);
 	void run(RenderingDevice *p_rd, const FlowBackend::ScatterSource &p_source, const Params &p_params, const Light *p_lights, int p_light_count, const RID &p_depth, const RID &p_color, const RID &p_coverage, const RID &p_shadow_atlas, const Size2i &p_size, ShadowMap *r_shadow = nullptr);
 	void free(RenderingDevice *p_rd);
 };

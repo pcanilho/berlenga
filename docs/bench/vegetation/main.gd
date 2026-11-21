@@ -26,6 +26,7 @@ extends Node3D
 #                    same costs as --floor and with --out saves the view.
 #   --burn=live      quick check: a streamed field of one species recovering over a year; a scar placed after the
 #                    tiles stand, aged, then removed (WorldFire.burn_changed, no rebuild): gone, half back, whole.
+#   --rooting        quick check: boar rooting (RULE_ROOTING, make_rooting, make_floor's regrowth rules)
 #   --trails         quick check: the game trail network (VegetationField3D.make_game_trails) over the valley, printed as VEG_TRAILS
 #   --stand=live     quick check: a streamed field of succession stages (meta succession_age / succession_kind); a
 #                    windthrow added after the tiles stand, aged a year (no re-place), then past the pioneer stage.
@@ -48,6 +49,7 @@ var floor_view := 0 # --floor: 1 with the small species' pixel reach, 2 without 
 var desert_view := 0 # --desert: 1 with make_desert's plants on a sand sea, 2 the same view without (--desert=off).
 var stand_live := false # --stand=live
 var trails_only := false # --trails
+var rooting_only := false # --rooting
 var burn_view := 0 # --burn: 1 with burn scars and make_burn's heath set, 2 the same heath unburnt (--burn=off).
 const BURN_SCARS := [[0.05, -60.0], [0.6, -25.0], [2.5, 10.0], [5.0, 45.0]] # Years since, and the scar's centre z (x 60, 60 x 30 m).
 var mushroom_view := 0 # --mushrooms: 1 with the mushrooms, 2 the same view without them (--mushrooms=off).
@@ -104,6 +106,8 @@ func _ready() -> void:
 			size = 128.0
 		elif a == "--trails":
 			trails_only = true
+		elif a == "--rooting":
+			rooting_only = true
 		elif a == "--stand=live":
 			stand_live = true
 		elif a.begins_with("--burn"):
@@ -280,8 +284,11 @@ func _physics_process(_d: float) -> void:
 	if stand_live:
 		await _stand_live()
 		return
-	if trails_only:
-		_trails_check()
+	if trails_only or rooting_only:
+		if trails_only:
+			_trails_check()
+		else:
+			_rooting_check()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	if burn_view > 0:
@@ -1122,6 +1129,105 @@ func _trails_check() -> void:
 	_check("game trails: none through deep water or up steep ground, merged (network %.0f m vs links %.0f m), shared stretches busier (%.0f passes), repeatable (%.0f ms)" % [length, links, top, ms],
 			trails.size() > 3 and bad == 0 and length < 0.6 * links and top >= 1000.0 and same, [trails.size(), bad, length, links, top, same])
 
+# Boar rooting (WorldStand DISTURBANCE_ROOTING discs, PlantSpecies.RULE_ROOTING; make_rooting, make_floor): a fresh
+# patch holds the sods and none of the field layer, the ground round it the reverse; aged two years the field layer is
+# back and the sods gone; the patch's arrival after the tiles stand is followed.
+# Anthills and molehills (PlantGenerator.make_mounds): every species tells the grass its radius, ant hills keep their
+# east crest, molehills slump with age, wood ant nests stand in the wood near its edge only.
+func _mounds_check() -> void:
+	var meadow := PlantGenerator.make_mounds(PlantGenerator.MOUNDS_MEADOW, 1, false)
+	var wood := PlantGenerator.make_mounds(PlantGenerator.MOUNDS_WOOD, 1, false)
+	var tagged := true
+	var heights := {}
+	var ant_turns := true
+	for sp in meadow + wood:
+		var ps := sp as PlantSpecies
+		tagged = tagged and ps.has_meta("sward_mound") and float(ps.get_meta("sward_mound")) > 0.1
+		var m: Mesh = ps.meshes[0]
+		var pre: int = ps.get_meta("plant_preset", -1)
+		if pre == PlantGenerator.PRESET_ANTHILL:
+			ant_turns = ps.random_yaw
+		if pre == PlantGenerator.PRESET_MOLEHILL and ps.has_meta("mound_age"):
+			heights[float(ps.get_meta("mound_age"))] = m.get_aabb().end.y
+	var ages := heights.keys()
+	ages.sort()
+	var slumps: bool = ages.size() >= 3 and heights[ages[0]] > heights[ages[ages.size() - 1]] * 1.15
+	var nest: PlantSpecies = wood[0]
+	var edge := nest.get_rule_range(PlantSpecies.RULE_FOREST_EDGE)
+	_check("mounds: every species has its sward_mound radius, ant hills keep their crest east, molehills slump with age, wood ant nests at the wood's edge",
+			tagged and not ant_turns and slumps and edge.x < 0.0 and edge.y <= 60.0 and nest.get_rule_range(PlantSpecies.RULE_CONIFER).x >= 0.3, [tagged, ant_turns, heights, edge])
+
+func _rooting_check() -> void:
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_disturbances()
+	st.clear_browse()
+	var c := Vector2(-30, 30)
+	var herb := PlantSpecies.new()
+	herb.meshes = [BoxMesh.new()]
+	herb.spacing = 1.0
+	herb.set_rule_range(PlantSpecies.RULE_ROOTING, Vector2(0.8, 10000.0))
+	herb.set_rule_fade(PlantSpecies.RULE_ROOTING, 0.6)
+	var sod := PlantSpecies.new()
+	sod.meshes = [BoxMesh.new()]
+	sod.spacing = 0.8
+	sod.set_rule_range(PlantSpecies.RULE_ROOTING, Vector2(0.0, 0.6))
+	sod.set_rule_fade(PlantSpecies.RULE_ROOTING, 0.1)
+	var sps := [herb, sod]
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign(sps)
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	var count := func() -> Array:
+		var on := [0, 0]
+		var off := [0, 0]
+		for ch in f.get_children(true):
+			if ch is MultiMeshInstance3D and ch.multimesh:
+				var mm: MultiMesh = ch.multimesh
+				var k := -1
+				for j in sps.size():
+					if sps[j].meshes[0] == mm.mesh:
+						k = j
+				if k < 0:
+					continue
+				for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+					var q: Vector3 = (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+					var d := Vector2(q.x, q.z).distance_to(c)
+					if d < 6.0:
+						on[k] += 1
+					elif d > 12.0 and d < 25.0:
+						off[k] += 1
+		return [on, off]
+	var id := st.add_disturbance(Vector3(c.x, 0, c.y), 9.0, 5, 0.05)
+	f.populate()
+	var fresh: Array = count.call()
+	st.clear_disturbances()
+	st.add_disturbance(Vector3(c.x, 0, c.y), 9.0, 5, 2.0)
+	f.populate()
+	var old: Array = count.call()
+	f.free()
+	st.clear_disturbances()
+	_check("boar rooting: sods and no field layer on a fresh patch, the reverse round it; two years on the field layer is back and the sods gone",
+			fresh[0][0] == 0 and fresh[0][1] > 10 and fresh[1][0] > 10 and fresh[1][1] == 0 and old[0][0] > 10 and old[0][1] == 0, [fresh, old, id])
+	var fl := PlantGenerator.make_floor(PlantGenerator.FLOOR_OAK_MIXED, 1, false)
+	var gone := 0
+	var back := 0
+	var herbs := 0
+	for sp in fl:
+		if (sp as PlantSpecies).rooting_range == Vector2(-1, 10000):
+			continue
+		herbs += 1
+		var r: Vector2 = sp.rooting_range
+		if r.x > 0.2:
+			gone += 1
+		if r.x + sp.rooting_fade < 3.0:
+			back += 1
+	var rs := PlantGenerator.make_rooting(PlantGenerator.ROOTING_WOOD, 1, false)
+	_check("boar rooting: the floor's field layer leaves fresh rooting and comes back within three years; the wood set has sods and ruderals",
+			herbs > 5 and gone == herbs and back == herbs and rs.size() >= 5, [herbs, gone, back, rs.size()])
+
 func _browse_check() -> void:
 	var st: WorldStand = WorldContracts.get_stand()
 	st.clear_disturbances()
@@ -1953,6 +2059,8 @@ func _checks() -> void:
 	_beaver_check()
 	_browse_check()
 	_trails_check()
+	_rooting_check()
+	_mounds_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []
@@ -1962,6 +2070,14 @@ func _checks() -> void:
 			if lr.x > 0.0 and not (lr.x - sp.get_rule_fade(PlantSpecies.RULE_LITTER) > 0.0):
 				open_litter.append(sp.resource_name)
 	_check("litter: no fallen leaves or twigs on open ground away from crowns", open_litter.is_empty(), open_litter)
+	# Nor in full light inside a ring of crowns (a clearing sums every edge's drift): the sward takes it there.
+	var lit_open := []
+	for sp in PlantGenerator.make_floor(PlantGenerator.FLOOR_BEECH, 1, false):
+		if sp.get_rule_range(PlantSpecies.RULE_LITTER).x > 0.0:
+			var sr: Vector2 = sp.get_rule_range(PlantSpecies.RULE_SHADE)
+			if not (sr.x - sp.get_rule_fade(PlantSpecies.RULE_SHADE) > 0.0):
+				lit_open.append(sp.resource_name)
+	_check("litter: none in a clearing's full light (shade 0), as forest_floor() draws the ground", lit_open.is_empty(), lit_open)
 	# Montado and dehesa (FLOOR_MEDITERRANEAN): the dry grass layer runs through the open and under the crowns.
 	var med := PlantGenerator.make_floor(PlantGenerator.FLOOR_MEDITERRANEAN, 1, false)
 	var med_grass: PlantSpecies = null

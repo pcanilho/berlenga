@@ -599,14 +599,95 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
   Review stills are 192 frames (about 1.1 s at 174 Hz).
 - Raster and PT match (640).
 
-## Next: lake-effect snow bands (plan)
+## Storm review 7 (21 Nov 2026; docs: mushroom ring, grain, contour bands)
 
-- When cold air crosses open water: the lake at least 13 K warmer than the air at 850 hPa (Niziol et al. 1995,
-  Wea. Forecasting 10), a fetch of about 80 to 100 km or more, little turning of the wind with height.
-- Form from Laird, Kristovich and Walsh 2003 (Mon. Wea. Rev. 131), by U^2/L (wind squared over fetch): mesoscale
-  vortices below 0.02, a shore-parallel band 0.02 to 0.09, wind-parallel bands (horizontal rolls) above 0.09.
-  Roll spacing about 2.5 to 3 times the boundary layer's depth (Kristovich 1993), cloud tops 1.5 to 4 km.
-- Clouds read where each point lies downwind of water, so the sky needs a fetch field, not one value: a coarse
-  grid (64 x 64 over about 100 km round the camera, each cell the distance of open water upwind from
-  WorldWater.height_at along the wind, rebuilt when the wind turns), uploaded with the cover. Cover, type and the
-  roll stretch rise with it downwind of the shore; the weather's snowfall takes the same field (Valence's map).
+- Grain on the shelf: a render with the march start fixed showed step banding and dots, and one with the shelf's
+  detail erosion off came out smooth: even a light erosion (0.15) over a dense, thin, hard-edged wedge seen at a few
+  degrees read as grain. The shelf is laminar (Doswell 1985: the lifted inflow condenses smoothly), so it now has no
+  detail erosion, its face shaped by its tiers alone. Inside cloud the short step also stays under 0.4% of the
+  distance (100 m at 25 km), with the iteration cap raised to four times the steps.
+- Shelf: hung from the storm's base instead of a ring further out. From under the tower (0.85 core radii) it slopes
+  down to a sharp leading edge just ahead of the tower's base (1.45 radii plus 0.02 per m/s of outflow), its top
+  flush with the base, along the leading side (about 70 degrees each way), the edge bulging 0.25 radii in and out
+  along the front (outflow surges), so it is one cloud with the base and not a saucer.
+- Contour bands under the anvil (and swirls on towers): the light grid's read stepped up a level wherever the read
+  height crossed one, a jump in shading along height contours of a sloping underside. The read now also takes the
+  next level up a level's climb further along the path (one march sample across the gap) and blends by where the
+  height falls between the two, so the shading is continuous at each crossing.
+- Snow veils stay lighter than rain's curtains under the shield (three quarters of the sky's light against two
+  fifths): flakes scatter nearly everything they intercept. Their curtains keep more contrast.
+- Storm towers billow all the way down (no fair-weather wisps on their sides).
+- Bench `--fov=D` frames a whole storm.
+
+## Side view and the anvil's upwind edge (21 Nov 2026)
+
+- The side view's tower reads dark and streaky because the sun sits on the anvil's downwind side there: the anvil
+  shades the tower's sunlit face and only crests poking out of its shadow catch the sun (the light grid was ruled
+  out: the same with it off). Lit from the other side (`--wind-dir=-1,0 --storm=9600,-22000,...`) it is solid.
+- The anvil's upwind edge was a cut wall. It now bulges upwind (the overshooting outflow spreads a little against
+  the wind), deepest at mid-depth (0.35 core radii), roughened by the noise.
+
+## Cumulus base detail: sag and scud (21 Nov 2026; Paulo's pick)
+
+- Flat bases are right: a field of cumulus shares one condensation level, level to tens of metres (Stull,
+  Practical Meteorology 2017, ch. 6). What breaks them up is below.
+- Sag: each cloud's base dips under its middle, where the updraft core brings moister air that condenses a little
+  lower: up to 5% of the cloud's height and at most 150 m (BASE_SAG), a parabola across the cloud, a random
+  0.4 to 1 per cloud. The base's softness is now in the cloud's own height (sagged), not the column's.
+- Scud (cumulus fractus, pannus): ragged fragments 20 to 450 m under the bases of cumulus and decks
+  (SCUD_DEPTH) where the air under them is near saturation, from eddies and rain-cooled air (WMO International
+  Cloud Atlas; Houze, Cloud Dynamics 2014). The share is State::scud, from the weather: the relative humidity at the
+  ground (none under 82%, all by 97%) or rain falling (all by 3 mm/h). The rags are the shape noise at an eighth
+  of its scale, thresholded, raised under a cloud or a deck; their top and bottom wander with the same noise, so
+  no straight walls; the cumulus wisps erode them. Bench `--humidity=H`.
+- Raster and PT match (640).
+
+## Lake-effect snow bands
+
+- When: cold air crossing open water at least 13 K warmer than the air at 850 hPa (Niziol et al. 1995, Wea.
+  Forecasting 10), here the water against the air 1.5 km up on the 6.5 K/km lapse (from 10 to 16 K), ice-free
+  water (above about 1 C) and a wind of 5 m/s or more. Water temperature is the weather's own
+  (`get_water_temperature`, the climate a month late; `water_temperature` overrides it).
+- Fetch field (WeatherLakeEffect): 64 x 64 cells of 2 km round the camera; each is open water where WorldWater's
+  surface stands a metre or more over the terrain (puddles do not count), sampled over a few ticks. For the wind's
+  direction each cell holds the water crossed upwind (km, each km weighted by exp(-s / 60 km) for its distance s
+  back), so the cloud and snow reach 50 to 100 km inland and fade; water past the square's edge continues as the
+  edge holds (a sea). A second channel holds how near the cell lies to the largest fetch across the wind within
+  16 km: the axis a single band forms on. Rebuilt when the wind turns by 5 degrees.
+- Form, by U / L (wind over the longest fetch, m/s per km; Laird, Kristovich and Walsh 2003, MWR 131, as cited
+  by Laird and Kristovich 2004): vortices up to 0.02 (left out), a shoreline band 0.02 to 0.06, band and
+  widespread cover together to 0.11, wind-parallel rolls above. The rolls' spacing is 2.75 times the convective
+  layer's depth (Kristovich 1993), the depth 1.5 to 3.5 km with the instability. U is the 10 m wind times 1.4
+  (above the surface layer's drag).
+- Effect: cover rises toward 0.95 and the type toward cumulus congestus along the bands (cover_type_at and
+  wc_cover_type, so shadows, the cells and the sky agree); the weather's cells add 4 mm/h of water at full
+  strength (2 to 8 cm of snow an hour), so get_snowfall_at, wet ground and snow cover follow. The sky draws the
+  falling snow from afar as veils under the band (march_lake_snow: 16 steps from 1.5 to 30 km, the storms'
+  snow visibility, Rasmussen et al. 1999), trailing downwind as the flakes fall; near the camera the falling
+  snow's particles draw it.
+- Bench: `--view=lake_effect` (a 30 km by 200 km lake, 6 C water, -8 C air, wind down its length, camera 14 km
+  aside of the band); `--test=clouds` checks the band on the axis and none aside, snowfall under it, the cover,
+  no band with the water under 10 K over the air aloft, and rolls with the wind across the lake.
+
+## Lenticular plates and iridescence
+
+- Technique: Altocumulus lenticularis duplicatus (pile of plates). Each plate is a moist layer lifted
+  over the lee wave crest; dry layers between them stay clear. Implemented as vertical gaps every
+  400 m (offset by 4 km noise) inside the wave layer, faded in by a 9 km stack mask so some lenses
+  stay single. Applied in `wave_plate_gaps` (CPU) and `wc_wave_sigma` (GLSL), so shadows and the
+  view march agree.
+- Iridescence: lens edges hold young, small, uniform droplets, which diffract sunlight into pastel
+  bands near the sun (Gedzelman and Lock 2003, "Simulating coronas in color"). Airy pattern
+  [2 J1(v)/v]^2 per RGB wavelength (0.65/0.55/0.45 um), luminance-normalised, droplet radius 1 um
+  at the edge to 6 um inside. Only within about 35 degrees of the sun, only on thin parts of the
+  plate (`cloud_iridescence`, default 0.6). Raster and PT share the sky shader.
+- Docs review (21 Nov): plate ends stepped and plates dotted. The lens march took four fixed samples per
+  coarse step (125 m) and lit each coarse step once, so a plate's end and the 100 m gaps fell between
+  samples. Now eight samples per step, jittered per revisit (the 12-revisit reprojection averages them), and
+  the sun's light read at each sample. The tint covers both forward lobes and its difference from white is
+  doubled (the lens's depth along a ray mixes droplet sizes and greys it); droplets 1.5 to 5 um; default
+  0.8. PT matches raster at 192 frames; at 30 frames each pixel has had two revisits and shows the dots.
+- A hard round cut in the lens near its end (in the 1920 shots, older than the plates): the lens march stopped
+  8 km into the slab, so a lens running on beyond that ended on the sphere where the cap met it (and lenses
+  further along a ray were never drawn). It now runs up to 16 km in a fixed 32 coarse steps (a count that varied
+  between pixels stepped the plates' gaps), each step tested on the largest lift at its middle and both ends.

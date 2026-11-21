@@ -396,7 +396,14 @@ private:
 	uint64_t trails_seen = 0;
 	uint64_t trails_follow_usec = 0;
 	bool _read_world_trails();
+	// Mounds (PlantGenerator.make_mounds: ant hills, molehills, wood ant nests) placed by the undergrowth or canopy
+	// field: their species' "sward_mound" radius keeps blades from under them (the mound carries its own turf).
+	PackedVector4Array mound_obstacles;
+	uint64_t mounds_follow_usec = 0;
+	bool _follow_mounds();
+	void _stale_tiles_over(const PackedVector4Array &p_discs);
 	bool graze_any = false;
+	bool graze_published = false; // The ground field handed grass_graze_map to the ground shader.
 	void _read_graze(TerrainDataMap3D *p_map);
 	void _publish_graze();
 	struct ShellTile {
