@@ -4583,6 +4583,20 @@ func _build_cover() -> void:
 	if args.get("floor", "") == "oak" and floor_sp.size() > 1:
 		floor_sp[1].set_meta("bench_bracken", true) # FLOOR_OAK_MIXED: bramble, bracken, ... (the --bracken view's plant)
 	b.species = floor_sp.slice(0, 3) + _wetland_species() + meadow_sp + floor_sp.slice(3)
+	if args.has("mounds") and ClassDB.class_has_method("PlantGenerator", "make_mounds"):
+		# --mounds=meadow|wood|both: ant hills and molehills in the meadows, wood ant nests at conifer edges
+		# (PlantGenerator.make_mounds, vegetation e90904e7); called by name so older binaries still parse.
+		var mk := String(args["mounds"]) if String(args["mounds"]) != "" else "both"
+		var msets := []
+		if mk == "meadow" or mk == "both":
+			msets.append(0) # MOUNDS_MEADOW
+		if mk == "wood" or mk == "both":
+			msets.append(1) # MOUNDS_WOOD
+		for ms in msets:
+			var mounds: Array = ClassDB.class_call_static("PlantGenerator", "make_mounds", ms, 3, true, season)
+			for msp in mounds:
+				b.species.append(msp)
+			_log("mounds set %d: %d species" % [ms, mounds.size()])
 	if gen.dunes_enabled and args.get("dune-plants", "1") != "0":
 		# The dunes' own plants (marram, lyme grass, sea holly), placed by distance to the water on the sand.
 		for st in [PlantGenerator.DUNES_EMBRYO, PlantGenerator.DUNES_MOBILE, PlantGenerator.DUNES_FIXED]:
