@@ -3838,12 +3838,11 @@ grown on demand (lazy generation, as the near leaves of 8c).
 
 ## Next-round options (card 20 Nov night)
 
-1. **Ice storms.** Freezing rain glazes every twig: radial ice of 10-25 mm on the 1998 Quebec storm's worst ground,
-   many times the twigs' own weight. Birches arch over to the ground and stay bent for years, crowns lose their tops
-   and limbs, conifers with stiff limbs shed less (Irland 2000, ice storms and forest impacts; Proulx and Greene 2001;
-   Lemon 1961, species susceptibility). Built as the snow crowns were: a glaze load from the weather's freezing rain,
-   droop and breaks in TreeWind3D, clear ice on the bark and needles (Transmission on under PT), broken tops and
-   arched birch as stand variants afterwards.
+1. **Ice storms.** Freezing rain glazes every twig in clear ice, which can multiply a branch's weight ten to a hundred
+   times (Hauer, Werner and Dawson 2008). Birches bend over, spreading broadleaf crowns lose limbs and tops, conical
+   conifers shed most of it. Built as the snow crowns were: a glaze load from the weather's freezing rain, droop and
+   breaks in TreeWind3D, clear ice on the bark and needles (Transmission on under PT), broken tops and bent stems as
+   stand variants afterwards. Research below.
 2. **Missing broadleaves.** Aspen and poplar (aspen groves are one clone from root suckers, so a whole patch shares
    its bark, form and autumn colour; Mitton and Grant 1996), wild cherry (banded, peeling, shiny red-brown bark),
    hornbeam (fluted grey stems, often coppiced or hedged) and sweet chestnut (spiral-furrowed bark, old coppice
@@ -3852,3 +3851,42 @@ grown on demand (lazy generation, as the near leaves of 8c).
    draped over the faces, crowns thin and half dead (Larson, Matthes and Kelly 2000, Cliff Ecology: the Niagara
    Escarpment's 1,000-year-old white cedars). Builds on root_stone's rock link: roots that follow a rock's cracks, and
    placement on steep, rocky ground from the terrain map.
+
+### Research for the likely picks (21 Nov, card pending)
+
+**Ice storms.**
+- Load: an ice storm is at least 6 mm (1/4 in) of glaze (US National Weather Service). Stem ice runs from a trace to
+  25 mm, up to 20 cm in extreme cases; glaze multiplies branch weight 10-100 times (Hauer, Werner and Dawson 2008, "Why
+  trees fail in ice storms", ISA). 6-12 mm breaks small branches and weak limbs; 12-25 mm and more breaks larger ones
+  (Hauer, Dawson and Werner 2006, *Trees and Ice Storms*, 2nd ed.).
+- Damage in order of load: bent birches, broken branches (the most common), split forks of twin stems, stem snaps,
+  uprooting (Smith, Shortle and Dudzik, USDA FS NA-TP-02-01; Hauer et al. 2006 and 2008).
+- Species: susceptible are poplars and aspen, soft maples, beech, willow, river birch and trees at clearing edges;
+  paper and yellow birch are intermediate; white oaks, walnut, trees inside a stand and conical conifers (spruce, fir,
+  hemlock) resist (Hauer et al. 2006 Table 2; NA-TP-02-01). Birches and arborvitae bend with the ice and often stand up
+  again after the melt; a bend low on the stem may leave internal cracks (Hauer et al. 2006).
+- Afterwards: snapped birch stems decay in columns several feet long, maples and ash wall it off within a foot
+  (NA-TP-02-01): fits the existing decay classes and broken-top variants.
+- Plan: WorldSnow-style contract for glaze (mm of radial ice per point, from the weather's freezing rain; the snow
+  thread owns sleet, so the provider is weather or snow, not trees). TreeWind3D reads it like canopy_load_at: droop by
+  limb stiffness, breaks past a species threshold (the table above), bent birch stems that recover after the melt.
+  Mesh: a clear ice sleeve on twigs and needles in the shader (thickness from the contract, refraction, icicles at
+  twig tips as small cones on the near trees only). Benches: raster and PT crops of an iced birch and spruce.
+
+**Missing broadleaves (aspen first).**
+- Aspen spreads as clones from root suckers: from a few stems to thousands (Pando in Utah, about 43 ha). A clone shares
+  bark colour (white, tan or green-tinged), branch angle, leaf size, bark flecking, leaf-out date and autumn colour;
+  neighbouring clones differ, one bare while the next is still green (Mitton, CU Boulder 2019; Mitton and Grant 1996).
+- Plan: a clone id per patch in VegetationField3D (hashed cells) picks one bark tint, form and season offset for every
+  stem in it; quaking aspen and black poplar presets; wild cherry, hornbeam and sweet chestnut after, which are also
+  mistletoe and broom hosts (5ay).
+
+**Trees on cliffs.**
+- On the Niagara Escarpment, cliff cedars (Thuja occidentalis) stand at about 1,000 stems a hectare of rock face, rarely
+  over half a metre across, and are often centuries old (one small ledge tree near 400 rings; the oldest over 1,000
+  years). Slow growth comes from roots confined in crevices: water or fertiliser barely changed it. Crowns carry much
+  dead wood among live, from sectored water paths up the stem (Larson, Matthes and Kelly, American Scientist 1999;
+  *Cliff Ecology* 2000). Juniper and yew do the same on European cliffs.
+- Plan: a cliff form (any conifer, plus yew and juniper-like shrubs): short, thick, leaning out from the face, part
+  dead stem strips, roots that follow a rock's cracks (root_stone's rock link), placed on steep rocky ground from the
+  terrain map.
