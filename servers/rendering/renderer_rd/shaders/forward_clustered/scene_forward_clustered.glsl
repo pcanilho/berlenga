@@ -1404,7 +1404,16 @@ float directional_volume_shadow(uint p_index, vec3 p_vertex) {
 	// optical depth. A dark or isotropic medium keeps Beer's law.
 	float w = uintBitsToFloat(directional_lights.data[p_index].pad.x);
 	float g = uintBitsToFloat(directional_lights.data[p_index].pad.y);
-	return exp(-optical_depth * (1.0 - w * g * g));
+	float direct = exp(-optical_depth * (1.0 - w * g * g));
+	// A bright medium (snow powder, steam, white smoke) also lets through the light it scatters many times: the
+	// two-stream total transmittance of a slab (direct and diffuse; Meador and Weaver 1980, with the similarity
+	// relations), exp(-kappa tau_a') / (1 + 3/4 tau_s'), kappa^2 = 3 (1 + tau_s' / tau_a'), tau_s' = (1 - g) w tau
+	// and tau_a' = (1 - w) tau. Beer's law alone left the ground under a white cloud as dark as under black smoke,
+	// where the path tracer's is lit through it.
+	float tau_s = (1.0 - g) * w * optical_depth;
+	float tau_a = (1.0 - w) * optical_depth;
+	float total = exp(-sqrt(3.0 * tau_a * (tau_a + tau_s))) / (1.0 + 0.75 * tau_s);
+	return max(direct, total);
 }
 
 void fragment_shader(in SceneData scene_data) {

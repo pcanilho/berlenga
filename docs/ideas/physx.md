@@ -2436,6 +2436,24 @@ weather_wind couples the wind's velocity into the whole grid, so every block the
 allocated its neighbours. The backend now asks a fast block for half the smoke threshold: the leading edge of a fast
 plume still gets its blocks ahead of the smoke, and empty windy air is freed.
 
+### The ground under bright gas (21 Nov)
+
+Snow's powder cloud drew a dark fringe along its lower edge in raster where the path tracer's ground stays bright:
+the gas's own shadow on the snow, seen past the cloud's thin base. The volume shadow the opaque pass reads passed
+the direct beam only (Beer's law with the delta-Eddington forward peak taken out), so the ground under a white
+cloud was as dark as under black smoke of the same depth. Under path tracing, a bright medium also passes the light
+it scatters many times. The shadow now takes the larger of the direct beam and the two-stream total transmittance
+of a slab (direct and diffuse; Meador and Weaver 1980 with the similarity relations, the same form as the gas's
+diffuse transmission): exp(-sqrt(3 tau_a' (tau_a' + tau_s'))) / (1 + 3/4 tau_s'), tau_s' = (1 - g) w tau,
+tau_a' = (1 - w) tau. Dark smoke keeps Beer's law.
+
+White block test against its same-run path-traced frame, rows through its shadow: before 120, 108, 111, 117, 125;
+after 123, 117, 122, 128, 137; path tracer 135, 127, 127, 128, 133. The other test puffs moved closer too (sky only
+-4.0% to -3.0%, albedo 0.99 -3.3% to -1.9%), from the brighter ground under them. On snow's powder bench the
+fringe went from 176 to 178 at its darkest row and 181 to 187 below it (path tracer 191, 196): a thin line remains
+at the very edge, and the path tracer's ground beside the cloud is lit a few levels brighter still by the cloud's
+own scattered light, which raster does not bounce onto the scene.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
