@@ -7069,6 +7069,22 @@ func _lens_cam() -> void:
 				hits += " %.0f deg: %.1f km at %.0f m;" % [el, s / 1000.0, (cp + ray * s).y]
 				break
 			s += 250.0
+	# Top-down: the wave cloud's optical depth over 40 km round the crest, the densest column and the waves' height.
+	var slab: Vector4 = weather.call("get_wave_cloud_slab") if weather.has_method("get_wave_cloud_slab") else Vector4()
+	var bt := 0.0
+	var bq := Vector3()
+	var eta := 0.0
+	for j in 21:
+		for i in 21:
+			var q := Vector3(top.x - 20000.0 + i * 2000.0, 0.0, top.z - 20000.0 + j * 2000.0)
+			eta = maxf(eta, absf(float(weather.call("get_mountain_wave_at", Vector3(q.x, 4500.0, q.z)))))
+			var tau := 0.0
+			for y in range(2500, 9000, 500):
+				tau += float(weather.call("get_wave_cloud_density_at", Vector3(q.x, y, q.z))) * 500.0
+			if tau > bt:
+				bt = tau
+				bq = q
+	_log("lens cam: wave slabs %s, max wave %.0f m, densest column tau %.2f at %s (%.1f km from the camera)" % [str(slab), eta, bt, str(bq.round()), Vector2(bq.x - cp.x, bq.z - cp.z).length() / 1000.0])
 	_log("lens cam: crest %s (%.0f m), cam %s, wind %s %.1f m/s, sun elevation %.1f deg, first wave cloud:%s" % [str(top.round()), top.y, str(cp.round()), str(weather.wind_direction), weather.wind_speed, rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0))), hits if hits != "" else " none in 20 km"])
 
 
