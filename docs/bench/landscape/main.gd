@@ -6829,10 +6829,10 @@ func _powder_avalanche() -> void:
 	_log("powder avalanche: %d natural releases before loading" % (int(av.get_release_count()) if av.has_method("get_release_count") else -1))
 	# A storm slab on an older bonded pack (as on the snow bench): it breaks away whole.
 	# world=true (snow 6f0f0a09): the slab everywhere, not only on the near square.
-	snow.add_snow(90.0, 150.0, true)
+	snow.call("add_snow", 90.0, 150.0, true)
 	snow.advance(8.0 * 24.0 * 3600.0)
 	await get_tree().physics_frame
-	snow.add_snow(90.0, 90.0, true)
+	snow.call("add_snow", 90.0, 90.0, true)
 	await get_tree().physics_frame
 	var wr: Rect2 = gen.get_world_rect()
 	var stp := float(args.get("av-step", "40"))
