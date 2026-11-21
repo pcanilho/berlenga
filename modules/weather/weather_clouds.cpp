@@ -1039,7 +1039,7 @@ float storm_body_at(const State &p_state, const Vector3 &p_pos, float p_base, fl
 		// whole tower.
 		const float a_s = a / cold;
 		// The anvil.
-		if (a > -1.6f && a_s < 7.5f) {
+		if (a > -2.0f && a_s < 7.5f) {
 			const float frac = 0.97f - (0.17f - 0.1f * smoothstep(0.0f, 6.0f, a_s));
 			float sag = 0.0f;
 			const float w = 1.6f + 0.4f * MAX(a_s + 1.2f, 0.0f); // wider than the tower's top (up to 1.6 radii)
@@ -1051,7 +1051,11 @@ float storm_body_at(const State &p_state, const Vector3 &p_pos, float p_base, fl
 			const float hb = p_base + frac * hgt - sag;
 			const float ht = p_base + 0.97f * hgt;
 			if (p_pos.y > hb && p_pos.y < ht) {
-				const float horiz = (1.0f - smoothstep(0.85f, 1.0f, Math::abs(c) / w + 0.3f * (p_noise - 0.5f))) * smoothstep(-1.55f, -1.4f, a) * (1.0f - smoothstep(5.0f, 7.0f, a_s + 2.0f * (p_noise - 0.5f)));
+				// The upwind edge rounded (the overshooting outflow spreads a little against the wind too, a blunt bulge
+				// deepest at mid-depth, not a cut wall), roughened by the noise.
+				const float hv = (p_pos.y - hb) / MAX(ht - hb, 1.0f);
+				const float up_edge = -1.4f - 0.35f * Math::sqrt(MAX(1.0f - (2.0f * hv - 1.0f) * (2.0f * hv - 1.0f), 0.0f)) - 0.25f * (p_noise - 0.5f);
+				const float horiz = (1.0f - smoothstep(0.85f, 1.0f, Math::abs(c) / w + 0.3f * (p_noise - 0.5f))) * smoothstep(up_edge - 0.12f, up_edge, a) * (1.0f - smoothstep(5.0f, 7.0f, a_s + 2.0f * (p_noise - 0.5f)));
 				const float vert = smoothstep(hb, hb + 30.0f, p_pos.y) * (1.0f - smoothstep(ht - 60.0f, ht, p_pos.y));
 				// The anvil is ice: optically about 10 deep over its kilometre or two near the core (extinction near
 				// 0.01 per metre) and thinning to 1 or 2 far downwind (Lilly 1988; Garrett 2005), a tenth of the
@@ -1466,7 +1470,7 @@ float wc_storm_body(vec3 p, float b, float n, float p_step, out float r_near, ou
 			e = wc_storm_tower(d - dir * (s.z * 0.3 * hh * hh), p.y - b, s.z, hgt, n, i);
 		}
 		float a_s = a / cold;
-		if (a > -1.6 && a_s < 7.5) {
+		if (a > -2.0 && a_s < 7.5) {
 			float frac = 0.97 - (0.17 - 0.1 * smoothstep(0.0, 6.0, a_s));
 			float w = 1.6 + 0.4 * max(a_s + 1.2, 0.0);
 			float overhang = smoothstep(2.0, 3.0, ax) * (1.0 - 0.7 * smoothstep(0.6, 0.95, cloud_air.y)) * (1.0 - smoothstep(0.5, 0.75, abs(c) / w));
@@ -1474,7 +1478,9 @@ float wc_storm_body(vec3 p, float b, float n, float p_step, out float r_near, ou
 			float hb = b + frac * hgt - sag;
 			float ht = b + 0.97 * hgt;
 			if (p.y > hb && p.y < ht) {
-				float horiz = (1.0 - smoothstep(0.85, 1.0, abs(c) / w + 0.3 * (n - 0.5))) * smoothstep(-1.55, -1.4, a) * (1.0 - smoothstep(5.0, 7.0, a_s + 2.0 * (n - 0.5)));
+				float hv = (p.y - hb) / max(ht - hb, 1.0);
+				float up_edge = -1.4 - 0.35 * sqrt(max(1.0 - (2.0 * hv - 1.0) * (2.0 * hv - 1.0), 0.0)) - 0.25 * (n - 0.5); // rounded (storm_body_at() on the CPU)
+				float horiz = (1.0 - smoothstep(0.85, 1.0, abs(c) / w + 0.3 * (n - 0.5))) * smoothstep(up_edge - 0.12, up_edge, a) * (1.0 - smoothstep(5.0, 7.0, a_s + 2.0 * (n - 0.5)));
 				float vert = smoothstep(hb, hb + 30.0, p.y) * (1.0 - smoothstep(ht - 60.0, ht, p.y));
 				float ea = 0.55 * horiz * vert; // ice: thin by the density (storm_body_at() on the CPU)
 				if (ea > e) {

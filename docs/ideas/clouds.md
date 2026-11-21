@@ -619,6 +619,14 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
 - Storm towers billow all the way down (no fair-weather wisps on their sides).
 - Bench `--fov=D` frames a whole storm.
 
+## Side view and the anvil's upwind edge (21 Nov 2026)
+
+- The side view's tower reads dark and streaky because the sun sits on the anvil's downwind side there: the anvil
+  shades the tower's sunlit face and only crests poking out of its shadow catch the sun (the light grid was ruled
+  out: the same with it off). Lit from the other side (`--wind-dir=-1,0 --storm=9600,-22000,...`) it is solid.
+- The anvil's upwind edge was a cut wall. It now bulges upwind (the overshooting outflow spreads a little against
+  the wind), deepest at mid-depth (0.35 core radii), roughened by the noise.
+
 ## Next: lake-effect snow bands (plan)
 
 - When cold air crosses open water: the lake at least 13 K warmer than the air at 850 hPa (Niziol et al. 1995,
