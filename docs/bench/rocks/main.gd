@@ -61,6 +61,9 @@ extends Node3D
 #   --only-layer          with --world: only the view's layer is placed
 #   --no-far-thinning     with --world: RockField3D.far_thinning off (each layer whole to its radius, then a cut)
 #   --save-far-cover=p    with --world: save the far cover map (32 m texels to 4 km) and count its stony texels
+#   --trail[=passes]      with --world: a game trail across the spot, 1.5 m before it (WorldStand.set_trails, 0.8 m wide,
+#                         400 passes a year); --rooting[=years] a boar rooting 2 m behind it, that old; --no-wear ignores both
+#   --streaming           with --world: RockField3D streams after the build, so far thinning runs as in play
 #   --focus=camera        with --world: RockField3D follows the camera instead of the spot (far thinning as a player sees it)
 #   --no-far-widen        with --world: thinned cells draw their survivors at their own size (RockField3D.far_widen off)
 #   --no-far              with --world: RockField3D.far_radius 0 (no big stones or landmarks past each layer's radius)
@@ -705,7 +708,21 @@ func _world() -> void:
 			rocks.ground_detail_threads = not args.has("detail-sync")
 		rocks.cell_threads = not args.has("cell-sync")
 		var tb := Time.get_ticks_msec()
+		# --trail[=passes]: a game trail (0.8 m, 400 passes a year) across the spot along x, 1.5 m before it;
+		# --rooting[=years]: a boar rooting 1.5 m across, 2 m behind the spot, that age (0: fresh). WorldStand.
+		if args.has("trail"):
+			var passes := 400.0 if args["trail"] == "1" else float(args["trail"])
+			WorldContracts.get_stand().set_trails([{"points": PackedVector2Array([Vector2(spot.x - 40, spot.z - 1.5), Vector2(spot.x + 40, spot.z - 1.5)]), "width": 0.8, "passes": passes, "kind": "game_trail"}])
+		if args.has("rooting"):
+			var age := 0.0 if args["rooting"] == "1" else float(args["rooting"])
+			WorldContracts.get_stand().add_disturbance(spot + Vector3(0, 0, 2), 1.5, WorldStand.DISTURBANCE_ROOTING, age)
+		rocks.ground_wear = not args.has("no-wear")
+		if args.has("trail") or args.has("rooting"):
+			var stw: WorldStand = WorldContracts.get_stand()
+			print("worn ground: trail %s at the trail's centre, rooting age %s at the rooting's" % [stw.trail_at(Vector3(spot.x, 0, spot.z - 1.5)), stw.rooting_age_at(spot + Vector3(0, 0, 2))])
 		var built := rocks.build_area(Rect2(spot.x - 160, spot.z - 160, 320, 320))
+		if args.has("streaming"):
+			rocks.streaming = true # --streaming: the field streams and thins every frame as in play (stills draw every cell whole)
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
 		if rocks.far_radius > 0.0:
 			# The far tier: big stones and landmarks past each layer's radius, to far_radius (streaming is off here).

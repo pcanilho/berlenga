@@ -806,3 +806,43 @@ to 4 km.
 rock cover map to 4 km that morning (4ce85981); this thread added widened survivors, thinning in stills and river
 beds in the far map (docs/ideas/rocks.md, "Far rocks", added 20 Nov). Scree's far look was already the terrain's own
 parallax blocks past the scree radius.
+
+## Game trails and boar rooting in the stones (20 Nov)
+
+Contracts on main (371c030c): `WorldStand.trail_at(pos)` returns (passes per year, tread share),
+`get_trails()` lists the lines, `rooting_age_at(pos)` returns years since rooting or -1, and
+`stand_changed(rect)` says where to rebuild. Vegetation already flattens litter and turf on the
+tread (547664ee); terrain owns the bare-soil colour. Ground detail owns the stones.
+
+**What the field studies say.**
+- Trail wear (Marion and Leung, USGS trail-degradation reviews; Leung and Marion 1996, "Trail
+  degradation as influenced by environmental factors"): traffic first removes litter and the fines,
+  then the soil itself. What is left on the tread is an **armour of coarse, angular stones and
+  exposed roots**, sitting proud of the surface instead of sunk in. Fines and small gravel are
+  kicked and washed **to the edges**, where a low berm of loose material builds up. Wear rises
+  fast for the first few hundred passes per year and then levels off.
+- Wild boar rooting (Forests 13(8) 1234, 2022; Eur. J. Wildl. Res., Springer s10344-025-01994-5):
+  rooting turns the top 5 to 15 cm in patches, leaving **loose clods and upturned stones** lying on
+  top at random angles, with fines on top of them. The surface settles and grasses back over in
+  one to two years; stones stay loose for the first season.
+
+**Technique.** Placement-time modulation of the existing detail sources (the same approach as the
+river-bed and scree layers): no new pass, no new shader. Inputs are sampled on the main thread into a
+0.25 m grid per detail job (the stand calls are not thread safe, and a deer trail's tread is narrower
+than the 1 m sub-cells the other sources use), read by `_place` on the worker where each stone falls.
+- Wear `w = tread * (1 - exp(-passes / 300))`; shoulders `4 tread (1 - tread)` of that.
+- Tread: an armour source of angular stones (scree shapes, local lithology), the coarse end of each
+  class, sunk little and tilted up to 25°. Cover at full wear: 15 % pebbles, 10 % gravel, 5 % fines,
+  times the soil's stoniness (0.5 to 1 with the rock exposure). Existing gravel and fines thin by
+  `(1 - 0.8 w)`; the coarsest class stays.
+- Shoulders: the kicked fine end of each class, 1 % / 8 % / 12 % cover.
+- Rooting `r = 1 - age / 2` for ages 0 to 2: stones of any size turned up loose, tilted up to 60°,
+  barely sunk: 6 % / 5 % / 6 % cover at r = 1, fading as the patch settles.
+- Worn squares are never cut into shared tiles (their grains stay single), and the shared tiles are
+  cut from unworn ground, so a trail never repeats into a field.
+- `stand_changed` rebuilds only the detail cells inside the changed rectangle (`ground_wear`, on).
+- Turned soil clods are left to GroundClods3D (the clay lumps belong to the ground surface, not the
+  stones); it can read `rooting_age_at` the same way.
+
+Bench: `--trail[=passes] --rooting[=years]` (rocks bench), `--no-wear` for the before frame. Stats
+`wear_armour`, `wear_shoulder`, `wear_rooting` in `get_ground_detail_tile_stats()`.
