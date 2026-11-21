@@ -6828,10 +6828,11 @@ func _powder_avalanche() -> void:
 	av.natural_release = false
 	_log("powder avalanche: %d natural releases before loading" % (int(av.get_release_count()) if av.has_method("get_release_count") else -1))
 	# A storm slab on an older bonded pack (as on the snow bench): it breaks away whole.
-	snow.add_snow(90.0, 150.0)
+	# world=true (snow 6f0f0a09): the slab everywhere, not only on the near square.
+	snow.add_snow(90.0, 150.0, true)
 	snow.advance(8.0 * 24.0 * 3600.0)
 	await get_tree().physics_frame
-	snow.add_snow(90.0, 90.0)
+	snow.add_snow(90.0, 90.0, true)
 	await get_tree().physics_frame
 	var wr: Rect2 = gen.get_world_rect()
 	var stp := float(args.get("av-step", "40"))
@@ -6895,6 +6896,17 @@ func _powder_avalanche() -> void:
 	if args.has("av-probe"):
 		get_tree().quit()
 		return
+	# Avalanches run on the snow's near square only: move it onto the release (it follows this marker).
+	var focus := Node3D.new()
+	focus.name = "AvalancheFocus"
+	add_child(focus)
+	focus.global_position = best
+	snow.follow_target = snow.get_path_to(focus)
+	var fw := 0
+	while fw < 600 and not (snow.get_map_rect() as Rect2).has_point(Vector2(best.x, best.z)):
+		await get_tree().physics_frame
+		fw += 1
+	_log("powder avalanche: near square %s over the release after %d frames, %.2f m snow there" % [str(snow.get_map_rect()), fw, snow.get_depth_at(best)])
 	Engine.max_physics_steps_per_frame = 1 # Flow steps once a frame: one tick a frame keeps the gas with the slide
 	var pflow: Node = av.get_powder_cloud().get_flow()
 	if pflow:
