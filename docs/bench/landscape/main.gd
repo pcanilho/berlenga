@@ -865,6 +865,8 @@ func _ready() -> void:
 		await _slip_walk()
 	if args.has("powder-avalanche") and snow != null:
 		await _powder_avalanche()
+	if args.has("suncups") and snow != null:
+		await _suncups()
 	if (args.has("face-sun") or args.has("face-away")) and sun != null:
 		# --face-sun=PITCH: turn the camera to the sun's azimuth, PITCH degrees below the horizon (godray shots).
 		var cam5: Camera3D = get_viewport().get_camera_3d()
@@ -6858,6 +6860,54 @@ func _build_farm_track() -> void:
 # head's height and the cloud trailing back up the track both show, the release zone in view. The face: the steepest
 # 35-45 degree cell on a --av-step (40) m grid with --av-min-snow (0.3) m of snow on it, scored for side light
 # (the fall line square to the sun). --av-probe: log the pick and quit. --av-dist (260) m camera distance.
+func _suncups() -> void:
+	# --suncups[=M]: a spring snowfield with suncups M (0.25) m deep (SnowCover3D.add_suncups, snow 89d02105), drawn by a
+	# SnowSurface3D round the camera. The camera stands 1.6 m over the deepest gentle (under --cups-max-deg, 15) snow
+	# at least --cups-min-snow (0.5) m deep, looking square to the sun so the low light rakes the cups.
+	var mm := float(args["suncups"]) if String(args["suncups"]) != "" else 0.25
+	var wr: Rect2 = gen.get_world_rect()
+	var stp := 40.0
+	var best := Vector3.INF
+	var best_d := 0.0
+	var xx := wr.position.x + 400.0
+	while xx < wr.end.x - 400.0:
+		var zz := wr.position.y + 400.0
+		while zz < wr.end.y - 400.0:
+			var p := Vector3(xx, 0, zz)
+			var ang := rad_to_deg(atan(_slip_grad(p).length()))
+			var d: float = snow.get_depth_at(p)
+			if ang < float(args.get("cups-max-deg", "15")) and d >= float(args.get("cups-min-snow", "0.5")) and d > best_d:
+				best_d = d
+				best = Vector3(xx, gen.get_height(p), zz)
+			zz += stp
+		xx += stp
+	if best == Vector3.INF:
+		_log("suncups: no gentle deep snow")
+		return
+	var to_sun := sun.global_basis.z
+	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
+	var look_dir := sf.rotated(Vector3.UP, deg_to_rad(float(args.get("cups-yaw", "80"))))
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.global_position = best + Vector3.UP * (1.6 + best_d)
+	c3.look_at(c3.global_position + look_dir * 6.0 - Vector3.UP * (1.6 + 0.4))
+	var focus := Node3D.new()
+	focus.name = "CupsFocus"
+	add_child(focus)
+	focus.global_position = best
+	snow.follow_target = snow.get_path_to(focus)
+	for i in 30:
+		await get_tree().physics_frame
+	var surf: Node3D = ClassDB.instantiate("SnowSurface3D")
+	surf.name = "SnowSurface"
+	add_child(surf)
+	surf.set("snow_cover", surf.get_path_to(snow))
+	surf.set("follow_target", surf.get_path_to(c3))
+	snow.call("add_suncups", mm)
+	for i in 10:
+		await get_tree().process_frame
+	_log("suncups: %.2f m cups on %.2f m snow at %s, cam %s, sun %.1f deg" % [mm, best_d, str(best.round()), str(c3.global_position.round()), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
+
+
 func _powder_avalanche() -> void:
 	var av = snow.get_avalanches()
 	if av == null:
