@@ -208,9 +208,22 @@ float rt_volume_free_flight(vec3 p_origin, vec3 p_dir, float p_t_max, inout uint
 	// emission at the scattering point instead made every sample all or nothing where smoke hangs in front
 	// of a flame (speckle); both estimate the same integral (Novak et al. 2018).
 	bool emissive = rt_volume.emission.z > 0.5;
+	float base_majorant = rt_volume.medium.x * rt_volume.medium.w;
 	float tr = 1.0;
 	float hit = -1.0;
-	for (uint i = 0u; i < 512u; i++) {
+	for (uint i = 0u; i < 1024u; i++) {
+		// The emission integral's budget spent (512 collisions at the glow majorant cover only 32 m of allocated
+		// blocks), or the gas behind too dark to add to it: drop the emission and its dense majorant, and let delta
+		// tracking finish the segment alone at the gas's own majorant (any bound above the extinction stays
+		// unbiased; the exponential steps are memoryless). Before, the path left the gas without a collision here,
+		// and the camera saw glow-enabled smoke about three times thinner than its shadow rays and raster did.
+		if (emissive && (i >= 512u || tr < 0.002)) {
+			emissive = false;
+			majorant = base_majorant;
+		}
+		if (!emissive && hit >= 0.0) {
+			return hit;
+		}
 		t -= log(max(1.0 - rand(rng_state), 1e-7)) / majorant;
 		if (t >= t1) {
 			return hit;
@@ -226,7 +239,9 @@ float rt_volume_free_flight(vec3 p_origin, vec3 p_dir, float p_t_max, inout uint
 		// Emission at every collision, real or null: the emission coefficient / majorant estimates its
 		// integral along the ray. The gas emits as much as it absorbs (Kirchhoff): the heat ramp's radiance
 		// times its extinction, so a thick hot cloud glows at the ramp's color and clear hot air does not glow.
-		r_emitted += rt_volume_emitted(ts.x) * (tr * sigma_t / majorant);
+		if (emissive) {
+			r_emitted += rt_volume_emitted(ts.x) * (tr * sigma_t / majorant);
+		}
 		if (hit < 0.0 && rand(rng_state) * majorant < sigma_t) {
 			hit = t;
 			if (!emissive) {
@@ -235,9 +250,6 @@ float rt_volume_free_flight(vec3 p_origin, vec3 p_dir, float p_t_max, inout uint
 		}
 		if (emissive) {
 			tr *= 1.0 - sigma_t / majorant;
-			if (tr < 0.002) {
-				return hit;
-			}
 		}
 	}
 	return hit;
