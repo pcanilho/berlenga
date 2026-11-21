@@ -807,8 +807,10 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 	if (t0 > far || t1 <= t0) {
 		return vec4(0.0, 0.0, 0.0, 1.0);
 	}
-	t1 = min(t1, min(t0 + 8000.0, far));
-	const int n = 16;
+	// Up to 16 km through the slab (an 8 km cap hid lenses further along the ray), in a fixed number of coarse steps
+	// (a count varying from pixel to pixel stepped the plates' gaps).
+	t1 = min(t1, min(t0 + 16000.0, far));
+	const int n = 32;
 	float ds = (t1 - t0) / float(n);
 	float cos_theta = dot(rd, sun_dir);
 	float phase0 = cloud_phase(cos_theta, 1.0);
@@ -826,12 +828,18 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 		if (pc.y < y0 - 0.5 * ds || pc.y > y1 + 0.5 * ds) {
 			continue;
 		}
-		float eta_c = wc_wave_eta(pc);
-		if (eta_c <= -150.0) {
+		// The largest lift over the whole step (its middle and both ends): from the middle alone a steep plate's end,
+		// lifted past saturation at an end of the step but not at its middle, was skipped.
+		float ta = t0 + float(i) * ds;
+		float tb = ta + ds;
+		vec3 pa = vec3(cam.x + rd.x * ta, length(ro + rd * ta) - PLANET_RADIUS, cam.z + rd.z * ta);
+		vec3 pb = vec3(cam.x + rd.x * tb, length(ro + rd * tb) - PLANET_RADIUS, cam.z + rd.z * tb);
+		float eta_c = max(wc_wave_eta(pc), max(wc_wave_eta(pa), wc_wave_eta(pb)));
+		if (eta_c <= -200.0) {
 			continue;
 		}
 		float dep = wc_wave_depression(pc);
-		if (eta_c - 125.0 * dep < -150.0) {
+		if (eta_c - 125.0 * dep < -200.0) {
 			continue;
 		}
 		bool ambient_done = false;
@@ -1010,6 +1018,78 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 	return vec4(col, tr);
 }
 
+// Lake-effect snow under its bands (wc_lake_effect), seen from afar: the weather's snowfall there (4 mm/h of water
+// at full strength, WeatherMap3D's cells), its visibility as the storms' snow (Rasmussen et al. 1999), in veils
+// trailing downwind as the flakes fall at about 1 to 2 m/s. Near the camera (under 1.5 km) the falling snow's own
+// particles draw it.
+vec4 march_lake_snow(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_bottom, float jitter, out float r_t) {
+	r_t = 0.0;
+	float base = cloud_base_height;
+	float t0 = 1500.0;
+	float t1 = 30000.0;
+	if (rd.y > 0.001) {
+		t1 = min(t1, (base - cam.y) / rd.y);
+	} else if (rd.y < -0.001) {
+		t1 = min(t1, (-50.0 - cam.y) / rd.y);
+	}
+	if (cam.y > base) {
+		if (rd.y >= -0.001) {
+			return vec4(0.0, 0.0, 0.0, 1.0);
+		}
+		t0 = max(t0, (base - cam.y) / rd.y);
+	}
+	if (t1 <= t0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	// The weather's snow share (rain_fraction(): Jennings et al. 2018).
+	float e = -10.04 + 1.41 * cloud_air.x + 9.0 * cloud_air.y;
+	float snow = 1.0 / (1.0 + exp(clamp(e, -60.0, 60.0)));
+	vec2 slant = cloud_rain_slant * mix(1.0, 3.5, snow);
+	const int n = 16;
+	// Steps spread out with distance (the near ones matter most).
+	vec3 col = vec3(0.0);
+	float tr = 1.0;
+	float wsum = 0.0;
+	float dsum = 0.0;
+	float g = 0.6;
+	float mu = dot(rd, sun_dir);
+	float hg = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
+	for (int k = 0; k < n; k++) {
+		float fa = (float(k) + jitter) / float(n);
+		float fb = (float(k) + 1.0 + jitter) / float(n);
+		float ta = t0 * pow(t1 / t0, fa);
+		float t = t0 * pow(t1 / t0, (float(k) + 0.5 + jitter) / float(n));
+		float dt = t0 * pow(t1 / t0, fb) - ta;
+		vec3 p = cam + rd * t;
+		if (p.y > base || p.y < -50.0) {
+			continue;
+		}
+		vec2 q = p.xz - slant * (base - p.y);
+		float lake = wc_lake_effect(q);
+		if (lake < 0.02) {
+			continue;
+		}
+		vec2 qn = q - cloud_drift;
+		float curt = 0.6 * wc_value_noise(qn / 1500.0 + vec2(23.1, 4.7)) + 0.4 * wc_value_noise(qn / 450.0 + vec2(3.3, 17.9));
+		float r = 4.0 * lake * mix(0.4, 1.6, smoothstep(0.3, 0.75, curt)) * smoothstep(0.0, mix(120.0, 500.0, snow), base - p.y);
+		float sigma = mix(0.31e-3 * pow(r, 0.67), 0.00196 * pow(min(r, 5.0), 2.1), snow);
+		vec2 qs = p.xz + sun_dir.xz / max(sun_dir.y, 0.05) * (base - p.y);
+		float sun_vis = exp(-6.0 * wc_cover_type(qs).x) * step(0.0, sun_dir.y);
+		vec3 light = ambient_bottom * mix(1.0, mix(0.4, 0.75, snow), lake) + sun_radiance * sun_vis * hg;
+		float st = exp(-sigma * dt);
+		float w = tr * (1.0 - st);
+		col += light * w;
+		dsum += t * w;
+		wsum += w;
+		tr *= st;
+		if (tr < 0.01) {
+			break;
+		}
+	}
+	r_t = wsum > 0.0 ? dsum / wsum : 0.0;
+	return vec4(col, tr);
+}
+
 // The three layers in the order the camera meets them: low cumulus, the mid slab, the high sheet.
 vec4 march_cloud_layers(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, int steps, float jitter, float p_pixel, out float r_depth) {
 	// The mid sheet over the cumulus dims their sun (as it shades the ground in the shadow bake): read once a
@@ -1072,6 +1152,15 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	float d;
 	vec4 o = march_cloud_layers(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, steps, jitter, p_pixel, d);
 	r_depth = d;
+	if (cloud_lake.x > 0.0) {
+		float d_snow;
+		vec4 ls = march_lake_snow(cam, rd, sun_dir, sun_radiance, ambient_bottom, jitter, d_snow);
+		if (ls.a < 0.999) {
+			float dd = r_depth;
+			o = (d_snow < dd || o.a >= 0.999) ? cloud_over(ls, d_snow, o, dd, r_depth) : cloud_over(o, dd, ls, d_snow, r_depth);
+			d = r_depth;
+		}
+	}
 	if (cloud_storm_count == 0) {
 		return o;
 	}
@@ -1467,6 +1556,8 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	rs->material_set_param(m, "cloud_wave_slab", p_state.wave_n > 0 ? Vector4(p_state.wave_y0, p_state.wave_y1, p_state.wave_y2, p_state.wave_y3) : Vector4());
 	rs->material_set_param(m, "cloud_air", Vector3(p_state.air_t0, p_state.air_rh0, p_state.air_y0));
 	rs->material_set_param(m, "cloud_scud", p_state.scud);
+	rs->material_set_param(m, "cloud_lake", p_state.lake_n > 0 ? p_state.lake_params : Vector4());
+	rs->material_set_param(m, "cloud_lake_dir", p_state.lake_dir);
 	rs->material_set_param(m, "cloud_high_cover", p_state.high_cover);
 	rs->material_set_param(m, "cloud_high_height", p_state.high_height);
 	rs->material_set_param(m, "cloud_high_tau", p_state.high_tau);
@@ -1733,6 +1824,17 @@ void WeatherSkyMaterial::set_cloud_wave_field(const Ref<Texture2D> &p_field, con
 		cloud_wave_field = f;
 	}
 	rs->material_set_param(m, "cloud_wave_rect", Vector4(p_corner.x, p_corner.y, MAX(p_size, 1.0f), float(p_texels)));
+}
+
+void WeatherSkyMaterial::set_cloud_lake_field(const Ref<Texture2D> &p_field, const Vector2 &p_corner, float p_size, int p_texels) {
+	RenderingServer *rs = RS::get_singleton();
+	const RID m = get_rid();
+	const RID f = p_field.is_valid() ? p_field->get_rid() : RID();
+	if (f != cloud_lake_field) {
+		rs->material_set_param(m, "cloud_lake_field", f.is_valid() ? Variant(f) : Variant());
+		cloud_lake_field = f;
+	}
+	rs->material_set_param(m, "cloud_lake_rect", Vector4(p_corner.x, p_corner.y, MAX(p_size, 1.0f), float(p_texels)));
 }
 
 void WeatherSkyMaterial::set_atmosphere_model(AtmosphereModel p_model) {

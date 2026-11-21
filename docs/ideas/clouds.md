@@ -642,17 +642,32 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
   no straight walls; the cumulus wisps erode them. Bench `--humidity=H`.
 - Raster and PT match (640).
 
-## Next: lake-effect snow bands (plan)
+## Lake-effect snow bands
 
-- When cold air crosses open water: the lake at least 13 K warmer than the air at 850 hPa (Niziol et al. 1995,
-  Wea. Forecasting 10), a fetch of about 80 to 100 km or more, little turning of the wind with height.
-- Form from Laird, Kristovich and Walsh 2003 (Mon. Wea. Rev. 131), by U^2/L (wind squared over fetch): mesoscale
-  vortices below 0.02, a shore-parallel band 0.02 to 0.09, wind-parallel bands (horizontal rolls) above 0.09.
-  Roll spacing about 2.5 to 3 times the boundary layer's depth (Kristovich 1993), cloud tops 1.5 to 4 km.
-- Clouds read where each point lies downwind of water, so the sky needs a fetch field, not one value: a coarse
-  grid (64 x 64 over about 100 km round the camera, each cell the distance of open water upwind from
-  WorldWater.height_at along the wind, rebuilt when the wind turns), uploaded with the cover. Cover, type and the
-  roll stretch rise with it downwind of the shore; the weather's snowfall takes the same field (Valence's map).
+- When: cold air crossing open water at least 13 K warmer than the air at 850 hPa (Niziol et al. 1995, Wea.
+  Forecasting 10), here the water against the air 1.5 km up on the 6.5 K/km lapse (from 10 to 16 K), ice-free
+  water (above about 1 C) and a wind of 5 m/s or more. Water temperature is the weather's own
+  (`get_water_temperature`, the climate a month late; `water_temperature` overrides it).
+- Fetch field (WeatherLakeEffect): 64 x 64 cells of 2 km round the camera; each is open water where WorldWater's
+  surface stands a metre or more over the terrain (puddles do not count), sampled over a few ticks. For the wind's
+  direction each cell holds the water crossed upwind (km, each km weighted by exp(-s / 60 km) for its distance s
+  back), so the cloud and snow reach 50 to 100 km inland and fade; water past the square's edge continues as the
+  edge holds (a sea). A second channel holds how near the cell lies to the largest fetch across the wind within
+  16 km: the axis a single band forms on. Rebuilt when the wind turns by 5 degrees.
+- Form, by U / L (wind over the longest fetch, m/s per km; Laird, Kristovich and Walsh 2003, MWR 131, as cited
+  by Laird and Kristovich 2004): vortices up to 0.02 (left out), a shoreline band 0.02 to 0.06, band and
+  widespread cover together to 0.11, wind-parallel rolls above. The rolls' spacing is 2.75 times the convective
+  layer's depth (Kristovich 1993), the depth 1.5 to 3.5 km with the instability. U is the 10 m wind times 1.4
+  (above the surface layer's drag).
+- Effect: cover rises toward 0.95 and the type toward cumulus congestus along the bands (cover_type_at and
+  wc_cover_type, so shadows, the cells and the sky agree); the weather's cells add 4 mm/h of water at full
+  strength (2 to 8 cm of snow an hour), so get_snowfall_at, wet ground and snow cover follow. The sky draws the
+  falling snow from afar as veils under the band (march_lake_snow: 16 steps from 1.5 to 30 km, the storms'
+  snow visibility, Rasmussen et al. 1999), trailing downwind as the flakes fall; near the camera the falling
+  snow's particles draw it.
+- Bench: `--view=lake_effect` (a 30 km by 200 km lake, 6 C water, -8 C air, wind down its length, camera 14 km
+  aside of the band); `--test=clouds` checks the band on the axis and none aside, snowfall under it, the cover,
+  no band with the water under 10 K over the air aloft, and rolls with the wind across the lake.
 
 ## Lenticular plates and iridescence
 
@@ -672,3 +687,7 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
   the sun's light read at each sample. The tint covers both forward lobes and its difference from white is
   doubled (the lens's depth along a ray mixes droplet sizes and greys it); droplets 1.5 to 5 um; default
   0.8. PT matches raster at 192 frames; at 30 frames each pixel has had two revisits and shows the dots.
+- A hard round cut in the lens near its end (in the 1920 shots, older than the plates): the lens march stopped
+  8 km into the slab, so a lens running on beyond that ended on the sphere where the cap met it (and lenses
+  further along a ray were never drawn). It now runs up to 16 km in a fixed 32 coarse steps (a count that varied
+  between pixels stepped the plates' gaps), each step tested on the largest lift at its middle and both ends.

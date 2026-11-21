@@ -457,6 +457,9 @@ void State::update_top_max() {
 			base_min = MIN(base_min, (storm_base[i] > 0.0f ? storm_base[i] : base_height) - SHELF_DROP);
 		}
 	}
+	if (lake_params.x > 0.0f) {
+		t = MAX(t, 0.75f);
+	}
 	top_max = MAX(top_max, base_height + top_height(*this, t));
 }
 
@@ -532,7 +535,58 @@ Vector2 cover_type_at(const State &p_state, Vector2 p_xz) {
 		// tower, which it is part of.
 		cover = MAX(cover, 0.95f * shelf_drop(p_state, i, p_xz) / SHELF_DROP);
 	}
+	// Lake-effect convection: cumulus congestus to the capping inversion, merging along its bands.
+	const float lake = lake_effect_at(p_state, p_xz);
+	if (lake > 0.0f) {
+		cover = 1.0f - (1.0f - cover) * (1.0f - 0.95f * lake);
+		t = MAX(t, 0.75f * lake);
+	}
 	return Vector2(cover, t);
+}
+
+// Lake-effect snow (Niziol et al. 1995; Laird, Kristovich and Walsh 2003): convection over the water grows with the fetch
+// (cloud from about 10 km of open water, full from 50), and organises by the wind over the longest fetch, U / L: a
+// single intense band along the fetch's axis (0.02 to 0.06 m/s per km), wind-parallel rolls (horizontal roll
+// convection, spaced 2.5 to 3 times the convective layer's depth; Kristovich 1993) above 0.11.
+float lake_effect_at(const float *p_field, int p_n, Vector2 p_corner, float p_size, const Vector4 &p_params, Vector2 p_dir, Vector2 p_xz) {
+	if (p_n < 2 || p_params.x <= 0.0f || p_size <= 0.0f) {
+		return 0.0f;
+	}
+	const Vector2 uv = (p_xz - p_corner) / p_size;
+	if (uv.x <= 0.0f || uv.y <= 0.0f || uv.x >= 1.0f || uv.y >= 1.0f) {
+		return 0.0f;
+	}
+	const float fx = CLAMP(uv.x * p_n - 0.5f, 0.0f, float(p_n - 1));
+	const float fz = CLAMP(uv.y * p_n - 0.5f, 0.0f, float(p_n - 1));
+	const int x0 = MIN(int(fx), p_n - 2);
+	const int z0 = MIN(int(fz), p_n - 2);
+	const float tx = fx - x0;
+	const float tz = fz - z0;
+	float v[2];
+	for (int c = 0; c < 2; c++) {
+		const float a = Math::lerp(p_field[(z0 * p_n + x0) * 2 + c], p_field[(z0 * p_n + x0 + 1) * 2 + c], tx);
+		const float b = Math::lerp(p_field[((z0 + 1) * p_n + x0) * 2 + c], p_field[((z0 + 1) * p_n + x0 + 1) * 2 + c], tx);
+		v[c] = Math::lerp(a, b, tz);
+	}
+	const float grow = p_params.x * smoothstep(10.0f, 50.0f, v[0]);
+	if (grow <= 0.0f) {
+		return 0.0f;
+	}
+	const float along = p_xz.dot(p_dir);
+	const float across = p_xz.dot(Vector2(-p_dir.y, p_dir.x));
+	const float lambda = MAX(p_params.z, 500.0f);
+	// Rolls wander across the wind and break along it every 20 km or so.
+	const float rolls = 0.5f + 0.5f * Math::cos(float(Math::TAU) * across / lambda + 6.0f * (value_noise(Vector2(along / 20000.0f, across / (2.0f * lambda))) - 0.5f));
+	const float band = smoothstep(0.7f, 0.97f, v[1]);
+	const float pattern = Math::lerp(band, rolls, p_params.y) + 0.25f * (value_noise(p_xz / 6000.0f + Vector2(17.3f, 5.1f)) - 0.5f);
+	return grow * smoothstep(0.4f, 0.8f, pattern);
+}
+
+float lake_effect_at(const State &p_state, Vector2 p_xz) {
+	if (p_state.lake_n < 2 || p_state.lake_field.size() < p_state.lake_n * p_state.lake_n * 2) {
+		return 0.0f;
+	}
+	return lake_effect_at(p_state.lake_field.ptr(), p_state.lake_n, p_state.lake_corner, p_state.lake_size, p_state.lake_params, p_state.lake_dir, p_xz);
 }
 
 float storm_column_type(const State &p_state, Vector2 p_xz) {
@@ -1573,6 +1627,36 @@ float wc_shelf_drop(int i, vec2 xz) {
 	return 450.0 * min(o / 15.0, 1.0) * s.w * arc * wedge;
 }
 
+uniform sampler2D cloud_lake_field : filter_linear, repeat_disable;
+uniform vec4 cloud_lake_rect = vec4(0.0); // corner x, z, size (m), texels across
+uniform vec4 cloud_lake = vec4(0.0); // instability, rolls share, roll spacing (m), top over the base (m)
+uniform vec2 cloud_lake_dir = vec2(1.0, 0.0);
+
+// Lake-effect cloud (lake_effect_at() on the CPU).
+float wc_lake_effect(vec2 xz) {
+	if (cloud_lake.x <= 0.0 || cloud_lake_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 uv = (xz - cloud_lake_rect.xy) / cloud_lake_rect.z;
+	if (uv.x <= 0.0 || uv.y <= 0.0 || uv.x >= 1.0 || uv.y >= 1.0) {
+		return 0.0;
+	}
+	float n = cloud_lake_rect.w;
+	vec2 tc = (clamp(uv * n - 0.5, vec2(0.0), vec2(n - 1.0)) + 0.5) / n;
+	vec2 v = textureLod(cloud_lake_field, tc, 0.0).rg;
+	float grow = cloud_lake.x * smoothstep(10.0, 50.0, v.x);
+	if (grow <= 0.0) {
+		return 0.0;
+	}
+	float along = dot(xz, cloud_lake_dir);
+	float across = dot(xz, vec2(-cloud_lake_dir.y, cloud_lake_dir.x));
+	float lambda = max(cloud_lake.z, 500.0);
+	float rolls = 0.5 + 0.5 * cos(6.2831853 * across / lambda + 6.0 * (wc_value_noise(vec2(along / 20000.0, across / (2.0 * lambda))) - 0.5));
+	float band = smoothstep(0.7, 0.97, v.y);
+	float pattern = mix(band, rolls, cloud_lake.y) + 0.25 * (wc_value_noise(xz / 6000.0 + vec2(17.3, 5.1)) - 0.5);
+	return grow * smoothstep(0.4, 0.8, pattern);
+}
+
 vec2 wc_cover_type(vec2 xz) {
 	float cover = cloud_cover;
 	float t = cloud_type;
@@ -1595,6 +1679,11 @@ vec2 wc_cover_type(vec2 xz) {
 		t = max(t, 0.9 * wide);
 		// The shelf: one continuous wedge under the storm's own tower (cover_type_at() on the CPU).
 		cover = max(cover, 0.95 * wc_shelf_drop(i, xz) / 450.0);
+	}
+	float lake = wc_lake_effect(xz);
+	if (lake > 0.0) {
+		cover = 1.0 - (1.0 - cover) * (1.0 - 0.95 * lake);
+		t = max(t, 0.75 * lake);
 	}
 	return vec2(cover, t);
 }

@@ -34,6 +34,7 @@
 #include "modules/world/world_contracts.h"
 #include "weather_clouds.h"
 #include "weather_contact_wetness.h"
+#include "weather_lake_effect.h"
 #include "weather_mountain_waves.h"
 #include "weather_season.h"
 #include "weather_shelter.h"
@@ -375,6 +376,14 @@ private:
 	Vector4 wave_slab_now; // m, where wave cloud can form (wave_slab(); each pair empty when y <= x)
 	float wave_slab_timer = 0.0f;
 	Ref<ImageTexture> wave_texture;
+	// Lake-effect snow (WeatherLakeEffect; docs/ideas/clouds.md): the fetch over the water round the camera, and
+	// what the air over it makes of it now (lake_effect_at()'s params).
+	WeatherLakeEffect lake_effect;
+	bool lake_effect_snow = true;
+	Vector4 lake_params_now;
+	float lake_timer = 0.0f;
+	Ref<ImageTexture> lake_texture;
+	float water_temperature_set = -100.0f; // C; below -99: from the climate or the air
 	float boundary_layer_height = 1000.0f; // m
 	float wind_shear_aloft = 1.5f; // m/s per km above the boundary layer
 	bool terrain_wind_enabled = true;
@@ -530,6 +539,8 @@ private:
 	int shelter_box_count = 0;
 	void _update_terrain_wind();
 	void _update_mountain_waves(float p_dt);
+	void _update_lake_effect(float p_dt);
+	void _apply_lake_field();
 	void _apply_wave_field();
 	float _wave_buoyancy() const;
 	void _find_terrain_source();
@@ -652,6 +663,9 @@ public:
 	// Open water's surface temperature (C): lakes and the sea follow the air's seasonal mean about a month
 	// late (Livingstone and Lotter 1998), never below freezing; without a climate, the day's mean air.
 	float get_water_temperature() const;
+	// Set it (C) to override that; below -99 follows the climate again.
+	void set_water_temperature(float p_celsius) { water_temperature_set = p_celsius; }
+	float get_water_temperature_setting() const { return water_temperature_set; }
 	float get_air_dew_point() const;
 	// The live air at a point: the air above (or below) the map's ground height by the standard lapse rate,
 	// 6.5 K/km (ICAO), with the dew point falling 1.8 K/km (the vapour mixing up unchanged).
@@ -950,6 +964,13 @@ public:
 	float get_cloud_effector_at(Vector3 p_position) const;
 	void set_wave_clouds(bool p_enabled);
 	bool is_wave_clouds() const { return wave_clouds; }
+	void set_lake_effect_snow(bool p_enabled);
+	bool is_lake_effect_snow() const { return lake_effect_snow; }
+	// Lake-effect cloud at the point (0..1), as the sky draws it.
+	float get_lake_effect_at(Vector3 p_position) const;
+	// The open water crossed upwind of the point (km, fading inland), from the lake-effect field.
+	float get_lake_fetch_at(Vector3 p_position) const;
+	bool is_lake_effect_ready() const { return lake_effect.derived; }
 	float get_mountain_wave_at(Vector3 p_position) const;
 	float get_mountain_wave_velocity_at(Vector3 p_position) const;
 	float get_wave_cloud_density_at(Vector3 p_position) const;
