@@ -2585,11 +2585,26 @@
   {
    "name": "Boar rooting",
    "settings": [
-    "WorldStand.DISTURBANCE_ROOTING",
-    "PlantSpecies.RULE_ROOTING"
+    "PlantGenerator.make_rooting()",
+    "ROOTING_WOOD",
+    "ROOTING_MEADOW",
+    "WorldStand.DISTURBANCE_ROOTING"
    ],
    "note": "",
-   "what": "rooted ground shows dark turned clods and loose stones, loses its plants and takes the first weeds, healing over about two years.",
+   "what": "rooted ground shows turned sods and loose stones that dry, slump and green over, loses its plants and takes the first weeds, healing over about two years.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Anthills and molehills",
+   "settings": [
+    "PlantGenerator.make_mounds()",
+    "MOUNDS_MEADOW",
+    "MOUNDS_WOOD"
+   ],
+   "note": "",
+   "what": "anthills in sunny meadow groups, wood ant nests at sunny gaps and edges of conifer stands, molehills in lines and arcs; grass keeps out from under them.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
