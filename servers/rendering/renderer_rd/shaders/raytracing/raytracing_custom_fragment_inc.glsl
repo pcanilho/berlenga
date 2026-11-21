@@ -55,6 +55,18 @@ tangent = mat3(rt_world_to_object) * rt_tangent;
 binormal = mat3(rt_world_to_object) * rt_bitangent;
 uv_interp = rt_uv;
 uv2_interp = rt_uv2;
+#if defined(RT_USES_CUSTOM_ATTRIBS) && defined(RT_HIT_ATTRIBS_DECLARED)
+// CUSTOM0-3 for vertex() (raster reads them per vertex; here they are interpolated at the hit).
+{
+	uint rt_ci0, rt_ci1, rt_ci2;
+	get_triangle_indices(rt_geom, rt_ci0, rt_ci1, rt_ci2);
+	vec3 rt_cbary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
+	custom0_attrib = fetch_custom_attrib(rt_geom, 0u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+	custom1_attrib = fetch_custom_attrib(rt_geom, 1u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+	custom2_attrib = fetch_custom_attrib(rt_geom, 2u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+	custom3_attrib = fetch_custom_attrib(rt_geom, 3u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+}
+#endif
 color_interp = rt_color * fetch_instance_color(rt_geom, uint(RT_HIT_PRIMITIVE_ID));
 // VIEW is view-space in the rasterizer; rotate the incoming ray to match.
 view = -normalize(mat3(rt_view_matrix) * gl_WorldRayDirectionEXT);
