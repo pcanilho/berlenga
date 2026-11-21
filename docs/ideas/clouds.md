@@ -658,7 +658,7 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
 
 - Technique: Altocumulus lenticularis duplicatus (pile of plates). Each plate is a moist layer lifted
   over the lee wave crest; dry layers between them stay clear. Implemented as vertical gaps every
-  350 m (offset by 4 km noise) inside the wave layer, faded in by a 9 km stack mask so some lenses
+  400 m (offset by 4 km noise) inside the wave layer, faded in by a 9 km stack mask so some lenses
   stay single. Applied in `wave_plate_gaps` (CPU) and `wc_wave_sigma` (GLSL), so shadows and the
   view march agree.
 - Iridescence: lens edges hold young, small, uniform droplets, which diffract sunlight into pastel
@@ -666,3 +666,9 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
   [2 J1(v)/v]^2 per RGB wavelength (0.65/0.55/0.45 um), luminance-normalised, droplet radius 1 um
   at the edge to 6 um inside. Only within about 35 degrees of the sun, only on thin parts of the
   plate (`cloud_iridescence`, default 0.6). Raster and PT share the sky shader.
+- Docs review (21 Nov): plate ends stepped and plates dotted. The lens march took four fixed samples per
+  coarse step (125 m) and lit each coarse step once, so a plate's end and the 100 m gaps fell between
+  samples. Now eight samples per step, jittered per revisit (the 12-revisit reprojection averages them), and
+  the sun's light read at each sample. The tint covers both forward lobes and its difference from white is
+  doubled (the lens's depth along a ray mixes droplet sizes and greys it); droplets 1.5 to 5 um; default
+  0.8. PT matches raster at 192 frames; at 30 frames each pixel has had two revisits and shows the dots.

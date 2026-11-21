@@ -115,7 +115,7 @@ uniform float cloud_surface_occlusion : hint_range(0, 2) = 1.0;
 // Short steps inside cloud as a share of the long ones (1: no refinement).
 uniform float cloud_refine : hint_range(0.1, 1) = 0.33;
 // Iridescence on thin, newly formed wave cloud near the sun (diffraction by small uniform droplets): its strength.
-uniform float cloud_iridescence : hint_range(0, 1) = 0.6;
+uniform float cloud_iridescence : hint_range(0, 1) = 0.8;
 group_uniforms;
 
 group_uniforms weather_map; // Set by WeatherMap3D each update.
@@ -768,7 +768,10 @@ vec3 iridescence_tint(float p_sin, float p_radius_um) {
 	vec3 j = vec3(bessel_j1(v.r), bessel_j1(v.g), bessel_j1(v.b));
 	vec3 airy = 4.0 * j * j / max(v * v, vec3(1e-4));
 	float lum = dot(airy, vec3(0.2126, 0.7152, 0.0722));
-	return clamp(airy / max(lum, 1e-6), vec3(0.0), vec3(2.5));
+	// Pastel in photographs, but the lens's depth along the ray mixes droplet sizes and greys them: the
+	// difference from white is doubled back.
+	vec3 tint = airy / max(lum, 1e-6);
+	return clamp(vec3(1.0) + 2.0 * (tint - vec3(1.0)), vec3(0.0), vec3(2.5));
 }
 
 vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, float jitter, float p_pixel, out float r_t) {
@@ -831,19 +834,19 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 		if (eta_c - 125.0 * dep < -150.0) {
 			continue;
 		}
-		bool lit = false;
-		vec3 light = vec3(0.0);
+		bool ambient_done = false;
 		vec3 ambient_lens = vec3(0.0);
-		for (int k = 0; k < 4; k++) {
-			// Not jittered: the field is smooth, and a jittered thin edge breaks into dots the reconstruction keeps.
-			float t = t0 + (float(i) + (float(k) + 0.5) * 0.25) * ds;
+		// Eight fine samples, jittered per revisit (the reprojection's R1 sequence averages them over 12 revisits): four
+		// fixed ones stepped a plate's end and a pile's 100 m gaps into stairs and dots.
+		for (int k = 0; k < 8; k++) {
+			float t = t0 + (float(i) + (float(k) + jitter) * 0.125) * ds;
 			vec3 p = vec3(cam.x + rd.x * t, length(ro + rd * t) - PLANET_RADIUS, cam.z + rd.z * t);
 			if (p.y < y0 || p.y > y1) {
 				continue;
 			}
 			// Striations: the detail noise stretched along the wind, a few tens of metres on the saturation level.
 			vec2 aw = vec2(dot(p.xz, wdir), dot(p.xz, vec2(-wdir.y, wdir.x)));
-			float foot = max(t * p_pixel, 0.0625 * ds);
+			float foot = max(t * p_pixel, 0.03125 * ds);
 			float lod = max(log2(foot / (2400.0 / 128.0)), 0.0);
 			float st = textureLod(cloud_detail, vec3(aw.x / 16000.0, aw.y / 2400.0, p.y / 1200.0), lod).b;
 			float eta = wc_wave_eta(p);
@@ -852,34 +855,37 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 				continue;
 			}
 			float sigma = wc_wave_sigma(p, eta, x);
+			if (sigma <= 0.0) {
+				continue;
+			}
 			float profile = clamp(x / 150.0, 0.0, 1.0);
-			if (!lit) {
-				// The sun's light once a coarse step, from the first sample in cloud.
-				float lr;
-				float dr;
-				// Through the whole lens toward the sun (a lens is 200 to 800 m deep: three reads to 700 m), so a belly
-				// under a high sun is shaded by the cloud over it and a crown is lit.
-				float tau = wc_wave_extinction_d(p + sun_dir * 40.0, 0.0, dep, lr, dr) * 80.0 + wc_wave_extinction_d(p + sun_dir * 170.0, 0.0, dep, lr, dr) * 180.0 + wc_wave_extinction_d(p + sun_dir * 450.0, 0.0, dep, lr, dr) * 380.0;
-				// The single-scattered sunlight carries the diffraction colours: droplets from 1 um where the air has just
-				// saturated to 6 um 150 m past it, on thin cloud only (many scatterings wash them out), 6 to 35 degrees
-				// from the sun.
-				vec3 irid = vec3(1.0);
-				if (cloud_iridescence > 0.0 && cos_theta > 0.82) {
-					float s_th = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
-					float w_ir = cloud_iridescence * smoothstep(0.82, 0.9, cos_theta) * (1.0 - smoothstep(0.985, 0.995, cos_theta)) * (1.0 - smoothstep(0.0, 0.7, profile)); // the term it tints already carries exp(-tau)
-					irid = mix(vec3(1.0), iridescence_tint(s_th, mix(1.0, 6.0, smoothstep(0.0, 150.0, x))), w_ir);
-				}
-				light = sun_radiance * (exp(-tau) * phase0 * irid + 0.5 * exp(-0.5 * tau) * phase1 + 0.25 * exp(-0.25 * tau) * phase2);
-				float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * 2.0);
-				light += sun_radiance * diffuse * mix(0.25, 1.0, smoothstep(0.0, 0.6, profile)) * (2.0 / (4.0 * PI));
-				// The sky's light: from above through the cloud over the point, from below off the ground (as the
-				// cumulus' hemisphere reads, Nubis's ambient through the density above).
+			float lr;
+			float dr;
+			// The sun's light at each sample (once a coarse step held a plate's end at one value for 60 m and stepped
+			// it): through the whole lens toward the sun (a lens is 200 to 800 m deep: three reads to 700 m), so a belly
+			// under a high sun is shaded by the cloud over it and a crown is lit.
+			float tau = wc_wave_extinction_d(p + sun_dir * 40.0, 0.0, dep, lr, dr) * 80.0 + wc_wave_extinction_d(p + sun_dir * 170.0, 0.0, dep, lr, dr) * 180.0 + wc_wave_extinction_d(p + sun_dir * 450.0, 0.0, dep, lr, dr) * 380.0;
+			// The forward-scattered sunlight carries the diffraction colours (the forward lobes, where single scattering
+			// by the droplets rules): droplets from 1 um where the air has just saturated to 6 um 150 m past it, on thin
+			// cloud only (many scatterings wash them out), 6 to 35 degrees from the sun.
+			vec3 irid = vec3(1.0);
+			if (cloud_iridescence > 0.0 && cos_theta > 0.82) {
+				float s_th = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
+				float w_ir = cloud_iridescence * smoothstep(0.82, 0.9, cos_theta) * (1.0 - smoothstep(0.985, 0.995, cos_theta)) * (1.0 - smoothstep(0.2, 0.9, profile));
+				irid = mix(vec3(1.0), iridescence_tint(s_th, mix(1.5, 5.0, smoothstep(0.0, 150.0, x))), w_ir);
+			}
+			vec3 light = sun_radiance * ((exp(-tau) * phase0 + 0.5 * exp(-0.5 * tau) * phase1) * irid + 0.25 * exp(-0.25 * tau) * phase2);
+			float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * 2.0);
+			light += sun_radiance * diffuse * mix(0.25, 1.0, smoothstep(0.0, 0.6, profile)) * (2.0 / (4.0 * PI));
+			if (!ambient_done) {
+				// The sky's light, once a coarse step: from above through the cloud over the point, from below off the
+				// ground (as the cumulus' hemisphere reads, Nubis's ambient through the density above).
 				float tau_up = wc_wave_extinction_d(p + vec3(0.0, 80.0, 0.0), 0.0, dep, lr, dr) * 160.0 + wc_wave_extinction_d(p + vec3(0.0, 300.0, 0.0), 0.0, dep, lr, dr) * 280.0;
 				ambient_lens = ambient_top * (1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau_up * 2.0)) + ambient_bottom * 0.5;
-				lit = true;
+				ambient_done = true;
 			}
 			vec3 l = light + ambient_lens * mix(0.35, 1.0, sqrt(1.0 - profile)) * 1.4;
-			float tr = exp(-sigma * 0.25 * ds);
+			float tr = exp(-sigma * 0.125 * ds);
 			radiance += transmittance * l * (1.0 - tr);
 			depth_sum += transmittance * (1.0 - tr) * t;
 			transmittance *= tr;

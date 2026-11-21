@@ -841,8 +841,8 @@ float wave_plate_gaps(float p_mid_height, const Vector3 &p_pos) {
 	if (stack <= 0.0f) {
 		return 1.0f;
 	}
-	const float f = Math::fposmod((p_pos.y - p_mid_height) / 350.0f + 0.4f * value_noise(xz / 4000.0f), 1.0f);
-	const float gap = smoothstep(0.02f, 0.1f, f) * (1.0f - smoothstep(0.3f, 0.38f, f));
+	const float f = Math::fposmod((p_pos.y - p_mid_height) / 400.0f + 0.4f * value_noise(xz / 4000.0f), 1.0f);
+	const float gap = smoothstep(0.02f, 0.08f, f) * (1.0f - smoothstep(0.36f, 0.42f, f));
 	return 1.0f - stack * gap;
 }
 
@@ -1768,7 +1768,7 @@ float wc_wave_depression(vec3 p) {
 		float rh = wc_wave_layer_rh(n, cloud_mid_cover, wc_layer_cover_n(n, cloud_mid_cover, p.xz, false));
 		float d = (p.y - cloud_mid_height) / (1.5 * cloud_mid_thickness + 300.0);
 		float w = exp(-d * d) * min(1.0, 4.0 * cloud_mid_cover);
-		float plates = 0.5 + 0.5 * sin(6.2831853 * (p.y - cloud_mid_height) / 350.0);
+		float plates = 0.5 + 0.5 * sin(6.2831853 * (p.y - cloud_mid_height) / 400.0);
 		dep = mix(dep, min(dep, -log(rh) * tk * tk / 5423.0 + 0.4 * plates), w);
 	}
 	if (cloud_high_cover > 0.001) {
@@ -1791,8 +1791,8 @@ float wc_wave_sigma(vec3 p, float eta, float x) {
 	float ice = clamp((-20.0 - tc) / 10.0, 0.0, 1.0);
 	// Pile of plates (wave_plate_gaps() on the CPU).
 	float stack = smoothstep(0.25, 0.55, wc_value_noise(p.xz / 9000.0 + vec2(3.1, 7.7)));
-	float f = fract((p.y - cloud_mid_height) / 350.0 + 0.4 * wc_value_noise(p.xz / 4000.0));
-	float gap = stack * smoothstep(0.02, 0.1, f) * (1.0 - smoothstep(0.3, 0.38, f));
+	float f = fract((p.y - cloud_mid_height) / 400.0 + 0.4 * wc_value_noise(p.xz / 4000.0));
+	float gap = stack * smoothstep(0.02, 0.08, f) * (1.0 - smoothstep(0.36, 0.42, f));
 	return 1.5 * rho_air * rate * x / mix(0.01, 917.0 * 30e-6, ice) * (1.0 - gap);
 }
 
