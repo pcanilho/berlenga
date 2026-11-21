@@ -1810,3 +1810,12 @@ Research notes for Paulo's pick; nothing below is built yet.
 - Build: per-cell packing and polish from the shared press bodies (wheels already press the snow), a grip value
   in the world contract for world-links' tyre slip, ice glaze look (low roughness, clearer), slush spray via
   PhysX particles.
+- **Built (21 Nov), follow-up 43.** Each physics frame `SnowCover3D` reads the `world_contact` bodies on the
+  snow: a pass packs the share of the cell it sweeps (car tyre 75 kPa fully, a boot about half), and a slipping
+  wheel (RigidBody3D wheel: contact velocity v + w x r; VehicleWheel3D: 1 - skidinfo) puts a quarter of its
+  friction power, 0.25 W v_slip, into melt that refreezes as glaze below 0 C. Glaze melts at 0.3 mm/h/K and
+  under rain. `get_grip_at`: loose 0.3, packed 0.25, polished ice 0.05 (wet or near 0 C) to 0.15 (-15 C), new
+  snow over it 0.3 again. Drawn through the cups texture's G (packed) and B (glaze): packed smoother and a
+  little grey, glaze dark and mirror-smooth. Tests: 10 s of a stuck wheel spinning at 10 m/s polishes 0.12 mm
+  and drops grip from 0.26 to 0.20. Open: world-links' tyre slip reading it needs a `contract_snow_grip_at`
+  in world_contracts.h (asked via the coordinator); slush spray from tyres.

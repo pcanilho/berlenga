@@ -170,6 +170,8 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	// of them: its crystals (mm), the snow over it (m) and the hours since it was buried.
 	Vector<float> cell_hoar;
 	Vector<float> cell_cups; // m, suncup relief (ridge to hollow)
+	Vector<float> cell_packed; // 0..1, the share of the cell traffic has packed hard (follow-up 43)
+	Vector<float> cell_glaze; // mm of ice glaze polished on it by slipping wheels
 	Vector<float> cell_slush; // mm of water ponded in the pack's pores over frozen ground (not in cell_swe)
 	Vector<float> cell_seal; // 0..1, how far frozen ground under the pack stops melt water draining (WorldGround.frost_at)
 	Ref<Image> cups_image;
@@ -267,6 +269,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 		Vector<float> hoar, hoar_layer, hoar_burial, hoar_age;
 		Vector<float> cups;
 		Vector<float> slush; // mm
+		Vector<float> packed, glaze;
 		Vector<float> cornice_x, cornice_z, cornice_crack;
 		Vector<float> ice, white_ice;
 		Vector<float> lap; // mg/m2 BC equivalent showing at the surface
@@ -351,6 +354,17 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	int ice_break_count = 0;
 	void _cut_ice(Vector<float> &r_ice, Vector<float> &r_white) const;
 	void _ice_load_step();
+	// Traffic (follow-up 43): what bodies rolling and slipping on the snow did since the last update.
+	struct TrafficMark {
+		Vector2 center;
+		float radius = 0.0f;
+		float pack = 0.0f; // share of a cell's area passed over
+		float glaze = 0.0f; // mm of glaze over a cell's area
+	};
+	LocalVector<TrafficMark> traffic_marks;
+	bool traffic_enabled = true;
+	void _traffic_step(double p_delta);
+	void _apply_traffic(Vector<float> &r_packed, Vector<float> &r_glaze, const LocalVector<TrafficMark> &p_marks, uint32_t p_from) const;
 	void _refresh_cell_inputs(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only);
 	void _refresh_fire();
 	void _refresh_obstacles();
@@ -420,6 +434,13 @@ public:
 	void set_slush_enabled(bool p_enabled) { slush_enabled = p_enabled; }
 	bool is_slush_enabled() const { return slush_enabled; }
 	float get_slush_at(Vector3 p_position) const; // m, the saturated layer at the pack's base
+	float get_packed_at(Vector3 p_position) const; // 0..1, traffic-packed share
+	float get_glaze_at(Vector3 p_position) const; // mm of polished ice glaze
+	float get_grip_at(Vector3 p_position) const; // tyre-road friction coefficient on the snow, -1 bare
+	void add_traffic(Vector3 p_position, float p_radius, float p_pack, float p_glaze_mm);
+	static float ice_grip(float p_celsius, float p_wetness); // friction on polished ice
+	void set_traffic_enabled(bool p_enabled) { traffic_enabled = p_enabled; }
+	bool is_traffic_enabled() const { return traffic_enabled; }
 	static float slush_height(float p_swe, float p_liquid, float p_density, float p_slush); // m
 	static float ground_seal(Vector3 p_frost); // 0..1 from WorldGround.frost_at (thawed top m, frost depth m, weakening)
 	static float slush_drain_rate(float p_density, float p_slope_sine, float p_length); // 1/h, Darcy flow off a slope of that length

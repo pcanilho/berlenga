@@ -216,6 +216,8 @@ func _ready() -> void:
 			_run_suncup_tests()
 		elif only == "spindrift":
 			await _run_spindrift_tests()
+		elif only == "road":
+			await _run_road_tests()
 		elif only == "rime":
 			await _run_rime_tests()
 		elif only == "transport":
@@ -433,6 +435,7 @@ func _run_tests() -> void:
 	await _run_rotten_tests()
 	await _run_slush_tests()
 	await _run_spindrift_tests()
+	await _run_road_tests()
 	await _run_hoar_tests()
 	_run_suncup_tests()
 	await _run_rime_tests()
@@ -677,6 +680,71 @@ func _run_spindrift_tests() -> void:
 	_check("drier air thins it sooner (sublimation)", SnowCover3D.spindrift_fade(0.4) > 2.0 * SnowCover3D.spindrift_fade(0.95), "%.3f /s at 40%%, %.3f at 95%%" % [SnowCover3D.spindrift_fade(0.4), SnowCover3D.spindrift_fade(0.95)])
 	var wet: Array = await _spindrift_at(26.0, 2.0)
 	_check("no plume from wet snow", wet[0] == 0.0, "%.2f kg/s at +2 C" % wet[0])
+
+
+func _road_wheel(spin: float, roll: float) -> RigidBody3D:
+	# A 0.66 m car tyre, 0.2 m tread, 300 kg on it (3 kN), held in place resting on the snow at x = 0, z = 1.
+	var w := RigidBody3D.new()
+	w.mass = 300.0
+	w.freeze = true
+	w.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
+	var cs := CollisionShape3D.new()
+	var cy := CylinderShape3D.new()
+	cy.radius = 0.33
+	cy.height = 0.2
+	cs.shape = cy
+	cs.rotation_degrees = Vector3(90, 0, 0) # its axle along z: it rolls along x
+	w.add_child(cs)
+	add_child(w)
+	w.add_to_group("world_contact")
+	w.global_position = Vector3(0.3, snow.get_ground_height_at(Vector3(0.3, 0, 1)) + snow.get_depth_at(Vector3(0.3, 0, 1)) + 0.3, 1.0)
+	w.linear_velocity = Vector3(roll, 0, 0)
+	w.angular_velocity = Vector3(0, 0, -(roll + spin) / 0.33)
+	return w
+
+
+func _run_road_tests() -> void:
+	print("Packed-snow roads (follow-up 43):")
+	var g0 := SnowCover3D.ice_grip(-0.5, 0.0)
+	var g20 := SnowCover3D.ice_grip(-20.0, 0.0)
+	var gw := SnowCover3D.ice_grip(-5.0, 1.0)
+	_check("ice grips least near melting and when wet, better in the cold (Wallman and Astrom 2001)", g0 < 0.07 and g20 > 0.13 and g20 < 0.16 and gw < 0.06, "%.2f at -0.5 C, %.2f at -20 C, %.2f wet" % [g0, g20, gw])
+	await _surface_setup(60.0, 250.0)
+	weather.temperature = -6.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var q := Vector3(0.3, 0, 1.0)
+	snow.advance(3600.0) # past the new-snow layer: an hour on, nothing fresh on top
+	await get_tree().physics_frame
+	var loose := snow.get_grip_at(q)
+	# A wheel rolling without slipping: it packs the snow, it does not polish it.
+	var w := _road_wheel(0.0, 5.0)
+	for i in 60:
+		await get_tree().physics_frame
+	var packed := snow.get_packed_at(q)
+	var rolled_glaze := snow.get_glaze_at(q)
+	var packed_grip := snow.get_grip_at(q)
+	w.queue_free()
+	# Spinning in place (stuck at a junction): its friction melts the surface and the melt freezes as a glaze.
+	w = _road_wheel(10.0, 0.0)
+	for i in 600:
+		await get_tree().physics_frame
+	w.queue_free()
+	var glaze := snow.get_glaze_at(q)
+	var polished := snow.get_grip_at(q)
+	_check("a rolling wheel packs the snow and leaves no glaze", packed > 0.5 and rolled_glaze < 0.005 and packed_grip < loose and packed_grip > 0.2, "packed %.2f, glaze %.3f mm; grip %.2f loose, %.2f packed" % [packed, rolled_glaze, loose, packed_grip])
+	_check("a spinning wheel polishes a glaze: the grip falls toward ice", glaze > 0.05 and polished < packed_grip - 0.03, "%.2f mm of glaze after 10 s at 10 m/s slip; grip %.2f" % [glaze, polished])
+	# Settled: the cells carry it through an update, then a warm spell melts the glaze and new snow covers it.
+	snow.advance(60.0)
+	await get_tree().physics_frame
+	var kept := snow.get_glaze_at(q)
+	await _weather_to(4.0, 3.0)
+	var melted := snow.get_glaze_at(q)
+	weather.temperature = -6.0
+	weather.snap_to_settings()
+	snow.add_snow(5.0, 100.0)
+	_check("the glaze lasts through updates, melts in a thaw", kept > 0.8 * glaze and melted < 0.5 * kept, "%.2f mm after an update, %.2f after 3 h at +4 C" % [kept, melted])
+	_check("new snow on a packed road: the tyre runs in loose snow again", absf(snow.get_grip_at(q) - 0.3) < 0.02, "grip %.2f" % snow.get_grip_at(q))
 
 
 func _run_crust_tests() -> void:

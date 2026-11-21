@@ -52,6 +52,9 @@
 #include "core/os/os.h"
 #include "core/templates/sort_array.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/physics/character_body_3d.h"
+#include "scene/3d/physics/rigid_body_3d.h"
+#include "scene/3d/physics/vehicle_body_3d.h"
 #include "scene/3d/light_3d.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
@@ -185,13 +188,13 @@ void SnowCover3D::_allocate() {
 	cell_canopy.fill(0.0f);
 	cell_canopy_load.resize(nn);
 	cell_canopy_load.fill(0.0f);
-	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in }) {
+	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_packed, &cell_glaze, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in }) {
 		f->resize(nn);
 		f->fill(0.0f);
 	}
 	catch_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RGBAF);
 	catch_texture.unref();
-	cups_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RH);
+	cups_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RGBAH);
 	cups_texture.unref();
 	cell_height_valid.resize(nn);
 	cell_ground.fill(0.0f);
@@ -321,7 +324,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
 	// where there is one, else the state of the nearest cell that was inside it.
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
+	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_packed, &cell_glaze, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
@@ -741,6 +744,10 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				cell_runoff.write[i] += in.dt_h > 0.0f ? cell_slush[i] / in.dt_h : 0.0f;
 				cell_slush.write[i] = 0.0f;
 			}
+			if (cell_packed.size() == n * n) {
+				cell_packed.write[i] = 0.0f;
+				cell_glaze.write[i] = 0.0f;
+			}
 			_clear_hoar(i);
 			continue;
 		}
@@ -850,6 +857,14 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		}
 		if (cell_slush.size() == n * n) {
 			cell_slush.write[i] = slush;
+		}
+		// A traffic glaze melts as ice does in the warm (about 0.3 mm an hour per degree, a degree-day factor of
+		// 7 mm a day for ice; Hock 2003) and under rain; packing and glaze go with the snow.
+		if (cell_glaze.size() == n * n && cell_glaze[i] > 0.0f) {
+			cell_glaze.write[i] = swe > SWE_MIN ? MAX(cell_glaze[i] - 0.3f * MAX(ts, 0.0f) * in.dt_h - 0.1f * rain, 0.0f) : 0.0f;
+		}
+		if (cell_packed.size() == n * n && swe <= SWE_MIN) {
+			cell_packed.write[i] = 0.0f;
 		}
 
 		// Settling (CLASS): toward a maximum density that grows with depth, higher in wet snow.
@@ -1324,6 +1339,10 @@ void SnowCover3D::_update_begin(double p_weather_dt, bool p_blocking) {
 		_cut_ice(cell_ice, cell_white_ice);
 		ice_breaks.clear(); // the cells carry the holes now (and grow ice in them again by Stefan's law)
 	}
+	if (!traffic_marks.is_empty()) {
+		_apply_traffic(cell_packed, cell_glaze, traffic_marks, 0);
+		traffic_marks.clear();
+	}
 }
 
 // Floating ice's bearing capacity: Gold's (1971) P = A h^2, P in kg and h in cm, from his survey of loads on lake and
@@ -1751,6 +1770,8 @@ void SnowCover3D::_update_cells(bool p_parallel) {
 	cell_hoar_age.ptrw();
 	cell_cups.ptrw(); // published as pub.cups
 	cell_slush.ptrw(); // published as pub.slush
+	cell_glaze.ptrw(); // published as pub.glaze
+	cell_packed.ptrw(); // published as pub.packed
 	cell_new_depth.ptrw();
 	cell_canopy_load.ptrw();
 	cell_cornice_x.ptrw();
@@ -1836,6 +1857,11 @@ void SnowCover3D::_publish_cells() {
 	pub.hoar = cell_hoar;
 	pub.cups = cell_cups;
 	pub.slush = cell_slush;
+	pub.packed = cell_packed;
+	pub.glaze = cell_glaze;
+	if (!traffic_marks.is_empty()) {
+		_apply_traffic(pub.packed, pub.glaze, traffic_marks, 0); // since this update started: the cells take them at the next one
+	}
 	pub.hoar_layer = cell_hoar_layer;
 	pub.hoar_burial = cell_hoar_burial;
 	pub.hoar_age = cell_hoar_age;
@@ -1940,13 +1966,18 @@ void SnowCover3D::_build_upload() {
 	upload_snow = Image::create_from_data(n, n, false, Image::FORMAT_RGBAH, bytes);
 	upload_cups.unref();
 	if (cell_cups.size() == n * n) {
+		// The surface map: suncup relief (m), traffic packing (0..1), glaze (mm).
+		const bool road = cell_packed.size() == n * n && cell_glaze.size() == n * n;
 		Vector<uint8_t> cb;
-		cb.resize(n * n * 2);
+		cb.resize(n * n * 8);
 		uint16_t *cw = reinterpret_cast<uint16_t *>(cb.ptrw());
 		for (int i = 0; i < n * n; i++) {
-			cw[i] = Math::make_half_float(cell_cups[i]);
+			cw[i * 4 + 0] = Math::make_half_float(cell_cups[i]);
+			cw[i * 4 + 1] = Math::make_half_float(road ? cell_packed[i] : 0.0f);
+			cw[i * 4 + 2] = Math::make_half_float(road ? cell_glaze[i] : 0.0f);
+			cw[i * 4 + 3] = Math::make_half_float(0.0f);
 		}
-		upload_cups = Image::create_from_data(n, n, false, Image::FORMAT_RH, cb);
+		upload_cups = Image::create_from_data(n, n, false, Image::FORMAT_RGBAH, cb);
 	}
 	// The catch map: the height of the surface the pack lies on, the canopy's load over its capacity, the
 	// canopy closure and the surface hoar. Materials leave what lies under an overhang bare and give tree crowns their load.
@@ -3363,6 +3394,177 @@ float SnowCover3D::slush_height(float p_swe, float p_liquid, float p_density, fl
 	return MIN(p_slush / 1000.0f / pores, depth);
 }
 
+// Traffic (follow-up 43). Wheels and feet pack the snow they pass over hard (a packed-snow road, 400-600 kg/m3), and a
+// wheel that slips (spinning or braking) melts the surface by its friction, mu W v_slip, which refreezes in the cold as
+// a polished glaze. Grip on each (Wallman and Astrom 2001, VTI): loose snow about 0.3, packed snow 0.2-0.3, ice
+// 0.05-0.15 and wet ice lower.
+void SnowCover3D::_traffic_step(double p_delta) {
+	const int n = resolution;
+	if (driven || owner || !traffic_enabled || !is_inside_tree() || !origin_valid || pub.swe.size() != n * n || p_delta <= 0.0) {
+		return;
+	}
+	if (pub.packed.size() != n * n || pub.glaze.size() != n * n) {
+		return;
+	}
+	const float dt = float(p_delta);
+	const float cs = _cell_size();
+	const float air = WorldContracts::weather()->has_provider() ? WorldContracts::weather()->air_temperature_at(_follow_position()) : inputs.temperature;
+	const uint32_t from = traffic_marks.size();
+	for (Node *nd : get_tree()->get_nodes_in_group(SNAME("world_contact"))) {
+		const Node3D *n3 = Object::cast_to<Node3D>(nd);
+		if (!n3 || !n3->is_visible_in_tree()) {
+			continue;
+		}
+		const WorldContactBody b = WorldContracts::describe_body(n3);
+		if (b.mass <= 0.0f) {
+			continue;
+		}
+		const float depth = get_depth_at(b.center);
+		if (depth < 0.01f) {
+			continue;
+		}
+		const float top = get_ground_height_at(b.center) + depth;
+		if (b.center.y - b.half_height - top > 0.15f) {
+			continue; // not on the snow
+		}
+		Vector3 lin, ang;
+		float slip = 0.0f;
+		if (const RigidBody3D *rb = Object::cast_to<RigidBody3D>(n3)) {
+			lin = rb->get_linear_velocity();
+			ang = rb->get_angular_velocity();
+			if (b.wheel) {
+				// The contact point's own velocity: the body's plus its spin about its centre, r below it.
+				const Vector3 vc = lin + ang.cross(Vector3(0.0f, -b.half_height, 0.0f));
+				slip = Vector2(vc.x, vc.z).length();
+			}
+		} else if (const VehicleWheel3D *vw = Object::cast_to<VehicleWheel3D>(n3)) {
+			if (const RigidBody3D *car = Object::cast_to<RigidBody3D>(vw->get_parent())) {
+				lin = car->get_linear_velocity();
+			}
+			const float roll = Math::abs(vw->get_rpm()) * Math::TAU / 60.0f * vw->get_radius();
+			slip = (1.0f - CLAMP(vw->get_skidinfo(), 0.0f, 1.0f)) * MAX(Vector2(lin.x, lin.z).length(), roll);
+		} else if (const CharacterBody3D *cb = Object::cast_to<CharacterBody3D>(n3)) {
+			lin = cb->get_velocity();
+		} else {
+			continue;
+		}
+		const float speed = Vector2(lin.x, lin.z).length();
+		const float width = b.width > 0.0f ? b.width : 2.0f * b.radius;
+		const float weight = b.mass * 9.81f;
+		// How hard it presses: weight over a contact patch about 0.2 m long; a car tyre (75 kPa) packs fully in a
+		// pass, a boot (15 kPa) about half as well.
+		const float kpa = weight / MAX(width * 0.2f, 0.01f) / 1000.0f;
+		TrafficMark m;
+		m.center = Vector2(b.center.x, b.center.z);
+		m.radius = 0.5f * width;
+		m.pack = CLAMP(kpa / 75.0f, 0.2f, 1.0f) * MIN(width * speed * dt / (cs * cs), 1.0f);
+		if (slip > 0.05f && air < 0.0f) {
+			// Friction power mu W v_slip; about half goes into the snow, and that melt refreezes (917 kg/m3 of
+			// ice, 334 kJ/kg) over the cell.
+			const float joules = 0.25f * weight * slip * dt * 0.5f;
+			m.glaze = joules / (917.0f * 334000.0f) * 1000.0f / (cs * cs);
+		}
+		if (m.pack > 0.0f || m.glaze > 0.0f) {
+			traffic_marks.push_back(m);
+		}
+	}
+	if (traffic_marks.size() > from) {
+		_apply_traffic(pub.packed, pub.glaze, traffic_marks, from);
+	}
+	if (traffic_marks.size() > 65536) {
+		traffic_marks.clear(); // not updating: the published copy keeps them
+	}
+}
+
+void SnowCover3D::_apply_traffic(Vector<float> &r_packed, Vector<float> &r_glaze, const LocalVector<TrafficMark> &p_marks, uint32_t p_from) const {
+	const int n = resolution;
+	if (r_packed.size() != n * n || r_glaze.size() != n * n || !origin_valid) {
+		return;
+	}
+	const float cs = _cell_size();
+	float *pk = r_packed.ptrw();
+	float *gl = r_glaze.ptrw();
+	for (uint32_t k = p_from; k < p_marks.size(); k++) {
+		const TrafficMark &m = p_marks[k];
+		const int x = int(Math::floor(m.center.x / cs)) - origin_cell.x;
+		const int z = int(Math::floor(m.center.y / cs)) - origin_cell.y;
+		if (x < 0 || z < 0 || x >= n || z >= n) {
+			continue;
+		}
+		const int i = z * n + x;
+		pk[i] = pk[i] + (1.0f - pk[i]) * CLAMP(m.pack, 0.0f, 1.0f);
+		gl[i] = MIN(gl[i] + m.glaze, 20.0f);
+	}
+}
+
+void SnowCover3D::add_traffic(Vector3 p_position, float p_radius, float p_pack, float p_glaze_mm) {
+	TrafficMark m;
+	m.center = Vector2(p_position.x, p_position.z);
+	m.radius = MAX(p_radius, 0.0f);
+	m.pack = CLAMP(p_pack, 0.0f, 1.0f);
+	m.glaze = MAX(p_glaze_mm, 0.0f);
+	const int n = resolution;
+	if (pub.packed.size() != n * n) {
+		pub.packed.resize(n * n);
+		pub.packed.fill(0.0f);
+	}
+	if (pub.glaze.size() != n * n) {
+		pub.glaze.resize(n * n);
+		pub.glaze.fill(0.0f);
+	}
+	traffic_marks.push_back(m);
+	_apply_traffic(pub.packed, pub.glaze, traffic_marks, traffic_marks.size() - 1);
+}
+
+float SnowCover3D::get_packed_at(Vector3 p_position) const {
+	if (_in_world_only(p_position) || pub.packed.is_empty()) {
+		return 0.0f;
+	}
+	// The cell it lies in (not blended with its neighbours: a track packs the cell it runs through).
+	const int n = resolution;
+	const float cs = _cell_size();
+	const int x = int(Math::floor(p_position.x / cs)) - origin_cell.x;
+	const int z = int(Math::floor(p_position.z / cs)) - origin_cell.y;
+	if (pub.packed.size() != n * n || x < 0 || z < 0 || x >= n || z >= n) {
+		return 0.0f;
+	}
+	return CLAMP(pub.packed[z * n + x], 0.0f, 1.0f);
+}
+
+float SnowCover3D::get_glaze_at(Vector3 p_position) const {
+	if (_in_world_only(p_position) || pub.glaze.is_empty()) {
+		return 0.0f;
+	}
+	const int n = resolution;
+	const float cs = _cell_size();
+	const int x = int(Math::floor(p_position.x / cs)) - origin_cell.x;
+	const int z = int(Math::floor(p_position.z / cs)) - origin_cell.y;
+	if (pub.glaze.size() != n * n || x < 0 || z < 0 || x >= n || z >= n) {
+		return 0.0f;
+	}
+	return MAX(pub.glaze[z * n + x], 0.0f);
+}
+
+// Ice is slipperiest near its melting point, where friction melts a water film (Hayhoe and Shapley 1989; Wallman and
+// Astrom 2001: 0.05 on wet ice), and grips better as it gets colder (about 0.15 by -15 C).
+float SnowCover3D::ice_grip(float p_celsius, float p_wetness) {
+	const float cold = Math::smoothstep(-1.0f, -15.0f, p_celsius);
+	return Math::lerp(0.05f + 0.1f * cold, 0.05f, Math::smoothstep(0.1f, 0.5f, p_wetness));
+}
+
+float SnowCover3D::get_grip_at(Vector3 p_position) const {
+	if (get_depth_at(p_position) < 0.005f) {
+		return -1.0f; // bare: the ground's own
+	}
+	const float air = WorldContracts::weather()->has_provider() ? WorldContracts::weather()->air_temperature_at(p_position) : inputs.temperature;
+	const float wet = get_wetness_at(p_position);
+	const float polish = 1.0f - Math::exp(-get_glaze_at(p_position) / 0.3f);
+	float mu = Math::lerp(0.3f, 0.25f, get_packed_at(p_position));
+	mu = Math::lerp(mu, ice_grip(air, wet), polish);
+	// New snow over it: the tyre runs in that (loose snow) until it is packed in turn.
+	return Math::lerp(mu, 0.3f, Math::smoothstep(0.0f, 0.03f, get_new_snow_at(p_position)));
+}
+
 float SnowCover3D::get_wetness_at(Vector3 p_position) const {
 	if (_in_world_only(p_position)) {
 		return world->get_wetness_at(p_position);
@@ -3569,6 +3771,7 @@ void SnowCover3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			_ice_load_step();
+			_traffic_step(get_physics_process_delta_time());
 			const WeatherMap3D *weather = WeatherMap3D::get_active();
 			const double scale = weather ? weather->get_time_scale() : time_scale;
 			update_accum += get_physics_process_delta_time();
@@ -3899,6 +4102,14 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_spindrift_enabled", "enabled"), &SnowCover3D::set_spindrift_enabled);
 	ClassDB::bind_method(D_METHOD("is_spindrift_enabled"), &SnowCover3D::is_spindrift_enabled);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "spindrift_enabled"), "set_spindrift_enabled", "is_spindrift_enabled");
+	ClassDB::bind_method(D_METHOD("set_traffic_enabled", "enabled"), &SnowCover3D::set_traffic_enabled);
+	ClassDB::bind_method(D_METHOD("is_traffic_enabled"), &SnowCover3D::is_traffic_enabled);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "traffic_enabled"), "set_traffic_enabled", "is_traffic_enabled");
+	ClassDB::bind_method(D_METHOD("get_packed_at", "position"), &SnowCover3D::get_packed_at);
+	ClassDB::bind_method(D_METHOD("get_glaze_at", "position"), &SnowCover3D::get_glaze_at);
+	ClassDB::bind_method(D_METHOD("get_grip_at", "position"), &SnowCover3D::get_grip_at);
+	ClassDB::bind_method(D_METHOD("add_traffic", "position", "radius", "pack", "glaze_mm"), &SnowCover3D::add_traffic);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("ice_grip", "celsius", "wetness"), &SnowCover3D::ice_grip);
 	ClassDB::bind_method(D_METHOD("set_max_spindrift", "count"), &SnowCover3D::set_max_spindrift);
 	ClassDB::bind_method(D_METHOD("get_max_spindrift"), &SnowCover3D::get_max_spindrift);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_spindrift", PROPERTY_HINT_RANGE, "1,32,1"), "set_max_spindrift", "get_max_spindrift");
