@@ -3829,10 +3829,15 @@ grown on demand (lazy generation, as the near leaves of 8c).
   30 degrees of the open instead of 15.
 - No browse line on the rim: make_edge built the deer wood's edge trees unbrowsed (make_stand had reset browse_band).
   Deer-wood edge trees are browsed like its canopy (browse_band 1), and the mantle is eaten out to hedged blackthorn and
-  hawthorn. Edge trees in other stands also get a browsed variant for the deer map (browse years 20). Open: the edge
-  trees' lowest leaves sit at 4.5-7 m (`--forest-edge=0`), so there are no low limbs for the deer to clip; 5as meant
-  green limbs to the ground on the open side. The level line in the re-rendered clearing comes from the glade trees and
-  hedged saplings.
+  hawthorn. Edge trees in other stands also get a browsed variant for the deer map (browse years 20).
+- Edge trees without low limbs: 5as lifted the stand's side shade on the open side, but the shade pyramids light from
+  above only, so the tree's own crown still shaded its edge limbs off (lowest leaves 5-9 m). The open side's sky now
+  also cuts the crown's self-shade there by 60%: on most seeds the lowest leaves come down to 0.3-3 m, the green wall of
+  a real edge (Harper et al. 2005), and the tree grows about a fifth shorter and wider, as edge trees do. These are
+  the limbs a deer wood's edge carries clipped to its browse line.
+- `stands.gd --stands --forest-edge=N` measures one-sidedness by the leaf mass's centre (a box's centre for needles):
+  with more variants, one birch with a single limb reaching back read as facing the stand. Leaf mass now sits 0.13-0.24
+  of the crown's width toward the open in the beech, deer wood, montane and northern hardwood edges.
 - Nest crown: forest-grown sycamore and horse chestnut lost apical control in a stand, packing 45-52 thousand internodes
   into a crown 2 m deep, a dark ball of bare twigs a few big leaves could not cover. In a stand their old-age apical
   dominance is held at 0.56 (shade-grown trees stay monopodial; Oliver and Larson 1996): a leafy cap on a clean bole,
