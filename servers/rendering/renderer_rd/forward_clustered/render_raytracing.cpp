@@ -6090,6 +6090,11 @@ uint32_t RTTlasBuilder::_surface_lod(const Instance &p_inst, const RTPlanSurface
 RTSurfaceData *RTTlasBuilder::_process_plan_surface(const Instance &p_inst, const RTPlanSurface &p_surface, uint32_t p_lod) {
 	const SurfaceCache *surf = static_cast<const SurfaceCache *>(p_surface.surf);
 	RTSurfaceData *surf_data = nullptr;
+	// A captured surface whose first capture waits for the dynamic budget traces its bare mesh until then (a terrain
+	// chunk not yet lowered under a ground patch, say): pending, so a still waits for the real one.
+	if (p_surface.deformed_kind != RT_PLAN_DEFORMED_CAPTURED && RenderRaytracing::is_capture_surface(surf, ctx.capture_mode)) {
+		pending_surface_count++;
+	}
 	if (p_surface.deformed_kind != RT_PLAN_DEFORMED_NONE) {
 		const RTDeformedGeometrySource source = _deformed_source(p_inst, p_surface);
 		if (source.is_deformed()) {
