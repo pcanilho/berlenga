@@ -4510,11 +4510,13 @@ func _build_camera() -> void:
 			cam.position = Vector3(300, 520, coast_z + 900.0)
 			cam.look_at(Vector3(-100, 250, -700))
 	if args.has("cam") and args.has("look"):
-		# A fixed shot for before/after pairs: --cam=x,y,z --look=x,y,z (y of either below 0: that far above the ground).
+		# A fixed shot for before/after pairs: --cam=x,y,z --look=x,y,z (y of either below 0: that far above the ground;
+		# the camera's above the sea where the ground is under water).
 		var cv := _vec3_arg(args["cam"])
 		var lv := _vec3_arg(args["look"])
 		if cv.y < 0.0:
-			cv.y = height_at(cv.x, cv.z) - cv.y
+			# Above the ground, or above the sea where the ground is under it.
+			cv.y = maxf(height_at(cv.x, cv.z), gen.sea_level if gen != null else -INF) - cv.y
 		if lv.y < 0.0:
 			lv.y = height_at(lv.x, lv.z) - lv.y
 		cam.position = cv
