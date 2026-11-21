@@ -114,6 +114,8 @@ uniform float cloud_halo_strength : hint_range(0, 0.5) = 0.08;
 uniform float cloud_surface_occlusion : hint_range(0, 2) = 1.0;
 // Short steps inside cloud as a share of the long ones (1: no refinement).
 uniform float cloud_refine : hint_range(0.1, 1) = 0.33;
+// Iridescence on thin, newly formed wave cloud near the sun (diffraction by small uniform droplets): its strength.
+uniform float cloud_iridescence : hint_range(0, 1) = 0.6;
 group_uniforms;
 
 group_uniforms weather_map; // Set by WeatherMap3D each update.
@@ -746,6 +748,29 @@ vec4 march_altocumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 // (the field is fixed to the ground and smooth: 16 coarse steps over at most 8 km of path, refined in cloud). The lens is laminar: its
 // edge is where the lift meets saturation, roughened only by thin striations along the wind (the moist sheets the
 // air carries through it). Lit as the mid layer: Wrenninge's octaves, two-stream diffuse, the sky's light.
+// Cloud iridescence (Gedzelman and Lock 2003, "Simulating coronas in color", Applied Optics 42; Laven's MiePlot):
+// light diffracted round droplets of radius a spreads as the Airy pattern [2 J1(v) / v]^2, v = 2 pi a sin(theta) /
+// lambda, so at a given angle from the sun each wavelength sits on a different part of its rings. Where the droplets
+// are small and alike (just condensed, at a lens' leading edge: 1 to 6 um) the colours show as pastel bands 10 to
+// 30 degrees from the sun, following the lens' outline as the droplets grow inward. Returned as the colour's ratio to
+// its own luminance, so it tints the forward-scattered sunlight without brightening it.
+float bessel_j1(float x) {
+	if (x < 3.0) {
+		float x2 = x * x;
+		return x * (0.5 - x2 * (1.0 / 16.0 - x2 * (1.0 / 384.0 - x2 / 18432.0)));
+	}
+	float ph = x - 2.35619449;
+	return sqrt(0.63661977 / x) * (cos(ph) - 0.375 / x * sin(ph));
+}
+
+vec3 iridescence_tint(float p_sin, float p_radius_um) {
+	vec3 v = 6.2831853 * p_radius_um * p_sin / vec3(0.65, 0.55, 0.45);
+	vec3 j = vec3(bessel_j1(v.r), bessel_j1(v.g), bessel_j1(v.b));
+	vec3 airy = 4.0 * j * j / max(v * v, vec3(1e-4));
+	float lum = dot(airy, vec3(0.2126, 0.7152, 0.0722));
+	return clamp(airy / max(lum, 1e-6), vec3(0.0), vec3(2.5));
+}
+
 vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, float jitter, float p_pixel, out float r_t) {
 	r_t = 0.0;
 	float y0 = slab.x;
@@ -835,7 +860,16 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 				// Through the whole lens toward the sun (a lens is 200 to 800 m deep: three reads to 700 m), so a belly
 				// under a high sun is shaded by the cloud over it and a crown is lit.
 				float tau = wc_wave_extinction_d(p + sun_dir * 40.0, 0.0, dep, lr, dr) * 80.0 + wc_wave_extinction_d(p + sun_dir * 170.0, 0.0, dep, lr, dr) * 180.0 + wc_wave_extinction_d(p + sun_dir * 450.0, 0.0, dep, lr, dr) * 380.0;
-				light = sun_radiance * (exp(-tau) * phase0 + 0.5 * exp(-0.5 * tau) * phase1 + 0.25 * exp(-0.25 * tau) * phase2);
+				// The single-scattered sunlight carries the diffraction colours: droplets from 1 um where the air has just
+				// saturated to 6 um 150 m past it, on thin cloud only (many scatterings wash them out), 6 to 35 degrees
+				// from the sun.
+				vec3 irid = vec3(1.0);
+				if (cloud_iridescence > 0.0 && cos_theta > 0.82) {
+					float s_th = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
+					float w_ir = cloud_iridescence * smoothstep(0.82, 0.9, cos_theta) * (1.0 - smoothstep(0.985, 0.995, cos_theta)) * (1.0 - smoothstep(0.0, 0.7, profile)); // the term it tints already carries exp(-tau)
+					irid = mix(vec3(1.0), iridescence_tint(s_th, mix(1.0, 6.0, smoothstep(0.0, 150.0, x))), w_ir);
+				}
+				light = sun_radiance * (exp(-tau) * phase0 * irid + 0.5 * exp(-0.5 * tau) * phase1 + 0.25 * exp(-0.25 * tau) * phase2);
 				float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * 2.0);
 				light += sun_radiance * diffuse * mix(0.25, 1.0, smoothstep(0.0, 0.6, profile)) * (2.0 / (4.0 * PI));
 				// The sky's light: from above through the cloud over the point, from below off the ground (as the

@@ -653,3 +653,16 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
   grid (64 x 64 over about 100 km round the camera, each cell the distance of open water upwind from
   WorldWater.height_at along the wind, rebuilt when the wind turns), uploaded with the cover. Cover, type and the
   roll stretch rise with it downwind of the shore; the weather's snowfall takes the same field (Valence's map).
+
+## Lenticular plates and iridescence
+
+- Technique: Altocumulus lenticularis duplicatus (pile of plates). Each plate is a moist layer lifted
+  over the lee wave crest; dry layers between them stay clear. Implemented as vertical gaps every
+  350 m (offset by 4 km noise) inside the wave layer, faded in by a 9 km stack mask so some lenses
+  stay single. Applied in `wave_plate_gaps` (CPU) and `wc_wave_sigma` (GLSL), so shadows and the
+  view march agree.
+- Iridescence: lens edges hold young, small, uniform droplets, which diffract sunlight into pastel
+  bands near the sun (Gedzelman and Lock 2003, "Simulating coronas in color"). Airy pattern
+  [2 J1(v)/v]^2 per RGB wavelength (0.65/0.55/0.45 um), luminance-normalised, droplet radius 1 um
+  at the edge to 6 um inside. Only within about 35 degrees of the sun, only on thin parts of the
+  plate (`cloud_iridescence`, default 0.6). Raster and PT share the sky shader.

@@ -831,6 +831,21 @@ float wave_dew_depression_at(const State &p_state, const Vector3 &p_pos) {
 	return dep;
 }
 
+// Pile of plates (altocumulus lenticularis duplicatus, "pile d'assiettes"): where the moist layer is stratified in
+// thin sheets, each lens splits into plates stacked about 350 m apart with thin clear gaps between, the dry sheets
+// staying unsaturated however far the wave lifts them (WMO International Cloud Atlas, Ac len duplicatus; the
+// radiosonde's stepped humidity). In patches some 10 km across; the gaps tilt and wander a little with the noise.
+float wave_plate_gaps(float p_mid_height, const Vector3 &p_pos) {
+	const Vector2 xz(p_pos.x, p_pos.z);
+	const float stack = smoothstep(0.25f, 0.55f, value_noise(xz / 9000.0f + Vector2(3.1f, 7.7f)));
+	if (stack <= 0.0f) {
+		return 1.0f;
+	}
+	const float f = Math::fposmod((p_pos.y - p_mid_height) / 350.0f + 0.4f * value_noise(xz / 4000.0f), 1.0f);
+	const float gap = smoothstep(0.02f, 0.1f, f) * (1.0f - smoothstep(0.3f, 0.38f, f));
+	return 1.0f - stack * gap;
+}
+
 float wave_extinction_at(const State &p_state, const Vector3 &p_pos) {
 	const bool in_a = p_state.wave_y1 > p_state.wave_y0 && p_pos.y >= p_state.wave_y0 && p_pos.y <= p_state.wave_y1;
 	const bool in_b = p_state.wave_y3 > p_state.wave_y2 && p_pos.y >= p_state.wave_y2 && p_pos.y <= p_state.wave_y3;
@@ -850,7 +865,7 @@ float wave_extinction_at(const State &p_state, const Vector3 &p_pos) {
 	const float rho_air = 1.225f * Math::exp(-p_pos.y / 8500.0f);
 	const float water = rho_air * rate * x; // kg/m^3
 	const float ice = CLAMP((-20.0f - tc) / 10.0f, 0.0f, 1.0f);
-	return 1.5f * water / Math::lerp(1000.0f * 10e-6f, 917.0f * 30e-6f, ice);
+	return 1.5f * water / Math::lerp(1000.0f * 10e-6f, 917.0f * 30e-6f, ice) * wave_plate_gaps(p_state.mid_height, p_pos);
 }
 
 Vector4 wave_slab(const State &p_state, const float *p_eta_max) {
@@ -1774,7 +1789,11 @@ float wc_wave_sigma(vec3 p, float eta, float x) {
 	float rate = 2.0e-6 * exp(0.06 * max(tc, -40.0));
 	float rho_air = 1.225 * exp(-p.y / 8500.0);
 	float ice = clamp((-20.0 - tc) / 10.0, 0.0, 1.0);
-	return 1.5 * rho_air * rate * x / mix(0.01, 917.0 * 30e-6, ice);
+	// Pile of plates (wave_plate_gaps() on the CPU).
+	float stack = smoothstep(0.25, 0.55, wc_value_noise(p.xz / 9000.0 + vec2(3.1, 7.7)));
+	float f = fract((p.y - cloud_mid_height) / 350.0 + 0.4 * wc_value_noise(p.xz / 4000.0));
+	float gap = stack * smoothstep(0.02, 0.1, f) * (1.0 - smoothstep(0.3, 0.38, f));
+	return 1.5 * rho_air * rate * x / mix(0.01, 917.0 * 30e-6, ice) * (1.0 - gap);
 }
 
 // p_dep >= 0: the dew point depression already read nearby (the sun samples reuse the step's; the moist layers
