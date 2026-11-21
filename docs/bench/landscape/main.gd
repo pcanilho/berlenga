@@ -847,6 +847,8 @@ func _ready() -> void:
 				var k := nd.get_class()
 				cnt[k] = cnt.get(k, 0) + 1
 		_log("drawables %s" % str(cnt))
+	if args.has("snow-road") and snow != null:
+		await _snow_road_pick()
 	if args.has("buggy"):
 		await _place_buggy()
 	if args.has("storm-patch"):
@@ -6667,6 +6669,14 @@ func _place_buggy() -> void:
 		var cam2: Camera3D = get_viewport().get_camera_3d()
 		cam2.global_position = Vector3(best_pos.x, height_at(best_pos.x, best_pos.z) + (float(cp2[1]) if cp2.size() > 1 else 1.2), best_pos.z)
 		cam2.look_at(rear + Vector3(0, 0.4, 0))
+		if args.has("snow-road") and snow != null and snow.has_method("get_glaze_at"):
+			var gl := 0.0
+			var pk := 0.0
+			for k in 12:
+				var q := car.global_position - fwd2 * (0.5 * k)
+				gl = maxf(gl, float(snow.call("get_glaze_at", q)))
+				pk = maxf(pk, float(snow.call("get_packed_at", q)))
+			_log("snow road: behind the car glaze up to %.2f mm, packed up to %.2f, grip at the rear wheel %.2f" % [gl, pk, float(snow.call("get_grip_at", rear))])
 		_log("buggy sun cam %s, sun elevation %.1f deg, %s the turn" % [str(cam2.global_position.round()), rad_to_deg(asin(clampf(ts.y, -1.0, 1.0))), "outside" if best_out > 0.0 else "inside"])
 	if args.has("buggy-hold"):
 		PhysicsServer3D.set_active(false) # mid-slide: hold the moment for the capture frames (a zero time scale makes PhysX vehicles complain)
@@ -6924,6 +6934,51 @@ func _suncups() -> void:
 	if args.has("snow-tracks"):
 		await _snow_tracks(surf, c3, look_dir)
 	_log("suncups: %.2f m cups on %.2f m snow at %s, cam %s, sun %.1f deg" % [mm, best_d, str(best.round()), str(c3.global_position.round()), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
+
+
+func _snow_road_pick() -> void:
+	# --snow-road: the buggy on gentle snow --road-min..--road-max (0.15..0.6 m) deep, heading --road-yaw (90) degrees
+	# off the sun so a --buggy-sun-cam looks across its packed track and glaze (snow e5ce60c3: world_contact wheels pack
+	# the snow they roll on and polish a glaze where they spin). A SnowSurface3D round the spot draws it; the drive is
+	# --buggy-drive (say a wheelspin start then a run), set on the command line.
+	var lo := float(args.get("road-min", "0.15"))
+	var hi := float(args.get("road-max", "0.6"))
+	var wr: Rect2 = gen.get_world_rect()
+	var best := Vector3.INF
+	var best_s := INF
+	var xx := wr.position.x + 300.0
+	while xx < wr.end.x - 300.0:
+		var zz := wr.position.y + 300.0
+		while zz < wr.end.y - 300.0:
+			var p := Vector3(xx, 0, zz)
+			var d: float = snow.get_depth_at(p)
+			var ang := rad_to_deg(atan(_slip_grad(p).length()))
+			if d >= lo and d <= hi and ang < best_s and gen.get_height(p) > gen.sea_level + 5.0:
+				best_s = ang
+				best = Vector3(xx, gen.get_height(p), zz)
+			zz += 32.0
+		xx += 32.0
+	if best == Vector3.INF:
+		_log("snow road: no snow %.2f to %.2f m deep" % [lo, hi])
+		return
+	var to_sun := sun.global_basis.z
+	var yaw := atan2(to_sun.x, to_sun.z) + deg_to_rad(float(args.get("road-yaw", "90")))
+	args["buggy"] = "%.1f,%.1f,%.1f" % [best.x, best.z, rad_to_deg(yaw)]
+	var focus := Node3D.new()
+	focus.name = "RoadFocus"
+	add_child(focus)
+	focus.global_position = best
+	snow.follow_target = snow.get_path_to(focus)
+	for i in 30:
+		await get_tree().physics_frame
+	var surf: Node3D = ClassDB.instantiate("SnowSurface3D")
+	surf.name = "SnowSurface"
+	add_child(surf)
+	surf.set("snow_cover", surf.get_path_to(snow))
+	surf.set("follow_target", surf.get_path_to(focus))
+	for i in 10:
+		await get_tree().physics_frame
+	_log("snow road: %.2f m of snow at %s (%.1f deg slope), buggy heading %.0f deg" % [snow.get_depth_at(best), str(best.round()), best_s, rad_to_deg(yaw)])
 
 
 func _slush_prints() -> void:
