@@ -127,6 +127,7 @@ class BodySnowStub extends WorldSnow:
 #   --raster          raster only (default path traced)
 #   --taa             raster with TAA (stills set against path traced ones: no per-pixel shadow or dither dots)
 #   --out=path.png    save the last frame and quit
+#   --ice-drop=M      icicles view: the edge M m under the roof (the roots must still join it)
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 
 const GroundScript := preload("res://ground.gd")
@@ -209,6 +210,7 @@ func _ready() -> void:
 			await _run_failure_tests()
 		elif only == "icicles":
 			_run_icicle_tests()
+			await _run_icicle_attach_tests()
 		elif only == "background":
 			await _run_background_tests()
 		elif only == "water":
@@ -421,6 +423,7 @@ func _run_tests() -> void:
 	await _run_climate_tests()
 	await _run_failure_tests()
 	_run_icicle_tests()
+	await _run_icicle_attach_tests()
 	await _run_background_tests()
 	await _run_water_tests()
 	await _run_fire_tests()
@@ -669,6 +672,10 @@ func _run_rime_tests() -> void:
 	for h in 24:
 		rime.grow(1.0, 4.0, Vector3(2.0, 0.0, 0.0), 0.0)
 	_check("a thaw takes it off", rime.get_target_thickness(0) < 0.001, "%.1f mm left" % (rime.get_target_thickness(0) * 1000.0))
+	# A twig at 45 degrees: its collector is its own width, not its world box's.
+	pole.rotation_degrees = Vector3(45.0, 30.0, 0.0)
+	rime.refresh_targets()
+	_check("a slanted twig's collector is its width", rime.get_target_diameter(0) < 0.025, "%.1f mm for a 20 mm pole at 45 degrees" % (rime.get_target_diameter(0) * 1000.0))
 	rime.queue_free()
 	holder.queue_free()
 	await get_tree().process_frame
@@ -2295,6 +2302,42 @@ func _run_failure_tests() -> void:
 			_check("a thaw brings them down sooner", day > 0 and day < days["cold"], "day %d against %d" % [day, days["cold"]])
 
 
+func _run_icicle_attach_tests() -> void:
+	# Roots joined to what they hang from: an eave slab 0.2 m above the edge (a placement that leaves the
+	# roots under it, as at the hut), and a gap past the reach.
+	var holder := Node3D.new()
+	add_child(holder)
+	var slab := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(2.4, 0.1, 0.6)
+	slab.mesh = bm
+	slab.position = Vector3(0, 0.25, 0)
+	holder.add_child(slab)
+	var ice := SnowIcicles3D.new()
+	holder.add_child(ice)
+	ice.edge = PackedVector3Array([Vector3(-1, 0, 0), Vector3(1, 0, 0)])
+	for day in 3:
+		ice.grow(6.0, -4.0, 0.5, 0.9)
+		ice.grow(18.0, -8.0, 0.5, 0.0)
+	await get_tree().process_frame
+	var lo := INF
+	var hi := -INF
+	var n := 0
+	for k in ice.get_icicle_count():
+		if ice.get_icicle_length(k) < 0.01:
+			continue
+		lo = minf(lo, ice.get_icicle_attach(k))
+		hi = maxf(hi, ice.get_icicle_attach(k))
+		n += 1
+	_check("roots join the eave above them (0.2 m up)", n > 0 and lo > 0.195 and hi < 0.205, "%d icicles, %.3f to %.3f m" % [n, lo, hi])
+	ice.attach_reach = 0.15
+	var far := 0.0
+	for k in ice.get_icicle_count():
+		far = maxf(far, ice.get_icicle_attach(k))
+	_check("nothing within reach: roots left as placed", far == 0.0, "%.3f m" % far)
+	holder.queue_free()
+
+
 func _run_icicle_tests() -> void:
 	print("Icicles (follow-up 6):")
 	var tip_still := SnowIcicles3D.tip_growth_rate(-10.0, 0.0) * 100.0
@@ -2901,6 +2944,9 @@ func _build_icicles(cam: Camera3D) -> void:
 	# The roof's front edge: 1.7 m out from its middle, dropped by its 10 degree slope, under its thickness.
 	# Rooted a little inside the roof.
 	var eave_y := 2.6 - 1.7 * sin(deg_to_rad(10.0)) - 0.03
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--ice-drop="): # --ice-drop=M: the edge M m below the roof (roots must still join it)
+			eave_y -= float(a.substr(11))
 	var ice := SnowIcicles3D.new()
 	ice.name = "Icicles"
 	ice.spacing = 0.12

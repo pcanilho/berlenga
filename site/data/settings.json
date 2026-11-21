@@ -2577,7 +2577,19 @@
     "VegetationField3D.make_game_trails()"
    ],
    "note": "",
-   "what": "animals wear a branching network of trails between cover, feeding lawns and water, routed by least cost over slope and water and merging where traffic runs; grass wears along them and the packed ground pools rain first.",
+   "what": "animals wear a branching network of trails between cover, feeding lawns and water, routed by least cost over slope and water and merging where traffic runs; grass wears to trodden soil along them, stones stand proud on the tread and the packed ground pools rain first.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Boar rooting",
+   "settings": [
+    "WorldStand.DISTURBANCE_ROOTING",
+    "PlantSpecies.RULE_ROOTING"
+   ],
+   "note": "",
+   "what": "rooted ground shows dark turned clods and loose stones, loses its plants and takes the first weeds, healing over about two years.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

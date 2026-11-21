@@ -859,6 +859,8 @@ func _ready() -> void:
 		await _hut()
 		if args.has("hut-icicles"):
 			await _hut_icicles()
+		if args.has("hut-rime"):
+			await _hut_rime()
 	if slip_walk.size() == 4 and prints != null:
 		await _slip_walk()
 	if args.has("powder-avalanche") and snow != null:
@@ -6193,6 +6195,29 @@ func _hut() -> void:
 		_log("hut fire at %.0f s: state %d, %.0f kW, flashover %.0f s, char %.1f mm, collapsed %s, firebrands %d" % [secs, int(bf.call("get_room_state", 0)), float(bf.call("get_heat_release")), float(bf.call("get_room_flashover_time", 0)), float(bf.call("get_room_char_depth", 0)) * 1000.0, str(bf.call("is_room_collapsed", 0)), int(bf.call("get_firebrand_count"))])
 
 
+func _hut_rime() -> void:
+	# --hut-rime[=H]: H (24) hours of freezing fog (--rime-c -6 C, --rime-wind 8 m/s, --rime-fog 0.25 g/m3) on the hut
+	# (SnowRime3D, snow d0a9db71/fbfd5e10), the wind blowing from the camera onto it so the feathers grow toward us.
+	var root := get_node_or_null("Hut") as Node3D
+	if root == null or not ClassDB.class_exists("SnowRime3D"):
+		_log("hut rime: no hut or no SnowRime3D")
+		return
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var wv := root.global_position - c3.global_position
+	wv.y = 0.0
+	wv = wv.normalized() * float(args.get("rime-wind", "8"))
+	var rime: Node3D = ClassDB.instantiate("SnowRime3D")
+	rime.name = "Rime"
+	rime.set("target_group", "")
+	add_child(rime)
+	rime.set("target_paths", [rime.get_path_to(root)])
+	rime.call("refresh_targets")
+	var hrs := float(args["hut-rime"]) if String(args["hut-rime"]) != "" else 24.0
+	for h in int(hrs):
+		rime.call("grow", 1.0, float(args.get("rime-c", "-6")), wv, float(args.get("rime-fog", "0.25")))
+	_log("hut rime: %d targets, %d feathers after %.0f h, wind %s" % [int(rime.call("get_target_count")), int(rime.call("get_feather_count")), hrs, str(wv)])
+
+
 func _hut_icicles() -> void:
 	# --hut-icicles (with --hut, winter): snow on the hut's roof (its materials take the weather's snow) and a week of
 	# icicles (SnowIcicles3D, snow 5f68879a) along its longest eave, the lip found from the roof mesh; the camera
@@ -6801,6 +6826,7 @@ func _powder_avalanche() -> void:
 		_log("powder avalanche: no avalanche node on the snow cover")
 		return
 	av.natural_release = false
+	_log("powder avalanche: %d natural releases before loading" % (int(av.get_release_count()) if av.has_method("get_release_count") else -1))
 	# A storm slab on an older bonded pack (as on the snow bench): it breaks away whole.
 	snow.add_snow(90.0, 150.0)
 	snow.advance(8.0 * 24.0 * 3600.0)
@@ -6846,7 +6872,7 @@ func _powder_avalanche() -> void:
 				deepest = maxf(deepest, snow.get_depth_at(Vector3(xs, 0, zs)))
 				zs += stp * 4.0
 			xs += stp * 4.0
-		_log("powder avalanche: no steep face with snow on it (deepest snow %.2f m; %d faces in range, the most snow on one %.2f m)" % [deepest, n_steep, steep_snow])
+		_log("powder avalanche: no steep face with snow on it (deepest snow %.2f m; %d faces in range, the most snow on one %.2f m; %d releases)" % [deepest, n_steep, steep_snow, int(av.get_release_count()) if av.has_method("get_release_count") else -1])
 		return
 	var f3 := Vector3(best_fall.x, 0, best_fall.y)
 	var side := f3.cross(Vector3.UP).normalized()

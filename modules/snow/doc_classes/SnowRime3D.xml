@@ -133,7 +133,7 @@
 		<member name="material" type="Material" setter="set_material" getter="get_material">
 			The rime's material. By default white, matte ice full of air with a little light through it.
 		</member>
-		<member name="max_feathers" type="int" setter="set_max_feathers" getter="get_max_feathers" default="40000">
+		<member name="max_feathers" type="int" setter="set_max_feathers" getter="get_max_feathers" default="60000">
 			The most feathers drawn; past it they are thinned evenly and widened.
 		</member>
 		<member name="max_thickness" type="float" setter="set_max_thickness" getter="get_max_thickness" default="0.25">

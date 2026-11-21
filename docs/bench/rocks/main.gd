@@ -79,6 +79,9 @@ extends Node3D
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --detail-octaves=N    with --world: the material's erosion detail octaves (4; 0 for none, a before frame);
 #                         --sun-shadow=0 drops the raster sun shadow map (A/B)
+#   --stand-test          with --world: a game trail (600 passes a year, 1.2 m) across the spot and a boar rooting disc
+#                         beside it on WorldStand (TerrainMaterial3D's worn soil and turned soil); --rooting-age=y (0.3),
+#                         --stand-at=x,z puts them there instead
 #   --gravel-reach[=d]    with --view=river: a gravel-bed reach whose median is nearest d m (0.03)
 #   --no-ground-cover     with --world: RockField3D.ground_detail_cover off (no grain aggregate on the ground past
 #                         each class's reach; a before frame); --save-cover writes the near cover map, --cover-check
@@ -162,6 +165,16 @@ func _ready() -> void:
 		for n in get_children():
 			if n is DirectionalLight3D:
 				(n as DirectionalLight3D).rotation_degrees = Vector3(-float(sv[0]), float(sv[1]) if sv.size() > 1 else -50.0, 0)
+	if args.has("sun-bias"):
+		# --sun-bias=normal_bias[,depth_bias[,blur]]: the sun's shadow biases and blur (shadow acne A/B).
+		var bv: PackedStringArray = args["sun-bias"].split(",")
+		for n in get_children():
+			if n is DirectionalLight3D:
+				(n as DirectionalLight3D).shadow_normal_bias = float(bv[0])
+				if bv.size() > 1:
+					(n as DirectionalLight3D).shadow_bias = float(bv[1])
+				if bv.size() > 2:
+					(n as DirectionalLight3D).shadow_blur = float(bv[2])
 	if out != "":
 		# Single captures have no TAA to smooth the soft-low shadow kernel's per-pixel rotation (a dot
 		# grid in penumbras): the high filter instead.
@@ -597,6 +610,20 @@ func _world() -> void:
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
 	spot_pos = spot
+	if args.has("stand-test"):
+		var stand: WorldStand = WorldContracts.get_stand()
+		var at := spot
+		if args.has("stand-at"):
+			var xz: PackedStringArray = str(args["stand-at"]).split(",")
+			at = Vector3(float(xz[0]), 0, float(xz[1]))
+			at.y = gen.get_height(at)
+		var pts := PackedVector3Array()
+		for i in range(-12, 13):
+			var t := float(i) * 2.0
+			pts.append(at + Vector3(t, 0, 1.2 * sin(t * 0.18) - 0.6))
+		stand.set_trails([{"points": pts, "width": 1.2, "passes": 600.0, "kind": "game_trail"}])
+		stand.add_disturbance(at + Vector3(-3.0, 0, 2.6), 2.2, WorldStand.DISTURBANCE_ROOTING, float(args.get("rooting-age", "0.3")))
+		print("stand test: trail through ", at, ", rooting at ", at + Vector3(-3.0, 0, 2.6))
 	var dist := {"rockfall": 14.0, "scree": 7.0, "glacial": 12.0, "river": 14.0, "shore": 12.0, "cliff": 30.0, "tor": 22.0, "coast": 60.0, "landform": 30.0}.get(view, 10.0) as float
 	if args.has("dist"):
 		dist = float(args["dist"])

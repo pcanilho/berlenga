@@ -36,6 +36,9 @@
 
 #include "terrain_generator_3d.h"
 
+#include "modules/world/world_contracts.h"
+
+#include "core/math/geometry_2d.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
@@ -1779,6 +1782,159 @@ Dictionary Landscape3D::get_stats() const {
 }
 
 
+// The stand's ground map (docs/ideas/terrain-material.md, "Trails and rooting"): WorldStand's worn trails and boar
+// rooting, rasterised round the camera for TerrainMaterial3D. Trails: the tread share (trail_at's: flat over the
+// middle half, easing to the edge) times the wear their passes give. Trampling takes the field layer's cover off
+// roughly as 1 - exp(-passes / P) (Cole 1995, Liddle 1997: a few hundred passes a year keep a line bare in most
+// field layers), P = 300 here. Rooting: the freshness of turned soil, 1 up to a season after the boar, gone by two
+// years as litter and the field layer close over it. Rebuilt when the camera crosses a 64 m step or the stand changes.
+void Landscape3D::_update_stand_map(const Vector3 &p_camera) {
+	WorldStand *st = WorldContracts::stand();
+	if (!st) {
+		_clear_stand_map();
+		return;
+	}
+	const real_t step = 64.0;
+	const Vector2 origin = Vector2(Math::round(p_camera.x / step) * step, Math::round(p_camera.z / step) * step) - Vector2(STAND_SIZE, STAND_SIZE) * 0.5;
+	const uint64_t gen = st->get_stand_generation();
+	if (origin == stand_origin && gen == stand_generation && st->get_instance_id() == stand_id) {
+		return;
+	}
+	stand_origin = origin;
+	stand_generation = gen;
+	stand_id = st->get_instance_id();
+	const int R = STAND_RES;
+	const real_t texel = STAND_SIZE / real_t(R);
+	const bool scripted = st->get_script_instance() != nullptr;
+	LocalVector<uint8_t> trail;
+	trail.resize(R * R);
+	memset(trail.ptr(), 0, trail.size());
+	bool any = false;
+	auto wear = [](float p_passes) { return 1.0f - Math::exp(-MAX(p_passes, 0.0f) / 300.0f); };
+	if (scripted) {
+		// A script stand answers per point only: sampled at 1 m, spread over the texels.
+		const int C = int(STAND_SIZE);
+		for (int z = 0; z < C; z++) {
+			for (int x = 0; x < C; x++) {
+				const Vector2 t = st->trail_at(Vector3(origin.x + x + 0.5, 0.0, origin.y + z + 0.5));
+				const float v = t.y * wear(t.x);
+				if (v <= 0.0f) {
+					continue;
+				}
+				any = true;
+				const uint8_t b = uint8_t(CLAMP(v * 255.0f, 0.0f, 255.0f));
+				for (int dz = 0; dz < 2; dz++) {
+					for (int dx = 0; dx < 2; dx++) {
+						trail[(z * 2 + dz) * R + x * 2 + dx] = b;
+					}
+				}
+			}
+		}
+	} else {
+		const Array trails = st->get_trails();
+		for (int t = 0; t < trails.size(); t++) {
+			const Dictionary d = trails[t];
+			LocalVector<Vector2> pts;
+			const Variant pv = d.get("points", Variant());
+			if (pv.get_type() == Variant::PACKED_VECTOR3_ARRAY) {
+				for (const Vector3 &q : PackedVector3Array(pv)) {
+					pts.push_back(Vector2(q.x, q.z));
+				}
+			} else if (pv.get_type() == Variant::PACKED_VECTOR2_ARRAY) {
+				for (const Vector2 &q : PackedVector2Array(pv)) {
+					pts.push_back(q);
+				}
+			}
+			const float hw = 0.5f * MAX(float(d.get("width", 0.6f)), 0.05f);
+			const float w = wear(float(d.has("passes") ? d["passes"] : d.get("passes_per_year", 0.0f)));
+			if (w <= 0.0f) {
+				continue;
+			}
+			for (uint32_t i = 0; i + 1 < pts.size(); i++) {
+				const Vector2 a = pts[i], b = pts[i + 1];
+				const int x0 = MAX(0, int(Math::floor((MIN(a.x, b.x) - hw - origin.x) / texel))), x1 = MIN(R - 1, int(Math::ceil((MAX(a.x, b.x) + hw - origin.x) / texel)));
+				const int z0 = MAX(0, int(Math::floor((MIN(a.y, b.y) - hw - origin.y) / texel))), z1 = MIN(R - 1, int(Math::ceil((MAX(a.y, b.y) + hw - origin.y) / texel)));
+				for (int z = z0; z <= z1; z++) {
+					for (int x = x0; x <= x1; x++) {
+						const Vector2 p(origin.x + (x + 0.5) * texel, origin.y + (z + 0.5) * texel);
+						const float dist = p.distance_to(Geometry2D::get_closest_point_to_segment(p, a, b));
+						if (dist > hw) {
+							continue;
+						}
+						const float v = (1.0f - Math::smoothstep(0.5f * hw, hw, dist)) * w;
+						const uint8_t bv = uint8_t(CLAMP(v * 255.0f, 0.0f, 255.0f));
+						if (bv > trail[z * R + x]) {
+							trail[z * R + x] = bv;
+							any = true;
+						}
+					}
+				}
+			}
+		}
+	}
+	// Rooting: sampled every 2 m (the discs are metres across), bilinear over the texels.
+	const int G = int(STAND_SIZE / 2.0) + 1;
+	LocalVector<float> fresh;
+	fresh.resize(G * G);
+	bool any_rooting = false;
+	for (int z = 0; z < G; z++) {
+		for (int x = 0; x < G; x++) {
+			const float age = st->rooting_age_at(Vector3(origin.x + x * 2.0, 0.0, origin.y + z * 2.0));
+			const float f = age < 0.0f ? 0.0f : 1.0f - Math::smoothstep(0.25f, 2.0f, age);
+			fresh[z * G + x] = f;
+			any_rooting = any_rooting || f > 0.0f;
+		}
+	}
+	if (!any && !any_rooting) {
+			_clear_stand_map();
+		stand_origin = origin;
+		stand_generation = gen;
+		stand_id = st->get_instance_id();
+		return;
+	}
+	Vector<uint8_t> data;
+	data.resize(R * R * 2);
+	uint8_t *w = data.ptrw();
+	for (int z = 0; z < R; z++) {
+		const real_t gz = ((z + 0.5) * texel) / 2.0;
+		const int iz = MIN(int(gz), G - 2);
+		const real_t fz = gz - iz;
+		for (int x = 0; x < R; x++) {
+			float g = 0.0f;
+			if (any_rooting) {
+				const real_t gx = ((x + 0.5) * texel) / 2.0;
+				const int ix = MIN(int(gx), G - 2);
+				const real_t fx = gx - ix;
+				const float r0 = Math::lerp(fresh[iz * G + ix], fresh[iz * G + ix + 1], float(fx));
+				const float r1 = Math::lerp(fresh[(iz + 1) * G + ix], fresh[(iz + 1) * G + ix + 1], float(fx));
+				g = Math::lerp(r0, r1, float(fz));
+			}
+			w[(z * R + x) * 2] = trail[z * R + x];
+			w[(z * R + x) * 2 + 1] = uint8_t(CLAMP(g * 255.0f, 0.0f, 255.0f));
+		}
+	}
+	Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_RG8, data);
+	if (stand_texture.is_valid() && stand_texture->get_width() == R) {
+		stand_texture->update(img);
+	} else {
+		stand_texture = ImageTexture::create_from_image(img);
+	}
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->global_shader_parameter_set("terrain_stand_map", stand_texture->get_rid());
+	rs->global_shader_parameter_set("terrain_stand_rect", Vector4(origin.x, origin.y, STAND_SIZE, STAND_SIZE));
+	stand_published = true;
+}
+
+void Landscape3D::_clear_stand_map() {
+	if (stand_published) {
+		RenderingServer::get_singleton()->global_shader_parameter_set("terrain_stand_rect", Vector4());
+		stand_published = false;
+	}
+	stand_origin = Vector2(1e30, 1e30);
+	stand_generation = UINT64_MAX;
+	stand_id = ObjectID();
+}
+
 void Landscape3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
@@ -1789,6 +1945,7 @@ void Landscape3D::_notification(int p_what) {
 			_wait_all();
 			_free_instances();
 			_free_all_collision();
+			_clear_stand_map();
 			set_process_internal(false);
 		} break;
 		case NOTIFICATION_TRANSFORM_CHANGED: {
@@ -1834,6 +1991,9 @@ void Landscape3D::_notification(int p_what) {
 					lods_dirty = false;
 					_launch_meshes(false);
 				}
+			}
+			if (cam) {
+				_update_stand_map(cam->get_global_transform().origin);
 			}
 			_update_collision();
 			_launch_heights();

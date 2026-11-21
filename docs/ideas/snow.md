@@ -1557,6 +1557,10 @@ weight gives tan(lean) = 3 rho_air Cd U^2 / (8 rho_w r g), about 0.01 U^2, and t
   n/(n-1) = 4.2 and drew the core as a wide opaque band, so icicles read as grey metal spikes against a dark
   wall). Raster's transmission reads almost straight through the middle, so the core's vertex() widens it to
   that apparent width outside the path tracer and shadow maps (the hair strands' IN_PATH_TRACER pattern).
+- **Roots attached** (21 Nov): an edge placed under the eave left roots floating with their caps showing from
+  above. Each root's column now runs straight up to the first surface above it within `attach_reach` (0.5 m;
+  meshes under `attach_path`, the parent's by default), 5 mm on into it: the film's ice along its drip path.
+  `--ice-drop=M` lowers the bench's edge to check it; tests: 0.200 m to a slab 0.2 m up, none past the reach.
 - **Raster transmission on solids**: the read takes the mip of the refracted footprint (UV derivatives), so thin
   curved ice no longer speckles or dashes; panes and open water identical (materials bench).
 - `--hero`: from under the roof 1.7 m back looking out (snow to 64 m); `--hero --wall` head on against boards.
@@ -1635,6 +1639,19 @@ photographs, e.g. Fikke et al. 2007, COST 727).
   0.25 g/m3 fog at 8 m/s and -6 C.
 - Next: tree crowns (rime on needles and twigs, through the trees thread's crown meshes or a tint they read),
   glaze (wet growth near 0 C with high liquid water: clear ice, not feathers), and rime shedding in sun.
+
+- **Look, round 2** (21 Nov, from the scene's close-up: hard faceted triangles, bare twigs, smooth posts):
+  - Feathers are vane cards cut by an alpha-tested texture to a feather's outline with 7 barbs a side (geometry for
+    the vane, texture for barbs too fine to model, as grass and fur cards do), drawn from both sides. Normals bend
+    from the surface's at the root to the growth direction at the tip; vertex shade 0.62 at the root to 1 at the
+    tip, 0.86-1 per feather, crust 0.7: tufts with depth, not facets. Backlight 0.55. Budget 60000; parts under
+    2 cm (twigs, wires) keep every feather, the rest share what is left.
+  - Bare twigs were a collector bug: the width came from the world box, so a slanted twig counted as 30 cm
+    wide (efficiency near 0). Now the smaller extent across the part's principal axes (test: 20 mm pole at 45
+    degrees reads 20.0 mm).
+  - Wide faces: a roughness collector (1 cm, 35% of its efficiency; Makkonen 1984, rime on structures grows
+    from roughness elements) sets the least a windward face catches. Faces parallel to the wind still take
+    none, as on real posts: a post's side seen across the wind stays bare but for its windward edge.
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 

@@ -836,13 +836,17 @@ than the 1 m sub-cells the other sources use), read by `_place` on the worker wh
   times the soil's stoniness (0.5 to 1 with the rock exposure). Existing gravel and fines thin by
   `(1 - 0.8 w)`; the coarsest class stays.
 - Shoulders: the kicked fine end of each class, 1 % / 8 % / 12 % cover.
-- Rooting `r = 1 - age / 2` for ages 0 to 2: stones of any size turned up loose, tilted up to 60°,
+- Rooting `r = 1 - smoothstep(0.25, 2, age)` (the terrain material's fade): stones of any size turned up loose, tilted up to 60°,
   barely sunk: 6 % / 5 % / 6 % cover at r = 1, fading as the patch settles.
 - Worn squares are never cut into shared tiles (their grains stay single), and the shared tiles are
   cut from unworn ground, so a trail never repeats into a field.
 - `stand_changed` rebuilds only the detail cells inside the changed rectangle (`ground_wear`, on).
-- Turned soil clods are left to GroundClods3D (the clay lumps belong to the ground surface, not the
-  stones); it can read `rooting_age_at` the same way.
+- Turned soil clods: `GroundClods3D.rooting` (on). Round the camera, hashed per 0.5 m cell, about 90
+  clods per m² of fresh rooting, log-normal round 7 cm (3 to 16 cm), loose on top at any angle; fewer,
+  smaller, flatter and sunk deeper as the patch settles. Colour is the terrain material's turned humus
+  (3199eeb8), greying the same way; the overturned sods' turf stays the terrain's shading, not geometry.
+  Rebuilt when the camera moves a quarter of the radius or the stand changes. Ground bench:
+  `--view=rooting` (fresh, 1 and 1.8 years, left to right), `--no-rooting` for the before frame.
 
 Bench: `--trail[=passes] --rooting[=years]` (rocks bench), `--no-wear` for the before frame. Stats
 `wear_armour`, `wear_shoulder`, `wear_rooting` in `get_ground_detail_tile_stats()`.
