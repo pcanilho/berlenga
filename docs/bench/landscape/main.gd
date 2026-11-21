@@ -6789,6 +6789,8 @@ func _powder_avalanche() -> void:
 	var best := Vector3.INF
 	var best_fall := Vector2.ZERO
 	var best_score := -INF
+	var n_steep := 0
+	var steep_snow := 0.0
 	var xx := wr.position.x + stp
 	while xx < wr.end.x - stp:
 		var zz := wr.position.y + stp
@@ -6796,6 +6798,9 @@ func _powder_avalanche() -> void:
 			var p := Vector3(xx, 0, zz)
 			var g := _slip_grad(p)
 			var ang := rad_to_deg(atan(g.length()))
+			if ang >= float(args.get("av-min-deg", "32")) and ang <= 45.0:
+				n_steep += 1
+				steep_snow = maxf(steep_snow, snow.get_depth_at(p))
 			if ang >= float(args.get("av-min-deg", "32")) and ang <= 45.0 and snow.get_depth_at(p) >= float(args.get("av-min-snow", "0.3")):
 				var fall := -g.normalized()
 				var score := (1.0 - absf(fall.dot(sun_h))) * 2.0 + gen.get_height(p) / 1000.0
@@ -6814,7 +6819,7 @@ func _powder_avalanche() -> void:
 				deepest = maxf(deepest, snow.get_depth_at(Vector3(xs, 0, zs)))
 				zs += stp * 4.0
 			xs += stp * 4.0
-		_log("powder avalanche: no steep face with snow on it (deepest snow %.2f m)" % deepest)
+		_log("powder avalanche: no steep face with snow on it (deepest snow %.2f m; %d faces in range, the most snow on one %.2f m)" % [deepest, n_steep, steep_snow])
 		return
 	var f3 := Vector3(best_fall.x, 0, best_fall.y)
 	var side := f3.cross(Vector3.UP).normalized()
