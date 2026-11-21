@@ -2710,7 +2710,7 @@ Vector3 RockField3D::StandWear::max_in(const Rect2 &p_rect) const {
 
 // Main thread. A trail's wear w = tread (1 - exp(-passes / 300)): the tread is worn bare within a few hundred passes a
 // year and changes little after (Marion and Leung); its shoulders tread (1 - tread) 4 of that. A rooting is fresh at
-// age 0 and settled by two years.
+// up to a season and settled by two years (the terrain material's fade).
 void RockField3D::_sample_wear(const Rect2 &p_rect, StandWear &r_wear) const {
 	r_wear = StandWear();
 	r_wear.rect = p_rect;
@@ -2735,8 +2735,8 @@ void RockField3D::_sample_wear(const Rect2 &p_rect, StandWear &r_wear) const {
 				c.y = 4.0f * t.y * (1.0f - t.y) * worn;
 			}
 			const float age = st->rooting_age_at(p);
-			if (age >= 0.0f && age < 2.0f) {
-				c.z = 1.0f - age / 2.0f;
+			if (age >= 0.0f) {
+				c.z = 1.0f - Math::smoothstep(0.25f, 2.0f, age); // the terrain material's fade (Landscape3D's stand map)
 			}
 			r_wear.v[j * (r_wear.nx + 1) + i] = c;
 			r_wear.any = r_wear.any || c.x > 0.0f || c.y > 0.0f || c.z > 0.0f;

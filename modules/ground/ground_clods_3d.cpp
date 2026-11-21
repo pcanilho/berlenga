@@ -41,6 +41,8 @@
 #include "scene/main/viewport.h"
 #include "servers/rendering/rendering_server.h"
 
+#include "modules/world/world_contracts.h"
+
 namespace {
 
 constexpr float RIM_STEP = 0.002f; // m of new rim on a scan cell before it counts
@@ -50,6 +52,10 @@ constexpr float MAX_SIZE = 0.09f;
 constexpr float SINK = 0.12f; // of its size, pressed into the ground it fell on
 constexpr float STICKY = 0.3f; // soil this sticky holds together as clods (MudSpray's "mud")
 constexpr float PARK_MARGIN = 4.0f; // m past the print field before a clod is kept away
+// Boar rooting (docs/ideas/ground-detail.md, "Game trails and boar rooting"): the top 5 to 15 cm turned over in clods.
+constexpr float ROOT_CELL = 0.5f; // m: the hashed cells the turned soil is laid in
+constexpr float ROOT_COUNT = 90.0f; // clods per m2 on a fresh rooting (about two fifths of the ground under clods)
+constexpr float ROOT_SETTLE = 2.0f; // years until the turned soil has settled back
 
 float _hash01(uint32_t p_h) {
 	p_h ^= p_h >> 16;
@@ -310,6 +316,89 @@ void GroundClods3D::_spawn(GroundSurface3D *p_surface, const Vector3 &p_at, cons
 	draw_dirty = true;
 }
 
+// Boar rooting turns the top 5 to 15 cm of the soil over in patches (Forests 13(8) 1234, 2022): clods of it lie loose
+// on top at any angle, the moist topsoil darker than the ground round it. Over the next two years they slump back,
+// crumble and grass over: fewer, smaller and deeper in each year, and the dark of the fresh soil gone in a few months.
+void GroundClods3D::_root(GroundSurface3D *p_surface) {
+	const WorldStand *st = rooting ? WorldContracts::stand() : nullptr;
+	if (!st) {
+		if (!rooted.is_empty()) {
+			rooted.clear();
+			draw_dirty = true;
+		}
+		rooted_generation = UINT64_MAX;
+		return;
+	}
+	const Rect2 field = p_surface->get_deform_rect();
+	const Vector3 cam = _camera_or(this, Vector3(field.get_center().x, 0.0f, field.get_center().y));
+	const Vector2 c2(cam.x, cam.z);
+	const uint64_t gen = st->get_stand_generation();
+	if (gen == rooted_generation && c2.distance_to(rooted_center) < 0.25f * radius) {
+		return;
+	}
+	const bool had = !rooted.is_empty();
+	rooted.clear();
+	rooted_generation = gen;
+	rooted_center = c2;
+	const float reach = radius * 1.25f; // past the watched radius, so the camera's quarter-radius moves stay covered
+	const int i0 = int(Math::floor((c2.x - reach) / ROOT_CELL)), i1 = int(Math::floor((c2.x + reach) / ROOT_CELL));
+	const int j0 = int(Math::floor((c2.y - reach) / ROOT_CELL)), j1 = int(Math::floor((c2.y + reach) / ROOT_CELL));
+	const int cap = MAX(max_clods / 2, 0);
+	for (int j = j0; j <= j1 && int(rooted.size()) < cap; j++) {
+		for (int i = i0; i <= i1 && int(rooted.size()) < cap; i++) {
+			const Vector2 mid((i + 0.5f) * ROOT_CELL, (j + 0.5f) * ROOT_CELL);
+			if (mid.distance_to(c2) > reach) {
+				continue;
+			}
+			// The terrain material's fade for the same rooting (Landscape3D's stand map: fresh up to a season, gone by
+			// two years), so the clods and the dark humus it draws under them come and go together. The freshest of the
+			// cell's middle and corners sets its count (a patch's edge can cross it), each clod its own.
+			auto fresh_at = [&](const Vector2 &p_at) {
+				const float a = st->rooting_age_at(Vector3(p_at.x, 0.0f, p_at.y));
+				return a < 0.0f ? 0.0f : 1.0f - Math::smoothstep(0.25f, ROOT_SETTLE, a);
+			};
+			float most = fresh_at(mid);
+			for (int q = 0; q < 4; q++) {
+				most = MAX(most, fresh_at(Vector2((i + (q & 1)) * ROOT_CELL, (j + (q >> 1)) * ROOT_CELL)));
+			}
+			if (most <= 0.0f) {
+				continue;
+			}
+			RandomPCG r(uint64_t(uint32_t(i) * 73856093u ^ uint32_t(j) * 19349663u ^ uint32_t(seed) * 83492791u) + 0x9e3779b97f4a7c15ull);
+			const int n = int(ROOT_COUNT * ROOT_CELL * ROOT_CELL * most + r.randf());
+			// The terrain material's turned humus (linear; TerrainMaterial3D, "Trails and rooting"), greying toward the
+			// bare soil as it dries; the sods' turf colour stays the terrain's (it draws them on the ground).
+			const Color bare = _clay_at(p_surface, Vector3(mid.x, 0.0f, mid.y)).srgb_to_linear() * 0.75f;
+			for (int k = 0; k < n && int(rooted.size()) < cap; k++) {
+				const Vector3 at((i + r.randf()) * ROOT_CELL, 0.0f, (j + r.randf()) * ROOT_CELL);
+				const float fresh = Vector2(at.x, at.z).distance_to(c2) > reach ? 0.0f : fresh_at(Vector2(at.x, at.z));
+				if (r.randf() * most >= fresh) {
+					continue; // past the patch's edge, or a less fresh part of the cell
+				}
+				// Log-normal sods (Gardner 1956) round 7 cm, 3 to 16 cm, crumbling smaller as they settle.
+				const float size = CLAMP(0.07f * Math::exp(0.45f * r.randfn(0.0f, 1.0f)), 0.03f, 0.16f) * (0.6f + 0.4f * fresh);
+				Clod cl;
+				cl.size = size;
+				cl.shape = uint8_t(r.rand() % SHAPES);
+				// Lying loose on top when fresh, slumped half into the ground by the time it has settled.
+				const float sink = SINK + 0.35f * (1.0f - fresh);
+				cl.position = Vector3(at.x, p_surface->get_surface_height_at(at) + size * (0.32f - sink), at.z);
+				const Basis yaw(Vector3(0, 1, 0), r.randf() * float(Math::TAU));
+				// Turned over: tipped any way, up to 50 degrees, flattening out as they slump.
+				const Basis tilt(Vector3(r.random(-1.0f, 1.0f), 0.0f, r.random(-1.0f, 1.0f)).normalized(), r.random(0.0f, 0.9f) * (0.4f + 0.6f * fresh));
+				const Basis stretch = Basis::from_scale(Vector3(r.random(0.85f, 1.25f), r.random(0.6f, 1.0f) * (0.7f + 0.3f * fresh), r.random(0.85f, 1.25f)));
+				cl.basis = tilt * yaw * stretch;
+				const Color humus = Color(0.062f, 0.046f, 0.033f).lerp(Color(0.11f, 0.085f, 0.06f), r.randf()).lerp(bare, (1.0f - fresh) * 0.6f);
+				cl.color = Color(MIN(humus.r, 1.0f), MIN(humus.g, 1.0f), MIN(humus.b, 1.0f)).linear_to_srgb();
+				rooted.push_back(cl);
+			}
+		}
+	}
+	if (had || !rooted.is_empty()) {
+		draw_dirty = true;
+	}
+}
+
 void GroundClods3D::_remove(uint32_t p_index) {
 	clods[p_index] = clods[clods.size() - 1];
 	clods.resize(clods.size() - 1);
@@ -373,7 +462,8 @@ void GroundClods3D::_draw() {
 	}
 	_ensure_draw();
 	draw_dirty = false;
-	for (const Clod &c : clods) {
+	for (uint32_t i = 0; i < clods.size() + rooted.size(); i++) {
+		const Clod &c = i < clods.size() ? clods[i] : rooted[i - clods.size()];
 		const Basis b = c.basis.scaled(Vector3(c.size, c.size, c.size));
 		LocalVector<float> &out = lump_draw.buffers[c.shape % SHAPES];
 		// Instance colours reach the shader as they are (linear); the clay's colour is sRGB, as albedos are given.
@@ -438,6 +528,7 @@ void GroundClods3D::update_now() {
 	store.configure(surface->is_keeping_ruts() ? surface->get_ruts_path() : String(), "clods");
 	_restore(surface);
 	store.flush();
+	_root(surface);
 	if (draw_dirty) {
 		_draw();
 	}
@@ -447,8 +538,24 @@ void GroundClods3D::update_now() {
 	update_runs++;
 }
 
+void GroundClods3D::set_rooting(bool p_enabled) {
+	if (rooting == p_enabled) {
+		return;
+	}
+	rooting = p_enabled;
+	rooted_generation = UINT64_MAX;
+	if (GroundSurface3D *surface = is_inside_tree() ? _surface() : nullptr) {
+		_root(surface);
+		if (draw_dirty) {
+			_draw();
+		}
+	}
+}
+
 void GroundClods3D::clear() {
 	clods.clear();
+	rooted.clear();
+	rooted_generation = UINT64_MAX;
 	store.clear(false);
 	next_slot = 0;
 	scan.clear();
@@ -505,6 +612,9 @@ void GroundClods3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("update_now"), &GroundClods3D::update_now);
 	ClassDB::bind_method(D_METHOD("clear"), &GroundClods3D::clear);
 	ClassDB::bind_method(D_METHOD("get_clod_count"), &GroundClods3D::get_clod_count);
+	ClassDB::bind_method(D_METHOD("set_rooting", "enabled"), &GroundClods3D::set_rooting);
+	ClassDB::bind_method(D_METHOD("is_rooting"), &GroundClods3D::is_rooting);
+	ClassDB::bind_method(D_METHOD("get_rooted_count"), &GroundClods3D::get_rooted_count);
 	ClassDB::bind_method(D_METHOD("get_spawned_total"), &GroundClods3D::get_spawned_total);
 	ClassDB::bind_method(D_METHOD("get_parked_count"), &GroundClods3D::get_parked_count);
 	ClassDB::bind_method(D_METHOD("get_landed_total"), &GroundClods3D::get_landed_total);
@@ -518,6 +628,7 @@ void GroundClods3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radius", PROPERTY_HINT_RANGE, "1,50,0.5,suffix:m"), "set_radius", "get_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_clods", PROPERTY_HINT_RANGE, "0,200000,1"), "set_max_clods", "get_max_clods");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rooting"), "set_rooting", "is_rooting");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
 }
 

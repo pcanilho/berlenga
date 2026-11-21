@@ -34,6 +34,12 @@
 				Returns the number of clods kept while the camera is away from where they lie (in memory; on disk ones are not counted), given back when the print field comes over them again.
 			</description>
 		</method>
+		<method name="get_rooted_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The clods of turned soil lying over boar rootings round the camera (see [member rooting]).
+			</description>
+		</method>
 		<method name="get_spawned_total" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -80,6 +86,9 @@
 		</member>
 		<member name="radius" type="float" setter="set_radius" getter="get_radius" default="12.0">
 			Distance round the camera, in metres, within which new rims are torn into clods.
+		</member>
+		<member name="rooting" type="bool" setter="set_rooting" getter="is_rooting" default="true">
+			Turned soil over the boar rootings [WorldStand] publishes ([method WorldStand.rooting_age_at]): within [member radius] of the camera, clods of moist topsoil 3 to 16 cm across lie loose on a fresh rooting at any angle, darker than the ground round them. Over two years they become fewer and smaller and slump into the ground; the dark of the fresh soil goes within about three months. They are laid the same way each time (hashed per 0.5 m) and rebuilt when the camera moves or the stand changes; a print does not crush them. Up to half of [member max_clods].
 		</member>
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			Seed for the clods' sizes, shapes and places.
