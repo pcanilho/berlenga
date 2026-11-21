@@ -599,6 +599,26 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
   Review stills are 192 frames (about 1.1 s at 174 Hz).
 - Raster and PT match (640).
 
+## Storm review 7 (21 Nov 2026; docs: mushroom ring, grain, contour bands)
+
+- Grain on the shelf: a render with the march start fixed showed step banding and dots, and one with the shelf's
+  detail erosion off came out smooth: even a light erosion (0.15) over a dense, thin, hard-edged wedge seen at a few
+  degrees read as grain. The shelf is laminar (Doswell 1985: the lifted inflow condenses smoothly), so it now has no
+  detail erosion, its face shaped by its tiers alone. Inside cloud the short step also stays under 0.4% of the
+  distance (100 m at 25 km), with the iteration cap raised to four times the steps.
+- Shelf: hung from the storm's base instead of a ring further out. From under the tower (0.85 core radii) it slopes
+  down to a sharp leading edge just ahead of the tower's base (1.45 radii plus 0.02 per m/s of outflow), its top
+  flush with the base, along the leading side (about 70 degrees each way), the edge bulging 0.25 radii in and out
+  along the front (outflow surges), so it is one cloud with the base and not a saucer.
+- Contour bands under the anvil (and swirls on towers): the light grid's read stepped up a level wherever the read
+  height crossed one, a jump in shading along height contours of a sloping underside. The read now also takes the
+  next level up a level's climb further along the path (one march sample across the gap) and blends by where the
+  height falls between the two, so the shading is continuous at each crossing.
+- Snow veils stay lighter than rain's curtains under the shield (three quarters of the sky's light against two
+  fifths): flakes scatter nearly everything they intercept. Their curtains keep more contrast.
+- Storm towers billow all the way down (no fair-weather wisps on their sides).
+- Bench `--fov=D` frames a whole storm.
+
 ## Next: lake-effect snow bands (plan)
 
 - When cold air crosses open water: the lake at least 13 K warmer than the air at 850 hPa (Niziol et al. 1995,
