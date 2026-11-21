@@ -7023,10 +7023,16 @@ func _slush_prints() -> void:
 	var to_sun := sun.global_basis.z
 	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
 	var look := sf.rotated(Vector3.UP, deg_to_rad(float(args.get("slush-yaw", "70"))))
+	# On a slope the line runs along the contour (level), the way nearest the sun-set heading.
+	var g2 := _slip_grad(best)
+	if g2.length() > 0.05:
+		var contour := Vector3(-g2.y, 0, g2.x).normalized()
+		look = contour if contour.dot(look) >= 0.0 else -contour
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	var eye := float(args.get("slush-eye", "1.7"))
 	c3.global_position = best - look * 1.0 + Vector3.UP * (eye + snow.get_depth_at(best))
-	c3.look_at(best + look * 7.0 + Vector3.UP * 0.1)
+	var tgt := best + look * float(args.get("slush-look", "6"))
+	c3.look_at(Vector3(tgt.x, gen.get_height(tgt) + snow.get_depth_at(tgt), tgt.z))
 	var focus := Node3D.new()
 	focus.name = "SlushFocus"
 	add_child(focus)
