@@ -209,6 +209,7 @@ private:
 	// The gas shadows the scene from the first directional light: a volumetric shadow map over the grid
 	// (see FlowScatterRD::ShadowMap), read by the Forward+ opaque pass a frame later.
 	bool cast_shadows = true;
+	bool diffuse_transmission = true;
 	// The scattering pass blends each frame with the last ones (see FlowScatterRD::Params::temporal).
 	bool scattering_temporal = true;
 	// Light bends through the gas's hot air (docs/ideas/heat-shimmer.md): a screen-space pass in raster, bent
@@ -387,6 +388,8 @@ public:
 	float get_heat_shimmer_turbulence() const { return heat_shimmer_turbulence; }
 	void set_cast_shadows(bool p_v) { cast_shadows = p_v; }
 	bool is_cast_shadows() const { return cast_shadows; }
+	void set_diffuse_transmission(bool p_v) { diffuse_transmission = p_v; }
+	bool is_diffuse_transmission() const { return diffuse_transmission; }
 	void set_scattering_temporal(bool p_v) { scattering_temporal = p_v; }
 	bool is_scattering_temporal() const { return scattering_temporal; }
 	void set_scattering_max_lights(int p_v) { scattering_max_lights = CLAMP(p_v, 1, FlowScatterRD::MAX_LIGHTS); }

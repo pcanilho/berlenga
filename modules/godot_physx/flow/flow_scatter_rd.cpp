@@ -59,7 +59,7 @@ layout(set = 0, binding = 5, std140) uniform Params {
 	vec4 sky_xform[3]; // rows: world direction -> sky direction
 	mat4 world_to_view; // meters -> the view space Godot's directional light buffer is in
 	mat4 view_to_world;
-	ivec4 sun; // x: directional lights to use (0: none); y: 1 = sample their shadow cascades
+	ivec4 sun; // x: directional lights to use (0: none); y: 1 = sample their shadow cascades; z: 1 = diffuse transmission
 	mat4 prev_view_projection; // world meters -> the previous frame's clip space (temporal blending)
 	vec4 sun_map_xform[3]; // rows: world meters -> the sun's volumetric shadow map (u, v, depth in 0..1)
 	vec4 sun_map; // xyz: world direction toward the light it is built from; w: 1 = present
@@ -401,12 +401,15 @@ vec3 octave_tail(vec3 alb, float k) {
 	vec3 q = min(k * alb, vec3(0.98));
 	return q * q * q / (1.0 - q);
 }
+// The orders past the third fade with depth no slower than diffusion theory allows: exp(-kappa tau), kappa =
+// sqrt(3 (1 - w)(1 - w g)), the transport coefficient (as the sky's light below), where a fixed 1/8 left the far
+// side of a dense cloud lit from behind it bright white against the path tracer's shaded blue-grey.
 vec3 ms_light(float tau, float tau_around, float c, float g) {
 	vec3 alb = ss_albedo();
 	vec3 a = alb * (1.0 / 0.9);
 	float thick = 1.0 - exp(-2.0 * tau_around);
 	float e = MS_ECCENTRICITY;
-	return (hg_phase(c, g) * exp(-tau) + thick * (hg_phase(c, g * e) * 0.5 * a * exp(-0.5 * tau) + hg_phase(c, g * e * e) * 0.25 * a * a * exp(-0.25 * tau) + hg_phase(c, g * e * e * e) * octave_tail(alb, p.sky_map.z) * exp(-0.125 * tau))) * (alb * SUN_MS_GAIN);
+	return (hg_phase(c, g) * exp(-tau) + thick * (hg_phase(c, g * e) * 0.5 * a * exp(-0.5 * tau) + hg_phase(c, g * e * e) * 0.25 * a * a * exp(-0.25 * tau) + hg_phase(c, g * e * e * e) * octave_tail(alb, p.sky_map.z) * exp(-max(sqrt(3.0 * (1.0 - alb) * (1.0 - alb * p.misc.y)), vec3(0.125)) * tau))) * (alb * SUN_MS_GAIN);
 }
 
 // The light from all around (sky above, ground below) through optical depth tau.
@@ -875,6 +878,56 @@ layout(set = 0, binding = 2) uniform sampler2D depth_tex;
 layout(set = 0, binding = 3, rgba16f) uniform restrict readonly image2D scatter_img;
 layout(set = 0, binding = 4, rgba16f) uniform restrict image2D color_img;
 layout(set = 0, binding = 6) uniform sampler2D coverage_tex;
+// The frame behind the gas (before Flow drew it), for the light that comes through by multiple scattering.
+layout(set = 0, binding = 7) uniform sampler2D background_tex;
+
+// The beam's spread as it crosses the gas, over the gas's depth.
+const float DIFFUSE_SPREAD = 0.33;
+
+// The view direction through a frame pixel (unit length).
+vec3 pixel_dir(vec2 frame_px) {
+	vec2 uv = frame_px / vec2(p.size.xy);
+	vec4 h = p.inv_view_projection * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+	return normalize(h.xyz / h.w - p.camera.xyz);
+}
+
+// A bright, forward-scattering gas passes the scene behind it on, not only along its direct beam (Beer's law,
+// what Flow draws) but scattered on through it, spread out: diffuse transmission. Two-stream with the
+// similarity relations (Meador and Weaver 1980; tau' = (1 - g) w tau scattering, (1 - w) tau absorption): the
+// total transmittance 1 / (1 + 3/4 tau'), absorbed by diffusion theory's exp(-sqrt(3 tau_a (tau_a + tau'))). The
+// scattered part beyond the direct beam comes from the scene behind, blurred by its spread: Premoze et al. 2004
+// blur the background by the beam's spatial spread (taken here as a third of the gas's depth crossed), sampled
+// from the frame behind with a disk of taps, as phenomenological transparency blurs it (McGuire and Mara 2017).
+// Of the light the gas sends toward the camera, that share is the scene behind rather than the gas's own
+// lighting, so it replaces that much of the gas's light (where the scene behind looks like the gas's own light,
+// nothing changes: blue sky behind a cloud, or shadowed snow behind powder, shows through).
+vec3 diffuse_transmission(ivec2 px, float coverage, vec3 light, float scene_dist) {
+	float t_beam = 1.0 - coverage;
+	float tau = -log(max(t_beam, 1e-4));
+	vec3 w = clamp(p.albedo.rgb * p.sky_map.x, vec3(0.0), vec3(0.999));
+	float g = p.misc.y;
+	vec3 tau_s = (1.0 - g) * w * tau;
+	vec3 tau_a = (1.0 - w) * tau;
+	vec3 t_total = exp(-sqrt(3.0 * tau_a * (tau_a + tau_s))) / (1.0 + 0.75 * tau_s);
+	vec3 share = clamp(t_total - t_beam, vec3(0.0), vec3(coverage));
+	if (max(share.r, max(share.g, share.b)) < 1e-3) {
+		return vec3(0.0);
+	}
+	// The gas's depth crossed (meters, at smoke 1) and the blur's radius in pixels at the scene's distance.
+	float depth_m = tau / max(p.misc.x, 1e-3);
+	float spread = clamp(depth_m * DIFFUSE_SPREAD, 0.0, 20.0);
+	vec2 fp = vec2(px) + 0.5;
+	float px_angle = max(length(pixel_dir(fp + vec2(1.0, 0.0)) - pixel_dir(fp)), 1e-6);
+	float radius = clamp(spread / (max(min(scene_dist, 1000.0), 0.1) * px_angle), 0.0, 96.0);
+	vec2 inv_size = 1.0 / vec2(p.size.xy);
+	const vec2 DISK[12] = vec2[](vec2(-0.326, -0.406), vec2(-0.840, -0.074), vec2(-0.696, 0.457), vec2(-0.203, 0.621), vec2(0.962, -0.195), vec2(0.473, -0.480), vec2(0.519, 0.767), vec2(0.185, -0.893), vec2(0.507, 0.064), vec2(0.896, 0.412), vec2(-0.322, -0.933), vec2(-0.792, -0.598));
+	vec3 bg = textureLod(background_tex, fp * inv_size, 0.0).rgb;
+	for (int i = 0; i < 12; i++) {
+		bg += textureLod(background_tex, (fp + DISK[i] * radius) * inv_size, 0.0).rgb;
+	}
+	bg *= 1.0 / 13.0;
+	return share * (bg - light);
+}
 
 void main() {
 	ivec2 px = ivec2(gl_GlobalInvocationID.xy);
@@ -961,6 +1014,9 @@ void main() {
 	}
 	vec4 c = imageLoad(color_img, px);
 	c.rgb += light * coverage;
+	if (p.sun.z != 0) {
+		c.rgb = max(c.rgb + diffuse_transmission(px, coverage, light, scene_distance(px, texelFetch(depth_tex, px, 0).r)), vec3(0.0));
+	}
 	imageStore(color_img, px, c);
 }
 )";
@@ -1187,7 +1243,8 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	}
 	iw[w++] = sun ? MIN(p_params.directional_count, (int)RendererSceneRender::MAX_DIRECTIONAL_LIGHTS) : 0;
 	iw[w++] = (sun && p_params.directional_shadows && p_params.directional_shadow_atlas.is_valid()) ? 1 : 0;
-	w += 2;
+	iw[w++] = (p_params.diffuse_transmission && p_params.background.is_valid()) ? 1 : 0;
+	w++;
 	for (int c = 0; c < 4; c++) {
 		for (int r = 0; r < 4; r++) {
 			f[w++] = (float)(blend ? prev_view_projection : view_projection).columns[c][r];
@@ -1283,6 +1340,7 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	up.push_back(RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 4, p_color));
 	up.push_back(RD::Uniform(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 5, params_buffer));
 	up.push_back(RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 6, Vector<RID>({ point_sampler, p_coverage })));
+	up.push_back(RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 7, Vector<RID>({ linear_sampler, p_params.background.is_valid() ? p_params.background : p_coverage })));
 	const RID up_set = p_rd->uniform_set_create(up, upsample_shader, 0);
 	ERR_FAIL_COND(!up_set.is_valid());
 	RD::ComputeListID list = p_rd->compute_list_begin();
@@ -1307,6 +1365,22 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	if (temporal_set.is_valid()) {
 		p_rd->free_rid(temporal_set);
 	}
+}
+
+RID FlowScatterRD::get_background_copy(RenderingDevice *p_rd, const Size2i &p_size) {
+	if (!background_copy.is_valid() || background_size != p_size) {
+		if (background_copy.is_valid()) {
+			p_rd->free_rid(background_copy);
+		}
+		RD::TextureFormat tf;
+		tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
+		tf.width = p_size.x;
+		tf.height = p_size.y;
+		tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
+		background_copy = p_rd->texture_create(tf, RD::TextureView());
+		background_size = p_size;
+	}
+	return background_copy;
 }
 
 // The gas's volumetric shadow map from the sun: the grid's box seen along the light, a texel per column of
@@ -1417,7 +1491,7 @@ void FlowScatterRD::free(RenderingDevice *p_rd) {
 	if (p_rd == nullptr) {
 		return;
 	}
-	for (RID *r : { &pipeline, &shader, &upsample_pipeline, &upsample_shader, &scatter_texture, &linear_sampler, &point_sampler, &shadow_sampler, &sky_sampler, &params_buffer, &lights_buffer, &directional_dummy, &shadow_pipeline, &shadow_shader, &sun_slot.box_buffer, &sun_slot.texture, &sky_slot.box_buffer, &sky_slot.texture, &temporal_pipeline, &temporal_shader, &history[0], &history[1] }) {
+	for (RID *r : { &pipeline, &shader, &upsample_pipeline, &upsample_shader, &scatter_texture, &linear_sampler, &point_sampler, &shadow_sampler, &sky_sampler, &params_buffer, &lights_buffer, &directional_dummy, &shadow_pipeline, &shadow_shader, &sun_slot.box_buffer, &sun_slot.texture, &sky_slot.box_buffer, &sky_slot.texture, &temporal_pipeline, &temporal_shader, &history[0], &history[1], &background_copy }) {
 		if (r->is_valid()) {
 			p_rd->free_rid(*r);
 			*r = RID();

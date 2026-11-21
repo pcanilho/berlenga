@@ -2359,6 +2359,40 @@ blue/red 1.076 -> 1.091 (PT 1.055 over the same box); the ragged line
 along the top edge is gone. The lower rim is softer but still dips 12
 below the body (PT 6): next.
 
+### Raster gas against corrected PT: diffuse transmission and the deep orders' decay (21 Nov)
+
+My PT references were all thinner than the gas really was (camera free
+flight escaped glowing gas when its collision budget ran out; Valence
+fixed it in a8567626). Re-rendered as same-run raster/PT pairs on the
+puff bench (--pair: raster from the frozen gas, then PT from the same).
+Against those: sky-only puff -2.3% (fine); sun-lit puffs +2.4% to +5.8%
+and greyer; a white block lit from behind it drew its far side bright
+white where PT shades it blue-grey, and under PT the slope's shadow shows
+through the block.
+
+Two pieces, both standard:
+- Diffuse transmission. A bright, forward-scattering gas passes the scene
+  behind it on by multiple scattering, spread out (Premoze et al. 2004
+  blur the background by the beam's spatial spread; McGuire and Mara
+  2017 blur it from the frame for translucency). Raster drew only the
+  direct beam (Beer, Flow's composite). Built: a copy of the frame before
+  Flow draws, a 13-tap disk blur of it with a radius of a third of the
+  gas depth crossed, weighted by the two-stream total transmittance with
+  the similarity relations, 1 / (1 + 3/4 (1 - g) w tau) times diffusion's
+  absorption exp(-sqrt(3 tau_a (tau_a + tau'))), less the direct beam;
+  that share replaces as much of the gas's own light. Property
+  diffuse_transmission, on.
+- The orders past the third faded with depth by a fixed exp(-tau/8)
+  (Wrenninge's octaves); diffusion theory says no slower than
+  exp(-kappa tau), kappa = sqrt(3 (1 - w)(1 - w g)) (the transport
+  coefficient the sky light already uses). Now the larger of the two.
+
+Same-run pairs, raster against PT: grey puff side-lit +5.3% -> +2.3%,
+white puff side-lit +2.4% -> -0.5%, front-lit +5.8% -> +4.5%, sky-only
+-2.3% unchanged; the white block's back-lit face 165/157/147 against PT
+164/157/149 (was 170/166/159). Raster stays a little less blue than PT
+(B/R 1.18 against 1.22 on the puffs); open.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
