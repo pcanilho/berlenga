@@ -1211,3 +1211,16 @@ point the passage holds more than 0.3 m clear of the ground, plus 2.5 m (the hol
 became a rectangle along the facing: half width, reach behind and in front of the entrance. The beach in front of a
 sea cave, whose floor runs a few centimetres under the sand, stays the landscape's, so the sand is not cut wider than
 the passage needs.
+
+## Sea cave mouth crease (21 Nov)
+
+A dark straight blade ran down one side of a sea arch, seen from inside looking out. The debug views (`CAVE_GROUND_DEBUG`,
+`CAVE_WALL_DEBUG=5`) showed it was the crease where the patch's ground meets the cave's side. The ground there is the
+heightfield's own surface, flat across each 5 m generator cell, and a sea cave's side is cut along a joint, close to a
+plane. Two planes meet in a straight line. Neither the patch outline nor the overlap band was the cause: dropping the
+cave's ground from the band changed nothing on screen.
+
+On rock slopes (20 to 32 degrees and up) inside a patch, the ground now gets relief: noise of 2.5 m amplitude over 4 m,
+1.25 m over 1.6 m, and the wall's finer octaves. It fades to nothing 1 m inside the patch edge, so it meets the
+landscape. At 0.4 of that amplitude the crease stayed straight. The cave's ground also stops 0.5 m outside the
+landscape's hole, so the band beyond is drawn once, by the landscape. `CAVE_PATCH_DEBUG=1` prints each patch's fit.
