@@ -4155,6 +4155,7 @@ void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
 		if (far_cover_texture.is_valid()) {
 			rs->global_shader_parameter_set("rock_far_cover_rect", Vector4());
 			far_cover_texture.unref();
+			far_reach_texture.unref();
 			far_cover_origin = Vector2(1e20, 1e20);
 		}
 		return;
@@ -4167,10 +4168,12 @@ void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
 		return;
 	}
 	far_cover_origin = o;
-	LocalVector<float> area;
+	LocalVector<float> area, river_area;
 	area.resize(R * R);
-	for (float &a : area) {
-		a = 0.0f;
+	river_area.resize(R * R);
+	for (uint32_t i = 0; i < area.size(); i++) {
+		area[i] = 0.0f;
+		river_area[i] = 0.0f;
 	}
 	// Rockfall blocks under the faces (the generator's own list, as the layer places them; their debris skirts add
 	// about a third), and the glacial boulders' mean cover on till.
@@ -4205,6 +4208,7 @@ void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
 					continue;
 				}
 				area[iz * R + ix] += 0.45f * step * sg.w * 1.2f * float(layer_density[LAYER_RIVER]);
+				river_area[iz * R + ix] += 0.45f * step * sg.w * 1.2f * float(layer_density[LAYER_RIVER]);
 			}
 		}
 	}
@@ -4212,6 +4216,18 @@ void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
 	Vector<uint8_t> data;
 	data.resize(R * R * 4);
 	uint8_t *w = data.ptrw();
+	// The hand-over (docs/ideas/ground-detail.md, "The middle-distance hand-over"): a river bed's cobbles are drawn
+	// whole to 0.8 of the layer's radius (thinned, their survivors widened), then gone by a cell past it; its tone
+	// fades in over exactly that. The rockfall blocks and boulders go on as the far tier's stones, so theirs keeps the
+	// 250 to 700 m fade it was set to.
+	const real_t rr = layer_radius[LAYER_RIVER];
+	const real_t river_start = far_thinning ? 0.8 * rr : 0.95 * rr, river_end = rr + _cell_size(LAYER_RIVER);
+	Vector<uint8_t> reach;
+	reach.resize(R * R * 2);
+	uint8_t *rw = reach.ptrw();
+	const uint8_t def_start = uint8_t(250.0 / FAR_REACH_UNIT), def_end = uint8_t(700.0 / FAR_REACH_UNIT);
+	LocalVector<uint8_t> has; // 2: river, 1: other stones, 0: none
+	has.resize(R * R);
 	for (int z = 0; z < R; z++) {
 		for (int x = 0; x < R; x++) {
 			const Vector3 c(o.x + (x + 0.5) * FAR_COVER_TEXEL, 0, o.y + (z + 0.5) * FAR_COVER_TEXEL);
@@ -4223,6 +4239,10 @@ void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
 			}
 			const float a = CLAMP(cover / 0.6f, 0.0f, 1.0f); // 60% plan cover: all stone
 			uint8_t *px = w + (z * R + x) * 4;
+			const bool river = river_area[z * R + x] > 0.5f * area[z * R + x] && river_area[z * R + x] > 0.0f;
+			has[z * R + x] = a <= 0.0f ? 0 : (river ? 2 : 1);
+			rw[(z * R + x) * 2 + 0] = river ? uint8_t(CLAMP(river_start / FAR_REACH_UNIT, 0.0, 255.0)) : def_start;
+			rw[(z * R + x) * 2 + 1] = river ? uint8_t(CLAMP(river_end / FAR_REACH_UNIT, 0.0, 255.0)) : def_end;
 			if (a <= 0.0f) {
 				px[0] = px[1] = px[2] = px[3] = 0;
 				continue;
@@ -4234,13 +4254,35 @@ void RockField3D::_update_far_cover(const Vector3 &p_target, bool p_force) {
 			px[3] = uint8_t(a * 255.0f);
 		}
 	}
+	// Empty texels next to a bed take its reach (the nearer fade wins), so filtering does not blend it with the default.
+	for (int z = 0; z < R; z++) {
+		for (int x = 0; x < R; x++) {
+			if (has[z * R + x] != 0) {
+				continue;
+			}
+			for (int dz = -1; dz <= 1; dz++) {
+				for (int dx = -1; dx <= 1; dx++) {
+					const int nx = x + dx, nz = z + dz;
+					if (nx < 0 || nz < 0 || nx >= R || nz >= R || has[nz * R + nx] != 2) {
+						continue;
+					}
+					rw[(z * R + x) * 2 + 0] = MIN(rw[(z * R + x) * 2 + 0], rw[(nz * R + nx) * 2 + 0]);
+					rw[(z * R + x) * 2 + 1] = MIN(rw[(z * R + x) * 2 + 1], rw[(nz * R + nx) * 2 + 1]);
+				}
+			}
+		}
+	}
 	Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_RGBA8, data);
-	if (far_cover_texture.is_valid()) {
+	Ref<Image> rimg = Image::create_from_data(R, R, false, Image::FORMAT_RG8, reach);
+	if (far_cover_texture.is_valid() && far_reach_texture.is_valid()) {
 		far_cover_texture->update(img);
+		far_reach_texture->update(rimg);
 	} else {
 		far_cover_texture = ImageTexture::create_from_image(img);
+		far_reach_texture = ImageTexture::create_from_image(rimg);
 	}
 	rs->global_shader_parameter_set("rock_far_cover_map", far_cover_texture->get_rid());
+	rs->global_shader_parameter_set("rock_far_reach_map", far_reach_texture->get_rid());
 	rs->global_shader_parameter_set("rock_far_cover_rect", Vector4(o.x, o.y, size, size));
 }
 
@@ -4357,6 +4399,7 @@ void RockField3D::_far_cancel() {
 	if (far_cover_texture.is_valid()) {
 		RenderingServer::get_singleton()->global_shader_parameter_set("rock_far_cover_rect", Vector4());
 		far_cover_texture.unref();
+		far_reach_texture.unref();
 	}
 	far_cover_origin = Vector2(1e20, 1e20);
 }

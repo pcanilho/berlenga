@@ -302,6 +302,7 @@ global uniform sampler2D terrain_cover_map : hint_default_black, filter_linear; 
 global uniform vec4 terrain_cover_rect;
 global uniform sampler2D rock_contact_map : hint_default_black, filter_linear; // RockField3D: r damp ring, g banked fines
 global uniform sampler2D rock_far_cover_map : hint_default_black, filter_linear; // RockField3D far tier: rgb stone colour, a cover
+global uniform sampler2D rock_far_reach_map : hint_default_black, filter_linear; // RockField3D: rg the fade's start and end, 8 m a step (2040 m at 1)
 global uniform vec4 rock_far_cover_rect;
 global uniform vec4 rock_contact_rect;
 global uniform sampler2D terrain_stand_map : hint_default_black, filter_linear; // Landscape3D: r trail wear, g fresh rooting
@@ -1932,7 +1933,10 @@ void fragment() {
 		vec2 fuv = (wp.xz - rock_far_cover_rect.xy) / rock_far_cover_rect.zw;
 		if (all(greaterThanEqual(fuv, vec2(0.0))) && all(lessThanEqual(fuv, vec2(1.0)))) {
 			vec4 fc = textureLod(rock_far_cover_map, fuv, 0.0);
-			float far_k = smoothstep(250.0, 700.0, length(wp - CAMERA_POSITION_WORLD));
+			// From where that texel's drawn stones stop (a river bed's near its layer's radius; the rest 250 to 700 m).
+			vec2 fr = textureLod(rock_far_reach_map, fuv, 0.0).rg * 2040.0;
+			fr = fr.y > 0.0 ? fr : vec2(250.0, 700.0);
+			float far_k = smoothstep(fr.x, max(fr.y, fr.x + 1.0), length(wp - CAMERA_POSITION_WORLD));
 			vec2 edge = min(fuv, 1.0 - fuv);
 			far_k *= smoothstep(0.0, 0.05, min(edge.x, edge.y));
 			float k = fc.a * far_k * 0.8 * (0.8 + 0.4 * tm_vn(wp * 0.03 + 41.0));

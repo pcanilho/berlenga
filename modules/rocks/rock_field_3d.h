@@ -676,6 +676,11 @@ private:
 	static const int FAR_COVER_RES = 256;
 	static constexpr real_t FAR_COVER_TEXEL = 32.0;
 	Ref<ImageTexture> far_cover_texture;
+	// Where each texel's tone takes over from its drawn stones (rock_far_reach_map, RG8: the fade's start and end
+	// distance from the camera, FAR_REACH_UNIT m a step): the river beds' own reach, the rest the far tier's 250 to
+	// 700 m. Texels without stones take their neighbours' (so the filtered map does not blend a narrow bed's reach away).
+	static constexpr real_t FAR_REACH_UNIT = 8.0;
+	Ref<ImageTexture> far_reach_texture;
 	Vector2 far_cover_origin = Vector2(1e20, 1e20);
 	void _update_far_cover(const Vector3 &p_target, bool p_force);
 	void _update_streaming(bool p_all);

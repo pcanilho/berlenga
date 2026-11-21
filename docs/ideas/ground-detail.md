@@ -865,6 +865,15 @@ terrain decorator fade both hand over on the drawn distance, not a fixed one. Me
 the shore and a river with --streaming, columns at 60/120/180/250 m, cover from the far map against the stones'
 own cover.
 
+Outcome (21 Nov, fixed as a bug): measured, the gap is the river beds'. Their cobbles thin from 0.8 of the
+layer's radius (96 m) and are gone by a cell past it (152 m), while their tone only began at 250 m (half in at
+475 m). RockField3D now publishes `rock_far_reach_map` (RG8 beside the cover map: each texel's fade start and end,
+8 m steps; empty texels next to a bed take its values so filtering keeps a narrow bed's), and TerrainMaterial3D
+fades each texel from there (river beds 96 to 152 m; rockfall and glacial texels keep 250 to 700 m, since the far
+tier's own stones carry on past their radius). The shore and scree show no gap at eye level (the shore's pebbles
+reach the middle distance through the detail classes and their far edge; scree has the terrain's parallax
+blocks), so they are left as they are. Raster and PT shore stills unchanged.
+
 **B. Frost-sorted patterned ground.** On cold, wet, gently sloping ground freeze-thaw cycling sorts stones from
 fines into circles (flat ground, 0.5 to 3 m across, stony borders round fine centres), nets and, past about 3°,
 downslope stripes (Washburn 1956; Kessler and Werner 2003, Science 299: a two-rule self-organising model, lateral
