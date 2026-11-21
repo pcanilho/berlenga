@@ -869,6 +869,8 @@ func _ready() -> void:
 		await _suncups()
 	if args.has("slush-prints") and snow != null:
 		await _slush_prints()
+	if args.has("spindrift-cam") and snow != null:
+		await _spindrift_cam()
 	if (args.has("face-sun") or args.has("face-away")) and sun != null:
 		# --face-sun=PITCH: turn the camera to the sun's azimuth, PITCH degrees below the horizon (godray shots).
 		var cam5: Camera3D = get_viewport().get_camera_3d()
@@ -7031,6 +7033,60 @@ func _slush_prints() -> void:
 	for i in 10:
 		await get_tree().process_frame
 	_log("slush prints: %.0f mm rain on %s at %s (%.1f deg), frost %s; after: depth %.3f m, swe %.0f mm, slush %.3f m, wetness %.2f; %d prints; cam %s" % [mm, before, str(best.round()), best_s, str(frost), snow.get_depth_at(probe), snow.get_swe_at(probe), float(snow.call("get_slush_at", probe)), float(snow.call("get_wetness_at", probe)), n + 1, str(c3.global_position.round())])
+
+
+func _spindrift_cam() -> void:
+	# --spindrift-cam[=D]: a gale (--wind, 20 m/s) blowing away from the sun over --sd-snow (30) mm of new snow at
+	# --sd-density (100) kg/m3 on the highest ground: spindrift plumes off the lee crests (snow 09b10f00, PhysX Flow).
+	# The camera D (140) m downwind of the strongest plume source, --sd-eye (1.7) m up, looks back up at the crest
+	# against the low sun (backlit), --sd-frames (90) frames of plume before the shot.
+	var wr: Rect2 = gen.get_world_rect()
+	var top := Vector3(0, -INF, 0)
+	var xx := wr.position.x + 64.0
+	while xx < wr.end.x:
+		var zz := wr.position.y + 64.0
+		while zz < wr.end.y:
+			var h := gen.get_height(Vector3(xx, 0, zz))
+			if is_finite(h) and h > top.y:
+				top = Vector3(xx, h, zz)
+			zz += 32.0
+		xx += 32.0
+	var to_sun := sun.global_basis.z
+	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
+	var wind := -sf.rotated(Vector3.UP, deg_to_rad(float(args.get("sd-wind-yaw", "0"))))
+	weather.wind_direction = Vector2(wind.x, wind.z)
+	weather.wind_speed = float(args.get("wind", "20"))
+	weather.air_follows_climate = false
+	weather.temperature = float(args.get("sd-temp", "-10"))
+	weather.snap_to_settings()
+	var focus := Node3D.new()
+	focus.name = "SpindriftFocus"
+	add_child(focus)
+	focus.global_position = top
+	snow.follow_target = snow.get_path_to(focus)
+	weather.follow_target = weather.get_path_to(focus)
+	for i in 20:
+		await get_tree().physics_frame
+	snow.call("add_snow", float(args.get("sd-snow", "30")), float(args.get("sd-density", "100")), true)
+	var srcs: Array = []
+	for i in 120:
+		await get_tree().physics_frame
+		srcs = snow.call("get_spindrift_sources")
+		if srcs.size() > 0 and i > 20:
+			break
+	if srcs.is_empty():
+		_log("spindrift: no plume sources near the peak %s at %.0f m/s" % [str(top.round()), weather.wind_speed])
+		return
+	var src: Vector3 = srcs[0]["position"]
+	var d := float(args["spindrift-cam"]) if String(args["spindrift-cam"]) != "" else 140.0
+	var cp := src + wind * d
+	cp.y = height_at(cp.x, cp.z) + float(args.get("sd-eye", "1.7"))
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.global_position = cp
+	c3.look_at(src + Vector3.UP * float(args.get("sd-look-up", "15")))
+	for i in int(args.get("sd-frames", "90")):
+		await get_tree().process_frame
+	_log("spindrift: %d sources, %.1f kg/s, strongest at %s (rate %.2f), cam %s %.0f m downwind, wind %s %.0f m/s, sun %.1f deg" % [srcs.size(), float(snow.call("get_spindrift_rate")), str(src.round()), float(srcs[0]["rate"]), str(cp.round()), d, str(weather.wind_direction), weather.wind_speed, rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
 
 
 func _lens_cam() -> void:
