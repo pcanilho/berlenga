@@ -6905,6 +6905,11 @@ func _powder_avalanche() -> void:
 		side = -side # the camera on the face's shaded side looks across it into the light: the cloud side- and back-lit
 	var dist := float(args.get("av-dist", "260"))
 	var cp := best + f3 * dist * 0.55 + side * dist * 0.8
+	if args.has("av-backlit"):
+		# --av-backlit: the camera down-sun of the slide's run-out, looking toward the sun, so the cloud is backlit
+		# (bright top rim, shaded front) with the slope behind its lower half.
+		var run := best + f3 * 70.0
+		cp = run - Vector3(sun_h.x, 0, sun_h.y) * dist
 	cp.x = clampf(cp.x, wr.position.x + 60.0, wr.end.x - 60.0)
 	cp.z = clampf(cp.z, wr.position.y + 60.0, wr.end.y - 60.0)
 	var gh: float = gen.get_height(cp)
@@ -6942,6 +6947,18 @@ func _powder_avalanche() -> void:
 		await get_tree().physics_frame
 		frames += 1
 	_log("powder avalanche: trigger %s, %.1f t up, %.1f t in the air, front %.1f m/s, after %d frames" % [str(ok), av.get_powder_taken() / 1000.0, av.get_suspended_mass() / 1000.0, av.get_max_speed(), frames])
+	if args.has("dt-before") and pflow != null and "diffuse_transmission" in pflow:
+		# --dt-before=PATH: the same moment with the gas's raster diffuse transmission off (PhysX 1529e96b), saved
+		# first, then on again for the main still (the scene paused, so the cloud holds).
+		process_mode = Node.PROCESS_MODE_ALWAYS
+		get_tree().paused = true
+		pflow.set("diffuse_transmission", false)
+		for i in int(args.get("dt-frames", "12")):
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png(args["dt-before"])
+		_log("saved %s (diffuse transmission off)" % args["dt-before"])
+		pflow.set("diffuse_transmission", true)
 
 
 # --lightning-cam (with --lightning): the struck spruce nearest the first view, the camera --lightning-dist m (6) from
