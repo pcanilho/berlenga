@@ -2338,6 +2338,90 @@ void TerrainMaterial3D::use_generator(Object *p_generator) {
 	ERR_FAIL_COND_MSG(!gen->has_result(), "Run the generator's generate() first.");
 	sea_level = gen->get_sea_level();
 	set_detail_code(gen->get_detail_shader_code());
+	generator_id = gen->get_instance_id();
+	if (!ground_color_registered) {
+		WorldContracts::register_ground_color(this);
+		ground_color_registered = true;
+	}
+}
+
+// The shader's layer weights (terrain material fragment) on level-of-detail-free ground: no edge noise, the narrow
+// slope bands, the generator's heightfield normal; each layer at its mean colour (a scan is divided by its own mean, and
+// the tone patches average to 1).
+Color TerrainMaterial3D::contract_ground_albedo_at(const Vector3 &p_position) const {
+	const TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(ObjectDB::get_instance(generator_id));
+	if (!gen || !gen->has_result()) {
+		return Color(0, 0, 0, -1);
+	}
+	const float y = gen->get_height(p_position);
+	if (Math::is_nan(y)) {
+		return Color(0, 0, 0, -1);
+	}
+	// The heightfield's normal over 2 m.
+	const float e = 2.0f;
+	const float hx0 = gen->get_height(p_position + Vector3(-e, 0, 0));
+	const float hx1 = gen->get_height(p_position + Vector3(e, 0, 0));
+	const float hz0 = gen->get_height(p_position + Vector3(0, 0, -e));
+	const float hz1 = gen->get_height(p_position + Vector3(0, 0, e));
+	float ny = 1.0f;
+	if (!Math::is_nan(hx0 + hx1 + hz0 + hz1)) {
+		ny = Vector3(hx0 - hx1, 2.0f * e, hz0 - hz1).normalized().y;
+	}
+	const float rock_cos = Math::cos(Math::deg_to_rad(rock_slope));
+	const float cliff_cos = Math::cos(Math::deg_to_rad(cliff_slope));
+	const float steep = 1.0f - Math::smoothstep(rock_cos - 0.08f, rock_cos + 0.04f, ny);
+	float w[LAYER_MAX] = {};
+	float beach_sand = -1.0f;
+	const Color g = geology_enabled ? gen->get_material_geology_at(p_position) : Color(Math::NaN, 0, 0, 0);
+	if (!Math::is_nan(g.r)) {
+		beach_sand = CLAMP(-g.r, 0.0f, 1.0f);
+		const float cliff_rock = 1.0f - Math::smoothstep(cliff_cos - 0.08f, cliff_cos + 0.04f, ny);
+		const float rock = MAX(Math::smoothstep(0.2f, 0.8f, CLAMP(g.g, 0.0f, 1.0f)), cliff_rock);
+		const float till = CLAMP(-g.b, 0.0f, 1.0f) * (1.0f - rock);
+		const float sg = CLAMP(g.b, 0.0f, 1.0f);
+		float scree = sg * (1.0f - rock) + 0.45f * till;
+		float rest = MAX(1.0f - rock - scree, 0.0f);
+		const float regolith = Math::smoothstep(0.05f, 0.3f, sg) * (1.0f - till);
+		scree += rest * regolith;
+		rest *= 1.0f - regolith;
+		const float bare_near = steep * MAX(Math::smoothstep(0.02f, 0.2f, CLAMP(g.g, 0.0f, 1.0f)), Math::smoothstep(0.02f, 0.2f, sg));
+		scree += rest * bare_near;
+		rest *= 1.0f - bare_near;
+		const float alluvium = Math::smoothstep(alluvium_area, alluvium_area + 1.0f, g.a) * Math::smoothstep(0.88f, 0.95f, ny);
+		w[LAYER_ROCK] = rock;
+		w[LAYER_SCREE] = scree;
+		w[LAYER_SOIL] = rest * (1.0f - alluvium);
+		w[LAYER_ALLUVIUM] = rest * alluvium;
+	} else {
+		w[LAYER_ROCK] = steep;
+		w[LAYER_SOIL] = 1.0f - steep;
+	}
+	float sand = beach_sand >= 0.0f ? MAX(beach_sand, 1.0f - Math::smoothstep(-0.2f, 0.3f, y - sea_level)) : 1.0f - Math::smoothstep(beach_height * 0.6f, beach_height, y - sea_level);
+	const float sand_steep = beach_sand > 0.0f ? Math::lerp(steep, 1.0f - Math::smoothstep(0.682f, 0.719f, ny), beach_sand) : steep;
+	sand *= 1.0f - sand_steep;
+	for (int i = 0; i < LAYER_SAND; i++) {
+		w[i] *= 1.0f - sand;
+	}
+	w[LAYER_SAND] = sand;
+	Color c(0, 0, 0, 0);
+	float total = 0.0f;
+	for (int i = 0; i < LAYER_MAX; i++) {
+		if (w[i] <= 0.0f) {
+			continue;
+		}
+		const Ref<TerrainMaterialLayer> &l = layers[i];
+		const Color lc = (l.is_valid() ? l->get_color() : LAYER_DEFAULT_COLORS[i]).srgb_to_linear();
+		const float por = l.is_valid() ? l->get_porosity() : 0.7f;
+		c.r += lc.r * w[i];
+		c.g += lc.g * w[i];
+		c.b += lc.b * w[i];
+		c.a += por * w[i];
+		total += w[i];
+	}
+	if (total <= 1e-6f) {
+		return Color(0, 0, 0, -1);
+	}
+	return Color(c.r / total, c.g / total, c.b / total, c.a / total);
 }
 
 void TerrainMaterial3D::_bind_methods() {
@@ -2347,6 +2431,7 @@ void TerrainMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_layer", "layer", "value"), &TerrainMaterial3D::set_layer);
 	ClassDB::bind_method(D_METHOD("get_layer", "layer"), &TerrainMaterial3D::get_layer);
 	ClassDB::bind_method(D_METHOD("use_generator", "generator"), &TerrainMaterial3D::use_generator);
+	ClassDB::bind_method(D_METHOD("get_ground_albedo_at", "position"), &TerrainMaterial3D::get_ground_albedo_at);
 #define BIND_PROP(m_type, m_name, m_get, m_hint, m_hint_str) \
 	ClassDB::bind_method(D_METHOD("set_" #m_name, "value"), &TerrainMaterial3D::set_##m_name); \
 	ClassDB::bind_method(D_METHOD(#m_get), &TerrainMaterial3D::m_get); \
@@ -2396,4 +2481,10 @@ TerrainMaterial3D::TerrainMaterial3D() {
 	shader.instantiate();
 	set_shader(shader);
 	update_shader();
+}
+
+TerrainMaterial3D::~TerrainMaterial3D() {
+	if (ground_color_registered) {
+		WorldContracts::unregister_ground_color(this);
+	}
 }

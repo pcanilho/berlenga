@@ -133,6 +133,30 @@ class PoolStub extends WorldWater:
 
 
 # Packed snow 10 cm deep over x > 0.
+# Red ground everywhere, for the gas's ground colour.
+class RedGround extends WorldGround:
+	func _albedo_at(_p: Vector3) -> Color:
+		return Color(0.4, 0.1, 0.05, 1.0)
+
+
+# Soaked ground everywhere.
+class SoakedStub extends WorldWeather:
+	func _surface_wetness_at(_p: Vector3) -> float:
+		return 1.0
+
+
+# Half a metre of aged snow (albedo 0.7) over x > 0.
+class DeepSnowStub extends WorldSnow:
+	func _depth_at(p: Vector3) -> float:
+		return 0.5 if p.x > 0.0 else 0.0
+
+	func _density_at(_p: Vector3) -> float:
+		return 300.0
+
+	func _albedo_at(_p: Vector3) -> float:
+		return 0.7
+
+
 class SnowStub extends WorldSnow:
 	func _depth_at(p: Vector3) -> float:
 		return 0.1 if p.x > 0.0 else 0.0
@@ -259,6 +283,7 @@ func _ready() -> void:
 	_tyre_snow_tests()
 	await _contract_tests()
 	await _shimmer_tests()
+	await _ground_color_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -1718,6 +1743,14 @@ func _shimmer_tests() -> void:
 	above /= max(n_above, 1)
 	side /= max(n_side, 1)
 	_check("shimmer: the hot air bends the wall above the fire, nothing beside it", above > 0.004 and side < 0.0005, "mean change %.4f above the fire, %.5f beside it" % [above, side])
+	# The gas reads the ground's colour under it from the world (ground_from_world).
+	WorldContracts.set_ground(RedGround.new())
+	for i in 40:
+		await RenderingServer.frame_post_draw
+	var wg: Color = flow.get_world_ground_albedo()
+	WorldContracts.set_ground(null)
+	_check("ground colour: the gas reads the ground under it from the world", wg.a == 1.0 and is_equal_approx(wg.r, 0.4) and is_equal_approx(wg.b, 0.05), str(wg))
+
 	root.queue_free()
 	await get_tree().process_frame
 
@@ -1870,3 +1903,75 @@ func _current_view(path: String, still: bool) -> void:
 	get_viewport().get_texture().get_image().save_png(path)
 	print("saved ", path)
 	WorldContracts.clear_overrides()
+
+
+# The ground's colour (WorldGround.albedo_at) for the light it sends up into gas: the terrain material's layers as its
+# shader weighs them, darkened when wet by porosity, under the snow's cover; PhysXFlow3D reads it under its gas.
+func _ground_color_tests() -> void:
+	if not ClassDB.class_exists("TerrainMaterial3D"):
+		_skip("ground colour", "needs the terrain modules")
+		return
+	var gen := TerrainGenerator3D.new()
+	gen.glacial_enabled = false
+	gen.glacial_converged = false
+	gen.tile_erosion_enabled = false
+	gen.strata_enabled = false
+	gen.guide_preview = false
+	gen.dunes_enabled = false
+	gen.deposition = 0.0
+	gen.moraine_age = 0.0
+	gen.scree_age = 0.0
+	gen.meander_age = 0.0
+	gen.outwash_age = 0.0
+	gen.size = Vector2(512, 512)
+	gen.cell_size = 8.0
+	gen.seed = 4
+	gen.uplift = 3.0
+	add_child(gen)
+	gen.generate()
+	var g := WorldContracts.get_ground()
+	var none: Color = g.albedo_at(Vector3(100, 0, 100))
+	var tm := TerrainMaterial3D.new()
+	var colors := [Color(0.3, 0.35, 0.6), Color(0.45, 0.45, 0.45), Color(0.5, 0.25, 0.15), Color(0.35, 0.3, 0.2), Color(0.8, 0.7, 0.5)]
+	for i in 5:
+		var l := TerrainMaterialLayer.new()
+		l.color = colors[i]
+		l.porosity = 0.5
+		tm.set_layer(i, l)
+	tm.sea_level = -1000.0
+	tm.use_generator(gen)
+	# The steepest and flattest points on a 16 m grid.
+	var steep_p := Vector3.ZERO
+	var flat_p := Vector3.ZERO
+	var best_steep := -1.0
+	var best_flat := 1e9
+	for z in range(-200, 201, 16):
+		for x in range(-200, 201, 16):
+			var p := Vector3(x, 0, z)
+			var s := absf(gen.get_height(p + Vector3(2, 0, 0)) - gen.get_height(p - Vector3(2, 0, 0))) + absf(gen.get_height(p + Vector3(0, 0, 2)) - gen.get_height(p - Vector3(0, 0, 2)))
+			if s > best_steep:
+				best_steep = s
+				steep_p = p
+			if s < best_flat:
+				best_flat = s
+				flat_p = p
+	var a_steep: Color = g.albedo_at(steep_p)
+	var a_flat: Color = g.albedo_at(flat_p)
+	var a_out: Color = g.albedo_at(Vector3(5000, 0, 5000))
+	var rock: Color = (colors[0] as Color).srgb_to_linear()
+	var blue_steep := a_steep.b / maxf(a_steep.r, 1e-4)
+	var blue_flat := a_flat.b / maxf(a_flat.r, 1e-4)
+	_check("ground colour: none without a terrain material; with one, its layers' colours as laid (rock on the steepest ground, bluer here, than the flattest); none past the terrain", none.a == 0.0 and a_flat.a == 1.0 and a_steep.a == 1.0 and blue_steep > blue_flat and a_steep.b <= rock.b + 1e-4 and a_out.a == 0.0, "no material %s; steep %s (B/R %.2f), flat %s (B/R %.2f); outside a %.1f" % [none, a_steep, blue_steep, a_flat, blue_flat, a_out.a])
+	WorldContracts.set_weather(SoakedStub.new())
+	var a_wet: Color = g.albedo_at(flat_p)
+	WorldContracts.set_weather(null)
+	WorldContracts.set_snow(DeepSnowStub.new())
+	var p_snow := Vector3(absf(flat_p.x) + 1.0, 0, flat_p.z)
+	var a_snow: Color = g.albedo_at(p_snow)
+	var a_snow_far: Color = g.albedo_at(Vector3(5000, 0, 5000))
+	var a_bare: Color = g.albedo_at(Vector3(-absf(flat_p.x) - 1.0, 0, flat_p.z))
+	WorldContracts.set_snow(null)
+	# Porosity 0.5: soaked keeps mix(1, 0.2, 0.5) = 0.6 of the dry albedo.
+	_check("ground colour: rain darkens it by porosity (0.6 of dry soaked at porosity 0.5), snow covers it with its albedo, snow beyond the terrain answers alone", is_equal_approx(a_wet.r, a_flat.r * 0.6) and is_equal_approx(a_snow.r, 0.7) and is_equal_approx(a_snow.b, 0.7) and a_snow.a == 1.0 and is_equal_approx(a_snow_far.r, 0.7) and a_snow_far.a == 1.0 and a_bare.a == 1.0 and a_bare.r < 0.6, "wet %s (dry %s), snow %s, snow past the terrain %s, bare %s" % [a_wet, a_flat, a_snow, a_snow_far, a_bare])
+	tm = null
+	gen.queue_free()

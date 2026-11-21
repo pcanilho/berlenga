@@ -309,6 +309,13 @@
 				Time the last rebuild of the far sun shadows' horizon map took, in milliseconds.
 			</description>
 		</method>
+		<method name="get_material_geology_at" qualifiers="const">
+			<return type="Color" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				[method get_geology_image]'s channels at a point: soil depth (negative on beach and dune sand), rock exposure, talus (negative for moraine till), log10 drainage area. NaN in r outside the result.
+			</description>
+		</method>
 		<method name="get_springs" qualifiers="const">
 			<return type="PackedVector4Array" />
 			<description>

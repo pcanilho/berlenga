@@ -18,6 +18,13 @@
 				Override in a stub to replace [method add_impurity].
 			</description>
 		</method>
+		<method name="_albedo_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method albedo_at].
+			</description>
+		</method>
 		<method name="_avalanche_peak_pressure_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -111,6 +118,13 @@
 			<param index="2" name="mg_per_m2" type="float" />
 			<description>
 				Light-absorbing particles (soot, ash, dust) settling on the snow within [param radius] of [param position], as mg/m2 of black carbon equivalent; mineral dust counts about 0.013 of its mass. The snow darkens and melts sooner.
+			</description>
+		</method>
+		<method name="albedo_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The snow surface's broadband albedo: about 0.85 fresh, toward 0.7 old and dry, toward 0.5 melting, less soot and dust on it. 0.8 where the snow system does not say; 0 with no snow system.
 			</description>
 		</method>
 		<method name="avalanche_peak_pressure_at" qualifiers="const">
