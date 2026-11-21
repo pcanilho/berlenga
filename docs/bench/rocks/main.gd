@@ -165,6 +165,16 @@ func _ready() -> void:
 		for n in get_children():
 			if n is DirectionalLight3D:
 				(n as DirectionalLight3D).rotation_degrees = Vector3(-float(sv[0]), float(sv[1]) if sv.size() > 1 else -50.0, 0)
+	if args.has("sun-bias"):
+		# --sun-bias=normal_bias[,depth_bias[,blur]]: the sun's shadow biases and blur (shadow acne A/B).
+		var bv: PackedStringArray = args["sun-bias"].split(",")
+		for n in get_children():
+			if n is DirectionalLight3D:
+				(n as DirectionalLight3D).shadow_normal_bias = float(bv[0])
+				if bv.size() > 1:
+					(n as DirectionalLight3D).shadow_bias = float(bv[1])
+				if bv.size() > 2:
+					(n as DirectionalLight3D).shadow_blur = float(bv[2])
 	if out != "":
 		# Single captures have no TAA to smooth the soft-low shadow kernel's per-pixel rotation (a dot
 		# grid in penumbras): the high filter instead.

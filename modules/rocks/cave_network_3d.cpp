@@ -2019,7 +2019,7 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 					for (int k = 0; k < 4; k++) {
 						gq += vert_ground[vi[k]];
 					}
-					const bool is_ground = gq >= 2; // a mixed quad on the seam goes to the ground, so the seam has no wall-coloured teeth
+					bool is_ground = gq >= 2; // a mixed quad on the seam goes to the ground, so the seam has no wall-coloured teeth
 					if (is_ground) {
 						// The patch is a rectangle along the entrance's facing, the landscape's hole the same rectangle 1.5 m
 						// smaller, so the two overlap all round.
@@ -2044,6 +2044,20 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 					const Vector3 nq = (verts[vi[1]] - q0).cross(verts[vi[2]] - q0) + (verts[vi[2]] - q0).cross(verts[vi[3]] - q0);
 					if (nq.dot(into) < 0.0f) {
 						SWAP(vi[1], vi[3]);
+					}
+					if (is_ground && gen) {
+						// A ground quad must face the way the ground does. Where a passage breaks out of a cliff the two
+						// surfaces cross back and forth along the seam with the wall's relief, and quads of the crease
+						// flagged as ground faced along the wall instead: drawn with the ground's material and its own
+						// normal from the heights, they showed as dark ragged flaps along an arch's edge against the
+						// sky. They are wall, so they take the wall's material.
+						const Vector3 qc = (verts[vi[0]] + verts[vi[1]] + verts[vi[2]] + verts[vi[3]]) * 0.25f;
+						const real_t ge = 0.5;
+						const Vector3 gnq = Vector3(gen->get_height(qc - Vector3(ge, 0, 0)) - gen->get_height(qc + Vector3(ge, 0, 0)), 2.0 * ge, gen->get_height(qc - Vector3(0, 0, ge)) - gen->get_height(qc + Vector3(0, 0, ge))).normalized();
+						const Vector3 outq = -(nq.dot(into) < 0.0f ? -nq : nq).normalized();
+						if (outq.dot(gnq) < 0.6f) {
+							is_ground = false;
+						}
 					}
 					const Vector3 &p0 = verts[vi[0]], &p1 = verts[vi[1]], &p2 = verts[vi[2]], &p3 = verts[vi[3]];
 					auto faces = [&into](const Vector3 &p_a, const Vector3 &p_b, const Vector3 &p_c) { return (p_b - p_a).cross(p_c - p_a).dot(into) > 0.0f; };
