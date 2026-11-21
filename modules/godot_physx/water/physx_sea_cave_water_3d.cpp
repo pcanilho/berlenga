@@ -346,7 +346,16 @@ void PhysXSeaCaveWater3D::_update(double p_delta, bool p_mesh) {
 		// The surface: rows every station_step along, lanes across to past the walls.
 		const int rows_n = MAX(2, int(Math::ceil(length / station_step)) + 1);
 		const float row_step = length / float(rows_n - 1);
-		const int nl = lanes;
+		// Across, the vertices are close enough for the wavelets' shortest waves (0.6 m: two vertices a wave, Nyquist):
+		// with the set lane count alone a wide passage drew them as large hard facets.
+		int nl = lanes;
+		if (wavelets) {
+			float widest = 0.0f;
+			for (int i = 0; i < hw.size(); i++) {
+				widest = MAX(widest, hw[i]);
+			}
+			nl = MAX(nl, int(Math::ceil(2.0f * (widest + wall_margin) / WAVELET_VERTEX_SPACING)) + 1);
+		}
 		LocalVector<At> row_at;
 		row_at.resize(rows_n);
 		LocalVector<float> height, across_m;
@@ -384,6 +393,12 @@ void PhysXSeaCaveWater3D::_update(double p_delta, bool p_mesh) {
 					}
 					// Shallow water carries less (the waves break on the floor): full past 0.3 m.
 					eta *= MIN(o.depth / 0.3f, 1.0f);
+					// Over the hand-over from the sea's surface (fade_length in from the arch) the two surfaces are both
+					// drawn: the wavelets grow in across it, so this one starts at the sea's level and the two don't
+					// cut through each other in hard-edged patches.
+					const float in_from_arch = start + s - covered;
+					const float grow = fade_length > 0.0f ? CLAMP(in_from_arch / fade_length, 0.0f, 1.0f) : 1.0f;
+					eta *= grow * grow * (3.0f - 2.0f * grow);
 				}
 				height[a * nl + l] = eta;
 			}

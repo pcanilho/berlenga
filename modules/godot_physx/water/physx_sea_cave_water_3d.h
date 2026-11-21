@@ -64,6 +64,7 @@ class PhysXSeaCaveWater3D : public Node3D {
 	static constexpr int WAVELET_DIRS = 16;
 	static constexpr int WAVELET_ACROSS = 12;
 	static constexpr float WAVELET_CELL = 0.5f; // m along
+	static constexpr float WAVELET_VERTEX_SPACING = 0.25f; // m across at most while the wavelets are drawn
 	static constexpr int PROFILE_SIZE = 1024;
 	static constexpr float PROFILE_PERIOD = 51.2f; // m
 
