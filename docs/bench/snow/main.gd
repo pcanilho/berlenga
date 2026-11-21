@@ -127,6 +127,7 @@ class BodySnowStub extends WorldSnow:
 #   --raster          raster only (default path traced)
 #   --taa             raster with TAA (stills set against path traced ones: no per-pixel shadow or dither dots)
 #   --out=path.png    save the last frame and quit
+#   --suncups=M       trail view: suncups of M m relief over the field (the deep-snow surface draws them)
 #   --ice-drop=M      icicles view: the edge M m under the roof (the roots must still join it)
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 
@@ -160,6 +161,7 @@ var melt_hours := 0.0
 var crust_cycles := 0.0
 var transport := true
 var hoar_mm := 0.0 # --hoar=MM: the sparkle view's surface hoar
+var suncups_m := 0.0 # --suncups=M: the sparkle view's suncup relief
 var air := INF # --air=C: the snowfall view's air temperature (sleet near and above 0 C)
 
 
@@ -184,6 +186,7 @@ func _ready() -> void:
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a.begins_with("--snow="): snow_hours = float(a.substr(7))
 		elif a.begins_with("--hoar="): hoar_mm = float(a.substr(7))
+		elif a.begins_with("--suncups="): suncups_m = float(a.substr(10))
 		elif a.begins_with("--sun="): sun_hours = float(a.substr(6))
 		elif a.begins_with("--steps="): steps = int(a.substr(8))
 		elif a.begins_with("--wind="): wind = float(a.substr(7))
@@ -202,6 +205,8 @@ func _ready() -> void:
 			await _run_crust_tests()
 		elif only == "hoar":
 			await _run_hoar_tests()
+		elif only == "suncups":
+			_run_suncup_tests()
 		elif only == "rime":
 			await _run_rime_tests()
 		elif only == "transport":
@@ -417,6 +422,7 @@ func _run_tests() -> void:
 	await _run_surface_tests()
 	await _run_crust_tests()
 	await _run_hoar_tests()
+	_run_suncup_tests()
 	await _run_rime_tests()
 	await _run_fall_tests()
 	await _run_shelter_tests()
@@ -679,6 +685,34 @@ func _run_rime_tests() -> void:
 	rime.queue_free()
 	holder.queue_free()
 	await get_tree().process_frame
+
+
+func _run_suncup_tests() -> void:
+	print("Suncups (follow-up 41):")
+	# Five sunny spring days: 25 mm of melt a day from the direct sun, 5 from the air, in 1 m of old snow.
+	var a := 0.0
+	for day in 5:
+		for h in 6:
+			a = SnowCover3D.suncup_step(a, 25.0 / 6.0, 5.0 / 6.0, 0.0, 0.0, 0.0, 1.0)
+	_check("five sunny days grow suncups (full grown in about 5 days; Mitchell and Tiedje 2010)", a > 0.15 and a <= 0.3, "%.2f m ridge to hollow" % a)
+	var b := a
+	for day in 3:
+		b = SnowCover3D.suncup_step(b, 2.0, 30.0, 0.0, 0.0, 0.0, 1.0)
+	_check("warm cloudy days melt them flat (air heats the surface evenly)", b < 0.5 * a, "%.2f to %.2f m in 3 days of 30 mm air melt" % [a, b])
+	var filled := SnowCover3D.suncup_step(a, 0.0, 0.0, 0.0, 0.12, 0.0, 1.0)
+	_check("new snow fills the hollows", absf(filled - maxf(a - 0.12, 0.0)) < 0.005, "%.2f m under 12 cm of new snow" % filled)
+	var dirty := 0.0
+	var thick := 0.0
+	for day in 5:
+		for h in 6:
+			dirty = SnowCover3D.suncup_step(dirty, 25.0 / 6.0, 5.0 / 6.0, 0.0, 0.0, 5.0e4, 1.0)
+			thick = SnowCover3D.suncup_step(thick, 25.0 / 6.0, 5.0 / 6.0, 0.0, 0.0, 5.0e6, 1.0)
+	_check("dust on the ridges deepens them, a thick layer stops them (Rhodes et al. 1987)", dirty > a and thick < 0.01, "%.2f m dusty, %.3f m under a thick layer" % [dirty, thick])
+	var shallow := 0.0
+	for day in 5:
+		for h in 6:
+			shallow = SnowCover3D.suncup_step(shallow, 25.0 / 6.0, 0.0, 0.0, 0.0, 0.0, 0.2)
+	_check("no deeper than half the pack", shallow <= 0.1 + 1e-4, "%.2f m in 20 cm of snow" % shallow)
 
 
 func _run_hoar_tests() -> void:
@@ -2615,6 +2649,8 @@ func _build_trail(cam: Camera3D) -> void:
 	if crust_cycles > 0.0:
 		# A 2 cm melt-freeze crust on top: one cycle breaks under a boot, two hold it.
 		snow.add_crust(0.02, crust_cycles)
+	if suncups_m > 0.0:
+		snow.add_suncups(suncups_m) # --suncups=M: a sunny spring week's hollows (the deep-snow surface draws them)
 	surface = SnowSurface3D.new()
 	surface.crust_plates = not OS.get_cmdline_user_args().has("--no-plates") # --no-plates: the field's ramps alone
 	surface.snow_cover = NodePath("../SnowCover3D")
@@ -3492,6 +3528,9 @@ func _build_sparkle(cam: Camera3D) -> void:
 		weather.temperature = 3.0
 		weather.snap_to_settings()
 		weather.advance(1.0)
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with("--sun-pitch="): # the melt under this sun (suncups need a high one)
+				sun.rotation_degrees.x = -float(a.substr(12))
 		snow.advance(melt_hours * 3600.0)
 	if hoar_mm > 0.0:
 		# A clear calm night's surface hoar over the field (SnowCover3D.hoar_enabled grows it; set here so the
@@ -3499,7 +3538,7 @@ func _build_sparkle(cam: Camera3D) -> void:
 		snow.add_hoar(hoar_mm)
 		snow.advance(1.0)
 	var p := Vector3(0, 0, 0)
-	print("sparkle: hoar %.1f mm" % snow.get_hoar_at(p))
+	print("sparkle: hoar %.1f mm, suncups %.3f m" % [snow.get_hoar_at(p), snow.get_suncup_relief_at(p)])
 	print("sparkle: depth %.2f m, density %.0f, albedo %.2f" % [snow.get_depth_at(p), snow.get_density_at(p), snow.get_albedo_at(p)])
 	await _save_frame("")
 	# The share of glinting pixels: over the snow below the horizon, those a fifth brighter than the ring of

@@ -1,0 +1,1 @@
+- Suncups: sunny spring melt digs a field of hollows up to 0.3 m deep in the deep-snow surface, smoothed by warm cloudy melt, rain and new snow (`suncups_enabled`).

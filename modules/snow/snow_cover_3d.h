@@ -90,6 +90,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	float liquid_capacity = 0.05f; // share of the pack's water it holds as liquid
 	bool crust_enabled = true;
 	bool hoar_enabled = true; // surface hoar on clear calm nights, buried as a weak layer (round 5)
+	bool suncups_enabled = true; // ablation hollows in sunny melt (follow-up 41)
 	bool slide_enabled = true;
 	float slide_interval = 600.0f; // weather seconds between slide passes
 	float slide_angle = 25.0f; // degrees
@@ -166,6 +167,10 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	// Surface hoar (docs/ideas/snow.md, round 5): the crystals on the surface (mm), and the newest buried layer
 	// of them: its crystals (mm), the snow over it (m) and the hours since it was buried.
 	Vector<float> cell_hoar;
+	Vector<float> cell_cups; // m, suncup relief (ridge to hollow)
+	Ref<Image> cups_image;
+	Ref<ImageTexture> cups_texture;
+	Ref<Image> upload_cups;
 	Vector<float> cell_hoar_layer;
 	Vector<float> cell_hoar_burial;
 	Vector<float> cell_hoar_age;
@@ -256,6 +261,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 		Vector<float> swe, liquid, density, albedo, runoff, canopy_load, new_depth;
 		Vector<float> crust, crust_cycles, crust_burial, crust_wet;
 		Vector<float> hoar, hoar_layer, hoar_burial, hoar_age;
+		Vector<float> cups;
 		Vector<float> cornice_x, cornice_z, cornice_crack;
 		Vector<float> ice, white_ice;
 		Vector<float> lap; // mg/m2 BC equivalent showing at the surface
@@ -394,6 +400,13 @@ public:
 	void set_crust_enabled(bool p_enabled);
 	bool is_crust_enabled() const { return crust_enabled; }
 	void set_hoar_enabled(bool p_enabled);
+	void set_suncups_enabled(bool p_enabled) { suncups_enabled = p_enabled; }
+	bool is_suncups_enabled() const { return suncups_enabled; }
+	// One step of suncup relief p_relief (m): grown by melt from direct sun (mm water), smoothed by melt from the
+	// air, rain (mm) and filled by new snow (m deep); p_dirt mg/m2 of particles on the surface.
+	static float suncup_step(float p_relief, float p_sun_melt, float p_air_melt, float p_rain, float p_new_depth, float p_dirt, float p_depth);
+	float get_suncup_relief_at(Vector3 p_position) const; // m
+	Ref<Texture2D> get_cups_texture() const { return cups_texture; }
 	bool is_hoar_enabled() const { return hoar_enabled; }
 	void set_slide_enabled(bool p_enabled);
 	bool is_slide_enabled() const { return slide_enabled; }
@@ -544,6 +557,7 @@ public:
 	static float buried_hoar_strength(float p_size_mm, float p_age_hours);
 	static float hoar_deposition_rate(float p_air_celsius, float p_humidity, float p_wind, float p_cloud, float p_shortwave); // kg/m2/h
 	void add_hoar(float p_size_mm); // lays crystals on the snow (tests)
+	void add_suncups(float p_relief); // sets the suncup relief (m) wherever there is snow (scenes, tests)
 	// The ground straight from the height source (finer than the cells), NaN where nothing answers.
 	float sample_ground_height(Vector3 p_position) const;
 	void sample_ground_heights(Vector2 p_origin, float p_spacing, int p_width, int p_height, float *r_heights) const;

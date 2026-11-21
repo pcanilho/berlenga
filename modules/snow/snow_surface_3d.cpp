@@ -38,6 +38,7 @@
 #include "snow_lake_ice_3d.h"
 
 #include "core/config/engine.h"
+#include "core/math/random_pcg.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
 #include "core/templates/hash_set.h"
@@ -57,6 +58,7 @@
 #include "scene/resources/mesh.h"
 #include "scene/resources/surface_tool.h"
 #include "scene/resources/material.h"
+#include "scene/resources/image_texture.h"
 
 // The surface shader: the same height function in vertex() (geometry, traced from the capture)
 // and fragment() (a finer normal from the deformation texels, plus a few millimetres of wind
@@ -78,6 +80,10 @@ uniform sampler2D catch_tex : filter_linear, repeat_disable;
 uniform bool has_catch = false;
 uniform sampler2D deform_tex : filter_linear, repeat_disable;
 uniform vec4 deform_rect;
+uniform sampler2D cups_tex : filter_linear, repeat_disable;
+uniform bool has_cups = false;
+uniform sampler2D cup_tile : filter_linear_mipmap, repeat_enable;
+uniform float cup_tile_size = 3.2;
 uniform vec4 mesh_rect;
 uniform float min_depth = 0.03;
 uniform float edge_fade = 8.0;
@@ -178,6 +184,54 @@ vec3 snow_depth_smooth_grad(vec2 p) {
 // The surface's height and its central differences over 2e (as the differences of snow_height at p +- e
 // took them, from 2 x 4 passes over the depth's cells): the depth's part from its exact gradient, the
 // fine deformation's, the ground's and the fade's from their own cheap differences.
+// Suncups (follow-up 41): the cover's relief (ridge to hollow, m) times a suncup tile grown by a damped
+// Kuramoto-Sivashinsky ablation equation (cellular hollows, sharp ridges), laid with hex-tiling (Mikkelsen 2022,
+// "Practical real-time hex-tiling"): each hex vertex takes the tile at its own turn and offset and the three
+// blend with sharpened weights, so no repeat lines up. Height about the pack's mean (hollows under, ridges
+// over) and its gradient (per metre).
+uint snow_cup_hash(ivec2 v) {
+	uvec2 u = uvec2(v) * 1664525u + 1013904223u;
+	u.x += u.y * 1664525u;
+	u.y += u.x * 1664525u;
+	u ^= u >> 16u;
+	return u.x + u.y * 1664525u;
+}
+vec3 snow_cups(vec2 p, float e) {
+	if (!has_cups) {
+		return vec3(0.0);
+	}
+	vec2 uv = (p - snow_rect.xy) / max(snow_rect.zw, vec2(1e-4));
+	if (!snow_inside(uv)) {
+		return vec3(0.0);
+	}
+	float relief = textureLod(cups_tex, uv, 0.0).r;
+	if (relief < 0.002) {
+		return vec3(0.0);
+	}
+	vec2 st = p / cup_tile_size * 2.0 * 1.7320508;
+	vec2 sk = vec2(st.x - 0.57735027 * st.y, 1.15470054 * st.y);
+	ivec2 base = ivec2(floor(sk));
+	vec3 t = vec3(fract(sk), 0.0);
+	t.z = 1.0 - t.x - t.y;
+	float s = t.z < 0.0 ? 1.0 : 0.0;
+	float s2 = 2.0 * s - 1.0;
+	vec3 w = vec3(-t.z * s2, s - t.y * s2, s - t.x * s2);
+	ivec2 v[3] = ivec2[3](base + ivec2(int(s), int(s)), base + ivec2(int(s), 1 - int(s)), base + ivec2(1 - int(s), int(s)));
+	w = pow(max(w, vec3(0.0)), vec3(6.0));
+	w /= max(w.x + w.y + w.z, 1e-6);
+	vec3 r = vec3(0.0);
+	for (int k = 0; k < 3; k++) {
+		uint h = snow_cup_hash(v[k]);
+		float a = float(h & 1023u) / 1023.0 * 6.2831853;
+		vec2 off = vec2(float((h >> 10u) & 1023u), float((h >> 20u) & 1023u)) / 1023.0;
+		mat2 rot = mat2(vec2(cos(a), sin(a)), vec2(-sin(a), cos(a)));
+		vec3 c = textureLod(cup_tile, rot * p / cup_tile_size + off, max(log2(e * 96.0 / cup_tile_size), 0.0)).rgb;
+		// c.gb: the tile's gradient per tile width, turned back to world axes.
+		r += w[k] * vec3(c.r - 0.5, (c.gb * rot) / cup_tile_size);
+	}
+	return relief * r;
+}
+
 vec3 snow_height_diff(vec2 p, float e, bool p_vertex) {
 	vec3 dg = snow_depth_smooth_grad(p);
 	vec2 ex = vec2(e, 0.0);
@@ -190,8 +244,9 @@ vec3 snow_height_diff(vec2 p, float e, bool p_vertex) {
 	vec2 rz0 = p_vertex ? snow_deform_vertex(p - ez) : snow_deform(p - ez);
 	vec2 rz1 = p_vertex ? snow_deform_vertex(p + ez) : snow_deform(p + ez);
 	vec2 ddr = vec2((rx1.y - rx1.x) - (rx0.y - rx0.x), (rz1.y - rz1.x) - (rz0.y - rz0.x));
-	float d = dg.x * fade - dr.x + dr.y;
-	vec2 dd = dg.yz * fade * 2.0 * e + dg.x * dfade + ddr;
+	vec3 cups = snow_cups(p, e) * fade;
+	float d = dg.x * fade - dr.x + dr.y + cups.x;
+	vec2 dd = dg.yz * fade * 2.0 * e + dg.x * dfade + ddr + cups.yz * 2.0 * e;
 	// Under min_depth the snow is the ground material's; the surface tucks 5 cm under the ground.
 	float lift = d >= min_depth ? d : mix(-0.05, min_depth, max(d, 0.0) / min_depth);
 	vec2 dlift = d >= min_depth ? dd : (d > 0.0 ? dd * (min_depth + 0.05) / max(min_depth, 1e-4) : vec2(0.0));
@@ -921,6 +976,69 @@ void SnowSurface3D::_upload_deform() {
 	}
 }
 
+Ref<Image> SnowSurface3D::suncup_tile() {
+	// A periodic suncup tile: the damped Kuramoto-Sivashinsky equation
+	// h_t = -lap h - lap^2 h - |grad h|^2 / 2 - g (h - mean), from small noise. Its linear part is an ablation
+	// instability with one fastest wavelength (Betterton 2000's form); the |grad h|^2 term is the eroding front's
+	// (walls retreat along their normal), which rounds the hollows and sharpens the ridges; the damping holds a
+	// steady cellular field. 96 cells over 64 units, g 0.1, t 60: about 8 cups across. R the height 0..1,
+	// G and B its gradient per tile width (half floats), mipmapped.
+	static Ref<Image> tile; // CPU only, so it may outlive the rendering server
+	if (tile.is_valid()) {
+		return tile;
+	}
+	constexpr int N = 96;
+	constexpr float L = 64.0f, DX = L / N, DT = 0.005f, G = 0.1f, T = 60.0f;
+	LocalVector<float> h, l, nh;
+	h.resize(N * N);
+	l.resize(N * N);
+	nh.resize(N * N);
+	RandomPCG rng(7);
+	for (int i = 0; i < N * N; i++) {
+		h[i] = 0.1f * (rng.randf() * 2.0f - 1.0f);
+	}
+	auto at = [&](const LocalVector<float> &a, int x, int z) { return a[((z + N) % N) * N + (x + N) % N]; };
+	const int steps = int(T / DT);
+	for (int st = 0; st < steps; st++) {
+		float mean = 0.0f;
+		for (int z = 0; z < N; z++) {
+			for (int x = 0; x < N; x++) {
+				l[z * N + x] = (at(h, x - 1, z) + at(h, x + 1, z) + at(h, x, z - 1) + at(h, x, z + 1) - 4.0f * h[z * N + x]) / (DX * DX);
+				mean += h[z * N + x];
+			}
+		}
+		mean /= N * N;
+		for (int z = 0; z < N; z++) {
+			for (int x = 0; x < N; x++) {
+				const float l2 = (at(l, x - 1, z) + at(l, x + 1, z) + at(l, x, z - 1) + at(l, x, z + 1) - 4.0f * l[z * N + x]) / (DX * DX);
+				const float gx = (at(h, x + 1, z) - at(h, x - 1, z)) / (2.0f * DX);
+				const float gz = (at(h, x, z + 1) - at(h, x, z - 1)) / (2.0f * DX);
+				const int i = z * N + x;
+				nh[i] = h[i] + DT * (-l[i] - l2 - 0.5f * (gx * gx + gz * gz) - G * (h[i] - mean));
+			}
+		}
+		SWAP(h, nh);
+	}
+	float lo = 1e9f, hi = -1e9f;
+	for (int i = 0; i < N * N; i++) {
+		lo = MIN(lo, h[i]);
+		hi = MAX(hi, h[i]);
+	}
+	const float scale = 1.0f / MAX(hi - lo, 1e-6f);
+	Ref<Image> img = Image::create_empty(N, N, false, Image::FORMAT_RGBAH);
+	for (int z = 0; z < N; z++) {
+		for (int x = 0; x < N; x++) {
+			const float v = (h[z * N + x] - lo) * scale;
+			const float gx = (at(h, x + 1, z) - at(h, x - 1, z)) * scale * 0.5f * N; // per tile width
+			const float gz = (at(h, x, z + 1) - at(h, x, z - 1)) * scale * 0.5f * N;
+			img->set_pixel(x, z, Color(v, gx, gz, 1.0f));
+		}
+	}
+	img->generate_mipmaps();
+	tile = img;
+	return tile;
+}
+
 void SnowSurface3D::_update_material() {
 	if (material.is_null()) {
 		return;
@@ -934,6 +1052,12 @@ void SnowSurface3D::_update_material() {
 		material->set_shader_parameter("snow_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y));
 		material->set_shader_parameter("catch_tex", cover->get_catch_texture());
 		material->set_shader_parameter("has_catch", cover->get_catch_texture().is_valid());
+		material->set_shader_parameter("cups_tex", cover->get_cups_texture());
+		material->set_shader_parameter("has_cups", cover->get_cups_texture().is_valid() && cover->is_suncups_enabled());
+		if (cup_tile_texture.is_null()) {
+			cup_tile_texture = ImageTexture::create_from_image(suncup_tile());
+		}
+		material->set_shader_parameter("cup_tile", cup_tile_texture);
 	} else {
 		material->set_shader_parameter("snow_rect", Vector4());
 	}
@@ -1066,7 +1190,7 @@ void SnowSurface3D::_notification(int p_what) {
 			}
 			// The cover's texture and rect move on its own schedule.
 			const SnowCover3D *cover = _cover();
-			if (cover && cover->get_snow_texture().is_valid() && material.is_valid() && material->get_shader_parameter("snow_tex") != Variant(cover->get_snow_texture())) {
+			if (cover && cover->get_snow_texture().is_valid() && material.is_valid() && (material->get_shader_parameter("snow_tex") != Variant(cover->get_snow_texture()) || material->get_shader_parameter("cups_tex") != Variant(cover->get_cups_texture()))) {
 				_update_material();
 			} else if (cover && material.is_valid()) {
 				const Rect2 r = cover->get_map_rect();
