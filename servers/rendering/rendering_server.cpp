@@ -3912,7 +3912,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/cull_max_distance", PROPERTY_HINT_RANGE, "0,100000,1,or_greater,suffix:m"), 0.0);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/cull_min_size", PROPERTY_HINT_RANGE, "0,5,0.01,suffix:°"), 0.0);
 	GLOBAL_DEF("rendering/pathtracing/offscreen_record_cull", true);
-	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/relative_origin_grid", PROPERTY_HINT_RANGE, "0,65536,1,suffix:m"), 1024.0);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/relative_origin_grid", PROPERTY_HINT_RANGE, "0,65536,1,suffix:m"), 64.0);
 	GLOBAL_DEF("rendering/pathtracing/transparency_at_output_size", true);
 	GLOBAL_DEF("rendering/pathtracing/transparent_lighting/enabled", true);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/transparent_lighting/near", PROPERTY_HINT_RANGE, "0.05,100,0.01,or_greater,suffix:m"), 0.5);

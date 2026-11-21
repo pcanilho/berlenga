@@ -1471,8 +1471,8 @@ struct RTViewportState {
 	uint32_t frame_counter = 0;
 
 	// Camera-relative tracing: every position the trace sees is world minus this anchor, the
-	// camera's cell on a grid of rendering/pathtracing/relative_origin_grid metres (x and z).
-	// It moves only when the camera leaves its cell. Zero when the setting is 0.
+	// grid point nearest the camera on a grid of rendering/pathtracing/relative_origin_grid metres
+	// (x and z). It moves only when the camera is 3/4 of a cell away. Zero when the setting is 0.
 	Vector3 rt_origin;
 	bool rt_origin_valid = false;
 
