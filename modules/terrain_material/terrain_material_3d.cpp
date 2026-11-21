@@ -1363,7 +1363,10 @@ float tm_rd_pom_shadow(vec3 q, float depth, vec3 n, vec3 l, float h, float e, fl
 		float w = max(t * 0.03, e);
 		vis = min(vis, smoothstep(-w, w, s - d + 0.002 * tm_rock_detail_scale));
 	}
-	return vis;
+	// Faded with the stones' height: where the scree thins into soil (a few per cent of a layer's weight) the stones
+	// are millimetres tall and show nothing, but their shadow test, whose penumbra and bias do not shrink with them,
+	// still cut full shadows into the soil: dark ovals a metre or two across in the raster and path-traced frames.
+	return mix(1.0, vis, smoothstep(0.1, 0.4, h / (TM_RD_STONE_H * tm_rock_detail_scale)));
 }
 )";
 	}
@@ -1852,6 +1855,29 @@ void fragment() {
 				albedo = mix(albedo, tpack, tr);
 				rough = mix(rough, rough * mix(0.9, 0.7, tdamp), tr);
 				sn = normalize(mix(sn, tm_macro_n, 0.55 * tr));
+				// The tread is worn down into the ground (a few to some 10 cm on a busy game trail; Cole 1995): its
+				// banks as a normal from the wear map's slope, steeper where the sward's turf breaks off at the edge.
+				vec2 sdu = vec2(1.0 / float(textureSize(terrain_stand_map, 0).x), 0.0);
+				float stx = textureLod(terrain_stand_map, suv + sdu.xy, 0.0).r - textureLod(terrain_stand_map, suv - sdu.xy, 0.0).r;
+				float stz = textureLod(terrain_stand_map, suv + sdu.yx, 0.0).r - textureLod(terrain_stand_map, suv - sdu.yx, 0.0).r;
+				vec2 sgrad = vec2(stx, stz) / (2.0 * sdu.x * terrain_stand_rect.z); // wear per metre
+				float tdepth = 0.08 * sground;
+				vec2 tbank = tdepth * sgrad * (0.6 + 0.8 * tn);
+				// The turf's broken edge: a narrow band of crumbled soil and torn roots under the lip, in its shade.
+				float tedge = smoothstep(0.1, 0.45, tr) * (1.0 - smoothstep(0.55, 0.9, tr));
+				albedo *= mix(1.0, 0.72 + 0.2 * tm_vn(wp * 14.0 + 2.0), tedge);
+				// Hoof and foot pocking in the tread: shallow prints a hand across, softened where the soil is dry.
+				vec3 hq = wp * 5.5;
+				float h0 = tm_vn(hq + 17.0);
+				float hx = tm_vn(hq + vec3(0.11, 0.0, 0.0) + 17.0);
+				float hz = tm_vn(hq + vec3(0.0, 0.0, 0.11) + 17.0);
+				vec2 hgrad = vec2(hx - h0, hz - h0) / 0.02 * 0.012; // about 1 cm deep
+				sn = normalize(sn + vec3(tbank.x, 0.0, tbank.y) - vec3(hgrad.x, 0.0, hgrad.y) * smoothstep(0.4, 0.9, tr));
+				albedo *= mix(1.0, 0.85 + 0.3 * h0, 0.6 * tr); // the prints hold damp and fines darker
+				// Grit the feet have bared: coarse sand and small chips, lighter and darker, while a pixel resolves them.
+				float tgrit = tm_vn(wp * 38.0 + 29.0);
+				float tgr = (1.0 - smoothstep(0.01, 0.04, tm_hb_fp)) * tr;
+				albedo *= mix(1.0, tgrit > 0.72 ? 1.35 : (tgrit < 0.25 ? 0.7 : 1.0), 0.7 * tgr);
 			}
 			if (st.g > 0.0 && sground > 0.0) {
 				// Rooted in patches (a sounder works the ground in strips and pits), the patch's edge ragged.

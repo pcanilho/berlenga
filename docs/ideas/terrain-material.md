@@ -277,3 +277,8 @@ moist humus in fist-sized clods (bump) with overturned sods among them, in patch
 greying toward the bare soil as it ages. Neither on rock, sand or slopes past about 40 degrees. Stones on trails come
 from ground detail, litter from vegetation. Rocks bench: --stand-test [--stand-at=x,z] [--rooting-age=y].
 Check: raster (TAA) and PT agree at the bench frame; PT keeps the clods and the tread's edge.
+Round 2 (docs review): the tread now has banks (a normal from the wear map's slope, about 8 cm deep), a darker band of
+crumbled soil under the turf's broken lip, hoof pocking about 1 cm deep and bared grit while a pixel resolves it.
+The dark ovals in that frame were not the trail: the scree's parallax stones cast their sun shadow test into soil
+where the scree weight thins to a few per cent (stones millimetres tall, but a penumbra and bias that do not shrink
+with them). tm_rd_pom_shadow now fades with the stones' height.
