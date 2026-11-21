@@ -4356,6 +4356,10 @@ void VegetationField3D::_apply_maps(Maps &p_maps) {
 		far_image = p_maps.far;
 		far_image_rect = p_maps.far_rect;
 		far_image_range = p_maps.far_range;
+		if (!plant_color_registered && is_inside_tree()) {
+			WorldContracts::register_plant_color(this); // The plants' colour over the ground for WorldGround.albedo_at.
+			plant_color_registered = true;
+		}
 		_publish_far_shade();
 		if (far_match_view && far_view_state == 0 && far_view_round == 0) {
 			_far_view_start(30);
@@ -5403,6 +5407,38 @@ float VegetationField3D::get_conifer_at(const Vector3 &p_global_position) const 
 	return conifer;
 }
 
+// The placed plants over the ground for WorldGround.albedo_at: the far map's colour (stored as the square root of the
+// premultiplied linear colour) and cover (a), bilinear; -1 past the map.
+Color VegetationField3D::contract_plant_albedo_at(const Vector3 &p_position) const {
+	if (far_image.is_null() || far_image_rect.size.x <= 0.0f || far_image_rect.size.y <= 0.0f) {
+		return Color(0, 0, 0, -1.0f);
+	}
+	const Vector2 uv = (Vector2(p_position.x, p_position.z) - far_image_rect.position) / far_image_rect.size;
+	if (uv.x < 0.0f || uv.y < 0.0f || uv.x > 1.0f || uv.y > 1.0f) {
+		return Color(0, 0, 0, -1.0f);
+	}
+	const int w = far_image->get_width();
+	const int h = far_image->get_height();
+	const float fx = CLAMP(uv.x * w - 0.5f, 0.0f, float(w - 1));
+	const float fz = CLAMP(uv.y * h - 0.5f, 0.0f, float(h - 1));
+	const int x0 = int(fx);
+	const int z0 = int(fz);
+	const int x1 = MIN(x0 + 1, w - 1);
+	const int z1 = MIN(z0 + 1, h - 1);
+	const float tx = fx - x0;
+	const float tz = fz - z0;
+	// Premultiplied colour and cover interpolate; the square roots are undone per texel first.
+	auto texel = [&](int p_x, int p_z) {
+		const Color t = far_image->get_pixel(p_x, p_z);
+		return Color(t.r * t.r, t.g * t.g, t.b * t.b, t.a);
+	};
+	const Color c = texel(x0, z0).lerp(texel(x1, z0), tx).lerp(texel(x0, z1).lerp(texel(x1, z1), tx), tz);
+	if (c.a <= 1e-4f) {
+		return Color(0, 0, 0, 0);
+	}
+	return Color(c.r / c.a, c.g / c.a, c.b / c.a, MIN(c.a, 1.0f));
+}
+
 float VegetationField3D::get_litter_at(const Vector3 &p_global_position) const {
 	RWLockRead guard(crown_lock);
 	return crown_litter(crown_grid, crowns, max_crown_radius + 3.0f * LITTER_SPREAD * (1.0f + litter_skew.length()), CROWN_CELL, Vector2(p_global_position.x, p_global_position.z), litter_skew);
@@ -6206,6 +6242,10 @@ void VegetationField3D::_notification(int p_what) {
 			set_process_internal(true);
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			if (plant_color_registered) {
+				WorldContracts::unregister_plant_color(this);
+				plant_color_registered = false;
+			}
 			if (contact_trample_owner == this) {
 				contact_trample.release();
 				contact_trample_owner = nullptr;

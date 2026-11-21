@@ -600,6 +600,18 @@ public:
 	virtual ~WorldGroundColorProvider() {}
 };
 
+// The plant cover over the ground (GrassField3D's sward, VegetationField3D's placed plants): a separate slot on the
+// ground contract, since every field is its own producer. Several may register; each lays its cover over the ground
+// colour in turn.
+class WorldPlantColorProvider {
+public:
+	// The plants' mean diffuse albedo at the point as seen from above (linear rgb, a few metres' mean, as the far
+	// ground draws them); a: the share of the ground they hide (0..1), 0 where the producer has none, < 0 where it
+	// does not reach.
+	virtual Color contract_plant_albedo_at(const Vector3 &p_position) const = 0;
+	virtual ~WorldPlantColorProvider() {}
+};
+
 class WorldGround : public RefCounted {
 	GDCLASS(WorldGround, RefCounted);
 
@@ -664,7 +676,8 @@ public:
 	// coarse_cover_at at many points (world xz) in one call (a script stub answers point by point).
 	void coarse_cover_points(const Vector2 *p_points, int p_count, Vector3 *r_cover) const;
 	// The ground's albedo as drawn (linear rgb, a few metres' mean): the terrain material's colour, darkened by the
-	// weather's surface wetness by its porosity, under the snowpack's cover and albedo. a: how much of that is known
+	// weather's surface wetness by its porosity, the plant cover over it (grass and plants, by the share they hide),
+	// under the snowpack's cover and albedo. a: how much of that is known
 	// (1 where a ground colour answers; the snow's cover alone over ground no colour knows; 0 nothing). Readers blend
 	// their own setting toward rgb by a. For the light the ground sends up: gas and haze over it.
 	Color albedo_at(const Vector3 &p_position) const;
@@ -785,6 +798,7 @@ class WorldContracts : public Object {
 	WorldRunoffProvider *runoff_provider = nullptr;
 	LocalVector<WorldCoverProvider *> cover_providers;
 	LocalVector<WorldGroundColorProvider *> ground_color_providers;
+	LocalVector<WorldPlantColorProvider *> plant_color_providers;
 	Ref<WorldWater> builtin_water;
 	Ref<WorldWater> water_override;
 	Ref<WorldFire> builtin_fire;
@@ -826,6 +840,9 @@ public:
 	static void register_ground_color(WorldGroundColorProvider *p_provider); // any number: the first that knows the point answers
 	static void unregister_ground_color(WorldGroundColorProvider *p_provider);
 	static const LocalVector<WorldGroundColorProvider *> *ground_color_providers_list() { return singleton ? &singleton->ground_color_providers : nullptr; }
+	static void register_plant_color(WorldPlantColorProvider *p_provider); // any number: each lays its cover over the ground in turn
+	static void unregister_plant_color(WorldPlantColorProvider *p_provider);
+	static const LocalVector<WorldPlantColorProvider *> *plant_color_providers_list() { return singleton ? &singleton->plant_color_providers : nullptr; }
 	static void register_water(WorldWaterProvider *p_provider);
 	static void unregister_water(WorldWaterProvider *p_provider);
 	static void register_fire(WorldFireProvider *p_provider);

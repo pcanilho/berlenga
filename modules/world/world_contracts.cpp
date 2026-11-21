@@ -1019,6 +1019,23 @@ Color WorldGround::albedo_at(const Vector3 &p_position) const {
 			}
 		}
 	}
+	// The plant cover over it (WorldPlantColorProvider): the sward and the placed plants hide the ground by the share
+	// they cover. Leaves are not darkened by rain the way soil is (a film on a leaf adds sheen, not much darkening).
+	const LocalVector<WorldPlantColorProvider *> *plants = WorldContracts::plant_color_providers_list();
+	if (plants) {
+		for (const WorldPlantColorProvider *pp : *plants) {
+			const Color v = pp->contract_plant_albedo_at(p_position);
+			const float k = CLAMP(v.a, 0.0f, 1.0f);
+			if (k <= 0.0f) {
+				continue;
+			}
+			if (c.a > 0.0f) {
+				c = Color(Math::lerp(c.r, v.r, k), Math::lerp(c.g, v.g, k), Math::lerp(c.b, v.b, k), c.a);
+			} else {
+				c = Color(v.r, v.g, v.b, k); // No ground colour known: the plants alone, as far as they cover.
+			}
+		}
+	}
 	// The snowpack over it, by the materials' cover on level ground (snow_cover_weight: the facets fill from about
 	// 1 cm, all buried by about 17 cm).
 	const WorldSnow *snow = WorldContracts::snow();
@@ -1167,6 +1184,18 @@ void WorldContracts::register_ground_color(WorldGroundColorProvider *p_provider)
 void WorldContracts::unregister_ground_color(WorldGroundColorProvider *p_provider) {
 	if (singleton) {
 		singleton->ground_color_providers.erase(p_provider);
+	}
+}
+
+void WorldContracts::register_plant_color(WorldPlantColorProvider *p_provider) {
+	if (singleton && p_provider && singleton->plant_color_providers.find(p_provider) < 0) {
+		singleton->plant_color_providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_plant_color(WorldPlantColorProvider *p_provider) {
+	if (singleton) {
+		singleton->plant_color_providers.erase(p_provider);
 	}
 }
 

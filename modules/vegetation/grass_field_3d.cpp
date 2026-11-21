@@ -4511,6 +4511,33 @@ void GrassField3D::_publish_crop_sun() {
 	rs->global_shader_parameter_set("crop_ground_lobe2", Vector4(l2.r, l2.g, l2.b, 0.0f));
 }
 
+// The sward over the ground for WorldGround.albedo_at (the light it sends up into gas and haze): the blades' colour
+// seen from a distance (get_far_color, as the far ground draws it) over the share the ground map gives the sward there
+// (its rules and worn paths), bilinear over the map's texels; -1 past the map.
+Color GrassField3D::contract_plant_albedo_at(const Vector3 &p_position) const {
+	if (ground_image.is_null() || ground_image_rect.z <= 0.0f || ground_image_rect.w <= 0.0f || !ground_tint_enabled) {
+		return Color(0, 0, 0, -1.0f);
+	}
+	const Vector2 uv((p_position.x - ground_image_rect.x) / ground_image_rect.z, (p_position.z - ground_image_rect.y) / ground_image_rect.w);
+	if (uv.x < 0.0f || uv.y < 0.0f || uv.x > 1.0f || uv.y > 1.0f) {
+		return Color(0, 0, 0, -1.0f);
+	}
+	const int w = ground_image->get_width();
+	const int h = ground_image->get_height();
+	const float fx = CLAMP(uv.x * w - 0.5f, 0.0f, float(w - 1));
+	const float fz = CLAMP(uv.y * h - 0.5f, 0.0f, float(h - 1));
+	const int x0 = int(fx);
+	const int z0 = int(fz);
+	const int x1 = MIN(x0 + 1, w - 1);
+	const int z1 = MIN(z0 + 1, h - 1);
+	const float tx = fx - x0;
+	const float tz = fz - z0;
+	const float cover = Math::lerp(Math::lerp(ground_image->get_pixel(x0, z0).r, ground_image->get_pixel(x1, z0).r, tx), Math::lerp(ground_image->get_pixel(x0, z1).r, ground_image->get_pixel(x1, z1).r, tx), tz);
+	Color c = get_far_color();
+	c.a = CLAMP(cover, 0.0f, 1.0f);
+	return c;
+}
+
 // The far colour and its azimuth lobes, for grass_ground(). The fade owner's only.
 // At the sun's elevation, between the baked ones (the lowest and highest held beyond them).
 void GrassField3D::_far_at_elevation(float p_deg, Color &r_color, Color &r_lobe1, Color &r_lobe2) const {
@@ -5291,6 +5318,12 @@ void GrassField3D::_ground_bake_publish(const Vector4 &p_rect, const Ref<Image> 
 	}
 	ground_texture = ImageTexture::create_from_image(p_img);
 	ground_litter_texture = ImageTexture::create_from_image(litter_img);
+	ground_image = p_img;
+	ground_image_rect = p_rect;
+	if (!plant_color_registered && is_inside_tree()) {
+		WorldContracts::register_plant_color(this); // The ground field: its sward's colour for WorldGround.albedo_at.
+		plant_color_registered = true;
+	}
 	RenderingServer *rs = RenderingServer::get_singleton();
 	rs->global_shader_parameter_set("grass_ground_map", ground_texture->get_rid());
 	rs->global_shader_parameter_set("grass_ground_litter", ground_litter_texture->get_rid());
@@ -6147,6 +6180,10 @@ void GrassField3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			if (plant_color_registered) {
+				WorldContracts::unregister_plant_color(this);
+				plant_color_registered = false;
+			}
 			if (crop_nodes.has(this)) {
 				crop_nodes.erase(this);
 				_crop_fields_changed_notify();
