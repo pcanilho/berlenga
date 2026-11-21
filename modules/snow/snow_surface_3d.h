@@ -203,7 +203,8 @@ class SnowSurface3D : public Node3D {
 	void _shift_ground(Vector2i p_origin);
 	void _shift_deform(Vector2i p_origin);
 	float _ground_at(float p_x, float p_z) const;
-	float _dent_max(float p_depth, float p_density) const;
+	float _dent_max(float p_depth, float p_density, float p_wet = 0.0f) const;
+	static float rotten_share(float p_wet); // the share of the dry pack's bearing a wet one keeps
 	float _press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, Vector2 p_velocity = Vector2());
 	void _press_movers(double p_delta);
 	void _relax();

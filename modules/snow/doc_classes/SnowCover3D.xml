@@ -379,6 +379,13 @@
 				Returns the snow map texture: depth in metres (R), albedo (G), wetness (B) and density in tonnes per cubic metre (A).
 			</description>
 		</method>
+		<method name="get_slush_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The saturated slush layer at the pack's base at [param position], m. Melt water and rain the pack cannot hold pond over frozen ground ([method WorldGround.frost_at]) instead of soaking away, and leave by Darcy flow down the slope; flat ground keeps a slush pond.
+			</description>
+		</method>
 		<method name="get_snowfall_rate_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -498,6 +505,13 @@
 				Returns the snow water equivalent (mm) a slope of [param slope_degrees] holds before it slides (SnowSlide, Bernhardt and Schulz 2010): [param min_mm] at 75 degrees and steeper, growing by a factor of e every 1 / [param decay] degrees flatter.
 			</description>
 		</method>
+		<method name="ground_seal" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="frost" type="Vector3" />
+			<description>
+				How far frozen ground stops melt water draining from the pack, 0 to 1, from [method WorldGround.frost_at] (thawed top m, frost depth m, weakening): concrete frost a few centimetres deep with no thawed layer over it seals.
+			</description>
+		</method>
 		<method name="is_updating" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -558,6 +572,15 @@
 			<param index="2" name="share" type="float" />
 			<description>
 				Moves [param share] (0 to 1) of the snow held in the crowns within [param radius] of [param position] onto the pack below at the next update (fresh snow of 150 kg/m3; mass kept). Returns the kg, from the published load. Answers [method WorldSnow.shake_canopy].
+			</description>
+		</method>
+		<method name="slush_drain_rate" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="density" type="float" />
+			<param index="1" name="slope_sine" type="float" />
+			<param index="2" name="length" type="float" />
+			<description>
+				The rate (1/h) a slush layer drains off a slope [param length] m long of sine [param slope_sine]: Darcy flow with the wet-snow permeability of Shimizu (1970) at [param density] kg/m3. The cover uses 50 m: hours on a steep slope, days on the flat.
 			</description>
 		</method>
 		<method name="snow_conductivity" qualifiers="static">
@@ -721,6 +744,9 @@
 		</member>
 		<member name="slide_min_holding" type="float" setter="set_slide_min_holding" getter="get_slide_min_holding" default="50.0">
 			The snow water equivalent (mm) slopes of 75 degrees and steeper still hold.
+		</member>
+		<member name="slush_enabled" type="bool" setter="set_slush_enabled" getter="is_slush_enabled" default="true">
+			Slush: melt water ponds in the pack's base over frozen ground and leaves only down the slope.
 		</member>
 		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
 			Updates per real second.

@@ -1,0 +1,2 @@
+- Rotten snow: a wet spring pack bears less, so boots and wheels posthole deeper, and packs denser and throws more aside under them (CPU and GPU).
+- Slush: melt water the pack cannot hold ponds in its base over frozen ground (`WorldGround.frost_at`) and drains only down the slope, hours on steep ground, days on the flat; drawn grey-blue and glossy where it nears the surface (`slush_enabled`).

@@ -415,8 +415,13 @@ void fragment() {
 	hz += rg.y;
 	vec3 nf = normalize(vec3(-hx, 2.0 * e, -hz));
 	vec3 tn = vec3(dot(nf, normalize(w_t)), dot(nf, normalize(w_b)), dot(nf, normalize(w_n)));
-	ALBEDO = tint * pack.g * (1.0 - 0.08 * compact);
-	ROUGHNESS = clamp(mix(0.7, 0.35, pack.b) - 0.15 * compact, 0.05, 1.0);
+	// The wet channel: liquid saturation to 1, then 1 + the share of the depth that is slush (SnowCover3D).
+	float wet = min(pack.b, 1.0);
+	// Slush whose water table nears the surface: water fills the pores between the grains, so light goes deep
+	// and is absorbed (saturated snow's albedo some 0.4-0.6; Warren 1982), faintly blue, under a glossy water film.
+	float slush = smoothstep(0.6, 1.0, pack.b - 1.0);
+	ALBEDO = tint * pack.g * (1.0 - 0.08 * compact) * mix(vec3(1.0), vec3(0.5, 0.56, 0.62), slush);
+	ROUGHNESS = mix(clamp(mix(0.7, 0.35, wet) - 0.15 * compact, 0.05, 1.0), 0.08, slush);
 	SPECULAR = 0.335; // ice, F0 0.018
 	METALLIC = 0.0;
 	NORMAL_MAP = tn * 0.5 + 0.5;
@@ -438,14 +443,14 @@ void fragment() {
 		// Under the path tracer: the ice specular lies on the facet of the grain hit, for every grain (the
 		// samples of a pixel integrate them), at the facet's own roughness; the diffuse keeps the snow's
 		// normal. Trodden snow keeps fewer whole grains, the rest stays rough.
-		float ew = (1.0 - smoothstep(0.05, 0.3, pack.b)) * (1.0 - 0.7 * compact);
+		float ew = (1.0 - smoothstep(0.05, 0.3, wet)) * (1.0 - 0.7 * compact);
 		if (ew > 0.0) {
 			SPECULAR_NORMAL = normalize((VIEW_MATRIX * vec4(snow_grain_facet(w_pos, nf, hoar), 0.0)).xyz);
 			ROUGHNESS = mix(ROUGHNESS, 0.22, ew);
 		}
 	} else {
 		vec4 g = snow_glint(w_pos, nf, fp, hoar);
-		float gw = g.w * (1.0 - smoothstep(0.05, 0.3, pack.b)) * (1.0 - 0.7 * compact);
+		float gw = g.w * (1.0 - smoothstep(0.05, 0.3, wet)) * (1.0 - 0.7 * compact);
 		vec3 f = normalize((VIEW_MATRIX * vec4(g.xyz, 0.0)).xyz);
 		mat3 tbf = mat3(TANGENT, BINORMAL, f);
 		if (gw > 0.0 && abs(determinant(tbf)) > 1e-3) {
@@ -469,14 +474,28 @@ float SnowSurface3D::bekker_sinkage(float p_pressure_kpa, float p_width, float p
 	return GroundDeformField::bekker_sinkage(p_pressure_kpa, p_width, p_n, p_kc, p_kphi);
 }
 
-float SnowSurface3D::_dent_max(float p_depth, float p_density) const {
+// Rotten snow (follow-up 41): a wet, isothermal spring pack loses the ice bonds between its grains as the water
+// in it rises (Colbeck 1982, grain clusters in wet snow; its strength falls steeply with liquid water content,
+// Yamanoi and Endo 2002), so it bears a fraction of a dry pack's load and packs denser under it (wet grains
+// slide into each other's gaps, up to about 700 kg/m3 under a boot, and more is pushed aside than packed). p_wet:
+// the liquid over what the pack holds.
+float SnowSurface3D::rotten_share(float p_wet) {
+	return 1.0f - 0.85f * CLAMP(p_wet, 0.0f, 1.0f);
+}
+
+float SnowSurface3D::_dent_max(float p_depth, float p_density, float p_wet) const {
 	// A column of depth D at density rho lowered by x keeps (1 - f) of the lost mass as compaction:
 	// D - x >= (D rho - f x rho) / rho_c, so x <= D (1 - rho / rho_c) / (1 - f rho / rho_c).
-	const float r = p_density / compacted_density;
+	// Wet, the grains pack closer under the load and more of the snow is pushed aside than packed (a bearing
+	// failure, not a compaction: the boot goes through).
+	const float w = CLAMP(p_wet, 0.0f, 1.0f);
+	const float rho_c = MAX(compacted_density, Math::lerp(compacted_density, 700.0f, w));
+	const float f = Math::lerp(rim_share, MAX(rim_share, 0.8f), w);
+	const float r = p_density / rho_c;
 	if (r >= 1.0f || p_depth <= 0.0f) {
 		return 0.0f;
 	}
-	return p_depth * (1.0f - r) / MAX(1.0f - rim_share * r, 1e-3f);
+	return p_depth * (1.0f - r) / MAX(1.0f - f * r, 1e-3f);
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -790,7 +809,8 @@ GroundDeformField::Column SnowSurface3D::SnowColumns::column(float p_x, float p_
 	c.deformable = true;
 	c.surface = surface->_ground_at(p_x, p_z) + depth;
 	const float density = cover->get_density_at(wp);
-	c.max_dent = surface->_dent_max(depth, density);
+	const float wet = cover->get_wetness_at(wp);
+	c.max_dent = surface->_dent_max(depth, density, wet);
 	c.rim_share = surface->rim_share;
 	if (held || broke) {
 		const float thickness = cover->get_crust_thickness_at(wp);
@@ -798,7 +818,7 @@ GroundDeformField::Column SnowSurface3D::SnowColumns::column(float p_x, float p_
 		if (thickness > 0.0f && over < depth) {
 			if (held) {
 				// Standing on the crust: only the snow over it compacts.
-				c.max_dent = MIN(c.max_dent, surface->_dent_max(over, density));
+				c.max_dent = MIN(c.max_dent, surface->_dent_max(over, density, wet));
 			} else if (over < 0.05f) {
 				c.crust = thickness;
 			}
@@ -810,8 +830,10 @@ GroundDeformField::Column SnowSurface3D::SnowColumns::column(float p_x, float p_
 float SnowSurface3D::SnowColumns::sinkage(const GroundDeformField::Body &p_body) const {
 	held = false;
 	broke = false;
-	const float z = GroundDeformField::body_sinkage(p_body, surface->bekker_n, surface->bekker_kc, surface->bekker_kphi);
 	const Vector3 wp(p_body.center.x, 0, p_body.center.z);
+	// Rotten snow bears less: the moduli scale with the share a wet pack keeps.
+	const float keep = rotten_share(cover->get_wetness_at(wp));
+	const float z = GroundDeformField::body_sinkage(p_body, surface->bekker_n, surface->bekker_kc * keep, surface->bekker_kphi * keep);
 	const float strength = cover->get_crust_strength_at(wp);
 	if (strength <= 0.0f) {
 		return z;
@@ -917,7 +939,7 @@ void SnowSurface3D::_relax() {
 					dn = MAX(dn - cover->get_new_snow_at(wp) * refill_share, 0.0f) * keep;
 					rm *= keep;
 					// The pack around settles toward the compacted density: the step shrinks.
-					dn = MIN(dn, _dent_max(depth, cover->get_density_at(wp)));
+					dn = MIN(dn, _dent_max(depth, cover->get_density_at(wp), cover->get_wetness_at(wp)));
 					rm = MIN(rm, depth);
 					dent[i] = dn > 1e-4f ? dn : 0.0f;
 					rim[i] = rm > 1e-4f ? rm : 0.0f;
@@ -1489,6 +1511,7 @@ PackedByteArray SnowSurface3D::_gpu_cover_cells(int &r_n, bool &r_valid) const {
 	const bool crust = cover->pub.crust.size() == cells;
 	const bool fresh = cover->pub.new_depth.size() == cells;
 	const bool ground_ok = cover->cell_ground.size() == cells;
+	const bool wet_ok = cover->pub.liquid.size() == cells;
 	for (int i = 0; i < cells; i++) {
 		w[i * 8 + 0] = cover->pub.swe[i];
 		w[i * 8 + 1] = cover->pub.density[i];
@@ -1496,7 +1519,13 @@ PackedByteArray SnowSurface3D::_gpu_cover_cells(int &r_n, bool &r_valid) const {
 		w[i * 8 + 3] = crust ? cover->pub.crust_burial[i] : 0.0f;
 		w[i * 8 + 4] = fresh ? cover->pub.new_depth[i] : 0.0f;
 		w[i * 8 + 5] = ground_ok ? cover->cell_ground[i] : 0.0f;
-		w[i * 8 + 6] = 0.0f;
+		// Liquid water saturation, as SnowCover3D::get_wetness_at (rotten snow: ground_deform's dent_max).
+		float wet = 0.0f;
+		if (wet_ok) {
+			const float hold = cover->liquid_capacity * (cover->pub.swe[i] - cover->pub.liquid[i]);
+			wet = hold > 1e-4f ? CLAMP(cover->pub.liquid[i] / hold, 0.0f, 1.0f) : 0.0f;
+		}
+		w[i * 8 + 6] = wet;
 		w[i * 8 + 7] = 0.0f;
 	}
 	r_n = cn;
@@ -1840,6 +1869,7 @@ void SnowSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("press", "position", "radius", "bottom", "sink", "round", "velocity"), &SnowSurface3D::press, DEFVAL(0.0f), DEFVAL(true), DEFVAL(Vector3()));
 	ClassDB::bind_method(D_METHOD("press_box", "position", "size", "yaw", "bottom", "sink", "velocity"), &SnowSurface3D::press_box, DEFVAL(0.0f), DEFVAL(Vector3()));
 	ClassDB::bind_static_method("SnowSurface3D", D_METHOD("bekker_sinkage", "pressure_kpa", "width", "n", "kc", "kphi"), &SnowSurface3D::bekker_sinkage);
+	ClassDB::bind_static_method("SnowSurface3D", D_METHOD("rotten_share", "wetness"), &SnowSurface3D::rotten_share);
 	ClassDB::bind_method(D_METHOD("clear_deformation"), &SnowSurface3D::clear_deformation);
 	ClassDB::bind_method(D_METHOD("refresh_ground"), &SnowSurface3D::refresh_ground);
 	ClassDB::bind_method(D_METHOD("get_surface_height_at", "position"), &SnowSurface3D::get_surface_height_at);

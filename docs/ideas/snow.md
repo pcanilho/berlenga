@@ -1689,6 +1689,18 @@ photographs, e.g. Fikke et al. 2007, COST 727).
   hex-tiling (Mikkelsen 2022) so no repeat shows; geometry in vertex(), the same height in the fragment's
   normal. Raster and PT agree (`--view=trail --suncups=0.2`). Next: ridge dirt drawn darker, rotten snow,
   slush.
+- **Rotten snow, built (21 Nov).** Wet snow loses its bonds (Yamanoi and Endo 2002), so the Bekker moduli scale
+  by `SnowSurface3D.rotten_share` = 1 - 0.85 x wetness, and the dent cap packs toward 700 kg/m3 with up to 0.8
+  of the snow thrown aside (a bearing failure rather than a compaction). The GPU field reads the wetness from
+  the cover's part 1 .z (ground 518018ad). Test: 0.06 m in the cold, 0.19 m in the same pack at wetness 0.5.
+- **Slush, built (21 Nov).** Frozen ground stops infiltration (Kane and Stein 1983), so over concrete frost
+  (`WorldGround.frost_at`: frost over 5 cm, no thawed top) the water the pack cannot hold stays in its base as
+  a saturated layer and leaves by Darcy flow down the slope (slushflows: Onesti 1985, Hestnes 1998): K from
+  Shimizu's (1970) wet-snow permeability, about 8 mm/s, over a 50 m slope as a linear reservoir, so it
+  e-folds in about 5 h at 20 degrees and two weeks on the flat (a slush pond). Water past the pores runs off.
+  `get_slush_at`; the snow texture's wet channel carries 1 + the slush share of the depth, and the surface
+  goes grey-blue (albedo x 0.5-0.6, Warren 1982) and glossy as the water table nears the top. Without a
+  ground provider nothing is sealed. Next: lateral routing of slush between cells (it gathers in hollows).
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 

@@ -203,6 +203,8 @@ func _ready() -> void:
 			await _run_shelter_tests()
 		elif only == "crust":
 			await _run_crust_tests()
+			await _run_rotten_tests()
+			await _run_slush_tests()
 		elif only == "hoar":
 			await _run_hoar_tests()
 		elif only == "suncups":
@@ -421,6 +423,8 @@ func _run_tests() -> void:
 	await _run_transport_tests()
 	await _run_surface_tests()
 	await _run_crust_tests()
+	await _run_rotten_tests()
+	await _run_slush_tests()
 	await _run_hoar_tests()
 	_run_suncup_tests()
 	await _run_rime_tests()
@@ -579,6 +583,49 @@ func _run_transport_tests() -> void:
 	snow.advance(6.0 * 3600.0)
 	var c1 := _ridge_band(-120.0, -10.0)
 	_check("a frozen crust holds the snow", absf(c1 - c0) < 0.1, "%.2f to %.2f mm on the windward side" % [c0, c1])
+
+
+func _run_rotten_tests() -> void:
+	print("Rotten snow (follow-up 41):")
+	_check("a wet pack keeps a share of its bearing (Yamanoi and Endo 2002)", SnowSurface3D.rotten_share(0.0) == 1.0 and absf(SnowSurface3D.rotten_share(1.0) - 0.15) < 1e-4, "%.2f dry, %.2f soaked" % [SnowSurface3D.rotten_share(0.0), SnowSurface3D.rotten_share(1.0)])
+	# 0.4 m of old spring snow at 400 kg/m3: firm in the cold, rotten in a warm afternoon.
+	await _surface_setup(160.0, 400.0)
+	await _walk(-1.0)
+	var dry := _trail_stats(-1.0)
+	await _weather_to(8.0, 10.0)
+	var wet := snow.get_wetness_at(Vector3(0.0, 0, 1.0))
+	await _walk(1.0)
+	var rotten := _trail_stats(1.0)
+	var q := Vector3(0.0, 0, 1.0)
+	_check("boots posthole in a wet spring pack", wet > 0.5 and rotten.dent > 2.0 * maxf(dry.dent, 0.01), "%.3f m in the cold, %.3f m when wet (wetness %.2f; %.2f m at %.0f kg/m3)" % [dry.dent, rotten.dent, wet, snow.get_depth_at(q), snow.get_density_at(q)])
+
+
+func _run_slush_tests() -> void:
+	print("Slush over frozen ground (follow-up 41):")
+	var seal_frozen := SnowCover3D.ground_seal(Vector3(0.0, 0.3, 0.0))
+	var seal_thawed := SnowCover3D.ground_seal(Vector3(0.1, 0.3, 0.0))
+	_check("concrete frost seals the base, a thawed top or unfrozen ground does not", seal_frozen > 0.99 and seal_thawed == 0.0 and SnowCover3D.ground_seal(Vector3()) == 0.0, "%.2f frozen, %.2f under 10 cm thawed" % [seal_frozen, seal_thawed])
+	var flat := SnowCover3D.slush_drain_rate(500.0, 0.0, 50.0)
+	var steep := SnowCover3D.slush_drain_rate(500.0, sin(deg_to_rad(20.0)), 50.0)
+	_check("slush ponds for days on the flat and drains in hours off a slope (Darcy, K about 8 mm/s)", 1.0 / flat > 72.0 and 1.0 / steep < 12.0, "e-folds in %.0f h flat, %.1f h at 20 degrees (50 m slope)" % [1.0 / flat, 1.0 / steep])
+	# 0.4 m of spring snow, two warm days: over unfrozen ground the melt soaks away; over frozen ground it ponds.
+	var q := Vector3(0.0, 0, 1.0)
+	await _surface_setup(160.0, 400.0)
+	await _weather_to(10.0, 48.0)
+	var open_slush := snow.get_slush_at(q)
+	var open_swe := snow.get_swe_at(q)
+	var stub := GDScript.new()
+	stub.source_code = "extends WorldGround\nfunc _frost_at(_p: Vector3) -> Vector3:\n\treturn Vector3(0.0, 0.3, 0.0)\n"
+	stub.reload()
+	WorldContracts.set_ground(stub.new())
+	await _surface_setup(160.0, 400.0)
+	await _weather_to(10.0, 48.0)
+	var slush := snow.get_slush_at(q)
+	var swe := snow.get_swe_at(q)
+	var wet := snow.get_wetness_at(q)
+	WorldContracts.clear_overrides()
+	_check("melt water ponds as slush over frozen ground, drains away over thawed", open_slush == 0.0 and slush > 0.02 and swe > open_swe and wet == 1.0, "%.3f m of slush (%.0f mm SWE kept against %.0f), none over thawed ground" % [slush, swe, open_swe])
+	_check("the slush stays inside the pack", slush <= snow.get_depth_at(q) + 1e-4, "%.3f of %.3f m" % [slush, snow.get_depth_at(q)])
 
 
 func _run_crust_tests() -> void:
