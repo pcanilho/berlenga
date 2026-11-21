@@ -1043,6 +1043,16 @@ Added 20 Nov (ground detail thread, Paulo's pick "thinning plus 4 km rock colour
   from the camera) the near shore grains of a path-traced still turned into dark pits and smooth patches, while the
   raster frame was identical; leaving the shore layer unthinned mostly cured it. Not the off-screen cull, not
   c1f09374, not zero counts. Open: whether play (streaming thins every frame) shows the same in PT; check on the PC.
+  Narrowed 21 Nov (cloud, shore eye view 640x360, 4 spp; PT is deterministic there, so frames diff exactly):
+  - Raster is bit-identical. PT loses whole near boulders and grain patches, but their shadows stay, so the
+    stones are still in the TLAS for shadow rays and are gone for camera rays.
+  - Thinning only the first 100 or 600 groups changes nothing; 750 breaks it. Groups 601-750 are all layer 4,
+    n about 17-23 halved, 72 m and more out. Those groups cut 448 TLAS instances, so they cross
+    `rendering/pathtracing/multimesh_merged_blas_max_triangles` (65536): from expanded TLAS entries to one merged BLAS.
+  - With the cap at 256 (every MultiMesh expanded) the thinned still matches the unthinned one. So the fault is in
+    the path tracer's merged-MultiMesh path when MultiMeshes become merged, not in the rocks.
+  - Ruled out: widening (`--no-far-widen` still breaks), `persistent_instances` off, build budget (60 more frames
+    make it worse), allocation errors (none logged).
 - The far cover map takes coarse river beds (45% stone over the bed where the median is drawn near). In the bench
   world only narrow boulder streams qualify, so it adds 67 faint texels; it matters where big rivers carry boulders.
   Shore stones are left out: the shingle band is a few metres wide, under a tenth of a 32 m texel.
