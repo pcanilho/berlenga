@@ -2143,7 +2143,7 @@ func _run_climate_tests() -> void:
 	var far_q := snow.global_position + Vector3(-700.0, 0, 300.0)
 	var w_before := snow.get_world_swe_at(fq)
 	var far_before := snow.get_world_swe_at(far_q)
-	snow.add_snow(30.0, 100.0)
+	snow.add_snow(30.0, 100.0, false) # the square alone: what feeds back is the square's
 	var near_now := 0.0
 	for k in 16:
 		near_now += snow.get_swe_at(fq + Vector3((k % 4) * 4.0 - 6.0, 0, (k / 4) * 4.0 - 6.0)) / 16.0
@@ -2153,6 +2153,10 @@ func _run_climate_tests() -> void:
 	var w_after := snow.get_world_swe_at(fq)
 	var far_after := snow.get_world_swe_at(far_q)
 	_check("the square feeds the world tier under it (two-way nesting)", w_after > w_before + 10.0 and absf(w_after - near_now) < 0.05 * maxf(near_now, 10.0) and absf(far_after - far_before) < 5.0, "world %.0f mm before, %.0f after, square %.0f mm there; far away %.0f to %.0f mm" % [w_before, w_after, near_now, far_before, far_after])
+	# A storm (add_snow's default) falls on the world tier too: slopes outside the square carry it.
+	var storm_before := snow.get_world_swe_at(far_q)
+	snow.add_snow(20.0, 100.0)
+	_check("add_snow falls on the world tier outside the square", absf(snow.get_world_swe_at(far_q) - storm_before - 20.0) < 1.0, "%.0f to %.0f mm at 760 m" % [storm_before, snow.get_world_swe_at(far_q)])
 
 	await _run_recipe_tests()
 
