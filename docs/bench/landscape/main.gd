@@ -881,6 +881,10 @@ func _ready() -> void:
 		_log("facing the sun: azimuth dir %s, sun elevation %.1f deg" % [str(flat), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
 	if args.has("stand-trail"):
 		_stand_trail()
+	if args.has("lens-cam"):
+		await _lens_cam()
+	if args.has("sea-effect"):
+		await _sea_effect()
 	await _docs_links_setup()
 	# Raster: 160 frames, so the sky's reprojected clouds (one pixel of each 4x4 block a frame) have had ten
 	# samples a pixel; fewer leave the first frame's upsampled blocks and the march jitter in the picture
@@ -1833,6 +1837,8 @@ func _generate() -> void:
 	gen.cell_size = float(args.get("cell", "16"))
 	gen.seed = 3
 	gen.uplift = float(args.get("uplift", "3.0"))
+	if args.has("max-height"):
+		gen.max_height = float(args["max-height"]) # --max-height=M: relief scaled so the highest point is M over the sea
 	# The desert's plain: no uplift under it, filled with the range's alluvium.
 	gen.base_uplift = float(args.get("base-uplift", "0.0" if layout == "desert" else "0.1"))
 	gen.uplift_map = ImageTexture.create_from_image(up)
@@ -3287,6 +3293,12 @@ func _weather_settings() -> void:
 		weather.mid_cloud_cover = float(args["mid-cover"])
 		if weather.cloud_cover <= 0.0:
 			weather.cloud_variation = 0.0 # a clear sky: the regional variation would still raise clouds out of 0 cover
+	if args.has("air-temp"):
+		# --air-temp=C: the air mass set here, not the date's climate (lake-effect and wave cloud frames).
+		weather.air_follows_climate = false
+		weather.temperature = float(args["air-temp"])
+	if args.has("water-temp") and "water_temperature" in weather:
+		weather.water_temperature = float(args["water-temp"]) # --water-temp=C: open water's surface (weather af97350f)
 	if args.has("cloud-type"):
 		weather.cloud_type = float(args["cloud-type"]) # --cloud-type=T: 0 stratus to 1 towering cumulus
 		# A set cloud type stays put unless --cloud-regime=1 (clouds 2dd4c468: else the type follows time of day).
@@ -6908,6 +6920,90 @@ func _suncups() -> void:
 	if args.has("snow-tracks"):
 		await _snow_tracks(surf, c3, look_dir)
 	_log("suncups: %.2f m cups on %.2f m snow at %s, cam %s, sun %.1f deg" % [mm, best_d, str(best.round()), str(c3.global_position.round()), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
+
+
+func _lens_cam() -> void:
+	# --lens-cam[=D]: wave clouds (lenticulars, weather 3876c353/47e03723) over the highest crest. The camera stands D
+	# (12000) m downwind of the crest, --lens-up (600) m over the ground or sea, looking back upwind --lens-pitch (30)
+	# degrees up; the wind (--wind, --humidity, --mid-cover from the command line) blows toward it, turned so the view
+	# sits --lens-sun-off (55) degrees off the sun's azimuth (the sun out of frame beside the lenses). --fov 75 default
+	# puts the crest in the lower third.
+	var wr: Rect2 = gen.get_world_rect()
+	var top := Vector3(0, -INF, 0)
+	var xx := wr.position.x + 64.0
+	while xx < wr.end.x:
+		var zz := wr.position.y + 64.0
+		while zz < wr.end.y:
+			var h := gen.get_height(Vector3(xx, 0, zz))
+			if is_finite(h) and h > top.y:
+				top = Vector3(xx, h, zz)
+			zz += 64.0
+		xx += 64.0
+	var to_sun := sun.global_basis.z
+	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
+	var look := sf.rotated(Vector3.UP, deg_to_rad(float(args.get("lens-sun-off", "55"))))
+	weather.wind_direction = Vector2(-look.x, -look.z)
+	if weather.has_method("rebake_terrain_wind"):
+		weather.rebake_terrain_wind()
+	var d := float(args["lens-cam"]) if String(args["lens-cam"]) != "" else 12000.0
+	var cp := Vector3(top.x, 0, top.z) - look * d
+	var g := gen.get_height(cp)
+	var base := maxf(g if is_finite(g) else gen.sea_level, gen.sea_level)
+	cp.y = base + float(args.get("lens-up", "600"))
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	if not args.has("fov"):
+		c3.fov = 75.0
+	var pitch := deg_to_rad(float(args.get("lens-pitch", "30")))
+	c3.global_position = cp
+	c3.look_at(cp + look * cos(pitch) + Vector3.UP * sin(pitch))
+	if weather.has_method("set_follow_target") or "follow_target" in weather:
+		weather.follow_target = weather.get_path_to(c3)
+	for i in 120:
+		await get_tree().physics_frame
+	# Where the lenses are along the view: the wave cloud's extinction on rays from the camera, 0 to 20 km.
+	var hits := ""
+	for el in [10.0, 20.0, 30.0, 40.0]:
+		var ray := look * cos(deg_to_rad(el)) + Vector3.UP * sin(deg_to_rad(el))
+		var s := 500.0
+		while s < 20000.0:
+			if float(weather.call("get_wave_cloud_density_at", cp + ray * s)) > 0.0:
+				hits += " %.0f deg: %.1f km at %.0f m;" % [el, s / 1000.0, (cp + ray * s).y]
+				break
+			s += 250.0
+	_log("lens cam: crest %s (%.0f m), cam %s, wind %s %.1f m/s, sun elevation %.1f deg, first wave cloud:%s" % [str(top.round()), top.y, str(cp.round()), str(weather.wind_direction), weather.wind_speed, rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0))), hits if hits != "" else " none in 20 km"])
+
+
+func _sea_effect() -> void:
+	# --sea-effect[=D]: cold air (--air-temp, e.g. -8) off the open sea (--water-temp, e.g. 6), the wind (--wind) along
+	# --sea-wind-deg (0: along the coast, toward +x) so the fetch runs down the shore; the camera on the shore at the
+	# map's sea edge, --sea-cam-h (40) m up, looking --sea-look-deg (60) off the wind out to sea. Logs the fetch and the
+	# lake-effect field round it.
+	var wdeg := deg_to_rad(float(args.get("sea-wind-deg", "0")))
+	var wd := Vector2(cos(wdeg), sin(wdeg))
+	weather.wind_direction = wd
+	var wr: Rect2 = gen.get_world_rect()
+	var cx := wr.position.x + wr.size.x * float(args.get("sea-cam-x", "0.85"))
+	var cz := wr.position.y
+	# Walk down the map toward the sea (+z) to the shoreline.
+	var z := wr.position.y + wr.size.y * 0.5
+	while z < wr.end.y - 8.0 and gen.get_height(Vector3(cx, 0, z)) > gen.sea_level + 2.0:
+		z += 8.0
+	cz = z - 20.0
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.global_position = Vector3(cx, maxf(gen.get_height(Vector3(cx, 0, cz)), gen.sea_level) + float(args.get("sea-cam-h", "40")), cz)
+	var w3 := Vector3(wd.x, 0, wd.y)
+	var look := w3.rotated(Vector3.UP, -deg_to_rad(float(args.get("sea-look-deg", "60"))))
+	c3.look_at(c3.global_position + look + Vector3.UP * sin(deg_to_rad(float(args.get("sea-pitch", "8")))))
+	weather.follow_target = weather.get_path_to(c3)
+	for i in 200:
+		await get_tree().physics_frame
+		if weather.has_method("is_lake_effect_ready") and weather.call("is_lake_effect_ready") and i > 30:
+			break
+	var line := ""
+	for k in 9:
+		var q := c3.global_position + look * (2000.0 * k)
+		line += " %.0f km: fetch %.0f, cloud %.2f, snow %.2f;" % [2.0 * k, float(weather.call("get_lake_fetch_at", q)), float(weather.call("get_lake_effect_at", q)), weather.get_snowfall_at(q)]
+	_log("sea effect: cam %s, wind %s %.1f m/s, air %.1f C, water %.1f C, ready %s, along the view:%s" % [str(c3.global_position.round()), str(wd), weather.wind_speed, weather.temperature, float(weather.call("get_water_temperature_setting")), str(weather.call("is_lake_effect_ready")), line])
 
 
 func _snow_tracks(surf: Node3D, c3: Camera3D, fwd: Vector3) -> void:
