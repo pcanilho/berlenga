@@ -7109,11 +7109,13 @@ func _lens_cam() -> void:
 	var to_sun := sun.global_basis.z
 	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
 	var look := sf.rotated(Vector3.UP, deg_to_rad(float(args.get("lens-sun-off", "55"))))
-	weather.wind_direction = Vector2(-look.x, -look.z)
+	# --lens-downwind: the camera between the crest and the lenses, looking downwind at them (the crest behind).
+	var downwind := args.has("lens-downwind")
+	weather.wind_direction = Vector2(look.x, look.z) if downwind else Vector2(-look.x, -look.z)
 	if weather.has_method("rebake_terrain_wind"):
 		weather.rebake_terrain_wind()
 	var d := float(args["lens-cam"]) if String(args["lens-cam"]) != "" else 12000.0
-	var cp := Vector3(top.x, 0, top.z) - look * d
+	var cp := Vector3(top.x, 0, top.z) + (look * d if downwind else -look * d)
 	var g := gen.get_height(cp)
 	var base := maxf(g if is_finite(g) else gen.sea_level, gen.sea_level)
 	cp.y = base + float(args.get("lens-up", "600"))
