@@ -867,6 +867,8 @@ func _ready() -> void:
 		await _powder_avalanche()
 	if args.has("suncups") and snow != null:
 		await _suncups()
+	if args.has("slush-prints") and snow != null:
+		await _slush_prints()
 	if (args.has("face-sun") or args.has("face-away")) and sun != null:
 		# --face-sun=PITCH: turn the camera to the sun's azimuth, PITCH degrees below the horizon (godray shots).
 		var cam5: Camera3D = get_viewport().get_camera_3d()
@@ -6920,6 +6922,103 @@ func _suncups() -> void:
 	if args.has("snow-tracks"):
 		await _snow_tracks(surf, c3, look_dir)
 	_log("suncups: %.2f m cups on %.2f m snow at %s, cam %s, sun %.1f deg" % [mm, best_d, str(best.round()), str(c3.global_position.round()), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
+
+
+func _slush_prints() -> void:
+	# --slush-prints[=MM]: a thin spring pack (--slush-min/--slush-max, 0.1 to 0.2 m) on gentle ground (under 10
+	# degrees), boot prints walked along the view, then MM (120) mm of rain over 10 h at +8 C (snow 0414a40d): over
+	# frozen ground (GroundSurface3D frost, ground e7de58cc) the water the pack cannot hold stays as slush in its base
+	# and pools in the prints. The camera --slush-eye (1.7) m up at the line's start, looking down it; the line runs
+	# --slush-yaw (70) degrees off the sun so the low light rakes across the prints.
+	var mm := float(args["slush-prints"]) if String(args["slush-prints"]) != "" else 120.0
+	var lo := float(args.get("slush-min", "0.1"))
+	var hi := float(args.get("slush-max", "0.2"))
+	var wr: Rect2 = gen.get_world_rect()
+	var best := Vector3.INF
+	var best_s := INF
+	var xx := wr.position.x + 300.0
+	while xx < wr.end.x - 300.0:
+		var zz := wr.position.y + 300.0
+		while zz < wr.end.y - 300.0:
+			var p := Vector3(xx, 0, zz)
+			var d: float = snow.get_depth_at(p)
+			var ang := rad_to_deg(atan(_slip_grad(p).length()))
+			if d >= lo and d <= hi and ang < 10.0 and gen.get_height(p) > gen.sea_level + 5.0 and ang < best_s:
+				best_s = ang
+				best = Vector3(xx, gen.get_height(p), zz)
+			zz += 32.0
+		xx += 32.0
+	if best == Vector3.INF:
+		_log("slush prints: no gentle snow %.2f to %.2f m deep" % [lo, hi])
+		return
+	var to_sun := sun.global_basis.z
+	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
+	var look := sf.rotated(Vector3.UP, deg_to_rad(float(args.get("slush-yaw", "70"))))
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var eye := float(args.get("slush-eye", "1.7"))
+	c3.global_position = best - look * 1.0 + Vector3.UP * (eye + snow.get_depth_at(best))
+	c3.look_at(best + look * 7.0 + Vector3.UP * 0.1)
+	var focus := Node3D.new()
+	focus.name = "SlushFocus"
+	add_child(focus)
+	focus.global_position = best
+	snow.follow_target = snow.get_path_to(focus)
+	if prints != null:
+		prints.follow_target = prints.get_path_to(c3)
+	weather.follow_target = weather.get_path_to(c3)
+	for i in 30:
+		await get_tree().physics_frame
+	var surf: Node3D = ClassDB.instantiate("SnowSurface3D")
+	surf.name = "SnowSurface"
+	add_child(surf)
+	surf.set("snow_cover", surf.get_path_to(snow))
+	surf.set("follow_target", surf.get_path_to(c3))
+	for i in 10:
+		await get_tree().physics_frame
+	var gw = WorldContracts.get_ground()
+	var probe := best + look * 4.0
+	var frost: Vector3 = gw.frost_at(Vector3(probe.x, gen.get_height(probe), probe.z)) if gw else Vector3()
+	# The walker: a step every 0.7 m down the view, from 0.5 m ahead out to --slush-walk (14) m.
+	get_viewport().disable_3d = true
+	var boot := CharacterBody3D.new()
+	boot.name = "SlushBoot"
+	var bs := CollisionShape3D.new()
+	var bx := BoxShape3D.new()
+	bx.size = Vector3(0.11, 0.3, 0.29)
+	bs.shape = bx
+	boot.add_child(bs)
+	boot.set_meta("ground_sole", true)
+	boot.add_to_group("snow_deform")
+	add_child(boot)
+	var side := look.cross(Vector3.UP).normalized()
+	var n := int(float(args.get("slush-walk", "14")) / 0.7)
+	for i in n + 1:
+		var q := best + look * (0.5 + 0.7 * i) + side * (0.12 if i % 2 == 0 else -0.12)
+		boot.global_basis = Basis.looking_at(-look, Vector3.UP)
+		boot.global_position = Vector3(q.x, float(surf.call("get_surface_height_at", q)) + 0.15, q.z)
+		for k in 4:
+			surf.call("sync_deformation")
+			await get_tree().physics_frame
+	boot.queue_free()
+	await get_tree().physics_frame
+	var before := "depth %.3f m, swe %.0f mm" % [snow.get_depth_at(probe), snow.get_swe_at(probe)]
+	# The rain: overcast, +8 C, MM over 10 h, then it clears for the shot.
+	var cc := weather.cloud_cover
+	weather.air_follows_climate = false
+	weather.temperature = 8.0
+	weather.rain_rate = mm / 10.0
+	weather.cloud_cover = 1.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	snow.advance(10.0 * 3600.0)
+	weather.rain_rate = 0.0
+	weather.cloud_cover = cc
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	get_viewport().disable_3d = false
+	for i in 10:
+		await get_tree().process_frame
+	_log("slush prints: %.0f mm rain on %s at %s (%.1f deg), frost %s; after: depth %.3f m, swe %.0f mm, slush %.3f m, wetness %.2f; %d prints; cam %s" % [mm, before, str(best.round()), best_s, str(frost), snow.get_depth_at(probe), snow.get_swe_at(probe), float(snow.call("get_slush_at", probe)), float(snow.call("get_wetness_at", probe)), n + 1, str(c3.global_position.round())])
 
 
 func _lens_cam() -> void:
