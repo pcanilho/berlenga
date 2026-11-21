@@ -466,6 +466,7 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 		params.anisotropy = scattering_anisotropy;
 		params.scattering_albedo = scattering_albedo;
 		params.ground_albedo = ground_albedo;
+		params.ground_color = ground_color.srgb_to_linear();
 		params.shadow_steps = scattering_shadow_steps;
 		params.shadow_reach = scattering_shadow_reach;
 		params.shadows = receive != 0;
@@ -1753,6 +1754,8 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_scattering_albedo"), &PhysXFlow3D::get_scattering_albedo);
 	ClassDB::bind_method(D_METHOD("set_ground_albedo", "albedo"), &PhysXFlow3D::set_ground_albedo);
 	ClassDB::bind_method(D_METHOD("get_ground_albedo"), &PhysXFlow3D::get_ground_albedo);
+	ClassDB::bind_method(D_METHOD("set_ground_color", "color"), &PhysXFlow3D::set_ground_color);
+	ClassDB::bind_method(D_METHOD("get_ground_color"), &PhysXFlow3D::get_ground_color);
 	ClassDB::bind_method(D_METHOD("set_scattering_shadow_steps", "steps"), &PhysXFlow3D::set_scattering_shadow_steps);
 	ClassDB::bind_method(D_METHOD("get_scattering_shadow_steps"), &PhysXFlow3D::get_scattering_shadow_steps);
 	ClassDB::bind_method(D_METHOD("set_scattering_resolution", "resolution"), &PhysXFlow3D::set_scattering_resolution);
@@ -1826,6 +1829,7 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scattering_anisotropy", PROPERTY_HINT_RANGE, "-0.95,0.95,0.01"), "set_scattering_anisotropy", "get_scattering_anisotropy");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scattering_albedo", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_scattering_albedo", "get_scattering_albedo");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_albedo", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_ground_albedo", "get_ground_albedo");
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "ground_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_ground_color", "get_ground_color");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_shadow_steps", PROPERTY_HINT_RANGE, "0,64,1"), "set_scattering_shadow_steps", "get_scattering_shadow_steps");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_receive_shadows", PROPERTY_HINT_FLAGS, "Omni:1,Spot:2"), "set_scattering_receive_shadows", "get_scattering_receive_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_resolution", PROPERTY_HINT_ENUM, "Full,Half,Quarter"), "set_scattering_resolution", "get_scattering_resolution");
