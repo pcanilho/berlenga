@@ -7046,7 +7046,12 @@ func _slush_prints() -> void:
 		await get_tree().physics_frame
 	var gw = WorldContracts.get_ground()
 	var probe := best + look * 4.0
-	var frost: Vector3 = gw.frost_at(Vector3(probe.x, gen.get_height(probe), probe.z)) if gw else Vector3()
+	var frost := Vector3()
+	for i in 120:
+		frost = gw.frost_at(Vector3(probe.x, gen.get_height(probe), probe.z)) if gw else Vector3()
+		if frost.y > 0.0:
+			break
+		await get_tree().physics_frame
 	# The walker: a step every 0.7 m down the view, from 0.5 m ahead out to --slush-walk (14) m.
 	get_viewport().disable_3d = true
 	var boot := CharacterBody3D.new()
@@ -7074,7 +7079,8 @@ func _slush_prints() -> void:
 	# The rain: overcast, +8 C, MM over 10 h, then it clears for the shot.
 	var cc := weather.cloud_cover
 	weather.air_follows_climate = false
-	weather.temperature = 8.0
+	# +8 C at the spot: the weather's temperature is at sea level, the air cooling 6.5 K/km up to the snowfield.
+	weather.temperature = 8.0 + 0.0065 * (best.y - gen.sea_level)
 	weather.rain_rate = mm / 10.0
 	weather.cloud_cover = 1.0
 	weather.snap_to_settings()
@@ -7087,6 +7093,7 @@ func _slush_prints() -> void:
 	get_viewport().disable_3d = false
 	for i in 10:
 		await get_tree().process_frame
+	_log("slush prints: air at the spot %.1f C during the rain" % weather.get_air_temperature_at(best))
 	_log("slush prints: %.0f mm rain on %s at %s (%.1f deg), frost %s; after: depth %.3f m, swe %.0f mm, slush %.3f m, wetness %.2f; %d prints; cam %s" % [mm, before, str(best.round()), best_s, str(frost), snow.get_depth_at(probe), snow.get_swe_at(probe), float(snow.call("get_slush_at", probe)), float(snow.call("get_wetness_at", probe)), n + 1, str(c3.global_position.round())])
 
 
