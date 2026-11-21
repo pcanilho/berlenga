@@ -1718,6 +1718,7 @@ void SnowCover3D::_update_cells(bool p_parallel) {
 	cell_hoar_layer.ptrw();
 	cell_hoar_burial.ptrw();
 	cell_hoar_age.ptrw();
+	cell_cups.ptrw(); // published as pub.cups
 	cell_new_depth.ptrw();
 	cell_canopy_load.ptrw();
 	cell_cornice_x.ptrw();
