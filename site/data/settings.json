@@ -3735,6 +3735,18 @@
    "topic": "Deep snow"
   },
   {
+   "name": "Packed-snow roads",
+   "settings": [
+    "SnowCover3D.traffic_enabled",
+    "get_grip_at()"
+   ],
+   "note": "",
+   "what": "wheels and feet pack the snow they pass, spinning wheels polish it to an ice glaze, and tyre grip falls with it.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Deep snow"
+  },
+  {
    "name": "Falling snow",
    "settings": [
     "SnowFall3D"

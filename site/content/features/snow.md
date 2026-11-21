@@ -91,6 +91,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Bow wave: a sled's track with raised berms along its sides and a mound where it stopped.*
 
+- **Packed-snow roads** (`SnowCover3D.traffic_enabled`, `get_grip_at()`): wheels and feet pack the snow they pass, spinning wheels polish it to an ice glaze, and tyre grip falls with it.
+
 ## Falling snow
 
 - **Falling snow** (`SnowFall3D`): falling and blowing snow from the weather; flake counts, sizes and fall speeds from snowfall measurements, drawn as motion streaks; roofs shelter, snow blows above the wind threshold, `get_extinction()` feeds fog.
