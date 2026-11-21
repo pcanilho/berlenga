@@ -169,6 +169,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	// of them: its crystals (mm), the snow over it (m) and the hours since it was buried.
 	Vector<float> cell_hoar;
 	Vector<float> cell_cups; // m, suncup relief (ridge to hollow)
+	Vector<float> cell_slush; // mm of water ponded in the pack's pores over frozen ground (not in cell_swe)
 	Vector<float> cell_seal; // 0..1, how far frozen ground under the pack stops melt water draining (WorldGround.frost_at)
 	Ref<Image> cups_image;
 	Ref<ImageTexture> cups_texture;
@@ -264,6 +265,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 		Vector<float> crust, crust_cycles, crust_burial, crust_wet;
 		Vector<float> hoar, hoar_layer, hoar_burial, hoar_age;
 		Vector<float> cups;
+		Vector<float> slush; // mm
 		Vector<float> cornice_x, cornice_z, cornice_crack;
 		Vector<float> ice, white_ice;
 		Vector<float> lap; // mg/m2 BC equivalent showing at the surface
@@ -408,6 +410,7 @@ public:
 	void set_slush_enabled(bool p_enabled) { slush_enabled = p_enabled; }
 	bool is_slush_enabled() const { return slush_enabled; }
 	float get_slush_at(Vector3 p_position) const; // m, the saturated layer at the pack's base
+	static float slush_height(float p_swe, float p_liquid, float p_density, float p_slush); // m
 	static float ground_seal(Vector3 p_frost); // 0..1 from WorldGround.frost_at (thawed top m, frost depth m, weakening)
 	static float slush_drain_rate(float p_density, float p_slope_sine, float p_length); // 1/h, Darcy flow off a slope of that length
 	static constexpr float SLUSH_SLOPE_LENGTH = 50.0f; // m, the slope a slush layer drains along

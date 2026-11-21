@@ -419,9 +419,13 @@ void fragment() {
 	float wet = min(pack.b, 1.0);
 	// Slush whose water table nears the surface: water fills the pores between the grains, so light goes deep
 	// and is absorbed (saturated snow's albedo some 0.4-0.6; Warren 1982), faintly blue, under a glossy water film.
-	float slush = smoothstep(0.6, 1.0, pack.b - 1.0);
-	ALBEDO = tint * pack.g * (1.0 - 0.08 * compact) * mix(vec3(1.0), vec3(0.5, 0.56, 0.62), slush);
-	ROUGHNESS = mix(clamp(mix(0.7, 0.35, wet) - 0.15 * compact, 0.05, 1.0), 0.08, slush);
+	float share = clamp(pack.b - 1.0, 0.0, 1.0);
+	float slush = smoothstep(0.6, 1.0, share);
+	// A print pressed below the water table fills with water (the slush layer's top, share x depth over the
+	// ground): a dark, mirror-smooth pool in the hole.
+	float pool = share > 0.0 ? smoothstep(0.0, 0.015, dr.x - pack.r * (1.0 - share)) : 0.0;
+	ALBEDO = tint * pack.g * (1.0 - 0.08 * compact) * mix(vec3(1.0), vec3(0.5, 0.56, 0.62), slush) * mix(1.0, 0.35, pool);
+	ROUGHNESS = mix(mix(clamp(mix(0.7, 0.35, wet) - 0.15 * compact, 0.05, 1.0), 0.08, slush), 0.02, pool);
 	SPECULAR = 0.335; // ice, F0 0.018
 	METALLIC = 0.0;
 	NORMAL_MAP = tn * 0.5 + 0.5;
@@ -1524,6 +1528,9 @@ PackedByteArray SnowSurface3D::_gpu_cover_cells(int &r_n, bool &r_valid) const {
 		if (wet_ok) {
 			const float hold = cover->liquid_capacity * (cover->pub.swe[i] - cover->pub.liquid[i]);
 			wet = hold > 1e-4f ? CLAMP(cover->pub.liquid[i] / hold, 0.0f, 1.0f) : 0.0f;
+		}
+		if (cover->pub.slush.size() == cells && cover->pub.slush[i] > 0.5f && cover->pub.swe[i] > 0.01f) {
+			wet = 1.0f; // saturated from the base (slush over frozen ground)
 		}
 		w[i * 8 + 6] = wet;
 		w[i * 8 + 7] = 0.0f;

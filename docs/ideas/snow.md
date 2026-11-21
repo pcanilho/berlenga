@@ -1701,6 +1701,9 @@ photographs, e.g. Fikke et al. 2007, COST 727).
   `get_slush_at`; the snow texture's wet channel carries 1 + the slush share of the depth, and the surface
   goes grey-blue (albedo x 0.5-0.6, Warren 1982) and glossy as the water table nears the top. Without a
   ground provider nothing is sealed. Next: lateral routing of slush between cells (it gathers in hollows).
+  Round 2: the slush is pore water in its own field (`cell_slush`, mm), outside the SWE, so the pack gets no
+  deeper when rain ponds in it; it freezes into the base in the cold (denser, not deeper); a print pressed
+  below the water table fills with a dark, smooth pool. Raster and PT agree (`--view=trail --slush=150`).
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 

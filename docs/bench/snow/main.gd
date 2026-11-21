@@ -128,6 +128,7 @@ class BodySnowStub extends WorldSnow:
 #   --taa             raster with TAA (stills set against path traced ones: no per-pixel shadow or dither dots)
 #   --out=path.png    save the last frame and quit
 #   --suncups=M       trail view: suncups of M m relief over the field (the deep-snow surface draws them)
+#   --slush=MM        trail view: 15 cm of old snow over frozen ground, then MM mm of rain at +8 C: slush in its base
 #   --ice-drop=M      icicles view: the edge M m under the roof (the roots must still join it)
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 
@@ -162,6 +163,7 @@ var crust_cycles := 0.0
 var transport := true
 var hoar_mm := 0.0 # --hoar=MM: the sparkle view's surface hoar
 var suncups_m := 0.0 # --suncups=M: the sparkle view's suncup relief
+var slush_mm := 0.0 # --slush=MM: rain on a thin pack over frozen ground (trail view)
 var air := INF # --air=C: the snowfall view's air temperature (sleet near and above 0 C)
 
 
@@ -187,6 +189,7 @@ func _ready() -> void:
 		elif a.begins_with("--snow="): snow_hours = float(a.substr(7))
 		elif a.begins_with("--hoar="): hoar_mm = float(a.substr(7))
 		elif a.begins_with("--suncups="): suncups_m = float(a.substr(10))
+		elif a.begins_with("--slush="): slush_mm = float(a.substr(8))
 		elif a.begins_with("--sun="): sun_hours = float(a.substr(6))
 		elif a.begins_with("--steps="): steps = int(a.substr(8))
 		elif a.begins_with("--wind="): wind = float(a.substr(7))
@@ -613,7 +616,7 @@ func _run_slush_tests() -> void:
 	await _surface_setup(160.0, 400.0)
 	await _weather_to(10.0, 48.0)
 	var open_slush := snow.get_slush_at(q)
-	var open_swe := snow.get_swe_at(q)
+	var open_depth := snow.get_depth_at(q)
 	var stub := GDScript.new()
 	stub.source_code = "extends WorldGround\nfunc _frost_at(_p: Vector3) -> Vector3:\n\treturn Vector3(0.0, 0.3, 0.0)\n"
 	stub.reload()
@@ -623,9 +626,16 @@ func _run_slush_tests() -> void:
 	var slush := snow.get_slush_at(q)
 	var swe := snow.get_swe_at(q)
 	var wet := snow.get_wetness_at(q)
+	var depth_frozen := snow.get_depth_at(q)
+	# Then a hard frost: the slush freezes into the pack's base (denser, not deeper).
+	await _weather_to(-8.0, 24.0)
+	var frozen_slush := snow.get_slush_at(q)
+	var swe_frozen := snow.get_swe_at(q)
+	var depth_after := snow.get_depth_at(q)
 	WorldContracts.clear_overrides()
-	_check("melt water ponds as slush over frozen ground, drains away over thawed", open_slush == 0.0 and slush > 0.02 and swe > open_swe and wet == 1.0, "%.3f m of slush (%.0f mm SWE kept against %.0f), none over thawed ground" % [slush, swe, open_swe])
-	_check("the slush stays inside the pack", slush <= snow.get_depth_at(q) + 1e-4, "%.3f of %.3f m" % [slush, snow.get_depth_at(q)])
+	_check("melt water ponds as slush over frozen ground, drains away over thawed", open_slush == 0.0 and slush > 0.02 and wet == 1.0, "%.3f m of slush, none over thawed ground" % slush)
+	_check("the slush is pore water: inside the pack, no deeper than the drained pack", slush <= depth_frozen + 1e-4 and absf(depth_frozen - open_depth) < 0.02, "%.3f of %.3f m (%.3f m over thawed ground)" % [slush, depth_frozen, open_depth])
+	_check("a hard frost freezes it into the base: denser, not deeper", frozen_slush < 0.5 * slush and swe_frozen > swe + 5.0 and depth_after <= depth_frozen + 1e-3, "%.3f m left, %.0f to %.0f mm SWE, %.3f to %.3f m" % [frozen_slush, swe, swe_frozen, depth_frozen, depth_after])
 
 
 func _run_crust_tests() -> void:
@@ -2691,6 +2701,19 @@ func _build_trail(cam: Camera3D) -> void:
 		_precipitate(hours, 2.0)
 	elif OS.get_cmdline_user_args().has("--settled"):
 		snow.add_snow(120.0, 300.0) # 0.4 m of settled snow: cohesive, prints break lumps out of it
+	elif slush_mm > 0.0:
+		# --slush=MM: 15 cm of old spring snow on concrete frost (a stand-in ground answering frost_at), then rain
+		# at +8 C for ten hours: what the pack cannot hold stays in its base.
+		var frozen := GDScript.new()
+		frozen.source_code = "extends WorldGround\nfunc _frost_at(_p: Vector3) -> Vector3:\n\treturn Vector3(0.0, 0.3, 0.0)\n"
+		frozen.reload()
+		WorldContracts.set_ground(frozen.new())
+		snow.add_snow(50.0, 330.0)
+		print("slush: before the rain %.3f m, %.0f mm" % [snow.get_depth_at(Vector3(0, 0, 1)), snow.get_swe_at(Vector3(0, 0, 1))])
+		weather.temperature = 8.0
+		_precipitate(10.0, slush_mm / 10.0)
+		var sp := Vector3(0.0, 0, 1.0)
+		print("slush: %.3f m of %.3f m, wetness %.2f, %.0f mm SWE" % [snow.get_slush_at(sp), snow.get_depth_at(sp), snow.get_wetness_at(sp), snow.get_swe_at(sp)])
 	else:
 		snow.add_snow(45.0, 110.0) # 0.41 m of fresh snow
 	if crust_cycles > 0.0:
@@ -3311,6 +3334,12 @@ func _build_avalanche(cam: Camera3D) -> void:
 		var pflow: Node = av.get_powder_cloud().get_flow()
 		if pflow:
 			pflow.set("scattering_resolution", 0) # full: quarter averages away the billows at still sizes
+			for a in OS.get_cmdline_user_args():
+				if a.begins_with("--flow-set="):
+					# --flow-set=prop=value[;prop=value]: try PhysXFlow3D settings on the powder cloud.
+					for kv in a.substr(11).split(";"):
+						var pv := kv.split("=")
+						pflow.set(pv[0], str_to_var(pv[1]))
 		av.trigger(Vector3(-40.0, 0, 0), 60.0)
 		surface.extent = 320.0 # the deep-snow geometry over the whole face the camera sees, out to the camera
 		# Mid-run in real time, so PhysX Flow steps the cloud with it: --at=S seconds after release (default 9).

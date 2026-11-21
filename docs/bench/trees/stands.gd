@@ -188,11 +188,21 @@ func _forest_edge_check(i: int) -> void:
 				ok = ok and m.has_meta("tree_open_side")
 				meshes += 1
 				var ab: AABB = m.get_aabb()
-				shift += (ab.position.x + 0.5 * ab.size.x) / maxf(ab.size.x, 0.1)
+				# The leaf mass's centre where the mesh has broad leaves (one limb reaching back moves a box's centre
+				# more than the crown); the box's centre for needles.
+				var li := _surface(m, "leaves")
+				if li >= 0:
+					var sx := 0.0
+					var verts: PackedVector3Array = m.surface_get_arrays(li)[Mesh.ARRAY_VERTEX]
+					for v in verts:
+						sx += v.x
+					shift += sx / maxf(verts.size(), 1) / maxf(ab.size.x, 0.1)
+				else:
+					shift += (ab.position.x + 0.5 * ab.size.x) / maxf(ab.size.x, 0.1)
 			shift /= maxf(sp.meshes.size(), 1)
 			if ok and shift > 0.05:
 				one_sided += 1
-			print("  %s: %.0f..%.0f m, crown centre %.2f of its width toward the open" % [nm, r.x, r.y, shift])
+			print("  %s: %.0f..%.0f m, crown (leaf mass) centre %.2f of its width toward the open" % [nm, r.x, r.y, shift])
 		elif nm.contains("(edge mantle)"):
 			mantle += 1
 			if r.x + r.y < 0.0:

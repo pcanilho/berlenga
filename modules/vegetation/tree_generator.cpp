@@ -1504,7 +1504,12 @@ void TreeGenerator::_build_shadow_grid(int p_year) {
 					// Near the stem the tree's own crown still shades its foot: the stem stays single and clean below the
 					// first limbs, which reach out long into the light.
 					const float open = edge_open * Math::smoothstep(-0.1f * r0, 0.3f * r0, dx) * Math::smoothstep(0.08f * r0, 0.35f * r0, r);
-					shadow[_cell_index(Vector3i(x, y, z))] += (1.0f - open) * (under + sy * t * t * (3.0f - 2.0f * t));
+					float &sh = shadow[_cell_index(Vector3i(x, y, z))];
+					// The open side's sky also lights the crown's own lower limbs from the side, which the shade pyramids
+					// (light from above only) leave out: without it the tree's own crown shaded its edge limbs off, the
+					// lowest leaves 5-9 m up. Lit 60% from the side they come down to 0.3-3 m on most trees, the edge's
+					// green wall (Harper et al. 2005), and the tree grows a little shorter and wider (trees.md 5bd).
+					sh = sh * (1.0f - 0.6f * open) + (1.0f - open) * (under + sy * t * t * (3.0f - 2.0f * t));
 				}
 			}
 		}
