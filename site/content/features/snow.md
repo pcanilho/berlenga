@@ -46,6 +46,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Melt-freeze crust: soft prints without plates, then the crust broken into flat plates tipped into each print.*
 
+- **Suncups** (`SnowCover3D.suncups_enabled`): sunny spring melt digs cups into deep snow; warm cloud, rain or new snow smooths them out.
+
 - **Surface hoar** (`SnowCover3D.hoar_enabled`): frost feathers grow on the snow on clear calm nights and, once snowed over, stay buried as a weak layer.
 
 - **Lake ice** (`SnowCover3D.lake_ice_enabled`): lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm; heavier bodies and vehicles break through ice too thin for their weight, and the hole freezes over again.

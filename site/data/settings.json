@@ -3618,6 +3618,17 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Suncups",
+   "settings": [
+    "SnowCover3D.suncups_enabled"
+   ],
+   "note": "",
+   "what": "sunny spring melt digs cups into deep snow; warm cloud, rain or new snow smooths them out.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Surface hoar",
    "settings": [
     "SnowCover3D.hoar_enabled"
