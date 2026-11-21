@@ -260,3 +260,20 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
 - Pale rock slopes and faces read flat from afar, with only the fine relief (scan or procedural bump) on an even
   colour: crumpled paper. Past about 32 degrees the rock layer now takes streaks down the fall line (1.3 m by 14 m,
   4 m by 30 m), bed bands (0.9 m) and 18 m tone, and its fine relief eased by up to 0.4.
+
+## Trails and rooting (21 Nov)
+
+WorldStand's worn trails (trail_at: passes a year, tread share) and boar rooting (rooting_age_at) now mark the
+ground layers. Landscape3D rasterises both round its camera into globals terrain_stand_map (RG8, 512 texels over
+256 m) and terrain_stand_rect, rebuilt when the camera crosses a 64 m step or the stand's generation changes:
+- r: tread share times the wear the passes give, 1 - exp(-passes / 300) (trampling takes a field layer's cover off
+  roughly so: Cole 1995, Liddle 1997; a few hundred passes a year keep a line bare). The trails' segments are copied
+  and drawn per texel; a script stand is sampled per metre through trail_at.
+- g: freshness of rooted soil, 1 to a season after the boar, 0 by two years (litter and the field layer close over
+  it; Bueno 2013, Welander 2000), from rooting_age_at every 2 m, bilinear.
+The material draws trodden soil as the sward's own paths do (grass_path_soil): compacted, darker and browner, damp in
+the hollows, smoother, the bump pressed flat; the tread's edge fairly sharp and ragged at two scales. Rooting is dark
+moist humus in fist-sized clods (bump) with overturned sods among them, in patches with ragged edges, browning and
+greying toward the bare soil as it ages. Neither on rock, sand or slopes past about 40 degrees. Stones on trails come
+from ground detail, litter from vegetation. Rocks bench: --stand-test [--stand-at=x,z] [--rooting-age=y].
+Check: raster (TAA) and PT agree at the bench frame; PT keeps the clods and the tread's edge.

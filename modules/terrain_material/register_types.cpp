@@ -74,6 +74,9 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_sky_full", "vec4" },
 		{ "terrain_sky_full2", "vec4" },
 		{ "terrain_sky_full3", "float" },
+		// The stand's worn trails and fresh rooting (Landscape3D publishes it).
+		{ "terrain_stand_map", "sampler2D" },
+		{ "terrain_stand_rect", "vec4" },
 	};
 	for (const auto &g : globals) {
 		if (ProjectSettings::get_singleton()->has_setting(String("shader_globals/") + g.name)) {

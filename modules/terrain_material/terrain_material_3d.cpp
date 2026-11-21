@@ -304,6 +304,8 @@ global uniform sampler2D rock_contact_map : hint_default_black, filter_linear; /
 global uniform sampler2D rock_far_cover_map : hint_default_black, filter_linear; // RockField3D far tier: rgb stone colour, a cover
 global uniform vec4 rock_far_cover_rect;
 global uniform vec4 rock_contact_rect;
+global uniform sampler2D terrain_stand_map : hint_default_black, filter_linear; // Landscape3D: r trail wear, g fresh rooting
+global uniform vec4 terrain_stand_rect;
 uniform float tm_far_start = 300.0;
 uniform float tm_far_fade = 150.0;
 )";
@@ -1757,6 +1759,8 @@ void fragment() {
 		// The soil under the cover, for where the ground is broken open (below).
 		c += "\tvec3 tm_soil = albedo;\n\tfloat tm_exposed = 0.0;\n";
 	}
+	// The bare ground under the cover, for the stand's trails and rooting (below).
+	c += "\tvec3 tm_stand_bare = albedo;\n";
 	if (grass_tint_enabled) {
 		c += "\talbedo = grass_ground(wp, albedo);\n";
 		// Moraine till keeps its stones above the turf: the scree layer's tallest blocks stand out of the sward
@@ -1824,6 +1828,58 @@ void fragment() {
 	}
 )";
 	}
+	// The stand's worn trails and boar rooting (WorldStand through Landscape3D's stand map; docs/ideas/terrain-material.md).
+	// A trail walked bare: the cover gone, the soil packed (Cole 1995; Liddle 1997: trampled soil is denser, its litter
+	// and fine relief worn off), darker and browner, smoother, its clods pressed flat; the tread's edge broken by noise. Rooting: boar turn the topsoil over in patches (Bueno 2013; Welander 2000),
+	// dark moist humus in loose clods, the cover gone, fading as it dries and the field layer closes over it (1 to 2
+	// years). Neither on bare rock faces or sand. Ground detail lays the stones and vegetation the litter on both.
+	c += R"(	if (terrain_stand_rect.z > 0.0) {
+		vec2 suv = (wp.xz - terrain_stand_rect.xy) / terrain_stand_rect.zw;
+		if (all(greaterThan(suv, vec2(0.0))) && all(lessThan(suv, vec2(1.0)))) {
+			vec2 st = textureLod(terrain_stand_map, suv, 0.0).rg;
+			vec2 sedge = min(suv, 1.0 - suv);
+			float sfade = smoothstep(0.0, 0.06, min(sedge.x, sedge.y));
+			float sground = (1.0 - w[0]) * (1.0 - w[4]) * smoothstep(0.55, 0.8, tm_macro_n.y) * sfade;
+			if (st.r > 0.0 && sground > 0.0) {
+				float tn = tm_vn(wp * vec3(2.2, 0.0, 2.2) + 31.0);
+				// A tread's edge is fairly sharp (the sward stands right up to it), ragged at two scales.
+				float tr = smoothstep(0.28, 0.48, st.r + (tn - 0.5) * 0.4 + (tm_vn(wp * 9.0 + 5.0) - 0.5) * 0.15) * sground;
+				// Trodden soil as the sward's own paths draw it (grass_path_soil): compacted, darker and browner than
+				// loose ground (Liddle 1997), damp in the hollows feet press into it.
+				vec3 tpack = mix(tm_stand_bare, vec3(0.085, 0.062, 0.042), 0.65) * (0.85 + 0.3 * tm_vn(wp * 2.3 + 9.1));
+				float tdamp = smoothstep(0.55, 0.75, tm_vn(wp * 0.7 + 4.4) * 0.7 + tm_vn(wp * 3.1) * 0.3) * smoothstep(0.5, 0.9, st.r);
+				tpack *= mix(1.0, 0.62, tdamp);
+				albedo = mix(albedo, tpack, tr);
+				rough = mix(rough, rough * mix(0.9, 0.7, tdamp), tr);
+				sn = normalize(mix(sn, tm_macro_n, 0.55 * tr));
+			}
+			if (st.g > 0.0 && sground > 0.0) {
+				// Rooted in patches (a sounder works the ground in strips and pits), the patch's edge ragged.
+				float rp = tm_vn(wp * 0.6 + 23.0) * 0.6 + tm_vn(wp * 2.1 + 3.0) * 0.4;
+				float rt = smoothstep(0.32, 0.5, rp * (0.6 + 0.5 * st.g)) * smoothstep(0.0, 0.25, st.g) * sground;
+				if (rt > 0.0) {
+					// Clods: lumps a hand to a fist across, their faces catching the light.
+					float e = 0.02;
+					vec3 cq = wp * 7.0;
+					float c0 = tm_vn(cq) + 0.5 * tm_vn(cq * 2.3 + 5.0);
+					float cx = tm_vn(cq + vec3(e * 7.0, 0.0, 0.0)) + 0.5 * tm_vn((cq + vec3(e * 7.0, 0.0, 0.0)) * 2.3 + 5.0);
+					float cz = tm_vn(cq + vec3(0.0, 0.0, e * 7.0)) + 0.5 * tm_vn((cq + vec3(0.0, 0.0, e * 7.0)) * 2.3 + 5.0);
+					vec2 cg = vec2(cx - c0, cz - c0) / e * 0.05;
+					float fresh = st.g;
+					// Turned humus: dark and moist while fresh, greying as it dries; the bare soil's own tint kept.
+					vec3 humus = mix(vec3(0.062, 0.046, 0.033), vec3(0.11, 0.085, 0.06), smoothstep(0.6, 1.4, c0));
+					humus = mix(humus, tm_stand_bare * 0.75, (1.0 - fresh) * 0.6);
+					// Overturned sods among the humus: the turf's own colour on the clods' tops, browning as they die.
+					float sod = smoothstep(1.05, 1.25, c0) * smoothstep(0.4, 0.6, tm_vn(wp * 1.7 + 61.0));
+					humus = mix(humus, albedo * vec3(0.8, 0.7, 0.55), sod * 0.7);
+					albedo = mix(albedo, humus, rt * mix(0.55, 1.0, fresh));
+					rough = mix(rough, mix(0.97, 0.8, fresh * smoothstep(1.0, 0.5, c0)), rt);
+					sn = normalize(sn - vec3(cg.x, 0.0, cg.y) * rt * mix(0.4, 1.0, fresh));
+				}
+			}
+		}
+	}
+)";
 	// Where stones sit (RockField3D.ground_contact): the soil beside them kept damp (darker, smoother: porous darkening
 	// as for wet sand, Lagarde 2013) and the fines banked on their uphill side, a finer, browner skin with a little
 	// grit, so a stone reads as sitting in the ground. Edges broken by noise; none on bare rock faces.
