@@ -61,7 +61,9 @@ struct GeometryData {
 	// With FLAG_REST: byte offset from vertex_address of the rest block (vertex() inputs, same layout as the
 	// positions and TBN before it).
 	uint rest_byte_offset;
-	uint rest_pad;
+	// CUSTOM0-3 vertex attributes: bits 0-7 byte offset of the first present one, then 4 bits each (bit 3 present,
+	// bits 0-2 the custom format). See fetch_custom_attrib().
+	uint custom_layout;
 };
 
 // ============================================================================

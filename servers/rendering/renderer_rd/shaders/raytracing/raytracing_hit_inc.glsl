@@ -161,6 +161,56 @@ vec2 fetch_uv2(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
 }
 
 // ============================================================================
+// CUSTOM0-3 VERTEX ATTRIBUTES (GeometryData::custom_layout)
+// ============================================================================
+// Byte size of a custom attribute format (RSE::ArrayCustomFormat).
+uint custom_attrib_size(uint fmt) {
+	return fmt == 3u || fmt == 5u ? 8u : (fmt == 6u ? 12u : (fmt == 7u ? 16u : 4u));
+}
+
+vec4 fetch_custom_vertex(in GeometryData geom, uint word_offset, uint fmt, uint index) {
+	Uint32Buffer attr = Uint32Buffer(geom.attribute_address);
+	uint w = index * (geom.attribute_stride >> 2u) + word_offset;
+	switch (fmt) {
+		case 0u:
+			return unpackUnorm4x8(attr.v[w]);
+		case 1u:
+			return unpackSnorm4x8(attr.v[w]);
+		case 2u:
+			return vec4(unpackHalf2x16(attr.v[w]), 0.0, 0.0);
+		case 3u:
+			return vec4(unpackHalf2x16(attr.v[w]), unpackHalf2x16(attr.v[w + 1u]));
+		case 4u:
+			return vec4(uintBitsToFloat(attr.v[w]), 0.0, 0.0, 0.0);
+		case 5u:
+			return vec4(uintBitsToFloat(attr.v[w]), uintBitsToFloat(attr.v[w + 1u]), 0.0, 0.0);
+		case 6u:
+			return vec4(uintBitsToFloat(attr.v[w]), uintBitsToFloat(attr.v[w + 1u]), uintBitsToFloat(attr.v[w + 2u]), 0.0);
+		default:
+			return vec4(uintBitsToFloat(attr.v[w]), uintBitsToFloat(attr.v[w + 1u]), uintBitsToFloat(attr.v[w + 2u]), uintBitsToFloat(attr.v[w + 3u]));
+	}
+}
+
+// CUSTOM<p_index> at the hit, interpolated as raster's varyings are; zero when the mesh has none.
+vec4 fetch_custom_attrib(in GeometryData geom, uint p_index, uint i0, uint i1, uint i2, vec3 bary) {
+	uint layout_bits = geom.custom_layout;
+	if (geom.attribute_address == 0ul || ((layout_bits >> (8u + 4u * p_index)) & 8u) == 0u) {
+		return vec4(0.0);
+	}
+	uint offset = layout_bits & 0xFFu;
+	for (uint k = 0u; k < p_index; k++) {
+		uint f = (layout_bits >> (8u + 4u * k)) & 0xFu;
+		if ((f & 8u) != 0u) {
+			offset += custom_attrib_size(f & 7u);
+		}
+	}
+	uint fmt = (layout_bits >> (8u + 4u * p_index)) & 7u;
+	uint word_offset = offset >> 2u;
+	return bary.x * fetch_custom_vertex(geom, word_offset, fmt, i0) + bary.y * fetch_custom_vertex(geom, word_offset, fmt, i1) +
+			bary.z * fetch_custom_vertex(geom, word_offset, fmt, i2);
+}
+
+// ============================================================================
 // VERTEX COLOR FETCHING (RGBA8 packed in uint32)
 // ============================================================================
 vec4 fetch_color(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
