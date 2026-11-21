@@ -76,6 +76,8 @@ protected:
 	static void _bind_methods();
 
 public:
+	// The storms' shafts and the lake-effect veils (GLSL), for the pass that draws them over the scene.
+	static const char *get_shafts_glsl();
 	// Sets the cloud uniforms straight on the material (not saved with it).
 	void set_cloud_state(const WeatherClouds::State &p_state);
 

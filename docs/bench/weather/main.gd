@@ -58,6 +58,7 @@ extends Node3D
 #   --wind-dir=x,z    clouds views: wind_direction (default 0.6,-0.8; 0,1 blows toward the camera)
 #   --shear-aloft=S   clouds views: wind_shear_aloft (m/s per km); 5 and up gives cirrocumulus (get_cirrocumulus_share)
 #   --no-wave-clouds  lenticular view: WeatherMap3D.wave_clouds off (cost A/B)
+#   --no-distant-shafts  clouds views: WeatherMap3D.distant_shafts off (shafts only where the sky shows; A/B)
 #   --sun-energy=E    clouds views: the sun's light_energy (0: night, for cloud lights)
 #   --high-cover=C    clouds views: the cirrus layer's base cover (WeatherMap3D.high_cloud_cover); with the shafts
 #                     view and --cover=0.05, the 22 and 46 degree ice halos round the sun
@@ -105,6 +106,7 @@ var cam_arg := PackedFloat64Array()
 var humidity_arg := -1.0
 var shear_arg := -1.0
 var wave_clouds_off := false
+var distant_shafts_off := false
 var half_usec := 0
 var out := ""
 var map_out := ""
@@ -186,6 +188,7 @@ func _ready() -> void:
 		elif a.begins_with("--cloud-effector="): cloud_effectors_arg.append(a.substr(17).split_floats(","))
 		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
 		elif a == "--no-wave-clouds": wave_clouds_off = true
+		elif a == "--no-distant-shafts": distant_shafts_off = true
 		elif a.begins_with("--type="): type_arg = float(a.substr(7))
 		elif a.begins_with("--wind="): wind_arg = float(a.substr(7))
 		elif a.begins_with("--temp="): temp_arg = float(a.substr(7))
@@ -1387,6 +1390,7 @@ func _build_clouds() -> void:
 	add_child(weather)
 	weather.sun_light = weather.get_path_to(sun)
 	weather.cloud_evolution = not frozen
+	weather.distant_shafts = not distant_shafts_off
 	if cloud_time >= 0.0:
 		weather.set_cloud_time(cloud_time)
 	if view == "lenticular":

@@ -929,13 +929,18 @@ vec4 cloud_over(vec4 a, float da, vec4 b, float db, out float r_depth) {
 	return o;
 }
 
+)";
+
+// The storms' rain and snow shafts and the lake-effect veils: shared by the sky and by the pass that draws them
+// over the scene (WeatherMap3D's distant_shafts pass), each marched from p_t_min to no further than p_t_max.
+const char *SHAFTS_GLSL = R"(
 // Rain shafts under the storms' bases, seen from afar (near the camera the rain's own haze and drops draw it).
 // Rain's visible extinction from its rate, sigma = 0.31 R^0.67 per km (Atlas 1953; the visibility in rain), with the
 // storm's Gaussian rain core (as the map's rain field) broken into curtains by two octaves of noise, slanted
 // downwind as the drops fall (about 7 m/s). Lit by the light under the storm (the sky's light below the clouds,
 // darkened under the storm's own shield) and by the sun where it reaches below the base, scattered forward by
 // the drops (g 0.6); albedo 1.
-vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_bottom, float jitter, out float r_t) {
+vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_bottom, float jitter, float p_t_min, float p_t_max, out float r_t) {
 	r_t = 0.0;
 	vec3 col = vec3(0.0);
 	float tr = 1.0;
@@ -970,8 +975,8 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 			continue;
 		}
 		float sq = sqrt(disc);
-		float t0 = max((-b - sq) / a, 0.0);
-		float t1 = (-b + sq) / a;
+		float t0 = max((-b - sq) / a, p_t_min);
+		float t1 = min((-b + sq) / a, p_t_max);
 		if (rd.y > 0.0) {
 			t1 = min(t1, (base - cam.y) / rd.y);
 		} else if (cam.y > base) {
@@ -1036,11 +1041,11 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 // at full strength, WeatherMap3D's cells), its visibility as the storms' snow (Rasmussen et al. 1999), in veils
 // trailing downwind as the flakes fall at about 1 to 2 m/s. Near the camera (under 1.5 km) the falling snow's own
 // particles draw it.
-vec4 march_lake_snow(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_bottom, float jitter, out float r_t) {
+vec4 march_lake_snow(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_bottom, float jitter, float p_t_min, float p_t_max, out float r_t) {
 	r_t = 0.0;
 	float base = cloud_base_height;
-	float t0 = 1500.0;
-	float t1 = 30000.0;
+	float t0 = max(1500.0, p_t_min);
+	float t1 = min(30000.0, p_t_max);
 	if (rd.y > 0.001) {
 		t1 = min(t1, (base - cam.y) / rd.y);
 	} else if (rd.y < -0.001) {
@@ -1112,6 +1117,9 @@ vec4 march_lake_snow(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 am
 	return vec4(col, tr);
 }
 
+)";
+
+const char *SKY_BODY_B = R"(
 // The three layers in the order the camera meets them: low cumulus, the mid slab, the high sheet.
 vec4 march_cloud_layers(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, int steps, float jitter, float p_pixel, out float r_depth) {
 	// The mid sheet over the cumulus dims their sun (as it shades the ground in the shadow bake): read once a
@@ -1176,7 +1184,7 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	r_depth = d;
 	if (cloud_lake.x > 0.0) {
 		float d_snow;
-		vec4 ls = march_lake_snow(cam, rd, sun_dir, sun_radiance, ambient_bottom, jitter, d_snow);
+		vec4 ls = march_lake_snow(cam, rd, sun_dir, sun_radiance, ambient_bottom, jitter, 0.0, 1e9, d_snow);
 		if (ls.a < 0.999) {
 			float dd = r_depth;
 			o = (d_snow < dd || o.a >= 0.999) ? cloud_over(ls, d_snow, o, dd, r_depth) : cloud_over(o, dd, ls, d_snow, r_depth);
@@ -1187,7 +1195,7 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 		return o;
 	}
 	float d_rain;
-	vec4 rain = march_rain_shafts(cam, rd, sun_dir, sun_radiance, ambient_bottom, jitter, d_rain);
+	vec4 rain = march_rain_shafts(cam, rd, sun_dir, sun_radiance, ambient_bottom, jitter, 0.0, 1e9, d_rain);
 	if (rain.a >= 0.999) {
 		return o;
 	}
@@ -1622,6 +1630,10 @@ Ref<WeatherSkyMaterial> WeatherSkyMaterial::find_for(Node *p_node) {
 	return env->get_sky()->get_material();
 }
 
+const char *WeatherSkyMaterial::get_shafts_glsl() {
+	return SHAFTS_GLSL;
+}
+
 Ref<Environment> WeatherSkyMaterial::find_environment(Node *p_node) {
 	Ref<Environment> env;
 	Viewport *vp = p_node->get_viewport();
@@ -1653,7 +1665,7 @@ void WeatherSkyMaterial::_update_shader() {
 			head = head.replace("use_half_res_pass, ", "use_half_res_pass, use_quarter_res_pass, ");
 		}
 		head = head.replace("shader_type sky;\n", "shader_type sky;\n" + defines);
-		shader->set_code(head + String(WeatherClouds::GLSL) + String(WeatherAtmosphere::GLSL) + String(SKY_BODY));
+		shader->set_code(head + String(WeatherClouds::GLSL) + String(WeatherAtmosphere::GLSL) + String(SKY_BODY) + String(SHAFTS_GLSL) + String(SKY_BODY_B));
 	}
 	set_shader(shader);
 	_update_atmosphere_textures();

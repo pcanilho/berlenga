@@ -868,10 +868,13 @@ static float wave_env_depression(float p_t0, float p_rh0, float p_dz) {
 
 // A moist layer's relative humidity in its clear air: saturated in its clouds, 0.93 at their edges, falling to
 // 0.68 half a cover's width of noise outside them (a moist layer is moist round its clouds as
-// well, which is where the waves raise lenses without other cloud).
+// well, which is where the waves raise lenses without other cloud), and no lower than 0.8 once the layer's cover
+// is 0.3 or more: such a layer runs moist for tens of kilometres between its cloudlets (soundings on wave days show
+// 70 to 90 % aloft), so a strong wave (350 m of lift and up) condenses lenses anywhere along it, not only under a
+// patch of altocumulus. Without the floor a lee wave over a dry gap in the patches made almost no cloud.
 static float wave_layer_rh(float p_noise, float p_cover, float p_c) {
 	const float u = (p_noise - (1.0f - p_cover)) / MAX(p_cover, 0.001f);
-	float rh = CLAMP(0.93f + 0.5f * u, 0.5f, 0.93f);
+	float rh = CLAMP(0.93f + 0.5f * u, Math::lerp(0.5f, 0.8f, smoothstep(0.1f, 0.3f, p_cover)), 0.93f);
 	if (p_c > 0.001f) {
 		rh = MAX(rh, 1.0f - 0.03f * (1.0f - p_c));
 	}
@@ -1876,7 +1879,7 @@ float wc_wave_eta(vec3 p) {
 
 float wc_wave_layer_rh(float n, float cover, float c) {
 	float u = (n - (1.0 - cover)) / max(cover, 0.001);
-	float rh = clamp(0.93 + 0.5 * u, 0.5, 0.93);
+	float rh = clamp(0.93 + 0.5 * u, mix(0.5, 0.8, smoothstep(0.1, 0.3, cover)), 0.93);
 	if (c > 0.001) {
 		rh = max(rh, 1.0 - 0.03 * (1.0 - c));
 	}

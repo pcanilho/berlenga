@@ -712,3 +712,31 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
 - **Lake band.** Snow curtains in three octaves (2.5 km, 800 m, 250 m stretched across the view) wander 1.5 km,
   fade in over the 100 to 700 m under the base, and the cover share is 0.8 so the band breaks into cells; the bench's
   shadow grid spans 60 km so the band's shadow has no straight edge.
+
+## Distant shafts in front of terrain (21 Nov 2026; Paulo's pick)
+
+The storms' rain and snow shafts and the lake-effect veils are marched in the sky shader, so they show only where
+the sky shows: a shaft standing between the camera and a far ridge vanishes in front of the ridge and reappears above
+it. Engines that draw far precipitation composite it against the depth buffer: Nubis and Red Dead Redemption 2's
+volumetrics (Schneider 2015, 2017; Bauer 2019) march the view ray only up to the scene depth and blend the result
+over the opaque scene; Hillaire's aerial perspective (2020) does the same for the air.
+
+- **Technique.** A depth-limited ray march over the scene: one screen-covering quad in the transparent pass reads
+  the depth texture, marches the same shaft functions as the sky (shared GLSL) from 1.5 km to the scene's depth, and
+  blends premultiplied over the terrain. Where there is no geometry the sky already draws the shaft, so the pass
+  skips sky pixels.
+- **Light.** The same terms as the sky: the sky's light under the base (ambient_bottom) and the sun through the cover
+  with the drops' Henyey-Greenstein phase. The march runs with unit lights (ambient (1, 0, 0), sun (0, 1, 0)), so one
+  march returns both weights; the material's own lighting supplies the lights: the sky's irradiance on a sideways
+  normal (half sky, half ground, as ambient_bottom) through ALBEDO, the sun's colour through light(). The cloud
+  uniforms are copied from the sky material each tick (WeatherMap3D distant_shafts, weather_shafts.cpp).
+- **Bench.** --no-distant-shafts for the A/B; a storm before the lenticular view's ridge:
+  `--view=lenticular --storm=3000,16000,2500,20,8 --cam=14000,700,24000,11100,600,12360 --fov=35`.
+- **Wave clouds, same day.** Scene's scout on a 1636 m crest got lenses of optical depth 0.09 with an 838 m wave:
+  the moist layer's clear air fell to RH 0.5 to 0.68 away from its altocumulus patches, so a lee wave over a gap
+  needed 600 m and more of lift. The layer's clear air now keeps RH 0.8 once its cover is 0.3 (wave_layer_rh()):
+  350 m of lift condenses a lens anywhere along a moist layer, as on wave days.
+- **Path tracing.** Hidden while the environment path traces: the tracer has its own media, and a screen quad would be
+  hit by camera rays.
+- **Cost.** Early-outs per storm on the ray's chord through the shaft's column and per pixel on sky depth; 24 steps
+  a storm, 16 for lake snow, as in the sky.
