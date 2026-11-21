@@ -88,9 +88,11 @@ float PlantGenerator::_rooting_age() const {
 // grass (leaf).
 void PlantGenerator::_build_rooted_sod() {
 	const float age = _rooting_age();
-	const float settle = Math::smoothstep(0.0f, 1.0f, age); // Rain and frost slump the clods into the soil.
+	// One rooting look game-wide: the terrain's turned humus (TerrainMaterial3D) and ground detail's clods fade by the same
+	// freshness, 1 - smoothstep(0.25, 2, years); the sods slump into the soil with it.
+	const float settle = Math::smoothstep(0.25f, 2.0f, age); // Rain and frost slump the clods into the soil.
 	const float wilt = Math::smoothstep(0.02f, 0.3f, age); // Torn-up grass dries within weeks.
-	const float rot = Math::smoothstep(0.3f, 1.0f, age); // Then it rots down and goes.
+	const float rot = Math::smoothstep(0.3f, 1.5f, age); // Then it rots down and goes.
 	const int clods = MAX(int(_rand(3.0f, 8.99f) * (1.0f - 0.35f * settle)), 2);
 	for (int c = 0; c < clods; c++) {
 		const float a = _rand(0.0f, Math::TAU);
@@ -105,7 +107,9 @@ void PlantGenerator::_build_rooted_sod() {
 		const Basis b = rooting_frame(up, Vector3(1, 0, 0));
 		// The clod: a flattened lump of topsoil, half sunk. Its root-mat side reads paler and fibrous (the tint).
 		const float shade = _rand(0.75f, 1.15f);
-		const Color soil = flipped ? Color(1.1f, 1.02f, 0.92f) * shade : Color(0.9f, 0.85f, 0.8f) * shade;
+		// Humus as the terrain draws it (0.062 to 0.11), drying paler with the freshness.
+		Color soil = (flipped ? Color(1.1f, 1.02f, 0.92f) * shade : Color(0.9f, 0.85f, 0.8f) * shade).lerp(Color(1.4f, 1.32f, 1.22f), settle * 0.6f);
+		soil.a = 1.0f; // A scaled tint scales the alpha, which the shader reads as wilting.
 		const Vector3 base = at - Vector3(0, h * (0.5f + 0.35f * settle), 0);
 		const int from = builders[SURFACE_CENTRE].verts.size();
 		_add_head(SURFACE_CENTRE, Transform3D(b, base), r, h, soil, 5, 11);
@@ -161,19 +165,9 @@ void PlantGenerator::_build_rooted_sod() {
 			}
 		}
 	}
-	// Crumbs: small lumps of soil thrown out round the clods, fewer as they wash in.
-	const int crumbs = int(_rand(10.0f, 22.0f) * (1.0f - 0.7f * settle));
-	for (int k = 0; k < crumbs; k++) {
-		const float a = _rand(0.0f, Math::TAU);
-		const float rr = 0.22f * Math::sqrt(_rand(0.0f, 1.0f));
-		const float cr = _rand(0.006f, 0.016f);
-		const Vector3 at(Math::cos(a) * rr, -cr * 0.3f, Math::sin(a) * rr);
-		const int from = builders[SURFACE_CENTRE].verts.size();
-		_add_head(SURFACE_CENTRE, Transform3D(rooting_frame(rooting_dir(_rand(0.0f, Math::TAU), _rand(0.8f, 1.57f)), Vector3(1, 0, 0)), at), cr, cr * _rand(0.5f, 0.9f), Color(1, 1, 1) * _rand(0.8f, 1.1f), 3, 6);
-		_lump_since(from, at, cr, 0.3f);
-	}
+	// No loose crumbs: ground detail lays the humus clods, the terrain the turned soil (one rooting look).
 	// Regrowth between the clods: seedlings and shoots from root fragments, green and upright, from about two months.
-	const float shoots = Math::smoothstep(0.12f, 0.6f, age);
+	const float shoots = Math::smoothstep(0.12f, 0.8f, age);
 	const int n = int(_rand(10.0f, 24.0f) * shoots);
 	for (int k = 0; k < n; k++) {
 		const float a = _rand(0.0f, Math::TAU);
@@ -208,9 +202,9 @@ TypedArray<Resource> PlantGenerator::make_rooting(RootingStand p_stand, int p_va
 		case ROOTING_WOOD:
 			// Woodland: fresh sods, then herb Robert, nettle and broad-leaved dock on the loosened, nutrient-rich soil;
 			// foxglove and raspberry follow in the second year where light reaches (Welander 2000; Kotanen 1995).
-			set = LocalVector<Spec>({ { P::PRESET_ROOTED_SOD, 0.04f, Vector2(0.0f, 0.15f), 0.04f, 0.3f, 0.1f, 0.95f, 0.8f, 1.25f, 0.0f, 0.0f, 30.0f },
-					{ P::PRESET_ROOTED_SOD, 0.3f, Vector2(0.15f, 0.6f), 0.1f, 0.32f, 0.1f, 0.85f, 0.8f, 1.2f, 0.0f, 0.0f, 30.0f },
-					{ P::PRESET_ROOTED_SOD, 0.8f, Vector2(0.6f, 1.1f), 0.2f, 0.4f, 0.1f, 0.6f, 0.8f, 1.15f, 3.0f, 0.6f, 25.0f },
+			set = LocalVector<Spec>({ { P::PRESET_ROOTED_SOD, 0.1f, Vector2(0.0f, 0.25f), 0.05f, 0.3f, 0.1f, 0.95f, 0.8f, 1.25f, 0.0f, 0.0f, 30.0f },
+					{ P::PRESET_ROOTED_SOD, 0.5f, Vector2(0.25f, 0.9f), 0.1f, 0.32f, 0.1f, 0.85f, 0.8f, 1.2f, 0.0f, 0.0f, 30.0f },
+					{ P::PRESET_ROOTED_SOD, 1.3f, Vector2(0.9f, 2.0f), 0.2f, 0.4f, 0.1f, 0.6f, 0.8f, 1.15f, 3.0f, 0.6f, 25.0f },
 					{ P::PRESET_HERB_ROBERT, 0.0f, Vector2(0.25f, 1.6f), 0.3f, 0.45f, 0.1f, 0.5f, 0.8f, 1.2f, 3.0f, 0.55f, 25.0f },
 					{ P::PRESET_NETTLE, 0.0f, Vector2(0.4f, 2.5f), 0.5f, 0.7f, 0.15f, 0.45f, 0.7f, 1.1f, 4.0f, 0.5f, 40.0f },
 					{ P::PRESET_DOCK, 0.0f, Vector2(0.3f, 2.5f), 0.5f, 0.9f, 0.2f, 0.35f, 0.8f, 1.2f, 4.0f, 0.45f, 40.0f } });
@@ -218,9 +212,9 @@ TypedArray<Resource> PlantGenerator::make_rooting(RootingStand p_stand, int p_va
 		case ROOTING_MEADOW:
 			// Meadow and woodland edge: sods, then mayweed, dock, thistle and plantain (the ruderal flush), the grasses
 			// closing over in the second year (Bueno et al. 2013).
-			set = LocalVector<Spec>({ { P::PRESET_ROOTED_SOD, 0.04f, Vector2(0.0f, 0.15f), 0.04f, 0.28f, 0.1f, 0.95f, 0.85f, 1.3f, 0.0f, 0.0f, 30.0f },
-					{ P::PRESET_ROOTED_SOD, 0.3f, Vector2(0.15f, 0.6f), 0.1f, 0.3f, 0.1f, 0.85f, 0.8f, 1.25f, 0.0f, 0.0f, 30.0f },
-					{ P::PRESET_ROOTED_SOD, 0.8f, Vector2(0.6f, 1.1f), 0.2f, 0.38f, 0.1f, 0.6f, 0.8f, 1.2f, 3.0f, 0.6f, 25.0f },
+			set = LocalVector<Spec>({ { P::PRESET_ROOTED_SOD, 0.1f, Vector2(0.0f, 0.25f), 0.05f, 0.28f, 0.1f, 0.95f, 0.85f, 1.3f, 0.0f, 0.0f, 30.0f },
+					{ P::PRESET_ROOTED_SOD, 0.5f, Vector2(0.25f, 0.9f), 0.1f, 0.3f, 0.1f, 0.85f, 0.8f, 1.25f, 0.0f, 0.0f, 30.0f },
+					{ P::PRESET_ROOTED_SOD, 1.3f, Vector2(0.9f, 2.0f), 0.2f, 0.38f, 0.1f, 0.6f, 0.8f, 1.2f, 3.0f, 0.6f, 25.0f },
 					{ P::PRESET_MAYWEED, 0.0f, Vector2(0.25f, 1.5f), 0.3f, 0.4f, 0.1f, 0.55f, 0.8f, 1.2f, 3.0f, 0.55f, 30.0f },
 					{ P::PRESET_DOCK, 0.0f, Vector2(0.3f, 2.5f), 0.5f, 0.8f, 0.2f, 0.4f, 0.8f, 1.2f, 4.0f, 0.5f, 40.0f },
 					{ P::PRESET_THISTLE, 0.0f, Vector2(0.4f, 2.5f), 0.5f, 0.9f, 0.2f, 0.3f, 0.8f, 1.2f, 5.0f, 0.4f, 40.0f },
@@ -270,7 +264,8 @@ TypedArray<Resource> PlantGenerator::make_rooting(RootingStand p_stand, int p_va
 		if (f.preset == P::PRESET_ROOTED_SOD) {
 			sp->set_meta("rooting_age", f.age);
 			// Far off, fresh rooting reads as dark turned soil, older as a dull green-brown.
-			Color far = Color(0.07f, 0.05f, 0.035f).lerp(Color(0.1f, 0.11f, 0.05f), Math::smoothstep(0.1f, 1.0f, f.age));
+			// The terrain's humus colours, then greening as it closes over.
+			Color far = Color(0.062f, 0.046f, 0.033f).lerp(Color(0.1f, 0.11f, 0.05f), Math::smoothstep(0.25f, 2.0f, f.age));
 			far.a = 0.6f;
 			sp->set_far_color(far);
 		}

@@ -1446,6 +1446,9 @@ Research so far (to confirm before building):
   (grass_streaks). The honami's fronts were also straight lines a sward wide; coherent canopy structures are a few
   heights across (Finnigan 2000; Py et al. 2006), so the fronts now bend with a slow crosswind warp and the wave's
   strength comes and goes in patches, with twice the per-clump phase jitter (the fallback wind's gusts the same).
+- Grazed lawn mosaic (21 Nov, the clearing shot read as one stamp repeated): crop heights follow a patch-grazing
+  mosaic (Adler, Raff and Lauenroth 2001) at about 1 m and 3 m, close-cropped patches and taller roughs, and each blade
+  its own bite (skewed tall, 12% just regrown), widths varied.
 - Grass bench --deer-wood=P: a clearing in TreeGenerator's real trees (P > 0 STAND_DEER_WOOD and its make_edge, the
   browse line; P = 0 the beech stand and its mantle), make_floor's beech floor with its browse set, the sward cropped
   by WorldStand browse P over the clearing and wood, from 1.6 m. About 12.5 GB and 30 min a 1920x1080 raster frame in
@@ -1511,7 +1514,10 @@ nitrophilous herbs first (Bueno et al. 2009, Ecol. Model. 220; Bueno et al. 2013
   untouched.
 - Vegetation bench `--rooting` (also in --test); plants bench `--close=99 --rooting=A`.
 - GrassField3D: its browse grid (graze_map) carries the rooting too (G: the share of blades torn out, all when fresh,
-  back over 1.5 years); those blades go, the rest stand at half height.
+  back over two years); those blades go, the rest stand at half height.
+- One rooting look (21 Nov): the terrain material draws the turned humus (0.062-0.11) and ground detail lays the humus
+  clods, both by freshness 1 - smoothstep(0.25, 2, years). The sods use that fade (bands 0-0.25, 0.25-0.9, 0.9-2 yr),
+  the terrain's humus colour, no loose crumbs of their own; the grass's torn share is the same freshness.
 - Not done: the turned soil itself (ground detail's: clods, exposed humus, 5-15 cm troughs). The sward's ground tint
   opens to soil under fresh rooting since 21 Nov (grass_ground() reads the graze map's G).
 

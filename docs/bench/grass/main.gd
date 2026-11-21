@@ -1374,7 +1374,12 @@ func _cover_biome() -> Biome:
 		b.species = _stand_trees() + floor_sp.slice(0, 3) + b.species + floor_sp.slice(3)
 	if mounds_view != "":
 		# Ant hills and molehills (or wood ant nests): listed first, so the herbs make room round them.
-		b.species = Array(PlantGenerator.make_mounds(PlantGenerator.MOUNDS_WOOD if mounds_view == "wood" else PlantGenerator.MOUNDS_MEADOW, 3, not notex)) + b.species
+		# In the wood, after the trees: the nests read the crowns' shade, needle share and edge.
+		var k := 0
+		while k < b.species.size() and (b.species[k] as PlantSpecies).canopy_radius > 0.0:
+			k += 1
+		var ms := Array(PlantGenerator.make_mounds(PlantGenerator.MOUNDS_WOOD if mounds_view == "wood" else PlantGenerator.MOUNDS_MEADOW, 3, not notex))
+		b.species = b.species.slice(0, k) + ms + b.species.slice(k)
 	if swamp:
 		b.species = _wetland_species() + b.species
 	if no_far:

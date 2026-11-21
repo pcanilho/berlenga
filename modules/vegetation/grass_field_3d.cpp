@@ -1117,11 +1117,17 @@ void vertex() {
 				w = 0.0;
 			}
 			h *= 1.0 - 0.5 * gr.g;
-			float crop_h = graze_height * (0.85 + 0.3 * fract(rnd * 5.31)) * (fract(rnd * 3.17) < 0.15 ? 1.4 : 1.0);
+			// Not one even height: grazers bite patchily (patch grazing; Adler, Raff and Lauenroth 2001), keeping some
+			// patches close-cropped and leaving others, by dung or unpalatable plants, as taller roughs, a mosaic at a
+			// metre and a few metres; within it each blade stands at its own bite, a few just regrown (skewed tall).
+			float mosaic = grass_noise(base_w.xz * 1.3 + 3.1) * 0.55 + grass_noise(base_w.xz * 0.31 + 17.0) * 0.45;
+			float patch_h = mix(0.65, 1.5, smoothstep(0.3, 0.75, mosaic)) * (1.0 + 1.2 * smoothstep(0.72, 0.86, mosaic));
+			float bite = fract(rnd * 5.31);
+			float crop_h = graze_height * patch_h * (0.5 + 0.8 * bite * bite + (fract(rnd * 3.17) < 0.12 ? 0.6 : 0.0));
 			h = mix(h, min(h, crop_h), v_graze);
 			// Regrowth after a bite is fine young leaf: narrower blades keep the short turf from reading as teeth. The
 			// turf ground under the sward (get_ground_shader_code()) closes it between them.
-			w *= 1.0 - 0.3 * v_graze;
+			w *= 1.0 - 0.35 * v_graze * (0.4 + fract(rnd * 9.13));
 		}
 	}
 	// A far ring blade (negative width; GrassField3D::_build_ring_tile()): one of a set thinned with the square of
@@ -3836,7 +3842,7 @@ void GrassField3D::_read_graze(TerrainDataMap3D *p_map) {
 	const float cell = MAX(2.0f, MAX(rect.size.x, rect.size.y) / 511.0f);
 	const int nx = CLAMP(int(Math::ceil(rect.size.x / cell)) + 1, 2, 512);
 	const int ny = CLAMP(int(Math::ceil(rect.size.y / cell)) + 1, 2, 512);
-	// R: grazed to a lawn; G: the share of blades boar rooting tore out (all of them fresh, back over 1.5 years:
+	// R: grazed to a lawn; G: the share of blades boar rooting tore out (all of them fresh, back over two years with the terrain's freshness 1 - smoothstep(0.25, 2, years):
 	// Bueno et al. 2013), which the sods (PlantGenerator.make_rooting) cover meanwhile.
 	Vector<uint8_t> data;
 	data.resize(nx * ny * 2);
@@ -3847,7 +3853,7 @@ void GrassField3D::_read_graze(TerrainDataMap3D *p_map) {
 			const Vector3 p(xz.x, 0.0f, xz.y);
 			const float g = Math::smoothstep(0.3f, 0.8f, stand->browse_at(p));
 			const float ra = stand->rooting_age_at(p);
-			const float torn = ra < 0.0f ? 0.0f : 1.0f - Math::smoothstep(0.15f, 1.5f, ra);
+			const float torn = ra < 0.0f ? 0.0f : 1.0f - Math::smoothstep(0.25f, 2.0f, ra); // The terrain's freshness.
 			const int i = (z * nx + x) * 2;
 			w[i] = uint8_t(CLAMP(g, 0.0f, 1.0f) * 255.0f + 0.5f);
 			w[i + 1] = uint8_t(CLAMP(torn, 0.0f, 1.0f) * 255.0f + 0.5f);

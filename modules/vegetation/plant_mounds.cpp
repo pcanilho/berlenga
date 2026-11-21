@@ -84,9 +84,18 @@ float dome_height(float p_x, float p_z, float p_a, float p_b, float p_h, float p
 } // namespace
 
 // Mounds do not sway: the soil and thatch surfaces (centre) get no wind weight (uv2.x), whatever _add_head gave them.
-static void mound_still(PackedVector2Array &p_uv2s, int p_from) {
+// Their colours' alpha back to 1: the plant shader reads 1 - alpha as dead tissue (yellowing), and a scaled tint
+// (Color * float) scales the alpha too.
+static void mound_still(PackedVector2Array &p_uv2s, int p_from, PackedColorArray *p_colors = nullptr) {
 	for (int i = p_from; i < p_uv2s.size(); i++) {
 		p_uv2s.write[i] = Vector2(0.0f, p_uv2s[i].y);
+	}
+	if (p_colors) {
+		for (int i = p_from; i < p_colors->size(); i++) {
+			Color c = (*p_colors)[i];
+			c.a = 1.0f;
+			p_colors->write[i] = c;
+		}
 	}
 }
 
@@ -120,7 +129,7 @@ void PlantGenerator::_build_anthill() {
 			cb.uv2s.push_back(Vector2(1.0f, 0.0f));
 			// Turf base: green-brown, darker in the hollows between the tussocks (noise).
 			const float n = 0.85f + 0.3f * Math::sin(x * 37.0f + z * 23.0f) * Math::sin(z * 41.0f - x * 13.0f);
-			cb.colors.push_back(Color(0.55f, 0.95f, 0.5f) * n);
+			cb.colors.push_back(Color(1, 1, 1) * n); // The turf's shaded base between the blades (centre_color).
 		}
 	}
 	for (int r = 0; r < rings; r++) {
@@ -140,8 +149,9 @@ void PlantGenerator::_build_anthill() {
 		const float dz = dome_height(p_x, p_z + e, a, b, h, shift) - dome_height(p_x, p_z - e, a, b, h, shift);
 		return Vector3(-dx, 2.0f * e, -dz).normalized();
 	};
-	// Fine fescue: short, wiry, grey-green blades over the whole dome, a little longer down the flanks.
-	const int blades = int(_rand(380.0f, 520.0f));
+	// Fine fescue and bent: grey-green blades as dense as the pasture's (a hill seen from a few metres is a grassy hump,
+	// not a bare dome), a little longer down the flanks where they meet the sward.
+	const int blades = int(_rand(2000.0f, 2400.0f));
 	for (int k = 0; k < blades; k++) {
 		const float ang = _rand(0.0f, Math::TAU);
 		const float rr = Math::sqrt(_rand(0.0f, 1.0f)) * 0.98f;
@@ -151,8 +161,8 @@ void PlantGenerator::_build_anthill() {
 		const Vector3 d = (n * _rand(0.6f, 1.0f) + mound_dir(_rand(0.0f, Math::TAU), 0.0f) * _rand(0.2f, 0.6f)).normalized();
 		Leaf l;
 		l.shape = LEAF_LINEAR;
-		l.length = _rand(0.025f, 0.06f) * (1.0f + 0.4f * rr);
-		l.width = _rand(0.0008f, 0.0015f); // Fescue's rolled, bristle-like leaves.
+		l.length = _rand(0.04f, 0.1f) * (1.0f + 0.6f * rr);
+		l.width = _rand(0.0015f, 0.0028f); // Fescue's rolled leaves and bent's flat ones.
 		l.fold = 0.6f;
 		l.bend = _rand(0.2f, 0.7f);
 		l.twist = _rand(-0.3f, 0.3f);
@@ -203,11 +213,20 @@ void PlantGenerator::_build_anthill() {
 			const float sz = _rand(0.004f, 0.01f);
 			const Vector3 at = ground(x, z) + normal(x, z) * 0.006f;
 			const int from = cb.verts.size();
-			_add_head(SURFACE_CENTRE, Transform3D(mound_frame(normal(x, z), Vector3(1, 0, 0)), at - normal(x, z) * sz * 0.3f), sz, sz * _rand(0.5f, 0.9f), Color(1.25f, 1.2f, 1.1f) * _rand(0.9f, 1.1f), 3, 6);
+			// Pale fine loam on the dark green turf base (centre_color): the tint lifts it to the soil's colour.
+			_add_head(SURFACE_CENTRE, Transform3D(mound_frame(normal(x, z), Vector3(1, 0, 0)), at - normal(x, z) * sz * 0.3f), sz, sz * _rand(0.5f, 0.9f), Color(2.25f, 1.15f, 2.1f) * _rand(0.9f, 1.1f), 3, 6);
 			_lump_since(from, at, sz, 0.3f);
 		}
 	}
-	mound_still(builders[SURFACE_CENTRE].uv2s, still_from);
+	mound_still(builders[SURFACE_CENTRE].uv2s, still_from, &builders[SURFACE_CENTRE].colors);
+	for (int sf = 0; sf < SURFACE_MAX; sf++) {
+		PackedColorArray &cl = builders[sf].colors; // Alpha only: nothing on a mound wilts.
+		for (int k = 0; k < cl.size(); k++) {
+			Color c = cl[k];
+			c.a = 1.0f;
+			cl.write[k] = c;
+		}
+	}
 }
 
 // A red wood ant nest: an earth bank round the foot, and over it a dome of thatch (needles, twig bits) 0.6 m to the rim
@@ -235,7 +254,7 @@ void PlantGenerator::_build_wood_ant_nest() {
 		return db.xform(local) + Vector3(0, -0.01f, 0);
 	};
 	// Needles: 1 to 2 cm, lying on the surface every which way, fresh rusty ones on top of greyer old ones.
-	const int needles = int(_rand(1400.0f, 1900.0f) * r / 0.6f);
+	const int needles = int(_rand(2600.0f, 3200.0f) * r / 0.6f); // A closed layer: the dome under them hardly shows.
 	for (int k = 0; k < needles; k++) {
 		const float u = Math::sqrt(_rand(0.0f, 0.98f));
 		const float ang = _rand(0.0f, Math::TAU);
@@ -277,7 +296,15 @@ void PlantGenerator::_build_wood_ant_nest() {
 		const float hr = _rand(0.008f, 0.016f);
 		_add_head(SURFACE_CENTRE, Transform3D(mound_frame(n, Vector3(0, 1, 0)), p - n * 0.002f), hr, hr * 0.15f, Color(0.18f, 0.16f, 0.15f), 2, 8);
 	}
-	mound_still(builders[SURFACE_CENTRE].uv2s, still_from);
+	mound_still(builders[SURFACE_CENTRE].uv2s, still_from, &builders[SURFACE_CENTRE].colors);
+	for (int sf = 0; sf < SURFACE_MAX; sf++) {
+		PackedColorArray &cl = builders[sf].colors; // Alpha only: nothing on a mound wilts.
+		for (int k = 0; k < cl.size(); k++) {
+			Color c = cl[k];
+			c.a = 1.0f;
+			cl.write[k] = c;
+		}
+	}
 }
 
 // A molehill: loose soil pushed up from a run, 0.2 m to the rim at scale 1 and 0.1 to 0.16 m high; a fringe of spilt
@@ -342,7 +369,15 @@ void PlantGenerator::_build_molehill() {
 		l.segments = 3;
 		_add_leaf(SURFACE_LEAF, Transform3D(mound_frame(d, Vector3(0, 1, 0)), Vector3(Math::cos(ang) * rr, y - 0.004f, Math::sin(ang) * rr)), l, 0.0f, 0.85f, Color(1, 1, 1) * _rand(0.85f, 1.1f));
 	}
-	mound_still(builders[SURFACE_CENTRE].uv2s, still_from);
+	mound_still(builders[SURFACE_CENTRE].uv2s, still_from, &builders[SURFACE_CENTRE].colors);
+	for (int sf = 0; sf < SURFACE_MAX; sf++) {
+		PackedColorArray &cl = builders[sf].colors; // Alpha only: nothing on a mound wilts.
+		for (int k = 0; k < cl.size(); k++) {
+			Color c = cl[k];
+			c.a = 1.0f;
+			cl.write[k] = c;
+		}
+	}
 }
 
 // The mound sets: each species carries "sward_mound" (its radius at scale 1) so GrassField3D keeps blades from under it.
@@ -429,7 +464,8 @@ TypedArray<Resource> PlantGenerator::make_mounds(MoundSet p_set, int p_variants,
 		}
 		sp->set_visibility_range(f.visibility);
 		sp->set_meta("mound", true);
-		sp->set_meta("sward_mound", f.radius);
+		// The field's own blades stop a little inside a grassed ant hill's foot, so its turf and the sward overlap.
+		sp->set_meta("sward_mound", f.preset == P::PRESET_ANTHILL ? f.radius * 0.75f : f.radius);
 		if (f.preset == P::PRESET_MOLEHILL) {
 			sp->set_meta("mound_age", f.age);
 			Color far = Color(0.09f, 0.065f, 0.045f).lerp(Color(0.12f, 0.13f, 0.06f), Math::smoothstep(0.1f, 1.0f, f.age));

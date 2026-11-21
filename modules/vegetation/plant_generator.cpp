@@ -628,6 +628,10 @@ PlantGenerator::Wither::~Wither() {
 		if (i == SURFACE_CENTRE && generator->preset == PRESET_THISTLE) {
 			continue; // Thistledown: dry pappus, white.
 		}
+		const Preset pr = generator->preset;
+		if (i == SURFACE_CENTRE && (pr == PRESET_ANTHILL || pr == PRESET_WOOD_ANT_NEST || pr == PRESET_MOLEHILL || pr == PRESET_ROOTED_SOD)) {
+			continue; // Soil and thatch: nothing to wither.
+		}
 		PackedColorArray &c = generator->builders[i].colors;
 		for (int k = from[i]; k < c.size(); k++) {
 			Color v = c[k];
@@ -6734,17 +6738,17 @@ void PlantGenerator::apply_preset_colors() {
 			leaf_color = Color(0.13f, 0.24f, 0.06f); // Resprouting heather shoots.
 			break;
 		case PRESET_ROOTED_SOD:
-			centre_color = Color(0.24f, 0.16f, 0.1f); // Moist topsoil, brown.
+			centre_color = Color(0.085f, 0.064f, 0.045f); // Moist humus, as the terrain's turned soil (TerrainMaterial3D).
 			stem_color = Color(0.62f, 0.55f, 0.42f); // Live roots, pale buff.
 			leaf_color = Color(0.15f, 0.26f, 0.08f); // The torn turf's grass (the vertex tint dries it).
 			break;
 		case PRESET_ANTHILL:
-			centre_color = Color(0.3f, 0.24f, 0.15f); // Fine, pale loam the ants bring up (the vertex tint greens the turf).
+			centre_color = Color(0.12f, 0.18f, 0.06f); // The turf, as the sward reads from a few metres once the LOD has dropped the blades (the crumbs' tint lifts it to pale loam).
 			stem_color = Color(0.36f, 0.3f, 0.2f); // Dead fescue bases.
 			leaf_color = Color(0.17f, 0.27f, 0.1f); // Sheep's fescue and thyme, greyer than the pasture round it.
 			break;
 		case PRESET_WOOD_ANT_NEST:
-			centre_color = Color(0.2f, 0.13f, 0.075f); // Thatch: spruce and pine needles, bud scales, resin.
+			centre_color = Color(0.25f, 0.155f, 0.08f); // Thatch under the loose needles: older needles, bud scales, resin.
 			stem_color = Color(0.33f, 0.2f, 0.1f); // Fresh needles, rusty brown.
 			leaf_color = Color(0.16f, 0.22f, 0.08f); // Moss on the old earth bank.
 			break;
