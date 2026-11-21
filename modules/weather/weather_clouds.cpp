@@ -535,10 +535,11 @@ Vector2 cover_type_at(const State &p_state, Vector2 p_xz) {
 		// tower, which it is part of.
 		cover = MAX(cover, 0.95f * shelf_drop(p_state, i, p_xz) / SHELF_DROP);
 	}
-	// Lake-effect convection: cumulus congestus to the capping inversion, merging along its bands.
+	// Lake-effect convection: cumulus congestus to the capping inversion along its bands (cover to 0.8: the cells
+	// stay apart enough for the base to keep its texture).
 	const float lake = lake_effect_at(p_state, p_xz);
 	if (lake > 0.0f) {
-		cover = 1.0f - (1.0f - cover) * (1.0f - 0.95f * lake);
+		cover = 1.0f - (1.0f - cover) * (1.0f - 0.8f * lake);
 		t = MAX(t, 0.75f * lake);
 	}
 	return Vector2(cover, t);
@@ -624,10 +625,16 @@ float high_tau_at(const State &p_state, Vector2 p_xz) {
 // Altocumulus patches: the cover noise at the mid layer's own scale and drift, thresholded as the low cover is;
 // plus a band round each storm's anvil (mid-level cloud spreads from a storm's outflow too). wc_mid_cover in the
 // sky.
+// The mid layer's cover read through a warp of about a kilometre (in the layer's drifting frame): value noise near a
+// thin cover's threshold has square, lattice-aligned peaks, and the altocumulus patches came out as rectangles.
+static Vector2 mid_warp(Vector2 p_q) {
+	return 1200.0f * (Vector2(value_noise(p_q / 3000.0f + Vector2(1.3f, 7.1f)), value_noise(p_q / 3000.0f + Vector2(6.2f, 2.8f))) - Vector2(0.5f, 0.5f));
+}
+
 float mid_cover_at(const State &p_state, Vector2 p_xz) {
 	float c = 0.0f;
 	if (p_state.mid_cover > 0.001f) {
-		const float n = cover_noise(p_xz + Vector2(4721.0f, 8363.0f), p_state.mid_drift, p_state.mid_scale, p_state.evolve);
+		const float n = cover_noise(p_xz + mid_warp(p_xz - p_state.mid_drift) + Vector2(4721.0f, 8363.0f), p_state.mid_drift, p_state.mid_scale, p_state.evolve);
 		c = CLAMP((n - (1.0f - p_state.mid_cover)) / MAX(p_state.mid_cover, 0.001f) * 1.5f, 0.0f, 1.0f) * MIN(1.0f, 2.0f * p_state.mid_cover);
 	}
 	for (int i = 0; i < p_state.storm_count; i++) {
@@ -758,13 +765,23 @@ float cells_at(const State &p_state, const Vector3 &p_pos, float p_base, Vector2
 			}
 			// Present where the cover here beats the cell's draw, fading over a margin: the cover is read at the sample,
 			// so a hard test cut a cloud off by a wall where it crossed a change in cover; now it shrinks toward it.
-			const float keep = CLAMP((present - hash2(sx + 7919, sz - 4241)) * 4.0f, 0.0f, 1.0f);
+			// In a sparse sky (cover under 0.3) the cover is read at the cell's middle instead: one value for the whole
+			// cloud. Read at each sample, the cloud took the cover noise's own outline where it crossed the draw, and
+			// value noise thresholded is blocky (square clouds at low cover).
+			const float draw = hash2(sx + 7919, sz - 4241);
+			float pres = present;
+			const float lowc = 1.0f - smoothstep(0.2f, 0.3f, p_ct.x);
+			if (lowc > 0.0f && present > draw - 0.15f) {
+				const Vector2 cc = (Vector2(cx, cz) + Vector2(0.5f, 0.5f)) * cell + p_state.drift;
+				pres = Math::lerp(present, cover_type_at(p_state, cc).x * (p_state.evolve >= 0.0f ? 2.9f : 2.2f), lowc);
+			}
+			const float keep = CLAMP((pres - draw) * 4.0f, 0.0f, 1.0f);
 			if (keep <= 0.0f) {
 				continue;
 			}
 			const Vector2 centre = Vector2(float(cx) + 0.15f + 0.7f * hash2(sx, sz + 3571), float(cz) + 0.15f + 0.7f * hash2(sx - 2713, sz));
 			const float size = Math::pow(hash2(sx + 1237, sz + 9109), 1.8f);
-			const float r = MIN((0.2f + 0.55f * size) * grow, 0.95f) * Math::sqrt(keep) * Math::lerp(0.7f, 1.0f, smoothstep(0.0f, 0.2f, age));
+			const float r = MIN((0.2f + 0.55f * size) * grow, 0.95f) * Math::lerp(0.6f, 1.0f, keep) * Math::lerp(0.7f, 1.0f, smoothstep(0.0f, 0.2f, age));
 			const float u = (q - centre).length() / r;
 			if (u >= 1.0f) {
 				continue;
@@ -800,7 +817,10 @@ float cells_at(const State &p_state, const Vector3 &p_pos, float p_base, Vector2
 				env = MAX(env, (1.0f - d * p_warp) / 0.6f);
 			}
 			// Born thin, then dissolving: the outline shrinks into the noise from the edges in.
-			env = env * smoothstep(0.0f, 0.08f, age) - 1.2f * smoothstep(0.75f, 1.0f, age);
+			// Where the cover thins past the cell's draw the cloud thins (keep scales its density) rather than its
+			// radius: a radius following the cover read at each sample collapsed across a cover gradient into straight
+			// cut walls (a boxy cloud at low cover).
+			env = (env * smoothstep(0.0f, 0.08f, age) - 1.2f * smoothstep(0.75f, 1.0f, age)) * keep;
 			// The base's softness in the cloud's own height (its sagged base), not the column's: a flat cut at the
 			// column's base would shave the sag off.
 			env *= smoothstep(0.0f, 0.04f, hh);
@@ -868,12 +888,11 @@ float wave_dew_depression_at(const State &p_state, const Vector3 &p_pos) {
 	float dep = wave_env_depression(p_state.air_t0, p_state.air_rh0, dz);
 	const Vector2 xz(p_pos.x, p_pos.z);
 	if (p_state.mid_cover > 0.001f) {
-		const float n = cover_noise(xz + Vector2(4721.0f, 8363.0f), p_state.mid_drift, p_state.mid_scale, p_state.evolve);
+		const float n = cover_noise(xz + mid_warp(xz - p_state.mid_drift) + Vector2(4721.0f, 8363.0f), p_state.mid_drift, p_state.mid_scale, p_state.evolve);
 		const float rh = wave_layer_rh(n, p_state.mid_cover, mid_cover_at(p_state, xz));
 		const float d = (p_pos.y - p_state.mid_height) / (1.5f * p_state.mid_thickness + 300.0f);
 		const float w = Math::exp(-d * d) * MIN(1.0f, 4.0f * p_state.mid_cover);
-		const float plates = 0.5f + 0.5f * Math::sin(Math::TAU * (p_pos.y - p_state.mid_height) / 350.0f);
-		dep = Math::lerp(dep, MIN(dep, wave_rh_depression(rh, tk) + 0.4f * plates), w);
+		dep = Math::lerp(dep, MIN(dep, wave_rh_depression(rh, tk)), w);
 	}
 	if (p_state.high_cover > 0.001f) {
 		const float n = cover_noise(xz + Vector2(9137.0f, 3301.0f), p_state.high_drift, p_state.high_scale, p_state.evolve);
@@ -882,22 +901,27 @@ float wave_dew_depression_at(const State &p_state, const Vector3 &p_pos) {
 		const float w = Math::exp(-d * d) * MIN(1.0f, 4.0f * p_state.high_cover);
 		dep = Math::lerp(dep, MIN(dep, wave_rh_depression(rh, tk)), w);
 	}
-	return dep;
+	return dep + wave_plate_depression(p_state, p_pos);
 }
 
 // Pile of plates (altocumulus lenticularis duplicatus, "pile d'assiettes"): where the moist layer is stratified in
-// thin sheets, each lens splits into plates stacked about 350 m apart with thin clear gaps between, the dry sheets
-// staying unsaturated however far the wave lifts them (WMO International Cloud Atlas, Ac len duplicatus; the
-// radiosonde's stepped humidity). In patches some 10 km across; the gaps tilt and wander a little with the noise.
-float wave_plate_gaps(float p_mid_height, const Vector3 &p_pos) {
-	const Vector2 xz(p_pos.x, p_pos.z);
-	const float stack = smoothstep(0.25f, 0.55f, value_noise(xz / 9000.0f + Vector2(3.1f, 7.7f)));
-	if (stack <= 0.0f) {
-		return 1.0f;
+// thin sheets (the radiosonde's stepped humidity), moister and drier sheets alternate about 220 m apart (a lens is 200 to 800 m deep), 1.6 K of dew point
+// depression (200 m of lift) between them, so each lens's edge splits into plates of different widths stacked one over
+// another, merging where the lift is largest (WMO International Cloud Atlas, Ac len duplicatus). In patches some
+// 10 km across; the sheets keep their heights over neighbouring lenses (moist layers run for tens of km), tilting a
+// little over 15 km. Added per sample (the sky's march reads the rest of the depression once a coarse step).
+float wave_plate_depression(const State &p_state, const Vector3 &p_pos) {
+	if (p_state.mid_cover <= 0.001f) {
+		return 0.0f;
 	}
-	const float f = Math::fposmod((p_pos.y - p_mid_height) / 400.0f + 0.4f * value_noise(xz / 4000.0f), 1.0f);
-	const float gap = smoothstep(0.02f, 0.08f, f) * (1.0f - smoothstep(0.36f, 0.42f, f));
-	return 1.0f - stack * gap;
+	const Vector2 xz(p_pos.x, p_pos.z);
+	const float stack = smoothstep(0.05f, 0.35f, value_noise(xz / 9000.0f + Vector2(3.1f, 7.7f)));
+	if (stack <= 0.0f) {
+		return 0.0f;
+	}
+	const float d = (p_pos.y - p_state.mid_height) / (1.5f * p_state.mid_thickness + 300.0f);
+	const float sheets = 0.5f + 0.5f * Math::sin(float(Math::TAU) * ((p_pos.y - p_state.mid_height) / 220.0f + 0.15f * value_noise(xz / 15000.0f)));
+	return 1.6f * stack * Math::exp(-d * d) * (smoothstep(0.35f, 0.65f, sheets) - 0.5f);
 }
 
 float wave_extinction_at(const State &p_state, const Vector3 &p_pos) {
@@ -919,7 +943,7 @@ float wave_extinction_at(const State &p_state, const Vector3 &p_pos) {
 	const float rho_air = 1.225f * Math::exp(-p_pos.y / 8500.0f);
 	const float water = rho_air * rate * x; // kg/m^3
 	const float ice = CLAMP((-20.0f - tc) / 10.0f, 0.0f, 1.0f);
-	return 1.5f * water / Math::lerp(1000.0f * 10e-6f, 917.0f * 30e-6f, ice) * wave_plate_gaps(p_state.mid_height, p_pos);
+	return 1.5f * water / Math::lerp(1000.0f * 10e-6f, 917.0f * 30e-6f, ice);
 }
 
 Vector4 wave_slab(const State &p_state, const float *p_eta_max) {
@@ -990,7 +1014,10 @@ float layered_share(float p_type) {
 float sc_cells_at(const State &p_state, Vector2 p_xz) {
 	const Vector2 q0 = p_xz - p_state.drift;
 	const Vector2 d = p_state.sc_dir;
-	const Vector2 q(q0.dot(d) / (p_state.sc_cell * p_state.sc_roll), (q0.x * -d.y + q0.y * d.x) / p_state.sc_cell);
+	Vector2 q(q0.dot(d) / (p_state.sc_cell * p_state.sc_roll), (q0.x * -d.y + q0.y * d.x) / p_state.sc_cell);
+	// Warped a third of a cell: the cells' borders (Voronoi edges) are straight lines, and a sparse sky of heaps came
+	// out as polygons with straight sides.
+	q += 0.35f * (Vector2(value_noise(q * 1.7f + Vector2(3.1f, 5.7f)), value_noise(q * 1.7f + Vector2(8.3f, 1.9f))) - Vector2(0.5f, 0.5f));
 	const int gx = int(Math::floor(q.x));
 	const int gz = int(Math::floor(q.y));
 	float f1 = 9.0f;
@@ -1682,7 +1709,7 @@ vec2 wc_cover_type(vec2 xz) {
 	}
 	float lake = wc_lake_effect(xz);
 	if (lake > 0.0) {
-		cover = 1.0 - (1.0 - cover) * (1.0 - 0.95 * lake);
+		cover = 1.0 - (1.0 - cover) * (1.0 - 0.8 * lake);
 		t = max(t, 0.75 * lake);
 	}
 	return vec2(cover, t);
@@ -1741,10 +1768,15 @@ float wc_high_cover(vec2 xz) {
 }
 
 // The mid layer's cover (mid_cover_at() on the CPU).
+// mid_warp() on the CPU: the mid layer's cover read through a kilometre's warp (no rectangular patches).
+vec2 wc_mid_warp(vec2 q) {
+	return 1200.0 * (vec2(wc_value_noise(q / 3000.0 + vec2(1.3, 7.1)), wc_value_noise(q / 3000.0 + vec2(6.2, 2.8))) - 0.5);
+}
+
 float wc_mid_cover(vec2 xz) {
 	float c = 0.0;
 	if (cloud_mid_cover > 0.001) {
-		float n = wc_cover_noise_at(xz + vec2(4721.0, 8363.0) - (cloud_mid_drift - cloud_drift), cloud_mid_scale);
+		float n = wc_cover_noise_at(xz + wc_mid_warp(xz - cloud_mid_drift) + vec2(4721.0, 8363.0) - (cloud_mid_drift - cloud_drift), cloud_mid_scale);
 		c = clamp((n - (1.0 - cloud_mid_cover)) / max(cloud_mid_cover, 0.001) * 1.5, 0.0, 1.0) * min(1.0, 2.0 * cloud_mid_cover);
 	}
 	for (int i = 0; i < cloud_storm_count; i++) {
@@ -1765,6 +1797,7 @@ float wc_sc_cells(vec2 xz) {
 	vec2 q0 = xz - cloud_drift;
 	vec2 d = cloud_sc.xy;
 	vec2 q = vec2(dot(q0, d) / (cloud_sc.w * cloud_sc.z), dot(q0, vec2(-d.y, d.x)) / cloud_sc.w);
+	q += 0.35 * (vec2(wc_value_noise(q * 1.7 + vec2(3.1, 5.7)), wc_value_noise(q * 1.7 + vec2(8.3, 1.9))) - 0.5); // sc_cells_at(): bent borders
 	int gx = int(floor(q.x));
 	int gz = int(floor(q.y));
 	float f1 = 9.0;
@@ -1811,7 +1844,23 @@ float wc_wave_eta(vec3 p) {
 	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
 		return 0.0;
 	}
-	vec4 e = textureLod(cloud_wave_field, uv, 0.0);
+	// Cubic B-spline across the 400 m cells (four bilinear reads; Sigg and Hadwiger 2005, GPU Gems 2 ch. 20): a lens's
+	// edge is a contour of this field, and bilinear made it a polygon of straight runs (boxy lenses, stepped ends).
+	float n = cloud_wave_rect.w;
+	vec2 st = uv * n - 0.5;
+	vec2 i0 = floor(st);
+	vec2 f = st - i0;
+	vec2 f2 = f * f;
+	vec2 f3 = f2 * f;
+	vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+	vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+	vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+	vec2 w3 = f3 / 6.0;
+	vec2 g0 = w0 + w1;
+	vec2 g1 = w2 + w3;
+	vec2 c0 = (i0 - 1.0 + w1 / g0 + 0.5) / n;
+	vec2 c1 = (i0 + 1.0 + w3 / g1 + 0.5) / n;
+	vec4 e = g0.y * (g0.x * textureLod(cloud_wave_field, c0, 0.0) + g1.x * textureLod(cloud_wave_field, vec2(c1.x, c0.y), 0.0)) + g1.y * (g0.x * textureLod(cloud_wave_field, vec2(c0.x, c1.y), 0.0) + g1.x * textureLod(cloud_wave_field, c1, 0.0));
 	vec4 lv = cloud_wave_levels;
 	if (p.y <= lv.x) {
 		return e.x;
@@ -1853,12 +1902,11 @@ float wc_wave_depression(vec3 p) {
 	float rh = clamp(cloud_air.y * (exp(-max(dz, 0.0) / 8000.0) - 0.02) / 0.98, 0.01, 1.0);
 	float dep = -log(rh) * tk * tk / 5423.0;
 	if (cloud_mid_cover > 0.001) {
-		float n = wc_cover_noise_at(p.xz + vec2(4721.0, 8363.0) - (cloud_mid_drift - cloud_drift), cloud_mid_scale);
+		float n = wc_cover_noise_at(p.xz + wc_mid_warp(p.xz - cloud_mid_drift) + vec2(4721.0, 8363.0) - (cloud_mid_drift - cloud_drift), cloud_mid_scale);
 		float rh = wc_wave_layer_rh(n, cloud_mid_cover, wc_layer_cover_n(n, cloud_mid_cover, p.xz, false));
 		float d = (p.y - cloud_mid_height) / (1.5 * cloud_mid_thickness + 300.0);
 		float w = exp(-d * d) * min(1.0, 4.0 * cloud_mid_cover);
-		float plates = 0.5 + 0.5 * sin(6.2831853 * (p.y - cloud_mid_height) / 400.0);
-		dep = mix(dep, min(dep, -log(rh) * tk * tk / 5423.0 + 0.4 * plates), w);
+		dep = mix(dep, min(dep, -log(rh) * tk * tk / 5423.0), w);
 	}
 	if (cloud_high_cover > 0.001) {
 		float n = wc_cover_noise_at(p.xz + vec2(9137.0, 3301.0) - (cloud_high_drift - cloud_drift), cloud_high_scale);
@@ -1878,11 +1926,22 @@ float wc_wave_sigma(vec3 p, float eta, float x) {
 	float rate = 2.0e-6 * exp(0.06 * max(tc, -40.0));
 	float rho_air = 1.225 * exp(-p.y / 8500.0);
 	float ice = clamp((-20.0 - tc) / 10.0, 0.0, 1.0);
-	// Pile of plates (wave_plate_gaps() on the CPU).
-	float stack = smoothstep(0.25, 0.55, wc_value_noise(p.xz / 9000.0 + vec2(3.1, 7.7)));
-	float f = fract((p.y - cloud_mid_height) / 400.0 + 0.4 * wc_value_noise(p.xz / 4000.0));
-	float gap = stack * smoothstep(0.02, 0.08, f) * (1.0 - smoothstep(0.36, 0.42, f));
-	return 1.5 * rho_air * rate * x / mix(0.01, 917.0 * 30e-6, ice) * (1.0 - gap);
+	return 1.5 * rho_air * rate * x / mix(0.01, 917.0 * 30e-6, ice);
+}
+
+// Pile of plates: the drier sheets' extra dew point depression (wave_plate_depression() on the CPU), read at each
+// sample (wc_wave_depression is read once a coarse step).
+float wc_plate_dep(vec3 p) {
+	if (cloud_mid_cover <= 0.001) {
+		return 0.0;
+	}
+	float stack = smoothstep(0.05, 0.35, wc_value_noise(p.xz / 9000.0 + vec2(3.1, 7.7)));
+	if (stack <= 0.0) {
+		return 0.0;
+	}
+	float d = (p.y - cloud_mid_height) / (1.5 * cloud_mid_thickness + 300.0);
+	float sheets = 0.5 + 0.5 * sin(6.2831853 * ((p.y - cloud_mid_height) / 220.0 + 0.15 * wc_value_noise(p.xz / 15000.0)));
+	return 1.6 * stack * exp(-d * d) * (smoothstep(0.35, 0.65, sheets) - 0.5);
 }
 
 // p_dep >= 0: the dew point depression already read nearby (the sun samples reuse the step's; the moist layers
@@ -1902,7 +1961,7 @@ float wc_wave_extinction_d(vec3 p, float p_jitter, float p_dep, out float r_lift
 	if (r_dep < 0.0) {
 		r_dep = wc_wave_depression(p);
 	}
-	float x = eta - 125.0 * r_dep + p_jitter;
+	float x = eta - 125.0 * (r_dep + wc_plate_dep(p)) + p_jitter;
 	if (x <= 0.0) {
 		return 0.0;
 	}
@@ -1948,13 +2007,21 @@ float wc_cells(vec3 p, float b0, vec2 ct, float p_warp, out float r_hh, out vec4
 			}
 			// Present where the cover (read here, not at the cloud's centre) beats the cell's own draw, fading over a
 			// margin: the cloud shrinks toward thinner cover instead of being cut off by a wall where it crosses it.
-			float keep = clamp((present - wc_hash2(sx + 7919, sz - 4241)) * 4.0, 0.0, 1.0);
+			// Sparse skies read the cover at the cell's middle (cells_at() on the CPU): no blocky outlines.
+			float draw = wc_hash2(sx + 7919, sz - 4241);
+			float pres = present;
+			float lowc = 1.0 - smoothstep(0.2, 0.3, ct.x);
+			if (lowc > 0.0 && present > draw - 0.15) {
+				vec2 cc = (vec2(float(cx), float(cz)) + 0.5) * cloud_cell_size + cloud_drift;
+				pres = mix(present, wc_cover_type(cc).x * (cloud_evolve >= 0.0 ? 2.9 : 2.2), lowc);
+			}
+			float keep = clamp((pres - draw) * 4.0, 0.0, 1.0);
 			if (keep <= 0.0) {
 				continue;
 			}
 			vec2 centre = vec2(float(cx) + 0.15 + 0.7 * wc_hash2(sx, sz + 3571), float(cz) + 0.15 + 0.7 * wc_hash2(sx - 2713, sz));
 			float size = pow(wc_hash2(sx + 1237, sz + 9109), 1.8);
-			float r = min((0.2 + 0.55 * size) * grow, 0.95) * sqrt(keep) * mix(0.7, 1.0, smoothstep(0.0, 0.2, age));
+			float r = min((0.2 + 0.55 * size) * grow, 0.95) * mix(0.6, 1.0, keep) * mix(0.7, 1.0, smoothstep(0.0, 0.2, age));
 			float u = length(q - centre) / r;
 			if (u >= 1.0) {
 				continue;
@@ -1983,7 +2050,7 @@ float wc_cells(vec3 p, float b0, vec2 ct, float p_warp, out float r_hh, out vec4
 			}
 			// Born thin, then dissolving: the outline shrinks into the noise from the edges in.
 			float decay = smoothstep(0.75, 1.0, age);
-			env = clamp(env * smoothstep(0.0, 0.08, age) - 1.2 * decay, 0.0, 1.0) * smoothstep(0.0, 0.04, hh); // the sagged base's softness
+			env = clamp((env * smoothstep(0.0, 0.08, age) - 1.2 * decay) * keep, 0.0, 1.0) * smoothstep(0.0, 0.04, hh); // the sagged base's softness; keep: cells_at()
 			if (env > best) {
 				r_decay = decay;
 				best = env;

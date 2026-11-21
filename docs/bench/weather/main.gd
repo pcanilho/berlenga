@@ -1220,6 +1220,11 @@ func _wave_report() -> void:
 			row += "#" if tau > 3.0 else ("+" if tau > 0.3 else ("|" if absf(q.x + 6000.0) < 1000.0 else " "))
 		print(row)
 	print("  thickest wave cloud over 12 km from the camera: %s, optical depth %.1f" % [str(best), best_tau])
+	# Up that column: the lens's plates (pile of plates: clear sheets between, get_wave_cloud_density_at in 1/m * 1000).
+	var pl := "  up that column, every 50 m from 3500 m:"
+	for k in 40:
+		pl += " %.1f" % (1000.0 * weather.get_wave_cloud_density_at(Vector3(best.x, 3500.0 + k * 50.0, best.z)))
+	print(pl)
 	# Connected: the vertical wind of the waves aloft, none near the ground; dry air or no wind, no wave cloud.
 	var wl := "  wave vertical wind at 4 km, x -12 to +8 km (m/s):"
 	var gl := "  get_wind_at().y there, at 4 km / at 50 m above ground:"
@@ -1419,6 +1424,8 @@ func _build_clouds() -> void:
 		weather.cloud_cover = 0.1 if cover < 0.0 else cover
 		weather.cloud_type = 0.4
 		weather.snap_to_settings()
+		weather.cloud_shadow_extent = 60000.0 # the band's shadow across the whole view (8 km ended in a straight edge)
+		weather.cloud_shadow_resolution = 512
 		var lake := MeshInstance3D.new()
 		var lm := PlaneMesh.new()
 		lm.size = Vector2(30000, 60000)

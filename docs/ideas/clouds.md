@@ -691,3 +691,24 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
   8 km into the slab, so a lens running on beyond that ended on the sphere where the cap met it (and lenses
   further along a ray were never drawn). It now runs up to 16 km in a fixed 32 coarse steps (a count that varied
   between pixels stepped the plates' gaps), each step tested on the largest lift at its middle and both ends.
+
+## Review 11 (21 Nov 2026; docs: plates gone, rainbow fringe, boxy cloudlet, lake band a flat wall)
+
+- **Plates from humidity sheets.** The pile of plates is now moist and dry sheets 220 m apart in the dew depression
+  (wave_plate_depression(), wc_plate_dep()), stacked where a 9 km noise says so and fading 1.5 thicknesses from the
+  layer's middle: a lens condenses as one plate where the air is uniform and as a pile where it is layered, as
+  observed ("pile d'assiettes"; Ludlam 1980, Clouds and Storms). The old cut-out gaps went: they left a puffy blob
+  once the march reached 16 km. The wave march is fixed at 32 steps over at most 16 km (a step count that varied with
+  the range stepped the plates).
+- **Smooth crests.** mountain_wave_eta() reads the displacement grid with a cubic B-spline (16 taps on the CPU, 4
+  bilinear taps in GLSL; Sigg and Hadwiger 2005): linear reads put kinks at the grid lines into the lens outlines.
+- **Iridescence** is a softer tint (1 + 1.6 (tint - 1), clamped), only on the thin edge (profile 0 to 0.08 and
+  out by 0.9), with the droplet radius wandering 2.5 um over 700 m so the bands are not drawn by a ruler.
+- **Mid-layer cloudlets.** A thin cover thinned the cloudlets by raising the billows' threshold until only their
+  peaks were left, the fine octaves' cells of a few texels, drawn as blocks (one read as letters). The threshold now
+  stops at a 0.3 cover and a thinner cover fades the cloudlets instead; the cover is read through a 300 m warp and
+  near texels are smoothed (Quilez's improved texture interpolation). The mid cover itself and the stratocumulus
+  cells are domain-warped (Quilez) so no edge runs straight for kilometres.
+- **Lake band.** Snow curtains in three octaves (2.5 km, 800 m, 250 m stretched across the view) wander 1.5 km,
+  fade in over the 100 to 700 m under the base, and the cover share is 0.8 so the band breaks into cells; the bench's
+  shadow grid spans 60 km so the band's shadow has no straight edge.

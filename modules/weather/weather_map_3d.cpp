@@ -1008,7 +1008,7 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 		// Lake-effect snow under its bands: 2 to 8 cm of snow an hour (Niziol et al. 1995), about 4 mm/h of water.
 		if (lake_params_now.x > 0.0f && lake_effect.derived) {
 			const float lake = WeatherClouds::lake_effect_at(lake_effect.field.ptr(), lake_effect.resolution, lake_effect.rect().position, lake_effect.extent, lake_params_now, lake_effect.wind_dir, p);
-			cover = 1.0f - (1.0f - cover) * (1.0f - 0.95f * lake);
+			cover = 1.0f - (1.0f - cover) * (1.0f - 0.8f * lake);
 			t = MAX(t, 0.75f * lake);
 			r += 4.0f * lake;
 		}
