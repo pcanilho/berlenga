@@ -1975,3 +1975,47 @@ func _ground_color_tests() -> void:
 	_check("ground colour: rain darkens it by porosity (0.6 of dry soaked at porosity 0.5), snow covers it with its albedo, snow beyond the terrain answers alone", is_equal_approx(a_wet.r, a_flat.r * 0.6) and is_equal_approx(a_snow.r, 0.7) and is_equal_approx(a_snow.b, 0.7) and a_snow.a == 1.0 and is_equal_approx(a_snow_far.r, 0.7) and a_snow_far.a == 1.0 and a_bare.a == 1.0 and a_bare.r < 0.6, "wet %s (dry %s), snow %s, snow past the terrain %s, bare %s" % [a_wet, a_flat, a_snow, a_snow_far, a_bare])
 	tm = null
 	gen.queue_free()
+	await _ground_color_meadow_tests()
+
+
+# The plants' colour over the ground (WorldPlantColorProvider, GrassField3D's sward cover): gas over a meadow takes its
+# green, gas over a worn path through it the bare tread.
+func _ground_color_meadow_tests() -> void:
+	if not ClassDB.class_exists("GrassField3D"):
+		_skip("ground colour meadow", "needs the vegetation module")
+		return
+	var root := Node3D.new()
+	add_child(root)
+	var w := 65
+	var data := PackedFloat32Array()
+	data.resize(w * w)
+	var shape := HeightMapShape3D.new()
+	shape.map_width = w
+	shape.map_depth = w
+	shape.map_data = data
+	var body := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	cs.shape = shape
+	body.add_child(cs)
+	root.add_child(body)
+	var dm := TerrainDataMap3D.new()
+	dm.size = 64.0
+	dm.resolution = 64
+	root.add_child(dm)
+	await get_tree().physics_frame
+	dm.bake()
+	var grass := GrassField3D.new()
+	grass.radius = 8.0
+	# A worn path along x = 0 (1500 walkers a year, bare soil in its tread).
+	grass.paths = [{"points": PackedVector3Array([Vector3(0, 0, -30), Vector3(0, 0, 30)]), "width": 1.5, "passes": 1500.0}]
+	root.add_child(grass)
+	grass.data_map = grass.get_path_to(dm)
+	for i in 10:
+		grass.update_at(Vector3(10, 0, 0))
+		await get_tree().process_frame
+	var meadow: Color = WorldContracts.get_ground().albedo_at(Vector3(12, 0, 5))
+	var path: Color = WorldContracts.get_ground().albedo_at(Vector3(0, 0, 5))
+	var far: Color = grass.get_far_color()
+	root.queue_free()
+	await get_tree().process_frame
+	_check("ground colour: gas over a meadow takes the sward's green (its far colour), over a worn path through it little of it", meadow.a > 0.8 and meadow.g > meadow.r and absf(meadow.g - far.g) < 0.02 and path.a < 0.5 * meadow.a, "meadow %s (far %s), path %s" % [meadow, far, path])
