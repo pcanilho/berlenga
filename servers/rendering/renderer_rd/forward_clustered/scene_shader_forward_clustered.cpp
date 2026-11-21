@@ -31,6 +31,8 @@
 #include "scene_shader_forward_clustered.h"
 
 #include "core/config/project_settings.h"
+#include "core/io/file_access.h"
+#include "core/os/os.h"
 #include "core/math/math_defs.h"
 #include "servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.h"
 #include "servers/rendering/renderer_rd/renderer_compositor_rd.h"
@@ -775,7 +777,19 @@ void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pip
 	RID shader_rid = get_shader_variant(p_pipeline_key.version, p_pipeline_key.color_pass_flags, p_pipeline_key.ubershader);
 	ERR_FAIL_COND(shader_rid.is_null());
 
+	// PIPELINE_MEM_LOG=1 in the environment: one line per pipeline compiled, with its time, the process's resident
+	// memory round it and the head of its shader (which material's pipelines cost a CPU driver what).
+	static const bool pipe_log = OS::get_singleton()->has_environment("PIPELINE_MEM_LOG");
+	auto rss_mb = []() -> int64_t {
+		Ref<FileAccess> f = FileAccess::open("/proc/self/statm", FileAccess::READ);
+		return f.is_valid() ? f->get_line().get_slicec(' ', 1).to_int() * 4 / 1024 : 0;
+	};
+	const uint64_t pl_t0 = OS::get_singleton()->get_ticks_msec();
+	const int64_t pl_m0 = pipe_log ? rss_mb() : 0;
 	RID pipeline = RD::get_singleton()->render_pipeline_create(shader_rid, p_pipeline_key.framebuffer_format_id, p_pipeline_key.vertex_format_id, primitive_rd, raster_state, multisample_state, depth_stencil_state, blend_state, 0, 0, specialization_constants);
+	if (pipe_log) {
+		print_line(vformat("PIPE %d ms rss %d -> %d MB uber %d ver %d flags %d code %d path '%s' head '%s'", int64_t(OS::get_singleton()->get_ticks_msec() - pl_t0), pl_m0, rss_mb(), int(p_pipeline_key.ubershader), int(p_pipeline_key.version), int(p_pipeline_key.color_pass_flags), code.length(), path, code.substr(0, 160).replace("\n", " ").replace("\t", " ")));
+	}
 	ERR_FAIL_COND(pipeline.is_null());
 
 	pipeline_hash_map.add_compiled_pipeline(p_pipeline_key.hash(), pipeline);

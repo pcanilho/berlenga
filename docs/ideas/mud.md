@@ -1340,6 +1340,31 @@ P times a year against the regrowth half-life T days, P T / (365 ln 2) passes ov
 re-reads it. Bench --test=trails: a daily trail holds 43.3 passes; a wheel sinks 22 mm on it against 52 mm beside it;
 in 20 mm/h rain water stands on it 16 frames (sped up) before the ground beside it.
 
+### Round 21: proposed (21 Nov, card posted), research notes
+
+**21.1 Engines drown, cars flood.** Hydrolock: an engine that draws water through its air intake stalls (water does
+not compress; a running engine bends rods). Makers rate a wading depth from the intake's height (typically 0.5 to
+0.9 m for off-roaders, raised by a snorkel to the roof line); off-road games model it as a stall past the intake with
+a snorkel upgrade (SnowRunner's snorkel addon). A car's body is not sealed: water comes in through door seals and
+the floor at an orifice rate Q = Cd A sqrt(2 g h) under the head outside (cars sink in one to a few minutes once
+floating: flood-safety guidance and the vehicle tests of Martinez-Gomariz et al. 2017). Plan: PhysXVehicle3D
+`air_intake_height` (with a snorkel raising it), the engine's torque cut and a stall once the water passes it;
+`hull_seal` falling as the cab fills by the orifice rate over a leak area, so a floating car settles and sinks;
+draining again on land.
+
+**21.2 Wet trails pug.** Treading damage on wet soils (pugging, poaching): hooves at 100 to 400 kPa (deer to cattle)
+punch into soil wetter than its plastic limit, leaving pocked mud that holds water and recovers over weeks to months
+(Climo and Richardson 1984; Drewry 2006, review of natural recovery from treading). Plan: on trails from
+WorldStand.trail_at(), when the soil is wet past a threshold, print hoof pocks over the tread at the trail's passes
+(as the walker steps' prints), worn and slumped, healed by the wear's regrowth; puddles fill the pocks.
+
+**21.3 Bow waves.** A vehicle wading at a walking pace pushes a bow wave that keeps the water lower round its engine
+bay (the wading technique taught for off-roaders: steady, about 5 to 8 km/h); faster, the wave climbs over the bonnet.
+A body in shallow water makes a wave by its depth Froude number Fr = v / sqrt(g h): near 1 the bow wave steepens and
+breaks. Plan: through the water contract's disturb() (owner-keyed moving disturbance) with the chassis' wet width
+and speed, the bow's height from Fr, the wake washing banks through the ford's bank path (_ford()), and the
+water level at the intake (21.1) read with the bow's trough.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

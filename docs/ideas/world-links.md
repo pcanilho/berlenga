@@ -323,3 +323,29 @@ mm a day; Bruijnzeel et al. 2005).
 3. Muddy prints leave mud (built 19 Nov). Bodies out of mud carry a clay film as well as water; each print on firm
    ground hands a share of it to the ground's tracked mud (`WorldGround.track_mud`, the contract's first write), the
    same depleting load as the wet prints. Vehicles and legs that already print their own mud are left to it.
+
+## Round 8 candidates (21 Nov, card to Paulo)
+
+Tyre grip on snow, offered on the 20 Nov card, was already linked (71387ca8): that card is withdrawn.
+
+1. Salt bloom on sea rocks. Source: `WorldWeather.salt_at` (sea spray salt, g/m2), rain wash-off, the sun's
+   drying. Reader: rocks (the stone material) and cliff faces. Spray-zone rock dries to a white crust of halite where
+   the salt load is high and the surface has dried; rain dissolves it within minutes. Salt weathering in the spray
+   zone (haloclasty, tafoni and honeycomb hollows) concentrates where wetting and drying alternate most (Mustoe
+   1982; Matsukura and Tanaka 2000; Urosevic et al. 2013 on salt crystallisation in porous stone). Shading: a
+   crust share = smoothstep of salt load times dryness, raising albedo and roughness in hollows first.
+2. Spray-wet sand holds sharper prints. Source: the weather's spray wetness and the swash's pore water (ground
+   wet map). Reader: sand's print deformation. Surface moisture above about 4-6 % by mass gives sand apparent
+   cohesion from capillary bridges, so prints keep steep walls and fine edges and wind lifts less of it (Namikas and
+   Sherman 1995; Namikas et al. 2010; Davidson-Arnott et al. 2008 on beach surface moisture); dry sand slumps
+   to its angle of repose. Sand already has moisture-driven cohesion from ground water: the link adds the spray's
+   wetting above the swash.
+3. Snow line and upslope rain from the cloud base. Source: `WorldWeather.cloud_base_at`, air temperature at
+   height, wind, terrain slope. Readers: rain, snow, vegetation. Linear theory of orographic precipitation (Smith
+   and Barstad 2004): uplift w = U . grad h condenses water at a rate set by the moist lapse rate, carried
+   downwind over a fall time of 1000-2000 s, so windward slopes get more and lee slopes a rain shadow; the snow
+   line sits where the wet-bulb freezing level meets the ground, about 300 m below the 0 C level in steady
+   precipitation (melting layer). An open "later" row of the matrix since 20 Nov.
+
+Sources: Smith and Barstad 2004 (J. Atmos. Sci. 61); Roe 2005 (Annu. Rev. Earth Planet. Sci.); Namikas and Sherman
+1995; Davidson-Arnott, Yang, Ollerhead, Hesp and Walker 2008; Urosevic et al. 2013; Matsukura and Tanaka 2000.

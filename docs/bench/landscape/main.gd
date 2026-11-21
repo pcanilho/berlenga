@@ -798,7 +798,9 @@ func _ready() -> void:
 	if landscape != null:
 		# Landscape3D streams heights coarse first: load every chunk exactly before the picture.
 		landscape.load_all_heights()
+		_mem_log("after load_all_heights")
 		landscape.update_lods_from_camera()
+		_mem_log("after update_lods_from_camera")
 		if args.has("seat-probe"):
 			# --seat-probe=x,z: stone seating against the drawn ground (generator vs landscape height, chunk LOD, stones).
 			var sv := String(args["seat-probe"]).split(",")
@@ -6303,7 +6305,15 @@ func _hut_icicles() -> void:
 
 func _mem_log(tag: String) -> void:
 	# What the renderer holds (lavapipe's GPU memory is system RAM) next to the process's own heap.
-	_log("memory %s: textures %d MB, buffers %d MB, video total %d MB, static %d MB" % [tag,
+	# Resident set from /proc (Linux): lavapipe, PhysX and driver heaps that the counters above do not see.
+	var rss := 0
+	var st := FileAccess.open("/proc/self/status", FileAccess.READ)
+	while st != null and not st.eof_reached(): # a /proc file reports no length: read it line by line
+		var ln := st.get_line()
+		if ln.begins_with("VmRSS:"):
+			rss = int(ln.substr(6).strip_edges().split(" ")[0]) >> 10
+			break
+	_log("memory %s: resident %d MB, textures %d MB, buffers %d MB, video total %d MB, static %d MB" % [tag, rss,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TEXTURE_MEM_USED) >> 20,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED) >> 20,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED) >> 20,
@@ -6789,16 +6799,23 @@ func _powder_avalanche() -> void:
 	var best := Vector3.INF
 	var best_fall := Vector2.ZERO
 	var best_score := -INF
-	var xx := wr.position.x + stp
-	while xx < wr.end.x - stp:
-		var zz := wr.position.y + stp
-		while zz < wr.end.y - stp:
+	var n_steep := 0
+	var steep_snow := 0.0
+	# --av-margin (400 m): faces this far in from the map's edge, so the camera has ground under it.
+	var avm := maxf(stp, float(args.get("av-margin", "400")))
+	var xx := wr.position.x + avm
+	while xx < wr.end.x - avm:
+		var zz := wr.position.y + avm
+		while zz < wr.end.y - avm:
 			var p := Vector3(xx, 0, zz)
 			var g := _slip_grad(p)
 			var ang := rad_to_deg(atan(g.length()))
+			if ang >= float(args.get("av-min-deg", "32")) and ang <= 45.0:
+				n_steep += 1
+				steep_snow = maxf(steep_snow, snow.get_depth_at(p))
 			if ang >= float(args.get("av-min-deg", "32")) and ang <= 45.0 and snow.get_depth_at(p) >= float(args.get("av-min-snow", "0.3")):
 				var fall := -g.normalized()
-				var score := (1.0 - absf(fall.dot(sun_h))) * 2.0 + gen.get_height(p) / 1000.0
+				var score := (1.0 - absf(fall.dot(sun_h))) * 2.0 + gen.get_height(p) / 1000.0 + minf(snow.get_depth_at(p), 1.5)
 				if score > best_score:
 					best_score = score
 					best = Vector3(xx, gen.get_height(p), zz)
@@ -6814,7 +6831,7 @@ func _powder_avalanche() -> void:
 				deepest = maxf(deepest, snow.get_depth_at(Vector3(xs, 0, zs)))
 				zs += stp * 4.0
 			xs += stp * 4.0
-		_log("powder avalanche: no steep face with snow on it (deepest snow %.2f m)" % deepest)
+		_log("powder avalanche: no steep face with snow on it (deepest snow %.2f m; %d faces in range, the most snow on one %.2f m)" % [deepest, n_steep, steep_snow])
 		return
 	var f3 := Vector3(best_fall.x, 0, best_fall.y)
 	var side := f3.cross(Vector3.UP).normalized()
@@ -6822,7 +6839,12 @@ func _powder_avalanche() -> void:
 		side = -side # the camera on the face's shaded side looks across it into the light: the cloud side- and back-lit
 	var dist := float(args.get("av-dist", "260"))
 	var cp := best + f3 * dist * 0.55 + side * dist * 0.8
-	cp.y = gen.get_height(cp) + float(args.get("av-cam-h", "30"))
+	cp.x = clampf(cp.x, wr.position.x + 60.0, wr.end.x - 60.0)
+	cp.z = clampf(cp.z, wr.position.y + 60.0, wr.end.y - 60.0)
+	var gh: float = gen.get_height(cp)
+	if is_nan(gh):
+		gh = height_at(cp.x, cp.z)
+	cp.y = gh + float(args.get("av-cam-h", "30"))
 	var look := best + f3 * 70.0 + Vector3.UP * 15.0
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	c3.global_position = cp

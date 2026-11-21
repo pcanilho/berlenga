@@ -919,8 +919,9 @@ Three colour changes a dune field shows from afar, after the grain-scale speckle
   so older, stabilised sand is redder than freshly worked sand. Drawn as a patchy low-frequency field (420 m and
   130 m value noise), strongest where the sand is thin and stable.
 - Interdune flats: deflation strips the fine sand and leaves a coarser, darker lag (Sharp 1963; Lancaster 1995). Keyed
-  to the loose sand depth the generator grew (TerrainGenerator3D.get_sand_depth_at(), published as
-  `terrain_sand_depth_map`): thin sand on flat ground darkens and greys.
+  to the generator's interdune floors (TerrainGenerator3D.get_sand_interdune_at(), published as
+  `terrain_sand_interdune_map`): sand depth against the deepest within about 50 m, so floors count even where they
+  still carry metres of sand (a first version keyed to absolute depth under 3 m found almost none in a real sea).
 - Slip faces: grain flows of fine, well-sorted sand at the angle of repose, paler than the stoss (Bagnold 1941). Keyed
   to slope (about 29 to 33 degrees), so it shows on any sand.
 

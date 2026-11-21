@@ -199,12 +199,12 @@ float tm_dune_vn(vec2 p_p, uint p_s) {
 	ivec2 c = ivec2(i);
 	return mix(mix(tm_dune_hash(c, p_s), tm_dune_hash(c + ivec2(1, 0), p_s), u.x), mix(tm_dune_hash(c + ivec2(0, 1), p_s), tm_dune_hash(c + ivec2(1, 1), p_s), u.x), u.y);
 }
-// The coarse lag's share on an interdune flat (the dune tone's lag term): thin sand on flat ground, patchy.
-float tm_dune_lag(vec2 p_xz, float p_normal_y, float p_depth) {
-	if (p_depth < 0.0) {
+// The coarse lag's share on an interdune flat (the dune tone's lag term): the floors between dunes, flat, patchy.
+float tm_dune_lag(vec2 p_xz, float p_normal_y, float p_interdune) {
+	if (p_interdune < 0.0) {
 		return 0.0;
 	}
-	float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	float thin = p_interdune;
 	return thin * smoothstep(0.93, 0.98, p_normal_y) * mix(0.45, 1.0, tm_dune_vn(p_xz / 23.0, 43u));
 }
 // Granule ripples (megaripples) on that lag: the coarse grains the wind cannot lift creep up into long, low ripples
@@ -274,17 +274,17 @@ vec2 tm_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, out 
 }
 // Dune-scale sand colour (docs/ideas/sand.md, "Dune-scale tone"): three of the changes a dune field shows from afar.
 // Rubefaction: iron-oxide coats redden grains that have lain still for millennia (Walker 1979; Pye and Tsoar 2009),
-// patchy over hundreds of metres and strongest on the stable sand of thin flanks and interdunes. Interdune flats: the
+// patchy over hundreds of metres and strongest on the stable sand of the interdunes. Interdune flats: the
 // wind strips the fine sand and leaves a coarser, darker lag (Sharp 1963; Lancaster 1995). Slip faces: grain flows of
-// fine, well-sorted sand, paler than the windward slope (Bagnold 1941). p_depth: the loose sand's depth (m), below 0
-// off the dune fields or unknown (only the slip faces show there).
-vec3 tm_dune_tone(vec2 p_xz, float p_normal_y, float p_depth) {
+// fine, well-sorted sand, paler than the windward slope (Bagnold 1941). p_interdune: the interdune floor's share
+// (TerrainGenerator3D.get_sand_interdune_at()), below 0 off the dune fields or unknown (only the slip faces show there).
+vec3 tm_dune_tone(vec2 p_xz, float p_normal_y, float p_interdune) {
 	vec3 t = vec3(1.0);
-	if (p_depth >= 0.0) {
-		float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	if (p_interdune >= 0.0) {
+		float thin = p_interdune;
 		float age = smoothstep(0.25, 0.7, 0.65 * tm_dune_vn(p_xz / 420.0, 41u) + 0.35 * tm_dune_vn(p_xz / 130.0, 42u));
 		t *= mix(vec3(1.0), vec3(1.15, 0.93, 0.78), age * (0.7 + 0.3 * thin));
-		float lag = tm_dune_lag(p_xz, p_normal_y, p_depth);
+		float lag = tm_dune_lag(p_xz, p_normal_y, p_interdune);
 		t *= mix(vec3(1.0), vec3(0.72, 0.7, 0.68), lag);
 	}
 	// Slopes of about 29 to 33 degrees: the slip face at the sand's repose.
@@ -730,6 +730,22 @@ vec2 tm_hex_hash(ivec2 v) {
 			dn -= g * A[k] * f;
 			albedo *= 1.0 + 0.14 * (v0 - 0.5) * f;
 			rk = R * rk;
+		}
+	}
+)";
+		}
+		if (i == LAYER_ROCK) {
+			// Rock slopes and faces from afar: water and lichen stain them in streaks down the fall line and the beds
+			// stand out as bands, so a pale face is not one even plane on which only the fine relief reads (crumpled
+			// paper). The fine relief is eased there too: the layers' textures and bump are of ground seen from above.
+			c += R"(	{
+		float face = 1.0 - smoothstep(0.55, 0.85, n.y);
+		if (face > 0.0) {
+			float streak = tm_vn(vec3(p.x / 1.3, p.y / 14.0, p.z / 1.3) + 71.0) * 0.6 + tm_vn(vec3(p.x / 4.0, p.y / 30.0, p.z / 4.0) + 17.0) * 0.4;
+			float bed = tm_vn(vec3(p.x / 40.0, p.y / 0.9, p.z / 40.0) + 5.0);
+			float sk = smoothstep(0.35, 0.75, streak);
+			albedo *= mix(1.0, (1.1 - 0.5 * sk) * (0.86 + 0.28 * bed) * (0.85 + 0.3 * tm_vn(p / 18.0 + 3.0)), face);
+			dn *= 1.0 - 0.4 * face;
 		}
 	}
 )";
@@ -1389,7 +1405,15 @@ void fragment() {
 	// far "swirls"). Close up they are as before.
 	float tm_fp0 = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 	float tm_sb = 1.0 + 2.0 * smoothstep(0.05, 0.6, tm_fp0);
-	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08 * tm_sb, tm_rock_cos + 0.04 * tm_sb, wn.y);
+	// The slope thresholds and the geology's rock edge are broken by noise (5 m and 1.3 m, the fine one faded out
+	// as the pixel grows): taken as they are, rock and soil met along smooth contours, a clean cut-out edge between
+	// grey and olive. Outcrops break up into tongues and islands.
+	float tm_edge_n = (tm_vn(wp / 5.0 + 11.0) - 0.5) * 0.24 + (tm_vn(wp / 1.3 + 23.0) - 0.5) * 0.12 * (1.0 - smoothstep(0.03, 0.15, tm_fp0));
+	// The layers go by the heightfield's own slope where cliff relief displaced the mesh (CUSTOM1): by the displaced
+	// faces' normal a ledge's flat tread took the soil, olive ladder strips under every lip on a grey cliff.
+	vec3 tm_cn = dot(tm_cl_n, tm_cl_n) > 0.5 ? normalize(mat3(MODEL_MATRIX) * tm_cl_n) : wn;
+	float tm_ny = tm_cn.y + tm_edge_n;
+	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08 * tm_sb, tm_rock_cos + 0.04 * tm_sb, tm_ny);
 	float beach_sand = -1.0;
 	float tm_till = 0.0;
 	if (tm_geology && terrain_geology_rect.z > 0.0) {
@@ -1397,8 +1421,8 @@ void fragment() {
 		beach_sand = clamp(-g.x, 0.0, 1.0);
 		// The generator knows where soil holds (Heimsath soil on slopes up to its repose); below its cells only
 		// faces past the cliff slope are forced bare.
-		float cliff_rock = 1.0 - smoothstep(tm_cliff_cos - 0.08 * tm_sb, tm_cliff_cos + 0.04 * tm_sb, wn.y);
-		float rock = max(clamp(g.y, 0.0, 1.0), cliff_rock);
+		float cliff_rock = 1.0 - smoothstep(tm_cliff_cos - 0.08 * tm_sb, tm_cliff_cos + 0.04 * tm_sb, tm_ny);
+		float rock = max(smoothstep(0.2, 0.8, clamp(g.y, 0.0, 1.0) + tm_edge_n * 2.5), cliff_rock);
 		// Moraine till (negative talus): unsorted debris under a thin soil, soil with stones through it (the height
 		// blend lets the scree's stones stand out of the soil).
 		float till = clamp(-g.z, 0.0, 1.0) * (1.0 - rock);
@@ -1429,7 +1453,7 @@ void fragment() {
 		float bare_near = steep * max(smoothstep(0.02, 0.2, clamp(g.y, 0.0, 1.0)), smoothstep(0.02, 0.2, clamp(g.z, 0.0, 1.0)));
 		scree += rest * bare_near;
 		rest *= 1.0 - bare_near;
-		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w) * smoothstep(0.88, 0.95, wn.y);
+		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w) * smoothstep(0.88, 0.95, tm_cn.y);
 		w[0] = rock;
 		w[1] = scree;
 		w[2] = rest * (1.0 - alluvium);
@@ -1450,7 +1474,7 @@ void fragment() {
 	// (34 degrees, 45 under marram).
 	// Past 47 degrees no sand holds at all: a wide band (to 56) left sand half-mixed over the steeper folds of sea
 	// cliffs behind beaches, pale sand-coloured curtains running up the rock.
-	float sand_steep = beach_sand > 0.0 ? mix(steep, 1.0 - smoothstep(0.682, 0.719, wn.y), beach_sand) : steep;
+	float sand_steep = beach_sand > 0.0 ? mix(steep, 1.0 - smoothstep(0.682, 0.719, tm_cn.y), beach_sand) : steep;
 	sand *= 1.0 - sand_steep;
 	for (int i = 0; i < 4; i++) {
 		w[i] *= 1.0 - sand;
@@ -1529,7 +1553,7 @@ void fragment() {
 		tm_sand(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		d += tm_sand_grain(wp, tm_fp0, a);
 		// The dune field's colour at this scale: redder old sand, coarse dark interdune flats, pale slip faces.
-		float tm_sdepth = terrain_sand_depth(wp);
+		float tm_sdepth = terrain_sand_interdune(wp);
 		if (tm_dune_tone_on) {
 			a *= tm_dune_tone(wp.xz, wn.y, tm_sdepth);
 		}
