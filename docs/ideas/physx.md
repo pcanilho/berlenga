@@ -2427,6 +2427,15 @@ The bench used to set `ground_albedo` 0.85, brighter than the plane's linear lum
 a few percent of brightness; with the real ground the puffs sit 1 to 4% darker, within the fit's spread. No gain was
 refitted. A follow-up for the world-links work: feed `ground_color` from the terrain or snow under the gas.
 
+### Wind filled the Flow grid (21 Nov)
+
+Snow's spindrift in strong wind filled max_blocks within seconds and cut the plume off. Flow's block allocation
+(NvFlowSummaryAllocateParams) keeps a block where its smoke is above smokeThreshold (0.02) or its speed above
+speedThreshold, with speedThresholdMinSmoke the smoke a fast block needs, 0 by default, and neighbour allocation on.
+weather_wind couples the wind's velocity into the whole grid, so every block the wind touched was fast, stayed, and
+allocated its neighbours. The backend now asks a fast block for half the smoke threshold: the leading edge of a fast
+plume still gets its blocks ahead of the smoke, and empty windy air is freed.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

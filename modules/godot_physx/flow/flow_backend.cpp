@@ -383,6 +383,10 @@ bool grid_step(Grid *p_grid, double p_time, float p_delta, const Settings &p_set
 	sim.advection.smoke.damping = p_settings.smoke_damping;
 	sim.advection.ignitionTemp = p_settings.ignition_temperature;
 	sim.vorticity.forceScale = p_settings.vorticity;
+	// Blocks stay allocated where the gas holds smoke, or moves fast and holds some smoke (the leading edge of a
+	// fast plume, ahead of its smoke). Flow's default asks no smoke at all of a fast block, so wind (weather_wind
+	// drives the whole grid) kept every block it blew through allocated, empty, and filled max_blocks in seconds.
+	sim.summaryAllocate.speedThresholdMinSmoke = 0.5f * sim.summaryAllocate.smokeThreshold;
 	sim.nanoVdbExport.enabled = NV_FLOW_TRUE;
 	sim.nanoVdbExport.readbackEnabled = p_settings.readback ? NV_FLOW_TRUE : NV_FLOW_FALSE;
 	sim.nanoVdbExport.temperatureEnabled = NV_FLOW_TRUE;
