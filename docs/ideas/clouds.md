@@ -627,6 +627,21 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
 - The anvil's upwind edge was a cut wall. It now bulges upwind (the overshooting outflow spreads a little against
   the wind), deepest at mid-depth (0.35 core radii), roughened by the noise.
 
+## Cumulus base detail: sag and scud (21 Nov 2026; Paulo's pick)
+
+- Flat bases are right: a field of cumulus shares one condensation level, level to tens of metres (Stull,
+  Practical Meteorology 2017, ch. 6). What breaks them up is below.
+- Sag: each cloud's base dips under its middle, where the updraft core brings moister air that condenses a little
+  lower: up to 5% of the cloud's height and at most 150 m (BASE_SAG), a parabola across the cloud, a random
+  0.4 to 1 per cloud. The base's softness is now in the cloud's own height (sagged), not the column's.
+- Scud (cumulus fractus, pannus): ragged fragments 20 to 450 m under the bases of cumulus and decks
+  (SCUD_DEPTH) where the air under them is near saturation, from eddies and rain-cooled air (WMO International
+  Cloud Atlas; Houze, Cloud Dynamics 2014). The share is State::scud, from the weather: the relative humidity at the
+  ground (none under 82%, all by 97%) or rain falling (all by 3 mm/h). The rags are the shape noise at an eighth
+  of its scale, thresholded, raised under a cloud or a deck; their top and bottom wander with the same noise, so
+  no straight walls; the cumulus wisps erode them. Bench `--humidity=H`.
+- Raster and PT match (640).
+
 ## Next: lake-effect snow bands (plan)
 
 - When cold air crosses open water: the lake at least 13 K warmer than the air at 850 hPa (Niziol et al. 1995,

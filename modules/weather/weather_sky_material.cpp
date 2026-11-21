@@ -1426,6 +1426,7 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	rs->material_set_param(m, "cloud_wave_levels", Vector4(p_state.wave_levels[0], p_state.wave_levels[1], p_state.wave_levels[2], p_state.wave_levels[3]));
 	rs->material_set_param(m, "cloud_wave_slab", p_state.wave_n > 0 ? Vector4(p_state.wave_y0, p_state.wave_y1, p_state.wave_y2, p_state.wave_y3) : Vector4());
 	rs->material_set_param(m, "cloud_air", Vector3(p_state.air_t0, p_state.air_rh0, p_state.air_y0));
+	rs->material_set_param(m, "cloud_scud", p_state.scud);
 	rs->material_set_param(m, "cloud_high_cover", p_state.high_cover);
 	rs->material_set_param(m, "cloud_high_height", p_state.high_height);
 	rs->material_set_param(m, "cloud_high_tau", p_state.high_tau);

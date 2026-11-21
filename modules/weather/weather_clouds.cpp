@@ -445,12 +445,12 @@ float top_height(const State &p_state, float p_type) {
 
 void State::update_top_max() {
 	float t = type;
-	base_min = base_height;
+	base_min = base_height - (scud > 0.0f ? SCUD_DEPTH : BASE_SAG);
 	top_max = base_height + top_height(*this, t);
 	for (int i = 0; i < storm_count; i++) {
 		t = MAX(t, storms[i][3]); // the cumulonimbus body's height (storm_body_at)
 		if (storm_base[i] > 0.0f) {
-			base_min = MIN(base_min, storm_base[i]);
+			base_min = MIN(base_min, storm_base[i] - BASE_SAG);
 			top_max = MAX(top_max, storm_base[i] + top_height(*this, MAX(type, storms[i][3])));
 		}
 		if (storm_outflow[i] > 0.0f) {
@@ -717,7 +717,11 @@ float cells_at(const State &p_state, const Vector3 &p_pos, float p_base, Vector2
 			}
 			// Height from width: humilis about half as tall as wide, mediocris nearly as tall, congestus taller.
 			const float hgt = MIN(top, Math::lerp(0.3f, 1.0f, smoothstep(0.0f, 0.3f, age)) * 2.0f * r * cell * Math::lerp(0.3f, 1.1f, smoothstep(0.2f, 0.9f, p_ct.y)) * Math::lerp(0.75f, 1.25f, hash2(sx + 5, sz + 11)));
-			const float hh = (p_pos.y - p_base) / hgt;
+			// The base sags under the cloud's middle: the updraft core carries moister air, so it condenses a little
+			// lower than the cloud's edges (bases are level to tens of metres over a field, lowest under the strongest
+			// updrafts; Stull, Practical Meteorology 2017, ch. 6), up to 5% of the cloud's height and BASE_SAG.
+			const float sag = MIN(0.05f * hgt, BASE_SAG) * Math::lerp(0.4f, 1.0f, hash2(sx + 71, sz - 19)) * (1.0f - u * u) / hgt;
+			const float hh = (p_pos.y - p_base) / hgt * (1.0f / (1.0f + sag)) + sag / (1.0f + sag);
 			if (hh <= 0.0f || hh >= 1.0f) {
 				continue;
 			}
@@ -743,6 +747,9 @@ float cells_at(const State &p_state, const Vector3 &p_pos, float p_base, Vector2
 			}
 			// Born thin, then dissolving: the outline shrinks into the noise from the edges in.
 			env = env * smoothstep(0.0f, 0.08f, age) - 1.2f * smoothstep(0.75f, 1.0f, age);
+			// The base's softness in the cloud's own height (its sagged base), not the column's: a flat cut at the
+			// column's base would shave the sag off.
+			env *= smoothstep(0.0f, 0.04f, hh);
 			best = MAX(best, CLAMP(env, 0.0f, 1.0f));
 		}
 	}
@@ -1086,12 +1093,42 @@ float storm_body_at(const State &p_state, const Vector3 &p_pos, float p_base, fl
 	return best;
 }
 
+// Cumulus fractus (scud): ragged fragments a few hundred metres under the bases of cumulus and decks in humid air,
+// where the moist layer below the condensation level reaches saturation in eddies and the downdrafts' cooled air (WMO
+// International Cloud Atlas, fractus and pannus; Houze, Cloud Dynamics 2014, ch. 7). The share of the sky's air
+// humid enough: none under 82% at the ground, all by 97%; or rain falling (its evaporation saturates the air under
+// the base, pannus under nimbostratus and showers): all by 3 mm/h.
+float scud_share(float p_rh, float p_rain) {
+	return MAX(smoothstep(0.82f, 0.97f, p_rh), smoothstep(0.3f, 3.0f, p_rain));
+}
+
+// The fragments at p under the base b: below a cloud or a deck (its envelope read just above the base), 20 to 450 m
+// down, the shape noise at an eighth of its scale thresholded into rags.
+float scud_at(const State &p_state, const Vector3 &p_pos, float p_b, Vector2 p_ct, float p_cells_at_base) {
+	const float share = p_state.scud;
+	const float dz = p_b - p_pos.y;
+	if (share <= 0.0f || dz < 20.0f || dz > SCUD_DEPTH) {
+		return 0.0f;
+	}
+	const float under = MAX(smoothstep(0.0f, 0.6f, p_cells_at_base), smoothstep(0.6f, 0.9f, p_ct.x));
+	if (under <= 0.0f) {
+		return 0.0f;
+	}
+	const Vector2 dr = p_state.drift;
+	const float fn = shape_at(p_state, Vector3(8.0f * (p_pos.x - dr.x) + dr.x, 8.0f * p_pos.y, 8.0f * (p_pos.z - dr.y) + dr.y));
+	// The rags' outlines are the noise's, the cloud above only raising it (its footprint as a cut left boxes with
+	// straight walls), and their depth wanders with it too.
+	const float v = smoothstep(20.0f, 120.0f, dz + 100.0f * (fn - 0.5f)) * (1.0f - smoothstep(150.0f, SCUD_DEPTH, dz + 200.0f * (fn - 0.5f)));
+	return 0.5f * share * v * smoothstep(0.45f, 0.8f, fn - 0.2f * (1.0f - under));
+}
+
 float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	if (p_pos.y < p_state.base_min || p_pos.y > p_state.top_max) {
 		return 0.0f;
 	}
 	const float b = base_at(p_state, Vector2(p_pos.x, p_pos.z));
-	if (p_pos.y < b) {
+	// A cumulus' sagging base reaches below the condensation level (cells_at), its scud further in humid air.
+	if (p_pos.y < b - (p_state.scud > 0.0f ? SCUD_DEPTH : BASE_SAG)) {
 		return 0.0f;
 	}
 	const Vector2 ct = cover_type_at(p_state, Vector2(p_pos.x, p_pos.z));
@@ -1132,7 +1169,7 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	// The storm's body: solid through, its outline the shape noise's where the envelope falls off.
 
 	const float lay = layered_share(ct.y);
-	const float cells = MAX(n - (1.0f - env), 0.0f) / MAX(env, 0.001f) * base * (1.0f - lay) * own;
+	const float cells = MAX(n - (1.0f - env), 0.0f) / MAX(env, 0.001f) * (1.0f - lay) * own; // the base's softness is in env (cells_at)
 	const float sc = sc_share(ct.y);
 	// A sheet: its noise lifted so an overcast layer closes (the shape noise alone left gaps at any cover); a
 	// stratocumulus deck is then mostly its cells, thick in the middle and thin at the rims.
@@ -1173,9 +1210,12 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	// and denser, so the face reads as stepped shelves over a smooth, dark underside.
 	const float hn = (p_pos.y - b) / MAX(wedge_top, 1.0f);
 	const float tiers = Math::lerp(0.55f, 1.0f, smoothstep(0.3f, 0.6f, Math::fmod(hn * 4.0f + 0.15f * n + 4.0f, 1.0f)));
-	const float wedge = shelf > 0.0f ? smoothstep(0.0f, 0.3f, shelf_arc) * smoothstep(0.05f, 0.25f, shelf / MAX(shelf_arc, 0.05f)) * (1.0f - smoothstep(0.85f, 1.0f, hn + 0.05f * (n - 0.5f))) * tiers : 0.0f;
+	const float wedge = shelf > 0.0f && hn >= 0.0f ? smoothstep(0.0f, 0.3f, shelf_arc) * smoothstep(0.05f, 0.25f, shelf / MAX(shelf_arc, 0.05f)) * (1.0f - smoothstep(0.85f, 1.0f, hn + 0.05f * (n - 0.5f))) * tiers : 0.0f;
 	// The deck gives way there too: the storm's raised cover made a flat-topped sheet round its base (a brim).
-	const float other = MAX(MAX(cells, deck_sc) * (1.0f - MAX(near_body, shelf)), wedge);
+	float other = MAX(MAX(cells, deck_sc) * (1.0f - MAX(near_body, shelf)), wedge);
+	if (p_pos.y < b - 20.0f && p_state.scud > 0.0f) {
+		other = MAX(other, scud_at(p_state, p_pos, b, ct, cells_at(p_state, Vector3(p_pos.x - so.x, b + 60.0f, p_pos.z - so.y), b, ct, 1.0f)));
+	}
 	const float shape = MAX(other, body) * (1.0f + MIN(eff, 0.0f));
 	// The storm's body its own density whatever the cover and type around it: the tower a cumulus' (0.1 per metre),
 	// the anvil ice (thin).
@@ -1256,6 +1296,7 @@ uniform float cloud_storm_outflow[8]; // m/s
 uniform float cloud_storm_snow[8]; // share falling as snow
 uniform vec2 cloud_storm_dir = vec2(1.0, 0.0); // the way the storms move
 uniform vec3 cloud_air = vec3(15.0, 0.6, 0.0); // ground temperature (C), relative humidity, its height (m)
+uniform float cloud_scud = 0.0; // State::scud
 uniform vec2 cloud_rain_slant = vec2(0.0); // horizontal metres per metre of fall (the low wind over the drops' 7 m/s)
 uniform float cloud_base_min = 1500.0;
 // Density effectors (WeatherMap3D.add_cloud_effector): world centre and radius (m), strength (> 0 adds cloud).
@@ -1811,7 +1852,8 @@ float wc_cells(vec3 p, float b0, vec2 ct, float p_warp, out float r_hh, out vec4
 				continue;
 			}
 			float hgt = min(top, mix(0.3, 1.0, smoothstep(0.0, 0.3, age)) * 2.0 * r * cloud_cell_size * mix(0.3, 1.1, smoothstep(0.2, 0.9, ct.y)) * mix(0.75, 1.25, wc_hash2(sx + 5, sz + 11)));
-			float hh = (p.y - b0) / hgt;
+			float sag = min(0.05 * hgt, 150.0) * mix(0.4, 1.0, wc_hash2(sx + 71, sz - 19)) * (1.0 - u * u) / hgt; // BASE_SAG, cells_at() on the CPU
+			float hh = (p.y - b0) / hgt / (1.0 + sag) + sag / (1.0 + sag);
 			if (hh <= 0.0 || hh >= 1.0) {
 				continue;
 			}
@@ -1833,7 +1875,7 @@ float wc_cells(vec3 p, float b0, vec2 ct, float p_warp, out float r_hh, out vec4
 			}
 			// Born thin, then dissolving: the outline shrinks into the noise from the edges in.
 			float decay = smoothstep(0.75, 1.0, age);
-			env = clamp(env * smoothstep(0.0, 0.08, age) - 1.2 * decay, 0.0, 1.0);
+			env = clamp(env * smoothstep(0.0, 0.08, age) - 1.2 * decay, 0.0, 1.0) * smoothstep(0.0, 0.04, hh); // the sagged base's softness
 			if (env > best) {
 				r_decay = decay;
 				best = env;
@@ -1856,7 +1898,9 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 	// Under a storm's anvil the column reaches the storm's height, for its body only: the single cells there keep
 	// their own type's height (raising the type made them a crowd of congestus as tall as the tower).
 	float tcol = cloud_storm_count > 0 ? max(ct.y, wc_storm_column(p.xz)) : ct.y;
-	if (p.y <= b0 || p.y >= b0 + wc_top_height(tcol)) {
+	float scud_share = cloud_scud; // State::scud
+	// BASE_SAG: a cumulus' base sags below b0 (wc_cells); SCUD_DEPTH: its fractus hang further in humid air.
+	if (p.y <= b0 - (scud_share > 0.0 ? 450.0 : 150.0) || p.y >= b0 + wc_top_height(tcol)) {
 		return 0.0;
 	}
 	float h = min((p.y - b0) / wc_top_height(ct.y), 1.0);
@@ -1902,7 +1946,7 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 	float thin = 1.0;
 	float body = cloud_storm_count > 0 ? wc_storm_body(p_unsheared, b0, n, p_step, near_body, thin) : 0.0; // storm_body_at() on the CPU
 	float lay = 1.0 - smoothstep(0.22, 0.36, ct.y); // layered_share() on the CPU
-	float cells = max(n - (1.0 - env), 0.0) / max(env, 0.001) * base * (1.0 - lay) * own;
+	float cells = max(n - (1.0 - env), 0.0) / max(env, 0.001) * (1.0 - lay) * own; // base softness in env (wc_cells)
 	float sc = wc_sc_share(ct.y);
 	float cell = 1.0; // rounded heaps, as on the CPU
 	if (sc > 0.0) {
@@ -1935,10 +1979,25 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 	float wedge_top = shelf_top + 80.0;
 	float hn = (p.y - b0) / max(wedge_top, 1.0);
 	float tiers = mix(0.55, 1.0, smoothstep(0.3, 0.6, fract(hn * 4.0 + 0.15 * n)));
-	float wedge = shelf > 0.0 ? smoothstep(0.0, 0.3, shelf_arc) * smoothstep(0.05, 0.25, shelf / max(shelf_arc, 0.05)) * (1.0 - smoothstep(0.85, 1.0, hn + 0.05 * (n - 0.5))) * tiers : 0.0;
+	float wedge = shelf > 0.0 && hn >= 0.0 ? smoothstep(0.0, 0.3, shelf_arc) * smoothstep(0.05, 0.25, shelf / max(shelf_arc, 0.05)) * (1.0 - smoothstep(0.85, 1.0, hn + 0.05 * (n - 0.5))) * tiers : 0.0;
 	// Inside the storm's body (and its shelf) their own outlines rule: single cells there would stand out of
 	// them as loose puffs.
 	float other = max(max(cells, deck) * (1.0 - max(near_body, shelf)), wedge);
+	// Cumulus fractus under the bases in humid air (scud_at() on the CPU).
+	float dz_s = b0 - p.y;
+	if (scud_share > 0.0 && dz_s > 20.0 && dz_s < 450.0) {
+		float hc_b;
+		vec4 loc_b;
+		float dec_b;
+		float env_b = wc_cells(vec3(p.x, b0 + 60.0, p.z), b0, ct, 1.0, hc_b, loc_b, dec_b);
+		float under = max(smoothstep(0.0, 0.6, env_b), smoothstep(0.6, 0.9, ct.x));
+		if (under > 0.0) {
+			vec3 q8 = vec3(8.0 * (p.xz - cloud_drift) + cloud_drift, 8.0 * p.y).xzy;
+			float fn = wc_shape(q8, p_step * 8.0);
+			float v = smoothstep(20.0, 120.0, dz_s + 100.0 * (fn - 0.5)) * (1.0 - smoothstep(150.0, 450.0, dz_s + 200.0 * (fn - 0.5)));
+			other = max(other, 0.5 * scud_share * v * smoothstep(0.45, 0.8, fn - 0.2 * (1.0 - under)));
+		}
+	}
 	float shape = max(other, body) * (1.0 + min(eff, 0.0));
 	bool storm_body = body > other; // its own density (extinction_at() on the CPU)
 	// The tower keeps more of its envelope: its lobes are kilometre turrets, and the cumulus erosion at full strength
