@@ -1791,6 +1791,17 @@ Research notes for Paulo's pick; nothing below is built yet.
   is a Flow gas: emitters on lee edges where the cover's transport flux is high (the cornice code already finds
   them), negative buoyancy for the snow's weight, Flow's wind and terrain floor carrying it.
 - Check: no plume under the threshold wind or from wet snow; plume length grows with wind.
+- **Built (21 Nov), follow-up 42.** As SnowDrift3D (Schneiderbauer and Prokop 2011) treats suspended snow, a
+  scalar carried by the wind with a settling speed: `SnowCover3D` finds lee crest cells (as the cornices: not
+  overtopped upwind, the ground falling 30 degrees or more downwind) with loose dry snow, takes the drift flux
+  (`transport_flux`, Pomeroy and Male) at the crest's sped-up wind (Taylor and Lee 1984) times the cell width
+  as the source, bins them along the ridge (8 m, doubled to fit `max_spindrift`) and feeds an internal
+  `SnowPowderCloud3D` (Flow gas, 2 m cells, slight negative buoyancy for the settling, emitted at 60% of the
+  10 m wind plus a 0.1 u lift off the lip). The gas fades by sublimation, 0.01 + 0.08 (1 - RH) per second
+  (Schmidt 1972). Tests: none at 4 m/s (threshold), 200 kg/s off a 256 m ridge at 18 m/s, 930 at 26 m/s,
+  none at +2 C. `--view=spindrift`. Open: in a gale Flow's block allocation fills (speed-threshold
+  allocation with no minimum smoke: the wind alone allocates), so the plume is cut off; asked of the PhysX
+  owner (summaryAllocate.speedThresholdMinSmoke).
 
 **Packed-snow roads.**
 - Traffic packs snow into a hard layer that polishes to ice where tyres spin or brake (Wallman and Astrom 2001,

@@ -73,6 +73,10 @@ constexpr float SNOW_REFRESH_MM = 10.0f;
 constexpr float SETTLE_RATE = 0.01f; // per hour
 // Below this the cell is bare.
 constexpr float SWE_MIN = 0.01f; // mm
+
+struct SpindriftStronger {
+	bool operator()(const SnowPowderCloud3D::Source &p_a, const SnowPowderCloud3D::Source &p_b) const { return p_a.rate > p_b.rate; }
+};
 constexpr float ICE_DENSITY = 917.0f; // kg/m3
 constexpr float SALT_DEPRESSION = 0.0593f; // K per g of NaCl in a kg of water (dilute; 2 ions, Kf 1.86)
 constexpr float SALT_EUTECTIC = 21.1f; // K: no brine stays liquid below -21.1 C
@@ -1778,6 +1782,7 @@ void SnowCover3D::_update_cells(bool p_parallel) {
 	if (cornices_enabled) {
 		_grow_cornices(inputs.dt_h, last_wind);
 	}
+	_find_spindrift(last_wind);
 	update_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 }
 
@@ -1794,6 +1799,7 @@ void SnowCover3D::_update_end() {
 	if (avalanche_node) {
 		avalanche_node->_track_recent(this); // every update's new snow and hours (follow-up 20)
 	}
+	_feed_spindrift();
 }
 
 void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
@@ -2471,6 +2477,173 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 		}
 	}
 	last_blown = float(moved / nn);
+}
+
+// Spindrift (follow-up 42): snow blown over a sharp lee crest leaves the ground where the flow separates and
+// streams out in a plume, the suspended part of the drift carried on by the wind while its grains settle (about
+// 0.3-0.5 m/s; Schmidt 1982) and sublimate (Schmidt 1972; Thorpe and Mason 1966). The source per crest cell is the
+// drift flux (Pomeroy and Male's saltation and suspension, transport_flux) at the crest's sped-up wind (Taylor and
+// Lee 1984, as the cornices) times the cell's width; as SnowDrift3D (Schneiderbauer and Prokop 2011) the plume is
+// then a scalar carried by the wind with a settling speed, here NVIDIA Flow's gas with a slight negative buoyancy.
+// Loose dry snow only: none from wet snow, a bare crust or under the threshold wind.
+void SnowCover3D::_find_spindrift(Vector2 p_wind) {
+	spindrift_next.clear();
+	spindrift_rate = 0.0f;
+	const int n = resolution;
+	const float u = p_wind.length();
+	if (!spindrift_enabled || owner || driven || u < 1.0f || cell_swe.size() != n * n) {
+		return;
+	}
+	const float cs = _cell_size();
+	const Vector2 dir = p_wind / u;
+	const float tan_lee = Math::tan(Math::deg_to_rad(30.0f));
+	auto cell = [&](int p_x, int p_z) { return CLAMP(p_z, 0, n - 1) * n + CLAMP(p_x, 0, n - 1); };
+	const int sx = int(Math::round(dir.x)), sz = int(Math::round(dir.y));
+	const float step = cs * Vector2(sx, sz).length();
+	if (step <= 0.0f) {
+		return;
+	}
+	// Crest cells with their flux first, then binned (8 m, doubled until the plumes fit max_spindrift), so the
+	// emitters spread along the whole ridge instead of crowding its strongest stretch.
+	struct Lip {
+		int x, z;
+		Vector3 at;
+		float q;
+		float speedup;
+	};
+	LocalVector<Lip> lips;
+	const int ring = MAX(4, int(Math::ceil(64.0f / cs)));
+	for (int z = 1; z < n - 1; z++) {
+		for (int x = 1; x < n - 1; x++) {
+			const int i = z * n + x;
+			const float swe = cell_swe[i];
+			if (swe <= SWE_MIN || cell_liquid[i] > 0.01f || (cell_canopy.size() == n * n && cell_canopy[i] > 0.2f)) {
+				continue;
+			}
+			if (crust_enabled && cell_crust[i] > 0.0f && cell_crust_burial[i] < 0.01f) {
+				continue; // a bare crust: nothing loose to lift
+			}
+			const float h = cell_ground[i];
+			const int iu = cell(x - sx, z - sz);
+			const int id1 = cell(x + sx, z + sz);
+			const int id2 = cell(x + 2 * sx, z + 2 * sz);
+			if (!(cell_ground[iu] <= h + 0.25f * step && cell_ground[id1] <= h && (h - cell_ground[id2]) >= tan_lee * 2.0f * step)) {
+				continue;
+			}
+			float around = 0.0f;
+			for (int k = 0; k < 8; k++) {
+				static const int RX[8] = { 1, 1, 0, -1, -1, -1, 0, 1 };
+				static const int RZ[8] = { 0, 1, 1, 1, 0, -1, -1, -1 };
+				around += cell_ground[cell(x + RX[k] * ring, z + RZ[k] * ring)] / 8.0f;
+			}
+			const float speedup = 1.0f + CLAMP(1.6f * (h - around) / (ring * cs), 0.0f, 0.6f);
+			const float t = inputs.temperature - lapse_rate * 0.001f * (h - inputs.ref_height);
+			const float q = transport_flux(u * speedup, t, cell_density[i]) * cs; // kg/s over the cell's width
+			if (q <= 0.0f) {
+				continue;
+			}
+			spindrift_rate += q;
+			const Vector3 c = _cell_center(x, z);
+			const float top = h + swe / MAX(cell_density[i], 30.0f);
+			// Where the plume leaves: half a cell past the lip and a metre up.
+			lips.push_back({ x, z, Vector3(c.x + 0.5f * cs * dir.x, top + 1.0f, c.z + 0.5f * cs * dir.y), q, speedup });
+		}
+	}
+	if (lips.is_empty()) {
+		return;
+	}
+	int bin = MAX(1, int(Math::round(8.0f / cs)));
+	while (true) {
+		const int bn = (n + bin - 1) / bin;
+		LocalVector<SnowPowderCloud3D::Source> bins;
+		bins.resize(bn * bn);
+		LocalVector<float> sp;
+		sp.resize(bn * bn);
+		for (const Lip &l : lips) {
+			const int b = (l.z / bin) * bn + l.x / bin;
+			SnowPowderCloud3D::Source &s = bins[b];
+			s.position = (s.position * s.rate + l.at * l.q) / (s.rate + l.q);
+			sp[b] = (sp[b] * s.rate + l.speedup * l.q) / (s.rate + l.q);
+			s.rate += l.q;
+		}
+		spindrift_next.clear();
+		for (uint32_t b = 0; b < bins.size(); b++) {
+			SnowPowderCloud3D::Source s = bins[b];
+			if (s.rate <= 0.0f) {
+				continue;
+			}
+			// Near the surface the wind is some 60% of the 10 m wind (log profile at 1-2 m); the separating flow
+			// lifts the drift off the lip (the plume rises over the lee eddy).
+			s.velocity = Vector3(dir.x, 0.0f, dir.y) * (0.6f * u * sp[b]) + Vector3(0.0f, 0.1f * u, 0.0f);
+			s.radius = CLAMP(0.5f * bin * cs, 1.0f, 6.0f);
+			spindrift_next.push_back(s);
+		}
+		if ((int)spindrift_next.size() <= max_spindrift || bin >= n) {
+			break;
+		}
+		bin *= 2;
+	}
+	spindrift_next.sort_custom<SpindriftStronger>();
+	if ((int)spindrift_next.size() > max_spindrift) {
+		spindrift_next.resize(max_spindrift);
+	}
+}
+
+// Sublimation of the suspended grains: a 100 um grain in air at 70% humidity lasts about a minute (Schmidt
+// 1972), faster in drier air, so the plume thins over tens of seconds to a few minutes.
+float SnowCover3D::spindrift_fade(float p_humidity) {
+	return 0.01f + 0.08f * CLAMP(1.0f - p_humidity, 0.0f, 1.0f);
+}
+
+void SnowCover3D::_feed_spindrift() {
+	if (owner || driven) {
+		return;
+	}
+	spindrift_sources = spindrift_next;
+	if (!spindrift_enabled) {
+		spindrift_sources.clear();
+	}
+	if (!spindrift_node && spindrift_sources.is_empty()) {
+		return;
+	}
+	if (!spindrift_node) {
+		spindrift_node = memnew(SnowPowderCloud3D);
+		spindrift_node->set_name("Spindrift");
+		// Thin and light: a few tens of grams of snow per cubic metre against the powder cloud's kilograms, settling
+		// slowly, so the gas barely sinks and drifts far on the wind.
+		spindrift_node->set_heaviness(0.05f);
+		spindrift_node->set_updraft(0.0f);
+		spindrift_node->set_smoke_per_kg(0.05f);
+		spindrift_node->set_max_sources(max_spindrift);
+		spindrift_node->set_grid(2.0f, 4096); // plumes hundreds of metres long: coarser than the powder cloud's 0.75 m
+		add_child(spindrift_node, false, INTERNAL_MODE_FRONT);
+	}
+	spindrift_node->feed(spindrift_sources);
+	if (Node3D *f = spindrift_node->get_flow()) {
+		f->set("smoke_fade", spindrift_fade(inputs.humidity));
+		f->set("smoke_density", 0.5f);
+		f->set("vorticity", 6.0f);
+	}
+}
+
+void SnowCover3D::set_spindrift_enabled(bool p_enabled) {
+	spindrift_enabled = p_enabled;
+	if (!p_enabled && spindrift_node) {
+		spindrift_sources.clear();
+		spindrift_node->feed(spindrift_sources);
+	}
+}
+
+Array SnowCover3D::get_spindrift_sources() const {
+	Array out;
+	for (const SnowPowderCloud3D::Source &s : spindrift_sources) {
+		Dictionary d;
+		d["position"] = s.position;
+		d["velocity"] = s.velocity;
+		d["rate"] = s.rate;
+		out.push_back(d);
+	}
+	return out;
 }
 
 void SnowCover3D::_grow_cornices(float p_dt_h, Vector2 p_wind) {
@@ -3723,6 +3896,17 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_slush_enabled", "enabled"), &SnowCover3D::set_slush_enabled);
 	ClassDB::bind_method(D_METHOD("is_slush_enabled"), &SnowCover3D::is_slush_enabled);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "slush_enabled"), "set_slush_enabled", "is_slush_enabled");
+	ClassDB::bind_method(D_METHOD("set_spindrift_enabled", "enabled"), &SnowCover3D::set_spindrift_enabled);
+	ClassDB::bind_method(D_METHOD("is_spindrift_enabled"), &SnowCover3D::is_spindrift_enabled);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "spindrift_enabled"), "set_spindrift_enabled", "is_spindrift_enabled");
+	ClassDB::bind_method(D_METHOD("set_max_spindrift", "count"), &SnowCover3D::set_max_spindrift);
+	ClassDB::bind_method(D_METHOD("get_max_spindrift"), &SnowCover3D::get_max_spindrift);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_spindrift", PROPERTY_HINT_RANGE, "1,32,1"), "set_max_spindrift", "get_max_spindrift");
+	ClassDB::bind_method(D_METHOD("get_spindrift_rate"), &SnowCover3D::get_spindrift_rate);
+	ClassDB::bind_method(D_METHOD("get_spindrift_source_count"), &SnowCover3D::get_spindrift_source_count);
+	ClassDB::bind_method(D_METHOD("get_spindrift_sources"), &SnowCover3D::get_spindrift_sources);
+	ClassDB::bind_method(D_METHOD("get_spindrift"), &SnowCover3D::get_spindrift);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("spindrift_fade", "humidity"), &SnowCover3D::spindrift_fade);
 	ClassDB::bind_method(D_METHOD("get_slush_at", "position"), &SnowCover3D::get_slush_at);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("ground_seal", "frost"), &SnowCover3D::ground_seal);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("slush_height", "swe", "liquid", "density", "slush"), &SnowCover3D::slush_height);

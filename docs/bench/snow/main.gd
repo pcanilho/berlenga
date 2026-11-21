@@ -89,6 +89,8 @@ class BodySnowStub extends WorldSnow:
 #                     into snow ice under a heavy load and melts in a thaw
 #   --test=crust      melt-freeze crusts: formed by a thaw and a frost, harder each cycle, a boot breaks a
 #                     first-cycle crust and stands on a second-cycle one, new snow over it
+#   --view=spindrift  the cornice ridge in a 20 m/s westerly after new snow: plumes off the crest (PhysX Flow),
+#                     --at=S seconds of plume (default 12), --wind=M m/s; traced, it also saves _raster from the same run
 #   --view=windblown  a ridge after new snow and a day of 15 m/s wind (--snow=H hours of wind, default 24;
 #                     --transport=0 without the wind moving lying snow)
 #   --test=transport  the wind moving lying snow (SnowTran-3D): the flux against Tabler (1991), a ridge
@@ -212,6 +214,8 @@ func _ready() -> void:
 			await _run_hoar_tests()
 		elif only == "suncups":
 			_run_suncup_tests()
+		elif only == "spindrift":
+			await _run_spindrift_tests()
 		elif only == "rime":
 			await _run_rime_tests()
 		elif only == "transport":
@@ -428,6 +432,7 @@ func _run_tests() -> void:
 	await _run_crust_tests()
 	await _run_rotten_tests()
 	await _run_slush_tests()
+	await _run_spindrift_tests()
 	await _run_hoar_tests()
 	_run_suncup_tests()
 	await _run_rime_tests()
@@ -636,6 +641,42 @@ func _run_slush_tests() -> void:
 	_check("melt water ponds as slush over frozen ground, drains away over thawed", open_slush == 0.0 and slush > 0.02 and wet == 1.0, "%.3f m of slush, none over thawed ground" % slush)
 	_check("the slush is pore water: inside the pack, no deeper than the drained pack", slush <= depth_frozen + 1e-4 and absf(depth_frozen - open_depth) < 0.02, "%.3f of %.3f m (%.3f m over thawed ground)" % [slush, depth_frozen, open_depth])
 	_check("a hard frost freezes it into the base: denser, not deeper", frozen_slush < 0.5 * slush and swe_frozen > swe + 5.0 and depth_after <= depth_frozen + 1e-3, "%.3f m left, %.0f to %.0f mm SWE, %.3f to %.3f m" % [frozen_slush, swe, swe_frozen, depth_frozen, depth_after])
+
+
+func _spindrift_at(wind: float, temp: float) -> Array:
+	weather.temperature = temp
+	weather.wind_speed = wind
+	weather.wind_direction = Vector2(1, 0)
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	snow.advance(600.0)
+	await get_tree().physics_frame
+	return [snow.get_spindrift_rate(), snow.get_spindrift_sources()]
+
+
+func _run_spindrift_tests() -> void:
+	print("Spindrift off ridges (follow-up 42):")
+	# The cornice ridge (crest along z at x = 0, a 50 degree lee face to the east), 0.4 m of new snow, westerlies.
+	await _setup("cornice", 256.0, 64, -10.0)
+	snow.add_snow(40.0, 100.0)
+	var calm: Array = await _spindrift_at(4.0, -10.0)
+	var gale: Array = await _spindrift_at(18.0, -10.0)
+	var storm: Array = await _spindrift_at(26.0, -10.0)
+	var srcs: Array = gale[1]
+	var on_crest := srcs.size() > 0
+	for s: Dictionary in srcs:
+		var p: Vector3 = s["position"]
+		var v: Vector3 = s["velocity"]
+		if absf(p.x) > 8.0 or v.x <= 0.0:
+			on_crest = false
+	_check("no plume under the threshold wind (Li and Pomeroy 1997)", calm[0] == 0.0 and (calm[1] as Array).is_empty(), "%.2f kg/s at 4 m/s (6.4 m/s at most over the crest)" % calm[0])
+	_check("a gale streams snow off the lee crest, downwind", gale[0] > 0.0 and on_crest, "%.1f kg/s from %d sources at 18 m/s, all on the crest blowing east" % [gale[0], srcs.size()])
+	_check("stronger wind, far more snow (flux about u^4)", storm[0] > 2.5 * gale[0], "%.1f kg/s at 26 m/s against %.1f at 18" % [storm[0], gale[0]])
+	var cloud: SnowPowderCloud3D = snow.get_spindrift()
+	_check("the plume is a Flow gas fed from the crest", cloud != null and (not ClassDB.class_exists("PhysXFlow3D") or (cloud.has_flow() and cloud.get_active_sources() == (storm[1] as Array).size())), "%s, %d emitters" % ["flow" if cloud and cloud.has_flow() else "no flow", cloud.get_active_sources() if cloud else 0])
+	_check("drier air thins it sooner (sublimation)", SnowCover3D.spindrift_fade(0.4) > 2.0 * SnowCover3D.spindrift_fade(0.95), "%.3f /s at 40%%, %.3f at 95%%" % [SnowCover3D.spindrift_fade(0.4), SnowCover3D.spindrift_fade(0.95)])
+	var wet: Array = await _spindrift_at(26.0, 2.0)
+	_check("no plume from wet snow", wet[0] == 0.0, "%.2f kg/s at +2 C" % wet[0])
 
 
 func _run_crust_tests() -> void:
@@ -2535,6 +2576,8 @@ func _build_view() -> void:
 			await _setup("avalanche", 256.0, 128, -8.0)
 	elif view == "windblown":
 		await _setup("ridge", 512.0, 256, -8.0)
+	elif view == "spindrift":
+		await _setup("cornice", 512.0, 256, -12.0)
 	elif view == "icicles" and OS.get_cmdline_user_args().has("--hero") and not OS.get_cmdline_user_args().has("--wall"):
 		# --hero looks out from under the roof: snow out to 64 m, past where the view meets the horizon haze.
 		await _setup("flat", 128.0, 256, -6.0)
@@ -2602,6 +2645,9 @@ func _build_view() -> void:
 		return
 	elif view == "windblown":
 		await _build_windblown(cam)
+		return
+	elif view == "spindrift":
+		await _build_spindrift(cam)
 		return
 	elif view == "shelter":
 		await _build_shelter(cam)
@@ -2991,6 +3037,62 @@ func _build_windblown(cam: Camera3D) -> void:
 	cam.fov = 45.0
 	for i in 4:
 		await get_tree().physics_frame
+	await _save_frame("")
+	get_tree().quit()
+
+
+func _build_spindrift(cam: Camera3D) -> void:
+	# The cornice ridge (crest along z, 150 m up, a 50 degree lee face to the east) after 0.3 m of new snow, in a
+	# westerly gale: snow streams off the crest and out over the lee in plumes (follow-up 42).
+	snow.drift_enabled = false
+	sun.visible = true
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 800.0
+	sun.rotation_degrees = Vector3(-22.0, 150.0, 0.0) # low, from the south-east: the plumes lit from the side
+	_add_terrain(512.0, 256, Color(0.33, 0.31, 0.27), 32.0)
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	snow.add_snow(30.0, 100.0)
+	var wind := 20.0
+	var at_s := 12.0
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--wind="):
+			wind = float(a.substr(7))
+		if a.begins_with("--at="):
+			at_s = float(a.substr(5))
+	weather.wind_speed = wind
+	weather.wind_direction = Vector2(1, 0)
+	weather.humidity = 0.7
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	snow.advance(600.0)
+	print("spindrift: %.0f kg/s off the crest from %d sources at %.0f m/s" % [snow.get_spindrift_rate(), snow.get_spindrift_source_count(), wind])
+	for sd: Dictionary in snow.get_spindrift_sources().slice(0, 3):
+		print("  source at %s, %s m/s, %.0f kg/s" % [str(sd["position"]), str(sd["velocity"]), sd["rate"]])
+	# From the south-east, over the lee: the crest across the frame, the plumes streaming off it toward the camera's
+	# right against the sky.
+	cam.position = Vector3(330.0, 210.0, 230.0)
+	cam.far = 3000.0
+	cam.look_at(Vector3(20.0, 140.0, -20.0))
+	cam.fov = 50.0
+	var wenv: Environment = null
+	for c in get_children():
+		if c is WorldEnvironment:
+			wenv = c.environment
+	var traced := wenv != null and wenv.pathtracing_enabled
+	if traced:
+		wenv.pathtracing_enabled = false
+	# One physics tick a frame so Flow steps with the frames (as the powder view).
+	Engine.max_physics_steps_per_frame = 1
+	for i in int(at_s * Engine.physics_ticks_per_second):
+		await get_tree().physics_frame
+	var cloud: SnowPowderCloud3D = snow.get_spindrift()
+	print("spindrift: flow %s, %d emitters" % ["yes" if cloud and cloud.has_flow() else "no", cloud.get_active_sources() if cloud else 0])
+	if traced:
+		await _save_frame("_raster")
+		process_mode = Node.PROCESS_MODE_ALWAYS
+		get_tree().paused = true
+		wenv.pathtracing_enabled = true
 	await _save_frame("")
 	get_tree().quit()
 

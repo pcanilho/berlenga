@@ -1,0 +1,1 @@
+- Spindrift: in wind over the blowing threshold, dry snow streams off sharp lee crests as plumes of Flow gas that drift on the wind and thin as they sublimate (`spindrift_enabled`).

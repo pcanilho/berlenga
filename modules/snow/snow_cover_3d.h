@@ -33,6 +33,7 @@
 #pragma once
 
 #include "snow_climate.h"
+#include "snow_powder_cloud_3d.h"
 
 #include "core/io/image.h"
 #include "core/object/worker_thread_pool.h"
@@ -325,6 +326,15 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	SnowBodies3D *bodies_node = nullptr; // snow carried by moving things, an internal child
 	bool avalanches_enabled = true;
 	SnowAvalanche3D *avalanche_node = nullptr; // slab release and run-out, an internal child
+	// Spindrift plumes (follow-up 42): snow blown off lee crests, as a light Flow gas (SnowPowderCloud3D).
+	bool spindrift_enabled = true;
+	int max_spindrift = 16;
+	SnowPowderCloud3D *spindrift_node = nullptr;
+	LocalVector<SnowPowderCloud3D::Source> spindrift_next; // worker: this update's sources
+	LocalVector<SnowPowderCloud3D::Source> spindrift_sources; // main thread: what feeds the plume
+	float spindrift_rate = 0.0f; // kg/s off all crests
+	void _find_spindrift(Vector2 p_wind); // worker, after the cells
+	void _feed_spindrift(); // main thread
 	const TerrainDataMap3D *_terrain_map() const;
 	uint64_t main_usec = 0; // main-thread time of the last update (gather, start, swap in)
 	// The textures' images, built off the main thread.
@@ -506,6 +516,15 @@ public:
 	SnowLakeIce3D *get_lake_ice() const { return lake_ice; }
 	SnowBodies3D *get_bodies() const { return bodies_node; }
 	SnowAvalanche3D *get_avalanches() const { return avalanche_node; }
+	void set_spindrift_enabled(bool p_enabled);
+	bool is_spindrift_enabled() const { return spindrift_enabled; }
+	void set_max_spindrift(int p_count) { max_spindrift = CLAMP(p_count, 1, 32); }
+	int get_max_spindrift() const { return max_spindrift; }
+	float get_spindrift_rate() const { return spindrift_rate; } // kg/s blown off the crests in the square
+	int get_spindrift_source_count() const { return (int)spindrift_sources.size(); }
+	Array get_spindrift_sources() const; // [{position, velocity, rate}] strongest first
+	SnowPowderCloud3D *get_spindrift() const { return spindrift_node; }
+	static float spindrift_fade(float p_humidity); // 1/s, Flow smoke_fade: the plume sublimating
 	void set_avalanches_enabled(bool p_enabled);
 	bool is_avalanches_enabled() const { return avalanches_enabled; }
 	void set_bodies_enabled(bool p_enabled);

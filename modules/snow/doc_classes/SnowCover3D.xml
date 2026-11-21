@@ -393,6 +393,30 @@
 				Returns the precipitation falling as snow at [param position], in millimetres of water an hour (the snow share of Jennings et al. 2018 at that height). [SnowFall3D] reads it.
 			</description>
 		</method>
+		<method name="get_spindrift" qualifiers="const">
+			<return type="SnowPowderCloud3D" />
+			<description>
+				The plume gas (an internal [SnowPowderCloud3D]) once a crest has blown, else [code]null[/code].
+			</description>
+		</method>
+		<method name="get_spindrift_rate" qualifiers="const">
+			<return type="float" />
+			<description>
+				Snow blown off the lee crests in the square at the last update, kg/s: the drift flux (saltation and suspension, Pomeroy and Male 1992) at each crest's sped-up wind times its width.
+			</description>
+		</method>
+		<method name="get_spindrift_source_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many plume sources feed the gas (at most [member max_spindrift]).
+			</description>
+		</method>
+		<method name="get_spindrift_sources" qualifiers="const">
+			<return type="Array" />
+			<description>
+				The plume sources, strongest first: dictionaries of [code]position[/code] (past the crest lip), [code]velocity[/code] (the near-surface wind over the crest) and [code]rate[/code] (kg/s).
+			</description>
+		</method>
 		<method name="get_suncup_relief_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -608,6 +632,13 @@
 				Returns the share of precipitation that falls as snow at air temperature [param celsius] and relative humidity [param humidity] (0 to 1), from the logistic model of Jennings et al. (2018): 1 / (1 + exp(-10.04 + 1.41 T + 0.09 RH)), RH in percent. Half falls as snow at 3.9 °C in dry air (50%) and at 1.4 °C in humid air (90%).
 			</description>
 		</method>
+		<method name="spindrift_fade" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="humidity" type="float" />
+			<description>
+				The rate (1/s) the plume thins by sublimation at relative [param humidity]: faster in dry air (Schmidt 1972). Set as the gas's smoke fade.
+			</description>
+		</method>
 		<method name="suncup_step" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="relief" type="float" />
@@ -713,6 +744,9 @@
 		<member name="liquid_capacity" type="float" setter="set_liquid_capacity" getter="get_liquid_capacity" default="0.05">
 			The share of its ice the snowpack holds as liquid water before meltwater and rain drain out.
 		</member>
+		<member name="max_spindrift" type="int" setter="set_max_spindrift" getter="get_max_spindrift" default="16">
+			Most plume sources: crest cells are gathered in 8 m bins, doubled until they fit, so the emitters spread along the ridge.
+		</member>
 		<member name="melt_shortwave_factor" type="float" setter="set_melt_shortwave_factor" getter="get_melt_shortwave_factor" default="0.0094">
 			Melt per watt of absorbed sunlight (mm m² h⁻¹ W⁻¹), the SRF of Pellicciotti et al. (2005). The sunlight is the clear-sky beam from [member sun_light] (Meinel and Meinel 1976) on each cell's slope, through the cloud shadow or cover of the weather map, times one minus the snow's albedo.
 		</member>
@@ -757,6 +791,9 @@
 		</member>
 		<member name="slush_enabled" type="bool" setter="set_slush_enabled" getter="is_slush_enabled" default="true">
 			Slush: melt water ponds in the pack's base over frozen ground and leaves only down the slope.
+		</member>
+		<member name="spindrift_enabled" type="bool" setter="set_spindrift_enabled" getter="is_spindrift_enabled" default="true">
+			Spindrift: in wind over the blowing threshold, loose dry snow streams off sharp lee crests (the ground falling 30 degrees or more downwind) as plumes of PhysX Flow gas that drift on the weather's wind, settle slowly and sublimate. Needs the PhysX module with Flow to show.
 		</member>
 		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
 			Updates per real second.
