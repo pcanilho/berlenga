@@ -3607,6 +3607,17 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Spindrift",
+   "settings": [
+    "SnowCover3D.spindrift_enabled"
+   ],
+   "note": "",
+   "what": "in strong wind, dry snow streams off sharp lee crests as plumes that drift downwind and thin as they sublimate.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Melt-freeze crusts",
    "settings": [
     "SnowCover3D.crust_enabled",

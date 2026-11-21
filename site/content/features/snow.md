@@ -40,6 +40,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Wind transport: after a day of 15 m/s wind the windward side is scoured bare and the lee is loaded.*
 
+- **Spindrift** (`SnowCover3D.spindrift_enabled`): in strong wind, dry snow streams off sharp lee crests as plumes that drift downwind and thin as they sublimate.
+
 - **Melt-freeze crusts** (`SnowCover3D.crust_enabled`; `SnowSurface3D.crust_plates`): a thawed surface refreezes into a crust that hardens each cycle; boots stand on hard ones and break thin ones into flat, sharp-edged plates tipped into the hole, with steps between them.
 
   ![Footprints in snow, soft prints without plates and crust broken into plates](media/snow-crust.jpg)
