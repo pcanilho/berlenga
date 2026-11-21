@@ -230,12 +230,17 @@ vec4 pack_at(vec2 p) {
 	return vec4(depth, c.y, c.z, c.w);
 }
 
-float dent_max(float depth, float density) {
-	float r = density / params.snow.x;
+// Rotten snow: wet snow (cover part 1 .z, 0..1) packs to a denser limit (to 700 kg/m3) and throws more aside (rim
+// share to 0.8), so a boot postholes a wet spring pack; dry snow (wet 0) is unchanged.
+float dent_max(float depth, float density, float wet) {
+	float w = clamp(wet, 0.0, 1.0);
+	float rc = max(params.snow.x, mix(params.snow.x, 700.0, w));
+	float r = density / rc;
 	if (r >= 1.0 || depth <= 0.0) {
 		return 0.0;
 	}
-	return depth * (1.0 - r) / max(1.0 - params.snow.y * r, 1e-3);
+	float f = mix(params.snow.y, max(params.snow.y, 0.8), w);
+	return depth * (1.0 - r) / max(1.0 - f * r, 1e-3);
 }
 
 struct Column {
@@ -323,14 +328,15 @@ Column column_at(vec2 p, uint flags) {
 	c.deformable = true;
 	c.surface = ground_at(p) + depth;
 	float density = pk.y;
-	c.max_dent = dent_max(depth, density);
-	c.rim_share = params.snow.y;
+	float wet = cover_sample(p, 1).z;
+	c.max_dent = dent_max(depth, density, wet);
+	c.rim_share = mix(params.snow.y, max(params.snow.y, 0.8), clamp(wet, 0.0, 1.0));
 	if ((flags & (STAMP_HELD | STAMP_BROKE)) != 0u) {
 		float thickness = pk.z;
 		float over = pk.w;
 		if (thickness > 0.0 && over < depth) {
 			if ((flags & STAMP_HELD) != 0u) {
-				c.max_dent = min(c.max_dent, dent_max(over, density));
+				c.max_dent = min(c.max_dent, dent_max(over, density, wet));
 			} else if (over < 0.05) {
 				c.crust = thickness;
 			}
@@ -1978,11 +1984,12 @@ void main() {
 		}
 		vec2 wp = texel_world(x, z);
 		vec4 pk = pack_at(wp);
-		float fresh = cover_sample(wp, 1).x;
+		vec4 part1 = cover_sample(wp, 1);
+		float fresh = part1.x;
 		float keep = params.relax.x;
 		float dn = max(st.x - fresh * params.relax.y, 0.0) * keep;
 		float rm = st.y * keep;
-		dn = min(dn, dent_max(pk.x, pk.y));
+		dn = min(dn, dent_max(pk.x, pk.y, part1.z));
 		rm = min(rm, pk.x);
 		st.x = dn > 1e-4 ? dn : 0.0;
 		st.y = rm > 1e-4 ? rm : 0.0;

@@ -181,12 +181,14 @@ void SnowCover3D::_allocate() {
 	cell_canopy.fill(0.0f);
 	cell_canopy_load.resize(nn);
 	cell_canopy_load.fill(0.0f);
-	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in }) {
+	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in }) {
 		f->resize(nn);
 		f->fill(0.0f);
 	}
 	catch_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RGBAF);
 	catch_texture.unref();
+	cups_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RH);
+	cups_texture.unref();
 	cell_height_valid.resize(nn);
 	cell_ground.fill(0.0f);
 	cell_swe.fill(0.0f);
@@ -315,7 +317,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
 	// where there is one, else the state of the nearest cell that was inside it.
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
+	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
@@ -469,6 +471,7 @@ void SnowCover3D::_prepare_inputs(double p_weather_dt, bool p_blocking) {
 	in.base_precip = precipitation_rate;
 	// The weather the cells read, as it is now: the update may run on a worker while the map moves on.
 	in.wx = in.weather ? in.weather->get_snapshot() : WeatherMap3D::Snapshot();
+	_gather_seal();
 	in.climate_map = get_climate_map_node();
 	in.climate_background = in.climate_map ? in.climate_map->get_climate_recipe()->get_precipitation() : 0.0f;
 
@@ -737,6 +740,7 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		const float rho_before = rho;
 		float refrozen = 0.0f;
 		float surface_melt = 0.0f;
+		float sun_melt = 0.0f, air_melt = 0.0f;
 
 		// Rain soaks into the pack (and drains out below what it holds).
 		liq += rain;
@@ -765,6 +769,12 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			const float m = (melt_temperature_factor * ts + melt_shortwave_factor * (1.0f - MAX(alb - lap_drop, 0.05f)) * g) * in.dt_h;
 			surface_melt = CLAMP(m, 0.0f, MAX(swe - liq, 0.0f));
 			liq += surface_melt;
+			// The share the direct sun melts (it digs suncups) and the share the air does (it smooths them).
+			if (m > 0.0f) {
+				const float sun_part = melt_shortwave_factor * (1.0f - MAX(alb - lap_drop, 0.05f)) * MAX(g - in.direct_normal * DIFFUSE_SHARE * in.sun_dir.y, 0.0f) * in.dt_h;
+				sun_melt = surface_melt * CLAMP(sun_part / m, 0.0f, 1.0f);
+				air_melt = surface_melt - sun_melt;
+			}
 		}
 		// Fire: the heat it puts into the pack melts snow whatever the air, its energy over the latent heat of
 		// fusion (334 kJ/kg), M = H dt / L_f (mm water); the cold pack's own warming is small beside a fire's tens
@@ -785,14 +795,30 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		}
 		swe = MAX(swe, liq);
 
-		// The pack holds liquid_capacity of its ice as liquid; the rest drains out.
+		// The pack holds liquid_capacity of its ice as liquid; the rest drains out. Over frozen ground it cannot
+		// soak away: it ponds in the base as a saturated slush layer and leaves only sideways, by Darcy flow down
+		// the slope (slushflows; Onesti 1985, Hestnes 1998), up to the pores the snow has (the rest runs off over it).
 		const float hold = liquid_capacity * (swe - liq);
 		if (liq > hold) {
-			const float out = liq - hold;
-			salt_pack *= hold / MAX(liq, 1e-6f); // the draining brine takes its salt
-			runoff += out;
-			swe -= out;
-			liq = hold;
+			float out = liq - hold;
+			const float seal = slush_enabled && cell_seal.size() == n * n ? cell_seal[i] : 0.0f;
+			if (seal > 0.0f && swe > SWE_MIN) {
+				const int xl = MAX(x - 1, 0), xr = MIN(x + 1, n - 1);
+				const int zd = MAX(z - 1, 0), zu = MIN(z + 1, n - 1);
+				const float gx = (cell_ground[z * n + xr] - cell_ground[z * n + xl]) / ((xr - xl) * cs);
+				const float gz = (cell_ground[zu * n + x] - cell_ground[zd * n + x]) / ((zu - zd) * cs);
+				const float g2 = gx * gx + gz * gz;
+				const float kept = out * seal * Math::exp(-slush_drain_rate(rho, Math::sqrt(g2 / (1.0f + g2)), MAX(cs, SLUSH_SLOPE_LENGTH)) * in.dt_h);
+				// Pore room (mm of water): the pack's depth less its ice.
+				const float room = MAX(swe / MAX(rho, 30.0f) * 1000.0f - (swe - liq) / 0.917f - hold, 0.0f);
+				out -= MIN(kept, room);
+			}
+			if (out > 0.0f) {
+				salt_pack *= (liq - out) / MAX(liq, 1e-6f); // the draining brine takes its salt
+				runoff += out;
+				swe -= out;
+				liq -= out;
+			}
 		}
 
 		// Settling (CLASS): toward a maximum density that grows with depth, higher in wet snow.
@@ -841,6 +867,9 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		}
 		if (hoar_enabled && cell_hoar.size() == n * n) {
 			_update_hoar(i, pos, t, snow, rain, surface_melt, rho_before, rho, swe, in);
+		}
+		if (cell_cups.size() == n * n) {
+			cell_cups.write[i] = suncups_enabled && swe > SWE_MIN ? suncup_step(cell_cups[i], sun_melt, air_melt, rain, snow / new_snow_density(t), lap_on ? lap : 0.0f, swe / MAX(rho, 30.0f)) : 0.0f;
 		}
 		cell_crust.write[i] = crust;
 		cell_crust_cycles.write[i] = cycles;
@@ -957,6 +986,42 @@ void SnowCover3D::_clear_hoar(int p_i) {
 		cell_hoar_burial.write[p_i] = 0.0f;
 		cell_hoar_age.write[p_i] = 0.0f;
 	}
+}
+
+// Suncups (docs/ideas/snow.md, follow-up 41): melt from direct sun deepens hollows that catch the light their
+// walls reflect (Betterton 2000), growing from the surface's roughness to a cellular relief that is full grown
+// after about 5 days of full sun (Mitchell and Tiedje 2010); melt by the air heats the surface evenly and
+// smooths them, rain washes them down and new snow fills them. Thin dirt gathers on the ridges and deepens the
+// hollows; a layer over about 3 mm insulates and stops them (Rhodes, Armstrong and Warren 1987; Driedger).
+static constexpr float CUPS_MAX = 0.3f; // m, ridge to hollow, full grown in clean snow
+static constexpr float CUPS_SEED = 0.01f; // m, the roughness they grow from
+static constexpr float CUPS_RATE = 0.045f; // per mm of sun melt: 0.01 m to 90% in about 125 mm (5 sunny days)
+static constexpr float CUPS_AIR_SMOOTH = 40.0f; // mm of air melt that smooths the relief by e
+static constexpr float CUPS_RAIN_SMOOTH = 10.0f; // mm of rain that smooths it by e
+
+float SnowCover3D::suncup_step(float p_relief, float p_sun_melt, float p_air_melt, float p_rain, float p_new_depth, float p_dirt, float p_depth) {
+	float a = MAX(p_relief, 0.0f);
+	const float deepen = 1.0f + 0.5f * Math::smoothstep(1.0e3f, 1.0e5f, p_dirt);
+	const float block = 1.0f - Math::smoothstep(1.0e6f, 4.0e6f, p_dirt);
+	const float top = MIN(CUPS_MAX * deepen * block, 0.5f * MAX(p_depth, 0.0f));
+	if (p_sun_melt > 0.0f && top > 0.0f) {
+		// In steps of at most 2 mm of melt, so a long update grows as a run of short ones would.
+		const int steps = CLAMP(int(Math::ceil(p_sun_melt / 2.0f)), 1, 64);
+		const float dm = p_sun_melt / steps;
+		for (int k = 0; k < steps; k++) {
+			a += CUPS_RATE * dm * (a + CUPS_SEED) * MAX(1.0f - a / top, 0.0f) * top / CUPS_MAX;
+		}
+	}
+	a *= Math::exp(-MAX(p_air_melt, 0.0f) / CUPS_AIR_SMOOTH - MAX(p_rain, 0.0f) / CUPS_RAIN_SMOOTH);
+	a = MAX(a - MAX(p_new_depth, 0.0f), 0.0f);
+	return CLAMP(a, 0.0f, MAX(top, 0.0f));
+}
+
+float SnowCover3D::get_suncup_relief_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_suncup_relief_at(p_position);
+	}
+	return pub.cups.is_empty() ? 0.0f : _sample(pub.cups, Vector2(p_position.x, p_position.z));
 }
 
 void SnowCover3D::_update_hoar(int p_i, const Vector3 &p_pos, float p_air, float p_snow, float p_rain, float p_melt, float p_rho_before, float p_rho, float p_swe, const Inputs &p_in) {
@@ -1734,6 +1799,7 @@ void SnowCover3D::_publish_cells() {
 	pub.crust_burial = cell_crust_burial;
 	pub.crust_wet = cell_crust_wet;
 	pub.hoar = cell_hoar;
+	pub.cups = cell_cups;
 	pub.hoar_layer = cell_hoar_layer;
 	pub.hoar_burial = cell_hoar_burial;
 	pub.hoar_age = cell_hoar_age;
@@ -1824,13 +1890,28 @@ void SnowCover3D::_build_upload() {
 		const float swe = cell_swe[i];
 		const float depth = swe > SWE_MIN ? swe / cell_density[i] : 0.0f;
 		const float hold = liquid_capacity * (swe - cell_liquid[i]);
-		const float wet = hold > 1e-4f ? CLAMP(cell_liquid[i] / hold, 0.0f, 1.0f) : 0.0f;
+		float wet = hold > 1e-4f ? CLAMP(cell_liquid[i] / hold, 0.0f, 1.0f) : 0.0f;
+		if (depth > 0.0f && cell_liquid[i] > hold) {
+			// Over 1: the share of the pack's depth that is slush (saturated from the base up).
+			const float pores = MAX(1.0f - (swe - cell_liquid[i]) / 917.0f / depth, 0.05f);
+			wet = 1.0f + CLAMP((cell_liquid[i] - hold) / 1000.0f / pores / depth, 0.0f, 1.0f);
+		}
 		w[i * 4 + 0] = Math::make_half_float(depth);
 		w[i * 4 + 1] = Math::make_half_float(pub.albedo.size() == n * n ? pub.albedo[i] : cell_albedo[i]);
 		w[i * 4 + 2] = Math::make_half_float(wet);
 		w[i * 4 + 3] = Math::make_half_float(cell_density[i] / 1000.0f);
 	}
 	upload_snow = Image::create_from_data(n, n, false, Image::FORMAT_RGBAH, bytes);
+	upload_cups.unref();
+	if (cell_cups.size() == n * n) {
+		Vector<uint8_t> cb;
+		cb.resize(n * n * 2);
+		uint16_t *cw = reinterpret_cast<uint16_t *>(cb.ptrw());
+		for (int i = 0; i < n * n; i++) {
+			cw[i] = Math::make_half_float(cell_cups[i]);
+		}
+		upload_cups = Image::create_from_data(n, n, false, Image::FORMAT_RH, cb);
+	}
 	// The catch map: the height of the surface the pack lies on, the canopy's load over its capacity, the
 	// canopy closure and the surface hoar. Materials leave what lies under an overhang bare and give tree crowns their load.
 	if (catch_image.is_valid() && catch_image->get_width() == n) {
@@ -1859,6 +1940,15 @@ void SnowCover3D::_apply_upload() {
 	}
 	snow_image = upload_snow;
 	upload_snow.unref();
+	if (upload_cups.is_valid()) {
+		cups_image = upload_cups;
+		upload_cups.unref();
+		if (cups_texture.is_null() || cups_texture->get_width() != n) {
+			cups_texture = ImageTexture::create_from_image(cups_image);
+		} else {
+			cups_texture->update(cups_image);
+		}
+	}
 	if (upload_catch.is_valid() && catch_image.is_valid() && catch_image->get_width() == n) {
 		catch_image = upload_catch;
 		upload_catch.unref();
@@ -2748,8 +2838,13 @@ void SnowCover3D::clear() {
 	_upload();
 }
 
-void SnowCover3D::add_snow(float p_swe_mm, float p_density) {
+void SnowCover3D::add_snow(float p_swe_mm, float p_density, bool p_world) {
 	_finish_background(true);
+	// A storm falls on the whole terrain: the world tier takes it too, so slopes outside the near square (where
+	// get_depth_at reads the world tier) carry it.
+	if (p_world && world && !owner) {
+		world->add_snow(p_swe_mm, p_density, false);
+	}
 	if (cell_swe.size() != resolution * resolution) {
 		_allocate();
 		_follow(_follow_position());
@@ -2762,6 +2857,9 @@ void SnowCover3D::add_snow(float p_swe_mm, float p_density) {
 		cell_density.write[i] = swe / MAX(depth_old + MAX(p_swe_mm, 0.0f) / rho_new, 1e-6f);
 		cell_albedo.write[i] = ALBEDO_FRESH;
 		cell_new_depth.write[i] = MAX(p_swe_mm, 0.0f) / rho_new;
+		if (cell_cups.size() == cell_swe.size()) {
+			cell_cups.write[i] = MAX(cell_cups[i] - MAX(p_swe_mm, 0.0f) / rho_new, 0.0f); // new snow fills the hollows
+		}
 		if (cell_crust.size() == cell_swe.size() && cell_crust[i] > 0.0f) {
 			cell_crust_burial.write[i] += MAX(p_swe_mm, 0.0f) / rho_new;
 		}
@@ -2944,6 +3042,15 @@ void SnowCover3D::add_hoar(float p_size_mm) {
 	_publish_cells();
 }
 
+void SnowCover3D::add_suncups(float p_relief) {
+	_finish_background(true);
+	for (int i = 0; i < cell_cups.size(); i++) {
+		cell_cups.write[i] = cell_swe[i] > SWE_MIN ? CLAMP(p_relief, 0.0f, 0.5f * cell_swe[i] / MAX(cell_density[i], 30.0f)) : 0.0f;
+	}
+	update_count++;
+	_upload();
+}
+
 float SnowCover3D::get_crust_thickness_at(Vector3 p_position) const {
 	if (_in_world_only(p_position)) {
 		return world->get_crust_thickness_at(p_position);
@@ -2987,6 +3094,67 @@ float SnowCover3D::get_albedo_at(Vector3 p_position) const {
 		return world->get_albedo_at(p_position);
 	}
 	return _sample(pub.albedo, Vector2(p_position.x, p_position.z));
+}
+
+// Frozen ground seals the pack's base: concrete frost a few centimetres deep with no thawed layer over it holds
+// melt water (Kane and Stein 1983: infiltration into frozen soil falls by orders of magnitude when its pores are
+// ice-filled). A thawed top soaks some up and lets it through.
+float SnowCover3D::ground_seal(Vector3 p_frost) {
+	return Math::smoothstep(0.0f, 0.05f, p_frost.y) * (1.0f - Math::smoothstep(0.0f, 0.03f, p_frost.x));
+}
+
+// Darcy flow through the saturated base: hydraulic conductivity K = k rho_w g / mu with the intrinsic permeability
+// of wet snow k = 0.077 d^2 exp(-7.8 rho / rho_w) (Shimizu 1970; Colbeck 1978), grains d 1 mm, mu 1.79e-3 Pa s
+// at 0 C: K about 8e-3 m/s at 500 kg/m3. A cell gets from upslope about what it gives downslope, so the layer
+// drains over the slope's length L (a linear reservoir, as hillslope models treat a saturated layer), at K s / L:
+// hours on a steep slope, days on the flat (a slush pond; s at least 0.005, the ground's own unevenness).
+float SnowCover3D::slush_drain_rate(float p_density, float p_slope_sine, float p_length) {
+	const float k = 0.077f * 1e-6f * Math::exp(-7.8f * CLAMP(p_density, 30.0f, 917.0f) / 1000.0f);
+	const float cond = k * 1000.0f * 9.81f / 1.79e-3f;
+	return cond * MAX(p_slope_sine, 0.005f) / MAX(p_length, 0.1f) * 3600.0f;
+}
+
+void SnowCover3D::_gather_seal() {
+	const int n = resolution;
+	WorldGround *wg = WorldContracts::ground();
+	if (!slush_enabled || driven || !wg || !wg->has_provider() || cell_liquid.size() != n * n || cell_ground.size() != n * n) {
+		cell_seal.clear();
+		return;
+	}
+	if (cell_seal.size() != n * n) {
+		cell_seal.resize(n * n);
+		cell_seal.fill(0.0f);
+	}
+	float *w = cell_seal.ptrw();
+	// Only where there is water to hold: a dry pack does not ask (the frost changes over days, not seconds).
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			if (cell_liquid[i] <= 0.0f || cell_swe[i] <= SWE_MIN) {
+				continue;
+			}
+			const Vector3 c = _cell_center(x, z);
+			w[i] = ground_seal(wg->frost_at(Vector3(c.x, cell_ground[i], c.z)));
+		}
+	}
+}
+
+float SnowCover3D::get_slush_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_slush_at(p_position);
+	}
+	const Vector2 p(p_position.x, p_position.z);
+	const float swe = _sample(pub.swe, p);
+	const float liq = _sample(pub.liquid, p);
+	const float rho = MAX(_sample(pub.density, p), 30.0f);
+	const float hold = liquid_capacity * (swe - liq);
+	if (swe <= SWE_MIN || liq <= hold) {
+		return 0.0f;
+	}
+	// The excess fills the pores (porosity 1 - ice share) from the base up.
+	const float depth = swe / rho;
+	const float pores = MAX(1.0f - (swe - liq) / 917.0f / MAX(depth, 1e-4f), 0.05f);
+	return MIN((liq - hold) / 1000.0f / pores, depth);
 }
 
 float SnowCover3D::get_wetness_at(Vector3 p_position) const {
@@ -3494,7 +3662,7 @@ void SnowCover3D::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("advance", "seconds"), &SnowCover3D::advance);
 	ClassDB::bind_method(D_METHOD("clear"), &SnowCover3D::clear);
-	ClassDB::bind_method(D_METHOD("add_snow", "swe_mm", "density"), &SnowCover3D::add_snow, DEFVAL(100.0f));
+	ClassDB::bind_method(D_METHOD("add_snow", "swe_mm", "density", "world"), &SnowCover3D::add_snow, DEFVAL(100.0f), DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("refresh_heights"), &SnowCover3D::refresh_heights);
 	ClassDB::bind_method(D_METHOD("get_map_rect"), &SnowCover3D::get_map_rect);
 	ClassDB::bind_method(D_METHOD("get_depth_at", "position"), &SnowCover3D::get_depth_at);
@@ -3510,10 +3678,23 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_crust_cycles_at", "position"), &SnowCover3D::get_crust_cycles_at);
 	ClassDB::bind_method(D_METHOD("get_crust_strength_at", "position"), &SnowCover3D::get_crust_strength_at);
 	ClassDB::bind_method(D_METHOD("get_hoar_at", "position"), &SnowCover3D::get_hoar_at);
+	ClassDB::bind_method(D_METHOD("get_suncup_relief_at", "position"), &SnowCover3D::get_suncup_relief_at);
+	ClassDB::bind_method(D_METHOD("get_cups_texture"), &SnowCover3D::get_cups_texture);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("suncup_step", "relief", "sun_melt", "air_melt", "rain", "new_depth", "dirt", "depth"), &SnowCover3D::suncup_step);
+	ClassDB::bind_method(D_METHOD("set_suncups_enabled", "enabled"), &SnowCover3D::set_suncups_enabled);
+	ClassDB::bind_method(D_METHOD("is_suncups_enabled"), &SnowCover3D::is_suncups_enabled);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "suncups_enabled"), "set_suncups_enabled", "is_suncups_enabled");
+	ClassDB::bind_method(D_METHOD("set_slush_enabled", "enabled"), &SnowCover3D::set_slush_enabled);
+	ClassDB::bind_method(D_METHOD("is_slush_enabled"), &SnowCover3D::is_slush_enabled);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "slush_enabled"), "set_slush_enabled", "is_slush_enabled");
+	ClassDB::bind_method(D_METHOD("get_slush_at", "position"), &SnowCover3D::get_slush_at);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("ground_seal", "frost"), &SnowCover3D::ground_seal);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("slush_drain_rate", "density", "slope_sine", "length"), &SnowCover3D::slush_drain_rate);
 	ClassDB::bind_method(D_METHOD("get_buried_hoar_at", "position"), &SnowCover3D::get_buried_hoar_at);
 	ClassDB::bind_method(D_METHOD("get_buried_hoar_depth_at", "position"), &SnowCover3D::get_buried_hoar_depth_at);
 	ClassDB::bind_method(D_METHOD("get_buried_hoar_age_at", "position"), &SnowCover3D::get_buried_hoar_age_at);
 	ClassDB::bind_method(D_METHOD("add_hoar", "size_mm"), &SnowCover3D::add_hoar);
+	ClassDB::bind_method(D_METHOD("add_suncups", "relief"), &SnowCover3D::add_suncups);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("buried_hoar_strength", "size_mm", "age_hours"), &SnowCover3D::buried_hoar_strength);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("hoar_deposition", "air_celsius", "humidity", "wind", "cloud", "shortwave"), &SnowCover3D::hoar_deposition_rate);
 	ClassDB::bind_method(D_METHOD("set_hoar_enabled", "enabled"), &SnowCover3D::set_hoar_enabled);

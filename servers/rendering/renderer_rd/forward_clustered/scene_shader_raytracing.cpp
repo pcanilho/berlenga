@@ -607,6 +607,11 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	actions.usage_flag_pointers["SCENE_DEPTH"] = &uses_scene_depth;
 	bool uses_instance_custom = false;
 	actions.usage_flag_pointers["INSTANCE_CUSTOM"] = &uses_instance_custom;
+	bool uses_custom_attribs = false;
+	actions.usage_flag_pointers["CUSTOM0"] = &uses_custom_attribs;
+	actions.usage_flag_pointers["CUSTOM1"] = &uses_custom_attribs;
+	actions.usage_flag_pointers["CUSTOM2"] = &uses_custom_attribs;
+	actions.usage_flag_pointers["CUSTOM3"] = &uses_custom_attribs;
 	// Light through the surface: shadow rays evaluate the fragment in the per-HG any-hit.
 	bool uses_transmission = false;
 	bool uses_backlight = false;
@@ -642,6 +647,7 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	r_entry.needs_full_any_hit = detected_alpha || blend_modei != RendererRD::MaterialStorage::ShaderData::BLEND_MODE_MIX || r_entry.casts_transmitted_shadow;
 	r_entry.uses_scene_depth = uses_scene_depth;
 	r_entry.uses_instance_custom = uses_instance_custom;
+	r_entry.uses_custom_attribs = uses_custom_attribs;
 	r_entry.vertex_code = gen_code.code.has("vertex") ? gen_code.code["vertex"] : String();
 	r_entry.fragment_code = gen_code.code.has("fragment") ? gen_code.code["fragment"] : String();
 	r_entry.fragment_globals = gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT];
@@ -1622,6 +1628,9 @@ SceneShaderRaytracing::PipelineBuildTask *SceneShaderRaytracing::_make_pipeline_
 		}
 		if (entry.uses_instance_custom) {
 			tex_defines += "#define RT_USES_INSTANCE_CUSTOM\n";
+		}
+		if (entry.uses_custom_attribs) {
+			tex_defines += "#define RT_USES_CUSTOM_ATTRIBS\n";
 		}
 		tex_defines += entry.render_mode_defines;
 

@@ -64,6 +64,7 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "rock_contact_map", "sampler2D" },
 		{ "rock_far_cover_map", "sampler2D" },
 		{ "rock_far_cover_rect", "vec4" },
+		{ "rock_far_reach_map", "sampler2D" },
 		{ "rock_contact_rect", "vec4" },
 		// The last glaciers' flow and wear, for ice-worn rock in the detail normal (TerrainGenerator3D.ice_worn_detail).
 		{ "terrain_ice_flow", "sampler2D" },

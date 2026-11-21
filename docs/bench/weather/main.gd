@@ -49,6 +49,8 @@ extends Node3D
 #   --type=T          clouds views: cloud_type (0.05 stratus, 0.2 stratocumulus, 0.6 cumulus)
 #   --wind=W          clouds views: wind_speed at 10 m (m/s)
 #   --temp=C          clouds views: the air temperature (below about 1 C a storm's precipitation falls as snow)
+#   --humidity=H      clouds views: the air's relative humidity at the ground (0 to 1; above 0.82 scud hangs under bases)
+#   --cam=x,y,z,tx,ty,tz  the camera at x,y,z looking at tx,ty,tz (after the view's own placement)
 #   --fov=D           the camera's vertical field of view (degrees), to frame a whole storm
 #   --storm=x,z,R,mm,out  clouds views: a storm (WeatherMap3D.add_storm, held), grown 15 min: its rain shafts under the
 #                     base and the shelf cloud on its gust front ahead of it (it moves with the wind, about 9 km in the 15 min); repeatable
@@ -98,6 +100,8 @@ var type_arg := -1.0
 var wind_arg := -1.0
 var temp_arg := -999.0
 var fov_arg := 0.0
+var cam_arg := PackedFloat64Array()
+var humidity_arg := -1.0
 var shear_arg := -1.0
 var wave_clouds_off := false
 var half_usec := 0
@@ -174,6 +178,8 @@ func _ready() -> void:
 		elif a.begins_with("--wind="): wind_arg = float(a.substr(7))
 		elif a.begins_with("--temp="): temp_arg = float(a.substr(7))
 		elif a.begins_with("--fov="): fov_arg = float(a.substr(6))
+		elif a.begins_with("--cam="): cam_arg = a.substr(6).split_floats(",")
+		elif a.begins_with("--humidity="): humidity_arg = float(a.substr(11))
 		elif a.begins_with("--shear-aloft="): shear_arg = float(a.substr(14))
 		elif a.begins_with("--haze-km="): haze_km = float(a.substr(10))
 		elif a == "--test": test = true
@@ -1240,6 +1246,9 @@ func _build_clouds() -> void:
 		cam.look_at_from_position(cam.position, Vector3(0, 160, -1000), Vector3.UP)
 	if fov_arg > 0.0:
 		cam.fov = fov_arg
+	if cam_arg.size() == 6:
+		cam.position = Vector3(cam_arg[0], cam_arg[1], cam_arg[2])
+		cam.look_at_from_position(cam.position, Vector3(cam_arg[3], cam_arg[4], cam_arg[5]), Vector3.UP)
 	add_child(cam)
 	pan_cam = cam
 	cam.make_current()
@@ -1264,6 +1273,8 @@ func _build_clouds() -> void:
 		weather.cloud_type = type_arg
 	if temp_arg > -999.0:
 		weather.temperature = temp_arg
+	if humidity_arg >= 0.0:
+		weather.humidity = humidity_arg
 	if wind_arg >= 0.0:
 		weather.wind_speed = wind_arg
 	if shear_arg >= 0.0:
@@ -1326,6 +1337,8 @@ func _build_clouds() -> void:
 		weather.wave_clouds = not wave_clouds_off
 		cam.position = Vector3(14000, 300, 24000)
 		cam.look_at_from_position(cam.position, Vector3(2000, 3800, 12000), Vector3.UP)
+		if cam_arg.size() == 6:
+			cam.look_at_from_position(Vector3(cam_arg[0], cam_arg[1], cam_arg[2]), Vector3(cam_arg[3], cam_arg[4], cam_arg[5]), Vector3.UP)
 		weather.rebake_terrain_wind()
 		_wave_report()
 	if view == "clouds_wide":

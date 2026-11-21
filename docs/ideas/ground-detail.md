@@ -850,3 +850,43 @@ than the 1 m sub-cells the other sources use), read by `_place` on the worker wh
 
 Bench: `--trail[=passes] --rooting[=years]` (rocks bench), `--no-wear` for the before frame. Stats
 `wear_armour`, `wear_shoulder`, `wear_rooting` in `get_ground_detail_tile_stats()`.
+
+## Next round candidates (21 Nov, research before the pick)
+
+**A. The middle-distance hand-over (120 to 250 m).** Today the terrain fades the 4 km rock cover map in over
+250 to 700 m (`smoothstep(250, 700)` in TerrainMaterial3D), while the coarse layers stop at their own reach (river
+beds 120 m, shore 100 m, scree 60 m, longer where streaming thins them). Where a layer's reach is short of 250 m the
+ground between shows neither stones nor their tone. Technique: the same as the near far-edge aggregate (Meng et al.
+2015, "Multi-scale modeling and rendering of granular materials"; the LEAN/LEADR idea of replacing what is too small
+to draw with its statistics), applied per layer: start the far map's fade at each layer's own last drawn distance
+(published with the map as a per-texel "drawn to" distance, or a per-layer reach in the rect's spare channel)
+instead of one 250 m constant, so the tone takes over exactly where the stones stop. Unreal's HLOD and Frostbite's
+terrain decorator fade both hand over on the drawn distance, not a fixed one. Measure first: an eye-level still at
+the shore and a river with --streaming, columns at 60/120/180/250 m, cover from the far map against the stones'
+own cover.
+
+Outcome (21 Nov, fixed as a bug): measured, the gap is the river beds'. Their cobbles thin from 0.8 of the
+layer's radius (96 m) and are gone by a cell past it (152 m), while their tone only began at 250 m (half in at
+475 m). RockField3D now publishes `rock_far_reach_map` (RG8 beside the cover map: each texel's fade start and end,
+8 m steps; empty texels next to a bed take its values so filtering keeps a narrow bed's), and TerrainMaterial3D
+fades each texel from there (river beds 96 to 152 m; rockfall and glacial texels keep 250 to 700 m, since the far
+tier's own stones carry on past their radius). The shore and scree show no gap at eye level (the shore's pebbles
+reach the middle distance through the detail classes and their far edge; scree has the terrain's parallax
+blocks), so they are left as they are. Raster and PT shore stills unchanged.
+
+**B. Frost-sorted patterned ground.** On cold, wet, gently sloping ground freeze-thaw cycling sorts stones from
+fines into circles (flat ground, 0.5 to 3 m across, stony borders round fine centres), nets and, past about 3°,
+downslope stripes (Washburn 1956; Kessler and Werner 2003, Science 299: a two-rule self-organising model, lateral
+sorting toward stone-rich ground and squeezing along the stone domains, that reproduces circles, labyrinths and
+stripes by stone share, slope and confinement). Technique: run the Kessler-Werner rules once on a small toroidal
+grid per lithology (offline-cheap, deterministic), tile it with hashed rotation and offsets (no visible
+repetition), and use it as a placement density for the detail classes: borders get the pebble class with stones
+on edge (frost-heaved stones stand up, long axis vertical), centres get fines only. Gate: mean annual air below
+about -1 to -2 °C (WeatherMap3D / WorldWeather temperature with the lapse rate), slope under 10° for circles,
+3 to 10° stripes, soil moisture high. Seasons: active-layer thaw shows the fresh sort in summer; snow hides it in
+winter (snow cover already reads WeatherMap3D).
+
+**C. Feet and tyres crush the new detail.** The trail armour and the rooting clods do not react to prints yet. The
+reacting-stones path (ground detail "Stones that react") already presses grains into a print and spills them at
+its rim; extend it to the rooting clods (GroundClods3D's crushed test on the print field, as its own clods) and
+make sure the wear stones carry the same react flags. Small; mostly wiring and a bench pass.

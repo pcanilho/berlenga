@@ -13,7 +13,8 @@ extends Node3D
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
 #   --exposure=x          the tonemapper's exposure (1): more for a dark cave seen from inside
-#   --taa                 temporal antialiasing as in play (24 frames settle before a sea-cave still)
+#   --taa                 temporal antialiasing as in play (24 frames settle before a sea-cave still); on by default
+#                         for raster stills, --no-taa for the single-sample frame
 #   --world-size=m        with --world: its side (2048); smaller for path traced stills in less memory
 #   --world               a generated 2 km world (range, strata, glaciers, scree, rivers, a lake, the sea) with a
 #                         RockField3D over it; --view=rockfall|scree|glacial|river|shore|cliff|tor|coast|landform puts the camera at the
@@ -129,6 +130,11 @@ func _ready() -> void:
 			var kv := a.substr(2).split("=", true, 1)
 			args[kv[0]] = kv[1] if kv.size() > 1 else "1"
 	raster = args.has("raster")
+	if raster and args.has("out") and not args.has("test") and not args.has("no-taa"):
+		# Raster stills take TAA by default, as play does: in one unjittered frame a stone's sub-pixel crystals,
+		# biotite flakes and facets point-sample into salt-and-pepper speckle (a fringe on the shaded side) that TAA
+		# resolves into the stone's real texture. --no-taa: the single-sample frame.
+		args["taa"] = "1"
 	WORLD = float(args.get("world-size", "2048"))
 	spp = int(args.get("spp", "16"))
 	out = args.get("out", "")

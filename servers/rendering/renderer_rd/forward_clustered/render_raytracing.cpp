@@ -2921,12 +2921,15 @@ static void _fill_surface_geometry_data(
 		geom.uv2_byte_offset = attrib_offset;
 		attrib_offset += attributes_compressed ? sizeof(uint16_t) * 2 : sizeof(float) * 2;
 	}
+	// CUSTOM0-3 follow in order; the hit shaders read them for vertex() (CUSTOM0..CUSTOM3), as raster's vertex stage does.
+	geom.custom_layout = MIN(attrib_offset, 0xFFu);
 	for (int ci = 0; ci < RSE::ARRAY_CUSTOM_COUNT; ci++) {
 		const uint32_t fmt_shift[RSE::ARRAY_CUSTOM_COUNT] = { RSE::ARRAY_FORMAT_CUSTOM0_SHIFT, RSE::ARRAY_FORMAT_CUSTOM1_SHIFT, RSE::ARRAY_FORMAT_CUSTOM2_SHIFT, RSE::ARRAY_FORMAT_CUSTOM3_SHIFT };
 		if (surface_format & (1ULL << (RSE::ARRAY_CUSTOM0 + ci))) {
 			uint32_t fmt = (surface_format >> fmt_shift[ci]) & RSE::ARRAY_FORMAT_CUSTOM_MASK;
 			const uint32_t fmtsize[RSE::ARRAY_CUSTOM_MAX] = { 4, 4, 4, 8, 4, 8, 12, 16 };
 			attrib_offset += fmtsize[fmt];
+			geom.custom_layout |= (8u | (fmt & 7u)) << (8 + 4 * ci);
 		}
 	}
 	geom.attribute_stride = attrib_offset;

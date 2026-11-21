@@ -1748,6 +1748,31 @@ func _run_frost_tests() -> void:
 	var sink1: float = surface.get_wheel_soil(Vector3(0.8, 0, 2), 3000.0, 0.35, 0.25, 200.0, 0.0, 0.0)["sinkage"]
 	_check("a wheel sinks deeper in the thaw's soaked layer than before the frost", fr.x > 0.03 and fr.y > fr.x and sink1 > 1.2 * sink0, "%.1f mm (%.1f mm before the frost), %.1f cm thawed" % [sink1 * 1000.0, sink0 * 1000.0, fr.x * 100.0])
 	wm.queue_free()
+	# Under a lasting pack (Kane and Stein 1983): frost made before the snow lies on under it, so a new node on a
+	# snowy late-winter day starts with concrete frost, not none.
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.4, 0.0)
+	var cold := WeatherMap3D.new()
+	cold.climate = load("res://cold_climate.gd").new()
+	add_child(cold)
+	var day := -1
+	var st := {}
+	for d in range(1, 120):
+		st = cold.get_season_on_day(d)
+		if float(st["snow_cover"]) > 0.5 and float(st["soil_frost"]) > 50.0:
+			day = d
+			break
+	cold.season_day = maxi(day, 1)
+	cold.snap_to_settings()
+	surface.frozen_ground = false # read the season again
+	for i in 2:
+		await get_tree().physics_frame
+	surface.frozen_ground = true
+	for i in 60:
+		await get_tree().physics_frame
+	var under: Vector3 = surface.get_frost_at(Vector3(0.5, 0, 0.5))
+	print("  day %d: snow cover %.2f, %.0f K days of frost: %.1f cm of frost under the pack" % [day, float(st.get("snow_cover", 0.0)), float(st.get("soil_frost", 0.0)), under.y * 100.0])
+	_check("frost made before the snow stays under the pack", day > 0 and under.y > 0.05, "%.1f cm on day %d" % [under.y * 100.0, day])
+	cold.queue_free()
 	near_on = true
 
 

@@ -1653,6 +1653,55 @@ photographs, e.g. Fikke et al. 2007, COST 727).
     from roughness elements) sets the least a windward face catches. Faces parallel to the wind still take
     none, as on real posts: a post's side seen across the wind stays bare but for its windward edge.
 
+## Follow-up 41: spring snow, suncups first (round 5, 21 Nov 2026; research before building)
+
+- **What suncups are.** Hollows from 2 cm up to half a metre across, in a cellular pattern with sharp ridges, on
+  melting snow in bright, dry, calm weather (Betterton 2000, arXiv physics/0007099; Post and LaChapelle). Their
+  height obeys an ablation equation, dh/dt = -P/L + D grad^2 h: a hollow takes the light its walls reflect
+  into it (a nonlocal term with a line-of-sight test) and so deepens, while diffusion (sun through the top
+  centimetre of grains, about 1 cm extinction) smooths short waves. Linear growth rate
+  omega = (a I / (pi L)) q - D q^2: one fastest wavelength. Mitchell and Tiedje (2010, JGR 115 F04039) evolve
+  a nonlinear form from random starts into quasi-periodic, chaotically drifting cups, fully developed in about
+  5 days of full sun in the field.
+- **What stops them.** Cloud, wind and warm air heat the surface evenly and smooth the cups out (Matthes;
+  Rhodes, Armstrong and Warren 1987); rain and new snow fill or flatten them. Thin dirt darkens and speeds
+  ablation, thicker than about 3 mm insulates (Driedger, via Betterton); dirt gathers on the ridges, which
+  then ablate slower, so dirty snow cups deeper (Workman: dirt on ridges 30-45 cm above the hollows). Thick
+  dirt blocks cups entirely (Mount St Helens ash on Mount Olympus).
+- **Penitentes**, the same instability by sublimation in high, very dry sun, 1-6 m: out of scope for the
+  game's climates; noted for mortal-plane.
+- **Build plan.** The cover's cells are 2 m, too coarse to evolve cups, so: (1) a per-cell cup amplitude on
+  the cover that grows with clear-sky melt hours toward the measured size (to about 0.3 m of relief in 5
+  sunny days, faster with ridge dirt, slower with thick dirt), and decays under cloud with melt, wind, rain
+  and new snow (filled by the new depth); (2) a periodic suncup tile made once by evolving the nonlinear
+  ablation equation from noise on a 64 x 64 grid (the published method, so the cells, ridges and spacing are
+  physical rather than a Voronoi stand-in), read at two rotations and scales and modulated by a slow noise so
+  no repeat shows; (3) the surface's vertex height and normals take amplitude x tile (real geometry, as Paulo
+  prefers), with the ridge dirt drawn darker on the crests. Then rotten snow (postholing deeper in a wet
+  isothermal pack) and slush over frozen ground.
+- **Built (21 Nov).** `SnowCover3D` splits each cell's melt into the direct sun's share and the air's; relief
+  grows logistically from 1 cm of roughness, 0.045 per mm of sun melt (in steps of at most 2 mm), to 0.3 m
+  (x1.5 with dust 1e3-1e5 mg/m2, none past 1-4 kg/m2 of dirt, at most half the pack); e-folds per 40 mm of air
+  melt and per 10 mm of rain; new snow fills it by its depth. Tests: 0.23 m after five sunny days (25 mm sun,
+  5 mm air a day), 0.03 m after three warm cloudy days, filled by 12 cm of new snow, 0.32 m dusty, 0 under a
+  thick layer, at most half a 20 cm pack. `SnowSurface3D` draws relief x a 96 x 96 tile grown once by the
+  damped Kuramoto-Sivashinsky equation (g 0.1, t 60, about 8 cups a tile, 3.2 m: cups about 0.4 m), laid by
+  hex-tiling (Mikkelsen 2022) so no repeat shows; geometry in vertex(), the same height in the fragment's
+  normal. Raster and PT agree (`--view=trail --suncups=0.2`). Next: ridge dirt drawn darker, rotten snow,
+  slush.
+- **Rotten snow, built (21 Nov).** Wet snow loses its bonds (Yamanoi and Endo 2002), so the Bekker moduli scale
+  by `SnowSurface3D.rotten_share` = 1 - 0.85 x wetness, and the dent cap packs toward 700 kg/m3 with up to 0.8
+  of the snow thrown aside (a bearing failure rather than a compaction). The GPU field reads the wetness from
+  the cover's part 1 .z (ground 518018ad). Test: 0.06 m in the cold, 0.19 m in the same pack at wetness 0.5.
+- **Slush, built (21 Nov).** Frozen ground stops infiltration (Kane and Stein 1983), so over concrete frost
+  (`WorldGround.frost_at`: frost over 5 cm, no thawed top) the water the pack cannot hold stays in its base as
+  a saturated layer and leaves by Darcy flow down the slope (slushflows: Onesti 1985, Hestnes 1998): K from
+  Shimizu's (1970) wet-snow permeability, about 8 mm/s, over a 50 m slope as a linear reservoir, so it
+  e-folds in about 5 h at 20 degrees and two weeks on the flat (a slush pond). Water past the pores runs off.
+  `get_slush_at`; the snow texture's wet channel carries 1 + the slush share of the depth, and the surface
+  goes grey-blue (albedo x 0.5-0.6, Warren 1982) and glossy as the water table nears the top. Without a
+  ground provider nothing is sealed. Next: lateral routing of slush between cells (it gathers in hollows).
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

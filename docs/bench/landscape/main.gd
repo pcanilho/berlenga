@@ -865,6 +865,8 @@ func _ready() -> void:
 		await _slip_walk()
 	if args.has("powder-avalanche") and snow != null:
 		await _powder_avalanche()
+	if args.has("suncups") and snow != null:
+		await _suncups()
 	if (args.has("face-sun") or args.has("face-away")) and sun != null:
 		# --face-sun=PITCH: turn the camera to the sun's azimuth, PITCH degrees below the horizon (godray shots).
 		var cam5: Camera3D = get_viewport().get_camera_3d()
@@ -877,6 +879,8 @@ func _ready() -> void:
 		var pitch := deg_to_rad(float(args.get("face-sun", args.get("face-away", "0"))))
 		cam5.look_at(cam5.global_position + flat * cos(pitch) - Vector3.UP * sin(pitch))
 		_log("facing the sun: azimuth dir %s, sun elevation %.1f deg" % [str(flat), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
+	if args.has("stand-trail"):
+		_stand_trail()
 	await _docs_links_setup()
 	# Raster: 160 frames, so the sky's reprojected clouds (one pixel of each 4x4 block a frame) have had ten
 	# samples a pixel; fewer leave the first frame's upsampled blocks and the march jitter in the picture
@@ -4581,6 +4585,20 @@ func _build_cover() -> void:
 	if args.get("floor", "") == "oak" and floor_sp.size() > 1:
 		floor_sp[1].set_meta("bench_bracken", true) # FLOOR_OAK_MIXED: bramble, bracken, ... (the --bracken view's plant)
 	b.species = floor_sp.slice(0, 3) + _wetland_species() + meadow_sp + floor_sp.slice(3)
+	if args.has("mounds") and ClassDB.class_has_method("PlantGenerator", "make_mounds"):
+		# --mounds=meadow|wood|both: ant hills and molehills in the meadows, wood ant nests at conifer edges
+		# (PlantGenerator.make_mounds, vegetation e90904e7); called by name so older binaries still parse.
+		var mk := String(args["mounds"]) if String(args["mounds"]) != "" else "both"
+		var msets := []
+		if mk == "meadow" or mk == "both":
+			msets.append(0) # MOUNDS_MEADOW
+		if mk == "wood" or mk == "both":
+			msets.append(1) # MOUNDS_WOOD
+		for ms in msets:
+			var mounds: Array = ClassDB.class_call_static("PlantGenerator", "make_mounds", ms, 3, true, season)
+			for msp in mounds:
+				b.species.append(msp)
+			_log("mounds set %d: %d species" % [ms, mounds.size()])
 	if gen.dunes_enabled and args.get("dune-plants", "1") != "0":
 		# The dunes' own plants (marram, lyme grass, sea holly), placed by distance to the water on the sand.
 		for st in [PlantGenerator.DUNES_EMBRYO, PlantGenerator.DUNES_MOBILE, PlantGenerator.DUNES_FIXED]:
@@ -6195,6 +6213,28 @@ func _hut() -> void:
 		_log("hut fire at %.0f s: state %d, %.0f kW, flashover %.0f s, char %.1f mm, collapsed %s, firebrands %d" % [secs, int(bf.call("get_room_state", 0)), float(bf.call("get_heat_release")), float(bf.call("get_room_flashover_time", 0)), float(bf.call("get_room_char_depth", 0)) * 1000.0, str(bf.call("is_room_collapsed", 0)), int(bf.call("get_firebrand_count"))])
 
 
+func _stand_trail() -> void:
+	# --stand-trail[=passes]: a game trail (WorldStand.set_trails, 0.8 m, 600 passes a year) from 2 m ahead of the
+	# camera away from it, bending a little, and a fresh boar rooting (--rooting-age, 0) 1.5 m across, --rooting-ahead
+	# (7) m out and 2 m to the side (terrain 3199eeb8/897cc1dd, rocks 7b898b93, clods ad9de493). Off for the before.
+	var tc: Camera3D = get_viewport().get_camera_3d()
+	var tf := -tc.global_basis.z
+	tf.y = 0.0
+	tf = tf.normalized().rotated(Vector3.UP, deg_to_rad(float(args.get("trail-angle", "12"))))
+	var ts := tf.cross(Vector3.UP).normalized()
+	var tpts := PackedVector2Array()
+	for i in 40:
+		var d := 2.0 + float(i) * 2.0
+		var q := tc.global_position + tf * d + ts * (0.9 * sin(d * 0.12))
+		tpts.append(Vector2(q.x, q.z))
+	var tpass := float(args["stand-trail"]) if String(args["stand-trail"]) != "" else 600.0
+	WorldContracts.get_stand().set_trails([{"points": tpts, "width": 0.8, "passes": tpass, "kind": "game_trail"}])
+	var rp := tc.global_position + tf * float(args.get("rooting-ahead", "7")) - ts * 2.0
+	rp.y = height_at(rp.x, rp.z)
+	WorldContracts.get_stand().add_disturbance(rp, 1.5, WorldStand.DISTURBANCE_ROOTING, float(args.get("rooting-age", "0")))
+	_log("stand trail: %d points from %s, rooting at %s; trail %s at 6 m" % [tpts.size(), str(tpts[0].round()), str(rp.round()), str(WorldContracts.get_stand().trail_at(Vector3(tpts[2].x, 0, tpts[2].y)))])
+
+
 func _hut_rime() -> void:
 	# --hut-rime[=H]: H (24) hours of freezing fog (--rime-c -6 C, --rime-wind 8 m/s, --rime-fog 0.25 g/m3) on the hut
 	# (SnowRime3D, snow d0a9db71/fbfd5e10), the wind blowing from the camera onto it so the feathers grow toward us.
@@ -6820,6 +6860,128 @@ func _build_farm_track() -> void:
 # head's height and the cloud trailing back up the track both show, the release zone in view. The face: the steepest
 # 35-45 degree cell on a --av-step (40) m grid with --av-min-snow (0.3) m of snow on it, scored for side light
 # (the fall line square to the sun). --av-probe: log the pick and quit. --av-dist (260) m camera distance.
+func _suncups() -> void:
+	# --suncups[=M]: a spring snowfield with suncups M (0.25) m deep (SnowCover3D.add_suncups, snow 89d02105), drawn by a
+	# SnowSurface3D round the camera. The camera stands 1.6 m over the deepest gentle (under --cups-max-deg, 15) snow
+	# at least --cups-min-snow (0.5) m deep, looking square to the sun so the low light rakes the cups.
+	var mm := float(args["suncups"]) if String(args["suncups"]) != "" else 0.25
+	var wr: Rect2 = gen.get_world_rect()
+	var stp := 40.0
+	var best := Vector3.INF
+	var best_d := 0.0
+	var xx := wr.position.x + 400.0
+	while xx < wr.end.x - 400.0:
+		var zz := wr.position.y + 400.0
+		while zz < wr.end.y - 400.0:
+			var p := Vector3(xx, 0, zz)
+			var ang := rad_to_deg(atan(_slip_grad(p).length()))
+			var d: float = snow.get_depth_at(p)
+			if ang < float(args.get("cups-max-deg", "15")) and d >= float(args.get("cups-min-snow", "0.5")) and d > best_d:
+				best_d = d
+				best = Vector3(xx, gen.get_height(p), zz)
+			zz += stp
+		xx += stp
+	if best == Vector3.INF:
+		_log("suncups: no gentle deep snow")
+		return
+	var to_sun := sun.global_basis.z
+	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
+	var look_dir := sf.rotated(Vector3.UP, deg_to_rad(float(args.get("cups-yaw", "80"))))
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.global_position = best + Vector3.UP * (1.6 + best_d)
+	c3.look_at(c3.global_position + look_dir * 6.0 - Vector3.UP * (1.6 + 0.4))
+	var focus := Node3D.new()
+	focus.name = "CupsFocus"
+	add_child(focus)
+	focus.global_position = best
+	snow.follow_target = snow.get_path_to(focus)
+	for i in 30:
+		await get_tree().physics_frame
+	var surf: Node3D = ClassDB.instantiate("SnowSurface3D")
+	surf.name = "SnowSurface"
+	add_child(surf)
+	surf.set("snow_cover", surf.get_path_to(snow))
+	surf.set("follow_target", surf.get_path_to(c3))
+	snow.call("add_suncups", mm)
+	for i in 10:
+		await get_tree().process_frame
+	if args.has("snow-tracks"):
+		await _snow_tracks(surf, c3, look_dir)
+	_log("suncups: %.2f m cups on %.2f m snow at %s, cam %s, sun %.1f deg" % [mm, best_d, str(best.round()), str(c3.global_position.round()), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
+
+
+func _snow_tracks(surf: Node3D, c3: Camera3D, fwd: Vector3) -> void:
+	# --snow-tracks: a walker's boot prints and a car's two ruts across the spring snow in front of the camera, pressed
+	# by the snow's own movers (a sole-flagged box on a CharacterBody3D, wheels by their deform_wheel_radius meta), so
+	# the pack's wetness decides the depth (rotten snow postholes, snow 51d3fa6b) and any slush at the base shows in
+	# the holes. --tracks-hours=H (0) first runs the snow H hours on in today's weather (an afternoon's melt).
+	var hrs := float(args.get("tracks-hours", "0"))
+	if hrs > 0.0:
+		snow.advance(hrs * 3600.0)
+	var f := Vector3(fwd.x, 0, fwd.z).normalized()
+	var side := f.cross(Vector3.UP).normalized()
+	var base := Vector3(c3.global_position.x, 0, c3.global_position.z)
+	var probe := base + f * 6.0
+	var gw = WorldContracts.get_ground()
+	_log("snow tracks: at %s depth %.2f m, density %.0f, wetness %.2f, slush %.3f m, frost %s, rotten share %.2f" % [str(probe.round()), snow.get_depth_at(probe), snow.get_density_at(probe), snow.call("get_wetness_at", probe), snow.call("get_slush_at", probe), str(gw.frost_at(Vector3(probe.x, gen.get_height(probe), probe.z))) if gw else "none", ClassDB.class_call_static("SnowSurface3D", "rotten_share", float(snow.call("get_wetness_at", probe)))])
+	get_viewport().disable_3d = true
+	# The walker: from the near left across to the far right, a step every 0.7 m, feet 0.12 m off the line.
+	var boot := CharacterBody3D.new()
+	boot.name = "TrackBoot"
+	var bs := CollisionShape3D.new()
+	var bx := BoxShape3D.new()
+	bx.size = Vector3(0.11, 0.3, 0.29)
+	bs.shape = bx
+	boot.add_child(bs)
+	boot.set_meta("ground_sole", true)
+	boot.add_to_group("snow_deform")
+	add_child(boot)
+	var a := base + f * float(args.get("boots-near", "2.5")) - side * 1.5
+	var b := base + f * float(args.get("boots-far", "16")) + side * 2.5
+	var dir := (b - a).normalized()
+	var bside := dir.cross(Vector3.UP).normalized()
+	var n := int(a.distance_to(b) / 0.7)
+	for i in n + 1:
+		var q := a + dir * (0.7 * i) + bside * (0.12 if i % 2 == 0 else -0.12)
+		boot.global_basis = Basis.looking_at(-dir, Vector3.UP)
+		boot.global_position = Vector3(q.x, surf.call("get_surface_height_at", q) + 0.15, q.z)
+		for k in 4:
+			surf.call("sync_deformation")
+			await get_tree().physics_frame
+	boot.queue_free()
+	# The car: two tyres 1.6 m apart on a line from the near right to the far left, 0.1 m a frame.
+	var tyres := []
+	for k in 2:
+		var w := Node3D.new()
+		w.name = "TrackTyre%d" % k
+		w.set_meta("deform_wheel_radius", 0.36)
+		w.set_meta("deform_wheel_width", 0.22)
+		w.set_meta("snow_mass", float(args.get("tyre-mass", "400")))
+		w.add_to_group("snow_deform")
+		add_child(w)
+		tyres.append(w)
+	var ta := base + f * float(args.get("ruts-near", "4")) + side * 3.5
+	var tb := base + f * float(args.get("ruts-far", "40")) - side * 6.0
+	var tdir := (tb - ta).normalized()
+	var tside := tdir.cross(Vector3.UP).normalized()
+	var m := int(ta.distance_to(tb) / 0.1)
+	for i in m + 1:
+		for k in 2:
+			var q: Vector3 = ta + tdir * (0.1 * i) + tside * ((k - 0.5) * 1.6)
+			var w: Node3D = tyres[k]
+			w.global_basis = Basis.looking_at(-tdir, Vector3.UP)
+			w.global_position = Vector3(q.x, surf.call("get_surface_height_at", q) + 0.36, q.z)
+		surf.call("sync_deformation")
+		await get_tree().physics_frame
+	for w in tyres:
+		w.queue_free()
+	get_viewport().disable_3d = false
+	for i in 10:
+		await get_tree().process_frame
+	var hole := a + dir * 0.7 * float(n / 2)
+	_log("snow tracks: %d boot steps, posthole %.3f m at %s; %d m of ruts" % [n + 1, snow.get_depth_at(hole) - (surf.call("get_surface_height_at", hole) - gen.get_height(hole)), str(hole.round()), int(ta.distance_to(tb))])
+
+
 func _powder_avalanche() -> void:
 	var av = snow.get_avalanches()
 	if av == null:
@@ -6828,10 +6990,11 @@ func _powder_avalanche() -> void:
 	av.natural_release = false
 	_log("powder avalanche: %d natural releases before loading" % (int(av.get_release_count()) if av.has_method("get_release_count") else -1))
 	# A storm slab on an older bonded pack (as on the snow bench): it breaks away whole.
-	snow.add_snow(90.0, 150.0)
+	# world=true (snow 6f0f0a09): the slab everywhere, not only on the near square.
+	snow.call("add_snow", 90.0, 150.0, true)
 	snow.advance(8.0 * 24.0 * 3600.0)
 	await get_tree().physics_frame
-	snow.add_snow(90.0, 90.0)
+	snow.call("add_snow", 90.0, 90.0, true)
 	await get_tree().physics_frame
 	var wr: Rect2 = gen.get_world_rect()
 	var stp := float(args.get("av-step", "40"))
@@ -6880,6 +7043,11 @@ func _powder_avalanche() -> void:
 		side = -side # the camera on the face's shaded side looks across it into the light: the cloud side- and back-lit
 	var dist := float(args.get("av-dist", "260"))
 	var cp := best + f3 * dist * 0.55 + side * dist * 0.8
+	if args.has("av-backlit"):
+		# --av-backlit: the camera down-sun of the slide's run-out, looking toward the sun, so the cloud is backlit
+		# (bright top rim, shaded front) with the slope behind its lower half.
+		var run := best + f3 * 70.0
+		cp = run - Vector3(sun_h.x, 0, sun_h.y) * dist
 	cp.x = clampf(cp.x, wr.position.x + 60.0, wr.end.x - 60.0)
 	cp.z = clampf(cp.z, wr.position.y + 60.0, wr.end.y - 60.0)
 	var gh: float = gen.get_height(cp)
@@ -6895,6 +7063,17 @@ func _powder_avalanche() -> void:
 	if args.has("av-probe"):
 		get_tree().quit()
 		return
+	# Avalanches run on the snow's near square only: move it onto the release (it follows this marker).
+	var focus := Node3D.new()
+	focus.name = "AvalancheFocus"
+	add_child(focus)
+	focus.global_position = best
+	snow.follow_target = snow.get_path_to(focus)
+	var fw := 0
+	while fw < 600 and not (snow.get_map_rect() as Rect2).has_point(Vector2(best.x, best.z)):
+		await get_tree().physics_frame
+		fw += 1
+	_log("powder avalanche: near square %s over the release after %d frames, %.2f m snow there" % [str(snow.get_map_rect()), fw, snow.get_depth_at(best)])
 	Engine.max_physics_steps_per_frame = 1 # Flow steps once a frame: one tick a frame keeps the gas with the slide
 	var pflow: Node = av.get_powder_cloud().get_flow()
 	if pflow:
@@ -6906,6 +7085,18 @@ func _powder_avalanche() -> void:
 		await get_tree().physics_frame
 		frames += 1
 	_log("powder avalanche: trigger %s, %.1f t up, %.1f t in the air, front %.1f m/s, after %d frames" % [str(ok), av.get_powder_taken() / 1000.0, av.get_suspended_mass() / 1000.0, av.get_max_speed(), frames])
+	if args.has("dt-before") and pflow != null and "diffuse_transmission" in pflow:
+		# --dt-before=PATH: the same moment with the gas's raster diffuse transmission off (PhysX 1529e96b), saved
+		# first, then on again for the main still (the scene paused, so the cloud holds).
+		process_mode = Node.PROCESS_MODE_ALWAYS
+		get_tree().paused = true
+		pflow.set("diffuse_transmission", false)
+		for i in int(args.get("dt-frames", "12")):
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png(args["dt-before"])
+		_log("saved %s (diffuse transmission off)" % args["dt-before"])
+		pflow.set("diffuse_transmission", true)
 
 
 # --lightning-cam (with --lightning): the struck spruce nearest the first view, the camera --lightning-dist m (6) from

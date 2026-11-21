@@ -42,8 +42,16 @@
 			<return type="void" />
 			<param index="0" name="swe_mm" type="float" />
 			<param index="1" name="density" type="float" default="100.0" />
+			<param index="2" name="world" type="bool" default="true" />
 			<description>
-				Adds [param swe_mm] of snow water equivalent everywhere on the map at [param density] (kg/m³), as fresh snow. For scenes that start under snow.
+				Adds [param swe_mm] of snow water equivalent everywhere on the map at [param density] (kg/m³), as fresh snow. For scenes that start under snow. With [param world], the world tier outside the near square takes it too (a storm over the whole terrain); false keeps it to the near square.
+			</description>
+		</method>
+		<method name="add_suncups">
+			<return type="void" />
+			<param index="0" name="relief" type="float" />
+			<description>
+				Sets the suncup relief (m, ridge to hollow) wherever there is snow, at most half its depth. For scenes and tests; the cover grows them itself in sunny melt.
 			</description>
 		</method>
 		<method name="advance">
@@ -258,6 +266,12 @@
 				The thickness of the top crust at [param position], in metres.
 			</description>
 		</method>
+		<method name="get_cups_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The suncup relief per cell (m, red channel), which [SnowSurface3D] draws as hollows.
+			</description>
+		</method>
 		<method name="get_density_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -365,11 +379,25 @@
 				Returns the snow map texture: depth in metres (R), albedo (G), wetness (B) and density in tonnes per cubic metre (A).
 			</description>
 		</method>
+		<method name="get_slush_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The saturated slush layer at the pack's base at [param position], m. Melt water and rain the pack cannot hold pond over frozen ground ([method WorldGround.frost_at]) instead of soaking away, and leave by Darcy flow down the slope; flat ground keeps a slush pond.
+			</description>
+		</method>
 		<method name="get_snowfall_rate_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the precipitation falling as snow at [param position], in millimetres of water an hour (the snow share of Jennings et al. 2018 at that height). [SnowFall3D] reads it.
+			</description>
+		</method>
+		<method name="get_suncup_relief_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The suncup relief (m, ridge to hollow) at [param position]. Melt from the direct sun grows it toward 0.3 m over about five sunny days (Mitchell and Tiedje 2010); melt from the air, rain and new snow smooth or fill it; dust on the ridges deepens it and a thick dirt layer stops it.
 			</description>
 		</method>
 		<method name="get_surface_depth_at" qualifiers="const">
@@ -477,6 +505,13 @@
 				Returns the snow water equivalent (mm) a slope of [param slope_degrees] holds before it slides (SnowSlide, Bernhardt and Schulz 2010): [param min_mm] at 75 degrees and steeper, growing by a factor of e every 1 / [param decay] degrees flatter.
 			</description>
 		</method>
+		<method name="ground_seal" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="frost" type="Vector3" />
+			<description>
+				How far frozen ground stops melt water draining from the pack, 0 to 1, from [method WorldGround.frost_at] (thawed top m, frost depth m, weakening): concrete frost a few centimetres deep with no thawed layer over it seals.
+			</description>
+		</method>
 		<method name="is_updating" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -539,6 +574,15 @@
 				Moves [param share] (0 to 1) of the snow held in the crowns within [param radius] of [param position] onto the pack below at the next update (fresh snow of 150 kg/m3; mass kept). Returns the kg, from the published load. Answers [method WorldSnow.shake_canopy].
 			</description>
 		</method>
+		<method name="slush_drain_rate" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="density" type="float" />
+			<param index="1" name="slope_sine" type="float" />
+			<param index="2" name="length" type="float" />
+			<description>
+				The rate (1/h) a slush layer drains off a slope [param length] m long of sine [param slope_sine]: Darcy flow with the wet-snow permeability of Shimizu (1970) at [param density] kg/m3. The cover uses 50 m: hours on a steep slope, days on the flat.
+			</description>
+		</method>
 		<method name="snow_conductivity" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="density" type="float" />
@@ -552,6 +596,19 @@
 			<param index="1" name="humidity" type="float" />
 			<description>
 				Returns the share of precipitation that falls as snow at air temperature [param celsius] and relative humidity [param humidity] (0 to 1), from the logistic model of Jennings et al. (2018): 1 / (1 + exp(-10.04 + 1.41 T + 0.09 RH)), RH in percent. Half falls as snow at 3.9 °C in dry air (50%) and at 1.4 °C in humid air (90%).
+			</description>
+		</method>
+		<method name="suncup_step" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="relief" type="float" />
+			<param index="1" name="sun_melt" type="float" />
+			<param index="2" name="air_melt" type="float" />
+			<param index="3" name="rain" type="float" />
+			<param index="4" name="new_depth" type="float" />
+			<param index="5" name="dirt" type="float" />
+			<param index="6" name="depth" type="float" />
+			<description>
+				One step of suncup relief (m): [param sun_melt] mm of melt from the direct sun deepens it, [param air_melt] mm from the air and [param rain] mm of rain smooth it, [param new_depth] m of new snow fills it; [param dirt] mg/m² of particles on the surface, [param depth] m of pack.
 			</description>
 		</method>
 		<method name="sync_update">
@@ -688,8 +745,14 @@
 		<member name="slide_min_holding" type="float" setter="set_slide_min_holding" getter="get_slide_min_holding" default="50.0">
 			The snow water equivalent (mm) slopes of 75 degrees and steeper still hold.
 		</member>
+		<member name="slush_enabled" type="bool" setter="set_slush_enabled" getter="is_slush_enabled" default="true">
+			Slush: melt water ponds in the pack's base over frozen ground and leaves only down the slope.
+		</member>
 		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
 			Updates per real second.
+		</member>
+		<member name="suncups_enabled" type="bool" setter="set_suncups_enabled" getter="is_suncups_enabled" default="true">
+			Suncups: ablation hollows that grow in sunny melt and are drawn by [SnowSurface3D].
 		</member>
 		<member name="temperature" type="float" setter="set_temperature" getter="get_temperature" default="-2.0">
 		</member>

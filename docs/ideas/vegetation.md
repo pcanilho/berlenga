@@ -1446,10 +1446,26 @@ Research so far (to confirm before building):
   (grass_streaks). The honami's fronts were also straight lines a sward wide; coherent canopy structures are a few
   heights across (Finnigan 2000; Py et al. 2006), so the fronts now bend with a slow crosswind warp and the wave's
   strength comes and goes in patches, with twice the per-clump phase jitter (the fallback wind's gusts the same).
+- Grazed lawn mosaic (21 Nov, the clearing shot read as one stamp repeated): crop heights follow a patch-grazing
+  mosaic (Adler, Raff and Lauenroth 2001) at about 1 m and 3 m, close-cropped patches and taller roughs, and each blade
+  its own bite (skewed tall, 12% just regrown), widths varied.
 - Grass bench --deer-wood=P: a clearing in TreeGenerator's real trees (P > 0 STAND_DEER_WOOD and its make_edge, the
   browse line; P = 0 the beech stand and its mantle), make_floor's beech floor with its browse set, the sward cropped
   by WorldStand browse P over the clearing and wood, from 1.6 m. About 12.5 GB and 30 min a 1920x1080 raster frame in
   the cloud: one at a time.
+
+## Clearing reshoot fixes (21 Nov)
+- The grazed clearing read as brown litter, not a lawn. Two causes, both systemic, not the bench's:
+  - Leaf litter plants: RULE_LITTER sums every crown's drift tail (e-folding 6 m), so a clearing ringed by crowns
+    reaches full litter in its middle. Litter now also needs some crown shade (RULE_SHADE from 0.06, fade 0.05), as
+    forest_floor() already draws the ground: in full light the sward grows through what drifts in and earthworms pull
+    it down within months (Satchell 1967; Knollenberg et al. 1985). The rim keeps its drift.
+  - The ground between bitten-down blades showed soil and litter. A close-grazed sward tillers densely (20,000 to
+    40,000 tillers per m2 against 5,000 to 10,000 lax; Hodgson 1990, Grant et al. 1983), a closed carpet. The ground
+    field now hands its graze map to grass_ground() (globals grass_graze_map / grass_graze_rect): under a lawn the turf
+    covers the soil fully, with less thatch and the lawn's brighter tint; rooting's torn share (G) opens it to soil.
+- The bench clearing is 48 m between trunks, the edge trees' crowns leaning in to leave about 30 m of open sky; the
+  eye stands 6 m south of its middle. GRASS_DEER_SHADE prints the crowns' shade along the view (0 open sky).
 
 ## Game trails (round 3, first pick)
 Deer, boar and other large animals wear narrow, lasting paths between the places they use: cover, feeding lawns,
@@ -1474,3 +1490,70 @@ cost field for roads and paths (e.g. Galin et al. 2010, "Procedural generation o
   snow wear the same lines and the fields read them without the scene copying them.
 - Vegetation bench `--trails` (also in --test): none through deep water or up steep ground, merged, shared stretches
   busier, repeatable.
+
+## Boar rooting (round 3, second pick)
+Wild boar dig for roots, bulbs, fungi and soil animals, turning the topsoil 5-15 cm deep in patches from a square metre
+to hundreds, mostly in moist, rich woodland and at meadow edges. The sward and herbs are torn out and left as sods
+flung over, grass side down; plant cover drops by half or more and comes back over one to two years, ruderals and
+nitrophilous herbs first (Bueno et al. 2009, Ecol. Model. 220; Bueno et al. 2013, Plant Ecol.; Welander 2000, J. Zool.
+251; Kotanen 1995, Ecography 18; Barrios-Garcia and Ballari 2012, Biol. Invasions 14).
+- Contract (world-links 371c030c): WorldStand DISTURBANCE_ROOTING 5 discs (add_disturbance, fractional years), field
+  layer only, read by WorldStand.rooting_age_at (years since the youngest rooting, -1 none); stand_age_at ignores it.
+- PlantSpecies.RULE_ROOTING (32): years since rooting, -1 never, which only ranges from -1 or to 10000 take (as stand
+  age). Sampled on the stand grid, followed like browse.
+- PRESET_ROOTED_SOD (99): 3-8 turf clods 4-16 cm, lumpy (a 3D noise pushes the dome in and out), 65% grass side down
+  with pale roots splayed over the top and a few blades poking from the rim, the rest tipped with their tuft; soil
+  crumbs thrown round. By the season's rooting_age the grass dries in weeks, rots by a year, the clods slump and
+  crumble, and shoots come up between them from about two months.
+- make_rooting(ROOTING_WOOD / ROOTING_MEADOW): the sods in three age bands (fresh 0-0.15, drying 0.15-0.6, slumped
+  0.6-1.1 yr), then herb Robert, nettle and dock (wood) or mayweed, dock, thistle and plantain (meadow) from about
+  three months to two and a half years. List after the stand's species. The sods' far colour is turned soil, greening
+  with age.
+- make_floor gives its field layer RULE_ROOTING: litter back from 0.35 yr (next leaf fall), herbs, grasses and ferns
+  from 0.8 yr (fade 0.6), mosses and lichen from 1.5 yr (fade 1.2); bramble, raspberry, bracken and plants on logs
+  untouched.
+- Vegetation bench `--rooting` (also in --test); plants bench `--close=99 --rooting=A`.
+- GrassField3D: its browse grid (graze_map) carries the rooting too (G: the share of blades torn out, all when fresh,
+  back over two years); those blades go, the rest stand at half height.
+- One rooting look (21 Nov): the terrain material draws the turned humus (0.062-0.11) and ground detail lays the humus
+  clods, both by freshness 1 - smoothstep(0.25, 2, years). The sods use that fade (bands 0-0.25, 0.25-0.9, 0.9-2 yr),
+  the terrain's humus colour, no loose crumbs of their own; the grass's torn share is the same freshness.
+- Not done: the turned soil itself (ground detail's: clods, exposed humus, 5-15 cm troughs). The sward's ground tint
+  opens to soil under fresh rooting since 21 Nov (grass_ground() reads the graze map's G).
+
+## Anthills and molehills (round 3, third pick)
+Research:
+- Yellow meadow ant (Lasius flavus) hills: domes of fine soil 0.3-1 m across, up to 0.5 m high, built over decades
+  in old, unploughed, grazed pasture (a field of them dates the grassland), tens to hundreds a hectare in groups. The
+  crest lies east of centre and the long axis east-west: the morning-warmed face is built steepest. Their turf is
+  finer and greyer than the pasture's (sheep's fescue, wild thyme on the warm face), with bare crumbs of fresh workings
+  near the top, most in spring (King 1977, J. Ecol. 65; "The persistence of Lasius flavus ant-hills", Oxford; "Ant-hill
+  heterogeneity and grassland management", Oxford, Dryad doi:10.5061/dryad.fqz612jrm).
+- Red wood ants (Formica rufa group): thatch domes of needles, twig bits and resin, 0.5-2 m across and up to 1 m
+  high, on an earth bank, at sunny gaps and edges of conifer and mixed woods; mounds built under forest fail after clear
+  felling (Sorvari and Hakkarainen, F. aquilonia in clear fells). Entrances mostly on the sunny side.
+- Moles (Talpa europaea): heaps of loose soil 25-50 cm across, 10-20 cm high, in lines and arcs over the runs, in
+  moist, deep, worm-rich soil of pasture and broadleaf woods; few on acid sand, in waterlogged ground or under conifers.
+  Fresh heaps are dark and crumbly, crust grey in days, slump over weeks and grass over within months (The Mammal
+  Society; Wildlife Online, European mole).
+Technique: like the sods, meshes from PlantGenerator presets placed by rules, the grass kept out from under them
+(the established approach for small ground features in open-world foliage systems: scatter a mesh and cut the grass
+with an exclusion mask, as Horizon Zero Dawn's GPU placement and UE's procedural foliage blocking volumes do).
+Built:
+- PRESET_ANTHILL (100): a dome on a ring grid, crest moved east (+x; the species keeps random_yaw off), long axis
+  east-west, green-brown turf base, 380-520 fine bristle blades, 2-5 thyme cushions on the south-east face, 1-6 bare
+  patches of pale crumbs near the crest (season "ant_workings" 0-1).
+- PRESET_WOOD_ANT_NEST (101): a mossy earth bank, a thatch dome leaning a little south, 1,400-1,900 needles lying every
+  way (fresh rusty over grey), 60-110 twig bits, 6-12 dark entrances, most on the south side.
+- PRESET_MOLEHILL (102): a lumpy cone sharpened while fresh, 40-70 crumbs on it and spilt round it, the pasture's grass
+  flattened under the spill. By season "mound_age": crust paler in days, slump lower and rounder over weeks, grass in
+  from the rim and over the top within a year. Mound surfaces get no wind weight.
+- make_mounds(MOUNDS_MEADOW / MOUNDS_WOOD): meadow = ant hills in groups out of the shade, molehills at three ages
+  along the patches' rings (patch_ring: runs); wood = wood ant nests (conifer 0.3+, shade 0.15-0.7, forest edge -2 to
+  40 m), a few molehills under broadleaves. All off waterlogged ground (water distance 3 m+) and steep slopes.
+  Species carry meta "mound", "sward_mound" (radius at scale 1), molehills "mound_age".
+- GrassField3D follows the mounds its undergrowth and canopy fields place (polled like the trails): discs of each
+  "sward_mound" species join its obstacles, and only the tiles over mounds that came or went are built again.
+- Not done: mounds as ground relief for ground detail / terrain (they are meshes on the ground); a WorldStand
+  contract for mole activity (age of heaps by place).
+

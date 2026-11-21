@@ -2585,11 +2585,26 @@
   {
    "name": "Boar rooting",
    "settings": [
-    "WorldStand.DISTURBANCE_ROOTING",
-    "PlantSpecies.RULE_ROOTING"
+    "PlantGenerator.make_rooting()",
+    "ROOTING_WOOD",
+    "ROOTING_MEADOW",
+    "WorldStand.DISTURBANCE_ROOTING"
    ],
    "note": "",
-   "what": "rooted ground shows dark turned clods and loose stones, loses its plants and takes the first weeds, healing over about two years.",
+   "what": "rooted ground shows turned sods and loose stones that dry, slump and green over, loses its plants and takes the first weeds, healing over about two years.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Anthills and molehills",
+   "settings": [
+    "PlantGenerator.make_mounds()",
+    "MOUNDS_MEADOW",
+    "MOUNDS_WOOD"
+   ],
+   "note": "",
+   "what": "anthills in sunny meadow groups, wood ant nests at sunny gaps and edges of conifer stands, molehills in lines and arcs; grass keeps out from under them.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -3603,6 +3618,28 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Suncups",
+   "settings": [
+    "SnowCover3D.suncups_enabled"
+   ],
+   "note": "",
+   "what": "sunny spring melt digs cups into deep snow; warm cloud, rain or new snow smooths them out.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
+   "name": "Rotten snow and slush",
+   "settings": [
+    "SnowCover3D.slush_enabled"
+   ],
+   "note": "",
+   "what": "a wet spring pack bears less, so boots and wheels posthole deeper; melt water it cannot hold ponds at its base over frozen ground as grey-blue glossy slush and drains only downslope.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Surface hoar",
    "settings": [
     "SnowCover3D.hoar_enabled"
@@ -4174,7 +4211,7 @@
     "cloud_density"
    ],
    "note": "",
-   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); low stratus and stratocumulus follow the day's heating, wind, humidity and rain, with their base at the condensation level (`WeatherMap3D.cloud_regime_from_weather`); storms tower into a leaning cumulonimbus with a flat anvil downwind and mammatus beneath, and hang rain shafts under their base, slanted by the low wind and as dense as the rain is heavy, or in cold storms snow shafts that trail long soft veils downwind, and a moving storm drops a shelf cloud along its gust front; high up, shear aloft breaks the cirrus into cirrocumulus grains and a spreading high sheet merges into a cirrostratus veil that carries halos; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
+   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); low stratus and stratocumulus follow the day's heating, wind, humidity and rain, with their base at the condensation level (`WeatherMap3D.cloud_regime_from_weather`); storms tower into a leaning cumulonimbus with a flat anvil downwind and mammatus beneath, and hang rain shafts under their base, slanted by the low wind and as dense as the rain is heavy, or in cold storms snow shafts that trail long soft veils downwind, and a moving storm drops a shelf cloud along its gust front; high up, shear aloft breaks the cirrus into cirrocumulus grains and a spreading high sheet merges into a cirrostratus veil that carries halos; lenticular clouds stack in plates whose thin edges near the sun show iridescence (`cloud_iridescence`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""
@@ -4255,10 +4292,11 @@
     "sun_scattering",
     "cast_shadows",
     "scattering_temporal",
-    "ground_albedo"
+    "ground_albedo",
+    "diffuse_transmission"
    ],
    "note": "",
-   "what": "smoke takes sky and ambient light, the sun through scene shadows and light bounced up from sunlit ground, and shadows the scene; `scattering_temporal` removes step banding at its edges.",
+   "what": "smoke takes sky and ambient light, the sun through scene shadows and light bounced up from sunlit ground, and shadows the scene; bright clouds show the scene behind them blurred, as under path tracing, and dense clouds lit from behind glow on their shaded side; `scattering_temporal` removes step banding at its edges.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

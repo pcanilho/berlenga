@@ -627,6 +627,21 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
 - The anvil's upwind edge was a cut wall. It now bulges upwind (the overshooting outflow spreads a little against
   the wind), deepest at mid-depth (0.35 core radii), roughened by the noise.
 
+## Cumulus base detail: sag and scud (21 Nov 2026; Paulo's pick)
+
+- Flat bases are right: a field of cumulus shares one condensation level, level to tens of metres (Stull,
+  Practical Meteorology 2017, ch. 6). What breaks them up is below.
+- Sag: each cloud's base dips under its middle, where the updraft core brings moister air that condenses a little
+  lower: up to 5% of the cloud's height and at most 150 m (BASE_SAG), a parabola across the cloud, a random
+  0.4 to 1 per cloud. The base's softness is now in the cloud's own height (sagged), not the column's.
+- Scud (cumulus fractus, pannus): ragged fragments 20 to 450 m under the bases of cumulus and decks
+  (SCUD_DEPTH) where the air under them is near saturation, from eddies and rain-cooled air (WMO International
+  Cloud Atlas; Houze, Cloud Dynamics 2014). The share is State::scud, from the weather: the relative humidity at the
+  ground (none under 82%, all by 97%) or rain falling (all by 3 mm/h). The rags are the shape noise at an eighth
+  of its scale, thresholded, raised under a cloud or a deck; their top and bottom wander with the same noise, so
+  no straight walls; the cumulus wisps erode them. Bench `--humidity=H`.
+- Raster and PT match (640).
+
 ## Next: lake-effect snow bands (plan)
 
 - When cold air crosses open water: the lake at least 13 K warmer than the air at 850 hPa (Niziol et al. 1995,
@@ -638,3 +653,22 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
   grid (64 x 64 over about 100 km round the camera, each cell the distance of open water upwind from
   WorldWater.height_at along the wind, rebuilt when the wind turns), uploaded with the cover. Cover, type and the
   roll stretch rise with it downwind of the shore; the weather's snowfall takes the same field (Valence's map).
+
+## Lenticular plates and iridescence
+
+- Technique: Altocumulus lenticularis duplicatus (pile of plates). Each plate is a moist layer lifted
+  over the lee wave crest; dry layers between them stay clear. Implemented as vertical gaps every
+  400 m (offset by 4 km noise) inside the wave layer, faded in by a 9 km stack mask so some lenses
+  stay single. Applied in `wave_plate_gaps` (CPU) and `wc_wave_sigma` (GLSL), so shadows and the
+  view march agree.
+- Iridescence: lens edges hold young, small, uniform droplets, which diffract sunlight into pastel
+  bands near the sun (Gedzelman and Lock 2003, "Simulating coronas in color"). Airy pattern
+  [2 J1(v)/v]^2 per RGB wavelength (0.65/0.55/0.45 um), luminance-normalised, droplet radius 1 um
+  at the edge to 6 um inside. Only within about 35 degrees of the sun, only on thin parts of the
+  plate (`cloud_iridescence`, default 0.6). Raster and PT share the sky shader.
+- Docs review (21 Nov): plate ends stepped and plates dotted. The lens march took four fixed samples per
+  coarse step (125 m) and lit each coarse step once, so a plate's end and the 100 m gaps fell between
+  samples. Now eight samples per step, jittered per revisit (the 12-revisit reprojection averages them), and
+  the sun's light read at each sample. The tint covers both forward lobes and its difference from white is
+  doubled (the lens's depth along a ray mixes droplet sizes and greys it); droplets 1.5 to 5 um; default
+  0.8. PT matches raster at 192 frames; at 30 frames each pixel has had two revisits and shows the dots.

@@ -117,7 +117,9 @@ struct alignas(8) RT_GeometryData {
 	// With RT_GEOM_FLAG_REST: byte offset from vertex_buffer_address of the rest block, the vertex() inputs of a
 	// capture in the same layout as the positions and TBN before it.
 	uint32_t rest_byte_offset;
-	uint32_t rest_pad;
+	// The CUSTOM0-3 vertex attributes in the attribute buffer: bits 0-7 byte offset of the first present one, then per
+	// attribute 4 bits (bit 3 present, bits 0-2 its RSE::ArrayCustomFormat). Packed by rt_pack_custom_layout().
+	uint32_t custom_layout;
 };
 static_assert(sizeof(RT_GeometryData) == 160, "RT_GeometryData must be 160 bytes for std430");
 

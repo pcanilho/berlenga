@@ -114,6 +114,13 @@
 				Like [method press], with a flat rectangular print [param size] wide (x) and long (y), turned by [param yaw] radians about up: a boot, a runner, a crate.
 			</description>
 		</method>
+		<method name="rotten_share" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="wetness" type="float" />
+			<description>
+				The share of its bearing (pressure-sinkage moduli) a pack keeps at liquid saturation [param wetness] (0 to 1): 1 dry, 0.15 soaked. Wet snow loses its bonds (Yamanoi and Endo 2002), so boots and wheels posthole in a rotten spring pack; it also packs denser under the load and throws more aside.
+			</description>
+		</method>
 		<method name="sync_deformation">
 			<return type="void" />
 			<description>

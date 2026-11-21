@@ -540,6 +540,7 @@ public:
 		bool bounds_medium = false; // Writes TRANSMISSION and IOR: rays cross it into a medium, so it is traced from both sides.
 		bool uses_scene_depth = false; // Reads SCENE_DEPTH; gates the rt_scene_depth imageLoad
 		bool uses_instance_custom = false; // Gates the MultiMesh custom-data buffer read.
+		bool uses_custom_attribs = false; // Reads CUSTOM0-3: gates their vertex fetch (GeometryData::custom_layout).
 		bool is_procedural = false; // Uses intersection shader instead of triangle geometry
 		String render_mode_defines; // The render modes the hit shading reads (hair_strands, hair_cards, sss_mode_skin).
 		uint32_t alpha_texture_buffer_offset = UINT32_MAX; // Byte offset of hint_alpha texture index in CustomMaterialUniforms UBO; UINT32_MAX if absent
