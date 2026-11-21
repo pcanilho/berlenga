@@ -174,6 +174,7 @@ func _forest_edge_check(i: int) -> void:
 	var mantle := 0
 	var mantle_out := 0
 	var bad := 0
+	var meshes := 0
 	for sp in biome.species:
 		var r: Vector2 = sp.get_meta("edge_distance", Vector2(1e9, -1e9))
 		if r.y <= r.x:
@@ -185,6 +186,7 @@ func _forest_edge_check(i: int) -> void:
 			var shift := 0.0
 			for m in sp.meshes:
 				ok = ok and m.has_meta("tree_open_side")
+				meshes += 1
 				var ab: AABB = m.get_aabb()
 				shift += (ab.position.x + 0.5 * ab.size.x) / maxf(ab.size.x, 0.1)
 			shift /= maxf(sp.meshes.size(), 1)
@@ -199,7 +201,12 @@ func _forest_edge_check(i: int) -> void:
 	var name_i: String = STAND_NAMES[i] if i < STAND_NAMES.size() else str(i)
 	# Groves, oases and parkland have no leading forest tree: a mantle only.
 	var no_lead := i in [TreeGenerator.STAND_STONE_PINE, TreeGenerator.STAND_OLIVE_GROVE, TreeGenerator.STAND_DATE_OASIS]
-	_check(bad == 0 and (trees > 0 or no_lead) and one_sided == trees and mantle >= 3 and mantle_out * 2 >= mantle, "forest edge of %s: %d edge trees (%d one-sided to the open), %d mantle shrubs (%d mostly outside), %d bad ranges" % [name_i, trees, one_sided, mantle, mantle_out, bad])
+	# A deer wood's mantle is eaten out to two hedged thorns (trees.md 5bd).
+	var deer := i == TreeGenerator.STAND_DEER_WOOD
+	var mantle_min := 2 if deer else 3
+	# Edge trees all face the open: at least three meshes for the lead and two for the second, whatever --variants says.
+	var enough := no_lead or meshes >= 5 or (trees == 1 and meshes >= 3)
+	_check(bad == 0 and (trees > 0 or no_lead) and one_sided == trees and mantle >= mantle_min and mantle_out * 2 >= mantle and enough, "forest edge of %s: %d edge trees (%d one-sided to the open, %d meshes), %d mantle shrubs (%d mostly outside), %d bad ranges" % [name_i, trees, one_sided, meshes, mantle, mantle_out, bad])
 
 # Beaver work (trees.md 5au) on willow and birch: a stump stands under a metre with its gnawed cone (wood surface
 # above the cut), a felled stem lies (longer than tall) with its butt cone, a gnawed stem's waist is pulled in

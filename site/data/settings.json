@@ -3946,6 +3946,17 @@
    "topic": ""
   },
   {
+   "name": "Lake-effect snow",
+   "settings": [
+    "WeatherMap3D.lake_effect_snow"
+   ],
+   "note": "",
+   "what": "cold air crossing open water builds snow bands downwind, reaching some 60 km inland.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Lightning and thunder",
    "settings": [
     "WeatherLightning3D"
@@ -4293,10 +4304,11 @@
     "cast_shadows",
     "scattering_temporal",
     "ground_albedo",
+    "ground_color",
     "diffuse_transmission"
    ],
    "note": "",
-   "what": "smoke takes sky and ambient light, the sun through scene shadows and light bounced up from sunlit ground, and shadows the scene; bright clouds show the scene behind them blurred, as under path tracing, and dense clouds lit from behind glow on their shaded side; `scattering_temporal` removes step banding at its edges.",
+   "what": "smoke takes sky and ambient light, the sun through scene shadows and light bounced up from sunlit ground in the ground's colour, and shadows the scene; bright clouds show the scene behind them blurred, as under path tracing, and dense clouds lit from behind glow on their shaded side; `scattering_temporal` removes step banding at its edges.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

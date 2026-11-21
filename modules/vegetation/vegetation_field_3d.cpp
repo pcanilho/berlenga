@@ -2751,10 +2751,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					if (ps.open_side != Vector2() && wood_out == Vector2() && !p_setup.edge.is_empty()) {
 						// An edge tree (mesh meta tree_open_side): that side turned down the edge distance, towards the
-						// open, within about 15 degrees.
+						// open, within about 30 degrees (light reaches an edge tree over a wide arc; within 15 degrees a run of
+						// edge trees read as one tree repeated).
 						const Vector2 open = p_setup.edge_open(xz);
 						if (open != Vector2()) {
-							yaw = Math::atan2(-open.y, open.x) - Math::atan2(-ps.open_side.y, ps.open_side.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.52f;
+							yaw = Math::atan2(-open.y, open.x) - Math::atan2(-ps.open_side.y, ps.open_side.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 1.05f;
 						}
 					}
 					if (row_sp) {
