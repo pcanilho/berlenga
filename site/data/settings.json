@@ -1951,10 +1951,11 @@
   {
    "name": "Sea caves",
    "settings": [
-    "PhysXSeaCaveWater3D"
+    "PhysXSeaCaveWater3D",
+    "wavelets"
    ],
    "note": "",
-   "what": "the sea's own water runs inside sea caves, handed over softly at the arch, with waves reflecting off the walls.",
+   "what": "the sea's own water runs inside sea caves, handed over softly at the arch, with waves reflecting off the walls and small wavelets rippling the water inside.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
