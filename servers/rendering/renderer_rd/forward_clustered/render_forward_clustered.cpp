@@ -42,6 +42,16 @@
 #include "servers/rendering/rendering_server_default.h"
 #include "servers/rendering/storage/ltc_lut.gen.h"
 
+// On a CPU Vulkan device (lavapipe: the cloud's headless benches and tests) no ubershaders: each draw waits for its
+// specialised pipeline instead. The ubershader exists to hide a GPU driver's compile stall, which there is no GPU to
+// hide; on lavapipe each one cost seconds to tens of seconds and the driver kept 1-3 GB of memory per large material
+// (four compiled at once, one per worker thread, took a landscape still past the cloud's 15 GB). The picture is the
+// same: the specialised pipeline is what the ubershader stands in for.
+static bool _ubershaders_skipped() {
+	static const bool skip = RD::get_singleton()->get_device_type() == RenderingDeviceEnums::DEVICE_TYPE_CPU;
+	return skip;
+}
+
 using namespace RendererSceneRenderImplementation;
 
 #define PRELOAD_PIPELINES_ON_SURFACE_CACHE_CONSTRUCTION 1
@@ -596,7 +606,7 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 
 			if (shader != prev_shader || pipeline_hash != prev_pipeline_hash) {
 				RSE::PipelineSource pipeline_source = pipeline_key.ubershader ? RSE::PIPELINE_SOURCE_DRAW : RSE::PIPELINE_SOURCE_SPECIALIZATION;
-				pipeline_rd = shader->pipeline_hash_map.get_pipeline(pipeline_key, pipeline_hash, pipeline_key.ubershader, pipeline_source);
+				pipeline_rd = shader->pipeline_hash_map.get_pipeline(pipeline_key, pipeline_hash, pipeline_key.ubershader || _ubershaders_skipped(), pipeline_source);
 
 				if (pipeline_rd.is_valid()) {
 					pipeline_valid = true;
@@ -5094,6 +5104,9 @@ void RenderForwardClustered::_mesh_compile_pipeline_for_surface(SceneShaderForwa
 }
 
 void RenderForwardClustered::_mesh_compile_pipelines_for_surface(const SurfacePipelineData &p_surface, const GlobalPipelineData &p_global, RSE::PipelineSource p_source, Vector<ShaderPipelinePair> *r_pipeline_pairs) {
+	if (_ubershaders_skipped()) {
+		return; // nothing to compile ahead: draws compile their specialised pipelines (_ubershaders_skipped)
+	}
 	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
 	bool octmap_use_storage = !copy_effects->get_raster_effects().has_flag(RendererRD::CopyEffects::RASTER_EFFECT_OCTMAP);
 

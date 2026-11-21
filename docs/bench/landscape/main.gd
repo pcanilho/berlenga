@@ -798,7 +798,9 @@ func _ready() -> void:
 	if landscape != null:
 		# Landscape3D streams heights coarse first: load every chunk exactly before the picture.
 		landscape.load_all_heights()
+		_mem_log("after load_all_heights")
 		landscape.update_lods_from_camera()
+		_mem_log("after update_lods_from_camera")
 		if args.has("seat-probe"):
 			# --seat-probe=x,z: stone seating against the drawn ground (generator vs landscape height, chunk LOD, stones).
 			var sv := String(args["seat-probe"]).split(",")
@@ -6303,7 +6305,15 @@ func _hut_icicles() -> void:
 
 func _mem_log(tag: String) -> void:
 	# What the renderer holds (lavapipe's GPU memory is system RAM) next to the process's own heap.
-	_log("memory %s: textures %d MB, buffers %d MB, video total %d MB, static %d MB" % [tag,
+	# Resident set from /proc (Linux): lavapipe, PhysX and driver heaps that the counters above do not see.
+	var rss := 0
+	var st := FileAccess.open("/proc/self/status", FileAccess.READ)
+	while st != null and not st.eof_reached(): # a /proc file reports no length: read it line by line
+		var ln := st.get_line()
+		if ln.begins_with("VmRSS:"):
+			rss = int(ln.substr(6).strip_edges().split(" ")[0]) >> 10
+			break
+	_log("memory %s: resident %d MB, textures %d MB, buffers %d MB, video total %d MB, static %d MB" % [tag, rss,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TEXTURE_MEM_USED) >> 20,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED) >> 20,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED) >> 20,
