@@ -261,6 +261,19 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
   colour: crumpled paper. Past about 32 degrees the rock layer now takes streaks down the fall line (1.3 m by 14 m,
   4 m by 30 m), bed bands (0.9 m) and 18 m tone, and its fine relief eased by up to 0.4.
 
+## Cliff relief on the ground patch (21 Nov)
+
+GroundSurface3D's patch (prints, the beach's sand) is drawn with a copy of the terrain material over a mesh with no
+CUSTOM0 / CUSTOM1, so near the camera it showed plain heightfield faces where the landscape had relief ledges. Landscape3D
+now publishes terrain_cliff_relief (metres, grid spacing, grid origin) and the patch's vertex() rebuilds the landscape's
+relief data itself: the heightfield normal as Landscape3D::_normal_at gives it (the ENO slope at each grid node from the
+ground's heights, blended bilinearly; the patch's own normal over one field texel is steeper next to a cliff's top and
+foot and put relief on faces the landscape leaves plain), the same face weight and offset, the vertices pushed out along
+it and the vertex normal from the displaced surface. The landscape under the patch steps back into the face by 1.5 times
+its relief scale as well as down: linear between its vertices, it stood out of the patch on the ledges.
+Rocks bench: --no-patch-relief (a before frame). Left: the landscape drops relief on chunk sides stitched to a coarser
+level; the patch keeps it there.
+
 ## Trails and rooting (21 Nov)
 
 WorldStand's worn trails (trail_at: passes a year, tread share) and boar rooting (rooting_age_at) now mark the

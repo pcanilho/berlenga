@@ -155,6 +155,11 @@ class Landscape3D : public Node3D {
 	bool stand_published = false;
 	void _update_stand_map(const Vector3 &p_camera);
 	void _clear_stand_map();
+	// cliff_relief and the grid for meshes drawn over the landscape with the terrain material that carry no relief
+	// data of their own (GroundSurface3D's patch): global terrain_cliff_relief = (metres, grid spacing, grid origin),
+	// read in world space as the stand map is (the landscape is not moved).
+	Vector4 cliff_published;
+	void _publish_cliff_relief(bool p_clear = false);
 
 	// Streaming.
 	ObjectID stream_source; // the TerrainGenerator3D read from worker threads

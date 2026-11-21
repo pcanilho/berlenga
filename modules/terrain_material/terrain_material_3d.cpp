@@ -307,6 +307,7 @@ global uniform vec4 rock_far_cover_rect;
 global uniform vec4 rock_contact_rect;
 global uniform sampler2D terrain_stand_map : hint_default_black, filter_linear; // Landscape3D: r trail wear, g fresh rooting
 global uniform vec4 terrain_stand_rect;
+global uniform vec4 terrain_cliff_relief; // Landscape3D: cliff_relief (m), grid spacing (m), grid origin (x, z); x 0 = none
 uniform float tm_far_start = 300.0;
 uniform float tm_far_fade = 150.0;
 )";
@@ -934,6 +935,40 @@ float tm_cl_shadow(vec3 p, vec3 nb, float k, vec3 l, float e, float j) {
 }
 )";
 	}
+	if (ground_deform_enabled) {
+		// Landscape3D::_normal_at for the ground patch, from the ground's heights at the landscape's grid nodes: the
+		// ENO slope (Landscape3D::_eno_slope) at each node, blended bilinearly.
+		c += R"(
+float tm_cl_eno(float a2, float a1, float c, float b1, float b2, float s) {
+	float back = c - a1, fwd = b1 - c;
+	float central = 0.5 * (back + fwd);
+	float kink = abs(fwd - back) / s;
+	if (kink < 0.18) {
+		return central;
+	}
+	float eno = abs(c - 2.0 * a1 + a2) <= abs(b2 - 2.0 * b1 + c) ? back : fwd;
+	float t = clamp((kink - 0.18) / (0.35 - 0.18), 0.0, 1.0);
+	return mix(central, eno, t * t * (3.0 - 2.0 * t));
+}
+float tm_cl_h(vec2 g) {
+	vec2 xz = terrain_cliff_relief.zw + g * terrain_cliff_relief.y;
+	return textureLod(ground_deform_height, (xz - ground_deform_height_rect.xy) / ground_deform_height_rect.zw, 0.0).r;
+}
+vec3 tm_cl_node_n(vec2 g) {
+	float s = terrain_cliff_relief.y;
+	float c = tm_cl_h(g);
+	float sx = tm_cl_eno(tm_cl_h(g - vec2(2.0, 0.0)), tm_cl_h(g - vec2(1.0, 0.0)), c, tm_cl_h(g + vec2(1.0, 0.0)), tm_cl_h(g + vec2(2.0, 0.0)), s);
+	float sz = tm_cl_eno(tm_cl_h(g - vec2(0.0, 2.0)), tm_cl_h(g - vec2(0.0, 1.0)), c, tm_cl_h(g + vec2(0.0, 1.0)), tm_cl_h(g + vec2(0.0, 2.0)), s);
+	return normalize(vec3(-sx, s, -sz));
+}
+vec3 tm_cl_land_n(vec2 xz) {
+	vec2 f = (xz - terrain_cliff_relief.zw) / terrain_cliff_relief.y;
+	vec2 g = floor(f);
+	vec2 u = f - g;
+	return normalize(mix(mix(tm_cl_node_n(g), tm_cl_node_n(g + vec2(1.0, 0.0)), u.x), mix(tm_cl_node_n(g + vec2(0.0, 1.0)), tm_cl_node_n(g + vec2(1.0, 1.0)), u.x), u.y));
+}
+)";
+	}
 	c += "\nvoid vertex() {\n\ttm_cl_p = CUSTOM0;\n\ttm_cl_n = CUSTOM1.xyz;\n";
 	if (ground_deform_enabled) {
 		// Prints in the ground (GroundSurface3D): the terrain sinks under the printed patch, and the patch, drawn
@@ -942,6 +977,42 @@ float tm_cl_shadow(vec3 p, vec3 nb, float k, vec3 l, float e, float j) {
 		// Read, so the path tracer counts the parameter among what its capture depends on (GroundSurface3D bumps it
 		// when the field's texture is rewritten in place, which alone recaptures nothing).
 		c += "\tVERTEX.y += 0.0 * ground_deform_serial;\n";
+		// The patch carries no relief data of its own, so it takes the landscape's here: the same face weight, scale
+		// and offset as Landscape3D::_cliff_point, its vertices pushed out as the landscape's are, and CUSTOM0 /
+		// CUSTOM1's data for the pixel normal and ledge shadows. Without it the patch drew smooth faces near the camera over relief cliffs.
+		// Landscape space is world space here (as for the stand map).
+		// And the landscape under the patch steps back into the face as well as down: its relief is linear between
+		// vertices a metre or so apart while the patch follows it closely, so it stood out of the patch on the ledges
+		// and shaded the patch from the sun (dark faces near the camera).
+		c += R"(	if (!ground_deform_patch && CUSTOM0.w > 0.0 && ground_deform_rect.z > 0.0) {
+		float cl_lw = ground_deform_lowered((MODEL_MATRIX * vec4(VERTEX, 1.0)).xz);
+		vec2 cl_mh = CUSTOM1.xz;
+		if (cl_lw > 0.0 && dot(cl_mh, cl_mh) > 1e-8) {
+			VERTEX -= vec3(cl_mh.x, 0.0, cl_mh.y) * inversesqrt(dot(cl_mh, cl_mh)) * (1.5 * CUSTOM0.w * cl_lw);
+		}
+	}
+)";
+		c += R"(	if (ground_deform_patch && terrain_cliff_relief.x > 0.0 && ground_deform_rect.z > 0.0) {
+		vec3 cl_w = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		// The landscape's own heightfield normal (its grid's ENO normals): the patch's over one field texel is
+		// steeper next to a cliff's top and foot, so it put relief on faces the landscape leaves plain.
+		vec3 cl_nw = terrain_cliff_relief.y > 0.0 ? tm_cl_land_n(cl_w.xz) : vec3(0.0, 1.0, 0.0);
+		float cl_ml = length(cl_nw.xz);
+		float cl_wt = 1.0 - clamp((cl_nw.y - 0.47) / (0.64 - 0.47), 0.0, 1.0);
+		if (cl_ml > 1e-4 && cl_wt > 0.0) {
+			vec3 cl_p = cl_w;
+			float cl_k = terrain_cliff_relief.x * cl_wt * cl_wt * (3.0 - 2.0 * cl_wt);
+			tm_cl_p = vec4(cl_p, cl_k);
+			tm_cl_n = cl_nw;
+			vec3 cl_m = vec3(cl_nw.x, 0.0, cl_nw.z) / cl_ml;
+			mat4 cl_inv = inverse(MODEL_MATRIX);
+			VERTEX = (cl_inv * vec4(cl_w + cl_m * (cl_k * tm_cl_offset(cl_p)), 1.0)).xyz;
+			// The vertex normal from the displaced surface around it, as the landscape's (the shadow map's normal
+			// bias and the triangles' own lighting go by it).
+			NORMAL = normalize(transpose(mat3(cl_inv)) * tm_cl_normal(cl_p, cl_nw, cl_k, 0.3));
+		}
+	}
+)";
 	}
 	c += "}\n";
 	if (rock_detail_enabled) {
