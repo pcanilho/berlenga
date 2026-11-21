@@ -102,6 +102,9 @@
 		<member name="cpu_readback" type="bool" setter="set_cpu_readback" getter="is_cpu_readback" default="false">
 			Copy temperature and smoke back to the CPU every few steps, for [method sample_smoke], [method sample_temperature] and the [code]bounds[/code] in [method get_stats]. Off by default: it costs a full field copy each time and isn't needed for rendering.
 		</member>
+		<member name="diffuse_transmission" type="bool" setter="set_diffuse_transmission" getter="is_diffuse_transmission" default="true">
+			When enabled, bright gas lets the scene behind it through in raster, blurred, by multiple scattering (as under the path tracer), not only along its direct beam: blue sky shows through a white cloud and a shadowed slope shows through snow powder. Needs [member ambient_scattering] or [member sun_scattering]. Costs one copy of the frame and a few taps per gas pixel.
+		</member>
 		<member name="ember_rate" type="float" setter="set_ember_rate" getter="get_ember_rate" default="40.0">
 			With [member embers], how many embers the fire throws up a second.
 		</member>

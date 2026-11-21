@@ -436,6 +436,13 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 	const uint64_t out = FlowBackend::grid_render_rd(grid, p_view, p_projection, p_size.x, p_size.y, p_depth.get_id(), p_size.x, p_size.y, p_color.get_id(), (lights.is_empty() && !ambient_scattering && !sun_scattering && !cast_shadows && !shimmer_on) ? nullptr : &source, p_first_view);
 	stat_render_calls++;
 	stat_render_outputs += out != 0 ? 1 : 0;
+	RID background;
+	if (diffuse_transmission && (ambient_scattering || sun_scattering) && out != 0 && out != p_color.get_id()) {
+		// The frame behind the gas, before Flow's output replaces it: the scattering pass lets it through the gas
+		// by multiple scattering (diffuse transmission).
+		background = p_effect->get_scatter().get_background_copy(p_rd, p_size);
+		p_effect->copy_texture(p_rd, p_color, background, p_size);
+	}
 	if (out != 0 && out != p_color.get_id()) {
 		// Flow's output carries its transmittance in alpha (misc/physx_patches 0011), which the scattering pass
 		// reads; the frame keeps its own alpha.
@@ -464,6 +471,8 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 		params.shadows = receive != 0;
 		params.resolution_divisor = scattering_resolution == SCATTERING_RESOLUTION_FULL ? 1 : (scattering_resolution == SCATTERING_RESOLUTION_HALF ? 2 : 4);
 		params.temporal = scattering_temporal;
+		params.background = background;
+		params.diffuse_transmission = diffuse_transmission;
 		if (ambient_scattering) {
 			_fill_scatter_ambient(params, p_environment);
 		}
@@ -1730,6 +1739,8 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_heat_shimmer_turbulence"), &PhysXFlow3D::get_heat_shimmer_turbulence);
 	ClassDB::bind_method(D_METHOD("set_cast_shadows", "enabled"), &PhysXFlow3D::set_cast_shadows);
 	ClassDB::bind_method(D_METHOD("is_cast_shadows"), &PhysXFlow3D::is_cast_shadows);
+	ClassDB::bind_method(D_METHOD("set_diffuse_transmission", "enabled"), &PhysXFlow3D::set_diffuse_transmission);
+	ClassDB::bind_method(D_METHOD("is_diffuse_transmission"), &PhysXFlow3D::is_diffuse_transmission);
 	ClassDB::bind_method(D_METHOD("set_scattering_temporal", "enabled"), &PhysXFlow3D::set_scattering_temporal);
 	ClassDB::bind_method(D_METHOD("is_scattering_temporal"), &PhysXFlow3D::is_scattering_temporal);
 	ClassDB::bind_method(D_METHOD("set_scattering_max_lights", "count"), &PhysXFlow3D::set_scattering_max_lights);
@@ -1809,6 +1820,7 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ambient_scattering"), "set_ambient_scattering", "is_ambient_scattering");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sun_scattering"), "set_sun_scattering", "is_sun_scattering");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cast_shadows"), "set_cast_shadows", "is_cast_shadows");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "diffuse_transmission"), "set_diffuse_transmission", "is_diffuse_transmission");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_max_lights", PROPERTY_HINT_RANGE, vformat("1,%d,1", FlowScatterRD::MAX_LIGHTS)), "set_scattering_max_lights", "get_scattering_max_lights");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scattering_strength", PROPERTY_HINT_RANGE, "0,8,0.01,or_greater"), "set_scattering_strength", "get_scattering_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scattering_anisotropy", PROPERTY_HINT_RANGE, "-0.95,0.95,0.01"), "set_scattering_anisotropy", "get_scattering_anisotropy");
