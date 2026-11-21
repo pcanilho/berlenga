@@ -3135,13 +3135,14 @@ func _build_spindrift(cam: Camera3D) -> void:
 	weather.advance(1.0)
 	snow.advance(600.0)
 	print("spindrift: %.0f kg/s off the crest from %d sources at %.0f m/s" % [snow.get_spindrift_rate(), snow.get_spindrift_source_count(), wind])
+	print("  world wind at the crest %s" % str(WorldContracts.get_weather().wind_at(Vector3(0, 160, 0))))
 	for sd: Dictionary in snow.get_spindrift_sources().slice(0, 3):
 		print("  source at %s, %s m/s, %.0f kg/s" % [str(sd["position"]), str(sd["velocity"]), sd["rate"]])
-	# From the south-east, over the lee: the crest across the frame, the plumes streaming off it toward the camera's
-	# right against the sky.
-	cam.position = Vector3(330.0, 210.0, 230.0)
+	# From the south along the ridge, a little above the crest: the ridge in profile, the wind blowing left to right
+	# and the plumes streaming off the crest over the lee against the sky.
+	cam.position = Vector3(70.0, 185.0, 470.0)
 	cam.far = 3000.0
-	cam.look_at(Vector3(20.0, 140.0, -20.0))
+	cam.look_at(Vector3(70.0, 150.0, 0.0))
 	cam.fov = 50.0
 	var wenv: Environment = null
 	for c in get_children():

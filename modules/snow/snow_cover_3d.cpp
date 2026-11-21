@@ -2644,8 +2644,9 @@ void SnowCover3D::_feed_spindrift() {
 		// slowly, so the gas barely sinks and drifts far on the wind.
 		spindrift_node->set_heaviness(0.05f);
 		spindrift_node->set_updraft(0.0f);
-		spindrift_node->set_smoke_per_kg(0.05f);
+		spindrift_node->set_smoke_per_kg(0.1f);
 		spindrift_node->set_max_sources(max_spindrift);
+		spindrift_node->set_divergence(0.0f);
 		spindrift_node->set_grid(2.0f, 4096); // plumes hundreds of metres long: coarser than the powder cloud's 0.75 m
 		add_child(spindrift_node, false, INTERNAL_MODE_FRONT);
 	}
@@ -2653,7 +2654,7 @@ void SnowCover3D::_feed_spindrift() {
 	if (Node3D *f = spindrift_node->get_flow()) {
 		f->set("smoke_fade", spindrift_fade(inputs.humidity));
 		f->set("smoke_density", 0.5f);
-		f->set("vorticity", 6.0f);
+		f->set("vorticity", 2.0f);
 	}
 }
 

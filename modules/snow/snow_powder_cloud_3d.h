@@ -59,6 +59,7 @@ private:
 	Color color = Color(0.98, 0.99, 1.0);
 	float cell_size = 0.75f; // m, the Flow grid (set before the first feed)
 	int max_blocks = 2048;
+	float divergence = 3.0f; // emitter divergence: the powder front erupts; a spindrift lip only lets go
 	NodePath terrain_path;
 
 	Node3D *flow = nullptr; // a PhysXFlow3D, when the PhysX module has Flow
@@ -91,6 +92,7 @@ public:
 	void set_updraft(float p_value) { updraft = MAX(p_value, 0.0f); }
 	float get_updraft() const { return updraft; }
 	void set_color(const Color &p_color);
+	void set_divergence(float p_value) { divergence = p_value; }
 	void set_grid(float p_cell_size, int p_max_blocks) { cell_size = MAX(p_cell_size, 0.05f); max_blocks = MAX(p_max_blocks, 16); }
 	Color get_color() const { return color; }
 };

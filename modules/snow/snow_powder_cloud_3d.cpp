@@ -141,7 +141,7 @@ void SnowPowderCloud3D::feed(const LocalVector<Source> &p_sources) {
 		e->set("radius", CLAMP(s.radius, 0.5f, 6.0f));
 		e->set_global_position(s.position);
 		e->set("velocity", v);
-		e->set("divergence", 3.0f);
+		e->set("divergence", divergence);
 		e->set("smoke", MIN(MAX(s.rate, strongest / 3.0f) * smoke_per_kg, 20.0f));
 		e->set("temperature", 0.0f);
 		e->set("couple_rate", 4.0f);
