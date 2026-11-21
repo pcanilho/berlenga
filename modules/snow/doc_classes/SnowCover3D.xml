@@ -383,7 +383,7 @@
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
-				The saturated slush layer at the pack's base at [param position], m. Melt water and rain the pack cannot hold pond over frozen ground ([method WorldGround.frost_at]) instead of soaking away, and leave by Darcy flow down the slope; flat ground keeps a slush pond.
+				The saturated slush layer at the pack's base at [param position], m. Melt water and rain the pack cannot hold pond in its pores over frozen ground ([method WorldGround.frost_at]) instead of soaking away (pore water: the snow gets no deeper and its SWE does not count it), leave by Darcy flow down the slope (flat ground keeps a slush pond) and freeze into the base in the cold.
 			</description>
 		</method>
 		<method name="get_snowfall_rate_at" qualifiers="const">
@@ -581,6 +581,16 @@
 			<param index="2" name="length" type="float" />
 			<description>
 				The rate (1/h) a slush layer drains off a slope [param length] m long of sine [param slope_sine]: Darcy flow with the wet-snow permeability of Shimizu (1970) at [param density] kg/m3. The cover uses 50 m: hours on a steep slope, days on the flat.
+			</description>
+		</method>
+		<method name="slush_height" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="swe" type="float" />
+			<param index="1" name="liquid" type="float" />
+			<param index="2" name="density" type="float" />
+			<param index="3" name="slush" type="float" />
+			<description>
+				The height (m) a slush layer of [param slush] mm of water reaches in a pack of [param swe] mm, [param liquid] mm of it held water, at [param density] kg/m3: the water fills the pores from the base up.
 			</description>
 		</method>
 		<method name="snow_conductivity" qualifiers="static">
