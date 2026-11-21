@@ -6936,6 +6936,9 @@ func _slush_prints() -> void:
 	var wr: Rect2 = gen.get_world_rect()
 	var best := Vector3.INF
 	var best_s := INF
+	var n_snow := 0
+	var dmin := INF
+	var dmax := 0.0
 	var xx := wr.position.x + 300.0
 	while xx < wr.end.x - 300.0:
 		var zz := wr.position.y + 300.0
@@ -6943,14 +6946,23 @@ func _slush_prints() -> void:
 			var p := Vector3(xx, 0, zz)
 			var d: float = snow.get_depth_at(p)
 			var ang := rad_to_deg(atan(_slip_grad(p).length()))
-			if d >= lo and d <= hi and ang < 10.0 and gen.get_height(p) > gen.sea_level + 5.0 and ang < best_s:
-				best_s = ang
-				best = Vector3(xx, gen.get_height(p), zz)
+			# The gentlest place in the band; failing that, the gentle place whose depth is nearest the band.
+			if d > 0.03:
+				n_snow += 1
+				dmin = minf(dmin, d)
+				dmax = maxf(dmax, d)
+			var miss := maxf(lo - d, d - hi)
+			if d > 0.03 and ang < 10.0 and gen.get_height(p) > gen.sea_level + 5.0:
+				var score := ang + 1000.0 * maxf(miss, 0.0)
+				if score < best_s:
+					best_s = score
+					best = Vector3(xx, gen.get_height(p), zz)
 			zz += 32.0
 		xx += 32.0
 	if best == Vector3.INF:
-		_log("slush prints: no gentle snow %.2f to %.2f m deep" % [lo, hi])
+		_log("slush prints: no gentle snow (%d snowy cells, %.2f to %.2f m)" % [n_snow, dmin, dmax])
 		return
+	_log("slush prints: %d snowy cells %.2f to %.2f m; picked %.2f m (score %.1f)" % [n_snow, dmin, dmax, snow.get_depth_at(best), best_s])
 	var to_sun := sun.global_basis.z
 	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
 	var look := sf.rotated(Vector3.UP, deg_to_rad(float(args.get("slush-yaw", "70"))))
