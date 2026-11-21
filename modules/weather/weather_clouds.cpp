@@ -476,10 +476,15 @@ float shelf_drop(const State &p_state, int p_storm, Vector2 p_xz) {
 	if (rr < 1.0f) {
 		return 0.0f;
 	}
-	const float r_gf = s[2] * (1.9f + 0.04f * out); // ahead of the tower's base (up to 1.2 radii)
-	const float u = (rr - r_gf) / (0.6f * s[2]);
-	const float arc = smoothstep(0.15f, 0.6f, d.dot(p_state.storm_dir) / rr); // the leading half: a long arc, much wider than the tower
-	const float wedge = smoothstep(-1.2f, -0.1f, u) * (1.0f - smoothstep(-0.1f, 0.05f, u));
+	// Hung under the storm's base: from under the tower (0.85 core radii) it slopes down to its leading edge just
+	// ahead of the tower's base (1.45 radii plus 0.02 per m/s of outflow), sharp there. A ring further out read as a
+	// floating halo round the tower.
+	const float x = rr / s[2];
+	// The gust front bulges and lags along its length (outflow surges a kilometre or so apart): its edge wanders 0.25
+	// radii in and out, so the arc is not a turned saucer.
+	const float g = 1.45f + 0.02f * MIN(out, 15.0f) + 0.5f * (value_noise(d / 1500.0f + Vector2(41.7f, 13.9f)) - 0.5f);
+	const float arc = smoothstep(0.25f, 0.7f, d.dot(p_state.storm_dir) / rr); // the leading side, about 70 degrees each way
+	const float wedge = smoothstep(0.85f, g - 0.05f, x) * (1.0f - smoothstep(g - 0.05f, g + 0.04f, x));
 	return SHELF_DROP * MIN(out / 15.0f, 1.0f) * s[3] * arc * wedge;
 }
 
@@ -1154,21 +1159,17 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 			shelf_top = dr;
 			shelf = dr / SHELF_DROP;
 			const Vector2 d(p_pos.x - p_state.storms[i][0], p_pos.z - p_state.storms[i][1]);
-			shelf_arc = smoothstep(0.15f, 0.6f, d.dot(p_state.storm_dir) / MAX(d.length(), 1.0f));
+			shelf_arc = smoothstep(0.25f, 0.7f, d.dot(p_state.storm_dir) / MAX(d.length(), 1.0f));
 		}
 	}
-	// Its top a smooth slope rippled by the shape noise at large scale only: the noise thresholding the whole wedge
-	// left a frilled, grainy rim.
-	// A wedge: its top lowest at the leading edge and rising back toward the storm (about 1.5 km over the drop), where
-	// it joins the tower's base, so from the front it reads as a sloping band, not a flat-topped brim.
-	// Lower toward the ends of its arc, so it tapers away at both sides instead of ending in walls: its radial cut
-	// reads the drop across the front (over the arc), so the ends thin to a sliver rising into the base, not round caps.
-	const float wedge_top = (0.5f * shelf_top + 250.0f + 450.0f * (1.0f - MIN(shelf / MAX(shelf_arc, 0.05f), 1.0f))) * shelf_arc; // low: a band, not a dome
+	// Its top flush with the storm's base (80 m over it), so it hangs from the base as one cloud with it: lowest at the
+	// leading edge, rising back into the base under the tower, thinning to a sheet toward the ends of its arc.
+	const float wedge_top = shelf_top + 80.0f;
 	// Its face in tiers (the lifted inflow condenses in layers): horizontal bands about a quarter of its height, lighter
 	// and denser, so the face reads as stepped shelves over a smooth, dark underside.
 	const float hn = (p_pos.y - b) / MAX(wedge_top, 1.0f);
 	const float tiers = Math::lerp(0.55f, 1.0f, smoothstep(0.3f, 0.6f, Math::fmod(hn * 4.0f + 0.15f * n + 4.0f, 1.0f)));
-	const float wedge = shelf > 0.0f ? smoothstep(0.3f, 0.6f, shelf / MAX(shelf_arc, 0.05f)) * (1.0f - smoothstep(0.75f, 1.0f, hn + 0.08f * (n - 0.5f))) * tiers : 0.0f;
+	const float wedge = shelf > 0.0f ? smoothstep(0.0f, 0.3f, shelf_arc) * smoothstep(0.05f, 0.25f, shelf / MAX(shelf_arc, 0.05f)) * (1.0f - smoothstep(0.85f, 1.0f, hn + 0.05f * (n - 0.5f))) * tiers : 0.0f;
 	// The deck gives way there too: the storm's raised cover made a flat-topped sheet round its base (a brim).
 	const float other = MAX(MAX(cells, deck_sc) * (1.0f - MAX(near_body, shelf)), wedge);
 	const float shape = MAX(other, body) * (1.0f + MIN(eff, 0.0f));
@@ -1503,9 +1504,10 @@ float wc_shelf_drop(int i, vec2 xz) {
 	if (rr < 1.0) {
 		return 0.0;
 	}
-	float u = (rr - s.z * (1.9 + 0.04 * o)) / (0.6 * s.z);
-	float arc = smoothstep(0.15, 0.6, dot(d, cloud_storm_dir) / rr);
-	float wedge = smoothstep(-1.2, -0.1, u) * (1.0 - smoothstep(-0.1, 0.05, u));
+	float x = rr / s.z;
+	float g = 1.45 + 0.02 * min(o, 15.0) + 0.5 * (wc_value_noise(d / 1500.0 + vec2(41.7, 13.9)) - 0.5);
+	float arc = smoothstep(0.25, 0.7, dot(d, cloud_storm_dir) / rr);
+	float wedge = smoothstep(0.85, g - 0.05, x) * (1.0 - smoothstep(g - 0.05, g + 0.04, x));
 	return 450.0 * min(o / 15.0, 1.0) * s.w * arc * wedge;
 }
 
@@ -1920,14 +1922,14 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 			shelf_top = dr;
 			shelf = dr / 450.0;
 			vec2 sd = p_unsheared.xz - cloud_storms[i].xy;
-			shelf_arc = smoothstep(0.15, 0.6, dot(sd, cloud_storm_dir) / max(length(sd), 1.0));
+			shelf_arc = smoothstep(0.25, 0.7, dot(sd, cloud_storm_dir) / max(length(sd), 1.0));
 		}
 	}
 	// A sloping wedge, tapering at the ends of its arc (extinction_at() on the CPU).
-	float wedge_top = (0.5 * shelf_top + 250.0 + 450.0 * (1.0 - min(shelf / max(shelf_arc, 0.05), 1.0))) * shelf_arc;
+	float wedge_top = shelf_top + 80.0;
 	float hn = (p.y - b0) / max(wedge_top, 1.0);
 	float tiers = mix(0.55, 1.0, smoothstep(0.3, 0.6, fract(hn * 4.0 + 0.15 * n)));
-	float wedge = shelf > 0.0 ? smoothstep(0.3, 0.6, shelf / max(shelf_arc, 0.05)) * (1.0 - smoothstep(0.75, 1.0, hn + 0.08 * (n - 0.5))) * tiers : 0.0;
+	float wedge = shelf > 0.0 ? smoothstep(0.0, 0.3, shelf_arc) * smoothstep(0.05, 0.25, shelf / max(shelf_arc, 0.05)) * (1.0 - smoothstep(0.85, 1.0, hn + 0.05 * (n - 0.5))) * tiers : 0.0;
 	// Inside the storm's body (and its shelf) their own outlines rule: single cells there would stand out of
 	// them as loose puffs.
 	float other = max(max(cells, deck) * (1.0 - max(near_body, shelf)), wedge);
@@ -1935,8 +1937,9 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 	bool storm_body = body > other; // its own density (extinction_at() on the CPU)
 	// The tower keeps more of its envelope: its lobes are kilometre turrets, and the cumulus erosion at full strength
 	// broke it into a heap of small puffs.
-	// The shelf is laminar (lifted smoothly along the gust front): its face smooth, only lightly textured.
-	float ero = storm_body && thin >= 1.0 ? 0.45 : (wedge > 0.0 && wedge >= other ? 0.15 : 1.0);
+	// The shelf is laminar (lifted smoothly along the gust front): its face smooth, shaped by its tiers alone (even a light
+	// erosion read as a grain over it at a distance).
+	float ero = storm_body && thin >= 1.0 ? 0.45 : (wedge > 0.0 && wedge >= other ? 0.0 : 1.0);
 	r_profile = clamp(shape, 0.0, 1.0);
 	if (p_detail && shape > 0.0) {
 		// Nubis Cubed's up-rez (Schneider, Advances 2023): wisps (Curly-Alligator) low frequency inside and high
@@ -1963,6 +1966,9 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 		float wispy = mix(dn.g, dn.r, r_profile);
 		float billowy = 1.0 - mix(dn.b, dn.a, pow(r_profile, 0.25));
 		float billow = clamp(hc * 4.0, 0.0, 1.0) * mix(0.6, 1.0, cu);
+		// The storm's tower billows all the way down (its updraft's cauliflower skin): the wisps of a fair-weather
+		// cloud's base tore its sides into strings.
+		billow = storm_body && thin >= 1.0 ? 1.0 : billow;
 		// A dissolving cloud loses its billows to wisps (evaporating at the edges into the dry air it mixes with).
 		billow *= 1.0 - 0.8 * decay;
 		float e = cloud_detail_strength * mix(0.45 * wispy, 0.4 * billowy, billow) * (1.0 + 0.6 * decay) * ero;
