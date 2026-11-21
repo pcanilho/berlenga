@@ -211,7 +211,7 @@
   {
    "name": "rendering/pathtracing/relative_origin_grid",
    "type": "float",
-   "default": "1024.0",
+   "default": "64.0",
    "about": "Size in meters of the grid the path tracer's origin snaps to.",
    "page": "open-worlds",
    "title": "Open worlds"
@@ -4747,7 +4747,7 @@
     "rendering/pathtracing/relative_origin_grid"
    ],
    "note": "",
-   "what": "exact shadows and reflections far from the origin.",
+   "what": "the trace origin follows the camera on a grid, so shadows, reflections and thin refractive detail near the camera stay exact far from the world origin.",
    "page": "open-worlds",
    "title": "Open worlds",
    "topic": ""
