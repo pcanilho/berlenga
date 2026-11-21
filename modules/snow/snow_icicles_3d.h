@@ -76,6 +76,15 @@ class SnowIcicles3D : public Node3D {
 	Vector3 wind_direction; // local, horizontal: the way the wind blows the tip's drop (zero: none)
 	bool curtains = true;
 	uint64_t seen_update = 0;
+	// Roots joined to what they hang from: each root's column runs up to the first surface above it within
+	// attach_reach (meshes under attach_path, or the parent's when empty), so no icicle floats under an eave.
+	NodePath attach_path;
+	float attach_reach = 0.5f;
+	LocalVector<Vector3> attach_tris; // local, the surfaces near the edge (three points each)
+	bool attach_dirty = true;
+	Vector<float> attach_heights; // m above each icicle's root, last build
+	void _gather_attach();
+	float _attach_height(const Vector3 &p_root) const;
 	float drawn_change = 0.0f;
 	float last_supply = 0.0f; // kg/h along the whole edge, last step
 	float last_dripped = 0.0f; // kg/h
@@ -135,4 +144,9 @@ public:
 	// The axis's sideways offset (local x, z) p_depth below an icicle's root.
 	Vector2 get_icicle_offset(int p_index, float p_depth) const;
 	bool is_icicle_dripping(int p_index) const;
+	void set_attach_path(const NodePath &p_path);
+	NodePath get_attach_path() const { return attach_path; }
+	void set_attach_reach(float p_reach);
+	float get_attach_reach() const { return attach_reach; }
+	float get_icicle_attach(int p_index) const; // m its root's column rises to the surface above (0: none found)
 };

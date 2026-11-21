@@ -49,6 +49,7 @@ constexpr float AIR_CONDUCTIVITY = 0.024f; // W/(m K)
 constexpr float AIR_VISCOSITY = 1.33e-5f; // m2/s, kinematic
 constexpr float AIR_DIFFUSIVITY = 1.87e-5f; // m2/s, thermal
 constexpr float PRANDTL = 0.71f;
+constexpr float ATTACH_EMBED = 0.005f; // m the attached column runs on into the surface above, so no seam shows
 constexpr float LATENT_VAPOUR = 2.5e6f; // J/kg
 constexpr float AIR_HEAT = 1005.0f; // J/(kg K)
 constexpr float AIR_PRESSURE = 101325.0f; // Pa
@@ -571,7 +572,7 @@ void SnowIcicles3D::_build_mesh() {
 	};
 	// p_scale shrinks the radius, p_reach the length: the hazy core is a thinner cone that stops short of the tip.
 	// p_phase shifts the ripples so neighbours' bands do not line up.
-	auto add_cone = [](Surface &p_out, const Icicle &p_ic, float p_scale, float p_reach, float p_phase, bool p_ripples) {
+	auto add_cone = [](Surface &p_out, const Icicle &p_ic, float p_scale, float p_reach, float p_phase, bool p_ripples, float p_attach) {
 		const float length = p_ic.length * p_reach;
 		const float root = p_ic.radius * PROFILE_ROOT * p_scale;
 		const float tip = TIP_RADIUS * p_scale;
@@ -581,17 +582,21 @@ void SnowIcicles3D::_build_mesh() {
 		// profile turns fastest.
 		const int rings = ripples ? CLAMP(int(Math::ceil(length / (0.25f * RIPPLE_WAVELENGTH))), 2, 600) : CLAMP(int(Math::ceil(length / 0.03f)), 2, 40);
 		const int base = p_out.verts.size();
-		for (int r = 0; r <= rings; r++) {
-			const float q = float(r) / rings;
-			const float z = ripples ? length * q : length * (1.0f - (1.0f - q) * (1.0f - q) * 0.5f - (1.0f - q) * 0.5f);
+		// Attached: one more ring above the root, a straight column at the root's radius up into the surface it
+		// hangs from (the film's ice along the drip path), so the root's cap is buried there.
+		const int extra = p_attach > 0.0f ? 1 : 0;
+		const float column_top = p_attach + ATTACH_EMBED;
+		for (int r = -extra; r <= rings; r++) {
+			const float q = float(MAX(r, 0)) / rings;
+			const float z = r < 0 ? -column_top : (ripples ? length * q : length * (1.0f - (1.0f - q) * (1.0f - q) * 0.5f - (1.0f - q) * 0.5f));
 			// Its radius by the distance from the full icicle's tip (the core stops short, as before).
-			const float u = MAX(p_ic.length - z, 0.0f) / MAX(p_ic.length, 1e-4f);
+			const float u = MIN(MAX(p_ic.length - z, 0.0f) / MAX(p_ic.length, 1e-4f), 1.0f);
 			float rad = MAX(root * Math::pow(u, p_ic.power), tip);
 			if (!p_ripples && p_scale < 1.0f) {
 				rad = MIN(rad, CORE_MAX_RADIUS); // the hazy core: a thin column
 			}
 			float slope = MIN(root * p_ic.power * Math::pow(MAX(u, 1e-3f), p_ic.power - 1.0f) / MAX(p_ic.length, 1e-4f), 3.0f);
-			if (!p_ripples && p_scale < 1.0f && rad >= CORE_MAX_RADIUS) {
+			if ((!p_ripples && p_scale < 1.0f && rad >= CORE_MAX_RADIUS) || r < 0) {
 				slope = 0.0f; // where the cap holds, the core is a straight column: its sides face out, not down
 			}
 			if (ripples) {
@@ -641,7 +646,7 @@ void SnowIcicles3D::_build_mesh() {
 				}
 			}
 		}
-		for (int r = 0; r < rings; r++) {
+		for (int r = 0; r < rings + extra; r++) {
 			for (int s = 0; s < SIDES; s++) {
 				const int a0 = base + r * (SIDES + 1) + s;
 				const int a1 = a0 + 1;
@@ -658,7 +663,7 @@ void SnowIcicles3D::_build_mesh() {
 		}
 		// The root's cap, inside the eave (closes the ice for refraction).
 		const int c = p_out.verts.size();
-		p_out.verts.push_back(p_ic.position);
+		p_out.verts.push_back(p_ic.position + Vector3(0.0f, extra ? column_top : 0.0f, 0.0f));
 		p_out.normals.push_back(Vector3(0, 1, 0));
 		p_out.tangents.push_back(1.0f);
 		p_out.tangents.push_back(0.0f);
@@ -794,16 +799,23 @@ void SnowIcicles3D::_build_mesh() {
 	Surface ice;
 	Surface core;
 	int previous = -1;
+	if (attach_dirty) {
+		_gather_attach();
+	}
+	attach_heights.resize(icicles.size());
 	for (int i = 0; i < icicles.size(); i++) {
 		const Icicle &ic = icicles[i];
+		attach_heights.write[i] = 0.0f;
 		if (ic.length < 0.01f) {
 			previous = -1;
 			continue;
 		}
+		const float up = _attach_height(ic.position);
+		attach_heights.write[i] = up;
 		const float phase = float(hash_murmur3_one_32(uint32_t(i) + uint32_t(seed) * 7919u) & 0xffffu) / 65536.0f;
-		add_cone(ice, ic, 1.0f, 1.0f, phase, true);
+		add_cone(ice, ic, 1.0f, 1.0f, phase, true, up);
 		if (hazy_core && ic.length > 0.05f) {
-			add_cone(core, ic, CORE_RADIUS, CORE_REACH, phase, false);
+			add_cone(core, ic, CORE_RADIUS, CORE_REACH, phase, false, up);
 		}
 		if (ic.dripping) {
 			add_drop(ice, ic);
@@ -858,9 +870,108 @@ void SnowIcicles3D::_notification(int p_what) {
 	}
 }
 
+void SnowIcicles3D::_gather_attach() {
+	attach_tris.clear();
+	attach_dirty = false;
+	if (!is_inside_tree() || edge.is_empty()) {
+		attach_dirty = !is_inside_tree();
+		return;
+	}
+	Node *target = attach_path.is_empty() ? get_parent() : get_node_or_null(attach_path);
+	if (target == nullptr) {
+		return;
+	}
+	// Only what lies just above the edge: its box grown sideways and up by the reach.
+	AABB box(edge[0], Vector3());
+	for (int i = 1; i < edge.size(); i++) {
+		box.expand_to(edge[i]);
+	}
+	box.position -= Vector3(0.3f, 0.05f, 0.3f);
+	box.size += Vector3(0.6f, 0.05f + attach_reach, 0.6f);
+	const Transform3D to_local = get_global_transform().affine_inverse();
+	TypedArray<Node> found = target->find_children("*", "MeshInstance3D", true, false);
+	if (MeshInstance3D *self_mi = Object::cast_to<MeshInstance3D>(target)) {
+		found.push_back(self_mi);
+	}
+	for (int k = 0; k < found.size(); k++) {
+		MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(found[k]);
+		if (mi == nullptr || mi == mesh_instance || is_ancestor_of(mi) || mi->get_mesh().is_null() || !mi->is_visible_in_tree()) {
+			continue;
+		}
+		const Transform3D xf = to_local * mi->get_global_transform();
+		if (!(xf.xform(mi->get_mesh()->get_aabb())).intersects(box)) {
+			continue;
+		}
+		const Vector<Face3> faces = mi->get_mesh()->get_faces();
+		for (const Face3 &f : faces) {
+			const Vector3 a = xf.xform(f.vertex[0]), b = xf.xform(f.vertex[1]), c = xf.xform(f.vertex[2]);
+			AABB fb(a, Vector3());
+			fb.expand_to(b);
+			fb.expand_to(c);
+			if (fb.intersects(box)) {
+				attach_tris.push_back(a);
+				attach_tris.push_back(b);
+				attach_tris.push_back(c);
+			}
+		}
+	}
+}
+
+float SnowIcicles3D::_attach_height(const Vector3 &p_root) const {
+	// Straight up from just under the root (a surface at the root itself counts), either face: Moller and
+	// Trumbore 1997 with the ray's direction fixed at +y.
+	constexpr float START = 0.01f;
+	const Vector3 o = p_root - Vector3(0.0f, START, 0.0f);
+	float best = attach_reach + START;
+	bool hit = false;
+	for (uint32_t i = 0; i + 2 < attach_tris.size(); i += 3) {
+		const Vector3 &a = attach_tris[i];
+		const Vector3 e1 = attach_tris[i + 1] - a, e2 = attach_tris[i + 2] - a;
+		const Vector3 pv(e2.z, 0.0f, -e2.x); // (0,1,0) x e2
+		const float det = e1.dot(pv);
+		if (Math::abs(det) < 1e-12f) {
+			continue;
+		}
+		const Vector3 tv = o - a;
+		const float uu = tv.dot(pv) / det;
+		if (uu < 0.0f || uu > 1.0f) {
+			continue;
+		}
+		const Vector3 qv = tv.cross(e1);
+		const float vv = qv.y / det;
+		if (vv < 0.0f || uu + vv > 1.0f) {
+			continue;
+		}
+		const float t = e2.dot(qv) / det;
+		if (t > 0.0f && t < best) {
+			best = t;
+			hit = true;
+		}
+	}
+	return hit ? MAX(best - START, 0.0f) : 0.0f;
+}
+
+void SnowIcicles3D::set_attach_path(const NodePath &p_path) {
+	attach_path = p_path;
+	attach_dirty = true;
+	_build_mesh();
+}
+
+void SnowIcicles3D::set_attach_reach(float p_reach) {
+	attach_reach = MAX(p_reach, 0.0f);
+	attach_dirty = true;
+	_build_mesh();
+}
+
+float SnowIcicles3D::get_icicle_attach(int p_index) const {
+	ERR_FAIL_INDEX_V(p_index, attach_heights.size(), 0.0f);
+	return attach_heights[p_index];
+}
+
 void SnowIcicles3D::set_edge(const PackedVector3Array &p_edge) {
 	edge = p_edge;
 	sites_dirty = true;
+	attach_dirty = true;
 	_place();
 	_build_mesh();
 }
@@ -942,6 +1053,11 @@ void SnowIcicles3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_core_material", "material"), &SnowIcicles3D::set_core_material);
 	ClassDB::bind_method(D_METHOD("get_core_material"), &SnowIcicles3D::get_core_material);
 	ClassDB::bind_method(D_METHOD("set_hazy_core", "enabled"), &SnowIcicles3D::set_hazy_core);
+	ClassDB::bind_method(D_METHOD("set_attach_path", "path"), &SnowIcicles3D::set_attach_path);
+	ClassDB::bind_method(D_METHOD("get_attach_path"), &SnowIcicles3D::get_attach_path);
+	ClassDB::bind_method(D_METHOD("set_attach_reach", "reach"), &SnowIcicles3D::set_attach_reach);
+	ClassDB::bind_method(D_METHOD("get_attach_reach"), &SnowIcicles3D::get_attach_reach);
+	ClassDB::bind_method(D_METHOD("get_icicle_attach", "index"), &SnowIcicles3D::get_icicle_attach);
 	ClassDB::bind_method(D_METHOD("get_hazy_core"), &SnowIcicles3D::get_hazy_core);
 	ClassDB::bind_method(D_METHOD("set_wind_direction", "direction"), &SnowIcicles3D::set_wind_direction);
 	ClassDB::bind_method(D_METHOD("get_wind_direction"), &SnowIcicles3D::get_wind_direction);
@@ -958,6 +1074,8 @@ void SnowIcicles3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hazy_core"), "set_hazy_core", "get_hazy_core");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "attach_path"), "set_attach_path", "get_attach_path");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "attach_reach", PROPERTY_HINT_RANGE, "0,2,0.01,suffix:m"), "set_attach_reach", "get_attach_reach");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind_direction"), "set_wind_direction", "get_wind_direction");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "curtains"), "set_curtains", "get_curtains");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "core_material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_core_material", "get_core_material");

@@ -1,0 +1,1 @@
+- Icicle roots now join the surface above them, so icicles placed under an eave no longer float or show an open root (`attach_path`, `attach_reach`).

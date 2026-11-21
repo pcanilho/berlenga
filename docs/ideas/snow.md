@@ -1557,6 +1557,10 @@ weight gives tan(lean) = 3 rho_air Cd U^2 / (8 rho_w r g), about 0.01 U^2, and t
   n/(n-1) = 4.2 and drew the core as a wide opaque band, so icicles read as grey metal spikes against a dark
   wall). Raster's transmission reads almost straight through the middle, so the core's vertex() widens it to
   that apparent width outside the path tracer and shadow maps (the hair strands' IN_PATH_TRACER pattern).
+- **Roots attached** (21 Nov): an edge placed under the eave left roots floating with their caps showing from
+  above. Each root's column now runs straight up to the first surface above it within `attach_reach` (0.5 m;
+  meshes under `attach_path`, the parent's by default), 5 mm on into it: the film's ice along its drip path.
+  `--ice-drop=M` lowers the bench's edge to check it; tests: 0.200 m to a slab 0.2 m up, none past the reach.
 - **Raster transmission on solids**: the read takes the mip of the refracted footprint (UV derivatives), so thin
   curved ice no longer speckles or dashes; panes and open water identical (materials bench).
 - `--hero`: from under the roof 1.7 m back looking out (snow to 64 m); `--hero --wall` head on against boards.
