@@ -919,8 +919,9 @@ Three colour changes a dune field shows from afar, after the grain-scale speckle
   so older, stabilised sand is redder than freshly worked sand. Drawn as a patchy low-frequency field (420 m and
   130 m value noise), strongest where the sand is thin and stable.
 - Interdune flats: deflation strips the fine sand and leaves a coarser, darker lag (Sharp 1963; Lancaster 1995). Keyed
-  to the loose sand depth the generator grew (TerrainGenerator3D.get_sand_depth_at(), published as
-  `terrain_sand_depth_map`): thin sand on flat ground darkens and greys.
+  to the generator's interdune floors (TerrainGenerator3D.get_sand_interdune_at(), published as
+  `terrain_sand_interdune_map`): sand depth against the deepest within about 50 m, so floors count even where they
+  still carry metres of sand (a first version keyed to absolute depth under 3 m found almost none in a real sea).
 - Slip faces: grain flows of fine, well-sorted sand at the angle of repose, paler than the stoss (Bagnold 1941). Keyed
   to slope (about 29 to 33 degrees), so it shows on any sand.
 
@@ -935,11 +936,36 @@ Where deflation leaves a coarse lag (the dune tone's dark interdune flats), the 
 under impacts into granule ripples (megaripples): 0.3 m to several metres apart, a few centimetres high (ripple index
 10 to 20), coarse grains armouring the crests and windward slopes over troughs of fines, crest lines less regular
 than impact ripples (Sharp 1963; Ellwood, Evans and Wilson 1975; Yizhaq et al. 2012; Lammel et al. 2018; arXiv
-2208.00888). Drawn as a normal and tint, h = 0.05 amp c^1.5 with c a raised cosine of a phase that carries: a 1.1 m
-mean spacing, a warp along the wind whose slope moves the local spacing between about 0.5 and 2 m, crest bending over
-metres, and sparse paired edge dislocations (Y-forks, about one per 4 m cell in three). Crests run tens of
-wavelengths and taper out at their ends. The slope comes from the phase's own gradient (differences, modulo a turn
-across a fork's cut). Crest colour follows the granules: paler for quartz (the default here), darker for lithic or
+2208.00888). Drawn as a normal and tint, h = 0.04 amp c with c a raised cosine of a phase that carries: a 1.1 m
+mean spacing, a warp along the wind whose slope moves the local spacing between about 0.5 and 2 m, and crest bending
+over metres. Crests run tens of wavelengths and taper out at their ends. The slope comes from the phase's own
+gradient (differences). Crest colour follows the granules: paler for quartz (the default here), darker for lithic or
 basaltic granules. Gated by the dry, wind-blown share (none under water or on wet sand), eased to the ground's own
 past the patch's block so nothing stops at its edge. A first version (straight, even, dark painted stripes with hard
-ends) was rejected by docs, 20 Nov.
+ends) was rejected by docs, 20 Nov. The second (r2, with paired edge dislocations as forks and h = 0.05 amp c^1.5) was declined
+21 Nov: each dislocation pair's closed contours read as a small oval rimmed pit (a dark speck at its core up close),
+and the steep lee (12 degrees) went hard-edged and dark under a 12 degree sun. The forks are gone, the profile is a
+rounded cosine under 7 degrees, and the lag and trough tints are warmer (lag 0.84, 0.74, 0.62: the reddish brown of a
+desert lag, not grey).
+
+## Next sand candidates (research, 21 Nov 2026; on a card)
+
+- **Rain pits and rain crust.** Drops on dry sand leave raindrop impressions: shallow craters a few mm across
+  with low raised rims, denser and overlapping as the shower goes on, until a downpour smooths them away
+  (Reineck and Singh 1980). As the wetted skin dries it seals into a thin structural crust, its fines washed
+  into the pores (Valentin and Bresson 1992), which holds the pits and keeps the wind off until saltation or a
+  foot breaks it. Built on what exists: the rain rate from WeatherMap3D get_rain_at (the one weather source,
+  no private copy), the field's wetness and drying for the crust's age, `rain_smoothing` for the downpour end
+  and the silt skin's break and re-crust logic for its breakup. Drawn as a stochastic pit layer in the near
+  field (hashed drop positions per cell and time, so the count grows with the rain's total) and a crust share
+  that darkens and mattes the sand and stops ripples and streamers where it holds. Medium.
+- **Dust devils over hot sand.** Convective vortices form on clear, calm afternoons over a strongly heated
+  surface (lapse rate far over adiabatic near the ground), a few metres to tens of metres across, wandering
+  with the light wind for minutes (Sinclair 1969; Balme and Greeley 2006). Built with PhysX Flow (the house
+  rule): a rotating, rising emitter lifting dust where the surface is loose and dry, spawned from WeatherMap3D
+  get_surface_temperature_at, get_sun_light and get_wind_at, with GroundStreamers3D taking the grains at its
+  foot and a faint swirl left on the ripples. Medium to large; costs Flow time while one lives.
+- **Adhesion warts at damp edges.** Dry grains blown onto a damp surface stick where they land, building small
+  irregular warts and ridges that grow upwind (adhesion structures, Kocurek and Fielder 1982). For oasis margins
+  and drying swash: where the wind's sand flux crosses the wet margin, add a rough, upwind-facing wart relief and
+  a paler dry-grain tint. Small; reads only up close.

@@ -49,6 +49,8 @@ extends Node3D
 #   --type=T          clouds views: cloud_type (0.05 stratus, 0.2 stratocumulus, 0.6 cumulus)
 #   --wind=W          clouds views: wind_speed at 10 m (m/s)
 #   --temp=C          clouds views: the air temperature (below about 1 C a storm's precipitation falls as snow)
+#   --humidity=H      clouds views: the air's relative humidity at the ground (0 to 1; above 0.82 scud hangs under bases)
+#   --fov=D           the camera's vertical field of view (degrees), to frame a whole storm
 #   --storm=x,z,R,mm,out  clouds views: a storm (WeatherMap3D.add_storm, held), grown 15 min: its rain shafts under the
 #                     base and the shelf cloud on its gust front ahead of it (it moves with the wind, about 9 km in the 15 min); repeatable
 #   --wind-dir=x,z    clouds views: wind_direction (default 0.6,-0.8; 0,1 blows toward the camera)
@@ -96,6 +98,8 @@ var sun_energy := -1.0
 var type_arg := -1.0
 var wind_arg := -1.0
 var temp_arg := -999.0
+var fov_arg := 0.0
+var humidity_arg := -1.0
 var shear_arg := -1.0
 var wave_clouds_off := false
 var half_usec := 0
@@ -171,6 +175,8 @@ func _ready() -> void:
 		elif a.begins_with("--type="): type_arg = float(a.substr(7))
 		elif a.begins_with("--wind="): wind_arg = float(a.substr(7))
 		elif a.begins_with("--temp="): temp_arg = float(a.substr(7))
+		elif a.begins_with("--fov="): fov_arg = float(a.substr(6))
+		elif a.begins_with("--humidity="): humidity_arg = float(a.substr(11))
 		elif a.begins_with("--shear-aloft="): shear_arg = float(a.substr(14))
 		elif a.begins_with("--haze-km="): haze_km = float(a.substr(10))
 		elif a == "--test": test = true
@@ -1235,6 +1241,8 @@ func _build_clouds() -> void:
 		# From a rise: sky and shadowed land.
 		cam.position = Vector3(0, 60, 0)
 		cam.look_at_from_position(cam.position, Vector3(0, 160, -1000), Vector3.UP)
+	if fov_arg > 0.0:
+		cam.fov = fov_arg
 	add_child(cam)
 	pan_cam = cam
 	cam.make_current()
@@ -1259,6 +1267,8 @@ func _build_clouds() -> void:
 		weather.cloud_type = type_arg
 	if temp_arg > -999.0:
 		weather.temperature = temp_arg
+	if humidity_arg >= 0.0:
+		weather.humidity = humidity_arg
 	if wind_arg >= 0.0:
 		weather.wind_speed = wind_arg
 	if shear_arg >= 0.0:

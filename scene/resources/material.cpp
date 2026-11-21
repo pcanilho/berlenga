@@ -4890,12 +4890,12 @@ vec3 ground_ripple_sort_tint(float p_t, vec2 p_xz, float p_resolved, float p_amp
 	vec3 mt = mix(vec3(1.0), mix(vec3(1.0), lag, 0.25) * mix(vec3(1.0), coarse, 0.25), clamp(p_amp, 0.0, 1.0));
 	return mix(mt, rt, p_resolved);
 }
-// The coarse lag's share on an interdune flat (the dune tone's lag term): thin sand on flat ground, patchy.
-float ground_dune_lag(vec2 p_xz, float p_normal_y, float p_depth) {
-	if (p_depth < 0.0) {
+// The coarse lag's share on an interdune flat (the dune tone's lag term): the floors between dunes, flat, patchy.
+float ground_dune_lag(vec2 p_xz, float p_normal_y, float p_interdune) {
+	if (p_interdune < 0.0) {
 		return 0.0;
 	}
-	float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	float thin = p_interdune;
 	return thin * smoothstep(0.93, 0.98, p_normal_y) * mix(0.45, 1.0, ground_ripple_vn(p_xz / 23.0, 43u));
 }
 // Granule ripples (megaripples) on that lag: the coarse grains the wind cannot lift creep up into long, low ripples
@@ -4906,28 +4906,13 @@ float ground_dune_lag(vec2 p_xz, float p_normal_y, float p_depth) {
 // crests closer than about four pixels fade to their mean tone. Returns the slope (dh/dx, dh/dz); p_tint: the albedo
 // factor (the crests' coarse grains, paler than the troughs' fines).
 // The phase (in wavelengths): the spacing wanders between about 0.5 and 2 m (a warp along the wind whose slope adds
-// to or takes from the 1.1 m mean), the crests bend over metres, and paired edge dislocations make the forks.
+// to or takes from the 1.1 m mean) and the crests bend over metres; they end by tapering out (no phase defects:
+// a defect's closed contours read as small rimmed pits).
 float ground_granule_phase(vec2 p_xz, vec2 p_k, vec2 p_t) {
 	float along = dot(p_xz, p_k);
 	float across = dot(p_xz, p_t);
 	float s = along / 1.1 + 2.5 * ground_ripple_vn(vec2(along / 6.0, across / 5.0), 52u) + 1.2 * ground_ripple_vn(p_xz / 9.0, 51u);
-	ivec2 c0 = ivec2(floor(p_xz / 4.0));
-	float ph = 0.0;
-	for (int dz = -1; dz <= 1; dz++) {
-		for (int dx = -1; dx <= 1; dx++) {
-			ivec2 c = c0 + ivec2(dx, dz);
-			if (ground_ripple_hash(c, 54u) >= 0.35) {
-				continue;
-			}
-			vec2 m = (vec2(c) + vec2(ground_ripple_hash(c, 55u), ground_ripple_hash(c, 56u))) * 4.0;
-			float hl = 0.4 + 0.8 * ground_ripple_hash(c, 57u);
-			vec2 da = p_xz - (m - p_t * hl);
-			vec2 db = p_xz - (m + p_t * hl);
-			float sgn = ground_ripple_hash(c, 58u) < 0.5 ? -1.0 : 1.0;
-			ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(2.0, 4.0, length(p_xz - m)));
-		}
-	}
-	return s + ph / 6.2831853;
+	return s;
 }
 vec2 ground_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, out vec3 p_tint) {
 	p_tint = vec3(1.0);
@@ -4943,49 +4928,49 @@ vec2 ground_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, 
 	if (amp <= 0.0) {
 		return vec2(0.0);
 	}
-	// The slope from the phase's own gradient (the warp and the forks turn the crests), by differences.
+	// The slope from the phase's own gradient (the warp turns the crests), by differences.
 	float e = 0.03;
 	float s = ground_granule_phase(p_xz, k, t);
 	vec2 gs = vec2(ground_granule_phase(p_xz + vec2(e, 0.0), k, t) - s, ground_granule_phase(p_xz + vec2(0.0, e), k, t) - s);
-	// Modulo one wavelength: a fork's phase jumps by a whole turn across its cut.
-	gs = (fract(gs + 0.5) - 0.5) / e;
+	gs /= e;
 	float c = 0.5 + 0.5 * cos(6.2831853 * s);
 	// Resolved by the local spacing (1 / |grad s|).
 	float lam = 1.0 / max(length(gs), 0.3);
 	float resolved = 1.0 - smoothstep(0.15 * lam, 0.3 * lam, p_fp);
-	vec3 crest = vec3(1.1, 1.08, 1.04);
-	vec3 trough = vec3(0.92, 0.9, 0.89);
+	vec3 crest = vec3(1.08, 1.05, 0.99);
+	vec3 trough = vec3(0.95, 0.92, 0.87);
 	// About a third of a ripple's length is crest: the unresolved pixel takes the mean.
 	vec3 rt = mix(trough, crest, smoothstep(0.35, 0.8, c));
 	vec3 mt = mix(trough, crest, 0.4);
 	p_tint = mix(vec3(1.0), mix(mt, rt, resolved), amp);
-	// h = 0.05 amp c^1.5, so dh/dp = 0.05 amp 1.5 c^0.5 dc/ds grad s.
-	float dhds = 0.05 * amp * 1.5 * sqrt(c) * (-3.14159265 * sin(6.2831853 * s));
+	// Low and rounded (h = 0.04 amp c, slopes under 7 degrees, so a low sun leaves no hard-edged dark troughs):
+	// dh/dp = 0.04 amp dc/ds grad s.
+	float dhds = 0.04 * amp * (-3.14159265 * sin(6.2831853 * s));
 	return resolved * dhds * gs;
 }
 // Dune-scale sand colour (docs/ideas/sand.md, "Dune-scale tone"): three of the changes a dune field shows from afar.
 // Rubefaction: iron-oxide coats redden grains that have lain still for millennia (Walker 1979; Pye and Tsoar 2009),
-// patchy over hundreds of metres and strongest on the stable sand of thin flanks and interdunes. Interdune flats: the
+// patchy over hundreds of metres and strongest on the stable sand of the interdunes. Interdune flats: the
 // wind strips the fine sand and leaves a coarser, darker lag (Sharp 1963; Lancaster 1995). Slip faces: grain flows of
-// fine, well-sorted sand, paler than the windward slope (Bagnold 1941). p_depth: the loose sand's depth (m), below 0
-// off the dune fields or unknown (only the slip faces show there).
-vec3 ground_dune_tone(vec2 p_xz, float p_normal_y, float p_depth) {
+// fine, well-sorted sand, paler than the windward slope (Bagnold 1941). p_interdune: the interdune floor's share
+// (TerrainGenerator3D.get_sand_interdune_at()), below 0 off the dune fields or unknown (only the slip faces show there).
+vec3 ground_dune_tone(vec2 p_xz, float p_normal_y, float p_interdune) {
 	vec3 t = vec3(1.0);
-	if (p_depth >= 0.0) {
-		float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	if (p_interdune >= 0.0) {
+		float thin = p_interdune;
 		float age = smoothstep(0.25, 0.7, 0.65 * ground_ripple_vn(p_xz / 420.0, 41u) + 0.35 * ground_ripple_vn(p_xz / 130.0, 42u));
 		t *= mix(vec3(1.0), vec3(1.15, 0.93, 0.78), age * (0.7 + 0.3 * thin));
-		float lag = ground_dune_lag(p_xz, p_normal_y, p_depth);
-		t *= mix(vec3(1.0), vec3(0.72, 0.7, 0.68), lag);
+		float lag = ground_dune_lag(p_xz, p_normal_y, p_interdune);
+		t *= mix(vec3(1.0), vec3(0.84, 0.74, 0.62), lag);
 	}
 	// Slopes of about 29 to 33 degrees: the slip face at the sand's repose.
 	float slip = smoothstep(0.78, 0.84, p_normal_y) * (1.0 - smoothstep(0.88, 0.93, p_normal_y));
 	t *= mix(vec3(1.0), vec3(1.08, 1.07, 1.05), slip);
 	return t;
 }
-// The dune tone's inputs (GroundSurface3D dune_tone), from the ripple map: under the patch, the loose sand's depth (m)
-// from its generator (TerrainGenerator3D.get_sand_depth_at(), below 0 off the dune fields or with none) and the
-// ground's sand share (the sand block, G and B); past it, the depth over a kilometre round the patch (the depth rows,
+// The dune tone's inputs (GroundSurface3D dune_tone), from the ripple map: under the patch, the interdune floors' share
+// from its generator (TerrainGenerator3D.get_sand_interdune_at(), below 0 off the dune fields or with none) and the
+// ground's sand share (the sand block, G and B); past it, the same share over a kilometre round the patch (the depth rows,
 // R, faded out over their outer 15%) and the ground's own share (all sand for a sand ground). Returns (depth, share,
 // the depth's weight); (-1, 0, 0) with the tone off (the meta row's fifth texel: x on, yzw the depth rows' rect).
 // The ripple map's sixth meta texel: the generator's dune-building wind (xy) and whether granule ripples are on (z).

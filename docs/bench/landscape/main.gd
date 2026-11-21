@@ -477,6 +477,19 @@ func _ready() -> void:
 	_build_camera()
 	if args.has("fov"):
 		get_viewport().get_camera_3d().fov = float(args["fov"]) # --fov=DEG: a wider or narrower lens
+	if args.has("storm-approach"):
+		# --storm-approach[=KM]: a storm cell KM (17) km ahead of the camera, upwind (clouds cd3dd60b): the wind blows
+		# from it toward the camera so its shelf faces us; --storm-radius (2500) m, --storm-rain (40) mm/h,
+		# --storm-outflow (15) m/s, grown --storm-grow (900) s. Shoot with --frames=24 or more.
+		var sc: Camera3D = get_viewport().get_camera_3d()
+		var sf := -sc.global_basis.z
+		var sf2 := Vector2(sf.x, sf.z).normalized()
+		var skm := float(args["storm-approach"]) if String(args["storm-approach"]) != "" else 17.0
+		var sp := Vector2(sc.global_position.x, sc.global_position.z) + sf2 * skm * 1000.0
+		weather.wind_direction = -sf2
+		weather.add_storm(sp, float(args.get("storm-radius", "2500")), float(args.get("storm-rain", "40")), float(args.get("storm-outflow", "15")), 0.0)
+		weather.advance(float(args.get("storm-grow", "900")))
+		_log("storm approach: cell at %s, %.1f km ahead, wind toward the camera %s" % [str(sp.round()), skm, str(-sf2)])
 	if args.has("deer-lawn"):
 		# --deer-lawn[=P]: deer browse a disc --lawn-dist (25) m ahead of the camera, --lawn-radius (22) m, pressure P
 		# (0.9) through WorldStand.add_browse (cef8dbd7): grass grazes to a lawn there, bramble bitten at its edge,
@@ -798,7 +811,9 @@ func _ready() -> void:
 	if landscape != null:
 		# Landscape3D streams heights coarse first: load every chunk exactly before the picture.
 		landscape.load_all_heights()
+		_mem_log("after load_all_heights")
 		landscape.update_lods_from_camera()
+		_mem_log("after update_lods_from_camera")
 		if args.has("seat-probe"):
 			# --seat-probe=x,z: stone seating against the drawn ground (generator vs landscape height, chunk LOD, stones).
 			var sv := String(args["seat-probe"]).split(",")
@@ -842,6 +857,10 @@ func _ready() -> void:
 		await _campfire()
 	if args.has("hut"):
 		await _hut()
+		if args.has("hut-icicles"):
+			await _hut_icicles()
+		if args.has("hut-rime"):
+			await _hut_rime()
 	if slip_walk.size() == 4 and prints != null:
 		await _slip_walk()
 	if args.has("powder-avalanche") and snow != null:
@@ -858,6 +877,8 @@ func _ready() -> void:
 		var pitch := deg_to_rad(float(args.get("face-sun", args.get("face-away", "0"))))
 		cam5.look_at(cam5.global_position + flat * cos(pitch) - Vector3.UP * sin(pitch))
 		_log("facing the sun: azimuth dir %s, sun elevation %.1f deg" % [str(flat), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
+	if args.has("stand-trail"):
+		_stand_trail()
 	await _docs_links_setup()
 	# Raster: 160 frames, so the sky's reprojected clouds (one pixel of each 4x4 block a frame) have had ten
 	# samples a pixel; fewer leave the first frame's upsampled blocks and the march jitter in the picture
@@ -1017,6 +1038,22 @@ func _ready() -> void:
 	if out != "":
 		get_viewport().get_texture().get_image().save_png(out)
 		_log("saved %s (%d primitives in the frame)" % [out, int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))])
+		if args.has("pt-pair") and not env.pathtracing_enabled:
+			# --pt-pair=PATH (with --raster): the same moment path traced, from this run (Flow is not repeatable run to
+			# run): the scene paused, path tracing on, TAA off, --spp-frames more frames once the tracer is ready.
+			process_mode = Node.PROCESS_MODE_ALWAYS
+			get_tree().paused = true
+			get_viewport().use_taa = false
+			env.pathtracing_enabled = true
+			var w2 := 0
+			while RenderingServer.has_method("is_pathtracing_ready") and w2 < 400 and not RenderingServer.call("is_pathtracing_ready"):
+				await get_tree().process_frame
+				w2 += 1
+			for i in int(args.get("spp-frames", "4")) + int(args.get("pt-pair-frames", "8")):
+				await get_tree().process_frame
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(args["pt-pair"])
+			_log("saved %s (path traced pair, paused)" % args["pt-pair"])
 		if data_map != null and data_map.has_method("get_aridity_at"):
 			var cq: Camera3D = get_viewport().get_camera_3d()
 			var gq := cq.global_position - cq.global_basis.z * 6.0
@@ -4490,11 +4527,13 @@ func _build_camera() -> void:
 			cam.position = Vector3(300, 520, coast_z + 900.0)
 			cam.look_at(Vector3(-100, 250, -700))
 	if args.has("cam") and args.has("look"):
-		# A fixed shot for before/after pairs: --cam=x,y,z --look=x,y,z (y of either below 0: that far above the ground).
+		# A fixed shot for before/after pairs: --cam=x,y,z --look=x,y,z (y of either below 0: that far above the ground;
+		# the camera's above the sea where the ground is under water).
 		var cv := _vec3_arg(args["cam"])
 		var lv := _vec3_arg(args["look"])
 		if cv.y < 0.0:
-			cv.y = height_at(cv.x, cv.z) - cv.y
+			# Above the ground, or above the sea where the ground is under it.
+			cv.y = maxf(height_at(cv.x, cv.z), gen.sea_level if gen != null else -INF) - cv.y
 		if lv.y < 0.0:
 			lv.y = height_at(lv.x, lv.z) - lv.y
 		cam.position = cv
@@ -6158,9 +6197,187 @@ func _hut() -> void:
 		_log("hut fire at %.0f s: state %d, %.0f kW, flashover %.0f s, char %.1f mm, collapsed %s, firebrands %d" % [secs, int(bf.call("get_room_state", 0)), float(bf.call("get_heat_release")), float(bf.call("get_room_flashover_time", 0)), float(bf.call("get_room_char_depth", 0)) * 1000.0, str(bf.call("is_room_collapsed", 0)), int(bf.call("get_firebrand_count"))])
 
 
+func _stand_trail() -> void:
+	# --stand-trail[=passes]: a game trail (WorldStand.set_trails, 0.8 m, 600 passes a year) from 2 m ahead of the
+	# camera away from it, bending a little, and a fresh boar rooting (--rooting-age, 0) 1.5 m across, --rooting-ahead
+	# (7) m out and 2 m to the side (terrain 3199eeb8/897cc1dd, rocks 7b898b93, clods ad9de493). Off for the before.
+	var tc: Camera3D = get_viewport().get_camera_3d()
+	var tf := -tc.global_basis.z
+	tf.y = 0.0
+	tf = tf.normalized().rotated(Vector3.UP, deg_to_rad(float(args.get("trail-angle", "12"))))
+	var ts := tf.cross(Vector3.UP).normalized()
+	var tpts := PackedVector2Array()
+	for i in 40:
+		var d := 2.0 + float(i) * 2.0
+		var q := tc.global_position + tf * d + ts * (0.9 * sin(d * 0.12))
+		tpts.append(Vector2(q.x, q.z))
+	var tpass := float(args["stand-trail"]) if String(args["stand-trail"]) != "" else 600.0
+	WorldContracts.get_stand().set_trails([{"points": tpts, "width": 0.8, "passes": tpass, "kind": "game_trail"}])
+	var rp := tc.global_position + tf * float(args.get("rooting-ahead", "7")) - ts * 2.0
+	rp.y = height_at(rp.x, rp.z)
+	WorldContracts.get_stand().add_disturbance(rp, 1.5, WorldStand.DISTURBANCE_ROOTING, float(args.get("rooting-age", "0")))
+	_log("stand trail: %d points from %s, rooting at %s; trail %s at 6 m" % [tpts.size(), str(tpts[0].round()), str(rp.round()), str(WorldContracts.get_stand().trail_at(Vector3(tpts[2].x, 0, tpts[2].y)))])
+
+
+func _hut_rime() -> void:
+	# --hut-rime[=H]: H (24) hours of freezing fog (--rime-c -6 C, --rime-wind 8 m/s, --rime-fog 0.25 g/m3) on the hut
+	# (SnowRime3D, snow d0a9db71/fbfd5e10), the wind blowing from the camera onto it so the feathers grow toward us.
+	var root := get_node_or_null("Hut") as Node3D
+	if root == null or not ClassDB.class_exists("SnowRime3D"):
+		_log("hut rime: no hut or no SnowRime3D")
+		return
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var wv := root.global_position - c3.global_position
+	wv.y = 0.0
+	wv = wv.normalized() * float(args.get("rime-wind", "8"))
+	var rime: Node3D = ClassDB.instantiate("SnowRime3D")
+	rime.name = "Rime"
+	rime.set("target_group", "")
+	add_child(rime)
+	rime.set("target_paths", [rime.get_path_to(root)])
+	rime.call("refresh_targets")
+	var hrs := float(args["hut-rime"]) if String(args["hut-rime"]) != "" else 24.0
+	for h in int(hrs):
+		rime.call("grow", 1.0, float(args.get("rime-c", "-6")), wv, float(args.get("rime-fog", "0.25")))
+	_log("hut rime: %d targets, %d feathers after %.0f h, wind %s" % [int(rime.call("get_target_count")), int(rime.call("get_feather_count")), hrs, str(wv)])
+
+
+func _hut_icicles() -> void:
+	# --hut-icicles (with --hut, winter): snow on the hut's roof (its materials take the weather's snow) and a week of
+	# icicles (SnowIcicles3D, snow 5f68879a) along its longest eave, the lip found from the roof mesh; the camera
+	# --ice-dist (1.55) m out from the eave, a little above the icicles' middle, on the longest fused pair, the hut's
+	# dark wall behind. --ice-days (7), --ice-fov (26), --ice-up (0.4 m over the icicles' middle), --ice-look-up (0), --ice-snow (40 mm of water on the roof at least).
+	var root := get_node_or_null("Hut") as Node3D
+	if root == null or not ClassDB.class_exists("SnowIcicles3D"):
+		_log("hut icicles: no hut or no SnowIcicles3D")
+		return
+	var inv := root.global_transform.affine_inverse()
+	var pts := PackedVector3Array()
+	var snowed := 0
+	for mi in root.find_children("*", "MeshInstance3D", true, false):
+		var m := mi as MeshInstance3D
+		if m.mesh == null or not String(m.name).begins_with("Hut"):
+			continue
+		for si in m.mesh.get_surface_count():
+			var mat := m.get_active_material(si)
+			if mat is BaseMaterial3D and "snow_enabled" in mat:
+				var mm := (mat as BaseMaterial3D).duplicate() as BaseMaterial3D
+				mm.set("snow_enabled", true)
+				m.set_surface_override_material(si, mm)
+				snowed += 1
+		var xf := inv * m.global_transform
+		for v in m.mesh.get_faces():
+			pts.append(xf * v)
+	if pts.is_empty():
+		_log("hut icicles: no hut mesh")
+		return
+	var lo := pts[0]
+	var hi := pts[0]
+	for v in pts:
+		lo = lo.min(v)
+		hi = hi.max(v)
+	# The eave: the side whose outermost vertices run level over a long length (the gable ends rise to the ridge).
+	var best_side := -1
+	var best_len := 0.0
+	var eave_y := 0.0
+	var along := Vector2()
+	for side in 4:
+		var ax := 0 if side < 2 else 2
+		var other := 2 if ax == 0 else 0
+		var ext: float = (lo if side % 2 == 0 else hi)[ax]
+		var ys := PackedFloat32Array()
+		var a0 := INF
+		var a1 := -INF
+		for v in pts:
+			if absf(v[ax] - ext) < 0.08:
+				ys.append(v.y)
+				a0 = minf(a0, v[other])
+				a1 = maxf(a1, v[other])
+		if ys.size() < 4:
+			continue
+		ys.sort()
+		var spread := ys[ys.size() - 1] - ys[0]
+		if spread < 0.4 and a1 - a0 > best_len:
+			best_side = side
+			best_len = a1 - a0
+			eave_y = ys[0]
+			along = Vector2(a0, a1)
+	if best_side < 0:
+		_log("hut icicles: no level eave found (box %s to %s)" % [str(lo), str(hi)])
+		return
+	var axis := 0 if best_side < 2 else 2
+	var out_sign := -1.0 if best_side % 2 == 0 else 1.0
+	var lip: float = (lo if best_side % 2 == 0 else hi)[axis]
+	var inward := lip - out_sign * 0.1
+	var e0 := Vector3()
+	var e1 := Vector3()
+	e0[axis] = inward
+	e1[axis] = inward
+	e0[2 if axis == 0 else 0] = along.x + 0.3
+	e1[2 if axis == 0 else 0] = along.y - 0.3
+	e0.y = eave_y - 0.01
+	e1.y = eave_y - 0.01
+	var ice: Node3D = ClassDB.instantiate("SnowIcicles3D")
+	ice.name = "Icicles"
+	ice.set("spacing", 0.05)
+	root.add_child(ice)
+	ice.set("edge", PackedVector3Array([e0, e1]))
+	var catch := 3.4
+	for day in int(args.get("ice-days", "7")):
+		ice.call("grow", 6.0, -4.0, 0.5, 0.3 * catch)
+		ice.call("grow", 18.0, -8.0, 0.5, 0.0)
+	ice.call("grow", 0.25, -4.0, 0.5, 0.3 * catch)
+	var n: int = ice.call("get_icicle_count")
+	var bk := -1
+	var bl := 0.0
+	for k in n - 1:
+		var pa: Vector3 = ice.call("get_icicle_position", k)
+		var pb: Vector3 = ice.call("get_icicle_position", k + 1)
+		var ra: float = ice.call("get_icicle_radius", k)
+		var rb: float = ice.call("get_icicle_radius", k + 1)
+		var l := minf(float(ice.call("get_icicle_length", k)), float(ice.call("get_icicle_length", k + 1)))
+		var gap := Vector2(pa.x - pb.x, pa.z - pb.z).length() - ra - rb
+		var t := float(k) / maxf(n - 1, 1)
+		if gap > 0.0 and gap < minf(ra, rb) and t > 0.25 and t < 0.75 and l > bl:
+			bk = k
+			bl = l
+	var mid_l := (e0 + e1) * 0.5
+	mid_l.y -= 0.25
+	if bk >= 0:
+		mid_l = (Vector3(ice.call("get_icicle_position", bk)) + Vector3(ice.call("get_icicle_position", bk + 1))) * 0.5
+		mid_l.y -= 0.5 * maxf(float(ice.call("get_icicle_length", bk)), float(ice.call("get_icicle_length", bk + 1)))
+	var outward := Vector3()
+	outward[axis] = out_sign
+	var tang := (e1 - e0).normalized()
+	var mid := root.global_transform * mid_l
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var wout := (root.global_basis * outward).normalized()
+	var wt := (root.global_basis * tang).normalized()
+	c3.global_position = mid + wout * float(args.get("ice-dist", "1.55")) + Vector3.UP * float(args.get("ice-up", "0.4")) - wt * 0.4
+	c3.look_at(mid + Vector3.UP * float(args.get("ice-look-up", "0")))
+	c3.fov = float(args.get("ice-fov", "26"))
+	var swe0: float = snow.get_world_swe_at(mid) if snow != null and snow.has_method("get_world_swe_at") else -1.0
+	var top_up := float(args.get("ice-snow", "40"))
+	if snow != null and swe0 >= 0.0 and swe0 < top_up:
+		# --ice-snow=MM (40): a winter's snow on the roof and round the hut where the climate left less (low ground).
+		snow.add_snow(top_up - swe0, 120.0)
+		for i in 4:
+			await get_tree().process_frame
+	_log("hut icicles: %d hut surfaces take the snow, snow %.0f mm water at the hut (was %.0f)" % [snowed, snow.get_world_swe_at(mid) if snow != null and snow.has_method("get_world_swe_at") else -1.0, swe0])
+	_log("hut icicles: eave side %d, %.1f m long at %.2f m, %d sites, longest %.2f m, %.2f kg; hero pair %d (%.2f m) at %s; cam %s" % [best_side, best_len, eave_y, n, float(ice.call("get_longest")), float(ice.call("get_ice_mass")), bk, bl, str(mid), str(c3.global_position)])
+
+
 func _mem_log(tag: String) -> void:
 	# What the renderer holds (lavapipe's GPU memory is system RAM) next to the process's own heap.
-	_log("memory %s: textures %d MB, buffers %d MB, video total %d MB, static %d MB" % [tag,
+	# Resident set from /proc (Linux): lavapipe, PhysX and driver heaps that the counters above do not see.
+	var rss := 0
+	var st := FileAccess.open("/proc/self/status", FileAccess.READ)
+	while st != null and not st.eof_reached(): # a /proc file reports no length: read it line by line
+		var ln := st.get_line()
+		if ln.begins_with("VmRSS:"):
+			rss = int(ln.substr(6).strip_edges().split(" ")[0]) >> 10
+			break
+	_log("memory %s: resident %d MB, textures %d MB, buffers %d MB, video total %d MB, static %d MB" % [tag, rss,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TEXTURE_MEM_USED) >> 20,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED) >> 20,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED) >> 20,
@@ -6633,11 +6850,13 @@ func _powder_avalanche() -> void:
 		_log("powder avalanche: no avalanche node on the snow cover")
 		return
 	av.natural_release = false
+	_log("powder avalanche: %d natural releases before loading" % (int(av.get_release_count()) if av.has_method("get_release_count") else -1))
 	# A storm slab on an older bonded pack (as on the snow bench): it breaks away whole.
-	snow.add_snow(90.0, 150.0)
+	# world=true (snow 6f0f0a09): the slab everywhere, not only on the near square.
+	snow.call("add_snow", 90.0, 150.0, true)
 	snow.advance(8.0 * 24.0 * 3600.0)
 	await get_tree().physics_frame
-	snow.add_snow(90.0, 90.0)
+	snow.call("add_snow", 90.0, 90.0, true)
 	await get_tree().physics_frame
 	var wr: Rect2 = gen.get_world_rect()
 	var stp := float(args.get("av-step", "40"))
@@ -6646,16 +6865,23 @@ func _powder_avalanche() -> void:
 	var best := Vector3.INF
 	var best_fall := Vector2.ZERO
 	var best_score := -INF
-	var xx := wr.position.x + stp
-	while xx < wr.end.x - stp:
-		var zz := wr.position.y + stp
-		while zz < wr.end.y - stp:
+	var n_steep := 0
+	var steep_snow := 0.0
+	# --av-margin (400 m): faces this far in from the map's edge, so the camera has ground under it.
+	var avm := maxf(stp, float(args.get("av-margin", "400")))
+	var xx := wr.position.x + avm
+	while xx < wr.end.x - avm:
+		var zz := wr.position.y + avm
+		while zz < wr.end.y - avm:
 			var p := Vector3(xx, 0, zz)
 			var g := _slip_grad(p)
 			var ang := rad_to_deg(atan(g.length()))
+			if ang >= float(args.get("av-min-deg", "32")) and ang <= 45.0:
+				n_steep += 1
+				steep_snow = maxf(steep_snow, snow.get_depth_at(p))
 			if ang >= float(args.get("av-min-deg", "32")) and ang <= 45.0 and snow.get_depth_at(p) >= float(args.get("av-min-snow", "0.3")):
 				var fall := -g.normalized()
-				var score := (1.0 - absf(fall.dot(sun_h))) * 2.0 + gen.get_height(p) / 1000.0
+				var score := (1.0 - absf(fall.dot(sun_h))) * 2.0 + gen.get_height(p) / 1000.0 + minf(snow.get_depth_at(p), 1.5)
 				if score > best_score:
 					best_score = score
 					best = Vector3(xx, gen.get_height(p), zz)
@@ -6671,7 +6897,7 @@ func _powder_avalanche() -> void:
 				deepest = maxf(deepest, snow.get_depth_at(Vector3(xs, 0, zs)))
 				zs += stp * 4.0
 			xs += stp * 4.0
-		_log("powder avalanche: no steep face with snow on it (deepest snow %.2f m)" % deepest)
+		_log("powder avalanche: no steep face with snow on it (deepest snow %.2f m; %d faces in range, the most snow on one %.2f m; %d releases)" % [deepest, n_steep, steep_snow, int(av.get_release_count()) if av.has_method("get_release_count") else -1])
 		return
 	var f3 := Vector3(best_fall.x, 0, best_fall.y)
 	var side := f3.cross(Vector3.UP).normalized()
@@ -6679,7 +6905,12 @@ func _powder_avalanche() -> void:
 		side = -side # the camera on the face's shaded side looks across it into the light: the cloud side- and back-lit
 	var dist := float(args.get("av-dist", "260"))
 	var cp := best + f3 * dist * 0.55 + side * dist * 0.8
-	cp.y = gen.get_height(cp) + float(args.get("av-cam-h", "30"))
+	cp.x = clampf(cp.x, wr.position.x + 60.0, wr.end.x - 60.0)
+	cp.z = clampf(cp.z, wr.position.y + 60.0, wr.end.y - 60.0)
+	var gh: float = gen.get_height(cp)
+	if is_nan(gh):
+		gh = height_at(cp.x, cp.z)
+	cp.y = gh + float(args.get("av-cam-h", "30"))
 	var look := best + f3 * 70.0 + Vector3.UP * 15.0
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	c3.global_position = cp
@@ -6689,6 +6920,17 @@ func _powder_avalanche() -> void:
 	if args.has("av-probe"):
 		get_tree().quit()
 		return
+	# Avalanches run on the snow's near square only: move it onto the release (it follows this marker).
+	var focus := Node3D.new()
+	focus.name = "AvalancheFocus"
+	add_child(focus)
+	focus.global_position = best
+	snow.follow_target = snow.get_path_to(focus)
+	var fw := 0
+	while fw < 600 and not (snow.get_map_rect() as Rect2).has_point(Vector2(best.x, best.z)):
+		await get_tree().physics_frame
+		fw += 1
+	_log("powder avalanche: near square %s over the release after %d frames, %.2f m snow there" % [str(snow.get_map_rect()), fw, snow.get_depth_at(best)])
 	Engine.max_physics_steps_per_frame = 1 # Flow steps once a frame: one tick a frame keeps the gas with the slide
 	var pflow: Node = av.get_powder_cloud().get_flow()
 	if pflow:

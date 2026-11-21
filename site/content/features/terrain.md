@@ -143,9 +143,9 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
 
-  ![A bare rock slope up close with scanned detail over the geology's colours, raster](media/terrain-ground-scan.jpg)
+  ![The same bare rock slope at 2 m without and with scanned detail, raster](media/terrain-ground-scan.jpg)
 
-  *Scanned detail: joints, fractures and grit on a bare slope at 2 m.*
+  *A bare slope at 2 m, left without scans, right with scanned joints, fractures and grit.*
 
 - **Far sun shadows** (`TerrainMaterial3D.far_shadow_start`): past the shadow maps' reach, ridges cast the low sun's shadow across distant terrain in raster.
 
@@ -181,13 +181,14 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 - **Soft ground** (PhysXVehicle3D `soft_soil`; PhysXVehicleWheel3D `tire_pressure`; GroundSurface3D `ploughing`): vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out; wheels sliding sideways across a slope dig in.
 - **Deep mud** (`GroundSurface3D.mud_layer`, `mud_map`, `data_map`): wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry. It lies on a firm base of varying depth that wheels can dig down to for grip (`subsoil`), and logs and branches settled in it become corduroy that spreads wheel load and snaps when too thin (`mats`). Liquid mud a wheel shoves aside runs on as a wave and the rut closes behind it (`mud_waves`).
-- **Hidden and loose stones** (`GroundSurface3D.buried_obstacles`, `buried_density`, `buried_kick`, `stream_stones`): stones and roots hidden in mud lift a sinking wheel and show as ruts deepen, and liquid mud flows round them. Tyres press the mud out round a stone, knock an uncovered one loose, push a stone low in the rut into its floor or squeeze it out under the shoulder, and shove loose stones ahead with a furrow and a heap. Loose stones settle as deep as the mud bears them and become hidden again once out of sight; slurry and debris flows carry them along, and streams roll them on once the current beats their weight, dropping them in slack water, with stones sunk in mud holding harder.
+- **Hidden and loose stones** (`GroundSurface3D.buried_obstacles`, `buried_density`, `buried_kick`, `stream_stones`): stones and roots hidden in mud lift a sinking wheel and show as ruts deepen, and liquid mud flows round them. Tyres press the mud out round a stone, knock an uncovered one loose, push a stone low in the rut into its floor or squeeze it out under the shoulder, and shove loose stones ahead with a furrow and a heap. Loose stones settle as deep as the mud bears them and become hidden again once out of sight; slurry and debris flows carry them along, and streams roll them on once the current beats their weight, dropping them in slack water, with stones sunk in mud holding harder. The current scours a hole round a stone on a stream bed and leaves a tail of sediment behind it, and stones rolled over a muddy bed stir up silt that drifts downstream.
 - **Tyre clogging** (`PhysXVehicle3D.tyre_clogging`): sticky clay packs the tread until it grips like a slick, and spinning throws it off.
 - **Treads and chains** (`PhysXVehicleWheel3D.tread`): road, all-terrain, mud or chains per wheel; mud tyres and chains bite deeper and clog less in sticky clay, and each prints its own pattern in the rut.
 - **Belly drag** (`PhysXVehicle3D.belly_drag`): a car sunk past its clearance rides on its belly, is dragged by the soil and can high-centre.
 - **Winch** (`PhysXWinch3D`: `rated_pull`, `line_speed`, `brake_hold`): a cable winch that slows under load, stalls at its rated pull and slips its brake; the cable sags and lies on the ground.
 - **Worn tracks** (`GroundSurface3D.worn_tracks`, `wear_regrowth_days`): repeated wheel passes pack the soil firmer so it sheds rain, flatten the grass and then wear it bare, and it all regrows over weeks.
 - **Stream fords** (`GroundSurface3D.stream_fords`): wheels crossing a stream scour its bed and its soft banks give way under them.
+- **Vehicles in water** (`PhysXVehicle3D.river_forces`, `hull_seal`): rivers, fords and floods buoy a vehicle by how much of its body keeps water out and push it with the current, carrying it off when the water is deep and fast.
 - **Mud on vehicles** (`PhysXVehicle3D.body_mud`; GroundSurface3D `mud_color`, `mud_color_map`): tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first; it dries with the weather, cracks into curling plates and shakes off on bumps.
 - **Mud spray** (`PhysXGroundGrains3D.mud_spray`): spinning wheels fling clods of wet clay that land back in the ground.
 - **Mud splats** (`PhysXVehicle3D.add_mud_splat()`): clods that hit a vehicle stick as domed splats that drip, dry and wash off in water.
@@ -203,6 +204,11 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 - **Desiccation cracks** (`GroundSurface3D.desiccation_cracks`): soaked clay dries to a pale matte crust that cracks into plates; rain closes the cracks, and each wet-dry cycle makes the pattern more regular.
 - **Thrown sand** (`PhysXGroundGrains3D`: `tread_depth`, `kick()`): spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept; a drifting car throws sand out of the turn, heaps a berm on the outside and scuffs a wide track, and the sand pushes back on the sliding tyre.
 - **Wind ripples** (`GroundSurface3D.wind_ripples`; `ripple_extent`): the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); on dry interdune flats, long low granule ripples with coarse crests run across the dune-building wind (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).
+
+  ![Long low granule ripples across dry sand between dune crests, raster](media/sand-granule-ripples.jpg)
+
+  *Granule ripples: long low ripples with coarse crests across a dry interdune flat.*
+
 - **Blowing sand** (`GroundStreamers3D`; `GroundSurface3D.obstacle_lee`): grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind, and drop in the lee of boulders, walls and parked vehicles.
 - **Dust** (`GroundDust3D`, `GroundSurface3D.dust_emission`): the wind lifts dust off dry sand, and sliding tyres lift billowing clouds of it, carried on the wind until it settles; needs volumetric fog.
 - **Sand glints** (`GroundSurface3D.sand_glints`): up close, dry sand shows the colours of its grains and the odd grain flashing in the sun; in low sun, sun-aligned grain facets glitter across dry sand.

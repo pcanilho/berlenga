@@ -69,6 +69,13 @@ private:
 
 	using Clod = GroundLump;
 	LocalVector<Clod> clods;
+	// Turned soil over WorldStand's boar rootings round the camera (rooting_age_at): rebuilt from the stand as the
+	// camera moves or the stand changes, the same clods each time (hashed per 0.5 m cell), not kept or crushed.
+	bool rooting = true;
+	LocalVector<Clod> rooted;
+	Vector2 rooted_center = Vector2(1e30f, 1e30f);
+	uint64_t rooted_generation = UINT64_MAX;
+	void _root(GroundSurface3D *p_surface);
 	uint32_t next_slot = 0;
 
 	GroundLumpScan scan;
@@ -127,6 +134,9 @@ public:
 	void update_now();
 	void clear();
 	int get_clod_count() const { return int(clods.size()); }
+	void set_rooting(bool p_enabled);
+	bool is_rooting() const { return rooting; }
+	int get_rooted_count() const { return int(rooted.size()); }
 	int get_spawned_total() const { return spawned_total; }
 	int get_landed_total() const { return landed_total; }
 	int get_parked_count() const { return store.get_parked_count(); }

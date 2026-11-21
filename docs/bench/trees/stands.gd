@@ -472,8 +472,16 @@ func _strike_stream_check() -> void:
 	ws.add_strike(at + Vector3(0, 25, 0), 0.1)
 	var t0 := Time.get_ticks_msec()
 	var after := 0
+	var start_count := f.get_plant_count()
+	var lowest := start_count
+	var longest := 0
+	var tf := Time.get_ticks_usec()
 	for k in 3000:
 		await get_tree().process_frame
+		var now := Time.get_ticks_usec()
+		longest = maxi(longest, now - tf)
+		tf = now
+		lowest = mini(lowest, f.get_plant_count())
 		if k % 10 == 0:
 			after = struck_count.call()
 			if k % 200 == 0:
@@ -481,6 +489,8 @@ func _strike_stream_check() -> void:
 			if after > 0:
 				break
 	_check(before == 0 and after >= 1, "streamed: no struck tree before (%d), %d after a strike, in %d ms" % [before, after, Time.get_ticks_msec() - t0])
+	# The field is placed again tile by tile, the old tiles showing until their replacements are in: nothing blinks out.
+	_check(lowest >= start_count * 0.9, "streamed: the field kept its plants while it re-placed (lowest %d of %d; longest frame %d ms on the software renderer)" % [lowest, start_count, longest / 1000])
 	ws.clear_strikes()
 
 

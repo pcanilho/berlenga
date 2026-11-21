@@ -2309,6 +2309,56 @@ On snow's bench, the darkest point along the cloud's lower edge
 (averaged over the edge): 161 -> 167 against a body of 175, a dip of 8,
 as under PT (180 against 188).
 
+### Raster powder: the slab edge, the lower rim with TAA, and the body gap (20 Nov)
+
+Docs' notes on v18. The ruler-straight left edge and flat top are the
+release slab's flank and crown walls in front of the gas: they show at
+the same place in the gas-hidden render and under PT. Not clipping at the
+grid box. Fixed on the way: a ground sample off the sun's map (fitted to
+the gas, not the box) counted as lit; now skipped.
+
+Lower rim, with TAA on (rocks' tip; snow's bench --taa): the dotted
+look is per-pixel shadow and dither noise and smooths out. The darkest
+point along the lower edge sits 8 below the body (174 -> 166), PT 6
+(190.6 -> 184.5).
+
+Body gap (raster 175 vs PT 188): about 4% is the scene (the plain snow
+next to the cloud: raster 187, PT 194). About 3% is the gas model (a
+white, front-lit block of powder: raster 177, PT 182). Raising the
+octave falloff q from 0.68 to 0.70 closes the gas part on the bench but
+puts the dense test puff 4.9% over PT; kept at 0.68 pending a pick.
+
+### Raster powder: the shadow's hard outline and the sky light in bright gas (20 Nov)
+
+Docs on v19: a hard dark grey outline along the lower edge. With the
+gas's scene shadow off it goes, so it is the gas's shadow on the snow,
+stair-stepped: the volumetric shadow map took one column through each
+texel's middle, and on the avalanche a texel was two 0.75 m gas cells
+wide. Built: a prefiltered shadow map (Unreal filters its cloud shadow
+map spatially for the same reason): each texel holds the mean
+transmittance of four columns on a rotated grid over its footprint,
+stored back as optical depth, and the map has a texel per two cells
+(up to 256). Steps gone on snow's bench.
+
+The body gap's gas part, against PT's sky-only light (snow found PT's
+sun about 17% too bright; Valence is fixing it, so the sun term waits).
+A big white block of powder lit by the sky only: PT's gas reads 1.03 of
+the ground beside it, raster's 0.81, darkest at the top. The orders
+past the first took their "is there gas around to scatter in" ramp from
+the gas above the point only, so the top of a deep cloud got single
+scattering only. Now the whole vertical (above and below), as the sun's
+orders take the gas both ways along its line. And light from all around
+fades inside bright gas only as fast as the gas absorbs it: diffusion
+theory's transport coefficient sqrt(3 (1 - w)(1 - w g)) (Jensen et al.
+2001) scales the ambient optical depth per channel for gas brighter
+than the fit (w 0.85), which also lets blue in deepest. SKY_MS_SHARE
+refit 0.21 -> 0.19. White block 0.81 -> 0.94 (PT 1.03); grey test puff
+sky-only -0.3% -> +3.5%.
+Snow's bench (TAA, against snow's PT v16): body 175 -> 185 (PT 190.6),
+blue/red 1.076 -> 1.091 (PT 1.055 over the same box); the ragged line
+along the top edge is gone. The lower rim is softer but still dips 12
+below the body (PT 6): next.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

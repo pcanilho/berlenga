@@ -241,3 +241,44 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
   degrees. Under a 32 degree sun those faces turned dark: blotches that read as wet ground, raster and PT alike,
   with or without scans (gone with --detail-octaves=0). The added slope now saturates softly near 0.35 (about 20
   degrees, small rill walls in soil).
+- The erosion detail took its gullies' direction and slope mask from the already bumped normal (procedural clods or
+  a scan's normal map), so they turned every few centimetres: blobs with hard rims, a melted-wax look over bare
+  ground without scans. It now runs on the surface's own normal (cliff relief included) and its tilt goes on top
+  of the bump. Its slope also had hard switches (normalising by max(len, 0.5), abs(s) and the sign of s at the
+  creases): fine in the geometry, hard-edged patches in per-pixel light. They are rounded (smooth maximum over
+  0.3, creases over 0.15).
+- No-scan ground, round two (docs: pale islands with dark rims, smear, diagonal ripple). The value noise hashed
+  with sin(), which loses precision once its argument reaches the thousands (fine octaves a few hundred metres out):
+  an integer hash now. The procedural floor had two bump octaves (0.25 m, 6 cm) on one square lattice: five now,
+  0.6 m to 1 cm, each turned against the last. The erosion detail drops its gullies under about 2 m (smoothstep
+  1.5 to 4 m): drawn in the light alone they were ripples and rimmed islands; the layers carry that scale.
+- Rock and soil met along smooth slope and geology contours (a cut-out olive edge on grey): the slope thresholds and
+  the geology's rock share are pushed by noise (5 m, and 1.3 m faded with the footprint), so outcrops break into
+  tongues and islands. Under cliff relief the layers go by the heightfield's normal (CUSTOM1), not the displaced
+  faces': each ledge's flat tread took the soil, olive ladder strips under the lips. The path tracer still draws
+  those strips (it reads the displaced normal); the lips' undersides read as thin black lines in raster only.
+- Pale rock slopes and faces read flat from afar, with only the fine relief (scan or procedural bump) on an even
+  colour: crumpled paper. Past about 32 degrees the rock layer now takes streaks down the fall line (1.3 m by 14 m,
+  4 m by 30 m), bed bands (0.9 m) and 18 m tone, and its fine relief eased by up to 0.4.
+
+## Trails and rooting (21 Nov)
+
+WorldStand's worn trails (trail_at: passes a year, tread share) and boar rooting (rooting_age_at) now mark the
+ground layers. Landscape3D rasterises both round its camera into globals terrain_stand_map (RG8, 512 texels over
+256 m) and terrain_stand_rect, rebuilt when the camera crosses a 64 m step or the stand's generation changes:
+- r: tread share times the wear the passes give, 1 - exp(-passes / 300) (trampling takes a field layer's cover off
+  roughly so: Cole 1995, Liddle 1997; a few hundred passes a year keep a line bare). The trails' segments are copied
+  and drawn per texel; a script stand is sampled per metre through trail_at.
+- g: freshness of rooted soil, 1 to a season after the boar, 0 by two years (litter and the field layer close over
+  it; Bueno 2013, Welander 2000), from rooting_age_at every 2 m, bilinear.
+The material draws trodden soil as the sward's own paths do (grass_path_soil): compacted, darker and browner, damp in
+the hollows, smoother, the bump pressed flat; the tread's edge fairly sharp and ragged at two scales. Rooting is dark
+moist humus in fist-sized clods (bump) with overturned sods among them, in patches with ragged edges, browning and
+greying toward the bare soil as it ages. Neither on rock, sand or slopes past about 40 degrees. Stones on trails come
+from ground detail, litter from vegetation. Rocks bench: --stand-test [--stand-at=x,z] [--rooting-age=y].
+Check: raster (TAA) and PT agree at the bench frame; PT keeps the clods and the tread's edge.
+Round 2 (docs review): the tread now has banks (a normal from the wear map's slope, about 8 cm deep), a darker band of
+crumbled soil under the turf's broken lip, hoof pocking about 1 cm deep and bared grit while a pixel resolves it.
+The dark ovals in that frame were not the trail: the scree's parallax stones cast their sun shadow test into soil
+where the scree weight thins to a few per cent (stones millimetres tall, but a penumbra and bias that do not shrink
+with them). tm_rd_pom_shadow now fades with the stones' height.

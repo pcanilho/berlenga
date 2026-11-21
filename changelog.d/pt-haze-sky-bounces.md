@@ -1,0 +1,2 @@
+### Fixed
+- Path tracing: a bounce ray that leaves for the sky no longer adds the weather's traced aerosol haze on top of the sky. The radiance map already holds that aerosol along the whole ray, and with the ambient light off the sky lights nothing, as in raster. A sun-only scene under a hazy WeatherMap3D was 17% too bright at a 30 degree sun and 35% at 12 degrees; it now matches the analytic value (0.502 vs 0.500).

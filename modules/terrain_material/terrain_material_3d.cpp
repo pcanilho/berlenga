@@ -199,12 +199,12 @@ float tm_dune_vn(vec2 p_p, uint p_s) {
 	ivec2 c = ivec2(i);
 	return mix(mix(tm_dune_hash(c, p_s), tm_dune_hash(c + ivec2(1, 0), p_s), u.x), mix(tm_dune_hash(c + ivec2(0, 1), p_s), tm_dune_hash(c + ivec2(1, 1), p_s), u.x), u.y);
 }
-// The coarse lag's share on an interdune flat (the dune tone's lag term): thin sand on flat ground, patchy.
-float tm_dune_lag(vec2 p_xz, float p_normal_y, float p_depth) {
-	if (p_depth < 0.0) {
+// The coarse lag's share on an interdune flat (the dune tone's lag term): the floors between dunes, flat, patchy.
+float tm_dune_lag(vec2 p_xz, float p_normal_y, float p_interdune) {
+	if (p_interdune < 0.0) {
 		return 0.0;
 	}
-	float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	float thin = p_interdune;
 	return thin * smoothstep(0.93, 0.98, p_normal_y) * mix(0.45, 1.0, tm_dune_vn(p_xz / 23.0, 43u));
 }
 // Granule ripples (megaripples) on that lag: the coarse grains the wind cannot lift creep up into long, low ripples
@@ -215,28 +215,13 @@ float tm_dune_lag(vec2 p_xz, float p_normal_y, float p_depth) {
 // crests closer than about four pixels fade to their mean tone. Returns the slope (dh/dx, dh/dz); p_tint: the albedo
 // factor (the crests' coarse grains, paler than the troughs' fines).
 // The phase (in wavelengths): the spacing wanders between about 0.5 and 2 m (a warp along the wind whose slope adds
-// to or takes from the 1.1 m mean), the crests bend over metres, and paired edge dislocations make the forks.
+// to or takes from the 1.1 m mean) and the crests bend over metres; they end by tapering out (no phase defects:
+// a defect's closed contours read as small rimmed pits).
 float tm_granule_phase(vec2 p_xz, vec2 p_k, vec2 p_t) {
 	float along = dot(p_xz, p_k);
 	float across = dot(p_xz, p_t);
 	float s = along / 1.1 + 2.5 * tm_dune_vn(vec2(along / 6.0, across / 5.0), 52u) + 1.2 * tm_dune_vn(p_xz / 9.0, 51u);
-	ivec2 c0 = ivec2(floor(p_xz / 4.0));
-	float ph = 0.0;
-	for (int dz = -1; dz <= 1; dz++) {
-		for (int dx = -1; dx <= 1; dx++) {
-			ivec2 c = c0 + ivec2(dx, dz);
-			if (tm_dune_hash(c, 54u) >= 0.35) {
-				continue;
-			}
-			vec2 m = (vec2(c) + vec2(tm_dune_hash(c, 55u), tm_dune_hash(c, 56u))) * 4.0;
-			float hl = 0.4 + 0.8 * tm_dune_hash(c, 57u);
-			vec2 da = p_xz - (m - p_t * hl);
-			vec2 db = p_xz - (m + p_t * hl);
-			float sgn = tm_dune_hash(c, 58u) < 0.5 ? -1.0 : 1.0;
-			ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(2.0, 4.0, length(p_xz - m)));
-		}
-	}
-	return s + ph / 6.2831853;
+	return s;
 }
 vec2 tm_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, out vec3 p_tint) {
 	p_tint = vec3(1.0);
@@ -252,40 +237,40 @@ vec2 tm_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, out 
 	if (amp <= 0.0) {
 		return vec2(0.0);
 	}
-	// The slope from the phase's own gradient (the warp and the forks turn the crests), by differences.
+	// The slope from the phase's own gradient (the warp turns the crests), by differences.
 	float e = 0.03;
 	float s = tm_granule_phase(p_xz, k, t);
 	vec2 gs = vec2(tm_granule_phase(p_xz + vec2(e, 0.0), k, t) - s, tm_granule_phase(p_xz + vec2(0.0, e), k, t) - s);
-	// Modulo one wavelength: a fork's phase jumps by a whole turn across its cut.
-	gs = (fract(gs + 0.5) - 0.5) / e;
+	gs /= e;
 	float c = 0.5 + 0.5 * cos(6.2831853 * s);
 	// Resolved by the local spacing (1 / |grad s|).
 	float lam = 1.0 / max(length(gs), 0.3);
 	float resolved = 1.0 - smoothstep(0.15 * lam, 0.3 * lam, p_fp);
-	vec3 crest = vec3(1.1, 1.08, 1.04);
-	vec3 trough = vec3(0.92, 0.9, 0.89);
+	vec3 crest = vec3(1.08, 1.05, 0.99);
+	vec3 trough = vec3(0.95, 0.92, 0.87);
 	// About a third of a ripple's length is crest: the unresolved pixel takes the mean.
 	vec3 rt = mix(trough, crest, smoothstep(0.35, 0.8, c));
 	vec3 mt = mix(trough, crest, 0.4);
 	p_tint = mix(vec3(1.0), mix(mt, rt, resolved), amp);
-	// h = 0.05 amp c^1.5, so dh/dp = 0.05 amp 1.5 c^0.5 dc/ds grad s.
-	float dhds = 0.05 * amp * 1.5 * sqrt(c) * (-3.14159265 * sin(6.2831853 * s));
+	// Low and rounded (h = 0.04 amp c, slopes under 7 degrees, so a low sun leaves no hard-edged dark troughs):
+	// dh/dp = 0.04 amp dc/ds grad s.
+	float dhds = 0.04 * amp * (-3.14159265 * sin(6.2831853 * s));
 	return resolved * dhds * gs;
 }
 // Dune-scale sand colour (docs/ideas/sand.md, "Dune-scale tone"): three of the changes a dune field shows from afar.
 // Rubefaction: iron-oxide coats redden grains that have lain still for millennia (Walker 1979; Pye and Tsoar 2009),
-// patchy over hundreds of metres and strongest on the stable sand of thin flanks and interdunes. Interdune flats: the
+// patchy over hundreds of metres and strongest on the stable sand of the interdunes. Interdune flats: the
 // wind strips the fine sand and leaves a coarser, darker lag (Sharp 1963; Lancaster 1995). Slip faces: grain flows of
-// fine, well-sorted sand, paler than the windward slope (Bagnold 1941). p_depth: the loose sand's depth (m), below 0
-// off the dune fields or unknown (only the slip faces show there).
-vec3 tm_dune_tone(vec2 p_xz, float p_normal_y, float p_depth) {
+// fine, well-sorted sand, paler than the windward slope (Bagnold 1941). p_interdune: the interdune floor's share
+// (TerrainGenerator3D.get_sand_interdune_at()), below 0 off the dune fields or unknown (only the slip faces show there).
+vec3 tm_dune_tone(vec2 p_xz, float p_normal_y, float p_interdune) {
 	vec3 t = vec3(1.0);
-	if (p_depth >= 0.0) {
-		float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	if (p_interdune >= 0.0) {
+		float thin = p_interdune;
 		float age = smoothstep(0.25, 0.7, 0.65 * tm_dune_vn(p_xz / 420.0, 41u) + 0.35 * tm_dune_vn(p_xz / 130.0, 42u));
 		t *= mix(vec3(1.0), vec3(1.15, 0.93, 0.78), age * (0.7 + 0.3 * thin));
-		float lag = tm_dune_lag(p_xz, p_normal_y, p_depth);
-		t *= mix(vec3(1.0), vec3(0.72, 0.7, 0.68), lag);
+		float lag = tm_dune_lag(p_xz, p_normal_y, p_interdune);
+		t *= mix(vec3(1.0), vec3(0.84, 0.74, 0.62), lag);
 	}
 	// Slopes of about 29 to 33 degrees: the slip face at the sand's repose.
 	float slip = smoothstep(0.78, 0.84, p_normal_y) * (1.0 - smoothstep(0.88, 0.93, p_normal_y));
@@ -319,6 +304,8 @@ global uniform sampler2D rock_contact_map : hint_default_black, filter_linear; /
 global uniform sampler2D rock_far_cover_map : hint_default_black, filter_linear; // RockField3D far tier: rgb stone colour, a cover
 global uniform vec4 rock_far_cover_rect;
 global uniform vec4 rock_contact_rect;
+global uniform sampler2D terrain_stand_map : hint_default_black, filter_linear; // Landscape3D: r trail wear, g fresh rooting
+global uniform vec4 terrain_stand_rect;
 uniform float tm_far_start = 300.0;
 uniform float tm_far_fade = 150.0;
 )";
@@ -510,8 +497,17 @@ TmProj tm_projection(vec3 p, vec3 n, float scale, bool cliff) {
 }
 
 // Value noise for the layers' large-scale breakup (no textures needed).
+// An integer hash of the lattice point: the sin() hash loses its precision once its argument reaches the
+// thousands (fine octaves a few hundred metres from the origin), and its value lattice turned into diagonal ripples.
 float tm_vn_hash(vec3 p) {
-	return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453123);
+	uvec3 q = uvec3(ivec3(p));
+	uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u) ^ (q.z * 2741598763u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	return float(h >> 8u) * (1.0 / 16777216.0);
 }
 float tm_vn(vec3 p) {
 	vec3 i = floor(p);
@@ -702,18 +698,41 @@ vec2 tm_hex_hash(ivec2 v) {
 			c += R"(	{
 		float fp = max(length(dpx), length(dpy));
 		albedo *= (0.84 + 0.32 * tm_vn(p / 9.0 + 31.0)) * (0.88 + 0.24 * tm_vn(p / 2.2 + 47.0));
-		const float L[2] = float[2](0.25, 0.06);
-		for (int k = 0; k < 2; k++) {
+		// Five octaves from 0.6 m to 1 cm, each turned against the last (a lattice kept square drew diagonal
+		// ripples), so the ground holds detail down to the pixel close up instead of reading as smeared clouds.
+		const float L[5] = float[5](0.6, 0.22, 0.08, 0.03, 0.011);
+		const float A[5] = float[5](0.45, 0.4, 0.35, 0.3, 0.25);
+		const mat3 R = mat3(vec3(0.00, 0.80, 0.60), vec3(-0.80, 0.36, -0.48), vec3(-0.60, -0.48, 0.64));
+		mat3 rk = mat3(1.0);
+		for (int k = 0; k < 5; k++) {
 			float f = 1.0 - smoothstep(0.25 * L[k], 0.6 * L[k], fp);
 			if (f <= 0.0) {
 				break;
 			}
-			vec3 q = p / L[k] + vec3(13.0 * float(k));
+			vec3 q = rk * p / L[k] + vec3(13.0 * float(k));
 			float v0 = tm_vn(q);
 			vec3 g = vec3(tm_vn(q + vec3(0.35, 0.0, 0.0)), tm_vn(q + vec3(0.0, 0.35, 0.0)), tm_vn(q + vec3(0.0, 0.0, 0.35))) - v0;
+			g = transpose(rk) * g;
 			g -= n * dot(g, n);
-			dn -= g * 0.6 * f;
-			albedo *= 1.0 + 0.16 * (v0 - 0.5) * f;
+			dn -= g * A[k] * f;
+			albedo *= 1.0 + 0.14 * (v0 - 0.5) * f;
+			rk = R * rk;
+		}
+	}
+)";
+		}
+		if (i == LAYER_ROCK) {
+			// Rock slopes and faces from afar: water and lichen stain them in streaks down the fall line and the beds
+			// stand out as bands, so a pale face is not one even plane on which only the fine relief reads (crumpled
+			// paper). The fine relief is eased there too: the layers' textures and bump are of ground seen from above.
+			c += R"(	{
+		float face = 1.0 - smoothstep(0.55, 0.85, n.y);
+		if (face > 0.0) {
+			float streak = tm_vn(vec3(p.x / 1.3, p.y / 14.0, p.z / 1.3) + 71.0) * 0.6 + tm_vn(vec3(p.x / 4.0, p.y / 30.0, p.z / 4.0) + 17.0) * 0.4;
+			float bed = tm_vn(vec3(p.x / 40.0, p.y / 0.9, p.z / 40.0) + 5.0);
+			float sk = smoothstep(0.35, 0.75, streak);
+			albedo *= mix(1.0, (1.1 - 0.5 * sk) * (0.86 + 0.28 * bed) * (0.85 + 0.3 * tm_vn(p / 18.0 + 3.0)), face);
+			dn *= 1.0 - 0.4 * face;
 		}
 	}
 )";
@@ -1344,7 +1363,10 @@ float tm_rd_pom_shadow(vec3 q, float depth, vec3 n, vec3 l, float h, float e, fl
 		float w = max(t * 0.03, e);
 		vis = min(vis, smoothstep(-w, w, s - d + 0.002 * tm_rock_detail_scale));
 	}
-	return vis;
+	// Faded with the stones' height: where the scree thins into soil (a few per cent of a layer's weight) the stones
+	// are millimetres tall and show nothing, but their shadow test, whose penumbra and bias do not shrink with them,
+	// still cut full shadows into the soil: dark ovals a metre or two across in the raster and path-traced frames.
+	return mix(1.0, vis, smoothstep(0.1, 0.4, h / (TM_RD_STONE_H * tm_rock_detail_scale)));
 }
 )";
 	}
@@ -1373,7 +1395,15 @@ void fragment() {
 	// far "swirls"). Close up they are as before.
 	float tm_fp0 = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 	float tm_sb = 1.0 + 2.0 * smoothstep(0.05, 0.6, tm_fp0);
-	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08 * tm_sb, tm_rock_cos + 0.04 * tm_sb, wn.y);
+	// The slope thresholds and the geology's rock edge are broken by noise (5 m and 1.3 m, the fine one faded out
+	// as the pixel grows): taken as they are, rock and soil met along smooth contours, a clean cut-out edge between
+	// grey and olive. Outcrops break up into tongues and islands.
+	float tm_edge_n = (tm_vn(wp / 5.0 + 11.0) - 0.5) * 0.24 + (tm_vn(wp / 1.3 + 23.0) - 0.5) * 0.12 * (1.0 - smoothstep(0.03, 0.15, tm_fp0));
+	// The layers go by the heightfield's own slope where cliff relief displaced the mesh (CUSTOM1): by the displaced
+	// faces' normal a ledge's flat tread took the soil, olive ladder strips under every lip on a grey cliff.
+	vec3 tm_cn = dot(tm_cl_n, tm_cl_n) > 0.5 ? normalize(mat3(MODEL_MATRIX) * tm_cl_n) : wn;
+	float tm_ny = tm_cn.y + tm_edge_n;
+	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08 * tm_sb, tm_rock_cos + 0.04 * tm_sb, tm_ny);
 	float beach_sand = -1.0;
 	float tm_till = 0.0;
 	if (tm_geology && terrain_geology_rect.z > 0.0) {
@@ -1381,8 +1411,8 @@ void fragment() {
 		beach_sand = clamp(-g.x, 0.0, 1.0);
 		// The generator knows where soil holds (Heimsath soil on slopes up to its repose); below its cells only
 		// faces past the cliff slope are forced bare.
-		float cliff_rock = 1.0 - smoothstep(tm_cliff_cos - 0.08 * tm_sb, tm_cliff_cos + 0.04 * tm_sb, wn.y);
-		float rock = max(clamp(g.y, 0.0, 1.0), cliff_rock);
+		float cliff_rock = 1.0 - smoothstep(tm_cliff_cos - 0.08 * tm_sb, tm_cliff_cos + 0.04 * tm_sb, tm_ny);
+		float rock = max(smoothstep(0.2, 0.8, clamp(g.y, 0.0, 1.0) + tm_edge_n * 2.5), cliff_rock);
 		// Moraine till (negative talus): unsorted debris under a thin soil, soil with stones through it (the height
 		// blend lets the scree's stones stand out of the soil).
 		float till = clamp(-g.z, 0.0, 1.0) * (1.0 - rock);
@@ -1413,7 +1443,7 @@ void fragment() {
 		float bare_near = steep * max(smoothstep(0.02, 0.2, clamp(g.y, 0.0, 1.0)), smoothstep(0.02, 0.2, clamp(g.z, 0.0, 1.0)));
 		scree += rest * bare_near;
 		rest *= 1.0 - bare_near;
-		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w) * smoothstep(0.88, 0.95, wn.y);
+		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w) * smoothstep(0.88, 0.95, tm_cn.y);
 		w[0] = rock;
 		w[1] = scree;
 		w[2] = rest * (1.0 - alluvium);
@@ -1434,7 +1464,7 @@ void fragment() {
 	// (34 degrees, 45 under marram).
 	// Past 47 degrees no sand holds at all: a wide band (to 56) left sand half-mixed over the steeper folds of sea
 	// cliffs behind beaches, pale sand-coloured curtains running up the rock.
-	float sand_steep = beach_sand > 0.0 ? mix(steep, 1.0 - smoothstep(0.682, 0.719, wn.y), beach_sand) : steep;
+	float sand_steep = beach_sand > 0.0 ? mix(steep, 1.0 - smoothstep(0.682, 0.719, tm_cn.y), beach_sand) : steep;
 	sand *= 1.0 - sand_steep;
 	for (int i = 0; i < 4; i++) {
 		w[i] *= 1.0 - sand;
@@ -1513,7 +1543,7 @@ void fragment() {
 		tm_sand(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		d += tm_sand_grain(wp, tm_fp0, a);
 		// The dune field's colour at this scale: redder old sand, coarse dark interdune flats, pale slip faces.
-		float tm_sdepth = terrain_sand_depth(wp);
+		float tm_sdepth = terrain_sand_interdune(wp);
 		if (tm_dune_tone_on) {
 			a *= tm_dune_tone(wp.xz, wn.y, tm_sdepth);
 		}
@@ -1562,12 +1592,14 @@ void fragment() {
 	dn /= total;
 	porosity /= total;
 	vec3 sn = normalize(wn + dn);
+	vec3 tm_macro_n = wn; // the surface's own normal, without the layers' fine bump
 	if (tm_cl_p.w > 0.0) {
 		// Cliff relief: the face's normal per pixel (see tm_cl_normal), with the layers' own detail on top.
 		float cl_fp = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 		vec3 cl_n = tm_cl_normal(tm_cl_p.xyz, normalize(tm_cl_n), tm_cl_p.w, max(0.15, cl_fp));
 		cl_n = normalize(mat3(MODEL_MATRIX) * cl_n);
 		sn = normalize(cl_n + dn);
+		tm_macro_n = cl_n;
 )";
 	if (cliff_self_shadow) {
 		// Where the relief is still wider than a pixel and the pixel faces the sun. sun_direction() is zero under
@@ -1590,7 +1622,10 @@ void fragment() {
 	// under a side sun drew the detail's octaves as fine diagonal hatching while the cone's width alone kept them.
 	float footprint = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 	footprint /= max(abs(dot(normalize(wp - CAMERA_POSITION_WORLD), wn)), 0.1);
-	sn = terrain_detail_normal(wp, sn, tm_detail_octaves, footprint);
+	// The detail's gullies run by the surface's own slope, not by the layers' fine bump (procedural clods or a scan's
+	// normal map): fed those, the gullies' direction turned every few centimetres and drew blobs with hard rims, a
+	// melted-wax look over any bare ground. Its tilt then goes on top of the bumped normal.
+	sn = normalize(sn + terrain_detail_normal(wp, tm_macro_n, tm_detail_octaves, footprint) - tm_macro_n);
 )";
 	}
 	if (rock_detail_enabled) {
@@ -1727,6 +1762,8 @@ void fragment() {
 		// The soil under the cover, for where the ground is broken open (below).
 		c += "\tvec3 tm_soil = albedo;\n\tfloat tm_exposed = 0.0;\n";
 	}
+	// The bare ground under the cover, for the stand's trails and rooting (below).
+	c += "\tvec3 tm_stand_bare = albedo;\n";
 	if (grass_tint_enabled) {
 		c += "\talbedo = grass_ground(wp, albedo);\n";
 		// Moraine till keeps its stones above the turf: the scree layer's tallest blocks stand out of the sward
@@ -1794,6 +1831,81 @@ void fragment() {
 	}
 )";
 	}
+	// The stand's worn trails and boar rooting (WorldStand through Landscape3D's stand map; docs/ideas/terrain-material.md).
+	// A trail walked bare: the cover gone, the soil packed (Cole 1995; Liddle 1997: trampled soil is denser, its litter
+	// and fine relief worn off), darker and browner, smoother, its clods pressed flat; the tread's edge broken by noise. Rooting: boar turn the topsoil over in patches (Bueno 2013; Welander 2000),
+	// dark moist humus in loose clods, the cover gone, fading as it dries and the field layer closes over it (1 to 2
+	// years). Neither on bare rock faces or sand. Ground detail lays the stones and vegetation the litter on both.
+	c += R"(	if (terrain_stand_rect.z > 0.0) {
+		vec2 suv = (wp.xz - terrain_stand_rect.xy) / terrain_stand_rect.zw;
+		if (all(greaterThan(suv, vec2(0.0))) && all(lessThan(suv, vec2(1.0)))) {
+			vec2 st = textureLod(terrain_stand_map, suv, 0.0).rg;
+			vec2 sedge = min(suv, 1.0 - suv);
+			float sfade = smoothstep(0.0, 0.06, min(sedge.x, sedge.y));
+			float sground = (1.0 - w[0]) * (1.0 - w[4]) * smoothstep(0.55, 0.8, tm_macro_n.y) * sfade;
+			if (st.r > 0.0 && sground > 0.0) {
+				float tn = tm_vn(wp * vec3(2.2, 0.0, 2.2) + 31.0);
+				// A tread's edge is fairly sharp (the sward stands right up to it), ragged at two scales.
+				float tr = smoothstep(0.28, 0.48, st.r + (tn - 0.5) * 0.4 + (tm_vn(wp * 9.0 + 5.0) - 0.5) * 0.15) * sground;
+				// Trodden soil as the sward's own paths draw it (grass_path_soil): compacted, darker and browner than
+				// loose ground (Liddle 1997), damp in the hollows feet press into it.
+				vec3 tpack = mix(tm_stand_bare, vec3(0.085, 0.062, 0.042), 0.65) * (0.85 + 0.3 * tm_vn(wp * 2.3 + 9.1));
+				float tdamp = smoothstep(0.55, 0.75, tm_vn(wp * 0.7 + 4.4) * 0.7 + tm_vn(wp * 3.1) * 0.3) * smoothstep(0.5, 0.9, st.r);
+				tpack *= mix(1.0, 0.62, tdamp);
+				albedo = mix(albedo, tpack, tr);
+				rough = mix(rough, rough * mix(0.9, 0.7, tdamp), tr);
+				sn = normalize(mix(sn, tm_macro_n, 0.55 * tr));
+				// The tread is worn down into the ground (a few to some 10 cm on a busy game trail; Cole 1995): its
+				// banks as a normal from the wear map's slope, steeper where the sward's turf breaks off at the edge.
+				vec2 sdu = vec2(1.0 / float(textureSize(terrain_stand_map, 0).x), 0.0);
+				float stx = textureLod(terrain_stand_map, suv + sdu.xy, 0.0).r - textureLod(terrain_stand_map, suv - sdu.xy, 0.0).r;
+				float stz = textureLod(terrain_stand_map, suv + sdu.yx, 0.0).r - textureLod(terrain_stand_map, suv - sdu.yx, 0.0).r;
+				vec2 sgrad = vec2(stx, stz) / (2.0 * sdu.x * terrain_stand_rect.z); // wear per metre
+				float tdepth = 0.08 * sground;
+				vec2 tbank = tdepth * sgrad * (0.6 + 0.8 * tn);
+				// The turf's broken edge: a narrow band of crumbled soil and torn roots under the lip, in its shade.
+				float tedge = smoothstep(0.1, 0.45, tr) * (1.0 - smoothstep(0.55, 0.9, tr));
+				albedo *= mix(1.0, 0.72 + 0.2 * tm_vn(wp * 14.0 + 2.0), tedge);
+				// Hoof and foot pocking in the tread: shallow prints a hand across, softened where the soil is dry.
+				vec3 hq = wp * 5.5;
+				float h0 = tm_vn(hq + 17.0);
+				float hx = tm_vn(hq + vec3(0.11, 0.0, 0.0) + 17.0);
+				float hz = tm_vn(hq + vec3(0.0, 0.0, 0.11) + 17.0);
+				vec2 hgrad = vec2(hx - h0, hz - h0) / 0.02 * 0.012; // about 1 cm deep
+				sn = normalize(sn + vec3(tbank.x, 0.0, tbank.y) - vec3(hgrad.x, 0.0, hgrad.y) * smoothstep(0.4, 0.9, tr));
+				albedo *= mix(1.0, 0.85 + 0.3 * h0, 0.6 * tr); // the prints hold damp and fines darker
+				// Grit the feet have bared: coarse sand and small chips, lighter and darker, while a pixel resolves them.
+				float tgrit = tm_vn(wp * 38.0 + 29.0);
+				float tgr = (1.0 - smoothstep(0.01, 0.04, tm_hb_fp)) * tr;
+				albedo *= mix(1.0, tgrit > 0.72 ? 1.35 : (tgrit < 0.25 ? 0.7 : 1.0), 0.7 * tgr);
+			}
+			if (st.g > 0.0 && sground > 0.0) {
+				// Rooted in patches (a sounder works the ground in strips and pits), the patch's edge ragged.
+				float rp = tm_vn(wp * 0.6 + 23.0) * 0.6 + tm_vn(wp * 2.1 + 3.0) * 0.4;
+				float rt = smoothstep(0.32, 0.5, rp * (0.6 + 0.5 * st.g)) * smoothstep(0.0, 0.25, st.g) * sground;
+				if (rt > 0.0) {
+					// Clods: lumps a hand to a fist across, their faces catching the light.
+					float e = 0.02;
+					vec3 cq = wp * 7.0;
+					float c0 = tm_vn(cq) + 0.5 * tm_vn(cq * 2.3 + 5.0);
+					float cx = tm_vn(cq + vec3(e * 7.0, 0.0, 0.0)) + 0.5 * tm_vn((cq + vec3(e * 7.0, 0.0, 0.0)) * 2.3 + 5.0);
+					float cz = tm_vn(cq + vec3(0.0, 0.0, e * 7.0)) + 0.5 * tm_vn((cq + vec3(0.0, 0.0, e * 7.0)) * 2.3 + 5.0);
+					vec2 cg = vec2(cx - c0, cz - c0) / e * 0.05;
+					float fresh = st.g;
+					// Turned humus: dark and moist while fresh, greying as it dries; the bare soil's own tint kept.
+					vec3 humus = mix(vec3(0.062, 0.046, 0.033), vec3(0.11, 0.085, 0.06), smoothstep(0.6, 1.4, c0));
+					humus = mix(humus, tm_stand_bare * 0.75, (1.0 - fresh) * 0.6);
+					// Overturned sods among the humus: the turf's own colour on the clods' tops, browning as they die.
+					float sod = smoothstep(1.05, 1.25, c0) * smoothstep(0.4, 0.6, tm_vn(wp * 1.7 + 61.0));
+					humus = mix(humus, albedo * vec3(0.8, 0.7, 0.55), sod * 0.7);
+					albedo = mix(albedo, humus, rt * mix(0.55, 1.0, fresh));
+					rough = mix(rough, mix(0.97, 0.8, fresh * smoothstep(1.0, 0.5, c0)), rt);
+					sn = normalize(sn - vec3(cg.x, 0.0, cg.y) * rt * mix(0.4, 1.0, fresh));
+				}
+			}
+		}
+	}
+)";
 	// Where stones sit (RockField3D.ground_contact): the soil beside them kept damp (darker, smoother: porous darkening
 	// as for wet sand, Lagarde 2013) and the fines banked on their uphill side, a finer, browner skin with a little
 	// grit, so a stone reads as sitting in the ground. Edges broken by noise; none on bare rock faces.

@@ -36,6 +36,7 @@
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
+#include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
 #include "scene/resources/physics_material.h"
 #include "servers/rendering/rendering_server_types.h"
@@ -142,6 +143,18 @@ class Landscape3D : public Node3D {
 	real_t last_viewport_height = 0.0;
 	bool lods_dirty = true;
 	bool have_camera = false;
+
+	// The stand's ground map (WorldStand worn trails and boar rooting) for TerrainMaterial3D: globals
+	// terrain_stand_map (RG8: r trail wear, g fresh rooting) and terrain_stand_rect, a STAND_SIZE square round the camera.
+	static constexpr int STAND_RES = 512;
+	static constexpr real_t STAND_SIZE = 256.0;
+	Ref<ImageTexture> stand_texture;
+	Vector2 stand_origin = Vector2(1e30, 1e30);
+	uint64_t stand_generation = UINT64_MAX;
+	ObjectID stand_id;
+	bool stand_published = false;
+	void _update_stand_map(const Vector3 &p_camera);
+	void _clear_stand_map();
 
 	// Streaming.
 	ObjectID stream_source; // the TerrainGenerator3D read from worker threads

@@ -3308,7 +3308,7 @@ void TerrainGenerator3D::_dune_tile(void *p_job, uint32_t p_tile) {
 }
 
 void TerrainGenerator3D::_build_dunes() {
-	sand_depth_dirty = true;
+	sand_interdune_dirty = true;
 	dune_sand.clear();
 	dune_plants.clear();
 	dune_cover.clear();
@@ -3570,7 +3570,7 @@ float TerrainGenerator3D::_sea_sample(real_t p_x, real_t p_z) const {
 }
 
 void TerrainGenerator3D::_build_sand_sea() {
-	sand_depth_dirty = true;
+	sand_interdune_dirty = true;
 	sea_sand.clear();
 	sea_cover.clear();
 	sea_mask.clear();
@@ -5497,35 +5497,95 @@ real_t TerrainGenerator3D::get_sand_depth_at(const Vector3 &p_global_position) c
 	return field ? depth : real_t(-1.0);
 }
 
-void TerrainGenerator3D::_bake_sand_depth() {
-	sand_depth_dirty = false;
+// Interdune floors (docs/ideas/sand.md, "Dune-scale tone"): the low ground between dunes, where the wind deflates the
+// fine sand and leaves a coarse lag (Lancaster 1995). Read from the sand's depth against the deepest sand within about
+// 50 m (the dunes round it): under a fifth of it is floor, over two fifths dune; a thin sand sheet with no dunes counts
+// as floor where it is under a few metres. 0..1, -1 off the dune fields.
+void TerrainGenerator3D::_bake_sand_interdune() {
+	sand_interdune_dirty = false;
+	sand_interdune.clear();
 	if (nx < 2 || ny < 2 || (dune_sand.is_empty() && sea_sand.is_empty())) {
-		sand_depth_texture.unref();
+		sand_interdune_texture.unref();
 		return;
 	}
-	Vector<uint8_t> bytes;
-	bytes.resize(nx * ny * sizeof(float));
-	float *w = reinterpret_cast<float *>(bytes.ptrw());
+	const int n = nx * ny;
+	LocalVector<float> depth;
+	depth.resize(n);
 	for (int z = 0; z < ny; z++) {
 		for (int x = 0; x < nx; x++) {
 			const Vector3 p(result_rect.position.x + x * result_cell, 0.0, result_rect.position.y + z * result_cell);
-			w[z * nx + x] = float(get_sand_depth_at(p));
+			depth[z * nx + x] = float(get_sand_depth_at(p));
 		}
 	}
-	const Ref<Image> img = Image::create_from_data(nx, ny, false, Image::FORMAT_RF, bytes);
-	if (sand_depth_texture.is_valid() && sand_depth_texture->get_width() == nx && sand_depth_texture->get_height() == ny) {
-		sand_depth_texture->update(img);
-	} else {
-		sand_depth_texture = ImageTexture::create_from_image(img);
+	// The local maximum: a separable square max filter, about 50 m each way.
+	const int rad = MAX(1, int(Math::ceil(50.0 / MAX(double(result_cell), 0.5))));
+	LocalVector<float> mx, tmp;
+	mx.resize(n);
+	tmp.resize(n);
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			float m = 0.0f;
+			for (int k = MAX(0, x - rad); k <= MIN(nx - 1, x + rad); k++) {
+				m = MAX(m, depth[z * nx + k]);
+			}
+			tmp[z * nx + x] = m;
+		}
 	}
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			float m = 0.0f;
+			for (int k = MAX(0, z - rad); k <= MIN(ny - 1, z + rad); k++) {
+				m = MAX(m, tmp[k * nx + x]);
+			}
+			mx[z * nx + x] = m;
+		}
+	}
+	sand_interdune.resize(n);
+	Vector<uint8_t> bytes;
+	bytes.resize(n * sizeof(float));
+	float *w = reinterpret_cast<float *>(bytes.ptrw());
+	for (int i = 0; i < n; i++) {
+		const float d = depth[i];
+		float v = -1.0f;
+		if (d >= 0.0f) {
+			const float rel = d / MAX(mx[i], 1.0f);
+			const float floor = 1.0f - float(Math::smoothstep(0.2, 0.4, double(rel)));
+			const float sheet = 1.0f - float(Math::smoothstep(0.3, 3.0, double(d)));
+			v = MAX(floor, sheet);
+		}
+		sand_interdune[i] = v;
+		w[i] = v;
+	}
+	const Ref<Image> img = Image::create_from_data(nx, ny, false, Image::FORMAT_RF, bytes);
+	if (sand_interdune_texture.is_valid() && sand_interdune_texture->get_width() == nx && sand_interdune_texture->get_height() == ny) {
+		sand_interdune_texture->update(img);
+	} else {
+		sand_interdune_texture = ImageTexture::create_from_image(img);
+	}
+}
+
+real_t TerrainGenerator3D::get_sand_interdune_at(const Vector3 &p_global_position) const {
+	if (sand_interdune_dirty) {
+		const_cast<TerrainGenerator3D *>(this)->_bake_sand_interdune();
+	}
+	if (nx < 2 || sand_interdune.size() != uint32_t(nx * ny)) {
+		return -1.0;
+	}
+	// Nearest node's field membership, so the bilinear blend never mixes a -1 into a share.
+	const int xi = CLAMP(int(Math::round((p_global_position.x - result_rect.position.x) / result_cell)), 0, nx - 1);
+	const int zi = CLAMP(int(Math::round((p_global_position.z - result_rect.position.y) / result_cell)), 0, ny - 1);
+	if (sand_interdune[zi * nx + xi] < 0.0f) {
+		return -1.0;
+	}
+	return MAX(_sample(sand_interdune, p_global_position.x, p_global_position.z), 0.0f);
 }
 
 void TerrainGenerator3D::_publish_globals() {
 	if (!publish_shader_globals || geology_texture.is_null() || !is_inside_tree()) {
 		return;
 	}
-	if (sand_depth_dirty) {
-		_bake_sand_depth();
+	if (sand_interdune_dirty) {
+		_bake_sand_interdune();
 	}
 	RenderingServer *rs = RenderingServer::get_singleton();
 	static HashSet<StringName> added;
@@ -5542,13 +5602,13 @@ void TerrainGenerator3D::_publish_globals() {
 	set_global("terrain_geology_map", geology_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 	set_global("terrain_geology_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
 	// Loose sand depth on the dune fields (the materials' dune-scale tone); a zero rect switches it off.
-	if (sand_depth_texture.is_valid()) {
-		set_global("terrain_sand_depth_map", sand_depth_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
-		set_global("terrain_sand_depth_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+	if (sand_interdune_texture.is_valid()) {
+		set_global("terrain_sand_interdune_map", sand_interdune_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		set_global("terrain_sand_interdune_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
 		const Vector2 sw = get_sand_wind_direction();
 		set_global("terrain_sand_wind", Vector4(sw.x, sw.y, 0.0, 0.0), RSE::GLOBAL_VAR_TYPE_VEC4);
 	} else {
-		set_global("terrain_sand_depth_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_global("terrain_sand_interdune_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
 	}
 	if (detail_keep_texture.is_valid()) {
 		set_global("terrain_detail_keep_map", detail_keep_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
@@ -6260,18 +6320,18 @@ String TerrainGenerator3D::get_geology_shader_code() {
 
 String TerrainGenerator3D::get_sand_shader_code() {
 	String c;
-	c += "// Loose sand depth from TerrainGenerator3D (TerrainGenerator3D.get_sand_shader_code()): m on the dune fields,\n";
-	c += "// below 0 off them or with no generator.\n";
-	c += "global uniform sampler2D terrain_sand_depth_map;\n";
-	c += "global uniform vec4 terrain_sand_depth_rect;\n";
+	c += "// Interdune floors from TerrainGenerator3D (TerrainGenerator3D.get_sand_shader_code()): 0..1 on the dune fields\n";
+	c += "// (1 the floor between dunes), below 0 off them or with no generator.\n";
+	c += "global uniform sampler2D terrain_sand_interdune_map;\n";
+	c += "global uniform vec4 terrain_sand_interdune_rect;\n";
 	c += "global uniform vec4 terrain_sand_wind; // the dune-building wind, x and z (unit)\n\n";
-	c += "float terrain_sand_depth(vec3 world_pos) {\n";
-	c += "	if (terrain_sand_depth_rect.z <= 0.0) {\n";
+	c += "float terrain_sand_interdune(vec3 world_pos) {\n";
+	c += "	if (terrain_sand_interdune_rect.z <= 0.0) {\n";
 	c += "		return -1.0;\n";
 	c += "	}\n";
-	c += "	vec2 size = vec2(textureSize(terrain_sand_depth_map, 0));\n";
-	c += "	vec2 g = clamp((world_pos.xz - terrain_sand_depth_rect.xy) / terrain_sand_depth_rect.zw, 0.0, 1.0);\n";
-	c += "	return textureLod(terrain_sand_depth_map, (g * (size - 1.0) + 0.5) / size, 0.0).r;\n";
+	c += "	vec2 size = vec2(textureSize(terrain_sand_interdune_map, 0));\n";
+	c += "	vec2 g = clamp((world_pos.xz - terrain_sand_interdune_rect.xy) / terrain_sand_interdune_rect.zw, 0.0, 1.0);\n";
+	c += "	return textureLod(terrain_sand_interdune_map, (g * (size - 1.0) + 0.5) / size, 0.0).r;\n";
 	c += "}\n";
 	return c;
 }
@@ -6375,35 +6435,38 @@ vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footpri
 		s /= ws;
 		dc = (dc / ws - c * dw / ws) / lambda;
 		ds = (ds / ws - s * dw / ws) / lambda;
+		// Drawn per pixel the detail's slope is the normal, so every place the slope jumps shows as a hard edge in
+		// the light: the normalisation by max(len, 0.5) is rounded over 0.3 (polynomial smooth maximum), and the
+		// gully creases (abs(s), the sign of s) over 0.15 below.
 		float len = sqrt(c * c + s * s);
-		if (len > 0.5) {
-			vec2 dl = (c * dc + s * ds) / len;
-			dc = (dc - c * dl / len) / len;
-			ds = (ds - s * dl / len) / len;
-			c /= len;
-			s /= len;
-		} else {
-			dc *= 2.0;
-			ds *= 2.0;
-			c *= 2.0;
-			s *= 2.0;
-		}
+		float hm = clamp(0.5 + (len - 0.5) / 0.3, 0.0, 1.0);
+		float den = mix(0.5, len, hm) + 0.15 * hm * (1.0 - hm);
+		vec2 dl = len > 1e-6 ? (c * dc + s * ds) / len : vec2(0.0);
+		dc = (dc - c * dl * hm / den) / den;
+		ds = (ds - s * dl * hm / den) / den;
+		c /= den;
+		s /= den;
 		float raw = c * TD_GULLY;
 		float faded = fade + (raw - fade) * mask;
 		fd = fd * (1.0 - mask) + mask * TD_GULLY * dc + (raw - fade) * md;
 		// Octaves fade out between eight and four pixels a wavelength (no shimmer).
 		float aa = footprint > 0.0 ? clamp(2.0 - 8.0 * footprint / lambda, 0.0, 1.0) : 1.0;
+		// Gullies under a few metres are not the eroded ground's own shape (its clods and stones are the layers'):
+		// drawn as light alone they were parallel ripples and pale islands with dark rims.
+		aa *= smoothstep(1.5, 4.0, lambda);
 		r += aa * fd * TD_DEPTH / TD_GULLY * lambda;
 		fade = faded;
 		float m0 = clamp(mask, 0.0, 1.0);
 		float reach = 1.0 - pow(1.0 - m0, TD_REACH);
 		float dreach = TD_REACH * pow(max(1.0 - m0, 0.0), TD_REACH - 1.0);
-		float as = abs(s);
+		float sq = sqrt(s * s + 0.0225);
+		float sgn = s / sq;
+		float as = sq - 0.15;
 		float e = td_ease_out(as);
-		float de = as < 1.0 ? 2.0 * (1.0 - as) * sign(s) : 0.0;
+		float de = as < 1.0 ? 2.0 * (1.0 - as) * sgn : 0.0;
 		md = dreach * md * e + reach * de * ds;
 		mask = reach * e;
-		st += -(s >= 0.0 ? 1.0 : -1.0) * TD_DEPTH * 6.2831853 * t;
+		st += -sgn * TD_DEPTH * 6.2831853 * t;
 		lambda /= 2.0;
 	}
 	return r;
@@ -9187,6 +9250,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("carve_oases"), &TerrainGenerator3D::carve_oases);
 	ClassDB::bind_method(D_METHOD("get_sand_sea_height", "global_position"), &TerrainGenerator3D::get_sand_sea_height);
 	ClassDB::bind_method(D_METHOD("get_sand_depth_at", "global_position"), &TerrainGenerator3D::get_sand_depth_at);
+	ClassDB::bind_method(D_METHOD("get_sand_interdune_at", "global_position"), &TerrainGenerator3D::get_sand_interdune_at);
 	ClassDB::bind_static_method("TerrainGenerator3D", D_METHOD("get_sand_shader_code"), &TerrainGenerator3D::get_sand_shader_code);
 	ClassDB::bind_method(D_METHOD("get_last_sand_sea_msec"), &TerrainGenerator3D::get_last_sand_sea_msec);
 	ClassDB::bind_method(D_METHOD("get_last_sand_sea_max"), &TerrainGenerator3D::get_last_sand_sea_max);

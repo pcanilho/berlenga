@@ -524,6 +524,7 @@ int CaveNetwork3D::add_cave(const Vector3 &p_entrance, const Vector3 &p_out) {
 	streams_dirty = true;
 	_stream_finish(true); // the batch in flight reads the caves
 	streamed = false;
+	_fit_patch(c);
 	caves.push_back(c);
 	return int(caves.size()) - 1;
 }
@@ -958,6 +959,7 @@ int CaveNetwork3D::add_sea_cave(const Vector3 &p_entrance, const Vector3 &p_out)
 	}
 	_stream_finish(true);
 	streamed = false;
+	_fit_patch(c);
 	caves.push_back(c);
 	surges_dirty = true;
 	return int(caves.size()) - 1;
@@ -1703,7 +1705,8 @@ real_t CaveNetwork3D::_rock(const FieldSource &p_src, const TerrainGenerator3D *
 	if (r_ground && Math::abs(cave - g) < 0.5) {
 		for (uint32_t pi = 0; pi < p_src.patches.size(); pi++) {
 			const Vector3 d = p_p - p_src.patches[pi];
-			if (d.x * d.x + d.z * d.z > p_src.patch_r[pi] * p_src.patch_r[pi] * 2.0) {
+			const real_t reach = MAX(-p_src.patch_lo[pi], p_src.patch_hi[pi]);
+			if (d.x * d.x + d.z * d.z > p_src.patch_r[pi] * p_src.patch_r[pi] + reach * reach) {
 				continue;
 			}
 			const Vector3 o = Vector3(p_src.patch_out[pi].x, 0, p_src.patch_out[pi].z).normalized();
@@ -1769,12 +1772,15 @@ void CaveNetwork3D::_gather(const AABB &p_box, FieldSource &r_src) const {
 				r_src.chambers.push_back(&ch);
 			}
 		}
-		const real_t half = _patch_half(c);
-		const real_t pr = half * 1.4143 + 4.0;
+		real_t lat, lo, hi, bound;
+		_patch_rect(c, lat, lo, hi, bound);
+		const real_t pr = bound + 4.0;
 		if (patch_radius > 0.0 && AABB(c.entrance - Vector3(pr, 60.0, pr), Vector3(2.0 * pr, 1000.0, 2.0 * pr)).intersects(p_box)) {
 			r_src.patches.push_back(c.entrance);
 			r_src.patch_out.push_back(c.out);
-			r_src.patch_r.push_back(half);
+			r_src.patch_r.push_back(lat);
+			r_src.patch_lo.push_back(lo);
+			r_src.patch_hi.push_back(hi);
 		}
 	}
 }
@@ -2013,15 +2019,16 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 					for (int k = 0; k < 4; k++) {
 						gq += vert_ground[vi[k]];
 					}
-					const bool is_ground = gq >= 2; // a mixed quad on the seam goes to the ground, so the seam has no wall-coloured teeth
+					bool is_ground = gq >= 2; // a mixed quad on the seam goes to the ground, so the seam has no wall-coloured teeth
 					if (is_ground) {
-						// The patch is a square along the entrance's facing, the landscape's hole the same square 1.5 m
+						// The patch is a rectangle along the entrance's facing, the landscape's hole the same rectangle 1.5 m
 						// smaller, so the two overlap all round.
 						bool inside = false;
 						for (uint32_t pi = 0; pi < src.patches.size() && !inside; pi++) {
 							const Vector3 d = verts[vi[0]] - src.patches[pi];
 							const Vector3 o = Vector3(src.patch_out[pi].x, 0, src.patch_out[pi].z).normalized();
-							inside = Math::abs(d.x * o.x + d.z * o.z) < src.patch_r[pi] && Math::abs(-d.x * o.z + d.z * o.x) < src.patch_r[pi];
+							const real_t along = d.x * o.x + d.z * o.z;
+							inside = along > src.patch_lo[pi] && along < src.patch_hi[pi] && Math::abs(-d.x * o.z + d.z * o.x) < src.patch_r[pi];
 						}
 						if (!inside) {
 							continue;
@@ -2037,6 +2044,20 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 					const Vector3 nq = (verts[vi[1]] - q0).cross(verts[vi[2]] - q0) + (verts[vi[2]] - q0).cross(verts[vi[3]] - q0);
 					if (nq.dot(into) < 0.0f) {
 						SWAP(vi[1], vi[3]);
+					}
+					if (is_ground && gen) {
+						// A ground quad must face the way the ground does. Where a passage breaks out of a cliff the two
+						// surfaces cross back and forth along the seam with the wall's relief, and quads of the crease
+						// flagged as ground faced along the wall instead: drawn with the ground's material and its own
+						// normal from the heights, they showed as dark ragged flaps along an arch's edge against the
+						// sky. They are wall, so they take the wall's material.
+						const Vector3 qc = (verts[vi[0]] + verts[vi[1]] + verts[vi[2]] + verts[vi[3]]) * 0.25f;
+						const real_t ge = 0.5;
+						const Vector3 gnq = Vector3(gen->get_height(qc - Vector3(ge, 0, 0)) - gen->get_height(qc + Vector3(ge, 0, 0)), 2.0 * ge, gen->get_height(qc - Vector3(0, 0, ge)) - gen->get_height(qc + Vector3(0, 0, ge))).normalized();
+						const Vector3 outq = -(nq.dot(into) < 0.0f ? -nq : nq).normalized();
+						if (outq.dot(gnq) < 0.6f) {
+							is_ground = false;
+						}
 					}
 					const Vector3 &p0 = verts[vi[0]], &p1 = verts[vi[1]], &p2 = verts[vi[2]], &p3 = verts[vi[3]];
 					auto faces = [&into](const Vector3 &p_a, const Vector3 &p_b, const Vector3 &p_c) { return (p_b - p_a).cross(p_c - p_a).dot(into) > 0.0f; };
@@ -3201,20 +3222,24 @@ void CaveNetwork3D::_wanted(const AABB &p_area, HashSet<Vector3i> &r_want, HashS
 		return;
 	}
 	for (const Cave &cv : caves) {
-		// The patch: from the foot to the top of the wall within the radius.
-		const real_t pr = _patch_half(cv) * 1.4143;
+		// The patch: from the foot to the top of the wall within its rectangle (its bounding circle).
+		real_t lat, lo, hi, pr;
+		_patch_rect(cv, lat, lo, hi, pr);
 		if (!p_all_patches && !p_area.intersects(AABB(cv.entrance - Vector3(pr, 4.0, pr), Vector3(2.0 * pr, 8.0, 2.0 * pr)))) {
 			continue;
 		}
 		real_t top = cv.entrance.y + 4.0;
+		real_t foot = cv.entrance.y - 4.0;
 		if (gen) {
 			for (real_t dz = -pr; dz <= pr; dz += 2.0) {
 				for (real_t dx = -pr; dx <= pr; dx += 2.0) {
-					top = MAX(top, gen->get_height(cv.entrance + Vector3(dx, 0, dz)) + 1.0);
+					const real_t gh = gen->get_height(cv.entrance + Vector3(dx, 0, dz));
+					top = MAX(top, gh + 1.0);
+					foot = MIN(foot, gh - 1.0);
 				}
 			}
 		}
-		add_box(AABB(cv.entrance - Vector3(pr, 4.0, pr), Vector3(2.0 * pr, top - cv.entrance.y + 4.0, 2.0 * pr)), true);
+		add_box(AABB(Vector3(cv.entrance.x - pr, foot, cv.entrance.z - pr), Vector3(2.0 * pr, top - foot, 2.0 * pr)), true);
 	}
 }
 
@@ -4182,6 +4207,49 @@ void fragment() {
 }
 
 // The landscape opens over each patch (less a 1.5 m ring the patch overlaps), once per cave.
+// Where the passage's air reaches the ground: the ground surface sampled round the entrance, and every point of it the
+// passage holds clear of the surface (its air more than 0.3 m past it) must lie in the patch, which draws the ground
+// itself and holes the landscape. Outside it the landscape is drawn, and there it would stand in the passage: a sea
+// arch opening wider or further out than the mouth's square showed the cliff's heightfield through it from behind (a
+// pale strip). The beach in front of a sea cave, its floor a few centimetres under the sand, stays the landscape's.
+void CaveNetwork3D::_fit_patch(Cave &r_cave) const {
+	const TerrainGenerator3D *gen = _get_generator();
+	if (!gen || patch_radius <= 0.0) {
+		return;
+	}
+	const real_t reach = 40.0;
+	FieldSource src;
+	for (const Segment &sg : r_cave.segments) {
+		src.segments.push_back(&sg);
+	}
+	for (const Chamber &ch : r_cave.chambers) {
+		src.chambers.push_back(&ch);
+	}
+	const Vector3 o = Vector3(r_cave.out.x, 0, r_cave.out.z).normalized();
+	const Vector3 s = Vector3(-o.z, 0, o.x);
+	real_t lat = 0.0, lo = 0.0, hi = 0.0;
+	int hits = 0;
+	for (real_t a = -reach; a <= reach; a += 0.5) {
+		for (real_t l = -reach; l <= reach; l += 0.5) {
+			Vector3 p = r_cave.entrance + o * a + s * l;
+			p.y = gen->get_height(p);
+			if (_air(src, p) < -0.3) {
+				lat = MAX(lat, Math::abs(l));
+				lo = MIN(lo, a);
+				hi = MAX(hi, a);
+				hits++;
+			}
+		}
+	}
+	if (hits > 0) {
+		// 2.5 m beyond the last such point: the hole is 1.5 m inside the patch, and a metre more covers the 0.5 m grid
+		// and the worn lip the smooth union rounds there.
+		r_cave.fit_lat = lat + 2.5;
+		r_cave.fit_lo = lo - 2.5;
+		r_cave.fit_hi = hi + 2.5;
+	}
+}
+
 void CaveNetwork3D::_open_holes() {
 	TerrainGenerator3D *gen = _get_generator();
 	if (!gen || patch_radius <= 1.5) {
@@ -4191,10 +4259,11 @@ void CaveNetwork3D::_open_holes() {
 		if (cv.holed) {
 			continue;
 		}
-		const real_t hr = _patch_half(cv) - 1.5;
+		real_t lat, lo, hi, bound;
+		_patch_rect(cv, lat, lo, hi, bound);
 		const Vector3 o = Vector3(cv.out.x, 0, cv.out.z).normalized();
-		const Basis b(Vector3(-o.z, 0, o.x) * hr, Vector3(0, 500.0, 0), o * hr);
-		gen->add_hole(Transform3D(b, cv.entrance + Vector3(0, 490.0, 0)));
+		const Basis b(Vector3(-o.z, 0, o.x) * (lat - 1.5), Vector3(0, 500.0, 0), o * (0.5 * (hi - lo) - 1.5));
+		gen->add_hole(Transform3D(b, cv.entrance + o * (0.5 * (hi + lo)) + Vector3(0, 490.0, 0)));
 		for (const Vector3 &bh : cv.blowholes) {
 			// The blowhole's mouth: a round-ish box a little inside the shaft's top, so the shaft's own wall meets the
 			// ground's edge.

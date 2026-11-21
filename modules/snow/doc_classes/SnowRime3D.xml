@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SnowRime3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Grows rime on things standing in freezing fog.
+	</brief_description>
+	<description>
+		Rime: supercooled fog droplets freezing where they hit something in the wind below 0 °C. The mass laid per projected area is the collision efficiency times the fog's liquid water times the wind speed (Makkonen 2000), the efficiency from the droplets' inertia on the collector (Finstad et al. 1988): thin parts, sharp edges and corners catch the most, and the growing rime widens its collector and slows. Its density follows Macklin (1962). The rime builds on the faces turned to the wind and is drawn as a white crust bristling with feathers that point into the wind, in raster and under path tracing. It melts away above 0 °C. Targets are the meshes of [member target_paths] and of the nodes in [member target_group].
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="accretion_rate" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="wind" type="float" />
+			<param index="1" name="fog_water" type="float" />
+			<param index="2" name="celsius" type="float" />
+			<param index="3" name="droplet_um" type="float" />
+			<param index="4" name="diameter" type="float" />
+			<description>
+				Rime thickness growth in metres per hour on a surface facing the wind: [method collision_efficiency] times the fog's liquid water ([param fog_water], g/m³) times the wind speed, over the deposit's density from [method rime_density] (Makkonen 2000). 0 at or above 0 °C or without fog.
+			</description>
+		</method>
+		<method name="advance">
+			<return type="void" />
+			<param index="0" name="hours" type="float" />
+			<description>
+				Grows the rime for [param hours] from the weather at the targets' middle: the air temperature (the active [SnowCover3D]'s, else the world weather's), its wind and its fog water ([member fog_water] when set). Called with each update of the active [SnowCover3D].
+			</description>
+		</method>
+		<method name="clear">
+			<return type="void" />
+			<description>
+				Removes all rime.
+			</description>
+		</method>
+		<method name="collision_efficiency" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="wind" type="float" />
+			<param index="1" name="droplet_um" type="float" />
+			<param index="2" name="diameter" type="float" />
+			<description>
+				The share of the fog droplets in the swept volume that hit a cylinder [param diameter] metres across in a wind of [param wind] m/s, for droplets of [param droplet_um] µm (Finstad et al. 1988). Thin things catch most: a wire or a twig far more than a post.
+			</description>
+		</method>
+		<method name="get_feather_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of rime feathers drawn.
+			</description>
+		</method>
+		<method name="get_growth_direction" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="index" type="int" />
+			<description>
+				The way the rime on target [param index] grew at its thickest point (into the wind), in world space.
+			</description>
+		</method>
+		<method name="get_last_density" qualifiers="const">
+			<return type="float" />
+			<description>
+				The density of the rime laid in the last step, kg/m³.
+			</description>
+		</method>
+		<method name="get_last_rate" qualifiers="const">
+			<return type="float" />
+			<description>
+				The fastest growth in the last step, metres per hour.
+			</description>
+		</method>
+		<method name="get_target_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of mesh parts rime grows on.
+			</description>
+		</method>
+		<method name="get_target_diameter" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="index" type="int" />
+			<description>
+				The collector width of target [param index]: its smallest dimension, in metres.
+			</description>
+		</method>
+		<method name="get_target_thickness" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="index" type="int" />
+			<description>
+				The thickest rime on target [param index], in metres.
+			</description>
+		</method>
+		<method name="get_thickness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The rime on the target point nearest [param position] (within 0.5 m), in metres.
+			</description>
+		</method>
+		<method name="grow">
+			<return type="void" />
+			<param index="0" name="hours" type="float" />
+			<param index="1" name="celsius" type="float" />
+			<param index="2" name="wind" type="Vector3" />
+			<param index="3" name="fog_water" type="float" />
+			<description>
+				Grows rime for [param hours] in air of [param celsius] and a [param wind] (world, m/s) through fog of [param fog_water] g/m³; above 0 °C the rime melts and falls away.
+			</description>
+		</method>
+		<method name="refresh_targets">
+			<return type="void" />
+			<description>
+				Reads the targets' meshes again (after they move or change). Rime laid so far is dropped.
+			</description>
+		</method>
+		<method name="rime_density" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="droplet_um" type="float" />
+			<param index="1" name="impact_speed" type="float" />
+			<param index="2" name="surface_celsius" type="float" />
+			<description>
+				The density of the rime in kg/m³ from Macklin's (1962) parameter R = -d v / (2 Ts): soft feathery rime (about 100 to 300) in light cold winds, hard rime (to about 900) in strong winds near freezing.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="droplet_diameter" type="float" setter="set_droplet_diameter" getter="get_droplet_diameter" default="20.0">
+			The fog droplets' median volume diameter in µm. Larger droplets hit more.
+		</member>
+		<member name="feather_spacing" type="float" setter="set_feather_spacing" getter="get_feather_spacing" default="0.012">
+			The spacing of the rime feathers on a thick part, in metres; thin parts set theirs closer.
+		</member>
+		<member name="fog_water" type="float" setter="set_fog_water" getter="get_fog_water" default="-1.0">
+			The fog's liquid water in g/m³ for [method advance]. Below 0, the world weather's fog water.
+		</member>
+		<member name="material" type="Material" setter="set_material" getter="get_material">
+			The rime's material. By default white, matte ice full of air with a little light through it.
+		</member>
+		<member name="max_feathers" type="int" setter="set_max_feathers" getter="get_max_feathers" default="60000">
+			The most feathers drawn; past it they are thinned evenly and widened.
+		</member>
+		<member name="max_thickness" type="float" setter="set_max_thickness" getter="get_max_thickness" default="0.25">
+			The thickest rime grows, in metres.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
+			Seeds where the feathers stand.
+		</member>
+		<member name="target_group" type="String" setter="set_target_group" getter="get_target_group" default="&quot;rime&quot;">
+			Rime grows on the meshes of the nodes in this group (and their children).
+		</member>
+		<member name="target_paths" type="NodePath[]" setter="set_target_paths" getter="get_target_paths" default="[]">
+			Rime grows on the meshes of these nodes (and their children), with those in [member target_group].
+		</member>
+	</members>
+</class>

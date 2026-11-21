@@ -46,6 +46,8 @@ namespace WeatherClouds {
 
 constexpr int MAX_STORMS = 8;
 constexpr float SHELF_DROP = 450.0f; // m, a shelf cloud's greatest drop below its storm's base
+constexpr float SCUD_DEPTH = 450.0f; // m, how far under the base cumulus fractus hangs in humid air
+constexpr float BASE_SAG = 150.0f; // m, the most a cumulus' base sags under its updraft below the condensation level
 constexpr int MAX_CLOUD_LIGHTS = 8;
 constexpr int MAX_CLOUD_EFFECTORS = 8;
 constexpr int SHAPE_SIZE = 128; // texels across the base shape noise (tiles)
@@ -139,6 +141,7 @@ struct State {
 	float wave_y3 = 0.0f;
 	float air_t0 = 15.0f;
 	float air_rh0 = 0.6f;
+	float scud = 0.0f; // share of the sky with fractus under its bases (WeatherMap3D: humid air, rain falling)
 	float air_y0 = 0.0f;
 	float top_max = 0.0f; // highest top any column reaches now (m), set by update_top_max()
 	float base_min = 1500.0f; // lowest base any column has now (m), set by update_top_max()
@@ -173,6 +176,8 @@ float cover_noise(const CoverNoiseFrame &p_frame, Vector2 p_xz);
 Vector2 cover_type_at(const State &p_state, Vector2 p_xz);
 // How high a storm's column reaches over p_xz, as a cloud type: under its anvil, the storm's own height.
 float storm_column_type(const State &p_state, Vector2 p_xz);
+// How much of the sky has cumulus fractus under its bases (0 to 1): humid air at the ground, or rain falling through it.
+float scud_share(float p_rh, float p_rain);
 // The cloud base (m) over world x, z: base_height, blended to each storm's own base over its cloud shield.
 float base_at(const State &p_state, Vector2 p_xz);
 // The high layer's cover (0..1) and vertical optical depth over world x, z (patches and anvil shields; the

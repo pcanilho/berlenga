@@ -156,6 +156,13 @@ private:
 	static constexpr float WEAR_CELL = 0.25f;
 	static constexpr float WEAR_GAP = 0.25f; // s a cell must go unpressed before the next press is a new pass
 	HashMap<Vector2i, Wear> wear_cells;
+	// Game trails (round 20): the stand contract's worn paths add their steady passes to the wear.
+	bool trails_on = false;
+	ObjectID trail_stand;
+	void _trails_refresh();
+	void _on_stand_changed(const Rect2 &p_area);
+	float _trail_passes(const Vector3 &p_position) const;
+	bool _wear_any() const { return !wear_cells.is_empty() || trails_on; }
 	// Hidden stones and roots (docs/ideas/mud.md, round 14.3): what lies in a mud layer, per 2 m cell, made on demand
 	// from the cell's hash; a stone a sphere (a == b), a root a capsule from a to b; y's are absolute.
 	struct Buried {
@@ -201,6 +208,8 @@ private:
 		float push_down = 0.0f; // N, from a tyre driving it this step
 		float cap = 0.0f; // a tyre's floor over it (round 18.2)
 		uint64_t cap_frame = 0;
+		float scour = 0.0f; // m dug round it by the current (round 20.2)
+		float scour_owed = 0.0f; // m eroded, not yet dug
 		Transform3D xf; // as it lay at the last step, for a save made as the node leaves the tree (round 19.2)
 		float r = 0.0f; // its mesh's radius
 	};
@@ -225,8 +234,13 @@ private:
 		Vector2 drag; // N, horizontal
 		Vector2 near_bed; // m/s, the water's speed at the stone's face
 		float up = 0.0f; // N, buoyancy and lift
+		Vector2 flow; // m/s, the water's depth-averaged flow
+		float depth = 0.0f; // m of water over the bed
 		bool wet = false;
 	};
+	void _loose_scour(const Vector3 &p_at, float p_rc, const StreamPush &p_push, const Cell &p_cell, LooseState &r_state, float p_dt);
+	float stone_scour_m3 = 0.0f; // dug round loose stones by the current (round 20.2)
+	float stone_plume_kg = 0.0f; // silt sent into the water by stones rolled and scoured (round 20.3)
 	StreamPush _loose_stream(const WorldWater *p_water, const Vector3 &p_at, float p_rc, float p_mass, const Vector3 &p_velocity, float p_bed) const;
 	void _loose_stream_firm(RigidBody3D *p_body, float p_rc, const StreamPush &p_push, float p_dt);
 	uint32_t loose_added = 0;
@@ -518,12 +532,12 @@ private:
 	Rect2 ripple_sand_rect;
 	LocalVector<float> ripple_tile_slope; // the grown field's slope, 2 per cell, world cell mod n
 	LocalVector<float> ripple_tile_norm; // its height over its mean in standard deviations
-	LocalVector<float> ripple_sand_depth; // the generator's loose sand depth over ripple_sand_rect (m, -1 none)
+	LocalVector<float> ripple_sand_depth; // the generator's interdune floors over ripple_sand_rect (0..1, -1 none)
 	LocalVector<float> ripple_sand_share; // the ground's sand share there
 	LocalVector<float> ripple_sand_blown; // and the share the wind moves (dry, bare: granule ripples form there)
 	static constexpr int RIPPLE_DEPTH_N = 128;
 	static constexpr float RIPPLE_DEPTH_SIZE = 1024.0f; // m
-	LocalVector<float> ripple_far_depth; // the generator's sand depth, RIPPLE_DEPTH_N squared over ripple_far_depth_rect
+	LocalVector<float> ripple_far_depth; // the generator's interdune floors, RIPPLE_DEPTH_N squared over ripple_far_depth_rect
 	Rect2 ripple_far_depth_rect;
 	Vector2 ripple_sand_wind; // the generator's dune-building wind (zero with none)
 	float ripple_tile_sd = 0.0f; // m
@@ -975,6 +989,8 @@ public:
 	void set_tracked_mud(bool p_enabled) { tracked_mud = p_enabled; }
 	void set_stream_stones(bool p_enabled) { stream_stones = p_enabled; }
 	bool is_stream_stones() const { return stream_stones; }
+	float get_stone_scour_volume() const { return stone_scour_m3; } // m3 dug round loose stones by currents
+	float get_stone_silt_lifted() const { return stone_plume_kg; } // kg sent into the water by stones
 	bool is_tracked_mud() const { return tracked_mud; }
 	void set_keep_ruts(bool p_enabled);
 	bool is_keeping_ruts() const { return keep_ruts; }

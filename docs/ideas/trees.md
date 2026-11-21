@@ -3204,6 +3204,19 @@ Still recipe: `rigged` false, `fire_variants` false, `near_needle_range` 0, `lig
 set before `make_stand`/`make_woodland`, `near_leaf_range` ~25, `set_near_build_limit(1)`, one tree
 variant, a frame between stands, wait for `get_near_builds() == 0`.
 
+## 8f. Build cost profile (20 Nov)
+
+Sampled with gdb (one session interrupting every 0.3 s, all thread stacks, about 190 samples) over 14 builds: oak, beech,
+Scots pine, Norway spruce, birch, lime and silver fir, open and forest-grown, seed 1. Share of the busy samples:
+- `ArrayMesh::add_surface_from_arrays` about 40%: the renderer's attribute packing (`_get_axis_angle` per vertex for the
+  compressed normal and tangent, then the copy). Engine code; its output is the GPU format, so a faster version must
+  give the same bits.
+- Leaf LODs 14%, `Builder::end` 10%, needles 8%.
+- Bark textures (`_bark_set`, bark_fbm and bark_voronoi inlined) about 9%, moss noise under 4%.
+The bark and moss sets depend on the bark kind alone but were built again by every new generator (a forest-grown
+tree spent half its time on them). They are now built once per process and shared (`shared_bark_sets`, freed with the
+module). Forest-grown builds of the seven species: 6.6 s to 4.4 s; mesh arrays and bark images hash the same.
+
 ## 8a. Species, habitats and stands (as built)
 
 Seventeen presets: oak, beech, birch, Scots pine, Norway spruce, hazel, hawthorn, small-leaved
@@ -3794,9 +3807,17 @@ grown on demand (lazy generation, as the near leaves of 8c).
 - VegetationField3D asks in setup for the kinds its area needs (any burn, strike or browse over it). A later burn, strike
   or disc asks from process, and the field streams again with the new meshes.
 - Woodland with all three on: 70 meshes, 3.08 GB peak (3.05 GB with none).
-- Grown on the main thread: the first strike, burn or disc of a kind over a streamed field holds that frame about a
-  second a species. On a worker it stalled the field (generate() runs its own group tasks while the field clears its
-  tiles); moving it to a worker is a PC follow-up with a debugger.
+- Grown on a worker from a streamed field (setup still grows what it needs before placing). The first worker build
+  deadlocked: generate() reads shader code through RenderingServer, which waits for the main thread to flush, while the
+  main thread's scene cull waited on a group task that needed a free worker, and four variant builds held all four
+  workers (found with gdb backtraces on a debug-symbol build). Variant builds now share the near trees' build slot
+  (`_near_limit()`, one core in four), so a worker always stays free; a kind that finds the slot taken is asked again on
+  the next poll (every 0.25 s).
+- When a kind is grown, only the grown species are set up again (meshes and variant tables; their order, halos and
+  colonnade and nebkha slots kept), and every tile is marked stale, so the old tile shows until its replacement is in.
+  A whole re-setup held the frame 16 s; the per-species refresh takes under 1 ms.
+- `--strikes --stream` on lavapipe: longest frame with no strike about 200 ms; with a strike 0.8 to 1.3 s, of which the
+  field's own process is about 200 ms. The rest is the software renderer drawing the struck tree for the first time.
 - Checks: `stands.gd --stands --lightning --strikes` and `--browse` (nothing grown before; the field grows them under a
   strike or disc, same placements as the eager build); `--strikes --stream` (a strike after streaming brings the struck
   tree in).
@@ -3814,3 +3835,58 @@ grown on demand (lazy generation, as the near leaves of 8c).
 3. **Colonnades and a browsing pressure map.** Rows of stilted spruce along one vanished log (a row placement in
    VegetationField3D), and a pressure map (WorldStand or vegetation) so the browse line and hedged saplings vary over
    the land, heavier by meadows and wintering ground.
+
+## Next-round options (card 20 Nov night)
+
+1. **Ice storms.** Freezing rain glazes every twig in clear ice, which can multiply a branch's weight ten to a hundred
+   times (Hauer, Werner and Dawson 2008). Birches bend over, spreading broadleaf crowns lose limbs and tops, conical
+   conifers shed most of it. Built as the snow crowns were: a glaze load from the weather's freezing rain, droop and
+   breaks in TreeWind3D, clear ice on the bark and needles (Transmission on under PT), broken tops and bent stems as
+   stand variants afterwards. Research below.
+2. **Missing broadleaves.** Aspen and poplar (aspen groves are one clone from root suckers, so a whole patch shares
+   its bark, form and autumn colour; Mitton and Grant 1996), wild cherry (banded, peeling, shiny red-brown bark),
+   hornbeam (fluted grey stems, often coppiced or hedged) and sweet chestnut (spiral-furrowed bark, old coppice
+   stools). They are also the hosts mistletoe and brooms still lack (5ay).
+3. **Trees on cliffs and rock.** Stunted, centuries-old trees on ledges and in crevices, roots fed along cracks and
+   draped over the faces, crowns thin and half dead (Larson, Matthes and Kelly 2000, Cliff Ecology: the Niagara
+   Escarpment's 1,000-year-old white cedars). Builds on root_stone's rock link: roots that follow a rock's cracks, and
+   placement on steep, rocky ground from the terrain map.
+
+### Research for the likely picks (21 Nov, card pending)
+
+**Ice storms.**
+- Load: an ice storm is at least 6 mm (1/4 in) of glaze (US National Weather Service). Stem ice runs from a trace to
+  25 mm, up to 20 cm in extreme cases; glaze multiplies branch weight 10-100 times (Hauer, Werner and Dawson 2008, "Why
+  trees fail in ice storms", ISA). 6-12 mm breaks small branches and weak limbs; 12-25 mm and more breaks larger ones
+  (Hauer, Dawson and Werner 2006, *Trees and Ice Storms*, 2nd ed.).
+- Damage in order of load: bent birches, broken branches (the most common), split forks of twin stems, stem snaps,
+  uprooting (Smith, Shortle and Dudzik, USDA FS NA-TP-02-01; Hauer et al. 2006 and 2008).
+- Species: susceptible are poplars and aspen, soft maples, beech, willow, river birch and trees at clearing edges;
+  paper and yellow birch are intermediate; white oaks, walnut, trees inside a stand and conical conifers (spruce, fir,
+  hemlock) resist (Hauer et al. 2006 Table 2; NA-TP-02-01). Birches and arborvitae bend with the ice and often stand up
+  again after the melt; a bend low on the stem may leave internal cracks (Hauer et al. 2006).
+- Afterwards: snapped birch stems decay in columns several feet long, maples and ash wall it off within a foot
+  (NA-TP-02-01): fits the existing decay classes and broken-top variants.
+- Plan: WorldSnow-style contract for glaze (mm of radial ice per point, from the weather's freezing rain; the snow
+  thread owns sleet, so the provider is weather or snow, not trees). TreeWind3D reads it like canopy_load_at: droop by
+  limb stiffness, breaks past a species threshold (the table above), bent birch stems that recover after the melt.
+  Mesh: a clear ice sleeve on twigs and needles in the shader (thickness from the contract, refraction, icicles at
+  twig tips as small cones on the near trees only). Benches: raster and PT crops of an iced birch and spruce.
+
+**Missing broadleaves (aspen first).**
+- Aspen spreads as clones from root suckers: from a few stems to thousands (Pando in Utah, about 43 ha). A clone shares
+  bark colour (white, tan or green-tinged), branch angle, leaf size, bark flecking, leaf-out date and autumn colour;
+  neighbouring clones differ, one bare while the next is still green (Mitton, CU Boulder 2019; Mitton and Grant 1996).
+- Plan: a clone id per patch in VegetationField3D (hashed cells) picks one bark tint, form and season offset for every
+  stem in it; quaking aspen and black poplar presets; wild cherry, hornbeam and sweet chestnut after, which are also
+  mistletoe and broom hosts (5ay).
+
+**Trees on cliffs.**
+- On the Niagara Escarpment, cliff cedars (Thuja occidentalis) stand at about 1,000 stems a hectare of rock face, rarely
+  over half a metre across, and are often centuries old (one small ledge tree near 400 rings; the oldest over 1,000
+  years). Slow growth comes from roots confined in crevices: water or fertiliser barely changed it. Crowns carry much
+  dead wood among live, from sectored water paths up the stem (Larson, Matthes and Kelly, American Scientist 1999;
+  *Cliff Ecology* 2000). Juniper and yew do the same on European cliffs.
+- Plan: a cliff form (any conifer, plus yew and juniper-like shrubs): short, thick, leaning out from the face, part
+  dead stem strips, roots that follow a rock's cracks (root_stone's rock link), placed on steep rocky ground from the
+  terrain map.

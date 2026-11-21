@@ -42,8 +42,9 @@
 			<return type="void" />
 			<param index="0" name="swe_mm" type="float" />
 			<param index="1" name="density" type="float" default="100.0" />
+			<param index="2" name="world" type="bool" default="true" />
 			<description>
-				Adds [param swe_mm] of snow water equivalent everywhere on the map at [param density] (kg/m³), as fresh snow. For scenes that start under snow.
+				Adds [param swe_mm] of snow water equivalent everywhere on the map at [param density] (kg/m³), as fresh snow. For scenes that start under snow. With [param world], the world tier outside the near square takes it too (a storm over the whole terrain); false keeps it to the near square.
 			</description>
 		</method>
 		<method name="advance">

@@ -52,8 +52,8 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_geology_rect", "vec4" },
 		{ "terrain_detail_keep_map", "sampler2D" },
 		// Loose sand depth on the dune fields (the sand's dune-scale tone).
-		{ "terrain_sand_depth_map", "sampler2D" },
-		{ "terrain_sand_depth_rect", "vec4" },
+		{ "terrain_sand_interdune_map", "sampler2D" },
+		{ "terrain_sand_interdune_rect", "vec4" },
 		{ "terrain_sand_wind", "vec4" },
 		// The generator's fall spray, and the plant cover colour the far ground blends to (vegetation publishes it).
 		{ "terrain_spray_potential", "sampler2D" },
@@ -74,6 +74,9 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_sky_full", "vec4" },
 		{ "terrain_sky_full2", "vec4" },
 		{ "terrain_sky_full3", "float" },
+		// The stand's worn trails and fresh rooting (Landscape3D publishes it).
+		{ "terrain_stand_map", "sampler2D" },
+		{ "terrain_stand_rect", "vec4" },
 	};
 	for (const auto &g : globals) {
 		if (ProjectSettings::get_singleton()->has_setting(String("shader_globals/") + g.name)) {

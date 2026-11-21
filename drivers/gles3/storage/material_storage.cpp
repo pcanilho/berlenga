@@ -1586,6 +1586,7 @@ MaterialStorage::MaterialStorage() {
 		actions.renames["LIGHT3_SIZE"] = "directional_lights.data[3].color_size.w";
 		actions.renames["AT_CUBEMAP_PASS"] = "AT_CUBEMAP_PASS";
 		actions.renames["AT_HALF_RES_PASS"] = "AT_HALF_RES_PASS";
+		actions.renames["REPROJECTION_FRAME"] = "0u"; // no half_res_reprojection here
 		actions.renames["AT_QUARTER_RES_PASS"] = "AT_QUARTER_RES_PASS";
 		actions.usage_defines["HALF_RES_COLOR"] = "\n#define USES_HALF_RES_COLOR\n";
 		actions.usage_defines["QUARTER_RES_COLOR"] = "\n#define USES_QUARTER_RES_COLOR\n";

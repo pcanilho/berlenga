@@ -1101,7 +1101,13 @@ void main() {
 			// proportion to sigma T over the segment, weighted by its scattering probability 1 - T); the path's own
 			// collision, drawn independently, only decides whether it scatters there and goes on, so that light is not
 			// counted twice. Far less noise than lighting only the collisions, for the same expectation.
-			if (!in_medium && get_rt_param(RT_PARAM_HAZE_SIGMA) > 0.0) {
+			// A bounce that leaves for the sky takes no haze here: the radiance map it reads holds the aerosol along the
+			// whole ray from its start (atmo_scatter with aerosol_from 0, only the camera's own sky starts at the reach),
+			// and with the ambient light off the sky lights nothing, as in raster. Before, its first reach was counted
+			// twice under the weather sky, and lit the ground under any other sky (a sun-only scene 17% over at a 30
+			// degree sun, more as the sun sank).
+			bool haze_sky_ray = bounce > 0u && ps.hit_t <= 0.0;
+			if (!in_medium && !haze_sky_ray && get_rt_param(RT_PARAM_HAZE_SIGMA) > 0.0) {
 				float seg_len = ps.hit_t > 0.0 ? min(ps.hit_t, t_far) : min(t_far, get_rt_param(RT_PARAM_HAZE_REACH));
 				if (seg_len > 0.0) {
 					float h_a, h_k;
@@ -1671,6 +1677,15 @@ void main() {
 		if (get_total_bounces(ps.packed_bounces_flags) == 0u && rt_volumetric_fog_enabled()) {
 			vec3 far_world = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * 10000.0;
 			sky_color = rt_volumetric_fog_apply_sky(sky_color, project_uv(far_world, curr_vp_unjittered));
+		}
+
+		// The environment's ambient light switched off (ambient_light_source DISABLED): raster's ambient term is
+		// gone, so a diffuse bounce leaving the scene gathers nothing either, as in Unreal's path tracer without
+		// a sky light (the sky only lights through it). The sky stays visible to the camera, in reflections and
+		// through glass. A colour or sky ambient keeps the sky here: the trace's own, directional, sky light.
+		if (get_total_bounces(ps.packed_bounces_flags) > 0u && rt_ray_is_diffuse(ps.packed_bounces_flags) &&
+				(scene_data_block.data.flags & SCENE_DATA_FLAGS_USE_AMBIENT_LIGHT) == 0u) {
+			sky_color = vec3(0.0);
 		}
 	}
 
@@ -2499,12 +2514,12 @@ vec3 ground_ripple_sort_tint(float p_t, vec2 p_xz, float p_resolved, float p_amp
 	vec3 mt = mix(vec3(1.0), mix(vec3(1.0), lag, 0.25) * mix(vec3(1.0), coarse, 0.25), clamp(p_amp, 0.0, 1.0));
 	return mix(mt, rt, p_resolved);
 }
-// The coarse lag's share on an interdune flat (the dune tone's lag term): thin sand on flat ground, patchy.
-float ground_dune_lag(vec2 p_xz, float p_normal_y, float p_depth) {
-	if (p_depth < 0.0) {
+// The coarse lag's share on an interdune flat (the dune tone's lag term): the floors between dunes, flat, patchy.
+float ground_dune_lag(vec2 p_xz, float p_normal_y, float p_interdune) {
+	if (p_interdune < 0.0) {
 		return 0.0;
 	}
-	float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	float thin = p_interdune;
 	return thin * smoothstep(0.93, 0.98, p_normal_y) * mix(0.45, 1.0, ground_ripple_vn(p_xz / 23.0, 43u));
 }
 // Granule ripples (megaripples) on that lag: the coarse grains the wind cannot lift creep up into long, low ripples
@@ -2515,28 +2530,13 @@ float ground_dune_lag(vec2 p_xz, float p_normal_y, float p_depth) {
 // crests closer than about four pixels fade to their mean tone. Returns the slope (dh/dx, dh/dz); p_tint: the albedo
 // factor (the crests' coarse grains, paler than the troughs' fines).
 // The phase (in wavelengths): the spacing wanders between about 0.5 and 2 m (a warp along the wind whose slope adds
-// to or takes from the 1.1 m mean), the crests bend over metres, and paired edge dislocations make the forks.
+// to or takes from the 1.1 m mean) and the crests bend over metres; they end by tapering out (no phase defects:
+// a defect's closed contours read as small rimmed pits).
 float ground_granule_phase(vec2 p_xz, vec2 p_k, vec2 p_t) {
 	float along = dot(p_xz, p_k);
 	float across = dot(p_xz, p_t);
 	float s = along / 1.1 + 2.5 * ground_ripple_vn(vec2(along / 6.0, across / 5.0), 52u) + 1.2 * ground_ripple_vn(p_xz / 9.0, 51u);
-	ivec2 c0 = ivec2(floor(p_xz / 4.0));
-	float ph = 0.0;
-	for (int dz = -1; dz <= 1; dz++) {
-		for (int dx = -1; dx <= 1; dx++) {
-			ivec2 c = c0 + ivec2(dx, dz);
-			if (ground_ripple_hash(c, 54u) >= 0.35) {
-				continue;
-			}
-			vec2 m = (vec2(c) + vec2(ground_ripple_hash(c, 55u), ground_ripple_hash(c, 56u))) * 4.0;
-			float hl = 0.4 + 0.8 * ground_ripple_hash(c, 57u);
-			vec2 da = p_xz - (m - p_t * hl);
-			vec2 db = p_xz - (m + p_t * hl);
-			float sgn = ground_ripple_hash(c, 58u) < 0.5 ? -1.0 : 1.0;
-			ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(2.0, 4.0, length(p_xz - m)));
-		}
-	}
-	return s + ph / 6.2831853;
+	return s;
 }
 vec2 ground_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, out vec3 p_tint) {
 	p_tint = vec3(1.0);
@@ -2552,36 +2552,36 @@ vec2 ground_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, 
 	if (amp <= 0.0) {
 		return vec2(0.0);
 	}
-	// The slope from the phase's own gradient (the warp and the forks turn the crests), by differences.
+	// The slope from the phase's own gradient (the warp turns the crests), by differences.
 	float e = 0.03;
 	float s = ground_granule_phase(p_xz, k, t);
 	vec2 gs = vec2(ground_granule_phase(p_xz + vec2(e, 0.0), k, t) - s, ground_granule_phase(p_xz + vec2(0.0, e), k, t) - s);
-	// Modulo one wavelength: a fork's phase jumps by a whole turn across its cut.
-	gs = (fract(gs + 0.5) - 0.5) / e;
+	gs /= e;
 	float c = 0.5 + 0.5 * cos(6.2831853 * s);
 	// Resolved by the local spacing (1 / |grad s|).
 	float lam = 1.0 / max(length(gs), 0.3);
 	float resolved = 1.0 - smoothstep(0.15 * lam, 0.3 * lam, p_fp);
-	vec3 crest = vec3(1.1, 1.08, 1.04);
-	vec3 trough = vec3(0.92, 0.9, 0.89);
+	vec3 crest = vec3(1.08, 1.05, 0.99);
+	vec3 trough = vec3(0.95, 0.92, 0.87);
 	// About a third of a ripple's length is crest: the unresolved pixel takes the mean.
 	vec3 rt = mix(trough, crest, smoothstep(0.35, 0.8, c));
 	vec3 mt = mix(trough, crest, 0.4);
 	p_tint = mix(vec3(1.0), mix(mt, rt, resolved), amp);
-	// h = 0.05 amp c^1.5, so dh/dp = 0.05 amp 1.5 c^0.5 dc/ds grad s.
-	float dhds = 0.05 * amp * 1.5 * sqrt(c) * (-3.14159265 * sin(6.2831853 * s));
+	// Low and rounded (h = 0.04 amp c, slopes under 7 degrees, so a low sun leaves no hard-edged dark troughs):
+	// dh/dp = 0.04 amp dc/ds grad s.
+	float dhds = 0.04 * amp * (-3.14159265 * sin(6.2831853 * s));
 	return resolved * dhds * gs;
 }
 // Dune-scale sand colour: rubefaction, coarse interdune flats, pale slip faces (material.cpp ground_dune_tone(),
 // the same lines).
-vec3 ground_dune_tone(vec2 p_xz, float p_normal_y, float p_depth) {
+vec3 ground_dune_tone(vec2 p_xz, float p_normal_y, float p_interdune) {
 	vec3 t = vec3(1.0);
-	if (p_depth >= 0.0) {
-		float thin = 1.0 - smoothstep(0.3, 3.0, p_depth);
+	if (p_interdune >= 0.0) {
+		float thin = p_interdune;
 		float age = smoothstep(0.25, 0.7, 0.65 * ground_ripple_vn(p_xz / 420.0, 41u) + 0.35 * ground_ripple_vn(p_xz / 130.0, 42u));
 		t *= mix(vec3(1.0), vec3(1.15, 0.93, 0.78), age * (0.7 + 0.3 * thin));
-		float lag = ground_dune_lag(p_xz, p_normal_y, p_depth);
-		t *= mix(vec3(1.0), vec3(0.72, 0.7, 0.68), lag);
+		float lag = ground_dune_lag(p_xz, p_normal_y, p_interdune);
+		t *= mix(vec3(1.0), vec3(0.84, 0.74, 0.62), lag);
 	}
 	// Slopes of about 29 to 33 degrees: the slip face at the sand's repose.
 	float slip = smoothstep(0.78, 0.84, p_normal_y) * (1.0 - smoothstep(0.88, 0.93, p_normal_y));
@@ -3446,7 +3446,7 @@ void main() {
 			int rn = int(m2.y + 0.5);
 			int sn = int(m2.z + 0.5);
 			// The dune field's colour at this scale (GroundSurface3D dune_tone; material.cpp ground_sand_at(), the same
-			// lines): the generator's sand depth and the sand share from the sand block (G, B); past it, the depth rows
+			// lines): the generator's interdune share and the sand share from the sand block (G, B); past it, the depth rows
 			// round the patch (R, faded over their outer 15%) and the ground's share.
 			vec4 m4 = ts.x >= 5 ? texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(4, ts.y - 1), 0) : vec4(0.0);
 			if (m0.z > 0.0 && m4.x > 0.5) {

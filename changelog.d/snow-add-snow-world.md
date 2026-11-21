@@ -1,0 +1,1 @@
+- `add_snow` now falls on the world tier too, so slopes outside the near square carry a storm (`world` argument, on by default).

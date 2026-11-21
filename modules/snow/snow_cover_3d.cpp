@@ -2748,8 +2748,13 @@ void SnowCover3D::clear() {
 	_upload();
 }
 
-void SnowCover3D::add_snow(float p_swe_mm, float p_density) {
+void SnowCover3D::add_snow(float p_swe_mm, float p_density, bool p_world) {
 	_finish_background(true);
+	// A storm falls on the whole terrain: the world tier takes it too, so slopes outside the near square (where
+	// get_depth_at reads the world tier) carry it.
+	if (p_world && world && !owner) {
+		world->add_snow(p_swe_mm, p_density, false);
+	}
 	if (cell_swe.size() != resolution * resolution) {
 		_allocate();
 		_follow(_follow_position());
@@ -3494,7 +3499,7 @@ void SnowCover3D::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("advance", "seconds"), &SnowCover3D::advance);
 	ClassDB::bind_method(D_METHOD("clear"), &SnowCover3D::clear);
-	ClassDB::bind_method(D_METHOD("add_snow", "swe_mm", "density"), &SnowCover3D::add_snow, DEFVAL(100.0f));
+	ClassDB::bind_method(D_METHOD("add_snow", "swe_mm", "density", "world"), &SnowCover3D::add_snow, DEFVAL(100.0f), DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("refresh_heights"), &SnowCover3D::refresh_heights);
 	ClassDB::bind_method(D_METHOD("get_map_rect"), &SnowCover3D::get_map_rect);
 	ClassDB::bind_method(D_METHOD("get_depth_at", "position"), &SnowCover3D::get_depth_at);

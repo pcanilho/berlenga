@@ -63,6 +63,7 @@
 		</member>
 		<member name="ambient_light_source" type="int" setter="set_ambient_source" getter="get_ambient_source" enum="Environment.AmbientSource" default="0">
 			The ambient light source to use for rendering materials and global illumination.
+			With the path tracer, [constant AMBIENT_SOURCE_DISABLED] also stops diffuse bounces that leave the scene from gathering the sky, so a scene lit only by its lights matches the rasterizer; the sky stays visible to the camera, in reflections and through transmissive materials.
 		</member>
 		<member name="background_camera_feed_id" type="int" setter="set_camera_feed_id" getter="get_camera_feed_id" default="1">
 			The ID of the camera feed to show in the background.
