@@ -877,6 +877,8 @@ func _ready() -> void:
 		var pitch := deg_to_rad(float(args.get("face-sun", args.get("face-away", "0"))))
 		cam5.look_at(cam5.global_position + flat * cos(pitch) - Vector3.UP * sin(pitch))
 		_log("facing the sun: azimuth dir %s, sun elevation %.1f deg" % [str(flat), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
+	if args.has("stand-trail"):
+		_stand_trail()
 	await _docs_links_setup()
 	# Raster: 160 frames, so the sky's reprojected clouds (one pixel of each 4x4 block a frame) have had ten
 	# samples a pixel; fewer leave the first frame's upsampled blocks and the march jitter in the picture
@@ -6193,6 +6195,28 @@ func _hut() -> void:
 			if i % (Engine.physics_ticks_per_second * 5) == 0:
 				_log("hut fire t %.0f s: state %d, %.0f C, %.0f kW, fuel %.2f, collapsed %s" % [i * float(bf.get("time_scale")) / Engine.physics_ticks_per_second, int(bf.call("get_room_state", 0)), float(bf.call("get_room_temperature", 0)), float(bf.call("get_heat_release")), float(bf.call("get_room_fuel_left", 0)), str(bf.call("is_room_collapsed", 0))])
 		_log("hut fire at %.0f s: state %d, %.0f kW, flashover %.0f s, char %.1f mm, collapsed %s, firebrands %d" % [secs, int(bf.call("get_room_state", 0)), float(bf.call("get_heat_release")), float(bf.call("get_room_flashover_time", 0)), float(bf.call("get_room_char_depth", 0)) * 1000.0, str(bf.call("is_room_collapsed", 0)), int(bf.call("get_firebrand_count"))])
+
+
+func _stand_trail() -> void:
+	# --stand-trail[=passes]: a game trail (WorldStand.set_trails, 0.8 m, 600 passes a year) from 2 m ahead of the
+	# camera away from it, bending a little, and a fresh boar rooting (--rooting-age, 0) 1.5 m across, --rooting-ahead
+	# (7) m out and 2 m to the side (terrain 3199eeb8/897cc1dd, rocks 7b898b93, clods ad9de493). Off for the before.
+	var tc: Camera3D = get_viewport().get_camera_3d()
+	var tf := -tc.global_basis.z
+	tf.y = 0.0
+	tf = tf.normalized().rotated(Vector3.UP, deg_to_rad(float(args.get("trail-angle", "12"))))
+	var ts := tf.cross(Vector3.UP).normalized()
+	var tpts := PackedVector2Array()
+	for i in 40:
+		var d := 2.0 + float(i) * 2.0
+		var q := tc.global_position + tf * d + ts * (0.9 * sin(d * 0.12))
+		tpts.append(Vector2(q.x, q.z))
+	var tpass := float(args["stand-trail"]) if String(args["stand-trail"]) != "" else 600.0
+	WorldContracts.get_stand().set_trails([{"points": tpts, "width": 0.8, "passes": tpass, "kind": "game_trail"}])
+	var rp := tc.global_position + tf * float(args.get("rooting-ahead", "7")) - ts * 2.0
+	rp.y = height_at(rp.x, rp.z)
+	WorldContracts.get_stand().add_disturbance(rp, 1.5, WorldStand.DISTURBANCE_ROOTING, float(args.get("rooting-age", "0")))
+	_log("stand trail: %d points from %s, rooting at %s; trail %s at 6 m" % [tpts.size(), str(tpts[0].round()), str(rp.round()), str(WorldContracts.get_stand().trail_at(Vector3(tpts[2].x, 0, tpts[2].y)))])
 
 
 func _hut_rime() -> void:
