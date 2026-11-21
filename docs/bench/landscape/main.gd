@@ -6982,8 +6982,8 @@ func _snow_road_pick() -> void:
 
 
 func _slush_prints() -> void:
-	# --slush-prints[=MM]: a thin spring pack (--slush-min/--slush-max, 0.1 to 0.2 m) on gentle ground (under 10
-	# degrees), boot prints walked along the view, then MM (120) mm of rain over 10 h at +8 C (snow 0414a40d): over
+	# --slush-prints[=MM]: a thin spring pack (--slush-min/--slush-max, 0.1 to 0.2 m) on gentle ground (under
+	# --slush-max-deg, 20), boot prints walked along the view, then MM (120) mm of rain over 10 h at +8 C (snow 0414a40d): over
 	# frozen ground (GroundSurface3D frost, ground e7de58cc) the water the pack cannot hold stays as slush in its base
 	# and pools in the prints. The camera --slush-eye (1.7) m up at the line's start, looking down it; the line runs
 	# --slush-yaw (70) degrees off the sun so the low light rakes across the prints.
@@ -7009,7 +7009,7 @@ func _slush_prints() -> void:
 				dmin = minf(dmin, d)
 				dmax = maxf(dmax, d)
 			var miss := maxf(lo - d, d - hi)
-			if d > 0.03 and ang < 10.0 and gen.get_height(p) > gen.sea_level + 5.0:
+			if d > 0.03 and ang < float(args.get("slush-max-deg", "20")) and gen.get_height(p) > gen.sea_level + 5.0:
 				var score := ang + 1000.0 * maxf(miss, 0.0)
 				if score < best_s:
 					best_s = score
