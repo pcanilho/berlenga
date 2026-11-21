@@ -257,3 +257,6 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
   tongues and islands. Under cliff relief the layers go by the heightfield's normal (CUSTOM1), not the displaced
   faces': each ledge's flat tread took the soil, olive ladder strips under the lips. The path tracer still draws
   those strips (it reads the displaced normal); the lips' undersides read as thin black lines in raster only.
+- Pale rock slopes and faces read flat from afar, with only the fine relief (scan or procedural bump) on an even
+  colour: crumpled paper. Past about 32 degrees the rock layer now takes streaks down the fall line (1.3 m by 14 m,
+  4 m by 30 m), bed bands (0.9 m) and 18 m tone, and its fine relief eased by up to 0.4.

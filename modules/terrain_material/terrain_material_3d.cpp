@@ -734,6 +734,22 @@ vec2 tm_hex_hash(ivec2 v) {
 	}
 )";
 		}
+		if (i == LAYER_ROCK) {
+			// Rock slopes and faces from afar: water and lichen stain them in streaks down the fall line and the beds
+			// stand out as bands, so a pale face is not one even plane on which only the fine relief reads (crumpled
+			// paper). The fine relief is eased there too: the layers' textures and bump are of ground seen from above.
+			c += R"(	{
+		float face = 1.0 - smoothstep(0.55, 0.85, n.y);
+		if (face > 0.0) {
+			float streak = tm_vn(vec3(p.x / 1.3, p.y / 14.0, p.z / 1.3) + 71.0) * 0.6 + tm_vn(vec3(p.x / 4.0, p.y / 30.0, p.z / 4.0) + 17.0) * 0.4;
+			float bed = tm_vn(vec3(p.x / 40.0, p.y / 0.9, p.z / 40.0) + 5.0);
+			float sk = smoothstep(0.35, 0.75, streak);
+			albedo *= mix(1.0, (1.1 - 0.5 * sk) * (0.86 + 0.28 * bed) * (0.85 + 0.3 * tm_vn(p / 18.0 + 3.0)), face);
+			dn *= 1.0 - 0.4 * face;
+		}
+	}
+)";
+		}
 		c += "}\n";
 	}
 	// Sand with no normal texture of its own: the surface's grain-scale relief (sorted grains, impact pits, a few
